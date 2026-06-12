@@ -121,7 +121,9 @@ Linux / macOS 发布包已提供手动升级命令：
 ./scripts/cms.sh upgrade-status
 ```
 
-`upgrade` 会读取公开发布仓库的 `manifest.json`，下载当前平台包，校验 SHA256，解压到 `releases/<新版本>`，备份 `shared/data/cms.db`，切换 `current`，然后重启并做健康检查。失败时会切回旧版本并恢复数据库备份。后台「设置 → 系统更新」目前先显示版本和下载信息，后续会接入此升级器做真正的一键升级。
+`upgrade` 会读取公开发布仓库的 `manifest.json`，下载当前平台包，校验 SHA256，解压到 `releases/<新版本>`，备份 `shared/data/cms.db`，切换 `current`，然后重启并做健康检查。失败时会切回旧版本并恢复数据库备份。
+
+后台「设置 → 系统更新」会检查公开发布仓库；当当前运行目录是 Linux / macOS 标准发布包、检测到新版本且当前平台包存在时，可以直接点击「一键升级」。后台升级会调用 `./scripts/cms.sh upgrade`，状态写入 `run/upgrade.json`，详细输出写入 `logs/upgrade-runner.log`。
 
 升级器依赖 `python3`、`curl` 或 `wget`、`tar`，以及 `sha256sum` / `shasum` / `openssl` 之一。
 

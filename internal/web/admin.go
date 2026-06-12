@@ -5,11 +5,13 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -651,6 +653,150 @@ func (s *Server) adminSettingsSection(w http.ResponseWriter, r *http.Request) {
 	s.showSettings(w, r, sec, "", "")
 }
 
+type UpgradeStatus struct {
+	Status    string `json:"status"`
+	Step      string `json:"step"`
+	Version   string `json:"version"`
+	Message   string `json:"message"`
+	UpdatedAt string `json:"updated_at"`
+	Available bool   `json:"available"`
+	Running   bool   `json:"running"`
+	RunnerLog string `json:"runner_log"`
+}
+
+func upgradeRoot() string {
+	if wd, err := os.Getwd(); err == nil && wd != "" {
+		return wd
+	}
+	return "."
+}
+
+func upgradeStatusPath() string {
+	return filepath.Join(upgradeRoot(), "run", "upgrade.json")
+}
+
+func upgradeRunnerLogPath() string {
+	return filepath.Join(upgradeRoot(), "logs", "upgrade-runner.log")
+}
+
+func upgradeScriptAvailable() bool {
+	root := upgradeRoot()
+	if info, err := os.Stat(filepath.Join(root, "scripts", "cms.sh")); err != nil || info.IsDir() {
+		return false
+	}
+	if info, err := os.Lstat(filepath.Join(root, "current")); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		return false
+	}
+	if info, err := os.Stat(filepath.Join(root, "current", "bin", "cms")); err != nil || info.IsDir() || info.Mode()&0o111 == 0 {
+		return false
+	}
+	return true
+}
+
+func readUpgradeStatus() *UpgradeStatus {
+	st := &UpgradeStatus{
+		Status:    "idle",
+		Message:   "暂无升级任务",
+		Available: upgradeScriptAvailable(),
+		RunnerLog: "logs/upgrade-runner.log",
+	}
+	if data, err := os.ReadFile(upgradeStatusPath()); err == nil && len(data) > 0 {
+		_ = json.Unmarshal(data, st)
+		if st.Status == "" {
+			st.Status = "idle"
+		}
+	}
+	st.Available = upgradeScriptAvailable()
+	st.Running = st.Status == "running"
+	st.RunnerLog = "logs/upgrade-runner.log"
+	if !st.Available && st.Status == "idle" {
+		st.Message = "当前运行目录不是标准 Linux/macOS 发布包，无法由后台升级。"
+	}
+	return st
+}
+
+func writeUpgradeStatus(st UpgradeStatus) {
+	st.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	_ = os.MkdirAll(filepath.Dir(upgradeStatusPath()), 0o755)
+	if data, err := json.Marshal(st); err == nil {
+		_ = os.WriteFile(upgradeStatusPath(), append(data, '\n'), 0o644)
+	}
+}
+
+func writeQueuedUpgradeStatus(version string) {
+	st := UpgradeStatus{
+		Status:  "running",
+		Step:    "queued",
+		Version: version,
+		Message: "升级任务已启动，等待升级器接管。",
+	}
+	writeUpgradeStatus(st)
+}
+
+func launchUpgrade(version string) error {
+	root := upgradeRoot()
+	logPath := upgradeRunnerLogPath()
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+		return err
+	}
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return err
+	}
+
+	args := []string{filepath.Join(root, "scripts", "cms.sh"), "upgrade"}
+	if version = strings.TrimSpace(version); version != "" {
+		args = append(args, version)
+	}
+	cmd := exec.Command("sh", args...)
+	cmd.Dir = root
+	cmd.Env = os.Environ()
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+	if err := cmd.Start(); err != nil {
+		_ = logFile.Close()
+		return err
+	}
+	_ = logFile.Close()
+	go func() {
+		_ = cmd.Wait()
+	}()
+	return nil
+}
+
+func (s *Server) adminUpgradeStatus(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(readUpgradeStatus())
+}
+
+func (s *Server) adminStartUpgrade(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.checkCSRF(w, r); !ok {
+		return
+	}
+	version := strings.TrimSpace(r.FormValue("version"))
+	st := readUpgradeStatus()
+	if !st.Available {
+		s.showSettings(w, r, "updates", "", st.Message)
+		return
+	}
+	if st.Running {
+		s.showSettings(w, r, "updates", "", "已有升级任务正在运行。")
+		return
+	}
+	writeQueuedUpgradeStatus(version)
+	if err := launchUpgrade(version); err != nil {
+		writeUpgradeStatus(UpgradeStatus{
+			Status:  "failed",
+			Step:    "launch",
+			Version: version,
+			Message: "启动升级器失败：" + err.Error(),
+		})
+		s.showSettings(w, r, "updates", "", "启动升级器失败："+err.Error())
+		return
+	}
+	s.showSettings(w, r, "updates", "升级任务已启动，页面会显示最新状态。", "")
+}
+
 // copyKey 返回某语种下文案设置的存储键：默认语种用裸键，其它语种用 key::lang。
 func (s *Server) copyKey(base, lang string) string {
 	if lang == s.defaultLang() {
@@ -721,6 +867,7 @@ func (s *Server) showSettings(w http.ResponseWriter, r *http.Request, section, f
 		ctx, cancel := context.WithTimeout(r.Context(), 6*time.Second)
 		defer cancel()
 		v.Update = checkLatestRelease(ctx)
+		v.Upgrade = readUpgradeStatus()
 	}
 
 	status := http.StatusOK

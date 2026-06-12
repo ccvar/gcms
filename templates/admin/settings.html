@@ -461,9 +461,50 @@
 
       <div class="field-group">
         <h3 class="group-head">一键升级</h3>
-        <p class="muted" style="font-size:.9rem">当前版本先提供更新检测与对应平台包下载。新版发布包默认采用 <code>current / releases / shared / backups</code> 标准目录，并已提供 <code>./scripts/cms.sh upgrade</code> 升级器；后台按钮下一阶段会接入该升级器。</p>
-        <button class="btn" type="button" disabled>一键升级（下一阶段）</button>
+        {{$up := .Upgrade}}
+        <table class="admin-table" id="upgrade-status-box" data-status-url="/admin/settings/updates/status" data-running="{{if $up.Running}}1{{else}}0{{end}}">
+          <tbody>
+            <tr><th>状态</th><td class="slug" data-upgrade-status>{{$up.Status}}</td></tr>
+            {{if $up.Step}}<tr><th>阶段</th><td class="slug" data-upgrade-step>{{$up.Step}}</td></tr>{{end}}
+            {{if $up.Version}}<tr><th>目标版本</th><td class="slug" data-upgrade-version>{{$up.Version}}</td></tr>{{end}}
+            <tr><th>消息</th><td data-upgrade-message>{{$up.Message}}</td></tr>
+            {{if $up.UpdatedAt}}<tr><th>更新时间</th><td class="slug" data-upgrade-updated>{{$up.UpdatedAt}}</td></tr>{{end}}
+            <tr><th>日志</th><td class="slug">{{$up.RunnerLog}}</td></tr>
+          </tbody>
+        </table>
+        <p class="muted" style="font-size:.9rem">后台会调用 <code>./scripts/cms.sh upgrade</code>，升级状态写入 <code>run/upgrade.json</code>。升级期间服务会短暂重启。</p>
+        <form method="post" action="/admin/settings/updates/upgrade" style="margin-top:.8rem">
+          <input type="hidden" name="_csrf" value="{{.CSRF}}">
+          {{if $u.LatestTag}}<input type="hidden" name="version" value="{{$u.LatestTag}}">{{end}}
+          <button class="btn btn-primary" type="submit"{{if not (and $up.Available $u.UpdateAvailable $u.AssetURL (not $up.Running))}} disabled{{end}}>一键升级</button>
+        </form>
       </div>
+      <script>
+      (function(){
+        var box = document.getElementById("upgrade-status-box");
+        if (!box || box.dataset.running !== "1") return;
+        var url = box.dataset.statusUrl;
+        var setText = function(sel, text) {
+          var el = box.querySelector(sel);
+          if (el) el.textContent = text || "";
+        };
+        var render = function(s) {
+          setText("[data-upgrade-status]", s.status);
+          setText("[data-upgrade-step]", s.step);
+          setText("[data-upgrade-version]", s.version);
+          setText("[data-upgrade-message]", s.message);
+          setText("[data-upgrade-updated]", s.updated_at);
+          if (s.status === "running") setTimeout(poll, 2500);
+        };
+        var poll = function() {
+          fetch(url, {headers: {"Accept": "application/json"}})
+            .then(function(r){ if (!r.ok) throw new Error("bad status"); return r.json(); })
+            .then(render)
+            .catch(function(){ setTimeout(poll, 3000); });
+        };
+        setTimeout(poll, 1000);
+      })();
+      </script>
 
       {{else if eq .Section "security"}}
       <form method="post" action="/admin/settings/security" class="admin-form">

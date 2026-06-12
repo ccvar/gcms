@@ -195,6 +195,7 @@ type View struct {
 	EditCat       *store.Category
 	FormVals      map[string]string // 表单回填（分类新增/编辑出错时）
 	Update        *UpdateInfo       // 系统更新检查
+	Upgrade       *UpgradeStatus    // 系统升级任务状态
 	EditLang      string            // 后台当前操作的内容语种
 	Locales       []i18n.Locale     // 已启用语种
 	AllLocales    []i18n.Locale     // 全部可选语种（内置 + 自定义，语言设置勾选）
@@ -591,8 +592,10 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("GET /admin", s.requireAuth(s.adminDashboard))
 	mux.HandleFunc("GET /admin/settings", s.requireAuth(s.adminSettings))
 	mux.HandleFunc("GET /admin/settings/{section}", s.requireAuth(s.adminSettingsSection))
+	mux.HandleFunc("GET /admin/settings/updates/status", s.requireAuth(s.adminUpgradeStatus))
 	mux.HandleFunc("POST /admin/settings/site", s.requireAuth(s.adminSaveSite))
 	mux.HandleFunc("POST /admin/settings/appearance", s.requireAuth(s.adminSaveAppearance))
+	mux.HandleFunc("POST /admin/settings/updates/upgrade", s.requireAuth(s.adminStartUpgrade))
 	mux.HandleFunc("POST /admin/settings/security", s.requireAuth(s.adminSavePassword))
 	mux.HandleFunc("POST /admin/settings/copy", s.requireAuth(s.adminSaveCopy))
 	mux.HandleFunc("POST /admin/settings/menu", s.requireAuth(s.adminSaveMenu))

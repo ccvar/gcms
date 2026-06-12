@@ -103,7 +103,8 @@ CCVAR 简记 CMS · 部署包（${NAME}）
 
 更新源：
   公开发布仓库：https://github.com/${RELEASE_REPO}
-  后台「设置 → 系统更新」会从该公开仓库读取 manifest.json 检查新版本。
+  后台「设置 → 系统更新」会从该公开仓库读取 manifest.json 检查新版本，
+  检测到可用更新时可直接点击「一键升级」。
 
 一、配置（可选但推荐）
   编辑 shared/cms.conf：
@@ -145,11 +146,13 @@ CCVAR 简记 CMS · 部署包（${NAME}）
   解压到 releases/<新版本>，备份 shared/data/cms.db，切换 current，
   然后重启并做健康检查。失败时会切回旧版本并恢复数据库备份。
 
+  后台「设置 → 系统更新」的一键升级按钮也会调用同一个升级器。
   升级状态写入 run/upgrade.json，可用 ./scripts/cms.sh upgrade-status 查看。
+  后台异步启动日志写入 logs/upgrade-runner.log。
   依赖：python3、curl 或 wget、tar、sha256sum / shasum / openssl 之一。
 
 六、升级目录规划
-  本发布包默认已经是后续一键升级所需的标准目录：
+  本发布包默认已经是后台一键升级所需的标准目录：
 
     $NAME/
       current -> releases/$VERSION
