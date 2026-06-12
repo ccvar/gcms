@@ -31,6 +31,10 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7a2 2 0 0 1 2-2h3l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/></svg>
         <span>分类</span>
       </a>
+      <a href="/admin/settings/updates"{{if eq .Section "updates"}} class="active"{{end}}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 1-15.5 6.2"/><path d="M3 12a9 9 0 0 1 15.5-6.2"/><path d="M3 17v4h4"/><path d="M21 7V3h-4"/></svg>
+        <span>系统更新</span>
+      </a>
       <a href="/admin/settings/security"{{if eq .Section "security"}} class="active"{{end}}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.6-7 9-4-1.4-7-4.5-7-9V6z"/></svg>
         <span>安全</span>
@@ -416,6 +420,49 @@
             </div>
           </form>
         </div>
+      </div>
+
+      {{else if eq .Section "updates"}}
+      {{$u := .Update}}
+      <div class="field-group">
+        <h3 class="group-head">当前版本</h3>
+        <table class="admin-table">
+          <tbody>
+            <tr><th>版本</th><td><strong>{{$u.Current.Version}}</strong>{{if eq $u.Current.Version "dev"}} <span class="mini-tag">开发构建</span>{{end}}</td></tr>
+            <tr><th>平台</th><td class="slug">{{$u.Current.Platform}}</td></tr>
+            {{if $u.Current.Commit}}<tr><th>提交</th><td class="slug">{{$u.Current.Commit}}</td></tr>{{end}}
+            {{if $u.Current.BuiltAt}}<tr><th>构建时间</th><td class="slug">{{$u.Current.BuiltAt}}</td></tr>{{end}}
+            <tr><th>发布仓库</th><td class="slug">{{$u.Current.Repo}}</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="field-group">
+        <h3 class="group-head">最新发布</h3>
+        {{if $u.Error}}
+        <div class="form-err">检查更新失败：{{$u.Error}}</div>
+        <p class="muted" style="font-size:.9rem">请确认公开发布仓库已创建 Release，并且 Release 中包含 <code>manifest.json</code>。如需临时切换更新源，可设置 <code>GCMS_UPDATE_URL</code> 或 <code>GCMS_RELEASE_REPO</code>。</p>
+        {{else}}
+        <table class="admin-table">
+          <tbody>
+            <tr><th>最新版本</th><td><strong>{{$u.LatestTag}}</strong>{{if $u.UpdateAvailable}} <span class="badge sched">有新版本</span>{{else}} <span class="badge pub">已是最新</span>{{end}}</td></tr>
+            {{if $u.PublishedAt}}<tr><th>发布时间</th><td class="slug">{{$u.PublishedAt}}</td></tr>{{end}}
+            {{if $u.ManifestURL}}<tr><th>更新清单</th><td><a href="{{$u.ManifestURL}}" target="_blank" rel="noopener">manifest.json</a></td></tr>{{end}}
+            <tr><th>匹配平台包</th><td>{{if $u.AssetURL}}<a href="{{$u.AssetURL}}" target="_blank" rel="noopener">{{$u.AssetName}}</a>{{else}}<span class="muted">该 Release 未找到当前平台的发布包</span>{{end}}</td></tr>
+            {{if gt $u.AssetSize 0}}<tr><th>包大小</th><td class="slug">{{filesize $u.AssetSize}}</td></tr>{{end}}
+            {{if $u.SHA256}}<tr><th>SHA256</th><td class="slug">{{$u.SHA256}}</td></tr>{{end}}
+            {{if $u.ChecksumURL}}<tr><th>校验文件</th><td><a href="{{$u.ChecksumURL}}" target="_blank" rel="noopener">checksums.txt</a></td></tr>{{end}}
+            {{if $u.LatestURL}}<tr><th>Release</th><td><a href="{{$u.LatestURL}}" target="_blank" rel="noopener">打开 GitHub Release</a></td></tr>{{end}}
+          </tbody>
+        </table>
+        {{if $u.LatestBody}}<pre style="white-space:pre-wrap;margin:1rem 0 0;padding:1rem;border:1px solid var(--line);border-radius:8px;background:var(--line-soft);font:inherit;font-size:.9rem;line-height:1.6">{{$u.LatestBody}}</pre>{{end}}
+        {{end}}
+      </div>
+
+      <div class="field-group">
+        <h3 class="group-head">一键升级</h3>
+        <p class="muted" style="font-size:.9rem">当前版本先提供更新检测与对应平台包下载。完整一键升级需要部署目录采用 <code>current / releases / shared / backups</code> 结构，并在升级前完成数据库备份与失败回滚。</p>
+        <button class="btn" type="button" disabled>一键升级（下一阶段）</button>
       </div>
 
       {{else if eq .Section "security"}}

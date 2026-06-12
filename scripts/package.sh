@@ -40,6 +40,9 @@ fi
 GOOS=${1:-$(go env GOOS)}
 GOARCH=${2:-$(go env GOARCH)}
 VERSION=${VERSION:-$(git -C "$ROOT" describe --tags --always --dirty 2>/dev/null || date +%Y%m%d)}
+COMMIT=${COMMIT:-$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)}
+BUILT_AT=${BUILT_AT:-$(date -u '+%Y-%m-%dT%H:%M:%SZ')}
+RELEASE_REPO=${RELEASE_REPO:-ccvar/gcms-releases}
 NAME="cms-${VERSION}-${GOOS}-${GOARCH}"
 OUT="$ROOT/dist"
 DIR="$OUT/$NAME"
@@ -52,7 +55,7 @@ mkdir -p "$DIR/bin" "$DIR/scripts"
 # ---- 编译（纯 Go，CGO 关闭，便于交叉编译；裁剪符号表减小体积）----
 info "编译 $GOOS/$GOARCH …"
 ( cd "$ROOT" && CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
-    go build -trimpath -ldflags "-s -w" -o "$DIR/bin/cms$BINEXT" . )
+    go build -trimpath -ldflags "-s -w -X cms.ccvar.com/internal/version.Version=${VERSION} -X cms.ccvar.com/internal/version.Commit=${COMMIT} -X cms.ccvar.com/internal/version.BuiltAt=${BUILT_AT} -X cms.ccvar.com/internal/version.Repo=${RELEASE_REPO}" -o "$DIR/bin/cms$BINEXT" . )
 ok "已编译 → bin/cms$BINEXT （$(du -h "$DIR/bin/cms$BINEXT" | cut -f1)）"
 
 # ---- 拷贝启停脚本与默认配置 ----
@@ -62,22 +65,28 @@ chmod +x "$DIR/scripts/cms.sh"
 # ---- 写入发布包元信息，启动脚本用来提示平台不匹配 ----
 cat > "$DIR/BUILD_INFO" <<EOF
 VERSION=$VERSION
+COMMIT=$COMMIT
 GOOS=$GOOS
 GOARCH=$GOARCH
-BUILT_AT=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+BUILT_AT=$BUILT_AT
+RELEASE_REPO=$RELEASE_REPO
 EOF
 
 # ---- 部署说明 ----
 cat > "$DIR/README.txt" <<EOF
-CCVAR 简记 CMS · 部署包（$NAME）
+CCVAR 简记 CMS · 部署包（${NAME}）
 
 目录结构：
   bin/cms$BINEXT       预编译程序（模板与静态资源已内嵌，单文件运行，部署机无需 Go）
   scripts/cms.sh     启停脚本（Linux / macOS）
   scripts/cms.ps1    启停脚本（Windows PowerShell）
   scripts/cms.conf   配置文件（监听端口 / 站点域名 / 数据库路径）
-  BUILD_INFO         发布包平台信息
+  BUILD_INFO         发布包平台与版本信息
   data/              运行后自动生成（SQLite 数据库与上传文件）
+
+更新源：
+  公开发布仓库：https://github.com/${RELEASE_REPO}
+  后台「设置 → 系统更新」会从该公开仓库读取 manifest.json 检查新版本。
 
 一、配置（可选但推荐）
   编辑 scripts/cms.conf：
@@ -105,9 +114,29 @@ CCVAR 简记 CMS · 部署包（$NAME）
   · 在 scripts/cms.conf 设置 BASE_URL 为 https 域名（影响 canonical / 站点地图）。
   · 可用 systemd 托管：ExecStart 指向 bin/cms，工作目录为本包根目录，
     并设置环境变量 ADDR / BASE_URL / CMS_DB。
+
+五、升级目录规划
+  推荐把程序版本与用户数据分开，便于后续后台一键升级与失败回滚：
+
+    /opt/gcms/
+      current -> releases/$VERSION
+      releases/$VERSION/
+      shared/data/cms.db
+      shared/data/uploads/
+      shared/cms.conf
+      backups/
+      tmp/
+
+  current 指向当前运行版本；shared 保存数据库、上传文件和配置，升级时不覆盖。
+  可设置 CMS_DB=/opt/gcms/shared/data/cms.db，让不同版本共用同一份数据。
 EOF
 
 # ---- 打 tar.gz ----
 ( cd "$OUT" && tar -czf "$NAME.tar.gz" "$NAME" )
+if command -v sha256sum >/dev/null 2>&1; then
+  ( cd "$OUT" && sha256sum "$NAME.tar.gz" > "$NAME.sha256" )
+elif command -v shasum >/dev/null 2>&1; then
+  ( cd "$OUT" && shasum -a 256 "$NAME.tar.gz" > "$NAME.sha256" )
+fi
 ok "发布包已生成：dist/$NAME.tar.gz （$(du -h "$OUT/$NAME.tar.gz" | cut -f1)）"
 info "解压后：cd $NAME && ./scripts/cms.sh start"

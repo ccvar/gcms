@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
@@ -385,6 +386,7 @@ func (s *Server) adminCreate(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, err)
 		return
 	}
+	s.clearGeneratedCaches()
 	http.Redirect(w, r, fmt.Sprintf("/admin/posts/%d/edit?saved=1", id), http.StatusSeeOther)
 }
 
@@ -416,6 +418,7 @@ func (s *Server) adminUpdate(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, err)
 		return
 	}
+	s.clearGeneratedCaches()
 	http.Redirect(w, r, fmt.Sprintf("/admin/posts/%d/edit?saved=1", id), http.StatusSeeOther)
 }
 
@@ -427,6 +430,7 @@ func (s *Server) adminDelete(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, err)
 		return
 	}
+	s.clearGeneratedCaches()
 	http.Redirect(w, r, "/admin", http.StatusSeeOther)
 }
 
@@ -435,6 +439,7 @@ func (s *Server) adminPin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = s.store.SetFeatured(atoi64(r.PathValue("id")), r.FormValue("on") == "1")
+	s.clearGeneratedCaches()
 	lang := strings.TrimSpace(r.FormValue("lang"))
 	dest := "/admin"
 	if s.langEnabled(lang) {
@@ -499,6 +504,7 @@ func (s *Server) adminTranslate(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, err)
 		return
 	}
+	s.clearGeneratedCaches()
 	http.Redirect(w, r, editPath(id), http.StatusSeeOther)
 }
 
@@ -556,6 +562,7 @@ func (s *Server) adminLinkCreate(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, err)
 		return
 	}
+	s.clearGeneratedCaches()
 	http.Redirect(w, r, fmt.Sprintf("/admin/links/%d/edit?saved=1", id), http.StatusSeeOther)
 }
 
@@ -588,6 +595,7 @@ func (s *Server) adminLinkUpdate(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, err)
 		return
 	}
+	s.clearGeneratedCaches()
 	http.Redirect(w, r, fmt.Sprintf("/admin/links/%d/edit?saved=1", id), http.StatusSeeOther)
 }
 
@@ -596,6 +604,7 @@ func (s *Server) adminLinkDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = s.store.DeletePost(atoi64(r.PathValue("id")))
+	s.clearGeneratedCaches()
 	dest := "/admin/links"
 	if lang := strings.TrimSpace(r.FormValue("lang")); s.langEnabled(lang) {
 		dest += "?lang=" + lang
@@ -608,6 +617,7 @@ func (s *Server) adminLinkPin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = s.store.SetFeatured(atoi64(r.PathValue("id")), r.FormValue("on") == "1")
+	s.clearGeneratedCaches()
 	dest := "/admin/links"
 	if lang := strings.TrimSpace(r.FormValue("lang")); s.langEnabled(lang) {
 		dest += "?lang=" + lang
@@ -617,7 +627,7 @@ func (s *Server) adminLinkPin(w http.ResponseWriter, r *http.Request) {
 
 // ---------- 站点设置（分区独立保存）----------
 
-var settingsSections = map[string]bool{"site": true, "appearance": true, "copy": true, "menu": true, "languages": true, "categories": true, "security": true}
+var settingsSections = map[string]bool{"site": true, "appearance": true, "copy": true, "menu": true, "languages": true, "categories": true, "updates": true, "security": true}
 
 func themeName(id string) string {
 	for _, t := range Themes {
@@ -707,6 +717,10 @@ func (s *Server) showSettings(w http.ResponseWriter, r *http.Request, section, f
 		v.CustomLocales = s.i18n.Custom()
 	case "menu":
 		v.MenuEdit = s.menuEditRows()
+	case "updates":
+		ctx, cancel := context.WithTimeout(r.Context(), 6*time.Second)
+		defer cancel()
+		v.Update = checkLatestRelease(ctx)
 	}
 
 	status := http.StatusOK
@@ -738,6 +752,7 @@ func (s *Server) adminSaveSite(w http.ResponseWriter, r *http.Request) {
 	_ = s.store.SetSetting("social_links", buildSocialJSON(r.Form["social_url"], r.Form["social_label"]))
 	_ = s.store.SetSetting("inject.head", strings.TrimSpace(r.FormValue("inject_head")))
 	_ = s.store.SetSetting("inject.body", strings.TrimSpace(r.FormValue("inject_body")))
+	s.clearGeneratedCaches()
 	s.showSettings(w, r, "site", "站点信息已保存。", "")
 }
 
@@ -775,6 +790,7 @@ func (s *Server) adminSaveAppearance(w http.ResponseWriter, r *http.Request) {
 	_ = s.store.SetSetting("hero.image", strings.TrimSpace(r.FormValue("hero_image")))
 	_ = s.store.SetSetting("hero.svg", strings.TrimSpace(r.FormValue("hero_svg")))
 
+	s.clearGeneratedCaches()
 	s.showSettings(w, r, "appearance", "外观设置已保存。", "")
 }
 
@@ -819,6 +835,7 @@ func (s *Server) adminSaveCopy(w http.ResponseWriter, r *http.Request) {
 	set("home.featured_title", "home_featured")
 	set("home.links_title", "home_links")
 	set("home.latest_title", "home_latest")
+	s.clearGeneratedCaches()
 	s.showSettings(w, r, "copy", "文案已保存。", "")
 }
 
@@ -832,6 +849,7 @@ func (s *Server) adminSaveMenu(w http.ResponseWriter, r *http.Request) {
 		labelsByLang[l.Code] = r.Form["nav_label_"+l.Code]
 	}
 	_ = s.store.SetSetting("nav_menu", buildMenuJSON(r.Form["nav_url"], labelsByLang))
+	s.clearGeneratedCaches()
 	s.showSettings(w, r, "menu", "导航菜单已保存。", "")
 }
 
@@ -866,6 +884,7 @@ func (s *Server) adminSaveLanguages(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.store.SetSetting("locales", strings.Join(enabled, ","))
 	_ = s.store.SetSetting("default_lang", enabled[0])
+	s.clearGeneratedCaches()
 	s.showSettings(w, r, "languages", "语言设置已保存。", "")
 }
 
@@ -892,6 +911,7 @@ func (s *Server) adminAddLocalePreset(w http.ResponseWriter, r *http.Request) {
 	})
 	_ = s.store.SetSetting("custom_locales", i18n.MarshalCustom(cur))
 	s.i18n.LoadCustom(s.store.Setting("custom_locales"))
+	s.clearGeneratedCaches()
 	s.showSettings(w, r, "languages", "已新增语种预设，可在上方勾选启用。", "")
 }
 
@@ -917,6 +937,7 @@ func (s *Server) adminDeleteLocalePreset(w http.ResponseWriter, r *http.Request)
 	}
 	_ = s.store.SetSetting("locales", strings.Join(codes, ","))
 	_ = s.store.SetSetting("default_lang", codes[0])
+	s.clearGeneratedCaches()
 	s.showSettings(w, r, "languages", "已删除语种预设。", "")
 }
 
@@ -955,6 +976,7 @@ func (s *Server) adminSaveCategory(w http.ResponseWriter, r *http.Request) {
 			s.serverError(w, err)
 			return
 		}
+		s.clearGeneratedCaches()
 		s.showSettings(w, r, "categories", "分类已添加。", "")
 		return
 	}
@@ -966,6 +988,7 @@ func (s *Server) adminSaveCategory(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, err)
 		return
 	}
+	s.clearGeneratedCaches()
 	s.showSettings(w, r, "categories", "分类已更新。", "")
 }
 
@@ -977,6 +1000,7 @@ func (s *Server) adminDeleteCategory(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, err)
 		return
 	}
+	s.clearGeneratedCaches()
 	s.showSettings(w, r, "categories", "分类已删除。", "")
 }
 
@@ -994,6 +1018,7 @@ func (s *Server) adminReorderCategories(w http.ResponseWriter, r *http.Request) 
 		s.serverError(w, err)
 		return
 	}
+	s.clearGeneratedCaches()
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -1062,6 +1087,7 @@ func (s *Server) adminPageSave(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, err)
 		return
 	}
+	s.clearGeneratedCaches()
 	http.Redirect(w, r, fmt.Sprintf("/admin/pages/%d/edit?saved=1", id), http.StatusSeeOther)
 }
 

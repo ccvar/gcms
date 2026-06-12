@@ -2,6 +2,7 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"encoding/xml"
 	"hash/fnv"
@@ -12,6 +13,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"cms.ccvar.com/internal/i18n"
@@ -29,6 +31,21 @@ type Server struct {
 	i18n      *i18n.Manager
 	mux       *http.ServeMux
 	assetVer  string // 静态资源内容指纹，用作 ?v= 破缓存（资源变更即失效旧缓存）
+	cacheMu   sync.RWMutex
+	content   map[string]contentCacheEntry
+	endpoints map[string]endpointCacheEntry
+}
+
+type contentCacheEntry struct {
+	updatedAt time.Time
+	html      template.HTML
+	toc       []Heading
+}
+
+type endpointCacheEntry struct {
+	body        []byte
+	contentType string
+	expires     time.Time
 }
 
 // assetVersion 取关键静态资源内容的短指纹：内容变了指纹就变，配合长缓存做缓存破坏。
@@ -177,6 +194,7 @@ type View struct {
 	CatKind       string // 分类管理当前类型：post | link
 	EditCat       *store.Category
 	FormVals      map[string]string // 表单回填（分类新增/编辑出错时）
+	Update        *UpdateInfo       // 系统更新检查
 	EditLang      string            // 后台当前操作的内容语种
 	Locales       []i18n.Locale     // 已启用语种
 	AllLocales    []i18n.Locale     // 全部可选语种（内置 + 自定义，语言设置勾选）
@@ -226,7 +244,11 @@ func New(st *store.Store, baseURL, uploadDir string, tplFS, assetsFS fs.FS) (*Se
 	if uploadDir != "" {
 		_ = os.MkdirAll(uploadDir, 0o755)
 	}
-	s := &Server{store: st, rnd: rnd, baseURL: baseURL, uploadDir: uploadDir, sess: newSessions(), login: newLoginLimiter(), i18n: i18n.New(), assetVer: assetVersion(assetsFS)}
+	s := &Server{
+		store: st, rnd: rnd, baseURL: baseURL, uploadDir: uploadDir,
+		sess: newSessions(), login: newLoginLimiter(), i18n: i18n.New(), assetVer: assetVersion(assetsFS),
+		content: map[string]contentCacheEntry{}, endpoints: map[string]endpointCacheEntry{},
+	}
 	s.i18n.LoadCustom(st.Setting("custom_locales")) // 合并后台新增的自定义语种预设
 	s.routes(assetsFS)
 	return s, nil
@@ -462,6 +484,62 @@ func (s *Server) themeOverride() template.CSS {
 	return template.CSS(b.String())
 }
 
+func (s *Server) renderedContent(p *store.Post) (template.HTML, []Heading) {
+	if p == nil {
+		return "", nil
+	}
+	key := p.Type + ":" + strconv.FormatInt(p.ID, 10)
+	s.cacheMu.RLock()
+	if e, ok := s.content[key]; ok && e.updatedAt.Equal(p.UpdatedAt) {
+		toc := append([]Heading(nil), e.toc...)
+		s.cacheMu.RUnlock()
+		return e.html, toc
+	}
+	s.cacheMu.RUnlock()
+
+	html, toc := RenderContent(p.Content)
+	s.cacheMu.Lock()
+	if len(s.content) > 512 {
+		s.content = map[string]contentCacheEntry{}
+	}
+	s.content[key] = contentCacheEntry{updatedAt: p.UpdatedAt, html: html, toc: append([]Heading(nil), toc...)}
+	s.cacheMu.Unlock()
+	return html, toc
+}
+
+func (s *Server) cachedEndpoint(key string) ([]byte, string, bool) {
+	now := time.Now()
+	s.cacheMu.RLock()
+	e, ok := s.endpoints[key]
+	if ok && now.Before(e.expires) {
+		body := append([]byte(nil), e.body...)
+		s.cacheMu.RUnlock()
+		return body, e.contentType, true
+	}
+	s.cacheMu.RUnlock()
+	if ok {
+		s.cacheMu.Lock()
+		if cur, still := s.endpoints[key]; still && now.After(cur.expires) {
+			delete(s.endpoints, key)
+		}
+		s.cacheMu.Unlock()
+	}
+	return nil, "", false
+}
+
+func (s *Server) setCachedEndpoint(key, contentType string, body []byte, ttl time.Duration) {
+	s.cacheMu.Lock()
+	s.endpoints[key] = endpointCacheEntry{body: append([]byte(nil), body...), contentType: contentType, expires: time.Now().Add(ttl)}
+	s.cacheMu.Unlock()
+}
+
+func (s *Server) clearGeneratedCaches() {
+	s.cacheMu.Lock()
+	s.content = map[string]contentCacheEntry{}
+	s.endpoints = map[string]endpointCacheEntry{}
+	s.cacheMu.Unlock()
+}
+
 func hexColor(s string) bool {
 	if len(s) != 7 || s[0] != '#' {
 		return false
@@ -678,7 +756,7 @@ func (s *Server) article(w http.ResponseWriter, r *http.Request) {
 	v := s.view(r, "")
 	v.SEO = v.Site.Article(p)
 	v.Post = p
-	v.ContentHTML, v.TOC = RenderContent(p.Content)
+	v.ContentHTML, v.TOC = s.renderedContent(p)
 	v.Prev, _ = s.store.PrevPost(p)
 	v.Next, _ = s.store.NextPost(p)
 	v.Related, _ = s.store.Related(p, 3)
@@ -773,7 +851,7 @@ func (s *Server) link(w http.ResponseWriter, r *http.Request) {
 	v := s.view(r, "links")
 	v.SEO = v.Site.Link(p)
 	v.Post = p
-	v.ContentHTML, v.TOC = RenderContent(p.Content)
+	v.ContentHTML, v.TOC = s.renderedContent(p)
 	v.Related, _ = s.store.RelatedLinks(p, 6)
 	ph := map[string]string{p.Lang: "/links/" + p.Slug}
 	if trs, _ := s.store.TranslationsPublished(p.TransGroup); trs != nil {
@@ -801,6 +879,7 @@ func (s *Server) about(w http.ResponseWriter, r *http.Request) {
 	v := s.view(r, "about")
 	v.SEO = v.Site.Page(p)
 	v.Page = p
+	v.ContentHTML, _ = s.renderedContent(p)
 	ph := map[string]string{p.Lang: "/" + p.Slug}
 	if trs, _ := s.store.TranslationsPublished(p.TransGroup); trs != nil {
 		for _, t := range trs {
@@ -855,6 +934,14 @@ func xmlEsc(s string) string {
 
 // sitemap 生成多语种站点地图：同一逻辑页面的各语种 URL 互相用 xhtml:link 标注 hreflang。
 func (s *Server) sitemap(w http.ResponseWriter, r *http.Request) {
+	const cacheKey = "sitemap"
+	const contentType = "application/xml; charset=utf-8"
+	if body, ct, ok := s.cachedEndpoint(cacheKey); ok {
+		w.Header().Set("Content-Type", ct)
+		_, _ = w.Write(body)
+		return
+	}
+
 	locales := s.locales()
 	def := s.defaultLang()
 	var b strings.Builder
@@ -956,8 +1043,10 @@ func (s *Server) sitemap(w http.ResponseWriter, r *http.Request) {
 	}
 
 	b.WriteString("</urlset>\n")
-	w.Header().Set("Content-Type", "application/xml; charset=utf-8")
-	_, _ = w.Write([]byte(b.String()))
+	body := []byte(b.String())
+	s.setCachedEndpoint(cacheKey, contentType, body, 2*time.Minute)
+	w.Header().Set("Content-Type", contentType)
+	_, _ = w.Write(body)
 }
 
 type rssItem struct {
@@ -985,6 +1074,14 @@ type rssFeed struct {
 
 func (s *Server) rss(w http.ResponseWriter, r *http.Request) {
 	lang := langFrom(r)
+	cacheKey := "rss:" + lang
+	const contentType = "application/rss+xml; charset=utf-8"
+	if body, ct, ok := s.cachedEndpoint(cacheKey); ok {
+		w.Header().Set("Content-Type", ct)
+		_, _ = w.Write(body)
+		return
+	}
+
 	site := s.site(lang)
 	feed := rssFeed{Version: "2.0", Channel: rssChannel{
 		Title:       site.Name,
@@ -992,11 +1089,8 @@ func (s *Server) rss(w http.ResponseWriter, r *http.Request) {
 		Description: site.Description,
 		Language:    site.LangTag,
 	}}
-	if posts, err := s.store.AllPublished(lang); err == nil {
-		for i, p := range posts {
-			if i >= 20 {
-				break
-			}
+	if posts, err := s.store.RecentPublished(lang, 20); err == nil {
+		for _, p := range posts {
 			cat := ""
 			if p.Category != nil {
 				cat = p.Category.Name
@@ -1011,11 +1105,15 @@ func (s *Server) rss(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
-	w.Header().Set("Content-Type", "application/rss+xml; charset=utf-8")
-	_, _ = w.Write([]byte(xml.Header))
-	enc := xml.NewEncoder(w)
+	var b bytes.Buffer
+	_, _ = b.WriteString(xml.Header)
+	enc := xml.NewEncoder(&b)
 	enc.Indent("", "  ")
 	_ = enc.Encode(feed)
+	body := b.Bytes()
+	s.setCachedEndpoint(cacheKey, contentType, body, 2*time.Minute)
+	w.Header().Set("Content-Type", contentType)
+	_, _ = w.Write(body)
 }
 
 func (s *Server) robots(w http.ResponseWriter, r *http.Request) {

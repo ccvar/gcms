@@ -140,8 +140,9 @@ func funcMap() template.FuncMap {
 		"nl2br": func(s string) template.HTML {
 			return template.HTML(strings.ReplaceAll(template.HTMLEscapeString(s), "\n", "<br>"))
 		},
-		"add": func(a, b int) int { return a + b },
-		"sub": func(a, b int) int { return a - b },
+		"filesize": func(n int64) string { return formatBytes(n) },
+		"add":      func(a, b int) int { return a + b },
+		"sub":      func(a, b int) int { return a - b },
 		"hasLang": func(posts []*store.Post, code string) bool {
 			for _, p := range posts {
 				if p.Lang == code {
@@ -166,6 +167,23 @@ func funcMap() template.FuncMap {
 			return out
 		},
 	}
+}
+
+func formatBytes(n int64) string {
+	if n <= 0 {
+		return ""
+	}
+	units := []string{"B", "KB", "MB", "GB"}
+	value := float64(n)
+	unit := units[0]
+	for i := 1; i < len(units) && value >= 1024; i++ {
+		value /= 1024
+		unit = units[i]
+	}
+	if unit == "B" {
+		return strconv.FormatInt(n, 10) + " " + unit
+	}
+	return strconv.FormatFloat(value, 'f', 1, 64) + " " + unit
 }
 
 // NewRenderer 从 templates 目录解析全部页面模板。

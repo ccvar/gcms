@@ -52,6 +52,78 @@ GOOS=linux GOARCH=amd64 go build -o cms .
 | `ADDR` | `:8080` | 监听地址 |
 | `CMS_DB` | `data/cms.db` | SQLite 文件路径 |
 | `BASE_URL` | `http://localhost:8080` | 站点绝对地址（用于 canonical / OG / sitemap）。**生产环境务必设为 `https://cms.ccvar.com`** |
+| `GCMS_RELEASE_REPO` | `ccvar/gcms-releases` | 后台检查更新使用的公开发布仓库 |
+| `GCMS_UPDATE_URL` | `https://github.com/ccvar/gcms-releases/releases/latest/download/manifest.json` | 自定义更新清单地址，留空则按发布仓库自动拼接 |
+
+### 使用 Caddy 作为入口
+
+生产环境建议让 CMS 只监听本机回环地址，由 Caddy 负责 HTTPS、HTTP/2/3、压缩与静态资源缓存：
+
+```bash
+ADDR=127.0.0.1:8080 BASE_URL=https://cms.ccvar.com ./scripts/cms.sh start
+```
+
+示例 `Caddyfile`：
+
+```caddyfile
+cms.ccvar.com {
+    encode zstd gzip
+
+    header /assets/* Cache-Control "public, max-age=31536000, immutable"
+    header /uploads/* Cache-Control "public, max-age=2592000"
+
+    reverse_proxy 127.0.0.1:8080
+}
+```
+
+`/assets/` 的 URL 自带内容指纹参数，适合长缓存；`/uploads/` 是用户上传文件，建议缓存时间短一些。动态 HTML、RSS 与 sitemap 由应用生成，保持经 Caddy 反代即可。
+
+### 升级目录规划
+
+为了支持后续后台一键升级，生产部署建议把“程序版本”和“用户数据”分开：
+
+```
+/opt/gcms/
+├── current -> releases/v1.0.3
+├── releases/
+│   ├── v1.0.2/
+│   └── v1.0.3/
+├── shared/
+│   ├── data/
+│   │   ├── cms.db
+│   │   └── uploads/
+│   └── cms.conf
+├── backups/
+└── tmp/
+```
+
+`current` 指向当前运行版本；`releases/` 保存历史版本；`shared/` 保存数据库、上传文件和配置，升级时不覆盖；`backups/` 保存升级前数据库备份。服务启动时可让 `CMS_DB` 指向共享数据库，例如：
+
+```bash
+CMS_DB=/opt/gcms/shared/data/cms.db ADDR=127.0.0.1:8080 BASE_URL=https://cms.ccvar.com /opt/gcms/current/bin/cms
+```
+
+后台「设置 → 系统更新」会显示当前版本、最新 GitHub Release、当前平台对应的发布包、SHA256 与校验文件。完整一键升级会在此目录结构基础上实现下载、校验、备份、切换、重启与失败回滚。
+
+### 公开发布仓库
+
+源码仓库保持私有，二进制发布到公开仓库 `ccvar/gcms-releases`。后台更新检测默认读取：
+
+```text
+https://github.com/ccvar/gcms-releases/releases/latest/download/manifest.json
+```
+
+私有源码仓库推送 `v*` tag 后，GitHub Actions 会交叉编译各平台部署包，生成 `checksums.txt` 与 `manifest.json`，再把这些文件发布到公开仓库的 GitHub Release。
+
+需要在私有源码仓库配置 Actions Secret：
+
+| Secret | 用途 |
+|--------|------|
+| `GCMS_RELEASE_TOKEN` | GitHub fine-grained token，仅授予公开仓库 `ccvar/gcms-releases` 的 `Contents: Read and write` 权限，用于创建 Release 与上传二进制产物 |
+
+`manifest.json` 是后台升级链路的稳定协议，包含版本号、Release 地址、各平台包的 `os` / `arch` / 下载 URL / SHA256 / 文件大小。这样用户部署环境不需要访问私有源码仓库，也不需要配置 GitHub token。
+
+公开仓库需要至少有一个 `main` 分支初始提交（例如 README），Release workflow 会把公开仓库里的版本 tag 挂到 `main` 上。
 
 ---
 

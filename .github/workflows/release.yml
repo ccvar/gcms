@@ -8,7 +8,10 @@ on:
       - "v*"
 
 permissions:
-  contents: write # 创建 Release / 上传产物所需
+  contents: read
+
+env:
+  RELEASE_REPO: ccvar/gcms-releases
 
 jobs:
   build:
@@ -33,6 +36,7 @@ jobs:
       - name: 交叉编译并打包（含预编译二进制 + 启停脚本 + 默认配置 + README）
         env:
           VERSION: ${{ github.ref_name }}
+          RELEASE_REPO: ${{ env.RELEASE_REPO }}
         run: |
           set -e
           sh scripts/package.sh ${{ matrix.goos }} ${{ matrix.goarch }}
@@ -54,10 +58,19 @@ jobs:
           retention-days: 3
 
   release:
-    name: 创建 GitHub Release
+    name: 发布到公开 Release 仓库
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - name: 检查公开仓库发布 Token
+        env:
+          GCMS_RELEASE_TOKEN: ${{ secrets.GCMS_RELEASE_TOKEN }}
+        run: |
+          if [ -z "$GCMS_RELEASE_TOKEN" ]; then
+            echo "::error::请在私有源码仓库配置 GCMS_RELEASE_TOKEN，授予 ${RELEASE_REPO} Contents: Read and write 权限。"
+            exit 1
+          fi
+
       - name: 下载全部平台产物
         uses: actions/download-artifact@v4
         with:
@@ -67,12 +80,82 @@ jobs:
       - name: 列出待发布文件
         run: ls -lh dist
 
-      - name: 发布 Release（一次性上传各平台包）
+      - name: 生成 SHA256 校验文件
+        run: |
+          cd dist
+          sha256sum *.tar.gz *.zip > checksums.txt
+          cat checksums.txt
+
+      - name: 生成更新清单
+        env:
+          VERSION: ${{ github.ref_name }}
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          cd dist
+          python3 - <<'PY'
+          import datetime
+          import hashlib
+          import json
+          import os
+          import pathlib
+
+          version = os.environ["VERSION"]
+          repo = os.environ["RELEASE_REPO"]
+          base = f"https://github.com/{repo}/releases/download/{version}"
+          assets = []
+          packages = sorted(list(pathlib.Path(".").glob("*.tar.gz")) + list(pathlib.Path(".").glob("*.zip")))
+
+          for pkg in packages:
+              name = pkg.name
+              stem = name[:-7] if name.endswith(".tar.gz") else pkg.stem
+              parts = stem.rsplit("-", 2)
+              if len(parts) != 3:
+                  continue
+              digest = hashlib.sha256(pkg.read_bytes()).hexdigest()
+              assets.append({
+                  "name": name,
+                  "os": parts[1],
+                  "arch": parts[2],
+                  "url": f"{base}/{name}",
+                  "sha256": digest,
+                  "size": pkg.stat().st_size,
+              })
+
+          manifest = {
+              "schema": 1,
+              "name": "gcms",
+              "version": version,
+              "release_repo": repo,
+              "release_url": f"https://github.com/{repo}/releases/tag/{version}",
+              "manifest_url": f"{base}/manifest.json",
+              "checksum_url": f"{base}/checksums.txt",
+              "published_at": datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+              "notes": f"GCMS {version} 发布包。",
+              "source_commit": os.environ["SOURCE_COMMIT"],
+              "assets": assets,
+          }
+          pathlib.Path("manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+          PY
+          cat > RELEASE_NOTES.md <<EOF
+          GCMS ${{ github.ref_name }} 发布包。
+
+          此公开仓库只存放已编译二进制、校验文件和更新清单；源码仓库保持私有。
+          EOF
+          cat manifest.json
+
+      - name: 发布 Release（上传到公开仓库）
         uses: softprops/action-gh-release@v2
         with:
+          repository: ${{ env.RELEASE_REPO }}
+          token: ${{ secrets.GCMS_RELEASE_TOKEN }}
+          tag_name: ${{ github.ref_name }}
+          target_commitish: main
           name: ${{ github.ref_name }}
-          generate_release_notes: true
+          body_path: dist/RELEASE_NOTES.md
+          make_latest: true
           fail_on_unmatched_files: true
           files: |
             dist/*.tar.gz
             dist/*.zip
+            dist/checksums.txt
+            dist/manifest.json

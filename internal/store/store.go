@@ -33,6 +33,7 @@ type Post struct {
 	Title      string
 	Excerpt    string
 	Content    string // Markdown 源文
+	ContentLen int    // 正文字符数；列表查询不取正文时用于估算阅读时长
 	MetaDesc   string
 	Keywords   string
 	CoverImage string
@@ -53,7 +54,10 @@ type Post struct {
 
 // ReadingTime 估算阅读时长（分钟）。中文按约 350 字/分钟。
 func (p *Post) ReadingTime() int {
-	n := len([]rune(p.Content))
+	n := p.ContentLen
+	if n == 0 && p.Content != "" {
+		n = len([]rune(p.Content))
+	}
 	m := n / 350
 	if m < 1 {
 		m = 1
@@ -89,6 +93,10 @@ type Store struct {
 	pwMu        sync.Mutex
 	pwHash      string
 	pwIsDefault bool
+	// 设置项读多写少，启动后缓存在内存中；后台保存设置时同步更新。
+	settingsMu     sync.RWMutex
+	settings       map[string]string
+	settingsLoaded bool
 }
 
 func Open(path string) (*Store, error) {
@@ -98,8 +106,9 @@ func Open(path string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	// SQLite 单写者：限制连接数可避免写锁竞争。
-	db.SetMaxOpenConns(1)
+	// WAL 下允许多个读连接并发；写入仍由 SQLite 串行化，连接数保持保守。
+	db.SetMaxOpenConns(4)
+	db.SetMaxIdleConns(4)
 	if err := db.Ping(); err != nil {
 		return nil, err
 	}
@@ -176,6 +185,9 @@ func (s *Store) migrate() error {
 	if err := s.createIndexes(); err != nil {
 		return fmt.Errorf("索引创建失败: %w", err)
 	}
+	if err := s.createSearchIndex(); err != nil {
+		return fmt.Errorf("搜索索引创建失败: %w", err)
+	}
 	return s.seedIfEmpty()
 }
 
@@ -184,7 +196,40 @@ func (s *Store) createIndexes() error {
 	stmts := []string{
 		`CREATE INDEX IF NOT EXISTS idx_posts_list ON posts(lang, type, status, published_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_posts_category ON posts(category_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_posts_category_list ON posts(category_id, type, status, published_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_posts_featured ON posts(lang, type, status, featured, published_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_posts_group ON posts(trans_group)`,
+		`CREATE INDEX IF NOT EXISTS idx_posts_due ON posts(status, published_at)`,
+	}
+	for _, q := range stmts {
+		if _, err := s.db.Exec(q); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Store) createSearchIndex() error {
+	stmts := []string{
+		`CREATE VIRTUAL TABLE IF NOT EXISTS post_search USING fts5(
+			title, excerpt, content,
+			lang UNINDEXED, type UNINDEXED, status UNINDEXED, published_at UNINDEXED,
+			tokenize='trigram'
+		)`,
+		`CREATE TRIGGER IF NOT EXISTS posts_search_ai AFTER INSERT ON posts BEGIN
+			INSERT INTO post_search(rowid,title,excerpt,content,lang,type,status,published_at)
+			VALUES(new.id,new.title,new.excerpt,new.content,new.lang,new.type,new.status,new.published_at);
+		END`,
+		`CREATE TRIGGER IF NOT EXISTS posts_search_au AFTER UPDATE ON posts BEGIN
+			DELETE FROM post_search WHERE rowid=old.id;
+			INSERT INTO post_search(rowid,title,excerpt,content,lang,type,status,published_at)
+			VALUES(new.id,new.title,new.excerpt,new.content,new.lang,new.type,new.status,new.published_at);
+		END`,
+		`CREATE TRIGGER IF NOT EXISTS posts_search_ad AFTER DELETE ON posts BEGIN
+			DELETE FROM post_search WHERE rowid=old.id;
+		END`,
+		`INSERT OR REPLACE INTO post_search(rowid,title,excerpt,content,lang,type,status,published_at)
+			SELECT id,title,excerpt,content,lang,type,status,published_at FROM posts`,
 	}
 	for _, q := range stmts {
 		if _, err := s.db.Exec(q); err != nil {
@@ -302,20 +347,34 @@ const postCols = `p.id,p.type,p.slug,p.title,p.excerpt,p.content,p.meta_desc,p.k
 	p.cover_image,p.author,p.status,p.featured,p.editor_mode,p.link_url,p.lang,p.trans_group,p.category_id,p.published_at,p.created_at,p.updated_at,
 	c.id,c.slug,c.name,c.description`
 
-func scanPost(sc interface{ Scan(...any) error }) (*Post, error) {
+const postSummaryCols = `p.id,p.type,p.slug,p.title,p.excerpt,'' AS content,p.meta_desc,p.keywords,
+	p.cover_image,p.author,p.status,p.featured,p.editor_mode,p.link_url,p.lang,p.trans_group,p.category_id,p.published_at,p.created_at,p.updated_at,
+	c.id,c.slug,c.name,c.description,length(p.content)`
+
+func scanPost(sc interface{ Scan(...any) error }, hasContentLen bool) (*Post, error) {
 	var p Post
 	var pub, created, updated sql.NullString
 	var cID sql.NullInt64
 	var cSlug, cName, cDesc sql.NullString
 	var featured int
-	err := sc.Scan(&p.ID, &p.Type, &p.Slug, &p.Title, &p.Excerpt, &p.Content, &p.MetaDesc,
+	var contentLen sql.NullInt64
+	dest := []any{&p.ID, &p.Type, &p.Slug, &p.Title, &p.Excerpt, &p.Content, &p.MetaDesc,
 		&p.Keywords, &p.CoverImage, &p.Author, &p.Status, &featured, &p.EditorMode, &p.LinkURL, &p.Lang, &p.TransGroup,
 		&p.CategoryID, &pub, &created, &updated,
-		&cID, &cSlug, &cName, &cDesc)
+		&cID, &cSlug, &cName, &cDesc}
+	if hasContentLen {
+		dest = append(dest, &contentLen)
+	}
+	err := sc.Scan(dest...)
 	if err != nil {
 		return nil, err
 	}
 	p.Featured = featured != 0
+	if contentLen.Valid {
+		p.ContentLen = int(contentLen.Int64)
+	} else if p.Content != "" {
+		p.ContentLen = len([]rune(p.Content))
+	}
 	p.PublishedAt = parseTime(pub)
 	p.CreatedAt = parseTime(created)
 	p.UpdatedAt = parseTime(updated)
@@ -327,6 +386,15 @@ func scanPost(sc interface{ Scan(...any) error }) (*Post, error) {
 
 func (s *Store) queryPosts(where string, args ...any) ([]*Post, error) {
 	q := `SELECT ` + postCols + ` FROM posts p LEFT JOIN categories c ON c.id = p.category_id ` + where
+	return s.queryPostRows(q, false, args...)
+}
+
+func (s *Store) queryPostSummaries(where string, args ...any) ([]*Post, error) {
+	q := `SELECT ` + postSummaryCols + ` FROM posts p LEFT JOIN categories c ON c.id = p.category_id ` + where
+	return s.queryPostRows(q, true, args...)
+}
+
+func (s *Store) queryPostRows(q string, hasContentLen bool, args ...any) ([]*Post, error) {
 	rows, err := s.db.Query(q, args...)
 	if err != nil {
 		return nil, err
@@ -334,7 +402,7 @@ func (s *Store) queryPosts(where string, args ...any) ([]*Post, error) {
 	defer rows.Close()
 	var out []*Post
 	for rows.Next() {
-		p, err := scanPost(rows)
+		p, err := scanPost(rows, hasContentLen)
 		if err != nil {
 			return nil, err
 		}
@@ -345,7 +413,7 @@ func (s *Store) queryPosts(where string, args ...any) ([]*Post, error) {
 
 // ListPublished 返回某语种已发布文章（按发布时间倒序，分页）。
 func (s *Store) ListPublished(lang string, offset, limit int) ([]*Post, error) {
-	return s.queryPosts(`WHERE p.type='post' AND p.status='published' AND p.lang=?
+	return s.queryPostSummaries(`WHERE p.type='post' AND p.status='published' AND p.lang=?
 		ORDER BY p.published_at DESC LIMIT ? OFFSET ?`, lang, limit, offset)
 }
 
@@ -378,7 +446,7 @@ func (s *Store) GetPage(lang, slug string) (*Post, error) {
 }
 
 func (s *Store) ListByCategory(catID int64, offset, limit int) ([]*Post, error) {
-	return s.queryPosts(`WHERE p.type='post' AND p.status='published' AND p.category_id=?
+	return s.queryPostSummaries(`WHERE p.type='post' AND p.status='published' AND p.category_id=?
 		ORDER BY p.published_at DESC LIMIT ? OFFSET ?`, catID, limit, offset)
 }
 
@@ -508,7 +576,7 @@ func (s *Store) ReorderCategories(ids []int64) error {
 
 // PrevPost / NextPost 用于文章详情页的上一篇/下一篇导航（同语种内）。
 func (s *Store) PrevPost(p *Post) (*Post, error) {
-	posts, err := s.queryPosts(`WHERE p.type='post' AND p.status='published' AND p.lang=? AND p.published_at < ?
+	posts, err := s.queryPostSummaries(`WHERE p.type='post' AND p.status='published' AND p.lang=? AND p.published_at < ?
 		ORDER BY p.published_at DESC LIMIT 1`, p.Lang, fmtTime(p.PublishedAt))
 	if err != nil || len(posts) == 0 {
 		return nil, err
@@ -517,7 +585,7 @@ func (s *Store) PrevPost(p *Post) (*Post, error) {
 }
 
 func (s *Store) NextPost(p *Post) (*Post, error) {
-	posts, err := s.queryPosts(`WHERE p.type='post' AND p.status='published' AND p.lang=? AND p.published_at > ?
+	posts, err := s.queryPostSummaries(`WHERE p.type='post' AND p.status='published' AND p.lang=? AND p.published_at > ?
 		ORDER BY p.published_at ASC LIMIT 1`, p.Lang, fmtTime(p.PublishedAt))
 	if err != nil || len(posts) == 0 {
 		return nil, err
@@ -530,31 +598,60 @@ func (s *Store) Related(p *Post, limit int) ([]*Post, error) {
 	if !p.CategoryID.Valid {
 		return nil, nil
 	}
-	return s.queryPosts(`WHERE p.type='post' AND p.status='published' AND p.lang=? AND p.category_id=? AND p.id<>?
+	return s.queryPostSummaries(`WHERE p.type='post' AND p.status='published' AND p.lang=? AND p.category_id=? AND p.id<>?
 		ORDER BY p.published_at DESC LIMIT ?`, p.Lang, p.CategoryID.Int64, p.ID, limit)
 }
 
-// Search 在某语种的标题、摘要与正文中做 LIKE 匹配。
+// Search 在某语种的标题、摘要与正文中检索；长词优先走 FTS5，短词保留 LIKE 回退。
 func (s *Store) Search(lang, q string, limit int) ([]*Post, error) {
+	if len([]rune(q)) >= 3 {
+		if posts, err := s.searchFTS(lang, q, limit); err == nil {
+			return posts, nil
+		}
+	}
+	return s.searchLike(lang, q, limit)
+}
+
+func (s *Store) searchFTS(lang, q string, limit int) ([]*Post, error) {
+	match := `"` + strings.ReplaceAll(strings.TrimSpace(q), `"`, `""`) + `"`
+	sql := `SELECT ` + postSummaryCols + `
+		FROM posts p
+		JOIN (
+			SELECT rowid, rank FROM post_search
+			WHERE post_search MATCH ? AND lang=? AND type='post' AND status='published'
+			ORDER BY rank LIMIT ?
+		) hit ON hit.rowid = p.id
+		LEFT JOIN categories c ON c.id = p.category_id
+		ORDER BY hit.rank, p.published_at DESC`
+	return s.queryPostRows(sql, true, match, lang, limit)
+}
+
+func (s *Store) searchLike(lang, q string, limit int) ([]*Post, error) {
 	like := "%" + q + "%"
-	return s.queryPosts(`WHERE p.type='post' AND p.status='published' AND p.lang=?
+	return s.queryPostSummaries(`WHERE p.type='post' AND p.status='published' AND p.lang=?
 		AND (p.title LIKE ? OR p.excerpt LIKE ? OR p.content LIKE ?)
 		ORDER BY p.published_at DESC LIMIT ?`, lang, like, like, like, limit)
 }
 
 // AllPublished 某语种全部已发布文章，供 rss 使用。
 func (s *Store) AllPublished(lang string) ([]*Post, error) {
-	return s.queryPosts(`WHERE p.type='post' AND p.status='published' AND p.lang=? ORDER BY p.published_at DESC`, lang)
+	return s.queryPostSummaries(`WHERE p.type='post' AND p.status='published' AND p.lang=? ORDER BY p.published_at DESC`, lang)
+}
+
+// RecentPublished 返回某语种最近的已发布文章，供 rss 使用。
+func (s *Store) RecentPublished(lang string, limit int) ([]*Post, error) {
+	return s.queryPostSummaries(`WHERE p.type='post' AND p.status='published' AND p.lang=?
+		ORDER BY p.published_at DESC LIMIT ?`, lang, limit)
 }
 
 // AllPublishedAllLangs 所有语种的已发布文章，供 sitemap 使用。
 func (s *Store) AllPublishedAllLangs() ([]*Post, error) {
-	return s.queryPosts(`WHERE p.type='post' AND p.status='published' ORDER BY p.lang, p.published_at DESC`)
+	return s.queryPostSummaries(`WHERE p.type='post' AND p.status='published' ORDER BY p.lang, p.published_at DESC`)
 }
 
 // AllPagesAllLangs 所有语种的已发布独立页面（type=page），供 sitemap 使用。
 func (s *Store) AllPagesAllLangs() ([]*Post, error) {
-	return s.queryPosts(`WHERE p.type='page' AND p.status='published' ORDER BY p.lang`)
+	return s.queryPostSummaries(`WHERE p.type='page' AND p.status='published' ORDER BY p.lang`)
 }
 
 // ---------- 查询：链接（type=link）----------
@@ -562,10 +659,10 @@ func (s *Store) AllPagesAllLangs() ([]*Post, error) {
 // ListLinks 返回某语种已发布链接（可按分类过滤，置顶优先、发布时间倒序，分页）。
 func (s *Store) ListLinks(lang string, catID int64, offset, limit int) ([]*Post, error) {
 	if catID > 0 {
-		return s.queryPosts(`WHERE p.type='link' AND p.status='published' AND p.lang=? AND p.category_id=?
+		return s.queryPostSummaries(`WHERE p.type='link' AND p.status='published' AND p.lang=? AND p.category_id=?
 			ORDER BY p.featured DESC, p.published_at DESC LIMIT ? OFFSET ?`, lang, catID, limit, offset)
 	}
-	return s.queryPosts(`WHERE p.type='link' AND p.status='published' AND p.lang=?
+	return s.queryPostSummaries(`WHERE p.type='link' AND p.status='published' AND p.lang=?
 		ORDER BY p.featured DESC, p.published_at DESC LIMIT ? OFFSET ?`, lang, limit, offset)
 }
 
@@ -600,18 +697,18 @@ func (s *Store) RelatedLinks(p *Post, limit int) ([]*Post, error) {
 	if !p.CategoryID.Valid {
 		return nil, nil
 	}
-	return s.queryPosts(`WHERE p.type='link' AND p.status='published' AND p.lang=? AND p.category_id=? AND p.id<>?
+	return s.queryPostSummaries(`WHERE p.type='link' AND p.status='published' AND p.lang=? AND p.category_id=? AND p.id<>?
 		ORDER BY p.published_at DESC LIMIT ?`, p.Lang, p.CategoryID.Int64, p.ID, limit)
 }
 
 // AllLinksAllLangs 所有语种的已发布链接，供 sitemap 使用。
 func (s *Store) AllLinksAllLangs() ([]*Post, error) {
-	return s.queryPosts(`WHERE p.type='link' AND p.status='published' ORDER BY p.lang, p.published_at DESC`)
+	return s.queryPostSummaries(`WHERE p.type='link' AND p.status='published' ORDER BY p.lang, p.published_at DESC`)
 }
 
 // ListAllLinks 后台：某语种全部链接（含草稿）。
 func (s *Store) ListAllLinks(lang string) ([]*Post, error) {
-	return s.queryPosts(`WHERE p.type='link' AND p.lang=? ORDER BY p.updated_at DESC`, lang)
+	return s.queryPostSummaries(`WHERE p.type='link' AND p.lang=? ORDER BY p.updated_at DESC`, lang)
 }
 
 // TranslationsPublished 返回与某 trans_group 关联、已发布的各语种内容（含 post 与 page）。
@@ -620,17 +717,17 @@ func (s *Store) TranslationsPublished(group string) ([]*Post, error) {
 	if group == "" {
 		return nil, nil
 	}
-	return s.queryPosts(`WHERE p.trans_group=? AND p.status='published' ORDER BY p.lang`, group)
+	return s.queryPostSummaries(`WHERE p.trans_group=? AND p.status='published' ORDER BY p.lang`, group)
 }
 
 // ---------- 查询：后台 ----------
 
 func (s *Store) ListAllPosts(lang string) ([]*Post, error) {
-	return s.queryPosts(`WHERE p.type='post' AND p.lang=? ORDER BY p.updated_at DESC`, lang)
+	return s.queryPostSummaries(`WHERE p.type='post' AND p.lang=? ORDER BY p.updated_at DESC`, lang)
 }
 
 func (s *Store) ListPages(lang string) ([]*Post, error) {
-	return s.queryPosts(`WHERE p.type='page' AND p.lang=? ORDER BY p.updated_at DESC`, lang)
+	return s.queryPostSummaries(`WHERE p.type='page' AND p.lang=? ORDER BY p.updated_at DESC`, lang)
 }
 
 func (s *Store) GetPostByID(id int64) (*Post, error) {
@@ -646,7 +743,7 @@ func (s *Store) TranslationsAll(group string, exceptID int64) ([]*Post, error) {
 	if group == "" {
 		return nil, nil
 	}
-	return s.queryPosts(`WHERE p.trans_group=? AND p.id<>? ORDER BY p.lang`, group, exceptID)
+	return s.queryPostSummaries(`WHERE p.trans_group=? AND p.id<>? ORDER BY p.lang`, group, exceptID)
 }
 
 func (s *Store) CreatePost(p *Post) (int64, error) {
@@ -696,14 +793,14 @@ func (s *Store) SetFeatured(id int64, on bool) error {
 // FeaturedPosts 返回某语种置顶的已发布文章（按发布时间倒序），供首页精选列表使用。
 func (s *Store) FeaturedPosts(lang string, limit int) ([]*Post, error) {
 	now := fmtTime(time.Now())
-	return s.queryPosts(`WHERE p.type='post' AND p.status='published' AND p.lang=? AND p.featured=1 AND p.published_at<=?
+	return s.queryPostSummaries(`WHERE p.type='post' AND p.status='published' AND p.lang=? AND p.featured=1 AND p.published_at<=?
 		ORDER BY p.published_at DESC LIMIT ?`, lang, now, limit)
 }
 
 // FeaturedLinks 取该语种下「置顶」的链接，供首页链接模块展示；无置顶则返回空（首页隐藏该模块）。
 func (s *Store) FeaturedLinks(lang string, limit int) ([]*Post, error) {
 	now := fmtTime(time.Now())
-	return s.queryPosts(`WHERE p.type='link' AND p.status='published' AND p.lang=? AND p.featured=1 AND p.published_at<=?
+	return s.queryPostSummaries(`WHERE p.type='link' AND p.status='published' AND p.lang=? AND p.featured=1 AND p.published_at<=?
 		ORDER BY p.published_at DESC LIMIT ?`, lang, now, limit)
 }
 
@@ -730,13 +827,46 @@ func (s *Store) SlugExists(lang, slug string, exceptID int64) (bool, error) {
 
 // ---------- 设置 ----------
 
-func (s *Store) GetSetting(key string) (string, error) {
-	var v string
-	err := s.db.QueryRow(`SELECT value FROM settings WHERE key=?`, key).Scan(&v)
-	if err == sql.ErrNoRows {
-		return "", nil
+func (s *Store) loadSettings() error {
+	rows, err := s.db.Query(`SELECT key,value FROM settings`)
+	if err != nil {
+		return err
 	}
-	return v, err
+	defer rows.Close()
+	next := map[string]string{}
+	for rows.Next() {
+		var key, value string
+		if err := rows.Scan(&key, &value); err != nil {
+			return err
+		}
+		next[key] = value
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	s.settingsMu.Lock()
+	s.settings = next
+	s.settingsLoaded = true
+	s.settingsMu.Unlock()
+	return nil
+}
+
+func (s *Store) GetSetting(key string) (string, error) {
+	s.settingsMu.RLock()
+	if s.settingsLoaded {
+		v := s.settings[key]
+		s.settingsMu.RUnlock()
+		return v, nil
+	}
+	s.settingsMu.RUnlock()
+
+	if err := s.loadSettings(); err != nil {
+		return "", err
+	}
+	s.settingsMu.RLock()
+	v := s.settings[key]
+	s.settingsMu.RUnlock()
+	return v, nil
 }
 
 // Setting 便捷读取（忽略错误，缺失返回空串）。
@@ -748,6 +878,17 @@ func (s *Store) Setting(key string) string {
 func (s *Store) SetSetting(key, value string) error {
 	_, err := s.db.Exec(`INSERT INTO settings(key,value) VALUES(?,?)
 		ON CONFLICT(key) DO UPDATE SET value=excluded.value`, key, value)
+	if err != nil {
+		return err
+	}
+	s.settingsMu.Lock()
+	if s.settingsLoaded {
+		if s.settings == nil {
+			s.settings = map[string]string{}
+		}
+		s.settings[key] = value
+	}
+	s.settingsMu.Unlock()
 	return err
 }
 

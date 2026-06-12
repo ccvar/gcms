@@ -78,7 +78,7 @@ ensure_go() {
     x86_64|amd64) arch=amd64 ;;
     arm64|aarch64) arch=arm64 ;;
     armv6l|armv7l) arch=armv6l ;;
-    *) err "不支持的 CPU 架构：$arch，请手动安装 Go：https://go.dev/dl/"; exit 1 ;;
+    *) err "不支持的 CPU 架构：${arch}，请手动安装 Go：https://go.dev/dl/"; exit 1 ;;
   esac
   case "$os" in linux|darwin) ;; *) err "请手动安装 Go：https://go.dev/dl/"; exit 1 ;; esac
   url="https://go.dev/dl/go${GO_VERSION}.${os}-${arch}.tar.gz"
@@ -129,7 +129,7 @@ check_binary_platform() {
   current_os=${current%/*}
   current_arch=${current#*/}
   if [ "$target_os" != "$current_os" ] || [ "$target_arch" != "$current_arch" ]; then
-    err "发布包平台不匹配：当前包是 $target_os/$target_arch，当前系统是 $current_os/$current_arch"
+    err "发布包平台不匹配：当前包是 ${target_os}/${target_arch}，当前系统是 ${current_os}/${current_arch}"
     err "请重新打包并上传对应平台，例如：./scripts/package.sh $current_os $current_arch"
     exit 1
   fi
@@ -148,7 +148,7 @@ start() {
   if running; then ok "已在运行（PID $(cat "$PIDFILE")） → $(base_url)"; return; fi
   # 仅在「尚无已编译二进制」时编译；已编译则直接运行，不重复编译（改代码请用 build）
   if [ -x "$BIN" ]; then
-    info "使用已编译二进制：$BIN（如已改动代码，请先运行：$0 build）"
+    info "使用已编译二进制：${BIN}（如已改动代码，请先运行：${0} build）"
     check_binary_platform
   else
     info "未发现已编译二进制，开始首次编译 …"
@@ -182,7 +182,7 @@ stop() {
     i=0; while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 10 ]; do sleep 0.3; i=$((i+1)); done
     kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null || true
     rm -f "$PIDFILE"
-    ok "已停止（PID $pid）"
+    ok "已停止（PID ${pid}）"
   else
     rm -f "$PIDFILE" 2>/dev/null || true
     info "服务未在运行"
