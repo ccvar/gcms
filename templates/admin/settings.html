@@ -31,13 +31,13 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7a2 2 0 0 1 2-2h3l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/></svg>
         <span>分类</span>
       </a>
-      <a href="/admin/settings/updates"{{if eq .Section "updates"}} class="active"{{end}}>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 1-15.5 6.2"/><path d="M3 12a9 9 0 0 1 15.5-6.2"/><path d="M3 17v4h4"/><path d="M21 7V3h-4"/></svg>
-        <span>系统更新</span>
-      </a>
       <a href="/admin/settings/security"{{if eq .Section "security"}} class="active"{{end}}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.6-7 9-4-1.4-7-4.5-7-9V6z"/></svg>
         <span>安全</span>
+      </a>
+      <a href="/admin/settings/updates"{{if eq .Section "updates"}} class="active"{{end}}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 16V8"/><path d="M8 12l4-4 4 4"/></svg>
+        <span>系统更新</span>
       </a>
     </nav>
 
@@ -424,72 +424,90 @@
 
       {{else if eq .Section "updates"}}
       {{$u := .Update}}
+      {{$up := .Upgrade}}
+      {{$canUpgrade := and $up.Available (not $u.Error) $u.UpdateAvailable $u.AssetURL (not $up.Running)}}
       <div class="field-group">
-        <h3 class="group-head">当前版本</h3>
-        <table class="admin-table">
-          <tbody>
-            <tr><th>版本</th><td><strong>{{$u.Current.Version}}</strong>{{if eq $u.Current.Version "dev"}} <span class="mini-tag">开发构建</span>{{end}}</td></tr>
-            <tr><th>平台</th><td class="slug">{{$u.Current.Platform}}</td></tr>
-            {{if $u.Current.Commit}}<tr><th>提交</th><td class="slug">{{$u.Current.Commit}}</td></tr>{{end}}
-            {{if $u.Current.BuiltAt}}<tr><th>构建时间</th><td class="slug">{{$u.Current.BuiltAt}}</td></tr>{{end}}
-            <tr><th>发布仓库</th><td class="slug">{{$u.Current.Repo}}</td></tr>
-          </tbody>
-        </table>
-      </div>
-
-      <div class="field-group">
-        <h3 class="group-head">最新发布</h3>
+        <h3 class="group-head">更新状态</h3>
         {{if $u.Error}}
         <div class="form-err">检查更新失败：{{$u.Error}}</div>
-        <p class="muted" style="font-size:.9rem">请确认公开发布仓库已创建 Release，并且 Release 中包含 <code>manifest.json</code>。如需临时切换更新源，可设置 <code>GCMS_UPDATE_URL</code> 或 <code>GCMS_RELEASE_REPO</code>。</p>
-        {{else}}
-        <table class="admin-table">
-          <tbody>
-            <tr><th>最新版本</th><td><strong>{{$u.LatestTag}}</strong>{{if $u.UpdateAvailable}} <span class="badge sched">有新版本</span>{{else}} <span class="badge pub">已是最新</span>{{end}}</td></tr>
-            {{if $u.PublishedAt}}<tr><th>发布时间</th><td class="slug">{{$u.PublishedAt}}</td></tr>{{end}}
-            {{if $u.ManifestURL}}<tr><th>更新清单</th><td><a href="{{$u.ManifestURL}}" target="_blank" rel="noopener">manifest.json</a></td></tr>{{end}}
-            <tr><th>匹配平台包</th><td>{{if $u.AssetURL}}<a href="{{$u.AssetURL}}" target="_blank" rel="noopener">{{$u.AssetName}}</a>{{else}}<span class="muted">该 Release 未找到当前平台的发布包</span>{{end}}</td></tr>
-            {{if gt $u.AssetSize 0}}<tr><th>包大小</th><td class="slug">{{filesize $u.AssetSize}}</td></tr>{{end}}
-            {{if $u.SHA256}}<tr><th>SHA256</th><td class="slug">{{$u.SHA256}}</td></tr>{{end}}
-            {{if $u.ChecksumURL}}<tr><th>校验文件</th><td><a href="{{$u.ChecksumURL}}" target="_blank" rel="noopener">checksums.txt</a></td></tr>{{end}}
-            {{if $u.LatestURL}}<tr><th>Release</th><td><a href="{{$u.LatestURL}}" target="_blank" rel="noopener">打开 GitHub Release</a></td></tr>{{end}}
-          </tbody>
-        </table>
-        {{if $u.LatestBody}}<pre style="white-space:pre-wrap;margin:1rem 0 0;padding:1rem;border:1px solid var(--line);border-radius:8px;background:var(--line-soft);font:inherit;font-size:.9rem;line-height:1.6">{{$u.LatestBody}}</pre>{{end}}
         {{end}}
-      </div>
 
-      <div class="field-group">
-        <h3 class="group-head">一键升级</h3>
-        {{$up := .Upgrade}}
-        <table class="admin-table" id="upgrade-status-box" data-status-url="/admin/settings/updates/status" data-running="{{if $up.Running}}1{{else}}0{{end}}">
-          <tbody>
-            <tr><th>状态</th><td class="slug" data-upgrade-status>{{$up.Status}}</td></tr>
-            {{if $up.Step}}<tr><th>阶段</th><td class="slug" data-upgrade-step>{{$up.Step}}</td></tr>{{end}}
-            {{if $up.Version}}<tr><th>目标版本</th><td class="slug" data-upgrade-version>{{$up.Version}}</td></tr>{{end}}
-            <tr><th>消息</th><td data-upgrade-message>{{$up.Message}}</td></tr>
-            {{if $up.UpdatedAt}}<tr><th>更新时间</th><td class="slug" data-upgrade-updated>{{$up.UpdatedAt}}</td></tr>{{end}}
-            <tr><th>日志</th><td class="slug">{{$up.RunnerLog}}</td></tr>
-          </tbody>
-        </table>
-        <p class="muted" style="font-size:.9rem">后台会调用 <code>./scripts/cms.sh upgrade</code>，升级状态写入 <code>run/upgrade.json</code>。升级期间服务会短暂重启。</p>
-        <form method="post" action="/admin/settings/updates/upgrade" style="margin-top:.8rem">
-          <input type="hidden" name="_csrf" value="{{.CSRF}}">
-          {{if $u.LatestTag}}<input type="hidden" name="version" value="{{$u.LatestTag}}">{{end}}
-          <button class="btn btn-primary" type="submit"{{if not (and $up.Available $u.UpdateAvailable $u.AssetURL (not $up.Running))}} disabled{{end}}>一键升级</button>
-        </form>
+        <div class="update-summary" id="upgrade-status-box" data-status-url="/admin/settings/updates/status" data-running="{{if $up.Running}}1{{else}}0{{end}}">
+          <div class="update-versions">
+            <div class="update-block">
+              <span class="update-label">当前版本</span>
+              <strong>{{$u.Current.Version}}</strong>{{if eq $u.Current.Version "dev"}} <span class="mini-tag">开发构建</span>{{end}}
+              <span class="update-meta">{{$u.Current.Platform}}</span>
+            </div>
+            <span class="update-sep" aria-hidden="true">→</span>
+            <div class="update-block">
+              <span class="update-label">最新版本</span>
+              {{if $u.Error}}
+              <strong class="muted">检查失败</strong>
+              {{else}}
+              <strong>{{if $u.LatestTag}}{{$u.LatestTag}}{{else}}未知{{end}}</strong>
+              {{if $u.UpdateAvailable}} <span class="badge sched">有新版本</span>{{else}} <span class="badge pub">已是最新</span>{{end}}
+              <span class="update-meta">{{if $u.AssetURL}}当前平台包已匹配{{else}}未找到当前平台包{{end}}</span>
+              {{end}}
+            </div>
+          </div>
+
+          <div class="update-task">
+            <div>
+              <span class="update-label">升级任务</span>
+              <strong data-upgrade-status>{{if eq $up.Status "running"}}升级中{{else if eq $up.Status "success"}}成功{{else if eq $up.Status "failed"}}失败{{else}}空闲{{end}}</strong>
+              <p data-upgrade-message>{{$up.Message}}</p>
+            </div>
+            <form method="post" action="/admin/settings/updates/upgrade" class="update-action">
+              <input type="hidden" name="_csrf" value="{{.CSRF}}">
+              {{if $u.LatestTag}}<input type="hidden" name="version" value="{{$u.LatestTag}}">{{end}}
+              <button class="btn btn-primary" type="submit"{{if not $canUpgrade}} disabled{{end}}>{{if $up.Running}}升级中...{{else if not $up.Available}}当前目录不支持后台升级{{else if $u.Error}}检查失败，暂不可升级{{else if not $u.UpdateAvailable}}已是最新{{else if not $u.AssetURL}}未找到当前平台包{{else}}一键升级{{end}}</button>
+            </form>
+          </div>
+        </div>
+
+        <details class="update-details">
+          <summary>高级信息</summary>
+          <table class="admin-table">
+            <tbody>
+              <tr><th>当前提交</th><td class="slug">{{if $u.Current.Commit}}{{$u.Current.Commit}}{{else}}-{{end}}</td></tr>
+              {{if $u.Current.BuiltAt}}<tr><th>构建时间</th><td class="slug">{{$u.Current.BuiltAt}}</td></tr>{{end}}
+              <tr><th>发布仓库</th><td class="slug">{{$u.Current.Repo}}</td></tr>
+              {{if $u.PublishedAt}}<tr><th>发布时间</th><td class="slug">{{$u.PublishedAt}}</td></tr>{{end}}
+              {{if $u.ManifestURL}}<tr><th>更新清单</th><td><a href="{{$u.ManifestURL}}" target="_blank" rel="noopener">manifest.json</a></td></tr>{{end}}
+              {{if $u.AssetURL}}<tr><th>匹配平台包</th><td><a href="{{$u.AssetURL}}" target="_blank" rel="noopener">{{$u.AssetName}}</a></td></tr>{{else if not $u.Error}}<tr><th>匹配平台包</th><td><span class="muted">该 Release 未找到当前平台的发布包</span></td></tr>{{end}}
+              {{if gt $u.AssetSize 0}}<tr><th>包大小</th><td class="slug">{{filesize $u.AssetSize}}</td></tr>{{end}}
+              {{if $u.SHA256}}<tr><th>SHA256</th><td class="slug">{{$u.SHA256}}</td></tr>{{end}}
+              {{if $u.ChecksumURL}}<tr><th>校验文件</th><td><a href="{{$u.ChecksumURL}}" target="_blank" rel="noopener">checksums.txt</a></td></tr>{{end}}
+              {{if $u.LatestURL}}<tr><th>Release</th><td><a href="{{$u.LatestURL}}" target="_blank" rel="noopener">打开 GitHub Release</a></td></tr>{{end}}
+              <tr><th>状态文件</th><td class="slug">run/upgrade.json</td></tr>
+              <tr><th>日志</th><td class="slug">{{$up.RunnerLog}}</td></tr>
+              {{if $up.Step}}<tr><th>阶段</th><td class="slug" data-upgrade-step>{{$up.Step}}</td></tr>{{end}}
+              {{if $up.Version}}<tr><th>目标版本</th><td class="slug" data-upgrade-version>{{$up.Version}}</td></tr>{{end}}
+              {{if $up.UpdatedAt}}<tr><th>更新时间</th><td class="slug" data-upgrade-updated>{{$up.UpdatedAt}}</td></tr>{{end}}
+            </tbody>
+          </table>
+          {{if $u.LatestBody}}<pre class="update-notes">{{$u.LatestBody}}</pre>{{end}}
+        </details>
       </div>
       <script>
       (function(){
         var box = document.getElementById("upgrade-status-box");
         if (!box || box.dataset.running !== "1") return;
+        var root = box.parentElement || box;
         var url = box.dataset.statusUrl;
+        var statusText = function(status) {
+          if (status === "running") return "升级中";
+          if (status === "success") return "成功";
+          if (status === "failed") return "失败";
+          return "空闲";
+        };
         var setText = function(sel, text) {
-          var el = box.querySelector(sel);
+          var el = root.querySelector(sel);
           if (el) el.textContent = text || "";
         };
         var render = function(s) {
-          setText("[data-upgrade-status]", s.status);
+          setText("[data-upgrade-status]", statusText(s.status));
           setText("[data-upgrade-step]", s.step);
           setText("[data-upgrade-version]", s.version);
           setText("[data-upgrade-message]", s.message);
