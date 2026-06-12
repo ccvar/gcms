@@ -112,7 +112,18 @@ cd cms-v1.0.3-linux-amd64
 ./scripts/cms.sh start
 ```
 
-`current` 指向当前运行版本；`releases/` 保存历史版本；`shared/` 保存数据库、上传文件和配置，升级时不覆盖；`backups/` 保存升级前数据库备份。后台「设置 → 系统更新」会显示当前版本、最新 GitHub Release、当前平台对应的发布包、SHA256 与校验文件。完整一键升级会在此目录结构基础上实现下载、校验、备份、切换、重启与失败回滚。
+`current` 指向当前运行版本；`releases/` 保存历史版本；`shared/` 保存数据库、上传文件和配置，升级时不覆盖；`backups/` 保存升级前数据库备份。
+
+Linux / macOS 发布包已提供手动升级命令：
+
+```bash
+./scripts/cms.sh upgrade
+./scripts/cms.sh upgrade-status
+```
+
+`upgrade` 会读取公开发布仓库的 `manifest.json`，下载当前平台包，校验 SHA256，解压到 `releases/<新版本>`，备份 `shared/data/cms.db`，切换 `current`，然后重启并做健康检查。失败时会切回旧版本并恢复数据库备份。后台「设置 → 系统更新」目前先显示版本和下载信息，后续会接入此升级器做真正的一键升级。
+
+升级器依赖 `python3`、`curl` 或 `wget`、`tar`，以及 `sha256sum` / `shasum` / `openssl` 之一。
 
 ### 公开发布仓库
 

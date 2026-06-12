@@ -117,6 +117,8 @@ CCVAR 简记 CMS · 部署包（${NAME}）
     ./scripts/cms.sh logs           查看日志
     ./scripts/cms.sh stop           停止
     ./scripts/cms.sh restart        重启
+    ./scripts/cms.sh upgrade        升级到公开发布仓库的最新版本
+    ./scripts/cms.sh upgrade-status 查看最近一次升级状态
 
    Windows（PowerShell）：
     ./scripts/cms.ps1 start | status | stop | restart
@@ -134,7 +136,19 @@ CCVAR 简记 CMS · 部署包（${NAME}）
     WorkingDirectory 设为本包根目录，并设置 ADDR / BASE_URL / CMS_DB=shared/data/cms.db。
     scripts/cms.sh 更适合手动启停与简单部署。
 
-五、升级目录规划
+五、升级
+  Linux / macOS 可直接执行：
+
+    ./scripts/cms.sh upgrade
+
+  它会读取公开发布仓库的 manifest.json，下载当前平台包，校验 SHA256，
+  解压到 releases/<新版本>，备份 shared/data/cms.db，切换 current，
+  然后重启并做健康检查。失败时会切回旧版本并恢复数据库备份。
+
+  升级状态写入 run/upgrade.json，可用 ./scripts/cms.sh upgrade-status 查看。
+  依赖：python3、curl 或 wget、tar、sha256sum / shasum / openssl 之一。
+
+六、升级目录规划
   本发布包默认已经是后续一键升级所需的标准目录：
 
     $NAME/
