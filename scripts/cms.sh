@@ -25,6 +25,7 @@ PIDFILE="$RUNDIR/cms.pid"
 LOGFILE="$RUNDIR/cms.log"
 GOROOT_LOCAL="$ROOT/.go/go"
 CONF="$SCRIPT_DIR/cms.conf"
+BUILD_INFO="$ROOT/BUILD_INFO"
 
 # ---- 读取配置文件（仅已知键；命令行环境变量优先，已设置则不覆盖）----
 load_conf() {
@@ -102,6 +103,38 @@ base_url() {
   esac
 }
 
+runtime_platform() {
+  os=$(uname -s | tr '[:upper:]' '[:lower:]')
+  arch=$(uname -m)
+  case "$arch" in
+    x86_64|amd64) arch=amd64 ;;
+    arm64|aarch64) arch=arm64 ;;
+    armv6l|armv7l) arch=armv6l ;;
+  esac
+  printf '%s/%s' "$os" "$arch"
+}
+
+build_info_value() {
+  [ -f "$BUILD_INFO" ] || return 0
+  awk -F= -v key="$1" '$1 == key { print $2; exit }' "$BUILD_INFO"
+}
+
+check_binary_platform() {
+  [ -f "$BUILD_INFO" ] || return 0
+  target_os=$(build_info_value GOOS)
+  target_arch=$(build_info_value GOARCH)
+  [ -n "$target_os" ] && [ -n "$target_arch" ] || return 0
+
+  current=$(runtime_platform)
+  current_os=${current%/*}
+  current_arch=${current#*/}
+  if [ "$target_os" != "$current_os" ] || [ "$target_arch" != "$current_arch" ]; then
+    err "发布包平台不匹配：当前包是 $target_os/$target_arch，当前系统是 $current_os/$current_arch"
+    err "请重新打包并上传对应平台，例如：./scripts/package.sh $current_os $current_arch"
+    exit 1
+  fi
+}
+
 build() {
   ensure_go
   info "构建 → $BIN"
@@ -116,6 +149,7 @@ start() {
   # 仅在「尚无已编译二进制」时编译；已编译则直接运行，不重复编译（改代码请用 build）
   if [ -x "$BIN" ]; then
     info "使用已编译二进制：$BIN（如已改动代码，请先运行：$0 build）"
+    check_binary_platform
   else
     info "未发现已编译二进制，开始首次编译 …"
     build

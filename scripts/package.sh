@@ -59,6 +59,14 @@ ok "已编译 → bin/cms$BINEXT （$(du -h "$DIR/bin/cms$BINEXT" | cut -f1)）"
 cp "$SCRIPT_DIR/cms.sh" "$SCRIPT_DIR/cms.ps1" "$SCRIPT_DIR/cms.conf" "$DIR/scripts/"
 chmod +x "$DIR/scripts/cms.sh"
 
+# ---- 写入发布包元信息，启动脚本用来提示平台不匹配 ----
+cat > "$DIR/BUILD_INFO" <<EOF
+VERSION=$VERSION
+GOOS=$GOOS
+GOARCH=$GOARCH
+BUILT_AT=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+EOF
+
 # ---- 部署说明 ----
 cat > "$DIR/README.txt" <<EOF
 CCVAR 简记 CMS · 部署包（$NAME）
@@ -68,6 +76,7 @@ CCVAR 简记 CMS · 部署包（$NAME）
   scripts/cms.sh     启停脚本（Linux / macOS）
   scripts/cms.ps1    启停脚本（Windows PowerShell）
   scripts/cms.conf   配置文件（监听端口 / 站点域名 / 数据库路径）
+  BUILD_INFO         发布包平台信息
   data/              运行后自动生成（SQLite 数据库与上传文件）
 
 一、配置（可选但推荐）
