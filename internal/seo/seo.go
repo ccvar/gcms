@@ -33,6 +33,8 @@ type Site struct {
 	HomeLatest   string   // 首页「最新」栏目标题
 	HomeLabel    string   // 面包屑「首页」文案（随语种）
 	LinksLabel   string   // 「链接」栏目名（随语种）
+	InjectHead   string   // 自定义注入：<head> 末尾（统计/校验等）
+	InjectBody   string   // 自定义注入：</body> 前（统计/广告等）
 	OGAltLocale  []string // 其它启用语种的 OG locale（og:locale:alternate）
 }
 
@@ -137,7 +139,7 @@ func (s Site) Home() Meta {
 	}
 	org := map[string]any{
 		"@type": "Organization", "@id": s.Root("/") + "#org",
-		"name": s.Author, "url": s.Root("/"), "logo": s.Root("/assets/logo.png"),
+		"name": s.Author, "url": s.Root("/"), "logo": s.Root("/assets/logo.svg"),
 	}
 	graph := map[string]any{"@context": "https://schema.org", "@graph": []any{web, org}}
 	return Meta{
@@ -184,7 +186,7 @@ func (s Site) Article(p *store.Post) Meta {
 		"author":           map[string]any{"@type": "Person", "name": p.Author},
 		"publisher": map[string]any{
 			"@type": "Organization", "name": s.Author,
-			"logo": map[string]any{"@type": "ImageObject", "url": s.Root("/assets/logo.png")},
+			"logo": map[string]any{"@type": "ImageObject", "url": s.Root("/assets/logo.svg")},
 		},
 		"inLanguage": s.langTag(),
 	}

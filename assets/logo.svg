@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 150 64" role="img" aria-label="CCVAR 简记">
+  <rect width="64" height="64" rx="15" fill="#9a3b2f"/>
+  <path d="M44 24a14 14 0 1 0 0 16" fill="none" stroke="#ffffff" stroke-width="7" stroke-linecap="round"/>
+  <circle cx="45.5" cy="42" r="4.6" fill="#ffffff"/>
+  <text x="80" y="43" font-family="Georgia, 'Songti SC', 'Noto Serif SC', serif" font-size="32" font-weight="700" letter-spacing="2" fill="#1b1a17">简记</text>
+</svg>

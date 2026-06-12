@@ -213,6 +213,9 @@ type SettingsForm struct {
 	HomeFeaturedDef string
 	HomeLinksDef    string
 	HomeLatestDef   string
+	// 代码注入（统计/广告等；头部进 <head> 末尾，尾部进 </body> 前）
+	InjectHead string
+	InjectBody string
 }
 
 func New(st *store.Store, baseURL, uploadDir string, tplFS, assetsFS fs.FS) (*Server, error) {
@@ -403,6 +406,10 @@ func (s *Server) site(lang string) seo.Site {
 	if brand == "" {
 		brand = "logo"
 	}
+	logo := s.store.Setting("site.logo")
+	if logo == "" {
+		logo = "/assets/logo.svg" // 默认使用内置 logo
+	}
 	return seo.Site{
 		Name:         get("site.name", "CCVAR 简记"),
 		Tagline:      get("site.tagline", "记录技术、工具与思考"),
@@ -414,7 +421,7 @@ func (s *Server) site(lang string) seo.Site {
 		Author:       "CCVAR",
 		Theme:        theme,
 		Favicon:      s.store.Setting("site.favicon"),
-		Logo:         s.store.Setting("site.logo"),
+		Logo:         logo,
 		Brand:        brand,
 		HeroEyebrow:  get("site.hero_eyebrow", "Go · SQLite · SEO"),
 		HeroTitle:    get("site.hero_title", "把复杂留给后端，\n把简单留给读者。"),
@@ -427,6 +434,8 @@ func (s *Server) site(lang string) seo.Site {
 		HomeLatest:   get("home.latest_title", tr.T("home.latest")),
 		HomeLabel:    tr.T("nav.home"),
 		LinksLabel:   tr.T("nav.links"),
+		InjectHead:   s.store.Setting("inject.head"),
+		InjectBody:   s.store.Setting("inject.body"),
 		OGAltLocale:  ogAlt,
 	}
 }
@@ -484,6 +493,10 @@ func (s *Server) routes(assetsFS fs.FS) {
 
 	// 静态资源（embed）
 	mux.Handle("GET /assets/", http.FileServer(http.FS(assetsFS)))
+	// 浏览器会自动请求站点根的 /favicon.ico
+	mux.HandleFunc("GET /favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFileFS(w, r, assetsFS, "assets/favicon.ico")
+	})
 
 	// 用户上传（运行时文件，存于磁盘）
 	if s.uploadDir != "" {

@@ -668,6 +668,7 @@ func (s *Server) showSettings(w http.ResponseWriter, r *http.Request, section, f
 		Custom: custom, Accent: accent, Radius: radius,
 		HeroEyebrow: st.HeroEyebrow, HeroTitle: st.HeroTitle, FooterNote: st.FooterNote,
 		HeroVisual: st.HeroVisual, HeroImage: st.HeroImage, HeroSVG: st.HeroSVG,
+		InjectHead: st.InjectHead, InjectBody: st.InjectBody,
 	}
 	v.Themes = Themes
 	v.Cards = cards
@@ -735,6 +736,8 @@ func (s *Server) adminSaveSite(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.store.SetSetting("site.brand", brand)
 	_ = s.store.SetSetting("social_links", buildSocialJSON(r.Form["social_url"], r.Form["social_label"]))
+	_ = s.store.SetSetting("inject.head", strings.TrimSpace(r.FormValue("inject_head")))
+	_ = s.store.SetSetting("inject.body", strings.TrimSpace(r.FormValue("inject_body")))
 	s.showSettings(w, r, "site", "站点信息已保存。", "")
 }
 

@@ -115,6 +115,19 @@
           <button type="button" class="btn btn-soft" data-social-add>＋ 添加链接</button>
         </div>
 
+        <div class="field-group">
+          <h3 class="group-head">代码注入</h3>
+          <p class="muted" style="margin:-.2rem 0 .9rem;font-size:.85rem">用于接入第三方<strong>统计</strong>（如 Google Analytics、百度统计）、<strong>站点验证</strong>或<strong>广告</strong>等代码，原样输出到每个前台页面。请只粘贴可信来源的代码。</p>
+          <div class="field">
+            <label for="inject_head">头部代码（注入 <code>&lt;head&gt;</code> 末尾）</label>
+            <textarea id="inject_head" name="inject_head" rows="4" spellcheck="false" placeholder="&lt;!-- 例：统计/验证 meta、<script> --&gt;" style="font-family:var(--mono);font-size:.85rem">{{.Settings.InjectHead}}</textarea>
+          </div>
+          <div class="field">
+            <label for="inject_body">尾部代码（注入 <code>&lt;/body&gt;</code> 前）</label>
+            <textarea id="inject_body" name="inject_body" rows="4" spellcheck="false" placeholder="&lt;!-- 例：广告位、客服/统计 <script> --&gt;" style="font-family:var(--mono);font-size:.85rem">{{.Settings.InjectBody}}</textarea>
+          </div>
+        </div>
+
         <button class="btn btn-primary" type="submit">保存站点信息</button>
       </form>
 

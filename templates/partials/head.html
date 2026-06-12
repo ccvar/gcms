@@ -1,7 +1,8 @@
 {{define "head"}}  <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#9a3b2f">
-  <link rel="icon" href="{{if .Site.Favicon}}{{.Site.Favicon}}{{else}}/assets/favicon.svg{{end}}">
+  <link rel="icon" href="{{if .Site.Favicon}}{{.Site.Favicon}}{{else}}/assets/favicon.svg{{end}}"{{if not .Site.Favicon}} type="image/svg+xml"{{end}}>
+  {{if not .Site.Favicon}}<link rel="alternate icon" href="/favicon.ico" sizes="16x16 32x32 48x48">{{end}}
 
   <title>{{.SEO.Title}}</title>
   <meta name="description" content="{{.SEO.Description}}">
@@ -35,4 +36,5 @@
   {{range .SEO.JSONLD}}<script type="application/ld+json">{{.}}</script>
   {{end}}
   <link rel="stylesheet" href="/assets/css/style.css?v={{.AssetVer}}">
+  {{if .Site.InjectHead}}{{safeHTML .Site.InjectHead}}{{end}}
 {{end}}
