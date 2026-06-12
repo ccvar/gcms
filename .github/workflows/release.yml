@@ -1,7 +1,7 @@
 name: Release
 
-# 推送形如 v1.2.3 的 tag 时：先做构建检查，再为各平台交叉编译并打包，
-# 最后自动创建 GitHub Release 并上传所有平台的部署包。
+# 推送形如 v1.2.3 的 tag 时：各平台交叉编译并打成「开箱即用」的部署包，
+# 再由单独的发布作业统一创建 GitHub Release 并上传全部产物（避免并发创建 Release 冲突）。
 on:
   push:
     tags:
@@ -11,21 +11,8 @@ permissions:
   contents: write # 创建 Release / 上传产物所需
 
 jobs:
-  check:
-    name: 构建检查（vet）
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: "1.23"
-          cache: true
-      - run: go vet ./...
-      - run: go build ./...
-
-  release:
-    name: 编译并打包 ${{ matrix.goos }}/${{ matrix.goarch }}
-    needs: check
+  build:
+    name: 编译打包 ${{ matrix.goos }}/${{ matrix.goarch }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -43,20 +30,49 @@ jobs:
           go-version: "1.23"
           cache: true
 
-      - name: 打包（复用 scripts/package.sh，纯 Go 交叉编译）
+      - name: 交叉编译并打包（含预编译二进制 + 启停脚本 + 默认配置 + README）
+        env:
+          VERSION: ${{ github.ref_name }}
         run: |
-          VERSION="${GITHUB_REF_NAME}" ./scripts/package.sh ${{ matrix.goos }} ${{ matrix.goarch }}
+          set -e
+          sh scripts/package.sh ${{ matrix.goos }} ${{ matrix.goarch }}
           # Windows 额外提供 .zip（更通用），并移除其 tar.gz
           if [ "${{ matrix.goos }}" = "windows" ]; then
-            name="cms-${GITHUB_REF_NAME}-${{ matrix.goos }}-${{ matrix.goarch }}"
+            name="cms-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}"
             (cd dist && zip -qr "$name.zip" "$name" && rm -f "$name.tar.gz")
           fi
+          echo "--- 产物 ---"; ls -lh dist/*.tar.gz dist/*.zip 2>/dev/null || true
 
-      - name: 创建/更新 Release 并上传产物
+      - name: 上传构建产物（供发布作业汇总）
+        uses: actions/upload-artifact@v4
+        with:
+          name: pkg-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+          if-no-files-found: error
+          retention-days: 3
+
+  release:
+    name: 创建 GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: 下载全部平台产物
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: 列出待发布文件
+        run: ls -lh dist
+
+      - name: 发布 Release（一次性上传各平台包）
         uses: softprops/action-gh-release@v2
         with:
+          name: ${{ github.ref_name }}
           generate_release_notes: true
-          fail_on_unmatched_files: false
+          fail_on_unmatched_files: true
           files: |
             dist/*.tar.gz
             dist/*.zip
