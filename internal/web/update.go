@@ -69,8 +69,8 @@ type manifestAsset struct {
 }
 
 func checkLatestRelease(ctx context.Context) *UpdateInfo {
-	cur := version.Current()
-	info := &UpdateInfo{Current: cur, CheckedAt: time.Now()}
+	info := currentUpdateInfo()
+	cur := info.Current
 	manifestURL := updateManifestURL(cur)
 	if err := fillUpdateFromManifest(ctx, info, manifestURL); err == nil {
 		return info
@@ -83,6 +83,10 @@ func checkLatestRelease(ctx context.Context) *UpdateInfo {
 	}
 	info.Error = ""
 	return info
+}
+
+func currentUpdateInfo() *UpdateInfo {
+	return &UpdateInfo{Current: version.Current(), CheckedAt: time.Now()}
 }
 
 func updateManifestURL(cur version.Info) string {

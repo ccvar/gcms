@@ -247,7 +247,7 @@ func New(st *store.Store, baseURL, uploadDir string, tplFS, assetsFS fs.FS) (*Se
 	}
 	s := &Server{
 		store: st, rnd: rnd, baseURL: baseURL, uploadDir: uploadDir,
-		sess: newSessions(), login: newLoginLimiter(), i18n: i18n.New(), assetVer: assetVersion(assetsFS),
+		sess: newSessions(st), login: newLoginLimiter(), i18n: i18n.New(), assetVer: assetVersion(assetsFS),
 		content: map[string]contentCacheEntry{}, endpoints: map[string]endpointCacheEntry{},
 	}
 	s.i18n.LoadCustom(st.Setting("custom_locales")) // 合并后台新增的自定义语种预设
@@ -593,6 +593,7 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("GET /admin/settings", s.requireAuth(s.adminSettings))
 	mux.HandleFunc("GET /admin/settings/{section}", s.requireAuth(s.adminSettingsSection))
 	mux.HandleFunc("GET /admin/settings/updates/status", s.requireAuth(s.adminUpgradeStatus))
+	mux.HandleFunc("GET /admin/settings/updates/check", s.requireAuth(s.adminUpdateCheck))
 	mux.HandleFunc("POST /admin/settings/site", s.requireAuth(s.adminSaveSite))
 	mux.HandleFunc("POST /admin/settings/appearance", s.requireAuth(s.adminSaveAppearance))
 	mux.HandleFunc("POST /admin/settings/updates/upgrade", s.requireAuth(s.adminStartUpgrade))

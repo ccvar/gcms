@@ -36,11 +36,10 @@ type session struct {
 }
 
 type sessions struct {
-	mu sync.Mutex
-	m  map[string]session
+	store *store.Store
 }
 
-func newSessions() *sessions { return &sessions{m: map[string]session{}} }
+func newSessions(st *store.Store) *sessions { return &sessions{store: st} }
 
 func randToken() string {
 	b := make([]byte, 32)
@@ -48,41 +47,31 @@ func randToken() string {
 	return hex.EncodeToString(b)
 }
 
-func (s *sessions) create(user string) string {
+func (s *sessions) create(user string) (string, error) {
 	tok := randToken()
-	s.mu.Lock()
-	s.m[tok] = session{user: user, csrf: randToken(), exp: time.Now().Add(24 * time.Hour)}
-	s.mu.Unlock()
-	return tok
+	csrf := randToken()
+	exp := time.Now().Add(24 * time.Hour)
+	if err := s.store.CreateAdminSession(tok, user, csrf, exp); err != nil {
+		return "", err
+	}
+	return tok, nil
 }
 
 func (s *sessions) get(tok string) (session, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	sess, ok := s.m[tok]
-	if !ok || time.Now().After(sess.exp) {
-		if ok {
-			delete(s.m, tok)
-		}
+	dbSess, ok, err := s.store.GetAdminSession(tok)
+	if err != nil || !ok {
 		return session{}, false
 	}
-	return sess, true
+	return session{user: dbSess.User, csrf: dbSess.CSRF, exp: dbSess.ExpiresAt, pwDismissed: dbSess.PwDismissed}, true
 }
 
 func (s *sessions) destroy(tok string) {
-	s.mu.Lock()
-	delete(s.m, tok)
-	s.mu.Unlock()
+	_ = s.store.DeleteAdminSession(tok)
 }
 
 // dismissPw 标记该会话已关闭默认密码提示。
 func (s *sessions) dismissPw(tok string) {
-	s.mu.Lock()
-	if sess, ok := s.m[tok]; ok {
-		sess.pwDismissed = true
-		s.m[tok] = sess
-	}
-	s.mu.Unlock()
+	_ = s.store.DismissAdminPasswordWarning(tok)
 }
 
 // ---------- 登录失败限流（防穷举） ----------
@@ -163,6 +152,22 @@ func (s *Server) currentSession(r *http.Request) (session, bool) {
 	return s.sess.get(c.Value)
 }
 
+func wantsJSON(r *http.Request) bool {
+	if strings.Contains(r.Header.Get("Accept"), "application/json") {
+		return true
+	}
+	if strings.EqualFold(r.Header.Get("X-Requested-With"), "XMLHttpRequest") {
+		return true
+	}
+	return false
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}
+
 func (s *Server) setSessionCookie(w http.ResponseWriter, token string) {
 	// 生产（BASE_URL 为 https）时加 Secure，仅经 HTTPS 传输 Cookie；本地 http 开发不加以免无法登录。
 	secure := strings.HasPrefix(s.baseURL, "https://")
@@ -176,6 +181,10 @@ func (s *Server) clearSessionCookie(w http.ResponseWriter) {
 func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if _, ok := s.currentSession(r); !ok {
+			if wantsJSON(r) {
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "login_required", "message": "登录已过期，请重新登录。"})
+				return
+			}
 			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
 			return
 		}
@@ -187,11 +196,19 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 func (s *Server) checkCSRF(w http.ResponseWriter, r *http.Request) (session, bool) {
 	sess, ok := s.currentSession(r)
 	if !ok {
+		if wantsJSON(r) {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "login_required", "message": "登录已过期，请重新登录。"})
+			return session{}, false
+		}
 		http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
 		return session{}, false
 	}
 	_ = r.ParseForm()
 	if r.FormValue("_csrf") != sess.csrf {
+		if wantsJSON(r) {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "bad_csrf", "message": "无效的 CSRF 令牌。"})
+			return session{}, false
+		}
 		http.Error(w, "无效的 CSRF 令牌", http.StatusForbidden)
 		return session{}, false
 	}
@@ -266,7 +283,12 @@ func (s *Server) adminLoginPost(w http.ResponseWriter, r *http.Request) {
 	hash, _ := s.store.GetSetting("admin_password_hash")
 	if user == storedUser && hash != "" && bcrypt.CompareHashAndPassword([]byte(hash), []byte(pass)) == nil {
 		s.login.reset(ip)
-		s.setSessionCookie(w, s.sess.create(user))
+		tok, err := s.sess.create(user)
+		if err != nil {
+			s.serverError(w, err)
+			return
+		}
+		s.setSessionCookie(w, tok)
 		http.Redirect(w, r, "/admin", http.StatusSeeOther)
 		return
 	}
@@ -765,33 +787,56 @@ func launchUpgrade(version string) error {
 }
 
 func (s *Server) adminUpgradeStatus(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	_ = json.NewEncoder(w).Encode(readUpgradeStatus())
+	writeJSON(w, http.StatusOK, readUpgradeStatus())
+}
+
+func (s *Server) adminUpdateCheck(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 6*time.Second)
+	defer cancel()
+	writeJSON(w, http.StatusOK, checkLatestRelease(ctx))
 }
 
 func (s *Server) adminStartUpgrade(w http.ResponseWriter, r *http.Request) {
+	jsonReq := wantsJSON(r)
 	if _, ok := s.checkCSRF(w, r); !ok {
 		return
 	}
 	version := strings.TrimSpace(r.FormValue("version"))
 	st := readUpgradeStatus()
 	if !st.Available {
+		if jsonReq {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": st.Message, "status": st})
+			return
+		}
 		s.showSettings(w, r, "updates", "", st.Message)
 		return
 	}
 	if st.Running {
+		if jsonReq {
+			writeJSON(w, http.StatusConflict, map[string]any{"ok": false, "message": "已有升级任务正在运行。", "status": st})
+			return
+		}
 		s.showSettings(w, r, "updates", "", "已有升级任务正在运行。")
 		return
 	}
 	writeQueuedUpgradeStatus(version)
 	if err := launchUpgrade(version); err != nil {
-		writeUpgradeStatus(UpgradeStatus{
+		failed := UpgradeStatus{
 			Status:  "failed",
 			Step:    "launch",
 			Version: version,
 			Message: "启动升级器失败：" + err.Error(),
-		})
+		}
+		writeUpgradeStatus(failed)
+		if jsonReq {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "message": failed.Message, "status": readUpgradeStatus()})
+			return
+		}
 		s.showSettings(w, r, "updates", "", "启动升级器失败："+err.Error())
+		return
+	}
+	if jsonReq {
+		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "message": "升级任务已启动。", "status": readUpgradeStatus()})
 		return
 	}
 	s.showSettings(w, r, "updates", "升级任务已启动，页面会显示最新状态。", "")
@@ -864,9 +909,7 @@ func (s *Server) showSettings(w http.ResponseWriter, r *http.Request, section, f
 	case "menu":
 		v.MenuEdit = s.menuEditRows()
 	case "updates":
-		ctx, cancel := context.WithTimeout(r.Context(), 6*time.Second)
-		defer cancel()
-		v.Update = checkLatestRelease(ctx)
+		v.Update = currentUpdateInfo()
 		v.Upgrade = readUpgradeStatus()
 	}
 

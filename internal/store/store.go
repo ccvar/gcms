@@ -3,7 +3,9 @@
 package store
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"sync"
@@ -163,6 +165,16 @@ CREATE TABLE IF NOT EXISTS posts (
 CREATE TABLE IF NOT EXISTS settings (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS admin_sessions (
+  token_hash   TEXT PRIMARY KEY,
+  user         TEXT NOT NULL,
+  csrf         TEXT NOT NULL,
+  expires_at   TEXT NOT NULL,
+  pw_dismissed INTEGER NOT NULL DEFAULT 0,
+  created_at   TEXT NOT NULL,
+  updated_at   TEXT NOT NULL
 );
 `
 
@@ -339,6 +351,61 @@ func parseTime(s sql.NullString) time.Time {
 		}
 	}
 	return time.Time{}
+}
+
+// ---------- 后台会话 ----------
+
+type AdminSession struct {
+	User        string
+	CSRF        string
+	ExpiresAt   time.Time
+	PwDismissed bool
+}
+
+func sessionTokenHash(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
+func (s *Store) CreateAdminSession(token, user, csrf string, expiresAt time.Time) error {
+	now := time.Now()
+	_, _ = s.db.Exec(`DELETE FROM admin_sessions WHERE expires_at<=?`, fmtTime(now))
+	_, err := s.db.Exec(`INSERT INTO admin_sessions(token_hash,user,csrf,expires_at,pw_dismissed,created_at,updated_at)
+		VALUES(?,?,?,?,0,?,?)`,
+		sessionTokenHash(token), user, csrf, fmtTime(expiresAt), fmtTime(now), fmtTime(now))
+	return err
+}
+
+func (s *Store) GetAdminSession(token string) (AdminSession, bool, error) {
+	var sess AdminSession
+	var expires string
+	var dismissed int
+	err := s.db.QueryRow(`SELECT user,csrf,expires_at,pw_dismissed FROM admin_sessions WHERE token_hash=?`, sessionTokenHash(token)).
+		Scan(&sess.User, &sess.CSRF, &expires, &dismissed)
+	if err == sql.ErrNoRows {
+		return AdminSession{}, false, nil
+	}
+	if err != nil {
+		return AdminSession{}, false, err
+	}
+	t, err := time.Parse(time.RFC3339, expires)
+	if err != nil || time.Now().After(t) {
+		_ = s.DeleteAdminSession(token)
+		return AdminSession{}, false, nil
+	}
+	sess.ExpiresAt = t
+	sess.PwDismissed = dismissed == 1
+	return sess, true, nil
+}
+
+func (s *Store) DeleteAdminSession(token string) error {
+	_, err := s.db.Exec(`DELETE FROM admin_sessions WHERE token_hash=?`, sessionTokenHash(token))
+	return err
+}
+
+func (s *Store) DismissAdminPasswordWarning(token string) error {
+	_, err := s.db.Exec(`UPDATE admin_sessions SET pw_dismissed=1,updated_at=? WHERE token_hash=?`, fmtTime(time.Now()), sessionTokenHash(token))
+	return err
 }
 
 // ---------- 查询：公开站点 ----------
