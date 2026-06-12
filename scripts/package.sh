@@ -9,12 +9,13 @@
 #     ./package.sh darwin arm64   → 为 Apple Silicon Mac 打包
 #
 #   产物：  dist/cms-<版本>-<os>-<arch>.tar.gz
-#   解压后开箱即用（已内置二进制 + 启停脚本 + 默认配置，部署机无需安装 Go）：
-#     bin/cms             预编译程序（模板/静态资源已 embed，单文件）
-#     scripts/cms.sh      启停脚本（Linux/macOS）
-#     scripts/cms.ps1     启停脚本（Windows）
-#     scripts/cms.conf    默认配置（端口 / 域名 / 数据库路径）
-#     README.txt          部署说明
+#   解压后即是可升级标准目录：
+#     current -> releases/<版本>  当前运行版本
+#     releases/<版本>/bin/cms     预编译程序
+#     shared/cms.conf             默认配置
+#     shared/data/                SQLite 与上传文件
+#     scripts/cms.sh              启停脚本（Linux/macOS）
+#     scripts/cms.ps1             启停脚本（Windows）
 #
 #   可用环境变量：VERSION=v1.0.0 ./scripts/package.sh linux amd64
 # =============================================================================
@@ -46,24 +47,28 @@ RELEASE_REPO=${RELEASE_REPO:-ccvar/gcms-releases}
 NAME="cms-${VERSION}-${GOOS}-${GOARCH}"
 OUT="$ROOT/dist"
 DIR="$OUT/$NAME"
+RELEASE_DIR="$DIR/releases/$VERSION"
 BINEXT=""; [ "$GOOS" = "windows" ] && BINEXT=".exe"
 
 info "打包 $NAME"
 rm -rf "$DIR"
-mkdir -p "$DIR/bin" "$DIR/scripts"
+mkdir -p "$RELEASE_DIR/bin" "$RELEASE_DIR/scripts" "$DIR/scripts" "$DIR/shared/data" "$DIR/run" "$DIR/logs" "$DIR/tmp" "$DIR/backups"
 
 # ---- 编译（纯 Go，CGO 关闭，便于交叉编译；裁剪符号表减小体积）----
 info "编译 $GOOS/$GOARCH …"
 ( cd "$ROOT" && CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
-    go build -trimpath -ldflags "-s -w -X cms.ccvar.com/internal/version.Version=${VERSION} -X cms.ccvar.com/internal/version.Commit=${COMMIT} -X cms.ccvar.com/internal/version.BuiltAt=${BUILT_AT} -X cms.ccvar.com/internal/version.Repo=${RELEASE_REPO}" -o "$DIR/bin/cms$BINEXT" . )
-ok "已编译 → bin/cms$BINEXT （$(du -h "$DIR/bin/cms$BINEXT" | cut -f1)）"
+    go build -trimpath -ldflags "-s -w -X cms.ccvar.com/internal/version.Version=${VERSION} -X cms.ccvar.com/internal/version.Commit=${COMMIT} -X cms.ccvar.com/internal/version.BuiltAt=${BUILT_AT} -X cms.ccvar.com/internal/version.Repo=${RELEASE_REPO}" -o "$RELEASE_DIR/bin/cms$BINEXT" . )
+ok "已编译 → releases/$VERSION/bin/cms$BINEXT （$(du -h "$RELEASE_DIR/bin/cms$BINEXT" | cut -f1)）"
 
 # ---- 拷贝启停脚本与默认配置 ----
-cp "$SCRIPT_DIR/cms.sh" "$SCRIPT_DIR/cms.ps1" "$SCRIPT_DIR/cms.conf" "$DIR/scripts/"
+cp "$SCRIPT_DIR/cms.sh" "$SCRIPT_DIR/cms.ps1" "$DIR/scripts/"
+cp "$SCRIPT_DIR/cms.sh" "$SCRIPT_DIR/cms.ps1" "$RELEASE_DIR/scripts/"
 chmod +x "$DIR/scripts/cms.sh"
+chmod +x "$RELEASE_DIR/scripts/cms.sh"
+sed 's#^CMS_DB=.*#CMS_DB=shared/data/cms.db#' "$SCRIPT_DIR/cms.conf" > "$DIR/shared/cms.conf"
 
 # ---- 写入发布包元信息，启动脚本用来提示平台不匹配 ----
-cat > "$DIR/BUILD_INFO" <<EOF
+cat > "$RELEASE_DIR/BUILD_INFO" <<EOF
 VERSION=$VERSION
 COMMIT=$COMMIT
 GOOS=$GOOS
@@ -71,27 +76,40 @@ GOARCH=$GOARCH
 BUILT_AT=$BUILT_AT
 RELEASE_REPO=$RELEASE_REPO
 EOF
+cp "$RELEASE_DIR/BUILD_INFO" "$DIR/BUILD_INFO"
+
+if [ "$GOOS" = "windows" ]; then
+  mkdir -p "$DIR/current"
+  cp -R "$RELEASE_DIR/." "$DIR/current/"
+else
+  ( cd "$DIR" && ln -s "releases/$VERSION" current )
+fi
 
 # ---- 部署说明 ----
 cat > "$DIR/README.txt" <<EOF
 CCVAR 简记 CMS · 部署包（${NAME}）
 
 目录结构：
-  bin/cms$BINEXT       预编译程序（模板与静态资源已内嵌，单文件运行，部署机无需 Go）
-  scripts/cms.sh     启停脚本（Linux / macOS）
-  scripts/cms.ps1    启停脚本（Windows PowerShell）
-  scripts/cms.conf   配置文件（监听端口 / 站点域名 / 数据库路径）
-  BUILD_INFO         发布包平台与版本信息
-  data/              运行后自动生成（SQLite 数据库与上传文件）
+  current            当前运行版本（Linux/macOS 为软链，Windows 为目录）
+  releases/$VERSION  当前版本程序目录
+  shared/cms.conf    配置文件（监听端口 / 站点域名 / 数据库路径）
+  shared/data/       SQLite 数据库与上传文件
+  scripts/           启停脚本
+  run/               PID 文件
+  logs/              运行日志
+  tmp/               升级临时目录
+  backups/           升级前备份目录
+  BUILD_INFO         发布包平台与版本信息快照
 
 更新源：
   公开发布仓库：https://github.com/${RELEASE_REPO}
   后台「设置 → 系统更新」会从该公开仓库读取 manifest.json 检查新版本。
 
 一、配置（可选但推荐）
-  编辑 scripts/cms.conf：
+  编辑 shared/cms.conf：
     ADDR=:8080                      监听端口
     BASE_URL=https://your-domain    生产环境务必设为你的 https 域名
+    CMS_DB=shared/data/cms.db       共享数据库路径，升级时不会被覆盖
 
 二、启动（Linux / macOS）
     ./scripts/cms.sh start          启动（后台运行）
@@ -104,21 +122,22 @@ CCVAR 简记 CMS · 部署包（${NAME}）
     ./scripts/cms.ps1 start | status | stop | restart
 
 三、首次启动
-  会在 data/cms.db 自动建库并写入演示内容，控制台打印默认后台账号：
+  会在 shared/data/cms.db 自动建库并写入演示内容，控制台打印默认后台账号：
     用户名 admin   密码 admin123
   浏览器打开 http://localhost:8080 ，后台 http://localhost:8080/admin
   ⚠ 登录后请尽快在「设置 → 安全」修改默认密码。
 
 四、生产部署建议
   · 用 Nginx / Caddy 终止 HTTPS 并反向代理到本服务端口（如 127.0.0.1:8080）。
-  · 在 scripts/cms.conf 设置 BASE_URL 为 https 域名（影响 canonical / 站点地图）。
-  · 可用 systemd 托管：ExecStart 指向 bin/cms，工作目录为本包根目录，
-    并设置环境变量 ADDR / BASE_URL / CMS_DB。
+  · 在 shared/cms.conf 设置 BASE_URL 为 https 域名（影响 canonical / 站点地图）。
+  · 可用 systemd 托管：ExecStart 建议直接指向 current/bin/cms，
+    WorkingDirectory 设为本包根目录，并设置 ADDR / BASE_URL / CMS_DB=shared/data/cms.db。
+    scripts/cms.sh 更适合手动启停与简单部署。
 
 五、升级目录规划
-  推荐把程序版本与用户数据分开，便于后续后台一键升级与失败回滚：
+  本发布包默认已经是后续一键升级所需的标准目录：
 
-    /opt/gcms/
+    $NAME/
       current -> releases/$VERSION
       releases/$VERSION/
       shared/data/cms.db
@@ -128,8 +147,8 @@ CCVAR 简记 CMS · 部署包（${NAME}）
       tmp/
 
   current 指向当前运行版本；shared 保存数据库、上传文件和配置，升级时不覆盖。
-  可设置 CMS_DB=/opt/gcms/shared/data/cms.db，让不同版本共用同一份数据。
 EOF
+cp "$DIR/README.txt" "$RELEASE_DIR/README.txt"
 
 # ---- 打 tar.gz ----
 ( cd "$OUT" && tar -czf "$NAME.tar.gz" "$NAME" )

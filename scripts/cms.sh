@@ -11,7 +11,7 @@
 #   可用环境变量（可在命令前覆盖）：
 #     ADDR=:9090            监听地址（默认 :8080）
 #     BASE_URL=https://...  站点绝对地址（默认 http://localhost<ADDR>）
-#     CMS_DB=/path/cms.db   数据库路径（默认 data/cms.db）
+#     CMS_DB=/path/cms.db   数据库路径（发布包默认 shared/data/cms.db，源码模式默认 data/cms.db）
 #     GO_VERSION=1.23.4     需要自动安装时下载的 Go 版本
 # =============================================================================
 set -eu
@@ -19,13 +19,25 @@ set -eu
 # ---- 路径 ----
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
-BIN="$ROOT/bin/cms"
 RUNDIR="$ROOT/run"
+LOGDIR="$ROOT/logs"
 PIDFILE="$RUNDIR/cms.pid"
-LOGFILE="$RUNDIR/cms.log"
+LOGFILE="$LOGDIR/cms.log"
 GOROOT_LOCAL="$ROOT/.go/go"
-CONF="$SCRIPT_DIR/cms.conf"
-BUILD_INFO="$ROOT/BUILD_INFO"
+CURRENT="$ROOT/current"
+
+if [ -x "$CURRENT/bin/cms" ]; then
+  BIN="$CURRENT/bin/cms"
+  BUILD_INFO="$CURRENT/BUILD_INFO"
+  DEFAULT_CMS_DB="shared/data/cms.db"
+  CONF="$ROOT/shared/cms.conf"
+  [ -f "$CONF" ] || CONF="$SCRIPT_DIR/cms.conf"
+else
+  BIN="$ROOT/bin/cms"
+  BUILD_INFO="$ROOT/BUILD_INFO"
+  DEFAULT_CMS_DB="data/cms.db"
+  CONF="$SCRIPT_DIR/cms.conf"
+fi
 
 # ---- 读取配置文件（仅已知键；命令行环境变量优先，已设置则不覆盖）----
 load_conf() {
@@ -47,6 +59,7 @@ load_conf
 # 配置文件与命令行都未提供时的最终兜底默认
 ADDR=${ADDR:-:8080}
 GO_VERSION=${GO_VERSION:-1.23.4}
+CMS_DB=${CMS_DB:-$DEFAULT_CMS_DB}
 
 # ---- 颜色（终端支持时）----
 if [ -t 1 ]; then C_OK='\033[32m'; C_ERR='\033[31m'; C_DIM='\033[2m'; C_0='\033[0m'; else C_OK=; C_ERR=; C_DIM=; C_0=; fi
@@ -130,12 +143,16 @@ check_binary_platform() {
   current_arch=${current#*/}
   if [ "$target_os" != "$current_os" ] || [ "$target_arch" != "$current_arch" ]; then
     err "发布包平台不匹配：当前包是 ${target_os}/${target_arch}，当前系统是 ${current_os}/${current_arch}"
-    err "请重新打包并上传对应平台，例如：./scripts/package.sh $current_os $current_arch"
+    err "请下载对应平台的发布包，或在源码仓库重新打包：./scripts/package.sh $current_os $current_arch"
     exit 1
   fi
 }
 
 build() {
+  if [ ! -f "$ROOT/go.mod" ]; then
+    err "当前是二进制发布包，不包含源码，无法 build。请下载新版发布包或在源码仓库中构建。"
+    exit 1
+  fi
   ensure_go
   info "构建 → $BIN"
   ( cd "$ROOT" && go build -o "$BIN" . )
@@ -154,12 +171,12 @@ start() {
     info "未发现已编译二进制，开始首次编译 …"
     build
   fi
-  mkdir -p "$RUNDIR"
+  mkdir -p "$RUNDIR" "$LOGDIR"
   info "启动服务 …"
-  # 通过导出环境变量传参（子进程继承），以 ROOT 为工作目录保证 data/ 相对路径正确
+  # 通过导出环境变量传参（子进程继承），以 ROOT 为工作目录保证相对路径正确
   export ADDR
   export BASE_URL="$(base_url)"
-  [ -n "${CMS_DB:-}" ] && export CMS_DB
+  export CMS_DB
   cd "$ROOT"
   # 单 > 截断日志：本次启动只保留本次运行日志，不混入历史
   # 直接后台运行二进制并记录其真实 PID（nohup 会 exec 二进制，PID 不变）；脱离终端
@@ -193,7 +210,7 @@ status() {
   if running; then ok "运行中（PID $(cat "$PIDFILE")） → $(base_url)"; else info "未运行"; fi
 }
 
-logs() { mkdir -p "$RUNDIR"; touch "$LOGFILE"; tail -n 80 -f "$LOGFILE"; }
+logs() { mkdir -p "$LOGDIR"; touch "$LOGFILE"; tail -n 80 -f "$LOGFILE"; }
 
 usage() {
   cat <<EOF
@@ -206,19 +223,21 @@ CCVAR 简记 CMS · 启停脚本（macOS / Linux）
   stop      停止服务（按 PID 文件结束进程并释放端口）。
   restart   重启服务（= 先 stop 再 start）。改了代码请先 build 再 restart。
   status    查看运行状态（PID 与访问地址）。
-  build     （重新）编译为 bin/cms。唯一会强制重新编译的命令。
+  build     （重新）编译为 bin/cms。仅源码仓库可用，二进制发布包不包含源码。
   logs      实时跟踪「本次运行」日志（Ctrl-C 退出）。
   help      显示本帮助（无参数时同样显示）。
 
 说明：
   · 仅 build、以及「尚无二进制时的 start」会触发编译；其余命令不编译。
-  · 每次 start 会清空旧日志，只保留本次运行日志（run/cms.log）。
+  · 发布包默认运行 current/bin/cms，数据保存在 shared/data/，版本保存在 releases/。
+  · 每次 start 会清空旧日志，只保留本次运行日志（logs/cms.log）。
 
-配置：默认读取 scripts/cms.conf（KEY=VALUE）。优先级：命令行环境变量 > 配置文件 > 内置默认。
+配置：发布包默认读取 shared/cms.conf，源码模式默认读取 scripts/cms.conf。
+优先级：命令行环境变量 > 配置文件 > 内置默认。
 环境变量（在命令前覆盖，优先级最高）：
   ADDR=:9090                监听地址（默认 :8080）
   BASE_URL=https://example  站点绝对地址（默认 http://localhost<ADDR>）
-  CMS_DB=/path/cms.db       数据库路径（默认 data/cms.db）
+  CMS_DB=/path/cms.db       数据库路径（发布包默认 shared/data/cms.db，源码模式默认 data/cms.db）
   GO_VERSION=1.23.4         需自动安装 Go 时下载的版本
 EOF
 }

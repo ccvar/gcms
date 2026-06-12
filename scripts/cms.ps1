@@ -11,7 +11,7 @@
    可用环境变量（运行前 $env:XXX 覆盖）：
      $env:ADDR=":9090"               监听地址（默认 :8080）
      $env:BASE_URL="https://..."     站点绝对地址（默认 http://localhost<ADDR>）
-     $env:CMS_DB="C:\path\cms.db"    数据库路径（默认 data\cms.db）
+     $env:CMS_DB="C:\path\cms.db"    数据库路径（发布包默认 shared\data\cms.db，源码模式默认 data\cms.db）
      $env:GO_VERSION="1.23.4"        需要自动安装时下载的 Go 版本
 =============================================================================
 #>
@@ -20,16 +20,30 @@ param([string]$Command = "")
 $ErrorActionPreference = "Stop"
 
 $Root      = Split-Path -Parent $PSScriptRoot
-$Bin       = Join-Path $Root "bin\cms.exe"
 $RunDir    = Join-Path $Root "run"
+$LogDir    = Join-Path $Root "logs"
 $PidFile   = Join-Path $RunDir "cms.pid"
-$LogFile   = Join-Path $RunDir "cms.log"      # Go 日志（stderr）写到这里
-$OutLog    = Join-Path $RunDir "cms.out.log"
+$LogFile   = Join-Path $LogDir "cms.log"      # Go 日志（stderr）写到这里
+$OutLog    = Join-Path $LogDir "cms.out.log"
 $LocalGoBin= Join-Path $Root ".go\go\bin"
+$Current   = Join-Path $Root "current"
+
+if (Test-Path (Join-Path $Current "bin\cms.exe")) {
+  $Bin          = Join-Path $Current "bin\cms.exe"
+  $BuildInfo    = Join-Path $Current "BUILD_INFO"
+  $DefaultCmsDb = "shared\data\cms.db"
+  $Conf         = Join-Path $Root "shared\cms.conf"
+  if (-not (Test-Path $Conf)) { $Conf = Join-Path $PSScriptRoot "cms.conf" }
+} else {
+  $Bin          = Join-Path $Root "bin\cms.exe"
+  $BuildInfo    = Join-Path $Root "BUILD_INFO"
+  $DefaultCmsDb = "data\cms.db"
+  $Conf         = Join-Path $PSScriptRoot "cms.conf"
+}
 
 # ---- 读取配置文件（仅已知键；命令行 $env 优先，已设置则不覆盖）----
 function Load-Conf {
-  $conf = Join-Path $PSScriptRoot "cms.conf"
+  $conf = $Conf
   if (-not (Test-Path $conf)) { return }
   foreach ($line in Get-Content $conf) {
     $t = $line.Trim()
@@ -48,6 +62,7 @@ Load-Conf
 
 $Addr      = if ($env:ADDR) { $env:ADDR } else { ":8080" }
 $GoVersion = if ($env:GO_VERSION) { $env:GO_VERSION } else { "1.23.4" }
+if (-not $env:CMS_DB) { $env:CMS_DB = $DefaultCmsDb }
 
 function Info($m) { Write-Host "» $m" -ForegroundColor DarkGray }
 function Ok($m)   { Write-Host "✓ $m" -ForegroundColor Green }
@@ -114,6 +129,10 @@ function Get-CmsProc {
 }
 
 function Invoke-Build {
+  if (-not (Test-Path (Join-Path $Root "go.mod"))) {
+    Fail "当前是二进制发布包，不包含源码，无法 build。请下载新版发布包或在源码仓库中构建。"
+    exit 1
+  }
   Ensure-Go
   Info "构建 → $Bin"
   Push-Location $Root
@@ -131,6 +150,7 @@ function Start-Cms {
     Invoke-Build
   }
   New-Item -ItemType Directory -Force -Path $RunDir | Out-Null
+  New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
   $env:ADDR = $Addr
   $env:BASE_URL = (BaseUrl)
   Info "启动服务 …"
@@ -182,19 +202,21 @@ CCVAR 简记 CMS · 启停脚本（Windows / PowerShell）
   stop      停止服务（按 PID 文件结束进程）。
   restart   重启服务（= 先 stop 再 start）。改了代码请先 build 再 restart。
   status    查看运行状态（PID 与访问地址）。
-  build     （重新）编译为 bin\cms.exe。唯一会强制重新编译的命令。
+  build     （重新）编译为 bin\cms.exe。仅源码仓库可用，二进制发布包不包含源码。
   logs      实时跟踪「本次运行」日志（Ctrl-C 退出）。
   help      显示本帮助（无参数时同样显示）。
 
 说明：
   · 仅 build、以及「尚无二进制时的 start」会触发编译；其余命令不编译。
-  · 每次 start 会重写日志，只保留本次运行日志（run\cms.log）。
+  · 发布包默认运行 current\bin\cms.exe，数据保存在 shared\data\，版本保存在 releases\。
+  · 每次 start 会重写日志，只保留本次运行日志（logs\cms.log）。
 
-配置：默认读取 scripts\cms.conf（KEY=VALUE）。优先级：`$env` 环境变量 > 配置文件 > 内置默认。
+配置：发布包默认读取 shared\cms.conf，源码模式默认读取 scripts\cms.conf。
+优先级：`$env` 环境变量 > 配置文件 > 内置默认。
 环境变量（运行前 `$env:XXX` 覆盖，优先级最高）：
   `$env:ADDR=":9090"`              监听地址（默认 :8080）
   `$env:BASE_URL="https://..."`    站点绝对地址（默认 http://localhost<ADDR>）
-  `$env:CMS_DB="C:\path\cms.db"`   数据库路径（默认 data\cms.db）
+  `$env:CMS_DB="C:\path\cms.db"`   数据库路径（发布包默认 shared\data\cms.db，源码模式默认 data\cms.db）
   `$env:GO_VERSION="1.23.4"`       需自动安装 Go 时下载的版本
 "@
 }

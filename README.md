@@ -17,7 +17,7 @@ go run .
 
 ### 一键启停脚本（自动装环境）
 
-跨平台启停脚本，`start` 会**自动检测 Go**（缺失或低于 1.23 时自动下载官方工具链到项目内 `.go/`，不污染系统），随后构建并后台运行，PID 与日志写入 `run/`。
+跨平台启停脚本，`start` 会**自动检测 Go**（缺失或低于 1.23 时自动下载官方工具链到项目内 `.go/`，不污染系统），随后构建并后台运行，PID 写入 `run/`，日志写入 `logs/`。
 
 ```bash
 # macOS / Linux
@@ -50,7 +50,7 @@ GOOS=linux GOARCH=amd64 go build -o cms .
 | 变量 | 默认 | 说明 |
 |------|------|------|
 | `ADDR` | `:8080` | 监听地址 |
-| `CMS_DB` | `data/cms.db` | SQLite 文件路径 |
+| `CMS_DB` | 源码模式 `data/cms.db`；发布包 `shared/data/cms.db` | SQLite 文件路径 |
 | `BASE_URL` | `http://localhost:8080` | 站点绝对地址（用于 canonical / OG / sitemap）。**生产环境务必设为 `https://cms.ccvar.com`** |
 | `GCMS_RELEASE_REPO` | `ccvar/gcms-releases` | 后台检查更新使用的公开发布仓库 |
 | `GCMS_UPDATE_URL` | `https://github.com/ccvar/gcms-releases/releases/latest/download/manifest.json` | 自定义更新清单地址，留空则按发布仓库自动拼接 |
@@ -80,30 +80,39 @@ cms.ccvar.com {
 
 ### 升级目录规划
 
-为了支持后续后台一键升级，生产部署建议把“程序版本”和“用户数据”分开：
+从 GitHub Release 下载的发布包，解压后默认就是可升级标准目录；用户数据和程序版本天然分开：
 
 ```
-/opt/gcms/
+gcms-v1.0.3-linux-amd64/
 ├── current -> releases/v1.0.3
 ├── releases/
-│   ├── v1.0.2/
 │   └── v1.0.3/
+│       ├── bin/
+│       ├── scripts/
+│       ├── BUILD_INFO
+│       └── README.txt
 ├── shared/
 │   ├── data/
 │   │   ├── cms.db
 │   │   └── uploads/
 │   └── cms.conf
+├── run/
+├── logs/
+├── tmp/
 ├── backups/
-└── tmp/
+├── scripts/
+└── BUILD_INFO
 ```
 
-`current` 指向当前运行版本；`releases/` 保存历史版本；`shared/` 保存数据库、上传文件和配置，升级时不覆盖；`backups/` 保存升级前数据库备份。服务启动时可让 `CMS_DB` 指向共享数据库，例如：
+首次部署可直接启动：
 
 ```bash
-CMS_DB=/opt/gcms/shared/data/cms.db ADDR=127.0.0.1:8080 BASE_URL=https://cms.ccvar.com /opt/gcms/current/bin/cms
+tar -xzf cms-v1.0.3-linux-amd64.tar.gz
+cd cms-v1.0.3-linux-amd64
+./scripts/cms.sh start
 ```
 
-后台「设置 → 系统更新」会显示当前版本、最新 GitHub Release、当前平台对应的发布包、SHA256 与校验文件。完整一键升级会在此目录结构基础上实现下载、校验、备份、切换、重启与失败回滚。
+`current` 指向当前运行版本；`releases/` 保存历史版本；`shared/` 保存数据库、上传文件和配置，升级时不覆盖；`backups/` 保存升级前数据库备份。后台「设置 → 系统更新」会显示当前版本、最新 GitHub Release、当前平台对应的发布包、SHA256 与校验文件。完整一键升级会在此目录结构基础上实现下载、校验、备份、切换、重启与失败回滚。
 
 ### 公开发布仓库
 
