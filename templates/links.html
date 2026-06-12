@@ -1,0 +1,49 @@
+{{define "body"}}  <main>
+    <section class="page-head">
+      <div class="wrap">
+        <nav class="breadcrumb" style="padding:0 0 1rem" aria-label="面包屑">
+          <a href="{{.Tr.U "/"}}">{{.Tr.T "nav.home"}}</a><span class="sep">/</span><span aria-current="page">{{if .Category}}{{.Category.Name}}{{else}}{{.Tr.T "nav.links"}}{{end}}</span>
+        </nav>
+        <p class="eyebrow">{{.Tr.T "nav.links"}}</p>
+        <h1>{{if .Category}}{{.Category.Name}}{{else}}{{.Tr.T "nav.links"}}{{end}}</h1>
+        {{if and .Category .Category.Description}}<p>{{.Category.Description}}</p>{{else}}<p class="hero-sub">{{.Site.Description}}</p>{{end}}
+      </div>
+    </section>
+
+    <div class="wrap">
+      {{if .Categories}}
+      <nav class="cat-nav" aria-label="链接分类">
+        <a href="{{.Tr.U "/links"}}"{{if not .Category}} class="active"{{end}}>{{.Tr.T "links.all"}}</a>
+        {{range .Categories}}
+        <a href="{{$.Tr.U "/links"}}?cat={{.Slug}}"{{if and $.Category (eq .Slug $.Category.Slug)}} class="active"{{end}}>{{.Name}} <span class="muted">{{.Count}}</span></a>
+        {{end}}
+      </nav>
+      {{end}}
+
+      <div class="link-grid">
+        {{range .Posts}}
+        <a class="link-card" href="{{$.Tr.U (printf "/links/%s" .Slug)}}">
+          <div class="lc-cover">{{if .CoverImage}}<img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy">{{else}}<span class="lc-mono" aria-hidden="true">{{initial .Title}}</span>{{end}}</div>
+          <div class="lc-body">
+            <h3 class="lc-title">{{.Title}} <span class="lc-arrow" aria-hidden="true">→</span></h3>
+            {{if .Excerpt}}<p class="lc-intro">{{.Excerpt}}</p>{{end}}
+            {{with .Category}}<div class="lc-foot"><span class="tag">{{.Name}}</span></div>{{end}}
+          </div>
+        </a>
+        {{else}}
+        <p class="muted">{{.Tr.T "links.empty"}}</p>
+        {{end}}
+      </div>
+
+      {{if gt .TotalPages 1}}
+      <nav class="pagination" aria-label="分页导航">
+        {{if .HasPrev}}<a href="{{.Tr.U "/links"}}?{{if .Category}}cat={{.Category.Slug}}&{{end}}page={{.PrevPage}}" aria-label="上一页">←</a>{{end}}
+        {{range $n := pages .TotalPages}}
+          {{if eq $n $.PageNum}}<span class="cur" aria-current="page">{{$n}}</span>{{else}}<a href="{{$.Tr.U "/links"}}?{{if $.Category}}cat={{$.Category.Slug}}&{{end}}page={{$n}}">{{$n}}</a>{{end}}
+        {{end}}
+        {{if .HasNext}}<a href="{{.Tr.U "/links"}}?{{if .Category}}cat={{.Category.Slug}}&{{end}}page={{.NextPage}}" aria-label="下一页">→</a>{{end}}
+      </nav>
+      {{end}}
+    </div>
+  </main>
+{{end}}

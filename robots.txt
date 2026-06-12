@@ -1,0 +1,11 @@
+# CCVAR 简记 — robots.txt
+# 允许所有主流爬虫抓取全站，仅屏蔽后台与搜索结果页
+
+User-agent: *
+Allow: /
+Disallow: /admin/
+Disallow: /search
+Disallow: /*?page=
+
+# 站点地图位置
+Sitemap: https://cms.ccvar.com/sitemap.xml

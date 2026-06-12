@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" role="img" aria-label="Coolors">
+  <rect width="256" height="720" x="0" fill="#0b132b"/>
+  <rect width="256" height="720" x="256" fill="#1c2541"/>
+  <rect width="256" height="720" x="512" fill="#3a506b"/>
+  <rect width="256" height="720" x="768" fill="#5bc0be"/>
+  <rect width="256" height="720" x="1024" fill="#e8f3f1"/>
+  <rect x="340" y="276" width="600" height="168" rx="22" fill="#ffffff" fill-opacity=".94"/>
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" text-anchor="middle">
+    <text x="640" y="368" font-size="96" font-weight="800" letter-spacing="-2" fill="#1c2541">Coolors</text>
+    <text x="640" y="416" font-size="30" font-weight="500" letter-spacing="6" fill="#3a506b">COLOR PALETTES</text>
+  </g>
+</svg>

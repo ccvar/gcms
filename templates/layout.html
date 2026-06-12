@@ -1,0 +1,11 @@
+{{define "public_layout"}}<!DOCTYPE html>
+<html lang="{{if .Site.LangTag}}{{.Site.LangTag}}{{else}}zh-CN{{end}}" data-theme="{{if .Theme}}{{.Theme}}{{else}}editorial{{end}}"{{if .ThemeStyle}} style="{{.ThemeStyle}}"{{end}}>
+<head>
+{{template "head" .}}
+</head>
+<body>
+{{template "header" .}}
+{{block "body" .}}{{end}}
+{{template "footer" .}}
+</body>
+</html>{{end}}

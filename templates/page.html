@@ -1,0 +1,15 @@
+{{define "body"}}{{$p := .Page}}  <main>
+    <section class="page-head">
+      <div class="wrap read">
+        <p class="eyebrow">{{$p.Title}}</p>
+        <h1>{{$p.Title}}</h1>
+        {{if $p.Excerpt}}<p>{{$p.Excerpt}}</p>{{end}}
+      </div>
+    </section>
+    <div class="wrap">
+      <div class="prose read" style="padding-top:2.5rem">
+        {{md $p.Content}}
+      </div>
+    </div>
+  </main>
+{{end}}

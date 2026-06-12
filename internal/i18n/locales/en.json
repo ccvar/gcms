@@ -1,0 +1,58 @@
+{
+  "nav.home": "Home",
+  "nav.category": "Topics",
+  "nav.about": "About",
+  "nav.search": "Search",
+  "nav.links": "Links",
+  "lang.switch": "Language",
+
+  "links.visit": "Visit",
+  "links.all": "All",
+  "links.empty": "No links yet.",
+  "links.related": "Related links",
+
+  "footer.content": "Content",
+  "footer.all_categories": "All topics",
+  "footer.featured": "Featured",
+  "footer.rss": "RSS",
+  "footer.site": "Site",
+  "footer.about": "About",
+  "footer.sitemap": "Sitemap",
+  "footer.robots": "robots.txt",
+  "footer.follow": "Follow",
+  "footer.admin": "Admin",
+  "footer.rights": "All rights reserved.",
+
+  "home.featured": "Featured",
+  "home.view_all": "View all",
+  "home.read_more": "Read more",
+  "home.latest": "Latest",
+  "home.links": "Featured Links",
+  "home.no_posts": "No posts yet.",
+  "home.cta_start": "Start reading",
+  "home.cta_more": "Learn more",
+
+  "common.min_read": "min read",
+  "common.min": "min",
+  "common.prev": "Previous",
+  "common.next": "Next",
+  "common.related": "Related",
+  "common.toc": "On this page",
+  "common.back_top": "Back to top",
+  "common.published": "Published",
+  "common.read_full": "Read full article",
+
+  "category.label": "Topic",
+  "category.count": "%d articles",
+
+  "search.title": "Search",
+  "search.placeholder": "Search articles…",
+  "search.button": "Search",
+  "search.found": "Found %d matching articles",
+  "search.none": "No articles found for “%s”.",
+  "search.prompt": "Enter a keyword to search the site.",
+
+  "nf.title": "Page not found",
+  "nf.desc": "Sorry, the page you are looking for does not exist or has moved.",
+  "nf.back": "Back to home"
+}

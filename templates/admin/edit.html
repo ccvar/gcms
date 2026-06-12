@@ -1,0 +1,211 @@
+{{define "body"}}{{$e := .Edit}}  <div class="admin-head edit-head">
+    <div>
+      <nav class="breadcrumb" style="padding:0 0 .4rem"><a href="{{.EditListURL}}?lang={{.EditLang}}">{{.EditTypeLabel}}</a><span class="sep">/</span><span>{{if $e.ID}}编辑{{else}}新建{{end}}</span></nav>
+      <h1>{{if $e.ID}}编辑{{else}}新建{{end}}{{.EditTypeLabel}}</h1>
+    </div>
+    <div class="edit-actions">
+      {{if .IsPage}}<a class="btn act-view" href="/{{$e.Lang}}/{{$e.Slug}}" target="_blank">查看 {{template "icon-extlink"}}</a>{{else if .IsLink}}{{if and $e.ID $e.IsPublished}}<a class="btn act-view" href="/{{$e.Lang}}/links/{{$e.Slug}}" target="_blank">查看 {{template "icon-extlink"}}</a>{{end}}{{else if and $e.ID $e.IsPublished}}<a class="btn act-view" href="/{{$e.Lang}}/posts/{{$e.Slug}}" target="_blank">查看 {{template "icon-extlink"}}</a>{{end}}
+      <a class="btn" href="{{.EditListURL}}?lang={{.EditLang}}">取消</a>
+      <button class="btn btn-primary" type="submit" form="post-form" data-save>保存</button>
+    </div>
+  </div>
+
+  {{if .Flash}}<div class="flash">{{.Flash}}</div>{{end}}
+  {{if .FormErr}}<div class="form-err">{{.FormErr}}</div>{{end}}
+
+  <div class="edit-grid">
+  <form method="post" action="/admin/{{.EditBase}}{{if $e.ID}}/{{$e.ID}}{{end}}" class="admin-form edit-form" id="post-form">
+    <input type="hidden" name="_csrf" value="{{.CSRF}}">
+    <input type="hidden" name="editor_mode" value="{{if eq $e.EditorMode "rich"}}rich{{else}}markdown{{end}}">
+    <input type="hidden" name="trans_group" value="{{$e.TransGroup}}">
+      <div class="form-main">
+        <div class="field">
+          <label for="title">标题</label>
+          <input id="title" name="title" value="{{$e.Title}}" required>
+        </div>
+        {{if .IsLink}}
+        <div class="field">
+          <label for="link_url">链接地址（目标网址，前台点「访问」跳转）</label>
+          <input id="link_url" name="link_url" type="text" inputmode="url" value="{{$e.LinkURL}}" placeholder="https://example.com">
+        </div>
+        {{end}}
+
+        <div class="field">
+          <div class="editor-bar">
+            <label>正文</label>
+            <div class="seg" role="tablist" aria-label="编辑模式">
+              <button type="button" class="seg-btn is-on" data-mode="markdown" role="tab">Markdown</button>
+              <button type="button" class="seg-btn" data-mode="rich" role="tab">富文本</button>
+            </div>
+          </div>
+          <div class="editor" data-editor>
+            <textarea id="content" name="content" rows="22" spellcheck="false">{{$e.Content}}</textarea>
+            <div class="rich-wrap" hidden>
+              <div class="rich" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder="开始写作…，选中文字弹出工具栏，空行点 ＋ 插入"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <aside class="form-side">
+        {{if gt (len .Locales) 1}}
+        <div class="field">
+          <label{{if not $e.ID}} id="lang-label"{{end}}>语种</label>
+          {{if $e.ID}}
+          <div class="lang-static">{{range .Locales}}{{if eq .Code $e.Lang}}<span class="lang-chip">{{.Name}}</span>{{end}}{{end}}<span class="muted" style="font-size:.82rem">（已固定，跨语种维护见下方互译）</span></div>
+          <input type="hidden" name="lang" value="{{$e.Lang}}">
+          {{else}}
+          <div class="dropdown" data-name="lang">
+            <button type="button" class="dd-toggle" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="lang-label">
+              <span class="dd-label">{{range .Locales}}{{if eq .Code $.EditLang}}{{.Name}}{{end}}{{end}}</span>
+              <svg class="dd-caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+            <input type="hidden" name="lang" value="{{.EditLang}}">
+            <ul class="dd-menu" role="listbox">
+              {{range .Locales}}<li role="option" data-value="{{.Code}}" aria-selected="{{if eq .Code $.EditLang}}true{{else}}false{{end}}">{{.Name}}</li>
+              {{end}}
+            </ul>
+          </div>
+          {{end}}
+        </div>
+        {{else}}
+        <input type="hidden" name="lang" value="{{if $e.Lang}}{{$e.Lang}}{{else}}{{.EditLang}}{{end}}">
+        {{end}}
+
+        {{if not .IsPage}}
+        <div class="field">
+          <label id="status-label">状态</label>
+          <div class="dropdown" data-name="status" data-status>
+            <button type="button" class="dd-toggle" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="status-label">
+              <span class="dd-label">{{if eq $e.Status "scheduled"}}定时发布{{else if eq $e.Status "published"}}已发布{{else}}草稿{{end}}</span>
+              <svg class="dd-caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+            <input type="hidden" name="status" value="{{if eq $e.Status "scheduled"}}scheduled{{else if eq $e.Status "published"}}published{{else}}draft{{end}}">
+            <ul class="dd-menu" role="listbox">
+              <li role="option" data-value="draft" aria-selected="{{if eq $e.Status "draft"}}true{{else}}false{{end}}">草稿</li>
+              <li role="option" data-value="published" aria-selected="{{if eq $e.Status "published"}}true{{else}}false{{end}}">立即发布</li>
+              <li role="option" data-value="scheduled" aria-selected="{{if eq $e.Status "scheduled"}}true{{else}}false{{end}}">定时发布</li>
+            </ul>
+          </div>
+          <div class="schedule-field"{{if ne $e.Status "scheduled"}} hidden{{end}}>
+            <label for="publish_at">发布时间</label>
+            <input type="datetime-local" id="publish_at" name="publish_at" value="{{dtlocal $e.PublishedAt}}">
+          </div>
+        </div>
+
+        <div class="field">
+          <label>封面图</label>
+          <div class="uploader" data-name="cover_image">
+            <input type="hidden" name="cover_image" value="{{$e.CoverImage}}">
+            <div class="up-preview" tabindex="0" role="button" aria-label="选择图片">
+              <span class="up-hint">点击选择图片</span>
+              <button type="button" class="up-remove" title="删除" aria-label="删除"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+              <input type="file" accept="image/*" hidden>
+            </div>
+            <input type="text" inputmode="url" class="up-url" placeholder="或粘贴图片 URL" value="{{$e.CoverImage}}">
+            <div class="up-status"></div>
+          </div>
+        </div>
+        {{end}}
+
+        <div class="field">
+          <label for="slug">Slug（URL）</label>
+          <input id="slug" name="slug" value="{{$e.Slug}}" placeholder="留空则按标题自动生成">
+        </div>
+
+        {{if not .IsPage}}
+        <div class="field">
+          <label id="cat-label">分类</label>
+          <div class="dropdown" data-name="category_id">
+            <button type="button" class="dd-toggle" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="cat-label">
+              <span class="dd-label">{{if $e.Category}}{{$e.Category.Name}}{{else}}（无）{{end}}</span>
+              <svg class="dd-caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+            <input type="hidden" name="category_id" value="{{if $e.CategoryID.Valid}}{{$e.CategoryID.Int64}}{{end}}">
+            <ul class="dd-menu" role="listbox">
+              <li role="option" data-value="" aria-selected="{{if not $e.CategoryID.Valid}}true{{else}}false{{end}}">（无）</li>
+              {{range .Categories}}
+              <li role="option" data-value="{{.ID}}" aria-selected="{{if and $e.CategoryID.Valid (eq $e.CategoryID.Int64 .ID)}}true{{else}}false{{end}}">{{.Name}}</li>
+              {{end}}
+            </ul>
+          </div>
+        </div>
+        {{end}}
+
+        <div class="field">
+          <label for="author">作者</label>
+          <input id="author" name="author" value="{{$e.Author}}">
+        </div>
+      </aside>
+
+    <fieldset class="seo-box">
+      <legend>SEO</legend>
+      <div class="field">
+        <label for="excerpt">摘要（列表与 description）</label>
+        <textarea id="excerpt" name="excerpt" rows="2">{{$e.Excerpt}}</textarea>
+      </div>
+      <div class="field">
+        <label for="meta_desc">自定义 Meta Description（留空则用摘要）</label>
+        <textarea id="meta_desc" name="meta_desc" rows="2">{{$e.MetaDesc}}</textarea>
+      </div>
+      <div class="field">
+        <label for="keywords">关键词（逗号分隔，作为标签）</label>
+        <input id="keywords" name="keywords" value="{{$e.Keywords}}">
+      </div>
+    </fieldset>
+  </form>
+
+  {{if and $e.ID (gt (len .Locales) 1)}}
+  <section class="trans-box">
+    <h3>跨语种 · 互译版本</h3>
+    <p class="muted" style="font-size:.85rem;margin:.1rem 0 .8rem">同一篇内容的各语种版本独立维护、共享互译关联（用于前台语言切换与 hreflang）。</p>
+    {{if .Trans}}
+    <div class="trans-list">
+      {{range .Trans}}
+      <a class="trans-link" href="/admin/{{if eq .Type "page"}}pages{{else}}posts{{end}}/{{.ID}}/edit">
+        <span class="lang-chip">{{.Lang}}</span>
+        <span class="trans-title">{{.Title}}</span>
+        <span class="badge {{if .IsPublished}}pub{{else if eq .Status "scheduled"}}sched{{else}}draft{{end}}">{{if .IsPublished}}已发布{{else if eq .Status "scheduled"}}定时{{else}}草稿{{end}}</span>
+      </a>
+      {{end}}
+    </div>
+    {{end}}
+    <div class="trans-actions">
+      {{range .Locales}}{{if ne .Code $e.Lang}}{{if not (hasLang $.Trans .Code)}}
+      <form method="post" action="/admin/posts/{{$e.ID}}/translate">
+        <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+        <input type="hidden" name="lang" value="{{.Code}}">
+        <button type="submit" class="btn btn-soft">＋ 翻译为 {{.Name}}</button>
+      </form>
+      {{end}}{{end}}{{end}}
+    </div>
+  </section>
+  {{end}}
+  </div>
+
+  <!-- 富文本气泡工具栏 -->
+  <div class="bubble" hidden>
+    <button type="button" data-cmd="bold" title="粗体"><b>B</b></button>
+    <button type="button" data-cmd="italic" title="斜体"><i>I</i></button>
+    <span class="bubble-sep"></span>
+    <button type="button" data-cmd="h2" title="标题">H2</button>
+    <button type="button" data-cmd="h3" title="小标题">H3</button>
+    <button type="button" data-cmd="quote" title="引用">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6 17h3l2-4V7H5v6h3zm8 0h3l2-4V7h-6v6h3z"/></svg>
+    </button>
+    <button type="button" data-cmd="link" title="链接">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 13a5 5 0 0 0 7 0l2-2a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-2 2a5 5 0 0 0 7 7l1-1"/></svg>
+    </button>
+  </div>
+
+  <!-- 链接小弹层（替代系统 prompt） -->
+  <div class="link-pop" hidden>
+    <input type="text" inputmode="url" class="link-input" placeholder="粘贴链接，回车确认">
+    <button type="button" class="link-apply" title="确认">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg>
+    </button>
+    <button type="button" class="link-close" title="关闭" aria-label="关闭">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
+    </button>
+  </div>
+{{end}}

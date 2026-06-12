@@ -1,0 +1,34 @@
+{{define "body"}}  <main>
+    <section class="page-head">
+      <div class="wrap">
+        <p class="eyebrow">{{.Site.Name}}</p>
+        <h1>{{.Tr.T "search.title"}}</h1>
+        <form class="searchbox" action="{{.Tr.U "/search"}}" method="get" role="search">
+          <input type="search" name="q" value="{{.Query}}" placeholder="{{.Tr.T "search.placeholder"}}" aria-label="{{.Tr.T "search.title"}}" autofocus>
+          <button class="btn btn-primary" type="submit">{{.Tr.T "search.button"}}</button>
+        </form>
+        {{if .Query}}<p class="muted" style="font-size:.92rem">{{.Tr.Tf "search.found" .Results}}</p>{{end}}
+      </div>
+    </section>
+
+    <div class="wrap">
+      <div class="post-list">
+        {{range $i, $p := .Posts}}
+        <article class="post-item">
+          <div class="num">{{printf "%02d" (add $i 1)}}</div>
+          <div>
+            <div class="meta">
+              {{with $p.Category}}<a class="tag" href="{{$.Tr.U (printf "/category/%s" .Slug)}}">{{.Name}}</a><span class="sep">·</span>{{end}}
+              <time datetime="{{$.Tr.ISODate $p.PublishedAt}}">{{$.Tr.Date $p.PublishedAt}}</time>
+            </div>
+            <h3><a href="{{$.Tr.U (printf "/posts/%s" $p.Slug)}}">{{$p.Title}}</a></h3>
+            <p>{{$p.Excerpt}}</p>
+          </div>
+        </article>
+        {{else}}
+        {{if .Query}}<p class="muted">{{.Tr.Tf "search.none" .Query}}</p>{{else}}<p class="muted">{{.Tr.T "search.prompt"}}</p>{{end}}
+        {{end}}
+      </div>
+    </div>
+  </main>
+{{end}}

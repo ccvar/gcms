@@ -1,0 +1,58 @@
+{
+  "nav.home": "首页",
+  "nav.category": "分类",
+  "nav.about": "关于",
+  "nav.search": "搜索",
+  "nav.links": "链接",
+  "lang.switch": "切换语言",
+
+  "links.visit": "访问",
+  "links.all": "全部",
+  "links.empty": "还没有链接。",
+  "links.related": "相关链接",
+
+  "footer.content": "内容",
+  "footer.all_categories": "全部分类",
+  "footer.featured": "精选文章",
+  "footer.rss": "RSS 订阅",
+  "footer.site": "站点",
+  "footer.about": "关于",
+  "footer.sitemap": "站点地图",
+  "footer.robots": "robots.txt",
+  "footer.follow": "关注",
+  "footer.admin": "后台",
+  "footer.rights": "保留所有权利。",
+
+  "home.featured": "精选",
+  "home.view_all": "查看全部",
+  "home.read_more": "阅读全文",
+  "home.latest": "最新",
+  "home.links": "精选链接",
+  "home.no_posts": "还没有文章。",
+  "home.cta_start": "开始阅读",
+  "home.cta_more": "了解更多",
+
+  "common.min_read": "分钟阅读",
+  "common.min": "分钟",
+  "common.prev": "上一篇",
+  "common.next": "下一篇",
+  "common.related": "相关阅读",
+  "common.toc": "本页大纲",
+  "common.back_top": "回到顶部",
+  "common.published": "发布于",
+  "common.read_full": "阅读全文",
+
+  "category.label": "分类",
+  "category.count": "共 %d 篇文章",
+
+  "search.title": "搜索",
+  "search.placeholder": "搜索文章…",
+  "search.button": "搜索",
+  "search.found": "找到 %d 篇相关文章",
+  "search.none": "没有找到与「%s」相关的文章。",
+  "search.prompt": "输入关键词，检索站内文章。",
+
+  "nf.title": "页面未找到",
+  "nf.desc": "抱歉，你访问的页面不存在或已被移动。",
+  "nf.back": "返回首页"
+}

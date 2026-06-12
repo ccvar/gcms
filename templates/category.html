@@ -1,0 +1,50 @@
+{{define "body"}}{{$cat := .Category}}  <main>
+    <section class="page-head">
+      <div class="wrap">
+        <nav class="breadcrumb" style="padding:0 0 1rem" aria-label="面包屑">
+          <a href="{{.Tr.U "/"}}">{{.Tr.T "nav.home"}}</a><span class="sep">/</span><span aria-current="page">{{$cat.Name}}</span>
+        </nav>
+        <p class="eyebrow">{{.Tr.T "category.label"}}</p>
+        <h1>{{$cat.Name}}</h1>
+        {{if $cat.Description}}<p>{{$cat.Description}}</p>{{end}}
+      </div>
+    </section>
+
+    <div class="wrap">
+      <nav class="cat-nav" aria-label="分类导航">
+        {{range .Categories}}
+        <a href="{{$.Tr.U (printf "/category/%s" .Slug)}}"{{if eq .Slug $cat.Slug}} class="active"{{end}}>{{.Name}} <span class="muted">{{.Count}}</span></a>
+        {{end}}
+      </nav>
+
+      <div class="post-list">
+        {{range $i, $p := .Posts}}
+        <article class="post-item">
+          <div class="num">{{printf "%02d" (add $i 1)}}</div>
+          <div>
+            <div class="meta">
+              {{with $p.Category}}<a class="tag" href="{{$.Tr.U (printf "/category/%s" .Slug)}}">{{.Name}}</a><span class="sep">·</span>{{end}}
+              <time datetime="{{$.Tr.ISODate $p.PublishedAt}}">{{$.Tr.Date $p.PublishedAt}}</time>
+              <span class="sep">·</span><span class="read-time">{{$p.ReadingTime}} {{$.Tr.T "common.min"}}</span>
+            </div>
+            <h3><a href="{{$.Tr.U (printf "/posts/%s" $p.Slug)}}">{{$p.Title}}</a></h3>
+            <p>{{$p.Excerpt}}</p>
+          </div>
+        </article>
+        {{else}}
+        <p class="muted">{{.Tr.T "home.no_posts"}}</p>
+        {{end}}
+      </div>
+
+      {{if gt .TotalPages 1}}
+      <nav class="pagination" aria-label="分页导航">
+        {{if .HasPrev}}<a href="{{.Tr.U .BasePath}}?page={{.PrevPage}}" aria-label="上一页">←</a>{{end}}
+        {{range $n := pages .TotalPages}}
+          {{if eq $n $.PageNum}}<span class="cur" aria-current="page">{{$n}}</span>{{else}}<a href="{{$.Tr.U $.BasePath}}?page={{$n}}">{{$n}}</a>{{end}}
+        {{end}}
+        {{if .HasNext}}<a href="{{.Tr.U .BasePath}}?page={{.NextPage}}" aria-label="下一页">→</a>{{end}}
+      </nav>
+      {{end}}
+    </div>
+  </main>
+{{end}}

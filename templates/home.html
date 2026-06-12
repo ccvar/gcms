@@ -1,0 +1,228 @@
+{{define "body"}}  <main>
+    <section class="hero">
+      <div class="wrap hero-inner">
+        <div class="hero-text">
+          <p class="eyebrow">{{.Site.HeroEyebrow}}</p>
+          <h1>{{nl2br .Site.HeroTitle}}</h1>
+          <p class="hero-sub">{{.Site.Description}}</p>
+          <div class="hero-cta">
+            <a class="btn btn-primary" href="{{if .Featured}}{{.Tr.U (printf "/posts/%s" .Featured.Slug)}}{{else}}{{.Tr.U "/category/engineering"}}{{end}}">{{.Tr.T "home.cta_start"}} <span class="arrow">→</span></a>
+            <a class="btn" href="{{.Tr.U "/about"}}">{{.Tr.T "home.cta_more"}}</a>
+          </div>
+        </div>
+        <div class="hero-visual" aria-hidden="true">
+          {{if and (eq .Site.HeroVisual "image") .Site.HeroImage}}<img class="hero-img" src="{{.Site.HeroImage}}" alt="">
+          {{else if and (eq .Site.HeroVisual "svg") .Site.HeroSVG}}<div class="hero-embed">{{safeHTML .Site.HeroSVG}}</div>
+          {{else if eq .Site.HeroVisual "anim1"}}
+          <svg class="hero-svg" viewBox="0 0 480 440" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="服务端渲染与数据流示意图">
+            <defs>
+              <pattern id="hvDots" width="26" height="26" patternUnits="userSpaceOnUse">
+                <circle cx="1.4" cy="1.4" r="1.4" class="hv-grid"/>
+              </pattern>
+              <filter id="hvShadow" x="-20%" y="-20%" width="140%" height="140%">
+                <feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#000" flood-opacity="0.10"/>
+              </filter>
+            </defs>
+
+            <rect x="0" y="0" width="480" height="440" fill="url(#hvDots)"/>
+
+            <!-- 轨道与节点（数据被分发到各处） -->
+            <path id="hvOrbit" class="hv-orbit" d="M55,220 A185,140 0 1,1 425,220 A185,140 0 1,1 55,220"/>
+            <circle class="hv-node" cx="425" cy="220" r="5"/>
+            <circle class="hv-node" cx="55" cy="220" r="5"/>
+            <g class="hv-ping">
+              <circle class="hv-node" cx="240" cy="80" r="5"/>
+              <circle class="hv-ring" cx="240" cy="80" r="5"/>
+            </g>
+            <circle class="hv-flow" r="5.5"/>
+
+            <!-- 背后的页面层（深度） -->
+            <rect class="hv-panel back" x="250" y="96" width="150" height="104" rx="13"/>
+            <rect class="hv-panel mid" x="206" y="120" width="180" height="120" rx="14"/>
+
+            <!-- 前景：被渲染出的页面窗口 -->
+            <g filter="url(#hvShadow)">
+              <rect class="hv-card" x="104" y="150" width="266" height="196" rx="16"/>
+            </g>
+            <line class="hv-bar" x1="104" y1="184" x2="370" y2="184"/>
+            <circle class="hv-tdot" cx="126" cy="167" r="4"/>
+            <circle class="hv-tdot" cx="142" cy="167" r="4"/>
+            <circle class="hv-tdot accent" cx="158" cy="167" r="4"/>
+
+            <rect class="hv-line accent" x="126" y="202" width="118" height="12" rx="4"/>
+            <rect class="hv-line" x="126" y="224" width="218" height="7" rx="3.5"/>
+            <rect class="hv-line" x="126" y="238" width="180" height="7" rx="3.5"/>
+
+            <!-- 内嵌代码块（科技感） -->
+            <rect class="hv-code" x="126" y="260" width="218" height="64" rx="9"/>
+            <rect class="hv-codeline a" x="140" y="274" width="64" height="6" rx="3"/>
+            <rect class="hv-codeline b" x="212" y="274" width="44" height="6" rx="3"/>
+            <rect class="hv-codeline c" x="140" y="288" width="120" height="6" rx="3"/>
+            <rect class="hv-codeline b" x="140" y="302" width="86" height="6" rx="3"/>
+          </svg>
+          {{else}}
+          <svg class="hero-svg hero-anim2" viewBox="0 0 480 440" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="单文件二进制把数据渲染成多语种页面的动画示意">
+            <defs>
+              <pattern id="hv2Dots" width="26" height="26" patternUnits="userSpaceOnUse"><circle cx="1.3" cy="1.3" r="1.3" class="hv2-grid"/></pattern>
+            </defs>
+            <rect x="0" y="0" width="480" height="440" fill="url(#hv2Dots)"/>
+
+            <!-- 核心光晕（呼吸） -->
+            <circle class="hv2-glow" cx="240" cy="206" r="60"/>
+            <!-- 从核心向外扩散的脉冲环 -->
+            <circle class="hv2-pulse" cx="240" cy="206" r="52"/>
+            <circle class="hv2-pulse p2" cx="240" cy="206" r="52"/>
+
+            <!-- 轨道环 + 巡游节点 -->
+            <circle class="hv2-orbit" cx="240" cy="206" r="92"/>
+            <g class="hv2-orbiter"><circle class="hv2-orbnode" cx="240" cy="114" r="4.5"/></g>
+
+            <!-- 连接线（数据流向） -->
+            <path class="hv2-wire" id="hv2wDb"    d="M120,112 C158,150 170,160 196,178"/>
+            <path class="hv2-wire" id="hv2wGlobe" d="M284,178 C312,158 330,142 356,116"/>
+            <path class="hv2-wire" id="hv2wPage"  d="M240,256 C240,288 240,302 240,324"/>
+
+            <!-- 流动的数据粒子：库→核心（入），核心→页面/全球（出） -->
+            <circle class="hv2-pkt in"  r="3.6"><animateMotion dur="2.6s" begin="0s"   repeatCount="indefinite"><mpath href="#hv2wDb"/></animateMotion></circle>
+            <circle class="hv2-pkt in"  r="3"  ><animateMotion dur="2.6s" begin="1.3s" repeatCount="indefinite"><mpath href="#hv2wDb"/></animateMotion></circle>
+            <circle class="hv2-pkt out" r="3.6"><animateMotion dur="2.8s" begin=".4s"  repeatCount="indefinite"><mpath href="#hv2wPage"/></animateMotion></circle>
+            <circle class="hv2-pkt out" r="3"  ><animateMotion dur="2.8s" begin="1.8s" repeatCount="indefinite"><mpath href="#hv2wPage"/></animateMotion></circle>
+            <circle class="hv2-pkt out" r="3.4"><animateMotion dur="3s"   begin=".9s"  repeatCount="indefinite"><mpath href="#hv2wGlobe"/></animateMotion></circle>
+
+            <!-- SQLite 数据库（左上） -->
+            <g class="hv2-db">
+              <ellipse class="hv2-db-top" cx="108" cy="82" rx="30" ry="10"/>
+              <path class="hv2-db-side" d="M78,82 V114 a30 10 0 0 0 60 0 V82"/>
+              <path class="hv2-db-line" d="M78,98 a30 10 0 0 0 60 0"/>
+            </g>
+
+            <!-- 地球：多语种 / SEO（右上） -->
+            <g class="hv2-globe">
+              <circle class="hv2-globe-face" cx="372" cy="104" r="24"/>
+              <line x1="348" y1="104" x2="396" y2="104"/>
+              <line x1="372" y1="80" x2="372" y2="128"/>
+              <ellipse cx="372" cy="104" rx="10" ry="24"/>
+              <path d="M353,90 H391 M353,118 H391"/>
+            </g>
+
+            <!-- 渲染出的页面（下方） -->
+            <g class="hv2-page">
+              <rect class="hv2-win" x="198" y="324" width="84" height="64" rx="9"/>
+              <line class="hv2-win-bar" x1="198" y1="340" x2="282" y2="340"/>
+              <circle class="hv2-win-dot" cx="208" cy="332" r="2.2"/>
+              <circle class="hv2-win-dot" cx="216" cy="332" r="2.2"/>
+              <circle class="hv2-win-dot accent" cx="224" cy="332" r="2.2"/>
+              <rect class="hv2-win-line accent" x="208" y="350" width="30" height="5" rx="2.5"/>
+              <rect class="hv2-win-line" x="208" y="361" width="62" height="4" rx="2"/>
+              <rect class="hv2-win-line" x="208" y="370" width="48" height="4" rx="2"/>
+            </g>
+
+            <!-- 核心芯片：单文件二进制 -->
+            <g class="hv2-core">
+              <g class="hv2-pins">
+                <line x1="210" y1="150" x2="210" y2="157"/><line x1="240" y1="148" x2="240" y2="157"/><line x1="270" y1="150" x2="270" y2="157"/>
+                <line x1="210" y1="255" x2="210" y2="262"/><line x1="240" y1="255" x2="240" y2="264"/><line x1="270" y1="255" x2="270" y2="262"/>
+                <line x1="183" y1="186" x2="190" y2="186"/><line x1="183" y1="206" x2="190" y2="206"/><line x1="183" y1="226" x2="190" y2="226"/>
+                <line x1="290" y1="186" x2="297" y2="186"/><line x1="290" y1="206" x2="297" y2="206"/><line x1="290" y1="226" x2="297" y2="226"/>
+              </g>
+              <rect class="hv2-chip" x="190" y="156" width="100" height="100" rx="24"/>
+              <rect class="hv2-chip-glow" x="190" y="156" width="100" height="100" rx="24"/>
+              <rect class="hv2-cl accent" x="210" y="180" width="38" height="7" rx="3.5"/>
+              <rect class="hv2-cl" x="210" y="194" width="58" height="6" rx="3"/>
+              <rect class="hv2-cl" x="210" y="207" width="46" height="6" rx="3"/>
+              <rect class="hv2-cl dim" x="210" y="220" width="26" height="6" rx="3"/>
+              <rect class="hv2-cursor" x="242" y="219" width="9" height="8" rx="2"/>
+            </g>
+          </svg>
+          {{end}}
+        </div>
+      </div>
+    </section>
+
+    <div class="wrap">
+      {{with .Featured}}
+      <div class="section-head">
+        <h2>{{$.Site.HomeFeatured}}</h2>
+        <a href="{{$.Tr.U "/category/engineering"}}">{{$.Tr.T "home.view_all"}} <span class="arrow">→</span></a>
+      </div>
+      <article class="feature{{if not .CoverImage}} no-cover{{end}}">
+        {{if .CoverImage}}<img class="cover" src="{{.CoverImage}}" alt="{{.Title}}">{{end}}
+        <div>
+          <div class="meta">
+            {{with .Category}}<a class="tag" href="{{$.Tr.U (printf "/category/%s" .Slug)}}">{{.Name}}</a><span class="sep">·</span>{{end}}
+            <time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time>
+            <span class="sep">·</span><span class="read-time">{{.ReadingTime}} {{$.Tr.T "common.min_read"}}</span>
+          </div>
+          <h3><a href="{{$.Tr.U (printf "/posts/%s" .Slug)}}">{{.Title}}</a></h3>
+          <p>{{.Excerpt}}</p>
+          <a class="btn" href="{{$.Tr.U (printf "/posts/%s" .Slug)}}">{{$.Tr.T "home.read_more"}} <span class="arrow">→</span></a>
+        </div>
+      </article>
+      {{if $.FeaturedMore}}
+      <div class="feature-more">
+        {{range $.FeaturedMore}}
+        <article class="card">
+          <div class="meta">{{with .Category}}<a class="tag" href="{{$.Tr.U (printf "/category/%s" .Slug)}}">{{.Name}}</a><span class="sep">·</span>{{end}}<time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time></div>
+          <h4><a href="{{$.Tr.U (printf "/posts/%s" .Slug)}}">{{.Title}}</a></h4>
+          <p class="card-excerpt">{{.Excerpt}}</p>
+        </article>
+        {{end}}
+      </div>
+      {{end}}
+      {{end}}
+
+      {{if .FeatLinks}}
+      <div class="section-head">
+        <h2>{{.Site.HomeLinks}}</h2>
+        <a href="{{.Tr.U "/links"}}">{{.Tr.T "home.view_all"}} <span class="arrow">→</span></a>
+      </div>
+      <div class="link-grid home-links">
+        {{range .FeatLinks}}
+        <a class="link-card" href="{{$.Tr.U (printf "/links/%s" .Slug)}}">
+          <div class="lc-cover">{{if .CoverImage}}<img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy">{{else}}<span class="lc-mono" aria-hidden="true">{{initial .Title}}</span>{{end}}</div>
+          <div class="lc-body">
+            <h3 class="lc-title">{{.Title}} <span class="lc-arrow" aria-hidden="true">→</span></h3>
+            {{if .Excerpt}}<p class="lc-intro">{{.Excerpt}}</p>{{end}}
+            {{with .Category}}<div class="lc-foot"><span class="tag">{{.Name}}</span></div>{{end}}
+          </div>
+        </a>
+        {{end}}
+      </div>
+      {{end}}
+
+      <div class="section-head">
+        <h2>{{.Site.HomeLatest}}</h2>
+        <a href="{{.Tr.U "/rss.xml"}}">{{.Tr.T "footer.rss"}}</a>
+      </div>
+
+      <div class="post-list">
+        {{range $i, $p := .Posts}}
+        <article class="post-item">
+          <div class="num">{{printf "%02d" (add $i 1)}}</div>
+          <div>
+            <div class="meta">
+              {{with $p.Category}}<a class="tag" href="{{$.Tr.U (printf "/category/%s" .Slug)}}">{{.Name}}</a><span class="sep">·</span>{{end}}
+              <time datetime="{{$.Tr.ISODate $p.PublishedAt}}">{{$.Tr.Date $p.PublishedAt}}</time>
+              <span class="sep">·</span><span class="read-time">{{$p.ReadingTime}} {{$.Tr.T "common.min"}}</span>
+            </div>
+            <h3><a href="{{$.Tr.U (printf "/posts/%s" $p.Slug)}}">{{$p.Title}}</a></h3>
+            <p>{{$p.Excerpt}}</p>
+          </div>
+        </article>
+        {{else}}
+        <p class="muted">{{.Tr.T "home.no_posts"}}</p>
+        {{end}}
+      </div>
+
+      {{if gt .TotalPages 1}}
+      <nav class="pagination" aria-label="分页导航">
+        {{if .HasPrev}}<a href="{{.Tr.U "/"}}?page={{.PrevPage}}" aria-label="上一页">←</a>{{end}}
+        {{range $n := pages .TotalPages}}
+          {{if eq $n $.PageNum}}<span class="cur" aria-current="page">{{$n}}</span>{{else}}<a href="{{$.Tr.U "/"}}?page={{$n}}">{{$n}}</a>{{end}}
+        {{end}}
+        {{if .HasNext}}<a href="{{.Tr.U "/"}}?page={{.NextPage}}" aria-label="下一页">→</a>{{end}}
+      </nav>
+      {{end}}
+    </div>
+  </main>
+{{end}}

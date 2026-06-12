@@ -1,0 +1,71 @@
+{{define "body"}}{{$p := .Post}}  <div class="read-progress" aria-hidden="true"><i></i></div>
+  <main class="wrap">
+    <div class="article-grid{{if .TOC}} has-toc{{end}}">
+      <nav class="breadcrumb article-bc" aria-label="面包屑">
+        <a href="{{.Tr.U "/"}}">{{.Tr.T "nav.home"}}</a><span class="sep">/</span>
+        <a href="{{.Tr.U "/links"}}">{{.Tr.T "nav.links"}}</a><span class="sep">/</span>
+        {{with $p.Category}}<a href="{{$.Tr.U "/links"}}?cat={{.Slug}}">{{.Name}}</a><span class="sep">/</span>{{end}}
+        <span aria-current="page">{{$p.Title}}</span>
+      </nav>
+      {{if .TOC}}
+      <aside class="toc-rail">
+        <details class="toc" open>
+          <summary>{{.Tr.T "common.toc"}}</summary>
+          <ul>
+            {{range .TOC}}<li class="lv{{.Level}}"><a href="#{{.ID}}">{{.Text}}</a></li>
+            {{end}}
+          </ul>
+        </details>
+      </aside>
+      {{end}}
+
+      <div class="article-col">
+        <article class="article-main">
+          <header class="article-head">
+            {{with $p.Category}}<p class="kicker">{{.Name}}</p>{{end}}
+            <h1>{{$p.Title}}</h1>
+            {{if $p.Excerpt}}<p class="lead">{{$p.Excerpt}}</p>{{end}}
+            {{if $p.LinkURL}}
+            <div class="link-visit-row">
+              <a class="btn btn-primary" href="{{$p.LinkURL}}" target="_blank" rel="noopener nofollow">{{.Tr.T "links.visit"}} <span class="arrow">↗</span></a>
+              <span class="link-url muted">{{$p.LinkURL}}</span>
+            </div>
+            {{end}}
+          </header>
+
+          {{if $p.CoverImage}}<img class="article-cover" src="{{$p.CoverImage}}" alt="{{$p.Title}}">{{end}}
+
+          <div class="prose">
+            {{.ContentHTML}}
+          </div>
+
+          <div class="article-foot">
+            <div class="tag-row">
+              {{with $p.Category}}<a class="tag" href="{{$.Tr.U "/links"}}?cat={{.Slug}}">{{.Name}}</a>{{end}}
+              {{range $p.KeywordList}}<a class="tag" href="{{$.Tr.U (printf "/search?q=%s" .)}}">{{.}}</a>{{end}}
+            </div>
+            {{if $p.LinkURL}}<a class="btn" href="{{$p.LinkURL}}" target="_blank" rel="noopener nofollow">{{$.Tr.T "links.visit"}} <span class="arrow">↗</span></a>{{end}}
+          </div>
+        </article>
+
+        {{if .Related}}
+        <section class="related">
+          <div class="section-head"><h2>{{.Tr.T "links.related"}}</h2></div>
+          <div class="related-grid">
+            {{range .Related}}
+            <a class="card" href="{{$.Tr.U (printf "/links/%s" .Slug)}}">
+              <div class="meta">{{with .Category}}<span class="tag">{{.Name}}</span>{{end}}</div>
+              <h4>{{.Title}}</h4>
+            </a>
+            {{end}}
+          </div>
+        </section>
+        {{end}}
+      </div>
+    </div>
+  </main>
+  <button class="to-top" aria-label="{{.Tr.T "common.back_top"}}" title="{{.Tr.T "common.back_top"}}">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+  </button>
+  <script src="/assets/js/toc.js" defer></script>
+{{end}}

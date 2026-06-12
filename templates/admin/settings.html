@@ -1,0 +1,431 @@
+{{define "body"}}  <div class="admin-head">
+    <div>
+      <nav class="breadcrumb" style="padding:0 0 .4rem"><a href="/admin">文章</a><span class="sep">/</span><span>设置</span></nav>
+      <h1>站点设置</h1>
+    </div>
+  </div>
+
+  <div class="settings-shell">
+    <nav class="settings-menu" aria-label="设置分区">
+      <a href="/admin/settings/site"{{if eq .Section "site"}} class="active"{{end}}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+        <span>站点信息</span>
+      </a>
+      <a href="/admin/settings/appearance"{{if eq .Section "appearance"}} class="active"{{end}}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor" stroke="none"/></svg>
+        <span>外观与主题</span>
+      </a>
+      <a href="/admin/settings/copy"{{if eq .Section "copy"}} class="active"{{end}}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6V4.5h16V6"/><path d="M9 20h6"/><path d="M12 4.5v15.5"/></svg>
+        <span>文案</span>
+      </a>
+      <a href="/admin/settings/menu"{{if eq .Section "menu"}} class="active"{{end}}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="20" y2="6"/><line x1="8" y1="12" x2="20" y2="12"/><line x1="8" y1="18" x2="20" y2="18"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/></svg>
+        <span>导航</span>
+      </a>
+      <a href="/admin/settings/languages"{{if eq .Section "languages"}} class="active"{{end}}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+        <span>语言</span>
+      </a>
+      <a href="/admin/settings/categories"{{if eq .Section "categories"}} class="active"{{end}}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7a2 2 0 0 1 2-2h3l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/></svg>
+        <span>分类</span>
+      </a>
+      <a href="/admin/settings/security"{{if eq .Section "security"}} class="active"{{end}}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.6-7 9-4-1.4-7-4.5-7-9V6z"/></svg>
+        <span>安全</span>
+      </a>
+    </nav>
+
+    <div class="settings-body">
+      {{if .Flash}}<div class="flash">{{.Flash}}</div>{{end}}
+      {{if .FormErr}}<div class="form-err">{{.FormErr}}</div>{{end}}
+
+      {{if eq .Section "site"}}
+      <form method="post" action="/admin/settings/site" class="admin-form">
+        <input type="hidden" name="_csrf" value="{{.CSRF}}">
+        <div class="field">
+          <label for="site_name">站点名称</label>
+          <input id="site_name" name="site_name" value="{{.Settings.Name}}" required>
+        </div>
+        <div class="field">
+          <label for="site_tagline">标语（默认语种；其它语种在「文案」分区）</label>
+          <input id="site_tagline" name="site_tagline" value="{{.Settings.Tagline}}">
+        </div>
+        <div class="field">
+          <label for="site_description">站点描述（首页 hero 与 SEO description）</label>
+          <textarea id="site_description" name="site_description" rows="3">{{.Settings.Description}}</textarea>
+        </div>
+        <div class="form-2col">
+          <div class="field">
+            <label>站点图标 Favicon</label>
+            <div class="uploader uploader-sm" data-name="site_favicon">
+              <input type="hidden" name="site_favicon" value="{{.Settings.Favicon}}">
+              <div class="up-preview" tabindex="0" role="button" aria-label="选择图片">
+                <span class="up-hint">选择</span>
+                <button type="button" class="up-remove" title="删除" aria-label="删除"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+                <input type="file" accept="image/*,.ico,.svg" hidden>
+              </div>
+              <input type="text" inputmode="url" class="up-url" placeholder="或粘贴 URL" value="{{.Settings.Favicon}}">
+              <div class="up-status"></div>
+            </div>
+          </div>
+          <div class="field">
+            <label>站点 Logo（页眉，留空用文字刊名）</label>
+            <div class="uploader uploader-sm" data-name="site_logo">
+              <input type="hidden" name="site_logo" value="{{.Settings.Logo}}">
+              <div class="up-preview" tabindex="0" role="button" aria-label="选择图片">
+                <span class="up-hint">选择</span>
+                <button type="button" class="up-remove" title="删除" aria-label="删除"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+                <input type="file" accept="image/*,.ico,.svg" hidden>
+              </div>
+              <input type="text" inputmode="url" class="up-url" placeholder="或粘贴 URL" value="{{.Settings.Logo}}">
+              <div class="up-status"></div>
+            </div>
+          </div>
+        </div>
+        <div class="field">
+          <label id="brand-label">页眉品牌（站点有 Logo 时生效）</label>
+          <div class="dropdown" data-name="site_brand">
+            <button type="button" class="dd-toggle" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="brand-label">
+              <span class="dd-label">{{if eq .Settings.Brand "both"}}Logo + 名称{{else if eq .Settings.Brand "text"}}仅名称{{else}}仅 Logo{{end}}</span>
+              <svg class="dd-caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+            <input type="hidden" name="site_brand" value="{{if .Settings.Brand}}{{.Settings.Brand}}{{else}}logo{{end}}">
+            <ul class="dd-menu" role="listbox">
+              <li role="option" data-value="logo" aria-selected="{{if eq .Settings.Brand "logo"}}true{{else}}false{{end}}">仅 Logo</li>
+              <li role="option" data-value="both" aria-selected="{{if eq .Settings.Brand "both"}}true{{else}}false{{end}}">Logo + 名称</li>
+              <li role="option" data-value="text" aria-selected="{{if eq .Settings.Brand "text"}}true{{else}}false{{end}}">仅名称</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>社交链接（页脚「关注」栏）</label>
+          <p class="muted" style="margin:.1rem 0 .7rem;font-size:.82rem">填主页 / 资料链接即可，图标按域名自动识别（GitHub、X、YouTube、Telegram、LinkedIn、微博、邮箱 <code>mailto:</code> 等）；名称留空自动命名，拖空即不显示。</p>
+          <div class="social-rows" data-social-rows>
+            {{range .Social}}
+            <div class="social-row">
+              <input name="social_url" value="{{.URL}}" placeholder="https://github.com/you 或 mailto:you@x.com" inputmode="url">
+              <input name="social_label" value="{{.Label}}" placeholder="名称（可选）">
+              <button type="button" class="social-del" data-social-del title="删除" aria-label="删除">{{template "icon-trash"}}</button>
+            </div>
+            {{end}}
+          </div>
+          <button type="button" class="btn btn-soft" data-social-add>＋ 添加链接</button>
+        </div>
+
+        <button class="btn btn-primary" type="submit">保存站点信息</button>
+      </form>
+
+      {{else if eq .Section "appearance"}}
+      <form method="post" action="/admin/settings/appearance" class="admin-form">
+        <input type="hidden" name="_csrf" value="{{.CSRF}}">
+        <div class="field-group">
+          <h3 class="group-head">当前主题与微调</h3>
+          <div class="current-theme-row">
+            <p class="current-theme"><span class="muted">当前主题：</span><strong data-cur-theme>{{range .Cards}}{{if eq .ID $.Settings.Theme}}{{.Name}}{{end}}{{end}}</strong></p>
+            <button class="btn btn-primary" type="submit">保存外观设置</button>
+          </div>
+          <div class="tweak">
+            <label class="tweak-toggle">
+              <input type="checkbox" name="theme_custom"{{if .Settings.Custom}} checked{{end}}>
+              <span>微调<strong>当前选中主题</strong>的主色与圆角（每个主题各自保存）</span>
+            </label>
+            <div class="tweak-row">
+              <div class="field">
+                <label for="theme_accent">主色</label>
+                <div class="color-field">
+                  <input type="color" id="theme_accent" name="theme_accent" value="{{.Settings.Accent}}">
+                  <output class="color-hex" for="theme_accent">{{.Settings.Accent}}</output>
+                </div>
+              </div>
+              <div class="field">
+                <label for="theme_radius">圆角 <output class="radius-val" for="theme_radius">{{.Settings.Radius}}px</output></label>
+                <input type="range" id="theme_radius" name="theme_radius" min="0" max="24" step="1" value="{{.Settings.Radius}}">
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="field-group hero-visual-set">
+          <h3 class="group-head">首页 Hero 右侧视觉</h3>
+          <p class="muted" style="margin:-.2rem 0 .9rem;font-size:.85rem">默认是科技感动画，可替换为图片、SVG 文件或直接粘贴 SVG 代码。</p>
+          <div class="field">
+            <label id="hero-visual-label">显示方式</label>
+            <div class="dropdown" data-name="hero_visual" data-hero-type>
+              <button type="button" class="dd-toggle" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="hero-visual-label">
+                <span class="dd-label">{{if eq .Settings.HeroVisual "image"}}图片 / SVG 文件{{else if eq .Settings.HeroVisual "svg"}}SVG 代码{{else if eq .Settings.HeroVisual "anim1"}}动画1{{else}}默认动画{{end}}</span>
+                <svg class="dd-caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+              </button>
+              <input type="hidden" name="hero_visual" value="{{.Settings.HeroVisual}}">
+              <ul class="dd-menu" role="listbox">
+                <li role="option" data-value="" aria-selected="{{if not .Settings.HeroVisual}}true{{else}}false{{end}}">默认动画</li>
+                <li role="option" data-value="anim1" aria-selected="{{if eq .Settings.HeroVisual "anim1"}}true{{else}}false{{end}}">动画1</li>
+                <li role="option" data-value="image" aria-selected="{{if eq .Settings.HeroVisual "image"}}true{{else}}false{{end}}">图片 / SVG 文件</li>
+                <li role="option" data-value="svg" aria-selected="{{if eq .Settings.HeroVisual "svg"}}true{{else}}false{{end}}">SVG 代码</li>
+              </ul>
+            </div>
+          </div>
+          <div class="field" data-hero-when="image"{{if ne .Settings.HeroVisual "image"}} hidden{{end}}>
+            <label>图片或 SVG 文件</label>
+            <div class="uploader" data-name="hero_image">
+              <input type="hidden" name="hero_image" value="{{.Settings.HeroImage}}">
+              <div class="up-preview" tabindex="0" role="button" aria-label="选择图片">
+                <span class="up-hint">点击选择图片 / SVG</span>
+                <button type="button" class="up-remove" title="删除" aria-label="删除"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+                <input type="file" accept="image/*,.svg" hidden>
+              </div>
+              <input type="text" inputmode="url" class="up-url" placeholder="或粘贴图片 URL" value="{{.Settings.HeroImage}}">
+              <div class="up-status"></div>
+            </div>
+          </div>
+          <div class="field" data-hero-when="svg"{{if ne .Settings.HeroVisual "svg"}} hidden{{end}}>
+            <label for="hero_svg">SVG 代码（粘贴整段 &lt;svg&gt;…&lt;/svg&gt;）</label>
+            <textarea id="hero_svg" name="hero_svg" rows="6" spellcheck="false" placeholder="&lt;svg viewBox=&quot;0 0 480 440&quot;&gt;…&lt;/svg&gt;">{{.Settings.HeroSVG}}</textarea>
+          </div>
+        </div>
+
+        <div class="field-group">
+          <h3 class="group-head">可选主题</h3>
+          <p class="muted" style="margin:-.2rem 0 .9rem;font-size:.85rem">十套主题<strong>布局结构</strong>各异（页眉、首页列表、卡片样式），点选即切换、上方保存即生效。</p>
+          <div class="theme-picker">
+            {{range .Cards}}
+            <label class="theme-card{{if eq .ID $.Settings.Theme}} sel{{end}}">
+              <input type="radio" name="theme" value="{{.ID}}" data-accent="{{.Accent}}" data-radius="{{.Radius}}" data-custom="{{if .Custom}}1{{end}}" data-theme-name="{{.Name}}"{{if eq .ID $.Settings.Theme}} checked{{end}}>
+              <span class="tc-prev tc-{{.ID}}" aria-hidden="true"><i class="b1"></i><i class="b2"></i><i class="b3"></i></span>
+              <span class="tc-name">{{.Name}}</span>
+              <span class="tc-desc">{{.Desc}}</span>
+            </label>
+            {{end}}
+          </div>
+        </div>
+      </form>
+
+      {{else if eq .Section "copy"}}
+      {{if gt (len .Locales) 1}}
+      <div class="lang-tabs" role="tablist" aria-label="文案语种">
+        {{range .Locales}}<a href="/admin/settings/copy?lang={{.Code}}"{{if eq .Code $.EditLang}} class="active" aria-current="true"{{end}}>{{.Name}}</a>{{end}}
+      </div>
+      {{end}}
+      <form method="post" action="/admin/settings/copy" class="admin-form">
+        <input type="hidden" name="_csrf" value="{{.CSRF}}">
+        <input type="hidden" name="lang" value="{{.EditLang}}">
+        <p class="muted" style="margin:.1rem 0 1.1rem;font-size:.9rem">编辑「<strong>{{range .Locales}}{{if eq .Code $.EditLang}}{{.Name}}{{end}}{{end}}</strong>」语种的前台文案，留空则回落默认语种。</p>
+
+        <div class="field-group">
+          <h3 class="group-head">首页 Hero</h3>
+          <div class="field">
+            <label for="hero_eyebrow">眉标（标题上方小字）</label>
+            <input id="hero_eyebrow" name="hero_eyebrow" value="{{.Settings.HeroEyebrow}}">
+          </div>
+          <div class="field">
+            <label for="hero_title">大标题（换行即分行）</label>
+            <textarea id="hero_title" name="hero_title" rows="2">{{.Settings.HeroTitle}}</textarea>
+          </div>
+        </div>
+
+        <div class="field-group">
+          <h3 class="group-head">首页栏目标题</h3>
+          <p class="muted" style="margin:-.2rem 0 .9rem;font-size:.85rem">首页各板块的 H2 标题，留空则使用该语种默认值（灰字提示）。</p>
+          <div class="field">
+            <label for="home_featured">「精选文章」板块标题</label>
+            <input id="home_featured" name="home_featured" value="{{.Settings.HomeFeatured}}" placeholder="{{.Settings.HomeFeaturedDef}}">
+          </div>
+          <div class="field">
+            <label for="home_links">「精选链接」板块标题</label>
+            <input id="home_links" name="home_links" value="{{.Settings.HomeLinks}}" placeholder="{{.Settings.HomeLinksDef}}">
+          </div>
+          <div class="field">
+            <label for="home_latest">「最新文章」板块标题</label>
+            <input id="home_latest" name="home_latest" value="{{.Settings.HomeLatest}}" placeholder="{{.Settings.HomeLatestDef}}">
+          </div>
+        </div>
+
+        <div class="field-group">
+          <h3 class="group-head">站点描述</h3>
+          <div class="field">
+            <label for="tagline">标语</label>
+            <input id="tagline" name="tagline" value="{{.Settings.Tagline}}">
+          </div>
+          <div class="field">
+            <label for="description">站点描述（首页 hero 副文案与 SEO description）</label>
+            <textarea id="description" name="description" rows="3">{{.Settings.Description}}</textarea>
+          </div>
+        </div>
+
+        <div class="field-group">
+          <h3 class="group-head">页脚</h3>
+          <div class="field">
+            <label for="footer_note">页脚说明（logo 下方）</label>
+            <input id="footer_note" name="footer_note" value="{{.Settings.FooterNote}}">
+          </div>
+        </div>
+
+        <button class="btn btn-primary" type="submit">保存文案</button>
+      </form>
+
+      {{else if eq .Section "menu"}}
+      <p class="muted" style="margin:.1rem 0 1rem;font-size:.9rem">自定义页眉导航：<strong>拖动排序</strong>、每个语种<strong>单独命名</strong>。<strong>内部路径</strong>（如 <code>/</code>、<code>/category/engineering</code>、<code>/about</code>、<code>/search</code>）会自动加语种前缀；<strong>外部链接</strong>填完整 <code>https://…</code>（新窗口打开）。</p>
+      <form method="post" action="/admin/settings/menu" class="admin-form">
+        <input type="hidden" name="_csrf" value="{{.CSRF}}">
+        <div class="menu-rows" data-menu-rows data-langs="{{range $i, $l := .Locales}}{{if $i}},{{end}}{{$l.Code}}{{end}}" data-lang-names="{{range $i, $l := .Locales}}{{if $i}},{{end}}{{$l.Name}}{{end}}">
+          {{range $row := .MenuEdit}}
+          <div class="menu-row">
+            <span class="drag-handle" aria-hidden="true">⠿</span>
+            <div class="menu-fields">
+              <input class="menu-url" name="nav_url" value="{{$row.URL}}" placeholder="/ 或 /category/eng 或 https://…" inputmode="url">
+              <div class="menu-labels">
+                {{range $.Locales}}<label class="menu-label"><span class="ml-lang">{{.Name}}</span><input name="nav_label_{{.Code}}" value="{{index $row.Labels .Code}}" placeholder="名称"></label>{{end}}
+              </div>
+            </div>
+            <button type="button" class="menu-del" data-menu-del title="删除" aria-label="删除">{{template "icon-trash"}}</button>
+          </div>
+          {{end}}
+        </div>
+        <div class="menu-foot">
+          <button type="button" class="btn btn-soft" data-menu-add>＋ 添加菜单项</button>
+          <button class="btn btn-primary" type="submit">保存菜单</button>
+        </div>
+      </form>
+
+      {{else if eq .Section "languages"}}
+      <form method="post" action="/admin/settings/languages" class="admin-form">
+        <input type="hidden" name="_csrf" value="{{.CSRF}}">
+        <p class="muted" style="margin:.1rem 0 1rem;font-size:.9rem">勾选要在前台启用的语种。「默认」语种是 <code>/</code> 的跳转目标，也是文案与内容的回落语种；每个语种的 URL 形如 <code>/en/…</code>。</p>
+        <table class="admin-table lang-table">
+          <thead><tr><th>语种</th><th>代码 · 标记</th><th class="center">启用</th><th class="center">默认</th></tr></thead>
+          <tbody>
+            {{range .AllLocales}}
+            <tr>
+              <td><strong>{{.Name}}</strong></td>
+              <td class="slug">{{.Code}} · {{.Tag}}{{if .Custom}} <span class="mini-tag">自定义</span>{{end}}</td>
+              <td class="center"><input type="checkbox" name="enabled" value="{{.Code}}"{{if localeOn $.Locales .Code}} checked{{end}}></td>
+              <td class="center"><input type="radio" name="default_lang" value="{{.Code}}"{{if eq .Code $.EditLang}} checked{{end}}></td>
+            </tr>
+            {{end}}
+          </tbody>
+        </table>
+        <button class="btn btn-primary" type="submit" style="margin-top:1rem">保存语言设置</button>
+      </form>
+
+      <div class="field-group" style="margin-top:1.8rem;border-top:1px solid var(--line);padding-top:1.4rem">
+        <h3 class="group-head">自定义语种预设</h3>
+        <p class="muted" style="margin:-.2rem 0 .9rem;font-size:.85rem">没有想要的语言？在此新增任意语种：<strong>代码</strong>用作 URL 前缀（如 <code>/pt/…</code>），<strong>标记</strong>为 BCP47（如 <code>pt-BR</code>）。新增后到上方勾选启用。自定义语种的界面文案会回落默认语种。</p>
+        {{if .CustomLocales}}
+        <table class="admin-table" style="margin-bottom:1rem">
+          <thead><tr><th>名称</th><th>代码</th><th>标记</th><th>OG</th><th class="right">操作</th></tr></thead>
+          <tbody>
+            {{range .CustomLocales}}
+            <tr>
+              <td><strong>{{.Name}}</strong></td>
+              <td class="slug">{{.Code}}</td>
+              <td class="slug">{{.Tag}}</td>
+              <td class="slug">{{.OG}}</td>
+              <td class="right actions">
+                <form method="post" action="/admin/settings/languages/preset/delete" data-confirm="删除自定义语种「{{.Name}}」？该语种下的内容不会被删除，但前台将不再可达。">
+                  <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+                  <input type="hidden" name="code" value="{{.Code}}">
+                  <button class="del act-ico" type="submit" title="删除" aria-label="删除">{{template "icon-trash"}}</button>
+                </form>
+              </td>
+            </tr>
+            {{end}}
+          </tbody>
+        </table>
+        {{end}}
+        <form method="post" action="/admin/settings/languages/preset" class="admin-form preset-form">
+          <input type="hidden" name="_csrf" value="{{.CSRF}}">
+          <div class="preset-grid">
+            <div class="field"><label for="pl-code">代码 *</label><input id="pl-code" name="code" placeholder="pt" required></div>
+            <div class="field"><label for="pl-name">名称</label><input id="pl-name" name="name" placeholder="Português"></div>
+            <div class="field"><label for="pl-tag">BCP47 标记</label><input id="pl-tag" name="tag" placeholder="pt-BR"></div>
+            <div class="field"><label for="pl-og">OG locale</label><input id="pl-og" name="og" placeholder="pt_BR"></div>
+          </div>
+          <button class="btn" type="submit" style="margin-top:.4rem">＋ 新增预设</button>
+        </form>
+      </div>
+
+      {{else if eq .Section "categories"}}
+      {{if gt (len .Locales) 1}}
+      <div class="lang-tabs" role="tablist" aria-label="分类语种">
+        {{range .Locales}}<a href="/admin/settings/categories?kind={{$.CatKind}}&lang={{.Code}}"{{if eq .Code $.EditLang}} class="active" aria-current="true"{{end}}>{{.Name}}</a>{{end}}
+      </div>
+      {{end}}
+      <div class="cat-toolbar">
+        <div class="lang-tabs" role="tablist" aria-label="分类类型">
+          <a href="/admin/settings/categories?kind=post&lang={{.EditLang}}"{{if ne .CatKind "link"}} class="active" aria-current="true"{{end}}>文章分类</a>
+          <a href="/admin/settings/categories?kind=link&lang={{.EditLang}}"{{if eq .CatKind "link"}} class="active" aria-current="true"{{end}}>链接分类</a>
+        </div>
+        <button type="button" class="btn btn-primary" data-cat-add>＋ 新增分类</button>
+      </div>
+      <p class="muted" style="margin:.2rem 0 0;font-size:.9rem">{{if eq .CatKind "link"}}链接{{else}}文章{{end}}在编辑页选择分类（同语种、同类型；文章分类与链接分类相互独立）。拖动行可调整顺序（影响前台分类导航的排列）。</p>
+      <table class="admin-table" style="margin-top:.6rem">
+        <thead><tr><th style="width:28px"></th><th>名称</th><th>Slug</th><th>文章数</th><th class="right">操作</th></tr></thead>
+        <tbody id="cat-sortable">
+          {{range .Categories}}
+          <tr class="cat-row" draggable="true" data-id="{{.ID}}">
+            <td class="drag-handle" aria-hidden="true">⠿</td>
+            <td><strong>{{.Name}}</strong>{{if .Description}}<div class="muted" style="font-size:.8rem;margin-top:.2rem">{{.Description}}</div>{{end}}</td>
+            <td class="slug">{{.Slug}}</td>
+            <td class="muted">{{.Count}}</td>
+            <td class="right actions">
+              <button type="button" class="linkbtn" data-cat-edit data-id="{{.ID}}" data-name="{{.Name}}" data-slug="{{.Slug}}" data-desc="{{.Description}}">编辑</button>
+              <form method="post" action="/admin/settings/categories/delete" data-confirm="删除分类「{{.Name}}」？该分类下内容将变为未分类。">
+                <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+                <input type="hidden" name="lang" value="{{$.EditLang}}">
+                <input type="hidden" name="kind" value="{{$.CatKind}}">
+                <input type="hidden" name="id" value="{{.ID}}">
+                <button class="del act-ico" type="submit" title="删除" aria-label="删除">{{template "icon-trash"}}</button>
+              </form>
+            </td>
+          </tr>
+          {{else}}<tr><td colspan="5" class="muted">该语种下还没有分类，点击右上角新增。</td></tr>{{end}}
+        </tbody>
+      </table>
+
+      <!-- 分类新增/编辑模态框 -->
+      <div class="modal" id="cat-modal" hidden>
+        <div class="modal-backdrop" data-cat-close></div>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="cat-modal-title">
+          <h3 id="cat-modal-title">新增分类</h3>
+          <form method="post" action="/admin/settings/categories" class="admin-form">
+            <input type="hidden" name="_csrf" value="{{.CSRF}}">
+            <input type="hidden" name="lang" value="{{.EditLang}}">
+            <input type="hidden" name="kind" value="{{.CatKind}}">
+            <input type="hidden" name="id" id="cat-id" value="">
+            <div class="field"><label for="cat-name">名称</label><input id="cat-name" name="name" required></div>
+            <div class="field"><label for="cat-slug">Slug（留空自动生成）</label><input id="cat-slug" name="slug"></div>
+            <div class="field"><label for="cat-desc">描述（分类页与 SEO）</label><textarea id="cat-desc" name="description" rows="2"></textarea></div>
+            <div style="display:flex;gap:.6rem;justify-content:flex-end">
+              <button type="button" class="btn" data-cat-close>取消</button>
+              <button type="submit" class="btn btn-primary">保存</button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      {{else if eq .Section "security"}}
+      <form method="post" action="/admin/settings/security" class="admin-form">
+        <input type="hidden" name="_csrf" value="{{.CSRF}}">
+        <p class="muted" style="margin:.1rem 0 1.2rem;font-size:.9rem">修改后台登录密码。新密码至少 6 位。</p>
+        <div class="field">
+          <label for="current_password">当前密码</label>
+          <input id="current_password" name="current_password" type="password" autocomplete="current-password" required>
+        </div>
+        <div class="form-2col">
+          <div class="field">
+            <label for="new_password">新密码</label>
+            <input id="new_password" name="new_password" type="password" autocomplete="new-password" required>
+          </div>
+          <div class="field">
+            <label for="confirm_password">确认新密码</label>
+            <input id="confirm_password" name="confirm_password" type="password" autocomplete="new-password" required>
+          </div>
+        </div>
+        <button class="btn btn-primary" type="submit">更新密码</button>
+      </form>
+      {{end}}
+    </div>
+  </div>
+{{end}}

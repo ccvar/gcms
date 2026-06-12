@@ -1,0 +1,38 @@
+{{define "head"}}  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#9a3b2f">
+  <link rel="icon" href="{{if .Site.Favicon}}{{.Site.Favicon}}{{else}}/assets/favicon.svg{{end}}">
+
+  <title>{{.SEO.Title}}</title>
+  <meta name="description" content="{{.SEO.Description}}">
+  {{if .SEO.Keywords}}<meta name="keywords" content="{{.SEO.Keywords}}">{{end}}
+  {{if .SEO.Author}}<meta name="author" content="{{.SEO.Author}}">{{end}}
+  <meta name="robots" content="{{.SEO.Robots}}">
+  <link rel="canonical" href="{{.SEO.Canonical}}">
+  {{range .SEO.Alternates}}<link rel="alternate" hreflang="{{.Hreflang}}" href="{{.Href}}">
+  {{end}}
+  <meta property="og:type" content="{{.SEO.OGType}}">
+  <meta property="og:site_name" content="{{.Site.Name}}">
+  <meta property="og:title" content="{{.SEO.Title}}">
+  <meta property="og:description" content="{{.SEO.Description}}">
+  <meta property="og:url" content="{{.SEO.Canonical}}">
+  {{if .SEO.Image}}<meta property="og:image" content="{{.SEO.Image}}">{{end}}
+  <meta property="og:locale" content="{{.Site.Locale}}">
+  {{range .Site.OGAltLocale}}<meta property="og:locale:alternate" content="{{.}}">
+  {{end}}
+  {{if .SEO.Published}}<meta property="article:published_time" content="{{.SEO.Published}}">{{end}}
+  {{if .SEO.Modified}}<meta property="article:modified_time" content="{{.SEO.Modified}}">{{end}}
+  {{if .SEO.Section}}<meta property="article:section" content="{{.SEO.Section}}">{{end}}
+
+  <meta name="twitter:card" content="{{if .SEO.Image}}summary_large_image{{else}}summary{{end}}">
+  <meta name="twitter:title" content="{{.SEO.Title}}">
+  <meta name="twitter:description" content="{{.SEO.Description}}">
+  {{if .SEO.Image}}<meta name="twitter:image" content="{{.SEO.Image}}">{{end}}
+
+  {{if .Tr}}<link rel="alternate" type="application/rss+xml" title="{{.Site.Name}} RSS" href="{{.Tr.U "/rss.xml"}}">{{end}}
+  <link rel="sitemap" type="application/xml" href="/sitemap.xml">
+
+  {{range .SEO.JSONLD}}<script type="application/ld+json">{{.}}</script>
+  {{end}}
+  <link rel="stylesheet" href="/assets/css/style.css?v={{.AssetVer}}">
+{{end}}

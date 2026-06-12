@@ -1,0 +1,22 @@
+# 数据库（运行时生成，含种子数据）
+/data/
+*.db
+*.db-wal
+*.db-shm
+
+# 构建产物
+/cms
+/ccvar-cms
+/tmp/
+/bin/
+
+# 启停脚本运行时（PID / 日志）与自动下载的 Go 工具链
+/run/
+/.go/
+
+# 系统
+.DS_Store
+.claude
+
+# 发布包
+/dist/
