@@ -1,0 +1,131 @@
+{{define "theme_preview"}}<!DOCTYPE html>
+<html lang="{{if .Site.LangTag}}{{.Site.LangTag}}{{else}}zh-CN{{end}}" data-theme="{{.Theme}}"{{if .ThemeStyle}} style="{{.ThemeStyle}}"{{end}}>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=1120, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <link rel="stylesheet" href="/assets/css/style.css?v={{.AssetVer}}">
+  <style>
+    html, body { width: 1120px; min-height: 760px; overflow: hidden; }
+    body { background: var(--bg); }
+    a { pointer-events: none; }
+    .site-header { position: relative; top: auto; }
+    .preview-page .hero { padding: 3.4rem 0 2.4rem; }
+    .preview-page .hero-inner { min-height: 300px; }
+    .preview-page .hero h1 { max-width: 10.5em; }
+    .preview-page .hero-visual { min-height: 240px; }
+    .preview-page .section-head { margin: 1.5rem 0 .75rem; }
+    .preview-page .feature { margin-bottom: 1rem; }
+    .preview-page .feature .cover { min-height: 190px; }
+    .preview-page .link-grid { margin-bottom: 1rem; }
+    .preview-page .hero-svg .preview-panel { fill: var(--accent-wash); stroke: var(--accent); stroke-opacity: .28; }
+    .preview-page .hero-svg .preview-line { fill: var(--line); opacity: .9; }
+    .preview-page .hero-svg .preview-line.accent { fill: var(--accent); opacity: .72; }
+    .site-footer, .pagination, .read-progress, .to-top { display: none !important; }
+  </style>
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap">
+      {{if and .Site.Logo (ne .Site.Brand "text")}}<a class="brand has-logo{{if eq .Site.Brand "both"}} with-name{{end}}" href="#"><img class="brand-logo" src="{{.Site.Logo}}" alt="{{.Site.Name}}">{{if eq .Site.Brand "both"}}<span class="brand-name">{{.Site.Name}}</span>{{end}}</a>{{else}}<a class="brand" href="#">{{.Site.Name}}</a>{{end}}
+      <nav class="nav" aria-label="主题预览导航">
+        {{range .Menu}}<a href="#">{{.Label}}</a>{{end}}
+        <a class="search-ico" href="#" aria-label="{{.Tr.T "nav.search"}}">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+        </a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="preview-page">
+    <section class="hero">
+      <div class="wrap hero-inner">
+        <div class="hero-text">
+          <p class="eyebrow">{{.Site.HeroEyebrow}}</p>
+          <h1>{{nl2br .Site.HeroTitle}}</h1>
+          <p class="hero-sub">{{.Site.Description}}</p>
+          <div class="hero-cta">
+            <a class="btn btn-primary" href="#">{{.Tr.T "home.cta_start"}} <span class="arrow">→</span></a>
+            <a class="btn" href="#">{{.Tr.T "home.cta_more"}}</a>
+          </div>
+        </div>
+        <div class="hero-visual" aria-hidden="true">
+          <svg class="hero-svg hero-anim2" viewBox="0 0 480 440" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <defs><pattern id="previewDots" width="26" height="26" patternUnits="userSpaceOnUse"><circle cx="1.3" cy="1.3" r="1.3" class="hv2-grid"/></pattern></defs>
+            <rect x="0" y="0" width="480" height="440" fill="url(#previewDots)"/>
+            <circle class="hv2-glow" cx="240" cy="206" r="60"/>
+            <circle class="hv2-pulse" cx="240" cy="206" r="52"/>
+            <circle class="hv2-orbit" cx="240" cy="206" r="92"/>
+            <path class="hv2-wire" d="M120,112 C158,150 170,160 196,178"/>
+            <path class="hv2-wire" d="M284,178 C312,158 330,142 356,116"/>
+            <path class="hv2-wire" d="M240,256 C240,288 240,302 240,324"/>
+            <rect class="hv-panel mid" x="206" y="120" width="180" height="120" rx="14"/>
+            <rect class="hv-card" x="104" y="150" width="266" height="196" rx="16"/>
+            <rect class="preview-panel" x="126" y="260" width="218" height="64" rx="9"/>
+            <rect class="preview-line accent" x="142" y="276" width="72" height="7" rx="3.5"/>
+            <rect class="preview-line" x="142" y="292" width="172" height="6" rx="3"/>
+            <rect class="preview-line" x="142" y="306" width="126" height="6" rx="3"/>
+            <rect class="hv2-win" x="198" y="324" width="84" height="64" rx="9"/>
+            <rect class="hv2-chip" x="190" y="156" width="100" height="100" rx="24"/>
+            <rect class="hv2-cl accent" x="210" y="180" width="38" height="7" rx="3.5"/>
+            <rect class="hv2-cl" x="210" y="194" width="58" height="6" rx="3"/>
+            <rect class="hv2-cl dim" x="210" y="220" width="26" height="6" rx="3"/>
+          </svg>
+        </div>
+      </div>
+    </section>
+
+    <div class="wrap">
+      {{with .Featured}}
+      <div class="section-head">
+        <h2>{{$.Site.HomeFeatured}}</h2>
+        <a href="#">{{$.Tr.T "home.view_all"}} <span class="arrow">→</span></a>
+      </div>
+      <article class="feature no-cover">
+        <div>
+          <div class="meta">{{with .Category}}<span class="tag">{{.Name}}</span><span class="sep">·</span>{{end}}<time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time></div>
+          <h3><a href="#">{{.Title}}</a></h3>
+          <p>{{.Excerpt}}</p>
+          <a class="btn" href="#">{{$.Tr.T "home.read_more"}} <span class="arrow">→</span></a>
+        </div>
+      </article>
+      {{end}}
+
+      {{if .FeatLinks}}
+      <div class="section-head">
+        <h2>{{.Site.HomeLinks}}</h2>
+        <a href="#">{{.Tr.T "home.view_all"}} <span class="arrow">→</span></a>
+      </div>
+      <div class="link-grid home-links">
+        {{range .FeatLinks}}
+        <a class="link-card" href="#">
+          <div class="lc-cover"><span class="lc-mono" aria-hidden="true">{{initial .Title}}</span></div>
+          <div class="lc-body">
+            <h3 class="lc-title">{{.Title}} <span class="lc-arrow" aria-hidden="true">→</span></h3>
+            {{if .Excerpt}}<p class="lc-intro">{{.Excerpt}}</p>{{end}}
+          </div>
+        </a>
+        {{end}}
+      </div>
+      {{end}}
+
+      <div class="section-head">
+        <h2>{{.Site.HomeLatest}}</h2>
+        <a href="#">{{.Tr.T "footer.rss"}}</a>
+      </div>
+      <div class="post-list">
+        {{range $i, $p := .Posts}}
+        <article class="post-item">
+          <div class="num">{{printf "%02d" (add $i 1)}}</div>
+          <div>
+            <div class="meta">{{with $p.Category}}<span class="tag">{{.Name}}</span><span class="sep">·</span>{{end}}<time datetime="{{$.Tr.ISODate $p.PublishedAt}}">{{$.Tr.Date $p.PublishedAt}}</time></div>
+            <h3><a href="#">{{$p.Title}}</a></h3>
+            <p>{{$p.Excerpt}}</p>
+          </div>
+        </article>
+        {{end}}
+      </div>
+    </div>
+  </main>
+</body>
+</html>{{end}}

@@ -176,6 +176,27 @@ CREATE TABLE IF NOT EXISTS admin_sessions (
   created_at   TEXT NOT NULL,
   updated_at   TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS automation_keys (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  name         TEXT NOT NULL,
+  token_hash   TEXT NOT NULL UNIQUE,
+  token_prefix TEXT NOT NULL,
+  scopes       TEXT NOT NULL DEFAULT '',
+  last_used_at TEXT,
+  created_at   TEXT NOT NULL,
+  revoked_at   TEXT
+);
+
+CREATE TABLE IF NOT EXISTS automation_logs (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  key_id      INTEGER REFERENCES automation_keys(id) ON DELETE SET NULL,
+  action      TEXT NOT NULL,
+  target_type TEXT NOT NULL,
+  target_id   INTEGER NOT NULL DEFAULT 0,
+  message     TEXT NOT NULL DEFAULT '',
+  created_at  TEXT NOT NULL
+);
 `
 
 func (s *Store) migrate() error {
@@ -406,6 +427,182 @@ func (s *Store) DeleteAdminSession(token string) error {
 func (s *Store) DismissAdminPasswordWarning(token string) error {
 	_, err := s.db.Exec(`UPDATE admin_sessions SET pw_dismissed=1,updated_at=? WHERE token_hash=?`, fmtTime(time.Now()), sessionTokenHash(token))
 	return err
+}
+
+// ---------- 自动化 API Key ----------
+
+type AutomationKey struct {
+	ID          int64
+	Name        string
+	TokenPrefix string
+	Scopes      string
+	LastUsedAt  time.Time
+	CreatedAt   time.Time
+	RevokedAt   time.Time
+}
+
+type AutomationLog struct {
+	ID         int64
+	KeyID      int64
+	KeyName    string
+	Action     string
+	TargetType string
+	TargetID   int64
+	Message    string
+	CreatedAt  time.Time
+}
+
+func (k *AutomationKey) ScopeList() []string {
+	var out []string
+	for _, s := range strings.Split(k.Scopes, ",") {
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func automationTokenHash(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
+func (s *Store) CreateAutomationKey(name, token, prefix, scopes string) (int64, error) {
+	now := fmtTime(time.Now())
+	res, err := s.db.Exec(`INSERT INTO automation_keys(name,token_hash,token_prefix,scopes,created_at)
+		VALUES(?,?,?,?,?)`, name, automationTokenHash(token), prefix, scopes, now)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+func (s *Store) ListAutomationKeys() ([]*AutomationKey, error) {
+	rows, err := s.db.Query(`SELECT id,name,token_prefix,scopes,last_used_at,created_at,revoked_at
+		FROM automation_keys ORDER BY revoked_at IS NOT NULL, created_at DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*AutomationKey
+	for rows.Next() {
+		k, err := scanAutomationKey(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, k)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) GetAutomationKeyByID(id int64) (*AutomationKey, bool, error) {
+	row := s.db.QueryRow(`SELECT id,name,token_prefix,scopes,last_used_at,created_at,revoked_at
+		FROM automation_keys WHERE id=?`, id)
+	k, err := scanAutomationKey(row)
+	if err == sql.ErrNoRows {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return k, true, nil
+}
+
+func (s *Store) GetAutomationKeyByToken(token string) (*AutomationKey, bool, error) {
+	row := s.db.QueryRow(`SELECT id,name,token_prefix,scopes,last_used_at,created_at,revoked_at
+		FROM automation_keys WHERE token_hash=? AND revoked_at IS NULL`, automationTokenHash(token))
+	k, err := scanAutomationKey(row)
+	if err == sql.ErrNoRows {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return k, true, nil
+}
+
+func (s *Store) RegenerateAutomationKey(id int64, token, prefix string) error {
+	res, err := s.db.Exec(`UPDATE automation_keys
+		SET token_hash=?, token_prefix=?, last_used_at=NULL
+		WHERE id=? AND revoked_at IS NULL`, automationTokenHash(token), prefix, id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (s *Store) TouchAutomationKey(id int64) error {
+	_, err := s.db.Exec(`UPDATE automation_keys SET last_used_at=? WHERE id=?`, fmtTime(time.Now()), id)
+	return err
+}
+
+func (s *Store) RevokeAutomationKey(id int64) error {
+	_, err := s.db.Exec(`UPDATE automation_keys SET revoked_at=COALESCE(revoked_at,?) WHERE id=?`, fmtTime(time.Now()), id)
+	return err
+}
+
+func (s *Store) DeleteRevokedAutomationKey(id int64) error {
+	res, err := s.db.Exec(`DELETE FROM automation_keys WHERE id=? AND revoked_at IS NOT NULL`, id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func scanAutomationKey(sc interface{ Scan(...any) error }) (*AutomationKey, error) {
+	var k AutomationKey
+	var last, created, revoked sql.NullString
+	if err := sc.Scan(&k.ID, &k.Name, &k.TokenPrefix, &k.Scopes, &last, &created, &revoked); err != nil {
+		return nil, err
+	}
+	k.LastUsedAt = parseTime(last)
+	k.CreatedAt = parseTime(created)
+	k.RevokedAt = parseTime(revoked)
+	return &k, nil
+}
+
+func (s *Store) CreateAutomationLog(keyID int64, action, targetType string, targetID int64, message string) error {
+	_, err := s.db.Exec(`INSERT INTO automation_logs(key_id,action,target_type,target_id,message,created_at)
+		VALUES(?,?,?,?,?,?)`, keyID, action, targetType, targetID, message, fmtTime(time.Now()))
+	return err
+}
+
+func (s *Store) ListAutomationLogs(limit int) ([]*AutomationLog, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	rows, err := s.db.Query(`SELECT l.id,COALESCE(l.key_id,0),COALESCE(k.name,''),l.action,l.target_type,l.target_id,l.message,l.created_at
+		FROM automation_logs l LEFT JOIN automation_keys k ON k.id=l.key_id
+		ORDER BY l.created_at DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*AutomationLog
+	for rows.Next() {
+		var l AutomationLog
+		var created sql.NullString
+		if err := rows.Scan(&l.ID, &l.KeyID, &l.KeyName, &l.Action, &l.TargetType, &l.TargetID, &l.Message, &created); err != nil {
+			return nil, err
+		}
+		l.CreatedAt = parseTime(created)
+		out = append(out, &l)
+	}
+	return out, rows.Err()
 }
 
 // ---------- 查询：公开站点 ----------
@@ -791,6 +988,41 @@ func (s *Store) TranslationsPublished(group string) ([]*Post, error) {
 
 func (s *Store) ListAllPosts(lang string) ([]*Post, error) {
 	return s.queryPostSummaries(`WHERE p.type='post' AND p.lang=? ORDER BY p.updated_at DESC`, lang)
+}
+
+func (s *Store) ListContentForAutomation(kind, lang, status, query, slug string, offset, limit int) ([]*Post, error) {
+	switch kind {
+	case "post", "page", "link":
+	default:
+		return nil, fmt.Errorf("unsupported content type: %s", kind)
+	}
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	where := `WHERE p.type=? AND p.lang=?`
+	args := []any{kind, lang}
+	if slug = strings.TrimSpace(slug); slug != "" {
+		where += ` AND p.slug=?`
+		args = append(args, slug)
+	}
+	if query = strings.TrimSpace(query); query != "" {
+		like := "%" + query + "%"
+		where += ` AND (p.title LIKE ? OR p.slug LIKE ? OR p.excerpt LIKE ? OR p.content LIKE ?)`
+		args = append(args, like, like, like, like)
+	}
+	switch status {
+	case "", "all":
+	case "draft", "published", "scheduled":
+		where += ` AND p.status=?`
+		args = append(args, status)
+	default:
+		return nil, fmt.Errorf("unsupported status: %s", status)
+	}
+	args = append(args, limit, offset)
+	return s.queryPostSummaries(where+` ORDER BY p.updated_at DESC LIMIT ? OFFSET ?`, args...)
 }
 
 func (s *Store) ListPages(lang string) ([]*Post, error) {

@@ -8,5 +8,6 @@
 {{block "body" .}}{{end}}
 {{template "footer" .}}
 {{if .Site.InjectBody}}{{safeHTML .Site.InjectBody}}{{end}}
+<script src="/assets/js/site.js?v={{.AssetVer}}" defer></script>
 </body>
 </html>{{end}}

@@ -140,9 +140,10 @@ func funcMap() template.FuncMap {
 		"nl2br": func(s string) template.HTML {
 			return template.HTML(strings.ReplaceAll(template.HTMLEscapeString(s), "\n", "<br>"))
 		},
-		"filesize": func(n int64) string { return formatBytes(n) },
-		"add":      func(a, b int) int { return a + b },
-		"sub":      func(a, b int) int { return a - b },
+		"filesize":              func(n int64) string { return formatBytes(n) },
+		"automationScopeBadges": automationScopeBadges,
+		"add":                   func(a, b int) int { return a + b },
+		"sub":                   func(a, b int) int { return a - b },
 		"hasLang": func(posts []*store.Post, code string) bool {
 			for _, p := range posts {
 				if p.Lang == code {
@@ -195,7 +196,7 @@ func NewRenderer(tplFS fs.FS) (*Renderer, error) {
 	r := &Renderer{sets: map[string]*template.Template{}}
 	partials := []string{"layout.html", "partials/head.html", "partials/header.html", "partials/footer.html"}
 
-	for _, name := range []string{"home", "article", "category", "links", "link", "page", "search", "404"} {
+	for _, name := range []string{"home", "article", "category", "links", "link", "page", "search", "api_docs", "404"} {
 		files := append([]string{}, partials...)
 		files = append(files, name+".html")
 		t, err := template.New(name).Funcs(funcMap()).ParseFS(sub, files...)
@@ -204,6 +205,12 @@ func NewRenderer(tplFS fs.FS) (*Renderer, error) {
 		}
 		r.sets[name] = t
 	}
+
+	tp, err := template.New("theme_preview").Funcs(funcMap()).ParseFS(sub, "theme_preview.html")
+	if err != nil {
+		return nil, err
+	}
+	r.sets["theme_preview"] = tp
 
 	for _, name := range []string{"login", "dashboard", "edit", "settings", "pages", "links"} {
 		t, err := template.New("admin_"+name).Funcs(funcMap()).ParseFS(sub, "admin/layout.html", "admin/"+name+".html")
@@ -235,6 +242,11 @@ func (r *Renderer) execute(w http.ResponseWriter, key, layout string, status int
 // Public 渲染公开页面。
 func (r *Renderer) Public(w http.ResponseWriter, name string, status int, data any) {
 	r.execute(w, name, "public_layout", status, data)
+}
+
+// ThemePreview 渲染后台主题卡片使用的轻量缩略图页面。
+func (r *Renderer) ThemePreview(w http.ResponseWriter, status int, data any) {
+	r.execute(w, "theme_preview", "theme_preview", status, data)
 }
 
 // Admin 渲染后台页面。

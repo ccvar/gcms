@@ -224,6 +224,44 @@
     });
   });
 
+  /* 主题真实缩略图：进入视口附近再加载，加载前显示骨架态 */
+  (function () {
+    var previews = Array.prototype.slice.call(document.querySelectorAll("[data-theme-preview]"));
+    if (!previews.length) return;
+
+    function loadPreview(box) {
+      if (!box || box.dataset.loaded === "1") return;
+      var frame = box.querySelector("iframe[data-src]");
+      if (!frame) return;
+      box.dataset.loaded = "1";
+      box.classList.add("is-loading");
+      frame.addEventListener("load", function () {
+        box.classList.remove("is-loading");
+        box.classList.add("is-loaded");
+      }, { once: true });
+      frame.addEventListener("error", function () {
+        box.classList.remove("is-loading");
+        box.classList.add("is-error");
+      }, { once: true });
+      frame.src = frame.dataset.src;
+    }
+
+    if ("IntersectionObserver" in window) {
+      var observer = new IntersectionObserver(function (entries) {
+        entries.forEach(function (entry) {
+          if (!entry.isIntersecting) return;
+          loadPreview(entry.target);
+          observer.unobserve(entry.target);
+        });
+      }, { rootMargin: "240px 0px" });
+      previews.forEach(function (box) { observer.observe(box); });
+    } else {
+      previews.forEach(function (box, i) {
+        setTimeout(function () { loadPreview(box); }, i * 90);
+      });
+    }
+  })();
+
   /* ---------- Markdown ⇄ 富文本编辑器 ---------- */
   initEditor();
   function initEditor() {
@@ -634,6 +672,70 @@
     document.addEventListener("keydown", function (e) { if (e.key === "Escape" && !modal.hidden) close(); });
   })();
 
+  /* ---------- 自动化密钥：一次性查看弹窗 ---------- */
+  (function () {
+    if (window.history && window.history.replaceState && /^\/admin\/settings\/automation\/keys/.test(window.location.pathname)) {
+      window.history.replaceState(null, document.title, "/admin/settings/automation");
+    }
+    var modal = document.querySelector("[data-secret-modal]");
+    if (!modal) return;
+    var firstInput = modal.querySelector("#new-api-secret");
+    function open() {
+      modal.hidden = false;
+      if (firstInput) setTimeout(function () { firstInput.focus(); firstInput.select(); }, 0);
+    }
+    function close() {
+      modal.hidden = true;
+    }
+    document.querySelectorAll("[data-secret-open]").forEach(function (btn) {
+      btn.addEventListener("click", open);
+    });
+    modal.querySelectorAll("[data-secret-close]").forEach(function (btn) {
+      btn.addEventListener("click", close);
+    });
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && !modal.hidden) close();
+    });
+    if (!modal.hidden && firstInput) setTimeout(function () { firstInput.focus(); firstInput.select(); }, 0);
+  })();
+
+  /* ---------- 复制文本 ---------- */
+  (function () {
+    document.querySelectorAll("[data-copy-target]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var target = document.getElementById(btn.getAttribute("data-copy-target"));
+        if (!target) return;
+        var text = target.value || target.textContent || "";
+        function done() {
+          if (btn.classList && btn.classList.contains("icon-btn")) {
+            var oldTitle = btn.getAttribute("title") || "";
+            btn.setAttribute("title", "已复制");
+            btn.setAttribute("aria-label", "已复制");
+            setTimeout(function () {
+              btn.setAttribute("title", oldTitle || "复制");
+              btn.setAttribute("aria-label", oldTitle || "复制");
+            }, 1600);
+            return;
+          }
+          var old = btn.textContent;
+          btn.textContent = "已复制";
+          setTimeout(function () { btn.textContent = old; }, 1600);
+        }
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(done).catch(function () {
+            target.select();
+            document.execCommand("copy");
+            done();
+          });
+        } else {
+          target.select();
+          document.execCommand("copy");
+          done();
+        }
+      });
+    });
+  })();
+
   /* ---------- 分类拖动排序 ---------- */
   (function () {
     var tbody = document.getElementById("cat-sortable");
@@ -746,6 +848,7 @@
   /* ---------- 提交防重复点击 ---------- */
   document.querySelectorAll(".admin-main form").forEach(function (form) {
     form.addEventListener("submit", function (e) {
+      if (form.matches("[data-no-busy]")) return;
       if (e.defaultPrevented) return; // 被 confirm 取消则不锁
       var btn = submitBtnsFor(form)[0];
       if (btn && !btn.disabled) {

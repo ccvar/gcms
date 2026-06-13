@@ -174,7 +174,7 @@ cms.ccvar.com/
 │   ├── home / article / category / page / search / 404 .html
 │   └── admin/               #   layout / login / dashboard / edit / settings
 ├── assets/                  # embed 进二进制
-│   ├── css/style.css        # 全站唯一样式表（10 套主题）
+│   ├── css/style.css        # 全站唯一样式表（18 套主题）
 │   ├── favicon.svg          # 默认站点图标
 │   └── js/
 │       ├── toc.js           # 公开页：页眉测量 / 阅读进度 / 回顶 / 大纲高亮
@@ -233,16 +233,71 @@ cms.ccvar.com/
 - **自定义下拉组件**替代原生 `<select>`（状态、分类），跨平台样式一致；后台图标统一 SVG
 - 图片上传 `/admin/upload` → `data/uploads/`（限 8MB，类型白名单含 svg/ico）。**前端在浏览器支持时先把 png/jpg 转 WebP** 再上传
 - **设置页 `/admin/settings`**：左侧菜单分区，**各区独立保存**——
-  - `站点信息`（`/site`）：站名 / 标语 / 描述 / **favicon / logo**（上传或 URL）/ **社交链接**（页脚「关注」栏，可增删，图标按域名自动识别 GitHub·X·YouTube·Telegram·LinkedIn·邮箱等，存 `social_links`）
-  - `外观与主题`（`/appearance`）：10 套主题单选 + 预览色板 + **按主题各自保存的可视化微调**（主色取色器、圆角滑杆，存 `theme.<id>.*`，切卡时控件随主题同步，以内联 CSS 变量覆盖当前主题默认）；**首页 Hero 右侧视觉可替换**：默认动画 / 上传图片或 SVG 文件 / 直接粘贴 SVG 代码（存 `hero.visual`·`hero.image`·`hero.svg`）
+  - `站点信息`（`/site`）：站名 / 标语 / 描述 / **favicon / logo**（上传或 URL）/ **首页显示数量**（链接条数、文章每页条数）/ **社交链接**（页脚「关注」栏，可增删，图标按域名自动识别 GitHub·X·YouTube·Telegram·LinkedIn·邮箱等，存 `social_links`）
+  - `外观与主题`（`/appearance`）：18 套主题单选 + **当前站点实时缩略图** + **按主题各自保存的可视化微调**（主色取色器、圆角滑杆，存 `theme.<id>.*`，切卡时控件随主题同步，以内联 CSS 变量覆盖当前主题默认）；**首页 Hero 右侧视觉可替换**：默认动画 / 上传图片或 SVG 文件 / 直接粘贴 SVG 代码（存 `hero.visual`·`hero.image`·`hero.svg`）
   - `文案`（`/copy`）：首页 hero 眉标/大标题、标语、描述、页脚说明等前台文案可编辑，**按语种切换标签分别维护**（非默认语种存 `site.x::<lang>`，留空回落默认语种）；字段按「首页 Hero / 站点描述 / 页脚」分组展示
   - `导航`（`/menu`）：**页眉菜单构建器**——自定义每项名称、**拖动排序**、**每语种单独命名**（存 `nav_menu` JSON）；内部路径自动加语种前缀，外部 `https://…` 新窗口打开；未配置时回落默认菜单（首页/分类/关于）
   - 左侧分区菜单每项带 SVG 图标
   - `语言`（`/languages`）：勾选启用的语种、指定默认语种（`/` 的跳转目标与回落语种）；内置 7 种之外可**新增自定义语种预设**（代码/名称/BCP47 标记/OG locale，存 `custom_locales`），自定义语种的界面文案回落默认语种
   - `分类`（`/categories`）：列表 + 「新增分类」**模态框**增删改（**按语种**）
+  - `自动化接口`（`/automation`）：为外部 AI 工具或应用创建/吊销访问权限，仅开放文章、链接、页面三类内容；创建成功后显示一次访问密钥，并可下载该权限专用的 AI 接入包
   - `安全`（`/security`）：在线改密（校验当前密码、新密码 ≥6 位、两次一致）
 
-### 前台主题（10 套，布局风格各异，非简单换色）
+### 自动化接口
+
+CMS 不主动调用任何 AI API；外部 AI 工具或自动化程序拿到访问密钥后，再来调用本站接口。
+
+后台会用浅显文案展示“可交给外部助手的事”：查看文章/链接/页面，创建草稿，修改草稿。默认不允许直接发布；发布、定时发布、修改已发布内容需要在对应资源下额外授予“发布”权限。
+
+建议一个外部工具或平台单独创建一条访问权限。以后如果不用了，或者怀疑泄露，直接吊销对应这一条。
+
+后台提供两类接入材料：
+
+- **OpenAPI 描述文件**：`/api/admin/v1/openapi.json`，给 ChatGPT Actions、Copilot Studio 或开发者工具识别接口用；它只是接口说明，所有访问权限共用
+- **AI 接入包**：创建访问权限成功后下载；包内包含密钥文件 `.env`、`AI助手说明.md`、`SKILL.md`、`references/openapi.json` 和 `scripts/gcms.js`，适合交给 Codex、Claude Code、Cursor 等能读文件或运行脚本的工具
+
+使用建议：
+
+1. 在后台为某个外部工具创建访问权限。
+2. 创建成功后立即复制访问密钥，或下载该权限专用的 AI 接入包。
+3. 把 AI 接入包交给可信的 AI 工具。
+4. 让 AI 先查目标内容的 `id`，再创建或修改草稿；发布前建议人工复核。
+
+认证方式（二选一）：
+
+```bash
+Authorization: Bearer gcms_xxx
+X-GCMS-API-Key: gcms_xxx
+```
+
+开发接入信息：
+
+| 资源 | 列表/创建 | 读取/更新 |
+|------|-----------|-----------|
+| 文章 | `GET/POST /api/admin/v1/posts` | `GET/PATCH /api/admin/v1/posts/{id}` |
+| 链接 | `GET/POST /api/admin/v1/links` | `GET/PATCH /api/admin/v1/links/{id}` |
+| 页面 | `GET/POST /api/admin/v1/pages` | `GET/PATCH /api/admin/v1/pages/{id}` |
+
+第一版不提供删除接口，也不开放站点设置、分类、导航、系统更新等能力。权限按资源分组：`posts:*`、`links:*`、`pages:*`，每组包含 `read`、`write`、`publish`。例如 `posts:write` 只能创建/修改文章草稿；发布、定时发布、修改已发布文章需要 `posts:publish`。
+
+修改某篇内容前，外部助手应先查到目标内容的 `id`，再用对应 `id` 更新，避免只凭标题猜测：
+
+```bash
+GET /api/admin/v1/posts?lang=zh&q=标题关键词
+GET /api/admin/v1/posts?lang=zh&slug=article-slug
+PATCH /api/admin/v1/posts/{id}
+```
+
+创建草稿示例：
+
+```bash
+curl -X POST https://example.com/api/admin/v1/posts \
+  -H 'Authorization: Bearer gcms_xxx' \
+  -H 'Content-Type: application/json' \
+  -d '{"title":"AI 生成的草稿","content":"正文 Markdown","lang":"zh","status":"draft"}'
+```
+
+### 前台主题（18 套，布局风格各异，非简单换色）
 
 在设置页切换，存于 `settings.theme`，服务端渲染即时生效（`<html data-theme="…">`，无闪烁）：
 
@@ -258,6 +313,14 @@ cms.ccvar.com/
 | `newspaper` | 报纸 · 衬线 | 居中刊头双线、小型大写导航、灰度封面、**多栏流式列表** |
 | `darkpro` | 暗夜 · 现代暗色 | 靛蓝/品红渐变、卡片网格、霓虹悬停、毛玻璃页眉 |
 | `landing` | 官网 · 产品落地页 | 大居中 hero + CTA 按钮 + 特性卡片网格，首页像产品官网 |
+| `product` | 产品 · 开源/互联网官网 | 文档入口感 hero、命令行/版本标签浮层、生态链接卡、更新日志式文章列表 |
+| `prism` | 光谱 · 深色海报 | 酸绿/珊瑚/青色信号线、海报式 hero、错层卡片和发光边界 |
+| `exchange` | 交易所 · Web3 增长页 | 深色行情仪表盘、交易数据浮层、强 CTA、三列增长内容卡 |
+| `academy` | 智课 · AI 教材科普 | 课程封面感 hero、章节式列表、学习卡片、长文阅读友好 |
+| `garment` | 制衣 · 外贸工厂 | 样衣/面料视觉、B2B 产品目录卡、工厂画册式精选区 |
+| `institution` | 机构 · 专业服务官网 | 律所/咨询/协会可信官网，徽章式品牌、报告卡片、正式信息流 |
+| `studio` | 作品 · 创意工作室 | 设计/摄影/建筑作品集，黑白画廊骨架、锐利边框、作品网格 |
+| `lifestyle` | 生活 · 小品牌官网 | 咖啡/民宿/餐厅/买手店，温暖首屏、圆润卡片、生活方式内容流 |
 
 首页 hero 右侧的科技感图形（SSR 窗口 + 轨道数据流）为纯 SVG/CSS，随主题 token 自动变色，并尊重 `prefers-reduced-motion`；如需也可在「外观与主题」里替换为自定义图片、SVG 文件或内联 SVG 代码。
 

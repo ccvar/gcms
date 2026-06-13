@@ -51,7 +51,7 @@ type endpointCacheEntry struct {
 // assetVersion 取关键静态资源内容的短指纹：内容变了指纹就变，配合长缓存做缓存破坏。
 func assetVersion(fsys fs.FS) string {
 	h := fnv.New64a()
-	for _, p := range []string{"assets/css/style.css", "assets/js/admin.js"} {
+	for _, p := range []string{"assets/css/style.css", "assets/js/admin.js", "assets/js/site.js"} {
 		if b, err := fs.ReadFile(fsys, p); err == nil {
 			_, _ = h.Write(b)
 		}
@@ -74,6 +74,14 @@ var Themes = []ThemeOption{
 	{"newspaper", "报纸 · Newspaper", "多栏排版、衬线、首字下沉、黑白"},
 	{"darkpro", "暗夜 · Dark Pro", "现代暗色、靛蓝霓虹、卡片网格"},
 	{"landing", "官网 · Landing", "产品/项目官网风：大 hero + CTA 按钮 + 特性卡片"},
+	{"product", "产品 · Product", "开源项目/互联网产品官网、文档入口、更新日志"},
+	{"prism", "光谱 · Prism", "深色海报感、多色信号线、错层内容卡"},
+	{"exchange", "交易所 · Exchange", "Web3 增长页、行情仪表盘、强转化按钮"},
+	{"academy", "智课 · Academy", "AI 教材科普、课程目录、阅读友好卡片"},
+	{"garment", "制衣 · Garment", "外贸服装工厂、样衣目录、B2B 展示感"},
+	{"institution", "机构 · Institution", "专业服务/咨询/律所/协会官网、可信背书"},
+	{"studio", "作品 · Studio", "设计/摄影/建筑/品牌工作室、图像主导作品集"},
+	{"lifestyle", "生活 · Lifestyle", "咖啡/民宿/餐厅/买手店、小品牌温度感官网"},
 }
 
 func validTheme(id string) bool {
@@ -89,12 +97,27 @@ func validTheme(id string) bool {
 var themeAccentDefault = map[string]string{
 	"editorial": "#9a3b2f", "magazine": "#1f5fff", "terminal": "#3fb950",
 	"brutalist": "#1f23ff", "notebook": "#c2691f", "swiss": "#e30613",
-	"pastel": "#8b5cf6", "newspaper": "#8b0000", "darkpro": "#7c7cf8", "landing": "#4f46e5",
+	"pastel": "#8b5cf6", "newspaper": "#8b0000", "darkpro": "#7c7cf8", "landing": "#4f46e5", "product": "#0f7cff", "prism": "#d7ff4a",
+	"exchange": "#00f5a0", "academy": "#2563eb", "garment": "#0f766e",
+	"institution": "#8a1f2d", "studio": "#ff4f5e", "lifestyle": "#2f7d57",
 }
 var themeRadiusDefault = map[string]string{
 	"editorial": "10", "magazine": "12", "terminal": "6", "brutalist": "0",
-	"notebook": "8", "swiss": "0", "pastel": "18", "newspaper": "0", "darkpro": "14", "landing": "14",
+	"notebook": "8", "swiss": "0", "pastel": "18", "newspaper": "0", "darkpro": "14", "landing": "14", "product": "14", "prism": "18",
+	"exchange": "16", "academy": "16", "garment": "12",
+	"institution": "8", "studio": "4", "lifestyle": "18",
 }
+
+const (
+	homeLinksLimitKey       = "home.links_limit"
+	homePostsPerPageKey     = "home.posts_per_page"
+	defaultHomeLinksLimit   = 8
+	defaultHomePostsPerPage = 6
+	minHomeLinksLimit       = 0
+	maxHomeLinksLimit       = 24
+	minHomePostsPerPage     = 1
+	maxHomePostsPerPage     = 50
+)
 
 // ThemeCard 是设置页每个主题卡片的状态（含该主题自己的微调值）。
 type ThemeCard struct {
@@ -175,35 +198,46 @@ type View struct {
 	Results int
 
 	// 后台
-	AllPosts      []*store.Post
-	Edit          *store.Post
-	IsPage        bool
-	IsLink        bool
-	EditBase      string // 编辑表单的后台路径基：posts | pages | links
-	EditListURL   string // 返回列表的后台 URL
-	EditTypeLabel string // 文章 | 页面 | 链接
-	Authed        bool
-	ShowPwWarn    bool // 仍为默认密码且本会话未关闭提示
-	CSRF          string
-	Flash         string
-	FormErr       string
-	Settings      *SettingsForm
-	Themes        []ThemeOption
-	Cards         []ThemeCard
-	Section       string
-	CatKind       string // 分类管理当前类型：post | link
-	EditCat       *store.Category
-	FormVals      map[string]string // 表单回填（分类新增/编辑出错时）
-	Update        *UpdateInfo       // 系统更新检查
-	Upgrade       *UpgradeStatus    // 系统升级任务状态
-	EditLang      string            // 后台当前操作的内容语种
-	Locales       []i18n.Locale     // 已启用语种
-	AllLocales    []i18n.Locale     // 全部可选语种（内置 + 自定义，语言设置勾选）
-	CustomLocales []i18n.Locale     // 自定义预设（可删除）
-	Trans         []*store.Post     // 当前编辑文章的互译版本
-	Social        []SocialLink      // 页脚社交链接（前台渲染 / 后台回填）
-	Menu          []MenuItem        // 前台页眉导航（按当前语种解析）
-	MenuEdit      []MenuRow         // 后台导航菜单编辑（URL + 各语种标签）
+	AllPosts        []*store.Post
+	Edit            *store.Post
+	IsPage          bool
+	IsLink          bool
+	EditBase        string // 编辑表单的后台路径基：posts | pages | links
+	EditListURL     string // 返回列表的后台 URL
+	EditTypeLabel   string // 文章 | 页面 | 链接
+	Authed          bool
+	ShowPwWarn      bool // 仍为默认密码且本会话未关闭提示
+	CSRF            string
+	Flash           string
+	FormErr         string
+	Settings        *SettingsForm
+	Themes          []ThemeOption
+	Cards           []ThemeCard
+	Section         string
+	CatKind         string // 分类管理当前类型：post | link
+	EditCat         *store.Category
+	FormVals        map[string]string // 表单回填（分类新增/编辑出错时）
+	Update          *UpdateInfo       // 系统更新检查
+	Upgrade         *UpgradeStatus    // 系统升级任务状态
+	AutomationKeys  []*store.AutomationKey
+	AutomationLogs  []*store.AutomationLog
+	NewAPISecret    string
+	NewAPIName      string
+	NewAPIScopes    string
+	NewAIBrief      string
+	NewAPIKeyID     int64
+	APIBaseURL      string
+	OpenAPIURL      string
+	APIDocsURL      string
+	SkillPackageURL string
+	EditLang        string        // 后台当前操作的内容语种
+	Locales         []i18n.Locale // 已启用语种
+	AllLocales      []i18n.Locale // 全部可选语种（内置 + 自定义，语言设置勾选）
+	CustomLocales   []i18n.Locale // 自定义预设（可删除）
+	Trans           []*store.Post // 当前编辑文章的互译版本
+	Social          []SocialLink  // 页脚社交链接（前台渲染 / 后台回填）
+	Menu            []MenuItem    // 前台页眉导航（按当前语种解析）
+	MenuEdit        []MenuRow     // 后台导航菜单编辑（URL + 各语种标签）
 }
 
 // SettingsForm 承载后台设置页的可编辑字段。
@@ -228,6 +262,9 @@ type SettingsForm struct {
 	HomeFeatured string
 	HomeLinks    string
 	HomeLatest   string
+	// 首页显示数量（站点信息）
+	HomeLinksLimit   string
+	HomePostsPerPage string
 	// 各栏目标题的语种默认值（作为输入框 placeholder 提示）
 	HomeFeaturedDef string
 	HomeLinksDef    string
@@ -317,7 +354,7 @@ func (s *Server) abs(path string) string { return strings.TrimRight(s.baseURL, "
 // 这些路径不参与语种前缀：后台、静态资源、上传、全局 SEO 端点。
 func isReservedPath(p string) bool {
 	switch {
-	case strings.HasPrefix(p, "/admin"), strings.HasPrefix(p, "/assets/"), strings.HasPrefix(p, "/uploads/"):
+	case strings.HasPrefix(p, "/admin"), strings.HasPrefix(p, "/api/"), strings.HasPrefix(p, "/assets/"), strings.HasPrefix(p, "/uploads/"):
 		return true
 	case p == "/robots.txt", p == "/sitemap.xml", p == "/favicon.ico":
 		return true
@@ -465,7 +502,10 @@ func (s *Server) site(lang string) seo.Site {
 
 // themeOverride 取「当前主题」的微调，生成注入 <html> 的内联 CSS 变量。
 func (s *Server) themeOverride() template.CSS {
-	theme, _ := s.store.GetSetting("theme")
+	return s.themeOverrideFor(s.store.Setting("theme"))
+}
+
+func (s *Server) themeOverrideFor(theme string) template.CSS {
 	if !validTheme(theme) {
 		theme = "editorial"
 	}
@@ -562,6 +602,7 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("GET /category/{slug}", s.category)
 	mux.HandleFunc("GET /links", s.links)
 	mux.HandleFunc("GET /links/{slug}", s.link)
+	mux.HandleFunc("GET /api-docs", s.apiDocs)
 	mux.HandleFunc("GET /about", s.about)
 	mux.HandleFunc("GET /search", s.search)
 
@@ -584,6 +625,13 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /admin/upload", s.requireAuth(s.adminUpload))
 	mux.HandleFunc("POST /admin/render", s.requireAuth(s.adminRender))
 
+	// 自动化 API（仅开放文章 / 页面 / 链接内容）。
+	mux.HandleFunc("GET /api/admin/v1/openapi.json", s.apiOpenAPI)
+	mux.HandleFunc("GET /api/admin/v1/{collection}", s.apiListContent)
+	mux.HandleFunc("POST /api/admin/v1/{collection}", s.apiCreateContent)
+	mux.HandleFunc("GET /api/admin/v1/{collection}/{id}", s.apiGetContent)
+	mux.HandleFunc("PATCH /api/admin/v1/{collection}/{id}", s.apiUpdateContent)
+
 	// 后台
 	mux.HandleFunc("GET /admin/login", s.adminLoginForm)
 	mux.HandleFunc("POST /admin/login", s.adminLoginPost)
@@ -592,6 +640,7 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("GET /admin", s.requireAuth(s.adminDashboard))
 	mux.HandleFunc("GET /admin/settings", s.requireAuth(s.adminSettings))
 	mux.HandleFunc("GET /admin/settings/{section}", s.requireAuth(s.adminSettingsSection))
+	mux.HandleFunc("GET /admin/theme-preview/{theme}", s.requireAuth(s.adminThemePreview))
 	mux.HandleFunc("GET /admin/settings/updates/status", s.requireAuth(s.adminUpgradeStatus))
 	mux.HandleFunc("GET /admin/settings/updates/check", s.requireAuth(s.adminUpdateCheck))
 	mux.HandleFunc("POST /admin/settings/site", s.requireAuth(s.adminSaveSite))
@@ -606,6 +655,12 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /admin/settings/categories", s.requireAuth(s.adminSaveCategory))
 	mux.HandleFunc("POST /admin/settings/categories/delete", s.requireAuth(s.adminDeleteCategory))
 	mux.HandleFunc("POST /admin/settings/categories/reorder", s.requireAuth(s.adminReorderCategories))
+	mux.HandleFunc("POST /admin/settings/automation/keys", s.requireAuth(s.adminCreateAutomationKey))
+	mux.HandleFunc("POST /admin/settings/automation/keys/regenerate", s.requireAuth(s.adminRegenerateAutomationKey))
+	mux.HandleFunc("POST /admin/settings/automation/keys/revoke", s.requireAuth(s.adminRevokeAutomationKey))
+	mux.HandleFunc("POST /admin/settings/automation/keys/delete", s.requireAuth(s.adminDeleteAutomationKey))
+	mux.HandleFunc("GET /admin/settings/automation/skill.zip", s.requireAuth(s.adminDownloadAutomationSkill))
+	mux.HandleFunc("POST /admin/settings/automation/skill.zip", s.requireAuth(s.adminDownloadAutomationSkill))
 
 	// 页面（如关于）
 	mux.HandleFunc("GET /admin/pages", s.requireAuth(s.adminPages))
@@ -645,6 +700,15 @@ func (s *Server) view(r *http.Request, nav string) *View {
 	v.Social = parseSocialLinks(s.store.Setting("social_links"))
 	v.Menu = s.menuItems(lang, tr, nav)
 	return v
+}
+
+func (s *Server) applyTheme(v *View, theme string) {
+	if !validTheme(theme) {
+		return
+	}
+	v.Theme = theme
+	v.Site.Theme = theme
+	v.ThemeStyle = s.themeOverrideFor(theme)
 }
 
 // menuItems 构建前台页眉导航：未配置时回落默认菜单（首页/分类/关于，用 i18n 文案）。
@@ -701,12 +765,61 @@ func (s *Server) menuEditRows() []MenuRow {
 }
 
 func (s *Server) home(w http.ResponseWriter, r *http.Request) {
-	const size = 6
+	s.renderHome(w, r)
+}
+
+func (s *Server) adminThemePreview(w http.ResponseWriter, r *http.Request) {
+	theme := r.PathValue("theme")
+	if !validTheme(theme) {
+		s.notFound(w, r)
+		return
+	}
+	w.Header().Set("X-Robots-Tag", "noindex, nofollow")
+	w.Header().Set("Cache-Control", "private, max-age=60")
+	lang := langFrom(r)
+	v := s.view(r, "home")
+	s.applyTheme(v, theme)
+	v.SEO = v.Site.Home()
+	v.Site.HeroVisual = ""
+	v.Site.HeroImage = ""
+	v.Site.HeroSVG = ""
+	v.Site.InjectHead = ""
+	v.Site.InjectBody = ""
+
+	posts, _ := s.store.ListPublished(lang, 0, 4)
+	if len(posts) == 0 {
+		posts = []*store.Post{
+			{Title: v.Site.Name + " 更新日志", Excerpt: v.Site.Description, PublishedAt: time.Now()},
+			{Title: "快速开始", Excerpt: "安装、配置与内容发布流程。", PublishedAt: time.Now()},
+			{Title: "设计与主题", Excerpt: "为不同类型的网站选择合适的前台结构。", PublishedAt: time.Now()},
+		}
+	}
+	v.Featured = posts[0]
+	if len(posts) > 1 {
+		v.Posts = posts[1:]
+	}
+	v.FeatLinks, _ = s.store.FeaturedLinks(lang, 3)
+	if len(v.FeatLinks) == 0 {
+		v.FeatLinks, _ = s.store.ListLinks(lang, 0, 0, 3)
+	}
+	if len(v.FeatLinks) == 0 {
+		v.FeatLinks = []*store.Post{
+			{Title: "文档", Excerpt: "查看部署、配置与 API 用法。"},
+			{Title: "发布", Excerpt: "版本更新与一键升级流程。"},
+			{Title: "生态", Excerpt: "自动化接口与内容助手接入。"},
+		}
+	}
+	s.rnd.ThemePreview(w, http.StatusOK, v)
+}
+
+func (s *Server) renderHome(w http.ResponseWriter, r *http.Request) {
 	lang := langFrom(r)
 	page := pageParam(r)
+	postsPerPage := s.intSetting(homePostsPerPageKey, defaultHomePostsPerPage, minHomePostsPerPage, maxHomePostsPerPage)
+	linksLimit := s.intSetting(homeLinksLimitKey, defaultHomeLinksLimit, minHomeLinksLimit, maxHomeLinksLimit)
 	total, _ := s.store.CountPublished(lang)
-	totalPages := ceilDiv(total, size)
-	posts, err := s.store.ListPublished(lang, (page-1)*size, size)
+	totalPages := ceilDiv(total, postsPerPage)
+	posts, err := s.store.ListPublished(lang, (page-1)*postsPerPage, postsPerPage)
 	if err != nil {
 		s.serverError(w, err)
 		return
@@ -715,7 +828,7 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 	v.SEO = v.Site.Home()
 	if page == 1 {
 		// 精选优先取置顶文章（可多篇），否则取最新一篇
-		if fps, _ := s.store.FeaturedPosts(lang, 6); len(fps) > 0 {
+		if fps, _ := s.store.FeaturedPosts(lang, postsPerPage); len(fps) > 0 {
 			v.Featured = fps[0]
 			v.FeaturedMore = fps[1:]
 			fset := map[int64]bool{}
@@ -732,7 +845,9 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 			v.Posts = posts[1:]
 		}
 		// 链接模块：仅当存在「置顶」链接时才在首页展示
-		v.FeatLinks, _ = s.store.FeaturedLinks(lang, 8)
+		if linksLimit > 0 {
+			v.FeatLinks, _ = s.store.FeaturedLinks(lang, linksLimit)
+		}
 	} else {
 		v.Posts = posts
 	}
@@ -867,6 +982,19 @@ func (s *Server) link(w http.ResponseWriter, r *http.Request) {
 	}
 	v.Langs, v.SEO.Alternates = s.i18nLinks(lang, ph)
 	s.rnd.Public(w, "link", http.StatusOK, v)
+}
+
+func (s *Server) apiDocs(w http.ResponseWriter, r *http.Request) {
+	v := s.view(r, "api_docs")
+	v.SEO = seo.Meta{
+		Title:       "自动化接口开放文档 — " + v.Site.Name,
+		Description: "GCMS 自动化接口的开放文档，包含文章、链接、页面的接口地址、权限说明、参数说明与请求示例。",
+		Canonical:   v.Site.Abs("/api-docs"),
+		Robots:      "noindex, follow",
+		OGType:      "article",
+		Author:      v.Site.Author,
+	}
+	s.rnd.Public(w, "api_docs", http.StatusOK, v)
 }
 
 func (s *Server) about(w http.ResponseWriter, r *http.Request) {
@@ -1139,6 +1267,24 @@ func pageParam(r *http.Request) int {
 		n = 1
 	}
 	return n
+}
+
+func boundedInt(raw string, def, min, max int) int {
+	n, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil {
+		n = def
+	}
+	if n < min {
+		return min
+	}
+	if n > max {
+		return max
+	}
+	return n
+}
+
+func (s *Server) intSetting(key string, def, min, max int) int {
+	return boundedInt(s.store.Setting(key), def, min, max)
 }
 
 func ceilDiv(a, b int) int {

@@ -1,0 +1,94 @@
+{{define "body"}}
+  <main>
+    <section class="page-head">
+      <div class="wrap read">
+        <p class="eyebrow">Automation API</p>
+        <h1>自动化接口开放文档</h1>
+        <p>这些接口只开放文章、链接、页面。站点设置、分类、导航、安全、系统更新不会通过这里开放。</p>
+      </div>
+    </section>
+
+    <div class="wrap">
+      <div class="prose read" style="padding-top:2.5rem">
+        <h2>连接地址</h2>
+        <p>接口根地址：</p>
+        <pre><code>{{.Site.Root "/api/admin/v1"}}</code></pre>
+        <p>OpenAPI 描述文件：</p>
+        <pre><code>{{.Site.Root "/api/admin/v1/openapi.json"}}</code></pre>
+
+        <h2>认证方式</h2>
+        <p>每个外部工具应单独创建一条访问权限。创建成功后复制访问密钥，请求时任选一种方式传入：</p>
+        <pre><code>Authorization: Bearer gcms_xxx
+X-GCMS-API-Key: gcms_xxx</code></pre>
+        <p>访问密钥只显示一次。如果泄露或不用了，请在后台吊销对应那一条。</p>
+
+        <h2>开放资源</h2>
+        <table>
+          <thead><tr><th>资源</th><th>列表 / 创建</th><th>读取 / 更新</th><th>权限前缀</th></tr></thead>
+          <tbody>
+            <tr><td>文章</td><td><code>GET/POST /posts</code></td><td><code>GET/PATCH /posts/{id}</code></td><td><code>posts</code></td></tr>
+            <tr><td>链接</td><td><code>GET/POST /links</code></td><td><code>GET/PATCH /links/{id}</code></td><td><code>links</code></td></tr>
+            <tr><td>页面</td><td><code>GET/POST /pages</code></td><td><code>GET/PATCH /pages/{id}</code></td><td><code>pages</code></td></tr>
+          </tbody>
+        </table>
+
+        <h2>权限说明</h2>
+        <table>
+          <thead><tr><th>小权限</th><th>能做什么</th><th>例子</th></tr></thead>
+          <tbody>
+            <tr><td>读取</td><td>列出和查看内容</td><td><code>posts:read</code></td></tr>
+            <tr><td>写草稿</td><td>创建草稿，修改未发布内容</td><td><code>posts:write</code></td></tr>
+            <tr><td>发布</td><td>发布、定时发布、修改已发布内容</td><td><code>posts:publish</code></td></tr>
+          </tbody>
+        </table>
+
+        <h2>列表查询参数</h2>
+        <table>
+          <thead><tr><th>参数</th><th>说明</th><th>示例</th></tr></thead>
+          <tbody>
+            <tr><td><code>lang</code></td><td>内容语种，留空使用默认语种</td><td><code>zh</code></td></tr>
+            <tr><td><code>status</code></td><td>按状态筛选</td><td><code>draft</code> / <code>published</code> / <code>scheduled</code></td></tr>
+            <tr><td><code>q</code></td><td>按标题、摘要、正文等关键词查找</td><td><code>SQLite</code></td></tr>
+            <tr><td><code>slug</code></td><td>按 slug 精确查找</td><td><code>about</code></td></tr>
+            <tr><td><code>limit</code></td><td>返回数量</td><td><code>20</code></td></tr>
+            <tr><td><code>offset</code></td><td>分页偏移</td><td><code>0</code></td></tr>
+          </tbody>
+        </table>
+
+        <h2>内容字段</h2>
+        <table>
+          <thead><tr><th>字段</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td><code>title</code></td><td>标题。创建内容时必填。</td></tr>
+            <tr><td><code>content</code></td><td>正文 Markdown。</td></tr>
+            <tr><td><code>slug</code></td><td>URL 里的短路径。留空时会按标题生成。</td></tr>
+            <tr><td><code>excerpt</code></td><td>摘要。</td></tr>
+            <tr><td><code>meta_desc</code></td><td>SEO 描述。</td></tr>
+            <tr><td><code>keywords</code></td><td>关键词。</td></tr>
+            <tr><td><code>status</code></td><td><code>draft</code>、<code>published</code> 或 <code>scheduled</code>。</td></tr>
+            <tr><td><code>published_at</code></td><td>发布时间。定时发布时必填，使用 RFC3339 或 <code>2006-01-02T15:04</code>。</td></tr>
+            <tr><td><code>category_id</code></td><td>文章和链接可用；页面不支持。</td></tr>
+            <tr><td><code>link_url</code></td><td>链接资源的目标地址。</td></tr>
+          </tbody>
+        </table>
+
+        <h2>常见用法</h2>
+        <p>修改某篇内容前，先查到准确 ID，不要只凭标题猜。</p>
+        <pre><code>curl '{{.Site.Root "/api/admin/v1/posts"}}?lang=zh&amp;q=SQLite' \
+  -H 'Authorization: Bearer gcms_xxx'</code></pre>
+
+        <p>创建一篇文章草稿：</p>
+        <pre><code>curl -X POST '{{.Site.Root "/api/admin/v1/posts"}}' \
+  -H 'Authorization: Bearer gcms_xxx' \
+  -H 'Content-Type: application/json' \
+  -d '{"title":"AI 生成的草稿","content":"正文 Markdown","lang":"zh","status":"draft"}'</code></pre>
+
+        <p>按 ID 更新草稿：</p>
+        <pre><code>curl -X PATCH '{{.Site.Root "/api/admin/v1/posts/123"}}' \
+  -H 'Authorization: Bearer gcms_xxx' \
+  -H 'Content-Type: application/json' \
+  -d '{"title":"新的标题","meta_desc":"新的 SEO 描述"}'</code></pre>
+      </div>
+    </div>
+  </main>
+{{end}}

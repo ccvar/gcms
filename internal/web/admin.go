@@ -651,7 +651,7 @@ func (s *Server) adminLinkPin(w http.ResponseWriter, r *http.Request) {
 
 // ---------- 站点设置（分区独立保存）----------
 
-var settingsSections = map[string]bool{"site": true, "appearance": true, "copy": true, "menu": true, "languages": true, "categories": true, "updates": true, "security": true}
+var settingsSections = map[string]bool{"site": true, "appearance": true, "copy": true, "menu": true, "languages": true, "categories": true, "automation": true, "updates": true, "security": true}
 
 func themeName(id string) string {
 	for _, t := range Themes {
@@ -850,7 +850,7 @@ func (s *Server) copyKey(base, lang string) string {
 	return base + "::" + lang
 }
 
-func (s *Server) showSettings(w http.ResponseWriter, r *http.Request, section, flash, formErr string) {
+func (s *Server) showSettings(w http.ResponseWriter, r *http.Request, section, flash, formErr string, newAPISecret ...string) {
 	sess, _ := s.currentSession(r)
 	st := s.site(s.defaultLang())
 	// 当前主题的微调（作为控件初值）
@@ -869,13 +869,34 @@ func (s *Server) showSettings(w http.ResponseWriter, r *http.Request, section, f
 		Custom: custom, Accent: accent, Radius: radius,
 		HeroEyebrow: st.HeroEyebrow, HeroTitle: st.HeroTitle, FooterNote: st.FooterNote,
 		HeroVisual: st.HeroVisual, HeroImage: st.HeroImage, HeroSVG: st.HeroSVG,
-		InjectHead: st.InjectHead, InjectBody: st.InjectBody,
+		HomeLinksLimit:   strconv.Itoa(s.intSetting(homeLinksLimitKey, defaultHomeLinksLimit, minHomeLinksLimit, maxHomeLinksLimit)),
+		HomePostsPerPage: strconv.Itoa(s.intSetting(homePostsPerPageKey, defaultHomePostsPerPage, minHomePostsPerPage, maxHomePostsPerPage)),
+		InjectHead:       st.InjectHead, InjectBody: st.InjectBody,
 	}
 	v.Themes = Themes
 	v.Cards = cards
 	v.Flash = flash
 	v.FormErr = formErr
 	v.Social = parseSocialLinks(s.store.Setting("social_links"))
+	v.APIBaseURL = s.abs("/api/admin/v1")
+	v.OpenAPIURL = s.abs("/api/admin/v1/openapi.json")
+	v.APIDocsURL = s.abs("/" + s.defaultLang() + "/api-docs")
+	v.SkillPackageURL = "/admin/settings/automation/skill.zip"
+	if len(newAPISecret) > 0 {
+		v.NewAPISecret = newAPISecret[0]
+		if len(newAPISecret) > 1 {
+			v.NewAPIScopes = newAPISecret[1]
+			v.NewAIBrief = automationAIBrief(v.APIBaseURL, newAPISecret[0], strings.Split(newAPISecret[1], ","))
+		} else {
+			v.NewAIBrief = automationAIBrief(v.APIBaseURL, newAPISecret[0], nil)
+		}
+		if len(newAPISecret) > 2 {
+			v.NewAPIName = newAPISecret[2]
+		}
+		if len(newAPISecret) > 3 {
+			v.NewAPIKeyID = atoi64(newAPISecret[3])
+		}
+	}
 
 	switch section {
 	case "copy":
@@ -908,6 +929,9 @@ func (s *Server) showSettings(w http.ResponseWriter, r *http.Request, section, f
 		v.CustomLocales = s.i18n.Custom()
 	case "menu":
 		v.MenuEdit = s.menuEditRows()
+	case "automation":
+		v.AutomationKeys, _ = s.store.ListAutomationKeys()
+		v.AutomationLogs, _ = s.store.ListAutomationLogs(20)
 	case "updates":
 		v.Update = currentUpdateInfo()
 		v.Upgrade = readUpgradeStatus()
@@ -918,6 +942,174 @@ func (s *Server) showSettings(w http.ResponseWriter, r *http.Request, section, f
 		status = http.StatusBadRequest
 	}
 	s.rnd.Admin(w, "settings", status, v)
+}
+
+func (s *Server) adminCreateAutomationKey(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.checkCSRF(w, r); !ok {
+		return
+	}
+	name := strings.TrimSpace(r.FormValue("name"))
+	if name == "" {
+		s.showSettings(w, r, "automation", "", "名称不能为空。")
+		return
+	}
+	scopes := automationScopesFromForm(r)
+	token, prefix := newAutomationToken()
+	id, err := s.store.CreateAutomationKey(name, token, prefix, strings.Join(scopes, ","))
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	s.showSettings(w, r, "automation", "访问权限已创建，请在列表中点“查看”复制密钥。", "", token, strings.Join(scopes, ","), name, strconv.FormatInt(id, 10))
+}
+
+func newAutomationToken() (token, prefix string) {
+	token = "gcms_" + randToken()
+	prefix = token
+	if len(prefix) > 13 {
+		prefix = prefix[:13]
+	}
+	return token, prefix
+}
+
+func automationAIBrief(apiBase, token string, scopes []string) string {
+	scopeText := automationScopeLabels(scopes)
+	return strings.Join([]string{
+		"你是我的网站内容助手。",
+		"",
+		"连接地址：" + apiBase,
+		"OpenAPI 描述文件：" + strings.TrimRight(apiBase, "/") + "/openapi.json",
+		"认证方式：Authorization: Bearer " + token,
+		"当前权限：" + scopeText,
+		"",
+		"如果你能读取文件或运行脚本，可以使用 GCMS AI 助手使用包；包里有 SKILL.md、openapi.json 和 scripts/gcms.js。",
+		"脚本环境变量：GCMS_API_BASE=" + apiBase,
+		"脚本环境变量：GCMS_API_KEY=" + token,
+		"",
+		"你可以帮我查看、创建和修改文章、链接、页面。",
+		"不要操作站点设置、分类、导航、安全、系统更新。",
+		"",
+		"默认只创建或修改草稿。除非我明确要求，并且你有发布权限，否则不要发布内容。",
+		"",
+		"如果我要你修改某篇内容，请先找到它的 id，不要只凭标题猜。",
+		"可以这样查找：",
+		"GET /posts?lang=zh&q=关键词",
+		"GET /posts?lang=zh&slug=slug",
+		"GET /pages?lang=zh&q=关键词",
+		"GET /links?lang=zh&q=关键词",
+		"",
+		"找到目标后，再用对应 id 更新：",
+		"PATCH /posts/{id}",
+		"PATCH /pages/{id}",
+		"PATCH /links/{id}",
+		"",
+		"如果找到多个相似结果，先让我确认。",
+		"",
+		"完成后告诉我创建或修改了哪些内容、对应 id、状态，以及建议我在后台审核什么。",
+	}, "\n")
+}
+
+func (s *Server) adminRevokeAutomationKey(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.checkCSRF(w, r); !ok {
+		return
+	}
+	if err := s.store.RevokeAutomationKey(atoi64(r.FormValue("id"))); err != nil {
+		s.serverError(w, err)
+		return
+	}
+	s.showSettings(w, r, "automation", "访问权限已吊销。", "")
+}
+
+func (s *Server) adminDeleteAutomationKey(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.checkCSRF(w, r); !ok {
+		return
+	}
+	if err := s.store.DeleteRevokedAutomationKey(atoi64(r.FormValue("id"))); err != nil {
+		if err == sql.ErrNoRows {
+			s.showSettings(w, r, "automation", "", "只能删除已吊销的访问权限。")
+			return
+		}
+		s.serverError(w, err)
+		return
+	}
+	s.showSettings(w, r, "automation", "已删除这条访问权限记录。", "")
+}
+
+func (s *Server) adminRegenerateAutomationKey(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.checkCSRF(w, r); !ok {
+		return
+	}
+	id := atoi64(r.FormValue("id"))
+	key, ok, err := s.store.GetAutomationKeyByID(id)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	if !ok {
+		s.showSettings(w, r, "automation", "", "访问权限不存在。")
+		return
+	}
+	if !key.RevokedAt.IsZero() {
+		s.showSettings(w, r, "automation", "", "这条访问权限已吊销，不能重新生成密钥。")
+		return
+	}
+	token, prefix := newAutomationToken()
+	if err := s.store.RegenerateAutomationKey(id, token, prefix); err != nil {
+		if err == sql.ErrNoRows {
+			s.showSettings(w, r, "automation", "", "这条访问权限已失效，不能重新生成密钥。")
+			return
+		}
+		s.serverError(w, err)
+		return
+	}
+	s.showSettings(w, r, "automation", "访问密钥已重新生成，请在列表中点“查看”复制新密钥。", "", token, key.Scopes, key.Name, strconv.FormatInt(id, 10))
+}
+
+func automationScopesFromForm(r *http.Request) []string {
+	_ = r.ParseForm()
+	want := map[string]bool{}
+	for _, scope := range r.Form["scopes"] {
+		if automationScopeValid(scope) {
+			want[scope] = true
+		}
+	}
+	for _, col := range automationCollections {
+		pub := apiScope(col.path, "publish")
+		write := apiScope(col.path, "write")
+		read := apiScope(col.path, "read")
+		if want[pub] {
+			want[write] = true
+		}
+		if want[write] {
+			want[read] = true
+		}
+	}
+	var out []string
+	for _, col := range automationCollections {
+		for _, action := range []string{"read", "write", "publish"} {
+			scope := apiScope(col.path, action)
+			if want[scope] {
+				out = append(out, scope)
+			}
+		}
+	}
+	if len(out) == 0 {
+		for _, col := range automationCollections {
+			out = append(out, apiScope(col.path, "read"), apiScope(col.path, "write"))
+		}
+	}
+	return out
+}
+
+func automationScopeValid(scope string) bool {
+	for _, col := range automationCollections {
+		for _, action := range []string{"read", "write", "publish"} {
+			if scope == apiScope(col.path, action) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (s *Server) adminSaveSite(w http.ResponseWriter, r *http.Request) {
@@ -938,7 +1130,11 @@ func (s *Server) adminSaveSite(w http.ResponseWriter, r *http.Request) {
 	if brand != "both" && brand != "text" {
 		brand = "logo"
 	}
+	linksLimit := boundedInt(r.FormValue("home_links_limit"), defaultHomeLinksLimit, minHomeLinksLimit, maxHomeLinksLimit)
+	postsPerPage := boundedInt(r.FormValue("home_posts_per_page"), defaultHomePostsPerPage, minHomePostsPerPage, maxHomePostsPerPage)
 	_ = s.store.SetSetting("site.brand", brand)
+	_ = s.store.SetSetting(homeLinksLimitKey, strconv.Itoa(linksLimit))
+	_ = s.store.SetSetting(homePostsPerPageKey, strconv.Itoa(postsPerPage))
 	_ = s.store.SetSetting("social_links", buildSocialJSON(r.Form["social_url"], r.Form["social_label"]))
 	_ = s.store.SetSetting("inject.head", strings.TrimSpace(r.FormValue("inject_head")))
 	_ = s.store.SetSetting("inject.body", strings.TrimSpace(r.FormValue("inject_body")))
