@@ -10,32 +10,33 @@ import (
 
 // Site 描述全站级别的 SEO 信息（含当前语种）。
 type Site struct {
-	Name         string
-	Tagline      string
-	Description  string
-	BaseURL      string   // 如 https://cms.ccvar.com（用于绝对 URL）
-	Locale       string   // Open Graph locale，如 zh_CN
-	LangTag      string   // BCP47，如 zh-CN（<html lang> / hreflang / inLanguage）
-	Prefix       string   // 语种路径前缀，如 /zh（内容 URL 用）
-	Author       string   // 组织名，如 CCVAR
-	Theme        string   // 前台主题
-	Favicon      string   // 站点图标 URL（为空用默认）
-	Logo         string   // 站点 logo 图片 URL（为空用文字刊名）
-	Brand        string   // 页眉品牌显示：logo | both | text
-	HeroEyebrow  string   // 首页 hero 眉标
-	HeroTitle    string   // 首页 hero 大标题（换行渲染为 <br>）
-	HeroVisual   string   // 首页右侧视觉类型：""(默认动画) | image | svg
-	HeroImage    string   // 视觉为 image 时的图片/SVG 文件 URL
-	HeroSVG      string   // 视觉为 svg 时的内联 SVG 代码
-	FooterNote   string   // 页脚 logo 下方说明
-	HomeFeatured string   // 首页「精选」栏目标题（可自定义，空则用语种默认）
-	HomeLinks    string   // 首页「精选链接」栏目标题
-	HomeLatest   string   // 首页「最新」栏目标题
-	HomeLabel    string   // 面包屑「首页」文案（随语种）
-	LinksLabel   string   // 「链接」栏目名（随语种）
-	InjectHead   string   // 自定义注入：<head> 末尾（统计/校验等）
-	InjectBody   string   // 自定义注入：</body> 前（统计/广告等）
-	OGAltLocale  []string // 其它启用语种的 OG locale（og:locale:alternate）
+	Name             string
+	Tagline          string
+	Description      string
+	BaseURL          string   // 如 https://cms.ccvar.com（用于绝对 URL）
+	Locale           string   // Open Graph locale，如 zh_CN
+	LangTag          string   // BCP47，如 zh-CN（<html lang> / hreflang / inLanguage）
+	Prefix           string   // 语种路径前缀，如 /zh（内容 URL 用）
+	Author           string   // 组织名，如 CCVAR
+	Theme            string   // 前台主题
+	Favicon          string   // 站点图标 URL（为空用默认）
+	Logo             string   // 站点 logo 图片 URL（为空用文字刊名）
+	Brand            string   // 页眉品牌显示：logo | both | text
+	HeroEyebrow      string   // 首页 hero 眉标
+	HeroTitle        string   // 首页 hero 大标题（换行渲染为 <br>）
+	HeroVisual       string   // 首页右侧视觉类型：""(默认动画) | image | svg
+	HeroImage        string   // 视觉为 image 时的图片/SVG 文件 URL
+	HeroSVG          string   // 视觉为 svg 时的内联 SVG 代码
+	FooterNote       string   // 页脚 logo 下方说明
+	HomeFeatured     string   // 首页「精选」栏目标题（可自定义，空则用语种默认）
+	HomeLinks        string   // 首页「精选链接」栏目标题
+	HomeLatest       string   // 首页「最新」栏目标题
+	HomeLabel        string   // 面包屑「首页」文案（随语种）
+	LinksLabel       string   // 「链接」栏目名（随语种）
+	LinksDescription string   // 链接列表页描述
+	InjectHead       string   // 自定义注入：<head> 末尾（统计/校验等）
+	InjectBody       string   // 自定义注入：</body> 前（统计/广告等）
+	OGAltLocale      []string // 其它启用语种的 OG locale（og:locale:alternate）
 }
 
 func (s Site) base() string { return strings.TrimRight(s.BaseURL, "/") }
@@ -217,6 +218,18 @@ func (s Site) Article(p *store.Post) Meta {
 // Category 分类页：CollectionPage + BreadcrumbList。
 func (s Site) Category(c *store.Category) Meta {
 	canon := s.Abs("/category/" + c.Slug)
+	return s.categoryMeta(c, "/category/"+c.Slug, canon)
+}
+
+// CategoryArchive 是文章分类「全部」页：path 可为 /category 或自定义别名。
+func (s Site) CategoryArchive(c *store.Category, path string) Meta {
+	if path == "" {
+		path = "/category"
+	}
+	return s.categoryMeta(c, path, s.Abs(path))
+}
+
+func (s Site) categoryMeta(c *store.Category, path, canon string) Meta {
 	coll := map[string]any{
 		"@context":   "https://schema.org",
 		"@type":      "CollectionPage",
@@ -283,7 +296,10 @@ func (s Site) Links(cat *store.Category) Meta {
 	canon := s.Abs("/links")
 	title := label + " — " + s.Name
 	name := label
-	desc := s.Description
+	desc := s.LinksDescription
+	if desc == "" {
+		desc = s.Description
+	}
 	if cat != nil {
 		canon = s.Abs("/links?cat=" + cat.Slug)
 		title = cat.Name + " — " + label + " — " + s.Name

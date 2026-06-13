@@ -1,0 +1,139 @@
+{{define "body"}}  <div class="admin-head visual-head">
+    <div>
+      <nav class="breadcrumb" style="padding:0 0 .4rem"><a href="/admin">文章</a><span class="sep">/</span><span>可视化编辑</span></nav>
+      <h1>可视化编辑</h1>
+    </div>
+    <div class="edit-actions">
+      <a class="btn" href="/admin/settings/site">{{template "visual-icon-settings"}}站点设置</a>
+      <a class="btn act-view" href="/{{.EditLang}}/" target="_blank">打开前台 {{template "icon-extlink"}}</a>
+    </div>
+  </div>
+
+  <div class="visual-editor" data-visual-editor data-lang="{{.EditLang}}" data-save-url="/admin/visual/save" data-reorder-url="/admin/visual/nav/reorder" data-category-reorder-url="/admin/visual/categories/reorder">
+    <section class="visual-stage" aria-label="前台预览">
+      <div class="visual-toolbar">
+        <div class="visual-toolbar-main">
+          <div class="lang-tabs" role="tablist" aria-label="预览语种">
+            {{range .Locales}}<a href="/admin/visual?lang={{.Code}}"{{if eq .Code $.EditLang}} class="active" aria-current="true"{{end}}>{{.Name}}</a>{{end}}
+          </div>
+          <p class="visual-note">{{template "visual-icon-info"}}<span>编辑模式下点击预览里的可编辑内容；浏览模式下可以在预览里跳转页面。</span></p>
+        </div>
+        <div class="visual-tools">
+          <div class="visual-seg" aria-label="操作模式">
+            <button type="button" class="active" data-visual-mode="edit">{{template "visual-icon-pen"}}编辑</button>
+            <button type="button" data-visual-mode="browse">{{template "visual-icon-eye"}}浏览</button>
+          </div>
+          <div class="visual-seg" aria-label="预览尺寸">
+            <button type="button" class="active" data-visual-size="desktop">{{template "visual-icon-desktop"}}桌面</button>
+            <button type="button" data-visual-size="tablet">{{template "visual-icon-tablet"}}平板</button>
+            <button type="button" data-visual-size="mobile">{{template "visual-icon-mobile"}}手机</button>
+          </div>
+          <label class="visual-current">
+            <input type="checkbox" data-visual-current>
+            <span>只看当前页</span>
+          </label>
+        </div>
+      </div>
+      <iframe class="visual-frame" src="{{.VisualPreviewURL}}" title="前台可视化预览"></iframe>
+    </section>
+
+    <aside class="visual-panel" aria-label="编辑面板">
+      <div class="visual-context">
+        {{template "visual-icon-editing"}}
+        <span>正在编辑</span>
+        <strong data-visual-lang-label>{{range .Locales}}{{if eq .Code $.EditLang}}{{.Name}}{{end}}{{end}}</strong>
+        <strong data-visual-page-label>首页</strong>
+      </div>
+      <div class="visual-empty" data-visual-empty>
+        <h3>{{template "visual-icon-crosshair"}}选择一个位置</h3>
+        <p class="muted">可以直接点左侧预览里的站点名称、Hero 文案、栏目标题、页脚说明或导航名称。</p>
+      </div>
+
+      <form class="visual-form" data-visual-form hidden>
+        <input type="hidden" name="_csrf" value="{{.CSRF}}">
+        <input type="hidden" name="lang" value="{{.EditLang}}">
+        <input type="hidden" name="key" data-visual-key>
+        <div class="field">
+          <label data-visual-label>字段</label>
+          <textarea name="value" rows="5" data-visual-value></textarea>
+          <span class="hint" data-visual-field-hint></span>
+        </div>
+        <div class="visual-image-tools" data-visual-image-tools hidden>
+          <div class="visual-image-preview" data-visual-image-preview><span>暂无图片</span></div>
+          <div class="visual-image-actions">
+            <button class="btn" type="button" data-visual-upload>{{template "visual-icon-upload"}}上传图片 / SVG</button>
+            <input type="file" accept="image/*,.svg,.ico" data-visual-file hidden>
+          </div>
+        </div>
+        <p class="visual-lang-hint" data-visual-lang-hint hidden></p>
+        <p class="visual-check" data-visual-check></p>
+        <div class="visual-actions">
+          <button class="btn btn-primary" type="submit" data-visual-save>{{template "visual-icon-save"}}保存修改</button>
+          <button class="btn" type="button" data-visual-reset>{{template "visual-icon-refresh"}}重新载入</button>
+        </div>
+        <p class="visual-status muted" data-visual-status></p>
+      </form>
+
+      <div class="visual-list">
+        {{range .VisualGroups}}
+        <section class="visual-group" data-visual-group="{{.ID}}">
+          <button class="visual-group-toggle" type="button" data-visual-group-toggle aria-expanded="false">
+            <span class="visual-group-title">{{template "visual-group-icon" .ID}}<span>{{.Title}}</span></span>
+            <small>{{len .Fields}}</small>
+            <svg class="visual-caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+          </button>
+          {{range .Fields}}
+          <button type="button" draggable="{{if .Draggable}}true{{else}}false{{end}}" data-sortable="{{if .Draggable}}1{{else}}0{{end}}" data-visual-pick data-key="{{.Key}}" data-label="{{.Label}}" data-kind="{{if .Kind}}{{.Kind}}{{else}}text{{end}}" data-group="{{.Group}}" data-hint="{{.Hint}}" data-localized="{{if .Localized}}1{{else}}0{{end}}" data-inherited="{{if .Inherited}}1{{else}}0{{end}}" data-multiline="{{if .Multiline}}1{{else}}0{{end}}" data-context="{{if .Contextual}}1{{else}}0{{end}}" data-value="{{.Value}}" data-meta="{{.Meta}}">
+            {{if .Draggable}}<span class="visual-drag" title="拖动排序" aria-hidden="true">⋮⋮</span>{{end}}
+            {{if eq .Kind "image"}}
+            <span class="visual-thumb">{{if not .Value}}图片{{end}}</span>
+            {{else}}
+            <span class="visual-card-ico">{{template "visual-group-icon" .Group}}</span>
+            {{end}}
+            <span class="visual-card-body">
+              <strong>{{.Label}}</strong>
+              <small>{{if .Meta}}{{.Meta}}{{else}}{{.Value}}{{end}}</small>
+              {{if .Inherited}}<em>沿用默认语种</em>{{end}}
+            </span>
+          </button>
+          {{end}}
+        </section>
+        {{end}}
+      </div>
+
+      <div class="visual-history" data-visual-history>
+        <h3 class="group-head with-icon">{{template "visual-icon-history"}}最近修改</h3>
+        {{if .VisualHistory}}
+          {{range .VisualHistory}}
+          <form method="post" action="/admin/visual/undo" data-visual-undo>
+            <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+            <input type="hidden" name="id" value="{{.ID}}">
+            <button type="submit">
+              <span>撤回 {{.Label}}</span>
+              <small>{{.At}}</small>
+            </button>
+          </form>
+          {{end}}
+        {{else}}
+          <p class="muted">暂无可撤回的修改。</p>
+        {{end}}
+      </div>
+    </aside>
+  </div>
+{{end}}
+
+{{define "visual-icon-info"}}<svg class="visual-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 8h.01"/></svg>{{end}}
+{{define "visual-icon-settings"}}<svg class="visual-btn-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.86l.04.04a2 2 0 0 1-2.83 2.83l-.04-.04A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 1.55V21a2 2 0 0 1-4 0v-.05A1.7 1.7 0 0 0 9 19.4a1.7 1.7 0 0 0-1.86.34l-.04.04a2 2 0 0 1-2.83-2.83l.04-.04A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.55-1H3a2 2 0 0 1 0-4h.05A1.7 1.7 0 0 0 4.6 9a1.7 1.7 0 0 0-.34-1.86l-.04-.04A2 2 0 0 1 7.05 4.3l.04.04A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.55V3a2 2 0 0 1 4 0v.05A1.7 1.7 0 0 0 15 4.6a1.7 1.7 0 0 0 1.86-.34l.04-.04a2 2 0 0 1 2.83 2.83l-.04.04A1.7 1.7 0 0 0 19.4 9a1.7 1.7 0 0 0 1.55 1H21a2 2 0 0 1 0 4h-.05A1.7 1.7 0 0 0 19.4 15z"/></svg>{{end}}
+{{define "visual-icon-pen"}}<svg class="visual-btn-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>{{end}}
+{{define "visual-icon-eye"}}<svg class="visual-btn-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>{{end}}
+{{define "visual-icon-desktop"}}<svg class="visual-btn-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8"/><path d="M12 16v4"/></svg>{{end}}
+{{define "visual-icon-tablet"}}<svg class="visual-btn-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="3" width="12" height="18" rx="2"/><path d="M11 17h2"/></svg>{{end}}
+{{define "visual-icon-mobile"}}<svg class="visual-btn-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="2" width="8" height="20" rx="2"/><path d="M11 18h2"/></svg>{{end}}
+{{define "visual-icon-editing"}}<svg class="visual-context-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v10H4z"/><path d="M8 21h8"/><path d="M12 15v6"/><path d="M9 9h6"/></svg>{{end}}
+{{define "visual-icon-crosshair"}}<svg class="visual-title-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="7"/><path d="M12 2v4"/><path d="M12 18v4"/><path d="M2 12h4"/><path d="M18 12h4"/></svg>{{end}}
+{{define "visual-icon-upload"}}<svg class="visual-btn-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M20 16v4H4v-4"/></svg>{{end}}
+{{define "visual-icon-save"}}<svg class="visual-btn-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/></svg>{{end}}
+{{define "visual-icon-refresh"}}<svg class="visual-btn-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 0 1-15.2 6.5"/><path d="M3 12A9 9 0 0 1 18.2 5.5"/><path d="M18 2v4h-4"/><path d="M6 22v-4h4"/></svg>{{end}}
+{{define "visual-icon-history"}}<svg class="visual-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><path d="M12 7v5l3 2"/></svg>{{end}}
+
+{{define "visual-group-icon"}}{{if eq . "site"}}<svg class="visual-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/><path d="M9 20v-6h6v6"/></svg>{{else if eq . "home"}}<svg class="visual-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/><path d="M8 14h8"/><path d="M8 17h5"/></svg>{{else if eq . "about"}}<svg class="visual-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h5"/></svg>{{else if eq . "nav"}}<svg class="visual-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h10"/></svg>{{else if eq . "category"}}<svg class="visual-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7h7l2 2h9v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M3 7V5a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v2"/></svg>{{else if eq . "categorynav"}}<svg class="visual-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h12"/><path d="M8 12h12"/><path d="M8 18h12"/><path d="M4 6h.01"/><path d="M4 12h.01"/><path d="M4 18h.01"/></svg>{{else if eq . "linkcat"}}<svg class="visual-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.1 0l2-2a5 5 0 0 0-7.1-7.1L10.8 5"/><path d="M14 11a5 5 0 0 0-7.1 0l-2 2a5 5 0 0 0 7.1 7.1l1.2-1.2"/></svg>{{else if eq . "linkcatnav"}}<svg class="visual-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 7h11"/><path d="M9 17h11"/><path d="M5 7h.01"/><path d="M5 17h.01"/><path d="M7 12h10"/><path d="M15 10l2 2-2 2"/></svg>{{else if eq . "footer"}}<svg class="visual-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 15h18"/><path d="M8 18h8"/></svg>{{else}}<svg class="visual-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2"/><path d="M9 9h6"/><path d="M9 13h4"/></svg>{{end}}{{end}}

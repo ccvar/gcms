@@ -2,16 +2,16 @@
     <section class="hero">
       <div class="wrap hero-inner">
         <div class="hero-text">
-          <p class="eyebrow">{{.Site.HeroEyebrow}}</p>
-          <h1>{{nl2br .Site.HeroTitle}}</h1>
-          <p class="hero-sub">{{.Site.Description}}</p>
+          <p class="eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>
+          <h1{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+          <p class="hero-sub"{{if .VisualEdit}} data-visual-edit="site.description" data-visual-label="站点描述"{{end}}>{{.Site.Description}}</p>
           <div class="hero-cta">
-            <a class="btn btn-primary" href="{{if .Featured}}{{.Tr.U (printf "/posts/%s" .Featured.Slug)}}{{else}}{{.Tr.U "/category/engineering"}}{{end}}">{{.Tr.T "home.cta_start"}} <span class="arrow">→</span></a>
+            <a class="btn btn-primary" href="{{if .Featured}}{{.Tr.U (printf "/posts/%s" .Featured.Slug)}}{{else}}{{.Tr.U .CategoryAll.Path}}{{end}}">{{.Tr.T "home.cta_start"}} <span class="arrow">→</span></a>
             <a class="btn" href="{{.Tr.U "/about"}}">{{.Tr.T "home.cta_more"}}</a>
           </div>
         </div>
-        <div class="hero-visual" aria-hidden="true">
-          {{if and (eq .Site.HeroVisual "image") .Site.HeroImage}}<img class="hero-img" src="{{.Site.HeroImage}}" alt="">
+        <div class="hero-visual" aria-hidden="true"{{if .VisualEdit}} data-visual-edit="hero.image" data-visual-label="Hero 图片" data-visual-kind="image"{{end}}>
+          {{if and (eq .Site.HeroVisual "image") .Site.HeroImage}}<img class="hero-img" src="{{.Site.HeroImage}}" alt=""{{if .VisualEdit}} data-visual-edit="hero.image" data-visual-label="Hero 图片" data-visual-kind="image"{{end}}>
           {{else if and (eq .Site.HeroVisual "svg") .Site.HeroSVG}}<div class="hero-embed">{{safeHTML .Site.HeroSVG}}</div>
           {{else if eq .Site.HeroVisual "anim1"}}
           <svg class="hero-svg" viewBox="0 0 480 440" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="服务端渲染与数据流示意图">
@@ -142,8 +142,8 @@
     <div class="wrap">
       {{with .Featured}}
       <div class="section-head">
-        <h2>{{$.Site.HomeFeatured}}</h2>
-        <a href="{{$.Tr.U "/category/engineering"}}">{{$.Tr.T "home.view_all"}} <span class="arrow">→</span></a>
+        <h2{{if $.VisualEdit}} data-visual-edit="home.featured_title" data-visual-label="首页精选标题"{{end}}>{{$.Site.HomeFeatured}}</h2>
+        <a href="{{$.Tr.U $.CategoryAll.Path}}">{{$.Tr.T "home.view_all"}} <span class="arrow">→</span></a>
       </div>
       <article class="feature{{if not .CoverImage}} no-cover{{end}}">
         {{if .CoverImage}}<img class="cover" src="{{.CoverImage}}" alt="{{.Title}}">{{end}}
@@ -173,7 +173,7 @@
 
       {{if .FeatLinks}}
       <div class="section-head">
-        <h2>{{.Site.HomeLinks}}</h2>
+        <h2{{if .VisualEdit}} data-visual-edit="home.links_title" data-visual-label="首页链接标题"{{end}}>{{.Site.HomeLinks}}</h2>
         <a href="{{.Tr.U "/links"}}">{{.Tr.T "home.view_all"}} <span class="arrow">→</span></a>
       </div>
       <div class="link-grid home-links">
@@ -191,7 +191,7 @@
       {{end}}
 
       <div class="section-head">
-        <h2>{{.Site.HomeLatest}}</h2>
+        <h2{{if .VisualEdit}} data-visual-edit="home.latest_title" data-visual-label="首页最新标题"{{end}}>{{.Site.HomeLatest}}</h2>
         <a href="{{.Tr.U "/rss.xml"}}">{{.Tr.T "footer.rss"}}</a>
       </div>
 

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"os"
 	"strings"
 	"time"
 
@@ -9,6 +10,12 @@ import (
 
 // md 把若干行拼成一段 Markdown（用双引号字符串便于内嵌反引号行内代码）。
 func md(lines ...string) string { return strings.Join(lines, "\n") }
+
+// bcryptHash 生成 bcrypt 哈希（供种子写入管理员密码）。
+func bcryptHash(pw string) (string, error) {
+	h, err := bcrypt.GenerateFromPassword([]byte(pw), bcrypt.DefaultCost)
+	return string(h), err
+}
 
 type seedCat struct {
 	Slug, Name, Description, Lang, Group, Kind string
@@ -28,6 +35,11 @@ func (s *Store) seedIfEmpty() error {
 	}
 	if n > 0 {
 		return nil
+	}
+
+	// CMS_SEED=showcase：写入「产品官网」样板内容（仅用于演示/评审），不走默认演示种子。
+	if strings.EqualFold(os.Getenv("CMS_SEED"), "showcase") {
+		return s.seedShowcase()
 	}
 
 	// 站点设置

@@ -35,6 +35,10 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="14.5" r="3.5"/><path d="M10 12l8-8"/><path d="M15 7l2 2"/><path d="M17 5l2 2"/></svg>
         <span>自动化接口</span>
       </a>
+      <a href="/admin/settings/comments"{{if eq .Section "comments"}} class="active"{{end}}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 14.5a4.5 4.5 0 0 1-4.5 4.5H8l-5 3V7.5A4.5 4.5 0 0 1 7.5 3h9A4.5 4.5 0 0 1 21 7.5z"/></svg>
+        <span>评论</span>
+      </a>
       <a href="/admin/settings/security"{{if eq .Section "security"}} class="active"{{end}}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.6-7 9-4-1.4-7-4.5-7-9V6z"/></svg>
         <span>安全</span>
@@ -52,6 +56,13 @@
       {{if eq .Section "site"}}
       <form method="post" action="/admin/settings/site" class="admin-form">
         <input type="hidden" name="_csrf" value="{{.CSRF}}">
+        <div class="visual-entry">
+          <div>
+            <strong>想直接在首页上改文字？</strong>
+            <p>打开真实前台预览，点选页面上的站点名称、Hero 文案、栏目标题或导航名称后再修改。</p>
+          </div>
+          <a class="btn" href="/admin/visual?lang={{.EditLang}}">打开可视化编辑</a>
+        </div>
         <div class="field">
           <label for="site_name">站点名称</label>
           <input id="site_name" name="site_name" value="{{.Settings.Name}}" required>
@@ -302,7 +313,7 @@
       </form>
 
       {{else if eq .Section "menu"}}
-      <p class="muted" style="margin:.1rem 0 1rem;font-size:.9rem">自定义页眉导航：<strong>拖动排序</strong>、每个语种<strong>单独命名</strong>。<strong>内部路径</strong>（如 <code>/</code>、<code>/category/engineering</code>、<code>/about</code>、<code>/search</code>）会自动加语种前缀；<strong>外部链接</strong>填完整 <code>https://…</code>（新窗口打开）。</p>
+      <p class="muted" style="margin:.1rem 0 1rem;font-size:.9rem">自定义页眉导航：<strong>拖动排序</strong>、每个语种<strong>单独命名</strong>。<strong>内部路径</strong>（如 <code>/</code>、<code>/category</code>、<code>/about</code>、<code>/search</code>）会自动加语种前缀；<strong>外部链接</strong>填完整 <code>https://…</code>（新窗口打开）。</p>
       <form method="post" action="/admin/settings/menu" class="admin-form">
         <input type="hidden" name="_csrf" value="{{.CSRF}}">
         <div class="menu-rows" data-menu-rows data-langs="{{range $i, $l := .Locales}}{{if $i}},{{end}}{{$l.Code}}{{end}}" data-lang-names="{{range $i, $l := .Locales}}{{if $i}},{{end}}{{$l.Name}}{{end}}">
@@ -310,7 +321,7 @@
           <div class="menu-row">
             <span class="drag-handle" aria-hidden="true">⠿</span>
             <div class="menu-fields">
-              <input class="menu-url" name="nav_url" value="{{$row.URL}}" placeholder="/ 或 /category/eng 或 https://…" inputmode="url">
+              <input class="menu-url" name="nav_url" value="{{$row.URL}}" placeholder="/ 或 /category 或 https://…" inputmode="url">
               <div class="menu-labels">
                 {{range $.Locales}}<label class="menu-label"><span class="ml-lang">{{.Name}}</span><input name="nav_label_{{.Code}}" value="{{index $row.Labels .Code}}" placeholder="名称"></label>{{end}}
               </div>
@@ -328,7 +339,7 @@
       {{else if eq .Section "languages"}}
       <form method="post" action="/admin/settings/languages" class="admin-form">
         <input type="hidden" name="_csrf" value="{{.CSRF}}">
-        <p class="muted" style="margin:.1rem 0 1rem;font-size:.9rem">勾选要在前台启用的语种。「默认」语种是 <code>/</code> 的跳转目标，也是文案与内容的回落语种；每个语种的 URL 形如 <code>/en/…</code>。</p>
+        <p class="muted" style="margin:.1rem 0 1rem;font-size:.9rem">勾选要在前台启用的语种。「默认」语种是浏览器语言无法匹配启用语种时的兜底访问语种，也是文案与内容的回落语种；访问 <code>/</code> 会先按浏览器语言协商，每个语种的 URL 形如 <code>/en/…</code>。</p>
         <table class="admin-table lang-table">
           <thead><tr><th>语种</th><th>代码 · 标记</th><th class="center">启用</th><th class="center">默认</th></tr></thead>
           <tbody>
@@ -397,13 +408,28 @@
       </div>
       <p class="muted" style="margin:.2rem 0 0;font-size:.9rem">{{if eq .CatKind "link"}}链接{{else}}文章{{end}}在编辑页选择分类（同语种、同类型；文章分类与链接分类相互独立）。拖动行可调整顺序（影响前台分类导航的排列）。</p>
       <table class="admin-table category-table" style="margin-top:.6rem">
-        <thead><tr><th style="width:28px"></th><th>名称</th><th>Slug</th><th>文章数</th><th class="right">操作</th></tr></thead>
+        <thead><tr><th style="width:28px"></th><th>名称</th><th>链接</th><th>数量</th><th class="right">操作</th></tr></thead>
         <tbody id="cat-sortable">
+          <tr class="cat-row-all">
+            <td><span class="cat-all-dot" aria-hidden="true"></span></td>
+            <td>
+              <strong>{{.Settings.AllTitle}}</strong>
+              {{if .Settings.AllDescription}}<div class="muted" style="font-size:.8rem;margin-top:.2rem">{{.Settings.AllDescription}}</div>{{end}}
+              <div class="muted" style="font-size:.78rem;margin-top:.2rem">筛选按钮：{{.Settings.AllLabel}}</div>
+            </td>
+            <td class="slug">{{.Settings.AllPath}}</td>
+            <td class="muted">全部</td>
+            <td class="right actions">
+              <span class="action-icons">
+                <button type="button" class="act-ico" data-cat-all-edit data-title="{{.Settings.AllTitle}}" data-label="{{.Settings.AllLabel}}" data-slug="{{.Settings.AllSlug}}" data-desc="{{.Settings.AllDescription}}" title="编辑" aria-label="编辑">{{template "icon-edit"}}</button>
+              </span>
+            </td>
+          </tr>
           {{range .Categories}}
           <tr class="cat-row" draggable="true" data-id="{{.ID}}">
             <td class="drag-handle" aria-hidden="true">⠿</td>
             <td><strong>{{.Name}}</strong>{{if .Description}}<div class="muted" style="font-size:.8rem;margin-top:.2rem">{{.Description}}</div>{{end}}</td>
-            <td class="slug">{{.Slug}}</td>
+            <td class="slug">{{if eq $.CatKind "link"}}/links?cat={{.Slug}}{{else}}/category/{{.Slug}}{{end}}</td>
             <td class="muted">{{.Count}}</td>
             <td class="right actions">
               <span class="action-icons">
@@ -421,6 +447,28 @@
           {{else}}<tr><td colspan="5" class="muted">该语种下还没有分类，点击右上角新增。</td></tr>{{end}}
         </tbody>
       </table>
+
+      <!-- “全部”入口编辑模态框 -->
+      <div class="modal" id="cat-all-modal" hidden>
+        <div class="modal-backdrop" data-cat-all-close></div>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="cat-all-modal-title">
+          <h3 id="cat-all-modal-title">{{if eq .CatKind "link"}}编辑链接全部页{{else}}编辑文章分类全部页{{end}}</h3>
+          <p class="muted" style="margin:-.4rem 0 1rem;font-size:.86rem">{{if eq .CatKind "link"}}默认入口是 /links；自定义 Slug 后，也可用 /links/{slug} 访问全部链接。{{else}}默认入口是 /category；自定义 Slug 后，也可用 /category/{slug} 访问全部文章。{{end}}</p>
+          <form method="post" action="/admin/settings/categories/all" class="admin-form">
+            <input type="hidden" name="_csrf" value="{{.CSRF}}">
+            <input type="hidden" name="lang" value="{{.EditLang}}">
+            <input type="hidden" name="kind" value="{{.CatKind}}">
+            <div class="field"><label for="cat-all-title">页面标题</label><input id="cat-all-title" name="title" value="{{.Settings.AllTitle}}" required></div>
+            <div class="field"><label for="cat-all-label">“全部”按钮文字</label><input id="cat-all-label" name="label" value="{{.Settings.AllLabel}}" required></div>
+            <div class="field"><label for="cat-all-slug">Slug</label><input id="cat-all-slug" name="slug" value="{{.Settings.AllSlug}}" placeholder="{{if eq .CatKind "link"}}links{{else}}category{{end}}"></div>
+            <div class="field"><label for="cat-all-desc">页面描述</label><textarea id="cat-all-desc" name="description" rows="2">{{.Settings.AllDescription}}</textarea></div>
+            <div style="display:flex;gap:.6rem;justify-content:flex-end">
+              <button type="button" class="btn" data-cat-all-close>取消</button>
+              <button type="submit" class="btn btn-primary">保存</button>
+            </div>
+          </form>
+        </div>
+      </div>
 
       <!-- 分类新增/编辑模态框 -->
       <div class="modal" id="cat-modal" hidden>
@@ -663,6 +711,127 @@
         </table>
       </details>
       {{end}}
+
+      {{else if eq .Section "comments"}}
+      <form method="post" action="/admin/settings/comments" class="admin-form">
+        <input type="hidden" name="_csrf" value="{{.CSRF}}">
+        <div class="field-group">
+          <h3 class="group-head with-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 14.5a4.5 4.5 0 0 1-4.5 4.5H8l-5 3V7.5A4.5 4.5 0 0 1 7.5 3h9A4.5 4.5 0 0 1 21 7.5z"/></svg>
+            <span>第三方评论</span>
+          </h3>
+          <p class="muted automation-note">评论内容不存进 GCMS。启用后，文章页底部会加载 giscus，把评论托管到你指定的 GitHub Discussions。</p>
+          <div class="field">
+            <label id="comments-provider-label">评论功能</label>
+            <div class="dropdown" data-name="comments_provider">
+              <button type="button" class="dd-toggle" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="comments-provider-label">
+                <span class="dd-label">{{if eq .Settings.CommentsProvider "giscus"}}Giscus（GitHub Discussions）{{else}}关闭{{end}}</span>
+                <svg class="dd-caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+              </button>
+              <input type="hidden" name="comments_provider" value="{{if eq .Settings.CommentsProvider "giscus"}}giscus{{else}}none{{end}}">
+              <ul class="dd-menu" role="listbox">
+                <li role="option" data-value="none" aria-selected="{{if ne .Settings.CommentsProvider "giscus"}}true{{else}}false{{end}}">关闭</li>
+                <li role="option" data-value="giscus" aria-selected="{{if eq .Settings.CommentsProvider "giscus"}}true{{else}}false{{end}}">Giscus（GitHub Discussions）</li>
+              </ul>
+            </div>
+          </div>
+          <div class="automation-help">
+            <div class="help-title">
+              <span class="cap-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 0 1 4.7 1.2c0 1.8-2.2 2.2-2.2 3.8"/><path d="M12 17h.01"/></svg></span>
+              <strong>怎么准备</strong>
+            </div>
+            <ol>
+              <li>准备一个 GitHub 仓库，开启 Discussions，并安装 giscus App。</li>
+              <li>打开 <a href="https://giscus.app/zh-CN" target="_blank" rel="noopener">giscus 配置页</a>，按提示选择仓库和讨论分类。</li>
+              <li>把页面生成的 Repo ID、Category ID 等信息填到下面。</li>
+              <li>在需要评论的文章编辑页勾选“显示评论区”。</li>
+            </ol>
+          </div>
+        </div>
+
+        <div class="field-group">
+          <h3 class="group-head">Giscus 配置</h3>
+          <div class="form-2col">
+            <div class="field">
+              <label for="giscus_repo">仓库</label>
+              <input id="giscus_repo" name="giscus_repo" value="{{.Settings.GiscusRepo}}" placeholder="owner/repo">
+            </div>
+            <div class="field">
+              <label for="giscus_repo_id">Repo ID</label>
+              <input id="giscus_repo_id" name="giscus_repo_id" value="{{.Settings.GiscusRepoID}}" placeholder="R_kg...">
+            </div>
+            <div class="field">
+              <label for="giscus_category">讨论分类</label>
+              <input id="giscus_category" name="giscus_category" value="{{.Settings.GiscusCategory}}" placeholder="Announcements">
+            </div>
+            <div class="field">
+              <label for="giscus_category_id">Category ID</label>
+              <input id="giscus_category_id" name="giscus_category_id" value="{{.Settings.GiscusCategoryID}}" placeholder="DIC_kw...">
+            </div>
+          </div>
+          <p class="muted" style="margin:.1rem 0 0;font-size:.84rem;line-height:1.55">这些值由 giscus 配置页生成。GCMS 只负责把它们放到文章页，不保存评论内容。</p>
+        </div>
+
+        <div class="field-group">
+          <h3 class="group-head">显示方式</h3>
+          <div class="form-2col">
+            <div class="field">
+              <label id="giscus-mapping-label">文章与讨论的对应方式</label>
+              <div class="dropdown" data-name="giscus_mapping">
+                <button type="button" class="dd-toggle" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="giscus-mapping-label">
+                  <span class="dd-label">{{if eq .Settings.GiscusMapping "url"}}按完整 URL{{else if eq .Settings.GiscusMapping "title"}}按文章标题{{else if eq .Settings.GiscusMapping "og:title"}}按 OG 标题{{else}}按页面路径（推荐）{{end}}</span>
+                  <svg class="dd-caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+                </button>
+                <input type="hidden" name="giscus_mapping" value="{{if .Settings.GiscusMapping}}{{.Settings.GiscusMapping}}{{else}}pathname{{end}}">
+                <ul class="dd-menu" role="listbox">
+                  <li role="option" data-value="pathname" aria-selected="{{if eq .Settings.GiscusMapping "pathname"}}true{{else}}false{{end}}">按页面路径（推荐）</li>
+                  <li role="option" data-value="url" aria-selected="{{if eq .Settings.GiscusMapping "url"}}true{{else}}false{{end}}">按完整 URL</li>
+                  <li role="option" data-value="title" aria-selected="{{if eq .Settings.GiscusMapping "title"}}true{{else}}false{{end}}">按文章标题</li>
+                  <li role="option" data-value="og:title" aria-selected="{{if eq .Settings.GiscusMapping "og:title"}}true{{else}}false{{end}}">按 OG 标题</li>
+                </ul>
+              </div>
+            </div>
+            <div class="field">
+              <label id="giscus-theme-label">评论区主题</label>
+              <div class="dropdown" data-name="giscus_theme">
+                <button type="button" class="dd-toggle" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="giscus-theme-label">
+                  <span class="dd-label">{{if eq .Settings.GiscusTheme "light"}}浅色{{else if eq .Settings.GiscusTheme "dark"}}深色{{else if eq .Settings.GiscusTheme "noborder_light"}}浅色无边框{{else if eq .Settings.GiscusTheme "noborder_dark"}}深色无边框{{else}}跟随系统{{end}}</span>
+                  <svg class="dd-caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+                </button>
+                <input type="hidden" name="giscus_theme" value="{{if .Settings.GiscusTheme}}{{.Settings.GiscusTheme}}{{else}}preferred_color_scheme{{end}}">
+                <ul class="dd-menu" role="listbox">
+                  <li role="option" data-value="preferred_color_scheme" aria-selected="{{if eq .Settings.GiscusTheme "preferred_color_scheme"}}true{{else}}false{{end}}">跟随系统</li>
+                  <li role="option" data-value="light" aria-selected="{{if eq .Settings.GiscusTheme "light"}}true{{else}}false{{end}}">浅色</li>
+                  <li role="option" data-value="dark" aria-selected="{{if eq .Settings.GiscusTheme "dark"}}true{{else}}false{{end}}">深色</li>
+                  <li role="option" data-value="noborder_light" aria-selected="{{if eq .Settings.GiscusTheme "noborder_light"}}true{{else}}false{{end}}">浅色无边框</li>
+                  <li role="option" data-value="noborder_dark" aria-selected="{{if eq .Settings.GiscusTheme "noborder_dark"}}true{{else}}false{{end}}">深色无边框</li>
+                </ul>
+              </div>
+            </div>
+            <div class="field">
+              <label id="giscus-input-position-label">评论输入框位置</label>
+              <div class="dropdown" data-name="giscus_input_position">
+                <button type="button" class="dd-toggle" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="giscus-input-position-label">
+                  <span class="dd-label">{{if eq .Settings.GiscusInputPosition "top"}}顶部{{else}}底部{{end}}</span>
+                  <svg class="dd-caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+                </button>
+                <input type="hidden" name="giscus_input_position" value="{{if eq .Settings.GiscusInputPosition "top"}}top{{else}}bottom{{end}}">
+                <ul class="dd-menu" role="listbox">
+                  <li role="option" data-value="bottom" aria-selected="{{if eq .Settings.GiscusInputPosition "bottom"}}true{{else}}false{{end}}">底部</li>
+                  <li role="option" data-value="top" aria-selected="{{if eq .Settings.GiscusInputPosition "top"}}true{{else}}false{{end}}">顶部</li>
+                </ul>
+              </div>
+            </div>
+            <div class="field">
+              <label>细节</label>
+              <label class="tweak-toggle"><input type="checkbox" name="giscus_strict" value="1"{{if .Settings.GiscusStrict}} checked{{end}}><span>严格匹配页面路径</span></label>
+              <label class="tweak-toggle" style="margin-top:.45rem"><input type="checkbox" name="giscus_reactions" value="1"{{if .Settings.GiscusReactions}} checked{{end}}><span>显示表情回应</span></label>
+            </div>
+          </div>
+        </div>
+
+        <button class="btn btn-primary" type="submit">保存评论设置</button>
+      </form>
 
       {{else if eq .Section "updates"}}
       {{$u := .Update}}

@@ -64,6 +64,25 @@
           {{end}}
         </article>
 
+        {{with .Giscus}}
+        <section class="comments giscus-comments" aria-label="评论">
+          <script src="https://giscus.app/client.js"
+            data-repo="{{.Repo}}"
+            data-repo-id="{{.RepoID}}"
+            data-category="{{.Category}}"
+            data-category-id="{{.CategoryID}}"
+            data-mapping="{{.Mapping}}"
+            data-strict="{{.Strict}}"
+            data-reactions-enabled="{{.Reactions}}"
+            data-emit-metadata="0"
+            data-input-position="{{.InputPosition}}"
+            data-theme="{{.Theme}}"
+            data-lang="{{.Lang}}"
+            crossorigin="anonymous"
+            async></script>
+        </section>
+        {{end}}
+
         {{if .Related}}
         <section class="related">
           <div class="section-head"><h2>{{.Tr.T "common.related"}}</h2></div>

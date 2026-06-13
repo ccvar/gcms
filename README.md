@@ -238,9 +238,10 @@ cms.ccvar.com/
   - `文案`（`/copy`）：首页 hero 眉标/大标题、标语、描述、页脚说明等前台文案可编辑，**按语种切换标签分别维护**（非默认语种存 `site.x::<lang>`，留空回落默认语种）；字段按「首页 Hero / 站点描述 / 页脚」分组展示
   - `导航`（`/menu`）：**页眉菜单构建器**——自定义每项名称、**拖动排序**、**每语种单独命名**（存 `nav_menu` JSON）；内部路径自动加语种前缀，外部 `https://…` 新窗口打开；未配置时回落默认菜单（首页/分类/关于）
   - 左侧分区菜单每项带 SVG 图标
-  - `语言`（`/languages`）：勾选启用的语种、指定默认语种（`/` 的跳转目标与回落语种）；内置 7 种之外可**新增自定义语种预设**（代码/名称/BCP47 标记/OG locale，存 `custom_locales`），自定义语种的界面文案回落默认语种
+  - `语言`（`/languages`）：勾选启用的语种、指定默认语种（访问者浏览器语言无法匹配启用语种时的兜底访问语种，也是回落语种）；内置 7 种之外可**新增自定义语种预设**（代码/名称/BCP47 标记/OG locale，存 `custom_locales`），自定义语种的界面文案回落默认语种
   - `分类`（`/categories`）：列表 + 「新增分类」**模态框**增删改（**按语种**）
   - `自动化接口`（`/automation`）：为外部 AI 工具或应用创建/吊销访问权限，仅开放文章、链接、页面三类内容；创建成功后显示一次访问密钥，并可下载该权限专用的 AI 接入包
+  - `评论`（`/comments`）：可选接入 giscus，把文章评论托管到 GitHub Discussions；全站默认关闭，且需要在单篇文章编辑页勾选“显示评论区”才会加载
   - `安全`（`/security`）：在线改密（校验当前密码、新密码 ≥6 位、两次一致）
 
 ### 自动化接口
@@ -297,6 +298,19 @@ curl -X POST https://example.com/api/admin/v1/posts \
   -d '{"title":"AI 生成的草稿","content":"正文 Markdown","lang":"zh","status":"draft"}'
 ```
 
+### 可选评论
+
+评论不由 GCMS 自建存储，第一版只提供 **giscus / GitHub Discussions** 接入。这样能借用 GitHub 登录、通知、讨论管理和基础风控，CMS 只负责在文章页加载评论组件。
+
+使用步骤：
+
+1. 准备一个 GitHub 仓库，开启 Discussions，并安装 giscus App。
+2. 在 <https://giscus.app/zh-CN> 选择仓库和讨论分类，复制生成的 Repo ID、Category ID 等参数。
+3. 到后台「设置 → 评论」选择 Giscus，并填写这些参数。
+4. 在需要开放讨论的文章编辑页勾选「显示评论区」。
+
+全局评论关闭、giscus 参数不完整、或文章未勾选时，前台不会加载任何评论脚本。页面和链接内容暂不接评论，避免入口过多导致运营成本上升。
+
 ### 前台主题（18 套，布局风格各异，非简单换色）
 
 在设置页切换，存于 `settings.theme`，服务端渲染即时生效（`<html data-theme="…">`，无闪烁）：
@@ -328,7 +342,7 @@ curl -X POST https://example.com/api/admin/v1/posts \
 
 ### 多语种（i18n）
 
-开箱演示中英双语；URL 形如 `/zh/…`、`/en/…`，访问 `/` 自动跳默认语种。
+开箱演示中英双语；URL 形如 `/zh/…`、`/en/…`，访问 `/` 会优先按浏览器 `Accept-Language` 协商到已启用语种，匹配不到时回到后台设置的默认语种。
 
 - **路由**：一层 `locale` 中间件识别并剥掉路径里的语种前缀写入 `context`，再交给原始 `ServeMux`——**现有 30+ 条路由零改动**。`/admin`、`/assets`、`/sitemap.xml`、`/robots.txt` 不参与前缀。
 - **内容模型**：`posts` / `categories` 各加 `lang` 与 `trans_group` 两列；同一逻辑内容的各语种版本是**独立的行**、共享 `trans_group` 关联（用于语言切换与 hreflang）。slug 改为 `(lang, slug)` 复合唯一，故 `/zh/about` 与 `/en/about` 可并存、各语种 slug 互不影响。
@@ -345,15 +359,14 @@ curl -X POST https://example.com/api/admin/v1/posts \
 - **路由**：标准库 `net/http`（Go 1.22+ `ServeMux`，方法 + 路径参数，零第三方路由）+ 自写 locale 前缀中间件
 - **数据库**：`modernc.org/sqlite`（纯 Go，免 CGO，开启 WAL）
 - **Markdown**：`github.com/yuin/goldmark`
-- **多语种**：自建轻量 `internal/i18n`（embed JSON 文案目录 + 每请求 `Tr` 助手 + 语种注册表），零第三方依赖
+- **多语种**：自建轻量 `internal/i18n`（embed JSON 文案目录 + 每请求 `Tr` 助手 + 语种注册表），`/` 自动按 `Accept-Language` 协商首选语种，零第三方依赖
 - **密码**：`golang.org/x/crypto/bcrypt`
 - **资源打包**：`embed.FS`
 
 ## 可选的后续增强
 
 - 标签系统（目前用关键词字段兼作标签）
-- 评论 / 浏览量统计
+- 浏览量统计
 - 更多主题，或把主题做成可视化定制
-- 自动按 `Accept-Language` 协商首选语种（目前 `/` 固定跳默认语种，由 hreflang/x-default 引导爬虫）
 
 数据模型已为这些预留空间；前端样式如需调整，集中在 `assets/css/style.css` 与 `templates/`。

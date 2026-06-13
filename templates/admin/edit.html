@@ -136,6 +136,16 @@
           <label for="author">作者</label>
           <input id="author" name="author" value="{{$e.Author}}">
         </div>
+
+        {{if and (not .IsPage) (not .IsLink)}}
+        <div class="field">
+          <label class="tweak-toggle">
+            <input type="checkbox" name="comments_enabled" value="1"{{if $e.CommentsEnabled}} checked{{end}}>
+            <span>显示评论区</span>
+          </label>
+          <p class="muted" style="margin:.35rem 0 0;font-size:.82rem;line-height:1.5">需要先在「设置 → 评论」启用 Giscus。</p>
+        </div>
+        {{end}}
       </aside>
 
     <fieldset class="seo-box">

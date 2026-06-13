@@ -17,6 +17,7 @@ type MenuItem struct {
 	Label    string
 	Active   bool
 	External bool
+	Index    int
 }
 
 // parseMenuRows 解析 settings.nav_menu（JSON 数组），过滤空 URL。

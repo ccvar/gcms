@@ -133,6 +133,553 @@
     });
   }
 
+  /* ---------- 可视化编辑：后台 iframe 内点选前台文案并保存 ---------- */
+  (function () {
+    var root = document.querySelector("[data-visual-editor]");
+    if (!root) return;
+    var frame = root.querySelector(".visual-frame");
+    var stage = root.querySelector(".visual-stage");
+    var form = root.querySelector("[data-visual-form]");
+    var empty = root.querySelector("[data-visual-empty]");
+    var keyInput = root.querySelector("[data-visual-key]");
+    var valueInput = root.querySelector("[data-visual-value]");
+    var labelEl = root.querySelector("[data-visual-label]");
+    var statusEl = root.querySelector("[data-visual-status]");
+    var hintEl = root.querySelector("[data-visual-field-hint]");
+    var langHintEl = root.querySelector("[data-visual-lang-hint]");
+    var checkEl = root.querySelector("[data-visual-check]");
+    var saveBtn = root.querySelector("[data-visual-save]");
+    var resetBtn = root.querySelector("[data-visual-reset]");
+    var currentToggle = root.querySelector("[data-visual-current]");
+    var imageTools = root.querySelector("[data-visual-image-tools]");
+    var imagePreview = root.querySelector("[data-visual-image-preview]");
+    var uploadBtn = root.querySelector("[data-visual-upload]");
+    var fileInput = root.querySelector("[data-visual-file]");
+    var historyBox = root.querySelector("[data-visual-history]");
+    var pageLabel = root.querySelector("[data-visual-page-label]");
+    var selectedKey = "";
+    var originalValue = "";
+    var currentMode = "edit";
+    var saving = false;
+    var pendingScroll = null;
+    var frameKeys = {};
+    var draggedSort = null;
+
+    function fieldButton(key) {
+      var found = null;
+      root.querySelectorAll("[data-visual-pick]").forEach(function (btn) {
+        if (!found && btn.getAttribute("data-key") === key) found = btn;
+      });
+      return found;
+    }
+    function setStatus(text, bad) {
+      if (!statusEl) return;
+      statusEl.textContent = text || "";
+      statusEl.classList.toggle("is-bad", !!bad);
+    }
+    function setCheck(text, bad) {
+      if (!checkEl) return false;
+      checkEl.textContent = text || "";
+      checkEl.classList.toggle("is-bad", !!bad);
+      return !!bad;
+    }
+    function frameDoc() {
+      try { return frame && frame.contentDocument; } catch (e) { return null; }
+    }
+    function frameScroll() {
+      var doc = frameDoc();
+      if (!doc || !doc.defaultView) return 0;
+      return doc.defaultView.pageYOffset || doc.documentElement.scrollTop || doc.body.scrollTop || 0;
+    }
+    function reloadFrame(keepScroll) {
+      if (!frame || !frame.contentWindow) return;
+      pendingScroll = keepScroll ? frameScroll() : null;
+      frame.contentWindow.location.reload();
+    }
+    function currentKind() {
+      var btn = fieldButton(selectedKey);
+      return (btn && btn.getAttribute("data-kind")) || "text";
+    }
+    function isListLabelGroup(group) {
+      return group === "nav" || group === "categorynav" || group === "linkcatnav";
+    }
+    function formLabelFor(btn, fallback) {
+      if (!btn) return fallback || selectedKey;
+      var group = btn.getAttribute("data-group");
+      if (group === "nav") return "导航名称";
+      if (group === "categorynav") return "分类导航按钮";
+      if (group === "linkcatnav") return "链接分类导航按钮";
+      return fallback || btn.getAttribute("data-label") || selectedKey;
+    }
+    function setImagePreview(value) {
+      if (!imagePreview) return;
+      if (value) {
+        imagePreview.style.backgroundImage = "url('" + value.replace(/'/g, "%27") + "')";
+        imagePreview.classList.add("has");
+      } else {
+        imagePreview.style.backgroundImage = "";
+        imagePreview.classList.remove("has");
+      }
+    }
+    function setButtonThumb(btn, value) {
+      var thumb = btn && btn.querySelector(".visual-thumb");
+      if (!thumb) return;
+      if (value) {
+        thumb.style.backgroundImage = "url('" + value.replace(/'/g, "%27") + "')";
+        thumb.textContent = "";
+      } else {
+        thumb.style.backgroundImage = "";
+        thumb.textContent = "图片";
+      }
+    }
+    function validate() {
+      if (!selectedKey || !valueInput) {
+        if (saveBtn) saveBtn.disabled = true;
+        return false;
+      }
+      var value = valueInput.value.trim();
+      var bad = false;
+      var msg = "";
+      if (selectedKey === "site.name" && !value) {
+        msg = "站点名称不能为空。";
+        bad = true;
+      } else if (selectedKey.indexOf("nav.") === 0 && value.length > 8) {
+        msg = "导航名称偏长，手机端可能换行。";
+      } else if (selectedKey === "site.hero_title" && value.replace(/\s/g, "").length > 36) {
+        msg = "Hero 大标题偏长，部分主题第一屏可能显得拥挤。";
+      } else if (selectedKey === "site.description" && value.length > 160) {
+        msg = "站点描述偏长，搜索结果里可能被截断。";
+      } else if (currentKind() === "image" && value && !/^(https?:\/\/|\/)/.test(value)) {
+        msg = "图片地址建议使用 /uploads/... 或 https://...。";
+      }
+      setCheck(msg, bad);
+      if (saveBtn) saveBtn.disabled = saving || bad || valueInput.value === originalValue;
+      return !bad;
+    }
+    function markSelected(key) {
+      var doc = frameDoc();
+      if (doc) {
+        doc.querySelectorAll("[data-visual-edit]").forEach(function (el) {
+          el.classList.toggle("ve-selected", el.getAttribute("data-visual-edit") === key);
+        });
+      }
+      root.querySelectorAll("[data-visual-pick]").forEach(function (btn) {
+        btn.classList.toggle("active", btn.getAttribute("data-key") === key);
+      });
+    }
+    function setGroupOpen(group, open) {
+      if (!group) return;
+      group.classList.toggle("open", !!open);
+      var toggle = group.querySelector("[data-visual-group-toggle]");
+      if (toggle) toggle.setAttribute("aria-expanded", open ? "true" : "false");
+    }
+    function openGroup(id, scroll) {
+      var group = id ? root.querySelector('[data-visual-group="' + id + '"]') : null;
+      setGroupOpen(group, true);
+      if (scroll && group) group.scrollIntoView({ block: "nearest" });
+    }
+    function refreshFieldVisibility() {
+      var onlyCurrent = currentToggle && currentToggle.checked;
+      root.querySelectorAll("[data-visual-pick]").forEach(function (btn) {
+        var key = btn.getAttribute("data-key");
+        var contextual = btn.getAttribute("data-context") === "1";
+        btn.hidden = (contextual && !frameKeys[key]) || (!!onlyCurrent && !frameKeys[key]);
+      });
+      root.querySelectorAll("[data-visual-group]").forEach(function (group) {
+        var visibleCount = 0;
+        group.querySelectorAll("[data-visual-pick]").forEach(function (btn) {
+          if (!btn.hidden) visibleCount++;
+        });
+        var count = group.querySelector("[data-visual-group-toggle] small");
+        if (count) count.textContent = visibleCount;
+        group.hidden = visibleCount === 0;
+      });
+    }
+    function selectField(key, label, value, multiline) {
+      selectedKey = key || "";
+      if (!selectedKey) return;
+      var btn = fieldButton(selectedKey);
+      var kind = "text";
+      if (btn) {
+        label = label || btn.getAttribute("data-label");
+        if (!value) value = btn.getAttribute("data-value");
+        multiline = btn.getAttribute("data-multiline") === "1";
+        kind = btn.getAttribute("data-kind") || "text";
+        openGroup(btn.getAttribute("data-group"), true);
+      }
+      if (empty) empty.hidden = true;
+      if (form) form.hidden = false;
+      if (keyInput) keyInput.value = selectedKey;
+      if (labelEl) labelEl.textContent = formLabelFor(btn, label);
+      if (hintEl) hintEl.textContent = (btn && btn.getAttribute("data-hint")) || "";
+      if (langHintEl && btn) {
+        var localized = btn.getAttribute("data-localized") === "1";
+        var inherited = btn.getAttribute("data-inherited") === "1";
+        langHintEl.hidden = !localized;
+        langHintEl.textContent = inherited ? "当前语种还没有单独文案，正在沿用默认语种；保存后会只影响当前语种。" : "这个字段会保存到当前语种。";
+      }
+      if (valueInput) {
+        valueInput.value = value || "";
+        valueInput.rows = multiline ? 6 : 3;
+        valueInput.placeholder = kind === "image" ? "/uploads/example.svg 或 https://example.com/image.png" : "";
+        setTimeout(function () { valueInput.focus(); valueInput.select(); }, 0);
+      }
+      originalValue = valueInput ? valueInput.value : "";
+      if (imageTools) imageTools.hidden = kind !== "image";
+      setImagePreview(kind === "image" ? originalValue : "");
+      setStatus("");
+      markSelected(selectedKey);
+      validate();
+    }
+    function syncSelectedValue(value) {
+      var btn = fieldButton(selectedKey);
+      if (!btn) return;
+      btn.setAttribute("data-value", value || "");
+      var small = btn.querySelector("small");
+      var group = btn.getAttribute("data-group");
+      if (small) small.textContent = isListLabelGroup(group) ? (btn.getAttribute("data-meta") || "") : (value || "");
+      var thumb = btn.querySelector(".visual-thumb");
+      if (thumb) setButtonThumb(btn, value || "");
+      var title = btn.querySelector(".visual-card-body strong");
+      if (title && isListLabelGroup(group)) {
+        title.textContent = value || (group === "nav" ? "未命名导航" : "未命名分类");
+        btn.setAttribute("data-label", title.textContent);
+        if (labelEl) labelEl.textContent = formLabelFor(btn, title.textContent);
+      }
+    }
+    function addHistoryItem(item) {
+      if (!historyBox || !item || !item.id) return;
+      var emptyText = historyBox.querySelector(":scope > p");
+      if (emptyText) emptyText.remove();
+      var f = document.createElement("form");
+      f.method = "post";
+      f.action = "/admin/visual/undo";
+      f.setAttribute("data-visual-undo", "");
+      var csrf = document.createElement("input");
+      csrf.type = "hidden";
+      csrf.name = "_csrf";
+      csrf.value = CSRF;
+      var id = document.createElement("input");
+      id.type = "hidden";
+      id.name = "id";
+      id.value = item.id;
+      var b = document.createElement("button");
+      b.type = "submit";
+      var label = document.createElement("span");
+      label.textContent = "撤回 " + (item.label || item.key || "修改");
+      var at = document.createElement("small");
+      at.textContent = item.at || "刚刚";
+      b.appendChild(label);
+      b.appendChild(at);
+      f.appendChild(csrf);
+      f.appendChild(id);
+      f.appendChild(b);
+      var head = historyBox.querySelector(".group-head");
+      if (head && head.nextSibling) historyBox.insertBefore(f, head.nextSibling);
+      else historyBox.appendChild(f);
+    }
+    function addVisualParam(url) {
+      try {
+        var u = new URL(url, frame.contentWindow.location.href);
+        if (u.origin !== frame.contentWindow.location.origin) return url;
+        u.searchParams.set("visual_edit", "1");
+        return u.pathname + u.search + u.hash;
+      } catch (e) {
+        return url;
+      }
+    }
+    function setMode(mode) {
+      currentMode = mode === "browse" ? "browse" : "edit";
+      root.querySelectorAll("[data-visual-mode]").forEach(function (btn) {
+        btn.classList.toggle("active", btn.getAttribute("data-visual-mode") === currentMode);
+      });
+      var doc = frameDoc();
+      if (doc && doc.documentElement) doc.documentElement.classList.toggle("ve-browse", currentMode === "browse");
+      setStatus(currentMode === "browse" ? "浏览模式：可以在预览里跳转页面。" : "");
+    }
+    function setSize(size) {
+      size = /^(tablet|mobile)$/.test(size) ? size : "desktop";
+      root.setAttribute("data-visual-size", size);
+      root.querySelectorAll("[data-visual-size]").forEach(function (btn) {
+        btn.classList.toggle("active", btn.getAttribute("data-visual-size") === size);
+      });
+    }
+    function updatePageLabel() {
+      if (!pageLabel) return;
+      var doc = frameDoc();
+      if (!doc || !doc.defaultView) return;
+      var path = doc.defaultView.location.pathname || "/";
+      var query = doc.defaultView.location.search || "";
+      var lang = root.getAttribute("data-lang") || "";
+      if (lang && path.indexOf("/" + lang) === 0) path = path.slice(lang.length + 1) || "/";
+      if (path === "/") pageLabel.textContent = "首页";
+      else if (path.indexOf("/links") === 0 && query.indexOf("cat=") >= 0) pageLabel.textContent = "链接分类页";
+      else if (path.indexOf("/links") === 0) pageLabel.textContent = "链接页";
+      else if (path.indexOf("/about") === 0) pageLabel.textContent = "关于页";
+      else if (path.indexOf("/category/") === 0) pageLabel.textContent = "分类页";
+      else if (path.indexOf("/posts/") === 0) pageLabel.textContent = "文章页";
+      else if (path.indexOf("/search") === 0) pageLabel.textContent = "搜索页";
+      else pageLabel.textContent = "当前页";
+    }
+    function collectFrameKeys() {
+      frameKeys = {};
+      var doc = frameDoc();
+      if (!doc) return;
+      doc.querySelectorAll("[data-visual-edit]").forEach(function (el) {
+        frameKeys[el.getAttribute("data-visual-edit")] = true;
+      });
+      refreshFieldVisibility();
+    }
+    function injectFrameTools() {
+      var doc = frameDoc();
+      if (!doc || !doc.body) return;
+      if (!doc.getElementById("visual-edit-style")) {
+        var style = doc.createElement("style");
+        style.id = "visual-edit-style";
+        style.textContent = [
+          "[data-visual-edit]{outline:2px dashed rgba(154,59,47,.55);outline-offset:4px;cursor:text;border-radius:4px;transition:outline-color .15s,background-color .15s}",
+          "[data-visual-edit]:hover{outline-color:#9a3b2f;background:rgba(154,59,47,.07)}",
+          "[data-visual-edit].ve-selected{outline:3px solid #9a3b2f;background:rgba(154,59,47,.10)}",
+          ".ve-browse [data-visual-edit]{outline-color:transparent;cursor:pointer;background:transparent}",
+          ".ve-browse [data-visual-edit]:hover{outline-color:rgba(154,59,47,.22)}"
+        ].join("");
+        doc.head.appendChild(style);
+      }
+      doc.documentElement.classList.toggle("ve-browse", currentMode === "browse");
+      doc.body.addEventListener("click", function (e) {
+        if (currentMode === "browse") {
+          var link = e.target.closest && e.target.closest("a[href]");
+          if (link && !link.target) {
+            try {
+              var u = new URL(link.href);
+              if (u.origin === doc.defaultView.location.origin) {
+                e.preventDefault();
+                e.stopPropagation();
+                doc.defaultView.location.href = addVisualParam(link.href);
+              }
+            } catch (err) {}
+          }
+          return;
+        }
+        var target = e.target.closest && e.target.closest("[data-visual-edit]");
+        if (!target) return;
+        e.preventDefault();
+        e.stopPropagation();
+        var key = target.getAttribute("data-visual-edit");
+        var kind = target.getAttribute("data-visual-kind") || (fieldButton(key) && fieldButton(key).getAttribute("data-kind")) || "text";
+        var rawValue = target.getAttribute("data-visual-value");
+        var val = rawValue !== null ? rawValue : (kind === "image" ? (target.getAttribute("src") || "") : target.innerText.trim());
+        selectField(key, target.getAttribute("data-visual-label"), val, false);
+      }, true);
+      collectFrameKeys();
+      updatePageLabel();
+      if (pendingScroll !== null && doc.defaultView) {
+        setTimeout(function () { doc.defaultView.scrollTo(0, pendingScroll); pendingScroll = null; }, 0);
+      }
+      if (selectedKey) markSelected(selectedKey);
+    }
+    if (frame) frame.addEventListener("load", injectFrameTools);
+    root.querySelectorAll("[data-visual-group-toggle]").forEach(function (toggle) {
+      toggle.addEventListener("click", function () {
+        var group = toggle.closest("[data-visual-group]");
+        setGroupOpen(group, !(group && group.classList.contains("open")));
+      });
+    });
+    root.querySelectorAll("[data-visual-pick]").forEach(function (btn) {
+      setButtonThumb(btn, btn.getAttribute("data-value") || "");
+      btn.addEventListener("click", function () {
+        selectField(
+          btn.getAttribute("data-key"),
+          btn.getAttribute("data-label"),
+          btn.getAttribute("data-value"),
+          btn.getAttribute("data-multiline") === "1"
+        );
+      });
+    });
+    function sortableButtons(groupID) {
+      return Array.prototype.slice.call(root.querySelectorAll('[data-visual-pick][data-group="' + groupID + '"][data-sortable="1"]'));
+    }
+    function reindexNavButtons() {
+      sortableButtons("nav").forEach(function (btn, i) {
+        var oldKey = btn.getAttribute("data-key");
+        var nextKey = "nav." + i;
+        btn.setAttribute("data-key", nextKey);
+        if (selectedKey === oldKey) {
+          selectedKey = nextKey;
+          if (keyInput) keyInput.value = nextKey;
+        }
+      });
+    }
+    function saveSortOrder(groupID) {
+      var isNav = groupID === "nav";
+      var url = isNav ? root.getAttribute("data-reorder-url") : root.getAttribute("data-category-reorder-url");
+      if (!url) return;
+      var data = new URLSearchParams();
+      data.set("_csrf", CSRF);
+      data.set("group", groupID);
+      sortableButtons(groupID).forEach(function (btn) { data.append("keys", btn.getAttribute("data-key")); });
+      setStatus(isNav ? "正在保存导航顺序..." : "正在保存分类顺序...");
+      fetch(url, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {"Accept": "application/json", "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8", "X-Requested-With": "XMLHttpRequest"},
+        body: data.toString()
+      }).then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (j) {
+          if (!r.ok) throw j;
+          return j;
+        });
+      }).then(function (j) {
+        if (isNav) reindexNavButtons();
+        markSelected(selectedKey);
+        setStatus((j && j.message) || (isNav ? "导航顺序已保存。" : "分类顺序已保存。"));
+        reloadFrame(true);
+      }).catch(function (err) {
+        setStatus((err && (err.message || err.error)) || (isNav ? "导航顺序保存失败。" : "分类顺序保存失败。"), true);
+      });
+    }
+    function dragAfterSort(groupID, y) {
+      var after = null;
+      sortableButtons(groupID).forEach(function (btn) {
+        if (btn === draggedSort || btn.hidden) return;
+        var rect = btn.getBoundingClientRect();
+        if (!after && y < rect.top + rect.height / 2) after = btn;
+      });
+      return after;
+    }
+    function initSortableGroup(groupID) {
+      var group = root.querySelector('[data-visual-group="' + groupID + '"]');
+      if (!group) return;
+      group.addEventListener("dragstart", function (e) {
+        var btn = e.target.closest && e.target.closest('[data-visual-pick][data-group="' + groupID + '"][data-sortable="1"]');
+        if (!btn) return;
+        draggedSort = btn;
+        if (e.dataTransfer) {
+          e.dataTransfer.effectAllowed = "move";
+          e.dataTransfer.setData("text/plain", btn.getAttribute("data-key") || "");
+        }
+        setTimeout(function () { btn.classList.add("dragging"); }, 0);
+      });
+      group.addEventListener("dragover", function (e) {
+        if (!draggedSort) return;
+        e.preventDefault();
+        var after = dragAfterSort(groupID, e.clientY);
+        if (after) group.insertBefore(draggedSort, after);
+        else group.appendChild(draggedSort);
+      });
+      group.addEventListener("drop", function (e) {
+        if (!draggedSort) return;
+        e.preventDefault();
+        saveSortOrder(groupID);
+      });
+      group.addEventListener("dragend", function () {
+        if (draggedSort) draggedSort.classList.remove("dragging");
+        draggedSort = null;
+      });
+    }
+    ["nav", "categorynav", "linkcatnav"].forEach(initSortableGroup);
+    root.querySelectorAll("[data-visual-mode]").forEach(function (btn) {
+      btn.addEventListener("click", function () { setMode(btn.getAttribute("data-visual-mode")); });
+    });
+    root.querySelectorAll("[data-visual-size]").forEach(function (btn) {
+      btn.addEventListener("click", function () { setSize(btn.getAttribute("data-visual-size")); });
+    });
+    if (currentToggle) currentToggle.addEventListener("change", refreshFieldVisibility);
+    if (valueInput) valueInput.addEventListener("input", function () {
+      if (currentKind() === "image") setImagePreview(valueInput.value.trim());
+      validate();
+    });
+    if (uploadBtn && fileInput) uploadBtn.addEventListener("click", function () { fileInput.click(); });
+    if (fileInput) fileInput.addEventListener("change", function () {
+      if (!fileInput.files || !fileInput.files[0]) return;
+      setStatus("上传中...");
+      uploadFile(fileInput.files[0]).then(function (res) {
+        if (res.ok && res.j.url) {
+          valueInput.value = res.j.url;
+          setImagePreview(res.j.url);
+          validate();
+          setStatus("已上传，保存后生效。");
+        } else {
+          setStatus((res.j && res.j.error) || "上传失败。", true);
+        }
+      }).catch(function () {
+        setStatus("上传失败。", true);
+      });
+      fileInput.value = "";
+    });
+    if (resetBtn && frame) resetBtn.addEventListener("click", function () {
+      setStatus("已重新载入预览。");
+      reloadFrame(false);
+    });
+    if (form) form.addEventListener("submit", function (e) {
+      e.preventDefault();
+      if (!validate()) return;
+      saving = true;
+      if (saveBtn) saveBtn.disabled = true;
+      setStatus("保存中...");
+      var data = new URLSearchParams(new FormData(form));
+      fetch(root.getAttribute("data-save-url"), {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {"Accept": "application/json", "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8", "X-Requested-With": "XMLHttpRequest"},
+        body: data.toString()
+      }).then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (j) {
+          if (!r.ok) throw j;
+          return j;
+        });
+      }).then(function (j) {
+        syncSelectedValue(valueInput ? valueInput.value : "");
+        addHistoryItem(j && j.history);
+        originalValue = valueInput ? valueInput.value : "";
+        validate();
+        setStatus("已保存，正在刷新预览。");
+        reloadFrame(true);
+      }).catch(function (err) {
+        setStatus((err && (err.message || err.error)) || "保存失败，请稍后重试。", true);
+      }).finally(function () {
+        saving = false;
+        validate();
+      });
+    });
+    if (historyBox) historyBox.addEventListener("submit", function (e) {
+      var f = e.target.closest && e.target.closest("[data-visual-undo]");
+      if (!f) return;
+      e.preventDefault();
+      var data = new URLSearchParams(new FormData(f));
+      fetch(f.action, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {"Accept": "application/json", "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8", "X-Requested-With": "XMLHttpRequest"},
+        body: data.toString()
+      }).then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (j) {
+          if (!r.ok) throw j;
+          return j;
+        });
+      }).then(function (j) {
+        f.remove();
+        if (j && j.key) {
+          selectedKey = j.key;
+          syncSelectedValue(j.value || "");
+          if (valueInput && keyInput && keyInput.value === j.key) {
+            valueInput.value = j.value || "";
+            originalValue = valueInput.value;
+            validate();
+          }
+        }
+        setStatus("已撤回，正在刷新预览。");
+        reloadFrame(true);
+      }).catch(function (err) {
+        setStatus((err && (err.message || err.error)) || "撤回失败，请稍后重试。", true);
+      });
+    });
+    setMode("edit");
+    setSize("desktop");
+    refreshFieldVisibility();
+    validate();
+  })();
+
   /* 社交链接行：增 / 删 */
   (function () {
     var box = document.querySelector("[data-social-rows]");
@@ -167,7 +714,7 @@
     if (addBtn) addBtn.addEventListener("click", function () {
       var row = document.createElement("div");
       row.className = "menu-row";
-      row.innerHTML = '<span class="drag-handle" aria-hidden="true">⠿</span><div class="menu-fields"><input class="menu-url" name="nav_url" placeholder="/ 或 /category/eng 或 https://…" inputmode="url"><div class="menu-labels">' + labelsHTML() + '</div></div><button type="button" class="menu-del" data-menu-del title="删除" aria-label="删除">' + trash + '</button>';
+      row.innerHTML = '<span class="drag-handle" aria-hidden="true">⠿</span><div class="menu-fields"><input class="menu-url" name="nav_url" placeholder="/ 或 /category 或 https://…" inputmode="url"><div class="menu-labels">' + labelsHTML() + '</div></div><button type="button" class="menu-del" data-menu-del title="删除" aria-label="删除">' + trash + '</button>';
       box.appendChild(row);
       var inp = row.querySelector(".menu-url"); if (inp) inp.focus();
     });
@@ -669,6 +1216,30 @@
       });
     });
     modal.querySelectorAll("[data-cat-close]").forEach(function (b) { b.addEventListener("click", close); });
+    document.addEventListener("keydown", function (e) { if (e.key === "Escape" && !modal.hidden) close(); });
+  })();
+
+  /* ---------- 分类“全部”入口模态框 ---------- */
+  (function () {
+    var modal = document.getElementById("cat-all-modal");
+    if (!modal) return;
+    var titleEl = modal.querySelector("#cat-all-title");
+    var labelEl = modal.querySelector("#cat-all-label");
+    var slugEl = modal.querySelector("#cat-all-slug");
+    var descEl = modal.querySelector("#cat-all-desc");
+    function open(btn) {
+      titleEl.value = btn.dataset.title || "";
+      labelEl.value = btn.dataset.label || "";
+      slugEl.value = btn.dataset.slug || "";
+      descEl.value = btn.dataset.desc || "";
+      modal.hidden = false;
+      setTimeout(function () { titleEl.focus(); titleEl.select(); }, 0);
+    }
+    function close() { modal.hidden = true; }
+    document.querySelectorAll("[data-cat-all-edit]").forEach(function (b) {
+      b.addEventListener("click", function () { open(b); });
+    });
+    modal.querySelectorAll("[data-cat-all-close]").forEach(function (b) { b.addEventListener("click", close); });
     document.addEventListener("keydown", function (e) { if (e.key === "Escape" && !modal.hidden) close(); });
   })();
 

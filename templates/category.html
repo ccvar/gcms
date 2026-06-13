@@ -1,19 +1,20 @@
-{{define "body"}}{{$cat := .Category}}  <main>
+{{define "body"}}{{$cat := .Category}}{{$isAll := eq $cat.ID 0}}  <main>
     <section class="page-head">
       <div class="wrap">
         <nav class="breadcrumb" style="padding:0 0 1rem" aria-label="面包屑">
           <a href="{{.Tr.U "/"}}">{{.Tr.T "nav.home"}}</a><span class="sep">/</span><span aria-current="page">{{$cat.Name}}</span>
         </nav>
         <p class="eyebrow">{{.Tr.T "category.label"}}</p>
-        <h1>{{$cat.Name}}</h1>
-        {{if $cat.Description}}<p>{{$cat.Description}}</p>{{end}}
+        <h1{{if .VisualEdit}}{{if $isAll}} data-visual-edit="category_all.title" data-visual-label="分类页标题"{{else}} data-visual-edit="category.{{$cat.ID}}.name" data-visual-label="分类名称"{{end}}{{end}}>{{$cat.Name}}</h1>
+        {{if or $cat.Description .VisualEdit}}<p{{if .VisualEdit}}{{if $isAll}} data-visual-edit="category_all.description" data-visual-label="分类页描述"{{else}} data-visual-edit="category.{{$cat.ID}}.description" data-visual-label="分类描述"{{end}}{{end}}>{{$cat.Description}}</p>{{end}}
       </div>
     </section>
 
     <div class="wrap">
       <nav class="cat-nav" aria-label="分类导航">
+        <a href="{{.Tr.U .CategoryAll.Path}}"{{if $isAll}} class="active"{{end}}{{if .VisualEdit}} data-visual-edit="category_all.label" data-visual-label="全部按钮文字" data-visual-value="{{.CategoryAll.Label}}"{{end}}>{{.CategoryAll.Label}}</a>
         {{range .Categories}}
-        <a href="{{$.Tr.U (printf "/category/%s" .Slug)}}"{{if eq .Slug $cat.Slug}} class="active"{{end}}>{{.Name}} <span class="muted">{{.Count}}</span></a>
+        <a href="{{$.Tr.U (printf "/category/%s" .Slug)}}"{{if eq .Slug $cat.Slug}} class="active"{{end}}{{if $.VisualEdit}} data-visual-edit="category.{{.ID}}.name" data-visual-label="分类名称" data-visual-value="{{.Name}}"{{end}}>{{.Name}} <span class="muted">{{.Count}}</span></a>
         {{end}}
       </nav>
 

@@ -2,12 +2,12 @@
     <section class="page-head">
       <div class="wrap read">
         <p class="eyebrow">{{$p.Title}}</p>
-        <h1>{{$p.Title}}</h1>
-        {{if $p.Excerpt}}<p>{{$p.Excerpt}}</p>{{end}}
+        <h1{{if and .VisualEdit (eq $p.Slug "about")}} data-visual-edit="page.about.title" data-visual-label="关于标题"{{end}}>{{$p.Title}}</h1>
+        {{if or $p.Excerpt (and .VisualEdit (eq $p.Slug "about"))}}<p{{if and .VisualEdit (eq $p.Slug "about")}} data-visual-edit="page.about.excerpt" data-visual-label="关于摘要"{{end}}>{{$p.Excerpt}}</p>{{end}}
       </div>
     </section>
     <div class="wrap">
-      <div class="prose read" style="padding-top:2.5rem">
+      <div class="prose read" style="padding-top:2.5rem"{{if and .VisualEdit (eq $p.Slug "about")}} data-visual-edit="page.about.content" data-visual-label="关于正文" data-visual-value="{{$p.Content}}"{{end}}>
         {{.ContentHTML}}
       </div>
     </div>

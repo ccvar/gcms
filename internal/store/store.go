@@ -29,25 +29,26 @@ type Category struct {
 }
 
 type Post struct {
-	ID         int64
-	Type       string // post | page | link
-	Slug       string
-	Title      string
-	Excerpt    string
-	Content    string // Markdown 源文
-	ContentLen int    // 正文字符数；列表查询不取正文时用于估算阅读时长
-	MetaDesc   string
-	Keywords   string
-	CoverImage string
-	Author     string
-	Status     string // draft | published | scheduled
-	Featured   bool   // 置顶（首页精选优先）
-	EditorMode string // markdown | rich（记住上次编辑方式）
-	Lang       string // 语种码，如 zh / en
-	TransGroup string // 互译分组键：同一逻辑文章的各语种版本共享
-	CategoryID sql.NullInt64
-	Category   *Category
-	LinkURL    string // 仅 type=link：指向的目标网址
+	ID              int64
+	Type            string // post | page | link
+	Slug            string
+	Title           string
+	Excerpt         string
+	Content         string // Markdown 源文
+	ContentLen      int    // 正文字符数；列表查询不取正文时用于估算阅读时长
+	MetaDesc        string
+	Keywords        string
+	CoverImage      string
+	Author          string
+	Status          string // draft | published | scheduled
+	Featured        bool   // 置顶（首页精选优先）
+	EditorMode      string // markdown | rich（记住上次编辑方式）
+	CommentsEnabled bool   // 文章页是否显示第三方评论区
+	Lang            string // 语种码，如 zh / en
+	TransGroup      string // 互译分组键：同一逻辑文章的各语种版本共享
+	CategoryID      sql.NullInt64
+	Category        *Category
+	LinkURL         string // 仅 type=link：指向的目标网址
 
 	PublishedAt time.Time
 	CreatedAt   time.Time
@@ -152,6 +153,7 @@ CREATE TABLE IF NOT EXISTS posts (
   status       TEXT NOT NULL DEFAULT 'draft',
   featured     INTEGER NOT NULL DEFAULT 0,
   editor_mode  TEXT NOT NULL DEFAULT 'markdown',
+  comments_enabled INTEGER NOT NULL DEFAULT 0,
   lang         TEXT NOT NULL DEFAULT 'zh',
   trans_group  TEXT NOT NULL DEFAULT '',
   link_url     TEXT NOT NULL DEFAULT '',
@@ -206,6 +208,7 @@ func (s *Store) migrate() error {
 	// 旧库补列（幂等）——先补简单列，再做多语种结构迁移。
 	s.addColumnIfMissing("posts", "featured", "INTEGER NOT NULL DEFAULT 0")
 	s.addColumnIfMissing("posts", "editor_mode", "TEXT NOT NULL DEFAULT 'markdown'")
+	s.addColumnIfMissing("posts", "comments_enabled", "INTEGER NOT NULL DEFAULT 0")
 	s.addColumnIfMissing("categories", "position", "INTEGER NOT NULL DEFAULT 0")
 	// 旧库（slug 全局唯一、无 lang 列）整体重建为多语种结构。
 	if err := s.rebuildForI18n(); err != nil {
@@ -333,14 +336,15 @@ func (s *Store) rebuildForI18n() error {
 			cover_image TEXT NOT NULL DEFAULT '', author TEXT NOT NULL DEFAULT '',
 			status TEXT NOT NULL DEFAULT 'draft', featured INTEGER NOT NULL DEFAULT 0,
 			editor_mode TEXT NOT NULL DEFAULT 'markdown',
+			comments_enabled INTEGER NOT NULL DEFAULT 0,
 			lang TEXT NOT NULL DEFAULT 'zh', trans_group TEXT NOT NULL DEFAULT '',
 			category_id INTEGER REFERENCES categories(id) ON DELETE SET NULL,
 			published_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
 			UNIQUE(lang, slug))`,
-		`INSERT INTO posts_new(id,type,slug,title,excerpt,content,meta_desc,keywords,cover_image,author,status,featured,editor_mode,lang,trans_group,category_id,published_at,created_at,updated_at)
+		`INSERT INTO posts_new(id,type,slug,title,excerpt,content,meta_desc,keywords,cover_image,author,status,featured,editor_mode,comments_enabled,lang,trans_group,category_id,published_at,created_at,updated_at)
 			SELECT id,type,slug,title,COALESCE(excerpt,''),COALESCE(content,''),COALESCE(meta_desc,''),COALESCE(keywords,''),
 			       COALESCE(cover_image,''),COALESCE(author,''),COALESCE(status,'draft'),COALESCE(featured,0),COALESCE(editor_mode,'markdown'),
-			       'zh','zh:'||slug,category_id,published_at,created_at,updated_at FROM posts`,
+			       COALESCE(comments_enabled,0),'zh','zh:'||slug,category_id,published_at,created_at,updated_at FROM posts`,
 		`DROP TABLE posts`,
 		`ALTER TABLE posts_new RENAME TO posts`,
 	}
@@ -608,11 +612,11 @@ func (s *Store) ListAutomationLogs(limit int) ([]*AutomationLog, error) {
 // ---------- 查询：公开站点 ----------
 
 const postCols = `p.id,p.type,p.slug,p.title,p.excerpt,p.content,p.meta_desc,p.keywords,
-	p.cover_image,p.author,p.status,p.featured,p.editor_mode,p.link_url,p.lang,p.trans_group,p.category_id,p.published_at,p.created_at,p.updated_at,
+	p.cover_image,p.author,p.status,p.featured,p.editor_mode,p.comments_enabled,p.link_url,p.lang,p.trans_group,p.category_id,p.published_at,p.created_at,p.updated_at,
 	c.id,c.slug,c.name,c.description`
 
 const postSummaryCols = `p.id,p.type,p.slug,p.title,p.excerpt,'' AS content,p.meta_desc,p.keywords,
-	p.cover_image,p.author,p.status,p.featured,p.editor_mode,p.link_url,p.lang,p.trans_group,p.category_id,p.published_at,p.created_at,p.updated_at,
+	p.cover_image,p.author,p.status,p.featured,p.editor_mode,p.comments_enabled,p.link_url,p.lang,p.trans_group,p.category_id,p.published_at,p.created_at,p.updated_at,
 	c.id,c.slug,c.name,c.description,length(p.content)`
 
 func scanPost(sc interface{ Scan(...any) error }, hasContentLen bool) (*Post, error) {
@@ -621,9 +625,10 @@ func scanPost(sc interface{ Scan(...any) error }, hasContentLen bool) (*Post, er
 	var cID sql.NullInt64
 	var cSlug, cName, cDesc sql.NullString
 	var featured int
+	var commentsEnabled int
 	var contentLen sql.NullInt64
 	dest := []any{&p.ID, &p.Type, &p.Slug, &p.Title, &p.Excerpt, &p.Content, &p.MetaDesc,
-		&p.Keywords, &p.CoverImage, &p.Author, &p.Status, &featured, &p.EditorMode, &p.LinkURL, &p.Lang, &p.TransGroup,
+		&p.Keywords, &p.CoverImage, &p.Author, &p.Status, &featured, &p.EditorMode, &commentsEnabled, &p.LinkURL, &p.Lang, &p.TransGroup,
 		&p.CategoryID, &pub, &created, &updated,
 		&cID, &cSlug, &cName, &cDesc}
 	if hasContentLen {
@@ -634,6 +639,7 @@ func scanPost(sc interface{ Scan(...any) error }, hasContentLen bool) (*Post, er
 		return nil, err
 	}
 	p.Featured = featured != 0
+	p.CommentsEnabled = commentsEnabled != 0
 	if contentLen.Valid {
 		p.ContentLen = int(contentLen.Int64)
 	} else if p.Content != "" {
@@ -1059,10 +1065,10 @@ func (s *Store) CreatePost(p *Post) (int64, error) {
 		p.TransGroup = p.Lang + ":" + p.Slug
 	}
 	res, err := s.db.Exec(`INSERT INTO posts
-		(type,slug,title,excerpt,content,meta_desc,keywords,cover_image,author,status,featured,editor_mode,link_url,lang,trans_group,category_id,published_at,created_at,updated_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		(type,slug,title,excerpt,content,meta_desc,keywords,cover_image,author,status,featured,editor_mode,comments_enabled,link_url,lang,trans_group,category_id,published_at,created_at,updated_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		nz(p.Type, "post"), p.Slug, p.Title, p.Excerpt, p.Content, p.MetaDesc, p.Keywords, p.CoverImage,
-		p.Author, p.Status, boolInt(p.Featured), nz(p.EditorMode, "markdown"), p.LinkURL, p.Lang, p.TransGroup,
+		p.Author, p.Status, boolInt(p.Featured), nz(p.EditorMode, "markdown"), boolInt(p.CommentsEnabled), p.LinkURL, p.Lang, p.TransGroup,
 		p.CategoryID, nullTime(p.PublishedAt), fmtTime(p.CreatedAt), fmtTime(p.UpdatedAt))
 	if err != nil {
 		return 0, err
@@ -1076,10 +1082,10 @@ func (s *Store) UpdatePost(p *Post) error {
 		p.PublishedAt = p.UpdatedAt
 	}
 	_, err := s.db.Exec(`UPDATE posts SET
-		slug=?,title=?,excerpt=?,content=?,meta_desc=?,keywords=?,cover_image=?,author=?,status=?,featured=?,editor_mode=?,link_url=?,trans_group=?,category_id=?,published_at=?,updated_at=?
+		slug=?,title=?,excerpt=?,content=?,meta_desc=?,keywords=?,cover_image=?,author=?,status=?,featured=?,editor_mode=?,comments_enabled=?,link_url=?,trans_group=?,category_id=?,published_at=?,updated_at=?
 		WHERE id=?`,
 		p.Slug, p.Title, p.Excerpt, p.Content, p.MetaDesc, p.Keywords, p.CoverImage, p.Author, p.Status,
-		boolInt(p.Featured), nz(p.EditorMode, "markdown"), p.LinkURL, p.TransGroup, p.CategoryID, nullTime(p.PublishedAt), fmtTime(p.UpdatedAt), p.ID)
+		boolInt(p.Featured), nz(p.EditorMode, "markdown"), boolInt(p.CommentsEnabled), p.LinkURL, p.TransGroup, p.CategoryID, nullTime(p.PublishedAt), fmtTime(p.UpdatedAt), p.ID)
 	return err
 }
 

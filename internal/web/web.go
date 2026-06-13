@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -156,6 +157,16 @@ type LangLink struct {
 	Active          bool
 }
 
+// ArchiveConfig 描述文章分类/链接列表的「全部」入口配置。
+// 它不是 categories 表里的真实分类，只用于列表页标题、筛选按钮、SEO 和默认导航。
+type ArchiveConfig struct {
+	Title       string
+	Label       string
+	Description string
+	Slug        string
+	Path        string
+}
+
 // View 是传给模板的统一数据载体。
 type View struct {
 	Site       seo.Site
@@ -179,9 +190,12 @@ type View struct {
 	Page         *store.Post
 	Categories   []*store.Category
 	Category     *store.Category
+	CategoryAll  ArchiveConfig
+	LinksAll     ArchiveConfig
 	Prev         *store.Post
 	Next         *store.Post
 	Related      []*store.Post
+	Giscus       *GiscusView
 
 	ContentHTML template.HTML
 	TOC         []Heading
@@ -198,46 +212,97 @@ type View struct {
 	Results int
 
 	// 后台
-	AllPosts        []*store.Post
-	Edit            *store.Post
-	IsPage          bool
-	IsLink          bool
-	EditBase        string // 编辑表单的后台路径基：posts | pages | links
-	EditListURL     string // 返回列表的后台 URL
-	EditTypeLabel   string // 文章 | 页面 | 链接
-	Authed          bool
-	ShowPwWarn      bool // 仍为默认密码且本会话未关闭提示
-	CSRF            string
-	Flash           string
-	FormErr         string
-	Settings        *SettingsForm
-	Themes          []ThemeOption
-	Cards           []ThemeCard
-	Section         string
-	CatKind         string // 分类管理当前类型：post | link
-	EditCat         *store.Category
-	FormVals        map[string]string // 表单回填（分类新增/编辑出错时）
-	Update          *UpdateInfo       // 系统更新检查
-	Upgrade         *UpgradeStatus    // 系统升级任务状态
-	AutomationKeys  []*store.AutomationKey
-	AutomationLogs  []*store.AutomationLog
-	NewAPISecret    string
-	NewAPIName      string
-	NewAPIScopes    string
-	NewAIBrief      string
-	NewAPIKeyID     int64
-	APIBaseURL      string
-	OpenAPIURL      string
-	APIDocsURL      string
-	SkillPackageURL string
-	EditLang        string        // 后台当前操作的内容语种
-	Locales         []i18n.Locale // 已启用语种
-	AllLocales      []i18n.Locale // 全部可选语种（内置 + 自定义，语言设置勾选）
-	CustomLocales   []i18n.Locale // 自定义预设（可删除）
-	Trans           []*store.Post // 当前编辑文章的互译版本
-	Social          []SocialLink  // 页脚社交链接（前台渲染 / 后台回填）
-	Menu            []MenuItem    // 前台页眉导航（按当前语种解析）
-	MenuEdit        []MenuRow     // 后台导航菜单编辑（URL + 各语种标签）
+	AllPosts         []*store.Post
+	Edit             *store.Post
+	IsPage           bool
+	IsLink           bool
+	EditBase         string // 编辑表单的后台路径基：posts | pages | links
+	EditListURL      string // 返回列表的后台 URL
+	EditTypeLabel    string // 文章 | 页面 | 链接
+	Authed           bool
+	ShowPwWarn       bool // 仍为默认密码且本会话未关闭提示
+	CSRF             string
+	Flash            string
+	FormErr          string
+	Settings         *SettingsForm
+	Themes           []ThemeOption
+	Cards            []ThemeCard
+	Section          string
+	CatKind          string // 分类管理当前类型：post | link
+	EditCat          *store.Category
+	FormVals         map[string]string // 表单回填（分类新增/编辑出错时）
+	Update           *UpdateInfo       // 系统更新检查
+	Upgrade          *UpgradeStatus    // 系统升级任务状态
+	AutomationKeys   []*store.AutomationKey
+	AutomationLogs   []*store.AutomationLog
+	NewAPISecret     string
+	NewAPIName       string
+	NewAPIScopes     string
+	NewAIBrief       string
+	NewAPIKeyID      int64
+	APIBaseURL       string
+	OpenAPIURL       string
+	APIDocsURL       string
+	SkillPackageURL  string
+	EditLang         string        // 后台当前操作的内容语种
+	Locales          []i18n.Locale // 已启用语种
+	AllLocales       []i18n.Locale // 全部可选语种（内置 + 自定义，语言设置勾选）
+	CustomLocales    []i18n.Locale // 自定义预设（可删除）
+	Trans            []*store.Post // 当前编辑文章的互译版本
+	Social           []SocialLink  // 页脚社交链接（前台渲染 / 后台回填）
+	Menu             []MenuItem    // 前台页眉导航（按当前语种解析）
+	MenuEdit         []MenuRow     // 后台导航菜单编辑（URL + 各语种标签）
+	VisualEdit       bool          // 前台 iframe 可视化编辑模式
+	VisualPreviewURL string        // 后台可视化编辑 iframe 地址
+	VisualFields     []VisualField // 可视化编辑侧栏字段
+	VisualGroups     []VisualGroup // 可视化编辑侧栏字段分组
+	VisualHistory    []VisualLog   // 可视化编辑最近修改
+}
+
+type VisualField struct {
+	Key        string
+	Label      string
+	Value      string
+	Meta       string // 侧栏卡片的辅助展示值，例如导航 URL
+	Group      string
+	Kind       string // text | image
+	Hint       string
+	Multiline  bool
+	Draggable  bool // 是否允许在可视化编辑侧栏拖动排序
+	Contextual bool // 是否只在当前预览页出现对应元素时显示
+	Localized  bool // 是否按语种保存
+	Inherited  bool // 当前语种是否沿用默认语种
+}
+
+type VisualGroup struct {
+	ID     string
+	Title  string
+	Fields []VisualField
+}
+
+type VisualLog struct {
+	ID    string `json:"id"`
+	Key   string `json:"key"`
+	Label string `json:"label"`
+	Lang  string `json:"lang"`
+	Kind  string `json:"kind"`
+	Old   string `json:"old"`
+	New   string `json:"new"`
+	At    string `json:"at"`
+}
+
+// GiscusView 是前台文章页渲染 giscus 所需的受控配置。
+type GiscusView struct {
+	Repo          string
+	RepoID        string
+	Category      string
+	CategoryID    string
+	Mapping       string
+	Strict        string
+	Reactions     string
+	InputPosition string
+	Theme         string
+	Lang          string
 }
 
 // SettingsForm 承载后台设置页的可编辑字段。
@@ -272,6 +337,23 @@ type SettingsForm struct {
 	// 代码注入（统计/广告等；头部进 <head> 末尾，尾部进 </body> 前）
 	InjectHead string
 	InjectBody string
+	// 第三方评论（giscus）
+	CommentsProvider    string
+	GiscusRepo          string
+	GiscusRepoID        string
+	GiscusCategory      string
+	GiscusCategoryID    string
+	GiscusMapping       string
+	GiscusStrict        bool
+	GiscusReactions     bool
+	GiscusInputPosition string
+	GiscusTheme         string
+	// 分类/链接列表的「全部」入口（设置 - 分类）。
+	AllTitle       string
+	AllLabel       string
+	AllSlug        string
+	AllPath        string
+	AllDescription string
 }
 
 func New(st *store.Store, baseURL, uploadDir string, tplFS, assetsFS fs.FS) (*Server, error) {
@@ -349,6 +431,111 @@ func (s *Server) langEnabled(code string) bool {
 	return false
 }
 
+type langPreference struct {
+	value string
+	q     float64
+	order int
+}
+
+func normalizeLangToken(v string) string {
+	v = strings.TrimSpace(strings.ToLower(v))
+	v = strings.ReplaceAll(v, "_", "-")
+	return v
+}
+
+func parseAcceptLanguage(header string) []langPreference {
+	if strings.TrimSpace(header) == "" {
+		return nil
+	}
+	parts := strings.Split(header, ",")
+	prefs := make([]langPreference, 0, len(parts))
+	for i, raw := range parts {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		segments := strings.Split(raw, ";")
+		value := normalizeLangToken(segments[0])
+		if value == "" {
+			continue
+		}
+		q := 1.0
+		for _, seg := range segments[1:] {
+			seg = strings.TrimSpace(seg)
+			if strings.HasPrefix(seg, "q=") {
+				v, err := strconv.ParseFloat(strings.TrimSpace(strings.TrimPrefix(seg, "q=")), 64)
+				if err != nil {
+					q = 0
+					break
+				}
+				q = v
+			}
+		}
+		if q <= 0 {
+			continue
+		}
+		if q > 1 {
+			q = 1
+		}
+		prefs = append(prefs, langPreference{value: value, q: q, order: i})
+	}
+	sort.SliceStable(prefs, func(i, j int) bool {
+		if prefs[i].q == prefs[j].q {
+			return prefs[i].order < prefs[j].order
+		}
+		return prefs[i].q > prefs[j].q
+	})
+	return prefs
+}
+
+func negotiateAcceptLanguage(header string, locales []i18n.Locale, fallback string) string {
+	if len(locales) == 0 {
+		return fallback
+	}
+	code := map[string]string{}
+	tag := map[string]string{}
+	for _, l := range locales {
+		code[normalizeLangToken(l.Code)] = l.Code
+		tag[normalizeLangToken(l.Tag)] = l.Code
+	}
+	if fallback == "" {
+		fallback = locales[0].Code
+	}
+	for _, pref := range parseAcceptLanguage(header) {
+		if pref.value == "*" {
+			return fallback
+		}
+		if v, ok := code[pref.value]; ok {
+			return v
+		}
+		if v, ok := tag[pref.value]; ok {
+			return v
+		}
+		primary := pref.value
+		if i := strings.IndexByte(primary, '-'); i >= 0 {
+			primary = primary[:i]
+		}
+		if v, ok := code[primary]; ok {
+			return v
+		}
+		if v, ok := tag[primary]; ok {
+			return v
+		}
+		for _, l := range locales {
+			c := normalizeLangToken(l.Code)
+			t := normalizeLangToken(l.Tag)
+			if strings.HasPrefix(c, primary+"-") || strings.HasPrefix(t, primary+"-") {
+				return l.Code
+			}
+		}
+	}
+	return fallback
+}
+
+func (s *Server) preferredLang(r *http.Request, fallback string) string {
+	return negotiateAcceptLanguage(r.Header.Get("Accept-Language"), s.locales(), fallback)
+}
+
 func (s *Server) abs(path string) string { return strings.TrimRight(s.baseURL, "/") + path }
 
 // 这些路径不参与语种前缀：后台、静态资源、上传、全局 SEO 端点。
@@ -385,8 +572,14 @@ func (s *Server) withLocale(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r.WithContext(withLang(r.Context(), head)))
 			return
 		}
-		// 无语种前缀 → 跳默认语种
-		target := "/" + def
+		// 无语种前缀 → 根路径按 Accept-Language 协商，其它路径仍跳兜底语种，避免旧链接被跳到不存在的译文。
+		targetLang := def
+		if r.URL.Path == "/" {
+			targetLang = s.preferredLang(r, def)
+			w.Header().Add("Vary", "Accept-Language")
+			w.Header().Set("Cache-Control", "private, no-store")
+		}
+		target := "/" + targetLang
 		if r.URL.Path == "/" {
 			target += "/"
 		} else {
@@ -435,6 +628,70 @@ func (s *Server) i18nLinks(cur string, pathByLang map[string]string) (langs []La
 	return
 }
 
+func (s *Server) localizedSetting(base, lang, dflt string) string {
+	def := s.defaultLang()
+	if lang != def {
+		if v := strings.TrimSpace(s.store.Setting(base + "::" + lang)); v != "" {
+			return v
+		}
+	}
+	if v := strings.TrimSpace(s.store.Setting(base)); v != "" {
+		return v
+	}
+	return dflt
+}
+
+func archivePrefix(kind string) string {
+	if kind == "link" {
+		return "links.all."
+	}
+	return "category.all."
+}
+
+func (s *Server) archiveStoreKey(kind, field, lang string) string {
+	return s.copyKey(archivePrefix(kind)+field, lang)
+}
+
+func normalizeArchiveSlug(slug, fallback string) string {
+	slug = slugify(slug)
+	if slug == "" {
+		return fallback
+	}
+	return slug
+}
+
+func archivePath(kind, slug string) string {
+	switch kind {
+	case "link":
+		if slug == "" || slug == "links" {
+			return "/links"
+		}
+		return "/links/" + slug
+	default:
+		if slug == "" || slug == "category" {
+			return "/category"
+		}
+		return "/category/" + slug
+	}
+}
+
+func (s *Server) archiveConfig(lang, kind string) ArchiveConfig {
+	def := s.defaultLang()
+	tr := s.i18n.Tr(lang, def)
+	prefix := archivePrefix(kind)
+	siteDesc := s.localizedSetting("site.description", lang, "用 Go 与 SQLite 构建的轻量内容站，关注后端工程、极简设计与搜索引擎优化。")
+	titleDef, labelDef, slugDef := tr.T("nav.category"), tr.T("links.all"), "category"
+	if kind == "link" {
+		titleDef = tr.T("nav.links")
+		slugDef = "links"
+	}
+	title := s.localizedSetting(prefix+"title", lang, titleDef)
+	label := s.localizedSetting(prefix+"label", lang, labelDef)
+	desc := s.localizedSetting(prefix+"description", lang, siteDesc)
+	slug := normalizeArchiveSlug(s.localizedSetting(prefix+"slug", lang, slugDef), slugDef)
+	return ArchiveConfig{Title: title, Label: label, Description: desc, Slug: slug, Path: archivePath(kind, slug)}
+}
+
 // site 每请求构建站点配置（含当前语种的文案、前缀、OG/hreflang 元信息）。
 func (s *Server) site(lang string) seo.Site {
 	loc := s.i18n.Locale(lang)
@@ -470,33 +727,35 @@ func (s *Server) site(lang string) seo.Site {
 	if logo == "" {
 		logo = "/assets/logo.svg" // 默认使用内置 logo
 	}
+	linkAll := s.archiveConfig(lang, "link")
 	return seo.Site{
-		Name:         get("site.name", "CCVAR 简记"),
-		Tagline:      get("site.tagline", "记录技术、工具与思考"),
-		Description:  get("site.description", "用 Go 与 SQLite 构建的轻量内容站，关注后端工程、极简设计与搜索引擎优化。"),
-		BaseURL:      s.baseURL,
-		Locale:       loc.OG,
-		LangTag:      loc.Tag,
-		Prefix:       "/" + loc.Code,
-		Author:       "CCVAR",
-		Theme:        theme,
-		Favicon:      s.store.Setting("site.favicon"),
-		Logo:         logo,
-		Brand:        brand,
-		HeroEyebrow:  get("site.hero_eyebrow", "Go · SQLite · SEO"),
-		HeroTitle:    get("site.hero_title", "把复杂留给后端，\n把简单留给读者。"),
-		HeroVisual:   s.store.Setting("hero.visual"),
-		HeroImage:    s.store.Setting("hero.image"),
-		HeroSVG:      s.store.Setting("hero.svg"),
-		FooterNote:   get("site.footer_note", "用 Go 与 SQLite 构建。"),
-		HomeFeatured: get("home.featured_title", tr.T("home.featured")),
-		HomeLinks:    get("home.links_title", tr.T("home.links")),
-		HomeLatest:   get("home.latest_title", tr.T("home.latest")),
-		HomeLabel:    tr.T("nav.home"),
-		LinksLabel:   tr.T("nav.links"),
-		InjectHead:   s.store.Setting("inject.head"),
-		InjectBody:   s.store.Setting("inject.body"),
-		OGAltLocale:  ogAlt,
+		Name:             get("site.name", "CCVAR 简记"),
+		Tagline:          get("site.tagline", "记录技术、工具与思考"),
+		Description:      get("site.description", "用 Go 与 SQLite 构建的轻量内容站，关注后端工程、极简设计与搜索引擎优化。"),
+		BaseURL:          s.baseURL,
+		Locale:           loc.OG,
+		LangTag:          loc.Tag,
+		Prefix:           "/" + loc.Code,
+		Author:           "CCVAR",
+		Theme:            theme,
+		Favicon:          s.store.Setting("site.favicon"),
+		Logo:             logo,
+		Brand:            brand,
+		HeroEyebrow:      get("site.hero_eyebrow", "Go · SQLite · SEO"),
+		HeroTitle:        get("site.hero_title", "把复杂留给后端，\n把简单留给读者。"),
+		HeroVisual:       s.store.Setting("hero.visual"),
+		HeroImage:        s.store.Setting("hero.image"),
+		HeroSVG:          s.store.Setting("hero.svg"),
+		FooterNote:       get("site.footer_note", "用 Go 与 SQLite 构建。"),
+		HomeFeatured:     get("home.featured_title", tr.T("home.featured")),
+		HomeLinks:        get("home.links_title", tr.T("home.links")),
+		HomeLatest:       get("home.latest_title", tr.T("home.latest")),
+		HomeLabel:        tr.T("nav.home"),
+		LinksLabel:       linkAll.Title,
+		LinksDescription: linkAll.Description,
+		InjectHead:       s.store.Setting("inject.head"),
+		InjectBody:       s.store.Setting("inject.body"),
+		OGAltLocale:      ogAlt,
 	}
 }
 
@@ -599,6 +858,7 @@ func (s *Server) routes(assetsFS fs.FS) {
 	// 公开站点（语种前缀由 withLocale 中间件剥离后命中这些原始路由）
 	mux.HandleFunc("GET /{$}", s.home)
 	mux.HandleFunc("GET /posts/{slug}", s.article)
+	mux.HandleFunc("GET /category", s.categoryRoot)
 	mux.HandleFunc("GET /category/{slug}", s.category)
 	mux.HandleFunc("GET /links", s.links)
 	mux.HandleFunc("GET /links/{slug}", s.link)
@@ -638,6 +898,11 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /admin/logout", s.adminLogout)
 	mux.HandleFunc("POST /admin/dismiss-pw", s.requireAuth(s.adminDismissPw))
 	mux.HandleFunc("GET /admin", s.requireAuth(s.adminDashboard))
+	mux.HandleFunc("GET /admin/visual", s.requireAuth(s.adminVisual))
+	mux.HandleFunc("POST /admin/visual/save", s.requireAuth(s.adminVisualSave))
+	mux.HandleFunc("POST /admin/visual/undo", s.requireAuth(s.adminVisualUndo))
+	mux.HandleFunc("POST /admin/visual/nav/reorder", s.requireAuth(s.adminVisualNavReorder))
+	mux.HandleFunc("POST /admin/visual/categories/reorder", s.requireAuth(s.adminVisualCategoryReorder))
 	mux.HandleFunc("GET /admin/settings", s.requireAuth(s.adminSettings))
 	mux.HandleFunc("GET /admin/settings/{section}", s.requireAuth(s.adminSettingsSection))
 	mux.HandleFunc("GET /admin/theme-preview/{theme}", s.requireAuth(s.adminThemePreview))
@@ -645,6 +910,7 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("GET /admin/settings/updates/check", s.requireAuth(s.adminUpdateCheck))
 	mux.HandleFunc("POST /admin/settings/site", s.requireAuth(s.adminSaveSite))
 	mux.HandleFunc("POST /admin/settings/appearance", s.requireAuth(s.adminSaveAppearance))
+	mux.HandleFunc("POST /admin/settings/comments", s.requireAuth(s.adminSaveComments))
 	mux.HandleFunc("POST /admin/settings/updates/upgrade", s.requireAuth(s.adminStartUpgrade))
 	mux.HandleFunc("POST /admin/settings/security", s.requireAuth(s.adminSavePassword))
 	mux.HandleFunc("POST /admin/settings/copy", s.requireAuth(s.adminSaveCopy))
@@ -652,6 +918,7 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /admin/settings/languages", s.requireAuth(s.adminSaveLanguages))
 	mux.HandleFunc("POST /admin/settings/languages/preset", s.requireAuth(s.adminAddLocalePreset))
 	mux.HandleFunc("POST /admin/settings/languages/preset/delete", s.requireAuth(s.adminDeleteLocalePreset))
+	mux.HandleFunc("POST /admin/settings/categories/all", s.requireAuth(s.adminSaveCategoryAll))
 	mux.HandleFunc("POST /admin/settings/categories", s.requireAuth(s.adminSaveCategory))
 	mux.HandleFunc("POST /admin/settings/categories/delete", s.requireAuth(s.adminDeleteCategory))
 	mux.HandleFunc("POST /admin/settings/categories/reorder", s.requireAuth(s.adminReorderCategories))
@@ -695,11 +962,102 @@ func (s *Server) view(r *http.Request, nav string) *View {
 	lang := langFrom(r)
 	st := s.site(lang)
 	tr := s.i18n.Tr(lang, s.defaultLang())
-	v := &View{Site: st, Nav: nav, Year: time.Now().Year(), Theme: st.Theme, ThemeStyle: s.themeOverride(), Tr: tr, Lang: lang, AssetVer: s.assetVer}
+	v := &View{
+		Site: st, Nav: nav, Year: time.Now().Year(), Theme: st.Theme, ThemeStyle: s.themeOverride(),
+		Tr: tr, Lang: lang, AssetVer: s.assetVer,
+		CategoryAll: s.archiveConfig(lang, "post"),
+		LinksAll:    s.archiveConfig(lang, "link"),
+	}
+	if r.URL.Query().Get("visual_edit") == "1" {
+		if _, ok := s.currentSession(r); ok {
+			v.VisualEdit = true
+		}
+	}
 	v.Langs = s.langSwitch(lang, nil, "/")
 	v.Social = parseSocialLinks(s.store.Setting("social_links"))
 	v.Menu = s.menuItems(lang, tr, nav)
 	return v
+}
+
+func (s *Server) giscusForPost(lang string, p *store.Post) *GiscusView {
+	if p == nil || p.Type != "post" || !p.CommentsEnabled || s.store.Setting("comments.provider") != "giscus" {
+		return nil
+	}
+	g := &GiscusView{
+		Repo:          strings.TrimSpace(s.store.Setting("comments.giscus.repo")),
+		RepoID:        strings.TrimSpace(s.store.Setting("comments.giscus.repo_id")),
+		Category:      strings.TrimSpace(s.store.Setting("comments.giscus.category")),
+		CategoryID:    strings.TrimSpace(s.store.Setting("comments.giscus.category_id")),
+		Mapping:       commentMapping(s.store.Setting("comments.giscus.mapping")),
+		Strict:        boolAttr(s.store.Setting("comments.giscus.strict") != "0"),
+		Reactions:     boolAttr(s.store.Setting("comments.giscus.reactions") != "0"),
+		InputPosition: commentInputPosition(s.store.Setting("comments.giscus.input_position")),
+		Theme:         commentTheme(s.store.Setting("comments.giscus.theme")),
+		Lang:          giscusLang(s.i18n.Locale(lang)),
+	}
+	if g.Repo == "" || g.RepoID == "" || g.Category == "" || g.CategoryID == "" {
+		return nil
+	}
+	return g
+}
+
+func boolAttr(on bool) string {
+	if on {
+		return "1"
+	}
+	return "0"
+}
+
+func commentMapping(v string) string {
+	switch strings.TrimSpace(v) {
+	case "url", "title", "og:title":
+		return strings.TrimSpace(v)
+	default:
+		return "pathname"
+	}
+}
+
+func commentInputPosition(v string) string {
+	if strings.TrimSpace(v) == "top" {
+		return "top"
+	}
+	return "bottom"
+}
+
+func commentTheme(v string) string {
+	switch strings.TrimSpace(v) {
+	case "light", "dark", "dark_high_contrast", "dark_dimmed", "transparent_dark", "noborder_light", "noborder_dark", "cobalt", "purple_dark":
+		return strings.TrimSpace(v)
+	default:
+		return "preferred_color_scheme"
+	}
+}
+
+func giscusLang(loc i18n.Locale) string {
+	supported := map[string]string{
+		"en": "en", "zh-cn": "zh-CN", "zh-tw": "zh-TW", "ja": "ja", "ko": "ko",
+		"fr": "fr", "de": "de", "es": "es", "it": "it", "pt": "pt", "ru": "ru",
+	}
+	code := normalizeLangToken(loc.Code)
+	if v, ok := supported[code]; ok {
+		return v
+	}
+	tag := normalizeLangToken(loc.Tag)
+	if v, ok := supported[tag]; ok {
+		return v
+	}
+	if strings.HasPrefix(tag, "zh-hant") {
+		return "zh-TW"
+	}
+	if strings.HasPrefix(tag, "zh") {
+		return "zh-CN"
+	}
+	if i := strings.IndexByte(tag, '-'); i > 0 {
+		if v, ok := supported[tag[:i]]; ok {
+			return v
+		}
+	}
+	return "en"
 }
 
 func (s *Server) applyTheme(v *View, theme string) {
@@ -715,16 +1073,17 @@ func (s *Server) applyTheme(v *View, theme string) {
 func (s *Server) menuItems(lang string, tr *i18n.Tr, nav string) []MenuItem {
 	rows := parseMenuRows(s.store.Setting("nav_menu"))
 	if len(rows) == 0 {
+		categoryPath := s.archiveConfig(lang, "post").Path
 		return []MenuItem{
-			{Href: tr.U("/"), Label: tr.T("nav.home"), Active: nav == "home"},
-			{Href: tr.U("/category/engineering"), Label: tr.T("nav.category"), Active: nav == "category"},
-			{Href: tr.U("/links"), Label: tr.T("nav.links"), Active: nav == "links"},
-			{Href: tr.U("/about"), Label: tr.T("nav.about"), Active: nav == "about"},
+			{Href: tr.U("/"), Label: tr.T("nav.home"), Active: nav == "home", Index: 0},
+			{Href: tr.U(categoryPath), Label: tr.T("nav.category"), Active: nav == "category", Index: 1},
+			{Href: tr.U("/links"), Label: tr.T("nav.links"), Active: nav == "links", Index: 2},
+			{Href: tr.U("/about"), Label: tr.T("nav.about"), Active: nav == "about", Index: 3},
 		}
 	}
 	def := s.defaultLang()
 	out := make([]MenuItem, 0, len(rows))
-	for _, m := range rows {
+	for i, m := range rows {
 		label := strings.TrimSpace(m.Labels[lang])
 		if label == "" {
 			label = strings.TrimSpace(m.Labels[def])
@@ -738,7 +1097,7 @@ func (s *Server) menuItems(lang string, tr *i18n.Tr, nav string) []MenuItem {
 			href = tr.U(m.URL)
 		}
 		k := navKeyOf(m.URL)
-		out = append(out, MenuItem{Href: href, Label: label, Active: k != "" && k == nav, External: ext})
+		out = append(out, MenuItem{Href: href, Label: label, Active: k != "" && k == nav, External: ext, Index: i})
 	}
 	return out
 }
@@ -749,6 +1108,7 @@ func (s *Server) menuEditRows() []MenuRow {
 		return rows
 	}
 	def := s.defaultLang()
+	categoryPath := s.archiveConfig(def, "post").Path
 	mk := func(url, key string) MenuRow {
 		labels := map[string]string{}
 		for _, l := range s.locales() {
@@ -758,7 +1118,7 @@ func (s *Server) menuEditRows() []MenuRow {
 	}
 	return []MenuRow{
 		mk("/", "nav.home"),
-		mk("/category/engineering", "nav.category"),
+		mk(categoryPath, "nav.category"),
 		mk("/links", "nav.links"),
 		mk("/about", "nav.about"),
 	}
@@ -879,6 +1239,7 @@ func (s *Server) article(w http.ResponseWriter, r *http.Request) {
 	v.Prev, _ = s.store.PrevPost(p)
 	v.Next, _ = s.store.NextPost(p)
 	v.Related, _ = s.store.Related(p, 3)
+	v.Giscus = s.giscusForPost(lang, p)
 	ph := map[string]string{p.Lang: "/posts/" + p.Slug}
 	if trs, _ := s.store.TranslationsPublished(p.TransGroup); trs != nil {
 		for _, t := range trs {
@@ -893,6 +1254,11 @@ func (s *Server) article(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) category(w http.ResponseWriter, r *http.Request) {
 	lang := langFrom(r)
+	all := s.archiveConfig(lang, "post")
+	if all.Path != "/category" && r.PathValue("slug") == all.Slug {
+		s.categoryAll(w, r, all)
+		return
+	}
 	c, err := s.store.GetCategoryBySlug(lang, r.PathValue("slug"))
 	if err != nil {
 		s.serverError(w, err)
@@ -923,6 +1289,37 @@ func (s *Server) category(w http.ResponseWriter, r *http.Request) {
 	s.rnd.Public(w, "category", http.StatusOK, v)
 }
 
+func (s *Server) categoryRoot(w http.ResponseWriter, r *http.Request) {
+	lang := langFrom(r)
+	s.categoryAll(w, r, s.archiveConfig(lang, "post"))
+}
+
+func (s *Server) categoryAll(w http.ResponseWriter, r *http.Request, all ArchiveConfig) {
+	const size = 8
+	lang := langFrom(r)
+	page := pageParam(r)
+	total, _ := s.store.CountPublished(lang)
+	posts, err := s.store.ListPublished(lang, (page-1)*size, size)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	cats, _ := s.store.ListCategories(lang, "post")
+	c := &store.Category{Slug: all.Slug, Name: all.Title, Description: all.Description, Lang: lang, Kind: "post"}
+	v := s.view(r, "category")
+	v.SEO = v.Site.CategoryArchive(c, all.Path)
+	v.Category = c
+	v.Categories = cats
+	v.Posts = posts
+	ph := map[string]string{}
+	for _, l := range s.locales() {
+		ph[l.Code] = s.archiveConfig(l.Code, "post").Path
+	}
+	v.Langs, v.SEO.Alternates = s.i18nLinks(lang, ph)
+	setPagination(v, page, ceilDiv(total, size), all.Path)
+	s.rnd.Public(w, "category", http.StatusOK, v)
+}
+
 func (s *Server) links(w http.ResponseWriter, r *http.Request) {
 	const size = 12
 	lang := langFrom(r)
@@ -947,17 +1344,26 @@ func (s *Server) links(w http.ResponseWriter, r *http.Request) {
 	v.Posts = items
 	v.Categories = cats
 	v.Category = cat
+	basePath := v.LinksAll.Path
+	if cat != nil {
+		basePath = "/links"
+	}
 	ph := map[string]string{}
 	for _, l := range s.locales() {
 		ph[l.Code] = "/links"
 	}
 	v.Langs, v.SEO.Alternates = s.i18nLinks(lang, ph)
-	setPagination(v, page, ceilDiv(total, size), "/links")
+	setPagination(v, page, ceilDiv(total, size), basePath)
 	s.rnd.Public(w, "links", http.StatusOK, v)
 }
 
 func (s *Server) link(w http.ResponseWriter, r *http.Request) {
 	lang := langFrom(r)
+	all := s.archiveConfig(lang, "link")
+	if all.Path != "/links" && r.PathValue("slug") == all.Slug {
+		s.links(w, r)
+		return
+	}
 	p, err := s.store.GetLinkBySlug(lang, r.PathValue("slug"), false)
 	if err != nil {
 		s.serverError(w, err)
@@ -1119,6 +1525,12 @@ func (s *Server) sitemap(w http.ResponseWriter, r *http.Request) {
 		linksList[l.Code] = "/links"
 	}
 	writeGroup(linksList, "weekly", "0.6")
+
+	categoryAll := map[string]string{}
+	for _, l := range locales {
+		categoryAll[l.Code] = s.archiveConfig(l.Code, "post").Path
+	}
+	writeGroup(categoryAll, "weekly", "0.7")
 
 	groupBy := func(items func(add func(group, lang, path string))) []map[string]string {
 		gm := map[string]map[string]string{}

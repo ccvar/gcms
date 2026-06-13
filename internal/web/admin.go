@@ -341,6 +341,665 @@ func (s *Server) adminDashboard(w http.ResponseWriter, r *http.Request) {
 	s.rnd.Admin(w, "dashboard", http.StatusOK, v)
 }
 
+func (s *Server) adminVisual(w http.ResponseWriter, r *http.Request) {
+	sess, _ := s.currentSession(r)
+	lang := s.editLang(r)
+	v := s.adminView("可视化编辑")
+	s.authed(v, sess)
+	v.EditLang = lang
+	v.VisualPreviewURL = "/" + lang + "/?visual_edit=1"
+	v.VisualFields = s.visualFields(lang)
+	v.VisualGroups = visualGroups(v.VisualFields)
+	v.VisualHistory = s.visualHistory()
+	s.rnd.Admin(w, "visual", http.StatusOK, v)
+}
+
+func (s *Server) visualFields(lang string) []VisualField {
+	st := s.site(lang)
+	def := s.defaultLang()
+	text := func(group, key, label, value, hint string, multiline bool) VisualField {
+		return VisualField{
+			Key:       key,
+			Label:     label,
+			Value:     value,
+			Group:     group,
+			Kind:      "text",
+			Hint:      hint,
+			Multiline: multiline,
+			Localized: true,
+			Inherited: lang != def && strings.TrimSpace(s.store.Setting(key+"::"+lang)) == "",
+		}
+	}
+	image := func(group, key, label, value, hint string) VisualField {
+		return VisualField{Key: key, Label: label, Value: value, Group: group, Kind: "image", Hint: hint}
+	}
+	contextText := func(group, key, label, value, meta, hint string, multiline bool) VisualField {
+		return VisualField{
+			Key:        key,
+			Label:      label,
+			Value:      value,
+			Meta:       meta,
+			Group:      group,
+			Kind:       "text",
+			Hint:       hint,
+			Multiline:  multiline,
+			Contextual: true,
+			Localized:  true,
+		}
+	}
+	fields := []VisualField{
+		text("site", "site.name", "站点名称", st.Name, "显示在页眉、页脚和 SEO 站点名中。", false),
+		text("site", "site.tagline", "标语", st.Tagline, "用于浏览器标题和部分主题的辅助文案。", false),
+		text("site", "site.description", "站点描述", st.Description, "首页 Hero 描述，也会作为默认 SEO description。", true),
+		image("site", "site.logo", "站点 Logo", s.store.Setting("site.logo"), "显示在页眉和页脚，留空时使用内置默认 Logo。"),
+		image("site", "site.favicon", "浏览器图标", s.store.Setting("site.favicon"), "显示在浏览器标签页，建议使用 SVG、PNG 或 ICO。"),
+		text("home", "site.hero_eyebrow", "Hero 眉标", st.HeroEyebrow, "首页主标题上方的小字。", false),
+		text("home", "site.hero_title", "Hero 大标题", st.HeroTitle, "首页第一屏最醒目的标题，建议短一点。", true),
+		image("home", "hero.image", "Hero 图片", s.store.Setting("hero.image"), "上传后会自动把 Hero 右侧视觉切换为图片模式。"),
+		text("home", "home.featured_title", "首页精选标题", st.HomeFeatured, "首页精选文章区块标题。", false),
+		text("home", "home.links_title", "首页链接标题", st.HomeLinks, "首页链接区块标题。", false),
+		text("home", "home.latest_title", "首页最新标题", st.HomeLatest, "首页最新文章区块标题。", false),
+		text("footer", "site.footer_note", "页脚说明", st.FooterNote, "显示在页脚站点名下方。", true),
+	}
+	for i, row := range s.menuEditRows() {
+		explicit := strings.TrimSpace(row.Labels[lang])
+		label := strings.TrimSpace(row.Labels[lang])
+		if label == "" {
+			label = strings.TrimSpace(row.Labels[def])
+		}
+		if label == "" {
+			label = row.URL
+		}
+		fields = append(fields, VisualField{
+			Key:       "nav." + strconv.Itoa(i),
+			Label:     label,
+			Value:     label,
+			Meta:      row.URL,
+			Group:     "nav",
+			Kind:      "text",
+			Hint:      "只修改当前语种的导航名称，导航地址仍在设置里的「导航」维护。",
+			Draggable: true,
+			Localized: true,
+			Inherited: lang != def && explicit == "",
+		})
+	}
+	if about, _ := s.store.GetPage(lang, "about"); about != nil {
+		fields = append(fields,
+			contextText("about", "page.about.title", "关于标题", about.Title, "", "关于页面的主标题。", false),
+			contextText("about", "page.about.excerpt", "关于摘要", about.Excerpt, "", "关于页面标题下方的简短说明。", true),
+			contextText("about", "page.about.content", "关于正文", about.Content, "", "支持 Markdown；长内容也可以到「页面」里编辑完整正文。", true),
+		)
+	}
+	categoryAll := s.archiveConfig(lang, "post")
+	fields = append(fields,
+		contextText("category", "category_all.title", "分类页标题", categoryAll.Title, categoryAll.Path, "文章分类的全部列表页标题。", false),
+		contextText("category", "category_all.description", "分类页描述", categoryAll.Description, categoryAll.Path, "显示在文章分类全部页标题下方。", true),
+		contextText("categorynav", "category_all.label", "全部按钮", categoryAll.Label, categoryAll.Path, "分类导航里“全部”按钮的显示文字。", false),
+	)
+	if cats, _ := s.store.ListCategories(lang, "post"); cats != nil {
+		for _, c := range cats {
+			path := "/category/" + c.Slug
+			nameField := contextText("categorynav", "category."+strconv.FormatInt(c.ID, 10)+".name", c.Name, c.Name, path, "分类导航按钮文字；不会改变 URL。", false)
+			nameField.Draggable = true
+			fields = append(fields,
+				nameField,
+				contextText("category", "category."+strconv.FormatInt(c.ID, 10)+".description", c.Name+" 描述", c.Description, path, "显示在当前分类页标题下方。", true),
+			)
+		}
+	}
+	linksAll := s.archiveConfig(lang, "link")
+	fields = append(fields,
+		contextText("linkcat", "links_all.title", "链接页标题", linksAll.Title, linksAll.Path, "链接列表页顶部标题。", false),
+		contextText("linkcat", "links_all.description", "链接页描述", linksAll.Description, linksAll.Path, "显示在链接列表页标题下方。", true),
+		contextText("linkcatnav", "links_all.label", "全部按钮", linksAll.Label, linksAll.Path, "链接分类导航里“全部”按钮的显示文字。", false),
+	)
+	if cats, _ := s.store.ListCategories(lang, "link"); cats != nil {
+		for _, c := range cats {
+			path := "/links?cat=" + c.Slug
+			nameField := contextText("linkcatnav", "category."+strconv.FormatInt(c.ID, 10)+".name", c.Name, c.Name, path, "链接分类导航按钮文字；不会改变 URL。", false)
+			nameField.Draggable = true
+			fields = append(fields,
+				nameField,
+				contextText("linkcat", "category."+strconv.FormatInt(c.ID, 10)+".description", c.Name+" 描述", c.Description, path, "显示在当前链接分类页标题下方。", true),
+			)
+		}
+	}
+	return fields
+}
+
+func visualGroups(fields []VisualField) []VisualGroup {
+	titles := []VisualGroup{
+		{ID: "site", Title: "站点信息"},
+		{ID: "home", Title: "首页内容"},
+		{ID: "about", Title: "关于页面"},
+		{ID: "nav", Title: "导航"},
+		{ID: "category", Title: "文章分类页"},
+		{ID: "categorynav", Title: "文章分类导航"},
+		{ID: "linkcat", Title: "链接页"},
+		{ID: "linkcatnav", Title: "链接分类导航"},
+		{ID: "footer", Title: "页脚"},
+	}
+	byID := map[string]int{}
+	for i := range titles {
+		byID[titles[i].ID] = i
+	}
+	for _, f := range fields {
+		i, ok := byID[f.Group]
+		if !ok {
+			i = len(titles)
+			byID[f.Group] = i
+			titles = append(titles, VisualGroup{ID: f.Group, Title: f.Group})
+		}
+		titles[i].Fields = append(titles[i].Fields, f)
+	}
+	out := titles[:0]
+	for _, g := range titles {
+		if len(g.Fields) > 0 {
+			out = append(out, g)
+		}
+	}
+	return out
+}
+
+func (s *Server) adminVisualSave(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.checkCSRF(w, r); !ok {
+		return
+	}
+	lang := s.editLang(r)
+	key := strings.TrimSpace(r.FormValue("key"))
+	value := strings.ReplaceAll(strings.TrimSpace(r.FormValue("value")), "\r\n", "\n")
+
+	if strings.HasPrefix(key, "page.about.") {
+		page, err := s.store.GetPage(lang, "about")
+		if err != nil {
+			s.serverError(w, err)
+			return
+		}
+		if page == nil {
+			writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "message": "关于页面不存在。"})
+			return
+		}
+		field := strings.TrimPrefix(key, "page.about.")
+		old := ""
+		switch field {
+		case "title":
+			if value == "" {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "关于标题不能为空。"})
+				return
+			}
+			old, page.Title = page.Title, value
+		case "excerpt":
+			old, page.Excerpt = page.Excerpt, value
+		case "content":
+			old, page.Content = page.Content, value
+		default:
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "这个关于页字段暂不支持可视化编辑。"})
+			return
+		}
+		if err := s.store.UpdatePost(page); err != nil {
+			s.serverError(w, err)
+			return
+		}
+		h := s.pushVisualHistory(VisualLog{
+			Key:   key,
+			Label: visualFieldLabel(s.visualFields(lang), key),
+			Lang:  lang,
+			Kind:  "text",
+			Old:   old,
+			New:   value,
+		})
+		s.clearGeneratedCaches()
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "已保存。", "history": h})
+		return
+	}
+
+	if kind, field, ok := archiveVisualField(key); ok {
+		if (field == "title" || field == "label") && value == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "这个字段不能为空。"})
+			return
+		}
+		all := s.archiveConfig(lang, kind)
+		old := ""
+		switch field {
+		case "title":
+			old = all.Title
+		case "label":
+			old = all.Label
+		case "description":
+			old = all.Description
+		default:
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "这个字段暂不支持可视化编辑。"})
+			return
+		}
+		if err := s.store.SetSetting(s.archiveStoreKey(kind, field, lang), value); err != nil {
+			s.serverError(w, err)
+			return
+		}
+		h := s.pushVisualHistory(VisualLog{
+			Key:   key,
+			Label: visualFieldLabel(s.visualFields(lang), key),
+			Lang:  lang,
+			Kind:  "text",
+			Old:   old,
+			New:   value,
+		})
+		s.clearGeneratedCaches()
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "已保存。", "history": h})
+		return
+	}
+
+	if strings.HasPrefix(key, "category.") {
+		parts := strings.Split(key, ".")
+		if len(parts) != 3 {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "分类字段无效。"})
+			return
+		}
+		id, err := strconv.ParseInt(parts[1], 10, 64)
+		if err != nil || id <= 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "分类项无效。"})
+			return
+		}
+		c, err := s.store.GetCategoryByID(id)
+		if err != nil {
+			s.serverError(w, err)
+			return
+		}
+		if c == nil || c.Lang != lang {
+			writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "message": "分类不存在。"})
+			return
+		}
+		old := ""
+		switch parts[2] {
+		case "name":
+			if value == "" {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "分类名称不能为空。"})
+				return
+			}
+			old, c.Name = c.Name, value
+		case "description":
+			old, c.Description = c.Description, value
+		default:
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "这个分类字段暂不支持可视化编辑。"})
+			return
+		}
+		if err := s.store.UpdateCategory(c); err != nil {
+			s.serverError(w, err)
+			return
+		}
+		h := s.pushVisualHistory(VisualLog{
+			Key:   key,
+			Label: visualFieldLabel(s.visualFields(lang), key),
+			Lang:  lang,
+			Kind:  "text",
+			Old:   old,
+			New:   value,
+		})
+		s.clearGeneratedCaches()
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "已保存。", "history": h})
+		return
+	}
+
+	if strings.HasPrefix(key, "nav.") {
+		idx, err := strconv.Atoi(strings.TrimPrefix(key, "nav."))
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "导航项无效。"})
+			return
+		}
+		rows := s.menuEditRows()
+		if idx < 0 || idx >= len(rows) {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "导航项不存在。"})
+			return
+		}
+		if rows[idx].Labels == nil {
+			rows[idx].Labels = map[string]string{}
+		}
+		old := rows[idx].Labels[lang]
+		rows[idx].Labels[lang] = value
+		b, _ := json.Marshal(rows)
+		_ = s.store.SetSetting("nav_menu", string(b))
+		h := s.pushVisualHistory(VisualLog{
+			Key:   key,
+			Label: visualFieldLabel(s.visualFields(lang), key),
+			Lang:  lang,
+			Kind:  "text",
+			Old:   old,
+			New:   value,
+		})
+		s.clearGeneratedCaches()
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "已保存。", "history": h})
+		return
+	}
+
+	if !visualSettingAllowed(key) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "这个字段暂不支持可视化编辑。"})
+		return
+	}
+	if key == "site.name" && value == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "站点名称不能为空。"})
+		return
+	}
+	storeKey := s.visualStoreKey(key, lang)
+	old := s.store.Setting(storeKey)
+	_ = s.store.SetSetting(storeKey, value)
+	if key == "hero.image" {
+		if value != "" {
+			_ = s.store.SetSetting("hero.visual", "image")
+		} else if s.store.Setting("hero.visual") == "image" {
+			_ = s.store.SetSetting("hero.visual", "")
+		}
+	}
+	h := s.pushVisualHistory(VisualLog{
+		Key:   key,
+		Label: visualFieldLabel(s.visualFields(lang), key),
+		Lang:  lang,
+		Kind:  visualFieldKind(s.visualFields(lang), key),
+		Old:   old,
+		New:   value,
+	})
+	s.clearGeneratedCaches()
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "已保存。", "history": h})
+}
+
+func (s *Server) adminVisualUndo(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.checkCSRF(w, r); !ok {
+		return
+	}
+	id := strings.TrimSpace(r.FormValue("id"))
+	history := s.visualHistory()
+	if id == "" && len(history) > 0 {
+		id = history[0].ID
+	}
+	var item VisualLog
+	var kept []VisualLog
+	found := false
+	for _, h := range history {
+		if h.ID == id {
+			item = h
+			found = true
+			continue
+		}
+		kept = append(kept, h)
+	}
+	if !found {
+		writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "message": "没有找到可撤回的修改。"})
+		return
+	}
+	if err := s.restoreVisualValue(item); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": err.Error()})
+		return
+	}
+	s.saveVisualHistory(kept)
+	s.clearGeneratedCaches()
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "已撤回。", "key": item.Key, "value": item.Old})
+}
+
+func (s *Server) adminVisualNavReorder(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.checkCSRF(w, r); !ok {
+		return
+	}
+	rows := s.menuEditRows()
+	if len(rows) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "没有可排序的导航。"})
+		return
+	}
+	keys := r.Form["keys"]
+	if len(keys) == 0 {
+		keys = strings.Split(r.FormValue("order"), ",")
+	}
+	if len(keys) != len(rows) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "导航顺序不完整。"})
+		return
+	}
+	used := map[int]bool{}
+	next := make([]MenuRow, 0, len(rows))
+	for _, key := range keys {
+		key = strings.TrimSpace(key)
+		if !strings.HasPrefix(key, "nav.") {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "导航项无效。"})
+			return
+		}
+		idx, err := strconv.Atoi(strings.TrimPrefix(key, "nav."))
+		if err != nil || idx < 0 || idx >= len(rows) || used[idx] {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "导航项无效。"})
+			return
+		}
+		used[idx] = true
+		next = append(next, rows[idx])
+	}
+	b, _ := json.Marshal(next)
+	_ = s.store.SetSetting("nav_menu", string(b))
+	s.clearGeneratedCaches()
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "导航顺序已保存。"})
+}
+
+func (s *Server) adminVisualCategoryReorder(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.checkCSRF(w, r); !ok {
+		return
+	}
+	lang := s.editLang(r)
+	group := strings.TrimSpace(r.FormValue("group"))
+	kind := ""
+	switch group {
+	case "categorynav":
+		kind = "post"
+	case "linkcatnav":
+		kind = "link"
+	default:
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "分类分组无效。"})
+		return
+	}
+	cats, err := s.store.ListCategories(lang, kind)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	keys := r.Form["keys"]
+	if len(keys) == 0 {
+		keys = strings.Split(r.FormValue("order"), ",")
+	}
+	if len(keys) != len(cats) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "分类顺序不完整。"})
+		return
+	}
+	allowed := map[int64]bool{}
+	for _, c := range cats {
+		allowed[c.ID] = true
+	}
+	used := map[int64]bool{}
+	ids := make([]int64, 0, len(keys))
+	for _, key := range keys {
+		key = strings.TrimSpace(key)
+		if !strings.HasPrefix(key, "category.") || !strings.HasSuffix(key, ".name") {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "分类项无效。"})
+			return
+		}
+		parts := strings.Split(key, ".")
+		if len(parts) != 3 {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "分类项无效。"})
+			return
+		}
+		id, err := strconv.ParseInt(parts[1], 10, 64)
+		if err != nil || id <= 0 || !allowed[id] || used[id] {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "分类项无效。"})
+			return
+		}
+		used[id] = true
+		ids = append(ids, id)
+	}
+	if err := s.store.ReorderCategories(ids); err != nil {
+		s.serverError(w, err)
+		return
+	}
+	s.clearGeneratedCaches()
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "分类顺序已保存。"})
+}
+
+func visualSettingAllowed(key string) bool {
+	switch key {
+	case "site.name", "site.tagline", "site.description", "site.hero_eyebrow", "site.hero_title",
+		"home.featured_title", "home.links_title", "home.latest_title", "site.footer_note",
+		"site.logo", "site.favicon", "hero.image":
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *Server) visualStoreKey(key, lang string) string {
+	switch key {
+	case "site.logo":
+		return "site.logo"
+	case "site.favicon":
+		return "site.favicon"
+	case "hero.image":
+		return "hero.image"
+	default:
+		return s.copyKey(key, lang)
+	}
+}
+
+func archiveVisualField(key string) (kind, field string, ok bool) {
+	switch {
+	case strings.HasPrefix(key, "category_all."):
+		return "post", strings.TrimPrefix(key, "category_all."), true
+	case strings.HasPrefix(key, "links_all."):
+		return "link", strings.TrimPrefix(key, "links_all."), true
+	default:
+		return "", "", false
+	}
+}
+
+func visualFieldLabel(fields []VisualField, key string) string {
+	for _, f := range fields {
+		if f.Key == key {
+			return f.Label
+		}
+	}
+	return key
+}
+
+func visualFieldKind(fields []VisualField, key string) string {
+	for _, f := range fields {
+		if f.Key == key && f.Kind != "" {
+			return f.Kind
+		}
+	}
+	return "text"
+}
+
+func (s *Server) visualHistory() []VisualLog {
+	var out []VisualLog
+	_ = json.Unmarshal([]byte(s.store.Setting("visual.history")), &out)
+	return out
+}
+
+func (s *Server) saveVisualHistory(items []VisualLog) {
+	if len(items) > 20 {
+		items = items[:20]
+	}
+	b, _ := json.Marshal(items)
+	_ = s.store.SetSetting("visual.history", string(b))
+}
+
+func (s *Server) pushVisualHistory(h VisualLog) VisualLog {
+	if h.Old == h.New {
+		return h
+	}
+	h.ID = strconv.FormatInt(time.Now().UnixNano(), 36)
+	h.At = time.Now().Format("2006-01-02 15:04")
+	items := append([]VisualLog{h}, s.visualHistory()...)
+	s.saveVisualHistory(items)
+	return h
+}
+
+func (s *Server) restoreVisualValue(h VisualLog) error {
+	if strings.HasPrefix(h.Key, "page.about.") {
+		page, err := s.store.GetPage(h.Lang, "about")
+		if err != nil {
+			return err
+		}
+		if page == nil {
+			return fmt.Errorf("关于页面不存在")
+		}
+		switch strings.TrimPrefix(h.Key, "page.about.") {
+		case "title":
+			page.Title = h.Old
+		case "excerpt":
+			page.Excerpt = h.Old
+		case "content":
+			page.Content = h.Old
+		default:
+			return fmt.Errorf("这个关于页字段暂不支持撤回")
+		}
+		return s.store.UpdatePost(page)
+	}
+	if kind, field, ok := archiveVisualField(h.Key); ok {
+		switch field {
+		case "title", "label", "description":
+			return s.store.SetSetting(s.archiveStoreKey(kind, field, h.Lang), h.Old)
+		default:
+			return fmt.Errorf("这个字段暂不支持撤回")
+		}
+	}
+	if strings.HasPrefix(h.Key, "category.") {
+		parts := strings.Split(h.Key, ".")
+		if len(parts) != 3 {
+			return fmt.Errorf("分类字段无效")
+		}
+		id, err := strconv.ParseInt(parts[1], 10, 64)
+		if err != nil || id <= 0 {
+			return fmt.Errorf("分类项无效")
+		}
+		c, err := s.store.GetCategoryByID(id)
+		if err != nil {
+			return err
+		}
+		if c == nil || c.Lang != h.Lang {
+			return fmt.Errorf("分类不存在")
+		}
+		switch parts[2] {
+		case "name":
+			c.Name = h.Old
+		case "description":
+			c.Description = h.Old
+		default:
+			return fmt.Errorf("这个分类字段暂不支持撤回")
+		}
+		return s.store.UpdateCategory(c)
+	}
+	if strings.HasPrefix(h.Key, "nav.") {
+		idx, err := strconv.Atoi(strings.TrimPrefix(h.Key, "nav."))
+		if err != nil {
+			return fmt.Errorf("导航项无效")
+		}
+		rows := s.menuEditRows()
+		if idx < 0 || idx >= len(rows) {
+			return fmt.Errorf("导航项不存在")
+		}
+		if rows[idx].Labels == nil {
+			rows[idx].Labels = map[string]string{}
+		}
+		rows[idx].Labels[h.Lang] = h.Old
+		b, _ := json.Marshal(rows)
+		return s.store.SetSetting("nav_menu", string(b))
+	}
+	if !visualSettingAllowed(h.Key) {
+		return fmt.Errorf("这个字段暂不支持撤回")
+	}
+	key := s.visualStoreKey(h.Key, h.Lang)
+	if err := s.store.SetSetting(key, h.Old); err != nil {
+		return err
+	}
+	if h.Key == "hero.image" {
+		if h.Old != "" {
+			_ = s.store.SetSetting("hero.visual", "image")
+		} else if s.store.Setting("hero.visual") == "image" {
+			_ = s.store.SetSetting("hero.visual", "")
+		}
+	}
+	return nil
+}
+
 func (s *Server) adminNew(w http.ResponseWriter, r *http.Request) {
 	sess, _ := s.currentSession(r)
 	s.showEdit(w, sess, &store.Post{Status: "draft", Lang: s.editLang(r)}, "", "")
@@ -656,7 +1315,7 @@ func (s *Server) adminLinkPin(w http.ResponseWriter, r *http.Request) {
 
 // ---------- 站点设置（分区独立保存）----------
 
-var settingsSections = map[string]bool{"site": true, "appearance": true, "copy": true, "menu": true, "languages": true, "categories": true, "automation": true, "updates": true, "security": true}
+var settingsSections = map[string]bool{"site": true, "appearance": true, "copy": true, "menu": true, "languages": true, "categories": true, "automation": true, "comments": true, "updates": true, "security": true}
 
 func themeName(id string) string {
 	for _, t := range Themes {
@@ -877,6 +1536,16 @@ func (s *Server) showSettings(w http.ResponseWriter, r *http.Request, section, f
 		HomeLinksLimit:   strconv.Itoa(s.intSetting(homeLinksLimitKey, defaultHomeLinksLimit, minHomeLinksLimit, maxHomeLinksLimit)),
 		HomePostsPerPage: strconv.Itoa(s.intSetting(homePostsPerPageKey, defaultHomePostsPerPage, minHomePostsPerPage, maxHomePostsPerPage)),
 		InjectHead:       st.InjectHead, InjectBody: st.InjectBody,
+		CommentsProvider:    commentProvider(s.store.Setting("comments.provider")),
+		GiscusRepo:          s.store.Setting("comments.giscus.repo"),
+		GiscusRepoID:        s.store.Setting("comments.giscus.repo_id"),
+		GiscusCategory:      s.store.Setting("comments.giscus.category"),
+		GiscusCategoryID:    s.store.Setting("comments.giscus.category_id"),
+		GiscusMapping:       commentMapping(s.store.Setting("comments.giscus.mapping")),
+		GiscusStrict:        s.store.Setting("comments.giscus.strict") != "0",
+		GiscusReactions:     s.store.Setting("comments.giscus.reactions") != "0",
+		GiscusInputPosition: commentInputPosition(s.store.Setting("comments.giscus.input_position")),
+		GiscusTheme:         commentTheme(s.store.Setting("comments.giscus.theme")),
 	}
 	v.Themes = Themes
 	v.Cards = cards
@@ -926,6 +1595,12 @@ func (s *Server) showSettings(w http.ResponseWriter, r *http.Request, section, f
 		kind := catKind(r)
 		v.EditLang = lang
 		v.CatKind = kind
+		all := s.archiveConfig(lang, kind)
+		v.Settings.AllTitle = all.Title
+		v.Settings.AllLabel = all.Label
+		v.Settings.AllSlug = all.Slug
+		v.Settings.AllPath = all.Path
+		v.Settings.AllDescription = all.Description
 		v.Categories, _ = s.store.ListCategories(lang, kind)
 		if eid := r.URL.Query().Get("edit"); eid != "" {
 			v.EditCat, _ = s.store.GetCategoryByID(atoi64(eid))
@@ -1185,6 +1860,77 @@ func (s *Server) adminSaveAppearance(w http.ResponseWriter, r *http.Request) {
 	s.showSettings(w, r, "appearance", "外观设置已保存。", "")
 }
 
+func (s *Server) adminSaveComments(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.checkCSRF(w, r); !ok {
+		return
+	}
+	provider := commentProvider(r.FormValue("comments_provider"))
+	repo := strings.TrimSpace(r.FormValue("giscus_repo"))
+	repoID := strings.TrimSpace(r.FormValue("giscus_repo_id"))
+	category := strings.TrimSpace(r.FormValue("giscus_category"))
+	categoryID := strings.TrimSpace(r.FormValue("giscus_category_id"))
+	mapping := commentMapping(r.FormValue("giscus_mapping"))
+	strict := boolAttr(r.FormValue("giscus_strict") == "1")
+	reactions := boolAttr(r.FormValue("giscus_reactions") == "1")
+	inputPosition := commentInputPosition(r.FormValue("giscus_input_position"))
+	theme := commentTheme(r.FormValue("giscus_theme"))
+
+	if provider == "giscus" {
+		switch {
+		case !validGiscusRepo(repo):
+			s.showSettings(w, r, "comments", "", "仓库地址请填写 owner/repo，例如 ccvar/site-comments。")
+			return
+		case repoID == "":
+			s.showSettings(w, r, "comments", "", "请填写 giscus 生成的 Repo ID。")
+			return
+		case category == "":
+			s.showSettings(w, r, "comments", "", "请填写讨论分类名称。")
+			return
+		case categoryID == "":
+			s.showSettings(w, r, "comments", "", "请填写 giscus 生成的 Category ID。")
+			return
+		}
+	}
+
+	_ = s.store.SetSetting("comments.provider", provider)
+	_ = s.store.SetSetting("comments.giscus.repo", repo)
+	_ = s.store.SetSetting("comments.giscus.repo_id", repoID)
+	_ = s.store.SetSetting("comments.giscus.category", category)
+	_ = s.store.SetSetting("comments.giscus.category_id", categoryID)
+	_ = s.store.SetSetting("comments.giscus.mapping", mapping)
+	_ = s.store.SetSetting("comments.giscus.strict", strict)
+	_ = s.store.SetSetting("comments.giscus.reactions", reactions)
+	_ = s.store.SetSetting("comments.giscus.input_position", inputPosition)
+	_ = s.store.SetSetting("comments.giscus.theme", theme)
+	s.clearGeneratedCaches()
+	s.showSettings(w, r, "comments", "评论设置已保存。", "")
+}
+
+func commentProvider(v string) string {
+	if strings.TrimSpace(v) == "giscus" {
+		return "giscus"
+	}
+	return "none"
+}
+
+func validGiscusRepo(v string) bool {
+	if strings.ContainsAny(v, " \t\r\n") || strings.Contains(v, "://") {
+		return false
+	}
+	parts := strings.Split(v, "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return false
+	}
+	for _, part := range parts {
+		for _, r := range part {
+			if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.') {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 func (s *Server) adminSavePassword(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.checkCSRF(w, r); !ok {
 		return
@@ -1333,6 +2079,89 @@ func (s *Server) adminDeleteLocalePreset(w http.ResponseWriter, r *http.Request)
 }
 
 // ---------- 分类管理 ----------
+
+func (s *Server) adminSaveCategoryAll(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.checkCSRF(w, r); !ok {
+		return
+	}
+	lang := s.editLang(r)
+	kind := catKind(r)
+	title := strings.TrimSpace(r.FormValue("title"))
+	label := strings.TrimSpace(r.FormValue("label"))
+	desc := strings.TrimSpace(r.FormValue("description"))
+	if title == "" {
+		s.showSettings(w, r, "categories", "", "页面标题不能为空。")
+		return
+	}
+	if label == "" {
+		s.showSettings(w, r, "categories", "", "“全部”按钮文字不能为空。")
+		return
+	}
+	fallbackSlug := "category"
+	if kind == "link" {
+		fallbackSlug = "links"
+	}
+	slug := normalizeArchiveSlug(r.FormValue("slug"), fallbackSlug)
+	newPath := archivePath(kind, slug)
+	if kind == "post" && newPath != "/category" {
+		exists, err := s.store.CategorySlugExists(lang, slug, 0)
+		if err != nil {
+			s.serverError(w, err)
+			return
+		}
+		if exists {
+			s.showSettings(w, r, "categories", "", "Slug 已被真实分类占用，请换一个。")
+			return
+		}
+	} else if kind == "link" && newPath != "/links" {
+		if p, err := s.store.GetLinkBySlug(lang, slug, true); err != nil {
+			s.serverError(w, err)
+			return
+		} else if p != nil {
+			s.showSettings(w, r, "categories", "", "Slug 已被链接详情页占用，请换一个。")
+			return
+		}
+	}
+	old := s.archiveConfig(lang, kind)
+	values := map[string]string{
+		"title":       title,
+		"label":       label,
+		"slug":        slug,
+		"description": desc,
+	}
+	for field, value := range values {
+		if err := s.store.SetSetting(s.archiveStoreKey(kind, field, lang), value); err != nil {
+			s.serverError(w, err)
+			return
+		}
+	}
+	if kind == "post" {
+		s.syncCategoryNavPath(old.Path, newPath)
+	}
+	s.clearGeneratedCaches()
+	s.showSettings(w, r, "categories", "“全部”入口已保存。", "")
+}
+
+func (s *Server) syncCategoryNavPath(oldPath, newPath string) {
+	if newPath == "" || oldPath == newPath {
+		return
+	}
+	rows := parseMenuRows(s.store.Setting("nav_menu"))
+	if len(rows) == 0 {
+		return
+	}
+	changed := false
+	for i := range rows {
+		if rows[i].URL == oldPath || rows[i].URL == "/category/engineering" || rows[i].URL == "/category/all" {
+			rows[i].URL = newPath
+			changed = true
+		}
+	}
+	if changed {
+		b, _ := json.Marshal(rows)
+		_ = s.store.SetSetting("nav_menu", string(b))
+	}
+}
 
 func (s *Server) adminSaveCategory(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.checkCSRF(w, r); !ok {
@@ -1498,6 +2327,9 @@ func postFromForm(r *http.Request, id int64, lang string) (*store.Post, string) 
 		Author:     strings.TrimSpace(r.FormValue("author")),
 		TransGroup: strings.TrimSpace(r.FormValue("trans_group")),
 		LinkURL:    strings.TrimSpace(r.FormValue("link_url")),
+	}
+	if r.FormValue("comments_enabled") == "1" {
+		p.CommentsEnabled = true
 	}
 	switch r.FormValue("status") {
 	case "published":
