@@ -251,5 +251,6 @@ func (r *Renderer) ThemePreview(w http.ResponseWriter, status int, data any) {
 
 // Admin 渲染后台页面。
 func (r *Renderer) Admin(w http.ResponseWriter, name string, status int, data any) {
+	w.Header().Set("Cache-Control", "no-store")
 	r.execute(w, "admin_"+name, "admin_layout", status, data)
 }

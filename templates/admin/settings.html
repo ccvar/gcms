@@ -889,6 +889,14 @@
             }).then(function(j) {
               render(j.status);
             }).catch(function(err) {
+              if (err && err.serverError && err.error === "bad_csrf") {
+                box.dataset.running = "0";
+                setText("[data-upgrade-status]", "需要刷新");
+                setText("[data-upgrade-message]", "页面令牌已过期，请刷新系统更新页后再点一键升级。");
+                setButton("刷新页面", false);
+                if (button) button.onclick = function(){ window.location.reload(); };
+                return;
+              }
               if (err && err.serverError && err.message) {
                 setText("[data-upgrade-message]", err.message);
                 setButton("重试升级", false);
