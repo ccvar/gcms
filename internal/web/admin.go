@@ -204,7 +204,11 @@ func (s *Server) checkCSRF(w http.ResponseWriter, r *http.Request) (session, boo
 		http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
 		return session{}, false
 	}
-	_ = r.ParseForm()
+	if strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "multipart/form-data") {
+		_ = r.ParseMultipartForm(8 << 20)
+	} else {
+		_ = r.ParseForm()
+	}
 	if r.FormValue("_csrf") != sess.csrf {
 		if wantsJSON(r) {
 			writeJSON(w, http.StatusForbidden, map[string]string{"error": "bad_csrf", "message": "无效的 CSRF 令牌。"})
