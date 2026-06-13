@@ -1527,8 +1527,10 @@ func (s *Server) showSettings(w http.ResponseWriter, r *http.Request, section, f
 	v := s.adminView("设置")
 	s.authed(v, sess)
 	v.Section = section
+	v.CatKind = catKind(r)
 	v.Settings = &SettingsForm{
 		Name: st.Name, Tagline: st.Tagline, Description: st.Description,
+		NameDef: st.Name, TaglineDef: st.Tagline, DescriptionDef: st.Description,
 		Favicon: st.Favicon, Logo: st.Logo, Brand: st.Brand, Theme: st.Theme,
 		Custom: custom, Accent: accent, Radius: radius,
 		HeroEyebrow: st.HeroEyebrow, HeroTitle: st.HeroTitle, FooterNote: st.FooterNote,
@@ -1552,9 +1554,9 @@ func (s *Server) showSettings(w http.ResponseWriter, r *http.Request, section, f
 	v.Flash = flash
 	v.FormErr = formErr
 	v.Social = parseSocialLinks(s.store.Setting("social_links"))
-	v.APIBaseURL = s.abs("/api/admin/v1")
-	v.OpenAPIURL = s.abs("/api/admin/v1/openapi.json")
-	v.APIDocsURL = s.abs("/" + s.defaultLang() + "/api-docs")
+	v.APIBaseURL = s.absForRequest(r, "/api/admin/v1")
+	v.OpenAPIURL = s.absForRequest(r, "/api/admin/v1/openapi.json")
+	v.APIDocsURL = s.absForRequest(r, "/"+s.defaultLang()+"/api-docs")
 	v.SkillPackageURL = "/admin/settings/automation/skill.zip"
 	if len(newAPISecret) > 0 {
 		v.NewAPISecret = newAPISecret[0]
@@ -1573,6 +1575,23 @@ func (s *Server) showSettings(w http.ResponseWriter, r *http.Request, section, f
 	}
 
 	switch section {
+	case "site":
+		lang := s.editLang(r)
+		v.EditLang = lang
+		def := s.site(s.defaultLang())
+		v.Settings.NameDef = def.Name
+		v.Settings.TaglineDef = def.Tagline
+		v.Settings.DescriptionDef = def.Description
+		localized := func(base, fallback string) string {
+			v := s.store.Setting(s.copyKey(base, lang))
+			if lang == s.defaultLang() && v == "" {
+				return fallback
+			}
+			return v
+		}
+		v.Settings.Name = localized("site.name", def.Name)
+		v.Settings.Tagline = localized("site.tagline", def.Tagline)
+		v.Settings.Description = localized("site.description", def.Description)
 	case "copy":
 		lang := s.editLang(r)
 		v.EditLang = lang
@@ -1796,14 +1815,15 @@ func (s *Server) adminSaveSite(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.checkCSRF(w, r); !ok {
 		return
 	}
+	lang := s.editLang(r)
 	name := strings.TrimSpace(r.FormValue("site_name"))
-	if name == "" {
+	if lang == s.defaultLang() && name == "" {
 		s.showSettings(w, r, "site", "", "站点名称不能为空。")
 		return
 	}
-	_ = s.store.SetSetting("site.name", name)
-	_ = s.store.SetSetting("site.tagline", strings.TrimSpace(r.FormValue("site_tagline")))
-	_ = s.store.SetSetting("site.description", strings.TrimSpace(r.FormValue("site_description")))
+	_ = s.store.SetSetting(s.copyKey("site.name", lang), name)
+	_ = s.store.SetSetting(s.copyKey("site.tagline", lang), strings.TrimSpace(r.FormValue("site_tagline")))
+	_ = s.store.SetSetting(s.copyKey("site.description", lang), strings.TrimSpace(r.FormValue("site_description")))
 	_ = s.store.SetSetting("site.favicon", strings.TrimSpace(r.FormValue("site_favicon")))
 	_ = s.store.SetSetting("site.logo", strings.TrimSpace(r.FormValue("site_logo")))
 	brand := r.FormValue("site_brand")
@@ -1819,7 +1839,7 @@ func (s *Server) adminSaveSite(w http.ResponseWriter, r *http.Request) {
 	_ = s.store.SetSetting("inject.head", strings.TrimSpace(r.FormValue("inject_head")))
 	_ = s.store.SetSetting("inject.body", strings.TrimSpace(r.FormValue("inject_body")))
 	s.clearGeneratedCaches()
-	s.showSettings(w, r, "site", "站点信息已保存。", "")
+	s.showSettings(w, r, "site", "基础信息已保存。", "")
 }
 
 func (s *Server) adminSaveAppearance(w http.ResponseWriter, r *http.Request) {
@@ -1964,8 +1984,6 @@ func (s *Server) adminSaveCopy(w http.ResponseWriter, r *http.Request) {
 	set := func(base, field string) {
 		_ = s.store.SetSetting(s.copyKey(base, lang), strings.TrimSpace(r.FormValue(field)))
 	}
-	set("site.tagline", "tagline")
-	set("site.description", "description")
 	set("site.hero_eyebrow", "hero_eyebrow")
 	set("site.hero_title", "hero_title")
 	set("site.footer_note", "footer_note")

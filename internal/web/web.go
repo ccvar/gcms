@@ -8,6 +8,7 @@ import (
 	"hash/fnv"
 	"html/template"
 	"io/fs"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -307,22 +308,25 @@ type GiscusView struct {
 
 // SettingsForm 承载后台设置页的可编辑字段。
 type SettingsForm struct {
-	Name        string
-	Tagline     string
-	Description string
-	Favicon     string
-	Logo        string
-	Brand       string
-	Theme       string
-	Custom      bool   // 是否启用主题微调
-	Accent      string // 自定义主色 #rrggbb
-	Radius      string // 自定义圆角 px
-	HeroEyebrow string
-	HeroTitle   string
-	HeroVisual  string // ""(默认动画) | image | svg
-	HeroImage   string
-	HeroSVG     string
-	FooterNote  string
+	Name           string
+	NameDef        string
+	Tagline        string
+	TaglineDef     string
+	Description    string
+	DescriptionDef string
+	Favicon        string
+	Logo           string
+	Brand          string
+	Theme          string
+	Custom         bool   // 是否启用主题微调
+	Accent         string // 自定义主色 #rrggbb
+	Radius         string // 自定义圆角 px
+	HeroEyebrow    string
+	HeroTitle      string
+	HeroVisual     string // ""(默认动画) | image | svg
+	HeroImage      string
+	HeroSVG        string
+	FooterNote     string
 	// 首页栏目标题（可自定义，空则前台回落语种默认）
 	HomeFeatured string
 	HomeLinks    string
@@ -536,7 +540,83 @@ func (s *Server) preferredLang(r *http.Request, fallback string) string {
 	return negotiateAcceptLanguage(r.Header.Get("Accept-Language"), s.locales(), fallback)
 }
 
-func (s *Server) abs(path string) string { return strings.TrimRight(s.baseURL, "/") + path }
+func (s *Server) abs(path string) string { return absWithBase(s.baseURL, path) }
+
+func absWithBase(baseURL, path string) string { return strings.TrimRight(baseURL, "/") + path }
+
+func (s *Server) absForRequest(r *http.Request, path string) string {
+	return absWithBase(s.publicBaseURL(r), path)
+}
+
+func (s *Server) publicBaseURL(r *http.Request) string {
+	configured := strings.TrimRight(strings.TrimSpace(s.baseURL), "/")
+	if configured != "" && !isLocalBaseURL(configured) {
+		return configured
+	}
+	if host := requestHost(r); host != "" {
+		return requestScheme(r) + "://" + host
+	}
+	if configured != "" {
+		return configured
+	}
+	return "http://localhost:8080"
+}
+
+func requestScheme(r *http.Request) string {
+	if r == nil {
+		return "http"
+	}
+	if proto := firstHeaderValue(r.Header.Get("X-Forwarded-Proto")); proto == "http" || proto == "https" {
+		return proto
+	}
+	if strings.EqualFold(r.Header.Get("X-Forwarded-Ssl"), "on") || r.TLS != nil {
+		return "https"
+	}
+	return "http"
+}
+
+func requestHost(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	for _, raw := range []string{r.Header.Get("X-Forwarded-Host"), r.Header.Get("X-Original-Host"), r.Host} {
+		host := firstHeaderValue(raw)
+		if host != "" && !strings.ContainsAny(host, " \t\r\n") {
+			return host
+		}
+	}
+	return ""
+}
+
+func firstHeaderValue(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	if i := strings.IndexByte(raw, ','); i >= 0 {
+		raw = raw[:i]
+	}
+	return strings.ToLower(strings.TrimSpace(raw))
+}
+
+func isLocalBaseURL(raw string) bool {
+	host := ""
+	if u, err := url.Parse(raw); err == nil {
+		host = u.Hostname()
+	}
+	if host == "" {
+		host = strings.TrimSpace(raw)
+		if h, _, err := net.SplitHostPort(host); err == nil {
+			host = h
+		}
+		host = strings.Trim(host, "[]")
+	}
+	switch strings.ToLower(host) {
+	case "localhost", "127.0.0.1", "::1", "0.0.0.0":
+		return true
+	default:
+		return false
+	}
+}
 
 // 这些路径不参与语种前缀：后台、静态资源、上传、全局 SEO 端点。
 func isReservedPath(p string) bool {
@@ -609,21 +689,21 @@ func (s *Server) langSwitch(cur string, pathByLang map[string]string, fallback s
 
 // i18nLinks 给定「该页在各语种的相对路径」，同时构建语言切换器与 hreflang 备份链接。
 // pathByLang 仅包含真实存在译文的语种；缺失语种的切换器回退到该语种首页，且不输出其 hreflang。
-func (s *Server) i18nLinks(cur string, pathByLang map[string]string) (langs []LangLink, alts []seo.Alternate) {
+func (s *Server) i18nLinks(baseURL, cur string, pathByLang map[string]string) (langs []LangLink, alts []seo.Alternate) {
 	def := s.defaultLang()
 	for _, l := range s.locales() {
 		if p, ok := pathByLang[l.Code]; ok {
 			url := "/" + l.Code + p
 			langs = append(langs, LangLink{Code: l.Code, Name: l.Name, URL: url, Active: l.Code == cur})
-			alts = append(alts, seo.Alternate{Hreflang: l.Tag, Href: s.abs(url)})
+			alts = append(alts, seo.Alternate{Hreflang: l.Tag, Href: absWithBase(baseURL, url)})
 		} else {
 			langs = append(langs, LangLink{Code: l.Code, Name: l.Name, URL: "/" + l.Code + "/", Active: l.Code == cur})
 		}
 	}
 	if p, ok := pathByLang[def]; ok {
-		alts = append(alts, seo.Alternate{Hreflang: "x-default", Href: s.abs("/" + def + p)})
+		alts = append(alts, seo.Alternate{Hreflang: "x-default", Href: absWithBase(baseURL, "/"+def+p)})
 	} else {
-		alts = append(alts, seo.Alternate{Hreflang: "x-default", Href: s.abs("/" + def + "/")})
+		alts = append(alts, seo.Alternate{Hreflang: "x-default", Href: absWithBase(baseURL, "/"+def+"/")})
 	}
 	return
 }
@@ -961,6 +1041,7 @@ func (s *Server) routes(assetsFS fs.FS) {
 func (s *Server) view(r *http.Request, nav string) *View {
 	lang := langFrom(r)
 	st := s.site(lang)
+	st.BaseURL = s.publicBaseURL(r)
 	tr := s.i18n.Tr(lang, s.defaultLang())
 	v := &View{
 		Site: st, Nav: nav, Year: time.Now().Year(), Theme: st.Theme, ThemeStyle: s.themeOverride(),
@@ -1216,7 +1297,7 @@ func (s *Server) renderHome(w http.ResponseWriter, r *http.Request) {
 	for _, l := range s.locales() {
 		ph[l.Code] = "/"
 	}
-	v.Langs, v.SEO.Alternates = s.i18nLinks(lang, ph)
+	v.Langs, v.SEO.Alternates = s.i18nLinks(v.Site.BaseURL, lang, ph)
 	setPagination(v, page, totalPages, "/")
 	s.rnd.Public(w, "home", http.StatusOK, v)
 }
@@ -1248,7 +1329,7 @@ func (s *Server) article(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	v.Langs, v.SEO.Alternates = s.i18nLinks(lang, ph)
+	v.Langs, v.SEO.Alternates = s.i18nLinks(v.Site.BaseURL, lang, ph)
 	s.rnd.Public(w, "article", http.StatusOK, v)
 }
 
@@ -1284,7 +1365,7 @@ func (s *Server) category(w http.ResponseWriter, r *http.Request) {
 			ph[t.Lang] = "/category/" + t.Slug
 		}
 	}
-	v.Langs, v.SEO.Alternates = s.i18nLinks(lang, ph)
+	v.Langs, v.SEO.Alternates = s.i18nLinks(v.Site.BaseURL, lang, ph)
 	setPagination(v, page, ceilDiv(total, size), "/category/"+c.Slug)
 	s.rnd.Public(w, "category", http.StatusOK, v)
 }
@@ -1315,7 +1396,7 @@ func (s *Server) categoryAll(w http.ResponseWriter, r *http.Request, all Archive
 	for _, l := range s.locales() {
 		ph[l.Code] = s.archiveConfig(l.Code, "post").Path
 	}
-	v.Langs, v.SEO.Alternates = s.i18nLinks(lang, ph)
+	v.Langs, v.SEO.Alternates = s.i18nLinks(v.Site.BaseURL, lang, ph)
 	setPagination(v, page, ceilDiv(total, size), all.Path)
 	s.rnd.Public(w, "category", http.StatusOK, v)
 }
@@ -1352,7 +1433,7 @@ func (s *Server) links(w http.ResponseWriter, r *http.Request) {
 	for _, l := range s.locales() {
 		ph[l.Code] = "/links"
 	}
-	v.Langs, v.SEO.Alternates = s.i18nLinks(lang, ph)
+	v.Langs, v.SEO.Alternates = s.i18nLinks(v.Site.BaseURL, lang, ph)
 	setPagination(v, page, ceilDiv(total, size), basePath)
 	s.rnd.Public(w, "links", http.StatusOK, v)
 }
@@ -1386,7 +1467,7 @@ func (s *Server) link(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	v.Langs, v.SEO.Alternates = s.i18nLinks(lang, ph)
+	v.Langs, v.SEO.Alternates = s.i18nLinks(v.Site.BaseURL, lang, ph)
 	s.rnd.Public(w, "link", http.StatusOK, v)
 }
 
@@ -1426,7 +1507,7 @@ func (s *Server) about(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	v.Langs, v.SEO.Alternates = s.i18nLinks(lang, ph)
+	v.Langs, v.SEO.Alternates = s.i18nLinks(v.Site.BaseURL, lang, ph)
 	s.rnd.Public(w, "page", http.StatusOK, v)
 }
 
@@ -1472,13 +1553,15 @@ func xmlEsc(s string) string {
 
 // sitemap 生成多语种站点地图：同一逻辑页面的各语种 URL 互相用 xhtml:link 标注 hreflang。
 func (s *Server) sitemap(w http.ResponseWriter, r *http.Request) {
-	const cacheKey = "sitemap"
 	const contentType = "application/xml; charset=utf-8"
+	baseURL := s.publicBaseURL(r)
+	cacheKey := "sitemap:" + baseURL
 	if body, ct, ok := s.cachedEndpoint(cacheKey); ok {
 		w.Header().Set("Content-Type", ct)
 		_, _ = w.Write(body)
 		return
 	}
+	abs := func(path string) string { return absWithBase(baseURL, path) }
 
 	locales := s.locales()
 	def := s.defaultLang()
@@ -1493,7 +1576,7 @@ func (s *Server) sitemap(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			b.WriteString("  <url>\n")
-			b.WriteString("    <loc>" + xmlEsc(s.abs("/"+l.Code+p)) + "</loc>\n")
+			b.WriteString("    <loc>" + xmlEsc(abs("/"+l.Code+p)) + "</loc>\n")
 			if freq != "" {
 				b.WriteString("    <changefreq>" + freq + "</changefreq>\n")
 			}
@@ -1502,11 +1585,11 @@ func (s *Server) sitemap(w http.ResponseWriter, r *http.Request) {
 			}
 			for _, a := range locales {
 				if ap, ok := byLang[a.Code]; ok {
-					b.WriteString(`    <xhtml:link rel="alternate" hreflang="` + a.Tag + `" href="` + xmlEsc(s.abs("/"+a.Code+ap)) + `"/>` + "\n")
+					b.WriteString(`    <xhtml:link rel="alternate" hreflang="` + a.Tag + `" href="` + xmlEsc(abs("/"+a.Code+ap)) + `"/>` + "\n")
 				}
 			}
 			if dp, ok := byLang[def]; ok {
-				b.WriteString(`    <xhtml:link rel="alternate" hreflang="x-default" href="` + xmlEsc(s.abs("/"+def+dp)) + `"/>` + "\n")
+				b.WriteString(`    <xhtml:link rel="alternate" hreflang="x-default" href="` + xmlEsc(abs("/"+def+dp)) + `"/>` + "\n")
 			}
 			b.WriteString("  </url>\n")
 		}
@@ -1666,7 +1749,7 @@ func (s *Server) robots(w http.ResponseWriter, r *http.Request) {
 	for _, l := range s.locales() {
 		b.WriteString("Disallow: /" + l.Code + "/search\n")
 	}
-	b.WriteString("\nSitemap: " + s.abs("/sitemap.xml") + "\n")
+	b.WriteString("\nSitemap: " + s.absForRequest(r, "/sitemap.xml") + "\n")
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	_, _ = w.Write([]byte(b.String()))
 }

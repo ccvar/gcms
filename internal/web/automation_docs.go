@@ -37,11 +37,11 @@ func (s *Server) apiOpenAPI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
-	_ = enc.Encode(automationOpenAPISpec(s.abs("/api/admin/v1")))
+	_ = enc.Encode(automationOpenAPISpec(s.absForRequest(r, "/api/admin/v1")))
 }
 
 func (s *Server) adminDownloadAutomationSkill(w http.ResponseWriter, r *http.Request) {
-	opts := automationSkillOptions{apiBase: s.abs("/api/admin/v1")}
+	opts := automationSkillOptions{apiBase: s.absForRequest(r, "/api/admin/v1")}
 	if r.Method == http.MethodPost {
 		if _, ok := s.checkCSRF(w, r); !ok {
 			return

@@ -562,7 +562,53 @@ body.admin { background: var(--line-soft); }
 .settings-menu a:hover svg { opacity: .9; }
 .settings-menu a.active { background: var(--accent-wash); color: var(--accent); font-weight: 600; }
 .settings-menu a.active svg { opacity: 1; }
-.settings-body { max-width: 640px; min-width: 0; }
+.settings-body { max-width: 860px; min-width: 0; }
+.site-config-head { margin: 0; }
+.site-config-main { display: grid; grid-template-columns: minmax(240px, .9fr) minmax(280px, 1.35fr); gap: 1.2rem; align-items: center; margin-bottom: 1rem; padding: 1.25rem; border: 1px solid var(--line); border-radius: 10px; background: linear-gradient(135deg, color-mix(in srgb, var(--surface) 90%, var(--accent-wash)), var(--surface)); box-shadow: var(--shadow); }
+.visual-entry-copy { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: .95rem; align-items: flex-start; }
+.visual-entry-icon { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 50%; color: var(--accent); background: var(--accent-wash); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent); }
+.visual-entry-icon svg { width: 22px; height: 22px; }
+.site-config-main h2 { margin: .1rem 0 .35rem; font-family: var(--sans); font-size: 1.22rem; line-height: 1.3; }
+.site-config-main p { margin: 0; max-width: 25rem; color: var(--muted); font-size: .88rem; line-height: 1.65; }
+.site-config-main .btn { display: inline-flex; align-items: center; gap: .38rem; margin-top: 1rem; padding: .58rem .9rem; border-radius: 7px; font-size: .88rem; line-height: 1.35; }
+.site-config-main .btn svg { width: 14px; height: 14px; }
+.visual-entry-preview { min-width: 0; }
+.preview-window { overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); box-shadow: 0 10px 24px rgba(27,26,23,.08); }
+.preview-chrome { display: flex; gap: .28rem; height: 22px; align-items: center; padding: 0 .65rem; border-bottom: 1px solid var(--line-soft); background: color-mix(in srgb, var(--line-soft) 72%, var(--surface)); }
+.preview-chrome i { width: 6px; height: 6px; border-radius: 50%; background: color-mix(in srgb, var(--faint) 55%, var(--surface)); }
+.preview-nav { display: flex; align-items: center; justify-content: flex-end; gap: .9rem; min-height: 35px; padding: .45rem .8rem; border-bottom: 1px solid var(--line-soft); color: var(--ink-soft); font-size: .68rem; font-weight: 700; }
+.preview-brand { margin-right: auto; display: inline-flex; align-items: center; gap: .35rem; color: var(--ink); }
+.preview-brand b { display: grid; place-items: center; width: 16px; height: 16px; border-radius: 4px; background: var(--accent); color: #fff; font-size: .72rem; line-height: 1; }
+.preview-stage { position: relative; min-height: 112px; padding: 1.2rem 7rem 1.1rem 1.35rem; background: radial-gradient(circle at 24px 24px, color-mix(in srgb, var(--accent) 16%, transparent) 1px, transparent 1.5px) 0 0 / 18px 18px, var(--surface); }
+.preview-stage > div { position: relative; display: inline-flex; align-items: center; max-width: 100%; padding: .15rem .35rem .2rem; outline: 2px dashed color-mix(in srgb, var(--accent) 46%, transparent); outline-offset: 4px; border-radius: 4px; }
+.preview-stage strong { color: var(--ink); font-family: var(--serif); font-size: 1.1rem; line-height: 1.2; white-space: nowrap; }
+.preview-stage p { margin: .75rem 0 0; max-width: 16.5rem; color: var(--muted); font-size: .68rem; line-height: 1.55; }
+.preview-edit { position: absolute; top: -.7rem; right: -1.3rem; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 5px; background: var(--accent); color: #fff; box-shadow: 0 6px 14px rgba(154,59,47,.24); }
+.preview-edit svg { width: 12px; height: 12px; }
+.preview-media { position: absolute; right: 1rem; top: 1.45rem; width: 88px; height: 60px; border-radius: 7px; background: var(--accent-wash); overflow: hidden; }
+.preview-media i:first-child { position: absolute; left: 16px; bottom: 15px; width: 44px; height: 26px; transform: rotate(45deg); border-radius: 5px; background: color-mix(in srgb, var(--line) 58%, var(--surface)); }
+.preview-media i:last-child { position: absolute; right: 15px; top: 14px; width: 17px; height: 17px; border-radius: 50%; background: color-mix(in srgb, var(--line) 74%, var(--surface)); }
+.config-kicker { display: inline-flex; align-items: center; gap: .35rem; color: var(--accent); font-size: .72rem; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+.config-lang-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .75rem; margin-top: 0; padding: .85rem 0 0; border-top: 1px solid var(--line-soft); }
+.config-lang-row .lang-tabs { margin: 0; }
+.config-lang-row .lang-tabs a { display: inline-flex; align-items: center; gap: .35rem; }
+.config-lang-row .lang-tabs small { font-size: .68rem; color: var(--faint); font-weight: 700; }
+.config-lang-note { display: flex; align-items: center; gap: .5rem; color: var(--muted); font-size: .8rem; line-height: 1.45; }
+.config-tabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .35rem; align-items: end; margin-top: .9rem; padding: 0 .65rem; }
+.config-tabs a { position: relative; z-index: 1; display: flex; align-items: center; justify-content: center; gap: .45rem; min-height: 44px; padding: .62rem .65rem .58rem; border: 1px solid var(--line); border-bottom-color: transparent; border-radius: 10px 10px 0 0; background: color-mix(in srgb, var(--surface) 70%, var(--line-soft)); color: var(--ink-soft); font-size: .84rem; font-weight: 700; box-shadow: inset 0 -10px 18px rgba(27,26,23,.025); }
+.config-tabs a svg { width: 16px; height: 16px; flex: none; color: var(--faint); }
+.config-tabs a:hover { border-color: color-mix(in srgb, var(--accent) 30%, var(--line)); border-bottom-color: transparent; color: var(--accent); background: color-mix(in srgb, var(--surface) 86%, var(--accent-wash)); }
+.config-tabs a:hover svg { color: var(--accent); }
+.config-tabs a.active { z-index: 3; transform: translateY(1px); border-color: var(--line); border-top-color: color-mix(in srgb, var(--accent) 55%, var(--line)); border-bottom-color: var(--surface); background: var(--surface); color: var(--accent); box-shadow: 0 -8px 20px rgba(27,26,23,.035); }
+.config-tabs a.active svg { color: var(--accent); }
+.config-panel { position: relative; z-index: 2; margin-top: -1px; padding: 1.25rem; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); box-shadow: var(--shadow); }
+.config-panel > .admin-form > .field:first-child,
+.config-panel > .admin-form > p:first-child,
+.config-panel > .cat-toolbar:first-child { margin-top: 0; }
+.config-intro { display: flex; align-items: flex-start; gap: .55rem; margin: 0 0 1.15rem; padding: .72rem .82rem; border: 1px solid var(--line-soft); border-radius: 8px; background: color-mix(in srgb, var(--surface) 84%, var(--line-soft)); font-size: .86rem; line-height: 1.55; }
+.config-intro svg { flex: none; width: 16px; height: 16px; margin-top: .12rem; color: var(--accent); }
+.scope-pill { display: inline-flex; align-items: center; vertical-align: middle; margin-left: .3rem; padding: .12rem .42rem; border-radius: 999px; background: var(--accent-wash); color: var(--accent); font-size: .68rem; font-weight: 800; line-height: 1.35; }
+.scope-pill.global { background: var(--line-soft); color: var(--muted); }
 /* 文案/外观分区里的语义分组 */
 .field-group { margin: 0 0 1.5rem; padding: 0 0 1.3rem; border-bottom: 1px solid var(--line-soft); }
 .field-group:last-of-type { border-bottom: none; padding-bottom: 0; margin-bottom: 0; }
@@ -935,6 +981,15 @@ body.admin { background: var(--line-soft); }
   .settings-shell { grid-template-columns: 1fr; gap: 1rem; }
   .settings-menu { flex-direction: row; position: static; overflow-x: auto; border-bottom: 1px solid var(--line); padding-bottom: .4rem; }
   .settings-menu a { white-space: nowrap; }
+  .site-config-main { grid-template-columns: 1fr; padding: 1rem; }
+  .site-config-main .btn { width: 100%; justify-content: center; }
+  .visual-entry-copy { grid-template-columns: 1fr; }
+  .visual-entry-preview { display: none; }
+  .config-lang-row { align-items: stretch; flex-direction: column; }
+  .config-lang-note { align-items: flex-start; }
+  .config-tabs { display: flex; overflow-x: auto; padding: 0 .35rem; -webkit-overflow-scrolling: touch; }
+  .config-tabs a { flex: 0 0 auto; min-width: 8.4rem; }
+  .config-panel { padding: 1rem; border-radius: 9px; }
 
   /* 后台移动端：折叠导航 */
   .admin-top .wrap { position: relative; height: 54px; }
