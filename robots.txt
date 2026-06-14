@@ -8,4 +8,4 @@ Disallow: /search
 Disallow: /*?page=
 
 # 站点地图位置
-Sitemap: https://cms.ccvar.com/sitemap.xml
+Sitemap: https://ccvar.com/sitemap.xml

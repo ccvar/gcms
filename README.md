@@ -26,7 +26,7 @@ go run .
 ./scripts/cms.sh restart    # 重启
 ./scripts/cms.sh stop       # 停止
 ./scripts/cms.sh logs       # 跟踪日志
-# 可覆盖：ADDR=:9090 BASE_URL=https://cms.ccvar.com ./scripts/cms.sh start
+# 可覆盖：ADDR=:9090 BASE_URL=https://ccvar.com ./scripts/cms.sh start
 ```
 
 ```powershell
@@ -51,7 +51,7 @@ GOOS=linux GOARCH=amd64 go build -o cms .
 |------|------|------|
 | `ADDR` | `:8080` | 监听地址 |
 | `CMS_DB` | 源码模式 `data/cms.db`；发布包 `shared/data/cms.db` | SQLite 文件路径 |
-| `BASE_URL` | `http://localhost:8080` | 站点绝对地址（用于 canonical / OG / sitemap）。**生产环境务必设为 `https://cms.ccvar.com`** |
+| `BASE_URL` | `http://localhost:8080` | 站点绝对地址（用于 canonical / OG / sitemap）。**生产环境务必设为 `https://ccvar.com`** |
 | `GCMS_RELEASE_REPO` | `ccvar/gcms-releases` | 后台检查更新使用的公开发布仓库 |
 | `GCMS_UPDATE_URL` | `https://github.com/ccvar/gcms-releases/releases/latest/download/manifest.json` | 自定义更新清单地址，留空则按发布仓库自动拼接 |
 
@@ -60,13 +60,13 @@ GOOS=linux GOARCH=amd64 go build -o cms .
 生产环境建议让 CMS 只监听本机回环地址，由 Caddy 负责 HTTPS、HTTP/2/3、压缩与静态资源缓存：
 
 ```bash
-ADDR=127.0.0.1:8080 BASE_URL=https://cms.ccvar.com ./scripts/cms.sh start
+ADDR=127.0.0.1:8080 BASE_URL=https://ccvar.com ./scripts/cms.sh start
 ```
 
 示例 `Caddyfile`：
 
 ```caddyfile
-cms.ccvar.com {
+ccvar.com {
     encode zstd gzip
 
     header /assets/* Cache-Control "public, max-age=31536000, immutable"
@@ -152,7 +152,7 @@ https://github.com/ccvar/gcms-releases/releases/latest/download/manifest.json
 ## 项目结构
 
 ```
-cms.ccvar.com/
+ccvar.com/
 ├── main.go                  # 入口：embed 资源、装配、启动 HTTP
 ├── go.mod / go.sum
 ├── internal/
@@ -193,7 +193,7 @@ cms.ccvar.com/
 
 **公开站点**（全部服务端渲染）
 - 首页（精选 + 最新列表 + 分页）、文章详情（上一篇/下一篇、相关阅读）、分类归档、关于页、站内搜索、404
-- **链接（资源/产品展示）** `/{lang}/links`：卡片网格列表（封面或首字母字形）+ 分类筛选，详情页含大图/介绍/详情正文/**「访问 ↗」外链按钮**/相关推荐，每条独立 SEO 与结构化数据。**首页「精选链接」模块仅在有置顶链接时出现**（无置顶则整块隐藏）；演示数据内置 Go·SQLite·MDN·Coolors 四张品牌化 SVG 封面（`assets/covers/`）
+- **链接（资源/产品展示）** `/{lang}/links`：卡片网格列表（封面或首字母字形）+ 分类筛选，详情页含大图/介绍/详情正文/**「访问 ↗」外链按钮**/相关推荐，每条独立 SEO 与结构化数据。**首页「精选链接」模块仅在有置顶链接时出现**（无置顶则整块隐藏）；演示数据内置一组产品化 SVG 封面（`assets/covers/`）
 - **多语种**：每个语种独立 URL 前缀 `/{lang}/…`（如 `/en/posts/…`），页眉语言切换器，界面文案与内容均按语种本地化（详见下方「多语种」）
 - 基于 slug 的干净 URL：`/{lang}/posts/{slug}`、`/{lang}/category/{slug}`（slug 各语种独立，`(lang, slug)` 复合唯一）
 - 文章正文用 Markdown 撰写，goldmark 渲染（支持表格、代码块等 GFM 扩展）

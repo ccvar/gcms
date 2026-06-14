@@ -351,6 +351,7 @@ func (s *Server) adminVisual(w http.ResponseWriter, r *http.Request) {
 	v.VisualFields = s.visualFields(lang)
 	v.VisualGroups = visualGroups(v.VisualFields)
 	v.VisualHistory = s.visualHistory()
+	v.LayoutWidth = normalizeLayoutWidth(s.store.Setting(layoutWidthKey))
 	s.rnd.Admin(w, "visual", http.StatusOK, v)
 }
 
@@ -392,7 +393,8 @@ func (s *Server) visualFields(lang string) []VisualField {
 		text("site", "site.tagline", "标语", st.Tagline, "用于浏览器标题和部分主题的辅助文案。", false),
 		text("site", "site.description", "站点描述", st.Description, "首页 Hero 描述，也会作为默认 SEO description。", true),
 		image("site", "site.logo", "站点 Logo", s.store.Setting("site.logo"), "显示在页眉和页脚，留空时使用内置默认 Logo。"),
-		image("site", "site.favicon", "浏览器图标", s.store.Setting("site.favicon"), "显示在浏览器标签页，建议使用 SVG、PNG 或 ICO。"),
+		image("site", "site.favicon", "浏览器图标", nonEmpty(s.store.Setting("site.favicon"), defaultFaviconPath), "显示在浏览器标签页，建议使用 SVG、PNG 或 ICO。"),
+		image("site", "site.share_image", "分享图", nonEmpty(s.store.Setting("site.share_image"), defaultShareImageURL), "分享到微信、飞书、X 等平台时默认显示，建议 1200×630。"),
 		text("home", "site.hero_eyebrow", "Hero 眉标", st.HeroEyebrow, "首页主标题上方的小字。", false),
 		text("home", "site.hero_title", "Hero 大标题", st.HeroTitle, "首页第一屏最醒目的标题，建议短一点。", true),
 		image("home", "hero.image", "Hero 图片", s.store.Setting("hero.image"), "上传后会自动把 Hero 右侧视觉切换为图片模式。"),
@@ -678,6 +680,9 @@ func (s *Server) adminVisualSave(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "站点名称不能为空。"})
 		return
 	}
+	if key == layoutWidthKey {
+		value = normalizeLayoutWidth(value)
+	}
 	storeKey := s.visualStoreKey(key, lang)
 	old := s.store.Setting(storeKey)
 	_ = s.store.SetSetting(storeKey, value)
@@ -838,7 +843,7 @@ func visualSettingAllowed(key string) bool {
 	switch key {
 	case "site.name", "site.tagline", "site.description", "site.hero_eyebrow", "site.hero_title",
 		"home.featured_title", "home.links_title", "home.latest_title", "site.footer_note",
-		"site.logo", "site.favicon", "hero.image":
+		"site.logo", "site.favicon", "site.share_image", "hero.image", layoutWidthKey:
 		return true
 	default:
 		return false
@@ -851,8 +856,12 @@ func (s *Server) visualStoreKey(key, lang string) string {
 		return "site.logo"
 	case "site.favicon":
 		return "site.favicon"
+	case "site.share_image":
+		return "site.share_image"
 	case "hero.image":
 		return "hero.image"
+	case layoutWidthKey:
+		return layoutWidthKey
 	default:
 		return s.copyKey(key, lang)
 	}
@@ -870,6 +879,9 @@ func archiveVisualField(key string) (kind, field string, ok bool) {
 }
 
 func visualFieldLabel(fields []VisualField, key string) string {
+	if key == layoutWidthKey {
+		return "页面宽度"
+	}
 	for _, f := range fields {
 		if f.Key == key {
 			return f.Label
@@ -1003,6 +1015,49 @@ func (s *Server) restoreVisualValue(h VisualLog) error {
 func (s *Server) adminNew(w http.ResponseWriter, r *http.Request) {
 	sess, _ := s.currentSession(r)
 	s.showEdit(w, sess, &store.Post{Status: "draft", Lang: s.editLang(r)}, "", "")
+}
+
+func (s *Server) adminPostPreview(w http.ResponseWriter, r *http.Request) {
+	s.adminContentPreview(w, r, "post")
+}
+
+func (s *Server) adminLinkPreview(w http.ResponseWriter, r *http.Request) {
+	s.adminContentPreview(w, r, "link")
+}
+
+func (s *Server) adminContentPreview(w http.ResponseWriter, r *http.Request, typ string) {
+	p, _ := s.store.GetPostByID(atoi64(r.PathValue("id")))
+	if p == nil || p.Type != typ {
+		s.notFound(w, r)
+		return
+	}
+	preview := *p
+	if preview.PublishedAt.IsZero() {
+		preview.PublishedAt = preview.UpdatedAt
+		if preview.PublishedAt.IsZero() {
+			preview.PublishedAt = preview.CreatedAt
+		}
+	}
+	p = &preview
+
+	nav, tpl := "", "article"
+	if typ == "link" {
+		nav, tpl = "links", "link"
+	}
+	v := s.viewForLang(r, p.Lang, nav)
+	switch typ {
+	case "link":
+		v.SEO = v.Site.Link(p)
+	default:
+		v.SEO = v.Site.Article(p)
+	}
+	v.SEO.Robots = "noindex, nofollow"
+	v.SEO.Alternates = nil
+	v.Site.InjectHead = ""
+	v.Site.InjectBody = ""
+	v.Post = p
+	v.ContentHTML, v.TOC = s.renderedContent(p)
+	s.rnd.Public(w, tpl, http.StatusOK, v)
 }
 
 func (s *Server) adminEdit(w http.ResponseWriter, r *http.Request) {
@@ -1528,10 +1583,12 @@ func (s *Server) showSettings(w http.ResponseWriter, r *http.Request, section, f
 	s.authed(v, sess)
 	v.Section = section
 	v.CatKind = catKind(r)
+	favicon := nonEmpty(st.Favicon, defaultFaviconPath)
+	shareImage := nonEmpty(st.ShareImage, defaultShareImageURL)
 	v.Settings = &SettingsForm{
 		Name: st.Name, Tagline: st.Tagline, Description: st.Description,
 		NameDef: st.Name, TaglineDef: st.Tagline, DescriptionDef: st.Description,
-		Favicon: st.Favicon, Logo: st.Logo, Brand: st.Brand, Theme: st.Theme,
+		Favicon: favicon, Logo: st.Logo, ShareImage: shareImage, Brand: st.Brand, Theme: st.Theme,
 		Custom: custom, Accent: accent, Radius: radius,
 		HeroEyebrow: st.HeroEyebrow, HeroTitle: st.HeroTitle, FooterNote: st.FooterNote,
 		HeroVisual: st.HeroVisual, HeroImage: st.HeroImage, HeroSVG: st.HeroSVG,
@@ -1627,6 +1684,7 @@ func (s *Server) showSettings(w http.ResponseWriter, r *http.Request, section, f
 	case "languages":
 		v.CustomLocales = s.i18n.Custom()
 	case "menu":
+		v.MenuTargets = s.menuTargetOptions()
 		v.MenuEdit = s.menuEditRows()
 	case "automation":
 		v.AutomationKeys, _ = s.store.ListAutomationKeys()
@@ -1690,12 +1748,19 @@ func automationAIBrief(apiBase, token string, scopes []string) string {
 		"",
 		"默认只创建或修改草稿。除非我明确要求，并且你有发布权限，否则不要发布内容。",
 		"",
+		"需要处理多语种内容时，先查看启用语种：",
+		"GET /languages",
+		"",
 		"如果我要你修改某篇内容，请先找到它的 id，不要只凭标题猜。",
 		"可以这样查找：",
 		"GET /posts?lang=zh&q=关键词",
 		"GET /posts?lang=zh&slug=slug",
 		"GET /pages?lang=zh&q=关键词",
 		"GET /links?lang=zh&q=关键词",
+		"",
+		"如果我要你更新某篇内容的全部语种，先 GET /posts/{id} 读取 trans_group，再查同组版本：",
+		"GET /posts?lang=all&trans_group=分组值",
+		"然后逐条 PATCH 对应语种版本的 id，不要用一个语种的正文覆盖其它语种。",
 		"",
 		"找到目标后，再用对应 id 更新：",
 		"PATCH /posts/{id}",
@@ -1824,8 +1889,17 @@ func (s *Server) adminSaveSite(w http.ResponseWriter, r *http.Request) {
 	_ = s.store.SetSetting(s.copyKey("site.name", lang), name)
 	_ = s.store.SetSetting(s.copyKey("site.tagline", lang), strings.TrimSpace(r.FormValue("site_tagline")))
 	_ = s.store.SetSetting(s.copyKey("site.description", lang), strings.TrimSpace(r.FormValue("site_description")))
-	_ = s.store.SetSetting("site.favicon", strings.TrimSpace(r.FormValue("site_favicon")))
+	favicon := strings.TrimSpace(r.FormValue("site_favicon"))
+	if favicon == defaultFaviconPath {
+		favicon = ""
+	}
+	shareImage := strings.TrimSpace(r.FormValue("site_share_image"))
+	if shareImage == defaultShareImageURL {
+		shareImage = ""
+	}
+	_ = s.store.SetSetting("site.favicon", favicon)
 	_ = s.store.SetSetting("site.logo", strings.TrimSpace(r.FormValue("site_logo")))
+	_ = s.store.SetSetting("site.share_image", shareImage)
 	brand := r.FormValue("site_brand")
 	if brand != "both" && brand != "text" {
 		brand = "logo"
@@ -1974,6 +2048,30 @@ func (s *Server) adminSavePassword(w http.ResponseWriter, r *http.Request) {
 		_ = s.store.SetSetting("admin_password_hash", string(nh))
 	}
 	s.showSettings(w, r, "security", "密码已更新。", "")
+}
+
+func (s *Server) adminClearDemoContent(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.checkCSRF(w, r); !ok {
+		return
+	}
+	if err := s.store.ClearDemoContent(); err != nil {
+		s.serverError(w, err)
+		return
+	}
+	s.clearGeneratedCaches()
+	s.showSettings(w, r, "security", "演示数据已清除。", "")
+}
+
+func (s *Server) adminReloadProductDemo(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.checkCSRF(w, r); !ok {
+		return
+	}
+	if err := s.store.ReloadShowcaseContent(); err != nil {
+		s.serverError(w, err)
+		return
+	}
+	s.clearGeneratedCaches()
+	s.showSettings(w, r, "security", "产品演示站已重新载入。", "")
 }
 
 func (s *Server) adminSaveCopy(w http.ResponseWriter, r *http.Request) {

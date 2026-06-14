@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"encoding/json"
 	"html/template"
 	"io/fs"
 	"log"
@@ -112,11 +113,21 @@ func funcMap() template.FuncMap {
 		"md": renderMarkdown,
 		// safeHTML 把可信（后台录入）的字符串作为原始 HTML 输出，用于内联 SVG。
 		"safeHTML": func(s string) template.HTML { return template.HTML(s) },
+		"json": func(v any) string {
+			b, _ := json.Marshal(v)
+			return string(b)
+		},
 		"date": func(t time.Time) string {
 			if t.IsZero() {
 				return ""
 			}
 			return t.Format("2006 年 1 月 2 日")
+		},
+		"adminDateTime": func(t time.Time) string {
+			if t.IsZero() {
+				return ""
+			}
+			return t.Local().Format("2006-01-02 15:04:05")
 		},
 		"isodate": func(t time.Time) string {
 			if t.IsZero() {

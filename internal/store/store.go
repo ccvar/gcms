@@ -224,7 +224,176 @@ func (s *Store) migrate() error {
 	if err := s.createSearchIndex(); err != nil {
 		return fmt.Errorf("搜索索引创建失败: %w", err)
 	}
+	if err := s.normalizeBundledAssetPaths(); err != nil {
+		return fmt.Errorf("内置资源路径迁移失败: %w", err)
+	}
+	if err := s.normalizeShowcaseDefaults(); err != nil {
+		return fmt.Errorf("产品演示设置迁移失败: %w", err)
+	}
 	return s.seedIfEmpty()
+}
+
+func (s *Store) normalizeBundledAssetPaths() error {
+	replacements := map[string]string{
+		"/assets/covers/caddy.svg":         "/assets/covers/caddy-brand.webp",
+		"/assets/covers/caddy.webp":        "/assets/covers/caddy-brand.webp",
+		"/assets/covers/deploy.svg":        "/assets/covers/release-package-real.webp",
+		"/assets/covers/architecture.svg":  "/assets/covers/gcms-stack-brand.webp",
+		"/assets/covers/i18n.svg":          "/assets/screenshots/language-switch.webp",
+		"/assets/covers/editor.svg":        "/assets/screenshots/article-editor.webp",
+		"/assets/covers/seo.svg":           "/assets/screenshots/seo-output.webp",
+		"/assets/covers/themes.svg":        "/assets/screenshots/theme-settings.webp",
+		"/assets/covers/automation.svg":    "/assets/screenshots/automation-api.webp",
+		"/assets/covers/updates.svg":       "/assets/screenshots/system-updates.webp",
+		"/assets/covers/release-repo.svg":  "/assets/covers/release-repo-real.webp",
+		"/assets/covers/release-repo.webp": "/assets/covers/release-repo-real.webp",
+		"/assets/covers/release.svg":       "/assets/covers/release-package-real.webp",
+		"/assets/covers/release.webp":      "/assets/covers/release-package-real.webp",
+		"/assets/covers/go.svg":            "/assets/covers/go-brand.webp",
+		"/assets/covers/go-real.webp":      "/assets/covers/go-brand.webp",
+		"/assets/covers/sqlite.svg":        "/assets/covers/sqlite-brand.webp",
+		"/assets/covers/sqlite-real.webp":  "/assets/covers/sqlite-brand.webp",
+	}
+	for oldPath, newPath := range replacements {
+		if _, err := s.db.Exec(`UPDATE posts SET cover_image=? WHERE cover_image=?`, newPath, oldPath); err != nil {
+			return err
+		}
+	}
+	contentReplacements := map[string]string{
+		"/assets/figures/deploy-flow.svg":      "/assets/covers/release-package-real.webp",
+		"/assets/figures/runtime-stack.svg":    "/assets/covers/gcms-stack-brand.webp",
+		"/assets/figures/i18n-routing.svg":     "/assets/screenshots/language-switch.webp",
+		"/assets/figures/editor-workflow.svg":  "/assets/screenshots/article-editor.webp",
+		"/assets/figures/seo-checklist.svg":    "/assets/screenshots/seo-output.webp",
+		"/assets/figures/theme-gallery.svg":    "/assets/screenshots/theme-settings.webp",
+		"/assets/figures/automation-scope.svg": "/assets/screenshots/automation-api.webp",
+		"/assets/figures/update-pipeline.svg":  "/assets/screenshots/system-updates.webp",
+	}
+	for oldPath, newPath := range contentReplacements {
+		if _, err := s.db.Exec(`UPDATE posts SET content=replace(content, ?, ?) WHERE instr(content, ?) > 0`, oldPath, newPath, oldPath); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Store) normalizeShowcaseDefaults() error {
+	demo := `EXISTS (SELECT 1 FROM settings WHERE key='demo.seed' AND value='showcase')`
+	updates := []struct {
+		key string
+		old string
+		new string
+	}{
+		{"site.tagline", "把内容站交付成一个可运行的二进制", "低配置也能跑的完整内容站"},
+		{"site.tagline", "搭一个能发布、能收录、能长期维护的网站", "低配置也能跑的完整内容站"},
+		{"site.description", "gcms 是面向产品官网、技术文档和轻量内容站的自托管 CMS：单个二进制启动，SQLite 单文件存储，服务端渲染默认做好 SEO，多语种、主题、在线升级和自动化接口开箱可用。", "gcms 适合产品官网、技术文档、资源导航和轻量内容站：单个二进制启动，SQLite 单文件存储，低配 VPS 也能部署；后台、主题、多语种、SEO、在线升级都开箱可用，并支持 AI 协助运营。"},
+		{"site.description", "gcms 适合产品官网、技术文档、资源导航和轻量内容站。自带后台、主题、多语种、SEO、在线升级和自动化接口，下载即可运行。", "gcms 适合产品官网、技术文档、资源导航和轻量内容站：单个二进制启动，SQLite 单文件存储，低配 VPS 也能部署；后台、主题、多语种、SEO、在线升级都开箱可用，并支持 AI 协助运营。"},
+		{"site.description", "gcms 适合产品官网、技术文档、资源导航和轻量内容站：单个二进制启动，SQLite 单文件存储，低配 VPS 也能部署；后台、主题、多语种、SEO、在线升级和自动化接口开箱可用。", "gcms 适合产品官网、技术文档、资源导航和轻量内容站：单个二进制启动，SQLite 单文件存储，低配 VPS 也能部署；后台、主题、多语种、SEO、在线升级都开箱可用，并支持 AI 协助运营。"},
+		{"site.hero_eyebrow", "产品官网 · 技术文档 · 自托管内容站", "低配置部署 · SEO 就绪 · 自托管内容站"},
+		{"site.hero_eyebrow", "产品官网 · 技术文档 · 资源导航 · 轻量内容站", "低配置部署 · SEO 就绪 · 自托管内容站"},
+		{"site.hero_title", "一个二进制，\n上线一个完整\n内容站。", "小机器，\n也能跑起完整\n内容站"},
+		{"site.hero_title", "搭一个能发布、\n能收录、能长期\n维护的网站", "小机器，\n也能跑起完整\n内容站"},
+		{"site.tagline::en", "Ship a complete content site as one binary", "A complete content site that runs on small servers"},
+		{"site.tagline::en", "Build a website you can publish, index and maintain", "A complete content site that runs on small servers"},
+		{"site.description::en", "gcms is a self-hosted CMS for product sites, docs and lightweight content hubs: one binary to run, SQLite as a single-file store, server-rendered SEO by default, with multilingual content, themes, in-app updates and automation APIs built in.", "gcms fits product sites, docs, resource directories and lightweight content hubs: one binary, one SQLite file, deployable on a low-end VPS, with admin, themes, multilingual content, SEO, in-app updates and AI-assisted operations out of the box."},
+		{"site.description::en", "gcms fits product sites, docs, resource directories and lightweight content hubs. It ships with an admin, themes, multilingual content, SEO, in-app updates and automation APIs, ready to run after download.", "gcms fits product sites, docs, resource directories and lightweight content hubs: one binary, one SQLite file, deployable on a low-end VPS, with admin, themes, multilingual content, SEO, in-app updates and AI-assisted operations out of the box."},
+		{"site.description::en", "gcms fits product sites, docs, resource directories and lightweight content hubs: one binary, one SQLite file, deployable on a low-end VPS, with admin, themes, multilingual content, SEO, in-app updates and automation APIs out of the box.", "gcms fits product sites, docs, resource directories and lightweight content hubs: one binary, one SQLite file, deployable on a low-end VPS, with admin, themes, multilingual content, SEO, in-app updates and AI-assisted operations out of the box."},
+		{"site.hero_eyebrow::en", "Product sites · Docs · Self-hosted content", "Low-resource deploys · SEO-ready · Self-hosted CMS"},
+		{"site.hero_eyebrow::en", "Product sites · Docs · Resource directories · Content hubs", "Low-resource deploys · SEO-ready · Self-hosted CMS"},
+		{"site.hero_title::en", "One binary,\none complete content site.", "A small server\ncan run a complete\ncontent site"},
+		{"site.hero_title::en", "Build a site that\npublishes, ranks\nand stays easy to run", "A small server\ncan run a complete\ncontent site"},
+		{"site.share_image", "", "/assets/og-cover.webp"},
+		{"hero.image", "", "/assets/hero-product-overview-brand.webp"},
+		{"hero.image", "/assets/figures/gcms-showcase-hero.svg", "/assets/hero-product-overview-brand.webp"},
+		{"hero.image", "/assets/hero-product-overview.webp", "/assets/hero-product-overview-brand.webp"},
+	}
+	for _, u := range updates {
+		if _, err := s.db.Exec(`UPDATE settings SET value=? WHERE key=? AND value=? AND `+demo, u.new, u.key, u.old); err != nil {
+			return err
+		}
+	}
+	inserts := map[string]string{
+		"site.share_image": "/assets/og-cover.webp",
+		"hero.image":       "/assets/hero-product-overview-brand.webp",
+		"hero.visual":      "image",
+	}
+	for key, value := range inserts {
+		if _, err := s.db.Exec(`INSERT INTO settings(key,value)
+			SELECT ?, ? WHERE `+demo+` AND NOT EXISTS (SELECT 1 FROM settings WHERE key=?)`, key, value, key); err != nil {
+			return err
+		}
+	}
+	if _, err := s.db.Exec(`UPDATE settings SET value='image' WHERE key='hero.visual' AND value='' AND ` + demo); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`UPDATE posts
+		SET slug='start', trans_group='s-page-start'
+		WHERE type='page' AND slug='contact' AND trans_group='s-page-contact' AND ` + demo + `
+		AND NOT EXISTS (SELECT 1 FROM posts p2 WHERE p2.lang=posts.lang AND p2.slug='start')`); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`UPDATE settings
+		SET value=replace(value, '"/contact"', '"/start"')
+		WHERE key='nav_menu' AND instr(value, '"/contact"') > 0 AND ` + demo); err != nil {
+		return err
+	}
+	zhStartEnv := "\n\n" + md(
+		"## 环境要求",
+		"gcms 不是重型平台，普通低配服务器就能跑起来，适合先用很小的成本把产品官网、技术文档或资源导航上线。",
+		"",
+		"- **CPU**：1 vCPU 即可启动并支撑日常内容发布；",
+		"- **内存**：512MB 级别 VPS 可以部署普通产品官网、文档站或资源导航；",
+		"- **磁盘**：程序包很小，主要占用来自 SQLite 数据库、上传图片和日志；",
+		"- **系统**：Linux、macOS、Windows 均提供 amd64 / arm64 发布包；",
+		"- **公网入口**：生产环境推荐用 Caddy 监听 80/443，gcms 监听 `127.0.0.1:8080`。",
+		"",
+		"后续内容量或访问量变大，再按实际情况增加内存和磁盘即可。",
+	)
+	if _, err := s.db.Exec(`UPDATE posts
+		SET content=replace(content, ?, ?)
+		WHERE type='page' AND lang='zh' AND slug='start' AND instr(content, '## 环境要求') = 0 AND instr(content, '## 部署建议') > 0 AND `+demo,
+		"\n\n## 部署建议", zhStartEnv+"\n\n## 部署建议"); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`UPDATE posts
+		SET content=content || ?
+		WHERE type='page' AND lang='zh' AND slug='start' AND instr(content, '## 环境要求') = 0 AND `+demo, zhStartEnv); err != nil {
+		return err
+	}
+	enStartEnv := "\n\n" + md(
+		"## Environment requirements",
+		"gcms is not a heavy platform. A small server is enough to launch a product site, docs hub or resource directory before you scale up.",
+		"",
+		"- **CPU**: 1 vCPU is enough to start and handle normal publishing work;",
+		"- **Memory**: a 512MB VPS can deploy a regular product site, docs site or resource directory;",
+		"- **Disk**: the package is small; most growth comes from the SQLite database, uploads and logs;",
+		"- **OS**: Linux, macOS and Windows packages are available for amd64 / arm64;",
+		"- **Public entry**: in production, put Caddy on 80/443 and bind gcms to `127.0.0.1:8080`.",
+		"",
+		"When content volume or traffic grows, increase memory and disk based on real usage.",
+	)
+	if _, err := s.db.Exec(`UPDATE posts
+		SET content=replace(content, ?, ?)
+		WHERE type='page' AND lang='en' AND slug='start' AND instr(content, '## Environment requirements') = 0 AND instr(content, '## Deployment suggestion') > 0 AND `+demo,
+		"\n\n## Deployment suggestion", enStartEnv+"\n\n## Deployment suggestion"); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`UPDATE posts
+		SET content=content || ?
+		WHERE type='page' AND lang='en' AND slug='start' AND instr(content, '## Environment requirements') = 0 AND `+demo, enStartEnv); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`UPDATE posts
+		SET content=replace(content, '## 系统要求很低', '## 环境要求')
+		WHERE type='post' AND lang='zh' AND slug='deploy-in-5-minutes' AND instr(content, '## 系统要求很低') > 0 AND ` + demo); err != nil {
+		return err
+	}
+	if _, err := s.db.Exec(`UPDATE posts
+		SET content=replace(content, '## The requirements are small', '## Environment requirements')
+		WHERE type='post' AND lang='en' AND slug='deploy-in-5-minutes' AND instr(content, '## The requirements are small') > 0 AND ` + demo); err != nil {
+		return err
+	}
+	return nil
 }
 
 // createIndexes 在 posts 表确定具备 lang/trans_group 列后统一建立索引。
@@ -996,7 +1165,7 @@ func (s *Store) ListAllPosts(lang string) ([]*Post, error) {
 	return s.queryPostSummaries(`WHERE p.type='post' AND p.lang=? ORDER BY p.updated_at DESC`, lang)
 }
 
-func (s *Store) ListContentForAutomation(kind, lang, status, query, slug string, offset, limit int) ([]*Post, error) {
+func (s *Store) ListContentForAutomation(kind, lang, status, query, slug, transGroup string, offset, limit int) ([]*Post, error) {
 	switch kind {
 	case "post", "page", "link":
 	default:
@@ -1008,8 +1177,16 @@ func (s *Store) ListContentForAutomation(kind, lang, status, query, slug string,
 	if offset < 0 {
 		offset = 0
 	}
-	where := `WHERE p.type=? AND p.lang=?`
-	args := []any{kind, lang}
+	where := `WHERE p.type=?`
+	args := []any{kind}
+	if lang = strings.TrimSpace(lang); lang != "" && lang != "all" {
+		where += ` AND p.lang=?`
+		args = append(args, lang)
+	}
+	if transGroup = strings.TrimSpace(transGroup); transGroup != "" {
+		where += ` AND p.trans_group=?`
+		args = append(args, transGroup)
+	}
 	if slug = strings.TrimSpace(slug); slug != "" {
 		where += ` AND p.slug=?`
 		args = append(args, slug)
@@ -1195,6 +1372,84 @@ func (s *Store) SetSetting(key, value string) error {
 	}
 	s.settingsMu.Unlock()
 	return err
+}
+
+// ClearDemoContent 清除首装产品官网演示数据。
+// 保留账号、密码、主题、语言、Logo/ico、上传文件与其他基础站点配置。
+func (s *Store) ClearDemoContent() error {
+	settings := demoSettingKeys()
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM posts WHERE trans_group LIKE 's-%' OR trans_group LIKE 'g-%'`); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM categories WHERE trans_group LIKE 's-%'`); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	for _, key := range settings {
+		if _, err := tx.Exec(`DELETE FROM settings WHERE key=?`, key); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.settingsMu.Lock()
+	if s.settingsLoaded {
+		for _, key := range settings {
+			delete(s.settings, key)
+		}
+	}
+	s.settingsMu.Unlock()
+	return nil
+}
+
+// ReloadShowcaseContent 用最新的产品官网样板替换当前内容区。
+// 这是给新站初始化/测试用的显式操作：保留登录凭据、Logo/ico、当前主题与上传文件。
+func (s *Store) ReloadShowcaseContent() error {
+	preserve := map[string]string{}
+	for _, key := range []string{"admin_user", "admin_password_hash", "site.logo", "site.favicon", "site.share_image", "theme"} {
+		preserve[key] = s.Setting(key)
+	}
+	if _, err := s.db.Exec(`
+DELETE FROM posts;
+DELETE FROM categories;
+DELETE FROM sqlite_sequence WHERE name IN ('posts','categories');
+`); err != nil {
+		return err
+	}
+	if err := s.seedShowcase(); err != nil {
+		return err
+	}
+	for key, value := range preserve {
+		if value == "" {
+			continue
+		}
+		if err := s.SetSetting(key, value); err != nil {
+			return err
+		}
+	}
+	s.Seeded = false
+	return nil
+}
+
+func demoSettingKeys() []string {
+	keys := []string{"nav_menu", "social_links", "demo.seed", "site.share_image", "hero.visual", "hero.image", "hero.svg"}
+	for _, base := range []string{"home.featured_title", "home.links_title", "home.latest_title"} {
+		keys = append(keys, base, base+"::en")
+	}
+	for _, prefix := range []string{"category.all.", "links.all."} {
+		for _, field := range []string{"title", "label", "slug", "description"} {
+			base := prefix + field
+			keys = append(keys, base, base+"::en")
+		}
+	}
+	return keys
 }
 
 // ---------- 小工具 ----------

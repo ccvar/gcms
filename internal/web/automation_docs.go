@@ -109,7 +109,11 @@ func automationSkillFiles(opts automationSkillOptions) ([]automationSkillFile, e
 }
 
 func automationOpenAPISpec(apiBase string) map[string]any {
-	paths := map[string]any{}
+	paths := map[string]any{
+		"/languages": map[string]any{
+			"get": automationLanguagesOperation(),
+		},
+	}
 	for _, col := range automationCollections {
 		paths["/"+col.path] = map[string]any{
 			"get":  automationListOperation(col),
@@ -143,6 +147,16 @@ func automationOpenAPISpec(apiBase string) map[string]any {
 	}
 }
 
+func automationLanguagesOperation() map[string]any {
+	return map[string]any{
+		"summary":     "列出启用语种",
+		"description": "只读接口。用于知道默认语种、启用语种，以及多语种内容更新时需要覆盖哪些语种。",
+		"operationId": "listLanguages",
+		"tags":        []string{"语种"},
+		"responses":   automationResponses("LanguageListResponse"),
+	}
+}
+
 func automationListOperation(col automationCollection) map[string]any {
 	return map[string]any{
 		"summary":     "列出" + col.label,
@@ -150,10 +164,11 @@ func automationListOperation(col automationCollection) map[string]any {
 		"operationId": "list" + automationOperationSuffix(col.path),
 		"tags":        []string{col.label},
 		"parameters": []map[string]any{
-			{"name": "lang", "in": "query", "schema": map[string]any{"type": "string", "default": "zh"}, "description": "内容语种"},
+			{"name": "lang", "in": "query", "schema": map[string]any{"type": "string", "default": "zh"}, "description": "内容语种。传 all 可跨语种查询；传 trans_group 且省略 lang 时默认等同 all。"},
 			{"name": "status", "in": "query", "schema": map[string]any{"type": "string", "enum": []string{"draft", "published", "scheduled"}}, "description": "按状态筛选"},
 			{"name": "q", "in": "query", "schema": map[string]any{"type": "string"}, "description": "按标题、摘要、正文等关键词查找"},
 			{"name": "slug", "in": "query", "schema": map[string]any{"type": "string"}, "description": "按 slug 精确查找"},
+			{"name": "trans_group", "in": "query", "schema": map[string]any{"type": "string"}, "description": "互译分组。用于查找同一内容的所有语种版本。"},
 			{"name": "limit", "in": "query", "schema": map[string]any{"type": "integer", "default": 20, "minimum": 1, "maximum": 100}},
 			{"name": "offset", "in": "query", "schema": map[string]any{"type": "integer", "default": 0, "minimum": 0}},
 		},
@@ -241,14 +256,34 @@ func automationResponses(schema string) map[string]any {
 
 func automationOpenAPISchemas() map[string]any {
 	return map[string]any{
+		"LanguageListResponse": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"default": map[string]any{"type": "string"},
+				"items": map[string]any{
+					"type": "array",
+					"items": map[string]any{
+						"type": "object",
+						"properties": map[string]any{
+							"code":    map[string]any{"type": "string"},
+							"name":    map[string]any{"type": "string"},
+							"tag":     map[string]any{"type": "string"},
+							"default": map[string]any{"type": "boolean"},
+						},
+					},
+				},
+			},
+		},
 		"ContentListResponse": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"items":  map[string]any{"type": "array", "items": map[string]any{"$ref": "#/components/schemas/ContentItem"}},
-				"limit":  map[string]any{"type": "integer"},
-				"offset": map[string]any{"type": "integer"},
-				"q":      map[string]any{"type": "string"},
-				"slug":   map[string]any{"type": "string"},
+				"items":       map[string]any{"type": "array", "items": map[string]any{"$ref": "#/components/schemas/ContentItem"}},
+				"limit":       map[string]any{"type": "integer"},
+				"offset":      map[string]any{"type": "integer"},
+				"lang":        map[string]any{"type": "string"},
+				"q":           map[string]any{"type": "string"},
+				"slug":        map[string]any{"type": "string"},
+				"trans_group": map[string]any{"type": "string"},
 			},
 		},
 		"ContentItemResponse": map[string]any{
@@ -411,6 +446,7 @@ func automationKitReadme(opts automationSkillOptions) string {
 		"- 不要把真实访问密钥发到普通聊天窗口。",
 		"- 默认让 AI 创建或修改草稿，发布前先人工审核。",
 		"- 修改指定内容时，让 AI 先查 id，再按 id 更新。",
+		"- 更新全部语种时，让 AI 先用 `/languages` 确认启用语种，再按 `trans_group` 找到同组内容，逐条更新各语种 id。",
 	)
 	return strings.Join(lines, "\n") + "\n"
 }
@@ -466,15 +502,19 @@ func automationSkillMarkdown(apiBase string) string {
 		"",
 		"1. 修改某篇内容前，先用 `q` 或 `slug` 查到准确 `id`。",
 		"2. 如果查到多个相似结果，先让用户确认。",
-		"3. 默认只创建或修改草稿。",
-		"4. 只有用户明确要求发布，并且访问密钥有对应资源的发布权限，才设置 `status` 为 `published` 或 `scheduled`。",
-		"5. 完成后告诉用户变更了哪些内容、对应 id、状态，以及建议人工复核的点。",
+		"3. 处理多语种内容时，先 `GET /languages` 查看启用语种；如果用户要求更新全部语种，先读取目标内容的 `trans_group`，再用 `lang=all&trans_group=...` 找到同组所有版本，逐条按 id 更新。",
+		"4. 不要把一个语种的正文直接覆盖到其它语种，除非用户明确要求这么做。",
+		"5. 默认只创建或修改草稿。",
+		"6. 只有用户明确要求发布，并且访问密钥有对应资源的发布权限，才设置 `status` 为 `published` 或 `scheduled`。",
+		"7. 完成后告诉用户变更了哪些内容、对应 id、语种、状态，以及建议人工复核的点。",
 		"",
 		"## 推荐脚本",
 		"",
 		"如果当前环境可以运行 Node.js，优先使用 `scripts/gcms.js`：",
 		"",
+		"- `node scripts/gcms.js languages`",
 		"- `node scripts/gcms.js list posts --lang zh --q 关键词`",
+		"- `node scripts/gcms.js list posts --lang all --trans_group 分组值`",
 		"- `node scripts/gcms.js get posts 123`",
 		"- `node scripts/gcms.js create posts '{\"title\":\"标题\",\"content\":\"正文\",\"lang\":\"zh\",\"status\":\"draft\"}'`",
 		"- `node scripts/gcms.js update posts 123 '{\"title\":\"新标题\"}'`",
@@ -528,7 +568,8 @@ func automationSkillScript() string {
 		"",
 		"function usage() {",
 		"  console.error('Usage:');",
-		"  console.error('  gcms.js list <posts|pages|links> [--lang zh] [--q text] [--slug slug] [--status draft] [--limit 20]');",
+		"  console.error('  gcms.js languages');",
+		"  console.error('  gcms.js list <posts|pages|links> [--lang zh|all] [--q text] [--slug slug] [--trans_group group] [--status draft] [--limit 20]');",
 		"  console.error('  gcms.js get <posts|pages|links> <id>');",
 		"  console.error('  gcms.js create <posts|pages|links> <json|@file>');",
 		"  console.error('  gcms.js update <posts|pages|links> <id> <json|@file>');",
@@ -589,6 +630,10 @@ func automationSkillScript() string {
 		"",
 		"async function main() {",
 		"  const [cmd, collection, maybeID, maybeBody, ...rest] = process.argv.slice(2);",
+		"  if (cmd === 'languages') {",
+		"    await request('GET', '/languages');",
+		"    return;",
+		"  }",
 		"  assertCollection(collection);",
 		"  if (cmd === 'list') {",
 		"    const opt = parseOptions([maybeID, maybeBody, ...rest].filter(Boolean));",

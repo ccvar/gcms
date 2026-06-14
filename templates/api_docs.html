@@ -26,6 +26,7 @@ X-GCMS-API-Key: gcms_xxx</code></pre>
         <table>
           <thead><tr><th>资源</th><th>列表 / 创建</th><th>读取 / 更新</th><th>权限前缀</th></tr></thead>
           <tbody>
+            <tr><td>语种</td><td><code>GET /languages</code></td><td>只读</td><td>任一读取权限</td></tr>
             <tr><td>文章</td><td><code>GET/POST /posts</code></td><td><code>GET/PATCH /posts/{id}</code></td><td><code>posts</code></td></tr>
             <tr><td>链接</td><td><code>GET/POST /links</code></td><td><code>GET/PATCH /links/{id}</code></td><td><code>links</code></td></tr>
             <tr><td>页面</td><td><code>GET/POST /pages</code></td><td><code>GET/PATCH /pages/{id}</code></td><td><code>pages</code></td></tr>
@@ -46,10 +47,11 @@ X-GCMS-API-Key: gcms_xxx</code></pre>
         <table>
           <thead><tr><th>参数</th><th>说明</th><th>示例</th></tr></thead>
           <tbody>
-            <tr><td><code>lang</code></td><td>内容语种，留空使用默认语种</td><td><code>zh</code></td></tr>
+            <tr><td><code>lang</code></td><td>内容语种，留空使用默认语种；传 <code>all</code> 可跨语种查询</td><td><code>zh</code> / <code>all</code></td></tr>
             <tr><td><code>status</code></td><td>按状态筛选</td><td><code>draft</code> / <code>published</code> / <code>scheduled</code></td></tr>
             <tr><td><code>q</code></td><td>按标题、摘要、正文等关键词查找</td><td><code>SQLite</code></td></tr>
             <tr><td><code>slug</code></td><td>按 slug 精确查找</td><td><code>about</code></td></tr>
+            <tr><td><code>trans_group</code></td><td>按互译分组查找同一内容的各语种版本；搭配 <code>lang=all</code> 可跨语种返回</td><td><code>zh:go-sqlite-cms</code></td></tr>
             <tr><td><code>limit</code></td><td>返回数量</td><td><code>20</code></td></tr>
             <tr><td><code>offset</code></td><td>分页偏移</td><td><code>0</code></td></tr>
           </tbody>
@@ -73,8 +75,16 @@ X-GCMS-API-Key: gcms_xxx</code></pre>
         </table>
 
         <h2>常见用法</h2>
+        <p>查看当前启用语种：</p>
+        <pre><code>curl '{{.Site.Root "/api/admin/v1/languages"}}' \
+  -H 'Authorization: Bearer gcms_xxx'</code></pre>
+
         <p>修改某篇内容前，先查到准确 ID，不要只凭标题猜。</p>
         <pre><code>curl '{{.Site.Root "/api/admin/v1/posts"}}?lang=zh&amp;q=SQLite' \
+  -H 'Authorization: Bearer gcms_xxx'</code></pre>
+
+        <p>如果要更新同一篇内容的全部语种，先读取某个版本拿到 <code>trans_group</code>，再查同组所有版本，逐条按 ID 更新：</p>
+        <pre><code>curl '{{.Site.Root "/api/admin/v1/posts"}}?lang=all&amp;trans_group=zh:go-sqlite-cms' \
   -H 'Authorization: Bearer gcms_xxx'</code></pre>
 
         <p>创建一篇文章草稿：</p>

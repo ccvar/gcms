@@ -1,17 +1,32 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" role="img" aria-label="SQLite">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" role="img" aria-label="SQLite data file">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#0e4a68"/>
-      <stop offset="1" stop-color="#062536"/>
+      <stop offset="0" stop-color="#f3fbff"/>
+      <stop offset="1" stop-color="#d8ecf7"/>
     </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="20" stdDeviation="24" flood-color="#12435d" flood-opacity=".14"/>
+    </filter>
   </defs>
   <rect width="1280" height="720" fill="url(#bg)"/>
-  <g transform="translate(905 360)" fill="none" stroke="#7fd4ff" stroke-opacity=".85" stroke-width="14">
-    <ellipse cx="0" cy="-104" rx="120" ry="44" fill="#7fd4ff" fill-opacity=".16"/>
-    <path d="M-120 -104 V 104 a120 44 0 0 0 240 0 V -104" stroke-opacity=".7"/>
-    <path d="M-120 -34 a120 44 0 0 0 240 0" stroke-opacity=".5"/>
-    <path d="M-120 36 a120 44 0 0 0 240 0" stroke-opacity=".5"/>
+  <g opacity=".36" stroke="#6fa9c8" stroke-width="2">
+    <circle cx="1010" cy="180" r="84" fill="none"/>
+    <circle cx="220" cy="550" r="120" fill="none"/>
+    <path d="M0 604C240 520 372 656 612 574s382-198 668-120"/>
   </g>
-  <text x="430" y="392" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="150" font-weight="800" letter-spacing="-4" fill="#ffffff">SQLite</text>
-  <text x="430" y="462" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="38" font-weight="500" letter-spacing="5" fill="#9fd9f5" fill-opacity=".9">SINGLE-FILE DATABASE</text>
+  <g filter="url(#shadow)">
+    <rect x="288" y="150" width="704" height="420" rx="38" fill="#fff"/>
+    <g transform="translate(408 230)" fill="none" stroke="#1f7aa5" stroke-width="16">
+      <ellipse cx="0" cy="0" rx="150" ry="54" fill="#dff5ff"/>
+      <path d="M-150 0v178c0 30 67 54 150 54s150-24 150-54V0"/>
+      <path d="M-150 76c0 30 67 54 150 54s150-24 150-54"/>
+      <path d="M-150 152c0 30 67 54 150 54s150-24 150-54"/>
+    </g>
+    <g transform="translate(660 238)">
+      <rect width="218" height="46" rx="14" fill="#1f7aa5" opacity=".18"/>
+      <rect y="82" width="260" height="22" rx="11" fill="#1f7aa5" opacity=".16"/>
+      <rect y="132" width="210" height="22" rx="11" fill="#1f7aa5" opacity=".16"/>
+      <rect y="182" width="244" height="22" rx="11" fill="#1f7aa5" opacity=".16"/>
+    </g>
+  </g>
 </svg>

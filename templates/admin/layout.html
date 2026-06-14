@@ -10,7 +10,15 @@
 <body class="admin" data-csrf="{{.CSRF}}">
   <header class="admin-top">
     <div class="wrap">
-      <a class="brand" href="/admin">{{if .Site.Name}}{{.Site.Name}}{{else}}CCVAR{{end}}<span class="dot">.</span><small>后台</small></a>
+      <a class="brand admin-brand{{if and .Site.Logo (ne .Site.Brand "text")}} has-logo{{if eq .Site.Brand "both"}} with-name{{end}}{{end}}" href="/admin">
+        {{if and .Site.Logo (ne .Site.Brand "text")}}
+        <img class="brand-logo" src="{{.Site.Logo}}" alt="{{if .Site.Name}}{{.Site.Name}}{{else}}CCVAR{{end}}">
+        {{if eq .Site.Brand "both"}}<span class="brand-name">{{if .Site.Name}}{{.Site.Name}}{{else}}CCVAR{{end}}</span>{{end}}
+        {{else}}
+        {{if .Site.Name}}{{.Site.Name}}{{else}}CCVAR{{end}}<span class="dot">.</span>
+        {{end}}
+        <small>后台</small>
+      </a>
       <button class="admin-burger" type="button" aria-label="菜单" aria-expanded="false">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
       </button>
@@ -44,7 +52,7 @@
       {{block "body" .}}{{end}}
     </div>
   </main>
-  <!-- 统一确认弹层（替代系统 confirm；带 data-confirm 的表单提交时触发） -->
+  <!-- 统一确认弹层（替代系统 confirm；带 data-confirm 的表单或按钮触发） -->
   <div class="modal confirm-modal" id="confirm-modal" hidden>
     <div class="modal-backdrop" data-confirm-cancel></div>
     <div class="modal-card" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title">

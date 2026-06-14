@@ -26,8 +26,8 @@ type seedPost struct {
 	Featured                                                                                                bool
 }
 
-// seedIfEmpty 在空库时写入演示内容：分类、文章、关于页、站点设置与管理员账号。
-// 演示中英双语并存：中文为默认语种，英文通过 trans_group 与之关联。
+// seedIfEmpty 在空库时写入首装样板：分类、文章、页面、站点设置与管理员账号。
+// 默认样板是一套 gcms 产品官网内容；如需旧版博客演示内容，可用 CMS_SEED=classic。
 func (s *Store) seedIfEmpty() error {
 	var n int
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM posts`).Scan(&n); err != nil {
@@ -37,12 +37,11 @@ func (s *Store) seedIfEmpty() error {
 		return nil
 	}
 
-	// CMS_SEED=showcase：写入「产品官网」样板内容（仅用于演示/评审），不走默认演示种子。
-	if strings.EqualFold(os.Getenv("CMS_SEED"), "showcase") {
+	if !strings.EqualFold(os.Getenv("CMS_SEED"), "classic") {
 		return s.seedShowcase()
 	}
 
-	// 站点设置
+	// 旧版内容博客演示种子（开发/回归用）。
 	_ = s.SetSetting("site.name", "CCVAR 简记")
 	_ = s.SetSetting("site.tagline", "记录技术、工具与思考")
 	_ = s.SetSetting("site.description", "用 Go 与 SQLite 构建的轻量内容站，关注后端工程、极简设计与搜索引擎优化。")
@@ -380,7 +379,7 @@ func (s *Store) seedIfEmpty() error {
 	links := []seedPost{
 		{
 			Type: "link", Slug: "go-dev", Title: "Go 官方网站", Cat: "dev-tools", Lang: "zh", Group: "link-godev",
-			LinkURL: "https://go.dev", Date: "2026-06-06", Cover: "/assets/covers/go.svg", Featured: true,
+			LinkURL: "https://go.dev", Date: "2026-06-06", Cover: "/assets/covers/go-brand.webp", Featured: true,
 			Excerpt:  "Go 语言官网：语言规范、标准库文档、下载、博客与在线 Playground。",
 			MetaDesc: "Go 语言官方网站，提供文档、下载、博客与在线 Playground。",
 			Keywords: "Go,golang,官网,文档",
@@ -388,7 +387,7 @@ func (s *Store) seedIfEmpty() error {
 		},
 		{
 			Type: "link", Slug: "sqlite", Title: "SQLite", Cat: "dev-tools", Lang: "zh", Group: "link-sqlite",
-			LinkURL: "https://sqlite.org", Date: "2026-06-04", Cover: "/assets/covers/sqlite.svg", Featured: true,
+			LinkURL: "https://sqlite.org", Date: "2026-06-04", Cover: "/assets/covers/sqlite-brand.webp", Featured: true,
 			Excerpt:  "世界上部署最广的数据库引擎：单文件、零配置、极其可靠。",
 			MetaDesc: "SQLite 官网：单文件、零配置、部署最广的嵌入式数据库引擎。",
 			Keywords: "SQLite,数据库,嵌入式",
@@ -412,7 +411,7 @@ func (s *Store) seedIfEmpty() error {
 		},
 		{
 			Type: "link", Slug: "go-dev", Title: "Go Official Site", Cat: "dev-tools", Lang: "en", Group: "link-godev",
-			LinkURL: "https://go.dev", Date: "2026-06-06", Cover: "/assets/covers/go.svg", Featured: true,
+			LinkURL: "https://go.dev", Date: "2026-06-06", Cover: "/assets/covers/go-brand.webp", Featured: true,
 			Excerpt:  "The Go language home: spec, standard library docs, downloads, blog and Playground.",
 			MetaDesc: "The official Go website — docs, downloads, blog and an online Playground.",
 			Keywords: "Go,golang,docs",
@@ -420,7 +419,7 @@ func (s *Store) seedIfEmpty() error {
 		},
 		{
 			Type: "link", Slug: "sqlite", Title: "SQLite", Cat: "dev-tools", Lang: "en", Group: "link-sqlite",
-			LinkURL: "https://sqlite.org", Date: "2026-06-04", Cover: "/assets/covers/sqlite.svg", Featured: true,
+			LinkURL: "https://sqlite.org", Date: "2026-06-04", Cover: "/assets/covers/sqlite-brand.webp", Featured: true,
 			Excerpt:  "The most widely deployed database engine: single file, zero-config, rock solid.",
 			MetaDesc: "SQLite — a single-file, zero-config, widely deployed embedded database engine.",
 			Keywords: "SQLite,database,embedded",

@@ -22,8 +22,8 @@ func TestAbsForRequestKeepsConfiguredPublicBaseURL(t *testing.T) {
 	r.Host = "proxy.example.com"
 	r.Header.Set("X-Forwarded-Proto", "https")
 
-	got := (&Server{baseURL: "https://cms.ccvar.com"}).absForRequest(r, "/api/admin/v1")
-	want := "https://cms.ccvar.com/api/admin/v1"
+	got := (&Server{baseURL: "https://ccvar.com"}).absForRequest(r, "/api/admin/v1")
+	want := "https://ccvar.com/api/admin/v1"
 	if got != want {
 		t.Fatalf("absForRequest() = %q, want %q", got, want)
 	}

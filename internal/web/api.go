@@ -43,6 +43,13 @@ type apiCategory struct {
 	Name string `json:"name"`
 }
 
+type apiLanguageItem struct {
+	Code    string `json:"code"`
+	Name    string `json:"name"`
+	Tag     string `json:"tag"`
+	Default bool   `json:"default"`
+}
+
 type apiContentItem struct {
 	ID          int64        `json:"id"`
 	Type        string       `json:"type"`
@@ -68,6 +75,19 @@ type apiContentItem struct {
 	UpdatedAt   string       `json:"updated_at,omitempty"`
 }
 
+func (s *Server) apiLanguages(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireAutomationAnyScope(w, r, "content:read", "posts:read", "pages:read", "links:read"); !ok {
+		return
+	}
+	def := s.defaultLang()
+	locales := s.locales()
+	items := make([]apiLanguageItem, 0, len(locales))
+	for _, l := range locales {
+		items = append(items, apiLanguageItem{Code: l.Code, Name: l.Name, Tag: l.Tag, Default: l.Code == def})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"default": def, "items": items})
+}
+
 func (s *Server) apiListContent(w http.ResponseWriter, r *http.Request) {
 	collection := r.PathValue("collection")
 	kind, ok := apiContentKind(collection)
@@ -80,10 +100,15 @@ func (s *Server) apiListContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	lang := strings.TrimSpace(r.URL.Query().Get("lang"))
+	transGroup := strings.TrimSpace(r.URL.Query().Get("trans_group"))
 	if lang == "" {
-		lang = s.defaultLang()
+		if transGroup != "" {
+			lang = "all"
+		} else {
+			lang = s.defaultLang()
+		}
 	}
-	if !s.langEnabled(lang) {
+	if lang != "all" && !s.langEnabled(lang) {
 		apiError(w, http.StatusBadRequest, "bad_lang", "语种未启用。")
 		return
 	}
@@ -92,7 +117,7 @@ func (s *Server) apiListContent(w http.ResponseWriter, r *http.Request) {
 	status := strings.TrimSpace(r.URL.Query().Get("status"))
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
 	slug := strings.TrimSpace(r.URL.Query().Get("slug"))
-	items, err := s.store.ListContentForAutomation(kind, lang, status, query, slug, offset, limit)
+	items, err := s.store.ListContentForAutomation(kind, lang, status, query, slug, transGroup, offset, limit)
 	if err != nil {
 		apiError(w, http.StatusBadRequest, "bad_request", err.Error())
 		return
@@ -102,7 +127,7 @@ func (s *Server) apiListContent(w http.ResponseWriter, r *http.Request) {
 		out = append(out, s.apiContentItem(p, false))
 	}
 	_ = auth
-	writeJSON(w, http.StatusOK, map[string]any{"items": out, "limit": limit, "offset": offset, "q": query, "slug": slug})
+	writeJSON(w, http.StatusOK, map[string]any{"items": out, "limit": limit, "offset": offset, "lang": lang, "q": query, "slug": slug, "trans_group": transGroup})
 }
 
 func (s *Server) apiGetContent(w http.ResponseWriter, r *http.Request) {
@@ -219,7 +244,7 @@ func (s *Server) apiUpdateContent(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"item": s.apiContentItem(updated, true)})
 }
 
-func (s *Server) requireAutomationScope(w http.ResponseWriter, r *http.Request, scope string) (*automationAuth, bool) {
+func (s *Server) requireAutomationToken(w http.ResponseWriter, r *http.Request) (*automationAuth, bool) {
 	token := apiTokenFromRequest(r)
 	if token == "" {
 		apiError(w, http.StatusUnauthorized, "missing_token", "缺少访问密钥。")
@@ -235,12 +260,34 @@ func (s *Server) requireAutomationScope(w http.ResponseWriter, r *http.Request, 
 		return nil, false
 	}
 	auth := &automationAuth{key: key, scopes: apiScopeMap(key.Scopes)}
+	_ = s.store.TouchAutomationKey(key.ID)
+	return auth, true
+}
+
+func (s *Server) requireAutomationScope(w http.ResponseWriter, r *http.Request, scope string) (*automationAuth, bool) {
+	auth, ok := s.requireAutomationToken(w, r)
+	if !ok {
+		return nil, false
+	}
 	if !automationScopeAllowed(auth.scopes, scope) {
 		apiError(w, http.StatusForbidden, "missing_scope", "访问权限不足。")
 		return nil, false
 	}
-	_ = s.store.TouchAutomationKey(key.ID)
 	return auth, true
+}
+
+func (s *Server) requireAutomationAnyScope(w http.ResponseWriter, r *http.Request, scopes ...string) (*automationAuth, bool) {
+	auth, ok := s.requireAutomationToken(w, r)
+	if !ok {
+		return nil, false
+	}
+	for _, scope := range scopes {
+		if automationScopeAllowed(auth.scopes, scope) {
+			return auth, true
+		}
+	}
+	apiError(w, http.StatusForbidden, "missing_scope", "访问权限不足。")
+	return nil, false
 }
 
 func (s *Server) apiContentByID(w http.ResponseWriter, r *http.Request, kind string) (*store.Post, bool) {

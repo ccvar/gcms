@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 560" role="img" aria-label="Realistic in-app update panel with manifest package checksum and restart">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fff8ed"/>
+      <stop offset="1" stop-color="#f1fbf5"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="24" flood-color="#4a312a" flood-opacity=".14"/>
+    </filter>
+    <style>
+      text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+      .ink { fill: #17191c; }
+      .muted { fill: #7d7871; }
+      .accent { fill: #a83d31; }
+      .small { font-size: 14px; }
+      .label { font-size: 16px; font-weight: 700; }
+      .title { font-size: 26px; font-weight: 800; }
+    </style>
+  </defs>
+  <rect width="1280" height="560" rx="34" fill="url(#bg)"/>
+  <g filter="url(#shadow)">
+    <rect x="90" y="76" width="1100" height="410" rx="28" fill="#fff"/>
+  </g>
+  <rect x="90" y="76" width="1100" height="64" rx="28" fill="#faf7f1"/>
+  <text x="130" y="118" class="title ink">System update</text>
+  <rect x="946" y="94" width="166" height="32" rx="16" fill="#a83d31"/>
+  <text x="984" y="115" class="small" fill="#fff">Check updates</text>
+
+  <rect x="130" y="172" width="286" height="122" rx="20" fill="#fffaf3" stroke="#ead7c2"/>
+  <text x="162" y="210" class="label ink">Current version</text>
+  <text x="162" y="250" font-size="36" font-weight="800" fill="#17191c">v1.0.12</text>
+  <rect x="450" y="172" width="286" height="122" rx="20" fill="#eefaf3" stroke="#d6eadf"/>
+  <text x="482" y="210" class="label ink">Latest release</text>
+  <text x="482" y="250" font-size="36" font-weight="800" fill="#1d8b5e">v1.0.13</text>
+  <rect x="770" y="172" width="340" height="122" rx="20" fill="#f7fbff" stroke="#dbe8f0"/>
+  <text x="802" y="210" class="label ink">Manifest source</text>
+  <text x="802" y="244" class="mono small muted">github.com/ccvar/gcms-releases</text>
+  <rect x="802" y="262" width="210" height="8" rx="4" fill="#ccd8e0"/>
+
+  <rect x="130" y="334" width="980" height="88" rx="20" fill="#111827"/>
+  <text x="164" y="370" class="mono small" fill="#7dd3fc">1. download cms-v1.0.13-linux-amd64.tar.gz</text>
+  <text x="164" y="400" class="mono small" fill="#b7f7d1">2. verify SHA256, backup old binary, replace and restart</text>
+  <rect x="748" y="364" width="284" height="16" rx="8" fill="#263548"/>
+  <rect x="748" y="364" width="206" height="16" rx="8" fill="#1d8b5e"/>
+  <text x="1048" y="379" class="small" fill="#f7efe8">72%</text>
+
+  <rect x="130" y="446" width="266" height="30" rx="15" fill="#fff0ed"/>
+  <text x="156" y="466" class="small accent">Rollback files are kept before restart</text>
+  <rect x="432" y="446" width="226" height="30" rx="15" fill="#eefaf3"/>
+  <text x="458" y="466" class="small" fill="#1d8b5e">Admin waits and reconnects</text>
+</svg>

@@ -13,7 +13,7 @@ type Site struct {
 	Name             string
 	Tagline          string
 	Description      string
-	BaseURL          string   // 如 https://cms.ccvar.com（用于绝对 URL）
+	BaseURL          string   // 如 https://ccvar.com（用于绝对 URL）
 	Locale           string   // Open Graph locale，如 zh_CN
 	LangTag          string   // BCP47，如 zh-CN（<html lang> / hreflang / inLanguage）
 	Prefix           string   // 语种路径前缀，如 /zh（内容 URL 用）
@@ -21,6 +21,7 @@ type Site struct {
 	Theme            string   // 前台主题
 	Favicon          string   // 站点图标 URL（为空用默认）
 	Logo             string   // 站点 logo 图片 URL（为空用文字刊名）
+	ShareImage       string   // 默认分享图 / og:image（为空用内置默认）
 	Brand            string   // 页眉品牌显示：logo | both | text
 	HeroEyebrow      string   // 首页 hero 眉标
 	HeroTitle        string   // 首页 hero 大标题（换行渲染为 <br>）
@@ -121,7 +122,19 @@ func (s Site) breadcrumb(items []crumb) map[string]any {
 	}
 }
 
-func (s Site) defaultImage() string { return s.Root("/assets/og-cover.png") }
+func (s Site) defaultImage() string {
+	img := strings.TrimSpace(s.ShareImage)
+	if img == "" {
+		img = "/assets/og-cover.webp"
+	}
+	if strings.HasPrefix(img, "http://") || strings.HasPrefix(img, "https://") {
+		return img
+	}
+	if !strings.HasPrefix(img, "/") {
+		img = "/" + img
+	}
+	return s.Root(img)
+}
 
 // Home 首页：WebSite + Organization。
 func (s Site) Home() Meta {

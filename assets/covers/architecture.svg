@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" role="img" aria-label="Go binary and SQLite architecture">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f7fbff"/>
+      <stop offset="1" stop-color="#fff8ed"/>
+    </linearGradient>
+    <pattern id="grid" width="58" height="58" patternUnits="userSpaceOnUse">
+      <path d="M58 0H0v58" fill="none" stroke="#dbe9ef" stroke-width="2" opacity=".46"/>
+    </pattern>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="28" flood-color="#294653" flood-opacity=".14"/>
+    </filter>
+  </defs>
+  <rect width="1280" height="720" fill="url(#bg)"/>
+  <rect width="1280" height="720" fill="url(#grid)"/>
+  <g filter="url(#shadow)">
+    <rect x="206" y="150" width="868" height="420" rx="44" fill="#fff"/>
+    <rect x="206" y="150" width="868" height="72" rx="44" fill="#fff6ed"/>
+  </g>
+  <path d="M206 222h868" stroke="#eaded1" stroke-width="3"/>
+  <circle cx="260" cy="186" r="10" fill="#d86756"/>
+  <circle cx="294" cy="186" r="10" fill="#dfc7b6"/>
+  <circle cx="328" cy="186" r="10" fill="#dfc7b6"/>
+  <path d="M422 360h124M734 360h124" stroke="#b64a3d" stroke-width="13" stroke-linecap="round" stroke-dasharray="2 24"/>
+  <rect x="300" y="272" width="150" height="176" rx="30" fill="#f7fbff" stroke="#dbe9ef" stroke-width="4"/>
+  <rect x="565" y="244" width="150" height="232" rx="34" fill="#a83d31"/>
+  <rect x="830" y="272" width="150" height="176" rx="30" fill="#f7fbff" stroke="#dbe9ef" stroke-width="4"/>
+  <rect x="342" y="314" width="66" height="66" rx="16" fill="#20a8c7"/>
+  <path d="M358 347h34M375 330v34" stroke="#fff" stroke-width="8" stroke-linecap="round"/>
+  <rect x="604" y="302" width="72" height="72" rx="18" fill="#fff7ed"/>
+  <path d="M622 338h36M640 320v36" stroke="#a83d31" stroke-width="9" stroke-linecap="round"/>
+  <rect x="604" y="406" width="72" height="18" rx="9" fill="#fff7ed" opacity=".8"/>
+  <ellipse cx="905" cy="320" rx="54" ry="18" fill="#eaf7ff" stroke="#217ca3" stroke-width="7"/>
+  <path d="M851 320v72c0 10 24 19 54 19s54-9 54-19v-72M851 356c0 10 24 19 54 19s54-9 54-19" fill="none" stroke="#217ca3" stroke-width="7"/>
+  <rect x="454" y="526" width="372" height="24" rx="12" fill="#8d8177" opacity=".14"/>
+</svg>

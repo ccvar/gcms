@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" role="img" aria-label="Theme gallery">
+  <rect width="1280" height="720" fill="#f8f4ef"/>
+  <g transform="translate(190 150)">
+    <rect width="260" height="180" rx="28" fill="#fff" stroke="#e4d9ca" stroke-width="4"/>
+    <rect x="28" y="32" width="112" height="24" rx="12" fill="#a63d2f"/>
+    <rect x="28" y="82" width="190" height="16" rx="8" fill="#8b8176" opacity=".28"/>
+    <rect x="28" y="122" width="150" height="16" rx="8" fill="#8b8176" opacity=".28"/>
+  </g>
+  <g transform="translate(510 150)">
+    <rect width="260" height="180" rx="28" fill="#0f1720"/>
+    <rect x="28" y="32" width="112" height="24" rx="12" fill="#78f2b5"/>
+    <rect x="28" y="82" width="190" height="16" rx="8" fill="#78f2b5" opacity=".28"/>
+    <rect x="28" y="122" width="150" height="16" rx="8" fill="#78f2b5" opacity=".28"/>
+  </g>
+  <g transform="translate(830 150)">
+    <rect width="260" height="180" rx="28" fill="#edf1ff" stroke="#d7ddff" stroke-width="4"/>
+    <rect x="28" y="32" width="112" height="24" rx="12" fill="#6d5df6"/>
+    <rect x="28" y="82" width="190" height="16" rx="8" fill="#6d5df6" opacity=".22"/>
+    <rect x="28" y="122" width="150" height="16" rx="8" fill="#6d5df6" opacity=".22"/>
+  </g>
+  <g transform="translate(350 390)">
+    <rect width="260" height="180" rx="28" fill="#fff7df" stroke="#ead9aa" stroke-width="4"/>
+    <rect x="28" y="32" width="112" height="24" rx="12" fill="#d68a1f"/>
+    <rect x="28" y="82" width="190" height="16" rx="8" fill="#d68a1f" opacity=".24"/>
+  </g>
+  <g transform="translate(670 390)">
+    <rect width="260" height="180" rx="28" fill="#fff" stroke="#111" stroke-width="7"/>
+    <rect x="28" y="32" width="112" height="24" fill="#111"/>
+    <rect x="28" y="82" width="190" height="16" fill="#111" opacity=".22"/>
+  </g>
+</svg>

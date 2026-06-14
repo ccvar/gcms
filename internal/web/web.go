@@ -113,6 +113,7 @@ var themeRadiusDefault = map[string]string{
 const (
 	homeLinksLimitKey       = "home.links_limit"
 	homePostsPerPageKey     = "home.posts_per_page"
+	layoutWidthKey          = "layout.width"
 	defaultHomeLinksLimit   = 8
 	defaultHomePostsPerPage = 6
 	minHomeLinksLimit       = 0
@@ -120,6 +121,15 @@ const (
 	minHomePostsPerPage     = 1
 	maxHomePostsPerPage     = 50
 )
+
+func normalizeLayoutWidth(v string) string {
+	switch strings.TrimSpace(v) {
+	case "1080", "1200", "1240", "1360", "1440":
+		return strings.TrimSpace(v)
+	default:
+		return ""
+	}
+}
 
 // ThemeCard 是设置页每个主题卡片的状态（含该主题自己的微调值）。
 type ThemeCard struct {
@@ -245,19 +255,21 @@ type View struct {
 	OpenAPIURL       string
 	APIDocsURL       string
 	SkillPackageURL  string
-	EditLang         string        // 后台当前操作的内容语种
-	Locales          []i18n.Locale // 已启用语种
-	AllLocales       []i18n.Locale // 全部可选语种（内置 + 自定义，语言设置勾选）
-	CustomLocales    []i18n.Locale // 自定义预设（可删除）
-	Trans            []*store.Post // 当前编辑文章的互译版本
-	Social           []SocialLink  // 页脚社交链接（前台渲染 / 后台回填）
-	Menu             []MenuItem    // 前台页眉导航（按当前语种解析）
-	MenuEdit         []MenuRow     // 后台导航菜单编辑（URL + 各语种标签）
-	VisualEdit       bool          // 前台 iframe 可视化编辑模式
-	VisualPreviewURL string        // 后台可视化编辑 iframe 地址
-	VisualFields     []VisualField // 可视化编辑侧栏字段
-	VisualGroups     []VisualGroup // 可视化编辑侧栏字段分组
-	VisualHistory    []VisualLog   // 可视化编辑最近修改
+	EditLang         string             // 后台当前操作的内容语种
+	Locales          []i18n.Locale      // 已启用语种
+	AllLocales       []i18n.Locale      // 全部可选语种（内置 + 自定义，语言设置勾选）
+	CustomLocales    []i18n.Locale      // 自定义预设（可删除）
+	Trans            []*store.Post      // 当前编辑文章的互译版本
+	Social           []SocialLink       // 页脚社交链接（前台渲染 / 后台回填）
+	Menu             []MenuItem         // 前台页眉导航（按当前语种解析）
+	MenuEdit         []MenuRow          // 后台导航菜单编辑（URL + 各语种标签）
+	MenuTargets      []MenuTargetOption // 后台导航菜单可选入口
+	VisualEdit       bool               // 前台 iframe 可视化编辑模式
+	VisualPreviewURL string             // 后台可视化编辑 iframe 地址
+	VisualFields     []VisualField      // 可视化编辑侧栏字段
+	VisualGroups     []VisualGroup      // 可视化编辑侧栏字段分组
+	VisualHistory    []VisualLog        // 可视化编辑最近修改
+	LayoutWidth      string             // 前台内容最大宽度预设（空=跟随主题）
 }
 
 type VisualField struct {
@@ -316,6 +328,7 @@ type SettingsForm struct {
 	DescriptionDef string
 	Favicon        string
 	Logo           string
+	ShareImage     string
 	Brand          string
 	Theme          string
 	Custom         bool   // 是否启用主题微调
@@ -358,6 +371,18 @@ type SettingsForm struct {
 	AllSlug        string
 	AllPath        string
 	AllDescription string
+}
+
+const (
+	defaultFaviconPath   = "/assets/favicon.svg"
+	defaultShareImageURL = "/assets/og-cover.webp"
+)
+
+func nonEmpty(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
 }
 
 func New(st *store.Store, baseURL, uploadDir string, tplFS, assetsFS fs.FS) (*Server, error) {
@@ -820,6 +845,7 @@ func (s *Server) site(lang string) seo.Site {
 		Theme:            theme,
 		Favicon:          s.store.Setting("site.favicon"),
 		Logo:             logo,
+		ShareImage:       s.store.Setting("site.share_image"),
 		Brand:            brand,
 		HeroEyebrow:      get("site.hero_eyebrow", "Go · SQLite · SEO"),
 		HeroTitle:        get("site.hero_title", "把复杂留给后端，\n把简单留给读者。"),
@@ -849,10 +875,13 @@ func (s *Server) themeOverrideFor(theme string) template.CSS {
 		theme = "editorial"
 	}
 	custom, accent, radius := s.themeTweak(theme)
-	if !custom {
-		return ""
-	}
 	var b strings.Builder
+	if width := normalizeLayoutWidth(s.store.Setting(layoutWidthKey)); width != "" {
+		b.WriteString("--w-wide:" + width + "px;")
+	}
+	if !custom {
+		return template.CSS(b.String())
+	}
 	if hexColor(accent) {
 		b.WriteString("--accent:" + accent + ";")
 		b.WriteString("--accent-soft:color-mix(in srgb," + accent + " 80%,#fff);")
@@ -945,6 +974,7 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("GET /api-docs", s.apiDocs)
 	mux.HandleFunc("GET /about", s.about)
 	mux.HandleFunc("GET /search", s.search)
+	mux.HandleFunc("GET /{slug}", s.page)
 
 	// SEO 端点（动态生成）
 	mux.HandleFunc("GET /sitemap.xml", s.sitemap)
@@ -967,6 +997,7 @@ func (s *Server) routes(assetsFS fs.FS) {
 
 	// 自动化 API（仅开放文章 / 页面 / 链接内容）。
 	mux.HandleFunc("GET /api/admin/v1/openapi.json", s.apiOpenAPI)
+	mux.HandleFunc("GET /api/admin/v1/languages", s.apiLanguages)
 	mux.HandleFunc("GET /api/admin/v1/{collection}", s.apiListContent)
 	mux.HandleFunc("POST /api/admin/v1/{collection}", s.apiCreateContent)
 	mux.HandleFunc("GET /api/admin/v1/{collection}/{id}", s.apiGetContent)
@@ -993,6 +1024,8 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /admin/settings/comments", s.requireAuth(s.adminSaveComments))
 	mux.HandleFunc("POST /admin/settings/updates/upgrade", s.requireAuth(s.adminStartUpgrade))
 	mux.HandleFunc("POST /admin/settings/security", s.requireAuth(s.adminSavePassword))
+	mux.HandleFunc("POST /admin/settings/demo/reload", s.requireAuth(s.adminReloadProductDemo))
+	mux.HandleFunc("POST /admin/settings/demo/clear", s.requireAuth(s.adminClearDemoContent))
 	mux.HandleFunc("POST /admin/settings/copy", s.requireAuth(s.adminSaveCopy))
 	mux.HandleFunc("POST /admin/settings/menu", s.requireAuth(s.adminSaveMenu))
 	mux.HandleFunc("POST /admin/settings/languages", s.requireAuth(s.adminSaveLanguages))
@@ -1014,6 +1047,7 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("GET /admin/pages/{id}/edit", s.requireAuth(s.adminPageEdit))
 	mux.HandleFunc("POST /admin/pages/{id}", s.requireAuth(s.adminPageSave))
 	mux.HandleFunc("GET /admin/posts/new", s.requireAuth(s.adminNew))
+	mux.HandleFunc("GET /admin/posts/{id}/preview", s.requireAuth(s.adminPostPreview))
 	mux.HandleFunc("GET /admin/posts/{id}/edit", s.requireAuth(s.adminEdit))
 	mux.HandleFunc("POST /admin/posts", s.requireAuth(s.adminCreate))
 	mux.HandleFunc("POST /admin/posts/{id}", s.requireAuth(s.adminUpdate))
@@ -1024,6 +1058,7 @@ func (s *Server) routes(assetsFS fs.FS) {
 	// 链接（type=link）
 	mux.HandleFunc("GET /admin/links", s.requireAuth(s.adminLinks))
 	mux.HandleFunc("GET /admin/links/new", s.requireAuth(s.adminLinkNew))
+	mux.HandleFunc("GET /admin/links/{id}/preview", s.requireAuth(s.adminLinkPreview))
 	mux.HandleFunc("GET /admin/links/{id}/edit", s.requireAuth(s.adminLinkEdit))
 	mux.HandleFunc("POST /admin/links", s.requireAuth(s.adminLinkCreate))
 	mux.HandleFunc("POST /admin/links/{id}", s.requireAuth(s.adminLinkUpdate))
@@ -1039,7 +1074,13 @@ func (s *Server) routes(assetsFS fs.FS) {
 // ---------- 公开处理器 ----------
 
 func (s *Server) view(r *http.Request, nav string) *View {
-	lang := langFrom(r)
+	return s.viewForLang(r, langFrom(r), nav)
+}
+
+func (s *Server) viewForLang(r *http.Request, lang, nav string) *View {
+	if !s.langEnabled(lang) {
+		lang = s.defaultLang()
+	}
 	st := s.site(lang)
 	st.BaseURL = s.publicBaseURL(r)
 	tr := s.i18n.Tr(lang, s.defaultLang())
@@ -1056,7 +1097,7 @@ func (s *Server) view(r *http.Request, nav string) *View {
 	}
 	v.Langs = s.langSwitch(lang, nil, "/")
 	v.Social = parseSocialLinks(s.store.Setting("social_links"))
-	v.Menu = s.menuItems(lang, tr, nav)
+	v.Menu = s.menuItems(r, lang, tr, nav)
 	return v
 }
 
@@ -1151,19 +1192,38 @@ func (s *Server) applyTheme(v *View, theme string) {
 }
 
 // menuItems 构建前台页眉导航：未配置时回落默认菜单（首页/分类/关于，用 i18n 文案）。
-func (s *Server) menuItems(lang string, tr *i18n.Tr, nav string) []MenuItem {
+func (s *Server) menuItems(r *http.Request, lang string, tr *i18n.Tr, nav string) []MenuItem {
 	rows := parseMenuRows(s.store.Setting("nav_menu"))
 	if len(rows) == 0 {
 		categoryPath := s.archiveConfig(lang, "post").Path
+		linksPath := s.archiveConfig(lang, "link").Path
 		return []MenuItem{
 			{Href: tr.U("/"), Label: tr.T("nav.home"), Active: nav == "home", Index: 0},
 			{Href: tr.U(categoryPath), Label: tr.T("nav.category"), Active: nav == "category", Index: 1},
-			{Href: tr.U("/links"), Label: tr.T("nav.links"), Active: nav == "links", Index: 2},
+			{Href: tr.U(linksPath), Label: tr.T("nav.links"), Active: nav == "links", Index: 2},
 			{Href: tr.U("/about"), Label: tr.T("nav.about"), Active: nav == "about", Index: 3},
 		}
 	}
 	def := s.defaultLang()
 	out := make([]MenuItem, 0, len(rows))
+	currentPath := r.URL.Path
+	if currentPath == "" {
+		currentPath = "/"
+	}
+	currentFull := currentPath
+	if r.URL.RawQuery != "" {
+		currentFull += "?" + r.URL.RawQuery
+	}
+	exactAny := false
+	groupCount := 0
+	for _, m := range rows {
+		if menuURLMatchesCurrent(m.URL, currentPath, currentFull) {
+			exactAny = true
+		}
+		if k := navKeyOf(m.URL); k != "" && k == nav {
+			groupCount++
+		}
+	}
 	for i, m := range rows {
 		label := strings.TrimSpace(m.Labels[lang])
 		if label == "" {
@@ -1178,31 +1238,78 @@ func (s *Server) menuItems(lang string, tr *i18n.Tr, nav string) []MenuItem {
 			href = tr.U(m.URL)
 		}
 		k := navKeyOf(m.URL)
-		out = append(out, MenuItem{Href: href, Label: label, Active: k != "" && k == nav, External: ext, Index: i})
+		active := false
+		if exactAny {
+			active = menuURLMatchesCurrent(m.URL, currentPath, currentFull)
+		} else if groupCount == 1 {
+			active = k != "" && k == nav
+		}
+		out = append(out, MenuItem{Href: href, Label: label, Active: active, External: ext, Index: i})
 	}
 	return out
 }
 
-// menuEditRows 为后台导航编辑提供回填行：未配置时给出默认菜单可编辑副本（各语种填 i18n 文案）。
-func (s *Server) menuEditRows() []MenuRow {
-	if rows := parseMenuRows(s.store.Setting("nav_menu")); len(rows) > 0 {
-		return rows
-	}
+func (s *Server) menuTargetOptions() []MenuTargetOption {
 	def := s.defaultLang()
-	categoryPath := s.archiveConfig(def, "post").Path
-	mk := func(url, key string) MenuRow {
+	locales := s.locales()
+	labelsFromKey := func(key string) map[string]string {
 		labels := map[string]string{}
-		for _, l := range s.locales() {
+		for _, l := range locales {
 			labels[l.Code] = s.i18n.Tr(l.Code, def).T(key)
 		}
-		return MenuRow{URL: url, Labels: labels}
+		return labels
 	}
-	return []MenuRow{
-		mk("/", "nav.home"),
-		mk(categoryPath, "nav.category"),
-		mk("/links", "nav.links"),
-		mk("/about", "nav.about"),
+	archiveLabels := func(kind, fallback string) map[string]string {
+		labels := map[string]string{}
+		for _, l := range locales {
+			if title := strings.TrimSpace(s.archiveConfig(l.Code, kind).Title); title != "" {
+				labels[l.Code] = title
+			} else {
+				labels[l.Code] = s.i18n.Tr(l.Code, def).T(fallback)
+			}
+		}
+		return labels
 	}
+	staticLabels := func(zh, en string) map[string]string {
+		labels := map[string]string{}
+		for _, l := range locales {
+			if l.Code == "en" {
+				labels[l.Code] = en
+			} else {
+				labels[l.Code] = zh
+			}
+		}
+		return labels
+	}
+	categoryPath := s.archiveConfig(def, "post").Path
+	linksPath := s.archiveConfig(def, "link").Path
+	return []MenuTargetOption{
+		{Value: "home", Label: "首页", URL: "/", Kind: "preset", Labels: labelsFromKey("nav.home")},
+		{Value: "category", Label: "文章分类页", URL: categoryPath, Kind: "preset", Labels: archiveLabels("post", "nav.category")},
+		{Value: "links", Label: "链接页", URL: linksPath, Kind: "preset", Labels: archiveLabels("link", "nav.links")},
+		{Value: "about", Label: "关于页", URL: "/about", Kind: "preset", Labels: labelsFromKey("nav.about")},
+		{Value: "start", Label: "开始使用页", URL: "/start", Kind: "preset", Labels: staticLabels("开始使用", "Get Started")},
+		{Value: "search", Label: "搜索页", URL: "/search", Kind: "preset", Labels: labelsFromKey("nav.search")},
+		{Value: "__custom__", Label: "自定义站内路径", Kind: "custom", Labels: map[string]string{}},
+		{Value: "__external__", Label: "外部链接", Kind: "external", Labels: map[string]string{}},
+	}
+}
+
+// menuEditRows 为后台导航编辑提供回填行：未配置时给出默认菜单可编辑副本（各语种填 i18n 文案）。
+func (s *Server) menuEditRows() []MenuRow {
+	targets := s.menuTargetOptions()
+	if rows := parseMenuRows(s.store.Setting("nav_menu")); len(rows) > 0 {
+		return decorateMenuRows(rows, targets)
+	}
+	byValue := map[string]MenuTargetOption{}
+	for _, opt := range targets {
+		byValue[opt.Value] = opt
+	}
+	mk := func(value string) MenuRow {
+		opt := byValue[value]
+		return MenuRow{URL: opt.URL, Labels: opt.Labels}
+	}
+	return decorateMenuRows([]MenuRow{mk("home"), mk("category"), mk("links"), mk("about")}, targets)
 }
 
 func (s *Server) home(w http.ResponseWriter, r *http.Request) {
@@ -1485,8 +1592,21 @@ func (s *Server) apiDocs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) about(w http.ResponseWriter, r *http.Request) {
+	s.renderPageBySlug(w, r, "about")
+}
+
+func (s *Server) page(w http.ResponseWriter, r *http.Request) {
+	slug := trim(r.PathValue("slug"))
+	if slug == "" {
+		s.notFound(w, r)
+		return
+	}
+	s.renderPageBySlug(w, r, slug)
+}
+
+func (s *Server) renderPageBySlug(w http.ResponseWriter, r *http.Request, slug string) {
 	lang := langFrom(r)
-	p, err := s.store.GetPage(lang, "about")
+	p, err := s.store.GetPage(lang, slug)
 	if err != nil {
 		s.serverError(w, err)
 		return
@@ -1495,7 +1615,7 @@ func (s *Server) about(w http.ResponseWriter, r *http.Request) {
 		s.notFound(w, r)
 		return
 	}
-	v := s.view(r, "about")
+	v := s.view(r, slug)
 	v.SEO = v.Site.Page(p)
 	v.Page = p
 	v.ContentHTML, _ = s.renderedContent(p)

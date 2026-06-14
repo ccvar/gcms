@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 560" role="img" aria-label="Automation API key page with scoped permissions">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f4fbff"/>
+      <stop offset="1" stop-color="#fff8ed"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="24" flood-color="#2e4252" flood-opacity=".14"/>
+    </filter>
+    <style>
+      text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .ink { fill: #17191c; }
+      .muted { fill: #7f7a73; }
+      .accent { fill: #a83d31; }
+      .small { font-size: 14px; }
+      .label { font-size: 16px; font-weight: 700; }
+      .title { font-size: 26px; font-weight: 800; }
+    </style>
+  </defs>
+  <rect width="1280" height="560" rx="34" fill="url(#bg)"/>
+  <g filter="url(#shadow)">
+    <rect x="88" y="74" width="1104" height="410" rx="28" fill="#fff"/>
+  </g>
+  <rect x="88" y="74" width="1104" height="66" rx="28" fill="#faf7f1"/>
+  <text x="126" y="116" class="title ink">Automation API</text>
+  <rect x="982" y="92" width="150" height="32" rx="16" fill="#a83d31"/>
+  <text x="1014" y="113" class="small" fill="#fff">Create key</text>
+  <rect x="126" y="168" width="430" height="74" rx="18" fill="#f7fbff" stroke="#dce8f0"/>
+  <text x="152" y="199" class="label ink">Base URL</text>
+  <text x="152" y="225" font-size="18" fill="#3b4652">https://ccvar.com/api/admin/v1</text>
+  <rect x="584" y="168" width="548" height="74" rx="18" fill="#fff8ee" stroke="#ebd8c0"/>
+  <text x="612" y="199" class="label ink">Give this to your tool</text>
+  <text x="612" y="225" class="small muted">OpenAPI file, AI guide, example requests and one-time key.</text>
+
+  <rect x="126" y="274" width="1006" height="152" rx="18" fill="#fff" stroke="#e3ded4"/>
+  <rect x="126" y="274" width="1006" height="46" rx="18" fill="#fbfaf7"/>
+  <text x="156" y="304" class="small muted">Name</text>
+  <text x="406" y="304" class="small muted">Permission scope</text>
+  <text x="824" y="304" class="small muted">Status</text>
+  <text x="1002" y="304" class="small muted">Actions</text>
+  <text x="156" y="362" class="label ink">Content assistant</text>
+  <text x="156" y="388" class="small muted">gcms_891f...a90c</text>
+  <g>
+    <rect x="406" y="346" width="108" height="30" rx="15" fill="#fff0ed"/>
+    <text x="430" y="367" class="small accent">Posts</text>
+    <rect x="526" y="346" width="106" height="30" rx="15" fill="#edf8ff"/>
+    <text x="552" y="367" class="small" fill="#227aa1">Pages</text>
+    <rect x="644" y="346" width="100" height="30" rx="15" fill="#eefaf3"/>
+    <text x="670" y="367" class="small" fill="#218557">Links</text>
+  </g>
+  <circle cx="844" cy="360" r="9" fill="#1d8b5e"/>
+  <text x="866" y="366" class="small muted">Active</text>
+  <rect x="972" y="342" width="54" height="34" rx="12" fill="#f6f0e9" stroke="#e4ded5"/>
+  <rect x="1038" y="342" width="58" height="34" rx="12" fill="#fff0ed" stroke="#ecc7c0"/>
+
+  <g filter="url(#shadow)">
+    <rect x="712" y="360" width="348" height="126" rx="20" fill="#fffaf0"/>
+  </g>
+  <text x="742" y="398" class="label ink">AI helper package</text>
+  <rect x="742" y="420" width="118" height="34" rx="12" fill="#a83d31"/>
+  <text x="766" y="442" class="small" fill="#fff">Download</text>
+  <text x="882" y="442" class="small muted">openapi.json + prompt.md + key.txt</text>
+</svg>

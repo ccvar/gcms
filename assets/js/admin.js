@@ -87,12 +87,16 @@
   function closeDD() {
     if (openDD) { openDD.classList.remove("open"); openDD.querySelector(".dd-toggle").setAttribute("aria-expanded", "false"); openDD = null; }
   }
-  document.querySelectorAll(".dropdown").forEach(function (dd) {
+  function initDropdown(dd) {
+    if (!dd || dd.dataset.ddReady === "1") return;
     var toggle = dd.querySelector(".dd-toggle");
     var label = dd.querySelector(".dd-label");
     var hidden = dd.querySelector('input[type="hidden"]');
     var items = Array.prototype.slice.call(dd.querySelectorAll(".dd-menu li"));
+    if (!toggle) return;
+    dd.dataset.ddReady = "1";
     function select(li) {
+      if (!li) return;
       items.forEach(function (x) { x.setAttribute("aria-selected", "false"); });
       li.setAttribute("aria-selected", "true");
       if (hidden) hidden.value = li.getAttribute("data-value");
@@ -112,7 +116,9 @@
       else if (e.key === "ArrowDown") { e.preventDefault(); select(items[Math.min(items.length - 1, cur + 1)] || items[0]); }
       else if (e.key === "ArrowUp") { e.preventDefault(); select(items[Math.max(0, cur - 1)] || items[0]); }
     });
-  });
+  }
+  document.querySelectorAll(".dropdown").forEach(initDropdown);
+  window.adminInitDropdown = initDropdown;
   document.addEventListener("click", closeDD);
 
   /* 状态=定时发布 时显示发布时间输入 */
@@ -404,6 +410,25 @@
         btn.classList.toggle("active", btn.getAttribute("data-visual-size") === size);
       });
     }
+    function saveVisualKey(key, value, label) {
+      var data = new URLSearchParams();
+      data.set("_csrf", CSRF);
+      data.set("lang", root.getAttribute("data-lang") || "");
+      data.set("key", key);
+      data.set("value", value || "");
+      setStatus("正在保存" + (label || "设置") + "...");
+      return fetch(root.getAttribute("data-save-url"), {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {"Accept": "application/json", "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8", "X-Requested-With": "XMLHttpRequest"},
+        body: data.toString()
+      }).then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (j) {
+          if (!r.ok) throw j;
+          return j;
+        });
+      });
+    }
     function updatePageLabel() {
       if (!pageLabel) return;
       var doc = frameDoc();
@@ -584,6 +609,17 @@
     root.querySelectorAll("[data-visual-size]").forEach(function (btn) {
       btn.addEventListener("click", function () { setSize(btn.getAttribute("data-visual-size")); });
     });
+    var widthDD = root.querySelector("[data-visual-width]");
+    if (widthDD) {
+      widthDD.addEventListener("dd:change", function (e) {
+        saveVisualKey("layout.width", e.detail.value || "", "页面宽度").then(function () {
+          setStatus("页面宽度已保存，正在刷新预览。");
+          reloadFrame(true);
+        }).catch(function (err) {
+          setStatus((err && (err.message || err.error)) || "页面宽度保存失败。", true);
+        });
+      });
+    }
     if (currentToggle) currentToggle.addEventListener("change", refreshFieldVisibility);
     if (valueInput) valueInput.addEventListener("input", function () {
       if (currentKind() === "image") setImagePreview(valueInput.value.trim());
@@ -688,7 +724,7 @@
     addBtn.addEventListener("click", function () {
       var row = document.createElement("div");
       row.className = "social-row";
-      row.innerHTML = '<input name="social_url" placeholder="https://github.com/you 或 mailto:you@x.com" inputmode="url"><input name="social_label" placeholder="名称（可选）"><button type="button" class="social-del" data-social-del title="删除" aria-label="删除"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg></button>';
+      row.innerHTML = '<input name="social_url" placeholder="https://github.com/you 或 mailto:you@x.com" inputmode="url"><input name="social_label" placeholder="名称（可选）"><button type="button" class="social-del" data-social-del data-confirm="删除这条社交链接？保存站点信息后生效。" title="删除" aria-label="删除"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg></button>';
       box.appendChild(row);
       var inp = row.querySelector("input"); if (inp) inp.focus();
     });
@@ -698,30 +734,184 @@
     });
   })();
 
-  /* 导航菜单：增 / 删 / 拖动排序（仅手柄可拖，避免影响输入框） */
+  /* 导航菜单：常用目标 / 自定义路径 / 增删 / 拖动排序 */
   (function () {
     var box = document.querySelector("[data-menu-rows]");
     var addBtn = document.querySelector("[data-menu-add]");
     if (!box) return;
     var langs = (box.getAttribute("data-langs") || "").split(",").filter(Boolean);
     var names = (box.getAttribute("data-lang-names") || "").split(",");
+    var livePreview = document.querySelector("[data-menu-live-preview]");
+    var previewList = livePreview ? livePreview.querySelector("[data-menu-preview-list]") : null;
+    var previewLang = (livePreview && livePreview.getAttribute("data-preview-lang")) || langs[0] || "";
+    var targets = [];
+    try { targets = JSON.parse(box.getAttribute("data-targets") || "[]") || []; } catch (e) { targets = []; }
     var trash = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>';
-    function labelsHTML() {
+    function esc(s) {
+      return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+        return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c];
+      });
+    }
+    function optionByValue(value) {
+      for (var i = 0; i < targets.length; i++) {
+        if (targets[i].value === value) return targets[i];
+      }
+      return targets[0] || { value: "__custom__", label: "自定义站内路径", kind: "custom", url: "", labels: {} };
+    }
+    function targetLabels(opt) {
+      return (opt && opt.labels && typeof opt.labels === "object") ? opt.labels : {};
+    }
+    function optionLabelsFromLI(li) {
+      if (!li) return {};
+      try { return JSON.parse(li.getAttribute("data-labels") || "{}") || {}; } catch (e) { return {}; }
+    }
+    function labelsHTML(values) {
+      values = values || {};
       return langs.map(function (code, i) {
-        return '<label class="menu-label"><span class="ml-lang">' + (names[i] || code) + '</span><input name="nav_label_' + code + '" placeholder="名称"></label>';
+        return '<label class="menu-label"><span class="ml-lang">' + esc(names[i] || code) + '</span><input name="nav_label_' + esc(code) + '" value="' + esc(values[code] || "") + '" placeholder="名称"></label>';
       }).join("");
+    }
+    function targetDropdownHTML(selected) {
+      var cur = optionByValue(selected || "__custom__");
+      var items = targets.map(function (t) {
+        var labels = JSON.stringify(targetLabels(t));
+        return '<li data-value="' + esc(t.value) + '" data-url="' + esc(t.url || "") + '" data-kind="' + esc(t.kind || "preset") + '" data-labels="' + esc(labels) + '" aria-selected="' + (t.value === cur.value ? "true" : "false") + '">' + esc(t.label || t.value) + '</li>';
+      }).join("");
+      return '<div class="dropdown menu-target" data-menu-target><button type="button" class="dd-toggle" aria-haspopup="listbox" aria-expanded="false"><span class="dd-label">' + esc(cur.label || cur.value) + '</span><span class="dd-caret" aria-hidden="true">⌄</span></button><input type="hidden" class="menu-target-value" value="' + esc(cur.value) + '"><ul class="dd-menu" role="listbox">' + items + '</ul></div>';
+    }
+    function setPreview(row, value) {
+      var path = row.querySelector("[data-menu-path]");
+      if (path) path.textContent = (value || "").trim() || "待填写";
+    }
+    function rowInputByLang(row, code) {
+      var input = null;
+      [].some.call(row.querySelectorAll(".menu-label input"), function (el) {
+        if (el.name === "nav_label_" + code) { input = el; return true; }
+        return false;
+      });
+      return input;
+    }
+    function rowLabel(row) {
+      var input = previewLang ? rowInputByLang(row, previewLang) : null;
+      var label = input ? input.value.trim() : "";
+      if (!label) {
+        for (var i = 0; i < langs.length; i++) {
+          input = rowInputByLang(row, langs[i]);
+          label = input ? input.value.trim() : "";
+          if (label) break;
+        }
+      }
+      if (!label) {
+        var ddLabel = row.querySelector("[data-menu-target] .dd-label");
+        label = ddLabel ? ddLabel.textContent.trim() : "";
+      }
+      if (!label) {
+        var hidden = row.querySelector(".menu-url");
+        label = hidden && hidden.value ? hidden.value.trim() : "未命名";
+      }
+      return label;
+    }
+    function rowURL(row) {
+      var hidden = row.querySelector(".menu-url");
+      return hidden ? hidden.value.trim() : "";
+    }
+    function isExternalMenuRow(row) {
+      var url = rowURL(row);
+      var val = (row.querySelector(".menu-target-value") || {}).value || "";
+      return val === "__external__" || /^https?:\/\//.test(url) || /^mailto:/i.test(url);
+    }
+    function updateMenuPreview() {
+      if (!previewList) return;
+      var rows = [].slice.call(box.querySelectorAll(".menu-row"));
+      if (!rows.length) {
+        previewList.innerHTML = '<span class="menu-preview-empty">暂无菜单项</span>';
+        return;
+      }
+      previewList.innerHTML = rows.map(function (row) {
+        var label = rowLabel(row);
+        var url = rowURL(row) || "待填写";
+        var ext = isExternalMenuRow(row);
+        return '<span class="menu-preview-item' + (ext ? ' is-external' : '') + '" title="' + esc(url) + '"><span>' + esc(label) + '</span>' + (ext ? '<span class="menu-preview-ext" aria-hidden="true">↗</span>' : '') + '</span>';
+      }).join("");
+    }
+    function setLabels(row, labels) {
+      if (!labels || !Object.keys(labels).length) return;
+      langs.forEach(function (code) {
+        var input = rowInputByLang(row, code);
+        if (input) input.value = labels[code] || "";
+      });
+    }
+    function syncCustomURL(row) {
+      var custom = row.querySelector(".menu-custom-url");
+      var hidden = row.querySelector(".menu-url");
+      if (!custom || !hidden) return;
+      hidden.value = custom.value.trim();
+      setPreview(row, hidden.value);
+      updateMenuPreview();
+    }
+    function applyTarget(row, value, fillLabels) {
+      var selected = null;
+      [].some.call(row.querySelectorAll("[data-menu-target] li"), function (li) {
+        if (li.getAttribute("data-value") === value) { selected = li; return true; }
+        return false;
+      });
+      var opt = optionByValue(value);
+      var kind = (selected && selected.getAttribute("data-kind")) || opt.kind || "preset";
+      var url = (selected && selected.getAttribute("data-url")) || opt.url || "";
+      var hidden = row.querySelector(".menu-url");
+      var customWrap = row.querySelector("[data-menu-custom-wrap]");
+      var custom = row.querySelector(".menu-custom-url");
+      var isCustom = kind === "custom" || kind === "external";
+      if (customWrap) customWrap.hidden = !isCustom;
+      if (hidden) {
+        if (isCustom) {
+          if (fillLabels && row.dataset.customTarget !== "1" && custom) custom.value = "";
+          hidden.value = custom ? custom.value.trim() : "";
+        } else {
+          hidden.value = url;
+          if (custom) custom.value = url;
+        }
+        setPreview(row, hidden.value);
+      }
+      row.dataset.customTarget = isCustom ? "1" : "0";
+      if (fillLabels && !isCustom) setLabels(row, selected ? optionLabelsFromLI(selected) : targetLabels(opt));
+      if (isCustom && custom && fillLabels) custom.focus();
+      updateMenuPreview();
     }
     if (addBtn) addBtn.addEventListener("click", function () {
       var row = document.createElement("div");
       row.className = "menu-row";
-      row.innerHTML = '<span class="drag-handle" aria-hidden="true">⠿</span><div class="menu-fields"><input class="menu-url" name="nav_url" placeholder="/ 或 /category 或 https://…" inputmode="url"><div class="menu-labels">' + labelsHTML() + '</div></div><button type="button" class="menu-del" data-menu-del title="删除" aria-label="删除">' + trash + '</button>';
+      row.dataset.customTarget = "1";
+      row.innerHTML = '<span class="drag-handle" aria-hidden="true">⠿</span><div class="menu-fields"><div class="menu-main"><div class="menu-target-wrap"><label>指向哪里</label>' + targetDropdownHTML("__custom__") + '</div><div class="menu-path-preview"><span>路径</span><code data-menu-path>待填写</code></div></div><input class="menu-url" type="hidden" name="nav_url"><div class="menu-custom-wrap" data-menu-custom-wrap><label>自定义地址</label><input class="menu-custom-url" placeholder="/docs 或 https://example.com" inputmode="url"></div><details class="menu-label-details" open><summary>菜单文字</summary><div class="menu-labels">' + labelsHTML() + '</div></details></div><button type="button" class="menu-del" data-menu-del data-confirm="删除这个菜单项？保存菜单后生效。" title="删除" aria-label="删除">' + trash + '</button>';
       box.appendChild(row);
-      var inp = row.querySelector(".menu-url"); if (inp) inp.focus();
+      if (window.adminInitDropdown) window.adminInitDropdown(row.querySelector(".dropdown"));
+      updateMenuPreview();
+      var inp = row.querySelector(".menu-custom-url"); if (inp) inp.focus();
     });
     box.addEventListener("click", function (e) {
       var del = e.target.closest("[data-menu-del]");
-      if (del) { var r = del.closest(".menu-row"); if (r) r.remove(); }
+      if (del) { var r = del.closest(".menu-row"); if (r) r.remove(); updateMenuPreview(); }
     });
+    box.addEventListener("dd:change", function (e) {
+      var dd = e.target.closest("[data-menu-target]");
+      if (!dd) return;
+      var row = dd.closest(".menu-row");
+      if (row) applyTarget(row, e.detail.value, true);
+    });
+    box.addEventListener("input", function (e) {
+      if (e.target.closest(".menu-custom-url")) {
+        var row = e.target.closest(".menu-row");
+        if (row) syncCustomURL(row);
+      } else if (e.target.closest(".menu-label input")) {
+        updateMenuPreview();
+      }
+    });
+    [].forEach.call(box.querySelectorAll(".menu-row"), function (row) {
+      var dd = row.querySelector("[data-menu-target]");
+      var val = dd ? (dd.querySelector(".menu-target-value") || {}).value : "";
+      applyTarget(row, val || "__custom__", false);
+    });
+    updateMenuPreview();
     // 仅在按下手柄时让该行可拖；其余区域可正常编辑输入框
     box.addEventListener("mousedown", function (e) {
       var inHandle = e.target.closest(".drag-handle");
@@ -748,6 +938,7 @@
         if (e.clientY < rect.top + rect.height / 2) { after = rows[i]; break; }
       }
       if (after) box.insertBefore(dragEl, after); else box.appendChild(dragEl);
+      updateMenuPreview();
     });
   })();
 
@@ -1346,20 +1537,20 @@
     });
   })();
 
-  /* ---------- 统一确认弹层（替代系统 confirm；拦截带 data-confirm 的表单） ---------- */
+  /* ---------- 统一确认弹层（替代系统 confirm；拦截带 data-confirm 的表单和按钮） ---------- */
   (function () {
     var modal = document.getElementById("confirm-modal");
     if (!modal) return;
     var msgEl = modal.querySelector("[data-confirm-msg]");
     var okBtn = modal.querySelector("[data-confirm-ok]");
     var titleEl = modal.querySelector("#confirm-title");
-    var pendingForm = null;
-    function close() { modal.hidden = true; pendingForm = null; }
-    function open(form) {
-      pendingForm = form;
-      if (msgEl) msgEl.textContent = form.getAttribute("data-confirm") || "确定执行此操作？";
-      if (okBtn) okBtn.textContent = form.getAttribute("data-confirm-ok") || "删除";
-      if (titleEl) titleEl.textContent = form.getAttribute("data-confirm-title") || "确认删除";
+    var pendingAction = null;
+    function close() { modal.hidden = true; pendingAction = null; }
+    function open(target, action) {
+      pendingAction = action;
+      if (msgEl) msgEl.textContent = target.getAttribute("data-confirm") || "确定执行此操作？";
+      if (okBtn) okBtn.textContent = target.getAttribute("data-confirm-ok") || "删除";
+      if (titleEl) titleEl.textContent = target.getAttribute("data-confirm-title") || "确认删除";
       modal.hidden = false;
       if (okBtn) setTimeout(function () { okBtn.focus(); }, 0);
     }
@@ -1370,13 +1561,27 @@
       if (form.dataset.confirmed === "1") { delete form.dataset.confirmed; return; }
       e.preventDefault();
       e.stopImmediatePropagation();
-      open(form);
+      open(form, function () {
+        form.dataset.confirmed = "1";
+        if (typeof form.requestSubmit === "function") form.requestSubmit(); else form.submit();
+      });
+    }, true);
+    // 普通按钮也能复用同一个确认框，例如：清空图片、移除菜单项、删除未保存的社交链接行。
+    document.addEventListener("click", function (e) {
+      var target = e.target.closest && e.target.closest("[data-confirm]");
+      if (!target || !target.matches || target.matches("form")) return;
+      if (target.closest("form[data-confirm]")) return;
+      if (target.dataset.confirmed === "1") { delete target.dataset.confirmed; return; }
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      open(target, function () {
+        target.dataset.confirmed = "1";
+        target.click();
+      });
     }, true);
     if (okBtn) okBtn.addEventListener("click", function () {
-      var f = pendingForm; close();
-      if (!f) return;
-      f.dataset.confirmed = "1";
-      if (typeof f.requestSubmit === "function") f.requestSubmit(); else f.submit();
+      var action = pendingAction; close();
+      if (action) action();
     });
     modal.querySelectorAll("[data-confirm-cancel]").forEach(function (b) { b.addEventListener("click", close); });
     document.addEventListener("keydown", function (e) { if (e.key === "Escape" && !modal.hidden) close(); });

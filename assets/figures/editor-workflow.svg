@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 560" role="img" aria-label="Realistic admin editor workflow">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fff8ed"/>
+      <stop offset="1" stop-color="#f3fbff"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="24" flood-color="#4c382f" flood-opacity=".15"/>
+    </filter>
+    <style>
+      text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .ink { fill: #18191b; }
+      .muted { fill: #7d7871; }
+      .accent { fill: #a83d31; }
+      .small { font-size: 14px; }
+      .label { font-size: 16px; font-weight: 700; }
+      .title { font-size: 24px; font-weight: 800; }
+    </style>
+  </defs>
+  <rect width="1280" height="560" rx="34" fill="url(#bg)"/>
+  <g filter="url(#shadow)">
+    <rect x="86" y="64" width="1108" height="430" rx="28" fill="#fff"/>
+  </g>
+  <rect x="86" y="64" width="1108" height="62" rx="28" fill="#faf7f1"/>
+  <circle cx="120" cy="95" r="6" fill="#d7c9bd"/>
+  <circle cx="142" cy="95" r="6" fill="#d7c9bd"/>
+  <circle cx="164" cy="95" r="6" fill="#d7c9bd"/>
+  <rect x="222" y="82" width="236" height="26" rx="13" fill="#fff" stroke="#e5ddd3"/>
+  <text x="242" y="101" class="small muted">/admin/posts/edit</text>
+  <rect x="1048" y="80" width="88" height="30" rx="15" fill="#a83d31"/>
+  <text x="1070" y="101" class="small" fill="#fff">Publish</text>
+
+  <rect x="86" y="126" width="178" height="368" fill="#f3efe7"/>
+  <rect x="116" y="164" width="116" height="18" rx="9" fill="#a83d31"/>
+  <rect x="116" y="220" width="104" height="12" rx="6" fill="#d0c8bd"/>
+  <rect x="116" y="260" width="92" height="12" rx="6" fill="#d0c8bd"/>
+  <rect x="116" y="300" width="122" height="12" rx="6" fill="#d0c8bd"/>
+  <rect x="116" y="340" width="88" height="12" rx="6" fill="#d0c8bd"/>
+
+  <text x="306" y="174" class="title ink">Edit article</text>
+  <rect x="306" y="202" width="548" height="52" rx="14" fill="#fff" stroke="#e4ded5"/>
+  <text x="330" y="235" font-size="22" class="ink">Build a small site that still feels complete</text>
+  <g>
+    <rect x="306" y="276" width="108" height="38" rx="19" fill="#a83d31"/>
+    <text x="334" y="301" class="small" fill="#fff">Markdown</text>
+    <rect x="424" y="276" width="96" height="38" rx="19" fill="#f6f0e9" stroke="#e4ded5"/>
+    <text x="452" y="301" class="small muted">Rich text</text>
+  </g>
+  <rect x="306" y="334" width="548" height="112" rx="16" fill="#111827"/>
+  <text x="334" y="372" font-size="17" fill="#f4efe8">## Why gcms stays light</text>
+  <text x="334" y="410" font-size="15" fill="#c7d2de">Go keeps deployment simple. SQLite keeps the data portable.</text>
+  <rect x="334" y="428" width="224" height="8" rx="4" fill="#40536a"/>
+
+  <rect x="890" y="154" width="248" height="128" rx="18" fill="#fffaf3" stroke="#e3ded4"/>
+  <text x="918" y="190" class="label ink">Cover image</text>
+  <rect x="918" y="210" width="184" height="44" rx="12" fill="#efeae1"/>
+  <path d="M940 244l38-34 26 24 18-15 52 25" fill="none" stroke="#b64a3d" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="890" y="310" width="248" height="136" rx="18" fill="#fff" stroke="#e3ded4"/>
+  <text x="918" y="346" class="label ink">SEO preview</text>
+  <rect x="918" y="370" width="142" height="13" rx="6.5" fill="#2f71d0"/>
+  <rect x="918" y="398" width="184" height="10" rx="5" fill="#d8dfe7"/>
+  <rect x="918" y="420" width="156" height="10" rx="5" fill="#e5ebf0"/>
+</svg>

@@ -3,16 +3,16 @@
 <rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/">
   <channel>
     <title>CCVAR 简记</title>
-    <link>https://cms.ccvar.com/</link>
+    <link>https://ccvar.com/</link>
     <description>用 Go 与 SQLite 构建的轻量内容站，关注后端工程、极简设计与 SEO。</description>
     <language>zh-CN</language>
     <lastBuildDate>Mon, 02 Jun 2026 09:00:00 +0800</lastBuildDate>
-    <atom:link href="https://cms.ccvar.com/rss.xml" rel="self" type="application/rss+xml"/>
+    <atom:link href="https://ccvar.com/rss.xml" rel="self" type="application/rss+xml"/>
 
     <item>
       <title>用 Go 与 SQLite 构建一个轻量内容管理系统</title>
-      <link>https://cms.ccvar.com/posts/go-sqlite-cms</link>
-      <guid isPermaLink="true">https://cms.ccvar.com/posts/go-sqlite-cms</guid>
+      <link>https://ccvar.com/posts/go-sqlite-cms</link>
+      <guid isPermaLink="true">https://ccvar.com/posts/go-sqlite-cms</guid>
       <description>一个静态二进制 + 一个数据库文件，跑起一个可被搜索引擎完全收录的内容站。</description>
       <category>工程</category>
       <pubDate>Mon, 02 Jun 2026 09:00:00 +0800</pubDate>
@@ -20,8 +20,8 @@
 
     <item>
       <title>为什么服务端渲染，依然是 SEO 的最优解</title>
-      <link>https://cms.ccvar.com/posts/ssr-and-seo</link>
-      <guid isPermaLink="true">https://cms.ccvar.com/posts/ssr-and-seo</guid>
+      <link>https://ccvar.com/posts/ssr-and-seo</link>
+      <guid isPermaLink="true">https://ccvar.com/posts/ssr-and-seo</guid>
       <description>从抓取预算、首屏速度与可访问性，重新审视服务端渲染。</description>
       <category>SEO</category>
       <pubDate>Wed, 28 May 2026 09:00:00 +0800</pubDate>

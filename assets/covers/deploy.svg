@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" role="img" aria-label="Deployment flow">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fff8ed"/>
+      <stop offset="1" stop-color="#edf8ff"/>
+    </linearGradient>
+    <pattern id="grid" width="64" height="64" patternUnits="userSpaceOnUse">
+      <path d="M64 0H0v64" fill="none" stroke="#d8e9f6" stroke-width="2" opacity=".45"/>
+    </pattern>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="28" flood-color="#6f332a" flood-opacity=".14"/>
+    </filter>
+    <filter id="soft" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="12" stdDeviation="18" flood-color="#6f332a" flood-opacity=".12"/>
+    </filter>
+  </defs>
+  <rect width="1280" height="720" fill="url(#bg)"/>
+  <rect width="1280" height="720" fill="url(#grid)"/>
+  <g filter="url(#shadow)">
+    <rect x="210" y="108" width="860" height="504" rx="46" fill="#fffdf8"/>
+    <rect x="210" y="108" width="860" height="72" rx="46" fill="#fff7ee"/>
+    <path d="M210 180h860" stroke="#eaded1" stroke-width="3"/>
+    <circle cx="266" cy="144" r="11" fill="#d86756"/>
+    <circle cx="302" cy="144" r="11" fill="#dfc7b6"/>
+    <circle cx="338" cy="144" r="11" fill="#dfc7b6"/>
+    <rect x="820" y="130" width="158" height="28" rx="14" fill="#f2e8dd"/>
+  </g>
+  <g filter="url(#soft)">
+    <rect x="300" y="250" width="178" height="210" rx="30" fill="#fff"/>
+    <rect x="328" y="286" width="96" height="22" rx="11" fill="#c85f4f"/>
+    <rect x="328" y="335" width="118" height="16" rx="8" fill="#c8b8aa"/>
+    <rect x="328" y="374" width="92" height="16" rx="8" fill="#d9cdc0"/>
+    <rect x="328" y="414" width="126" height="16" rx="8" fill="#d9cdc0"/>
+    <rect x="544" y="214" width="192" height="282" rx="36" fill="#a63d2f"/>
+    <rect x="584" y="270" width="112" height="112" rx="24" fill="#fff7ee"/>
+    <path d="M616 326h48M640 302v48" stroke="#a63d2f" stroke-width="12" stroke-linecap="round"/>
+    <rect x="584" y="420" width="112" height="24" rx="12" fill="#fff7ee" opacity=".8"/>
+    <rect x="802" y="250" width="178" height="210" rx="30" fill="#fff"/>
+    <rect x="830" y="286" width="116" height="26" rx="13" fill="#eef6ff"/>
+    <path d="M844 388l34 34 62-78" fill="none" stroke="#1e915f" stroke-width="17" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <path d="M492 356h38M750 356h38" stroke="#c85f4f" stroke-width="14" stroke-linecap="round" stroke-dasharray="2 28"/>
+  <g fill="#a63d2f" opacity=".9">
+    <circle cx="524" cy="356" r="7"/>
+    <circle cx="756" cy="356" r="7"/>
+  </g>
+  <rect x="500" y="548" width="280" height="24" rx="12" fill="#8d8177" opacity=".16"/>
+</svg>
