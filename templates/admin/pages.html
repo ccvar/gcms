@@ -1,19 +1,19 @@
 {{define "body"}}  <div class="admin-head">
     <div>
-      <h1>页面</h1>
-      <p class="muted">独立页面（如「关于」），在此维护内容</p>
+      <h1>{{.Admin.T "admin.pages.title" "页面"}}</h1>
+      <p class="muted">{{.Admin.T "admin.pages.desc" "独立页面（如「关于」），在此维护内容"}}</p>
     </div>
   </div>
 
   {{if gt (len .Locales) 1}}
-  <div class="lang-tabs" role="tablist" aria-label="内容语种">
+  <div class="lang-tabs" role="tablist" aria-label="{{.Admin.T "admin.common.content_language" "内容语种"}}">
     {{range .Locales}}<a href="/admin/pages?lang={{.Code}}"{{if eq .Code $.EditLang}} class="active" aria-current="true"{{end}}>{{.Name}}</a>{{end}}
   </div>
   {{end}}
 
   <table class="admin-table">
     <thead>
-      <tr><th>标题</th><th>URL</th><th class="nowrap">更新时间</th><th class="right nowrap">操作</th></tr>
+      <tr><th>{{.Admin.T "admin.common.title" "标题"}}</th><th>URL</th><th class="nowrap">{{.Admin.T "admin.common.updated_at" "更新时间"}}</th><th class="right nowrap">{{.Admin.T "admin.common.actions" "操作"}}</th></tr>
     </thead>
     <tbody>
       {{range .AllPosts}}
@@ -22,12 +22,12 @@
         <td class="slug">/{{.Lang}}/{{.Slug}}</td>
         <td class="muted nowrap">{{adminDateTime .UpdatedAt}}</td>
         <td class="right actions">
-          <a class="act-ico" href="/{{.Lang}}/{{.Slug}}" target="_blank" title="查看" aria-label="查看">{{template "icon-extlink"}}</a>
-          <a class="act-ico" href="/admin/pages/{{.ID}}/edit" title="编辑" aria-label="编辑">{{template "icon-edit"}}</a>
+          <a class="act-ico" href="/{{.Lang}}/{{.Slug}}" target="_blank" title="{{$.Admin.T "admin.action.view" "查看"}}" aria-label="{{$.Admin.T "admin.action.view" "查看"}}">{{template "icon-extlink"}}</a>
+          <a class="act-ico" href="/admin/pages/{{.ID}}/edit" title="{{$.Admin.T "admin.action.edit" "编辑"}}" aria-label="{{$.Admin.T "admin.action.edit" "编辑"}}">{{template "icon-edit"}}</a>
         </td>
       </tr>
       {{else}}
-      <tr><td colspan="4" class="muted">该语种下还没有页面。</td></tr>
+      <tr><td colspan="4" class="muted">{{.Admin.T "admin.pages.empty" "该语种下还没有页面。"}}</td></tr>
       {{end}}
     </tbody>
   </table>

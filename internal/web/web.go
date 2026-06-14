@@ -189,9 +189,13 @@ type View struct {
 	AssetVer   string
 
 	// 多语种（前台）
-	Tr    *i18n.Tr
-	Lang  string
-	Langs []LangLink
+	Tr          *i18n.Tr
+	Lang        string
+	Langs       []LangLink
+	Admin       *i18n.AdminTr
+	AdminLang   string
+	AdminLangs  []i18n.Locale
+	AdminReturn string
 
 	Posts        []*store.Post
 	Featured     *store.Post
@@ -259,6 +263,7 @@ type View struct {
 	Locales          []i18n.Locale      // 已启用语种
 	AllLocales       []i18n.Locale      // 全部可选语种（内置 + 自定义，语言设置勾选）
 	CustomLocales    []i18n.Locale      // 自定义预设（可删除）
+	AdminI18NJSON    string             // 当前后台语种的用户覆盖翻译 JSON
 	Trans            []*store.Post      // 当前编辑文章的互译版本
 	Social           []SocialLink       // 页脚社交链接（前台渲染 / 后台回填）
 	Menu             []MenuItem         // 前台页眉导航（按当前语种解析）
@@ -1006,6 +1011,7 @@ func (s *Server) routes(assetsFS fs.FS) {
 	// 后台
 	mux.HandleFunc("GET /admin/login", s.adminLoginForm)
 	mux.HandleFunc("POST /admin/login", s.adminLoginPost)
+	mux.HandleFunc("GET /admin/language", s.adminLanguage)
 	mux.HandleFunc("POST /admin/logout", s.adminLogout)
 	mux.HandleFunc("POST /admin/dismiss-pw", s.requireAuth(s.adminDismissPw))
 	mux.HandleFunc("GET /admin", s.requireAuth(s.adminDashboard))
@@ -1024,6 +1030,7 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /admin/settings/comments", s.requireAuth(s.adminSaveComments))
 	mux.HandleFunc("POST /admin/settings/updates/upgrade", s.requireAuth(s.adminStartUpgrade))
 	mux.HandleFunc("POST /admin/settings/security", s.requireAuth(s.adminSavePassword))
+	mux.HandleFunc("POST /admin/settings/admin-i18n", s.requireAuth(s.adminSaveAdminI18N))
 	mux.HandleFunc("POST /admin/settings/demo/reload", s.requireAuth(s.adminReloadProductDemo))
 	mux.HandleFunc("POST /admin/settings/demo/clear", s.requireAuth(s.adminClearDemoContent))
 	mux.HandleFunc("POST /admin/settings/copy", s.requireAuth(s.adminSaveCopy))

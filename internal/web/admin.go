@@ -26,7 +26,10 @@ import (
 
 // ---------- 会话 ----------
 
-const cookieName = "ccvar_sess"
+const (
+	cookieName      = "ccvar_sess"
+	adminLangCookie = "gcms_admin_lang"
+)
 
 type session struct {
 	user        string
@@ -220,19 +223,76 @@ func (s *Server) checkCSRF(w http.ResponseWriter, r *http.Request) (session, boo
 	return sess, true
 }
 
-func (s *Server) adminView(title string) *View {
+func (s *Server) adminLang(r *http.Request) string {
+	if r != nil {
+		if lang := strings.TrimSpace(r.URL.Query().Get("admin_lang")); s.i18n.Known(lang) {
+			return lang
+		}
+		if c, err := r.Cookie(adminLangCookie); err == nil && s.i18n.Known(c.Value) {
+			return c.Value
+		}
+		if lang := negotiateAcceptLanguage(r.Header.Get("Accept-Language"), s.i18n.All(), "zh"); s.i18n.Known(lang) {
+			return lang
+		}
+	}
+	return "zh"
+}
+
+func (s *Server) adminI18NKey(lang string) string {
+	if !s.i18n.Known(lang) {
+		lang = "zh"
+	}
+	return "admin_i18n::" + lang
+}
+
+func (s *Server) adminI18NOverrides(lang string) map[string]string {
+	return i18n.ParseAdminOverrides(s.store.Setting(s.adminI18NKey(lang)))
+}
+
+func adminTitleKey(title string) string {
+	switch title {
+	case "登录":
+		return "admin.login.title"
+	case "文章":
+		return "admin.posts.title"
+	case "链接":
+		return "admin.links.title"
+	case "页面":
+		return "admin.pages.title"
+	case "设置":
+		return "admin.settings.title"
+	case "可视化编辑":
+		return "admin.nav.visual"
+	default:
+		return ""
+	}
+}
+
+func (s *Server) adminView(r *http.Request, title string) *View {
 	def := s.defaultLang()
 	site := s.site(def)
+	adminLang := s.adminLang(r)
+	admin := s.i18n.AdminTr(adminLang, s.adminI18NOverrides(adminLang))
+	titleText := admin.T(adminTitleKey(title), title)
+	suffix := admin.T("admin.brand.suffix", "后台")
+	adminReturn := "/admin"
+	if r != nil && r.URL != nil {
+		adminReturn = r.URL.RequestURI()
+	}
 	return &View{
-		Site:       site,
-		SEO:        seo.Meta{Title: title + " — " + site.Name + " 后台", Robots: "noindex, nofollow"},
-		Year:       time.Now().Year(),
-		Tr:         s.i18n.Tr(def, def),
-		Lang:       def,
-		EditLang:   def,
-		Locales:    s.locales(),
-		AllLocales: s.i18n.All(),
-		AssetVer:   s.assetVer,
+		Site:        site,
+		SEO:         seo.Meta{Title: titleText + " — " + site.Name + " " + suffix, Robots: "noindex, nofollow"},
+		Year:        time.Now().Year(),
+		Tr:          s.i18n.Tr(def, def),
+		Lang:        def,
+		Admin:       admin,
+		AdminLang:   adminLang,
+		AdminLangs:  s.i18n.AdminLocales(),
+		AdminReturn: adminReturn,
+		EditLang:    def,
+		Locales:     s.locales(),
+		AllLocales:  s.i18n.All(),
+		AssetVer:    s.assetVer,
 	}
 }
 
@@ -269,7 +329,7 @@ func (s *Server) adminLoginForm(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/admin", http.StatusSeeOther)
 		return
 	}
-	s.rnd.Admin(w, "login", http.StatusOK, s.adminView("登录"))
+	s.rnd.Admin(w, "login", http.StatusOK, s.adminView(r, "登录"))
 }
 
 func (s *Server) adminLoginPost(w http.ResponseWriter, r *http.Request) {
@@ -277,8 +337,8 @@ func (s *Server) adminLoginPost(w http.ResponseWriter, r *http.Request) {
 	ip := clientIP(r)
 	// 防穷举：同一 IP 短时间内多次失败则暂时锁定
 	if wait := s.login.lockedFor(ip); wait > 0 {
-		v := s.adminView("登录")
-		v.FormErr = fmt.Sprintf("登录尝试过于频繁，请约 %d 分钟后再试。", int(wait/time.Minute)+1)
+		v := s.adminView(r, "登录")
+		v.FormErr = fmt.Sprintf(v.Admin.T("admin.login.too_many", "登录尝试过于频繁，请约 %d 分钟后再试。"), int(wait/time.Minute)+1)
 		s.rnd.Admin(w, "login", http.StatusTooManyRequests, v)
 		return
 	}
@@ -298,9 +358,36 @@ func (s *Server) adminLoginPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.login.fail(ip)
-	v := s.adminView("登录")
-	v.FormErr = "用户名或密码错误"
+	v := s.adminView(r, "登录")
+	v.FormErr = v.Admin.T("admin.login.bad_credentials", "用户名或密码错误")
 	s.rnd.Admin(w, "login", http.StatusUnauthorized, v)
+}
+
+func (s *Server) adminLanguage(w http.ResponseWriter, r *http.Request) {
+	lang := strings.TrimSpace(r.URL.Query().Get("lang"))
+	if !s.i18n.Known(lang) {
+		lang = "zh"
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     adminLangCookie,
+		Value:    lang,
+		Path:     "/admin",
+		HttpOnly: true,
+		Secure:   strings.HasPrefix(s.baseURL, "https://"),
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   365 * 24 * 60 * 60,
+	})
+	http.Redirect(w, r, safeAdminNext(r.URL.Query().Get("next")), http.StatusSeeOther)
+}
+
+func safeAdminNext(raw string) string {
+	if raw == "" || strings.ContainsAny(raw, "\r\n") || strings.HasPrefix(raw, "//") {
+		return "/admin"
+	}
+	if raw == "/admin" || strings.HasPrefix(raw, "/admin/") || strings.HasPrefix(raw, "/admin?") {
+		return raw
+	}
+	return "/admin"
 }
 
 func (s *Server) adminLogout(w http.ResponseWriter, r *http.Request) {
@@ -334,7 +421,7 @@ func (s *Server) adminDashboard(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, err)
 		return
 	}
-	v := s.adminView("文章")
+	v := s.adminView(r, "文章")
 	s.authed(v, sess)
 	v.AllPosts = posts
 	v.EditLang = lang
@@ -344,7 +431,7 @@ func (s *Server) adminDashboard(w http.ResponseWriter, r *http.Request) {
 func (s *Server) adminVisual(w http.ResponseWriter, r *http.Request) {
 	sess, _ := s.currentSession(r)
 	lang := s.editLang(r)
-	v := s.adminView("可视化编辑")
+	v := s.adminView(r, "可视化编辑")
 	s.authed(v, sess)
 	v.EditLang = lang
 	v.VisualPreviewURL = "/" + lang + "/?visual_edit=1"
@@ -1014,7 +1101,7 @@ func (s *Server) restoreVisualValue(h VisualLog) error {
 
 func (s *Server) adminNew(w http.ResponseWriter, r *http.Request) {
 	sess, _ := s.currentSession(r)
-	s.showEdit(w, sess, &store.Post{Status: "draft", Lang: s.editLang(r)}, "", "")
+	s.showEdit(w, r, sess, &store.Post{Status: "draft", Lang: s.editLang(r)}, "", "")
 }
 
 func (s *Server) adminPostPreview(w http.ResponseWriter, r *http.Request) {
@@ -1071,11 +1158,11 @@ func (s *Server) adminEdit(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("saved") == "1" {
 		flash = "文章已保存。"
 	}
-	s.showEdit(w, sess, p, flash, "")
+	s.showEdit(w, r, sess, p, flash, "")
 }
 
-func (s *Server) showEdit(w http.ResponseWriter, sess session, e *store.Post, flash, formErr string) {
-	v := s.adminView("编辑")
+func (s *Server) showEdit(w http.ResponseWriter, r *http.Request, sess session, e *store.Post, flash, formErr string) {
+	v := s.adminView(r, "编辑")
 	s.authed(v, sess)
 	v.Edit = e
 	v.IsPage = e.Type == "page"
@@ -1083,17 +1170,28 @@ func (s *Server) showEdit(w http.ResponseWriter, sess session, e *store.Post, fl
 	catKind := "post"
 	switch e.Type {
 	case "page":
-		v.EditBase, v.EditListURL, v.EditTypeLabel = "pages", "/admin/pages", "页面"
+		v.EditBase, v.EditListURL, v.EditTypeLabel = "pages", "/admin/pages", v.Admin.T("admin.edit.type_page", "页面")
 	case "link":
-		v.EditBase, v.EditListURL, v.EditTypeLabel, catKind = "links", "/admin/links", "链接", "link"
+		v.EditBase, v.EditListURL, v.EditTypeLabel, catKind = "links", "/admin/links", v.Admin.T("admin.edit.type_link", "链接"), "link"
 	default:
-		v.EditBase, v.EditListURL, v.EditTypeLabel = "posts", "/admin", "文章"
+		v.EditBase, v.EditListURL, v.EditTypeLabel = "posts", "/admin", v.Admin.T("admin.edit.type_post", "文章")
 	}
-	title := "新建" + v.EditTypeLabel
+	title := fmt.Sprintf(v.Admin.T("admin.edit.title_new", "新建%s"), v.EditTypeLabel)
 	if e.ID != 0 {
-		title = "编辑" + v.EditTypeLabel
+		title = fmt.Sprintf(v.Admin.T("admin.edit.title_edit", "编辑%s"), v.EditTypeLabel)
 	}
-	v.SEO.Title = title + " — " + v.Site.Name + " 后台"
+	v.SEO.Title = title + " — " + v.Site.Name + " " + v.Admin.T("admin.brand.suffix", "后台")
+	switch flash {
+	case "文章已保存。":
+		flash = v.Admin.T("admin.edit.saved_post", "文章已保存。")
+	case "页面已保存。":
+		flash = v.Admin.T("admin.edit.saved_page", "页面已保存。")
+	case "链接已保存。":
+		flash = v.Admin.T("admin.edit.saved_link", "链接已保存。")
+	}
+	if formErr == "标题不能为空。" {
+		formErr = v.Admin.T("admin.edit.title_required", "标题不能为空。")
+	}
 	v.Flash = flash
 	v.FormErr = formErr
 	lang := e.Lang
@@ -1120,7 +1218,7 @@ func (s *Server) adminCreate(w http.ResponseWriter, r *http.Request) {
 	lang := s.editLang(r)
 	p, formErr := postFromForm(r, 0, lang)
 	if formErr != "" {
-		s.showEdit(w, sess, p, "", formErr)
+		s.showEdit(w, r, sess, p, "", formErr)
 		return
 	}
 	p.Slug = s.uniqueSlug(lang, p.Slug, 0)
@@ -1147,7 +1245,7 @@ func (s *Server) adminUpdate(w http.ResponseWriter, r *http.Request) {
 	p, formErr := postFromForm(r, id, existing.Lang)
 	if formErr != "" {
 		p.TransGroup = existing.TransGroup
-		s.showEdit(w, sess, p, "", formErr)
+		s.showEdit(w, r, sess, p, "", formErr)
 		return
 	}
 	p.CreatedAt = existing.CreatedAt
@@ -1261,7 +1359,7 @@ func (s *Server) adminLinks(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, err)
 		return
 	}
-	v := s.adminView("链接")
+	v := s.adminView(r, "链接")
 	s.authed(v, sess)
 	v.AllPosts = links
 	v.EditLang = lang
@@ -1270,7 +1368,7 @@ func (s *Server) adminLinks(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) adminLinkNew(w http.ResponseWriter, r *http.Request) {
 	sess, _ := s.currentSession(r)
-	s.showEdit(w, sess, &store.Post{Type: "link", Status: "draft", Lang: s.editLang(r)}, "", "")
+	s.showEdit(w, r, sess, &store.Post{Type: "link", Status: "draft", Lang: s.editLang(r)}, "", "")
 }
 
 func (s *Server) adminLinkEdit(w http.ResponseWriter, r *http.Request) {
@@ -1284,7 +1382,7 @@ func (s *Server) adminLinkEdit(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("saved") == "1" {
 		flash = "链接已保存。"
 	}
-	s.showEdit(w, sess, p, flash, "")
+	s.showEdit(w, r, sess, p, flash, "")
 }
 
 func (s *Server) adminLinkCreate(w http.ResponseWriter, r *http.Request) {
@@ -1296,7 +1394,7 @@ func (s *Server) adminLinkCreate(w http.ResponseWriter, r *http.Request) {
 	p, formErr := postFromForm(r, 0, lang)
 	p.Type = "link"
 	if formErr != "" {
-		s.showEdit(w, sess, p, "", formErr)
+		s.showEdit(w, r, sess, p, "", formErr)
 		return
 	}
 	p.Slug = s.uniqueSlug(lang, p.Slug, 0)
@@ -1324,7 +1422,7 @@ func (s *Server) adminLinkUpdate(w http.ResponseWriter, r *http.Request) {
 	p.Type = "link"
 	if formErr != "" {
 		p.TransGroup = existing.TransGroup
-		s.showEdit(w, sess, p, "", formErr)
+		s.showEdit(w, r, sess, p, "", formErr)
 		return
 	}
 	p.CreatedAt = existing.CreatedAt
@@ -1579,7 +1677,7 @@ func (s *Server) showSettings(w http.ResponseWriter, r *http.Request, section, f
 		c, a, rd := s.themeTweak(t.ID)
 		cards = append(cards, ThemeCard{ID: t.ID, Name: t.Name, Desc: t.Desc, Accent: a, Radius: rd, Custom: c})
 	}
-	v := s.adminView("设置")
+	v := s.adminView(r, "设置")
 	s.authed(v, sess)
 	v.Section = section
 	v.CatKind = catKind(r)
@@ -1610,6 +1708,7 @@ func (s *Server) showSettings(w http.ResponseWriter, r *http.Request, section, f
 	v.Cards = cards
 	v.Flash = flash
 	v.FormErr = formErr
+	v.AdminI18NJSON = s.store.Setting(s.adminI18NKey(v.AdminLang))
 	v.Social = parseSocialLinks(s.store.Setting("social_links"))
 	v.APIBaseURL = s.absForRequest(r, "/api/admin/v1")
 	v.OpenAPIURL = s.absForRequest(r, "/api/admin/v1/openapi.json")
@@ -1683,6 +1782,7 @@ func (s *Server) showSettings(w http.ResponseWriter, r *http.Request, section, f
 		}
 	case "languages":
 		v.CustomLocales = s.i18n.Custom()
+		v.AdminI18NJSON = s.store.Setting(s.adminI18NKey(v.AdminLang))
 	case "menu":
 		v.MenuTargets = s.menuTargetOptions()
 		v.MenuEdit = s.menuEditRows()
@@ -2050,6 +2150,32 @@ func (s *Server) adminSavePassword(w http.ResponseWriter, r *http.Request) {
 	s.showSettings(w, r, "security", "密码已更新。", "")
 }
 
+func (s *Server) adminSaveAdminI18N(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.checkCSRF(w, r); !ok {
+		return
+	}
+	lang := strings.TrimSpace(r.FormValue("admin_lang"))
+	if !s.i18n.Known(lang) {
+		lang = s.adminLang(r)
+	}
+	raw := strings.TrimSpace(r.FormValue("admin_i18n_json"))
+	if raw != "" {
+		var kv map[string]string
+		if err := json.Unmarshal([]byte(raw), &kv); err != nil {
+			v := s.adminView(r, "设置")
+			s.showSettings(w, r, "languages", "", v.Admin.T("admin.settings.admin_i18n.invalid", "后台翻译 JSON 格式不正确。"))
+			return
+		}
+	}
+	overrides := i18n.ParseAdminOverrides(raw)
+	if err := s.store.SetSetting(s.adminI18NKey(lang), i18n.MarshalAdminOverrides(overrides)); err != nil {
+		s.serverError(w, err)
+		return
+	}
+	v := s.adminView(r, "设置")
+	s.showSettings(w, r, "languages", v.Admin.T("admin.settings.admin_i18n.saved", "后台翻译已保存。"), "")
+}
+
 func (s *Server) adminClearDemoContent(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.checkCSRF(w, r); !ok {
 		return
@@ -2368,7 +2494,7 @@ func (s *Server) adminPages(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, err)
 		return
 	}
-	v := s.adminView("页面")
+	v := s.adminView(r, "页面")
 	s.authed(v, sess)
 	v.AllPosts = pages
 	v.EditLang = lang
@@ -2386,7 +2512,7 @@ func (s *Server) adminPageEdit(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("saved") == "1" {
 		flash = "页面已保存。"
 	}
-	s.showEdit(w, sess, p, flash, "")
+	s.showEdit(w, r, sess, p, flash, "")
 }
 
 func (s *Server) adminPageSave(w http.ResponseWriter, r *http.Request) {
@@ -2403,7 +2529,7 @@ func (s *Server) adminPageSave(w http.ResponseWriter, r *http.Request) {
 	p.Content = r.FormValue("content")
 	title := strings.TrimSpace(r.FormValue("title"))
 	if title == "" {
-		s.showEdit(w, sess, p, "", "标题不能为空。")
+		s.showEdit(w, r, sess, p, "", "标题不能为空。")
 		return
 	}
 	p.Title = title

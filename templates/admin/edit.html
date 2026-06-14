@@ -1,12 +1,12 @@
 {{define "body"}}{{$e := .Edit}}  <div class="admin-head edit-head">
     <div>
-      <nav class="breadcrumb" style="padding:0 0 .4rem"><a href="{{.EditListURL}}?lang={{.EditLang}}">{{.EditTypeLabel}}</a><span class="sep">/</span><span>{{if $e.ID}}编辑{{else}}新建{{end}}</span></nav>
-      <h1>{{if $e.ID}}编辑{{else}}新建{{end}}{{.EditTypeLabel}}</h1>
+      <nav class="breadcrumb" style="padding:0 0 .4rem"><a href="{{.EditListURL}}?lang={{.EditLang}}">{{.EditTypeLabel}}</a><span class="sep">/</span><span>{{if $e.ID}}{{.Admin.T "admin.edit.breadcrumb.edit" "编辑"}}{{else}}{{.Admin.T "admin.edit.breadcrumb.new" "新建"}}{{end}}</span></nav>
+      <h1>{{if $e.ID}}{{printf (.Admin.T "admin.edit.title_edit" "编辑%s") .EditTypeLabel}}{{else}}{{printf (.Admin.T "admin.edit.title_new" "新建%s") .EditTypeLabel}}{{end}}</h1>
     </div>
     <div class="edit-actions">
-      {{if .IsPage}}<a class="btn act-view" href="/{{$e.Lang}}/{{$e.Slug}}" target="_blank">查看 {{template "icon-extlink"}}</a>{{else if .IsLink}}{{if $e.ID}}<a class="btn act-view" href="{{if $e.IsPublished}}/{{$e.Lang}}/links/{{$e.Slug}}{{else}}/admin/links/{{$e.ID}}/preview{{end}}" target="_blank">{{if $e.IsPublished}}查看{{else}}预览{{end}} {{template "icon-extlink"}}</a>{{end}}{{else if $e.ID}}<a class="btn act-view" href="{{if $e.IsPublished}}/{{$e.Lang}}/posts/{{$e.Slug}}{{else}}/admin/posts/{{$e.ID}}/preview{{end}}" target="_blank">{{if $e.IsPublished}}查看{{else}}预览{{end}} {{template "icon-extlink"}}</a>{{end}}
-      <a class="btn" href="{{.EditListURL}}?lang={{.EditLang}}">取消</a>
-      <button class="btn btn-primary" type="submit" form="post-form" data-save>保存</button>
+      {{if .IsPage}}<a class="btn act-view" href="/{{$e.Lang}}/{{$e.Slug}}" target="_blank">{{.Admin.T "admin.action.view" "查看"}} {{template "icon-extlink"}}</a>{{else if .IsLink}}{{if $e.ID}}<a class="btn act-view" href="{{if $e.IsPublished}}/{{$e.Lang}}/links/{{$e.Slug}}{{else}}/admin/links/{{$e.ID}}/preview{{end}}" target="_blank">{{if $e.IsPublished}}{{$.Admin.T "admin.action.view" "查看"}}{{else}}{{$.Admin.T "admin.action.preview" "预览"}}{{end}} {{template "icon-extlink"}}</a>{{end}}{{else if $e.ID}}<a class="btn act-view" href="{{if $e.IsPublished}}/{{$e.Lang}}/posts/{{$e.Slug}}{{else}}/admin/posts/{{$e.ID}}/preview{{end}}" target="_blank">{{if $e.IsPublished}}{{$.Admin.T "admin.action.view" "查看"}}{{else}}{{$.Admin.T "admin.action.preview" "预览"}}{{end}} {{template "icon-extlink"}}</a>{{end}}
+      <a class="btn" href="{{.EditListURL}}?lang={{.EditLang}}">{{.Admin.T "admin.action.cancel" "取消"}}</a>
+      <button class="btn btn-primary" type="submit" form="post-form" data-save>{{.Admin.T "admin.action.save" "保存"}}</button>
     </div>
   </div>
 
@@ -20,19 +20,19 @@
     <input type="hidden" name="trans_group" value="{{$e.TransGroup}}">
       <div class="form-main">
         <div class="field">
-          <label for="title">标题</label>
+          <label for="title">{{.Admin.T "admin.edit.title_label" "标题"}}</label>
           <input id="title" name="title" value="{{$e.Title}}" required>
         </div>
         {{if .IsLink}}
         <div class="field">
-          <label for="link_url">链接地址（目标网址，前台点「访问」跳转）</label>
+          <label for="link_url">{{.Admin.T "admin.edit.link_url" "链接地址（目标网址，前台点「访问」跳转）"}}</label>
           <input id="link_url" name="link_url" type="text" inputmode="url" value="{{$e.LinkURL}}" placeholder="https://example.com">
         </div>
         {{end}}
 
         <div class="field">
           <div class="editor-bar">
-            <label>正文</label>
+            <label>{{.Admin.T "admin.edit.content" "正文"}}</label>
             <div class="seg" role="tablist" aria-label="编辑模式">
               <button type="button" class="seg-btn is-on" data-mode="markdown" role="tab">Markdown</button>
               <button type="button" class="seg-btn" data-mode="rich" role="tab">富文本</button>
@@ -50,9 +50,9 @@
       <aside class="form-side">
         {{if gt (len .Locales) 1}}
         <div class="field">
-          <label{{if not $e.ID}} id="lang-label"{{end}}>语种</label>
+          <label{{if not $e.ID}} id="lang-label"{{end}}>{{.Admin.T "admin.edit.language" "语种"}}</label>
           {{if $e.ID}}
-          <div class="lang-static">{{range .Locales}}{{if eq .Code $e.Lang}}<span class="lang-chip">{{.Name}}</span>{{end}}{{end}}<span class="muted" style="font-size:.82rem">（已固定，跨语种维护见下方互译）</span></div>
+          <div class="lang-static">{{range .Locales}}{{if eq .Code $e.Lang}}<span class="lang-chip">{{.Name}}</span>{{end}}{{end}}<span class="muted" style="font-size:.82rem">{{.Admin.T "admin.edit.language_fixed" "（已固定，跨语种维护见下方互译）"}}</span></div>
           <input type="hidden" name="lang" value="{{$e.Lang}}">
           {{else}}
           <div class="dropdown" data-name="lang">
@@ -74,56 +74,56 @@
 
         {{if not .IsPage}}
         <div class="field">
-          <label id="status-label">状态</label>
+          <label id="status-label">{{.Admin.T "admin.edit.status" "状态"}}</label>
           <div class="dropdown" data-name="status" data-status>
             <button type="button" class="dd-toggle" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="status-label">
-              <span class="dd-label">{{if eq $e.Status "scheduled"}}定时发布{{else if eq $e.Status "published"}}已发布{{else}}草稿{{end}}</span>
+              <span class="dd-label">{{if eq $e.Status "scheduled"}}{{.Admin.T "admin.edit.status_schedule" "定时发布"}}{{else if eq $e.Status "published"}}{{.Admin.T "admin.status.published" "已发布"}}{{else}}{{.Admin.T "admin.status.draft" "草稿"}}{{end}}</span>
               <svg class="dd-caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
             </button>
             <input type="hidden" name="status" value="{{if eq $e.Status "scheduled"}}scheduled{{else if eq $e.Status "published"}}published{{else}}draft{{end}}">
             <ul class="dd-menu" role="listbox">
-              <li role="option" data-value="draft" aria-selected="{{if eq $e.Status "draft"}}true{{else}}false{{end}}">草稿</li>
-              <li role="option" data-value="published" aria-selected="{{if eq $e.Status "published"}}true{{else}}false{{end}}">立即发布</li>
-              <li role="option" data-value="scheduled" aria-selected="{{if eq $e.Status "scheduled"}}true{{else}}false{{end}}">定时发布</li>
+              <li role="option" data-value="draft" aria-selected="{{if eq $e.Status "draft"}}true{{else}}false{{end}}">{{.Admin.T "admin.status.draft" "草稿"}}</li>
+              <li role="option" data-value="published" aria-selected="{{if eq $e.Status "published"}}true{{else}}false{{end}}">{{.Admin.T "admin.edit.status_publish_now" "立即发布"}}</li>
+              <li role="option" data-value="scheduled" aria-selected="{{if eq $e.Status "scheduled"}}true{{else}}false{{end}}">{{.Admin.T "admin.edit.status_schedule" "定时发布"}}</li>
             </ul>
           </div>
           <div class="schedule-field"{{if ne $e.Status "scheduled"}} hidden{{end}}>
-            <label for="publish_at">发布时间</label>
+            <label for="publish_at">{{.Admin.T "admin.edit.publish_at" "发布时间"}}</label>
             <input type="datetime-local" id="publish_at" name="publish_at" value="{{dtlocal $e.PublishedAt}}">
           </div>
         </div>
 
         <div class="field">
-          <label>封面图</label>
+          <label>{{.Admin.T "admin.edit.cover" "封面图"}}</label>
           <div class="uploader" data-name="cover_image">
             <input type="hidden" name="cover_image" value="{{$e.CoverImage}}">
-            <div class="up-preview" tabindex="0" role="button" aria-label="选择图片">
-              <span class="up-hint">点击选择图片</span>
-              <button type="button" class="up-remove" data-confirm-title="确认移除" data-confirm-ok="移除" data-confirm="移除当前封面图？保存后生效。" title="删除" aria-label="删除"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+            <div class="up-preview" tabindex="0" role="button" aria-label="{{.Admin.T "admin.edit.cover_choose" "点击选择图片"}}">
+              <span class="up-hint">{{.Admin.T "admin.edit.cover_choose" "点击选择图片"}}</span>
+              <button type="button" class="up-remove" data-confirm-title="{{.Admin.T "admin.confirm.title" "确认删除"}}" data-confirm-ok="{{.Admin.T "admin.action.delete" "删除"}}" data-confirm="{{.Admin.T "admin.edit.remove_cover_confirm" "移除当前封面图？保存后生效。"}}" title="{{.Admin.T "admin.action.delete" "删除"}}" aria-label="{{.Admin.T "admin.action.delete" "删除"}}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
               <input type="file" accept="image/*" hidden>
             </div>
-            <input type="text" inputmode="url" class="up-url" placeholder="或粘贴图片 URL" value="{{$e.CoverImage}}">
+            <input type="text" inputmode="url" class="up-url" placeholder="{{.Admin.T "admin.edit.cover_url" "或粘贴图片 URL"}}" value="{{$e.CoverImage}}">
             <div class="up-status"></div>
           </div>
         </div>
         {{end}}
 
         <div class="field">
-          <label for="slug">Slug（URL）</label>
-          <input id="slug" name="slug" value="{{$e.Slug}}" placeholder="留空则按标题自动生成">
+          <label for="slug">{{.Admin.T "admin.edit.slug" "Slug（URL）"}}</label>
+          <input id="slug" name="slug" value="{{$e.Slug}}" placeholder="{{.Admin.T "admin.edit.slug_placeholder" "留空则按标题自动生成"}}">
         </div>
 
         {{if not .IsPage}}
         <div class="field">
-          <label id="cat-label">分类</label>
+          <label id="cat-label">{{.Admin.T "admin.edit.category" "分类"}}</label>
           <div class="dropdown" data-name="category_id">
             <button type="button" class="dd-toggle" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="cat-label">
-              <span class="dd-label">{{if $e.Category}}{{$e.Category.Name}}{{else}}（无）{{end}}</span>
+              <span class="dd-label">{{if $e.Category}}{{$e.Category.Name}}{{else}}{{.Admin.T "admin.edit.no_category" "（无）"}}{{end}}</span>
               <svg class="dd-caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
             </button>
             <input type="hidden" name="category_id" value="{{if $e.CategoryID.Valid}}{{$e.CategoryID.Int64}}{{end}}">
             <ul class="dd-menu" role="listbox">
-              <li role="option" data-value="" aria-selected="{{if not $e.CategoryID.Valid}}true{{else}}false{{end}}">（无）</li>
+              <li role="option" data-value="" aria-selected="{{if not $e.CategoryID.Valid}}true{{else}}false{{end}}">{{.Admin.T "admin.edit.no_category" "（无）"}}</li>
               {{range .Categories}}
               <li role="option" data-value="{{.ID}}" aria-selected="{{if and $e.CategoryID.Valid (eq $e.CategoryID.Int64 .ID)}}true{{else}}false{{end}}">{{.Name}}</li>
               {{end}}
@@ -133,7 +133,7 @@
         {{end}}
 
         <div class="field">
-          <label for="author">作者</label>
+          <label for="author">{{.Admin.T "admin.edit.author" "作者"}}</label>
           <input id="author" name="author" value="{{$e.Author}}">
         </div>
 

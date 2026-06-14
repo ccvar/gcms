@@ -70,14 +70,15 @@ func ValidCode(code string) bool {
 
 // Manager 持有各语种的文案目录与「自定义预设」。一次构建、全站共享。
 type Manager struct {
-	cats   map[string]map[string]string // code -> key -> text
-	mu     sync.RWMutex
-	custom []Locale // 后台新增的自定义预设
+	cats      map[string]map[string]string // code -> key -> text
+	adminCats map[string]map[string]string // code -> admin key -> text
+	mu        sync.RWMutex
+	custom    []Locale // 后台新增的自定义预设
 }
 
 // New 加载 embed 的文案目录。
 func New() *Manager {
-	m := &Manager{cats: map[string]map[string]string{}}
+	m := &Manager{cats: map[string]map[string]string{}, adminCats: loadAdminCatalogs()}
 	entries, _ := localesFS.ReadDir("locales")
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {

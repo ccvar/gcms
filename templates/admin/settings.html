@@ -1,39 +1,39 @@
 {{define "body"}}{{$isConfig := or (eq .Section "site") (eq .Section "copy") (eq .Section "menu") (eq .Section "categories")}}  <div class="admin-head">
     <div>
-      <nav class="breadcrumb" style="padding:0 0 .4rem"><a href="/admin">文章</a><span class="sep">/</span><span>设置</span></nav>
-      <h1>{{if $isConfig}}站点配置{{else}}站点设置{{end}}</h1>
+      <nav class="breadcrumb" style="padding:0 0 .4rem"><a href="/admin">{{.Admin.T "admin.nav.posts" "文章"}}</a><span class="sep">/</span><span>{{.Admin.T "admin.nav.settings" "设置"}}</span></nav>
+      <h1>{{if $isConfig}}{{.Admin.T "admin.settings.config_title" "站点配置"}}{{else}}{{.Admin.T "admin.settings.title" "站点设置"}}{{end}}</h1>
     </div>
   </div>
 
   <div class="settings-shell">
-    <nav class="settings-menu" aria-label="设置分区">
+    <nav class="settings-menu" aria-label="{{.Admin.T "admin.nav.settings" "设置"}}">
       <a href="/admin/settings/site?lang={{.EditLang}}"{{if $isConfig}} class="active"{{end}}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
-        <span>站点配置</span>
+        <span>{{.Admin.T "admin.settings.menu.site" "站点配置"}}</span>
       </a>
       <a href="/admin/settings/appearance"{{if eq .Section "appearance"}} class="active"{{end}}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor" stroke="none"/></svg>
-        <span>外观与主题</span>
+        <span>{{.Admin.T "admin.settings.menu.appearance" "外观与主题"}}</span>
       </a>
       <a href="/admin/settings/languages"{{if eq .Section "languages"}} class="active"{{end}}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-        <span>语言</span>
+        <span>{{.Admin.T "admin.settings.menu.languages" "语言"}}</span>
       </a>
       <a href="/admin/settings/automation"{{if eq .Section "automation"}} class="active"{{end}}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="14.5" r="3.5"/><path d="M10 12l8-8"/><path d="M15 7l2 2"/><path d="M17 5l2 2"/></svg>
-        <span>自动化接口</span>
+        <span>{{.Admin.T "admin.settings.menu.automation" "自动化接口"}}</span>
       </a>
       <a href="/admin/settings/comments"{{if eq .Section "comments"}} class="active"{{end}}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 14.5a4.5 4.5 0 0 1-4.5 4.5H8l-5 3V7.5A4.5 4.5 0 0 1 7.5 3h9A4.5 4.5 0 0 1 21 7.5z"/></svg>
-        <span>评论</span>
+        <span>{{.Admin.T "admin.settings.menu.comments" "评论"}}</span>
       </a>
       <a href="/admin/settings/security"{{if eq .Section "security"}} class="active"{{end}}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.6-7 9-4-1.4-7-4.5-7-9V6z"/></svg>
-        <span>安全</span>
+        <span>{{.Admin.T "admin.settings.menu.security" "安全"}}</span>
       </a>
       <a href="/admin/settings/updates"{{if eq .Section "updates"}} class="active"{{end}}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 16V8"/><path d="M8 12l4-4 4 4"/></svg>
-        <span>系统更新</span>
+        <span>{{.Admin.T "admin.settings.menu.updates" "系统更新"}}</span>
       </a>
     </nav>
 
@@ -462,26 +462,26 @@
       {{else if eq .Section "languages"}}
       <form method="post" action="/admin/settings/languages" class="admin-form">
         <input type="hidden" name="_csrf" value="{{.CSRF}}">
-        <p class="muted" style="margin:.1rem 0 1rem;font-size:.9rem">勾选要在前台启用的语种。「默认」语种是浏览器语言无法匹配启用语种时的兜底访问语种，也是文案与内容的回落语种；访问 <code>/</code> 会先按浏览器语言协商，每个语种的 URL 形如 <code>/en/…</code>。</p>
+        <p class="muted" style="margin:.1rem 0 1rem;font-size:.9rem">{{.Admin.T "admin.settings.languages.front_desc" "勾选要在前台启用的语种。「默认」语种是浏览器语言无法匹配启用语种时的兜底访问语种，也是文案与内容的回落语种；访问 / 会先按浏览器语言协商，每个语种的 URL 形如 /en/…。"}}</p>
         <table class="admin-table lang-table">
-          <thead><tr><th>语种</th><th>代码 · 标记</th><th class="center">启用</th><th class="center">默认</th></tr></thead>
+          <thead><tr><th>{{.Admin.T "admin.settings.languages.language" "语种"}}</th><th>{{.Admin.T "admin.settings.languages.code_tag" "代码 · 标记"}}</th><th class="center">{{.Admin.T "admin.settings.languages.enabled" "启用"}}</th><th class="center">{{.Admin.T "admin.settings.languages.default" "默认"}}</th></tr></thead>
           <tbody>
             {{range .AllLocales}}
             <tr>
               <td><strong>{{.Name}}</strong></td>
-              <td class="slug">{{.Code}} · {{.Tag}}{{if .Custom}} <span class="mini-tag">自定义</span>{{end}}</td>
+              <td class="slug">{{.Code}} · {{.Tag}}{{if .Custom}} <span class="mini-tag">{{$.Admin.T "admin.settings.languages.custom" "自定义"}}</span>{{end}}</td>
               <td class="center"><input type="checkbox" name="enabled" value="{{.Code}}"{{if localeOn $.Locales .Code}} checked{{end}}></td>
               <td class="center"><input type="radio" name="default_lang" value="{{.Code}}"{{if eq .Code $.EditLang}} checked{{end}}></td>
             </tr>
             {{end}}
           </tbody>
         </table>
-        <button class="btn btn-primary" type="submit" style="margin-top:1rem">保存语言设置</button>
+        <button class="btn btn-primary" type="submit" style="margin-top:1rem">{{.Admin.T "admin.settings.languages.save" "保存语言设置"}}</button>
       </form>
 
       <div class="field-group" style="margin-top:1.8rem;border-top:1px solid var(--line);padding-top:1.4rem">
-        <h3 class="group-head">自定义语种预设</h3>
-        <p class="muted" style="margin:-.2rem 0 .9rem;font-size:.85rem">没有想要的语言？在此新增任意语种：<strong>代码</strong>用作 URL 前缀（如 <code>/pt/…</code>），<strong>标记</strong>为 BCP47（如 <code>pt-BR</code>）。新增后到上方勾选启用。自定义语种的界面文案会回落默认语种。</p>
+        <h3 class="group-head">{{.Admin.T "admin.settings.languages.custom_presets" "自定义语种预设"}}</h3>
+        <p class="muted" style="margin:-.2rem 0 .9rem;font-size:.85rem">{{.Admin.T "admin.settings.languages.custom_desc" "没有想要的语言？在此新增任意语种：代码用作 URL 前缀（如 /pt/…），标记为 BCP47（如 pt-BR）。新增后到上方勾选启用。自定义语种的界面文案会回落默认语种。"}}</p>
         {{if .CustomLocales}}
         <table class="admin-table" style="margin-bottom:1rem">
           <thead><tr><th>名称</th><th>代码</th><th>标记</th><th>OG</th><th class="right">操作</th></tr></thead>
@@ -513,6 +513,29 @@
             <div class="field"><label for="pl-og">OG locale</label><input id="pl-og" name="og" placeholder="pt_BR"></div>
           </div>
           <button class="btn" type="submit" style="margin-top:.4rem">＋ 新增预设</button>
+        </form>
+      </div>
+
+      <div class="field-group admin-i18n-box" style="margin-top:1.8rem;border-top:1px solid var(--line);padding-top:1.4rem">
+        <h3 class="group-head with-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16"/><path d="M4 12h16"/><path d="M4 19h10"/><path d="M17 16l3 3 3-3"/></svg>
+          <span>{{.Admin.T "admin.settings.admin_i18n.title" "后台界面翻译"}}</span>
+        </h3>
+        <p class="muted" style="margin:-.2rem 0 .9rem;font-size:.85rem">{{.Admin.T "admin.settings.admin_i18n.desc" "后台默认读取内置 JSON。这里可以按 key 覆盖当前后台语种的文案；未填写或 JSON 缺少的 key 会回落中文。"}}</p>
+        <form method="post" action="/admin/settings/admin-i18n" class="admin-form">
+          <input type="hidden" name="_csrf" value="{{.CSRF}}">
+          <input type="hidden" name="admin_lang" value="{{.AdminLang}}">
+          <div class="field">
+            <label>{{.Admin.T "admin.settings.admin_i18n.current" "当前后台语种"}}</label>
+            <div class="admin-i18n-current">
+              {{range .AdminLangs}}<a href="/admin/language?lang={{.Code}}&next={{urlquery $.AdminReturn}}"{{if eq .Code $.AdminLang}} class="active" aria-current="true"{{end}}>{{.Name}}</a>{{end}}
+            </div>
+          </div>
+          <div class="field">
+            <label for="admin-i18n-json">{{.Admin.T "admin.settings.admin_i18n.override" "覆盖 JSON"}}</label>
+            <textarea id="admin-i18n-json" name="admin_i18n_json" rows="10" spellcheck="false" placeholder="{{.Admin.T "admin.settings.admin_i18n.placeholder" "{\n  \"admin.nav.posts\": \"Posts\"\n}"}}">{{.AdminI18NJSON}}</textarea>
+          </div>
+          <button class="btn btn-primary" type="submit">{{.Admin.T "admin.settings.admin_i18n.save" "保存后台翻译"}}</button>
         </form>
       </div>
 

@@ -1,5 +1,5 @@
 {{define "admin_layout"}}<!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="{{if .Admin}}{{.Admin.Lang.Tag}}{{else}}zh-CN{{end}}">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -17,23 +17,28 @@
         {{else}}
         {{if .Site.Name}}{{.Site.Name}}{{else}}CCVAR{{end}}<span class="dot">.</span>
         {{end}}
-        <small>后台</small>
+        <small>{{.Admin.T "admin.brand.suffix" "后台"}}</small>
       </a>
-      <button class="admin-burger" type="button" aria-label="菜单" aria-expanded="false">
+      <button class="admin-burger" type="button" aria-label="{{.Admin.T "admin.nav.settings" "菜单"}}" aria-expanded="false">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
       </button>
       <nav class="admin-nav">
-        <a class="ext" href="/" target="_blank">查看站点 ↗</a>
+        <a class="ext" href="/" target="_blank">{{.Admin.T "admin.nav.view_site" "查看站点"}} ↗</a>
         {{if .Authed}}
         <span class="admin-nav-sep" aria-hidden="true"></span>
-        <a href="/admin">文章</a>
-        <a href="/admin/links">链接</a>
-        <a href="/admin/pages">页面</a>
-        <a href="/admin/visual"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v10H4z"/><path d="M8 21h8"/><path d="M12 15v6"/><path d="M9 9h6"/><path d="M9 12h4"/></svg>可视化编辑</a>
-        <a href="/admin/settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>设置</a>
+        <a href="/admin">{{.Admin.T "admin.nav.posts" "文章"}}</a>
+        <a href="/admin/links">{{.Admin.T "admin.nav.links" "链接"}}</a>
+        <a href="/admin/pages">{{.Admin.T "admin.nav.pages" "页面"}}</a>
+        <a href="/admin/visual"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v10H4z"/><path d="M8 21h8"/><path d="M12 15v6"/><path d="M9 9h6"/><path d="M9 12h4"/></svg>{{.Admin.T "admin.nav.visual" "可视化编辑"}}</a>
+        <a href="/admin/settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>{{.Admin.T "admin.nav.settings" "设置"}}</a>
+        {{if gt (len .AdminLangs) 1}}
+        <span class="admin-lang-switch" aria-label="{{.Admin.T "admin.lang.label" "后台语言"}}">
+          {{range .AdminLangs}}<a href="/admin/language?lang={{.Code}}&next={{urlquery $.AdminReturn}}"{{if eq .Code $.AdminLang}} class="active" aria-current="true"{{end}}>{{.Name}}</a>{{end}}
+        </span>
+        {{end}}
         <form method="post" action="/admin/logout">
           <input type="hidden" name="_csrf" value="{{.CSRF}}">
-          <button class="btn-logout" type="submit">退出</button>
+          <button class="btn-logout" type="submit">{{.Admin.T "admin.nav.logout" "退出"}}</button>
         </form>
         {{end}}
       </nav>
@@ -44,9 +49,9 @@
       {{if .ShowPwWarn}}
       <div class="pw-warn" id="pw-warn" role="alert">
         <svg class="pw-warn-ico" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4M12 17h.01"/></svg>
-        <span class="pw-warn-text">当前仍在使用<strong>默认密码</strong>，建议尽快修改以保证安全。</span>
-        <a class="pw-warn-link" href="/admin/settings/security">前往修改 →</a>
-        <button type="button" class="pw-warn-close" aria-label="关闭提示" data-pw-dismiss>✕</button>
+        <span class="pw-warn-text">{{.Admin.T "admin.warning.default_password" "当前仍在使用默认密码，建议尽快修改以保证安全。"}}</span>
+        <a class="pw-warn-link" href="/admin/settings/security">{{.Admin.T "admin.warning.change_password" "前往修改"}} →</a>
+        <button type="button" class="pw-warn-close" aria-label="{{.Admin.T "admin.action.cancel" "关闭提示"}}" data-pw-dismiss>✕</button>
       </div>
       {{end}}
       {{block "body" .}}{{end}}
@@ -56,11 +61,11 @@
   <div class="modal confirm-modal" id="confirm-modal" hidden>
     <div class="modal-backdrop" data-confirm-cancel></div>
     <div class="modal-card" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title">
-      <h3 id="confirm-title">确认删除</h3>
+      <h3 id="confirm-title">{{.Admin.T "admin.confirm.title" "确认删除"}}</h3>
       <p class="confirm-msg" data-confirm-msg></p>
       <div class="confirm-actions">
-        <button type="button" class="btn" data-confirm-cancel>取消</button>
-        <button type="button" class="btn btn-danger" data-confirm-ok>删除</button>
+        <button type="button" class="btn" data-confirm-cancel>{{.Admin.T "admin.action.cancel" "取消"}}</button>
+        <button type="button" class="btn btn-danger" data-confirm-ok>{{.Admin.T "admin.action.delete" "删除"}}</button>
       </div>
     </div>
   </div>

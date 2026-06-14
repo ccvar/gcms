@@ -414,6 +414,9 @@ body.admin { background: var(--line-soft); }
 .admin-nav a:hover svg { opacity: 1; }
 .admin-nav a.ext { color: var(--muted); }
 .admin-nav-sep { width: 1px; height: 18px; background: var(--line); margin: 0 .45rem; flex: none; }
+.admin-lang-switch { display: inline-flex; align-items: center; gap: .15rem; margin-left: .2rem; padding: .15rem; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+.admin-lang-switch a { padding: .22rem .48rem; border-radius: 6px; font-size: .78rem; line-height: 1.25; color: var(--muted); }
+.admin-lang-switch a.active { background: var(--accent-wash); color: var(--accent); font-weight: 700; }
 .admin-nav form { margin: 0; }
 .admin-nav .btn-logout { padding: .24rem .62rem; margin-left: .25rem; border: 1px solid var(--line); border-radius: 7px; background: none; color: var(--muted); font: inherit; font-size: .8rem; line-height: 1.4; cursor: pointer; }
 .admin-nav .btn-logout:hover { border-color: var(--accent); color: var(--accent); }
@@ -1019,6 +1022,8 @@ body.admin { background: var(--line-soft); }
   .admin-nav a { padding: .7rem .8rem; border-radius: 8px; font-size: .98rem; }
   .admin-nav a svg { width: 16px; height: 16px; }
   .admin-nav-sep { width: auto; height: 1px; margin: .35rem .2rem; align-self: stretch; }
+  .admin-lang-switch { margin: .35rem .2rem; justify-content: flex-start; }
+  .admin-lang-switch a { flex: 1; justify-content: center; padding: .55rem .7rem; }
   .admin-nav form { width: 100%; }
   .admin-nav .btn-logout { width: 100%; text-align: left; padding: .7rem .8rem; margin-left: 0; font-size: .98rem; }
 
@@ -4179,6 +4184,10 @@ input[type=range] { accent-color: var(--accent); }
 /* 语言设置表 */
 .lang-table th.center, .lang-table td.center { text-align: center; }
 .lang-table input[type=checkbox], .lang-table input[type=radio] { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
+.admin-i18n-box textarea { font-family: var(--mono); font-size: .82rem; line-height: 1.55; min-height: 220px; }
+.admin-i18n-current { display: inline-flex; align-items: center; gap: .25rem; padding: .2rem; border: 1px solid var(--line); border-radius: 8px; background: var(--line-soft); }
+.admin-i18n-current a { display: inline-flex; align-items: center; justify-content: center; min-height: 34px; padding: .35rem .75rem; border-radius: 7px; color: var(--ink-soft); font-size: .86rem; font-weight: 700; }
+.admin-i18n-current a.active { background: var(--surface); color: var(--accent); box-shadow: 0 2px 8px rgba(0,0,0,.06); }
 
 /* 柔色按钮（翻译动作） */
 .btn-soft { background: var(--accent-wash); color: var(--accent); border-color: transparent; }
