@@ -83,14 +83,15 @@ func TestDefaultSeedIsProductShowcase(t *testing.T) {
 		}
 	}
 	for slug, wantCover := range map[string]string{
-		"deploy-in-5-minutes":   "/assets/covers/release-package-real.webp",
-		"why-go-and-sqlite":     "/assets/covers/gcms-stack-brand.webp",
-		"multilingual-built-in": "/assets/screenshots/language-switch.webp",
-		"dual-mode-editor":      "/assets/screenshots/article-editor.webp",
-		"seo-by-default":        "/assets/screenshots/seo-output.webp",
-		"eighteen-themes":       "/assets/screenshots/theme-settings.webp",
-		"automation-api":        "/assets/screenshots/automation-api.webp",
-		"in-app-updates":        "/assets/screenshots/system-updates.webp",
+		"deploy-in-5-minutes":          "/assets/covers/release-package-real.webp",
+		"why-go-and-sqlite":            "/assets/covers/gcms-stack-brand.webp",
+		"multilingual-built-in":        "/assets/screenshots/language-switch.webp",
+		"dual-mode-editor":             "/assets/screenshots/article-editor.webp",
+		"seo-by-default":               "/assets/screenshots/seo-output.webp",
+		"eighteen-themes":              "/assets/screenshots/theme-settings.webp",
+		"automation-api":               "/assets/screenshots/automation-api.webp",
+		"gcms-content-assistant-skill": "/assets/screenshots/automation-api.webp",
+		"in-app-updates":               "/assets/screenshots/system-updates.webp",
 	} {
 		post, err := st.GetPostBySlug("zh", slug, true)
 		if err != nil {
@@ -149,6 +150,7 @@ func TestDefaultSeedIsProductShowcase(t *testing.T) {
 		"seo-by-default":                      "/assets/screenshots/seo-output-en.webp",
 		"eighteen-themes":                     "/assets/screenshots/theme-settings-en.webp",
 		"automation-api":                      "/assets/screenshots/automation-api-en.webp",
+		"gcms-content-assistant-skill":        "/assets/screenshots/automation-api-en.webp",
 		"in-app-updates":                      "/assets/screenshots/system-updates-en.webp",
 		"how-to-change-theme":                 "/assets/screenshots/theme-settings-en.webp",
 		"how-to-ai-content-ops":               "/assets/screenshots/automation-api-en.webp",
@@ -174,6 +176,24 @@ func TestDefaultSeedIsProductShowcase(t *testing.T) {
 		t.Fatalf("list post categories: %v", err)
 	} else if len(cats) != 4 {
 		t.Fatalf("post categories = %d, want 4", len(cats))
+	}
+	if post, err := st.GetPostBySlug("zh", "gcms-content-assistant-skill", true); err != nil {
+		t.Fatalf("get content assistant skill post: %v", err)
+	} else if post == nil {
+		t.Fatalf("content assistant skill post missing")
+	} else if post.Category == nil || post.Category.Slug != "ops" {
+		t.Fatalf("content assistant skill category = %#v, want ops", post.Category)
+	} else if !strings.Contains(post.Content, "下载 AI 接入包") || !strings.Contains(post.Content, "node scripts/gcms.js doctor") {
+		t.Fatalf("content assistant skill post should explain download and doctor: %s", post.Content)
+	}
+	if post, err := st.GetPostBySlug("en", "gcms-content-assistant-skill", true); err != nil {
+		t.Fatalf("get english content assistant skill post: %v", err)
+	} else if post == nil {
+		t.Fatalf("english content assistant skill post missing")
+	} else if post.TransGroup != "s-content-assistant-skill" {
+		t.Fatalf("english content assistant skill trans_group = %q", post.TransGroup)
+	} else if !strings.Contains(post.Content, "Download AI Package") || !strings.Contains(post.Content, "node scripts/gcms.js doctor") {
+		t.Fatalf("english content assistant skill post should explain download and doctor: %s", post.Content)
 	}
 }
 
@@ -510,8 +530,8 @@ func TestReloadShowcaseContentReplacesCurrentContent(t *testing.T) {
 	}
 	if n, err := st.CountPublished("zh"); err != nil {
 		t.Fatalf("count showcase posts: %v", err)
-	} else if n != 13 {
-		t.Fatalf("published zh posts = %d, want 13", n)
+	} else if n != 14 {
+		t.Fatalf("published zh posts = %d, want 14", n)
 	}
 	if n, err := st.CountLinks("zh", 0); err != nil {
 		t.Fatalf("count showcase links: %v", err)
