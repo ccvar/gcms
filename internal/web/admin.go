@@ -435,14 +435,30 @@ func (s *Server) adminVisual(w http.ResponseWriter, r *http.Request) {
 	s.authed(v, sess)
 	v.EditLang = lang
 	v.VisualPreviewURL = "/" + lang + "/?visual_edit=1"
-	v.VisualFields = s.visualFields(lang)
-	v.VisualGroups = visualGroups(v.VisualFields)
+	v.VisualFields = s.visualFields(lang, v.Admin)
+	v.VisualGroups = visualGroups(v.VisualFields, v.Admin)
 	v.VisualHistory = s.visualHistory()
 	v.LayoutWidth = normalizeLayoutWidth(s.store.Setting(layoutWidthKey))
 	s.rnd.Admin(w, "visual", http.StatusOK, v)
 }
 
-func (s *Server) visualFields(lang string) []VisualField {
+func adminUI(admin *i18n.AdminTr, key, fallback string) string {
+	if admin != nil {
+		return admin.T(key, fallback)
+	}
+	return fallback
+}
+
+func firstAdmin(admins []*i18n.AdminTr) *i18n.AdminTr {
+	if len(admins) == 0 {
+		return nil
+	}
+	return admins[0]
+}
+
+func (s *Server) visualFields(lang string, admins ...*i18n.AdminTr) []VisualField {
+	admin := firstAdmin(admins)
+	t := func(key, fallback string) string { return adminUI(admin, key, fallback) }
 	st := s.site(lang)
 	def := s.defaultLang()
 	text := func(group, key, label, value, hint string, multiline bool) VisualField {
@@ -476,19 +492,19 @@ func (s *Server) visualFields(lang string) []VisualField {
 		}
 	}
 	fields := []VisualField{
-		text("site", "site.name", "站点名称", st.Name, "显示在页眉、页脚和 SEO 站点名中。", false),
-		text("site", "site.tagline", "标语", st.Tagline, "用于浏览器标题和部分主题的辅助文案。", false),
-		text("site", "site.description", "站点描述", st.Description, "首页 Hero 描述，也会作为默认 SEO description。", true),
-		image("site", "site.logo", "站点 Logo", s.store.Setting("site.logo"), "显示在页眉和页脚，留空时使用内置默认 Logo。"),
-		image("site", "site.favicon", "浏览器图标", nonEmpty(s.store.Setting("site.favicon"), defaultFaviconPath), "显示在浏览器标签页，建议使用 SVG、PNG 或 ICO。"),
-		image("site", "site.share_image", "分享图", nonEmpty(s.store.Setting("site.share_image"), defaultShareImageURL), "分享到微信、飞书、X 等平台时默认显示，建议 1200×630。"),
-		text("home", "site.hero_eyebrow", "Hero 眉标", st.HeroEyebrow, "首页主标题上方的小字。", false),
-		text("home", "site.hero_title", "Hero 大标题", st.HeroTitle, "首页第一屏最醒目的标题，建议短一点。", true),
-		image("home", "hero.image", "Hero 图片", s.store.Setting("hero.image"), "上传后会自动把 Hero 右侧视觉切换为图片模式。"),
-		text("home", "home.featured_title", "首页精选标题", st.HomeFeatured, "首页精选文章区块标题。", false),
-		text("home", "home.links_title", "首页链接标题", st.HomeLinks, "首页链接区块标题。", false),
-		text("home", "home.latest_title", "首页最新标题", st.HomeLatest, "首页最新文章区块标题。", false),
-		text("footer", "site.footer_note", "页脚说明", st.FooterNote, "显示在页脚站点名下方。", true),
+		text("site", "site.name", t("admin.visual.field.site_name", "站点名称"), st.Name, t("admin.visual.hint.site_name", "显示在页眉、页脚和 SEO 站点名中。"), false),
+		text("site", "site.tagline", t("admin.visual.field.tagline", "标语"), st.Tagline, t("admin.visual.hint.tagline", "用于浏览器标题和部分主题的辅助文案。"), false),
+		text("site", "site.description", t("admin.visual.field.description", "站点描述"), st.Description, t("admin.visual.hint.description", "首页 Hero 描述，也会作为默认 SEO description。"), true),
+		image("site", "site.logo", t("admin.visual.field.logo", "站点 Logo"), s.store.Setting("site.logo"), t("admin.visual.hint.logo", "显示在页眉和页脚，留空时使用内置默认 Logo。")),
+		image("site", "site.favicon", t("admin.visual.field.favicon", "浏览器图标"), nonEmpty(s.store.Setting("site.favicon"), defaultFaviconPath), t("admin.visual.hint.favicon", "显示在浏览器标签页，建议使用 SVG、PNG 或 ICO。")),
+		image("site", "site.share_image", t("admin.visual.field.share_image", "分享图"), nonEmpty(s.store.Setting("site.share_image"), defaultShareImageURL), t("admin.visual.hint.share_image", "分享到微信、飞书、X 等平台时默认显示，建议 1200×630。")),
+		text("home", "site.hero_eyebrow", t("admin.visual.field.hero_eyebrow", "Hero 眉标"), st.HeroEyebrow, t("admin.visual.hint.hero_eyebrow", "首页主标题上方的小字。"), false),
+		text("home", "site.hero_title", t("admin.visual.field.hero_title", "Hero 大标题"), st.HeroTitle, t("admin.visual.hint.hero_title", "首页第一屏最醒目的标题，建议短一点。"), true),
+		image("home", "hero.image", t("admin.visual.field.hero_image", "Hero 图片"), st.HeroImage, t("admin.visual.hint.hero_image", "上传后会自动把 Hero 右侧视觉切换为图片模式。")),
+		text("home", "home.featured_title", t("admin.visual.field.home_featured", "首页精选标题"), st.HomeFeatured, t("admin.visual.hint.home_featured", "首页精选文章区块标题。"), false),
+		text("home", "home.links_title", t("admin.visual.field.home_links", "首页链接标题"), st.HomeLinks, t("admin.visual.hint.home_links", "首页链接区块标题。"), false),
+		text("home", "home.latest_title", t("admin.visual.field.home_latest", "首页最新标题"), st.HomeLatest, t("admin.visual.hint.home_latest", "首页最新文章区块标题。"), false),
+		text("footer", "site.footer_note", t("admin.visual.field.footer_note", "页脚说明"), st.FooterNote, t("admin.visual.hint.footer_note", "显示在页脚站点名下方。"), true),
 	}
 	for i, row := range s.menuEditRows() {
 		explicit := strings.TrimSpace(row.Labels[lang])
@@ -506,7 +522,7 @@ func (s *Server) visualFields(lang string) []VisualField {
 			Meta:      row.URL,
 			Group:     "nav",
 			Kind:      "text",
-			Hint:      "只修改当前语种的导航名称，导航地址仍在设置里的「导航」维护。",
+			Hint:      t("admin.visual.hint.nav", "只修改当前语种的导航名称，导航地址仍在设置里的「导航」维护。"),
 			Draggable: true,
 			Localized: true,
 			Inherited: lang != def && explicit == "",
@@ -514,59 +530,64 @@ func (s *Server) visualFields(lang string) []VisualField {
 	}
 	if about, _ := s.store.GetPage(lang, "about"); about != nil {
 		fields = append(fields,
-			contextText("about", "page.about.title", "关于标题", about.Title, "", "关于页面的主标题。", false),
-			contextText("about", "page.about.excerpt", "关于摘要", about.Excerpt, "", "关于页面标题下方的简短说明。", true),
-			contextText("about", "page.about.content", "关于正文", about.Content, "", "支持 Markdown；长内容也可以到「页面」里编辑完整正文。", true),
+			contextText("about", "page.about.title", t("admin.visual.field.about_title", "关于标题"), about.Title, "", t("admin.visual.hint.about_title", "关于页面的主标题。"), false),
+			contextText("about", "page.about.excerpt", t("admin.visual.field.about_excerpt", "关于摘要"), about.Excerpt, "", t("admin.visual.hint.about_excerpt", "关于页面标题下方的简短说明。"), true),
+			contextText("about", "page.about.content", t("admin.visual.field.about_content", "关于正文"), about.Content, "", t("admin.visual.hint.about_content", "支持 Markdown；长内容也可以到「页面」里编辑完整正文。"), true),
 		)
 	}
 	categoryAll := s.archiveConfig(lang, "post")
 	fields = append(fields,
-		contextText("category", "category_all.title", "分类页标题", categoryAll.Title, categoryAll.Path, "文章分类的全部列表页标题。", false),
-		contextText("category", "category_all.description", "分类页描述", categoryAll.Description, categoryAll.Path, "显示在文章分类全部页标题下方。", true),
-		contextText("categorynav", "category_all.label", "全部按钮", categoryAll.Label, categoryAll.Path, "分类导航里“全部”按钮的显示文字。", false),
+		contextText("category", "category_all.title", t("admin.visual.field.category_title", "分类页标题"), categoryAll.Title, categoryAll.Path, t("admin.visual.hint.category_title", "文章分类的全部列表页标题。"), false),
+		contextText("category", "category_all.description", t("admin.visual.field.category_description", "分类页描述"), categoryAll.Description, categoryAll.Path, t("admin.visual.hint.category_description", "显示在文章分类全部页标题下方。"), true),
+		contextText("categorynav", "category_all.label", t("admin.visual.field.all_button", "全部按钮"), categoryAll.Label, categoryAll.Path, t("admin.visual.hint.category_all_button", "分类导航里“全部”按钮的显示文字。"), false),
 	)
 	if cats, _ := s.store.ListCategories(lang, "post"); cats != nil {
 		for _, c := range cats {
 			path := "/category/" + c.Slug
-			nameField := contextText("categorynav", "category."+strconv.FormatInt(c.ID, 10)+".name", c.Name, c.Name, path, "分类导航按钮文字；不会改变 URL。", false)
+			nameField := contextText("categorynav", "category."+strconv.FormatInt(c.ID, 10)+".name", c.Name, c.Name, path, t("admin.visual.hint.category_nav_name", "分类导航按钮文字；不会改变 URL。"), false)
 			nameField.Draggable = true
 			fields = append(fields,
 				nameField,
-				contextText("category", "category."+strconv.FormatInt(c.ID, 10)+".description", c.Name+" 描述", c.Description, path, "显示在当前分类页标题下方。", true),
+				contextText("category", "category."+strconv.FormatInt(c.ID, 10)+".description", fmt.Sprintf(t("admin.visual.field.named_description", "%s 描述"), c.Name), c.Description, path, t("admin.visual.hint.category_item_description", "显示在当前分类页标题下方。"), true),
 			)
 		}
 	}
 	linksAll := s.archiveConfig(lang, "link")
 	fields = append(fields,
-		contextText("linkcat", "links_all.title", "链接页标题", linksAll.Title, linksAll.Path, "链接列表页顶部标题。", false),
-		contextText("linkcat", "links_all.description", "链接页描述", linksAll.Description, linksAll.Path, "显示在链接列表页标题下方。", true),
-		contextText("linkcatnav", "links_all.label", "全部按钮", linksAll.Label, linksAll.Path, "链接分类导航里“全部”按钮的显示文字。", false),
+		contextText("linkcat", "links_all.title", t("admin.visual.field.links_title", "链接页标题"), linksAll.Title, linksAll.Path, t("admin.visual.hint.links_title", "链接列表页顶部标题。"), false),
+		contextText("linkcat", "links_all.description", t("admin.visual.field.links_description", "链接页描述"), linksAll.Description, linksAll.Path, t("admin.visual.hint.links_description", "显示在链接列表页标题下方。"), true),
+		contextText("linkcatnav", "links_all.label", t("admin.visual.field.all_button", "全部按钮"), linksAll.Label, linksAll.Path, t("admin.visual.hint.links_all_button", "链接分类导航里“全部”按钮的显示文字。"), false),
 	)
 	if cats, _ := s.store.ListCategories(lang, "link"); cats != nil {
 		for _, c := range cats {
 			path := "/links?cat=" + c.Slug
-			nameField := contextText("linkcatnav", "category."+strconv.FormatInt(c.ID, 10)+".name", c.Name, c.Name, path, "链接分类导航按钮文字；不会改变 URL。", false)
+			nameField := contextText("linkcatnav", "category."+strconv.FormatInt(c.ID, 10)+".name", c.Name, c.Name, path, t("admin.visual.hint.link_category_nav_name", "链接分类导航按钮文字；不会改变 URL。"), false)
 			nameField.Draggable = true
 			fields = append(fields,
 				nameField,
-				contextText("linkcat", "category."+strconv.FormatInt(c.ID, 10)+".description", c.Name+" 描述", c.Description, path, "显示在当前链接分类页标题下方。", true),
+				contextText("linkcat", "category."+strconv.FormatInt(c.ID, 10)+".description", fmt.Sprintf(t("admin.visual.field.named_description", "%s 描述"), c.Name), c.Description, path, t("admin.visual.hint.link_category_item_description", "显示在当前链接分类页标题下方。"), true),
 			)
 		}
 	}
 	return fields
 }
 
-func visualGroups(fields []VisualField) []VisualGroup {
+func visualGroups(fields []VisualField, admins ...*i18n.AdminTr) []VisualGroup {
+	var admin *i18n.AdminTr
+	if len(admins) > 0 {
+		admin = admins[0]
+	}
+	t := func(key, fallback string) string { return adminUI(admin, key, fallback) }
 	titles := []VisualGroup{
-		{ID: "site", Title: "站点信息"},
-		{ID: "home", Title: "首页内容"},
-		{ID: "about", Title: "关于页面"},
-		{ID: "nav", Title: "导航"},
-		{ID: "category", Title: "文章分类页"},
-		{ID: "categorynav", Title: "文章分类导航"},
-		{ID: "linkcat", Title: "链接页"},
-		{ID: "linkcatnav", Title: "链接分类导航"},
-		{ID: "footer", Title: "页脚"},
+		{ID: "site", Title: t("admin.visual.group.site", "站点信息")},
+		{ID: "home", Title: t("admin.visual.group.home", "首页内容")},
+		{ID: "about", Title: t("admin.visual.group.about", "关于页面")},
+		{ID: "nav", Title: t("admin.visual.group.nav", "导航")},
+		{ID: "category", Title: t("admin.visual.group.category", "文章分类页")},
+		{ID: "categorynav", Title: t("admin.visual.group.categorynav", "文章分类导航")},
+		{ID: "linkcat", Title: t("admin.visual.group.linkcat", "链接页")},
+		{ID: "linkcatnav", Title: t("admin.visual.group.linkcatnav", "链接分类导航")},
+		{ID: "footer", Title: t("admin.visual.group.footer", "页脚")},
 	}
 	byID := map[string]int{}
 	for i := range titles {
@@ -774,10 +795,11 @@ func (s *Server) adminVisualSave(w http.ResponseWriter, r *http.Request) {
 	old := s.store.Setting(storeKey)
 	_ = s.store.SetSetting(storeKey, value)
 	if key == "hero.image" {
+		heroVisualKey := s.copyKey("hero.visual", lang)
 		if value != "" {
-			_ = s.store.SetSetting("hero.visual", "image")
-		} else if s.store.Setting("hero.visual") == "image" {
-			_ = s.store.SetSetting("hero.visual", "")
+			_ = s.store.SetSetting(heroVisualKey, "image")
+		} else if s.store.Setting(heroVisualKey) == "image" {
+			_ = s.store.SetSetting(heroVisualKey, "")
 		}
 	}
 	h := s.pushVisualHistory(VisualLog{
@@ -946,7 +968,7 @@ func (s *Server) visualStoreKey(key, lang string) string {
 	case "site.share_image":
 		return "site.share_image"
 	case "hero.image":
-		return "hero.image"
+		return s.copyKey("hero.image", lang)
 	case layoutWidthKey:
 		return layoutWidthKey
 	default:
@@ -1090,10 +1112,11 @@ func (s *Server) restoreVisualValue(h VisualLog) error {
 		return err
 	}
 	if h.Key == "hero.image" {
+		heroVisualKey := s.copyKey("hero.visual", h.Lang)
 		if h.Old != "" {
-			_ = s.store.SetSetting("hero.visual", "image")
-		} else if s.store.Setting("hero.visual") == "image" {
-			_ = s.store.SetSetting("hero.visual", "")
+			_ = s.store.SetSetting(heroVisualKey, "image")
+		} else if s.store.Setting(heroVisualKey) == "image" {
+			_ = s.store.SetSetting(heroVisualKey, "")
 		}
 	}
 	return nil
@@ -1479,6 +1502,42 @@ func themeName(id string) string {
 	return id
 }
 
+var themeDescEN = map[string]string{
+	"editorial":   "Warm serif, single-column reading list",
+	"magazine":    "Sans-serif masthead, centered lead, three-column cards",
+	"terminal":    "Monospace, dark, terminal-style content lists",
+	"brutalist":   "High contrast, heavy borders, hard shadows, square edges",
+	"notebook":    "Paper texture, ruled lines, warm highlights",
+	"swiss":       "International grid, red-black palette, large numbering",
+	"pastel":      "Soft gradients, rounded cards, friendly tone",
+	"newspaper":   "Multi-column serif layout with editorial rhythm",
+	"darkpro":     "Modern dark mode, indigo glow, card grid",
+	"landing":     "Product landing layout with hero, CTAs and feature cards",
+	"product":     "Product site, docs entry and release-note structure",
+	"prism":       "Dark poster mood with multi-color signal lines",
+	"exchange":    "Web3 growth page with market-dashboard energy",
+	"academy":     "AI course and education layout with readable cards",
+	"garment":     "B2B garment factory layout with catalog feel",
+	"institution": "Professional service, consulting or association website",
+	"studio":      "Image-led portfolio for design, photography or studios",
+	"lifestyle":   "Warm small-brand site for cafes, stays or boutiques",
+}
+
+func themeOptionForAdmin(t ThemeOption, lang string) ThemeOption {
+	if !strings.HasPrefix(strings.ToLower(lang), "en") {
+		return t
+	}
+	name := t.Name
+	if i := strings.LastIndex(name, " · "); i >= 0 {
+		name = strings.TrimSpace(name[i+len(" · "):])
+	}
+	desc := themeDescEN[t.ID]
+	if desc == "" {
+		desc = t.Desc
+	}
+	return ThemeOption{ID: t.ID, Name: name, Desc: desc}
+}
+
 func (s *Server) adminSettings(w http.ResponseWriter, r *http.Request) {
 	s.showSettings(w, r, "site", "", "")
 }
@@ -1670,12 +1729,14 @@ func (s *Server) copyKey(base, lang string) string {
 func (s *Server) showSettings(w http.ResponseWriter, r *http.Request, section, flash, formErr string, newAPISecret ...string) {
 	sess, _ := s.currentSession(r)
 	st := s.site(s.defaultLang())
+	adminLang := s.adminLang(r)
 	// 当前主题的微调（作为控件初值）
 	custom, accent, radius := s.themeTweak(st.Theme)
 	cards := make([]ThemeCard, 0, len(Themes))
 	for _, t := range Themes {
+		display := themeOptionForAdmin(t, adminLang)
 		c, a, rd := s.themeTweak(t.ID)
-		cards = append(cards, ThemeCard{ID: t.ID, Name: t.Name, Desc: t.Desc, Accent: a, Radius: rd, Custom: c})
+		cards = append(cards, ThemeCard{ID: t.ID, Name: display.Name, Desc: display.Desc, Accent: a, Radius: rd, Custom: c})
 	}
 	v := s.adminView(r, "设置")
 	s.authed(v, sess)
@@ -1704,7 +1765,10 @@ func (s *Server) showSettings(w http.ResponseWriter, r *http.Request, section, f
 		GiscusInputPosition: commentInputPosition(s.store.Setting("comments.giscus.input_position")),
 		GiscusTheme:         commentTheme(s.store.Setting("comments.giscus.theme")),
 	}
-	v.Themes = Themes
+	v.Themes = make([]ThemeOption, 0, len(Themes))
+	for _, t := range Themes {
+		v.Themes = append(v.Themes, themeOptionForAdmin(t, v.AdminLang))
+	}
 	v.Cards = cards
 	v.Flash = flash
 	v.FormErr = formErr
@@ -1760,6 +1824,17 @@ func (s *Server) showSettings(w http.ResponseWriter, r *http.Request, section, f
 		v.Settings.HomeFeatured = s.store.Setting(s.copyKey("home.featured_title", lang))
 		v.Settings.HomeLinks = s.store.Setting(s.copyKey("home.links_title", lang))
 		v.Settings.HomeLatest = s.store.Setting(s.copyKey("home.latest_title", lang))
+		v.Settings.HeroImageDef = s.store.Setting("hero.image")
+		v.Settings.HeroImage = s.store.Setting(s.copyKey("hero.image", lang))
+		v.Settings.HeroImageMode = "inherit"
+		if lang == s.defaultLang() {
+			v.Settings.HeroImageMode = "global"
+			if v.Settings.HeroImage == "" {
+				v.Settings.HeroImage = v.Settings.HeroImageDef
+			}
+		} else if v.Settings.HeroImage != "" {
+			v.Settings.HeroImageMode = "custom"
+		}
 		// 语种默认值（输入框 placeholder，提示「留空则用此默认」）
 		tr := s.i18n.Tr(lang, s.defaultLang())
 		v.Settings.HomeFeaturedDef = tr.T("home.featured")
@@ -1784,8 +1859,13 @@ func (s *Server) showSettings(w http.ResponseWriter, r *http.Request, section, f
 		v.CustomLocales = s.i18n.Custom()
 		v.AdminI18NJSON = s.store.Setting(s.adminI18NKey(v.AdminLang))
 	case "menu":
-		v.MenuTargets = s.menuTargetOptions()
-		v.MenuEdit = s.menuEditRows()
+		lang := v.AdminLang
+		if !s.langEnabled(lang) {
+			lang = s.defaultLang()
+		}
+		v.EditLang = lang
+		v.MenuTargets = s.menuTargetOptions(v.Admin)
+		v.MenuEdit = s.menuEditRows(v.Admin)
 	case "automation":
 		v.AutomationKeys, _ = s.store.ListAutomationKeys()
 		v.AutomationLogs, _ = s.store.ListAutomationLogs(20)
@@ -1818,6 +1898,36 @@ func (s *Server) adminCreateAutomationKey(w http.ResponseWriter, r *http.Request
 		return
 	}
 	s.showSettings(w, r, "automation", "访问权限已创建，请在列表中点“查看”复制密钥。", "", token, strings.Join(scopes, ","), name, strconv.FormatInt(id, 10))
+}
+
+func (s *Server) adminUpdateAutomationKey(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.checkCSRF(w, r); !ok {
+		return
+	}
+	id := atoi64(r.FormValue("id"))
+	name := strings.TrimSpace(r.FormValue("name"))
+	if id <= 0 {
+		s.showSettings(w, r, "automation", "", "访问权限不存在。")
+		return
+	}
+	if name == "" {
+		s.showSettings(w, r, "automation", "", "用途名称不能为空。")
+		return
+	}
+	scopes := automationScopesFromFormRequired(r)
+	if len(scopes) == 0 {
+		s.showSettings(w, r, "automation", "", "至少选择一项权限。")
+		return
+	}
+	if err := s.store.UpdateAutomationKey(id, name, strings.Join(scopes, ",")); err != nil {
+		if err == sql.ErrNoRows {
+			s.showSettings(w, r, "automation", "", "这条访问权限已失效，不能修改。")
+			return
+		}
+		s.serverError(w, err)
+		return
+	}
+	s.showSettings(w, r, "automation", "访问权限已更新。", "")
 }
 
 func newAutomationToken() (token, prefix string) {
@@ -1930,6 +2040,14 @@ func (s *Server) adminRegenerateAutomationKey(w http.ResponseWriter, r *http.Req
 }
 
 func automationScopesFromForm(r *http.Request) []string {
+	return automationScopesFromFormWithDefault(r, true)
+}
+
+func automationScopesFromFormRequired(r *http.Request) []string {
+	return automationScopesFromFormWithDefault(r, false)
+}
+
+func automationScopesFromFormWithDefault(r *http.Request, useDefault bool) []string {
 	_ = r.ParseForm()
 	want := map[string]bool{}
 	for _, scope := range r.Form["scopes"] {
@@ -1958,8 +2076,10 @@ func automationScopesFromForm(r *http.Request) []string {
 		}
 	}
 	if len(out) == 0 {
-		for _, col := range automationCollections {
-			out = append(out, apiScope(col.path, "read"), apiScope(col.path, "write"))
+		if useDefault {
+			for _, col := range automationCollections {
+				out = append(out, apiScope(col.path, "read"), apiScope(col.path, "write"))
+			}
 		}
 	}
 	return out
@@ -2214,6 +2334,21 @@ func (s *Server) adminSaveCopy(w http.ResponseWriter, r *http.Request) {
 	set("home.featured_title", "home_featured")
 	set("home.links_title", "home_links")
 	set("home.latest_title", "home_latest")
+	heroImage := strings.TrimSpace(r.FormValue("hero_image_lang"))
+	if lang == s.defaultLang() {
+		_ = s.store.SetSetting("hero.image", heroImage)
+		if heroImage != "" {
+			_ = s.store.SetSetting("hero.visual", "image")
+		} else if s.store.Setting("hero.visual") == "image" {
+			_ = s.store.SetSetting("hero.visual", "")
+		}
+	} else if r.FormValue("hero_image_mode") == "custom" && heroImage != "" {
+		_ = s.store.SetSetting(s.copyKey("hero.image", lang), heroImage)
+		_ = s.store.SetSetting(s.copyKey("hero.visual", lang), "image")
+	} else {
+		_ = s.store.SetSetting(s.copyKey("hero.image", lang), "")
+		_ = s.store.SetSetting(s.copyKey("hero.visual", lang), "")
+	}
 	s.clearGeneratedCaches()
 	s.showSettings(w, r, "copy", "文案已保存。", "")
 }

@@ -303,9 +303,11 @@ func (s *Store) normalizeShowcaseDefaults() error {
 		{"site.hero_title::en", "One binary,\none complete content site.", "A small server\ncan run a complete\ncontent site"},
 		{"site.hero_title::en", "Build a site that\npublishes, ranks\nand stays easy to run", "A small server\ncan run a complete\ncontent site"},
 		{"site.share_image", "", "/assets/og-cover.webp"},
+		{"site.share_image::en", "", "/assets/og-cover-en.webp"},
 		{"hero.image", "", "/assets/hero-product-overview-brand.webp"},
 		{"hero.image", "/assets/figures/gcms-showcase-hero.svg", "/assets/hero-product-overview-brand.webp"},
 		{"hero.image", "/assets/hero-product-overview.webp", "/assets/hero-product-overview-brand.webp"},
+		{"hero.image::en", "", "/assets/hero-product-overview-brand-en.webp"},
 	}
 	for _, u := range updates {
 		if _, err := s.db.Exec(`UPDATE settings SET value=? WHERE key=? AND value=? AND `+demo, u.new, u.key, u.old); err != nil {
@@ -313,9 +315,12 @@ func (s *Store) normalizeShowcaseDefaults() error {
 		}
 	}
 	inserts := map[string]string{
-		"site.share_image": "/assets/og-cover.webp",
-		"hero.image":       "/assets/hero-product-overview-brand.webp",
-		"hero.visual":      "image",
+		"site.share_image":     "/assets/og-cover.webp",
+		"site.share_image::en": "/assets/og-cover-en.webp",
+		"hero.image":           "/assets/hero-product-overview-brand.webp",
+		"hero.image::en":       "/assets/hero-product-overview-brand-en.webp",
+		"hero.visual":          "image",
+		"hero.visual::en":      "image",
 	}
 	for key, value := range inserts {
 		if _, err := s.db.Exec(`INSERT INTO settings(key,value)
@@ -392,6 +397,50 @@ func (s *Store) normalizeShowcaseDefaults() error {
 		SET content=replace(content, '## The requirements are small', '## Environment requirements')
 		WHERE type='post' AND lang='en' AND slug='deploy-in-5-minutes' AND instr(content, '## The requirements are small') > 0 AND ` + demo); err != nil {
 		return err
+	}
+	enScreenshots := map[string]string{
+		"/assets/screenshots/language-switch.webp":    "/assets/screenshots/language-switch-en.webp",
+		"/assets/screenshots/article-editor.webp":     "/assets/screenshots/article-editor-en.webp",
+		"/assets/screenshots/seo-output.webp":         "/assets/screenshots/seo-output-en.webp",
+		"/assets/screenshots/theme-settings.webp":     "/assets/screenshots/theme-settings-en.webp",
+		"/assets/screenshots/automation-api.webp":     "/assets/screenshots/automation-api-en.webp",
+		"/assets/screenshots/system-updates.webp":     "/assets/screenshots/system-updates-en.webp",
+		"/assets/screenshots/visual-editor-home.webp": "/assets/screenshots/visual-editor-home-en.webp",
+		"/assets/screenshots/navigation-menu.webp":    "/assets/screenshots/navigation-menu-en.webp",
+		"/assets/screenshots/security-demo-data.webp": "/assets/screenshots/security-demo-data-en.webp",
+	}
+	for oldPath, newPath := range enScreenshots {
+		if _, err := s.db.Exec(`UPDATE posts
+			SET cover_image=?
+			WHERE lang='en' AND cover_image=? AND `+demo, newPath, oldPath); err != nil {
+			return err
+		}
+		if _, err := s.db.Exec(`UPDATE posts
+			SET content=replace(content, ?, ?)
+			WHERE lang='en' AND instr(content, ?) > 0 AND `+demo, oldPath, newPath, oldPath); err != nil {
+			return err
+		}
+	}
+	enCovers := map[string]string{
+		"/assets/covers/release-package-real.webp": "/assets/covers/release-package-real-en.webp",
+		"/assets/covers/gcms-stack-brand.webp":     "/assets/covers/gcms-stack-brand-en.webp",
+		"/assets/covers/release-repo-real.webp":    "/assets/covers/release-repo-real-en.webp",
+		"/assets/covers/site.webp":                 "/assets/covers/site-en.webp",
+		"/assets/covers/go-brand.webp":             "/assets/covers/go-brand-en.webp",
+		"/assets/covers/sqlite-brand.webp":         "/assets/covers/sqlite-brand-en.webp",
+		"/assets/covers/caddy-brand.webp":          "/assets/covers/caddy-brand-en.webp",
+	}
+	for oldPath, newPath := range enCovers {
+		if _, err := s.db.Exec(`UPDATE posts
+			SET cover_image=?
+			WHERE lang='en' AND cover_image=? AND `+demo, newPath, oldPath); err != nil {
+			return err
+		}
+		if _, err := s.db.Exec(`UPDATE posts
+			SET content=replace(content, ?, ?)
+			WHERE lang='en' AND instr(content, ?) > 0 AND `+demo, oldPath, newPath, oldPath); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -698,6 +747,23 @@ func (s *Store) RegenerateAutomationKey(id int64, token, prefix string) error {
 	res, err := s.db.Exec(`UPDATE automation_keys
 		SET token_hash=?, token_prefix=?, last_used_at=NULL
 		WHERE id=? AND revoked_at IS NULL`, automationTokenHash(token), prefix, id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (s *Store) UpdateAutomationKey(id int64, name, scopes string) error {
+	res, err := s.db.Exec(`UPDATE automation_keys
+		SET name=?, scopes=?
+		WHERE id=? AND revoked_at IS NULL`, name, scopes, id)
 	if err != nil {
 		return err
 	}
@@ -1413,7 +1479,7 @@ func (s *Store) ClearDemoContent() error {
 // 这是给新站初始化/测试用的显式操作：保留登录凭据、Logo/ico、当前主题与上传文件。
 func (s *Store) ReloadShowcaseContent() error {
 	preserve := map[string]string{}
-	for _, key := range []string{"admin_user", "admin_password_hash", "site.logo", "site.favicon", "site.share_image", "theme"} {
+	for _, key := range []string{"admin_user", "admin_password_hash", "site.logo", "site.favicon", "site.share_image", "site.share_image::en", "theme"} {
 		preserve[key] = s.Setting(key)
 	}
 	if _, err := s.db.Exec(`
@@ -1439,7 +1505,7 @@ DELETE FROM sqlite_sequence WHERE name IN ('posts','categories');
 }
 
 func demoSettingKeys() []string {
-	keys := []string{"nav_menu", "social_links", "demo.seed", "site.share_image", "hero.visual", "hero.image", "hero.svg"}
+	keys := []string{"nav_menu", "social_links", "demo.seed", "site.share_image", "site.share_image::en", "hero.visual", "hero.visual::en", "hero.image", "hero.image::en", "hero.svg"}
 	for _, base := range []string{"home.featured_title", "home.links_title", "home.latest_title"} {
 		keys = append(keys, base, base+"::en")
 	}

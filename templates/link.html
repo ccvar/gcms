@@ -1,7 +1,7 @@
 {{define "body"}}{{$p := .Post}}  <div class="read-progress" aria-hidden="true"><i></i></div>
   <main class="wrap">
     <div class="article-grid{{if .TOC}} has-toc{{end}}">
-      <nav class="breadcrumb article-bc" aria-label="面包屑">
+      <nav class="breadcrumb article-bc" aria-label="{{.Tr.T "common.breadcrumb"}}">
         <a href="{{.Tr.U "/"}}">{{.Tr.T "nav.home"}}</a><span class="sep">/</span>
         <a href="{{.Tr.U "/links"}}">{{.Tr.T "nav.links"}}</a><span class="sep">/</span>
         {{with $p.Category}}<a href="{{$.Tr.U "/links"}}?cat={{.Slug}}">{{.Name}}</a><span class="sep">/</span>{{end}}

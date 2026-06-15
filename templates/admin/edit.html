@@ -33,15 +33,15 @@
         <div class="field">
           <div class="editor-bar">
             <label>{{.Admin.T "admin.edit.content" "正文"}}</label>
-            <div class="seg" role="tablist" aria-label="编辑模式">
+            <div class="seg" role="tablist" aria-label="{{.Admin.T "admin.edit.mode" "编辑模式"}}">
               <button type="button" class="seg-btn is-on" data-mode="markdown" role="tab">Markdown</button>
-              <button type="button" class="seg-btn" data-mode="rich" role="tab">富文本</button>
+              <button type="button" class="seg-btn" data-mode="rich" role="tab">{{.Admin.T "admin.edit.rich_text" "富文本"}}</button>
             </div>
           </div>
           <div class="editor" data-editor>
             <textarea id="content" name="content" rows="22" spellcheck="false">{{$e.Content}}</textarea>
             <div class="rich-wrap" hidden>
-              <div class="rich" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder="开始写作…，选中文字弹出工具栏，空行点 ＋ 插入"></div>
+              <div class="rich" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder="{{.Admin.T "admin.edit.rich_placeholder" "开始写作…，选中文字弹出工具栏，空行点 ＋ 插入"}}"></div>
             </div>
           </div>
         </div>
@@ -141,9 +141,9 @@
         <div class="field">
           <label class="tweak-toggle">
             <input type="checkbox" name="comments_enabled" value="1"{{if $e.CommentsEnabled}} checked{{end}}>
-            <span>显示评论区</span>
+            <span>{{.Admin.T "admin.edit.comments_enabled" "显示评论区"}}</span>
           </label>
-          <p class="muted" style="margin:.35rem 0 0;font-size:.82rem;line-height:1.5">需要先在「设置 → 评论」启用 Giscus。</p>
+          <p class="muted" style="margin:.35rem 0 0;font-size:.82rem;line-height:1.5">{{.Admin.T "admin.edit.comments_note" "需要先在「设置 → 评论」启用 Giscus。"}}</p>
         </div>
         {{end}}
       </aside>
@@ -151,15 +151,15 @@
     <fieldset class="seo-box">
       <legend>SEO</legend>
       <div class="field">
-        <label for="excerpt">摘要（列表与 description）</label>
+        <label for="excerpt">{{.Admin.T "admin.edit.excerpt" "摘要（列表与 description）"}}</label>
         <textarea id="excerpt" name="excerpt" rows="2">{{$e.Excerpt}}</textarea>
       </div>
       <div class="field">
-        <label for="meta_desc">自定义 Meta Description（留空则用摘要）</label>
+        <label for="meta_desc">{{.Admin.T "admin.edit.meta_desc" "自定义 Meta Description（留空则用摘要）"}}</label>
         <textarea id="meta_desc" name="meta_desc" rows="2">{{$e.MetaDesc}}</textarea>
       </div>
       <div class="field">
-        <label for="keywords">关键词（逗号分隔，作为标签）</label>
+        <label for="keywords">{{.Admin.T "admin.edit.keywords" "关键词（逗号分隔，作为标签）"}}</label>
         <input id="keywords" name="keywords" value="{{$e.Keywords}}">
       </div>
     </fieldset>
@@ -167,15 +167,15 @@
 
   {{if and $e.ID (gt (len .Locales) 1)}}
   <section class="trans-box">
-    <h3>跨语种 · 互译版本</h3>
-    <p class="muted" style="font-size:.85rem;margin:.1rem 0 .8rem">同一篇内容的各语种版本独立维护、共享互译关联（用于前台语言切换与 hreflang）。</p>
+    <h3>{{.Admin.T "admin.edit.translations" "跨语种 · 互译版本"}}</h3>
+    <p class="muted" style="font-size:.85rem;margin:.1rem 0 .8rem">{{.Admin.T "admin.edit.translations_desc" "同一篇内容的各语种版本独立维护、共享互译关联（用于前台语言切换与 hreflang）。"}}</p>
     {{if .Trans}}
     <div class="trans-list">
       {{range .Trans}}
       <a class="trans-link" href="/admin/{{if eq .Type "page"}}pages{{else}}posts{{end}}/{{.ID}}/edit">
         <span class="lang-chip">{{.Lang}}</span>
         <span class="trans-title">{{.Title}}</span>
-        <span class="badge {{if .IsPublished}}pub{{else if eq .Status "scheduled"}}sched{{else}}draft{{end}}">{{if .IsPublished}}已发布{{else if eq .Status "scheduled"}}定时{{else}}草稿{{end}}</span>
+        <span class="badge {{if .IsPublished}}pub{{else if eq .Status "scheduled"}}sched{{else}}draft{{end}}">{{if .IsPublished}}{{$.Admin.T "admin.status.published" "已发布"}}{{else if eq .Status "scheduled"}}{{$.Admin.T "admin.status.scheduled" "定时"}}{{else}}{{$.Admin.T "admin.status.draft" "草稿"}}{{end}}</span>
       </a>
       {{end}}
     </div>
@@ -185,7 +185,7 @@
       <form method="post" action="/admin/posts/{{$e.ID}}/translate">
         <input type="hidden" name="_csrf" value="{{$.CSRF}}">
         <input type="hidden" name="lang" value="{{.Code}}">
-        <button type="submit" class="btn btn-soft">＋ 翻译为 {{.Name}}</button>
+        <button type="submit" class="btn btn-soft">＋ {{printf ($.Admin.T "admin.edit.translate_to" "翻译为 %s") .Name}}</button>
       </form>
       {{end}}{{end}}{{end}}
     </div>
@@ -195,26 +195,26 @@
 
   <!-- 富文本气泡工具栏 -->
   <div class="bubble" hidden>
-    <button type="button" data-cmd="bold" title="粗体"><b>B</b></button>
-    <button type="button" data-cmd="italic" title="斜体"><i>I</i></button>
+    <button type="button" data-cmd="bold" title="{{.Admin.T "admin.edit.bold" "粗体"}}"><b>B</b></button>
+    <button type="button" data-cmd="italic" title="{{.Admin.T "admin.edit.italic" "斜体"}}"><i>I</i></button>
     <span class="bubble-sep"></span>
-    <button type="button" data-cmd="h2" title="标题">H2</button>
-    <button type="button" data-cmd="h3" title="小标题">H3</button>
-    <button type="button" data-cmd="quote" title="引用">
+    <button type="button" data-cmd="h2" title="{{.Admin.T "admin.edit.heading" "标题"}}">H2</button>
+    <button type="button" data-cmd="h3" title="{{.Admin.T "admin.edit.subheading" "小标题"}}">H3</button>
+    <button type="button" data-cmd="quote" title="{{.Admin.T "admin.edit.quote" "引用"}}">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6 17h3l2-4V7H5v6h3zm8 0h3l2-4V7h-6v6h3z"/></svg>
     </button>
-    <button type="button" data-cmd="link" title="链接">
+    <button type="button" data-cmd="link" title="{{.Admin.T "admin.common.link" "链接"}}">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 13a5 5 0 0 0 7 0l2-2a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-2 2a5 5 0 0 0 7 7l1-1"/></svg>
     </button>
   </div>
 
   <!-- 链接小弹层（替代系统 prompt） -->
   <div class="link-pop" hidden>
-    <input type="text" inputmode="url" class="link-input" placeholder="粘贴链接，回车确认">
-    <button type="button" class="link-apply" title="确认">
+    <input type="text" inputmode="url" class="link-input" placeholder="{{.Admin.T "admin.edit.link_pop_placeholder" "粘贴链接，回车确认"}}">
+    <button type="button" class="link-apply" title="{{.Admin.T "admin.edit.confirm" "确认"}}">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg>
     </button>
-    <button type="button" class="link-close" title="关闭" aria-label="关闭">
+    <button type="button" class="link-close" title="{{.Admin.T "admin.action.close" "关闭"}}" aria-label="{{.Admin.T "admin.action.close" "关闭"}}">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
     </button>
   </div>

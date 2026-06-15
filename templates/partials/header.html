@@ -1,7 +1,7 @@
 {{define "header"}}  <header class="site-header">
     <div class="wrap">
       {{if and .Site.Logo (ne .Site.Brand "text")}}<a class="brand has-logo{{if eq .Site.Brand "both"}} with-name{{end}}" href="{{.Tr.U "/"}}"><img class="brand-logo" src="{{.Site.Logo}}" alt="{{.Site.Name}}"{{if .VisualEdit}} data-visual-edit="site.logo" data-visual-label="站点 Logo" data-visual-kind="image"{{end}}>{{if eq .Site.Brand "both"}}<span class="brand-name"{{if .VisualEdit}} data-visual-edit="site.name" data-visual-label="站点名称"{{end}}>{{.Site.Name}}</span>{{end}}</a>{{else}}<a class="brand" href="{{.Tr.U "/"}}"{{if .VisualEdit}} data-visual-edit="site.name" data-visual-label="站点名称"{{end}}>{{.Site.Name}}</a>{{end}}
-      <nav class="nav" aria-label="主导航">
+      <nav class="nav" aria-label="{{.Tr.T "common.main_nav"}}">
         {{range .Menu}}<a href="{{.Href}}"{{if .External}} target="_blank" rel="noopener"{{end}}{{if .Active}} aria-current="page"{{end}}{{if $.VisualEdit}} data-visual-edit="nav.{{.Index}}" data-visual-label="{{.Label}}"{{end}}>{{.Label}}</a>
         {{end}}
         <a class="search-ico" href="{{.Tr.U "/search"}}"{{if eq .Nav "search"}} aria-current="page"{{end}} aria-label="{{.Tr.T "nav.search"}}">

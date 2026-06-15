@@ -42,18 +42,18 @@
       {{if .FormErr}}<div class="form-err">{{.FormErr}}</div>{{end}}
 
       {{if $isConfig}}
-      <section class="site-config-head" aria-label="站点配置入口">
+      <section class="site-config-head" aria-label="{{.Admin.T "admin.settings.config_entry" "站点配置入口"}}">
         <div class="site-config-main">
           <div class="visual-entry-copy">
             <span class="visual-entry-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3H5a2 2 0 0 0-2 2v2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M17 21h2a2 2 0 0 0 2-2v-2"/><path d="M8 8h8v8H8z"/></svg>
             </span>
             <div>
-              <span class="config-kicker">站点配置</span>
-              <h2>可视化编辑</h2>
-              <p>在真实页面上点击任意内容进行修改，实时预览并保存，让配置更直观高效。</p>
+              <span class="config-kicker">{{.Admin.T "admin.settings.config_title" "站点配置"}}</span>
+              <h2>{{.Admin.T "admin.settings.visual.title" "可视化编辑"}}</h2>
+              <p>{{.Admin.T "admin.settings.visual.desc" "在真实页面上点击任意内容进行修改，实时预览并保存，让配置更直观高效。"}}</p>
               <a class="btn btn-primary" href="/admin/visual?lang={{.EditLang}}">
-                打开可视化编辑
+                {{.Admin.T "admin.settings.visual.open" "打开可视化编辑"}}
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7"/><path d="M9 7h8v8"/></svg>
               </a>
             </div>
@@ -62,15 +62,15 @@
             <div class="preview-window">
               <div class="preview-chrome"><i></i><i></i><i></i></div>
               <div class="preview-nav">
-                <span class="preview-brand"><b>C</b> 简记</span>
-                <span>首页</span><span>分类</span><span>链接</span><span>关于</span>
+                <span class="preview-brand"><b>C</b> {{.Admin.T "admin.settings.visual.preview_brand" "简记"}}</span>
+                <span>{{.Admin.T "admin.settings.visual.preview_home" "首页"}}</span><span>{{.Admin.T "admin.settings.visual.preview_categories" "分类"}}</span><span>{{.Admin.T "admin.settings.visual.preview_links" "链接"}}</span><span>{{.Admin.T "admin.settings.visual.preview_about" "关于"}}</span>
               </div>
               <div class="preview-stage">
                 <div>
-                  <strong>记录技术、工具与思考</strong>
+                  <strong>{{.Admin.T "admin.settings.visual.preview_title" "记录技术、工具与思考"}}</strong>
                   <span class="preview-edit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></span>
                 </div>
-                <p>用 Go 与 SQLite 构建的轻量内容站，关注后端工程、极简设计与搜索引擎优化。</p>
+                <p>{{.Admin.T "admin.settings.visual.preview_desc" "用 Go 与 SQLite 构建的轻量内容站，关注后端工程、极简设计与搜索引擎优化。"}}</p>
                 <span class="preview-media"><i></i><i></i></span>
               </div>
             </div>
@@ -79,43 +79,43 @@
         <div class="config-lang-row">
           {{if eq .Section "menu"}}
           <div class="config-lang-note">
-            <span class="scope-pill global">所有语种</span>
-            <span>导航菜单会在同一行里维护各语种名称；路径是全站共用的。</span>
+            <span class="scope-pill global">{{.Admin.T "admin.scope.all_languages" "所有语种"}}</span>
+            <span>{{.Admin.T "admin.settings.menu.lang_note" "导航菜单会在同一行里维护各语种名称；路径是全站共用的。"}}</span>
           </div>
           {{else}}
           {{if gt (len .Locales) 1}}
-          <div class="lang-tabs compact" role="tablist" aria-label="当前编辑语种">
-            {{range .Locales}}<a href="{{if eq $.Section "categories"}}/admin/settings/categories?kind={{$.CatKind}}&lang={{.Code}}{{else}}/admin/settings/{{$.Section}}?lang={{.Code}}{{end}}"{{if eq .Code $.EditLang}} class="active" aria-current="true"{{end}}>{{.Name}}{{if eq .Code $.Lang}}<small>默认</small>{{end}}</a>{{end}}
+          <div class="lang-tabs compact" role="tablist" aria-label="{{.Admin.T "admin.settings.current_edit_lang" "当前编辑语种"}}">
+            {{range .Locales}}<a href="{{if eq $.Section "categories"}}/admin/settings/categories?kind={{$.CatKind}}&lang={{.Code}}{{else}}/admin/settings/{{$.Section}}?lang={{.Code}}{{end}}"{{if eq .Code $.EditLang}} class="active" aria-current="true"{{end}}>{{.Name}}{{if eq .Code $.Lang}}<small>{{$.Admin.T "admin.scope.default" "默认"}}</small>{{end}}</a>{{end}}
           </div>
           {{end}}
           <div class="config-lang-note">
-            <span class="scope-pill">当前语种</span>
-            <span>正在编辑{{range .Locales}}{{if eq .Code $.EditLang}}「{{.Name}}」{{end}}{{end}}的前台文案；未填写时会回落默认语种。</span>
+            <span class="scope-pill">{{.Admin.T "admin.scope.current_lang" "当前语种"}}</span>
+            <span>{{.Admin.T "admin.settings.config.editing_prefix" "正在编辑"}}{{range .Locales}}{{if eq .Code $.EditLang}}「{{.Name}}」{{end}}{{end}}{{.Admin.T "admin.settings.config.editing_suffix" "的前台文案；未填写时会回落默认语种。"}}</span>
           </div>
           {{end}}
         </div>
-        <nav class="config-tabs" aria-label="站点配置分区">
+        <nav class="config-tabs" aria-label="{{.Admin.T "admin.settings.config_sections" "站点配置分区"}}">
           <a href="/admin/settings/site?lang={{.EditLang}}"{{if eq .Section "site"}} class="active" aria-current="page"{{end}}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
-            <span>基础信息</span>
+            <span>{{.Admin.T "admin.settings.tabs.basic" "基础信息"}}</span>
           </a>
           <a href="/admin/settings/copy?lang={{.EditLang}}"{{if eq .Section "copy"}} class="active" aria-current="page"{{end}}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6V4.5h16V6"/><path d="M9 20h6"/><path d="M12 4.5v15.5"/></svg>
-            <span>文案内容</span>
+            <span>{{.Admin.T "admin.settings.tabs.copy" "文案内容"}}</span>
           </a>
           <a href="/admin/settings/menu"{{if eq .Section "menu"}} class="active" aria-current="page"{{end}}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="8" y1="6" x2="20" y2="6"/><line x1="8" y1="12" x2="20" y2="12"/><line x1="8" y1="18" x2="20" y2="18"/><circle cx="4" cy="6" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="18" r="1"/></svg>
-            <span>导航菜单</span>
+            <span>{{.Admin.T "admin.settings.tabs.menu" "导航菜单"}}</span>
           </a>
           <a href="/admin/settings/categories?kind={{if .CatKind}}{{.CatKind}}{{else}}post{{end}}&lang={{.EditLang}}"{{if eq .Section "categories"}} class="active" aria-current="page"{{end}}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7a2 2 0 0 1 2-2h3l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/></svg>
-            <span>分类入口</span>
+            <span>{{.Admin.T "admin.settings.tabs.categories" "分类入口"}}</span>
           </a>
         </nav>
       </section>
       {{end}}
 
-      {{if $isConfig}}<section class="config-panel" aria-label="当前配置内容">{{end}}
+      {{if $isConfig}}<section class="config-panel" aria-label="{{.Admin.T "admin.settings.config_content" "当前配置内容"}}">{{end}}
       {{if eq .Section "site"}}
       <form method="post" action="/admin/settings/site" class="admin-form">
         <input type="hidden" name="_csrf" value="{{.CSRF}}">
@@ -123,113 +123,113 @@
         <div class="field-group">
           <h3 class="group-head with-icon">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01"/><path d="M11 12h1v5h1"/></svg>
-            <span>当前语种内容</span>
+            <span>{{.Admin.T "admin.settings.site.current_content" "当前语种内容"}}</span>
           </h3>
           <div class="field">
-            <label for="site_name">站点名称 <span class="scope-pill">当前语种</span></label>
+            <label for="site_name">{{.Admin.T "admin.settings.site.name" "站点名称"}} <span class="scope-pill">{{.Admin.T "admin.scope.current_lang" "当前语种"}}</span></label>
             <input id="site_name" name="site_name" value="{{.Settings.Name}}" placeholder="{{if ne .EditLang .Lang}}{{.Settings.NameDef}}{{end}}"{{if eq .EditLang .Lang}} required{{end}}>
           </div>
           <div class="field">
-            <label for="site_tagline">标语 <span class="scope-pill">当前语种</span></label>
+            <label for="site_tagline">{{.Admin.T "admin.settings.site.tagline" "标语"}} <span class="scope-pill">{{.Admin.T "admin.scope.current_lang" "当前语种"}}</span></label>
             <input id="site_tagline" name="site_tagline" value="{{.Settings.Tagline}}" placeholder="{{if ne .EditLang .Lang}}{{.Settings.TaglineDef}}{{end}}">
           </div>
           <div class="field">
-            <label for="site_description">站点描述 <span class="scope-pill">当前语种</span></label>
+            <label for="site_description">{{.Admin.T "admin.settings.site.description" "站点描述"}} <span class="scope-pill">{{.Admin.T "admin.scope.current_lang" "当前语种"}}</span></label>
             <textarea id="site_description" name="site_description" rows="3" placeholder="{{if ne .EditLang .Lang}}{{.Settings.DescriptionDef}}{{end}}">{{.Settings.Description}}</textarea>
           </div>
         </div>
         <div class="field-group">
           <h3 class="group-head with-icon">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="2"/><circle cx="9" cy="10" r="1.4"/><path d="m8 17 3.2-3.2a1.5 1.5 0 0 1 2.1 0L16 16.5"/><path d="m14 15 1.1-1.1a1.5 1.5 0 0 1 2.1 0L20 16.7"/></svg>
-            <span>品牌与链接</span>
+            <span>{{.Admin.T "admin.settings.site.brand_links" "品牌与链接"}}</span>
           </h3>
         <div class="form-2col">
           <div class="field">
-            <label>站点图标 Favicon <span class="scope-pill global">全站共用</span></label>
+            <label>{{.Admin.T "admin.settings.site.favicon" "站点图标 Favicon"}} <span class="scope-pill global">{{.Admin.T "admin.scope.global" "全站共用"}}</span></label>
             <div class="uploader uploader-sm" data-name="site_favicon">
               <input type="hidden" name="site_favicon" value="{{.Settings.Favicon}}">
-              <div class="up-preview" tabindex="0" role="button" aria-label="选择图片">
-                <span class="up-hint">选择</span>
-                <button type="button" class="up-remove" data-confirm-title="确认移除" data-confirm-ok="移除" data-confirm="移除当前站点图标？保存站点信息后生效。" title="删除" aria-label="删除"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+              <div class="up-preview" tabindex="0" role="button" aria-label="{{.Admin.T "admin.settings.site.choose_image" "选择图片"}}">
+                <span class="up-hint">{{.Admin.T "admin.settings.site.choose" "选择"}}</span>
+                <button type="button" class="up-remove" data-confirm-title="{{.Admin.T "admin.settings.site.confirm_remove" "确认移除"}}" data-confirm-ok="{{.Admin.T "admin.action.remove" "移除"}}" data-confirm="{{.Admin.T "admin.settings.site.remove_favicon_confirm" "移除当前站点图标？保存站点信息后生效。"}}" title="{{.Admin.T "admin.action.delete" "删除"}}" aria-label="{{.Admin.T "admin.action.delete" "删除"}}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
                 <input type="file" accept="image/*,.ico,.svg" hidden>
               </div>
-              <input type="text" inputmode="url" class="up-url" placeholder="或粘贴 URL" value="{{.Settings.Favicon}}">
+              <input type="text" inputmode="url" class="up-url" placeholder="{{.Admin.T "admin.settings.site.url_placeholder" "或粘贴 URL"}}" value="{{.Settings.Favicon}}">
               <div class="up-status"></div>
             </div>
           </div>
           <div class="field">
-            <label>站点 Logo <span class="scope-pill global">全站共用</span></label>
+            <label>{{.Admin.T "admin.settings.site.logo" "站点 Logo"}} <span class="scope-pill global">{{.Admin.T "admin.scope.global" "全站共用"}}</span></label>
             <div class="uploader uploader-sm" data-name="site_logo">
               <input type="hidden" name="site_logo" value="{{.Settings.Logo}}">
-              <div class="up-preview" tabindex="0" role="button" aria-label="选择图片">
-                <span class="up-hint">选择</span>
-                <button type="button" class="up-remove" data-confirm-title="确认移除" data-confirm-ok="移除" data-confirm="移除当前站点 Logo？保存站点信息后生效。" title="删除" aria-label="删除"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+              <div class="up-preview" tabindex="0" role="button" aria-label="{{.Admin.T "admin.settings.site.choose_image" "选择图片"}}">
+                <span class="up-hint">{{.Admin.T "admin.settings.site.choose" "选择"}}</span>
+                <button type="button" class="up-remove" data-confirm-title="{{.Admin.T "admin.settings.site.confirm_remove" "确认移除"}}" data-confirm-ok="{{.Admin.T "admin.action.remove" "移除"}}" data-confirm="{{.Admin.T "admin.settings.site.remove_logo_confirm" "移除当前站点 Logo？保存站点信息后生效。"}}" title="{{.Admin.T "admin.action.delete" "删除"}}" aria-label="{{.Admin.T "admin.action.delete" "删除"}}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
                 <input type="file" accept="image/*,.ico,.svg" hidden>
               </div>
-              <input type="text" inputmode="url" class="up-url" placeholder="或粘贴 URL" value="{{.Settings.Logo}}">
+              <input type="text" inputmode="url" class="up-url" placeholder="{{.Admin.T "admin.settings.site.url_placeholder" "或粘贴 URL"}}" value="{{.Settings.Logo}}">
               <div class="up-status"></div>
             </div>
           </div>
         </div>
         <div class="field">
-          <label>分享图 <span class="scope-pill global">全站共用</span></label>
-          <p class="muted" style="margin:.1rem 0 .7rem;font-size:.82rem">分享到微信、飞书、X 等平台时默认显示；文章有封面时会优先使用文章封面。建议 1200 × 630。</p>
+          <label>{{.Admin.T "admin.settings.site.share_image" "分享图"}} <span class="scope-pill global">{{.Admin.T "admin.scope.global" "全站共用"}}</span></label>
+          <p class="muted" style="margin:.1rem 0 .7rem;font-size:.82rem">{{.Admin.T "admin.settings.site.share_note" "分享到微信、飞书、X 等平台时默认显示；文章有封面时会优先使用文章封面。建议 1200 × 630。"}}</p>
           <div class="uploader uploader-og" data-name="site_share_image">
             <input type="hidden" name="site_share_image" value="{{.Settings.ShareImage}}">
-            <div class="up-preview" tabindex="0" role="button" aria-label="选择分享图">
-              <span class="up-hint">选择分享图</span>
-              <button type="button" class="up-remove" data-confirm-title="确认移除" data-confirm-ok="移除" data-confirm="移除当前分享图？保存站点信息后生效。" title="删除" aria-label="删除"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+            <div class="up-preview" tabindex="0" role="button" aria-label="{{.Admin.T "admin.settings.site.choose_share_image" "选择分享图"}}">
+              <span class="up-hint">{{.Admin.T "admin.settings.site.choose_share_image" "选择分享图"}}</span>
+              <button type="button" class="up-remove" data-confirm-title="{{.Admin.T "admin.settings.site.confirm_remove" "确认移除"}}" data-confirm-ok="{{.Admin.T "admin.action.remove" "移除"}}" data-confirm="{{.Admin.T "admin.settings.site.remove_share_confirm" "移除当前分享图？保存站点信息后生效。"}}" title="{{.Admin.T "admin.action.delete" "删除"}}" aria-label="{{.Admin.T "admin.action.delete" "删除"}}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
               <input type="file" accept="image/*,.svg" hidden>
             </div>
-            <input type="text" inputmode="url" class="up-url" placeholder="或粘贴图片 URL" value="{{.Settings.ShareImage}}">
+            <input type="text" inputmode="url" class="up-url" placeholder="{{.Admin.T "admin.settings.site.image_url_placeholder" "或粘贴图片 URL"}}" value="{{.Settings.ShareImage}}">
             <div class="up-status"></div>
           </div>
         </div>
         <div class="field">
-          <label id="brand-label">页眉品牌 <span class="scope-pill global">全站共用</span></label>
+          <label id="brand-label">{{.Admin.T "admin.settings.site.header_brand" "页眉品牌"}} <span class="scope-pill global">{{.Admin.T "admin.scope.global" "全站共用"}}</span></label>
           <div class="dropdown" data-name="site_brand">
             <button type="button" class="dd-toggle" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="brand-label">
-              <span class="dd-label">{{if eq .Settings.Brand "both"}}Logo + 名称{{else if eq .Settings.Brand "text"}}仅名称{{else}}仅 Logo{{end}}</span>
+              <span class="dd-label">{{if eq .Settings.Brand "both"}}{{.Admin.T "admin.settings.site.brand.both" "Logo + 名称"}}{{else if eq .Settings.Brand "text"}}{{.Admin.T "admin.settings.site.brand.text" "仅名称"}}{{else}}{{.Admin.T "admin.settings.site.brand.logo" "仅 Logo"}}{{end}}</span>
               <svg class="dd-caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
             </button>
             <input type="hidden" name="site_brand" value="{{if .Settings.Brand}}{{.Settings.Brand}}{{else}}logo{{end}}">
             <ul class="dd-menu" role="listbox">
-              <li role="option" data-value="logo" aria-selected="{{if eq .Settings.Brand "logo"}}true{{else}}false{{end}}">仅 Logo</li>
-              <li role="option" data-value="both" aria-selected="{{if eq .Settings.Brand "both"}}true{{else}}false{{end}}">Logo + 名称</li>
-              <li role="option" data-value="text" aria-selected="{{if eq .Settings.Brand "text"}}true{{else}}false{{end}}">仅名称</li>
+              <li role="option" data-value="logo" aria-selected="{{if eq .Settings.Brand "logo"}}true{{else}}false{{end}}">{{.Admin.T "admin.settings.site.brand.logo" "仅 Logo"}}</li>
+              <li role="option" data-value="both" aria-selected="{{if eq .Settings.Brand "both"}}true{{else}}false{{end}}">{{.Admin.T "admin.settings.site.brand.both" "Logo + 名称"}}</li>
+              <li role="option" data-value="text" aria-selected="{{if eq .Settings.Brand "text"}}true{{else}}false{{end}}">{{.Admin.T "admin.settings.site.brand.text" "仅名称"}}</li>
             </ul>
           </div>
         </div>
 
         <div class="field">
-          <label>社交链接 <span class="scope-pill global">全站共用</span></label>
-          <p class="muted" style="margin:.1rem 0 .7rem;font-size:.82rem">填主页 / 资料链接即可，图标按域名自动识别（GitHub、X、YouTube、Telegram、LinkedIn、微博、邮箱 <code>mailto:</code> 等）；名称留空自动命名，拖空即不显示。</p>
+          <label>{{.Admin.T "admin.settings.site.social" "社交链接"}} <span class="scope-pill global">{{.Admin.T "admin.scope.global" "全站共用"}}</span></label>
+          <p class="muted" style="margin:.1rem 0 .7rem;font-size:.82rem">{{.Admin.T "admin.settings.site.social_note" "填主页 / 资料链接即可，图标按域名自动识别（GitHub、X、YouTube、Telegram、LinkedIn、微博、邮箱 mailto: 等）；名称留空自动命名，拖空即不显示。"}}</p>
           <div class="social-rows" data-social-rows>
             {{range .Social}}
             <div class="social-row">
-              <input name="social_url" value="{{.URL}}" placeholder="https://github.com/you 或 mailto:you@x.com" inputmode="url">
-              <input name="social_label" value="{{.Label}}" placeholder="名称（可选）">
-              <button type="button" class="social-del" data-social-del data-confirm="删除这条社交链接？保存站点信息后生效。" title="删除" aria-label="删除">{{template "icon-trash"}}</button>
+              <input name="social_url" value="{{.URL}}" placeholder="{{$.Admin.T "admin.settings.site.social_url_placeholder" "https://github.com/you 或 mailto:you@example.com"}}" inputmode="url">
+              <input name="social_label" value="{{.Label}}" placeholder="{{$.Admin.T "admin.settings.site.social_label_placeholder" "名称（可选）"}}">
+              <button type="button" class="social-del" data-social-del data-confirm="{{$.Admin.T "admin.settings.site.delete_social_confirm" "删除这条社交链接？保存站点信息后生效。"}}" title="{{$.Admin.T "admin.action.delete" "删除"}}" aria-label="{{$.Admin.T "admin.action.delete" "删除"}}">{{template "icon-trash"}}</button>
             </div>
             {{end}}
           </div>
-          <button type="button" class="btn btn-soft" data-social-add>＋ 添加链接</button>
+          <button type="button" class="btn btn-soft" data-social-add>＋ {{.Admin.T "admin.settings.site.add_link" "添加链接"}}</button>
         </div>
         </div>
 
         <div class="field-group">
           <h3 class="group-head with-icon">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19V5"/><path d="M4 19h16"/><rect x="7" y="11" width="3" height="5" rx=".6"/><rect x="12" y="7" width="3" height="9" rx=".6"/><rect x="17" y="9" width="3" height="7" rx=".6"/></svg>
-            <span>首页显示数量</span>
+            <span>{{.Admin.T "admin.settings.site.home_counts" "首页显示数量"}}</span>
           </h3>
-          <p class="muted" style="margin:-.2rem 0 .9rem;font-size:.85rem">全站共用的内容密度设置。链接数量填 0 时，首页不显示「链接」模块。</p>
+          <p class="muted" style="margin:-.2rem 0 .9rem;font-size:.85rem">{{.Admin.T "admin.settings.site.home_counts_note" "全站共用的内容密度设置。链接数量填 0 时，首页不显示「链接」模块。"}}</p>
           <div class="form-2col">
             <div class="field">
-              <label for="home_links_limit">首页「链接」条数</label>
+              <label for="home_links_limit">{{.Admin.T "admin.settings.site.home_links_limit" "首页「链接」条数"}}</label>
               <input id="home_links_limit" name="home_links_limit" type="number" min="0" max="24" step="1" value="{{.Settings.HomeLinksLimit}}">
             </div>
             <div class="field">
-              <label for="home_posts_per_page">「文章」每页条数</label>
+              <label for="home_posts_per_page">{{.Admin.T "admin.settings.site.home_posts_per_page" "「文章」每页条数"}}</label>
               <input id="home_posts_per_page" name="home_posts_per_page" type="number" min="1" max="50" step="1" value="{{.Settings.HomePostsPerPage}}">
             </div>
           </div>
@@ -238,46 +238,46 @@
         <div class="field-group">
           <h3 class="group-head with-icon">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 9-4 3 4 3"/><path d="m16 9 4 3-4 3"/><path d="m14 5-4 14"/></svg>
-            <span>代码注入</span>
+            <span>{{.Admin.T "admin.settings.site.code_injection" "代码注入"}}</span>
           </h3>
-          <p class="muted" style="margin:-.2rem 0 .9rem;font-size:.85rem">全站共用。用于接入第三方<strong>统计</strong>、<strong>站点验证</strong>或<strong>广告</strong>等代码，原样输出到每个前台页面。请只粘贴可信来源的代码。</p>
+          <p class="muted" style="margin:-.2rem 0 .9rem;font-size:.85rem">{{.Admin.T "admin.settings.site.code_note" "全站共用。用于接入第三方统计、站点验证或广告等代码，原样输出到每个前台页面。请只粘贴可信来源的代码。"}}</p>
           <div class="field">
-            <label for="inject_head">头部代码（注入 <code>&lt;head&gt;</code> 末尾）</label>
-            <textarea id="inject_head" name="inject_head" rows="4" spellcheck="false" placeholder="&lt;!-- 例：统计/验证 meta、<script> --&gt;" style="font-family:var(--mono);font-size:.85rem">{{.Settings.InjectHead}}</textarea>
+            <label for="inject_head">{{.Admin.T "admin.settings.site.inject_head" "头部代码（注入 <head> 末尾）"}}</label>
+            <textarea id="inject_head" name="inject_head" rows="4" spellcheck="false" placeholder="{{.Admin.T "admin.settings.site.inject_head_placeholder" "<!-- 例：统计/验证 meta、<script> -->"}}" style="font-family:var(--mono);font-size:.85rem">{{.Settings.InjectHead}}</textarea>
           </div>
           <div class="field">
-            <label for="inject_body">尾部代码（注入 <code>&lt;/body&gt;</code> 前）</label>
-            <textarea id="inject_body" name="inject_body" rows="4" spellcheck="false" placeholder="&lt;!-- 例：广告位、客服/统计 <script> --&gt;" style="font-family:var(--mono);font-size:.85rem">{{.Settings.InjectBody}}</textarea>
+            <label for="inject_body">{{.Admin.T "admin.settings.site.inject_body" "尾部代码（注入 </body> 前）"}}</label>
+            <textarea id="inject_body" name="inject_body" rows="4" spellcheck="false" placeholder="{{.Admin.T "admin.settings.site.inject_body_placeholder" "<!-- 例：广告位、客服/统计 <script> -->"}}" style="font-family:var(--mono);font-size:.85rem">{{.Settings.InjectBody}}</textarea>
           </div>
         </div>
 
-        <button class="btn btn-primary" type="submit">保存基础信息</button>
+        <button class="btn btn-primary" type="submit">{{.Admin.T "admin.settings.site.save" "保存基础信息"}}</button>
       </form>
 
       {{else if eq .Section "appearance"}}
       <form method="post" action="/admin/settings/appearance" class="admin-form">
         <input type="hidden" name="_csrf" value="{{.CSRF}}">
         <div class="field-group">
-          <h3 class="group-head">当前主题与微调</h3>
+          <h3 class="group-head">{{.Admin.T "admin.settings.appearance.current_theme" "当前主题与微调"}}</h3>
           <div class="current-theme-row">
-            <p class="current-theme"><span class="muted">当前主题：</span><strong data-cur-theme>{{range .Cards}}{{if eq .ID $.Settings.Theme}}{{.Name}}{{end}}{{end}}</strong></p>
-            <button class="btn btn-primary" type="submit">保存外观设置</button>
+            <p class="current-theme"><span class="muted">{{.Admin.T "admin.settings.appearance.current" "当前主题："}}</span><strong data-cur-theme>{{range .Cards}}{{if eq .ID $.Settings.Theme}}{{.Name}}{{end}}{{end}}</strong></p>
+            <button class="btn btn-primary" type="submit">{{.Admin.T "admin.settings.appearance.save" "保存外观设置"}}</button>
           </div>
           <div class="tweak">
             <label class="tweak-toggle">
               <input type="checkbox" name="theme_custom"{{if .Settings.Custom}} checked{{end}}>
-              <span>微调<strong>当前选中主题</strong>的主色与圆角（每个主题各自保存）</span>
+              <span>{{.Admin.T "admin.settings.appearance.tweak" "微调当前选中主题的主色与圆角（每个主题各自保存）"}}</span>
             </label>
             <div class="tweak-row">
               <div class="field">
-                <label for="theme_accent">主色</label>
+                <label for="theme_accent">{{.Admin.T "admin.settings.appearance.accent" "主色"}}</label>
                 <div class="color-field">
                   <input type="color" id="theme_accent" name="theme_accent" value="{{.Settings.Accent}}">
                   <output class="color-hex" for="theme_accent">{{.Settings.Accent}}</output>
                 </div>
               </div>
               <div class="field">
-                <label for="theme_radius">圆角 <output class="radius-val" for="theme_radius">{{.Settings.Radius}}px</output></label>
+                <label for="theme_radius">{{.Admin.T "admin.settings.appearance.radius" "圆角"}} <output class="radius-val" for="theme_radius">{{.Settings.Radius}}px</output></label>
                 <input type="range" id="theme_radius" name="theme_radius" min="0" max="24" step="1" value="{{.Settings.Radius}}">
               </div>
             </div>
@@ -285,51 +285,51 @@
         </div>
 
         <div class="field-group hero-visual-set">
-          <h3 class="group-head">首页 Hero 右侧视觉</h3>
-          <p class="muted" style="margin:-.2rem 0 .9rem;font-size:.85rem">默认是科技感动画，可替换为图片、SVG 文件或直接粘贴 SVG 代码。</p>
+          <h3 class="group-head">{{.Admin.T "admin.settings.appearance.hero_visual" "首页 Hero 右侧视觉"}}</h3>
+          <p class="muted" style="margin:-.2rem 0 .9rem;font-size:.85rem">{{.Admin.T "admin.settings.appearance.hero_visual_desc" "默认是科技感动画，可替换为图片、SVG 文件或直接粘贴 SVG 代码。"}}</p>
           <div class="field">
-            <label id="hero-visual-label">显示方式</label>
+            <label id="hero-visual-label">{{.Admin.T "admin.settings.appearance.display" "显示方式"}}</label>
             <div class="dropdown" data-name="hero_visual" data-hero-type>
               <button type="button" class="dd-toggle" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="hero-visual-label">
-                <span class="dd-label">{{if eq .Settings.HeroVisual "image"}}图片 / SVG 文件{{else if eq .Settings.HeroVisual "svg"}}SVG 代码{{else if eq .Settings.HeroVisual "anim1"}}动画1{{else}}默认动画{{end}}</span>
+                <span class="dd-label">{{if eq .Settings.HeroVisual "image"}}{{.Admin.T "admin.settings.appearance.image_file" "图片 / SVG 文件"}}{{else if eq .Settings.HeroVisual "svg"}}{{.Admin.T "admin.settings.appearance.svg_code" "SVG 代码"}}{{else if eq .Settings.HeroVisual "anim1"}}{{.Admin.T "admin.settings.appearance.animation_1" "动画1"}}{{else}}{{.Admin.T "admin.settings.appearance.default_animation" "默认动画"}}{{end}}</span>
                 <svg class="dd-caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
               </button>
               <input type="hidden" name="hero_visual" value="{{.Settings.HeroVisual}}">
               <ul class="dd-menu" role="listbox">
-                <li role="option" data-value="" aria-selected="{{if not .Settings.HeroVisual}}true{{else}}false{{end}}">默认动画</li>
-                <li role="option" data-value="anim1" aria-selected="{{if eq .Settings.HeroVisual "anim1"}}true{{else}}false{{end}}">动画1</li>
-                <li role="option" data-value="image" aria-selected="{{if eq .Settings.HeroVisual "image"}}true{{else}}false{{end}}">图片 / SVG 文件</li>
-                <li role="option" data-value="svg" aria-selected="{{if eq .Settings.HeroVisual "svg"}}true{{else}}false{{end}}">SVG 代码</li>
+                <li role="option" data-value="" aria-selected="{{if not .Settings.HeroVisual}}true{{else}}false{{end}}">{{.Admin.T "admin.settings.appearance.default_animation" "默认动画"}}</li>
+                <li role="option" data-value="anim1" aria-selected="{{if eq .Settings.HeroVisual "anim1"}}true{{else}}false{{end}}">{{.Admin.T "admin.settings.appearance.animation_1" "动画1"}}</li>
+                <li role="option" data-value="image" aria-selected="{{if eq .Settings.HeroVisual "image"}}true{{else}}false{{end}}">{{.Admin.T "admin.settings.appearance.image_file" "图片 / SVG 文件"}}</li>
+                <li role="option" data-value="svg" aria-selected="{{if eq .Settings.HeroVisual "svg"}}true{{else}}false{{end}}">{{.Admin.T "admin.settings.appearance.svg_code" "SVG 代码"}}</li>
               </ul>
             </div>
           </div>
           <div class="field" data-hero-when="image"{{if ne .Settings.HeroVisual "image"}} hidden{{end}}>
-            <label>图片或 SVG 文件</label>
+            <label>{{.Admin.T "admin.settings.appearance.image_or_svg" "图片或 SVG 文件"}}</label>
             <div class="uploader" data-name="hero_image">
               <input type="hidden" name="hero_image" value="{{.Settings.HeroImage}}">
-              <div class="up-preview" tabindex="0" role="button" aria-label="选择图片">
-                <span class="up-hint">点击选择图片 / SVG</span>
-                <button type="button" class="up-remove" data-confirm-title="确认移除" data-confirm-ok="移除" data-confirm="移除当前首页视觉图片？保存外观后生效。" title="删除" aria-label="删除"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+              <div class="up-preview" tabindex="0" role="button" aria-label="{{.Admin.T "admin.settings.site.choose_image" "选择图片"}}">
+                <span class="up-hint">{{.Admin.T "admin.settings.appearance.choose_image_svg" "点击选择图片 / SVG"}}</span>
+                <button type="button" class="up-remove" data-confirm-title="{{.Admin.T "admin.settings.site.confirm_remove" "确认移除"}}" data-confirm-ok="{{.Admin.T "admin.action.remove" "移除"}}" data-confirm="{{.Admin.T "admin.settings.appearance.remove_hero_confirm" "移除当前首页视觉图片？保存外观后生效。"}}" title="{{.Admin.T "admin.action.delete" "删除"}}" aria-label="{{.Admin.T "admin.action.delete" "删除"}}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
                 <input type="file" accept="image/*,.svg" hidden>
               </div>
-              <input type="text" inputmode="url" class="up-url" placeholder="或粘贴图片 URL" value="{{.Settings.HeroImage}}">
+              <input type="text" inputmode="url" class="up-url" placeholder="{{.Admin.T "admin.settings.site.image_url_placeholder" "或粘贴图片 URL"}}" value="{{.Settings.HeroImage}}">
               <div class="up-status"></div>
             </div>
           </div>
           <div class="field" data-hero-when="svg"{{if ne .Settings.HeroVisual "svg"}} hidden{{end}}>
-            <label for="hero_svg">SVG 代码（粘贴整段 &lt;svg&gt;…&lt;/svg&gt;）</label>
-            <textarea id="hero_svg" name="hero_svg" rows="6" spellcheck="false" placeholder="&lt;svg viewBox=&quot;0 0 480 440&quot;&gt;…&lt;/svg&gt;">{{.Settings.HeroSVG}}</textarea>
+            <label for="hero_svg">{{.Admin.T "admin.settings.appearance.paste_svg_code" "SVG 代码（粘贴整段 <svg>…</svg>）"}}</label>
+            <textarea id="hero_svg" name="hero_svg" rows="6" spellcheck="false" placeholder="{{.Admin.T "admin.settings.appearance.svg_placeholder" "<svg viewBox=\"0 0 480 440\">…</svg>"}}">{{.Settings.HeroSVG}}</textarea>
           </div>
         </div>
 
         <div class="field-group">
-          <h3 class="group-head">可选主题</h3>
-          <p class="muted" style="margin:-.2rem 0 .9rem;font-size:.85rem">十八套主题<strong>布局结构</strong>各异（页眉、首页列表、卡片样式），点选即切换、上方保存即生效。</p>
+          <h3 class="group-head">{{.Admin.T "admin.settings.appearance.themes" "可选主题"}}</h3>
+          <p class="muted" style="margin:-.2rem 0 .9rem;font-size:.85rem">{{.Admin.T "admin.settings.appearance.themes_desc" "十八套主题布局结构各异（页眉、首页列表、卡片样式），点选即切换、上方保存即生效。"}}</p>
           <div class="theme-picker">
             {{range .Cards}}
             <label class="theme-card{{if eq .ID $.Settings.Theme}} sel{{end}}">
               <input type="radio" name="theme" value="{{.ID}}" data-accent="{{.Accent}}" data-radius="{{.Radius}}" data-custom="{{if .Custom}}1{{end}}" data-theme-name="{{.Name}}"{{if eq .ID $.Settings.Theme}} checked{{end}}>
-              <span class="tc-prev tc-live tc-{{.ID}}" aria-hidden="true" data-theme-preview><iframe data-src="/admin/theme-preview/{{.ID}}" title="{{.Name}} 主题预览" loading="lazy" tabindex="-1"></iframe></span>
+              <span class="tc-prev tc-live tc-{{.ID}}" aria-hidden="true" data-theme-preview><iframe data-src="/admin/theme-preview/{{.ID}}" title="{{.Name}} {{$.Admin.T "admin.settings.theme.preview_title_suffix" "主题预览"}}" loading="lazy" tabindex="-1"></iframe></span>
               <span class="tc-name">{{.Name}}</span>
               <span class="tc-desc">{{.Desc}}</span>
             </label>
@@ -344,40 +344,63 @@
         <input type="hidden" name="lang" value="{{.EditLang}}">
         <p class="muted config-intro">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01"/><path d="M11 12h1v5h1"/></svg>
-          <span>编辑「<strong>{{range .Locales}}{{if eq .Code $.EditLang}}{{.Name}}{{end}}{{end}}</strong>」语种的前台文案，留空则回落默认语种。</span>
+          <span>{{.Admin.T "admin.settings.copy.intro_prefix" "编辑「"}}<strong>{{range .Locales}}{{if eq .Code $.EditLang}}{{.Name}}{{end}}{{end}}</strong>{{.Admin.T "admin.settings.copy.intro_suffix" "」语种的前台文案，留空则回落默认语种。"}}</span>
         </p>
 
         <div class="field-group">
           <h3 class="group-head with-icon">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19h16"/><path d="M5 17 11 6l4 7 2-3 3 7"/><circle cx="7.5" cy="7.5" r="1.5"/></svg>
-            <span>首页 Hero</span>
+            <span>{{.Admin.T "admin.settings.copy.hero" "首页 Hero"}}</span>
           </h3>
           <div class="field">
-            <label for="hero_eyebrow">眉标（标题上方小字） <span class="scope-pill">当前语种</span></label>
+            <label for="hero_eyebrow">{{.Admin.T "admin.settings.copy.hero_eyebrow" "眉标（标题上方小字）"}} <span class="scope-pill">{{.Admin.T "admin.scope.current_lang" "当前语种"}}</span></label>
             <input id="hero_eyebrow" name="hero_eyebrow" value="{{.Settings.HeroEyebrow}}">
           </div>
           <div class="field">
-            <label for="hero_title">大标题（换行即分行） <span class="scope-pill">当前语种</span></label>
+            <label for="hero_title">{{.Admin.T "admin.settings.copy.hero_title" "大标题（换行即分行）"}} <span class="scope-pill">{{.Admin.T "admin.scope.current_lang" "当前语种"}}</span></label>
             <textarea id="hero_title" name="hero_title" rows="2">{{.Settings.HeroTitle}}</textarea>
+          </div>
+          <div class="field hero-lang-visual" data-hero-lang-visual>
+            <label>{{.Admin.T "admin.settings.copy.hero_image" "首页 Hero 右侧图"}} <span class="scope-pill">{{if eq .EditLang .Lang}}{{.Admin.T "admin.scope.global" "全站共用"}}{{else}}{{.Admin.T "admin.scope.current_lang" "当前语种"}}{{end}}</span></label>
+            {{if eq .EditLang .Lang}}
+            <input type="hidden" name="hero_image_mode" value="global">
+            <p class="muted" style="margin:.1rem 0 .7rem;font-size:.82rem">{{.Admin.T "admin.settings.copy.hero_image_global_note" "默认语种会作为全站默认 Hero 图；其它语种未单独设置时会使用这张图。"}}</p>
+            {{else}}
+            <div class="choice-row hero-image-mode">
+              <label><input type="radio" name="hero_image_mode" value="inherit" {{if ne .Settings.HeroImageMode "custom"}}checked{{end}}><span>{{.Admin.T "admin.settings.copy.hero_image_inherit" "跟随全站默认图"}}</span></label>
+              <label><input type="radio" name="hero_image_mode" value="custom" {{if eq .Settings.HeroImageMode "custom"}}checked{{end}}><span>{{.Admin.T "admin.settings.copy.hero_image_custom" "当前语种单独设置"}}</span></label>
+            </div>
+            <p class="muted" style="margin:.1rem 0 .7rem;font-size:.82rem">{{.Admin.T "admin.settings.copy.hero_image_lang_note" "英文站、中文站可以使用不同 Hero 图；未单独设置时会自动继承全站默认图。"}}</p>
+            {{end}}
+            <div class="uploader uploader-og hero-lang-uploader" data-name="hero_image_lang">
+              <input type="hidden" name="hero_image_lang" value="{{if and (ne .EditLang .Lang) (ne .Settings.HeroImageMode "custom")}}{{.Settings.HeroImageDef}}{{else}}{{.Settings.HeroImage}}{{end}}">
+              <div class="up-preview" tabindex="0" role="button" aria-label="{{.Admin.T "admin.settings.copy.choose_hero_image" "选择 Hero 图"}}">
+                <span class="up-hint">{{.Admin.T "admin.settings.copy.choose_hero_image" "选择 Hero 图"}}</span>
+                <button type="button" class="up-remove" data-confirm-title="{{.Admin.T "admin.settings.site.confirm_remove" "确认移除"}}" data-confirm-ok="{{.Admin.T "admin.action.remove" "移除"}}" data-confirm="{{.Admin.T "admin.settings.copy.remove_hero_image_confirm" "移除当前 Hero 图？保存文案后生效。"}}" title="{{.Admin.T "admin.action.delete" "删除"}}" aria-label="{{.Admin.T "admin.action.delete" "删除"}}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+                <input type="file" accept="image/*,.svg" hidden>
+              </div>
+              <input type="text" inputmode="url" class="up-url" placeholder="{{.Admin.T "admin.settings.site.image_url_placeholder" "或粘贴图片 URL"}}" value="{{if and (ne .EditLang .Lang) (ne .Settings.HeroImageMode "custom")}}{{.Settings.HeroImageDef}}{{else}}{{.Settings.HeroImage}}{{end}}">
+              <div class="up-status"></div>
+            </div>
           </div>
         </div>
 
         <div class="field-group">
           <h3 class="group-head with-icon">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="M8 9h8"/><path d="M8 13h5"/><path d="M8 17h7"/></svg>
-            <span>首页栏目标题</span>
+            <span>{{.Admin.T "admin.settings.copy.home_titles" "首页栏目标题"}}</span>
           </h3>
-          <p class="muted" style="margin:-.2rem 0 .9rem;font-size:.85rem">首页各板块的 H2 标题，留空则使用该语种默认值（灰字提示）。</p>
+          <p class="muted" style="margin:-.2rem 0 .9rem;font-size:.85rem">{{.Admin.T "admin.settings.copy.home_titles_note" "首页各板块的 H2 标题，留空则使用该语种默认值（灰字提示）。"}}</p>
           <div class="field">
-            <label for="home_featured">「精选文章」板块标题 <span class="scope-pill">当前语种</span></label>
+            <label for="home_featured">{{.Admin.T "admin.settings.copy.home_featured" "「精选文章」板块标题"}} <span class="scope-pill">{{.Admin.T "admin.scope.current_lang" "当前语种"}}</span></label>
             <input id="home_featured" name="home_featured" value="{{.Settings.HomeFeatured}}" placeholder="{{.Settings.HomeFeaturedDef}}">
           </div>
           <div class="field">
-            <label for="home_links">「精选链接」板块标题 <span class="scope-pill">当前语种</span></label>
+            <label for="home_links">{{.Admin.T "admin.settings.copy.home_links" "「精选链接」板块标题"}} <span class="scope-pill">{{.Admin.T "admin.scope.current_lang" "当前语种"}}</span></label>
             <input id="home_links" name="home_links" value="{{.Settings.HomeLinks}}" placeholder="{{.Settings.HomeLinksDef}}">
           </div>
           <div class="field">
-            <label for="home_latest">「最新文章」板块标题 <span class="scope-pill">当前语种</span></label>
+            <label for="home_latest">{{.Admin.T "admin.settings.copy.home_latest" "「最新文章」板块标题"}} <span class="scope-pill">{{.Admin.T "admin.scope.current_lang" "当前语种"}}</span></label>
             <input id="home_latest" name="home_latest" value="{{.Settings.HomeLatest}}" placeholder="{{.Settings.HomeLatestDef}}">
           </div>
         </div>
@@ -385,42 +408,42 @@
         <div class="field-group">
           <h3 class="group-head with-icon">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="M7 15h10"/><path d="M9 19v-4"/><path d="M15 19v-4"/></svg>
-            <span>页脚</span>
+            <span>{{.Admin.T "admin.settings.copy.footer" "页脚"}}</span>
           </h3>
           <div class="field">
-            <label for="footer_note">页脚说明（logo 下方） <span class="scope-pill">当前语种</span></label>
+            <label for="footer_note">{{.Admin.T "admin.settings.copy.footer_note" "页脚说明（logo 下方）"}} <span class="scope-pill">{{.Admin.T "admin.scope.current_lang" "当前语种"}}</span></label>
             <input id="footer_note" name="footer_note" value="{{.Settings.FooterNote}}">
           </div>
         </div>
 
-        <button class="btn btn-primary" type="submit">保存文案</button>
+        <button class="btn btn-primary" type="submit">{{.Admin.T "admin.settings.copy.save" "保存文案"}}</button>
       </form>
 
       {{else if eq .Section "menu"}}
       <div class="menu-live-preview" data-menu-live-preview data-preview-lang="{{.EditLang}}">
         <div class="menu-preview-head">
-          <span class="menu-preview-title">导航预览</span>
-          <span class="menu-preview-note">按当前顺序和菜单文字实时更新</span>
+          <span class="menu-preview-title">{{.Admin.T "admin.settings.menu.preview" "导航预览"}}</span>
+          <span class="menu-preview-note">{{.Admin.T "admin.settings.menu.preview_note" "按当前顺序和菜单文字实时更新"}}</span>
         </div>
         <div class="menu-preview-bar">
           <div class="menu-preview-brand">
             <span class="menu-preview-logo">{{initial .Site.Name}}</span>
             <span class="menu-preview-brand-text">{{.Site.Name}}</span>
           </div>
-          <nav class="menu-preview-list" data-menu-preview-list aria-label="导航预览"></nav>
+          <nav class="menu-preview-list" data-menu-preview-list aria-label="{{.Admin.T "admin.settings.menu.preview" "导航预览"}}"></nav>
         </div>
       </div>
-      <p class="muted" style="margin:.1rem 0 1rem;font-size:.9rem">选择常用入口即可自动生成路径和各语种菜单文字；需要特殊页面时选择「自定义站内路径」，外部网站选择「外部链接」。左侧手柄可拖动排序。</p>
+      <p class="muted" style="margin:.1rem 0 1rem;font-size:.9rem">{{.Admin.T "admin.settings.menu.desc" "选择常用入口即可自动生成路径和各语种菜单文字；需要特殊页面时选择「自定义站内路径」，外部网站选择「外部链接」。左侧手柄可拖动排序。"}}</p>
       <form method="post" action="/admin/settings/menu" class="admin-form">
         <input type="hidden" name="_csrf" value="{{.CSRF}}">
-        <div class="menu-rows" data-menu-rows data-langs="{{range $i, $l := .Locales}}{{if $i}},{{end}}{{$l.Code}}{{end}}" data-lang-names="{{range $i, $l := .Locales}}{{if $i}},{{end}}{{$l.Name}}{{end}}" data-targets="{{json .MenuTargets}}">
+        <div class="menu-rows" data-menu-rows data-langs="{{range $i, $l := .Locales}}{{if $i}},{{end}}{{$l.Code}}{{end}}" data-lang-names="{{range $i, $l := .Locales}}{{if $i}},{{end}}{{$l.Name}}{{end}}" data-targets="{{json .MenuTargets}}" data-text-target="{{.Admin.T "admin.settings.menu.target" "指向哪里"}}" data-text-path="{{.Admin.T "admin.settings.menu.path" "路径"}}" data-text-pending="{{.Admin.T "admin.settings.menu.pending" "待填写"}}" data-text-custom-url="{{.Admin.T "admin.settings.menu.custom_url" "自定义地址"}}" data-text-custom-url-placeholder="{{.Admin.T "admin.settings.menu.custom_url_placeholder" "/docs 或 https://example.com"}}" data-text-labels="{{.Admin.T "admin.settings.menu.labels" "菜单文字"}}" data-text-label-placeholder="{{.Admin.T "admin.settings.menu.label_placeholder" "名称"}}" data-text-delete="{{.Admin.T "admin.action.delete" "删除"}}" data-text-delete-confirm="{{.Admin.T "admin.settings.menu.delete_confirm" "删除这个菜单项？保存菜单后生效。"}}" data-text-empty="{{.Admin.T "admin.settings.menu.empty" "暂无菜单项"}}" data-text-unnamed="{{.Admin.T "admin.settings.menu.unnamed" "未命名"}}">
           {{range $row := .MenuEdit}}
           <div class="menu-row">
             <span class="drag-handle" aria-hidden="true">⠿</span>
             <div class="menu-fields">
               <div class="menu-main">
                 <div class="menu-target-wrap">
-                  <label>指向哪里</label>
+                  <label>{{$.Admin.T "admin.settings.menu.target" "指向哪里"}}</label>
                   <div class="dropdown menu-target" data-menu-target>
                     <button type="button" class="dd-toggle" aria-haspopup="listbox" aria-expanded="false">
                       <span class="dd-label">{{$row.TargetLabel}}</span>
@@ -433,29 +456,29 @@
                   </div>
                 </div>
                 <div class="menu-path-preview">
-                  <span>路径</span>
+                  <span>{{$.Admin.T "admin.settings.menu.path" "路径"}}</span>
                   <code data-menu-path>{{$row.URL}}</code>
                 </div>
               </div>
               <input class="menu-url" type="hidden" name="nav_url" value="{{$row.URL}}">
               <div class="menu-custom-wrap" data-menu-custom-wrap{{if not $row.CustomTarget}} hidden{{end}}>
-                <label>自定义地址</label>
-                <input class="menu-custom-url" value="{{$row.URL}}" placeholder="/docs 或 https://example.com" inputmode="url">
+                <label>{{$.Admin.T "admin.settings.menu.custom_url" "自定义地址"}}</label>
+                <input class="menu-custom-url" value="{{$row.URL}}" placeholder="{{$.Admin.T "admin.settings.menu.custom_url_placeholder" "/docs 或 https://example.com"}}" inputmode="url">
               </div>
               <details class="menu-label-details">
-                <summary>菜单文字</summary>
+                <summary>{{$.Admin.T "admin.settings.menu.labels" "菜单文字"}}</summary>
                 <div class="menu-labels">
-                  {{range $.Locales}}<label class="menu-label"><span class="ml-lang">{{.Name}}</span><input name="nav_label_{{.Code}}" value="{{index $row.Labels .Code}}" placeholder="名称"></label>{{end}}
+                  {{range $.Locales}}<label class="menu-label"><span class="ml-lang">{{.Name}}</span><input name="nav_label_{{.Code}}" value="{{index $row.Labels .Code}}" placeholder="{{$.Admin.T "admin.settings.menu.label_placeholder" "名称"}}"></label>{{end}}
                 </div>
               </details>
             </div>
-            <button type="button" class="menu-del" data-menu-del data-confirm="删除这个菜单项？保存菜单后生效。" title="删除" aria-label="删除">{{template "icon-trash"}}</button>
+            <button type="button" class="menu-del" data-menu-del data-confirm="{{$.Admin.T "admin.settings.menu.delete_confirm" "删除这个菜单项？保存菜单后生效。"}}" title="{{$.Admin.T "admin.action.delete" "删除"}}" aria-label="{{$.Admin.T "admin.action.delete" "删除"}}">{{template "icon-trash"}}</button>
           </div>
           {{end}}
         </div>
         <div class="menu-foot">
-          <button type="button" class="btn btn-soft" data-menu-add>＋ 添加菜单项</button>
-          <button class="btn btn-primary" type="submit">保存菜单</button>
+          <button type="button" class="btn btn-soft" data-menu-add>＋ {{.Admin.T "admin.settings.menu.add" "添加菜单项"}}</button>
+          <button class="btn btn-primary" type="submit">{{.Admin.T "admin.settings.menu.save" "保存菜单"}}</button>
         </div>
       </form>
 
@@ -484,7 +507,7 @@
         <p class="muted" style="margin:-.2rem 0 .9rem;font-size:.85rem">{{.Admin.T "admin.settings.languages.custom_desc" "没有想要的语言？在此新增任意语种：代码用作 URL 前缀（如 /pt/…），标记为 BCP47（如 pt-BR）。新增后到上方勾选启用。自定义语种的界面文案会回落默认语种。"}}</p>
         {{if .CustomLocales}}
         <table class="admin-table" style="margin-bottom:1rem">
-          <thead><tr><th>名称</th><th>代码</th><th>标记</th><th>OG</th><th class="right">操作</th></tr></thead>
+          <thead><tr><th>{{.Admin.T "admin.common.name" "名称"}}</th><th>{{.Admin.T "admin.common.code" "代码"}}</th><th>{{.Admin.T "admin.common.tag" "标记"}}</th><th>OG</th><th class="right">{{.Admin.T "admin.common.actions" "操作"}}</th></tr></thead>
           <tbody>
             {{range .CustomLocales}}
             <tr>
@@ -493,10 +516,10 @@
               <td class="slug">{{.Tag}}</td>
               <td class="slug">{{.OG}}</td>
               <td class="right actions">
-                <form method="post" action="/admin/settings/languages/preset/delete" data-confirm="删除自定义语种「{{.Name}}」？该语种下的内容不会被删除，但前台将不再可达。">
+                <form method="post" action="/admin/settings/languages/preset/delete" data-confirm="{{printf ($.Admin.T "admin.settings.languages.delete_confirm" "删除自定义语种「%s」？该语种下的内容不会被删除，但前台将不再可达。") .Name}}">
                   <input type="hidden" name="_csrf" value="{{$.CSRF}}">
                   <input type="hidden" name="code" value="{{.Code}}">
-                  <button class="del act-ico" type="submit" title="删除" aria-label="删除">{{template "icon-trash"}}</button>
+                  <button class="del act-ico" type="submit" title="{{$.Admin.T "admin.action.delete" "删除"}}" aria-label="{{$.Admin.T "admin.action.delete" "删除"}}">{{template "icon-trash"}}</button>
                 </form>
               </td>
             </tr>
@@ -507,12 +530,12 @@
         <form method="post" action="/admin/settings/languages/preset" class="admin-form preset-form">
           <input type="hidden" name="_csrf" value="{{.CSRF}}">
           <div class="preset-grid">
-            <div class="field"><label for="pl-code">代码 *</label><input id="pl-code" name="code" placeholder="pt" required></div>
-            <div class="field"><label for="pl-name">名称</label><input id="pl-name" name="name" placeholder="Português"></div>
-            <div class="field"><label for="pl-tag">BCP47 标记</label><input id="pl-tag" name="tag" placeholder="pt-BR"></div>
+            <div class="field"><label for="pl-code">{{.Admin.T "admin.settings.languages.code_required" "代码 *"}}</label><input id="pl-code" name="code" placeholder="pt" required></div>
+            <div class="field"><label for="pl-name">{{.Admin.T "admin.common.name" "名称"}}</label><input id="pl-name" name="name" placeholder="Português"></div>
+            <div class="field"><label for="pl-tag">{{.Admin.T "admin.settings.languages.bcp47" "BCP47 标记"}}</label><input id="pl-tag" name="tag" placeholder="pt-BR"></div>
             <div class="field"><label for="pl-og">OG locale</label><input id="pl-og" name="og" placeholder="pt_BR"></div>
           </div>
-          <button class="btn" type="submit" style="margin-top:.4rem">＋ 新增预设</button>
+          <button class="btn" type="submit" style="margin-top:.4rem">＋ {{.Admin.T "admin.settings.languages.add_preset" "新增预设"}}</button>
         </form>
       </div>
 
@@ -522,47 +545,53 @@
           <span>{{.Admin.T "admin.settings.admin_i18n.title" "后台界面翻译"}}</span>
         </h3>
         <p class="muted" style="margin:-.2rem 0 .9rem;font-size:.85rem">{{.Admin.T "admin.settings.admin_i18n.desc" "后台默认读取内置 JSON。这里可以按 key 覆盖当前后台语种的文案；未填写或 JSON 缺少的 key 会回落中文。"}}</p>
-        <form method="post" action="/admin/settings/admin-i18n" class="admin-form">
-          <input type="hidden" name="_csrf" value="{{.CSRF}}">
-          <input type="hidden" name="admin_lang" value="{{.AdminLang}}">
-          <div class="field">
-            <label>{{.Admin.T "admin.settings.admin_i18n.current" "当前后台语种"}}</label>
-            <div class="admin-i18n-current">
-              {{range .AdminLangs}}<a href="/admin/language?lang={{.Code}}&next={{urlquery $.AdminReturn}}"{{if eq .Code $.AdminLang}} class="active" aria-current="true"{{end}}>{{.Name}}</a>{{end}}
+        <div class="field">
+          <label>{{.Admin.T "admin.settings.admin_i18n.current" "当前后台语种"}}</label>
+          <div class="admin-i18n-current">
+            {{range .AdminLangs}}<a href="/admin/language?lang={{.Code}}&next={{urlquery $.AdminReturn}}"{{if eq .Code $.AdminLang}} class="active" aria-current="true"{{end}}>{{.Name}}</a>{{end}}
+          </div>
+        </div>
+        <details class="admin-i18n-details">
+          <summary>
+            <span>{{.Admin.T "admin.settings.admin_i18n.customize" "自定义覆盖文案"}}</span>
+            <small>{{.Admin.T "admin.settings.admin_i18n.customize_desc" "高级配置，默认折叠。只有需要改内置翻译 key 时再展开。"}}</small>
+          </summary>
+          <form method="post" action="/admin/settings/admin-i18n" class="admin-form">
+            <input type="hidden" name="_csrf" value="{{.CSRF}}">
+            <input type="hidden" name="admin_lang" value="{{.AdminLang}}">
+            <div class="field">
+              <label for="admin-i18n-json">{{.Admin.T "admin.settings.admin_i18n.override" "覆盖 JSON"}}</label>
+              <textarea id="admin-i18n-json" name="admin_i18n_json" rows="10" spellcheck="false" placeholder="{{.Admin.T "admin.settings.admin_i18n.placeholder" "{\n  \"admin.nav.posts\": \"Posts\"\n}"}}">{{.AdminI18NJSON}}</textarea>
             </div>
-          </div>
-          <div class="field">
-            <label for="admin-i18n-json">{{.Admin.T "admin.settings.admin_i18n.override" "覆盖 JSON"}}</label>
-            <textarea id="admin-i18n-json" name="admin_i18n_json" rows="10" spellcheck="false" placeholder="{{.Admin.T "admin.settings.admin_i18n.placeholder" "{\n  \"admin.nav.posts\": \"Posts\"\n}"}}">{{.AdminI18NJSON}}</textarea>
-          </div>
-          <button class="btn btn-primary" type="submit">{{.Admin.T "admin.settings.admin_i18n.save" "保存后台翻译"}}</button>
-        </form>
+            <button class="btn btn-primary" type="submit">{{.Admin.T "admin.settings.admin_i18n.save" "保存后台翻译"}}</button>
+          </form>
+        </details>
       </div>
 
       {{else if eq .Section "categories"}}
       <div class="cat-toolbar">
-        <div class="lang-tabs" role="tablist" aria-label="分类类型">
-          <a href="/admin/settings/categories?kind=post&lang={{.EditLang}}"{{if ne .CatKind "link"}} class="active" aria-current="true"{{end}}>文章分类</a>
-          <a href="/admin/settings/categories?kind=link&lang={{.EditLang}}"{{if eq .CatKind "link"}} class="active" aria-current="true"{{end}}>链接分类</a>
+        <div class="lang-tabs" role="tablist" aria-label="{{.Admin.T "admin.settings.categories.type_label" "分类类型"}}">
+          <a href="/admin/settings/categories?kind=post&lang={{.EditLang}}"{{if ne .CatKind "link"}} class="active" aria-current="true"{{end}}>{{.Admin.T "admin.settings.categories.post" "文章分类"}}</a>
+          <a href="/admin/settings/categories?kind=link&lang={{.EditLang}}"{{if eq .CatKind "link"}} class="active" aria-current="true"{{end}}>{{.Admin.T "admin.settings.categories.link" "链接分类"}}</a>
         </div>
-        <button type="button" class="btn btn-primary" data-cat-add>＋ 新增分类</button>
+        <button type="button" class="btn btn-primary" data-cat-add>＋ {{.Admin.T "admin.settings.categories.new" "新增分类"}}</button>
       </div>
-      <p class="muted" style="margin:.2rem 0 0;font-size:.9rem">{{if eq .CatKind "link"}}链接{{else}}文章{{end}}在编辑页选择分类（同语种、同类型；文章分类与链接分类相互独立）。拖动行可调整顺序（影响前台分类导航的排列）。</p>
+      <p class="muted" style="margin:.2rem 0 0;font-size:.9rem">{{if eq .CatKind "link"}}{{.Admin.T "admin.settings.categories.desc_link" "链接在编辑页选择分类（同语种、同类型；文章分类与链接分类相互独立）。拖动行可调整顺序（影响前台分类导航的排列）。"}}{{else}}{{.Admin.T "admin.settings.categories.desc_post" "文章在编辑页选择分类（同语种、同类型；文章分类与链接分类相互独立）。拖动行可调整顺序（影响前台分类导航的排列）。"}}{{end}}</p>
       <table class="admin-table category-table" style="margin-top:.6rem">
-        <thead><tr><th style="width:28px"></th><th>名称</th><th>链接</th><th>数量</th><th class="right">操作</th></tr></thead>
+        <thead><tr><th style="width:28px"></th><th>{{.Admin.T "admin.common.name" "名称"}}</th><th>{{.Admin.T "admin.common.link" "链接"}}</th><th>{{.Admin.T "admin.common.count" "数量"}}</th><th class="right">{{.Admin.T "admin.common.actions" "操作"}}</th></tr></thead>
         <tbody id="cat-sortable">
           <tr class="cat-row-all">
             <td><span class="cat-all-dot" aria-hidden="true"></span></td>
             <td>
               <strong>{{.Settings.AllTitle}}</strong>
               {{if .Settings.AllDescription}}<div class="muted" style="font-size:.8rem;margin-top:.2rem">{{.Settings.AllDescription}}</div>{{end}}
-              <div class="muted" style="font-size:.78rem;margin-top:.2rem">筛选按钮：{{.Settings.AllLabel}}</div>
+              <div class="muted" style="font-size:.78rem;margin-top:.2rem">{{.Admin.T "admin.settings.categories.filter_label" "筛选按钮："}}{{.Settings.AllLabel}}</div>
             </td>
             <td class="slug">{{.Settings.AllPath}}</td>
-            <td class="muted">全部</td>
+            <td class="muted">{{.Admin.T "admin.common.all" "全部"}}</td>
             <td class="right actions">
               <span class="action-icons">
-                <button type="button" class="act-ico" data-cat-all-edit data-title="{{.Settings.AllTitle}}" data-label="{{.Settings.AllLabel}}" data-slug="{{.Settings.AllSlug}}" data-desc="{{.Settings.AllDescription}}" title="编辑" aria-label="编辑">{{template "icon-edit"}}</button>
+                <button type="button" class="act-ico" data-cat-all-edit data-title="{{.Settings.AllTitle}}" data-label="{{.Settings.AllLabel}}" data-slug="{{.Settings.AllSlug}}" data-desc="{{.Settings.AllDescription}}" title="{{.Admin.T "admin.action.edit" "编辑"}}" aria-label="{{.Admin.T "admin.action.edit" "编辑"}}">{{template "icon-edit"}}</button>
               </span>
             </td>
           </tr>
@@ -574,18 +603,18 @@
             <td class="muted">{{.Count}}</td>
             <td class="right actions">
               <span class="action-icons">
-                <button type="button" class="act-ico" data-cat-edit data-id="{{.ID}}" data-name="{{.Name}}" data-slug="{{.Slug}}" data-desc="{{.Description}}" title="编辑" aria-label="编辑">{{template "icon-edit"}}</button>
-                <form method="post" action="/admin/settings/categories/delete" data-confirm="删除分类「{{.Name}}」？该分类下内容将变为未分类。">
+                <button type="button" class="act-ico" data-cat-edit data-id="{{.ID}}" data-name="{{.Name}}" data-slug="{{.Slug}}" data-desc="{{.Description}}" title="{{$.Admin.T "admin.action.edit" "编辑"}}" aria-label="{{$.Admin.T "admin.action.edit" "编辑"}}">{{template "icon-edit"}}</button>
+                <form method="post" action="/admin/settings/categories/delete" data-confirm="{{printf ($.Admin.T "admin.settings.categories.delete_confirm" "删除分类「%s」？该分类下内容将变为未分类。") .Name}}">
                   <input type="hidden" name="_csrf" value="{{$.CSRF}}">
                   <input type="hidden" name="lang" value="{{$.EditLang}}">
                   <input type="hidden" name="kind" value="{{$.CatKind}}">
                   <input type="hidden" name="id" value="{{.ID}}">
-                  <button class="del act-ico" type="submit" title="删除" aria-label="删除">{{template "icon-trash"}}</button>
+                  <button class="del act-ico" type="submit" title="{{$.Admin.T "admin.action.delete" "删除"}}" aria-label="{{$.Admin.T "admin.action.delete" "删除"}}">{{template "icon-trash"}}</button>
                 </form>
               </span>
             </td>
           </tr>
-          {{else}}<tr><td colspan="5" class="muted">该语种下还没有分类，点击右上角新增。</td></tr>{{end}}
+          {{else}}<tr><td colspan="5" class="muted">{{.Admin.T "admin.settings.categories.empty" "该语种下还没有分类，点击右上角新增。"}}</td></tr>{{end}}
         </tbody>
       </table>
 
@@ -593,19 +622,19 @@
       <div class="modal" id="cat-all-modal" hidden>
         <div class="modal-backdrop" data-cat-all-close></div>
         <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="cat-all-modal-title">
-          <h3 id="cat-all-modal-title">{{if eq .CatKind "link"}}编辑链接全部页{{else}}编辑文章分类全部页{{end}}</h3>
-          <p class="muted" style="margin:-.4rem 0 1rem;font-size:.86rem">{{if eq .CatKind "link"}}默认入口是 /links；自定义 Slug 后，也可用 /links/{slug} 访问全部链接。{{else}}默认入口是 /category；自定义 Slug 后，也可用 /category/{slug} 访问全部文章。{{end}}</p>
+          <h3 id="cat-all-modal-title">{{if eq .CatKind "link"}}{{.Admin.T "admin.settings.categories.edit_link_all" "编辑链接全部页"}}{{else}}{{.Admin.T "admin.settings.categories.edit_post_all" "编辑文章分类全部页"}}{{end}}</h3>
+          <p class="muted" style="margin:-.4rem 0 1rem;font-size:.86rem">{{if eq .CatKind "link"}}{{.Admin.T "admin.settings.categories.link_all_desc" "默认入口是 /links；自定义 Slug 后，也可用 /links/{slug} 访问全部链接。"}}{{else}}{{.Admin.T "admin.settings.categories.post_all_desc" "默认入口是 /category；自定义 Slug 后，也可用 /category/{slug} 访问全部文章。"}}{{end}}</p>
           <form method="post" action="/admin/settings/categories/all" class="admin-form">
             <input type="hidden" name="_csrf" value="{{.CSRF}}">
             <input type="hidden" name="lang" value="{{.EditLang}}">
             <input type="hidden" name="kind" value="{{.CatKind}}">
-            <div class="field"><label for="cat-all-title">页面标题</label><input id="cat-all-title" name="title" value="{{.Settings.AllTitle}}" required></div>
-            <div class="field"><label for="cat-all-label">“全部”按钮文字</label><input id="cat-all-label" name="label" value="{{.Settings.AllLabel}}" required></div>
+            <div class="field"><label for="cat-all-title">{{.Admin.T "admin.settings.categories.page_title" "页面标题"}}</label><input id="cat-all-title" name="title" value="{{.Settings.AllTitle}}" required></div>
+            <div class="field"><label for="cat-all-label">{{.Admin.T "admin.settings.categories.all_button" "“全部”按钮文字"}}</label><input id="cat-all-label" name="label" value="{{.Settings.AllLabel}}" required></div>
             <div class="field"><label for="cat-all-slug">Slug</label><input id="cat-all-slug" name="slug" value="{{.Settings.AllSlug}}" placeholder="{{if eq .CatKind "link"}}links{{else}}category{{end}}"></div>
-            <div class="field"><label for="cat-all-desc">页面描述</label><textarea id="cat-all-desc" name="description" rows="2">{{.Settings.AllDescription}}</textarea></div>
+            <div class="field"><label for="cat-all-desc">{{.Admin.T "admin.settings.categories.page_desc" "页面描述"}}</label><textarea id="cat-all-desc" name="description" rows="2">{{.Settings.AllDescription}}</textarea></div>
             <div style="display:flex;gap:.6rem;justify-content:flex-end">
-              <button type="button" class="btn" data-cat-all-close>取消</button>
-              <button type="submit" class="btn btn-primary">保存</button>
+              <button type="button" class="btn" data-cat-all-close>{{.Admin.T "admin.action.cancel" "取消"}}</button>
+              <button type="submit" class="btn btn-primary">{{.Admin.T "admin.action.save" "保存"}}</button>
             </div>
           </form>
         </div>
@@ -615,18 +644,18 @@
       <div class="modal" id="cat-modal" hidden>
         <div class="modal-backdrop" data-cat-close></div>
         <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="cat-modal-title">
-          <h3 id="cat-modal-title">新增分类</h3>
+          <h3 id="cat-modal-title">{{.Admin.T "admin.settings.categories.new" "新增分类"}}</h3>
           <form method="post" action="/admin/settings/categories" class="admin-form">
             <input type="hidden" name="_csrf" value="{{.CSRF}}">
             <input type="hidden" name="lang" value="{{.EditLang}}">
             <input type="hidden" name="kind" value="{{.CatKind}}">
             <input type="hidden" name="id" id="cat-id" value="">
-            <div class="field"><label for="cat-name">名称</label><input id="cat-name" name="name" required></div>
-            <div class="field"><label for="cat-slug">Slug（留空自动生成）</label><input id="cat-slug" name="slug"></div>
-            <div class="field"><label for="cat-desc">描述（分类页与 SEO）</label><textarea id="cat-desc" name="description" rows="2"></textarea></div>
+            <div class="field"><label for="cat-name">{{.Admin.T "admin.common.name" "名称"}}</label><input id="cat-name" name="name" required></div>
+            <div class="field"><label for="cat-slug">{{.Admin.T "admin.settings.categories.slug_auto" "Slug（留空自动生成）"}}</label><input id="cat-slug" name="slug"></div>
+            <div class="field"><label for="cat-desc">{{.Admin.T "admin.settings.categories.desc_label" "描述（分类页与 SEO）"}}</label><textarea id="cat-desc" name="description" rows="2"></textarea></div>
             <div style="display:flex;gap:.6rem;justify-content:flex-end">
-              <button type="button" class="btn" data-cat-close>取消</button>
-              <button type="submit" class="btn btn-primary">保存</button>
+              <button type="button" class="btn" data-cat-close>{{.Admin.T "admin.action.cancel" "取消"}}</button>
+              <button type="submit" class="btn btn-primary">{{.Admin.T "admin.action.save" "保存"}}</button>
             </div>
           </form>
         </div>
@@ -634,43 +663,43 @@
 
       {{else if eq .Section "automation"}}
       <div class="field-group">
-        <h3 class="group-head">可交给外部助手的事</h3>
+        <h3 class="group-head">{{.Admin.T "admin.settings.automation.cap_title" "可交给外部助手的事"}}</h3>
         <div class="cap-grid">
           <div class="cap-card">
             <div class="cap-title">
               <span class="cap-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h10l4 4v12H5z"/><path d="M15 4v5h5"/><path d="M8 13h8"/><path d="M8 17h6"/></svg></span>
-              <strong>文章</strong>
+              <strong>{{.Admin.T "admin.nav.posts" "文章"}}</strong>
             </div>
-            <p>查看文章、创建草稿、修改草稿。要改哪篇，助手会先按标题或 slug 找到对应 ID。</p>
+            <p>{{.Admin.T "admin.settings.automation.posts_desc" "查看文章、创建草稿、修改草稿。要改哪篇，助手会先按标题或 slug 找到对应 ID。"}}</p>
           </div>
           <div class="cap-card">
             <div class="cap-title">
               <span class="cap-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.1 0l2-2a5 5 0 0 0-7.1-7.1l-1.2 1.2"/><path d="M14 11a5 5 0 0 0-7.1 0l-2 2A5 5 0 0 0 12 20.1l1.2-1.2"/></svg></span>
-              <strong>链接</strong>
+              <strong>{{.Admin.T "admin.nav.links" "链接"}}</strong>
             </div>
-            <p>查看和维护链接，包括链接地址、说明文字、正文和 SEO 文案。</p>
+            <p>{{.Admin.T "admin.settings.automation.links_desc" "查看和维护链接，包括链接地址、说明文字、正文和 SEO 文案。"}}</p>
           </div>
           <div class="cap-card">
             <div class="cap-title">
               <span class="cap-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8"/><path d="M8 12h8"/><path d="M8 16h5"/></svg></span>
-              <strong>页面</strong>
+              <strong>{{.Admin.T "admin.nav.pages" "页面"}}</strong>
             </div>
-            <p>查看和维护页面内容，比如关于页、介绍页，以及页面的 SEO 文案。</p>
+            <p>{{.Admin.T "admin.settings.automation.pages_desc" "查看和维护页面内容，比如关于页、介绍页，以及页面的 SEO 文案。"}}</p>
           </div>
         </div>
         <details class="update-details dev-details">
-          <summary>给开发者看的连接信息</summary>
+          <summary>{{.Admin.T "admin.settings.automation.dev_info" "给开发者看的连接信息"}}</summary>
           <div class="api-base"><code>{{.APIBaseURL}}</code></div>
           <div class="dev-doc-link">
             <span class="cap-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h14v16H5z"/><path d="M8 8h8"/><path d="M8 12h8"/><path d="M8 16h5"/></svg></span>
-            <p><a href="{{.APIDocsURL}}" target="_blank" rel="noopener">查看开放文档</a><span>参数说明、请求示例和常见用法都在这里。</span></p>
+            <p><a href="{{.APIDocsURL}}" target="_blank" rel="noopener">{{.Admin.T "admin.settings.automation.docs" "查看开放文档"}}</a><span>{{.Admin.T "admin.settings.automation.docs_desc" "参数说明、请求示例和常见用法都在这里。"}}</span></p>
           </div>
           <table class="admin-table api-endpoints">
           <tbody>
-            <tr><th>文章</th><td class="slug">GET/POST /posts · GET/PATCH /posts/{id}</td></tr>
-            <tr><th>链接</th><td class="slug">GET/POST /links · GET/PATCH /links/{id}</td></tr>
-            <tr><th>页面</th><td class="slug">GET/POST /pages · GET/PATCH /pages/{id}</td></tr>
-            <tr><th>查找</th><td class="slug">?q=关键词 · ?slug=slug · ?lang=zh · ?status=draft</td></tr>
+            <tr><th>{{.Admin.T "admin.nav.posts" "文章"}}</th><td class="slug">GET/POST /posts · GET/PATCH /posts/{id}</td></tr>
+            <tr><th>{{.Admin.T "admin.nav.links" "链接"}}</th><td class="slug">GET/POST /links · GET/PATCH /links/{id}</td></tr>
+            <tr><th>{{.Admin.T "admin.nav.pages" "页面"}}</th><td class="slug">GET/POST /pages · GET/PATCH /pages/{id}</td></tr>
+            <tr><th>{{.Admin.T "admin.settings.automation.search" "查找"}}</th><td class="slug">?q=keyword · ?slug=slug · ?lang=zh · ?status=draft</td></tr>
           </tbody>
           </table>
         </details>
@@ -680,25 +709,25 @@
         <div class="automation-toolbar">
           <h3 class="group-head with-icon">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7.5" cy="14.5" r="3.5"/><path d="M10 12l8-8"/><path d="M15 7l2 2"/></svg>
-            <span>外部助手访问权限</span>
+            <span>{{.Admin.T "admin.settings.automation.permissions" "外部助手访问权限"}}</span>
           </h3>
-          <a class="btn btn-primary" href="#api-key-modal">创建访问权限</a>
+          <a class="btn btn-primary" href="#api-key-modal">{{.Admin.T "admin.settings.automation.create_key" "创建访问权限"}}</a>
         </div>
-        <p class="muted automation-note">建议一个外部工具或平台创建一条访问权限。以后如果不用了，或者怀疑泄露，直接吊销对应这一条。</p>
+        <p class="muted automation-note">{{.Admin.T "admin.settings.automation.note" "建议一个外部工具或平台创建一条访问权限。以后如果不用了，或者怀疑泄露，直接吊销对应这一条。"}}</p>
         <div class="key-warning">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.3 4.2 2.8 17.4A2 2 0 0 0 4.5 20h15a2 2 0 0 0 1.7-2.6L13.7 4.2a2 2 0 0 0-3.4 0z"/></svg>
-          <span>完整密钥只在创建或重新生成后显示一次。刚生成时可在对应行点“查看”，刷新后如需再次拿到完整密钥，请重新生成。</span>
+          <span>{{.Admin.T "admin.settings.automation.secret_once" "完整密钥只在创建或重新生成后显示一次。刚生成时可在对应行点“查看”，刷新后如需再次拿到完整密钥，请重新生成。"}}</span>
         </div>
         <table class="admin-table automation-key-table">
-          <thead><tr><th>用途</th><th>权限</th><th>最近使用</th><th class="right">操作</th></tr></thead>
+          <thead><tr><th>{{.Admin.T "admin.settings.automation.purpose" "用途"}}</th><th>{{.Admin.T "admin.settings.automation.scopes" "权限"}}</th><th>{{.Admin.T "admin.settings.automation.last_used" "最近使用"}}</th><th class="right">{{.Admin.T "admin.common.actions" "操作"}}</th></tr></thead>
           <tbody>
             {{range .AutomationKeys}}
             {{$canViewSecret := and $.NewAPISecret (eq .ID $.NewAPIKeyID)}}
             <tr>
-              <td><strong>{{.Name}}</strong><div class="slug">密钥开头：{{.TokenPrefix}}...</div>{{if isodate .RevokedAt}}<span class="badge draft">已吊销</span>{{end}}</td>
+              <td><strong>{{.Name}}</strong><div class="slug">{{$.Admin.T "admin.settings.automation.prefix" "密钥开头："}}{{.TokenPrefix}}...</div>{{if isodate .RevokedAt}}<span class="badge draft">{{$.Admin.T "admin.settings.automation.revoked" "已吊销"}}</span>{{end}}</td>
               <td>
                 <span class="scope-list">
-                {{range automationScopeBadges .Scopes}}
+                {{range automationScopeBadgesAdmin .Scopes $.Admin}}
                   <span class="mini-tag">{{.}}</span>
                 {{end}}
                 </span>
@@ -706,27 +735,28 @@
               <td class="slug">{{if isodate .LastUsedAt}}{{.LastUsedAt.Format "2006-01-02 15:04"}}{{else}}-{{end}}</td>
               <td class="right actions key-actions">
                 {{if not (isodate .RevokedAt)}}
-                {{if $canViewSecret}}<button type="button" class="linkbtn" data-secret-open>查看</button>{{end}}
-                <form method="post" action="/admin/settings/automation/keys/regenerate" data-confirm-title="重新生成密钥" data-confirm-ok="重新生成" data-confirm="重新生成「{{.Name}}」的访问密钥？旧密钥会立即失效，使用它的外部工具需要改用新密钥。">
+                {{if $canViewSecret}}<button type="button" class="linkbtn" data-secret-open>{{$.Admin.T "admin.action.view" "查看"}}</button>{{end}}
+                <button type="button" class="linkbtn" data-key-edit data-id="{{.ID}}" data-name="{{.Name}}" data-scopes="{{.Scopes}}">{{$.Admin.T "admin.settings.automation.edit_permissions" "修改权限"}}</button>
+                <form method="post" action="/admin/settings/automation/keys/regenerate" data-confirm-title="{{$.Admin.T "admin.settings.automation.regenerate" "重新生成"}}" data-confirm-ok="{{$.Admin.T "admin.settings.automation.regenerate" "重新生成"}}" data-confirm="{{printf ($.Admin.T "admin.settings.automation.regenerate_confirm" "重新生成「%s」的访问密钥？旧密钥会立即失效，使用它的外部工具需要改用新密钥。") .Name}}">
                   <input type="hidden" name="_csrf" value="{{$.CSRF}}">
                   <input type="hidden" name="id" value="{{.ID}}">
-                  <button class="linkbtn" type="submit">重新生成</button>
+                  <button class="linkbtn" type="submit">{{$.Admin.T "admin.settings.automation.regenerate" "重新生成"}}</button>
                 </form>
-                <form method="post" action="/admin/settings/automation/keys/revoke" data-confirm="吊销「{{.Name}}」的访问权限？吊销后使用它的自动化任务会立即失效。">
+                <form method="post" action="/admin/settings/automation/keys/revoke" data-confirm="{{printf ($.Admin.T "admin.settings.automation.revoke_confirm" "吊销「%s」的访问权限？吊销后使用它的自动化任务会立即失效。") .Name}}">
                   <input type="hidden" name="_csrf" value="{{$.CSRF}}">
                   <input type="hidden" name="id" value="{{.ID}}">
-                  <button class="del" type="submit">吊销</button>
+                  <button class="del" type="submit">{{$.Admin.T "admin.settings.automation.revoke" "吊销"}}</button>
                 </form>
                 {{else}}
-                <form method="post" action="/admin/settings/automation/keys/delete" data-confirm-title="删除访问记录" data-confirm-ok="删除" data-confirm="删除「{{.Name}}」这条已吊销的访问权限记录？删除后列表中不再显示它。">
+                <form method="post" action="/admin/settings/automation/keys/delete" data-confirm-title="{{$.Admin.T "admin.action.delete" "删除"}}" data-confirm-ok="{{$.Admin.T "admin.action.delete" "删除"}}" data-confirm="{{printf ($.Admin.T "admin.settings.automation.delete_confirm" "删除「%s」这条已吊销的访问权限记录？删除后列表中不再显示它。") .Name}}">
                   <input type="hidden" name="_csrf" value="{{$.CSRF}}">
                   <input type="hidden" name="id" value="{{.ID}}">
-                  <button class="del act-ico" type="submit" title="删除" aria-label="删除">{{template "icon-trash"}}</button>
+                  <button class="del act-ico" type="submit" title="{{$.Admin.T "admin.action.delete" "删除"}}" aria-label="{{$.Admin.T "admin.action.delete" "删除"}}">{{template "icon-trash"}}</button>
                 </form>
                 {{end}}
               </td>
             </tr>
-            {{else}}<tr><td colspan="4" class="muted">还没有给外部助手开通访问权限。先点右上角“创建访问权限”，创建成功后可在列表中点“查看”复制密钥。</td></tr>{{end}}
+            {{else}}<tr><td colspan="4" class="muted">{{.Admin.T "admin.settings.automation.empty" "还没有给外部助手开通访问权限。先点右上角“创建访问权限”，创建成功后可在列表中点“查看”复制密钥。"}}</td></tr>{{end}}
           </tbody>
         </table>
 
@@ -734,13 +764,13 @@
         <div class="modal api-secret-modal" id="api-secret-modal" data-secret-modal>
           <div class="modal-backdrop" data-secret-close></div>
           <div class="modal-card secret-modal-card" role="dialog" aria-modal="true" aria-labelledby="api-secret-title">
-            <h3 id="api-secret-title">{{if .NewAPIName}}「{{.NewAPIName}}」{{else}}新的外部助手{{end}}的访问密钥</h3>
-            <p class="muted secret-modal-note">完整密钥只显示这一次。建议下载 AI 接入包，里面包含密钥文件、OpenAPI 描述文件和给 AI 助手的说明。</p>
+            <h3 id="api-secret-title">{{if .NewAPIName}}{{.NewAPIName}}{{.Admin.T "admin.settings.automation.secret_title_suffix" "的访问密钥"}}{{else}}{{.Admin.T "admin.settings.automation.new_secret_title" "新的外部助手的访问密钥"}}{{end}}</h3>
+            <p class="muted secret-modal-note">{{.Admin.T "admin.settings.automation.secret_note" "完整密钥只显示这一次。建议下载 AI 接入包，里面包含密钥文件、OpenAPI 描述文件和给 AI 助手的说明。"}}</p>
             <div class="api-secret">
-              <strong>完整密钥</strong>
+              <strong>{{.Admin.T "admin.settings.automation.full_secret" "完整密钥"}}</strong>
               <div class="secret-copy">
                 <input id="new-api-secret" value="{{.NewAPISecret}}" readonly>
-                <button type="button" class="icon-btn" data-copy-target="new-api-secret" title="复制密钥" aria-label="复制密钥">
+                <button type="button" class="icon-btn" data-copy-target="new-api-secret" title="{{.Admin.T "admin.settings.automation.copy_secret" "复制密钥"}}" aria-label="{{.Admin.T "admin.settings.automation.copy_secret" "复制密钥"}}">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
                 </button>
               </div>
@@ -750,15 +780,15 @@
                   <input type="hidden" name="token" value="{{.NewAPISecret}}">
                   <input type="hidden" name="name" value="{{.NewAPIName}}">
                   <input type="hidden" name="scopes" value="{{.NewAPIScopes}}">
-                  <button class="btn btn-primary" type="submit">下载 AI 接入包</button>
+                  <button class="btn btn-primary" type="submit">{{.Admin.T "admin.settings.automation.download_kit" "下载 AI 接入包"}}</button>
                 </form>
               </div>
-              <label for="ai-brief">给 AI 助手的说明</label>
+              <label for="ai-brief">{{.Admin.T "admin.settings.automation.ai_brief" "给 AI 助手的说明"}}</label>
               <textarea id="ai-brief" readonly rows="13">{{.NewAIBrief}}</textarea>
-              <button type="button" class="btn btn-primary" data-copy-target="ai-brief">复制说明</button>
+              <button type="button" class="btn btn-primary" data-copy-target="ai-brief">{{.Admin.T "admin.settings.automation.copy_brief" "复制说明"}}</button>
             </div>
             <div class="modal-actions">
-              <button type="button" class="btn" data-secret-close>关闭窗口</button>
+              <button type="button" class="btn" data-secret-close>{{.Admin.T "admin.settings.automation.close_window" "关闭窗口"}}</button>
             </div>
           </div>
         </div>
@@ -767,32 +797,32 @@
         <div class="key-next">
           <h3 class="group-head with-icon">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16"/><path d="M4 12h16"/><path d="M4 17h10"/><circle cx="18" cy="17" r="2"/></svg>
-            <span>接入方式</span>
+            <span>{{.Admin.T "admin.settings.automation.integration" "接入方式"}}</span>
           </h3>
-          <p class="muted automation-note">OpenAPI 是接口说明，所有访问权限共用；真正能操作网站的是上面创建出来的访问密钥。创建成功时可下载已写入密钥的专属使用包。</p>
+          <p class="muted automation-note">{{.Admin.T "admin.settings.automation.integration_note" "OpenAPI 是接口说明，所有访问权限共用；真正能操作网站的是上面创建出来的访问密钥。创建成功时可下载已写入密钥的专属使用包。"}}</p>
           <div class="automation-help">
             <div class="help-title">
               <span class="cap-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 0 1 4.7 1.2c0 1.8-2.2 2.2-2.2 3.8"/><path d="M12 17h.01"/></svg></span>
-              <strong>使用帮助</strong>
+              <strong>{{.Admin.T "admin.settings.automation.help" "使用帮助"}}</strong>
             </div>
             <ol>
-              <li>先为每个外部工具单独创建访问权限，创建成功后马上复制完整密钥。</li>
-              <li>用 Codex、Claude Code、Cursor 这类工具时，创建成功后下载“专属使用包”。</li>
-              <li>用 ChatGPT Actions、Copilot Studio 或开发者工具时，复制 OpenAPI 地址，再在对应平台里配置这个接口和密钥。</li>
+              <li>{{.Admin.T "admin.settings.automation.help_1" "先为每个外部工具单独创建访问权限，创建成功后马上复制完整密钥。"}}</li>
+              <li>{{.Admin.T "admin.settings.automation.help_2" "用 Codex、Claude Code、Cursor 这类工具时，创建成功后下载“专属使用包”。"}}</li>
+              <li>{{.Admin.T "admin.settings.automation.help_3" "用 ChatGPT Actions、Copilot Studio 或开发者工具时，复制 OpenAPI 地址，再在对应平台里配置这个接口和密钥。"}}</li>
             </ol>
-            <p>不要把真实密钥发到普通聊天窗口。默认让 AI 保存草稿，发布前先在后台看一遍。</p>
+            <p>{{.Admin.T "admin.settings.automation.help_note" "不要把真实密钥发到普通聊天窗口。默认让 AI 保存草稿，发布前先在后台看一遍。"}}</p>
           </div>
           <div class="kit-list">
             <div class="kit-item">
               <span class="kit-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg></span>
               <div>
-                <strong>OpenAPI 描述文件</strong>
-                <p>给 ChatGPT Actions、Copilot Studio 或开发者工具识别接口用。</p>
+                <strong>{{.Admin.T "admin.settings.automation.openapi" "OpenAPI 描述文件"}}</strong>
+                <p>{{.Admin.T "admin.settings.automation.openapi_desc" "给 ChatGPT Actions、Copilot Studio 或开发者工具识别接口用。"}}</p>
               </div>
               <div class="copy-line">
                 <input id="openapi-url" value="{{.OpenAPIURL}}" readonly>
-                <button type="button" class="btn" data-copy-target="openapi-url">复制地址</button>
-                <a class="btn" href="{{.OpenAPIURL}}" target="_blank" rel="noopener">打开</a>
+                <button type="button" class="btn" data-copy-target="openapi-url">{{.Admin.T "admin.settings.automation.copy_url" "复制地址"}}</button>
+                <a class="btn" href="{{.OpenAPIURL}}" target="_blank" rel="noopener">{{.Admin.T "admin.settings.automation.open" "打开"}}</a>
               </div>
             </div>
           </div>
@@ -800,38 +830,78 @@
       </div>
 
       <div class="modal api-key-modal" id="api-key-modal">
-        <a class="modal-backdrop" href="#" aria-label="关闭"></a>
+        <a class="modal-backdrop" href="#" aria-label="{{.Admin.T "admin.action.close" "关闭"}}"></a>
         <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="api-key-modal-title">
-          <h3 id="api-key-modal-title">创建访问权限</h3>
+          <h3 id="api-key-modal-title">{{.Admin.T "admin.settings.automation.create_key" "创建访问权限"}}</h3>
           <form method="post" action="/admin/settings/automation/keys" class="admin-form">
             <input type="hidden" name="_csrf" value="{{.CSRF}}">
             <div class="field">
-              <label for="api-key-name">用途名称</label>
-              <input id="api-key-name" name="name" placeholder="内容运营助手" required>
+              <label for="api-key-name">{{.Admin.T "admin.settings.automation.key_name" "用途名称"}}</label>
+              <input id="api-key-name" name="name" placeholder="{{.Admin.T "admin.settings.automation.key_name_placeholder" "内容运营助手"}}" required>
             </div>
             <div class="scope-groups">
               <div class="scope-group">
-                <strong>文章</strong>
-                <label><input type="checkbox" name="scopes" value="posts:read" checked><span>读取</span><small>列出和查看文章</small></label>
-                <label><input type="checkbox" name="scopes" value="posts:write" checked><span>写草稿</span><small>创建草稿，修改未发布文章</small></label>
-                <label><input type="checkbox" name="scopes" value="posts:publish"><span>发布</span><small>发布、定时发布、修改已发布文章</small></label>
+                <strong>{{.Admin.T "admin.nav.posts" "文章"}}</strong>
+                <label><input type="checkbox" name="scopes" value="posts:read" checked><span>{{.Admin.T "admin.settings.automation.read" "读取"}}</span><small>{{.Admin.T "admin.settings.automation.posts_read_desc" "列出和查看文章"}}</small></label>
+                <label><input type="checkbox" name="scopes" value="posts:write" checked><span>{{.Admin.T "admin.settings.automation.write_draft" "写草稿"}}</span><small>{{.Admin.T "admin.settings.automation.posts_write_desc" "创建草稿，修改未发布文章"}}</small></label>
+                <label><input type="checkbox" name="scopes" value="posts:publish"><span>{{.Admin.T "admin.settings.automation.publish" "发布"}}</span><small>{{.Admin.T "admin.settings.automation.posts_publish_desc" "发布、定时发布、修改已发布文章"}}</small></label>
               </div>
               <div class="scope-group">
-                <strong>链接</strong>
-                <label><input type="checkbox" name="scopes" value="links:read" checked><span>读取</span><small>列出和查看链接</small></label>
-                <label><input type="checkbox" name="scopes" value="links:write" checked><span>写草稿</span><small>创建草稿，修改未发布链接</small></label>
-                <label><input type="checkbox" name="scopes" value="links:publish"><span>发布</span><small>发布、定时发布、修改已发布链接</small></label>
+                <strong>{{.Admin.T "admin.nav.links" "链接"}}</strong>
+                <label><input type="checkbox" name="scopes" value="links:read" checked><span>{{.Admin.T "admin.settings.automation.read" "读取"}}</span><small>{{.Admin.T "admin.settings.automation.links_read_desc" "列出和查看链接"}}</small></label>
+                <label><input type="checkbox" name="scopes" value="links:write" checked><span>{{.Admin.T "admin.settings.automation.write_draft" "写草稿"}}</span><small>{{.Admin.T "admin.settings.automation.links_write_desc" "创建草稿，修改未发布链接"}}</small></label>
+                <label><input type="checkbox" name="scopes" value="links:publish"><span>{{.Admin.T "admin.settings.automation.publish" "发布"}}</span><small>{{.Admin.T "admin.settings.automation.links_publish_desc" "发布、定时发布、修改已发布链接"}}</small></label>
               </div>
               <div class="scope-group">
-                <strong>页面</strong>
-                <label><input type="checkbox" name="scopes" value="pages:read" checked><span>读取</span><small>列出和查看页面</small></label>
-                <label><input type="checkbox" name="scopes" value="pages:write" checked><span>写草稿</span><small>创建草稿，修改未发布页面</small></label>
-                <label><input type="checkbox" name="scopes" value="pages:publish"><span>发布</span><small>发布、定时发布、修改已发布页面</small></label>
+                <strong>{{.Admin.T "admin.nav.pages" "页面"}}</strong>
+                <label><input type="checkbox" name="scopes" value="pages:read" checked><span>{{.Admin.T "admin.settings.automation.read" "读取"}}</span><small>{{.Admin.T "admin.settings.automation.pages_read_desc" "列出和查看页面"}}</small></label>
+                <label><input type="checkbox" name="scopes" value="pages:write" checked><span>{{.Admin.T "admin.settings.automation.write_draft" "写草稿"}}</span><small>{{.Admin.T "admin.settings.automation.pages_write_desc" "创建草稿，修改未发布页面"}}</small></label>
+                <label><input type="checkbox" name="scopes" value="pages:publish"><span>{{.Admin.T "admin.settings.automation.publish" "发布"}}</span><small>{{.Admin.T "admin.settings.automation.pages_publish_desc" "发布、定时发布、修改已发布页面"}}</small></label>
               </div>
             </div>
             <div class="modal-actions">
-              <a class="btn" href="#">取消</a>
-              <button class="btn btn-primary" type="submit">创建访问权限</button>
+              <a class="btn" href="#">{{.Admin.T "admin.action.cancel" "取消"}}</a>
+              <button class="btn btn-primary" type="submit">{{.Admin.T "admin.settings.automation.create_key" "创建访问权限"}}</button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <div class="modal api-edit-modal" id="api-key-edit-modal" hidden>
+        <button class="modal-backdrop" type="button" data-key-edit-close aria-label="{{.Admin.T "admin.action.close" "关闭"}}"></button>
+        <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="api-key-edit-title">
+          <h3 id="api-key-edit-title">{{.Admin.T "admin.settings.automation.edit_permissions" "修改权限"}}</h3>
+          <p class="muted" style="margin:-.35rem 0 1rem;font-size:.85rem">{{.Admin.T "admin.settings.automation.edit_permissions_note" "只调整用途名称和能访问的内容，不会改变已经复制出去的密钥。"}}</p>
+          <form method="post" action="/admin/settings/automation/keys/update" class="admin-form">
+            <input type="hidden" name="_csrf" value="{{.CSRF}}">
+            <input type="hidden" name="id" id="api-key-edit-id">
+            <div class="field">
+              <label for="api-key-edit-name">{{.Admin.T "admin.settings.automation.key_name" "用途名称"}}</label>
+              <input id="api-key-edit-name" name="name" required>
+            </div>
+            <div class="scope-groups">
+              <div class="scope-group">
+                <strong>{{.Admin.T "admin.nav.posts" "文章"}}</strong>
+                <label><input type="checkbox" name="scopes" value="posts:read" data-scope-edit><span>{{.Admin.T "admin.settings.automation.read" "读取"}}</span><small>{{.Admin.T "admin.settings.automation.posts_read_desc" "列出和查看文章"}}</small></label>
+                <label><input type="checkbox" name="scopes" value="posts:write" data-scope-edit><span>{{.Admin.T "admin.settings.automation.write_draft" "写草稿"}}</span><small>{{.Admin.T "admin.settings.automation.posts_write_desc" "创建草稿，修改未发布文章"}}</small></label>
+                <label><input type="checkbox" name="scopes" value="posts:publish" data-scope-edit><span>{{.Admin.T "admin.settings.automation.publish" "发布"}}</span><small>{{.Admin.T "admin.settings.automation.posts_publish_desc" "发布、定时发布、修改已发布文章"}}</small></label>
+              </div>
+              <div class="scope-group">
+                <strong>{{.Admin.T "admin.nav.links" "链接"}}</strong>
+                <label><input type="checkbox" name="scopes" value="links:read" data-scope-edit><span>{{.Admin.T "admin.settings.automation.read" "读取"}}</span><small>{{.Admin.T "admin.settings.automation.links_read_desc" "列出和查看链接"}}</small></label>
+                <label><input type="checkbox" name="scopes" value="links:write" data-scope-edit><span>{{.Admin.T "admin.settings.automation.write_draft" "写草稿"}}</span><small>{{.Admin.T "admin.settings.automation.links_write_desc" "创建草稿，修改未发布链接"}}</small></label>
+                <label><input type="checkbox" name="scopes" value="links:publish" data-scope-edit><span>{{.Admin.T "admin.settings.automation.publish" "发布"}}</span><small>{{.Admin.T "admin.settings.automation.links_publish_desc" "发布、定时发布、修改已发布链接"}}</small></label>
+              </div>
+              <div class="scope-group">
+                <strong>{{.Admin.T "admin.nav.pages" "页面"}}</strong>
+                <label><input type="checkbox" name="scopes" value="pages:read" data-scope-edit><span>{{.Admin.T "admin.settings.automation.read" "读取"}}</span><small>{{.Admin.T "admin.settings.automation.pages_read_desc" "列出和查看页面"}}</small></label>
+                <label><input type="checkbox" name="scopes" value="pages:write" data-scope-edit><span>{{.Admin.T "admin.settings.automation.write_draft" "写草稿"}}</span><small>{{.Admin.T "admin.settings.automation.pages_write_desc" "创建草稿，修改未发布页面"}}</small></label>
+                <label><input type="checkbox" name="scopes" value="pages:publish" data-scope-edit><span>{{.Admin.T "admin.settings.automation.publish" "发布"}}</span><small>{{.Admin.T "admin.settings.automation.pages_publish_desc" "发布、定时发布、修改已发布页面"}}</small></label>
+              </div>
+            </div>
+            <div class="modal-actions">
+              <button type="button" class="btn" data-key-edit-close>{{.Admin.T "admin.action.cancel" "取消"}}</button>
+              <button class="btn btn-primary" type="submit">{{.Admin.T "admin.settings.automation.save_permissions" "保存权限"}}</button>
             </div>
           </form>
         </div>
@@ -839,7 +909,7 @@
 
       {{if .AutomationLogs}}
       <details class="update-details">
-        <summary>最近调用</summary>
+        <summary>{{.Admin.T "admin.settings.automation.recent_calls" "最近调用"}}</summary>
         <table class="admin-table">
           <tbody>
             {{range .AutomationLogs}}
@@ -859,42 +929,42 @@
         <div class="field-group">
           <h3 class="group-head with-icon">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 14.5a4.5 4.5 0 0 1-4.5 4.5H8l-5 3V7.5A4.5 4.5 0 0 1 7.5 3h9A4.5 4.5 0 0 1 21 7.5z"/></svg>
-            <span>第三方评论</span>
+            <span>{{.Admin.T "admin.settings.comments.third_party" "第三方评论"}}</span>
           </h3>
-          <p class="muted automation-note">评论内容不存进 GCMS。启用后，文章页底部会加载 giscus，把评论托管到你指定的 GitHub Discussions。</p>
+          <p class="muted automation-note">{{.Admin.T "admin.settings.comments.desc" "评论内容不存进 GCMS。启用后，文章页底部会加载 giscus，把评论托管到你指定的 GitHub Discussions。"}}</p>
           <div class="field">
-            <label id="comments-provider-label">评论功能</label>
+            <label id="comments-provider-label">{{.Admin.T "admin.settings.comments.feature" "评论功能"}}</label>
             <div class="dropdown" data-name="comments_provider">
               <button type="button" class="dd-toggle" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="comments-provider-label">
-                <span class="dd-label">{{if eq .Settings.CommentsProvider "giscus"}}Giscus（GitHub Discussions）{{else}}关闭{{end}}</span>
+                <span class="dd-label">{{if eq .Settings.CommentsProvider "giscus"}}{{.Admin.T "admin.settings.comments.giscus" "Giscus（GitHub Discussions）"}}{{else}}{{.Admin.T "admin.settings.comments.off" "关闭"}}{{end}}</span>
                 <svg class="dd-caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
               </button>
               <input type="hidden" name="comments_provider" value="{{if eq .Settings.CommentsProvider "giscus"}}giscus{{else}}none{{end}}">
               <ul class="dd-menu" role="listbox">
-                <li role="option" data-value="none" aria-selected="{{if ne .Settings.CommentsProvider "giscus"}}true{{else}}false{{end}}">关闭</li>
-                <li role="option" data-value="giscus" aria-selected="{{if eq .Settings.CommentsProvider "giscus"}}true{{else}}false{{end}}">Giscus（GitHub Discussions）</li>
+                <li role="option" data-value="none" aria-selected="{{if ne .Settings.CommentsProvider "giscus"}}true{{else}}false{{end}}">{{.Admin.T "admin.settings.comments.off" "关闭"}}</li>
+                <li role="option" data-value="giscus" aria-selected="{{if eq .Settings.CommentsProvider "giscus"}}true{{else}}false{{end}}">{{.Admin.T "admin.settings.comments.giscus" "Giscus（GitHub Discussions）"}}</li>
               </ul>
             </div>
           </div>
           <div class="automation-help">
             <div class="help-title">
               <span class="cap-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 0 1 4.7 1.2c0 1.8-2.2 2.2-2.2 3.8"/><path d="M12 17h.01"/></svg></span>
-              <strong>怎么准备</strong>
+              <strong>{{.Admin.T "admin.settings.comments.prepare" "怎么准备"}}</strong>
             </div>
             <ol>
-              <li>准备一个 GitHub 仓库，开启 Discussions，并安装 giscus App。</li>
-              <li>打开 <a href="https://giscus.app/zh-CN" target="_blank" rel="noopener">giscus 配置页</a>，按提示选择仓库和讨论分类。</li>
-              <li>把页面生成的 Repo ID、Category ID 等信息填到下面。</li>
-              <li>在需要评论的文章编辑页勾选“显示评论区”。</li>
+              <li>{{.Admin.T "admin.settings.comments.prepare_1" "准备一个 GitHub 仓库，开启 Discussions，并安装 giscus App。"}}</li>
+              <li>{{.Admin.T "admin.settings.comments.prepare_2_prefix" "打开 "}}<a href="https://giscus.app/zh-CN" target="_blank" rel="noopener">{{.Admin.T "admin.settings.comments.prepare_2_link" "giscus 配置页"}}</a>{{.Admin.T "admin.settings.comments.prepare_2_suffix" "，按提示选择仓库和讨论分类。"}}</li>
+              <li>{{.Admin.T "admin.settings.comments.prepare_3" "把页面生成的 Repo ID、Category ID 等信息填到下面。"}}</li>
+              <li>{{.Admin.T "admin.settings.comments.prepare_4" "在需要评论的文章编辑页勾选“显示评论区”。"}}</li>
             </ol>
           </div>
         </div>
 
         <div class="field-group">
-          <h3 class="group-head">Giscus 配置</h3>
+          <h3 class="group-head">{{.Admin.T "admin.settings.comments.config" "Giscus 配置"}}</h3>
           <div class="form-2col">
             <div class="field">
-              <label for="giscus_repo">仓库</label>
+              <label for="giscus_repo">{{.Admin.T "admin.settings.comments.repo" "仓库"}}</label>
               <input id="giscus_repo" name="giscus_repo" value="{{.Settings.GiscusRepo}}" placeholder="owner/repo">
             </div>
             <div class="field">
@@ -902,7 +972,7 @@
               <input id="giscus_repo_id" name="giscus_repo_id" value="{{.Settings.GiscusRepoID}}" placeholder="R_kg...">
             </div>
             <div class="field">
-              <label for="giscus_category">讨论分类</label>
+              <label for="giscus_category">{{.Admin.T "admin.settings.comments.category" "讨论分类"}}</label>
               <input id="giscus_category" name="giscus_category" value="{{.Settings.GiscusCategory}}" placeholder="Announcements">
             </div>
             <div class="field">
@@ -910,68 +980,68 @@
               <input id="giscus_category_id" name="giscus_category_id" value="{{.Settings.GiscusCategoryID}}" placeholder="DIC_kw...">
             </div>
           </div>
-          <p class="muted" style="margin:.1rem 0 0;font-size:.84rem;line-height:1.55">这些值由 giscus 配置页生成。GCMS 只负责把它们放到文章页，不保存评论内容。</p>
+          <p class="muted" style="margin:.1rem 0 0;font-size:.84rem;line-height:1.55">{{.Admin.T "admin.settings.comments.config_note" "这些值由 giscus 配置页生成。GCMS 只负责把它们放到文章页，不保存评论内容。"}}</p>
         </div>
 
         <div class="field-group">
-          <h3 class="group-head">显示方式</h3>
+          <h3 class="group-head">{{.Admin.T "admin.settings.comments.display" "显示方式"}}</h3>
           <div class="form-2col">
             <div class="field">
-              <label id="giscus-mapping-label">文章与讨论的对应方式</label>
+              <label id="giscus-mapping-label">{{.Admin.T "admin.settings.comments.mapping" "文章与讨论的对应方式"}}</label>
               <div class="dropdown" data-name="giscus_mapping">
                 <button type="button" class="dd-toggle" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="giscus-mapping-label">
-                  <span class="dd-label">{{if eq .Settings.GiscusMapping "url"}}按完整 URL{{else if eq .Settings.GiscusMapping "title"}}按文章标题{{else if eq .Settings.GiscusMapping "og:title"}}按 OG 标题{{else}}按页面路径（推荐）{{end}}</span>
+                  <span class="dd-label">{{if eq .Settings.GiscusMapping "url"}}{{.Admin.T "admin.settings.comments.map_url" "按完整 URL"}}{{else if eq .Settings.GiscusMapping "title"}}{{.Admin.T "admin.settings.comments.map_title" "按文章标题"}}{{else if eq .Settings.GiscusMapping "og:title"}}{{.Admin.T "admin.settings.comments.map_og" "按 OG 标题"}}{{else}}{{.Admin.T "admin.settings.comments.map_path" "按页面路径（推荐）"}}{{end}}</span>
                   <svg class="dd-caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
                 </button>
                 <input type="hidden" name="giscus_mapping" value="{{if .Settings.GiscusMapping}}{{.Settings.GiscusMapping}}{{else}}pathname{{end}}">
                 <ul class="dd-menu" role="listbox">
-                  <li role="option" data-value="pathname" aria-selected="{{if eq .Settings.GiscusMapping "pathname"}}true{{else}}false{{end}}">按页面路径（推荐）</li>
-                  <li role="option" data-value="url" aria-selected="{{if eq .Settings.GiscusMapping "url"}}true{{else}}false{{end}}">按完整 URL</li>
-                  <li role="option" data-value="title" aria-selected="{{if eq .Settings.GiscusMapping "title"}}true{{else}}false{{end}}">按文章标题</li>
-                  <li role="option" data-value="og:title" aria-selected="{{if eq .Settings.GiscusMapping "og:title"}}true{{else}}false{{end}}">按 OG 标题</li>
+                  <li role="option" data-value="pathname" aria-selected="{{if eq .Settings.GiscusMapping "pathname"}}true{{else}}false{{end}}">{{.Admin.T "admin.settings.comments.map_path" "按页面路径（推荐）"}}</li>
+                  <li role="option" data-value="url" aria-selected="{{if eq .Settings.GiscusMapping "url"}}true{{else}}false{{end}}">{{.Admin.T "admin.settings.comments.map_url" "按完整 URL"}}</li>
+                  <li role="option" data-value="title" aria-selected="{{if eq .Settings.GiscusMapping "title"}}true{{else}}false{{end}}">{{.Admin.T "admin.settings.comments.map_title" "按文章标题"}}</li>
+                  <li role="option" data-value="og:title" aria-selected="{{if eq .Settings.GiscusMapping "og:title"}}true{{else}}false{{end}}">{{.Admin.T "admin.settings.comments.map_og" "按 OG 标题"}}</li>
                 </ul>
               </div>
             </div>
             <div class="field">
-              <label id="giscus-theme-label">评论区主题</label>
+              <label id="giscus-theme-label">{{.Admin.T "admin.settings.comments.theme" "评论区主题"}}</label>
               <div class="dropdown" data-name="giscus_theme">
                 <button type="button" class="dd-toggle" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="giscus-theme-label">
-                  <span class="dd-label">{{if eq .Settings.GiscusTheme "light"}}浅色{{else if eq .Settings.GiscusTheme "dark"}}深色{{else if eq .Settings.GiscusTheme "noborder_light"}}浅色无边框{{else if eq .Settings.GiscusTheme "noborder_dark"}}深色无边框{{else}}跟随系统{{end}}</span>
+                  <span class="dd-label">{{if eq .Settings.GiscusTheme "light"}}{{.Admin.T "admin.settings.comments.theme_light" "浅色"}}{{else if eq .Settings.GiscusTheme "dark"}}{{.Admin.T "admin.settings.comments.theme_dark" "深色"}}{{else if eq .Settings.GiscusTheme "noborder_light"}}{{.Admin.T "admin.settings.comments.theme_light_no_border" "浅色无边框"}}{{else if eq .Settings.GiscusTheme "noborder_dark"}}{{.Admin.T "admin.settings.comments.theme_dark_no_border" "深色无边框"}}{{else}}{{.Admin.T "admin.settings.comments.theme_system" "跟随系统"}}{{end}}</span>
                   <svg class="dd-caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
                 </button>
                 <input type="hidden" name="giscus_theme" value="{{if .Settings.GiscusTheme}}{{.Settings.GiscusTheme}}{{else}}preferred_color_scheme{{end}}">
                 <ul class="dd-menu" role="listbox">
-                  <li role="option" data-value="preferred_color_scheme" aria-selected="{{if eq .Settings.GiscusTheme "preferred_color_scheme"}}true{{else}}false{{end}}">跟随系统</li>
-                  <li role="option" data-value="light" aria-selected="{{if eq .Settings.GiscusTheme "light"}}true{{else}}false{{end}}">浅色</li>
-                  <li role="option" data-value="dark" aria-selected="{{if eq .Settings.GiscusTheme "dark"}}true{{else}}false{{end}}">深色</li>
-                  <li role="option" data-value="noborder_light" aria-selected="{{if eq .Settings.GiscusTheme "noborder_light"}}true{{else}}false{{end}}">浅色无边框</li>
-                  <li role="option" data-value="noborder_dark" aria-selected="{{if eq .Settings.GiscusTheme "noborder_dark"}}true{{else}}false{{end}}">深色无边框</li>
+                  <li role="option" data-value="preferred_color_scheme" aria-selected="{{if eq .Settings.GiscusTheme "preferred_color_scheme"}}true{{else}}false{{end}}">{{.Admin.T "admin.settings.comments.theme_system" "跟随系统"}}</li>
+                  <li role="option" data-value="light" aria-selected="{{if eq .Settings.GiscusTheme "light"}}true{{else}}false{{end}}">{{.Admin.T "admin.settings.comments.theme_light" "浅色"}}</li>
+                  <li role="option" data-value="dark" aria-selected="{{if eq .Settings.GiscusTheme "dark"}}true{{else}}false{{end}}">{{.Admin.T "admin.settings.comments.theme_dark" "深色"}}</li>
+                  <li role="option" data-value="noborder_light" aria-selected="{{if eq .Settings.GiscusTheme "noborder_light"}}true{{else}}false{{end}}">{{.Admin.T "admin.settings.comments.theme_light_no_border" "浅色无边框"}}</li>
+                  <li role="option" data-value="noborder_dark" aria-selected="{{if eq .Settings.GiscusTheme "noborder_dark"}}true{{else}}false{{end}}">{{.Admin.T "admin.settings.comments.theme_dark_no_border" "深色无边框"}}</li>
                 </ul>
               </div>
             </div>
             <div class="field">
-              <label id="giscus-input-position-label">评论输入框位置</label>
+              <label id="giscus-input-position-label">{{.Admin.T "admin.settings.comments.input_position" "评论输入框位置"}}</label>
               <div class="dropdown" data-name="giscus_input_position">
                 <button type="button" class="dd-toggle" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="giscus-input-position-label">
-                  <span class="dd-label">{{if eq .Settings.GiscusInputPosition "top"}}顶部{{else}}底部{{end}}</span>
+                  <span class="dd-label">{{if eq .Settings.GiscusInputPosition "top"}}{{.Admin.T "admin.settings.comments.position_top" "顶部"}}{{else}}{{.Admin.T "admin.settings.comments.position_bottom" "底部"}}{{end}}</span>
                   <svg class="dd-caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
                 </button>
                 <input type="hidden" name="giscus_input_position" value="{{if eq .Settings.GiscusInputPosition "top"}}top{{else}}bottom{{end}}">
                 <ul class="dd-menu" role="listbox">
-                  <li role="option" data-value="bottom" aria-selected="{{if eq .Settings.GiscusInputPosition "bottom"}}true{{else}}false{{end}}">底部</li>
-                  <li role="option" data-value="top" aria-selected="{{if eq .Settings.GiscusInputPosition "top"}}true{{else}}false{{end}}">顶部</li>
+                  <li role="option" data-value="bottom" aria-selected="{{if eq .Settings.GiscusInputPosition "bottom"}}true{{else}}false{{end}}">{{.Admin.T "admin.settings.comments.position_bottom" "底部"}}</li>
+                  <li role="option" data-value="top" aria-selected="{{if eq .Settings.GiscusInputPosition "top"}}true{{else}}false{{end}}">{{.Admin.T "admin.settings.comments.position_top" "顶部"}}</li>
                 </ul>
               </div>
             </div>
             <div class="field">
-              <label>细节</label>
-              <label class="tweak-toggle"><input type="checkbox" name="giscus_strict" value="1"{{if .Settings.GiscusStrict}} checked{{end}}><span>严格匹配页面路径</span></label>
-              <label class="tweak-toggle" style="margin-top:.45rem"><input type="checkbox" name="giscus_reactions" value="1"{{if .Settings.GiscusReactions}} checked{{end}}><span>显示表情回应</span></label>
+              <label>{{.Admin.T "admin.settings.comments.details" "细节"}}</label>
+              <label class="tweak-toggle"><input type="checkbox" name="giscus_strict" value="1"{{if .Settings.GiscusStrict}} checked{{end}}><span>{{.Admin.T "admin.settings.comments.strict" "严格匹配页面路径"}}</span></label>
+              <label class="tweak-toggle" style="margin-top:.45rem"><input type="checkbox" name="giscus_reactions" value="1"{{if .Settings.GiscusReactions}} checked{{end}}><span>{{.Admin.T "admin.settings.comments.reactions" "显示表情回应"}}</span></label>
             </div>
           </div>
         </div>
 
-        <button class="btn btn-primary" type="submit">保存评论设置</button>
+        <button class="btn btn-primary" type="submit">{{.Admin.T "admin.settings.comments.save" "保存评论设置"}}</button>
       </form>
 
       {{else if eq .Section "updates"}}
@@ -979,60 +1049,60 @@
       {{$up := .Upgrade}}
       {{$canUpgrade := and $up.Available (not $u.Error) $u.UpdateAvailable $u.AssetURL (not $up.Running)}}
       <div class="field-group">
-        <h3 class="group-head">更新状态</h3>
-        <div class="form-err" data-update-error{{if not $u.Error}} hidden{{end}}>检查更新失败：{{$u.Error}}</div>
+        <h3 class="group-head">{{.Admin.T "admin.settings.updates.status" "更新状态"}}</h3>
+        <div class="form-err" data-update-error{{if not $u.Error}} hidden{{end}}>{{.Admin.T "admin.settings.updates.check_failed" "检查更新失败："}}{{$u.Error}}</div>
 
         <div class="update-summary" id="upgrade-status-box" data-status-url="/admin/settings/updates/status" data-check-url="/admin/settings/updates/check" data-running="{{if $up.Running}}1{{else}}0{{end}}" data-upgrade-available="{{if $up.Available}}1{{else}}0{{end}}">
           <div class="update-versions">
             <div class="update-block">
-              <span class="update-label">当前版本</span>
-              <strong>{{$u.Current.Version}}</strong>{{if eq $u.Current.Version "dev"}} <span class="mini-tag">开发构建</span>{{end}}
+              <span class="update-label">{{.Admin.T "admin.settings.updates.current_version" "当前版本"}}</span>
+              <strong>{{$u.Current.Version}}</strong>{{if eq $u.Current.Version "dev"}} <span class="mini-tag">{{.Admin.T "admin.settings.updates.dev_build" "开发构建"}}</span>{{end}}
               <span class="update-meta">{{$u.Current.Platform}}</span>
             </div>
             <span class="update-sep" aria-hidden="true">→</span>
             <div class="update-block">
-              <span class="update-label">最新版本</span>
-              <strong data-update-latest>{{if $u.Error}}检查失败{{else if $u.LatestTag}}{{$u.LatestTag}}{{else}}检查中{{end}}</strong>
-              <span class="badge {{if $u.UpdateAvailable}}sched{{else}}pub{{end}}" data-update-badge{{if or $u.Error (not $u.LatestTag)}} hidden{{end}}>{{if $u.UpdateAvailable}}有新版本{{else}}已是最新{{end}}</span>
-              <span class="update-meta" data-update-meta>{{if $u.Error}}更新源暂不可用{{else if $u.LatestTag}}{{if $u.AssetURL}}当前平台包已匹配{{else}}未找到当前平台包{{end}}{{else}}正在连接更新源{{end}}</span>
+              <span class="update-label">{{.Admin.T "admin.settings.updates.latest_version" "最新版本"}}</span>
+              <strong data-update-latest>{{if $u.Error}}{{.Admin.T "admin.settings.updates.check_failed_short" "检查失败"}}{{else if $u.LatestTag}}{{$u.LatestTag}}{{else}}{{.Admin.T "admin.settings.updates.checking" "检查中"}}{{end}}</strong>
+              <span class="badge {{if $u.UpdateAvailable}}sched{{else}}pub{{end}}" data-update-badge{{if or $u.Error (not $u.LatestTag)}} hidden{{end}}>{{if $u.UpdateAvailable}}{{.Admin.T "admin.settings.updates.update_available" "有新版本"}}{{else}}{{.Admin.T "admin.settings.updates.up_to_date" "已是最新"}}{{end}}</span>
+              <span class="update-meta" data-update-meta>{{if $u.Error}}{{.Admin.T "admin.settings.updates.source_unavailable" "更新源暂不可用"}}{{else if $u.LatestTag}}{{if $u.AssetURL}}{{.Admin.T "admin.settings.updates.asset_matched" "当前平台包已匹配"}}{{else}}{{.Admin.T "admin.settings.updates.asset_missing" "未找到当前平台包"}}{{end}}{{else}}{{.Admin.T "admin.settings.updates.connecting" "正在连接更新源"}}{{end}}</span>
             </div>
           </div>
 
           <div class="update-task">
             <div>
-              <span class="update-label">升级任务</span>
-              <strong data-upgrade-status>{{if eq $up.Status "running"}}升级中{{else if eq $up.Status "failed"}}失败{{else}}空闲{{end}}</strong>
-              <p data-upgrade-message>{{if or (eq $up.Status "running") (eq $up.Status "failed")}}{{$up.Message}}{{else}}暂无升级任务{{end}}</p>
+              <span class="update-label">{{.Admin.T "admin.settings.updates.task" "升级任务"}}</span>
+              <strong data-upgrade-status>{{if eq $up.Status "running"}}{{.Admin.T "admin.settings.updates.running" "升级中"}}{{else if eq $up.Status "failed"}}{{.Admin.T "admin.settings.updates.failed" "失败"}}{{else}}{{.Admin.T "admin.settings.updates.idle" "空闲"}}{{end}}</strong>
+              <p data-upgrade-message>{{if or (eq $up.Status "running") (eq $up.Status "failed")}}{{$up.Message}}{{else}}{{.Admin.T "admin.settings.updates.no_task" "暂无升级任务"}}{{end}}</p>
             </div>
             <form method="post" action="/admin/settings/updates/upgrade" class="update-action" data-upgrade-form>
               <input type="hidden" name="_csrf" value="{{.CSRF}}">
               <input type="hidden" name="version" value="{{$u.LatestTag}}" data-update-version-input>
-              <button class="btn btn-primary" type="submit" data-upgrade-button{{if not $canUpgrade}} disabled{{end}}>{{if $up.Running}}升级中...{{else if not $up.Available}}当前目录不支持后台升级{{else if $u.Error}}检查失败，暂不可升级{{else if not $u.LatestTag}}检查更新中...{{else if not $u.UpdateAvailable}}已是最新{{else if not $u.AssetURL}}未找到当前平台包{{else}}一键升级{{end}}</button>
+              <button class="btn btn-primary" type="submit" data-upgrade-button{{if not $canUpgrade}} disabled{{end}}>{{if $up.Running}}{{.Admin.T "admin.settings.updates.upgrading_ellipsis" "升级中..."}}{{else if not $up.Available}}{{.Admin.T "admin.settings.updates.unsupported" "当前目录不支持后台升级"}}{{else if $u.Error}}{{.Admin.T "admin.settings.updates.check_failed_upgrade" "检查失败，暂不可升级"}}{{else if not $u.LatestTag}}{{.Admin.T "admin.settings.updates.checking_ellipsis" "检查更新中..."}}{{else if not $u.UpdateAvailable}}{{.Admin.T "admin.settings.updates.up_to_date" "已是最新"}}{{else if not $u.AssetURL}}{{.Admin.T "admin.settings.updates.asset_missing" "未找到当前平台包"}}{{else}}{{.Admin.T "admin.settings.updates.one_click" "一键升级"}}{{end}}</button>
             </form>
           </div>
         </div>
 
         <details class="update-details">
-          <summary>高级信息</summary>
+          <summary>{{.Admin.T "admin.settings.updates.advanced" "高级信息"}}</summary>
           <table class="admin-table">
             <tbody>
-              <tr><th>当前提交</th><td class="slug">{{if $u.Current.Commit}}{{$u.Current.Commit}}{{else}}-{{end}}</td></tr>
-              {{if $u.Current.BuiltAt}}<tr><th>构建时间</th><td class="slug">{{$u.Current.BuiltAt}}</td></tr>{{end}}
-              <tr><th>发布仓库</th><td class="slug">{{$u.Current.Repo}}</td></tr>
-              {{if $u.PublishedAt}}<tr><th>发布时间</th><td class="slug">{{$u.PublishedAt}}</td></tr>{{end}}
-              {{if $u.ManifestURL}}<tr><th>更新清单</th><td><a href="{{$u.ManifestURL}}" target="_blank" rel="noopener">manifest.json</a></td></tr>{{end}}
-              {{if $u.AssetURL}}<tr><th>匹配平台包</th><td><a href="{{$u.AssetURL}}" target="_blank" rel="noopener">{{$u.AssetName}}</a></td></tr>{{else if not $u.Error}}<tr><th>匹配平台包</th><td><span class="muted">该 Release 未找到当前平台的发布包</span></td></tr>{{end}}
-              {{if gt $u.AssetSize 0}}<tr><th>包大小</th><td class="slug">{{filesize $u.AssetSize}}</td></tr>{{end}}
+              <tr><th>{{.Admin.T "admin.settings.updates.current_commit" "当前提交"}}</th><td class="slug">{{if $u.Current.Commit}}{{$u.Current.Commit}}{{else}}-{{end}}</td></tr>
+              {{if $u.Current.BuiltAt}}<tr><th>{{.Admin.T "admin.settings.updates.built_at" "构建时间"}}</th><td class="slug">{{$u.Current.BuiltAt}}</td></tr>{{end}}
+              <tr><th>{{.Admin.T "admin.settings.updates.release_repo" "发布仓库"}}</th><td class="slug">{{$u.Current.Repo}}</td></tr>
+              {{if $u.PublishedAt}}<tr><th>{{.Admin.T "admin.settings.updates.published_at" "发布时间"}}</th><td class="slug">{{$u.PublishedAt}}</td></tr>{{end}}
+              {{if $u.ManifestURL}}<tr><th>{{.Admin.T "admin.settings.updates.manifest" "更新清单"}}</th><td><a href="{{$u.ManifestURL}}" target="_blank" rel="noopener">manifest.json</a></td></tr>{{end}}
+              {{if $u.AssetURL}}<tr><th>{{.Admin.T "admin.settings.updates.asset" "匹配平台包"}}</th><td><a href="{{$u.AssetURL}}" target="_blank" rel="noopener">{{$u.AssetName}}</a></td></tr>{{else if not $u.Error}}<tr><th>{{.Admin.T "admin.settings.updates.asset" "匹配平台包"}}</th><td><span class="muted">{{.Admin.T "admin.settings.updates.no_asset" "该 Release 未找到当前平台的发布包"}}</span></td></tr>{{end}}
+              {{if gt $u.AssetSize 0}}<tr><th>{{.Admin.T "admin.settings.updates.size" "包大小"}}</th><td class="slug">{{filesize $u.AssetSize}}</td></tr>{{end}}
               {{if $u.SHA256}}<tr><th>SHA256</th><td class="slug">{{$u.SHA256}}</td></tr>{{end}}
-              {{if $u.ChecksumURL}}<tr><th>校验文件</th><td><a href="{{$u.ChecksumURL}}" target="_blank" rel="noopener">checksums.txt</a></td></tr>{{end}}
-              {{if $u.LatestURL}}<tr><th>Release</th><td><a href="{{$u.LatestURL}}" target="_blank" rel="noopener">打开 GitHub Release</a></td></tr>{{end}}
-              <tr><th>状态文件</th><td class="slug">run/upgrade.json</td></tr>
-              <tr><th>日志</th><td class="slug">{{$up.RunnerLog}}</td></tr>
-              {{if ne $up.Status "idle"}}<tr><th>最近升级</th><td class="slug">{{if eq $up.Status "running"}}运行中{{else if eq $up.Status "success"}}成功{{else if eq $up.Status "failed"}}失败{{else}}{{$up.Status}}{{end}}</td></tr>{{end}}
-              {{if and (ne $up.Status "idle") $up.Message}}<tr><th>最近消息</th><td>{{$up.Message}}</td></tr>{{end}}
-              {{if $up.Step}}<tr><th>阶段</th><td class="slug" data-upgrade-step>{{$up.Step}}</td></tr>{{end}}
-              {{if $up.Version}}<tr><th>目标版本</th><td class="slug" data-upgrade-version>{{$up.Version}}</td></tr>{{end}}
-              {{if $up.UpdatedAt}}<tr><th>更新时间</th><td class="slug" data-upgrade-updated>{{$up.UpdatedAt}}</td></tr>{{end}}
+              {{if $u.ChecksumURL}}<tr><th>{{.Admin.T "admin.settings.updates.checksum" "校验文件"}}</th><td><a href="{{$u.ChecksumURL}}" target="_blank" rel="noopener">checksums.txt</a></td></tr>{{end}}
+              {{if $u.LatestURL}}<tr><th>Release</th><td><a href="{{$u.LatestURL}}" target="_blank" rel="noopener">{{.Admin.T "admin.settings.updates.open_release" "打开 GitHub Release"}}</a></td></tr>{{end}}
+              <tr><th>{{.Admin.T "admin.settings.updates.status_file" "状态文件"}}</th><td class="slug">run/upgrade.json</td></tr>
+              <tr><th>{{.Admin.T "admin.settings.updates.log" "日志"}}</th><td class="slug">{{$up.RunnerLog}}</td></tr>
+              {{if ne $up.Status "idle"}}<tr><th>{{.Admin.T "admin.settings.updates.recent_upgrade" "最近升级"}}</th><td class="slug">{{if eq $up.Status "running"}}{{.Admin.T "admin.settings.updates.running" "运行中"}}{{else if eq $up.Status "success"}}{{.Admin.T "admin.settings.updates.success" "成功"}}{{else if eq $up.Status "failed"}}{{.Admin.T "admin.settings.updates.failed" "失败"}}{{else}}{{$up.Status}}{{end}}</td></tr>{{end}}
+              {{if and (ne $up.Status "idle") $up.Message}}<tr><th>{{.Admin.T "admin.settings.updates.recent_message" "最近消息"}}</th><td>{{$up.Message}}</td></tr>{{end}}
+              {{if $up.Step}}<tr><th>{{.Admin.T "admin.settings.updates.step" "阶段"}}</th><td class="slug" data-upgrade-step>{{$up.Step}}</td></tr>{{end}}
+              {{if $up.Version}}<tr><th>{{.Admin.T "admin.settings.updates.target_version" "目标版本"}}</th><td class="slug" data-upgrade-version>{{$up.Version}}</td></tr>{{end}}
+              {{if $up.UpdatedAt}}<tr><th>{{.Admin.T "admin.settings.updates.updated_at" "更新时间"}}</th><td class="slug" data-upgrade-updated>{{$up.UpdatedAt}}</td></tr>{{end}}
             </tbody>
           </table>
           {{if $u.LatestBody}}<pre class="update-notes">{{$u.LatestBody}}</pre>{{end}}
@@ -1055,11 +1125,44 @@
         var versionInput = root.querySelector("[data-update-version-input]");
         var reloadScheduled = false;
         var pollTimer = 0;
+        var txt = {
+          running: "{{.Admin.T "admin.settings.updates.running" "升级中"}}",
+          success: "{{.Admin.T "admin.settings.updates.success" "升级完成"}}",
+          failed: "{{.Admin.T "admin.settings.updates.failed" "失败"}}",
+          idle: "{{.Admin.T "admin.settings.updates.idle" "空闲"}}",
+          checkFailed: "{{.Admin.T "admin.settings.updates.check_failed_short" "检查失败"}}",
+          checking: "{{.Admin.T "admin.settings.updates.checking" "检查中"}}",
+          updateAvailable: "{{.Admin.T "admin.settings.updates.update_available" "有新版本"}}",
+          upToDate: "{{.Admin.T "admin.settings.updates.up_to_date" "已是最新"}}",
+          sourceUnavailable: "{{.Admin.T "admin.settings.updates.source_unavailable" "更新源暂不可用"}}",
+          assetMatched: "{{.Admin.T "admin.settings.updates.asset_matched" "当前平台包已匹配"}}",
+          assetMissing: "{{.Admin.T "admin.settings.updates.asset_missing" "未找到当前平台包"}}",
+          unsupported: "{{.Admin.T "admin.settings.updates.unsupported" "当前目录不支持后台升级"}}",
+          checkFailedUpgrade: "{{.Admin.T "admin.settings.updates.check_failed_upgrade" "检查失败，暂不可升级"}}",
+          checkingEllipsis: "{{.Admin.T "admin.settings.updates.checking_ellipsis" "检查更新中..."}}",
+          upgradingEllipsis: "{{.Admin.T "admin.settings.updates.upgrading_ellipsis" "升级中..."}}",
+          oneClick: "{{.Admin.T "admin.settings.updates.one_click" "一键升级"}}",
+          refreshing: "{{.Admin.T "admin.settings.updates.refreshing" "刷新中..."}}",
+          retry: "{{.Admin.T "admin.settings.updates.retry" "重试升级"}}",
+          reloadSuccess: "{{.Admin.T "admin.settings.updates.reload_success" "升级成功，正在刷新页面..."}}",
+          checkFailedPrefix: "{{.Admin.T "admin.settings.updates.check_failed" "检查更新失败："}}",
+          loginRequired: "{{.Admin.T "admin.settings.updates.login_required" "需要登录"}}",
+          loginExpired: "{{.Admin.T "admin.settings.updates.login_expired" "登录已过期，请重新登录后查看升级结果。"}}",
+          relogin: "{{.Admin.T "admin.settings.updates.relogin" "重新登录"}}",
+          waitRestart: "{{.Admin.T "admin.settings.updates.wait_restart" "服务正在重启，稍后自动恢复..."}}",
+          waitService: "{{.Admin.T "admin.settings.updates.wait_service" "等待服务恢复..."}}",
+          needRefresh: "{{.Admin.T "admin.settings.updates.need_refresh" "需要刷新"}}",
+          csrfExpired: "{{.Admin.T "admin.settings.updates.csrf_expired" "页面令牌已过期，请刷新系统更新页后再点一键升级。"}}",
+          refreshPage: "{{.Admin.T "admin.settings.updates.refresh_page" "刷新页面"}}",
+          requestSent: "{{.Admin.T "admin.settings.updates.request_sent" "请求已发出，正在等待服务响应..."}}",
+          taskStarted: "{{.Admin.T "admin.settings.updates.task_started" "升级任务已启动，正在等待升级器接管。"}}",
+          unreachable: "{{.Admin.T "admin.settings.updates.unreachable" "更新源请求超时或不可达"}}"
+        };
         var statusText = function(status) {
-          if (status === "running") return "升级中";
-          if (status === "success") return "升级完成";
-          if (status === "failed") return "失败";
-          return "空闲";
+          if (status === "running") return txt.running;
+          if (status === "success") return txt.success;
+          if (status === "failed") return txt.failed;
+          return txt.idle;
         };
         var setText = function(sel, text) {
           var el = root.querySelector(sel);
@@ -1077,13 +1180,13 @@
         var scheduleReload = function() {
           if (reloadScheduled) return;
           reloadScheduled = true;
-          setText("[data-upgrade-message]", "升级成功，正在刷新页面...");
+          setText("[data-upgrade-message]", txt.reloadSuccess);
           window.setTimeout(function(){ window.location.reload(); }, 1200);
         };
         var showUpdateError = function(message) {
           if (!updateError) return;
           updateError.hidden = !message;
-          updateError.textContent = message ? "检查更新失败：" + message : "";
+          updateError.textContent = message ? txt.checkFailedPrefix + message : "";
         };
         var setBadge = function(text, cls, hidden) {
           if (!badgeEl) return;
@@ -1097,23 +1200,23 @@
           var latest = u.LatestTag || "";
           var hasAsset = !!u.AssetURL;
           showUpdateError(err);
-          if (latestEl) latestEl.textContent = err ? "检查失败" : (latest || "检查中");
-          if (metaEl) metaEl.textContent = err ? "更新源暂不可用" : (hasAsset ? "当前平台包已匹配" : "未找到当前平台包");
+          if (latestEl) latestEl.textContent = err ? txt.checkFailed : (latest || txt.checking);
+          if (metaEl) metaEl.textContent = err ? txt.sourceUnavailable : (hasAsset ? txt.assetMatched : txt.assetMissing);
           if (versionInput) versionInput.value = latest;
           if (err) {
             setBadge("", "pub", true);
           } else if (latest) {
-            setBadge(u.UpdateAvailable ? "有新版本" : "已是最新", u.UpdateAvailable ? "sched" : "pub", false);
+            setBadge(u.UpdateAvailable ? txt.updateAvailable : txt.upToDate, u.UpdateAvailable ? "sched" : "pub", false);
           } else {
             setBadge("", "pub", true);
           }
           if (box.dataset.running === "1") return;
-          if (!upgradeAvailable) setButton("当前目录不支持后台升级", true);
-          else if (err) setButton("检查失败，暂不可升级", true);
-          else if (!latest) setButton("检查更新中...", true);
-          else if (!u.UpdateAvailable) setButton("已是最新", true);
-          else if (!hasAsset) setButton("未找到当前平台包", true);
-          else setButton("一键升级", false);
+          if (!upgradeAvailable) setButton(txt.unsupported, true);
+          else if (err) setButton(txt.checkFailedUpgrade, true);
+          else if (!latest) setButton(txt.checkingEllipsis, true);
+          else if (!u.UpdateAvailable) setButton(txt.upToDate, true);
+          else if (!hasAsset) setButton(txt.assetMissing, true);
+          else setButton(txt.oneClick, false);
         };
         var checkUpdates = function() {
           if (!checkUrl) return;
@@ -1126,12 +1229,12 @@
             .then(renderUpdateInfo)
             .catch(function(err){
               if (err && err.login) {
-                showUpdateError("登录已过期，请重新登录。");
-                setButton("重新登录", false);
+                showUpdateError(txt.loginExpired);
+                setButton(txt.relogin, false);
                 if (button) button.onclick = function(){ window.location.href = "/admin/login"; };
                 return;
               }
-              renderUpdateInfo({Error: "更新源请求超时或不可达"});
+              renderUpdateInfo({Error: txt.unreachable});
             });
         };
         var render = function(s) {
@@ -1143,13 +1246,13 @@
           setText("[data-upgrade-message]", s.message);
           setText("[data-upgrade-updated]", s.updated_at);
           if (s.status === "running") {
-            setButton("升级中...", true);
+            setButton(txt.upgradingEllipsis, true);
             schedulePoll(2500);
           } else if (s.status === "success") {
-            setButton("刷新中...", true);
+            setButton(txt.refreshing, true);
             scheduleReload();
           } else if (s.status === "failed") {
-            setButton("重试升级", false);
+            setButton(txt.retry, false);
           }
         };
         var poll = function() {
@@ -1162,15 +1265,15 @@
             .then(render)
             .catch(function(err){
               if (err && err.login) {
-                setText("[data-upgrade-status]", "需要登录");
-                setText("[data-upgrade-message]", "登录已过期，请重新登录后查看升级结果。");
-                setButton("重新登录", false);
+                setText("[data-upgrade-status]", txt.loginRequired);
+                setText("[data-upgrade-message]", txt.loginExpired);
+                setButton(txt.relogin, false);
                 if (button) button.onclick = function(){ window.location.href = "/admin/login"; };
                 return;
               }
-              setText("[data-upgrade-status]", "升级中");
-              setText("[data-upgrade-message]", "服务正在重启，稍后自动恢复...");
-              setButton("等待服务恢复...", true);
+              setText("[data-upgrade-status]", txt.running);
+              setText("[data-upgrade-message]", txt.waitRestart);
+              setButton(txt.waitService, true);
               schedulePoll(3000);
             });
         };
@@ -1180,9 +1283,9 @@
             e.preventDefault();
             if (button && button.disabled) return;
             box.dataset.running = "1";
-            setText("[data-upgrade-status]", "升级中");
-            setText("[data-upgrade-message]", "升级任务已启动，正在等待升级器接管。");
-            setButton("升级中...", true);
+            setText("[data-upgrade-status]", txt.running);
+            setText("[data-upgrade-message]", txt.taskStarted);
+            setButton(txt.upgradingEllipsis, true);
             fetch(form.action, {
               method: "POST",
               body: new URLSearchParams(new FormData(form)),
@@ -1201,18 +1304,18 @@
             }).catch(function(err) {
               if (err && err.serverError && err.error === "bad_csrf") {
                 box.dataset.running = "0";
-                setText("[data-upgrade-status]", "需要刷新");
-                setText("[data-upgrade-message]", "页面令牌已过期，请刷新系统更新页后再点一键升级。");
-                setButton("刷新页面", false);
+                setText("[data-upgrade-status]", txt.needRefresh);
+                setText("[data-upgrade-message]", txt.csrfExpired);
+                setButton(txt.refreshPage, false);
                 if (button) button.onclick = function(){ window.location.reload(); };
                 return;
               }
               if (err && err.serverError && err.message) {
                 setText("[data-upgrade-message]", err.message);
-                setButton("重试升级", false);
+                setButton(txt.retry, false);
                 return;
               }
-              setText("[data-upgrade-message]", "请求已发出，正在等待服务响应...");
+              setText("[data-upgrade-message]", txt.requestSent);
               schedulePoll(1500);
             });
           });
@@ -1225,40 +1328,40 @@
       {{else if eq .Section "security"}}
       <form method="post" action="/admin/settings/security" class="admin-form">
         <input type="hidden" name="_csrf" value="{{.CSRF}}">
-        <p class="muted" style="margin:.1rem 0 1.2rem;font-size:.9rem">修改后台登录密码。新密码至少 6 位。</p>
+        <p class="muted" style="margin:.1rem 0 1.2rem;font-size:.9rem">{{.Admin.T "admin.settings.security.desc" "修改后台登录密码。新密码至少 6 位。"}}</p>
         <div class="field">
-          <label for="current_password">当前密码</label>
+          <label for="current_password">{{.Admin.T "admin.settings.security.current_password" "当前密码"}}</label>
           <input id="current_password" name="current_password" type="password" autocomplete="current-password" required>
         </div>
         <div class="form-2col">
           <div class="field">
-            <label for="new_password">新密码</label>
+            <label for="new_password">{{.Admin.T "admin.settings.security.new_password" "新密码"}}</label>
             <input id="new_password" name="new_password" type="password" autocomplete="new-password" required>
           </div>
           <div class="field">
-            <label for="confirm_password">确认新密码</label>
+            <label for="confirm_password">{{.Admin.T "admin.settings.security.confirm_password" "确认新密码"}}</label>
             <input id="confirm_password" name="confirm_password" type="password" autocomplete="new-password" required>
           </div>
         </div>
-        <button class="btn btn-primary" type="submit">更新密码</button>
+        <button class="btn btn-primary" type="submit">{{.Admin.T "admin.settings.security.update_password" "更新密码"}}</button>
       </form>
       <div class="field-group demo-data-zone">
         <h3 class="group-head with-icon">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
-          <span>演示数据</span>
+          <span>{{.Admin.T "admin.settings.security.demo_data" "演示数据"}}</span>
         </h3>
         <div class="key-warning">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
-          <span>这里的操作只用于测试或新站初始化。不会删除管理员账号、密码、Logo、浏览器图标、上传文件，也不会覆盖当前主题，但会影响当前内容区，请先确认已经备份。</span>
+          <span>{{.Admin.T "admin.settings.security.demo_warning" "这里的操作只用于测试或新站初始化。不会删除管理员账号、密码、Logo、浏览器图标、上传文件，也不会覆盖当前主题，但会影响当前内容区，请先确认已经备份。"}}</span>
         </div>
         <div class="demo-actions">
-          <form method="post" action="/admin/settings/demo/reload" data-confirm-title="重新载入产品演示站" data-confirm-ok="重新载入" data-confirm="这会用最新的 gcms 产品官网样板替换当前文章、页面、链接、分类、导航和首页文案。此操作不可撤销，确定继续？">
+          <form method="post" action="/admin/settings/demo/reload" data-confirm-title="{{.Admin.T "admin.settings.security.reload_demo" "重新载入产品演示站"}}" data-confirm-ok="{{.Admin.T "admin.settings.security.reload_demo_ok" "重新载入"}}" data-confirm="{{.Admin.T "admin.settings.security.reload_demo_confirm" "这会用最新的 gcms 产品官网样板替换当前文章、页面、链接、分类、导航和首页文案。此操作不可撤销，确定继续？"}}">
             <input type="hidden" name="_csrf" value="{{.CSRF}}">
-            <button class="btn btn-danger" type="submit">重新载入产品演示站</button>
+            <button class="btn btn-danger" type="submit">{{.Admin.T "admin.settings.security.reload_demo" "重新载入产品演示站"}}</button>
           </form>
-          <form method="post" action="/admin/settings/demo/clear" data-confirm-title="清除演示数据" data-confirm-ok="清除" data-confirm="清除内置演示文章、页面、链接、分类和示例导航？此操作不可撤销。">
+          <form method="post" action="/admin/settings/demo/clear" data-confirm-title="{{.Admin.T "admin.settings.security.clear_demo" "清除演示数据"}}" data-confirm-ok="{{.Admin.T "admin.settings.security.clear_demo_ok" "清除"}}" data-confirm="{{.Admin.T "admin.settings.security.clear_demo_confirm" "清除内置演示文章、页面、链接、分类和示例导航？此操作不可撤销。"}}">
             <input type="hidden" name="_csrf" value="{{.CSRF}}">
-            <button class="btn" type="submit">只清除演示数据</button>
+            <button class="btn" type="submit">{{.Admin.T "admin.settings.security.clear_demo" "清除演示数据"}}</button>
           </form>
         </div>
       </div>

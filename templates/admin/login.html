@@ -1,4 +1,10 @@
-{{define "body"}}  <div class="login-card">
+{{define "body"}}  <div class="login-wrap">
+    {{if gt (len .AdminLangs) 1}}
+    <nav class="login-lang-switch" aria-label="{{.Admin.T "admin.lang.label" "后台语言"}}">
+      {{range .AdminLangs}}<a href="/admin/language?lang={{.Code}}&next={{urlquery $.AdminReturn}}"{{if eq .Code $.AdminLang}} class="active" aria-current="true"{{end}}>{{.Name}}</a>{{end}}
+    </nav>
+    {{end}}
+    <div class="login-card">
     <h1>{{.Admin.T "admin.login.title" "登录后台"}}</h1>
     {{if .FormErr}}<div class="form-err">{{.FormErr}}</div>{{end}}
     <form method="post" action="/admin/login">
@@ -13,5 +19,6 @@
       </div>
       <button class="btn btn-primary" type="submit" style="width:100%">{{.Admin.T "admin.login.submit" "登录"}}</button>
     </form>
+    </div>
   </div>
 {{end}}

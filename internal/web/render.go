@@ -151,10 +151,11 @@ func funcMap() template.FuncMap {
 		"nl2br": func(s string) template.HTML {
 			return template.HTML(strings.ReplaceAll(template.HTMLEscapeString(s), "\n", "<br>"))
 		},
-		"filesize":              func(n int64) string { return formatBytes(n) },
-		"automationScopeBadges": automationScopeBadges,
-		"add":                   func(a, b int) int { return a + b },
-		"sub":                   func(a, b int) int { return a - b },
+		"filesize":                   func(n int64) string { return formatBytes(n) },
+		"automationScopeBadges":      automationScopeBadges,
+		"automationScopeBadgesAdmin": automationScopeBadgesAdmin,
+		"add":                        func(a, b int) int { return a + b },
+		"sub":                        func(a, b int) int { return a - b },
 		"hasLang": func(posts []*store.Post, code string) bool {
 			for _, p := range posts {
 				if p.Lang == code {

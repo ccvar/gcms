@@ -128,6 +128,11 @@ func decorateMenuRows(rows []MenuRow, targets []MenuTargetOption) []MenuRow {
 		}
 	}
 	fallback := menuOptionLabels()
+	for _, opt := range targets {
+		if opt.Value == "__custom__" || opt.Value == "__external__" {
+			fallback[opt.Value] = opt.Label
+		}
+	}
 	for i := range rows {
 		rows[i].URL = strings.TrimSpace(rows[i].URL)
 		if opt, ok := byURL[rows[i].URL]; ok {

@@ -343,6 +343,8 @@ type SettingsForm struct {
 	HeroTitle      string
 	HeroVisual     string // ""(默认动画) | image | svg
 	HeroImage      string
+	HeroImageDef   string
+	HeroImageMode  string
 	HeroSVG        string
 	FooterNote     string
 	// 首页栏目标题（可自定义，空则前台回落语种默认）
@@ -380,6 +382,8 @@ type SettingsForm struct {
 
 const (
 	defaultFaviconPath   = "/assets/favicon.svg"
+	defaultLogoPath      = "/assets/logo.svg"
+	defaultLogoENPath    = "/assets/logo-en.svg"
 	defaultShareImageURL = "/assets/og-cover.webp"
 )
 
@@ -819,6 +823,14 @@ func (s *Server) site(lang string) seo.Site {
 		}
 		return dflt
 	}
+	getAsset := func(base string) string {
+		if lang != def {
+			if v := s.store.Setting(base + "::" + lang); v != "" {
+				return v
+			}
+		}
+		return s.store.Setting(base)
+	}
 	theme := s.store.Setting("theme")
 	if !validTheme(theme) {
 		theme = "editorial"
@@ -833,9 +845,12 @@ func (s *Server) site(lang string) seo.Site {
 	if brand == "" {
 		brand = "logo"
 	}
-	logo := s.store.Setting("site.logo")
+	logo := getAsset("site.logo")
 	if logo == "" {
-		logo = "/assets/logo.svg" // 默认使用内置 logo
+		logo = defaultLogoPath
+	}
+	if lang == "en" && logo == defaultLogoPath {
+		logo = defaultLogoENPath
 	}
 	linkAll := s.archiveConfig(lang, "link")
 	return seo.Site{
@@ -850,12 +865,12 @@ func (s *Server) site(lang string) seo.Site {
 		Theme:            theme,
 		Favicon:          s.store.Setting("site.favicon"),
 		Logo:             logo,
-		ShareImage:       s.store.Setting("site.share_image"),
+		ShareImage:       getAsset("site.share_image"),
 		Brand:            brand,
 		HeroEyebrow:      get("site.hero_eyebrow", "Go · SQLite · SEO"),
 		HeroTitle:        get("site.hero_title", "把复杂留给后端，\n把简单留给读者。"),
-		HeroVisual:       s.store.Setting("hero.visual"),
-		HeroImage:        s.store.Setting("hero.image"),
+		HeroVisual:       getAsset("hero.visual"),
+		HeroImage:        getAsset("hero.image"),
 		HeroSVG:          s.store.Setting("hero.svg"),
 		FooterNote:       get("site.footer_note", "用 Go 与 SQLite 构建。"),
 		HomeFeatured:     get("home.featured_title", tr.T("home.featured")),
@@ -1043,6 +1058,7 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /admin/settings/categories/delete", s.requireAuth(s.adminDeleteCategory))
 	mux.HandleFunc("POST /admin/settings/categories/reorder", s.requireAuth(s.adminReorderCategories))
 	mux.HandleFunc("POST /admin/settings/automation/keys", s.requireAuth(s.adminCreateAutomationKey))
+	mux.HandleFunc("POST /admin/settings/automation/keys/update", s.requireAuth(s.adminUpdateAutomationKey))
 	mux.HandleFunc("POST /admin/settings/automation/keys/regenerate", s.requireAuth(s.adminRegenerateAutomationKey))
 	mux.HandleFunc("POST /admin/settings/automation/keys/revoke", s.requireAuth(s.adminRevokeAutomationKey))
 	mux.HandleFunc("POST /admin/settings/automation/keys/delete", s.requireAuth(s.adminDeleteAutomationKey))
@@ -1256,9 +1272,11 @@ func (s *Server) menuItems(r *http.Request, lang string, tr *i18n.Tr, nav string
 	return out
 }
 
-func (s *Server) menuTargetOptions() []MenuTargetOption {
+func (s *Server) menuTargetOptions(admins ...*i18n.AdminTr) []MenuTargetOption {
 	def := s.defaultLang()
 	locales := s.locales()
+	admin := firstAdmin(admins)
+	t := func(key, fallback string) string { return adminUI(admin, key, fallback) }
 	labelsFromKey := func(key string) map[string]string {
 		labels := map[string]string{}
 		for _, l := range locales {
@@ -1291,20 +1309,20 @@ func (s *Server) menuTargetOptions() []MenuTargetOption {
 	categoryPath := s.archiveConfig(def, "post").Path
 	linksPath := s.archiveConfig(def, "link").Path
 	return []MenuTargetOption{
-		{Value: "home", Label: "首页", URL: "/", Kind: "preset", Labels: labelsFromKey("nav.home")},
-		{Value: "category", Label: "文章分类页", URL: categoryPath, Kind: "preset", Labels: archiveLabels("post", "nav.category")},
-		{Value: "links", Label: "链接页", URL: linksPath, Kind: "preset", Labels: archiveLabels("link", "nav.links")},
-		{Value: "about", Label: "关于页", URL: "/about", Kind: "preset", Labels: labelsFromKey("nav.about")},
-		{Value: "start", Label: "开始使用页", URL: "/start", Kind: "preset", Labels: staticLabels("开始使用", "Get Started")},
-		{Value: "search", Label: "搜索页", URL: "/search", Kind: "preset", Labels: labelsFromKey("nav.search")},
-		{Value: "__custom__", Label: "自定义站内路径", Kind: "custom", Labels: map[string]string{}},
-		{Value: "__external__", Label: "外部链接", Kind: "external", Labels: map[string]string{}},
+		{Value: "home", Label: t("admin.settings.menu.target.home", "首页"), URL: "/", Kind: "preset", Labels: labelsFromKey("nav.home")},
+		{Value: "category", Label: t("admin.settings.menu.target.category", "文章分类页"), URL: categoryPath, Kind: "preset", Labels: archiveLabels("post", "nav.category")},
+		{Value: "links", Label: t("admin.settings.menu.target.links", "链接页"), URL: linksPath, Kind: "preset", Labels: archiveLabels("link", "nav.links")},
+		{Value: "about", Label: t("admin.settings.menu.target.about", "关于页"), URL: "/about", Kind: "preset", Labels: labelsFromKey("nav.about")},
+		{Value: "start", Label: t("admin.settings.menu.target.start", "开始使用页"), URL: "/start", Kind: "preset", Labels: staticLabels("开始使用", "Get Started")},
+		{Value: "search", Label: t("admin.settings.menu.target.search", "搜索页"), URL: "/search", Kind: "preset", Labels: labelsFromKey("nav.search")},
+		{Value: "__custom__", Label: t("admin.settings.menu.target.custom", "自定义站内路径"), Kind: "custom", Labels: map[string]string{}},
+		{Value: "__external__", Label: t("admin.settings.menu.target.external", "外部链接"), Kind: "external", Labels: map[string]string{}},
 	}
 }
 
 // menuEditRows 为后台导航编辑提供回填行：未配置时给出默认菜单可编辑副本（各语种填 i18n 文案）。
-func (s *Server) menuEditRows() []MenuRow {
-	targets := s.menuTargetOptions()
+func (s *Server) menuEditRows(admins ...*i18n.AdminTr) []MenuRow {
+	targets := s.menuTargetOptions(admins...)
 	if rows := parseMenuRows(s.store.Setting("nav_menu")); len(rows) > 0 {
 		return decorateMenuRows(rows, targets)
 	}

@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+
+	"cms.ccvar.com/internal/i18n"
 )
 
 type automationSkillFile struct {
@@ -379,6 +381,60 @@ func automationActionLabels(scopes map[string]bool, resource string) []string {
 	} {
 		if scopes[resource+":"+action.key] {
 			labels = append(labels, action.label)
+		}
+	}
+	return labels
+}
+
+func automationScopeBadgesAdmin(scopes string, admin *i18n.AdminTr) []string {
+	m := apiScopeMap(scopes)
+	colon := "："
+	sep := "、"
+	if admin != nil && admin.Lang.Code != "zh" {
+		colon = ": "
+		sep = ", "
+	}
+	var out []string
+	if labels := automationActionLabelsAdmin(m, "content", admin); len(labels) > 0 {
+		out = append(out, adminUI(admin, "admin.settings.automation.content", "全部内容")+colon+strings.Join(labels, sep))
+	}
+	for _, col := range automationCollections {
+		if labels := automationActionLabelsAdmin(m, col.path, admin); len(labels) > 0 {
+			out = append(out, automationCollectionLabelAdmin(col.path, col.label, admin)+colon+strings.Join(labels, sep))
+		}
+	}
+	if len(out) == 0 {
+		return []string{adminUI(admin, "admin.settings.automation.read_content", "读取内容")}
+	}
+	return out
+}
+
+func automationCollectionLabelAdmin(path, fallback string, admin *i18n.AdminTr) string {
+	switch path {
+	case "posts":
+		return adminUI(admin, "admin.nav.posts", fallback)
+	case "links":
+		return adminUI(admin, "admin.nav.links", fallback)
+	case "pages":
+		return adminUI(admin, "admin.nav.pages", fallback)
+	default:
+		return fallback
+	}
+}
+
+func automationActionLabelsAdmin(scopes map[string]bool, resource string, admin *i18n.AdminTr) []string {
+	var labels []string
+	for _, action := range []struct {
+		key      string
+		i18nKey  string
+		fallback string
+	}{
+		{"read", "admin.settings.automation.read", "读取"},
+		{"write", "admin.settings.automation.write_draft", "写草稿"},
+		{"publish", "admin.settings.automation.publish", "发布"},
+	} {
+		if scopes[resource+":"+action.key] {
+			labels = append(labels, adminUI(admin, action.i18nKey, action.fallback))
 		}
 	}
 	return labels

@@ -127,6 +127,18 @@ func (s Site) defaultImage() string {
 	if img == "" {
 		img = "/assets/og-cover.webp"
 	}
+	return s.rootImage(img)
+}
+
+func (s Site) logoImage() string {
+	img := strings.TrimSpace(s.Logo)
+	if img == "" {
+		img = "/assets/logo.svg"
+	}
+	return s.rootImage(img)
+}
+
+func (s Site) rootImage(img string) string {
 	if strings.HasPrefix(img, "http://") || strings.HasPrefix(img, "https://") {
 		return img
 	}
@@ -153,7 +165,7 @@ func (s Site) Home() Meta {
 	}
 	org := map[string]any{
 		"@type": "Organization", "@id": s.Root("/") + "#org",
-		"name": s.Author, "url": s.Root("/"), "logo": s.Root("/assets/logo.svg"),
+		"name": s.Author, "url": s.Root("/"), "logo": s.logoImage(),
 	}
 	graph := map[string]any{"@context": "https://schema.org", "@graph": []any{web, org}}
 	return Meta{
@@ -200,7 +212,7 @@ func (s Site) Article(p *store.Post) Meta {
 		"author":           map[string]any{"@type": "Person", "name": p.Author},
 		"publisher": map[string]any{
 			"@type": "Organization", "name": s.Author,
-			"logo": map[string]any{"@type": "ImageObject", "url": s.Root("/assets/logo.svg")},
+			"logo": map[string]any{"@type": "ImageObject", "url": s.logoImage()},
 		},
 		"inLanguage": s.langTag(),
 	}

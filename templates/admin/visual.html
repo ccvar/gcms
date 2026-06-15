@@ -1,68 +1,68 @@
 {{define "body"}}  <div class="admin-head visual-head">
     <div>
-      <nav class="breadcrumb" style="padding:0 0 .4rem"><a href="/admin">文章</a><span class="sep">/</span><span>可视化编辑</span></nav>
-      <h1>可视化编辑</h1>
+      <nav class="breadcrumb" style="padding:0 0 .4rem"><a href="/admin">{{.Admin.T "admin.nav.posts" "文章"}}</a><span class="sep">/</span><span>{{.Admin.T "admin.nav.visual" "可视化编辑"}}</span></nav>
+      <h1>{{.Admin.T "admin.nav.visual" "可视化编辑"}}</h1>
     </div>
     <div class="edit-actions">
-      <a class="btn" href="/admin/settings/site">{{template "visual-icon-settings"}}站点设置</a>
-      <a class="btn act-view" href="/{{.EditLang}}/" target="_blank">打开前台 {{template "icon-extlink"}}</a>
+      <a class="btn" href="/admin/settings/site">{{template "visual-icon-settings"}}{{.Admin.T "admin.settings.title" "站点设置"}}</a>
+      <a class="btn act-view" href="/{{.EditLang}}/" target="_blank">{{.Admin.T "admin.visual.open_front" "打开前台"}} {{template "icon-extlink"}}</a>
     </div>
   </div>
 
   <div class="visual-editor" data-visual-editor data-lang="{{.EditLang}}" data-save-url="/admin/visual/save" data-reorder-url="/admin/visual/nav/reorder" data-category-reorder-url="/admin/visual/categories/reorder">
-    <section class="visual-stage" aria-label="前台预览">
+    <section class="visual-stage" aria-label="{{.Admin.T "admin.visual.front_preview" "前台预览"}}">
       <div class="visual-toolbar">
         <div class="visual-toolbar-main">
-          <div class="lang-tabs" role="tablist" aria-label="预览语种">
+          <div class="lang-tabs" role="tablist" aria-label="{{.Admin.T "admin.visual.preview_lang" "预览语种"}}">
             {{range .Locales}}<a href="/admin/visual?lang={{.Code}}"{{if eq .Code $.EditLang}} class="active" aria-current="true"{{end}}>{{.Name}}</a>{{end}}
           </div>
-          <p class="visual-note">{{template "visual-icon-info"}}<span>编辑模式下点击预览里的可编辑内容；浏览模式下可以在预览里跳转页面。</span></p>
+          <p class="visual-note">{{template "visual-icon-info"}}<span>{{.Admin.T "admin.visual.note" "编辑模式下点击预览里的可编辑内容；浏览模式下可以在预览里跳转页面。"}}</span></p>
         </div>
         <div class="visual-tools">
-          <div class="visual-seg" aria-label="操作模式">
-            <button type="button" class="active" data-visual-mode="edit">{{template "visual-icon-pen"}}编辑</button>
-            <button type="button" data-visual-mode="browse">{{template "visual-icon-eye"}}浏览</button>
+          <div class="visual-seg" aria-label="{{.Admin.T "admin.visual.mode" "操作模式"}}">
+            <button type="button" class="active" data-visual-mode="edit">{{template "visual-icon-pen"}}{{.Admin.T "admin.visual.edit" "编辑"}}</button>
+            <button type="button" data-visual-mode="browse">{{template "visual-icon-eye"}}{{.Admin.T "admin.visual.browse" "浏览"}}</button>
           </div>
-          <div class="visual-seg" aria-label="预览尺寸">
-            <button type="button" class="active" data-visual-size="desktop">{{template "visual-icon-desktop"}}桌面</button>
-            <button type="button" data-visual-size="tablet">{{template "visual-icon-tablet"}}平板</button>
-            <button type="button" data-visual-size="mobile">{{template "visual-icon-mobile"}}手机</button>
+          <div class="visual-seg" aria-label="{{.Admin.T "admin.visual.preview_size" "预览尺寸"}}">
+            <button type="button" class="active" data-visual-size="desktop">{{template "visual-icon-desktop"}}{{.Admin.T "admin.visual.desktop" "桌面"}}</button>
+            <button type="button" data-visual-size="tablet">{{template "visual-icon-tablet"}}{{.Admin.T "admin.visual.tablet" "平板"}}</button>
+            <button type="button" data-visual-size="mobile">{{template "visual-icon-mobile"}}{{.Admin.T "admin.visual.mobile" "手机"}}</button>
           </div>
           <div class="dropdown visual-width-dd" data-name="layout_width" data-visual-width>
-            <button type="button" class="dd-toggle" aria-haspopup="listbox" aria-expanded="false" aria-label="页面宽度">
+            <button type="button" class="dd-toggle" aria-haspopup="listbox" aria-expanded="false" aria-label="{{.Admin.T "admin.visual.page_width" "页面宽度"}}">
               {{template "visual-icon-width"}}
-              <span class="dd-label">{{if eq .LayoutWidth "1080"}}紧凑 1080{{else if eq .LayoutWidth "1200"}}舒适 1200{{else if eq .LayoutWidth "1240"}}宽屏 1240{{else if eq .LayoutWidth "1360"}}展示 1360{{else if eq .LayoutWidth "1440"}}超宽 1440{{else}}跟随主题{{end}}</span>
+              <span class="dd-label">{{if eq .LayoutWidth "1080"}}{{.Admin.T "admin.visual.width.compact" "紧凑"}} 1080{{else if eq .LayoutWidth "1200"}}{{.Admin.T "admin.visual.width.comfort" "舒适"}} 1200{{else if eq .LayoutWidth "1240"}}{{.Admin.T "admin.visual.width.wide" "宽屏"}} 1240{{else if eq .LayoutWidth "1360"}}{{.Admin.T "admin.visual.width.showcase" "展示"}} 1360{{else if eq .LayoutWidth "1440"}}{{.Admin.T "admin.visual.width.ultra" "超宽"}} 1440{{else}}{{.Admin.T "admin.visual.width.theme" "跟随主题"}}{{end}}</span>
               <svg class="dd-caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
             </button>
             <input type="hidden" name="layout_width" value="{{.LayoutWidth}}">
             <ul class="dd-menu" role="listbox">
-              <li role="option" data-value="" aria-selected="{{if not .LayoutWidth}}true{{else}}false{{end}}">跟随主题</li>
-              <li role="option" data-value="1080" aria-selected="{{if eq .LayoutWidth "1080"}}true{{else}}false{{end}}">紧凑 1080</li>
-              <li role="option" data-value="1200" aria-selected="{{if eq .LayoutWidth "1200"}}true{{else}}false{{end}}">舒适 1200</li>
-              <li role="option" data-value="1240" aria-selected="{{if eq .LayoutWidth "1240"}}true{{else}}false{{end}}">宽屏 1240</li>
-              <li role="option" data-value="1360" aria-selected="{{if eq .LayoutWidth "1360"}}true{{else}}false{{end}}">展示 1360</li>
-              <li role="option" data-value="1440" aria-selected="{{if eq .LayoutWidth "1440"}}true{{else}}false{{end}}">超宽 1440</li>
+              <li role="option" data-value="" aria-selected="{{if not .LayoutWidth}}true{{else}}false{{end}}">{{.Admin.T "admin.visual.width.theme" "跟随主题"}}</li>
+              <li role="option" data-value="1080" aria-selected="{{if eq .LayoutWidth "1080"}}true{{else}}false{{end}}">{{.Admin.T "admin.visual.width.compact" "紧凑"}} 1080</li>
+              <li role="option" data-value="1200" aria-selected="{{if eq .LayoutWidth "1200"}}true{{else}}false{{end}}">{{.Admin.T "admin.visual.width.comfort" "舒适"}} 1200</li>
+              <li role="option" data-value="1240" aria-selected="{{if eq .LayoutWidth "1240"}}true{{else}}false{{end}}">{{.Admin.T "admin.visual.width.wide" "宽屏"}} 1240</li>
+              <li role="option" data-value="1360" aria-selected="{{if eq .LayoutWidth "1360"}}true{{else}}false{{end}}">{{.Admin.T "admin.visual.width.showcase" "展示"}} 1360</li>
+              <li role="option" data-value="1440" aria-selected="{{if eq .LayoutWidth "1440"}}true{{else}}false{{end}}">{{.Admin.T "admin.visual.width.ultra" "超宽"}} 1440</li>
             </ul>
           </div>
           <label class="visual-current">
             <input type="checkbox" data-visual-current>
-            <span>只看当前页</span>
+            <span>{{.Admin.T "admin.visual.current_only" "只看当前页"}}</span>
           </label>
         </div>
       </div>
-      <iframe class="visual-frame" src="{{.VisualPreviewURL}}" title="前台可视化预览"></iframe>
+      <iframe class="visual-frame" src="{{.VisualPreviewURL}}" title="{{.Admin.T "admin.visual.frame_title" "前台可视化预览"}}"></iframe>
     </section>
 
-    <aside class="visual-panel" aria-label="编辑面板">
+    <aside class="visual-panel" aria-label="{{.Admin.T "admin.visual.panel" "编辑面板"}}">
       <div class="visual-context">
         {{template "visual-icon-editing"}}
-        <span>正在编辑</span>
+        <span>{{.Admin.T "admin.visual.editing" "正在编辑"}}</span>
         <strong data-visual-lang-label>{{range .Locales}}{{if eq .Code $.EditLang}}{{.Name}}{{end}}{{end}}</strong>
-        <strong data-visual-page-label>首页</strong>
+        <strong data-visual-page-label>{{.Admin.T "admin.visual.home" "首页"}}</strong>
       </div>
       <div class="visual-empty" data-visual-empty>
-        <h3>{{template "visual-icon-crosshair"}}选择一个位置</h3>
-        <p class="muted">可以直接点左侧预览里的站点名称、Hero 文案、栏目标题、页脚说明或导航名称。</p>
+        <h3>{{template "visual-icon-crosshair"}}{{.Admin.T "admin.visual.pick_title" "选择一个位置"}}</h3>
+        <p class="muted">{{.Admin.T "admin.visual.pick_desc" "可以直接点左侧预览里的站点名称、Hero 文案、栏目标题、页脚说明或导航名称。"}}</p>
       </div>
 
       <form class="visual-form" data-visual-form hidden>
@@ -70,22 +70,22 @@
         <input type="hidden" name="lang" value="{{.EditLang}}">
         <input type="hidden" name="key" data-visual-key>
         <div class="field">
-          <label data-visual-label>字段</label>
+          <label data-visual-label>{{.Admin.T "admin.visual.field" "字段"}}</label>
           <textarea name="value" rows="5" data-visual-value></textarea>
           <span class="hint" data-visual-field-hint></span>
         </div>
         <div class="visual-image-tools" data-visual-image-tools hidden>
-          <div class="visual-image-preview" data-visual-image-preview><span>暂无图片</span></div>
+          <div class="visual-image-preview" data-visual-image-preview><span>{{.Admin.T "admin.visual.no_image" "暂无图片"}}</span></div>
           <div class="visual-image-actions">
-            <button class="btn" type="button" data-visual-upload>{{template "visual-icon-upload"}}上传图片 / SVG</button>
+            <button class="btn" type="button" data-visual-upload>{{template "visual-icon-upload"}}{{.Admin.T "admin.visual.upload_image" "上传图片 / SVG"}}</button>
             <input type="file" accept="image/*,.svg,.ico" data-visual-file hidden>
           </div>
         </div>
         <p class="visual-lang-hint" data-visual-lang-hint hidden></p>
         <p class="visual-check" data-visual-check></p>
         <div class="visual-actions">
-          <button class="btn btn-primary" type="submit" data-visual-save>{{template "visual-icon-save"}}保存修改</button>
-          <button class="btn" type="button" data-visual-reset>{{template "visual-icon-refresh"}}重新载入</button>
+          <button class="btn btn-primary" type="submit" data-visual-save>{{template "visual-icon-save"}}{{.Admin.T "admin.visual.save" "保存修改"}}</button>
+          <button class="btn" type="button" data-visual-reset>{{template "visual-icon-refresh"}}{{.Admin.T "admin.visual.reload" "重新载入"}}</button>
         </div>
         <p class="visual-status muted" data-visual-status></p>
       </form>
@@ -100,16 +100,16 @@
           </button>
           {{range .Fields}}
           <button type="button" draggable="{{if .Draggable}}true{{else}}false{{end}}" data-sortable="{{if .Draggable}}1{{else}}0{{end}}" data-visual-pick data-key="{{.Key}}" data-label="{{.Label}}" data-kind="{{if .Kind}}{{.Kind}}{{else}}text{{end}}" data-group="{{.Group}}" data-hint="{{.Hint}}" data-localized="{{if .Localized}}1{{else}}0{{end}}" data-inherited="{{if .Inherited}}1{{else}}0{{end}}" data-multiline="{{if .Multiline}}1{{else}}0{{end}}" data-context="{{if .Contextual}}1{{else}}0{{end}}" data-value="{{.Value}}" data-meta="{{.Meta}}">
-            {{if .Draggable}}<span class="visual-drag" title="拖动排序" aria-hidden="true">⋮⋮</span>{{end}}
+            {{if .Draggable}}<span class="visual-drag" title="{{$.Admin.T "admin.visual.drag_sort" "拖动排序"}}" aria-hidden="true">⋮⋮</span>{{end}}
             {{if eq .Kind "image"}}
-            <span class="visual-thumb">{{if not .Value}}图片{{end}}</span>
+            <span class="visual-thumb">{{if not .Value}}{{$.Admin.T "admin.visual.image" "图片"}}{{end}}</span>
             {{else}}
             <span class="visual-card-ico">{{template "visual-group-icon" .Group}}</span>
             {{end}}
             <span class="visual-card-body">
               <strong>{{.Label}}</strong>
               <small>{{if .Meta}}{{.Meta}}{{else}}{{.Value}}{{end}}</small>
-              {{if .Inherited}}<em>沿用默认语种</em>{{end}}
+              {{if .Inherited}}<em>{{$.Admin.T "admin.visual.inherited" "沿用默认语种"}}</em>{{end}}
             </span>
           </button>
           {{end}}
@@ -118,20 +118,20 @@
       </div>
 
       <div class="visual-history" data-visual-history>
-        <h3 class="group-head with-icon">{{template "visual-icon-history"}}最近修改</h3>
+        <h3 class="group-head with-icon">{{template "visual-icon-history"}}{{.Admin.T "admin.visual.recent_changes" "最近修改"}}</h3>
         {{if .VisualHistory}}
           {{range .VisualHistory}}
           <form method="post" action="/admin/visual/undo" data-visual-undo>
             <input type="hidden" name="_csrf" value="{{$.CSRF}}">
             <input type="hidden" name="id" value="{{.ID}}">
             <button type="submit">
-              <span>撤回 {{.Label}}</span>
+              <span>{{printf ($.Admin.T "admin.visual.undo_label" "撤回 %s") .Label}}</span>
               <small>{{.At}}</small>
             </button>
           </form>
           {{end}}
         {{else}}
-          <p class="muted">暂无可撤回的修改。</p>
+          <p class="muted">{{.Admin.T "admin.visual.no_undo" "暂无可撤回的修改。"}}</p>
         {{end}}
       </div>
     </aside>

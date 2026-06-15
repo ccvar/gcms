@@ -39,8 +39,14 @@ func TestDefaultSeedIsProductShowcase(t *testing.T) {
 	if got := st.Setting("site.share_image"); got != "/assets/og-cover.webp" {
 		t.Fatalf("site.share_image = %q, want default share image", got)
 	}
+	if got := st.Setting("site.share_image::en"); got != "/assets/og-cover-en.webp" {
+		t.Fatalf("site.share_image::en = %q, want english share image", got)
+	}
 	if got := st.Setting("hero.image"); got != "/assets/hero-product-overview-brand.webp" {
 		t.Fatalf("hero.image = %q, want product hero image", got)
+	}
+	if got := st.Setting("hero.image::en"); got != "/assets/hero-product-overview-brand-en.webp" {
+		t.Fatalf("hero.image::en = %q, want english product hero image", got)
 	}
 	nav := st.Setting("nav_menu")
 	for _, want := range []string{"/category/features", "/category/guides", "/links", "/start"} {
@@ -100,6 +106,70 @@ func TestDefaultSeedIsProductShowcase(t *testing.T) {
 			t.Fatalf("post %s still references old figure asset: %s", slug, post.Content)
 		}
 	}
+	for slug, wantCover := range map[string]string{
+		"github":   "/assets/covers/release-repo-real-en.webp",
+		"demo":     "/assets/covers/site-en.webp",
+		"releases": "/assets/covers/release-package-real-en.webp",
+		"go":       "/assets/covers/go-brand-en.webp",
+		"sqlite":   "/assets/covers/sqlite-brand-en.webp",
+		"caddy":    "/assets/covers/caddy-brand-en.webp",
+	} {
+		link, err := st.GetLinkBySlug("en", slug, true)
+		if err != nil {
+			t.Fatalf("get en link %s: %v", slug, err)
+		}
+		if link == nil {
+			t.Fatalf("en link %s missing", slug)
+		}
+		if link.CoverImage != wantCover {
+			t.Fatalf("en link %s cover = %q, want %q", slug, link.CoverImage, wantCover)
+		}
+	}
+	for slug, wantCover := range map[string]string{
+		"deploy-in-5-minutes": "/assets/covers/release-package-real-en.webp",
+		"why-go-and-sqlite":   "/assets/covers/gcms-stack-brand-en.webp",
+	} {
+		post, err := st.GetPostBySlug("en", slug, true)
+		if err != nil {
+			t.Fatalf("get en post %s: %v", slug, err)
+		}
+		if post == nil {
+			t.Fatalf("en post %s missing", slug)
+		}
+		if post.CoverImage != wantCover {
+			t.Fatalf("en post %s cover = %q, want %q", slug, post.CoverImage, wantCover)
+		}
+		if !strings.Contains(post.Content, wantCover) {
+			t.Fatalf("en post %s content should reference %q: %s", slug, wantCover, post.Content)
+		}
+	}
+	for slug, wantCover := range map[string]string{
+		"multilingual-built-in":               "/assets/screenshots/language-switch-en.webp",
+		"dual-mode-editor":                    "/assets/screenshots/article-editor-en.webp",
+		"seo-by-default":                      "/assets/screenshots/seo-output-en.webp",
+		"eighteen-themes":                     "/assets/screenshots/theme-settings-en.webp",
+		"automation-api":                      "/assets/screenshots/automation-api-en.webp",
+		"in-app-updates":                      "/assets/screenshots/system-updates-en.webp",
+		"how-to-change-theme":                 "/assets/screenshots/theme-settings-en.webp",
+		"how-to-ai-content-ops":               "/assets/screenshots/automation-api-en.webp",
+		"visual-edit-homepage-copy":           "/assets/screenshots/visual-editor-home-en.webp",
+		"configure-navigation-and-categories": "/assets/screenshots/navigation-menu-en.webp",
+		"first-launch-security-and-demo-data": "/assets/screenshots/security-demo-data-en.webp",
+	} {
+		post, err := st.GetPostBySlug("en", slug, true)
+		if err != nil {
+			t.Fatalf("get en post %s: %v", slug, err)
+		}
+		if post == nil {
+			t.Fatalf("en post %s missing", slug)
+		}
+		if post.CoverImage != wantCover {
+			t.Fatalf("en post %s cover = %q, want %q", slug, post.CoverImage, wantCover)
+		}
+		if !strings.Contains(post.Content, wantCover) {
+			t.Fatalf("en post %s content should reference %q: %s", slug, wantCover, post.Content)
+		}
+	}
 	if cats, err := st.ListCategories("zh", "post"); err != nil {
 		t.Fatalf("list post categories: %v", err)
 	} else if len(cats) != 4 {
@@ -134,15 +204,16 @@ func TestBundledCoverPathsMigrateToWebP(t *testing.T) {
 		}
 	}
 	for key, value := range map[string]string{
-		"site.tagline":        "把内容站交付成一个可运行的二进制",
-		"site.description":    "gcms 是面向产品官网、技术文档和轻量内容站的自托管 CMS：单个二进制启动，SQLite 单文件存储，服务端渲染默认做好 SEO，多语种、主题、在线升级和自动化接口开箱可用。",
-		"site.hero_eyebrow":   "产品官网 · 技术文档 · 自托管内容站",
-		"site.hero_title":     "一个二进制，\n上线一个完整\n内容站。",
-		"site.share_image":    "",
-		"hero.visual":         "",
-		"hero.image":          "/assets/figures/gcms-showcase-hero.svg",
-		"site.tagline::en":    "Ship a complete content site as one binary",
-		"site.hero_title::en": "One binary,\none complete content site.",
+		"site.tagline":         "把内容站交付成一个可运行的二进制",
+		"site.description":     "gcms 是面向产品官网、技术文档和轻量内容站的自托管 CMS：单个二进制启动，SQLite 单文件存储，服务端渲染默认做好 SEO，多语种、主题、在线升级和自动化接口开箱可用。",
+		"site.hero_eyebrow":    "产品官网 · 技术文档 · 自托管内容站",
+		"site.hero_title":      "一个二进制，\n上线一个完整\n内容站。",
+		"site.share_image":     "",
+		"site.share_image::en": "",
+		"hero.visual":          "",
+		"hero.image":           "/assets/figures/gcms-showcase-hero.svg",
+		"site.tagline::en":     "Ship a complete content site as one binary",
+		"site.hero_title::en":  "One binary,\none complete content site.",
 	} {
 		if _, err := st.db.Exec(`UPDATE settings SET value=? WHERE key=?`, value, key); err != nil {
 			t.Fatalf("set old setting %s: %v", key, err)
@@ -161,6 +232,28 @@ func TestBundledCoverPathsMigrateToWebP(t *testing.T) {
 	)
 	if _, err := st.db.Exec(`UPDATE posts SET content=? WHERE type='page' AND lang='zh' AND slug='start'`, oldStart); err != nil {
 		t.Fatalf("set old start page content: %v", err)
+	}
+	if _, err := st.db.Exec(`UPDATE posts SET cover_image=?, content=? WHERE lang=? AND slug=?`,
+		"/assets/screenshots/article-editor.webp",
+		"Old English editor screenshot: ![](/assets/screenshots/article-editor.webp)",
+		"en",
+		"dual-mode-editor",
+	); err != nil {
+		t.Fatalf("set old english screenshot path: %v", err)
+	}
+	for slug, oldCover := range map[string]string{
+		"github":              "/assets/covers/release-repo-real.webp",
+		"demo":                "/assets/covers/site.webp",
+		"releases":            "/assets/covers/release-package-real.webp",
+		"go":                  "/assets/covers/go-brand.webp",
+		"sqlite":              "/assets/covers/sqlite-brand.webp",
+		"caddy":               "/assets/covers/caddy-brand.webp",
+		"deploy-in-5-minutes": "/assets/covers/release-package-real.webp",
+		"why-go-and-sqlite":   "/assets/covers/gcms-stack-brand.webp",
+	} {
+		if _, err := st.db.Exec(`UPDATE posts SET cover_image=?, content=? WHERE lang=? AND slug=?`, oldCover, "old English cover ![]("+oldCover+")", "en", slug); err != nil {
+			t.Fatalf("set old english cover for %s: %v", slug, err)
+		}
 	}
 	if err := st.Close(); err != nil {
 		t.Fatalf("close store: %v", err)
@@ -211,19 +304,75 @@ func TestBundledCoverPathsMigrateToWebP(t *testing.T) {
 			t.Fatalf("%s content did not migrate to article editor screenshot: %s", slug, post.Content)
 		}
 	}
+	enPost, err := st.GetPostBySlug("en", "dual-mode-editor", true)
+	if err != nil {
+		t.Fatalf("get migrated en editor post: %v", err)
+	}
+	if enPost == nil {
+		t.Fatalf("migrated en editor post missing")
+	}
+	if enPost.CoverImage != "/assets/screenshots/article-editor-en.webp" {
+		t.Fatalf("en editor cover = %q, want english screenshot", enPost.CoverImage)
+	}
+	if !strings.Contains(enPost.Content, "/assets/screenshots/article-editor-en.webp") || strings.Contains(enPost.Content, "/assets/screenshots/article-editor.webp") {
+		t.Fatalf("en editor content did not migrate to english screenshot: %s", enPost.Content)
+	}
 	for key, want := range map[string]string{
-		"site.tagline":        "低配置也能跑的完整内容站",
-		"site.description":    "gcms 适合产品官网、技术文档、资源导航和轻量内容站：单个二进制启动，SQLite 单文件存储，低配 VPS 也能部署；后台、主题、多语种、SEO、在线升级都开箱可用，并支持 AI 协助运营。",
-		"site.hero_eyebrow":   "低配置部署 · SEO 就绪 · 自托管内容站",
-		"site.hero_title":     "小机器，\n也能跑起完整\n内容站",
-		"site.share_image":    "/assets/og-cover.webp",
-		"hero.visual":         "image",
-		"hero.image":          "/assets/hero-product-overview-brand.webp",
-		"site.tagline::en":    "A complete content site that runs on small servers",
-		"site.hero_title::en": "A small server\ncan run a complete\ncontent site",
+		"site.tagline":         "低配置也能跑的完整内容站",
+		"site.description":     "gcms 适合产品官网、技术文档、资源导航和轻量内容站：单个二进制启动，SQLite 单文件存储，低配 VPS 也能部署；后台、主题、多语种、SEO、在线升级都开箱可用，并支持 AI 协助运营。",
+		"site.hero_eyebrow":    "低配置部署 · SEO 就绪 · 自托管内容站",
+		"site.hero_title":      "小机器，\n也能跑起完整\n内容站",
+		"site.share_image":     "/assets/og-cover.webp",
+		"site.share_image::en": "/assets/og-cover-en.webp",
+		"hero.visual":          "image",
+		"hero.image":           "/assets/hero-product-overview-brand.webp",
+		"hero.visual::en":      "image",
+		"hero.image::en":       "/assets/hero-product-overview-brand-en.webp",
+		"site.tagline::en":     "A complete content site that runs on small servers",
+		"site.hero_title::en":  "A small server\ncan run a complete\ncontent site",
 	} {
 		if got := st.Setting(key); got != want {
 			t.Fatalf("%s = %q, want %q", key, got, want)
+		}
+	}
+	for slug, wantCover := range map[string]string{
+		"github":   "/assets/covers/release-repo-real-en.webp",
+		"demo":     "/assets/covers/site-en.webp",
+		"releases": "/assets/covers/release-package-real-en.webp",
+		"go":       "/assets/covers/go-brand-en.webp",
+		"sqlite":   "/assets/covers/sqlite-brand-en.webp",
+		"caddy":    "/assets/covers/caddy-brand-en.webp",
+	} {
+		link, err := st.GetLinkBySlug("en", slug, true)
+		if err != nil {
+			t.Fatalf("get migrated en link %s: %v", slug, err)
+		}
+		if link == nil {
+			t.Fatalf("migrated en link %s missing", slug)
+		}
+		if link.CoverImage != wantCover {
+			t.Fatalf("migrated en link %s cover = %q, want %q", slug, link.CoverImage, wantCover)
+		}
+		if !strings.Contains(link.Content, wantCover) {
+			t.Fatalf("migrated en link %s content should reference %q: %s", slug, wantCover, link.Content)
+		}
+	}
+	for slug, wantCover := range map[string]string{
+		"deploy-in-5-minutes": "/assets/covers/release-package-real-en.webp",
+		"why-go-and-sqlite":   "/assets/covers/gcms-stack-brand-en.webp",
+	} {
+		post, err := st.GetPostBySlug("en", slug, true)
+		if err != nil {
+			t.Fatalf("get migrated en post %s: %v", slug, err)
+		}
+		if post == nil {
+			t.Fatalf("migrated en post %s missing", slug)
+		}
+		if post.CoverImage != wantCover {
+			t.Fatalf("migrated en post %s cover = %q, want %q", slug, post.CoverImage, wantCover)
+		}
+		if !strings.Contains(post.Content, wantCover) {
+			t.Fatalf("migrated en post %s content should reference %q: %s", slug, wantCover, post.Content)
 		}
 	}
 	page, err := st.GetPage("zh", "start")
@@ -272,7 +421,7 @@ func TestClearDemoContentKeepsBaseSettings(t *testing.T) {
 	} else if len(cats) != 0 {
 		t.Fatalf("link categories = %d, want 0", len(cats))
 	}
-	for _, key := range []string{"nav_menu", "social_links", "home.featured_title", "category.all.title", "links.all.title", "site.share_image", "hero.visual", "hero.image", "hero.svg"} {
+	for _, key := range []string{"nav_menu", "social_links", "home.featured_title", "category.all.title", "links.all.title", "site.share_image", "site.share_image::en", "hero.visual", "hero.visual::en", "hero.image", "hero.image::en", "hero.svg"} {
 		if got := st.Setting(key); got != "" {
 			t.Fatalf("%s = %q, want empty", key, got)
 		}
@@ -308,6 +457,9 @@ func TestReloadShowcaseContentReplacesCurrentContent(t *testing.T) {
 	if err := st.SetSetting("site.share_image", "/uploads/share.webp"); err != nil {
 		t.Fatalf("set share image: %v", err)
 	}
+	if err := st.SetSetting("site.share_image::en", "/uploads/share-en.webp"); err != nil {
+		t.Fatalf("set english share image: %v", err)
+	}
 	if err := st.SetSetting("theme", "terminal"); err != nil {
 		t.Fatalf("set theme: %v", err)
 	}
@@ -336,6 +488,9 @@ func TestReloadShowcaseContentReplacesCurrentContent(t *testing.T) {
 	}
 	if got := st.Setting("site.share_image"); got != "/uploads/share.webp" {
 		t.Fatalf("site.share_image = %q, want preserved share image", got)
+	}
+	if got := st.Setting("site.share_image::en"); got != "/uploads/share-en.webp" {
+		t.Fatalf("site.share_image::en = %q, want preserved english share image", got)
 	}
 	if got := st.Setting("theme"); got != "terminal" {
 		t.Fatalf("theme = %q, want preserved theme", got)

@@ -1,7 +1,7 @@
 {{define "body"}}{{$p := .Post}}  <div class="read-progress" aria-hidden="true"><i></i></div>
   <main class="wrap">
     <div class="article-grid{{if .TOC}} has-toc{{end}}">
-      <nav class="breadcrumb article-bc" aria-label="面包屑">
+      <nav class="breadcrumb article-bc" aria-label="{{.Tr.T "common.breadcrumb"}}">
         <a href="{{.Tr.U "/"}}">{{.Tr.T "nav.home"}}</a><span class="sep">/</span>
         {{with $p.Category}}<a href="{{$.Tr.U (printf "/category/%s" .Slug)}}">{{.Name}}</a><span class="sep">/</span>{{end}}
         <span aria-current="page">{{$p.Title}}</span>
@@ -47,7 +47,7 @@
           </div>
 
           {{if or .Prev .Next}}
-          <nav class="pager" aria-label="文章导航">
+          <nav class="pager" aria-label="{{.Tr.T "common.article_nav"}}">
             {{with .Prev}}
             <a class="prev" href="{{$.Tr.U (printf "/posts/%s" .Slug)}}">
               <div class="dir">← {{$.Tr.T "common.prev"}}</div>
@@ -65,7 +65,7 @@
         </article>
 
         {{with .Giscus}}
-        <section class="comments giscus-comments" aria-label="评论">
+        <section class="comments giscus-comments" aria-label="{{.Tr.T "common.comments"}}">
           <script src="https://giscus.app/client.js"
             data-repo="{{.Repo}}"
             data-repo-id="{{.RepoID}}"

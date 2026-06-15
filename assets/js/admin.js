@@ -747,6 +747,9 @@
     var targets = [];
     try { targets = JSON.parse(box.getAttribute("data-targets") || "[]") || []; } catch (e) { targets = []; }
     var trash = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>';
+    function text(name, fallback) {
+      return box.getAttribute("data-text-" + name) || fallback;
+    }
     function esc(s) {
       return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
         return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c];
@@ -768,7 +771,7 @@
     function labelsHTML(values) {
       values = values || {};
       return langs.map(function (code, i) {
-        return '<label class="menu-label"><span class="ml-lang">' + esc(names[i] || code) + '</span><input name="nav_label_' + esc(code) + '" value="' + esc(values[code] || "") + '" placeholder="名称"></label>';
+        return '<label class="menu-label"><span class="ml-lang">' + esc(names[i] || code) + '</span><input name="nav_label_' + esc(code) + '" value="' + esc(values[code] || "") + '" placeholder="' + esc(text("label-placeholder", "名称")) + '"></label>';
       }).join("");
     }
     function targetDropdownHTML(selected) {
@@ -781,7 +784,7 @@
     }
     function setPreview(row, value) {
       var path = row.querySelector("[data-menu-path]");
-      if (path) path.textContent = (value || "").trim() || "待填写";
+      if (path) path.textContent = (value || "").trim() || text("pending", "待填写");
     }
     function rowInputByLang(row, code) {
       var input = null;
@@ -807,7 +810,7 @@
       }
       if (!label) {
         var hidden = row.querySelector(".menu-url");
-        label = hidden && hidden.value ? hidden.value.trim() : "未命名";
+        label = hidden && hidden.value ? hidden.value.trim() : text("unnamed", "未命名");
       }
       return label;
     }
@@ -824,12 +827,12 @@
       if (!previewList) return;
       var rows = [].slice.call(box.querySelectorAll(".menu-row"));
       if (!rows.length) {
-        previewList.innerHTML = '<span class="menu-preview-empty">暂无菜单项</span>';
+        previewList.innerHTML = '<span class="menu-preview-empty">' + esc(text("empty", "暂无菜单项")) + '</span>';
         return;
       }
       previewList.innerHTML = rows.map(function (row) {
         var label = rowLabel(row);
-        var url = rowURL(row) || "待填写";
+        var url = rowURL(row) || text("pending", "待填写");
         var ext = isExternalMenuRow(row);
         return '<span class="menu-preview-item' + (ext ? ' is-external' : '') + '" title="' + esc(url) + '"><span>' + esc(label) + '</span>' + (ext ? '<span class="menu-preview-ext" aria-hidden="true">↗</span>' : '') + '</span>';
       }).join("");
@@ -882,7 +885,7 @@
       var row = document.createElement("div");
       row.className = "menu-row";
       row.dataset.customTarget = "1";
-      row.innerHTML = '<span class="drag-handle" aria-hidden="true">⠿</span><div class="menu-fields"><div class="menu-main"><div class="menu-target-wrap"><label>指向哪里</label>' + targetDropdownHTML("__custom__") + '</div><div class="menu-path-preview"><span>路径</span><code data-menu-path>待填写</code></div></div><input class="menu-url" type="hidden" name="nav_url"><div class="menu-custom-wrap" data-menu-custom-wrap><label>自定义地址</label><input class="menu-custom-url" placeholder="/docs 或 https://example.com" inputmode="url"></div><details class="menu-label-details" open><summary>菜单文字</summary><div class="menu-labels">' + labelsHTML() + '</div></details></div><button type="button" class="menu-del" data-menu-del data-confirm="删除这个菜单项？保存菜单后生效。" title="删除" aria-label="删除">' + trash + '</button>';
+      row.innerHTML = '<span class="drag-handle" aria-hidden="true">⠿</span><div class="menu-fields"><div class="menu-main"><div class="menu-target-wrap"><label>' + esc(text("target", "指向哪里")) + '</label>' + targetDropdownHTML("__custom__") + '</div><div class="menu-path-preview"><span>' + esc(text("path", "路径")) + '</span><code data-menu-path>' + esc(text("pending", "待填写")) + '</code></div></div><input class="menu-url" type="hidden" name="nav_url"><div class="menu-custom-wrap" data-menu-custom-wrap><label>' + esc(text("custom-url", "自定义地址")) + '</label><input class="menu-custom-url" placeholder="' + esc(text("custom-url-placeholder", "/docs 或 https://example.com")) + '" inputmode="url"></div><details class="menu-label-details" open><summary>' + esc(text("labels", "菜单文字")) + '</summary><div class="menu-labels">' + labelsHTML() + '</div></details></div><button type="button" class="menu-del" data-menu-del data-confirm="' + esc(text("delete-confirm", "删除这个菜单项？保存菜单后生效。")) + '" title="' + esc(text("delete", "删除")) + '" aria-label="' + esc(text("delete", "删除")) + '">' + trash + '</button>';
       box.appendChild(row);
       if (window.adminInitDropdown) window.adminInitDropdown(row.querySelector(".dropdown"));
       updateMenuPreview();
@@ -1459,6 +1462,69 @@
       if (e.key === "Escape" && !modal.hidden) close();
     });
     if (!modal.hidden && firstInput) setTimeout(function () { firstInput.focus(); firstInput.select(); }, 0);
+  })();
+
+  /* ---------- 自动化密钥：修改用途和权限 ---------- */
+  (function () {
+    var modal = document.getElementById("api-key-edit-modal");
+    if (!modal) return;
+    var idEl = modal.querySelector("#api-key-edit-id");
+    var nameEl = modal.querySelector("#api-key-edit-name");
+    var form = modal.querySelector("form");
+    var checks = Array.prototype.slice.call(modal.querySelectorAll("[data-scope-edit]"));
+    function close() {
+      modal.hidden = true;
+    }
+    function open(btn) {
+      var scopes = {};
+      (btn.dataset.scopes || "").split(",").forEach(function (scope) {
+        scope = scope.trim();
+        if (scope) scopes[scope] = true;
+      });
+      if (idEl) idEl.value = btn.dataset.id || "";
+      if (nameEl) nameEl.value = btn.dataset.name || "";
+      checks.forEach(function (input) {
+        input.checked = !!scopes[input.value];
+      });
+      modal.hidden = false;
+      if (form) form.dispatchEvent(new Event("input", { bubbles: true }));
+      setTimeout(function () { if (nameEl) nameEl.focus(); }, 0);
+    }
+    document.querySelectorAll("[data-key-edit]").forEach(function (btn) {
+      btn.addEventListener("click", function () { open(btn); });
+    });
+    modal.querySelectorAll("[data-key-edit-close]").forEach(function (btn) {
+      btn.addEventListener("click", close);
+    });
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && !modal.hidden) close();
+    });
+  })();
+
+  /* ---------- 当前语种 Hero 图：上传后自动改为单独设置 ---------- */
+  (function () {
+    document.querySelectorAll("[data-hero-lang-visual]").forEach(function (box) {
+      var custom = box.querySelector('input[name="hero_image_mode"][value="custom"]');
+      var inherit = box.querySelector('input[name="hero_image_mode"][value="inherit"]');
+      var uploader = box.querySelector(".hero-lang-uploader");
+      var hidden = box.querySelector('input[name="hero_image_lang"]');
+      function sync() {
+        if (!uploader || !custom) return;
+        uploader.classList.toggle("is-muted", !custom.checked);
+      }
+      [custom, inherit].forEach(function (radio) {
+        if (radio) radio.addEventListener("change", sync);
+      });
+      if (hidden && custom) {
+        hidden.addEventListener("input", function () {
+          if (hidden.value) {
+            custom.checked = true;
+            sync();
+          }
+        });
+      }
+      sync();
+    });
   })();
 
   /* ---------- 复制文本 ---------- */
