@@ -697,6 +697,7 @@
           <table class="admin-table api-endpoints">
           <tbody>
             <tr><th>{{.Admin.T "admin.settings.automation.languages" "语种"}}</th><td class="slug">GET /languages</td></tr>
+            <tr><th>{{.Admin.T "admin.settings.automation.media" "媒体"}}</th><td class="slug">POST /media</td></tr>
             <tr><th>{{.Admin.T "admin.settings.automation.post_categories" "文章分类"}}</th><td class="slug">GET /posts/categories</td></tr>
             <tr><th>{{.Admin.T "admin.settings.automation.link_categories" "链接分类"}}</th><td class="slug">GET /links/categories</td></tr>
             <tr><th>{{.Admin.T "admin.nav.posts" "文章"}}</th><td class="slug">GET/POST /posts · GET/PATCH /posts/{id}</td></tr>
@@ -846,6 +847,7 @@
               <div class="scope-group scope-group-wide">
                 <strong>{{.Admin.T "admin.settings.automation.base_interfaces" "基础接口"}}</strong>
                 <label><input type="checkbox" name="scopes" value="languages:read" checked><span>{{.Admin.T "admin.settings.automation.languages" "语种"}}</span><small>{{.Admin.T "admin.settings.automation.languages_read_desc" "列出默认语种和启用语种"}}</small></label>
+                <label><input type="checkbox" name="scopes" value="media:write" checked><span>{{.Admin.T "admin.settings.automation.media_upload" "上传媒体"}}</span><small>{{.Admin.T "admin.settings.automation.media_upload_desc" "上传图片并返回可用于封面的 URL"}}</small></label>
               </div>
               <div class="scope-group">
                 <strong>{{.Admin.T "admin.nav.posts" "文章"}}</strong>
@@ -892,6 +894,7 @@
               <div class="scope-group scope-group-wide">
                 <strong>{{.Admin.T "admin.settings.automation.base_interfaces" "基础接口"}}</strong>
                 <label><input type="checkbox" name="scopes" value="languages:read" data-scope-edit><span>{{.Admin.T "admin.settings.automation.languages" "语种"}}</span><small>{{.Admin.T "admin.settings.automation.languages_read_desc" "列出默认语种和启用语种"}}</small></label>
+                <label><input type="checkbox" name="scopes" value="media:write" data-scope-edit><span>{{.Admin.T "admin.settings.automation.media_upload" "上传媒体"}}</span><small>{{.Admin.T "admin.settings.automation.media_upload_desc" "上传图片并返回可用于封面的 URL"}}</small></label>
               </div>
               <div class="scope-group">
                 <strong>{{.Admin.T "admin.nav.posts" "文章"}}</strong>

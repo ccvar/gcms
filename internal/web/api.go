@@ -136,6 +136,40 @@ func (s *Server) apiListCategories(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"items": items, "lang": lang, "kind": kind})
 }
 
+func (s *Server) apiUploadMedia(w http.ResponseWriter, r *http.Request) {
+	auth, ok := s.requireAutomationScope(w, r, "media:write")
+	if !ok {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 8<<20)
+	if err := r.ParseMultipartForm(8 << 20); err != nil {
+		apiError(w, http.StatusBadRequest, "bad_multipart", "表单解析失败或文件过大。")
+		return
+	}
+	file, hdr, err := r.FormFile("file")
+	if err != nil {
+		apiError(w, http.StatusBadRequest, "missing_file", "未收到文件。")
+		return
+	}
+	defer file.Close()
+	result, err := s.saveUploadFile(file, hdr.Filename)
+	if err != nil {
+		switch err.Error() {
+		case "upload_disabled":
+			apiError(w, http.StatusServiceUnavailable, "upload_disabled", "上传未启用。")
+		case "bad_type":
+			apiError(w, http.StatusBadRequest, "bad_type", "仅支持 jpg、png、gif、webp、svg、ico、avif。")
+		case "save_failed":
+			apiError(w, http.StatusInternalServerError, "save_failed", "保存失败。")
+		default:
+			apiError(w, http.StatusBadRequest, "write_failed", "文件过大或写入失败。")
+		}
+		return
+	}
+	_ = s.store.CreateAutomationLog(auth.key.ID, "upload", "media", 0, "上传媒体："+result.URL)
+	writeJSON(w, http.StatusCreated, map[string]any{"url": result.URL, "name": result.Name, "size": result.Size})
+}
+
 func (s *Server) apiListContent(w http.ResponseWriter, r *http.Request) {
 	collection := r.PathValue("collection")
 	kind, ok := apiContentKind(collection)

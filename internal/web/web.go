@@ -1015,9 +1015,10 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /admin/upload", s.requireAuth(s.adminUpload))
 	mux.HandleFunc("POST /admin/render", s.requireAuth(s.adminRender))
 
-	// 自动化 API（开放语种、分类读取，以及文章 / 页面 / 链接内容操作）。
+	// 自动化 API（开放语种、分类读取、媒体上传，以及文章 / 页面 / 链接内容操作）。
 	mux.HandleFunc("GET /api/admin/v1/openapi.json", s.apiOpenAPI)
 	mux.HandleFunc("GET /api/admin/v1/languages", s.apiLanguages)
+	mux.HandleFunc("POST /api/admin/v1/media", s.apiUploadMedia)
 	mux.HandleFunc("GET /api/admin/v1/{collection}/categories", s.apiListCategories)
 	mux.HandleFunc("GET /api/admin/v1/{collection}", s.apiListContent)
 	mux.HandleFunc("POST /api/admin/v1/{collection}", s.apiCreateContent)
@@ -1608,7 +1609,7 @@ func (s *Server) apiDocs(w http.ResponseWriter, r *http.Request) {
 	v := s.view(r, "api_docs")
 	v.SEO = seo.Meta{
 		Title:       "自动化接口开放文档 — " + v.Site.Name,
-		Description: "GCMS 自动化接口的开放文档，包含文章、链接、页面的接口地址、权限说明、参数说明与请求示例。",
+		Description: "GCMS 自动化接口的开放文档，包含语种、分类、媒体上传、文章、链接、页面的接口地址、权限说明、参数说明与请求示例。",
 		Canonical:   v.Site.Abs("/api-docs"),
 		Robots:      "noindex, follow",
 		OGType:      "article",

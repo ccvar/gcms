@@ -1,0 +1,7 @@
+interface:
+  display_name: "GCMS Content Assistant"
+  short_description: "Audit, draft, upload media, and optimize GCMS content"
+  default_prompt: "Use $gcms-content-assistant to audit recent GCMS content and suggest safe draft improvements."
+
+policy:
+  allow_implicit_invocation: true

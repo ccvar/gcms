@@ -15,6 +15,9 @@
 /logs/
 /.go/
 
+# 本地自动化访问密钥
+/skills/gcms-content-assistant/.env
+
 # 系统
 .DS_Store
 .claude

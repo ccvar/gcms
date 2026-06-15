@@ -240,7 +240,7 @@ ccvar.com/
   - 左侧分区菜单每项带 SVG 图标
   - `语言`（`/languages`）：勾选启用的语种、指定默认语种（访问者浏览器语言无法匹配启用语种时的兜底访问语种，也是回落语种）；内置 7 种之外可**新增自定义语种预设**（代码/名称/BCP47 标记/OG locale，存 `custom_locales`），自定义语种的界面文案回落默认语种
   - `分类`（`/categories`）：列表 + 「新增分类」**模态框**增删改（**按语种**）
-  - `自动化接口`（`/automation`）：为外部 AI 工具或应用创建/吊销访问权限，仅开放文章、链接、页面三类内容；创建成功后显示一次访问密钥，并可下载该权限专用的 AI 接入包
+  - `自动化接口`（`/automation`）：为外部 AI 工具或应用创建/吊销访问权限，开放语种、分类、媒体上传以及文章、链接、页面内容操作；创建成功后显示一次访问密钥，并可下载该权限专用的 AI 接入包
   - `评论`（`/comments`）：可选接入 giscus，把文章评论托管到 GitHub Discussions；全站默认关闭，且需要在单篇文章编辑页勾选“显示评论区”才会加载
   - `安全`（`/security`）：在线改密（校验当前密码、新密码 ≥6 位、两次一致）
 
@@ -248,7 +248,7 @@ ccvar.com/
 
 CMS 不主动调用任何 AI API；外部 AI 工具或自动化程序拿到访问密钥后，再来调用本站接口。
 
-后台会用浅显文案展示“可交给外部助手的事”：查看语种和分类，查看文章/链接/页面，创建草稿，修改草稿。默认不允许直接发布；发布、定时发布、修改已发布内容需要在对应资源下额外授予“发布”权限。
+后台会用浅显文案展示“可交给外部助手的事”：查看语种和分类，上传媒体，查看文章/链接/页面，创建草稿，修改草稿。默认不允许直接发布；发布、定时发布、修改已发布内容需要在对应资源下额外授予“发布”权限。
 
 建议一个外部工具或平台单独创建一条访问权限。以后如果不用了，或者怀疑泄露，直接吊销对应这一条。
 
@@ -276,13 +276,14 @@ X-GCMS-API-Key: gcms_xxx
 | 资源 | 列表/创建 | 读取/更新 |
 |------|-----------|-----------|
 | 语种 | `GET /api/admin/v1/languages` | 只读 |
+| 媒体 | `POST /api/admin/v1/media` | 返回可用于 `cover_image` 的 URL |
 | 文章分类 | `GET /api/admin/v1/posts/categories` | 只读 |
 | 文章 | `GET/POST /api/admin/v1/posts` | `GET/PATCH /api/admin/v1/posts/{id}` |
 | 链接分类 | `GET /api/admin/v1/links/categories` | 只读 |
 | 链接 | `GET/POST /api/admin/v1/links` | `GET/PATCH /api/admin/v1/links/{id}` |
 | 页面 | `GET/POST /api/admin/v1/pages` | `GET/PATCH /api/admin/v1/pages/{id}` |
 
-第一版不提供删除接口，也不开放站点设置、分类增删改、导航、系统更新等能力。权限按资源分组：`languages:read`、`posts:*`、`links:*`、`pages:*`，文章和链接额外有只读分类权限 `posts:categories`、`links:categories`；内容操作包含 `read`、`write`、`publish`。例如 `posts:write` 只能创建/修改文章草稿；发布、定时发布、修改已发布文章需要 `posts:publish`。
+第一版不提供删除接口，也不开放站点设置、分类增删改、导航、系统更新等能力。权限按资源分组：`languages:read`、`media:write`、`posts:*`、`links:*`、`pages:*`，文章和链接额外有只读分类权限 `posts:categories`、`links:categories`；内容操作包含 `read`、`write`、`publish`。例如 `posts:write` 只能创建/修改文章草稿；发布、定时发布、修改已发布文章需要 `posts:publish`。
 
 修改某篇内容前，外部助手应先查到目标内容的 `id`，再用对应 `id` 更新，避免只凭标题猜测：
 
@@ -290,6 +291,14 @@ X-GCMS-API-Key: gcms_xxx
 GET /api/admin/v1/posts?lang=zh&q=标题关键词
 GET /api/admin/v1/posts?lang=zh&slug=article-slug
 PATCH /api/admin/v1/posts/{id}
+```
+
+设置封面图前可先上传媒体，返回的 `url` 可写入文章或链接的 `cover_image`：
+
+```bash
+curl -X POST https://example.com/api/admin/v1/media \
+  -H 'Authorization: Bearer gcms_xxx' \
+  -F 'file=@cover.webp'
 ```
 
 创建草稿示例：

@@ -115,6 +115,9 @@ func automationOpenAPISpec(apiBase string) map[string]any {
 		"/languages": map[string]any{
 			"get": automationLanguagesOperation(),
 		},
+		"/media": map[string]any{
+			"post": automationMediaUploadOperation(),
+		},
 	}
 	for _, col := range automationCollections {
 		if col.path == "posts" || col.path == "links" {
@@ -136,7 +139,7 @@ func automationOpenAPISpec(apiBase string) map[string]any {
 		"info": map[string]any{
 			"title":       "GCMS Automation API",
 			"version":     "1.0.0",
-			"description": "开放语种、文章分类、链接分类读取，以及文章、链接、页面的自动化接口。GCMS 不调用 AI API，外部 AI 工具或自动化程序使用访问密钥调用这里的接口。",
+			"description": "开放语种、文章分类、链接分类读取、媒体上传，以及文章、链接、页面的自动化接口。GCMS 不调用 AI API，外部 AI 工具或自动化程序使用访问密钥调用这里的接口。",
 		},
 		"servers": []map[string]string{{"url": apiBase}},
 		"security": []map[string][]string{
@@ -161,6 +164,17 @@ func automationLanguagesOperation() map[string]any {
 		"operationId": "listLanguages",
 		"tags":        []string{"语种"},
 		"responses":   automationResponses("LanguageListResponse"),
+	}
+}
+
+func automationMediaUploadOperation() map[string]any {
+	return map[string]any{
+		"summary":     "上传媒体",
+		"description": "接收 multipart/form-data 的 file 字段，上传成功后返回可写入 cover_image 或正文 Markdown 的 URL。大小上限 8MB，支持 jpg、png、gif、webp、svg、ico、avif。",
+		"operationId": "uploadMedia",
+		"tags":        []string{"媒体"},
+		"requestBody": automationMultipartFileBody(),
+		"responses":   automationResponses("MediaUploadResponse"),
 	}
 }
 
@@ -253,6 +267,23 @@ func automationJSONBody(schema string) map[string]any {
 	}
 }
 
+func automationMultipartFileBody() map[string]any {
+	return map[string]any{
+		"required": true,
+		"content": map[string]any{
+			"multipart/form-data": map[string]any{
+				"schema": map[string]any{
+					"type":     "object",
+					"required": []string{"file"},
+					"properties": map[string]any{
+						"file": map[string]any{"type": "string", "format": "binary"},
+					},
+				},
+			},
+		},
+	}
+}
+
 func automationResponses(schema string) map[string]any {
 	return map[string]any{
 		"200": map[string]any{
@@ -316,6 +347,14 @@ func automationOpenAPISchemas() map[string]any {
 				"trans_group": map[string]any{"type": "string"},
 				"kind":        map[string]any{"type": "string", "enum": []string{"post", "link"}},
 				"count":       map[string]any{"type": "integer", "description": "该分类下已发布内容数量"},
+			},
+		},
+		"MediaUploadResponse": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"url":  map[string]any{"type": "string", "description": "可用于 cover_image 或 Markdown 图片的公开访问路径。"},
+				"name": map[string]any{"type": "string", "description": "保存后的文件名。"},
+				"size": map[string]any{"type": "integer", "description": "写入字节数。"},
 			},
 		},
 		"ContentListResponse": map[string]any{
@@ -401,6 +440,9 @@ func automationScopeBadges(scopes string) []string {
 	if m["languages:read"] {
 		out = append(out, "语种：读取")
 	}
+	if m["media:write"] {
+		out = append(out, "媒体：上传")
+	}
 	if labels := automationActionLabels(m, "content"); len(labels) > 0 {
 		out = append(out, "全部内容："+strings.Join(labels, "、"))
 	}
@@ -444,6 +486,9 @@ func automationScopeBadgesAdmin(scopes string, admin *i18n.AdminTr) []string {
 	var out []string
 	if m["languages:read"] {
 		out = append(out, adminUI(admin, "admin.settings.automation.languages", "语种")+colon+adminUI(admin, "admin.settings.automation.read", "读取"))
+	}
+	if m["media:write"] {
+		out = append(out, adminUI(admin, "admin.settings.automation.media", "媒体")+colon+adminUI(admin, "admin.settings.automation.media_upload", "上传媒体"))
 	}
 	if labels := automationActionLabelsAdmin(m, "content", admin); len(labels) > 0 {
 		out = append(out, adminUI(admin, "admin.settings.automation.content", "全部内容")+colon+strings.Join(labels, sep))
@@ -554,6 +599,7 @@ func automationKitReadme(opts automationSkillOptions) string {
 		"- 默认让 AI 创建或修改草稿，发布前先人工审核。",
 		"- 修改指定内容时，让 AI 先查 id，再按 id 更新。",
 		"- 设置分类前，让 AI 先用 `/posts/categories` 或 `/links/categories` 查询可用分类 ID。",
+		"- 设置封面或正文图片前，让 AI 先用 `POST /media` 上传文件，拿返回的 `url` 再写入 `cover_image` 或 Markdown 图片。",
 		"- 更新全部语种时，让 AI 先用 `/languages` 确认启用语种，再按 `trans_group` 找到同组内容，逐条更新各语种 id。",
 	)
 	return strings.Join(lines, "\n") + "\n"
@@ -592,12 +638,12 @@ func automationSkillMarkdown(apiBase string) string {
 	return strings.Join([]string{
 		"---",
 		"name: gcms-content-assistant",
-		"description: Use this skill to operate a GCMS site through its automation API for languages, categories, posts, pages, and links. Use it when asked to inspect, create drafts, update drafts, or publish content in GCMS.",
+		"description: Use this skill to operate a GCMS site through its automation API for languages, media uploads, categories, posts, pages, and links. Use it when asked to inspect, create drafts, update drafts, upload cover images, or publish content in GCMS.",
 		"---",
 		"",
 		"# GCMS Content Assistant",
 		"",
-		"你是 GCMS 网站内容助手。你可以读取语种和分类，并处理文章、页面、链接。不要增删改站点设置、分类、导航、安全、系统更新。",
+		"你是 GCMS 网站内容助手。你可以读取语种和分类、上传媒体，并处理文章、页面、链接。不要增删改站点设置、分类、导航、安全、系统更新。",
 		"",
 		"## 连接方式",
 		"",
@@ -611,17 +657,19 @@ func automationSkillMarkdown(apiBase string) string {
 		"1. 修改某篇内容前，先用 `q` 或 `slug` 查到准确 `id`。",
 		"2. 如果查到多个相似结果，先让用户确认。",
 		"3. 需要设置分类时，先用 `GET /posts/categories?lang=...` 或 `GET /links/categories?lang=...` 查询可用分类 ID。",
-		"4. 处理多语种内容时，先 `GET /languages` 查看启用语种；如果用户要求更新全部语种，先读取目标内容的 `trans_group`，再用 `lang=all&trans_group=...` 找到同组所有版本，逐条按 id 更新。",
-		"5. 不要把一个语种的正文直接覆盖到其它语种，除非用户明确要求这么做。",
-		"6. 默认只创建或修改草稿。",
-		"7. 只有用户明确要求发布，并且访问密钥有对应资源的发布权限，才设置 `status` 为 `published` 或 `scheduled`。",
-		"8. 完成后告诉用户变更了哪些内容、对应 id、语种、状态，以及建议人工复核的点。",
+		"4. 需要封面或正文图片时，先用 `POST /media` 上传文件，拿返回的 `url` 再写入 `cover_image` 或 Markdown 图片。",
+		"5. 处理多语种内容时，先 `GET /languages` 查看启用语种；如果用户要求更新全部语种，先读取目标内容的 `trans_group`，再用 `lang=all&trans_group=...` 找到同组所有版本，逐条按 id 更新。",
+		"6. 不要把一个语种的正文直接覆盖到其它语种，除非用户明确要求这么做。",
+		"7. 默认只创建或修改草稿。",
+		"8. 只有用户明确要求发布，并且访问密钥有对应资源的发布权限，才设置 `status` 为 `published` 或 `scheduled`。",
+		"9. 完成后告诉用户变更了哪些内容、对应 id、语种、状态，以及建议人工复核的点。",
 		"",
 		"## 推荐脚本",
 		"",
 		"如果当前环境可以运行 Node.js，优先使用 `scripts/gcms.js`：",
 		"",
 		"- `node scripts/gcms.js languages`",
+		"- `node scripts/gcms.js upload ./cover.webp`",
 		"- `node scripts/gcms.js categories posts --lang zh`",
 		"- `node scripts/gcms.js categories links --lang zh`",
 		"- `node scripts/gcms.js list posts --lang zh --q 关键词`",
@@ -637,7 +685,7 @@ func automationSkillMarkdown(apiBase string) string {
 func automationSkillAgentYAML() string {
 	return strings.Join([]string{
 		"display_name: GCMS Content Assistant",
-		"short_description: Operate GCMS languages, categories, posts, pages, and links through the automation API.",
+		"short_description: Operate GCMS languages, media uploads, categories, posts, pages, and links through the automation API.",
 		"default_prompt: Check recent GCMS content for improvements, create drafts when useful, and do not publish without explicit approval.",
 	}, "\n") + "\n"
 }
@@ -680,6 +728,7 @@ func automationSkillScript() string {
 		"function usage() {",
 		"  console.error('Usage:');",
 		"  console.error('  gcms.js languages');",
+		"  console.error('  gcms.js upload <file>');",
 		"  console.error('  gcms.js categories <posts|links> [--lang zh|all]');",
 		"  console.error('  gcms.js list <posts|pages|links> [--lang zh|all] [--q text] [--slug slug] [--trans_group group] [--status draft] [--limit 20]');",
 		"  console.error('  gcms.js get <posts|pages|links> <id>');",
@@ -721,13 +770,42 @@ func automationSkillScript() string {
 		"  return JSON.parse(raw);",
 		"}",
 		"",
+		"function mimeFromFile(file) {",
+		"  switch (path.extname(file).toLowerCase()) {",
+		"    case '.jpg':",
+		"    case '.jpeg': return 'image/jpeg';",
+		"    case '.png': return 'image/png';",
+		"    case '.gif': return 'image/gif';",
+		"    case '.webp': return 'image/webp';",
+		"    case '.svg': return 'image/svg+xml';",
+		"    case '.ico': return 'image/x-icon';",
+		"    case '.avif': return 'image/avif';",
+		"    default: return 'application/octet-stream';",
+		"  }",
+		"}",
+		"",
+		"function mediaBodyFromFile(file) {",
+		"  if (typeof FormData !== 'function' || typeof Blob !== 'function') {",
+		"    console.error('Upload needs Node.js 18+ with FormData and Blob.');",
+		"    process.exit(2);",
+		"  }",
+		"  const bytes = fs.readFileSync(file);",
+		"  const form = new FormData();",
+		"  form.append('file', new Blob([bytes], { type: mimeFromFile(file) }), path.basename(file));",
+		"  return form;",
+		"}",
+		"",
 		"async function request(method, urlPath, body) {",
 		"  requireConfig();",
 		"  const headers = { Authorization: 'Bearer ' + key, Accept: 'application/json' };",
 		"  const init = { method, headers };",
 		"  if (body !== undefined) {",
-		"    headers['Content-Type'] = 'application/json';",
-		"    init.body = JSON.stringify(body);",
+		"    if (typeof FormData !== 'undefined' && body instanceof FormData) {",
+		"      init.body = body;",
+		"    } else {",
+		"      headers['Content-Type'] = 'application/json';",
+		"      init.body = JSON.stringify(body);",
+		"    }",
 		"  }",
 		"  const res = await fetch(base + urlPath, init);",
 		"  const text = await res.text();",
@@ -744,6 +822,11 @@ func automationSkillScript() string {
 		"  const [cmd, collection, maybeID, maybeBody, ...rest] = process.argv.slice(2);",
 		"  if (cmd === 'languages') {",
 		"    await request('GET', '/languages');",
+		"    return;",
+		"  }",
+		"  if (cmd === 'upload') {",
+		"    if (!collection) usage();",
+		"    await request('POST', '/media', mediaBodyFromFile(collection));",
 		"    return;",
 		"  }",
 		"  if (cmd === 'categories') {",

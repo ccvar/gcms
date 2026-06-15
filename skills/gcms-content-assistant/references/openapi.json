@@ -1,0 +1,495 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "GCMS Automation API",
+    "version": "1.0.0",
+    "description": "Automation API for enabled languages, media uploads, post categories, link categories, posts, pages, and links. Replace the server URL with GCMS_API_BASE for the target site."
+  },
+  "servers": [
+    {
+      "url": "https://example.com/api/admin/v1"
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
+    },
+    {
+      "apiKeyAuth": []
+    }
+  ],
+  "paths": {
+    "/languages": {
+      "get": {
+        "summary": "List enabled languages",
+        "operationId": "listLanguages",
+        "tags": ["Languages"],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LanguageListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/media": {
+      "post": {
+        "summary": "Upload media",
+        "description": "Upload an image file and use the returned url for cover_image or Markdown images.",
+        "operationId": "uploadMedia",
+        "tags": ["Media"],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/MediaUpload"
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MediaUploadResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/posts/categories": {
+      "get": {
+        "summary": "List post categories",
+        "operationId": "listPostCategories",
+        "tags": ["Posts"],
+        "parameters": [
+          {
+            "name": "lang",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "default": "zh"
+            },
+            "description": "Category language. Use all to return all languages."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CategoryListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/links/categories": {
+      "get": {
+        "summary": "List link categories",
+        "operationId": "listLinkCategories",
+        "tags": ["Links"],
+        "parameters": [
+          {
+            "name": "lang",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "default": "zh"
+            },
+            "description": "Category language. Use all to return all languages."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CategoryListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/posts": {
+      "get": {
+        "$ref": "#/components/pathItems/ListPosts"
+      },
+      "post": {
+        "$ref": "#/components/pathItems/CreatePosts"
+      }
+    },
+    "/posts/{id}": {
+      "get": {
+        "$ref": "#/components/pathItems/GetPosts"
+      },
+      "patch": {
+        "$ref": "#/components/pathItems/UpdatePosts"
+      }
+    },
+    "/pages": {
+      "get": {
+        "$ref": "#/components/pathItems/ListPages"
+      },
+      "post": {
+        "$ref": "#/components/pathItems/CreatePages"
+      }
+    },
+    "/pages/{id}": {
+      "get": {
+        "$ref": "#/components/pathItems/GetPages"
+      },
+      "patch": {
+        "$ref": "#/components/pathItems/UpdatePages"
+      }
+    },
+    "/links": {
+      "get": {
+        "$ref": "#/components/pathItems/ListLinks"
+      },
+      "post": {
+        "$ref": "#/components/pathItems/CreateLinks"
+      }
+    },
+    "/links/{id}": {
+      "get": {
+        "$ref": "#/components/pathItems/GetLinks"
+      },
+      "patch": {
+        "$ref": "#/components/pathItems/UpdateLinks"
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "GCMS Access Token"
+      },
+      "apiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-GCMS-API-Key"
+      }
+    },
+    "pathItems": {
+      "ListPosts": {
+        "summary": "List posts",
+        "operationId": "listPosts",
+        "tags": ["Posts"],
+        "parameters": [
+          {"$ref": "#/components/parameters/Lang"},
+          {"$ref": "#/components/parameters/Status"},
+          {"$ref": "#/components/parameters/Q"},
+          {"$ref": "#/components/parameters/Slug"},
+          {"$ref": "#/components/parameters/TransGroup"},
+          {"$ref": "#/components/parameters/Limit"},
+          {"$ref": "#/components/parameters/Offset"}
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/ContentListResponse"}
+              }
+            }
+          }
+        }
+      },
+      "CreatePosts": {
+        "summary": "Create post",
+        "operationId": "createPosts",
+        "tags": ["Posts"],
+        "requestBody": {"$ref": "#/components/requestBodies/ContentInput"},
+        "responses": {"201": {"description": "Created"}}
+      },
+      "GetPosts": {
+        "summary": "Get post",
+        "operationId": "getPosts",
+        "tags": ["Posts"],
+        "parameters": [{"$ref": "#/components/parameters/ID"}],
+        "responses": {"200": {"description": "OK"}}
+      },
+      "UpdatePosts": {
+        "summary": "Update post",
+        "operationId": "updatePosts",
+        "tags": ["Posts"],
+        "parameters": [{"$ref": "#/components/parameters/ID"}],
+        "requestBody": {"$ref": "#/components/requestBodies/ContentInput"},
+        "responses": {"200": {"description": "OK"}}
+      },
+      "ListPages": {
+        "summary": "List pages",
+        "operationId": "listPages",
+        "tags": ["Pages"],
+        "parameters": [
+          {"$ref": "#/components/parameters/Lang"},
+          {"$ref": "#/components/parameters/Status"},
+          {"$ref": "#/components/parameters/Q"},
+          {"$ref": "#/components/parameters/Slug"},
+          {"$ref": "#/components/parameters/TransGroup"},
+          {"$ref": "#/components/parameters/Limit"},
+          {"$ref": "#/components/parameters/Offset"}
+        ],
+        "responses": {"200": {"description": "OK"}}
+      },
+      "CreatePages": {
+        "summary": "Create page",
+        "operationId": "createPages",
+        "tags": ["Pages"],
+        "requestBody": {"$ref": "#/components/requestBodies/ContentInput"},
+        "responses": {"201": {"description": "Created"}}
+      },
+      "GetPages": {
+        "summary": "Get page",
+        "operationId": "getPages",
+        "tags": ["Pages"],
+        "parameters": [{"$ref": "#/components/parameters/ID"}],
+        "responses": {"200": {"description": "OK"}}
+      },
+      "UpdatePages": {
+        "summary": "Update page",
+        "operationId": "updatePages",
+        "tags": ["Pages"],
+        "parameters": [{"$ref": "#/components/parameters/ID"}],
+        "requestBody": {"$ref": "#/components/requestBodies/ContentInput"},
+        "responses": {"200": {"description": "OK"}}
+      },
+      "ListLinks": {
+        "summary": "List links",
+        "operationId": "listLinks",
+        "tags": ["Links"],
+        "parameters": [
+          {"$ref": "#/components/parameters/Lang"},
+          {"$ref": "#/components/parameters/Status"},
+          {"$ref": "#/components/parameters/Q"},
+          {"$ref": "#/components/parameters/Slug"},
+          {"$ref": "#/components/parameters/TransGroup"},
+          {"$ref": "#/components/parameters/Limit"},
+          {"$ref": "#/components/parameters/Offset"}
+        ],
+        "responses": {"200": {"description": "OK"}}
+      },
+      "CreateLinks": {
+        "summary": "Create link",
+        "operationId": "createLinks",
+        "tags": ["Links"],
+        "requestBody": {"$ref": "#/components/requestBodies/ContentInput"},
+        "responses": {"201": {"description": "Created"}}
+      },
+      "GetLinks": {
+        "summary": "Get link",
+        "operationId": "getLinks",
+        "tags": ["Links"],
+        "parameters": [{"$ref": "#/components/parameters/ID"}],
+        "responses": {"200": {"description": "OK"}}
+      },
+      "UpdateLinks": {
+        "summary": "Update link",
+        "operationId": "updateLinks",
+        "tags": ["Links"],
+        "parameters": [{"$ref": "#/components/parameters/ID"}],
+        "requestBody": {"$ref": "#/components/requestBodies/ContentInput"},
+        "responses": {"200": {"description": "OK"}}
+      }
+    },
+    "parameters": {
+      "ID": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "schema": {"type": "integer", "minimum": 1}
+      },
+      "Lang": {
+        "name": "lang",
+        "in": "query",
+        "schema": {"type": "string", "default": "zh"},
+        "description": "Content language. Use all for cross-language queries."
+      },
+      "Status": {
+        "name": "status",
+        "in": "query",
+        "schema": {"type": "string", "enum": ["draft", "published", "scheduled"]}
+      },
+      "Q": {
+        "name": "q",
+        "in": "query",
+        "schema": {"type": "string"}
+      },
+      "Slug": {
+        "name": "slug",
+        "in": "query",
+        "schema": {"type": "string"}
+      },
+      "TransGroup": {
+        "name": "trans_group",
+        "in": "query",
+        "schema": {"type": "string"}
+      },
+      "Limit": {
+        "name": "limit",
+        "in": "query",
+        "schema": {"type": "integer", "default": 20, "minimum": 1, "maximum": 100}
+      },
+      "Offset": {
+        "name": "offset",
+        "in": "query",
+        "schema": {"type": "integer", "default": 0, "minimum": 0}
+      }
+    },
+    "requestBodies": {
+      "MediaUpload": {
+        "required": true,
+        "content": {
+          "multipart/form-data": {
+            "schema": {
+              "type": "object",
+              "required": ["file"],
+              "properties": {
+                "file": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          }
+        }
+      },
+      "ContentInput": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {"$ref": "#/components/schemas/ContentInput"}
+          }
+        }
+      }
+    },
+    "schemas": {
+      "LanguageListResponse": {
+        "type": "object",
+        "properties": {
+          "default": {"type": "string"},
+          "items": {
+            "type": "array",
+            "items": {"$ref": "#/components/schemas/LanguageItem"}
+          }
+        }
+      },
+      "LanguageItem": {
+        "type": "object",
+        "properties": {
+          "code": {"type": "string"},
+          "name": {"type": "string"},
+          "tag": {"type": "string"},
+          "default": {"type": "boolean"}
+        }
+      },
+      "CategoryListResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {"$ref": "#/components/schemas/CategoryItem"}
+          },
+          "lang": {"type": "string"},
+          "kind": {"type": "string", "enum": ["post", "link"]}
+        }
+      },
+      "CategoryItem": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "integer"},
+          "slug": {"type": "string"},
+          "name": {"type": "string"},
+          "description": {"type": "string"},
+          "lang": {"type": "string"},
+          "trans_group": {"type": "string"},
+          "kind": {"type": "string"},
+          "count": {"type": "integer"}
+        }
+      },
+      "MediaUploadResponse": {
+        "type": "object",
+        "properties": {
+          "url": {"type": "string"},
+          "name": {"type": "string"},
+          "size": {"type": "integer"}
+        }
+      },
+      "ContentListResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {"$ref": "#/components/schemas/ContentItem"}
+          },
+          "limit": {"type": "integer"},
+          "offset": {"type": "integer"},
+          "lang": {"type": "string"},
+          "q": {"type": "string"},
+          "slug": {"type": "string"},
+          "trans_group": {"type": "string"}
+        }
+      },
+      "ContentInput": {
+        "type": "object",
+        "properties": {
+          "lang": {"type": "string"},
+          "slug": {"type": "string"},
+          "title": {"type": "string"},
+          "excerpt": {"type": "string"},
+          "content": {"type": "string"},
+          "meta_desc": {"type": "string"},
+          "keywords": {"type": "string"},
+          "cover_image": {"type": "string"},
+          "author": {"type": "string"},
+          "status": {"type": "string", "enum": ["draft", "published", "scheduled"], "default": "draft"},
+          "editor_mode": {"type": "string", "enum": ["markdown", "rich"], "default": "markdown"},
+          "link_url": {"type": "string"},
+          "trans_group": {"type": "string"},
+          "category_id": {"type": "integer", "nullable": true},
+          "published_at": {"type": "string", "format": "date-time"}
+        }
+      },
+      "ContentItem": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "integer"},
+          "type": {"type": "string", "enum": ["post", "page", "link"]},
+          "lang": {"type": "string"},
+          "slug": {"type": "string"},
+          "title": {"type": "string"},
+          "excerpt": {"type": "string"},
+          "content": {"type": "string"},
+          "meta_desc": {"type": "string"},
+          "keywords": {"type": "string"},
+          "cover_image": {"type": "string"},
+          "author": {"type": "string"},
+          "status": {"type": "string", "enum": ["draft", "published", "scheduled"]},
+          "featured": {"type": "boolean"},
+          "editor_mode": {"type": "string"},
+          "link_url": {"type": "string"},
+          "trans_group": {"type": "string"},
+          "category_id": {"type": "integer", "nullable": true},
+          "category": {"$ref": "#/components/schemas/CategoryItem"},
+          "url": {"type": "string"},
+          "published_at": {"type": "string", "format": "date-time"},
+          "created_at": {"type": "string", "format": "date-time"},
+          "updated_at": {"type": "string", "format": "date-time"}
+        }
+      }
+    }
+  }
+}

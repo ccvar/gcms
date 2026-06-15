@@ -4,7 +4,7 @@
       <div class="wrap read">
         <p class="eyebrow">Automation API</p>
         <h1>自动化接口开放文档</h1>
-        <p>这些接口开放语种、文章分类、链接分类读取，以及文章、链接、页面内容操作。站点设置、分类增删改、导航、安全、系统更新不会通过这里开放。</p>
+        <p>这些接口开放语种、文章分类、链接分类读取、媒体上传，以及文章、链接、页面内容操作。站点设置、分类增删改、导航、安全、系统更新不会通过这里开放。</p>
       </div>
     </section>
 
@@ -27,6 +27,7 @@ X-GCMS-API-Key: gcms_xxx</code></pre>
           <thead><tr><th>资源</th><th>列表 / 创建</th><th>读取 / 更新</th><th>权限前缀</th></tr></thead>
           <tbody>
             <tr><td>语种</td><td><code>GET /languages</code></td><td>只读</td><td><code>languages</code></td></tr>
+            <tr><td>媒体</td><td><code>POST /media</code></td><td>上传图片</td><td><code>media</code></td></tr>
             <tr><td>文章分类</td><td><code>GET /posts/categories</code></td><td>只读</td><td><code>posts:categories</code></td></tr>
             <tr><td>文章</td><td><code>GET/POST /posts</code></td><td><code>GET/PATCH /posts/{id}</code></td><td><code>posts</code></td></tr>
             <tr><td>链接分类</td><td><code>GET /links/categories</code></td><td>只读</td><td><code>links:categories</code></td></tr>
@@ -40,6 +41,7 @@ X-GCMS-API-Key: gcms_xxx</code></pre>
           <thead><tr><th>小权限</th><th>能做什么</th><th>例子</th></tr></thead>
           <tbody>
             <tr><td>读取语种</td><td>列出默认语种和启用语种</td><td><code>languages:read</code></td></tr>
+            <tr><td>上传媒体</td><td>上传图片并返回可用于 <code>cover_image</code> 或正文 Markdown 的 URL</td><td><code>media:write</code></td></tr>
             <tr><td>读取</td><td>列出和查看内容</td><td><code>posts:read</code></td></tr>
             <tr><td>获取分类</td><td>列出文章或链接分类，用于获取可写入 <code>category_id</code> 的 ID</td><td><code>posts:categories</code> / <code>links:categories</code></td></tr>
             <tr><td>写草稿</td><td>创建草稿，修改未发布内容</td><td><code>posts:write</code></td></tr>
@@ -71,6 +73,7 @@ X-GCMS-API-Key: gcms_xxx</code></pre>
             <tr><td><code>excerpt</code></td><td>摘要。</td></tr>
             <tr><td><code>meta_desc</code></td><td>SEO 描述。</td></tr>
             <tr><td><code>keywords</code></td><td>关键词。</td></tr>
+            <tr><td><code>cover_image</code></td><td>文章和链接封面图 URL；可先用 <code>POST /media</code> 上传图片，再写入返回的 <code>url</code>。</td></tr>
             <tr><td><code>status</code></td><td><code>draft</code>、<code>published</code> 或 <code>scheduled</code>。</td></tr>
             <tr><td><code>published_at</code></td><td>发布时间。定时发布时必填，使用 RFC3339 或 <code>2006-01-02T15:04</code>。</td></tr>
             <tr><td><code>category_id</code></td><td>文章和链接可用；页面不支持。</td></tr>
@@ -90,6 +93,11 @@ X-GCMS-API-Key: gcms_xxx</code></pre>
         <p>查看链接分类：</p>
         <pre><code>curl '{{.Site.Root "/api/admin/v1/links/categories"}}?lang=zh' \
   -H 'Authorization: Bearer gcms_xxx'</code></pre>
+
+        <p>上传封面图，拿返回的 <code>url</code> 写入文章或链接的 <code>cover_image</code>：</p>
+        <pre><code>curl -X POST '{{.Site.Root "/api/admin/v1/media"}}' \
+  -H 'Authorization: Bearer gcms_xxx' \
+  -F 'file=@cover.webp'</code></pre>
 
         <p>修改某篇内容前，先查到准确 ID，不要只凭标题猜。</p>
         <pre><code>curl '{{.Site.Root "/api/admin/v1/posts"}}?lang=zh&amp;q=SQLite' \

@@ -1,10 +1,15 @@
 package web
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"cms.ccvar.com/internal/i18n"
@@ -50,6 +55,47 @@ func TestAPILanguages(t *testing.T) {
 	}
 	if len(got.Items) < 2 {
 		t.Fatalf("expected seeded zh/en languages, got %#v", got.Items)
+	}
+}
+
+func TestAutomationOpenAPIIncludesMediaUpload(t *testing.T) {
+	spec := automationOpenAPISpec("https://example.com/api/admin/v1")
+	paths, ok := spec["paths"].(map[string]any)
+	if !ok {
+		t.Fatalf("paths missing or wrong type: %#v", spec["paths"])
+	}
+	media, ok := paths["/media"].(map[string]any)
+	if !ok {
+		t.Fatalf("/media path missing: %#v", paths)
+	}
+	post, ok := media["post"].(map[string]any)
+	if !ok {
+		t.Fatalf("POST /media missing: %#v", media)
+	}
+	if post["operationId"] != "uploadMedia" {
+		t.Fatalf("operationId = %#v, want uploadMedia", post["operationId"])
+	}
+	requestBody, ok := post["requestBody"].(map[string]any)
+	if !ok {
+		t.Fatalf("requestBody missing: %#v", post["requestBody"])
+	}
+	content, ok := requestBody["content"].(map[string]any)
+	if !ok {
+		t.Fatalf("requestBody.content missing: %#v", requestBody)
+	}
+	if _, ok := content["multipart/form-data"]; !ok {
+		t.Fatalf("multipart/form-data request body missing: %#v", content)
+	}
+	components, ok := spec["components"].(map[string]any)
+	if !ok {
+		t.Fatalf("components missing: %#v", spec["components"])
+	}
+	schemas, ok := components["schemas"].(map[string]any)
+	if !ok {
+		t.Fatalf("schemas missing: %#v", components["schemas"])
+	}
+	if _, ok := schemas["MediaUploadResponse"]; !ok {
+		t.Fatalf("MediaUploadResponse schema missing: %#v", schemas)
 	}
 }
 
@@ -100,6 +146,77 @@ func TestAPIListPostCategories(t *testing.T) {
 		}
 	}
 	t.Fatalf("created category %d not found in response: %#v", id, got.Items)
+}
+
+func TestAPIUploadMedia(t *testing.T) {
+	s, token := newTestAutomationServer(t, "media:write")
+	s.uploadDir = t.TempDir()
+
+	body := &bytes.Buffer{}
+	mw := multipart.NewWriter(body)
+	part, err := mw.CreateFormFile("file", "cover.webp")
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	if _, err := io.WriteString(part, "WEBP test image bytes"); err != nil {
+		t.Fatalf("write form file: %v", err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatalf("close multipart: %v", err)
+	}
+	r := httptest.NewRequest(http.MethodPost, "/api/admin/v1/media", body)
+	r.Header.Set("Authorization", "Bearer "+token)
+	r.Header.Set("Content-Type", mw.FormDataContentType())
+	w := httptest.NewRecorder()
+
+	s.apiUploadMedia(w, r)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var got struct {
+		URL  string `json:"url"`
+		Name string `json:"name"`
+		Size int64  `json:"size"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !strings.HasPrefix(got.URL, "/uploads/") || !strings.HasSuffix(got.Name, ".webp") {
+		t.Fatalf("unexpected upload response: %#v", got)
+	}
+	if got.Size == 0 {
+		t.Fatalf("size = 0, want written bytes")
+	}
+	if _, err := os.Stat(filepath.Join(s.uploadDir, got.Name)); err != nil {
+		t.Fatalf("uploaded file missing: %v", err)
+	}
+}
+
+func TestAPIUploadMediaRequiresScope(t *testing.T) {
+	s, token := newTestAutomationServer(t, "posts:write")
+	s.uploadDir = t.TempDir()
+
+	body := &bytes.Buffer{}
+	mw := multipart.NewWriter(body)
+	part, err := mw.CreateFormFile("file", "cover.webp")
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	if _, err := io.WriteString(part, "WEBP test image bytes"); err != nil {
+		t.Fatalf("write form file: %v", err)
+	}
+	if err := mw.Close(); err != nil {
+		t.Fatalf("close multipart: %v", err)
+	}
+	r := httptest.NewRequest(http.MethodPost, "/api/admin/v1/media", body)
+	r.Header.Set("Authorization", "Bearer "+token)
+	r.Header.Set("Content-Type", mw.FormDataContentType())
+	w := httptest.NewRecorder()
+
+	s.apiUploadMedia(w, r)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
 }
 
 func TestAPIListContentByTransGroupAcrossLanguages(t *testing.T) {

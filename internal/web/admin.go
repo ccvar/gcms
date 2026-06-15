@@ -1953,7 +1953,7 @@ func automationAIBrief(apiBase, token string, scopes []string) string {
 		"脚本环境变量：GCMS_API_BASE=" + apiBase,
 		"脚本环境变量：GCMS_API_KEY=" + token,
 		"",
-		"你可以帮我查看语种和分类，并查看、创建、修改文章、链接、页面。",
+		"你可以帮我查看语种和分类、上传媒体，并查看、创建、修改文章、链接、页面。",
 		"不要增删改站点设置、分类、导航、安全、系统更新。",
 		"",
 		"默认只创建或修改草稿。除非我明确要求，并且你有发布权限，否则不要发布内容。",
@@ -1964,6 +1964,9 @@ func automationAIBrief(apiBase, token string, scopes []string) string {
 		"需要设置分类时，先查看可用分类 ID：",
 		"GET /posts/categories?lang=zh",
 		"GET /links/categories?lang=zh",
+		"",
+		"需要设置封面图或正文图片时，先上传媒体文件，拿返回的 url 再写入 cover_image 或 Markdown 图片：",
+		"POST /media",
 		"",
 		"如果我要你修改某篇内容，请先找到它的 id，不要只凭标题猜。",
 		"可以这样查找：",
@@ -2074,6 +2077,9 @@ func automationScopesFromFormWithDefault(r *http.Request, useDefault bool) []str
 	if want["languages:read"] {
 		out = append(out, "languages:read")
 	}
+	if want["media:write"] {
+		out = append(out, "media:write")
+	}
 	for _, col := range automationCollections {
 		for _, action := range automationScopeActions(col.path) {
 			scope := apiScope(col.path, action)
@@ -2091,7 +2097,7 @@ func automationScopesFromFormWithDefault(r *http.Request, useDefault bool) []str
 }
 
 func automationScopeValid(scope string) bool {
-	if scope == "languages:read" {
+	if scope == "languages:read" || scope == "media:write" {
 		return true
 	}
 	for _, col := range automationCollections {
@@ -2105,7 +2111,7 @@ func automationScopeValid(scope string) bool {
 }
 
 func defaultAutomationScopes() []string {
-	out := []string{"languages:read"}
+	out := []string{"languages:read", "media:write"}
 	for _, col := range automationCollections {
 		out = append(out, apiScope(col.path, "read"))
 		if col.path == "posts" || col.path == "links" {
@@ -2814,12 +2820,35 @@ func uploadJSON(w http.ResponseWriter, status int, body string) {
 	_, _ = w.Write([]byte(body))
 }
 
+type uploadResult struct {
+	URL  string `json:"url"`
+	Name string `json:"name"`
+	Size int64  `json:"size"`
+}
+
+func (s *Server) saveUploadFile(file io.Reader, filename string) (uploadResult, error) {
+	if s.uploadDir == "" {
+		return uploadResult{}, fmt.Errorf("upload_disabled")
+	}
+	ext := strings.ToLower(filepath.Ext(filename))
+	if !allowedUploadExt[ext] {
+		return uploadResult{}, fmt.Errorf("bad_type")
+	}
+	name := randToken()[:20] + ext
+	out, err := os.Create(filepath.Join(s.uploadDir, name))
+	if err != nil {
+		return uploadResult{}, fmt.Errorf("save_failed")
+	}
+	defer out.Close()
+	n, err := io.Copy(out, file)
+	if err != nil {
+		return uploadResult{}, fmt.Errorf("write_failed")
+	}
+	return uploadResult{URL: "/uploads/" + name, Name: name, Size: n}, nil
+}
+
 // adminUpload 接收 multipart 图片，存到 uploadDir，返回 {"url":"/uploads/<name>"}。
 func (s *Server) adminUpload(w http.ResponseWriter, r *http.Request) {
-	if s.uploadDir == "" {
-		uploadJSON(w, http.StatusServiceUnavailable, `{"error":"上传未启用"}`)
-		return
-	}
 	r.Body = http.MaxBytesReader(w, r.Body, 8<<20) // 限制 8MB
 	// 必须先解析 multipart，_csrf 字段才进入 r.Form，否则 checkCSRF 取不到。
 	if err := r.ParseMultipartForm(8 << 20); err != nil {
@@ -2835,23 +2864,26 @@ func (s *Server) adminUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer file.Close()
-	ext := strings.ToLower(filepath.Ext(hdr.Filename))
-	if !allowedUploadExt[ext] {
-		uploadJSON(w, http.StatusBadRequest, `{"error":"仅支持 jpg/png/gif/webp/svg"}`)
-		return
-	}
-	name := randToken()[:20] + ext
-	out, err := os.Create(filepath.Join(s.uploadDir, name))
+	result, err := s.saveUploadFile(file, hdr.Filename)
 	if err != nil {
-		uploadJSON(w, http.StatusInternalServerError, `{"error":"保存失败"}`)
+		switch err.Error() {
+		case "upload_disabled":
+			uploadJSON(w, http.StatusServiceUnavailable, `{"error":"上传未启用"}`)
+		case "bad_type":
+			uploadJSON(w, http.StatusBadRequest, `{"error":"仅支持 jpg/png/gif/webp/svg/ico/avif"}`)
+		case "save_failed":
+			uploadJSON(w, http.StatusInternalServerError, `{"error":"保存失败"}`)
+		default:
+			uploadJSON(w, http.StatusBadRequest, `{"error":"文件过大或写入失败"}`)
+		}
 		return
 	}
-	defer out.Close()
-	if _, err := io.Copy(out, file); err != nil {
+	body, err := json.Marshal(map[string]string{"url": result.URL})
+	if err != nil {
 		uploadJSON(w, http.StatusBadRequest, `{"error":"文件过大或写入失败"}`)
 		return
 	}
-	uploadJSON(w, http.StatusOK, `{"url":"/uploads/`+name+`"}`)
+	uploadJSON(w, http.StatusOK, string(body))
 }
 
 // adminRender 把请求体里的 Markdown 渲染成 HTML，供富文本编辑器进入时初始化。
