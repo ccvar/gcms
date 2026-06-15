@@ -21,7 +21,7 @@
 - Include `lang`; do not rely on the default language unless the user asked for the default language.
 - Provide title, content, excerpt, meta description, and keywords when creating substantial drafts.
 - For links, include `link_url`; if unknown, ask before creating a publish-ready entry.
-- For posts and links with a supplied image file, upload it and set `cover_image` to the returned URL.
+- For posts, pages, and links with a supplied cover image file, upload it and set `cover_image` to the returned URL.
 - Do not invent factual claims about products, dates, pricing, people, laws, or current events without a source.
 
 ## Update Rules

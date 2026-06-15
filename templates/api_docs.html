@@ -73,7 +73,7 @@ X-GCMS-API-Key: gcms_xxx</code></pre>
             <tr><td><code>excerpt</code></td><td>摘要。</td></tr>
             <tr><td><code>meta_desc</code></td><td>SEO 描述。</td></tr>
             <tr><td><code>keywords</code></td><td>关键词。</td></tr>
-            <tr><td><code>cover_image</code></td><td>文章和链接封面图 URL；可先用 <code>POST /media</code> 上传图片，再写入返回的 <code>url</code>。</td></tr>
+            <tr><td><code>cover_image</code></td><td>文章、链接、页面封面图 URL；可先用 <code>POST /media</code> 上传图片，再写入返回的 <code>url</code>。</td></tr>
             <tr><td><code>status</code></td><td><code>draft</code>、<code>published</code> 或 <code>scheduled</code>。</td></tr>
             <tr><td><code>published_at</code></td><td>发布时间。定时发布时必填，使用 RFC3339 或 <code>2006-01-02T15:04</code>。</td></tr>
             <tr><td><code>category_id</code></td><td>文章和链接可用；页面不支持。</td></tr>
@@ -94,7 +94,7 @@ X-GCMS-API-Key: gcms_xxx</code></pre>
         <pre><code>curl '{{.Site.Root "/api/admin/v1/links/categories"}}?lang=zh' \
   -H 'Authorization: Bearer gcms_xxx'</code></pre>
 
-        <p>上传封面图，拿返回的 <code>url</code> 写入文章或链接的 <code>cover_image</code>：</p>
+        <p>上传封面图，拿返回的 <code>url</code> 写入文章、链接或页面的 <code>cover_image</code>；正文图片可直接写成 Markdown 图片。</p>
         <pre><code>curl -X POST '{{.Site.Root "/api/admin/v1/media"}}' \
   -H 'Authorization: Bearer gcms_xxx' \
   -F 'file=@cover.webp'</code></pre>

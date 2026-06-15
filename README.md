@@ -293,7 +293,7 @@ GET /api/admin/v1/posts?lang=zh&slug=article-slug
 PATCH /api/admin/v1/posts/{id}
 ```
 
-设置封面图前可先上传媒体，返回的 `url` 可写入文章或链接的 `cover_image`：
+设置封面图前可先上传媒体，返回的 `url` 可写入文章、链接或页面的 `cover_image`；正文图片可直接写成 Markdown 图片：
 
 ```bash
 curl -X POST https://example.com/api/admin/v1/media \

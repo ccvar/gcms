@@ -482,9 +482,6 @@ func (s *Server) applyAPIContentInput(p *store.Post, in *apiContentInput, creati
 	if p.Type == "link" && p.LinkURL == "" && p.Status != "draft" {
 		return false, "发布链接时 link_url 不能为空。"
 	}
-	if p.Type == "page" && p.CoverImage != "" {
-		p.CoverImage = ""
-	}
 	if p.Title == "" {
 		return false, "标题不能为空。"
 	}

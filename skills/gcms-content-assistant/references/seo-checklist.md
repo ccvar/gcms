@@ -10,7 +10,7 @@ Use this checklist for audits, drafts, and metadata improvements.
 - `keywords`: 3-8 focused terms when appropriate.
 - `slug`: readable, stable, and language-appropriate.
 - `category_id`: use when a matching category exists.
-- `cover_image`: recommended for posts and links when visual presentation matters; upload the file first and use the returned URL.
+- `cover_image`: recommended for posts, pages, and links when visual presentation matters; upload the file first and use the returned URL.
 
 ## Title
 

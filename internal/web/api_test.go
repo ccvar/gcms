@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -216,6 +217,69 @@ func TestAPIUploadMediaRequiresScope(t *testing.T) {
 	s.apiUploadMedia(w, r)
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+}
+
+func TestAPICreateAndUpdatePageCoverImage(t *testing.T) {
+	s, token := newTestAutomationServer(t, "pages:read,pages:write")
+	cover := "/uploads/api-page-cover.webp"
+	body, err := json.Marshal(map[string]any{
+		"title":       "API Page Cover Test",
+		"lang":        "zh",
+		"status":      "draft",
+		"cover_image": cover,
+		"content":     "Page body with inline image: ![cover](" + cover + ")",
+	})
+	if err != nil {
+		t.Fatalf("marshal create body: %v", err)
+	}
+	r := httptest.NewRequest(http.MethodPost, "/api/admin/v1/pages", bytes.NewReader(body))
+	r.SetPathValue("collection", "pages")
+	r.Header.Set("Authorization", "Bearer "+token)
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	s.apiCreateContent(w, r)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var created struct {
+		Item apiContentItem `json:"item"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	if created.Item.CoverImage != cover {
+		t.Fatalf("created cover_image = %q, want %q", created.Item.CoverImage, cover)
+	}
+	if !strings.Contains(created.Item.Content, cover) {
+		t.Fatalf("created content does not keep inline image URL: %q", created.Item.Content)
+	}
+
+	nextCover := "/uploads/api-page-cover-next.webp"
+	patchBody, err := json.Marshal(map[string]any{"cover_image": nextCover})
+	if err != nil {
+		t.Fatalf("marshal patch body: %v", err)
+	}
+	r = httptest.NewRequest(http.MethodPatch, "/api/admin/v1/pages/1", bytes.NewReader(patchBody))
+	r.SetPathValue("collection", "pages")
+	r.SetPathValue("id", strconv.FormatInt(created.Item.ID, 10))
+	r.Header.Set("Authorization", "Bearer "+token)
+	r.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+
+	s.apiUpdateContent(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("update status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var updated struct {
+		Item apiContentItem `json:"item"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &updated); err != nil {
+		t.Fatalf("decode update response: %v", err)
+	}
+	if updated.Item.CoverImage != nextCover {
+		t.Fatalf("updated cover_image = %q, want %q", updated.Item.CoverImage, nextCover)
 	}
 }
 
