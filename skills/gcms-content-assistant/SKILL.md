@@ -1,6 +1,6 @@
 ---
 name: gcms-content-assistant
-description: "Use this skill when operating a GCMS site through its automation API for content operations: audit posts, pages, and links; upload media; create or update drafts; improve SEO metadata; handle categories and multilingual content; and publish only with explicit approval and permission."
+description: "Use this skill when operating a GCMS site through its automation API for standard content operations: run connection and permission diagnostics; audit posts, pages, and links; upload media; create or update drafts; improve SEO metadata; handle categories and multilingual content; and publish only with explicit approval and permission."
 ---
 
 # GCMS Content Operations Assistant
@@ -20,6 +20,7 @@ You are a GCMS content operations assistant. Use this skill to safely inspect, d
 
 ## Allowed Work
 
+- Run diagnostics for API connectivity, OpenAPI shape, category reads, and media permission.
 - List enabled languages.
 - List post and link categories.
 - Upload images and use the returned URL for `cover_image` or Markdown image embeds.
@@ -28,6 +29,16 @@ You are a GCMS content operations assistant. Use this skill to safely inspect, d
 - Update drafts or, with publish permission, update published content.
 - Improve titles, excerpts, content, SEO descriptions, keywords, slugs, categories, and link URLs.
 - Produce audits and recommendations without changing content.
+
+## Task Modes
+
+- `doctor`: verify configuration, OpenAPI, read permissions, and media permission before operational work.
+- `audit`: inspect content and report issues without changing anything.
+- `draft`: create new content as `status: "draft"`.
+- `update`: patch existing content only after finding the exact ID.
+- `media`: upload approved files and reuse the returned URL in `cover_image` or Markdown.
+- `multilingual`: inspect languages and `trans_group`, then handle each language's own item separately.
+- `publish-review`: check readiness for publishing; publish only when explicitly asked and permitted.
 
 ## Hard Boundaries
 
@@ -41,16 +52,18 @@ You are a GCMS content operations assistant. Use this skill to safely inspect, d
 ## Standard Workflow
 
 1. Classify the task: audit, draft, update, publish, multilingual, or category assignment.
-2. Inspect first. Use `languages`, category lookup, list, upload, or get commands before editing.
-3. For updates, find the exact content ID with `q`, `slug`, or `trans_group`.
-4. For broad or risky changes, summarize the intended edits before applying them.
-5. Default to `status: "draft"` for new content.
-6. After writing, read back the item when possible.
-7. Report changed IDs, language, status, fields changed, and review points.
+2. For a new environment or after permission changes, run `doctor` first.
+3. Inspect first. Use `languages`, category lookup, list, upload, or get commands before editing.
+4. For updates, find the exact content ID with `q`, `slug`, or `trans_group`.
+5. For broad or risky changes, summarize the intended edits before applying them.
+6. Default to `status: "draft"` for new content.
+7. After writing, read back the item when possible.
+8. Report changed IDs, language, status, fields changed, and review points.
 
 ## Useful Commands
 
 ```bash
+node scripts/gcms.js doctor
 node scripts/gcms.js languages
 node scripts/gcms.js upload ./cover.webp
 node scripts/gcms.js categories posts --lang zh
@@ -61,6 +74,7 @@ node scripts/gcms.js get posts 123
 node scripts/gcms.js create posts '{"title":"Title","content":"Body","lang":"zh","status":"draft"}'
 node scripts/gcms.js update posts 123 '{"meta_desc":"Updated SEO description"}'
 node scripts/gcms.js audit posts --lang zh --limit 50
+node scripts/gcms.js audit pages --lang zh --limit 20 --deep true
 ```
 
 ## Multilingual Rules

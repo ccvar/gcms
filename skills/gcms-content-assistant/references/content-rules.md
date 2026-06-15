@@ -6,6 +6,16 @@
 - `pages`: stable pages such as about, product, start, or landing pages.
 - `links`: resource or product directory entries with `link_url`.
 
+## Task Modes
+
+- `doctor`: run before first use, after permission changes, or when an API call fails unexpectedly.
+- `audit`: inspect and report; do not write content.
+- `draft`: create new items as drafts with complete metadata when enough context exists.
+- `update`: patch only the requested fields after finding the exact ID.
+- `media`: upload approved files and reuse the returned URL.
+- `multilingual`: work per language item; never overwrite one language with another.
+- `publish-review`: check readiness and risks before any explicit publish request.
+
 ## Before Editing
 
 - Search by `slug` when the user gives a URL or slug.
@@ -41,6 +51,19 @@ Look for:
 - Drafts that look ready but lack SEO fields.
 - Published content with weak metadata.
 - Multilingual groups missing enabled languages.
+
+Use normal audit for quick list-level checks. Use `--deep true` when content body quality matters; it reads each item before checking for missing content.
+
+## Diagnostic Rules
+
+Run `node scripts/gcms.js doctor` when:
+
+- Setting up a new access key.
+- Permissions were edited in GCMS.
+- Uploads, categories, or OpenAPI behavior seems inconsistent.
+- A tool reports `missing_scope`, `bad_type`, or connection failures.
+
+Doctor is non-destructive: it probes media permission with an invalid `.txt` upload and expects `bad_type` when `media:write` is present.
 
 ## Final Report
 

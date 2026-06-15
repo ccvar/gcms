@@ -576,15 +576,17 @@ func automationKitReadme(opts automationSkillOptions) string {
 	if opts.token != "" {
 		lines = append(lines,
 			"1. 把 `gcms-content-assistant` 文件夹交给 AI 工具读取。",
-			"2. 对 AI 说清楚任务，例如：检查最近 10 篇文章标题，只给建议，不要发布。",
-			"3. 如果不再使用这个工具，请在后台吊销对应访问权限。",
+			"2. 先运行 `node scripts/gcms.js doctor` 检查连接、OpenAPI 和权限。",
+			"3. 对 AI 说清楚任务，例如：检查最近 10 篇文章标题，只给建议，不要发布。",
+			"4. 如果不再使用这个工具，请在后台吊销对应访问权限。",
 		)
 	} else {
 		lines = append(lines,
 			"1. 把 `gcms-content-assistant/.env.example` 复制为 `.env`。",
 			"2. 填入 `GCMS_API_BASE` 和 `GCMS_API_KEY`。",
 			"3. 把 `gcms-content-assistant` 文件夹交给 AI 工具读取。",
-			"4. 对 AI 说清楚任务，例如：检查最近 10 篇文章标题，只给建议，不要发布。",
+			"4. 先运行 `node scripts/gcms.js doctor` 检查连接、OpenAPI 和权限。",
+			"5. 对 AI 说清楚任务，例如：检查最近 10 篇文章标题，只给建议，不要发布。",
 		)
 	}
 	lines = append(lines,
@@ -596,6 +598,7 @@ func automationKitReadme(opts automationSkillOptions) string {
 		"",
 		"- 一个访问密钥只给一个外部工具或平台使用。",
 		"- 不要把真实访问密钥发到普通聊天窗口。",
+		"- 第一次接入、改过权限或接口异常时，先运行 `node scripts/gcms.js doctor`。",
 		"- 默认让 AI 创建或修改草稿，发布前先人工审核。",
 		"- 修改指定内容时，让 AI 先查 id，再按 id 更新。",
 		"- 设置分类前，让 AI 先用 `/posts/categories` 或 `/links/categories` 查询可用分类 ID。",
@@ -638,7 +641,7 @@ func automationSkillMarkdown(apiBase string) string {
 	return strings.Join([]string{
 		"---",
 		"name: gcms-content-assistant",
-		"description: Use this skill to operate a GCMS site through its automation API for languages, media uploads, categories, posts, pages, and links. Use it when asked to inspect, create drafts, update drafts, upload cover images, or publish content in GCMS.",
+		"description: Use this skill to operate a GCMS site through its automation API for standard content operations: run connection and permission diagnostics; audit posts, pages, and links; upload media; create or update drafts; improve SEO metadata; handle categories and multilingual content; and publish only with explicit approval and permission.",
 		"---",
 		"",
 		"# GCMS Content Assistant",
@@ -652,22 +655,34 @@ func automationSkillMarkdown(apiBase string) string {
 		"- 优先从环境变量读取 `GCMS_API_BASE` 与 `GCMS_API_KEY`。",
 		"- 不要在普通回复里泄露访问密钥。",
 		"",
+		"## 任务模式",
+		"",
+		"- `doctor`：检查配置、OpenAPI、分类读取和媒体权限。",
+		"- `audit`：只检查内容并报告问题，不写入。",
+		"- `draft`：创建草稿，默认 `status` 为 `draft`。",
+		"- `update`：先找到准确 id，再按字段更新。",
+		"- `media`：上传用户提供的文件，把返回 URL 用于封面或正文图片。",
+		"- `multilingual`：先查语种和 `trans_group`，逐条处理各语种版本。",
+		"- `publish-review`：发布前复核；只有用户明确要求且权限允许才发布。",
+		"",
 		"## 工作规则",
 		"",
 		"1. 修改某篇内容前，先用 `q` 或 `slug` 查到准确 `id`。",
-		"2. 如果查到多个相似结果，先让用户确认。",
-		"3. 需要设置分类时，先用 `GET /posts/categories?lang=...` 或 `GET /links/categories?lang=...` 查询可用分类 ID。",
-		"4. 需要封面或正文图片时，先用 `POST /media` 上传文件，拿返回的 `url` 再写入 `cover_image` 或 Markdown 图片。",
-		"5. 处理多语种内容时，先 `GET /languages` 查看启用语种；如果用户要求更新全部语种，先读取目标内容的 `trans_group`，再用 `lang=all&trans_group=...` 找到同组所有版本，逐条按 id 更新。",
-		"6. 不要把一个语种的正文直接覆盖到其它语种，除非用户明确要求这么做。",
-		"7. 默认只创建或修改草稿。",
-		"8. 只有用户明确要求发布，并且访问密钥有对应资源的发布权限，才设置 `status` 为 `published` 或 `scheduled`。",
-		"9. 完成后告诉用户变更了哪些内容、对应 id、语种、状态，以及建议人工复核的点。",
+		"2. 新环境、权限变更或接口异常时，先运行 `node scripts/gcms.js doctor`。",
+		"3. 如果查到多个相似结果，先让用户确认。",
+		"4. 需要设置分类时，先用 `GET /posts/categories?lang=...` 或 `GET /links/categories?lang=...` 查询可用分类 ID。",
+		"5. 需要封面或正文图片时，先用 `POST /media` 上传文件，拿返回的 `url` 再写入 `cover_image` 或 Markdown 图片。",
+		"6. 处理多语种内容时，先 `GET /languages` 查看启用语种；如果用户要求更新全部语种，先读取目标内容的 `trans_group`，再用 `lang=all&trans_group=...` 找到同组所有版本，逐条按 id 更新。",
+		"7. 不要把一个语种的正文直接覆盖到其它语种，除非用户明确要求这么做。",
+		"8. 默认只创建或修改草稿。",
+		"9. 只有用户明确要求发布，并且访问密钥有对应资源的发布权限，才设置 `status` 为 `published` 或 `scheduled`。",
+		"10. 完成后告诉用户变更了哪些内容、对应 id、语种、状态，以及建议人工复核的点。",
 		"",
 		"## 推荐脚本",
 		"",
 		"如果当前环境可以运行 Node.js，优先使用 `scripts/gcms.js`：",
 		"",
+		"- `node scripts/gcms.js doctor`",
 		"- `node scripts/gcms.js languages`",
 		"- `node scripts/gcms.js upload ./cover.webp`",
 		"- `node scripts/gcms.js categories posts --lang zh`",
@@ -677,6 +692,8 @@ func automationSkillMarkdown(apiBase string) string {
 		"- `node scripts/gcms.js get posts 123`",
 		"- `node scripts/gcms.js create posts '{\"title\":\"标题\",\"content\":\"正文\",\"lang\":\"zh\",\"status\":\"draft\"}'`",
 		"- `node scripts/gcms.js update posts 123 '{\"title\":\"新标题\"}'`",
+		"- `node scripts/gcms.js audit posts --lang zh --limit 50`",
+		"- `node scripts/gcms.js audit pages --lang zh --limit 20 --deep true`",
 		"",
 		"如果不能运行脚本，根据 `references/openapi.json` 直接发 HTTP 请求。",
 	}, "\n") + "\n"
@@ -685,8 +702,8 @@ func automationSkillMarkdown(apiBase string) string {
 func automationSkillAgentYAML() string {
 	return strings.Join([]string{
 		"display_name: GCMS Content Assistant",
-		"short_description: Operate GCMS languages, media uploads, categories, posts, pages, and links through the automation API.",
-		"default_prompt: Check recent GCMS content for improvements, create drafts when useful, and do not publish without explicit approval.",
+		"short_description: Diagnose, audit, draft, upload media, and optimize GCMS content through the automation API.",
+		"default_prompt: Run doctor, audit recent GCMS content for improvements, create drafts when useful, and do not publish without explicit approval.",
 	}, "\n") + "\n"
 }
 
@@ -698,170 +715,352 @@ func automationSkillEnv(apiBase, token string) string {
 }
 
 func automationSkillScript() string {
-	return strings.Join([]string{
-		"#!/usr/bin/env node",
-		"const fs = require('fs');",
-		"const path = require('path');",
-		"",
-		"function loadEnv(file) {",
-		"  if (!fs.existsSync(file)) return;",
-		"  const lines = fs.readFileSync(file, 'utf8').split(/\\r?\\n/);",
-		"  for (const line of lines) {",
-		"    const s = line.trim();",
-		"    if (!s || s.startsWith('#')) continue;",
-		"    const i = s.indexOf('=');",
-		"    if (i < 0) continue;",
-		"    const k = s.slice(0, i).trim();",
-		"    let v = s.slice(i + 1).trim();",
-		"    if ((v.startsWith('\"') && v.endsWith('\"')) || (v.startsWith(\"'\") && v.endsWith(\"'\"))) v = v.slice(1, -1);",
-		"    if (!process.env[k]) process.env[k] = v;",
-		"  }",
-		"}",
-		"",
-		"loadEnv(path.resolve(process.cwd(), '.env'));",
-		"loadEnv(path.resolve(__dirname, '..', '.env'));",
-		"",
-		"const base = (process.env.GCMS_API_BASE || '').replace(/\\/+$/, '');",
-		"const key = process.env.GCMS_API_KEY || '';",
-		"const collections = new Set(['posts', 'pages', 'links']);",
-		"",
-		"function usage() {",
-		"  console.error('Usage:');",
-		"  console.error('  gcms.js languages');",
-		"  console.error('  gcms.js upload <file>');",
-		"  console.error('  gcms.js categories <posts|links> [--lang zh|all]');",
-		"  console.error('  gcms.js list <posts|pages|links> [--lang zh|all] [--q text] [--slug slug] [--trans_group group] [--status draft] [--limit 20]');",
-		"  console.error('  gcms.js get <posts|pages|links> <id>');",
-		"  console.error('  gcms.js create <posts|pages|links> <json|@file>');",
-		"  console.error('  gcms.js update <posts|pages|links> <id> <json|@file>');",
-		"  process.exit(2);",
-		"}",
-		"",
-		"function requireConfig() {",
-		"  if (!base || !key) {",
-		"    console.error('Missing GCMS_API_BASE or GCMS_API_KEY. Copy .env.example to .env and fill it first.');",
-		"    process.exit(2);",
-		"  }",
-		"  if (typeof fetch !== 'function') {",
-		"    console.error('This script needs Node.js 18+ with built-in fetch.');",
-		"    process.exit(2);",
-		"  }",
-		"}",
-		"",
-		"function assertCollection(name) {",
-		"  if (!collections.has(name)) usage();",
-		"}",
-		"",
-		"function parseOptions(args) {",
-		"  const out = {};",
-		"  for (let i = 0; i < args.length; i++) {",
-		"    const a = args[i];",
-		"    if (!a.startsWith('--')) usage();",
-		"    const key = a.slice(2);",
-		"    const val = args[++i];",
-		"    if (val == null) usage();",
-		"    out[key] = val;",
-		"  }",
-		"  return out;",
-		"}",
-		"",
-		"function bodyFromArg(arg) {",
-		"  const raw = arg.startsWith('@') ? fs.readFileSync(arg.slice(1), 'utf8') : arg;",
-		"  return JSON.parse(raw);",
-		"}",
-		"",
-		"function mimeFromFile(file) {",
-		"  switch (path.extname(file).toLowerCase()) {",
-		"    case '.jpg':",
-		"    case '.jpeg': return 'image/jpeg';",
-		"    case '.png': return 'image/png';",
-		"    case '.gif': return 'image/gif';",
-		"    case '.webp': return 'image/webp';",
-		"    case '.svg': return 'image/svg+xml';",
-		"    case '.ico': return 'image/x-icon';",
-		"    case '.avif': return 'image/avif';",
-		"    default: return 'application/octet-stream';",
-		"  }",
-		"}",
-		"",
-		"function mediaBodyFromFile(file) {",
-		"  if (typeof FormData !== 'function' || typeof Blob !== 'function') {",
-		"    console.error('Upload needs Node.js 18+ with FormData and Blob.');",
-		"    process.exit(2);",
-		"  }",
-		"  const bytes = fs.readFileSync(file);",
-		"  const form = new FormData();",
-		"  form.append('file', new Blob([bytes], { type: mimeFromFile(file) }), path.basename(file));",
-		"  return form;",
-		"}",
-		"",
-		"async function request(method, urlPath, body) {",
-		"  requireConfig();",
-		"  const headers = { Authorization: 'Bearer ' + key, Accept: 'application/json' };",
-		"  const init = { method, headers };",
-		"  if (body !== undefined) {",
-		"    if (typeof FormData !== 'undefined' && body instanceof FormData) {",
-		"      init.body = body;",
-		"    } else {",
-		"      headers['Content-Type'] = 'application/json';",
-		"      init.body = JSON.stringify(body);",
-		"    }",
-		"  }",
-		"  const res = await fetch(base + urlPath, init);",
-		"  const text = await res.text();",
-		"  let data;",
-		"  try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }",
-		"  if (!res.ok) {",
-		"    console.error(JSON.stringify(data, null, 2));",
-		"    process.exit(1);",
-		"  }",
-		"  console.log(JSON.stringify(data, null, 2));",
-		"}",
-		"",
-		"async function main() {",
-		"  const [cmd, collection, maybeID, maybeBody, ...rest] = process.argv.slice(2);",
-		"  if (cmd === 'languages') {",
-		"    await request('GET', '/languages');",
-		"    return;",
-		"  }",
-		"  if (cmd === 'upload') {",
-		"    if (!collection) usage();",
-		"    await request('POST', '/media', mediaBodyFromFile(collection));",
-		"    return;",
-		"  }",
-		"  if (cmd === 'categories') {",
-		"    assertCollection(collection);",
-		"    if (collection === 'pages') usage();",
-		"    const opt = parseOptions([maybeID, maybeBody, ...rest].filter(Boolean));",
-		"    const qs = new URLSearchParams(opt);",
-		"    await request('GET', '/' + collection + '/categories' + (qs.toString() ? '?' + qs.toString() : ''));",
-		"    return;",
-		"  }",
-		"  assertCollection(collection);",
-		"  if (cmd === 'list') {",
-		"    const opt = parseOptions([maybeID, maybeBody, ...rest].filter(Boolean));",
-		"    const qs = new URLSearchParams(opt);",
-		"    await request('GET', '/' + collection + (qs.toString() ? '?' + qs.toString() : ''));",
-		"    return;",
-		"  }",
-		"  if (cmd === 'get') {",
-		"    if (!maybeID) usage();",
-		"    await request('GET', '/' + collection + '/' + encodeURIComponent(maybeID));",
-		"    return;",
-		"  }",
-		"  if (cmd === 'create') {",
-		"    if (!maybeID) usage();",
-		"    await request('POST', '/' + collection, bodyFromArg(maybeID));",
-		"    return;",
-		"  }",
-		"  if (cmd === 'update') {",
-		"    if (!maybeID || !maybeBody) usage();",
-		"    await request('PATCH', '/' + collection + '/' + encodeURIComponent(maybeID), bodyFromArg(maybeBody));",
-		"    return;",
-		"  }",
-		"  usage();",
-		"}",
-		"",
-		"main().catch((err) => { console.error(err && err.message ? err.message : err); process.exit(1); });",
-	}, "\n") + "\n"
+	return `#!/usr/bin/env node
+const fs = require("fs");
+const path = require("path");
+
+function loadEnv(file) {
+  if (!fs.existsSync(file)) return;
+  const lines = fs.readFileSync(file, "utf8").split(/\r?\n/);
+  for (const line of lines) {
+    const s = line.trim();
+    if (!s || s.startsWith("#")) continue;
+    const i = s.indexOf("=");
+    if (i < 0) continue;
+    const k = s.slice(0, i).trim();
+    let v = s.slice(i + 1).trim();
+    if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
+      v = v.slice(1, -1);
+    }
+    if (!process.env[k]) process.env[k] = v;
+  }
+}
+
+loadEnv(path.resolve(process.cwd(), ".env"));
+loadEnv(path.resolve(__dirname, "..", ".env"));
+
+const base = (process.env.GCMS_API_BASE || "").replace(/\/+$/, "");
+const key = process.env.GCMS_API_KEY || "";
+const collections = new Set(["posts", "pages", "links"]);
+
+function usage(code = 2) {
+  const out = code === 0 ? console.log : console.error;
+  out("Usage:");
+  out("  gcms.js help");
+  out("  gcms.js doctor");
+  out("  gcms.js languages");
+  out("  gcms.js upload <file>");
+  out("  gcms.js categories <posts|links> [--lang zh|all]");
+  out("  gcms.js list <posts|pages|links> [--lang zh|all] [--q text] [--slug slug] [--trans_group group] [--status draft] [--limit 20]");
+  out("  gcms.js get <posts|pages|links> <id>");
+  out("  gcms.js create <posts|pages|links> <json|@file>");
+  out("  gcms.js update <posts|pages|links> <id> <json|@file>");
+  out("  gcms.js audit <posts|pages|links> [--lang zh|all] [--limit 50] [--deep true]");
+  process.exit(code);
+}
+
+function requireConfig() {
+  if (!base || !key) {
+    console.error("Missing GCMS_API_BASE or GCMS_API_KEY. Set environment variables or create .env.");
+    process.exit(2);
+  }
+  if (typeof fetch !== "function") {
+    console.error("This script needs Node.js 18+ with built-in fetch.");
+    process.exit(2);
+  }
+}
+
+function assertCollection(name) {
+  if (!collections.has(name)) usage();
+}
+
+function parseOptions(args) {
+  const out = {};
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (!a.startsWith("--")) usage();
+    const k = a.slice(2);
+    const v = args[++i];
+    if (v == null || v.startsWith("--")) usage();
+    out[k] = v;
+  }
+  return out;
+}
+
+function bodyFromArg(arg) {
+  const raw = arg.startsWith("@") ? fs.readFileSync(arg.slice(1), "utf8") : arg;
+  return JSON.parse(raw);
+}
+
+function mimeFromFile(file) {
+  switch (path.extname(file).toLowerCase()) {
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg";
+    case ".png":
+      return "image/png";
+    case ".gif":
+      return "image/gif";
+    case ".webp":
+      return "image/webp";
+    case ".svg":
+      return "image/svg+xml";
+    case ".ico":
+      return "image/x-icon";
+    case ".avif":
+      return "image/avif";
+    default:
+      return "application/octet-stream";
+  }
+}
+
+function mediaBodyFromFile(file) {
+  if (typeof FormData !== "function" || typeof Blob !== "function") {
+    console.error("Upload needs Node.js 18+ with FormData and Blob.");
+    process.exit(2);
+  }
+  const bytes = fs.readFileSync(file);
+  const form = new FormData();
+  form.append("file", new Blob([bytes], { type: mimeFromFile(file) }), path.basename(file));
+  return form;
+}
+
+function mediaProbeBody() {
+  if (typeof FormData !== "function" || typeof Blob !== "function") {
+    console.error("Doctor needs Node.js 18+ with FormData and Blob.");
+    process.exit(2);
+  }
+  const form = new FormData();
+  form.append("file", new Blob(["permission probe"], { type: "text/plain" }), "doctor.txt");
+  return form;
+}
+
+async function rawRequest(method, urlPath, body) {
+  requireConfig();
+  const headers = { Authorization: "Bearer " + key, Accept: "application/json" };
+  const init = { method, headers };
+  if (body !== undefined) {
+    if (typeof FormData !== "undefined" && body instanceof FormData) {
+      init.body = body;
+    } else {
+      headers["Content-Type"] = "application/json";
+      init.body = JSON.stringify(body);
+    }
+  }
+  const res = await fetch(base + urlPath, init);
+  const text = await res.text();
+  let data;
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = { raw: text };
+  }
+  return { ok: res.ok, status: res.status, data };
+}
+
+async function request(method, urlPath, body) {
+  const result = await rawRequest(method, urlPath, body);
+  const { ok, data } = result;
+  if (!ok) {
+    console.error(JSON.stringify(data, null, 2));
+    process.exit(1);
+  }
+  return data;
+}
+
+function print(data) {
+  console.log(JSON.stringify(data, null, 2));
+}
+
+function boolOption(value) {
+  return value === true || value === "true" || value === "1" || value === "yes";
+}
+
+function auditItems(collection, data, options = {}) {
+  const items = Array.isArray(data.items) ? data.items : [];
+  const issues = [];
+  for (const item of items) {
+    const missing = [];
+    if (!item.title) missing.push("title");
+    if (!item.slug) missing.push("slug");
+    if (!item.excerpt) missing.push("excerpt");
+    if (!item.meta_desc) missing.push("meta_desc");
+    if (!item.keywords) missing.push("keywords");
+    if (collection !== "pages" && !item.category_id) missing.push("category_id");
+    if (collection === "links" && !item.link_url) missing.push("link_url");
+    if (!item.cover_image) missing.push("cover_image");
+    if (options.deep && !item.content) missing.push("content");
+    if (missing.length) {
+      issues.push({
+        id: item.id,
+        type: item.type,
+        lang: item.lang,
+        status: item.status,
+        slug: item.slug,
+        title: item.title,
+        missing
+      });
+    }
+  }
+  return {
+    checked: items.length,
+    issue_count: issues.length,
+    issues
+  };
+}
+
+async function auditCollection(collection, opt) {
+  const deep = boolOption(opt.deep);
+  delete opt.deep;
+  if (!opt.limit) opt.limit = "50";
+  const qs = new URLSearchParams(opt);
+  const data = await request("GET", "/" + collection + (qs.toString() ? "?" + qs.toString() : ""));
+  if (!deep) return auditItems(collection, data);
+  const detailed = [];
+  for (const item of Array.isArray(data.items) ? data.items : []) {
+    const got = await request("GET", "/" + collection + "/" + encodeURIComponent(item.id));
+    detailed.push(got.item || item);
+  }
+  return auditItems(collection, { items: detailed }, { deep: true });
+}
+
+async function doctor() {
+  const result = {
+    base,
+    node: process.version,
+    checks: []
+  };
+  const add = (name, ok, detail = {}) => {
+    result.checks.push({ name, ok, ...detail });
+  };
+  if (!base) add("config_base", false, { message: "Missing GCMS_API_BASE" });
+  else add("config_base", true);
+  if (!key) add("config_key", false, { message: "Missing GCMS_API_KEY" });
+  else add("config_key", true);
+  if (typeof fetch !== "function") add("node_fetch", false, { message: "Node.js 18+ is required" });
+  else add("node_fetch", true);
+  if (!base || !key || typeof fetch !== "function") {
+    result.ok = false;
+    print(result);
+    process.exit(1);
+  }
+
+  try {
+    const openapi = await rawRequest("GET", "/openapi.json");
+    add("openapi", openapi.ok, { status: openapi.status });
+    if (openapi.ok) {
+      const paths = openapi.data && openapi.data.paths ? openapi.data.paths : {};
+      const schemas = openapi.data && openapi.data.components && openapi.data.components.schemas ? openapi.data.components.schemas : {};
+      add("openapi_media_path", !!(paths["/media"] && paths["/media"].post));
+      add("openapi_media_schema", !!schemas.MediaUploadResponse);
+    }
+  } catch (err) {
+    add("openapi", false, { message: err.message });
+  }
+
+  try {
+    const languages = await rawRequest("GET", "/languages");
+    const items = languages.data && Array.isArray(languages.data.items) ? languages.data.items : [];
+    add("languages", languages.ok, { status: languages.status, count: items.length, default: languages.data && languages.data.default });
+  } catch (err) {
+    add("languages", false, { message: err.message });
+  }
+
+  for (const name of ["posts", "links"]) {
+    try {
+      const cats = await rawRequest("GET", "/" + name + "/categories?lang=zh");
+      const items = cats.data && Array.isArray(cats.data.items) ? cats.data.items : [];
+      add(name + "_categories", cats.ok, { status: cats.status, count: items.length });
+    } catch (err) {
+      add(name + "_categories", false, { message: err.message });
+    }
+  }
+
+  try {
+    const media = await rawRequest("POST", "/media", mediaProbeBody());
+    const mediaOK = media.status === 400 && media.data && media.data.error === "bad_type";
+    add("media_write_permission", mediaOK, { status: media.status, error: media.data && media.data.error });
+  } catch (err) {
+    add("media_write_permission", false, { message: err.message });
+  }
+
+  result.ok = result.checks.every((check) => check.ok);
+  print(result);
+  process.exit(result.ok ? 0 : 1);
+}
+
+async function main() {
+  const [cmd, collection, ...rest] = process.argv.slice(2);
+  if (!cmd || cmd === "help" || cmd === "--help" || cmd === "-h") usage(0);
+
+  if (cmd === "doctor") {
+    await doctor();
+    return;
+  }
+
+  if (cmd === "languages") {
+    print(await request("GET", "/languages"));
+    return;
+  }
+
+  if (cmd === "upload") {
+    const [file] = [collection, ...rest];
+    if (!file) usage();
+    print(await request("POST", "/media", mediaBodyFromFile(file)));
+    return;
+  }
+
+  if (cmd === "categories") {
+    assertCollection(collection);
+    if (collection === "pages") usage();
+    const opt = parseOptions(rest);
+    const qs = new URLSearchParams(opt);
+    print(await request("GET", "/" + collection + "/categories" + (qs.toString() ? "?" + qs.toString() : "")));
+    return;
+  }
+
+  assertCollection(collection);
+
+  if (cmd === "list") {
+    const opt = parseOptions(rest);
+    const qs = new URLSearchParams(opt);
+    print(await request("GET", "/" + collection + (qs.toString() ? "?" + qs.toString() : "")));
+    return;
+  }
+
+  if (cmd === "get") {
+    const [id] = rest;
+    if (!id) usage();
+    print(await request("GET", "/" + collection + "/" + encodeURIComponent(id)));
+    return;
+  }
+
+  if (cmd === "create") {
+    const [body] = rest;
+    if (!body) usage();
+    print(await request("POST", "/" + collection, bodyFromArg(body)));
+    return;
+  }
+
+  if (cmd === "update") {
+    const [id, body] = rest;
+    if (!id || !body) usage();
+    print(await request("PATCH", "/" + collection + "/" + encodeURIComponent(id), bodyFromArg(body)));
+    return;
+  }
+
+  if (cmd === "audit") {
+    const opt = parseOptions(rest);
+    print(await auditCollection(collection, opt));
+    return;
+  }
+
+  usage();
+}
+
+main().catch((err) => {
+  console.error(err && err.message ? err.message : err);
+  process.exit(1);
+});
+`
 }
