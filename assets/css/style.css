@@ -691,6 +691,7 @@ body.admin { background: var(--line-soft); }
 .scope-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: .75rem; }
 .scope-groups { display: grid; grid-template-columns: repeat(3, 1fr); gap: .75rem; }
 .scope-group { border: 1px solid var(--line); border-radius: 8px; background: var(--surface); padding: .75rem; }
+.scope-group-wide { grid-column: 1 / -1; }
 .scope-group > strong { display: block; color: var(--ink); font-size: .9rem; margin-bottom: .55rem; }
 .scope-group label { display: grid; grid-template-columns: 16px minmax(3rem, auto) 1fr; gap: .45rem; align-items: center; padding: .42rem 0; border-top: 1px solid var(--line-soft); cursor: pointer; }
 .scope-group label:first-of-type { border-top: 0; }
@@ -712,7 +713,7 @@ body.admin { background: var(--line-soft); }
 .key-actions > .linkbtn { margin-left: .55rem; }
 .key-actions > .linkbtn:first-child { margin-left: 0; }
 .key-actions.actions form:first-child { margin-left: 0; }
-.api-endpoints th { width: 4.5rem; }
+.api-endpoints th { width: 6rem; min-width: 6rem; white-space: nowrap; word-break: keep-all; }
 .dev-details .api-base { margin: 0; border-width: 0 0 1px; border-radius: 0; }
 .api-key-modal:not(:target) { display: none; }
 .api-key-modal:target { display: grid; }

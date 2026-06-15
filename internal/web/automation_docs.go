@@ -117,6 +117,11 @@ func automationOpenAPISpec(apiBase string) map[string]any {
 		},
 	}
 	for _, col := range automationCollections {
+		if col.path == "posts" || col.path == "links" {
+			paths["/"+col.path+"/categories"] = map[string]any{
+				"get": automationCategoryListOperation(col),
+			}
+		}
 		paths["/"+col.path] = map[string]any{
 			"get":  automationListOperation(col),
 			"post": automationCreateOperation(col),
@@ -131,7 +136,7 @@ func automationOpenAPISpec(apiBase string) map[string]any {
 		"info": map[string]any{
 			"title":       "GCMS Automation API",
 			"version":     "1.0.0",
-			"description": "只开放文章、链接、页面的自动化接口。GCMS 不调用 AI API，外部 AI 工具或自动化程序使用访问密钥调用这里的接口。",
+			"description": "开放语种、文章分类、链接分类读取，以及文章、链接、页面的自动化接口。GCMS 不调用 AI API，外部 AI 工具或自动化程序使用访问密钥调用这里的接口。",
 		},
 		"servers": []map[string]string{{"url": apiBase}},
 		"security": []map[string][]string{
@@ -156,6 +161,19 @@ func automationLanguagesOperation() map[string]any {
 		"operationId": "listLanguages",
 		"tags":        []string{"语种"},
 		"responses":   automationResponses("LanguageListResponse"),
+	}
+}
+
+func automationCategoryListOperation(col automationCollection) map[string]any {
+	return map[string]any{
+		"summary":     "列出" + col.label + "分类",
+		"description": "只读接口。用于拿到可用分类 ID，创建或更新内容时可写入 category_id。",
+		"operationId": "list" + automationOperationSuffix(col.kind+"Categories"),
+		"tags":        []string{col.label},
+		"parameters": []map[string]any{
+			{"name": "lang", "in": "query", "schema": map[string]any{"type": "string", "default": "zh"}, "description": "分类语种。传 all 可返回所有语种的分类。"},
+		},
+		"responses": automationResponses("CategoryListResponse"),
 	}
 }
 
@@ -276,6 +294,30 @@ func automationOpenAPISchemas() map[string]any {
 				},
 			},
 		},
+		"CategoryListResponse": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"items": map[string]any{
+					"type":  "array",
+					"items": map[string]any{"$ref": "#/components/schemas/CategoryItem"},
+				},
+				"lang": map[string]any{"type": "string"},
+				"kind": map[string]any{"type": "string", "enum": []string{"post", "link"}},
+			},
+		},
+		"CategoryItem": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"id":          map[string]any{"type": "integer"},
+				"slug":        map[string]any{"type": "string"},
+				"name":        map[string]any{"type": "string"},
+				"description": map[string]any{"type": "string"},
+				"lang":        map[string]any{"type": "string"},
+				"trans_group": map[string]any{"type": "string"},
+				"kind":        map[string]any{"type": "string", "enum": []string{"post", "link"}},
+				"count":       map[string]any{"type": "integer", "description": "该分类下已发布内容数量"},
+			},
+		},
 		"ContentListResponse": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -332,6 +374,7 @@ func automationOpenAPISchemas() map[string]any {
 				"link_url":     map[string]any{"type": "string"},
 				"trans_group":  map[string]any{"type": "string"},
 				"category_id":  map[string]any{"type": "integer", "nullable": true},
+				"category":     map[string]any{"$ref": "#/components/schemas/CategoryItem"},
 				"url":          map[string]any{"type": "string"},
 				"published_at": map[string]any{"type": "string", "format": "date-time"},
 				"created_at":   map[string]any{"type": "string", "format": "date-time"},
@@ -355,6 +398,9 @@ func automationScopeLabels(scopes []string) string {
 func automationScopeBadges(scopes string) []string {
 	m := apiScopeMap(scopes)
 	var out []string
+	if m["languages:read"] {
+		out = append(out, "语种：读取")
+	}
 	if labels := automationActionLabels(m, "content"); len(labels) > 0 {
 		out = append(out, "全部内容："+strings.Join(labels, "、"))
 	}
@@ -376,6 +422,7 @@ func automationActionLabels(scopes map[string]bool, resource string) []string {
 		label string
 	}{
 		{"read", "读取"},
+		{"categories", "获取分类"},
 		{"write", "写草稿"},
 		{"publish", "发布"},
 	} {
@@ -395,6 +442,9 @@ func automationScopeBadgesAdmin(scopes string, admin *i18n.AdminTr) []string {
 		sep = ", "
 	}
 	var out []string
+	if m["languages:read"] {
+		out = append(out, adminUI(admin, "admin.settings.automation.languages", "语种")+colon+adminUI(admin, "admin.settings.automation.read", "读取"))
+	}
 	if labels := automationActionLabelsAdmin(m, "content", admin); len(labels) > 0 {
 		out = append(out, adminUI(admin, "admin.settings.automation.content", "全部内容")+colon+strings.Join(labels, sep))
 	}
@@ -430,6 +480,7 @@ func automationActionLabelsAdmin(scopes map[string]bool, resource string, admin 
 		fallback string
 	}{
 		{"read", "admin.settings.automation.read", "读取"},
+		{"categories", "admin.settings.automation.read_categories", "获取分类"},
 		{"write", "admin.settings.automation.write_draft", "写草稿"},
 		{"publish", "admin.settings.automation.publish", "发布"},
 	} {
@@ -502,6 +553,7 @@ func automationKitReadme(opts automationSkillOptions) string {
 		"- 不要把真实访问密钥发到普通聊天窗口。",
 		"- 默认让 AI 创建或修改草稿，发布前先人工审核。",
 		"- 修改指定内容时，让 AI 先查 id，再按 id 更新。",
+		"- 设置分类前，让 AI 先用 `/posts/categories` 或 `/links/categories` 查询可用分类 ID。",
 		"- 更新全部语种时，让 AI 先用 `/languages` 确认启用语种，再按 `trans_group` 找到同组内容，逐条更新各语种 id。",
 	)
 	return strings.Join(lines, "\n") + "\n"
@@ -540,12 +592,12 @@ func automationSkillMarkdown(apiBase string) string {
 	return strings.Join([]string{
 		"---",
 		"name: gcms-content-assistant",
-		"description: Use this skill to operate a GCMS site through its automation API for posts, pages, and links only. Use it when asked to inspect, create drafts, update drafts, or publish content in GCMS.",
+		"description: Use this skill to operate a GCMS site through its automation API for languages, categories, posts, pages, and links. Use it when asked to inspect, create drafts, update drafts, or publish content in GCMS.",
 		"---",
 		"",
 		"# GCMS Content Assistant",
 		"",
-		"你是 GCMS 网站内容助手。你只能处理文章、页面、链接，不要操作站点设置、分类、导航、安全、系统更新。",
+		"你是 GCMS 网站内容助手。你可以读取语种和分类，并处理文章、页面、链接。不要增删改站点设置、分类、导航、安全、系统更新。",
 		"",
 		"## 连接方式",
 		"",
@@ -558,17 +610,20 @@ func automationSkillMarkdown(apiBase string) string {
 		"",
 		"1. 修改某篇内容前，先用 `q` 或 `slug` 查到准确 `id`。",
 		"2. 如果查到多个相似结果，先让用户确认。",
-		"3. 处理多语种内容时，先 `GET /languages` 查看启用语种；如果用户要求更新全部语种，先读取目标内容的 `trans_group`，再用 `lang=all&trans_group=...` 找到同组所有版本，逐条按 id 更新。",
-		"4. 不要把一个语种的正文直接覆盖到其它语种，除非用户明确要求这么做。",
-		"5. 默认只创建或修改草稿。",
-		"6. 只有用户明确要求发布，并且访问密钥有对应资源的发布权限，才设置 `status` 为 `published` 或 `scheduled`。",
-		"7. 完成后告诉用户变更了哪些内容、对应 id、语种、状态，以及建议人工复核的点。",
+		"3. 需要设置分类时，先用 `GET /posts/categories?lang=...` 或 `GET /links/categories?lang=...` 查询可用分类 ID。",
+		"4. 处理多语种内容时，先 `GET /languages` 查看启用语种；如果用户要求更新全部语种，先读取目标内容的 `trans_group`，再用 `lang=all&trans_group=...` 找到同组所有版本，逐条按 id 更新。",
+		"5. 不要把一个语种的正文直接覆盖到其它语种，除非用户明确要求这么做。",
+		"6. 默认只创建或修改草稿。",
+		"7. 只有用户明确要求发布，并且访问密钥有对应资源的发布权限，才设置 `status` 为 `published` 或 `scheduled`。",
+		"8. 完成后告诉用户变更了哪些内容、对应 id、语种、状态，以及建议人工复核的点。",
 		"",
 		"## 推荐脚本",
 		"",
 		"如果当前环境可以运行 Node.js，优先使用 `scripts/gcms.js`：",
 		"",
 		"- `node scripts/gcms.js languages`",
+		"- `node scripts/gcms.js categories posts --lang zh`",
+		"- `node scripts/gcms.js categories links --lang zh`",
 		"- `node scripts/gcms.js list posts --lang zh --q 关键词`",
 		"- `node scripts/gcms.js list posts --lang all --trans_group 分组值`",
 		"- `node scripts/gcms.js get posts 123`",
@@ -582,7 +637,7 @@ func automationSkillMarkdown(apiBase string) string {
 func automationSkillAgentYAML() string {
 	return strings.Join([]string{
 		"display_name: GCMS Content Assistant",
-		"short_description: Operate GCMS posts, pages, and links through the automation API.",
+		"short_description: Operate GCMS languages, categories, posts, pages, and links through the automation API.",
 		"default_prompt: Check recent GCMS content for improvements, create drafts when useful, and do not publish without explicit approval.",
 	}, "\n") + "\n"
 }
@@ -625,6 +680,7 @@ func automationSkillScript() string {
 		"function usage() {",
 		"  console.error('Usage:');",
 		"  console.error('  gcms.js languages');",
+		"  console.error('  gcms.js categories <posts|links> [--lang zh|all]');",
 		"  console.error('  gcms.js list <posts|pages|links> [--lang zh|all] [--q text] [--slug slug] [--trans_group group] [--status draft] [--limit 20]');",
 		"  console.error('  gcms.js get <posts|pages|links> <id>');",
 		"  console.error('  gcms.js create <posts|pages|links> <json|@file>');",
@@ -688,6 +744,14 @@ func automationSkillScript() string {
 		"  const [cmd, collection, maybeID, maybeBody, ...rest] = process.argv.slice(2);",
 		"  if (cmd === 'languages') {",
 		"    await request('GET', '/languages');",
+		"    return;",
+		"  }",
+		"  if (cmd === 'categories') {",
+		"    assertCollection(collection);",
+		"    if (collection === 'pages') usage();",
+		"    const opt = parseOptions([maybeID, maybeBody, ...rest].filter(Boolean));",
+		"    const qs = new URLSearchParams(opt);",
+		"    await request('GET', '/' + collection + '/categories' + (qs.toString() ? '?' + qs.toString() : ''));",
 		"    return;",
 		"  }",
 		"  assertCollection(collection);",

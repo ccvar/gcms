@@ -4,7 +4,7 @@
       <div class="wrap read">
         <p class="eyebrow">Automation API</p>
         <h1>自动化接口开放文档</h1>
-        <p>这些接口只开放文章、链接、页面。站点设置、分类、导航、安全、系统更新不会通过这里开放。</p>
+        <p>这些接口开放语种、文章分类、链接分类读取，以及文章、链接、页面内容操作。站点设置、分类增删改、导航、安全、系统更新不会通过这里开放。</p>
       </div>
     </section>
 
@@ -26,8 +26,10 @@ X-GCMS-API-Key: gcms_xxx</code></pre>
         <table>
           <thead><tr><th>资源</th><th>列表 / 创建</th><th>读取 / 更新</th><th>权限前缀</th></tr></thead>
           <tbody>
-            <tr><td>语种</td><td><code>GET /languages</code></td><td>只读</td><td>任一读取权限</td></tr>
+            <tr><td>语种</td><td><code>GET /languages</code></td><td>只读</td><td><code>languages</code></td></tr>
+            <tr><td>文章分类</td><td><code>GET /posts/categories</code></td><td>只读</td><td><code>posts:categories</code></td></tr>
             <tr><td>文章</td><td><code>GET/POST /posts</code></td><td><code>GET/PATCH /posts/{id}</code></td><td><code>posts</code></td></tr>
+            <tr><td>链接分类</td><td><code>GET /links/categories</code></td><td>只读</td><td><code>links:categories</code></td></tr>
             <tr><td>链接</td><td><code>GET/POST /links</code></td><td><code>GET/PATCH /links/{id}</code></td><td><code>links</code></td></tr>
             <tr><td>页面</td><td><code>GET/POST /pages</code></td><td><code>GET/PATCH /pages/{id}</code></td><td><code>pages</code></td></tr>
           </tbody>
@@ -37,7 +39,9 @@ X-GCMS-API-Key: gcms_xxx</code></pre>
         <table>
           <thead><tr><th>小权限</th><th>能做什么</th><th>例子</th></tr></thead>
           <tbody>
+            <tr><td>读取语种</td><td>列出默认语种和启用语种</td><td><code>languages:read</code></td></tr>
             <tr><td>读取</td><td>列出和查看内容</td><td><code>posts:read</code></td></tr>
+            <tr><td>获取分类</td><td>列出文章或链接分类，用于获取可写入 <code>category_id</code> 的 ID</td><td><code>posts:categories</code> / <code>links:categories</code></td></tr>
             <tr><td>写草稿</td><td>创建草稿，修改未发布内容</td><td><code>posts:write</code></td></tr>
             <tr><td>发布</td><td>发布、定时发布、修改已发布内容</td><td><code>posts:publish</code></td></tr>
           </tbody>
@@ -77,6 +81,14 @@ X-GCMS-API-Key: gcms_xxx</code></pre>
         <h2>常见用法</h2>
         <p>查看当前启用语种：</p>
         <pre><code>curl '{{.Site.Root "/api/admin/v1/languages"}}' \
+  -H 'Authorization: Bearer gcms_xxx'</code></pre>
+
+        <p>查看当前语种下的文章分类，拿到创建或更新文章可用的 <code>category_id</code>：</p>
+        <pre><code>curl '{{.Site.Root "/api/admin/v1/posts/categories"}}?lang=zh' \
+  -H 'Authorization: Bearer gcms_xxx'</code></pre>
+
+        <p>查看链接分类：</p>
+        <pre><code>curl '{{.Site.Root "/api/admin/v1/links/categories"}}?lang=zh' \
   -H 'Authorization: Bearer gcms_xxx'</code></pre>
 
         <p>修改某篇内容前，先查到准确 ID，不要只凭标题猜。</p>

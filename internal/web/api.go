@@ -38,9 +38,14 @@ type apiContentInput struct {
 }
 
 type apiCategory struct {
-	ID   int64  `json:"id"`
-	Slug string `json:"slug"`
-	Name string `json:"name"`
+	ID          int64  `json:"id"`
+	Slug        string `json:"slug"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Lang        string `json:"lang,omitempty"`
+	TransGroup  string `json:"trans_group,omitempty"`
+	Kind        string `json:"kind,omitempty"`
+	Count       int    `json:"count,omitempty"`
 }
 
 type apiLanguageItem struct {
@@ -76,7 +81,7 @@ type apiContentItem struct {
 }
 
 func (s *Server) apiLanguages(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.requireAutomationAnyScope(w, r, "content:read", "posts:read", "pages:read", "links:read"); !ok {
+	if _, ok := s.requireAutomationScope(w, r, "languages:read"); !ok {
 		return
 	}
 	def := s.defaultLang()
@@ -86,6 +91,49 @@ func (s *Server) apiLanguages(w http.ResponseWriter, r *http.Request) {
 		items = append(items, apiLanguageItem{Code: l.Code, Name: l.Name, Tag: l.Tag, Default: l.Code == def})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"default": def, "items": items})
+}
+
+func (s *Server) apiListCategories(w http.ResponseWriter, r *http.Request) {
+	collection := r.PathValue("collection")
+	kind := ""
+	switch collection {
+	case "posts":
+		kind = "post"
+	case "links":
+		kind = "link"
+	default:
+		apiError(w, http.StatusNotFound, "not_found", "接口不存在。")
+		return
+	}
+	if _, ok := s.requireAutomationScope(w, r, apiScope(collection, "categories")); !ok {
+		return
+	}
+	lang := strings.TrimSpace(r.URL.Query().Get("lang"))
+	if lang == "" {
+		lang = s.defaultLang()
+	}
+	if lang != "all" && !s.langEnabled(lang) {
+		apiError(w, http.StatusBadRequest, "bad_lang", "语种未启用。")
+		return
+	}
+	var (
+		cats []*store.Category
+		err  error
+	)
+	if lang == "all" {
+		cats, err = s.store.AllCategories(kind)
+	} else {
+		cats, err = s.store.ListCategories(lang, kind)
+	}
+	if err != nil {
+		apiError(w, http.StatusInternalServerError, "store_error", err.Error())
+		return
+	}
+	items := make([]apiCategory, 0, len(cats))
+	for _, cat := range cats {
+		items = append(items, apiCategoryItem(cat))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items, "lang": lang, "kind": kind})
 }
 
 func (s *Server) apiListContent(w http.ResponseWriter, r *http.Request) {
@@ -438,7 +486,8 @@ func (s *Server) apiContentItem(p *store.Post, includeContent bool) apiContentIt
 	}
 	var cat *apiCategory
 	if p.Category != nil {
-		cat = &apiCategory{ID: p.Category.ID, Slug: p.Category.Slug, Name: p.Category.Name}
+		v := apiCategoryItem(p.Category)
+		cat = &v
 	}
 	item := apiContentItem{
 		ID: p.ID, Type: p.Type, Lang: p.Lang, Slug: p.Slug, Title: p.Title, Excerpt: p.Excerpt,
@@ -451,6 +500,16 @@ func (s *Server) apiContentItem(p *store.Post, includeContent bool) apiContentIt
 		item.Content = p.Content
 	}
 	return item
+}
+
+func apiCategoryItem(c *store.Category) apiCategory {
+	if c == nil {
+		return apiCategory{}
+	}
+	return apiCategory{
+		ID: c.ID, Slug: c.Slug, Name: c.Name, Description: c.Description,
+		Lang: c.Lang, TransGroup: c.TransGroup, Kind: c.Kind, Count: c.Count,
+	}
 }
 
 func (s *Server) apiContentURL(p *store.Post) string {
@@ -501,6 +560,15 @@ func apiScopeMap(scopes string) map[string]bool {
 
 func apiScope(collection, action string) string {
 	return collection + ":" + action
+}
+
+func automationScopeActions(resource string) []string {
+	switch resource {
+	case "posts", "links":
+		return []string{"read", "categories", "write", "publish"}
+	default:
+		return []string{"read", "write", "publish"}
+	}
 }
 
 func automationScopeAllowed(scopes map[string]bool, scope string) bool {

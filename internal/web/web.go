@@ -1015,9 +1015,10 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /admin/upload", s.requireAuth(s.adminUpload))
 	mux.HandleFunc("POST /admin/render", s.requireAuth(s.adminRender))
 
-	// 自动化 API（仅开放文章 / 页面 / 链接内容）。
+	// 自动化 API（开放语种、分类读取，以及文章 / 页面 / 链接内容操作）。
 	mux.HandleFunc("GET /api/admin/v1/openapi.json", s.apiOpenAPI)
 	mux.HandleFunc("GET /api/admin/v1/languages", s.apiLanguages)
+	mux.HandleFunc("GET /api/admin/v1/{collection}/categories", s.apiListCategories)
 	mux.HandleFunc("GET /api/admin/v1/{collection}", s.apiListContent)
 	mux.HandleFunc("POST /api/admin/v1/{collection}", s.apiCreateContent)
 	mux.HandleFunc("GET /api/admin/v1/{collection}/{id}", s.apiGetContent)

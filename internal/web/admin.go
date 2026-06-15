@@ -1953,13 +1953,17 @@ func automationAIBrief(apiBase, token string, scopes []string) string {
 		"脚本环境变量：GCMS_API_BASE=" + apiBase,
 		"脚本环境变量：GCMS_API_KEY=" + token,
 		"",
-		"你可以帮我查看、创建和修改文章、链接、页面。",
-		"不要操作站点设置、分类、导航、安全、系统更新。",
+		"你可以帮我查看语种和分类，并查看、创建、修改文章、链接、页面。",
+		"不要增删改站点设置、分类、导航、安全、系统更新。",
 		"",
 		"默认只创建或修改草稿。除非我明确要求，并且你有发布权限，否则不要发布内容。",
 		"",
 		"需要处理多语种内容时，先查看启用语种：",
 		"GET /languages",
+		"",
+		"需要设置分类时，先查看可用分类 ID：",
+		"GET /posts/categories?lang=zh",
+		"GET /links/categories?lang=zh",
 		"",
 		"如果我要你修改某篇内容，请先找到它的 id，不要只凭标题猜。",
 		"可以这样查找：",
@@ -2067,8 +2071,11 @@ func automationScopesFromFormWithDefault(r *http.Request, useDefault bool) []str
 		}
 	}
 	var out []string
+	if want["languages:read"] {
+		out = append(out, "languages:read")
+	}
 	for _, col := range automationCollections {
-		for _, action := range []string{"read", "write", "publish"} {
+		for _, action := range automationScopeActions(col.path) {
 			scope := apiScope(col.path, action)
 			if want[scope] {
 				out = append(out, scope)
@@ -2077,23 +2084,36 @@ func automationScopesFromFormWithDefault(r *http.Request, useDefault bool) []str
 	}
 	if len(out) == 0 {
 		if useDefault {
-			for _, col := range automationCollections {
-				out = append(out, apiScope(col.path, "read"), apiScope(col.path, "write"))
-			}
+			out = append(out, defaultAutomationScopes()...)
 		}
 	}
 	return out
 }
 
 func automationScopeValid(scope string) bool {
+	if scope == "languages:read" {
+		return true
+	}
 	for _, col := range automationCollections {
-		for _, action := range []string{"read", "write", "publish"} {
+		for _, action := range automationScopeActions(col.path) {
 			if scope == apiScope(col.path, action) {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+func defaultAutomationScopes() []string {
+	out := []string{"languages:read"}
+	for _, col := range automationCollections {
+		out = append(out, apiScope(col.path, "read"))
+		if col.path == "posts" || col.path == "links" {
+			out = append(out, apiScope(col.path, "categories"))
+		}
+		out = append(out, apiScope(col.path, "write"))
+	}
+	return out
 }
 
 func (s *Server) adminSaveSite(w http.ResponseWriter, r *http.Request) {

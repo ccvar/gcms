@@ -26,7 +26,7 @@ func newTestAutomationServer(t *testing.T, scopes string) (*Server, string) {
 }
 
 func TestAPILanguages(t *testing.T) {
-	s, token := newTestAutomationServer(t, "posts:read")
+	s, token := newTestAutomationServer(t, "languages:read")
 	r := httptest.NewRequest(http.MethodGet, "/api/admin/v1/languages", nil)
 	r.Header.Set("Authorization", "Bearer "+token)
 	w := httptest.NewRecorder()
@@ -51,6 +51,55 @@ func TestAPILanguages(t *testing.T) {
 	if len(got.Items) < 2 {
 		t.Fatalf("expected seeded zh/en languages, got %#v", got.Items)
 	}
+}
+
+func TestAPIListPostCategories(t *testing.T) {
+	s, token := newTestAutomationServer(t, "posts:categories")
+	id, err := s.store.CreateCategory(&store.Category{
+		Slug:        "api-test-category",
+		Name:        "API Test Category",
+		Description: "Category exposed to automation clients.",
+		Lang:        "zh",
+		Kind:        "post",
+	})
+	if err != nil {
+		t.Fatalf("create category: %v", err)
+	}
+	r := httptest.NewRequest(http.MethodGet, "/api/admin/v1/posts/categories?lang=zh", nil)
+	r.SetPathValue("collection", "posts")
+	r.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+
+	s.apiListCategories(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var got struct {
+		Lang  string `json:"lang"`
+		Kind  string `json:"kind"`
+		Items []struct {
+			ID   int64  `json:"id"`
+			Slug string `json:"slug"`
+			Name string `json:"name"`
+			Lang string `json:"lang"`
+			Kind string `json:"kind"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got.Lang != "zh" || got.Kind != "post" {
+		t.Fatalf("lang/kind = %q/%q, want zh/post", got.Lang, got.Kind)
+	}
+	for _, item := range got.Items {
+		if item.ID == id {
+			if item.Slug != "api-test-category" || item.Name != "API Test Category" || item.Lang != "zh" || item.Kind != "post" {
+				t.Fatalf("category item mismatch: %#v", item)
+			}
+			return
+		}
+	}
+	t.Fatalf("created category %d not found in response: %#v", id, got.Items)
 }
 
 func TestAPIListContentByTransGroupAcrossLanguages(t *testing.T) {
