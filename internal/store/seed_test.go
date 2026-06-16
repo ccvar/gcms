@@ -197,6 +197,97 @@ func TestDefaultSeedIsProductShowcase(t *testing.T) {
 	}
 }
 
+func TestListAdminContentPaginatesAndFiltersStatus(t *testing.T) {
+	st := openSeededTestStore(t)
+
+	for i := 0; i < 25; i++ {
+		if _, err := st.CreatePost(&Post{
+			Type:       "post",
+			Lang:       "zh",
+			Slug:       "admin-draft-" + string(rune('a'+i)),
+			Title:      "Admin Draft",
+			Status:     "draft",
+			EditorMode: "markdown",
+		}); err != nil {
+			t.Fatalf("create draft %d: %v", i, err)
+		}
+	}
+	total, err := st.CountAdminContent("post", "zh", "draft")
+	if err != nil {
+		t.Fatalf("count drafts: %v", err)
+	}
+	if total != 25 {
+		t.Fatalf("draft total = %d, want 25", total)
+	}
+	first, err := st.ListAdminContent("post", "zh", "draft", 0, 20)
+	if err != nil {
+		t.Fatalf("list first page: %v", err)
+	}
+	if len(first) != 20 {
+		t.Fatalf("first page len = %d, want 20", len(first))
+	}
+	second, err := st.ListAdminContent("post", "zh", "draft", 20, 20)
+	if err != nil {
+		t.Fatalf("list second page: %v", err)
+	}
+	if len(second) != 5 {
+		t.Fatalf("second page len = %d, want 5", len(second))
+	}
+}
+
+func TestAdminOverviewQueries(t *testing.T) {
+	st := openSeededTestStore(t)
+	lang := "zz"
+
+	items := []*Post{
+		{Type: "post", Lang: lang, Slug: "overview-post", Title: "Overview Post", Status: "draft", EditorMode: "markdown"},
+		{Type: "link", Lang: lang, Slug: "overview-link", Title: "Overview Link", Status: "published", CoverImage: "/uploads/link.webp", LinkURL: "https://example.com", EditorMode: "markdown"},
+		{Type: "page", Lang: lang, Slug: "overview-page", Title: "Overview Page", Status: "scheduled", EditorMode: "markdown"},
+	}
+	for i, p := range items {
+		if _, err := st.CreatePost(p); err != nil {
+			t.Fatalf("create overview item %d: %v", i, err)
+		}
+	}
+
+	if total, err := st.CountAdminContent("page", lang, "scheduled"); err != nil {
+		t.Fatalf("count scheduled pages: %v", err)
+	} else if total != 1 {
+		t.Fatalf("scheduled page total = %d, want 1", total)
+	}
+	if missing, err := st.CountAdminContentIssue("post", lang, "missing_cover"); err != nil {
+		t.Fatalf("count missing post covers: %v", err)
+	} else if missing != 1 {
+		t.Fatalf("missing post covers = %d, want 1", missing)
+	}
+	if missing, err := st.CountAdminContentIssue("link", lang, "missing_cover"); err != nil {
+		t.Fatalf("count missing link covers: %v", err)
+	} else if missing != 0 {
+		t.Fatalf("missing link covers = %d, want 0", missing)
+	}
+	if missing, err := st.CountAdminContentIssue("link", lang, "missing_category"); err != nil {
+		t.Fatalf("count missing link categories: %v", err)
+	} else if missing != 1 {
+		t.Fatalf("missing link categories = %d, want 1", missing)
+	}
+	recent, err := st.ListRecentAdminContent(lang, 10)
+	if err != nil {
+		t.Fatalf("list recent content: %v", err)
+	}
+	if len(recent) != 3 {
+		t.Fatalf("recent len = %d, want 3", len(recent))
+	}
+	seen := map[string]bool{}
+	for _, p := range recent {
+		seen[p.Type] = true
+	}
+	for _, typ := range []string{"post", "link", "page"} {
+		if !seen[typ] {
+			t.Fatalf("recent content missing type %q: %#v", typ, recent)
+		}
+	}
+}
+
 func TestBundledCoverPathsMigrateToWebP(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "cms.db")
 	st, err := Open(path)

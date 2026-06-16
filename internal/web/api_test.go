@@ -302,6 +302,76 @@ func TestAPICreateAndUpdatePageCoverImage(t *testing.T) {
 	}
 }
 
+func TestAPICreatePostUsesConfiguredDefaultAuthor(t *testing.T) {
+	s, token := newTestAutomationServer(t, "posts:write")
+	if err := s.store.SetSetting("content.post_author::en", "Docs Team"); err != nil {
+		t.Fatalf("set default author: %v", err)
+	}
+	body, err := json.Marshal(map[string]any{
+		"title":  "Default Author Draft",
+		"lang":   "en",
+		"status": "draft",
+	})
+	if err != nil {
+		t.Fatalf("marshal body: %v", err)
+	}
+	r := httptest.NewRequest(http.MethodPost, "/api/admin/v1/posts", bytes.NewReader(body))
+	r.SetPathValue("collection", "posts")
+	r.Header.Set("Authorization", "Bearer "+token)
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	s.apiCreateContent(w, r)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var got struct {
+		Item apiContentItem `json:"item"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got.Item.Author != "Docs Team" {
+		t.Fatalf("author = %q, want Docs Team", got.Item.Author)
+	}
+}
+
+func TestAPIGetPostUsesDefaultAuthorForBlankAuthor(t *testing.T) {
+	s, token := newTestAutomationServer(t, "posts:read")
+	if err := s.store.SetSetting("content.post_author", "Ops Team"); err != nil {
+		t.Fatalf("set default author: %v", err)
+	}
+	id, err := s.store.CreatePost(&store.Post{
+		Type:   "post",
+		Lang:   "zh",
+		Slug:   "blank-author",
+		Title:  "Blank Author",
+		Status: "draft",
+	})
+	if err != nil {
+		t.Fatalf("create post: %v", err)
+	}
+	r := httptest.NewRequest(http.MethodGet, "/api/admin/v1/posts/"+strconv.FormatInt(id, 10), nil)
+	r.SetPathValue("collection", "posts")
+	r.SetPathValue("id", strconv.FormatInt(id, 10))
+	r.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+
+	s.apiGetContent(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var got struct {
+		Item apiContentItem `json:"item"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got.Item.Author != "Ops Team" {
+		t.Fatalf("author = %q, want Ops Team", got.Item.Author)
+	}
+}
+
 func TestAPIPreviewPostAndLinkDrafts(t *testing.T) {
 	s, token := newTestAutomationServer(t, "posts:read,links:read")
 	postID, err := s.store.CreatePost(&store.Post{

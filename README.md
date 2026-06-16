@@ -172,7 +172,7 @@ ccvar.com/
 │   ├── layout.html
 │   ├── partials/            #   head（SEO）/ header / footer
 │   ├── home / article / category / page / search / 404 .html
-│   └── admin/               #   layout / login / dashboard / edit / settings
+│   └── admin/               #   layout / login / dashboard / posts / edit / settings
 ├── assets/                  # embed 进二进制
 │   ├── css/style.css        # 全站唯一样式表（18 套主题）
 │   ├── favicon.svg          # 默认站点图标

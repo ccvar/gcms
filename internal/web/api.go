@@ -314,6 +314,7 @@ func (s *Server) apiCreateContent(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusBadRequest, "bad_category", errMsg)
 		return
 	}
+	s.fillDefaultAuthor(p)
 	p.Slug = s.uniqueSlug(p.Lang, p.Slug, 0)
 	id, err := s.store.CreatePost(p)
 	if err != nil {
@@ -364,6 +365,7 @@ func (s *Server) apiUpdateContent(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusBadRequest, "bad_category", errMsg)
 		return
 	}
+	s.fillDefaultAuthor(&next)
 	next.Slug = s.uniqueSlug(next.Lang, next.Slug, next.ID)
 	if err := s.store.UpdatePost(&next); err != nil {
 		apiError(w, http.StatusInternalServerError, "store_error", err.Error())
@@ -559,6 +561,10 @@ func (s *Server) validateAPICategory(p *store.Post) string {
 }
 
 func (s *Server) apiContentItem(p *store.Post, includeContent bool) apiContentItem {
+	author := strings.TrimSpace(p.Author)
+	if author == "" && (p.Type == "post" || p.Type == "link") {
+		author = s.defaultContentAuthor(p.Type, p.Lang)
+	}
 	var categoryID *int64
 	if p.CategoryID.Valid {
 		v := p.CategoryID.Int64
@@ -571,7 +577,7 @@ func (s *Server) apiContentItem(p *store.Post, includeContent bool) apiContentIt
 	}
 	item := apiContentItem{
 		ID: p.ID, Type: p.Type, Lang: p.Lang, Slug: p.Slug, Title: p.Title, Excerpt: p.Excerpt,
-		MetaDesc: p.MetaDesc, Keywords: p.Keywords, CoverImage: p.CoverImage, Author: p.Author,
+		MetaDesc: p.MetaDesc, Keywords: p.Keywords, CoverImage: p.CoverImage, Author: author,
 		Status: p.Status, Featured: p.Featured, EditorMode: p.EditorMode, LinkURL: p.LinkURL,
 		TransGroup: p.TransGroup, CategoryID: categoryID, Category: cat, URL: s.apiContentURL(p),
 		PublishedAt: apiTime(p.PublishedAt), CreatedAt: apiTime(p.CreatedAt), UpdatedAt: apiTime(p.UpdatedAt),

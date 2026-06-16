@@ -253,6 +253,8 @@ func adminTitleKey(title string) string {
 	switch title {
 	case "登录":
 		return "admin.login.title"
+	case "概览":
+		return "admin.dashboard.title"
 	case "文章":
 		return "admin.posts.title"
 	case "链接":
@@ -413,10 +415,94 @@ func (s *Server) adminDismissPw(w http.ResponseWriter, r *http.Request) {
 
 // ---------- 文章管理 ----------
 
+const adminListPageSize = 20
+
+func adminStatusFilter(r *http.Request) string {
+	switch strings.TrimSpace(r.URL.Query().Get("status")) {
+	case "draft", "published", "scheduled":
+		return strings.TrimSpace(r.URL.Query().Get("status"))
+	default:
+		return ""
+	}
+}
+
+func (s *Server) adminListRedirect(base string, r *http.Request) string {
+	parts := []string{}
+	if lang := strings.TrimSpace(r.FormValue("lang")); s.langEnabled(lang) {
+		parts = append(parts, "lang="+lang)
+	}
+	switch status := strings.TrimSpace(r.FormValue("status")); status {
+	case "draft", "published", "scheduled":
+		parts = append(parts, "status="+status)
+	}
+	if page, err := strconv.Atoi(strings.TrimSpace(r.FormValue("page"))); err == nil && page > 1 {
+		parts = append(parts, "page="+strconv.Itoa(page))
+	}
+	if len(parts) == 0 {
+		return base
+	}
+	return base + "?" + strings.Join(parts, "&")
+}
+
 func (s *Server) adminDashboard(w http.ResponseWriter, r *http.Request) {
 	sess, _ := s.currentSession(r)
 	lang := s.editLang(r)
-	posts, err := s.store.ListAllPosts(lang)
+	v := s.adminView(r, "概览")
+	s.authed(v, sess)
+	v.EditLang = lang
+
+	stats, err := s.adminOverviewStats(lang, v.Admin)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	tasks, err := s.adminOverviewTasks(lang, v.Admin)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	recent, err := s.store.ListRecentAdminContent(lang, 8)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	keys, err := s.store.ListAutomationKeys()
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	logs, err := s.store.ListAutomationLogs(5)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+
+	v.OverviewStats = stats
+	v.OverviewTasks = tasks
+	v.OverviewRecent = recent
+	v.AutomationKeys = keys
+	v.AutomationLogs = logs
+	v.Update = currentUpdateInfo()
+	v.Upgrade = readUpgradeStatus()
+	v.OverviewStatus = s.adminOverviewStatus(v, keys)
+	s.rnd.Admin(w, "dashboard", http.StatusOK, v)
+}
+
+func (s *Server) adminPosts(w http.ResponseWriter, r *http.Request) {
+	sess, _ := s.currentSession(r)
+	lang := s.editLang(r)
+	status := adminStatusFilter(r)
+	page := pageParam(r)
+	total, err := s.store.CountAdminContent("post", lang, status)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	totalPages := ceilDiv(total, adminListPageSize)
+	if totalPages > 0 && page > totalPages {
+		page = totalPages
+	}
+	posts, err := s.store.ListAdminContent("post", lang, status, (page-1)*adminListPageSize, adminListPageSize)
 	if err != nil {
 		s.serverError(w, err)
 		return
@@ -424,8 +510,183 @@ func (s *Server) adminDashboard(w http.ResponseWriter, r *http.Request) {
 	v := s.adminView(r, "文章")
 	s.authed(v, sess)
 	v.AllPosts = posts
+	v.ListTotal = total
+	v.StatusFilter = status
+	v.AdminListPath = "/admin/posts"
 	v.EditLang = lang
-	s.rnd.Admin(w, "dashboard", http.StatusOK, v)
+	setPagination(v, page, totalPages, "/admin/posts")
+	s.rnd.Admin(w, "posts", http.StatusOK, v)
+}
+
+func (s *Server) adminOverviewStats(lang string, admin *i18n.AdminTr) ([]OverviewStat, error) {
+	specs := []struct {
+		kind  string
+		label string
+		href  string
+		icon  string
+	}{
+		{"post", admin.T("admin.nav.posts", "文章"), "/admin/posts?lang=" + lang, "posts"},
+		{"link", admin.T("admin.nav.links", "链接"), "/admin/links?lang=" + lang, "links"},
+		{"page", admin.T("admin.nav.pages", "页面"), "/admin/pages?lang=" + lang, "pages"},
+	}
+	out := make([]OverviewStat, 0, len(specs))
+	for _, spec := range specs {
+		total, err := s.store.CountAdminContent(spec.kind, lang, "")
+		if err != nil {
+			return nil, err
+		}
+		published, err := s.store.CountAdminContent(spec.kind, lang, "published")
+		if err != nil {
+			return nil, err
+		}
+		draft, err := s.store.CountAdminContent(spec.kind, lang, "draft")
+		if err != nil {
+			return nil, err
+		}
+		scheduled, err := s.store.CountAdminContent(spec.kind, lang, "scheduled")
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, OverviewStat{
+			Label: spec.label, Href: spec.href, Icon: spec.icon, Total: total,
+			Published: published, Draft: draft, Scheduled: scheduled,
+		})
+	}
+	out = append(out, OverviewStat{
+		Label: admin.T("admin.dashboard.languages", "语种"),
+		Href:  "/admin/settings/languages",
+		Icon:  "languages",
+		Total: len(s.locales()),
+	})
+	return out, nil
+}
+
+func (s *Server) adminOverviewTasks(lang string, admin *i18n.AdminTr) ([]OverviewTask, error) {
+	var out []OverviewTask
+	addCount := func(kind, status, labelKey, labelFallback, hintKey, hintFallback, href, icon, tone string) error {
+		n, err := s.store.CountAdminContent(kind, lang, status)
+		if err != nil {
+			return err
+		}
+		if n > 0 {
+			out = append(out, OverviewTask{
+				Label: admin.T(labelKey, labelFallback),
+				Hint:  admin.T(hintKey, hintFallback),
+				Href:  href,
+				Icon:  icon,
+				Count: n,
+				Tone:  tone,
+			})
+		}
+		return nil
+	}
+	addIssue := func(kind, issue, labelKey, labelFallback, hintKey, hintFallback, href, icon string) error {
+		n, err := s.store.CountAdminContentIssue(kind, lang, issue)
+		if err != nil {
+			return err
+		}
+		if n > 0 {
+			out = append(out, OverviewTask{
+				Label: admin.T(labelKey, labelFallback),
+				Hint:  admin.T(hintKey, hintFallback),
+				Href:  href,
+				Icon:  icon,
+				Count: n,
+				Tone:  "warn",
+			})
+		}
+		return nil
+	}
+	postBase := "/admin/posts?lang=" + lang
+	linkBase := "/admin/links?lang=" + lang
+	if err := addCount("post", "draft", "admin.dashboard.task.post_drafts", "文章草稿", "admin.dashboard.task.post_drafts_hint", "等待审核、补充或发布", postBase+"&status=draft", "posts", "accent"); err != nil {
+		return nil, err
+	}
+	if err := addCount("post", "scheduled", "admin.dashboard.task.post_scheduled", "定时文章", "admin.dashboard.task.post_scheduled_hint", "确认发布时间和内容状态", postBase+"&status=scheduled", "clock", "ok"); err != nil {
+		return nil, err
+	}
+	if err := addCount("link", "draft", "admin.dashboard.task.link_drafts", "链接草稿", "admin.dashboard.task.link_drafts_hint", "等待确认目标网址和详情页", linkBase+"&status=draft", "links", "accent"); err != nil {
+		return nil, err
+	}
+	if err := addCount("link", "scheduled", "admin.dashboard.task.link_scheduled", "定时链接", "admin.dashboard.task.link_scheduled_hint", "确认发布时间和目标网址", linkBase+"&status=scheduled", "clock", "ok"); err != nil {
+		return nil, err
+	}
+	if err := addIssue("post", "missing_cover", "admin.dashboard.task.posts_missing_cover", "文章缺封面", "admin.dashboard.task.missing_cover_hint", "会影响列表、分享和 AI 审稿质量", postBase, "image"); err != nil {
+		return nil, err
+	}
+	if err := addIssue("post", "missing_category", "admin.dashboard.task.posts_missing_category", "文章缺分类", "admin.dashboard.task.missing_category_hint", "会影响分类页和内容筛选", postBase, "folder"); err != nil {
+		return nil, err
+	}
+	if err := addIssue("link", "missing_cover", "admin.dashboard.task.links_missing_cover", "链接缺封面", "admin.dashboard.task.missing_cover_hint", "会影响列表、分享和 AI 审稿质量", linkBase, "image"); err != nil {
+		return nil, err
+	}
+	if err := addIssue("link", "missing_category", "admin.dashboard.task.links_missing_category", "链接缺分类", "admin.dashboard.task.missing_category_hint", "会影响分类页和内容筛选", linkBase, "folder"); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (s *Server) adminOverviewStatus(v *View, keys []*store.AutomationKey) []OverviewStatus {
+	active, revoked := 0, 0
+	for _, key := range keys {
+		if key.RevokedAt.IsZero() {
+			active++
+		} else {
+			revoked++
+		}
+	}
+	automationTone := "ok"
+	automationValue := fmt.Sprintf(v.Admin.T("admin.dashboard.status.api_active", "%d 个有效密钥"), active)
+	automationHint := v.Admin.T("admin.dashboard.status.api_hint", "最近调用记录见下方")
+	if active == 0 {
+		automationTone = "warn"
+		automationValue = v.Admin.T("admin.dashboard.status.api_empty", "未配置")
+		automationHint = v.Admin.T("admin.dashboard.status.api_empty_hint", "创建访问权限后，AI 才能安全接入")
+	}
+	if revoked > 0 {
+		automationHint = fmt.Sprintf(v.Admin.T("admin.dashboard.status.api_revoked_hint", "%d 条已吊销记录保留在设置中"), revoked)
+	}
+	passwordTone := "ok"
+	passwordValue := v.Admin.T("admin.dashboard.status.password_ok", "已处理")
+	passwordHint := v.Admin.T("admin.dashboard.status.password_ok_hint", "后台登录密码不是默认值")
+	if s.store.IsDefaultPassword() {
+		passwordTone = "warn"
+		passwordValue = v.Admin.T("admin.dashboard.status.password_warn", "需要处理")
+		passwordHint = v.Admin.T("admin.warning.default_password", "当前仍在使用默认密码，建议尽快修改以保证安全。")
+	}
+	updateValue := v.Admin.T("admin.settings.updates.current_version", "当前版本")
+	if v.Update != nil {
+		updateValue = v.Update.Current.Version
+		if updateValue == "" {
+			updateValue = v.Admin.T("admin.settings.updates.dev_build", "开发构建")
+		}
+	}
+	return []OverviewStatus{
+		{
+			Label: v.Admin.T("admin.dashboard.status.api", "自动化接口"),
+			Value: automationValue,
+			Hint:  automationHint,
+			Href:  "/admin/settings/automation",
+			Icon:  "bot",
+			Tone:  automationTone,
+		},
+		{
+			Label: v.Admin.T("admin.dashboard.status.version", "系统版本"),
+			Value: updateValue,
+			Hint:  v.Admin.T("admin.dashboard.status.version_hint", "可在系统更新里检查新版本"),
+			Href:  "/admin/settings/updates",
+			Icon:  "version",
+			Tone:  "neutral",
+		},
+		{
+			Label: v.Admin.T("admin.dashboard.status.password", "后台密码"),
+			Value: passwordValue,
+			Hint:  passwordHint,
+			Href:  "/admin/settings/security",
+			Icon:  "lock",
+			Tone:  passwordTone,
+		},
+	}
 }
 
 func (s *Server) adminVisual(w http.ResponseWriter, r *http.Request) {
@@ -1148,6 +1409,7 @@ func (s *Server) adminContentPreview(w http.ResponseWriter, r *http.Request, typ
 			preview.PublishedAt = preview.CreatedAt
 		}
 	}
+	s.fillDefaultAuthor(&preview)
 	p = &preview
 
 	nav, tpl := "", "article"
@@ -1197,7 +1459,7 @@ func (s *Server) showEdit(w http.ResponseWriter, r *http.Request, sess session, 
 	case "link":
 		v.EditBase, v.EditListURL, v.EditTypeLabel, catKind = "links", "/admin/links", v.Admin.T("admin.edit.type_link", "链接"), "link"
 	default:
-		v.EditBase, v.EditListURL, v.EditTypeLabel = "posts", "/admin", v.Admin.T("admin.edit.type_post", "文章")
+		v.EditBase, v.EditListURL, v.EditTypeLabel = "posts", "/admin/posts", v.Admin.T("admin.edit.type_post", "文章")
 	}
 	title := fmt.Sprintf(v.Admin.T("admin.edit.title_new", "新建%s"), v.EditTypeLabel)
 	if e.ID != 0 {
@@ -1222,6 +1484,13 @@ func (s *Server) showEdit(w http.ResponseWriter, r *http.Request, sess session, 
 		lang = s.defaultLang()
 	}
 	v.EditLang = lang
+	if !v.IsPage {
+		kind := "post"
+		if v.IsLink {
+			kind = "link"
+		}
+		v.DefaultAuthor = s.defaultContentAuthor(kind, lang)
+	}
 	v.Categories, _ = s.store.ListCategories(lang, catKind)
 	if e.TransGroup != "" {
 		v.Trans, _ = s.store.TranslationsAll(e.TransGroup, e.ID)
@@ -1244,6 +1513,7 @@ func (s *Server) adminCreate(w http.ResponseWriter, r *http.Request) {
 		s.showEdit(w, r, sess, p, "", formErr)
 		return
 	}
+	s.fillDefaultAuthor(p)
 	p.Slug = s.uniqueSlug(lang, p.Slug, 0)
 	id, err := s.store.CreatePost(p)
 	if err != nil {
@@ -1277,6 +1547,7 @@ func (s *Server) adminUpdate(w http.ResponseWriter, r *http.Request) {
 	if p.PublishedAt.IsZero() {        // 表单未指定发布时间则沿用原值
 		p.PublishedAt = existing.PublishedAt
 	}
+	s.fillDefaultAuthor(p)
 	p.Slug = s.uniqueSlug(existing.Lang, p.Slug, id)
 	if err := s.store.UpdatePost(p); err != nil {
 		s.serverError(w, err)
@@ -1295,7 +1566,7 @@ func (s *Server) adminDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.clearGeneratedCaches()
-	http.Redirect(w, r, "/admin", http.StatusSeeOther)
+	http.Redirect(w, r, s.adminListRedirect("/admin/posts", r), http.StatusSeeOther)
 }
 
 func (s *Server) adminPin(w http.ResponseWriter, r *http.Request) {
@@ -1304,12 +1575,7 @@ func (s *Server) adminPin(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.store.SetFeatured(atoi64(r.PathValue("id")), r.FormValue("on") == "1")
 	s.clearGeneratedCaches()
-	lang := strings.TrimSpace(r.FormValue("lang"))
-	dest := "/admin"
-	if s.langEnabled(lang) {
-		dest += "?lang=" + lang
-	}
-	http.Redirect(w, r, dest, http.StatusSeeOther)
+	http.Redirect(w, r, s.adminListRedirect("/admin/posts", r), http.StatusSeeOther)
 }
 
 // adminTranslate 为某篇内容创建/跳转到指定语种的互译版本（共享 trans_group）。
@@ -1377,7 +1643,18 @@ func (s *Server) adminTranslate(w http.ResponseWriter, r *http.Request) {
 func (s *Server) adminLinks(w http.ResponseWriter, r *http.Request) {
 	sess, _ := s.currentSession(r)
 	lang := s.editLang(r)
-	links, err := s.store.ListAllLinks(lang)
+	status := adminStatusFilter(r)
+	page := pageParam(r)
+	total, err := s.store.CountAdminContent("link", lang, status)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	totalPages := ceilDiv(total, adminListPageSize)
+	if totalPages > 0 && page > totalPages {
+		page = totalPages
+	}
+	links, err := s.store.ListAdminContent("link", lang, status, (page-1)*adminListPageSize, adminListPageSize)
 	if err != nil {
 		s.serverError(w, err)
 		return
@@ -1385,7 +1662,11 @@ func (s *Server) adminLinks(w http.ResponseWriter, r *http.Request) {
 	v := s.adminView(r, "链接")
 	s.authed(v, sess)
 	v.AllPosts = links
+	v.ListTotal = total
+	v.StatusFilter = status
+	v.AdminListPath = "/admin/links"
 	v.EditLang = lang
+	setPagination(v, page, totalPages, "/admin/links")
 	s.rnd.Admin(w, "links", http.StatusOK, v)
 }
 
@@ -1420,6 +1701,7 @@ func (s *Server) adminLinkCreate(w http.ResponseWriter, r *http.Request) {
 		s.showEdit(w, r, sess, p, "", formErr)
 		return
 	}
+	s.fillDefaultAuthor(p)
 	p.Slug = s.uniqueSlug(lang, p.Slug, 0)
 	id, err := s.store.CreatePost(p)
 	if err != nil {
@@ -1454,6 +1736,7 @@ func (s *Server) adminLinkUpdate(w http.ResponseWriter, r *http.Request) {
 	if p.PublishedAt.IsZero() {
 		p.PublishedAt = existing.PublishedAt
 	}
+	s.fillDefaultAuthor(p)
 	p.Slug = s.uniqueSlug(existing.Lang, p.Slug, id)
 	if err := s.store.UpdatePost(p); err != nil {
 		s.serverError(w, err)
@@ -1469,11 +1752,7 @@ func (s *Server) adminLinkDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.store.DeletePost(atoi64(r.PathValue("id")))
 	s.clearGeneratedCaches()
-	dest := "/admin/links"
-	if lang := strings.TrimSpace(r.FormValue("lang")); s.langEnabled(lang) {
-		dest += "?lang=" + lang
-	}
-	http.Redirect(w, r, dest, http.StatusSeeOther)
+	http.Redirect(w, r, s.adminListRedirect("/admin/links", r), http.StatusSeeOther)
 }
 
 func (s *Server) adminLinkPin(w http.ResponseWriter, r *http.Request) {
@@ -1482,11 +1761,7 @@ func (s *Server) adminLinkPin(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.store.SetFeatured(atoi64(r.PathValue("id")), r.FormValue("on") == "1")
 	s.clearGeneratedCaches()
-	dest := "/admin/links"
-	if lang := strings.TrimSpace(r.FormValue("lang")); s.langEnabled(lang) {
-		dest += "?lang=" + lang
-	}
-	http.Redirect(w, r, dest, http.StatusSeeOther)
+	http.Redirect(w, r, s.adminListRedirect("/admin/links", r), http.StatusSeeOther)
 }
 
 // ---------- 站点设置（分区独立保存）----------
@@ -1812,6 +2087,17 @@ func (s *Server) showSettings(w http.ResponseWriter, r *http.Request, section, f
 		v.Settings.Name = localized("site.name", def.Name)
 		v.Settings.Tagline = localized("site.tagline", def.Tagline)
 		v.Settings.Description = localized("site.description", def.Description)
+		authorValue := func(kind string) string {
+			v := strings.TrimSpace(s.store.Setting(s.copyKey(defaultAuthorKey(kind), lang)))
+			if lang == s.defaultLang() && v == "" {
+				return defaultAuthorFallback(kind, lang)
+			}
+			return v
+		}
+		v.Settings.PostAuthor = authorValue("post")
+		v.Settings.PostAuthorDef = defaultAuthorFallback("post", lang)
+		v.Settings.LinkAuthor = authorValue("link")
+		v.Settings.LinkAuthorDef = defaultAuthorFallback("link", lang)
 	case "copy":
 		lang := s.editLang(r)
 		v.EditLang = lang
@@ -2139,6 +2425,8 @@ func (s *Server) adminSaveSite(w http.ResponseWriter, r *http.Request) {
 	_ = s.store.SetSetting(s.copyKey("site.name", lang), name)
 	_ = s.store.SetSetting(s.copyKey("site.tagline", lang), strings.TrimSpace(r.FormValue("site_tagline")))
 	_ = s.store.SetSetting(s.copyKey("site.description", lang), strings.TrimSpace(r.FormValue("site_description")))
+	_ = s.store.SetSetting(s.copyKey(postDefaultAuthorKey, lang), strings.TrimSpace(r.FormValue("default_post_author")))
+	_ = s.store.SetSetting(s.copyKey(linkDefaultAuthorKey, lang), strings.TrimSpace(r.FormValue("default_link_author")))
 	favicon := strings.TrimSpace(r.FormValue("site_favicon"))
 	if favicon == defaultFaviconPath {
 		favicon = ""

@@ -114,6 +114,8 @@ const (
 	homeLinksLimitKey       = "home.links_limit"
 	homePostsPerPageKey     = "home.posts_per_page"
 	layoutWidthKey          = "layout.width"
+	postDefaultAuthorKey    = "content.post_author"
+	linkDefaultAuthorKey    = "content.link_author"
 	defaultHomeLinksLimit   = 8
 	defaultHomePostsPerPage = 6
 	minHomeLinksLimit       = 0
@@ -228,6 +230,10 @@ type View struct {
 
 	// 后台
 	AllPosts         []*store.Post
+	ListTotal        int
+	StatusFilter     string
+	AdminListPath    string
+	DefaultAuthor    string
 	Edit             *store.Post
 	IsPage           bool
 	IsLink           bool
@@ -275,6 +281,38 @@ type View struct {
 	VisualGroups     []VisualGroup      // 可视化编辑侧栏字段分组
 	VisualHistory    []VisualLog        // 可视化编辑最近修改
 	LayoutWidth      string             // 前台内容最大宽度预设（空=跟随主题）
+	OverviewStats    []OverviewStat     // 后台概览：内容状态
+	OverviewTasks    []OverviewTask     // 后台概览：待处理事项
+	OverviewRecent   []*store.Post      // 后台概览：最近更新
+	OverviewStatus   []OverviewStatus   // 后台概览：系统状态
+}
+
+type OverviewStat struct {
+	Label     string
+	Href      string
+	Icon      string
+	Total     int
+	Published int
+	Draft     int
+	Scheduled int
+}
+
+type OverviewTask struct {
+	Label string
+	Hint  string
+	Href  string
+	Icon  string
+	Count int
+	Tone  string
+}
+
+type OverviewStatus struct {
+	Label string
+	Value string
+	Hint  string
+	Href  string
+	Icon  string
+	Tone  string
 }
 
 type VisualField struct {
@@ -331,6 +369,10 @@ type SettingsForm struct {
 	TaglineDef     string
 	Description    string
 	DescriptionDef string
+	PostAuthor     string
+	PostAuthorDef  string
+	LinkAuthor     string
+	LinkAuthorDef  string
 	Favicon        string
 	Logo           string
 	ShareImage     string
@@ -392,6 +434,51 @@ func nonEmpty(value, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func defaultAuthorFallback(kind, lang string) string {
+	if lang == "en" {
+		if kind == "link" {
+			return "GCMS Picks"
+		}
+		return "GCMS Team"
+	}
+	if kind == "link" {
+		return "gcms 推荐"
+	}
+	return "gcms 团队"
+}
+
+func defaultAuthorKey(kind string) string {
+	if kind == "link" {
+		return linkDefaultAuthorKey
+	}
+	return postDefaultAuthorKey
+}
+
+func (s *Server) defaultContentAuthor(kind, lang string) string {
+	if lang == "" || !s.langEnabled(lang) {
+		lang = s.defaultLang()
+	}
+	if v := strings.TrimSpace(s.store.Setting(s.copyKey(defaultAuthorKey(kind), lang))); v != "" {
+		return v
+	}
+	if lang != "en" && lang != s.defaultLang() {
+		if v := strings.TrimSpace(s.store.Setting(defaultAuthorKey(kind))); v != "" {
+			return v
+		}
+	}
+	return defaultAuthorFallback(kind, lang)
+}
+
+func (s *Server) fillDefaultAuthor(p *store.Post) {
+	if p == nil || strings.TrimSpace(p.Author) != "" {
+		return
+	}
+	switch p.Type {
+	case "post", "link":
+		p.Author = s.defaultContentAuthor(p.Type, p.Lang)
+	}
 }
 
 func New(st *store.Store, baseURL, uploadDir string, tplFS, assetsFS fs.FS) (*Server, error) {
@@ -861,7 +948,7 @@ func (s *Server) site(lang string) seo.Site {
 		Locale:           loc.OG,
 		LangTag:          loc.Tag,
 		Prefix:           "/" + loc.Code,
-		Author:           "CCVAR",
+		Author:           s.defaultContentAuthor("post", lang),
 		Theme:            theme,
 		Favicon:          s.store.Setting("site.favicon"),
 		Logo:             logo,
@@ -1033,6 +1120,7 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /admin/logout", s.adminLogout)
 	mux.HandleFunc("POST /admin/dismiss-pw", s.requireAuth(s.adminDismissPw))
 	mux.HandleFunc("GET /admin", s.requireAuth(s.adminDashboard))
+	mux.HandleFunc("GET /admin/posts", s.requireAuth(s.adminPosts))
 	mux.HandleFunc("GET /admin/visual", s.requireAuth(s.adminVisual))
 	mux.HandleFunc("POST /admin/visual/save", s.requireAuth(s.adminVisualSave))
 	mux.HandleFunc("POST /admin/visual/undo", s.requireAuth(s.adminVisualUndo))
@@ -1448,6 +1536,7 @@ func (s *Server) article(w http.ResponseWriter, r *http.Request) {
 		s.notFound(w, r)
 		return
 	}
+	s.fillDefaultAuthor(p)
 	v := s.view(r, "")
 	v.SEO = v.Site.Article(p)
 	v.Post = p
@@ -1589,6 +1678,7 @@ func (s *Server) link(w http.ResponseWriter, r *http.Request) {
 		s.notFound(w, r)
 		return
 	}
+	s.fillDefaultAuthor(p)
 	v := s.view(r, "links")
 	v.SEO = v.Site.Link(p)
 	v.Post = p

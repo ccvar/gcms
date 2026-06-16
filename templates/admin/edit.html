@@ -134,7 +134,7 @@
 
         <div class="field">
           <label for="author">{{.Admin.T "admin.edit.author" "作者"}}</label>
-          <input id="author" name="author" value="{{$e.Author}}">
+          <input id="author" name="author" value="{{$e.Author}}" placeholder="{{if .DefaultAuthor}}{{printf (.Admin.T "admin.edit.author_placeholder" "留空使用默认作者：%s") .DefaultAuthor}}{{end}}">
         </div>
 
         {{if and (not .IsPage) (not .IsLink)}}

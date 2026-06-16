@@ -224,7 +224,7 @@ func NewRenderer(tplFS fs.FS) (*Renderer, error) {
 	}
 	r.sets["theme_preview"] = tp
 
-	for _, name := range []string{"login", "dashboard", "edit", "settings", "pages", "links", "visual"} {
+	for _, name := range []string{"login", "dashboard", "posts", "edit", "settings", "pages", "links", "visual"} {
 		t, err := template.New("admin_"+name).Funcs(funcMap()).ParseFS(sub, "admin/layout.html", "admin/"+name+".html")
 		if err != nil {
 			return nil, err

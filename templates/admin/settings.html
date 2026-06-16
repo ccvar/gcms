@@ -1,6 +1,6 @@
 {{define "body"}}{{$isConfig := or (eq .Section "site") (eq .Section "copy") (eq .Section "menu") (eq .Section "categories")}}  <div class="admin-head">
     <div>
-      <nav class="breadcrumb" style="padding:0 0 .4rem"><a href="/admin">{{.Admin.T "admin.nav.posts" "文章"}}</a><span class="sep">/</span><span>{{.Admin.T "admin.nav.settings" "设置"}}</span></nav>
+      <nav class="breadcrumb" style="padding:0 0 .4rem"><a href="/admin">{{.Admin.T "admin.nav.overview" "概览"}}</a><span class="sep">/</span><span>{{.Admin.T "admin.nav.settings" "设置"}}</span></nav>
       <h1>{{if $isConfig}}{{.Admin.T "admin.settings.config_title" "站点配置"}}{{else}}{{.Admin.T "admin.settings.title" "站点设置"}}{{end}}</h1>
     </div>
   </div>
@@ -136,6 +136,18 @@
           <div class="field">
             <label for="site_description">{{.Admin.T "admin.settings.site.description" "站点描述"}} <span class="scope-pill">{{.Admin.T "admin.scope.current_lang" "当前语种"}}</span></label>
             <textarea id="site_description" name="site_description" rows="3" placeholder="{{if ne .EditLang .Lang}}{{.Settings.DescriptionDef}}{{end}}">{{.Settings.Description}}</textarea>
+          </div>
+          <div class="form-2col">
+            <div class="field">
+              <label for="default_post_author">{{.Admin.T "admin.settings.site.default_post_author" "默认文章作者"}} <span class="scope-pill">{{.Admin.T "admin.scope.current_lang" "当前语种"}}</span></label>
+              <input id="default_post_author" name="default_post_author" value="{{.Settings.PostAuthor}}" placeholder="{{.Settings.PostAuthorDef}}">
+              <span class="hint">{{.Admin.T "admin.settings.site.default_author_hint" "文章未填写作者时自动使用。"}}</span>
+            </div>
+            <div class="field">
+              <label for="default_link_author">{{.Admin.T "admin.settings.site.default_link_author" "默认链接作者"}} <span class="scope-pill">{{.Admin.T "admin.scope.current_lang" "当前语种"}}</span></label>
+              <input id="default_link_author" name="default_link_author" value="{{.Settings.LinkAuthor}}" placeholder="{{.Settings.LinkAuthorDef}}">
+              <span class="hint">{{.Admin.T "admin.settings.site.default_link_author_hint" "链接未填写作者时自动使用。"}}</span>
+            </div>
           </div>
         </div>
         <div class="field-group">

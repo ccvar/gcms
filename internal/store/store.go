@@ -1257,6 +1257,87 @@ func (s *Store) ListAllPosts(lang string) ([]*Post, error) {
 	return s.queryPostSummaries(`WHERE p.type='post' AND p.lang=? ORDER BY p.updated_at DESC`, lang)
 }
 
+func adminContentWhere(kind, lang, status string) (string, []any, error) {
+	switch kind {
+	case "post", "link", "page":
+	default:
+		return "", nil, fmt.Errorf("unsupported content type: %s", kind)
+	}
+	where := `WHERE p.type=? AND p.lang=?`
+	args := []any{kind, lang}
+	switch strings.TrimSpace(status) {
+	case "", "all":
+	case "draft", "published", "scheduled":
+		where += ` AND p.status=?`
+		args = append(args, strings.TrimSpace(status))
+	default:
+		return "", nil, fmt.Errorf("unsupported status: %s", status)
+	}
+	return where, args, nil
+}
+
+// ListAdminContent 后台：某语种文章、链接或页面列表（含草稿，可按状态过滤，分页）。
+func (s *Store) ListAdminContent(kind, lang, status string, offset, limit int) ([]*Post, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 20
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	where, args, err := adminContentWhere(kind, lang, status)
+	if err != nil {
+		return nil, err
+	}
+	args = append(args, limit, offset)
+	return s.queryPostSummaries(where+` ORDER BY p.updated_at DESC LIMIT ? OFFSET ?`, args...)
+}
+
+// CountAdminContent 后台：统计某语种文章、链接或页面数量（含草稿，可按状态过滤）。
+func (s *Store) CountAdminContent(kind, lang, status string) (int, error) {
+	where, args, err := adminContentWhere(kind, lang, status)
+	if err != nil {
+		return 0, err
+	}
+	var n int
+	err = s.db.QueryRow(`SELECT COUNT(*) FROM posts p `+where, args...).Scan(&n)
+	return n, err
+}
+
+// CountAdminContentIssue 统计后台概览中的内容缺项。
+func (s *Store) CountAdminContentIssue(kind, lang, issue string) (int, error) {
+	switch kind {
+	case "post", "link", "page":
+	default:
+		return 0, fmt.Errorf("unsupported content type: %s", kind)
+	}
+	where := `WHERE type=? AND lang=?`
+	args := []any{kind, lang}
+	switch strings.TrimSpace(issue) {
+	case "missing_cover":
+		where += ` AND TRIM(COALESCE(cover_image,''))=''`
+	case "missing_category":
+		where += ` AND category_id IS NULL`
+	case "missing_excerpt":
+		where += ` AND TRIM(COALESCE(excerpt,''))=''`
+	case "missing_meta_desc":
+		where += ` AND TRIM(COALESCE(meta_desc,''))=''`
+	default:
+		return 0, fmt.Errorf("unsupported content issue: %s", issue)
+	}
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM posts `+where, args...).Scan(&n)
+	return n, err
+}
+
+// ListRecentAdminContent 返回某语种最近更新的后台内容，含文章、链接和页面。
+func (s *Store) ListRecentAdminContent(lang string, limit int) ([]*Post, error) {
+	if limit <= 0 || limit > 50 {
+		limit = 10
+	}
+	return s.queryPostSummaries(`WHERE p.lang=? AND p.type IN ('post','link','page')
+		ORDER BY p.updated_at DESC LIMIT ?`, lang, limit)
+}
+
 func (s *Store) ListContentForAutomation(kind, lang, status, query, slug, transGroup string, offset, limit int) ([]*Post, error) {
 	switch kind {
 	case "post", "page", "link":

@@ -26,7 +26,8 @@
         <a class="ext" href="/" target="_blank">{{.Admin.T "admin.nav.view_site" "查看站点"}} ↗</a>
         {{if .Authed}}
         <span class="admin-nav-sep" aria-hidden="true"></span>
-        <a href="/admin">{{.Admin.T "admin.nav.posts" "文章"}}</a>
+        <a href="/admin">{{.Admin.T "admin.nav.overview" "概览"}}</a>
+        <a href="/admin/posts">{{.Admin.T "admin.nav.posts" "文章"}}</a>
         <a href="/admin/links">{{.Admin.T "admin.nav.links" "链接"}}</a>
         <a href="/admin/pages">{{.Admin.T "admin.nav.pages" "页面"}}</a>
         <a href="/admin/visual"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v10H4z"/><path d="M8 21h8"/><path d="M12 15v6"/><path d="M9 9h6"/><path d="M9 12h4"/></svg>{{.Admin.T "admin.nav.visual" "可视化编辑"}}</a>
