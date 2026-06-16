@@ -52,7 +52,7 @@
   "admin.dashboard.todo_desc": "优先处理草稿、定时发布和内容缺项。",
   "admin.dashboard.view_posts": "查看文章",
   "admin.dashboard.todo_empty": "暂时没有明显待处理项",
-  "admin.dashboard.todo_empty_desc": "可以继续新建内容，或去可视化编辑调整站点展示。",
+  "admin.dashboard.todo_empty_desc": "可以继续新建内容，或检查最近更新。",
   "admin.dashboard.system_status": "系统状态",
   "admin.dashboard.system_status_desc": "安全、版本和外部接入状态。",
   "admin.dashboard.recent": "最近更新",

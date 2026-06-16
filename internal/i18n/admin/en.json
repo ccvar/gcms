@@ -52,7 +52,7 @@
   "admin.dashboard.todo_desc": "Prioritize drafts, scheduled publishing, and missing content fields.",
   "admin.dashboard.view_posts": "View Posts",
   "admin.dashboard.todo_empty": "No obvious action items right now",
-  "admin.dashboard.todo_empty_desc": "Create more content, or tune the site presentation in Visual Edit.",
+  "admin.dashboard.todo_empty_desc": "Create more content, or review recent updates.",
   "admin.dashboard.system_status": "System Status",
   "admin.dashboard.system_status_desc": "Security, version, and external access status.",
   "admin.dashboard.recent": "Recent Updates",

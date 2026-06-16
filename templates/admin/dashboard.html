@@ -6,9 +6,8 @@
       <p class="muted">{{printf (.Admin.T "admin.dashboard.subtitle" "当前内容语种：%s") .EditLang}}</p>
     </div>
     <div class="overview-actions">
-      <a class="btn" href="/admin/visual">{{template "overview-icon" "visual"}}<span>{{.Admin.T "admin.nav.visual" "可视化编辑"}}</span></a>
-      <a class="btn" href="/admin/links/new?lang={{.EditLang}}">{{template "overview-icon" "links"}}<span>{{.Admin.T "admin.links.new" "新建链接"}}</span></a>
-      <a class="btn btn-primary" href="/admin/posts/new?lang={{.EditLang}}">{{template "overview-icon" "plus"}}<span>{{.Admin.T "admin.posts.new" "新建文章"}}</span></a>
+      <a class="btn" href="/admin/links/new?lang={{.EditLang}}">{{.Admin.T "admin.links.new" "新建链接"}}</a>
+      <a class="btn btn-primary" href="/admin/posts/new?lang={{.EditLang}}">＋ {{.Admin.T "admin.posts.new" "新建文章"}}</a>
     </div>
   </div>
 
@@ -21,8 +20,7 @@
   <section class="overview-metrics" aria-label="{{.Admin.T "admin.dashboard.content_status" "内容状态"}}">
     {{range .OverviewStats}}
     <a class="overview-metric" href="{{.Href}}">
-      {{template "overview-icon" .Icon}}
-      <span class="metric-label">{{.Label}}</span>
+      <span class="metric-head"><span class="metric-label">{{.Label}}</span>{{template "overview-icon" .Icon}}</span>
       <strong>{{.Total}}</strong>
       {{if or .Published .Draft .Scheduled}}
       <span class="metric-breakdown">
@@ -50,7 +48,7 @@
         <div class="overview-task-list">
           {{range .OverviewTasks}}
           <a class="overview-task {{.Tone}}" href="{{.Href}}">
-            <span class="task-mark">{{template "overview-icon" .Icon}}<b>{{.Count}}</b></span>
+            <span class="task-count">{{.Count}}</span>
             <span class="task-body">
               <strong>{{.Label}}</strong>
               <span>{{.Hint}}</span>
@@ -58,11 +56,8 @@
           </a>
           {{else}}
           <div class="overview-empty">
-            {{template "overview-icon" "todo"}}
-            <span>
-              <strong>{{.Admin.T "admin.dashboard.todo_empty" "暂时没有明显待处理项"}}</strong>
-              <em>{{.Admin.T "admin.dashboard.todo_empty_desc" "可以继续新建内容，或去可视化编辑调整站点展示。"}}</em>
-            </span>
+            <strong>{{.Admin.T "admin.dashboard.todo_empty" "暂时没有明显待处理项"}}</strong>
+            <span>{{.Admin.T "admin.dashboard.todo_empty_desc" "可以继续新建内容，或检查最近更新。"}}</span>
           </div>
           {{end}}
         </div>
@@ -83,7 +78,7 @@
             {{range .OverviewRecent}}
             <tr>
               <td>
-                <div class="overview-title-line">{{if eq .Type "link"}}{{template "overview-icon" "links"}}{{else if eq .Type "page"}}{{template "overview-icon" "pages"}}{{else}}{{template "overview-icon" "posts"}}{{end}}<a class="t" href="/admin/{{if eq .Type "link"}}links{{else if eq .Type "page"}}pages{{else}}posts{{end}}/{{.ID}}/edit">{{.Title}}</a></div>
+                <div class="overview-title-line"><a class="t" href="/admin/{{if eq .Type "link"}}links{{else if eq .Type "page"}}pages{{else}}posts{{end}}/{{.ID}}/edit">{{.Title}}</a></div>
                 <div class="slug">{{if eq .Type "link"}}{{$.Admin.T "admin.nav.links" "链接"}}{{else if eq .Type "page"}}{{$.Admin.T "admin.nav.pages" "页面"}}{{else}}{{$.Admin.T "admin.nav.posts" "文章"}}{{end}} · /{{.Lang}}{{if eq .Type "page"}}/{{.Slug}}{{else}}/{{if eq .Type "link"}}links{{else}}posts{{end}}/{{.Slug}}{{end}}</div>
               </td>
               <td class="nowrap">{{if eq .Status "scheduled"}}<span class="badge sched">{{$.Admin.T "admin.status.scheduled" "定时"}}</span>{{else if .IsPublished}}<span class="badge pub">{{$.Admin.T "admin.status.published" "已发布"}}</span>{{else}}<span class="badge draft">{{$.Admin.T "admin.status.draft" "草稿"}}</span>{{end}}</td>
@@ -111,7 +106,7 @@
         <div class="overview-status-list">
           {{range .OverviewStatus}}
           <a class="overview-status {{.Tone}}" href="{{.Href}}">
-            <span class="status-main">{{template "overview-icon" .Icon}}<span><strong>{{.Label}}</strong><em>{{.Hint}}</em></span></span>
+            <span class="status-main"><strong>{{.Label}}</strong><em>{{.Hint}}</em></span>
             <b>{{.Value}}</b>
           </a>
           {{end}}
@@ -129,19 +124,13 @@
         <div class="overview-log-list">
           {{range .AutomationLogs}}
           <div class="overview-log">
-            {{template "overview-icon" "activity"}}
-            <span>
-              <strong>{{.Message}}</strong>
-              <em>{{if .KeyName}}{{.KeyName}}{{else}}{{$.Admin.T "admin.dashboard.automation_unknown_key" "未知访问权限"}}{{end}} · {{adminDateTime .CreatedAt}}</em>
-            </span>
+            <strong>{{.Message}}</strong>
+            <span>{{if .KeyName}}{{.KeyName}}{{else}}{{$.Admin.T "admin.dashboard.automation_unknown_key" "未知访问权限"}}{{end}} · {{adminDateTime .CreatedAt}}</span>
           </div>
           {{else}}
           <div class="overview-empty compact">
-            {{template "overview-icon" "bot"}}
-            <span>
-              <strong>{{.Admin.T "admin.dashboard.automation_empty" "暂无自动化调用"}}</strong>
-              <em>{{.Admin.T "admin.dashboard.automation_empty_desc" "创建访问权限后，AI 接入记录会显示在这里。"}}</em>
-            </span>
+            <strong>{{.Admin.T "admin.dashboard.automation_empty" "暂无自动化调用"}}</strong>
+            <span>{{.Admin.T "admin.dashboard.automation_empty_desc" "创建访问权限后，AI 接入记录会显示在这里。"}}</span>
           </div>
           {{end}}
         </div>
