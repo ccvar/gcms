@@ -4,7 +4,7 @@
       <div class="wrap read">
         <p class="eyebrow">Automation API</p>
         <h1>自动化接口开放文档</h1>
-        <p>这些接口开放语种、文章分类、链接分类读取、媒体上传，以及文章、链接、页面内容操作。站点设置、分类增删改、导航、安全、系统更新不会通过这里开放。</p>
+        <p>这些接口开放语种、文章分类、链接分类读取、媒体上传、文章与链接草稿预览，以及文章、链接、页面内容操作。站点设置、分类增删改、导航、安全、系统更新不会通过这里开放。</p>
       </div>
     </section>
 
@@ -29,9 +29,9 @@ X-GCMS-API-Key: gcms_xxx</code></pre>
             <tr><td>语种</td><td><code>GET /languages</code></td><td>只读</td><td><code>languages</code></td></tr>
             <tr><td>媒体</td><td><code>POST /media</code></td><td>上传图片</td><td><code>media</code></td></tr>
             <tr><td>文章分类</td><td><code>GET /posts/categories</code></td><td>只读</td><td><code>posts:categories</code></td></tr>
-            <tr><td>文章</td><td><code>GET/POST /posts</code></td><td><code>GET/PATCH /posts/{id}</code></td><td><code>posts</code></td></tr>
+            <tr><td>文章</td><td><code>GET/POST /posts</code></td><td><code>GET/PATCH /posts/{id}</code><br><code>GET /posts/{id}/preview</code></td><td><code>posts</code></td></tr>
             <tr><td>链接分类</td><td><code>GET /links/categories</code></td><td>只读</td><td><code>links:categories</code></td></tr>
-            <tr><td>链接</td><td><code>GET/POST /links</code></td><td><code>GET/PATCH /links/{id}</code></td><td><code>links</code></td></tr>
+            <tr><td>链接</td><td><code>GET/POST /links</code></td><td><code>GET/PATCH /links/{id}</code><br><code>GET /links/{id}/preview</code></td><td><code>links</code></td></tr>
             <tr><td>页面</td><td><code>GET/POST /pages</code></td><td><code>GET/PATCH /pages/{id}</code></td><td><code>pages</code></td></tr>
           </tbody>
         </table>
@@ -42,7 +42,7 @@ X-GCMS-API-Key: gcms_xxx</code></pre>
           <tbody>
             <tr><td>读取语种</td><td>列出默认语种和启用语种</td><td><code>languages:read</code></td></tr>
             <tr><td>上传媒体</td><td>上传图片并返回可用于 <code>cover_image</code> 或正文 Markdown 的 URL</td><td><code>media:write</code></td></tr>
-            <tr><td>读取</td><td>列出和查看内容</td><td><code>posts:read</code></td></tr>
+            <tr><td>读取</td><td>列出和查看内容；文章和链接还可读取草稿预览</td><td><code>posts:read</code></td></tr>
             <tr><td>获取分类</td><td>列出文章或链接分类，用于获取可写入 <code>category_id</code> 的 ID</td><td><code>posts:categories</code> / <code>links:categories</code></td></tr>
             <tr><td>写草稿</td><td>创建草稿，修改未发布内容</td><td><code>posts:write</code></td></tr>
             <tr><td>发布</td><td>发布、定时发布、修改已发布内容</td><td><code>posts:publish</code></td></tr>
@@ -118,6 +118,13 @@ X-GCMS-API-Key: gcms_xxx</code></pre>
   -H 'Authorization: Bearer gcms_xxx' \
   -H 'Content-Type: application/json' \
   -d '{"title":"新的标题","meta_desc":"新的 SEO 描述"}'</code></pre>
+
+        <p>发布前预览文章或链接草稿。响应会返回内容字段、渲染后的 <code>content_html</code>、目录 <code>toc</code>、API 预览地址和发布后的正式地址。</p>
+        <pre><code>curl '{{.Site.Root "/api/admin/v1/posts/123/preview"}}' \
+  -H 'Authorization: Bearer gcms_xxx'
+
+curl '{{.Site.Root "/api/admin/v1/links/123/preview"}}' \
+  -H 'Authorization: Bearer gcms_xxx'</code></pre>
       </div>
     </div>
   </main>

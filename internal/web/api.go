@@ -80,6 +80,21 @@ type apiContentItem struct {
 	UpdatedAt   string       `json:"updated_at,omitempty"`
 }
 
+type apiContentPreview struct {
+	Item        apiContentItem `json:"item"`
+	PreviewURL  string         `json:"preview_url"`
+	PublicURL   string         `json:"public_url"`
+	ContentHTML string         `json:"content_html"`
+	TOC         []apiHeading   `json:"toc,omitempty"`
+	Robots      string         `json:"robots"`
+}
+
+type apiHeading struct {
+	Level int    `json:"level"`
+	ID    string `json:"id"`
+	Text  string `json:"text"`
+}
+
 func (s *Server) apiLanguages(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requireAutomationScope(w, r, "languages:read"); !ok {
 		return
@@ -227,6 +242,40 @@ func (s *Server) apiGetContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"item": s.apiContentItem(p, true)})
+}
+
+func (s *Server) apiPreviewContent(w http.ResponseWriter, r *http.Request) {
+	collection := r.PathValue("collection")
+	if collection != "posts" && collection != "links" {
+		apiError(w, http.StatusNotFound, "not_found", "草稿预览仅支持文章和链接。")
+		return
+	}
+	kind, _ := apiContentKind(collection)
+	if _, ok := s.requireAutomationScope(w, r, apiScope(collection, "read")); !ok {
+		return
+	}
+	p, ok := s.apiContentByID(w, r, kind)
+	if !ok {
+		return
+	}
+	preview := *p
+	if preview.PublishedAt.IsZero() {
+		preview.PublishedAt = preview.UpdatedAt
+		if preview.PublishedAt.IsZero() {
+			preview.PublishedAt = preview.CreatedAt
+		}
+	}
+	html, toc := s.renderedContent(&preview)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"preview": apiContentPreview{
+			Item:        s.apiContentItem(&preview, true),
+			PreviewURL:  s.absForRequest(r, fmt.Sprintf("/api/admin/v1/%s/%d/preview", collection, preview.ID)),
+			PublicURL:   s.absForRequest(r, s.apiContentURL(&preview)),
+			ContentHTML: string(html),
+			TOC:         apiHeadings(toc),
+			Robots:      "noindex, nofollow",
+		},
+	})
 }
 
 func (s *Server) apiCreateContent(w http.ResponseWriter, r *http.Request) {
@@ -541,6 +590,17 @@ func apiCategoryItem(c *store.Category) apiCategory {
 		ID: c.ID, Slug: c.Slug, Name: c.Name, Description: c.Description,
 		Lang: c.Lang, TransGroup: c.TransGroup, Kind: c.Kind, Count: c.Count,
 	}
+}
+
+func apiHeadings(toc []Heading) []apiHeading {
+	if len(toc) == 0 {
+		return nil
+	}
+	out := make([]apiHeading, 0, len(toc))
+	for _, h := range toc {
+		out = append(out, apiHeading{Level: h.Level, ID: h.ID, Text: h.Text})
+	}
+	return out
 }
 
 func (s *Server) apiContentURL(p *store.Post) string {

@@ -133,13 +133,18 @@ func automationOpenAPISpec(apiBase string) map[string]any {
 			"get":   automationGetOperation(col),
 			"patch": automationUpdateOperation(col),
 		}
+		if col.path == "posts" || col.path == "links" {
+			paths["/"+col.path+"/{id}/preview"] = map[string]any{
+				"get": automationPreviewOperation(col),
+			}
+		}
 	}
 	return map[string]any{
 		"openapi": "3.0.3",
 		"info": map[string]any{
 			"title":       "GCMS Automation API",
 			"version":     "1.0.0",
-			"description": "开放语种、文章分类、链接分类读取、媒体上传，以及文章、链接、页面的自动化接口。GCMS 不调用 AI API，外部 AI 工具或自动化程序使用访问密钥调用这里的接口。",
+			"description": "开放语种、文章分类、链接分类读取、媒体上传、文章与链接草稿预览，以及文章、链接、页面的自动化接口。GCMS 不调用 AI API，外部 AI 工具或自动化程序使用访问密钥调用这里的接口。",
 		},
 		"servers": []map[string]string{{"url": apiBase}},
 		"security": []map[string][]string{
@@ -240,6 +245,17 @@ func automationUpdateOperation(col automationCollection) map[string]any {
 		"parameters":  []map[string]any{automationIDParam()},
 		"requestBody": automationJSONBody("ContentInput"),
 		"responses":   automationResponses("ContentItemResponse"),
+	}
+}
+
+func automationPreviewOperation(col automationCollection) map[string]any {
+	return map[string]any{
+		"summary":     "预览" + col.label + "草稿",
+		"description": "读取文章或链接的预览结果，返回内容字段、渲染后的正文 HTML、目录和正式 URL。用于发布前复核草稿，权限同读取接口。",
+		"operationId": "preview" + automationOperationSuffix(col.path),
+		"tags":        []string{col.label},
+		"parameters":  []map[string]any{automationIDParam()},
+		"responses":   automationResponses("ContentPreviewResponse"),
 	}
 }
 
@@ -372,6 +388,34 @@ func automationOpenAPISchemas() map[string]any {
 		"ContentItemResponse": map[string]any{
 			"type":       "object",
 			"properties": map[string]any{"item": map[string]any{"$ref": "#/components/schemas/ContentItem"}},
+		},
+		"ContentPreviewResponse": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"preview": map[string]any{"$ref": "#/components/schemas/ContentPreview"},
+			},
+		},
+		"ContentPreview": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"item":         map[string]any{"$ref": "#/components/schemas/ContentItem"},
+				"preview_url":  map[string]any{"type": "string", "description": "当前 API 预览接口地址。调用时仍需传入访问密钥。"},
+				"public_url":   map[string]any{"type": "string", "description": "内容发布后的正式前台地址。草稿状态下不一定可公开访问。"},
+				"content_html": map[string]any{"type": "string", "description": "正文 Markdown 渲染后的 HTML，便于 AI 或外部工具做发布前复核。"},
+				"toc": map[string]any{
+					"type":  "array",
+					"items": map[string]any{"$ref": "#/components/schemas/ContentHeading"},
+				},
+				"robots": map[string]any{"type": "string", "example": "noindex, nofollow"},
+			},
+		},
+		"ContentHeading": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"level": map[string]any{"type": "integer"},
+				"id":    map[string]any{"type": "string"},
+				"text":  map[string]any{"type": "string"},
+			},
 		},
 		"ContentInput": map[string]any{
 			"type": "object",
@@ -604,6 +648,7 @@ func automationKitReadme(opts automationSkillOptions) string {
 		"- 创建一条链接草稿，链接地址是我给的 URL；先查询链接分类并写入合适的 `category_id`，补充摘要、正文介绍、SEO 描述和封面图。",
 		"- 先读取启用语种，再读取目标内容的 `trans_group`，找出同组中文和英文版本；分别按各自语言优化标题、摘要和 SEO 描述。",
 		"- 发布前复核指定草稿是否具备发布条件，包括标题、slug、摘要、SEO 描述、关键词、分类、封面图、正文结构和多语种关联；只给意见，不要发布。",
+		"- 发布前调用 `GET /posts/{id}/preview` 或 `GET /links/{id}/preview`，检查草稿渲染后的正文 HTML、目录和正式 URL，再给复核意见。",
 		"- 只有我明确说“发布这篇”时，才回读目标 ID 和当前状态，确认具备 `publish` 权限后改为 `published`；完成后报告 ID、语种、URL 和改动字段。",
 		"- 如果接口返回权限不足、分类不存在、图片上传失败或找不到目标内容，停止后续写入动作，把错误、已完成步骤和需要补充的信息列出来。",
 		"",
@@ -617,6 +662,7 @@ func automationKitReadme(opts automationSkillOptions) string {
 		"- 第一次接入、改过权限或接口异常时，先运行 `node scripts/gcms.js doctor`。",
 		"- 默认让 AI 创建或修改草稿，发布前先人工审核。",
 		"- 修改指定内容时，让 AI 先查 id，再按 id 更新。",
+		"- 发布前复核文章或链接草稿时，让 AI 用 `/posts/{id}/preview` 或 `/links/{id}/preview` 查看渲染后的正文 HTML。",
 		"- 设置分类前，让 AI 先用 `/posts/categories` 或 `/links/categories` 查询可用分类 ID。",
 		"- 设置封面或正文图片前，让 AI 先用 `POST /media` 上传文件，拿返回的 `url` 再写入 `cover_image` 或 Markdown 图片。",
 		"- 更新全部语种时，让 AI 先用 `/languages` 确认启用语种，再按 `trans_group` 找到同组内容，逐条更新各语种 id。",
@@ -680,6 +726,7 @@ func automationSkillMarkdown(apiBase string) string {
 		"- `media`：上传用户提供的文件，把返回 URL 用于封面或正文图片。",
 		"- `multilingual`：先查语种和 `trans_group`，逐条处理各语种版本。",
 		"- `publish-review`：发布前复核；只有用户明确要求且权限允许才发布。",
+		"- `preview`：发布前读取文章或链接预览，检查渲染后的正文 HTML、目录和正式 URL。",
 		"",
 		"## 工作规则",
 		"",
@@ -692,7 +739,8 @@ func automationSkillMarkdown(apiBase string) string {
 		"7. 不要把一个语种的正文直接覆盖到其它语种，除非用户明确要求这么做。",
 		"8. 默认只创建或修改草稿。",
 		"9. 只有用户明确要求发布，并且访问密钥有对应资源的发布权限，才设置 `status` 为 `published` 或 `scheduled`。",
-		"10. 完成后告诉用户变更了哪些内容、对应 id、语种、状态，以及建议人工复核的点。",
+		"10. 发布前优先用 `GET /posts/{id}/preview` 或 `GET /links/{id}/preview` 复核草稿渲染结果。",
+		"11. 完成后告诉用户变更了哪些内容、对应 id、语种、状态，以及建议人工复核的点。",
 		"",
 		"## 推荐脚本",
 		"",
@@ -706,6 +754,8 @@ func automationSkillMarkdown(apiBase string) string {
 		"- `node scripts/gcms.js list posts --lang zh --q 关键词`",
 		"- `node scripts/gcms.js list posts --lang all --trans_group 分组值`",
 		"- `node scripts/gcms.js get posts 123`",
+		"- `node scripts/gcms.js preview posts 123`",
+		"- `node scripts/gcms.js preview links 123`",
 		"- `node scripts/gcms.js create posts '{\"title\":\"标题\",\"content\":\"正文\",\"lang\":\"zh\",\"status\":\"draft\"}'`",
 		"- `node scripts/gcms.js update posts 123 '{\"title\":\"新标题\"}'`",
 		"- `node scripts/gcms.js audit posts --lang zh --limit 50`",
@@ -718,8 +768,8 @@ func automationSkillMarkdown(apiBase string) string {
 func automationSkillAgentYAML() string {
 	return strings.Join([]string{
 		"display_name: GCMS Content Assistant",
-		"short_description: Diagnose, audit, draft, upload media, and optimize GCMS content through the automation API.",
-		"default_prompt: Run doctor, audit recent GCMS content for improvements, create drafts when useful, and do not publish without explicit approval.",
+		"short_description: Diagnose, audit, preview drafts, upload media, and optimize GCMS content through the automation API.",
+		"default_prompt: Run doctor, audit recent GCMS content for improvements, create drafts when useful, preview posts or links before publishing, and do not publish without explicit approval.",
 	}, "\n") + "\n"
 }
 
@@ -769,6 +819,7 @@ function usage(code = 2) {
   out("  gcms.js categories <posts|links> [--lang zh|all]");
   out("  gcms.js list <posts|pages|links> [--lang zh|all] [--q text] [--slug slug] [--trans_group group] [--status draft] [--limit 20]");
   out("  gcms.js get <posts|pages|links> <id>");
+  out("  gcms.js preview <posts|links> <id>");
   out("  gcms.js create <posts|pages|links> <json|@file>");
   out("  gcms.js update <posts|pages|links> <id> <json|@file>");
   out("  gcms.js audit <posts|pages|links> [--lang zh|all] [--limit 50] [--deep true]");
@@ -969,6 +1020,9 @@ async function doctor() {
       const schemas = openapi.data && openapi.data.components && openapi.data.components.schemas ? openapi.data.components.schemas : {};
       add("openapi_media_path", !!(paths["/media"] && paths["/media"].post));
       add("openapi_media_schema", !!schemas.MediaUploadResponse);
+      add("openapi_post_preview_path", !!(paths["/posts/{id}/preview"] && paths["/posts/{id}/preview"].get));
+      add("openapi_link_preview_path", !!(paths["/links/{id}/preview"] && paths["/links/{id}/preview"].get));
+      add("openapi_preview_schema", !!schemas.ContentPreviewResponse && !!schemas.ContentPreview);
     }
   } catch (err) {
     add("openapi", false, { message: err.message });
@@ -1048,6 +1102,13 @@ async function main() {
     const [id] = rest;
     if (!id) usage();
     print(await request("GET", "/" + collection + "/" + encodeURIComponent(id)));
+    return;
+  }
+
+  if (cmd === "preview") {
+    const [id] = rest;
+    if (!id || collection === "pages") usage();
+    print(await request("GET", "/" + collection + "/" + encodeURIComponent(id) + "/preview"));
     return;
   }
 

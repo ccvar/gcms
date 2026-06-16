@@ -28,7 +28,7 @@ func newTestAutomationServer(t *testing.T, scopes string) (*Server, string) {
 	if _, err := st.CreateAutomationKey("test", token, prefix, scopes); err != nil {
 		t.Fatalf("create automation key: %v", err)
 	}
-	return &Server{store: st, i18n: i18n.New(), baseURL: "http://localhost:8080"}, token
+	return &Server{store: st, i18n: i18n.New(), baseURL: "http://localhost:8080", content: map[string]contentCacheEntry{}}, token
 }
 
 func TestAPILanguages(t *testing.T) {
@@ -97,6 +97,25 @@ func TestAutomationOpenAPIIncludesMediaUpload(t *testing.T) {
 	}
 	if _, ok := schemas["MediaUploadResponse"]; !ok {
 		t.Fatalf("MediaUploadResponse schema missing: %#v", schemas)
+	}
+	for _, path := range []string{"/posts/{id}/preview", "/links/{id}/preview"} {
+		entry, ok := paths[path].(map[string]any)
+		if !ok {
+			t.Fatalf("%s path missing: %#v", path, paths)
+		}
+		get, ok := entry["get"].(map[string]any)
+		if !ok {
+			t.Fatalf("GET %s missing: %#v", path, entry)
+		}
+		if get["responses"] == nil {
+			t.Fatalf("GET %s responses missing: %#v", path, get)
+		}
+	}
+	if _, ok := schemas["ContentPreviewResponse"]; !ok {
+		t.Fatalf("ContentPreviewResponse schema missing: %#v", schemas)
+	}
+	if _, ok := schemas["ContentPreview"]; !ok {
+		t.Fatalf("ContentPreview schema missing: %#v", schemas)
 	}
 }
 
@@ -280,6 +299,121 @@ func TestAPICreateAndUpdatePageCoverImage(t *testing.T) {
 	}
 	if updated.Item.CoverImage != nextCover {
 		t.Fatalf("updated cover_image = %q, want %q", updated.Item.CoverImage, nextCover)
+	}
+}
+
+func TestAPIPreviewPostAndLinkDrafts(t *testing.T) {
+	s, token := newTestAutomationServer(t, "posts:read,links:read")
+	postID, err := s.store.CreatePost(&store.Post{
+		Type:       "post",
+		Lang:       "zh",
+		Slug:       "api-preview-post",
+		Title:      "API Preview Post",
+		Content:    "Intro\n\n## Section\n\nBody",
+		Status:     "draft",
+		EditorMode: "markdown",
+	})
+	if err != nil {
+		t.Fatalf("create post: %v", err)
+	}
+	linkID, err := s.store.CreatePost(&store.Post{
+		Type:       "link",
+		Lang:       "zh",
+		Slug:       "api-preview-link",
+		Title:      "API Preview Link",
+		Content:    "Link intro\n\n## Link Section\n\nBody",
+		Status:     "draft",
+		EditorMode: "markdown",
+		LinkURL:    "https://example.com",
+	})
+	if err != nil {
+		t.Fatalf("create link: %v", err)
+	}
+
+	for _, tc := range []struct {
+		collection string
+		id         int64
+		wantURL    string
+		wantHTML   string
+	}{
+		{"posts", postID, "http://example.com/zh/posts/api-preview-post", "<h2 id=\"section\">Section</h2>"},
+		{"links", linkID, "http://example.com/zh/links/api-preview-link", "<h2 id=\"link-section\">Link Section</h2>"},
+	} {
+		r := httptest.NewRequest(http.MethodGet, "/api/admin/v1/"+tc.collection+"/"+strconv.FormatInt(tc.id, 10)+"/preview", nil)
+		r.SetPathValue("collection", tc.collection)
+		r.SetPathValue("id", strconv.FormatInt(tc.id, 10))
+		r.Header.Set("Authorization", "Bearer "+token)
+		w := httptest.NewRecorder()
+
+		s.apiPreviewContent(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s preview status = %d, body = %s", tc.collection, w.Code, w.Body.String())
+		}
+		var got struct {
+			Preview struct {
+				Item struct {
+					ID      int64  `json:"id"`
+					Status  string `json:"status"`
+					Content string `json:"content"`
+				} `json:"item"`
+				PreviewURL  string `json:"preview_url"`
+				PublicURL   string `json:"public_url"`
+				ContentHTML string `json:"content_html"`
+				TOC         []struct {
+					Level int    `json:"level"`
+					ID    string `json:"id"`
+					Text  string `json:"text"`
+				} `json:"toc"`
+				Robots string `json:"robots"`
+			} `json:"preview"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+			t.Fatalf("decode %s preview: %v", tc.collection, err)
+		}
+		if got.Preview.Item.ID != tc.id || got.Preview.Item.Status != "draft" || got.Preview.Item.Content == "" {
+			t.Fatalf("%s preview item mismatch: %#v", tc.collection, got.Preview.Item)
+		}
+		if got.Preview.PublicURL != tc.wantURL {
+			t.Fatalf("%s public_url = %q, want %q", tc.collection, got.Preview.PublicURL, tc.wantURL)
+		}
+		if !strings.HasSuffix(got.Preview.PreviewURL, "/api/admin/v1/"+tc.collection+"/"+strconv.FormatInt(tc.id, 10)+"/preview") {
+			t.Fatalf("%s preview_url = %q", tc.collection, got.Preview.PreviewURL)
+		}
+		if !strings.Contains(got.Preview.ContentHTML, tc.wantHTML) {
+			t.Fatalf("%s content_html = %q, want contains %q", tc.collection, got.Preview.ContentHTML, tc.wantHTML)
+		}
+		if len(got.Preview.TOC) == 0 {
+			t.Fatalf("%s preview toc empty", tc.collection)
+		}
+		if got.Preview.Robots != "noindex, nofollow" {
+			t.Fatalf("%s robots = %q", tc.collection, got.Preview.Robots)
+		}
+	}
+}
+
+func TestAPIPreviewRequiresReadScope(t *testing.T) {
+	s, token := newTestAutomationServer(t, "posts:write")
+	id, err := s.store.CreatePost(&store.Post{
+		Type:       "post",
+		Lang:       "zh",
+		Slug:       "api-preview-no-read",
+		Title:      "API Preview No Read",
+		Content:    "Body",
+		Status:     "draft",
+		EditorMode: "markdown",
+	})
+	if err != nil {
+		t.Fatalf("create post: %v", err)
+	}
+	r := httptest.NewRequest(http.MethodGet, "/api/admin/v1/posts/"+strconv.FormatInt(id, 10)+"/preview", nil)
+	r.SetPathValue("collection", "posts")
+	r.SetPathValue("id", strconv.FormatInt(id, 10))
+	r.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+
+	s.apiPreviewContent(w, r)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
 	}
 }
 

@@ -670,14 +670,14 @@
               <span class="cap-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4h10l4 4v12H5z"/><path d="M15 4v5h5"/><path d="M8 13h8"/><path d="M8 17h6"/></svg></span>
               <strong>{{.Admin.T "admin.nav.posts" "文章"}}</strong>
             </div>
-            <p>{{.Admin.T "admin.settings.automation.posts_desc" "查看文章、创建草稿、修改草稿。要改哪篇，助手会先按标题或 slug 找到对应 ID。"}}</p>
+            <p>{{.Admin.T "admin.settings.automation.posts_desc" "查看文章、预览草稿、创建草稿、修改草稿。要改哪篇，助手会先按标题或 slug 找到对应 ID。"}}</p>
           </div>
           <div class="cap-card">
             <div class="cap-title">
               <span class="cap-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.1 0l2-2a5 5 0 0 0-7.1-7.1l-1.2 1.2"/><path d="M14 11a5 5 0 0 0-7.1 0l-2 2A5 5 0 0 0 12 20.1l1.2-1.2"/></svg></span>
               <strong>{{.Admin.T "admin.nav.links" "链接"}}</strong>
             </div>
-            <p>{{.Admin.T "admin.settings.automation.links_desc" "查看和维护链接，包括链接地址、说明文字、正文和 SEO 文案。"}}</p>
+            <p>{{.Admin.T "admin.settings.automation.links_desc" "查看和维护链接，预览链接草稿，并管理链接地址、说明文字、正文和 SEO 文案。"}}</p>
           </div>
           <div class="cap-card">
             <div class="cap-title">
@@ -700,8 +700,8 @@
             <tr><th>{{.Admin.T "admin.settings.automation.media" "媒体"}}</th><td class="slug">POST /media</td></tr>
             <tr><th>{{.Admin.T "admin.settings.automation.post_categories" "文章分类"}}</th><td class="slug">GET /posts/categories</td></tr>
             <tr><th>{{.Admin.T "admin.settings.automation.link_categories" "链接分类"}}</th><td class="slug">GET /links/categories</td></tr>
-            <tr><th>{{.Admin.T "admin.nav.posts" "文章"}}</th><td class="slug">GET/POST /posts · GET/PATCH /posts/{id}</td></tr>
-            <tr><th>{{.Admin.T "admin.nav.links" "链接"}}</th><td class="slug">GET/POST /links · GET/PATCH /links/{id}</td></tr>
+            <tr><th>{{.Admin.T "admin.nav.posts" "文章"}}</th><td class="slug">GET/POST /posts · GET/PATCH /posts/{id} · GET /posts/{id}/preview</td></tr>
+            <tr><th>{{.Admin.T "admin.nav.links" "链接"}}</th><td class="slug">GET/POST /links · GET/PATCH /links/{id} · GET /links/{id}/preview</td></tr>
             <tr><th>{{.Admin.T "admin.nav.pages" "页面"}}</th><td class="slug">GET/POST /pages · GET/PATCH /pages/{id}</td></tr>
             <tr><th>{{.Admin.T "admin.settings.automation.search" "查找"}}</th><td class="slug">?q=keyword · ?slug=slug · ?lang=zh · ?status=draft</td></tr>
           </tbody>

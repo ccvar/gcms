@@ -25,6 +25,7 @@ You are a GCMS content operations assistant. Use this skill to safely inspect, d
 - List post and link categories.
 - Upload images and use the returned URL for `cover_image` or Markdown image embeds.
 - List and read posts, pages, and links.
+- Preview post and link drafts before publishing.
 - Create drafts for posts, pages, and links.
 - Update drafts or, with publish permission, update published content.
 - Improve titles, excerpts, content, SEO descriptions, keywords, slugs, categories, and link URLs.
@@ -39,6 +40,7 @@ You are a GCMS content operations assistant. Use this skill to safely inspect, d
 - `media`: upload approved files and reuse the returned URL in `cover_image` or Markdown.
 - `multilingual`: inspect languages and `trans_group`, then handle each language's own item separately.
 - `publish-review`: check readiness for publishing; publish only when explicitly asked and permitted.
+- `preview`: inspect rendered post or link drafts, including HTML, TOC, and public URL, before publishing.
 
 ## Hard Boundaries
 
@@ -58,7 +60,8 @@ You are a GCMS content operations assistant. Use this skill to safely inspect, d
 5. For broad or risky changes, summarize the intended edits before applying them.
 6. Default to `status: "draft"` for new content.
 7. After writing, read back the item when possible.
-8. Report changed IDs, language, status, fields changed, and review points.
+8. Before publishing a post or link, use the preview endpoint to inspect rendered HTML and TOC.
+9. Report changed IDs, language, status, fields changed, and review points.
 
 ## Useful Commands
 
@@ -71,6 +74,8 @@ node scripts/gcms.js categories links --lang zh
 node scripts/gcms.js list posts --lang zh --q keyword
 node scripts/gcms.js list posts --lang all --trans_group group
 node scripts/gcms.js get posts 123
+node scripts/gcms.js preview posts 123
+node scripts/gcms.js preview links 123
 node scripts/gcms.js create posts '{"title":"Title","content":"Body","lang":"zh","status":"draft"}'
 node scripts/gcms.js update posts 123 '{"meta_desc":"Updated SEO description"}'
 node scripts/gcms.js audit posts --lang zh --limit 50
@@ -103,6 +108,7 @@ node scripts/gcms.js audit pages --lang zh --limit 20 --deep true
 - Treat publishing as a separate, explicit action.
 - Confirm that the user requested publishing in the current conversation.
 - Confirm the content status, language, and ID before publishing.
+- For posts and links, run `preview` and check rendered HTML, TOC, and public URL before publishing.
 - If publish scope is missing, create or update a draft and say publishing was not available.
 
 ## Extension Principle

@@ -3,7 +3,7 @@
   "info": {
     "title": "GCMS Automation API",
     "version": "1.0.0",
-    "description": "Automation API for enabled languages, media uploads, post categories, link categories, posts, pages, and links. Replace the server URL with GCMS_API_BASE for the target site."
+    "description": "Automation API for enabled languages, media uploads, post categories, link categories, post and link draft previews, posts, pages, and links. Replace the server URL with GCMS_API_BASE for the target site."
   },
   "servers": [
     {
@@ -23,7 +23,9 @@
       "get": {
         "summary": "List enabled languages",
         "operationId": "listLanguages",
-        "tags": ["Languages"],
+        "tags": [
+          "Languages"
+        ],
         "responses": {
           "200": {
             "description": "OK",
@@ -43,7 +45,9 @@
         "summary": "Upload media",
         "description": "Upload an image file and use the returned url for cover_image or Markdown images.",
         "operationId": "uploadMedia",
-        "tags": ["Media"],
+        "tags": [
+          "Media"
+        ],
         "requestBody": {
           "$ref": "#/components/requestBodies/MediaUpload"
         },
@@ -65,7 +69,9 @@
       "get": {
         "summary": "List post categories",
         "operationId": "listPostCategories",
-        "tags": ["Posts"],
+        "tags": [
+          "Posts"
+        ],
         "parameters": [
           {
             "name": "lang",
@@ -95,7 +101,9 @@
       "get": {
         "summary": "List link categories",
         "operationId": "listLinkCategories",
-        "tags": ["Links"],
+        "tags": [
+          "Links"
+        ],
         "parameters": [
           {
             "name": "lang",
@@ -168,6 +176,174 @@
       "patch": {
         "$ref": "#/components/pathItems/UpdateLinks"
       }
+    },
+    "/posts/{id}/preview": {
+      "get": {
+        "summary": "Preview post draft",
+        "description": "Read a post preview with content fields, rendered body HTML, table of contents, and public URL. Use this for pre-publish review. Requires the same read scope as the post read endpoint.",
+        "operationId": "previewPosts",
+        "tags": [
+          "Posts"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "description": "Content ID. Search with the list endpoint first instead of guessing from a title."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContentPreviewResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContentPreviewResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求参数错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "缺少或无效的访问密钥",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "访问权限不足",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "内容不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/links/{id}/preview": {
+      "get": {
+        "summary": "Preview link draft",
+        "description": "Read a link preview with content fields, rendered body HTML, table of contents, and public URL. Use this for pre-publish review. Requires the same read scope as the link read endpoint.",
+        "operationId": "previewLinks",
+        "tags": [
+          "Links"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "description": "Content ID. Search with the list endpoint first instead of guessing from a title."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContentPreviewResponse"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContentPreviewResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求参数错误",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "缺少或无效的访问密钥",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "访问权限不足",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "内容不存在",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -187,22 +363,40 @@
       "ListPosts": {
         "summary": "List posts",
         "operationId": "listPosts",
-        "tags": ["Posts"],
+        "tags": [
+          "Posts"
+        ],
         "parameters": [
-          {"$ref": "#/components/parameters/Lang"},
-          {"$ref": "#/components/parameters/Status"},
-          {"$ref": "#/components/parameters/Q"},
-          {"$ref": "#/components/parameters/Slug"},
-          {"$ref": "#/components/parameters/TransGroup"},
-          {"$ref": "#/components/parameters/Limit"},
-          {"$ref": "#/components/parameters/Offset"}
+          {
+            "$ref": "#/components/parameters/Lang"
+          },
+          {
+            "$ref": "#/components/parameters/Status"
+          },
+          {
+            "$ref": "#/components/parameters/Q"
+          },
+          {
+            "$ref": "#/components/parameters/Slug"
+          },
+          {
+            "$ref": "#/components/parameters/TransGroup"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/Offset"
+          }
         ],
         "responses": {
           "200": {
             "description": "OK",
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/ContentListResponse"}
+                "schema": {
+                  "$ref": "#/components/schemas/ContentListResponse"
+                }
               }
             }
           }
@@ -211,98 +405,228 @@
       "CreatePosts": {
         "summary": "Create post",
         "operationId": "createPosts",
-        "tags": ["Posts"],
-        "requestBody": {"$ref": "#/components/requestBodies/ContentInput"},
-        "responses": {"201": {"description": "Created"}}
+        "tags": [
+          "Posts"
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/ContentInput"
+        },
+        "responses": {
+          "201": {
+            "description": "Created"
+          }
+        }
       },
       "GetPosts": {
         "summary": "Get post",
         "operationId": "getPosts",
-        "tags": ["Posts"],
-        "parameters": [{"$ref": "#/components/parameters/ID"}],
-        "responses": {"200": {"description": "OK"}}
+        "tags": [
+          "Posts"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
       },
       "UpdatePosts": {
         "summary": "Update post",
         "operationId": "updatePosts",
-        "tags": ["Posts"],
-        "parameters": [{"$ref": "#/components/parameters/ID"}],
-        "requestBody": {"$ref": "#/components/requestBodies/ContentInput"},
-        "responses": {"200": {"description": "OK"}}
+        "tags": [
+          "Posts"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ID"
+          }
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/ContentInput"
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
       },
       "ListPages": {
         "summary": "List pages",
         "operationId": "listPages",
-        "tags": ["Pages"],
-        "parameters": [
-          {"$ref": "#/components/parameters/Lang"},
-          {"$ref": "#/components/parameters/Status"},
-          {"$ref": "#/components/parameters/Q"},
-          {"$ref": "#/components/parameters/Slug"},
-          {"$ref": "#/components/parameters/TransGroup"},
-          {"$ref": "#/components/parameters/Limit"},
-          {"$ref": "#/components/parameters/Offset"}
+        "tags": [
+          "Pages"
         ],
-        "responses": {"200": {"description": "OK"}}
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Lang"
+          },
+          {
+            "$ref": "#/components/parameters/Status"
+          },
+          {
+            "$ref": "#/components/parameters/Q"
+          },
+          {
+            "$ref": "#/components/parameters/Slug"
+          },
+          {
+            "$ref": "#/components/parameters/TransGroup"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/Offset"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
       },
       "CreatePages": {
         "summary": "Create page",
         "operationId": "createPages",
-        "tags": ["Pages"],
-        "requestBody": {"$ref": "#/components/requestBodies/ContentInput"},
-        "responses": {"201": {"description": "Created"}}
+        "tags": [
+          "Pages"
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/ContentInput"
+        },
+        "responses": {
+          "201": {
+            "description": "Created"
+          }
+        }
       },
       "GetPages": {
         "summary": "Get page",
         "operationId": "getPages",
-        "tags": ["Pages"],
-        "parameters": [{"$ref": "#/components/parameters/ID"}],
-        "responses": {"200": {"description": "OK"}}
+        "tags": [
+          "Pages"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
       },
       "UpdatePages": {
         "summary": "Update page",
         "operationId": "updatePages",
-        "tags": ["Pages"],
-        "parameters": [{"$ref": "#/components/parameters/ID"}],
-        "requestBody": {"$ref": "#/components/requestBodies/ContentInput"},
-        "responses": {"200": {"description": "OK"}}
+        "tags": [
+          "Pages"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ID"
+          }
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/ContentInput"
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
       },
       "ListLinks": {
         "summary": "List links",
         "operationId": "listLinks",
-        "tags": ["Links"],
-        "parameters": [
-          {"$ref": "#/components/parameters/Lang"},
-          {"$ref": "#/components/parameters/Status"},
-          {"$ref": "#/components/parameters/Q"},
-          {"$ref": "#/components/parameters/Slug"},
-          {"$ref": "#/components/parameters/TransGroup"},
-          {"$ref": "#/components/parameters/Limit"},
-          {"$ref": "#/components/parameters/Offset"}
+        "tags": [
+          "Links"
         ],
-        "responses": {"200": {"description": "OK"}}
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Lang"
+          },
+          {
+            "$ref": "#/components/parameters/Status"
+          },
+          {
+            "$ref": "#/components/parameters/Q"
+          },
+          {
+            "$ref": "#/components/parameters/Slug"
+          },
+          {
+            "$ref": "#/components/parameters/TransGroup"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/Offset"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
       },
       "CreateLinks": {
         "summary": "Create link",
         "operationId": "createLinks",
-        "tags": ["Links"],
-        "requestBody": {"$ref": "#/components/requestBodies/ContentInput"},
-        "responses": {"201": {"description": "Created"}}
+        "tags": [
+          "Links"
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/ContentInput"
+        },
+        "responses": {
+          "201": {
+            "description": "Created"
+          }
+        }
       },
       "GetLinks": {
         "summary": "Get link",
         "operationId": "getLinks",
-        "tags": ["Links"],
-        "parameters": [{"$ref": "#/components/parameters/ID"}],
-        "responses": {"200": {"description": "OK"}}
+        "tags": [
+          "Links"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
       },
       "UpdateLinks": {
         "summary": "Update link",
         "operationId": "updateLinks",
-        "tags": ["Links"],
-        "parameters": [{"$ref": "#/components/parameters/ID"}],
-        "requestBody": {"$ref": "#/components/requestBodies/ContentInput"},
-        "responses": {"200": {"description": "OK"}}
+        "tags": [
+          "Links"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ID"
+          }
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/ContentInput"
+        },
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
       }
     },
     "parameters": {
@@ -310,43 +634,71 @@
         "name": "id",
         "in": "path",
         "required": true,
-        "schema": {"type": "integer", "minimum": 1}
+        "schema": {
+          "type": "integer",
+          "minimum": 1
+        }
       },
       "Lang": {
         "name": "lang",
         "in": "query",
-        "schema": {"type": "string", "default": "zh"},
+        "schema": {
+          "type": "string",
+          "default": "zh"
+        },
         "description": "Content language. Use all for cross-language queries."
       },
       "Status": {
         "name": "status",
         "in": "query",
-        "schema": {"type": "string", "enum": ["draft", "published", "scheduled"]}
+        "schema": {
+          "type": "string",
+          "enum": [
+            "draft",
+            "published",
+            "scheduled"
+          ]
+        }
       },
       "Q": {
         "name": "q",
         "in": "query",
-        "schema": {"type": "string"}
+        "schema": {
+          "type": "string"
+        }
       },
       "Slug": {
         "name": "slug",
         "in": "query",
-        "schema": {"type": "string"}
+        "schema": {
+          "type": "string"
+        }
       },
       "TransGroup": {
         "name": "trans_group",
         "in": "query",
-        "schema": {"type": "string"}
+        "schema": {
+          "type": "string"
+        }
       },
       "Limit": {
         "name": "limit",
         "in": "query",
-        "schema": {"type": "integer", "default": 20, "minimum": 1, "maximum": 100}
+        "schema": {
+          "type": "integer",
+          "default": 20,
+          "minimum": 1,
+          "maximum": 100
+        }
       },
       "Offset": {
         "name": "offset",
         "in": "query",
-        "schema": {"type": "integer", "default": 0, "minimum": 0}
+        "schema": {
+          "type": "integer",
+          "default": 0,
+          "minimum": 0
+        }
       }
     },
     "requestBodies": {
@@ -356,7 +708,9 @@
           "multipart/form-data": {
             "schema": {
               "type": "object",
-              "required": ["file"],
+              "required": [
+                "file"
+              ],
               "properties": {
                 "file": {
                   "type": "string",
@@ -371,7 +725,9 @@
         "required": true,
         "content": {
           "application/json": {
-            "schema": {"$ref": "#/components/schemas/ContentInput"}
+            "schema": {
+              "$ref": "#/components/schemas/ContentInput"
+            }
           }
         }
       }
@@ -380,20 +736,32 @@
       "LanguageListResponse": {
         "type": "object",
         "properties": {
-          "default": {"type": "string"},
+          "default": {
+            "type": "string"
+          },
           "items": {
             "type": "array",
-            "items": {"$ref": "#/components/schemas/LanguageItem"}
+            "items": {
+              "$ref": "#/components/schemas/LanguageItem"
+            }
           }
         }
       },
       "LanguageItem": {
         "type": "object",
         "properties": {
-          "code": {"type": "string"},
-          "name": {"type": "string"},
-          "tag": {"type": "string"},
-          "default": {"type": "boolean"}
+          "code": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "tag": {
+            "type": "string"
+          },
+          "default": {
+            "type": "boolean"
+          }
         }
       },
       "CategoryListResponse": {
@@ -401,31 +769,63 @@
         "properties": {
           "items": {
             "type": "array",
-            "items": {"$ref": "#/components/schemas/CategoryItem"}
+            "items": {
+              "$ref": "#/components/schemas/CategoryItem"
+            }
           },
-          "lang": {"type": "string"},
-          "kind": {"type": "string", "enum": ["post", "link"]}
+          "lang": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "post",
+              "link"
+            ]
+          }
         }
       },
       "CategoryItem": {
         "type": "object",
         "properties": {
-          "id": {"type": "integer"},
-          "slug": {"type": "string"},
-          "name": {"type": "string"},
-          "description": {"type": "string"},
-          "lang": {"type": "string"},
-          "trans_group": {"type": "string"},
-          "kind": {"type": "string"},
-          "count": {"type": "integer"}
+          "id": {
+            "type": "integer"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "lang": {
+            "type": "string"
+          },
+          "trans_group": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer"
+          }
         }
       },
       "MediaUploadResponse": {
         "type": "object",
         "properties": {
-          "url": {"type": "string"},
-          "name": {"type": "string"},
-          "size": {"type": "integer"}
+          "url": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer"
+          }
         }
       },
       "ContentListResponse": {
@@ -433,61 +833,228 @@
         "properties": {
           "items": {
             "type": "array",
-            "items": {"$ref": "#/components/schemas/ContentItem"}
+            "items": {
+              "$ref": "#/components/schemas/ContentItem"
+            }
           },
-          "limit": {"type": "integer"},
-          "offset": {"type": "integer"},
-          "lang": {"type": "string"},
-          "q": {"type": "string"},
-          "slug": {"type": "string"},
-          "trans_group": {"type": "string"}
+          "limit": {
+            "type": "integer"
+          },
+          "offset": {
+            "type": "integer"
+          },
+          "lang": {
+            "type": "string"
+          },
+          "q": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "trans_group": {
+            "type": "string"
+          }
         }
       },
       "ContentInput": {
         "type": "object",
         "properties": {
-          "lang": {"type": "string"},
-          "slug": {"type": "string"},
-          "title": {"type": "string"},
-          "excerpt": {"type": "string"},
-          "content": {"type": "string"},
-          "meta_desc": {"type": "string"},
-          "keywords": {"type": "string"},
-          "cover_image": {"type": "string"},
-          "author": {"type": "string"},
-          "status": {"type": "string", "enum": ["draft", "published", "scheduled"], "default": "draft"},
-          "editor_mode": {"type": "string", "enum": ["markdown", "rich"], "default": "markdown"},
-          "link_url": {"type": "string"},
-          "trans_group": {"type": "string"},
-          "category_id": {"type": "integer", "nullable": true},
-          "published_at": {"type": "string", "format": "date-time"}
+          "lang": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "excerpt": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          },
+          "meta_desc": {
+            "type": "string"
+          },
+          "keywords": {
+            "type": "string"
+          },
+          "cover_image": {
+            "type": "string"
+          },
+          "author": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "published",
+              "scheduled"
+            ],
+            "default": "draft"
+          },
+          "editor_mode": {
+            "type": "string",
+            "enum": [
+              "markdown",
+              "rich"
+            ],
+            "default": "markdown"
+          },
+          "link_url": {
+            "type": "string"
+          },
+          "trans_group": {
+            "type": "string"
+          },
+          "category_id": {
+            "type": "integer",
+            "nullable": true
+          },
+          "published_at": {
+            "type": "string",
+            "format": "date-time"
+          }
         }
       },
       "ContentItem": {
         "type": "object",
         "properties": {
-          "id": {"type": "integer"},
-          "type": {"type": "string", "enum": ["post", "page", "link"]},
-          "lang": {"type": "string"},
-          "slug": {"type": "string"},
-          "title": {"type": "string"},
-          "excerpt": {"type": "string"},
-          "content": {"type": "string"},
-          "meta_desc": {"type": "string"},
-          "keywords": {"type": "string"},
-          "cover_image": {"type": "string"},
-          "author": {"type": "string"},
-          "status": {"type": "string", "enum": ["draft", "published", "scheduled"]},
-          "featured": {"type": "boolean"},
-          "editor_mode": {"type": "string"},
-          "link_url": {"type": "string"},
-          "trans_group": {"type": "string"},
-          "category_id": {"type": "integer", "nullable": true},
-          "category": {"$ref": "#/components/schemas/CategoryItem"},
-          "url": {"type": "string"},
-          "published_at": {"type": "string", "format": "date-time"},
-          "created_at": {"type": "string", "format": "date-time"},
-          "updated_at": {"type": "string", "format": "date-time"}
+          "id": {
+            "type": "integer"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "post",
+              "page",
+              "link"
+            ]
+          },
+          "lang": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "excerpt": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          },
+          "meta_desc": {
+            "type": "string"
+          },
+          "keywords": {
+            "type": "string"
+          },
+          "cover_image": {
+            "type": "string"
+          },
+          "author": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "published",
+              "scheduled"
+            ]
+          },
+          "featured": {
+            "type": "boolean"
+          },
+          "editor_mode": {
+            "type": "string"
+          },
+          "link_url": {
+            "type": "string"
+          },
+          "trans_group": {
+            "type": "string"
+          },
+          "category_id": {
+            "type": "integer",
+            "nullable": true
+          },
+          "category": {
+            "$ref": "#/components/schemas/CategoryItem"
+          },
+          "url": {
+            "type": "string"
+          },
+          "published_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ContentPreviewResponse": {
+        "type": "object",
+        "properties": {
+          "preview": {
+            "$ref": "#/components/schemas/ContentPreview"
+          }
+        }
+      },
+      "ContentPreview": {
+        "type": "object",
+        "properties": {
+          "item": {
+            "$ref": "#/components/schemas/ContentItem"
+          },
+          "preview_url": {
+            "type": "string",
+            "description": "Current API preview endpoint URL. Requests still need the access key."
+          },
+          "public_url": {
+            "type": "string",
+            "description": "Front-end URL after publishing. Draft content may not be publicly accessible yet."
+          },
+          "content_html": {
+            "type": "string",
+            "description": "Rendered HTML from the Markdown body, useful for AI or external tools during pre-publish review."
+          },
+          "toc": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContentHeading"
+            }
+          },
+          "robots": {
+            "type": "string",
+            "example": "noindex, nofollow"
+          }
+        }
+      },
+      "ContentHeading": {
+        "type": "object",
+        "properties": {
+          "level": {
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
         }
       }
     }

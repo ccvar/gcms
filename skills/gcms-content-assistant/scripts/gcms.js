@@ -36,6 +36,7 @@ function usage(code = 2) {
   out("  gcms.js categories <posts|links> [--lang zh|all]");
   out("  gcms.js list <posts|pages|links> [--lang zh|all] [--q text] [--slug slug] [--trans_group group] [--status draft] [--limit 20]");
   out("  gcms.js get <posts|pages|links> <id>");
+  out("  gcms.js preview <posts|links> <id>");
   out("  gcms.js create <posts|pages|links> <json|@file>");
   out("  gcms.js update <posts|pages|links> <id> <json|@file>");
   out("  gcms.js audit <posts|pages|links> [--lang zh|all] [--limit 50] [--deep true]");
@@ -236,6 +237,9 @@ async function doctor() {
       const schemas = openapi.data && openapi.data.components && openapi.data.components.schemas ? openapi.data.components.schemas : {};
       add("openapi_media_path", !!(paths["/media"] && paths["/media"].post));
       add("openapi_media_schema", !!schemas.MediaUploadResponse);
+      add("openapi_post_preview_path", !!(paths["/posts/{id}/preview"] && paths["/posts/{id}/preview"].get));
+      add("openapi_link_preview_path", !!(paths["/links/{id}/preview"] && paths["/links/{id}/preview"].get));
+      add("openapi_preview_schema", !!schemas.ContentPreviewResponse && !!schemas.ContentPreview);
     }
   } catch (err) {
     add("openapi", false, { message: err.message });
@@ -315,6 +319,13 @@ async function main() {
     const [id] = rest;
     if (!id) usage();
     print(await request("GET", "/" + collection + "/" + encodeURIComponent(id)));
+    return;
+  }
+
+  if (cmd === "preview") {
+    const [id] = rest;
+    if (!id || collection === "pages") usage();
+    print(await request("GET", "/" + collection + "/" + encodeURIComponent(id) + "/preview"));
     return;
   }
 
