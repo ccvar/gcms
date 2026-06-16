@@ -1,12 +1,14 @@
 package web
 
 import (
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"cms.ccvar.com/internal/store"
@@ -15,6 +17,84 @@ import (
 type automationAuth struct {
 	key    *store.AutomationKey
 	scopes map[string]bool
+}
+
+const (
+	apiIPRateLimit    = 240
+	apiTokenRateLimit = 120
+	apiRateWindow     = time.Minute
+)
+
+type apiRateLimiter struct {
+	mu   sync.Mutex
+	hits map[string]apiRateEntry
+}
+
+type apiRateEntry struct {
+	count int
+	reset time.Time
+}
+
+func newAPIRateLimiter() *apiRateLimiter {
+	return &apiRateLimiter{hits: map[string]apiRateEntry{}}
+}
+
+func (l *apiRateLimiter) allow(key string, max int, window time.Duration) (time.Duration, bool) {
+	if l == nil || key == "" || max <= 0 {
+		return 0, true
+	}
+	now := time.Now()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	e := l.hits[key]
+	if e.reset.IsZero() || now.After(e.reset) {
+		l.hits[key] = apiRateEntry{count: 1, reset: now.Add(window)}
+		if len(l.hits) > 4096 {
+			for k, v := range l.hits {
+				if now.After(v.reset) {
+					delete(l.hits, k)
+				}
+			}
+		}
+		return 0, true
+	}
+	if e.count >= max {
+		return time.Until(e.reset), false
+	}
+	e.count++
+	l.hits[key] = e
+	return 0, true
+}
+
+func (s *Server) checkAPIRateLimit(w http.ResponseWriter, r *http.Request, token string) bool {
+	if s.apiLimiter == nil {
+		return true
+	}
+	if retry, ok := s.apiLimiter.allow("ip:"+clientIP(r), apiIPRateLimit, apiRateWindow); !ok {
+		apiRateLimitError(w, retry)
+		return false
+	}
+	if token != "" {
+		if retry, ok := s.apiLimiter.allow("token:"+apiTokenRateKey(token), apiTokenRateLimit, apiRateWindow); !ok {
+			apiRateLimitError(w, retry)
+			return false
+		}
+	}
+	return true
+}
+
+func apiTokenRateKey(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return fmt.Sprintf("%x", sum[:8])
+}
+
+func apiRateLimitError(w http.ResponseWriter, retry time.Duration) {
+	if retry < time.Second {
+		retry = time.Second
+	}
+	w.Header().Set("Retry-After", strconv.Itoa(int(retry.Seconds())+1))
+	apiError(w, http.StatusTooManyRequests, "rate_limited", "请求过于频繁，请稍后再试。")
 }
 
 type apiContentInput struct {
@@ -379,6 +459,9 @@ func (s *Server) apiUpdateContent(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) requireAutomationToken(w http.ResponseWriter, r *http.Request) (*automationAuth, bool) {
 	token := apiTokenFromRequest(r)
+	if !s.checkAPIRateLimit(w, r, token) {
+		return nil, false
+	}
 	if token == "" {
 		apiError(w, http.StatusUnauthorized, "missing_token", "缺少访问密钥。")
 		return nil, false

@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"database/sql"
@@ -141,10 +142,33 @@ func (l *loginLimiter) reset(key string) {
 
 // clientIP 取请求来源 IP（用作限流 key）。
 func clientIP(r *http.Request) string {
+	host := r.RemoteAddr
 	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		if forwarded := forwardedClientIP(r, host); forwarded != "" {
+			return forwarded
+		}
 		return host
 	}
+	if forwarded := forwardedClientIP(r, host); forwarded != "" {
+		return forwarded
+	}
 	return r.RemoteAddr
+}
+
+func forwardedClientIP(r *http.Request, remoteHost string) string {
+	ip := net.ParseIP(remoteHost)
+	if ip == nil || !ip.IsLoopback() {
+		return ""
+	}
+	forwarded := firstHeaderValue(r.Header.Get("X-Forwarded-For"))
+	if forwarded == "" {
+		return ""
+	}
+	parsed := net.ParseIP(forwarded)
+	if parsed == nil {
+		return ""
+	}
+	return parsed.String()
 }
 
 func (s *Server) currentSession(r *http.Request) (session, bool) {
@@ -172,14 +196,17 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-func (s *Server) setSessionCookie(w http.ResponseWriter, token string) {
-	// 生产（BASE_URL 为 https）时加 Secure，仅经 HTTPS 传输 Cookie；本地 http 开发不加以免无法登录。
-	secure := strings.HasPrefix(s.baseURL, "https://")
-	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: token, Path: "/", HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode, MaxAge: 86400})
+func (s *Server) secureCookie(r *http.Request) bool {
+	return strings.HasPrefix(s.baseURL, "https://") || requestScheme(r) == "https"
 }
 
-func (s *Server) clearSessionCookie(w http.ResponseWriter) {
-	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: "", Path: "/", HttpOnly: true, MaxAge: -1})
+func (s *Server) setSessionCookie(w http.ResponseWriter, r *http.Request, token string) {
+	// 生产（BASE_URL 为 https，或经 Caddy 传入 X-Forwarded-Proto=https）时加 Secure。
+	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: token, Path: "/", HttpOnly: true, Secure: s.secureCookie(r), SameSite: http.SameSiteLaxMode, MaxAge: 86400})
+}
+
+func (s *Server) clearSessionCookie(w http.ResponseWriter, r *http.Request) {
+	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: "", Path: "/", HttpOnly: true, Secure: s.secureCookie(r), SameSite: http.SameSiteLaxMode, MaxAge: -1})
 }
 
 func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
@@ -355,7 +382,7 @@ func (s *Server) adminLoginPost(w http.ResponseWriter, r *http.Request) {
 			s.serverError(w, err)
 			return
 		}
-		s.setSessionCookie(w, tok)
+		s.setSessionCookie(w, r, tok)
 		http.Redirect(w, r, "/admin", http.StatusSeeOther)
 		return
 	}
@@ -375,7 +402,7 @@ func (s *Server) adminLanguage(w http.ResponseWriter, r *http.Request) {
 		Value:    lang,
 		Path:     "/admin",
 		HttpOnly: true,
-		Secure:   strings.HasPrefix(s.baseURL, "https://"),
+		Secure:   s.secureCookie(r),
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   365 * 24 * 60 * 60,
 	})
@@ -398,7 +425,7 @@ func (s *Server) adminLogout(w http.ResponseWriter, r *http.Request) {
 			s.sess.destroy(c.Value)
 		}
 	}
-	s.clearSessionCookie(w)
+	s.clearSessionCookie(w, r)
 	http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
 }
 
@@ -451,12 +478,22 @@ func (s *Server) adminDashboard(w http.ResponseWriter, r *http.Request) {
 	s.authed(v, sess)
 	v.EditLang = lang
 
-	stats, err := s.adminOverviewStats(lang, v.Admin)
+	contentCounts, err := s.store.AdminContentStatusCounts(lang)
 	if err != nil {
 		s.serverError(w, err)
 		return
 	}
-	tasks, err := s.adminOverviewTasks(lang, v.Admin)
+	contentIssues, err := s.store.AdminContentIssueCounts(lang)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	stats, err := s.adminOverviewStats(lang, v.Admin, contentCounts)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	tasks, err := s.adminOverviewTasks(lang, v.Admin, contentCounts, contentIssues)
 	if err != nil {
 		s.serverError(w, err)
 		return
@@ -518,7 +555,39 @@ func (s *Server) adminPosts(w http.ResponseWriter, r *http.Request) {
 	s.rnd.Admin(w, "posts", http.StatusOK, v)
 }
 
-func (s *Server) adminOverviewStats(lang string, admin *i18n.AdminTr) ([]OverviewStat, error) {
+func overviewStatusCount(counts map[string]store.AdminContentCounts, kind, status string) int {
+	c := counts[kind]
+	switch status {
+	case "":
+		return c.Total
+	case "published":
+		return c.Published
+	case "draft":
+		return c.Draft
+	case "scheduled":
+		return c.Scheduled
+	default:
+		return 0
+	}
+}
+
+func overviewIssueCount(issues map[string]store.AdminContentIssues, kind, issue string) int {
+	item := issues[kind]
+	switch issue {
+	case "missing_cover":
+		return item.MissingCover
+	case "missing_category":
+		return item.MissingCategory
+	case "missing_excerpt":
+		return item.MissingExcerpt
+	case "missing_meta_desc":
+		return item.MissingMetaDesc
+	default:
+		return 0
+	}
+}
+
+func (s *Server) adminOverviewStats(lang string, admin *i18n.AdminTr, counts map[string]store.AdminContentCounts) ([]OverviewStat, error) {
 	specs := []struct {
 		kind  string
 		label string
@@ -531,25 +600,10 @@ func (s *Server) adminOverviewStats(lang string, admin *i18n.AdminTr) ([]Overvie
 	}
 	out := make([]OverviewStat, 0, len(specs))
 	for _, spec := range specs {
-		total, err := s.store.CountAdminContent(spec.kind, lang, "")
-		if err != nil {
-			return nil, err
-		}
-		published, err := s.store.CountAdminContent(spec.kind, lang, "published")
-		if err != nil {
-			return nil, err
-		}
-		draft, err := s.store.CountAdminContent(spec.kind, lang, "draft")
-		if err != nil {
-			return nil, err
-		}
-		scheduled, err := s.store.CountAdminContent(spec.kind, lang, "scheduled")
-		if err != nil {
-			return nil, err
-		}
+		c := counts[spec.kind]
 		out = append(out, OverviewStat{
-			Label: spec.label, Href: spec.href, Icon: spec.icon, Total: total,
-			Published: published, Draft: draft, Scheduled: scheduled,
+			Label: spec.label, Href: spec.href, Icon: spec.icon, Total: c.Total,
+			Published: c.Published, Draft: c.Draft, Scheduled: c.Scheduled,
 		})
 	}
 	out = append(out, OverviewStat{
@@ -561,13 +615,10 @@ func (s *Server) adminOverviewStats(lang string, admin *i18n.AdminTr) ([]Overvie
 	return out, nil
 }
 
-func (s *Server) adminOverviewTasks(lang string, admin *i18n.AdminTr) ([]OverviewTask, error) {
+func (s *Server) adminOverviewTasks(lang string, admin *i18n.AdminTr, counts map[string]store.AdminContentCounts, issues map[string]store.AdminContentIssues) ([]OverviewTask, error) {
 	var out []OverviewTask
 	addCount := func(kind, status, labelKey, labelFallback, hintKey, hintFallback, href, icon, tone string) error {
-		n, err := s.store.CountAdminContent(kind, lang, status)
-		if err != nil {
-			return err
-		}
+		n := overviewStatusCount(counts, kind, status)
 		if n > 0 {
 			out = append(out, OverviewTask{
 				Label: admin.T(labelKey, labelFallback),
@@ -581,10 +632,7 @@ func (s *Server) adminOverviewTasks(lang string, admin *i18n.AdminTr) ([]Overvie
 		return nil
 	}
 	addIssue := func(kind, issue, labelKey, labelFallback, hintKey, hintFallback, href, icon string) error {
-		n, err := s.store.CountAdminContentIssue(kind, lang, issue)
-		if err != nil {
-			return err
-		}
+		n := overviewIssueCount(issues, kind, issue)
 		if n > 0 {
 			out = append(out, OverviewTask{
 				Label: admin.T(labelKey, labelFallback),
@@ -3126,17 +3174,80 @@ func (s *Server) saveUploadFile(file io.Reader, filename string) (uploadResult, 
 	if !allowedUploadExt[ext] {
 		return uploadResult{}, fmt.Errorf("bad_type")
 	}
+	head := make([]byte, 512)
+	n, err := io.ReadFull(file, head)
+	if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
+		return uploadResult{}, fmt.Errorf("write_failed")
+	}
+	head = head[:n]
+	if !validUploadContent(ext, head) {
+		return uploadResult{}, fmt.Errorf("bad_type")
+	}
 	name := randToken()[:20] + ext
 	out, err := os.Create(filepath.Join(s.uploadDir, name))
 	if err != nil {
 		return uploadResult{}, fmt.Errorf("save_failed")
 	}
 	defer out.Close()
-	n, err := io.Copy(out, file)
+	if len(head) > 0 {
+		if _, err := out.Write(head); err != nil {
+			return uploadResult{}, fmt.Errorf("write_failed")
+		}
+	}
+	m, err := io.Copy(out, file)
 	if err != nil {
 		return uploadResult{}, fmt.Errorf("write_failed")
 	}
-	return uploadResult{URL: "/uploads/" + name, Name: name, Size: n}, nil
+	return uploadResult{URL: "/uploads/" + name, Name: name, Size: int64(len(head)) + m}, nil
+}
+
+func validUploadContent(ext string, head []byte) bool {
+	if len(head) == 0 {
+		return false
+	}
+	sniff := http.DetectContentType(head)
+	switch ext {
+	case ".jpg", ".jpeg":
+		return sniff == "image/jpeg"
+	case ".png":
+		return sniff == "image/png"
+	case ".gif":
+		return sniff == "image/gif"
+	case ".webp":
+		return sniff == "image/webp" || isWebP(head)
+	case ".avif":
+		return sniff == "image/avif" || isAVIF(head)
+	case ".ico":
+		return sniff == "image/x-icon" || isICO(head)
+	case ".svg":
+		return isSVG(head)
+	default:
+		return false
+	}
+}
+
+func isWebP(b []byte) bool {
+	return len(b) >= 12 && string(b[:4]) == "RIFF" && string(b[8:12]) == "WEBP"
+}
+
+func isAVIF(b []byte) bool {
+	if len(b) < 12 || string(b[4:8]) != "ftyp" {
+		return false
+	}
+	head := b
+	if len(head) > 64 {
+		head = head[:64]
+	}
+	return bytes.Contains(head, []byte("avif")) || bytes.Contains(head, []byte("avis"))
+}
+
+func isICO(b []byte) bool {
+	return len(b) >= 4 && b[0] == 0 && b[1] == 0 && (b[2] == 1 || b[2] == 2) && b[3] == 0
+}
+
+func isSVG(b []byte) bool {
+	trimmed := bytes.ToLower(bytes.TrimSpace(b))
+	return bytes.HasPrefix(trimmed, []byte("<svg")) || bytes.Contains(trimmed, []byte("<svg"))
 }
 
 // adminUpload 接收 multipart 图片，存到 uploadDir，返回 {"url":"/uploads/<name>"}。

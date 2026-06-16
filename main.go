@@ -55,6 +55,9 @@ func main() {
 		Addr:              addr,
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 	log.Printf("CCVAR 简记 已启动 → http://localhost%s  （后台 /admin）", addr)
 	// 首次启动（播种了演示数据）→ 在控制台醒目打印默认账号密码

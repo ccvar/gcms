@@ -255,6 +255,19 @@ func TestAdminOverviewQueries(t *testing.T) {
 	} else if total != 1 {
 		t.Fatalf("scheduled page total = %d, want 1", total)
 	}
+	counts, err := st.AdminContentStatusCounts(lang)
+	if err != nil {
+		t.Fatalf("admin content status counts: %v", err)
+	}
+	if got := counts["post"]; got.Total != 1 || got.Draft != 1 {
+		t.Fatalf("post counts = %#v, want total=1 draft=1", got)
+	}
+	if got := counts["link"]; got.Total != 1 || got.Published != 1 {
+		t.Fatalf("link counts = %#v, want total=1 published=1", got)
+	}
+	if got := counts["page"]; got.Total != 1 || got.Scheduled != 1 {
+		t.Fatalf("page counts = %#v, want total=1 scheduled=1", got)
+	}
 	if missing, err := st.CountAdminContentIssue("post", lang, "missing_cover"); err != nil {
 		t.Fatalf("count missing post covers: %v", err)
 	} else if missing != 1 {
@@ -269,6 +282,16 @@ func TestAdminOverviewQueries(t *testing.T) {
 		t.Fatalf("count missing link categories: %v", err)
 	} else if missing != 1 {
 		t.Fatalf("missing link categories = %d, want 1", missing)
+	}
+	issues, err := st.AdminContentIssueCounts(lang)
+	if err != nil {
+		t.Fatalf("admin content issue counts: %v", err)
+	}
+	if got := issues["post"]; got.MissingCover != 1 || got.MissingCategory != 1 {
+		t.Fatalf("post issues = %#v, want missing cover/category", got)
+	}
+	if got := issues["link"]; got.MissingCover != 0 || got.MissingCategory != 1 {
+		t.Fatalf("link issues = %#v, want category only", got)
 	}
 	recent, err := st.ListRecentAdminContent(lang, 10)
 	if err != nil {

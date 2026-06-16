@@ -306,6 +306,47 @@ calc_sha256() {
   fi
 }
 
+release_public_key_file() {
+  if [ -n "${GCMS_UPDATE_PUBLIC_KEY:-}" ]; then
+    [ -f "$GCMS_UPDATE_PUBLIC_KEY" ] && { printf '%s' "$GCMS_UPDATE_PUBLIC_KEY"; return 0; }
+    return 2
+  fi
+  for f in "$ROOT/shared/update-public.pem" "$ROOT/scripts/update-public.pem" "$SCRIPT_DIR/update-public.pem"; do
+    [ -n "$f" ] && [ -f "$f" ] && { printf '%s' "$f"; return 0; }
+  done
+  return 1
+}
+
+manifest_signature_url() {
+  url=$1
+  printf '%s.sig' "$url"
+}
+
+verify_manifest_signature() {
+  manifest_url_value=$1
+  manifest=$2
+  work=$3
+  key_status=0
+  pub=$(release_public_key_file) || key_status=$?
+  if [ "$key_status" = "2" ]; then
+    fail_upgrade "GCMS_UPDATE_PUBLIC_KEY 指向的公钥文件不存在：$GCMS_UPDATE_PUBLIC_KEY" "" verify
+  fi
+  if [ "$key_status" != "0" ] || [ -z "$pub" ]; then
+    info "未配置更新公钥，跳过 manifest 签名校验（仍会校验 SHA256）"
+    return 0
+  fi
+  command -v openssl >/dev/null 2>&1 || fail_upgrade "已配置更新公钥，但缺少 openssl，无法校验 manifest 签名" "" verify
+  sig="$work/manifest.json.sig"
+  sig_url=$(manifest_signature_url "$manifest_url_value")
+  write_upgrade_status running verify "" "下载并校验更新清单签名"
+  info "下载更新清单签名：$sig_url"
+  download_file "$sig_url" "$sig" || fail_upgrade "已配置更新公钥，但下载 manifest 签名失败" "" verify
+  if ! openssl dgst -sha256 -verify "$pub" -signature "$sig" "$manifest" >/dev/null 2>&1; then
+    fail_upgrade "manifest 签名校验失败，已停止升级" "" verify
+  fi
+  ok "manifest 签名校验通过"
+}
+
 abs_path() {
   case "$1" in
     /*) printf '%s' "$1" ;;
@@ -491,6 +532,7 @@ upgrade() {
   write_upgrade_status running manifest "$target" "下载更新清单"
   info "下载更新清单：$murl"
   download_file "$murl" "$manifest" || fail_upgrade "下载更新清单失败" "$target" manifest
+  verify_manifest_signature "$murl" "$manifest" "$work"
 
   parsed=$(manifest_asset_info "$manifest" "$current_os" "$current_arch" 2>"$work/manifest.err") || {
     fail_upgrade "$(cat "$work/manifest.err")" "$target" manifest
@@ -620,6 +662,7 @@ CCVAR 简记 CMS · 启停脚本（macOS / Linux）
   CMS_DB=/path/cms.db       数据库路径（发布包默认 shared/data/cms.db，源码模式默认 data/cms.db）
   GO_VERSION=1.23.4         需自动安装 Go 时下载的版本
   GCMS_UPDATE_URL=https://.../manifest.json  自定义更新清单地址
+  GCMS_UPDATE_PUBLIC_KEY=/path/update-public.pem  自定义更新清单签名公钥
   GCMS_RELEASE_REPO=ccvar/gcms-releases      默认公开发布仓库
 EOF
 }

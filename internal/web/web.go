@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -24,18 +25,19 @@ import (
 )
 
 type Server struct {
-	store     *store.Store
-	rnd       *Renderer
-	baseURL   string
-	uploadDir string
-	sess      *sessions
-	login     *loginLimiter
-	i18n      *i18n.Manager
-	mux       *http.ServeMux
-	assetVer  string // 静态资源内容指纹，用作 ?v= 破缓存（资源变更即失效旧缓存）
-	cacheMu   sync.RWMutex
-	content   map[string]contentCacheEntry
-	endpoints map[string]endpointCacheEntry
+	store      *store.Store
+	rnd        *Renderer
+	baseURL    string
+	uploadDir  string
+	sess       *sessions
+	login      *loginLimiter
+	apiLimiter *apiRateLimiter
+	i18n       *i18n.Manager
+	mux        *http.ServeMux
+	assetVer   string // 静态资源内容指纹，用作 ?v= 破缓存（资源变更即失效旧缓存）
+	cacheMu    sync.RWMutex
+	content    map[string]contentCacheEntry
+	endpoints  map[string]endpointCacheEntry
 }
 
 type contentCacheEntry struct {
@@ -50,10 +52,15 @@ type endpointCacheEntry struct {
 	expires     time.Time
 }
 
+const (
+	generatedEndpointCacheControl = "public, max-age=1800"
+	generatedEndpointCacheTTL     = 30 * time.Minute
+)
+
 // assetVersion 取关键静态资源内容的短指纹：内容变了指纹就变，配合长缓存做缓存破坏。
 func assetVersion(fsys fs.FS) string {
 	h := fnv.New64a()
-	for _, p := range []string{"assets/css/style.css", "assets/js/admin.js", "assets/js/site.js"} {
+	for _, p := range []string{"assets/css/style.css", "assets/js/admin.js", "assets/js/site.js", "assets/js/toc.js"} {
 		if b, err := fs.ReadFile(fsys, p); err == nil {
 			_, _ = h.Write(b)
 		}
@@ -491,7 +498,7 @@ func New(st *store.Store, baseURL, uploadDir string, tplFS, assetsFS fs.FS) (*Se
 	}
 	s := &Server{
 		store: st, rnd: rnd, baseURL: baseURL, uploadDir: uploadDir,
-		sess: newSessions(st), login: newLoginLimiter(), i18n: i18n.New(), assetVer: assetVersion(assetsFS),
+		sess: newSessions(st), login: newLoginLimiter(), apiLimiter: newAPIRateLimiter(), i18n: i18n.New(), assetVer: assetVersion(assetsFS),
 		content: map[string]contentCacheEntry{}, endpoints: map[string]endpointCacheEntry{},
 	}
 	s.i18n.LoadCustom(st.Setting("custom_locales")) // 合并后台新增的自定义语种预设
@@ -500,6 +507,60 @@ func New(st *store.Store, baseURL, uploadDir string, tplFS, assetsFS fs.FS) (*Se
 }
 
 func (s *Server) Handler() http.Handler { return s.securityHeaders(s.withLocale(s.mux)) }
+
+func (s *Server) serveUpload(w http.ResponseWriter, r *http.Request) {
+	name, ok := uploadNameFromPath(r.URL.EscapedPath())
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	full := filepath.Join(s.uploadDir, name)
+	info, err := os.Stat(full)
+	if err != nil || info.IsDir() {
+		http.NotFound(w, r)
+		return
+	}
+	http.ServeFile(w, r, full)
+}
+
+func uploadNameFromPath(escapedPath string) (string, bool) {
+	raw := strings.TrimPrefix(escapedPath, "/uploads/")
+	if raw == "" {
+		return "", false
+	}
+	name, err := url.PathUnescape(raw)
+	if err != nil || !validUploadFilename(name) {
+		return "", false
+	}
+	return name, true
+}
+
+func validUploadFilename(name string) bool {
+	if name == "" || name == "." || strings.HasPrefix(name, ".") || strings.Contains(name, "..") || strings.ContainsAny(name, `/\`) {
+		return false
+	}
+	if !allowedUploadExt[strings.ToLower(filepath.Ext(name))] {
+		return false
+	}
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case r == '-' || r == '_' || r == '.':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func (s *Server) assetCacheControl(r *http.Request) string {
+	if s.assetVer != "" && r.URL.Query().Get("v") == s.assetVer {
+		return "public, max-age=31536000, immutable"
+	}
+	return "public, max-age=86400"
+}
 
 // securityHeaders 给所有响应加上基础安全头；并为静态资源/上传文件加缓存，
 // 特别地对 /uploads/（尤其用户上传的 SVG）施加 CSP，杜绝直链访问触发脚本执行（XSS）。
@@ -519,7 +580,7 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 			h.Set("Content-Security-Policy", "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; script-src 'none'; object-src 'none'; base-uri 'none'; sandbox")
 			h.Set("Cache-Control", "public, max-age=2592000")
 		case strings.HasPrefix(p, "/assets/"):
-			h.Set("Cache-Control", "public, max-age=86400")
+			h.Set("Cache-Control", s.assetCacheControl(r))
 		}
 		next.ServeHTTP(w, r)
 	})
@@ -1097,7 +1158,7 @@ func (s *Server) routes(assetsFS fs.FS) {
 
 	// 用户上传（运行时文件，存于磁盘）
 	if s.uploadDir != "" {
-		mux.Handle("GET /uploads/", http.StripPrefix("/uploads/", http.FileServer(http.Dir(s.uploadDir))))
+		mux.HandleFunc("GET /uploads/", s.serveUpload)
 	}
 	mux.HandleFunc("POST /admin/upload", s.requireAuth(s.adminUpload))
 	mux.HandleFunc("POST /admin/render", s.requireAuth(s.adminRender))
@@ -1796,6 +1857,7 @@ func (s *Server) sitemap(w http.ResponseWriter, r *http.Request) {
 	cacheKey := "sitemap:" + baseURL
 	if body, ct, ok := s.cachedEndpoint(cacheKey); ok {
 		w.Header().Set("Content-Type", ct)
+		w.Header().Set("Cache-Control", generatedEndpointCacheControl)
 		_, _ = w.Write(body)
 		return
 	}
@@ -1909,8 +1971,9 @@ func (s *Server) sitemap(w http.ResponseWriter, r *http.Request) {
 
 	b.WriteString("</urlset>\n")
 	body := []byte(b.String())
-	s.setCachedEndpoint(cacheKey, contentType, body, 2*time.Minute)
+	s.setCachedEndpoint(cacheKey, contentType, body, generatedEndpointCacheTTL)
 	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", generatedEndpointCacheControl)
 	_, _ = w.Write(body)
 }
 
@@ -1943,6 +2006,7 @@ func (s *Server) rss(w http.ResponseWriter, r *http.Request) {
 	const contentType = "application/rss+xml; charset=utf-8"
 	if body, ct, ok := s.cachedEndpoint(cacheKey); ok {
 		w.Header().Set("Content-Type", ct)
+		w.Header().Set("Cache-Control", generatedEndpointCacheControl)
 		_, _ = w.Write(body)
 		return
 	}
@@ -1976,8 +2040,9 @@ func (s *Server) rss(w http.ResponseWriter, r *http.Request) {
 	enc.Indent("", "  ")
 	_ = enc.Encode(feed)
 	body := b.Bytes()
-	s.setCachedEndpoint(cacheKey, contentType, body, 2*time.Minute)
+	s.setCachedEndpoint(cacheKey, contentType, body, generatedEndpointCacheTTL)
 	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", generatedEndpointCacheControl)
 	_, _ = w.Write(body)
 }
 

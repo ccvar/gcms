@@ -480,6 +480,14 @@ func (s *Store) createIndexes() error {
 		`CREATE INDEX IF NOT EXISTS idx_posts_featured ON posts(lang, type, status, featured, published_at DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_posts_group ON posts(trans_group)`,
 		`CREATE INDEX IF NOT EXISTS idx_posts_due ON posts(status, published_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_posts_admin_status_updated ON posts(lang, type, status, updated_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_posts_admin_updated ON posts(lang, type, updated_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_posts_recent_updated ON posts(lang, updated_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_posts_automation_updated ON posts(type, updated_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_posts_type_slug ON posts(type, slug)`,
+		`CREATE INDEX IF NOT EXISTS idx_categories_kind_lang_position ON categories(kind, lang, position, id)`,
+		`CREATE INDEX IF NOT EXISTS idx_categories_group ON categories(trans_group)`,
+		`CREATE INDEX IF NOT EXISTS idx_automation_logs_created ON automation_logs(created_at DESC)`,
 	}
 	for _, q := range stmts {
 		if _, err := s.db.Exec(q); err != nil {
@@ -1257,6 +1265,20 @@ func (s *Store) ListAllPosts(lang string) ([]*Post, error) {
 	return s.queryPostSummaries(`WHERE p.type='post' AND p.lang=? ORDER BY p.updated_at DESC`, lang)
 }
 
+type AdminContentCounts struct {
+	Total     int
+	Published int
+	Draft     int
+	Scheduled int
+}
+
+type AdminContentIssues struct {
+	MissingCover    int
+	MissingCategory int
+	MissingExcerpt  int
+	MissingMetaDesc int
+}
+
 func adminContentWhere(kind, lang, status string) (string, []any, error) {
 	switch kind {
 	case "post", "link", "page":
@@ -1303,6 +1325,40 @@ func (s *Store) CountAdminContent(kind, lang, status string) (int, error) {
 	return n, err
 }
 
+func (s *Store) AdminContentStatusCounts(lang string) (map[string]AdminContentCounts, error) {
+	counts := map[string]AdminContentCounts{
+		"post": {},
+		"link": {},
+		"page": {},
+	}
+	rows, err := s.db.Query(`SELECT type,status,COUNT(*) FROM posts
+		WHERE lang=? AND type IN ('post','link','page')
+		GROUP BY type,status`, lang)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var kind, status string
+		var n int
+		if err := rows.Scan(&kind, &status, &n); err != nil {
+			return nil, err
+		}
+		c := counts[kind]
+		c.Total += n
+		switch status {
+		case "published":
+			c.Published += n
+		case "draft":
+			c.Draft += n
+		case "scheduled":
+			c.Scheduled += n
+		}
+		counts[kind] = c
+	}
+	return counts, rows.Err()
+}
+
 // CountAdminContentIssue 统计后台概览中的内容缺项。
 func (s *Store) CountAdminContentIssue(kind, lang, issue string) (int, error) {
 	switch kind {
@@ -1327,6 +1383,35 @@ func (s *Store) CountAdminContentIssue(kind, lang, issue string) (int, error) {
 	var n int
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM posts `+where, args...).Scan(&n)
 	return n, err
+}
+
+func (s *Store) AdminContentIssueCounts(lang string) (map[string]AdminContentIssues, error) {
+	issues := map[string]AdminContentIssues{
+		"post": {},
+		"link": {},
+		"page": {},
+	}
+	rows, err := s.db.Query(`SELECT type,
+			COALESCE(SUM(CASE WHEN TRIM(COALESCE(cover_image,''))='' THEN 1 ELSE 0 END),0),
+			COALESCE(SUM(CASE WHEN category_id IS NULL THEN 1 ELSE 0 END),0),
+			COALESCE(SUM(CASE WHEN TRIM(COALESCE(excerpt,''))='' THEN 1 ELSE 0 END),0),
+			COALESCE(SUM(CASE WHEN TRIM(COALESCE(meta_desc,''))='' THEN 1 ELSE 0 END),0)
+		FROM posts
+		WHERE lang=? AND type IN ('post','link','page')
+		GROUP BY type`, lang)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var kind string
+		var item AdminContentIssues
+		if err := rows.Scan(&kind, &item.MissingCover, &item.MissingCategory, &item.MissingExcerpt, &item.MissingMetaDesc); err != nil {
+			return nil, err
+		}
+		issues[kind] = item
+	}
+	return issues, rows.Err()
 }
 
 // ListRecentAdminContent 返回某语种最近更新的后台内容，含文章、链接和页面。

@@ -24,3 +24,6 @@
 
 # 发布包
 /dist/
+
+# Release workflow 从 Secret 临时写入的更新验签公钥
+/scripts/update-public.pem

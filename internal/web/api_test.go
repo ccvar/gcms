@@ -3,7 +3,6 @@ package web
 import (
 	"bytes"
 	"encoding/json"
-	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -29,6 +28,26 @@ func newTestAutomationServer(t *testing.T, scopes string) (*Server, string) {
 		t.Fatalf("create automation key: %v", err)
 	}
 	return &Server{store: st, i18n: i18n.New(), baseURL: "http://localhost:8080", content: map[string]contentCacheEntry{}}, token
+}
+
+func testWebPBytes() []byte {
+	return []byte("RIFF\x18\x00\x00\x00WEBPVP8 \x00\x00\x00\x00gcms-test")
+}
+
+func TestAssetCacheControlUsesLongCacheForVersionedAssets(t *testing.T) {
+	s := &Server{assetVer: "asset123"}
+	versioned := httptest.NewRequest(http.MethodGet, "/assets/css/style.css?v=asset123", nil)
+	if got, want := s.assetCacheControl(versioned), "public, max-age=31536000, immutable"; got != want {
+		t.Fatalf("versioned cache control = %q, want %q", got, want)
+	}
+	unversioned := httptest.NewRequest(http.MethodGet, "/assets/js/toc.js", nil)
+	if got, want := s.assetCacheControl(unversioned), "public, max-age=86400"; got != want {
+		t.Fatalf("unversioned cache control = %q, want %q", got, want)
+	}
+	staleVersion := httptest.NewRequest(http.MethodGet, "/assets/js/admin.js?v=old", nil)
+	if got, want := s.assetCacheControl(staleVersion), "public, max-age=86400"; got != want {
+		t.Fatalf("stale version cache control = %q, want %q", got, want)
+	}
 }
 
 func TestAPILanguages(t *testing.T) {
@@ -178,7 +197,7 @@ func TestAPIUploadMedia(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create form file: %v", err)
 	}
-	if _, err := io.WriteString(part, "WEBP test image bytes"); err != nil {
+	if _, err := part.Write(testWebPBytes()); err != nil {
 		t.Fatalf("write form file: %v", err)
 	}
 	if err := mw.Close(); err != nil {
@@ -212,6 +231,37 @@ func TestAPIUploadMedia(t *testing.T) {
 	}
 }
 
+func TestSaveUploadRejectsMismatchedContent(t *testing.T) {
+	s := &Server{uploadDir: t.TempDir()}
+	if _, err := s.saveUploadFile(strings.NewReader("not an image"), "fake.webp"); err == nil || err.Error() != "bad_type" {
+		t.Fatalf("saveUploadFile error = %v, want bad_type", err)
+	}
+}
+
+func TestServeUploadRejectsDirectoryListing(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "cover.webp"), testWebPBytes(), 0o644); err != nil {
+		t.Fatalf("write upload fixture: %v", err)
+	}
+	s := &Server{uploadDir: dir}
+
+	for _, path := range []string{"/uploads/", "/uploads/../cover.webp", "/uploads/nested/cover.webp"} {
+		r := httptest.NewRequest(http.MethodGet, path, nil)
+		w := httptest.NewRecorder()
+		s.serveUpload(w, r)
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("%s status = %d, want 404", path, w.Code)
+		}
+	}
+
+	r := httptest.NewRequest(http.MethodGet, "/uploads/cover.webp", nil)
+	w := httptest.NewRecorder()
+	s.serveUpload(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("file status = %d, body = %s", w.Code, w.Body.String())
+	}
+}
+
 func TestAPIUploadMediaRequiresScope(t *testing.T) {
 	s, token := newTestAutomationServer(t, "posts:write")
 	s.uploadDir = t.TempDir()
@@ -222,7 +272,7 @@ func TestAPIUploadMediaRequiresScope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create form file: %v", err)
 	}
-	if _, err := io.WriteString(part, "WEBP test image bytes"); err != nil {
+	if _, err := part.Write(testWebPBytes()); err != nil {
 		t.Fatalf("write form file: %v", err)
 	}
 	if err := mw.Close(); err != nil {

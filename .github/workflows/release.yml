@@ -37,8 +37,12 @@ jobs:
         env:
           VERSION: ${{ github.ref_name }}
           RELEASE_REPO: ${{ env.RELEASE_REPO }}
+          GCMS_RELEASE_PUBLIC_KEY: ${{ secrets.GCMS_RELEASE_PUBLIC_KEY }}
         run: |
           set -e
+          if [ -n "${GCMS_RELEASE_PUBLIC_KEY:-}" ]; then
+            printf '%s\n' "$GCMS_RELEASE_PUBLIC_KEY" > scripts/update-public.pem
+          fi
           sh scripts/package.sh ${{ matrix.goos }} ${{ matrix.goarch }}
           # Windows 额外提供 .zip（更通用），并移除其 tar.gz
           if [ "${{ matrix.goos }}" = "windows" ]; then
@@ -65,10 +69,23 @@ jobs:
       - name: 检查公开仓库发布 Token
         env:
           GCMS_RELEASE_TOKEN: ${{ secrets.GCMS_RELEASE_TOKEN }}
+          GCMS_RELEASE_PUBLIC_KEY: ${{ secrets.GCMS_RELEASE_PUBLIC_KEY }}
+          GCMS_RELEASE_SIGNING_KEY: ${{ secrets.GCMS_RELEASE_SIGNING_KEY }}
         run: |
           if [ -z "$GCMS_RELEASE_TOKEN" ]; then
             echo "::error::请在私有源码仓库配置 GCMS_RELEASE_TOKEN，授予 ${RELEASE_REPO} Contents: Read and write 权限。"
             exit 1
+          fi
+          if [ -n "$GCMS_RELEASE_PUBLIC_KEY" ] && [ -z "$GCMS_RELEASE_SIGNING_KEY" ]; then
+            echo "::error::已配置 GCMS_RELEASE_PUBLIC_KEY，但缺少 GCMS_RELEASE_SIGNING_KEY，无法生成可验证的 manifest 签名。"
+            exit 1
+          fi
+          if [ -z "$GCMS_RELEASE_PUBLIC_KEY" ] && [ -n "$GCMS_RELEASE_SIGNING_KEY" ]; then
+            echo "::error::已配置 GCMS_RELEASE_SIGNING_KEY，但缺少 GCMS_RELEASE_PUBLIC_KEY，发布包不会携带验签公钥。"
+            exit 1
+          fi
+          if [ -z "$GCMS_RELEASE_SIGNING_KEY" ]; then
+            echo "::notice::未配置发布签名 Secret，本次 Release 仅生成 SHA256 校验。"
           fi
 
       - name: 下载全部平台产物
@@ -90,6 +107,7 @@ jobs:
         env:
           VERSION: ${{ github.ref_name }}
           SOURCE_COMMIT: ${{ github.sha }}
+          GCMS_RELEASE_PUBLIC_KEY: ${{ secrets.GCMS_RELEASE_PUBLIC_KEY }}
         run: |
           cd dist
           python3 - <<'PY'
@@ -102,6 +120,7 @@ jobs:
           version = os.environ["VERSION"]
           repo = os.environ["RELEASE_REPO"]
           base = f"https://github.com/{repo}/releases/download/{version}"
+          signing_enabled = bool(os.environ.get("GCMS_RELEASE_PUBLIC_KEY"))
           assets = []
           packages = sorted(list(pathlib.Path(".").glob("*.tar.gz")) + list(pathlib.Path(".").glob("*.zip")))
 
@@ -134,6 +153,9 @@ jobs:
               "source_commit": os.environ["SOURCE_COMMIT"],
               "assets": assets,
           }
+          if signing_enabled:
+              manifest["manifest_signature_url"] = f"{base}/manifest.json.sig"
+              manifest["manifest_signature_algorithm"] = "openssl-sha256-rsa"
           pathlib.Path("manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
           PY
           cat > RELEASE_NOTES.md <<EOF
@@ -142,6 +164,22 @@ jobs:
           此公开仓库只存放已编译二进制、校验文件和更新清单；源码仓库保持私有。
           EOF
           cat manifest.json
+
+      - name: 生成 manifest 签名（可选）
+        env:
+          GCMS_RELEASE_SIGNING_KEY: ${{ secrets.GCMS_RELEASE_SIGNING_KEY }}
+        run: |
+          cd dist
+          if [ -z "${GCMS_RELEASE_SIGNING_KEY:-}" ]; then
+            echo "::notice::跳过 manifest 签名。"
+            exit 0
+          fi
+          key_file="$(mktemp)"
+          printf '%s\n' "$GCMS_RELEASE_SIGNING_KEY" > "$key_file"
+          chmod 600 "$key_file"
+          openssl dgst -sha256 -sign "$key_file" -out manifest.json.sig manifest.json
+          rm -f "$key_file"
+          ls -lh manifest.json.sig
 
       - name: 发布 Release（上传到公开仓库）
         uses: softprops/action-gh-release@v2
@@ -153,9 +191,10 @@ jobs:
           name: ${{ github.ref_name }}
           body_path: dist/RELEASE_NOTES.md
           make_latest: true
-          fail_on_unmatched_files: true
+          fail_on_unmatched_files: false
           files: |
             dist/*.tar.gz
             dist/*.zip
             dist/checksums.txt
             dist/manifest.json
+            dist/manifest.json.sig

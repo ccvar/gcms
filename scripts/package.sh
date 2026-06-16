@@ -63,6 +63,10 @@ ok "已编译 → releases/$VERSION/bin/cms$BINEXT （$(du -h "$RELEASE_DIR/bin/
 # ---- 拷贝启停脚本与默认配置 ----
 cp "$SCRIPT_DIR/cms.sh" "$SCRIPT_DIR/cms.ps1" "$DIR/scripts/"
 cp "$SCRIPT_DIR/cms.sh" "$SCRIPT_DIR/cms.ps1" "$RELEASE_DIR/scripts/"
+if [ -f "$SCRIPT_DIR/update-public.pem" ]; then
+  cp "$SCRIPT_DIR/update-public.pem" "$DIR/scripts/"
+  cp "$SCRIPT_DIR/update-public.pem" "$RELEASE_DIR/scripts/"
+fi
 chmod +x "$DIR/scripts/cms.sh"
 chmod +x "$RELEASE_DIR/scripts/cms.sh"
 sed 's#^CMS_DB=.*#CMS_DB=shared/data/cms.db#' "$SCRIPT_DIR/cms.conf" > "$DIR/shared/cms.conf"
@@ -145,6 +149,8 @@ CCVAR 简记 CMS · 部署包（${NAME}）
   它会读取公开发布仓库的 manifest.json，下载当前平台包，校验 SHA256，
   解压到 releases/<新版本>，备份 shared/data/cms.db，切换 current，
   然后重启并做健康检查。失败时会切回旧版本并恢复数据库备份。
+  如果发布包内存在 scripts/update-public.pem，升级器会先校验 manifest.json.sig，
+  再根据已签名 manifest 里的 SHA256 校验发布包。
 
   后台「设置 → 系统更新」的一键升级按钮也会调用同一个升级器。
   升级状态写入 run/upgrade.json，可用 ./scripts/cms.sh upgrade-status 查看。
