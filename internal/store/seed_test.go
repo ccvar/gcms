@@ -338,18 +338,18 @@ func TestBundledCoverPathsMigrateToWebP(t *testing.T) {
 		t.Fatalf("en editor content did not migrate to english screenshot: %s", enPost.Content)
 	}
 	for key, want := range map[string]string{
-		"site.tagline":         "低配置也能跑的完整内容站",
-		"site.description":     "gcms 适合产品官网、技术文档、资源导航和轻量内容站：单个二进制启动，SQLite 单文件存储，低配 VPS 也能部署；后台、主题、多语种、SEO、在线升级都开箱可用，并支持 AI 协助运营。",
-		"site.hero_eyebrow":    "低配置部署 · SEO 就绪 · 自托管内容站",
-		"site.hero_title":      "小机器，\n也能跑起完整\n内容站",
+		"site.tagline":         "内容发布、搜索增长，一个后台跑通",
+		"site.description":     "gcms 把文章、页面、资源链接、全语种内容、主题、SEO/GEO、在线升级和 AI 自运营接口收进同一个后台；无需搭数据库服务和前端构建环境，一行命令即可部署，1 vCPU / 512MB 内存的小规格 VPS 也能稳定起步。",
+		"site.hero_eyebrow":    "轻部署 · SEO/GEO 就绪 · AI 自运营",
+		"site.hero_title":      "内容发布、\n搜索增长，\n一个后台跑通",
 		"site.share_image":     "/assets/og-cover.webp",
 		"site.share_image::en": "/assets/og-cover-en.webp",
 		"hero.visual":          "image",
 		"hero.image":           "/assets/hero-product-overview-brand.webp",
 		"hero.visual::en":      "image",
 		"hero.image::en":       "/assets/hero-product-overview-brand-en.webp",
-		"site.tagline::en":     "A complete content site that runs on small servers",
-		"site.hero_title::en":  "A small server\ncan run a complete\ncontent site",
+		"site.tagline::en":     "Publish content and grow search from one admin",
+		"site.hero_title::en":  "Publish content,\ngrow search traffic,\nrun it from one admin",
 	} {
 		if got := st.Setting(key); got != want {
 			t.Fatalf("%s = %q, want %q", key, got, want)

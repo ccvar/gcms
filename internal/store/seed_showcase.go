@@ -24,15 +24,15 @@ func seedJSON(v any) string {
 func (s *Store) seedShowcase() error {
 	// ---- 站点身份（产品定位，中英双语）----
 	_ = s.SetSetting("site.name", "gcms")
-	_ = s.SetSetting("site.tagline", "低配置也能跑的完整内容站")
-	_ = s.SetSetting("site.description", "gcms 适合产品官网、技术文档、资源导航和轻量内容站：单个二进制启动，SQLite 单文件存储，低配 VPS 也能部署；后台、主题、多语种、SEO、在线升级都开箱可用，并支持 AI 协助运营。")
-	_ = s.SetSetting("site.hero_eyebrow", "低配置部署 · SEO 就绪 · 自托管内容站")
-	_ = s.SetSetting("site.hero_title", "小机器，\n也能跑起完整\n内容站")
+	_ = s.SetSetting("site.tagline", "内容发布、搜索增长，一个后台跑通")
+	_ = s.SetSetting("site.description", "gcms 把文章、页面、资源链接、全语种内容、主题、SEO/GEO、在线升级和 AI 自运营接口收进同一个后台；无需搭数据库服务和前端构建环境，一行命令即可部署，1 vCPU / 512MB 内存的小规格 VPS 也能稳定起步。")
+	_ = s.SetSetting("site.hero_eyebrow", "轻部署 · SEO/GEO 就绪 · AI 自运营")
+	_ = s.SetSetting("site.hero_title", "内容发布、\n搜索增长，\n一个后台跑通")
 	_ = s.SetSetting("site.footer_note", "gcms · 单文件部署的自托管内容系统")
-	_ = s.SetSetting("site.tagline::en", "A complete content site that runs on small servers")
-	_ = s.SetSetting("site.description::en", "gcms fits product sites, docs, resource directories and lightweight content hubs: one binary, one SQLite file, deployable on a low-end VPS, with admin, themes, multilingual content, SEO, in-app updates and AI-assisted operations out of the box.")
-	_ = s.SetSetting("site.hero_eyebrow::en", "Low-resource deploys · SEO-ready · Self-hosted CMS")
-	_ = s.SetSetting("site.hero_title::en", "A small server\ncan run a complete\ncontent site")
+	_ = s.SetSetting("site.tagline::en", "Publish content and grow search from one admin")
+	_ = s.SetSetting("site.description::en", "gcms brings posts, pages, resource links, multilingual content, themes, SEO/GEO, in-app updates and AI-operation APIs into one lightweight admin. No database server or frontend build pipeline required: deploy with one command and start on a 1 vCPU / 512MB VPS.")
+	_ = s.SetSetting("site.hero_eyebrow::en", "Self-hosted · SEO/GEO-ready · AI operations")
+	_ = s.SetSetting("site.hero_title::en", "Publish content,\ngrow search traffic,\nrun it from one admin")
 	_ = s.SetSetting("site.footer_note::en", "gcms · self-hosted content in one deployable file")
 
 	_ = s.SetSetting("home.featured_title", "先看这几件事")
@@ -223,7 +223,7 @@ func showcasePosts() []seedPost {
 				"",
 				"## 环境要求",
 				"",
-				"gcms 的运行形态很轻，普通低配 VPS 就能承载一个产品官网或资料站：",
+				"gcms 的运行形态很轻，小规格 VPS 就能承载一个产品官网或资料站：",
 				"",
 				"- **CPU**：1 vCPU 即可启动和日常运行；",
 				"- **内存**：512MB 级别机器可以部署，内容量和并发升高后再按需加；",
@@ -308,7 +308,7 @@ func showcasePosts() []seedPost {
 				"",
 				"## Environment requirements",
 				"",
-				"gcms has a lightweight runtime shape, so a low-end VPS is enough for a product site or documentation hub:",
+				"gcms has a lightweight runtime shape, so a small VPS is enough for a product site or documentation hub:",
 				"",
 				"- **CPU**: 1 vCPU is enough to start and run normal content workloads;",
 				"- **Memory**: a 512MB machine can deploy it; scale up only when content volume or traffic requires it;",
@@ -940,15 +940,15 @@ func showcasePosts() []seedPost {
 			),
 		},
 
-		// ===== 11 · 实用教程：AI 协助运营（guides）=====
+		// ===== 11 · 实用教程：AI 运营（guides）=====
 		{
-			Slug: "how-to-ai-content-ops", Title: "怎么把网站内容交给 AI 协助运营？",
+			Slug: "how-to-ai-content-ops", Title: "怎么把网站内容交给 AI 运营？",
 			Excerpt:  "gcms 不直接调用 AI API，而是给 AI 工具一份受限接口：密钥、OpenAPI、助手说明和可写范围都由你控制。",
-			MetaDesc: "用 gcms 自动化接口让 AI 工具协助运营网站内容：创建访问权限、下载 AI 接入包、限制文章页面链接权限，并保持人工审核边界。",
+			MetaDesc: "用 gcms 自动化接口让 AI 工具参与网站内容运营：创建访问权限、下载 AI 接入包、限制文章页面链接权限，并保持人工审核边界。",
 			Keywords: "gcms,AI运营,自动化接口,OpenAPI,API Key,内容运营", Author: "gcms", Cat: "guides", Date: "2026-06-14",
 			Lang: "zh", Group: "g-ai-content-ops", Featured: true, Cover: "/assets/screenshots/automation-api.webp",
 			Content: md(
-				"让 AI 协助运营内容，不等于把后台账号交出去。gcms 的做法是开放一组受限接口，只让外部工具访问文章、页面和链接，并且每个工具单独一条访问权限。",
+				"让 AI 参与内容运营，不等于把后台账号交出去。gcms 的做法是开放一组受限接口，只让外部工具访问文章、页面和链接，并且每个工具单独一条访问权限。",
 				"",
 				"![gcms 后台自动化接口真实截图：文章、链接、页面能力说明，访问权限列表和接入方式](/assets/screenshots/automation-api.webp)",
 				"",
@@ -1249,7 +1249,7 @@ func showcaseAbouts() []seedPost {
 				"- 一键安装：`curl -fsSL https://raw.githubusercontent.com/ccvar/gcms-releases/main/install.sh | sh`",
 				"",
 				"## 环境要求",
-				"gcms 不是重型平台，普通低配服务器就能跑起来，适合先用很小的成本把产品官网、技术文档或资源导航上线。",
+				"gcms 不是重型平台，小规格服务器就能跑起来，适合先用很小的成本把产品官网、技术文档或资源导航上线。",
 				"",
 				"- **CPU**：1 vCPU 即可启动并支撑日常内容发布；",
 				"- **内存**：512MB 级别 VPS 可以部署普通产品官网、文档站或资源导航；",
