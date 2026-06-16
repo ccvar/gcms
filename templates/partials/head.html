@@ -35,6 +35,6 @@
 
   {{range .SEO.JSONLD}}<script type="application/ld+json">{{.}}</script>
   {{end}}
-  <link rel="stylesheet" href="/assets/css/style.css?v={{.AssetVer}}">
+  <link rel="stylesheet" href="/assets/css/public.css?v={{.AssetVer}}">
   {{if .Site.InjectHead}}{{safeHTML .Site.InjectHead}}{{end}}
 {{end}}

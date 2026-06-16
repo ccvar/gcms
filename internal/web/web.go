@@ -35,6 +35,7 @@ type Server struct {
 	i18n       *i18n.Manager
 	mux        *http.ServeMux
 	assetVer   string // 静态资源内容指纹，用作 ?v= 破缓存（资源变更即失效旧缓存）
+	imageSizes map[string]ImageSize
 	cacheMu    sync.RWMutex
 	content    map[string]contentCacheEntry
 	endpoints  map[string]endpointCacheEntry
@@ -60,7 +61,7 @@ const (
 // assetVersion 取关键静态资源内容的短指纹：内容变了指纹就变，配合长缓存做缓存破坏。
 func assetVersion(fsys fs.FS) string {
 	h := fnv.New64a()
-	for _, p := range []string{"assets/css/style.css", "assets/js/admin.js", "assets/js/site.js", "assets/js/toc.js"} {
+	for _, p := range []string{"assets/css/style.css", "assets/css/public.css", "assets/css/admin.css", "assets/js/admin.js", "assets/js/site.js", "assets/js/toc.js"} {
 		if b, err := fs.ReadFile(fsys, p); err == nil {
 			_, _ = h.Write(b)
 		}
@@ -489,7 +490,8 @@ func (s *Server) fillDefaultAuthor(p *store.Post) {
 }
 
 func New(st *store.Store, baseURL, uploadDir string, tplFS, assetsFS fs.FS) (*Server, error) {
-	rnd, err := NewRenderer(tplFS)
+	imageSizes := scanAssetImageSizes(assetsFS)
+	rnd, err := NewRenderer(tplFS, imageSizes)
 	if err != nil {
 		return nil, err
 	}
@@ -498,7 +500,7 @@ func New(st *store.Store, baseURL, uploadDir string, tplFS, assetsFS fs.FS) (*Se
 	}
 	s := &Server{
 		store: st, rnd: rnd, baseURL: baseURL, uploadDir: uploadDir,
-		sess: newSessions(st), login: newLoginLimiter(), apiLimiter: newAPIRateLimiter(), i18n: i18n.New(), assetVer: assetVersion(assetsFS),
+		sess: newSessions(st), login: newLoginLimiter(), apiLimiter: newAPIRateLimiter(), i18n: i18n.New(), assetVer: assetVersion(assetsFS), imageSizes: imageSizes,
 		content: map[string]contentCacheEntry{}, endpoints: map[string]endpointCacheEntry{},
 	}
 	s.i18n.LoadCustom(st.Setting("custom_locales")) // 合并后台新增的自定义语种预设
@@ -1074,7 +1076,7 @@ func (s *Server) renderedContent(p *store.Post) (template.HTML, []Heading) {
 	}
 	s.cacheMu.RUnlock()
 
-	html, toc := RenderContent(p.Content)
+	html, toc := RenderContentWithImages(p.Content, s.imageSizes)
 	s.cacheMu.Lock()
 	if len(s.content) > 512 {
 		s.content = map[string]contentCacheEntry{}

@@ -33,7 +33,7 @@
             </div>
           </header>
 
-          {{if $p.CoverImage}}<img class="article-cover" src="{{$p.CoverImage}}" alt="{{$p.Title}}">{{end}}
+          {{if $p.CoverImage}}<img class="article-cover" src="{{$p.CoverImage}}" alt="{{$p.Title}}" decoding="async" fetchpriority="high"{{imgAttrs $p.CoverImage}}>{{end}}
 
           <div class="prose">
             {{.ContentHTML}}

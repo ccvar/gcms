@@ -5,14 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="robots" content="noindex, nofollow">
   <title>{{.SEO.Title}}</title>
-  <link rel="stylesheet" href="/assets/css/style.css?v={{.AssetVer}}">
+  <link rel="stylesheet" href="/assets/css/admin.css?v={{.AssetVer}}">
 </head>
 <body class="admin" data-csrf="{{.CSRF}}">
   <header class="admin-top">
     <div class="wrap">
       <a class="brand admin-brand{{if and .Site.Logo (ne .Site.Brand "text")}} has-logo{{if eq .Site.Brand "both"}} with-name{{end}}{{end}}" href="/admin">
         {{if and .Site.Logo (ne .Site.Brand "text")}}
-        <img class="brand-logo" src="{{.Site.Logo}}" alt="{{if .Site.Name}}{{.Site.Name}}{{else}}CCVAR{{end}}">
+        <img class="brand-logo" src="{{.Site.Logo}}" alt="{{if .Site.Name}}{{.Site.Name}}{{else}}CCVAR{{end}}" decoding="async"{{imgAttrs .Site.Logo}}>
         {{if eq .Site.Brand "both"}}<span class="brand-name">{{if .Site.Name}}{{.Site.Name}}{{else}}CCVAR{{end}}</span>{{end}}
         {{else}}
         {{if .Site.Name}}{{.Site.Name}}{{else}}CCVAR{{end}}<span class="dot">.</span>

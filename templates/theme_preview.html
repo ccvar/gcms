@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=1120, initial-scale=1">
   <meta name="robots" content="noindex, nofollow">
-  <link rel="stylesheet" href="/assets/css/style.css?v={{.AssetVer}}">
+  <link rel="stylesheet" href="/assets/css/public.css?v={{.AssetVer}}">
   <style>
     html, body { width: 1120px; min-height: 760px; overflow: hidden; }
     body { background: var(--bg); }
@@ -27,7 +27,7 @@
 <body>
   <header class="site-header">
     <div class="wrap">
-      {{if and .Site.Logo (ne .Site.Brand "text")}}<a class="brand has-logo{{if eq .Site.Brand "both"}} with-name{{end}}" href="#"><img class="brand-logo" src="{{.Site.Logo}}" alt="{{.Site.Name}}">{{if eq .Site.Brand "both"}}<span class="brand-name">{{.Site.Name}}</span>{{end}}</a>{{else}}<a class="brand" href="#">{{.Site.Name}}</a>{{end}}
+      {{if and .Site.Logo (ne .Site.Brand "text")}}<a class="brand has-logo{{if eq .Site.Brand "both"}} with-name{{end}}" href="#"><img class="brand-logo" src="{{.Site.Logo}}" alt="{{.Site.Name}}" loading="lazy" decoding="async"{{imgAttrs .Site.Logo}}>{{if eq .Site.Brand "both"}}<span class="brand-name">{{.Site.Name}}</span>{{end}}</a>{{else}}<a class="brand" href="#">{{.Site.Name}}</a>{{end}}
       <nav class="nav" aria-label="{{.Tr.T "common.theme_preview_nav"}}">
         {{range .Menu}}<a href="#">{{.Label}}</a>{{end}}
         <a class="search-ico" href="#" aria-label="{{.Tr.T "nav.search"}}">

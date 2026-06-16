@@ -20,6 +20,8 @@
 #   可用环境变量：VERSION=v1.0.0 ./scripts/package.sh linux amd64
 # =============================================================================
 set -eu
+export LC_ALL=C
+export LANG=C
 
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
@@ -28,6 +30,38 @@ if [ -t 1 ]; then C_OK='\033[32m'; C_ERR='\033[31m'; C_DIM='\033[2m'; C_0='\033[
 info() { printf "%b\n" "${C_DIM}» $*${C_0}"; }
 ok()   { printf "%b\n" "${C_OK}✓ $*${C_0}"; }
 err()  { printf "%b\n" "${C_ERR}✗ $*${C_0}" >&2; }
+
+RESTORE_ASSETS_DIR=
+restore_assets() {
+  if [ -n "${RESTORE_ASSETS_DIR:-}" ] && [ -d "$RESTORE_ASSETS_DIR" ]; then
+    info "恢复未压缩前端资源 …"
+    ( cd "$RESTORE_ASSETS_DIR" && find . -type f | while IFS= read -r f; do
+      src="$RESTORE_ASSETS_DIR/${f#./}"
+      dst="$ROOT/${f#./}"
+      cp "$src" "$dst"
+    done )
+    rm -rf "$RESTORE_ASSETS_DIR"
+    RESTORE_ASSETS_DIR=
+  fi
+}
+trap restore_assets EXIT HUP INT TERM
+
+minify_release_assets() {
+  if [ "${MINIFY_ASSETS:-1}" = "0" ]; then
+    info "跳过 CSS/JS 压缩（MINIFY_ASSETS=0）"
+    return
+  fi
+  if [ ! -d "$ROOT/assets/css" ] && [ ! -d "$ROOT/assets/js" ]; then
+    return
+  fi
+  RESTORE_ASSETS_DIR=$(mktemp -d "${TMPDIR:-/tmp}/gcms-assets.XXXXXX")
+  ( cd "$ROOT" && find assets/css assets/js -type f \( -name '*.css' -o -name '*.js' \) 2>/dev/null | while IFS= read -r f; do
+    mkdir -p "$RESTORE_ASSETS_DIR/$(dirname "$f")"
+    cp "$f" "$RESTORE_ASSETS_DIR/$f"
+  done )
+  info "压缩发布包内 CSS/JS …"
+  ( cd "$ROOT" && go run ./tools/minifyassets )
+}
 
 # ---- 确保有 Go（优先系统，其次项目内 .go/，否则提示）----
 if ! command -v go >/dev/null 2>&1 && [ -x "$ROOT/.go/go/bin/go" ]; then
@@ -55,10 +89,12 @@ rm -rf "$DIR"
 mkdir -p "$RELEASE_DIR/bin" "$RELEASE_DIR/scripts" "$DIR/scripts" "$DIR/shared/data" "$DIR/run" "$DIR/logs" "$DIR/tmp" "$DIR/backups"
 
 # ---- 编译（纯 Go，CGO 关闭，便于交叉编译；裁剪符号表减小体积）----
+minify_release_assets
 info "编译 $GOOS/$GOARCH …"
 ( cd "$ROOT" && CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
     go build -trimpath -ldflags "-s -w -X cms.ccvar.com/internal/version.Version=${VERSION} -X cms.ccvar.com/internal/version.Commit=${COMMIT} -X cms.ccvar.com/internal/version.BuiltAt=${BUILT_AT} -X cms.ccvar.com/internal/version.Repo=${RELEASE_REPO}" -o "$RELEASE_DIR/bin/cms$BINEXT" . )
 ok "已编译 → releases/$VERSION/bin/cms$BINEXT （$(du -h "$RELEASE_DIR/bin/cms$BINEXT" | cut -f1)）"
+restore_assets
 
 # ---- 拷贝启停脚本与默认配置 ----
 cp "$SCRIPT_DIR/cms.sh" "$SCRIPT_DIR/cms.ps1" "$DIR/scripts/"

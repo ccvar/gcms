@@ -3,10 +3,12 @@ package web
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"html/template"
 	"io/fs"
 	"log"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -33,12 +35,37 @@ var gmark = goldmark.New(
 	goldmark.WithParserOptions(parser.WithAutoHeadingID()),
 )
 
-func renderMarkdown(src string) template.HTML {
+var (
+	imgLoadingAttrRE  = regexp.MustCompile(`(?i)\sloading\s*=`)
+	imgDecodingAttrRE = regexp.MustCompile(`(?i)\sdecoding\s*=`)
+	imgWidthAttrRE    = regexp.MustCompile(`(?i)\swidth\s*=`)
+	imgHeightAttrRE   = regexp.MustCompile(`(?i)\sheight\s*=`)
+	imgSrcAttrRE      = regexp.MustCompile(`(?is)\ssrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))`)
+)
+
+func renderMarkdown(src string, imageSizes map[string]ImageSize) template.HTML {
+	source := []byte(src)
+	doc := gmark.Parser().Parse(text.NewReader(source))
+	decorateMarkdownImages(doc)
+
 	var buf bytes.Buffer
-	if err := gmark.Convert([]byte(src), &buf); err != nil {
+	if err := gmark.Renderer().Render(&buf, source, doc); err != nil {
 		return template.HTML(template.HTMLEscapeString(src))
 	}
-	return template.HTML(buf.String())
+	return template.HTML(addImageLoadingHints(buf.String(), imageSizes))
+}
+
+func decorateMarkdownImages(doc ast.Node) {
+	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		if !entering {
+			return ast.WalkContinue, nil
+		}
+		if img, ok := n.(*ast.Image); ok {
+			img.SetAttributeString("loading", []byte("lazy"))
+			img.SetAttributeString("decoding", []byte("async"))
+		}
+		return ast.WalkContinue, nil
+	})
 }
 
 // Heading 是文章大纲中的一个条目。
@@ -51,6 +78,10 @@ type Heading struct {
 // RenderContent 渲染正文并提取 h2/h3 大纲。解析一次，先为每个标题写入「保留中文」
 // 的可读锚点 id，再渲染——这样大纲锚点、正文标题 id、分享链接三者一致且语义清晰。
 func RenderContent(src string) (template.HTML, []Heading) {
+	return RenderContentWithImages(src, nil)
+}
+
+func RenderContentWithImages(src string, imageSizes map[string]ImageSize) (template.HTML, []Heading) {
 	source := []byte(src)
 	doc := gmark.Parser().Parse(text.NewReader(source))
 
@@ -74,6 +105,10 @@ func RenderContent(src string) (template.HTML, []Heading) {
 			h.SetAttributeString("id", []byte(id))
 			toc = append(toc, Heading{Level: h.Level, ID: id, Text: txt})
 		}
+		if img, ok := n.(*ast.Image); ok {
+			img.SetAttributeString("loading", []byte("lazy"))
+			img.SetAttributeString("decoding", []byte("async"))
+		}
 		return ast.WalkContinue, nil
 	})
 
@@ -81,7 +116,99 @@ func RenderContent(src string) (template.HTML, []Heading) {
 	if err := gmark.Renderer().Render(&buf, source, doc); err != nil {
 		return template.HTML(template.HTMLEscapeString(src)), nil
 	}
-	return template.HTML(buf.String()), toc
+	return template.HTML(addImageLoadingHints(buf.String(), imageSizes)), toc
+}
+
+func addImageLoadingHints(html string, imageSizes map[string]ImageSize) string {
+	if !strings.Contains(strings.ToLower(html), "<img") {
+		return html
+	}
+	var out strings.Builder
+	out.Grow(len(html) + 64)
+	for i := 0; i < len(html); {
+		rest := strings.ToLower(html[i:])
+		rel := strings.Index(rest, "<img")
+		if rel < 0 {
+			out.WriteString(html[i:])
+			break
+		}
+		start := i + rel
+		afterName := start + len("<img")
+		if afterName < len(html) && isHTMLNameChar(html[afterName]) {
+			out.WriteString(html[i:afterName])
+			i = afterName
+			continue
+		}
+		end := htmlTagEnd(html, afterName)
+		if end < 0 {
+			out.WriteString(html[i:])
+			break
+		}
+		out.WriteString(html[i:start])
+		out.WriteString(addAttrsToImgTag(html[start:end], imageSizes))
+		out.WriteByte('>')
+		i = end + 1
+	}
+	return out.String()
+}
+
+func addAttrsToImgTag(tag string, imageSizes map[string]ImageSize) string {
+	attrs := ""
+	if !imgLoadingAttrRE.MatchString(tag) {
+		attrs += ` loading="lazy"`
+	}
+	if !imgDecodingAttrRE.MatchString(tag) {
+		attrs += ` decoding="async"`
+	}
+	if size, ok := lookupImageSize(imgTagSrc(tag), imageSizes); ok {
+		if !imgWidthAttrRE.MatchString(tag) {
+			attrs += fmt.Sprintf(` width="%d"`, size.Width)
+		}
+		if !imgHeightAttrRE.MatchString(tag) {
+			attrs += fmt.Sprintf(` height="%d"`, size.Height)
+		}
+	}
+	if attrs == "" {
+		return tag
+	}
+	if strings.HasSuffix(strings.TrimSpace(tag), "/") {
+		slash := strings.LastIndex(tag, "/")
+		if slash > 0 {
+			return strings.TrimRight(tag[:slash], " \t\r\n") + attrs + " /"
+		}
+	}
+	return tag + attrs
+}
+
+func imgTagSrc(tag string) string {
+	m := imgSrcAttrRE.FindStringSubmatch(tag)
+	for i := 1; i < len(m); i++ {
+		if m[i] != "" {
+			return m[i]
+		}
+	}
+	return ""
+}
+
+func htmlTagEnd(s string, start int) int {
+	var quote byte
+	for i := start; i < len(s); i++ {
+		switch c := s[i]; {
+		case quote != 0:
+			if c == quote {
+				quote = 0
+			}
+		case c == '"' || c == '\'':
+			quote = c
+		case c == '>':
+			return i
+		}
+	}
+	return -1
+}
+
+func isHTMLNameChar(c byte) bool {
+	return c == '-' || c == '_' || c == ':' || (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
 }
 
 // slugHeading 生成锚点：保留中日韩文字与字母数字，其余转连字符。
@@ -108,9 +235,16 @@ func slugHeading(s string) string {
 	return strings.Trim(b.String(), "-")
 }
 
-func funcMap() template.FuncMap {
+func funcMap(imageSizes map[string]ImageSize) template.FuncMap {
 	return template.FuncMap{
-		"md": renderMarkdown,
+		"md": func(s string) template.HTML { return renderMarkdown(s, imageSizes) },
+		"imgAttrs": func(src string) template.HTMLAttr {
+			size, ok := lookupImageSize(src, imageSizes)
+			if !ok {
+				return ""
+			}
+			return template.HTMLAttr(fmt.Sprintf(` width="%d" height="%d"`, size.Width, size.Height))
+		},
 		// safeHTML 把可信（后台录入）的字符串作为原始 HTML 输出，用于内联 SVG。
 		"safeHTML": func(s string) template.HTML { return template.HTML(s) },
 		"json": func(v any) string {
@@ -200,7 +334,7 @@ func formatBytes(n int64) string {
 }
 
 // NewRenderer 从 templates 目录解析全部页面模板。
-func NewRenderer(tplFS fs.FS) (*Renderer, error) {
+func NewRenderer(tplFS fs.FS, imageSizes map[string]ImageSize) (*Renderer, error) {
 	sub, err := fs.Sub(tplFS, "templates")
 	if err != nil {
 		return nil, err
@@ -211,21 +345,21 @@ func NewRenderer(tplFS fs.FS) (*Renderer, error) {
 	for _, name := range []string{"home", "article", "category", "links", "link", "page", "search", "api_docs", "404"} {
 		files := append([]string{}, partials...)
 		files = append(files, name+".html")
-		t, err := template.New(name).Funcs(funcMap()).ParseFS(sub, files...)
+		t, err := template.New(name).Funcs(funcMap(imageSizes)).ParseFS(sub, files...)
 		if err != nil {
 			return nil, err
 		}
 		r.sets[name] = t
 	}
 
-	tp, err := template.New("theme_preview").Funcs(funcMap()).ParseFS(sub, "theme_preview.html")
+	tp, err := template.New("theme_preview").Funcs(funcMap(imageSizes)).ParseFS(sub, "theme_preview.html")
 	if err != nil {
 		return nil, err
 	}
 	r.sets["theme_preview"] = tp
 
 	for _, name := range []string{"login", "dashboard", "posts", "edit", "settings", "pages", "links", "visual"} {
-		t, err := template.New("admin_"+name).Funcs(funcMap()).ParseFS(sub, "admin/layout.html", "admin/"+name+".html")
+		t, err := template.New("admin_"+name).Funcs(funcMap(imageSizes)).ParseFS(sub, "admin/layout.html", "admin/"+name+".html")
 		if err != nil {
 			return nil, err
 		}

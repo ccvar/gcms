@@ -3292,7 +3292,7 @@ func (s *Server) adminUpload(w http.ResponseWriter, r *http.Request) {
 // adminRender 把请求体里的 Markdown 渲染成 HTML，供富文本编辑器进入时初始化。
 func (s *Server) adminRender(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
-	html, _ := RenderContent(string(body))
+	html, _ := RenderContentWithImages(string(body), s.imageSizes)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write([]byte(html))
 }
