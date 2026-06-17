@@ -55,6 +55,7 @@ GOOS=linux GOARCH=amd64 go build -o cms .
 | `GCMS_RELEASE_REPO` | `ccvar/gcms-releases` | 后台检查更新使用的公开发布仓库 |
 | `GCMS_UPDATE_URL` | `https://github.com/ccvar/gcms-releases/releases/latest/download/manifest.json` | 自定义更新清单地址，留空则按发布仓库自动拼接 |
 | `GCMS_UPDATE_PUBLIC_KEY` | 空 | 自定义更新清单验签公钥路径。发布包内有 `scripts/update-public.pem` 时无需配置 |
+| `GCMS_UPDATE_REQUIRE_SIGNATURE` | `1` | 是否强制校验 `manifest.json.sig`。标准发布包应保持开启；仅排障时可临时设为 `0` |
 
 ### 使用 Caddy 作为入口
 
@@ -132,7 +133,7 @@ Linux / macOS 发布包已提供手动升级命令：
 ./scripts/cms.sh upgrade-status
 ```
 
-`upgrade` 会读取公开发布仓库的 `manifest.json`，下载当前平台包，校验 SHA256，解压到 `releases/<新版本>`，备份 `shared/data/cms.db`，切换 `current`，然后重启并做健康检查。失败时会切回旧版本并恢复数据库备份。如果发布包内存在 `scripts/update-public.pem`，升级器会先校验 `manifest.json.sig`，再信任清单里的包地址与 SHA256。
+`upgrade` 会读取公开发布仓库的 `manifest.json`，先用发布包内置的 `scripts/update-public.pem`（或 `GCMS_UPDATE_PUBLIC_KEY` 指定的公钥）校验 `manifest.json.sig`，再下载当前平台包、校验 SHA256、检查压缩包路径安全性，解压到 `releases/<新版本>`，备份 `shared/data/cms.db`，切换 `current`，然后重启并做健康检查。失败时会切回旧版本并恢复数据库备份。
 
 后台「设置 → 系统更新」会检查公开发布仓库；当当前运行目录是 Linux / macOS 标准发布包、检测到新版本且当前平台包存在时，可以直接点击「一键升级」。后台升级会调用 `./scripts/cms.sh upgrade`，状态写入 `run/upgrade.json`，详细输出写入 `logs/upgrade-runner.log`。
 
@@ -153,19 +154,19 @@ https://github.com/ccvar/gcms-releases/releases/latest/download/manifest.json
 | Secret | 用途 |
 |--------|------|
 | `GCMS_RELEASE_TOKEN` | GitHub fine-grained token，仅授予公开仓库 `ccvar/gcms-releases` 的 `Contents: Read and write` 权限，用于创建 Release 与上传二进制产物 |
-| `GCMS_RELEASE_SIGNING_KEY` | 可选。RSA 私钥 PEM，用于给 `manifest.json` 生成 `manifest.json.sig` |
-| `GCMS_RELEASE_PUBLIC_KEY` | 可选。与私钥匹配的 RSA 公钥 PEM，会打进发布包的 `scripts/update-public.pem` |
+| `GCMS_RELEASE_SIGNING_KEY` | 必填。RSA 私钥 PEM，用于给 `manifest.json` 生成 `manifest.json.sig` |
+| `GCMS_RELEASE_PUBLIC_KEY` | 必填。与私钥匹配的 RSA 公钥 PEM，会打进发布包的 `scripts/update-public.pem` |
 
 `manifest.json` 是后台升级链路的稳定协议，包含版本号、Release 地址、各平台包的 `os` / `arch` / 下载 URL / SHA256 / 文件大小。这样用户部署环境不需要访问私有源码仓库，也不需要配置 GitHub token。
 
-如果开启发布签名，`GCMS_RELEASE_SIGNING_KEY` 与 `GCMS_RELEASE_PUBLIC_KEY` 必须成对配置。生成方式示例：
+发布签名默认强制开启，`GCMS_RELEASE_SIGNING_KEY` 与 `GCMS_RELEASE_PUBLIC_KEY` 必须成对配置。生成方式示例：
 
 ```bash
 openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out gcms-release-private.pem
 openssl pkey -in gcms-release-private.pem -pubout -out gcms-release-public.pem
 ```
 
-把私钥内容写入 `GCMS_RELEASE_SIGNING_KEY`，公钥内容写入 `GCMS_RELEASE_PUBLIC_KEY`。安装过带公钥发布包的用户，后续升级会强制校验 `manifest.json.sig`；旧安装没有公钥时仍会保留 SHA256 校验，不会被直接阻断。
+把私钥内容写入 `GCMS_RELEASE_SIGNING_KEY`，公钥内容写入 `GCMS_RELEASE_PUBLIC_KEY`。标准发布包会内置公钥，后续升级会强制校验 `manifest.json.sig`；只有排障或私有临时源场景，才建议显式设置 `GCMS_UPDATE_REQUIRE_SIGNATURE=0` 临时跳过签名校验。
 
 公开仓库需要至少有一个 `main` 分支初始提交（例如 README），Release workflow 会把公开仓库里的版本 tag 挂到 `main` 上。
 

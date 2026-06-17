@@ -4,6 +4,8 @@ package web
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/xml"
 	"hash/fnv"
 	"html/template"
@@ -39,6 +41,7 @@ type Server struct {
 	cacheMu    sync.RWMutex
 	content    map[string]contentCacheEntry
 	endpoints  map[string]endpointCacheEntry
+	pages      map[string]pageCacheEntry
 }
 
 type contentCacheEntry struct {
@@ -53,9 +56,20 @@ type endpointCacheEntry struct {
 	expires     time.Time
 }
 
+type pageCacheEntry struct {
+	body        []byte
+	contentType string
+	etag        string
+	expires     time.Time
+}
+
 const (
 	generatedEndpointCacheControl = "public, max-age=1800"
 	generatedEndpointCacheTTL     = 30 * time.Minute
+	publicPageCacheControl        = "public, max-age=0, must-revalidate"
+	publicPageCacheTTL            = 5 * time.Minute
+	publicPageCacheLimit          = 512
+	uploadCacheControl            = "public, max-age=31536000, immutable"
 )
 
 // assetVersion 取关键静态资源内容的短指纹：内容变了指纹就变，配合长缓存做缓存破坏。
@@ -501,14 +515,16 @@ func New(st *store.Store, baseURL, uploadDir string, tplFS, assetsFS fs.FS) (*Se
 	s := &Server{
 		store: st, rnd: rnd, baseURL: baseURL, uploadDir: uploadDir,
 		sess: newSessions(st), login: newLoginLimiter(), apiLimiter: newAPIRateLimiter(), i18n: i18n.New(), assetVer: assetVersion(assetsFS), imageSizes: imageSizes,
-		content: map[string]contentCacheEntry{}, endpoints: map[string]endpointCacheEntry{},
+		content: map[string]contentCacheEntry{}, endpoints: map[string]endpointCacheEntry{}, pages: map[string]pageCacheEntry{},
 	}
 	s.i18n.LoadCustom(st.Setting("custom_locales")) // 合并后台新增的自定义语种预设
 	s.routes(assetsFS)
 	return s, nil
 }
 
-func (s *Server) Handler() http.Handler { return s.securityHeaders(s.withLocale(s.mux)) }
+func (s *Server) Handler() http.Handler {
+	return s.securityHeaders(s.withLocale(s.publicPageCache(s.mux)))
+}
 
 func (s *Server) serveUpload(w http.ResponseWriter, r *http.Request) {
 	name, ok := uploadNameFromPath(r.URL.EscapedPath())
@@ -580,12 +596,22 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 		case strings.HasPrefix(p, "/uploads/"):
 			// 用户上传内容：禁脚本与插件，并禁止被嵌入为顶层文档执行（SVG XSS 防护）
 			h.Set("Content-Security-Policy", "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; script-src 'none'; object-src 'none'; base-uri 'none'; sandbox")
-			h.Set("Cache-Control", "public, max-age=2592000")
+			h.Set("Cache-Control", uploadCacheControl)
 		case strings.HasPrefix(p, "/assets/"):
 			h.Set("Cache-Control", s.assetCacheControl(r))
+		default:
+			h.Set("Content-Security-Policy-Report-Only", cspReportOnly(p))
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func cspReportOnly(path string) string {
+	common := "default-src 'self'; base-uri 'self'; object-src 'none'; form-action 'self'; img-src 'self' data: blob: https:; media-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:;"
+	if strings.HasPrefix(path, "/admin") {
+		return common + " script-src 'self' 'unsafe-inline'; connect-src 'self' https://api.github.com https://github.com; frame-src 'self'; frame-ancestors 'self'"
+	}
+	return common + " script-src 'self' 'unsafe-inline' https://giscus.app; connect-src 'self' https://giscus.app https://api.github.com https://github.com; frame-src 'self' https://giscus.app; frame-ancestors 'self'"
 }
 
 // ---------- 多语种基础设施 ----------
@@ -1086,6 +1112,163 @@ func (s *Server) renderedContent(p *store.Post) (template.HTML, []Heading) {
 	return html, toc
 }
 
+type captureResponseWriter struct {
+	header http.Header
+	status int
+	body   bytes.Buffer
+}
+
+func newCaptureResponseWriter() *captureResponseWriter {
+	return &captureResponseWriter{header: http.Header{}}
+}
+
+func (w *captureResponseWriter) Header() http.Header {
+	return w.header
+}
+
+func (w *captureResponseWriter) WriteHeader(status int) {
+	if w.status == 0 {
+		w.status = status
+	}
+}
+
+func (w *captureResponseWriter) Write(b []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	return w.body.Write(b)
+}
+
+func copyHTTPHeader(dst, src http.Header) {
+	for k, vv := range src {
+		dst[k] = append([]string(nil), vv...)
+	}
+}
+
+func pageCacheETag(body []byte) string {
+	sum := sha256.Sum256(body)
+	return `"` + hex.EncodeToString(sum[:16]) + `"`
+}
+
+func etagMatches(header, etag string) bool {
+	if header == "" || etag == "" {
+		return false
+	}
+	for _, raw := range strings.Split(header, ",") {
+		tag := strings.TrimSpace(raw)
+		if tag == "*" || tag == etag || strings.TrimPrefix(tag, "W/") == etag {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) publicPageCacheKey(r *http.Request) string {
+	var b strings.Builder
+	b.WriteString(langFrom(r))
+	b.WriteByte('|')
+	b.WriteString(s.publicBaseURL(r))
+	b.WriteByte('|')
+	b.WriteString(r.URL.Path)
+	if r.URL.RawQuery != "" {
+		b.WriteByte('?')
+		b.WriteString(r.URL.RawQuery)
+	}
+	b.WriteByte('|')
+	b.WriteString(s.assetVer)
+	return b.String()
+}
+
+func publicPageCacheableRequest(r *http.Request) bool {
+	if r.Method != http.MethodGet || r.Header.Get("Range") != "" {
+		return false
+	}
+	return !isReservedPath(r.URL.Path)
+}
+
+func (s *Server) cachedPage(key string) (pageCacheEntry, bool) {
+	now := time.Now()
+	s.cacheMu.RLock()
+	e, ok := s.pages[key]
+	if ok && now.Before(e.expires) {
+		e.body = append([]byte(nil), e.body...)
+		s.cacheMu.RUnlock()
+		return e, true
+	}
+	s.cacheMu.RUnlock()
+	if ok {
+		s.cacheMu.Lock()
+		if cur, still := s.pages[key]; still && now.After(cur.expires) {
+			delete(s.pages, key)
+		}
+		s.cacheMu.Unlock()
+	}
+	return pageCacheEntry{}, false
+}
+
+func (s *Server) setCachedPage(key string, e pageCacheEntry) {
+	s.cacheMu.Lock()
+	if s.pages == nil || len(s.pages) >= publicPageCacheLimit {
+		s.pages = map[string]pageCacheEntry{}
+	}
+	e.body = append([]byte(nil), e.body...)
+	s.pages[key] = e
+	s.cacheMu.Unlock()
+}
+
+func writeCachedPage(w http.ResponseWriter, r *http.Request, e pageCacheEntry) {
+	w.Header().Set("Content-Type", e.contentType)
+	w.Header().Set("Cache-Control", publicPageCacheControl)
+	w.Header().Set("ETag", e.etag)
+	if etagMatches(r.Header.Get("If-None-Match"), e.etag) {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(e.body)
+}
+
+func (s *Server) publicPageCache(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !publicPageCacheableRequest(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		key := s.publicPageCacheKey(r)
+		if e, ok := s.cachedPage(key); ok {
+			writeCachedPage(w, r, e)
+			return
+		}
+
+		cw := newCaptureResponseWriter()
+		next.ServeHTTP(cw, r)
+		status := cw.status
+		if status == 0 {
+			status = http.StatusOK
+		}
+		body := cw.body.Bytes()
+		contentType := cw.Header().Get("Content-Type")
+		if contentType == "" {
+			contentType = "text/html; charset=utf-8"
+		}
+
+		copyHTTPHeader(w.Header(), cw.Header())
+		if status == http.StatusOK && strings.HasPrefix(strings.ToLower(contentType), "text/html") && cw.Header().Get("Set-Cookie") == "" && !strings.Contains(strings.ToLower(cw.Header().Get("Cache-Control")), "no-store") {
+			etag := pageCacheETag(body)
+			w.Header().Set("Content-Type", contentType)
+			w.Header().Set("Cache-Control", publicPageCacheControl)
+			w.Header().Set("ETag", etag)
+			s.setCachedPage(key, pageCacheEntry{body: body, contentType: contentType, etag: etag, expires: time.Now().Add(publicPageCacheTTL)})
+			if etagMatches(r.Header.Get("If-None-Match"), etag) {
+				w.WriteHeader(http.StatusNotModified)
+				return
+			}
+		}
+		w.WriteHeader(status)
+		_, _ = w.Write(body)
+	})
+}
+
 func (s *Server) cachedEndpoint(key string) ([]byte, string, bool) {
 	now := time.Now()
 	s.cacheMu.RLock()
@@ -1116,6 +1299,7 @@ func (s *Server) clearGeneratedCaches() {
 	s.cacheMu.Lock()
 	s.content = map[string]contentCacheEntry{}
 	s.endpoints = map[string]endpointCacheEntry{}
+	s.pages = map[string]pageCacheEntry{}
 	s.cacheMu.Unlock()
 }
 

@@ -322,6 +322,13 @@ manifest_signature_url() {
   printf '%s.sig' "$url"
 }
 
+update_signature_required() {
+  case "${GCMS_UPDATE_REQUIRE_SIGNATURE:-1}" in
+    0|false|FALSE|no|NO) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
 verify_manifest_signature() {
   manifest_url_value=$1
   manifest=$2
@@ -332,7 +339,10 @@ verify_manifest_signature() {
     fail_upgrade "GCMS_UPDATE_PUBLIC_KEY 指向的公钥文件不存在：$GCMS_UPDATE_PUBLIC_KEY" "" verify
   fi
   if [ "$key_status" != "0" ] || [ -z "$pub" ]; then
-    info "未配置更新公钥，跳过 manifest 签名校验（仍会校验 SHA256）"
+    if update_signature_required; then
+      fail_upgrade "未找到更新验签公钥，已停止升级。标准发布包应包含 scripts/update-public.pem；如需临时跳过验签，请显式设置 GCMS_UPDATE_REQUIRE_SIGNATURE=0。" "" verify
+    fi
+    info "已显式关闭 manifest 签名要求，跳过签名校验（仍会校验 SHA256）"
     return 0
   fi
   command -v openssl >/dev/null 2>&1 || fail_upgrade "已配置更新公钥，但缺少 openssl，无法校验 manifest 签名" "" verify
@@ -345,6 +355,18 @@ verify_manifest_signature() {
     fail_upgrade "manifest 签名校验失败，已停止升级" "" verify
   fi
   ok "manifest 签名校验通过"
+}
+
+validate_tar_paths() {
+  file=$1
+  tar -tzf "$file" | while IFS= read -r entry; do
+    case "$entry" in
+      ""|/*|..|../*|*/../*|*/..|*\\*)
+        printf '%s\n' "$entry" >&2
+        exit 1
+        ;;
+    esac
+  done
 }
 
 abs_path() {
@@ -576,6 +598,7 @@ upgrade() {
   extract_dir="$work/extract"
   mkdir -p "$extract_dir"
   write_upgrade_status running extract "$new_version" "解压发布包"
+  validate_tar_paths "$pkg" || fail_upgrade "发布包包含不安全路径，已停止解压" "$new_version" extract
   tar -xzf "$pkg" -C "$extract_dir" || fail_upgrade "解压发布包失败" "$new_version" extract
   extracted_root=$(find "$extract_dir" -mindepth 1 -maxdepth 1 -type d | head -n 1)
   [ -n "$extracted_root" ] || fail_upgrade "发布包结构异常：缺少根目录" "$new_version" extract
@@ -651,7 +674,7 @@ CCVAR 简记 CMS · 启停脚本（macOS / Linux）
 说明：
   · 仅 build、以及「尚无二进制时的 start」会触发编译；其余命令不编译。
   · 发布包默认运行 current/bin/cms，数据保存在 shared/data/，版本保存在 releases/。
-  · upgrade 会下载 manifest、校验 SHA256、备份数据库、切换 current，并在失败时回滚。
+  · upgrade 会校验 manifest 签名、校验 SHA256、备份数据库、切换 current，并在失败时回滚。
   · 每次 start 会清空旧日志，只保留本次运行日志（logs/cms.log）。
 
 配置：发布包默认读取 shared/cms.conf，源码模式默认读取 scripts/cms.conf。
@@ -663,6 +686,7 @@ CCVAR 简记 CMS · 启停脚本（macOS / Linux）
   GO_VERSION=1.23.4         需自动安装 Go 时下载的版本
   GCMS_UPDATE_URL=https://.../manifest.json  自定义更新清单地址
   GCMS_UPDATE_PUBLIC_KEY=/path/update-public.pem  自定义更新清单签名公钥
+  GCMS_UPDATE_REQUIRE_SIGNATURE=0            临时关闭 manifest 签名强校验（排障时使用）
   GCMS_RELEASE_REPO=ccvar/gcms-releases      默认公开发布仓库
 EOF
 }
