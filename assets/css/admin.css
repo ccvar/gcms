@@ -404,9 +404,11 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 2.5rem 0; }
 body.admin { background: var(--line-soft); }
 .admin-top { background: var(--surface); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 50; }
 .admin-top .wrap { display: flex; align-items: center; justify-content: space-between; height: 60px; }
-.admin-brand { align-items: center; }
-.admin-brand.has-logo { gap: .55rem; }
-.admin-brand .brand-logo { height: 32px; max-width: 160px; }
+.admin-brand.brand { align-items: center; gap: .5rem; line-height: 1; flex: 0 0 auto; }
+.admin-brand.has-logo { gap: .5rem; }
+.admin-brand .brand-logo { height: 32px; width: auto; max-width: 150px; display: block; flex: none; object-fit: contain; }
+.admin-brand .brand-name { font-family: var(--sans); font-size: 1rem; font-weight: 700; letter-spacing: 0; }
+.admin-brand small { flex: none; white-space: nowrap; line-height: 1; }
 .admin-brand.has-logo small { margin-left: .05rem; }
 .admin-nav { display: flex; align-items: center; gap: .25rem; }
 .admin-nav a { display: inline-flex; align-items: center; gap: .32rem; color: var(--ink-soft); font-size: .9rem; padding: .4rem .7rem; border-radius: 7px; }
