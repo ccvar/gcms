@@ -37,6 +37,7 @@ function usage(code = 2) {
   out("  gcms.js list <posts|pages|links> [--lang zh|all] [--q text] [--slug slug] [--trans_group group] [--status draft] [--limit 20]");
   out("  gcms.js get <posts|pages|links> <id>");
   out("  gcms.js preview <posts|links> <id>");
+  out("  gcms.js preview-url <posts|links> <id>");
   out("  gcms.js create <posts|pages|links> <json|@file>");
   out("  gcms.js update <posts|pages|links> <id> <json|@file>");
   out("  gcms.js audit <posts|pages|links> [--lang zh|all] [--limit 50] [--deep true]");
@@ -326,6 +327,13 @@ async function main() {
     const [id] = rest;
     if (!id || collection === "pages") usage();
     print(await request("GET", "/" + collection + "/" + encodeURIComponent(id) + "/preview"));
+    return;
+  }
+
+  if (cmd === "preview-url") {
+    const [id] = rest;
+    if (!id || collection === "pages") usage();
+    print(await request("POST", "/" + collection + "/" + encodeURIComponent(id) + "/preview-url"));
     return;
   }
 

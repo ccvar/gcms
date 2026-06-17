@@ -1450,6 +1450,55 @@ func (s *Server) adminContentPreview(w http.ResponseWriter, r *http.Request, typ
 		s.notFound(w, r)
 		return
 	}
+	s.renderContentPreviewPage(w, r, p, typ)
+}
+
+func (s *Server) frontendPreviewContent(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Robots-Tag", "noindex, nofollow")
+
+	collection := r.PathValue("collection")
+	kind, ok := apiContentKind(collection)
+	if !ok || (collection != "posts" && collection != "links") {
+		s.notFound(w, r)
+		return
+	}
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		s.notFound(w, r)
+		return
+	}
+	claims, state := s.verifyFrontendPreviewToken(strings.TrimSpace(r.URL.Query().Get("token")))
+	if state == "expired" {
+		http.Error(w, "预览链接已过期，请重新生成。", http.StatusGone)
+		return
+	}
+	if state != "" || claims.Collection != collection || claims.ID != id {
+		s.notFound(w, r)
+		return
+	}
+	p, err := s.store.GetPostByID(id)
+	if err != nil {
+		http.Error(w, "读取预览内容失败。", http.StatusInternalServerError)
+		return
+	}
+	if p == nil || p.Type != kind {
+		s.notFound(w, r)
+		return
+	}
+	if claims.Revision != "" {
+		if claims.Revision != previewRevision(p) {
+			http.Error(w, "内容已更新，请重新生成预览链接。", http.StatusGone)
+			return
+		}
+	} else if claims.Updated != previewUpdatedUnix(p) {
+		http.Error(w, "内容已更新，请重新生成预览链接。", http.StatusGone)
+		return
+	}
+	s.renderContentPreviewPage(w, r, p, kind)
+}
+
+func (s *Server) renderContentPreviewPage(w http.ResponseWriter, r *http.Request, p *store.Post, typ string) {
 	preview := *p
 	if preview.PublishedAt.IsZero() {
 		preview.PublishedAt = preview.UpdatedAt

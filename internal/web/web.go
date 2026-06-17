@@ -828,10 +828,10 @@ func isLocalBaseURL(raw string) bool {
 	}
 }
 
-// 这些路径不参与语种前缀：后台、静态资源、上传、全局 SEO 端点。
+// 这些路径不参与语种前缀：后台、静态资源、上传、临时预览、全局 SEO 端点。
 func isReservedPath(p string) bool {
 	switch {
-	case strings.HasPrefix(p, "/admin"), strings.HasPrefix(p, "/api/"), strings.HasPrefix(p, "/assets/"), strings.HasPrefix(p, "/uploads/"):
+	case strings.HasPrefix(p, "/admin"), strings.HasPrefix(p, "/api/"), strings.HasPrefix(p, "/assets/"), strings.HasPrefix(p, "/uploads/"), strings.HasPrefix(p, "/preview/"):
 		return true
 	case p == "/robots.txt", p == "/sitemap.xml", p == "/favicon.ico":
 		return true
@@ -1357,8 +1357,12 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("GET /api/admin/v1/{collection}", s.apiListContent)
 	mux.HandleFunc("POST /api/admin/v1/{collection}", s.apiCreateContent)
 	mux.HandleFunc("GET /api/admin/v1/{collection}/{id}/preview", s.apiPreviewContent)
+	mux.HandleFunc("POST /api/admin/v1/{collection}/{id}/preview-url", s.apiCreatePreviewURL)
 	mux.HandleFunc("GET /api/admin/v1/{collection}/{id}", s.apiGetContent)
 	mux.HandleFunc("PATCH /api/admin/v1/{collection}/{id}", s.apiUpdateContent)
+
+	// 临时前台预览：由自动化 API 生成短期签名 URL，渲染真实前台模板但不索引、不缓存。
+	mux.HandleFunc("GET /preview/{collection}/{id}", s.frontendPreviewContent)
 
 	// 后台
 	mux.HandleFunc("GET /admin/login", s.adminLoginForm)

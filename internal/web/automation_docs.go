@@ -137,6 +137,9 @@ func automationOpenAPISpec(apiBase string) map[string]any {
 			paths["/"+col.path+"/{id}/preview"] = map[string]any{
 				"get": automationPreviewOperation(col),
 			}
+			paths["/"+col.path+"/{id}/preview-url"] = map[string]any{
+				"post": automationPreviewURLOperation(col),
+			}
 		}
 	}
 	return map[string]any{
@@ -251,11 +254,22 @@ func automationUpdateOperation(col automationCollection) map[string]any {
 func automationPreviewOperation(col automationCollection) map[string]any {
 	return map[string]any{
 		"summary":     "预览" + col.label + "草稿",
-		"description": "读取文章或链接的预览结果，返回内容字段、渲染后的正文 HTML、目录和正式 URL。用于发布前复核草稿，权限同读取接口。",
+		"description": "读取文章或链接的预览结果，返回内容字段、渲染后的正文 HTML、目录、正式 URL 和短期前台预览 URL。用于发布前复核草稿，权限同读取接口。",
 		"operationId": "preview" + automationOperationSuffix(col.path),
 		"tags":        []string{col.label},
 		"parameters":  []map[string]any{automationIDParam()},
 		"responses":   automationResponses("ContentPreviewResponse"),
+	}
+}
+
+func automationPreviewURLOperation(col automationCollection) map[string]any {
+	return map[string]any{
+		"summary":     "生成" + col.label + "前台预览链接",
+		"description": "生成短期有效的签名前台预览 URL。打开后使用真实前台模板渲染草稿，不需要登录后台；页面强制 noindex 且不缓存。",
+		"operationId": "create" + automationOperationSuffix(col.path) + "PreviewURL",
+		"tags":        []string{col.label},
+		"parameters":  []map[string]any{automationIDParam()},
+		"responses":   automationResponses("PreviewURLResponse"),
 	}
 }
 
@@ -398,15 +412,28 @@ func automationOpenAPISchemas() map[string]any {
 		"ContentPreview": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"item":         map[string]any{"$ref": "#/components/schemas/ContentItem"},
-				"preview_url":  map[string]any{"type": "string", "description": "当前 API 预览接口地址。调用时仍需传入访问密钥。"},
-				"public_url":   map[string]any{"type": "string", "description": "内容发布后的正式前台地址。草稿状态下不一定可公开访问。"},
-				"content_html": map[string]any{"type": "string", "description": "正文 Markdown 渲染后的 HTML，便于 AI 或外部工具做发布前复核。"},
+				"item":        map[string]any{"$ref": "#/components/schemas/ContentItem"},
+				"preview_url": map[string]any{"type": "string", "description": "当前 API 预览接口地址。调用时仍需传入访问密钥。"},
+				"frontend_preview_url": map[string]any{
+					"type":        "string",
+					"description": "短期有效的前台预览地址。可直接在浏览器打开，使用真实前台模板渲染草稿。",
+				},
+				"frontend_preview_expires_at": map[string]any{"type": "string", "description": "前台预览地址过期时间。"},
+				"public_url":                  map[string]any{"type": "string", "description": "内容发布后的正式前台地址。草稿状态下不一定可公开访问。"},
+				"content_html":                map[string]any{"type": "string", "description": "正文 Markdown 渲染后的 HTML，便于 AI 或外部工具做发布前复核。"},
 				"toc": map[string]any{
 					"type":  "array",
 					"items": map[string]any{"$ref": "#/components/schemas/ContentHeading"},
 				},
 				"robots": map[string]any{"type": "string", "example": "noindex, nofollow"},
+			},
+		},
+		"PreviewURLResponse": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"preview_url": map[string]any{"type": "string"},
+				"expires_at":  map[string]any{"type": "string"},
+				"ttl_seconds": map[string]any{"type": "integer"},
 			},
 		},
 		"ContentHeading": map[string]any{
@@ -648,7 +675,7 @@ func automationKitReadme(opts automationSkillOptions) string {
 		"- 创建一条链接草稿，链接地址是我给的 URL；先查询链接分类并写入合适的 `category_id`，补充摘要、正文介绍、SEO 描述和封面图。",
 		"- 先读取启用语种，再读取目标内容的 `trans_group`，找出同组中文和英文版本；分别按各自语言优化标题、摘要和 SEO 描述。",
 		"- 发布前复核指定草稿是否具备发布条件，包括标题、slug、摘要、SEO 描述、关键词、分类、封面图、正文结构和多语种关联；只给意见，不要发布。",
-		"- 发布前调用 `GET /posts/{id}/preview` 或 `GET /links/{id}/preview`，检查草稿渲染后的正文 HTML、目录和正式 URL，再给复核意见。",
+		"- 发布前调用 `GET /posts/{id}/preview` 或 `GET /links/{id}/preview`，检查草稿渲染后的正文 HTML、目录和正式 URL；需要浏览器复核时调用 `POST /posts/{id}/preview-url` 或 `POST /links/{id}/preview-url` 生成短期前台预览链接。",
 		"- 只有我明确说“发布这篇”时，才回读目标 ID 和当前状态，确认具备 `publish` 权限后改为 `published`；完成后报告 ID、语种、URL 和改动字段。",
 		"- 如果接口返回权限不足、分类不存在、图片上传失败或找不到目标内容，停止后续写入动作，把错误、已完成步骤和需要补充的信息列出来。",
 		"",
@@ -662,7 +689,7 @@ func automationKitReadme(opts automationSkillOptions) string {
 		"- 第一次接入、改过权限或接口异常时，先运行 `node scripts/gcms.js doctor`。",
 		"- 默认让 AI 创建或修改草稿，发布前先人工审核。",
 		"- 修改指定内容时，让 AI 先查 id，再按 id 更新。",
-		"- 发布前复核文章或链接草稿时，让 AI 用 `/posts/{id}/preview` 或 `/links/{id}/preview` 查看渲染后的正文 HTML。",
+		"- 发布前复核文章或链接草稿时，让 AI 用 `/posts/{id}/preview` 或 `/links/{id}/preview` 查看渲染后的正文 HTML；需要打开真实前台页面时，用 `/posts/{id}/preview-url` 或 `/links/{id}/preview-url` 生成短期签名链接。",
 		"- 设置分类前，让 AI 先用 `/posts/categories` 或 `/links/categories` 查询可用分类 ID。",
 		"- 设置封面或正文图片前，让 AI 先用 `POST /media` 上传文件，拿返回的 `url` 再写入 `cover_image` 或 Markdown 图片。",
 		"- 更新全部语种时，让 AI 先用 `/languages` 确认启用语种，再按 `trans_group` 找到同组内容，逐条更新各语种 id。",
@@ -727,6 +754,7 @@ func automationSkillMarkdown(apiBase string) string {
 		"- `multilingual`：先查语种和 `trans_group`，逐条处理各语种版本。",
 		"- `publish-review`：发布前复核；只有用户明确要求且权限允许才发布。",
 		"- `preview`：发布前读取文章或链接预览，检查渲染后的正文 HTML、目录和正式 URL。",
+		"- `preview-url`：生成短期有效的前台预览链接，用真实前台模板复核草稿。",
 		"",
 		"## 工作规则",
 		"",
@@ -739,7 +767,7 @@ func automationSkillMarkdown(apiBase string) string {
 		"7. 不要把一个语种的正文直接覆盖到其它语种，除非用户明确要求这么做。",
 		"8. 默认只创建或修改草稿。",
 		"9. 只有用户明确要求发布，并且访问密钥有对应资源的发布权限，才设置 `status` 为 `published` 或 `scheduled`。",
-		"10. 发布前优先用 `GET /posts/{id}/preview` 或 `GET /links/{id}/preview` 复核草稿渲染结果。",
+		"10. 发布前优先用 `GET /posts/{id}/preview` 或 `GET /links/{id}/preview` 复核草稿渲染结果；需要浏览器复核时再生成 `preview-url`。",
 		"11. 完成后告诉用户变更了哪些内容、对应 id、语种、状态，以及建议人工复核的点。",
 		"",
 		"## 推荐脚本",
@@ -755,6 +783,7 @@ func automationSkillMarkdown(apiBase string) string {
 		"- `node scripts/gcms.js list posts --lang all --trans_group 分组值`",
 		"- `node scripts/gcms.js get posts 123`",
 		"- `node scripts/gcms.js preview posts 123`",
+		"- `node scripts/gcms.js preview-url posts 123`",
 		"- `node scripts/gcms.js preview links 123`",
 		"- `node scripts/gcms.js create posts '{\"title\":\"标题\",\"content\":\"正文\",\"lang\":\"zh\",\"status\":\"draft\"}'`",
 		"- `node scripts/gcms.js update posts 123 '{\"title\":\"新标题\"}'`",
@@ -820,6 +849,7 @@ function usage(code = 2) {
   out("  gcms.js list <posts|pages|links> [--lang zh|all] [--q text] [--slug slug] [--trans_group group] [--status draft] [--limit 20]");
   out("  gcms.js get <posts|pages|links> <id>");
   out("  gcms.js preview <posts|links> <id>");
+  out("  gcms.js preview-url <posts|links> <id>");
   out("  gcms.js create <posts|pages|links> <json|@file>");
   out("  gcms.js update <posts|pages|links> <id> <json|@file>");
   out("  gcms.js audit <posts|pages|links> [--lang zh|all] [--limit 50] [--deep true]");
@@ -1109,6 +1139,13 @@ async function main() {
     const [id] = rest;
     if (!id || collection === "pages") usage();
     print(await request("GET", "/" + collection + "/" + encodeURIComponent(id) + "/preview"));
+    return;
+  }
+
+  if (cmd === "preview-url") {
+    const [id] = rest;
+    if (!id || collection === "pages") usage();
+    print(await request("POST", "/" + collection + "/" + encodeURIComponent(id) + "/preview-url"));
     return;
   }
 

@@ -1,11 +1,14 @@
 package web
 
 import (
+	"crypto/hmac"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -161,12 +164,14 @@ type apiContentItem struct {
 }
 
 type apiContentPreview struct {
-	Item        apiContentItem `json:"item"`
-	PreviewURL  string         `json:"preview_url"`
-	PublicURL   string         `json:"public_url"`
-	ContentHTML string         `json:"content_html"`
-	TOC         []apiHeading   `json:"toc,omitempty"`
-	Robots      string         `json:"robots"`
+	Item                     apiContentItem `json:"item"`
+	PreviewURL               string         `json:"preview_url"`
+	FrontendPreviewURL       string         `json:"frontend_preview_url,omitempty"`
+	FrontendPreviewExpiresAt string         `json:"frontend_preview_expires_at,omitempty"`
+	PublicURL                string         `json:"public_url"`
+	ContentHTML              string         `json:"content_html"`
+	TOC                      []apiHeading   `json:"toc,omitempty"`
+	Robots                   string         `json:"robots"`
 }
 
 type apiHeading struct {
@@ -174,6 +179,25 @@ type apiHeading struct {
 	ID    string `json:"id"`
 	Text  string `json:"text"`
 }
+
+type apiPreviewURLResponse struct {
+	PreviewURL string `json:"preview_url"`
+	ExpiresAt  string `json:"expires_at"`
+	TTLSeconds int64  `json:"ttl_seconds"`
+}
+
+type frontendPreviewClaims struct {
+	Collection string `json:"collection"`
+	ID         int64  `json:"id"`
+	Expires    int64  `json:"exp"`
+	Updated    int64  `json:"updated"`
+	Revision   string `json:"rev,omitempty"`
+}
+
+const (
+	frontendPreviewTTL           = 2 * time.Hour
+	frontendPreviewSecretSetting = "preview.secret"
+)
 
 func (s *Server) apiLanguages(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requireAutomationScope(w, r, "languages:read"); !ok {
@@ -346,15 +370,45 @@ func (s *Server) apiPreviewContent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	html, toc := s.renderedContent(&preview)
+	frontendURL, frontendExp, _ := s.frontendPreviewURL(r, collection, &preview, time.Now().Add(frontendPreviewTTL))
 	writeJSON(w, http.StatusOK, map[string]any{
 		"preview": apiContentPreview{
-			Item:        s.apiContentItem(&preview, true),
-			PreviewURL:  s.absForRequest(r, fmt.Sprintf("/api/admin/v1/%s/%d/preview", collection, preview.ID)),
-			PublicURL:   s.absForRequest(r, s.apiContentURL(&preview)),
-			ContentHTML: string(html),
-			TOC:         apiHeadings(toc),
-			Robots:      "noindex, nofollow",
+			Item:                     s.apiContentItem(&preview, true),
+			PreviewURL:               s.absForRequest(r, fmt.Sprintf("/api/admin/v1/%s/%d/preview", collection, preview.ID)),
+			FrontendPreviewURL:       frontendURL,
+			FrontendPreviewExpiresAt: apiTime(frontendExp),
+			PublicURL:                s.absForRequest(r, s.apiContentURL(&preview)),
+			ContentHTML:              string(html),
+			TOC:                      apiHeadings(toc),
+			Robots:                   "noindex, nofollow",
 		},
+	})
+}
+
+func (s *Server) apiCreatePreviewURL(w http.ResponseWriter, r *http.Request) {
+	collection := r.PathValue("collection")
+	if collection != "posts" && collection != "links" {
+		apiError(w, http.StatusNotFound, "not_found", "草稿预览仅支持文章和链接。")
+		return
+	}
+	kind, _ := apiContentKind(collection)
+	if _, ok := s.requireAutomationScope(w, r, apiScope(collection, "read")); !ok {
+		return
+	}
+	p, ok := s.apiContentByID(w, r, kind)
+	if !ok {
+		return
+	}
+	expires := time.Now().Add(frontendPreviewTTL)
+	previewURL, expires, err := s.frontendPreviewURL(r, collection, p, expires)
+	if err != nil {
+		apiError(w, http.StatusInternalServerError, "sign_failed", "生成预览链接失败。")
+		return
+	}
+	writeJSON(w, http.StatusCreated, apiPreviewURLResponse{
+		PreviewURL: previewURL,
+		ExpiresAt:  apiTime(expires),
+		TTLSeconds: int64(frontendPreviewTTL.Seconds()),
 	})
 }
 
@@ -522,6 +576,121 @@ func (s *Server) apiContentByID(w http.ResponseWriter, r *http.Request, kind str
 		return nil, false
 	}
 	return p, true
+}
+
+func (s *Server) frontendPreviewURL(r *http.Request, collection string, p *store.Post, expires time.Time) (string, time.Time, error) {
+	token, err := s.signFrontendPreviewToken(frontendPreviewClaims{
+		Collection: collection,
+		ID:         p.ID,
+		Expires:    expires.Unix(),
+		Updated:    previewUpdatedUnix(p),
+		Revision:   previewRevision(p),
+	})
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	path := fmt.Sprintf("/preview/%s/%d?token=%s", collection, p.ID, url.QueryEscape(token))
+	return s.absForRequest(r, path), expires, nil
+}
+
+func previewUpdatedUnix(p *store.Post) int64 {
+	if p == nil || p.UpdatedAt.IsZero() {
+		return 0
+	}
+	return p.UpdatedAt.UTC().Unix()
+}
+
+func previewRevision(p *store.Post) string {
+	if p == nil {
+		return ""
+	}
+	var b strings.Builder
+	write := func(s string) {
+		b.WriteString(s)
+		b.WriteByte('\x00')
+	}
+	write(p.Type)
+	write(strconv.FormatInt(p.ID, 10))
+	write(p.Lang)
+	write(p.Slug)
+	write(p.Title)
+	write(p.Excerpt)
+	write(p.Content)
+	write(p.MetaDesc)
+	write(p.Keywords)
+	write(p.CoverImage)
+	write(p.Author)
+	write(p.Status)
+	write(p.EditorMode)
+	write(p.LinkURL)
+	write(p.TransGroup)
+	if p.CategoryID.Valid {
+		write(strconv.FormatInt(p.CategoryID.Int64, 10))
+	}
+	write(p.PublishedAt.UTC().Format(time.RFC3339Nano))
+	write(p.UpdatedAt.UTC().Format(time.RFC3339Nano))
+	sum := sha256.Sum256([]byte(b.String()))
+	return fmt.Sprintf("%x", sum[:8])
+}
+
+func (s *Server) previewSigningSecret() ([]byte, error) {
+	secret := strings.TrimSpace(s.store.Setting(frontendPreviewSecretSetting))
+	if secret == "" {
+		secret = randToken()
+		if err := s.store.SetSetting(frontendPreviewSecretSetting, secret); err != nil {
+			return nil, err
+		}
+	}
+	return []byte(secret), nil
+}
+
+func (s *Server) signFrontendPreviewToken(claims frontendPreviewClaims) (string, error) {
+	payload, err := json.Marshal(claims)
+	if err != nil {
+		return "", err
+	}
+	encodedPayload := base64.RawURLEncoding.EncodeToString(payload)
+	sig, err := s.frontendPreviewSignature(encodedPayload)
+	if err != nil {
+		return "", err
+	}
+	return encodedPayload + "." + sig, nil
+}
+
+func (s *Server) frontendPreviewSignature(encodedPayload string) (string, error) {
+	secret, err := s.previewSigningSecret()
+	if err != nil {
+		return "", err
+	}
+	mac := hmac.New(sha256.New, secret)
+	_, _ = mac.Write([]byte(encodedPayload))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil)), nil
+}
+
+func (s *Server) verifyFrontendPreviewToken(token string) (frontendPreviewClaims, string) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return frontendPreviewClaims{}, "invalid"
+	}
+	want, err := s.frontendPreviewSignature(parts[0])
+	if err != nil || !hmac.Equal([]byte(want), []byte(parts[1])) {
+		return frontendPreviewClaims{}, "invalid"
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		return frontendPreviewClaims{}, "invalid"
+	}
+	var claims frontendPreviewClaims
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return frontendPreviewClaims{}, "invalid"
+	}
+	if claims.Expires <= 0 || time.Now().After(time.Unix(claims.Expires, 0)) {
+		return frontendPreviewClaims{}, "expired"
+	}
+	if claims.ID <= 0 || (claims.Collection != "posts" && claims.Collection != "links") {
+		return frontendPreviewClaims{}, "invalid"
+	}
+	return claims, ""
 }
 
 func (s *Server) applyAPIContentInput(p *store.Post, in *apiContentInput, creating bool) (bool, string) {

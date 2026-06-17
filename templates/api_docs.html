@@ -119,11 +119,18 @@ X-GCMS-API-Key: gcms_xxx</code></pre>
   -H 'Content-Type: application/json' \
   -d '{"title":"新的标题","meta_desc":"新的 SEO 描述"}'</code></pre>
 
-        <p>发布前预览文章或链接草稿。响应会返回内容字段、渲染后的 <code>content_html</code>、目录 <code>toc</code>、API 预览地址和发布后的正式地址。</p>
+        <p>发布前预览文章或链接草稿。响应会返回内容字段、渲染后的 <code>content_html</code>、目录 <code>toc</code>、API 预览地址、短期前台预览地址和发布后的正式地址。</p>
         <pre><code>curl '{{.Site.Root "/api/admin/v1/posts/123/preview"}}' \
   -H 'Authorization: Bearer gcms_xxx'
 
 curl '{{.Site.Root "/api/admin/v1/links/123/preview"}}' \
+  -H 'Authorization: Bearer gcms_xxx'</code></pre>
+
+        <p>如果需要把真实前台页面发给同事或 AI 工具复核，可以生成短期有效的签名预览链接。该链接不需要后台登录，不会被搜索引擎索引，也不会被缓存。</p>
+        <pre><code>curl -X POST '{{.Site.Root "/api/admin/v1/posts/123/preview-url"}}' \
+  -H 'Authorization: Bearer gcms_xxx'
+
+curl -X POST '{{.Site.Root "/api/admin/v1/links/123/preview-url"}}' \
   -H 'Authorization: Bearer gcms_xxx'</code></pre>
       </div>
     </div>

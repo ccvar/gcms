@@ -6,6 +6,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -130,11 +131,27 @@ func TestAutomationOpenAPIIncludesMediaUpload(t *testing.T) {
 			t.Fatalf("GET %s responses missing: %#v", path, get)
 		}
 	}
+	for _, path := range []string{"/posts/{id}/preview-url", "/links/{id}/preview-url"} {
+		entry, ok := paths[path].(map[string]any)
+		if !ok {
+			t.Fatalf("%s path missing: %#v", path, paths)
+		}
+		post, ok := entry["post"].(map[string]any)
+		if !ok {
+			t.Fatalf("POST %s missing: %#v", path, entry)
+		}
+		if post["responses"] == nil {
+			t.Fatalf("POST %s responses missing: %#v", path, post)
+		}
+	}
 	if _, ok := schemas["ContentPreviewResponse"]; !ok {
 		t.Fatalf("ContentPreviewResponse schema missing: %#v", schemas)
 	}
 	if _, ok := schemas["ContentPreview"]; !ok {
 		t.Fatalf("ContentPreview schema missing: %#v", schemas)
+	}
+	if _, ok := schemas["PreviewURLResponse"]; !ok {
+		t.Fatalf("PreviewURLResponse schema missing: %#v", schemas)
 	}
 }
 
@@ -477,6 +494,7 @@ func TestAPIPreviewPostAndLinkDrafts(t *testing.T) {
 					Content string `json:"content"`
 				} `json:"item"`
 				PreviewURL  string `json:"preview_url"`
+				FrontendURL string `json:"frontend_preview_url"`
 				PublicURL   string `json:"public_url"`
 				ContentHTML string `json:"content_html"`
 				TOC         []struct {
@@ -498,6 +516,9 @@ func TestAPIPreviewPostAndLinkDrafts(t *testing.T) {
 		}
 		if !strings.HasSuffix(got.Preview.PreviewURL, "/api/admin/v1/"+tc.collection+"/"+strconv.FormatInt(tc.id, 10)+"/preview") {
 			t.Fatalf("%s preview_url = %q", tc.collection, got.Preview.PreviewURL)
+		}
+		if !strings.Contains(got.Preview.FrontendURL, "/preview/"+tc.collection+"/"+strconv.FormatInt(tc.id, 10)+"?token=") {
+			t.Fatalf("%s frontend_preview_url = %q", tc.collection, got.Preview.FrontendURL)
 		}
 		if !strings.Contains(got.Preview.ContentHTML, tc.wantHTML) {
 			t.Fatalf("%s content_html = %q, want contains %q", tc.collection, got.Preview.ContentHTML, tc.wantHTML)
@@ -534,6 +555,78 @@ func TestAPIPreviewRequiresReadScope(t *testing.T) {
 	s.apiPreviewContent(w, r)
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+}
+
+func TestAPICreatePreviewURLRendersFrontendDraft(t *testing.T) {
+	s := newTestPublicServer(t, "")
+	token, prefix := newAutomationToken()
+	if _, err := s.store.CreateAutomationKey("preview", token, prefix, "posts:read"); err != nil {
+		t.Fatalf("create automation key: %v", err)
+	}
+	id, err := s.store.CreatePost(&store.Post{
+		Type:       "post",
+		Lang:       "zh",
+		Slug:       "frontend-preview-draft",
+		Title:      "Frontend Preview Draft",
+		Content:    "Intro\n\n## Draft Section\n\nBody",
+		Status:     "draft",
+		EditorMode: "markdown",
+	})
+	if err != nil {
+		t.Fatalf("create post: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/admin/v1/posts/"+strconv.FormatInt(id, 10)+"/preview-url", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create preview URL status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var got apiPreviewURLResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode preview URL response: %v", err)
+	}
+	if got.PreviewURL == "" || got.ExpiresAt == "" || got.TTLSeconds != int64(frontendPreviewTTL.Seconds()) {
+		t.Fatalf("preview URL response incomplete: %#v", got)
+	}
+	u, err := url.Parse(got.PreviewURL)
+	if err != nil {
+		t.Fatalf("parse preview URL: %v", err)
+	}
+	if u.Path != "/preview/posts/"+strconv.FormatInt(id, 10) || u.Query().Get("token") == "" {
+		t.Fatalf("preview URL = %q", got.PreviewURL)
+	}
+
+	page := httptest.NewRecorder()
+	s.Handler().ServeHTTP(page, httptest.NewRequest(http.MethodGet, u.RequestURI(), nil))
+	if page.Code != http.StatusOK {
+		t.Fatalf("frontend preview status = %d, body = %s", page.Code, page.Body.String())
+	}
+	if got := page.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("cache-control = %q, want no-store", got)
+	}
+	if got := page.Header().Get("X-Robots-Tag"); got != "noindex, nofollow" {
+		t.Fatalf("x-robots-tag = %q", got)
+	}
+	body := page.Body.String()
+	if !strings.Contains(body, "Frontend Preview Draft") || !strings.Contains(body, "Draft Section") {
+		t.Fatalf("frontend preview body missing draft content")
+	}
+
+	p, err := s.store.GetPostByID(id)
+	if err != nil || p == nil {
+		t.Fatalf("reload post: %v", err)
+	}
+	p.Content += "\n\nChanged"
+	if err := s.store.UpdatePost(p); err != nil {
+		t.Fatalf("update post: %v", err)
+	}
+	stale := httptest.NewRecorder()
+	s.Handler().ServeHTTP(stale, httptest.NewRequest(http.MethodGet, u.RequestURI(), nil))
+	if stale.Code != http.StatusGone {
+		t.Fatalf("stale preview status = %d, want 410", stale.Code)
 	}
 }
 
