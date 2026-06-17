@@ -370,7 +370,7 @@ func (s *Server) apiPreviewContent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	html, toc := s.renderedContent(&preview)
-	frontendURL, frontendExp, _ := s.frontendPreviewURL(r, collection, &preview, time.Now().Add(frontendPreviewTTL))
+	frontendURL, frontendExp, _ := s.frontendPreviewURL(r, collection, p, time.Now().Add(frontendPreviewTTL))
 	writeJSON(w, http.StatusOK, map[string]any{
 		"preview": apiContentPreview{
 			Item:                     s.apiContentItem(&preview, true),

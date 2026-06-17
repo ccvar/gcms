@@ -440,7 +440,11 @@ func TestAPIGetPostUsesDefaultAuthorForBlankAuthor(t *testing.T) {
 }
 
 func TestAPIPreviewPostAndLinkDrafts(t *testing.T) {
-	s, token := newTestAutomationServer(t, "posts:read,links:read")
+	s := newTestPublicServer(t, "")
+	token, prefix := newAutomationToken()
+	if _, err := s.store.CreateAutomationKey("preview", token, prefix, "posts:read,links:read"); err != nil {
+		t.Fatalf("create automation key: %v", err)
+	}
 	postID, err := s.store.CreatePost(&store.Post{
 		Type:       "post",
 		Lang:       "zh",
@@ -473,8 +477,8 @@ func TestAPIPreviewPostAndLinkDrafts(t *testing.T) {
 		wantURL    string
 		wantHTML   string
 	}{
-		{"posts", postID, "http://example.com/zh/posts/api-preview-post", "<h2 id=\"section\">Section</h2>"},
-		{"links", linkID, "http://example.com/zh/links/api-preview-link", "<h2 id=\"link-section\">Link Section</h2>"},
+		{"posts", postID, "https://example.test/zh/posts/api-preview-post", "<h2 id=\"section\">Section</h2>"},
+		{"links", linkID, "https://example.test/zh/links/api-preview-link", "<h2 id=\"link-section\">Link Section</h2>"},
 	} {
 		r := httptest.NewRequest(http.MethodGet, "/api/admin/v1/"+tc.collection+"/"+strconv.FormatInt(tc.id, 10)+"/preview", nil)
 		r.SetPathValue("collection", tc.collection)
@@ -519,6 +523,15 @@ func TestAPIPreviewPostAndLinkDrafts(t *testing.T) {
 		}
 		if !strings.Contains(got.Preview.FrontendURL, "/preview/"+tc.collection+"/"+strconv.FormatInt(tc.id, 10)+"?token=") {
 			t.Fatalf("%s frontend_preview_url = %q", tc.collection, got.Preview.FrontendURL)
+		}
+		u, err := url.Parse(got.Preview.FrontendURL)
+		if err != nil {
+			t.Fatalf("%s parse frontend preview URL: %v", tc.collection, err)
+		}
+		page := httptest.NewRecorder()
+		s.Handler().ServeHTTP(page, httptest.NewRequest(http.MethodGet, u.RequestURI(), nil))
+		if page.Code != http.StatusOK {
+			t.Fatalf("%s frontend preview status = %d, body = %s", tc.collection, page.Code, page.Body.String())
 		}
 		if !strings.Contains(got.Preview.ContentHTML, tc.wantHTML) {
 			t.Fatalf("%s content_html = %q, want contains %q", tc.collection, got.Preview.ContentHTML, tc.wantHTML)
