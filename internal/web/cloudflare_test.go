@@ -180,3 +180,24 @@ func TestCloudflareRouteHostAndZoneMatch(t *testing.T) {
 		t.Fatalf("unexpected matched zone: %+v", got)
 	}
 }
+
+func TestCloudflareZoneNameCandidates(t *testing.T) {
+	got := cloudflareZoneNameCandidates("test.ccvar.com")
+	want := []string{"test.ccvar.com", "ccvar.com"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("cloudflareZoneNameCandidates returned %#v, want %#v", got, want)
+	}
+	if likely := cloudflareLikelyZoneName("test.ccvar.com"); likely != "ccvar.com" {
+		t.Fatalf("cloudflareLikelyZoneName returned %q, want ccvar.com", likely)
+	}
+}
+
+func TestCloudflareZoneDetectErrorIncludesLikelyZone(t *testing.T) {
+	err := cloudflareZoneDetectError("test.ccvar.com/*", nil)
+	msg := err.Error()
+	for _, needle := range []string{"test.ccvar.com", "ccvar.com", "Zone Read"} {
+		if !strings.Contains(msg, needle) {
+			t.Fatalf("error %q should contain %q", msg, needle)
+		}
+	}
+}

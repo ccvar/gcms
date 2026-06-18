@@ -1059,11 +1059,11 @@
               <p data-cloudflare-message>{{$st.Message}}</p>
             </div>
             <div class="button-row">
-              <form method="post" action="/admin/settings/cloudflare/deploy" data-confirm="{{.Admin.T "admin.settings.cloudflare.deploy_confirm" "将当前公开站点入口部署到 Cloudflare Worker？请确认源站地址不是同一个 Cloudflare 公开域名。"}}">
+              <form method="post" action="/admin/settings/cloudflare/deploy" data-confirm-title="{{.Admin.T "admin.settings.cloudflare.deploy_confirm_title" "确认部署"}}" data-confirm-ok="{{.Admin.T "admin.settings.cloudflare.deploy_confirm_ok" "开始部署"}}" data-confirm="{{.Admin.T "admin.settings.cloudflare.deploy_confirm" "将当前公开站点入口部署到 Cloudflare Worker？请确认源站地址不是同一个 Cloudflare 公开域名。"}}">
                 <input type="hidden" name="_csrf" value="{{.CSRF}}">
                 <button class="btn btn-primary" type="submit" data-cloudflare-deploy-button{{if $st.Running}} disabled{{end}}>{{if $st.Running}}{{.Admin.T "admin.settings.cloudflare.deploying" "部署中..."}}{{else}}{{.Admin.T "admin.settings.cloudflare.deploy" "部署到 Cloudflare"}}{{end}}</button>
               </form>
-              <form method="post" action="/admin/settings/cloudflare/purge" data-confirm="{{.Admin.T "admin.settings.cloudflare.purge_confirm" "清除当前 Zone 的 Cloudflare 缓存？下一次访问会重新回源生成页面。"}}">
+              <form method="post" action="/admin/settings/cloudflare/purge" data-confirm-title="{{.Admin.T "admin.settings.cloudflare.purge_confirm_title" "确认清除缓存"}}" data-confirm-ok="{{.Admin.T "admin.settings.cloudflare.purge" "清除缓存"}}" data-confirm="{{.Admin.T "admin.settings.cloudflare.purge_confirm" "清除当前 Zone 的 Cloudflare 缓存？下一次访问会重新回源生成页面。"}}">
                 <input type="hidden" name="_csrf" value="{{.CSRF}}">
                 <button class="btn" type="submit">{{.Admin.T "admin.settings.cloudflare.purge" "清除缓存"}}</button>
               </form>

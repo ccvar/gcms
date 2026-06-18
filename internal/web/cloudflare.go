@@ -882,8 +882,12 @@ func (s *Server) prepareCloudflareAPIConfig(ctx context.Context, cfg CloudflareC
 	if err != nil {
 		return cfg, err
 	}
+	var detectErr error
 	if strings.TrimSpace(cfg.AccountID) == "" || (strings.TrimSpace(cfg.ZoneID) == "" && strings.TrimSpace(cfg.RoutePattern) != "") {
-		target, _ := discoverCloudflareTarget(ctx, cfg.APIToken, cfg.RoutePattern)
+		target, err := discoverCloudflareTarget(ctx, cfg.APIToken, cfg.RoutePattern)
+		if err != nil {
+			detectErr = err
+		}
 		if cfg.AccountID == "" && target.AccountID != "" {
 			cfg.AccountID = target.AccountID
 			cfg.AccountName = target.AccountName
@@ -902,9 +906,28 @@ func (s *Server) prepareCloudflareAPIConfig(ctx context.Context, cfg CloudflareC
 		return cfg, errors.New("无法自动识别 Cloudflare Account ID。请确认 Token 权限包含 Account Settings Read，或在高级设置里手动填写 Account ID。")
 	}
 	if strings.TrimSpace(cfg.RoutePattern) != "" && strings.TrimSpace(cfg.ZoneID) == "" {
-		return cfg, errors.New("无法自动识别 Worker 路由对应的 Zone ID。请确认 Token 权限包含 Zone Read，或在高级设置里手动填写 Zone ID。")
+		return cfg, cloudflareZoneDetectError(cfg.RoutePattern, detectErr)
 	}
 	return cfg, nil
+}
+
+func cloudflareZoneDetectError(routePattern string, detectErr error) error {
+	host := cloudflareRouteHost(routePattern)
+	zoneHint := cloudflareLikelyZoneName(host)
+	var b strings.Builder
+	if host != "" {
+		fmt.Fprintf(&b, "无法自动识别 %s 对应的 Cloudflare Zone ID。", host)
+	} else {
+		b.WriteString("无法自动识别 Worker 路由对应的 Cloudflare Zone ID。")
+	}
+	if zoneHint != "" && zoneHint != host {
+		fmt.Fprintf(&b, " 这个路由通常属于 %s 这个 Zone；创建 Token 时请在域名范围里选择它。", zoneHint)
+	}
+	b.WriteString(" 请确认 Token 权限包含 Zone Read，或在高级设置里手动填写 Zone ID。")
+	if detectErr != nil {
+		fmt.Fprintf(&b, " Cloudflare 返回：%s", detectErr.Error())
+	}
+	return errors.New(b.String())
 }
 
 func (s *Server) saveCloudflareDetectedTarget(cfg CloudflareConfig) error {
@@ -950,9 +973,10 @@ func (s *Server) saveCloudflareOAuthToken(cfg CloudflareConfig) error {
 
 func discoverCloudflareTarget(ctx context.Context, token, routePattern string) (cloudflareOAuthTarget, error) {
 	var target cloudflareOAuthTarget
+	var zoneErr error
+	host := cloudflareRouteHost(routePattern)
 	zones, err := listCloudflareZones(ctx, token)
 	if err == nil {
-		host := cloudflareRouteHost(routePattern)
 		if zone := matchCloudflareZone(host, zones); zone.ID != "" {
 			target.ZoneID = zone.ID
 			target.ZoneName = zone.Name
@@ -968,20 +992,53 @@ func discoverCloudflareTarget(ctx context.Context, token, routePattern string) (
 			target.AccountName = zone.Account.Name
 			return target, nil
 		}
+	} else {
+		zoneErr = err
+	}
+	for _, name := range cloudflareZoneNameCandidates(host) {
+		zones, err := listCloudflareZonesByName(ctx, token, name)
+		if err != nil {
+			if zoneErr == nil {
+				zoneErr = err
+			}
+			continue
+		}
+		if zone := matchCloudflareZone(host, zones); zone.ID != "" {
+			target.ZoneID = zone.ID
+			target.ZoneName = zone.Name
+			target.AccountID = zone.Account.ID
+			target.AccountName = zone.Account.Name
+			return target, nil
+		}
 	}
 	accounts, err := listCloudflareAccounts(ctx, token)
 	if err != nil {
+		if zoneErr != nil {
+			return target, zoneErr
+		}
 		return target, nil
 	}
 	if len(accounts) == 1 {
 		target.AccountID = accounts[0].ID
 		target.AccountName = accounts[0].Name
 	}
-	return target, nil
+	return target, zoneErr
 }
 
 func listCloudflareZones(ctx context.Context, token string) ([]cloudflareZone, error) {
-	result, err := cloudflareAPIRequest(ctx, token, http.MethodGet, "/zones?per_page=50", nil, "")
+	return listCloudflareZonesWithPath(ctx, token, "/zones?per_page=50")
+}
+
+func listCloudflareZonesByName(ctx context.Context, token, name string) ([]cloudflareZone, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, nil
+	}
+	return listCloudflareZonesWithPath(ctx, token, "/zones?per_page=50&name="+url.QueryEscape(name))
+}
+
+func listCloudflareZonesWithPath(ctx context.Context, token, path string) ([]cloudflareZone, error) {
+	result, err := cloudflareAPIRequest(ctx, token, http.MethodGet, path, nil, "")
 	if err != nil {
 		return nil, err
 	}
@@ -992,6 +1049,39 @@ func listCloudflareZones(ctx context.Context, token string) ([]cloudflareZone, e
 		}
 	}
 	return zones, nil
+}
+
+func cloudflareZoneNameCandidates(host string) []string {
+	host = strings.Trim(strings.ToLower(strings.TrimSpace(host)), ".")
+	if host == "" {
+		return nil
+	}
+	parts := strings.Split(host, ".")
+	if len(parts) < 2 {
+		return []string{host}
+	}
+	out := make([]string, 0, len(parts)-1)
+	seen := map[string]bool{}
+	for i := 0; i <= len(parts)-2; i++ {
+		name := strings.Join(parts[i:], ".")
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	return out
+}
+
+func cloudflareLikelyZoneName(host string) string {
+	candidates := cloudflareZoneNameCandidates(host)
+	if len(candidates) == 0 {
+		return ""
+	}
+	if len(candidates) == 1 {
+		return candidates[0]
+	}
+	return candidates[1]
 }
 
 func listCloudflareAccounts(ctx context.Context, token string) ([]cloudflareAccount, error) {
