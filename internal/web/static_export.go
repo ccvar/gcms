@@ -138,6 +138,11 @@ func (s *Server) exportStaticSite(ctx context.Context, cfg CloudflareConfig) (*s
 	if err := render("/favicon.ico", "/favicon.ico"); err != nil {
 		return nil, err
 	}
+	if redirects := cloudflarePagesRedirectsFile(cfg); redirects != "" {
+		if err := s.exportBytes("/_redirects", []byte(redirects), "text/plain; charset=utf-8", result); err != nil {
+			return nil, err
+		}
+	}
 	if err := s.exportAssets(result); err != nil {
 		return nil, err
 	}
@@ -145,6 +150,25 @@ func (s *Server) exportStaticSite(ctx context.Context, cfg CloudflareConfig) (*s
 		return nil, err
 	}
 	return result, nil
+}
+
+func cloudflarePagesRedirectsFile(cfg CloudflareConfig) string {
+	primary := cfg.primaryHost()
+	if primary == "" {
+		return ""
+	}
+	lines := []string{}
+	for _, host := range cfg.redirectHosts() {
+		if host == "" || sameCloudflareDNSName(host, primary) {
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("https://%s/* https://%s/:splat 301", host, primary))
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	sort.Strings(lines)
+	return strings.Join(lines, "\n") + "\n"
 }
 
 func (s *Server) exportHomePages(render func(string, string) error, lang, prefix string) error {

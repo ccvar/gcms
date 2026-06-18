@@ -49,6 +49,41 @@ func TestNormalizeCloudflareRoutePattern(t *testing.T) {
 	}
 }
 
+func TestNormalizeCloudflareDomainsFromForm(t *testing.T) {
+	domains := cloudflareDomainsFromForm("https://ccvar.com/", []string{"www.ccvar.com\nblog.ccvar.com/*", "ccvar.com"}, true)
+	if len(domains) != 3 {
+		t.Fatalf("domains len = %d, want 3: %#v", len(domains), domains)
+	}
+	if domains[0].Host != "ccvar.com" || !domains[0].Primary || domains[0].RedirectToPrimary {
+		t.Fatalf("primary domain mismatch: %#v", domains[0])
+	}
+	for _, d := range domains[1:] {
+		if !d.RedirectToPrimary {
+			t.Fatalf("alias should redirect to primary: %#v", d)
+		}
+	}
+	cfg := CloudflareConfig{Domains: domains}
+	if got := strings.Join(cfg.routePatterns(), ","); got != "ccvar.com/*,www.ccvar.com/*,blog.ccvar.com/*" {
+		t.Fatalf("routePatterns = %q", got)
+	}
+	if got := strings.Join(cfg.redirectHosts(), ","); got != "blog.ccvar.com,www.ccvar.com" {
+		t.Fatalf("redirectHosts = %q", got)
+	}
+}
+
+func TestCloudflarePagesRedirectsFile(t *testing.T) {
+	cfg := CloudflareConfig{Domains: []CloudflareDomain{
+		{Host: "ccvar.com", Primary: true},
+		{Host: "www.ccvar.com", RedirectToPrimary: true},
+		{Host: "docs.ccvar.com"},
+	}}
+	got := cloudflarePagesRedirectsFile(cfg)
+	want := "https://www.ccvar.com/* https://ccvar.com/:splat 301\n"
+	if got != want {
+		t.Fatalf("redirects file = %q, want %q", got, want)
+	}
+}
+
 func TestCloudflareStatusStale(t *testing.T) {
 	st := &CloudflareStatus{
 		Status:    "running",
@@ -89,6 +124,23 @@ func TestCloudflareWorkerScriptProtectsAdminAndServesAssets(t *testing.T) {
 		`env.ASSETS.fetch`,
 		`/cat/`,
 		`/page/`,
+	} {
+		if !strings.Contains(script, needle) {
+			t.Fatalf("worker script should contain %s", needle)
+		}
+	}
+}
+
+func TestCloudflareWorkerScriptRedirectsAliasHosts(t *testing.T) {
+	cfg := CloudflareConfig{Domains: []CloudflareDomain{
+		{Host: "ccvar.com", Primary: true},
+		{Host: "www.ccvar.com", RedirectToPrimary: true},
+	}}
+	script := cloudflareWorkerScriptForConfig(cfg)
+	for _, needle := range []string{
+		`const PRIMARY_HOST = "ccvar.com";`,
+		`const REDIRECT_HOSTS = new Set(["www.ccvar.com"]);`,
+		`return Response.redirect(redirectURL.toString(), 301);`,
 	} {
 		if !strings.Contains(script, needle) {
 			t.Fatalf("worker script should contain %s", needle)
@@ -155,24 +207,6 @@ func TestCloudflareStagePermissionErrorForWorkerUpload(t *testing.T) {
 	}
 }
 
-func TestCloudflareOAuthAuthorizationURL(t *testing.T) {
-	got, err := cloudflareOAuthAuthorizationURL("client_123", "https://cms.example.com/admin/settings/cloudflare/callback", "state_123")
-	if err != nil {
-		t.Fatalf("cloudflareOAuthAuthorizationURL returned %v", err)
-	}
-	for _, needle := range []string{
-		"https://dash.cloudflare.com/oauth2/auth?",
-		"response_type=code",
-		"client_id=client_123",
-		"redirect_uri=https%3A%2F%2Fcms.example.com%2Fadmin%2Fsettings%2Fcloudflare%2Fcallback",
-		"state=state_123",
-	} {
-		if !strings.Contains(got, needle) {
-			t.Fatalf("authorization URL %q should contain %s", got, needle)
-		}
-	}
-}
-
 func TestCloudflareAPITokenTemplateURL(t *testing.T) {
 	raw := cloudflareAPITokenTemplateURL()
 	u, err := url.Parse(raw)
@@ -203,9 +237,10 @@ func TestCloudflareAPITokenTemplateURL(t *testing.T) {
 
 func TestCloudflareConfigConfiguredWithAPITokenOnly(t *testing.T) {
 	cfg := CloudflareConfig{
-		APIToken:     "token",
-		WorkerName:   "gcms-frontend",
-		RoutePattern: "example.com/*",
+		APIToken:   "token",
+		DeployMode: cloudflareModeWorkerAssets,
+		WorkerName: "gcms-frontend",
+		Domains:    []CloudflareDomain{{Host: "example.com", Primary: true}},
 	}
 	if !cfg.configured() {
 		t.Fatal("API token plus worker/route should be enough before auto detection")
@@ -220,7 +255,7 @@ func TestCloudflareConfigConfiguredWithPagesMode(t *testing.T) {
 		APIToken:         "token",
 		DeployMode:       cloudflareModePages,
 		PagesProjectName: "gcms-frontend",
-		RoutePattern:     "example.com/*",
+		Domains:          []CloudflareDomain{{Host: "example.com", Primary: true}},
 	}
 	if !cfg.configured() {
 		t.Fatal("API token plus Pages project and public domain should configure Pages deploy")
@@ -234,6 +269,15 @@ func TestCloudflareConfigConfiguredWithPagesMode(t *testing.T) {
 	}
 	if err := cfg.validateDeploy(); err == nil || !strings.Contains(err.Error(), "Pages") {
 		t.Fatalf("validateDeploy should explain missing Pages project, got %v", err)
+	}
+}
+
+func TestNormalizeCloudflareDeployModeDefaultsToWorkerAssets(t *testing.T) {
+	if got := normalizeCloudflareDeployMode(""); got != cloudflareModeWorkerAssets {
+		t.Fatalf("default deploy mode = %q, want %q", got, cloudflareModeWorkerAssets)
+	}
+	if got := normalizeCloudflareDeployMode("pages"); got != cloudflareModePages {
+		t.Fatalf("pages deploy mode = %q, want %q", got, cloudflareModePages)
 	}
 }
 
@@ -280,25 +324,6 @@ func TestRecommendedCloudflareTokenFormClearsDetectedIDs(t *testing.T) {
 	}
 	if got := st.Setting(cloudflareAPITokenKey); got != "new_token" {
 		t.Fatalf("api token = %q, want new_token", got)
-	}
-}
-
-func TestCloudflareConfigConfiguredWithOAuth(t *testing.T) {
-	cfg := CloudflareConfig{
-		OAuthClientID:     "client_123",
-		OAuthClientSecret: "secret",
-		OAuthRefreshToken: "refresh",
-		AccountID:         "account_123",
-		ZoneID:            "zone_123",
-		WorkerName:        "gcms-frontend",
-		OriginURL:         "https://origin.example.com",
-		RoutePattern:      "example.com/*",
-	}
-	if !cfg.configured() {
-		t.Fatal("local OAuth credentials should be enough to configure Cloudflare deploy")
-	}
-	if err := cfg.validateDeploy(); err != nil {
-		t.Fatalf("validateDeploy returned %v", err)
 	}
 }
 

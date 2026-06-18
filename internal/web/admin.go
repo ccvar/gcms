@@ -2254,7 +2254,6 @@ func (s *Server) showSettings(w http.ResponseWriter, r *http.Request, section, f
 		v.AutomationLogs, _ = s.store.ListAutomationLogs(20)
 	case "cloudflare":
 		v.Cloudflare = s.cloudflareViewForRequest(r)
-		v.Cloudflare.CallbackURL = s.absForRequest(r, cloudflareCallbackPath)
 	case "updates":
 		v.Update = currentUpdateInfo()
 		v.Upgrade = readUpgradeStatus()
