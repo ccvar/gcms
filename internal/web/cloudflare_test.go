@@ -58,7 +58,7 @@ func TestCloudflareStatusStale(t *testing.T) {
 	}
 }
 
-func TestCloudflareRequestDefaultsUsePublicRequestHost(t *testing.T) {
+func TestCloudflareRequestDefaultsOnlyInferOrigin(t *testing.T) {
 	s := &Server{baseURL: "http://localhost:8080"}
 	r := httptest.NewRequest("GET", "http://127.0.0.1/admin/settings/cloudflare", nil)
 	r.Host = "cms.example.com"
@@ -68,8 +68,8 @@ func TestCloudflareRequestDefaultsUsePublicRequestHost(t *testing.T) {
 	if cfg.OriginURL != "https://cms.example.com" {
 		t.Fatalf("OriginURL = %q, want https://cms.example.com", cfg.OriginURL)
 	}
-	if cfg.RoutePattern != "cms.example.com/*" {
-		t.Fatalf("RoutePattern = %q, want cms.example.com/*", cfg.RoutePattern)
+	if cfg.RoutePattern != "" {
+		t.Fatalf("RoutePattern = %q, want empty; public entry domain must be user supplied", cfg.RoutePattern)
 	}
 }
 

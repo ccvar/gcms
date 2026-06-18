@@ -101,6 +101,8 @@ type CloudflareView struct {
 	Configured       bool
 	CallbackURL      string
 	TokenTemplateURL string
+	RouteHost        string
+	LikelyZoneName   string
 }
 
 type cloudflareOAuthToken struct {
@@ -177,6 +179,9 @@ func (cfg CloudflareConfig) validateDeploy() error {
 	}
 	if strings.TrimSpace(cfg.WorkerName) == "" {
 		return errors.New("请填写 Worker 名称。")
+	}
+	if strings.TrimSpace(cfg.RoutePattern) == "" {
+		return errors.New("请填写前台访问域名，例如 example.com 或 www.example.com/*。")
 	}
 	if _, err := url.ParseRequestURI(cfg.OriginURL); err != nil || !(strings.HasPrefix(cfg.OriginURL, "http://") || strings.HasPrefix(cfg.OriginURL, "https://")) {
 		return errors.New("源站地址必须是完整的 http:// 或 https:// 地址。")
@@ -320,9 +325,6 @@ func (s *Server) cloudflareConfig() CloudflareConfig {
 		origin = s.defaultCloudflareOriginURL()
 	}
 	route := normalizeCloudflareRoutePattern(s.store.Setting(cloudflareRoutePatternKey))
-	if route == "" {
-		route = s.defaultCloudflareRoutePattern()
-	}
 	return CloudflareConfig{
 		AccountID:         strings.TrimSpace(s.store.Setting(cloudflareAccountIDKey)),
 		APIToken:          strings.TrimSpace(s.store.Setting(cloudflareAPITokenKey)),
@@ -357,6 +359,7 @@ func (s *Server) cloudflareViewForRequest(r *http.Request) *CloudflareView {
 	view.Status.RoutePattern = view.Config.RoutePattern
 	view.Status.Configured = view.Config.configured()
 	view.Configured = view.Status.Configured
+	view.decorate()
 	return view
 }
 
@@ -367,9 +370,6 @@ func (s *Server) applyCloudflareRequestDefaults(r *http.Request, cfg *Cloudflare
 	base := s.publicBaseURL(r)
 	if strings.TrimSpace(cfg.OriginURL) == "" {
 		cfg.OriginURL = cloudflareOriginFromBaseURL(base)
-	}
-	if strings.TrimSpace(cfg.RoutePattern) == "" {
-		cfg.RoutePattern = cloudflareRoutePatternFromBaseURL(base)
 	}
 }
 
@@ -425,7 +425,7 @@ func (s *Server) cloudflareView() *CloudflareView {
 	st.Configured = cfg.configured()
 	st.TokenSet = cfg.tokenSet()
 	st.AutoSync = cfg.AutoSync
-	return &CloudflareView{
+	view := &CloudflareView{
 		Config:           cfg,
 		Status:           st,
 		TokenSet:         cfg.tokenSet(),
@@ -434,6 +434,16 @@ func (s *Server) cloudflareView() *CloudflareView {
 		Configured:       cfg.configured(),
 		TokenTemplateURL: cloudflareAPITokenTemplateURL(),
 	}
+	view.decorate()
+	return view
+}
+
+func (view *CloudflareView) decorate() {
+	if view == nil {
+		return
+	}
+	view.RouteHost = cloudflareRouteHost(view.Config.RoutePattern)
+	view.LikelyZoneName = cloudflareLikelyZoneName(view.RouteHost)
 }
 
 func cloudflareAPITokenTemplateURL() string {
@@ -974,9 +984,11 @@ func (s *Server) saveCloudflareOAuthToken(cfg CloudflareConfig) error {
 func discoverCloudflareTarget(ctx context.Context, token, routePattern string) (cloudflareOAuthTarget, error) {
 	var target cloudflareOAuthTarget
 	var zoneErr error
+	zoneLookupOK := false
 	host := cloudflareRouteHost(routePattern)
 	zones, err := listCloudflareZones(ctx, token)
 	if err == nil {
+		zoneLookupOK = true
 		if zone := matchCloudflareZone(host, zones); zone.ID != "" {
 			target.ZoneID = zone.ID
 			target.ZoneName = zone.Name
@@ -1003,6 +1015,7 @@ func discoverCloudflareTarget(ctx context.Context, token, routePattern string) (
 			}
 			continue
 		}
+		zoneLookupOK = true
 		if zone := matchCloudflareZone(host, zones); zone.ID != "" {
 			target.ZoneID = zone.ID
 			target.ZoneName = zone.Name
@@ -1022,7 +1035,25 @@ func discoverCloudflareTarget(ctx context.Context, token, routePattern string) (
 		target.AccountID = accounts[0].ID
 		target.AccountName = accounts[0].Name
 	}
+	if host != "" && zoneErr == nil {
+		if !zoneLookupOK {
+			return target, errors.New("Cloudflare 没有返回可读取的 Zone 数据。")
+		}
+		return target, cloudflareNoMatchingZoneError(host)
+	}
 	return target, zoneErr
+}
+
+func cloudflareNoMatchingZoneError(host string) error {
+	host = strings.TrimSpace(host)
+	zoneHint := cloudflareLikelyZoneName(host)
+	if zoneHint != "" && zoneHint != host {
+		return fmt.Errorf("Cloudflare 当前 Token 看不到 %s 这个 Zone；%s 通常属于它。请在创建 Token 时把 Zone Resources 选到 %s，或在高级设置里手动填写 Zone ID。", zoneHint, host, zoneHint)
+	}
+	if host != "" {
+		return fmt.Errorf("Cloudflare 当前 Token 看不到 %s 对应的 Zone。请确认这个域名已接入 Cloudflare，并且 Token 的 Zone Resources 包含它。", host)
+	}
+	return errors.New("Cloudflare 当前 Token 看不到可用的 Zone。")
 }
 
 func listCloudflareZones(ctx context.Context, token string) ([]cloudflareZone, error) {

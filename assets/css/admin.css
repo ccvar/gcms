@@ -1103,6 +1103,7 @@ body.admin { background: var(--line-soft); }
 .cloudflare-token-form label { display: grid; gap: .28rem; color: var(--muted); font: 700 .82rem/1.4 var(--sans); }
 .cloudflare-token-form input { width: 100%; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); font: 500 .92rem/1.4 var(--mono); padding: .64rem .72rem; }
 .cloudflare-token-form small { color: var(--muted); font: 500 .76rem/1.45 var(--sans); }
+.cloudflare-token-form .cloudflare-zone-hint { color: var(--accent); font-weight: 800; }
 .cloudflare-token-form .btn { justify-content: center; min-height: 42px; border-radius: 8px; white-space: normal; text-align: center; }
 .cloudflare-token-steps { display: grid; gap: .5rem; margin-top: .95rem; }
 .cloudflare-token-steps span { display: flex; align-items: center; gap: .5rem; color: var(--ink-soft); font: 800 .82rem/1.3 var(--sans); }

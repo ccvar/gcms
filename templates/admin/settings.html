@@ -998,6 +998,15 @@
               <span>{{.Admin.T "admin.settings.cloudflare.public_domain" "前台访问域名"}}</span>
               <input name="route_pattern" value="{{$c.RoutePattern}}" placeholder="{{.Admin.T "admin.settings.cloudflare.public_domain_placeholder" "例如 ccvar.com 或 www.ccvar.com/*"}}">
               <small>{{.Admin.T "admin.settings.cloudflare.public_domain_hint" "访客最终打开的域名，会绑定到 Cloudflare Worker。创建 Token 时，请在 Cloudflare 里选择这个域名所在的 Zone。"}}</small>
+              {{if and $cf.RouteHost $cf.LikelyZoneName}}
+              <small class="cloudflare-zone-hint">
+                {{if ne $cf.RouteHost $cf.LikelyZoneName}}
+                  {{printf (.Admin.T "admin.settings.cloudflare.zone_hint_subdomain" "你填写的入口 %s 通常属于 %s 这个 Cloudflare Zone；创建 Token 时请选择这个 Zone。") $cf.RouteHost $cf.LikelyZoneName}}
+                {{else}}
+                  {{printf (.Admin.T "admin.settings.cloudflare.zone_hint_root" "你填写的入口对应 Cloudflare Zone：%s。") $cf.LikelyZoneName}}
+                {{end}}
+              </small>
+              {{end}}
             </label>
             <div class="cloudflare-template-actions">
               <a class="btn" href="{{$cf.TokenTemplateURL}}" target="_blank" rel="noopener">{{.Admin.T "admin.settings.cloudflare.template_link" "去 Cloudflare 创建专用 Token"}}</a>
@@ -1165,7 +1174,7 @@
         </script>
       </div>
 
-      <details class="update-details cloudflare-manual">
+      <details class="update-details cloudflare-manual"{{if eq $st.Status "failed"}} open{{end}}>
         <summary>{{.Admin.T "admin.settings.cloudflare.manual_title" "高级设置：路由、缓存与手动字段"}}</summary>
         <form method="post" action="/admin/settings/cloudflare" class="admin-form">
           <input type="hidden" name="_csrf" value="{{.CSRF}}">
@@ -1174,6 +1183,18 @@
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.3 4.2 2.8 17.4A2 2 0 0 0 4.5 20h15a2 2 0 0 0 1.7-2.6L13.7 4.2a2 2 0 0 0-3.4 0z"/></svg>
               <span>{{.Admin.T "admin.settings.cloudflare.token_note" "建议创建最小权限 Cloudflare API Token：Account Workers Scripts Edit、Zone Workers Routes Edit、Zone Cache Purge。Token 只保存在本机数据库，页面不会回显完整值。"}}</span>
             </div>
+            {{if and $cf.RouteHost $cf.LikelyZoneName}}
+            <div class="key-warning">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21s7-4.5 7-11V5l-7-3-7 3v5c0 6.5 7 11 7 11z"/><path d="m9 12 2 2 4-5"/></svg>
+              <span>
+                {{if ne $cf.RouteHost $cf.LikelyZoneName}}
+                  {{printf (.Admin.T "admin.settings.cloudflare.zone_manual_hint_subdomain" "如果仍然识别失败，请在 Cloudflare 的 %s 域名概览页复制 Zone ID，填到下方 Zone ID。%s 是 Worker 路由，不是 Zone 名称。") $cf.LikelyZoneName $cf.RouteHost}}
+                {{else}}
+                  {{printf (.Admin.T "admin.settings.cloudflare.zone_manual_hint_root" "如果仍然识别失败，请在 Cloudflare 的 %s 域名概览页复制 Zone ID，填到下方 Zone ID。") $cf.LikelyZoneName}}
+                {{end}}
+              </span>
+            </div>
+            {{end}}
             <div class="form-2col">
               <div class="field">
                 <label for="cf_worker_name">{{.Admin.T "admin.settings.cloudflare.worker_name" "Worker 名称"}}</label>
