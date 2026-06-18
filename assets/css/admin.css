@@ -1121,6 +1121,15 @@ body.admin { background: var(--line-soft); }
 .cloudflare-status-group { margin-top: .9rem; }
 .cloudflare-status-group .update-summary { box-shadow: 0 8px 22px rgba(27,26,23,.035); }
 .cloudflare-status-group .update-details { margin-top: .8rem; }
+.cloudflare-progress { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: .5rem; padding-top: .75rem; border-top: 1px solid var(--line-soft); }
+.cloudflare-progress span { display: inline-flex; align-items: center; gap: .35rem; color: var(--muted); font: 800 .76rem/1.25 var(--sans); }
+.cloudflare-progress span::before { content: ""; width: 9px; height: 9px; border-radius: 999px; background: var(--line); box-shadow: inset 0 0 0 1px rgba(0,0,0,.05); }
+.cloudflare-progress span.is-done { color: var(--ok); }
+.cloudflare-progress span.is-done::before { background: var(--ok); }
+.cloudflare-progress span.is-active { color: var(--accent); }
+.cloudflare-progress span.is-active::before { background: var(--accent); box-shadow: 0 0 0 4px var(--accent-wash); }
+.cloudflare-progress span.is-failed { color: var(--danger); }
+.cloudflare-progress span.is-failed::before { background: var(--danger); }
 .cloudflare-status-group + .update-details,
 .cloudflare-help { margin-top: 1rem; }
 .cloudflare-help .automation-help { padding: 1rem; }

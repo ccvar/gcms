@@ -45,6 +45,7 @@ const (
 	cloudflareDefaultWorkerName = "gcms-frontend"
 	cloudflareDefaultHTMLTTL    = 300
 	cloudflareAPITimeout        = 70 * time.Second
+	cloudflareStaleAfter        = 3 * time.Minute
 	cloudflareConnectTTL        = 15 * time.Minute
 	cloudflareOAuthSkew         = 2 * time.Minute
 	cloudflareCallbackPath      = "/admin/settings/cloudflare/callback"
@@ -186,6 +187,22 @@ func (cfg CloudflareConfig) validateDeploy() error {
 	return nil
 }
 
+func cloudflareStatusFailed(cfg CloudflareConfig, step, msg string) CloudflareStatus {
+	if strings.TrimSpace(msg) == "" {
+		msg = "Cloudflare 部署失败。"
+	}
+	return CloudflareStatus{
+		Status:       "failed",
+		Step:         step,
+		Message:      msg,
+		WorkerName:   cfg.WorkerName,
+		RoutePattern: cfg.RoutePattern,
+		Configured:   cfg.configured(),
+		TokenSet:     cfg.tokenSet(),
+		AutoSync:     cfg.AutoSync,
+	}
+}
+
 func normalizeCloudflareWorkerName(v string) string {
 	v = strings.ToLower(strings.TrimSpace(v))
 	v = strings.ReplaceAll(v, "_", "-")
@@ -216,6 +233,32 @@ func normalizeCloudflareOrigin(v string) string {
 	u.RawQuery = ""
 	u.Fragment = ""
 	return strings.TrimRight(u.String(), "/")
+}
+
+func normalizeCloudflareRoutePattern(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return ""
+	}
+	if strings.Contains(v, "://") {
+		if u, err := url.Parse(v); err == nil && u.Host != "" {
+			path := strings.TrimSpace(u.EscapedPath())
+			if path == "" || path == "/" {
+				return u.Host + "/*"
+			}
+			return u.Host + strings.TrimRight(path, "/") + "/*"
+		}
+	}
+	if strings.Contains(v, " ") {
+		v = strings.Fields(v)[0]
+	}
+	if strings.HasSuffix(v, "/*") || strings.Contains(v, "*") {
+		return v
+	}
+	if strings.Contains(v, "/") {
+		return strings.TrimRight(v, "/") + "/*"
+	}
+	return v + "/*"
 }
 
 func (s *Server) defaultCloudflareRoutePattern() string {
@@ -276,7 +319,7 @@ func (s *Server) cloudflareConfig() CloudflareConfig {
 	if origin == "" {
 		origin = s.defaultCloudflareOriginURL()
 	}
-	route := strings.TrimSpace(s.store.Setting(cloudflareRoutePatternKey))
+	route := normalizeCloudflareRoutePattern(s.store.Setting(cloudflareRoutePatternKey))
 	if route == "" {
 		route = s.defaultCloudflareRoutePattern()
 	}
@@ -344,8 +387,25 @@ func readCloudflareStatus() *CloudflareStatus {
 			st.Message = "暂无 Cloudflare 部署任务"
 		}
 	}
+	if st.Status == "running" && cloudflareStatusStale(st) {
+		st.Status = "failed"
+		st.Step = "timeout"
+		st.Message = "上一次部署任务长时间没有更新，可能已被中断。请检查 Token、域名和源站地址后重新部署。"
+		writeCloudflareStatus(*st)
+	}
 	st.Running = st.Status == "running"
 	return st
+}
+
+func cloudflareStatusStale(st *CloudflareStatus) bool {
+	if st == nil || st.Status != "running" || strings.TrimSpace(st.UpdatedAt) == "" {
+		return false
+	}
+	updatedAt, err := time.Parse(time.RFC3339, st.UpdatedAt)
+	if err != nil {
+		return false
+	}
+	return time.Since(updatedAt) > cloudflareStaleAfter
 }
 
 func writeCloudflareStatus(st CloudflareStatus) {
@@ -415,7 +475,7 @@ func (s *Server) saveCloudflareConfigFromRequest(r *http.Request) (CloudflareCon
 	cfg.WorkerName = normalizeCloudflareWorkerName(r.FormValue("worker_name"))
 	cfg.ZoneID = strings.TrimSpace(r.FormValue("zone_id"))
 	if raw := strings.TrimSpace(r.FormValue("route_pattern")); raw != "" || r.FormValue("deploy") != "1" {
-		cfg.RoutePattern = raw
+		cfg.RoutePattern = normalizeCloudflareRoutePattern(raw)
 	}
 	if raw := strings.TrimSpace(r.FormValue("origin_url")); raw != "" || r.FormValue("deploy") != "1" {
 		cfg.OriginURL = normalizeCloudflareOrigin(raw)
@@ -503,19 +563,15 @@ func (s *Server) queueCloudflareDeploy(cfg CloudflareConfig) error {
 		AutoSync:     cfg.AutoSync,
 	})
 	go func() {
+		defer func() {
+			if v := recover(); v != nil {
+				writeCloudflareStatus(cloudflareStatusFailed(cfg, "failed", fmt.Sprintf("Cloudflare 部署任务异常中断：%v", v)))
+			}
+		}()
 		ctx, cancel := context.WithTimeout(context.Background(), cloudflareAPITimeout)
 		defer cancel()
 		if err := s.deployCloudflare(ctx, cfg); err != nil {
-			writeCloudflareStatus(CloudflareStatus{
-				Status:       "failed",
-				Step:         "failed",
-				Message:      err.Error(),
-				WorkerName:   cfg.WorkerName,
-				RoutePattern: cfg.RoutePattern,
-				Configured:   cfg.configured(),
-				TokenSet:     cfg.tokenSet(),
-				AutoSync:     cfg.AutoSync,
-			})
+			writeCloudflareStatus(cloudflareStatusFailed(cfg, "failed", err.Error()))
 		}
 	}()
 	return nil
@@ -631,19 +687,15 @@ func (s *Server) adminCloudflareCallback(w http.ResponseWriter, r *http.Request)
 			AutoSync:     nextCfg.AutoSync,
 		})
 		go func() {
+			defer func() {
+				if v := recover(); v != nil {
+					writeCloudflareStatus(cloudflareStatusFailed(nextCfg, "failed", fmt.Sprintf("Cloudflare 部署任务异常中断：%v", v)))
+				}
+			}()
 			ctx, cancel := context.WithTimeout(context.Background(), cloudflareAPITimeout)
 			defer cancel()
 			if err := s.deployCloudflare(ctx, nextCfg); err != nil {
-				writeCloudflareStatus(CloudflareStatus{
-					Status:       "failed",
-					Step:         "failed",
-					Message:      err.Error(),
-					WorkerName:   nextCfg.WorkerName,
-					RoutePattern: nextCfg.RoutePattern,
-					Configured:   nextCfg.configured(),
-					TokenSet:     nextCfg.tokenSet(),
-					AutoSync:     nextCfg.AutoSync,
-				})
+				writeCloudflareStatus(cloudflareStatusFailed(nextCfg, "failed", err.Error()))
 			}
 		}()
 		flash = "Cloudflare 已连接，部署任务已启动。"

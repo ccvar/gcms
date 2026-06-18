@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestNormalizeCloudflareWorkerName(t *testing.T) {
@@ -24,6 +25,36 @@ func TestNormalizeCloudflareOrigin(t *testing.T) {
 	got := normalizeCloudflareOrigin("https://origin.example.com/base/?x=1#top")
 	if got != "https://origin.example.com/base" {
 		t.Fatalf("origin normalized to %q", got)
+	}
+}
+
+func TestNormalizeCloudflareRoutePattern(t *testing.T) {
+	tests := map[string]string{
+		"ccvar.com":                   "ccvar.com/*",
+		"www.ccvar.com/*":             "www.ccvar.com/*",
+		"https://ccvar.com":           "ccvar.com/*",
+		"https://ccvar.com/docs?x=1":  "ccvar.com/docs/*",
+		"static.ccvar.com/assets/*":   "static.ccvar.com/assets/*",
+		"  www.ccvar.com  extra text": "www.ccvar.com/*",
+	}
+	for input, want := range tests {
+		if got := normalizeCloudflareRoutePattern(input); got != want {
+			t.Fatalf("normalizeCloudflareRoutePattern(%q)=%q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestCloudflareStatusStale(t *testing.T) {
+	st := &CloudflareStatus{
+		Status:    "running",
+		UpdatedAt: time.Now().Add(-cloudflareStaleAfter - time.Minute).UTC().Format(time.RFC3339),
+	}
+	if !cloudflareStatusStale(st) {
+		t.Fatal("old running status should be stale")
+	}
+	st.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	if cloudflareStatusStale(st) {
+		t.Fatal("fresh running status should not be stale")
 	}
 }
 

@@ -989,12 +989,16 @@
             <input type="hidden" name="deploy" value="1">
             <input type="hidden" name="worker_name" value="{{$c.WorkerName}}">
             <input type="hidden" name="origin_url" value="{{$c.OriginURL}}">
-            <input type="hidden" name="route_pattern" value="{{$c.RoutePattern}}">
             <input type="hidden" name="account_id" value="{{$c.AccountID}}">
             <input type="hidden" name="zone_id" value="{{$c.ZoneID}}">
             <input type="hidden" name="html_cache_ttl" value="{{$c.HTMLCacheTTL}}">
             <input type="hidden" name="auto_sync" value="1">
             <input id="cf-token-template-url" class="copy-source" type="text" value="{{$cf.TokenTemplateURL}}" readonly tabindex="-1" aria-hidden="true">
+            <label>
+              <span>{{.Admin.T "admin.settings.cloudflare.public_domain" "前台访问域名"}}</span>
+              <input name="route_pattern" value="{{$c.RoutePattern}}" placeholder="{{.Admin.T "admin.settings.cloudflare.public_domain_placeholder" "例如 ccvar.com 或 www.ccvar.com/*"}}">
+              <small>{{.Admin.T "admin.settings.cloudflare.public_domain_hint" "访客最终打开的域名，会绑定到 Cloudflare Worker。创建 Token 时，请在 Cloudflare 里选择这个域名所在的 Zone。"}}</small>
+            </label>
             <div class="cloudflare-template-actions">
               <a class="btn" href="{{$cf.TokenTemplateURL}}" target="_blank" rel="noopener">{{.Admin.T "admin.settings.cloudflare.template_link" "去 Cloudflare 创建专用 Token"}}</a>
               <button class="btn" type="button" data-copy-target="cf-token-template-url">{{.Admin.T "admin.settings.cloudflare.copy_template_url" "复制链接"}}</button>
@@ -1034,7 +1038,7 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h5l2-7 4 14 2-7h3"/><path d="M4 19h16"/></svg>
           <span>{{.Admin.T "admin.settings.cloudflare.status" "部署状态"}}</span>
         </h3>
-        <div class="update-summary">
+        <div class="update-summary" id="cloudflare-status-box" data-status-url="/admin/settings/cloudflare/status" data-running="{{if $st.Running}}1{{else}}0{{end}}">
           <div class="update-versions">
             <div class="update-block">
               <span class="update-label">{{.Admin.T "admin.settings.cloudflare.worker" "Worker"}}</span>
@@ -1051,19 +1055,27 @@
           <div class="update-task">
             <div>
               <span class="update-label">{{.Admin.T "admin.settings.cloudflare.task" "部署任务"}}</span>
-              <strong>{{if eq $st.Status "running"}}{{.Admin.T "admin.settings.cloudflare.running" "部署中"}}{{else if eq $st.Status "failed"}}{{.Admin.T "admin.settings.cloudflare.failed" "失败"}}{{else if eq $st.Status "success"}}{{.Admin.T "admin.settings.cloudflare.success" "成功"}}{{else}}{{.Admin.T "admin.settings.cloudflare.idle" "空闲"}}{{end}}</strong>
-              <p>{{$st.Message}}</p>
+              <strong data-cloudflare-status>{{if eq $st.Status "running"}}{{.Admin.T "admin.settings.cloudflare.running" "部署中"}}{{else if eq $st.Status "failed"}}{{.Admin.T "admin.settings.cloudflare.failed" "失败"}}{{else if eq $st.Status "success"}}{{.Admin.T "admin.settings.cloudflare.success" "成功"}}{{else}}{{.Admin.T "admin.settings.cloudflare.idle" "空闲"}}{{end}}</strong>
+              <p data-cloudflare-message>{{$st.Message}}</p>
             </div>
             <div class="button-row">
               <form method="post" action="/admin/settings/cloudflare/deploy" data-confirm="{{.Admin.T "admin.settings.cloudflare.deploy_confirm" "将当前公开站点入口部署到 Cloudflare Worker？请确认源站地址不是同一个 Cloudflare 公开域名。"}}">
                 <input type="hidden" name="_csrf" value="{{.CSRF}}">
-                <button class="btn btn-primary" type="submit"{{if $st.Running}} disabled{{end}}>{{if $st.Running}}{{.Admin.T "admin.settings.cloudflare.deploying" "部署中..."}}{{else}}{{.Admin.T "admin.settings.cloudflare.deploy" "部署到 Cloudflare"}}{{end}}</button>
+                <button class="btn btn-primary" type="submit" data-cloudflare-deploy-button{{if $st.Running}} disabled{{end}}>{{if $st.Running}}{{.Admin.T "admin.settings.cloudflare.deploying" "部署中..."}}{{else}}{{.Admin.T "admin.settings.cloudflare.deploy" "部署到 Cloudflare"}}{{end}}</button>
               </form>
               <form method="post" action="/admin/settings/cloudflare/purge" data-confirm="{{.Admin.T "admin.settings.cloudflare.purge_confirm" "清除当前 Zone 的 Cloudflare 缓存？下一次访问会重新回源生成页面。"}}">
                 <input type="hidden" name="_csrf" value="{{.CSRF}}">
                 <button class="btn" type="submit">{{.Admin.T "admin.settings.cloudflare.purge" "清除缓存"}}</button>
               </form>
             </div>
+          </div>
+          <div class="cloudflare-progress" data-cloudflare-progress>
+            <span data-step="queued">{{.Admin.T "admin.settings.cloudflare.progress_queued" "连接 Cloudflare"}}</span>
+            <span data-step="detect">{{.Admin.T "admin.settings.cloudflare.progress_detect" "识别账号域名"}}</span>
+            <span data-step="worker">{{.Admin.T "admin.settings.cloudflare.progress_worker" "上传 Worker"}}</span>
+            <span data-step="route">{{.Admin.T "admin.settings.cloudflare.progress_route" "绑定路由"}}</span>
+            <span data-step="purge">{{.Admin.T "admin.settings.cloudflare.progress_purge" "清理缓存"}}</span>
+            <span data-step="done">{{.Admin.T "admin.settings.cloudflare.progress_done" "完成"}}</span>
           </div>
         </div>
         <details class="update-details">
@@ -1088,6 +1100,69 @@
             </tbody>
           </table>
         </details>
+        <script>
+        (function(){
+          var box = document.getElementById("cloudflare-status-box");
+          if (!box || !window.fetch) return;
+          var root = box.parentElement || box;
+          var button = root.querySelector("[data-cloudflare-deploy-button]");
+          var url = box.dataset.statusUrl;
+          var timer = 0;
+          var txt = {
+            running: "{{.Admin.T "admin.settings.cloudflare.running" "部署中"}}",
+            failed: "{{.Admin.T "admin.settings.cloudflare.failed" "失败"}}",
+            success: "{{.Admin.T "admin.settings.cloudflare.success" "成功"}}",
+            idle: "{{.Admin.T "admin.settings.cloudflare.idle" "空闲"}}",
+            deploy: "{{.Admin.T "admin.settings.cloudflare.deploy" "部署到 Cloudflare"}}",
+            deploying: "{{.Admin.T "admin.settings.cloudflare.deploying" "部署中..."}}"
+          };
+          var order = ["queued", "detect", "worker", "route", "purge", "done"];
+          var statusText = function(status) {
+            if (status === "running") return txt.running;
+            if (status === "failed") return txt.failed;
+            if (status === "success") return txt.success;
+            return txt.idle;
+          };
+          var setText = function(sel, text) {
+            var el = root.querySelector(sel);
+            if (el) el.textContent = text || "";
+          };
+          var setProgress = function(status, step) {
+            var current = status === "success" ? "done" : (step || "");
+            var index = order.indexOf(current);
+            root.querySelectorAll("[data-cloudflare-progress] [data-step]").forEach(function(item) {
+              var itemIndex = order.indexOf(item.dataset.step);
+              item.classList.toggle("is-active", status === "running" && item.dataset.step === current);
+              item.classList.toggle("is-done", (status === "success" && itemIndex >= 0) || (index > itemIndex && itemIndex >= 0));
+              item.classList.toggle("is-failed", status === "failed" && item.dataset.step === current);
+            });
+          };
+          var render = function(s) {
+            if (!s) return;
+            box.dataset.running = s.status === "running" ? "1" : "0";
+            setText("[data-cloudflare-status]", statusText(s.status));
+            setText("[data-cloudflare-message]", s.message);
+            setProgress(s.status, s.step);
+            if (button) {
+              button.disabled = s.status === "running";
+              button.textContent = s.status === "running" ? txt.deploying : txt.deploy;
+            }
+            if (s.status === "running") schedulePoll(2500);
+          };
+          var schedulePoll = function(delay) {
+            window.clearTimeout(timer);
+            timer = window.setTimeout(poll, delay);
+          };
+          var poll = function() {
+            fetch(url, {credentials: "same-origin", headers: {"Accept": "application/json", "X-Requested-With": "XMLHttpRequest"}})
+              .then(function(r){ if (!r.ok) throw new Error("bad status"); return r.json(); })
+              .then(render)
+              .catch(function(){ schedulePoll(3500); });
+          };
+          setProgress({{printf "%q" $st.Status}}, {{printf "%q" $st.Step}});
+          if (box.dataset.running === "1") schedulePoll(900);
+        })();
+        </script>
       </div>
 
       <details class="update-details cloudflare-manual">
