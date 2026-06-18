@@ -1,6 +1,7 @@
 package web
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -83,6 +84,8 @@ func TestCloudflareWorkerScriptProtectsAdminAndServesAssets(t *testing.T) {
 		`"/admin"`,
 		`"/api/admin"`,
 		`"/preview"`,
+		`typeof env.ASSETS.fetch`,
+		`status: 503`,
 		`env.ASSETS.fetch`,
 		`/cat/`,
 		`/page/`,
@@ -90,6 +93,31 @@ func TestCloudflareWorkerScriptProtectsAdminAndServesAssets(t *testing.T) {
 		if !strings.Contains(script, needle) {
 			t.Fatalf("worker script should contain %s", needle)
 		}
+	}
+}
+
+func TestCloudflareWorkerUploadMetadataIncludesAssetsBinding(t *testing.T) {
+	var metadata map[string]any
+	if err := json.Unmarshal(cloudflareWorkerUploadMetadata("jwt_123"), &metadata); err != nil {
+		t.Fatalf("metadata should be valid json: %v", err)
+	}
+	if metadata["main_module"] != "worker.js" {
+		t.Fatalf("main_module = %v, want worker.js", metadata["main_module"])
+	}
+	assets, ok := metadata["assets"].(map[string]any)
+	if !ok {
+		t.Fatalf("assets metadata missing: %#v", metadata["assets"])
+	}
+	if assets["jwt"] != "jwt_123" {
+		t.Fatalf("assets jwt = %v", assets["jwt"])
+	}
+	bindings, ok := metadata["bindings"].([]any)
+	if !ok || len(bindings) != 1 {
+		t.Fatalf("bindings = %#v, want one assets binding", metadata["bindings"])
+	}
+	binding, ok := bindings[0].(map[string]any)
+	if !ok || binding["name"] != "ASSETS" || binding["type"] != "assets" {
+		t.Fatalf("binding = %#v, want ASSETS assets binding", bindings[0])
 	}
 }
 

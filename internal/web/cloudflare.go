@@ -182,6 +182,10 @@ type cloudflareAssetsUploadResult struct {
 	JWT string `json:"jwt"`
 }
 
+type cloudflareWorkerVersionResult struct {
+	ID string `json:"id"`
+}
+
 func cloudflareStatusPath() string {
 	return filepath.Join(upgradeRoot(), "run", "cloudflare-deploy.json")
 }
@@ -1486,6 +1490,26 @@ func exportedContentType(exported *staticExportResult, hash string) string {
 }
 
 func uploadCloudflareWorker(ctx context.Context, cfg CloudflareConfig, assetsJWT string) error {
+	versionID, err := uploadCloudflareWorkerVersion(ctx, cfg, assetsJWT)
+	if err != nil {
+		// Cloudflare may require the script to exist before accepting immutable
+		// versions. Seed it once through the script upload API, then publish the
+		// real Worker Assets version and deployment.
+		if seedErr := uploadCloudflareWorkerScript(ctx, cfg); seedErr != nil {
+			return seedErr
+		}
+		versionID, err = uploadCloudflareWorkerVersion(ctx, cfg, assetsJWT)
+		if err != nil {
+			return cloudflareStagePermissionError("worker", err)
+		}
+	}
+	if err := deployCloudflareWorkerVersion(ctx, cfg, versionID); err != nil {
+		return cloudflareStagePermissionError("worker", err)
+	}
+	return nil
+}
+
+func cloudflareWorkerUploadMetadata(assetsJWT string) []byte {
 	metadata := map[string]any{
 		"main_module":        "worker.js",
 		"compatibility_date": "2025-01-01",
@@ -1501,19 +1525,86 @@ func uploadCloudflareWorker(ctx context.Context, cfg CloudflareConfig, assetsJWT
 		},
 	}
 	metadataJSON, _ := json.Marshal(metadata)
+	return metadataJSON
+}
+
+func cloudflareWorkerSeedMetadata() []byte {
+	metadataJSON, _ := json.Marshal(map[string]any{
+		"main_module":        "worker.js",
+		"compatibility_date": "2025-01-01",
+	})
+	return metadataJSON
+}
+
+func newCloudflareWorkerUploadBody(assetsJWT string) (*bytes.Buffer, string, error) {
+	return newCloudflareWorkerMultipartBody(cloudflareWorkerUploadMetadata(assetsJWT), []byte(cloudflareWorkerScript()))
+}
+
+func newCloudflareWorkerSeedBody() (*bytes.Buffer, string, error) {
+	return newCloudflareWorkerMultipartBody(cloudflareWorkerSeedMetadata(), []byte(cloudflareWorkerScript()))
+}
+
+func newCloudflareWorkerMultipartBody(metadata []byte, script []byte) (*bytes.Buffer, string, error) {
 	var body bytes.Buffer
 	mw := multipart.NewWriter(&body)
-	if err := writeMultipartField(mw, "metadata", "", "application/json", metadataJSON); err != nil {
-		return err
+	if err := writeMultipartField(mw, "metadata", "", "application/json", metadata); err != nil {
+		return nil, "", err
 	}
-	if err := writeMultipartField(mw, "worker.js", "worker.js", "application/javascript+module", []byte(cloudflareWorkerScript())); err != nil {
-		return err
+	if err := writeMultipartField(mw, "worker.js", "worker.js", "application/javascript+module", script); err != nil {
+		return nil, "", err
 	}
 	if err := mw.Close(); err != nil {
+		return nil, "", err
+	}
+	return &body, mw.FormDataContentType(), nil
+}
+
+func uploadCloudflareWorkerVersion(ctx context.Context, cfg CloudflareConfig, assetsJWT string) (string, error) {
+	body, contentType, err := newCloudflareWorkerUploadBody(assetsJWT)
+	if err != nil {
+		return "", err
+	}
+	path := fmt.Sprintf("/accounts/%s/workers/scripts/%s/versions", url.PathEscape(cfg.AccountID), url.PathEscape(cfg.WorkerName))
+	result, err := cloudflareAPIRequest(ctx, cfg.APIToken, http.MethodPost, path, body, contentType)
+	if err != nil {
+		return "", err
+	}
+	var version cloudflareWorkerVersionResult
+	if err := json.Unmarshal(result, &version); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(version.ID) == "" {
+		return "", errors.New("Cloudflare 没有返回 Worker Version ID。")
+	}
+	return version.ID, nil
+}
+
+func deployCloudflareWorkerVersion(ctx context.Context, cfg CloudflareConfig, versionID string) error {
+	body, _ := json.Marshal(map[string]any{
+		"strategy": "percentage",
+		"versions": []map[string]any{
+			{
+				"version_id": versionID,
+				"percentage": 100,
+			},
+		},
+		"annotations": map[string]string{
+			"workers/message":      "Deploy gcms static site",
+			"workers/triggered_by": "gcms",
+		},
+	})
+	path := fmt.Sprintf("/accounts/%s/workers/scripts/%s/deployments", url.PathEscape(cfg.AccountID), url.PathEscape(cfg.WorkerName))
+	_, err := cloudflareAPIRequest(ctx, cfg.APIToken, http.MethodPost, path, bytes.NewReader(body), "application/json")
+	return err
+}
+
+func uploadCloudflareWorkerScript(ctx context.Context, cfg CloudflareConfig) error {
+	body, contentType, err := newCloudflareWorkerSeedBody()
+	if err != nil {
 		return err
 	}
 	path := fmt.Sprintf("/accounts/%s/workers/scripts/%s", url.PathEscape(cfg.AccountID), url.PathEscape(cfg.WorkerName))
-	_, err := cloudflareAPIRequest(ctx, cfg.APIToken, http.MethodPut, path, &body, mw.FormDataContentType())
+	_, err = cloudflareAPIRequest(ctx, cfg.APIToken, http.MethodPut, path, body, contentType)
 	if err != nil {
 		return cloudflareStagePermissionError("worker", err)
 	}
@@ -1776,6 +1867,9 @@ export default {
     }
     if (request.method !== "GET" && request.method !== "HEAD") {
       return new Response("Method Not Allowed", { status: 405 });
+    }
+    if (!env.ASSETS || typeof env.ASSETS.fetch !== "function") {
+      return new Response("GCMS static assets binding is missing. Please redeploy this site from the GCMS Cloudflare deployment page.", { status: 503 });
     }
 
     const assetURL = remap(incoming);
