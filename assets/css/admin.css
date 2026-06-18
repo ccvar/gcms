@@ -1125,6 +1125,8 @@ body.admin { background: var(--line-soft); }
 .cloudflare-progress { display: flex; flex-wrap: wrap; gap: .55rem 1rem; padding: .85rem 1rem 1rem; border-top: 1px solid var(--line-soft); background: color-mix(in srgb, var(--surface) 92%, var(--line-soft)); }
 .cloudflare-progress span { display: inline-flex; align-items: center; gap: .35rem; color: var(--muted); font: 800 .76rem/1.35 var(--sans); white-space: nowrap; }
 .cloudflare-progress span::before { content: ""; width: 9px; height: 9px; border-radius: 999px; background: var(--line); box-shadow: inset 0 0 0 1px rgba(0,0,0,.05); }
+.cloudflare-progress[data-status="success"] span { color: var(--ok); }
+.cloudflare-progress[data-status="success"] span::before { background: var(--ok); }
 .cloudflare-progress span.is-done { color: var(--ok); }
 .cloudflare-progress span.is-done::before { background: var(--ok); }
 .cloudflare-progress span.is-active { color: var(--accent); }

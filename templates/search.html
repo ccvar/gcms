@@ -7,12 +7,12 @@
           <input type="search" name="q" value="{{.Query}}" placeholder="{{.Tr.T "search.placeholder"}}" aria-label="{{.Tr.T "search.title"}}" autofocus>
           <button class="btn btn-primary" type="submit">{{.Tr.T "search.button"}}</button>
         </form>
-        {{if .Query}}<p class="muted" style="font-size:.92rem">{{.Tr.Tf "search.found" .Results}}</p>{{end}}
+        <p class="muted" style="font-size:.92rem" data-search-summary{{if not .Query}} hidden{{end}}>{{if .Query}}{{.Tr.Tf "search.found" .Results}}{{end}}</p>
       </div>
     </section>
 
     <div class="wrap">
-      <div class="post-list">
+      <div class="post-list" data-static-search data-index-url="{{.Tr.U "/search-index.json"}}" data-query="{{.Query}}" data-none="{{if .Query}}{{.Tr.Tf "search.none" .Query}}{{else}}{{.Tr.T "search.prompt"}}{{end}}" data-none-template="{{.Tr.T "search.none"}}" data-found-template="{{.Tr.T "search.found"}}">
         {{range $i, $p := .Posts}}
         <article class="post-item">
           <div class="num">{{printf "%02d" (add $i 1)}}</div>

@@ -60,9 +60,9 @@
   "search.title": "搜索",
   "search.placeholder": "搜索文章…",
   "search.button": "搜索",
-  "search.found": "找到 %d 篇相关文章",
-  "search.none": "没有找到与「%s」相关的文章。",
-  "search.prompt": "输入关键词，检索站内文章。",
+  "search.found": "找到 %d 条相关内容",
+  "search.none": "没有找到与「%s」相关的内容。",
+  "search.prompt": "输入关键词，检索站内内容。",
 
   "nf.title": "页面未找到",
   "nf.desc": "抱歉，你访问的页面不存在或已被移动。",

@@ -44,7 +44,7 @@ const (
 
 	cloudflareDefaultWorkerName = "gcms-frontend"
 	cloudflareDefaultHTMLTTL    = 300
-	cloudflareAPITimeout        = 70 * time.Second
+	cloudflareAPITimeout        = 4 * time.Minute
 	cloudflareStaleAfter        = 3 * time.Minute
 	cloudflareConnectTTL        = 15 * time.Minute
 	cloudflareOAuthSkew         = 2 * time.Minute
@@ -160,6 +160,28 @@ type cloudflareRoute struct {
 	Script  string `json:"script"`
 }
 
+type cloudflareDNSRecord struct {
+	ID      string `json:"id"`
+	Type    string `json:"type"`
+	Name    string `json:"name"`
+	Content string `json:"content"`
+	Proxied *bool  `json:"proxied"`
+}
+
+type cloudflareAssetManifestEntry struct {
+	Hash string `json:"hash"`
+	Size int64  `json:"size"`
+}
+
+type cloudflareAssetsUploadSession struct {
+	JWT     string     `json:"jwt"`
+	Buckets [][]string `json:"buckets"`
+}
+
+type cloudflareAssetsUploadResult struct {
+	JWT string `json:"jwt"`
+}
+
 func cloudflareStatusPath() string {
 	return filepath.Join(upgradeRoot(), "run", "cloudflare-deploy.json")
 }
@@ -183,7 +205,7 @@ func (cfg CloudflareConfig) oauthSet() bool {
 func (cfg CloudflareConfig) configured() bool {
 	return cfg.tokenSet() &&
 		strings.TrimSpace(cfg.WorkerName) != "" &&
-		strings.TrimSpace(cfg.OriginURL) != ""
+		strings.TrimSpace(cfg.RoutePattern) != ""
 }
 
 func (cfg CloudflareConfig) validateDeploy() error {
@@ -195,9 +217,6 @@ func (cfg CloudflareConfig) validateDeploy() error {
 	}
 	if strings.TrimSpace(cfg.RoutePattern) == "" {
 		return errors.New("请填写前台访问域名，例如 example.com 或 www.example.com/*。")
-	}
-	if _, err := url.ParseRequestURI(cfg.OriginURL); err != nil || !(strings.HasPrefix(cfg.OriginURL, "http://") || strings.HasPrefix(cfg.OriginURL, "https://")) {
-		return errors.New("源站地址必须是完整的 http:// 或 https:// 地址。")
 	}
 	if cfg.RoutePattern != "" && strings.Contains(cfg.RoutePattern, "://") {
 		return errors.New("Worker 路由请填写 example.com/* 这种格式，不要带 http:// 或 https://。")
@@ -403,7 +422,7 @@ func readCloudflareStatus() *CloudflareStatus {
 	if st.Status == "running" && cloudflareStatusStale(st) {
 		st.Status = "failed"
 		st.Step = "timeout"
-		st.Message = "上一次部署任务长时间没有更新，可能已被中断。请检查 Token、域名和源站地址后重新部署。"
+		st.Message = "上一次部署任务长时间没有更新，可能已被中断。请检查 Token、前台域名和 Cloudflare 权限后重新部署。"
 		writeCloudflareStatus(*st)
 	}
 	st.Running = st.Status == "running"
@@ -463,6 +482,7 @@ func cloudflareAPITokenTemplateURL() string {
 	permissions := []map[string]string{
 		{"key": "workers_scripts", "type": "edit"},
 		{"key": "workers_routes", "type": "edit"},
+		{"key": "dns", "type": "edit"},
 		{"key": "cache", "type": "purge"},
 		{"key": "zone", "type": "read"},
 		{"key": "account_settings", "type": "read"},
@@ -523,14 +543,19 @@ func (s *Server) saveCloudflareConfigFromRequest(r *http.Request) (CloudflareCon
 		cfg.OriginURL = normalizeCloudflareOrigin(raw)
 	}
 	cfg.AutoSync = r.FormValue("auto_sync") == "1"
-	ttl, err := strconv.Atoi(strings.TrimSpace(r.FormValue("html_cache_ttl")))
-	if err != nil {
-		return cfg, errors.New("HTML 缓存时间必须是数字。")
+	if _, ok := r.Form["html_cache_ttl"]; ok {
+		ttl, err := strconv.Atoi(strings.TrimSpace(r.FormValue("html_cache_ttl")))
+		if err != nil {
+			return cfg, errors.New("HTML 缓存时间必须是数字。")
+		}
+		if ttl < 0 || ttl > 86400 {
+			return cfg, errors.New("HTML 缓存时间需要在 0 到 86400 秒之间。")
+		}
+		cfg.HTMLCacheTTL = ttl
 	}
-	if ttl < 0 || ttl > 86400 {
-		return cfg, errors.New("HTML 缓存时间需要在 0 到 86400 秒之间。")
+	if cfg.HTMLCacheTTL <= 0 {
+		cfg.HTMLCacheTTL = cloudflareDefaultHTMLTTL
 	}
-	cfg.HTMLCacheTTL = ttl
 
 	settings := map[string]string{
 		cloudflareAccountIDKey:    cfg.AccountID,
@@ -1271,14 +1296,29 @@ func (s *Server) deployCloudflare(ctx context.Context, cfg CloudflareConfig) err
 	if err != nil {
 		return fmt.Errorf("获取 Cloudflare 授权失败：%w", err)
 	}
-	setStep("worker", "正在上传 Worker 脚本。")
-	if err := uploadCloudflareWorker(ctx, cfg); err != nil {
+	setStep("export", "正在导出前台静态站。")
+	exported, err := s.exportStaticSite(ctx, cfg)
+	if err != nil {
+		return fmt.Errorf("导出静态站失败：%w", err)
+	}
+	defer os.RemoveAll(exported.Dir)
+	setStep("assets", fmt.Sprintf("正在上传 %d 个静态文件到 Cloudflare。", exported.Count))
+	assetsJWT, err := uploadCloudflareStaticAssets(ctx, cfg, exported)
+	if err != nil {
+		return fmt.Errorf("上传静态资源失败：%w", err)
+	}
+	setStep("worker", "正在发布静态站 Worker。")
+	if err := uploadCloudflareWorker(ctx, cfg, assetsJWT); err != nil {
 		return fmt.Errorf("上传 Worker 失败：%w", err)
 	}
 	if cfg.ZoneID != "" && cfg.RoutePattern != "" {
 		setStep("route", "正在绑定 Worker 路由。")
 		if err := ensureCloudflareRoute(ctx, cfg); err != nil {
 			return fmt.Errorf("绑定 Worker 路由失败：%w", err)
+		}
+		setStep("dns", "正在确认 Cloudflare DNS。")
+		if err := ensureCloudflareDNSRecord(ctx, cfg); err != nil {
+			return fmt.Errorf("绑定 DNS 失败：%w", err)
 		}
 		setStep("purge", "正在清理 Cloudflare 缓存。")
 		if err := purgeCloudflareEverything(ctx, cfg); err != nil {
@@ -1290,7 +1330,7 @@ func (s *Server) deployCloudflare(ctx context.Context, cfg CloudflareConfig) err
 	writeCloudflareStatus(CloudflareStatus{
 		Status:       "success",
 		Step:         "done",
-		Message:      "Cloudflare Worker 已部署；内容仍由当前 gcms 源站渲染，Cloudflare 负责入口与缓存。",
+		Message:      fmt.Sprintf("Cloudflare 静态站已部署：%d 个文件已上传，前台由 Worker Assets 托管。", exported.Count),
 		WorkerName:   cfg.WorkerName,
 		RoutePattern: cfg.RoutePattern,
 		UpdatedAt:    now,
@@ -1305,11 +1345,11 @@ func (s *Server) deployCloudflare(ctx context.Context, cfg CloudflareConfig) err
 
 func (s *Server) scheduleCloudflareSync(reason string) {
 	cfg := s.cloudflareConfig()
-	if !cfg.AutoSync || !cfg.tokenSet() {
+	if !cfg.AutoSync || !cfg.configured() {
 		return
 	}
 	if strings.TrimSpace(reason) == "" {
-		reason = "内容已更新，Cloudflare 缓存已自动清除。"
+		reason = "内容已更新，Cloudflare 静态站将自动重新发布。"
 	}
 	s.cloudflareMu.Lock()
 	if s.cloudflareTimer != nil {
@@ -1317,9 +1357,21 @@ func (s *Server) scheduleCloudflareSync(reason string) {
 	}
 	msg := reason
 	s.cloudflareTimer = time.AfterFunc(25*time.Second, func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		writeCloudflareStatus(CloudflareStatus{
+			Status:       "running",
+			Step:         "queued",
+			Message:      msg,
+			WorkerName:   cfg.WorkerName,
+			RoutePattern: cfg.RoutePattern,
+			Configured:   cfg.configured(),
+			TokenSet:     cfg.tokenSet(),
+			AutoSync:     cfg.AutoSync,
+		})
+		ctx, cancel := context.WithTimeout(context.Background(), cloudflareAPITimeout)
 		defer cancel()
-		_ = s.purgeCloudflareCache(ctx, cfg, msg)
+		if err := s.deployCloudflare(ctx, cfg); err != nil {
+			writeCloudflareStatus(cloudflareStatusFailed(cfg, "failed", err.Error()))
+		}
 	})
 	s.cloudflareMu.Unlock()
 }
@@ -1351,13 +1403,101 @@ func (s *Server) purgeCloudflareCache(ctx context.Context, cfg CloudflareConfig,
 	return nil
 }
 
-func uploadCloudflareWorker(ctx context.Context, cfg CloudflareConfig) error {
+func uploadCloudflareStaticAssets(ctx context.Context, cfg CloudflareConfig, exported *staticExportResult) (string, error) {
+	manifest := map[string]cloudflareAssetManifestEntry{}
+	for _, p := range sortedStaticFilePaths(exported.Files) {
+		f := exported.Files[p]
+		manifest[f.Path] = cloudflareAssetManifestEntry{Hash: f.Hash, Size: f.Size}
+	}
+	body, _ := json.Marshal(map[string]any{"manifest": manifest})
+	path := fmt.Sprintf("/accounts/%s/workers/scripts/%s/assets-upload-session", url.PathEscape(cfg.AccountID), url.PathEscape(cfg.WorkerName))
+	result, err := cloudflareAPIRequest(ctx, cfg.APIToken, http.MethodPost, path, bytes.NewReader(body), "application/json")
+	if err != nil {
+		return "", cloudflareStagePermissionError("assets", err)
+	}
+	var session cloudflareAssetsUploadSession
+	if err := json.Unmarshal(result, &session); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(session.JWT) == "" {
+		return "", errors.New("Cloudflare 没有返回静态资源上传令牌。")
+	}
+	completionJWT := session.JWT
+	for _, bucket := range session.Buckets {
+		if len(bucket) == 0 {
+			continue
+		}
+		jwt, err := uploadCloudflareAssetBucket(ctx, cfg, session.JWT, exported, bucket)
+		if err != nil {
+			return "", err
+		}
+		if strings.TrimSpace(jwt) != "" {
+			completionJWT = jwt
+		}
+	}
+	if strings.TrimSpace(completionJWT) == "" {
+		return "", errors.New("Cloudflare 没有返回静态资源完成令牌。")
+	}
+	return completionJWT, nil
+}
+
+func uploadCloudflareAssetBucket(ctx context.Context, cfg CloudflareConfig, uploadJWT string, exported *staticExportResult, hashes []string) (string, error) {
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	for _, hash := range hashes {
+		diskPath := exported.ByHash[hash]
+		if diskPath == "" {
+			return "", fmt.Errorf("静态资源上传清单缺少文件 hash：%s", hash)
+		}
+		data, err := os.ReadFile(diskPath)
+		if err != nil {
+			return "", err
+		}
+		contentType := exportedContentType(exported, hash)
+		if contentType == "" {
+			contentType = "application/null"
+		}
+		if err := writeMultipartField(mw, hash, hash, contentType, []byte(base64.StdEncoding.EncodeToString(data))); err != nil {
+			return "", err
+		}
+	}
+	if err := mw.Close(); err != nil {
+		return "", err
+	}
+	path := fmt.Sprintf("/accounts/%s/workers/assets/upload?base64=true", url.PathEscape(cfg.AccountID))
+	result, err := cloudflareAPIRequest(ctx, uploadJWT, http.MethodPost, path, &body, mw.FormDataContentType())
+	if err != nil {
+		return "", cloudflareStagePermissionError("assets", err)
+	}
+	var uploaded cloudflareAssetsUploadResult
+	if err := json.Unmarshal(result, &uploaded); err != nil {
+		return "", err
+	}
+	return uploaded.JWT, nil
+}
+
+func exportedContentType(exported *staticExportResult, hash string) string {
+	for _, file := range exported.Files {
+		if file.Hash == hash {
+			return file.ContentType
+		}
+	}
+	return ""
+}
+
+func uploadCloudflareWorker(ctx context.Context, cfg CloudflareConfig, assetsJWT string) error {
 	metadata := map[string]any{
 		"main_module":        "worker.js",
 		"compatibility_date": "2025-01-01",
 		"bindings": []map[string]string{
-			{"type": "plain_text", "name": "GCMS_ORIGIN", "text": cfg.OriginURL},
-			{"type": "plain_text", "name": "HTML_CACHE_TTL", "text": strconv.Itoa(cfg.HTMLCacheTTL)},
+			{"type": "assets", "name": "ASSETS"},
+		},
+		"assets": map[string]any{
+			"jwt": assetsJWT,
+			"config": map[string]any{
+				"html_handling":      "auto-trailing-slash",
+				"not_found_handling": "404-page",
+			},
 		},
 	}
 	metadataJSON, _ := json.Marshal(metadata)
@@ -1433,6 +1573,71 @@ func listCloudflareRoutes(ctx context.Context, cfg CloudflareConfig) ([]cloudfla
 	return routes, nil
 }
 
+func ensureCloudflareDNSRecord(ctx context.Context, cfg CloudflareConfig) error {
+	host := cloudflareRouteHost(cfg.RoutePattern)
+	if strings.TrimSpace(cfg.ZoneID) == "" || host == "" {
+		return nil
+	}
+	records, err := listCloudflareDNSRecords(ctx, cfg, host)
+	if err != nil {
+		return cloudflareStagePermissionError("dns", err)
+	}
+	for _, rec := range records {
+		if !sameCloudflareDNSName(rec.Name, host) || !cloudflareDNSRouteRecord(rec.Type) {
+			continue
+		}
+		if rec.Proxied != nil && *rec.Proxied {
+			return nil
+		}
+	}
+	for _, rec := range records {
+		if sameCloudflareDNSName(rec.Name, host) && cloudflareDNSRouteRecord(rec.Type) {
+			return fmt.Errorf("Cloudflare DNS 已有 %s 记录，但没有开启代理。请在 Cloudflare DNS 中给 %s 开启橙云代理，或删除该记录后重新部署。", rec.Type, host)
+		}
+	}
+	proxied := true
+	body, _ := json.Marshal(map[string]any{
+		"type":    "AAAA",
+		"name":    host,
+		"content": "100::",
+		"ttl":     1,
+		"proxied": proxied,
+	})
+	path := fmt.Sprintf("/zones/%s/dns_records", url.PathEscape(cfg.ZoneID))
+	if _, err := cloudflareAPIRequest(ctx, cfg.APIToken, http.MethodPost, path, bytes.NewReader(body), "application/json"); err != nil {
+		return cloudflareStagePermissionError("dns", err)
+	}
+	return nil
+}
+
+func listCloudflareDNSRecords(ctx context.Context, cfg CloudflareConfig, host string) ([]cloudflareDNSRecord, error) {
+	path := fmt.Sprintf("/zones/%s/dns_records?per_page=100&name=%s", url.PathEscape(cfg.ZoneID), url.QueryEscape(host))
+	result, err := cloudflareAPIRequest(ctx, cfg.APIToken, http.MethodGet, path, nil, "")
+	if err != nil {
+		return nil, err
+	}
+	var records []cloudflareDNSRecord
+	if len(result) > 0 {
+		if err := json.Unmarshal(result, &records); err != nil {
+			return nil, err
+		}
+	}
+	return records, nil
+}
+
+func cloudflareDNSRouteRecord(recordType string) bool {
+	switch strings.ToUpper(strings.TrimSpace(recordType)) {
+	case "A", "AAAA", "CNAME":
+		return true
+	default:
+		return false
+	}
+}
+
+func sameCloudflareDNSName(a, b string) bool {
+	return strings.Trim(strings.ToLower(strings.TrimSpace(a)), ".") == strings.Trim(strings.ToLower(strings.TrimSpace(b)), ".")
+}
+
 func purgeCloudflareEverything(ctx context.Context, cfg CloudflareConfig) error {
 	if strings.TrimSpace(cfg.ZoneID) == "" {
 		return nil
@@ -1482,8 +1687,12 @@ func cloudflareStagePermissionError(stage string, err error) error {
 		return err
 	}
 	switch stage {
+	case "assets":
+		return fmt.Errorf("Cloudflare 拒绝上传静态资源：请重新创建 Token，并确认摘要里包含 Account 级的 Workers Scripts Edit 权限；Account Resources 必须包含当前账号。如果手动填过 Account ID，也请确认它属于这个账号。原始错误：%w", err)
 	case "worker":
 		return fmt.Errorf("Cloudflare 拒绝上传 Worker：请重新创建 Token，并确认摘要里包含 Account 级的 Workers Scripts Edit 权限；Account Resources 必须包含当前账号。如果手动填过 Account ID，也请确认它属于这个账号。原始错误：%w", err)
+	case "dns":
+		return fmt.Errorf("Cloudflare 拒绝绑定 DNS：请重新创建 Token，并确认摘要里包含 Zone 级的 DNS Edit 和 Zone Read 权限；Zone Resources 必须包含当前前台域名。原始错误：%w", err)
 	case "route":
 		return fmt.Errorf("Cloudflare 拒绝绑定路由：请重新创建 Token，并确认摘要里包含 Zone 级的 Workers Routes Edit 和 Zone Read 权限；Zone Resources 必须包含当前域名。原始错误：%w", err)
 	case "purge":
@@ -1534,11 +1743,29 @@ function blocked(pathname) {
   return BLOCKED_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(prefix + "/"));
 }
 
-function cacheable(request, response, ttl) {
-  if (request.method !== "GET" || ttl <= 0 || response.status !== 200) return false;
-  if (response.headers.has("set-cookie")) return false;
-  const type = response.headers.get("content-type") || "";
-  return type.includes("text/html") || type.includes("application/xml") || type.includes("application/rss+xml") || type.includes("text/plain");
+function remap(url) {
+  const next = new URL(url.toString());
+  const pathname = next.pathname.replace(/\/+$/, "") || "/";
+  const page = next.searchParams.get("page");
+  const cat = next.searchParams.get("cat");
+  const hasSearch = next.searchParams.has("q");
+
+  if (hasSearch && /\/search\/?$/.test(pathname)) {
+    next.search = "";
+    return next;
+  }
+  if (cat && /^\/[^/]+\/links\/?$/.test(pathname)) {
+    const safeCat = encodeURIComponent(cat).replace(/%2F/gi, "");
+    next.pathname = pathname.replace(/\/+$/, "") + "/cat/" + safeCat + (page && page !== "1" ? "/page/" + page : "") + "/";
+    next.search = "";
+    return next;
+  }
+  if (page && page !== "1") {
+    next.pathname = pathname.replace(/\/+$/, "") + "/page/" + page + "/";
+    next.search = "";
+    return next;
+  }
+  return url;
 }
 
 export default {
@@ -1547,44 +1774,15 @@ export default {
     if (blocked(incoming.pathname)) {
       return new Response("Not found", { status: 404 });
     }
-
-    const originBase = new URL(env.GCMS_ORIGIN);
-    const originURL = new URL(request.url);
-    originURL.protocol = originBase.protocol;
-    originURL.hostname = originBase.hostname;
-    originURL.port = originBase.port;
-
-    const ttl = Number.parseInt(env.HTML_CACHE_TTL || "0", 10) || 0;
-    if (request.method === "GET" && ttl > 0) {
-      const cacheKey = new Request(request.url, request);
-      const hit = await caches.default.match(cacheKey);
-      if (hit) return hit;
-    }
-
-    const headers = new Headers(request.headers);
-    headers.set("X-Forwarded-Host", incoming.host);
-    headers.set("X-Forwarded-Proto", "https");
-    headers.set("X-GCMS-Cloudflare", "1");
-
-    const init = {
-      method: request.method,
-      headers,
-      redirect: "manual",
-    };
     if (request.method !== "GET" && request.method !== "HEAD") {
-      init.body = request.body;
+      return new Response("Method Not Allowed", { status: 405 });
     }
 
-    const response = await fetch(originURL.toString(), init);
+    const assetURL = remap(incoming);
+    const assetRequest = assetURL === incoming ? request : new Request(assetURL.toString(), request);
+    const response = await env.ASSETS.fetch(assetRequest);
     const out = new Response(response.body, response);
-    out.headers.set("X-GCMS-Edge", "cloudflare-worker");
-
-    if (cacheable(request, out, ttl)) {
-      const cacheKey = new Request(request.url, request);
-      const cached = new Response(out.clone().body, out);
-      cached.headers.set("Cache-Control", "public, max-age=" + ttl);
-      ctx.waitUntil(caches.default.put(cacheKey, cached));
-    }
+    out.headers.set("X-GCMS-Edge", "cloudflare-static");
     return out;
   },
 };

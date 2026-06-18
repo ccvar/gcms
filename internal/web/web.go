@@ -36,6 +36,7 @@ type Server struct {
 	apiLimiter *apiRateLimiter
 	i18n       *i18n.Manager
 	mux        *http.ServeMux
+	assetsFS   fs.FS
 	assetVer   string // 静态资源内容指纹，用作 ?v= 破缓存（资源变更即失效旧缓存）
 	imageSizes map[string]ImageSize
 	cacheMu    sync.RWMutex
@@ -517,7 +518,7 @@ func New(st *store.Store, baseURL, uploadDir string, tplFS, assetsFS fs.FS) (*Se
 		_ = os.MkdirAll(uploadDir, 0o755)
 	}
 	s := &Server{
-		store: st, rnd: rnd, baseURL: baseURL, uploadDir: uploadDir,
+		store: st, rnd: rnd, baseURL: baseURL, uploadDir: uploadDir, assetsFS: assetsFS,
 		sess: newSessions(st), login: newLoginLimiter(), apiLimiter: newAPIRateLimiter(), i18n: i18n.New(), assetVer: assetVersion(assetsFS), imageSizes: imageSizes,
 		content: map[string]contentCacheEntry{}, endpoints: map[string]endpointCacheEntry{}, pages: map[string]pageCacheEntry{},
 	}
@@ -623,9 +624,14 @@ func cspReportOnly(path string) string {
 type ctxKey int
 
 const langKey ctxKey = 0
+const publicBaseKey ctxKey = 1
 
 func withLang(ctx context.Context, lang string) context.Context {
 	return context.WithValue(ctx, langKey, lang)
+}
+
+func withPublicBase(ctx context.Context, baseURL string) context.Context {
+	return context.WithValue(ctx, publicBaseKey, strings.TrimRight(strings.TrimSpace(baseURL), "/"))
 }
 
 func langFrom(r *http.Request) string {
@@ -763,6 +769,11 @@ func (s *Server) absForRequest(r *http.Request, path string) string {
 }
 
 func (s *Server) publicBaseURL(r *http.Request) string {
+	if r != nil {
+		if v, ok := r.Context().Value(publicBaseKey).(string); ok && v != "" {
+			return v
+		}
+	}
 	configured := strings.TrimRight(strings.TrimSpace(s.baseURL), "/")
 	if configured != "" && !isLocalBaseURL(configured) {
 		return configured
@@ -1305,7 +1316,7 @@ func (s *Server) clearGeneratedCaches() {
 	s.endpoints = map[string]endpointCacheEntry{}
 	s.pages = map[string]pageCacheEntry{}
 	s.cacheMu.Unlock()
-	s.scheduleCloudflareSync("内容或站点配置已更新，Cloudflare 缓存已自动清除。")
+	s.scheduleCloudflareSync("内容或站点配置已更新，Cloudflare 静态站将自动重新发布。")
 }
 
 func hexColor(s string) bool {

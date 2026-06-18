@@ -77,15 +77,15 @@ func TestCloudflareRequestDefaultsOnlyInferOrigin(t *testing.T) {
 	}
 }
 
-func TestCloudflareWorkerScriptProtectsAdminAndForwardsHost(t *testing.T) {
+func TestCloudflareWorkerScriptProtectsAdminAndServesAssets(t *testing.T) {
 	script := cloudflareWorkerScript()
 	for _, needle := range []string{
 		`"/admin"`,
 		`"/api/admin"`,
 		`"/preview"`,
-		`X-Forwarded-Host`,
-		`X-Forwarded-Proto`,
-		`caches.default`,
+		`env.ASSETS.fetch`,
+		`/cat/`,
+		`/page/`,
 	} {
 		if !strings.Contains(script, needle) {
 			t.Fatalf("worker script should contain %s", needle)
@@ -161,6 +161,7 @@ func TestCloudflareAPITokenTemplateURL(t *testing.T) {
 	for _, needle := range []string{
 		`"key":"workers_scripts"`,
 		`"key":"workers_routes"`,
+		`"key":"dns"`,
 		`"key":"cache"`,
 		`"key":"zone"`,
 		`"key":"account_settings"`,
@@ -175,11 +176,10 @@ func TestCloudflareConfigConfiguredWithAPITokenOnly(t *testing.T) {
 	cfg := CloudflareConfig{
 		APIToken:     "token",
 		WorkerName:   "gcms-frontend",
-		OriginURL:    "https://origin.example.com",
 		RoutePattern: "example.com/*",
 	}
 	if !cfg.configured() {
-		t.Fatal("API token plus worker/origin should be enough before auto detection")
+		t.Fatal("API token plus worker/route should be enough before auto detection")
 	}
 	if err := cfg.validateDeploy(); err != nil {
 		t.Fatalf("validateDeploy returned %v", err)

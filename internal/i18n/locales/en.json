@@ -60,8 +60,8 @@
   "search.title": "Search",
   "search.placeholder": "Search articles…",
   "search.button": "Search",
-  "search.found": "Found %d matching articles",
-  "search.none": "No articles found for “%s”.",
+  "search.found": "Found %d matching results",
+  "search.none": "No results found for “%s”.",
   "search.prompt": "Enter a keyword to search the site.",
 
   "nf.title": "Page not found",
