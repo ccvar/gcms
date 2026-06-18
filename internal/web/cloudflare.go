@@ -219,23 +219,28 @@ func normalizeCloudflareOrigin(v string) string {
 }
 
 func (s *Server) defaultCloudflareRoutePattern() string {
-	base := strings.TrimSpace(s.baseURL)
-	if base == "" {
-		return ""
-	}
+	return cloudflareRoutePatternFromBaseURL(s.baseURL)
+}
+
+func cloudflareRoutePatternFromBaseURL(base string) string {
+	base = strings.TrimSpace(base)
 	u, err := url.Parse(base)
 	if err != nil || u.Host == "" {
 		return ""
 	}
 	host := strings.ToLower(u.Hostname())
-	if host == "localhost" || host == "127.0.0.1" || strings.HasSuffix(host, ".local") {
+	if cloudflareLocalHost(host) {
 		return ""
 	}
 	return u.Host + "/*"
 }
 
 func (s *Server) defaultCloudflareOriginURL() string {
-	base := strings.TrimRight(strings.TrimSpace(s.baseURL), "/")
+	return cloudflareOriginFromBaseURL(s.baseURL)
+}
+
+func cloudflareOriginFromBaseURL(base string) string {
+	base = strings.TrimRight(strings.TrimSpace(base), "/")
 	if base == "" {
 		return ""
 	}
@@ -244,10 +249,18 @@ func (s *Server) defaultCloudflareOriginURL() string {
 		return ""
 	}
 	host := strings.ToLower(u.Hostname())
-	if host == "localhost" || host == "127.0.0.1" {
+	if cloudflareLocalHost(host) {
 		return ""
 	}
 	return base
+}
+
+func cloudflareLocalHost(host string) bool {
+	host = strings.ToLower(strings.Trim(host, "[]"))
+	return host == "localhost" ||
+		host == "127.0.0.1" ||
+		host == "::1" ||
+		strings.HasSuffix(host, ".local")
 }
 
 func (s *Server) cloudflareConfig() CloudflareConfig {
@@ -285,6 +298,35 @@ func (s *Server) cloudflareConfig() CloudflareConfig {
 		AccountName:       strings.TrimSpace(s.store.Setting(cloudflareAccountNameKey)),
 		ZoneName:          strings.TrimSpace(s.store.Setting(cloudflareZoneNameKey)),
 		ConnectedAt:       strings.TrimSpace(s.store.Setting(cloudflareConnectedAtKey)),
+	}
+}
+
+func (s *Server) cloudflareConfigForRequest(r *http.Request) CloudflareConfig {
+	cfg := s.cloudflareConfig()
+	s.applyCloudflareRequestDefaults(r, &cfg)
+	return cfg
+}
+
+func (s *Server) cloudflareViewForRequest(r *http.Request) *CloudflareView {
+	view := s.cloudflareView()
+	s.applyCloudflareRequestDefaults(r, &view.Config)
+	view.Status.WorkerName = view.Config.WorkerName
+	view.Status.RoutePattern = view.Config.RoutePattern
+	view.Status.Configured = view.Config.configured()
+	view.Configured = view.Status.Configured
+	return view
+}
+
+func (s *Server) applyCloudflareRequestDefaults(r *http.Request, cfg *CloudflareConfig) {
+	if cfg == nil || r == nil {
+		return
+	}
+	base := s.publicBaseURL(r)
+	if strings.TrimSpace(cfg.OriginURL) == "" {
+		cfg.OriginURL = cloudflareOriginFromBaseURL(base)
+	}
+	if strings.TrimSpace(cfg.RoutePattern) == "" {
+		cfg.RoutePattern = cloudflareRoutePatternFromBaseURL(base)
 	}
 }
 
@@ -354,7 +396,7 @@ func cloudflareAPITokenTemplateURL() string {
 }
 
 func (s *Server) saveCloudflareConfigFromRequest(r *http.Request) (CloudflareConfig, error) {
-	cfg := s.cloudflareConfig()
+	cfg := s.cloudflareConfigForRequest(r)
 	cfg.AccountID = strings.TrimSpace(r.FormValue("account_id"))
 	if token := strings.TrimSpace(r.FormValue("api_token")); token != "" {
 		cfg.APIToken = token
@@ -372,8 +414,12 @@ func (s *Server) saveCloudflareConfigFromRequest(r *http.Request) (CloudflareCon
 	}
 	cfg.WorkerName = normalizeCloudflareWorkerName(r.FormValue("worker_name"))
 	cfg.ZoneID = strings.TrimSpace(r.FormValue("zone_id"))
-	cfg.RoutePattern = strings.TrimSpace(r.FormValue("route_pattern"))
-	cfg.OriginURL = normalizeCloudflareOrigin(r.FormValue("origin_url"))
+	if raw := strings.TrimSpace(r.FormValue("route_pattern")); raw != "" || r.FormValue("deploy") != "1" {
+		cfg.RoutePattern = raw
+	}
+	if raw := strings.TrimSpace(r.FormValue("origin_url")); raw != "" || r.FormValue("deploy") != "1" {
+		cfg.OriginURL = normalizeCloudflareOrigin(raw)
+	}
 	cfg.AutoSync = r.FormValue("auto_sync") == "1"
 	ttl, err := strconv.Atoi(strings.TrimSpace(r.FormValue("html_cache_ttl")))
 	if err != nil {
@@ -956,7 +1002,7 @@ func (s *Server) adminStartCloudflareDeploy(w http.ResponseWriter, r *http.Reque
 	if _, ok := s.checkCSRF(w, r); !ok {
 		return
 	}
-	cfg := s.cloudflareConfig()
+	cfg := s.cloudflareConfigForRequest(r)
 	if err := cfg.validateDeploy(); err != nil {
 		if jsonReq {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": err.Error(), "status": readCloudflareStatus()})

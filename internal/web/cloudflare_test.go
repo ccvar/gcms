@@ -1,6 +1,7 @@
 package web
 
 import (
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -23,6 +24,21 @@ func TestNormalizeCloudflareOrigin(t *testing.T) {
 	got := normalizeCloudflareOrigin("https://origin.example.com/base/?x=1#top")
 	if got != "https://origin.example.com/base" {
 		t.Fatalf("origin normalized to %q", got)
+	}
+}
+
+func TestCloudflareRequestDefaultsUsePublicRequestHost(t *testing.T) {
+	s := &Server{baseURL: "http://localhost:8080"}
+	r := httptest.NewRequest("GET", "http://127.0.0.1/admin/settings/cloudflare", nil)
+	r.Host = "cms.example.com"
+	r.Header.Set("X-Forwarded-Proto", "https")
+	var cfg CloudflareConfig
+	s.applyCloudflareRequestDefaults(r, &cfg)
+	if cfg.OriginURL != "https://cms.example.com" {
+		t.Fatalf("OriginURL = %q, want https://cms.example.com", cfg.OriginURL)
+	}
+	if cfg.RoutePattern != "cms.example.com/*" {
+		t.Fatalf("RoutePattern = %q, want cms.example.com/*", cfg.RoutePattern)
 	}
 }
 
