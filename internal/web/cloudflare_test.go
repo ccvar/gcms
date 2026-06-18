@@ -1,11 +1,15 @@
 package web
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"cms.ccvar.com/internal/store"
 )
 
 func TestNormalizeCloudflareWorkerName(t *testing.T) {
@@ -179,6 +183,52 @@ func TestCloudflareConfigConfiguredWithAPITokenOnly(t *testing.T) {
 	}
 	if err := cfg.validateDeploy(); err != nil {
 		t.Fatalf("validateDeploy returned %v", err)
+	}
+}
+
+func TestRecommendedCloudflareTokenFormClearsDetectedIDs(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "cms.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	for key, value := range map[string]string{
+		cloudflareAccountIDKey:   "old_account",
+		cloudflareAccountNameKey: "Old Account",
+		cloudflareZoneIDKey:      "old_zone",
+		cloudflareZoneNameKey:    "Old Zone",
+		cloudflareAPITokenKey:    "old_token",
+	} {
+		if err := st.SetSetting(key, value); err != nil {
+			t.Fatalf("set %s: %v", key, err)
+		}
+	}
+	s := &Server{store: st, baseURL: "https://origin.example.com"}
+	form := url.Values{
+		"deploy":         {"1"},
+		"worker_name":    {"gcms-frontend"},
+		"origin_url":     {"https://origin.example.com"},
+		"route_pattern":  {"test.ccvar.com/*"},
+		"html_cache_ttl": {"300"},
+		"auto_sync":      {"1"},
+		"api_token":      {"new_token"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/admin/settings/cloudflare", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	cfg, err := s.saveCloudflareConfigFromRequest(req)
+	if err != nil {
+		t.Fatalf("saveCloudflareConfigFromRequest returned %v", err)
+	}
+	if cfg.AccountID != "" || cfg.ZoneID != "" || cfg.AccountName != "" || cfg.ZoneName != "" {
+		t.Fatalf("recommended form should clear stale detected IDs, got %+v", cfg)
+	}
+	for _, key := range []string{cloudflareAccountIDKey, cloudflareAccountNameKey, cloudflareZoneIDKey, cloudflareZoneNameKey} {
+		if got := st.Setting(key); got != "" {
+			t.Fatalf("%s should be cleared, got %q", key, got)
+		}
+	}
+	if got := st.Setting(cloudflareAPITokenKey); got != "new_token" {
+		t.Fatalf("api token = %q, want new_token", got)
 	}
 }
 

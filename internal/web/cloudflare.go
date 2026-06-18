@@ -480,7 +480,27 @@ func cloudflareAPITokenTemplateURL() string {
 
 func (s *Server) saveCloudflareConfigFromRequest(r *http.Request) (CloudflareConfig, error) {
 	cfg := s.cloudflareConfigForRequest(r)
-	cfg.AccountID = strings.TrimSpace(r.FormValue("account_id"))
+	if err := r.ParseForm(); err != nil {
+		return cfg, err
+	}
+	prevAccountID := cfg.AccountID
+	prevZoneID := cfg.ZoneID
+	if _, ok := r.Form["account_id"]; ok {
+		cfg.AccountID = strings.TrimSpace(r.FormValue("account_id"))
+	} else {
+		cfg.AccountID = ""
+	}
+	if _, ok := r.Form["zone_id"]; ok {
+		cfg.ZoneID = strings.TrimSpace(r.FormValue("zone_id"))
+	} else {
+		cfg.ZoneID = ""
+	}
+	if cfg.AccountID == "" || cfg.AccountID != prevAccountID {
+		cfg.AccountName = ""
+	}
+	if cfg.ZoneID == "" || cfg.ZoneID != prevZoneID {
+		cfg.ZoneName = ""
+	}
 	if token := strings.TrimSpace(r.FormValue("api_token")); token != "" {
 		cfg.APIToken = token
 	}
@@ -496,7 +516,6 @@ func (s *Server) saveCloudflareConfigFromRequest(r *http.Request) (CloudflareCon
 		cfg.OAuthClientSecret = ""
 	}
 	cfg.WorkerName = normalizeCloudflareWorkerName(r.FormValue("worker_name"))
-	cfg.ZoneID = strings.TrimSpace(r.FormValue("zone_id"))
 	if raw := strings.TrimSpace(r.FormValue("route_pattern")); raw != "" || r.FormValue("deploy") != "1" {
 		cfg.RoutePattern = normalizeCloudflareRoutePattern(raw)
 	}
@@ -517,6 +536,8 @@ func (s *Server) saveCloudflareConfigFromRequest(r *http.Request) (CloudflareCon
 		cloudflareAccountIDKey:    cfg.AccountID,
 		cloudflareWorkerNameKey:   cfg.WorkerName,
 		cloudflareZoneIDKey:       cfg.ZoneID,
+		cloudflareAccountNameKey:  cfg.AccountName,
+		cloudflareZoneNameKey:     cfg.ZoneName,
 		cloudflareRoutePatternKey: cfg.RoutePattern,
 		cloudflareOriginURLKey:    cfg.OriginURL,
 		cloudflareHTMLTTLKey:      strconv.Itoa(cfg.HTMLCacheTTL),
@@ -1464,7 +1485,7 @@ func cloudflareStagePermissionError(stage string, err error) error {
 	case "worker":
 		return fmt.Errorf("Cloudflare 拒绝上传 Worker：请重新创建 Token，并确认摘要里包含 Account 级的 Workers Scripts Edit 权限；Account Resources 必须包含当前账号。如果手动填过 Account ID，也请确认它属于这个账号。原始错误：%w", err)
 	case "route":
-		return fmt.Errorf("Cloudflare 拒绝绑定路由：请重新创建 Token，并确认摘要里包含 Account 级的 Workers Routes Edit 权限，以及 Zone 级的 Zone Read 权限；资源范围必须包含当前账号和当前域名。原始错误：%w", err)
+		return fmt.Errorf("Cloudflare 拒绝绑定路由：请重新创建 Token，并确认摘要里包含 Zone 级的 Workers Routes Edit 和 Zone Read 权限；Zone Resources 必须包含当前域名。原始错误：%w", err)
 	case "purge":
 		return fmt.Errorf("Cloudflare 拒绝清理缓存：请重新创建 Token，并确认摘要里包含 Zone 级的 Cache Purge 权限；Zone Resources 必须包含当前域名。原始错误：%w", err)
 	default:
