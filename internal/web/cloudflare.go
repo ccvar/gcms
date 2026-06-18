@@ -1589,8 +1589,7 @@ func deployCloudflareWorkerVersion(ctx context.Context, cfg CloudflareConfig, ve
 			},
 		},
 		"annotations": map[string]string{
-			"workers/message":      "Deploy gcms static site",
-			"workers/triggered_by": "gcms",
+			"workers/message": "Deploy gcms static site",
 		},
 	})
 	path := fmt.Sprintf("/accounts/%s/workers/scripts/%s/deployments", url.PathEscape(cfg.AccountID), url.PathEscape(cfg.WorkerName))
