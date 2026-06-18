@@ -1863,7 +1863,7 @@ func (s *Server) adminLinkPin(w http.ResponseWriter, r *http.Request) {
 
 // ---------- 站点设置（分区独立保存）----------
 
-var settingsSections = map[string]bool{"site": true, "appearance": true, "copy": true, "menu": true, "languages": true, "categories": true, "automation": true, "comments": true, "updates": true, "security": true}
+var settingsSections = map[string]bool{"site": true, "appearance": true, "copy": true, "menu": true, "languages": true, "categories": true, "automation": true, "cloudflare": true, "comments": true, "updates": true, "security": true}
 
 func themeName(id string) string {
 	for _, t := range Themes {
@@ -2252,6 +2252,9 @@ func (s *Server) showSettings(w http.ResponseWriter, r *http.Request, section, f
 	case "automation":
 		v.AutomationKeys, _ = s.store.ListAutomationKeys()
 		v.AutomationLogs, _ = s.store.ListAutomationLogs(20)
+	case "cloudflare":
+		v.Cloudflare = s.cloudflareView()
+		v.Cloudflare.CallbackURL = s.absForRequest(r, cloudflareCallbackPath)
 	case "updates":
 		v.Update = currentUpdateInfo()
 		v.Upgrade = readUpgradeStatus()

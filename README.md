@@ -90,6 +90,14 @@ ccvar.com {
 
 `/assets/` 的 URL 自带内容指纹参数，适合长缓存；`/uploads/` 是用户上传文件，建议缓存时间短一些，并限制为图片展示上下文。动态 HTML、RSS 与 sitemap 由应用生成，保持经 Caddy 反代即可。Caddy 默认会带上 `X-Forwarded-Proto`，应用会据此在 HTTPS 入口下设置更安全的 Cookie。
 
+### Cloudflare 部署
+
+后台「设置 → Cloudflare部署」可把公开站点入口交给 Cloudflare Worker：后台和数据库仍在当前服务器，Worker 负责公开访问、HTTPS、边缘缓存和内容更新后的缓存清理。
+
+推荐流程是后台给出 Cloudflare API Token 模板链接：点击后在 Cloudflare 官方页面创建一个 gcms 专用 Token，复制回来粘贴，gcms 会自动识别 Account、Zone 与路由并部署 Worker。整个过程不需要公共中间服务，也不会把密钥写入发布包。
+
+高级设置仍保留手动 Account ID、Zone ID、API Token、源站地址、路由和缓存时间，适合需要精细控制的部署环境。详细说明见 [docs/cloudflare-connector.md](docs/cloudflare-connector.md)。
+
 ### 升级目录规划
 
 从 GitHub Release 下载的发布包，解压后默认就是可升级标准目录；用户数据和程序版本天然分开：

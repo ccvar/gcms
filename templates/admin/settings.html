@@ -23,6 +23,10 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="14.5" r="3.5"/><path d="M10 12l8-8"/><path d="M15 7l2 2"/><path d="M17 5l2 2"/></svg>
         <span>{{.Admin.T "admin.settings.menu.automation" "自动化接口"}}</span>
       </a>
+      <a href="/admin/settings/cloudflare"{{if eq .Section "cloudflare"}} class="active"{{end}}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 18H8a5 5 0 1 1 1.5-9.8A6 6 0 0 1 21 10.5 3.8 3.8 0 0 1 17.5 18z"/><path d="M8 21h8"/><path d="M12 18v3"/></svg>
+        <span>{{.Admin.T "admin.settings.menu.cloudflare" "Cloudflare 部署"}}</span>
+      </a>
       <a href="/admin/settings/comments"{{if eq .Section "comments"}} class="active"{{end}}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 14.5a4.5 4.5 0 0 1-4.5 4.5H8l-5 3V7.5A4.5 4.5 0 0 1 7.5 3h9A4.5 4.5 0 0 1 21 7.5z"/></svg>
         <span>{{.Admin.T "admin.settings.menu.comments" "评论"}}</span>
@@ -952,6 +956,202 @@
         </table>
       </details>
       {{end}}
+
+      {{else if eq .Section "cloudflare"}}
+      {{$cf := .Cloudflare}}
+      {{$c := $cf.Config}}
+      {{$st := $cf.Status}}
+      <div class="field-group cloudflare-connect">
+        <h3 class="group-head with-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.5 18H8a5 5 0 1 1 1.5-9.8A6 6 0 0 1 21 10.5 3.8 3.8 0 0 1 17.5 18z"/><path d="M8 21h8"/><path d="M12 18v3"/></svg>
+          <span>{{.Admin.T "admin.settings.cloudflare.title" "Cloudflare 部署"}}</span>
+        </h3>
+        <p class="muted automation-note">{{.Admin.T "admin.settings.cloudflare.desc" "把公开站点入口交给 Cloudflare Worker：后台和数据库仍在当前服务器，Worker 负责访问入口、HTTPS、边缘缓存和内容更新后的缓存清理。"}}</p>
+        <div class="cloudflare-connect-card">
+          <div class="cloudflare-connect-copy">
+            <span class="mini-tag">{{.Admin.T "admin.settings.cloudflare.recommended" "推荐方式"}}</span>
+            <h3>{{.Admin.T "admin.settings.cloudflare.connect_title" "创建专用 Token 并部署"}}</h3>
+            <p>{{.Admin.T "admin.settings.cloudflare.connect_desc" "按模板生成 gcms 专用 Token，复制后粘贴回来。系统会自动识别账号和域名，并部署 Worker。"}}</p>
+            <div class="cloudflare-token-steps">
+              <span data-step="1">{{.Admin.T "admin.settings.cloudflare.step_create_token" "生成专用 Token"}}</span>
+              <span data-step="2">{{.Admin.T "admin.settings.cloudflare.step_paste_token" "粘贴回来"}}</span>
+              <span data-step="3">{{.Admin.T "admin.settings.cloudflare.step_deploy" "保存并部署"}}</span>
+            </div>
+            {{if or $c.OriginURL $c.RoutePattern}}
+            <div class="cloudflare-connect-meta">
+              <span>{{.Admin.T "admin.settings.cloudflare.origin_url" "源站地址"}}：{{if $c.OriginURL}}{{$c.OriginURL}}{{else}}{{.Admin.T "admin.common.empty_dash" "—"}}{{end}}</span>
+              <span>{{.Admin.T "admin.settings.cloudflare.route_pattern" "Worker 路由"}}：{{if $c.RoutePattern}}{{$c.RoutePattern}}{{else}}{{.Admin.T "admin.common.empty_dash" "—"}}{{end}}</span>
+            </div>
+            {{end}}
+          </div>
+          <form method="post" action="/admin/settings/cloudflare" class="cloudflare-token-form">
+            <input type="hidden" name="_csrf" value="{{.CSRF}}">
+            <input type="hidden" name="deploy" value="1">
+            <input type="hidden" name="worker_name" value="{{$c.WorkerName}}">
+            <input type="hidden" name="origin_url" value="{{$c.OriginURL}}">
+            <input type="hidden" name="route_pattern" value="{{$c.RoutePattern}}">
+            <input type="hidden" name="account_id" value="{{$c.AccountID}}">
+            <input type="hidden" name="zone_id" value="{{$c.ZoneID}}">
+            <input type="hidden" name="html_cache_ttl" value="{{$c.HTMLCacheTTL}}">
+            <input type="hidden" name="auto_sync" value="1">
+            <input id="cf-token-template-url" class="copy-source" type="text" value="{{$cf.TokenTemplateURL}}" readonly tabindex="-1" aria-hidden="true">
+            <div class="cloudflare-template-actions">
+              <a class="btn" href="{{$cf.TokenTemplateURL}}" target="_blank" rel="noopener">{{.Admin.T "admin.settings.cloudflare.template_link" "去 Cloudflare 创建专用 Token"}}</a>
+              <button class="btn" type="button" data-copy-target="cf-token-template-url">{{.Admin.T "admin.settings.cloudflare.copy_template_url" "复制链接"}}</button>
+            </div>
+            <label>
+              <span>{{.Admin.T "admin.settings.cloudflare.api_token" "API Token"}}</span>
+              <input name="api_token" type="password" autocomplete="new-password" placeholder="{{if $cf.TokenSet}}{{.Admin.T "admin.settings.cloudflare.token_keep" "已保存，留空则不修改"}}{{else}}{{.Admin.T "admin.settings.cloudflare.token_placeholder" "粘贴 Cloudflare API Token"}}{{end}}">
+              <small>{{.Admin.T "admin.settings.cloudflare.template_hint" "Token 只显示一次，请从 Cloudflare 创建完成页复制后粘贴回来。"}}</small>
+            </label>
+            <button class="btn btn-primary" type="submit">{{.Admin.T "admin.settings.cloudflare.save_deploy" "保存 Token 并部署"}}</button>
+          </form>
+          <div class="cloudflare-connect-guide">
+            <strong>{{.Admin.T "admin.settings.cloudflare.local_title" "本地能不能跑？"}}</strong>
+            <p>{{.Admin.T "admin.settings.cloudflare.local_note" "本地可以生成 Token、保存配置和触发部署；完整访问链路需要 Cloudflare 能访问到源站。正式环境用公网域名，本地测试请先用 Cloudflare Tunnel 或 ngrok 暴露临时 HTTPS 地址。"}}</p>
+          </div>
+          <div class="cloudflare-connect-guide">
+            <strong>{{.Admin.T "admin.settings.cloudflare.template_steps_title" "Cloudflare 页面怎么操作？"}}</strong>
+            <ol>
+              <li>{{.Admin.T "admin.settings.cloudflare.template_step_1" "登录后模板会预填名称和权限，选择要部署的账号和域名范围。"}}</li>
+              <li>{{.Admin.T "admin.settings.cloudflare.template_step_2" "进入摘要页，确认包含 Worker 脚本、路由、缓存清理、域名读取和账号读取。"}}</li>
+              <li>{{.Admin.T "admin.settings.cloudflare.template_step_3" "创建 Token，复制只显示一次的值，回到这里粘贴并保存部署。"}}</li>
+            </ol>
+          </div>
+        </div>
+        {{if $cf.TokenSet}}
+        <div class="key-warning">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
+          <span>{{.Admin.T "admin.settings.cloudflare.connected_note" "已保存 Cloudflare 授权。部署时会自动识别账号与域名；如果识别失败，再到高级设置补 Account ID 或 Zone ID。"}}</span>
+        </div>
+        {{else}}
+        <p class="muted automation-note">{{.Admin.T "admin.settings.cloudflare.oauth_note" "推荐用模板生成专用 Token：不需要 OAuth Client，不需要中间服务，也不会把密钥写入发布包。"}}</p>
+        {{end}}
+      </div>
+
+      <div class="field-group cloudflare-status-group">
+        <h3 class="group-head with-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h5l2-7 4 14 2-7h3"/><path d="M4 19h16"/></svg>
+          <span>{{.Admin.T "admin.settings.cloudflare.status" "部署状态"}}</span>
+        </h3>
+        <div class="update-summary">
+          <div class="update-versions">
+            <div class="update-block">
+              <span class="update-label">{{.Admin.T "admin.settings.cloudflare.worker" "Worker"}}</span>
+              <strong>{{$c.WorkerName}}</strong>
+              <span class="update-meta">{{if $cf.OAuth}}{{.Admin.T "admin.settings.cloudflare.oauth_ready" "已通过本机 OAuth 授权"}}{{else if $cf.Configured}}{{.Admin.T "admin.settings.cloudflare.configured" "已具备部署配置"}}{{else}}{{.Admin.T "admin.settings.cloudflare.not_configured" "请先补全必填配置"}}{{end}}</span>
+            </div>
+            <span class="update-sep" aria-hidden="true">→</span>
+            <div class="update-block">
+              <span class="update-label">{{.Admin.T "admin.settings.cloudflare.route" "公开入口"}}</span>
+              <strong>{{if $c.RoutePattern}}{{$c.RoutePattern}}{{else}}{{.Admin.T "admin.common.empty_dash" "—"}}{{end}}</strong>
+              <span class="update-meta">{{if $c.ZoneID}}{{.Admin.T "admin.settings.cloudflare.route_managed" "可自动绑定路由并清缓存"}}{{else}}{{.Admin.T "admin.settings.cloudflare.route_manual" "未填写 Zone ID 时只上传 Worker"}}{{end}}</span>
+            </div>
+          </div>
+          <div class="update-task">
+            <div>
+              <span class="update-label">{{.Admin.T "admin.settings.cloudflare.task" "部署任务"}}</span>
+              <strong>{{if eq $st.Status "running"}}{{.Admin.T "admin.settings.cloudflare.running" "部署中"}}{{else if eq $st.Status "failed"}}{{.Admin.T "admin.settings.cloudflare.failed" "失败"}}{{else if eq $st.Status "success"}}{{.Admin.T "admin.settings.cloudflare.success" "成功"}}{{else}}{{.Admin.T "admin.settings.cloudflare.idle" "空闲"}}{{end}}</strong>
+              <p>{{$st.Message}}</p>
+            </div>
+            <div class="button-row">
+              <form method="post" action="/admin/settings/cloudflare/deploy" data-confirm="{{.Admin.T "admin.settings.cloudflare.deploy_confirm" "将当前公开站点入口部署到 Cloudflare Worker？请确认源站地址不是同一个 Cloudflare 公开域名。"}}">
+                <input type="hidden" name="_csrf" value="{{.CSRF}}">
+                <button class="btn btn-primary" type="submit"{{if $st.Running}} disabled{{end}}>{{if $st.Running}}{{.Admin.T "admin.settings.cloudflare.deploying" "部署中..."}}{{else}}{{.Admin.T "admin.settings.cloudflare.deploy" "部署到 Cloudflare"}}{{end}}</button>
+              </form>
+              <form method="post" action="/admin/settings/cloudflare/purge" data-confirm="{{.Admin.T "admin.settings.cloudflare.purge_confirm" "清除当前 Zone 的 Cloudflare 缓存？下一次访问会重新回源生成页面。"}}">
+                <input type="hidden" name="_csrf" value="{{.CSRF}}">
+                <button class="btn" type="submit">{{.Admin.T "admin.settings.cloudflare.purge" "清除缓存"}}</button>
+              </form>
+            </div>
+          </div>
+        </div>
+        <details class="update-details">
+          <summary>{{.Admin.T "admin.settings.cloudflare.advanced" "连接细节"}}</summary>
+          <table class="admin-table">
+            <tbody>
+              <tr><th>{{.Admin.T "admin.settings.cloudflare.origin_url" "源站地址"}}</th><td class="slug">{{if $c.OriginURL}}{{$c.OriginURL}}{{else}}-{{end}}</td></tr>
+              <tr><th>{{.Admin.T "admin.settings.cloudflare.auth_mode" "授权方式"}}</th><td>{{if $cf.OAuth}}<span class="badge pub">{{.Admin.T "admin.settings.cloudflare.auth_oauth" "本机 OAuth"}}</span>{{else if $cf.TokenSet}}<span class="badge sched">{{.Admin.T "admin.settings.cloudflare.auth_token" "手动 Token"}}</span>{{else}}<span class="badge draft">{{.Admin.T "admin.settings.cloudflare.token_missing" "未保存"}}</span>{{end}}</td></tr>
+              {{if $c.AccountName}}<tr><th>{{.Admin.T "admin.settings.cloudflare.account_name" "账号"}}</th><td>{{$c.AccountName}}</td></tr>{{end}}
+              {{if $c.ZoneName}}<tr><th>{{.Admin.T "admin.settings.cloudflare.zone_name" "域名"}}</th><td>{{$c.ZoneName}}</td></tr>{{end}}
+              <tr><th>{{.Admin.T "admin.settings.cloudflare.account_id" "Account ID"}}</th><td class="slug">{{if $c.AccountID}}{{$c.AccountID}}{{else}}-{{end}}</td></tr>
+              <tr><th>{{.Admin.T "admin.settings.cloudflare.zone_id" "Zone ID"}}</th><td class="slug">{{if $c.ZoneID}}{{$c.ZoneID}}{{else}}-{{end}}</td></tr>
+              {{if $c.OAuthClientID}}<tr><th>{{.Admin.T "admin.settings.cloudflare.oauth_client_id" "OAuth Client ID"}}</th><td class="slug">{{$c.OAuthClientID}}</td></tr>{{end}}
+              {{if $c.ConnectedAt}}<tr><th>{{.Admin.T "admin.settings.cloudflare.connected_at" "连接时间"}}</th><td class="slug">{{$c.ConnectedAt}}</td></tr>{{end}}
+              <tr><th>{{.Admin.T "admin.settings.cloudflare.token_status" "Token 状态"}}</th><td>{{if $cf.TokenSet}}<span class="badge pub">{{.Admin.T "admin.settings.cloudflare.token_saved" "已保存"}}</span>{{else}}<span class="badge draft">{{.Admin.T "admin.settings.cloudflare.token_missing" "未保存"}}</span>{{end}}</td></tr>
+              <tr><th>{{.Admin.T "admin.settings.cloudflare.html_ttl" "HTML 边缘缓存秒数"}}</th><td class="slug">{{$c.HTMLCacheTTL}}</td></tr>
+              <tr><th>{{.Admin.T "admin.settings.cloudflare.status_file" "状态文件"}}</th><td class="slug">run/cloudflare-deploy.json</td></tr>
+              {{if $st.Step}}<tr><th>{{.Admin.T "admin.settings.cloudflare.step" "阶段"}}</th><td class="slug">{{$st.Step}}</td></tr>{{end}}
+              {{if $st.UpdatedAt}}<tr><th>{{.Admin.T "admin.settings.cloudflare.updated_at" "更新时间"}}</th><td class="slug">{{$st.UpdatedAt}}</td></tr>{{end}}
+              {{if $st.LastDeployAt}}<tr><th>{{.Admin.T "admin.settings.cloudflare.last_deploy" "最近部署"}}</th><td class="slug">{{$st.LastDeployAt}}</td></tr>{{end}}
+              {{if $st.LastPurgeAt}}<tr><th>{{.Admin.T "admin.settings.cloudflare.last_purge" "最近清缓存"}}</th><td class="slug">{{$st.LastPurgeAt}}</td></tr>{{end}}
+            </tbody>
+          </table>
+        </details>
+      </div>
+
+      <details class="update-details cloudflare-manual">
+        <summary>{{.Admin.T "admin.settings.cloudflare.manual_title" "高级设置：路由、缓存与手动字段"}}</summary>
+        <form method="post" action="/admin/settings/cloudflare" class="admin-form">
+          <input type="hidden" name="_csrf" value="{{.CSRF}}">
+          <div class="field-group">
+            <div class="key-warning">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.3 4.2 2.8 17.4A2 2 0 0 0 4.5 20h15a2 2 0 0 0 1.7-2.6L13.7 4.2a2 2 0 0 0-3.4 0z"/></svg>
+              <span>{{.Admin.T "admin.settings.cloudflare.token_note" "建议创建最小权限 Cloudflare API Token：Account Workers Scripts Edit、Zone Workers Routes Edit、Zone Cache Purge。Token 只保存在本机数据库，页面不会回显完整值。"}}</span>
+            </div>
+            <div class="form-2col">
+              <div class="field">
+                <label for="cf_worker_name">{{.Admin.T "admin.settings.cloudflare.worker_name" "Worker 名称"}}</label>
+                <input id="cf_worker_name" name="worker_name" value="{{$c.WorkerName}}" placeholder="gcms-frontend">
+              </div>
+              <div class="field">
+                <label for="cf_origin_url">{{.Admin.T "admin.settings.cloudflare.origin_url" "源站地址"}}</label>
+                <input id="cf_origin_url" name="origin_url" value="{{$c.OriginURL}}" placeholder="https://origin.example.com" inputmode="url">
+                <span class="hint">{{.Admin.T "admin.settings.cloudflare.origin_hint" "填当前 gcms 可访问的源站地址。不要填即将交给 Cloudflare 接管的同一个公开域名，避免回源循环。"}}</span>
+              </div>
+              <div class="field">
+                <label for="cf_route_pattern">{{.Admin.T "admin.settings.cloudflare.route_pattern" "Worker 路由"}}</label>
+                <input id="cf_route_pattern" name="route_pattern" value="{{$c.RoutePattern}}" placeholder="example.com/*">
+                <span class="hint">{{.Admin.T "admin.settings.cloudflare.route_hint" "例如 example.com/* 或 www.example.com/*。填写后部署会自动绑定到这个域名路由。"}}</span>
+              </div>
+              <div class="field">
+                <label for="cf_account_id">{{.Admin.T "admin.settings.cloudflare.account_id" "Account ID"}}</label>
+                <input id="cf_account_id" name="account_id" value="{{$c.AccountID}}" placeholder="Cloudflare Account ID">
+              </div>
+              <div class="field">
+                <label for="cf_zone_id">{{.Admin.T "admin.settings.cloudflare.zone_id" "Zone ID"}}</label>
+                <input id="cf_zone_id" name="zone_id" value="{{$c.ZoneID}}" placeholder="{{.Admin.T "admin.settings.cloudflare.zone_placeholder" "域名所在 Zone ID，可选但建议填写"}}">
+              </div>
+              <div class="field">
+                <label for="cf_api_token">{{.Admin.T "admin.settings.cloudflare.api_token" "API Token"}}</label>
+                <input id="cf_api_token" name="api_token" type="password" autocomplete="new-password" placeholder="{{if $cf.TokenSet}}{{.Admin.T "admin.settings.cloudflare.token_keep" "已保存，留空则不修改"}}{{else}}{{.Admin.T "admin.settings.cloudflare.token_placeholder" "粘贴 Cloudflare API Token"}}{{end}}">
+              </div>
+              <div class="field">
+                <label for="cf_html_cache_ttl">{{.Admin.T "admin.settings.cloudflare.html_ttl" "HTML 边缘缓存秒数"}}</label>
+                <input id="cf_html_cache_ttl" name="html_cache_ttl" type="number" min="0" max="86400" step="1" value="{{$c.HTMLCacheTTL}}">
+                <span class="hint">{{.Admin.T "admin.settings.cloudflare.cache_hint" "0 表示不缓存 HTML。开启自动同步后，内容更新会延时清理 Cloudflare 缓存。"}}</span>
+              </div>
+              <div class="field">
+                <label>{{.Admin.T "admin.settings.cloudflare.sync" "内容同步"}}</label>
+                <label class="tweak-toggle"><input type="checkbox" name="auto_sync" value="1"{{if $c.AutoSync}} checked{{end}}><span>{{.Admin.T "admin.settings.cloudflare.auto_sync" "内容或配置保存后自动延时清理 Cloudflare 缓存"}}</span></label>
+              </div>
+            </div>
+            <button class="btn btn-primary" type="submit">{{.Admin.T "admin.settings.cloudflare.save" "保存 Cloudflare 配置"}}</button>
+          </div>
+        </form>
+      </details>
+
+      <details class="update-details cloudflare-help">
+        <summary>{{.Admin.T "admin.settings.cloudflare.how_it_works" "工作方式"}}</summary>
+        <div class="automation-help">
+          <ol>
+            <li>{{.Admin.T "admin.settings.cloudflare.flow_1" "用户访问你的正式域名，Cloudflare Worker 接住请求。"}}</li>
+            <li>{{.Admin.T "admin.settings.cloudflare.flow_2" "Worker 把公开页面回源到当前 gcms，并传递原始域名，canonical、hreflang、分享链接仍按正式域名生成。"}}</li>
+            <li>{{.Admin.T "admin.settings.cloudflare.flow_3" "后台、自动化接口和预览链接不会暴露给 Worker 公开代理；它们仍从源站后台访问。"}}</li>
+            <li>{{.Admin.T "admin.settings.cloudflare.flow_4" "内容保存后，若开启自动同步，系统会延时清除 Cloudflare 缓存，让新内容在下一次访问生效。"}}</li>
+          </ol>
+        </div>
+      </details>
 
       {{else if eq .Section "comments"}}
       <form method="post" action="/admin/settings/comments" class="admin-form">

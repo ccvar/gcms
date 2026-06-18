@@ -42,6 +42,9 @@ type Server struct {
 	content    map[string]contentCacheEntry
 	endpoints  map[string]endpointCacheEntry
 	pages      map[string]pageCacheEntry
+
+	cloudflareMu    sync.Mutex
+	cloudflareTimer *time.Timer
 }
 
 type contentCacheEntry struct {
@@ -276,6 +279,7 @@ type View struct {
 	FormVals         map[string]string // 表单回填（分类新增/编辑出错时）
 	Update           *UpdateInfo       // 系统更新检查
 	Upgrade          *UpgradeStatus    // 系统升级任务状态
+	Cloudflare       *CloudflareView   // Cloudflare Worker 部署配置与状态
 	AutomationKeys   []*store.AutomationKey
 	AutomationLogs   []*store.AutomationLog
 	NewAPISecret     string
@@ -1301,6 +1305,7 @@ func (s *Server) clearGeneratedCaches() {
 	s.endpoints = map[string]endpointCacheEntry{}
 	s.pages = map[string]pageCacheEntry{}
 	s.cacheMu.Unlock()
+	s.scheduleCloudflareSync("内容或站点配置已更新，Cloudflare 缓存已自动清除。")
 }
 
 func hexColor(s string) bool {
@@ -1382,10 +1387,16 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("GET /admin/theme-preview/{theme}", s.requireAuth(s.adminThemePreview))
 	mux.HandleFunc("GET /admin/settings/updates/status", s.requireAuth(s.adminUpgradeStatus))
 	mux.HandleFunc("GET /admin/settings/updates/check", s.requireAuth(s.adminUpdateCheck))
+	mux.HandleFunc("GET /admin/settings/cloudflare/status", s.requireAuth(s.adminCloudflareStatus))
+	mux.HandleFunc("GET /admin/settings/cloudflare/callback", s.requireAuth(s.adminCloudflareCallback))
 	mux.HandleFunc("POST /admin/settings/site", s.requireAuth(s.adminSaveSite))
 	mux.HandleFunc("POST /admin/settings/appearance", s.requireAuth(s.adminSaveAppearance))
 	mux.HandleFunc("POST /admin/settings/comments", s.requireAuth(s.adminSaveComments))
 	mux.HandleFunc("POST /admin/settings/updates/upgrade", s.requireAuth(s.adminStartUpgrade))
+	mux.HandleFunc("POST /admin/settings/cloudflare", s.requireAuth(s.adminSaveCloudflare))
+	mux.HandleFunc("POST /admin/settings/cloudflare/connect", s.requireAuth(s.adminStartCloudflareConnect))
+	mux.HandleFunc("POST /admin/settings/cloudflare/deploy", s.requireAuth(s.adminStartCloudflareDeploy))
+	mux.HandleFunc("POST /admin/settings/cloudflare/purge", s.requireAuth(s.adminCloudflarePurge))
 	mux.HandleFunc("POST /admin/settings/security", s.requireAuth(s.adminSavePassword))
 	mux.HandleFunc("POST /admin/settings/admin-i18n", s.requireAuth(s.adminSaveAdminI18N))
 	mux.HandleFunc("POST /admin/settings/demo/reload", s.requireAuth(s.adminReloadProductDemo))
