@@ -89,6 +89,40 @@ func TestCloudflareWorkerScriptProtectsAdminAndForwardsHost(t *testing.T) {
 	}
 }
 
+func TestCloudflareAPIErrorCodeDetection(t *testing.T) {
+	err := cloudflareAPIError{
+		Status: 403,
+		Errors: []cloudflareErr{
+			{Code: 10000, Message: "Authentication error"},
+		},
+	}
+	if !cloudflareHasErrorCode(err, 10000) {
+		t.Fatal("Cloudflare error code 10000 should be detectable")
+	}
+	if cloudflareHasErrorCode(err, 7003) {
+		t.Fatal("unexpected Cloudflare error code match")
+	}
+	if !strings.Contains(err.Error(), "10000 Authentication error") {
+		t.Fatalf("error message should keep original code: %q", err.Error())
+	}
+}
+
+func TestCloudflareStagePermissionErrorForWorkerUpload(t *testing.T) {
+	baseErr := cloudflareAPIError{
+		Status: 403,
+		Errors: []cloudflareErr{
+			{Code: 10000, Message: "Authentication error"},
+		},
+	}
+	err := cloudflareStagePermissionError("worker", baseErr)
+	msg := err.Error()
+	for _, needle := range []string{"Workers Scripts Edit", "Account Resources", "原始错误", "10000 Authentication error"} {
+		if !strings.Contains(msg, needle) {
+			t.Fatalf("worker upload permission error %q should contain %q", msg, needle)
+		}
+	}
+}
+
 func TestCloudflareOAuthAuthorizationURL(t *testing.T) {
 	got, err := cloudflareOAuthAuthorizationURL("client_123", "https://cms.example.com/admin/settings/cloudflare/callback", "state_123")
 	if err != nil {

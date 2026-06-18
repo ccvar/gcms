@@ -136,6 +136,19 @@ type cloudflareAPIResponse struct {
 	Result  json.RawMessage `json:"result"`
 }
 
+type cloudflareAPIError struct {
+	Status int
+	Errors []cloudflareErr
+	Raw    string
+}
+
+func (e cloudflareAPIError) Error() string {
+	if strings.TrimSpace(e.Raw) != "" {
+		return fmt.Sprintf("Cloudflare 返回 HTTP %d：%s", e.Status, e.Raw)
+	}
+	return fmt.Sprintf("Cloudflare 返回错误：%s", cloudflareErrorMessage(e.Errors, e.Status))
+}
+
 type cloudflareErr struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
@@ -1340,7 +1353,10 @@ func uploadCloudflareWorker(ctx context.Context, cfg CloudflareConfig) error {
 	}
 	path := fmt.Sprintf("/accounts/%s/workers/scripts/%s", url.PathEscape(cfg.AccountID), url.PathEscape(cfg.WorkerName))
 	_, err := cloudflareAPIRequest(ctx, cfg.APIToken, http.MethodPut, path, &body, mw.FormDataContentType())
-	return err
+	if err != nil {
+		return cloudflareStagePermissionError("worker", err)
+	}
+	return nil
 }
 
 func writeMultipartField(mw *multipart.Writer, name, filename, contentType string, data []byte) error {
@@ -1369,12 +1385,18 @@ func ensureCloudflareRoute(ctx context.Context, cfg CloudflareConfig) error {
 		if rt.Pattern == cfg.RoutePattern {
 			path := fmt.Sprintf("/zones/%s/workers/routes/%s", url.PathEscape(cfg.ZoneID), url.PathEscape(rt.ID))
 			_, err := cloudflareAPIRequest(ctx, cfg.APIToken, http.MethodPut, path, bytes.NewReader(body), "application/json")
-			return err
+			if err != nil {
+				return cloudflareStagePermissionError("route", err)
+			}
+			return nil
 		}
 	}
 	path := fmt.Sprintf("/zones/%s/workers/routes", url.PathEscape(cfg.ZoneID))
 	_, err = cloudflareAPIRequest(ctx, cfg.APIToken, http.MethodPost, path, bytes.NewReader(body), "application/json")
-	return err
+	if err != nil {
+		return cloudflareStagePermissionError("route", err)
+	}
+	return nil
 }
 
 func listCloudflareRoutes(ctx context.Context, cfg CloudflareConfig) ([]cloudflareRoute, error) {
@@ -1397,7 +1419,10 @@ func purgeCloudflareEverything(ctx context.Context, cfg CloudflareConfig) error 
 	body := strings.NewReader(`{"purge_everything":true}`)
 	path := fmt.Sprintf("/zones/%s/purge_cache", url.PathEscape(cfg.ZoneID))
 	_, err := cloudflareAPIRequest(ctx, cfg.APIToken, http.MethodPost, path, body, "application/json")
-	return err
+	if err != nil {
+		return cloudflareStagePermissionError("purge", err)
+	}
+	return nil
 }
 
 func cloudflareAPIRequest(ctx context.Context, token, method, path string, body io.Reader, contentType string) (json.RawMessage, error) {
@@ -1421,14 +1446,43 @@ func cloudflareAPIRequest(ctx context.Context, token, method, path string, body 
 	var envelope cloudflareAPIResponse
 	if err := json.Unmarshal(data, &envelope); err != nil {
 		if resp.StatusCode >= 400 {
-			return nil, fmt.Errorf("Cloudflare 返回 HTTP %d：%s", resp.StatusCode, strings.TrimSpace(string(data)))
+			return nil, cloudflareAPIError{Status: resp.StatusCode, Raw: strings.TrimSpace(string(data))}
 		}
 		return data, nil
 	}
 	if resp.StatusCode >= 400 || !envelope.Success {
-		return nil, fmt.Errorf("Cloudflare 返回错误：%s", cloudflareErrorMessage(envelope.Errors, resp.StatusCode))
+		return nil, cloudflareAPIError{Status: resp.StatusCode, Errors: envelope.Errors}
 	}
 	return envelope.Result, nil
+}
+
+func cloudflareStagePermissionError(stage string, err error) error {
+	if !cloudflareHasErrorCode(err, 10000) {
+		return err
+	}
+	switch stage {
+	case "worker":
+		return fmt.Errorf("Cloudflare 拒绝上传 Worker：请重新创建 Token，并确认摘要里包含 Account 级的 Workers Scripts Edit 权限；Account Resources 必须包含当前账号。如果手动填过 Account ID，也请确认它属于这个账号。原始错误：%w", err)
+	case "route":
+		return fmt.Errorf("Cloudflare 拒绝绑定路由：请重新创建 Token，并确认摘要里包含 Account 级的 Workers Routes Edit 权限，以及 Zone 级的 Zone Read 权限；资源范围必须包含当前账号和当前域名。原始错误：%w", err)
+	case "purge":
+		return fmt.Errorf("Cloudflare 拒绝清理缓存：请重新创建 Token，并确认摘要里包含 Zone 级的 Cache Purge 权限；Zone Resources 必须包含当前域名。原始错误：%w", err)
+	default:
+		return err
+	}
+}
+
+func cloudflareHasErrorCode(err error, code int) bool {
+	var apiErr cloudflareAPIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	for _, e := range apiErr.Errors {
+		if e.Code == code {
+			return true
+		}
+	}
+	return false
 }
 
 func cloudflareErrorMessage(errs []cloudflareErr, status int) string {
