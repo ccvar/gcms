@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -24,7 +25,9 @@ import (
 const (
 	cloudflareAccountIDKey    = "cloudflare.account_id"
 	cloudflareAPITokenKey     = "cloudflare.api_token"
+	cloudflareDeployModeKey   = "cloudflare.deploy_mode"
 	cloudflareWorkerNameKey   = "cloudflare.worker_name"
+	cloudflarePagesProjectKey = "cloudflare.pages_project_name"
 	cloudflareZoneIDKey       = "cloudflare.zone_id"
 	cloudflareRoutePatternKey = "cloudflare.route_pattern"
 	cloudflareOriginURLKey    = "cloudflare.origin_url"
@@ -43,6 +46,8 @@ const (
 	cloudflareOAuthExpiresKey = "cloudflare.oauth_expires_at"
 
 	cloudflareDefaultWorkerName = "gcms-frontend"
+	cloudflareModeWorkerAssets  = "worker_assets"
+	cloudflareModePages         = "pages"
 	cloudflareDefaultHTMLTTL    = 300
 	cloudflareAPITimeout        = 4 * time.Minute
 	cloudflareStaleAfter        = 3 * time.Minute
@@ -60,7 +65,9 @@ var (
 type CloudflareConfig struct {
 	AccountID         string
 	APIToken          string
+	DeployMode        string
 	WorkerName        string
+	PagesProjectName  string
 	ZoneID            string
 	RoutePattern      string
 	OriginURL         string
@@ -78,18 +85,20 @@ type CloudflareConfig struct {
 }
 
 type CloudflareStatus struct {
-	Status       string `json:"status"`
-	Step         string `json:"step"`
-	Message      string `json:"message"`
-	WorkerName   string `json:"worker_name"`
-	RoutePattern string `json:"route_pattern"`
-	UpdatedAt    string `json:"updated_at"`
-	LastDeployAt string `json:"last_deploy_at,omitempty"`
-	LastPurgeAt  string `json:"last_purge_at,omitempty"`
-	Configured   bool   `json:"configured"`
-	TokenSet     bool   `json:"token_set"`
-	AutoSync     bool   `json:"auto_sync"`
-	Running      bool   `json:"running"`
+	Status           string `json:"status"`
+	Step             string `json:"step"`
+	Message          string `json:"message"`
+	DeployMode       string `json:"deploy_mode"`
+	WorkerName       string `json:"worker_name"`
+	PagesProjectName string `json:"pages_project_name,omitempty"`
+	RoutePattern     string `json:"route_pattern"`
+	UpdatedAt        string `json:"updated_at"`
+	LastDeployAt     string `json:"last_deploy_at,omitempty"`
+	LastPurgeAt      string `json:"last_purge_at,omitempty"`
+	Configured       bool   `json:"configured"`
+	TokenSet         bool   `json:"token_set"`
+	AutoSync         bool   `json:"auto_sync"`
+	Running          bool   `json:"running"`
 }
 
 type CloudflareView struct {
@@ -168,6 +177,23 @@ type cloudflareDNSRecord struct {
 	Proxied *bool  `json:"proxied"`
 }
 
+type cloudflarePagesProject struct {
+	ID               string `json:"id"`
+	Name             string `json:"name"`
+	ProjectName      string `json:"project_name"`
+	Subdomain        string `json:"subdomain"`
+	ProductionBranch string `json:"production_branch"`
+}
+
+type cloudflarePagesUploadToken struct {
+	JWT string `json:"jwt"`
+}
+
+type cloudflarePagesDeployment struct {
+	ID  string `json:"id"`
+	URL string `json:"url"`
+}
+
 type cloudflareAssetManifestEntry struct {
 	Hash string `json:"hash"`
 	Size int64  `json:"size"`
@@ -207,25 +233,37 @@ func (cfg CloudflareConfig) oauthSet() bool {
 }
 
 func (cfg CloudflareConfig) configured() bool {
-	return cfg.tokenSet() &&
-		strings.TrimSpace(cfg.WorkerName) != "" &&
-		strings.TrimSpace(cfg.RoutePattern) != ""
+	if !cfg.tokenSet() || strings.TrimSpace(cfg.RoutePattern) == "" {
+		return false
+	}
+	if cfg.usingPages() {
+		return strings.TrimSpace(cfg.PagesProjectName) != ""
+	}
+	return strings.TrimSpace(cfg.WorkerName) != ""
 }
 
 func (cfg CloudflareConfig) validateDeploy() error {
 	if !cfg.tokenSet() {
 		return errors.New("请先粘贴 Cloudflare API Token，或在高级设置里完成 OAuth 授权。")
 	}
-	if strings.TrimSpace(cfg.WorkerName) == "" {
+	if cfg.usingPages() {
+		if strings.TrimSpace(cfg.PagesProjectName) == "" {
+			return errors.New("请填写 Cloudflare Pages 项目名称。")
+		}
+	} else if strings.TrimSpace(cfg.WorkerName) == "" {
 		return errors.New("请填写 Worker 名称。")
 	}
 	if strings.TrimSpace(cfg.RoutePattern) == "" {
 		return errors.New("请填写前台访问域名，例如 example.com 或 www.example.com/*。")
 	}
 	if cfg.RoutePattern != "" && strings.Contains(cfg.RoutePattern, "://") {
-		return errors.New("Worker 路由请填写 example.com/* 这种格式，不要带 http:// 或 https://。")
+		return errors.New("前台访问域名请填写 example.com 或 example.com/* 这种格式，不要带 http:// 或 https://。")
 	}
 	return nil
+}
+
+func (cfg CloudflareConfig) usingPages() bool {
+	return normalizeCloudflareDeployMode(cfg.DeployMode) == cloudflareModePages
 }
 
 func cloudflareStatusFailed(cfg CloudflareConfig, step, msg string) CloudflareStatus {
@@ -233,14 +271,26 @@ func cloudflareStatusFailed(cfg CloudflareConfig, step, msg string) CloudflareSt
 		msg = "Cloudflare 部署失败。"
 	}
 	return CloudflareStatus{
-		Status:       "failed",
-		Step:         step,
-		Message:      msg,
-		WorkerName:   cfg.WorkerName,
-		RoutePattern: cfg.RoutePattern,
-		Configured:   cfg.configured(),
-		TokenSet:     cfg.tokenSet(),
-		AutoSync:     cfg.AutoSync,
+		Status:           "failed",
+		Step:             step,
+		Message:          msg,
+		DeployMode:       normalizeCloudflareDeployMode(cfg.DeployMode),
+		WorkerName:       cfg.WorkerName,
+		PagesProjectName: cfg.PagesProjectName,
+		RoutePattern:     cfg.RoutePattern,
+		Configured:       cfg.configured(),
+		TokenSet:         cfg.tokenSet(),
+		AutoSync:         cfg.AutoSync,
+	}
+}
+
+func normalizeCloudflareDeployMode(v string) string {
+	v = strings.ToLower(strings.TrimSpace(v))
+	switch v {
+	case cloudflareModePages:
+		return cloudflareModePages
+	default:
+		return cloudflareModeWorkerAssets
 	}
 }
 
@@ -259,6 +309,10 @@ func normalizeCloudflareWorkerName(v string) string {
 		return cloudflareDefaultWorkerName
 	}
 	return v
+}
+
+func normalizeCloudflarePagesProjectName(v string) string {
+	return normalizeCloudflareWorkerName(v)
 }
 
 func normalizeCloudflareOrigin(v string) string {
@@ -356,6 +410,7 @@ func (s *Server) cloudflareConfig() CloudflareConfig {
 		ttl = 86400
 	}
 	worker := normalizeCloudflareWorkerName(s.store.Setting(cloudflareWorkerNameKey))
+	pagesProject := normalizeCloudflarePagesProjectName(s.store.Setting(cloudflarePagesProjectKey))
 	origin := normalizeCloudflareOrigin(s.store.Setting(cloudflareOriginURLKey))
 	if origin == "" {
 		origin = s.defaultCloudflareOriginURL()
@@ -364,7 +419,9 @@ func (s *Server) cloudflareConfig() CloudflareConfig {
 	return CloudflareConfig{
 		AccountID:         strings.TrimSpace(s.store.Setting(cloudflareAccountIDKey)),
 		APIToken:          strings.TrimSpace(s.store.Setting(cloudflareAPITokenKey)),
+		DeployMode:        normalizeCloudflareDeployMode(s.store.Setting(cloudflareDeployModeKey)),
 		WorkerName:        worker,
+		PagesProjectName:  pagesProject,
 		ZoneID:            strings.TrimSpace(s.store.Setting(cloudflareZoneIDKey)),
 		RoutePattern:      route,
 		OriginURL:         origin,
@@ -391,7 +448,9 @@ func (s *Server) cloudflareConfigForRequest(r *http.Request) CloudflareConfig {
 func (s *Server) cloudflareViewForRequest(r *http.Request) *CloudflareView {
 	view := s.cloudflareView()
 	s.applyCloudflareRequestDefaults(r, &view.Config)
+	view.Status.DeployMode = view.Config.DeployMode
 	view.Status.WorkerName = view.Config.WorkerName
+	view.Status.PagesProjectName = view.Config.PagesProjectName
 	view.Status.RoutePattern = view.Config.RoutePattern
 	view.Status.Configured = view.Config.configured()
 	view.Configured = view.Status.Configured
@@ -423,6 +482,7 @@ func readCloudflareStatus() *CloudflareStatus {
 			st.Message = "暂无 Cloudflare 部署任务"
 		}
 	}
+	st.DeployMode = normalizeCloudflareDeployMode(st.DeployMode)
 	if st.Status == "running" && cloudflareStatusStale(st) {
 		st.Status = "failed"
 		st.Step = "timeout"
@@ -456,7 +516,9 @@ func writeCloudflareStatus(st CloudflareStatus) {
 func (s *Server) cloudflareView() *CloudflareView {
 	cfg := s.cloudflareConfig()
 	st := readCloudflareStatus()
+	st.DeployMode = cfg.DeployMode
 	st.WorkerName = cfg.WorkerName
+	st.PagesProjectName = cfg.PagesProjectName
 	st.RoutePattern = cfg.RoutePattern
 	st.Configured = cfg.configured()
 	st.TokenSet = cfg.tokenSet()
@@ -486,6 +548,7 @@ func cloudflareAPITokenTemplateURL() string {
 	permissions := []map[string]string{
 		{"key": "workers_scripts", "type": "edit"},
 		{"key": "workers_routes", "type": "edit"},
+		{"key": "page", "type": "edit"},
 		{"key": "dns", "type": "edit"},
 		{"key": "cache", "type": "purge"},
 		{"key": "zone", "type": "read"},
@@ -539,7 +602,9 @@ func (s *Server) saveCloudflareConfigFromRequest(r *http.Request) (CloudflareCon
 	} else if clearOAuthSecret {
 		cfg.OAuthClientSecret = ""
 	}
+	cfg.DeployMode = normalizeCloudflareDeployMode(r.FormValue("deploy_mode"))
 	cfg.WorkerName = normalizeCloudflareWorkerName(r.FormValue("worker_name"))
+	cfg.PagesProjectName = normalizeCloudflarePagesProjectName(r.FormValue("pages_project_name"))
 	if raw := strings.TrimSpace(r.FormValue("route_pattern")); raw != "" || r.FormValue("deploy") != "1" {
 		cfg.RoutePattern = normalizeCloudflareRoutePattern(raw)
 	}
@@ -563,7 +628,9 @@ func (s *Server) saveCloudflareConfigFromRequest(r *http.Request) (CloudflareCon
 
 	settings := map[string]string{
 		cloudflareAccountIDKey:    cfg.AccountID,
+		cloudflareDeployModeKey:   cfg.DeployMode,
 		cloudflareWorkerNameKey:   cfg.WorkerName,
+		cloudflarePagesProjectKey: cfg.PagesProjectName,
 		cloudflareZoneIDKey:       cfg.ZoneID,
 		cloudflareAccountNameKey:  cfg.AccountName,
 		cloudflareZoneNameKey:     cfg.ZoneName,
@@ -626,14 +693,16 @@ func (s *Server) queueCloudflareDeploy(cfg CloudflareConfig) error {
 		return errors.New("已有 Cloudflare 部署任务正在运行。")
 	}
 	writeCloudflareStatus(CloudflareStatus{
-		Status:       "running",
-		Step:         "queued",
-		Message:      "部署任务已启动，正在连接 Cloudflare。",
-		WorkerName:   cfg.WorkerName,
-		RoutePattern: cfg.RoutePattern,
-		Configured:   cfg.configured(),
-		TokenSet:     cfg.tokenSet(),
-		AutoSync:     cfg.AutoSync,
+		Status:           "running",
+		Step:             "queued",
+		Message:          "部署任务已启动，正在连接 Cloudflare。",
+		DeployMode:       cfg.DeployMode,
+		WorkerName:       cfg.WorkerName,
+		PagesProjectName: cfg.PagesProjectName,
+		RoutePattern:     cfg.RoutePattern,
+		Configured:       cfg.configured(),
+		TokenSet:         cfg.tokenSet(),
+		AutoSync:         cfg.AutoSync,
 	})
 	go func() {
 		defer func() {
@@ -750,14 +819,16 @@ func (s *Server) adminCloudflareCallback(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		writeCloudflareStatus(CloudflareStatus{
-			Status:       "running",
-			Step:         "queued",
-			Message:      "Cloudflare 已连接，正在自动部署 Worker。",
-			WorkerName:   nextCfg.WorkerName,
-			RoutePattern: nextCfg.RoutePattern,
-			Configured:   nextCfg.configured(),
-			TokenSet:     nextCfg.tokenSet(),
-			AutoSync:     nextCfg.AutoSync,
+			Status:           "running",
+			Step:             "queued",
+			Message:          "Cloudflare 已连接，正在自动部署静态站。",
+			DeployMode:       nextCfg.DeployMode,
+			WorkerName:       nextCfg.WorkerName,
+			PagesProjectName: nextCfg.PagesProjectName,
+			RoutePattern:     nextCfg.RoutePattern,
+			Configured:       nextCfg.configured(),
+			TokenSet:         nextCfg.tokenSet(),
+			AutoSync:         nextCfg.AutoSync,
 		})
 		go func() {
 			defer func() {
@@ -991,7 +1062,7 @@ func cloudflareZoneDetectError(routePattern string, detectErr error) error {
 	if host != "" {
 		fmt.Fprintf(&b, "无法自动识别 %s 对应的 Cloudflare Zone ID。", host)
 	} else {
-		b.WriteString("无法自动识别 Worker 路由对应的 Cloudflare Zone ID。")
+		b.WriteString("无法自动识别前台访问域名对应的 Cloudflare Zone ID。")
 	}
 	if zoneHint != "" && zoneHint != host {
 		fmt.Fprintf(&b, " 这个路由通常属于 %s 这个 Zone；创建 Token 时请在域名范围里选择它。", zoneHint)
@@ -1283,14 +1354,16 @@ func (s *Server) adminCloudflarePurge(w http.ResponseWriter, r *http.Request) {
 func (s *Server) deployCloudflare(ctx context.Context, cfg CloudflareConfig) error {
 	setStep := func(step, msg string) {
 		writeCloudflareStatus(CloudflareStatus{
-			Status:       "running",
-			Step:         step,
-			Message:      msg,
-			WorkerName:   cfg.WorkerName,
-			RoutePattern: cfg.RoutePattern,
-			Configured:   cfg.configured(),
-			TokenSet:     cfg.tokenSet(),
-			AutoSync:     cfg.AutoSync,
+			Status:           "running",
+			Step:             step,
+			Message:          msg,
+			DeployMode:       cfg.DeployMode,
+			WorkerName:       cfg.WorkerName,
+			PagesProjectName: cfg.PagesProjectName,
+			RoutePattern:     cfg.RoutePattern,
+			Configured:       cfg.configured(),
+			TokenSet:         cfg.tokenSet(),
+			AutoSync:         cfg.AutoSync,
 		})
 	}
 	lastPurgeAt := ""
@@ -1306,7 +1379,38 @@ func (s *Server) deployCloudflare(ctx context.Context, cfg CloudflareConfig) err
 		return fmt.Errorf("导出静态站失败：%w", err)
 	}
 	defer os.RemoveAll(exported.Dir)
-	setStep("assets", fmt.Sprintf("正在上传 %d 个静态文件到 Cloudflare。", exported.Count))
+	if cfg.usingPages() {
+		setStep("assets", fmt.Sprintf("正在上传 %d 个静态文件到 Cloudflare Pages。", exported.Count))
+		if err := deployCloudflarePagesStaticSite(ctx, cfg, exported, setStep); err != nil {
+			return err
+		}
+		if cfg.ZoneID != "" {
+			setStep("purge", "正在清理 Cloudflare 缓存。")
+			if err := purgeCloudflareEverything(ctx, cfg); err != nil {
+				return fmt.Errorf("清理 Cloudflare 缓存失败：%w", err)
+			}
+			lastPurgeAt = time.Now().UTC().Format(time.RFC3339)
+		}
+		now := time.Now().UTC().Format(time.RFC3339)
+		writeCloudflareStatus(CloudflareStatus{
+			Status:           "success",
+			Step:             "done",
+			Message:          fmt.Sprintf("Cloudflare Pages 静态站已部署：%d 个文件已上传，项目 %s 已发布。", exported.Count, cfg.PagesProjectName),
+			DeployMode:       cfg.DeployMode,
+			WorkerName:       cfg.WorkerName,
+			PagesProjectName: cfg.PagesProjectName,
+			RoutePattern:     cfg.RoutePattern,
+			UpdatedAt:        now,
+			LastDeployAt:     now,
+			LastPurgeAt:      lastPurgeAt,
+			Configured:       cfg.configured(),
+			TokenSet:         cfg.tokenSet(),
+			AutoSync:         cfg.AutoSync,
+		})
+		return nil
+	}
+
+	setStep("assets", fmt.Sprintf("正在上传 %d 个静态文件到 Cloudflare Worker Assets。", exported.Count))
 	assetsJWT, err := uploadCloudflareStaticAssets(ctx, cfg, exported)
 	if err != nil {
 		return fmt.Errorf("上传静态资源失败：%w", err)
@@ -1332,17 +1436,19 @@ func (s *Server) deployCloudflare(ctx context.Context, cfg CloudflareConfig) err
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	writeCloudflareStatus(CloudflareStatus{
-		Status:       "success",
-		Step:         "done",
-		Message:      fmt.Sprintf("Cloudflare 静态站已部署：%d 个文件已上传，前台由 Worker Assets 托管。", exported.Count),
-		WorkerName:   cfg.WorkerName,
-		RoutePattern: cfg.RoutePattern,
-		UpdatedAt:    now,
-		LastDeployAt: now,
-		LastPurgeAt:  lastPurgeAt,
-		Configured:   cfg.configured(),
-		TokenSet:     cfg.tokenSet(),
-		AutoSync:     cfg.AutoSync,
+		Status:           "success",
+		Step:             "done",
+		Message:          fmt.Sprintf("Cloudflare 静态站已部署：%d 个文件已上传，前台由 Worker Assets 托管。", exported.Count),
+		DeployMode:       cfg.DeployMode,
+		WorkerName:       cfg.WorkerName,
+		PagesProjectName: cfg.PagesProjectName,
+		RoutePattern:     cfg.RoutePattern,
+		UpdatedAt:        now,
+		LastDeployAt:     now,
+		LastPurgeAt:      lastPurgeAt,
+		Configured:       cfg.configured(),
+		TokenSet:         cfg.tokenSet(),
+		AutoSync:         cfg.AutoSync,
 	})
 	return nil
 }
@@ -1362,14 +1468,16 @@ func (s *Server) scheduleCloudflareSync(reason string) {
 	msg := reason
 	s.cloudflareTimer = time.AfterFunc(25*time.Second, func() {
 		writeCloudflareStatus(CloudflareStatus{
-			Status:       "running",
-			Step:         "queued",
-			Message:      msg,
-			WorkerName:   cfg.WorkerName,
-			RoutePattern: cfg.RoutePattern,
-			Configured:   cfg.configured(),
-			TokenSet:     cfg.tokenSet(),
-			AutoSync:     cfg.AutoSync,
+			Status:           "running",
+			Step:             "queued",
+			Message:          msg,
+			DeployMode:       cfg.DeployMode,
+			WorkerName:       cfg.WorkerName,
+			PagesProjectName: cfg.PagesProjectName,
+			RoutePattern:     cfg.RoutePattern,
+			Configured:       cfg.configured(),
+			TokenSet:         cfg.tokenSet(),
+			AutoSync:         cfg.AutoSync,
 		})
 		ctx, cancel := context.WithTimeout(context.Background(), cloudflareAPITimeout)
 		defer cancel()
@@ -1394,17 +1502,313 @@ func (s *Server) purgeCloudflareCache(ctx context.Context, cfg CloudflareConfig,
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	writeCloudflareStatus(CloudflareStatus{
-		Status:       "success",
-		Step:         "purge",
-		Message:      message,
-		WorkerName:   cfg.WorkerName,
-		RoutePattern: cfg.RoutePattern,
-		LastPurgeAt:  now,
-		Configured:   cfg.configured(),
-		TokenSet:     cfg.tokenSet(),
-		AutoSync:     cfg.AutoSync,
+		Status:           "success",
+		Step:             "purge",
+		Message:          message,
+		DeployMode:       cfg.DeployMode,
+		WorkerName:       cfg.WorkerName,
+		PagesProjectName: cfg.PagesProjectName,
+		RoutePattern:     cfg.RoutePattern,
+		LastPurgeAt:      now,
+		Configured:       cfg.configured(),
+		TokenSet:         cfg.tokenSet(),
+		AutoSync:         cfg.AutoSync,
 	})
 	return nil
+}
+
+func deployCloudflarePagesStaticSite(ctx context.Context, cfg CloudflareConfig, exported *staticExportResult, setStep func(string, string)) error {
+	setStep("worker", "正在准备 Cloudflare Pages 项目。")
+	project, err := ensureCloudflarePagesProject(ctx, cfg)
+	if err != nil {
+		return fmt.Errorf("准备 Cloudflare Pages 项目失败：%w", err)
+	}
+	setStep("assets", fmt.Sprintf("正在上传 %d 个静态文件到 Pages。", exported.Count))
+	manifest, err := uploadCloudflarePagesAssets(ctx, cfg, exported)
+	if err != nil {
+		return fmt.Errorf("上传 Pages 静态资源失败：%w", err)
+	}
+	setStep("worker", "正在发布 Cloudflare Pages 静态站。")
+	if _, err := createCloudflarePagesDeployment(ctx, cfg, manifest); err != nil {
+		return fmt.Errorf("发布 Cloudflare Pages 失败：%w", err)
+	}
+	if cfg.ZoneID != "" && cfg.RoutePattern != "" {
+		setStep("route", "正在绑定 Pages 自定义域名。")
+		if err := ensureCloudflarePagesDomain(ctx, cfg); err != nil {
+			return fmt.Errorf("绑定 Pages 自定义域名失败：%w", err)
+		}
+		setStep("dns", "正在确认 Pages DNS。")
+		target := strings.TrimSpace(project.Subdomain)
+		if target == "" {
+			target = cfg.PagesProjectName + ".pages.dev"
+		}
+		if err := ensureCloudflarePagesDNSRecord(ctx, cfg, target); err != nil {
+			return fmt.Errorf("绑定 Pages DNS 失败：%w", err)
+		}
+	}
+	return nil
+}
+
+func ensureCloudflarePagesProject(ctx context.Context, cfg CloudflareConfig) (cloudflarePagesProject, error) {
+	project, err := getCloudflarePagesProject(ctx, cfg)
+	if err == nil {
+		if project.ProjectName == "" {
+			project.ProjectName = cfg.PagesProjectName
+		}
+		if project.Name == "" {
+			project.Name = project.ProjectName
+		}
+		return project, nil
+	}
+	if !cloudflareHasErrorCode(err, 8000007) && !cloudflareErrorContains(err, "not found") {
+		return cloudflarePagesProject{}, cloudflareStagePermissionError("pages", err)
+	}
+	return createCloudflarePagesProject(ctx, cfg)
+}
+
+func getCloudflarePagesProject(ctx context.Context, cfg CloudflareConfig) (cloudflarePagesProject, error) {
+	path := fmt.Sprintf("/accounts/%s/pages/projects/%s", url.PathEscape(cfg.AccountID), url.PathEscape(cfg.PagesProjectName))
+	result, err := cloudflareAPIRequest(ctx, cfg.APIToken, http.MethodGet, path, nil, "")
+	if err != nil {
+		return cloudflarePagesProject{}, err
+	}
+	var project cloudflarePagesProject
+	if len(result) > 0 {
+		if err := json.Unmarshal(result, &project); err != nil {
+			return cloudflarePagesProject{}, err
+		}
+	}
+	return project, nil
+}
+
+func createCloudflarePagesProject(ctx context.Context, cfg CloudflareConfig) (cloudflarePagesProject, error) {
+	body, _ := json.Marshal(map[string]any{
+		"name":              cfg.PagesProjectName,
+		"production_branch": "main",
+	})
+	path := fmt.Sprintf("/accounts/%s/pages/projects", url.PathEscape(cfg.AccountID))
+	result, err := cloudflareAPIRequest(ctx, cfg.APIToken, http.MethodPost, path, bytes.NewReader(body), "application/json")
+	if err != nil {
+		return cloudflarePagesProject{}, cloudflareStagePermissionError("pages", err)
+	}
+	var project cloudflarePagesProject
+	if len(result) > 0 {
+		if err := json.Unmarshal(result, &project); err != nil {
+			return cloudflarePagesProject{}, err
+		}
+	}
+	if project.ProjectName == "" {
+		project.ProjectName = cfg.PagesProjectName
+	}
+	if project.Name == "" {
+		project.Name = project.ProjectName
+	}
+	return project, nil
+}
+
+func uploadCloudflarePagesAssets(ctx context.Context, cfg CloudflareConfig, exported *staticExportResult) (map[string]string, error) {
+	jwt, err := cloudflarePagesUploadJWT(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	hashes := sortedStaticFileHashes(exported)
+	missing, err := cloudflarePagesMissingHashes(ctx, jwt, hashes)
+	if err != nil {
+		return nil, err
+	}
+	if len(missing) > 0 {
+		if err := uploadCloudflarePagesMissingFiles(ctx, jwt, exported, missing); err != nil {
+			return nil, err
+		}
+	}
+	if err := upsertCloudflarePagesHashes(ctx, jwt, hashes); err != nil {
+		return nil, err
+	}
+	manifest := map[string]string{}
+	for _, p := range sortedStaticFilePaths(exported.Files) {
+		f := exported.Files[p]
+		manifest[f.Path] = f.Hash
+	}
+	return manifest, nil
+}
+
+func sortedStaticFileHashes(exported *staticExportResult) []string {
+	seen := map[string]bool{}
+	hashes := make([]string, 0, len(exported.ByHash))
+	for _, file := range exported.Files {
+		if file.Hash == "" || seen[file.Hash] {
+			continue
+		}
+		seen[file.Hash] = true
+		hashes = append(hashes, file.Hash)
+	}
+	sort.Strings(hashes)
+	return hashes
+}
+
+func cloudflarePagesUploadJWT(ctx context.Context, cfg CloudflareConfig) (string, error) {
+	path := fmt.Sprintf("/accounts/%s/pages/projects/%s/upload-token", url.PathEscape(cfg.AccountID), url.PathEscape(cfg.PagesProjectName))
+	result, err := cloudflareAPIRequest(ctx, cfg.APIToken, http.MethodGet, path, nil, "")
+	if err != nil {
+		return "", cloudflareStagePermissionError("pages", err)
+	}
+	var token cloudflarePagesUploadToken
+	if len(result) > 0 {
+		if err := json.Unmarshal(result, &token); err != nil {
+			return "", err
+		}
+	}
+	if strings.TrimSpace(token.JWT) == "" {
+		return "", errors.New("Cloudflare Pages 没有返回静态资源上传令牌。")
+	}
+	return token.JWT, nil
+}
+
+func cloudflarePagesMissingHashes(ctx context.Context, jwt string, hashes []string) ([]string, error) {
+	body, _ := json.Marshal(map[string][]string{"hashes": hashes})
+	result, err := cloudflareAPIRequest(ctx, jwt, http.MethodPost, "/pages/assets/check-missing", bytes.NewReader(body), "application/json")
+	if err != nil {
+		return nil, cloudflareStagePermissionError("pages_assets", err)
+	}
+	var missing []string
+	if len(result) > 0 {
+		if err := json.Unmarshal(result, &missing); err != nil {
+			return nil, err
+		}
+	}
+	return missing, nil
+}
+
+func uploadCloudflarePagesMissingFiles(ctx context.Context, jwt string, exported *staticExportResult, hashes []string) error {
+	const batchSize = 50
+	for start := 0; start < len(hashes); start += batchSize {
+		end := start + batchSize
+		if end > len(hashes) {
+			end = len(hashes)
+		}
+		if err := uploadCloudflarePagesFileBatch(ctx, jwt, exported, hashes[start:end]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func uploadCloudflarePagesFileBatch(ctx context.Context, jwt string, exported *staticExportResult, hashes []string) error {
+	type uploadFile struct {
+		Key      string            `json:"key"`
+		Value    string            `json:"value"`
+		Metadata map[string]string `json:"metadata"`
+		Base64   bool              `json:"base64"`
+	}
+	payload := make([]uploadFile, 0, len(hashes))
+	for _, hash := range hashes {
+		diskPath := exported.ByHash[hash]
+		if diskPath == "" {
+			return fmt.Errorf("Pages 上传清单缺少文件 hash：%s", hash)
+		}
+		data, err := os.ReadFile(diskPath)
+		if err != nil {
+			return err
+		}
+		contentType := exportedContentType(exported, hash)
+		if contentType == "" {
+			contentType = "application/octet-stream"
+		}
+		payload = append(payload, uploadFile{
+			Key:      hash,
+			Value:    base64.StdEncoding.EncodeToString(data),
+			Metadata: map[string]string{"contentType": contentType},
+			Base64:   true,
+		})
+	}
+	body, _ := json.Marshal(payload)
+	_, err := cloudflareAPIRequest(ctx, jwt, http.MethodPost, "/pages/assets/upload", bytes.NewReader(body), "application/json")
+	if err != nil {
+		return cloudflareStagePermissionError("pages_assets", err)
+	}
+	return nil
+}
+
+func upsertCloudflarePagesHashes(ctx context.Context, jwt string, hashes []string) error {
+	body, _ := json.Marshal(map[string][]string{"hashes": hashes})
+	_, err := cloudflareAPIRequest(ctx, jwt, http.MethodPost, "/pages/assets/upsert-hashes", bytes.NewReader(body), "application/json")
+	if err != nil {
+		return cloudflareStagePermissionError("pages_assets", err)
+	}
+	return nil
+}
+
+func createCloudflarePagesDeployment(ctx context.Context, cfg CloudflareConfig, manifest map[string]string) (cloudflarePagesDeployment, error) {
+	manifestJSON, _ := json.Marshal(manifest)
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	if err := writeMultipartField(mw, "manifest", "", "application/json", manifestJSON); err != nil {
+		return cloudflarePagesDeployment{}, err
+	}
+	if err := writeMultipartField(mw, "branch", "", "text/plain; charset=utf-8", []byte("main")); err != nil {
+		return cloudflarePagesDeployment{}, err
+	}
+	if err := writeMultipartField(mw, "commit_message", "", "text/plain; charset=utf-8", []byte("Deploy gcms static site")); err != nil {
+		return cloudflarePagesDeployment{}, err
+	}
+	if err := mw.Close(); err != nil {
+		return cloudflarePagesDeployment{}, err
+	}
+	path := fmt.Sprintf("/accounts/%s/pages/projects/%s/deployments", url.PathEscape(cfg.AccountID), url.PathEscape(cfg.PagesProjectName))
+	result, err := cloudflareAPIRequest(ctx, cfg.APIToken, http.MethodPost, path, &body, mw.FormDataContentType())
+	if err != nil {
+		return cloudflarePagesDeployment{}, cloudflareStagePermissionError("pages", err)
+	}
+	var deployment cloudflarePagesDeployment
+	if len(result) > 0 {
+		if err := json.Unmarshal(result, &deployment); err != nil {
+			return cloudflarePagesDeployment{}, err
+		}
+	}
+	return deployment, nil
+}
+
+func ensureCloudflarePagesDomain(ctx context.Context, cfg CloudflareConfig) error {
+	host := cloudflareRouteHost(cfg.RoutePattern)
+	if host == "" {
+		return nil
+	}
+	body, _ := json.Marshal(map[string]string{"name": host})
+	path := fmt.Sprintf("/accounts/%s/pages/projects/%s/domains", url.PathEscape(cfg.AccountID), url.PathEscape(cfg.PagesProjectName))
+	_, err := cloudflareAPIRequest(ctx, cfg.APIToken, http.MethodPost, path, bytes.NewReader(body), "application/json")
+	if err == nil || cloudflareErrorContains(err, "already") || cloudflareErrorContains(err, "exists") {
+		return nil
+	}
+	return cloudflareStagePermissionError("pages", err)
+}
+
+func ensureCloudflarePagesDNSRecord(ctx context.Context, cfg CloudflareConfig, target string) error {
+	host := cloudflareRouteHost(cfg.RoutePattern)
+	target = strings.TrimSpace(strings.TrimSuffix(target, "."))
+	if strings.TrimSpace(cfg.ZoneID) == "" || host == "" || target == "" {
+		return nil
+	}
+	records, err := listCloudflareDNSRecords(ctx, cfg, host)
+	if err != nil {
+		return cloudflareStagePermissionError("dns", err)
+	}
+	cnameID := ""
+	for _, rec := range records {
+		if !sameCloudflareDNSName(rec.Name, host) || !cloudflareDNSRouteRecord(rec.Type) {
+			continue
+		}
+		if strings.EqualFold(rec.Type, "CNAME") {
+			cnameID = rec.ID
+			continue
+		}
+		if err := deleteCloudflareDNSRecord(ctx, cfg, rec.ID); err != nil {
+			return err
+		}
+	}
+	if cnameID != "" {
+		return putCloudflareDNSRecord(ctx, cfg, cnameID, "CNAME", host, target, true)
+	}
+	return createCloudflareDNSRecord(ctx, cfg, "CNAME", host, target, true)
 }
 
 func uploadCloudflareStaticAssets(ctx context.Context, cfg CloudflareConfig, exported *staticExportResult) (string, error) {
@@ -1700,6 +2104,44 @@ func ensureCloudflareDNSRecord(ctx context.Context, cfg CloudflareConfig) error 
 	return nil
 }
 
+func createCloudflareDNSRecord(ctx context.Context, cfg CloudflareConfig, recordType, host, content string, proxied bool) error {
+	body, _ := json.Marshal(map[string]any{
+		"type":    strings.ToUpper(strings.TrimSpace(recordType)),
+		"name":    host,
+		"content": content,
+		"ttl":     1,
+		"proxied": proxied,
+	})
+	path := fmt.Sprintf("/zones/%s/dns_records", url.PathEscape(cfg.ZoneID))
+	if _, err := cloudflareAPIRequest(ctx, cfg.APIToken, http.MethodPost, path, bytes.NewReader(body), "application/json"); err != nil {
+		return cloudflareStagePermissionError("dns", err)
+	}
+	return nil
+}
+
+func putCloudflareDNSRecord(ctx context.Context, cfg CloudflareConfig, recordID, recordType, host, content string, proxied bool) error {
+	body, _ := json.Marshal(map[string]any{
+		"type":    strings.ToUpper(strings.TrimSpace(recordType)),
+		"name":    host,
+		"content": content,
+		"ttl":     1,
+		"proxied": proxied,
+	})
+	path := fmt.Sprintf("/zones/%s/dns_records/%s", url.PathEscape(cfg.ZoneID), url.PathEscape(recordID))
+	if _, err := cloudflareAPIRequest(ctx, cfg.APIToken, http.MethodPut, path, bytes.NewReader(body), "application/json"); err != nil {
+		return cloudflareStagePermissionError("dns", err)
+	}
+	return nil
+}
+
+func deleteCloudflareDNSRecord(ctx context.Context, cfg CloudflareConfig, recordID string) error {
+	path := fmt.Sprintf("/zones/%s/dns_records/%s", url.PathEscape(cfg.ZoneID), url.PathEscape(recordID))
+	if _, err := cloudflareAPIRequest(ctx, cfg.APIToken, http.MethodDelete, path, nil, ""); err != nil {
+		return cloudflareStagePermissionError("dns", err)
+	}
+	return nil
+}
+
 func listCloudflareDNSRecords(ctx context.Context, cfg CloudflareConfig, host string) ([]cloudflareDNSRecord, error) {
 	path := fmt.Sprintf("/zones/%s/dns_records?per_page=100&name=%s", url.PathEscape(cfg.ZoneID), url.QueryEscape(host))
 	result, err := cloudflareAPIRequest(ctx, cfg.APIToken, http.MethodGet, path, nil, "")
@@ -1779,6 +2221,8 @@ func cloudflareStagePermissionError(stage string, err error) error {
 	switch stage {
 	case "assets":
 		return fmt.Errorf("Cloudflare 拒绝上传静态资源：请重新创建 Token，并确认摘要里包含 Account 级的 Workers Scripts Edit 权限；Account Resources 必须包含当前账号。如果手动填过 Account ID，也请确认它属于这个账号。原始错误：%w", err)
+	case "pages", "pages_assets":
+		return fmt.Errorf("Cloudflare 拒绝发布 Pages：请重新创建 Token，并确认摘要里包含 Account 级的 Cloudflare Pages Edit 权限；Account Resources 必须包含当前账号。原始错误：%w", err)
 	case "worker":
 		return fmt.Errorf("Cloudflare 拒绝上传 Worker：请重新创建 Token，并确认摘要里包含 Account 级的 Workers Scripts Edit 权限；Account Resources 必须包含当前账号。如果手动填过 Account ID，也请确认它属于这个账号。原始错误：%w", err)
 	case "dns":
@@ -1799,6 +2243,26 @@ func cloudflareHasErrorCode(err error, code int) bool {
 	}
 	for _, e := range apiErr.Errors {
 		if e.Code == code {
+			return true
+		}
+	}
+	return false
+}
+
+func cloudflareErrorContains(err error, needle string) bool {
+	needle = strings.ToLower(strings.TrimSpace(needle))
+	if err == nil || needle == "" {
+		return false
+	}
+	if strings.Contains(strings.ToLower(err.Error()), needle) {
+		return true
+	}
+	var apiErr cloudflareAPIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	for _, e := range apiErr.Errors {
+		if strings.Contains(strings.ToLower(e.Message), needle) {
 			return true
 		}
 	}

@@ -189,6 +189,7 @@ func TestCloudflareAPITokenTemplateURL(t *testing.T) {
 	for _, needle := range []string{
 		`"key":"workers_scripts"`,
 		`"key":"workers_routes"`,
+		`"key":"page"`,
 		`"key":"dns"`,
 		`"key":"cache"`,
 		`"key":"zone"`,
@@ -211,6 +212,28 @@ func TestCloudflareConfigConfiguredWithAPITokenOnly(t *testing.T) {
 	}
 	if err := cfg.validateDeploy(); err != nil {
 		t.Fatalf("validateDeploy returned %v", err)
+	}
+}
+
+func TestCloudflareConfigConfiguredWithPagesMode(t *testing.T) {
+	cfg := CloudflareConfig{
+		APIToken:         "token",
+		DeployMode:       cloudflareModePages,
+		PagesProjectName: "gcms-frontend",
+		RoutePattern:     "example.com/*",
+	}
+	if !cfg.configured() {
+		t.Fatal("API token plus Pages project and public domain should configure Pages deploy")
+	}
+	if err := cfg.validateDeploy(); err != nil {
+		t.Fatalf("validateDeploy returned %v", err)
+	}
+	cfg.PagesProjectName = ""
+	if cfg.configured() {
+		t.Fatal("Pages mode should require a Pages project name")
+	}
+	if err := cfg.validateDeploy(); err == nil || !strings.Contains(err.Error(), "Pages") {
+		t.Fatalf("validateDeploy should explain missing Pages project, got %v", err)
 	}
 }
 

@@ -961,17 +961,18 @@
       {{$cf := .Cloudflare}}
       {{$c := $cf.Config}}
       {{$st := $cf.Status}}
+      {{$isPages := eq $c.DeployMode "pages"}}
       <div class="field-group cloudflare-connect">
         <h3 class="group-head with-icon">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.5 18H8a5 5 0 1 1 1.5-9.8A6 6 0 0 1 21 10.5 3.8 3.8 0 0 1 17.5 18z"/><path d="M8 21h8"/><path d="M12 18v3"/></svg>
           <span>{{.Admin.T "admin.settings.cloudflare.title" "Cloudflare 部署"}}</span>
         </h3>
-        <p class="muted automation-note">{{.Admin.T "admin.settings.cloudflare.desc" "把前台导出为完整静态站并上传到 Cloudflare Worker Assets；后台和数据库仍在当前服务器，Cloudflare 只负责公开访问、HTTPS、边缘托管和内容更新后的重新发布。"}}</p>
+        <p class="muted automation-note">{{.Admin.T "admin.settings.cloudflare.desc" "把前台导出为完整静态站并部署到 Cloudflare；后台和数据库仍在当前服务器，Cloudflare 负责公开访问、HTTPS、边缘缓存和内容更新后的重新发布。"}}</p>
         <div class="cloudflare-connect-card">
           <div class="cloudflare-connect-copy">
             <span class="mini-tag">{{.Admin.T "admin.settings.cloudflare.recommended" "推荐方式"}}</span>
             <h3>{{.Admin.T "admin.settings.cloudflare.connect_title" "创建专用 Token 并部署"}}</h3>
-            <p>{{.Admin.T "admin.settings.cloudflare.connect_desc" "先填写前台访问域名，再按模板创建 Token。保存后 gcms 会导出静态站、上传资源、发布 Worker 并绑定路由。"}}</p>
+            <p>{{.Admin.T "admin.settings.cloudflare.connect_desc" "先选择托管方式并填写前台访问域名，再按模板创建 Token。保存后 gcms 会导出完整静态站、上传资源并完成域名绑定。"}}</p>
             <div class="cloudflare-token-steps">
               <span data-step="1">{{.Admin.T "admin.settings.cloudflare.step_domain" "填写前台域名"}}</span>
               <span data-step="2">{{.Admin.T "admin.settings.cloudflare.step_create_token" "生成专用 Token"}}</span>
@@ -981,7 +982,7 @@
             {{if $c.RoutePattern}}
             <div class="cloudflare-connect-meta">
               <span>{{.Admin.T "admin.settings.cloudflare.public_domain" "前台访问域名"}}：{{$c.RoutePattern}}</span>
-              <span>{{.Admin.T "admin.settings.cloudflare.hosting_mode" "托管方式"}}：{{.Admin.T "admin.settings.cloudflare.static_assets" "静态站托管"}}</span>
+              <span>{{.Admin.T "admin.settings.cloudflare.hosting_mode" "托管方式"}}：{{if $isPages}}{{.Admin.T "admin.settings.cloudflare.mode_pages" "Cloudflare Pages"}}{{else}}{{.Admin.T "admin.settings.cloudflare.mode_worker_assets" "Worker Assets"}}{{end}}</span>
             </div>
             {{end}}
           </div>
@@ -989,13 +990,35 @@
             <input type="hidden" name="_csrf" value="{{.CSRF}}">
             <input type="hidden" name="deploy" value="1">
             <input type="hidden" name="worker_name" value="{{$c.WorkerName}}">
+            <input type="hidden" name="pages_project_name" value="{{$c.PagesProjectName}}">
             <input type="hidden" name="html_cache_ttl" value="{{$c.HTMLCacheTTL}}">
             <input type="hidden" name="auto_sync" value="1">
             <input id="cf-token-template-url" class="copy-source" type="text" value="{{$cf.TokenTemplateURL}}" readonly tabindex="-1" aria-hidden="true">
+            <fieldset class="cloudflare-mode-picker">
+              <legend>{{.Admin.T "admin.settings.cloudflare.deploy_mode" "部署方式"}}</legend>
+              <div class="cloudflare-mode-options">
+                <label class="cloudflare-mode-option">
+                  <input type="radio" name="deploy_mode" value="worker_assets"{{if not $isPages}} checked{{end}}>
+                  <span>
+                    <strong>{{.Admin.T "admin.settings.cloudflare.mode_worker_assets" "Worker Assets"}} <em>{{.Admin.T "admin.settings.cloudflare.default" "默认"}}</em></strong>
+                    <small>{{.Admin.T "admin.settings.cloudflare.mode_worker_desc" "入口控制更强，适合长期托管、路由保护和边缘访问控制。"}}</small>
+                    <b>{{.Admin.T "admin.settings.cloudflare.mode_worker_note" "控制台显示为 Worker，不展示文件列表"}}</b>
+                  </span>
+                </label>
+                <label class="cloudflare-mode-option">
+                  <input type="radio" name="deploy_mode" value="pages"{{if $isPages}} checked{{end}}>
+                  <span>
+                    <strong>{{.Admin.T "admin.settings.cloudflare.mode_pages" "Cloudflare Pages"}}</strong>
+                    <small>{{.Admin.T "admin.settings.cloudflare.mode_pages_desc" "更像静态站项目，能在 Cloudflare 里看到项目、部署记录和自定义域名。"}}</small>
+                    <b>{{.Admin.T "admin.settings.cloudflare.mode_pages_note" "适合偏内容站和可视化查看部署结果"}}</b>
+                  </span>
+                </label>
+              </div>
+            </fieldset>
             <label>
               <span>{{.Admin.T "admin.settings.cloudflare.public_domain" "前台访问域名"}}</span>
               <input name="route_pattern" value="{{$c.RoutePattern}}" placeholder="{{.Admin.T "admin.settings.cloudflare.public_domain_placeholder" "例如 ccvar.com 或 www.ccvar.com/*"}}">
-              <small>{{.Admin.T "admin.settings.cloudflare.public_domain_hint" "访客最终打开的域名，会绑定到 Cloudflare Worker。创建 Token 时，请在 Cloudflare 里选择这个域名所在的 Zone。"}}</small>
+              <small>{{.Admin.T "admin.settings.cloudflare.public_domain_hint" "访客最终打开的域名，会绑定到所选 Cloudflare 托管方式。创建 Token 时，请在 Cloudflare 里选择这个域名所在的 Zone。"}}</small>
               {{if and $cf.RouteHost $cf.LikelyZoneName}}
               <small class="cloudflare-zone-hint">
                 {{if ne $cf.RouteHost $cf.LikelyZoneName}}
@@ -1006,7 +1029,7 @@
               </small>
               {{end}}
               {{if $cf.RouteHost}}
-              <small class="cloudflare-zone-hint">{{printf (.Admin.T "admin.settings.cloudflare.dns_hint" "部署会自动确认 %s 的 Cloudflare DNS；没有记录时会创建一条已代理的 AAAA 记录。") $cf.RouteHost}}</small>
+              <small class="cloudflare-zone-hint">{{printf (.Admin.T "admin.settings.cloudflare.dns_hint" "部署会自动确认 %s 的 Cloudflare DNS；没有记录时会按当前部署方式创建合适的代理记录。") $cf.RouteHost}}</small>
               {{end}}
             </label>
             <div class="cloudflare-template-actions">
@@ -1028,7 +1051,7 @@
             <strong>{{.Admin.T "admin.settings.cloudflare.template_steps_title" "Cloudflare 页面怎么操作？"}}</strong>
             <ol>
               <li>{{.Admin.T "admin.settings.cloudflare.template_step_1" "登录后模板会预填名称和权限，选择要部署的账号和域名范围。"}}</li>
-              <li>{{.Admin.T "admin.settings.cloudflare.template_step_2" "进入摘要页，确认包含 Worker 脚本、路由、缓存清理、域名读取和账号读取。"}}</li>
+              <li>{{.Admin.T "admin.settings.cloudflare.template_step_2" "进入摘要页，确认包含 Worker 脚本、Worker 路由、Pages、DNS、缓存清理、域名读取和账号读取。"}}</li>
               <li>{{.Admin.T "admin.settings.cloudflare.template_step_3" "创建 Token，复制只显示一次的值，回到这里粘贴并保存部署。"}}</li>
             </ol>
           </div>
@@ -1051,15 +1074,15 @@
         <div class="update-summary" id="cloudflare-status-box" data-status-url="/admin/settings/cloudflare/status" data-running="{{if $st.Running}}1{{else}}0{{end}}">
           <div class="update-versions">
             <div class="update-block">
-              <span class="update-label">{{.Admin.T "admin.settings.cloudflare.worker" "Worker"}}</span>
-              <strong>{{$c.WorkerName}}</strong>
+              <span class="update-label">{{.Admin.T "admin.settings.cloudflare.hosting_project" "托管项目"}}</span>
+              <strong>{{if $isPages}}{{$c.PagesProjectName}}{{else}}{{$c.WorkerName}}{{end}}</strong>
               <span class="update-meta">{{if $cf.OAuth}}{{.Admin.T "admin.settings.cloudflare.oauth_ready" "已通过本机 OAuth 授权"}}{{else if $cf.Configured}}{{.Admin.T "admin.settings.cloudflare.configured" "已具备部署配置"}}{{else}}{{.Admin.T "admin.settings.cloudflare.not_configured" "请先补全必填配置"}}{{end}}</span>
             </div>
             <span class="update-sep" aria-hidden="true">→</span>
             <div class="update-block">
               <span class="update-label">{{.Admin.T "admin.settings.cloudflare.route" "公开入口"}}</span>
               <strong>{{if $c.RoutePattern}}{{$c.RoutePattern}}{{else}}{{.Admin.T "admin.common.empty_dash" "—"}}{{end}}</strong>
-              <span class="update-meta">{{if $c.ZoneID}}{{.Admin.T "admin.settings.cloudflare.route_managed" "可自动绑定路由并清缓存"}}{{else}}{{.Admin.T "admin.settings.cloudflare.route_manual" "部署时会尝试自动识别 Zone ID"}}{{end}}</span>
+              <span class="update-meta">{{if $c.ZoneID}}{{.Admin.T "admin.settings.cloudflare.route_managed" "可自动绑定域名并清缓存"}}{{else}}{{.Admin.T "admin.settings.cloudflare.route_manual" "部署时会尝试自动识别 Zone ID"}}{{end}}</span>
             </div>
           </div>
           <div class="update-task">
@@ -1084,8 +1107,8 @@
             <span data-step="detect">{{.Admin.T "admin.settings.cloudflare.progress_detect" "识别账号域名"}}</span>
             <span data-step="export">{{.Admin.T "admin.settings.cloudflare.progress_export" "导出静态站"}}</span>
             <span data-step="assets">{{.Admin.T "admin.settings.cloudflare.progress_assets" "上传静态资源"}}</span>
-            <span data-step="worker">{{.Admin.T "admin.settings.cloudflare.progress_worker" "发布 Worker"}}</span>
-            <span data-step="route">{{.Admin.T "admin.settings.cloudflare.progress_route" "绑定路由"}}</span>
+            <span data-step="worker">{{.Admin.T "admin.settings.cloudflare.progress_worker" "发布静态站"}}</span>
+            <span data-step="route">{{.Admin.T "admin.settings.cloudflare.progress_route" "绑定访问入口"}}</span>
             <span data-step="dns">{{.Admin.T "admin.settings.cloudflare.progress_dns" "绑定 DNS"}}</span>
             <span data-step="purge">{{.Admin.T "admin.settings.cloudflare.progress_purge" "清理缓存"}}</span>
             <span data-step="done">{{.Admin.T "admin.settings.cloudflare.progress_done" "完成"}}</span>
@@ -1095,7 +1118,7 @@
           <summary>{{.Admin.T "admin.settings.cloudflare.advanced" "连接细节"}}</summary>
           <table class="admin-table">
             <tbody>
-              <tr><th>{{.Admin.T "admin.settings.cloudflare.hosting_mode" "托管方式"}}</th><td class="slug">{{.Admin.T "admin.settings.cloudflare.static_assets" "静态站托管"}}</td></tr>
+              <tr><th>{{.Admin.T "admin.settings.cloudflare.hosting_mode" "托管方式"}}</th><td class="slug">{{if $isPages}}{{.Admin.T "admin.settings.cloudflare.mode_pages" "Cloudflare Pages"}}{{else}}{{.Admin.T "admin.settings.cloudflare.mode_worker_assets" "Worker Assets"}}{{end}}</td></tr>
               <tr><th>{{.Admin.T "admin.settings.cloudflare.auth_mode" "授权方式"}}</th><td>{{if $cf.OAuth}}<span class="badge pub">{{.Admin.T "admin.settings.cloudflare.auth_oauth" "本机 OAuth"}}</span>{{else if $cf.TokenSet}}<span class="badge sched">{{.Admin.T "admin.settings.cloudflare.auth_token" "手动 Token"}}</span>{{else}}<span class="badge draft">{{.Admin.T "admin.settings.cloudflare.token_missing" "未保存"}}</span>{{end}}</td></tr>
               {{if $c.AccountName}}<tr><th>{{.Admin.T "admin.settings.cloudflare.account_name" "账号"}}</th><td>{{$c.AccountName}}</td></tr>{{end}}
               {{if $c.ZoneName}}<tr><th>{{.Admin.T "admin.settings.cloudflare.zone_name" "域名"}}</th><td>{{$c.ZoneName}}</td></tr>{{end}}
@@ -1103,6 +1126,7 @@
               <tr><th>{{.Admin.T "admin.settings.cloudflare.zone_id" "Zone ID"}}</th><td class="slug">{{if $c.ZoneID}}{{$c.ZoneID}}{{else}}-{{end}}</td></tr>
               {{if $c.OAuthClientID}}<tr><th>{{.Admin.T "admin.settings.cloudflare.oauth_client_id" "OAuth Client ID"}}</th><td class="slug">{{$c.OAuthClientID}}</td></tr>{{end}}
               {{if $c.ConnectedAt}}<tr><th>{{.Admin.T "admin.settings.cloudflare.connected_at" "连接时间"}}</th><td class="slug">{{$c.ConnectedAt}}</td></tr>{{end}}
+              <tr><th>{{.Admin.T "admin.settings.cloudflare.pages_project_name" "Pages 项目名称"}}</th><td class="slug">{{$c.PagesProjectName}}</td></tr>
               <tr><th>{{.Admin.T "admin.settings.cloudflare.token_status" "Token 状态"}}</th><td>{{if $cf.TokenSet}}<span class="badge pub">{{.Admin.T "admin.settings.cloudflare.token_saved" "已保存"}}</span>{{else}}<span class="badge draft">{{.Admin.T "admin.settings.cloudflare.token_missing" "未保存"}}</span>{{end}}</td></tr>
               <tr><th>{{.Admin.T "admin.settings.cloudflare.status_file" "状态文件"}}</th><td class="slug">run/cloudflare-deploy.json</td></tr>
               {{if $st.Step}}<tr><th>{{.Admin.T "admin.settings.cloudflare.step" "阶段"}}</th><td class="slug">{{$st.Step}}</td></tr>{{end}}
@@ -1189,14 +1213,14 @@
           <div class="field-group">
             <div class="key-warning">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.3 4.2 2.8 17.4A2 2 0 0 0 4.5 20h15a2 2 0 0 0 1.7-2.6L13.7 4.2a2 2 0 0 0-3.4 0z"/></svg>
-              <span>{{.Admin.T "admin.settings.cloudflare.token_note" "建议创建最小权限 Cloudflare API Token：Account Workers Scripts Edit、Zone Workers Routes Edit、Zone DNS Edit、Zone Cache Purge、Zone Read。Token 只保存在本机数据库，页面不会回显完整值。"}}</span>
+              <span>{{.Admin.T "admin.settings.cloudflare.token_note" "建议用上方模板创建专用 Cloudflare API Token：会一次性包含 Worker Assets、Pages、DNS、缓存清理、Zone Read 和 Account Read。Token 只保存在本机数据库，页面不会回显完整值。"}}</span>
             </div>
             {{if and $cf.RouteHost $cf.LikelyZoneName}}
             <div class="key-warning">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 21s7-4.5 7-11V5l-7-3-7 3v5c0 6.5 7 11 7 11z"/><path d="m9 12 2 2 4-5"/></svg>
               <span>
                 {{if ne $cf.RouteHost $cf.LikelyZoneName}}
-                  {{printf (.Admin.T "admin.settings.cloudflare.zone_manual_hint_subdomain" "如果仍然识别失败，请在 Cloudflare 的 %s 域名概览页复制 Zone ID，填到下方 Zone ID。%s 是 Worker 路由，不是 Zone 名称。") $cf.LikelyZoneName $cf.RouteHost}}
+                  {{printf (.Admin.T "admin.settings.cloudflare.zone_manual_hint_subdomain" "如果仍然识别失败，请在 Cloudflare 的 %s 域名概览页复制 Zone ID，填到下方 Zone ID。%s 是前台访问域名，不是 Zone 名称。") $cf.LikelyZoneName $cf.RouteHost}}
                 {{else}}
                   {{printf (.Admin.T "admin.settings.cloudflare.zone_manual_hint_root" "如果仍然识别失败，请在 Cloudflare 的 %s 域名概览页复制 Zone ID，填到下方 Zone ID。") $cf.LikelyZoneName}}
                 {{end}}
@@ -1204,14 +1228,25 @@
             </div>
             {{end}}
             <div class="form-2col">
+              <div class="field full">
+                <label>{{.Admin.T "admin.settings.cloudflare.deploy_mode" "部署方式"}}</label>
+                <div class="radio-pill-row">
+                  <label class="radio-pill"><input type="radio" name="deploy_mode" value="worker_assets"{{if not $isPages}} checked{{end}}><span>{{.Admin.T "admin.settings.cloudflare.mode_worker_assets" "Worker Assets"}}</span></label>
+                  <label class="radio-pill"><input type="radio" name="deploy_mode" value="pages"{{if $isPages}} checked{{end}}><span>{{.Admin.T "admin.settings.cloudflare.mode_pages" "Cloudflare Pages"}}</span></label>
+                </div>
+              </div>
               <div class="field">
                 <label for="cf_worker_name">{{.Admin.T "admin.settings.cloudflare.worker_name" "Worker 名称"}}</label>
                 <input id="cf_worker_name" name="worker_name" value="{{$c.WorkerName}}" placeholder="gcms-frontend">
               </div>
               <div class="field">
-                <label for="cf_route_pattern">{{.Admin.T "admin.settings.cloudflare.route_pattern" "Worker 路由"}}</label>
+                <label for="cf_pages_project">{{.Admin.T "admin.settings.cloudflare.pages_project_name" "Pages 项目名称"}}</label>
+                <input id="cf_pages_project" name="pages_project_name" value="{{$c.PagesProjectName}}" placeholder="gcms-frontend">
+              </div>
+              <div class="field">
+                <label for="cf_route_pattern">{{.Admin.T "admin.settings.cloudflare.route_pattern" "前台访问域名"}}</label>
                 <input id="cf_route_pattern" name="route_pattern" value="{{$c.RoutePattern}}" placeholder="example.com/*">
-                <span class="hint">{{.Admin.T "admin.settings.cloudflare.route_hint" "例如 example.com/* 或 www.example.com/*。填写后部署会自动绑定到这个域名路由。"}}</span>
+                <span class="hint">{{.Admin.T "admin.settings.cloudflare.route_hint" "例如 example.com 或 www.example.com/*。填写后部署会自动绑定到这个公开入口。"}}</span>
               </div>
               <div class="field">
                 <label for="cf_account_id">{{.Admin.T "admin.settings.cloudflare.account_id" "Account ID"}}</label>
@@ -1240,8 +1275,8 @@
         <div class="automation-help">
           <ol>
             <li>{{.Admin.T "admin.settings.cloudflare.flow_1" "gcms 先按当前内容、语种、主题和正式域名生成完整静态文件。"}}</li>
-            <li>{{.Admin.T "admin.settings.cloudflare.flow_2" "这些 HTML、图片、CSS、JS 和搜索索引会上传到 Cloudflare Worker Assets。"}}</li>
-            <li>{{.Admin.T "admin.settings.cloudflare.flow_3" "公开访客只访问 Cloudflare 静态站；后台、自动化接口和预览链接仍留在当前 gcms。"}}</li>
+            <li>{{.Admin.T "admin.settings.cloudflare.flow_2" "这些 HTML、图片、CSS、JS 和搜索索引会上传到所选 Cloudflare 托管方式：Worker Assets 或 Pages。"}}</li>
+            <li>{{.Admin.T "admin.settings.cloudflare.flow_3" "公开访客只访问 Cloudflare 上的纯静态站；后台、自动化接口和预览链接仍留在当前 gcms。"}}</li>
             <li>{{.Admin.T "admin.settings.cloudflare.flow_4" "内容保存后，若开启自动同步，系统会延时重新导出并发布静态站。"}}</li>
           </ol>
         </div>
