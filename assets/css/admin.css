@@ -16,6 +16,7 @@
   --faint:     #9c978d;
   --line:      #e8e4db;
   --line-soft: #f0ede5;
+  --ok:        #1f8b4c;  /* 成功 / 已部署 绿 */
 
   /* 强调色（克制的赭石/陶土，编辑气质） */
   --accent:      #9a3b2f;
@@ -51,6 +52,7 @@
     --faint:     #7c776d;
     --line:      #2c2924;
     --line-soft: #221f1b;
+    --ok:        #46c07e;
     --accent:      #e0816e;
     --accent-soft: #ec9582;
     --accent-wash: #251b17;
@@ -1180,14 +1182,14 @@ body.admin { background: var(--line-soft); }
 .cloudflare-status-group [hidden] { display: none !important; }
 .cloudflare-status-group { margin-top: .9rem; }
 .cloudflare-status-group .update-summary { overflow: visible; box-shadow: 0 8px 22px rgba(27,26,23,.035); }
-.cloudflare-status-group .update-task { display: grid; grid-template-columns: minmax(0, 1fr) max-content; align-items: start; }
-.cloudflare-status-group .update-task > div:first-child { min-width: 0; }
+.cloudflare-status-group .update-task { display: grid; grid-template-columns: minmax(0, 1fr) max-content; align-items: start; row-gap: .45rem; }
+.cloudflare-status-group .update-task > div:first-child { min-width: 0; grid-row: 1 / -1; }
 .cloudflare-status-group .update-task p { max-width: 100%; overflow-wrap: anywhere; }
 .cloudflare-status-group .update-task .button-row { flex-wrap: nowrap; align-items: stretch; flex: none; min-width: max-content; }
 .cloudflare-status-group .update-task .button-row form { flex: none; }
 .cloudflare-status-group .update-task .button-row .btn { justify-content: center; min-width: 8.6rem; white-space: nowrap; }
 .cloudflare-status-group .update-details { margin-top: .8rem; }
-.cloudflare-status-footer { grid-column: 2; justify-self: end; position: relative; display: flex; align-items: center; justify-content: flex-end; gap: .55rem; padding: .15rem 0 0; color: var(--muted); font: 700 .78rem/1.4 var(--sans); }
+.cloudflare-status-footer { grid-column: 2; justify-self: end; align-self: start; position: relative; display: flex; align-items: center; justify-content: flex-end; gap: .55rem; padding: .15rem 0 0; color: var(--muted); font: 700 .78rem/1.4 var(--sans); }
 .cloudflare-last-deploy time { color: var(--ink-soft); font-weight: 850; }
 .cloudflare-history { position: relative; flex: none; }
 .cloudflare-history-toggle { display: inline-grid; place-items: center; width: 30px; height: 30px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--muted); cursor: pointer; transition: border-color .15s, color .15s, background .15s; }
