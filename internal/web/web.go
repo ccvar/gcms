@@ -524,11 +524,94 @@ func New(st *store.Store, baseURL, uploadDir string, tplFS, assetsFS fs.FS) (*Se
 	}
 	s.i18n.LoadCustom(st.Setting("custom_locales")) // 合并后台新增的自定义语种预设
 	s.routes(assetsFS)
+	s.resumeCloudflareSync()
 	return s, nil
 }
 
 func (s *Server) Handler() http.Handler {
-	return s.securityHeaders(s.withLocale(s.publicPageCache(s.mux)))
+	return s.securityHeaders(s.withCloudflareCanonicalFrontend(s.withLocale(s.publicPageCache(s.mux))))
+}
+
+func (s *Server) withCloudflareCanonicalFrontend(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		action := s.cloudflareSourceFrontendAction(r)
+		if target := action.redirectURL; target != "" {
+			http.Redirect(w, r, target, http.StatusMovedPermanently)
+			return
+		}
+		if action.noindex {
+			w.Header().Set("X-Robots-Tag", "noindex, follow")
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+type cloudflareSourceFrontendAction struct {
+	redirectURL string
+	noindex     bool
+}
+
+func (s *Server) cloudflareCanonicalFrontendRedirect(r *http.Request) string {
+	return s.cloudflareSourceFrontendAction(r).redirectURL
+}
+
+func (s *Server) cloudflareCanonicalFrontendNoindex(r *http.Request) bool {
+	return s.cloudflareSourceFrontendAction(r).noindex
+}
+
+func (s *Server) cloudflareSourceFrontendAction(r *http.Request) cloudflareSourceFrontendAction {
+	if r == nil || (r.Method != http.MethodGet && r.Method != http.MethodHead) {
+		return cloudflareSourceFrontendAction{}
+	}
+	if cloudflareCanonicalFrontendExemptPath(r.URL.Path) {
+		return cloudflareSourceFrontendAction{}
+	}
+	mode := s.cloudflareSourceFrontendMode()
+	if mode == cloudflareSourceModeNone {
+		return cloudflareSourceFrontendAction{}
+	}
+	primary := s.cloudflarePublishedPrimaryHost()
+	if primary == "" {
+		return cloudflareSourceFrontendAction{}
+	}
+	host := normalizeCloudflareDomainHost(requestHost(r))
+	if host == "" || sameCloudflareDNSName(host, primary) {
+		return cloudflareSourceFrontendAction{}
+	}
+	if mode == cloudflareSourceModeNoindex {
+		return cloudflareSourceFrontendAction{noindex: true}
+	}
+	next := *r.URL
+	next.Scheme = "https"
+	next.Host = primary
+	return cloudflareSourceFrontendAction{redirectURL: next.String()}
+}
+
+func (s *Server) cloudflareSourceFrontendMode() string {
+	if s == nil || s.store == nil {
+		return cloudflareSourceModeRedirect
+	}
+	return normalizeCloudflareSourceMode(s.store.Setting(cloudflareSourceModeKey))
+}
+
+func (s *Server) cloudflarePublishedPrimaryHost() string {
+	st := readCloudflareStatus()
+	if !cloudflareStatusPublished(st) {
+		return ""
+	}
+	if host := normalizeCloudflareDomainHost(st.PrimaryDomain); host != "" {
+		return host
+	}
+	return s.cloudflareConfig().primaryHost()
+}
+
+func cloudflareCanonicalFrontendExemptPath(path string) bool {
+	for _, prefix := range []string{"/admin", "/api", "/preview", "/assets", "/uploads", "/.well-known"} {
+		if path == prefix || strings.HasPrefix(path, prefix+"/") {
+			return true
+		}
+	}
+	return path == "/favicon.ico"
 }
 
 func (s *Server) serveUpload(w http.ResponseWriter, r *http.Request) {
@@ -1404,6 +1487,7 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /admin/settings/comments", s.requireAuth(s.adminSaveComments))
 	mux.HandleFunc("POST /admin/settings/updates/upgrade", s.requireAuth(s.adminStartUpgrade))
 	mux.HandleFunc("POST /admin/settings/cloudflare", s.requireAuth(s.adminSaveCloudflare))
+	mux.HandleFunc("POST /admin/settings/cloudflare/sync", s.requireAuth(s.adminSaveCloudflareSync))
 	mux.HandleFunc("POST /admin/settings/cloudflare/deploy", s.requireAuth(s.adminStartCloudflareDeploy))
 	mux.HandleFunc("POST /admin/settings/cloudflare/unpublish", s.requireAuth(s.adminStartCloudflareUnpublish))
 	mux.HandleFunc("POST /admin/settings/cloudflare/purge", s.requireAuth(s.adminCloudflarePurge))

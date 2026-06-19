@@ -962,120 +962,162 @@
       {{$c := $cf.Config}}
       {{$st := $cf.Status}}
       {{$isPages := eq $c.DeployMode "pages"}}{{/* 部署方式只在「高级」里选，主流程不让小白纠结 */}}
-      {{$projectName := $c.WorkerName}}{{if $isPages}}{{$projectName = $c.PagesProjectName}}{{end}}
+      {{$projectName := $cf.ProjectName}}
+      {{$projectDefault := $cf.ProjectDefault}}
       {{$liveURL := ""}}{{if $cf.PrimaryDomain}}{{$liveURL = printf "https://%s" $cf.PrimaryDomain}}{{end}}
+      {{$domainLabel := $cf.DomainSummary}}{{if not $domainLabel}}{{$domainLabel = $cf.PrimaryDomain}}{{end}}
+      {{$hasDeployment := and $cf.TokenSet (or $st.Published $st.LastDeployAt)}}
+      {{$canPurge := $st.CanPurge}}
+      {{$syncDaily := eq $c.SyncMode "daily"}}
       <div class="field-group cloudflare-connect">
         <h3 class="group-head with-icon">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.5 18H8a5 5 0 1 1 1.5-9.8A6 6 0 0 1 21 10.5 3.8 3.8 0 0 1 17.5 18z"/><path d="M8 21h8"/><path d="M12 18v3"/></svg>
           <span>{{.Admin.T "admin.settings.cloudflare.title" "Cloudflare 部署"}}</span>
         </h3>
         <p class="muted automation-note">{{.Admin.T "admin.settings.cloudflare.desc" "把前台导出为完整静态站并部署到 Cloudflare；后台和数据库仍在当前服务器，Cloudflare 负责公开访问、HTTPS、边缘缓存和内容更新后的重新发布。"}}</p>
-        {{if and (eq $st.Status "success") $liveURL}}
-        <a class="cf-live" href="{{$liveURL}}" target="_blank" rel="noopener">
-          <span class="cf-live-dot" aria-hidden="true"></span>
-          <span class="cf-live-text"><strong>{{.Admin.T "admin.settings.cloudflare.live" "已上线"}}</strong><span class="cf-live-url">{{$liveURL}}</span></span>
-          <span class="cf-live-go">{{.Admin.T "admin.settings.cloudflare.open_site" "打开网站"}} ↗</span>
-        </a>
-        {{end}}
-        <div class="cloudflare-connect-card{{if $cf.TokenSet}} is-bound{{end}}">
+        <div class="cloudflare-connect-card{{if $cf.TokenSet}} is-bound{{end}}" data-cloudflare-connect-card>
           <div class="cloudflare-connect-copy">
-            <span class="mini-tag">{{if $cf.TokenSet}}{{.Admin.T "admin.settings.cloudflare.bound" "已绑定"}}{{else}}{{.Admin.T "admin.settings.cloudflare.recommended" "推荐方式"}}{{end}}</span>
-            <h3>{{if $cf.TokenSet}}{{.Admin.T "admin.settings.cloudflare.bound_title" "Cloudflare 已连接"}}{{else}}{{.Admin.T "admin.settings.cloudflare.connect_title" "创建专用 Token 并部署"}}{{end}}</h3>
-            <p>{{if $cf.TokenSet}}{{.Admin.T "admin.settings.cloudflare.bound_desc" "后续内容更新可以直接重新部署；需要换域名、换 Token 或调整项目名时，再打开修改绑定。"}}{{else}}{{.Admin.T "admin.settings.cloudflare.connect_desc" "先填写前台访问域名，再按模板创建 Token 粘贴回来，gcms 会导出纯静态站并部署到 Cloudflare。"}}{{end}}</p>
+            <span class="mini-tag" data-cf-connect-tag>{{if $cf.TokenSet}}{{.Admin.T "admin.settings.cloudflare.bound" "已绑定"}}{{else}}{{.Admin.T "admin.settings.cloudflare.recommended" "推荐方式"}}{{end}}</span>
+            <h3 data-cf-connect-title>{{if $cf.TokenSet}}{{.Admin.T "admin.settings.cloudflare.bound_title" "Cloudflare 已连接"}}{{else}}{{.Admin.T "admin.settings.cloudflare.connect_title" "连接 Cloudflare"}}{{end}}</h3>
+            <p data-cf-connect-desc>{{if $cf.TokenSet}}{{.Admin.T "admin.settings.cloudflare.bound_desc" "后续内容更新可以直接重新部署；需要换域名、换 Token 或调整项目名时，再打开修改绑定。"}}{{else}}{{.Admin.T "admin.settings.cloudflare.connect_desc" "填写前台访问域名，按模板获取授权 Token，保存配置后即可部署静态站。"}}{{end}}</p>
             <div class="cloudflare-token-steps">
-              <span data-step="1">{{.Admin.T "admin.settings.cloudflare.step_domain" "填写前台域名"}}</span>
-              <span data-step="2">{{.Admin.T "admin.settings.cloudflare.step_create_token" "生成专用 Token"}}</span>
-              <span data-step="3">{{.Admin.T "admin.settings.cloudflare.step_paste_token" "粘贴回来"}}</span>
-              <span data-step="4">{{.Admin.T "admin.settings.cloudflare.step_deploy" "部署静态站"}}</span>
+              <span data-step="1">{{.Admin.T "admin.settings.cloudflare.step_zone_ready" "确认域名已托管到 Cloudflare"}}</span>
+              <span data-step="2">{{.Admin.T "admin.settings.cloudflare.step_domain" "填写前台域名"}}</span>
+              <span data-step="3">{{.Admin.T "admin.settings.cloudflare.step_create_token" "获取授权 Token"}}</span>
+              <span data-step="4">{{.Admin.T "admin.settings.cloudflare.step_paste_token" "粘贴回来并保存"}}</span>
+              <span data-step="5">{{.Admin.T "admin.settings.cloudflare.step_deploy" "部署静态站"}}</span>
             </div>
           </div>
-          {{if $cf.TokenSet}}
-          <div class="cloudflare-bound-panel">
+          <div class="cloudflare-bound-panel" data-cloudflare-bound-panel{{if not $cf.TokenSet}} hidden{{end}}>
             <div class="cloudflare-bound-grid">
               <div>
                 <span>{{.Admin.T "admin.settings.cloudflare.public_domain" "前台访问域名"}}</span>
-                <strong>{{if $cf.DomainSummary}}{{$cf.DomainSummary}}{{else}}{{.Admin.T "admin.common.empty_dash" "—"}}{{end}}</strong>
+                <strong data-cf-bound-domain>{{if $cf.DomainSummary}}{{$cf.DomainSummary}}{{else}}{{.Admin.T "admin.common.empty_dash" "—"}}{{end}}</strong>
                 <small>{{if $cf.AliasDomains}}{{.Admin.T "admin.settings.cloudflare.alias_hint" "别名域名会按设置跳转或共同访问。"}}{{else}}{{.Admin.T "admin.settings.cloudflare.single_domain_hint" "当前只绑定一个前台域名。"}}{{end}}</small>
               </div>
               <div>
                 <span>{{.Admin.T "admin.settings.cloudflare.api_token" "API Token"}}</span>
-                <strong class="slug">{{if $cf.TokenFingerprint}}{{$cf.TokenFingerprint}}{{else}}{{.Admin.T "admin.common.empty_dash" "—"}}{{end}}</strong>
+                <strong class="slug" data-cf-bound-token>{{if $cf.TokenFingerprint}}{{$cf.TokenFingerprint}}{{else}}{{.Admin.T "admin.common.empty_dash" "—"}}{{end}}</strong>
                 <small>{{.Admin.T "admin.settings.cloudflare.token_hidden" "完整 Token 不会回显，如需更换请重新粘贴。"}}</small>
               </div>
               <div>
                 <span>{{.Admin.T "admin.settings.cloudflare.hosting_project" "托管项目"}}</span>
-                <strong><span data-cf-project-label>{{$projectName}}</span> <button class="inline-icon-btn" type="button" data-cf-project-edit title="{{.Admin.T "admin.settings.cloudflare.edit_project" "修改项目名"}}" aria-label="{{.Admin.T "admin.settings.cloudflare.edit_project" "修改项目名"}}">✎</button></strong>
+                <strong><span data-cf-project-label>{{$projectName}}</span> <button class="inline-icon-btn" type="button" data-cf-project-edit title="{{.Admin.T "admin.settings.cloudflare.edit_project" "修改项目名"}}" aria-label="{{.Admin.T "admin.settings.cloudflare.edit_project" "修改项目名"}}">{{template "icon-edit"}}</button></strong>
                 <small>{{if $isPages}}{{.Admin.T "admin.settings.cloudflare.mode_pages" "Cloudflare Pages"}}{{else}}{{.Admin.T "admin.settings.cloudflare.mode_worker_assets" "Worker Assets"}}{{end}}</small>
               </div>
             </div>
             <div class="button-row">
-              {{if $liveURL}}<a class="btn" href="{{$liveURL}}" target="_blank" rel="noopener">{{.Admin.T "admin.settings.cloudflare.open_site" "打开网站"}} ↗</a>{{end}}
+              <a class="btn" data-cf-open-site href="{{$liveURL}}" target="_blank" rel="noopener"{{if not (and $hasDeployment $liveURL)}} hidden{{end}}>{{.Admin.T "admin.settings.cloudflare.open_site" "打开网站"}} ↗</a>
               <button class="btn" type="button" data-cf-open-binding>{{.Admin.T "admin.settings.cloudflare.modify_binding" "修改绑定"}}</button>
-              <form method="post" action="/admin/settings/cloudflare/reset" data-cloudflare-ajax data-confirm-title="{{.Admin.T "admin.settings.cloudflare.reset_confirm_title" "清空绑定"}}" data-confirm-ok="{{.Admin.T "admin.settings.cloudflare.reset" "清空绑定"}}" data-confirm="{{.Admin.T "admin.settings.cloudflare.reset_confirm" "清空本地保存的 Cloudflare Token、域名和识别结果？不会删除 Cloudflare 上的项目或 DNS。"}}">
+              <form method="post" action="/admin/settings/cloudflare/reset" data-cloudflare-ajax data-no-busy data-confirm-title="{{.Admin.T "admin.settings.cloudflare.reset_confirm_title" "清空绑定"}}" data-confirm-ok="{{.Admin.T "admin.settings.cloudflare.reset" "清空绑定"}}" data-confirm="{{.Admin.T "admin.settings.cloudflare.reset_confirm" "清空本地保存的 Cloudflare Token、域名和识别结果？不会删除 Cloudflare 上的项目或 DNS。"}}">
                 <input type="hidden" name="_csrf" value="{{.CSRF}}">
                 <button class="btn" type="submit">{{.Admin.T "admin.settings.cloudflare.reset" "清空绑定"}}</button>
               </form>
             </div>
           </div>
-          {{else}}
-          <form method="post" action="/admin/settings/cloudflare" class="cloudflare-token-form" data-cloudflare-ajax data-cloudflare-deploy-form>
+          <form method="post" action="/admin/settings/cloudflare" class="cloudflare-token-form{{if $cf.TokenSet}} is-hidden{{end}}" data-cloudflare-ajax data-no-busy data-cloudflare-deploy-form data-token-set="{{if $cf.TokenSet}}1{{else}}0{{end}}"{{if $cf.TokenSet}} hidden{{end}}>
             <input type="hidden" name="_csrf" value="{{.CSRF}}">
-            <input type="hidden" name="deploy" value="1">
-            <input type="hidden" name="worker_name" value="{{$c.WorkerName}}">
-            <input type="hidden" name="pages_project_name" value="{{$c.PagesProjectName}}">
+            <input type="hidden" name="worker_name" value="{{$projectName}}" data-cf-worker-name>
+            <input type="hidden" name="pages_project_name" value="{{$projectName}}" data-cf-pages-project>
+            <input type="hidden" name="project_custom" value="{{if $cf.ProjectCustom}}1{{else}}0{{end}}" data-cf-project-custom>
+            <input type="hidden" name="verify_token" value="1">
             <input type="hidden" name="html_cache_ttl" value="{{$c.HTMLCacheTTL}}">
             <input type="hidden" name="auto_sync" value="1">
             <input id="cf-token-template-url" class="copy-source" type="text" value="{{$cf.TokenTemplateURL}}" readonly tabindex="-1" aria-hidden="true">
-            <fieldset class="cloudflare-mode-picker">
-              <legend>{{.Admin.T "admin.settings.cloudflare.deploy_mode" "部署方式"}}</legend>
-              <div class="cloudflare-mode-options">
-                <label class="cloudflare-mode-option">
-                  <input type="radio" name="deploy_mode" value="worker_assets"{{if not $isPages}} checked{{end}}>
-                  <span>
-                    <strong>{{.Admin.T "admin.settings.cloudflare.mode_worker_assets" "Worker Assets"}} <em>{{.Admin.T "admin.settings.cloudflare.default" "默认"}}</em></strong>
-                    <small>{{.Admin.T "admin.settings.cloudflare.mode_worker_desc" "入口控制更强，适合长期托管、路由保护和边缘访问控制。"}}</small>
-                    <b>{{.Admin.T "admin.settings.cloudflare.mode_worker_note" "控制台显示为 Worker，不展示文件列表"}}</b>
-                  </span>
-                </label>
-                <label class="cloudflare-mode-option">
-                  <input type="radio" name="deploy_mode" value="pages"{{if $isPages}} checked{{end}}>
-                  <span>
-                    <strong>{{.Admin.T "admin.settings.cloudflare.mode_pages" "Cloudflare Pages"}}</strong>
-                    <small>{{.Admin.T "admin.settings.cloudflare.mode_pages_desc" "更像静态站项目，能在 Cloudflare 里看到项目、部署记录和自定义域名。"}}</small>
-                    <b>{{.Admin.T "admin.settings.cloudflare.mode_pages_note" "适合偏内容站和可视化查看部署结果"}}</b>
-                  </span>
-                </label>
-              </div>
-            </fieldset>
             <label>
               <span>{{.Admin.T "admin.settings.cloudflare.primary_domain" "主域名"}}</span>
               <input name="primary_domain" value="{{$cf.PrimaryDomain}}" placeholder="{{.Admin.T "admin.settings.cloudflare.primary_domain_placeholder" "例如 ccvar.com"}}">
               <small>{{.Admin.T "admin.settings.cloudflare.public_domain_hint" "访客最终打开的域名。若域名已托管在当前 Cloudflare 账号，系统会自动绑定；否则需要手动配置 DNS。"}}</small>
             </label>
+            <div class="cloudflare-project-editor" data-cf-project-field data-default-project="{{$projectDefault}}">
+              <span>{{.Admin.T "admin.settings.cloudflare.hosting_project" "托管项目"}}</span>
+              <div class="cloudflare-readonly-line" data-cf-project-readonly>
+                <code data-cf-project-display>{{$projectName}}</code>
+                <button class="inline-icon-btn" type="button" data-cf-edit-project title="{{.Admin.T "admin.settings.cloudflare.edit_project" "修改项目名"}}" aria-label="{{.Admin.T "admin.settings.cloudflare.edit_project" "修改项目名"}}">{{template "icon-edit"}}</button>
+              </div>
+              <div class="cloudflare-edit-line" data-cf-project-editor hidden>
+                <input data-cf-project-input value="{{$projectName}}" autocomplete="off" spellcheck="false">
+                <button class="btn" type="button" data-cf-project-cancel>{{.Admin.T "admin.action.cancel" "取消"}}</button>
+              </div>
+              <small>{{.Admin.T "admin.settings.cloudflare.project_hint" "默认根据主域名生成，点编辑图标后可自定义。"}}</small>
+            </div>
             <label>
               <span>{{.Admin.T "admin.settings.cloudflare.alias_domains" "别名域名（可选）"}}</span>
               <textarea name="alias_domains" rows="2" placeholder="{{.Admin.T "admin.settings.cloudflare.alias_placeholder" "例如 www.ccvar.com，每行一个"}}">{{$cf.AliasDomainInput}}</textarea>
               <small><label class="inline-check"><input type="checkbox" name="redirect_aliases" value="1"{{if $cf.RedirectAliases}} checked{{end}}> {{.Admin.T "admin.settings.cloudflare.redirect_aliases" "别名域名 301 跳转到主域名"}}</label></small>
             </label>
             <div class="cloudflare-template-actions">
-              <a class="btn" href="{{$cf.TokenTemplateURL}}" target="_blank" rel="noopener">{{.Admin.T "admin.settings.cloudflare.template_link" "去 Cloudflare 创建专用 Token"}}</a>
-              <button class="btn" type="button" data-copy-target="cf-token-template-url">{{.Admin.T "admin.settings.cloudflare.copy_template_url" "复制链接"}}</button>
+              <a class="btn icon-text" href="{{$cf.TokenTemplateURL}}" target="_blank" rel="noopener">{{.Admin.T "admin.settings.cloudflare.template_link" "去 Cloudflare 获取授权 Token"}} <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7"/><path d="M9 7h8v8"/></svg></a>
+              <button class="btn icon-text" type="button" data-copy-target="cf-token-template-url"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>{{.Admin.T "admin.settings.cloudflare.copy_template_url" "复制链接"}}</button>
             </div>
-            <label>
+            <div class="cloudflare-token-control" data-cf-token-field>
               <span>{{.Admin.T "admin.settings.cloudflare.api_token" "API Token"}}</span>
-              <input name="api_token" type="password" autocomplete="new-password" placeholder="{{.Admin.T "admin.settings.cloudflare.token_placeholder" "粘贴 Cloudflare API Token"}}">
+              <div class="cloudflare-readonly-line" data-cf-token-readonly{{if not $cf.TokenSet}} hidden{{end}}>
+                <code data-cf-token-mask>{{if $cf.TokenFingerprint}}{{$cf.TokenFingerprint}}{{else}}{{.Admin.T "admin.settings.cloudflare.token_saved" "已保存"}}{{end}}</code>
+                <button class="inline-icon-btn" type="button" data-cf-token-edit title="{{.Admin.T "admin.settings.cloudflare.edit_token" "更换 Token"}}" aria-label="{{.Admin.T "admin.settings.cloudflare.edit_token" "更换 Token"}}">{{template "icon-edit"}}</button>
+              </div>
+              <div class="cloudflare-edit-line" data-cf-token-editor{{if $cf.TokenSet}} hidden{{end}}>
+                <input name="api_token" type="text" autocomplete="off" spellcheck="false" placeholder="{{.Admin.T "admin.settings.cloudflare.token_placeholder" "粘贴 Cloudflare API Token"}}"{{if $cf.TokenSet}} disabled{{end}} data-cf-token-input>
+                <button class="btn" type="button" data-cf-token-cancel{{if not $cf.TokenSet}} hidden{{end}}>{{.Admin.T "admin.action.cancel" "取消"}}</button>
+              </div>
               <small>{{.Admin.T "admin.settings.cloudflare.template_hint" "Token 只显示一次，请从 Cloudflare 创建完成页复制后粘贴回来。"}}</small>
-            </label>
-            <button class="btn btn-primary" type="submit">{{.Admin.T "admin.settings.cloudflare.save_deploy" "保存 Token 并部署"}}</button>
+            </div>
+            <details class="cloudflare-token-advanced">
+              <summary>
+                <span>{{.Admin.T "admin.settings.cloudflare.advanced_options" "高级设置"}}</span>
+                <small><span data-cf-mode-summary>{{if $isPages}}{{.Admin.T "admin.settings.cloudflare.mode_pages" "Cloudflare Pages"}}{{else}}{{.Admin.T "admin.settings.cloudflare.mode_worker_assets" "Worker Assets"}}{{end}}</span> · <span data-cf-source-summary>{{if eq $c.SourceMode "noindex"}}{{.Admin.T "admin.settings.cloudflare.source_mode_noindex" "禁止收录"}}{{else if eq $c.SourceMode "none"}}{{.Admin.T "admin.settings.cloudflare.source_mode_none" "不处理"}}{{else}}{{.Admin.T "admin.settings.cloudflare.source_mode_redirect" "跳转到主域名"}}{{end}}</span></small>
+              </summary>
+              <div class="cloudflare-token-advanced-body">
+                <fieldset class="cloudflare-mode-picker">
+                  <legend>{{.Admin.T "admin.settings.cloudflare.deploy_mode" "部署方式"}}</legend>
+                  <div class="cloudflare-mode-options">
+                    <label class="cloudflare-mode-option">
+                      <input type="radio" name="deploy_mode" value="worker_assets" data-summary="{{.Admin.T "admin.settings.cloudflare.mode_worker_assets" "Worker Assets"}}"{{if not $isPages}} checked{{end}}>
+                      <span>
+                        <strong>{{.Admin.T "admin.settings.cloudflare.mode_worker_assets" "Worker Assets"}} <em>{{.Admin.T "admin.settings.cloudflare.default" "默认"}}</em></strong>
+                        <small>{{.Admin.T "admin.settings.cloudflare.mode_worker_desc" "入口控制更强，适合长期托管、路由保护和边缘访问控制。"}}</small>
+                        <b>{{.Admin.T "admin.settings.cloudflare.mode_worker_note" "控制台显示为 Worker，不展示文件列表"}}</b>
+                      </span>
+                    </label>
+                    <label class="cloudflare-mode-option">
+                      <input type="radio" name="deploy_mode" value="pages" data-summary="{{.Admin.T "admin.settings.cloudflare.mode_pages" "Cloudflare Pages"}}"{{if $isPages}} checked{{end}}>
+                      <span>
+                        <strong>{{.Admin.T "admin.settings.cloudflare.mode_pages" "Cloudflare Pages"}}</strong>
+                        <small>{{.Admin.T "admin.settings.cloudflare.mode_pages_desc" "更像静态站项目，能在 Cloudflare 里看到项目、部署记录和自定义域名。"}}</small>
+                        <b>{{.Admin.T "admin.settings.cloudflare.mode_pages_note" "适合偏内容站和可视化查看部署结果"}}</b>
+                      </span>
+                    </label>
+                  </div>
+                </fieldset>
+                <fieldset class="cloudflare-source-picker">
+                  <legend>{{.Admin.T "admin.settings.cloudflare.source_frontend_mode" "源站前台处理方式"}}</legend>
+                  <div class="radio-pill-row">
+                    <label class="radio-pill"><input type="radio" name="source_frontend_mode" value="redirect" data-summary="{{.Admin.T "admin.settings.cloudflare.source_mode_redirect" "跳转到主域名"}}"{{if eq $c.SourceMode "redirect"}} checked{{end}}><span>{{.Admin.T "admin.settings.cloudflare.source_mode_redirect" "跳转到主域名"}}</span></label>
+                    <label class="radio-pill"><input type="radio" name="source_frontend_mode" value="noindex" data-summary="{{.Admin.T "admin.settings.cloudflare.source_mode_noindex" "禁止收录"}}"{{if eq $c.SourceMode "noindex"}} checked{{end}}><span>{{.Admin.T "admin.settings.cloudflare.source_mode_noindex" "禁止收录"}}</span></label>
+                    <label class="radio-pill"><input type="radio" name="source_frontend_mode" value="none" data-summary="{{.Admin.T "admin.settings.cloudflare.source_mode_none" "不处理"}}"{{if eq $c.SourceMode "none"}} checked{{end}}><span>{{.Admin.T "admin.settings.cloudflare.source_mode_none" "不处理"}}</span></label>
+                  </div>
+                  <small>{{.Admin.T "admin.settings.cloudflare.source_frontend_hint" "部署成功后，当前服务器仍负责后台；源站前台默认 301 到 Cloudflare 主域名，避免搜索引擎收录两份相同内容。"}}</small>
+                </fieldset>
+              </div>
+            </details>
+            <div class="cloudflare-form-message" data-cf-form-message hidden></div>
+            <div class="button-row cloudflare-form-actions">
+              <button class="btn btn-primary" type="submit">{{.Admin.T "admin.settings.cloudflare.save_token" "保存配置"}}</button>
+              <button class="btn" type="button" data-cf-cancel-binding-edit{{if not $cf.TokenSet}} hidden{{end}}>{{.Admin.T "admin.action.cancel" "取消"}}</button>
+            </div>
           </form>
-          {{end}}
         </div>
-        {{if $cf.TokenSet}}
-        <div class="key-warning">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>
-          <span>{{.Admin.T "admin.settings.cloudflare.connected_note" "已保存 Cloudflare Token。若域名在同一个 Cloudflare 授权账号下，部署会自动绑定；否则请按提示手动配置 DNS 或补 Zone ID。"}}</span>
+        <div class="modal cloudflare-save-modal" data-cloudflare-save-modal hidden>
+          <button class="modal-backdrop" type="button" data-cf-save-later aria-label="{{.Admin.T "admin.action.cancel" "取消"}}"></button>
+          <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="cf-save-modal-title">
+            <h3 id="cf-save-modal-title">{{.Admin.T "admin.settings.cloudflare.saved_title" "Cloudflare 配置已保存"}}</h3>
+            <p class="confirm-msg">{{.Admin.T "admin.settings.cloudflare.saved_desc" "配置已验证并保存。你可以现在立即部署静态站；也可以稍后在下方「部署状态」里点击「立即部署」完成部署。"}}</p>
+            <div class="modal-actions">
+              <button type="button" class="btn" data-cf-save-later>{{.Admin.T "admin.settings.cloudflare.deploy_later" "稍后部署"}}</button>
+              <button type="button" class="btn btn-primary" data-cf-save-deploy>{{.Admin.T "admin.settings.cloudflare.deploy_now" "立即部署"}}</button>
+            </div>
+          </div>
         </div>
-        {{end}}
       </div>
 
       <div class="field-group cloudflare-status-group">
@@ -1087,50 +1129,98 @@
           <div class="update-versions">
             <div class="update-block">
               <span class="update-label">{{.Admin.T "admin.settings.cloudflare.hosting_project" "托管项目"}}</span>
-              <strong>{{if $isPages}}{{$c.PagesProjectName}}{{else}}{{$c.WorkerName}}{{end}}</strong>
+              <strong data-cf-status-project>{{if $projectName}}{{$projectName}}{{else}}{{.Admin.T "admin.common.empty_dash" "—"}}{{end}}</strong>
               <span class="update-meta">{{if $cf.Configured}}{{.Admin.T "admin.settings.cloudflare.configured" "已具备部署配置"}}{{else}}{{.Admin.T "admin.settings.cloudflare.not_configured" "请先补全必填配置"}}{{end}}</span>
             </div>
             <span class="update-sep" aria-hidden="true">→</span>
             <div class="update-block">
               <span class="update-label">{{.Admin.T "admin.settings.cloudflare.route" "公开入口"}}</span>
-              <strong>{{if $cf.DomainSummary}}{{$cf.DomainSummary}}{{else}}{{.Admin.T "admin.common.empty_dash" "—"}}{{end}}</strong>
+              <strong class="cloudflare-domain-value">
+                <a class="cloudflare-domain-link" data-cloudflare-domain-summary data-cf-domain-link href="{{$liveURL}}" target="_blank" rel="noopener"{{if not $liveURL}} hidden{{end}}>{{if $domainLabel}}{{$domainLabel}}{{else}}{{.Admin.T "admin.common.empty_dash" "—"}}{{end}}</a>
+                <span data-cf-domain-fallback{{if $liveURL}} hidden{{end}}>{{if $domainLabel}}{{$domainLabel}}{{else}}{{.Admin.T "admin.common.empty_dash" "—"}}{{end}}</span>
+              </strong>
               <span class="update-meta">{{if $c.ZoneID}}{{.Admin.T "admin.settings.cloudflare.route_managed" "域名在当前 Cloudflare Zone，可自动绑定"}}{{else}}{{.Admin.T "admin.settings.cloudflare.route_manual" "部署时会尝试自动识别 Zone ID"}}{{end}}</span>
             </div>
           </div>
           <div class="update-task">
             <div>
               <span class="update-label">{{.Admin.T "admin.settings.cloudflare.task" "部署任务"}}</span>
-              <strong data-cloudflare-status>{{if eq $st.Status "running"}}{{.Admin.T "admin.settings.cloudflare.running" "部署中"}}{{else if eq $st.Status "failed"}}{{.Admin.T "admin.settings.cloudflare.failed" "失败"}}{{else if eq $st.Status "success"}}{{.Admin.T "admin.settings.cloudflare.success" "成功"}}{{else}}{{.Admin.T "admin.settings.cloudflare.idle" "空闲"}}{{end}}</strong>
+              <strong class="cloudflare-task-state {{if eq $st.Status "running"}}is-running{{else if eq $st.Status "failed"}}is-failed{{else if and (eq $st.Status "success") $hasDeployment}}is-success{{else}}is-idle{{end}}" data-cloudflare-status>{{if eq $st.Status "running"}}{{.Admin.T "admin.settings.cloudflare.running" "部署中"}}{{else if eq $st.Status "failed"}}{{.Admin.T "admin.settings.cloudflare.failed" "失败"}}{{else if eq $st.Status "success"}}{{if $hasDeployment}}{{.Admin.T "admin.settings.cloudflare.success" "已部署"}}{{else}}{{.Admin.T "admin.settings.cloudflare.unpublished_status" "已取消"}}{{end}}{{else}}{{.Admin.T "admin.settings.cloudflare.idle" "空闲"}}{{end}}</strong>
               <p data-cloudflare-message>{{$st.Message}}</p>
             </div>
             <div class="button-row">
-              {{if $liveURL}}<a class="btn" href="{{$liveURL}}" target="_blank" rel="noopener">{{.Admin.T "admin.settings.cloudflare.open_site" "打开网站"}} ↗</a>{{end}}
-              <form method="post" action="/admin/settings/cloudflare/deploy" data-cloudflare-ajax data-confirm-title="{{.Admin.T "admin.settings.cloudflare.deploy_confirm_title" "确认部署"}}" data-confirm-ok="{{.Admin.T "admin.settings.cloudflare.deploy_confirm_ok" "开始部署"}}" data-confirm="{{.Admin.T "admin.settings.cloudflare.deploy_confirm" "将当前前台导出为静态站并部署到 Cloudflare？部署完成后公开访问由 Cloudflare 静态资源托管。"}}">
+              <form method="post" action="/admin/settings/cloudflare/deploy" data-cloudflare-ajax data-no-busy data-confirm-title="{{.Admin.T "admin.settings.cloudflare.deploy_confirm_title" "确认部署"}}" data-confirm-ok="{{.Admin.T "admin.settings.cloudflare.deploy_confirm_ok" "开始部署"}}" data-confirm="{{.Admin.T "admin.settings.cloudflare.deploy_confirm" "将当前前台导出为静态站并部署到 Cloudflare？部署完成后公开访问由 Cloudflare 静态资源托管。"}}">
                 <input type="hidden" name="_csrf" value="{{.CSRF}}">
-                <button class="btn btn-primary" type="submit" data-cloudflare-deploy-button{{if $st.Running}} disabled{{end}}>{{if $st.Running}}{{.Admin.T "admin.settings.cloudflare.deploying" "部署中..."}}{{else if $cf.TokenSet}}{{.Admin.T "admin.settings.cloudflare.redeploy" "重新部署"}}{{else}}{{.Admin.T "admin.settings.cloudflare.deploy_now" "立即部署"}}{{end}}</button>
+                <button class="btn btn-primary" type="submit" data-cloudflare-deploy-button{{if or $st.Running (not $cf.TokenSet)}} disabled{{end}}>{{if $st.Running}}{{.Admin.T "admin.settings.cloudflare.deploying" "部署中..."}}{{else if $hasDeployment}}{{.Admin.T "admin.settings.cloudflare.redeploy" "重新部署"}}{{else}}{{.Admin.T "admin.settings.cloudflare.deploy_now" "立即部署"}}{{end}}</button>
               </form>
-              <form method="post" action="/admin/settings/cloudflare/unpublish" data-cloudflare-ajax data-confirm-title="{{.Admin.T "admin.settings.cloudflare.unpublish_confirm_title" "取消公开部署"}}" data-confirm-ok="{{.Admin.T "admin.settings.cloudflare.unpublish" "取消部署"}}" data-confirm="{{.Admin.T "admin.settings.cloudflare.unpublish_confirm" "取消 Cloudflare 公开入口绑定？项目和静态资源会保留，DNS 不会删除。"}}">
+              <form method="post" action="/admin/settings/cloudflare/unpublish" data-cloudflare-managed-action="unpublish" data-cloudflare-ajax data-no-busy{{if not $hasDeployment}} hidden{{end}} data-confirm-title="{{.Admin.T "admin.settings.cloudflare.unpublish_confirm_title" "取消公开部署"}}" data-confirm-ok="{{.Admin.T "admin.settings.cloudflare.unpublish" "取消部署"}}" data-confirm="{{.Admin.T "admin.settings.cloudflare.unpublish_confirm" "取消 Cloudflare 公开入口绑定？项目和静态资源会保留，DNS 不会删除。"}}">
                 <input type="hidden" name="_csrf" value="{{.CSRF}}">
-                <button class="btn" type="submit">{{.Admin.T "admin.settings.cloudflare.unpublish" "取消部署"}}</button>
+                <button class="btn" type="submit" data-tooltip="{{.Admin.T "admin.settings.cloudflare.unpublish_tip" "移除 Cloudflare 上当前域名的公开入口绑定；项目和已上传静态资源保留，DNS 不会被删除。"}}" aria-label="{{.Admin.T "admin.settings.cloudflare.unpublish_tip" "移除 Cloudflare 上当前域名的公开入口绑定；项目和已上传静态资源保留，DNS 不会被删除。"}}">{{.Admin.T "admin.settings.cloudflare.unpublish" "取消部署"}}</button>
               </form>
-              <form method="post" action="/admin/settings/cloudflare/purge" data-cloudflare-ajax data-confirm-title="{{.Admin.T "admin.settings.cloudflare.purge_confirm_title" "确认清除缓存"}}" data-confirm-ok="{{.Admin.T "admin.settings.cloudflare.purge" "清除 Cloudflare 缓存"}}" data-confirm="{{.Admin.T "admin.settings.cloudflare.purge_confirm" "清除当前 Zone 的 Cloudflare 缓存？静态资源仍在 Cloudflare，下一次访问会重新读取已部署资源。"}}">
+              <form method="post" action="/admin/settings/cloudflare/purge" data-cloudflare-managed-action="purge" data-cloudflare-ajax data-no-busy{{if not $canPurge}} hidden{{end}} data-confirm-title="{{.Admin.T "admin.settings.cloudflare.purge_confirm_title" "确认清除缓存"}}" data-confirm-ok="{{.Admin.T "admin.settings.cloudflare.purge" "清除 Cloudflare 缓存"}}" data-confirm="{{.Admin.T "admin.settings.cloudflare.purge_confirm" "清除当前 Zone 的 Cloudflare 缓存？静态资源仍在 Cloudflare，下一次访问会重新读取已部署资源。"}}">
                 <input type="hidden" name="_csrf" value="{{.CSRF}}">
-                <button class="btn" type="submit">{{.Admin.T "admin.settings.cloudflare.purge" "清除 Cloudflare 缓存"}}</button>
-              </form>
-            </div>
-          </div>
-          <div class="cloudflare-progress cf-phase" data-cloudflare-progress data-status="{{$st.Status}}" data-current="{{$st.Step}}">
-            <span data-phase="queued" data-from="0" data-to="0">{{.Admin.T "admin.settings.cloudflare.progress_queued" "连接 Cloudflare"}}</span>
-            <span data-phase="detect" data-from="1" data-to="1">{{.Admin.T "admin.settings.cloudflare.progress_detect" "识别账号域名"}}</span>
-            <span data-phase="export" data-from="2" data-to="2">{{.Admin.T "admin.settings.cloudflare.progress_export" "导出静态站"}}</span>
-            <span data-phase="assets" data-from="3" data-to="3">{{.Admin.T "admin.settings.cloudflare.progress_assets" "上传静态资源"}}</span>
-            <span data-phase="worker" data-from="4" data-to="4">{{.Admin.T "admin.settings.cloudflare.progress_worker" "发布静态站"}}</span>
-            <span data-phase="route" data-from="5" data-to="5">{{.Admin.T "admin.settings.cloudflare.progress_route" "绑定访问入口"}}</span>
-            <span data-phase="dns" data-from="6" data-to="6">{{.Admin.T "admin.settings.cloudflare.progress_dns" "绑定 DNS"}}</span>
-            <span data-phase="purge" data-from="7" data-to="7">{{.Admin.T "admin.settings.cloudflare.progress_purge" "清理缓存"}}</span>
-            <span data-phase="done" data-from="8" data-to="8">{{.Admin.T "admin.settings.cloudflare.progress_done" "完成"}}</span>
-          </div>
-        </div>
+                <button class="btn" type="submit" data-tooltip="{{.Admin.T "admin.settings.cloudflare.purge_tip" "清空 Cloudflare 边缘缓存。不会删除静态站；下一次访问会重新读取最新部署的资源。"}}" aria-label="{{.Admin.T "admin.settings.cloudflare.purge_tip" "清空 Cloudflare 边缘缓存。不会删除静态站；下一次访问会重新读取最新部署的资源。"}}">{{.Admin.T "admin.settings.cloudflare.purge" "清除 Cloudflare 缓存"}}</button>
+	              </form>
+	            </div>
+	            <div class="cloudflare-status-footer">
+	            <span class="cloudflare-last-deploy">
+	              {{.Admin.T "admin.settings.cloudflare.last_deploy" "最近部署"}}：
+	              <time data-cf-last-deploy datetime="{{$st.LastDeployAt}}">{{if $st.LastDeployAt}}{{$st.LastDeployAt}}{{else}}{{.Admin.T "admin.settings.cloudflare.never_deployed" "尚未部署"}}{{end}}</time>
+	            </span>
+	            <div class="cloudflare-history" data-cf-history>
+	              <button class="cloudflare-history-toggle" type="button" data-cf-history-toggle aria-expanded="false" aria-label="{{.Admin.T "admin.settings.cloudflare.more_history" "查看最近部署记录"}}">
+	                <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>
+	              </button>
+	              <div class="cloudflare-history-popover" data-cf-history-popover hidden>
+	                <strong>{{.Admin.T "admin.settings.cloudflare.deploy_history" "最近部署记录"}}</strong>
+	                <div class="cloudflare-history-list" data-cf-history-list>
+	                  {{if $st.History}}
+	                    {{range $item := $st.History}}
+	                      <div class="cloudflare-history-item {{if eq $item.Status "failed"}}is-failed{{else if eq $item.Status "success"}}is-success{{end}}">
+	                        <div>
+	                          <span>{{if eq $item.Status "failed"}}{{$.Admin.T "admin.settings.cloudflare.history_failed" "失败"}}{{else if eq $item.Action "purge"}}{{$.Admin.T "admin.settings.cloudflare.history_purge" "清缓存"}}{{else if eq $item.Action "unpublish"}}{{$.Admin.T "admin.settings.cloudflare.history_unpublish" "取消部署"}}{{else}}{{$.Admin.T "admin.settings.cloudflare.history_deploy" "部署"}}{{end}}</span>
+	                          <time datetime="{{$item.At}}">{{$item.At}}</time>
+	                        </div>
+	                        {{if $item.Message}}<p>{{$item.Message}}</p>{{end}}
+	                      </div>
+	                    {{end}}
+	                  {{else}}
+	                    <p class="cloudflare-history-empty">{{.Admin.T "admin.settings.cloudflare.history_empty" "暂无部署记录"}}</p>
+	                  {{end}}
+	                </div>
+	              </div>
+	            </div>
+	          </div>
+	          </div>
+	          <form method="post" action="/admin/settings/cloudflare/sync" class="cloudflare-sync-rule" data-cloudflare-ajax data-no-busy data-cloudflare-sync-form>
+	            <input type="hidden" name="_csrf" value="{{.CSRF}}">
+	            <div class="cloudflare-sync-copy">
+	              <span class="update-label">{{.Admin.T "admin.settings.cloudflare.sync" "内容同步"}}</span>
+	              <strong>{{.Admin.T "admin.settings.cloudflare.sync_title" "静态站更新规则"}}</strong>
+	              <p>{{.Admin.T "admin.settings.cloudflare.sync_desc" "选择内容变化后什么时候重新发布到 Cloudflare。每天同步只会在有内容变化时执行。"}}</p>
+	            </div>
+	            <div class="cloudflare-sync-controls">
+	              <div class="radio-pill-row">
+	                <label class="radio-pill"><input type="radio" name="sync_mode" value="realtime"{{if not $syncDaily}} checked{{end}}><span>{{.Admin.T "admin.settings.cloudflare.sync_realtime" "实时同步"}}</span></label>
+	                <label class="radio-pill"><input type="radio" name="sync_mode" value="daily"{{if $syncDaily}} checked{{end}}><span>{{.Admin.T "admin.settings.cloudflare.sync_daily" "每天同步"}}</span></label>
+	              </div>
+	              <label class="cloudflare-sync-time{{if not $syncDaily}} is-disabled{{end}}">
+	                <span>{{.Admin.T "admin.settings.cloudflare.sync_time" "同步时间"}}</span>
+	                <input type="time" name="sync_time" value="{{$c.SyncTime}}"{{if not $syncDaily}} disabled{{end}} data-cf-sync-time>
+	              </label>
+	              <button class="btn" type="submit">{{.Admin.T "admin.settings.cloudflare.sync_save" "保存同步规则"}}</button>
+	            </div>
+	            <p class="cloudflare-sync-status" data-cf-sync-status>
+	              {{if and $c.SyncPending $syncDaily}}
+	                {{.Admin.T "admin.settings.cloudflare.sync_pending" "有内容变化待同步"}}{{if $c.SyncNextAt}} · {{.Admin.T "admin.settings.cloudflare.sync_next_at" "计划同步"}}：{{$c.SyncNextAt}}{{end}}
+	              {{else if $syncDaily}}
+	                {{.Admin.T "admin.settings.cloudflare.sync_daily_note" "有内容变化时，会等到每天设定时间统一发布。"}}
+	              {{else}}
+	                {{.Admin.T "admin.settings.cloudflare.sync_realtime_note" "内容或配置保存后，会短暂延时并自动重新发布。"}}
+	              {{end}}
+	            </p>
+	          </form>
+	        </div>
         <details class="update-details">
           <summary>{{.Admin.T "admin.settings.cloudflare.advanced" "连接细节"}}</summary>
           <table class="admin-table">
@@ -1156,8 +1246,17 @@
           var box = document.getElementById("cloudflare-status-box");
           if (!box || !window.fetch) return;
           var root = box.parentElement || box;
-          var button = root.querySelector("[data-cloudflare-deploy-button]");
-          var url = box.dataset.statusUrl;
+	          var button = root.querySelector("[data-cloudflare-deploy-button]");
+	          var statusEl = root.querySelector("[data-cloudflare-status]");
+	          var lastDeployEl = root.querySelector("[data-cf-last-deploy]");
+	          var historyToggle = root.querySelector("[data-cf-history-toggle]");
+	          var historyPopover = root.querySelector("[data-cf-history-popover]");
+	          var historyList = root.querySelector("[data-cf-history-list]");
+	          var syncForm = root.querySelector("[data-cloudflare-sync-form]");
+	          var syncTimeWrap = syncForm ? syncForm.querySelector(".cloudflare-sync-time") : null;
+	          var syncTimeInput = syncForm ? syncForm.querySelector("[data-cf-sync-time]") : null;
+	          var syncStatusEl = syncForm ? syncForm.querySelector("[data-cf-sync-status]") : null;
+	          var url = box.dataset.statusUrl;
           var timer = 0;
           var txt = {
             running: "{{.Admin.T "admin.settings.cloudflare.running" "部署中"}}",
@@ -1165,22 +1264,429 @@
             success: "{{.Admin.T "admin.settings.cloudflare.success" "成功"}}",
             idle: "{{.Admin.T "admin.settings.cloudflare.idle" "空闲"}}",
             deploy: "{{.Admin.T "admin.settings.cloudflare.redeploy" "重新部署"}}",
-            deploying: "{{.Admin.T "admin.settings.cloudflare.deploying" "部署中..."}}"
-          };
+            deployNow: "{{.Admin.T "admin.settings.cloudflare.deploy_now" "立即部署"}}",
+            deploying: "{{.Admin.T "admin.settings.cloudflare.deploying" "部署中..."}}",
+            empty: "{{.Admin.T "admin.common.empty_dash" "—"}}",
+            bound: "{{.Admin.T "admin.settings.cloudflare.bound" "已绑定"}}",
+            recommended: "{{.Admin.T "admin.settings.cloudflare.recommended" "推荐方式"}}",
+            boundTitle: "{{.Admin.T "admin.settings.cloudflare.bound_title" "Cloudflare 已连接"}}",
+            connectTitle: "{{.Admin.T "admin.settings.cloudflare.connect_title" "连接 Cloudflare"}}",
+            boundDesc: "{{.Admin.T "admin.settings.cloudflare.bound_desc" "后续内容更新可以直接重新部署；需要换域名、换 Token 或调整项目名时，再打开修改绑定。"}}",
+            connectDesc: "{{.Admin.T "admin.settings.cloudflare.connect_desc" "填写前台访问域名，按模板获取授权 Token，保存配置后即可部署静态站。"}}",
+            saveConfig: "{{.Admin.T "admin.settings.cloudflare.save_token" "保存配置"}}",
+            savingConfig: "{{.Admin.T "admin.settings.cloudflare.saving_config" "验证并保存中..."}}",
+	            ajaxFailed: "{{.Admin.T "admin.settings.cloudflare.ajax_failed" "请求失败，请稍后重试。"}}",
+	            neverDeployed: "{{.Admin.T "admin.settings.cloudflare.never_deployed" "尚未部署"}}",
+	            justNow: "{{.Admin.T "admin.settings.cloudflare.just_now" "刚刚"}}",
+	            minutesAgo: "{{.Admin.T "admin.settings.cloudflare.minutes_ago" "%d 分钟前"}}",
+	            hoursAgo: "{{.Admin.T "admin.settings.cloudflare.hours_ago" "%d 小时前"}}",
+	            daysAgo: "{{.Admin.T "admin.settings.cloudflare.days_ago" "%d 天前"}}",
+	            historyEmpty: "{{.Admin.T "admin.settings.cloudflare.history_empty" "暂无部署记录"}}",
+	            historyDeploy: "{{.Admin.T "admin.settings.cloudflare.history_deploy" "部署"}}",
+	            historyPurge: "{{.Admin.T "admin.settings.cloudflare.history_purge" "清缓存"}}",
+	            historyUnpublish: "{{.Admin.T "admin.settings.cloudflare.history_unpublish" "取消部署"}}",
+	            historyFailed: "{{.Admin.T "admin.settings.cloudflare.history_failed" "失败"}}",
+	            unpublished: "{{.Admin.T "admin.settings.cloudflare.unpublished_status" "已取消"}}",
+	            syncPending: "{{.Admin.T "admin.settings.cloudflare.sync_pending" "有内容变化待同步"}}",
+	            syncNextAt: "{{.Admin.T "admin.settings.cloudflare.sync_next_at" "计划同步"}}",
+	            syncDailyNote: "{{.Admin.T "admin.settings.cloudflare.sync_daily_note" "有内容变化时，会等到每天设定时间统一发布。"}}",
+	            syncRealtimeNote: "{{.Admin.T "admin.settings.cloudflare.sync_realtime_note" "内容或配置保存后，会短暂延时并自动重新发布。"}}"
+	          };
           var order = ["queued", "detect", "export", "assets", "worker", "route", "dns", "purge", "done"];
-          var statusText = function(status) {
-            if (status === "running") return txt.running;
-            if (status === "failed") return txt.failed;
-            if (status === "success") return txt.success;
-            return txt.idle;
+          var currentTokenSet = {{if $cf.TokenSet}}true{{else}}false{{end}};
+          var currentPublished = {{if $hasDeployment}}true{{else}}false{{end}};
+          var connectCard = document.querySelector("[data-cloudflare-connect-card]");
+          var boundPanel = document.querySelector("[data-cloudflare-bound-panel]");
+          var tokenForm = document.querySelector("[data-cloudflare-deploy-form]");
+          var deployForm = document.querySelector("form[action='/admin/settings/cloudflare/deploy']");
+          var saveModal = document.querySelector("[data-cloudflare-save-modal]");
+          var primaryInput = tokenForm ? tokenForm.querySelector("input[name='primary_domain']") : null;
+          var saveTokenButton = tokenForm ? tokenForm.querySelector(".cloudflare-form-actions button[type='submit']") : null;
+          var bindingCancel = tokenForm ? tokenForm.querySelector("[data-cf-cancel-binding-edit]") : null;
+          var workerNameInput = tokenForm ? tokenForm.querySelector("[data-cf-worker-name]") : null;
+          var pagesProjectInput = tokenForm ? tokenForm.querySelector("[data-cf-pages-project]") : null;
+          var projectCustomInput = tokenForm ? tokenForm.querySelector("[data-cf-project-custom]") : null;
+          var projectField = tokenForm ? tokenForm.querySelector("[data-cf-project-field]") : null;
+          var projectReadonly = tokenForm ? tokenForm.querySelector("[data-cf-project-readonly]") : null;
+          var projectEditor = tokenForm ? tokenForm.querySelector("[data-cf-project-editor]") : null;
+          var projectInput = tokenForm ? tokenForm.querySelector("[data-cf-project-input]") : null;
+          var projectDisplay = tokenForm ? tokenForm.querySelector("[data-cf-project-display]") : null;
+          var tokenReadonly = tokenForm ? tokenForm.querySelector("[data-cf-token-readonly]") : null;
+          var tokenEditor = tokenForm ? tokenForm.querySelector("[data-cf-token-editor]") : null;
+          var tokenInput = tokenForm ? tokenForm.querySelector("[data-cf-token-input]") : null;
+          var tokenCancel = tokenForm ? tokenForm.querySelector("[data-cf-token-cancel]") : null;
+          var tokenMask = tokenForm ? tokenForm.querySelector("[data-cf-token-mask]") : null;
+          var formMessage = tokenForm ? tokenForm.querySelector("[data-cf-form-message]") : null;
+          var advancedModeSummary = tokenForm ? tokenForm.querySelector("[data-cf-mode-summary]") : null;
+          var advancedSourceSummary = tokenForm ? tokenForm.querySelector("[data-cf-source-summary]") : null;
+          var projectBeforeEdit = null;
+          var bindingEditSnapshot = null;
+          var normalizeProjectName = function(value) {
+            value = String(value || "").trim().toLowerCase().replace(/_/g, "-").replace(/[^a-z0-9-]+/g, "-").replace(/^-+|-+$/g, "");
+            if (!value) value = "gcms-frontend";
+            if (value.length > 63) value = value.slice(0, 63).replace(/-+$/g, "");
+            return value || "gcms-frontend";
           };
+          var defaultProjectName = function() {
+            var host = primaryInput ? String(primaryInput.value || "").trim().toLowerCase() : "";
+            host = host.replace(/^https?:\/\//, "").replace(/\/.*$/, "").replace(/:\d+$/, "").replace(/^\*\./, "").replace(/\.$/, "");
+            return host ? normalizeProjectName("gcms-" + host.replace(/\./g, "-")) : "";
+          };
+          var setProjectValue = function(value, custom) {
+            value = String(value || "").trim();
+            if (value || custom) value = normalizeProjectName(value);
+            if (projectDisplay) projectDisplay.textContent = value || txt.empty;
+            if (projectInput) projectInput.value = value;
+            if (workerNameInput) workerNameInput.value = value;
+            if (pagesProjectInput) pagesProjectInput.value = value;
+            if (projectCustomInput) projectCustomInput.value = custom ? "1" : "0";
+          };
+          var hideProjectEditor = function() {
+            if (projectReadonly) projectReadonly.hidden = false;
+            if (projectEditor) projectEditor.hidden = true;
+            projectBeforeEdit = null;
+          };
+          var syncDefaultProject = function(force) {
+            if (!projectField) return;
+            var nextDefault = defaultProjectName();
+            projectField.dataset.defaultProject = nextDefault;
+            if (force || !projectCustomInput || projectCustomInput.value !== "1") {
+              setProjectValue(nextDefault, false);
+            }
+          };
+          var tokenEditRequired = function() {
+            if (!currentTokenSet) return true;
+            return !!(tokenEditor && !tokenEditor.hidden && tokenInput && !tokenInput.disabled);
+          };
+          var tokenFormValid = function() {
+            if (!tokenForm) return true;
+            var hasPrimary = primaryInput && String(primaryInput.value || "").trim() !== "";
+            var hasToken = !tokenEditRequired() || (tokenInput && String(tokenInput.value || "").trim() !== "");
+            return !!(hasPrimary && hasToken);
+          };
+          var updateTokenFormValidity = function() {
+            if (!saveTokenButton) return;
+            saveTokenButton.disabled = tokenForm.dataset.submitting === "1" || box.dataset.running === "1" || !tokenFormValid();
+          };
+          var setFormMessage = function(type, message) {
+            if (!formMessage) return;
+            message = String(message || "").trim();
+            formMessage.classList.remove("is-error", "is-success");
+            if (!message) {
+              formMessage.hidden = true;
+              formMessage.textContent = "";
+              return;
+            }
+            formMessage.textContent = message;
+            formMessage.hidden = false;
+            formMessage.classList.add(type === "success" ? "is-success" : "is-error");
+          };
+          var setTokenEditor = function(editing) {
+            if (!tokenReadonly || !tokenEditor || !tokenInput) return;
+            if (!currentTokenSet) {
+              tokenReadonly.hidden = true;
+              tokenEditor.hidden = false;
+              tokenInput.disabled = false;
+              if (tokenCancel) tokenCancel.hidden = true;
+              updateTokenFormValidity();
+              return;
+            }
+            tokenReadonly.hidden = editing;
+            tokenEditor.hidden = !editing;
+            tokenInput.disabled = !editing;
+            if (tokenCancel) tokenCancel.hidden = !editing;
+            if (editing) {
+              tokenInput.value = "";
+              setTimeout(function(){ tokenInput.focus(); }, 0);
+            }
+            updateTokenFormValidity();
+          };
+          var updateAdvancedSummary = function() {
+            if (!tokenForm) return;
+            var mode = tokenForm.querySelector("input[name='deploy_mode']:checked");
+            var source = tokenForm.querySelector("input[name='source_frontend_mode']:checked");
+            if (advancedModeSummary && mode) advancedModeSummary.textContent = mode.dataset.summary || mode.value;
+            if (advancedSourceSummary && source) advancedSourceSummary.textContent = source.dataset.summary || source.value;
+          };
+          var captureBindingForm = function() {
+            if (!tokenForm) return null;
+            var mode = tokenForm.querySelector("input[name='deploy_mode']:checked");
+            var sourceMode = tokenForm.querySelector("input[name='source_frontend_mode']:checked");
+            var redirect = tokenForm.querySelector("input[name='redirect_aliases']");
+            var aliases = tokenForm.querySelector("textarea[name='alias_domains']");
+            return {
+              primary: primaryInput ? primaryInput.value : "",
+              aliases: aliases ? aliases.value : "",
+              redirect: redirect ? redirect.checked : false,
+              project: projectDisplay ? projectDisplay.textContent : defaultProjectName(),
+              projectCustom: projectCustomInput ? projectCustomInput.value === "1" : false,
+              mode: mode ? mode.value : "worker_assets",
+              sourceMode: sourceMode ? sourceMode.value : "redirect"
+            };
+          };
+          var restoreBindingForm = function(snapshot) {
+            if (!snapshot || !tokenForm) return;
+            if (primaryInput) primaryInput.value = snapshot.primary;
+            var aliases = tokenForm.querySelector("textarea[name='alias_domains']");
+            if (aliases) aliases.value = snapshot.aliases;
+            var redirect = tokenForm.querySelector("input[name='redirect_aliases']");
+            if (redirect) redirect.checked = !!snapshot.redirect;
+            tokenForm.querySelectorAll("input[name='deploy_mode']").forEach(function(input) {
+              input.checked = input.value === snapshot.mode;
+            });
+            tokenForm.querySelectorAll("input[name='source_frontend_mode']").forEach(function(input) {
+              input.checked = input.value === snapshot.sourceMode;
+            });
+            setProjectValue(snapshot.project, snapshot.projectCustom);
+            if (tokenInput) tokenInput.value = "";
+            hideProjectEditor();
+            setTokenEditor(false);
+            updateAdvancedSummary();
+          };
+          var setBindingFormOpen = function(open, focusMode) {
+            if (!tokenForm) return;
+            var show = open || !currentTokenSet;
+            if (show && currentTokenSet && !bindingEditSnapshot) bindingEditSnapshot = captureBindingForm();
+            if (boundPanel) boundPanel.hidden = currentTokenSet ? show : true;
+            tokenForm.hidden = !show;
+            tokenForm.classList.toggle("is-hidden", !show);
+            if (bindingCancel) bindingCancel.hidden = !(show && currentTokenSet);
+            if (connectCard) connectCard.classList.toggle("is-editing", show && currentTokenSet);
+            if (!show) {
+              restoreBindingForm(bindingEditSnapshot);
+              bindingEditSnapshot = null;
+              if (boundPanel && currentTokenSet) boundPanel.hidden = false;
+              if (bindingCancel) bindingCancel.hidden = true;
+              updateTokenFormValidity();
+              return;
+            }
+            setTokenEditor(false);
+            updateTokenFormValidity();
+            setTimeout(function(){
+              tokenForm.scrollIntoView({behavior: "smooth", block: "start"});
+              if (focusMode === "project") {
+                var edit = tokenForm.querySelector("[data-cf-edit-project]");
+                if (edit) edit.click();
+              } else if (primaryInput) {
+                primaryInput.focus({preventScroll: true});
+                if (primaryInput.select) primaryInput.select();
+              }
+            }, 0);
+          };
+	          var hasDeploymentValue = function(published, lastDeployAt) {
+	            return !!published || !!String(lastDeployAt || "").trim();
+	          };
+	          var statusText = function(status, published, lastDeployAt) {
+	            if (status === "running") return txt.running;
+	            if (status === "failed") return txt.failed;
+	            if (status === "success") return hasDeploymentValue(published, lastDeployAt) ? txt.success : txt.unpublished;
+	            return txt.idle;
+	          };
           var setText = function(sel, text) {
             var el = root.querySelector(sel);
             if (el) el.textContent = text || "";
           };
+          var setAnyText = function(sel, text) {
+            var el = document.querySelector(sel);
+            if (el) el.textContent = text || "";
+          };
+          var publicURLFromHost = function(host) {
+            if (!host) return "";
+            return "https://" + String(host).replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+          };
+          var setDomainSummary = function(label, publicURL) {
+            var text = label || txt.empty;
+            document.querySelectorAll("[data-cf-domain-link]").forEach(function(link) {
+              link.textContent = text;
+              if (publicURL) {
+                link.href = publicURL;
+                link.hidden = false;
+              } else {
+                link.removeAttribute("href");
+                link.hidden = true;
+              }
+            });
+            document.querySelectorAll("[data-cf-domain-fallback]").forEach(function(el) {
+              el.textContent = text;
+              el.hidden = !!publicURL;
+            });
+          };
+	          var setTaskState = function(status, published, lastDeployAt) {
+	            if (!statusEl) return;
+	            statusEl.classList.remove("is-idle", "is-running", "is-failed", "is-success");
+	            statusEl.classList.add(status === "running" ? "is-running" : status === "failed" ? "is-failed" : status === "success" && hasDeploymentValue(published, lastDeployAt) ? "is-success" : "is-idle");
+	          };
+	          var localDateTitle = function(value) {
+	            var date = new Date(value);
+	            if (isNaN(date.getTime())) return value || "";
+	            return date.toLocaleString();
+	          };
+	          var relativeTime = function(value) {
+	            var date = new Date(value);
+	            if (!value || isNaN(date.getTime())) return txt.neverDeployed;
+	            var seconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
+	            if (seconds < 60) return txt.justNow;
+	            var minutes = Math.floor(seconds / 60);
+	            if (minutes < 60) return txt.minutesAgo.replace("%d", minutes);
+	            var hours = Math.floor(minutes / 60);
+	            if (hours < 24) return txt.hoursAgo.replace("%d", hours);
+	            var days = Math.floor(hours / 24);
+	            if (days < 30) return txt.daysAgo.replace("%d", days);
+	            return localDateTitle(value);
+	          };
+	          var actionText = function(action, status) {
+	            if (status === "failed") return txt.historyFailed;
+	            if (action === "purge") return txt.historyPurge;
+	            if (action === "unpublish") return txt.historyUnpublish;
+	            return txt.historyDeploy;
+	          };
+	          var renderLastDeploy = function(value) {
+	            if (!lastDeployEl) return;
+	            value = String(value || "");
+	            lastDeployEl.dateTime = value;
+	            lastDeployEl.textContent = relativeTime(value);
+	            lastDeployEl.title = value ? localDateTitle(value) : "";
+	          };
+	          var renderHistory = function(items) {
+	            if (!historyList) return;
+	            historyList.innerHTML = "";
+	            if (!items || !items.length) {
+	              var empty = document.createElement("p");
+	              empty.className = "cloudflare-history-empty";
+	              empty.textContent = txt.historyEmpty;
+	              historyList.appendChild(empty);
+	              return;
+	            }
+	            items.slice(0, 8).forEach(function(item) {
+	              var row = document.createElement("div");
+	              row.className = "cloudflare-history-item";
+	              if (item.status === "success") row.classList.add("is-success");
+	              if (item.status === "failed") row.classList.add("is-failed");
+	              var head = document.createElement("div");
+	              var name = document.createElement("span");
+	              name.textContent = actionText(item.action, item.status);
+	              var time = document.createElement("time");
+	              time.dateTime = item.at || "";
+	              time.textContent = relativeTime(item.at);
+	              time.title = localDateTitle(item.at);
+	              head.appendChild(name);
+	              head.appendChild(time);
+	              row.appendChild(head);
+	              if (item.message) {
+	                var msg = document.createElement("p");
+	                msg.textContent = item.message;
+	                row.appendChild(msg);
+	              }
+	              historyList.appendChild(row);
+	            });
+	          };
+	          var refreshHistoryTimes = function() {
+	            if (!historyList) return;
+	            historyList.querySelectorAll("time[datetime]").forEach(function(time) {
+	              var value = time.getAttribute("datetime") || "";
+	              time.textContent = relativeTime(value);
+	              time.title = localDateTitle(value);
+	            });
+	          };
+	          var selectedSyncMode = function() {
+	            if (!syncForm) return "realtime";
+	            var input = syncForm.querySelector("input[name='sync_mode']:checked");
+	            return input ? input.value : "realtime";
+	          };
+	          var updateSyncTimeState = function() {
+	            var daily = selectedSyncMode() === "daily";
+	            if (syncTimeInput) syncTimeInput.disabled = !daily;
+	            if (syncTimeWrap) syncTimeWrap.classList.toggle("is-disabled", !daily);
+	          };
+	          var renderSyncState = function(s) {
+	            if (!syncForm || !s) return;
+	            var mode = s.sync_mode || selectedSyncMode();
+	            syncForm.querySelectorAll("input[name='sync_mode']").forEach(function(input) {
+	              input.checked = input.value === mode;
+	            });
+	            if (syncTimeInput && s.sync_time) syncTimeInput.value = s.sync_time;
+	            updateSyncTimeState();
+	            if (!syncStatusEl) return;
+	            if (mode === "daily" && s.sync_pending) {
+	              var next = s.sync_next_at ? " · " + txt.syncNextAt + "：" + localDateTitle(s.sync_next_at) : "";
+	              syncStatusEl.textContent = txt.syncPending + next;
+	            } else {
+	              syncStatusEl.textContent = mode === "daily" ? txt.syncDailyNote : txt.syncRealtimeNote;
+	            }
+	          };
+	          var toggleManagedActions = function(canUnpublish, canPurge) {
+	            document.querySelectorAll("[data-cloudflare-managed-action='unpublish']").forEach(function(el){ el.hidden = !canUnpublish; });
+	            document.querySelectorAll("[data-cloudflare-managed-action='purge']").forEach(function(el){ el.hidden = !canPurge; });
+	          };
+          var setOpenLinks = function(publicURL) {
+            document.querySelectorAll("[data-cf-open-site]").forEach(function(link) {
+              if (publicURL) {
+                link.href = publicURL;
+                link.hidden = false;
+              } else {
+                link.removeAttribute("href");
+                link.hidden = true;
+              }
+            });
+          };
+          var deployButtonText = function(status) {
+            if (status === "running") return txt.deploying;
+            return currentPublished ? txt.deploy : txt.deployNow;
+          };
+          var closeSaveModal = function() {
+            if (saveModal) saveModal.hidden = true;
+          };
+          var showSaveModal = function() {
+            if (!saveModal) return;
+            saveModal.hidden = false;
+            var primary = saveModal.querySelector("[data-cf-save-deploy]");
+            if (primary) setTimeout(function(){ primary.focus(); }, 0);
+          };
+          var applyView = function(v) {
+            if (!v) return;
+            currentTokenSet = !!v.token_set;
+            currentPublished = !!v.published;
+            if (connectCard) {
+              connectCard.classList.toggle("is-bound", currentTokenSet);
+              connectCard.classList.remove("is-editing");
+            }
+            if (boundPanel) boundPanel.hidden = !currentTokenSet;
+            if (tokenForm) {
+              tokenForm.dataset.tokenSet = currentTokenSet ? "1" : "0";
+              tokenForm.hidden = currentTokenSet;
+              tokenForm.classList.toggle("is-hidden", currentTokenSet);
+              if (bindingCancel) bindingCancel.hidden = true;
+            }
+            setAnyText("[data-cf-connect-tag]", currentTokenSet ? txt.bound : txt.recommended);
+            setAnyText("[data-cf-connect-title]", currentTokenSet ? txt.boundTitle : txt.connectTitle);
+            setAnyText("[data-cf-connect-desc]", currentTokenSet ? txt.boundDesc : txt.connectDesc);
+            setAnyText("[data-cf-bound-domain]", v.domain_summary || txt.empty);
+            setAnyText("[data-cf-bound-token]", v.token_fingerprint || txt.empty);
+            setAnyText("[data-cf-project-label]", v.project_name || txt.empty);
+            setAnyText("[data-cf-status-project]", v.project_name || txt.empty);
+            setDomainSummary(v.domain_summary || v.primary_domain || txt.empty, publicURLFromHost(v.primary_domain));
+            if (primaryInput && typeof v.primary_domain === "string") primaryInput.value = v.primary_domain;
+            if (tokenMask) tokenMask.textContent = v.token_fingerprint || txt.empty;
+            if (projectField) projectField.dataset.defaultProject = v.project_default || "";
+            setProjectValue(v.project_name || v.project_default || "", !!v.project_custom);
+            tokenForm.querySelectorAll("input[name='deploy_mode']").forEach(function(input) {
+              input.checked = input.value === (v.deploy_mode || "worker_assets");
+            });
+            tokenForm.querySelectorAll("input[name='source_frontend_mode']").forEach(function(input) {
+              input.checked = input.value === (v.source_mode || "redirect");
+            });
+            updateAdvancedSummary();
+            bindingEditSnapshot = null;
+            hideProjectEditor();
+            setTokenEditor(false);
+            updateTokenFormValidity();
+            setOpenLinks(v.public_url || "");
+            toggleManagedActions(!!v.can_unpublish, !!v.can_purge);
+          };
           var setProgress = function(status, step) {
             var current = status === "success" ? "done" : (step || "");
             var index = status === "success" ? order.length : order.indexOf(current);
+            if (status === "failed" && index < 0) index = 0;
             var progress = root.querySelector("[data-cloudflare-progress]");
             if (progress) {
               progress.dataset.status = status || "";
@@ -1198,14 +1704,24 @@
           var render = function(s) {
             if (!s) return;
             wasRunning = s.status === "running";
+            currentPublished = hasDeploymentValue(!!s.published, s.last_deploy_at);
             box.dataset.running = s.status === "running" ? "1" : "0";
-            setText("[data-cloudflare-status]", statusText(s.status));
-            setText("[data-cloudflare-message]", s.message);
-            setProgress(s.status, s.step);
+	            setText("[data-cloudflare-status]", statusText(s.status, !!s.published, s.last_deploy_at));
+	            setTaskState(s.status, !!s.published, s.last_deploy_at);
+	            setText("[data-cloudflare-message]", s.message);
+	            setDomainSummary(s.domains || s.primary_domain || txt.empty, publicURLFromHost(s.primary_domain));
+	            setText("[data-cf-status-project]", s.deploy_mode === "pages" ? s.pages_project_name : s.worker_name);
+	            setOpenLinks((currentPublished && s.primary_domain) ? ("https://" + s.primary_domain) : "");
+	            renderLastDeploy(s.last_deploy_at);
+	            renderHistory(s.history || []);
+	            renderSyncState(s);
+	            setProgress(s.status, s.step);
             if (button) {
-              button.disabled = s.status === "running";
-              button.textContent = s.status === "running" ? txt.deploying : txt.deploy;
+              button.disabled = !currentTokenSet || s.status === "running";
+              button.textContent = deployButtonText(s.status);
             }
+            updateTokenFormValidity();
+            toggleManagedActions(!!s.can_unpublish, !!s.can_purge);
             if (s.status === "running") schedulePoll(2500);
           };
           var schedulePoll = function(delay) {
@@ -1221,9 +1737,21 @@
           document.querySelectorAll("[data-cloudflare-ajax]").forEach(function(form) {
             form.addEventListener("submit", function(e) {
               e.preventDefault();
+              var isTokenForm = form.matches("[data-cloudflare-deploy-form]");
+              if (isTokenForm && !tokenFormValid()) {
+                updateTokenFormValidity();
+                return;
+              }
               var fd = new FormData(form);
               var submit = form.querySelector("button[type='submit']");
-              if (submit) submit.disabled = true;
+              if (isTokenForm) {
+                form.dataset.submitting = "1";
+                setFormMessage("", "");
+              }
+              if (submit) {
+                submit.disabled = true;
+                if (isTokenForm) submit.textContent = txt.savingConfig;
+              }
               fetch(form.action, {
                 method: "POST",
                 body: fd,
@@ -1231,53 +1759,196 @@
                 headers: {"Accept": "application/json", "X-Requested-With": "XMLHttpRequest"}
               })
                 .then(function(r){ return r.json().then(function(j){ j.httpOK = r.ok; return j; }); })
-              .then(function(j) {
+                .then(function(j) {
+                  if (isTokenForm && !j.httpOK) {
+                    setFormMessage("error", (j && j.message) || txt.ajaxFailed);
+                    return j;
+                  }
+                  if (j && j.view) applyView(j.view);
                   if (j && j.status) render(j.status);
                   if (!j.httpOK && j.message) setText("[data-cloudflare-message]", j.message);
                   if (j && j.status && j.status.status === "running") schedulePoll(700);
-                  if (form.matches("[data-cloudflare-deploy-form]") && j && j.httpOK) {
-                    form.reset();
-                  } else if (j && j.httpOK) {
+                  if (j && j.httpOK) {
                     var path = "";
                     try { path = new URL(form.action).pathname; } catch (_) {}
-                    if (path === "/admin/settings/cloudflare/reset" || path === "/admin/settings/cloudflare") {
+                    if (path === "/admin/settings/cloudflare/reset") {
                       window.setTimeout(function(){ window.location.reload(); }, 350);
+                    } else if (form.matches("[data-cloudflare-deploy-form]")) {
+                      showSaveModal();
                     }
                   }
                   return j;
                 })
                 .catch(function() {
-                  setText("[data-cloudflare-message]", "{{.Admin.T "admin.settings.cloudflare.ajax_failed" "请求失败，请稍后重试。"}}");
+                  if (isTokenForm) setFormMessage("error", txt.ajaxFailed);
+                  else setText("[data-cloudflare-message]", txt.ajaxFailed);
                 })
                 .finally(function() {
-                  if (submit && box.dataset.running !== "1") submit.disabled = false;
+                  if (isTokenForm) {
+                    delete form.dataset.submitting;
+                    if (submit) submit.textContent = txt.saveConfig;
+                    updateTokenFormValidity();
+                  } else if (submit && box.dataset.running !== "1") {
+                    submit.disabled = false;
+                  }
                 });
             });
           });
-          document.querySelectorAll("[data-cf-open-binding], [data-cf-project-edit]").forEach(function(btn) {
-            btn.addEventListener("click", function() {
-              var details = document.querySelector(".cloudflare-manual");
-              if (details) {
-                details.open = true;
-                var target = btn.matches("[data-cf-project-edit]") ? (details.querySelector("#cf_pages_project") || details.querySelector("#cf_worker_name")) : details.querySelector("input, textarea");
-                if (target) setTimeout(function(){ target.focus(); if (target.select) target.select(); }, 0);
-              }
-            });
+          if (primaryInput) {
+            primaryInput.addEventListener("input", function(){ syncDefaultProject(false); updateTokenFormValidity(); });
+          }
+          document.querySelectorAll("[data-cf-open-binding]").forEach(function(btn) {
+            btn.addEventListener("click", function(){ setBindingFormOpen(true, "domain"); });
           });
-          setProgress({{printf "%q" $st.Status}}, {{printf "%q" $st.Step}});
+          document.querySelectorAll("[data-cf-project-edit]").forEach(function(btn) {
+            btn.addEventListener("click", function(){ setBindingFormOpen(true, "project"); });
+          });
+          if (tokenForm) {
+            var closeEdit = tokenForm.querySelector("[data-cf-cancel-binding-edit]");
+            if (closeEdit) closeEdit.addEventListener("click", function(){ setBindingFormOpen(false); });
+            var projectEdit = tokenForm.querySelector("[data-cf-edit-project]");
+            if (projectEdit) {
+              projectEdit.addEventListener("click", function() {
+                projectBeforeEdit = {
+                  value: projectDisplay ? projectDisplay.textContent : defaultProjectName(),
+                  custom: projectCustomInput && projectCustomInput.value === "1"
+                };
+                if (projectReadonly) projectReadonly.hidden = true;
+                if (projectEditor) projectEditor.hidden = false;
+                if (projectInput) {
+                  projectInput.value = projectBeforeEdit.value;
+                  setTimeout(function(){ projectInput.focus(); if (projectInput.select) projectInput.select(); }, 0);
+                }
+              });
+            }
+            if (projectInput) {
+              projectInput.addEventListener("input", function(){ setProjectValue(projectInput.value, true); updateTokenFormValidity(); });
+            }
+            var projectCancel = tokenForm.querySelector("[data-cf-project-cancel]");
+            if (projectCancel) {
+              projectCancel.addEventListener("click", function() {
+                if (projectBeforeEdit) setProjectValue(projectBeforeEdit.value, projectBeforeEdit.custom);
+                hideProjectEditor();
+              });
+            }
+            var tokenEdit = tokenForm.querySelector("[data-cf-token-edit]");
+            if (tokenEdit) tokenEdit.addEventListener("click", function(){ setTokenEditor(true); });
+            if (tokenCancel) {
+              tokenCancel.addEventListener("click", function() {
+                if (tokenInput) tokenInput.value = "";
+                setTokenEditor(false);
+              });
+            }
+            tokenForm.querySelectorAll("input, textarea").forEach(function(el) {
+              el.addEventListener("input", updateTokenFormValidity);
+              el.addEventListener("change", updateTokenFormValidity);
+            });
+            tokenForm.querySelectorAll("input[name='deploy_mode'], input[name='source_frontend_mode']").forEach(function(el) {
+              el.addEventListener("change", updateAdvancedSummary);
+            });
+            syncDefaultProject(false);
+            setTokenEditor(false);
+            updateAdvancedSummary();
+            updateTokenFormValidity();
+          }
+	          if (syncForm) {
+	            syncForm.querySelectorAll("input[name='sync_mode']").forEach(function(input) {
+	              input.addEventListener("change", updateSyncTimeState);
+	            });
+	            updateSyncTimeState();
+	          }
+	          if (saveModal) {
+	            saveModal.querySelectorAll("[data-cf-save-later]").forEach(function(btn) {
+	              btn.addEventListener("click", closeSaveModal);
+	            });
+            var saveDeploy = saveModal.querySelector("[data-cf-save-deploy]");
+            if (saveDeploy) {
+              saveDeploy.addEventListener("click", function() {
+                closeSaveModal();
+                if (!deployForm) return;
+                deployForm.dataset.confirmed = "1";
+                if (typeof deployForm.requestSubmit === "function") deployForm.requestSubmit();
+                else deployForm.submit();
+              });
+            }
+            document.addEventListener("keydown", function(e) {
+	              if (e.key === "Escape" && !saveModal.hidden) closeSaveModal();
+	            });
+	          }
+	          if (historyToggle && historyPopover) {
+	            historyToggle.addEventListener("click", function(e) {
+	              e.preventDefault();
+	              e.stopPropagation();
+	              var open = historyPopover.hidden;
+	              historyPopover.hidden = !open;
+	              historyToggle.setAttribute("aria-expanded", open ? "true" : "false");
+	            });
+	            document.addEventListener("click", function(e) {
+	              if (historyPopover.hidden) return;
+	              if (historyPopover.contains(e.target) || historyToggle.contains(e.target)) return;
+	              historyPopover.hidden = true;
+	              historyToggle.setAttribute("aria-expanded", "false");
+	            });
+	            document.addEventListener("keydown", function(e) {
+	              if (e.key === "Escape" && !historyPopover.hidden) {
+	                historyPopover.hidden = true;
+	                historyToggle.setAttribute("aria-expanded", "false");
+	              }
+	            });
+	          }
+	          if (lastDeployEl) renderLastDeploy(lastDeployEl.getAttribute("datetime"));
+	          refreshHistoryTimes();
+	          setProgress({{printf "%q" $st.Status}}, {{printf "%q" $st.Step}});
+	          setTaskState({{printf "%q" $st.Status}}, {{if $st.Published}}true{{else}}false{{end}}, {{printf "%q" $st.LastDeployAt}});
+          if (button) button.disabled = !currentTokenSet || box.dataset.running === "1";
           if (box.dataset.running === "1") schedulePoll(900);
+          // 内容同步：实时模式隐藏「同步时间」+「保存」；切换模式即时静默自动保存（fetch，不导航）；
+          // 每天同步下「保存」只在同步时间被改动时才出现。
+          (function(){
+            var f = document.querySelector("[data-cloudflare-sync-form]");
+            if (!f) return;
+            var timeWrap = f.querySelector(".cloudflare-sync-time");
+            var timeInput = f.querySelector("[data-cf-sync-time]");
+            var saveBtn = f.querySelector("button[type='submit']");
+            var csrf = (f.querySelector("input[name='_csrf']") || {}).value || "";
+            var modeNow = function(){ var c = f.querySelector("input[name='sync_mode']:checked"); return c ? c.value : "realtime"; };
+            var baseMode = modeNow();
+            var baseTime = timeInput ? timeInput.value : "";
+            var refresh = function(){
+              var daily = modeNow() === "daily";
+              if (timeWrap) timeWrap.hidden = !daily;
+              // 「保存」只跟「同步时间是否改动」绑定；模式切换走自动保存
+              if (saveBtn) saveBtn.hidden = !(daily && timeInput && timeInput.value !== baseTime);
+            };
+            var autoSaveMode = function(){
+              var body = new URLSearchParams();
+              body.set("_csrf", csrf);
+              body.set("sync_mode", modeNow());
+              if (timeInput) body.set("sync_time", timeInput.value || "");
+              fetch(f.getAttribute("action"), { method: "POST", body: body, headers: { "Content-Type": "application/x-www-form-urlencoded", "X-Requested-With": "XMLHttpRequest" }, credentials: "same-origin" }).catch(function(){});
+              baseMode = modeNow();
+              baseTime = timeInput ? timeInput.value : baseTime;
+              refresh();
+            };
+            f.querySelectorAll("input[name='sync_mode']").forEach(function(r){
+              r.addEventListener("change", function(){ if (modeNow() !== baseMode) autoSaveMode(); else refresh(); });
+            });
+            if (timeInput) timeInput.addEventListener("input", refresh);
+            f.addEventListener("submit", function(){ setTimeout(function(){ baseMode = modeNow(); baseTime = timeInput ? timeInput.value : baseTime; refresh(); }, 0); });
+            refresh();
+          })();
         })();
         </script>
       </div>
 
       <details class="update-details cloudflare-manual"{{if eq $st.Status "failed"}} open{{end}}>
         <summary>{{.Admin.T "admin.settings.cloudflare.manual_title" "高级设置：路由与手动字段"}}</summary>
-        <form method="post" action="/admin/settings/cloudflare" class="admin-form" data-cloudflare-ajax>
+        <form method="post" action="/admin/settings/cloudflare" class="admin-form" data-cloudflare-ajax data-no-busy>
           <input type="hidden" name="_csrf" value="{{.CSRF}}">
           <div class="field-group">
             <div class="key-warning">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.3 4.2 2.8 17.4A2 2 0 0 0 4.5 20h15a2 2 0 0 0 1.7-2.6L13.7 4.2a2 2 0 0 0-3.4 0z"/></svg>
-              <span>{{.Admin.T "admin.settings.cloudflare.token_note" "建议用上方模板创建专用 Cloudflare API Token：会一次性包含 Worker Assets、Pages、DNS、缓存清理、Zone Read 和 Account Read。Token 只保存在本机数据库，页面不会回显完整值。"}}</span>
+              <span>{{.Admin.T "admin.settings.cloudflare.token_note" "建议用上方模板获取 Cloudflare 授权 Token：会一次性包含 Worker Assets、Pages、DNS、缓存清理、Zone Read 和 Account Read。Token 只保存在本机数据库，页面不会回显完整值。"}}</span>
             </div>
             {{if and $cf.RouteHost $cf.LikelyZoneName}}
             <div class="key-warning">
@@ -1292,13 +1963,6 @@
             </div>
             {{end}}
             <div class="form-2col">
-              <div class="field full">
-                <label>{{.Admin.T "admin.settings.cloudflare.deploy_mode" "部署方式"}}</label>
-                <div class="radio-pill-row">
-                  <label class="radio-pill"><input type="radio" name="deploy_mode" value="worker_assets"{{if not $isPages}} checked{{end}}><span>{{.Admin.T "admin.settings.cloudflare.mode_worker_assets" "Worker Assets"}}</span></label>
-                  <label class="radio-pill"><input type="radio" name="deploy_mode" value="pages"{{if $isPages}} checked{{end}}><span>{{.Admin.T "admin.settings.cloudflare.mode_pages" "Cloudflare Pages"}}</span></label>
-                </div>
-              </div>
               <div class="field">
                 <label for="cf_worker_name">{{.Admin.T "admin.settings.cloudflare.worker_name" "Worker 名称"}}</label>
                 <input id="cf_worker_name" name="worker_name" value="{{$c.WorkerName}}" placeholder="gcms-frontend">
@@ -1327,10 +1991,11 @@
               </div>
               <div class="field">
                 <label for="cf_api_token">{{.Admin.T "admin.settings.cloudflare.api_token" "API Token"}}</label>
-                <input id="cf_api_token" name="api_token" type="password" autocomplete="new-password" placeholder="{{if $cf.TokenSet}}{{.Admin.T "admin.settings.cloudflare.token_keep" "已保存，留空则不修改"}}{{else}}{{.Admin.T "admin.settings.cloudflare.token_placeholder" "粘贴 Cloudflare API Token"}}{{end}}">
+                <input id="cf_api_token" name="api_token" type="text" autocomplete="off" spellcheck="false" placeholder="{{if $cf.TokenSet}}{{.Admin.T "admin.settings.cloudflare.token_keep" "已保存，留空则不修改"}}{{else}}{{.Admin.T "admin.settings.cloudflare.token_placeholder" "粘贴 Cloudflare API Token"}}{{end}}">
               </div>
               <div class="field">
                 <label>{{.Admin.T "admin.settings.cloudflare.sync" "内容同步"}}</label>
+                <input type="hidden" name="auto_sync" value="0">
                 <label class="tweak-toggle"><input type="checkbox" name="auto_sync" value="1"{{if $c.AutoSync}} checked{{end}}><span>{{.Admin.T "admin.settings.cloudflare.auto_sync" "内容或配置保存后自动延时重新发布静态站"}}</span></label>
               </div>
             </div>

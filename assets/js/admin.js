@@ -4,6 +4,86 @@
   "use strict";
   var CSRF = (document.body && document.body.dataset.csrf) || "";
 
+  /* ---------- 通用轻提示：接管按钮/链接原生 title ---------- */
+  (function () {
+    var selector = "[data-tooltip],button[title],a[title],[role='button'][title]";
+    var tip = null;
+    var current = null;
+    function ensureTip() {
+      if (tip) return tip;
+      tip = document.createElement("div");
+      tip.className = "ui-tooltip";
+      tip.setAttribute("role", "tooltip");
+      tip.hidden = true;
+      document.body.appendChild(tip);
+      return tip;
+    }
+    function tooltipText(el) {
+      if (!el) return "";
+      var text = el.getAttribute("data-tooltip") || el.getAttribute("title") || "";
+      if (el.hasAttribute("title")) {
+        if (!el.hasAttribute("data-tooltip")) el.setAttribute("data-tooltip", text);
+        el.removeAttribute("title");
+      }
+      return text.trim();
+    }
+    function targetFromEvent(e) {
+      return e.target && e.target.closest ? e.target.closest(selector) : null;
+    }
+    function place(el) {
+      if (!tip || tip.hidden || !el) return;
+      var rect = el.getBoundingClientRect();
+      var gap = 8;
+      var pad = 10;
+      var width = tip.offsetWidth;
+      var height = tip.offsetHeight;
+      var left = rect.left + rect.width / 2 - width / 2;
+      var top = rect.top - height - gap;
+      if (top < pad) top = rect.bottom + gap;
+      left = Math.max(pad, Math.min(left, window.innerWidth - width - pad));
+      top = Math.max(pad, Math.min(top, window.innerHeight - height - pad));
+      tip.style.left = left + "px";
+      tip.style.top = top + "px";
+    }
+    function show(el) {
+      var text = tooltipText(el);
+      if (!text || (el && el.disabled)) return;
+      current = el;
+      ensureTip().textContent = text;
+      tip.hidden = false;
+      place(el);
+    }
+    function hide(el) {
+      if (el && current && el !== current) return;
+      if (tip) tip.hidden = true;
+      current = null;
+    }
+    document.querySelectorAll("button[title],a[title],[role='button'][title]").forEach(tooltipText);
+    document.addEventListener("pointerover", function (e) {
+      var el = targetFromEvent(e);
+      if (!el || (e.relatedTarget && el.contains(e.relatedTarget))) return;
+      show(el);
+    });
+    document.addEventListener("pointerout", function (e) {
+      var el = targetFromEvent(e);
+      if (!el || (e.relatedTarget && el.contains(e.relatedTarget))) return;
+      hide(el);
+    });
+    document.addEventListener("focusin", function (e) {
+      var el = targetFromEvent(e);
+      if (el) show(el);
+    });
+    document.addEventListener("focusout", function (e) {
+      var el = targetFromEvent(e);
+      if (el) hide(el);
+    });
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") hide();
+    });
+    window.addEventListener("resize", function () { if (current) place(current); });
+    window.addEventListener("scroll", function () { if (current) place(current); }, true);
+  })();
+
   /* ---------- 上传：浏览器支持时先把 png/jpg 转成 WebP ---------- */
   function maybeWebp(file) {
     return new Promise(function (resolve) {

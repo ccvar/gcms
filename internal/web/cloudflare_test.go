@@ -1,7 +1,9 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -13,6 +15,13 @@ import (
 	"cms.ccvar.com/internal/store"
 )
 
+func stubCloudflareTokenVerify(t *testing.T, fn func(context.Context, string) error) {
+	t.Helper()
+	prev := verifyCloudflareAPIToken
+	verifyCloudflareAPIToken = fn
+	t.Cleanup(func() { verifyCloudflareAPIToken = prev })
+}
+
 func TestNormalizeCloudflareWorkerName(t *testing.T) {
 	tests := map[string]string{
 		"":                  cloudflareDefaultWorkerName,
@@ -22,6 +31,19 @@ func TestNormalizeCloudflareWorkerName(t *testing.T) {
 	for input, want := range tests {
 		if got := normalizeCloudflareWorkerName(input); got != want {
 			t.Fatalf("normalizeCloudflareWorkerName(%q)=%q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestCloudflareDefaultProjectNameForHost(t *testing.T) {
+	tests := map[string]string{
+		"":                         cloudflareDefaultWorkerName,
+		"https://Test.CCVAR.com/":  "gcms-test-ccvar-com",
+		"www.example.com:443/path": "gcms-www-example-com",
+	}
+	for input, want := range tests {
+		if got := cloudflareDefaultProjectNameForHost(input); got != want {
+			t.Fatalf("cloudflareDefaultProjectNameForHost(%q)=%q, want %q", input, got, want)
 		}
 	}
 }
@@ -84,6 +106,95 @@ func TestCloudflarePagesRedirectsFile(t *testing.T) {
 	}
 }
 
+func TestCloudflarePagesRedirectsDefaultPagesDomain(t *testing.T) {
+	cfg := CloudflareConfig{
+		DeployMode:       cloudflareModePages,
+		PagesProjectName: "gcms-ccvar-com",
+		Domains: []CloudflareDomain{
+			{Host: "ccvar.com", Primary: true},
+			{Host: "www.ccvar.com", RedirectToPrimary: true},
+		},
+	}
+	got := cloudflarePagesRedirectsFile(cfg)
+	want := "https://gcms-ccvar-com.pages.dev/* https://ccvar.com/:splat 301\nhttps://www.ccvar.com/* https://ccvar.com/:splat 301\n"
+	if got != want {
+		t.Fatalf("redirects file = %q, want %q", got, want)
+	}
+}
+
+func TestCloudflarePagesRedirectsInferDefaultProjectDomain(t *testing.T) {
+	cfg := CloudflareConfig{
+		DeployMode: cloudflareModePages,
+		Domains:    []CloudflareDomain{{Host: "docs.example.com", Primary: true}},
+	}
+	got := cloudflarePagesRedirectsFile(cfg)
+	want := "https://gcms-docs-example-com.pages.dev/* https://docs.example.com/:splat 301\n"
+	if got != want {
+		t.Fatalf("redirects file = %q, want %q", got, want)
+	}
+}
+
+func TestCloudflareCanonicalFrontendRedirectsOrigin(t *testing.T) {
+	t.Chdir(t.TempDir())
+	writeCloudflareStatus(CloudflareStatus{
+		Status:        "success",
+		LastDeployAt:  time.Now().UTC().Format(time.RFC3339),
+		PrimaryDomain: "www.example.com",
+		Published:     true,
+	})
+	s := &Server{}
+	r := httptest.NewRequest(http.MethodGet, "http://origin.example.net/zh/posts/demo?utm=1", nil)
+	r.Host = "origin.example.net"
+	if got, want := s.cloudflareCanonicalFrontendRedirect(r), "https://www.example.com/zh/posts/demo?utm=1"; got != want {
+		t.Fatalf("redirect = %q, want %q", got, want)
+	}
+	r.Host = "www.example.com"
+	if got := s.cloudflareCanonicalFrontendRedirect(r); got != "" {
+		t.Fatalf("primary host should not redirect, got %q", got)
+	}
+	r.Host = "origin.example.net"
+	r.URL.Path = "/admin"
+	if got := s.cloudflareCanonicalFrontendRedirect(r); got != "" {
+		t.Fatalf("admin path should not redirect, got %q", got)
+	}
+}
+
+func TestCloudflareCanonicalFrontendSourceMode(t *testing.T) {
+	t.Chdir(t.TempDir())
+	st, err := store.Open(filepath.Join(t.TempDir(), "cms.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	writeCloudflareStatus(CloudflareStatus{
+		Status:        "success",
+		LastDeployAt:  time.Now().UTC().Format(time.RFC3339),
+		PrimaryDomain: "www.example.com",
+		Published:     true,
+	})
+	s := &Server{store: st}
+	r := httptest.NewRequest(http.MethodGet, "http://origin.example.net/zh/posts/demo", nil)
+	r.Host = "origin.example.net"
+	if err := st.SetSetting(cloudflareSourceModeKey, cloudflareSourceModeNoindex); err != nil {
+		t.Fatalf("set source mode: %v", err)
+	}
+	if got := s.cloudflareCanonicalFrontendRedirect(r); got != "" {
+		t.Fatalf("noindex mode should not redirect, got %q", got)
+	}
+	if !s.cloudflareCanonicalFrontendNoindex(r) {
+		t.Fatal("noindex mode should set noindex for origin frontend")
+	}
+	if err := st.SetSetting(cloudflareSourceModeKey, cloudflareSourceModeNone); err != nil {
+		t.Fatalf("set source mode: %v", err)
+	}
+	if got := s.cloudflareCanonicalFrontendRedirect(r); got != "" {
+		t.Fatalf("none mode should not redirect, got %q", got)
+	}
+	if s.cloudflareCanonicalFrontendNoindex(r) {
+		t.Fatal("none mode should not set noindex")
+	}
+}
+
 func TestCloudflareStatusStale(t *testing.T) {
 	st := &CloudflareStatus{
 		Status:    "running",
@@ -95,6 +206,30 @@ func TestCloudflareStatusStale(t *testing.T) {
 	st.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	if cloudflareStatusStale(st) {
 		t.Fatal("fresh running status should not be stale")
+	}
+}
+
+func TestCloudflareStatusFailedKeepsPreviousStep(t *testing.T) {
+	t.Chdir(t.TempDir())
+	cfg := CloudflareConfig{
+		APIToken:   "token",
+		DeployMode: cloudflareModeWorkerAssets,
+		WorkerName: "gcms-frontend",
+		Domains:    []CloudflareDomain{{Host: "example.com", Primary: true}},
+	}
+	writeCloudflareStatus(CloudflareStatus{
+		Status:    "running",
+		Step:      "assets",
+		Message:   "uploading assets",
+		TokenSet:  true,
+		Published: true,
+	})
+	st := cloudflareStatusFailed(cfg, "failed", "boom")
+	if st.Step != "assets" {
+		t.Fatalf("failed step = %q, want previous assets step", st.Step)
+	}
+	if !st.Published {
+		t.Fatal("failed status should preserve previous published state")
 	}
 }
 
@@ -140,6 +275,8 @@ func TestCloudflareWorkerScriptRedirectsAliasHosts(t *testing.T) {
 	for _, needle := range []string{
 		`const PRIMARY_HOST = "ccvar.com";`,
 		`const REDIRECT_HOSTS = new Set(["www.ccvar.com"]);`,
+		`const PUBLIC_HOSTS = new Set(["ccvar.com","www.ccvar.com"]);`,
+		`!REDIRECT_HOSTS.has(host) && PUBLIC_HOSTS.has(host)`,
 		`return Response.redirect(redirectURL.toString(), 301);`,
 	} {
 		if !strings.Contains(script, needle) {
@@ -282,6 +419,7 @@ func TestNormalizeCloudflareDeployModeDefaultsToWorkerAssets(t *testing.T) {
 }
 
 func TestRecommendedCloudflareTokenFormClearsDetectedIDs(t *testing.T) {
+	stubCloudflareTokenVerify(t, func(context.Context, string) error { return nil })
 	st, err := store.Open(filepath.Join(t.TempDir(), "cms.db"))
 	if err != nil {
 		t.Fatalf("open store: %v", err)
@@ -327,6 +465,134 @@ func TestRecommendedCloudflareTokenFormClearsDetectedIDs(t *testing.T) {
 	}
 }
 
+func TestRecommendedCloudflareFormDefaultsProjectFromPrimaryDomain(t *testing.T) {
+	stubCloudflareTokenVerify(t, func(context.Context, string) error { return nil })
+	st, err := store.Open(filepath.Join(t.TempDir(), "cms.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	s := &Server{store: st, baseURL: "https://origin.example.com"}
+	form := url.Values{
+		"deploy":         {"1"},
+		"project_custom": {"0"},
+		"deploy_mode":    {cloudflareModeWorkerAssets},
+		"primary_domain": {"test.ccvar.com"},
+		"html_cache_ttl": {"300"},
+		"auto_sync":      {"1"},
+		"api_token":      {"new_token"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/admin/settings/cloudflare", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	cfg, err := s.saveCloudflareConfigFromRequest(req)
+	if err != nil {
+		t.Fatalf("saveCloudflareConfigFromRequest returned %v", err)
+	}
+	if cfg.WorkerName != "gcms-test-ccvar-com" || cfg.PagesProjectName != "gcms-test-ccvar-com" {
+		t.Fatalf("project names = %q/%q, want gcms-test-ccvar-com", cfg.WorkerName, cfg.PagesProjectName)
+	}
+}
+
+func TestSaveCloudflareConfigRejectsInvalidToken(t *testing.T) {
+	stubCloudflareTokenVerify(t, func(context.Context, string) error { return errors.New("token inactive") })
+	st, err := store.Open(filepath.Join(t.TempDir(), "cms.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	if err := st.SetSetting(cloudflareAPITokenKey, "old_token"); err != nil {
+		t.Fatalf("set old token: %v", err)
+	}
+	s := &Server{store: st, baseURL: "https://origin.example.com"}
+	form := url.Values{
+		"deploy_mode":    {cloudflareModeWorkerAssets},
+		"primary_domain": {"test.ccvar.com"},
+		"html_cache_ttl": {"300"},
+		"auto_sync":      {"1"},
+		"api_token":      {"bad_token"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/admin/settings/cloudflare", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if _, err := s.saveCloudflareConfigFromRequest(req); err == nil {
+		t.Fatal("saveCloudflareConfigFromRequest should reject invalid token")
+	}
+	if got := st.Setting(cloudflareAPITokenKey); got != "old_token" {
+		t.Fatalf("api token = %q, want old_token", got)
+	}
+}
+
+func TestSaveCloudflareConfigVerifiesExistingTokenWhenRequested(t *testing.T) {
+	var verifiedToken string
+	stubCloudflareTokenVerify(t, func(_ context.Context, token string) error {
+		verifiedToken = token
+		return nil
+	})
+	st, err := store.Open(filepath.Join(t.TempDir(), "cms.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	if err := st.SetSetting(cloudflareAPITokenKey, "old_token"); err != nil {
+		t.Fatalf("set old token: %v", err)
+	}
+	s := &Server{store: st, baseURL: "https://origin.example.com"}
+	form := url.Values{
+		"deploy_mode":    {cloudflareModeWorkerAssets},
+		"primary_domain": {"test.ccvar.com"},
+		"verify_token":   {"1"},
+		"html_cache_ttl": {"300"},
+		"auto_sync":      {"1"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/admin/settings/cloudflare", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if _, err := s.saveCloudflareConfigFromRequest(req); err != nil {
+		t.Fatalf("saveCloudflareConfigFromRequest returned %v", err)
+	}
+	if verifiedToken != "old_token" {
+		t.Fatalf("verified token = %q, want old_token", verifiedToken)
+	}
+}
+
+func TestCloudflareResetClearsProjectNames(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "cms.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	s := &Server{store: st}
+	for key, value := range map[string]string{
+		cloudflareAPITokenKey:     "token",
+		cloudflareDeployModeKey:   cloudflareModePages,
+		cloudflareWorkerNameKey:   "gcms-old-worker",
+		cloudflarePagesProjectKey: "gcms-old-pages",
+		cloudflareDomainsKey:      `[{"host":"example.com","primary":true}]`,
+		cloudflareSourceModeKey:   cloudflareSourceModeNoindex,
+	} {
+		if err := st.SetSetting(key, value); err != nil {
+			t.Fatalf("set %s: %v", key, err)
+		}
+	}
+	if err := s.clearCloudflareBinding(); err != nil {
+		t.Fatalf("clearCloudflareBinding returned %v", err)
+	}
+	for _, key := range []string{cloudflareAPITokenKey, cloudflareDeployModeKey, cloudflareWorkerNameKey, cloudflarePagesProjectKey, cloudflareDomainsKey, cloudflareSourceModeKey} {
+		if got := st.Setting(key); got != "" {
+			t.Fatalf("%s after reset = %q, want empty", key, got)
+		}
+	}
+	view := s.cloudflareView()
+	if view.TokenSet {
+		t.Fatal("view.TokenSet = true after reset, want false")
+	}
+	if view.ProjectName != "" || view.ProjectDefault != "" {
+		t.Fatalf("project after reset = %q/%q, want empty", view.ProjectName, view.ProjectDefault)
+	}
+	clientView := cloudflareClientViewFromView(view)
+	if clientView.ProjectName != "" || clientView.ProjectDefault != "" {
+		t.Fatalf("client project after reset = %q/%q, want empty", clientView.ProjectName, clientView.ProjectDefault)
+	}
+}
+
 func TestCloudflareRouteHostAndZoneMatch(t *testing.T) {
 	if got := cloudflareRouteHost("www.example.com/*"); got != "www.example.com" {
 		t.Fatalf("cloudflareRouteHost returned %q", got)
@@ -359,5 +625,43 @@ func TestCloudflareZoneDetectErrorIncludesLikelyZone(t *testing.T) {
 		if !strings.Contains(msg, needle) {
 			t.Fatalf("error %q should contain %q", msg, needle)
 		}
+	}
+}
+
+func TestCloudflareClientViewIsRedactedAndOnlyLinksPublishedSite(t *testing.T) {
+	cfg := CloudflareConfig{
+		APIToken:   "cfut_secret_token_value",
+		DeployMode: cloudflareModeWorkerAssets,
+		WorkerName: "gcms-frontend",
+		Domains:    []CloudflareDomain{{Host: "example.com", Primary: true}},
+		ZoneID:     "zone_123",
+	}
+	view := &CloudflareView{
+		Config:     cfg,
+		Status:     &CloudflareStatus{Status: "idle", TokenSet: true},
+		TokenSet:   true,
+		Configured: true,
+	}
+	view.decorate()
+	clientView := cloudflareClientViewFromView(view)
+	if clientView.PublicURL != "" {
+		t.Fatalf("unpublished client view should not expose public URL, got %q", clientView.PublicURL)
+	}
+	if clientView.TokenFingerprint == "" || strings.Contains(clientView.TokenFingerprint, cfg.APIToken) {
+		t.Fatalf("token fingerprint should be redacted, got %q", clientView.TokenFingerprint)
+	}
+	if clientView.CanUnpublish || clientView.CanPurge {
+		t.Fatalf("unpublished site should not expose destructive actions: %+v", clientView)
+	}
+
+	view.Status.Status = "success"
+	view.Status.LastDeployAt = time.Now().UTC().Format(time.RFC3339)
+	view.Status.Published = true
+	clientView = cloudflareClientViewFromView(view)
+	if clientView.PublicURL != "https://example.com" {
+		t.Fatalf("published client view PublicURL = %q", clientView.PublicURL)
+	}
+	if !clientView.CanUnpublish || !clientView.CanPurge {
+		t.Fatalf("published site should expose deployment actions: %+v", clientView)
 	}
 }

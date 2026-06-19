@@ -164,6 +164,15 @@ func cloudflarePagesRedirectsFile(cfg CloudflareConfig) string {
 		}
 		lines = append(lines, fmt.Sprintf("https://%s/* https://%s/:splat 301", host, primary))
 	}
+	if cfg.usingPages() {
+		project := normalizeCloudflarePagesProjectName(cfg.PagesProjectName)
+		if strings.TrimSpace(cfg.PagesProjectName) == "" {
+			project = cloudflareDefaultProjectNameForHost(primary)
+		}
+		if project != "" && !sameCloudflareDNSName(project+".pages.dev", primary) {
+			lines = append(lines, fmt.Sprintf("https://%s.pages.dev/* https://%s/:splat 301", project, primary))
+		}
+	}
 	if len(lines) == 0 {
 		return ""
 	}

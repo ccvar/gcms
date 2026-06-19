@@ -33,15 +33,27 @@ const (
 	cloudflareOriginURLKey    = "cloudflare.origin_url"
 	cloudflareHTMLTTLKey      = "cloudflare.html_cache_ttl"
 	cloudflareAutoSyncKey     = "cloudflare.auto_sync"
+	cloudflareSyncModeKey     = "cloudflare.sync_mode"
+	cloudflareSyncTimeKey     = "cloudflare.sync_time"
+	cloudflareSyncPendingKey  = "cloudflare.sync_pending"
+	cloudflareSyncNextAtKey   = "cloudflare.sync_next_at"
+	cloudflareSourceModeKey   = "cloudflare.source_frontend_mode"
 	cloudflareAccountNameKey  = "cloudflare.account_name"
 	cloudflareZoneNameKey     = "cloudflare.zone_name"
 
-	cloudflareDefaultWorkerName = "gcms-frontend"
-	cloudflareModeWorkerAssets  = "worker_assets"
-	cloudflareModePages         = "pages"
-	cloudflareDefaultHTMLTTL    = 300
-	cloudflareAPITimeout        = 4 * time.Minute
-	cloudflareStaleAfter        = 3 * time.Minute
+	cloudflareDefaultWorkerName  = "gcms-frontend"
+	cloudflareModeWorkerAssets   = "worker_assets"
+	cloudflareModePages          = "pages"
+	cloudflareSourceModeRedirect = "redirect"
+	cloudflareSourceModeNoindex  = "noindex"
+	cloudflareSourceModeNone     = "none"
+	cloudflareSyncModeRealtime   = "realtime"
+	cloudflareSyncModeDaily      = "daily"
+	cloudflareDefaultSyncTime    = "03:00"
+	cloudflareDefaultHTMLTTL     = 300
+	cloudflareAPITimeout         = 4 * time.Minute
+	cloudflareStaleAfter         = 3 * time.Minute
+	cloudflareHistoryLimit       = 8
 )
 
 var cloudflareWorkerNameRE = regexp.MustCompile(`[^a-z0-9-]+`)
@@ -58,6 +70,11 @@ type CloudflareConfig struct {
 	OriginURL        string
 	HTMLCacheTTL     int
 	AutoSync         bool
+	SyncMode         string
+	SyncTime         string
+	SyncPending      bool
+	SyncNextAt       string
+	SourceMode       string
 	AccountName      string
 	ZoneName         string
 }
@@ -69,22 +86,43 @@ type CloudflareDomain struct {
 }
 
 type CloudflareStatus struct {
+	Status           string                    `json:"status"`
+	Step             string                    `json:"step"`
+	Message          string                    `json:"message"`
+	DeployMode       string                    `json:"deploy_mode"`
+	WorkerName       string                    `json:"worker_name"`
+	PagesProjectName string                    `json:"pages_project_name,omitempty"`
+	RoutePattern     string                    `json:"route_pattern"`
+	PrimaryDomain    string                    `json:"primary_domain,omitempty"`
+	Domains          string                    `json:"domains,omitempty"`
+	UpdatedAt        string                    `json:"updated_at"`
+	LastDeployAt     string                    `json:"last_deploy_at,omitempty"`
+	LastPurgeAt      string                    `json:"last_purge_at,omitempty"`
+	Configured       bool                      `json:"configured"`
+	TokenSet         bool                      `json:"token_set"`
+	AutoSync         bool                      `json:"auto_sync"`
+	SyncMode         string                    `json:"sync_mode"`
+	SyncTime         string                    `json:"sync_time"`
+	SyncPending      bool                      `json:"sync_pending"`
+	SyncNextAt       string                    `json:"sync_next_at,omitempty"`
+	Published        bool                      `json:"published"`
+	CanUnpublish     bool                      `json:"can_unpublish"`
+	CanPurge         bool                      `json:"can_purge"`
+	Running          bool                      `json:"running"`
+	History          []CloudflareStatusHistory `json:"history,omitempty"`
+}
+
+type CloudflareStatusHistory struct {
+	Action           string `json:"action"`
 	Status           string `json:"status"`
-	Step             string `json:"step"`
+	Step             string `json:"step,omitempty"`
 	Message          string `json:"message"`
-	DeployMode       string `json:"deploy_mode"`
-	WorkerName       string `json:"worker_name"`
+	DeployMode       string `json:"deploy_mode,omitempty"`
+	WorkerName       string `json:"worker_name,omitempty"`
 	PagesProjectName string `json:"pages_project_name,omitempty"`
-	RoutePattern     string `json:"route_pattern"`
 	PrimaryDomain    string `json:"primary_domain,omitempty"`
 	Domains          string `json:"domains,omitempty"`
-	UpdatedAt        string `json:"updated_at"`
-	LastDeployAt     string `json:"last_deploy_at,omitempty"`
-	LastPurgeAt      string `json:"last_purge_at,omitempty"`
-	Configured       bool   `json:"configured"`
-	TokenSet         bool   `json:"token_set"`
-	AutoSync         bool   `json:"auto_sync"`
-	Running          bool   `json:"running"`
+	At               string `json:"at"`
 }
 
 type CloudflareView struct {
@@ -101,6 +139,31 @@ type CloudflareView struct {
 	RedirectAliases  bool
 	DomainSummary    string
 	TokenFingerprint string
+	ProjectName      string
+	ProjectDefault   string
+	ProjectCustom    bool
+}
+
+type cloudflareClientView struct {
+	TokenSet         bool   `json:"token_set"`
+	Configured       bool   `json:"configured"`
+	PrimaryDomain    string `json:"primary_domain"`
+	DomainSummary    string `json:"domain_summary"`
+	PublicURL        string `json:"public_url"`
+	TokenFingerprint string `json:"token_fingerprint"`
+	ProjectName      string `json:"project_name"`
+	ProjectDefault   string `json:"project_default"`
+	ProjectCustom    bool   `json:"project_custom"`
+	DeployMode       string `json:"deploy_mode"`
+	SourceMode       string `json:"source_mode"`
+	AutoSync         bool   `json:"auto_sync"`
+	SyncMode         string `json:"sync_mode"`
+	SyncTime         string `json:"sync_time"`
+	SyncPending      bool   `json:"sync_pending"`
+	SyncNextAt       string `json:"sync_next_at,omitempty"`
+	CanUnpublish     bool   `json:"can_unpublish"`
+	CanPurge         bool   `json:"can_purge"`
+	Published        bool   `json:"published"`
 }
 
 type cloudflareDetectedTarget struct {
@@ -119,6 +182,10 @@ type cloudflareZone struct {
 	ID      string            `json:"id"`
 	Name    string            `json:"name"`
 	Account cloudflareAccount `json:"account"`
+}
+
+type cloudflareTokenVerifyResult struct {
+	Status string `json:"status"`
 }
 
 type cloudflareAPIResponse struct {
@@ -196,6 +263,67 @@ type cloudflareWorkerVersionResult struct {
 
 func cloudflareStatusPath() string {
 	return filepath.Join(upgradeRoot(), "run", "cloudflare-deploy.json")
+}
+
+func cloudflareStatusHistory(st *CloudflareStatus) []CloudflareStatusHistory {
+	if st == nil || len(st.History) == 0 {
+		return nil
+	}
+	history := append([]CloudflareStatusHistory(nil), st.History...)
+	if len(history) > cloudflareHistoryLimit {
+		history = history[:cloudflareHistoryLimit]
+	}
+	return history
+}
+
+func withCloudflareHistory(st CloudflareStatus, action string) CloudflareStatus {
+	prev := readCloudflareStatus()
+	st.History = appendCloudflareHistory(cloudflareStatusHistory(prev), cloudflareHistoryEntry(st, action))
+	return st
+}
+
+func appendCloudflareHistory(history []CloudflareStatusHistory, entry CloudflareStatusHistory) []CloudflareStatusHistory {
+	if strings.TrimSpace(entry.At) == "" {
+		entry.At = time.Now().UTC().Format(time.RFC3339)
+	}
+	out := make([]CloudflareStatusHistory, 0, min(len(history)+1, cloudflareHistoryLimit))
+	out = append(out, entry)
+	for _, item := range history {
+		if len(out) >= cloudflareHistoryLimit {
+			break
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+func cloudflareHistoryEntry(st CloudflareStatus, action string) CloudflareStatusHistory {
+	action = strings.TrimSpace(action)
+	if action == "" {
+		action = st.Step
+	}
+	at := st.UpdatedAt
+	if action == "deploy" && strings.TrimSpace(st.LastDeployAt) != "" {
+		at = st.LastDeployAt
+	}
+	if action == "purge" && strings.TrimSpace(st.LastPurgeAt) != "" {
+		at = st.LastPurgeAt
+	}
+	if strings.TrimSpace(at) == "" {
+		at = time.Now().UTC().Format(time.RFC3339)
+	}
+	return CloudflareStatusHistory{
+		Action:           action,
+		Status:           st.Status,
+		Step:             st.Step,
+		Message:          st.Message,
+		DeployMode:       st.DeployMode,
+		WorkerName:       st.WorkerName,
+		PagesProjectName: st.PagesProjectName,
+		PrimaryDomain:    st.PrimaryDomain,
+		Domains:          st.Domains,
+		At:               at,
+	}
 }
 
 func (cfg CloudflareConfig) tokenSet() bool {
@@ -338,9 +466,17 @@ func cloudflareStatusFailed(cfg CloudflareConfig, step, msg string) CloudflareSt
 	if strings.TrimSpace(msg) == "" {
 		msg = "Cloudflare 部署失败。"
 	}
-	return CloudflareStatus{
+	prev := readCloudflareStatus()
+	failedStep := strings.TrimSpace(step)
+	if failedStep == "" || failedStep == "failed" {
+		failedStep = strings.TrimSpace(prev.Step)
+		if failedStep == "" || failedStep == "done" {
+			failedStep = "queued"
+		}
+	}
+	st := CloudflareStatus{
 		Status:           "failed",
-		Step:             step,
+		Step:             failedStep,
 		Message:          msg,
 		DeployMode:       normalizeCloudflareDeployMode(cfg.DeployMode),
 		WorkerName:       cfg.WorkerName,
@@ -351,7 +487,12 @@ func cloudflareStatusFailed(cfg CloudflareConfig, step, msg string) CloudflareSt
 		Configured:       cfg.configured(),
 		TokenSet:         cfg.tokenSet(),
 		AutoSync:         cfg.AutoSync,
+		Published:        cloudflareStatusPublished(prev),
+		LastDeployAt:     prev.LastDeployAt,
+		LastPurgeAt:      prev.LastPurgeAt,
 	}
+	st.History = appendCloudflareHistory(cloudflareStatusHistory(prev), cloudflareHistoryEntry(st, "failed"))
+	return st
 }
 
 func normalizeCloudflareDeployMode(v string) string {
@@ -363,6 +504,61 @@ func normalizeCloudflareDeployMode(v string) string {
 		// 默认走 Worker Assets：一个 Worker 即可承载静态站，入口控制和缓存策略更统一。
 		return cloudflareModeWorkerAssets
 	}
+}
+
+func normalizeCloudflareSourceMode(v string) string {
+	switch strings.TrimSpace(v) {
+	case cloudflareSourceModeNoindex:
+		return cloudflareSourceModeNoindex
+	case cloudflareSourceModeNone:
+		return cloudflareSourceModeNone
+	default:
+		return cloudflareSourceModeRedirect
+	}
+}
+
+func normalizeCloudflareSyncMode(v string) string {
+	switch strings.TrimSpace(v) {
+	case cloudflareSyncModeDaily:
+		return cloudflareSyncModeDaily
+	default:
+		return cloudflareSyncModeRealtime
+	}
+}
+
+func normalizeCloudflareSyncTime(v string) string {
+	parts := strings.Split(strings.TrimSpace(v), ":")
+	if len(parts) < 2 {
+		return cloudflareDefaultSyncTime
+	}
+	hour, errH := strconv.Atoi(parts[0])
+	minute, errM := strconv.Atoi(parts[1])
+	if errH != nil || errM != nil || hour < 0 || hour > 23 || minute < 0 || minute > 59 {
+		return cloudflareDefaultSyncTime
+	}
+	return fmt.Sprintf("%02d:%02d", hour, minute)
+}
+
+func cloudflareNextDailySyncAt(now time.Time, syncTime string) time.Time {
+	syncTime = normalizeCloudflareSyncTime(syncTime)
+	parts := strings.Split(syncTime, ":")
+	hour, _ := strconv.Atoi(parts[0])
+	minute, _ := strconv.Atoi(parts[1])
+	localNow := now.In(time.Local)
+	next := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), hour, minute, 0, 0, time.Local)
+	if !next.After(localNow) {
+		next = next.Add(24 * time.Hour)
+	}
+	return next
+}
+
+func formHasValue(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeCloudflareWorkerName(v string) string {
@@ -384,6 +580,14 @@ func normalizeCloudflareWorkerName(v string) string {
 
 func normalizeCloudflarePagesProjectName(v string) string {
 	return normalizeCloudflareWorkerName(v)
+}
+
+func cloudflareDefaultProjectNameForHost(host string) string {
+	host = normalizeCloudflareDomainHost(host)
+	if host == "" {
+		return cloudflareDefaultWorkerName
+	}
+	return normalizeCloudflareWorkerName("gcms-" + strings.ReplaceAll(host, ".", "-"))
 }
 
 func normalizeCloudflareOrigin(v string) string {
@@ -571,6 +775,7 @@ func (s *Server) cloudflareConfig() CloudflareConfig {
 			}
 		}
 	}
+	autoSyncRaw := strings.TrimSpace(s.store.Setting(cloudflareAutoSyncKey))
 	return CloudflareConfig{
 		AccountID:        strings.TrimSpace(s.store.Setting(cloudflareAccountIDKey)),
 		APIToken:         strings.TrimSpace(s.store.Setting(cloudflareAPITokenKey)),
@@ -582,7 +787,12 @@ func (s *Server) cloudflareConfig() CloudflareConfig {
 		Domains:          domains,
 		OriginURL:        origin,
 		HTMLCacheTTL:     ttl,
-		AutoSync:         s.store.Setting(cloudflareAutoSyncKey) == "1",
+		AutoSync:         autoSyncRaw != "0",
+		SyncMode:         normalizeCloudflareSyncMode(s.store.Setting(cloudflareSyncModeKey)),
+		SyncTime:         normalizeCloudflareSyncTime(s.store.Setting(cloudflareSyncTimeKey)),
+		SyncPending:      s.store.Setting(cloudflareSyncPendingKey) == "1",
+		SyncNextAt:       strings.TrimSpace(s.store.Setting(cloudflareSyncNextAtKey)),
+		SourceMode:       normalizeCloudflareSourceMode(s.store.Setting(cloudflareSourceModeKey)),
 		AccountName:      strings.TrimSpace(s.store.Setting(cloudflareAccountNameKey)),
 		ZoneName:         strings.TrimSpace(s.store.Setting(cloudflareZoneNameKey)),
 	}
@@ -604,6 +814,14 @@ func (s *Server) cloudflareViewForRequest(r *http.Request) *CloudflareView {
 	view.Status.PrimaryDomain = view.Config.primaryHost()
 	view.Status.Domains = view.Config.publicDomainSummary()
 	view.Status.Configured = view.Config.configured()
+	view.Status.Published = cloudflareStatusPublished(view.Status)
+	view.Status.CanUnpublish = cloudflareCanUnpublish(view.Config, view.Status)
+	view.Status.CanPurge = cloudflareCanPurge(view.Config, view.Status)
+	view.Status.AutoSync = view.Config.AutoSync
+	view.Status.SyncMode = view.Config.SyncMode
+	view.Status.SyncTime = view.Config.SyncTime
+	view.Status.SyncPending = view.Config.SyncPending
+	view.Status.SyncNextAt = view.Config.SyncNextAt
 	view.Configured = view.Status.Configured
 	view.decorate()
 	return view
@@ -634,6 +852,7 @@ func readCloudflareStatus() *CloudflareStatus {
 		}
 	}
 	st.DeployMode = normalizeCloudflareDeployMode(st.DeployMode)
+	st.History = cloudflareStatusHistory(st)
 	if st.Status == "running" && cloudflareStatusStale(st) {
 		st.Status = "failed"
 		st.Step = "timeout"
@@ -656,6 +875,14 @@ func cloudflareStatusStale(st *CloudflareStatus) bool {
 }
 
 func writeCloudflareStatus(st CloudflareStatus) {
+	if st.History == nil {
+		if data, err := os.ReadFile(cloudflareStatusPath()); err == nil && len(data) > 0 {
+			var prev CloudflareStatus
+			if err := json.Unmarshal(data, &prev); err == nil {
+				st.History = cloudflareStatusHistory(&prev)
+			}
+		}
+	}
 	st.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	st.Running = st.Status == "running"
 	_ = os.MkdirAll(filepath.Dir(cloudflareStatusPath()), 0o755)
@@ -676,6 +903,13 @@ func (s *Server) cloudflareView() *CloudflareView {
 	st.Configured = cfg.configured()
 	st.TokenSet = cfg.tokenSet()
 	st.AutoSync = cfg.AutoSync
+	st.SyncMode = cfg.SyncMode
+	st.SyncTime = cfg.SyncTime
+	st.SyncPending = cfg.SyncPending
+	st.SyncNextAt = cfg.SyncNextAt
+	st.Published = cloudflareStatusPublished(st)
+	st.CanUnpublish = cloudflareCanUnpublish(cfg, st)
+	st.CanPurge = cloudflareCanPurge(cfg, st)
 	view := &CloudflareView{
 		Config:           cfg,
 		Status:           st,
@@ -687,6 +921,74 @@ func (s *Server) cloudflareView() *CloudflareView {
 	return view
 }
 
+func (s *Server) cloudflareClientViewForRequest(r *http.Request) cloudflareClientView {
+	return cloudflareClientViewFromView(s.cloudflareViewForRequest(r))
+}
+
+func (s *Server) cloudflareJSONState(r *http.Request) (*CloudflareStatus, cloudflareClientView) {
+	view := s.cloudflareViewForRequest(r)
+	return view.Status, cloudflareClientViewFromView(view)
+}
+
+func (s *Server) cloudflareJSONPayload(r *http.Request, ok bool, message string) map[string]any {
+	status, view := s.cloudflareJSONState(r)
+	return map[string]any{"ok": ok, "message": message, "status": status, "view": view}
+}
+
+func cloudflareClientViewFromView(view *CloudflareView) cloudflareClientView {
+	if view == nil {
+		return cloudflareClientView{}
+	}
+	cfg := view.Config
+	st := view.Status
+	published := cloudflareStatusPublished(st)
+	publicURL := ""
+	if published && view.PrimaryDomain != "" {
+		publicURL = "https://" + view.PrimaryDomain
+	}
+	return cloudflareClientView{
+		TokenSet:         view.TokenSet,
+		Configured:       view.Configured,
+		PrimaryDomain:    view.PrimaryDomain,
+		DomainSummary:    view.DomainSummary,
+		PublicURL:        publicURL,
+		TokenFingerprint: view.TokenFingerprint,
+		ProjectName:      view.ProjectName,
+		ProjectDefault:   view.ProjectDefault,
+		ProjectCustom:    view.ProjectCustom,
+		DeployMode:       normalizeCloudflareDeployMode(cfg.DeployMode),
+		SourceMode:       normalizeCloudflareSourceMode(cfg.SourceMode),
+		AutoSync:         cfg.AutoSync,
+		SyncMode:         normalizeCloudflareSyncMode(cfg.SyncMode),
+		SyncTime:         normalizeCloudflareSyncTime(cfg.SyncTime),
+		SyncPending:      cfg.SyncPending,
+		SyncNextAt:       cfg.SyncNextAt,
+		CanUnpublish:     cloudflareCanUnpublish(cfg, st),
+		CanPurge:         cloudflareCanPurge(cfg, st),
+		Published:        published,
+	}
+}
+
+func cloudflareStatusPublished(st *CloudflareStatus) bool {
+	if st == nil {
+		return false
+	}
+	if st.Published {
+		return true
+	}
+	return st.Status == "success" &&
+		strings.TrimSpace(st.LastDeployAt) != "" &&
+		!strings.Contains(st.Message, "取消")
+}
+
+func cloudflareCanUnpublish(cfg CloudflareConfig, st *CloudflareStatus) bool {
+	return cfg.configured() && cloudflareStatusPublished(st) && (st == nil || !st.Running)
+}
+
+func cloudflareCanPurge(cfg CloudflareConfig, st *CloudflareStatus) bool {
+	return cfg.tokenSet() && strings.TrimSpace(cfg.ZoneID) != "" && cloudflareStatusPublished(st) && (st == nil || !st.Running)
+}
+
 func (view *CloudflareView) decorate() {
 	if view == nil {
 		return
@@ -695,6 +997,19 @@ func (view *CloudflareView) decorate() {
 	view.LikelyZoneName = cloudflareLikelyZoneName(view.RouteHost)
 	view.PrimaryDomain = view.Config.primaryHost()
 	view.DomainSummary = view.Config.publicDomainSummary()
+	view.ProjectDefault = cloudflareDefaultProjectNameForHost(view.PrimaryDomain)
+	view.ProjectName = view.Config.WorkerName
+	if view.Config.usingPages() {
+		view.ProjectName = view.Config.PagesProjectName
+	}
+	if strings.TrimSpace(view.ProjectName) == "" {
+		view.ProjectName = view.ProjectDefault
+	}
+	if !view.TokenSet && view.PrimaryDomain == "" {
+		view.ProjectDefault = ""
+		view.ProjectName = ""
+	}
+	view.ProjectCustom = view.ProjectName != "" && view.ProjectName != cloudflareDefaultWorkerName && view.ProjectName != view.ProjectDefault
 	aliases := []string{}
 	for _, domain := range view.Config.publicDomains() {
 		if domain.Primary {
@@ -769,10 +1084,24 @@ func (s *Server) saveCloudflareConfigFromRequest(r *http.Request) (CloudflareCon
 	if cfg.ZoneID == "" || cfg.ZoneID != prevZoneID {
 		cfg.ZoneName = ""
 	}
-	if token := strings.TrimSpace(r.FormValue("api_token")); token != "" {
-		cfg.APIToken = token
+	submittedToken := strings.TrimSpace(r.FormValue("api_token"))
+	tokenToVerify := submittedToken
+	if tokenToVerify == "" && r.FormValue("verify_token") == "1" {
+		tokenToVerify = strings.TrimSpace(cfg.APIToken)
 	}
-	cfg.DeployMode = normalizeCloudflareDeployMode(r.FormValue("deploy_mode"))
+	if tokenToVerify != "" {
+		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+		defer cancel()
+		if err := verifyCloudflareAPIToken(ctx, tokenToVerify); err != nil {
+			return cfg, err
+		}
+	}
+	if submittedToken != "" {
+		cfg.APIToken = submittedToken
+	}
+	if _, ok := r.Form["deploy_mode"]; ok {
+		cfg.DeployMode = normalizeCloudflareDeployMode(r.FormValue("deploy_mode"))
+	}
 	cfg.WorkerName = normalizeCloudflareWorkerName(r.FormValue("worker_name"))
 	cfg.PagesProjectName = normalizeCloudflarePagesProjectName(r.FormValue("pages_project_name"))
 	if _, ok := r.Form["primary_domain"]; ok {
@@ -793,10 +1122,26 @@ func (s *Server) saveCloudflareConfigFromRequest(r *http.Request) (CloudflareCon
 			cfg.Domains = nil
 		}
 	}
+	if _, ok := r.Form["project_custom"]; ok && r.FormValue("project_custom") != "1" {
+		project := cloudflareDefaultProjectNameForHost(cfg.primaryHost())
+		cfg.WorkerName = project
+		cfg.PagesProjectName = project
+	}
+	if _, ok := r.Form["source_frontend_mode"]; ok {
+		cfg.SourceMode = normalizeCloudflareSourceMode(r.FormValue("source_frontend_mode"))
+	}
 	if raw := strings.TrimSpace(r.FormValue("origin_url")); raw != "" || r.FormValue("deploy") != "1" {
 		cfg.OriginURL = normalizeCloudflareOrigin(raw)
 	}
-	cfg.AutoSync = r.FormValue("auto_sync") == "1"
+	if values, ok := r.Form["auto_sync"]; ok {
+		cfg.AutoSync = formHasValue(values, "1")
+	}
+	if _, ok := r.Form["sync_mode"]; ok {
+		cfg.SyncMode = normalizeCloudflareSyncMode(r.FormValue("sync_mode"))
+	}
+	if _, ok := r.Form["sync_time"]; ok {
+		cfg.SyncTime = normalizeCloudflareSyncTime(r.FormValue("sync_time"))
+	}
 	if _, ok := r.Form["html_cache_ttl"]; ok {
 		ttl, err := strconv.Atoi(strings.TrimSpace(r.FormValue("html_cache_ttl")))
 		if err != nil {
@@ -824,6 +1169,9 @@ func (s *Server) saveCloudflareConfigFromRequest(r *http.Request) (CloudflareCon
 		cloudflareOriginURLKey:    cfg.OriginURL,
 		cloudflareHTMLTTLKey:      strconv.Itoa(cfg.HTMLCacheTTL),
 		cloudflareAutoSyncKey:     boolSetting(cfg.AutoSync),
+		cloudflareSyncModeKey:     normalizeCloudflareSyncMode(cfg.SyncMode),
+		cloudflareSyncTimeKey:     normalizeCloudflareSyncTime(cfg.SyncTime),
+		cloudflareSourceModeKey:   normalizeCloudflareSourceMode(cfg.SourceMode),
 	}
 	if strings.TrimSpace(r.FormValue("api_token")) != "" {
 		settings[cloudflareAPITokenKey] = cfg.APIToken
@@ -851,7 +1199,7 @@ func (s *Server) adminSaveCloudflare(w http.ResponseWriter, r *http.Request) {
 	cfg, err := s.saveCloudflareConfigFromRequest(r)
 	if err != nil {
 		if jsonReq {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": err.Error(), "status": readCloudflareStatus()})
+			writeJSON(w, http.StatusBadRequest, s.cloudflareJSONPayload(r, false, err.Error()))
 			return
 		}
 		s.showSettings(w, r, "cloudflare", "", err.Error())
@@ -860,7 +1208,7 @@ func (s *Server) adminSaveCloudflare(w http.ResponseWriter, r *http.Request) {
 	if r.FormValue("deploy") == "1" {
 		if err := cfg.validateDeploy(); err != nil {
 			if jsonReq {
-				writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": err.Error(), "status": readCloudflareStatus()})
+				writeJSON(w, http.StatusBadRequest, s.cloudflareJSONPayload(r, false, err.Error()))
 				return
 			}
 			s.showSettings(w, r, "cloudflare", "", err.Error())
@@ -868,24 +1216,69 @@ func (s *Server) adminSaveCloudflare(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := s.queueCloudflareDeploy(cfg); err != nil {
 			if jsonReq {
-				writeJSON(w, http.StatusConflict, map[string]any{"ok": false, "message": err.Error(), "status": readCloudflareStatus()})
+				writeJSON(w, http.StatusConflict, s.cloudflareJSONPayload(r, false, err.Error()))
 				return
 			}
 			s.showSettings(w, r, "cloudflare", "", err.Error())
 			return
 		}
 		if jsonReq {
-			writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "message": "Cloudflare Token 已保存，部署任务已启动。", "status": readCloudflareStatus(), "view": s.cloudflareViewForRequest(r)})
+			writeJSON(w, http.StatusAccepted, s.cloudflareJSONPayload(r, true, "Cloudflare 配置已保存，部署任务已启动。"))
 			return
 		}
-		s.showSettings(w, r, "cloudflare", "Cloudflare Token 已保存，部署任务已启动。", "")
+		s.showSettings(w, r, "cloudflare", "Cloudflare 配置已保存，部署任务已启动。", "")
 		return
 	}
 	if jsonReq {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "Cloudflare 部署配置已保存。", "status": readCloudflareStatus(), "view": s.cloudflareViewForRequest(r)})
+		writeJSON(w, http.StatusOK, s.cloudflareJSONPayload(r, true, "Cloudflare 部署配置已保存。"))
 		return
 	}
 	s.showSettings(w, r, "cloudflare", "Cloudflare 部署配置已保存。", "")
+}
+
+func (s *Server) adminSaveCloudflareSync(w http.ResponseWriter, r *http.Request) {
+	jsonReq := wantsJSON(r)
+	if _, ok := s.checkCSRF(w, r); !ok {
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		if jsonReq {
+			writeJSON(w, http.StatusBadRequest, s.cloudflareJSONPayload(r, false, err.Error()))
+			return
+		}
+		s.showSettings(w, r, "cloudflare", "", err.Error())
+		return
+	}
+	cfg := s.cloudflareConfigForRequest(r)
+	cfg.AutoSync = true
+	cfg.SyncMode = normalizeCloudflareSyncMode(r.FormValue("sync_mode"))
+	cfg.SyncTime = normalizeCloudflareSyncTime(r.FormValue("sync_time"))
+	settings := map[string]string{
+		cloudflareAutoSyncKey: boolSetting(cfg.AutoSync),
+		cloudflareSyncModeKey: cfg.SyncMode,
+		cloudflareSyncTimeKey: cfg.SyncTime,
+	}
+	for k, v := range settings {
+		if err := s.store.SetSetting(k, v); err != nil {
+			if jsonReq {
+				writeJSON(w, http.StatusInternalServerError, s.cloudflareJSONPayload(r, false, err.Error()))
+				return
+			}
+			s.showSettings(w, r, "cloudflare", "", err.Error())
+			return
+		}
+	}
+	if cfg.SyncPending && cfg.configured() && cfg.SyncMode == cloudflareSyncModeDaily {
+		s.armCloudflareDailySync(cfg, "已有内容变化，将按每天同步时间发布静态站。")
+	}
+	if cfg.SyncPending && cfg.configured() && cfg.SyncMode == cloudflareSyncModeRealtime {
+		s.scheduleCloudflareSync("已有内容变化，Cloudflare 静态站将自动重新发布。")
+	}
+	if jsonReq {
+		writeJSON(w, http.StatusOK, s.cloudflareJSONPayload(r, true, "内容同步规则已保存。"))
+		return
+	}
+	s.showSettings(w, r, "cloudflare", "内容同步规则已保存。", "")
 }
 
 func (s *Server) queueCloudflareDeploy(cfg CloudflareConfig) error {
@@ -893,6 +1286,7 @@ func (s *Server) queueCloudflareDeploy(cfg CloudflareConfig) error {
 	if st.Running {
 		return errors.New("已有 Cloudflare 部署任务正在运行。")
 	}
+	published := cloudflareStatusPublished(st)
 	writeCloudflareStatus(CloudflareStatus{
 		Status:           "running",
 		Step:             "queued",
@@ -906,6 +1300,7 @@ func (s *Server) queueCloudflareDeploy(cfg CloudflareConfig) error {
 		Configured:       cfg.configured(),
 		TokenSet:         cfg.tokenSet(),
 		AutoSync:         cfg.AutoSync,
+		Published:        published,
 	})
 	go func() {
 		defer func() {
@@ -927,6 +1322,7 @@ func (s *Server) queueCloudflareUnpublish(cfg CloudflareConfig) error {
 	if st.Running {
 		return errors.New("已有 Cloudflare 部署任务正在运行。")
 	}
+	published := cloudflareStatusPublished(st)
 	writeCloudflareStatus(CloudflareStatus{
 		Status:           "running",
 		Step:             "route",
@@ -940,6 +1336,7 @@ func (s *Server) queueCloudflareUnpublish(cfg CloudflareConfig) error {
 		Configured:       cfg.configured(),
 		TokenSet:         cfg.tokenSet(),
 		AutoSync:         cfg.AutoSync,
+		Published:        published,
 	})
 	go func() {
 		defer func() {
@@ -1225,7 +1622,7 @@ func (s *Server) adminStartCloudflareDeploy(w http.ResponseWriter, r *http.Reque
 	cfg := s.cloudflareConfigForRequest(r)
 	if err := cfg.validateDeploy(); err != nil {
 		if jsonReq {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": err.Error(), "status": readCloudflareStatus()})
+			writeJSON(w, http.StatusBadRequest, s.cloudflareJSONPayload(r, false, err.Error()))
 			return
 		}
 		s.showSettings(w, r, "cloudflare", "", err.Error())
@@ -1233,14 +1630,14 @@ func (s *Server) adminStartCloudflareDeploy(w http.ResponseWriter, r *http.Reque
 	}
 	if err := s.queueCloudflareDeploy(cfg); err != nil {
 		if jsonReq {
-			writeJSON(w, http.StatusConflict, map[string]any{"ok": false, "message": err.Error(), "status": readCloudflareStatus()})
+			writeJSON(w, http.StatusConflict, s.cloudflareJSONPayload(r, false, err.Error()))
 			return
 		}
 		s.showSettings(w, r, "cloudflare", "", err.Error())
 		return
 	}
 	if jsonReq {
-		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "message": "Cloudflare 部署任务已启动。", "status": readCloudflareStatus()})
+		writeJSON(w, http.StatusAccepted, s.cloudflareJSONPayload(r, true, "Cloudflare 部署任务已启动。"))
 		return
 	}
 	s.showSettings(w, r, "cloudflare", "Cloudflare 部署任务已启动，请稍后刷新状态。", "")
@@ -1254,7 +1651,7 @@ func (s *Server) adminStartCloudflareUnpublish(w http.ResponseWriter, r *http.Re
 	cfg := s.cloudflareConfigForRequest(r)
 	if err := cfg.validateDeploy(); err != nil {
 		if jsonReq {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": err.Error(), "status": readCloudflareStatus()})
+			writeJSON(w, http.StatusBadRequest, s.cloudflareJSONPayload(r, false, err.Error()))
 			return
 		}
 		s.showSettings(w, r, "cloudflare", "", err.Error())
@@ -1262,14 +1659,14 @@ func (s *Server) adminStartCloudflareUnpublish(w http.ResponseWriter, r *http.Re
 	}
 	if err := s.queueCloudflareUnpublish(cfg); err != nil {
 		if jsonReq {
-			writeJSON(w, http.StatusConflict, map[string]any{"ok": false, "message": err.Error(), "status": readCloudflareStatus()})
+			writeJSON(w, http.StatusConflict, s.cloudflareJSONPayload(r, false, err.Error()))
 			return
 		}
 		s.showSettings(w, r, "cloudflare", "", err.Error())
 		return
 	}
 	if jsonReq {
-		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "message": "正在取消 Cloudflare 公开部署。", "status": readCloudflareStatus()})
+		writeJSON(w, http.StatusAccepted, s.cloudflareJSONPayload(r, true, "正在取消 Cloudflare 公开部署。"))
 		return
 	}
 	s.showSettings(w, r, "cloudflare", "正在取消 Cloudflare 公开部署。", "")
@@ -1283,7 +1680,7 @@ func (s *Server) adminCloudflarePurge(w http.ResponseWriter, r *http.Request) {
 	cfg := s.cloudflareConfig()
 	if !cfg.tokenSet() {
 		if jsonReq {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "清除缓存需要先粘贴 Cloudflare API Token。", "status": readCloudflareStatus()})
+			writeJSON(w, http.StatusBadRequest, s.cloudflareJSONPayload(r, false, "清除缓存需要先粘贴 Cloudflare API Token。"))
 			return
 		}
 		s.showSettings(w, r, "cloudflare", "", "清除缓存需要先粘贴 Cloudflare API Token。")
@@ -1293,14 +1690,14 @@ func (s *Server) adminCloudflarePurge(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	if err := s.purgeCloudflareCache(ctx, cfg, "手动清除 Cloudflare 缓存完成。"); err != nil {
 		if jsonReq {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": err.Error(), "status": readCloudflareStatus()})
+			writeJSON(w, http.StatusBadRequest, s.cloudflareJSONPayload(r, false, err.Error()))
 			return
 		}
 		s.showSettings(w, r, "cloudflare", "", err.Error())
 		return
 	}
 	if jsonReq {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "Cloudflare 缓存已清除。", "status": readCloudflareStatus()})
+		writeJSON(w, http.StatusOK, s.cloudflareJSONPayload(r, true, "Cloudflare 缓存已清除。"))
 		return
 	}
 	s.showSettings(w, r, "cloudflare", "Cloudflare 缓存已清除。", "")
@@ -1311,33 +1708,57 @@ func (s *Server) adminCloudflareReset(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.checkCSRF(w, r); !ok {
 		return
 	}
-	for _, key := range []string{
-		cloudflareAPITokenKey,
-		cloudflareRoutePatternKey,
-		cloudflareDomainsKey,
-		cloudflareAccountIDKey,
-		cloudflareAccountNameKey,
-		cloudflareZoneIDKey,
-		cloudflareZoneNameKey,
-	} {
-		if err := s.store.SetSetting(key, ""); err != nil {
-			if jsonReq {
-				writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "message": err.Error(), "status": readCloudflareStatus()})
-				return
-			}
-			s.showSettings(w, r, "cloudflare", "", err.Error())
+	if err := s.clearCloudflareBinding(); err != nil {
+		if jsonReq {
+			writeJSON(w, http.StatusInternalServerError, s.cloudflareJSONPayload(r, false, err.Error()))
 			return
 		}
+		s.showSettings(w, r, "cloudflare", "", err.Error())
+		return
 	}
-	writeCloudflareStatus(CloudflareStatus{Status: "idle", Step: "", Message: "Cloudflare 绑定已清空。"})
+	writeCloudflareStatus(CloudflareStatus{Status: "idle", Step: "", Message: "Cloudflare 绑定已清空。", History: []CloudflareStatusHistory{}})
 	if jsonReq {
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "Cloudflare 绑定已清空。", "status": readCloudflareStatus()})
+		writeJSON(w, http.StatusOK, s.cloudflareJSONPayload(r, true, "Cloudflare 绑定已清空。"))
 		return
 	}
 	s.showSettings(w, r, "cloudflare", "Cloudflare 绑定已清空。", "")
 }
 
+func cloudflareBindingSettingKeys() []string {
+	return []string{
+		cloudflareAPITokenKey,
+		cloudflareDeployModeKey,
+		cloudflareWorkerNameKey,
+		cloudflarePagesProjectKey,
+		cloudflareRoutePatternKey,
+		cloudflareDomainsKey,
+		cloudflareSourceModeKey,
+		cloudflareAccountIDKey,
+		cloudflareAccountNameKey,
+		cloudflareZoneIDKey,
+		cloudflareZoneNameKey,
+		cloudflareAutoSyncKey,
+		cloudflareSyncModeKey,
+		cloudflareSyncTimeKey,
+		cloudflareSyncPendingKey,
+		cloudflareSyncNextAtKey,
+	}
+}
+
+func (s *Server) clearCloudflareBinding() error {
+	s.stopCloudflareTimer()
+	for _, key := range cloudflareBindingSettingKeys() {
+		if err := s.store.SetSetting(key, ""); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Server) deployCloudflare(ctx context.Context, cfg CloudflareConfig) error {
+	initialStatus := readCloudflareStatus()
+	wasPublished := cloudflareStatusPublished(initialStatus)
+	lastDeployAt := initialStatus.LastDeployAt
 	setStep := func(step, msg string) {
 		writeCloudflareStatus(CloudflareStatus{
 			Status:           "running",
@@ -1352,6 +1773,8 @@ func (s *Server) deployCloudflare(ctx context.Context, cfg CloudflareConfig) err
 			Configured:       cfg.configured(),
 			TokenSet:         cfg.tokenSet(),
 			AutoSync:         cfg.AutoSync,
+			Published:        wasPublished,
+			LastDeployAt:     lastDeployAt,
 		})
 	}
 	lastPurgeAt := ""
@@ -1380,7 +1803,8 @@ func (s *Server) deployCloudflare(ctx context.Context, cfg CloudflareConfig) err
 			lastPurgeAt = time.Now().UTC().Format(time.RFC3339)
 		}
 		now := time.Now().UTC().Format(time.RFC3339)
-		writeCloudflareStatus(CloudflareStatus{
+		s.clearCloudflareSyncPending()
+		writeCloudflareStatus(withCloudflareHistory(CloudflareStatus{
 			Status:           "success",
 			Step:             "done",
 			Message:          fmt.Sprintf("Cloudflare Pages 静态站已部署：%d 个文件已上传，项目 %s 已发布。", exported.Count, cfg.PagesProjectName),
@@ -1396,7 +1820,8 @@ func (s *Server) deployCloudflare(ctx context.Context, cfg CloudflareConfig) err
 			Configured:       cfg.configured(),
 			TokenSet:         cfg.tokenSet(),
 			AutoSync:         cfg.AutoSync,
-		})
+			Published:        true,
+		}, "deploy"))
 		return nil
 	}
 
@@ -1425,7 +1850,8 @@ func (s *Server) deployCloudflare(ctx context.Context, cfg CloudflareConfig) err
 		lastPurgeAt = time.Now().UTC().Format(time.RFC3339)
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	writeCloudflareStatus(CloudflareStatus{
+	s.clearCloudflareSyncPending()
+	writeCloudflareStatus(withCloudflareHistory(CloudflareStatus{
 		Status:           "success",
 		Step:             "done",
 		Message:          fmt.Sprintf("Cloudflare 静态站已部署：%d 个文件已上传，前台由 Worker Assets 托管。", exported.Count),
@@ -1441,7 +1867,8 @@ func (s *Server) deployCloudflare(ctx context.Context, cfg CloudflareConfig) err
 		Configured:       cfg.configured(),
 		TokenSet:         cfg.tokenSet(),
 		AutoSync:         cfg.AutoSync,
-	})
+		Published:        true,
+	}, "deploy"))
 	return nil
 }
 
@@ -1453,12 +1880,20 @@ func (s *Server) scheduleCloudflareSync(reason string) {
 	if strings.TrimSpace(reason) == "" {
 		reason = "内容已更新，Cloudflare 静态站将自动重新发布。"
 	}
+	if normalizeCloudflareSyncMode(cfg.SyncMode) == cloudflareSyncModeDaily {
+		s.queueCloudflareDailySync(cfg, reason)
+		return
+	}
+	next := time.Now().Add(25 * time.Second)
+	_ = s.store.SetSetting(cloudflareSyncPendingKey, "1")
+	_ = s.store.SetSetting(cloudflareSyncNextAtKey, next.UTC().Format(time.RFC3339))
 	s.cloudflareMu.Lock()
 	if s.cloudflareTimer != nil {
 		s.cloudflareTimer.Stop()
 	}
 	msg := reason
 	s.cloudflareTimer = time.AfterFunc(25*time.Second, func() {
+		prev := readCloudflareStatus()
 		writeCloudflareStatus(CloudflareStatus{
 			Status:           "running",
 			Step:             "queued",
@@ -1472,6 +1907,12 @@ func (s *Server) scheduleCloudflareSync(reason string) {
 			Configured:       cfg.configured(),
 			TokenSet:         cfg.tokenSet(),
 			AutoSync:         cfg.AutoSync,
+			SyncMode:         cfg.SyncMode,
+			SyncTime:         cfg.SyncTime,
+			SyncPending:      true,
+			SyncNextAt:       next.UTC().Format(time.RFC3339),
+			Published:        cloudflareStatusPublished(prev),
+			LastDeployAt:     prev.LastDeployAt,
 		})
 		ctx, cancel := context.WithTimeout(context.Background(), cloudflareAPITimeout)
 		defer cancel()
@@ -1482,7 +1923,102 @@ func (s *Server) scheduleCloudflareSync(reason string) {
 	s.cloudflareMu.Unlock()
 }
 
+func (s *Server) stopCloudflareTimer() {
+	s.cloudflareMu.Lock()
+	if s.cloudflareTimer != nil {
+		s.cloudflareTimer.Stop()
+		s.cloudflareTimer = nil
+	}
+	s.cloudflareMu.Unlock()
+}
+
+func (s *Server) queueCloudflareDailySync(cfg CloudflareConfig, reason string) {
+	next := cloudflareNextDailySyncAt(time.Now(), cfg.SyncTime)
+	_ = s.store.SetSetting(cloudflareSyncPendingKey, "1")
+	_ = s.store.SetSetting(cloudflareSyncNextAtKey, next.UTC().Format(time.RFC3339))
+	s.armCloudflareDailySyncAt(cfg, reason, next)
+}
+
+func (s *Server) armCloudflareDailySync(cfg CloudflareConfig, reason string) {
+	next := cloudflareNextDailySyncAt(time.Now(), cfg.SyncTime)
+	_ = s.store.SetSetting(cloudflareSyncNextAtKey, next.UTC().Format(time.RFC3339))
+	s.armCloudflareDailySyncAt(cfg, reason, next)
+}
+
+func (s *Server) armCloudflareDailySyncAt(cfg CloudflareConfig, reason string, next time.Time) {
+	if strings.TrimSpace(reason) == "" {
+		reason = "有内容变化，正在按每天同步规则重新发布 Cloudflare 静态站。"
+	}
+	delay := time.Until(next)
+	if delay < time.Second {
+		delay = time.Second
+	}
+	s.cloudflareMu.Lock()
+	if s.cloudflareTimer != nil {
+		s.cloudflareTimer.Stop()
+	}
+	msg := reason
+	s.cloudflareTimer = time.AfterFunc(delay, func() {
+		s.runCloudflareDailySync(msg)
+	})
+	s.cloudflareMu.Unlock()
+}
+
+func (s *Server) runCloudflareDailySync(reason string) {
+	cfg := s.cloudflareConfig()
+	if !cfg.AutoSync || !cfg.configured() || normalizeCloudflareSyncMode(cfg.SyncMode) != cloudflareSyncModeDaily || !cfg.SyncPending {
+		return
+	}
+	prev := readCloudflareStatus()
+	if prev.Running {
+		s.queueCloudflareDailySync(cfg, reason)
+		return
+	}
+	if strings.TrimSpace(reason) == "" {
+		reason = "有内容变化，正在按每天同步规则重新发布 Cloudflare 静态站。"
+	}
+	writeCloudflareStatus(CloudflareStatus{
+		Status:           "running",
+		Step:             "queued",
+		Message:          reason,
+		DeployMode:       cfg.DeployMode,
+		WorkerName:       cfg.WorkerName,
+		PagesProjectName: cfg.PagesProjectName,
+		RoutePattern:     cfg.RoutePattern,
+		PrimaryDomain:    cfg.primaryHost(),
+		Domains:          cfg.publicDomainSummary(),
+		Configured:       cfg.configured(),
+		TokenSet:         cfg.tokenSet(),
+		AutoSync:         cfg.AutoSync,
+		SyncMode:         cfg.SyncMode,
+		SyncTime:         cfg.SyncTime,
+		SyncPending:      true,
+		SyncNextAt:       cfg.SyncNextAt,
+		Published:        cloudflareStatusPublished(prev),
+		LastDeployAt:     prev.LastDeployAt,
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), cloudflareAPITimeout)
+	defer cancel()
+	if err := s.deployCloudflare(ctx, cfg); err != nil {
+		writeCloudflareStatus(cloudflareStatusFailed(cfg, "failed", err.Error()))
+		s.queueCloudflareDailySync(cfg, reason)
+	}
+}
+
+func (s *Server) clearCloudflareSyncPending() {
+	_ = s.store.SetSetting(cloudflareSyncPendingKey, "")
+	_ = s.store.SetSetting(cloudflareSyncNextAtKey, "")
+}
+
+func (s *Server) resumeCloudflareSync() {
+	cfg := s.cloudflareConfig()
+	if cfg.AutoSync && cfg.configured() && cfg.SyncPending && normalizeCloudflareSyncMode(cfg.SyncMode) == cloudflareSyncModeDaily {
+		s.armCloudflareDailySync(cfg, "已有内容变化，将按每天同步时间发布静态站。")
+	}
+}
+
 func (s *Server) purgeCloudflareCache(ctx context.Context, cfg CloudflareConfig, message string) error {
+	prev := readCloudflareStatus()
 	var err error
 	cfg, err = s.prepareCloudflareAPIConfig(ctx, cfg)
 	if err != nil {
@@ -1495,7 +2031,7 @@ func (s *Server) purgeCloudflareCache(ctx context.Context, cfg CloudflareConfig,
 		return fmt.Errorf("清理 Cloudflare 缓存失败：%w", err)
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	writeCloudflareStatus(CloudflareStatus{
+	writeCloudflareStatus(withCloudflareHistory(CloudflareStatus{
 		Status:           "success",
 		Step:             "purge",
 		Message:          message,
@@ -1505,11 +2041,13 @@ func (s *Server) purgeCloudflareCache(ctx context.Context, cfg CloudflareConfig,
 		RoutePattern:     cfg.RoutePattern,
 		PrimaryDomain:    cfg.primaryHost(),
 		Domains:          cfg.publicDomainSummary(),
+		LastDeployAt:     prev.LastDeployAt,
 		LastPurgeAt:      now,
 		Configured:       cfg.configured(),
 		TokenSet:         cfg.tokenSet(),
 		AutoSync:         cfg.AutoSync,
-	})
+		Published:        cloudflareStatusPublished(prev),
+	}, "purge"))
 	return nil
 }
 
@@ -1536,7 +2074,7 @@ func (s *Server) unpublishCloudflare(ctx context.Context, cfg CloudflareConfig) 
 		lastPurgeAt = time.Now().UTC().Format(time.RFC3339)
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	writeCloudflareStatus(CloudflareStatus{
+	writeCloudflareStatus(withCloudflareHistory(CloudflareStatus{
 		Status:           "success",
 		Step:             "done",
 		Message:          "Cloudflare 公开入口已取消；项目和静态资源仍保留在 Cloudflare，DNS 未被删除。",
@@ -1547,12 +2085,12 @@ func (s *Server) unpublishCloudflare(ctx context.Context, cfg CloudflareConfig) 
 		PrimaryDomain:    cfg.primaryHost(),
 		Domains:          cfg.publicDomainSummary(),
 		UpdatedAt:        now,
-		LastDeployAt:     now,
 		LastPurgeAt:      lastPurgeAt,
 		Configured:       cfg.configured(),
 		TokenSet:         cfg.tokenSet(),
 		AutoSync:         cfg.AutoSync,
-	})
+		Published:        false,
+	}, "unpublish"))
 	return nil
 }
 
@@ -2324,6 +2862,25 @@ func purgeCloudflareEverything(ctx context.Context, cfg CloudflareConfig) error 
 	return nil
 }
 
+var verifyCloudflareAPIToken = verifyCloudflareAPITokenLive
+
+func verifyCloudflareAPITokenLive(ctx context.Context, token string) error {
+	result, err := cloudflareAPIRequest(ctx, token, http.MethodGet, "/user/tokens/verify", nil, "")
+	if err != nil {
+		return fmt.Errorf("Cloudflare Token 验证失败：请确认 Token 已复制完整、未被删除，并且仍处于 active 状态。原始错误：%w", err)
+	}
+	var verified cloudflareTokenVerifyResult
+	if len(result) > 0 {
+		if err := json.Unmarshal(result, &verified); err != nil {
+			return fmt.Errorf("Cloudflare Token 验证结果无法解析：%w", err)
+		}
+	}
+	if !strings.EqualFold(strings.TrimSpace(verified.Status), "active") {
+		return fmt.Errorf("Cloudflare Token 验证失败：当前状态为 %q，请重新获取 active 状态的授权 Token。", strings.TrimSpace(verified.Status))
+	}
+	return nil
+}
+
 func cloudflareAPIRequest(ctx context.Context, token, method, path string, body io.Reader, contentType string) (json.RawMessage, error) {
 	req, err := http.NewRequestWithContext(ctx, method, "https://api.cloudflare.com/client/v4"+path, body)
 	if err != nil {
@@ -2438,9 +2995,17 @@ func cloudflareWorkerScript() string {
 func cloudflareWorkerScriptForConfig(cfg CloudflareConfig) string {
 	primaryJSON, _ := json.Marshal(cfg.primaryHost())
 	redirectsJSON, _ := json.Marshal(cfg.redirectHosts())
+	publicHosts := make([]string, 0, len(cfg.publicDomains()))
+	for _, domain := range cfg.publicDomains() {
+		if domain.Host != "" {
+			publicHosts = append(publicHosts, domain.Host)
+		}
+	}
+	publicHostsJSON, _ := json.Marshal(publicHosts)
 	return fmt.Sprintf(`const BLOCKED_PREFIXES = ["/admin", "/api/admin", "/preview"];
 const PRIMARY_HOST = %s;
 const REDIRECT_HOSTS = new Set(%s);
+const PUBLIC_HOSTS = new Set(%s);
 
 function blocked(pathname) {
   return BLOCKED_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(prefix + "/"));
@@ -2448,7 +3013,10 @@ function blocked(pathname) {
 
 function redirectTarget(url) {
   const host = url.hostname.toLowerCase();
-  if (!PRIMARY_HOST || !REDIRECT_HOSTS.has(host) || host === PRIMARY_HOST) {
+  if (!PRIMARY_HOST || host === PRIMARY_HOST) {
+    return null;
+  }
+  if (!REDIRECT_HOSTS.has(host) && PUBLIC_HOSTS.has(host)) {
     return null;
   }
   const next = new URL(url.toString());
@@ -2506,5 +3074,5 @@ export default {
     return out;
   },
 };
-`, string(primaryJSON), string(redirectsJSON))
+`, string(primaryJSON), string(redirectsJSON), string(publicHostsJSON))
 }
