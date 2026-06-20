@@ -911,13 +911,13 @@ func (s *Server) cloudflareView() *CloudflareView {
 	st.CanUnpublish = cloudflareCanUnpublish(cfg, st)
 	st.CanPurge = cloudflareCanPurge(cfg, st)
 	view := &CloudflareView{
-		Config:           cfg,
-		Status:           st,
-		TokenSet:         cfg.tokenSet(),
-		Configured:       cfg.configured(),
-		TokenTemplateURL: cloudflareAPITokenTemplateURL(),
+		Config:     cfg,
+		Status:     st,
+		TokenSet:   cfg.tokenSet(),
+		Configured: cfg.configured(),
 	}
 	view.decorate()
+	view.TokenTemplateURL = cloudflareAPITokenTemplateURL(view.ProjectName)
 	return view
 }
 
@@ -1040,7 +1040,9 @@ func cloudflareTokenFingerprint(token string) string {
 	return token[:4] + "_****" + token[len(token)-6:]
 }
 
-func cloudflareAPITokenTemplateURL() string {
+const cloudflareDefaultAPITokenName = "GCMS Cloudflare Deploy"
+
+func cloudflareAPITokenTemplateURL(tokenName string) string {
 	permissions := []map[string]string{
 		{"key": "workers_scripts", "type": "edit"},
 		{"key": "workers_routes", "type": "edit"},
@@ -1053,7 +1055,11 @@ func cloudflareAPITokenTemplateURL() string {
 	raw, _ := json.Marshal(permissions)
 	u := url.URL{Scheme: "https", Host: "dash.cloudflare.com", Path: "/profile/api-tokens"}
 	q := u.Query()
-	q.Set("name", "GCMS Cloudflare Deploy")
+	tokenName = strings.TrimSpace(tokenName)
+	if tokenName == "" {
+		tokenName = cloudflareDefaultAPITokenName
+	}
+	q.Set("name", tokenName)
 	q.Set("accountId", "*")
 	q.Set("zoneId", "all")
 	q.Set("permissionGroupKeys", string(raw))

@@ -1167,7 +1167,7 @@ body.admin { background: var(--line-soft); }
 .cloudflare-bound-value.has-action { display: flex !important; align-items: center; gap: .35rem; overflow: visible; white-space: normal; }
 .cloudflare-bound-value.has-action [data-cf-project-label] { display: block; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: inherit; font: inherit; }
 .cloudflare-bound-grid strong.slug { display: block; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: .78rem; font-weight: 700; color: var(--ink-soft); }
-.cloudflare-bound-grid small { display: block; margin-top: .26rem; color: var(--muted); font: 500 .72rem/1.45 var(--sans); }
+.cloudflare-bound-grid small { display: block; margin-top: .26rem; color: var(--faint); font: 500 .72rem/1.45 var(--sans); }
 .inline-icon-btn { display: inline-grid; place-items: center; width: 24px; height: 24px; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--accent); font: 800 .78rem/1 var(--sans); cursor: pointer; }
 .inline-icon-btn svg { width: 14px; height: 14px; display: block; }
 .inline-icon-btn:hover { border-color: var(--accent); background: var(--accent-wash); }
@@ -1209,8 +1209,8 @@ body.admin { background: var(--line-soft); }
 .cloudflare-token-form input,
 .cloudflare-token-form textarea { width: 100%; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); font: 500 .92rem/1.4 var(--mono); padding: .64rem .72rem; }
 .cloudflare-token-form textarea { min-height: 5.4rem; resize: vertical; }
-.cloudflare-token-form small { color: var(--muted); font: 500 .76rem/1.45 var(--sans); }
-.cloudflare-token-form .inline-check { display: inline-flex; align-items: center; gap: .35rem; color: var(--muted); font: 700 .76rem/1.35 var(--sans); }
+.cloudflare-token-form small { color: var(--faint); font: 500 .74rem/1.5 var(--sans); }
+.cloudflare-token-form .inline-check { display: inline-flex; align-items: center; gap: .35rem; color: var(--muted); font: 650 .76rem/1.35 var(--sans); }
 .cloudflare-token-form .inline-check input { width: 17px; height: 17px; padding: 0; accent-color: var(--accent); }
 .cloudflare-token-form .cloudflare-zone-hint { color: var(--accent); font-weight: 800; }
 .cloudflare-token-form .btn { justify-content: center; min-height: 42px; border-radius: 8px; white-space: normal; text-align: center; }

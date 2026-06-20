@@ -1027,7 +1027,7 @@
             <input type="hidden" name="verify_token" value="1">
             <input type="hidden" name="html_cache_ttl" value="{{$c.HTMLCacheTTL}}">
             <input type="hidden" name="auto_sync" value="1">
-            <input id="cf-token-template-url" class="copy-source" type="text" value="{{$cf.TokenTemplateURL}}" readonly tabindex="-1" aria-hidden="true">
+            <input id="cf-token-template-url" class="copy-source" type="text" value="{{$cf.TokenTemplateURL}}" data-default-token-name="GCMS Cloudflare Deploy" readonly tabindex="-1" aria-hidden="true">
             <label>
               <span>{{.Admin.T "admin.settings.cloudflare.primary_domain" "主域名"}}</span>
               <input name="primary_domain" value="{{$cf.PrimaryDomain}}" placeholder="{{.Admin.T "admin.settings.cloudflare.primary_domain_placeholder" "例如 ccvar.com"}}">
@@ -1051,7 +1051,7 @@
               <small><label class="inline-check"><input type="checkbox" name="redirect_aliases" value="1"{{if $cf.RedirectAliases}} checked{{end}}> {{.Admin.T "admin.settings.cloudflare.redirect_aliases" "别名域名 301 跳转到主域名"}}</label></small>
             </label>
             <div class="cloudflare-template-actions">
-              <a class="btn icon-text" href="{{$cf.TokenTemplateURL}}" target="_blank" rel="noopener">{{.Admin.T "admin.settings.cloudflare.template_link" "打开 Cloudflare 授权模板"}} <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7"/><path d="M9 7h8v8"/></svg></a>
+              <a class="btn icon-text" href="{{$cf.TokenTemplateURL}}" target="_blank" rel="noopener" data-cf-token-template>{{.Admin.T "admin.settings.cloudflare.template_link" "打开 Cloudflare 授权模板"}} <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7"/><path d="M9 7h8v8"/></svg></a>
               <button class="btn icon-text" type="button" data-copy-target="cf-token-template-url"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>{{.Admin.T "admin.settings.cloudflare.copy_template_url" "复制链接"}}</button>
             </div>
             <div class="cloudflare-token-control" data-cf-token-field>
@@ -1343,6 +1343,9 @@
           var tokenInput = tokenForm ? tokenForm.querySelector("[data-cf-token-input]") : null;
           var tokenCancel = tokenForm ? tokenForm.querySelector("[data-cf-token-cancel]") : null;
           var tokenMask = tokenForm ? tokenForm.querySelector("[data-cf-token-mask]") : null;
+          var tokenTemplateInput = tokenForm ? tokenForm.querySelector("#cf-token-template-url") : null;
+          var tokenTemplateLinks = tokenForm ? tokenForm.querySelectorAll("[data-cf-token-template]") : [];
+          var tokenTemplateBase = tokenTemplateInput ? tokenTemplateInput.value : "";
           var formMessage = tokenForm ? tokenForm.querySelector("[data-cf-form-message]") : null;
           var advancedModeSummary = tokenForm ? tokenForm.querySelector("[data-cf-mode-summary]") : null;
           var advancedSourceSummary = tokenForm ? tokenForm.querySelector("[data-cf-source-summary]") : null;
@@ -1359,6 +1362,26 @@
             host = host.replace(/^https?:\/\//, "").replace(/\/.*$/, "").replace(/:\d+$/, "").replace(/^\*\./, "").replace(/\.$/, "");
             return host ? normalizeProjectName("gcms-" + host.replace(/\./g, "-")) : "";
           };
+          var projectNameForToken = function() {
+            var value = workerNameInput ? String(workerNameInput.value || "").trim() : "";
+            if (!value && pagesProjectInput) value = String(pagesProjectInput.value || "").trim();
+            if (!value && projectDisplay) value = String(projectDisplay.textContent || "").trim();
+            if (value === txt.empty) value = "";
+            return value;
+          };
+          var refreshTokenTemplateURL = function() {
+            if (!tokenTemplateInput || !tokenTemplateBase) return;
+            var next = tokenTemplateBase;
+            try {
+              var u = new URL(tokenTemplateBase, window.location.href);
+              u.searchParams.set("name", projectNameForToken() || tokenTemplateInput.dataset.defaultTokenName || "GCMS Cloudflare Deploy");
+              next = u.toString();
+            } catch (err) {}
+            tokenTemplateInput.value = next;
+            tokenTemplateLinks.forEach(function(link) {
+              link.href = next;
+            });
+          };
           var setProjectValue = function(value, custom) {
             value = String(value || "").trim();
             if (value || custom) value = normalizeProjectName(value);
@@ -1367,6 +1390,7 @@
             if (workerNameInput) workerNameInput.value = value;
             if (pagesProjectInput) pagesProjectInput.value = value;
             if (projectCustomInput) projectCustomInput.value = custom ? "1" : "0";
+            refreshTokenTemplateURL();
           };
           var hideProjectEditor = function() {
             if (projectReadonly) projectReadonly.hidden = false;
@@ -1901,6 +1925,7 @@
             syncDefaultProject(false);
             setTokenEditor(false);
             updateAdvancedSummary();
+            refreshTokenTemplateURL();
             updateTokenFormValidity();
           }
           if (syncForm) {

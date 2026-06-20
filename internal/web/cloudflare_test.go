@@ -345,7 +345,7 @@ func TestCloudflareStagePermissionErrorForWorkerUpload(t *testing.T) {
 }
 
 func TestCloudflareAPITokenTemplateURL(t *testing.T) {
-	raw := cloudflareAPITokenTemplateURL()
+	raw := cloudflareAPITokenTemplateURL("")
 	u, err := url.Parse(raw)
 	if err != nil {
 		t.Fatalf("token template URL should parse: %v", err)
@@ -356,6 +356,9 @@ func TestCloudflareAPITokenTemplateURL(t *testing.T) {
 	q := u.Query()
 	if q.Get("accountId") != "*" || q.Get("zoneId") != "all" {
 		t.Fatalf("unexpected token scope: %s", raw)
+	}
+	if q.Get("name") != cloudflareDefaultAPITokenName {
+		t.Fatalf("default token name = %q, want %q", q.Get("name"), cloudflareDefaultAPITokenName)
 	}
 	for _, needle := range []string{
 		`"key":"workers_scripts"`,
@@ -369,6 +372,14 @@ func TestCloudflareAPITokenTemplateURL(t *testing.T) {
 		if !strings.Contains(q.Get("permissionGroupKeys"), needle) {
 			t.Fatalf("permissionGroupKeys should contain %s: %s", needle, q.Get("permissionGroupKeys"))
 		}
+	}
+	projectURL := cloudflareAPITokenTemplateURL("gcms-test-ccvar-com")
+	projectParsed, err := url.Parse(projectURL)
+	if err != nil {
+		t.Fatalf("project token template URL should parse: %v", err)
+	}
+	if got := projectParsed.Query().Get("name"); got != "gcms-test-ccvar-com" {
+		t.Fatalf("project token name = %q, want gcms-test-ccvar-com", got)
 	}
 }
 
