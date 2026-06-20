@@ -982,7 +982,7 @@
         <div class="cloudflare-connect-card{{if $cf.TokenSet}} is-bound{{end}}" data-cloudflare-connect-card>
           <div class="cloudflare-connect-copy">
             <span class="mini-tag" data-cf-connect-tag>{{if $cf.TokenSet}}{{.Admin.T "admin.settings.cloudflare.bound" "已绑定"}}{{else}}{{.Admin.T "admin.settings.cloudflare.recommended" "推荐方式"}}{{end}}</span>
-            <h3 data-cf-connect-title>{{if $cf.TokenSet}}{{.Admin.T "admin.settings.cloudflare.bound_title" "Cloudflare 已连接"}}{{else}}{{.Admin.T "admin.settings.cloudflare.connect_title" "连接 Cloudflare"}}{{end}}</h3>
+            <h3 class="cloudflare-connect-title"><span class="cloudflare-connect-title-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></span><span data-cf-connect-title>{{if $cf.TokenSet}}{{.Admin.T "admin.settings.cloudflare.bound_title" "Cloudflare 已连接"}}{{else}}{{.Admin.T "admin.settings.cloudflare.connect_title" "连接 Cloudflare"}}{{end}}</span></h3>
             <p data-cf-connect-desc>{{if $cf.TokenSet}}{{.Admin.T "admin.settings.cloudflare.bound_desc" "配置已保存。后续内容更新可发布到 Cloudflare；换域名、Token 或项目名时点「修改绑定」。"}}{{else}}{{.Admin.T "admin.settings.cloudflare.connect_desc" "填好公开域名，打开授权模板复制 Token，保存后即可部署静态站。"}}{{end}}</p>
             <div class="cloudflare-token-steps" data-cf-new-steps{{if $cf.TokenSet}} hidden{{end}}>
               <span data-step="1">{{.Admin.T "admin.settings.cloudflare.step_zone_ready" "确认域名已托管到 Cloudflare"}}</span>
@@ -1006,13 +1006,13 @@
               </div>
               <div class="cloudflare-bound-item">
                 <span class="cloudflare-card-label"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.3 7 12 12l8.7-5"/><path d="M12 22V12"/></svg>{{.Admin.T "admin.settings.cloudflare.hosting_project" "托管项目"}}</span>
-                <strong><span data-cf-project-label>{{$projectName}}</span> <button class="inline-icon-btn" type="button" data-cf-project-edit title="{{.Admin.T "admin.settings.cloudflare.edit_project" "修改项目名"}}" aria-label="{{.Admin.T "admin.settings.cloudflare.edit_project" "修改项目名"}}">{{template "icon-edit"}}</button></strong>
+                <strong class="cloudflare-bound-value has-action"><span data-cf-project-label>{{$projectName}}</span> <button class="inline-icon-btn" type="button" data-cf-project-edit title="{{.Admin.T "admin.settings.cloudflare.edit_project" "修改项目名"}}" aria-label="{{.Admin.T "admin.settings.cloudflare.edit_project" "修改项目名"}}">{{template "icon-edit"}}</button></strong>
                 <small>{{if $isPages}}{{.Admin.T "admin.settings.cloudflare.mode_pages" "Cloudflare Pages"}}{{else}}{{.Admin.T "admin.settings.cloudflare.mode_worker_assets" "Worker Assets"}}{{end}}</small>
               </div>
             </div>
             <div class="button-row">
-              <a class="btn" data-cf-open-site href="{{$liveURL}}" target="_blank" rel="noopener"{{if not (and $hasDeployment $liveURL)}} hidden{{end}}>{{.Admin.T "admin.settings.cloudflare.open_site" "打开网站"}} ↗</a>
-              <button class="btn" type="button" data-cf-open-binding>{{.Admin.T "admin.settings.cloudflare.modify_binding" "修改绑定"}}</button>
+              <a class="btn icon-text" data-cf-open-site href="{{$liveURL}}" target="_blank" rel="noopener"{{if not (and $hasDeployment $liveURL)}} hidden{{end}}><span>{{.Admin.T "admin.settings.cloudflare.open_site" "打开网站"}}</span>{{template "icon-extlink"}}</a>
+              <button class="btn icon-text" type="button" data-cf-open-binding>{{template "icon-edit"}}<span>{{.Admin.T "admin.settings.cloudflare.modify_binding" "修改绑定"}}</span></button>
               <form method="post" action="/admin/settings/cloudflare/reset" data-cloudflare-ajax data-no-busy data-confirm-title="{{.Admin.T "admin.settings.cloudflare.reset_confirm_title" "清除本地配置"}}" data-confirm-ok="{{.Admin.T "admin.settings.cloudflare.reset" "清除本地配置"}}" data-confirm="{{.Admin.T "admin.settings.cloudflare.reset_confirm" "只清除本机保存的 Cloudflare Token、域名和识别结果；不会删除 Cloudflare 上的项目、DNS 或静态资源。"}}">
                 <input type="hidden" name="_csrf" value="{{.CSRF}}">
                 <button class="btn btn-subtle-danger icon-text" type="submit">{{template "icon-trash"}}<span>{{.Admin.T "admin.settings.cloudflare.reset" "清除本地配置"}}</span></button>
@@ -1154,6 +1154,30 @@
               <span class="update-label with-small-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h5l2-7 4 14 2-7h3"/><path d="M4 19h16"/></svg>{{.Admin.T "admin.settings.cloudflare.task" "部署任务"}}</span>
               <strong class="cloudflare-task-state {{if eq $st.Status "running"}}is-running{{else if eq $st.Status "failed"}}is-failed{{else if $hasDeployment}}is-success{{else}}is-idle{{end}}" data-cloudflare-status>{{if eq $st.Status "running"}}{{.Admin.T "admin.settings.cloudflare.running" "部署中"}}{{else if eq $st.Status "failed"}}{{.Admin.T "admin.settings.cloudflare.failed" "失败"}}{{else if $hasDeployment}}{{.Admin.T "admin.settings.cloudflare.success" "已部署"}}{{else if eq $st.Status "success"}}{{.Admin.T "admin.settings.cloudflare.unpublished_status" "已取消"}}{{else}}{{.Admin.T "admin.settings.cloudflare.idle" "空闲"}}{{end}}</strong>
               <p data-cloudflare-message>{{$st.Message}}</p>
+            </div>
+            <div class="cloudflare-task-actions">
+              <div class="button-row cloudflare-status-actions">
+                <form method="post" action="/admin/settings/cloudflare/deploy" data-cloudflare-ajax data-no-busy data-confirm-title="{{.Admin.T "admin.settings.cloudflare.deploy_confirm_title" "确认部署"}}" data-confirm-ok="{{.Admin.T "admin.settings.cloudflare.deploy_confirm_ok" "开始部署"}}" data-confirm="{{.Admin.T "admin.settings.cloudflare.deploy_confirm" "将当前前台导出为静态站并部署到 Cloudflare？部署完成后公开访问由 Cloudflare 静态资源托管。"}}">
+                  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+                  <button class="btn btn-primary" type="submit" data-cloudflare-deploy-button{{if or $st.Running (not $cf.TokenSet)}} disabled{{end}}>{{if $st.Running}}{{.Admin.T "admin.settings.cloudflare.deploying" "部署中..."}}{{else if eq $st.Status "failed"}}{{.Admin.T "admin.settings.cloudflare.retry_deploy" "重试发布"}}{{else if $hasDeployment}}{{.Admin.T "admin.settings.cloudflare.redeploy" "发布最新内容"}}{{else}}{{.Admin.T "admin.settings.cloudflare.deploy_now" "立即部署"}}{{end}}</button>
+                </form>
+                <details class="cloudflare-more-actions" data-cf-more-actions{{if not (or $hasDeployment $canPurge)}} hidden{{end}}>
+                  <summary class="btn icon-text">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg>
+                    <span>{{.Admin.T "admin.settings.cloudflare.more_actions" "更多操作"}}</span>
+                  </summary>
+                  <div class="cloudflare-more-actions-menu">
+                    <form method="post" action="/admin/settings/cloudflare/unpublish" data-cloudflare-managed-action="unpublish" data-cloudflare-ajax data-no-busy{{if not $hasDeployment}} hidden{{end}} data-confirm-title="{{.Admin.T "admin.settings.cloudflare.unpublish_confirm_title" "取消公开入口"}}" data-confirm-ok="{{.Admin.T "admin.settings.cloudflare.unpublish" "取消公开入口"}}" data-confirm="{{.Admin.T "admin.settings.cloudflare.unpublish_confirm" "取消 Cloudflare 上当前域名的公开访问？项目和静态资源会保留，DNS 不会删除。"}}">
+                      <input type="hidden" name="_csrf" value="{{.CSRF}}">
+                      <button class="btn icon-text" type="submit" data-tooltip="{{.Admin.T "admin.settings.cloudflare.unpublish_tip" "移除 Cloudflare 上当前域名的公开入口绑定；项目和已上传静态资源保留，DNS 不会被删除。"}}" aria-label="{{.Admin.T "admin.settings.cloudflare.unpublish_tip" "移除 Cloudflare 上当前域名的公开入口绑定；项目和已上传静态资源保留，DNS 不会被删除。"}}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 7 7 17"/><path d="M8 7h9v9"/></svg><span>{{.Admin.T "admin.settings.cloudflare.unpublish" "取消公开入口"}}</span></button>
+                    </form>
+                    <form method="post" action="/admin/settings/cloudflare/purge" data-cloudflare-managed-action="purge" data-cloudflare-ajax data-no-busy{{if not $canPurge}} hidden{{end}} data-confirm-title="{{.Admin.T "admin.settings.cloudflare.purge_confirm_title" "确认清除缓存"}}" data-confirm-ok="{{.Admin.T "admin.settings.cloudflare.purge" "清除 Cloudflare 缓存"}}" data-confirm="{{.Admin.T "admin.settings.cloudflare.purge_confirm" "清除当前 Zone 的 Cloudflare 缓存？静态资源仍在 Cloudflare，下一次访问会重新读取已部署资源。"}}">
+                      <input type="hidden" name="_csrf" value="{{.CSRF}}">
+                      <button class="btn icon-text" type="submit" data-tooltip="{{.Admin.T "admin.settings.cloudflare.purge_tip" "清空 Cloudflare 边缘缓存。不会删除静态站；下一次访问会重新读取最新部署的资源。"}}" aria-label="{{.Admin.T "admin.settings.cloudflare.purge_tip" "清空 Cloudflare 边缘缓存。不会删除静态站；下一次访问会重新读取最新部署的资源。"}}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 0 1-15 6.7"/><path d="M3 12a9 9 0 0 1 15-6.7"/><path d="M18 3v5h-5"/><path d="M6 21v-5h5"/></svg><span>{{.Admin.T "admin.settings.cloudflare.purge" "清除 Cloudflare 缓存"}}</span></button>
+                    </form>
+                  </div>
+                </details>
+              </div>
               <div class="cloudflare-status-footer">
                 <span class="cloudflare-last-deploy">
                   {{.Admin.T "admin.settings.cloudflare.last_deploy" "最近部署"}}：
@@ -1182,30 +1206,6 @@
                     </div>
                   </div>
                 </div>
-              </div>
-            </div>
-            <div class="cloudflare-task-actions">
-              <div class="button-row cloudflare-status-actions">
-                <form method="post" action="/admin/settings/cloudflare/deploy" data-cloudflare-ajax data-no-busy data-confirm-title="{{.Admin.T "admin.settings.cloudflare.deploy_confirm_title" "确认部署"}}" data-confirm-ok="{{.Admin.T "admin.settings.cloudflare.deploy_confirm_ok" "开始部署"}}" data-confirm="{{.Admin.T "admin.settings.cloudflare.deploy_confirm" "将当前前台导出为静态站并部署到 Cloudflare？部署完成后公开访问由 Cloudflare 静态资源托管。"}}">
-                  <input type="hidden" name="_csrf" value="{{.CSRF}}">
-                  <button class="btn btn-primary" type="submit" data-cloudflare-deploy-button{{if or $st.Running (not $cf.TokenSet)}} disabled{{end}}>{{if $st.Running}}{{.Admin.T "admin.settings.cloudflare.deploying" "部署中..."}}{{else if eq $st.Status "failed"}}{{.Admin.T "admin.settings.cloudflare.retry_deploy" "重试发布"}}{{else if $hasDeployment}}{{.Admin.T "admin.settings.cloudflare.redeploy" "发布最新内容"}}{{else}}{{.Admin.T "admin.settings.cloudflare.deploy_now" "立即部署"}}{{end}}</button>
-                </form>
-                <details class="cloudflare-more-actions" data-cf-more-actions{{if not (or $hasDeployment $canPurge)}} hidden{{end}}>
-                  <summary class="btn icon-text">
-                    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg>
-                    <span>{{.Admin.T "admin.settings.cloudflare.more_actions" "更多操作"}}</span>
-                  </summary>
-                  <div class="cloudflare-more-actions-menu">
-                    <form method="post" action="/admin/settings/cloudflare/unpublish" data-cloudflare-managed-action="unpublish" data-cloudflare-ajax data-no-busy{{if not $hasDeployment}} hidden{{end}} data-confirm-title="{{.Admin.T "admin.settings.cloudflare.unpublish_confirm_title" "取消公开入口"}}" data-confirm-ok="{{.Admin.T "admin.settings.cloudflare.unpublish" "取消公开入口"}}" data-confirm="{{.Admin.T "admin.settings.cloudflare.unpublish_confirm" "取消 Cloudflare 上当前域名的公开访问？项目和静态资源会保留，DNS 不会删除。"}}">
-                      <input type="hidden" name="_csrf" value="{{.CSRF}}">
-                      <button class="btn icon-text" type="submit" data-tooltip="{{.Admin.T "admin.settings.cloudflare.unpublish_tip" "移除 Cloudflare 上当前域名的公开入口绑定；项目和已上传静态资源保留，DNS 不会被删除。"}}" aria-label="{{.Admin.T "admin.settings.cloudflare.unpublish_tip" "移除 Cloudflare 上当前域名的公开入口绑定；项目和已上传静态资源保留，DNS 不会被删除。"}}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 7 7 17"/><path d="M8 7h9v9"/></svg><span>{{.Admin.T "admin.settings.cloudflare.unpublish" "取消公开入口"}}</span></button>
-                    </form>
-                    <form method="post" action="/admin/settings/cloudflare/purge" data-cloudflare-managed-action="purge" data-cloudflare-ajax data-no-busy{{if not $canPurge}} hidden{{end}} data-confirm-title="{{.Admin.T "admin.settings.cloudflare.purge_confirm_title" "确认清除缓存"}}" data-confirm-ok="{{.Admin.T "admin.settings.cloudflare.purge" "清除 Cloudflare 缓存"}}" data-confirm="{{.Admin.T "admin.settings.cloudflare.purge_confirm" "清除当前 Zone 的 Cloudflare 缓存？静态资源仍在 Cloudflare，下一次访问会重新读取已部署资源。"}}">
-                      <input type="hidden" name="_csrf" value="{{.CSRF}}">
-                      <button class="btn icon-text" type="submit" data-tooltip="{{.Admin.T "admin.settings.cloudflare.purge_tip" "清空 Cloudflare 边缘缓存。不会删除静态站；下一次访问会重新读取最新部署的资源。"}}" aria-label="{{.Admin.T "admin.settings.cloudflare.purge_tip" "清空 Cloudflare 边缘缓存。不会删除静态站；下一次访问会重新读取最新部署的资源。"}}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 0 1-15 6.7"/><path d="M3 12a9 9 0 0 1 15-6.7"/><path d="M18 3v5h-5"/><path d="M6 21v-5h5"/></svg><span>{{.Admin.T "admin.settings.cloudflare.purge" "清除 Cloudflare 缓存"}}</span></button>
-                    </form>
-                  </div>
-                </details>
               </div>
             </div>
           </div>
@@ -1246,14 +1246,14 @@
         <details class="update-details">
           <summary class="cloudflare-details-summary"><span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg>{{.Admin.T "admin.settings.cloudflare.advanced" "连接细节"}}</span></summary>
           <table class="admin-table">
-	            <tbody>
-	              <tr><th>{{.Admin.T "admin.settings.cloudflare.hosting_mode" "托管方式"}}</th><td class="slug">{{if $isPages}}{{.Admin.T "admin.settings.cloudflare.mode_pages" "Cloudflare Pages"}}{{else}}{{.Admin.T "admin.settings.cloudflare.mode_worker_assets" "Worker Assets"}}{{end}}</td></tr>
-	              <tr><th>{{.Admin.T "admin.settings.cloudflare.auth_mode" "授权方式"}}</th><td>{{if $cf.TokenSet}}<span class="badge sched">{{.Admin.T "admin.settings.cloudflare.auth_token" "API Token"}}</span>{{else}}<span class="badge draft">{{.Admin.T "admin.settings.cloudflare.token_missing" "未保存"}}</span>{{end}}</td></tr>
-	              {{if $c.AccountName}}<tr><th>{{.Admin.T "admin.settings.cloudflare.account_name" "账号"}}</th><td>{{$c.AccountName}}</td></tr>{{end}}
-	              {{if $c.ZoneName}}<tr><th>{{.Admin.T "admin.settings.cloudflare.zone_name" "域名"}}</th><td>{{$c.ZoneName}}</td></tr>{{end}}
-	              <tr><th>{{.Admin.T "admin.settings.cloudflare.account_id" "Account ID"}}</th><td class="slug">{{if $c.AccountID}}{{$c.AccountID}}{{else}}-{{end}}</td></tr>
-	              <tr><th>{{.Admin.T "admin.settings.cloudflare.zone_id" "Zone ID"}}</th><td class="slug">{{if $c.ZoneID}}{{$c.ZoneID}}{{else}}-{{end}}</td></tr>
-	              <tr><th>{{.Admin.T "admin.settings.cloudflare.pages_project_name" "Pages 项目名称"}}</th><td class="slug">{{$c.PagesProjectName}}</td></tr>
+            <tbody>
+              <tr><th>{{.Admin.T "admin.settings.cloudflare.hosting_mode" "托管方式"}}</th><td class="slug">{{if $isPages}}{{.Admin.T "admin.settings.cloudflare.mode_pages" "Cloudflare Pages"}}{{else}}{{.Admin.T "admin.settings.cloudflare.mode_worker_assets" "Worker Assets"}}{{end}}</td></tr>
+              <tr><th>{{.Admin.T "admin.settings.cloudflare.auth_mode" "授权方式"}}</th><td>{{if $cf.TokenSet}}<span class="badge sched">{{.Admin.T "admin.settings.cloudflare.auth_token" "API Token"}}</span>{{else}}<span class="badge draft">{{.Admin.T "admin.settings.cloudflare.token_missing" "未保存"}}</span>{{end}}</td></tr>
+              {{if $c.AccountName}}<tr><th>{{.Admin.T "admin.settings.cloudflare.account_name" "账号"}}</th><td>{{$c.AccountName}}</td></tr>{{end}}
+              {{if $c.ZoneName}}<tr><th>{{.Admin.T "admin.settings.cloudflare.zone_name" "域名"}}</th><td>{{$c.ZoneName}}</td></tr>{{end}}
+              <tr><th>{{.Admin.T "admin.settings.cloudflare.account_id" "Account ID"}}</th><td class="slug">{{if $c.AccountID}}{{$c.AccountID}}{{else}}-{{end}}</td></tr>
+              <tr><th>{{.Admin.T "admin.settings.cloudflare.zone_id" "Zone ID"}}</th><td class="slug">{{if $c.ZoneID}}{{$c.ZoneID}}{{else}}-{{end}}</td></tr>
+              <tr><th>{{.Admin.T "admin.settings.cloudflare.pages_project_name" "Pages 项目名称"}}</th><td class="slug">{{$c.PagesProjectName}}</td></tr>
               <tr><th>{{.Admin.T "admin.settings.cloudflare.token_status" "Token 状态"}}</th><td>{{if $cf.TokenSet}}<span class="badge pub">{{.Admin.T "admin.settings.cloudflare.token_saved" "已保存"}}</span>{{else}}<span class="badge draft">{{.Admin.T "admin.settings.cloudflare.token_missing" "未保存"}}</span>{{end}}</td></tr>
               <tr><th>{{.Admin.T "admin.settings.cloudflare.status_file" "状态文件"}}</th><td class="slug">run/cloudflare-deploy.json</td></tr>
               {{if $st.Step}}<tr><th>{{.Admin.T "admin.settings.cloudflare.step" "阶段"}}</th><td class="slug">{{$st.Step}}</td></tr>{{end}}
@@ -1268,18 +1268,18 @@
           var box = document.getElementById("cloudflare-status-box");
           if (!box || !window.fetch) return;
           var root = box.parentElement || box;
-	          var button = root.querySelector("[data-cloudflare-deploy-button]");
-	          var statusEl = root.querySelector("[data-cloudflare-status]");
-	          var lastDeployEl = root.querySelector("[data-cf-last-deploy]");
-	          var historyToggle = root.querySelector("[data-cf-history-toggle]");
-	          var historyPopover = root.querySelector("[data-cf-history-popover]");
-	          var historyList = root.querySelector("[data-cf-history-list]");
-	          var syncForm = root.querySelector("[data-cloudflare-sync-form]");
-	          var syncTimeWrap = syncForm ? syncForm.querySelector(".cloudflare-sync-time") : null;
-	          var syncTimeInput = syncForm ? syncForm.querySelector("[data-cf-sync-time]") : null;
+          var button = root.querySelector("[data-cloudflare-deploy-button]");
+          var statusEl = root.querySelector("[data-cloudflare-status]");
+          var lastDeployEl = root.querySelector("[data-cf-last-deploy]");
+          var historyToggle = root.querySelector("[data-cf-history-toggle]");
+          var historyPopover = root.querySelector("[data-cf-history-popover]");
+          var historyList = root.querySelector("[data-cf-history-list]");
+          var syncForm = root.querySelector("[data-cloudflare-sync-form]");
+          var syncTimeWrap = syncForm ? syncForm.querySelector(".cloudflare-sync-time") : null;
+          var syncTimeInput = syncForm ? syncForm.querySelector("[data-cf-sync-time]") : null;
 		          var syncStatusEl = root.querySelector("[data-cf-sync-status]");
 		          var syncCurrentEl = root.querySelector("[data-cf-sync-current]");
-	          var url = box.dataset.statusUrl;
+          var url = box.dataset.statusUrl;
           var timer = 0;
           var txt = {
             running: "{{.Admin.T "admin.settings.cloudflare.running" "部署中"}}",
@@ -1299,25 +1299,25 @@
             connectDesc: "{{.Admin.T "admin.settings.cloudflare.connect_desc" "填好公开域名，打开授权模板复制 Token，保存后即可部署静态站。"}}",
             saveConfig: "{{.Admin.T "admin.settings.cloudflare.save_token" "保存配置"}}",
             savingConfig: "{{.Admin.T "admin.settings.cloudflare.saving_config" "验证并保存中..."}}",
-	            ajaxFailed: "{{.Admin.T "admin.settings.cloudflare.ajax_failed" "请求失败，请稍后重试。"}}",
-	            neverDeployed: "{{.Admin.T "admin.settings.cloudflare.never_deployed" "尚未部署"}}",
-	            justNow: "{{.Admin.T "admin.settings.cloudflare.just_now" "刚刚"}}",
-	            minutesAgo: "{{.Admin.T "admin.settings.cloudflare.minutes_ago" "%d 分钟前"}}",
-	            hoursAgo: "{{.Admin.T "admin.settings.cloudflare.hours_ago" "%d 小时前"}}",
-	            daysAgo: "{{.Admin.T "admin.settings.cloudflare.days_ago" "%d 天前"}}",
-	            historyEmpty: "{{.Admin.T "admin.settings.cloudflare.history_empty" "暂无部署记录"}}",
-	            historyDeploy: "{{.Admin.T "admin.settings.cloudflare.history_deploy" "部署"}}",
-	            historyPurge: "{{.Admin.T "admin.settings.cloudflare.history_purge" "清缓存"}}",
-	            historyUnpublish: "{{.Admin.T "admin.settings.cloudflare.history_unpublish" "取消公开入口"}}",
-	            historyFailed: "{{.Admin.T "admin.settings.cloudflare.history_failed" "失败"}}",
-	            unpublished: "{{.Admin.T "admin.settings.cloudflare.unpublished_status" "已取消"}}",
-	            syncPending: "{{.Admin.T "admin.settings.cloudflare.sync_pending" "有内容变化待同步"}}",
-	            syncNextAt: "{{.Admin.T "admin.settings.cloudflare.sync_next_at" "计划同步"}}",
+            ajaxFailed: "{{.Admin.T "admin.settings.cloudflare.ajax_failed" "请求失败，请稍后重试。"}}",
+            neverDeployed: "{{.Admin.T "admin.settings.cloudflare.never_deployed" "尚未部署"}}",
+            justNow: "{{.Admin.T "admin.settings.cloudflare.just_now" "刚刚"}}",
+            minutesAgo: "{{.Admin.T "admin.settings.cloudflare.minutes_ago" "%d 分钟前"}}",
+            hoursAgo: "{{.Admin.T "admin.settings.cloudflare.hours_ago" "%d 小时前"}}",
+            daysAgo: "{{.Admin.T "admin.settings.cloudflare.days_ago" "%d 天前"}}",
+            historyEmpty: "{{.Admin.T "admin.settings.cloudflare.history_empty" "暂无部署记录"}}",
+            historyDeploy: "{{.Admin.T "admin.settings.cloudflare.history_deploy" "部署"}}",
+            historyPurge: "{{.Admin.T "admin.settings.cloudflare.history_purge" "清缓存"}}",
+            historyUnpublish: "{{.Admin.T "admin.settings.cloudflare.history_unpublish" "取消公开入口"}}",
+            historyFailed: "{{.Admin.T "admin.settings.cloudflare.history_failed" "失败"}}",
+            unpublished: "{{.Admin.T "admin.settings.cloudflare.unpublished_status" "已取消"}}",
+            syncPending: "{{.Admin.T "admin.settings.cloudflare.sync_pending" "有内容变化待同步"}}",
+            syncNextAt: "{{.Admin.T "admin.settings.cloudflare.sync_next_at" "计划同步"}}",
 		            syncDailyNote: "{{.Admin.T "admin.settings.cloudflare.sync_daily_note" "有变化时，等到每天指定时间统一发布。"}}",
 		            syncRealtimeNote: "{{.Admin.T "admin.settings.cloudflare.sync_realtime_note" "保存内容后自动重新发布到 Cloudflare。"}}",
 		            syncDaily: "{{.Admin.T "admin.settings.cloudflare.sync_daily" "每天同步"}}",
 		            syncRealtime: "{{.Admin.T "admin.settings.cloudflare.sync_realtime" "实时同步"}}"
-	          };
+          };
           var order = ["queued", "detect", "export", "assets", "worker", "route", "dns", "purge", "done"];
           var currentTokenSet = {{if $cf.TokenSet}}true{{else}}false{{end}};
           var currentPublished = {{if $hasDeployment}}true{{else}}false{{end}};
@@ -1500,22 +1500,22 @@
               }
             }, 0);
           };
-	          var hasDeploymentValue = function(published, lastDeployAt) {
-	            return !!published || !!String(lastDeployAt || "").trim();
-	          };
-	          var taskStateClass = function(status, published, lastDeployAt) {
-	            if (status === "running") return "is-running";
-	            if (status === "failed") return "is-failed";
-	            if (hasDeploymentValue(published, lastDeployAt)) return "is-success";
-	            return "is-idle";
-	          };
-	          var statusText = function(status, published, lastDeployAt) {
-	            if (status === "running") return txt.running;
-	            if (status === "failed") return txt.failed;
-	            if (hasDeploymentValue(published, lastDeployAt)) return txt.success;
-	            if (status === "success") return txt.unpublished;
-	            return txt.idle;
-	          };
+          var hasDeploymentValue = function(published, lastDeployAt) {
+            return !!published || !!String(lastDeployAt || "").trim();
+          };
+          var taskStateClass = function(status, published, lastDeployAt) {
+            if (status === "running") return "is-running";
+            if (status === "failed") return "is-failed";
+            if (hasDeploymentValue(published, lastDeployAt)) return "is-success";
+            return "is-idle";
+          };
+          var statusText = function(status, published, lastDeployAt) {
+            if (status === "running") return txt.running;
+            if (status === "failed") return txt.failed;
+            if (hasDeploymentValue(published, lastDeployAt)) return txt.success;
+            if (status === "success") return txt.unpublished;
+            return txt.idle;
+          };
           var setText = function(sel, text) {
             var el = root.querySelector(sel);
             if (el) el.textContent = text || "";
@@ -1547,124 +1547,124 @@
               el.hidden = !!publicURL;
             });
           };
-	          var setTaskState = function(status, published, lastDeployAt) {
-	            if (!statusEl) return;
-	            statusEl.classList.remove("is-idle", "is-running", "is-failed", "is-success");
-	            statusEl.classList.add(taskStateClass(status, published, lastDeployAt));
-	          };
-	          var localDateTitle = function(value) {
-	            var date = new Date(value);
-	            if (isNaN(date.getTime())) return value || "";
-	            return date.toLocaleString();
-	          };
-	          var relativeTime = function(value) {
-	            var date = new Date(value);
-	            if (!value || isNaN(date.getTime())) return txt.neverDeployed;
-	            var seconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
-	            if (seconds < 60) return txt.justNow;
-	            var minutes = Math.floor(seconds / 60);
-	            if (minutes < 60) return txt.minutesAgo.replace("%d", minutes);
-	            var hours = Math.floor(minutes / 60);
-	            if (hours < 24) return txt.hoursAgo.replace("%d", hours);
-	            var days = Math.floor(hours / 24);
-	            if (days < 30) return txt.daysAgo.replace("%d", days);
-	            return localDateTitle(value);
-	          };
-	          var actionText = function(action, status) {
-	            if (status === "failed") return txt.historyFailed;
-	            if (action === "purge") return txt.historyPurge;
-	            if (action === "unpublish") return txt.historyUnpublish;
-	            return txt.historyDeploy;
-	          };
-	          var renderLastDeploy = function(value) {
-	            if (!lastDeployEl) return;
-	            value = String(value || "");
-	            lastDeployEl.dateTime = value;
-	            lastDeployEl.textContent = relativeTime(value);
-	            lastDeployEl.title = value ? localDateTitle(value) : "";
-	          };
-	          var renderHistory = function(items) {
-	            if (!historyList) return;
-	            historyList.innerHTML = "";
-	            if (!items || !items.length) {
-	              var empty = document.createElement("p");
-	              empty.className = "cloudflare-history-empty";
-	              empty.textContent = txt.historyEmpty;
-	              historyList.appendChild(empty);
-	              return;
-	            }
-	            items.slice(0, 8).forEach(function(item) {
-	              var row = document.createElement("div");
-	              row.className = "cloudflare-history-item";
-	              if (item.status === "success") row.classList.add("is-success");
-	              if (item.status === "failed") row.classList.add("is-failed");
-	              var head = document.createElement("div");
-	              var name = document.createElement("span");
-	              name.textContent = actionText(item.action, item.status);
-	              var time = document.createElement("time");
-	              time.dateTime = item.at || "";
-	              time.textContent = relativeTime(item.at);
-	              time.title = localDateTitle(item.at);
-	              head.appendChild(name);
-	              head.appendChild(time);
-	              row.appendChild(head);
-	              if (item.message) {
-	                var msg = document.createElement("p");
-	                msg.textContent = item.message;
-	                row.appendChild(msg);
-	              }
-	              historyList.appendChild(row);
-	            });
-	          };
-	          var refreshHistoryTimes = function() {
-	            if (!historyList) return;
-	            historyList.querySelectorAll("time[datetime]").forEach(function(time) {
-	              var value = time.getAttribute("datetime") || "";
-	              time.textContent = relativeTime(value);
-	              time.title = localDateTitle(value);
-	            });
-	          };
-	          var selectedSyncMode = function() {
-	            if (!syncForm) return "realtime";
-	            var input = syncForm.querySelector("input[name='sync_mode']:checked");
-	            return input ? input.value : "realtime";
-	          };
+          var setTaskState = function(status, published, lastDeployAt) {
+            if (!statusEl) return;
+            statusEl.classList.remove("is-idle", "is-running", "is-failed", "is-success");
+            statusEl.classList.add(taskStateClass(status, published, lastDeployAt));
+          };
+          var localDateTitle = function(value) {
+            var date = new Date(value);
+            if (isNaN(date.getTime())) return value || "";
+            return date.toLocaleString();
+          };
+          var relativeTime = function(value) {
+            var date = new Date(value);
+            if (!value || isNaN(date.getTime())) return txt.neverDeployed;
+            var seconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
+            if (seconds < 60) return txt.justNow;
+            var minutes = Math.floor(seconds / 60);
+            if (minutes < 60) return txt.minutesAgo.replace("%d", minutes);
+            var hours = Math.floor(minutes / 60);
+            if (hours < 24) return txt.hoursAgo.replace("%d", hours);
+            var days = Math.floor(hours / 24);
+            if (days < 30) return txt.daysAgo.replace("%d", days);
+            return localDateTitle(value);
+          };
+          var actionText = function(action, status) {
+            if (status === "failed") return txt.historyFailed;
+            if (action === "purge") return txt.historyPurge;
+            if (action === "unpublish") return txt.historyUnpublish;
+            return txt.historyDeploy;
+          };
+          var renderLastDeploy = function(value) {
+            if (!lastDeployEl) return;
+            value = String(value || "");
+            lastDeployEl.dateTime = value;
+            lastDeployEl.textContent = relativeTime(value);
+            lastDeployEl.title = value ? localDateTitle(value) : "";
+          };
+          var renderHistory = function(items) {
+            if (!historyList) return;
+            historyList.innerHTML = "";
+            if (!items || !items.length) {
+              var empty = document.createElement("p");
+              empty.className = "cloudflare-history-empty";
+              empty.textContent = txt.historyEmpty;
+              historyList.appendChild(empty);
+              return;
+            }
+            items.slice(0, 8).forEach(function(item) {
+              var row = document.createElement("div");
+              row.className = "cloudflare-history-item";
+              if (item.status === "success") row.classList.add("is-success");
+              if (item.status === "failed") row.classList.add("is-failed");
+              var head = document.createElement("div");
+              var name = document.createElement("span");
+              name.textContent = actionText(item.action, item.status);
+              var time = document.createElement("time");
+              time.dateTime = item.at || "";
+              time.textContent = relativeTime(item.at);
+              time.title = localDateTitle(item.at);
+              head.appendChild(name);
+              head.appendChild(time);
+              row.appendChild(head);
+              if (item.message) {
+                var msg = document.createElement("p");
+                msg.textContent = item.message;
+                row.appendChild(msg);
+              }
+              historyList.appendChild(row);
+            });
+          };
+          var refreshHistoryTimes = function() {
+            if (!historyList) return;
+            historyList.querySelectorAll("time[datetime]").forEach(function(time) {
+              var value = time.getAttribute("datetime") || "";
+              time.textContent = relativeTime(value);
+              time.title = localDateTitle(value);
+            });
+          };
+          var selectedSyncMode = function() {
+            if (!syncForm) return "realtime";
+            var input = syncForm.querySelector("input[name='sync_mode']:checked");
+            return input ? input.value : "realtime";
+          };
 		          var updateSyncTimeState = function() {
 		            var daily = selectedSyncMode() === "daily";
 		            if (syncTimeInput) syncTimeInput.disabled = !daily;
 		            if (syncTimeWrap) syncTimeWrap.classList.toggle("is-disabled", !daily);
 		            if (syncCurrentEl) syncCurrentEl.textContent = daily ? txt.syncDaily : txt.syncRealtime;
 		          };
-	          var renderSyncState = function(s) {
-	            if (!syncForm || !s) return;
-	            var mode = s.sync_mode || selectedSyncMode();
-	            syncForm.querySelectorAll("input[name='sync_mode']").forEach(function(input) {
-	              input.checked = input.value === mode;
-	            });
-	            if (syncTimeInput && s.sync_time) syncTimeInput.value = s.sync_time;
-	            updateSyncTimeState();
+          var renderSyncState = function(s) {
+            if (!syncForm || !s) return;
+            var mode = s.sync_mode || selectedSyncMode();
+            syncForm.querySelectorAll("input[name='sync_mode']").forEach(function(input) {
+              input.checked = input.value === mode;
+            });
+            if (syncTimeInput && s.sync_time) syncTimeInput.value = s.sync_time;
+            updateSyncTimeState();
 		            if (mode === "daily" && s.sync_pending) {
 		              var next = s.sync_next_at ? " · " + txt.syncNextAt + "：" + localDateTitle(s.sync_next_at) : "";
 		              if (syncStatusEl) syncStatusEl.textContent = txt.syncPending + next;
 		            } else {
 		              if (syncStatusEl) syncStatusEl.textContent = mode === "daily" ? txt.syncDailyNote : txt.syncRealtimeNote;
 		            }
-	          };
-	          var toggleManagedActions = function(canUnpublish, canPurge) {
-	            var hasAction = false;
-	            document.querySelectorAll("[data-cloudflare-managed-action='unpublish']").forEach(function(el){
-	              el.hidden = !canUnpublish;
-	              if (canUnpublish) hasAction = true;
-	            });
-	            document.querySelectorAll("[data-cloudflare-managed-action='purge']").forEach(function(el){
-	              el.hidden = !canPurge;
-	              if (canPurge) hasAction = true;
-	            });
-	            document.querySelectorAll("[data-cf-more-actions]").forEach(function(el) {
-	              el.hidden = !hasAction;
-	              if (!hasAction) el.open = false;
-	            });
-	          };
+          };
+          var toggleManagedActions = function(canUnpublish, canPurge) {
+            var hasAction = false;
+            document.querySelectorAll("[data-cloudflare-managed-action='unpublish']").forEach(function(el){
+              el.hidden = !canUnpublish;
+              if (canUnpublish) hasAction = true;
+            });
+            document.querySelectorAll("[data-cloudflare-managed-action='purge']").forEach(function(el){
+              el.hidden = !canPurge;
+              if (canPurge) hasAction = true;
+            });
+            document.querySelectorAll("[data-cf-more-actions]").forEach(function(el) {
+              el.hidden = !hasAction;
+              if (!hasAction) el.open = false;
+            });
+          };
           var setOpenLinks = function(publicURL) {
             document.querySelectorAll("[data-cf-open-site]").forEach(function(link) {
               if (publicURL) {
@@ -1710,6 +1710,9 @@
             setAnyText("[data-cf-connect-title]", currentTokenSet ? txt.boundTitle : txt.connectTitle);
             setAnyText("[data-cf-connect-desc]", currentTokenSet ? txt.boundDesc : txt.connectDesc);
             setAnyText("[data-cf-bound-domain]", v.domain_summary || txt.empty);
+            document.querySelectorAll("[data-cf-bound-domain]").forEach(function(el) {
+              el.title = v.domain_summary || v.primary_domain || "";
+            });
             setAnyText("[data-cf-bound-token]", v.token_fingerprint || txt.empty);
             setAnyText("[data-cf-project-label]", v.project_name || txt.empty);
             setAnyText("[data-cf-status-project]", v.project_name || txt.empty);
@@ -1755,16 +1758,16 @@
             wasRunning = s.status === "running";
             currentPublished = hasDeploymentValue(!!s.published, s.last_deploy_at);
             box.dataset.running = s.status === "running" ? "1" : "0";
-	            setText("[data-cloudflare-status]", statusText(s.status, !!s.published, s.last_deploy_at));
-	            setTaskState(s.status, !!s.published, s.last_deploy_at);
-	            setText("[data-cloudflare-message]", s.message);
-	            setDomainSummary(s.domains || s.primary_domain || txt.empty, publicURLFromHost(s.primary_domain));
-	            setText("[data-cf-status-project]", s.deploy_mode === "pages" ? s.pages_project_name : s.worker_name);
-	            setOpenLinks((currentPublished && s.primary_domain) ? ("https://" + s.primary_domain) : "");
-	            renderLastDeploy(s.last_deploy_at);
-	            renderHistory(s.history || []);
-	            renderSyncState(s);
-	            setProgress(s.status, s.step);
+            setText("[data-cloudflare-status]", statusText(s.status, !!s.published, s.last_deploy_at));
+            setTaskState(s.status, !!s.published, s.last_deploy_at);
+            setText("[data-cloudflare-message]", s.message);
+            setDomainSummary(s.domains || s.primary_domain || txt.empty, publicURLFromHost(s.primary_domain));
+            setText("[data-cf-status-project]", s.deploy_mode === "pages" ? s.pages_project_name : s.worker_name);
+            setOpenLinks((currentPublished && s.primary_domain) ? ("https://" + s.primary_domain) : "");
+            renderLastDeploy(s.last_deploy_at);
+            renderHistory(s.history || []);
+            renderSyncState(s);
+            setProgress(s.status, s.step);
             if (button) {
               button.disabled = !currentTokenSet || s.status === "running";
               button.textContent = deployButtonText(s.status);
@@ -1900,16 +1903,16 @@
             updateAdvancedSummary();
             updateTokenFormValidity();
           }
-	          if (syncForm) {
-	            syncForm.querySelectorAll("input[name='sync_mode']").forEach(function(input) {
-	              input.addEventListener("change", updateSyncTimeState);
-	            });
-	            updateSyncTimeState();
-	          }
-	          if (saveModal) {
-	            saveModal.querySelectorAll("[data-cf-save-later]").forEach(function(btn) {
-	              btn.addEventListener("click", closeSaveModal);
-	            });
+          if (syncForm) {
+            syncForm.querySelectorAll("input[name='sync_mode']").forEach(function(input) {
+              input.addEventListener("change", updateSyncTimeState);
+            });
+            updateSyncTimeState();
+          }
+          if (saveModal) {
+            saveModal.querySelectorAll("[data-cf-save-later]").forEach(function(btn) {
+              btn.addEventListener("click", closeSaveModal);
+            });
             var saveDeploy = saveModal.querySelector("[data-cf-save-deploy]");
             if (saveDeploy) {
               saveDeploy.addEventListener("click", function() {
@@ -1921,46 +1924,46 @@
               });
             }
             document.addEventListener("keydown", function(e) {
-	              if (e.key === "Escape" && !saveModal.hidden) closeSaveModal();
-	            });
-	          }
-	          var closeMoreActions = function(except) {
-	            document.querySelectorAll("[data-cf-more-actions][open]").forEach(function(menu) {
-	              if (menu !== except) menu.open = false;
-	            });
-	          };
-	          document.addEventListener("click", function(e) {
-	            var current = e.target.closest ? e.target.closest("[data-cf-more-actions]") : null;
-	            closeMoreActions(current);
-	          });
-	          document.addEventListener("keydown", function(e) {
-	            if (e.key === "Escape") closeMoreActions(null);
-	          });
-	          if (historyToggle && historyPopover) {
-	            historyToggle.addEventListener("click", function(e) {
-	              e.preventDefault();
-	              e.stopPropagation();
-	              var open = historyPopover.hidden;
-	              historyPopover.hidden = !open;
-	              historyToggle.setAttribute("aria-expanded", open ? "true" : "false");
-	            });
-	            document.addEventListener("click", function(e) {
-	              if (historyPopover.hidden) return;
-	              if (historyPopover.contains(e.target) || historyToggle.contains(e.target)) return;
-	              historyPopover.hidden = true;
-	              historyToggle.setAttribute("aria-expanded", "false");
-	            });
-	            document.addEventListener("keydown", function(e) {
-	              if (e.key === "Escape" && !historyPopover.hidden) {
-	                historyPopover.hidden = true;
-	                historyToggle.setAttribute("aria-expanded", "false");
-	              }
-	            });
-	          }
-	          if (lastDeployEl) renderLastDeploy(lastDeployEl.getAttribute("datetime"));
-	          refreshHistoryTimes();
-	          setProgress({{printf "%q" $st.Status}}, {{printf "%q" $st.Step}});
-	          setTaskState({{printf "%q" $st.Status}}, {{if $st.Published}}true{{else}}false{{end}}, {{printf "%q" $st.LastDeployAt}});
+              if (e.key === "Escape" && !saveModal.hidden) closeSaveModal();
+            });
+          }
+          var closeMoreActions = function(except) {
+            document.querySelectorAll("[data-cf-more-actions][open]").forEach(function(menu) {
+              if (menu !== except) menu.open = false;
+            });
+          };
+          document.addEventListener("click", function(e) {
+            var current = e.target.closest ? e.target.closest("[data-cf-more-actions]") : null;
+            closeMoreActions(current);
+          });
+          document.addEventListener("keydown", function(e) {
+            if (e.key === "Escape") closeMoreActions(null);
+          });
+          if (historyToggle && historyPopover) {
+            historyToggle.addEventListener("click", function(e) {
+              e.preventDefault();
+              e.stopPropagation();
+              var open = historyPopover.hidden;
+              historyPopover.hidden = !open;
+              historyToggle.setAttribute("aria-expanded", open ? "true" : "false");
+            });
+            document.addEventListener("click", function(e) {
+              if (historyPopover.hidden) return;
+              if (historyPopover.contains(e.target) || historyToggle.contains(e.target)) return;
+              historyPopover.hidden = true;
+              historyToggle.setAttribute("aria-expanded", "false");
+            });
+            document.addEventListener("keydown", function(e) {
+              if (e.key === "Escape" && !historyPopover.hidden) {
+                historyPopover.hidden = true;
+                historyToggle.setAttribute("aria-expanded", "false");
+              }
+            });
+          }
+          if (lastDeployEl) renderLastDeploy(lastDeployEl.getAttribute("datetime"));
+          refreshHistoryTimes();
+          setProgress({{printf "%q" $st.Status}}, {{printf "%q" $st.Step}});
+          setTaskState({{printf "%q" $st.Status}}, {{if $st.Published}}true{{else}}false{{end}}, {{printf "%q" $st.LastDeployAt}});
           if (button) button.disabled = !currentTokenSet || box.dataset.running === "1";
           if (box.dataset.running === "1") schedulePoll(900);
           // 内容同步：实时模式隐藏「同步时间」+「保存」；切换模式即时静默自动保存（fetch，不导航）；
@@ -2003,7 +2006,7 @@
       </div>
 
       <details class="update-details cloudflare-manual"{{if eq $st.Status "failed"}} open{{end}}>
-        <summary>{{.Admin.T "admin.settings.cloudflare.manual_title" "高级设置：路由与手动字段"}}</summary>
+        <summary class="cloudflare-details-summary"><span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 21v-7"/><path d="M4 10V3"/><path d="M12 21v-9"/><path d="M12 8V3"/><path d="M20 21v-5"/><path d="M20 12V3"/><path d="M2 14h4"/><path d="M10 8h4"/><path d="M18 16h4"/></svg>{{.Admin.T "admin.settings.cloudflare.manual_title" "高级设置：路由与手动字段"}}</span></summary>
         <form method="post" action="/admin/settings/cloudflare" class="admin-form" data-cloudflare-ajax data-no-busy>
           <input type="hidden" name="_csrf" value="{{.CSRF}}">
           <div class="field-group">
@@ -2066,7 +2069,7 @@
       </details>
 
       <details class="update-details cloudflare-help">
-        <summary>{{.Admin.T "admin.settings.cloudflare.how_it_works" "工作方式"}}</summary>
+        <summary class="cloudflare-details-summary"><span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5z"/><path d="M8 7h8"/><path d="M8 11h6"/></svg>{{.Admin.T "admin.settings.cloudflare.how_it_works" "工作方式"}}</span></summary>
         <div class="automation-help">
           <ol>
             <li>{{.Admin.T "admin.settings.cloudflare.flow_1" "gcms 先按当前内容、语种、主题和正式域名生成完整静态文件。"}}</li>
@@ -2078,6 +2081,7 @@
       </details>
 
       {{else if eq .Section "comments"}}
+      {{$giscusReady := and .Settings.GiscusRepo .Settings.GiscusRepoID .Settings.GiscusCategory .Settings.GiscusCategoryID}}
       <form method="post" action="/admin/settings/comments" class="admin-form">
         <input type="hidden" name="_csrf" value="{{.CSRF}}">
         <div class="field-group">
@@ -2105,97 +2109,311 @@
               <span class="cap-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 0 1 4.7 1.2c0 1.8-2.2 2.2-2.2 3.8"/><path d="M12 17h.01"/></svg></span>
               <strong>{{.Admin.T "admin.settings.comments.prepare" "怎么准备"}}</strong>
             </div>
-            <ol>
-              <li>{{.Admin.T "admin.settings.comments.prepare_1" "准备一个 GitHub 仓库，开启 Discussions，并安装 giscus App。"}}</li>
-              <li>{{.Admin.T "admin.settings.comments.prepare_2_prefix" "打开 "}}<a href="https://giscus.app/zh-CN" target="_blank" rel="noopener">{{.Admin.T "admin.settings.comments.prepare_2_link" "giscus 配置页"}}</a>{{.Admin.T "admin.settings.comments.prepare_2_suffix" "，按提示选择仓库和讨论分类。"}}</li>
-              <li>{{.Admin.T "admin.settings.comments.prepare_3" "把页面生成的 Repo ID、Category ID 等信息填到下面。"}}</li>
-              <li>{{.Admin.T "admin.settings.comments.prepare_4" "在需要评论的文章编辑页勾选“显示评论区”。"}}</li>
-            </ol>
+            <p>{{.Admin.T "admin.settings.comments.prepare_note" "下面按 5 步走即可，不需要手动理解 Repo ID、Category ID。GCMS 会从 giscus 生成代码里自动提取需要的配置。"}}</p>
           </div>
         </div>
 
-        <div class="field-group">
-          <h3 class="group-head">{{.Admin.T "admin.settings.comments.config" "Giscus 配置"}}</h3>
-          <div class="form-2col">
-            <div class="field">
-              <label for="giscus_repo">{{.Admin.T "admin.settings.comments.repo" "仓库"}}</label>
-              <input id="giscus_repo" name="giscus_repo" value="{{.Settings.GiscusRepo}}" placeholder="owner/repo">
+        <div class="field-group giscus-quick" data-giscus-wizard data-ready-text="{{.Admin.T "admin.settings.comments.ready" "已就绪"}}" data-pending-text="{{.Admin.T "admin.settings.comments.pending" "待配置"}}" data-ready-hint="{{.Admin.T "admin.settings.comments.ready_hint" "配置已经完整，可以保存并启用。"}}" data-pending-hint="{{.Admin.T "admin.settings.comments.pending_hint" "完成第 4 步解析后，这里会显示四项配置。"}}" data-empty-text="{{.Admin.T "admin.common.empty_dash" "—"}}" data-parse-ok="{{.Admin.T "admin.settings.comments.parse_ok" "已从脚本中识别配置，可以保存启用。"}}" data-parse-missing="{{.Admin.T "admin.settings.comments.parse_missing" "没有识别到完整的 giscus 配置，请确认粘贴的是包含 data-repo-id 和 data-category-id 的 script 代码。"}}">
+          <div class="giscus-quick-head">
+            <div>
+              <h3 class="group-head">{{.Admin.T "admin.settings.comments.quick_title" "新手配置向导"}}</h3>
+              <p class="muted">{{.Admin.T "admin.settings.comments.quick_desc" "按顺序完成下面 5 步。右侧“当前配置”四项都有内容后，再点击底部保存启用。"}}</p>
             </div>
-            <div class="field">
-              <label for="giscus_repo_id">Repo ID</label>
-              <input id="giscus_repo_id" name="giscus_repo_id" value="{{.Settings.GiscusRepoID}}" placeholder="R_kg...">
-            </div>
-            <div class="field">
-              <label for="giscus_category">{{.Admin.T "admin.settings.comments.category" "讨论分类"}}</label>
-              <input id="giscus_category" name="giscus_category" value="{{.Settings.GiscusCategory}}" placeholder="Announcements">
-            </div>
-            <div class="field">
-              <label for="giscus_category_id">Category ID</label>
-              <input id="giscus_category_id" name="giscus_category_id" value="{{.Settings.GiscusCategoryID}}" placeholder="DIC_kw...">
-            </div>
+            <span class="mini-tag {{if $giscusReady}}is-ready{{end}}" data-giscus-status-label>{{if $giscusReady}}{{.Admin.T "admin.settings.comments.ready" "已就绪"}}{{else}}{{.Admin.T "admin.settings.comments.pending" "待配置"}}{{end}}</span>
           </div>
-          <p class="muted" style="margin:.1rem 0 0;font-size:.84rem;line-height:1.55">{{.Admin.T "admin.settings.comments.config_note" "这些值由 giscus 配置页生成。GCMS 只负责把它们放到文章页，不保存评论内容。"}}</p>
-        </div>
-
-        <div class="field-group">
-          <h3 class="group-head">{{.Admin.T "admin.settings.comments.display" "显示方式"}}</h3>
-          <div class="form-2col">
-            <div class="field">
-              <label id="giscus-mapping-label">{{.Admin.T "admin.settings.comments.mapping" "文章与讨论的对应方式"}}</label>
-              <div class="dropdown" data-name="giscus_mapping">
-                <button type="button" class="dd-toggle" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="giscus-mapping-label">
-                  <span class="dd-label">{{if eq .Settings.GiscusMapping "url"}}{{.Admin.T "admin.settings.comments.map_url" "按完整 URL"}}{{else if eq .Settings.GiscusMapping "title"}}{{.Admin.T "admin.settings.comments.map_title" "按文章标题"}}{{else if eq .Settings.GiscusMapping "og:title"}}{{.Admin.T "admin.settings.comments.map_og" "按 OG 标题"}}{{else}}{{.Admin.T "admin.settings.comments.map_path" "按页面路径（推荐）"}}{{end}}</span>
-                  <svg class="dd-caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
-                </button>
-                <input type="hidden" name="giscus_mapping" value="{{if .Settings.GiscusMapping}}{{.Settings.GiscusMapping}}{{else}}pathname{{end}}">
-                <ul class="dd-menu" role="listbox">
-                  <li role="option" data-value="pathname" aria-selected="{{if eq .Settings.GiscusMapping "pathname"}}true{{else}}false{{end}}">{{.Admin.T "admin.settings.comments.map_path" "按页面路径（推荐）"}}</li>
-                  <li role="option" data-value="url" aria-selected="{{if eq .Settings.GiscusMapping "url"}}true{{else}}false{{end}}">{{.Admin.T "admin.settings.comments.map_url" "按完整 URL"}}</li>
-                  <li role="option" data-value="title" aria-selected="{{if eq .Settings.GiscusMapping "title"}}true{{else}}false{{end}}">{{.Admin.T "admin.settings.comments.map_title" "按文章标题"}}</li>
-                  <li role="option" data-value="og:title" aria-selected="{{if eq .Settings.GiscusMapping "og:title"}}true{{else}}false{{end}}">{{.Admin.T "admin.settings.comments.map_og" "按 OG 标题"}}</li>
-                </ul>
+          <div class="giscus-quick-grid">
+            <div class="giscus-quick-fields">
+              <div class="giscus-guide">
+                <section class="giscus-step">
+                  <span class="giscus-step-num">1</span>
+                  <div class="giscus-step-body">
+                    <strong>{{.Admin.T "admin.settings.comments.step_repo_title" "准备评论仓库"}}</strong>
+                    <p>{{.Admin.T "admin.settings.comments.step_repo_desc" "新建或选择一个公开 GitHub 仓库，用来存放文章评论讨论；仓库需要开启 Discussions。"}}</p>
+                    <div class="field">
+                      <label for="giscus_quick_repo">{{.Admin.T "admin.settings.comments.repo" "仓库"}}</label>
+                      <input id="giscus_quick_repo" data-giscus-quick-repo value="{{.Settings.GiscusRepo}}" placeholder="owner/repo" autocomplete="off" spellcheck="false">
+                      <span class="hint">{{.Admin.T "admin.settings.comments.repo_hint" "填写 GitHub 仓库地址里的 owner/repo，例如 yourname/blog-comments。"}}</span>
+                    </div>
+                  </div>
+                </section>
+                <section class="giscus-step">
+                  <span class="giscus-step-num">2</span>
+                  <div class="giscus-step-body">
+                    <strong>{{.Admin.T "admin.settings.comments.step_app_title" "安装 giscus App"}}</strong>
+                    <p>{{.Admin.T "admin.settings.comments.step_app_desc" "点击安装，选择第 1 步填写的仓库。安装完成后回到这个页面继续。"}}</p>
+                    <div class="button-row">
+                      <a class="btn icon-text" href="https://github.com/apps/giscus" target="_blank" rel="noopener">{{.Admin.T "admin.settings.comments.install_app" "安装 giscus App"}} {{template "icon-extlink"}}</a>
+                    </div>
+                  </div>
+                </section>
+                <section class="giscus-step">
+                  <span class="giscus-step-num">3</span>
+                  <div class="giscus-step-body">
+                    <strong>{{.Admin.T "admin.settings.comments.step_config_title" "生成 giscus 配置代码"}}</strong>
+                    <p>{{.Admin.T "admin.settings.comments.step_config_desc" "打开配置页，仓库填写同一个 owner/repo，讨论分类选择 General 或 Announcements，页面底部会生成 script 代码。"}}</p>
+                    <div class="button-row">
+                      <a class="btn icon-text" href="https://giscus.app/zh-CN" target="_blank" rel="noopener">{{.Admin.T "admin.settings.comments.open_config" "打开配置页"}} {{template "icon-extlink"}}</a>
+                    </div>
+                  </div>
+                </section>
+                <section class="giscus-step">
+                  <span class="giscus-step-num">4</span>
+                  <div class="giscus-step-body">
+                    <strong>{{.Admin.T "admin.settings.comments.step_paste_title" "粘贴代码并解析"}}</strong>
+                    <p>{{.Admin.T "admin.settings.comments.step_paste_desc" "把配置页生成的整段 script 粘贴到下面，然后点“解析并填充”。系统会自动填好高级配置里的 ID。"}}</p>
+                    <div class="field">
+                      <label for="giscus_config_script">{{.Admin.T "admin.settings.comments.script" "giscus 生成代码"}}</label>
+                      <textarea id="giscus_config_script" name="giscus_config_script" rows="5" data-giscus-script class="giscus-script-input" placeholder="{{.Admin.T "admin.settings.comments.script_placeholder" "把 giscus.app 生成的 <script ...></script> 粘贴到这里"}}"></textarea>
+                      <span class="hint">{{.Admin.T "admin.settings.comments.script_hint" "只用于本次保存时解析，不会存入数据库。"}}</span>
+                    </div>
+                    <div class="button-row">
+                      <button class="btn" type="button" data-giscus-parse>{{.Admin.T "admin.settings.comments.parse" "解析并填充"}}</button>
+                    </div>
+                    <p class="giscus-parse-message" data-giscus-message hidden></p>
+                  </div>
+                </section>
+                <section class="giscus-step">
+                  <span class="giscus-step-num">5</span>
+                  <div class="giscus-step-body">
+                    <strong>{{.Admin.T "admin.settings.comments.step_save_title" "保存并在文章中启用"}}</strong>
+                    <p>{{.Admin.T "admin.settings.comments.step_save_desc" "确认右侧四项配置都有值后，点击底部“保存并启用 Giscus”。之后到文章编辑页勾选“显示评论区”。"}}</p>
+                  </div>
+                </section>
               </div>
             </div>
-            <div class="field">
-              <label id="giscus-theme-label">{{.Admin.T "admin.settings.comments.theme" "评论区主题"}}</label>
-              <div class="dropdown" data-name="giscus_theme">
-                <button type="button" class="dd-toggle" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="giscus-theme-label">
-                  <span class="dd-label">{{if eq .Settings.GiscusTheme "light"}}{{.Admin.T "admin.settings.comments.theme_light" "浅色"}}{{else if eq .Settings.GiscusTheme "dark"}}{{.Admin.T "admin.settings.comments.theme_dark" "深色"}}{{else if eq .Settings.GiscusTheme "noborder_light"}}{{.Admin.T "admin.settings.comments.theme_light_no_border" "浅色无边框"}}{{else if eq .Settings.GiscusTheme "noborder_dark"}}{{.Admin.T "admin.settings.comments.theme_dark_no_border" "深色无边框"}}{{else}}{{.Admin.T "admin.settings.comments.theme_system" "跟随系统"}}{{end}}</span>
-                  <svg class="dd-caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
-                </button>
-                <input type="hidden" name="giscus_theme" value="{{if .Settings.GiscusTheme}}{{.Settings.GiscusTheme}}{{else}}preferred_color_scheme{{end}}">
-                <ul class="dd-menu" role="listbox">
-                  <li role="option" data-value="preferred_color_scheme" aria-selected="{{if eq .Settings.GiscusTheme "preferred_color_scheme"}}true{{else}}false{{end}}">{{.Admin.T "admin.settings.comments.theme_system" "跟随系统"}}</li>
-                  <li role="option" data-value="light" aria-selected="{{if eq .Settings.GiscusTheme "light"}}true{{else}}false{{end}}">{{.Admin.T "admin.settings.comments.theme_light" "浅色"}}</li>
-                  <li role="option" data-value="dark" aria-selected="{{if eq .Settings.GiscusTheme "dark"}}true{{else}}false{{end}}">{{.Admin.T "admin.settings.comments.theme_dark" "深色"}}</li>
-                  <li role="option" data-value="noborder_light" aria-selected="{{if eq .Settings.GiscusTheme "noborder_light"}}true{{else}}false{{end}}">{{.Admin.T "admin.settings.comments.theme_light_no_border" "浅色无边框"}}</li>
-                  <li role="option" data-value="noborder_dark" aria-selected="{{if eq .Settings.GiscusTheme "noborder_dark"}}true{{else}}false{{end}}">{{.Admin.T "admin.settings.comments.theme_dark_no_border" "深色无边框"}}</li>
-                </ul>
-              </div>
-            </div>
-            <div class="field">
-              <label id="giscus-input-position-label">{{.Admin.T "admin.settings.comments.input_position" "评论输入框位置"}}</label>
-              <div class="dropdown" data-name="giscus_input_position">
-                <button type="button" class="dd-toggle" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="giscus-input-position-label">
-                  <span class="dd-label">{{if eq .Settings.GiscusInputPosition "top"}}{{.Admin.T "admin.settings.comments.position_top" "顶部"}}{{else}}{{.Admin.T "admin.settings.comments.position_bottom" "底部"}}{{end}}</span>
-                  <svg class="dd-caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
-                </button>
-                <input type="hidden" name="giscus_input_position" value="{{if eq .Settings.GiscusInputPosition "top"}}top{{else}}bottom{{end}}">
-                <ul class="dd-menu" role="listbox">
-                  <li role="option" data-value="bottom" aria-selected="{{if eq .Settings.GiscusInputPosition "bottom"}}true{{else}}false{{end}}">{{.Admin.T "admin.settings.comments.position_bottom" "底部"}}</li>
-                  <li role="option" data-value="top" aria-selected="{{if eq .Settings.GiscusInputPosition "top"}}true{{else}}false{{end}}">{{.Admin.T "admin.settings.comments.position_top" "顶部"}}</li>
-                </ul>
-              </div>
-            </div>
-            <div class="field">
-              <label>{{.Admin.T "admin.settings.comments.details" "细节"}}</label>
-              <label class="tweak-toggle"><input type="checkbox" name="giscus_strict" value="1"{{if .Settings.GiscusStrict}} checked{{end}}><span>{{.Admin.T "admin.settings.comments.strict" "严格匹配页面路径"}}</span></label>
-              <label class="tweak-toggle" style="margin-top:.45rem"><input type="checkbox" name="giscus_reactions" value="1"{{if .Settings.GiscusReactions}} checked{{end}}><span>{{.Admin.T "admin.settings.comments.reactions" "显示表情回应"}}</span></label>
+            <div class="giscus-quick-status {{if $giscusReady}}is-ready{{end}}" data-giscus-status>
+              <strong>{{.Admin.T "admin.settings.comments.current_config" "当前配置"}}</strong>
+              <p class="giscus-status-hint" data-giscus-status-hint>{{if $giscusReady}}{{.Admin.T "admin.settings.comments.ready_hint" "配置已经完整，可以保存并启用。"}}{{else}}{{.Admin.T "admin.settings.comments.pending_hint" "完成第 4 步解析后，这里会显示四项配置。"}}{{end}}</p>
+              <dl>
+                <div><dt>{{.Admin.T "admin.settings.comments.repo" "仓库"}}</dt><dd data-giscus-status-repo>{{if .Settings.GiscusRepo}}{{.Settings.GiscusRepo}}{{else}}{{.Admin.T "admin.common.empty_dash" "—"}}{{end}}</dd></div>
+                <div><dt>Repo ID</dt><dd data-giscus-status-repo-id>{{if .Settings.GiscusRepoID}}{{.Settings.GiscusRepoID}}{{else}}{{.Admin.T "admin.common.empty_dash" "—"}}{{end}}</dd></div>
+                <div><dt>{{.Admin.T "admin.settings.comments.category" "讨论分类"}}</dt><dd data-giscus-status-category>{{if .Settings.GiscusCategory}}{{.Settings.GiscusCategory}}{{else}}{{.Admin.T "admin.common.empty_dash" "—"}}{{end}}</dd></div>
+                <div><dt>Category ID</dt><dd data-giscus-status-category-id>{{if .Settings.GiscusCategoryID}}{{.Settings.GiscusCategoryID}}{{else}}{{.Admin.T "admin.common.empty_dash" "—"}}{{end}}</dd></div>
+              </dl>
             </div>
           </div>
         </div>
 
-        <button class="btn btn-primary" type="submit">{{.Admin.T "admin.settings.comments.save" "保存评论设置"}}</button>
+        <details class="update-details giscus-manual">
+          <summary class="cloudflare-details-summary"><span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 21v-7"/><path d="M4 10V3"/><path d="M12 21v-9"/><path d="M12 8V3"/><path d="M20 21v-5"/><path d="M20 12V3"/><path d="M2 14h4"/><path d="M10 8h4"/><path d="M18 16h4"/></svg>{{.Admin.T "admin.settings.comments.manual_title" "高级配置 / 手动填写"}}</span></summary>
+          <div class="giscus-manual-body">
+            <p class="muted">{{.Admin.T "admin.settings.comments.config_note" "这些值由 giscus 配置页生成。GCMS 只负责把它们放到文章页，不保存评论内容。"}}</p>
+            <div class="form-2col">
+              <div class="field">
+                <label for="giscus_repo">{{.Admin.T "admin.settings.comments.repo" "仓库"}}</label>
+                <input id="giscus_repo" name="giscus_repo" value="{{.Settings.GiscusRepo}}" placeholder="owner/repo" data-giscus-field="repo">
+              </div>
+              <div class="field">
+                <label for="giscus_repo_id">Repo ID</label>
+                <input id="giscus_repo_id" name="giscus_repo_id" value="{{.Settings.GiscusRepoID}}" placeholder="R_kg..." data-giscus-field="repo_id">
+              </div>
+              <div class="field">
+                <label for="giscus_category">{{.Admin.T "admin.settings.comments.category" "讨论分类"}}</label>
+                <input id="giscus_category" name="giscus_category" value="{{.Settings.GiscusCategory}}" placeholder="Announcements" data-giscus-field="category">
+              </div>
+              <div class="field">
+                <label for="giscus_category_id">Category ID</label>
+                <input id="giscus_category_id" name="giscus_category_id" value="{{.Settings.GiscusCategoryID}}" placeholder="DIC_kw..." data-giscus-field="category_id">
+              </div>
+            </div>
+
+            <h3 class="group-head">{{.Admin.T "admin.settings.comments.display" "显示方式"}}</h3>
+            <div class="form-2col">
+              <div class="field">
+                <label id="giscus-mapping-label">{{.Admin.T "admin.settings.comments.mapping" "文章与讨论的对应方式"}}</label>
+                <div class="dropdown" data-name="giscus_mapping">
+                  <button type="button" class="dd-toggle" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="giscus-mapping-label">
+                    <span class="dd-label">{{if eq .Settings.GiscusMapping "url"}}{{.Admin.T "admin.settings.comments.map_url" "按完整 URL"}}{{else if eq .Settings.GiscusMapping "title"}}{{.Admin.T "admin.settings.comments.map_title" "按文章标题"}}{{else if eq .Settings.GiscusMapping "og:title"}}{{.Admin.T "admin.settings.comments.map_og" "按 OG 标题"}}{{else}}{{.Admin.T "admin.settings.comments.map_path" "按页面路径（推荐）"}}{{end}}</span>
+                    <svg class="dd-caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+                  </button>
+                  <input type="hidden" name="giscus_mapping" value="{{if .Settings.GiscusMapping}}{{.Settings.GiscusMapping}}{{else}}pathname{{end}}">
+                  <ul class="dd-menu" role="listbox">
+                    <li role="option" data-value="pathname" aria-selected="{{if eq .Settings.GiscusMapping "pathname"}}true{{else}}false{{end}}">{{.Admin.T "admin.settings.comments.map_path" "按页面路径（推荐）"}}</li>
+                    <li role="option" data-value="url" aria-selected="{{if eq .Settings.GiscusMapping "url"}}true{{else}}false{{end}}">{{.Admin.T "admin.settings.comments.map_url" "按完整 URL"}}</li>
+                    <li role="option" data-value="title" aria-selected="{{if eq .Settings.GiscusMapping "title"}}true{{else}}false{{end}}">{{.Admin.T "admin.settings.comments.map_title" "按文章标题"}}</li>
+                    <li role="option" data-value="og:title" aria-selected="{{if eq .Settings.GiscusMapping "og:title"}}true{{else}}false{{end}}">{{.Admin.T "admin.settings.comments.map_og" "按 OG 标题"}}</li>
+                  </ul>
+                </div>
+              </div>
+              <div class="field">
+                <label id="giscus-theme-label">{{.Admin.T "admin.settings.comments.theme" "评论区主题"}}</label>
+                <div class="dropdown" data-name="giscus_theme">
+                  <button type="button" class="dd-toggle" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="giscus-theme-label">
+                    <span class="dd-label">{{if eq .Settings.GiscusTheme "light"}}{{.Admin.T "admin.settings.comments.theme_light" "浅色"}}{{else if eq .Settings.GiscusTheme "dark"}}{{.Admin.T "admin.settings.comments.theme_dark" "深色"}}{{else if eq .Settings.GiscusTheme "noborder_light"}}{{.Admin.T "admin.settings.comments.theme_light_no_border" "浅色无边框"}}{{else if eq .Settings.GiscusTheme "noborder_dark"}}{{.Admin.T "admin.settings.comments.theme_dark_no_border" "深色无边框"}}{{else}}{{.Admin.T "admin.settings.comments.theme_system" "跟随系统"}}{{end}}</span>
+                    <svg class="dd-caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+                  </button>
+                  <input type="hidden" name="giscus_theme" value="{{if .Settings.GiscusTheme}}{{.Settings.GiscusTheme}}{{else}}preferred_color_scheme{{end}}">
+                  <ul class="dd-menu" role="listbox">
+                    <li role="option" data-value="preferred_color_scheme" aria-selected="{{if eq .Settings.GiscusTheme "preferred_color_scheme"}}true{{else}}false{{end}}">{{.Admin.T "admin.settings.comments.theme_system" "跟随系统"}}</li>
+                    <li role="option" data-value="light" aria-selected="{{if eq .Settings.GiscusTheme "light"}}true{{else}}false{{end}}">{{.Admin.T "admin.settings.comments.theme_light" "浅色"}}</li>
+                    <li role="option" data-value="dark" aria-selected="{{if eq .Settings.GiscusTheme "dark"}}true{{else}}false{{end}}">{{.Admin.T "admin.settings.comments.theme_dark" "深色"}}</li>
+                    <li role="option" data-value="noborder_light" aria-selected="{{if eq .Settings.GiscusTheme "noborder_light"}}true{{else}}false{{end}}">{{.Admin.T "admin.settings.comments.theme_light_no_border" "浅色无边框"}}</li>
+                    <li role="option" data-value="noborder_dark" aria-selected="{{if eq .Settings.GiscusTheme "noborder_dark"}}true{{else}}false{{end}}">{{.Admin.T "admin.settings.comments.theme_dark_no_border" "深色无边框"}}</li>
+                  </ul>
+                </div>
+              </div>
+              <div class="field">
+                <label id="giscus-input-position-label">{{.Admin.T "admin.settings.comments.input_position" "评论输入框位置"}}</label>
+                <div class="dropdown" data-name="giscus_input_position">
+                  <button type="button" class="dd-toggle" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="giscus-input-position-label">
+                    <span class="dd-label">{{if eq .Settings.GiscusInputPosition "top"}}{{.Admin.T "admin.settings.comments.position_top" "顶部"}}{{else}}{{.Admin.T "admin.settings.comments.position_bottom" "底部"}}{{end}}</span>
+                    <svg class="dd-caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+                  </button>
+                  <input type="hidden" name="giscus_input_position" value="{{if eq .Settings.GiscusInputPosition "top"}}top{{else}}bottom{{end}}">
+                  <ul class="dd-menu" role="listbox">
+                    <li role="option" data-value="bottom" aria-selected="{{if eq .Settings.GiscusInputPosition "bottom"}}true{{else}}false{{end}}">{{.Admin.T "admin.settings.comments.position_bottom" "底部"}}</li>
+                    <li role="option" data-value="top" aria-selected="{{if eq .Settings.GiscusInputPosition "top"}}true{{else}}false{{end}}">{{.Admin.T "admin.settings.comments.position_top" "顶部"}}</li>
+                  </ul>
+                </div>
+              </div>
+              <div class="field">
+                <label>{{.Admin.T "admin.settings.comments.details" "细节"}}</label>
+                <label class="tweak-toggle"><input type="checkbox" name="giscus_strict" value="1"{{if .Settings.GiscusStrict}} checked{{end}}><span>{{.Admin.T "admin.settings.comments.strict" "严格匹配页面路径"}}</span></label>
+                <label class="tweak-toggle" style="margin-top:.45rem"><input type="checkbox" name="giscus_reactions" value="1"{{if .Settings.GiscusReactions}} checked{{end}}><span>{{.Admin.T "admin.settings.comments.reactions" "显示表情回应"}}</span></label>
+              </div>
+            </div>
+          </div>
+        </details>
+
+        <div class="button-row giscus-form-actions">
+          <button class="btn btn-primary" type="submit" name="enable_giscus" value="1" data-giscus-enable-save>{{.Admin.T "admin.settings.comments.save_enable" "保存并启用 Giscus"}}</button>
+          <button class="btn" type="submit">{{.Admin.T "admin.settings.comments.save" "保存评论设置"}}</button>
+        </div>
+
+        <script>
+        (function(){
+          var root = document.querySelector("[data-giscus-wizard]");
+          if (!root) return;
+          var form = root.closest("form");
+          var quickRepo = root.querySelector("[data-giscus-quick-repo]");
+          var scriptInput = root.querySelector("[data-giscus-script]");
+          var parseBtn = root.querySelector("[data-giscus-parse]");
+          var message = root.querySelector("[data-giscus-message]");
+          var readyText = root.dataset.readyText || "已就绪";
+          var pendingText = root.dataset.pendingText || "待配置";
+          var readyHint = root.dataset.readyHint || "配置已经完整，可以保存并启用。";
+          var pendingHint = root.dataset.pendingHint || "完成第 4 步解析后，这里会显示四项配置。";
+          var emptyText = root.dataset.emptyText || "-";
+          var parseOK = root.dataset.parseOk || "已识别配置。";
+          var parseMissing = root.dataset.parseMissing || "没有识别到完整配置。";
+          function named(name) { return form ? form.querySelector('[name="' + name + '"]') : null; }
+          var fields = {
+            repo: named("giscus_repo"),
+            repoID: named("giscus_repo_id"),
+            category: named("giscus_category"),
+            categoryID: named("giscus_category_id"),
+            strict: named("giscus_strict"),
+            reactions: named("giscus_reactions")
+          };
+          function text(v) { return (v || "").trim(); }
+          function decode(v) {
+            var box = document.createElement("textarea");
+            box.innerHTML = v || "";
+            return box.value;
+          }
+          function attr(raw, name) {
+            var safe = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+            var re = new RegExp("\\b" + safe + "\\s*=\\s*(\\\"([^\\\"]*)\\\"|'([^']*)'|([^\\s>]+))", "i");
+            var m = re.exec(raw || "");
+            if (!m) return "";
+            return text(decode(m[2] || m[3] || m[4] || ""));
+          }
+          function setStatus(selector, value) {
+            var el = root.querySelector(selector);
+            if (el) el.textContent = text(value) || emptyText;
+          }
+          function ready() {
+            return text(fields.repo && fields.repo.value) && text(fields.repoID && fields.repoID.value) && text(fields.category && fields.category.value) && text(fields.categoryID && fields.categoryID.value);
+          }
+          function refresh() {
+            if (quickRepo && fields.repo && quickRepo.value !== fields.repo.value) quickRepo.value = fields.repo.value;
+            setStatus("[data-giscus-status-repo]", fields.repo && fields.repo.value);
+            setStatus("[data-giscus-status-repo-id]", fields.repoID && fields.repoID.value);
+            setStatus("[data-giscus-status-category]", fields.category && fields.category.value);
+            setStatus("[data-giscus-status-category-id]", fields.categoryID && fields.categoryID.value);
+            var ok = !!ready();
+            root.querySelectorAll("[data-giscus-status-label]").forEach(function(el){
+              el.textContent = ok ? readyText : pendingText;
+              el.classList.toggle("is-ready", ok);
+            });
+            var status = root.querySelector("[data-giscus-status]");
+            if (status) status.classList.toggle("is-ready", ok);
+            var hint = root.querySelector("[data-giscus-status-hint]");
+            if (hint) hint.textContent = ok ? readyHint : pendingHint;
+          }
+          function setProviderGiscus() {
+            var provider = named("comments_provider");
+            if (provider) provider.value = "giscus";
+            var dd = provider && provider.closest(".dropdown");
+            if (!dd) return;
+            var label = dd.querySelector(".dd-label");
+            dd.querySelectorAll("[role='option']").forEach(function(li) {
+              var selected = li.getAttribute("data-value") === "giscus";
+              li.setAttribute("aria-selected", selected ? "true" : "false");
+              if (selected && label) label.textContent = li.textContent;
+            });
+          }
+          function setSelect(name, value) {
+            var input = named(name);
+            if (!input || !value) return;
+            input.value = value;
+            var dd = input.closest(".dropdown");
+            if (!dd) return;
+            var label = dd.querySelector(".dd-label");
+            dd.querySelectorAll("[role='option']").forEach(function(li) {
+              var selected = li.getAttribute("data-value") === value;
+              li.setAttribute("aria-selected", selected ? "true" : "false");
+              if (selected && label) label.textContent = li.textContent;
+            });
+          }
+          if (quickRepo && fields.repo) {
+            quickRepo.addEventListener("input", function(){
+              fields.repo.value = quickRepo.value;
+              refresh();
+            });
+          }
+          ["repo", "repoID", "category", "categoryID"].forEach(function(key) {
+            var input = fields[key];
+            if (input) input.addEventListener("input", refresh);
+          });
+          if (parseBtn) {
+            parseBtn.addEventListener("click", function(){
+              var raw = scriptInput ? scriptInput.value : "";
+              var values = {
+                repo: attr(raw, "data-repo"),
+                repoID: attr(raw, "data-repo-id"),
+                category: attr(raw, "data-category"),
+                categoryID: attr(raw, "data-category-id")
+              };
+              if (fields.repo && values.repo) fields.repo.value = values.repo;
+              if (fields.repoID && values.repoID) fields.repoID.value = values.repoID;
+              if (fields.category && values.category) fields.category.value = values.category;
+              if (fields.categoryID && values.categoryID) fields.categoryID.value = values.categoryID;
+              setSelect("giscus_mapping", attr(raw, "data-mapping"));
+              setSelect("giscus_theme", attr(raw, "data-theme"));
+              setSelect("giscus_input_position", attr(raw, "data-input-position"));
+              var strict = attr(raw, "data-strict");
+              var reactions = attr(raw, "data-reactions-enabled");
+              if (fields.strict && strict) fields.strict.checked = strict === "1";
+              if (fields.reactions && reactions) fields.reactions.checked = reactions === "1";
+              setProviderGiscus();
+              refresh();
+              if (message) {
+                message.hidden = false;
+                message.textContent = ready() ? parseOK : parseMissing;
+                message.classList.toggle("is-error", !ready());
+              }
+            });
+          }
+          if (form) {
+            form.addEventListener("submit", function(e){
+              if (quickRepo && fields.repo && !text(fields.repo.value)) fields.repo.value = quickRepo.value;
+              if (e.submitter && e.submitter.matches("[data-giscus-enable-save]")) setProviderGiscus();
+            });
+          }
+          refresh();
+        })();
+        </script>
       </form>
 
       {{else if eq .Section "updates"}}

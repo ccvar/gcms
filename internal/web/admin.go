@@ -8,12 +8,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -2605,6 +2607,39 @@ func (s *Server) adminSaveComments(w http.ResponseWriter, r *http.Request) {
 	reactions := boolAttr(r.FormValue("giscus_reactions") == "1")
 	inputPosition := commentInputPosition(r.FormValue("giscus_input_position"))
 	theme := commentTheme(r.FormValue("giscus_theme"))
+	if r.FormValue("enable_giscus") == "1" {
+		provider = "giscus"
+	}
+
+	if script := r.FormValue("giscus_config_script"); strings.TrimSpace(script) != "" {
+		if v := giscusScriptAttr(script, "data-repo"); repo == "" && v != "" {
+			repo = v
+		}
+		if v := giscusScriptAttr(script, "data-repo-id"); repoID == "" && v != "" {
+			repoID = v
+		}
+		if v := giscusScriptAttr(script, "data-category"); category == "" && v != "" {
+			category = v
+		}
+		if v := giscusScriptAttr(script, "data-category-id"); categoryID == "" && v != "" {
+			categoryID = v
+		}
+		if v := giscusScriptAttr(script, "data-mapping"); v != "" {
+			mapping = commentMapping(v)
+		}
+		if v := giscusScriptAttr(script, "data-strict"); v != "" {
+			strict = boolAttr(v == "1")
+		}
+		if v := giscusScriptAttr(script, "data-reactions-enabled"); v != "" {
+			reactions = boolAttr(v == "1")
+		}
+		if v := giscusScriptAttr(script, "data-input-position"); v != "" {
+			inputPosition = commentInputPosition(v)
+		}
+		if v := giscusScriptAttr(script, "data-theme"); v != "" {
+			theme = commentTheme(v)
+		}
+	}
 
 	if provider == "giscus" {
 		switch {
@@ -2660,6 +2695,24 @@ func validGiscusRepo(v string) bool {
 		}
 	}
 	return true
+}
+
+func giscusScriptAttr(raw, attr string) string {
+	attr = strings.TrimSpace(attr)
+	if attr == "" {
+		return ""
+	}
+	re := regexp.MustCompile(`(?is)\b` + regexp.QuoteMeta(attr) + `\s*=\s*("([^"]*)"|'([^']*)'|([^\s>]+))`)
+	m := re.FindStringSubmatch(raw)
+	if len(m) == 0 {
+		return ""
+	}
+	for _, v := range m[2:] {
+		if v != "" {
+			return strings.TrimSpace(html.UnescapeString(v))
+		}
+	}
+	return ""
 }
 
 func (s *Server) adminSavePassword(w http.ResponseWriter, r *http.Request) {
