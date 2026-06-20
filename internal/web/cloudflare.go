@@ -79,6 +79,8 @@ type CloudflareConfig struct {
 	SourceMode       string
 	AccountName      string
 	ZoneName         string
+	DefaultLang      string
+	Locales          []string
 }
 
 type CloudflareDomain struct {
@@ -831,6 +833,25 @@ func (s *Server) cloudflareConfig() CloudflareConfig {
 func (s *Server) cloudflareConfigForRequest(r *http.Request) CloudflareConfig {
 	cfg := s.cloudflareConfig()
 	s.applyCloudflareRequestDefaults(r, &cfg)
+	return cfg
+}
+
+func (s *Server) cloudflareStaticRuntimeConfig(cfg CloudflareConfig) CloudflareConfig {
+	locales := s.locales()
+	cfg.Locales = cfg.Locales[:0]
+	for _, loc := range locales {
+		code := strings.TrimSpace(loc.Code)
+		if code != "" {
+			cfg.Locales = append(cfg.Locales, code)
+		}
+	}
+	if len(cfg.Locales) == 0 {
+		cfg.Locales = []string{"zh"}
+	}
+	cfg.DefaultLang = strings.TrimSpace(s.defaultLang())
+	if cfg.DefaultLang == "" {
+		cfg.DefaultLang = cfg.Locales[0]
+	}
 	return cfg
 }
 
@@ -1899,6 +1920,7 @@ func (s *Server) deployCloudflare(ctx context.Context, cfg CloudflareConfig) err
 	if err != nil {
 		return fmt.Errorf("获取 Cloudflare 授权失败：%w", err)
 	}
+	cfg = s.cloudflareStaticRuntimeConfig(cfg)
 	setStep("export", "正在导出前台静态站。")
 	exported, err := s.exportStaticSite(ctx, cfg)
 	if err != nil {
@@ -3245,6 +3267,42 @@ func cloudflareWorkerScript() string {
 	return cloudflareWorkerScriptForConfig(CloudflareConfig{})
 }
 
+func cloudflareWorkerDefaultLang(cfg CloudflareConfig) string {
+	def := strings.TrimSpace(cfg.DefaultLang)
+	if def == "" && len(cfg.Locales) > 0 {
+		def = strings.TrimSpace(cfg.Locales[0])
+	}
+	if def == "" {
+		return "zh"
+	}
+	return def
+}
+
+func cloudflareWorkerLocales(cfg CloudflareConfig) []string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, code := range cfg.Locales {
+		code = strings.TrimSpace(code)
+		if code == "" {
+			continue
+		}
+		key := strings.ToLower(code)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, code)
+	}
+	def := cloudflareWorkerDefaultLang(cfg)
+	if !seen[strings.ToLower(def)] {
+		out = append([]string{def}, out...)
+	}
+	if len(out) == 0 {
+		out = []string{"zh"}
+	}
+	return out
+}
+
 func cloudflareWorkerScriptForConfig(cfg CloudflareConfig) string {
 	primaryJSON, _ := json.Marshal(cfg.primaryHost())
 	redirectsJSON, _ := json.Marshal(cfg.redirectHosts())
@@ -3255,13 +3313,82 @@ func cloudflareWorkerScriptForConfig(cfg CloudflareConfig) string {
 		}
 	}
 	publicHostsJSON, _ := json.Marshal(publicHosts)
+	defaultLangJSON, _ := json.Marshal(cloudflareWorkerDefaultLang(cfg))
+	localesJSON, _ := json.Marshal(cloudflareWorkerLocales(cfg))
 	return fmt.Sprintf(`const BLOCKED_PREFIXES = ["/admin", "/api/admin", "/preview"];
+const RESERVED_PREFIXES = ["/assets", "/uploads", "/api"];
+const RESERVED_PATHS = new Set(["/robots.txt", "/sitemap.xml", "/rss.xml", "/favicon.ico", "/_redirects", "/_worker.js"]);
 const PRIMARY_HOST = %s;
 const REDIRECT_HOSTS = new Set(%s);
 const PUBLIC_HOSTS = new Set(%s);
+const DEFAULT_LANG = %s;
+const LOCALES = %s;
 
 function blocked(pathname) {
   return BLOCKED_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(prefix + "/"));
+}
+
+function reserved(pathname) {
+  return RESERVED_PATHS.has(pathname) || RESERVED_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(prefix + "/"));
+}
+
+function normalizeLang(value) {
+  return String(value || "").trim().toLowerCase().replace(/_/g, "-");
+}
+
+function localeForSegment(segment) {
+  const normalized = normalizeLang(segment);
+  return LOCALES.find((code) => normalizeLang(code) === normalized) || "";
+}
+
+function parseAcceptLanguage(header) {
+  return String(header || "")
+    .split(",")
+    .map((part, index) => {
+      const bits = part.trim().split(";");
+      const value = normalizeLang(bits[0]);
+      let q = 1;
+      for (const bit of bits.slice(1)) {
+        const pieces = bit.trim().split("=");
+        if (pieces[0] === "q") {
+          const parsed = Number.parseFloat(pieces[1]);
+          if (!Number.isNaN(parsed)) q = Math.max(0, Math.min(1, parsed));
+        }
+      }
+      return { value, q, index };
+    })
+    .filter((pref) => pref.value && pref.q > 0)
+    .sort((a, b) => (b.q === a.q ? a.index - b.index : b.q - a.q));
+}
+
+function preferredLanguage(header) {
+  for (const pref of parseAcceptLanguage(header)) {
+    if (pref.value === "*") {
+      return DEFAULT_LANG;
+    }
+    const exact = LOCALES.find((code) => normalizeLang(code) === pref.value);
+    if (exact) {
+      return exact;
+    }
+    const primary = pref.value.split("-")[0];
+    const primaryMatch = LOCALES.find((code) => {
+      const normalized = normalizeLang(code);
+      return normalized === primary || normalized.startsWith(primary + "-");
+    });
+    if (primaryMatch) {
+      return primaryMatch;
+    }
+  }
+  return DEFAULT_LANG;
+}
+
+function makeRedirect(url, status, varyLanguage) {
+  const headers = { Location: url.toString() };
+  if (varyLanguage) {
+    headers.Vary = "Accept-Language";
+    headers["Cache-Control"] = "private, no-store";
+  }
+  return new Response(null, { status, headers });
 }
 
 function redirectTarget(url) {
@@ -3275,6 +3402,24 @@ function redirectTarget(url) {
   const next = new URL(url.toString());
   next.hostname = PRIMARY_HOST;
   return next;
+}
+
+function localeRedirect(url, request) {
+  const pathname = url.pathname || "/";
+  if (reserved(pathname)) {
+    return null;
+  }
+  const head = pathname.replace(/^\/+/, "").split("/")[0];
+  if (localeForSegment(head)) {
+    return null;
+  }
+  const next = new URL(url.toString());
+  if (pathname === "/" || pathname === "") {
+    next.pathname = "/" + preferredLanguage(request.headers.get("Accept-Language")) + "/";
+    return { url: next, varyLanguage: true };
+  }
+  next.pathname = "/" + DEFAULT_LANG + (pathname.startsWith("/") ? pathname : "/" + pathname);
+  return { url: next, varyLanguage: false };
 }
 
 function remap(url) {
@@ -3307,10 +3452,14 @@ export default {
     const incoming = new URL(request.url);
     const redirectURL = redirectTarget(incoming);
     if (redirectURL) {
-      return Response.redirect(redirectURL.toString(), 301);
+      return makeRedirect(redirectURL, 301, false);
     }
     if (blocked(incoming.pathname)) {
       return new Response("Not found", { status: 404 });
+    }
+    const langRedirect = localeRedirect(incoming, request);
+    if (langRedirect) {
+      return makeRedirect(langRedirect.url, 302, langRedirect.varyLanguage);
     }
     if (request.method !== "GET" && request.method !== "HEAD") {
       return new Response("Method Not Allowed", { status: 405 });
@@ -3327,5 +3476,5 @@ export default {
     return out;
   },
 };
-`, string(primaryJSON), string(redirectsJSON), string(publicHostsJSON))
+`, string(primaryJSON), string(redirectsJSON), string(publicHostsJSON), string(defaultLangJSON), string(localesJSON))
 }

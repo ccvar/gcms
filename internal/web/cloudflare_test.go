@@ -423,11 +423,34 @@ func TestCloudflareWorkerScriptProtectsAdminAndServesAssets(t *testing.T) {
 		`"/admin"`,
 		`"/api/admin"`,
 		`"/preview"`,
+		`const DEFAULT_LANG = "zh";`,
+		`Accept-Language`,
+		`localeRedirect`,
+		`headers.Vary = "Accept-Language";`,
 		`typeof env.ASSETS.fetch`,
 		`status: 503`,
 		`env.ASSETS.fetch`,
 		`/cat/`,
 		`/page/`,
+	} {
+		if !strings.Contains(script, needle) {
+			t.Fatalf("worker script should contain %s", needle)
+		}
+	}
+}
+
+func TestCloudflareWorkerScriptUsesLocaleConfig(t *testing.T) {
+	cfg := CloudflareConfig{
+		DefaultLang: "en",
+		Locales:     []string{"en", "zh"},
+	}
+	script := cloudflareWorkerScriptForConfig(cfg)
+	for _, needle := range []string{
+		`const DEFAULT_LANG = "en";`,
+		`const LOCALES = ["en","zh"];`,
+		`next.pathname = "/" + preferredLanguage(request.headers.get("Accept-Language")) + "/";`,
+		`next.pathname = "/" + DEFAULT_LANG + (pathname.startsWith("/") ? pathname : "/" + pathname);`,
+		`return makeRedirect(langRedirect.url, 302, langRedirect.varyLanguage);`,
 	} {
 		if !strings.Contains(script, needle) {
 			t.Fatalf("worker script should contain %s", needle)
@@ -446,7 +469,7 @@ func TestCloudflareWorkerScriptRedirectsAliasHosts(t *testing.T) {
 		`const REDIRECT_HOSTS = new Set(["www.ccvar.com"]);`,
 		`const PUBLIC_HOSTS = new Set(["ccvar.com","www.ccvar.com"]);`,
 		`!REDIRECT_HOSTS.has(host) && PUBLIC_HOSTS.has(host)`,
-		`return Response.redirect(redirectURL.toString(), 301);`,
+		`return makeRedirect(redirectURL, 301, false);`,
 	} {
 		if !strings.Contains(script, needle) {
 			t.Fatalf("worker script should contain %s", needle)

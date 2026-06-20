@@ -49,6 +49,7 @@ type staticSearchEntry struct {
 }
 
 func (s *Server) exportStaticSite(ctx context.Context, cfg CloudflareConfig) (*staticExportResult, error) {
+	cfg = s.cloudflareStaticRuntimeConfig(cfg)
 	host := cloudflareRouteHost(cfg.RoutePattern)
 	if host == "" {
 		return nil, errors.New("请先填写前台访问域名。")
@@ -129,6 +130,9 @@ func (s *Server) exportStaticSite(ctx context.Context, cfg CloudflareConfig) (*s
 		}
 	}
 
+	if err := render("/rss.xml", "/rss.xml"); err != nil {
+		return nil, err
+	}
 	if err := render("/sitemap.xml", "/sitemap.xml"); err != nil {
 		return nil, err
 	}
@@ -140,6 +144,11 @@ func (s *Server) exportStaticSite(ctx context.Context, cfg CloudflareConfig) (*s
 	}
 	if redirects := cloudflarePagesRedirectsFile(cfg); redirects != "" {
 		if err := s.exportBytes("/_redirects", []byte(redirects), "text/plain; charset=utf-8", result); err != nil {
+			return nil, err
+		}
+	}
+	if cfg.usingPages() {
+		if err := s.exportBytes("/_worker.js", []byte(cloudflareWorkerScriptForConfig(cfg)), "application/javascript; charset=utf-8", result); err != nil {
 			return nil, err
 		}
 	}
