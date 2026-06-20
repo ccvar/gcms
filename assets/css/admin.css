@@ -1291,6 +1291,13 @@ body.admin { background: var(--line-soft); }
 .cloudflare-task-state.is-failed { background: color-mix(in srgb, var(--danger) 10%, #fff); color: var(--danger); }
 .cloudflare-task-state.is-failed::before { content: "!"; display: inline-grid; place-items: center; flex: none; width: 15px; height: 15px; border-radius: 999px; background: var(--danger); color: #fff; font-size: .62rem; line-height: 1; }
 .cloudflare-task-state.is-idle { background: color-mix(in srgb, var(--line-soft) 70%, #fff); color: var(--ink); }
+.cloudflare-takeover-checks { display: flex; flex-wrap: wrap; gap: .42rem; margin-top: .1rem; }
+.cloudflare-check-chip { display: inline-flex; align-items: center; gap: .34rem; min-height: 24px; padding: .18rem .5rem; border-radius: 999px; color: var(--muted); background: color-mix(in srgb, var(--line-soft) 64%, #fff); font: 850 .72rem/1.2 var(--sans); white-space: nowrap; }
+.cloudflare-check-chip::before { content: ""; display: inline-grid; place-items: center; flex: none; width: 13px; height: 13px; border-radius: 999px; background: var(--line); color: #fff; font-size: .58rem; line-height: 1; }
+.cloudflare-check-chip.is-success { background: color-mix(in srgb, var(--ok) 11%, #fff); color: #137333; }
+.cloudflare-check-chip.is-success::before { content: "✓"; background: #137333; }
+.cloudflare-check-chip.is-warning { background: color-mix(in srgb, #f3b23b 18%, #fff); color: #8a5a00; }
+.cloudflare-check-chip.is-warning::before { content: "!"; background: #a86b00; }
 .cloudflare-sync-rule { border-top: 1px solid var(--line-soft); background: color-mix(in srgb, var(--surface) 92%, var(--line-soft)); }
 .cloudflare-sync-rule > summary { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: .75rem; align-items: center; list-style: none; padding: .74rem .9rem; cursor: pointer; }
 .cloudflare-sync-rule > summary::-webkit-details-marker { display: none; }

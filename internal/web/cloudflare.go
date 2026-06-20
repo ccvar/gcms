@@ -44,6 +44,8 @@ const (
 	cloudflareDefaultWorkerName  = "gcms-frontend"
 	cloudflareModeWorkerAssets   = "worker_assets"
 	cloudflareModePages          = "pages"
+	cloudflareDNSStatusManaged   = "managed"
+	cloudflareDNSStatusManual    = "manual"
 	cloudflareSourceModeRedirect = "redirect"
 	cloudflareSourceModeNoindex  = "noindex"
 	cloudflareSourceModeNone     = "none"
@@ -98,6 +100,8 @@ type CloudflareStatus struct {
 	UpdatedAt        string                    `json:"updated_at"`
 	LastDeployAt     string                    `json:"last_deploy_at,omitempty"`
 	LastPurgeAt      string                    `json:"last_purge_at,omitempty"`
+	DNSStatus        string                    `json:"dns_status,omitempty"`
+	DNSMessage       string                    `json:"dns_message,omitempty"`
 	Configured       bool                      `json:"configured"`
 	TokenSet         bool                      `json:"token_set"`
 	AutoSync         bool                      `json:"auto_sync"`
@@ -164,6 +168,8 @@ type cloudflareClientView struct {
 	CanUnpublish     bool   `json:"can_unpublish"`
 	CanPurge         bool   `json:"can_purge"`
 	Published        bool   `json:"published"`
+	DNSStatus        string `json:"dns_status,omitempty"`
+	DNSMessage       string `json:"dns_message,omitempty"`
 }
 
 type cloudflareDetectedTarget struct {
@@ -171,6 +177,17 @@ type cloudflareDetectedTarget struct {
 	AccountName string
 	ZoneID      string
 	ZoneName    string
+}
+
+type cloudflareDNSManageResult struct {
+	Status  string
+	Message string
+}
+
+type cloudflareDNSTarget struct {
+	Type    string
+	Host    string
+	Content string
 }
 
 type cloudflareAccount struct {
@@ -487,6 +504,8 @@ func cloudflareStatusFailed(cfg CloudflareConfig, step, msg string) CloudflareSt
 		Configured:       cfg.configured(),
 		TokenSet:         cfg.tokenSet(),
 		AutoSync:         cfg.AutoSync,
+		DNSStatus:        prev.DNSStatus,
+		DNSMessage:       prev.DNSMessage,
 		Published:        cloudflareStatusPublished(prev),
 		LastDeployAt:     prev.LastDeployAt,
 		LastPurgeAt:      prev.LastPurgeAt,
@@ -503,6 +522,17 @@ func normalizeCloudflareDeployMode(v string) string {
 	default:
 		// 默认走 Worker Assets：一个 Worker 即可承载静态站，入口控制和缓存策略更统一。
 		return cloudflareModeWorkerAssets
+	}
+}
+
+func normalizeCloudflareDNSStatus(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case cloudflareDNSStatusManaged:
+		return cloudflareDNSStatusManaged
+	case cloudflareDNSStatusManual:
+		return cloudflareDNSStatusManual
+	default:
+		return ""
 	}
 }
 
@@ -814,14 +844,15 @@ func (s *Server) cloudflareViewForRequest(r *http.Request) *CloudflareView {
 	view.Status.PrimaryDomain = view.Config.primaryHost()
 	view.Status.Domains = view.Config.publicDomainSummary()
 	view.Status.Configured = view.Config.configured()
-	view.Status.Published = cloudflareStatusPublished(view.Status)
-	view.Status.CanUnpublish = cloudflareCanUnpublish(view.Config, view.Status)
-	view.Status.CanPurge = cloudflareCanPurge(view.Config, view.Status)
 	view.Status.AutoSync = view.Config.AutoSync
 	view.Status.SyncMode = view.Config.SyncMode
 	view.Status.SyncTime = view.Config.SyncTime
 	view.Status.SyncPending = view.Config.SyncPending
 	view.Status.SyncNextAt = view.Config.SyncNextAt
+	applyCloudflareLegacyDeploymentStatus(view.Config, view.Status)
+	view.Status.Published = cloudflareStatusPublished(view.Status)
+	view.Status.CanUnpublish = cloudflareCanUnpublish(view.Config, view.Status)
+	view.Status.CanPurge = cloudflareCanPurge(view.Config, view.Status)
 	view.Configured = view.Status.Configured
 	view.decorate()
 	return view
@@ -852,6 +883,7 @@ func readCloudflareStatus() *CloudflareStatus {
 		}
 	}
 	st.DeployMode = normalizeCloudflareDeployMode(st.DeployMode)
+	st.DNSStatus = normalizeCloudflareDNSStatus(st.DNSStatus)
 	st.History = cloudflareStatusHistory(st)
 	if st.Status == "running" && cloudflareStatusStale(st) {
 		st.Status = "failed"
@@ -907,6 +939,8 @@ func (s *Server) cloudflareView() *CloudflareView {
 	st.SyncTime = cfg.SyncTime
 	st.SyncPending = cfg.SyncPending
 	st.SyncNextAt = cfg.SyncNextAt
+	st.DNSStatus = normalizeCloudflareDNSStatus(st.DNSStatus)
+	applyCloudflareLegacyDeploymentStatus(cfg, st)
 	st.Published = cloudflareStatusPublished(st)
 	st.CanUnpublish = cloudflareCanUnpublish(cfg, st)
 	st.CanPurge = cloudflareCanPurge(cfg, st)
@@ -933,6 +967,44 @@ func (s *Server) cloudflareJSONState(r *http.Request) (*CloudflareStatus, cloudf
 func (s *Server) cloudflareJSONPayload(r *http.Request, ok bool, message string) map[string]any {
 	status, view := s.cloudflareJSONState(r)
 	return map[string]any{"ok": ok, "message": message, "status": status, "view": view}
+}
+
+func (s *Server) cloudflareStatusWithDNSCheck(ctx context.Context) *CloudflareStatus {
+	view := s.cloudflareView()
+	st := view.Status
+	if !cloudflareShouldCheckDNS(view.Config, st) {
+		return st
+	}
+	checkCtx, cancel := context.WithTimeout(ctx, 6*time.Second)
+	defer cancel()
+	result, err := detectCloudflareDNSStatus(checkCtx, view.Config)
+	if err != nil {
+		if normalizeCloudflareDNSStatus(st.DNSStatus) == cloudflareDNSStatusManaged {
+			return st
+		}
+		result = cloudflareDNSManualResult("暂时无法自动检测前台域名 DNS；请确认 Token 包含 Zone DNS Read 权限，或发布一次最新内容。")
+	}
+	if result.Status == "" {
+		return st
+	}
+	prevMessage := st.Message
+	if result.Status == cloudflareDNSStatusManaged && strings.TrimSpace(st.LastDeployAt) == "" && strings.Contains(st.Message, "旧版本") {
+		st.Message = "Cloudflare 配置已存在；已自动检测到前台域名 DNS 已接管。发布一次最新内容后，会补齐部署时间和部署记录。"
+	}
+	if normalizeCloudflareDNSStatus(st.DNSStatus) == result.Status && strings.TrimSpace(st.DNSMessage) == strings.TrimSpace(result.Message) && st.Message == prevMessage {
+		return st
+	}
+	st.DNSStatus = result.Status
+	st.DNSMessage = result.Message
+	writeCloudflareStatus(*st)
+	return st
+}
+
+func cloudflareShouldCheckDNS(cfg CloudflareConfig, st *CloudflareStatus) bool {
+	if st == nil || st.Running || !cloudflareStatusPublished(st) {
+		return false
+	}
+	return cfg.configured() && cfg.tokenSet() && strings.TrimSpace(cfg.ZoneID) != ""
 }
 
 func cloudflareClientViewFromView(view *CloudflareView) cloudflareClientView {
@@ -966,6 +1038,8 @@ func cloudflareClientViewFromView(view *CloudflareView) cloudflareClientView {
 		CanUnpublish:     cloudflareCanUnpublish(cfg, st),
 		CanPurge:         cloudflareCanPurge(cfg, st),
 		Published:        published,
+		DNSStatus:        normalizeCloudflareDNSStatus(st.DNSStatus),
+		DNSMessage:       st.DNSMessage,
 	}
 }
 
@@ -979,6 +1053,35 @@ func cloudflareStatusPublished(st *CloudflareStatus) bool {
 	return st.Status == "success" &&
 		strings.TrimSpace(st.LastDeployAt) != "" &&
 		!strings.Contains(st.Message, "取消")
+}
+
+func applyCloudflareLegacyDeploymentStatus(cfg CloudflareConfig, st *CloudflareStatus) {
+	if st == nil || st.Running || st.Published || cloudflareStatusPublished(st) {
+		return
+	}
+	if st.Status == "failed" || strings.TrimSpace(st.LastDeployAt) != "" {
+		return
+	}
+	if strings.Contains(st.Message, "取消") {
+		return
+	}
+	if !cfg.configured() || strings.TrimSpace(cfg.AccountID) == "" || strings.TrimSpace(cfg.ZoneID) == "" || strings.TrimSpace(cfg.primaryHost()) == "" {
+		return
+	}
+	st.Published = true
+	if st.Status == "" || st.Status == "idle" {
+		st.Status = "success"
+	}
+	msg := strings.TrimSpace(st.Message)
+	if msg == "" || msg == "暂无 Cloudflare 部署任务" {
+		st.Message = "Cloudflare 配置已存在；旧版本没有记录部署时间。发布一次最新内容后，会自动补齐部署记录并接管前台域名 DNS。"
+	}
+	if normalizeCloudflareDNSStatus(st.DNSStatus) == "" {
+		st.DNSStatus = cloudflareDNSStatusManual
+		if strings.TrimSpace(st.DNSMessage) == "" {
+			st.DNSMessage = "旧版本未记录 DNS 接管状态；发布最新内容后会自动接管前台域名 DNS。"
+		}
+	}
 }
 
 func cloudflareCanUnpublish(cfg CloudflareConfig, st *CloudflareStatus) bool {
@@ -1306,6 +1409,8 @@ func (s *Server) queueCloudflareDeploy(cfg CloudflareConfig) error {
 		Configured:       cfg.configured(),
 		TokenSet:         cfg.tokenSet(),
 		AutoSync:         cfg.AutoSync,
+		DNSStatus:        st.DNSStatus,
+		DNSMessage:       st.DNSMessage,
 		Published:        published,
 	})
 	go func() {
@@ -1342,6 +1447,8 @@ func (s *Server) queueCloudflareUnpublish(cfg CloudflareConfig) error {
 		Configured:       cfg.configured(),
 		TokenSet:         cfg.tokenSet(),
 		AutoSync:         cfg.AutoSync,
+		DNSStatus:        st.DNSStatus,
+		DNSMessage:       st.DNSMessage,
 		Published:        published,
 	})
 	go func() {
@@ -1617,7 +1724,7 @@ func matchCloudflareZone(host string, zones []cloudflareZone) cloudflareZone {
 }
 
 func (s *Server) adminCloudflareStatus(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.cloudflareView().Status)
+	writeJSON(w, http.StatusOK, s.cloudflareStatusWithDNSCheck(r.Context()))
 }
 
 func (s *Server) adminStartCloudflareDeploy(w http.ResponseWriter, r *http.Request) {
@@ -1779,6 +1886,8 @@ func (s *Server) deployCloudflare(ctx context.Context, cfg CloudflareConfig) err
 			Configured:       cfg.configured(),
 			TokenSet:         cfg.tokenSet(),
 			AutoSync:         cfg.AutoSync,
+			DNSStatus:        initialStatus.DNSStatus,
+			DNSMessage:       initialStatus.DNSMessage,
 			Published:        wasPublished,
 			LastDeployAt:     lastDeployAt,
 		})
@@ -1798,7 +1907,8 @@ func (s *Server) deployCloudflare(ctx context.Context, cfg CloudflareConfig) err
 	defer os.RemoveAll(exported.Dir)
 	if cfg.usingPages() {
 		setStep("assets", fmt.Sprintf("正在上传 %d 个静态文件到 Cloudflare Pages。", exported.Count))
-		if err := deployCloudflarePagesStaticSite(ctx, cfg, exported, setStep); err != nil {
+		dnsResult, err := deployCloudflarePagesStaticSite(ctx, cfg, exported, setStep)
+		if err != nil {
 			return err
 		}
 		if cfg.ZoneID != "" {
@@ -1826,6 +1936,8 @@ func (s *Server) deployCloudflare(ctx context.Context, cfg CloudflareConfig) err
 			Configured:       cfg.configured(),
 			TokenSet:         cfg.tokenSet(),
 			AutoSync:         cfg.AutoSync,
+			DNSStatus:        dnsResult.Status,
+			DNSMessage:       dnsResult.Message,
 			Published:        true,
 		}, "deploy"))
 		return nil
@@ -1840,13 +1952,15 @@ func (s *Server) deployCloudflare(ctx context.Context, cfg CloudflareConfig) err
 	if err := uploadCloudflareWorker(ctx, cfg, assetsJWT); err != nil {
 		return fmt.Errorf("上传 Worker 失败：%w", err)
 	}
+	dnsResult := cloudflareDNSManualResult("静态站已发布，但域名 DNS 尚未确认接管。")
 	if cfg.ZoneID != "" && len(cfg.routePatterns()) > 0 {
 		setStep("route", "正在绑定 Worker 路由。")
 		if err := ensureCloudflareRoutes(ctx, cfg); err != nil {
 			return fmt.Errorf("绑定 Worker 路由失败：%w", err)
 		}
-		setStep("dns", "正在确认 Cloudflare DNS。")
-		if err := ensureCloudflareDNSRecords(ctx, cfg); err != nil {
+		setStep("dns", "正在将前台域名接管到 Cloudflare 托管入口。")
+		dnsResult, err = ensureCloudflareDNSRecords(ctx, cfg)
+		if err != nil {
 			return fmt.Errorf("绑定 DNS 失败：%w", err)
 		}
 		setStep("purge", "正在清理 Cloudflare 缓存。")
@@ -1856,6 +1970,9 @@ func (s *Server) deployCloudflare(ctx context.Context, cfg CloudflareConfig) err
 		lastPurgeAt = time.Now().UTC().Format(time.RFC3339)
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
+	if dnsResult.Status == "" {
+		dnsResult = cloudflareDNSManualResult("静态站已发布，但域名 DNS 尚未确认接管。")
+	}
 	s.clearCloudflareSyncPending()
 	writeCloudflareStatus(withCloudflareHistory(CloudflareStatus{
 		Status:           "success",
@@ -1873,6 +1990,8 @@ func (s *Server) deployCloudflare(ctx context.Context, cfg CloudflareConfig) err
 		Configured:       cfg.configured(),
 		TokenSet:         cfg.tokenSet(),
 		AutoSync:         cfg.AutoSync,
+		DNSStatus:        dnsResult.Status,
+		DNSMessage:       dnsResult.Message,
 		Published:        true,
 	}, "deploy"))
 	return nil
@@ -2000,6 +2119,8 @@ func (s *Server) runCloudflareDailySync(reason string) {
 		SyncTime:         cfg.SyncTime,
 		SyncPending:      true,
 		SyncNextAt:       cfg.SyncNextAt,
+		DNSStatus:        prev.DNSStatus,
+		DNSMessage:       prev.DNSMessage,
 		Published:        cloudflareStatusPublished(prev),
 		LastDeployAt:     prev.LastDeployAt,
 	})
@@ -2052,6 +2173,8 @@ func (s *Server) purgeCloudflareCache(ctx context.Context, cfg CloudflareConfig,
 		Configured:       cfg.configured(),
 		TokenSet:         cfg.tokenSet(),
 		AutoSync:         cfg.AutoSync,
+		DNSStatus:        prev.DNSStatus,
+		DNSMessage:       prev.DNSMessage,
 		Published:        cloudflareStatusPublished(prev),
 	}, "purge"))
 	return nil
@@ -2100,36 +2223,37 @@ func (s *Server) unpublishCloudflare(ctx context.Context, cfg CloudflareConfig) 
 	return nil
 }
 
-func deployCloudflarePagesStaticSite(ctx context.Context, cfg CloudflareConfig, exported *staticExportResult, setStep func(string, string)) error {
+func deployCloudflarePagesStaticSite(ctx context.Context, cfg CloudflareConfig, exported *staticExportResult, setStep func(string, string)) (cloudflareDNSManageResult, error) {
 	setStep("worker", "正在准备 Cloudflare Pages 项目。")
 	project, err := ensureCloudflarePagesProject(ctx, cfg)
 	if err != nil {
-		return fmt.Errorf("准备 Cloudflare Pages 项目失败：%w", err)
+		return cloudflareDNSManageResult{}, fmt.Errorf("准备 Cloudflare Pages 项目失败：%w", err)
 	}
 	setStep("assets", fmt.Sprintf("正在上传 %d 个静态文件到 Pages。", exported.Count))
 	manifest, err := uploadCloudflarePagesAssets(ctx, cfg, exported)
 	if err != nil {
-		return fmt.Errorf("上传 Pages 静态资源失败：%w", err)
+		return cloudflareDNSManageResult{}, fmt.Errorf("上传 Pages 静态资源失败：%w", err)
 	}
 	setStep("worker", "正在发布 Cloudflare Pages 静态站。")
 	if _, err := createCloudflarePagesDeployment(ctx, cfg, manifest); err != nil {
-		return fmt.Errorf("发布 Cloudflare Pages 失败：%w", err)
+		return cloudflareDNSManageResult{}, fmt.Errorf("发布 Cloudflare Pages 失败：%w", err)
 	}
 	if cfg.ZoneID != "" && len(cfg.routePatterns()) > 0 {
 		setStep("route", "正在绑定 Pages 自定义域名。")
 		if err := ensureCloudflarePagesDomains(ctx, cfg); err != nil {
-			return fmt.Errorf("绑定 Pages 自定义域名失败：%w", err)
+			return cloudflareDNSManageResult{}, fmt.Errorf("绑定 Pages 自定义域名失败：%w", err)
 		}
-		setStep("dns", "正在确认 Pages DNS。")
+		setStep("dns", "正在将前台域名接管到 Pages 托管入口。")
 		target := strings.TrimSpace(project.Subdomain)
 		if target == "" {
 			target = cfg.PagesProjectName + ".pages.dev"
 		}
 		if err := ensureCloudflarePagesDNSRecords(ctx, cfg, target); err != nil {
-			return fmt.Errorf("绑定 Pages DNS 失败：%w", err)
+			return cloudflareDNSManageResult{}, fmt.Errorf("绑定 Pages DNS 失败：%w", err)
 		}
+		return cloudflareDNSManagedResult("前台域名 DNS 已切换为 Cloudflare Pages 托管入口。"), nil
 	}
-	return nil
+	return cloudflareDNSManualResult("静态站已发布，但域名 DNS 尚未确认接管。"), nil
 }
 
 func ensureCloudflarePagesProject(ctx context.Context, cfg CloudflareConfig) (cloudflarePagesProject, error) {
@@ -2738,55 +2862,178 @@ func listCloudflareRoutes(ctx context.Context, cfg CloudflareConfig) ([]cloudfla
 	return routes, nil
 }
 
-func ensureCloudflareDNSRecords(ctx context.Context, cfg CloudflareConfig) error {
+func ensureCloudflareDNSRecords(ctx context.Context, cfg CloudflareConfig) (cloudflareDNSManageResult, error) {
 	for _, domain := range cfg.publicDomains() {
 		if domain.Host == "" {
 			continue
 		}
 		next := cfg
 		next.RoutePattern = normalizeCloudflareRoutePattern(domain.Host)
-		if err := ensureCloudflareDNSRecord(ctx, next); err != nil {
-			return err
+		if err := ensureCloudflareDNSRecord(ctx, next, domain); err != nil {
+			return cloudflareDNSManageResult{}, err
 		}
 	}
-	return nil
+	return cloudflareDNSManagedResult("前台域名 DNS 已切换为 Cloudflare Worker Assets 托管入口。"), nil
 }
 
-func ensureCloudflareDNSRecord(ctx context.Context, cfg CloudflareConfig) error {
+func detectCloudflareDNSStatus(ctx context.Context, cfg CloudflareConfig) (cloudflareDNSManageResult, error) {
+	if strings.TrimSpace(cfg.ZoneID) == "" || !cfg.tokenSet() {
+		return cloudflareDNSManualResult("暂无可检测的 Cloudflare DNS 授权。"), nil
+	}
+	modeName := "Cloudflare Worker Assets"
+	targetFor := func(domain CloudflareDomain) cloudflareDNSTarget {
+		return cloudflareWorkerDNSTarget(cfg, domain)
+	}
+	if cfg.usingPages() {
+		modeName = "Cloudflare Pages"
+		pagesTarget := cloudflarePagesDefaultSubdomain(cfg)
+		if strings.TrimSpace(cfg.AccountID) != "" && strings.TrimSpace(cfg.PagesProjectName) != "" {
+			if project, err := getCloudflarePagesProject(ctx, cfg); err == nil && strings.TrimSpace(project.Subdomain) != "" {
+				pagesTarget = strings.TrimSpace(project.Subdomain)
+			}
+		}
+		targetFor = func(domain CloudflareDomain) cloudflareDNSTarget {
+			return cloudflarePagesDNSTarget(cfg, domain, pagesTarget)
+		}
+	}
+	checked := 0
+	for _, domain := range cfg.publicDomains() {
+		if domain.Host == "" {
+			continue
+		}
+		target := targetFor(domain)
+		if target.Host == "" || target.Type == "" || target.Content == "" {
+			continue
+		}
+		records, err := listCloudflareDNSRecords(ctx, cfg, target.Host)
+		if err != nil {
+			return cloudflareDNSManageResult{}, cloudflareStagePermissionError("dns", err)
+		}
+		checked++
+		if !cloudflareDNSRecordsMatchTarget(records, target) {
+			return cloudflareDNSManualResult(fmt.Sprintf("%s 的 DNS 尚未指向 %s 托管入口。", target.Host, modeName)), nil
+		}
+	}
+	if checked == 0 {
+		return cloudflareDNSManualResult("暂无可检测的前台域名。"), nil
+	}
+	return cloudflareDNSManagedResult(fmt.Sprintf("前台域名 DNS 已接管到 %s 托管入口。", modeName)), nil
+}
+
+func ensureCloudflareDNSRecord(ctx context.Context, cfg CloudflareConfig, domain CloudflareDomain) error {
 	host := cloudflareRouteHost(cfg.RoutePattern)
 	if strings.TrimSpace(cfg.ZoneID) == "" || host == "" {
+		return nil
+	}
+	if domain.Host == "" {
+		domain.Host = host
+	}
+	target := cloudflareWorkerDNSTarget(cfg, domain)
+	if target.Host == "" || target.Type == "" || target.Content == "" {
 		return nil
 	}
 	records, err := listCloudflareDNSRecords(ctx, cfg, host)
 	if err != nil {
 		return cloudflareStagePermissionError("dns", err)
 	}
+	keepID := ""
 	for _, rec := range records {
 		if !sameCloudflareDNSName(rec.Name, host) || !cloudflareDNSRouteRecord(rec.Type) {
 			continue
 		}
-		if rec.Proxied != nil && *rec.Proxied {
-			return nil
+		if strings.EqualFold(rec.Type, target.Type) && keepID == "" {
+			keepID = rec.ID
+			continue
+		}
+		if err := deleteCloudflareDNSRecord(ctx, cfg, rec.ID); err != nil {
+			return err
 		}
 	}
+	if keepID != "" {
+		return putCloudflareDNSRecord(ctx, cfg, keepID, target.Type, target.Host, target.Content, true)
+	}
+	return createCloudflareDNSRecord(ctx, cfg, target.Type, target.Host, target.Content, true)
+}
+
+func cloudflareWorkerDNSTarget(cfg CloudflareConfig, domain CloudflareDomain) cloudflareDNSTarget {
+	host := normalizeCloudflareDomainHost(domain.Host)
+	if host == "" {
+		host = cloudflareRouteHost(cfg.RoutePattern)
+	}
+	if host == "" {
+		return cloudflareDNSTarget{}
+	}
+	primary := cfg.primaryHost()
+	if domain.RedirectToPrimary && primary != "" && !sameCloudflareDNSName(host, primary) {
+		return cloudflareDNSTarget{Type: "CNAME", Host: host, Content: primary}
+	}
+	return cloudflareDNSTarget{Type: "AAAA", Host: host, Content: "100::"}
+}
+
+func cloudflarePagesDefaultSubdomain(cfg CloudflareConfig) string {
+	project := strings.TrimSpace(cfg.PagesProjectName)
+	if project == "" {
+		project = cloudflareDefaultProjectNameForHost(cfg.primaryHost())
+	}
+	if project == "" {
+		return ""
+	}
+	return project + ".pages.dev"
+}
+
+func cloudflarePagesDNSTarget(cfg CloudflareConfig, domain CloudflareDomain, pagesTarget string) cloudflareDNSTarget {
+	host := normalizeCloudflareDomainHost(domain.Host)
+	if host == "" {
+		host = cloudflareRouteHost(cfg.RoutePattern)
+	}
+	pagesTarget = strings.TrimSpace(strings.TrimSuffix(pagesTarget, "."))
+	if host == "" || pagesTarget == "" {
+		return cloudflareDNSTarget{}
+	}
+	return cloudflareDNSTarget{Type: "CNAME", Host: host, Content: pagesTarget}
+}
+
+func cloudflareDNSRecordsMatchTarget(records []cloudflareDNSRecord, target cloudflareDNSTarget) bool {
+	found := false
 	for _, rec := range records {
-		if sameCloudflareDNSName(rec.Name, host) && cloudflareDNSRouteRecord(rec.Type) {
-			return fmt.Errorf("Cloudflare DNS 已有 %s 记录，但没有开启代理。请在 Cloudflare DNS 中给 %s 开启橙云代理，或删除该记录后重新部署。", rec.Type, host)
+		if !sameCloudflareDNSName(rec.Name, target.Host) || !cloudflareDNSRouteRecord(rec.Type) {
+			continue
 		}
+		if !cloudflareDNSRecordMatchesTarget(rec, target) {
+			return false
+		}
+		found = true
 	}
-	proxied := true
-	body, _ := json.Marshal(map[string]any{
-		"type":    "AAAA",
-		"name":    host,
-		"content": "100::",
-		"ttl":     1,
-		"proxied": proxied,
-	})
-	path := fmt.Sprintf("/zones/%s/dns_records", url.PathEscape(cfg.ZoneID))
-	if _, err := cloudflareAPIRequest(ctx, cfg.APIToken, http.MethodPost, path, bytes.NewReader(body), "application/json"); err != nil {
-		return cloudflareStagePermissionError("dns", err)
+	return found
+}
+
+func cloudflareDNSRecordMatchesTarget(rec cloudflareDNSRecord, target cloudflareDNSTarget) bool {
+	if !strings.EqualFold(rec.Type, target.Type) {
+		return false
 	}
-	return nil
+	if rec.Proxied == nil || !*rec.Proxied {
+		return false
+	}
+	content := strings.TrimSpace(strings.TrimSuffix(rec.Content, "."))
+	targetContent := strings.TrimSpace(strings.TrimSuffix(target.Content, "."))
+	if strings.EqualFold(target.Type, "CNAME") {
+		return sameCloudflareDNSName(content, targetContent)
+	}
+	return strings.EqualFold(content, targetContent)
+}
+
+func cloudflareDNSManagedResult(message string) cloudflareDNSManageResult {
+	if strings.TrimSpace(message) == "" {
+		message = "前台域名 DNS 已切换为 Cloudflare 托管入口。"
+	}
+	return cloudflareDNSManageResult{Status: cloudflareDNSStatusManaged, Message: message}
+}
+
+func cloudflareDNSManualResult(message string) cloudflareDNSManageResult {
+	if strings.TrimSpace(message) == "" {
+		message = "静态站已发布，但域名 DNS 尚未确认接管。"
+	}
+	return cloudflareDNSManageResult{Status: cloudflareDNSStatusManual, Message: message}
 }
 
 func createCloudflareDNSRecord(ctx context.Context, cfg CloudflareConfig, recordType, host, content string, proxied bool) error {

@@ -93,6 +93,175 @@ func TestNormalizeCloudflareDomainsFromForm(t *testing.T) {
 	}
 }
 
+func TestCloudflareWorkerDNSTargetsTakeOverFrontendDomains(t *testing.T) {
+	cfg := CloudflareConfig{Domains: []CloudflareDomain{
+		{Host: "ccvar.com", Primary: true},
+		{Host: "www.ccvar.com", RedirectToPrimary: true},
+		{Host: "docs.ccvar.com"},
+	}}
+
+	primary := cloudflareWorkerDNSTarget(cfg, cfg.Domains[0])
+	if primary.Type != "AAAA" || primary.Host != "ccvar.com" || primary.Content != "100::" {
+		t.Fatalf("primary target = %#v, want AAAA ccvar.com 100::", primary)
+	}
+
+	alias := cloudflareWorkerDNSTarget(cfg, cfg.Domains[1])
+	if alias.Type != "CNAME" || alias.Host != "www.ccvar.com" || alias.Content != "ccvar.com" {
+		t.Fatalf("redirect alias target = %#v, want CNAME www.ccvar.com ccvar.com", alias)
+	}
+
+	standalone := cloudflareWorkerDNSTarget(cfg, cfg.Domains[2])
+	if standalone.Type != "AAAA" || standalone.Host != "docs.ccvar.com" || standalone.Content != "100::" {
+		t.Fatalf("standalone target = %#v, want AAAA docs.ccvar.com 100::", standalone)
+	}
+}
+
+func TestCloudflareDNSRecordsMatchWorkerTarget(t *testing.T) {
+	proxied := true
+	unproxied := false
+	target := cloudflareDNSTarget{Type: "AAAA", Host: "test3.ccvar.com", Content: "100::"}
+
+	if !cloudflareDNSRecordsMatchTarget([]cloudflareDNSRecord{{Type: "AAAA", Name: "test3.ccvar.com", Content: "100::", Proxied: &proxied}}, target) {
+		t.Fatal("proxied Worker Assets AAAA target should be treated as managed")
+	}
+	if cloudflareDNSRecordsMatchTarget([]cloudflareDNSRecord{{Type: "AAAA", Name: "test3.ccvar.com", Content: "100::", Proxied: &unproxied}}, target) {
+		t.Fatal("unproxied Worker Assets DNS record should not be treated as managed")
+	}
+	if cloudflareDNSRecordsMatchTarget([]cloudflareDNSRecord{{Type: "A", Name: "test3.ccvar.com", Content: "38.207.175.236", Proxied: &proxied}}, target) {
+		t.Fatal("old origin A record should not be treated as managed")
+	}
+	if cloudflareDNSRecordsMatchTarget([]cloudflareDNSRecord{
+		{Type: "AAAA", Name: "test3.ccvar.com", Content: "100::", Proxied: &proxied},
+		{Type: "A", Name: "test3.ccvar.com", Content: "38.207.175.236", Proxied: &proxied},
+	}, target) {
+		t.Fatal("extra route DNS record should keep takeover status pending")
+	}
+}
+
+func TestCloudflareDNSRecordsMatchRedirectAliasTarget(t *testing.T) {
+	proxied := true
+	target := cloudflareDNSTarget{Type: "CNAME", Host: "www.ccvar.com", Content: "ccvar.com"}
+	if !cloudflareDNSRecordsMatchTarget([]cloudflareDNSRecord{{Type: "CNAME", Name: "www.ccvar.com", Content: "ccvar.com.", Proxied: &proxied}}, target) {
+		t.Fatal("proxied redirect CNAME target should be treated as managed")
+	}
+}
+
+func TestCloudflarePagesDNSTarget(t *testing.T) {
+	cfg := CloudflareConfig{Domains: []CloudflareDomain{{Host: "ccvar.com", Primary: true}}}
+	target := cloudflarePagesDNSTarget(cfg, cfg.Domains[0], "gcms-ccvar-com.pages.dev.")
+	if target.Type != "CNAME" || target.Host != "ccvar.com" || target.Content != "gcms-ccvar-com.pages.dev" {
+		t.Fatalf("Pages target = %#v, want CNAME ccvar.com gcms-ccvar-com.pages.dev", target)
+	}
+}
+
+func TestCloudflareViewInfersLegacyPublishedDeployment(t *testing.T) {
+	t.Chdir(t.TempDir())
+	writeCloudflareStatus(CloudflareStatus{
+		Status:  "idle",
+		Message: "暂无 Cloudflare 部署任务",
+	})
+	st, err := store.Open(filepath.Join(t.TempDir(), "cms.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	for key, value := range map[string]string{
+		cloudflareAPITokenKey:     "token",
+		cloudflareDeployModeKey:   cloudflareModeWorkerAssets,
+		cloudflareWorkerNameKey:   "gcms-test3-ccvar-com",
+		cloudflareDomainsKey:      `[{"host":"test3.ccvar.com","primary":true}]`,
+		cloudflareAccountIDKey:    "account_id",
+		cloudflareZoneIDKey:       "zone_id",
+		cloudflareSourceModeKey:   cloudflareSourceModeRedirect,
+		cloudflareAutoSyncKey:     "1",
+		cloudflareHTMLTTLKey:      "300",
+		cloudflareOriginURLKey:    "https://cms.ccvar.com",
+		cloudflareSyncModeKey:     cloudflareSyncModeRealtime,
+		cloudflarePagesProjectKey: "gcms-test3-ccvar-com",
+	} {
+		if err := st.SetSetting(key, value); err != nil {
+			t.Fatalf("set %s: %v", key, err)
+		}
+	}
+	s := &Server{store: st}
+
+	view := s.cloudflareView()
+	if !view.Status.Published {
+		t.Fatal("legacy configured deployment should be treated as published")
+	}
+	if view.Status.Status != "success" {
+		t.Fatalf("legacy status = %q, want success", view.Status.Status)
+	}
+	if view.Status.DNSStatus != cloudflareDNSStatusManual {
+		t.Fatalf("legacy dns status = %q, want manual", view.Status.DNSStatus)
+	}
+	if !view.Status.CanUnpublish {
+		t.Fatal("legacy published deployment should allow unpublish")
+	}
+	if !strings.Contains(view.Status.Message, "旧版本") {
+		t.Fatalf("legacy message = %q, want compatibility hint", view.Status.Message)
+	}
+}
+
+func TestCloudflareViewDoesNotInferFreshConfigAsPublished(t *testing.T) {
+	t.Chdir(t.TempDir())
+	st, err := store.Open(filepath.Join(t.TempDir(), "cms.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	for key, value := range map[string]string{
+		cloudflareAPITokenKey:   "token",
+		cloudflareDeployModeKey: cloudflareModeWorkerAssets,
+		cloudflareWorkerNameKey: "gcms-new",
+		cloudflareDomainsKey:    `[{"host":"new.example.com","primary":true}]`,
+	} {
+		if err := st.SetSetting(key, value); err != nil {
+			t.Fatalf("set %s: %v", key, err)
+		}
+	}
+	s := &Server{store: st}
+
+	view := s.cloudflareView()
+	if view.Status.Published {
+		t.Fatal("fresh config without detected account and zone should not be treated as published")
+	}
+	if view.Status.DNSStatus != "" {
+		t.Fatalf("fresh config dns status = %q, want empty", view.Status.DNSStatus)
+	}
+}
+
+func TestCloudflareViewDoesNotInferUnpublishedStatusAsPublished(t *testing.T) {
+	t.Chdir(t.TempDir())
+	writeCloudflareStatus(CloudflareStatus{
+		Status:  "success",
+		Message: "Cloudflare 公开入口已取消；项目和静态资源仍保留在 Cloudflare，DNS 未被删除。",
+	})
+	st, err := store.Open(filepath.Join(t.TempDir(), "cms.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	for key, value := range map[string]string{
+		cloudflareAPITokenKey:   "token",
+		cloudflareDeployModeKey: cloudflareModeWorkerAssets,
+		cloudflareWorkerNameKey: "gcms-test3-ccvar-com",
+		cloudflareDomainsKey:    `[{"host":"test3.ccvar.com","primary":true}]`,
+		cloudflareAccountIDKey:  "account_id",
+		cloudflareZoneIDKey:     "zone_id",
+	} {
+		if err := st.SetSetting(key, value); err != nil {
+			t.Fatalf("set %s: %v", key, err)
+		}
+	}
+	s := &Server{store: st}
+
+	view := s.cloudflareView()
+	if view.Status.Published {
+		t.Fatal("unpublished status should not be treated as published")
+	}
+}
+
 func TestCloudflarePagesRedirectsFile(t *testing.T) {
 	cfg := CloudflareConfig{Domains: []CloudflareDomain{
 		{Host: "ccvar.com", Primary: true},

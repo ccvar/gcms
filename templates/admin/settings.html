@@ -967,6 +967,8 @@
       {{$liveURL := ""}}{{if $cf.PrimaryDomain}}{{$liveURL = printf "https://%s" $cf.PrimaryDomain}}{{end}}
       {{$domainLabel := $cf.DomainSummary}}{{if not $domainLabel}}{{$domainLabel = $cf.PrimaryDomain}}{{end}}
       {{$hasDeployment := and $cf.TokenSet (or $st.Published $st.LastDeployAt)}}
+      {{$dnsManaged := eq $st.DNSStatus "managed"}}
+      {{$dnsPending := and $hasDeployment (not $dnsManaged)}}
       {{$canPurge := $st.CanPurge}}
       {{$syncDaily := eq $c.SyncMode "daily"}}
       <div class="field-group cloudflare-connect">
@@ -1146,7 +1148,7 @@
                 </a>
                 <span data-cf-domain-fallback{{if $liveURL}} hidden{{end}}>{{if $domainLabel}}{{$domainLabel}}{{else}}{{.Admin.T "admin.common.empty_dash" "—"}}{{end}}</span>
               </strong>
-              <span class="update-meta">{{if $c.ZoneID}}{{.Admin.T "admin.settings.cloudflare.route_managed" "域名在当前 Cloudflare Zone，可自动绑定"}}{{else}}{{.Admin.T "admin.settings.cloudflare.route_manual" "部署时会尝试自动识别 Zone ID"}}{{end}}</span>
+              <span class="update-meta">{{if $c.ZoneID}}{{.Admin.T "admin.settings.cloudflare.route_managed" "域名在当前 Cloudflare Zone，可自动接管 DNS"}}{{else}}{{.Admin.T "admin.settings.cloudflare.route_manual" "部署时会尝试自动识别 Zone ID"}}{{end}}</span>
             </div>
           </div>
           <div class="update-task">
@@ -1154,6 +1156,10 @@
               <span class="update-label with-small-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h5l2-7 4 14 2-7h3"/><path d="M4 19h16"/></svg>{{.Admin.T "admin.settings.cloudflare.task" "部署任务"}}</span>
               <strong class="cloudflare-task-state {{if eq $st.Status "running"}}is-running{{else if eq $st.Status "failed"}}is-failed{{else if $hasDeployment}}is-success{{else}}is-idle{{end}}" data-cloudflare-status>{{if eq $st.Status "running"}}{{.Admin.T "admin.settings.cloudflare.running" "部署中"}}{{else if eq $st.Status "failed"}}{{.Admin.T "admin.settings.cloudflare.failed" "失败"}}{{else if $hasDeployment}}{{.Admin.T "admin.settings.cloudflare.success" "已部署"}}{{else if eq $st.Status "success"}}{{.Admin.T "admin.settings.cloudflare.unpublished_status" "已取消"}}{{else}}{{.Admin.T "admin.settings.cloudflare.idle" "空闲"}}{{end}}</strong>
               <p data-cloudflare-message>{{$st.Message}}</p>
+              <div class="cloudflare-takeover-checks" aria-label="{{.Admin.T "admin.settings.cloudflare.takeover_status" "托管状态"}}">
+                <span class="cloudflare-check-chip {{if $hasDeployment}}is-success{{else}}is-idle{{end}}" data-cf-static-check>{{if $hasDeployment}}{{.Admin.T "admin.settings.cloudflare.static_published" "静态站已发布"}}{{else}}{{.Admin.T "admin.settings.cloudflare.static_pending" "等待发布"}}{{end}}</span>
+                <span class="cloudflare-check-chip {{if $dnsManaged}}is-success{{else if $dnsPending}}is-warning{{else}}is-idle{{end}}" data-cf-dns-check>{{if $dnsManaged}}{{.Admin.T "admin.settings.cloudflare.dns_managed" "域名已接管"}}{{else if $dnsPending}}{{.Admin.T "admin.settings.cloudflare.dns_pending" "DNS 待处理"}}{{else}}{{.Admin.T "admin.settings.cloudflare.dns_waiting" "等待接管"}}{{end}}</span>
+              </div>
             </div>
             <div class="cloudflare-task-actions">
               <div class="button-row cloudflare-status-actions">
@@ -1181,7 +1187,7 @@
               <div class="cloudflare-status-footer">
                 <span class="cloudflare-last-deploy">
                   {{.Admin.T "admin.settings.cloudflare.last_deploy" "最近部署"}}：
-                  <time data-cf-last-deploy datetime="{{$st.LastDeployAt}}">{{if $st.LastDeployAt}}{{$st.LastDeployAt}}{{else}}{{.Admin.T "admin.settings.cloudflare.never_deployed" "尚未部署"}}{{end}}</time>
+                  <time data-cf-last-deploy datetime="{{$st.LastDeployAt}}">{{if $st.LastDeployAt}}{{$st.LastDeployAt}}{{else if $hasDeployment}}{{.Admin.T "admin.settings.cloudflare.deployed_unknown_at" "已部署，时间未记录"}}{{else}}{{.Admin.T "admin.settings.cloudflare.never_deployed" "尚未部署"}}{{end}}</time>
                 </span>
                 <div class="cloudflare-history" data-cf-history>
                   <button class="cloudflare-history-toggle" type="button" data-cf-history-toggle aria-expanded="false" aria-label="{{.Admin.T "admin.settings.cloudflare.more_history" "查看最近部署记录"}}">
@@ -1270,6 +1276,8 @@
           var root = box.parentElement || box;
           var button = root.querySelector("[data-cloudflare-deploy-button]");
           var statusEl = root.querySelector("[data-cloudflare-status]");
+          var staticCheckEl = root.querySelector("[data-cf-static-check]");
+          var dnsCheckEl = root.querySelector("[data-cf-dns-check]");
           var lastDeployEl = root.querySelector("[data-cf-last-deploy]");
           var historyToggle = root.querySelector("[data-cf-history-toggle]");
           var historyPopover = root.querySelector("[data-cf-history-popover]");
@@ -1277,14 +1285,14 @@
           var syncForm = root.querySelector("[data-cloudflare-sync-form]");
           var syncTimeWrap = syncForm ? syncForm.querySelector(".cloudflare-sync-time") : null;
           var syncTimeInput = syncForm ? syncForm.querySelector("[data-cf-sync-time]") : null;
-		          var syncStatusEl = root.querySelector("[data-cf-sync-status]");
-		          var syncCurrentEl = root.querySelector("[data-cf-sync-current]");
+          var syncStatusEl = root.querySelector("[data-cf-sync-status]");
+          var syncCurrentEl = root.querySelector("[data-cf-sync-current]");
           var url = box.dataset.statusUrl;
           var timer = 0;
           var txt = {
             running: "{{.Admin.T "admin.settings.cloudflare.running" "部署中"}}",
             failed: "{{.Admin.T "admin.settings.cloudflare.failed" "失败"}}",
-            success: "{{.Admin.T "admin.settings.cloudflare.success" "成功"}}",
+            success: "{{.Admin.T "admin.settings.cloudflare.success" "已部署"}}",
             idle: "{{.Admin.T "admin.settings.cloudflare.idle" "空闲"}}",
             deploy: "{{.Admin.T "admin.settings.cloudflare.redeploy" "发布最新内容"}}",
             retryDeploy: "{{.Admin.T "admin.settings.cloudflare.retry_deploy" "重试发布"}}",
@@ -1301,6 +1309,7 @@
             savingConfig: "{{.Admin.T "admin.settings.cloudflare.saving_config" "验证并保存中..."}}",
             ajaxFailed: "{{.Admin.T "admin.settings.cloudflare.ajax_failed" "请求失败，请稍后重试。"}}",
             neverDeployed: "{{.Admin.T "admin.settings.cloudflare.never_deployed" "尚未部署"}}",
+            deployedUnknownAt: "{{.Admin.T "admin.settings.cloudflare.deployed_unknown_at" "已部署，时间未记录"}}",
             justNow: "{{.Admin.T "admin.settings.cloudflare.just_now" "刚刚"}}",
             minutesAgo: "{{.Admin.T "admin.settings.cloudflare.minutes_ago" "%d 分钟前"}}",
             hoursAgo: "{{.Admin.T "admin.settings.cloudflare.hours_ago" "%d 小时前"}}",
@@ -1313,10 +1322,15 @@
             unpublished: "{{.Admin.T "admin.settings.cloudflare.unpublished_status" "已取消"}}",
             syncPending: "{{.Admin.T "admin.settings.cloudflare.sync_pending" "有内容变化待同步"}}",
             syncNextAt: "{{.Admin.T "admin.settings.cloudflare.sync_next_at" "计划同步"}}",
-		            syncDailyNote: "{{.Admin.T "admin.settings.cloudflare.sync_daily_note" "有变化时，等到每天指定时间统一发布。"}}",
-		            syncRealtimeNote: "{{.Admin.T "admin.settings.cloudflare.sync_realtime_note" "保存内容后自动重新发布到 Cloudflare。"}}",
-		            syncDaily: "{{.Admin.T "admin.settings.cloudflare.sync_daily" "每天同步"}}",
-		            syncRealtime: "{{.Admin.T "admin.settings.cloudflare.sync_realtime" "实时同步"}}"
+            syncDailyNote: "{{.Admin.T "admin.settings.cloudflare.sync_daily_note" "有变化时，等到每天指定时间统一发布。"}}",
+            syncRealtimeNote: "{{.Admin.T "admin.settings.cloudflare.sync_realtime_note" "保存内容后自动重新发布到 Cloudflare。"}}",
+            syncDaily: "{{.Admin.T "admin.settings.cloudflare.sync_daily" "每天同步"}}",
+            syncRealtime: "{{.Admin.T "admin.settings.cloudflare.sync_realtime" "实时同步"}}",
+            staticPublished: "{{.Admin.T "admin.settings.cloudflare.static_published" "静态站已发布"}}",
+            staticPending: "{{.Admin.T "admin.settings.cloudflare.static_pending" "等待发布"}}",
+            dnsManaged: "{{.Admin.T "admin.settings.cloudflare.dns_managed" "域名已接管"}}",
+            dnsPending: "{{.Admin.T "admin.settings.cloudflare.dns_pending" "DNS 待处理"}}",
+            dnsWaiting: "{{.Admin.T "admin.settings.cloudflare.dns_waiting" "等待接管"}}"
           };
           var order = ["queued", "detect", "export", "assets", "worker", "route", "dns", "purge", "done"];
           var currentTokenSet = {{if $cf.TokenSet}}true{{else}}false{{end}};
@@ -1576,14 +1590,30 @@
             statusEl.classList.remove("is-idle", "is-running", "is-failed", "is-success");
             statusEl.classList.add(taskStateClass(status, published, lastDeployAt));
           };
+          var setCheckChip = function(el, state, text) {
+            if (!el) return;
+            el.classList.remove("is-idle", "is-warning", "is-success");
+            el.classList.add(state === "success" ? "is-success" : (state === "warning" ? "is-warning" : "is-idle"));
+            el.textContent = text || "";
+          };
+          var renderTakeoverChecks = function(published, dnsStatus) {
+            setCheckChip(staticCheckEl, published ? "success" : "idle", published ? txt.staticPublished : txt.staticPending);
+            if (published && dnsStatus === "managed") {
+              setCheckChip(dnsCheckEl, "success", txt.dnsManaged);
+            } else if (published) {
+              setCheckChip(dnsCheckEl, "warning", txt.dnsPending);
+            } else {
+              setCheckChip(dnsCheckEl, "idle", txt.dnsWaiting);
+            }
+          };
           var localDateTitle = function(value) {
             var date = new Date(value);
             if (isNaN(date.getTime())) return value || "";
             return date.toLocaleString();
           };
-          var relativeTime = function(value) {
+          var relativeTime = function(value, published) {
             var date = new Date(value);
-            if (!value || isNaN(date.getTime())) return txt.neverDeployed;
+            if (!value || isNaN(date.getTime())) return published ? txt.deployedUnknownAt : txt.neverDeployed;
             var seconds = Math.max(0, Math.floor((Date.now() - date.getTime()) / 1000));
             if (seconds < 60) return txt.justNow;
             var minutes = Math.floor(seconds / 60);
@@ -1600,11 +1630,11 @@
             if (action === "unpublish") return txt.historyUnpublish;
             return txt.historyDeploy;
           };
-          var renderLastDeploy = function(value) {
+          var renderLastDeploy = function(value, published) {
             if (!lastDeployEl) return;
             value = String(value || "");
             lastDeployEl.dateTime = value;
-            lastDeployEl.textContent = relativeTime(value);
+            lastDeployEl.textContent = relativeTime(value, published);
             lastDeployEl.title = value ? localDateTitle(value) : "";
           };
           var renderHistory = function(items) {
@@ -1758,6 +1788,7 @@
             updateTokenFormValidity();
             setOpenLinks(v.public_url || "");
             toggleManagedActions(!!v.can_unpublish, !!v.can_purge);
+            renderTakeoverChecks(currentPublished, v.dns_status || "");
           };
           var setProgress = function(status, step) {
             var current = status === "success" ? "done" : (step || "");
@@ -1788,9 +1819,10 @@
             setDomainSummary(s.domains || s.primary_domain || txt.empty, publicURLFromHost(s.primary_domain));
             setText("[data-cf-status-project]", s.deploy_mode === "pages" ? s.pages_project_name : s.worker_name);
             setOpenLinks((currentPublished && s.primary_domain) ? ("https://" + s.primary_domain) : "");
-            renderLastDeploy(s.last_deploy_at);
+            renderLastDeploy(s.last_deploy_at, currentPublished);
             renderHistory(s.history || []);
             renderSyncState(s);
+            renderTakeoverChecks(currentPublished, s.dns_status || "");
             setProgress(s.status, s.step);
             if (button) {
               button.disabled = !currentTokenSet || s.status === "running";
@@ -1805,10 +1837,16 @@
             timer = window.setTimeout(poll, delay);
           };
           var poll = function() {
+            fetchStatus(true);
+          };
+          var fetchStatus = function(retryOnError) {
             fetch(url, {credentials: "same-origin", headers: {"Accept": "application/json", "X-Requested-With": "XMLHttpRequest"}})
               .then(function(r){ if (!r.ok) throw new Error("bad status"); return r.json(); })
               .then(render)
-              .catch(function(){ schedulePoll(3500); });
+              .catch(function(){ if (retryOnError) schedulePoll(3500); });
+          };
+          var refreshStatusOnce = function() {
+            fetchStatus(false);
           };
           document.querySelectorAll("[data-cloudflare-ajax]").forEach(function(form) {
             form.addEventListener("submit", function(e) {
@@ -1985,12 +2023,13 @@
               }
             });
           }
-          if (lastDeployEl) renderLastDeploy(lastDeployEl.getAttribute("datetime"));
+          if (lastDeployEl) renderLastDeploy(lastDeployEl.getAttribute("datetime"), currentPublished);
           refreshHistoryTimes();
           setProgress({{printf "%q" $st.Status}}, {{printf "%q" $st.Step}});
           setTaskState({{printf "%q" $st.Status}}, {{if $st.Published}}true{{else}}false{{end}}, {{printf "%q" $st.LastDeployAt}});
           if (button) button.disabled = !currentTokenSet || box.dataset.running === "1";
           if (box.dataset.running === "1") schedulePoll(900);
+          else if (currentTokenSet && currentPublished) window.setTimeout(refreshStatusOnce, 350);
           // 内容同步：实时模式隐藏「同步时间」+「保存」；切换模式即时静默自动保存（fetch，不导航）；
           // 每天同步下「保存」只在同步时间被改动时才出现。
           (function(){
