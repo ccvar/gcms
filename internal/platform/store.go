@@ -454,14 +454,9 @@ func (s *Store) CreateAdminSession(token, user, csrf string, expiresAt time.Time
 	if err := s.db.QueryRow(`SELECT id FROM platform_admins WHERE username=?`, user).Scan(&adminID); err != nil {
 		return err
 	}
-	defaultSite, _ := s.DefaultSite()
-	var currentSite any
-	if defaultSite != nil {
-		currentSite = defaultSite.ID
-	}
 	_, err := s.db.Exec(`INSERT INTO platform_sessions(token_hash,admin_id,csrf,current_site_id,expires_at,pw_dismissed,created_at,updated_at)
 		VALUES(?,?,?,?,?,0,?,?)`,
-		sessionTokenHash(token), adminID, csrf, currentSite, fmtTime(expiresAt), fmtTime(now), fmtTime(now))
+		sessionTokenHash(token), adminID, csrf, nil, fmtTime(expiresAt), fmtTime(now), fmtTime(now))
 	return err
 }
 

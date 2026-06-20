@@ -457,7 +457,7 @@ func (s *Server) editLang(r *http.Request) string {
 
 func (s *Server) adminLoginForm(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.currentSession(r); ok {
-		http.Redirect(w, r, "/admin", http.StatusSeeOther)
+		http.Redirect(w, r, s.adminLandingPath(), http.StatusSeeOther)
 		return
 	}
 	s.rnd.Admin(w, "login", http.StatusOK, s.adminView(r, "登录"))
@@ -484,13 +484,20 @@ func (s *Server) adminLoginPost(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.setSessionCookie(w, r, tok)
-		http.Redirect(w, r, "/admin", http.StatusSeeOther)
+		http.Redirect(w, r, s.adminLandingPath(), http.StatusSeeOther)
 		return
 	}
 	s.login.fail(ip)
 	v := s.adminView(r, "登录")
 	v.FormErr = v.Admin.T("admin.login.bad_credentials", "用户名或密码错误")
 	s.rnd.Admin(w, "login", http.StatusUnauthorized, v)
+}
+
+func (s *Server) adminLandingPath() string {
+	if s.platform != nil {
+		return "/admin/sites"
+	}
+	return "/admin"
 }
 
 func (s *Server) adminLanguage(w http.ResponseWriter, r *http.Request) {
@@ -628,8 +635,9 @@ func (s *Server) adminDashboard(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) adminSites(w http.ResponseWriter, r *http.Request) {
 	sess, _ := s.currentSession(r)
-	v := s.adminView(r, "站点")
+	v := s.adminView(r, "站点管理")
 	s.authed(v, sess)
+	v.PlatformAdminView = true
 	v.PlatformCurrentSiteID = sess.currentSiteID
 	if s.platform == nil {
 		siteName := strings.TrimSpace(s.store.Setting("site.name"))

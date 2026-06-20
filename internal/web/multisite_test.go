@@ -3,6 +3,7 @@ package web
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -81,6 +82,49 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 		t.Fatalf("new multisite server: %v", err)
 	}
 	h := srv.Handler()
+
+	login := httptest.NewRecorder()
+	loginForm := url.Values{"username": {"admin"}, "password": {store.DefaultAdminPassword}}
+	loginReq := httptest.NewRequest(http.MethodPost, "https://platform.test/admin/login", strings.NewReader(loginForm.Encode()))
+	loginReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	h.ServeHTTP(login, loginReq)
+	if login.Code != http.StatusSeeOther || login.Header().Get("Location") != "/admin/sites" {
+		t.Fatalf("login status/location = %d %q", login.Code, login.Header().Get("Location"))
+	}
+	var loginCookie *http.Cookie
+	for _, c := range login.Result().Cookies() {
+		if c.Name == cookieName {
+			loginCookie = c
+			break
+		}
+	}
+	if loginCookie == nil {
+		t.Fatalf("login did not set session cookie")
+	}
+	loginSess, ok, err := ps.GetAdminSession(loginCookie.Value)
+	if err != nil || !ok {
+		t.Fatalf("get login session: ok=%v err=%v", ok, err)
+	}
+	if loginSess.CurrentSiteID != 0 {
+		t.Fatalf("login current site id = %d, want 0", loginSess.CurrentSiteID)
+	}
+	adminWithoutSite := httptest.NewRecorder()
+	adminReq := httptest.NewRequest(http.MethodGet, "https://platform.test/admin", nil)
+	adminReq.AddCookie(loginCookie)
+	h.ServeHTTP(adminWithoutSite, adminReq)
+	if adminWithoutSite.Code != http.StatusSeeOther || adminWithoutSite.Header().Get("Location") != "/admin/sites" {
+		t.Fatalf("admin without site status/location = %d %q", adminWithoutSite.Code, adminWithoutSite.Header().Get("Location"))
+	}
+	platformPage := httptest.NewRecorder()
+	platformSitesReq := httptest.NewRequest(http.MethodGet, "https://platform.test/admin/sites", nil)
+	platformSitesReq.AddCookie(loginCookie)
+	h.ServeHTTP(platformPage, platformSitesReq)
+	if platformPage.Code != http.StatusOK {
+		t.Fatalf("platform page status = %d, body = %s", platformPage.Code, platformPage.Body.String())
+	}
+	if body := platformPage.Body.String(); strings.Contains(body, `href="/admin/posts"`) || strings.Contains(body, `href="/admin/settings"`) {
+		t.Fatalf("platform page leaked site admin navigation")
+	}
 
 	defaultResp := httptest.NewRecorder()
 	h.ServeHTTP(defaultResp, httptest.NewRequest(http.MethodGet, "https://platform.test/zh/", nil))

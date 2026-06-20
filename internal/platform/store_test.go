@@ -61,11 +61,18 @@ func TestBootstrapDefaultSiteAndPlatformSession(t *testing.T) {
 	if sess.User != "admin" || sess.CSRF != "csrf" {
 		t.Fatalf("session mismatch: %#v", sess)
 	}
-	if sess.CurrentSiteID != site.ID {
-		t.Fatalf("current site id = %d, want %d", sess.CurrentSiteID, site.ID)
+	if sess.CurrentSiteID != 0 {
+		t.Fatalf("new session current site id = %d, want 0", sess.CurrentSiteID)
 	}
 	if err := ps.SetAdminSessionSite("token", site.ID); err != nil {
 		t.Fatalf("set current site: %v", err)
+	}
+	sess, ok, err = ps.GetAdminSession("token")
+	if err != nil || !ok {
+		t.Fatalf("get selected session: ok=%v err=%v", ok, err)
+	}
+	if sess.CurrentSiteID != site.ID {
+		t.Fatalf("selected current site id = %d, want %d", sess.CurrentSiteID, site.ID)
 	}
 	if err := ps.DismissAdminPasswordWarning("token"); err != nil {
 		t.Fatalf("dismiss warning: %v", err)

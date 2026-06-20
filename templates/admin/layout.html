@@ -10,19 +10,31 @@
 <body class="admin" data-csrf="{{.CSRF}}">
   <header class="admin-top">
     <div class="wrap">
-      <a class="brand admin-brand{{if and .Site.Logo (ne .Site.Brand "text")}} has-logo{{if eq .Site.Brand "both"}} with-name{{end}}{{end}}" href="/admin">
+      <a class="brand admin-brand{{if and (not .PlatformAdminView) .Site.Logo (ne .Site.Brand "text")}} has-logo{{if eq .Site.Brand "both"}} with-name{{end}}{{end}}" href="{{if .PlatformAdminView}}/admin/sites{{else}}/admin{{end}}">
+        {{if .PlatformAdminView}}
+        GCMS<span class="dot">.</span>
+        {{else}}
         {{if and .Site.Logo (ne .Site.Brand "text")}}
         <img class="brand-logo" src="{{.Site.Logo}}" alt="{{if .Site.Name}}{{.Site.Name}}{{else}}CCVAR{{end}}" decoding="async"{{imgAttrs .Site.Logo}}>
         {{if eq .Site.Brand "both"}}<span class="brand-name">{{if .Site.Name}}{{.Site.Name}}{{else}}CCVAR{{end}}</span>{{end}}
         {{else}}
         {{if .Site.Name}}{{.Site.Name}}{{else}}CCVAR{{end}}<span class="dot">.</span>
         {{end}}
-        <small>{{.Admin.T "admin.brand.suffix" "后台"}}</small>
+        {{end}}
+        <small>{{if .PlatformAdminView}}{{.Admin.T "admin.brand.platform" "平台"}}{{else}}{{.Admin.T "admin.brand.suffix" "后台"}}{{end}}</small>
       </a>
       <button class="admin-burger" type="button" aria-label="{{.Admin.T "admin.nav.settings" "菜单"}}" aria-expanded="false">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
       </button>
       <nav class="admin-nav">
+        {{if .PlatformAdminView}}
+        {{if .Authed}}
+        <form method="post" action="/admin/logout">
+          <input type="hidden" name="_csrf" value="{{.CSRF}}">
+          <button class="btn-logout" type="submit">{{.Admin.T "admin.nav.logout" "退出"}}</button>
+        </form>
+        {{end}}
+        {{else}}
         <a class="ext" href="/" target="_blank">{{.Admin.T "admin.nav.view_site" "查看站点"}} ↗</a>
         {{if .Authed}}
         <span class="admin-nav-sep" aria-hidden="true"></span>
@@ -36,6 +48,7 @@
           <input type="hidden" name="_csrf" value="{{.CSRF}}">
           <button class="btn-logout" type="submit">{{.Admin.T "admin.nav.logout" "退出"}}</button>
         </form>
+        {{end}}
         {{end}}
       </nav>
     </div>

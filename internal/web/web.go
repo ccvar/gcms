@@ -304,6 +304,7 @@ type View struct {
 	EditListURL           string // 返回列表的后台 URL
 	EditTypeLabel         string // 文章 | 页面 | 链接
 	Authed                bool
+	PlatformAdminView     bool // 平台级管理页，不显示当前站点后台导航
 	ShowPwWarn            bool // 仍为默认密码且本会话未关闭提示
 	CSRF                  string
 	Flash                 string
@@ -786,9 +787,6 @@ func (p *SiteRuntimePool) runtimeByID(id int64) (*SiteRuntime, bool) {
 		if rt := p.byID[id]; rt != nil {
 			return rt, true
 		}
-	}
-	if p.defaultSite != nil {
-		return p.defaultSite, true
 	}
 	return nil, false
 }
