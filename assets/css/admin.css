@@ -789,7 +789,7 @@ body.admin { background: var(--line-soft); }
 .giscus-manual-body { display: grid; gap: 1rem; padding: 1rem; }
 .giscus-manual-body > .muted { margin: 0; font-size: .84rem; line-height: 1.55; }
 .giscus-manual-body .group-head { margin: .25rem 0 -.25rem; font-size: 1rem; }
-.giscus-form-actions { justify-content: flex-start; margin-top: 1rem; }
+.button-row.giscus-form-actions { justify-content: flex-start; margin-top: 1rem; }
 @media (max-width: 760px) {
   .giscus-quick-head { display: grid; }
   .giscus-quick-head .mini-tag { justify-self: start; }
