@@ -221,7 +221,7 @@ func showcasePosts() []seedPost {
 				"",
 				"- **原生 SEO**：每页服务端渲染，自带 canonical、`hreflang`、Open Graph、`sitemap.xml`、RSS 与 JSON-LD 结构化数据；",
 				"- **多语种**：URL 前缀路由（`/zh/…`、`/en/…`），逐语种维护内容，自动输出 hreflang 备份链接；",
-				"- **18 套主题**：后台一键切换，还能按主题微调主色与圆角；",
+				"- **19 套主题**：后台一键切换，还能按主题微调主色与圆角；",
 				"- **双模式编辑器**：Markdown ⇄ 所见即所得，粘贴图片、插表格、拖动段落；",
 				"- **链接展示、代码注入、社媒页脚、自定义导航、后台在线更新**……",
 				"",
@@ -306,7 +306,7 @@ func showcasePosts() []seedPost {
 				"",
 				"- **SEO-native**: server-rendered pages with canonical, `hreflang`, Open Graph, `sitemap.xml`, RSS and JSON-LD;",
 				"- **Multilingual**: URL-prefix routing (`/zh/…`, `/en/…`), per-language content, automatic hreflang alternates;",
-				"- **18 themes**, switchable from the admin, with per-theme accent and radius tweaks;",
+				"- **19 themes**, switchable from the admin, with per-theme accent and radius tweaks;",
 				"- **Dual-mode editor**: Markdown ⇄ WYSIWYG, paste images, insert tables, drag blocks;",
 				"- Link showcase, code injection, social footer, custom nav, in-app updates…",
 				"",
@@ -568,15 +568,15 @@ func showcasePosts() []seedPost {
 			),
 		},
 
-		// ===== 6 · 18 套主题（features）=====
+		// ===== 6 · 19 套主题（features）=====
 		{
 			Slug: "eighteen-themes", Title: "内容不变，气质可以随时换",
-			Excerpt:  "产品官网、技术博客、交易所推广、AI 教材、外贸工厂、开源项目官网……18 套主题让同一套内容适配不同场景。",
-			MetaDesc: "gcms 内置 18 套各具风格的前台主题，后台一键切换，并可按主题微调主色与圆角，无需改一行 CSS。",
+			Excerpt:  "产品官网、技术博客、交易所推广、AI 教材、外贸工厂、开源项目官网、知识库……19 套主题让同一套内容适配不同场景。",
+			MetaDesc: "gcms 内置 19 套各具风格的前台主题，后台一键切换，并可按主题微调主色与圆角，无需改一行 CSS。",
 			Keywords: "主题,模板,设计,可定制,前端,换肤", Author: "gcms", Cat: "features", Date: "2026-06-07",
 			Lang: "zh", Group: "s-themes", Cover: "/assets/screenshots/theme-settings.webp",
 			Content: md(
-				"同一份内容，能穿上完全不同的「衣服」。gcms 内置 **18 套**布局与气质各异的主题：编辑部、杂志、极客终端、粗野、手账、瑞士、报纸、暗夜、产品官网、交易所、AI 教材、外贸工厂、开源项目官网……",
+				"同一份内容，能穿上完全不同的「衣服」。gcms 内置 **19 套**布局与气质各异的主题：编辑部、杂志、极客终端、粗野、手账、瑞士、报纸、暗夜、产品官网、交易所、AI 教材、外贸工厂、开源项目官网、知识库……",
 				"",
 				"![gcms 后台外观与主题真实截图：主题卡片、预览缩略图和当前主题选择状态](/assets/screenshots/theme-settings.webp)",
 				"",
@@ -595,12 +595,12 @@ func showcasePosts() []seedPost {
 		},
 		{
 			Slug: "eighteen-themes", Title: "Same Content, a Different Presence Anytime",
-			Excerpt:  "Product site, technical blog, exchange campaign, AI course, garment factory or open-source homepage — 18 themes let one CMS fit many scenes.",
-			MetaDesc: "gcms ships 18 distinct front-end themes, switchable from the admin in one click, with per-theme accent and radius tuning — no CSS required.",
+			Excerpt:  "Product site, technical blog, exchange campaign, AI course, garment factory, open-source homepage or docs hub — 19 themes let one CMS fit many scenes.",
+			MetaDesc: "gcms ships 19 distinct front-end themes, switchable from the admin in one click, with per-theme accent and radius tuning — no CSS required.",
 			Keywords: "themes,templates,design,customizable,frontend,skins", Author: "gcms", Cat: "features", Date: "2026-06-07",
 			Lang: "en", Group: "s-themes", Cover: "/assets/screenshots/theme-settings-en.webp",
 			Content: md(
-				"The same content can wear completely different clothes. gcms ships **18** themes with distinct layouts and moods: editorial, magazine, terminal, brutalist, notebook, swiss, newspaper, dark pro, product, exchange, academy, garment, open-source, studio…",
+				"The same content can wear completely different clothes. gcms ships **19** themes with distinct layouts and moods: editorial, magazine, terminal, brutalist, notebook, swiss, newspaper, dark pro, product, exchange, academy, garment, open-source, studio, knowledge hub…",
 				"",
 				"![Real gcms Appearance & Themes screenshot: theme cards, preview thumbnails and selected theme state](/assets/screenshots/theme-settings-en.webp)",
 				"",
@@ -894,7 +894,7 @@ func showcasePosts() []seedPost {
 		{
 			Slug: "how-to-change-theme", Title: "怎么更改网站主题？从预览到上线的完整步骤",
 			Excerpt:  "不用改 CSS，也不用重新部署。进入外观与主题，预览、选择、微调主色和圆角，保存后前台立即生效。",
-			MetaDesc: "gcms 更换网站主题教程：在后台外观与主题页面预览 18 套主题，选择适合场景的风格，微调主色与圆角，并保存到正式前台。",
+			MetaDesc: "gcms 更换网站主题教程：在后台外观与主题页面预览 19 套主题，选择适合场景的风格，微调主色与圆角，并保存到正式前台。",
 			Keywords: "gcms,更改主题,外观设置,主题预览,网站设计", Author: "gcms", Cat: "guides", Date: "2026-06-14",
 			Lang: "zh", Group: "g-change-theme", Featured: true, Cover: "/assets/screenshots/theme-settings.webp",
 			Content: md(
@@ -920,7 +920,7 @@ func showcasePosts() []seedPost {
 		{
 			Slug: "how-to-change-theme", Title: "How to Change the Site Theme",
 			Excerpt:  "No CSS and no redeploy. Open Appearance & Themes, preview, choose, tune accent color and radius, then save.",
-			MetaDesc: "A practical gcms guide to changing the front-end theme: preview 18 themes in the admin, choose the right style, tune accent color and radius, and publish it instantly.",
+			MetaDesc: "A practical gcms guide to changing the front-end theme: preview 19 themes in the admin, choose the right style, tune accent color and radius, and publish it instantly.",
 			Keywords: "gcms,change theme,appearance,theme preview,website design", Author: "gcms", Cat: "guides", Date: "2026-06-14",
 			Lang: "en", Group: "g-change-theme", Featured: true, Cover: "/assets/screenshots/theme-settings-en.webp",
 			Content: md(
@@ -1184,7 +1184,7 @@ func showcaseAbouts() []seedPost {
 		{
 			Type: "page", Slug: "about", Title: "关于 gcms", Lang: "zh", Group: "s-page-about",
 			Excerpt:  "gcms 面向产品官网、技术文档和轻量内容站：一个二进制启动，一个 SQLite 文件存数据，SEO 与多语种默认就绪。",
-			MetaDesc: "gcms 是面向产品官网、技术文档和轻量内容站的自托管 CMS：单一静态二进制 + SQLite 单文件数据库，原生 SEO、多语种、18 套主题、在线更新与自动化接口。",
+			MetaDesc: "gcms 是面向产品官网、技术文档和轻量内容站的自托管 CMS：单一静态二进制 + SQLite 单文件数据库，原生 SEO、多语种、19 套主题、在线更新与自动化接口。",
 			Keywords: "gcms,关于,CMS,Go,SQLite,自托管", Author: "gcms", Date: "2026-06-12",
 			Content: md(
 				"**gcms** 是一个把「上线简单、长期维护简单」放在第一位的内容管理系统。它适合产品官网、技术文档、个人知识库、资源导航和轻量内容站。",
@@ -1195,7 +1195,7 @@ func showcaseAbouts() []seedPost {
 				"## 你会得到什么",
 				"- 用 **Go + SQLite** 构建，最终是**一个静态二进制 + 一个数据库文件**；",
 				"- 100% 服务端渲染，**原生 SEO**（canonical / hreflang / sitemap / JSON-LD）；",
-				"- **多语种内容**、**18 套主题**、**Markdown ⇄ 富文本编辑器**、可视化站点配置；",
+				"- **多语种内容**、**19 套主题**、**Markdown ⇄ 富文本编辑器**、可视化站点配置；",
 				"- 链接展示、页脚社交入口、代码注入、自定义导航、评论接入；",
 				"- 跨平台启停脚本、Caddy 部署建议、**后台在线更新**与自动化 API。",
 				"",
@@ -1213,7 +1213,7 @@ func showcaseAbouts() []seedPost {
 		{
 			Type: "page", Slug: "about", Title: "About gcms", Lang: "en", Group: "s-page-about",
 			Excerpt:  "gcms is for product sites, docs and lightweight content hubs: one binary to run, one SQLite file for data, SEO and i18n ready by default.",
-			MetaDesc: "gcms is a self-hosted CMS for product sites, docs and lightweight content hubs: one static binary, one SQLite database file, SEO-native, multilingual, 18 themes, in-app updates and automation APIs.",
+			MetaDesc: "gcms is a self-hosted CMS for product sites, docs and lightweight content hubs: one static binary, one SQLite database file, SEO-native, multilingual, 19 themes, in-app updates and automation APIs.",
 			Keywords: "gcms,about,CMS,Go,SQLite,self-hosted", Author: "gcms", Date: "2026-06-12",
 			Content: md(
 				"**gcms** is a content management system built around one promise: launch simply, maintain simply. It fits product sites, docs, personal knowledge bases, resource directories and lightweight content hubs.",
@@ -1224,7 +1224,7 @@ func showcaseAbouts() []seedPost {
 				"## What you get",
 				"- Built with **Go + SQLite**, shipped as **one static binary plus one database file**;",
 				"- 100% server-rendered, **SEO-native** (canonical / hreflang / sitemap / JSON-LD);",
-				"- **Multilingual content**, **18 themes**, **Markdown ⇄ WYSIWYG editor**, visual site configuration;",
+				"- **Multilingual content**, **19 themes**, **Markdown ⇄ WYSIWYG editor**, visual site configuration;",
 				"- Link showcase, social footer, code injection, custom navigation and optional comments;",
 				"- Cross-platform scripts, Caddy deployment guidance, **in-app updates** and automation APIs.",
 				"",

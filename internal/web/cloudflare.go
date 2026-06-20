@@ -1356,14 +1356,14 @@ func (s *Server) adminSaveCloudflare(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusAccepted, s.cloudflareJSONPayload(r, true, "Cloudflare 配置已保存，部署任务已启动。"))
 			return
 		}
-		s.showSettings(w, r, "cloudflare", "Cloudflare 配置已保存，部署任务已启动。", "")
+		s.redirectSettings(w, r, "cloudflare", "Cloudflare 配置已保存，部署任务已启动。")
 		return
 	}
 	if jsonReq {
 		writeJSON(w, http.StatusOK, s.cloudflareJSONPayload(r, true, "Cloudflare 部署配置已保存。"))
 		return
 	}
-	s.showSettings(w, r, "cloudflare", "Cloudflare 部署配置已保存。", "")
+	s.redirectSettings(w, r, "cloudflare", "Cloudflare 部署配置已保存。")
 }
 
 func (s *Server) adminSaveCloudflareSync(w http.ResponseWriter, r *http.Request) {
@@ -1408,7 +1408,7 @@ func (s *Server) adminSaveCloudflareSync(w http.ResponseWriter, r *http.Request)
 		writeJSON(w, http.StatusOK, s.cloudflareJSONPayload(r, true, "内容同步规则已保存。"))
 		return
 	}
-	s.showSettings(w, r, "cloudflare", "内容同步规则已保存。", "")
+	s.redirectSettings(w, r, "cloudflare", "内容同步规则已保存。")
 }
 
 func (s *Server) queueCloudflareDeploy(cfg CloudflareConfig) error {
@@ -1774,7 +1774,7 @@ func (s *Server) adminStartCloudflareDeploy(w http.ResponseWriter, r *http.Reque
 		writeJSON(w, http.StatusAccepted, s.cloudflareJSONPayload(r, true, "Cloudflare 部署任务已启动。"))
 		return
 	}
-	s.showSettings(w, r, "cloudflare", "Cloudflare 部署任务已启动，请稍后刷新状态。", "")
+	s.redirectSettings(w, r, "cloudflare", "Cloudflare 部署任务已启动，请稍后刷新状态。")
 }
 
 func (s *Server) adminStartCloudflareUnpublish(w http.ResponseWriter, r *http.Request) {
@@ -1803,7 +1803,7 @@ func (s *Server) adminStartCloudflareUnpublish(w http.ResponseWriter, r *http.Re
 		writeJSON(w, http.StatusAccepted, s.cloudflareJSONPayload(r, true, "正在取消 Cloudflare 公开部署。"))
 		return
 	}
-	s.showSettings(w, r, "cloudflare", "正在取消 Cloudflare 公开部署。", "")
+	s.redirectSettings(w, r, "cloudflare", "正在取消 Cloudflare 公开部署。")
 }
 
 func (s *Server) adminCloudflarePurge(w http.ResponseWriter, r *http.Request) {
@@ -1834,7 +1834,7 @@ func (s *Server) adminCloudflarePurge(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, s.cloudflareJSONPayload(r, true, "Cloudflare 缓存已清除。"))
 		return
 	}
-	s.showSettings(w, r, "cloudflare", "Cloudflare 缓存已清除。", "")
+	s.redirectSettings(w, r, "cloudflare", "Cloudflare 缓存已清除。")
 }
 
 func (s *Server) adminCloudflareReset(w http.ResponseWriter, r *http.Request) {
@@ -1855,7 +1855,7 @@ func (s *Server) adminCloudflareReset(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, s.cloudflareJSONPayload(r, true, "Cloudflare 绑定已清空。"))
 		return
 	}
-	s.showSettings(w, r, "cloudflare", "Cloudflare 绑定已清空。", "")
+	s.redirectSettings(w, r, "cloudflare", "Cloudflare 绑定已清空。")
 }
 
 func cloudflareBindingSettingKeys() []string {

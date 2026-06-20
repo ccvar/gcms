@@ -205,7 +205,7 @@ ccvar.com/
 │   ├── home / article / category / page / search / 404 .html
 │   └── admin/               #   layout / login / dashboard / posts / edit / settings
 ├── assets/                  # embed 进二进制
-│   ├── css/style.css        # 全站唯一样式表（18 套主题）
+│   ├── css/style.css        # 全站唯一样式表（19 套主题）
 │   ├── favicon.svg          # 默认站点图标
 │   └── js/
 │       ├── toc.js           # 公开页：页眉测量 / 阅读进度 / 回顶 / 大纲高亮
@@ -265,7 +265,7 @@ ccvar.com/
 - 图片上传 `/admin/upload` → `data/uploads/`（限 8MB，类型白名单含 svg/ico）。**前端在浏览器支持时先把 png/jpg 转 WebP** 再上传
 - **设置页 `/admin/settings`**：左侧菜单分区，**各区独立保存**——
   - `站点信息`（`/site`）：站名 / 标语 / 描述 / **favicon / logo**（上传或 URL）/ **首页显示数量**（链接条数、文章每页条数）/ **社交链接**（页脚「关注」栏，可增删，图标按域名自动识别 GitHub·X·YouTube·Telegram·LinkedIn·邮箱等，存 `social_links`）
-  - `外观与主题`（`/appearance`）：18 套主题单选 + **当前站点实时缩略图** + **按主题各自保存的可视化微调**（主色取色器、圆角滑杆，存 `theme.<id>.*`，切卡时控件随主题同步，以内联 CSS 变量覆盖当前主题默认）；**首页 Hero 右侧视觉可替换**：默认动画 / 上传图片或 SVG 文件 / 直接粘贴 SVG 代码（存 `hero.visual`·`hero.image`·`hero.svg`）
+  - `外观与主题`（`/appearance`）：19 套主题单选 + **当前站点实时缩略图** + **按主题各自保存的可视化微调**（主色取色器、圆角滑杆，存 `theme.<id>.*`，切卡时控件随主题同步，以内联 CSS 变量覆盖当前主题默认）；**首页 Hero 右侧视觉可替换**：默认动画 / 上传图片或 SVG 文件 / 直接粘贴 SVG 代码（存 `hero.visual`·`hero.image`·`hero.svg`）
   - `文案`（`/copy`）：首页 hero 眉标/大标题、标语、描述、页脚说明等前台文案可编辑，**按语种切换标签分别维护**（非默认语种存 `site.x::<lang>`，留空回落默认语种）；字段按「首页 Hero / 站点描述 / 页脚」分组展示
   - `导航`（`/menu`）：**页眉菜单构建器**——自定义每项名称、**拖动排序**、**每语种单独命名**（存 `nav_menu` JSON）；内部路径自动加语种前缀，外部 `https://…` 新窗口打开；未配置时回落默认菜单（首页/分类/关于）
   - 左侧分区菜单每项带 SVG 图标
@@ -394,7 +394,7 @@ curl -X POST https://example.com/api/admin/v1/posts \
 
 全局评论关闭、giscus 参数不完整、或文章未勾选时，前台不会加载任何评论脚本。页面和链接内容暂不接评论，避免入口过多导致运营成本上升。
 
-### 前台主题（18 套，布局风格各异，非简单换色）
+### 前台主题（19 套，布局风格各异，非简单换色）
 
 在设置页切换，存于 `settings.theme`，服务端渲染即时生效（`<html data-theme="…">`，无闪烁）：
 
@@ -418,6 +418,7 @@ curl -X POST https://example.com/api/admin/v1/posts \
 | `institution` | 机构 · 专业服务官网 | 律所/咨询/协会可信官网，徽章式品牌、报告卡片、正式信息流 |
 | `studio` | 作品 · 创意工作室 | 设计/摄影/建筑作品集，黑白画廊骨架、锐利边框、作品网格 |
 | `lifestyle` | 生活 · 小品牌官网 | 咖啡/民宿/餐厅/买手店，温暖首屏、圆润卡片、生活方式内容流 |
+| `knowledge` | 知识库 · 文档中心 | 搜索优先、推荐阅读、资源目录和更新时间线，适合文档站/教程中心 |
 
 首页 hero 右侧的科技感图形（SSR 窗口 + 轨道数据流）为纯 SVG/CSS，随主题 token 自动变色，并尊重 `prefers-reduced-motion`；如需也可在「外观与主题」里替换为自定义图片、SVG 文件或内联 SVG 代码。
 

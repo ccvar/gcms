@@ -532,7 +532,7 @@
   "admin.settings.appearance.paste_svg_code": "SVG code (paste the full <svg>…</svg>)",
   "admin.settings.appearance.svg_placeholder": "<svg viewBox=\"0 0 480 440\">…</svg>",
   "admin.settings.appearance.themes": "Available Themes",
-  "admin.settings.appearance.themes_desc": "The 18 themes use different structures for headers, homepage lists, and cards. Select a theme, then save above to apply it.",
+  "admin.settings.appearance.themes_desc": "The 19 themes use different structures for headers, homepage lists, and cards. Select a theme, then save above to apply it.",
   "admin.settings.copy.intro_prefix": "Editing “",
   "admin.settings.copy.intro_suffix": "” front-end copy. Empty fields fall back to the default language.",
   "admin.settings.copy.hero": "Homepage Hero",

@@ -1,6 +1,6 @@
 {{define "body"}}  <main>
     <section class="hero">
-      <div class="wrap hero-inner">
+      <div class="wrap hero-inner{{if and (eq .Theme "knowledge") .FeatLinks}} has-knowledge-links{{end}}">
         <div class="hero-text">
           <p class="eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>
           <h1{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
@@ -10,6 +10,16 @@
             <a class="btn" href="{{.Tr.U "/about"}}">{{.Tr.T "home.cta_more"}}</a>
           </div>
         </div>
+        {{if and (eq .Theme "knowledge") .FeatLinks}}
+        <aside class="knowledge-links" aria-label="{{.Tr.T "nav.links"}}">
+          {{range .FeatLinks}}
+          <a class="knowledge-link" href="{{if .Slug}}{{$.Tr.U (printf "/links/%s" .Slug)}}{{else}}#{{end}}" target="_blank" rel="noopener">
+            <span class="kl-cover">{{if .CoverImage}}<img src="{{.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b>{{initial .Title}}</b>{{end}}</span>
+            <span class="kl-title">{{.Title}}</span>
+          </a>
+          {{end}}
+        </aside>
+        {{end}}
         <div class="hero-visual" aria-hidden="true"{{if .VisualEdit}} data-visual-edit="hero.image" data-visual-label="Hero 图片" data-visual-kind="image"{{end}}>
           {{if and (eq .Site.HeroVisual "image") .Site.HeroImage}}<img class="hero-img" src="{{.Site.HeroImage}}" alt="" decoding="async" fetchpriority="high"{{imgAttrs .Site.HeroImage}}{{if .VisualEdit}} data-visual-edit="hero.image" data-visual-label="Hero 图片" data-visual-kind="image"{{end}}>
           {{else if and (eq .Site.HeroVisual "svg") .Site.HeroSVG}}<div class="hero-embed">{{safeHTML .Site.HeroSVG}}</div>
@@ -139,90 +149,149 @@
       </div>
     </section>
 
-    <div class="wrap">
-      {{with .Featured}}
-      <div class="section-head">
-        <h2{{if $.VisualEdit}} data-visual-edit="home.featured_title" data-visual-label="首页精选标题"{{end}}>{{$.Site.HomeFeatured}}</h2>
-        <a href="{{$.Tr.U $.CategoryAll.Path}}">{{$.Tr.T "home.view_all"}} <span class="arrow">→</span></a>
-      </div>
-      <article class="feature{{if not .CoverImage}} no-cover{{end}}">
-        {{if .CoverImage}}<img class="cover" src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{end}}
-        <div>
-          <div class="meta">
-            {{with .Category}}<a class="tag" href="{{$.Tr.U (printf "/category/%s" .Slug)}}">{{.Name}}</a><span class="sep">·</span>{{end}}
-            <time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time>
-            <span class="sep">·</span><span class="read-time">{{.ReadingTime}} {{$.Tr.T "common.min_read"}}</span>
+    {{if eq .Theme "knowledge"}}
+    <div class="wrap knowledge-docs" data-knowledge-docs>
+      <aside class="docs-sidebar" aria-label="{{.Tr.T "common.category_nav"}}">
+        <p class="docs-sidebar-kicker">{{.Tr.T "category.label"}}</p>
+        <nav class="docs-cat-list" data-knowledge-docs-nav>
+          {{range $i, $g := .KnowledgeGroups}}
+          <a href="{{$.Tr.U .Path}}" data-docs-tab="{{.Key}}" aria-controls="docs-panel-{{.Key}}"{{if eq $i 0}} class="active" aria-current="page" aria-selected="true"{{else}} aria-selected="false"{{end}}>
+            <span>{{.Title}}</span>
+            {{if .Count}}<small>{{.Count}}</small>{{end}}
+          </a>
+          {{end}}
+        </nav>
+      </aside>
+      <section class="docs-content">
+        {{range $i, $g := .KnowledgeGroups}}
+        <div class="docs-panel" id="docs-panel-{{.Key}}" data-docs-panel="{{.Key}}"{{if ne $i 0}} hidden{{end}}>
+        <div class="docs-content-head">
+          <div>
+            <h2>{{.Title}}</h2>
+            {{if .Description}}<p>{{.Description}}</p>{{end}}
           </div>
-          <h3><a href="{{$.Tr.U (printf "/posts/%s" .Slug)}}">{{.Title}}</a></h3>
-          <p>{{.Excerpt}}</p>
-          <a class="btn" href="{{$.Tr.U (printf "/posts/%s" .Slug)}}">{{$.Tr.T "home.read_more"}} <span class="arrow">→</span></a>
+          <a class="docs-rss" href="{{$.Tr.U .Path}}">{{$.Tr.T "home.view_all"}}</a>
         </div>
-      </article>
-      {{if $.FeaturedMore}}
-      <div class="feature-more">
-        {{range $.FeaturedMore}}
-        <article class="card">
-          <div class="meta">{{with .Category}}<a class="tag" href="{{$.Tr.U (printf "/category/%s" .Slug)}}">{{.Name}}</a><span class="sep">·</span>{{end}}<time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time></div>
-          <h4><a href="{{$.Tr.U (printf "/posts/%s" .Slug)}}">{{.Title}}</a></h4>
-          <p class="card-excerpt">{{.Excerpt}}</p>
-        </article>
+        <div class="docs-post-list">
+          {{range $j, $p := .Posts}}
+          <article class="docs-post{{if and (eq $i 0) (eq $j 0)}} featured{{end}}">
+            <div class="meta">
+              {{with .Category}}<a class="tag" href="{{$.Tr.U (printf "/category/%s" .Slug)}}">{{.Name}}</a><span class="sep">·</span>{{end}}
+              <time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time>
+              <span class="sep">·</span><span class="read-time">{{.ReadingTime}} {{$.Tr.T "common.min"}}</span>
+            </div>
+            <h3><a href="{{$.Tr.U (printf "/posts/%s" .Slug)}}">{{.Title}}</a></h3>
+            <p>{{.Excerpt}}</p>
+          </article>
+          {{else}}
+          <p class="muted">{{$.Tr.T "home.no_posts"}}</p>
+          {{end}}
+          {{if gt .Count (len .Posts)}}
+          <a class="docs-more" href="{{$.Tr.U .Path}}">{{$.Tr.T "home.view_more"}} <span class="arrow">→</span></a>
+          {{end}}
+        </div>
+        </div>
         {{end}}
-      </div>
-      {{end}}
+      </section>
+    </div>
+    {{else}}
+
+    <div class="wrap home-docs">
+      {{with .Featured}}
+      <section class="doc-section">
+        <div class="section-head">
+          <h2{{if $.VisualEdit}} data-visual-edit="home.featured_title" data-visual-label="首页精选标题"{{end}}>{{$.Site.HomeFeatured}}</h2>
+          <a href="{{$.Tr.U $.CategoryAll.Path}}">{{$.Tr.T "home.view_all"}} <span class="arrow">→</span></a>
+        </div>
+        <div class="doc-section-body">
+          <article class="feature{{if not .CoverImage}} no-cover{{end}}">
+            {{if .CoverImage}}<img class="cover" src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{end}}
+            <div>
+              <div class="meta">
+                {{with .Category}}<a class="tag" href="{{$.Tr.U (printf "/category/%s" .Slug)}}">{{.Name}}</a><span class="sep">·</span>{{end}}
+                <time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time>
+                <span class="sep">·</span><span class="read-time">{{.ReadingTime}} {{$.Tr.T "common.min_read"}}</span>
+              </div>
+              <h3><a href="{{$.Tr.U (printf "/posts/%s" .Slug)}}">{{.Title}}</a></h3>
+              <p>{{.Excerpt}}</p>
+              <a class="btn" href="{{$.Tr.U (printf "/posts/%s" .Slug)}}">{{$.Tr.T "home.read_more"}} <span class="arrow">→</span></a>
+            </div>
+          </article>
+          {{if $.FeaturedMore}}
+          <div class="feature-more">
+            {{range $.FeaturedMore}}
+            <article class="card">
+              <div class="meta">{{with .Category}}<a class="tag" href="{{$.Tr.U (printf "/category/%s" .Slug)}}">{{.Name}}</a><span class="sep">·</span>{{end}}<time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time></div>
+              <h4><a href="{{$.Tr.U (printf "/posts/%s" .Slug)}}">{{.Title}}</a></h4>
+              <p class="card-excerpt">{{.Excerpt}}</p>
+            </article>
+            {{end}}
+          </div>
+          {{end}}
+        </div>
+      </section>
       {{end}}
 
       {{if .FeatLinks}}
-      <div class="section-head">
-        <h2{{if .VisualEdit}} data-visual-edit="home.links_title" data-visual-label="首页链接标题"{{end}}>{{.Site.HomeLinks}}</h2>
-        <a href="{{.Tr.U "/links"}}">{{.Tr.T "home.view_all"}} <span class="arrow">→</span></a>
-      </div>
-      <div class="link-grid home-links">
-        {{range .FeatLinks}}
-        <a class="link-card" href="{{$.Tr.U (printf "/links/%s" .Slug)}}">
-          <div class="lc-cover">{{if .CoverImage}}<img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<span class="lc-mono" aria-hidden="true">{{initial .Title}}</span>{{end}}</div>
-          <div class="lc-body">
-            <h3 class="lc-title">{{.Title}} <span class="lc-arrow" aria-hidden="true">→</span></h3>
-            {{if .Excerpt}}<p class="lc-intro">{{.Excerpt}}</p>{{end}}
-            {{with .Category}}<div class="lc-foot"><span class="tag">{{.Name}}</span></div>{{end}}
+      <section class="doc-section">
+        <div class="section-head">
+          <h2{{if .VisualEdit}} data-visual-edit="home.links_title" data-visual-label="首页链接标题"{{end}}>{{.Site.HomeLinks}}</h2>
+          <a href="{{.Tr.U "/links"}}">{{.Tr.T "home.view_all"}} <span class="arrow">→</span></a>
+        </div>
+        <div class="doc-section-body">
+          <div class="link-grid home-links">
+            {{range .FeatLinks}}
+            <a class="link-card" href="{{$.Tr.U (printf "/links/%s" .Slug)}}">
+              <div class="lc-cover">{{if .CoverImage}}<img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<span class="lc-mono" aria-hidden="true">{{initial .Title}}</span>{{end}}</div>
+              <div class="lc-body">
+                <h3 class="lc-title">{{.Title}} <span class="lc-arrow" aria-hidden="true">→</span></h3>
+                {{if .Excerpt}}<p class="lc-intro">{{.Excerpt}}</p>{{end}}
+                {{with .Category}}<div class="lc-foot"><span class="tag">{{.Name}}</span></div>{{end}}
+              </div>
+            </a>
+            {{end}}
           </div>
-        </a>
-        {{end}}
-      </div>
+        </div>
+      </section>
       {{end}}
 
-      <div class="section-head">
-        <h2{{if .VisualEdit}} data-visual-edit="home.latest_title" data-visual-label="首页最新标题"{{end}}>{{.Site.HomeLatest}}</h2>
-        <a href="{{.Tr.U "/rss.xml"}}">{{.Tr.T "footer.rss"}}</a>
-      </div>
-
-      <div class="post-list">
-        {{range $i, $p := .Posts}}
-        <article class="post-item">
-          <div class="num">{{printf "%02d" (add $i 1)}}</div>
-          <div>
-            <div class="meta">
-              {{with $p.Category}}<a class="tag" href="{{$.Tr.U (printf "/category/%s" .Slug)}}">{{.Name}}</a><span class="sep">·</span>{{end}}
-              <time datetime="{{$.Tr.ISODate $p.PublishedAt}}">{{$.Tr.Date $p.PublishedAt}}</time>
-              <span class="sep">·</span><span class="read-time">{{$p.ReadingTime}} {{$.Tr.T "common.min"}}</span>
-            </div>
-            <h3><a href="{{$.Tr.U (printf "/posts/%s" $p.Slug)}}">{{$p.Title}}</a></h3>
-            <p>{{$p.Excerpt}}</p>
+      <section class="doc-section">
+        <div class="section-head">
+          <h2{{if .VisualEdit}} data-visual-edit="home.latest_title" data-visual-label="首页最新标题"{{end}}>{{.Site.HomeLatest}}</h2>
+          <a href="{{.Tr.U "/rss.xml"}}">{{.Tr.T "footer.rss"}}</a>
+        </div>
+        <div class="doc-section-body">
+          <div class="post-list">
+            {{range $i, $p := .Posts}}
+            <article class="post-item">
+              <div class="num">{{printf "%02d" (add $i 1)}}</div>
+              <div>
+                <div class="meta">
+                  {{with $p.Category}}<a class="tag" href="{{$.Tr.U (printf "/category/%s" .Slug)}}">{{.Name}}</a><span class="sep">·</span>{{end}}
+                  <time datetime="{{$.Tr.ISODate $p.PublishedAt}}">{{$.Tr.Date $p.PublishedAt}}</time>
+                  <span class="sep">·</span><span class="read-time">{{$p.ReadingTime}} {{$.Tr.T "common.min"}}</span>
+                </div>
+                <h3><a href="{{$.Tr.U (printf "/posts/%s" $p.Slug)}}">{{$p.Title}}</a></h3>
+                <p>{{$p.Excerpt}}</p>
+              </div>
+            </article>
+            {{else}}
+            <p class="muted">{{.Tr.T "home.no_posts"}}</p>
+            {{end}}
           </div>
-        </article>
-        {{else}}
-        <p class="muted">{{.Tr.T "home.no_posts"}}</p>
-        {{end}}
-      </div>
 
-      {{if gt .TotalPages 1}}
-      <nav class="pagination" aria-label="{{.Tr.T "common.pagination"}}">
-        {{if .HasPrev}}<a href="{{.Tr.U "/"}}?page={{.PrevPage}}" aria-label="{{.Tr.T "common.prev_page"}}">←</a>{{end}}
-        {{range $n := pages .TotalPages}}
-          {{if eq $n $.PageNum}}<span class="cur" aria-current="page">{{$n}}</span>{{else}}<a href="{{$.Tr.U "/"}}?page={{$n}}">{{$n}}</a>{{end}}
-        {{end}}
-        {{if .HasNext}}<a href="{{.Tr.U "/"}}?page={{.NextPage}}" aria-label="{{.Tr.T "common.next_page"}}">→</a>{{end}}
-      </nav>
-      {{end}}
+          {{if gt .TotalPages 1}}
+          <nav class="pagination" aria-label="{{.Tr.T "common.pagination"}}">
+            {{if .HasPrev}}<a href="{{.Tr.U "/"}}?page={{.PrevPage}}" aria-label="{{.Tr.T "common.prev_page"}}">←</a>{{end}}
+            {{range $n := pages .TotalPages}}
+              {{if eq $n $.PageNum}}<span class="cur" aria-current="page">{{$n}}</span>{{else}}<a href="{{$.Tr.U "/"}}?page={{$n}}">{{$n}}</a>{{end}}
+            {{end}}
+            {{if .HasNext}}<a href="{{.Tr.U "/"}}?page={{.NextPage}}" aria-label="{{.Tr.T "common.next_page"}}">→</a>{{end}}
+          </nav>
+          {{end}}
+        </div>
+      </section>
     </div>
+    {{end}}
   </main>
 {{end}}

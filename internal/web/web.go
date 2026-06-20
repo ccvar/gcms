@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/xml"
+	"fmt"
 	"hash/fnv"
 	"html/template"
 	"io/fs"
@@ -110,6 +111,8 @@ var Themes = []ThemeOption{
 	{"institution", "机构 · Institution", "专业服务/咨询/律所/协会官网、可信背书"},
 	{"studio", "作品 · Studio", "设计/摄影/建筑/品牌工作室、图像主导作品集"},
 	{"lifestyle", "生活 · Lifestyle", "咖啡/民宿/餐厅/买手店、小品牌温度感官网"},
+	{"knowledge", "知识库 · Knowledge Hub", "搜索优先、分类导航、推荐阅读和更新时间线"},
+	{"sidebar", "侧栏 · Sidebar", "左侧常驻竖栏（品牌+导航）+ 右侧阅读流，个人站 / 文档站气质"},
 }
 
 func validTheme(id string) bool {
@@ -128,12 +131,14 @@ var themeAccentDefault = map[string]string{
 	"pastel": "#8b5cf6", "newspaper": "#8b0000", "darkpro": "#7c7cf8", "landing": "#4f46e5", "product": "#0f7cff", "prism": "#d7ff4a",
 	"exchange": "#00f5a0", "academy": "#2563eb", "garment": "#0f766e",
 	"institution": "#8a1f2d", "studio": "#ff4f5e", "lifestyle": "#2f7d57",
+	"knowledge": "#0f766e",
 }
 var themeRadiusDefault = map[string]string{
 	"editorial": "10", "magazine": "12", "terminal": "6", "brutalist": "0",
 	"notebook": "8", "swiss": "0", "pastel": "18", "newspaper": "0", "darkpro": "14", "landing": "14", "product": "14", "prism": "18",
 	"exchange": "16", "academy": "16", "garment": "12",
 	"institution": "8", "studio": "4", "lifestyle": "18",
+	"knowledge": "8",
 }
 
 const (
@@ -206,6 +211,15 @@ type ArchiveConfig struct {
 	Path        string
 }
 
+type KnowledgeGroup struct {
+	Key         string
+	Title       string
+	Description string
+	Path        string
+	Count       int
+	Posts       []*store.Post
+}
+
 // View 是传给模板的统一数据载体。
 type View struct {
 	Site       seo.Site
@@ -225,20 +239,21 @@ type View struct {
 	AdminLangs  []i18n.Locale
 	AdminReturn string
 
-	Posts        []*store.Post
-	Featured     *store.Post
-	FeaturedMore []*store.Post
-	FeatLinks    []*store.Post
-	Post         *store.Post
-	Page         *store.Post
-	Categories   []*store.Category
-	Category     *store.Category
-	CategoryAll  ArchiveConfig
-	LinksAll     ArchiveConfig
-	Prev         *store.Post
-	Next         *store.Post
-	Related      []*store.Post
-	Giscus       *GiscusView
+	Posts           []*store.Post
+	Featured        *store.Post
+	FeaturedMore    []*store.Post
+	FeatLinks       []*store.Post
+	Post            *store.Post
+	Page            *store.Post
+	Categories      []*store.Category
+	KnowledgeGroups []*KnowledgeGroup
+	Category        *store.Category
+	CategoryAll     ArchiveConfig
+	LinksAll        ArchiveConfig
+	Prev            *store.Post
+	Next            *store.Post
+	Related         []*store.Post
+	Giscus          *GiscusView
 
 	ContentHTML template.HTML
 	TOC         []Heading
@@ -1819,10 +1834,16 @@ func (s *Server) adminThemePreview(w http.ResponseWriter, r *http.Request) {
 	if len(posts) > 1 {
 		v.Posts = posts[1:]
 	}
-	v.FeatLinks, _ = s.store.FeaturedLinks(lang, 3)
-	if len(v.FeatLinks) == 0 {
-		v.FeatLinks, _ = s.store.ListLinks(lang, 0, 0, 3)
+	v.Categories, _ = s.store.ListCategories(lang, "post")
+	if len(v.Categories) == 0 {
+		v.Categories = []*store.Category{
+			{Slug: "guides", Name: "指南", Count: 3},
+			{Slug: "reference", Name: "参考", Count: 2},
+			{Slug: "updates", Name: "更新", Count: 1},
+		}
 	}
+	v.KnowledgeGroups = s.knowledgeGroups(lang, v.CategoryAll, v.Categories, posts, len(posts), s.intSetting(homePostsPerPageKey, defaultHomePostsPerPage, minHomePostsPerPage, maxHomePostsPerPage))
+	v.FeatLinks = s.knowledgeHeroLinks(lang)
 	if len(v.FeatLinks) == 0 {
 		v.FeatLinks = []*store.Post{
 			{Title: "文档", Excerpt: "查看部署、配置与 API 用法。"},
@@ -1847,6 +1868,8 @@ func (s *Server) renderHome(w http.ResponseWriter, r *http.Request) {
 	}
 	v := s.view(r, "home")
 	v.SEO = v.Site.Home()
+	v.Categories, _ = s.store.ListCategories(lang, "post")
+	v.KnowledgeGroups = s.knowledgeGroups(lang, v.CategoryAll, v.Categories, posts, total, postsPerPage)
 	if page == 1 {
 		// 精选优先取置顶文章（可多篇），否则取最新一篇
 		if fps, _ := s.store.FeaturedPosts(lang, postsPerPage); len(fps) > 0 {
@@ -1872,6 +1895,9 @@ func (s *Server) renderHome(w http.ResponseWriter, r *http.Request) {
 	} else {
 		v.Posts = posts
 	}
+	if v.Theme == "knowledge" {
+		v.FeatLinks = s.knowledgeHeroLinks(lang)
+	}
 	// 首页在每个语种都存在 → 全语种 hreflang
 	ph := map[string]string{}
 	for _, l := range s.locales() {
@@ -1880,6 +1906,62 @@ func (s *Server) renderHome(w http.ResponseWriter, r *http.Request) {
 	v.Langs, v.SEO.Alternates = s.i18nLinks(v.Site.BaseURL, lang, ph)
 	setPagination(v, page, totalPages, "/")
 	s.rnd.Public(w, "home", http.StatusOK, v)
+}
+
+func (s *Server) knowledgeHeroLinks(lang string) []*store.Post {
+	const limit = 12
+	out := make([]*store.Post, 0, limit)
+	seen := map[int64]bool{}
+	add := func(items []*store.Post) {
+		for _, item := range items {
+			if item == nil || seen[item.ID] || len(out) >= limit {
+				continue
+			}
+			seen[item.ID] = true
+			out = append(out, item)
+		}
+	}
+	if featured, _ := s.store.FeaturedLinks(lang, limit); len(featured) > 0 {
+		add(featured)
+	}
+	if len(out) < limit {
+		if latest, _ := s.store.ListLinks(lang, 0, 0, limit*2); len(latest) > 0 {
+			add(latest)
+		}
+	}
+	return out
+}
+
+func (s *Server) knowledgeGroups(lang string, all ArchiveConfig, cats []*store.Category, allPosts []*store.Post, total, limit int) []*KnowledgeGroup {
+	if limit < 1 {
+		limit = defaultHomePostsPerPage
+	}
+	groups := []*KnowledgeGroup{{
+		Key:         "all",
+		Title:       all.Title,
+		Description: all.Description,
+		Path:        all.Path,
+		Count:       total,
+		Posts:       allPosts,
+	}}
+	if len(groups[0].Posts) > limit {
+		groups[0].Posts = groups[0].Posts[:limit]
+	}
+	for _, c := range cats {
+		if c == nil {
+			continue
+		}
+		posts, _ := s.store.ListByCategory(c.ID, 0, limit)
+		groups = append(groups, &KnowledgeGroup{
+			Key:         fmt.Sprintf("cat-%d", c.ID),
+			Title:       c.Name,
+			Description: c.Description,
+			Path:        "/category/" + c.Slug,
+			Count:       c.Count,
+			Posts:       posts,
+		})
+	}
+	return groups
 }
 
 func (s *Server) article(w http.ResponseWriter, r *http.Request) {

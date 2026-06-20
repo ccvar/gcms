@@ -273,7 +273,7 @@
       {{else if eq .Section "appearance"}}
       <form method="post" action="/admin/settings/appearance" class="admin-form">
         <input type="hidden" name="_csrf" value="{{.CSRF}}">
-        <div class="field-group">
+        <div class="field-group appearance-sticky">
           <h3 class="group-head">{{.Admin.T "admin.settings.appearance.current_theme" "当前主题与微调"}}</h3>
           <div class="current-theme-row">
             <p class="current-theme"><span class="muted">{{.Admin.T "admin.settings.appearance.current" "当前主题："}}</span><strong data-cur-theme>{{range .Cards}}{{if eq .ID $.Settings.Theme}}{{.Name}}{{end}}{{end}}</strong></p>
@@ -340,7 +340,7 @@
 
         <div class="field-group">
           <h3 class="group-head">{{.Admin.T "admin.settings.appearance.themes" "可选主题"}}</h3>
-          <p class="muted" style="margin:-.2rem 0 .9rem;font-size:.85rem">{{.Admin.T "admin.settings.appearance.themes_desc" "十八套主题布局结构各异（页眉、首页列表、卡片样式），点选即切换、上方保存即生效。"}}</p>
+          <p class="muted" style="margin:-.2rem 0 .9rem;font-size:.85rem">{{.Admin.T "admin.settings.appearance.themes_desc" "十九套主题布局结构各异（页眉、首页列表、卡片样式），点选即切换、上方保存即生效。"}}</p>
           <div class="theme-picker">
             {{range .Cards}}
             <label class="theme-card{{if eq .ID $.Settings.Theme}} sel{{end}}">

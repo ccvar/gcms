@@ -63,6 +63,72 @@
 
   staticSearch();
 
+  function knowledgeDocsTabs() {
+    var root = document.querySelector("[data-knowledge-docs]");
+    if (!root) return;
+    var nav = root.querySelector("[data-knowledge-docs-nav]");
+    if (!nav) return;
+    var tabs = Array.prototype.slice.call(nav.querySelectorAll("[data-docs-tab]"));
+    var panels = Array.prototype.slice.call(root.querySelectorAll("[data-docs-panel]"));
+    if (!tabs.length || !panels.length) return;
+
+    function activate(key) {
+      var found = false;
+      panels.forEach(function (panel) {
+        var active = panel.getAttribute("data-docs-panel") === key;
+        panel.hidden = !active;
+        if (active) found = true;
+      });
+      if (!found) return false;
+      tabs.forEach(function (tab) {
+        var active = tab.getAttribute("data-docs-tab") === key;
+        tab.classList.toggle("active", active);
+        tab.setAttribute("aria-selected", active ? "true" : "false");
+        if (active) tab.setAttribute("aria-current", "page");
+        else tab.removeAttribute("aria-current");
+      });
+      return true;
+    }
+
+    nav.addEventListener("click", function (event) {
+      var tab = event.target.closest && event.target.closest("[data-docs-tab]");
+      if (!tab || !nav.contains(tab)) return;
+      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button === 1) return;
+      var key = tab.getAttribute("data-docs-tab");
+      if (!key || !activate(key)) return;
+      event.preventDefault();
+    });
+  }
+
+  function navToggle() {
+    var header = document.querySelector(".site-header");
+    if (!header) return;
+    var btn = header.querySelector(".menu-toggle");
+    var nav = header.querySelector(".nav");
+    if (!btn || !nav) return;
+    function close() {
+      header.classList.remove("nav-open");
+      btn.setAttribute("aria-expanded", "false");
+    }
+    btn.addEventListener("click", function (e) {
+      e.stopPropagation();
+      var open = header.classList.toggle("nav-open");
+      btn.setAttribute("aria-expanded", open ? "true" : "false");
+    });
+    nav.addEventListener("click", function (e) {
+      if (e.target.closest && e.target.closest("a")) close();
+    });
+    document.addEventListener("click", function (e) {
+      if (header.classList.contains("nav-open") && !header.contains(e.target)) close();
+    });
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") close();
+    });
+  }
+
+  knowledgeDocsTabs();
+  navToggle();
+
   var langSwitches = Array.prototype.slice.call(document.querySelectorAll(".lang-switch"));
   if (!langSwitches.length) return;
 

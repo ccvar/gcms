@@ -532,7 +532,7 @@
   "admin.settings.appearance.paste_svg_code": "SVG 代码（粘贴整段 <svg>…</svg>）",
   "admin.settings.appearance.svg_placeholder": "<svg viewBox=\"0 0 480 440\">…</svg>",
   "admin.settings.appearance.themes": "可选主题",
-  "admin.settings.appearance.themes_desc": "十八套主题布局结构各异（页眉、首页列表、卡片样式），点选即切换、上方保存即生效。",
+  "admin.settings.appearance.themes_desc": "十九套主题布局结构各异（页眉、首页列表、卡片样式），点选即切换、上方保存即生效。",
   "admin.settings.copy.intro_prefix": "编辑「",
   "admin.settings.copy.intro_suffix": "」语种的前台文案，留空则回落默认语种。",
   "admin.settings.copy.hero": "首页 Hero",

@@ -12,6 +12,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -41,11 +42,20 @@ type session struct {
 	pwDismissed bool // 本次会话已关闭「修改默认密码」提示（下次登录重新提示）
 }
 
-type sessions struct {
-	store *store.Store
+type settingsFlash struct {
+	Flash        string
+	NewAPISecret []string
 }
 
-func newSessions(st *store.Store) *sessions { return &sessions{store: st} }
+type sessions struct {
+	store         *store.Store
+	mu            sync.Mutex
+	settingsFlash map[string]settingsFlash
+}
+
+func newSessions(st *store.Store) *sessions {
+	return &sessions{store: st, settingsFlash: map[string]settingsFlash{}}
+}
 
 func randToken() string {
 	b := make([]byte, 32)
@@ -73,11 +83,36 @@ func (s *sessions) get(tok string) (session, bool) {
 
 func (s *sessions) destroy(tok string) {
 	_ = s.store.DeleteAdminSession(tok)
+	s.mu.Lock()
+	delete(s.settingsFlash, tok)
+	s.mu.Unlock()
 }
 
 // dismissPw 标记该会话已关闭默认密码提示。
 func (s *sessions) dismissPw(tok string) {
 	_ = s.store.DismissAdminPasswordWarning(tok)
+}
+
+func (s *sessions) setSettingsFlash(tok string, f settingsFlash) {
+	if tok == "" {
+		return
+	}
+	s.mu.Lock()
+	s.settingsFlash[tok] = f
+	s.mu.Unlock()
+}
+
+func (s *sessions) takeSettingsFlash(tok string) (settingsFlash, bool) {
+	if tok == "" {
+		return settingsFlash{}, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	f, ok := s.settingsFlash[tok]
+	if ok {
+		delete(s.settingsFlash, tok)
+	}
+	return f, ok
 }
 
 // ---------- 登录失败限流（防穷举） ----------
@@ -179,6 +214,14 @@ func (s *Server) currentSession(r *http.Request) (session, bool) {
 		return session{}, false
 	}
 	return s.sess.get(c.Value)
+}
+
+func sessionToken(r *http.Request) string {
+	c, err := r.Cookie(cookieName)
+	if err != nil {
+		return ""
+	}
+	return c.Value
 }
 
 func wantsJSON(r *http.Request) bool {
@@ -1895,6 +1938,7 @@ var themeDescEN = map[string]string{
 	"institution": "Professional service, consulting or association website",
 	"studio":      "Image-led portfolio for design, photography or studios",
 	"lifestyle":   "Warm small-brand site for cafes, stays or boutiques",
+	"knowledge":   "Search-first docs hub with navigation, recommended reads and updates",
 }
 
 func themeOptionForAdmin(t ThemeOption, lang string) ThemeOption {
@@ -2089,7 +2133,7 @@ func (s *Server) adminStartUpgrade(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "message": "升级任务已启动。", "status": readUpgradeStatus()})
 		return
 	}
-	s.showSettings(w, r, "updates", "升级任务已启动，页面会显示最新状态。", "")
+	s.redirectSettings(w, r, "updates", "升级任务已启动，页面会显示最新状态。")
 }
 
 // copyKey 返回某语种下文案设置的存储键：默认语种用裸键，其它语种用 key::lang。
@@ -2100,7 +2144,37 @@ func (s *Server) copyKey(base, lang string) string {
 	return base + "::" + lang
 }
 
+func (s *Server) settingsRedirectURL(r *http.Request, section string) string {
+	if !settingsSections[section] {
+		section = "site"
+	}
+	q := url.Values{}
+	switch section {
+	case "site", "copy":
+		q.Set("lang", s.editLang(r))
+	case "categories":
+		q.Set("kind", catKind(r))
+		q.Set("lang", s.editLang(r))
+	}
+	target := "/admin/settings/" + section
+	if encoded := q.Encode(); encoded != "" {
+		target += "?" + encoded
+	}
+	return target
+}
+
+func (s *Server) redirectSettings(w http.ResponseWriter, r *http.Request, section, flash string, newAPISecret ...string) {
+	s.sess.setSettingsFlash(sessionToken(r), settingsFlash{Flash: flash, NewAPISecret: newAPISecret})
+	http.Redirect(w, r, s.settingsRedirectURL(r, section), http.StatusSeeOther)
+}
+
 func (s *Server) showSettings(w http.ResponseWriter, r *http.Request, section, flash, formErr string, newAPISecret ...string) {
+	if r.Method == http.MethodGet && flash == "" && formErr == "" {
+		if f, ok := s.sess.takeSettingsFlash(sessionToken(r)); ok {
+			flash = f.Flash
+			newAPISecret = f.NewAPISecret
+		}
+	}
 	sess, _ := s.currentSession(r)
 	st := s.site(s.defaultLang())
 	adminLang := s.adminLang(r)
@@ -2284,7 +2358,7 @@ func (s *Server) adminCreateAutomationKey(w http.ResponseWriter, r *http.Request
 		s.serverError(w, err)
 		return
 	}
-	s.showSettings(w, r, "automation", "访问权限已创建，请在列表中点“查看”复制密钥。", "", token, strings.Join(scopes, ","), name, strconv.FormatInt(id, 10))
+	s.redirectSettings(w, r, "automation", "访问权限已创建，请在列表中点“查看”复制密钥。", token, strings.Join(scopes, ","), name, strconv.FormatInt(id, 10))
 }
 
 func (s *Server) adminUpdateAutomationKey(w http.ResponseWriter, r *http.Request) {
@@ -2314,7 +2388,7 @@ func (s *Server) adminUpdateAutomationKey(w http.ResponseWriter, r *http.Request
 		s.serverError(w, err)
 		return
 	}
-	s.showSettings(w, r, "automation", "访问权限已更新。", "")
+	s.redirectSettings(w, r, "automation", "访问权限已更新。")
 }
 
 func newAutomationToken() (token, prefix string) {
@@ -2389,7 +2463,7 @@ func (s *Server) adminRevokeAutomationKey(w http.ResponseWriter, r *http.Request
 		s.serverError(w, err)
 		return
 	}
-	s.showSettings(w, r, "automation", "访问权限已吊销。", "")
+	s.redirectSettings(w, r, "automation", "访问权限已吊销。")
 }
 
 func (s *Server) adminDeleteAutomationKey(w http.ResponseWriter, r *http.Request) {
@@ -2404,7 +2478,7 @@ func (s *Server) adminDeleteAutomationKey(w http.ResponseWriter, r *http.Request
 		s.serverError(w, err)
 		return
 	}
-	s.showSettings(w, r, "automation", "已删除这条访问权限记录。", "")
+	s.redirectSettings(w, r, "automation", "已删除这条访问权限记录。")
 }
 
 func (s *Server) adminRegenerateAutomationKey(w http.ResponseWriter, r *http.Request) {
@@ -2434,7 +2508,7 @@ func (s *Server) adminRegenerateAutomationKey(w http.ResponseWriter, r *http.Req
 		s.serverError(w, err)
 		return
 	}
-	s.showSettings(w, r, "automation", "访问密钥已重新生成，请在列表中点“查看”复制新密钥。", "", token, key.Scopes, key.Name, strconv.FormatInt(id, 10))
+	s.redirectSettings(w, r, "automation", "访问密钥已重新生成，请在列表中点“查看”复制新密钥。", token, key.Scopes, key.Name, strconv.FormatInt(id, 10))
 }
 
 func automationScopesFromForm(r *http.Request) []string {
@@ -2552,7 +2626,7 @@ func (s *Server) adminSaveSite(w http.ResponseWriter, r *http.Request) {
 	_ = s.store.SetSetting("inject.head", strings.TrimSpace(r.FormValue("inject_head")))
 	_ = s.store.SetSetting("inject.body", strings.TrimSpace(r.FormValue("inject_body")))
 	s.clearGeneratedCaches()
-	s.showSettings(w, r, "site", "基础信息已保存。", "")
+	s.redirectSettings(w, r, "site", "基础信息已保存。")
 }
 
 func (s *Server) adminSaveAppearance(w http.ResponseWriter, r *http.Request) {
@@ -2590,7 +2664,7 @@ func (s *Server) adminSaveAppearance(w http.ResponseWriter, r *http.Request) {
 	_ = s.store.SetSetting("hero.svg", strings.TrimSpace(r.FormValue("hero_svg")))
 
 	s.clearGeneratedCaches()
-	s.showSettings(w, r, "appearance", "外观设置已保存。", "")
+	s.redirectSettings(w, r, "appearance", "外观设置已保存。")
 }
 
 func (s *Server) adminSaveComments(w http.ResponseWriter, r *http.Request) {
@@ -2669,7 +2743,7 @@ func (s *Server) adminSaveComments(w http.ResponseWriter, r *http.Request) {
 	_ = s.store.SetSetting("comments.giscus.input_position", inputPosition)
 	_ = s.store.SetSetting("comments.giscus.theme", theme)
 	s.clearGeneratedCaches()
-	s.showSettings(w, r, "comments", "评论设置已保存。", "")
+	s.redirectSettings(w, r, "comments", "评论设置已保存。")
 }
 
 func commentProvider(v string) string {
@@ -2737,7 +2811,7 @@ func (s *Server) adminSavePassword(w http.ResponseWriter, r *http.Request) {
 	if nh, err := bcrypt.GenerateFromPassword([]byte(neu), bcrypt.DefaultCost); err == nil {
 		_ = s.store.SetSetting("admin_password_hash", string(nh))
 	}
-	s.showSettings(w, r, "security", "密码已更新。", "")
+	s.redirectSettings(w, r, "security", "密码已更新。")
 }
 
 func (s *Server) adminSaveAdminI18N(w http.ResponseWriter, r *http.Request) {
@@ -2763,7 +2837,7 @@ func (s *Server) adminSaveAdminI18N(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	v := s.adminView(r, "设置")
-	s.showSettings(w, r, "languages", v.Admin.T("admin.settings.admin_i18n.saved", "后台翻译已保存。"), "")
+	s.redirectSettings(w, r, "languages", v.Admin.T("admin.settings.admin_i18n.saved", "后台翻译已保存。"))
 }
 
 func (s *Server) adminClearDemoContent(w http.ResponseWriter, r *http.Request) {
@@ -2775,7 +2849,7 @@ func (s *Server) adminClearDemoContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.clearGeneratedCaches()
-	s.showSettings(w, r, "security", "演示数据已清除。", "")
+	s.redirectSettings(w, r, "security", "演示数据已清除。")
 }
 
 func (s *Server) adminReloadProductDemo(w http.ResponseWriter, r *http.Request) {
@@ -2787,7 +2861,7 @@ func (s *Server) adminReloadProductDemo(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	s.clearGeneratedCaches()
-	s.showSettings(w, r, "security", "产品演示站已重新载入。", "")
+	s.redirectSettings(w, r, "security", "产品演示站已重新载入。")
 }
 
 func (s *Server) adminSaveCopy(w http.ResponseWriter, r *http.Request) {
@@ -2820,7 +2894,7 @@ func (s *Server) adminSaveCopy(w http.ResponseWriter, r *http.Request) {
 		_ = s.store.SetSetting(s.copyKey("hero.visual", lang), "")
 	}
 	s.clearGeneratedCaches()
-	s.showSettings(w, r, "copy", "文案已保存。", "")
+	s.redirectSettings(w, r, "copy", "文案已保存。")
 }
 
 // adminSaveMenu 保存前台导航菜单（URL + 各语种标签，顺序即 DOM 行序）。
@@ -2834,7 +2908,7 @@ func (s *Server) adminSaveMenu(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.store.SetSetting("nav_menu", buildMenuJSON(r.Form["nav_url"], labelsByLang))
 	s.clearGeneratedCaches()
-	s.showSettings(w, r, "menu", "导航菜单已保存。", "")
+	s.redirectSettings(w, r, "menu", "导航菜单已保存。")
 }
 
 func (s *Server) adminSaveLanguages(w http.ResponseWriter, r *http.Request) {
@@ -2869,7 +2943,7 @@ func (s *Server) adminSaveLanguages(w http.ResponseWriter, r *http.Request) {
 	_ = s.store.SetSetting("locales", strings.Join(enabled, ","))
 	_ = s.store.SetSetting("default_lang", enabled[0])
 	s.clearGeneratedCaches()
-	s.showSettings(w, r, "languages", "语言设置已保存。", "")
+	s.redirectSettings(w, r, "languages", "语言设置已保存。")
 }
 
 // adminAddLocalePreset 新增一个自定义语种预设（存 settings.custom_locales）。
@@ -2896,7 +2970,7 @@ func (s *Server) adminAddLocalePreset(w http.ResponseWriter, r *http.Request) {
 	_ = s.store.SetSetting("custom_locales", i18n.MarshalCustom(cur))
 	s.i18n.LoadCustom(s.store.Setting("custom_locales"))
 	s.clearGeneratedCaches()
-	s.showSettings(w, r, "languages", "已新增语种预设，可在上方勾选启用。", "")
+	s.redirectSettings(w, r, "languages", "已新增语种预设，可在上方勾选启用。")
 }
 
 // adminDeleteLocalePreset 删除一个自定义语种预设；若它在启用列表里也一并移除。
@@ -2922,7 +2996,7 @@ func (s *Server) adminDeleteLocalePreset(w http.ResponseWriter, r *http.Request)
 	_ = s.store.SetSetting("locales", strings.Join(codes, ","))
 	_ = s.store.SetSetting("default_lang", codes[0])
 	s.clearGeneratedCaches()
-	s.showSettings(w, r, "languages", "已删除语种预设。", "")
+	s.redirectSettings(w, r, "languages", "已删除语种预设。")
 }
 
 // ---------- 分类管理 ----------
@@ -2986,7 +3060,7 @@ func (s *Server) adminSaveCategoryAll(w http.ResponseWriter, r *http.Request) {
 		s.syncCategoryNavPath(old.Path, newPath)
 	}
 	s.clearGeneratedCaches()
-	s.showSettings(w, r, "categories", "“全部”入口已保存。", "")
+	s.redirectSettings(w, r, "categories", "“全部”入口已保存。")
 }
 
 func (s *Server) syncCategoryNavPath(oldPath, newPath string) {
@@ -3044,7 +3118,7 @@ func (s *Server) adminSaveCategory(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.clearGeneratedCaches()
-		s.showSettings(w, r, "categories", "分类已添加。", "")
+		s.redirectSettings(w, r, "categories", "分类已添加。")
 		return
 	}
 	if ex, _ := s.store.GetCategoryByID(id); ex != nil {
@@ -3056,7 +3130,7 @@ func (s *Server) adminSaveCategory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.clearGeneratedCaches()
-	s.showSettings(w, r, "categories", "分类已更新。", "")
+	s.redirectSettings(w, r, "categories", "分类已更新。")
 }
 
 func (s *Server) adminDeleteCategory(w http.ResponseWriter, r *http.Request) {
@@ -3068,7 +3142,7 @@ func (s *Server) adminDeleteCategory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.clearGeneratedCaches()
-	s.showSettings(w, r, "categories", "分类已删除。", "")
+	s.redirectSettings(w, r, "categories", "分类已删除。")
 }
 
 func (s *Server) adminReorderCategories(w http.ResponseWriter, r *http.Request) {

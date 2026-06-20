@@ -1199,10 +1199,10 @@ func (s *Store) AllPagesAllLangs() ([]*Post, error) {
 func (s *Store) ListLinks(lang string, catID int64, offset, limit int) ([]*Post, error) {
 	if catID > 0 {
 		return s.queryPostSummaries(`WHERE p.type='link' AND p.status='published' AND p.lang=? AND p.category_id=?
-			ORDER BY p.featured DESC, p.published_at DESC LIMIT ? OFFSET ?`, lang, catID, limit, offset)
+			ORDER BY p.featured DESC, p.published_at DESC, p.id DESC LIMIT ? OFFSET ?`, lang, catID, limit, offset)
 	}
 	return s.queryPostSummaries(`WHERE p.type='link' AND p.status='published' AND p.lang=?
-		ORDER BY p.featured DESC, p.published_at DESC LIMIT ? OFFSET ?`, lang, limit, offset)
+		ORDER BY p.featured DESC, p.published_at DESC, p.id DESC LIMIT ? OFFSET ?`, lang, limit, offset)
 }
 
 // CountLinks 统计某语种已发布链接数（可按分类）。
@@ -1541,7 +1541,7 @@ func (s *Store) FeaturedPosts(lang string, limit int) ([]*Post, error) {
 func (s *Store) FeaturedLinks(lang string, limit int) ([]*Post, error) {
 	now := fmtTime(time.Now())
 	return s.queryPostSummaries(`WHERE p.type='link' AND p.status='published' AND p.lang=? AND p.featured=1 AND p.published_at<=?
-		ORDER BY p.published_at DESC LIMIT ?`, lang, now, limit)
+		ORDER BY p.published_at DESC, p.id DESC LIMIT ?`, lang, now, limit)
 }
 
 func (s *Store) DeletePost(id int64) error {
