@@ -125,6 +125,9 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 	if body := platformPage.Body.String(); strings.Contains(body, `href="/admin/posts"`) || strings.Contains(body, `href="/admin/settings"`) {
 		t.Fatalf("platform page leaked site admin navigation")
 	}
+	if body := platformPage.Body.String(); !strings.Contains(body, `data-site-create-open`) || !strings.Contains(body, `data-site-create-modal`) {
+		t.Fatalf("platform page did not render create-site modal")
+	}
 
 	defaultResp := httptest.NewRecorder()
 	h.ServeHTTP(defaultResp, httptest.NewRequest(http.MethodGet, "https://platform.test/zh/", nil))
@@ -199,5 +202,16 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 	}
 	if prefixSess.CurrentSiteID != otherSite.ID {
 		t.Fatalf("prefix current site = %d, want %d", prefixSess.CurrentSiteID, otherSite.ID)
+	}
+
+	siteAdmin := httptest.NewRecorder()
+	siteAdminReq := httptest.NewRequest(http.MethodGet, "https://platform.test/admin", nil)
+	siteAdminReq.AddCookie(&http.Cookie{Name: cookieName, Value: "prefix-token"})
+	h.ServeHTTP(siteAdmin, siteAdminReq)
+	if siteAdmin.Code != http.StatusOK {
+		t.Fatalf("site admin status = %d, body = %s", siteAdmin.Code, siteAdmin.Body.String())
+	}
+	if body := siteAdmin.Body.String(); !strings.Contains(body, `class="site-switcher"`) || !strings.Contains(body, `href="/admin/sites"`) || !strings.Contains(body, "/admin/sites/"+strconv.FormatInt(defaultSite.ID, 10)+"/enter") {
+		t.Fatalf("site admin did not render site switcher")
 	}
 }

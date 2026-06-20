@@ -23,6 +23,29 @@
         {{end}}
         <small>{{if .PlatformAdminView}}{{.Admin.T "admin.brand.platform" "平台"}}{{else}}{{.Admin.T "admin.brand.suffix" "后台"}}{{end}}</small>
       </a>
+      {{if and .Authed (not .PlatformAdminView) (gt (len .PlatformSites) 0)}}
+      <details class="site-switcher">
+        <summary>
+          <span>{{.Admin.T "admin.sites.switch" "切换站点"}}</span>
+          <strong>{{range .PlatformSites}}{{if eq .ID $.PlatformCurrentSiteID}}{{.Name}}{{end}}{{end}}</strong>
+        </summary>
+        <div class="site-switcher-menu">
+          <a class="site-switcher-manage" href="/admin/sites">{{.Admin.T "admin.sites.title" "站点管理"}}</a>
+          {{range .PlatformSites}}
+          <form method="post" action="/admin/sites/{{.ID}}/enter">
+            <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+            <button type="submit"{{if eq .Status "enabled"}}{{else}} disabled{{end}}{{if eq .ID $.PlatformCurrentSiteID}} class="active"{{end}}>
+              <span>
+                <strong>{{.Name}}</strong>
+                <em>{{.Slug}}{{if .IsDefault}} · {{$.Admin.T "admin.sites.default" "默认站点"}}{{end}}</em>
+              </span>
+              {{if eq .ID $.PlatformCurrentSiteID}}<b>{{$.Admin.T "admin.sites.current_short" "当前"}}</b>{{end}}
+            </button>
+          </form>
+          {{end}}
+        </div>
+      </details>
+      {{end}}
       <button class="admin-burger" type="button" aria-label="{{.Admin.T "admin.nav.settings" "菜单"}}" aria-expanded="false">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
       </button>

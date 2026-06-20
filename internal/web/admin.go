@@ -432,6 +432,19 @@ func (s *Server) authed(v *View, sess session) {
 	v.Authed = true
 	v.CSRF = sess.csrf
 	v.ShowPwWarn = !sess.pwDismissed && s.adminPasswordIsDefault()
+	v.PlatformCurrentSiteID = sess.currentSiteID
+	s.populatePlatformSites(v)
+}
+
+func (s *Server) populatePlatformSites(v *View) {
+	if v == nil || s.platform == nil {
+		return
+	}
+	sites, err := s.platform.Sites()
+	if err != nil {
+		return
+	}
+	v.PlatformSites = sites
 }
 
 // catKind 取分类管理当前的类型（post|link，来自 ?kind= 或表单）。

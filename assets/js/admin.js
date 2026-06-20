@@ -1683,6 +1683,38 @@
     });
   })();
 
+  /* ---------- 站点管理：创建站点弹窗 ---------- */
+  (function () {
+    var modal = document.querySelector("[data-site-create-modal]");
+    var openBtn = document.querySelector("[data-site-create-open]");
+    if (!modal || !openBtn) return;
+    var firstInput = modal.querySelector("input[name='slug']");
+    function open() {
+      modal.hidden = false;
+      if (firstInput) setTimeout(function () { firstInput.focus(); firstInput.select(); }, 0);
+    }
+    function close() { modal.hidden = true; }
+    openBtn.addEventListener("click", open);
+    modal.querySelectorAll("[data-site-create-close]").forEach(function (btn) {
+      btn.addEventListener("click", close);
+    });
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && !modal.hidden) close();
+    });
+  })();
+
+  /* ---------- 顶部站点切换器 ---------- */
+  (function () {
+    var switcher = document.querySelector(".site-switcher");
+    if (!switcher) return;
+    document.addEventListener("click", function (e) {
+      if (!switcher.contains(e.target)) switcher.open = false;
+    });
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") switcher.open = false;
+    });
+  })();
+
   /* ---------- 统一确认弹层（替代系统 confirm；拦截带 data-confirm 的表单和按钮） ---------- */
   (function () {
     var modal = document.getElementById("confirm-modal");
