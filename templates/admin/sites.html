@@ -20,7 +20,7 @@
 
       <div class="site-card-list">
         {{range .PlatformSites}}
-        <article class="site-card">
+        <article class="site-card{{if .IsDefault}} is-default{{end}}">
           <div class="site-card-main">
             <div class="site-title-row">
               <div>

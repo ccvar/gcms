@@ -1,0 +1,39 @@
+{{define "body"}}
+  <div class="admin-head platform-security-head">
+    <div>
+      <h1>{{.Admin.T "admin.security.title" "安全"}}</h1>
+      <p class="muted">{{.Admin.T "admin.security.subtitle" "管理平台后台登录密码。这个密码适用于所有站点后台。"}}</p>
+    </div>
+  </div>
+
+  <section class="overview-panel platform-security-panel">
+    <div class="overview-panel-head">
+      <div>
+        <h2>{{.Admin.T "admin.security.password_title" "修改后台密码"}}</h2>
+        <p class="muted">{{.Admin.T "admin.settings.security.desc" "修改后台登录密码。新密码至少 6 位。"}}</p>
+      </div>
+    </div>
+    {{if .Flash}}<div class="flash platform-security-flash">{{.Flash}}</div>{{end}}
+    {{if .FormErr}}<div class="form-err platform-security-flash">{{.FormErr}}</div>{{end}}
+    <form method="post" action="/admin/security" class="admin-form platform-security-form">
+      <input type="hidden" name="_csrf" value="{{.CSRF}}">
+      <div class="field">
+        <label for="current_password">{{.Admin.T "admin.settings.security.current_password" "当前密码"}}</label>
+        <input id="current_password" name="current_password" type="password" autocomplete="current-password" required>
+      </div>
+      <div class="form-2col">
+        <div class="field">
+          <label for="new_password">{{.Admin.T "admin.settings.security.new_password" "新密码"}}</label>
+          <input id="new_password" name="new_password" type="password" autocomplete="new-password" required>
+        </div>
+        <div class="field">
+          <label for="confirm_password">{{.Admin.T "admin.settings.security.confirm_password" "确认新密码"}}</label>
+          <input id="confirm_password" name="confirm_password" type="password" autocomplete="new-password" required>
+        </div>
+      </div>
+      <div class="platform-security-actions">
+        <button class="btn btn-primary" type="submit">{{.Admin.T "admin.settings.security.update_password" "更新密码"}}</button>
+      </div>
+    </form>
+  </section>
+{{end}}

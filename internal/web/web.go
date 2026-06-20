@@ -304,6 +304,7 @@ type View struct {
 	EditListURL           string // 返回列表的后台 URL
 	EditTypeLabel         string // 文章 | 页面 | 链接
 	Authed                bool
+	PlatformMode          bool // 当前实例启用了平台级多站点
 	PlatformAdminView     bool // 平台级管理页，不显示当前站点后台导航
 	ShowPwWarn            bool // 仍为默认密码且本会话未关闭提示
 	CSRF                  string
@@ -342,6 +343,7 @@ type View struct {
 	MenuTargets           []MenuTargetOption // 后台导航菜单可选入口
 	VisualEdit            bool               // 前台 iframe 可视化编辑模式
 	VisualPreviewURL      string             // 后台可视化编辑 iframe 地址
+	AdminSiteURL          string             // 后台顶部“查看站点”入口
 	VisualFields          []VisualField      // 可视化编辑侧栏字段
 	VisualGroups          []VisualGroup      // 可视化编辑侧栏字段分组
 	VisualHistory         []VisualLog        // 可视化编辑最近修改
@@ -1003,6 +1005,8 @@ func (s *Server) platformHostAllowed(r *http.Request, pool *SiteRuntimePool) boo
 func platformOnlyPath(path string) bool {
 	switch {
 	case path == "/admin/login", path == "/admin/language", path == "/admin/logout", path == "/admin/dismiss-pw":
+		return true
+	case path == "/admin/security":
 		return true
 	case path == "/admin/sites" || strings.HasPrefix(path, "/admin/sites/"):
 		return true
@@ -1986,6 +1990,8 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /admin/sites/{id}/status", s.requireAuth(s.adminSetSiteStatus))
 	mux.HandleFunc("POST /admin/sites/{id}/automation", s.requireAuth(s.adminSetSiteAutomation))
 	mux.HandleFunc("POST /admin/sites/{id}/domains", s.requireAuth(s.adminAddSiteDomain))
+	mux.HandleFunc("GET /admin/security", s.requireAuth(s.adminSecurity))
+	mux.HandleFunc("POST /admin/security", s.requireAuth(s.adminSavePlatformPassword))
 	mux.HandleFunc("GET /admin/posts", s.requireAuth(s.adminPosts))
 	mux.HandleFunc("GET /admin/visual", s.requireAuth(s.adminVisual))
 	mux.HandleFunc("POST /admin/visual/save", s.requireAuth(s.adminVisualSave))

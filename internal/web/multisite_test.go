@@ -128,6 +128,20 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 	if body := platformPage.Body.String(); !strings.Contains(body, `data-site-create-open`) || !strings.Contains(body, `data-site-create-modal`) {
 		t.Fatalf("platform page did not render create-site modal")
 	}
+	if body := platformPage.Body.String(); !strings.Contains(body, `site-card is-default`) || !strings.Contains(body, `href="/admin/security"`) {
+		t.Fatalf("platform page did not render default-site card state or security nav")
+	}
+
+	securityPage := httptest.NewRecorder()
+	securityReq := httptest.NewRequest(http.MethodGet, "https://platform.test/admin/security", nil)
+	securityReq.AddCookie(loginCookie)
+	h.ServeHTTP(securityPage, securityReq)
+	if securityPage.Code != http.StatusOK {
+		t.Fatalf("platform security status = %d, body = %s", securityPage.Code, securityPage.Body.String())
+	}
+	if body := securityPage.Body.String(); !strings.Contains(body, `action="/admin/security"`) || strings.Contains(body, `href="/admin/posts"`) {
+		t.Fatalf("platform security page did not render as platform-level page")
+	}
 
 	defaultResp := httptest.NewRecorder()
 	h.ServeHTTP(defaultResp, httptest.NewRequest(http.MethodGet, "https://platform.test/zh/", nil))
@@ -213,5 +227,20 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 	}
 	if body := siteAdmin.Body.String(); !strings.Contains(body, `class="site-switcher"`) || !strings.Contains(body, `href="/admin/sites"`) || !strings.Contains(body, "/admin/sites/"+strconv.FormatInt(defaultSite.ID, 10)+"/enter") {
 		t.Fatalf("site admin did not render site switcher")
+	}
+	otherPreviewPath := "/admin/sites/" + strconv.FormatInt(otherSite.ID, 10) + "/preview/zh/"
+	if body := siteAdmin.Body.String(); !strings.Contains(body, `href="`+otherPreviewPath+`"`) {
+		t.Fatalf("site admin view-site link did not point at current site preview")
+	}
+
+	visual := httptest.NewRecorder()
+	visualReq := httptest.NewRequest(http.MethodGet, "https://platform.test/admin/visual", nil)
+	visualReq.AddCookie(&http.Cookie{Name: cookieName, Value: "prefix-token"})
+	h.ServeHTTP(visual, visualReq)
+	if visual.Code != http.StatusOK {
+		t.Fatalf("visual status = %d, body = %s", visual.Code, visual.Body.String())
+	}
+	if body := visual.Body.String(); !strings.Contains(body, `href="`+otherPreviewPath+`"`) || !strings.Contains(body, `src="`+otherPreviewPath+`?visual_edit=1"`) {
+		t.Fatalf("visual editor did not point at current site preview")
 	}
 }

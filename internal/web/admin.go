@@ -394,6 +394,8 @@ func adminTitleKey(title string) string {
 		return "admin.settings.title"
 	case "可视化编辑":
 		return "admin.nav.visual"
+	case "安全":
+		return "admin.security.title"
 	default:
 		return ""
 	}
@@ -411,19 +413,21 @@ func (s *Server) adminView(r *http.Request, title string) *View {
 		adminReturn = r.URL.RequestURI()
 	}
 	return &View{
-		Site:        site,
-		SEO:         seo.Meta{Title: titleText + " — " + site.Name + " " + suffix, Robots: "noindex, nofollow"},
-		Year:        time.Now().Year(),
-		Tr:          s.i18n.Tr(def, def),
-		Lang:        def,
-		Admin:       admin,
-		AdminLang:   adminLang,
-		AdminLangs:  s.i18n.AdminLocales(),
-		AdminReturn: adminReturn,
-		EditLang:    def,
-		Locales:     s.locales(),
-		AllLocales:  s.i18n.All(),
-		AssetVer:    s.assetVer,
+		Site:         site,
+		SEO:          seo.Meta{Title: titleText + " — " + site.Name + " " + suffix, Robots: "noindex, nofollow"},
+		Year:         time.Now().Year(),
+		Tr:           s.i18n.Tr(def, def),
+		Lang:         def,
+		Admin:        admin,
+		AdminLang:    adminLang,
+		AdminLangs:   s.i18n.AdminLocales(),
+		AdminReturn:  adminReturn,
+		EditLang:     def,
+		Locales:      s.locales(),
+		AllLocales:   s.i18n.All(),
+		AssetVer:     s.assetVer,
+		PlatformMode: s.platform != nil,
+		AdminSiteURL: "/" + def + "/",
 	}
 }
 
@@ -433,7 +437,29 @@ func (s *Server) authed(v *View, sess session) {
 	v.CSRF = sess.csrf
 	v.ShowPwWarn = !sess.pwDismissed && s.adminPasswordIsDefault()
 	v.PlatformCurrentSiteID = sess.currentSiteID
+	v.AdminSiteURL = s.adminSiteURL(sess.currentSiteID, v.EditLang)
 	s.populatePlatformSites(v)
+}
+
+func (s *Server) adminSiteURL(siteID int64, lang string) string {
+	if !s.langEnabled(lang) {
+		lang = s.defaultLang()
+	}
+	if s.platform == nil || siteID <= 0 {
+		return "/" + lang + "/"
+	}
+	site, ok, err := s.platform.GetSite(siteID)
+	if err != nil || !ok || site == nil {
+		return "/" + lang + "/"
+	}
+	if site.IsDefault {
+		return "/" + lang + "/"
+	}
+	return "/admin/sites/" + strconv.FormatInt(siteID, 10) + "/preview/" + lang + "/"
+}
+
+func (s *Server) adminSiteVisualPreviewURL(siteID int64, lang string) string {
+	return s.adminSiteURL(siteID, lang) + "?visual_edit=1"
 }
 
 func (s *Server) populatePlatformSites(v *View) {
@@ -801,6 +827,47 @@ func (s *Server) adminDownloadPlatformAutomationSkill(w http.ResponseWriter, r *
 		apiBase: s.absForRequest(r, "/api/platform/v1/sites/"+strconv.FormatInt(id, 10)),
 		name:    strings.TrimSpace(site.Name),
 	})
+}
+
+func (s *Server) adminSecurity(w http.ResponseWriter, r *http.Request) {
+	if s.platform == nil {
+		http.Redirect(w, r, "/admin/settings/security", http.StatusSeeOther)
+		return
+	}
+	sess, _ := s.currentSession(r)
+	v := s.adminView(r, "安全")
+	s.authed(v, sess)
+	v.PlatformAdminView = true
+	if f, ok := s.sess.takeSettingsFlash(sessionToken(r)); ok {
+		v.Flash = f.Flash
+	}
+	s.rnd.Admin(w, "security", http.StatusOK, v)
+}
+
+func (s *Server) adminSavePlatformPassword(w http.ResponseWriter, r *http.Request) {
+	if s.platform == nil {
+		http.NotFound(w, r)
+		return
+	}
+	if _, ok := s.checkCSRF(w, r); !ok {
+		return
+	}
+	if msg := s.changeAdminPassword(r); msg != "" {
+		s.showPlatformSecurity(w, r, "", msg)
+		return
+	}
+	s.sess.setSettingsFlash(sessionToken(r), settingsFlash{Flash: "密码已更新。"})
+	http.Redirect(w, r, "/admin/security", http.StatusSeeOther)
+}
+
+func (s *Server) showPlatformSecurity(w http.ResponseWriter, r *http.Request, flash, formErr string) {
+	sess, _ := s.currentSession(r)
+	v := s.adminView(r, "安全")
+	s.authed(v, sess)
+	v.PlatformAdminView = true
+	v.Flash = flash
+	v.FormErr = formErr
+	s.rnd.Admin(w, "security", http.StatusOK, v)
 }
 
 func (s *Server) adminSetDefaultSite(w http.ResponseWriter, r *http.Request) {
@@ -1193,11 +1260,18 @@ func (s *Server) adminOverviewStatus(v *View, keys []*store.AutomationKey) []Ove
 			Label: v.Admin.T("admin.dashboard.status.password", "后台密码"),
 			Value: passwordValue,
 			Hint:  passwordHint,
-			Href:  "/admin/settings/security",
+			Href:  s.adminPasswordURL(),
 			Icon:  "lock",
 			Tone:  passwordTone,
 		},
 	}
+}
+
+func (s *Server) adminPasswordURL() string {
+	if s.platform != nil {
+		return "/admin/security"
+	}
+	return "/admin/settings/security"
 }
 
 func (s *Server) adminVisual(w http.ResponseWriter, r *http.Request) {
@@ -1206,7 +1280,8 @@ func (s *Server) adminVisual(w http.ResponseWriter, r *http.Request) {
 	v := s.adminView(r, "可视化编辑")
 	s.authed(v, sess)
 	v.EditLang = lang
-	v.VisualPreviewURL = "/" + lang + "/?visual_edit=1"
+	v.AdminSiteURL = s.adminSiteURL(sess.currentSiteID, lang)
+	v.VisualPreviewURL = s.adminSiteVisualPreviewURL(sess.currentSiteID, lang)
 	v.VisualFields = s.visualFields(lang, v.Admin)
 	v.VisualGroups = visualGroups(v.VisualFields, v.Admin)
 	v.VisualHistory = s.visualHistory()
@@ -3211,25 +3286,30 @@ func (s *Server) adminSavePassword(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.checkCSRF(w, r); !ok {
 		return
 	}
+	if msg := s.changeAdminPassword(r); msg != "" {
+		s.showSettings(w, r, "security", "", msg)
+		return
+	}
+	s.redirectSettings(w, r, "security", "密码已更新。")
+}
+
+func (s *Server) changeAdminPassword(r *http.Request) string {
 	cur := r.FormValue("current_password")
 	neu := r.FormValue("new_password")
 	conf := r.FormValue("confirm_password")
 	user, hash := s.adminCredentials()
 	switch {
 	case bcrypt.CompareHashAndPassword([]byte(hash), []byte(cur)) != nil:
-		s.showSettings(w, r, "security", "", "当前密码不正确。")
-		return
+		return "当前密码不正确。"
 	case len([]rune(neu)) < 6:
-		s.showSettings(w, r, "security", "", "新密码至少 6 位。")
-		return
+		return "新密码至少 6 位。"
 	case neu != conf:
-		s.showSettings(w, r, "security", "", "两次输入的新密码不一致。")
-		return
+		return "两次输入的新密码不一致。"
 	}
 	if nh, err := bcrypt.GenerateFromPassword([]byte(neu), bcrypt.DefaultCost); err == nil {
 		_ = s.setAdminPasswordHash(user, string(nh))
 	}
-	s.redirectSettings(w, r, "security", "密码已更新。")
+	return ""
 }
 
 func (s *Server) adminSaveAdminI18N(w http.ResponseWriter, r *http.Request) {
