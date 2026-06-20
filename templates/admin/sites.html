@@ -10,94 +10,85 @@
   </div>
 
   <div class="sites-layout">
-    <section class="overview-panel sites-list-panel">
-      <div class="overview-panel-head">
-        <div>
-          <h2>{{.Admin.T "admin.sites.all_sites" "所有站点"}}</h2>
-          <p class="muted">{{.Admin.T "admin.sites.current_desc" "查看每个站点的状态、绑定域名、存储位置和平台入口。"}}</p>
-        </div>
-      </div>
-
-      <div class="site-card-list">
-        {{range .PlatformSites}}
-        <article class="site-card{{if .IsDefault}} is-default{{end}}">
-          <div class="site-card-main">
-            <div class="site-title-row">
-              <div>
-                <h3>{{.Name}}</h3>
-                <p class="site-meta">
-                  <span>{{.Slug}}</span>
-                  {{if .IsDefault}}<span>{{$.Admin.T "admin.sites.default" "默认站点"}}</span>{{end}}
-                  {{if eq .ID $.PlatformCurrentSiteID}}<span>{{$.Admin.T "admin.sites.current_badge" "当前后台"}}</span>{{end}}
-                </p>
-              </div>
-              <div class="site-badges">
-                {{if eq .Status "enabled"}}<span class="badge pub">{{$.Admin.T "admin.sites.enabled" "启用"}}</span>{{else}}<span class="badge draft">{{$.Admin.T "admin.sites.disabled" "关闭"}}</span>{{end}}
-                {{if .ManagementAutomationEnabled}}<span class="badge sched">{{$.Admin.T "admin.sites.platform_api_on" "已开启"}}</span>{{else}}<span class="badge draft">{{$.Admin.T "admin.sites.platform_api_off" "未开启"}}</span>{{end}}
-              </div>
+    <div class="site-card-list">
+      {{range .PlatformSites}}
+      <article class="site-card{{if .IsDefault}} is-default{{end}}">
+        <div class="site-card-main">
+          <div class="site-title-row">
+            <div>
+              <h3>{{.Name}}</h3>
+              <p class="site-meta">
+                <span>{{.Slug}}</span>
+                {{if .IsDefault}}<span>{{$.Admin.T "admin.sites.default" "默认站点"}}</span>{{end}}
+                {{if eq .ID $.PlatformCurrentSiteID}}<span>{{$.Admin.T "admin.sites.current_badge" "当前后台"}}</span>{{end}}
+              </p>
             </div>
-
-            <dl class="site-info-grid">
-              <div>
-                <dt>{{$.Admin.T "admin.sites.domain" "域名"}}</dt>
-                <dd>
-                  {{with index $.PlatformDomains .ID}}
-                    {{range .}}<span class="site-domain{{if .IsPrimary}} primary{{end}}">{{if .IsPrimary}}★ {{end}}{{.Scheme}}://{{.Host}}</span>{{end}}
-                  {{else}}
-                    <span class="muted">{{$.Admin.T "admin.sites.no_domain" "未绑定域名"}}</span>
-                  {{end}}
-                </dd>
-              </div>
-              <div>
-                <dt>{{$.Admin.T "admin.sites.storage" "存储"}}</dt>
-                <dd><code>{{.DBPath}}</code><code>{{.UploadDir}}</code></dd>
-              </div>
-            </dl>
+            <div class="site-badges">
+              {{if eq .Status "enabled"}}<span class="badge pub">{{$.Admin.T "admin.sites.enabled" "启用"}}</span>{{else}}<span class="badge draft">{{$.Admin.T "admin.sites.disabled" "关闭"}}</span>{{end}}
+              {{if .ManagementAutomationEnabled}}<span class="badge sched">{{$.Admin.T "admin.sites.platform_api_on" "已开启"}}</span>{{else}}<span class="badge draft">{{$.Admin.T "admin.sites.platform_api_off" "未开启"}}</span>{{end}}
+            </div>
           </div>
 
-          <div class="site-card-actions">
-            <form method="post" action="/admin/sites/{{.ID}}/enter">
-              <input type="hidden" name="_csrf" value="{{$.CSRF}}">
-              <button class="btn btn-primary" type="submit">{{$.Admin.T "admin.sites.enter" "进入后台"}}</button>
-            </form>
-            <a class="btn" href="/admin/sites/{{.ID}}/preview" target="_blank" rel="noopener">{{$.Admin.T "admin.sites.preview" "预览"}}</a>
-            {{if .ManagementAutomationEnabled}}<a class="btn" href="/admin/sites/{{.ID}}/automation/skill.zip">{{$.Admin.T "admin.sites.download_platform_kit" "下载平台接入包"}}</a>{{end}}
-          </div>
-
-          <div class="site-card-tools">
-            {{if not .IsDefault}}
-            <form method="post" action="/admin/sites/{{.ID}}/default">
-              <input type="hidden" name="_csrf" value="{{$.CSRF}}">
-              <button class="linkbtn" type="submit">{{$.Admin.T "admin.sites.set_default" "设为默认"}}</button>
-            </form>
-            {{end}}
-            <form method="post" action="/admin/sites/{{.ID}}/status">
-              <input type="hidden" name="_csrf" value="{{$.CSRF}}">
-              <input type="hidden" name="status" value="{{if eq .Status "enabled"}}disabled{{else}}enabled{{end}}">
-              <button class="linkbtn" type="submit">{{if eq .Status "enabled"}}{{$.Admin.T "admin.sites.disable" "关闭"}}{{else}}{{$.Admin.T "admin.sites.enable" "启用"}}{{end}}</button>
-            </form>
-            <form method="post" action="/admin/sites/{{.ID}}/automation">
-              <input type="hidden" name="_csrf" value="{{$.CSRF}}">
-              <input type="hidden" name="enabled" value="{{if .ManagementAutomationEnabled}}0{{else}}1{{end}}">
-              <button class="linkbtn" type="submit">{{if .ManagementAutomationEnabled}}{{$.Admin.T "admin.sites.platform_api_disable" "关闭平台入口"}}{{else}}{{$.Admin.T "admin.sites.platform_api_enable" "开启平台入口"}}{{end}}</button>
-            </form>
-          </div>
-
-          <form class="site-domain-form" method="post" action="/admin/sites/{{.ID}}/domains">
-            <input type="hidden" name="_csrf" value="{{$.CSRF}}">
-            <input name="host" placeholder="www.example.com">
-            <input type="hidden" name="primary" value="1">
-            <input type="hidden" name="redirect" value="1">
-            <button class="btn" type="submit">{{$.Admin.T "admin.sites.add_domain" "绑定域名"}}</button>
-          </form>
-        </article>
-        {{else}}
-        <div class="overview-empty compact">
-          <strong>{{.Admin.T "admin.sites.empty" "暂无站点。"}}</strong>
+          <dl class="site-info-grid">
+            <div>
+              <dt>{{$.Admin.T "admin.sites.domain" "域名"}}</dt>
+              <dd>
+                {{with index $.PlatformDomains .ID}}
+                  {{range .}}<span class="site-domain{{if .IsPrimary}} primary{{end}}">{{if .IsPrimary}}★ {{end}}{{.Scheme}}://{{.Host}}</span>{{end}}
+                {{else}}
+                  <span class="muted">{{$.Admin.T "admin.sites.no_domain" "未绑定域名"}}</span>
+                {{end}}
+              </dd>
+            </div>
+            <div>
+              <dt>{{$.Admin.T "admin.sites.storage" "存储"}}</dt>
+              <dd><code>{{.DBPath}}</code><code>{{.UploadDir}}</code></dd>
+            </div>
+          </dl>
         </div>
-        {{end}}
+
+        <div class="site-card-actions">
+          <form method="post" action="/admin/sites/{{.ID}}/enter">
+            <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+            <button class="btn btn-primary" type="submit">{{$.Admin.T "admin.sites.enter" "进入后台"}}</button>
+          </form>
+          <a class="btn" href="/admin/sites/{{.ID}}/preview" target="_blank" rel="noopener">{{$.Admin.T "admin.sites.preview" "预览"}}</a>
+          {{if .ManagementAutomationEnabled}}<a class="btn" href="/admin/sites/{{.ID}}/automation/skill.zip">{{$.Admin.T "admin.sites.download_platform_kit" "下载平台接入包"}}</a>{{end}}
+        </div>
+
+        <div class="site-card-tools">
+          {{if not .IsDefault}}
+          <form method="post" action="/admin/sites/{{.ID}}/default">
+            <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+            <button class="linkbtn" type="submit">{{$.Admin.T "admin.sites.set_default" "设为默认"}}</button>
+          </form>
+          {{end}}
+          <form method="post" action="/admin/sites/{{.ID}}/status">
+            <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+            <input type="hidden" name="status" value="{{if eq .Status "enabled"}}disabled{{else}}enabled{{end}}">
+            <button class="linkbtn" type="submit">{{if eq .Status "enabled"}}{{$.Admin.T "admin.sites.disable" "关闭"}}{{else}}{{$.Admin.T "admin.sites.enable" "启用"}}{{end}}</button>
+          </form>
+          <form method="post" action="/admin/sites/{{.ID}}/automation">
+            <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+            <input type="hidden" name="enabled" value="{{if .ManagementAutomationEnabled}}0{{else}}1{{end}}">
+            <button class="linkbtn" type="submit">{{if .ManagementAutomationEnabled}}{{$.Admin.T "admin.sites.platform_api_disable" "关闭平台入口"}}{{else}}{{$.Admin.T "admin.sites.platform_api_enable" "开启平台入口"}}{{end}}</button>
+          </form>
+        </div>
+
+        <form class="site-domain-form" method="post" action="/admin/sites/{{.ID}}/domains">
+          <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+          <input name="host" placeholder="www.example.com">
+          <input type="hidden" name="primary" value="1">
+          <input type="hidden" name="redirect" value="1">
+          <button class="btn" type="submit">{{$.Admin.T "admin.sites.add_domain" "绑定域名"}}</button>
+        </form>
+      </article>
+      {{else}}
+      <div class="overview-empty compact site-empty">
+        <strong>{{.Admin.T "admin.sites.empty" "暂无站点。"}}</strong>
       </div>
-    </section>
+      {{end}}
+    </div>
   </div>
 
   <div class="modal site-create-modal" data-site-create-modal hidden>

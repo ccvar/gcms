@@ -435,10 +435,26 @@ func (s *Server) adminView(r *http.Request, title string) *View {
 func (s *Server) authed(v *View, sess session) {
 	v.Authed = true
 	v.CSRF = sess.csrf
-	v.ShowPwWarn = !sess.pwDismissed && s.adminPasswordIsDefault()
+	v.ShowPwWarn = s.passwordWarningVisible(sess, false)
 	v.PlatformCurrentSiteID = sess.currentSiteID
 	v.AdminSiteURL = s.adminSiteURL(sess.currentSiteID, v.EditLang)
 	s.populatePlatformSites(v)
+}
+
+func (s *Server) platformAuthed(v *View, sess session) {
+	s.authed(v, sess)
+	v.PlatformAdminView = true
+	v.ShowPwWarn = s.passwordWarningVisible(sess, true)
+}
+
+func (s *Server) passwordWarningVisible(sess session, platformView bool) bool {
+	if sess.pwDismissed || !s.adminPasswordIsDefault() {
+		return false
+	}
+	if s.platform == nil {
+		return true
+	}
+	return platformView
 }
 
 func (s *Server) adminSiteURL(siteID int64, lang string) string {
@@ -675,8 +691,7 @@ func (s *Server) adminDashboard(w http.ResponseWriter, r *http.Request) {
 func (s *Server) adminSites(w http.ResponseWriter, r *http.Request) {
 	sess, _ := s.currentSession(r)
 	v := s.adminView(r, "站点管理")
-	s.authed(v, sess)
-	v.PlatformAdminView = true
+	s.platformAuthed(v, sess)
 	v.PlatformCurrentSiteID = sess.currentSiteID
 	if s.platform == nil {
 		siteName := strings.TrimSpace(s.store.Setting("site.name"))
@@ -836,8 +851,7 @@ func (s *Server) adminSecurity(w http.ResponseWriter, r *http.Request) {
 	}
 	sess, _ := s.currentSession(r)
 	v := s.adminView(r, "安全")
-	s.authed(v, sess)
-	v.PlatformAdminView = true
+	s.platformAuthed(v, sess)
 	if f, ok := s.sess.takeSettingsFlash(sessionToken(r)); ok {
 		v.Flash = f.Flash
 	}
@@ -863,8 +877,7 @@ func (s *Server) adminSavePlatformPassword(w http.ResponseWriter, r *http.Reques
 func (s *Server) showPlatformSecurity(w http.ResponseWriter, r *http.Request, flash, formErr string) {
 	sess, _ := s.currentSession(r)
 	v := s.adminView(r, "安全")
-	s.authed(v, sess)
-	v.PlatformAdminView = true
+	s.platformAuthed(v, sess)
 	v.Flash = flash
 	v.FormErr = formErr
 	s.rnd.Admin(w, "security", http.StatusOK, v)

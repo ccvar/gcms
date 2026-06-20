@@ -612,7 +612,7 @@ body.admin { background: var(--line-soft); }
 .site-create-footer { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-top: .95rem; padding-top: .85rem; border-top: 1px solid var(--line-soft); }
 .checkline { display: inline-flex; align-items: center; gap: .5rem; min-width: 0; color: var(--muted); font-size: .86rem; line-height: 1.4; }
 .checkline input { flex: none; width: 16px; height: 16px; accent-color: var(--accent); }
-.site-card-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(360px, 100%), 1fr)); gap: .85rem; padding: .85rem; }
+.site-card-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(360px, 100%), 1fr)); gap: .85rem; padding: 0; }
 .site-card { display: grid; grid-template-columns: 1fr; gap: .9rem; padding: 1rem; border: 1px solid var(--line-soft); border-radius: 8px; background: var(--surface); }
 .site-card.is-default { border-color: color-mix(in srgb, var(--accent) 38%, var(--line)); background: color-mix(in srgb, var(--surface) 86%, var(--accent-wash)); box-shadow: inset 3px 0 0 var(--accent); }
 .site-card:hover { border-color: color-mix(in srgb, var(--accent) 20%, var(--line)); }
@@ -639,6 +639,7 @@ body.admin { background: var(--line-soft); }
 .site-domain-form input { width: 100%; padding: .5rem .65rem; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); font-family: inherit; font-size: .88rem; line-height: 1.4; }
 .site-domain-form input:focus { outline: none; border-color: var(--accent); }
 .site-domain-form .btn { padding: .45rem .75rem; font-size: .82rem; white-space: nowrap; }
+.site-empty { grid-column: 1 / -1; background: var(--surface); }
 .site-create-modal .modal-card { width: min(620px, 92vw); }
 .platform-security-panel { max-width: 760px; }
 .platform-security-form { padding: 1rem; }

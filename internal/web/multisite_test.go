@@ -125,6 +125,12 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 	if body := platformPage.Body.String(); strings.Contains(body, `href="/admin/posts"`) || strings.Contains(body, `href="/admin/settings"`) {
 		t.Fatalf("platform page leaked site admin navigation")
 	}
+	if body := platformPage.Body.String(); strings.Contains(body, `sites-list-panel`) || strings.Contains(body, `overview-panel-head`) {
+		t.Fatalf("platform page rendered an outer site-list panel")
+	}
+	if body := platformPage.Body.String(); !strings.Contains(body, `id="pw-warn"`) {
+		t.Fatalf("platform page did not render password warning")
+	}
 	if body := platformPage.Body.String(); !strings.Contains(body, `data-site-create-open`) || !strings.Contains(body, `data-site-create-modal`) {
 		t.Fatalf("platform page did not render create-site modal")
 	}
@@ -227,6 +233,9 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 	}
 	if body := siteAdmin.Body.String(); !strings.Contains(body, `class="site-switcher"`) || !strings.Contains(body, `href="/admin/sites"`) || !strings.Contains(body, "/admin/sites/"+strconv.FormatInt(defaultSite.ID, 10)+"/enter") {
 		t.Fatalf("site admin did not render site switcher")
+	}
+	if body := siteAdmin.Body.String(); strings.Contains(body, `id="pw-warn"`) {
+		t.Fatalf("site admin should not render platform password warning")
 	}
 	otherPreviewPath := "/admin/sites/" + strconv.FormatInt(otherSite.ID, 10) + "/preview/zh/"
 	if body := siteAdmin.Body.String(); !strings.Contains(body, `href="`+otherPreviewPath+`"`) {
