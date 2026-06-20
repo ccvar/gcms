@@ -23,12 +23,14 @@ import (
 	"time"
 
 	"cms.ccvar.com/internal/i18n"
+	"cms.ccvar.com/internal/platform"
 	"cms.ccvar.com/internal/seo"
 	"cms.ccvar.com/internal/store"
 )
 
 type Server struct {
 	store      *store.Store
+	platform   *platform.Store
 	rnd        *Renderer
 	baseURL    string
 	uploadDir  string
@@ -270,63 +272,65 @@ type View struct {
 	Results int
 
 	// 后台
-	AllPosts         []*store.Post
-	ListTotal        int
-	StatusFilter     string
-	AdminListPath    string
-	DefaultAuthor    string
-	Edit             *store.Post
-	IsPage           bool
-	IsLink           bool
-	EditBase         string // 编辑表单的后台路径基：posts | pages | links
-	EditListURL      string // 返回列表的后台 URL
-	EditTypeLabel    string // 文章 | 页面 | 链接
-	Authed           bool
-	ShowPwWarn       bool // 仍为默认密码且本会话未关闭提示
-	CSRF             string
-	Flash            string
-	FormErr          string
-	Settings         *SettingsForm
-	Themes           []ThemeOption
-	Cards            []ThemeCard
-	Section          string
-	CatKind          string // 分类管理当前类型：post | link
-	EditCat          *store.Category
-	FormVals         map[string]string // 表单回填（分类新增/编辑出错时）
-	Update           *UpdateInfo       // 系统更新检查
-	Upgrade          *UpgradeStatus    // 系统升级任务状态
-	Cloudflare       *CloudflareView   // Cloudflare Worker 部署配置与状态
-	AutomationKeys   []*store.AutomationKey
-	AutomationLogs   []*store.AutomationLog
-	NewAPISecret     string
-	NewAPIName       string
-	NewAPIScopes     string
-	NewAIBrief       string
-	NewAPIKeyID      int64
-	APIBaseURL       string
-	OpenAPIURL       string
-	APIDocsURL       string
-	SkillPackageURL  string
-	EditLang         string             // 后台当前操作的内容语种
-	Locales          []i18n.Locale      // 已启用语种
-	AllLocales       []i18n.Locale      // 全部可选语种（内置 + 自定义，语言设置勾选）
-	CustomLocales    []i18n.Locale      // 自定义预设（可删除）
-	AdminI18NJSON    string             // 当前后台语种的用户覆盖翻译 JSON
-	Trans            []*store.Post      // 当前编辑文章的互译版本
-	Social           []SocialLink       // 页脚社交链接（前台渲染 / 后台回填）
-	Menu             []MenuItem         // 前台页眉导航（按当前语种解析）
-	MenuEdit         []MenuRow          // 后台导航菜单编辑（URL + 各语种标签）
-	MenuTargets      []MenuTargetOption // 后台导航菜单可选入口
-	VisualEdit       bool               // 前台 iframe 可视化编辑模式
-	VisualPreviewURL string             // 后台可视化编辑 iframe 地址
-	VisualFields     []VisualField      // 可视化编辑侧栏字段
-	VisualGroups     []VisualGroup      // 可视化编辑侧栏字段分组
-	VisualHistory    []VisualLog        // 可视化编辑最近修改
-	LayoutWidth      string             // 前台内容最大宽度预设（空=跟随主题）
-	OverviewStats    []OverviewStat     // 后台概览：内容状态
-	OverviewTasks    []OverviewTask     // 后台概览：待处理事项
-	OverviewRecent   []*store.Post      // 后台概览：最近更新
-	OverviewStatus   []OverviewStatus   // 后台概览：系统状态
+	AllPosts              []*store.Post
+	ListTotal             int
+	StatusFilter          string
+	AdminListPath         string
+	DefaultAuthor         string
+	Edit                  *store.Post
+	IsPage                bool
+	IsLink                bool
+	EditBase              string // 编辑表单的后台路径基：posts | pages | links
+	EditListURL           string // 返回列表的后台 URL
+	EditTypeLabel         string // 文章 | 页面 | 链接
+	Authed                bool
+	ShowPwWarn            bool // 仍为默认密码且本会话未关闭提示
+	CSRF                  string
+	Flash                 string
+	FormErr               string
+	Settings              *SettingsForm
+	Themes                []ThemeOption
+	Cards                 []ThemeCard
+	Section               string
+	CatKind               string // 分类管理当前类型：post | link
+	EditCat               *store.Category
+	FormVals              map[string]string // 表单回填（分类新增/编辑出错时）
+	Update                *UpdateInfo       // 系统更新检查
+	Upgrade               *UpgradeStatus    // 系统升级任务状态
+	Cloudflare            *CloudflareView   // Cloudflare Worker 部署配置与状态
+	AutomationKeys        []*store.AutomationKey
+	AutomationLogs        []*store.AutomationLog
+	NewAPISecret          string
+	NewAPIName            string
+	NewAPIScopes          string
+	NewAIBrief            string
+	NewAPIKeyID           int64
+	APIBaseURL            string
+	OpenAPIURL            string
+	APIDocsURL            string
+	SkillPackageURL       string
+	EditLang              string             // 后台当前操作的内容语种
+	Locales               []i18n.Locale      // 已启用语种
+	AllLocales            []i18n.Locale      // 全部可选语种（内置 + 自定义，语言设置勾选）
+	CustomLocales         []i18n.Locale      // 自定义预设（可删除）
+	AdminI18NJSON         string             // 当前后台语种的用户覆盖翻译 JSON
+	Trans                 []*store.Post      // 当前编辑文章的互译版本
+	Social                []SocialLink       // 页脚社交链接（前台渲染 / 后台回填）
+	Menu                  []MenuItem         // 前台页眉导航（按当前语种解析）
+	MenuEdit              []MenuRow          // 后台导航菜单编辑（URL + 各语种标签）
+	MenuTargets           []MenuTargetOption // 后台导航菜单可选入口
+	VisualEdit            bool               // 前台 iframe 可视化编辑模式
+	VisualPreviewURL      string             // 后台可视化编辑 iframe 地址
+	VisualFields          []VisualField      // 可视化编辑侧栏字段
+	VisualGroups          []VisualGroup      // 可视化编辑侧栏字段分组
+	VisualHistory         []VisualLog        // 可视化编辑最近修改
+	LayoutWidth           string             // 前台内容最大宽度预设（空=跟随主题）
+	OverviewStats         []OverviewStat     // 后台概览：内容状态
+	OverviewTasks         []OverviewTask     // 后台概览：待处理事项
+	OverviewRecent        []*store.Post      // 后台概览：最近更新
+	OverviewStatus        []OverviewStatus   // 后台概览：系统状态
+	PlatformSites         []*platform.Site   // 平台综合后台：站点列表
+	PlatformCurrentSiteID int64              // 平台会话中当前选择的站点
 }
 
 type OverviewStat struct {
@@ -524,6 +528,10 @@ func (s *Server) fillDefaultAuthor(p *store.Post) {
 }
 
 func New(st *store.Store, baseURL, uploadDir string, tplFS, assetsFS fs.FS) (*Server, error) {
+	return NewWithPlatform(st, nil, baseURL, uploadDir, tplFS, assetsFS)
+}
+
+func NewWithPlatform(st *store.Store, ps *platform.Store, baseURL, uploadDir string, tplFS, assetsFS fs.FS) (*Server, error) {
 	imageSizes := scanAssetImageSizes(assetsFS)
 	rnd, err := NewRenderer(tplFS, imageSizes)
 	if err != nil {
@@ -532,9 +540,13 @@ func New(st *store.Store, baseURL, uploadDir string, tplFS, assetsFS fs.FS) (*Se
 	if uploadDir != "" {
 		_ = os.MkdirAll(uploadDir, 0o755)
 	}
+	sessionStore := adminSessionStore(st)
+	if ps != nil {
+		sessionStore = ps
+	}
 	s := &Server{
-		store: st, rnd: rnd, baseURL: baseURL, uploadDir: uploadDir, assetsFS: assetsFS,
-		sess: newSessions(st), login: newLoginLimiter(), apiLimiter: newAPIRateLimiter(), i18n: i18n.New(), assetVer: assetVersion(assetsFS), imageSizes: imageSizes,
+		store: st, platform: ps, rnd: rnd, baseURL: baseURL, uploadDir: uploadDir, assetsFS: assetsFS,
+		sess: newSessions(sessionStore), login: newLoginLimiter(), apiLimiter: newAPIRateLimiter(), i18n: i18n.New(), assetVer: assetVersion(assetsFS), imageSizes: imageSizes,
 		content: map[string]contentCacheEntry{}, endpoints: map[string]endpointCacheEntry{}, pages: map[string]pageCacheEntry{},
 	}
 	s.i18n.LoadCustom(st.Setting("custom_locales")) // 合并后台新增的自定义语种预设
@@ -1485,6 +1497,8 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /admin/logout", s.adminLogout)
 	mux.HandleFunc("POST /admin/dismiss-pw", s.requireAuth(s.adminDismissPw))
 	mux.HandleFunc("GET /admin", s.requireAuth(s.adminDashboard))
+	mux.HandleFunc("GET /admin/sites", s.requireAuth(s.adminSites))
+	mux.HandleFunc("POST /admin/sites/{id}/enter", s.requireAuth(s.adminEnterSite))
 	mux.HandleFunc("GET /admin/posts", s.requireAuth(s.adminPosts))
 	mux.HandleFunc("GET /admin/visual", s.requireAuth(s.adminVisual))
 	mux.HandleFunc("POST /admin/visual/save", s.requireAuth(s.adminVisualSave))

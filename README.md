@@ -51,6 +51,7 @@ GOOS=linux GOARCH=amd64 go build -o cms .
 |------|------|------|
 | `ADDR` | `:8080` | 监听地址 |
 | `CMS_DB` | 源码模式 `data/cms.db`；发布包 `shared/data/cms.db` | SQLite 文件路径 |
+| `SYSTEM_DB` | 与 `CMS_DB` 同目录的 `system.db` | 平台级数据库路径，用于多站点的站点列表、平台管理员和后台会话 |
 | `BASE_URL` | `http://localhost:8080` | 站点绝对地址（用于 canonical / OG / sitemap）。**生产环境务必设为 `https://ccvar.com`** |
 | `GCMS_RELEASE_REPO` | `ccvar/gcms-releases` | 后台检查更新使用的公开发布仓库 |
 | `GCMS_UPDATE_URL` | `https://github.com/ccvar/gcms-releases/releases/latest/download/manifest.json` | 自定义更新清单地址，留空则按发布仓库自动拼接 |

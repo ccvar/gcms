@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"cms.ccvar.com/internal/i18n"
+	"cms.ccvar.com/internal/platform"
 	"cms.ccvar.com/internal/seo"
 	"cms.ccvar.com/internal/store"
 	"golang.org/x/crypto/bcrypt"
@@ -36,10 +37,11 @@ const (
 )
 
 type session struct {
-	user        string
-	csrf        string
-	exp         time.Time
-	pwDismissed bool // 本次会话已关闭「修改默认密码」提示（下次登录重新提示）
+	user          string
+	csrf          string
+	exp           time.Time
+	pwDismissed   bool // 本次会话已关闭「修改默认密码」提示（下次登录重新提示）
+	currentSiteID int64
 }
 
 type settingsFlash struct {
@@ -48,12 +50,20 @@ type settingsFlash struct {
 }
 
 type sessions struct {
-	store         *store.Store
+	store         adminSessionStore
 	mu            sync.Mutex
 	settingsFlash map[string]settingsFlash
 }
 
-func newSessions(st *store.Store) *sessions {
+type adminSessionStore interface {
+	CreateAdminSession(token, user, csrf string, expiresAt time.Time) error
+	GetAdminSession(token string) (store.AdminSession, bool, error)
+	DeleteAdminSession(token string) error
+	DismissAdminPasswordWarning(token string) error
+	SetAdminSessionSite(token string, siteID int64) error
+}
+
+func newSessions(st adminSessionStore) *sessions {
 	return &sessions{store: st, settingsFlash: map[string]settingsFlash{}}
 }
 
@@ -78,7 +88,7 @@ func (s *sessions) get(tok string) (session, bool) {
 	if err != nil || !ok {
 		return session{}, false
 	}
-	return session{user: dbSess.User, csrf: dbSess.CSRF, exp: dbSess.ExpiresAt, pwDismissed: dbSess.PwDismissed}, true
+	return session{user: dbSess.User, csrf: dbSess.CSRF, exp: dbSess.ExpiresAt, pwDismissed: dbSess.PwDismissed, currentSiteID: dbSess.CurrentSiteID}, true
 }
 
 func (s *sessions) destroy(tok string) {
@@ -91,6 +101,13 @@ func (s *sessions) destroy(tok string) {
 // dismissPw 标记该会话已关闭默认密码提示。
 func (s *sessions) dismissPw(tok string) {
 	_ = s.store.DismissAdminPasswordWarning(tok)
+}
+
+func (s *sessions) setCurrentSite(tok string, siteID int64) error {
+	if tok == "" || siteID <= 0 {
+		return nil
+	}
+	return s.store.SetAdminSessionSite(tok, siteID)
 }
 
 func (s *sessions) setSettingsFlash(tok string, f settingsFlash) {
@@ -216,6 +233,44 @@ func (s *Server) currentSession(r *http.Request) (session, bool) {
 	return s.sess.get(c.Value)
 }
 
+func (s *Server) adminCredentials() (string, string) {
+	if s.platform != nil {
+		user, hash, err := s.platform.GetAdminCredentials()
+		if err == nil && strings.TrimSpace(user) != "" && strings.TrimSpace(hash) != "" {
+			return user, hash
+		}
+	}
+	user, _ := s.store.GetSetting("admin_user")
+	hash, _ := s.store.GetSetting("admin_password_hash")
+	if s.platform != nil && strings.TrimSpace(user) != "" && strings.TrimSpace(hash) != "" {
+		_ = s.platform.SetAdminPasswordHash(user, hash)
+	}
+	return user, hash
+}
+
+func (s *Server) setAdminPasswordHash(user, hash string) error {
+	if s.platform != nil {
+		if strings.TrimSpace(user) == "" {
+			storedUser, _, _ := s.platform.GetAdminCredentials()
+			user = storedUser
+		}
+		if strings.TrimSpace(user) == "" {
+			user = "admin"
+		}
+		if err := s.platform.SetAdminPasswordHash(user, hash); err != nil {
+			return err
+		}
+	}
+	return s.store.SetSetting("admin_password_hash", hash)
+}
+
+func (s *Server) adminPasswordIsDefault() bool {
+	if s.platform != nil {
+		return s.platform.IsDefaultPassword()
+	}
+	return s.store.IsDefaultPassword()
+}
+
 func sessionToken(r *http.Request) string {
 	c, err := r.Cookie(cookieName)
 	if err != nil {
@@ -327,6 +382,8 @@ func adminTitleKey(title string) string {
 		return "admin.login.title"
 	case "概览":
 		return "admin.dashboard.title"
+	case "站点":
+		return "admin.sites.title"
 	case "文章":
 		return "admin.posts.title"
 	case "链接":
@@ -374,7 +431,7 @@ func (s *Server) adminView(r *http.Request, title string) *View {
 func (s *Server) authed(v *View, sess session) {
 	v.Authed = true
 	v.CSRF = sess.csrf
-	v.ShowPwWarn = !sess.pwDismissed && s.store.IsDefaultPassword()
+	v.ShowPwWarn = !sess.pwDismissed && s.adminPasswordIsDefault()
 }
 
 // catKind 取分类管理当前的类型（post|link，来自 ?kind= 或表单）。
@@ -418,8 +475,7 @@ func (s *Server) adminLoginPost(w http.ResponseWriter, r *http.Request) {
 	}
 	user := strings.TrimSpace(r.FormValue("username"))
 	pass := r.FormValue("password")
-	storedUser, _ := s.store.GetSetting("admin_user")
-	hash, _ := s.store.GetSetting("admin_password_hash")
+	storedUser, hash := s.adminCredentials()
 	if user == storedUser && hash != "" && bcrypt.CompareHashAndPassword([]byte(hash), []byte(pass)) == nil {
 		s.login.reset(ip)
 		tok, err := s.sess.create(user)
@@ -568,6 +624,68 @@ func (s *Server) adminDashboard(w http.ResponseWriter, r *http.Request) {
 	v.Upgrade = readUpgradeStatus()
 	v.OverviewStatus = s.adminOverviewStatus(v, keys)
 	s.rnd.Admin(w, "dashboard", http.StatusOK, v)
+}
+
+func (s *Server) adminSites(w http.ResponseWriter, r *http.Request) {
+	sess, _ := s.currentSession(r)
+	v := s.adminView(r, "站点")
+	s.authed(v, sess)
+	v.PlatformCurrentSiteID = sess.currentSiteID
+	if s.platform == nil {
+		siteName := strings.TrimSpace(s.store.Setting("site.name"))
+		if siteName == "" {
+			siteName = "Default Site"
+		}
+		v.PlatformSites = []*platform.Site{{
+			ID:                          1,
+			Slug:                        "main",
+			Name:                        siteName,
+			Status:                      "enabled",
+			IsDefault:                   true,
+			ManagementAutomationEnabled: true,
+			DBPath:                      "CMS_DB",
+			UploadDir:                   s.uploadDir,
+		}}
+		s.rnd.Admin(w, "sites", http.StatusOK, v)
+		return
+	}
+	sites, err := s.platform.Sites()
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	v.PlatformSites = sites
+	s.rnd.Admin(w, "sites", http.StatusOK, v)
+}
+
+func (s *Server) adminEnterSite(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.checkCSRF(w, r); !ok {
+		return
+	}
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		http.NotFound(w, r)
+		return
+	}
+	if s.platform != nil {
+		site, ok, err := s.platform.GetSite(id)
+		if err != nil {
+			s.serverError(w, err)
+			return
+		}
+		if !ok || site.Status != "enabled" {
+			http.NotFound(w, r)
+			return
+		}
+	} else if id != 1 {
+		http.NotFound(w, r)
+		return
+	}
+	if err := s.sess.setCurrentSite(sessionToken(r), id); err != nil {
+		s.serverError(w, err)
+		return
+	}
+	http.Redirect(w, r, "/admin", http.StatusSeeOther)
 }
 
 func (s *Server) adminPosts(w http.ResponseWriter, r *http.Request) {
@@ -742,7 +860,7 @@ func (s *Server) adminOverviewStatus(v *View, keys []*store.AutomationKey) []Ove
 	passwordTone := "ok"
 	passwordValue := v.Admin.T("admin.dashboard.status.password_ok", "已处理")
 	passwordHint := v.Admin.T("admin.dashboard.status.password_ok_hint", "后台登录密码不是默认值")
-	if s.store.IsDefaultPassword() {
+	if s.adminPasswordIsDefault() {
 		passwordTone = "warn"
 		passwordValue = v.Admin.T("admin.dashboard.status.password_warn", "需要处理")
 		passwordHint = v.Admin.T("admin.warning.default_password", "当前仍在使用默认密码，建议尽快修改以保证安全。")
@@ -2796,7 +2914,7 @@ func (s *Server) adminSavePassword(w http.ResponseWriter, r *http.Request) {
 	cur := r.FormValue("current_password")
 	neu := r.FormValue("new_password")
 	conf := r.FormValue("confirm_password")
-	hash, _ := s.store.GetSetting("admin_password_hash")
+	user, hash := s.adminCredentials()
 	switch {
 	case bcrypt.CompareHashAndPassword([]byte(hash), []byte(cur)) != nil:
 		s.showSettings(w, r, "security", "", "当前密码不正确。")
@@ -2809,7 +2927,7 @@ func (s *Server) adminSavePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if nh, err := bcrypt.GenerateFromPassword([]byte(neu), bcrypt.DefaultCost); err == nil {
-		_ = s.store.SetSetting("admin_password_hash", string(nh))
+		_ = s.setAdminPasswordHash(user, string(nh))
 	}
 	s.redirectSettings(w, r, "security", "密码已更新。")
 }

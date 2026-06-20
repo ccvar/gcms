@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"cms.ccvar.com/internal/platform"
 	"cms.ccvar.com/internal/store"
 	"cms.ccvar.com/internal/web"
 )
@@ -45,7 +46,27 @@ func main() {
 
 	baseURL := env("BASE_URL", "http://localhost:8080")
 	uploadDir := env("UPLOAD_DIR", filepath.Join(filepath.Dir(dbPath), "uploads"))
-	srv, err := web.New(st, baseURL, uploadDir, templatesFS, assetsFS)
+	systemDBPath := env("SYSTEM_DB", filepath.Join(filepath.Dir(dbPath), "system.db"))
+	ps, err := platform.Open(systemDBPath)
+	if err != nil {
+		log.Fatalf("打开平台数据库失败: %v", err)
+	}
+	defer ps.Close()
+	adminUser, _ := st.GetSetting("admin_user")
+	adminHash, _ := st.GetSetting("admin_password_hash")
+	siteName, _ := st.GetSetting("site.name")
+	if err := ps.BootstrapDefaultSite(platform.DefaultSiteBootstrap{
+		Slug:                        "main",
+		Name:                        siteName,
+		DBPath:                      dbPath,
+		UploadDir:                   uploadDir,
+		AdminUser:                   adminUser,
+		AdminPasswordHash:           adminHash,
+		ManagementAutomationEnabled: true,
+	}); err != nil {
+		log.Fatalf("初始化平台默认站点失败: %v", err)
+	}
+	srv, err := web.NewWithPlatform(st, ps, baseURL, uploadDir, templatesFS, assetsFS)
 	if err != nil {
 		log.Fatalf("初始化 Web 失败: %v", err)
 	}

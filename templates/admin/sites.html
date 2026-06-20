@@ -1,0 +1,55 @@
+{{define "body"}}
+  <div class="admin-head">
+    <div>
+      <h1>{{.Admin.T "admin.sites.title" "站点"}}</h1>
+      <p class="muted">{{.Admin.T "admin.sites.subtitle" "平台级站点列表。第一阶段默认站点继续沿用旧后台路径。"}}</p>
+    </div>
+    <div class="overview-actions">
+      <a class="btn" href="/admin">{{.Admin.T "admin.nav.overview" "概览"}}</a>
+    </div>
+  </div>
+
+  <section class="overview-panel">
+    <div class="overview-panel-head">
+      <div>
+        <h2>{{.Admin.T "admin.sites.current" "当前站点池"}}</h2>
+        <p class="muted">{{.Admin.T "admin.sites.current_desc" "默认站点已写入 system.db；后续新增站点、域名绑定和平台入口开关会在这里扩展。"}}</p>
+      </div>
+    </div>
+    <table class="admin-table">
+      <thead>
+        <tr>
+          <th>{{.Admin.T "admin.sites.name" "站点"}}</th>
+          <th>{{.Admin.T "admin.sites.status" "状态"}}</th>
+          <th>{{.Admin.T "admin.sites.automation" "平台入口"}}</th>
+          <th>{{.Admin.T "admin.sites.storage" "存储"}}</th>
+          <th class="right">{{.Admin.T "admin.common.actions" "操作"}}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {{range .PlatformSites}}
+        <tr>
+          <td>
+            <strong>{{.Name}}</strong>
+            <div class="muted slug">{{.Slug}}{{if .IsDefault}} · {{$.Admin.T "admin.sites.default" "默认站点"}}{{end}}{{if eq .ID $.PlatformCurrentSiteID}} · {{$.Admin.T "admin.sites.current_badge" "当前后台"}}{{end}}</div>
+          </td>
+          <td>{{if eq .Status "enabled"}}{{$.Admin.T "admin.sites.enabled" "启用"}}{{else}}{{$.Admin.T "admin.sites.disabled" "关闭"}}{{end}}</td>
+          <td>{{if .ManagementAutomationEnabled}}{{$.Admin.T "admin.sites.platform_api_on" "已开启"}}{{else}}{{$.Admin.T "admin.sites.platform_api_off" "未开启"}}{{end}}</td>
+          <td>
+            <div class="slug">{{.DBPath}}</div>
+            <div class="muted slug">{{.UploadDir}}</div>
+          </td>
+          <td class="right">
+            <form method="post" action="/admin/sites/{{.ID}}/enter">
+              <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+              <button class="btn" type="submit">{{$.Admin.T "admin.sites.enter" "进入后台"}}</button>
+            </form>
+          </td>
+        </tr>
+        {{else}}
+        <tr><td colspan="5" class="muted">{{.Admin.T "admin.sites.empty" "暂无站点。"}}</td></tr>
+        {{end}}
+      </tbody>
+    </table>
+  </section>
+{{end}}

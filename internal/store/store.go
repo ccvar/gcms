@@ -633,10 +633,11 @@ func parseTime(s sql.NullString) time.Time {
 // ---------- 后台会话 ----------
 
 type AdminSession struct {
-	User        string
-	CSRF        string
-	ExpiresAt   time.Time
-	PwDismissed bool
+	User          string
+	CSRF          string
+	ExpiresAt     time.Time
+	PwDismissed   bool
+	CurrentSiteID int64
 }
 
 func sessionTokenHash(token string) string {
@@ -683,6 +684,10 @@ func (s *Store) DeleteAdminSession(token string) error {
 func (s *Store) DismissAdminPasswordWarning(token string) error {
 	_, err := s.db.Exec(`UPDATE admin_sessions SET pw_dismissed=1,updated_at=? WHERE token_hash=?`, fmtTime(time.Now()), sessionTokenHash(token))
 	return err
+}
+
+func (s *Store) SetAdminSessionSite(token string, siteID int64) error {
+	return nil
 }
 
 // ---------- 自动化 API Key ----------

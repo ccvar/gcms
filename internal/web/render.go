@@ -358,7 +358,7 @@ func NewRenderer(tplFS fs.FS, imageSizes map[string]ImageSize) (*Renderer, error
 	}
 	r.sets["theme_preview"] = tp
 
-	for _, name := range []string{"login", "dashboard", "posts", "edit", "settings", "pages", "links", "visual"} {
+	for _, name := range []string{"login", "dashboard", "posts", "edit", "settings", "pages", "links", "visual", "sites"} {
 		t, err := template.New("admin_"+name).Funcs(funcMap(imageSizes)).ParseFS(sub, "admin/layout.html", "admin/"+name+".html")
 		if err != nil {
 			return nil, err
