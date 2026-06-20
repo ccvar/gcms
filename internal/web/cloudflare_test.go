@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -300,6 +301,32 @@ func TestCloudflarePagesRedirectsInferDefaultProjectDomain(t *testing.T) {
 	want := "https://gcms-docs-example-com.pages.dev/* https://docs.example.com/:splat 301\n"
 	if got != want {
 		t.Fatalf("redirects file = %q, want %q", got, want)
+	}
+}
+
+func TestExportStaticSiteWritesRootRSSFromDefaultLocale(t *testing.T) {
+	s := newTestPublicServer(t, "")
+	result, err := s.exportStaticSite(context.Background(), CloudflareConfig{
+		DeployMode:       cloudflareModeWorkerAssets,
+		RoutePattern:     "static.example.com/*",
+		WorkerName:       "gcms-static-example-com",
+		HTMLCacheTTL:     300,
+		SourceMode:       cloudflareSourceModeRedirect,
+		AutoSync:         true,
+		SyncMode:         cloudflareSyncModeRealtime,
+		SyncTime:         cloudflareDefaultSyncTime,
+		OriginURL:        "https://origin.example.com",
+		PagesProjectName: "gcms-static-example-com",
+		Domains:          []CloudflareDomain{{Host: "static.example.com", Primary: true}},
+	})
+	if err != nil {
+		t.Fatalf("export static site: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(result.Dir) })
+	if f, ok := result.Files["/rss.xml"]; !ok {
+		t.Fatalf("root rss was not exported")
+	} else if f.Size == 0 {
+		t.Fatalf("root rss should not be empty")
 	}
 }
 

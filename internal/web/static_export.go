@@ -130,7 +130,7 @@ func (s *Server) exportStaticSite(ctx context.Context, cfg CloudflareConfig) (*s
 		}
 	}
 
-	if err := render("/rss.xml", "/rss.xml"); err != nil {
+	if err := render("/"+defLang+"/rss.xml", "/rss.xml"); err != nil {
 		return nil, err
 	}
 	if err := render("/sitemap.xml", "/sitemap.xml"); err != nil {

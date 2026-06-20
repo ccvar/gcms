@@ -1305,6 +1305,14 @@ body.admin { background: var(--line-soft); }
 .cloudflare-task-state.is-failed { background: color-mix(in srgb, var(--danger) 10%, #fff); color: var(--danger); }
 .cloudflare-task-state.is-failed::before { content: "!"; display: inline-grid; place-items: center; flex: none; width: 15px; height: 15px; border-radius: 999px; background: var(--danger); color: #fff; font-size: .62rem; line-height: 1; }
 .cloudflare-task-state.is-idle { background: color-mix(in srgb, var(--line-soft) 70%, #fff); color: var(--ink); }
+.cloudflare-task-state[data-task-state="running"] { background: color-mix(in srgb, var(--accent) 10%, #fff); color: var(--accent); }
+.cloudflare-task-state[data-task-state="running"]::before { content: ""; flex: none; width: 13px; height: 13px; border-radius: 999px; border: 2px solid color-mix(in srgb, var(--accent) 24%, transparent); border-top-color: currentColor; background: transparent; animation: cf-spin .75s linear infinite; }
+.cloudflare-task-state[data-task-state="success"] { background: color-mix(in srgb, var(--ok) 13%, #fff); color: #137333; }
+.cloudflare-task-state[data-task-state="success"]::before { content: "✓"; display: inline-grid; place-items: center; flex: none; width: 15px; height: 15px; border: 0; border-radius: 999px; background: #137333; color: #fff; font-size: .62rem; line-height: 1; animation: none; }
+.cloudflare-task-state[data-task-state="failed"] { background: color-mix(in srgb, var(--danger) 10%, #fff); color: var(--danger); }
+.cloudflare-task-state[data-task-state="failed"]::before { content: "!"; display: inline-grid; place-items: center; flex: none; width: 15px; height: 15px; border: 0; border-radius: 999px; background: var(--danger); color: #fff; font-size: .62rem; line-height: 1; animation: none; }
+.cloudflare-task-state[data-task-state="idle"] { background: color-mix(in srgb, var(--line-soft) 70%, #fff); color: var(--ink); }
+.cloudflare-task-state[data-task-state="idle"]::before { content: none; }
 .cloudflare-takeover-checks { display: flex; flex-wrap: wrap; gap: .42rem; margin-top: .1rem; }
 .cloudflare-check-chip { display: inline-flex; align-items: center; gap: .34rem; min-height: 24px; padding: .18rem .5rem; border-radius: 999px; color: var(--muted); background: color-mix(in srgb, var(--line-soft) 64%, #fff); font: 850 .72rem/1.2 var(--sans); white-space: nowrap; }
 .cloudflare-check-chip::before { content: ""; display: inline-grid; place-items: center; flex: none; width: 13px; height: 13px; border-radius: 999px; background: var(--line); color: #fff; font-size: .58rem; line-height: 1; }

@@ -49,6 +49,7 @@ const (
 	cloudflareSourceModeRedirect = "redirect"
 	cloudflareSourceModeNoindex  = "noindex"
 	cloudflareSourceModeNone     = "none"
+	cloudflareSyncModeManual     = "manual"
 	cloudflareSyncModeRealtime   = "realtime"
 	cloudflareSyncModeDaily      = "daily"
 	cloudflareDefaultSyncTime    = "03:00"
@@ -551,6 +552,8 @@ func normalizeCloudflareSourceMode(v string) string {
 
 func normalizeCloudflareSyncMode(v string) string {
 	switch strings.TrimSpace(v) {
+	case cloudflareSyncModeManual:
+		return cloudflareSyncModeManual
 	case cloudflareSyncModeDaily:
 		return cloudflareSyncModeDaily
 	default:
@@ -808,6 +811,7 @@ func (s *Server) cloudflareConfig() CloudflareConfig {
 		}
 	}
 	autoSyncRaw := strings.TrimSpace(s.store.Setting(cloudflareAutoSyncKey))
+	syncMode := normalizeCloudflareSyncMode(s.store.Setting(cloudflareSyncModeKey))
 	return CloudflareConfig{
 		AccountID:        strings.TrimSpace(s.store.Setting(cloudflareAccountIDKey)),
 		APIToken:         strings.TrimSpace(s.store.Setting(cloudflareAPITokenKey)),
@@ -819,8 +823,8 @@ func (s *Server) cloudflareConfig() CloudflareConfig {
 		Domains:          domains,
 		OriginURL:        origin,
 		HTMLCacheTTL:     ttl,
-		AutoSync:         autoSyncRaw != "0",
-		SyncMode:         normalizeCloudflareSyncMode(s.store.Setting(cloudflareSyncModeKey)),
+		AutoSync:         autoSyncRaw != "0" && syncMode != cloudflareSyncModeManual,
+		SyncMode:         syncMode,
 		SyncTime:         normalizeCloudflareSyncTime(s.store.Setting(cloudflareSyncTimeKey)),
 		SyncPending:      s.store.Setting(cloudflareSyncPendingKey) == "1",
 		SyncNextAt:       strings.TrimSpace(s.store.Setting(cloudflareSyncNextAtKey)),
@@ -1269,6 +1273,9 @@ func (s *Server) saveCloudflareConfigFromRequest(r *http.Request) (CloudflareCon
 	if _, ok := r.Form["sync_mode"]; ok {
 		cfg.SyncMode = normalizeCloudflareSyncMode(r.FormValue("sync_mode"))
 	}
+	if cfg.SyncMode == cloudflareSyncModeManual {
+		cfg.AutoSync = false
+	}
 	if _, ok := r.Form["sync_time"]; ok {
 		cfg.SyncTime = normalizeCloudflareSyncTime(r.FormValue("sync_time"))
 	}
@@ -1380,13 +1387,16 @@ func (s *Server) adminSaveCloudflareSync(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	cfg := s.cloudflareConfigForRequest(r)
-	cfg.AutoSync = true
 	cfg.SyncMode = normalizeCloudflareSyncMode(r.FormValue("sync_mode"))
+	cfg.AutoSync = cfg.SyncMode != cloudflareSyncModeManual
 	cfg.SyncTime = normalizeCloudflareSyncTime(r.FormValue("sync_time"))
 	settings := map[string]string{
 		cloudflareAutoSyncKey: boolSetting(cfg.AutoSync),
 		cloudflareSyncModeKey: cfg.SyncMode,
 		cloudflareSyncTimeKey: cfg.SyncTime,
+	}
+	if cfg.SyncMode == cloudflareSyncModeManual {
+		settings[cloudflareSyncNextAtKey] = ""
 	}
 	for k, v := range settings {
 		if err := s.store.SetSetting(k, v); err != nil {
@@ -1397,6 +1407,9 @@ func (s *Server) adminSaveCloudflareSync(w http.ResponseWriter, r *http.Request)
 			s.showSettings(w, r, "cloudflare", "", err.Error())
 			return
 		}
+	}
+	if cfg.SyncMode == cloudflareSyncModeManual {
+		s.stopCloudflareTimer()
 	}
 	if cfg.SyncPending && cfg.configured() && cfg.SyncMode == cloudflareSyncModeDaily {
 		s.armCloudflareDailySync(cfg, "已有内容变化，将按每天同步时间发布静态站。")
@@ -2021,7 +2034,13 @@ func (s *Server) deployCloudflare(ctx context.Context, cfg CloudflareConfig) err
 
 func (s *Server) scheduleCloudflareSync(reason string) {
 	cfg := s.cloudflareConfig()
-	if !cfg.AutoSync || !cfg.configured() {
+	if !cfg.configured() {
+		return
+	}
+	if normalizeCloudflareSyncMode(cfg.SyncMode) == cloudflareSyncModeManual || !cfg.AutoSync {
+		_ = s.store.SetSetting(cloudflareSyncPendingKey, "1")
+		_ = s.store.SetSetting(cloudflareSyncNextAtKey, "")
+		s.stopCloudflareTimer()
 		return
 	}
 	if strings.TrimSpace(reason) == "" {

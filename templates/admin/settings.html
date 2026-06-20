@@ -970,6 +970,7 @@
       {{$dnsManaged := eq $st.DNSStatus "managed"}}
       {{$dnsPending := and $hasDeployment (not $dnsManaged)}}
       {{$canPurge := $st.CanPurge}}
+      {{$syncManual := eq $c.SyncMode "manual"}}
       {{$syncDaily := eq $c.SyncMode "daily"}}
       <div class="field-group cloudflare-connect">
         <h3 class="group-head with-icon">
@@ -1154,7 +1155,7 @@
           <div class="update-task">
             <div class="cloudflare-task-copy">
               <span class="update-label with-small-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h5l2-7 4 14 2-7h3"/><path d="M4 19h16"/></svg>{{.Admin.T "admin.settings.cloudflare.task" "部署任务"}}</span>
-              <strong class="cloudflare-task-state {{if eq $st.Status "running"}}is-running{{else if eq $st.Status "failed"}}is-failed{{else if $hasDeployment}}is-success{{else}}is-idle{{end}}" data-cloudflare-status>{{if eq $st.Status "running"}}{{.Admin.T "admin.settings.cloudflare.running" "部署中"}}{{else if eq $st.Status "failed"}}{{.Admin.T "admin.settings.cloudflare.failed" "失败"}}{{else if $hasDeployment}}{{.Admin.T "admin.settings.cloudflare.success" "已部署"}}{{else if eq $st.Status "success"}}{{.Admin.T "admin.settings.cloudflare.unpublished_status" "已取消"}}{{else}}{{.Admin.T "admin.settings.cloudflare.idle" "空闲"}}{{end}}</strong>
+              <strong class="cloudflare-task-state {{if eq $st.Status "running"}}is-running{{else if eq $st.Status "failed"}}is-failed{{else if $hasDeployment}}is-success{{else}}is-idle{{end}}" data-task-state="{{if eq $st.Status "running"}}running{{else if eq $st.Status "failed"}}failed{{else if $hasDeployment}}success{{else}}idle{{end}}" data-cloudflare-status>{{if eq $st.Status "running"}}{{.Admin.T "admin.settings.cloudflare.running" "部署中"}}{{else if eq $st.Status "failed"}}{{.Admin.T "admin.settings.cloudflare.failed" "失败"}}{{else if $hasDeployment}}{{.Admin.T "admin.settings.cloudflare.success" "已部署"}}{{else if eq $st.Status "success"}}{{.Admin.T "admin.settings.cloudflare.unpublished_status" "已取消"}}{{else}}{{.Admin.T "admin.settings.cloudflare.idle" "空闲"}}{{end}}</strong>
               <p data-cloudflare-message>{{$st.Message}}</p>
               <div class="cloudflare-takeover-checks" aria-label="{{.Admin.T "admin.settings.cloudflare.takeover_status" "托管状态"}}">
                 <span class="cloudflare-check-chip {{if $hasDeployment}}is-success{{else}}is-idle{{end}}" data-cf-static-check>{{if $hasDeployment}}{{.Admin.T "admin.settings.cloudflare.static_published" "静态站已发布"}}{{else}}{{.Admin.T "admin.settings.cloudflare.static_pending" "等待发布"}}{{end}}</span>
@@ -1221,8 +1222,12 @@
                 <span class="update-label with-small-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 0 1-15 6.7"/><path d="M3 12a9 9 0 0 1 15-6.7"/><path d="M18 3v5h-5"/><path d="M6 21v-5h5"/></svg>{{.Admin.T "admin.settings.cloudflare.sync" "内容同步"}}</span>
                 <strong>{{.Admin.T "admin.settings.cloudflare.sync_title" "内容更新方式"}}</strong>
                 <p data-cf-sync-status>
-                  {{if and $c.SyncPending $syncDaily}}
+                  {{if and $c.SyncPending $syncManual}}
+                    {{.Admin.T "admin.settings.cloudflare.sync_manual_pending" "有内容变化待手动同步。"}}
+                  {{else if and $c.SyncPending $syncDaily}}
                     {{.Admin.T "admin.settings.cloudflare.sync_pending" "有内容变化待同步"}}{{if $c.SyncNextAt}} · {{.Admin.T "admin.settings.cloudflare.sync_next_at" "计划同步"}}：{{$c.SyncNextAt}}{{end}}
+                  {{else if $syncManual}}
+                    {{.Admin.T "admin.settings.cloudflare.sync_manual_note" "内容变化后不会自动发布，需要手动点击部署同步到 Cloudflare。"}}
                   {{else if $syncDaily}}
                     {{.Admin.T "admin.settings.cloudflare.sync_daily_note" "有变化时，等到每天指定时间统一发布。"}}
                   {{else}}
@@ -1230,15 +1235,16 @@
                   {{end}}
                 </p>
               </div>
-              <span class="cloudflare-sync-current" data-cf-sync-current>{{if $syncDaily}}{{.Admin.T "admin.settings.cloudflare.sync_daily" "每天同步"}}{{else}}{{.Admin.T "admin.settings.cloudflare.sync_realtime" "实时同步"}}{{end}}</span>
+              <span class="cloudflare-sync-current" data-cf-sync-current>{{if $syncManual}}{{.Admin.T "admin.settings.cloudflare.sync_manual" "手动同步"}}{{else if $syncDaily}}{{.Admin.T "admin.settings.cloudflare.sync_daily" "每天同步"}}{{else}}{{.Admin.T "admin.settings.cloudflare.sync_realtime" "实时同步"}}{{end}}</span>
             </summary>
             <form method="post" action="/admin/settings/cloudflare/sync" class="cloudflare-sync-form" data-cloudflare-ajax data-no-busy data-cloudflare-sync-form>
               <input type="hidden" name="_csrf" value="{{.CSRF}}">
-              <p>{{.Admin.T "admin.settings.cloudflare.sync_desc" "默认保存后自动同步；需要集中发布时间时，可以改为每天同步。"}}</p>
+              <p>{{.Admin.T "admin.settings.cloudflare.sync_desc" "默认保存后自动同步；需要集中发布时间时，可以改为每天同步，或改为手动同步。"}}</p>
               <div class="cloudflare-sync-controls">
                 <div class="radio-pill-row">
-                  <label class="radio-pill"><input type="radio" name="sync_mode" value="realtime"{{if not $syncDaily}} checked{{end}}><span>{{.Admin.T "admin.settings.cloudflare.sync_realtime" "实时同步"}}</span></label>
+                  <label class="radio-pill"><input type="radio" name="sync_mode" value="realtime"{{if and (not $syncManual) (not $syncDaily)}} checked{{end}}><span>{{.Admin.T "admin.settings.cloudflare.sync_realtime" "实时同步"}}</span></label>
                   <label class="radio-pill"><input type="radio" name="sync_mode" value="daily"{{if $syncDaily}} checked{{end}}><span>{{.Admin.T "admin.settings.cloudflare.sync_daily" "每天同步"}}</span></label>
+                  <label class="radio-pill"><input type="radio" name="sync_mode" value="manual"{{if $syncManual}} checked{{end}}><span>{{.Admin.T "admin.settings.cloudflare.sync_manual" "手动同步"}}</span></label>
                 </div>
                 <label class="cloudflare-sync-time{{if not $syncDaily}} is-disabled{{end}}">
                   <span>{{.Admin.T "admin.settings.cloudflare.sync_time" "同步时间"}}</span>
@@ -1324,8 +1330,11 @@
             syncNextAt: "{{.Admin.T "admin.settings.cloudflare.sync_next_at" "计划同步"}}",
             syncDailyNote: "{{.Admin.T "admin.settings.cloudflare.sync_daily_note" "有变化时，等到每天指定时间统一发布。"}}",
             syncRealtimeNote: "{{.Admin.T "admin.settings.cloudflare.sync_realtime_note" "保存内容后自动重新发布到 Cloudflare。"}}",
+            syncManualNote: "{{.Admin.T "admin.settings.cloudflare.sync_manual_note" "内容变化后不会自动发布，需要手动点击部署同步到 Cloudflare。"}}",
+            syncManualPending: "{{.Admin.T "admin.settings.cloudflare.sync_manual_pending" "有内容变化待手动同步。"}}",
             syncDaily: "{{.Admin.T "admin.settings.cloudflare.sync_daily" "每天同步"}}",
             syncRealtime: "{{.Admin.T "admin.settings.cloudflare.sync_realtime" "实时同步"}}",
+            syncManual: "{{.Admin.T "admin.settings.cloudflare.sync_manual" "手动同步"}}",
             staticPublished: "{{.Admin.T "admin.settings.cloudflare.static_published" "静态站已发布"}}",
             staticPending: "{{.Admin.T "admin.settings.cloudflare.static_pending" "等待发布"}}",
             dnsManaged: "{{.Admin.T "admin.settings.cloudflare.dns_managed" "域名已接管"}}",
@@ -1541,13 +1550,18 @@
           var hasDeploymentValue = function(published, lastDeployAt) {
             return !!published || !!String(lastDeployAt || "").trim();
           };
+          var normalizedTaskStatus = function(status) {
+            return String(status || "").trim().toLowerCase();
+          };
           var taskStateClass = function(status, published, lastDeployAt) {
+            status = normalizedTaskStatus(status);
             if (status === "running") return "is-running";
             if (status === "failed") return "is-failed";
             if (hasDeploymentValue(published, lastDeployAt)) return "is-success";
             return "is-idle";
           };
           var statusText = function(status, published, lastDeployAt) {
+            status = normalizedTaskStatus(status);
             if (status === "running") return txt.running;
             if (status === "failed") return txt.failed;
             if (hasDeploymentValue(published, lastDeployAt)) return txt.success;
@@ -1587,8 +1601,9 @@
           };
           var setTaskState = function(status, published, lastDeployAt) {
             if (!statusEl) return;
-            statusEl.classList.remove("is-idle", "is-running", "is-failed", "is-success");
-            statusEl.classList.add(taskStateClass(status, published, lastDeployAt));
+            var state = taskStateClass(status, published, lastDeployAt).replace(/^is-/, "");
+            statusEl.dataset.taskState = state;
+            statusEl.className = "cloudflare-task-state is-" + state;
           };
           var setCheckChip = function(el, state, text) {
             if (!el) return;
@@ -1683,12 +1698,23 @@
             var input = syncForm.querySelector("input[name='sync_mode']:checked");
             return input ? input.value : "realtime";
           };
-		          var updateSyncTimeState = function() {
-		            var daily = selectedSyncMode() === "daily";
-		            if (syncTimeInput) syncTimeInput.disabled = !daily;
-		            if (syncTimeWrap) syncTimeWrap.classList.toggle("is-disabled", !daily);
-		            if (syncCurrentEl) syncCurrentEl.textContent = daily ? txt.syncDaily : txt.syncRealtime;
-		          };
+          var syncModeLabel = function(mode) {
+            if (mode === "daily") return txt.syncDaily;
+            if (mode === "manual") return txt.syncManual;
+            return txt.syncRealtime;
+          };
+          var syncModeNote = function(mode) {
+            if (mode === "daily") return txt.syncDailyNote;
+            if (mode === "manual") return txt.syncManualNote;
+            return txt.syncRealtimeNote;
+          };
+          var updateSyncTimeState = function() {
+            var mode = selectedSyncMode();
+            var daily = mode === "daily";
+            if (syncTimeInput) syncTimeInput.disabled = !daily;
+            if (syncTimeWrap) syncTimeWrap.classList.toggle("is-disabled", !daily);
+            if (syncCurrentEl) syncCurrentEl.textContent = syncModeLabel(mode);
+          };
           var renderSyncState = function(s) {
             if (!syncForm || !s) return;
             var mode = s.sync_mode || selectedSyncMode();
@@ -1697,12 +1723,14 @@
             });
             if (syncTimeInput && s.sync_time) syncTimeInput.value = s.sync_time;
             updateSyncTimeState();
-		            if (mode === "daily" && s.sync_pending) {
-		              var next = s.sync_next_at ? " · " + txt.syncNextAt + "：" + localDateTitle(s.sync_next_at) : "";
-		              if (syncStatusEl) syncStatusEl.textContent = txt.syncPending + next;
-		            } else {
-		              if (syncStatusEl) syncStatusEl.textContent = mode === "daily" ? txt.syncDailyNote : txt.syncRealtimeNote;
-		            }
+            if (mode === "daily" && s.sync_pending) {
+              var next = s.sync_next_at ? " · " + txt.syncNextAt + "：" + localDateTitle(s.sync_next_at) : "";
+              if (syncStatusEl) syncStatusEl.textContent = txt.syncPending + next;
+            } else if (mode === "manual" && s.sync_pending) {
+              if (syncStatusEl) syncStatusEl.textContent = txt.syncManualPending;
+            } else {
+              if (syncStatusEl) syncStatusEl.textContent = syncModeNote(mode);
+            }
           };
           var toggleManagedActions = function(canUnpublish, canPurge) {
             var hasAction = false;
@@ -1731,6 +1759,7 @@
             });
           };
           var deployButtonText = function(status) {
+            status = normalizedTaskStatus(status);
             if (status === "running") return txt.deploying;
             if (status === "failed") return txt.retryDeploy;
             return currentPublished ? txt.deploy : txt.deployNow;
@@ -1791,6 +1820,7 @@
             renderTakeoverChecks(currentPublished, v.dns_status || "");
           };
           var setProgress = function(status, step) {
+            status = normalizedTaskStatus(status);
             var current = status === "success" ? "done" : (step || "");
             var index = status === "success" ? order.length : order.indexOf(current);
             if (status === "failed" && index < 0) index = 0;
@@ -1810,11 +1840,12 @@
           var wasRunning = box.dataset.running === "1";
           var render = function(s) {
             if (!s) return;
-            wasRunning = s.status === "running";
+            var status = normalizedTaskStatus(s.status);
+            wasRunning = status === "running";
             currentPublished = hasDeploymentValue(!!s.published, s.last_deploy_at);
-            box.dataset.running = s.status === "running" ? "1" : "0";
-            setText("[data-cloudflare-status]", statusText(s.status, !!s.published, s.last_deploy_at));
-            setTaskState(s.status, !!s.published, s.last_deploy_at);
+            box.dataset.running = status === "running" ? "1" : "0";
+            setText("[data-cloudflare-status]", statusText(status, !!s.published, s.last_deploy_at));
+            setTaskState(status, !!s.published, s.last_deploy_at);
             setText("[data-cloudflare-message]", s.message);
             setDomainSummary(s.domains || s.primary_domain || txt.empty, publicURLFromHost(s.primary_domain));
             setText("[data-cf-status-project]", s.deploy_mode === "pages" ? s.pages_project_name : s.worker_name);
@@ -1823,14 +1854,14 @@
             renderHistory(s.history || []);
             renderSyncState(s);
             renderTakeoverChecks(currentPublished, s.dns_status || "");
-            setProgress(s.status, s.step);
+            setProgress(status, s.step);
             if (button) {
-              button.disabled = !currentTokenSet || s.status === "running";
-              button.textContent = deployButtonText(s.status);
+              button.disabled = !currentTokenSet || status === "running";
+              button.textContent = deployButtonText(status);
             }
             updateTokenFormValidity();
             toggleManagedActions(!!s.can_unpublish, !!s.can_purge);
-            if (s.status === "running") schedulePoll(2500);
+            if (status === "running") schedulePoll(2500);
           };
           var schedulePoll = function(delay) {
             window.clearTimeout(timer);
@@ -1881,7 +1912,7 @@
                   if (j && j.view) applyView(j.view);
                   if (j && j.status) render(j.status);
                   if (!j.httpOK && j.message) setText("[data-cloudflare-message]", j.message);
-                  if (j && j.status && j.status.status === "running") schedulePoll(700);
+                  if (j && j.status && normalizedTaskStatus(j.status.status) === "running") schedulePoll(700);
                   if (j && j.httpOK) {
                     var path = "";
                     try { path = new URL(form.action).pathname; } catch (_) {}
@@ -2030,7 +2061,7 @@
           if (button) button.disabled = !currentTokenSet || box.dataset.running === "1";
           if (box.dataset.running === "1") schedulePoll(900);
           else if (currentTokenSet && currentPublished) window.setTimeout(refreshStatusOnce, 350);
-          // 内容同步：实时模式隐藏「同步时间」+「保存」；切换模式即时静默自动保存（fetch，不导航）；
+          // 内容同步：非每天同步隐藏「同步时间」+「保存」；切换模式即时静默自动保存（fetch，不导航）；
           // 每天同步下「保存」只在同步时间被改动时才出现。
           (function(){
             var f = document.querySelector("[data-cloudflare-sync-form]");
@@ -2053,7 +2084,14 @@
               body.set("_csrf", csrf);
               body.set("sync_mode", modeNow());
               if (timeInput) body.set("sync_time", timeInput.value || "");
-              fetch(f.getAttribute("action"), { method: "POST", body: body, headers: { "Content-Type": "application/x-www-form-urlencoded", "X-Requested-With": "XMLHttpRequest" }, credentials: "same-origin" }).catch(function(){});
+              fetch(f.getAttribute("action"), { method: "POST", body: body, headers: { "Accept": "application/json", "Content-Type": "application/x-www-form-urlencoded", "X-Requested-With": "XMLHttpRequest" }, credentials: "same-origin" })
+                .then(function(r){ return r.json().then(function(j){ j.httpOK = r.ok; return j; }); })
+                .then(function(j) {
+                  if (j && j.view) applyView(j.view);
+                  if (j && j.status) render(j.status);
+                  if (!j.httpOK && j.message) setText("[data-cloudflare-message]", j.message);
+                })
+                .catch(function(){});
               baseMode = modeNow();
               baseTime = timeInput ? timeInput.value : baseTime;
               refresh();

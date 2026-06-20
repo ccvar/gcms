@@ -83,3 +83,45 @@ func TestAdminAutomationSecretSurvivesSettingsRedirectOnce(t *testing.T) {
 		t.Fatalf("one-time API secret should be consumed after first GET")
 	}
 }
+
+func TestCloudflareManualSyncDisablesAutomaticDeploy(t *testing.T) {
+	s := newTestPublicServer(t, "")
+	if err := s.store.SetSetting(cloudflareAPITokenKey, "token"); err != nil {
+		t.Fatalf("set token: %v", err)
+	}
+	if err := s.store.SetSetting(cloudflareDeployModeKey, cloudflareModeWorkerAssets); err != nil {
+		t.Fatalf("set deploy mode: %v", err)
+	}
+	if err := s.store.SetSetting(cloudflareWorkerNameKey, "gcms-test"); err != nil {
+		t.Fatalf("set worker: %v", err)
+	}
+	if err := s.store.SetSetting(cloudflareDomainsKey, encodeCloudflareDomains([]CloudflareDomain{{Host: "www.example.com", Primary: true}})); err != nil {
+		t.Fatalf("set domains: %v", err)
+	}
+
+	form := url.Values{
+		"sync_mode": {"manual"},
+		"sync_time": {"03:00"},
+	}
+	req, _ := authedAdminRequest(t, s, http.MethodPost, "/admin/settings/cloudflare/sync", form)
+	req.Header.Set("X-Requested-With", "XMLHttpRequest")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", w.Code, http.StatusOK, w.Body.String())
+	}
+	if got := s.store.Setting(cloudflareSyncModeKey); got != cloudflareSyncModeManual {
+		t.Fatalf("sync mode = %q, want manual", got)
+	}
+	if got := s.store.Setting(cloudflareAutoSyncKey); got != "0" {
+		t.Fatalf("auto sync = %q, want 0", got)
+	}
+
+	s.clearGeneratedCaches()
+	if got := s.store.Setting(cloudflareSyncPendingKey); got != "1" {
+		t.Fatalf("sync pending = %q, want 1", got)
+	}
+	if got := s.store.Setting(cloudflareSyncNextAtKey); got != "" {
+		t.Fatalf("sync next at = %q, want empty for manual sync", got)
+	}
+}
