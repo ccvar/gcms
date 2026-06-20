@@ -6,6 +6,7 @@
       <p class="muted">{{printf (.Admin.T "admin.dashboard.subtitle" "当前内容语种：%s") .EditLang}}</p>
     </div>
     <div class="overview-actions">
+      <a class="btn" href="/admin/sites">{{.Admin.T "admin.sites.title" "站点管理"}}</a>
       <a class="btn" href="/admin/links/new?lang={{.EditLang}}">{{.Admin.T "admin.links.new" "新建链接"}}</a>
       <a class="btn btn-primary" href="/admin/posts/new?lang={{.EditLang}}">＋ {{.Admin.T "admin.posts.new" "新建文章"}}</a>
     </div>
