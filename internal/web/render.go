@@ -387,6 +387,10 @@ func (r *Renderer) execute(w http.ResponseWriter, key, layout string, status int
 
 // Public 渲染公开页面。
 func (r *Renderer) Public(w http.ResponseWriter, name string, status int, data any) {
+	if v, ok := data.(*View); ok && v.ForceNoindex {
+		v.SEO.Robots = "noindex, nofollow"
+		v.SEO.Alternates = nil
+	}
 	r.execute(w, name, "public_layout", status, data)
 }
 

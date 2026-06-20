@@ -654,8 +654,74 @@ func (s *Server) adminSites(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, err)
 		return
 	}
+	domains, err := s.platform.SiteDomains()
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	v.PlatformDomains = map[int64][]*platform.SiteDomain{}
+	for _, d := range domains {
+		if d != nil && d.Enabled {
+			v.PlatformDomains[d.SiteID] = append(v.PlatformDomains[d.SiteID], d)
+		}
+	}
 	v.PlatformSites = sites
 	s.rnd.Admin(w, "sites", http.StatusOK, v)
+}
+
+func (s *Server) adminCreateSite(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.checkCSRF(w, r); !ok {
+		return
+	}
+	if s.platform == nil {
+		http.NotFound(w, r)
+		return
+	}
+	slug := strings.TrimSpace(r.FormValue("slug"))
+	name := strings.TrimSpace(r.FormValue("name"))
+	dbPath, uploadDir, err := s.newSiteStoragePaths(slug)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := os.MkdirAll(uploadDir, 0o755); err != nil {
+		s.serverError(w, err)
+		return
+	}
+	st, err := store.Open(dbPath)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	if name != "" {
+		_ = st.SetSetting("site.name", name)
+	}
+	_ = st.Close()
+	site, err := s.platform.CreateSite(slug, name, dbPath, uploadDir, r.FormValue("automation") == "1")
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	if raw := strings.TrimSpace(r.FormValue("domain")); raw != "" {
+		scheme, host, err := parseSiteDomainInput(raw)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if s.domainConflictsWithPlatformHost(site, host) {
+			http.Error(w, "非默认站点不能绑定平台默认 Host", http.StatusBadRequest)
+			return
+		}
+		if err := s.platform.AddSiteDomain(site.ID, scheme, host, true, true); err != nil {
+			s.serverError(w, err)
+			return
+		}
+	}
+	if err := s.reloadRuntimePool(); err != nil {
+		s.serverError(w, err)
+		return
+	}
+	http.Redirect(w, r, "/admin/sites", http.StatusSeeOther)
 }
 
 func (s *Server) adminEnterSite(w http.ResponseWriter, r *http.Request) {
@@ -686,6 +752,219 @@ func (s *Server) adminEnterSite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/admin", http.StatusSeeOther)
+}
+
+func (s *Server) adminDownloadPlatformAutomationSkill(w http.ResponseWriter, r *http.Request) {
+	if s.platform == nil {
+		http.NotFound(w, r)
+		return
+	}
+	id, ok := adminSiteID(w, r)
+	if !ok {
+		return
+	}
+	site, found, err := s.platform.GetSite(id)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	if !found {
+		http.NotFound(w, r)
+		return
+	}
+	if !site.ManagementAutomationEnabled {
+		http.Error(w, "该站点未开启平台自动化入口", http.StatusBadRequest)
+		return
+	}
+	s.writeAutomationSkillZip(w, automationSkillOptions{
+		apiBase: s.absForRequest(r, "/api/platform/v1/sites/"+strconv.FormatInt(id, 10)),
+		name:    strings.TrimSpace(site.Name),
+	})
+}
+
+func (s *Server) adminSetDefaultSite(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.checkCSRF(w, r); !ok {
+		return
+	}
+	if s.platform == nil {
+		http.NotFound(w, r)
+		return
+	}
+	id, ok := adminSiteID(w, r)
+	if !ok {
+		return
+	}
+	if err := s.platform.SetDefaultSite(id); err != nil {
+		s.serverError(w, err)
+		return
+	}
+	if err := s.reloadRuntimePool(); err != nil {
+		s.serverError(w, err)
+		return
+	}
+	http.Redirect(w, r, "/admin/sites", http.StatusSeeOther)
+}
+
+func (s *Server) adminSetSiteStatus(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.checkCSRF(w, r); !ok {
+		return
+	}
+	if s.platform == nil {
+		http.NotFound(w, r)
+		return
+	}
+	id, ok := adminSiteID(w, r)
+	if !ok {
+		return
+	}
+	status := "disabled"
+	if r.FormValue("status") == "enabled" {
+		status = "enabled"
+	}
+	if status == "disabled" {
+		site, found, err := s.platform.GetSite(id)
+		if err != nil {
+			s.serverError(w, err)
+			return
+		}
+		if found && site.IsDefault {
+			http.Error(w, "默认站点不能关闭", http.StatusBadRequest)
+			return
+		}
+	}
+	if err := s.platform.SetSiteStatus(id, status); err != nil {
+		s.serverError(w, err)
+		return
+	}
+	if err := s.reloadRuntimePool(); err != nil {
+		s.serverError(w, err)
+		return
+	}
+	http.Redirect(w, r, "/admin/sites", http.StatusSeeOther)
+}
+
+func (s *Server) adminSetSiteAutomation(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.checkCSRF(w, r); !ok {
+		return
+	}
+	if s.platform == nil {
+		http.NotFound(w, r)
+		return
+	}
+	id, ok := adminSiteID(w, r)
+	if !ok {
+		return
+	}
+	if err := s.platform.SetSiteAutomation(id, r.FormValue("enabled") == "1"); err != nil {
+		s.serverError(w, err)
+		return
+	}
+	if err := s.reloadRuntimePool(); err != nil {
+		s.serverError(w, err)
+		return
+	}
+	http.Redirect(w, r, "/admin/sites", http.StatusSeeOther)
+}
+
+func (s *Server) adminAddSiteDomain(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.checkCSRF(w, r); !ok {
+		return
+	}
+	if s.platform == nil {
+		http.NotFound(w, r)
+		return
+	}
+	id, ok := adminSiteID(w, r)
+	if !ok {
+		return
+	}
+	site, found, err := s.platform.GetSite(id)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	if !found {
+		http.NotFound(w, r)
+		return
+	}
+	scheme, host, err := parseSiteDomainInput(r.FormValue("host"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if s.domainConflictsWithPlatformHost(site, host) {
+		http.Error(w, "非默认站点不能绑定平台默认 Host", http.StatusBadRequest)
+		return
+	}
+	if err := s.platform.AddSiteDomain(id, scheme, host, r.FormValue("primary") == "1", r.FormValue("redirect") == "1"); err != nil {
+		s.serverError(w, err)
+		return
+	}
+	if err := s.reloadRuntimePool(); err != nil {
+		s.serverError(w, err)
+		return
+	}
+	http.Redirect(w, r, "/admin/sites", http.StatusSeeOther)
+}
+
+func adminSiteID(w http.ResponseWriter, r *http.Request) (int64, bool) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		http.NotFound(w, r)
+		return 0, false
+	}
+	return id, true
+}
+
+func (s *Server) newSiteStoragePaths(slug string) (dbPath, uploadDir string, err error) {
+	slug = strings.TrimSpace(slug)
+	if slug == "" {
+		return "", "", fmt.Errorf("站点标记不能为空")
+	}
+	if !regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`).MatchString(slug) {
+		return "", "", fmt.Errorf("站点标记只能包含小写字母、数字和短横线")
+	}
+	base := "data"
+	if s.platform != nil {
+		if site, err := s.platform.DefaultSite(); err == nil && strings.TrimSpace(site.DBPath) != "" {
+			base = filepath.Dir(site.DBPath)
+		}
+	}
+	root := filepath.Join(base, "sites", slug)
+	return filepath.Join(root, "cms.db"), filepath.Join(root, "uploads"), nil
+}
+
+func parseSiteDomainInput(raw string) (scheme, host string, err error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", "", fmt.Errorf("域名不能为空")
+	}
+	if strings.Contains(raw, "://") {
+		u, err := url.Parse(raw)
+		if err != nil || u.Host == "" {
+			return "", "", fmt.Errorf("域名格式不正确")
+		}
+		scheme = u.Scheme
+		host = u.Host
+	} else {
+		scheme = "https"
+		host = raw
+	}
+	host = normalizeRuntimeHost(host)
+	if host == "" || strings.Contains(host, "/") {
+		return "", "", fmt.Errorf("域名格式不正确")
+	}
+	if scheme != "http" && scheme != "https" {
+		scheme = "https"
+	}
+	return scheme, host, nil
+}
+
+func (s *Server) domainConflictsWithPlatformHost(site *platform.Site, host string) bool {
+	if site != nil && site.IsDefault {
+		return false
+	}
+	return normalizeRuntimeHost(host) != "" && normalizeRuntimeHost(host) == normalizeRuntimeHost(baseURLHost(s.baseURL))
 }
 
 func (s *Server) adminPosts(w http.ResponseWriter, r *http.Request) {

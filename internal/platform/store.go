@@ -249,6 +249,161 @@ func (s *Store) Sites() ([]*Site, error) {
 	return out, rows.Err()
 }
 
+func (s *Store) CreateSite(slug, name, dbPath, uploadDir string, managementAutomation bool) (*Site, error) {
+	if s == nil {
+		return nil, sql.ErrConnDone
+	}
+	slug = normalizeSlug(slug, "")
+	if slug == "" {
+		return nil, fmt.Errorf("站点标记不能为空")
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		name = slug
+	}
+	now := fmtTime(time.Now())
+	res, err := s.db.Exec(`INSERT INTO sites(slug,name,status,is_default,management_automation_enabled,db_path,upload_dir,created_at,updated_at)
+		VALUES(?,?,?,?,?,?,?,?,?)`,
+		slug, name, "enabled", 0, boolInt(managementAutomation), strings.TrimSpace(dbPath), strings.TrimSpace(uploadDir), now, now)
+	if err != nil {
+		return nil, err
+	}
+	id, _ := res.LastInsertId()
+	site, ok, err := s.GetSite(id)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, sql.ErrNoRows
+	}
+	return site, nil
+}
+
+func (s *Store) SetSiteStatus(id int64, status string) error {
+	if s == nil {
+		return nil
+	}
+	status = strings.TrimSpace(strings.ToLower(status))
+	if status != "enabled" && status != "disabled" {
+		return fmt.Errorf("无效站点状态")
+	}
+	res, err := s.db.Exec(`UPDATE sites SET status=?,updated_at=? WHERE id=?`, status, fmtTime(time.Now()), id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (s *Store) SetSiteAutomation(id int64, enabled bool) error {
+	if s == nil {
+		return nil
+	}
+	res, err := s.db.Exec(`UPDATE sites SET management_automation_enabled=?,updated_at=? WHERE id=?`, boolInt(enabled), fmtTime(time.Now()), id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (s *Store) SetDefaultSite(id int64) error {
+	if s == nil {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var status string
+	if err := tx.QueryRow(`SELECT status FROM sites WHERE id=?`, id).Scan(&status); err != nil {
+		return err
+	}
+	if status != "enabled" {
+		return fmt.Errorf("只能把启用站点设为默认站点")
+	}
+	now := fmtTime(time.Now())
+	if _, err := tx.Exec(`UPDATE sites SET is_default=0,updated_at=? WHERE is_default=1`, now); err != nil {
+		return err
+	}
+	res, err := tx.Exec(`UPDATE sites SET is_default=1,updated_at=? WHERE id=?`, now, id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return tx.Commit()
+}
+
+func (s *Store) SiteDomains() ([]*SiteDomain, error) {
+	if s == nil {
+		return nil, nil
+	}
+	rows, err := s.db.Query(`SELECT id,site_id,scheme,host,is_primary,redirect_to_primary,enabled,created_at,updated_at
+		FROM site_domains ORDER BY site_id ASC, is_primary DESC, id ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*SiteDomain
+	for rows.Next() {
+		d, err := scanSiteDomain(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) AddSiteDomain(siteID int64, scheme, host string, primary, redirect bool) error {
+	if s == nil {
+		return nil
+	}
+	scheme = strings.TrimSpace(strings.ToLower(scheme))
+	if scheme != "http" && scheme != "https" {
+		scheme = "https"
+	}
+	host = strings.TrimSpace(strings.ToLower(host))
+	if host == "" {
+		return fmt.Errorf("域名不能为空")
+	}
+	now := fmtTime(time.Now())
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if primary {
+		if _, err := tx.Exec(`UPDATE site_domains SET is_primary=0,updated_at=? WHERE site_id=?`, now, siteID); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(`INSERT INTO site_domains(site_id,scheme,host,is_primary,redirect_to_primary,enabled,created_at,updated_at)
+		VALUES(?,?,?,?,?,?,?,?)`, siteID, scheme, host, boolInt(primary), boolInt(redirect), 1, now, now); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *Store) GetAdminCredentials() (string, string, error) {
 	if s == nil {
 		return "", "", sql.ErrNoRows
@@ -368,6 +523,10 @@ type siteScanner interface {
 	Scan(dest ...any) error
 }
 
+type siteDomainScanner interface {
+	Scan(dest ...any) error
+}
+
 func scanSite(row siteScanner) (*Site, error) {
 	var s Site
 	var isDefault, management int
@@ -380,6 +539,21 @@ func scanSite(row siteScanner) (*Site, error) {
 	s.CreatedAt = parseTime(created)
 	s.UpdatedAt = parseTime(updated)
 	return &s, nil
+}
+
+func scanSiteDomain(row siteDomainScanner) (*SiteDomain, error) {
+	var d SiteDomain
+	var isPrimary, redirectToPrimary, enabled int
+	var created, updated string
+	if err := row.Scan(&d.ID, &d.SiteID, &d.Scheme, &d.Host, &isPrimary, &redirectToPrimary, &enabled, &created, &updated); err != nil {
+		return nil, err
+	}
+	d.IsPrimary = isPrimary == 1
+	d.RedirectToPrimary = redirectToPrimary == 1
+	d.Enabled = enabled == 1
+	d.CreatedAt = parseTime(created)
+	d.UpdatedAt = parseTime(updated)
+	return &d, nil
 }
 
 func normalizeSlug(v, fallback string) string {

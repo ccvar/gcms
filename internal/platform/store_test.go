@@ -74,4 +74,35 @@ func TestBootstrapDefaultSiteAndPlatformSession(t *testing.T) {
 	if err != nil || !ok || !sess.PwDismissed {
 		t.Fatalf("dismissed session: %#v ok=%v err=%v", sess, ok, err)
 	}
+
+	other, err := ps.CreateSite("blog", "Blog", filepath.Join(dir, "blog.db"), filepath.Join(dir, "blog-uploads"), true)
+	if err != nil {
+		t.Fatalf("create site: %v", err)
+	}
+	if err := ps.AddSiteDomain(other.ID, "https", "blog.example.com", true, true); err != nil {
+		t.Fatalf("add domain: %v", err)
+	}
+	domains, err := ps.SiteDomains()
+	if err != nil {
+		t.Fatalf("site domains: %v", err)
+	}
+	if len(domains) != 1 || domains[0].SiteID != other.ID || !domains[0].IsPrimary {
+		t.Fatalf("domains mismatch: %#v", domains)
+	}
+	if err := ps.SetSiteAutomation(other.ID, false); err != nil {
+		t.Fatalf("set automation: %v", err)
+	}
+	if err := ps.SetDefaultSite(other.ID); err != nil {
+		t.Fatalf("set default site: %v", err)
+	}
+	def, err := ps.DefaultSite()
+	if err != nil {
+		t.Fatalf("default site after switch: %v", err)
+	}
+	if def.ID != other.ID {
+		t.Fatalf("default site id = %d, want %d", def.ID, other.ID)
+	}
+	if err := ps.SetSiteStatus(site.ID, "disabled"); err != nil {
+		t.Fatalf("disable old default: %v", err)
+	}
 }

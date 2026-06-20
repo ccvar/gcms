@@ -42,6 +42,15 @@ func (s *Server) apiOpenAPI(w http.ResponseWriter, r *http.Request) {
 	_ = enc.Encode(automationOpenAPISpec(s.absForRequest(r, "/api/admin/v1")))
 }
 
+func (s *Server) apiPlatformOpenAPI(w http.ResponseWriter, r *http.Request) {
+	siteID := strings.TrimSpace(r.PathValue("siteID"))
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	enc := json.NewEncoder(w)
+	enc.SetIndent("", "  ")
+	_ = enc.Encode(automationOpenAPISpec(s.absForRequest(r, "/api/platform/v1/sites/"+siteID)))
+}
+
 func (s *Server) adminDownloadAutomationSkill(w http.ResponseWriter, r *http.Request) {
 	opts := automationSkillOptions{apiBase: s.absForRequest(r, "/api/admin/v1")}
 	if r.Method == http.MethodPost {
@@ -56,6 +65,10 @@ func (s *Server) adminDownloadAutomationSkill(w http.ResponseWriter, r *http.Req
 			return
 		}
 	}
+	s.writeAutomationSkillZip(w, opts)
+}
+
+func (s *Server) writeAutomationSkillZip(w http.ResponseWriter, opts automationSkillOptions) {
 	files, err := automationSkillFiles(opts)
 	if err != nil {
 		s.serverError(w, err)

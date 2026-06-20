@@ -12,6 +12,23 @@
   <section class="overview-panel">
     <div class="overview-panel-head">
       <div>
+        <h2>{{.Admin.T "admin.sites.create" "新建站点"}}</h2>
+        <p class="muted">{{.Admin.T "admin.sites.create_desc" "新站点会创建独立 cms.db 和 uploads 目录；域名可先留空，之后再绑定。"}}</p>
+      </div>
+    </div>
+    <form class="admin-form" method="post" action="/admin/sites" style="padding:1rem">
+      <input type="hidden" name="_csrf" value="{{.CSRF}}">
+      <label>{{.Admin.T "admin.sites.slug" "站点标记"}}<input name="slug" placeholder="blog" required></label>
+      <label>{{.Admin.T "admin.sites.display_name" "站点名称"}}<input name="name" placeholder="{{.Admin.T "admin.sites.display_name_placeholder" "品牌官网 / 文档中心"}}"></label>
+      <label>{{.Admin.T "admin.sites.domain_optional" "访问域名（可选）"}}<input name="domain" placeholder="blog.example.com"></label>
+      <label class="checkline"><input type="checkbox" name="automation" value="1" checked><span>{{.Admin.T "admin.sites.platform_api_enable_new" "允许通过平台入口调用自动化接口"}}</span></label>
+      <button class="btn btn-primary" type="submit">{{.Admin.T "admin.sites.create_submit" "创建站点"}}</button>
+    </form>
+  </section>
+
+  <section class="overview-panel">
+    <div class="overview-panel-head">
+      <div>
         <h2>{{.Admin.T "admin.sites.current" "当前站点池"}}</h2>
         <p class="muted">{{.Admin.T "admin.sites.current_desc" "默认站点已写入 system.db；后续新增站点、域名绑定和平台入口开关会在这里扩展。"}}</p>
       </div>
@@ -38,11 +55,41 @@
           <td>
             <div class="slug">{{.DBPath}}</div>
             <div class="muted slug">{{.UploadDir}}</div>
+            {{with index $.PlatformDomains .ID}}
+              <div class="muted slug">
+                {{range .}}{{if .IsPrimary}}★ {{end}}{{.Scheme}}://{{.Host}} {{end}}
+              </div>
+            {{end}}
           </td>
           <td class="right">
             <form method="post" action="/admin/sites/{{.ID}}/enter">
               <input type="hidden" name="_csrf" value="{{$.CSRF}}">
               <button class="btn" type="submit">{{$.Admin.T "admin.sites.enter" "进入后台"}}</button>
+            </form>
+            <a class="linkbtn" href="/admin/sites/{{.ID}}/preview" target="_blank" rel="noopener">{{$.Admin.T "admin.sites.preview" "预览"}}</a>
+            {{if .ManagementAutomationEnabled}}<a class="linkbtn" href="/admin/sites/{{.ID}}/automation/skill.zip">{{$.Admin.T "admin.sites.download_platform_kit" "下载平台接入包"}}</a>{{end}}
+            {{if not .IsDefault}}
+            <form method="post" action="/admin/sites/{{.ID}}/default">
+              <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+              <button class="linkbtn" type="submit">{{$.Admin.T "admin.sites.set_default" "设为默认"}}</button>
+            </form>
+            {{end}}
+            <form method="post" action="/admin/sites/{{.ID}}/status">
+              <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+              <input type="hidden" name="status" value="{{if eq .Status "enabled"}}disabled{{else}}enabled{{end}}">
+              <button class="linkbtn" type="submit">{{if eq .Status "enabled"}}{{$.Admin.T "admin.sites.disable" "关闭"}}{{else}}{{$.Admin.T "admin.sites.enable" "启用"}}{{end}}</button>
+            </form>
+            <form method="post" action="/admin/sites/{{.ID}}/automation">
+              <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+              <input type="hidden" name="enabled" value="{{if .ManagementAutomationEnabled}}0{{else}}1{{end}}">
+              <button class="linkbtn" type="submit">{{if .ManagementAutomationEnabled}}{{$.Admin.T "admin.sites.platform_api_disable" "关闭平台入口"}}{{else}}{{$.Admin.T "admin.sites.platform_api_enable" "开启平台入口"}}{{end}}</button>
+            </form>
+            <form method="post" action="/admin/sites/{{.ID}}/domains" style="margin-top:.5rem">
+              <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+              <input name="host" placeholder="www.example.com" style="max-width:14rem">
+              <input type="hidden" name="primary" value="1">
+              <input type="hidden" name="redirect" value="1">
+              <button class="linkbtn" type="submit">{{$.Admin.T "admin.sites.add_domain" "绑定域名"}}</button>
             </form>
           </td>
         </tr>

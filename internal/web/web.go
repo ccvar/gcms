@@ -49,6 +49,25 @@ type Server struct {
 
 	cloudflareMu    sync.Mutex
 	cloudflareTimer *time.Timer
+
+	runtimeMu sync.RWMutex
+	runtimes  *SiteRuntimePool
+}
+
+type SiteRuntime struct {
+	Site      *platform.Site
+	Store     *store.Store
+	BaseURL   string
+	UploadDir string
+	server    *Server
+}
+
+type SiteRuntimePool struct {
+	byID          map[int64]*SiteRuntime
+	byHost        map[string]*SiteRuntime
+	defaultSite   *SiteRuntime
+	platformHost  string
+	localPlatform bool
 }
 
 type contentCacheEntry struct {
@@ -224,13 +243,14 @@ type KnowledgeGroup struct {
 
 // View 是传给模板的统一数据载体。
 type View struct {
-	Site       seo.Site
-	SEO        seo.Meta
-	Nav        string
-	Year       int
-	Theme      string
-	ThemeStyle template.CSS
-	AssetVer   string
+	Site         seo.Site
+	SEO          seo.Meta
+	ForceNoindex bool
+	Nav          string
+	Year         int
+	Theme        string
+	ThemeStyle   template.CSS
+	AssetVer     string
 
 	// 多语种（前台）
 	Tr          *i18n.Tr
@@ -330,7 +350,8 @@ type View struct {
 	OverviewRecent        []*store.Post      // 后台概览：最近更新
 	OverviewStatus        []OverviewStatus   // 后台概览：系统状态
 	PlatformSites         []*platform.Site   // 平台综合后台：站点列表
-	PlatformCurrentSiteID int64              // 平台会话中当前选择的站点
+	PlatformDomains       map[int64][]*platform.SiteDomain
+	PlatformCurrentSiteID int64 // 平台会话中当前选择的站点
 }
 
 type OverviewStat struct {
@@ -551,12 +572,451 @@ func NewWithPlatform(st *store.Store, ps *platform.Store, baseURL, uploadDir str
 	}
 	s.i18n.LoadCustom(st.Setting("custom_locales")) // 合并后台新增的自定义语种预设
 	s.routes(assetsFS)
+	if ps != nil {
+		if err := s.reloadRuntimePool(); err != nil {
+			return nil, err
+		}
+	}
 	s.resumeCloudflareSync()
 	return s, nil
 }
 
 func (s *Server) Handler() http.Handler {
+	if s.runtimePool() != nil {
+		return http.HandlerFunc(s.serveWithRuntime)
+	}
+	return s.siteHandler()
+}
+
+func (s *Server) siteHandler() http.Handler {
 	return s.securityHeaders(s.withCloudflareCanonicalFrontend(s.withLocale(s.publicPageCache(s.mux))))
+}
+
+func (s *Server) runtimePool() *SiteRuntimePool {
+	s.runtimeMu.RLock()
+	defer s.runtimeMu.RUnlock()
+	return s.runtimes
+}
+
+func (s *Server) setRuntimePool(pool *SiteRuntimePool) {
+	s.runtimeMu.Lock()
+	s.runtimes = pool
+	s.runtimeMu.Unlock()
+}
+
+func (s *Server) reloadRuntimePool() error {
+	if s.platform == nil {
+		return nil
+	}
+	sites, err := s.platform.Sites()
+	if err != nil {
+		return err
+	}
+	domains, err := s.platform.SiteDomains()
+	if err != nil {
+		return err
+	}
+	domainsBySite := map[int64][]*platform.SiteDomain{}
+	for _, d := range domains {
+		if d == nil || !d.Enabled {
+			continue
+		}
+		domainsBySite[d.SiteID] = append(domainsBySite[d.SiteID], d)
+	}
+	pool := &SiteRuntimePool{
+		byID:          map[int64]*SiteRuntime{},
+		byHost:        map[string]*SiteRuntime{},
+		platformHost:  normalizeRuntimeHost(baseURLHost(s.baseURL)),
+		localPlatform: isLocalBaseURL(s.baseURL),
+	}
+	for _, site := range sites {
+		if site == nil {
+			continue
+		}
+		rt, err := s.runtimeForSite(site, domainsBySite[site.ID])
+		if err != nil {
+			return err
+		}
+		pool.byID[site.ID] = rt
+		if site.IsDefault || pool.defaultSite == nil {
+			pool.defaultSite = rt
+		}
+		if site.Status != "enabled" {
+			continue
+		}
+		for _, d := range domainsBySite[site.ID] {
+			host := normalizeRuntimeHost(d.Host)
+			if host != "" {
+				pool.byHost[host] = rt
+			}
+		}
+	}
+	if pool.defaultSite == nil {
+		return fmt.Errorf("平台数据库缺少启用的默认站点")
+	}
+	if pool.platformHost != "" {
+		pool.byHost[pool.platformHost] = pool.defaultSite
+	}
+	s.setRuntimePool(pool)
+	return nil
+}
+
+func (s *Server) runtimeForSite(site *platform.Site, domains []*platform.SiteDomain) (*SiteRuntime, error) {
+	baseURL := s.siteBaseURL(site, domains)
+	uploadDir := strings.TrimSpace(site.UploadDir)
+	if uploadDir == "" && site.IsDefault {
+		uploadDir = s.uploadDir
+	}
+	st := s.store
+	if !site.IsDefault && strings.TrimSpace(site.DBPath) != "" {
+		opened, err := store.Open(site.DBPath)
+		if err != nil {
+			return nil, fmt.Errorf("打开站点 %s 数据库失败: %w", site.Slug, err)
+		}
+		st = opened
+	}
+	rt := &SiteRuntime{Site: site, Store: st, BaseURL: baseURL, UploadDir: uploadDir}
+	if site.IsDefault {
+		s.baseURL = baseURL
+		s.uploadDir = uploadDir
+		rt.server = s
+		return rt, nil
+	}
+	rt.server = s.cloneForRuntime(rt)
+	return rt, nil
+}
+
+func (s *Server) cloneForRuntime(rt *SiteRuntime) *Server {
+	if strings.TrimSpace(rt.UploadDir) != "" {
+		_ = os.MkdirAll(rt.UploadDir, 0o755)
+	}
+	clone := &Server{
+		store:      rt.Store,
+		platform:   s.platform,
+		rnd:        s.rnd,
+		baseURL:    rt.BaseURL,
+		uploadDir:  rt.UploadDir,
+		sess:       s.sess,
+		login:      s.login,
+		apiLimiter: s.apiLimiter,
+		i18n:       i18n.New(),
+		assetsFS:   s.assetsFS,
+		assetVer:   s.assetVer,
+		imageSizes: s.imageSizes,
+		content:    map[string]contentCacheEntry{},
+		endpoints:  map[string]endpointCacheEntry{},
+		pages:      map[string]pageCacheEntry{},
+	}
+	clone.i18n.LoadCustom(rt.Store.Setting("custom_locales"))
+	clone.routes(s.assetsFS)
+	return clone
+}
+
+func (s *Server) siteBaseURL(site *platform.Site, domains []*platform.SiteDomain) string {
+	if site != nil && site.IsDefault {
+		return strings.TrimRight(strings.TrimSpace(s.baseURL), "/")
+	}
+	for _, d := range domains {
+		if d != nil && d.Enabled && d.IsPrimary {
+			if host := normalizeRuntimeHost(d.Host); host != "" {
+				scheme := strings.TrimSpace(d.Scheme)
+				if scheme != "http" && scheme != "https" {
+					scheme = "https"
+				}
+				return scheme + "://" + host
+			}
+		}
+	}
+	for _, d := range domains {
+		if d != nil && d.Enabled {
+			if host := normalizeRuntimeHost(d.Host); host != "" {
+				scheme := strings.TrimSpace(d.Scheme)
+				if scheme != "http" && scheme != "https" {
+					scheme = "https"
+				}
+				return scheme + "://" + host
+			}
+		}
+	}
+	return strings.TrimRight(strings.TrimSpace(s.baseURL), "/")
+}
+
+func baseURLHost(raw string) string {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Host == "" {
+		return strings.TrimSpace(raw)
+	}
+	return u.Host
+}
+
+func normalizeRuntimeHost(raw string) string {
+	raw = strings.TrimSpace(strings.ToLower(raw))
+	raw = strings.TrimPrefix(raw, "http://")
+	raw = strings.TrimPrefix(raw, "https://")
+	raw = strings.TrimSuffix(raw, "/")
+	if raw == "" || strings.ContainsAny(raw, " \t\r\n") {
+		return ""
+	}
+	return raw
+}
+
+func (p *SiteRuntimePool) runtimeByHost(rawHost string) (*SiteRuntime, bool) {
+	if p == nil {
+		return nil, false
+	}
+	host := normalizeRuntimeHost(rawHost)
+	if host != "" {
+		if rt := p.byHost[host]; rt != nil {
+			return rt, true
+		}
+	}
+	if host == "" || (p.localPlatform && isLocalHostOnly(host)) {
+		if p.defaultSite != nil {
+			return p.defaultSite, true
+		}
+	}
+	return nil, false
+}
+
+func (p *SiteRuntimePool) runtimeByID(id int64) (*SiteRuntime, bool) {
+	if p == nil {
+		return nil, false
+	}
+	if id > 0 {
+		if rt := p.byID[id]; rt != nil {
+			return rt, true
+		}
+	}
+	if p.defaultSite != nil {
+		return p.defaultSite, true
+	}
+	return nil, false
+}
+
+func isLocalHostOnly(host string) bool {
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.Trim(host, "[]")
+	switch strings.ToLower(host) {
+	case "localhost", "127.0.0.1", "::1", "0.0.0.0":
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *Server) serveWithRuntime(w http.ResponseWriter, r *http.Request) {
+	pool := s.runtimePool()
+	if pool == nil {
+		s.siteHandler().ServeHTTP(w, r)
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/api/platform/") {
+		s.servePlatformAPI(w, r, pool)
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/admin/sites/") && strings.Contains(r.URL.Path, "/preview") {
+		s.serveSitePreview(w, r, pool)
+		return
+	}
+	if siteID, target, ok := prefixedSiteAdminTarget(r.URL.Path); ok {
+		s.servePrefixedSiteAdmin(w, r, pool, siteID, target)
+		return
+	}
+	if platformOnlyPath(r.URL.Path) {
+		if !s.platformHostAllowed(r, pool) {
+			http.NotFound(w, r)
+			return
+		}
+		s.siteHandler().ServeHTTP(w, r)
+		return
+	}
+	if siteAdminPath(r.URL.Path) {
+		sess, _ := s.currentSession(r)
+		rt, ok := pool.runtimeByID(sess.currentSiteID)
+		if !ok || rt == nil || rt.server == nil {
+			http.Redirect(w, r, "/admin/sites", http.StatusSeeOther)
+			return
+		}
+		rt.server.siteHandler().ServeHTTP(w, r)
+		return
+	}
+	rt, ok := pool.runtimeByHost(requestHost(r))
+	if !ok || rt == nil || rt.server == nil {
+		http.NotFound(w, r)
+		return
+	}
+	rt.server.siteHandler().ServeHTTP(w, r)
+}
+
+func (s *Server) serveSitePreview(w http.ResponseWriter, r *http.Request, pool *SiteRuntimePool) {
+	if !s.platformHostAllowed(r, pool) {
+		http.NotFound(w, r)
+		return
+	}
+	if _, ok := s.currentSession(r); !ok {
+		http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+		return
+	}
+	siteID, rest, ok := sitePreviewTarget(r.URL.Path)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	rt, ok := pool.runtimeByID(siteID)
+	if !ok || rt == nil || rt.server == nil {
+		http.NotFound(w, r)
+		return
+	}
+	if rest == "" || rest == "/" {
+		rest = "/" + rt.server.defaultLang() + "/"
+	}
+	nextURL := *r.URL
+	nextURL.Path = rest
+	req := r.Clone(withPreviewNoindex(r.Context()))
+	req.URL = &nextURL
+	w.Header().Set("X-Robots-Tag", "noindex, nofollow")
+	w.Header().Set("Cache-Control", "no-store")
+	rt.server.siteHandler().ServeHTTP(w, req)
+}
+
+func (s *Server) servePrefixedSiteAdmin(w http.ResponseWriter, r *http.Request, pool *SiteRuntimePool, siteID int64, target string) {
+	if !s.platformHostAllowed(r, pool) {
+		http.NotFound(w, r)
+		return
+	}
+	if _, ok := s.currentSession(r); !ok {
+		http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+		return
+	}
+	rt, ok := pool.runtimeByID(siteID)
+	if !ok || rt == nil || rt.server == nil {
+		http.NotFound(w, r)
+		return
+	}
+	if err := s.sess.setCurrentSite(sessionToken(r), siteID); err != nil {
+		s.serverError(w, err)
+		return
+	}
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	http.Redirect(w, r, target, http.StatusSeeOther)
+}
+
+func prefixedSiteAdminTarget(path string) (int64, string, bool) {
+	const prefix = "/admin/sites/"
+	if !strings.HasPrefix(path, prefix) {
+		return 0, "", false
+	}
+	rest := strings.TrimPrefix(path, prefix)
+	sitePart, tail, ok := strings.Cut(rest, "/")
+	if !ok {
+		return 0, "", false
+	}
+	id, err := strconv.ParseInt(sitePart, 10, 64)
+	if err != nil || id <= 0 {
+		return 0, "", false
+	}
+	tail = "/" + strings.TrimPrefix(tail, "/")
+	head := strings.Trim(strings.SplitN(strings.TrimPrefix(tail, "/"), "/", 2)[0], "/")
+	switch head {
+	case "", "posts", "links", "pages", "settings", "visual":
+		if head == "" {
+			return id, "/admin", true
+		}
+		return id, "/admin" + tail, true
+	default:
+		return 0, "", false
+	}
+}
+
+func sitePreviewTarget(path string) (int64, string, bool) {
+	const prefix = "/admin/sites/"
+	if !strings.HasPrefix(path, prefix) {
+		return 0, "", false
+	}
+	rest := strings.TrimPrefix(path, prefix)
+	sitePart, tail, ok := strings.Cut(rest, "/preview")
+	if !ok {
+		return 0, "", false
+	}
+	id, err := strconv.ParseInt(strings.Trim(sitePart, "/"), 10, 64)
+	if err != nil || id <= 0 {
+		return 0, "", false
+	}
+	if tail == "" {
+		tail = "/"
+	}
+	if !strings.HasPrefix(tail, "/") {
+		tail = "/" + tail
+	}
+	return id, tail, true
+}
+
+func (s *Server) servePlatformAPI(w http.ResponseWriter, r *http.Request, pool *SiteRuntimePool) {
+	if !s.platformHostAllowed(r, pool) {
+		http.NotFound(w, r)
+		return
+	}
+	siteID, ok := platformAPISiteID(r.URL.Path)
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	rt, ok := pool.runtimeByID(siteID)
+	if !ok || rt == nil || rt.server == nil || rt.Site == nil {
+		http.NotFound(w, r)
+		return
+	}
+	if !rt.Site.ManagementAutomationEnabled {
+		writeJSON(w, http.StatusForbidden, map[string]string{"error": "platform_api_disabled", "message": "该站点未开启平台自动化入口。"})
+		return
+	}
+	rt.server.siteHandler().ServeHTTP(w, r)
+}
+
+func platformAPISiteID(path string) (int64, bool) {
+	const prefix = "/api/platform/v1/sites/"
+	if !strings.HasPrefix(path, prefix) {
+		return 0, false
+	}
+	rest := strings.TrimPrefix(path, prefix)
+	part, _, _ := strings.Cut(rest, "/")
+	id, err := strconv.ParseInt(part, 10, 64)
+	if err != nil || id <= 0 {
+		return 0, false
+	}
+	return id, true
+}
+
+func (s *Server) platformHostAllowed(r *http.Request, pool *SiteRuntimePool) bool {
+	if pool == nil || pool.platformHost == "" {
+		return true
+	}
+	host := normalizeRuntimeHost(requestHost(r))
+	if host == pool.platformHost {
+		return true
+	}
+	return pool.localPlatform && isLocalHostOnly(host)
+}
+
+func platformOnlyPath(path string) bool {
+	switch {
+	case path == "/admin/login", path == "/admin/language", path == "/admin/logout", path == "/admin/dismiss-pw":
+		return true
+	case path == "/admin/sites" || strings.HasPrefix(path, "/admin/sites/"):
+		return true
+	case strings.HasPrefix(path, "/api/platform/"):
+		return true
+	default:
+		return false
+	}
+}
+
+func siteAdminPath(path string) bool {
+	return path == "/admin" || strings.HasPrefix(path, "/admin/")
 }
 
 func (s *Server) withCloudflareCanonicalFrontend(next http.Handler) http.Handler {
@@ -735,6 +1195,7 @@ type ctxKey int
 
 const langKey ctxKey = 0
 const publicBaseKey ctxKey = 1
+const previewNoindexKey ctxKey = 2
 
 func withLang(ctx context.Context, lang string) context.Context {
 	return context.WithValue(ctx, langKey, lang)
@@ -742,6 +1203,15 @@ func withLang(ctx context.Context, lang string) context.Context {
 
 func withPublicBase(ctx context.Context, baseURL string) context.Context {
 	return context.WithValue(ctx, publicBaseKey, strings.TrimRight(strings.TrimSpace(baseURL), "/"))
+}
+
+func withPreviewNoindex(ctx context.Context) context.Context {
+	return context.WithValue(ctx, previewNoindexKey, true)
+}
+
+func previewNoindexFrom(ctx context.Context) bool {
+	v, _ := ctx.Value(previewNoindexKey).(bool)
+	return v
 }
 
 func langFrom(r *http.Request) string {
@@ -1308,6 +1778,9 @@ func publicPageCacheableRequest(r *http.Request) bool {
 	if r.Method != http.MethodGet || r.Header.Get("Range") != "" {
 		return false
 	}
+	if previewNoindexFrom(r.Context()) {
+		return false
+	}
 	return !isReservedPath(r.URL.Path)
 }
 
@@ -1486,6 +1959,16 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /api/admin/v1/{collection}/{id}/preview-url", s.apiCreatePreviewURL)
 	mux.HandleFunc("GET /api/admin/v1/{collection}/{id}", s.apiGetContent)
 	mux.HandleFunc("PATCH /api/admin/v1/{collection}/{id}", s.apiUpdateContent)
+	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/openapi.json", s.apiPlatformOpenAPI)
+	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/languages", s.apiLanguages)
+	mux.HandleFunc("POST /api/platform/v1/sites/{siteID}/media", s.apiUploadMedia)
+	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/{collection}/categories", s.apiListCategories)
+	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/{collection}", s.apiListContent)
+	mux.HandleFunc("POST /api/platform/v1/sites/{siteID}/{collection}", s.apiCreateContent)
+	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/{collection}/{id}/preview", s.apiPreviewContent)
+	mux.HandleFunc("POST /api/platform/v1/sites/{siteID}/{collection}/{id}/preview-url", s.apiCreatePreviewURL)
+	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/{collection}/{id}", s.apiGetContent)
+	mux.HandleFunc("PATCH /api/platform/v1/sites/{siteID}/{collection}/{id}", s.apiUpdateContent)
 
 	// 临时前台预览：由自动化 API 生成短期签名 URL，渲染真实前台模板但不索引、不缓存。
 	mux.HandleFunc("GET /preview/{collection}/{id}", s.frontendPreviewContent)
@@ -1498,7 +1981,13 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /admin/dismiss-pw", s.requireAuth(s.adminDismissPw))
 	mux.HandleFunc("GET /admin", s.requireAuth(s.adminDashboard))
 	mux.HandleFunc("GET /admin/sites", s.requireAuth(s.adminSites))
+	mux.HandleFunc("POST /admin/sites", s.requireAuth(s.adminCreateSite))
 	mux.HandleFunc("POST /admin/sites/{id}/enter", s.requireAuth(s.adminEnterSite))
+	mux.HandleFunc("GET /admin/sites/{id}/automation/skill.zip", s.requireAuth(s.adminDownloadPlatformAutomationSkill))
+	mux.HandleFunc("POST /admin/sites/{id}/default", s.requireAuth(s.adminSetDefaultSite))
+	mux.HandleFunc("POST /admin/sites/{id}/status", s.requireAuth(s.adminSetSiteStatus))
+	mux.HandleFunc("POST /admin/sites/{id}/automation", s.requireAuth(s.adminSetSiteAutomation))
+	mux.HandleFunc("POST /admin/sites/{id}/domains", s.requireAuth(s.adminAddSiteDomain))
 	mux.HandleFunc("GET /admin/posts", s.requireAuth(s.adminPosts))
 	mux.HandleFunc("GET /admin/visual", s.requireAuth(s.adminVisual))
 	mux.HandleFunc("POST /admin/visual/save", s.requireAuth(s.adminVisualSave))
@@ -1587,8 +2076,9 @@ func (s *Server) viewForLang(r *http.Request, lang, nav string) *View {
 	v := &View{
 		Site: st, Nav: nav, Year: time.Now().Year(), Theme: st.Theme, ThemeStyle: s.themeOverride(),
 		Tr: tr, Lang: lang, AssetVer: s.assetVer,
-		CategoryAll: s.archiveConfig(lang, "post"),
-		LinksAll:    s.archiveConfig(lang, "link"),
+		CategoryAll:  s.archiveConfig(lang, "post"),
+		LinksAll:     s.archiveConfig(lang, "link"),
+		ForceNoindex: previewNoindexFrom(r.Context()),
 	}
 	if r.URL.Query().Get("visual_edit") == "1" {
 		if _, ok := s.currentSession(r); ok {
