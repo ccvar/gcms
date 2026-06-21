@@ -3,6 +3,7 @@ package web
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -34,6 +35,10 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 	if err := defaultStore.SetSetting("admin_i18n::en", legacyAdminI18N); err != nil {
 		t.Fatalf("set legacy admin i18n: %v", err)
 	}
+	defaultToken, defaultPrefix := newAutomationToken()
+	if _, err := defaultStore.CreateAutomationKey("default bot", defaultToken, defaultPrefix, "posts:write"); err != nil {
+		t.Fatalf("create default automation key: %v", err)
+	}
 	defaultUploadDir := filepath.Join(dir, "default-uploads")
 	if err := os.MkdirAll(defaultUploadDir, 0o755); err != nil {
 		t.Fatalf("create default upload dir: %v", err)
@@ -54,7 +59,7 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 		t.Fatalf("set other site favicon: %v", err)
 	}
 	otherToken, otherPrefix := newAutomationToken()
-	if _, err := otherStore.CreateAutomationKey("blog bot", otherToken, otherPrefix, "languages:read"); err != nil {
+	if _, err := otherStore.CreateAutomationKey("blog bot", otherToken, otherPrefix, "languages:read,posts:write"); err != nil {
 		t.Fatalf("create other automation key: %v", err)
 	}
 	if err := otherStore.Close(); err != nil {
@@ -696,6 +701,33 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 		t.Fatalf("automation skill env api base = %q, want %q", envExample, otherAPIBase)
 	}
 
+	otherAPICreate := httptest.NewRecorder()
+	otherAPIBody, err := json.Marshal(map[string]any{
+		"title":  "API Other Site Draft",
+		"lang":   "zh",
+		"status": "draft",
+	})
+	if err != nil {
+		t.Fatalf("marshal other api post: %v", err)
+	}
+	otherAPIReq := httptest.NewRequest(http.MethodPost, "https://platform.test/api/platform/v1/sites/"+strconv.FormatInt(otherSite.ID, 10)+"/posts", bytes.NewReader(otherAPIBody))
+	otherAPIReq.Header.Set("Authorization", "Bearer "+otherToken)
+	otherAPIReq.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(otherAPICreate, otherAPIReq)
+	if otherAPICreate.Code != http.StatusCreated {
+		t.Fatalf("other api create status = %d, body = %s", otherAPICreate.Code, otherAPICreate.Body.String())
+	}
+	otherPosts := httptest.NewRecorder()
+	otherPostsReq := httptest.NewRequest(http.MethodGet, "https://platform.test/admin/posts?lang=zh&status=draft", nil)
+	otherPostsReq.AddCookie(&http.Cookie{Name: cookieName, Value: "prefix-token"})
+	h.ServeHTTP(otherPosts, otherPostsReq)
+	if otherPosts.Code != http.StatusOK {
+		t.Fatalf("other posts status = %d, body = %s", otherPosts.Code, otherPosts.Body.String())
+	}
+	if body := otherPosts.Body.String(); !strings.Contains(body, "API Other Site Draft") {
+		t.Fatalf("platform api-created draft was not visible in other-site admin posts")
+	}
+
 	visual := httptest.NewRecorder()
 	visualReq := httptest.NewRequest(http.MethodGet, "https://platform.test/admin/visual", nil)
 	visualReq.AddCookie(&http.Cookie{Name: cookieName, Value: "prefix-token"})
@@ -733,5 +765,42 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 	}
 	if body := defaultVisual.Body.String(); !strings.Contains(body, `href="`+defaultPreviewPath+`"`) || !strings.Contains(body, `src="`+defaultPreviewPath+`?visual_edit=1"`) || strings.Contains(body, `src="/zh/?visual_edit=1"`) {
 		t.Fatalf("default visual editor did not point at source preview")
+	}
+
+	apiCreate := httptest.NewRecorder()
+	apiBody, err := json.Marshal(map[string]any{
+		"title":  "API Default Site Draft",
+		"lang":   "zh",
+		"status": "draft",
+	})
+	if err != nil {
+		t.Fatalf("marshal default api post: %v", err)
+	}
+	apiReq := httptest.NewRequest(http.MethodPost, "https://platform.test/api/admin/v1/posts", bytes.NewReader(apiBody))
+	apiReq.Header.Set("Authorization", "Bearer "+defaultToken)
+	apiReq.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(apiCreate, apiReq)
+	if apiCreate.Code != http.StatusCreated {
+		t.Fatalf("default api create status = %d, body = %s", apiCreate.Code, apiCreate.Body.String())
+	}
+	defaultPosts := httptest.NewRecorder()
+	defaultPostsReq := httptest.NewRequest(http.MethodGet, "https://platform.test/admin/posts?lang=zh&status=draft", nil)
+	defaultPostsReq.AddCookie(&http.Cookie{Name: cookieName, Value: "default-current-token"})
+	h.ServeHTTP(defaultPosts, defaultPostsReq)
+	if defaultPosts.Code != http.StatusOK {
+		t.Fatalf("default posts status = %d, body = %s", defaultPosts.Code, defaultPosts.Body.String())
+	}
+	if body := defaultPosts.Body.String(); !strings.Contains(body, "API Default Site Draft") {
+		t.Fatalf("default api-created draft was not visible in admin posts/logs")
+	}
+	defaultDashboard := httptest.NewRecorder()
+	defaultDashboardReq := httptest.NewRequest(http.MethodGet, "https://platform.test/admin", nil)
+	defaultDashboardReq.AddCookie(&http.Cookie{Name: cookieName, Value: "default-current-token"})
+	h.ServeHTTP(defaultDashboard, defaultDashboardReq)
+	if defaultDashboard.Code != http.StatusOK {
+		t.Fatalf("default dashboard status = %d, body = %s", defaultDashboard.Code, defaultDashboard.Body.String())
+	}
+	if body := defaultDashboard.Body.String(); !strings.Contains(body, "创建文章（草稿 · 中文）：API Default Site Draft") || !strings.Contains(body, "/admin/posts/") {
+		t.Fatalf("default dashboard did not render api log with target link")
 	}
 }

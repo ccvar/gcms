@@ -457,7 +457,7 @@ func (s *Server) apiCreateContent(w http.ResponseWriter, r *http.Request) {
 	}
 	p.ID = id
 	created, _ := s.store.GetPostByID(id)
-	_ = s.store.CreateAutomationLog(auth.key.ID, "create", kind, id, fmt.Sprintf("创建%s：%s", apiKindName(kind), p.Title))
+	_ = s.store.CreateAutomationLog(auth.key.ID, "create", kind, id, s.automationContentLogMessage("create", kind, created))
 	s.clearGeneratedCaches()
 	writeJSON(w, http.StatusCreated, map[string]any{"item": s.apiContentItem(created, true)})
 }
@@ -506,9 +506,51 @@ func (s *Server) apiUpdateContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	updated, _ := s.store.GetPostByID(next.ID)
-	_ = s.store.CreateAutomationLog(auth.key.ID, "update", kind, next.ID, fmt.Sprintf("更新%s：%s", apiKindName(kind), next.Title))
+	_ = s.store.CreateAutomationLog(auth.key.ID, "update", kind, next.ID, s.automationContentLogMessage("update", kind, &next))
 	s.clearGeneratedCaches()
 	writeJSON(w, http.StatusOK, map[string]any{"item": s.apiContentItem(updated, true)})
+}
+
+func (s *Server) automationContentLogMessage(action, kind string, p *store.Post) string {
+	actionLabel := "更新"
+	if action == "create" {
+		actionLabel = "创建"
+	}
+	title := ""
+	status := ""
+	lang := ""
+	if p != nil {
+		title = p.Title
+		status = p.Status
+		lang = p.Lang
+	}
+	return fmt.Sprintf("%s%s（%s · %s）：%s", actionLabel, apiKindName(kind), apiStatusLabel(status), s.apiLangLabel(lang), title)
+}
+
+func apiStatusLabel(status string) string {
+	switch strings.TrimSpace(status) {
+	case "published":
+		return "已发布"
+	case "scheduled":
+		return "定时"
+	case "draft", "":
+		return "草稿"
+	default:
+		return strings.TrimSpace(status)
+	}
+}
+
+func (s *Server) apiLangLabel(code string) string {
+	code = strings.TrimSpace(code)
+	for _, loc := range s.locales() {
+		if loc.Code == code {
+			return loc.Name
+		}
+	}
+	if code == "" {
+		return s.defaultLang()
+	}
+	return code
 }
 
 func (s *Server) requireAutomationToken(w http.ResponseWriter, r *http.Request) (*automationAuth, bool) {

@@ -401,6 +401,13 @@ func TestAPICreatePostUsesConfiguredDefaultAuthor(t *testing.T) {
 	if got.Item.Author != "Docs Team" {
 		t.Fatalf("author = %q, want Docs Team", got.Item.Author)
 	}
+	logs, err := s.store.ListAutomationLogs(1)
+	if err != nil {
+		t.Fatalf("list automation logs: %v", err)
+	}
+	if len(logs) != 1 || !strings.Contains(logs[0].Message, "创建文章（草稿 · English）：Default Author Draft") {
+		t.Fatalf("automation log message = %#v", logs)
+	}
 }
 
 func TestAPIGetPostUsesDefaultAuthorForBlankAuthor(t *testing.T) {

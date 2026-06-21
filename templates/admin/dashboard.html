@@ -124,7 +124,7 @@
         <div class="overview-log-list">
           {{range .AutomationLogs}}
           <div class="overview-log">
-            <strong>{{.Message}}</strong>
+            {{if and (eq .TargetType "post") (gt .TargetID 0)}}<a class="overview-log-title" href="/admin/posts/{{.TargetID}}/edit">{{.Message}}</a>{{else if and (eq .TargetType "link") (gt .TargetID 0)}}<a class="overview-log-title" href="/admin/links/{{.TargetID}}/edit">{{.Message}}</a>{{else if and (eq .TargetType "page") (gt .TargetID 0)}}<a class="overview-log-title" href="/admin/pages/{{.TargetID}}/edit">{{.Message}}</a>{{else}}<strong>{{.Message}}</strong>{{end}}
             <span>{{if .KeyName}}{{.KeyName}}{{else}}{{$.Admin.T "admin.dashboard.automation_unknown_key" "未知访问权限"}}{{end}} · {{adminDateTime .CreatedAt}}</span>
           </div>
           {{else}}

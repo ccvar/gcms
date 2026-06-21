@@ -962,7 +962,7 @@
             {{range .AutomationLogs}}
             <tr>
               <th>{{.Action}}</th>
-              <td>{{.Message}}<div class="slug">{{.KeyName}} · {{.TargetType}} #{{.TargetID}} · {{.CreatedAt.Format "2006-01-02 15:04"}}</div></td>
+              <td>{{if and (eq .TargetType "post") (gt .TargetID 0)}}<a href="/admin/posts/{{.TargetID}}/edit">{{.Message}}</a>{{else if and (eq .TargetType "link") (gt .TargetID 0)}}<a href="/admin/links/{{.TargetID}}/edit">{{.Message}}</a>{{else if and (eq .TargetType "page") (gt .TargetID 0)}}<a href="/admin/pages/{{.TargetID}}/edit">{{.Message}}</a>{{else}}{{.Message}}{{end}}<div class="slug">{{.KeyName}} · {{.TargetType}} #{{.TargetID}} · {{.CreatedAt.Format "2006-01-02 15:04"}}</div></td>
             </tr>
             {{end}}
           </tbody>

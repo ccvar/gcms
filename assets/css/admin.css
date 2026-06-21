@@ -525,7 +525,8 @@ body.admin { background: var(--line-soft); }
 .overview-table th:last-child, .overview-table td:last-child { padding-right: 1.1rem; }
 .overview-title-line { min-width: 0; }
 .overview-log { display: grid; gap: .25rem; padding: .75rem .85rem; border: 1px solid var(--line-soft); border-radius: 8px; }
-.overview-log strong { font-size: .86rem; line-height: 1.4; }
+.overview-log strong, .overview-log-title { font-size: .86rem; line-height: 1.4; font-weight: 700; color: var(--ink); }
+.overview-log-title:hover { color: var(--accent); }
 .overview-log span { color: var(--muted); font-size: .76rem; line-height: 1.45; }
 @media (prefers-color-scheme: dark) {
   .overview-task.ok { border-left-color: #7ed99f; }
