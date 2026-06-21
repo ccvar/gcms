@@ -576,19 +576,26 @@ func (s *Server) populatePlatformSites(v *View) {
 func (s *Server) platformSiteIconURL(siteID int64) string {
 	raw := ""
 	uploadDir := ""
+	var site *platform.Site
+	if s.platform != nil {
+		if loaded, found, err := s.platform.GetSite(siteID); err == nil && found {
+			site = loaded
+		}
+	}
 	if rt, ok := s.runtimePool().runtimeByID(siteID); ok && rt != nil && rt.Store != nil {
 		raw = strings.TrimSpace(rt.Store.Setting("site.favicon"))
 		uploadDir = strings.TrimSpace(rt.UploadDir)
 	}
-	if raw == "" && s.platform != nil {
-		site, found, err := s.platform.GetSite(siteID)
-		if err == nil && found {
-			if uploadDir == "" {
-				uploadDir = strings.TrimSpace(site.UploadDir)
+	if site != nil && uploadDir == "" {
+		uploadDir = strings.TrimSpace(site.UploadDir)
+	}
+	if raw == "" && site != nil {
+		if strings.TrimSpace(site.DBPath) == "" {
+			if icon := s.legacyUploadFaviconURL(siteID, uploadDir); icon != "" {
+				return icon
 			}
-			if strings.TrimSpace(site.DBPath) == "" {
-				return s.legacyUploadFaviconURL(siteID, uploadDir)
-			}
+		}
+		if strings.TrimSpace(site.DBPath) != "" {
 			if _, statErr := os.Stat(site.DBPath); statErr == nil {
 				st, openErr := store.Open(site.DBPath)
 				if openErr == nil {
@@ -599,7 +606,13 @@ func (s *Server) platformSiteIconURL(siteID int64) string {
 		}
 	}
 	if raw == "" {
-		return s.legacyUploadFaviconURL(siteID, uploadDir)
+		if icon := s.legacyUploadFaviconURL(siteID, uploadDir); icon != "" {
+			return icon
+		}
+		if site != nil && site.IsDefault {
+			return defaultFaviconPath
+		}
+		return ""
 	}
 	if strings.HasPrefix(raw, "/uploads/") {
 		name, ok := uploadNameFromPath(strings.Split(raw, "?")[0])
@@ -608,7 +621,7 @@ func (s *Server) platformSiteIconURL(siteID int64) string {
 		}
 		return s.adminSiteUploadURL(siteID, name)
 	}
-	if strings.HasPrefix(raw, "/assets/") || strings.HasPrefix(raw, "data:image/") {
+	if strings.HasPrefix(raw, "/assets/") || raw == "/favicon.ico" || strings.HasPrefix(raw, "data:image/") {
 		return raw
 	}
 	u, err := url.Parse(raw)

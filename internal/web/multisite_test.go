@@ -203,6 +203,15 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 	if defaultIcon.Code != http.StatusOK {
 		t.Fatalf("default site legacy upload icon status = %d, body = %s", defaultIcon.Code, defaultIcon.Body.String())
 	}
+	if err := os.Remove(filepath.Join(defaultUploadDir, "favicon.ico")); err != nil {
+		t.Fatalf("remove default legacy favicon: %v", err)
+	}
+	if got := srv.platformSiteIconURL(defaultSite.ID); got != defaultFaviconPath {
+		t.Fatalf("default site icon fallback = %q, want %q", got, defaultFaviconPath)
+	}
+	if err := os.WriteFile(filepath.Join(defaultUploadDir, "favicon.ico"), []byte("default icon"), 0o644); err != nil {
+		t.Fatalf("restore default legacy favicon: %v", err)
+	}
 	otherIcon := httptest.NewRecorder()
 	otherIconReq := httptest.NewRequest(http.MethodGet, "https://platform.test"+otherIconPath, nil)
 	otherIconReq.AddCookie(loginCookie)
