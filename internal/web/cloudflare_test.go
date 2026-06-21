@@ -554,6 +554,12 @@ func TestCloudflareCanonicalFrontendRedirectsOrigin(t *testing.T) {
 	if got := s.cloudflareCanonicalFrontendRedirect(r); got != "" {
 		t.Fatalf("admin path should not redirect, got %q", got)
 	}
+	previewReq := httptest.NewRequest(http.MethodGet, "http://origin.example.net/zh/?visual_edit=1", nil)
+	previewReq.Host = "origin.example.net"
+	previewReq = previewReq.WithContext(withPreviewNoindex(previewReq.Context()))
+	if got := s.cloudflareCanonicalFrontendRedirect(previewReq); got != "" {
+		t.Fatalf("site preview should not redirect, got %q", got)
+	}
 }
 
 func TestCloudflareCanonicalFrontendSourceMode(t *testing.T) {

@@ -1106,6 +1106,10 @@ func siteAdminPath(path string) bool {
 
 func (s *Server) withCloudflareCanonicalFrontend(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if previewNoindexFrom(r.Context()) {
+			next.ServeHTTP(w, r)
+			return
+		}
 		action := s.cloudflareSourceFrontendAction(r)
 		if target := action.redirectURL; target != "" {
 			http.Redirect(w, r, target, http.StatusMovedPermanently)
@@ -1133,6 +1137,9 @@ func (s *Server) cloudflareCanonicalFrontendNoindex(r *http.Request) bool {
 
 func (s *Server) cloudflareSourceFrontendAction(r *http.Request) cloudflareSourceFrontendAction {
 	if r == nil || (r.Method != http.MethodGet && r.Method != http.MethodHead) {
+		return cloudflareSourceFrontendAction{}
+	}
+	if previewNoindexFrom(r.Context()) {
 		return cloudflareSourceFrontendAction{}
 	}
 	if cloudflareCanonicalFrontendExemptPath(r.URL.Path) {

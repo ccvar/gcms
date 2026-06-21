@@ -612,7 +612,7 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 	if renamedPlatformPage.Code != http.StatusOK {
 		t.Fatalf("renamed platform page status = %d, body = %s", renamedPlatformPage.Code, renamedPlatformPage.Body.String())
 	}
-	if body := renamedPlatformPage.Body.String(); !strings.Contains(body, "Renamed Blog Site") {
+	if body := renamedPlatformPage.Body.String(); !strings.Contains(body, "Renamed Blog Site") || !strings.Contains(body, `/admin/sites/`+strconv.FormatInt(otherSite.ID, 10)+`/preview/zh/`) || strings.Contains(body, `/admin/sites/`+strconv.FormatInt(otherSite.ID, 10)+`/preview"`) {
 		t.Fatalf("platform page did not render renamed site: %s", body)
 	}
 

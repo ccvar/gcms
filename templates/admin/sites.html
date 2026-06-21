@@ -41,7 +41,7 @@
               <input type="hidden" name="_csrf" value="{{$.CSRF}}">
               <button class="btn btn-primary icon-text" type="submit">{{template "site-icon-enter"}}<span>{{$.Admin.T "admin.sites.enter" "进入后台"}}</span></button>
             </form>
-            <a class="site-card-preview" href="/admin/sites/{{.ID}}/preview" target="_blank" rel="noopener"><span>{{$.Admin.T "admin.nav.view_site" "查看站点"}}</span><span class="ext-arrow" aria-hidden="true">↗</span></a>
+            <a class="site-card-preview" href="/admin/sites/{{.ID}}/preview/{{$.EditLang}}/" target="_blank" rel="noopener"><span>{{$.Admin.T "admin.nav.view_site" "查看站点"}}</span><span class="ext-arrow" aria-hidden="true">↗</span></a>
           </div>
 
           {{if eq .Status "disabled"}}
