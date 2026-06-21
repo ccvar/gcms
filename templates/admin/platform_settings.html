@@ -2,7 +2,7 @@
   <div class="admin-head platform-page-head">
     <div>
       <h1>{{.Admin.T "admin.platform.settings.title" "设置"}}</h1>
-      <p class="muted">{{.Admin.T "admin.platform.settings.subtitle" "管理平台级安全、界面文字和系统更新。"}}</p>
+      <p class="muted">{{.Admin.T "admin.platform.settings.subtitle" "管理平台级安全、界面文字、系统更新和归档站点。"}}</p>
     </div>
   </div>
 
@@ -33,9 +33,19 @@
       </span>
       <span class="platform-settings-card-go" aria-hidden="true">↗</span>
     </a>
+
+    <a class="platform-settings-card" href="/admin/archived-sites">
+      <span class="platform-settings-card-icon">{{template "platform-settings-icon-archive"}}</span>
+      <span class="platform-settings-card-copy">
+        <strong>{{.Admin.T "admin.archived_sites.title" "归档站点"}}</strong>
+        <em>{{.Admin.T "admin.platform.settings.archived_desc" "查看已归档站点，并在确认后彻底删除归档文件。"}}</em>
+      </span>
+      <span class="platform-settings-card-go" aria-hidden="true">↗</span>
+    </a>
   </section>
 {{end}}
 
 {{define "platform-settings-icon-lock"}}<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>{{end}}
 {{define "platform-settings-icon-type"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7V5h16v2"/><path d="M9 20h6"/><path d="M12 5v15"/></svg>{{end}}
 {{define "platform-settings-icon-update"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>{{end}}
+{{define "platform-settings-icon-archive"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16"/><path d="M6 7v13h12V7"/><path d="M9 11h6"/><path d="M8 4h8l1 3H7z"/></svg>{{end}}

@@ -1,0 +1,85 @@
+{{define "body"}}
+  <div class="admin-head platform-page-head">
+    <div>
+      <nav class="platform-breadcrumb" aria-label="{{.Admin.T "admin.platform.settings.title" "设置"}}">
+        <a href="/admin/platform/settings">{{.Admin.T "admin.platform.settings.title" "设置"}}</a>
+        <span>/</span>
+        <strong>{{.Admin.T "admin.archived_sites.title" "归档站点"}}</strong>
+      </nav>
+      <h1>{{.Admin.T "admin.archived_sites.title" "归档站点"}}</h1>
+      <p class="muted">{{.Admin.T "admin.archived_sites.subtitle" "管理已经从站点列表移除、但仍保留文件的归档站点。"}}</p>
+    </div>
+  </div>
+
+  <nav class="platform-settings-subnav" aria-label="{{.Admin.T "admin.platform.settings.title" "设置"}}">
+    <a href="/admin/security">{{template "platform-settings-icon-lock"}}<span>{{.Admin.T "admin.security.title" "安全"}}</span></a>
+    <a href="/admin/admin-i18n">{{template "platform-settings-icon-type"}}<span>{{.Admin.T "admin.settings.admin_i18n.title" "界面文字"}}</span></a>
+    <a href="/admin/updates">{{template "platform-settings-icon-update"}}<span>{{.Admin.T "admin.settings.menu.updates" "系统更新"}}</span></a>
+    <a class="active" href="/admin/archived-sites" aria-current="page">{{template "platform-settings-icon-archive"}}<span>{{.Admin.T "admin.archived_sites.title" "归档站点"}}</span></a>
+  </nav>
+
+  <section class="overview-panel platform-settings-panel archived-sites-panel">
+    <div class="overview-panel-head">
+      <div>
+        <h2>{{.Admin.T "admin.archived_sites.list_title" "归档列表"}}</h2>
+        <p class="muted">{{.Admin.T "admin.archived_sites.desc" "归档站点不会出现在站点管理中；彻底删除会移除归档目录，无法从后台恢复。"}}</p>
+      </div>
+    </div>
+    {{if .Flash}}<div class="flash platform-settings-flash">{{.Flash}}</div>{{end}}
+    {{if .FormErr}}<div class="form-err platform-settings-flash">{{.FormErr}}</div>{{end}}
+    <div class="platform-settings-body archived-sites-body">
+      {{if .ArchivedSites}}
+      <div class="archived-site-list">
+        {{range .ArchivedSites}}
+        <article class="archived-site-card">
+          <div class="archived-site-top">
+            <div class="archived-site-main">
+              {{with index $.ArchivedSiteIcons .ID}}<img class="archived-site-icon" src="{{.}}" alt="" decoding="async">{{else}}<span class="archived-site-icon fallback">{{template "site-icon-empty"}}</span>{{end}}
+              <span class="archived-site-copy">
+                <strong>{{.Name}}</strong>
+                <span class="archived-site-slug">
+                  <code>{{.Slug}}</code>
+                  <button class="slug-copy-btn" type="button" data-copy-text="{{.Slug}}" data-copy-label="{{$.Admin.T "admin.archived_sites.copy_slug" "复制标记"}}" data-copy-done="{{$.Admin.T "admin.archived_sites.copied" "已复制"}}" title="{{$.Admin.T "admin.archived_sites.copy_slug" "复制标记"}}" aria-label="{{$.Admin.T "admin.archived_sites.copy_slug" "复制标记"}}">{{template "platform-settings-icon-copy"}}</button>
+                </span>
+              </span>
+            </div>
+            <span class="archived-site-badge">{{$.Admin.T "admin.archived_sites.archived_at" "归档时间"}} {{adminDateTime .ArchivedAt}}</span>
+          </div>
+          <dl class="archived-site-meta">
+            <div>
+              <dt>{{$.Admin.T "admin.archived_sites.original_id" "原站点 ID"}}</dt>
+              <dd>{{.OriginalSiteID}}</dd>
+            </div>
+            <div>
+              <dt>{{$.Admin.T "admin.archived_sites.archive_path" "归档目录"}}</dt>
+              <dd><code>{{.ArchivePath}}</code></dd>
+            </div>
+          </dl>
+          <form class="archived-site-actions" method="post" action="/admin/archived-sites/{{.ID}}/restore" data-confirm-title="{{$.Admin.T "admin.archived_sites.restore_confirm_title" "确认恢复站点"}}" data-confirm-ok="{{$.Admin.T "admin.archived_sites.restore" "恢复站点"}}" data-confirm="{{printf ($.Admin.T "admin.archived_sites.restore_confirm" "恢复归档站点「%s」？恢复后会重新出现在站点管理中，当前仍保持关闭状态。") .Name}}">
+            <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+            <input type="hidden" name="confirm_slug">
+            <div class="archived-site-buttons">
+              <button class="btn archived-site-restore" type="submit" formaction="/admin/archived-sites/{{.ID}}/restore" data-confirm-title="{{$.Admin.T "admin.archived_sites.restore_confirm_title" "确认恢复站点"}}" data-confirm-ok="{{$.Admin.T "admin.archived_sites.restore" "恢复站点"}}" data-confirm="{{printf ($.Admin.T "admin.archived_sites.restore_confirm" "恢复归档站点「%s」？恢复后会重新出现在站点管理中，当前仍保持关闭状态。") .Name}}" data-confirm-input-name="confirm_slug" data-confirm-input-label="{{$.Admin.T "admin.archived_sites.confirm_slug" "输入站点标记确认"}}" data-confirm-input-placeholder="{{.Slug}}" data-confirm-input-match="{{.Slug}}" data-confirm-input-mismatch="{{$.Admin.T "admin.archived_sites.confirm_mismatch" "站点标记不匹配。"}}" data-confirm-input-copy="{{.Slug}}" data-confirm-input-copy-label="{{$.Admin.T "admin.archived_sites.copy_slug" "复制标记"}}" data-confirm-input-copied="{{$.Admin.T "admin.archived_sites.copied" "已复制"}}">{{template "platform-settings-icon-restore"}}<span>{{$.Admin.T "admin.archived_sites.restore" "恢复站点"}}</span></button>
+              <button class="btn btn-danger" type="submit" formaction="/admin/archived-sites/{{.ID}}/delete" data-confirm-title="{{$.Admin.T "admin.archived_sites.delete_confirm_title" "确认彻底删除"}}" data-confirm-ok="{{$.Admin.T "admin.archived_sites.delete" "彻底删除"}}" data-confirm="{{printf ($.Admin.T "admin.archived_sites.delete_confirm" "彻底删除归档站点「%s」？归档目录会被删除，此操作不可撤销。") .Name}}" data-confirm-input-name="confirm_slug" data-confirm-input-label="{{$.Admin.T "admin.archived_sites.confirm_slug" "输入站点标记确认"}}" data-confirm-input-placeholder="{{.Slug}}" data-confirm-input-match="{{.Slug}}" data-confirm-input-mismatch="{{$.Admin.T "admin.archived_sites.confirm_mismatch" "站点标记不匹配。"}}" data-confirm-input-copy="{{.Slug}}" data-confirm-input-copy-label="{{$.Admin.T "admin.archived_sites.copy_slug" "复制标记"}}" data-confirm-input-copied="{{$.Admin.T "admin.archived_sites.copied" "已复制"}}">{{template "platform-settings-icon-trash"}}<span>{{$.Admin.T "admin.archived_sites.delete" "彻底删除"}}</span></button>
+            </div>
+          </form>
+        </article>
+        {{end}}
+      </div>
+      {{else}}
+      <div class="overview-empty compact">
+        <strong>{{.Admin.T "admin.archived_sites.empty" "暂无归档站点。"}}</strong>
+        <span>{{.Admin.T "admin.archived_sites.empty_desc" "关闭非默认站点后，可以在站点管理里执行归档删除。"}}</span>
+      </div>
+      {{end}}
+    </div>
+  </section>
+{{end}}
+
+{{define "platform-settings-icon-lock"}}<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>{{end}}
+{{define "platform-settings-icon-type"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7V5h16v2"/><path d="M9 20h6"/><path d="M12 5v15"/></svg>{{end}}
+{{define "platform-settings-icon-update"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>{{end}}
+{{define "platform-settings-icon-archive"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16"/><path d="M6 7v13h12V7"/><path d="M9 11h6"/><path d="M8 4h8l1 3H7z"/></svg>{{end}}
+{{define "platform-settings-icon-restore"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v6h6"/><path d="M12 8v5l3 2"/></svg>{{end}}
+{{define "platform-settings-icon-trash"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="m19 6-1 14H6L5 6"/><path d="M10 11v5"/><path d="M14 11v5"/></svg>{{end}}
+{{define "platform-settings-icon-copy"}}<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>{{end}}

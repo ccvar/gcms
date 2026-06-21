@@ -321,6 +321,113 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 	if len(recentEmpty) != 0 {
 		t.Fatalf("empty site seeded %d content items, want 0", len(recentEmpty))
 	}
+	emptyRoot := filepath.Dir(emptySite.DBPath)
+	if _, err := os.Stat(emptyRoot); err != nil {
+		t.Fatalf("empty site root before archive: %v", err)
+	}
+	archiveEnabled := postPlatformForm("/admin/sites/"+strconv.FormatInt(emptySite.ID, 10)+"/archive", nil)
+	if archiveEnabled.Code != http.StatusBadRequest {
+		t.Fatalf("archive enabled site status = %d, want 400", archiveEnabled.Code)
+	}
+	disableEmpty := postPlatformForm("/admin/sites/"+strconv.FormatInt(emptySite.ID, 10)+"/status", url.Values{"status": {"disabled"}})
+	if disableEmpty.Code != http.StatusSeeOther || disableEmpty.Header().Get("Location") != "/admin/sites" {
+		t.Fatalf("disable empty site status/location = %d %q", disableEmpty.Code, disableEmpty.Header().Get("Location"))
+	}
+	disabledEmptyPage := getPlatform("/admin/sites")
+	if disabledEmptyPage.Code != http.StatusOK {
+		t.Fatalf("disabled empty page status = %d, body = %s", disabledEmptyPage.Code, disabledEmptyPage.Body.String())
+	}
+	if body := disabledEmptyPage.Body.String(); !strings.Contains(body, `/admin/sites/`+strconv.FormatInt(emptySite.ID, 10)+`/archive`) || !strings.Contains(body, "归档删除") || !strings.Contains(body, `site-card is-disabled`) || !strings.Contains(body, "站点已关闭") {
+		t.Fatalf("disabled site did not render archive action and disabled mask: %s", body)
+	}
+	archiveEmpty := postPlatformForm("/admin/sites/"+strconv.FormatInt(emptySite.ID, 10)+"/archive", nil)
+	if archiveEmpty.Code != http.StatusSeeOther || archiveEmpty.Header().Get("Location") != "/admin/sites" {
+		t.Fatalf("archive empty site status/location = %d %q, body = %s", archiveEmpty.Code, archiveEmpty.Header().Get("Location"), archiveEmpty.Body.String())
+	}
+	if _, ok, err := ps.GetSite(emptySite.ID); err != nil || ok {
+		t.Fatalf("archived site should not remain active: ok=%v err=%v", ok, err)
+	}
+	archived, err := ps.ArchivedSites()
+	if err != nil {
+		t.Fatalf("list archived sites: %v", err)
+	}
+	if len(archived) != 1 || archived[0].Slug != "empty" || archived[0].OriginalSiteID != emptySite.ID {
+		t.Fatalf("archived sites mismatch: %#v", archived)
+	}
+	archivePath := archived[0].ArchivePath
+	if _, err := os.Stat(emptyRoot); !os.IsNotExist(err) {
+		t.Fatalf("empty active root after archive err = %v, want not exist", err)
+	}
+	if _, err := os.Stat(filepath.Join(archivePath, "cms.db")); err != nil {
+		t.Fatalf("archived cms.db missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(archivePath, "archive.json")); err != nil {
+		t.Fatalf("archive manifest missing: %v", err)
+	}
+	archivedPage := getPlatform("/admin/archived-sites")
+	if archivedPage.Code != http.StatusOK {
+		t.Fatalf("archived sites page status = %d, body = %s", archivedPage.Code, archivedPage.Body.String())
+	}
+	if body := archivedPage.Body.String(); !strings.Contains(body, "Empty Runtime Site") || !strings.Contains(body, `class="archived-site-card"`) || !strings.Contains(body, `class="archived-site-icon fallback"`) || !strings.Contains(body, `data-copy-text="empty"`) || !strings.Contains(body, `data-confirm-input-name="confirm_slug"`) || !strings.Contains(body, `data-confirm-input-copy="empty"`) || !strings.Contains(body, `formaction="/admin/archived-sites/`+strconv.FormatInt(archived[0].ID, 10)+`/restore"`) || !strings.Contains(body, `formaction="/admin/archived-sites/`+strconv.FormatInt(archived[0].ID, 10)+`/delete"`) || !strings.Contains(body, "恢复站点") || !strings.Contains(body, "彻底删除") {
+		t.Fatalf("archived sites page did not render archive record: %s", body)
+	}
+	restoreWrongSlug := postPlatformForm("/admin/archived-sites/"+strconv.FormatInt(archived[0].ID, 10)+"/restore", url.Values{"confirm_slug": {"wrong"}})
+	if restoreWrongSlug.Code != http.StatusSeeOther || restoreWrongSlug.Header().Get("Location") != "/admin/archived-sites" {
+		t.Fatalf("restore wrong slug status/location = %d %q", restoreWrongSlug.Code, restoreWrongSlug.Header().Get("Location"))
+	}
+	if archivedStillThere, err := ps.ArchivedSites(); err != nil || len(archivedStillThere) != 1 {
+		t.Fatalf("wrong slug should keep archive before restore: len=%d err=%v", len(archivedStillThere), err)
+	}
+	restoreArchived := postPlatformForm("/admin/archived-sites/"+strconv.FormatInt(archived[0].ID, 10)+"/restore", url.Values{"confirm_slug": {"empty"}})
+	if restoreArchived.Code != http.StatusSeeOther || restoreArchived.Header().Get("Location") != "/admin/sites" {
+		t.Fatalf("restore archived status/location = %d %q", restoreArchived.Code, restoreArchived.Header().Get("Location"))
+	}
+	restoredSite, ok, err := ps.GetSite(emptySite.ID)
+	if err != nil || !ok {
+		t.Fatalf("restored site not found: ok=%v err=%v", ok, err)
+	}
+	if restoredSite.Status != "disabled" {
+		t.Fatalf("restored site status = %q, want disabled", restoredSite.Status)
+	}
+	if _, err := os.Stat(emptyRoot); err != nil {
+		t.Fatalf("empty active root after restore: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(emptyRoot, "archive.json")); !os.IsNotExist(err) {
+		t.Fatalf("archive manifest after restore err = %v, want not exist", err)
+	}
+	if archivedGone, err := ps.ArchivedSites(); err != nil || len(archivedGone) != 0 {
+		t.Fatalf("archived site should be restored out of archive list: len=%d err=%v", len(archivedGone), err)
+	}
+
+	archiveRestored := postPlatformForm("/admin/sites/"+strconv.FormatInt(restoredSite.ID, 10)+"/archive", nil)
+	if archiveRestored.Code != http.StatusSeeOther || archiveRestored.Header().Get("Location") != "/admin/sites" {
+		t.Fatalf("archive restored site status/location = %d %q, body = %s", archiveRestored.Code, archiveRestored.Header().Get("Location"), archiveRestored.Body.String())
+	}
+	archived, err = ps.ArchivedSites()
+	if err != nil {
+		t.Fatalf("list re-archived sites: %v", err)
+	}
+	if len(archived) != 1 || archived[0].Slug != "empty" || archived[0].OriginalSiteID != restoredSite.ID {
+		t.Fatalf("re-archived sites mismatch: %#v", archived)
+	}
+	archivePath = archived[0].ArchivePath
+	deleteWrongSlug := postPlatformForm("/admin/archived-sites/"+strconv.FormatInt(archived[0].ID, 10)+"/delete", url.Values{"confirm_slug": {"wrong"}})
+	if deleteWrongSlug.Code != http.StatusSeeOther || deleteWrongSlug.Header().Get("Location") != "/admin/archived-sites" {
+		t.Fatalf("delete wrong slug status/location = %d %q", deleteWrongSlug.Code, deleteWrongSlug.Header().Get("Location"))
+	}
+	if archivedStillThere, err := ps.ArchivedSites(); err != nil || len(archivedStillThere) != 1 {
+		t.Fatalf("wrong slug should keep archive: len=%d err=%v", len(archivedStillThere), err)
+	}
+	deleteArchived := postPlatformForm("/admin/archived-sites/"+strconv.FormatInt(archived[0].ID, 10)+"/delete", url.Values{"confirm_slug": {"empty"}})
+	if deleteArchived.Code != http.StatusSeeOther || deleteArchived.Header().Get("Location") != "/admin/archived-sites" {
+		t.Fatalf("delete archived status/location = %d %q", deleteArchived.Code, deleteArchived.Header().Get("Location"))
+	}
+	if archivedGone, err := ps.ArchivedSites(); err != nil || len(archivedGone) != 0 {
+		t.Fatalf("archived site should be deleted: len=%d err=%v", len(archivedGone), err)
+	}
+	if _, err := os.Stat(archivePath); !os.IsNotExist(err) {
+		t.Fatalf("archive path after permanent delete err = %v, want not exist", err)
+	}
 
 	platformSettingsPage := httptest.NewRecorder()
 	platformSettingsReq := httptest.NewRequest(http.MethodGet, "https://platform.test/admin/platform/settings", nil)
@@ -329,7 +436,7 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 	if platformSettingsPage.Code != http.StatusOK {
 		t.Fatalf("platform settings status = %d, body = %s", platformSettingsPage.Code, platformSettingsPage.Body.String())
 	}
-	if body := platformSettingsPage.Body.String(); !strings.Contains(body, `href="/admin/security"`) || !strings.Contains(body, `href="/admin/updates"`) || !strings.Contains(body, `href="/admin/admin-i18n"`) || strings.Contains(body, `href="/admin/posts"`) {
+	if body := platformSettingsPage.Body.String(); !strings.Contains(body, `href="/admin/security"`) || !strings.Contains(body, `href="/admin/updates"`) || !strings.Contains(body, `href="/admin/admin-i18n"`) || !strings.Contains(body, `href="/admin/archived-sites"`) || strings.Contains(body, `href="/admin/posts"`) {
 		t.Fatalf("platform settings page did not render platform setting entries")
 	}
 

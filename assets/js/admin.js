@@ -4,6 +4,53 @@
   "use strict";
   var CSRF = (document.body && document.body.dataset.csrf) || "";
 
+  function copyTextToClipboard(text) {
+    text = String(text || "");
+    if (!text) return Promise.reject(new Error("empty"));
+    if (navigator.clipboard && window.isSecureContext) {
+      return navigator.clipboard.writeText(text);
+    }
+    return new Promise(function (resolve, reject) {
+      var area = document.createElement("textarea");
+      area.value = text;
+      area.setAttribute("readonly", "");
+      area.style.position = "fixed";
+      area.style.left = "-9999px";
+      area.style.top = "0";
+      document.body.appendChild(area);
+      area.select();
+      try {
+        document.execCommand("copy") ? resolve() : reject(new Error("copy failed"));
+      } catch (err) {
+        reject(err);
+      } finally {
+        area.remove();
+      }
+    });
+  }
+
+  function markCopyDone(button, fallback) {
+    if (!button) return;
+    var label = button.querySelector("[data-copy-label-text]");
+    var old = button.getAttribute("aria-label") || (label ? label.textContent : button.textContent);
+    var done = button.getAttribute("data-copy-done") || fallback || "已复制";
+    button.classList.add("is-copied");
+    button.setAttribute("aria-label", done);
+    if (button.dataset.copyReplaceText === "1") {
+      if (label) label.textContent = done;
+      else button.textContent = done;
+    }
+    window.setTimeout(function () {
+      button.classList.remove("is-copied");
+      button.setAttribute("aria-label", old);
+      if (button.dataset.copyReplaceText === "1") {
+        var restored = button.getAttribute("data-copy-label") || old;
+        if (label) label.textContent = restored;
+        else button.textContent = restored;
+      }
+    }, 1200);
+  }
+
   /* ---------- 通用轻提示：接管按钮/链接原生 title ---------- */
   (function () {
     var selector = "[data-tooltip],button[title],a[title],[role='button'][title]";
@@ -1739,6 +1786,18 @@
     });
   })();
 
+  /* ---------- 通用复制按钮 ---------- */
+  (function () {
+    document.addEventListener("click", function (e) {
+      var button = e.target.closest && e.target.closest("[data-copy-text]");
+      if (!button) return;
+      e.preventDefault();
+      copyTextToClipboard(button.getAttribute("data-copy-text")).then(function () {
+        markCopyDone(button, button.getAttribute("data-copy-done"));
+      }).catch(function () {});
+    });
+  })();
+
   /* ---------- 统一确认弹层（替代系统 confirm；拦截带 data-confirm 的表单和按钮） ---------- */
   (function () {
     var modal = document.getElementById("confirm-modal");
@@ -1746,26 +1805,116 @@
     var msgEl = modal.querySelector("[data-confirm-msg]");
     var okBtn = modal.querySelector("[data-confirm-ok]");
     var titleEl = modal.querySelector("#confirm-title");
+    var inputWrap = modal.querySelector("[data-confirm-input-wrap]");
+    var inputLabel = modal.querySelector("[data-confirm-input-label]");
+    var inputEl = modal.querySelector("[data-confirm-input]");
+    var inputError = modal.querySelector("[data-confirm-input-error]");
+    var inputCopy = modal.querySelector("[data-confirm-input-copy]");
+    var pendingInput = null;
     var pendingAction = null;
-    function close() { modal.hidden = true; pendingAction = null; }
+    function close() {
+      modal.hidden = true;
+      pendingAction = null;
+      pendingInput = null;
+      if (inputWrap) inputWrap.hidden = true;
+      if (inputEl) inputEl.value = "";
+      if (inputError) { inputError.hidden = true; inputError.textContent = ""; }
+      if (inputCopy) {
+        var copyLabel = inputCopy.querySelector("[data-copy-label-text]");
+        inputCopy.hidden = true;
+        if (copyLabel) copyLabel.textContent = "";
+        inputCopy.removeAttribute("data-copy-text");
+      }
+    }
     function open(target, action) {
       pendingAction = action;
       if (msgEl) msgEl.textContent = target.getAttribute("data-confirm") || "确定执行此操作？";
       if (okBtn) okBtn.textContent = target.getAttribute("data-confirm-ok") || "删除";
       if (titleEl) titleEl.textContent = target.getAttribute("data-confirm-title") || "确认删除";
+      pendingInput = null;
+      var inputName = target.getAttribute("data-confirm-input-name") || "";
+      if (inputWrap && inputEl && inputName) {
+        var copyValue = target.getAttribute("data-confirm-input-copy") || "";
+        pendingInput = {
+          name: inputName,
+          match: target.getAttribute("data-confirm-input-match") || "",
+          target: target
+        };
+        if (inputLabel) inputLabel.textContent = target.getAttribute("data-confirm-input-label") || "输入确认内容";
+        inputEl.value = "";
+        inputEl.placeholder = target.getAttribute("data-confirm-input-placeholder") || "";
+        inputEl.setAttribute("name", inputName);
+        inputWrap.hidden = false;
+        if (inputCopy && copyValue) {
+          var copyLabel = inputCopy.querySelector("[data-copy-label-text]");
+          inputCopy.hidden = false;
+          if (copyLabel) copyLabel.textContent = target.getAttribute("data-confirm-input-copy-label") || "复制";
+          else inputCopy.textContent = target.getAttribute("data-confirm-input-copy-label") || "复制";
+          inputCopy.setAttribute("data-copy-text", copyValue);
+          inputCopy.setAttribute("data-copy-label", target.getAttribute("data-confirm-input-copy-label") || "复制");
+          inputCopy.setAttribute("data-copy-done", target.getAttribute("data-confirm-input-copied") || "已复制");
+          inputCopy.setAttribute("data-copy-replace-text", "1");
+        } else if (inputCopy) {
+          inputCopy.hidden = true;
+          inputCopy.removeAttribute("data-copy-text");
+        }
+        if (inputError) { inputError.hidden = true; inputError.textContent = ""; }
+      } else if (inputWrap) {
+        inputWrap.hidden = true;
+        if (inputCopy) inputCopy.hidden = true;
+      }
       modal.hidden = false;
-      if (okBtn) setTimeout(function () { okBtn.focus(); }, 0);
+      if (inputEl && inputWrap && !inputWrap.hidden) setTimeout(function () { inputEl.focus(); }, 0);
+      else if (okBtn) setTimeout(function () { okBtn.focus(); }, 0);
+    }
+    function applyPendingInput() {
+      if (!pendingInput || !inputEl) return true;
+      var value = inputEl.value.trim();
+      if (!value) {
+        if (inputError) {
+          inputError.textContent = pendingInput.target.getAttribute("data-confirm-input-required") || "请先输入确认内容。";
+          inputError.hidden = false;
+        }
+        inputEl.focus();
+        return false;
+      }
+      if (pendingInput.match && value !== pendingInput.match) {
+        if (inputError) {
+          inputError.textContent = pendingInput.target.getAttribute("data-confirm-input-mismatch") || "输入内容不匹配。";
+          inputError.hidden = false;
+        }
+        inputEl.focus();
+        inputEl.select();
+        return false;
+      }
+      var form = pendingInput.target.closest && pendingInput.target.closest("form");
+      if (form) {
+        var field = form.querySelector('input[name="' + pendingInput.name.replace(/"/g, '\\"') + '"]');
+        if (!field) {
+          field = document.createElement("input");
+          field.type = "hidden";
+          field.name = pendingInput.name;
+          form.appendChild(field);
+        }
+        field.value = value;
+      }
+      return true;
     }
     // 捕获阶段优先拦截，未确认前阻断其它提交监听器（如防重复点击）
     document.addEventListener("submit", function (e) {
       var form = e.target;
-      if (!form || !form.matches || !form.matches("[data-confirm]")) return;
+      if (!form || !form.matches) return;
+      var submitter = e.submitter && e.submitter.matches && e.submitter.matches("[data-confirm]") ? e.submitter : null;
+      var confirmTarget = submitter || (form.matches("[data-confirm]") ? form : null);
+      if (!confirmTarget) return;
       if (form.dataset.confirmed === "1") { delete form.dataset.confirmed; return; }
       e.preventDefault();
       e.stopImmediatePropagation();
-      open(form, function () {
+      open(confirmTarget, function () {
         form.dataset.confirmed = "1";
-        if (typeof form.requestSubmit === "function") form.requestSubmit(); else form.submit();
+        if (submitter && typeof form.requestSubmit === "function") form.requestSubmit(submitter);
+        else if (typeof form.requestSubmit === "function") form.requestSubmit();
+        else form.submit();
       });
     }, true);
     // 普通按钮也能复用同一个确认框，例如：清空图片、移除菜单项、删除未保存的社交链接行。
@@ -1782,6 +1931,7 @@
       });
     }, true);
     if (okBtn) okBtn.addEventListener("click", function () {
+      if (!applyPendingInput()) return;
       var action = pendingAction; close();
       if (action) action();
     });

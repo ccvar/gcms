@@ -357,6 +357,8 @@ type View struct {
 	PlatformDomains       map[int64][]*platform.SiteDomain
 	PlatformSiteIcons     map[int64]string
 	PlatformCurrentSiteID int64 // 平台会话中当前选择的站点
+	ArchivedSites         []*platform.ArchivedSite
+	ArchivedSiteIcons     map[int64]string
 }
 
 type OverviewStat struct {
@@ -608,6 +610,27 @@ func (s *Server) setRuntimePool(pool *SiteRuntimePool) {
 	s.runtimeMu.Lock()
 	s.runtimes = pool
 	s.runtimeMu.Unlock()
+}
+
+func (s *Server) detachSiteRuntime(siteID int64) {
+	if siteID <= 0 {
+		return
+	}
+	s.runtimeMu.Lock()
+	defer s.runtimeMu.Unlock()
+	if s.runtimes == nil {
+		return
+	}
+	rt := s.runtimes.byID[siteID]
+	delete(s.runtimes.byID, siteID)
+	for host, candidate := range s.runtimes.byHost {
+		if candidate == rt {
+			delete(s.runtimes.byHost, host)
+		}
+	}
+	if rt != nil && rt.Store != nil && rt.Store != s.store && (rt.Site == nil || !rt.Site.IsDefault) {
+		_ = rt.Store.Close()
+	}
 }
 
 func (s *Server) reloadRuntimePool() error {
@@ -1057,6 +1080,8 @@ func platformOnlyPath(path string) bool {
 	case path == "/admin/security":
 		return true
 	case path == "/admin/platform/settings":
+		return true
+	case path == "/admin/archived-sites" || strings.HasPrefix(path, "/admin/archived-sites/"):
 		return true
 	case path == "/admin/updates" || strings.HasPrefix(path, "/admin/updates/"):
 		return true
@@ -2069,8 +2094,12 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /admin/sites/{id}/status", s.requireAuth(s.adminSetSiteStatus))
 	mux.HandleFunc("POST /admin/sites/{id}/automation", s.requireAuth(s.adminSetSiteAutomation))
 	mux.HandleFunc("POST /admin/sites/{id}/domains", s.requireAuth(s.adminAddSiteDomain))
+	mux.HandleFunc("POST /admin/sites/{id}/archive", s.requireAuth(s.adminArchiveSite))
 	mux.HandleFunc("GET /admin/sites/{id}/uploads/{name}", s.requireAuth(s.adminSiteUpload))
 	mux.HandleFunc("GET /admin/platform/settings", s.requireAuth(s.adminPlatformSettings))
+	mux.HandleFunc("GET /admin/archived-sites", s.requireAuth(s.adminArchivedSites))
+	mux.HandleFunc("POST /admin/archived-sites/{id}/restore", s.requireAuth(s.adminRestoreArchivedSite))
+	mux.HandleFunc("POST /admin/archived-sites/{id}/delete", s.requireAuth(s.adminDeleteArchivedSite))
 	mux.HandleFunc("GET /admin/updates", s.requireAuth(s.adminUpdates))
 	mux.HandleFunc("GET /admin/updates/status", s.requireAuth(s.adminUpgradeStatus))
 	mux.HandleFunc("GET /admin/updates/check", s.requireAuth(s.adminUpdateCheck))

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -46,6 +47,7 @@ type session struct {
 
 type settingsFlash struct {
 	Flash        string
+	FormErr      string
 	NewAPISecret []string
 	SiteFormErr  string
 	SiteFormVals map[string]string
@@ -448,6 +450,8 @@ func adminTitleKey(title string) string {
 		return "admin.settings.title"
 	case "平台设置":
 		return "admin.platform.settings.title"
+	case "归档站点":
+		return "admin.archived_sites.title"
 	case "可视化编辑":
 		return "admin.nav.visual"
 	case "安全":
@@ -665,6 +669,73 @@ func legacyUploadFaviconName(uploadDir string) string {
 	return bestName
 }
 
+func archivedSiteIconDataURL(site *platform.ArchivedSite) string {
+	if site == nil {
+		return ""
+	}
+	archivePath := filepath.Clean(strings.TrimSpace(site.ArchivePath))
+	if archivePath == "" || archivePath == "." {
+		return ""
+	}
+	uploadDir := filepath.Join(archivePath, "uploads")
+	raw := ""
+	dbPath := filepath.Join(archivePath, "cms.db")
+	if _, err := os.Stat(dbPath); err == nil {
+		st, openErr := store.Open(dbPath)
+		if openErr == nil {
+			raw = strings.TrimSpace(st.Setting("site.favicon"))
+			_ = st.Close()
+		}
+	}
+	if strings.HasPrefix(raw, "data:image/") || strings.HasPrefix(raw, "/assets/") {
+		return raw
+	}
+	if strings.HasPrefix(raw, "/uploads/") {
+		if name, ok := uploadNameFromPath(strings.Split(raw, "?")[0]); ok {
+			return imageFileDataURL(filepath.Join(uploadDir, name))
+		}
+	}
+	if u, err := url.Parse(raw); err == nil && (u.Scheme == "http" || u.Scheme == "https") {
+		return raw
+	}
+	if name := legacyUploadFaviconName(uploadDir); name != "" {
+		return imageFileDataURL(filepath.Join(uploadDir, name))
+	}
+	return ""
+}
+
+func imageFileDataURL(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() || info.Size() <= 0 || info.Size() > 256*1024 {
+		return ""
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	mimeType := http.DetectContentType(data)
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".svg":
+		mimeType = "image/svg+xml"
+	case ".ico":
+		mimeType = "image/x-icon"
+	case ".webp":
+		mimeType = "image/webp"
+	case ".png":
+		mimeType = "image/png"
+	case ".jpg", ".jpeg":
+		mimeType = "image/jpeg"
+	}
+	if !strings.HasPrefix(mimeType, "image/") {
+		return ""
+	}
+	return "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(data)
+}
+
 // catKind 取分类管理当前的类型（post|link，来自 ?kind= 或表单）。
 func catKind(r *http.Request) string {
 	if r.URL.Query().Get("kind") == "link" || r.FormValue("kind") == "link" {
@@ -870,8 +941,10 @@ func (s *Server) adminSites(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) showAdminSites(w http.ResponseWriter, r *http.Request, status int, formErr string, formVals map[string]string) {
 	sess, _ := s.currentSession(r)
+	flash := ""
 	if status == http.StatusOK && formErr == "" && formVals == nil {
 		if f, ok := s.sess.takeSettingsFlash(sessionToken(r)); ok {
+			flash = f.Flash
 			formErr = f.SiteFormErr
 			formVals = f.SiteFormVals
 		}
@@ -879,6 +952,7 @@ func (s *Server) showAdminSites(w http.ResponseWriter, r *http.Request, status i
 	v := s.adminView(r, "站点管理")
 	s.platformAuthed(v, sess)
 	v.PlatformCurrentSiteID = sess.currentSiteID
+	v.Flash = flash
 	v.FormErr = formErr
 	if formVals == nil {
 		formVals = map[string]string{}
@@ -1286,6 +1360,245 @@ func (s *Server) adminSetSiteAutomation(w http.ResponseWriter, r *http.Request) 
 	http.Redirect(w, r, "/admin/sites", http.StatusSeeOther)
 }
 
+func (s *Server) adminArchiveSite(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.checkCSRF(w, r); !ok {
+		return
+	}
+	if s.platform == nil {
+		http.NotFound(w, r)
+		return
+	}
+	id, ok := adminSiteID(w, r)
+	if !ok {
+		return
+	}
+	site, found, err := s.platform.GetSite(id)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	if !found {
+		http.NotFound(w, r)
+		return
+	}
+	if site.IsDefault {
+		http.Error(w, "默认站点不能归档删除", http.StatusBadRequest)
+		return
+	}
+	if site.Status != "disabled" {
+		http.Error(w, "请先关闭站点，再执行归档删除", http.StatusBadRequest)
+		return
+	}
+	sourceRoot, err := standardSiteStorageRoot(site)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	if info, err := os.Stat(sourceRoot); err != nil || !info.IsDir() {
+		if err == nil {
+			err = fmt.Errorf("站点存储目录不是文件夹")
+		}
+		s.serverError(w, fmt.Errorf("归档源目录不可用: %w", err))
+		return
+	}
+	archivePath, err := s.newArchivedSitePath(site)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(archivePath), 0o755); err != nil {
+		s.serverError(w, err)
+		return
+	}
+
+	s.detachSiteRuntime(site.ID)
+	if err := os.Rename(sourceRoot, archivePath); err != nil {
+		_ = s.reloadRuntimePool()
+		s.serverError(w, fmt.Errorf("移动站点文件到归档目录失败: %w", err))
+		return
+	}
+	archived, err := s.platform.ArchiveSite(site.ID, archivePath)
+	if err != nil {
+		_ = os.Rename(archivePath, sourceRoot)
+		_ = s.reloadRuntimePool()
+		s.serverError(w, err)
+		return
+	}
+	flash := fmt.Sprintf("站点「%s」已归档，数据保留在 %s。", archived.Name, archived.ArchivePath)
+	if err := writeArchivedSiteManifest(archived); err != nil {
+		flash = fmt.Sprintf("站点「%s」已归档，但写入 archive.json 失败：%s", archived.Name, err)
+	}
+	if err := s.reloadRuntimePool(); err != nil {
+		s.serverError(w, err)
+		return
+	}
+	s.sess.setSettingsFlash(sessionToken(r), settingsFlash{Flash: flash})
+	http.Redirect(w, r, "/admin/sites", http.StatusSeeOther)
+}
+
+func (s *Server) adminArchivedSites(w http.ResponseWriter, r *http.Request) {
+	s.showAdminArchivedSites(w, r, "", "")
+}
+
+func (s *Server) showAdminArchivedSites(w http.ResponseWriter, r *http.Request, flash, formErr string) {
+	if r.Method == http.MethodGet && flash == "" && formErr == "" {
+		if f, ok := s.sess.takeSettingsFlash(sessionToken(r)); ok {
+			flash = f.Flash
+			formErr = f.FormErr
+		}
+	}
+	if s.platform == nil {
+		http.Redirect(w, r, "/admin/platform/settings", http.StatusSeeOther)
+		return
+	}
+	sess, _ := s.currentSession(r)
+	v := s.adminView(r, "归档站点")
+	s.platformAuthed(v, sess)
+	v.Flash = flash
+	v.FormErr = formErr
+	archived, err := s.platform.ArchivedSites()
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	v.ArchivedSites = archived
+	v.ArchivedSiteIcons = map[int64]string{}
+	for _, site := range archived {
+		if site == nil {
+			continue
+		}
+		if icon := archivedSiteIconDataURL(site); icon != "" {
+			v.ArchivedSiteIcons[site.ID] = icon
+		}
+	}
+	status := http.StatusOK
+	if formErr != "" {
+		status = http.StatusBadRequest
+	}
+	s.rnd.Admin(w, "archived_sites", status, v)
+}
+
+func (s *Server) adminRestoreArchivedSite(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.checkCSRF(w, r); !ok {
+		return
+	}
+	if s.platform == nil {
+		http.NotFound(w, r)
+		return
+	}
+	id, ok := adminSiteID(w, r)
+	if !ok {
+		return
+	}
+	archived, found, err := s.platform.GetArchivedSite(id)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	if !found {
+		http.NotFound(w, r)
+		return
+	}
+	if strings.TrimSpace(r.FormValue("confirm_slug")) != archived.Slug {
+		s.sess.setSettingsFlash(sessionToken(r), settingsFlash{FormErr: "站点标记不匹配，请输入归档站点的标记后再恢复。"})
+		http.Redirect(w, r, "/admin/archived-sites", http.StatusSeeOther)
+		return
+	}
+	archivePath, err := safeArchivedSitePath(archived.ArchivePath)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	if info, err := os.Stat(archivePath); err != nil || !info.IsDir() {
+		if err == nil {
+			err = fmt.Errorf("归档目录不是文件夹")
+		}
+		s.serverError(w, fmt.Errorf("归档目录不可用: %w", err))
+		return
+	}
+	targetRoot, err := standardArchivedSiteStorageRoot(archived)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	if _, err := os.Stat(targetRoot); err == nil {
+		s.sess.setSettingsFlash(sessionToken(r), settingsFlash{FormErr: fmt.Sprintf("恢复目标目录 %s 已存在，请先检查文件后再恢复。", targetRoot)})
+		http.Redirect(w, r, "/admin/archived-sites", http.StatusSeeOther)
+		return
+	} else if !os.IsNotExist(err) {
+		s.serverError(w, err)
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(targetRoot), 0o755); err != nil {
+		s.serverError(w, err)
+		return
+	}
+	if err := os.Rename(archivePath, targetRoot); err != nil {
+		s.serverError(w, fmt.Errorf("移动归档目录失败: %w", err))
+		return
+	}
+	restored, err := s.platform.RestoreArchivedSite(archived.ID)
+	if err != nil {
+		if moveErr := os.Rename(targetRoot, archivePath); moveErr != nil {
+			s.serverError(w, fmt.Errorf("恢复站点记录失败: %v；回滚归档目录失败: %w", err, moveErr))
+			return
+		}
+		s.sess.setSettingsFlash(sessionToken(r), settingsFlash{FormErr: fmt.Sprintf("恢复失败：%s", err)})
+		http.Redirect(w, r, "/admin/archived-sites", http.StatusSeeOther)
+		return
+	}
+	_ = os.Remove(filepath.Join(targetRoot, "archive.json"))
+	if err := s.reloadRuntimePool(); err != nil {
+		s.serverError(w, err)
+		return
+	}
+	s.sess.setSettingsFlash(sessionToken(r), settingsFlash{Flash: fmt.Sprintf("站点「%s」已恢复，当前仍为关闭状态。", restored.Name)})
+	http.Redirect(w, r, "/admin/sites", http.StatusSeeOther)
+}
+
+func (s *Server) adminDeleteArchivedSite(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.checkCSRF(w, r); !ok {
+		return
+	}
+	if s.platform == nil {
+		http.NotFound(w, r)
+		return
+	}
+	id, ok := adminSiteID(w, r)
+	if !ok {
+		return
+	}
+	archived, found, err := s.platform.GetArchivedSite(id)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	if !found {
+		http.NotFound(w, r)
+		return
+	}
+	if strings.TrimSpace(r.FormValue("confirm_slug")) != archived.Slug {
+		s.sess.setSettingsFlash(sessionToken(r), settingsFlash{FormErr: "站点标记不匹配，请输入归档站点的标记后再彻底删除。"})
+		http.Redirect(w, r, "/admin/archived-sites", http.StatusSeeOther)
+		return
+	}
+	archivePath, err := safeArchivedSitePath(archived.ArchivePath)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	if err := os.RemoveAll(archivePath); err != nil {
+		s.serverError(w, err)
+		return
+	}
+	if err := s.platform.DeleteArchivedSite(archived.ID); err != nil {
+		s.serverError(w, err)
+		return
+	}
+	s.sess.setSettingsFlash(sessionToken(r), settingsFlash{Flash: fmt.Sprintf("归档站点「%s」已彻底删除。", archived.Name)})
+	http.Redirect(w, r, "/admin/archived-sites", http.StatusSeeOther)
+}
+
 func (s *Server) adminAddSiteDomain(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.checkCSRF(w, r); !ok {
 		return
@@ -1392,6 +1705,96 @@ func (s *Server) newSiteStoragePaths(slug string) (dbPath, uploadDir string, err
 	}
 	root := filepath.Join(base, "sites", slug)
 	return filepath.Join(root, "cms.db"), filepath.Join(root, "uploads"), nil
+}
+
+func (s *Server) platformDataDir() string {
+	base := "data"
+	if s.platform != nil {
+		if site, err := s.platform.DefaultSite(); err == nil && strings.TrimSpace(site.DBPath) != "" {
+			base = filepath.Dir(site.DBPath)
+		}
+	}
+	return base
+}
+
+func standardSiteStorageRoot(site *platform.Site) (string, error) {
+	if site == nil {
+		return "", fmt.Errorf("站点不存在")
+	}
+	dbPath := filepath.Clean(strings.TrimSpace(site.DBPath))
+	if dbPath == "." || filepath.Base(dbPath) != "cms.db" {
+		return "", fmt.Errorf("只能归档标准站点存储目录")
+	}
+	root := filepath.Dir(dbPath)
+	if filepath.Base(root) != site.Slug || filepath.Base(filepath.Dir(root)) != "sites" {
+		return "", fmt.Errorf("只能归档 data/sites/{slug} 下的站点")
+	}
+	if uploadDir := strings.TrimSpace(site.UploadDir); uploadDir != "" {
+		rel, err := filepath.Rel(root, filepath.Clean(uploadDir))
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || filepath.IsAbs(rel) {
+			return "", fmt.Errorf("上传目录不在站点存储目录内，不能自动归档")
+		}
+	}
+	return root, nil
+}
+
+func standardArchivedSiteStorageRoot(site *platform.ArchivedSite) (string, error) {
+	if site == nil {
+		return "", fmt.Errorf("归档站点不存在")
+	}
+	dbPath := filepath.Clean(strings.TrimSpace(site.DBPath))
+	if dbPath == "." || filepath.Base(dbPath) != "cms.db" {
+		return "", fmt.Errorf("只能恢复标准站点存储目录")
+	}
+	root := filepath.Dir(dbPath)
+	if filepath.Base(root) != site.Slug || filepath.Base(filepath.Dir(root)) != "sites" {
+		return "", fmt.Errorf("只能恢复到 data/sites/{slug} 下的站点")
+	}
+	if uploadDir := strings.TrimSpace(site.UploadDir); uploadDir != "" {
+		rel, err := filepath.Rel(root, filepath.Clean(uploadDir))
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || filepath.IsAbs(rel) {
+			return "", fmt.Errorf("上传目录不在站点存储目录内，不能自动恢复")
+		}
+	}
+	return root, nil
+}
+
+func (s *Server) newArchivedSitePath(site *platform.Site) (string, error) {
+	if site == nil {
+		return "", fmt.Errorf("站点不存在")
+	}
+	base := filepath.Join(s.platformDataDir(), "deleted-sites")
+	stamp := time.Now().UTC().Format("20060102150405")
+	name := fmt.Sprintf("%s-%d-%s", site.Slug, site.ID, stamp)
+	path := filepath.Join(base, name)
+	if _, err := os.Stat(path); err == nil {
+		path = filepath.Join(base, name+"-"+strconv.FormatInt(time.Now().UnixNano(), 36))
+	} else if !os.IsNotExist(err) {
+		return "", err
+	}
+	return path, nil
+}
+
+func safeArchivedSitePath(path string) (string, error) {
+	path = filepath.Clean(strings.TrimSpace(path))
+	if path == "" || path == "." || path == string(os.PathSeparator) {
+		return "", fmt.Errorf("归档路径无效")
+	}
+	if filepath.Base(filepath.Dir(path)) != "deleted-sites" {
+		return "", fmt.Errorf("只能删除 deleted-sites 下的归档目录")
+	}
+	return path, nil
+}
+
+func writeArchivedSiteManifest(site *platform.ArchivedSite) error {
+	if site == nil || strings.TrimSpace(site.ArchivePath) == "" {
+		return nil
+	}
+	data, err := json.MarshalIndent(site, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(site.ArchivePath, "archive.json"), data, 0o644)
 }
 
 func parseSiteDomainInput(raw string) (scheme, host string, err error) {

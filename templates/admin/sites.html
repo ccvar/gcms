@@ -9,42 +9,53 @@
     </div>
   </div>
 
+  {{if .Flash}}<div class="flash">{{.Flash}}</div>{{end}}
+
   <div class="sites-layout">
     <div class="site-card-list">
       {{range .PlatformSites}}
-      <article class="site-card{{if .IsDefault}} is-default{{end}}">
-        <div class="site-card-main">
-          <div class="site-title-row">
-            <div class="site-card-identity">
-              {{with index $.PlatformSiteIcons .ID}}<img class="site-card-icon" src="{{.}}" alt="" decoding="async">{{else}}<span class="site-card-icon fallback">{{template "site-icon-empty"}}</span>{{end}}
-              <div>
-                <h3>{{.Name}}</h3>
-                <p class="site-meta">
-                  <span>{{.Slug}}</span>
-                  {{if .IsDefault}}<span>{{$.Admin.T "admin.sites.default" "默认站点"}}</span>{{end}}
-                  {{if eq .ID $.PlatformCurrentSiteID}}<span>{{$.Admin.T "admin.sites.current_badge" "当前后台"}}</span>{{end}}
-                </p>
+      <article class="site-card{{if .IsDefault}} is-default{{end}}{{if eq .Status "disabled"}} is-disabled{{end}}">
+        <div class="site-card-locked-area"{{if eq .Status "disabled"}} aria-disabled="true"{{end}}>
+          <div class="site-card-main"{{if eq .Status "disabled"}} inert{{end}}>
+            <div class="site-title-row">
+              <div class="site-card-identity">
+                {{with index $.PlatformSiteIcons .ID}}<img class="site-card-icon" src="{{.}}" alt="" decoding="async">{{else}}<span class="site-card-icon fallback">{{template "site-icon-empty"}}</span>{{end}}
+                <div>
+                  <h3>{{.Name}}</h3>
+                  <p class="site-meta">
+                    <span>{{.Slug}}</span>
+                    {{if .IsDefault}}<span>{{$.Admin.T "admin.sites.default" "默认站点"}}</span>{{end}}
+                    {{if eq .ID $.PlatformCurrentSiteID}}<span>{{$.Admin.T "admin.sites.current_badge" "当前后台"}}</span>{{end}}
+                  </p>
+                </div>
+              </div>
+              <div class="site-badges">
+                {{if eq .Status "enabled"}}<span class="badge pub" data-tooltip="{{$.Admin.T "admin.sites.status_enabled_tip" "站点状态：已启用。该站点可访问，也可以进入后台管理。"}}" aria-label="{{$.Admin.T "admin.sites.status_enabled_tip" "站点状态：已启用。该站点可访问，也可以进入后台管理。"}}">{{template "site-icon-status"}}<span>{{$.Admin.T "admin.sites.enabled" "站点启用"}}</span></span>{{else}}<span class="badge draft" data-tooltip="{{$.Admin.T "admin.sites.status_disabled_tip" "站点状态：已关闭。该站点暂不可访问。"}}" aria-label="{{$.Admin.T "admin.sites.status_disabled_tip" "站点状态：已关闭。该站点暂不可访问。"}}">{{template "site-icon-status"}}<span>{{$.Admin.T "admin.sites.disabled" "站点关闭"}}</span></span>{{end}}
+                {{if .ManagementAutomationEnabled}}<span class="badge sched" data-tooltip="{{$.Admin.T "admin.sites.platform_api_on_tip" "自动化接口：已开启。AI 和外部工具可通过平台入口调用该站点接口。"}}" aria-label="{{$.Admin.T "admin.sites.platform_api_on_tip" "自动化接口：已开启。AI 和外部工具可通过平台入口调用该站点接口。"}}">{{template "site-icon-plug"}}<span>{{$.Admin.T "admin.sites.platform_api_on" "接口已开"}}</span></span>{{else}}<span class="badge draft" data-tooltip="{{$.Admin.T "admin.sites.platform_api_off_tip" "自动化接口：已关闭。平台入口不会暴露该站点接口。"}}" aria-label="{{$.Admin.T "admin.sites.platform_api_off_tip" "自动化接口：已关闭。平台入口不会暴露该站点接口。"}}">{{template "site-icon-plug"}}<span>{{$.Admin.T "admin.sites.platform_api_off" "接口关闭"}}</span></span>{{end}}
               </div>
             </div>
-            <div class="site-badges">
-              {{if eq .Status "enabled"}}<span class="badge pub" data-tooltip="{{$.Admin.T "admin.sites.status_enabled_tip" "站点状态：已启用。该站点可访问，也可以进入后台管理。"}}" aria-label="{{$.Admin.T "admin.sites.status_enabled_tip" "站点状态：已启用。该站点可访问，也可以进入后台管理。"}}">{{template "site-icon-status"}}<span>{{$.Admin.T "admin.sites.enabled" "站点启用"}}</span></span>{{else}}<span class="badge draft" data-tooltip="{{$.Admin.T "admin.sites.status_disabled_tip" "站点状态：已关闭。该站点暂不可访问。"}}" aria-label="{{$.Admin.T "admin.sites.status_disabled_tip" "站点状态：已关闭。该站点暂不可访问。"}}">{{template "site-icon-status"}}<span>{{$.Admin.T "admin.sites.disabled" "站点关闭"}}</span></span>{{end}}
-              {{if .ManagementAutomationEnabled}}<span class="badge sched" data-tooltip="{{$.Admin.T "admin.sites.platform_api_on_tip" "自动化接口：已开启。AI 和外部工具可通过平台入口调用该站点接口。"}}" aria-label="{{$.Admin.T "admin.sites.platform_api_on_tip" "自动化接口：已开启。AI 和外部工具可通过平台入口调用该站点接口。"}}">{{template "site-icon-plug"}}<span>{{$.Admin.T "admin.sites.platform_api_on" "接口已开"}}</span></span>{{else}}<span class="badge draft" data-tooltip="{{$.Admin.T "admin.sites.platform_api_off_tip" "自动化接口：已关闭。平台入口不会暴露该站点接口。"}}" aria-label="{{$.Admin.T "admin.sites.platform_api_off_tip" "自动化接口：已关闭。平台入口不会暴露该站点接口。"}}">{{template "site-icon-plug"}}<span>{{$.Admin.T "admin.sites.platform_api_off" "接口关闭"}}</span></span>{{end}}
-            </div>
           </div>
-        </div>
 
-        <div class="site-card-actions">
-          <form method="post" action="/admin/sites/{{.ID}}/enter">
-            <input type="hidden" name="_csrf" value="{{$.CSRF}}">
-            <button class="btn btn-primary icon-text" type="submit">{{template "site-icon-enter"}}<span>{{$.Admin.T "admin.sites.enter" "进入后台"}}</span></button>
-          </form>
-          <a class="site-card-preview" href="/admin/sites/{{.ID}}/preview" target="_blank" rel="noopener"><span>{{$.Admin.T "admin.nav.view_site" "查看站点"}}</span><span class="ext-arrow" aria-hidden="true">↗</span></a>
+          <div class="site-card-actions"{{if eq .Status "disabled"}} inert{{end}}>
+            <form method="post" action="/admin/sites/{{.ID}}/enter">
+              <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+              <button class="btn btn-primary icon-text" type="submit">{{template "site-icon-enter"}}<span>{{$.Admin.T "admin.sites.enter" "进入后台"}}</span></button>
+            </form>
+            <a class="site-card-preview" href="/admin/sites/{{.ID}}/preview" target="_blank" rel="noopener"><span>{{$.Admin.T "admin.nav.view_site" "查看站点"}}</span><span class="ext-arrow" aria-hidden="true">↗</span></a>
+          </div>
+
+          {{if eq .Status "disabled"}}
+          <div class="site-disabled-mask" aria-hidden="true">
+            <span class="site-disabled-mask-title">{{template "site-icon-lock"}}<span>{{$.Admin.T "admin.sites.disabled_mask_title" "站点已关闭"}}</span></span>
+            <small>{{$.Admin.T "admin.sites.disabled_mask_desc" "上方入口已暂停，可在下方站点设置中启用或归档。"}}</small>
+          </div>
+          {{end}}
         </div>
 
         <details class="site-card-details">
           <summary>
-            <span class="site-details-title">{{template "site-icon-settings"}}<span>{{$.Admin.T "admin.sites.details" "存储、设置与绑定"}}</span></span>
-            <small>{{if .IsDefault}}{{$.Admin.T "admin.sites.default_domain_note" "使用当前默认入口"}}{{else}}{{$.Admin.T "admin.sites.details_hint" "域名、平台入口和文件路径"}}{{end}}</small>
+            <span class="site-details-title">{{template "site-icon-settings"}}<span>{{$.Admin.T "admin.sites.details" "站点设置"}}</span></span>
+            <small>{{if .IsDefault}}{{$.Admin.T "admin.sites.default_domain_note" "使用当前默认入口"}}{{else}}{{$.Admin.T "admin.sites.details_hint" "域名、接口和文件路径"}}{{end}}</small>
           </summary>
           <div class="site-details-body">
             <dl class="site-info-grid">
@@ -87,6 +98,12 @@
                 <input type="hidden" name="enabled" value="{{if .ManagementAutomationEnabled}}0{{else}}1{{end}}">
                 <button class="linkbtn" type="submit" data-tooltip="{{if .ManagementAutomationEnabled}}{{$.Admin.T "admin.sites.platform_api_disable_tip" "停止通过平台入口暴露该站点自动化接口。"}}{{else}}{{$.Admin.T "admin.sites.platform_api_enable_tip" "允许平台接入包和外部 AI 工具调用该站点接口。"}}{{end}}">{{if .ManagementAutomationEnabled}}{{$.Admin.T "admin.sites.platform_api_disable" "关闭自动化接口"}}{{else}}{{$.Admin.T "admin.sites.platform_api_enable" "开启自动化接口"}}{{end}}</button>
               </form>
+              {{if eq .Status "disabled"}}
+              <form method="post" action="/admin/sites/{{.ID}}/archive" data-confirm-title="{{$.Admin.T "admin.sites.archive_confirm_title" "确认归档删除站点"}}" data-confirm-ok="{{$.Admin.T "admin.sites.archive" "归档删除"}}" data-confirm="{{printf ($.Admin.T "admin.sites.archive_confirm" "归档删除「%s」后，该站点会从站点管理中移除，数据会保留到 deleted-sites 目录。确定继续？") .Name}}">
+                <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+                <button class="linkbtn danger" type="submit" data-tooltip="{{$.Admin.T "admin.sites.archive_tip" "从站点列表移除，并把数据移动到归档目录。"}}">{{$.Admin.T "admin.sites.archive" "归档删除"}}</button>
+              </form>
+              {{end}}
               {{if .ManagementAutomationEnabled}}<a class="site-tool-link" href="/admin/sites/{{.ID}}/automation/skill.zip">{{template "site-icon-package"}}<span>{{$.Admin.T "admin.sites.download_platform_kit" "下载平台接入包"}}</span></a>{{end}}
             </div>
             {{end}}
@@ -199,3 +216,4 @@
 {{define "site-icon-package"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.3 7 12 12l8.7-5"/><path d="M12 22V12"/></svg>{{end}}
 {{define "site-icon-settings"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 21v-7"/><path d="M4 10V3"/><path d="M12 21v-9"/><path d="M12 8V3"/><path d="M20 21v-5"/><path d="M20 12V3"/><path d="M2 14h4"/><path d="M10 8h4"/><path d="M18 16h4"/></svg>{{end}}
 {{define "site-icon-link"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.1 0l2-2a5 5 0 0 0-7.1-7.1l-1.2 1.2"/><path d="M14 11a5 5 0 0 0-7.1 0l-2 2A5 5 0 0 0 12 20.1l1.2-1.2"/></svg>{{end}}
+{{define "site-icon-lock"}}<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>{{end}}

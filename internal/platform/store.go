@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -52,6 +53,23 @@ type SiteDomain struct {
 	Enabled           bool
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
+}
+
+type ArchivedSite struct {
+	ID                          int64
+	OriginalSiteID              int64
+	Slug                        string
+	Name                        string
+	Status                      string
+	ManagementAutomationEnabled bool
+	AdminNote                   string
+	DBPath                      string
+	UploadDir                   string
+	ArchivePath                 string
+	DomainsJSON                 string
+	ArchivedAt                  time.Time
+	CreatedAt                   time.Time
+	UpdatedAt                   time.Time
 }
 
 type DefaultSiteBootstrap struct {
@@ -102,6 +120,26 @@ WHERE enabled = 1;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_site_domains_one_primary
 ON site_domains(site_id)
 WHERE is_primary = 1;
+
+CREATE TABLE IF NOT EXISTS archived_sites (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  original_site_id INTEGER NOT NULL,
+  slug TEXT NOT NULL,
+  name TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'disabled',
+  management_automation_enabled INTEGER NOT NULL DEFAULT 0,
+  admin_note TEXT NOT NULL DEFAULT '',
+  db_path TEXT NOT NULL,
+  upload_dir TEXT NOT NULL DEFAULT '',
+  archive_path TEXT NOT NULL,
+  domains_json TEXT NOT NULL DEFAULT '[]',
+  archived_at TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_archived_sites_archived_at
+ON archived_sites(archived_at DESC, id DESC);
 
 CREATE TABLE IF NOT EXISTS platform_admins (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -512,6 +550,228 @@ func (s *Store) AddSiteDomain(siteID int64, scheme, host string, primary, redire
 	return tx.Commit()
 }
 
+func (s *Store) ArchiveSite(id int64, archivePath string) (*ArchivedSite, error) {
+	if s == nil {
+		return nil, sql.ErrConnDone
+	}
+	archivePath = strings.TrimSpace(archivePath)
+	if archivePath == "" {
+		return nil, fmt.Errorf("归档路径不能为空")
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	site, err := scanSite(tx.QueryRow(`SELECT id,slug,name,status,is_default,management_automation_enabled,admin_note,db_path,upload_dir,created_at,updated_at
+		FROM sites WHERE id=?`, id))
+	if err != nil {
+		return nil, err
+	}
+	if site.IsDefault {
+		return nil, fmt.Errorf("默认站点不能归档删除")
+	}
+	if site.Status != "disabled" {
+		return nil, fmt.Errorf("只能归档已关闭的站点")
+	}
+	domains, err := siteDomainsTx(tx, id)
+	if err != nil {
+		return nil, err
+	}
+	domainsJSON := "[]"
+	if b, err := json.Marshal(domains); err == nil {
+		domainsJSON = string(b)
+	}
+	now := fmtTime(time.Now())
+	created := fmtTime(site.CreatedAt)
+	if site.CreatedAt.IsZero() {
+		created = now
+	}
+	updated := fmtTime(site.UpdatedAt)
+	if site.UpdatedAt.IsZero() {
+		updated = now
+	}
+	res, err := tx.Exec(`INSERT INTO archived_sites(original_site_id,slug,name,status,management_automation_enabled,admin_note,db_path,upload_dir,archive_path,domains_json,archived_at,created_at,updated_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		site.ID, site.Slug, site.Name, site.Status, boolInt(site.ManagementAutomationEnabled), site.AdminNote, site.DBPath, site.UploadDir, archivePath, domainsJSON, now, created, updated)
+	if err != nil {
+		return nil, err
+	}
+	archivedID, _ := res.LastInsertId()
+	if _, err := tx.Exec(`UPDATE platform_sessions SET current_site_id=NULL,updated_at=? WHERE current_site_id=?`, now, id); err != nil {
+		return nil, err
+	}
+	del, err := tx.Exec(`DELETE FROM sites WHERE id=?`, id)
+	if err != nil {
+		return nil, err
+	}
+	if n, err := del.RowsAffected(); err != nil {
+		return nil, err
+	} else if n == 0 {
+		return nil, sql.ErrNoRows
+	}
+	archived, err := scanArchivedSite(tx.QueryRow(`SELECT id,original_site_id,slug,name,status,management_automation_enabled,admin_note,db_path,upload_dir,archive_path,domains_json,archived_at,created_at,updated_at
+		FROM archived_sites WHERE id=?`, archivedID))
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return archived, nil
+}
+
+func (s *Store) ArchivedSites() ([]*ArchivedSite, error) {
+	if s == nil {
+		return nil, nil
+	}
+	rows, err := s.db.Query(`SELECT id,original_site_id,slug,name,status,management_automation_enabled,admin_note,db_path,upload_dir,archive_path,domains_json,archived_at,created_at,updated_at
+		FROM archived_sites ORDER BY archived_at DESC, id DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*ArchivedSite
+	for rows.Next() {
+		site, err := scanArchivedSite(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, site)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) GetArchivedSite(id int64) (*ArchivedSite, bool, error) {
+	if s == nil {
+		return nil, false, nil
+	}
+	site, err := scanArchivedSite(s.db.QueryRow(`SELECT id,original_site_id,slug,name,status,management_automation_enabled,admin_note,db_path,upload_dir,archive_path,domains_json,archived_at,created_at,updated_at
+		FROM archived_sites WHERE id=?`, id))
+	if err == sql.ErrNoRows {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return site, true, nil
+}
+
+func (s *Store) DeleteArchivedSite(id int64) error {
+	if s == nil {
+		return nil
+	}
+	res, err := s.db.Exec(`DELETE FROM archived_sites WHERE id=?`, id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (s *Store) RestoreArchivedSite(id int64) (*Site, error) {
+	if s == nil {
+		return nil, sql.ErrConnDone
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	archived, err := scanArchivedSite(tx.QueryRow(`SELECT id,original_site_id,slug,name,status,management_automation_enabled,admin_note,db_path,upload_dir,archive_path,domains_json,archived_at,created_at,updated_at
+		FROM archived_sites WHERE id=?`, id))
+	if err != nil {
+		return nil, err
+	}
+	var existing int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM sites WHERE slug=?`, archived.Slug).Scan(&existing); err != nil {
+		return nil, err
+	}
+	if existing > 0 {
+		return nil, fmt.Errorf("站点标记 %q 已存在，无法恢复", archived.Slug)
+	}
+
+	status := "disabled"
+	now := fmtTime(time.Now())
+	created := fmtTime(archived.CreatedAt)
+	if archived.CreatedAt.IsZero() {
+		created = now
+	}
+	var idInUse int
+	if archived.OriginalSiteID > 0 {
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM sites WHERE id=?`, archived.OriginalSiteID).Scan(&idInUse); err != nil {
+			return nil, err
+		}
+	}
+	var siteID int64
+	if archived.OriginalSiteID > 0 && idInUse == 0 {
+		_, err = tx.Exec(`INSERT INTO sites(id,slug,name,status,is_default,management_automation_enabled,admin_note,db_path,upload_dir,created_at,updated_at)
+			VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+			archived.OriginalSiteID, archived.Slug, archived.Name, status, 0, boolInt(archived.ManagementAutomationEnabled), archived.AdminNote, archived.DBPath, archived.UploadDir, created, now)
+		siteID = archived.OriginalSiteID
+	} else {
+		var res sql.Result
+		res, err = tx.Exec(`INSERT INTO sites(slug,name,status,is_default,management_automation_enabled,admin_note,db_path,upload_dir,created_at,updated_at)
+			VALUES(?,?,?,?,?,?,?,?,?,?)`,
+			archived.Slug, archived.Name, status, 0, boolInt(archived.ManagementAutomationEnabled), archived.AdminNote, archived.DBPath, archived.UploadDir, created, now)
+		if err == nil {
+			siteID, _ = res.LastInsertId()
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	var domains []*SiteDomain
+	if raw := strings.TrimSpace(archived.DomainsJSON); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &domains); err != nil {
+			return nil, fmt.Errorf("读取归档域名失败: %w", err)
+		}
+	}
+	for _, domain := range domains {
+		if domain == nil {
+			continue
+		}
+		host := strings.TrimSpace(strings.ToLower(domain.Host))
+		if host == "" {
+			continue
+		}
+		scheme := strings.TrimSpace(strings.ToLower(domain.Scheme))
+		if scheme != "http" && scheme != "https" {
+			scheme = "https"
+		}
+		domainCreated := fmtTime(domain.CreatedAt)
+		if domain.CreatedAt.IsZero() {
+			domainCreated = now
+		}
+		if _, err := tx.Exec(`INSERT INTO site_domains(site_id,scheme,host,is_primary,redirect_to_primary,enabled,created_at,updated_at)
+			VALUES(?,?,?,?,?,?,?,?)`,
+			siteID, scheme, host, boolInt(domain.IsPrimary), boolInt(domain.RedirectToPrimary), boolInt(domain.Enabled), domainCreated, now); err != nil {
+			return nil, err
+		}
+	}
+	if _, err := tx.Exec(`DELETE FROM archived_sites WHERE id=?`, id); err != nil {
+		return nil, err
+	}
+	site, err := scanSite(tx.QueryRow(`SELECT id,slug,name,status,is_default,management_automation_enabled,admin_note,db_path,upload_dir,created_at,updated_at
+		FROM sites WHERE id=?`, siteID))
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return site, nil
+}
+
 func (s *Store) GetAdminCredentials() (string, string, error) {
 	if s == nil {
 		return "", "", sql.ErrNoRows
@@ -630,6 +890,10 @@ type siteDomainScanner interface {
 	Scan(dest ...any) error
 }
 
+type archivedSiteScanner interface {
+	Scan(dest ...any) error
+}
+
 func scanSite(row siteScanner) (*Site, error) {
 	var s Site
 	var isDefault, management int
@@ -642,6 +906,24 @@ func scanSite(row siteScanner) (*Site, error) {
 	s.CreatedAt = parseTime(created)
 	s.UpdatedAt = parseTime(updated)
 	return &s, nil
+}
+
+func siteDomainsTx(tx *sql.Tx, siteID int64) ([]*SiteDomain, error) {
+	rows, err := tx.Query(`SELECT id,site_id,scheme,host,is_primary,redirect_to_primary,enabled,created_at,updated_at
+		FROM site_domains WHERE site_id=? ORDER BY is_primary DESC, id ASC`, siteID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*SiteDomain
+	for rows.Next() {
+		d, err := scanSiteDomain(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
 }
 
 func scanSiteDomain(row siteDomainScanner) (*SiteDomain, error) {
@@ -657,6 +939,20 @@ func scanSiteDomain(row siteDomainScanner) (*SiteDomain, error) {
 	d.CreatedAt = parseTime(created)
 	d.UpdatedAt = parseTime(updated)
 	return &d, nil
+}
+
+func scanArchivedSite(row archivedSiteScanner) (*ArchivedSite, error) {
+	var s ArchivedSite
+	var management int
+	var archived, created, updated string
+	if err := row.Scan(&s.ID, &s.OriginalSiteID, &s.Slug, &s.Name, &s.Status, &management, &s.AdminNote, &s.DBPath, &s.UploadDir, &s.ArchivePath, &s.DomainsJSON, &archived, &created, &updated); err != nil {
+		return nil, err
+	}
+	s.ManagementAutomationEnabled = management == 1
+	s.ArchivedAt = parseTime(archived)
+	s.CreatedAt = parseTime(created)
+	s.UpdatedAt = parseTime(updated)
+	return &s, nil
 }
 
 func normalizeSlug(v, fallback string) string {
