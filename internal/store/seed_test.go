@@ -83,15 +83,17 @@ func TestDefaultSeedIsProductShowcase(t *testing.T) {
 		}
 	}
 	for slug, wantCover := range map[string]string{
-		"deploy-in-5-minutes":          "/assets/covers/release-package-real.webp",
-		"why-go-and-sqlite":            "/assets/covers/gcms-stack-brand.webp",
-		"multilingual-built-in":        "/assets/screenshots/language-switch.webp",
-		"dual-mode-editor":             "/assets/screenshots/article-editor.webp",
-		"seo-by-default":               "/assets/screenshots/seo-output.webp",
-		"eighteen-themes":              "/assets/screenshots/theme-settings.webp",
-		"automation-api":               "/assets/screenshots/automation-api.webp",
-		"gcms-content-assistant-skill": "/assets/screenshots/automation-api.webp",
-		"in-app-updates":               "/assets/screenshots/system-updates.webp",
+		"deploy-in-5-minutes":               "/assets/covers/release-package-real.webp",
+		"why-go-and-sqlite":                 "/assets/covers/gcms-stack-brand.webp",
+		"multilingual-built-in":             "/assets/screenshots/language-switch.webp",
+		"dual-mode-editor":                  "/assets/screenshots/article-editor.webp",
+		"seo-by-default":                    "/assets/screenshots/seo-output.webp",
+		"eighteen-themes":                   "/assets/screenshots/theme-settings.webp",
+		"automation-api":                    "/assets/screenshots/automation-api.webp",
+		"gcms-content-assistant-skill":      "/assets/screenshots/automation-api.webp",
+		"cloudflare-static-deploy":          "/assets/screenshots/cloudflare-deploy.webp",
+		"run-multiple-sites-from-one-admin": "/assets/screenshots/site-management.webp",
+		"in-app-updates":                    "/assets/screenshots/system-updates.webp",
 	} {
 		post, err := st.GetPostBySlug("zh", slug, true)
 		if err != nil {
@@ -151,6 +153,8 @@ func TestDefaultSeedIsProductShowcase(t *testing.T) {
 		"eighteen-themes":                     "/assets/screenshots/theme-settings-en.webp",
 		"automation-api":                      "/assets/screenshots/automation-api-en.webp",
 		"gcms-content-assistant-skill":        "/assets/screenshots/automation-api-en.webp",
+		"cloudflare-static-deploy":            "/assets/screenshots/cloudflare-deploy-en.webp",
+		"run-multiple-sites-from-one-admin":   "/assets/screenshots/site-management-en.webp",
 		"in-app-updates":                      "/assets/screenshots/system-updates-en.webp",
 		"how-to-change-theme":                 "/assets/screenshots/theme-settings-en.webp",
 		"how-to-ai-content-ops":               "/assets/screenshots/automation-api-en.webp",
@@ -647,8 +651,8 @@ func TestReloadShowcaseContentReplacesCurrentContent(t *testing.T) {
 	}
 	if n, err := st.CountPublished("zh"); err != nil {
 		t.Fatalf("count showcase posts: %v", err)
-	} else if n != 14 {
-		t.Fatalf("published zh posts = %d, want 14", n)
+	} else if n != 16 {
+		t.Fatalf("published zh posts = %d, want 16", n)
 	}
 	if n, err := st.CountLinks("zh", 0); err != nil {
 		t.Fatalf("count showcase links: %v", err)
