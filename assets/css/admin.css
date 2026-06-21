@@ -425,7 +425,8 @@ body.admin { background: var(--line-soft); }
 .site-switcher summary svg { width: 16px; height: 16px; flex: none; }
 .site-switcher summary:hover,
 .site-switcher[open] summary { background: var(--line-soft); color: var(--accent); }
-.site-switcher-menu { position: absolute; z-index: 70; top: calc(100% + 7px); left: 0; width: min(320px, calc(100vw - 2rem)); padding: .35rem; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); box-shadow: var(--shadow); }
+.site-switcher-menu { position: absolute; z-index: 70; top: calc(100% + 7px); left: 0; width: min(320px, calc(100vw - 2rem)); max-height: min(420px, calc(100vh - 5rem)); overflow-y: auto; overscroll-behavior: contain; padding: .35rem; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); box-shadow: var(--shadow); }
+.site-switcher.is-floating .site-switcher-menu { position: fixed; top: var(--site-switcher-top, 68px); left: var(--site-switcher-left, 1rem); width: var(--site-switcher-width, min(320px, calc(100vw - 2rem))); max-height: var(--site-switcher-max-height, min(420px, calc(100vh - 5rem))); }
 .site-switcher-menu form { margin: 0; }
 .site-switcher-menu a,
 .site-switcher-menu button { width: 100%; display: flex; align-items: center; justify-content: flex-start; gap: .55rem; padding: .58rem .65rem; border: 0; border-radius: 7px; background: transparent; color: var(--ink-soft); font: inherit; font-size: .86rem; text-align: left; cursor: pointer; }
@@ -1682,7 +1683,7 @@ a.overview-log-title { text-decoration: none; }
   /* 后台移动端：折叠导航 */
   .admin-top .wrap { position: relative; height: 54px; gap: .55rem; }
   .site-switcher { flex: 0 0 auto; max-width: none; }
-  .site-switcher-menu { left: 0; right: auto; }
+  .site-switcher-menu { left: 0; right: auto; width: min(320px, calc(100vw - 1.25rem)); max-height: calc(100vh - 4.5rem); }
   .admin-burger { display: inline-flex; }
   .admin-nav { display: none; position: absolute; top: calc(100% + 1px); right: 0; left: 0; flex-direction: column; align-items: stretch; gap: 0; background: var(--surface); border-bottom: 1px solid var(--line); box-shadow: 0 18px 36px rgba(0,0,0,.12); padding: .5rem; z-index: 60; }
   .admin-nav.open { display: flex; }

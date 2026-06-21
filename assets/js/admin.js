@@ -1778,12 +1778,71 @@
   (function () {
     var switcher = document.querySelector(".site-switcher");
     if (!switcher) return;
+    var summary = switcher.querySelector("summary");
+    var menu = switcher.querySelector(".site-switcher-menu");
+    var raf = 0;
+
+    function resetMenuPosition() {
+      switcher.classList.remove("is-floating");
+      if (!menu) return;
+      menu.style.removeProperty("--site-switcher-left");
+      menu.style.removeProperty("--site-switcher-top");
+      menu.style.removeProperty("--site-switcher-width");
+      menu.style.removeProperty("--site-switcher-max-height");
+    }
+
+    function positionMenu() {
+      raf = 0;
+      if (!summary || !menu || !switcher.open) {
+        resetMenuPosition();
+        return;
+      }
+
+      var margin = window.matchMedia("(max-width: 720px)").matches ? 10 : 12;
+      var gap = 8;
+      var viewportWidth = document.documentElement.clientWidth || window.innerWidth;
+      var viewportHeight = document.documentElement.clientHeight || window.innerHeight;
+      var width = Math.min(320, Math.max(240, viewportWidth - margin * 2));
+      var rect = summary.getBoundingClientRect();
+      var left = Math.min(Math.max(rect.left, margin), viewportWidth - width - margin);
+      var below = Math.max(120, viewportHeight - rect.bottom - margin - gap);
+      var above = Math.max(120, rect.top - margin - gap);
+      var naturalHeight;
+      var maxHeight;
+      var top;
+      var opensUp;
+
+      switcher.classList.add("is-floating");
+      menu.style.setProperty("--site-switcher-width", width + "px");
+      menu.style.setProperty("--site-switcher-max-height", Math.max(120, viewportHeight - margin * 2) + "px");
+      naturalHeight = menu.scrollHeight;
+      opensUp = below < Math.min(naturalHeight, 220) && above > below;
+      maxHeight = opensUp ? above : below;
+      top = opensUp ? Math.max(margin, rect.top - gap - Math.min(naturalHeight, maxHeight)) : rect.bottom + gap;
+
+      menu.style.setProperty("--site-switcher-left", left + "px");
+      menu.style.setProperty("--site-switcher-top", top + "px");
+      menu.style.setProperty("--site-switcher-max-height", Math.max(120, maxHeight) + "px");
+    }
+
+    function schedulePosition() {
+      if (!switcher.open) return;
+      if (raf) return;
+      raf = window.requestAnimationFrame(positionMenu);
+    }
+
+    switcher.addEventListener("toggle", function () {
+      if (switcher.open) schedulePosition();
+      else resetMenuPosition();
+    });
     document.addEventListener("click", function (e) {
       if (!switcher.contains(e.target)) switcher.open = false;
     });
     document.addEventListener("keydown", function (e) {
       if (e.key === "Escape") switcher.open = false;
     });
+    window.addEventListener("resize", schedulePosition);
+    window.addEventListener("scroll", schedulePosition, true);
   })();
 
   /* ---------- 通用复制按钮 ---------- */
