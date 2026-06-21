@@ -124,6 +124,12 @@
       <form method="post" action="/admin/settings/site" class="admin-form">
         <input type="hidden" name="_csrf" value="{{.CSRF}}">
         <input type="hidden" name="lang" value="{{.EditLang}}">
+        <div class="config-savebar">
+          <span class="config-savebar-title">{{.Admin.T "admin.settings.tabs.basic" "基础信息"}}</span>
+          <div class="config-savebar-actions">
+            <button class="btn btn-primary" type="submit">{{.Admin.T "admin.settings.site.save" "保存基础信息"}}</button>
+          </div>
+        </div>
         <div class="field-group">
           <h3 class="group-head with-icon">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01"/><path d="M11 12h1v5h1"/></svg>
@@ -267,7 +273,6 @@
           </div>
         </div>
 
-        <button class="btn btn-primary" type="submit">{{.Admin.T "admin.settings.site.save" "保存基础信息"}}</button>
       </form>
 
       {{else if eq .Section "appearance"}}
@@ -358,6 +363,12 @@
       <form method="post" action="/admin/settings/copy" class="admin-form">
         <input type="hidden" name="_csrf" value="{{.CSRF}}">
         <input type="hidden" name="lang" value="{{.EditLang}}">
+        <div class="config-savebar">
+          <span class="config-savebar-title">{{.Admin.T "admin.settings.tabs.copy" "文案内容"}}</span>
+          <div class="config-savebar-actions">
+            <button class="btn btn-primary" type="submit">{{.Admin.T "admin.settings.copy.save" "保存文案"}}</button>
+          </div>
+        </div>
         <p class="muted config-intro">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01"/><path d="M11 12h1v5h1"/></svg>
           <span>{{.Admin.T "admin.settings.copy.intro_prefix" "编辑「"}}<strong>{{range .Locales}}{{if eq .Code $.EditLang}}{{.Name}}{{end}}{{end}}</strong>{{.Admin.T "admin.settings.copy.intro_suffix" "」语种的前台文案，留空则回落默认语种。"}}</span>
@@ -432,7 +443,6 @@
           </div>
         </div>
 
-        <button class="btn btn-primary" type="submit">{{.Admin.T "admin.settings.copy.save" "保存文案"}}</button>
       </form>
 
       {{else if eq .Section "menu"}}
@@ -452,6 +462,13 @@
       <p class="muted" style="margin:.1rem 0 1rem;font-size:.9rem">{{.Admin.T "admin.settings.menu.desc" "选择常用入口即可自动生成路径和各语种菜单文字；需要特殊页面时选择「自定义站内路径」，外部网站选择「外部链接」。左侧手柄可拖动排序。"}}</p>
       <form method="post" action="/admin/settings/menu" class="admin-form">
         <input type="hidden" name="_csrf" value="{{.CSRF}}">
+        <div class="config-savebar">
+          <span class="config-savebar-title">{{.Admin.T "admin.settings.tabs.menu" "导航菜单"}}</span>
+          <div class="config-savebar-actions">
+            <button type="button" class="btn btn-soft" data-menu-add>＋ {{.Admin.T "admin.settings.menu.add" "添加菜单项"}}</button>
+            <button class="btn btn-primary" type="submit">{{.Admin.T "admin.settings.menu.save" "保存菜单"}}</button>
+          </div>
+        </div>
         <div class="menu-rows" data-menu-rows data-langs="{{range $i, $l := .Locales}}{{if $i}},{{end}}{{$l.Code}}{{end}}" data-lang-names="{{range $i, $l := .Locales}}{{if $i}},{{end}}{{$l.Name}}{{end}}" data-targets="{{json .MenuTargets}}" data-text-target="{{.Admin.T "admin.settings.menu.target" "指向哪里"}}" data-text-path="{{.Admin.T "admin.settings.menu.path" "路径"}}" data-text-pending="{{.Admin.T "admin.settings.menu.pending" "待填写"}}" data-text-custom-url="{{.Admin.T "admin.settings.menu.custom_url" "自定义地址"}}" data-text-custom-url-placeholder="{{.Admin.T "admin.settings.menu.custom_url_placeholder" "/docs 或 https://example.com"}}" data-text-labels="{{.Admin.T "admin.settings.menu.labels" "菜单文字"}}" data-text-label-placeholder="{{.Admin.T "admin.settings.menu.label_placeholder" "名称"}}" data-text-delete="{{.Admin.T "admin.action.delete" "删除"}}" data-text-delete-confirm="{{.Admin.T "admin.settings.menu.delete_confirm" "删除这个菜单项？保存菜单后生效。"}}" data-text-empty="{{.Admin.T "admin.settings.menu.empty" "暂无菜单项"}}" data-text-unnamed="{{.Admin.T "admin.settings.menu.unnamed" "未命名"}}">
           {{range $row := .MenuEdit}}
           <div class="menu-row">
@@ -491,10 +508,6 @@
             <button type="button" class="menu-del" data-menu-del data-confirm="{{$.Admin.T "admin.settings.menu.delete_confirm" "删除这个菜单项？保存菜单后生效。"}}" title="{{$.Admin.T "admin.action.delete" "删除"}}" aria-label="{{$.Admin.T "admin.action.delete" "删除"}}">{{template "icon-trash"}}</button>
           </div>
           {{end}}
-        </div>
-        <div class="menu-foot">
-          <button type="button" class="btn btn-soft" data-menu-add>＋ {{.Admin.T "admin.settings.menu.add" "添加菜单项"}}</button>
-          <button class="btn btn-primary" type="submit">{{.Admin.T "admin.settings.menu.save" "保存菜单"}}</button>
         </div>
       </form>
 

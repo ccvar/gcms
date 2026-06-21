@@ -1659,14 +1659,23 @@ func (s *Store) ClearDemoContent() error {
 			return err
 		}
 	}
+	if _, err := tx.Exec(`INSERT INTO settings(key,value) VALUES('demo.seed','empty')
+		ON CONFLICT(key) DO UPDATE SET value=excluded.value`); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		return err
 	}
 	s.settingsMu.Lock()
 	if s.settingsLoaded {
+		if s.settings == nil {
+			s.settings = map[string]string{}
+		}
 		for _, key := range settings {
 			delete(s.settings, key)
 		}
+		s.settings["demo.seed"] = "empty"
 	}
 	s.settingsMu.Unlock()
 	return nil

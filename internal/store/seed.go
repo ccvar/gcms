@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"os"
 	"strings"
 	"time"
@@ -34,6 +35,15 @@ func (s *Store) seedIfEmpty() error {
 		return err
 	}
 	if n > 0 {
+		return nil
+	}
+	var seedMode string
+	err := s.db.QueryRow(`SELECT value FROM settings WHERE key='demo.seed'`).Scan(&seedMode)
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+	if strings.EqualFold(seedMode, "empty") {
+		s.Seeded = false
 		return nil
 	}
 

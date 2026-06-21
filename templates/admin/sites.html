@@ -1,7 +1,7 @@
 {{define "body"}}
   <div class="admin-head sites-head">
     <div>
-      <h1>{{.Admin.T "admin.sites.title" "站点管理"}}</h1>
+      <h1 class="sites-title">{{.Admin.T "admin.sites.title" "站点管理"}} <span class="sites-count">{{printf (.Admin.T "admin.sites.count" "%d 个站点") (len .PlatformSites)}}</span></h1>
       <p class="muted">{{.Admin.T "admin.sites.subtitle" "管理平台下的站点、域名、默认入口和平台自动化接入。"}}</p>
     </div>
     <div class="overview-actions">
@@ -15,73 +15,110 @@
       <article class="site-card{{if .IsDefault}} is-default{{end}}">
         <div class="site-card-main">
           <div class="site-title-row">
-            <div>
-              <h3>{{.Name}}</h3>
-              <p class="site-meta">
-                <span>{{.Slug}}</span>
-                {{if .IsDefault}}<span>{{$.Admin.T "admin.sites.default" "默认站点"}}</span>{{end}}
-                {{if eq .ID $.PlatformCurrentSiteID}}<span>{{$.Admin.T "admin.sites.current_badge" "当前后台"}}</span>{{end}}
-              </p>
+            <div class="site-card-identity">
+              {{with index $.PlatformSiteIcons .ID}}<img class="site-card-icon" src="{{.}}" alt="" decoding="async">{{else}}<span class="site-card-icon fallback">{{template "site-icon-empty"}}</span>{{end}}
+              <div>
+                <h3>{{.Name}}</h3>
+                <p class="site-meta">
+                  <span>{{.Slug}}</span>
+                  {{if .IsDefault}}<span>{{$.Admin.T "admin.sites.default" "默认站点"}}</span>{{end}}
+                  {{if eq .ID $.PlatformCurrentSiteID}}<span>{{$.Admin.T "admin.sites.current_badge" "当前后台"}}</span>{{end}}
+                </p>
+              </div>
             </div>
             <div class="site-badges">
-              {{if eq .Status "enabled"}}<span class="badge pub">{{$.Admin.T "admin.sites.enabled" "启用"}}</span>{{else}}<span class="badge draft">{{$.Admin.T "admin.sites.disabled" "关闭"}}</span>{{end}}
-              {{if .ManagementAutomationEnabled}}<span class="badge sched">{{$.Admin.T "admin.sites.platform_api_on" "已开启"}}</span>{{else}}<span class="badge draft">{{$.Admin.T "admin.sites.platform_api_off" "未开启"}}</span>{{end}}
+              {{if eq .Status "enabled"}}<span class="badge pub" data-tooltip="{{$.Admin.T "admin.sites.status_enabled_tip" "站点状态：已启用。该站点可访问，也可以进入后台管理。"}}" aria-label="{{$.Admin.T "admin.sites.status_enabled_tip" "站点状态：已启用。该站点可访问，也可以进入后台管理。"}}">{{template "site-icon-status"}}<span>{{$.Admin.T "admin.sites.enabled" "站点启用"}}</span></span>{{else}}<span class="badge draft" data-tooltip="{{$.Admin.T "admin.sites.status_disabled_tip" "站点状态：已关闭。该站点暂不可访问。"}}" aria-label="{{$.Admin.T "admin.sites.status_disabled_tip" "站点状态：已关闭。该站点暂不可访问。"}}">{{template "site-icon-status"}}<span>{{$.Admin.T "admin.sites.disabled" "站点关闭"}}</span></span>{{end}}
+              {{if .ManagementAutomationEnabled}}<span class="badge sched" data-tooltip="{{$.Admin.T "admin.sites.platform_api_on_tip" "自动化接口：已开启。AI 和外部工具可通过平台入口调用该站点接口。"}}" aria-label="{{$.Admin.T "admin.sites.platform_api_on_tip" "自动化接口：已开启。AI 和外部工具可通过平台入口调用该站点接口。"}}">{{template "site-icon-plug"}}<span>{{$.Admin.T "admin.sites.platform_api_on" "接口已开"}}</span></span>{{else}}<span class="badge draft" data-tooltip="{{$.Admin.T "admin.sites.platform_api_off_tip" "自动化接口：已关闭。平台入口不会暴露该站点接口。"}}" aria-label="{{$.Admin.T "admin.sites.platform_api_off_tip" "自动化接口：已关闭。平台入口不会暴露该站点接口。"}}">{{template "site-icon-plug"}}<span>{{$.Admin.T "admin.sites.platform_api_off" "接口关闭"}}</span></span>{{end}}
             </div>
           </div>
-
-          <dl class="site-info-grid">
-            <div>
-              <dt>{{$.Admin.T "admin.sites.domain" "域名"}}</dt>
-              <dd>
-                {{with index $.PlatformDomains .ID}}
-                  {{range .}}<span class="site-domain{{if .IsPrimary}} primary{{end}}">{{if .IsPrimary}}★ {{end}}{{.Scheme}}://{{.Host}}</span>{{end}}
-                {{else}}
-                  <span class="muted">{{$.Admin.T "admin.sites.no_domain" "未绑定域名"}}</span>
-                {{end}}
-              </dd>
-            </div>
-            <div>
-              <dt>{{$.Admin.T "admin.sites.storage" "存储"}}</dt>
-              <dd><code>{{.DBPath}}</code><code>{{.UploadDir}}</code></dd>
-            </div>
-          </dl>
         </div>
 
         <div class="site-card-actions">
           <form method="post" action="/admin/sites/{{.ID}}/enter">
             <input type="hidden" name="_csrf" value="{{$.CSRF}}">
-            <button class="btn btn-primary" type="submit">{{$.Admin.T "admin.sites.enter" "进入后台"}}</button>
+            <button class="btn btn-primary icon-text" type="submit">{{template "site-icon-enter"}}<span>{{$.Admin.T "admin.sites.enter" "进入后台"}}</span></button>
           </form>
-          <a class="btn" href="/admin/sites/{{.ID}}/preview" target="_blank" rel="noopener">{{$.Admin.T "admin.sites.preview" "预览"}}</a>
-          {{if .ManagementAutomationEnabled}}<a class="btn" href="/admin/sites/{{.ID}}/automation/skill.zip">{{$.Admin.T "admin.sites.download_platform_kit" "下载平台接入包"}}</a>{{end}}
+          <a class="site-card-preview" href="/admin/sites/{{.ID}}/preview" target="_blank" rel="noopener"><span>{{$.Admin.T "admin.nav.view_site" "查看站点"}}</span><span class="ext-arrow" aria-hidden="true">↗</span></a>
         </div>
 
-        <div class="site-card-tools">
-          {{if not .IsDefault}}
-          <form method="post" action="/admin/sites/{{.ID}}/default">
-            <input type="hidden" name="_csrf" value="{{$.CSRF}}">
-            <button class="linkbtn" type="submit">{{$.Admin.T "admin.sites.set_default" "设为默认"}}</button>
-          </form>
-          {{end}}
-          <form method="post" action="/admin/sites/{{.ID}}/status">
-            <input type="hidden" name="_csrf" value="{{$.CSRF}}">
-            <input type="hidden" name="status" value="{{if eq .Status "enabled"}}disabled{{else}}enabled{{end}}">
-            <button class="linkbtn" type="submit">{{if eq .Status "enabled"}}{{$.Admin.T "admin.sites.disable" "关闭"}}{{else}}{{$.Admin.T "admin.sites.enable" "启用"}}{{end}}</button>
-          </form>
-          <form method="post" action="/admin/sites/{{.ID}}/automation">
-            <input type="hidden" name="_csrf" value="{{$.CSRF}}">
-            <input type="hidden" name="enabled" value="{{if .ManagementAutomationEnabled}}0{{else}}1{{end}}">
-            <button class="linkbtn" type="submit">{{if .ManagementAutomationEnabled}}{{$.Admin.T "admin.sites.platform_api_disable" "关闭平台入口"}}{{else}}{{$.Admin.T "admin.sites.platform_api_enable" "开启平台入口"}}{{end}}</button>
-          </form>
-        </div>
+        <details class="site-card-details">
+          <summary>
+            <span class="site-details-title">{{template "site-icon-settings"}}<span>{{$.Admin.T "admin.sites.details" "存储、设置与绑定"}}</span></span>
+            <small>{{if .IsDefault}}{{$.Admin.T "admin.sites.default_domain_note" "使用当前默认入口"}}{{else}}{{$.Admin.T "admin.sites.details_hint" "域名、平台入口和文件路径"}}{{end}}</small>
+          </summary>
+          <div class="site-details-body">
+            <dl class="site-info-grid">
+              <div>
+                <dt>{{$.Admin.T "admin.sites.domain" "域名"}}</dt>
+                <dd>
+                  {{if .IsDefault}}
+                    <span class="muted">{{$.Admin.T "admin.sites.default_domain_note" "使用当前默认入口"}}</span>
+                  {{else}}
+                    <span class="site-domain-row">
+                      <span class="site-domain-list">
+                        {{with index $.PlatformDomains .ID}}
+                          {{range .}}<span class="site-domain{{if .IsPrimary}} primary{{end}}">{{if .IsPrimary}}★ {{end}}{{.Scheme}}://{{.Host}}</span>{{end}}
+                        {{else}}
+                          <span class="muted">{{$.Admin.T "admin.sites.no_domain" "未绑定域名"}}</span>
+                        {{end}}
+                      </span>
+                      <a class="site-domain-bind" href="#site-domain-modal-{{.ID}}">{{template "site-icon-link"}}<span>{{$.Admin.T "admin.sites.bind_domain_short" "绑定"}}</span></a>
+                    </span>
+                  {{end}}
+                </dd>
+              </div>
+              <div>
+                <dt>{{$.Admin.T "admin.sites.storage" "存储"}}</dt>
+                <dd><code>{{.DBPath}}</code><code>{{.UploadDir}}</code></dd>
+              </div>
+            </dl>
 
-        <form class="site-domain-form" method="post" action="/admin/sites/{{.ID}}/domains">
-          <input type="hidden" name="_csrf" value="{{$.CSRF}}">
-          <input name="host" placeholder="www.example.com">
-          <input type="hidden" name="primary" value="1">
-          <input type="hidden" name="redirect" value="1">
-          <button class="btn" type="submit">{{$.Admin.T "admin.sites.add_domain" "绑定域名"}}</button>
-        </form>
+            {{if .IsDefault}}
+            <p class="site-default-note">{{$.Admin.T "admin.sites.default_locked_note" "默认站点使用当前默认入口，不能关闭站点、关闭自动化接口或绑定域名。"}}</p>
+            {{else}}
+            <div class="site-card-tools">
+              <form method="post" action="/admin/sites/{{.ID}}/status" data-confirm-title="{{if eq .Status "enabled"}}{{$.Admin.T "admin.sites.disable_confirm_title" "确认关闭站点"}}{{else}}{{$.Admin.T "admin.sites.enable_confirm_title" "确认启用站点"}}{{end}}" data-confirm-ok="{{if eq .Status "enabled"}}{{$.Admin.T "admin.sites.disable" "关闭站点"}}{{else}}{{$.Admin.T "admin.sites.enable" "启用站点"}}{{end}}" data-confirm="{{if eq .Status "enabled"}}{{printf ($.Admin.T "admin.sites.disable_confirm" "关闭「%s」后，该站点前台访问会暂停，但数据会保留。确定继续？") .Name}}{{else}}{{printf ($.Admin.T "admin.sites.enable_confirm" "启用「%s」后，该站点会重新允许访问。确定继续？") .Name}}{{end}}">
+                <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+                <input type="hidden" name="status" value="{{if eq .Status "enabled"}}disabled{{else}}enabled{{end}}">
+                <button class="linkbtn" type="submit" data-tooltip="{{if eq .Status "enabled"}}{{$.Admin.T "admin.sites.disable_tip" "暂停该站点访问，不删除数据。"}}{{else}}{{$.Admin.T "admin.sites.enable_tip" "恢复该站点访问。"}}{{end}}">{{if eq .Status "enabled"}}{{$.Admin.T "admin.sites.disable" "关闭站点"}}{{else}}{{$.Admin.T "admin.sites.enable" "启用站点"}}{{end}}</button>
+              </form>
+              <form method="post" action="/admin/sites/{{.ID}}/automation" data-confirm-title="{{if .ManagementAutomationEnabled}}{{$.Admin.T "admin.sites.platform_api_disable_confirm_title" "确认关闭自动化接口"}}{{else}}{{$.Admin.T "admin.sites.platform_api_enable_confirm_title" "确认开启自动化接口"}}{{end}}" data-confirm-ok="{{if .ManagementAutomationEnabled}}{{$.Admin.T "admin.sites.platform_api_disable" "关闭自动化接口"}}{{else}}{{$.Admin.T "admin.sites.platform_api_enable" "开启自动化接口"}}{{end}}" data-confirm="{{if .ManagementAutomationEnabled}}{{printf ($.Admin.T "admin.sites.platform_api_disable_confirm" "关闭「%s」的自动化接口后，平台接入包和外部 AI 工具将无法调用该站点。确定继续？") .Name}}{{else}}{{printf ($.Admin.T "admin.sites.platform_api_enable_confirm" "开启「%s」的自动化接口后，外部工具可通过平台入口调用该站点接口。确定继续？") .Name}}{{end}}">
+                <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+                <input type="hidden" name="enabled" value="{{if .ManagementAutomationEnabled}}0{{else}}1{{end}}">
+                <button class="linkbtn" type="submit" data-tooltip="{{if .ManagementAutomationEnabled}}{{$.Admin.T "admin.sites.platform_api_disable_tip" "停止通过平台入口暴露该站点自动化接口。"}}{{else}}{{$.Admin.T "admin.sites.platform_api_enable_tip" "允许平台接入包和外部 AI 工具调用该站点接口。"}}{{end}}">{{if .ManagementAutomationEnabled}}{{$.Admin.T "admin.sites.platform_api_disable" "关闭自动化接口"}}{{else}}{{$.Admin.T "admin.sites.platform_api_enable" "开启自动化接口"}}{{end}}</button>
+              </form>
+              {{if .ManagementAutomationEnabled}}<a class="site-tool-link" href="/admin/sites/{{.ID}}/automation/skill.zip">{{template "site-icon-package"}}<span>{{$.Admin.T "admin.sites.download_platform_kit" "下载平台接入包"}}</span></a>{{end}}
+            </div>
+            {{end}}
+          </div>
+        </details>
+        {{if not .IsDefault}}
+        <div class="modal site-domain-modal" id="site-domain-modal-{{.ID}}">
+          <a class="modal-backdrop" href="#" aria-label="{{$.Admin.T "admin.action.cancel" "取消"}}"></a>
+          <div class="modal-card site-domain-modal-card" role="dialog" aria-modal="true" aria-labelledby="site-domain-title-{{.ID}}">
+            <div class="site-modal-head">
+              <div>
+                <h3 id="site-domain-title-{{.ID}}">{{$.Admin.T "admin.sites.bind_domain_title" "绑定访问域名"}}</h3>
+                <p class="muted">{{$.Admin.T "admin.sites.bind_domain_desc" "填写要指向该站点的域名，系统会作为主域名保存。"}}</p>
+              </div>
+              <a class="modal-x" href="#" aria-label="{{$.Admin.T "admin.action.cancel" "取消"}}">×</a>
+            </div>
+            <form class="admin-form site-domain-form site-domain-modal-form" method="post" action="/admin/sites/{{.ID}}/domains">
+              <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+              <div class="field">
+                <label for="site-domain-host-{{.ID}}">{{$.Admin.T "admin.sites.domain" "域名"}}</label>
+                <input id="site-domain-host-{{.ID}}" name="host" placeholder="www.example.com" required>
+              </div>
+              <input type="hidden" name="primary" value="1">
+              <input type="hidden" name="redirect" value="1">
+              <div class="modal-actions">
+                <a class="btn" href="#">{{$.Admin.T "admin.action.cancel" "取消"}}</a>
+                <button class="btn btn-primary" type="submit">{{$.Admin.T "admin.sites.add_domain" "绑定域名"}}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+        {{end}}
       </article>
       {{else}}
       <div class="overview-empty compact site-empty">
@@ -91,7 +128,7 @@
     </div>
   </div>
 
-  <div class="modal site-create-modal" data-site-create-modal hidden>
+  <div class="modal site-create-modal" data-site-create-modal{{if not .FormErr}} hidden{{end}}>
     <button class="modal-backdrop" type="button" data-site-create-close aria-label="{{.Admin.T "admin.action.cancel" "取消"}}"></button>
     <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="site-create-title">
       <div class="site-modal-head">
@@ -103,20 +140,41 @@
       </div>
       <form class="admin-form site-create-form" method="post" action="/admin/sites">
         <input type="hidden" name="_csrf" value="{{.CSRF}}">
+        {{if .FormErr}}<div class="form-err">{{.FormErr}}</div>{{end}}
         <div class="site-form-stack">
           <div class="field">
             <label for="site-slug">{{.Admin.T "admin.sites.slug" "站点标记"}}</label>
-            <input id="site-slug" name="slug" placeholder="blog" required>
+            <input id="site-slug" name="slug" value="{{index .FormVals "slug"}}" placeholder="blog" pattern="[a-z0-9][a-z0-9-]{0,62}" maxlength="63" autocapitalize="none" autocomplete="off" spellcheck="false" required>
+            <p class="hint">{{.Admin.T "admin.sites.slug_hint" "只能使用小写字母、数字和短横线，例如 blog 或 docs-site。"}}</p>
           </div>
           <div class="field">
             <label for="site-name">{{.Admin.T "admin.sites.display_name" "站点名称"}}</label>
-            <input id="site-name" name="name" placeholder="{{.Admin.T "admin.sites.display_name_placeholder" "品牌官网 / 文档中心"}}">
+            <input id="site-name" name="name" value="{{index .FormVals "name"}}" placeholder="{{.Admin.T "admin.sites.display_name_placeholder" "品牌官网 / 文档中心"}}">
           </div>
           <div class="field">
             <label for="site-domain">{{.Admin.T "admin.sites.domain_optional" "访问域名（可选）"}}</label>
-            <input id="site-domain" name="domain" placeholder="blog.example.com">
+            <input id="site-domain" name="domain" value="{{index .FormVals "domain"}}" placeholder="blog.example.com" inputmode="url" autocapitalize="none" autocomplete="off" spellcheck="false">
           </div>
-          <label class="checkline"><input type="checkbox" name="automation" value="1" checked><span>{{.Admin.T "admin.sites.platform_api_enable_new" "允许通过平台入口调用自动化接口"}}</span></label>
+          <div class="field">
+            <label>{{.Admin.T "admin.sites.seed_mode" "初始化内容"}}</label>
+            <div class="site-seed-options">
+              <label class="site-seed-option">
+                <input type="radio" name="seed_mode" value="demo"{{if ne (index .FormVals "seed_mode") "empty"}} checked{{end}}>
+                <span>
+                  <strong>{{.Admin.T "admin.sites.seed_demo" "带演示数据"}}</strong>
+                  <em>{{.Admin.T "admin.sites.seed_demo_desc" "适合基于样板内容快速改站。"}}</em>
+                </span>
+              </label>
+              <label class="site-seed-option">
+                <input type="radio" name="seed_mode" value="empty"{{if eq (index .FormVals "seed_mode") "empty"}} checked{{end}}>
+                <span>
+                  <strong>{{.Admin.T "admin.sites.seed_empty" "空数据"}}</strong>
+                  <em>{{.Admin.T "admin.sites.seed_empty_desc" "只保留基础设置，从零开始录入内容。"}}</em>
+                </span>
+              </label>
+            </div>
+          </div>
+          <label class="checkline"><input type="checkbox" name="automation" value="1"{{if or (not .FormErr) (eq (index .FormVals "automation") "1")}} checked{{end}}><span>{{.Admin.T "admin.sites.platform_api_enable_new" "允许通过平台入口调用自动化接口"}}</span></label>
         </div>
         <div class="modal-actions">
           <button class="btn" type="button" data-site-create-close>{{.Admin.T "admin.action.cancel" "取消"}}</button>
@@ -126,3 +184,10 @@
     </div>
   </div>
 {{end}}
+
+{{define "site-icon-status"}}<svg class="site-inline-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>{{end}}
+{{define "site-icon-plug"}}<svg class="site-inline-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 2v5"/><path d="M16 2v5"/><path d="M7 7h10v5a5 5 0 0 1-10 0z"/><path d="M12 17v5"/></svg>{{end}}
+{{define "site-icon-enter"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/></svg>{{end}}
+{{define "site-icon-package"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.3 7 12 12l8.7-5"/><path d="M12 22V12"/></svg>{{end}}
+{{define "site-icon-settings"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 21v-7"/><path d="M4 10V3"/><path d="M12 21v-9"/><path d="M12 8V3"/><path d="M20 21v-5"/><path d="M20 12V3"/><path d="M2 14h4"/><path d="M10 8h4"/><path d="M18 16h4"/></svg>{{end}}
+{{define "site-icon-link"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.1 0l2-2a5 5 0 0 0-7.1-7.1l-1.2 1.2"/><path d="M14 11a5 5 0 0 0-7.1 0l-2 2A5 5 0 0 0 12 20.1l1.2-1.2"/></svg>{{end}}

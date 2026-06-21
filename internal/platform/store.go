@@ -279,6 +279,28 @@ func (s *Store) CreateSite(slug, name, dbPath, uploadDir string, managementAutom
 	return site, nil
 }
 
+func (s *Store) SetSiteName(id int64, name string) error {
+	if s == nil {
+		return nil
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("站点名称不能为空")
+	}
+	res, err := s.db.Exec(`UPDATE sites SET name=?,updated_at=? WHERE id=?`, name, fmtTime(time.Now()), id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 func (s *Store) SetSiteStatus(id int64, status string) error {
 	if s == nil {
 		return nil

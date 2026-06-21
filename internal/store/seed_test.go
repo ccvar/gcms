@@ -560,6 +560,9 @@ func TestClearDemoContentKeepsBaseSettings(t *testing.T) {
 			t.Fatalf("%s = %q, want empty", key, got)
 		}
 	}
+	if got := st.Setting("demo.seed"); got != "empty" {
+		t.Fatalf("demo.seed = %q, want empty", got)
+	}
 	if got := st.Setting("admin_password_hash"); got == "" {
 		t.Fatalf("admin password hash should be kept")
 	}

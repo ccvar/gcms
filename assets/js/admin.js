@@ -1703,6 +1703,30 @@
     });
   })();
 
+  /* ---------- 站点管理：详情浮层 ---------- */
+  (function () {
+    var details = Array.prototype.slice.call(document.querySelectorAll(".site-card-details"));
+    if (!details.length) return;
+    function closeAll(except) {
+      details.forEach(function (d) {
+        if (d !== except) d.open = false;
+      });
+    }
+    details.forEach(function (d) {
+      d.addEventListener("toggle", function () {
+        if (d.open) closeAll(d);
+      });
+    });
+    document.addEventListener("pointerdown", function (e) {
+      if (!details.some(function (d) { return d.open; })) return;
+      if (e.target.closest && e.target.closest(".site-card-details")) return;
+      closeAll();
+    });
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") closeAll();
+    });
+  })();
+
   /* ---------- 顶部站点切换器 ---------- */
   (function () {
     var switcher = document.querySelector(".site-switcher");
@@ -1804,7 +1828,7 @@
     form.addEventListener("submit", function (e) {
       if (form.matches("[data-no-busy]")) return;
       if (e.defaultPrevented) return; // 被 confirm 取消则不锁
-      var btn = submitBtnsFor(form)[0];
+      var btn = e.submitter || submitBtnsFor(form)[0];
       if (btn && !btn.disabled) {
         var orig = btn.textContent;
         setTimeout(function () { btn.disabled = true; btn.dataset.busy = "1"; btn.textContent = orig.indexOf("上传") >= 0 ? "上传中…" : "处理中…"; }, 0);

@@ -25,23 +25,26 @@
       </a>
       {{if and .Authed (not .PlatformAdminView) (gt (len .PlatformSites) 0)}}
       <details class="site-switcher">
-        <summary>
-          <span>{{.Admin.T "admin.sites.switch" "切换站点"}}</span>
-          <strong>{{range .PlatformSites}}{{if eq .ID $.PlatformCurrentSiteID}}{{.Name}}{{end}}{{end}}</strong>
+        <summary aria-label="{{.Admin.T "admin.sites.switch" "切换站点"}}" title="{{.Admin.T "admin.sites.switch" "切换站点"}}">
+          <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7h11l-3-3"/><path d="M17 17H6l3 3"/><path d="M18 7l-3 3"/><path d="M6 17l3-3"/></svg>
         </summary>
         <div class="site-switcher-menu">
-          <a class="site-switcher-manage" href="/admin/sites">{{.Admin.T "admin.sites.title" "站点管理"}}</a>
+          <a class="site-switcher-manage" href="/admin/sites">
+            <span>
+              <strong>{{.Admin.T "admin.sites.title" "站点管理"}}</strong>
+              <em>{{.Admin.T "admin.sites.manage_desc" "回到平台入口"}}</em>
+            </span>
+          </a>
           {{range .PlatformSites}}
+          {{if ne .ID $.PlatformCurrentSiteID}}
           <form method="post" action="/admin/sites/{{.ID}}/enter">
             <input type="hidden" name="_csrf" value="{{$.CSRF}}">
-            <button type="submit"{{if eq .Status "enabled"}}{{else}} disabled{{end}}{{if eq .ID $.PlatformCurrentSiteID}} class="active"{{end}}>
-              <span>
-                <strong>{{.Name}}</strong>
-                <em>{{.Slug}}{{if .IsDefault}} · {{$.Admin.T "admin.sites.default" "默认站点"}}{{end}}</em>
-              </span>
-              {{if eq .ID $.PlatformCurrentSiteID}}<b>{{$.Admin.T "admin.sites.current_short" "当前"}}</b>{{end}}
+            <button type="submit"{{if eq .Status "enabled"}}{{else}} disabled{{end}}>
+              {{with index $.PlatformSiteIcons .ID}}<img class="site-switcher-icon" src="{{.}}" alt="" decoding="async">{{else}}<span class="site-switcher-icon fallback">{{template "site-icon-empty"}}</span>{{end}}
+              <strong>{{.Name}} / {{.Slug}}</strong>
             </button>
           </form>
+          {{end}}
           {{end}}
         </div>
       </details>
@@ -112,3 +115,5 @@
 {{define "icon-extlink"}}<span class="ext-arrow" aria-hidden="true">↗</span>{{end}}
 
 {{define "icon-edit"}}<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>{{end}}
+
+{{define "site-icon-empty"}}<svg class="site-empty-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="3"/><path d="M8 16 16 8"/><path d="M9 9h.01"/><path d="M15 15h.01"/></svg>{{end}}

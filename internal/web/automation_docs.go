@@ -48,11 +48,12 @@ func (s *Server) apiPlatformOpenAPI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
-	_ = enc.Encode(automationOpenAPISpec(s.absForRequest(r, "/api/platform/v1/sites/"+siteID)))
+	_ = enc.Encode(automationOpenAPISpec(s.absForPlatformRequest(r, "/api/platform/v1/sites/"+siteID)))
 }
 
 func (s *Server) adminDownloadAutomationSkill(w http.ResponseWriter, r *http.Request) {
-	opts := automationSkillOptions{apiBase: s.absForRequest(r, "/api/admin/v1")}
+	sess, _ := s.currentSession(r)
+	opts := automationSkillOptions{apiBase: s.automationBaseURL(r, sess.currentSiteID)}
 	if r.Method == http.MethodPost {
 		if _, ok := s.checkCSRF(w, r); !ok {
 			return

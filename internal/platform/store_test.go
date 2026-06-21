@@ -86,6 +86,16 @@ func TestBootstrapDefaultSiteAndPlatformSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create site: %v", err)
 	}
+	if err := ps.SetSiteName(other.ID, "Renamed Blog"); err != nil {
+		t.Fatalf("rename site: %v", err)
+	}
+	renamed, ok, err := ps.GetSite(other.ID)
+	if err != nil || !ok {
+		t.Fatalf("get renamed site: ok=%v err=%v", ok, err)
+	}
+	if renamed.Name != "Renamed Blog" {
+		t.Fatalf("renamed site name = %q, want Renamed Blog", renamed.Name)
+	}
 	if err := ps.AddSiteDomain(other.ID, "https", "blog.example.com", true, true); err != nil {
 		t.Fatalf("add domain: %v", err)
 	}

@@ -1,6 +1,8 @@
 package web
 
 import (
+	"archive/zip"
+	"bytes"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -28,6 +30,13 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 	if err := defaultStore.SetSetting("site.name", "Default Runtime Site"); err != nil {
 		t.Fatalf("set default site name: %v", err)
 	}
+	defaultUploadDir := filepath.Join(dir, "default-uploads")
+	if err := os.MkdirAll(defaultUploadDir, 0o755); err != nil {
+		t.Fatalf("create default upload dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(defaultUploadDir, "favicon.ico"), []byte("default icon"), 0o644); err != nil {
+		t.Fatalf("write default legacy favicon: %v", err)
+	}
 
 	otherDB := filepath.Join(dir, "other.db")
 	otherStore, err := store.Open(otherDB)
@@ -36,6 +45,9 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 	}
 	if err := otherStore.SetSetting("site.name", "Blog Runtime Site"); err != nil {
 		t.Fatalf("set other site name: %v", err)
+	}
+	if err := otherStore.SetSetting("site.favicon", "/uploads/blog-icon.ico"); err != nil {
+		t.Fatalf("set other site favicon: %v", err)
 	}
 	otherToken, otherPrefix := newAutomationToken()
 	if _, err := otherStore.CreateAutomationKey("blog bot", otherToken, otherPrefix, "languages:read"); err != nil {
@@ -58,7 +70,7 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 		Slug:                        "main",
 		Name:                        "Default Runtime Site",
 		DBPath:                      defaultDB,
-		UploadDir:                   filepath.Join(dir, "default-uploads"),
+		UploadDir:                   defaultUploadDir,
 		AdminUser:                   "admin",
 		AdminPasswordHash:           string(hash),
 		ManagementAutomationEnabled: true,
@@ -69,7 +81,17 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 	if err != nil {
 		t.Fatalf("default site: %v", err)
 	}
-	otherSite, err := ps.CreateSite("blog", "Blog Runtime Site", otherDB, filepath.Join(dir, "blog-uploads"), true)
+	if err := ps.AddSiteDomain(defaultSite.ID, "https", "default-bound.test", true, true); err != nil {
+		t.Fatalf("add default domain: %v", err)
+	}
+	otherUploadDir := filepath.Join(dir, "blog-uploads")
+	if err := os.MkdirAll(otherUploadDir, 0o755); err != nil {
+		t.Fatalf("create other upload dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(otherUploadDir, "blog-icon.ico"), []byte("icon"), 0o644); err != nil {
+		t.Fatalf("write other favicon: %v", err)
+	}
+	otherSite, err := ps.CreateSite("blog", "Blog Runtime Site", otherDB, otherUploadDir, true)
 	if err != nil {
 		t.Fatalf("create other site: %v", err)
 	}
@@ -77,7 +99,7 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 		t.Fatalf("add other domain: %v", err)
 	}
 
-	srv, err := NewWithPlatform(defaultStore, ps, "https://platform.test", filepath.Join(dir, "default-uploads"), os.DirFS("../.."), os.DirFS("../.."))
+	srv, err := NewWithPlatform(defaultStore, ps, "https://platform.test", defaultUploadDir, os.DirFS("../.."), os.DirFS("../.."))
 	if err != nil {
 		t.Fatalf("new multisite server: %v", err)
 	}
@@ -108,6 +130,25 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 	if loginSess.CurrentSiteID != 0 {
 		t.Fatalf("login current site id = %d, want 0", loginSess.CurrentSiteID)
 	}
+	postPlatformForm := func(path string, form url.Values) *httptest.ResponseRecorder {
+		if form == nil {
+			form = url.Values{}
+		}
+		form.Set("_csrf", loginSess.CSRF)
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "https://platform.test"+path, strings.NewReader(form.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.AddCookie(loginCookie)
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+	getPlatform := func(path string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "https://platform.test"+path, nil)
+		req.AddCookie(loginCookie)
+		h.ServeHTTP(rec, req)
+		return rec
+	}
 	adminWithoutSite := httptest.NewRecorder()
 	adminReq := httptest.NewRequest(http.MethodGet, "https://platform.test/admin", nil)
 	adminReq.AddCookie(loginCookie)
@@ -131,11 +172,144 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 	if body := platformPage.Body.String(); !strings.Contains(body, `id="pw-warn"`) {
 		t.Fatalf("platform page did not render password warning")
 	}
+	if body := platformPage.Body.String(); !strings.Contains(body, `2 个站点`) {
+		t.Fatalf("platform page did not render site count")
+	}
 	if body := platformPage.Body.String(); !strings.Contains(body, `data-site-create-open`) || !strings.Contains(body, `data-site-create-modal`) {
 		t.Fatalf("platform page did not render create-site modal")
 	}
 	if body := platformPage.Body.String(); !strings.Contains(body, `site-card is-default`) || !strings.Contains(body, `href="/admin/security"`) {
 		t.Fatalf("platform page did not render default-site card state or security nav")
+	}
+	defaultIconPath := "/admin/sites/" + strconv.FormatInt(defaultSite.ID, 10) + "/uploads/favicon.ico"
+	otherIconPath := "/admin/sites/" + strconv.FormatInt(otherSite.ID, 10) + "/uploads/blog-icon.ico"
+	if body := platformPage.Body.String(); !strings.Contains(body, `class="site-card-icon"`) || !strings.Contains(body, defaultIconPath) || !strings.Contains(body, otherIconPath) {
+		t.Fatalf("platform page did not render site icons")
+	}
+	defaultIcon := httptest.NewRecorder()
+	defaultIconReq := httptest.NewRequest(http.MethodGet, "https://platform.test"+defaultIconPath, nil)
+	defaultIconReq.AddCookie(loginCookie)
+	h.ServeHTTP(defaultIcon, defaultIconReq)
+	if defaultIcon.Code != http.StatusOK {
+		t.Fatalf("default site legacy upload icon status = %d, body = %s", defaultIcon.Code, defaultIcon.Body.String())
+	}
+	otherIcon := httptest.NewRecorder()
+	otherIconReq := httptest.NewRequest(http.MethodGet, "https://platform.test"+otherIconPath, nil)
+	otherIconReq.AddCookie(loginCookie)
+	h.ServeHTTP(otherIcon, otherIconReq)
+	if otherIcon.Code != http.StatusOK {
+		t.Fatalf("site upload icon status = %d, body = %s", otherIcon.Code, otherIcon.Body.String())
+	}
+	defaultDomainAction := "/admin/sites/" + strconv.FormatInt(defaultSite.ID, 10) + "/domains"
+	otherDomainAction := "/admin/sites/" + strconv.FormatInt(otherSite.ID, 10) + "/domains"
+	if body := platformPage.Body.String(); strings.Contains(body, defaultDomainAction) || !strings.Contains(body, otherDomainAction) || !strings.Contains(body, `使用当前默认入口`) {
+		t.Fatalf("platform page did not enforce default-site domain UI")
+	}
+	if body := platformPage.Body.String(); strings.Contains(body, `default-bound.test`) {
+		t.Fatalf("platform page rendered a stored default-site domain")
+	}
+	if body := platformPage.Body.String(); !strings.Contains(body, `name="seed_mode" value="demo" checked`) || !strings.Contains(body, `name="seed_mode" value="empty"`) {
+		t.Fatalf("platform page did not render site seed mode options")
+	}
+	if body := platformPage.Body.String(); strings.Contains(body, `/default"`) {
+		t.Fatalf("platform page rendered set-default controls")
+	}
+
+	disableDefault := postPlatformForm("/admin/sites/"+strconv.FormatInt(defaultSite.ID, 10)+"/status", url.Values{"status": {"disabled"}})
+	if disableDefault.Code != http.StatusBadRequest {
+		t.Fatalf("disable default site status = %d, want 400", disableDefault.Code)
+	}
+	disableDefaultAutomation := postPlatformForm("/admin/sites/"+strconv.FormatInt(defaultSite.ID, 10)+"/automation", url.Values{"enabled": {"0"}})
+	if disableDefaultAutomation.Code != http.StatusBadRequest {
+		t.Fatalf("disable default platform entry status = %d, want 400", disableDefaultAutomation.Code)
+	}
+	setOtherDefault := postPlatformForm("/admin/sites/"+strconv.FormatInt(otherSite.ID, 10)+"/default", nil)
+	if setOtherDefault.Code != http.StatusBadRequest {
+		t.Fatalf("set other site default status = %d, want 400", setOtherDefault.Code)
+	}
+	bindDefaultDomain := postPlatformForm(defaultDomainAction, url.Values{"host": {"default.test"}})
+	if bindDefaultDomain.Code != http.StatusBadRequest {
+		t.Fatalf("bind default site domain status = %d, want 400", bindDefaultDomain.Code)
+	}
+
+	createBadSlug := postPlatformForm("/admin/sites", url.Values{
+		"slug":       {"Bad Site"},
+		"name":       {"Bad Runtime Site"},
+		"seed_mode":  {"empty"},
+		"automation": {"1"},
+	})
+	if createBadSlug.Code != http.StatusSeeOther || createBadSlug.Header().Get("Location") != "/admin/sites" {
+		t.Fatalf("create bad slug status/location = %d %q, want 303 /admin/sites", createBadSlug.Code, createBadSlug.Header().Get("Location"))
+	}
+	createBadSlugPage := getPlatform("/admin/sites")
+	if createBadSlugPage.Code != http.StatusOK {
+		t.Fatalf("bad slug redirect page status = %d, body = %s", createBadSlugPage.Code, createBadSlugPage.Body.String())
+	}
+	if body := createBadSlugPage.Body.String(); !strings.Contains(body, `class="sites-title">站点管理`) || !strings.Contains(body, `2 个站点`) || !strings.Contains(body, "站点标记只能包含小写字母、数字和短横线") || !strings.Contains(body, `data-site-create-modal>`) || !strings.Contains(body, `value="Bad Site"`) {
+		t.Fatalf("bad slug did not re-render sites page with modal error, body = %s", body)
+	}
+	createBadDomain := postPlatformForm("/admin/sites", url.Values{
+		"slug":   {"bad-domain"},
+		"name":   {"Bad Domain Site"},
+		"domain": {"https://platform.test"},
+	})
+	if createBadDomain.Code != http.StatusSeeOther || createBadDomain.Header().Get("Location") != "/admin/sites" {
+		t.Fatalf("create bad domain status/location = %d %q, want 303 /admin/sites", createBadDomain.Code, createBadDomain.Header().Get("Location"))
+	}
+	createBadDomainPage := getPlatform("/admin/sites")
+	if createBadDomainPage.Code != http.StatusOK {
+		t.Fatalf("bad domain redirect page status = %d, body = %s", createBadDomainPage.Code, createBadDomainPage.Body.String())
+	}
+	if body := createBadDomainPage.Body.String(); !strings.Contains(body, "非默认站点不能绑定平台默认 Host") || !strings.Contains(body, `value="bad-domain"`) {
+		t.Fatalf("bad domain did not re-render sites page with form state, body = %s", body)
+	}
+
+	createEmpty := postPlatformForm("/admin/sites", url.Values{
+		"slug":       {"empty"},
+		"name":       {"Empty Runtime Site"},
+		"seed_mode":  {"empty"},
+		"automation": {"1"},
+	})
+	if createEmpty.Code != http.StatusSeeOther || createEmpty.Header().Get("Location") != "/admin/sites" {
+		t.Fatalf("create empty site status/location = %d %q, body = %s", createEmpty.Code, createEmpty.Header().Get("Location"), createEmpty.Body.String())
+	}
+	var emptySite *platform.Site
+	sites, err := ps.Sites()
+	if err != nil {
+		t.Fatalf("list platform sites: %v", err)
+	}
+	for _, site := range sites {
+		if site.Slug == "empty" {
+			emptySite = site
+			break
+		}
+	}
+	if emptySite == nil {
+		t.Fatalf("created empty site not found")
+	}
+	emptySitePage := getPlatform("/admin/sites")
+	if emptySitePage.Code != http.StatusOK {
+		t.Fatalf("empty site page status = %d, body = %s", emptySitePage.Code, emptySitePage.Body.String())
+	}
+	if body := emptySitePage.Body.String(); !strings.Contains(body, `3 个站点`) {
+		t.Fatalf("empty site page did not update site count")
+	}
+	if body := emptySitePage.Body.String(); !strings.Contains(body, "Empty Runtime Site") || !strings.Contains(body, `class="site-card-icon fallback"`) || !strings.Contains(body, `class="site-empty-icon"`) {
+		t.Fatalf("empty site did not render no-icon fallback: %s", body)
+	}
+	emptyStore, err := store.Open(emptySite.DBPath)
+	if err != nil {
+		t.Fatalf("open empty site store: %v", err)
+	}
+	recentEmpty, err := emptyStore.ListRecentAdminContent("zh", 50)
+	if closeErr := emptyStore.Close(); closeErr != nil && err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		t.Fatalf("inspect empty site content: %v", err)
+	}
+	if len(recentEmpty) != 0 {
+		t.Fatalf("empty site seeded %d content items, want 0", len(recentEmpty))
 	}
 
 	securityPage := httptest.NewRecorder()
@@ -165,6 +339,12 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 	}
 	if !strings.Contains(otherResp.Body.String(), "Blog Runtime Site") {
 		t.Fatalf("bound host did not render bound store")
+	}
+
+	defaultBoundResp := httptest.NewRecorder()
+	h.ServeHTTP(defaultBoundResp, httptest.NewRequest(http.MethodGet, "https://default-bound.test/zh/", nil))
+	if defaultBoundResp.Code != http.StatusNotFound {
+		t.Fatalf("stored default-site domain status = %d, want 404", defaultBoundResp.Code)
 	}
 
 	unknownResp := httptest.NewRecorder()
@@ -224,6 +404,37 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 		t.Fatalf("prefix current site = %d, want %d", prefixSess.CurrentSiteID, otherSite.ID)
 	}
 
+	saveSiteName := httptest.NewRecorder()
+	saveSiteNameForm := url.Values{
+		"_csrf":     {prefixSess.CSRF},
+		"lang":      {"zh"},
+		"site_name": {"Renamed Blog Site"},
+	}
+	saveSiteNameReq := httptest.NewRequest(http.MethodPost, "https://platform.test/admin/settings/site", strings.NewReader(saveSiteNameForm.Encode()))
+	saveSiteNameReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	saveSiteNameReq.AddCookie(&http.Cookie{Name: cookieName, Value: "prefix-token"})
+	h.ServeHTTP(saveSiteName, saveSiteNameReq)
+	if saveSiteName.Code != http.StatusSeeOther {
+		t.Fatalf("save site name status = %d, body = %s", saveSiteName.Code, saveSiteName.Body.String())
+	}
+	renamedSite, ok, err := ps.GetSite(otherSite.ID)
+	if err != nil || !ok {
+		t.Fatalf("get renamed platform site: ok=%v err=%v", ok, err)
+	}
+	if renamedSite.Name != "Renamed Blog Site" {
+		t.Fatalf("platform site name = %q, want Renamed Blog Site", renamedSite.Name)
+	}
+	renamedPlatformPage := httptest.NewRecorder()
+	renamedPlatformReq := httptest.NewRequest(http.MethodGet, "https://platform.test/admin/sites", nil)
+	renamedPlatformReq.AddCookie(&http.Cookie{Name: cookieName, Value: "prefix-token"})
+	h.ServeHTTP(renamedPlatformPage, renamedPlatformReq)
+	if renamedPlatformPage.Code != http.StatusOK {
+		t.Fatalf("renamed platform page status = %d, body = %s", renamedPlatformPage.Code, renamedPlatformPage.Body.String())
+	}
+	if body := renamedPlatformPage.Body.String(); !strings.Contains(body, "Renamed Blog Site") {
+		t.Fatalf("platform page did not render renamed site: %s", body)
+	}
+
 	siteAdmin := httptest.NewRecorder()
 	siteAdminReq := httptest.NewRequest(http.MethodGet, "https://platform.test/admin", nil)
 	siteAdminReq.AddCookie(&http.Cookie{Name: cookieName, Value: "prefix-token"})
@@ -231,15 +442,82 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 	if siteAdmin.Code != http.StatusOK {
 		t.Fatalf("site admin status = %d, body = %s", siteAdmin.Code, siteAdmin.Body.String())
 	}
-	if body := siteAdmin.Body.String(); !strings.Contains(body, `class="site-switcher"`) || !strings.Contains(body, `href="/admin/sites"`) || !strings.Contains(body, "/admin/sites/"+strconv.FormatInt(defaultSite.ID, 10)+"/enter") {
+	siteAdminBody := siteAdmin.Body.String()
+	switcherStart := strings.Index(siteAdminBody, `<details class="site-switcher">`)
+	switcherEnd := -1
+	if switcherStart >= 0 {
+		switcherEnd = strings.Index(siteAdminBody[switcherStart:], `</details>`)
+	}
+	if switcherStart < 0 || switcherEnd < 0 {
 		t.Fatalf("site admin did not render site switcher")
 	}
-	if body := siteAdmin.Body.String(); strings.Contains(body, `id="pw-warn"`) {
+	switcherBody := siteAdminBody[switcherStart : switcherStart+switcherEnd]
+	if !strings.Contains(switcherBody, `aria-label="切换站点"`) || !strings.Contains(switcherBody, `href="/admin/sites"`) || !strings.Contains(switcherBody, `class="site-switcher-icon"`) || !strings.Contains(switcherBody, defaultIconPath) || !strings.Contains(switcherBody, "Default Runtime Site / main") || !strings.Contains(switcherBody, "/admin/sites/"+strconv.FormatInt(defaultSite.ID, 10)+"/enter") {
+		t.Fatalf("site switcher did not render management and other-site entries")
+	}
+	if strings.Contains(switcherBody, "/admin/sites/"+strconv.FormatInt(otherSite.ID, 10)+"/enter") || strings.Contains(switcherBody, `class="active"`) {
+		t.Fatalf("site switcher rendered the current site as a switch target: %s", switcherBody)
+	}
+	if strings.Contains(siteAdminBody, `id="pw-warn"`) {
 		t.Fatalf("site admin should not render platform password warning")
 	}
 	otherPreviewPath := "/admin/sites/" + strconv.FormatInt(otherSite.ID, 10) + "/preview/zh/"
-	if body := siteAdmin.Body.String(); !strings.Contains(body, `href="`+otherPreviewPath+`"`) {
+	if !strings.Contains(siteAdminBody, `href="`+otherPreviewPath+`"`) {
 		t.Fatalf("site admin view-site link did not point at current site preview")
+	}
+
+	scopedUpload := httptest.NewRecorder()
+	scopedUploadReq := httptest.NewRequest(http.MethodGet, "https://platform.test/uploads/blog-icon.ico", nil)
+	scopedUploadReq.AddCookie(&http.Cookie{Name: cookieName, Value: "prefix-token"})
+	scopedUploadReq.Header.Set("Referer", "https://platform.test/admin/settings/site")
+	h.ServeHTTP(scopedUpload, scopedUploadReq)
+	if scopedUpload.Code != http.StatusOK {
+		t.Fatalf("scoped upload status = %d, body = %s", scopedUpload.Code, scopedUpload.Body.String())
+	}
+
+	automationPage := httptest.NewRecorder()
+	automationReq := httptest.NewRequest(http.MethodGet, "https://platform.test/admin/settings/automation", nil)
+	automationReq.AddCookie(&http.Cookie{Name: cookieName, Value: "prefix-token"})
+	h.ServeHTTP(automationPage, automationReq)
+	if automationPage.Code != http.StatusOK {
+		t.Fatalf("automation settings status = %d, body = %s", automationPage.Code, automationPage.Body.String())
+	}
+	otherAPIBase := "https://platform.test/api/platform/v1/sites/" + strconv.FormatInt(otherSite.ID, 10)
+	if body := automationPage.Body.String(); !strings.Contains(body, otherAPIBase) || !strings.Contains(body, otherAPIBase+"/openapi.json") || strings.Contains(body, "https://blog.test/api/admin/v1") {
+		t.Fatalf("automation settings did not render platform site API base")
+	}
+
+	kit := httptest.NewRecorder()
+	kitReq := httptest.NewRequest(http.MethodGet, "https://platform.test/admin/settings/automation/skill.zip", nil)
+	kitReq.AddCookie(&http.Cookie{Name: cookieName, Value: "prefix-token"})
+	h.ServeHTTP(kit, kitReq)
+	if kit.Code != http.StatusOK {
+		t.Fatalf("automation skill zip status = %d, body = %s", kit.Code, kit.Body.String())
+	}
+	zr, err := zip.NewReader(bytes.NewReader(kit.Body.Bytes()), int64(kit.Body.Len()))
+	if err != nil {
+		t.Fatalf("read automation skill zip: %v", err)
+	}
+	var envExample string
+	for _, f := range zr.File {
+		if f.Name != "gcms-content-assistant/.env.example" {
+			continue
+		}
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatalf("open env example: %v", err)
+		}
+		buf := new(bytes.Buffer)
+		if _, err := buf.ReadFrom(rc); err != nil {
+			_ = rc.Close()
+			t.Fatalf("read env example: %v", err)
+		}
+		_ = rc.Close()
+		envExample = buf.String()
+		break
+	}
+	if !strings.Contains(envExample, "GCMS_API_BASE="+otherAPIBase) {
+		t.Fatalf("automation skill env api base = %q, want %q", envExample, otherAPIBase)
 	}
 
 	visual := httptest.NewRecorder()

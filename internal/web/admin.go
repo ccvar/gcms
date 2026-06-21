@@ -47,6 +47,8 @@ type session struct {
 type settingsFlash struct {
 	Flash        string
 	NewAPISecret []string
+	SiteFormErr  string
+	SiteFormVals map[string]string
 }
 
 type sessions struct {
@@ -478,6 +480,17 @@ func (s *Server) adminSiteVisualPreviewURL(siteID int64, lang string) string {
 	return s.adminSiteURL(siteID, lang) + "?visual_edit=1"
 }
 
+func (s *Server) automationBaseURL(r *http.Request, currentSiteID int64) string {
+	path := "/api/admin/v1"
+	if s.platform != nil && currentSiteID > 0 {
+		if site, ok, err := s.platform.GetSite(currentSiteID); err == nil && ok && site != nil && !site.IsDefault {
+			path = "/api/platform/v1/sites/" + strconv.FormatInt(currentSiteID, 10)
+			return s.absForPlatformRequest(r, path)
+		}
+	}
+	return s.absForRequest(r, path)
+}
+
 func (s *Server) populatePlatformSites(v *View) {
 	if v == nil || s.platform == nil {
 		return
@@ -487,6 +500,111 @@ func (s *Server) populatePlatformSites(v *View) {
 		return
 	}
 	v.PlatformSites = sites
+	v.PlatformSiteIcons = map[int64]string{}
+	for _, site := range sites {
+		if site == nil {
+			continue
+		}
+		if icon := s.platformSiteIconURL(site.ID); icon != "" {
+			v.PlatformSiteIcons[site.ID] = icon
+		}
+	}
+}
+
+func (s *Server) platformSiteIconURL(siteID int64) string {
+	raw := ""
+	uploadDir := ""
+	if rt, ok := s.runtimePool().runtimeByID(siteID); ok && rt != nil && rt.Store != nil {
+		raw = strings.TrimSpace(rt.Store.Setting("site.favicon"))
+		uploadDir = strings.TrimSpace(rt.UploadDir)
+	}
+	if raw == "" && s.platform != nil {
+		site, found, err := s.platform.GetSite(siteID)
+		if err == nil && found {
+			if uploadDir == "" {
+				uploadDir = strings.TrimSpace(site.UploadDir)
+			}
+			if strings.TrimSpace(site.DBPath) == "" {
+				return s.legacyUploadFaviconURL(siteID, uploadDir)
+			}
+			if _, statErr := os.Stat(site.DBPath); statErr == nil {
+				st, openErr := store.Open(site.DBPath)
+				if openErr == nil {
+					raw = strings.TrimSpace(st.Setting("site.favicon"))
+					_ = st.Close()
+				}
+			}
+		}
+	}
+	if raw == "" {
+		return s.legacyUploadFaviconURL(siteID, uploadDir)
+	}
+	if strings.HasPrefix(raw, "/uploads/") {
+		name, ok := uploadNameFromPath(strings.Split(raw, "?")[0])
+		if !ok {
+			return ""
+		}
+		return s.adminSiteUploadURL(siteID, name)
+	}
+	if strings.HasPrefix(raw, "/assets/") || strings.HasPrefix(raw, "data:image/") {
+		return raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	if u.Scheme == "http" || u.Scheme == "https" {
+		return raw
+	}
+	return ""
+}
+
+func (s *Server) legacyUploadFaviconURL(siteID int64, uploadDir string) string {
+	name := legacyUploadFaviconName(uploadDir)
+	if name == "" {
+		return ""
+	}
+	return s.adminSiteUploadURL(siteID, name)
+}
+
+func (s *Server) adminSiteUploadURL(siteID int64, name string) string {
+	return "/admin/sites/" + strconv.FormatInt(siteID, 10) + "/uploads/" + url.PathEscape(name)
+}
+
+func legacyUploadFaviconName(uploadDir string) string {
+	uploadDir = strings.TrimSpace(uploadDir)
+	if uploadDir == "" {
+		return ""
+	}
+	for _, name := range []string{"favicon.ico", "favicon.svg", "favicon.png", "favicon.webp", "site-favicon.ico", "site-favicon.svg", "site-favicon.png", "site-favicon.webp"} {
+		if info, err := os.Stat(filepath.Join(uploadDir, name)); err == nil && !info.IsDir() {
+			return name
+		}
+	}
+	entries, err := os.ReadDir(uploadDir)
+	if err != nil {
+		return ""
+	}
+	bestName := ""
+	var bestTime time.Time
+	for _, entry := range entries {
+		if entry == nil || entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !validUploadFilename(name) || !strings.EqualFold(filepath.Ext(name), ".ico") {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		if bestName == "" || info.ModTime().After(bestTime) {
+			bestName = name
+			bestTime = info.ModTime()
+		}
+	}
+	return bestName
 }
 
 // catKind 取分类管理当前的类型（post|link，来自 ?kind= 或表单）。
@@ -689,10 +807,25 @@ func (s *Server) adminDashboard(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) adminSites(w http.ResponseWriter, r *http.Request) {
+	s.showAdminSites(w, r, http.StatusOK, "", nil)
+}
+
+func (s *Server) showAdminSites(w http.ResponseWriter, r *http.Request, status int, formErr string, formVals map[string]string) {
 	sess, _ := s.currentSession(r)
+	if status == http.StatusOK && formErr == "" && formVals == nil {
+		if f, ok := s.sess.takeSettingsFlash(sessionToken(r)); ok {
+			formErr = f.SiteFormErr
+			formVals = f.SiteFormVals
+		}
+	}
 	v := s.adminView(r, "站点管理")
 	s.platformAuthed(v, sess)
 	v.PlatformCurrentSiteID = sess.currentSiteID
+	v.FormErr = formErr
+	if formVals == nil {
+		formVals = map[string]string{}
+	}
+	v.FormVals = formVals
 	if s.platform == nil {
 		siteName := strings.TrimSpace(s.store.Setting("site.name"))
 		if siteName == "" {
@@ -708,7 +841,7 @@ func (s *Server) adminSites(w http.ResponseWriter, r *http.Request) {
 			DBPath:                      "CMS_DB",
 			UploadDir:                   s.uploadDir,
 		}}
-		s.rnd.Admin(w, "sites", http.StatusOK, v)
+		s.rnd.Admin(w, "sites", status, v)
 		return
 	}
 	sites, err := s.platform.Sites()
@@ -728,7 +861,7 @@ func (s *Server) adminSites(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	v.PlatformSites = sites
-	s.rnd.Admin(w, "sites", http.StatusOK, v)
+	s.rnd.Admin(w, "sites", status, v)
 }
 
 func (s *Server) adminCreateSite(w http.ResponseWriter, r *http.Request) {
@@ -741,10 +874,38 @@ func (s *Server) adminCreateSite(w http.ResponseWriter, r *http.Request) {
 	}
 	slug := strings.TrimSpace(r.FormValue("slug"))
 	name := strings.TrimSpace(r.FormValue("name"))
+	formVals := siteCreateFormVals(r)
+	showFormErr := func(msg string) {
+		s.sess.setSettingsFlash(sessionToken(r), settingsFlash{SiteFormErr: msg, SiteFormVals: formVals})
+		http.Redirect(w, r, "/admin/sites", http.StatusSeeOther)
+	}
 	dbPath, uploadDir, err := s.newSiteStoragePaths(slug)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		showFormErr(err.Error())
 		return
+	}
+	if sites, err := s.platform.Sites(); err != nil {
+		s.serverError(w, err)
+		return
+	} else {
+		for _, site := range sites {
+			if site != nil && site.Slug == slug {
+				showFormErr("站点标记已存在，请换一个。")
+				return
+			}
+		}
+	}
+	var domainScheme, domainHost string
+	if raw := strings.TrimSpace(r.FormValue("domain")); raw != "" {
+		domainScheme, domainHost, err = parseSiteDomainInput(raw)
+		if err != nil {
+			showFormErr(err.Error())
+			return
+		}
+		if s.domainConflictsWithPlatformHost(nil, domainHost) {
+			showFormErr("非默认站点不能绑定平台默认 Host")
+			return
+		}
 	}
 	if err := os.MkdirAll(uploadDir, 0o755); err != nil {
 		s.serverError(w, err)
@@ -756,25 +917,34 @@ func (s *Server) adminCreateSite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if name != "" {
-		_ = st.SetSetting("site.name", name)
+		if err := st.SetSetting("site.name", name); err != nil {
+			_ = st.Close()
+			s.serverError(w, err)
+			return
+		}
 	}
-	_ = st.Close()
-	site, err := s.platform.CreateSite(slug, name, dbPath, uploadDir, r.FormValue("automation") == "1")
-	if err != nil {
+	if r.FormValue("seed_mode") == "empty" {
+		if err := st.ClearDemoContent(); err != nil {
+			_ = st.Close()
+			s.serverError(w, err)
+			return
+		}
+	}
+	if err := st.Close(); err != nil {
 		s.serverError(w, err)
 		return
 	}
-	if raw := strings.TrimSpace(r.FormValue("domain")); raw != "" {
-		scheme, host, err := parseSiteDomainInput(raw)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+	site, err := s.platform.CreateSite(slug, name, dbPath, uploadDir, r.FormValue("automation") == "1")
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "unique") {
+			showFormErr("站点标记已存在，请换一个。")
 			return
 		}
-		if s.domainConflictsWithPlatformHost(site, host) {
-			http.Error(w, "非默认站点不能绑定平台默认 Host", http.StatusBadRequest)
-			return
-		}
-		if err := s.platform.AddSiteDomain(site.ID, scheme, host, true, true); err != nil {
+		s.serverError(w, err)
+		return
+	}
+	if domainHost != "" {
+		if err := s.platform.AddSiteDomain(site.ID, domainScheme, domainHost, true, true); err != nil {
 			s.serverError(w, err)
 			return
 		}
@@ -784,6 +954,22 @@ func (s *Server) adminCreateSite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/admin/sites", http.StatusSeeOther)
+}
+
+func siteCreateFormVals(r *http.Request) map[string]string {
+	vals := map[string]string{
+		"slug":      strings.TrimSpace(r.FormValue("slug")),
+		"name":      strings.TrimSpace(r.FormValue("name")),
+		"domain":    strings.TrimSpace(r.FormValue("domain")),
+		"seed_mode": strings.TrimSpace(r.FormValue("seed_mode")),
+	}
+	if vals["seed_mode"] == "" {
+		vals["seed_mode"] = "demo"
+	}
+	if r.FormValue("automation") == "1" {
+		vals["automation"] = "1"
+	}
+	return vals
 }
 
 func (s *Server) adminEnterSite(w http.ResponseWriter, r *http.Request) {
@@ -839,7 +1025,7 @@ func (s *Server) adminDownloadPlatformAutomationSkill(w http.ResponseWriter, r *
 		return
 	}
 	s.writeAutomationSkillZip(w, automationSkillOptions{
-		apiBase: s.absForRequest(r, "/api/platform/v1/sites/"+strconv.FormatInt(id, 10)),
+		apiBase: s.absForPlatformRequest(r, "/api/platform/v1/sites/"+strconv.FormatInt(id, 10)),
 		name:    strings.TrimSpace(site.Name),
 	})
 }
@@ -895,12 +1081,17 @@ func (s *Server) adminSetDefaultSite(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := s.platform.SetDefaultSite(id); err != nil {
+	site, found, err := s.platform.GetSite(id)
+	if err != nil {
 		s.serverError(w, err)
 		return
 	}
-	if err := s.reloadRuntimePool(); err != nil {
-		s.serverError(w, err)
+	if !found {
+		http.NotFound(w, r)
+		return
+	}
+	if !site.IsDefault {
+		http.Error(w, "其他站点不能设为默认站点", http.StatusBadRequest)
 		return
 	}
 	http.Redirect(w, r, "/admin/sites", http.StatusSeeOther)
@@ -956,7 +1147,19 @@ func (s *Server) adminSetSiteAutomation(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	if err := s.platform.SetSiteAutomation(id, r.FormValue("enabled") == "1"); err != nil {
+	enabled := r.FormValue("enabled") == "1"
+	if !enabled {
+		site, found, err := s.platform.GetSite(id)
+		if err != nil {
+			s.serverError(w, err)
+			return
+		}
+		if found && site.IsDefault {
+			http.Error(w, "默认站点不能关闭平台入口", http.StatusBadRequest)
+			return
+		}
+	}
+	if err := s.platform.SetSiteAutomation(id, enabled); err != nil {
 		s.serverError(w, err)
 		return
 	}
@@ -988,6 +1191,10 @@ func (s *Server) adminAddSiteDomain(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	if site.IsDefault {
+		http.Error(w, "默认站点使用当前默认入口，不能绑定域名", http.StatusBadRequest)
+		return
+	}
 	scheme, host, err := parseSiteDomainInput(r.FormValue("host"))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -1006,6 +1213,42 @@ func (s *Server) adminAddSiteDomain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/admin/sites", http.StatusSeeOther)
+}
+
+func (s *Server) adminSiteUpload(w http.ResponseWriter, r *http.Request) {
+	id, ok := adminSiteID(w, r)
+	if !ok {
+		return
+	}
+	name := r.PathValue("name")
+	if !validUploadFilename(name) {
+		http.NotFound(w, r)
+		return
+	}
+	uploadDir := strings.TrimSpace(s.uploadDir)
+	if s.platform != nil {
+		rt, found := s.runtimePool().runtimeByID(id)
+		if !found || rt == nil {
+			http.NotFound(w, r)
+			return
+		}
+		uploadDir = strings.TrimSpace(rt.UploadDir)
+	} else if id != 1 {
+		http.NotFound(w, r)
+		return
+	}
+	if uploadDir == "" {
+		http.NotFound(w, r)
+		return
+	}
+	full := filepath.Join(uploadDir, name)
+	info, err := os.Stat(full)
+	if err != nil || info.IsDir() {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Cache-Control", uploadCacheControl)
+	http.ServeFile(w, r, full)
 }
 
 func adminSiteID(w http.ResponseWriter, r *http.Request) (int64, bool) {
@@ -2728,8 +2971,8 @@ func (s *Server) showSettings(w http.ResponseWriter, r *http.Request, section, f
 	v.FormErr = formErr
 	v.AdminI18NJSON = s.store.Setting(s.adminI18NKey(v.AdminLang))
 	v.Social = parseSocialLinks(s.store.Setting("social_links"))
-	v.APIBaseURL = s.absForRequest(r, "/api/admin/v1")
-	v.OpenAPIURL = s.absForRequest(r, "/api/admin/v1/openapi.json")
+	v.APIBaseURL = s.automationBaseURL(r, sess.currentSiteID)
+	v.OpenAPIURL = strings.TrimRight(v.APIBaseURL, "/") + "/openapi.json"
 	v.APIDocsURL = s.absForRequest(r, "/"+s.defaultLang()+"/api-docs")
 	v.SkillPackageURL = "/admin/settings/automation/skill.zip"
 	if len(newAPISecret) > 0 {
@@ -3094,7 +3337,8 @@ func defaultAutomationScopes() []string {
 }
 
 func (s *Server) adminSaveSite(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.checkCSRF(w, r); !ok {
+	sess, ok := s.checkCSRF(w, r)
+	if !ok {
 		return
 	}
 	lang := s.editLang(r)
@@ -3104,6 +3348,12 @@ func (s *Server) adminSaveSite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = s.store.SetSetting(s.copyKey("site.name", lang), name)
+	if s.platform != nil && sess.currentSiteID > 0 && lang == s.defaultLang() {
+		if err := s.platform.SetSiteName(sess.currentSiteID, name); err != nil {
+			s.serverError(w, err)
+			return
+		}
+	}
 	_ = s.store.SetSetting(s.copyKey("site.tagline", lang), strings.TrimSpace(r.FormValue("site_tagline")))
 	_ = s.store.SetSetting(s.copyKey("site.description", lang), strings.TrimSpace(r.FormValue("site_description")))
 	_ = s.store.SetSetting(s.copyKey(postDefaultAuthorKey, lang), strings.TrimSpace(r.FormValue("default_post_author")))

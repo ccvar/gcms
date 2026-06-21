@@ -29,23 +29,24 @@ import (
 )
 
 type Server struct {
-	store      *store.Store
-	platform   *platform.Store
-	rnd        *Renderer
-	baseURL    string
-	uploadDir  string
-	sess       *sessions
-	login      *loginLimiter
-	apiLimiter *apiRateLimiter
-	i18n       *i18n.Manager
-	mux        *http.ServeMux
-	assetsFS   fs.FS
-	assetVer   string // 静态资源内容指纹，用作 ?v= 破缓存（资源变更即失效旧缓存）
-	imageSizes map[string]ImageSize
-	cacheMu    sync.RWMutex
-	content    map[string]contentCacheEntry
-	endpoints  map[string]endpointCacheEntry
-	pages      map[string]pageCacheEntry
+	store           *store.Store
+	platform        *platform.Store
+	rnd             *Renderer
+	baseURL         string
+	platformBaseURL string
+	uploadDir       string
+	sess            *sessions
+	login           *loginLimiter
+	apiLimiter      *apiRateLimiter
+	i18n            *i18n.Manager
+	mux             *http.ServeMux
+	assetsFS        fs.FS
+	assetVer        string // 静态资源内容指纹，用作 ?v= 破缓存（资源变更即失效旧缓存）
+	imageSizes      map[string]ImageSize
+	cacheMu         sync.RWMutex
+	content         map[string]contentCacheEntry
+	endpoints       map[string]endpointCacheEntry
+	pages           map[string]pageCacheEntry
 
 	cloudflareMu    sync.Mutex
 	cloudflareTimer *time.Timer
@@ -354,6 +355,7 @@ type View struct {
 	OverviewStatus        []OverviewStatus   // 后台概览：系统状态
 	PlatformSites         []*platform.Site   // 平台综合后台：站点列表
 	PlatformDomains       map[int64][]*platform.SiteDomain
+	PlatformSiteIcons     map[int64]string
 	PlatformCurrentSiteID int64 // 平台会话中当前选择的站点
 }
 
@@ -569,7 +571,7 @@ func NewWithPlatform(st *store.Store, ps *platform.Store, baseURL, uploadDir str
 		sessionStore = ps
 	}
 	s := &Server{
-		store: st, platform: ps, rnd: rnd, baseURL: baseURL, uploadDir: uploadDir, assetsFS: assetsFS,
+		store: st, platform: ps, rnd: rnd, baseURL: baseURL, platformBaseURL: baseURL, uploadDir: uploadDir, assetsFS: assetsFS,
 		sess: newSessions(sessionStore), login: newLoginLimiter(), apiLimiter: newAPIRateLimiter(), i18n: i18n.New(), assetVer: assetVersion(assetsFS), imageSizes: imageSizes,
 		content: map[string]contentCacheEntry{}, endpoints: map[string]endpointCacheEntry{}, pages: map[string]pageCacheEntry{},
 	}
@@ -647,6 +649,9 @@ func (s *Server) reloadRuntimePool() error {
 		if site.Status != "enabled" {
 			continue
 		}
+		if site.IsDefault {
+			continue
+		}
 		for _, d := range domainsBySite[site.ID] {
 			host := normalizeRuntimeHost(d.Host)
 			if host != "" {
@@ -694,21 +699,22 @@ func (s *Server) cloneForRuntime(rt *SiteRuntime) *Server {
 		_ = os.MkdirAll(rt.UploadDir, 0o755)
 	}
 	clone := &Server{
-		store:      rt.Store,
-		platform:   s.platform,
-		rnd:        s.rnd,
-		baseURL:    rt.BaseURL,
-		uploadDir:  rt.UploadDir,
-		sess:       s.sess,
-		login:      s.login,
-		apiLimiter: s.apiLimiter,
-		i18n:       i18n.New(),
-		assetsFS:   s.assetsFS,
-		assetVer:   s.assetVer,
-		imageSizes: s.imageSizes,
-		content:    map[string]contentCacheEntry{},
-		endpoints:  map[string]endpointCacheEntry{},
-		pages:      map[string]pageCacheEntry{},
+		store:           rt.Store,
+		platform:        s.platform,
+		rnd:             s.rnd,
+		baseURL:         rt.BaseURL,
+		platformBaseURL: s.platformBaseURL,
+		uploadDir:       rt.UploadDir,
+		sess:            s.sess,
+		login:           s.login,
+		apiLimiter:      s.apiLimiter,
+		i18n:            i18n.New(),
+		assetsFS:        s.assetsFS,
+		assetVer:        s.assetVer,
+		imageSizes:      s.imageSizes,
+		content:         map[string]contentCacheEntry{},
+		endpoints:       map[string]endpointCacheEntry{},
+		pages:           map[string]pageCacheEntry{},
 	}
 	clone.i18n.LoadCustom(rt.Store.Setting("custom_locales"))
 	clone.routes(s.assetsFS)
@@ -824,6 +830,9 @@ func (s *Server) serveWithRuntime(w http.ResponseWriter, r *http.Request) {
 		s.servePrefixedSiteAdmin(w, r, pool, siteID, target)
 		return
 	}
+	if strings.HasPrefix(r.URL.Path, "/uploads/") && s.serveAdminScopedUpload(w, r, pool) {
+		return
+	}
 	if platformOnlyPath(r.URL.Path) {
 		if !s.platformHostAllowed(r, pool) {
 			http.NotFound(w, r)
@@ -848,6 +857,44 @@ func (s *Server) serveWithRuntime(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rt.server.siteHandler().ServeHTTP(w, r)
+}
+
+func (s *Server) serveAdminScopedUpload(w http.ResponseWriter, r *http.Request, pool *SiteRuntimePool) bool {
+	if !s.platformHostAllowed(r, pool) {
+		return false
+	}
+	siteID := s.uploadSiteIDFromAdminContext(r)
+	if siteID <= 0 {
+		return false
+	}
+	rt, ok := pool.runtimeByID(siteID)
+	if !ok || rt == nil || rt.server == nil || rt.Site == nil || rt.Site.IsDefault {
+		return false
+	}
+	rt.server.siteHandler().ServeHTTP(w, r)
+	return true
+}
+
+func (s *Server) uploadSiteIDFromAdminContext(r *http.Request) int64 {
+	ref := strings.TrimSpace(r.Referer())
+	if ref == "" {
+		return 0
+	}
+	u, err := url.Parse(ref)
+	if err != nil {
+		return 0
+	}
+	if id, _, ok := sitePreviewTarget(u.Path); ok {
+		return id
+	}
+	if !strings.HasPrefix(u.Path, "/admin") {
+		return 0
+	}
+	sess, ok := s.currentSession(r)
+	if !ok {
+		return 0
+	}
+	return sess.currentSiteID
 }
 
 func (s *Server) serveSitePreview(w http.ResponseWriter, r *http.Request, pool *SiteRuntimePool) {
@@ -1348,6 +1395,27 @@ func absWithBase(baseURL, path string) string { return strings.TrimRight(baseURL
 
 func (s *Server) absForRequest(r *http.Request, path string) string {
 	return absWithBase(s.publicBaseURL(r), path)
+}
+
+func (s *Server) absForPlatformRequest(r *http.Request, path string) string {
+	return absWithBase(s.platformPublicBaseURL(r), path)
+}
+
+func (s *Server) platformPublicBaseURL(r *http.Request) string {
+	configured := strings.TrimRight(strings.TrimSpace(s.platformBaseURL), "/")
+	if configured == "" {
+		configured = strings.TrimRight(strings.TrimSpace(s.baseURL), "/")
+	}
+	if configured != "" && !isLocalBaseURL(configured) {
+		return configured
+	}
+	if host := requestHost(r); host != "" {
+		return requestScheme(r) + "://" + host
+	}
+	if configured != "" {
+		return configured
+	}
+	return s.publicBaseURL(r)
 }
 
 func (s *Server) publicBaseURL(r *http.Request) string {
@@ -1990,6 +2058,7 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /admin/sites/{id}/status", s.requireAuth(s.adminSetSiteStatus))
 	mux.HandleFunc("POST /admin/sites/{id}/automation", s.requireAuth(s.adminSetSiteAutomation))
 	mux.HandleFunc("POST /admin/sites/{id}/domains", s.requireAuth(s.adminAddSiteDomain))
+	mux.HandleFunc("GET /admin/sites/{id}/uploads/{name}", s.requireAuth(s.adminSiteUpload))
 	mux.HandleFunc("GET /admin/security", s.requireAuth(s.adminSecurity))
 	mux.HandleFunc("POST /admin/security", s.requireAuth(s.adminSavePlatformPassword))
 	mux.HandleFunc("GET /admin/posts", s.requireAuth(s.adminPosts))
