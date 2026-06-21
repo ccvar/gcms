@@ -48,6 +48,12 @@ func TestDefaultSeedIsProductShowcase(t *testing.T) {
 	if got := st.Setting("hero.image::en"); got != "/assets/hero-product-overview-brand-en.webp" {
 		t.Fatalf("hero.image::en = %q, want english product hero image", got)
 	}
+	if got := st.Setting("site.hero_eyebrow"); got != "Cloudflare 部署 · 多站管理 · SEO/GEO · AI 自运营" {
+		t.Fatalf("site.hero_eyebrow = %q", got)
+	}
+	if got := st.Setting("site.description"); !strings.Contains(got, "Cloudflare 静态部署") || !strings.Contains(got, "多站管理") {
+		t.Fatalf("site.description should mention Cloudflare and multisite: %q", got)
+	}
 	nav := st.Setting("nav_menu")
 	for _, want := range []string{"/category/features", "/category/guides", "/links", "/start"} {
 		if !strings.Contains(nav, want) {
@@ -456,18 +462,20 @@ func TestBundledCoverPathsMigrateToWebP(t *testing.T) {
 		t.Fatalf("en editor content did not migrate to english screenshot: %s", enPost.Content)
 	}
 	for key, want := range map[string]string{
-		"site.tagline":         "内容发布、搜索增长，一个后台跑通",
-		"site.description":     "gcms 把文章、页面、资源链接、全语种内容、主题、SEO/GEO、在线升级和 AI 自运营接口收进同一个后台；无需搭数据库服务和前端构建环境，一行命令即可部署，1 vCPU / 512MB 内存的小规格 VPS 也能稳定起步。",
-		"site.hero_eyebrow":    "轻部署 · SEO/GEO 就绪 · AI 自运营",
-		"site.hero_title":      "内容发布、\n搜索增长，\n一个后台跑通",
-		"site.share_image":     "/assets/og-cover.webp",
-		"site.share_image::en": "/assets/og-cover-en.webp",
-		"hero.visual":          "image",
-		"hero.image":           "/assets/hero-product-overview-brand.webp",
-		"hero.visual::en":      "image",
-		"hero.image::en":       "/assets/hero-product-overview-brand-en.webp",
-		"site.tagline::en":     "Publish content and grow search from one admin",
-		"site.hero_title::en":  "Publish content,\ngrow search traffic,\nrun it from one admin",
+		"site.tagline":          "内容发布、搜索增长，一个后台跑通",
+		"site.description":      "gcms 把文章、页面、资源链接、全语种内容、主题、SEO/GEO、Cloudflare 静态部署、多站管理和 AI 自运营接口收进同一个后台；无需搭数据库服务和前端构建环境，一行命令即可部署，1 vCPU / 512MB 内存的小规格 VPS 也能稳定起步。",
+		"site.hero_eyebrow":     "Cloudflare 部署 · 多站管理 · SEO/GEO · AI 自运营",
+		"site.hero_title":       "内容发布、\n搜索增长，\n一个后台跑通",
+		"site.share_image":      "/assets/og-cover.webp",
+		"site.share_image::en":  "/assets/og-cover-en.webp",
+		"hero.visual":           "image",
+		"hero.image":            "/assets/hero-product-overview-brand.webp",
+		"hero.visual::en":       "image",
+		"hero.image::en":        "/assets/hero-product-overview-brand-en.webp",
+		"site.tagline::en":      "Publish content and grow search from one admin",
+		"site.description::en":  "gcms brings posts, pages, resource links, multilingual content, themes, SEO/GEO, Cloudflare static deployment, multisite management and AI-operation APIs into one lightweight admin. No database server or frontend build pipeline required: deploy with one command and start on a 1 vCPU / 512MB VPS.",
+		"site.hero_eyebrow::en": "Cloudflare deploy · Multisite · SEO/GEO · AI operations",
+		"site.hero_title::en":   "Publish content,\ngrow search traffic,\nrun it from one admin",
 	} {
 		if got := st.Setting(key); got != want {
 			t.Fatalf("%s = %q, want %q", key, got, want)
