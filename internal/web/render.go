@@ -235,6 +235,30 @@ func slugHeading(s string) string {
 	return strings.Trim(b.String(), "-")
 }
 
+func automationLogParts(message string) struct {
+	Action string
+	Title  string
+} {
+	message = strings.TrimSpace(message)
+	action, title, ok := strings.Cut(message, "：")
+	if !ok {
+		action, title, ok = strings.Cut(message, ":")
+	}
+	if !ok {
+		return struct {
+			Action string
+			Title  string
+		}{Title: message}
+	}
+	return struct {
+		Action string
+		Title  string
+	}{
+		Action: strings.TrimSpace(action),
+		Title:  strings.TrimSpace(title),
+	}
+}
+
 func funcMap(imageSizes map[string]ImageSize) template.FuncMap {
 	return template.FuncMap{
 		"md": func(s string) template.HTML { return renderMarkdown(s, imageSizes) },
@@ -263,6 +287,7 @@ func funcMap(imageSizes map[string]ImageSize) template.FuncMap {
 			}
 			return t.Local().Format("2006-01-02 15:04:05")
 		},
+		"automationLogParts": automationLogParts,
 		"isodate": func(t time.Time) string {
 			if t.IsZero() {
 				return ""

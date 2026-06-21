@@ -32,8 +32,13 @@
         <span>{{.Admin.T "admin.settings.menu.comments" "评论"}}</span>
       </a>
       <a href="/admin/settings/security"{{if eq .Section "security"}} class="active"{{end}}>
+        {{if .PlatformMode}}
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+        <span>{{.Admin.T "admin.settings.security.demo_data" "演示数据"}}</span>
+        {{else}}
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.6-7 9-4-1.4-7-4.5-7-9V6z"/></svg>
         <span>{{.Admin.T "admin.settings.menu.security" "安全"}}</span>
+        {{end}}
       </a>
       {{if not .PlatformMode}}<a href="/admin/settings/updates"{{if eq .Section "updates"}} class="active"{{end}}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 16V8"/><path d="M8 12l4-4 4 4"/></svg>
@@ -2813,15 +2818,7 @@
       </script>
 
       {{else if eq .Section "security"}}
-      {{if .PlatformMode}}
-      <div class="platform-security-redirect">
-        <div>
-          <h3>{{.Admin.T "admin.security.password_title" "修改后台密码"}}</h3>
-          <p class="muted">{{.Admin.T "admin.security.platform_hint" "后台密码属于平台级账号，不属于单个站点。请到平台安全页统一修改。"}}</p>
-        </div>
-        <a class="btn btn-primary" href="/admin/security">{{.Admin.T "admin.security.open" "打开平台安全"}}</a>
-      </div>
-      {{else}}
+      {{if not .PlatformMode}}
       <form method="post" action="/admin/settings/security" class="admin-form">
         <input type="hidden" name="_csrf" value="{{.CSRF}}">
         <p class="muted" style="margin:.1rem 0 1.2rem;font-size:.9rem">{{.Admin.T "admin.settings.security.desc" "修改后台登录密码。新密码至少 6 位。"}}</p>

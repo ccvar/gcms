@@ -800,7 +800,7 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 	if defaultDashboard.Code != http.StatusOK {
 		t.Fatalf("default dashboard status = %d, body = %s", defaultDashboard.Code, defaultDashboard.Body.String())
 	}
-	if body := defaultDashboard.Body.String(); !strings.Contains(body, "创建文章（草稿 · 中文）：API Default Site Draft") || !strings.Contains(body, "/admin/posts/") {
+	if body := defaultDashboard.Body.String(); !strings.Contains(body, `class="overview-log-action">创建文章（草稿 · 中文）`) || !strings.Contains(body, `class="overview-log-text">API Default Site Draft`) || !strings.Contains(body, "/admin/posts/") {
 		t.Fatalf("default dashboard did not render api log with target link")
 	}
 }
