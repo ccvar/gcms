@@ -39,11 +39,11 @@
 
       {{if gt .TotalPages 1}}
       <nav class="pagination" aria-label="{{.Tr.T "common.pagination"}}">
-        {{if .HasPrev}}<a href="{{.Tr.U .BasePath}}?page={{.PrevPage}}" aria-label="{{.Tr.T "common.prev_page"}}">←</a>{{end}}
+        {{if .HasPrev}}<a href="{{pageURL .Tr .BasePath .PrevPage}}" aria-label="{{.Tr.T "common.prev_page"}}">←</a>{{end}}
         {{range $n := pages .TotalPages}}
-          {{if eq $n $.PageNum}}<span class="cur" aria-current="page">{{$n}}</span>{{else}}<a href="{{$.Tr.U $.BasePath}}?page={{$n}}">{{$n}}</a>{{end}}
+          {{if eq $n $.PageNum}}<span class="cur" aria-current="page">{{$n}}</span>{{else}}<a href="{{pageURL $.Tr $.BasePath $n}}">{{$n}}</a>{{end}}
         {{end}}
-        {{if .HasNext}}<a href="{{.Tr.U .BasePath}}?page={{.NextPage}}" aria-label="{{.Tr.T "common.next_page"}}">→</a>{{end}}
+        {{if .HasNext}}<a href="{{pageURL .Tr .BasePath .NextPage}}" aria-label="{{.Tr.T "common.next_page"}}">→</a>{{end}}
       </nav>
       {{end}}
     </div>

@@ -325,20 +325,21 @@ func (s Site) Links(cat *store.Category) Meta {
 	if desc == "" {
 		desc = s.Description
 	}
+	crumbs := s.breadcrumb([]crumb{{s.homeLabel(), s.Abs("/")}, {label, s.Abs("/links")}})
 	if cat != nil {
-		canon = s.Abs("/links?cat=" + cat.Slug)
+		canon = s.Abs("/links/cat/" + cat.Slug)
 		title = cat.Name + " — " + label + " — " + s.Name
 		name = cat.Name + " · " + label
 		if cat.Description != "" {
 			desc = cat.Description
 		}
+		crumbs = s.breadcrumb([]crumb{{s.homeLabel(), s.Abs("/")}, {label, s.Abs("/links")}, {cat.Name, canon}})
 	}
 	coll := map[string]any{
 		"@context": "https://schema.org", "@type": "CollectionPage",
 		"name": name, "url": canon, "inLanguage": s.langTag(),
 		"isPartOf": map[string]any{"@type": "WebSite", "name": s.Name, "url": s.Abs("/")},
 	}
-	crumbs := s.breadcrumb([]crumb{{s.homeLabel(), s.Abs("/")}, {label, s.Abs("/links")}})
 	return Meta{
 		Title: title, Description: desc, Keywords: label, Canonical: canon,
 		Robots: defaultRobots, OGType: "website", Image: s.defaultImage(), JSONLD: []any{coll, crumbs},

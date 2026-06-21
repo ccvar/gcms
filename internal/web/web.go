@@ -2025,10 +2025,22 @@ func (s *Server) routes(assetsFS fs.FS) {
 
 	// 公开站点（语种前缀由 withLocale 中间件剥离后命中这些原始路由）
 	mux.HandleFunc("GET /{$}", s.home)
+	mux.HandleFunc("GET /page/{pageNum}", s.home)
+	mux.HandleFunc("GET /page/{pageNum}/{$}", s.home)
 	mux.HandleFunc("GET /posts/{slug}", s.article)
 	mux.HandleFunc("GET /category", s.categoryRoot)
+	mux.HandleFunc("GET /category/page/{pageNum}", s.categoryRoot)
+	mux.HandleFunc("GET /category/page/{pageNum}/{$}", s.categoryRoot)
 	mux.HandleFunc("GET /category/{slug}", s.category)
+	mux.HandleFunc("GET /category/{slug}/page/{pageNum}", s.category)
+	mux.HandleFunc("GET /category/{slug}/page/{pageNum}/{$}", s.category)
 	mux.HandleFunc("GET /links", s.links)
+	mux.HandleFunc("GET /links/page/{pageNum}", s.links)
+	mux.HandleFunc("GET /links/page/{pageNum}/{$}", s.links)
+	mux.HandleFunc("GET /links/cat/{cat}", s.links)
+	mux.HandleFunc("GET /links/cat/{cat}/{$}", s.links)
+	mux.HandleFunc("GET /links/cat/{cat}/page/{pageNum}", s.links)
+	mux.HandleFunc("GET /links/cat/{cat}/page/{pageNum}/{$}", s.links)
 	mux.HandleFunc("GET /links/{slug}", s.link)
 	mux.HandleFunc("GET /api-docs", s.apiDocs)
 	mux.HandleFunc("GET /about", s.about)
@@ -2692,10 +2704,14 @@ func (s *Server) links(w http.ResponseWriter, r *http.Request) {
 	const size = 12
 	lang := langFrom(r)
 	page := pageParam(r)
-	// 分类筛选 ?cat=slug（仅链接分类）
+	// 分类筛选支持静态友好的 /links/cat/slug，也兼容旧的 ?cat=slug。
 	var cat *store.Category
 	var catID int64
 	if cs := trim(r.URL.Query().Get("cat")); cs != "" {
+		if c, _ := s.store.GetCategoryBySlug(lang, cs); c != nil && c.Kind == "link" {
+			cat, catID = c, c.ID
+		}
+	} else if cs := trim(r.PathValue("cat")); cs != "" {
 		if c, _ := s.store.GetCategoryBySlug(lang, cs); c != nil && c.Kind == "link" {
 			cat, catID = c, c.ID
 		}
@@ -2714,11 +2730,22 @@ func (s *Server) links(w http.ResponseWriter, r *http.Request) {
 	v.Category = cat
 	basePath := v.LinksAll.Path
 	if cat != nil {
-		basePath = "/links"
+		basePath = "/links/cat/" + cat.Slug
 	}
 	ph := map[string]string{}
-	for _, l := range s.locales() {
-		ph[l.Code] = "/links"
+	if cat != nil {
+		ph[cat.Lang] = "/links/cat/" + cat.Slug
+		if trs, _ := s.store.CategoryTranslations(cat.TransGroup); trs != nil {
+			for _, t := range trs {
+				if t.Kind == "link" {
+					ph[t.Lang] = "/links/cat/" + t.Slug
+				}
+			}
+		}
+	} else {
+		for _, l := range s.locales() {
+			ph[l.Code] = s.archiveConfig(l.Code, "link").Path
+		}
 	}
 	v.Langs, v.SEO.Alternates = s.i18nLinks(v.Site.BaseURL, lang, ph)
 	setPagination(v, page, ceilDiv(total, size), basePath)
@@ -3062,7 +3089,11 @@ func (s *Server) robots(w http.ResponseWriter, r *http.Request) {
 // ---------- 小工具 ----------
 
 func pageParam(r *http.Request) int {
-	n, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	raw := r.URL.Query().Get("page")
+	if raw == "" {
+		raw = r.PathValue("pageNum")
+	}
+	n, _ := strconv.Atoi(raw)
 	if n < 1 {
 		n = 1
 	}

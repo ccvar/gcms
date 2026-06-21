@@ -628,7 +628,7 @@
           <tr class="cat-row" draggable="true" data-id="{{.ID}}">
             <td class="drag-handle" aria-hidden="true">⠿</td>
             <td><strong>{{.Name}}</strong>{{if .Description}}<div class="muted" style="font-size:.8rem;margin-top:.2rem">{{.Description}}</div>{{end}}</td>
-            <td class="slug">{{if eq $.CatKind "link"}}/links?cat={{.Slug}}{{else}}/category/{{.Slug}}{{end}}</td>
+            <td class="slug">{{if eq $.CatKind "link"}}/links/cat/{{.Slug}}{{else}}/category/{{.Slug}}{{end}}</td>
             <td class="muted">{{.Count}}</td>
             <td class="right actions">
               <span class="action-icons">

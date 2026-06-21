@@ -2,8 +2,10 @@ package web
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -402,6 +404,130 @@ func TestExportStaticSiteUsesCurrentSiteWhenPlatformHostDiffers(t *testing.T) {
 		t.Fatalf("localized index was not exported")
 	} else if f.Size == 0 {
 		t.Fatalf("localized index should not be empty")
+	}
+}
+
+func TestStaticPaginationUsesPrettyPaths(t *testing.T) {
+	s := newTestPublicServer(t, "")
+	if err := s.store.SetSetting(homePostsPerPageKey, "2"); err != nil {
+		t.Fatalf("set home posts per page: %v", err)
+	}
+	now := time.Now().UTC()
+	postCatID, err := s.store.CreateCategory(&store.Category{
+		Slug: "export-post-cat",
+		Name: "Export Post Category",
+		Lang: "zh",
+		Kind: "post",
+	})
+	if err != nil {
+		t.Fatalf("create post category: %v", err)
+	}
+	for i := 0; i < 9; i++ {
+		if _, err := s.store.CreatePost(&store.Post{
+			Type:        "post",
+			Lang:        "zh",
+			Slug:        fmt.Sprintf("export-post-%02d", i),
+			Title:       fmt.Sprintf("Export Post %02d", i),
+			Content:     "content",
+			Status:      "published",
+			EditorMode:  "markdown",
+			CategoryID:  sql.NullInt64{Int64: postCatID, Valid: true},
+			PublishedAt: now.Add(time.Duration(i) * time.Minute),
+		}); err != nil {
+			t.Fatalf("create post %d: %v", i, err)
+		}
+	}
+	linkCatID, err := s.store.CreateCategory(&store.Category{
+		Slug: "export-link-cat",
+		Name: "Export Link Category",
+		Lang: "zh",
+		Kind: "link",
+	})
+	if err != nil {
+		t.Fatalf("create link category: %v", err)
+	}
+	for i := 0; i < 13; i++ {
+		if _, err := s.store.CreatePost(&store.Post{
+			Type:        "link",
+			Lang:        "zh",
+			Slug:        fmt.Sprintf("export-link-%02d", i),
+			Title:       fmt.Sprintf("Export Link %02d", i),
+			Excerpt:     "link excerpt",
+			Status:      "published",
+			EditorMode:  "markdown",
+			LinkURL:     fmt.Sprintf("https://example.com/%02d", i),
+			CategoryID:  sql.NullInt64{Int64: linkCatID, Valid: true},
+			PublishedAt: now.Add(time.Duration(i) * time.Minute),
+		}); err != nil {
+			t.Fatalf("create link %d: %v", i, err)
+		}
+	}
+
+	for _, target := range []string{
+		"/zh/page/2/",
+		"/zh/category/export-post-cat/page/2/",
+		"/zh/links/cat/export-link-cat/",
+		"/zh/links/cat/export-link-cat/page/2/",
+	} {
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, target, nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s status = %d, body = %s", target, w.Code, w.Body.String())
+		}
+	}
+
+	result, err := s.exportStaticSite(context.Background(), CloudflareConfig{
+		DeployMode:       cloudflareModeWorkerAssets,
+		RoutePattern:     "static.example.com/*",
+		WorkerName:       "gcms-static-example-com",
+		HTMLCacheTTL:     300,
+		SourceMode:       cloudflareSourceModeRedirect,
+		AutoSync:         true,
+		SyncMode:         cloudflareSyncModeRealtime,
+		SyncTime:         cloudflareDefaultSyncTime,
+		OriginURL:        "https://origin.example.com",
+		PagesProjectName: "gcms-static-example-com",
+		Domains:          []CloudflareDomain{{Host: "static.example.com", Primary: true}},
+	})
+	if err != nil {
+		t.Fatalf("export static site: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(result.Dir) })
+	for _, want := range []string{
+		"/zh/page/2/index.html",
+		"/zh/category/export-post-cat/page/2/index.html",
+		"/zh/links/cat/export-link-cat/index.html",
+		"/zh/links/cat/export-link-cat/page/2/index.html",
+	} {
+		if _, ok := result.Files[want]; !ok {
+			t.Fatalf("static export missing %s", want)
+		}
+	}
+
+	indexBody, err := os.ReadFile(result.Files["/zh/index.html"].DiskPath)
+	if err != nil {
+		t.Fatalf("read zh index: %v", err)
+	}
+	if body := string(indexBody); !strings.Contains(body, `href="/zh/page/2/"`) || strings.Contains(body, `?page=2`) {
+		t.Fatalf("home pagination should use pretty static path, body contains query = %v", strings.Contains(body, `?page=2`))
+	}
+	categoryBody, err := os.ReadFile(result.Files["/zh/category/export-post-cat/index.html"].DiskPath)
+	if err != nil {
+		t.Fatalf("read category index: %v", err)
+	}
+	if body := string(categoryBody); !strings.Contains(body, `href="/zh/category/export-post-cat/page/2/"`) || strings.Contains(body, `?page=2`) {
+		t.Fatalf("category pagination should use pretty static path, body contains query = %v", strings.Contains(body, `?page=2`))
+	}
+	linksBody, err := os.ReadFile(result.Files["/zh/links/cat/export-link-cat/index.html"].DiskPath)
+	if err != nil {
+		t.Fatalf("read links category index: %v", err)
+	}
+	if body := string(linksBody); !strings.Contains(body, `href="/zh/links/cat/export-link-cat/page/2/"`) {
+		t.Fatalf("link category pagination missing pretty path")
+	} else if strings.Contains(body, `?cat=export-link-cat`) {
+		t.Fatalf("link category navigation should use pretty path")
+	} else if strings.Contains(body, `?page=2`) {
+		t.Fatalf("link category pagination should not use query page")
 	}
 }
 

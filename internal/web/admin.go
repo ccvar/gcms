@@ -532,9 +532,6 @@ func (s *Server) adminSiteURL(siteID int64, lang string) string {
 	if err != nil || !ok || site == nil {
 		return "/" + lang + "/"
 	}
-	if site.IsDefault {
-		return "/" + lang + "/"
-	}
 	return "/admin/sites/" + strconv.FormatInt(siteID, 10) + "/preview/" + lang + "/"
 }
 
@@ -2199,7 +2196,7 @@ func (s *Server) visualFields(lang string, admins ...*i18n.AdminTr) []VisualFiel
 	)
 	if cats, _ := s.store.ListCategories(lang, "link"); cats != nil {
 		for _, c := range cats {
-			path := "/links?cat=" + c.Slug
+			path := "/links/cat/" + c.Slug
 			nameField := contextText("linkcatnav", "category."+strconv.FormatInt(c.ID, 10)+".name", c.Name, c.Name, path, t("admin.visual.hint.link_category_nav_name", "链接分类导航按钮文字；不会改变 URL。"), false)
 			nameField.Draggable = true
 			fields = append(fields,

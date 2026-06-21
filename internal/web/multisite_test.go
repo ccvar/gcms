@@ -706,4 +706,32 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 	if body := visual.Body.String(); !strings.Contains(body, `href="`+otherPreviewPath+`"`) || !strings.Contains(body, `src="`+otherPreviewPath+`?visual_edit=1"`) {
 		t.Fatalf("visual editor did not point at current site preview")
 	}
+
+	if err := ps.CreateAdminSession("default-current-token", "admin", "csrf", time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("create default current session: %v", err)
+	}
+	if err := ps.SetAdminSessionSite("default-current-token", defaultSite.ID); err != nil {
+		t.Fatalf("set default current site: %v", err)
+	}
+	defaultSiteAdmin := httptest.NewRecorder()
+	defaultSiteAdminReq := httptest.NewRequest(http.MethodGet, "https://platform.test/admin", nil)
+	defaultSiteAdminReq.AddCookie(&http.Cookie{Name: cookieName, Value: "default-current-token"})
+	h.ServeHTTP(defaultSiteAdmin, defaultSiteAdminReq)
+	if defaultSiteAdmin.Code != http.StatusOK {
+		t.Fatalf("default site admin status = %d, body = %s", defaultSiteAdmin.Code, defaultSiteAdmin.Body.String())
+	}
+	defaultPreviewPath := "/admin/sites/" + strconv.FormatInt(defaultSite.ID, 10) + "/preview/zh/"
+	if body := defaultSiteAdmin.Body.String(); !strings.Contains(body, `href="`+defaultPreviewPath+`"`) || strings.Contains(body, `href="/zh/"`) {
+		t.Fatalf("default site admin did not point view-site at source preview")
+	}
+	defaultVisual := httptest.NewRecorder()
+	defaultVisualReq := httptest.NewRequest(http.MethodGet, "https://platform.test/admin/visual", nil)
+	defaultVisualReq.AddCookie(&http.Cookie{Name: cookieName, Value: "default-current-token"})
+	h.ServeHTTP(defaultVisual, defaultVisualReq)
+	if defaultVisual.Code != http.StatusOK {
+		t.Fatalf("default visual status = %d, body = %s", defaultVisual.Code, defaultVisual.Body.String())
+	}
+	if body := defaultVisual.Body.String(); !strings.Contains(body, `href="`+defaultPreviewPath+`"`) || !strings.Contains(body, `src="`+defaultPreviewPath+`?visual_edit=1"`) || strings.Contains(body, `src="/zh/?visual_edit=1"`) {
+		t.Fatalf("default visual editor did not point at source preview")
+	}
 }

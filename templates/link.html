@@ -4,7 +4,7 @@
       <nav class="breadcrumb article-bc" aria-label="{{.Tr.T "common.breadcrumb"}}">
         <a href="{{.Tr.U "/"}}">{{.Tr.T "nav.home"}}</a><span class="sep">/</span>
         <a href="{{.Tr.U "/links"}}">{{.Tr.T "nav.links"}}</a><span class="sep">/</span>
-        {{with $p.Category}}<a href="{{$.Tr.U "/links"}}?cat={{.Slug}}">{{.Name}}</a><span class="sep">/</span>{{end}}
+        {{with $p.Category}}<a href="{{$.Tr.U (printf "/links/cat/%s" .Slug)}}">{{.Name}}</a><span class="sep">/</span>{{end}}
         <span aria-current="page">{{$p.Title}}</span>
       </nav>
       {{if .TOC}}
@@ -41,7 +41,7 @@
 
           <div class="article-foot">
             <div class="tag-row">
-              {{with $p.Category}}<a class="tag" href="{{$.Tr.U "/links"}}?cat={{.Slug}}">{{.Name}}</a>{{end}}
+              {{with $p.Category}}<a class="tag" href="{{$.Tr.U (printf "/links/cat/%s" .Slug)}}">{{.Name}}</a>{{end}}
               {{range $p.KeywordList}}<a class="tag" href="{{$.Tr.U (printf "/search?q=%s" .)}}">{{.}}</a>{{end}}
             </div>
             {{if $p.LinkURL}}<a class="btn" href="{{$p.LinkURL}}" target="_blank" rel="noopener nofollow">{{$.Tr.T "links.visit"}} <span class="arrow">↗</span></a>{{end}}

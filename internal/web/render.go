@@ -313,7 +313,33 @@ func funcMap(imageSizes map[string]ImageSize) template.FuncMap {
 			}
 			return out
 		},
+		"pageURL": func(tr *i18n.Tr, base string, page int) string {
+			if tr == nil {
+				return paginationPath(base, page)
+			}
+			return tr.U(paginationPath(base, page))
+		},
 	}
+}
+
+func paginationPath(base string, page int) string {
+	base = strings.TrimSpace(base)
+	if base == "" {
+		base = "/"
+	}
+	if !strings.HasPrefix(base, "/") {
+		base = "/" + base
+	}
+	if page <= 1 {
+		if base == "/" {
+			return "/"
+		}
+		return strings.TrimRight(base, "/")
+	}
+	if base == "/" {
+		return "/page/" + strconv.Itoa(page) + "/"
+	}
+	return strings.TrimRight(base, "/") + "/page/" + strconv.Itoa(page) + "/"
 }
 
 func formatBytes(n int64) string {

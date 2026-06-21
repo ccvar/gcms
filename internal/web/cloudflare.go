@@ -3463,6 +3463,11 @@ function remap(url) {
     next.search = "";
     return next;
   }
+  if (/\/page\/[1-9][0-9]*$/.test(pathname) || /^\/[^/]+\/links\/cat\/[^/]+$/.test(pathname)) {
+    next.pathname = pathname + "/";
+    next.search = "";
+    return next;
+  }
   return url;
 }
 
