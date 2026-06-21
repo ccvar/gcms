@@ -30,6 +30,7 @@
         </summary>
         <div class="site-switcher-menu">
           <a class="site-switcher-manage" href="/admin/sites">
+            <span class="site-switcher-manage-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3 3 7.5 12 12l9-4.5L12 3Z"/><path d="m3 12 9 4.5 9-4.5"/><path d="m3 16.5 9 4.5 9-4.5"/></svg></span>
             <span>
               <strong>{{.Admin.T "admin.sites.title" "站点管理"}}</strong>
               <em>{{.Admin.T "admin.sites.manage_desc" "回到平台入口"}}</em>
@@ -55,8 +56,8 @@
       <nav class="admin-nav">
         {{if .PlatformAdminView}}
         {{if .Authed}}
-        <a href="/admin/sites">{{.Admin.T "admin.sites.title" "站点管理"}}</a>
-        <a href="/admin/security">{{.Admin.T "admin.security.title" "安全"}}</a>
+        <a href="/admin/sites"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 3 7.5 12 12l9-4.5L12 3Z"/><path d="m3 12 9 4.5 9-4.5"/><path d="m3 16.5 9 4.5 9-4.5"/></svg>{{.Admin.T "admin.sites.title" "站点管理"}}</a>
+        <a href="/admin/platform/settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 21v-7"/><path d="M4 10V3"/><path d="M12 21v-9"/><path d="M12 8V3"/><path d="M20 21v-5"/><path d="M20 12V3"/><path d="M2 14h4"/><path d="M10 8h4"/><path d="M18 16h4"/></svg>{{.Admin.T "admin.platform.settings.title" "设置"}}</a>
         <form method="post" action="/admin/logout">
           <input type="hidden" name="_csrf" value="{{.CSRF}}">
           <button class="btn-logout" type="submit">{{.Admin.T "admin.nav.logout" "退出"}}</button>

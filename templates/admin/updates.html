@@ -1,0 +1,226 @@
+{{define "body"}}
+  {{$u := .Update}}
+  {{$up := .Upgrade}}
+  {{$canUpgrade := and $up.Available (not $u.Error) $u.UpdateAvailable $u.AssetURL (not $up.Running)}}
+  <div class="admin-head platform-page-head">
+    <div>
+      <nav class="platform-breadcrumb" aria-label="{{.Admin.T "admin.platform.settings.title" "设置"}}">
+        <a href="/admin/platform/settings">{{.Admin.T "admin.platform.settings.title" "设置"}}</a>
+        <span>/</span>
+        <strong>{{.Admin.T "admin.settings.menu.updates" "系统更新"}}</strong>
+      </nav>
+      <h1>{{.Admin.T "admin.settings.menu.updates" "系统更新"}}</h1>
+      <p class="muted">{{.Admin.T "admin.platform.updates.subtitle" "更新当前运行的 gcms 程序、升级器和平台数据库迁移；这属于平台级能力，会影响所有站点。"}}</p>
+    </div>
+  </div>
+
+  <nav class="platform-settings-subnav" aria-label="{{.Admin.T "admin.platform.settings.title" "设置"}}">
+    <a href="/admin/security">{{template "platform-settings-icon-lock"}}<span>{{.Admin.T "admin.security.title" "安全"}}</span></a>
+    <a href="/admin/admin-i18n">{{template "platform-settings-icon-type"}}<span>{{.Admin.T "admin.settings.admin_i18n.title" "界面文字"}}</span></a>
+    <a class="active" href="/admin/updates" aria-current="page">{{template "platform-settings-icon-update"}}<span>{{.Admin.T "admin.settings.menu.updates" "系统更新"}}</span></a>
+  </nav>
+
+  <section class="overview-panel platform-settings-panel">
+    <div class="overview-panel-head">
+      <div>
+        <h2>{{.Admin.T "admin.settings.updates.status" "更新状态"}}</h2>
+        <p class="muted">{{.Admin.T "admin.platform.updates.desc" "检查发布仓库中的最新版本，并在标准发布目录中启动后台升级任务。"}}</p>
+      </div>
+    </div>
+    {{if .Flash}}<div class="flash platform-settings-flash">{{.Flash}}</div>{{end}}
+    {{if .FormErr}}<div class="form-err platform-settings-flash">{{.FormErr}}</div>{{end}}
+    <div class="platform-settings-body">
+      <div class="form-err" data-update-error{{if not $u.Error}} hidden{{end}}>{{.Admin.T "admin.settings.updates.check_failed" "检查更新失败："}}{{$u.Error}}</div>
+      <div class="update-summary" id="upgrade-status-box" data-status-url="/admin/updates/status" data-check-url="/admin/updates/check" data-running="{{if $up.Running}}1{{else}}0{{end}}" data-upgrade-available="{{if $up.Available}}1{{else}}0{{end}}">
+        <div class="update-versions">
+          <div class="update-block">
+            <span class="update-label">{{.Admin.T "admin.settings.updates.current_version" "当前版本"}}</span>
+            <strong>{{$u.Current.Version}}</strong>{{if eq $u.Current.Version "dev"}} <span class="mini-tag">{{.Admin.T "admin.settings.updates.dev_build" "开发构建"}}</span>{{end}}
+            <span class="update-meta">{{$u.Current.Platform}}</span>
+          </div>
+          <span class="update-sep" aria-hidden="true">→</span>
+          <div class="update-block">
+            <span class="update-label">{{.Admin.T "admin.settings.updates.latest_version" "最新版本"}}</span>
+            <strong data-update-latest>{{if $u.Error}}{{.Admin.T "admin.settings.updates.check_failed_short" "检查失败"}}{{else if $u.LatestTag}}{{$u.LatestTag}}{{else}}{{.Admin.T "admin.settings.updates.checking" "检查中"}}{{end}}</strong>
+            <span class="badge {{if $u.UpdateAvailable}}sched{{else}}pub{{end}}" data-update-badge{{if or $u.Error (not $u.LatestTag)}} hidden{{end}}>{{if $u.UpdateAvailable}}{{.Admin.T "admin.settings.updates.update_available" "有新版本"}}{{else}}{{.Admin.T "admin.settings.updates.up_to_date" "已是最新"}}{{end}}</span>
+            <span class="update-meta" data-update-meta>{{if $u.Error}}{{.Admin.T "admin.settings.updates.source_unavailable" "更新源暂不可用"}}{{else if $u.LatestTag}}{{if $u.AssetURL}}{{.Admin.T "admin.settings.updates.asset_matched" "当前平台包已匹配"}}{{else}}{{.Admin.T "admin.settings.updates.asset_missing" "未找到当前平台包"}}{{end}}{{else}}{{.Admin.T "admin.settings.updates.connecting" "正在连接更新源"}}{{end}}</span>
+          </div>
+        </div>
+
+        <div class="update-task">
+          <div>
+            <span class="update-label">{{.Admin.T "admin.settings.updates.task" "升级任务"}}</span>
+            <strong data-upgrade-status>{{if eq $up.Status "running"}}{{.Admin.T "admin.settings.updates.running" "升级中"}}{{else if eq $up.Status "failed"}}{{.Admin.T "admin.settings.updates.failed" "失败"}}{{else}}{{.Admin.T "admin.settings.updates.idle" "空闲"}}{{end}}</strong>
+            <p data-upgrade-message>{{if or (eq $up.Status "running") (eq $up.Status "failed")}}{{$up.Message}}{{else}}{{.Admin.T "admin.settings.updates.no_task" "暂无升级任务"}}{{end}}</p>
+          </div>
+          <form method="post" action="/admin/updates/upgrade" class="update-action" data-upgrade-form>
+            <input type="hidden" name="_csrf" value="{{.CSRF}}">
+            <input type="hidden" name="version" value="{{$u.LatestTag}}" data-update-version-input>
+            <button class="btn btn-primary" type="submit" data-upgrade-button{{if not $canUpgrade}} disabled{{end}}>{{if $up.Running}}{{.Admin.T "admin.settings.updates.upgrading_ellipsis" "升级中..."}}{{else if not $up.Available}}{{.Admin.T "admin.settings.updates.unsupported" "当前目录不支持后台升级"}}{{else if $u.Error}}{{.Admin.T "admin.settings.updates.check_failed_upgrade" "检查失败，暂不可升级"}}{{else if not $u.LatestTag}}{{.Admin.T "admin.settings.updates.checking_ellipsis" "检查更新中..."}}{{else if not $u.UpdateAvailable}}{{.Admin.T "admin.settings.updates.up_to_date" "已是最新"}}{{else if not $u.AssetURL}}{{.Admin.T "admin.settings.updates.asset_missing" "未找到当前平台包"}}{{else}}{{.Admin.T "admin.settings.updates.one_click" "一键升级"}}{{end}}</button>
+          </form>
+        </div>
+      </div>
+
+      <details class="update-details">
+        <summary>{{.Admin.T "admin.settings.updates.advanced" "高级信息"}}</summary>
+        <table class="admin-table">
+          <tbody>
+            <tr><th>{{.Admin.T "admin.settings.updates.current_commit" "当前提交"}}</th><td class="slug">{{if $u.Current.Commit}}{{$u.Current.Commit}}{{else}}-{{end}}</td></tr>
+            {{if $u.Current.BuiltAt}}<tr><th>{{.Admin.T "admin.settings.updates.built_at" "构建时间"}}</th><td class="slug">{{$u.Current.BuiltAt}}</td></tr>{{end}}
+            <tr><th>{{.Admin.T "admin.settings.updates.release_repo" "发布仓库"}}</th><td class="slug">{{$u.Current.Repo}}</td></tr>
+            {{if $u.PublishedAt}}<tr><th>{{.Admin.T "admin.settings.updates.published_at" "发布时间"}}</th><td class="slug">{{$u.PublishedAt}}</td></tr>{{end}}
+            {{if $u.ManifestURL}}<tr><th>{{.Admin.T "admin.settings.updates.manifest" "更新清单"}}</th><td><a href="{{$u.ManifestURL}}" target="_blank" rel="noopener">manifest.json</a></td></tr>{{end}}
+            {{if $u.AssetURL}}<tr><th>{{.Admin.T "admin.settings.updates.asset" "匹配平台包"}}</th><td><a href="{{$u.AssetURL}}" target="_blank" rel="noopener">{{$u.AssetName}}</a></td></tr>{{else if not $u.Error}}<tr><th>{{.Admin.T "admin.settings.updates.asset" "匹配平台包"}}</th><td><span class="muted">{{.Admin.T "admin.settings.updates.no_asset" "该 Release 未找到当前平台的发布包"}}</span></td></tr>{{end}}
+            {{if gt $u.AssetSize 0}}<tr><th>{{.Admin.T "admin.settings.updates.size" "包大小"}}</th><td class="slug">{{filesize $u.AssetSize}}</td></tr>{{end}}
+            {{if $u.SHA256}}<tr><th>SHA256</th><td class="slug">{{$u.SHA256}}</td></tr>{{end}}
+            {{if $u.ChecksumURL}}<tr><th>{{.Admin.T "admin.settings.updates.checksum" "校验文件"}}</th><td><a href="{{$u.ChecksumURL}}" target="_blank" rel="noopener">checksums.txt</a></td></tr>{{end}}
+            {{if $u.LatestURL}}<tr><th>Release</th><td><a href="{{$u.LatestURL}}" target="_blank" rel="noopener">{{.Admin.T "admin.settings.updates.open_release" "打开 GitHub Release"}}</a></td></tr>{{end}}
+            <tr><th>{{.Admin.T "admin.settings.updates.status_file" "状态文件"}}</th><td class="slug">run/upgrade.json</td></tr>
+            <tr><th>{{.Admin.T "admin.settings.updates.log" "日志"}}</th><td class="slug">{{$up.RunnerLog}}</td></tr>
+            {{if ne $up.Status "idle"}}<tr><th>{{.Admin.T "admin.settings.updates.recent_upgrade" "最近升级"}}</th><td class="slug">{{if eq $up.Status "running"}}{{.Admin.T "admin.settings.updates.running" "运行中"}}{{else if eq $up.Status "success"}}{{.Admin.T "admin.settings.updates.success" "成功"}}{{else if eq $up.Status "failed"}}{{.Admin.T "admin.settings.updates.failed" "失败"}}{{else}}{{$up.Status}}{{end}}</td></tr>{{end}}
+            {{if and (ne $up.Status "idle") $up.Message}}<tr><th>{{.Admin.T "admin.settings.updates.recent_message" "最近消息"}}</th><td>{{$up.Message}}</td></tr>{{end}}
+            {{if $up.Step}}<tr><th>{{.Admin.T "admin.settings.updates.step" "阶段"}}</th><td class="slug" data-upgrade-step>{{$up.Step}}</td></tr>{{end}}
+            {{if $up.Version}}<tr><th>{{.Admin.T "admin.settings.updates.target_version" "目标版本"}}</th><td class="slug" data-upgrade-version>{{$up.Version}}</td></tr>{{end}}
+            {{if $up.UpdatedAt}}<tr><th>{{.Admin.T "admin.settings.updates.updated_at" "更新时间"}}</th><td class="slug" data-upgrade-updated>{{$up.UpdatedAt}}</td></tr>{{end}}
+          </tbody>
+        </table>
+        {{if $u.LatestBody}}<pre class="update-notes">{{$u.LatestBody}}</pre>{{end}}
+      </details>
+    </div>
+  </section>
+
+  <script>
+  (function(){
+    var box = document.getElementById("upgrade-status-box");
+    if (!box) return;
+    var root = box.parentElement || box;
+    var form = root.querySelector("[data-upgrade-form]");
+    var button = root.querySelector("[data-upgrade-button]");
+    var checkUrl = box.dataset.checkUrl;
+    var statusUrl = box.dataset.statusUrl;
+    var upgradeAvailable = box.dataset.upgradeAvailable === "1";
+    var updateError = root.querySelector("[data-update-error]");
+    var latestEl = root.querySelector("[data-update-latest]");
+    var badgeEl = root.querySelector("[data-update-badge]");
+    var metaEl = root.querySelector("[data-update-meta]");
+    var versionInput = root.querySelector("[data-update-version-input]");
+    var timer = 0;
+    var txt = {
+      running: "{{.Admin.T "admin.settings.updates.running" "升级中"}}",
+      success: "{{.Admin.T "admin.settings.updates.success" "升级完成"}}",
+      failed: "{{.Admin.T "admin.settings.updates.failed" "失败"}}",
+      idle: "{{.Admin.T "admin.settings.updates.idle" "空闲"}}",
+      checkFailed: "{{.Admin.T "admin.settings.updates.check_failed_short" "检查失败"}}",
+      checking: "{{.Admin.T "admin.settings.updates.checking" "检查中"}}",
+      updateAvailable: "{{.Admin.T "admin.settings.updates.update_available" "有新版本"}}",
+      upToDate: "{{.Admin.T "admin.settings.updates.up_to_date" "已是最新"}}",
+      sourceUnavailable: "{{.Admin.T "admin.settings.updates.source_unavailable" "更新源暂不可用"}}",
+      assetMatched: "{{.Admin.T "admin.settings.updates.asset_matched" "当前平台包已匹配"}}",
+      assetMissing: "{{.Admin.T "admin.settings.updates.asset_missing" "未找到当前平台包"}}",
+      unsupported: "{{.Admin.T "admin.settings.updates.unsupported" "当前目录不支持后台升级"}}",
+      checkFailedUpgrade: "{{.Admin.T "admin.settings.updates.check_failed_upgrade" "检查失败，暂不可升级"}}",
+      checkingEllipsis: "{{.Admin.T "admin.settings.updates.checking_ellipsis" "检查更新中..."}}",
+      upgradingEllipsis: "{{.Admin.T "admin.settings.updates.upgrading_ellipsis" "升级中..."}}",
+      oneClick: "{{.Admin.T "admin.settings.updates.one_click" "一键升级"}}",
+      retry: "{{.Admin.T "admin.settings.updates.retry" "重试升级"}}",
+      refreshing: "{{.Admin.T "admin.settings.updates.refreshing" "刷新中..."}}",
+      requestSent: "{{.Admin.T "admin.settings.updates.request_sent" "请求已发出，正在等待服务响应..."}}",
+      taskStarted: "{{.Admin.T "admin.settings.updates.task_started" "升级任务已启动，正在等待升级器接管。"}}",
+      unreachable: "{{.Admin.T "admin.settings.updates.unreachable" "更新源请求超时或不可达"}}",
+      waitRestart: "{{.Admin.T "admin.settings.updates.wait_restart" "服务正在重启，稍后自动恢复..."}}",
+      loginRequired: "{{.Admin.T "admin.settings.updates.login_required" "需要登录"}}",
+      loginExpired: "{{.Admin.T "admin.settings.updates.login_expired" "登录已过期，请重新登录后查看升级结果。"}}",
+      csrfExpired: "{{.Admin.T "admin.settings.updates.csrf_expired" "页面令牌已过期，请刷新系统更新页后再点一键升级。"}}",
+      refreshPage: "{{.Admin.T "admin.settings.updates.refresh_page" "刷新页面"}}",
+      checkFailedPrefix: "{{.Admin.T "admin.settings.updates.check_failed" "检查更新失败："}}"
+    };
+    function setText(sel, value) { var el = root.querySelector(sel); if (el) el.textContent = value || ""; }
+    function setButton(value, disabled) { if (button) { button.textContent = value; button.disabled = !!disabled; } }
+    function setBadge(value, cls, hidden) { if (badgeEl) { badgeEl.textContent = value || ""; badgeEl.className = "badge " + (cls || "pub"); badgeEl.hidden = !!hidden; } }
+    function showError(value) { if (updateError) { updateError.hidden = !value; updateError.textContent = value ? txt.checkFailedPrefix + value : ""; } }
+    function statusText(value) { if (value === "running") return txt.running; if (value === "success") return txt.success; if (value === "failed") return txt.failed; return txt.idle; }
+    function schedulePoll(delay) { window.clearTimeout(timer); timer = window.setTimeout(poll, delay); }
+    function renderUpdateInfo(u) {
+      if (!u) return;
+      var err = u.Error || "";
+      var latest = u.LatestTag || "";
+      var hasAsset = !!u.AssetURL;
+      showError(err);
+      if (latestEl) latestEl.textContent = err ? txt.checkFailed : (latest || txt.checking);
+      if (metaEl) metaEl.textContent = err ? txt.sourceUnavailable : (hasAsset ? txt.assetMatched : txt.assetMissing);
+      if (versionInput) versionInput.value = latest;
+      if (err) setBadge("", "pub", true);
+      else if (latest) setBadge(u.UpdateAvailable ? txt.updateAvailable : txt.upToDate, u.UpdateAvailable ? "sched" : "pub", false);
+      else setBadge("", "pub", true);
+      if (box.dataset.running === "1") return;
+      if (!upgradeAvailable) setButton(txt.unsupported, true);
+      else if (err) setButton(txt.checkFailedUpgrade, true);
+      else if (!latest) setButton(txt.checkingEllipsis, true);
+      else if (!u.UpdateAvailable) setButton(txt.upToDate, true);
+      else if (!hasAsset) setButton(txt.assetMissing, true);
+      else setButton(txt.oneClick, false);
+    }
+    function checkUpdates() {
+      fetch(checkUrl, {credentials: "same-origin", headers: {"Accept": "application/json", "X-Requested-With": "XMLHttpRequest"}})
+        .then(function(r){ if (r.status === 401) throw {login: true}; if (!r.ok) throw new Error("bad status"); return r.json(); })
+        .then(renderUpdateInfo)
+        .catch(function(err){ if (err && err.login) { showError(txt.loginExpired); setButton(txt.loginRequired, true); return; } renderUpdateInfo({Error: txt.unreachable}); });
+    }
+    function renderStatus(s) {
+      if (!s) return;
+      box.dataset.running = s.status === "running" ? "1" : "0";
+      setText("[data-upgrade-status]", statusText(s.status));
+      setText("[data-upgrade-message]", s.message);
+      setText("[data-upgrade-step]", s.step);
+      setText("[data-upgrade-version]", s.version);
+      setText("[data-upgrade-updated]", s.updated_at);
+      if (s.status === "running") { setButton(txt.upgradingEllipsis, true); schedulePoll(2500); }
+      else if (s.status === "success") { setButton(txt.refreshing, true); window.setTimeout(function(){ window.location.reload(); }, 1200); }
+      else if (s.status === "failed") { setButton(txt.retry, false); }
+    }
+    function poll() {
+      fetch(statusUrl, {credentials: "same-origin", headers: {"Accept": "application/json", "X-Requested-With": "XMLHttpRequest"}})
+        .then(function(r){ if (r.status === 401) throw {login: true}; if (!r.ok) throw new Error("bad status"); return r.json(); })
+        .then(renderStatus)
+        .catch(function(err){ if (err && err.login) { setText("[data-upgrade-status]", txt.loginRequired); setText("[data-upgrade-message]", txt.loginExpired); return; } setText("[data-upgrade-status]", txt.running); setText("[data-upgrade-message]", txt.waitRestart); schedulePoll(3000); });
+    }
+    if (form) {
+      form.addEventListener("submit", function(e) {
+        if (!window.fetch || !window.FormData || !window.URLSearchParams) return;
+        e.preventDefault();
+        if (button && button.disabled) return;
+        box.dataset.running = "1";
+        setText("[data-upgrade-status]", txt.running);
+        setText("[data-upgrade-message]", txt.taskStarted);
+        setButton(txt.upgradingEllipsis, true);
+        fetch(form.action, {
+          method: "POST",
+          body: new URLSearchParams(new FormData(form)),
+          credentials: "same-origin",
+          headers: {"Accept": "application/json", "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8", "X-Requested-With": "XMLHttpRequest"}
+        }).then(function(r) {
+          return r.json().catch(function(){ return {}; }).then(function(j) { if (!r.ok) { j.serverError = true; throw j; } return j; });
+        }).then(function(j) {
+          renderStatus(j.status);
+        }).catch(function(err) {
+          box.dataset.running = "0";
+          if (err && err.serverError && err.error === "bad_csrf") {
+            setText("[data-upgrade-message]", txt.csrfExpired);
+            setButton(txt.refreshPage, false);
+            if (button) button.onclick = function(){ window.location.reload(); };
+            return;
+          }
+          setText("[data-upgrade-message]", (err && err.message) || txt.requestSent);
+          setButton(txt.retry, false);
+        });
+      });
+    }
+    checkUpdates();
+    if (box.dataset.running === "1") schedulePoll(1000);
+  })();
+  </script>
+{{end}}
+
+{{define "platform-settings-icon-lock"}}<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>{{end}}
+{{define "platform-settings-icon-type"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7V5h16v2"/><path d="M9 20h6"/><path d="M12 5v15"/></svg>{{end}}
+{{define "platform-settings-icon-update"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>{{end}}

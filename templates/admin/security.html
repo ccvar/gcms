@@ -1,10 +1,21 @@
 {{define "body"}}
   <div class="admin-head platform-security-head">
     <div>
+      <nav class="platform-breadcrumb" aria-label="{{.Admin.T "admin.platform.settings.title" "设置"}}">
+        <a href="/admin/platform/settings">{{.Admin.T "admin.platform.settings.title" "设置"}}</a>
+        <span>/</span>
+        <strong>{{.Admin.T "admin.security.title" "安全"}}</strong>
+      </nav>
       <h1>{{.Admin.T "admin.security.title" "安全"}}</h1>
       <p class="muted">{{.Admin.T "admin.security.subtitle" "管理平台后台登录密码。这个密码适用于所有站点后台。"}}</p>
     </div>
   </div>
+
+  <nav class="platform-settings-subnav" aria-label="{{.Admin.T "admin.platform.settings.title" "设置"}}">
+    <a class="active" href="/admin/security" aria-current="page">{{template "platform-settings-icon-lock"}}<span>{{.Admin.T "admin.security.title" "安全"}}</span></a>
+    <a href="/admin/admin-i18n">{{template "platform-settings-icon-type"}}<span>{{.Admin.T "admin.settings.admin_i18n.title" "界面文字"}}</span></a>
+    <a href="/admin/updates">{{template "platform-settings-icon-update"}}<span>{{.Admin.T "admin.settings.menu.updates" "系统更新"}}</span></a>
+  </nav>
 
   <section class="overview-panel platform-security-panel">
     <div class="overview-panel-head">
@@ -37,3 +48,7 @@
     </form>
   </section>
 {{end}}
+
+{{define "platform-settings-icon-lock"}}<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>{{end}}
+{{define "platform-settings-icon-type"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7V5h16v2"/><path d="M9 20h6"/><path d="M12 5v15"/></svg>{{end}}
+{{define "platform-settings-icon-update"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>{{end}}

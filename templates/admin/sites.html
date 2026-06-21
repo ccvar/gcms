@@ -5,7 +5,7 @@
       <p class="muted">{{.Admin.T "admin.sites.subtitle" "管理平台下的站点、域名、默认入口和平台自动化接入。"}}</p>
     </div>
     <div class="overview-actions">
-      <button class="btn btn-primary" type="button" data-site-create-open>{{.Admin.T "admin.sites.create" "新建站点"}}</button>
+      <button class="btn btn-primary icon-text" type="button" data-site-create-open>{{template "site-icon-plus"}}<span>{{.Admin.T "admin.sites.create" "新建站点"}}</span></button>
     </div>
   </div>
 
@@ -174,7 +174,14 @@
               </label>
             </div>
           </div>
-          <label class="checkline"><input type="checkbox" name="automation" value="1"{{if or (not .FormErr) (eq (index .FormVals "automation") "1")}} checked{{end}}><span>{{.Admin.T "admin.sites.platform_api_enable_new" "允许通过平台入口调用自动化接口"}}</span></label>
+          <label class="checkline site-automation-option">
+            <span class="site-automation-icon">{{template "site-icon-plug"}}</span>
+            <span>
+              <strong>{{.Admin.T "admin.sites.platform_api_enable_new" "允许通过平台入口调用自动化接口"}}</strong>
+              <em>{{.Admin.T "admin.sites.platform_api_enable_new_desc" "创建后可下载平台接入包，供 AI 和外部工具调用。"}}</em>
+            </span>
+            <input type="checkbox" name="automation" value="1"{{if or (not .FormErr) (eq (index .FormVals "automation") "1")}} checked{{end}}>
+          </label>
         </div>
         <div class="modal-actions">
           <button class="btn" type="button" data-site-create-close>{{.Admin.T "admin.action.cancel" "取消"}}</button>
@@ -188,6 +195,7 @@
 {{define "site-icon-status"}}<svg class="site-inline-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>{{end}}
 {{define "site-icon-plug"}}<svg class="site-inline-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 2v5"/><path d="M16 2v5"/><path d="M7 7h10v5a5 5 0 0 1-10 0z"/><path d="M12 17v5"/></svg>{{end}}
 {{define "site-icon-enter"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/></svg>{{end}}
+{{define "site-icon-plus"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg>{{end}}
 {{define "site-icon-package"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.3 7 12 12l8.7-5"/><path d="M12 22V12"/></svg>{{end}}
 {{define "site-icon-settings"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 21v-7"/><path d="M4 10V3"/><path d="M12 21v-9"/><path d="M12 8V3"/><path d="M20 21v-5"/><path d="M20 12V3"/><path d="M2 14h4"/><path d="M10 8h4"/><path d="M18 16h4"/></svg>{{end}}
 {{define "site-icon-link"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.1 0l2-2a5 5 0 0 0-7.1-7.1l-1.2 1.2"/><path d="M14 11a5 5 0 0 0-7.1 0l-2 2A5 5 0 0 0 12 20.1l1.2-1.2"/></svg>{{end}}

@@ -1,0 +1,41 @@
+{{define "body"}}
+  <div class="admin-head platform-page-head">
+    <div>
+      <h1>{{.Admin.T "admin.platform.settings.title" "设置"}}</h1>
+      <p class="muted">{{.Admin.T "admin.platform.settings.subtitle" "管理平台级安全、界面文字和系统更新。"}}</p>
+    </div>
+  </div>
+
+  <section class="platform-settings-hub" aria-label="{{.Admin.T "admin.platform.settings.title" "设置"}}">
+    <a class="platform-settings-card" href="/admin/security">
+      <span class="platform-settings-card-icon">{{template "platform-settings-icon-lock"}}</span>
+      <span class="platform-settings-card-copy">
+        <strong>{{.Admin.T "admin.security.title" "安全"}}</strong>
+        <em>{{.Admin.T "admin.platform.settings.security_desc" "修改平台管理员密码和默认密码提醒。"}}</em>
+      </span>
+      <span class="platform-settings-card-go" aria-hidden="true">↗</span>
+    </a>
+
+    <a class="platform-settings-card" href="/admin/admin-i18n">
+      <span class="platform-settings-card-icon">{{template "platform-settings-icon-type"}}</span>
+      <span class="platform-settings-card-copy">
+        <strong>{{.Admin.T "admin.settings.admin_i18n.title" "界面文字"}}</strong>
+        <em>{{.Admin.T "admin.platform.settings.interface_text_desc" "调整后台菜单、按钮和提示文字，保存后应用到所有站点后台。"}}</em>
+      </span>
+      <span class="platform-settings-card-go" aria-hidden="true">↗</span>
+    </a>
+
+    <a class="platform-settings-card" href="/admin/updates">
+      <span class="platform-settings-card-icon">{{template "platform-settings-icon-update"}}</span>
+      <span class="platform-settings-card-copy">
+        <strong>{{.Admin.T "admin.settings.menu.updates" "系统更新"}}</strong>
+        <em>{{.Admin.T "admin.platform.settings.updates_desc" "检查新版本、执行升级并查看最近升级状态。"}}</em>
+      </span>
+      <span class="platform-settings-card-go" aria-hidden="true">↗</span>
+    </a>
+  </section>
+{{end}}
+
+{{define "platform-settings-icon-lock"}}<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>{{end}}
+{{define "platform-settings-icon-type"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7V5h16v2"/><path d="M9 20h6"/><path d="M12 5v15"/></svg>{{end}}
+{{define "platform-settings-icon-update"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>{{end}}

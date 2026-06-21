@@ -30,6 +30,10 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 	if err := defaultStore.SetSetting("site.name", "Default Runtime Site"); err != nil {
 		t.Fatalf("set default site name: %v", err)
 	}
+	legacyAdminI18N := `{"admin.nav.posts":"Legacy Posts"}`
+	if err := defaultStore.SetSetting("admin_i18n::en", legacyAdminI18N); err != nil {
+		t.Fatalf("set legacy admin i18n: %v", err)
+	}
 	defaultUploadDir := filepath.Join(dir, "default-uploads")
 	if err := os.MkdirAll(defaultUploadDir, 0o755); err != nil {
 		t.Fatalf("create default upload dir: %v", err)
@@ -102,6 +106,9 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 	srv, err := NewWithPlatform(defaultStore, ps, "https://platform.test", defaultUploadDir, os.DirFS("../.."), os.DirFS("../.."))
 	if err != nil {
 		t.Fatalf("new multisite server: %v", err)
+	}
+	if got := ps.Setting("admin_i18n::en"); got != legacyAdminI18N {
+		t.Fatalf("platform admin i18n migration = %q, want %q", got, legacyAdminI18N)
 	}
 	h := srv.Handler()
 
@@ -178,8 +185,11 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 	if body := platformPage.Body.String(); !strings.Contains(body, `data-site-create-open`) || !strings.Contains(body, `data-site-create-modal`) {
 		t.Fatalf("platform page did not render create-site modal")
 	}
-	if body := platformPage.Body.String(); !strings.Contains(body, `site-card is-default`) || !strings.Contains(body, `href="/admin/security"`) {
-		t.Fatalf("platform page did not render default-site card state or security nav")
+	if body := platformPage.Body.String(); !strings.Contains(body, `site-card is-default`) || !strings.Contains(body, `href="/admin/platform/settings"`) || strings.Contains(body, `href="/admin/updates"`) || strings.Contains(body, `href="/admin/admin-i18n"`) {
+		t.Fatalf("platform page did not render default-site card state or platform nav")
+	}
+	if body := platformPage.Body.String(); strings.Contains(body, `href="/admin/settings/updates"`) {
+		t.Fatalf("platform page rendered old site-level update link")
 	}
 	defaultIconPath := "/admin/sites/" + strconv.FormatInt(defaultSite.ID, 10) + "/uploads/favicon.ico"
 	otherIconPath := "/admin/sites/" + strconv.FormatInt(otherSite.ID, 10) + "/uploads/blog-icon.ico"
@@ -312,6 +322,17 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 		t.Fatalf("empty site seeded %d content items, want 0", len(recentEmpty))
 	}
 
+	platformSettingsPage := httptest.NewRecorder()
+	platformSettingsReq := httptest.NewRequest(http.MethodGet, "https://platform.test/admin/platform/settings", nil)
+	platformSettingsReq.AddCookie(loginCookie)
+	h.ServeHTTP(platformSettingsPage, platformSettingsReq)
+	if platformSettingsPage.Code != http.StatusOK {
+		t.Fatalf("platform settings status = %d, body = %s", platformSettingsPage.Code, platformSettingsPage.Body.String())
+	}
+	if body := platformSettingsPage.Body.String(); !strings.Contains(body, `href="/admin/security"`) || !strings.Contains(body, `href="/admin/updates"`) || !strings.Contains(body, `href="/admin/admin-i18n"`) || strings.Contains(body, `href="/admin/posts"`) {
+		t.Fatalf("platform settings page did not render platform setting entries")
+	}
+
 	securityPage := httptest.NewRecorder()
 	securityReq := httptest.NewRequest(http.MethodGet, "https://platform.test/admin/security", nil)
 	securityReq.AddCookie(loginCookie)
@@ -321,6 +342,45 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 	}
 	if body := securityPage.Body.String(); !strings.Contains(body, `action="/admin/security"`) || strings.Contains(body, `href="/admin/posts"`) {
 		t.Fatalf("platform security page did not render as platform-level page")
+	}
+
+	updatePage := httptest.NewRecorder()
+	updateReq := httptest.NewRequest(http.MethodGet, "https://platform.test/admin/updates", nil)
+	updateReq.AddCookie(loginCookie)
+	h.ServeHTTP(updatePage, updateReq)
+	if updatePage.Code != http.StatusOK {
+		t.Fatalf("platform updates status = %d, body = %s", updatePage.Code, updatePage.Body.String())
+	}
+	if body := updatePage.Body.String(); !strings.Contains(body, `data-status-url="/admin/updates/status"`) || !strings.Contains(body, `action="/admin/updates/upgrade"`) || strings.Contains(body, `href="/admin/posts"`) {
+		t.Fatalf("platform updates page did not render as platform-level page")
+	}
+	oldUpdatePage := httptest.NewRecorder()
+	oldUpdateReq := httptest.NewRequest(http.MethodGet, "https://platform.test/admin/settings/updates", nil)
+	oldUpdateReq.AddCookie(loginCookie)
+	h.ServeHTTP(oldUpdatePage, oldUpdateReq)
+	if oldUpdatePage.Code != http.StatusSeeOther || oldUpdatePage.Header().Get("Location") != "/admin/updates" {
+		t.Fatalf("old update page status/location = %d %q", oldUpdatePage.Code, oldUpdatePage.Header().Get("Location"))
+	}
+
+	adminI18NPage := httptest.NewRecorder()
+	adminI18NReq := httptest.NewRequest(http.MethodGet, "https://platform.test/admin/admin-i18n?admin_lang=en", nil)
+	adminI18NReq.AddCookie(loginCookie)
+	h.ServeHTTP(adminI18NPage, adminI18NReq)
+	if adminI18NPage.Code != http.StatusOK {
+		t.Fatalf("platform admin i18n status = %d, body = %s", adminI18NPage.Code, adminI18NPage.Body.String())
+	}
+	if body := adminI18NPage.Body.String(); !strings.Contains(body, `action="/admin/admin-i18n"`) || !strings.Contains(body, `Legacy Posts`) || strings.Contains(body, `href="/admin/posts"`) {
+		t.Fatalf("platform admin i18n page did not render migrated platform overrides")
+	}
+	saveAdminI18N := postPlatformForm("/admin/settings/admin-i18n", url.Values{
+		"admin_lang":      {"en"},
+		"admin_i18n_json": {`{"admin.nav.posts":"Platform Posts"}`},
+	})
+	if saveAdminI18N.Code != http.StatusSeeOther || saveAdminI18N.Header().Get("Location") != "/admin/admin-i18n" {
+		t.Fatalf("save admin i18n status/location = %d %q", saveAdminI18N.Code, saveAdminI18N.Header().Get("Location"))
+	}
+	if got := ps.Setting("admin_i18n::en"); !strings.Contains(got, "Platform Posts") {
+		t.Fatalf("platform admin i18n saved to %q", got)
 	}
 
 	defaultResp := httptest.NewRecorder()

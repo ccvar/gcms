@@ -35,10 +35,10 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 7.6-7 9-4-1.4-7-4.5-7-9V6z"/></svg>
         <span>{{.Admin.T "admin.settings.menu.security" "安全"}}</span>
       </a>
-      <a href="/admin/settings/updates"{{if eq .Section "updates"}} class="active"{{end}}>
+      {{if not .PlatformMode}}<a href="/admin/settings/updates"{{if eq .Section "updates"}} class="active"{{end}}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 16V8"/><path d="M8 12l4-4 4 4"/></svg>
         <span>{{.Admin.T "admin.settings.menu.updates" "系统更新"}}</span>
-      </a>
+      </a>{{end}}
     </nav>
 
     <div class="settings-body">
@@ -568,12 +568,12 @@
         </form>
       </div>
 
-      <div class="field-group admin-i18n-box" style="margin-top:1.8rem;border-top:1px solid var(--line);padding-top:1.4rem">
+      {{if not .PlatformMode}}<div class="field-group admin-i18n-box" style="margin-top:1.8rem;border-top:1px solid var(--line);padding-top:1.4rem">
         <h3 class="group-head with-icon">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16"/><path d="M4 12h16"/><path d="M4 19h10"/><path d="M17 16l3 3 3-3"/></svg>
-          <span>{{.Admin.T "admin.settings.admin_i18n.title" "后台界面翻译"}}</span>
+          <span>{{.Admin.T "admin.settings.admin_i18n.title" "界面文字"}}</span>
         </h3>
-        <p class="muted" style="margin:-.2rem 0 .9rem;font-size:.85rem">{{.Admin.T "admin.settings.admin_i18n.desc" "后台默认读取内置 JSON。这里可以按 key 覆盖当前后台语种的文案；未填写或 JSON 缺少的 key 会回落中文。"}}</p>
+        <p class="muted" style="margin:-.2rem 0 .9rem;font-size:.85rem">{{.Admin.T "admin.settings.admin_i18n.desc" "用于调整后台按钮、菜单和提示里的显示文字；未填写的内容会继续使用系统默认文字。"}}</p>
         <div class="field">
           <label>{{.Admin.T "admin.settings.admin_i18n.current" "当前后台语种"}}</label>
           <div class="admin-i18n-current">
@@ -582,8 +582,8 @@
         </div>
         <details class="admin-i18n-details">
           <summary>
-            <span>{{.Admin.T "admin.settings.admin_i18n.customize" "自定义覆盖文案"}}</span>
-            <small>{{.Admin.T "admin.settings.admin_i18n.customize_desc" "高级配置，默认折叠。只有需要改内置翻译 key 时再展开。"}}</small>
+            <span>{{.Admin.T "admin.settings.admin_i18n.customize" "自定义界面文字"}}</span>
+            <small>{{.Admin.T "admin.settings.admin_i18n.customize_desc" "高级配置，默认折叠。只有需要改内置文字 key 时再展开。"}}</small>
           </summary>
           <form method="post" action="/admin/settings/admin-i18n" class="admin-form">
             <input type="hidden" name="_csrf" value="{{.CSRF}}">
@@ -592,10 +592,10 @@
               <label for="admin-i18n-json">{{.Admin.T "admin.settings.admin_i18n.override" "覆盖 JSON"}}</label>
               <textarea id="admin-i18n-json" name="admin_i18n_json" rows="10" spellcheck="false" placeholder="{{.Admin.T "admin.settings.admin_i18n.placeholder" "{\n  \"admin.nav.posts\": \"Posts\"\n}"}}">{{.AdminI18NJSON}}</textarea>
             </div>
-            <button class="btn btn-primary" type="submit">{{.Admin.T "admin.settings.admin_i18n.save" "保存后台翻译"}}</button>
+            <button class="btn btn-primary" type="submit">{{.Admin.T "admin.settings.admin_i18n.save" "保存界面文字"}}</button>
           </form>
         </details>
-      </div>
+      </div>{{end}}
 
       {{else if eq .Section "categories"}}
       <div class="cat-toolbar">

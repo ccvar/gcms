@@ -1,0 +1,60 @@
+{{define "body"}}
+  <div class="admin-head platform-page-head">
+    <div>
+      <nav class="platform-breadcrumb" aria-label="{{.Admin.T "admin.platform.settings.title" "设置"}}">
+        <a href="/admin/platform/settings">{{.Admin.T "admin.platform.settings.title" "设置"}}</a>
+        <span>/</span>
+        <strong>{{.Admin.T "admin.settings.admin_i18n.title" "界面文字"}}</strong>
+      </nav>
+      <h1>{{.Admin.T "admin.settings.admin_i18n.title" "界面文字"}}</h1>
+      <p class="muted">{{.Admin.T "admin.platform.admin_i18n.subtitle" "这里管理后台里显示的按钮、菜单和提示文字，保存后会应用到所有站点后台。"}}</p>
+    </div>
+  </div>
+
+  <nav class="platform-settings-subnav" aria-label="{{.Admin.T "admin.platform.settings.title" "设置"}}">
+    <a href="/admin/security">{{template "platform-settings-icon-lock"}}<span>{{.Admin.T "admin.security.title" "安全"}}</span></a>
+    <a class="active" href="/admin/admin-i18n" aria-current="page">{{template "platform-settings-icon-type"}}<span>{{.Admin.T "admin.settings.admin_i18n.title" "界面文字"}}</span></a>
+    <a href="/admin/updates">{{template "platform-settings-icon-update"}}<span>{{.Admin.T "admin.settings.menu.updates" "系统更新"}}</span></a>
+  </nav>
+
+  <section class="overview-panel platform-settings-panel platform-i18n-panel">
+    <div class="overview-panel-head">
+      <div>
+        <h2>{{.Admin.T "admin.settings.admin_i18n.customize" "自定义界面文字"}}</h2>
+        <p class="muted">{{.Admin.T "admin.settings.admin_i18n.desc" "用于调整后台按钮、菜单和提示里的显示文字；未填写的内容会继续使用系统默认文字。"}}</p>
+      </div>
+    </div>
+    {{if .Flash}}<div class="flash platform-settings-flash">{{.Flash}}</div>{{end}}
+    {{if .FormErr}}<div class="form-err platform-settings-flash">{{.FormErr}}</div>{{end}}
+    <form method="post" action="/admin/admin-i18n" class="admin-form platform-settings-body platform-i18n-form">
+      <input type="hidden" name="_csrf" value="{{.CSRF}}">
+      <input type="hidden" name="admin_lang" value="{{.AdminLang}}">
+      <div class="field">
+        <label>{{.Admin.T "admin.settings.admin_i18n.current" "当前后台语种"}}</label>
+        <div class="admin-i18n-current">
+          {{range .AdminLangs}}<a href="/admin/language?lang={{.Code}}&next={{urlquery $.AdminReturn}}"{{if eq .Code $.AdminLang}} class="active" aria-current="true"{{end}}>{{.Name}}</a>{{end}}
+        </div>
+      </div>
+      <details class="platform-i18n-details">
+        <summary>
+          <span>{{.Admin.T "admin.settings.admin_i18n.advanced" "高级设置：覆盖文字 key"}}</span>
+          <small>{{.Admin.T "admin.settings.admin_i18n.advanced_desc" "只有需要改系统内置界面文字时再展开。"}}</small>
+        </summary>
+        <div class="platform-i18n-editor">
+          <div class="field">
+            <label for="admin-i18n-json">{{.Admin.T "admin.settings.admin_i18n.override" "覆盖 JSON"}}</label>
+            <textarea id="admin-i18n-json" name="admin_i18n_json" rows="14" spellcheck="false" placeholder="{{.Admin.T "admin.settings.admin_i18n.placeholder" "{\n  \"admin.nav.posts\": \"Posts\"\n}"}}">{{.AdminI18NJSON}}</textarea>
+            <p class="hint">{{.Admin.T "admin.platform.admin_i18n.hint" "只填写需要覆盖的 key。保存为空对象或清空输入框时，会恢复系统默认界面文字。"}}</p>
+          </div>
+          <div class="platform-settings-actions">
+            <button class="btn btn-primary" type="submit">{{.Admin.T "admin.settings.admin_i18n.save" "保存界面文字"}}</button>
+          </div>
+        </div>
+      </details>
+    </form>
+  </section>
+{{end}}
+
+{{define "platform-settings-icon-lock"}}<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>{{end}}
+{{define "platform-settings-icon-type"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7V5h16v2"/><path d="M9 20h6"/><path d="M12 5v15"/></svg>{{end}}
+{{define "platform-settings-icon-update"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>{{end}}

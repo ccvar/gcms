@@ -576,6 +576,7 @@ func NewWithPlatform(st *store.Store, ps *platform.Store, baseURL, uploadDir str
 		content: map[string]contentCacheEntry{}, endpoints: map[string]endpointCacheEntry{}, pages: map[string]pageCacheEntry{},
 	}
 	s.i18n.LoadCustom(st.Setting("custom_locales")) // 合并后台新增的自定义语种预设
+	s.migratePlatformAdminI18N()
 	s.routes(assetsFS)
 	if ps != nil {
 		if err := s.reloadRuntimePool(); err != nil {
@@ -1054,6 +1055,16 @@ func platformOnlyPath(path string) bool {
 	case path == "/admin/login", path == "/admin/language", path == "/admin/logout", path == "/admin/dismiss-pw":
 		return true
 	case path == "/admin/security":
+		return true
+	case path == "/admin/platform/settings":
+		return true
+	case path == "/admin/updates" || strings.HasPrefix(path, "/admin/updates/"):
+		return true
+	case path == "/admin/admin-i18n":
+		return true
+	case path == "/admin/settings/updates" || strings.HasPrefix(path, "/admin/settings/updates/"):
+		return true
+	case path == "/admin/settings/admin-i18n":
 		return true
 	case path == "/admin/sites" || strings.HasPrefix(path, "/admin/sites/"):
 		return true
@@ -2059,6 +2070,13 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /admin/sites/{id}/automation", s.requireAuth(s.adminSetSiteAutomation))
 	mux.HandleFunc("POST /admin/sites/{id}/domains", s.requireAuth(s.adminAddSiteDomain))
 	mux.HandleFunc("GET /admin/sites/{id}/uploads/{name}", s.requireAuth(s.adminSiteUpload))
+	mux.HandleFunc("GET /admin/platform/settings", s.requireAuth(s.adminPlatformSettings))
+	mux.HandleFunc("GET /admin/updates", s.requireAuth(s.adminUpdates))
+	mux.HandleFunc("GET /admin/updates/status", s.requireAuth(s.adminUpgradeStatus))
+	mux.HandleFunc("GET /admin/updates/check", s.requireAuth(s.adminUpdateCheck))
+	mux.HandleFunc("POST /admin/updates/upgrade", s.requireAuth(s.adminStartUpgrade))
+	mux.HandleFunc("GET /admin/admin-i18n", s.requireAuth(s.adminAdminI18N))
+	mux.HandleFunc("POST /admin/admin-i18n", s.requireAuth(s.adminSaveAdminI18N))
 	mux.HandleFunc("GET /admin/security", s.requireAuth(s.adminSecurity))
 	mux.HandleFunc("POST /admin/security", s.requireAuth(s.adminSavePlatformPassword))
 	mux.HandleFunc("GET /admin/posts", s.requireAuth(s.adminPosts))

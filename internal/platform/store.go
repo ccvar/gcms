@@ -22,6 +22,10 @@ type Store struct {
 	pwMu        sync.Mutex
 	pwHash      string
 	pwIsDefault bool
+
+	settingsMu     sync.RWMutex
+	settings       map[string]string
+	settingsLoaded bool
 }
 
 type Site struct {
@@ -117,6 +121,11 @@ CREATE TABLE IF NOT EXISTS platform_sessions (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL DEFAULT ''
+);
 `
 
 func Open(path string) (*Store, error) {
@@ -143,6 +152,83 @@ func (s *Store) Close() error {
 		return nil
 	}
 	return s.db.Close()
+}
+
+func (s *Store) loadSettings() error {
+	if s == nil {
+		return nil
+	}
+	rows, err := s.db.Query(`SELECT key,value FROM settings`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	next := map[string]string{}
+	for rows.Next() {
+		var key, value string
+		if err := rows.Scan(&key, &value); err != nil {
+			return err
+		}
+		next[key] = value
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	s.settingsMu.Lock()
+	s.settings = next
+	s.settingsLoaded = true
+	s.settingsMu.Unlock()
+	return nil
+}
+
+func (s *Store) LookupSetting(key string) (string, bool, error) {
+	if s == nil {
+		return "", false, nil
+	}
+	s.settingsMu.RLock()
+	if s.settingsLoaded {
+		v, ok := s.settings[key]
+		s.settingsMu.RUnlock()
+		return v, ok, nil
+	}
+	s.settingsMu.RUnlock()
+	if err := s.loadSettings(); err != nil {
+		return "", false, err
+	}
+	s.settingsMu.RLock()
+	v, ok := s.settings[key]
+	s.settingsMu.RUnlock()
+	return v, ok, nil
+}
+
+func (s *Store) GetSetting(key string) (string, error) {
+	v, _, err := s.LookupSetting(key)
+	return v, err
+}
+
+func (s *Store) Setting(key string) string {
+	v, _ := s.GetSetting(key)
+	return v
+}
+
+func (s *Store) SetSetting(key, value string) error {
+	if s == nil {
+		return nil
+	}
+	_, err := s.db.Exec(`INSERT INTO settings(key,value) VALUES(?,?)
+		ON CONFLICT(key) DO UPDATE SET value=excluded.value`, key, value)
+	if err != nil {
+		return err
+	}
+	s.settingsMu.Lock()
+	if s.settingsLoaded {
+		if s.settings == nil {
+			s.settings = map[string]string{}
+		}
+		s.settings[key] = value
+	}
+	s.settingsMu.Unlock()
+	return nil
 }
 
 func (s *Store) BootstrapDefaultSite(in DefaultSiteBootstrap) error {

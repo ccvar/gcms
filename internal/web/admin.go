@@ -374,8 +374,58 @@ func (s *Server) adminI18NKey(lang string) string {
 	return "admin_i18n::" + lang
 }
 
+func (s *Server) migratePlatformAdminI18N() {
+	if s == nil || s.platform == nil || s.store == nil {
+		return
+	}
+	for _, lang := range s.i18n.AdminLocales() {
+		key := s.adminI18NKey(lang.Code)
+		if _, ok, err := s.platform.LookupSetting(key); err == nil && ok {
+			continue
+		}
+		if legacy := strings.TrimSpace(s.store.Setting(key)); legacy != "" {
+			_ = s.platform.SetSetting(key, legacy)
+		}
+	}
+}
+
+func (s *Server) legacyAdminI18NRaw(key string) string {
+	if s == nil || s.store == nil {
+		return ""
+	}
+	if v := strings.TrimSpace(s.store.Setting(key)); v != "" {
+		return v
+	}
+	if pool := s.runtimePool(); pool != nil && pool.defaultSite != nil && pool.defaultSite.Store != nil && pool.defaultSite.Store != s.store {
+		return strings.TrimSpace(pool.defaultSite.Store.Setting(key))
+	}
+	return ""
+}
+
+func (s *Server) adminI18NRaw(lang string) string {
+	key := s.adminI18NKey(lang)
+	if s.platform != nil {
+		if v, ok, err := s.platform.LookupSetting(key); err == nil && ok {
+			return v
+		}
+		if legacy := s.legacyAdminI18NRaw(key); legacy != "" {
+			return legacy
+		}
+		return ""
+	}
+	return s.store.Setting(key)
+}
+
+func (s *Server) setAdminI18NRaw(lang, raw string) error {
+	key := s.adminI18NKey(lang)
+	if s.platform != nil {
+		return s.platform.SetSetting(key, raw)
+	}
+	return s.store.SetSetting(key, raw)
+}
+
 func (s *Server) adminI18NOverrides(lang string) map[string]string {
-	return i18n.ParseAdminOverrides(s.store.Setting(s.adminI18NKey(lang)))
+	return i18n.ParseAdminOverrides(s.adminI18NRaw(lang))
 }
 
 func adminTitleKey(title string) string {
@@ -386,6 +436,8 @@ func adminTitleKey(title string) string {
 		return "admin.dashboard.title"
 	case "站点":
 		return "admin.sites.title"
+	case "站点管理":
+		return "admin.sites.title"
 	case "文章":
 		return "admin.posts.title"
 	case "链接":
@@ -394,10 +446,16 @@ func adminTitleKey(title string) string {
 		return "admin.pages.title"
 	case "设置":
 		return "admin.settings.title"
+	case "平台设置":
+		return "admin.platform.settings.title"
 	case "可视化编辑":
 		return "admin.nav.visual"
 	case "安全":
 		return "admin.security.title"
+	case "系统更新":
+		return "admin.settings.menu.updates"
+	case "后台翻译", "后台显示文字", "后台文案", "界面文字":
+		return "admin.settings.admin_i18n.title"
 	default:
 		return ""
 	}
@@ -1044,6 +1102,64 @@ func (s *Server) adminSecurity(w http.ResponseWriter, r *http.Request) {
 	s.rnd.Admin(w, "security", http.StatusOK, v)
 }
 
+func (s *Server) adminPlatformSettings(w http.ResponseWriter, r *http.Request) {
+	if s.platform == nil {
+		http.Redirect(w, r, "/admin/settings", http.StatusSeeOther)
+		return
+	}
+	sess, _ := s.currentSession(r)
+	v := s.adminView(r, "平台设置")
+	s.platformAuthed(v, sess)
+	s.rnd.Admin(w, "platform_settings", http.StatusOK, v)
+}
+
+func (s *Server) adminUpdates(w http.ResponseWriter, r *http.Request) {
+	s.showAdminUpdates(w, r, "", "")
+}
+
+func (s *Server) showAdminUpdates(w http.ResponseWriter, r *http.Request, flash, formErr string) {
+	if r.Method == http.MethodGet && flash == "" && formErr == "" {
+		if f, ok := s.sess.takeSettingsFlash(sessionToken(r)); ok {
+			flash = f.Flash
+		}
+	}
+	sess, _ := s.currentSession(r)
+	v := s.adminView(r, "系统更新")
+	s.platformAuthed(v, sess)
+	v.Flash = flash
+	v.FormErr = formErr
+	v.Update = currentUpdateInfo()
+	v.Upgrade = readUpgradeStatus()
+	status := http.StatusOK
+	if formErr != "" {
+		status = http.StatusBadRequest
+	}
+	s.rnd.Admin(w, "updates", status, v)
+}
+
+func (s *Server) adminAdminI18N(w http.ResponseWriter, r *http.Request) {
+	s.showAdminI18N(w, r, "", "")
+}
+
+func (s *Server) showAdminI18N(w http.ResponseWriter, r *http.Request, flash, formErr string) {
+	if r.Method == http.MethodGet && flash == "" && formErr == "" {
+		if f, ok := s.sess.takeSettingsFlash(sessionToken(r)); ok {
+			flash = f.Flash
+		}
+	}
+	sess, _ := s.currentSession(r)
+	v := s.adminView(r, "界面文字")
+	s.platformAuthed(v, sess)
+	v.Flash = flash
+	v.FormErr = formErr
+	v.AdminI18NJSON = s.adminI18NRaw(v.AdminLang)
+	status := http.StatusOK
+	if formErr != "" {
+		status = http.StatusBadRequest
+	}
+	s.rnd.Admin(w, "admin_i18n", status, v)
+}
+
 func (s *Server) adminSavePlatformPassword(w http.ResponseWriter, r *http.Request) {
 	if s.platform == nil {
 		http.NotFound(w, r)
@@ -1495,6 +1611,10 @@ func (s *Server) adminOverviewStatus(v *View, keys []*store.AutomationKey) []Ove
 			updateValue = v.Admin.T("admin.settings.updates.dev_build", "开发构建")
 		}
 	}
+	updateHref := "/admin/settings/updates"
+	if s.platform != nil {
+		updateHref = "/admin/updates"
+	}
 	return []OverviewStatus{
 		{
 			Label: v.Admin.T("admin.dashboard.status.api", "自动化接口"),
@@ -1508,7 +1628,7 @@ func (s *Server) adminOverviewStatus(v *View, keys []*store.AutomationKey) []Ove
 			Label: v.Admin.T("admin.dashboard.status.version", "系统版本"),
 			Value: updateValue,
 			Hint:  v.Admin.T("admin.dashboard.status.version_hint", "可在系统更新里检查新版本"),
-			Href:  "/admin/settings/updates",
+			Href:  updateHref,
 			Icon:  "version",
 			Tone:  "neutral",
 		},
@@ -2715,6 +2835,10 @@ func (s *Server) adminSettingsSection(w http.ResponseWriter, r *http.Request) {
 		s.notFound(w, r)
 		return
 	}
+	if s.platform != nil && sec == "updates" {
+		http.Redirect(w, r, "/admin/updates", http.StatusSeeOther)
+		return
+	}
 	s.showSettings(w, r, sec, "", "")
 }
 
@@ -2851,7 +2975,7 @@ func (s *Server) adminStartUpgrade(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": st.Message, "status": st})
 			return
 		}
-		s.showSettings(w, r, "updates", "", st.Message)
+		s.showUpgradeFormError(w, r, st.Message)
 		return
 	}
 	if st.Running {
@@ -2859,7 +2983,7 @@ func (s *Server) adminStartUpgrade(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusConflict, map[string]any{"ok": false, "message": "已有升级任务正在运行。", "status": st})
 			return
 		}
-		s.showSettings(w, r, "updates", "", "已有升级任务正在运行。")
+		s.showUpgradeFormError(w, r, "已有升级任务正在运行。")
 		return
 	}
 	writeQueuedUpgradeStatus(version)
@@ -2875,14 +2999,31 @@ func (s *Server) adminStartUpgrade(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "message": failed.Message, "status": readUpgradeStatus()})
 			return
 		}
-		s.showSettings(w, r, "updates", "", "启动升级器失败："+err.Error())
+		s.showUpgradeFormError(w, r, "启动升级器失败："+err.Error())
 		return
 	}
 	if jsonReq {
 		writeJSON(w, http.StatusAccepted, map[string]any{"ok": true, "message": "升级任务已启动。", "status": readUpgradeStatus()})
 		return
 	}
-	s.redirectSettings(w, r, "updates", "升级任务已启动，页面会显示最新状态。")
+	s.redirectUpgradePage(w, r, "升级任务已启动，页面会显示最新状态。")
+}
+
+func (s *Server) showUpgradeFormError(w http.ResponseWriter, r *http.Request, msg string) {
+	if s.platform != nil {
+		s.showAdminUpdates(w, r, "", msg)
+		return
+	}
+	s.showSettings(w, r, "updates", "", msg)
+}
+
+func (s *Server) redirectUpgradePage(w http.ResponseWriter, r *http.Request, flash string) {
+	if s.platform != nil {
+		s.sess.setSettingsFlash(sessionToken(r), settingsFlash{Flash: flash})
+		http.Redirect(w, r, "/admin/updates", http.StatusSeeOther)
+		return
+	}
+	s.redirectSettings(w, r, "updates", flash)
 }
 
 // copyKey 返回某语种下文案设置的存储键：默认语种用裸键，其它语种用 key::lang。
@@ -2969,7 +3110,7 @@ func (s *Server) showSettings(w http.ResponseWriter, r *http.Request, section, f
 	v.Cards = cards
 	v.Flash = flash
 	v.FormErr = formErr
-	v.AdminI18NJSON = s.store.Setting(s.adminI18NKey(v.AdminLang))
+	v.AdminI18NJSON = s.adminI18NRaw(v.AdminLang)
 	v.Social = parseSocialLinks(s.store.Setting("social_links"))
 	v.APIBaseURL = s.automationBaseURL(r, sess.currentSiteID)
 	v.OpenAPIURL = strings.TrimRight(v.APIBaseURL, "/") + "/openapi.json"
@@ -3065,7 +3206,7 @@ func (s *Server) showSettings(w http.ResponseWriter, r *http.Request, section, f
 		}
 	case "languages":
 		v.CustomLocales = s.i18n.Custom()
-		v.AdminI18NJSON = s.store.Setting(s.adminI18NKey(v.AdminLang))
+		v.AdminI18NJSON = s.adminI18NRaw(v.AdminLang)
 	case "menu":
 		lang := v.AdminLang
 		if !s.langEnabled(lang) {
@@ -3588,17 +3729,28 @@ func (s *Server) adminSaveAdminI18N(w http.ResponseWriter, r *http.Request) {
 		var kv map[string]string
 		if err := json.Unmarshal([]byte(raw), &kv); err != nil {
 			v := s.adminView(r, "设置")
-			s.showSettings(w, r, "languages", "", v.Admin.T("admin.settings.admin_i18n.invalid", "后台翻译 JSON 格式不正确。"))
+			msg := v.Admin.T("admin.settings.admin_i18n.invalid", "界面文字 JSON 格式不正确。")
+			if s.platform != nil {
+				s.showAdminI18N(w, r, "", msg)
+			} else {
+				s.showSettings(w, r, "languages", "", msg)
+			}
 			return
 		}
 	}
 	overrides := i18n.ParseAdminOverrides(raw)
-	if err := s.store.SetSetting(s.adminI18NKey(lang), i18n.MarshalAdminOverrides(overrides)); err != nil {
+	if err := s.setAdminI18NRaw(lang, i18n.MarshalAdminOverrides(overrides)); err != nil {
 		s.serverError(w, err)
 		return
 	}
 	v := s.adminView(r, "设置")
-	s.redirectSettings(w, r, "languages", v.Admin.T("admin.settings.admin_i18n.saved", "后台翻译已保存。"))
+	flash := v.Admin.T("admin.settings.admin_i18n.saved", "界面文字已保存。")
+	if s.platform != nil {
+		s.sess.setSettingsFlash(sessionToken(r), settingsFlash{Flash: flash})
+		http.Redirect(w, r, "/admin/admin-i18n", http.StatusSeeOther)
+		return
+	}
+	s.redirectSettings(w, r, "languages", flash)
 }
 
 func (s *Server) adminClearDemoContent(w http.ResponseWriter, r *http.Request) {
