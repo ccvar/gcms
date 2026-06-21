@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"cms.ccvar.com/internal/platform"
 	"cms.ccvar.com/internal/store"
 )
 
@@ -327,6 +328,80 @@ func TestExportStaticSiteWritesRootRSSFromDefaultLocale(t *testing.T) {
 		t.Fatalf("root rss was not exported")
 	} else if f.Size == 0 {
 		t.Fatalf("root rss should not be empty")
+	}
+}
+
+func TestExportStaticSiteUsesCurrentSiteWhenPlatformHostDiffers(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get cwd: %v", err)
+	}
+	repoRoot := filepath.Clean(filepath.Join(cwd, "../.."))
+	runDir := filepath.Join(t.TempDir(), "runtime")
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		t.Fatalf("create runtime dir: %v", err)
+	}
+	t.Chdir(runDir)
+
+	dir := t.TempDir()
+	defaultDB := filepath.Join(dir, "cms.db")
+	st, err := store.Open(defaultDB)
+	if err != nil {
+		t.Fatalf("open default store: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	uploadDir := filepath.Join(dir, "uploads")
+	ps, err := platform.Open(filepath.Join(dir, "system.db"))
+	if err != nil {
+		t.Fatalf("open platform store: %v", err)
+	}
+	t.Cleanup(func() { _ = ps.Close() })
+	if err := ps.BootstrapDefaultSite(platform.DefaultSiteBootstrap{
+		Slug:                        "main",
+		Name:                        "Default Site",
+		DBPath:                      defaultDB,
+		UploadDir:                   uploadDir,
+		ManagementAutomationEnabled: true,
+	}); err != nil {
+		t.Fatalf("bootstrap default site: %v", err)
+	}
+	srv, err := NewWithPlatform(st, ps, "https://cms.example.test", uploadDir, os.DirFS(repoRoot), os.DirFS(repoRoot))
+	if err != nil {
+		t.Fatalf("new platform server: %v", err)
+	}
+
+	unknownHost := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(unknownHost, httptest.NewRequest(http.MethodGet, "https://www.example.test/zh/", nil))
+	if unknownHost.Code != http.StatusNotFound {
+		t.Fatalf("platform dispatcher status = %d, want 404 for unbound Cloudflare host", unknownHost.Code)
+	}
+
+	result, err := srv.exportStaticSite(context.Background(), CloudflareConfig{
+		DeployMode:       cloudflareModeWorkerAssets,
+		RoutePattern:     "www.example.test/*",
+		WorkerName:       "gcms-www-example-test",
+		HTMLCacheTTL:     300,
+		SourceMode:       cloudflareSourceModeRedirect,
+		AutoSync:         true,
+		SyncMode:         cloudflareSyncModeRealtime,
+		SyncTime:         cloudflareDefaultSyncTime,
+		OriginURL:        "https://cms.example.test",
+		PagesProjectName: "gcms-www-example-test",
+		Domains:          []CloudflareDomain{{Host: "www.example.test", Primary: true}},
+	})
+	if err != nil {
+		t.Fatalf("export static site: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(result.Dir) })
+	if f, ok := result.Files["/index.html"]; !ok {
+		t.Fatalf("root index was not exported")
+	} else if f.Size == 0 {
+		t.Fatalf("root index should not be empty")
+	}
+	if f, ok := result.Files["/zh/index.html"]; !ok {
+		t.Fatalf("localized index was not exported")
+	} else if f.Size == 0 {
+		t.Fatalf("localized index should not be empty")
 	}
 }
 

@@ -67,7 +67,9 @@ func (s *Server) exportStaticSite(ctx context.Context, cfg CloudflareConfig) (*s
 		ByHash: map[string]string{},
 	}
 	baseURL := "https://" + host
-	handler := s.Handler()
+	// Static export renders the current site directly. In platform mode the
+	// Cloudflare public host is intentionally not registered as a site domain.
+	handler := s.siteHandler()
 
 	render := func(requestTarget, outputPath string) error {
 		if err := ctx.Err(); err != nil {
