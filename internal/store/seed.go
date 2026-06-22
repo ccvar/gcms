@@ -465,6 +465,73 @@ func (s *Store) seedIfEmpty() error {
 	return nil
 }
 
+// EnsureEmptySiteBasePages 为「空数据」新站点补齐默认导航会指向的基础页面。
+// 它不会创建演示文章、分类或链接，只避免空站一上线就出现 /about 404。
+func (s *Store) EnsureEmptySiteBasePages() error {
+	siteName := strings.TrimSpace(s.Setting("site.name"))
+	if siteName == "" {
+		siteName = "本站"
+	}
+	locales := []string{"zh"}
+	if raw := strings.TrimSpace(s.Setting("locales")); raw != "" {
+		locales = nil
+		seen := map[string]bool{}
+		for _, code := range strings.Split(raw, ",") {
+			code = strings.TrimSpace(code)
+			if code == "" || seen[code] {
+				continue
+			}
+			seen[code] = true
+			locales = append(locales, code)
+		}
+		if len(locales) == 0 {
+			locales = []string{"zh"}
+		}
+	}
+	for _, lang := range locales {
+		if page, err := s.GetPage(lang, "about"); err != nil {
+			return err
+		} else if page != nil {
+			continue
+		}
+		if err := s.insertSeed(emptyAboutPage(lang, siteName), nil); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func emptyAboutPage(lang, siteName string) seedPost {
+	if lang == "zh" {
+		return seedPost{
+			Type: "page", Slug: "about", Title: "关于", Lang: "zh", Group: "base-page-about",
+			Excerpt:  "介绍这个站点的背景、定位和联系方式。",
+			MetaDesc: "关于" + siteName + "：介绍站点背景、定位、服务内容或联系方式。",
+			Keywords: "关于," + siteName,
+			Author:   siteName,
+			Date:     "2026-06-22",
+			Content: md(
+				"这里可以介绍站点、团队、服务或项目。",
+				"",
+				"你可以在后台「页面」中编辑这段内容，替换为自己的正式介绍。",
+			),
+		}
+	}
+	return seedPost{
+		Type: "page", Slug: "about", Title: "About", Lang: lang, Group: "base-page-about",
+		Excerpt:  "Introduce this site's background, positioning and contact information.",
+		MetaDesc: "About " + siteName + ": background, positioning, services or contact information.",
+		Keywords: "about," + siteName,
+		Author:   siteName,
+		Date:     "2026-06-22",
+		Content: md(
+			"Use this page to introduce the site, team, service or project.",
+			"",
+			"You can edit this page in Admin -> Pages and replace it with your final introduction.",
+		),
+	}
+}
+
 // DefaultAdminPassword 是演示用默认管理员密码（仅用于首启提示与「是否仍为默认」校验）。
 const DefaultAdminPassword = "admin123"
 

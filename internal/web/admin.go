@@ -1074,6 +1074,11 @@ func (s *Server) adminCreateSite(w http.ResponseWriter, r *http.Request) {
 			s.serverError(w, err)
 			return
 		}
+		if err := st.EnsureEmptySiteBasePages(); err != nil {
+			_ = st.Close()
+			s.serverError(w, err)
+			return
+		}
 	}
 	if err := st.Close(); err != nil {
 		s.serverError(w, err)

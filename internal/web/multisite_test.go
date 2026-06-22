@@ -336,14 +336,34 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 		t.Fatalf("open empty site store: %v", err)
 	}
 	recentEmpty, err := emptyStore.ListRecentAdminContent("zh", 50)
+	emptyAbout, aboutErr := emptyStore.GetPage("zh", "about")
+	emptyAboutEN, aboutENErr := emptyStore.GetPage("en", "about")
+	emptyPostCount, postCountErr := emptyStore.CountPublished("zh")
+	emptyLinkCount, linkCountErr := emptyStore.CountLinks("zh", 0)
+	emptyCats, catsErr := emptyStore.ListCategories("zh", "post")
 	if closeErr := emptyStore.Close(); closeErr != nil && err == nil {
 		err = closeErr
 	}
 	if err != nil {
 		t.Fatalf("inspect empty site content: %v", err)
 	}
-	if len(recentEmpty) != 0 {
-		t.Fatalf("empty site seeded %d content items, want 0", len(recentEmpty))
+	if aboutErr != nil || emptyAbout == nil || emptyAbout.Type != "page" || emptyAbout.Title != "关于" {
+		t.Fatalf("empty site zh about page = %#v err=%v", emptyAbout, aboutErr)
+	}
+	if aboutENErr != nil || emptyAboutEN == nil || emptyAboutEN.Type != "page" || emptyAboutEN.Title != "About" {
+		t.Fatalf("empty site en about page = %#v err=%v", emptyAboutEN, aboutENErr)
+	}
+	if len(recentEmpty) != 1 || recentEmpty[0].Type != "page" || recentEmpty[0].Slug != "about" {
+		t.Fatalf("empty site recent content = %#v, want only base about page", recentEmpty)
+	}
+	if postCountErr != nil || emptyPostCount != 0 {
+		t.Fatalf("empty site zh posts = %d err=%v, want 0", emptyPostCount, postCountErr)
+	}
+	if linkCountErr != nil || emptyLinkCount != 0 {
+		t.Fatalf("empty site zh links = %d err=%v, want 0", emptyLinkCount, linkCountErr)
+	}
+	if catsErr != nil || len(emptyCats) != 0 {
+		t.Fatalf("empty site zh categories = %#v err=%v, want none", emptyCats, catsErr)
 	}
 	emptyRoot := filepath.Dir(emptySite.DBPath)
 	if _, err := os.Stat(emptyRoot); err != nil {
