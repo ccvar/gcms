@@ -714,6 +714,7 @@ a.overview-log-title { text-decoration: none; }
 .site-tool-link { display: inline-flex; align-items: center; gap: .28rem; margin-left: auto; color: var(--muted); font-size: .8rem; font-weight: 600; line-height: 1.35; }
 .site-tool-link svg { flex: none; width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .site-tool-link:hover { color: var(--accent); }
+.site-tool-help { margin-left: 0; color: color-mix(in srgb, var(--accent) 72%, var(--muted)); }
 .site-domain-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .55rem; align-items: center; }
 .site-domain-form input { width: 100%; padding: .5rem .65rem; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); font-family: inherit; font-size: .88rem; line-height: 1.4; }
 .site-domain-form input:focus { outline: none; border-color: var(--accent); }
@@ -721,6 +722,19 @@ a.overview-log-title { text-decoration: none; }
 .site-domain-modal:not(:target) { display: none; }
 .site-domain-modal:target { display: grid; }
 .site-domain-modal .modal-card { width: min(520px, 92vw); }
+.site-starter-help-modal .modal-card { width: min(660px, 92vw); }
+.site-starter-help-card { max-height: min(86vh, 760px); overflow: auto; }
+.starter-help-goal { margin: -.15rem 0 1rem; padding: .82rem .9rem; border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--line)); border-radius: 8px; background: color-mix(in srgb, var(--accent-wash) 58%, var(--surface)); }
+.starter-help-goal strong { display: block; margin-bottom: .35rem; color: var(--accent); font-size: .86rem; }
+.starter-help-goal p { margin: 0; color: var(--ink-soft); font-size: .84rem; line-height: 1.62; }
+.starter-help-steps { counter-reset: starter-help; display: grid; gap: .72rem; margin: .2rem 0 1rem; padding: 0; list-style: none; }
+.starter-help-steps li { counter-increment: starter-help; display: grid; grid-template-columns: 2rem minmax(0, 1fr); gap: .7rem; align-items: start; padding: .72rem .78rem; border: 1px solid var(--line-soft); border-radius: 8px; background: color-mix(in srgb, var(--surface) 88%, var(--accent-wash)); }
+.starter-help-steps li::before { content: counter(starter-help); display: inline-grid; place-items: center; width: 1.65rem; height: 1.65rem; border-radius: 999px; background: color-mix(in srgb, var(--accent) 12%, var(--surface)); color: var(--accent); font: 800 .78rem/1 var(--sans); }
+.starter-help-steps strong { display: block; margin-bottom: .2rem; color: var(--ink); font-size: .88rem; }
+.starter-help-steps span { color: var(--muted); font-size: .82rem; line-height: 1.55; }
+.starter-help-boundary { padding: .8rem .9rem; border: 1px solid #ecc56a; border-radius: 8px; background: color-mix(in srgb, #fff7df 72%, var(--surface)); }
+.starter-help-boundary strong { display: block; margin-bottom: .35rem; color: #7a5b16; }
+.starter-help-boundary p { margin: 0; color: var(--ink-soft); font-size: .84rem; line-height: 1.6; }
 .site-domain-modal-form { display: grid; grid-template-columns: 1fr; gap: .9rem; padding: 0; }
 .site-domain-modal-form .field { margin: 0; }
 .site-domain-modal-form .modal-actions { margin-top: .1rem; }

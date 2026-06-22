@@ -106,6 +106,7 @@
               {{end}}
               {{if .ManagementAutomationEnabled}}<a class="site-tool-link" href="/admin/sites/{{.ID}}/automation/skill.zip">{{template "site-icon-package"}}<span>{{$.Admin.T "admin.sites.download_platform_kit" "下载平台接入包"}}</span></a>{{end}}
               {{if .ManagementAutomationEnabled}}<a class="site-tool-link" href="/admin/sites/{{.ID}}/automation/starter.zip">{{template "site-icon-package"}}<span>{{$.Admin.T "admin.sites.download_platform_starter" "下载新站 AI 技能包"}}</span></a>{{end}}
+              {{if .ManagementAutomationEnabled}}<a class="site-tool-link site-tool-help" href="#site-starter-help-{{.ID}}">{{template "site-icon-help"}}<span>{{$.Admin.T "admin.sites.starter_help" "使用帮助"}}</span></a>{{end}}
             </div>
             {{end}}
           </div>
@@ -136,6 +137,41 @@
             </form>
           </div>
         </div>
+        {{if .ManagementAutomationEnabled}}
+        <div class="modal site-domain-modal site-starter-help-modal" id="site-starter-help-{{.ID}}">
+          <a class="modal-backdrop" href="#" aria-label="{{$.Admin.T "admin.action.cancel" "取消"}}"></a>
+          <div class="modal-card site-starter-help-card" role="dialog" aria-modal="true" aria-labelledby="site-starter-help-title-{{.ID}}">
+            <div class="site-modal-head">
+              <div>
+                <h3 id="site-starter-help-title-{{.ID}}">{{$.Admin.T "admin.sites.starter_help_title" "新站 AI 技能包怎么用"}}</h3>
+                <p class="muted">{{$.Admin.T "admin.sites.starter_help_desc" "适合刚开始建站时使用：先让 AI 出规划，确认后再写入草稿。"}}</p>
+              </div>
+              <a class="modal-x" href="#" aria-label="{{$.Admin.T "admin.action.cancel" "取消"}}">×</a>
+            </div>
+            <div class="starter-help-goal">
+              <strong>{{$.Admin.T "admin.sites.starter_help_goal" "最终要完成什么"}}</strong>
+              <p>{{$.Admin.T "admin.sites.starter_help_goal_desc" "让 AI 根据你填写的网站方向和语种，先规划新站，再帮你完成站点文案、首页内容、导航、分类、页面、文章和链接。所有内容默认写成草稿，你确认后再发布。"}}</p>
+            </div>
+            <ol class="starter-help-steps">
+              <li><strong>{{$.Admin.T "admin.sites.starter_help_step_1" "下载新站包"}}</strong><span>{{$.Admin.T "admin.sites.starter_help_step_1_desc" "点击“下载新站 AI 技能包”，解压后把整个 gcms-site-starter 文件夹交给 AI 工具。"}}</span></li>
+              <li><strong>{{$.Admin.T "admin.sites.starter_help_step_2" "确认密钥可用"}}</strong><span>{{$.Admin.T "admin.sites.starter_help_step_2_desc" "如果包里有 .env，通常已经带好连接信息；如果只有 .env.example，把它改名为 .env，并填入 GCMS_API_KEY。"}}</span></li>
+              <li><strong>{{$.Admin.T "admin.sites.starter_help_step_3" "用 AI 工具打开文件夹"}}</strong><span>{{$.Admin.T "admin.sites.starter_help_step_3_desc" "在 Codex、Claude Code、Cursor 等工具里打开整个 gcms-site-starter 文件夹，不要只复制零散文件。"}}</span></li>
+              <li><strong>{{$.Admin.T "admin.sites.starter_help_step_4" "填写需求向导"}}</strong><span>{{$.Admin.T "admin.sites.starter_help_step_4_desc" "打开“新站需求向导.md”，用自然语言填写网站方向、目标用户、启用语种、内容风格和不能碰的边界。不确定就写“不确定”。"}}</span></li>
+              <li><strong>{{$.Admin.T "admin.sites.starter_help_step_5" "先让 AI 出规划"}}</strong><span>{{$.Admin.T "admin.sites.starter_help_step_5_desc" "复制“第一步-让AI出规划.md”里的提示词发给 AI。此时 AI 只读取站点并输出规划，不会写入任何内容。"}}</span></li>
+              <li><strong>{{$.Admin.T "admin.sites.starter_help_step_6" "你先审核规划"}}</strong><span>{{$.Admin.T "admin.sites.starter_help_step_6_desc" "重点看：网站定位、语种策略、导航菜单、分类、首页文案、页面、文章选题和资源链接是否符合你的想法。"}}</span></li>
+              <li><strong>{{$.Admin.T "admin.sites.starter_help_step_7" "确认后写入草稿"}}</strong><span>{{$.Admin.T "admin.sites.starter_help_step_7_desc" "规划没问题后，再复制“第二步-审核后写入草稿.md”。AI 会按顺序完成新站基础内容，默认全部保存为草稿。"}}</span></li>
+              <li><strong>{{$.Admin.T "admin.sites.starter_help_step_8" "后台检查并发布"}}</strong><span>{{$.Admin.T "admin.sites.starter_help_step_8_desc" "回到 GCMS 后台检查草稿内容。只有你明确说“发布这些内容”，并且密钥有发布权限时，AI 才能发布。"}}</span></li>
+            </ol>
+            <div class="starter-help-boundary">
+              <strong>{{$.Admin.T "admin.sites.starter_help_boundary" "关键边界"}}</strong>
+              <p>{{$.Admin.T "admin.sites.starter_help_boundary_desc" "先规划，不写入；确认后，写草稿；最后明确授权，才发布。AI 不会处理后台安全、系统更新、Cloudflare、管理员账号和 API Key。"}}</p>
+            </div>
+            <div class="modal-actions">
+              <a class="btn" href="#">{{$.Admin.T "admin.action.cancel" "关闭"}}</a>
+            </div>
+          </div>
+        </div>
+        {{end}}
         {{end}}
       </article>
       {{else}}
@@ -217,4 +253,5 @@
 {{define "site-icon-package"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.3 7 12 12l8.7-5"/><path d="M12 22V12"/></svg>{{end}}
 {{define "site-icon-settings"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 21v-7"/><path d="M4 10V3"/><path d="M12 21v-9"/><path d="M12 8V3"/><path d="M20 21v-5"/><path d="M20 12V3"/><path d="M2 14h4"/><path d="M10 8h4"/><path d="M18 16h4"/></svg>{{end}}
 {{define "site-icon-link"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.1 0l2-2a5 5 0 0 0-7.1-7.1l-1.2 1.2"/><path d="M14 11a5 5 0 0 0-7.1 0l-2 2A5 5 0 0 0 12 20.1l1.2-1.2"/></svg>{{end}}
+{{define "site-icon-help"}}<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.7 9.1a2.6 2.6 0 0 1 4.8 1.3c0 1.9-2.4 2.2-2.4 4"/><path d="M12 17.5h.01"/></svg>{{end}}
 {{define "site-icon-lock"}}<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>{{end}}
