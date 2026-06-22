@@ -145,12 +145,19 @@
             <input id="site_name" name="site_name" value="{{.Settings.Name}}" placeholder="{{if ne .EditLang .Lang}}{{.Settings.NameDef}}{{end}}"{{if eq .EditLang .Lang}} required{{end}}>
           </div>
           <div class="field">
-            <label for="site_tagline">{{.Admin.T "admin.settings.site.tagline" "标语"}} <span class="scope-pill">{{.Admin.T "admin.scope.current_lang" "当前语种"}}</span></label>
+            <label for="site_tagline">{{.Admin.T "admin.settings.site.tagline" "首页标题标语"}} <span class="scope-pill">{{.Admin.T "admin.scope.current_lang" "当前语种"}}</span></label>
             <input id="site_tagline" name="site_tagline" value="{{.Settings.Tagline}}" placeholder="{{if ne .EditLang .Lang}}{{.Settings.TaglineDef}}{{end}}">
+            <span class="hint">{{.Admin.T "admin.settings.site.tagline_hint" "会和站点名称组成首页浏览器标题。"}}</span>
           </div>
           <div class="field">
-            <label for="site_description">{{.Admin.T "admin.settings.site.description" "站点描述"}} <span class="scope-pill">{{.Admin.T "admin.scope.current_lang" "当前语种"}}</span></label>
+            <label for="site_description">{{.Admin.T "admin.settings.site.description" "首页 SEO 描述"}} <span class="scope-pill">{{.Admin.T "admin.scope.current_lang" "当前语种"}}</span></label>
             <textarea id="site_description" name="site_description" rows="3" placeholder="{{if ne .EditLang .Lang}}{{.Settings.DescriptionDef}}{{end}}">{{.Settings.Description}}</textarea>
+            <span class="hint">{{.Admin.T "admin.settings.site.description_hint" "用于首页 meta description；首页可见的 Hero 描述在「文案内容」里设置。"}}</span>
+          </div>
+          <div class="field">
+            <label for="site_keywords">{{.Admin.T "admin.settings.site.keywords" "首页 SEO 关键词"}} <span class="scope-pill">{{.Admin.T "admin.scope.current_lang" "当前语种"}}</span></label>
+            <textarea id="site_keywords" name="site_keywords" rows="2" placeholder="{{if ne .EditLang .Lang}}{{.Settings.KeywordsDef}}{{end}}">{{.Settings.Keywords}}</textarea>
+            <span class="hint">{{.Admin.T "admin.settings.site.keywords_hint" "多个关键词用逗号分隔，可留空。"}}</span>
           </div>
           <div class="form-2col">
             <div class="field">
@@ -392,6 +399,11 @@
             <label for="hero_title">{{.Admin.T "admin.settings.copy.hero_title" "大标题（换行即分行）"}} <span class="scope-pill">{{.Admin.T "admin.scope.current_lang" "当前语种"}}</span></label>
             <textarea id="hero_title" name="hero_title" rows="2">{{.Settings.HeroTitle}}</textarea>
           </div>
+          <div class="field">
+            <label for="hero_description">{{.Admin.T "admin.settings.copy.hero_description" "描述（标题下方文案）"}} <span class="scope-pill">{{.Admin.T "admin.scope.current_lang" "当前语种"}}</span></label>
+            <textarea id="hero_description" name="hero_description" rows="3" placeholder="{{if .Settings.HeroDescriptionDef}}{{.Settings.HeroDescriptionDef}}{{else}}{{.Settings.DescriptionDef}}{{end}}">{{.Settings.HeroDescription}}</textarea>
+            <span class="hint">{{.Admin.T "admin.settings.copy.hero_description_hint" "首页大标题下方的可见说明。留空时回退首页 SEO 描述。"}}</span>
+          </div>
           <div class="field hero-lang-visual" data-hero-lang-visual>
             <label>{{.Admin.T "admin.settings.copy.hero_image" "首页 Hero 右侧图"}} <span class="scope-pill">{{if eq .EditLang .Lang}}{{.Admin.T "admin.scope.global" "全站共用"}}{{else}}{{.Admin.T "admin.scope.current_lang" "当前语种"}}{{end}}</span></label>
             {{if eq .EditLang .Lang}}
@@ -610,7 +622,7 @@
         </div>
         <button type="button" class="btn btn-primary" data-cat-add>＋ {{.Admin.T "admin.settings.categories.new" "新增分类"}}</button>
       </div>
-      <p class="muted" style="margin:.2rem 0 0;font-size:.9rem">{{if eq .CatKind "link"}}{{.Admin.T "admin.settings.categories.desc_link" "链接在编辑页选择分类（同语种、同类型；文章分类与链接分类相互独立）。拖动行可调整顺序（影响前台分类导航的排列）。"}}{{else}}{{.Admin.T "admin.settings.categories.desc_post" "文章在编辑页选择分类（同语种、同类型；文章分类与链接分类相互独立）。拖动行可调整顺序（影响前台分类导航的排列）。"}}{{end}}</p>
+      <p class="muted" style="margin:.2rem 0 0;font-size:.9rem">{{if eq .CatKind "link"}}{{.Admin.T "admin.settings.categories.desc_link" "第一行是全部链接入口，用来设置列表页标题、描述和“全部”筛选按钮；下面才是链接可选择的真实分类。拖动分类行可调整前台分类导航顺序。"}}{{else}}{{.Admin.T "admin.settings.categories.desc_post" "第一行是全部文章入口，用来设置列表页标题、描述和“全部”筛选按钮；下面才是文章可选择的真实分类。拖动分类行可调整前台分类导航顺序。"}}{{end}}</p>
       <table class="admin-table category-table" style="margin-top:.6rem">
         <thead><tr><th style="width:28px"></th><th>{{.Admin.T "admin.common.name" "名称"}}</th><th>{{.Admin.T "admin.common.link" "链接"}}</th><th>{{.Admin.T "admin.common.count" "数量"}}</th><th class="right">{{.Admin.T "admin.common.actions" "操作"}}</th></tr></thead>
         <tbody id="cat-sortable">
@@ -618,6 +630,7 @@
             <td><span class="cat-all-dot" aria-hidden="true"></span></td>
             <td>
               <strong>{{.Settings.AllTitle}}</strong>
+              <span class="mini-tag">{{if eq .CatKind "link"}}{{.Admin.T "admin.settings.categories.link_all_entry" "全部链接入口"}}{{else}}{{.Admin.T "admin.settings.categories.post_all_entry" "全部文章入口"}}{{end}}</span>
               {{if .Settings.AllDescription}}<div class="muted" style="font-size:.8rem;margin-top:.2rem">{{.Settings.AllDescription}}</div>{{end}}
               <div class="muted" style="font-size:.78rem;margin-top:.2rem">{{.Admin.T "admin.settings.categories.filter_label" "筛选按钮："}}{{.Settings.AllLabel}}</div>
             </td>
@@ -656,8 +669,8 @@
       <div class="modal" id="cat-all-modal" hidden>
         <div class="modal-backdrop" data-cat-all-close></div>
         <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="cat-all-modal-title">
-          <h3 id="cat-all-modal-title">{{if eq .CatKind "link"}}{{.Admin.T "admin.settings.categories.edit_link_all" "编辑链接全部页"}}{{else}}{{.Admin.T "admin.settings.categories.edit_post_all" "编辑文章分类全部页"}}{{end}}</h3>
-          <p class="muted" style="margin:-.4rem 0 1rem;font-size:.86rem">{{if eq .CatKind "link"}}{{.Admin.T "admin.settings.categories.link_all_desc" "默认入口是 /links；自定义 Slug 后，也可用 /links/{slug} 访问全部链接。"}}{{else}}{{.Admin.T "admin.settings.categories.post_all_desc" "默认入口是 /category；自定义 Slug 后，也可用 /category/{slug} 访问全部文章。"}}{{end}}</p>
+          <h3 id="cat-all-modal-title">{{if eq .CatKind "link"}}{{.Admin.T "admin.settings.categories.edit_link_all" "编辑链接分类总入口"}}{{else}}{{.Admin.T "admin.settings.categories.edit_post_all" "编辑文章分类总入口"}}{{end}}</h3>
+          <p class="muted" style="margin:-.4rem 0 1rem;font-size:.86rem">{{if eq .CatKind "link"}}{{.Admin.T "admin.settings.categories.link_all_desc" "控制 /links 入口页的标题、说明和“全部”筛选按钮；这不是一条真实分类。"}}{{else}}{{.Admin.T "admin.settings.categories.post_all_desc" "控制 /category 入口页的标题、说明和“全部”筛选按钮；这不是一条真实分类。"}}{{end}}</p>
           <form method="post" action="/admin/settings/categories/all" class="admin-form">
             <input type="hidden" name="_csrf" value="{{.CSRF}}">
             <input type="hidden" name="lang" value="{{.EditLang}}">
@@ -665,7 +678,7 @@
             <div class="field"><label for="cat-all-title">{{.Admin.T "admin.settings.categories.page_title" "页面标题"}}</label><input id="cat-all-title" name="title" value="{{.Settings.AllTitle}}" required></div>
             <div class="field"><label for="cat-all-label">{{.Admin.T "admin.settings.categories.all_button" "“全部”按钮文字"}}</label><input id="cat-all-label" name="label" value="{{.Settings.AllLabel}}" required></div>
             <div class="field"><label for="cat-all-slug">Slug</label><input id="cat-all-slug" name="slug" value="{{.Settings.AllSlug}}" placeholder="{{if eq .CatKind "link"}}links{{else}}category{{end}}"></div>
-            <div class="field"><label for="cat-all-desc">{{.Admin.T "admin.settings.categories.page_desc" "页面描述"}}</label><textarea id="cat-all-desc" name="description" rows="2">{{.Settings.AllDescription}}</textarea></div>
+            <div class="field"><label for="cat-all-desc">{{.Admin.T "admin.settings.categories.page_desc" "页面描述（前台顶部与 SEO）"}}</label><textarea id="cat-all-desc" name="description" rows="2">{{.Settings.AllDescription}}</textarea></div>
             <div style="display:flex;gap:.6rem;justify-content:flex-end">
               <button type="button" class="btn" data-cat-all-close>{{.Admin.T "admin.action.cancel" "取消"}}</button>
               <button type="submit" class="btn btn-primary">{{.Admin.T "admin.action.save" "保存"}}</button>
@@ -686,7 +699,7 @@
             <input type="hidden" name="id" id="cat-id" value="">
             <div class="field"><label for="cat-name">{{.Admin.T "admin.common.name" "名称"}}</label><input id="cat-name" name="name" required></div>
             <div class="field"><label for="cat-slug">{{.Admin.T "admin.settings.categories.slug_auto" "Slug（留空自动生成）"}}</label><input id="cat-slug" name="slug"></div>
-            <div class="field"><label for="cat-desc">{{.Admin.T "admin.settings.categories.desc_label" "描述（分类页与 SEO）"}}</label><textarea id="cat-desc" name="description" rows="2"></textarea></div>
+            <div class="field"><label for="cat-desc">{{.Admin.T "admin.settings.categories.desc_label" "分类描述（当前分类页与 SEO）"}}</label><textarea id="cat-desc" name="description" rows="2"></textarea></div>
             <div style="display:flex;gap:.6rem;justify-content:flex-end">
               <button type="button" class="btn" data-cat-close>{{.Admin.T "admin.action.cancel" "取消"}}</button>
               <button type="submit" class="btn btn-primary">{{.Admin.T "admin.action.save" "保存"}}</button>

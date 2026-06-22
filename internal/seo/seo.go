@@ -13,6 +13,7 @@ type Site struct {
 	Name             string
 	Tagline          string
 	Description      string
+	Keywords         string
 	BaseURL          string   // 如 https://ccvar.com（用于绝对 URL）
 	Locale           string   // Open Graph locale，如 zh_CN
 	LangTag          string   // BCP47，如 zh-CN（<html lang> / hreflang / inLanguage）
@@ -25,6 +26,7 @@ type Site struct {
 	Brand            string   // 页眉品牌显示：logo | both | text
 	HeroEyebrow      string   // 首页 hero 眉标
 	HeroTitle        string   // 首页 hero 大标题（换行渲染为 <br>）
+	HeroDescription  string   // 首页 hero 描述，空时由站点描述回退
 	HeroVisual       string   // 首页右侧视觉类型：""(默认动画) | image | svg
 	HeroImage        string   // 视觉为 image 时的图片/SVG 文件 URL
 	HeroSVG          string   // 视觉为 svg 时的内联 SVG 代码
@@ -171,7 +173,7 @@ func (s Site) Home() Meta {
 	return Meta{
 		Title:       s.Name + " — " + s.Tagline,
 		Description: s.Description,
-		Keywords:    "Go,SQLite,CMS,内容管理系统,服务端渲染,SEO,极简设计,后端工程",
+		Keywords:    s.Keywords,
 		Canonical:   s.Abs("/"),
 		Robots:      defaultRobots,
 		OGType:      "website",

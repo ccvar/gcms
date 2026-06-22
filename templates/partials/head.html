@@ -31,7 +31,7 @@
   {{if .SEO.Image}}<meta name="twitter:image" content="{{.SEO.Image}}">{{end}}
 
   {{if .Tr}}<link rel="alternate" type="application/rss+xml" title="{{.Site.Name}} RSS" href="{{.Tr.U "/rss.xml"}}">{{end}}
-  <link rel="sitemap" type="application/xml" href="/sitemap.xml">
+  <link rel="sitemap" type="application/xml" href="{{.SitemapURL}}">
 
   {{range .SEO.JSONLD}}<script type="application/ld+json">{{.}}</script>
   {{end}}

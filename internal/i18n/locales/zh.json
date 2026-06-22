@@ -10,6 +10,8 @@
   "links.all": "全部",
   "links.empty": "还没有链接。",
   "links.related": "相关链接",
+  "archive.post_description": "展示当前语种下的全部文章，读者可以通过分类筛选内容。",
+  "archive.link_description": "展示当前语种下的全部链接，读者可以通过分类筛选资源。",
 
   "footer.content": "内容",
   "footer.all_categories": "全部分类",

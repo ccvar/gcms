@@ -58,6 +58,16 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 	if err := otherStore.SetSetting("site.favicon", "/uploads/blog-icon.ico"); err != nil {
 		t.Fatalf("set other site favicon: %v", err)
 	}
+	if _, err := otherStore.CreatePost(&store.Post{
+		Type:       "post",
+		Lang:       "zh",
+		Slug:       "preview-internal-link",
+		Title:      "Preview Internal Link",
+		Status:     "published",
+		EditorMode: "markdown",
+	}); err != nil {
+		t.Fatalf("create other preview post: %v", err)
+	}
 	otherToken, otherPrefix := newAutomationToken()
 	if _, err := otherStore.CreateAutomationKey("blog bot", otherToken, otherPrefix, "languages:read,posts:write"); err != nil {
 		t.Fatalf("create other automation key: %v", err)
@@ -595,8 +605,53 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 	if got := preview.Header().Get("X-Robots-Tag"); got != "noindex, nofollow" {
 		t.Fatalf("preview robots header = %q", got)
 	}
+	previewPrefix := "/admin/sites/" + strconv.FormatInt(otherSite.ID, 10) + "/preview"
 	if body := preview.Body.String(); !strings.Contains(body, "Blog Runtime Site") || !strings.Contains(body, `<meta name="robots" content="noindex, nofollow">`) {
 		t.Fatalf("preview did not render noindex blog page")
+	} else {
+		for _, needle := range []string{
+			`href="` + previewPrefix + `/zh/posts/preview-internal-link"`,
+			`href="` + previewPrefix + `/zh/category"`,
+			`href="` + previewPrefix + `/zh/about"`,
+			`href="` + previewPrefix + `/sitemap.xml"`,
+			`href="` + previewPrefix + `/robots.txt"`,
+		} {
+			if !strings.Contains(body, needle) {
+				t.Fatalf("preview did not keep internal link %q under preview prefix: %s", needle, body)
+			}
+		}
+		for _, needle := range []string{
+			`href="/zh/posts/preview-internal-link"`,
+			`href="/zh/category"`,
+			`href="/zh/about"`,
+		} {
+			if strings.Contains(body, needle) {
+				t.Fatalf("preview rendered root-relative frontend link %q: %s", needle, body)
+			}
+		}
+	}
+
+	previewArticle := httptest.NewRecorder()
+	previewArticleReq := httptest.NewRequest(http.MethodGet, "https://platform.test"+previewPrefix+"/zh/posts/preview-internal-link", nil)
+	previewArticleReq.AddCookie(&http.Cookie{Name: cookieName, Value: "preview-token"})
+	h.ServeHTTP(previewArticle, previewArticleReq)
+	if previewArticle.Code != http.StatusOK {
+		t.Fatalf("preview article status = %d, body = %s", previewArticle.Code, previewArticle.Body.String())
+	}
+	if body := previewArticle.Body.String(); !strings.Contains(body, "Preview Internal Link") {
+		t.Fatalf("preview article did not render expected post: %s", body)
+	} else {
+		for _, needle := range []string{
+			`href="` + previewPrefix + `/zh/"`,
+			`href="` + previewPrefix + `/zh/category"`,
+		} {
+			if !strings.Contains(body, needle) {
+				t.Fatalf("preview article did not keep internal link %q under preview prefix: %s", needle, body)
+			}
+		}
+		if strings.Contains(body, `href="/zh/category"`) {
+			t.Fatalf("preview article rendered root-relative category link: %s", body)
+		}
 	}
 
 	if err := ps.CreateAdminSession("prefix-token", "admin", "csrf", time.Now().Add(time.Hour)); err != nil {

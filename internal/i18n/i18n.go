@@ -255,6 +255,19 @@ func (t *Tr) Tag() string    { return t.Loc.Tag }
 func (t *Tr) OG() string     { return t.Loc.OG }
 func (t *Tr) Prefix() string { return t.prefix }
 
+// WithPrefix 返回一个使用自定义 URL 前缀的翻译助手，供站点预览等带壳路由复用。
+func (t *Tr) WithPrefix(prefix string) *Tr {
+	if t == nil {
+		return nil
+	}
+	cp := *t
+	cp.prefix = strings.TrimRight(strings.TrimSpace(prefix), "/")
+	if cp.prefix == "" {
+		cp.prefix = "/" + cp.Loc.Code
+	}
+	return &cp
+}
+
 // T 取一条界面文案：先查本语种，缺失回退默认语种，再缺失返回 key 本身。
 func (t *Tr) T(key string) string {
 	if t.cat != nil {

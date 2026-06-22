@@ -2346,13 +2346,15 @@ func (s *Server) visualFields(lang string, admins ...*i18n.AdminTr) []VisualFiel
 	}
 	fields := []VisualField{
 		text("site", "site.name", t("admin.visual.field.site_name", "站点名称"), st.Name, t("admin.visual.hint.site_name", "显示在页眉、页脚和 SEO 站点名中。"), false),
-		text("site", "site.tagline", t("admin.visual.field.tagline", "标语"), st.Tagline, t("admin.visual.hint.tagline", "用于浏览器标题和部分主题的辅助文案。"), false),
-		text("site", "site.description", t("admin.visual.field.description", "站点描述"), st.Description, t("admin.visual.hint.description", "首页 Hero 描述，也会作为默认 SEO description。"), true),
+		text("site", "site.tagline", t("admin.visual.field.tagline", "首页标题标语"), st.Tagline, t("admin.visual.hint.tagline", "会和站点名称组成首页浏览器标题。"), false),
+		text("site", "site.description", t("admin.visual.field.description", "首页 SEO 描述"), st.Description, t("admin.visual.hint.description", "用于首页 meta description；Hero 描述在首页文案里单独设置。"), true),
+		text("site", "site.keywords", t("admin.visual.field.keywords", "首页 SEO 关键词"), st.Keywords, t("admin.visual.hint.keywords", "用于首页 meta keywords，多个关键词用逗号分隔。"), true),
 		image("site", "site.logo", t("admin.visual.field.logo", "站点 Logo"), s.store.Setting("site.logo"), t("admin.visual.hint.logo", "显示在页眉和页脚，留空时使用内置默认 Logo。")),
 		image("site", "site.favicon", t("admin.visual.field.favicon", "浏览器图标"), nonEmpty(s.store.Setting("site.favicon"), defaultFaviconPath), t("admin.visual.hint.favicon", "显示在浏览器标签页，建议使用 SVG、PNG 或 ICO。")),
 		image("site", "site.share_image", t("admin.visual.field.share_image", "分享图"), nonEmpty(s.store.Setting("site.share_image"), defaultShareImageURL), t("admin.visual.hint.share_image", "分享到微信、飞书、X 等平台时默认显示，建议 1200×630。")),
 		text("home", "site.hero_eyebrow", t("admin.visual.field.hero_eyebrow", "Hero 眉标"), st.HeroEyebrow, t("admin.visual.hint.hero_eyebrow", "首页主标题上方的小字。"), false),
 		text("home", "site.hero_title", t("admin.visual.field.hero_title", "Hero 大标题"), st.HeroTitle, t("admin.visual.hint.hero_title", "首页第一屏最醒目的标题，建议短一点。"), true),
+		text("home", "site.hero_description", t("admin.visual.field.hero_description", "Hero 描述"), st.HeroDescription, t("admin.visual.hint.hero_description", "首页大标题下方的说明文案，留空时回退首页 SEO 描述。"), true),
 		image("home", "hero.image", t("admin.visual.field.hero_image", "Hero 图片"), st.HeroImage, t("admin.visual.hint.hero_image", "上传后会自动把 Hero 右侧视觉切换为图片模式。")),
 		text("home", "home.featured_title", t("admin.visual.field.home_featured", "首页精选标题"), st.HomeFeatured, t("admin.visual.hint.home_featured", "首页精选文章区块标题。"), false),
 		text("home", "home.links_title", t("admin.visual.field.home_links", "首页链接标题"), st.HomeLinks, t("admin.visual.hint.home_links", "首页链接区块标题。"), false),
@@ -2803,7 +2805,7 @@ func (s *Server) adminVisualCategoryReorder(w http.ResponseWriter, r *http.Reque
 
 func visualSettingAllowed(key string) bool {
 	switch key {
-	case "site.name", "site.tagline", "site.description", "site.hero_eyebrow", "site.hero_title",
+	case "site.name", "site.tagline", "site.description", "site.keywords", "site.hero_eyebrow", "site.hero_title", "site.hero_description",
 		"home.featured_title", "home.links_title", "home.latest_title", "site.footer_note",
 		"site.logo", "site.favicon", "site.share_image", "hero.image", layoutWidthKey:
 		return true
@@ -3713,11 +3715,11 @@ func (s *Server) showSettings(w http.ResponseWriter, r *http.Request, section, f
 	favicon := nonEmpty(st.Favicon, defaultFaviconPath)
 	shareImage := nonEmpty(st.ShareImage, defaultShareImageURL)
 	v.Settings = &SettingsForm{
-		Name: st.Name, Tagline: st.Tagline, Description: st.Description,
-		NameDef: st.Name, TaglineDef: st.Tagline, DescriptionDef: st.Description,
+		Name: st.Name, Tagline: st.Tagline, Description: st.Description, Keywords: st.Keywords,
+		NameDef: st.Name, TaglineDef: st.Tagline, DescriptionDef: st.Description, KeywordsDef: st.Keywords,
 		Favicon: favicon, Logo: st.Logo, ShareImage: shareImage, Brand: st.Brand, Theme: st.Theme,
 		Custom: custom, Accent: accent, Radius: radius,
-		HeroEyebrow: st.HeroEyebrow, HeroTitle: st.HeroTitle, FooterNote: st.FooterNote,
+		HeroEyebrow: st.HeroEyebrow, HeroTitle: st.HeroTitle, HeroDescription: st.HeroDescription, FooterNote: st.FooterNote,
 		HeroVisual: st.HeroVisual, HeroImage: st.HeroImage, HeroSVG: st.HeroSVG,
 		HomeLinksLimit:   strconv.Itoa(s.intSetting(homeLinksLimitKey, defaultHomeLinksLimit, minHomeLinksLimit, maxHomeLinksLimit)),
 		HomePostsPerPage: strconv.Itoa(s.intSetting(homePostsPerPageKey, defaultHomePostsPerPage, minHomePostsPerPage, maxHomePostsPerPage)),
@@ -3770,6 +3772,7 @@ func (s *Server) showSettings(w http.ResponseWriter, r *http.Request, section, f
 		v.Settings.NameDef = def.Name
 		v.Settings.TaglineDef = def.Tagline
 		v.Settings.DescriptionDef = def.Description
+		v.Settings.KeywordsDef = def.Keywords
 		localized := func(base, fallback string) string {
 			v := s.store.Setting(s.copyKey(base, lang))
 			if lang == s.defaultLang() && v == "" {
@@ -3780,6 +3783,7 @@ func (s *Server) showSettings(w http.ResponseWriter, r *http.Request, section, f
 		v.Settings.Name = localized("site.name", def.Name)
 		v.Settings.Tagline = localized("site.tagline", def.Tagline)
 		v.Settings.Description = localized("site.description", def.Description)
+		v.Settings.Keywords = localized("site.keywords", def.Keywords)
 		authorValue := func(kind string) string {
 			v := strings.TrimSpace(s.store.Setting(s.copyKey(defaultAuthorKey(kind), lang)))
 			if lang == s.defaultLang() && v == "" {
@@ -3799,6 +3803,8 @@ func (s *Server) showSettings(w http.ResponseWriter, r *http.Request, section, f
 		v.Settings.Description = s.store.Setting(s.copyKey("site.description", lang))
 		v.Settings.HeroEyebrow = s.store.Setting(s.copyKey("site.hero_eyebrow", lang))
 		v.Settings.HeroTitle = s.store.Setting(s.copyKey("site.hero_title", lang))
+		v.Settings.HeroDescriptionDef = s.site(s.defaultLang()).HeroDescription
+		v.Settings.HeroDescription = s.store.Setting(s.copyKey("site.hero_description", lang))
 		v.Settings.FooterNote = s.store.Setting(s.copyKey("site.footer_note", lang))
 		v.Settings.HomeFeatured = s.store.Setting(s.copyKey("home.featured_title", lang))
 		v.Settings.HomeLinks = s.store.Setting(s.copyKey("home.links_title", lang))
@@ -4127,6 +4133,7 @@ func (s *Server) adminSaveSite(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.store.SetSetting(s.copyKey("site.tagline", lang), strings.TrimSpace(r.FormValue("site_tagline")))
 	_ = s.store.SetSetting(s.copyKey("site.description", lang), strings.TrimSpace(r.FormValue("site_description")))
+	_ = s.store.SetSetting(s.copyKey("site.keywords", lang), strings.TrimSpace(r.FormValue("site_keywords")))
 	_ = s.store.SetSetting(s.copyKey(postDefaultAuthorKey, lang), strings.TrimSpace(r.FormValue("default_post_author")))
 	_ = s.store.SetSetting(s.copyKey(linkDefaultAuthorKey, lang), strings.TrimSpace(r.FormValue("default_link_author")))
 	favicon := strings.TrimSpace(r.FormValue("site_favicon"))
@@ -4417,6 +4424,7 @@ func (s *Server) adminSaveCopy(w http.ResponseWriter, r *http.Request) {
 	}
 	set("site.hero_eyebrow", "hero_eyebrow")
 	set("site.hero_title", "hero_title")
+	set("site.hero_description", "hero_description")
 	set("site.footer_note", "footer_note")
 	set("home.featured_title", "home_featured")
 	set("home.links_title", "home_links")

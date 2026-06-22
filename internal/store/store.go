@@ -283,6 +283,8 @@ func (s *Store) normalizeShowcaseDefaults() error {
 	showcaseHeroEyebrow := "Cloudflare 部署 · 多站管理 · SEO/GEO · AI 自运营"
 	showcaseDescriptionEN := "gcms brings posts, pages, resource links, multilingual content, themes, SEO/GEO, Cloudflare static deployment, multisite management and AI-operation APIs into one lightweight admin. No database server or frontend build pipeline required: deploy with one command and start on a 1 vCPU / 512MB VPS."
 	showcaseHeroEyebrowEN := "Cloudflare deploy · Multisite · SEO/GEO · AI operations"
+	showcaseKeywords := "gcms,CMS,内容管理系统,Cloudflare 静态部署,多站管理,SEO,GEO,AI 自运营"
+	showcaseKeywordsEN := "gcms,CMS,content management,Cloudflare static deployment,multisite,SEO,GEO,AI operations"
 	updates := []struct {
 		key string
 		old string
@@ -349,12 +351,16 @@ func (s *Store) normalizeShowcaseDefaults() error {
 		}
 	}
 	inserts := map[string]string{
-		"site.share_image":     "/assets/og-cover.webp",
-		"site.share_image::en": "/assets/og-cover-en.webp",
-		"hero.image":           "/assets/hero-product-overview-brand.webp",
-		"hero.image::en":       "/assets/hero-product-overview-brand-en.webp",
-		"hero.visual":          "image",
-		"hero.visual::en":      "image",
+		"site.keywords":             showcaseKeywords,
+		"site.keywords::en":         showcaseKeywordsEN,
+		"site.hero_description":     showcaseDescription,
+		"site.hero_description::en": showcaseDescriptionEN,
+		"site.share_image":          "/assets/og-cover.webp",
+		"site.share_image::en":      "/assets/og-cover-en.webp",
+		"hero.image":                "/assets/hero-product-overview-brand.webp",
+		"hero.image::en":            "/assets/hero-product-overview-brand-en.webp",
+		"hero.visual":               "image",
+		"hero.visual::en":           "image",
 	}
 	for key, value := range inserts {
 		if _, err := s.db.Exec(`INSERT INTO settings(key,value)

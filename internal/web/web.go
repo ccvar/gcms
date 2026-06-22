@@ -259,6 +259,8 @@ type View struct {
 	Tr          *i18n.Tr
 	Lang        string
 	Langs       []LangLink
+	SitemapURL  string
+	RobotsURL   string
 	Admin       *i18n.AdminTr
 	AdminLang   string
 	AdminLangs  []i18n.Locale
@@ -442,32 +444,36 @@ type GiscusView struct {
 
 // SettingsForm 承载后台设置页的可编辑字段。
 type SettingsForm struct {
-	Name           string
-	NameDef        string
-	Tagline        string
-	TaglineDef     string
-	Description    string
-	DescriptionDef string
-	PostAuthor     string
-	PostAuthorDef  string
-	LinkAuthor     string
-	LinkAuthorDef  string
-	Favicon        string
-	Logo           string
-	ShareImage     string
-	Brand          string
-	Theme          string
-	Custom         bool   // 是否启用主题微调
-	Accent         string // 自定义主色 #rrggbb
-	Radius         string // 自定义圆角 px
-	HeroEyebrow    string
-	HeroTitle      string
-	HeroVisual     string // ""(默认动画) | image | svg
-	HeroImage      string
-	HeroImageDef   string
-	HeroImageMode  string
-	HeroSVG        string
-	FooterNote     string
+	Name               string
+	NameDef            string
+	Tagline            string
+	TaglineDef         string
+	Description        string
+	DescriptionDef     string
+	Keywords           string
+	KeywordsDef        string
+	PostAuthor         string
+	PostAuthorDef      string
+	LinkAuthor         string
+	LinkAuthorDef      string
+	Favicon            string
+	Logo               string
+	ShareImage         string
+	Brand              string
+	Theme              string
+	Custom             bool   // 是否启用主题微调
+	Accent             string // 自定义主色 #rrggbb
+	Radius             string // 自定义圆角 px
+	HeroEyebrow        string
+	HeroTitle          string
+	HeroDescription    string
+	HeroDescriptionDef string
+	HeroVisual         string // ""(默认动画) | image | svg
+	HeroImage          string
+	HeroImageDef       string
+	HeroImageMode      string
+	HeroSVG            string
+	FooterNote         string
 	// 首页栏目标题（可自定义，空则前台回落语种默认）
 	HomeFeatured string
 	HomeLinks    string
@@ -952,7 +958,9 @@ func (s *Server) serveSitePreview(w http.ResponseWriter, r *http.Request, pool *
 	}
 	nextURL := *r.URL
 	nextURL.Path = rest
-	req := r.Clone(withPreviewNoindex(r.Context()))
+	previewPrefix := "/admin/sites/" + strconv.FormatInt(siteID, 10) + "/preview"
+	ctx := withPreviewRoutePrefix(withPreviewNoindex(r.Context()), previewPrefix)
+	req := r.Clone(ctx)
 	req.URL = &nextURL
 	w.Header().Set("X-Robots-Tag", "noindex, nofollow")
 	w.Header().Set("Cache-Control", "no-store")
@@ -1297,6 +1305,7 @@ type ctxKey int
 const langKey ctxKey = 0
 const publicBaseKey ctxKey = 1
 const previewNoindexKey ctxKey = 2
+const previewRoutePrefixKey ctxKey = 3
 
 func withLang(ctx context.Context, lang string) context.Context {
 	return context.WithValue(ctx, langKey, lang)
@@ -1310,8 +1319,21 @@ func withPreviewNoindex(ctx context.Context) context.Context {
 	return context.WithValue(ctx, previewNoindexKey, true)
 }
 
+func withPreviewRoutePrefix(ctx context.Context, prefix string) context.Context {
+	prefix = strings.TrimRight(strings.TrimSpace(prefix), "/")
+	if prefix == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, previewRoutePrefixKey, prefix)
+}
+
 func previewNoindexFrom(ctx context.Context) bool {
 	v, _ := ctx.Value(previewNoindexKey).(bool)
+	return v
+}
+
+func previewRoutePrefixFrom(ctx context.Context) string {
+	v, _ := ctx.Value(previewRoutePrefixKey).(string)
 	return v
 }
 
@@ -1599,8 +1621,54 @@ func (s *Server) withLocale(next http.Handler) http.Handler {
 	})
 }
 
+func localizedPrefix(routePrefix, lang string) string {
+	routePrefix = strings.TrimRight(strings.TrimSpace(routePrefix), "/")
+	if routePrefix != "" {
+		return routePrefix + "/" + lang
+	}
+	return "/" + lang
+}
+
+func localizedPath(routePrefix, lang, p string) string {
+	prefix := localizedPrefix(routePrefix, lang)
+	if p == "" || p == "/" {
+		return prefix + "/"
+	}
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	return prefix + p
+}
+
+func previewLocalizedPath(r *http.Request, lang, p string) string {
+	if r == nil {
+		return localizedPath("", lang, p)
+	}
+	return localizedPath(previewRoutePrefixFrom(r.Context()), lang, p)
+}
+
+func previewRootPath(r *http.Request, p string) string {
+	if p == "" {
+		p = "/"
+	}
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	if r == nil {
+		return p
+	}
+	if prefix := previewRoutePrefixFrom(r.Context()); prefix != "" {
+		return strings.TrimRight(prefix, "/") + p
+	}
+	return p
+}
+
 // langSwitch 构建「仅切换器」语言链接（不输出 hreflang）：每个语种走 fallback 路径。
 func (s *Server) langSwitch(cur string, pathByLang map[string]string, fallback string) []LangLink {
+	return s.langSwitchForRequest(nil, cur, pathByLang, fallback)
+}
+
+func (s *Server) langSwitchForRequest(r *http.Request, cur string, pathByLang map[string]string, fallback string) []LangLink {
 	var out []LangLink
 	for _, l := range s.locales() {
 		p := fallback
@@ -1609,7 +1677,7 @@ func (s *Server) langSwitch(cur string, pathByLang map[string]string, fallback s
 				p = v
 			}
 		}
-		out = append(out, LangLink{Code: l.Code, Name: l.Name, URL: "/" + l.Code + p, Active: l.Code == cur})
+		out = append(out, LangLink{Code: l.Code, Name: l.Name, URL: previewLocalizedPath(r, l.Code, p), Active: l.Code == cur})
 	}
 	return out
 }
@@ -1617,20 +1685,23 @@ func (s *Server) langSwitch(cur string, pathByLang map[string]string, fallback s
 // i18nLinks 给定「该页在各语种的相对路径」，同时构建语言切换器与 hreflang 备份链接。
 // pathByLang 仅包含真实存在译文的语种；缺失语种的切换器回退到该语种首页，且不输出其 hreflang。
 func (s *Server) i18nLinks(baseURL, cur string, pathByLang map[string]string) (langs []LangLink, alts []seo.Alternate) {
+	return s.i18nLinksForRequest(nil, baseURL, cur, pathByLang)
+}
+
+func (s *Server) i18nLinksForRequest(r *http.Request, baseURL, cur string, pathByLang map[string]string) (langs []LangLink, alts []seo.Alternate) {
 	def := s.defaultLang()
 	for _, l := range s.locales() {
 		if p, ok := pathByLang[l.Code]; ok {
-			url := "/" + l.Code + p
-			langs = append(langs, LangLink{Code: l.Code, Name: l.Name, URL: url, Active: l.Code == cur})
-			alts = append(alts, seo.Alternate{Hreflang: l.Tag, Href: absWithBase(baseURL, url)})
+			langs = append(langs, LangLink{Code: l.Code, Name: l.Name, URL: previewLocalizedPath(r, l.Code, p), Active: l.Code == cur})
+			alts = append(alts, seo.Alternate{Hreflang: l.Tag, Href: absWithBase(baseURL, localizedPath("", l.Code, p))})
 		} else {
-			langs = append(langs, LangLink{Code: l.Code, Name: l.Name, URL: "/" + l.Code + "/", Active: l.Code == cur})
+			langs = append(langs, LangLink{Code: l.Code, Name: l.Name, URL: previewLocalizedPath(r, l.Code, "/"), Active: l.Code == cur})
 		}
 	}
 	if p, ok := pathByLang[def]; ok {
-		alts = append(alts, seo.Alternate{Hreflang: "x-default", Href: absWithBase(baseURL, "/"+def+p)})
+		alts = append(alts, seo.Alternate{Hreflang: "x-default", Href: absWithBase(baseURL, localizedPath("", def, p))})
 	} else {
-		alts = append(alts, seo.Alternate{Hreflang: "x-default", Href: absWithBase(baseURL, "/"+def+"/")})
+		alts = append(alts, seo.Alternate{Hreflang: "x-default", Href: absWithBase(baseURL, localizedPath("", def, "/"))})
 	}
 	return
 }
@@ -1688,13 +1759,15 @@ func (s *Server) archiveConfig(lang, kind string) ArchiveConfig {
 	prefix := archivePrefix(kind)
 	siteDesc := s.localizedSetting("site.description", lang, "用 Go 与 SQLite 构建的轻量内容站，关注后端工程、极简设计与搜索引擎优化。")
 	titleDef, labelDef, slugDef := tr.T("nav.category"), tr.T("links.all"), "category"
+	descDef := tr.T("archive.post_description")
 	if kind == "link" {
 		titleDef = tr.T("nav.links")
 		slugDef = "links"
+		descDef = tr.T("archive.link_description")
 	}
 	title := s.localizedSetting(prefix+"title", lang, titleDef)
 	label := s.localizedSetting(prefix+"label", lang, labelDef)
-	desc := s.localizedSetting(prefix+"description", lang, siteDesc)
+	desc := s.localizedSetting(prefix+"description", lang, nonEmpty(descDef, siteDesc))
 	slug := normalizeArchiveSlug(s.localizedSetting(prefix+"slug", lang, slugDef), slugDef)
 	return ArchiveConfig{Title: title, Label: label, Description: desc, Slug: slug, Path: archivePath(kind, slug)}
 }
@@ -1745,11 +1818,20 @@ func (s *Server) site(lang string) seo.Site {
 	if lang == "en" && logo == defaultLogoPath {
 		logo = defaultLogoENPath
 	}
+	defaultSiteDescription := "用 Go 与 SQLite 构建的轻量内容站，关注后端工程、极简设计与搜索引擎优化。"
+	defaultSiteKeywords := "Go,SQLite,CMS,内容管理系统,服务端渲染,SEO,极简设计,后端工程"
+	if lang == "en" {
+		defaultSiteDescription = "A lightweight content site built with Go and SQLite — focused on backend engineering, minimal design and SEO."
+		defaultSiteKeywords = "Go,SQLite,CMS,content management,server-side rendering,SEO,minimal design,backend engineering"
+	}
+	siteDescription := get("site.description", defaultSiteDescription)
+	heroDescription := get("site.hero_description", siteDescription)
 	linkAll := s.archiveConfig(lang, "link")
 	return seo.Site{
 		Name:             get("site.name", "CCVAR 简记"),
 		Tagline:          get("site.tagline", "记录技术、工具与思考"),
-		Description:      get("site.description", "用 Go 与 SQLite 构建的轻量内容站，关注后端工程、极简设计与搜索引擎优化。"),
+		Description:      siteDescription,
+		Keywords:         get("site.keywords", defaultSiteKeywords),
 		BaseURL:          s.baseURL,
 		Locale:           loc.OG,
 		LangTag:          loc.Tag,
@@ -1762,6 +1844,7 @@ func (s *Server) site(lang string) seo.Site {
 		Brand:            brand,
 		HeroEyebrow:      get("site.hero_eyebrow", "Go · SQLite · SEO"),
 		HeroTitle:        get("site.hero_title", "把复杂留给后端，\n把简单留给读者。"),
+		HeroDescription:  heroDescription,
 		HeroVisual:       getAsset("hero.visual"),
 		HeroImage:        getAsset("hero.image"),
 		HeroSVG:          s.store.Setting("hero.svg"),
@@ -2227,9 +2310,14 @@ func (s *Server) viewForLang(r *http.Request, lang, nav string) *View {
 	st := s.site(lang)
 	st.BaseURL = s.publicBaseURL(r)
 	tr := s.i18n.Tr(lang, s.defaultLang())
+	if prefix := previewRoutePrefixFrom(r.Context()); prefix != "" {
+		tr = tr.WithPrefix(localizedPrefix(prefix, lang))
+	}
 	v := &View{
 		Site: st, Nav: nav, Year: time.Now().Year(), Theme: st.Theme, ThemeStyle: s.themeOverride(),
 		Tr: tr, Lang: lang, AssetVer: s.assetVer,
+		SitemapURL:   previewRootPath(r, "/sitemap.xml"),
+		RobotsURL:    previewRootPath(r, "/robots.txt"),
 		CategoryAll:  s.archiveConfig(lang, "post"),
 		LinksAll:     s.archiveConfig(lang, "link"),
 		ForceNoindex: previewNoindexFrom(r.Context()),
@@ -2239,7 +2327,7 @@ func (s *Server) viewForLang(r *http.Request, lang, nav string) *View {
 			v.VisualEdit = true
 		}
 	}
-	v.Langs = s.langSwitch(lang, nil, "/")
+	v.Langs = s.langSwitchForRequest(r, lang, nil, "/")
 	v.Social = parseSocialLinks(s.store.Setting("social_links"))
 	v.Menu = s.menuItems(r, lang, tr, nav)
 	return v
@@ -2561,7 +2649,7 @@ func (s *Server) renderHome(w http.ResponseWriter, r *http.Request) {
 	for _, l := range s.locales() {
 		ph[l.Code] = "/"
 	}
-	v.Langs, v.SEO.Alternates = s.i18nLinks(v.Site.BaseURL, lang, ph)
+	v.Langs, v.SEO.Alternates = s.i18nLinksForRequest(r, v.Site.BaseURL, lang, ph)
 	setPagination(v, page, totalPages, "/")
 	s.rnd.Public(w, "home", http.StatusOK, v)
 }
@@ -2650,7 +2738,7 @@ func (s *Server) article(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	v.Langs, v.SEO.Alternates = s.i18nLinks(v.Site.BaseURL, lang, ph)
+	v.Langs, v.SEO.Alternates = s.i18nLinksForRequest(r, v.Site.BaseURL, lang, ph)
 	s.rnd.Public(w, "article", http.StatusOK, v)
 }
 
@@ -2686,7 +2774,7 @@ func (s *Server) category(w http.ResponseWriter, r *http.Request) {
 			ph[t.Lang] = "/category/" + t.Slug
 		}
 	}
-	v.Langs, v.SEO.Alternates = s.i18nLinks(v.Site.BaseURL, lang, ph)
+	v.Langs, v.SEO.Alternates = s.i18nLinksForRequest(r, v.Site.BaseURL, lang, ph)
 	setPagination(v, page, ceilDiv(total, size), "/category/"+c.Slug)
 	s.rnd.Public(w, "category", http.StatusOK, v)
 }
@@ -2717,7 +2805,7 @@ func (s *Server) categoryAll(w http.ResponseWriter, r *http.Request, all Archive
 	for _, l := range s.locales() {
 		ph[l.Code] = s.archiveConfig(l.Code, "post").Path
 	}
-	v.Langs, v.SEO.Alternates = s.i18nLinks(v.Site.BaseURL, lang, ph)
+	v.Langs, v.SEO.Alternates = s.i18nLinksForRequest(r, v.Site.BaseURL, lang, ph)
 	setPagination(v, page, ceilDiv(total, size), all.Path)
 	s.rnd.Public(w, "category", http.StatusOK, v)
 }
@@ -2769,7 +2857,7 @@ func (s *Server) links(w http.ResponseWriter, r *http.Request) {
 			ph[l.Code] = s.archiveConfig(l.Code, "link").Path
 		}
 	}
-	v.Langs, v.SEO.Alternates = s.i18nLinks(v.Site.BaseURL, lang, ph)
+	v.Langs, v.SEO.Alternates = s.i18nLinksForRequest(r, v.Site.BaseURL, lang, ph)
 	setPagination(v, page, ceilDiv(total, size), basePath)
 	s.rnd.Public(w, "links", http.StatusOK, v)
 }
@@ -2804,7 +2892,7 @@ func (s *Server) link(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	v.Langs, v.SEO.Alternates = s.i18nLinks(v.Site.BaseURL, lang, ph)
+	v.Langs, v.SEO.Alternates = s.i18nLinksForRequest(r, v.Site.BaseURL, lang, ph)
 	s.rnd.Public(w, "link", http.StatusOK, v)
 }
 
@@ -2857,7 +2945,7 @@ func (s *Server) renderPageBySlug(w http.ResponseWriter, r *http.Request, slug s
 			}
 		}
 	}
-	v.Langs, v.SEO.Alternates = s.i18nLinks(v.Site.BaseURL, lang, ph)
+	v.Langs, v.SEO.Alternates = s.i18nLinksForRequest(r, v.Site.BaseURL, lang, ph)
 	s.rnd.Public(w, "page", http.StatusOK, v)
 }
 
@@ -2878,7 +2966,7 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 	if q != "" {
 		sp += "?q=" + url.QueryEscape(q)
 	}
-	v.Langs = s.langSwitch(lang, nil, sp)
+	v.Langs = s.langSwitchForRequest(r, lang, nil, sp)
 	s.rnd.Public(w, "search", http.StatusOK, v)
 }
 

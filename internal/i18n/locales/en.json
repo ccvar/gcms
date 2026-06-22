@@ -10,6 +10,8 @@
   "links.all": "All",
   "links.empty": "No links yet.",
   "links.related": "Related links",
+  "archive.post_description": "Browse all posts in the current language. Readers can filter content by category.",
+  "archive.link_description": "Browse all links in the current language. Readers can filter resources by category.",
 
   "footer.content": "Content",
   "footer.all_categories": "All topics",

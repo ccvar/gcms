@@ -55,14 +55,18 @@ func (s *Store) seedIfEmpty() error {
 	_ = s.SetSetting("site.name", "CCVAR 简记")
 	_ = s.SetSetting("site.tagline", "记录技术、工具与思考")
 	_ = s.SetSetting("site.description", "用 Go 与 SQLite 构建的轻量内容站，关注后端工程、极简设计与搜索引擎优化。")
+	_ = s.SetSetting("site.keywords", "Go,SQLite,CMS,内容管理系统,服务端渲染,SEO,极简设计,后端工程")
 	_ = s.SetSetting("site.hero_eyebrow", "Go · SQLite · SEO")
 	_ = s.SetSetting("site.hero_title", "把复杂留给后端，\n把简单留给读者。")
+	_ = s.SetSetting("site.hero_description", "用 Go 与 SQLite 构建的轻量内容站，关注后端工程、极简设计与搜索引擎优化。")
 	_ = s.SetSetting("site.footer_note", "用 Go 与 SQLite 构建。")
 	// 英文文案（::en 命名空间，site() 取不到时回落默认语种）
 	_ = s.SetSetting("site.tagline::en", "Notes on engineering, tools & thinking")
 	_ = s.SetSetting("site.description::en", "A lightweight content site built with Go and SQLite — focused on backend engineering, minimal design and SEO.")
+	_ = s.SetSetting("site.keywords::en", "Go,SQLite,CMS,content management,server-side rendering,SEO,minimal design,backend engineering")
 	_ = s.SetSetting("site.hero_eyebrow::en", "Go · SQLite · SEO")
 	_ = s.SetSetting("site.hero_title::en", "Keep the complexity in the backend,\nkeep it simple for readers.")
+	_ = s.SetSetting("site.hero_description::en", "A lightweight content site built with Go and SQLite — focused on backend engineering, minimal design and SEO.")
 	_ = s.SetSetting("site.footer_note::en", "Built with Go and SQLite.")
 	// 多语种：启用 zh,en（首个为默认）
 	_ = s.SetSetting("locales", "zh,en")

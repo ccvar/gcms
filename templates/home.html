@@ -4,7 +4,7 @@
         <div class="hero-text">
           <p class="eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>
           <h1{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
-          <p class="hero-sub"{{if .VisualEdit}} data-visual-edit="site.description" data-visual-label="站点描述"{{end}}>{{.Site.Description}}</p>
+          <p class="hero-sub"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>
           <div class="hero-cta">
             <a class="btn btn-primary" href="{{if .Featured}}{{.Tr.U (printf "/posts/%s" .Featured.Slug)}}{{else}}{{.Tr.U .CategoryAll.Path}}{{end}}">{{.Tr.T "home.cta_start"}} <span class="arrow">→</span></a>
             <a class="btn" href="{{.Tr.U "/about"}}">{{.Tr.T "home.cta_more"}}</a>
