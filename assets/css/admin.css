@@ -1074,6 +1074,9 @@ a.overview-log-title { text-decoration: none; }
 .kit-item { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: .75rem .9rem; align-items: center; border: 1px solid var(--line); border-radius: 8px; padding: .9rem; background: var(--surface); }
 .kit-item strong { display: block; color: var(--ink); font-size: .95rem; margin-bottom: .3rem; }
 .kit-item p { margin: 0; color: var(--muted); font-size: .82rem; line-height: 1.55; }
+.kit-steps { display: flex; flex-wrap: wrap; gap: .35rem .55rem; margin: .55rem 0 0; padding: 0; list-style: none; }
+.kit-steps li { display: inline-flex; align-items: center; gap: .28rem; color: var(--ink-soft); font-size: .76rem; line-height: 1.25; white-space: nowrap; }
+.kit-steps li::before { content: ""; width: .34rem; height: .34rem; border-radius: 999px; background: color-mix(in srgb, var(--accent) 72%, var(--surface)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent); }
 .dev-doc-link { display: flex; align-items: flex-start; gap: .65rem; padding: .75rem 1rem; border-bottom: 1px solid var(--line-soft); background: color-mix(in srgb, var(--surface) 86%, var(--accent-wash)); }
 .dev-doc-link .cap-icon { margin-top: .05rem; }
 .dev-doc-link p { margin: 0; color: var(--muted); font-size: .84rem; line-height: 1.55; }

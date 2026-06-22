@@ -365,7 +365,10 @@ func TestAutomationStarterZipIncludesBriefAndOpenAPI(t *testing.T) {
 		"README.md",
 		"gcms-site-starter/给AI的任务说明.md",
 		"gcms-site-starter/SKILL.md",
+		"gcms-site-starter/新站需求向导.md",
 		"gcms-site-starter/站点需求模板.md",
+		"gcms-site-starter/第一步-让AI出规划.md",
+		"gcms-site-starter/第二步-审核后写入草稿.md",
 		"gcms-site-starter/工作流.md",
 		"gcms-site-starter/示例提示词.md",
 		"gcms-site-starter/connection.json",
@@ -378,6 +381,11 @@ func TestAutomationStarterZipIncludesBriefAndOpenAPI(t *testing.T) {
 	}
 	if !strings.Contains(got["README.md"], "GCMS 新站 AI 技能包") || !strings.Contains(got["gcms-site-starter/给AI的任务说明.md"], "PATCH /site-profile") {
 		t.Fatalf("starter markdown missing expected guidance")
+	}
+	if !strings.Contains(got["gcms-site-starter/新站需求向导.md"], "第一轮只允许输出规划") ||
+		!strings.Contains(got["gcms-site-starter/第一步-让AI出规划.md"], "不允许创建、修改、删除或发布任何内容") ||
+		!strings.Contains(got["gcms-site-starter/第二步-审核后写入草稿.md"], "所有页面、文章和链接默认 status=draft") {
+		t.Fatalf("starter planning workflow missing expected boundary guidance")
 	}
 	if !strings.Contains(got["gcms-site-starter/SKILL.md"], "gcms-site-starter") || !strings.Contains(got["gcms-site-starter/SKILL.md"], "status: draft") {
 		t.Fatalf("starter skill missing expected guidance")
