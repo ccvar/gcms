@@ -235,6 +235,59 @@ func TestCloudflareViewDoesNotInferFreshConfigAsPublished(t *testing.T) {
 	}
 }
 
+func TestCloudflareStatusIsIsolatedPerSite(t *testing.T) {
+	runDir := t.TempDir()
+	t.Chdir(runDir)
+	now := time.Now().UTC().Format(time.RFC3339)
+	writeCloudflareStatus(CloudflareStatus{
+		Status:        "success",
+		Step:          "done",
+		Message:       "Cloudflare 静态站已部署：默认站。",
+		WorkerName:    "gcms-default",
+		PrimaryDomain: "default.example.com",
+		LastDeployAt:  now,
+		DNSStatus:     cloudflareDNSStatusManaged,
+		Published:     true,
+	})
+
+	siteDir := filepath.Join(t.TempDir(), "sites", "blog")
+	if err := os.MkdirAll(siteDir, 0o755); err != nil {
+		t.Fatalf("create site dir: %v", err)
+	}
+	otherDB := filepath.Join(siteDir, "cms.db")
+	otherStore, err := store.Open(otherDB)
+	if err != nil {
+		t.Fatalf("open other store: %v", err)
+	}
+	t.Cleanup(func() { _ = otherStore.Close() })
+	if err := otherStore.SetSetting(cloudflareWorkerNameKey, "gcms-blog"); err != nil {
+		t.Fatalf("set other worker: %v", err)
+	}
+	otherSite := &platform.Site{ID: 2, Slug: "blog", DBPath: otherDB, UploadDir: filepath.Join(siteDir, "uploads")}
+	otherServer := &Server{
+		store:                otherStore,
+		uploadDir:            otherSite.UploadDir,
+		cloudflareStatusFile: cloudflareStatusPathForRuntime(&SiteRuntime{Site: otherSite, Store: otherStore, UploadDir: otherSite.UploadDir}),
+	}
+
+	if otherServer.cloudflareStatusPath() == cloudflareStatusPath() {
+		t.Fatalf("non-default site should not use global cloudflare status path")
+	}
+	view := otherServer.cloudflareView()
+	if view.Status.Published {
+		t.Fatal("non-default fresh site should not inherit default site's published Cloudflare status")
+	}
+	if view.Status.LastDeployAt != "" {
+		t.Fatalf("non-default last deploy = %q, want empty", view.Status.LastDeployAt)
+	}
+	if view.Status.DNSStatus != "" {
+		t.Fatalf("non-default dns status = %q, want empty", view.Status.DNSStatus)
+	}
+	if view.Status.Message != "暂无 Cloudflare 部署任务" {
+		t.Fatalf("non-default message = %q, want idle message", view.Status.Message)
+	}
+}
+
 func TestCloudflareViewDoesNotInferUnpublishedStatusAsPublished(t *testing.T) {
 	t.Chdir(t.TempDir())
 	writeCloudflareStatus(CloudflareStatus{

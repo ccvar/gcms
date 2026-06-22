@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"cms.ccvar.com/internal/backup"
 	"cms.ccvar.com/internal/i18n"
 	"cms.ccvar.com/internal/platform"
 	"cms.ccvar.com/internal/seo"
@@ -48,8 +49,9 @@ type Server struct {
 	endpoints       map[string]endpointCacheEntry
 	pages           map[string]pageCacheEntry
 
-	cloudflareMu    sync.Mutex
-	cloudflareTimer *time.Timer
+	cloudflareMu         sync.Mutex
+	cloudflareTimer      *time.Timer
+	cloudflareStatusFile string
 
 	runtimeMu sync.RWMutex
 	runtimes  *SiteRuntimePool
@@ -359,6 +361,9 @@ type View struct {
 	PlatformCurrentSiteID int64 // 平台会话中当前选择的站点
 	ArchivedSites         []*platform.ArchivedSite
 	ArchivedSiteIcons     map[int64]string
+	BackupConfig          backup.Config
+	BackupRecords         []*backup.BackupRecord
+	BackupDir             string
 }
 
 type OverviewStat struct {
@@ -576,6 +581,7 @@ func NewWithPlatform(st *store.Store, ps *platform.Store, baseURL, uploadDir str
 		store: st, platform: ps, rnd: rnd, baseURL: baseURL, platformBaseURL: baseURL, uploadDir: uploadDir, assetsFS: assetsFS,
 		sess: newSessions(sessionStore), login: newLoginLimiter(), apiLimiter: newAPIRateLimiter(), i18n: i18n.New(), assetVer: assetVersion(assetsFS), imageSizes: imageSizes,
 		content: map[string]contentCacheEntry{}, endpoints: map[string]endpointCacheEntry{}, pages: map[string]pageCacheEntry{},
+		cloudflareStatusFile: cloudflareStatusPath(),
 	}
 	s.i18n.LoadCustom(st.Setting("custom_locales")) // 合并后台新增的自定义语种预设
 	s.migratePlatformAdminI18N()
@@ -723,22 +729,23 @@ func (s *Server) cloneForRuntime(rt *SiteRuntime) *Server {
 		_ = os.MkdirAll(rt.UploadDir, 0o755)
 	}
 	clone := &Server{
-		store:           rt.Store,
-		platform:        s.platform,
-		rnd:             s.rnd,
-		baseURL:         rt.BaseURL,
-		platformBaseURL: s.platformBaseURL,
-		uploadDir:       rt.UploadDir,
-		sess:            s.sess,
-		login:           s.login,
-		apiLimiter:      s.apiLimiter,
-		i18n:            i18n.New(),
-		assetsFS:        s.assetsFS,
-		assetVer:        s.assetVer,
-		imageSizes:      s.imageSizes,
-		content:         map[string]contentCacheEntry{},
-		endpoints:       map[string]endpointCacheEntry{},
-		pages:           map[string]pageCacheEntry{},
+		store:                rt.Store,
+		platform:             s.platform,
+		rnd:                  s.rnd,
+		baseURL:              rt.BaseURL,
+		platformBaseURL:      s.platformBaseURL,
+		uploadDir:            rt.UploadDir,
+		sess:                 s.sess,
+		login:                s.login,
+		apiLimiter:           s.apiLimiter,
+		i18n:                 i18n.New(),
+		assetsFS:             s.assetsFS,
+		assetVer:             s.assetVer,
+		imageSizes:           s.imageSizes,
+		content:              map[string]contentCacheEntry{},
+		endpoints:            map[string]endpointCacheEntry{},
+		pages:                map[string]pageCacheEntry{},
+		cloudflareStatusFile: cloudflareStatusPathForRuntime(rt),
 	}
 	clone.i18n.LoadCustom(rt.Store.Setting("custom_locales"))
 	clone.routes(s.assetsFS)
@@ -1081,6 +1088,8 @@ func platformOnlyPath(path string) bool {
 		return true
 	case path == "/admin/platform/settings":
 		return true
+	case path == "/admin/backups" || strings.HasPrefix(path, "/admin/backups/"):
+		return true
 	case path == "/admin/archived-sites" || strings.HasPrefix(path, "/admin/archived-sites/"):
 		return true
 	case path == "/admin/updates" || strings.HasPrefix(path, "/admin/updates/"):
@@ -1174,7 +1183,7 @@ func (s *Server) cloudflareSourceFrontendMode() string {
 }
 
 func (s *Server) cloudflarePublishedPrimaryHost() string {
-	st := readCloudflareStatus()
+	st := s.readCloudflareStatus()
 	if !cloudflareStatusPublished(st) {
 		return ""
 	}
@@ -2116,6 +2125,12 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /admin/sites/{id}/archive", s.requireAuth(s.adminArchiveSite))
 	mux.HandleFunc("GET /admin/sites/{id}/uploads/{name}", s.requireAuth(s.adminSiteUpload))
 	mux.HandleFunc("GET /admin/platform/settings", s.requireAuth(s.adminPlatformSettings))
+	mux.HandleFunc("GET /admin/backups", s.requireAuth(s.adminBackups))
+	mux.HandleFunc("POST /admin/backups", s.requireAuth(s.adminCreateBackup))
+	mux.HandleFunc("POST /admin/backups/config", s.requireAuth(s.adminSaveBackupConfig))
+	mux.HandleFunc("GET /admin/backups/{name}/download", s.requireAuth(s.adminDownloadBackup))
+	mux.HandleFunc("POST /admin/backups/{name}/sync", s.requireAuth(s.adminSyncBackup))
+	mux.HandleFunc("POST /admin/backups/{name}/delete", s.requireAuth(s.adminDeleteBackup))
 	mux.HandleFunc("GET /admin/archived-sites", s.requireAuth(s.adminArchivedSites))
 	mux.HandleFunc("POST /admin/archived-sites/{id}/restore", s.requireAuth(s.adminRestoreArchivedSite))
 	mux.HandleFunc("POST /admin/archived-sites/{id}/delete", s.requireAuth(s.adminDeleteArchivedSite))

@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"cms.ccvar.com/internal/backup"
 	"cms.ccvar.com/internal/i18n"
 	"cms.ccvar.com/internal/platform"
 	"cms.ccvar.com/internal/seo"
@@ -450,6 +451,8 @@ func adminTitleKey(title string) string {
 		return "admin.settings.title"
 	case "平台设置":
 		return "admin.platform.settings.title"
+	case "数据备份":
+		return "admin.backups.title"
 	case "归档站点":
 		return "admin.archived_sites.title"
 	case "可视化编辑":
@@ -1195,6 +1198,220 @@ func (s *Server) adminPlatformSettings(w http.ResponseWriter, r *http.Request) {
 	v := s.adminView(r, "平台设置")
 	s.platformAuthed(v, sess)
 	s.rnd.Admin(w, "platform_settings", http.StatusOK, v)
+}
+
+func (s *Server) adminBackups(w http.ResponseWriter, r *http.Request) {
+	s.showAdminBackups(w, r, "", "")
+}
+
+func (s *Server) showAdminBackups(w http.ResponseWriter, r *http.Request, flash, formErr string) {
+	if s.platform == nil {
+		http.Redirect(w, r, "/admin/platform/settings", http.StatusSeeOther)
+		return
+	}
+	if r.Method == http.MethodGet && flash == "" && formErr == "" {
+		if f, ok := s.sess.takeSettingsFlash(sessionToken(r)); ok {
+			flash = f.Flash
+			formErr = f.FormErr
+		}
+	}
+	sess, _ := s.currentSession(r)
+	v := s.adminView(r, "数据备份")
+	s.platformAuthed(v, sess)
+	v.Flash = flash
+	v.FormErr = formErr
+	v.BackupDir = s.platformBackupDir()
+	v.BackupConfig = backup.ParseConfig(s.platform.Setting(backup.ConfigSettingKey)).Sanitized()
+	records, err := backup.ListRecords(v.BackupDir)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	v.BackupRecords = records
+	status := http.StatusOK
+	if formErr != "" {
+		status = http.StatusBadRequest
+	}
+	s.rnd.Admin(w, "backups", status, v)
+}
+
+func (s *Server) adminSaveBackupConfig(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.checkCSRF(w, r); !ok {
+		return
+	}
+	if s.platform == nil {
+		http.NotFound(w, r)
+		return
+	}
+	prev := backup.ParseConfig(s.platform.Setting(backup.ConfigSettingKey))
+	keep, _ := strconv.Atoi(strings.TrimSpace(r.FormValue("keep_local")))
+	cfg := backup.Config{
+		AutoSync:        r.FormValue("auto_sync") == "1",
+		KeepLocal:       keep,
+		Endpoint:        strings.TrimSpace(r.FormValue("endpoint")),
+		Region:          strings.TrimSpace(r.FormValue("region")),
+		Bucket:          strings.TrimSpace(r.FormValue("bucket")),
+		Prefix:          strings.Trim(strings.TrimSpace(r.FormValue("prefix")), "/"),
+		AccessKeyID:     strings.TrimSpace(r.FormValue("access_key_id")),
+		SecretAccessKey: strings.TrimSpace(r.FormValue("secret_access_key")),
+		PathStyle:       r.FormValue("path_style") == "1",
+	}
+	if cfg.SecretAccessKey == "" {
+		cfg.SecretAccessKey = prev.SecretAccessKey
+	}
+	cfg = backup.NormalizeConfig(cfg)
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	if err := s.platform.SetSetting(backup.ConfigSettingKey, string(data)); err != nil {
+		s.serverError(w, err)
+		return
+	}
+	if err := backup.ApplyRetention(s.platformBackupDir(), cfg.KeepLocal); err != nil {
+		s.serverError(w, err)
+		return
+	}
+	s.sess.setSettingsFlash(sessionToken(r), settingsFlash{Flash: "数据备份设置已保存。"})
+	http.Redirect(w, r, "/admin/backups", http.StatusSeeOther)
+}
+
+func (s *Server) adminCreateBackup(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.checkCSRF(w, r); !ok {
+		return
+	}
+	if s.platform == nil {
+		http.NotFound(w, r)
+		return
+	}
+	opts, err := s.platformBackupOptions()
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	rec, err := backup.CreatePlatformBackup(opts)
+	if err != nil {
+		s.sess.setSettingsFlash(sessionToken(r), settingsFlash{FormErr: "创建备份失败：" + err.Error()})
+		http.Redirect(w, r, "/admin/backups", http.StatusSeeOther)
+		return
+	}
+	cfg := backup.ParseConfig(s.platform.Setting(backup.ConfigSettingKey))
+	flash := "已创建数据备份：" + rec.Name
+	if cfg.AutoSync && cfg.RemoteConfigured() {
+		if status, err := s.syncBackupRecord(r.Context(), cfg, rec); err != nil {
+			flash += "；远程同步失败：" + err.Error()
+			rec.Remote = status
+			_ = backup.WriteRecord(s.platformBackupDir(), rec)
+		} else {
+			flash += "；已同步到 OSS。"
+			rec.Remote = status
+			_ = backup.WriteRecord(s.platformBackupDir(), rec)
+		}
+	}
+	if err := backup.ApplyRetention(s.platformBackupDir(), cfg.KeepLocal); err != nil {
+		s.serverError(w, err)
+		return
+	}
+	s.sess.setSettingsFlash(sessionToken(r), settingsFlash{Flash: flash})
+	http.Redirect(w, r, "/admin/backups", http.StatusSeeOther)
+}
+
+func (s *Server) adminSyncBackup(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.checkCSRF(w, r); !ok {
+		return
+	}
+	if s.platform == nil {
+		http.NotFound(w, r)
+		return
+	}
+	name := r.PathValue("name")
+	rec, err := backup.ReadRecord(s.platformBackupDir(), name)
+	if err != nil {
+		s.sess.setSettingsFlash(sessionToken(r), settingsFlash{FormErr: "读取备份记录失败：" + err.Error()})
+		http.Redirect(w, r, "/admin/backups", http.StatusSeeOther)
+		return
+	}
+	cfg := backup.ParseConfig(s.platform.Setting(backup.ConfigSettingKey))
+	status, err := s.syncBackupRecord(r.Context(), cfg, rec)
+	rec.Remote = status
+	_ = backup.WriteRecord(s.platformBackupDir(), rec)
+	if err != nil {
+		s.sess.setSettingsFlash(sessionToken(r), settingsFlash{FormErr: "远程同步失败：" + err.Error()})
+	} else {
+		s.sess.setSettingsFlash(sessionToken(r), settingsFlash{Flash: "备份已同步到 OSS：" + status.ObjectKey})
+	}
+	http.Redirect(w, r, "/admin/backups", http.StatusSeeOther)
+}
+
+func (s *Server) adminDownloadBackup(w http.ResponseWriter, r *http.Request) {
+	if s.platform == nil {
+		http.NotFound(w, r)
+		return
+	}
+	name := r.PathValue("name")
+	if !backup.ValidName(name) {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+filepath.Base(name)+`"`)
+	http.ServeFile(w, r, backup.ZipPath(s.platformBackupDir(), name))
+}
+
+func (s *Server) adminDeleteBackup(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.checkCSRF(w, r); !ok {
+		return
+	}
+	if s.platform == nil {
+		http.NotFound(w, r)
+		return
+	}
+	name := r.PathValue("name")
+	if err := backup.DeleteRecord(s.platformBackupDir(), name); err != nil {
+		s.sess.setSettingsFlash(sessionToken(r), settingsFlash{FormErr: "删除备份失败：" + err.Error()})
+	} else {
+		s.sess.setSettingsFlash(sessionToken(r), settingsFlash{Flash: "备份已删除。"})
+	}
+	http.Redirect(w, r, "/admin/backups", http.StatusSeeOther)
+}
+
+func (s *Server) syncBackupRecord(parent context.Context, cfg backup.Config, rec *backup.BackupRecord) (*backup.RemoteStatus, error) {
+	ctx, cancel := context.WithTimeout(parent, 5*time.Minute)
+	defer cancel()
+	return backup.SyncToS3(ctx, cfg, s.platformBackupDir(), rec)
+}
+
+func (s *Server) platformBackupOptions() (backup.Options, error) {
+	if s.platform == nil {
+		return backup.Options{}, fmt.Errorf("未启用平台模式")
+	}
+	sites, err := s.platform.Sites()
+	if err != nil {
+		return backup.Options{}, err
+	}
+	archived, err := s.platform.ArchivedSites()
+	if err != nil {
+		return backup.Options{}, err
+	}
+	return backup.Options{
+		BackupDir:    s.platformBackupDir(),
+		SystemDBPath: s.platform.Path(),
+		Sites:        sites,
+		Archived:     archived,
+	}, nil
+}
+
+func (s *Server) platformBackupDir() string {
+	if s.platform != nil {
+		if systemPath := strings.TrimSpace(s.platform.Path()); systemPath != "" {
+			return filepath.Join(filepath.Dir(systemPath), "backups")
+		}
+	}
+	if s.uploadDir != "" {
+		return filepath.Join(filepath.Dir(s.uploadDir), "backups")
+	}
+	return filepath.Join("data", "backups")
 }
 
 func (s *Server) adminUpdates(w http.ResponseWriter, r *http.Request) {
