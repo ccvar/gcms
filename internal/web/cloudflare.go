@@ -285,6 +285,19 @@ func cloudflareStatusPath() string {
 	return filepath.Join(upgradeRoot(), "run", "cloudflare-deploy.json")
 }
 
+func cloudflareStatusPathForRuntime(rt *SiteRuntime) string {
+	if rt == nil || rt.Site == nil || rt.Site.IsDefault {
+		return cloudflareStatusPath()
+	}
+	if dbPath := strings.TrimSpace(rt.Site.DBPath); dbPath != "" {
+		return filepath.Join(filepath.Dir(dbPath), "run", "cloudflare-deploy.json")
+	}
+	if uploadDir := strings.TrimSpace(rt.UploadDir); uploadDir != "" {
+		return filepath.Join(filepath.Dir(uploadDir), "run", "cloudflare-deploy.json")
+	}
+	return cloudflareStatusPath()
+}
+
 func cloudflareStatusHistory(st *CloudflareStatus) []CloudflareStatusHistory {
 	if st == nil || len(st.History) == 0 {
 		return nil
@@ -483,10 +496,16 @@ func normalizeCloudflareDomains(domains []CloudflareDomain) []CloudflareDomain {
 }
 
 func cloudflareStatusFailed(cfg CloudflareConfig, step, msg string) CloudflareStatus {
+	return cloudflareStatusFailedFromPrevious(readCloudflareStatus(), cfg, step, msg)
+}
+
+func cloudflareStatusFailedFromPrevious(prev *CloudflareStatus, cfg CloudflareConfig, step, msg string) CloudflareStatus {
 	if strings.TrimSpace(msg) == "" {
 		msg = "Cloudflare 部署失败。"
 	}
-	prev := readCloudflareStatus()
+	if prev == nil {
+		prev = readCloudflareStatus()
+	}
 	failedStep := strings.TrimSpace(step)
 	if failedStep == "" || failedStep == "failed" {
 		failedStep = strings.TrimSpace(prev.Step)
@@ -894,11 +913,44 @@ func (s *Server) applyCloudflareRequestDefaults(r *http.Request, cfg *Cloudflare
 }
 
 func readCloudflareStatus() *CloudflareStatus {
+	return readCloudflareStatusFile(cloudflareStatusPath())
+}
+
+func (s *Server) cloudflareStatusPath() string {
+	if s != nil && strings.TrimSpace(s.cloudflareStatusFile) != "" {
+		return strings.TrimSpace(s.cloudflareStatusFile)
+	}
+	return cloudflareStatusPath()
+}
+
+func (s *Server) readCloudflareStatus() *CloudflareStatus {
+	return readCloudflareStatusFile(s.cloudflareStatusPath())
+}
+
+func (s *Server) writeCloudflareStatus(st CloudflareStatus) {
+	writeCloudflareStatusFile(s.cloudflareStatusPath(), st)
+}
+
+func (s *Server) withCloudflareHistory(st CloudflareStatus, action string) CloudflareStatus {
+	prev := s.readCloudflareStatus()
+	st.History = appendCloudflareHistory(cloudflareStatusHistory(prev), cloudflareHistoryEntry(st, action))
+	return st
+}
+
+func (s *Server) cloudflareStatusFailed(cfg CloudflareConfig, step, msg string) CloudflareStatus {
+	return cloudflareStatusFailedFromPrevious(s.readCloudflareStatus(), cfg, step, msg)
+}
+
+func readCloudflareStatusFile(path string) *CloudflareStatus {
 	st := &CloudflareStatus{
 		Status:  "idle",
 		Message: "暂无 Cloudflare 部署任务",
 	}
-	if data, err := os.ReadFile(cloudflareStatusPath()); err == nil && len(data) > 0 {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		path = cloudflareStatusPath()
+	}
+	if data, err := os.ReadFile(path); err == nil && len(data) > 0 {
 		_ = json.Unmarshal(data, st)
 		if st.Status == "" {
 			st.Status = "idle"
@@ -914,7 +966,7 @@ func readCloudflareStatus() *CloudflareStatus {
 		st.Status = "failed"
 		st.Step = "timeout"
 		st.Message = "上一次部署任务长时间没有更新，可能已被中断。请检查 Token、前台域名和 Cloudflare 权限后重新部署。"
-		writeCloudflareStatus(*st)
+		writeCloudflareStatusFile(path, *st)
 	}
 	st.Running = st.Status == "running"
 	return st
@@ -932,8 +984,16 @@ func cloudflareStatusStale(st *CloudflareStatus) bool {
 }
 
 func writeCloudflareStatus(st CloudflareStatus) {
+	writeCloudflareStatusFile(cloudflareStatusPath(), st)
+}
+
+func writeCloudflareStatusFile(path string, st CloudflareStatus) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		path = cloudflareStatusPath()
+	}
 	if st.History == nil {
-		if data, err := os.ReadFile(cloudflareStatusPath()); err == nil && len(data) > 0 {
+		if data, err := os.ReadFile(path); err == nil && len(data) > 0 {
 			var prev CloudflareStatus
 			if err := json.Unmarshal(data, &prev); err == nil {
 				st.History = cloudflareStatusHistory(&prev)
@@ -942,15 +1002,15 @@ func writeCloudflareStatus(st CloudflareStatus) {
 	}
 	st.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	st.Running = st.Status == "running"
-	_ = os.MkdirAll(filepath.Dir(cloudflareStatusPath()), 0o755)
+	_ = os.MkdirAll(filepath.Dir(path), 0o755)
 	if data, err := json.MarshalIndent(st, "", "  "); err == nil {
-		_ = os.WriteFile(cloudflareStatusPath(), append(data, '\n'), 0o644)
+		_ = os.WriteFile(path, append(data, '\n'), 0o644)
 	}
 }
 
 func (s *Server) cloudflareView() *CloudflareView {
 	cfg := s.cloudflareConfig()
-	st := readCloudflareStatus()
+	st := s.readCloudflareStatus()
 	st.DeployMode = cfg.DeployMode
 	st.WorkerName = cfg.WorkerName
 	st.PagesProjectName = cfg.PagesProjectName
@@ -1021,7 +1081,7 @@ func (s *Server) cloudflareStatusWithDNSCheck(ctx context.Context) *CloudflareSt
 	}
 	st.DNSStatus = result.Status
 	st.DNSMessage = result.Message
-	writeCloudflareStatus(*st)
+	s.writeCloudflareStatus(*st)
 	return st
 }
 
@@ -1425,12 +1485,12 @@ func (s *Server) adminSaveCloudflareSync(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) queueCloudflareDeploy(cfg CloudflareConfig) error {
-	st := readCloudflareStatus()
+	st := s.readCloudflareStatus()
 	if st.Running {
 		return errors.New("已有 Cloudflare 部署任务正在运行。")
 	}
 	published := cloudflareStatusPublished(st)
-	writeCloudflareStatus(CloudflareStatus{
+	s.writeCloudflareStatus(CloudflareStatus{
 		Status:           "running",
 		Step:             "queued",
 		Message:          "部署任务已启动，正在连接 Cloudflare。",
@@ -1450,25 +1510,25 @@ func (s *Server) queueCloudflareDeploy(cfg CloudflareConfig) error {
 	go func() {
 		defer func() {
 			if v := recover(); v != nil {
-				writeCloudflareStatus(cloudflareStatusFailed(cfg, "failed", fmt.Sprintf("Cloudflare 部署任务异常中断：%v", v)))
+				s.writeCloudflareStatus(s.cloudflareStatusFailed(cfg, "failed", fmt.Sprintf("Cloudflare 部署任务异常中断：%v", v)))
 			}
 		}()
 		ctx, cancel := context.WithTimeout(context.Background(), cloudflareAPITimeout)
 		defer cancel()
 		if err := s.deployCloudflare(ctx, cfg); err != nil {
-			writeCloudflareStatus(cloudflareStatusFailed(cfg, "failed", err.Error()))
+			s.writeCloudflareStatus(s.cloudflareStatusFailed(cfg, "failed", err.Error()))
 		}
 	}()
 	return nil
 }
 
 func (s *Server) queueCloudflareUnpublish(cfg CloudflareConfig) error {
-	st := readCloudflareStatus()
+	st := s.readCloudflareStatus()
 	if st.Running {
 		return errors.New("已有 Cloudflare 部署任务正在运行。")
 	}
 	published := cloudflareStatusPublished(st)
-	writeCloudflareStatus(CloudflareStatus{
+	s.writeCloudflareStatus(CloudflareStatus{
 		Status:           "running",
 		Step:             "route",
 		Message:          "正在取消 Cloudflare 公开入口绑定。",
@@ -1488,13 +1548,13 @@ func (s *Server) queueCloudflareUnpublish(cfg CloudflareConfig) error {
 	go func() {
 		defer func() {
 			if v := recover(); v != nil {
-				writeCloudflareStatus(cloudflareStatusFailed(cfg, "failed", fmt.Sprintf("Cloudflare 取消部署异常中断：%v", v)))
+				s.writeCloudflareStatus(s.cloudflareStatusFailed(cfg, "failed", fmt.Sprintf("Cloudflare 取消部署异常中断：%v", v)))
 			}
 		}()
 		ctx, cancel := context.WithTimeout(context.Background(), cloudflareAPITimeout)
 		defer cancel()
 		if err := s.unpublishCloudflare(ctx, cfg); err != nil {
-			writeCloudflareStatus(cloudflareStatusFailed(cfg, "failed", err.Error()))
+			s.writeCloudflareStatus(s.cloudflareStatusFailed(cfg, "failed", err.Error()))
 		}
 	}()
 	return nil
@@ -1863,7 +1923,7 @@ func (s *Server) adminCloudflareReset(w http.ResponseWriter, r *http.Request) {
 		s.showSettings(w, r, "cloudflare", "", err.Error())
 		return
 	}
-	writeCloudflareStatus(CloudflareStatus{Status: "idle", Step: "", Message: "Cloudflare 绑定已清空。", History: []CloudflareStatusHistory{}})
+	s.writeCloudflareStatus(CloudflareStatus{Status: "idle", Step: "", Message: "Cloudflare 绑定已清空。", History: []CloudflareStatusHistory{}})
 	if jsonReq {
 		writeJSON(w, http.StatusOK, s.cloudflareJSONPayload(r, true, "Cloudflare 绑定已清空。"))
 		return
@@ -1903,11 +1963,11 @@ func (s *Server) clearCloudflareBinding() error {
 }
 
 func (s *Server) deployCloudflare(ctx context.Context, cfg CloudflareConfig) error {
-	initialStatus := readCloudflareStatus()
+	initialStatus := s.readCloudflareStatus()
 	wasPublished := cloudflareStatusPublished(initialStatus)
 	lastDeployAt := initialStatus.LastDeployAt
 	setStep := func(step, msg string) {
-		writeCloudflareStatus(CloudflareStatus{
+		s.writeCloudflareStatus(CloudflareStatus{
 			Status:           "running",
 			Step:             step,
 			Message:          msg,
@@ -1955,7 +2015,7 @@ func (s *Server) deployCloudflare(ctx context.Context, cfg CloudflareConfig) err
 		}
 		now := time.Now().UTC().Format(time.RFC3339)
 		s.clearCloudflareSyncPending()
-		writeCloudflareStatus(withCloudflareHistory(CloudflareStatus{
+		s.writeCloudflareStatus(s.withCloudflareHistory(CloudflareStatus{
 			Status:           "success",
 			Step:             "done",
 			Message:          fmt.Sprintf("Cloudflare Pages 静态站已部署：%d 个文件已上传，项目 %s 已发布。", exported.Count, cfg.PagesProjectName),
@@ -2009,7 +2069,7 @@ func (s *Server) deployCloudflare(ctx context.Context, cfg CloudflareConfig) err
 		dnsResult = cloudflareDNSManualResult("静态站已发布，但域名 DNS 尚未确认接管。")
 	}
 	s.clearCloudflareSyncPending()
-	writeCloudflareStatus(withCloudflareHistory(CloudflareStatus{
+	s.writeCloudflareStatus(s.withCloudflareHistory(CloudflareStatus{
 		Status:           "success",
 		Step:             "done",
 		Message:          fmt.Sprintf("Cloudflare 静态站已部署：%d 个文件已上传，前台由 Worker Assets 托管。", exported.Count),
@@ -2059,8 +2119,8 @@ func (s *Server) scheduleCloudflareSync(reason string) {
 	}
 	msg := reason
 	s.cloudflareTimer = time.AfterFunc(25*time.Second, func() {
-		prev := readCloudflareStatus()
-		writeCloudflareStatus(CloudflareStatus{
+		prev := s.readCloudflareStatus()
+		s.writeCloudflareStatus(CloudflareStatus{
 			Status:           "running",
 			Step:             "queued",
 			Message:          msg,
@@ -2083,7 +2143,7 @@ func (s *Server) scheduleCloudflareSync(reason string) {
 		ctx, cancel := context.WithTimeout(context.Background(), cloudflareAPITimeout)
 		defer cancel()
 		if err := s.deployCloudflare(ctx, cfg); err != nil {
-			writeCloudflareStatus(cloudflareStatusFailed(cfg, "failed", err.Error()))
+			s.writeCloudflareStatus(s.cloudflareStatusFailed(cfg, "failed", err.Error()))
 		}
 	})
 	s.cloudflareMu.Unlock()
@@ -2135,7 +2195,7 @@ func (s *Server) runCloudflareDailySync(reason string) {
 	if !cfg.AutoSync || !cfg.configured() || normalizeCloudflareSyncMode(cfg.SyncMode) != cloudflareSyncModeDaily || !cfg.SyncPending {
 		return
 	}
-	prev := readCloudflareStatus()
+	prev := s.readCloudflareStatus()
 	if prev.Running {
 		s.queueCloudflareDailySync(cfg, reason)
 		return
@@ -2143,7 +2203,7 @@ func (s *Server) runCloudflareDailySync(reason string) {
 	if strings.TrimSpace(reason) == "" {
 		reason = "有内容变化，正在按每天同步规则重新发布 Cloudflare 静态站。"
 	}
-	writeCloudflareStatus(CloudflareStatus{
+	s.writeCloudflareStatus(CloudflareStatus{
 		Status:           "running",
 		Step:             "queued",
 		Message:          reason,
@@ -2168,7 +2228,7 @@ func (s *Server) runCloudflareDailySync(reason string) {
 	ctx, cancel := context.WithTimeout(context.Background(), cloudflareAPITimeout)
 	defer cancel()
 	if err := s.deployCloudflare(ctx, cfg); err != nil {
-		writeCloudflareStatus(cloudflareStatusFailed(cfg, "failed", err.Error()))
+		s.writeCloudflareStatus(s.cloudflareStatusFailed(cfg, "failed", err.Error()))
 		s.queueCloudflareDailySync(cfg, reason)
 	}
 }
@@ -2186,7 +2246,7 @@ func (s *Server) resumeCloudflareSync() {
 }
 
 func (s *Server) purgeCloudflareCache(ctx context.Context, cfg CloudflareConfig, message string) error {
-	prev := readCloudflareStatus()
+	prev := s.readCloudflareStatus()
 	var err error
 	cfg, err = s.prepareCloudflareAPIConfig(ctx, cfg)
 	if err != nil {
@@ -2199,7 +2259,7 @@ func (s *Server) purgeCloudflareCache(ctx context.Context, cfg CloudflareConfig,
 		return fmt.Errorf("清理 Cloudflare 缓存失败：%w", err)
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	writeCloudflareStatus(withCloudflareHistory(CloudflareStatus{
+	s.writeCloudflareStatus(s.withCloudflareHistory(CloudflareStatus{
 		Status:           "success",
 		Step:             "purge",
 		Message:          message,
@@ -2244,7 +2304,7 @@ func (s *Server) unpublishCloudflare(ctx context.Context, cfg CloudflareConfig) 
 		lastPurgeAt = time.Now().UTC().Format(time.RFC3339)
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	writeCloudflareStatus(withCloudflareHistory(CloudflareStatus{
+	s.writeCloudflareStatus(s.withCloudflareHistory(CloudflareStatus{
 		Status:           "success",
 		Step:             "done",
 		Message:          "Cloudflare 公开入口已取消；项目和静态资源仍保留在 Cloudflare，DNS 未被删除。",

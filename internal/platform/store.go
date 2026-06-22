@@ -18,7 +18,8 @@ import (
 )
 
 type Store struct {
-	db *sql.DB
+	db   *sql.DB
+	path string
 
 	pwMu        sync.Mutex
 	pwHash      string
@@ -177,12 +178,19 @@ func Open(path string) (*Store, error) {
 	if err := db.Ping(); err != nil {
 		return nil, err
 	}
-	s := &Store{db: db}
+	s := &Store{db: db, path: strings.TrimSpace(path)}
 	if _, err := s.db.Exec(schema); err != nil {
 		_ = s.Close()
 		return nil, fmt.Errorf("平台数据库迁移失败: %w", err)
 	}
 	return s, nil
+}
+
+func (s *Store) Path() string {
+	if s == nil {
+		return ""
+	}
+	return s.path
 }
 
 func (s *Store) Close() error {

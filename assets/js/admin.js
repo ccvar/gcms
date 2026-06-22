@@ -2012,6 +2012,16 @@
     });
   })();
 
+  /* ---------- 平台设置子导航：移动端把当前项带入视野 ---------- */
+  (function () {
+    var subnav = document.querySelector(".platform-settings-subnav");
+    var active = subnav && subnav.querySelector(".active");
+    if (!subnav || !active || subnav.scrollWidth <= subnav.clientWidth) return;
+    requestAnimationFrame(function () {
+      active.scrollIntoView({ block: "nearest", inline: "nearest" });
+    });
+  })();
+
   /* ---------- 默认密码提示：关闭（本会话内不再提示，下次登录重新出现） ---------- */
   (function () {
     var btn = document.querySelector("[data-pw-dismiss]");

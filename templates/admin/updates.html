@@ -18,6 +18,7 @@
     <a href="/admin/security">{{template "platform-settings-icon-lock"}}<span>{{.Admin.T "admin.security.title" "安全"}}</span></a>
     <a href="/admin/admin-i18n">{{template "platform-settings-icon-type"}}<span>{{.Admin.T "admin.settings.admin_i18n.title" "界面文字"}}</span></a>
     <a class="active" href="/admin/updates" aria-current="page">{{template "platform-settings-icon-update"}}<span>{{.Admin.T "admin.settings.menu.updates" "系统更新"}}</span></a>
+    <a href="/admin/backups">{{template "platform-settings-icon-backup"}}<span>{{.Admin.T "admin.backups.title" "数据备份"}}</span></a>
     <a href="/admin/archived-sites">{{template "platform-settings-icon-archive"}}<span>{{.Admin.T "admin.archived_sites.title" "归档站点"}}</span></a>
   </nav>
 
@@ -225,4 +226,5 @@
 {{define "platform-settings-icon-lock"}}<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>{{end}}
 {{define "platform-settings-icon-type"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7V5h16v2"/><path d="M9 20h6"/><path d="M12 5v15"/></svg>{{end}}
 {{define "platform-settings-icon-update"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>{{end}}
+{{define "platform-settings-icon-backup"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v12H4z"/><path d="M8 10h8"/><path d="M8 14h5"/><path d="M7 6V4h10v2"/></svg>{{end}}
 {{define "platform-settings-icon-archive"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16"/><path d="M6 7v13h12V7"/><path d="M9 11h6"/><path d="M8 4h8l1 3H7z"/></svg>{{end}}

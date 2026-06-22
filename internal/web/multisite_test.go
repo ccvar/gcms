@@ -450,8 +450,40 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 	if platformSettingsPage.Code != http.StatusOK {
 		t.Fatalf("platform settings status = %d, body = %s", platformSettingsPage.Code, platformSettingsPage.Body.String())
 	}
-	if body := platformSettingsPage.Body.String(); !strings.Contains(body, `href="/admin/security"`) || !strings.Contains(body, `href="/admin/updates"`) || !strings.Contains(body, `href="/admin/admin-i18n"`) || !strings.Contains(body, `href="/admin/archived-sites"`) || strings.Contains(body, `href="/admin/posts"`) {
+	if body := platformSettingsPage.Body.String(); !strings.Contains(body, `href="/admin/security"`) || !strings.Contains(body, `href="/admin/updates"`) || !strings.Contains(body, `href="/admin/admin-i18n"`) || !strings.Contains(body, `href="/admin/backups"`) || !strings.Contains(body, `href="/admin/archived-sites"`) || strings.Contains(body, `href="/admin/posts"`) {
 		t.Fatalf("platform settings page did not render platform setting entries")
+	}
+
+	backupsPage := httptest.NewRecorder()
+	backupsReq := httptest.NewRequest(http.MethodGet, "https://platform.test/admin/backups", nil)
+	backupsReq.AddCookie(loginCookie)
+	h.ServeHTTP(backupsPage, backupsReq)
+	if backupsPage.Code != http.StatusOK {
+		t.Fatalf("backups page status = %d, body = %s", backupsPage.Code, backupsPage.Body.String())
+	}
+	if body := backupsPage.Body.String(); !strings.Contains(body, `action="/admin/backups"`) || !strings.Contains(body, `action="/admin/backups/config"`) || !strings.Contains(body, "S3-Compatible") || strings.Contains(body, `href="/admin/posts"`) {
+		t.Fatalf("backups page did not render platform backup controls")
+	}
+	createBackup := postPlatformForm("/admin/backups", nil)
+	if createBackup.Code != http.StatusSeeOther || createBackup.Header().Get("Location") != "/admin/backups" {
+		t.Fatalf("create backup status/location = %d %q", createBackup.Code, createBackup.Header().Get("Location"))
+	}
+	backupsDir := filepath.Join(dir, "backups")
+	entries, err := os.ReadDir(backupsDir)
+	if err != nil {
+		t.Fatalf("read backups dir: %v", err)
+	}
+	var hasZip, hasRecord bool
+	for _, entry := range entries {
+		if strings.HasSuffix(entry.Name(), ".zip") {
+			hasZip = true
+		}
+		if strings.HasSuffix(entry.Name(), ".json") {
+			hasRecord = true
+		}
+	}
+	if !hasZip || !hasRecord {
+		t.Fatalf("backup did not create zip and record in %s: zip=%v record=%v entries=%v", backupsDir, hasZip, hasRecord, entries)
 	}
 
 	securityPage := httptest.NewRecorder()
