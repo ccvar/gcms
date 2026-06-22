@@ -69,6 +69,24 @@ func (s *Server) adminDownloadAutomationSkill(w http.ResponseWriter, r *http.Req
 	s.writeAutomationSkillZip(w, opts)
 }
 
+func (s *Server) adminDownloadAutomationStarter(w http.ResponseWriter, r *http.Request) {
+	sess, _ := s.currentSession(r)
+	opts := automationSkillOptions{apiBase: s.automationBaseURL(r, sess.currentSiteID)}
+	if r.Method == http.MethodPost {
+		if _, ok := s.checkCSRF(w, r); !ok {
+			return
+		}
+		opts.token = strings.TrimSpace(r.FormValue("token"))
+		opts.name = strings.TrimSpace(r.FormValue("name"))
+		opts.scopes = strings.TrimSpace(r.FormValue("scopes"))
+		if opts.token == "" || !strings.HasPrefix(opts.token, "gcms_") {
+			http.Error(w, "访问密钥无效", http.StatusBadRequest)
+			return
+		}
+	}
+	s.writeAutomationStarterZip(w, opts)
+}
+
 func (s *Server) writeAutomationSkillZip(w http.ResponseWriter, opts automationSkillOptions) {
 	files, err := automationSkillFiles(opts)
 	if err != nil {
@@ -124,10 +142,84 @@ func automationSkillFiles(opts automationSkillOptions) ([]automationSkillFile, e
 	return files, nil
 }
 
+func (s *Server) writeAutomationStarterZip(w http.ResponseWriter, opts automationSkillOptions) {
+	files, err := automationStarterFiles(opts)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for _, file := range files {
+		h := &zip.FileHeader{Name: file.name, Method: zip.Deflate}
+		h.SetMode(0o644)
+		fw, err := zw.CreateHeader(h)
+		if err != nil {
+			_ = zw.Close()
+			s.serverError(w, err)
+			return
+		}
+		if _, err := fw.Write([]byte(file.body)); err != nil {
+			_ = zw.Close()
+			s.serverError(w, err)
+			return
+		}
+	}
+	if err := zw.Close(); err != nil {
+		s.serverError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", `attachment; filename="gcms-site-starter-kit.zip"`)
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(buf.Bytes())
+}
+
+func automationStarterFiles(opts automationSkillOptions) ([]automationSkillFile, error) {
+	spec, err := json.MarshalIndent(automationOpenAPISpec(opts.apiBase), "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	connection, err := json.MarshalIndent(map[string]any{
+		"api_base": opts.apiBase,
+		"token":    nonEmpty(opts.token, "gcms_xxx"),
+		"scopes":   opts.scopes,
+		"note":     "真实密钥只放在本地环境或受信任的 AI 编程工具里，不要发到普通聊天窗口。",
+	}, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	files := []automationSkillFile{
+		{name: "README.md", body: automationStarterReadme(opts)},
+		{name: "gcms-site-starter/给AI的任务说明.md", body: automationStarterBriefMarkdown(opts)},
+		{name: "gcms-site-starter/SKILL.md", body: automationStarterSkillMarkdown(opts.apiBase)},
+		{name: "gcms-site-starter/站点需求模板.md", body: automationStarterRequirementsTemplate()},
+		{name: "gcms-site-starter/工作流.md", body: automationStarterWorkflowMarkdown()},
+		{name: "gcms-site-starter/示例提示词.md", body: automationStarterPromptExamples(opts)},
+		{name: "gcms-site-starter/connection.json", body: string(connection) + "\n"},
+		{name: "gcms-site-starter/references/openapi.json", body: string(spec) + "\n"},
+	}
+	if opts.token != "" {
+		files = append(files, automationSkillFile{name: "gcms-site-starter/.env", body: automationSkillEnv(opts.apiBase, opts.token)})
+	} else {
+		files = append(files, automationSkillFile{name: "gcms-site-starter/.env.example", body: automationSkillEnv(opts.apiBase, "gcms_xxx")})
+	}
+	return files, nil
+}
+
 func automationOpenAPISpec(apiBase string) map[string]any {
 	paths := map[string]any{
 		"/languages": map[string]any{
 			"get": automationLanguagesOperation(),
+		},
+		"/site-profile": map[string]any{
+			"get":   automationSiteProfileGetOperation(),
+			"patch": automationSiteProfileUpdateOperation(),
+		},
+		"/navigation": map[string]any{
+			"get":   automationNavigationGetOperation(),
+			"patch": automationNavigationUpdateOperation(),
 		},
 		"/media": map[string]any{
 			"post": automationMediaUploadOperation(),
@@ -136,7 +228,11 @@ func automationOpenAPISpec(apiBase string) map[string]any {
 	for _, col := range automationCollections {
 		if col.path == "posts" || col.path == "links" {
 			paths["/"+col.path+"/categories"] = map[string]any{
-				"get": automationCategoryListOperation(col),
+				"get":  automationCategoryListOperation(col),
+				"post": automationCategoryCreateOperation(col),
+			}
+			paths["/"+col.path+"/categories/{id}"] = map[string]any{
+				"patch": automationCategoryUpdateOperation(col),
 			}
 		}
 		paths["/"+col.path] = map[string]any{
@@ -161,7 +257,7 @@ func automationOpenAPISpec(apiBase string) map[string]any {
 		"info": map[string]any{
 			"title":       "GCMS Automation API",
 			"version":     "1.0.0",
-			"description": "开放语种、文章分类、链接分类读取、媒体上传、文章与链接草稿预览，以及文章、链接、页面的自动化接口。GCMS 不调用 AI API，外部 AI 工具或自动化程序使用访问密钥调用这里的接口。",
+			"description": "开放语种、站点文案、导航菜单、分类、媒体上传、文章与链接草稿预览，以及文章、链接、页面的自动化接口。GCMS 不调用 AI API，外部 AI 工具或自动化程序使用访问密钥调用这里的接口。",
 		},
 		"servers": []map[string]string{{"url": apiBase}},
 		"security": []map[string][]string{
@@ -189,6 +285,48 @@ func automationLanguagesOperation() map[string]any {
 	}
 }
 
+func automationSiteProfileGetOperation() map[string]any {
+	return map[string]any{
+		"summary":     "读取站点文案",
+		"description": "读取每个启用语种的站点名称、标语、描述、首页 Hero 文案、首页区块标题、页脚说明和默认作者。新站初始化时先读取再覆盖。",
+		"operationId": "getSiteProfile",
+		"tags":        []string{"站点初始化"},
+		"responses":   automationResponses("SiteProfileResponse"),
+	}
+}
+
+func automationSiteProfileUpdateOperation() map[string]any {
+	return map[string]any{
+		"summary":     "更新站点文案",
+		"description": "按语种更新站点基础文案和首页文案。可传单个语种对象，也可传 items 数组批量更新。默认语种的站点名称不能为空。",
+		"operationId": "updateSiteProfile",
+		"tags":        []string{"站点初始化"},
+		"requestBody": automationJSONBody("SiteProfilePatch"),
+		"responses":   automationResponses("SiteProfileResponse"),
+	}
+}
+
+func automationNavigationGetOperation() map[string]any {
+	return map[string]any{
+		"summary":     "读取导航菜单",
+		"description": "读取前台页眉导航的顺序、URL 和各语种显示文字。",
+		"operationId": "getNavigation",
+		"tags":        []string{"站点初始化"},
+		"responses":   automationResponses("NavigationResponse"),
+	}
+}
+
+func automationNavigationUpdateOperation() map[string]any {
+	return map[string]any{
+		"summary":     "更新导航菜单",
+		"description": "覆盖保存前台页眉导航。站内路径用 / 开头；外部链接必须使用完整 http://、https:// 或 mailto:。",
+		"operationId": "updateNavigation",
+		"tags":        []string{"站点初始化"},
+		"requestBody": automationJSONBody("NavigationInput"),
+		"responses":   automationResponses("NavigationResponse"),
+	}
+}
+
 func automationMediaUploadOperation() map[string]any {
 	return map[string]any{
 		"summary":     "上传媒体",
@@ -197,6 +335,29 @@ func automationMediaUploadOperation() map[string]any {
 		"tags":        []string{"媒体"},
 		"requestBody": automationMultipartFileBody(),
 		"responses":   automationResponses("MediaUploadResponse"),
+	}
+}
+
+func automationCategoryCreateOperation(col automationCollection) map[string]any {
+	return map[string]any{
+		"summary":     "创建" + col.label + "分类",
+		"description": "新站初始化时可按语种创建分类。slug 留空时会根据分类名生成，并自动避开重复。",
+		"operationId": "create" + automationOperationSuffix(col.kind+"Category"),
+		"tags":        []string{col.label},
+		"requestBody": automationJSONBody("CategoryInput"),
+		"responses":   automationResponses("CategoryItemResponse"),
+	}
+}
+
+func automationCategoryUpdateOperation(col automationCollection) map[string]any {
+	return map[string]any{
+		"summary":     "更新" + col.label + "分类",
+		"description": "修改分类名称、slug、描述或互译分组。不要删除分类；如不确定分类 ID，先调用分类列表接口。",
+		"operationId": "update" + automationOperationSuffix(col.kind+"Category"),
+		"tags":        []string{col.label},
+		"parameters":  []map[string]any{automationIDParam()},
+		"requestBody": automationJSONBody("CategoryInput"),
+		"responses":   automationResponses("CategoryItemResponse"),
 	}
 }
 
@@ -393,6 +554,97 @@ func automationOpenAPISchemas() map[string]any {
 				"count":       map[string]any{"type": "integer", "description": "该分类下已发布内容数量"},
 			},
 		},
+		"CategoryInput": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"lang":        map[string]any{"type": "string", "description": "分类语种，留空使用默认语种。"},
+				"slug":        map[string]any{"type": "string", "description": "留空时由名称自动生成；重复时会自动追加序号。"},
+				"name":        map[string]any{"type": "string"},
+				"description": map[string]any{"type": "string"},
+				"trans_group": map[string]any{"type": "string", "description": "多语种分类的关联分组。"},
+			},
+		},
+		"CategoryItemResponse": map[string]any{
+			"type":       "object",
+			"properties": map[string]any{"item": map[string]any{"$ref": "#/components/schemas/CategoryItem"}},
+		},
+		"SiteProfileResponse": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"default": map[string]any{"type": "string", "description": "默认语种。"},
+				"items":   map[string]any{"type": "array", "items": map[string]any{"$ref": "#/components/schemas/SiteProfileItem"}},
+			},
+		},
+		"SiteProfileItem": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"lang":                map[string]any{"type": "string"},
+				"name":                map[string]any{"type": "string", "description": "站点名称。"},
+				"tagline":             map[string]any{"type": "string", "description": "站点标语。"},
+				"description":         map[string]any{"type": "string", "description": "站点描述。"},
+				"keywords":            map[string]any{"type": "string"},
+				"hero_eyebrow":        map[string]any{"type": "string"},
+				"hero_title":          map[string]any{"type": "string"},
+				"hero_description":    map[string]any{"type": "string"},
+				"footer_note":         map[string]any{"type": "string"},
+				"home_featured_title": map[string]any{"type": "string"},
+				"home_links_title":    map[string]any{"type": "string"},
+				"home_latest_title":   map[string]any{"type": "string"},
+				"default_post_author": map[string]any{"type": "string"},
+				"default_link_author": map[string]any{"type": "string"},
+			},
+		},
+		"SiteProfilePatch": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"items": map[string]any{
+					"type":        "array",
+					"description": "批量更新多个语种。也可以直接在顶层传入单个语种字段。",
+					"items":       map[string]any{"$ref": "#/components/schemas/SiteProfileItem"},
+				},
+				"lang":                map[string]any{"type": "string"},
+				"name":                map[string]any{"type": "string"},
+				"tagline":             map[string]any{"type": "string"},
+				"description":         map[string]any{"type": "string"},
+				"keywords":            map[string]any{"type": "string"},
+				"hero_eyebrow":        map[string]any{"type": "string"},
+				"hero_title":          map[string]any{"type": "string"},
+				"hero_description":    map[string]any{"type": "string"},
+				"footer_note":         map[string]any{"type": "string"},
+				"home_featured_title": map[string]any{"type": "string"},
+				"home_links_title":    map[string]any{"type": "string"},
+				"home_latest_title":   map[string]any{"type": "string"},
+				"default_post_author": map[string]any{"type": "string"},
+				"default_link_author": map[string]any{"type": "string"},
+			},
+		},
+		"NavigationResponse": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"default":   map[string]any{"type": "string"},
+				"languages": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+				"items":     map[string]any{"type": "array", "items": map[string]any{"$ref": "#/components/schemas/NavigationItem"}},
+			},
+		},
+		"NavigationInput": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"items": map[string]any{"type": "array", "items": map[string]any{"$ref": "#/components/schemas/NavigationItem"}},
+			},
+			"required": []string{"items"},
+		},
+		"NavigationItem": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"url": map[string]any{"type": "string", "description": "站内路径（/ 开头）或完整外部链接。"},
+				"labels": map[string]any{
+					"type":                 "object",
+					"description":          "各语种菜单文字，例如 {\"zh\":\"首页\",\"en\":\"Home\"}。",
+					"additionalProperties": map[string]any{"type": "string"},
+				},
+			},
+			"required": []string{"url", "labels"},
+		},
 		"MediaUploadResponse": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -528,6 +780,26 @@ func automationScopeBadges(scopes string) []string {
 	if m["media:write"] {
 		out = append(out, "媒体：上传")
 	}
+	if m[apiScopeSiteRead] || m[apiScopeSiteWrite] {
+		actions := []string{}
+		if m[apiScopeSiteRead] {
+			actions = append(actions, "读取")
+		}
+		if m[apiScopeSiteWrite] {
+			actions = append(actions, "修改")
+		}
+		out = append(out, "站点文案："+strings.Join(actions, "、"))
+	}
+	if m[apiScopeNavigationRead] || m[apiScopeNavigationWrite] {
+		actions := []string{}
+		if m[apiScopeNavigationRead] {
+			actions = append(actions, "读取")
+		}
+		if m[apiScopeNavigationWrite] {
+			actions = append(actions, "修改")
+		}
+		out = append(out, "导航菜单："+strings.Join(actions, "、"))
+	}
 	if labels := automationActionLabels(m, "content"); len(labels) > 0 {
 		out = append(out, "全部内容："+strings.Join(labels, "、"))
 	}
@@ -550,6 +822,7 @@ func automationActionLabels(scopes map[string]bool, resource string) []string {
 	}{
 		{"read", "读取"},
 		{"categories", "获取分类"},
+		{"categories:write", "写分类"},
 		{"write", "写草稿"},
 		{"publish", "发布"},
 	} {
@@ -574,6 +847,26 @@ func automationScopeBadgesAdmin(scopes string, admin *i18n.AdminTr) []string {
 	}
 	if m["media:write"] {
 		out = append(out, adminUI(admin, "admin.settings.automation.media", "媒体")+colon+adminUI(admin, "admin.settings.automation.media_upload", "上传媒体"))
+	}
+	if m[apiScopeSiteRead] || m[apiScopeSiteWrite] {
+		labels := []string{}
+		if m[apiScopeSiteRead] {
+			labels = append(labels, adminUI(admin, "admin.settings.automation.read", "读取"))
+		}
+		if m[apiScopeSiteWrite] {
+			labels = append(labels, adminUI(admin, "admin.settings.automation.write", "修改"))
+		}
+		out = append(out, adminUI(admin, "admin.settings.automation.site_profile", "站点文案")+colon+strings.Join(labels, sep))
+	}
+	if m[apiScopeNavigationRead] || m[apiScopeNavigationWrite] {
+		labels := []string{}
+		if m[apiScopeNavigationRead] {
+			labels = append(labels, adminUI(admin, "admin.settings.automation.read", "读取"))
+		}
+		if m[apiScopeNavigationWrite] {
+			labels = append(labels, adminUI(admin, "admin.settings.automation.write", "修改"))
+		}
+		out = append(out, adminUI(admin, "admin.settings.automation.navigation", "导航菜单")+colon+strings.Join(labels, sep))
 	}
 	if labels := automationActionLabelsAdmin(m, "content", admin); len(labels) > 0 {
 		out = append(out, adminUI(admin, "admin.settings.automation.content", "全部内容")+colon+strings.Join(labels, sep))
@@ -611,6 +904,7 @@ func automationActionLabelsAdmin(scopes map[string]bool, resource string, admin 
 	}{
 		{"read", "admin.settings.automation.read", "读取"},
 		{"categories", "admin.settings.automation.read_categories", "获取分类"},
+		{"categories:write", "admin.settings.automation.write_categories", "写分类"},
 		{"write", "admin.settings.automation.write_draft", "写草稿"},
 		{"publish", "admin.settings.automation.publish", "发布"},
 	} {
@@ -619,6 +913,279 @@ func automationActionLabelsAdmin(scopes map[string]bool, resource string, admin 
 		}
 	}
 	return labels
+}
+
+func automationStarterReadme(opts automationSkillOptions) string {
+	lines := []string{
+		"# GCMS 新站 AI 技能包",
+		"",
+		"这个包用于让 Codex、Claude Code、Cursor 等 AI 编程工具帮你准备一个新站的基础内容。GCMS 不调用 AI API，AI 只通过你授权的自动化接口写入站点文案、导航、分类、页面、文章和链接。",
+		"",
+		"## 包内文件",
+		"",
+		"- `gcms-site-starter/.env` 或 `.env.example`：本地密钥文件，包含 `GCMS_API_BASE` 和 `GCMS_API_KEY`。",
+		"- `gcms-site-starter/给AI的任务说明.md`：交给 AI 读取的边界、流程和写入规则。",
+		"- `gcms-site-starter/SKILL.md`：支持 skills 的 AI 工具可读取的技能说明。",
+		"- `gcms-site-starter/站点需求模板.md`：给用户填写的网站方向、语种、栏目和语气要求。",
+		"- `gcms-site-starter/工作流.md`：从需求到写入草稿的标准步骤。",
+		"- `gcms-site-starter/示例提示词.md`：可以直接复制给 AI 的提示词。",
+		"- `gcms-site-starter/references/openapi.json`：接口描述文件。",
+		"",
+	}
+	if opts.token != "" {
+		name := strings.TrimSpace(opts.name)
+		if name == "" {
+			name = "新站初始化助手"
+		}
+		lines = append(lines,
+			"这个包已经写入访问密钥，只给「"+name+"」使用。",
+			"如果这个包或密钥泄露，请回到 GCMS 后台吊销对应的访问权限。",
+		)
+		if opts.scopes != "" {
+			lines = append(lines, "当前权限："+automationScopeLabels(strings.Split(opts.scopes, ",")))
+		}
+	} else {
+		lines = append(lines,
+			"这个包不包含访问密钥。请先在 GCMS 后台「设置 -> 自动化接口」创建访问权限，并勾选“新站初始化”相关权限，再把密钥填到 `.env`。",
+		)
+	}
+	lines = append(lines,
+		"",
+		"## 推荐使用方式",
+		"",
+		"1. 先填写 `站点需求模板.md`。",
+		"2. 把整个 `gcms-site-starter` 文件夹交给 AI 工具读取。",
+		"3. 让 AI 先给出站点规划，不要马上写入。",
+		"4. 规划确认后，让 AI 分批写入：站点文案 -> 导航 -> 分类 -> 页面/文章/链接。",
+		"5. 默认所有文章、页面和链接先保存为草稿；只有明确要求并且密钥有发布权限时才发布。",
+		"",
+		"接口地址："+opts.apiBase,
+		"",
+		"## 安全边界",
+		"",
+		"- 不要把真实密钥发到普通聊天窗口。",
+		"- 不允许修改管理员账号、密码、安全设置、系统更新、Cloudflare 配置或 API Key 本身。",
+		"- 不允许删除内容。",
+		"- 修改导航、站点文案或分类前，必须先读取现有配置。",
+		"- 写入后让 AI 汇总每个语种的变更、内容 ID、草稿 URL 或预览方式。",
+	)
+	return strings.Join(lines, "\n") + "\n"
+}
+
+func automationStarterBriefMarkdown(opts automationSkillOptions) string {
+	token := nonEmpty(opts.token, "gcms_xxx")
+	return strings.Join([]string{
+		"# 给 AI 的任务说明",
+		"",
+		"你是 GCMS 新站初始化助手。你的任务是根据用户提供的网站方向和启用语种，帮助准备一个可上线的基础内容站。",
+		"",
+		"## 连接方式",
+		"",
+		"- API Base: `" + opts.apiBase + "`",
+		"- API Key: `" + token + "`",
+		"- OpenAPI: `references/openapi.json`",
+		"- 优先读取 `.env` 或 `connection.json`，不要在普通回复中泄露密钥。",
+		"",
+		"## 你可以做什么",
+		"",
+		"- 读取启用语种。",
+		"- 读取和更新站点基础文案、Hero 文案、首页分区标题、默认作者。",
+		"- 读取和更新导航菜单。",
+		"- 创建或更新文章分类、链接分类。",
+		"- 创建文章、页面和链接草稿。",
+		"- 上传用户提供的图片，并把返回 URL 用于封面或正文。",
+		"",
+		"## 不能做什么",
+		"",
+		"- 不要修改安全、系统更新、Cloudflare 部署、评论配置、管理员账号和 API Key。",
+		"- 不要删除任何内容。",
+		"- 不要默认发布内容；除非用户明确说“可以发布”，并且当前密钥拥有发布权限。",
+		"- 不要把一个语种的正文机械翻译覆盖到其他语种；每个语种都要符合对应读者习惯。",
+		"",
+		"## 工作原则",
+		"",
+		"1. 先读取 `/languages`，确认默认语种和启用语种。",
+		"2. 先读取 `/site-profile`、`/navigation`、`/posts/categories`、`/links/categories`，了解当前状态。",
+		"3. 先输出站点内容规划，包含：定位、导航、首页文案、分类、页面、文章、链接、每个语种的差异。",
+		"4. 用户确认后再写入。",
+		"5. 写入内容时保持 `status: draft`。",
+		"6. 多语种内容使用同一个 `trans_group` 关联。",
+		"7. 每次批量写入后报告已创建或更新的 id、slug、语种和状态。",
+		"",
+		"## 推荐写入顺序",
+		"",
+		"1. `PATCH /site-profile` 写站点名、标语、描述、Hero、首页标题和默认作者。",
+		"2. `PATCH /navigation` 写菜单顺序和各语种菜单文字。",
+		"3. `POST /posts/categories` 和 `POST /links/categories` 建分类。",
+		"4. `POST /pages` 建首页以外的基础页面草稿。",
+		"5. `POST /posts` 建 6-12 篇基础文章草稿。",
+		"6. `POST /links` 建资源链接草稿。",
+		"7. 用列表接口复核缺项，再给用户检查清单。",
+	}, "\n") + "\n"
+}
+
+func automationStarterRequirementsTemplate() string {
+	return strings.Join([]string{
+		"# 站点需求模板",
+		"",
+		"把下面内容填给 AI。暂时不确定的地方可以写“不确定”，让 AI 先给建议。",
+		"",
+		"## 基础信息",
+		"",
+		"- 网站名称：",
+		"- 网站面向谁：",
+		"- 网站主要目的：产品官网 / 技术文档 / 资源导航 / 教程科普 / 企业展示 / 其他",
+		"- 希望用户看完后做什么：",
+		"- 启用语种：例如中文、英文",
+		"- 默认语种：",
+		"",
+		"## 内容调性",
+		"",
+		"- 品牌关键词：",
+		"- 不想出现的表达：",
+		"- 语气：专业 / 轻松 / 极简 / 销售型 / 教程型",
+		"- 竞品或参考网站：",
+		"",
+		"## 页面与导航",
+		"",
+		"- 需要哪些导航：",
+		"- 是否需要关于页、功能页、价格页、联系页、文档页：",
+		"- 是否已有固定 URL 或 slug：",
+		"",
+		"## 文章与链接",
+		"",
+		"- 希望有哪些文章分类：",
+		"- 希望有哪些链接分类：",
+		"- 希望第一批准备多少篇文章：",
+		"- 希望第一批准备哪些资源链接：",
+		"",
+		"## SEO/GEO",
+		"",
+		"- 想覆盖的关键词：",
+		"- 想避免的关键词：",
+		"- 目标地区或市场：",
+		"- 是否需要 FAQ、对比、教程、案例等内容：",
+		"",
+		"## 素材",
+		"",
+		"- Logo/图片文件位置：",
+		"- 产品截图或案例素材：",
+		"- 已有文案或资料：",
+	}, "\n") + "\n"
+}
+
+func automationStarterWorkflowMarkdown() string {
+	return strings.Join([]string{
+		"# 新站初始化工作流",
+		"",
+		"## 第一步：只读检查",
+		"",
+		"- 读取 `/languages`。",
+		"- 读取 `/site-profile`。",
+		"- 读取 `/navigation`。",
+		"- 读取 `/posts/categories?lang=all` 和 `/links/categories?lang=all`。",
+		"- 如需避免重复，读取现有 `/posts`、`/pages`、`/links`。",
+		"",
+		"## 第二步：生成规划",
+		"",
+		"输出一份计划，至少包含：",
+		"",
+		"- 每个语种的站点名、标语、描述、Hero 文案。",
+		"- 导航菜单及 URL。",
+		"- 文章分类、链接分类。",
+		"- 基础页面清单。",
+		"- 第一批文章清单。",
+		"- 第一批资源链接清单。",
+		"- 哪些内容保持草稿，哪些需要用户确认。",
+		"",
+		"## 第三步：用户确认",
+		"",
+		"没有确认前不要写入。用户确认后，按模块分批写入，便于回滚和检查。",
+		"",
+		"## 第四步：写入",
+		"",
+		"- 站点文案：`PATCH /site-profile`。",
+		"- 导航：`PATCH /navigation`。",
+		"- 分类：`POST /posts/categories`、`POST /links/categories`。",
+		"- 页面：`POST /pages`，默认 `draft`。",
+		"- 文章：`POST /posts`，默认 `draft`。",
+		"- 链接：`POST /links`，默认 `draft`。",
+		"",
+		"## 第五步：复核",
+		"",
+		"- 检查每条内容的标题、slug、摘要、SEO 描述、关键词、分类、封面、正文结构。",
+		"- 多语种内容检查 `trans_group` 是否一致。",
+		"- 输出人工复核清单，不要自行发布。",
+	}, "\n") + "\n"
+}
+
+func automationStarterPromptExamples(opts automationSkillOptions) string {
+	return strings.Join([]string{
+		"# 示例提示词",
+		"",
+		"## 从零规划",
+		"",
+		"请读取这个文件夹里的 GCMS 新站 AI 技能包。我的网站方向是：一个面向中小团队的产品官网和知识库。启用中文和英文，中文为默认语种。请先读取当前站点、语种、导航和分类，只输出新站内容规划，不要写入。",
+		"",
+		"## 确认后写入草稿",
+		"",
+		"按刚才确认的规划写入 GCMS。先更新站点文案和导航，再创建分类，最后创建页面、文章和链接。所有内容保持草稿，不要发布。完成后列出每条内容的 id、slug、语种和状态。",
+		"",
+		"## 只做中文站",
+		"",
+		"请把这个 GCMS 初始化为中文技术文档站。主题围绕“低成本部署、内容维护、SEO/GEO、自动化运营”。先生成规划，确认后只写中文草稿。",
+		"",
+		"## 多语种站",
+		"",
+		"请为中文和英文分别写站点文案、导航、分类和基础内容。英文不要直译中文，要面向海外用户表达。对应内容用同一个 trans_group 关联。",
+		"",
+		"## 资源导航站",
+		"",
+		"请把这个 GCMS 初始化为一个资源导航站。先创建链接分类和链接草稿，再创建 3 篇说明文章。每条链接要有摘要、正文介绍、SEO 描述和合适分类。",
+		"",
+		"## 只检查不写入",
+		"",
+		"请读取当前站点配置、导航、分类、文章、页面和链接，评估是否适合作为一个新站演示内容。只输出问题和优化建议，不要写入。",
+		"",
+		"接口地址：" + opts.apiBase,
+	}, "\n") + "\n"
+}
+
+func automationStarterSkillMarkdown(apiBase string) string {
+	return strings.Join([]string{
+		"---",
+		"name: gcms-site-starter",
+		"description: Use this skill to initialize a new GCMS site from a human brief: inspect languages and existing state, plan site positioning, navigation, categories, pages, posts, and links, then write multilingual starter content as drafts through the GCMS automation API. Do not publish or modify system/security settings without explicit approval.",
+		"---",
+		"",
+		"# GCMS Site Starter",
+		"",
+		"你是 GCMS 新站初始化助手。你帮助用户把一个空站或演示站整理成可检查的新站基础内容：站点文案、首页文案、导航、文章分类、链接分类、页面、文章和链接。",
+		"",
+		"## 连接方式",
+		"",
+		"- API Base: `" + apiBase + "`",
+		"- OpenAPI: `references/openapi.json`",
+		"- 优先从 `.env` 或环境变量读取 `GCMS_API_BASE` 与 `GCMS_API_KEY`。",
+		"- 不要在普通回复里泄露访问密钥。",
+		"",
+		"## 标准流程",
+		"",
+		"1. 读取 `站点需求模板.md`，确认网站方向、目标用户、语种和内容调性。",
+		"2. 调用 `/languages`、`/site-profile`、`/navigation`、`/posts/categories?lang=all`、`/links/categories?lang=all` 做只读检查。",
+		"3. 先输出完整规划，不要马上写入。",
+		"4. 用户确认后再分批写入：站点文案 -> 导航 -> 分类 -> 页面 -> 文章 -> 链接。",
+		"5. 所有内容默认 `status: draft`。",
+		"6. 完成后列出每条内容的 id、slug、语种、状态和需要人工复核的点。",
+		"",
+		"## 边界",
+		"",
+		"- 不要删除内容。",
+		"- 不要修改管理员账号、密码、安全设置、系统更新、Cloudflare 部署、评论配置或 API Key。",
+		"- 不要默认发布内容；只有用户明确要求并且访问密钥具备发布权限时才发布。",
+		"- 多语种内容不要机械直译；要根据目标读者调整表达，并使用同一个 `trans_group` 关联同组内容。",
+		"- 修改已有内容时，先查到准确 id，再按 id 更新。",
+	}, "\n") + "\n"
 }
 
 func automationKitReadme(opts automationSkillOptions) string {

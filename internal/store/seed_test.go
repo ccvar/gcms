@@ -596,6 +596,51 @@ func TestClearDemoContentKeepsBaseSettings(t *testing.T) {
 	}
 }
 
+func TestEmptySiteBasePagesAreRepairedOnReopen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cms.db")
+	st, err := Open(path)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	if err := st.ClearDemoContent(); err != nil {
+		t.Fatalf("clear demo content: %v", err)
+	}
+	if page, err := st.GetPage("zh", "about"); err != nil {
+		t.Fatalf("get about before reopen: %v", err)
+	} else if page != nil {
+		t.Fatalf("about page should not be present before repair")
+	}
+	if err := st.Close(); err != nil {
+		t.Fatalf("close store: %v", err)
+	}
+
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatalf("reopen store: %v", err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	for _, lang := range []string{"zh", "en"} {
+		page, err := reopened.GetPage(lang, "about")
+		if err != nil {
+			t.Fatalf("get repaired %s about page: %v", lang, err)
+		}
+		if page == nil {
+			t.Fatalf("repaired %s about page missing", lang)
+		}
+		if page.Type != "page" || page.Status != "published" || page.TransGroup != "base-page-about" {
+			t.Fatalf("repaired %s about page = %#v", lang, page)
+		}
+	}
+	if got := reopened.Setting("empty.base_pages_repaired"); got != "1" {
+		t.Fatalf("empty.base_pages_repaired = %q, want 1", got)
+	}
+	if n, err := reopened.CountPublished("zh"); err != nil {
+		t.Fatalf("count repaired posts: %v", err)
+	} else if n != 0 {
+		t.Fatalf("repaired empty site should not add posts, got %d", n)
+	}
+}
+
 func TestReloadShowcaseContentReplacesCurrentContent(t *testing.T) {
 	st := openSeededTestStoreWithMode(t, "classic")
 	if got := st.Setting("site.name"); got == "gcms" {

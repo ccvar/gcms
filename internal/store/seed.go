@@ -498,7 +498,24 @@ func (s *Store) EnsureEmptySiteBasePages() error {
 			return err
 		}
 	}
+	if err := s.SetSetting("empty.base_pages_repaired", "1"); err != nil {
+		return err
+	}
 	return nil
+}
+
+func (s *Store) repairEmptySiteBasePages() error {
+	if strings.TrimSpace(s.Setting("demo.seed")) != "empty" || strings.TrimSpace(s.Setting("empty.base_pages_repaired")) == "1" {
+		return nil
+	}
+	var pages int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM posts WHERE type='page'`).Scan(&pages); err != nil {
+		return err
+	}
+	if pages > 0 {
+		return s.SetSetting("empty.base_pages_repaired", "1")
+	}
+	return s.EnsureEmptySiteBasePages()
 }
 
 func emptyAboutPage(lang, siteName string) seedPost {

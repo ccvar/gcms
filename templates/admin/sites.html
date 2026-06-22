@@ -105,6 +105,7 @@
               </form>
               {{end}}
               {{if .ManagementAutomationEnabled}}<a class="site-tool-link" href="/admin/sites/{{.ID}}/automation/skill.zip">{{template "site-icon-package"}}<span>{{$.Admin.T "admin.sites.download_platform_kit" "下载平台接入包"}}</span></a>{{end}}
+              {{if .ManagementAutomationEnabled}}<a class="site-tool-link" href="/admin/sites/{{.ID}}/automation/starter.zip">{{template "site-icon-package"}}<span>{{$.Admin.T "admin.sites.download_platform_starter" "下载新站 AI 技能包"}}</span></a>{{end}}
             </div>
             {{end}}
           </div>

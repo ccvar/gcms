@@ -1180,6 +1180,34 @@ func (s *Server) adminDownloadPlatformAutomationSkill(w http.ResponseWriter, r *
 	})
 }
 
+func (s *Server) adminDownloadPlatformAutomationStarter(w http.ResponseWriter, r *http.Request) {
+	if s.platform == nil {
+		http.NotFound(w, r)
+		return
+	}
+	id, ok := adminSiteID(w, r)
+	if !ok {
+		return
+	}
+	site, found, err := s.platform.GetSite(id)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	if !found {
+		http.NotFound(w, r)
+		return
+	}
+	if !site.ManagementAutomationEnabled {
+		http.Error(w, "该站点未开启平台自动化入口", http.StatusBadRequest)
+		return
+	}
+	s.writeAutomationStarterZip(w, automationSkillOptions{
+		apiBase: s.absForPlatformRequest(r, "/api/platform/v1/sites/"+strconv.FormatInt(id, 10)),
+		name:    strings.TrimSpace(site.Name),
+	})
+}
+
 func (s *Server) adminSecurity(w http.ResponseWriter, r *http.Request) {
 	if s.platform == nil {
 		http.Redirect(w, r, "/admin/settings/security", http.StatusSeeOther)
@@ -3753,6 +3781,7 @@ func (s *Server) showSettings(w http.ResponseWriter, r *http.Request, section, f
 	v.OpenAPIURL = strings.TrimRight(v.APIBaseURL, "/") + "/openapi.json"
 	v.APIDocsURL = s.absForRequest(r, "/"+s.defaultLang()+"/api-docs")
 	v.SkillPackageURL = "/admin/settings/automation/skill.zip"
+	v.StarterPackageURL = "/admin/settings/automation/starter.zip"
 	if len(newAPISecret) > 0 {
 		v.NewAPISecret = newAPISecret[0]
 		if len(newAPISecret) > 1 {
@@ -4069,12 +4098,29 @@ func automationScopesFromFormWithDefault(r *http.Request, useDefault bool) []str
 			want[read] = true
 		}
 	}
-	var out []string
-	if want["languages:read"] {
-		out = append(out, "languages:read")
+	if want[apiScopeSiteWrite] {
+		want[apiScopeSiteRead] = true
 	}
-	if want["media:write"] {
-		out = append(out, "media:write")
+	if want[apiScopeNavigationWrite] {
+		want[apiScopeNavigationRead] = true
+	}
+	if want[apiScopePostCategoriesWrite] {
+		want[apiScope("posts", "categories")] = true
+	}
+	if want[apiScopeLinkCategoriesWrite] {
+		want[apiScope("links", "categories")] = true
+	}
+	var out []string
+	if want[apiScopeLanguagesRead] {
+		out = append(out, apiScopeLanguagesRead)
+	}
+	if want[apiScopeMediaWrite] {
+		out = append(out, apiScopeMediaWrite)
+	}
+	for _, scope := range []string{apiScopeSiteRead, apiScopeSiteWrite, apiScopeNavigationRead, apiScopeNavigationWrite} {
+		if want[scope] {
+			out = append(out, scope)
+		}
 	}
 	for _, col := range automationCollections {
 		for _, action := range automationScopeActions(col.path) {
@@ -4093,7 +4139,8 @@ func automationScopesFromFormWithDefault(r *http.Request, useDefault bool) []str
 }
 
 func automationScopeValid(scope string) bool {
-	if scope == "languages:read" || scope == "media:write" {
+	switch scope {
+	case apiScopeLanguagesRead, apiScopeMediaWrite, apiScopeSiteRead, apiScopeSiteWrite, apiScopeNavigationRead, apiScopeNavigationWrite:
 		return true
 	}
 	for _, col := range automationCollections {
@@ -4107,7 +4154,7 @@ func automationScopeValid(scope string) bool {
 }
 
 func defaultAutomationScopes() []string {
-	out := []string{"languages:read", "media:write"}
+	out := []string{apiScopeLanguagesRead, apiScopeMediaWrite}
 	for _, col := range automationCollections {
 		out = append(out, apiScope(col.path, "read"))
 		if col.path == "posts" || col.path == "links" {
@@ -4736,6 +4783,11 @@ func (s *Server) adminPages(w http.ResponseWriter, r *http.Request) {
 	s.rnd.Admin(w, "pages", http.StatusOK, v)
 }
 
+func (s *Server) adminPageNew(w http.ResponseWriter, r *http.Request) {
+	sess, _ := s.currentSession(r)
+	s.showEdit(w, r, sess, &store.Post{Type: "page", Status: "published", Lang: s.editLang(r)}, "", "")
+}
+
 func (s *Server) adminPageEdit(w http.ResponseWriter, r *http.Request) {
 	sess, _ := s.currentSession(r)
 	p, _ := s.store.GetPostByID(atoi64(r.PathValue("id")))
@@ -4750,6 +4802,27 @@ func (s *Server) adminPageEdit(w http.ResponseWriter, r *http.Request) {
 	s.showEdit(w, r, sess, p, flash, "")
 }
 
+func (s *Server) adminPageCreate(w http.ResponseWriter, r *http.Request) {
+	sess, ok := s.checkCSRF(w, r)
+	if !ok {
+		return
+	}
+	lang := s.editLang(r)
+	p, formErr := pageFromForm(r, 0, lang)
+	if formErr != "" {
+		s.showEdit(w, r, sess, p, "", formErr)
+		return
+	}
+	p.Slug = s.uniqueSlug(lang, p.Slug, 0)
+	id, err := s.store.CreatePost(p)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	s.clearGeneratedCaches()
+	http.Redirect(w, r, fmt.Sprintf("/admin/pages/%d/edit?saved=1", id), http.StatusSeeOther)
+}
+
 func (s *Server) adminPageSave(w http.ResponseWriter, r *http.Request) {
 	sess, ok := s.checkCSRF(w, r)
 	if !ok {
@@ -4761,31 +4834,55 @@ func (s *Server) adminPageSave(w http.ResponseWriter, r *http.Request) {
 		s.notFound(w, r)
 		return
 	}
-	p.Content = r.FormValue("content")
-	title := strings.TrimSpace(r.FormValue("title"))
-	if title == "" {
-		s.showEdit(w, r, sess, p, "", "标题不能为空。")
+	updated, formErr := pageFromForm(r, id, p.Lang)
+	if formErr != "" {
+		updated.TransGroup = p.TransGroup
+		s.showEdit(w, r, sess, updated, "", formErr)
 		return
 	}
-	p.Title = title
-	p.Excerpt = strings.TrimSpace(r.FormValue("excerpt"))
-	p.MetaDesc = strings.TrimSpace(r.FormValue("meta_desc"))
-	p.Keywords = strings.TrimSpace(r.FormValue("keywords"))
-	p.Author = strings.TrimSpace(r.FormValue("author"))
-	p.EditorMode = "markdown"
-	if r.FormValue("editor_mode") == "rich" {
-		p.EditorMode = "rich"
-	}
-	if slug := slugify(strings.TrimSpace(r.FormValue("slug"))); slug != "" {
-		p.Slug = s.uniqueSlug(p.Lang, slug, id)
-	}
-	p.Status = "published"
-	if err := s.store.UpdatePost(p); err != nil {
+	updated.CreatedAt = p.CreatedAt
+	updated.TransGroup = p.TransGroup
+	updated.PublishedAt = p.PublishedAt
+	updated.Slug = s.uniqueSlug(p.Lang, updated.Slug, id)
+	if err := s.store.UpdatePost(updated); err != nil {
 		s.serverError(w, err)
 		return
 	}
 	s.clearGeneratedCaches()
 	http.Redirect(w, r, fmt.Sprintf("/admin/pages/%d/edit?saved=1", id), http.StatusSeeOther)
+}
+
+func pageFromForm(r *http.Request, id int64, lang string) (*store.Post, string) {
+	_ = r.ParseForm()
+	p := &store.Post{
+		ID:         id,
+		Type:       "page",
+		Lang:       lang,
+		Title:      strings.TrimSpace(r.FormValue("title")),
+		Excerpt:    strings.TrimSpace(r.FormValue("excerpt")),
+		Content:    r.FormValue("content"),
+		MetaDesc:   strings.TrimSpace(r.FormValue("meta_desc")),
+		Keywords:   strings.TrimSpace(r.FormValue("keywords")),
+		Author:     strings.TrimSpace(r.FormValue("author")),
+		Status:     "published",
+		EditorMode: "markdown",
+		TransGroup: strings.TrimSpace(r.FormValue("trans_group")),
+	}
+	if r.FormValue("editor_mode") == "rich" {
+		p.EditorMode = "rich"
+	}
+	slug := slugify(strings.TrimSpace(r.FormValue("slug")))
+	if slug == "" {
+		slug = slugify(p.Title)
+	}
+	if slug == "" {
+		slug = "page-" + strconv.FormatInt(time.Now().Unix(), 36)
+	}
+	p.Slug = slug
+	if p.Title == "" {
+		return p, "标题不能为空。"
+	}
+	return p, ""
 }
 
 // postFromForm 从表单构建 Post；返回校验错误信息（空表示通过）。lang 为该文章语种。

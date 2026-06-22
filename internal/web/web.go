@@ -336,6 +336,7 @@ type View struct {
 	OpenAPIURL            string
 	APIDocsURL            string
 	SkillPackageURL       string
+	StarterPackageURL     string
 	EditLang              string             // 后台当前操作的内容语种
 	Locales               []i18n.Locale      // 已启用语种
 	AllLocales            []i18n.Locale      // 全部可选语种（内置 + 自定义，语言设置勾选）
@@ -2165,11 +2166,17 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /admin/upload", s.requireAuth(s.adminUpload))
 	mux.HandleFunc("POST /admin/render", s.requireAuth(s.adminRender))
 
-	// 自动化 API（开放语种、分类读取、媒体上传，以及文章 / 页面 / 链接内容操作）。
+	// 自动化 API（开放语种、站点文案、导航、分类、媒体上传，以及文章 / 页面 / 链接内容操作）。
 	mux.HandleFunc("GET /api/admin/v1/openapi.json", s.apiOpenAPI)
 	mux.HandleFunc("GET /api/admin/v1/languages", s.apiLanguages)
+	mux.HandleFunc("GET /api/admin/v1/site-profile", s.apiGetSiteProfile)
+	mux.HandleFunc("PATCH /api/admin/v1/site-profile", s.apiUpdateSiteProfile)
+	mux.HandleFunc("GET /api/admin/v1/navigation", s.apiGetNavigation)
+	mux.HandleFunc("PATCH /api/admin/v1/navigation", s.apiUpdateNavigation)
 	mux.HandleFunc("POST /api/admin/v1/media", s.apiUploadMedia)
 	mux.HandleFunc("GET /api/admin/v1/{collection}/categories", s.apiListCategories)
+	mux.HandleFunc("POST /api/admin/v1/{collection}/categories", s.apiCreateCategory)
+	mux.HandleFunc("PATCH /api/admin/v1/{collection}/categories/{id}", s.apiUpdateCategory)
 	mux.HandleFunc("GET /api/admin/v1/{collection}", s.apiListContent)
 	mux.HandleFunc("POST /api/admin/v1/{collection}", s.apiCreateContent)
 	mux.HandleFunc("GET /api/admin/v1/{collection}/{id}/preview", s.apiPreviewContent)
@@ -2178,8 +2185,14 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("PATCH /api/admin/v1/{collection}/{id}", s.apiUpdateContent)
 	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/openapi.json", s.apiPlatformOpenAPI)
 	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/languages", s.apiLanguages)
+	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/site-profile", s.apiGetSiteProfile)
+	mux.HandleFunc("PATCH /api/platform/v1/sites/{siteID}/site-profile", s.apiUpdateSiteProfile)
+	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/navigation", s.apiGetNavigation)
+	mux.HandleFunc("PATCH /api/platform/v1/sites/{siteID}/navigation", s.apiUpdateNavigation)
 	mux.HandleFunc("POST /api/platform/v1/sites/{siteID}/media", s.apiUploadMedia)
 	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/{collection}/categories", s.apiListCategories)
+	mux.HandleFunc("POST /api/platform/v1/sites/{siteID}/{collection}/categories", s.apiCreateCategory)
+	mux.HandleFunc("PATCH /api/platform/v1/sites/{siteID}/{collection}/categories/{id}", s.apiUpdateCategory)
 	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/{collection}", s.apiListContent)
 	mux.HandleFunc("POST /api/platform/v1/sites/{siteID}/{collection}", s.apiCreateContent)
 	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/{collection}/{id}/preview", s.apiPreviewContent)
@@ -2201,6 +2214,7 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /admin/sites", s.requireAuth(s.adminCreateSite))
 	mux.HandleFunc("POST /admin/sites/{id}/enter", s.requireAuth(s.adminEnterSite))
 	mux.HandleFunc("GET /admin/sites/{id}/automation/skill.zip", s.requireAuth(s.adminDownloadPlatformAutomationSkill))
+	mux.HandleFunc("GET /admin/sites/{id}/automation/starter.zip", s.requireAuth(s.adminDownloadPlatformAutomationStarter))
 	mux.HandleFunc("POST /admin/sites/{id}/default", s.requireAuth(s.adminSetDefaultSite))
 	mux.HandleFunc("POST /admin/sites/{id}/status", s.requireAuth(s.adminSetSiteStatus))
 	mux.HandleFunc("POST /admin/sites/{id}/automation", s.requireAuth(s.adminSetSiteAutomation))
@@ -2267,11 +2281,16 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /admin/settings/automation/keys/delete", s.requireAuth(s.adminDeleteAutomationKey))
 	mux.HandleFunc("GET /admin/settings/automation/skill.zip", s.requireAuth(s.adminDownloadAutomationSkill))
 	mux.HandleFunc("POST /admin/settings/automation/skill.zip", s.requireAuth(s.adminDownloadAutomationSkill))
+	mux.HandleFunc("GET /admin/settings/automation/starter.zip", s.requireAuth(s.adminDownloadAutomationStarter))
+	mux.HandleFunc("POST /admin/settings/automation/starter.zip", s.requireAuth(s.adminDownloadAutomationStarter))
 
 	// 页面（如关于）
 	mux.HandleFunc("GET /admin/pages", s.requireAuth(s.adminPages))
+	mux.HandleFunc("GET /admin/pages/new", s.requireAuth(s.adminPageNew))
 	mux.HandleFunc("GET /admin/pages/{id}/edit", s.requireAuth(s.adminPageEdit))
+	mux.HandleFunc("POST /admin/pages", s.requireAuth(s.adminPageCreate))
 	mux.HandleFunc("POST /admin/pages/{id}", s.requireAuth(s.adminPageSave))
+	mux.HandleFunc("POST /admin/pages/{id}/translate", s.requireAuth(s.adminTranslate))
 	mux.HandleFunc("GET /admin/posts/new", s.requireAuth(s.adminNew))
 	mux.HandleFunc("GET /admin/posts/{id}/preview", s.requireAuth(s.adminPostPreview))
 	mux.HandleFunc("GET /admin/posts/{id}/edit", s.requireAuth(s.adminEdit))
@@ -2290,6 +2309,7 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /admin/links/{id}", s.requireAuth(s.adminLinkUpdate))
 	mux.HandleFunc("POST /admin/links/{id}/delete", s.requireAuth(s.adminLinkDelete))
 	mux.HandleFunc("POST /admin/links/{id}/pin", s.requireAuth(s.adminLinkPin))
+	mux.HandleFunc("POST /admin/links/{id}/translate", s.requireAuth(s.adminTranslate))
 
 	// 兜底 404
 	mux.HandleFunc("GET /", s.notFound)

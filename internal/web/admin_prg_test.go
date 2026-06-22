@@ -48,6 +48,63 @@ func TestAdminSettingsSaveUsesRedirectAfterPost(t *testing.T) {
 	}
 }
 
+func TestAdminCanCreatePageFromPagesScreen(t *testing.T) {
+	s := newTestPublicServer(t, "")
+	h := s.Handler()
+
+	listReq, token := authedAdminRequest(t, s, http.MethodGet, "/admin/pages?lang=zh", nil)
+	list := httptest.NewRecorder()
+	h.ServeHTTP(list, listReq)
+	if list.Code != http.StatusOK {
+		t.Fatalf("list status = %d, body = %s", list.Code, list.Body.String())
+	}
+	if !strings.Contains(list.Body.String(), `href="/admin/pages/new?lang=zh"`) {
+		t.Fatalf("pages list should render new page entry")
+	}
+
+	newReq := httptest.NewRequest(http.MethodGet, "/admin/pages/new?lang=zh", nil)
+	newReq.AddCookie(&http.Cookie{Name: cookieName, Value: token})
+	newPage := httptest.NewRecorder()
+	h.ServeHTTP(newPage, newReq)
+	if newPage.Code != http.StatusOK {
+		t.Fatalf("new page status = %d, body = %s", newPage.Code, newPage.Body.String())
+	}
+	if !strings.Contains(newPage.Body.String(), "新建页面") || strings.Contains(newPage.Body.String(), `class="btn act-view" href="/zh/"`) {
+		t.Fatalf("new page form should render page create state without premature view link")
+	}
+
+	form := url.Values{
+		"title":       {"团队介绍"},
+		"slug":        {"team"},
+		"content":     {"这里介绍团队。"},
+		"excerpt":     {"团队与服务介绍。"},
+		"meta_desc":   {"团队介绍页面"},
+		"keywords":    {"团队,介绍"},
+		"author":      {"gcms 团队"},
+		"editor_mode": {"markdown"},
+	}
+	createReq, _ := authedAdminRequest(t, s, http.MethodPost, "/admin/pages?lang=zh", form)
+	created := httptest.NewRecorder()
+	h.ServeHTTP(created, createReq)
+	if created.Code != http.StatusSeeOther {
+		t.Fatalf("create status = %d, body = %s", created.Code, created.Body.String())
+	}
+	location := created.Header().Get("Location")
+	if !strings.HasPrefix(location, "/admin/pages/") || !strings.HasSuffix(location, "/edit?saved=1") {
+		t.Fatalf("create Location = %q", location)
+	}
+	page, err := s.store.GetPage("zh", "team")
+	if err != nil {
+		t.Fatalf("get created page: %v", err)
+	}
+	if page == nil {
+		t.Fatalf("created page missing")
+	}
+	if page.Type != "page" || page.Status != "published" || page.Title != "团队介绍" || page.Content != "这里介绍团队。" {
+		t.Fatalf("created page = %#v", page)
+	}
+}
+
 func TestAdminAutomationSecretSurvivesSettingsRedirectOnce(t *testing.T) {
 	s := newTestPublicServer(t, "")
 	form := url.Values{"name": {"content helper"}}

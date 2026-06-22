@@ -230,7 +230,13 @@ func (s *Store) migrate() error {
 	if err := s.normalizeShowcaseDefaults(); err != nil {
 		return fmt.Errorf("产品演示设置迁移失败: %w", err)
 	}
-	return s.seedIfEmpty()
+	if err := s.seedIfEmpty(); err != nil {
+		return err
+	}
+	if err := s.repairEmptySiteBasePages(); err != nil {
+		return fmt.Errorf("空站点基础页面修复失败: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) normalizeBundledAssetPaths() error {

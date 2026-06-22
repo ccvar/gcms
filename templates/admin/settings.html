@@ -744,9 +744,11 @@
           <table class="admin-table api-endpoints">
           <tbody>
             <tr><th>{{.Admin.T "admin.settings.automation.languages" "语种"}}</th><td class="slug">GET /languages</td></tr>
+            <tr><th>{{.Admin.T "admin.settings.automation.site_profile" "站点文案"}}</th><td class="slug">GET/PATCH /site-profile</td></tr>
+            <tr><th>{{.Admin.T "admin.settings.automation.navigation" "导航菜单"}}</th><td class="slug">GET/PATCH /navigation</td></tr>
             <tr><th>{{.Admin.T "admin.settings.automation.media" "媒体"}}</th><td class="slug">POST /media</td></tr>
-            <tr><th>{{.Admin.T "admin.settings.automation.post_categories" "文章分类"}}</th><td class="slug">GET /posts/categories</td></tr>
-            <tr><th>{{.Admin.T "admin.settings.automation.link_categories" "链接分类"}}</th><td class="slug">GET /links/categories</td></tr>
+            <tr><th>{{.Admin.T "admin.settings.automation.post_categories" "文章分类"}}</th><td class="slug">GET/POST /posts/categories · PATCH /posts/categories/{id}</td></tr>
+            <tr><th>{{.Admin.T "admin.settings.automation.link_categories" "链接分类"}}</th><td class="slug">GET/POST /links/categories · PATCH /links/categories/{id}</td></tr>
             <tr><th>{{.Admin.T "admin.nav.posts" "文章"}}</th><td class="slug">GET/POST /posts · GET/PATCH /posts/{id} · GET /posts/{id}/preview</td></tr>
             <tr><th>{{.Admin.T "admin.nav.links" "链接"}}</th><td class="slug">GET/POST /links · GET/PATCH /links/{id} · GET /links/{id}/preview</td></tr>
             <tr><th>{{.Admin.T "admin.nav.pages" "页面"}}</th><td class="slug">GET/POST /pages · GET/PATCH /pages/{id}</td></tr>
@@ -833,6 +835,13 @@
                   <input type="hidden" name="scopes" value="{{.NewAPIScopes}}">
                   <button class="btn btn-primary" type="submit">{{.Admin.T "admin.settings.automation.download_kit" "下载 AI 接入包"}}</button>
                 </form>
+                <form method="post" action="{{.StarterPackageURL}}" data-no-busy>
+                  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+                  <input type="hidden" name="token" value="{{.NewAPISecret}}">
+                  <input type="hidden" name="name" value="{{.NewAPIName}}">
+                  <input type="hidden" name="scopes" value="{{.NewAPIScopes}}">
+                  <button class="btn" type="submit">{{.Admin.T "admin.settings.automation.download_starter_kit" "下载新站 AI 技能包"}}</button>
+                </form>
               </div>
               <label for="ai-brief">{{.Admin.T "admin.settings.automation.ai_brief" "给 AI 助手的说明"}}</label>
               <textarea id="ai-brief" readonly rows="13">{{.NewAIBrief}}</textarea>
@@ -876,6 +885,16 @@
                 <a class="btn" href="{{.OpenAPIURL}}" target="_blank" rel="noopener">{{.Admin.T "admin.settings.automation.open" "打开"}}</a>
               </div>
             </div>
+            <div class="kit-item">
+              <span class="kit-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v5"/><path d="M8 8h8"/><path d="M5 12h14"/><path d="M7 16h10"/><path d="M10 20h4"/><path d="M4 8h2"/><path d="M18 8h2"/></svg></span>
+              <div>
+                <strong>{{.Admin.T "admin.settings.automation.starter_kit" "新站 AI 技能包"}}</strong>
+                <p>{{.Admin.T "admin.settings.automation.starter_kit_desc" "给 Codex、Claude Code、Cursor 读取，用来根据网站方向生成基础文案、导航、分类、文章、页面和链接草稿。"}}</p>
+              </div>
+              <div class="copy-line">
+                <a class="btn" href="{{.StarterPackageURL}}" target="_blank" rel="noopener">{{.Admin.T "admin.settings.automation.download_template" "下载空白包"}}</a>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -895,6 +914,15 @@
                 <strong>{{.Admin.T "admin.settings.automation.base_interfaces" "基础接口"}}</strong>
                 <label><input type="checkbox" name="scopes" value="languages:read" checked><span>{{.Admin.T "admin.settings.automation.languages" "语种"}}</span><small>{{.Admin.T "admin.settings.automation.languages_read_desc" "列出默认语种和启用语种"}}</small></label>
                 <label><input type="checkbox" name="scopes" value="media:write" checked><span>{{.Admin.T "admin.settings.automation.media_upload" "上传媒体"}}</span><small>{{.Admin.T "admin.settings.automation.media_upload_desc" "上传图片并返回可用于封面的 URL"}}</small></label>
+              </div>
+              <div class="scope-group scope-group-wide">
+                <strong>{{.Admin.T "admin.settings.automation.site_starter" "新站初始化"}}</strong>
+                <label><input type="checkbox" name="scopes" value="site:read"><span>{{.Admin.T "admin.settings.automation.site_profile_read" "读取站点文案"}}</span><small>{{.Admin.T "admin.settings.automation.site_profile_read_desc" "读取站点名称、Hero、首页标题和默认作者"}}</small></label>
+                <label><input type="checkbox" name="scopes" value="site:write"><span>{{.Admin.T "admin.settings.automation.site_profile_write" "修改站点文案"}}</span><small>{{.Admin.T "admin.settings.automation.site_profile_write_desc" "更新多语种站点文案、首页标题和默认作者"}}</small></label>
+                <label><input type="checkbox" name="scopes" value="navigation:read"><span>{{.Admin.T "admin.settings.automation.navigation_read" "读取导航"}}</span><small>{{.Admin.T "admin.settings.automation.navigation_read_desc" "查看当前导航菜单和各语种文字"}}</small></label>
+                <label><input type="checkbox" name="scopes" value="navigation:write"><span>{{.Admin.T "admin.settings.automation.navigation_write" "修改导航"}}</span><small>{{.Admin.T "admin.settings.automation.navigation_write_desc" "写入导航顺序、链接和多语种菜单文字"}}</small></label>
+                <label><input type="checkbox" name="scopes" value="posts:categories:write"><span>{{.Admin.T "admin.settings.automation.post_categories_write" "写文章分类"}}</span><small>{{.Admin.T "admin.settings.automation.post_categories_write_desc" "创建或更新文章分类"}}</small></label>
+                <label><input type="checkbox" name="scopes" value="links:categories:write"><span>{{.Admin.T "admin.settings.automation.link_categories_write" "写链接分类"}}</span><small>{{.Admin.T "admin.settings.automation.link_categories_write_desc" "创建或更新链接分类"}}</small></label>
               </div>
               <div class="scope-group">
                 <strong>{{.Admin.T "admin.nav.posts" "文章"}}</strong>
@@ -942,6 +970,15 @@
                 <strong>{{.Admin.T "admin.settings.automation.base_interfaces" "基础接口"}}</strong>
                 <label><input type="checkbox" name="scopes" value="languages:read" data-scope-edit><span>{{.Admin.T "admin.settings.automation.languages" "语种"}}</span><small>{{.Admin.T "admin.settings.automation.languages_read_desc" "列出默认语种和启用语种"}}</small></label>
                 <label><input type="checkbox" name="scopes" value="media:write" data-scope-edit><span>{{.Admin.T "admin.settings.automation.media_upload" "上传媒体"}}</span><small>{{.Admin.T "admin.settings.automation.media_upload_desc" "上传图片并返回可用于封面的 URL"}}</small></label>
+              </div>
+              <div class="scope-group scope-group-wide">
+                <strong>{{.Admin.T "admin.settings.automation.site_starter" "新站初始化"}}</strong>
+                <label><input type="checkbox" name="scopes" value="site:read" data-scope-edit><span>{{.Admin.T "admin.settings.automation.site_profile_read" "读取站点文案"}}</span><small>{{.Admin.T "admin.settings.automation.site_profile_read_desc" "读取站点名称、Hero、首页标题和默认作者"}}</small></label>
+                <label><input type="checkbox" name="scopes" value="site:write" data-scope-edit><span>{{.Admin.T "admin.settings.automation.site_profile_write" "修改站点文案"}}</span><small>{{.Admin.T "admin.settings.automation.site_profile_write_desc" "更新多语种站点文案、首页标题和默认作者"}}</small></label>
+                <label><input type="checkbox" name="scopes" value="navigation:read" data-scope-edit><span>{{.Admin.T "admin.settings.automation.navigation_read" "读取导航"}}</span><small>{{.Admin.T "admin.settings.automation.navigation_read_desc" "查看当前导航菜单和各语种文字"}}</small></label>
+                <label><input type="checkbox" name="scopes" value="navigation:write" data-scope-edit><span>{{.Admin.T "admin.settings.automation.navigation_write" "修改导航"}}</span><small>{{.Admin.T "admin.settings.automation.navigation_write_desc" "写入导航顺序、链接和多语种菜单文字"}}</small></label>
+                <label><input type="checkbox" name="scopes" value="posts:categories:write" data-scope-edit><span>{{.Admin.T "admin.settings.automation.post_categories_write" "写文章分类"}}</span><small>{{.Admin.T "admin.settings.automation.post_categories_write_desc" "创建或更新文章分类"}}</small></label>
+                <label><input type="checkbox" name="scopes" value="links:categories:write" data-scope-edit><span>{{.Admin.T "admin.settings.automation.link_categories_write" "写链接分类"}}</span><small>{{.Admin.T "admin.settings.automation.link_categories_write_desc" "创建或更新链接分类"}}</small></label>
               </div>
               <div class="scope-group">
                 <strong>{{.Admin.T "admin.nav.posts" "文章"}}</strong>

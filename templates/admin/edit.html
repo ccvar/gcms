@@ -4,7 +4,7 @@
       <h1>{{if $e.ID}}{{printf (.Admin.T "admin.edit.title_edit" "编辑%s") .EditTypeLabel}}{{else}}{{printf (.Admin.T "admin.edit.title_new" "新建%s") .EditTypeLabel}}{{end}}</h1>
     </div>
     <div class="edit-actions">
-      {{if .IsPage}}<a class="btn act-view" href="/{{$e.Lang}}/{{$e.Slug}}" target="_blank">{{.Admin.T "admin.action.view" "查看"}} {{template "icon-extlink"}}</a>{{else if .IsLink}}{{if $e.ID}}<a class="btn act-view" href="{{if $e.IsPublished}}/{{$e.Lang}}/links/{{$e.Slug}}{{else}}/admin/links/{{$e.ID}}/preview{{end}}" target="_blank">{{if $e.IsPublished}}{{$.Admin.T "admin.action.view" "查看"}}{{else}}{{$.Admin.T "admin.action.preview" "预览"}}{{end}} {{template "icon-extlink"}}</a>{{end}}{{else if $e.ID}}<a class="btn act-view" href="{{if $e.IsPublished}}/{{$e.Lang}}/posts/{{$e.Slug}}{{else}}/admin/posts/{{$e.ID}}/preview{{end}}" target="_blank">{{if $e.IsPublished}}{{$.Admin.T "admin.action.view" "查看"}}{{else}}{{$.Admin.T "admin.action.preview" "预览"}}{{end}} {{template "icon-extlink"}}</a>{{end}}
+      {{if and .IsPage $e.ID}}<a class="btn act-view" href="/{{$e.Lang}}/{{$e.Slug}}" target="_blank">{{.Admin.T "admin.action.view" "查看"}} {{template "icon-extlink"}}</a>{{else if .IsLink}}{{if $e.ID}}<a class="btn act-view" href="{{if $e.IsPublished}}/{{$e.Lang}}/links/{{$e.Slug}}{{else}}/admin/links/{{$e.ID}}/preview{{end}}" target="_blank">{{if $e.IsPublished}}{{$.Admin.T "admin.action.view" "查看"}}{{else}}{{$.Admin.T "admin.action.preview" "预览"}}{{end}} {{template "icon-extlink"}}</a>{{end}}{{else if $e.ID}}<a class="btn act-view" href="{{if $e.IsPublished}}/{{$e.Lang}}/posts/{{$e.Slug}}{{else}}/admin/posts/{{$e.ID}}/preview{{end}}" target="_blank">{{if $e.IsPublished}}{{$.Admin.T "admin.action.view" "查看"}}{{else}}{{$.Admin.T "admin.action.preview" "预览"}}{{end}} {{template "icon-extlink"}}</a>{{end}}
       <a class="btn" href="{{.EditListURL}}?lang={{.EditLang}}">{{.Admin.T "admin.action.cancel" "取消"}}</a>
       <button class="btn btn-primary" type="submit" form="post-form" data-save>{{.Admin.T "admin.action.save" "保存"}}</button>
     </div>
@@ -172,7 +172,7 @@
     {{if .Trans}}
     <div class="trans-list">
       {{range .Trans}}
-      <a class="trans-link" href="/admin/{{if eq .Type "page"}}pages{{else}}posts{{end}}/{{.ID}}/edit">
+      <a class="trans-link" href="/admin/{{if eq .Type "page"}}pages{{else if eq .Type "link"}}links{{else}}posts{{end}}/{{.ID}}/edit">
         <span class="lang-chip">{{.Lang}}</span>
         <span class="trans-title">{{.Title}}</span>
         <span class="badge {{if .IsPublished}}pub{{else if eq .Status "scheduled"}}sched{{else}}draft{{end}}">{{if .IsPublished}}{{$.Admin.T "admin.status.published" "已发布"}}{{else if eq .Status "scheduled"}}{{$.Admin.T "admin.status.scheduled" "定时"}}{{else}}{{$.Admin.T "admin.status.draft" "草稿"}}{{end}}</span>
@@ -182,7 +182,7 @@
     {{end}}
     <div class="trans-actions">
       {{range .Locales}}{{if ne .Code $e.Lang}}{{if not (hasLang $.Trans .Code)}}
-      <form method="post" action="/admin/posts/{{$e.ID}}/translate">
+      <form method="post" action="/admin/{{$.EditBase}}/{{$e.ID}}/translate">
         <input type="hidden" name="_csrf" value="{{$.CSRF}}">
         <input type="hidden" name="lang" value="{{.Code}}">
         <button type="submit" class="btn btn-soft">＋ {{printf ($.Admin.T "admin.edit.translate_to" "翻译为 %s") .Name}}</button>

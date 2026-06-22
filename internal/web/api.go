@@ -28,6 +28,17 @@ const (
 	apiRateWindow     = time.Minute
 )
 
+const (
+	apiScopeLanguagesRead       = "languages:read"
+	apiScopeMediaWrite          = "media:write"
+	apiScopeSiteRead            = "site:read"
+	apiScopeSiteWrite           = "site:write"
+	apiScopeNavigationRead      = "navigation:read"
+	apiScopeNavigationWrite     = "navigation:write"
+	apiScopePostCategoriesWrite = "posts:categories:write"
+	apiScopeLinkCategoriesWrite = "links:categories:write"
+)
+
 type apiRateLimiter struct {
 	mu   sync.Mutex
 	hits map[string]apiRateEntry
@@ -131,11 +142,67 @@ type apiCategory struct {
 	Count       int    `json:"count,omitempty"`
 }
 
+type apiCategoryInput struct {
+	Lang        *string `json:"lang,omitempty"`
+	Slug        *string `json:"slug,omitempty"`
+	Name        *string `json:"name,omitempty"`
+	Description *string `json:"description,omitempty"`
+	TransGroup  *string `json:"trans_group,omitempty"`
+}
+
 type apiLanguageItem struct {
 	Code    string `json:"code"`
 	Name    string `json:"name"`
 	Tag     string `json:"tag"`
 	Default bool   `json:"default"`
+}
+
+type apiSiteProfileItem struct {
+	Lang              string `json:"lang"`
+	Name              string `json:"name"`
+	Tagline           string `json:"tagline"`
+	Description       string `json:"description"`
+	Keywords          string `json:"keywords"`
+	HeroEyebrow       string `json:"hero_eyebrow"`
+	HeroTitle         string `json:"hero_title"`
+	HeroDescription   string `json:"hero_description"`
+	FooterNote        string `json:"footer_note"`
+	HomeFeaturedTitle string `json:"home_featured_title"`
+	HomeLinksTitle    string `json:"home_links_title"`
+	HomeLatestTitle   string `json:"home_latest_title"`
+	DefaultPostAuthor string `json:"default_post_author"`
+	DefaultLinkAuthor string `json:"default_link_author"`
+}
+
+type apiSiteProfileInput struct {
+	Lang              string  `json:"lang,omitempty"`
+	Name              *string `json:"name,omitempty"`
+	Tagline           *string `json:"tagline,omitempty"`
+	Description       *string `json:"description,omitempty"`
+	Keywords          *string `json:"keywords,omitempty"`
+	HeroEyebrow       *string `json:"hero_eyebrow,omitempty"`
+	HeroTitle         *string `json:"hero_title,omitempty"`
+	HeroDescription   *string `json:"hero_description,omitempty"`
+	FooterNote        *string `json:"footer_note,omitempty"`
+	HomeFeaturedTitle *string `json:"home_featured_title,omitempty"`
+	HomeLinksTitle    *string `json:"home_links_title,omitempty"`
+	HomeLatestTitle   *string `json:"home_latest_title,omitempty"`
+	DefaultPostAuthor *string `json:"default_post_author,omitempty"`
+	DefaultLinkAuthor *string `json:"default_link_author,omitempty"`
+}
+
+type apiSiteProfilePatch struct {
+	apiSiteProfileInput
+	Items []apiSiteProfileInput `json:"items,omitempty"`
+}
+
+type apiNavigationItem struct {
+	URL    string            `json:"url"`
+	Labels map[string]string `json:"labels"`
+}
+
+type apiNavigationInput struct {
+	Items []apiNavigationItem `json:"items"`
 }
 
 type apiContentItem struct {
@@ -200,7 +267,7 @@ const (
 )
 
 func (s *Server) apiLanguages(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.requireAutomationScope(w, r, "languages:read"); !ok {
+	if _, ok := s.requireAutomationScope(w, r, apiScopeLanguagesRead); !ok {
 		return
 	}
 	def := s.defaultLang()
@@ -210,6 +277,91 @@ func (s *Server) apiLanguages(w http.ResponseWriter, r *http.Request) {
 		items = append(items, apiLanguageItem{Code: l.Code, Name: l.Name, Tag: l.Tag, Default: l.Code == def})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"default": def, "items": items})
+}
+
+func (s *Server) apiGetSiteProfile(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireAutomationScope(w, r, apiScopeSiteRead); !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, s.apiSiteProfileResponse())
+}
+
+func (s *Server) apiUpdateSiteProfile(w http.ResponseWriter, r *http.Request) {
+	auth, ok := s.requireAutomationScope(w, r, apiScopeSiteWrite)
+	if !ok {
+		return
+	}
+	var in apiSiteProfilePatch
+	if !decodeAPIJSON(w, r, &in) {
+		return
+	}
+	items := in.Items
+	if len(items) == 0 && in.hasFields() {
+		items = []apiSiteProfileInput{in.apiSiteProfileInput}
+	}
+	if len(items) == 0 {
+		apiError(w, http.StatusBadRequest, "empty_patch", "没有收到需要更新的站点文案。")
+		return
+	}
+	for i := range items {
+		if errMsg := s.applyAPISiteProfileInput(&items[i]); errMsg != "" {
+			apiError(w, http.StatusBadRequest, "bad_request", errMsg)
+			return
+		}
+	}
+	_ = s.store.CreateAutomationLog(auth.key.ID, "update", "site", 0, "更新站点文案与首页文案")
+	s.clearGeneratedCaches()
+	writeJSON(w, http.StatusOK, s.apiSiteProfileResponse())
+}
+
+func (s *Server) apiGetNavigation(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireAutomationScope(w, r, apiScopeNavigationRead); !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, s.apiNavigationResponse())
+}
+
+func (s *Server) apiUpdateNavigation(w http.ResponseWriter, r *http.Request) {
+	auth, ok := s.requireAutomationScope(w, r, apiScopeNavigationWrite)
+	if !ok {
+		return
+	}
+	var in apiNavigationInput
+	if !decodeAPIJSON(w, r, &in) {
+		return
+	}
+	if len(in.Items) > 50 {
+		apiError(w, http.StatusBadRequest, "too_many_items", "导航菜单最多 50 项。")
+		return
+	}
+	rows := make([]MenuRow, 0, len(in.Items))
+	for _, item := range in.Items {
+		u := strings.TrimSpace(item.URL)
+		if u == "" {
+			continue
+		}
+		if !strings.HasPrefix(u, "/") && !isExternalURL(u) {
+			apiError(w, http.StatusBadRequest, "bad_url", "导航 URL 需要是站内路径（/ 开头）或完整外部链接。")
+			return
+		}
+		labels := map[string]string{}
+		for k, v := range item.Labels {
+			k = strings.TrimSpace(k)
+			if k == "" {
+				continue
+			}
+			labels[k] = strings.TrimSpace(v)
+		}
+		rows = append(rows, MenuRow{URL: u, Labels: labels})
+	}
+	b, _ := json.Marshal(rows)
+	if err := s.store.SetSetting("nav_menu", string(b)); err != nil {
+		apiError(w, http.StatusInternalServerError, "store_error", err.Error())
+		return
+	}
+	_ = s.store.CreateAutomationLog(auth.key.ID, "update", "navigation", 0, "更新前台导航菜单")
+	s.clearGeneratedCaches()
+	writeJSON(w, http.StatusOK, s.apiNavigationResponse())
 }
 
 func (s *Server) apiListCategories(w http.ResponseWriter, r *http.Request) {
@@ -255,8 +407,136 @@ func (s *Server) apiListCategories(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"items": items, "lang": lang, "kind": kind})
 }
 
+func (s *Server) apiCreateCategory(w http.ResponseWriter, r *http.Request) {
+	collection := r.PathValue("collection")
+	kind, scope, ok := apiCategoryWriteTarget(collection)
+	if !ok {
+		apiError(w, http.StatusNotFound, "not_found", "接口不存在。")
+		return
+	}
+	auth, ok := s.requireAutomationScope(w, r, scope)
+	if !ok {
+		return
+	}
+	var in apiCategoryInput
+	if !decodeAPIJSON(w, r, &in) {
+		return
+	}
+	lang := s.defaultLang()
+	if in.Lang != nil && strings.TrimSpace(*in.Lang) != "" {
+		lang = strings.TrimSpace(*in.Lang)
+	}
+	if !s.langEnabled(lang) {
+		apiError(w, http.StatusBadRequest, "bad_lang", "语种未启用。")
+		return
+	}
+	name := ""
+	if in.Name != nil {
+		name = strings.TrimSpace(*in.Name)
+	}
+	if name == "" {
+		apiError(w, http.StatusBadRequest, "bad_name", "分类名称不能为空。")
+		return
+	}
+	slug := ""
+	if in.Slug != nil {
+		slug = slugify(strings.TrimSpace(*in.Slug))
+	}
+	if slug == "" {
+		slug = slugify(name)
+	}
+	if slug == "" {
+		slug = "cat-" + strconv.FormatInt(time.Now().Unix(), 36)
+	}
+	slug = s.uniqueAPICategorySlug(lang, slug, 0)
+	description := ""
+	if in.Description != nil {
+		description = strings.TrimSpace(*in.Description)
+	}
+	transGroup := ""
+	if in.TransGroup != nil {
+		transGroup = strings.TrimSpace(*in.TransGroup)
+	}
+	cat := &store.Category{Slug: slug, Name: name, Description: description, Lang: lang, Kind: kind, TransGroup: transGroup}
+	id, err := s.store.CreateCategory(cat)
+	if err != nil {
+		apiError(w, http.StatusInternalServerError, "store_error", err.Error())
+		return
+	}
+	cat, _ = s.store.GetCategoryByID(id)
+	_ = s.store.CreateAutomationLog(auth.key.ID, "create", kind+"-category", id, "创建"+apiKindName(kind)+"分类："+name)
+	s.clearGeneratedCaches()
+	writeJSON(w, http.StatusCreated, map[string]any{"item": apiCategoryItem(cat)})
+}
+
+func (s *Server) apiUpdateCategory(w http.ResponseWriter, r *http.Request) {
+	collection := r.PathValue("collection")
+	kind, scope, ok := apiCategoryWriteTarget(collection)
+	if !ok {
+		apiError(w, http.StatusNotFound, "not_found", "接口不存在。")
+		return
+	}
+	auth, ok := s.requireAutomationScope(w, r, scope)
+	if !ok {
+		return
+	}
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		apiError(w, http.StatusBadRequest, "bad_id", "分类 ID 无效。")
+		return
+	}
+	existing, err := s.store.GetCategoryByID(id)
+	if err != nil {
+		apiError(w, http.StatusInternalServerError, "store_error", err.Error())
+		return
+	}
+	if existing == nil || existing.Kind != kind {
+		apiError(w, http.StatusNotFound, "not_found", "分类不存在。")
+		return
+	}
+	var in apiCategoryInput
+	if !decodeAPIJSON(w, r, &in) {
+		return
+	}
+	next := *existing
+	if in.Name != nil {
+		next.Name = strings.TrimSpace(*in.Name)
+	}
+	if next.Name == "" {
+		apiError(w, http.StatusBadRequest, "bad_name", "分类名称不能为空。")
+		return
+	}
+	if in.Description != nil {
+		next.Description = strings.TrimSpace(*in.Description)
+	}
+	if in.TransGroup != nil {
+		next.TransGroup = strings.TrimSpace(*in.TransGroup)
+	}
+	if in.Slug != nil {
+		next.Slug = slugify(strings.TrimSpace(*in.Slug))
+		if next.Slug == "" {
+			next.Slug = slugify(next.Name)
+		}
+		if next.Slug == "" {
+			next.Slug = "cat-" + strconv.FormatInt(time.Now().Unix(), 36)
+		}
+		next.Slug = s.uniqueAPICategorySlug(next.Lang, next.Slug, next.ID)
+	}
+	if next.TransGroup == "" {
+		next.TransGroup = next.Lang + ":" + next.Slug
+	}
+	if err := s.store.UpdateCategory(&next); err != nil {
+		apiError(w, http.StatusInternalServerError, "store_error", err.Error())
+		return
+	}
+	updated, _ := s.store.GetCategoryByID(next.ID)
+	_ = s.store.CreateAutomationLog(auth.key.ID, "update", kind+"-category", next.ID, "更新"+apiKindName(kind)+"分类："+next.Name)
+	s.clearGeneratedCaches()
+	writeJSON(w, http.StatusOK, map[string]any{"item": apiCategoryItem(updated)})
+}
+
 func (s *Server) apiUploadMedia(w http.ResponseWriter, r *http.Request) {
-	auth, ok := s.requireAutomationScope(w, r, "media:write")
+	auth, ok := s.requireAutomationScope(w, r, apiScopeMediaWrite)
 	if !ok {
 		return
 	}
@@ -620,6 +900,130 @@ func (s *Server) apiContentByID(w http.ResponseWriter, r *http.Request, kind str
 	return p, true
 }
 
+func (in apiSiteProfileInput) hasFields() bool {
+	return in.Name != nil || in.Tagline != nil || in.Description != nil || in.Keywords != nil ||
+		in.HeroEyebrow != nil || in.HeroTitle != nil || in.HeroDescription != nil || in.FooterNote != nil ||
+		in.HomeFeaturedTitle != nil || in.HomeLinksTitle != nil || in.HomeLatestTitle != nil ||
+		in.DefaultPostAuthor != nil || in.DefaultLinkAuthor != nil
+}
+
+func (in apiSiteProfilePatch) hasFields() bool {
+	return in.apiSiteProfileInput.hasFields()
+}
+
+func (s *Server) apiSiteProfileResponse() map[string]any {
+	locales := s.locales()
+	items := make([]apiSiteProfileItem, 0, len(locales))
+	for _, loc := range locales {
+		items = append(items, s.apiSiteProfileItem(loc.Code))
+	}
+	return map[string]any{"default": s.defaultLang(), "items": items}
+}
+
+func (s *Server) apiSiteProfileItem(lang string) apiSiteProfileItem {
+	st := s.site(lang)
+	return apiSiteProfileItem{
+		Lang:              lang,
+		Name:              st.Name,
+		Tagline:           st.Tagline,
+		Description:       st.Description,
+		Keywords:          st.Keywords,
+		HeroEyebrow:       st.HeroEyebrow,
+		HeroTitle:         st.HeroTitle,
+		HeroDescription:   st.HeroDescription,
+		FooterNote:        st.FooterNote,
+		HomeFeaturedTitle: st.HomeFeatured,
+		HomeLinksTitle:    st.HomeLinks,
+		HomeLatestTitle:   st.HomeLatest,
+		DefaultPostAuthor: s.defaultContentAuthor("post", lang),
+		DefaultLinkAuthor: s.defaultContentAuthor("link", lang),
+	}
+}
+
+func (s *Server) applyAPISiteProfileInput(in *apiSiteProfileInput) string {
+	if in == nil {
+		return ""
+	}
+	lang := strings.TrimSpace(in.Lang)
+	if lang == "" {
+		lang = s.defaultLang()
+	}
+	if !s.langEnabled(lang) {
+		return "语种未启用。"
+	}
+	if in.Name != nil && lang == s.defaultLang() && strings.TrimSpace(*in.Name) == "" {
+		return "默认语种的站点名称不能为空。"
+	}
+	set := func(key string, value *string) error {
+		if value == nil {
+			return nil
+		}
+		return s.store.SetSetting(s.copyKey(key, lang), strings.TrimSpace(*value))
+	}
+	for _, item := range []struct {
+		key   string
+		value *string
+	}{
+		{"site.name", in.Name},
+		{"site.tagline", in.Tagline},
+		{"site.description", in.Description},
+		{"site.keywords", in.Keywords},
+		{"site.hero_eyebrow", in.HeroEyebrow},
+		{"site.hero_title", in.HeroTitle},
+		{"site.hero_description", in.HeroDescription},
+		{"site.footer_note", in.FooterNote},
+		{"home.featured_title", in.HomeFeaturedTitle},
+		{"home.links_title", in.HomeLinksTitle},
+		{"home.latest_title", in.HomeLatestTitle},
+		{postDefaultAuthorKey, in.DefaultPostAuthor},
+		{linkDefaultAuthorKey, in.DefaultLinkAuthor},
+	} {
+		if err := set(item.key, item.value); err != nil {
+			return err.Error()
+		}
+	}
+	return ""
+}
+
+func (s *Server) apiNavigationResponse() map[string]any {
+	rows := parseMenuRows(s.store.Setting("nav_menu"))
+	items := make([]apiNavigationItem, 0, len(rows))
+	for _, row := range rows {
+		labels := map[string]string{}
+		for k, v := range row.Labels {
+			labels[k] = v
+		}
+		items = append(items, apiNavigationItem{URL: row.URL, Labels: labels})
+	}
+	langs := make([]string, 0, len(s.locales()))
+	for _, loc := range s.locales() {
+		langs = append(langs, loc.Code)
+	}
+	return map[string]any{"default": s.defaultLang(), "languages": langs, "items": items}
+}
+
+func apiCategoryWriteTarget(collection string) (kind, scope string, ok bool) {
+	switch collection {
+	case "posts":
+		return "post", apiScopePostCategoriesWrite, true
+	case "links":
+		return "link", apiScopeLinkCategoriesWrite, true
+	default:
+		return "", "", false
+	}
+}
+
+func (s *Server) uniqueAPICategorySlug(lang, slug string, exceptID int64) string {
+	base := slug
+	for n := 2; ; n++ {
+		exists, err := s.store.CategorySlugExists(lang, slug, exceptID)
+		if err != nil || !exists {
+			return slug
+		}
+		slug = base + "-" + strconv.Itoa(n)
+	}
+}
+
 func (s *Server) frontendPreviewURL(r *http.Request, collection string, p *store.Post, expires time.Time) (string, time.Time, error) {
 	token, err := s.signFrontendPreviewToken(frontendPreviewClaims{
 		Collection: collection,
@@ -956,7 +1360,7 @@ func apiScope(collection, action string) string {
 func automationScopeActions(resource string) []string {
 	switch resource {
 	case "posts", "links":
-		return []string{"read", "categories", "write", "publish"}
+		return []string{"read", "categories", "categories:write", "write", "publish"}
 	default:
 		return []string{"read", "write", "publish"}
 	}

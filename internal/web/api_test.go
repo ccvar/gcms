@@ -153,6 +153,32 @@ func TestAutomationOpenAPIIncludesMediaUpload(t *testing.T) {
 	if _, ok := schemas["PreviewURLResponse"]; !ok {
 		t.Fatalf("PreviewURLResponse schema missing: %#v", schemas)
 	}
+	for _, path := range []string{"/site-profile", "/navigation"} {
+		entry, ok := paths[path].(map[string]any)
+		if !ok {
+			t.Fatalf("%s path missing: %#v", path, paths)
+		}
+		if _, ok := entry["get"].(map[string]any); !ok {
+			t.Fatalf("GET %s missing: %#v", path, entry)
+		}
+		if _, ok := entry["patch"].(map[string]any); !ok {
+			t.Fatalf("PATCH %s missing: %#v", path, entry)
+		}
+	}
+	for _, path := range []string{"/posts/categories", "/links/categories"} {
+		entry, ok := paths[path].(map[string]any)
+		if !ok {
+			t.Fatalf("%s path missing: %#v", path, paths)
+		}
+		if _, ok := entry["post"].(map[string]any); !ok {
+			t.Fatalf("POST %s missing: %#v", path, entry)
+		}
+	}
+	for _, schema := range []string{"SiteProfileResponse", "SiteProfilePatch", "NavigationResponse", "NavigationInput", "CategoryInput", "CategoryItemResponse"} {
+		if _, ok := schemas[schema]; !ok {
+			t.Fatalf("%s schema missing: %#v", schema, schemas)
+		}
+	}
 }
 
 func TestAPIListPostCategories(t *testing.T) {
@@ -202,6 +228,166 @@ func TestAPIListPostCategories(t *testing.T) {
 		}
 	}
 	t.Fatalf("created category %d not found in response: %#v", id, got.Items)
+}
+
+func TestAPISiteStarterPermissionsAndWrites(t *testing.T) {
+	s, token := newTestAutomationServer(t, strings.Join([]string{
+		"languages:read",
+		apiScopeSiteRead,
+		apiScopeSiteWrite,
+		apiScopeNavigationRead,
+		apiScopeNavigationWrite,
+		apiScope("posts", "categories"),
+		apiScopePostCategoriesWrite,
+		apiScope("links", "categories"),
+		apiScopeLinkCategoriesWrite,
+	}, ","))
+
+	siteBody, err := json.Marshal(map[string]any{
+		"items": []map[string]any{
+			{
+				"lang":                "zh",
+				"hero_title":          "一行命令，跑起完整内容站",
+				"home_featured_title": "推荐阅读",
+				"default_post_author": "产品团队",
+			},
+			{
+				"lang":                "en",
+				"hero_title":          "Launch a complete content site with one command",
+				"default_post_author": "Product Team",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal site profile: %v", err)
+	}
+	r := httptest.NewRequest(http.MethodPatch, "/api/admin/v1/site-profile", bytes.NewReader(siteBody))
+	r.Header.Set("Authorization", "Bearer "+token)
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.apiUpdateSiteProfile(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("site profile status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if got := s.store.Setting("site.hero_title"); got != "一行命令，跑起完整内容站" {
+		t.Fatalf("site.hero_title = %q", got)
+	}
+	if got := s.store.Setting("site.hero_title::en"); got != "Launch a complete content site with one command" {
+		t.Fatalf("site.hero_title::en = %q", got)
+	}
+	if got := s.store.Setting("content.post_author"); got != "产品团队" {
+		t.Fatalf("content.post_author = %q", got)
+	}
+
+	navBody, err := json.Marshal(map[string]any{
+		"items": []map[string]any{
+			{"url": "/", "labels": map[string]string{"zh": "首页", "en": "Home"}},
+			{"url": "/docs", "labels": map[string]string{"zh": "文档", "en": "Docs"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal navigation: %v", err)
+	}
+	r = httptest.NewRequest(http.MethodPatch, "/api/admin/v1/navigation", bytes.NewReader(navBody))
+	r.Header.Set("Authorization", "Bearer "+token)
+	r.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	s.apiUpdateNavigation(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("navigation status = %d, body = %s", w.Code, w.Body.String())
+	}
+	nav := s.apiNavigationResponse()
+	if items, ok := nav["items"].([]apiNavigationItem); !ok || len(items) != 2 || items[1].Labels["en"] != "Docs" {
+		t.Fatalf("navigation response = %#v", nav)
+	}
+
+	catBody, err := json.Marshal(map[string]any{
+		"lang":        "zh",
+		"name":        "实用教程",
+		"slug":        "practical-guides",
+		"description": "帮助用户完成上线、配置和运营。",
+	})
+	if err != nil {
+		t.Fatalf("marshal category: %v", err)
+	}
+	r = httptest.NewRequest(http.MethodPost, "/api/admin/v1/posts/categories", bytes.NewReader(catBody))
+	r.SetPathValue("collection", "posts")
+	r.Header.Set("Authorization", "Bearer "+token)
+	r.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	s.apiCreateCategory(w, r)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create category status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var created struct {
+		Item apiCategory `json:"item"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode category: %v", err)
+	}
+	if created.Item.Kind != "post" || created.Item.Lang != "zh" || created.Item.Slug != "practical-guides" {
+		t.Fatalf("created category = %#v", created.Item)
+	}
+}
+
+func TestAPISiteStarterWriteRequiresScope(t *testing.T) {
+	s, token := newTestAutomationServer(t, apiScopeSiteRead)
+	body, err := json.Marshal(map[string]any{"hero_title": "blocked"})
+	if err != nil {
+		t.Fatalf("marshal body: %v", err)
+	}
+	r := httptest.NewRequest(http.MethodPatch, "/api/admin/v1/site-profile", bytes.NewReader(body))
+	r.Header.Set("Authorization", "Bearer "+token)
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	s.apiUpdateSiteProfile(w, r)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+}
+
+func TestAutomationStarterZipIncludesBriefAndOpenAPI(t *testing.T) {
+	files, err := automationStarterFiles(automationSkillOptions{
+		apiBase: "https://example.com/api/admin/v1",
+		token:   "gcms_test",
+		name:    "starter bot",
+		scopes:  strings.Join([]string{apiScopeSiteRead, apiScopeSiteWrite, apiScopeNavigationWrite, apiScopePostCategoriesWrite}, ","),
+	})
+	if err != nil {
+		t.Fatalf("automationStarterFiles: %v", err)
+	}
+	got := map[string]string{}
+	for _, file := range files {
+		got[file.name] = file.body
+	}
+	for _, name := range []string{
+		"README.md",
+		"gcms-site-starter/给AI的任务说明.md",
+		"gcms-site-starter/SKILL.md",
+		"gcms-site-starter/站点需求模板.md",
+		"gcms-site-starter/工作流.md",
+		"gcms-site-starter/示例提示词.md",
+		"gcms-site-starter/connection.json",
+		"gcms-site-starter/references/openapi.json",
+		"gcms-site-starter/.env",
+	} {
+		if got[name] == "" {
+			t.Fatalf("%s missing from starter files: %#v", name, got)
+		}
+	}
+	if !strings.Contains(got["README.md"], "GCMS 新站 AI 技能包") || !strings.Contains(got["gcms-site-starter/给AI的任务说明.md"], "PATCH /site-profile") {
+		t.Fatalf("starter markdown missing expected guidance")
+	}
+	if !strings.Contains(got["gcms-site-starter/SKILL.md"], "gcms-site-starter") || !strings.Contains(got["gcms-site-starter/SKILL.md"], "status: draft") {
+		t.Fatalf("starter skill missing expected guidance")
+	}
+	if !strings.Contains(got["gcms-site-starter/references/openapi.json"], `"/site-profile"`) || !strings.Contains(got["gcms-site-starter/references/openapi.json"], `"CategoryInput"`) {
+		t.Fatalf("starter openapi missing site starter paths/schemas")
+	}
+	if !strings.Contains(got["gcms-site-starter/.env"], "GCMS_API_KEY=gcms_test") {
+		t.Fatalf("starter env did not include provided token: %q", got["gcms-site-starter/.env"])
+	}
 }
 
 func TestAPIUploadMedia(t *testing.T) {
