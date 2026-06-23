@@ -58,15 +58,39 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 	if err := otherStore.SetSetting("site.favicon", "/uploads/blog-icon.ico"); err != nil {
 		t.Fatalf("set other site favicon: %v", err)
 	}
-	if _, err := otherStore.CreatePost(&store.Post{
+	otherPostID, err := otherStore.CreatePost(&store.Post{
 		Type:       "post",
 		Lang:       "zh",
 		Slug:       "preview-internal-link",
 		Title:      "Preview Internal Link",
 		Status:     "published",
 		EditorMode: "markdown",
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("create other preview post: %v", err)
+	}
+	otherLinkID, err := otherStore.CreatePost(&store.Post{
+		Type:       "link",
+		Lang:       "zh",
+		Slug:       "preview-resource-link",
+		Title:      "Preview Resource Link",
+		Status:     "published",
+		LinkURL:    "https://example.test/resource",
+		EditorMode: "markdown",
+	})
+	if err != nil {
+		t.Fatalf("create other preview link: %v", err)
+	}
+	otherPageID, err := otherStore.CreatePost(&store.Post{
+		Type:       "page",
+		Lang:       "zh",
+		Slug:       "preview-about",
+		Title:      "Preview About Page",
+		Status:     "published",
+		EditorMode: "markdown",
+	})
+	if err != nil {
+		t.Fatalf("create other preview page: %v", err)
 	}
 	otherToken, otherPrefix := newAutomationToken()
 	if _, err := otherStore.CreateAutomationKey("blog bot", otherToken, otherPrefix, "languages:read,posts:write"); err != nil {
@@ -833,6 +857,61 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 	}
 	if body := otherPosts.Body.String(); !strings.Contains(body, "API Other Site Draft") {
 		t.Fatalf("platform api-created draft was not visible in other-site admin posts")
+	}
+	for _, tc := range []struct {
+		name      string
+		path      string
+		wantHref  string
+		rootHref  string
+		editPath  string
+		editTitle string
+	}{
+		{
+			name:      "posts",
+			path:      "/admin/posts?lang=zh&status=published",
+			wantHref:  previewPrefix + "/zh/posts/preview-internal-link",
+			rootHref:  "/zh/posts/preview-internal-link",
+			editPath:  "/admin/posts/" + strconv.FormatInt(otherPostID, 10) + "/edit",
+			editTitle: "Preview Internal Link",
+		},
+		{
+			name:      "links",
+			path:      "/admin/links?lang=zh&status=published",
+			wantHref:  previewPrefix + "/zh/links/preview-resource-link",
+			rootHref:  "/zh/links/preview-resource-link",
+			editPath:  "/admin/links/" + strconv.FormatInt(otherLinkID, 10) + "/edit",
+			editTitle: "Preview Resource Link",
+		},
+		{
+			name:      "pages",
+			path:      "/admin/pages?lang=zh",
+			wantHref:  previewPrefix + "/zh/preview-about",
+			rootHref:  "/zh/preview-about",
+			editPath:  "/admin/pages/" + strconv.FormatInt(otherPageID, 10) + "/edit",
+			editTitle: "Preview About Page",
+		},
+	} {
+		list := httptest.NewRecorder()
+		listReq := httptest.NewRequest(http.MethodGet, "https://platform.test"+tc.path, nil)
+		listReq.AddCookie(&http.Cookie{Name: cookieName, Value: "prefix-token"})
+		h.ServeHTTP(list, listReq)
+		if list.Code != http.StatusOK {
+			t.Fatalf("other %s list status = %d, body = %s", tc.name, list.Code, list.Body.String())
+		}
+		if body := list.Body.String(); !strings.Contains(body, tc.editTitle) || !strings.Contains(body, `href="`+tc.wantHref+`"`) || strings.Contains(body, `href="`+tc.rootHref+`"`) {
+			t.Fatalf("other %s list preview link mismatch: want %q without root %q in %s", tc.name, tc.wantHref, tc.rootHref, body)
+		}
+
+		edit := httptest.NewRecorder()
+		editReq := httptest.NewRequest(http.MethodGet, "https://platform.test"+tc.editPath, nil)
+		editReq.AddCookie(&http.Cookie{Name: cookieName, Value: "prefix-token"})
+		h.ServeHTTP(edit, editReq)
+		if edit.Code != http.StatusOK {
+			t.Fatalf("other %s edit status = %d, body = %s", tc.name, edit.Code, edit.Body.String())
+		}
+		if body := edit.Body.String(); !strings.Contains(body, tc.editTitle) || !strings.Contains(body, `href="`+tc.wantHref+`"`) || strings.Contains(body, `href="`+tc.rootHref+`"`) {
+			t.Fatalf("other %s edit preview link mismatch: want %q without root %q in %s", tc.name, tc.wantHref, tc.rootHref, body)
+		}
 	}
 
 	visual := httptest.NewRecorder()

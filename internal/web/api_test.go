@@ -179,6 +179,34 @@ func TestAutomationOpenAPIIncludesMediaUpload(t *testing.T) {
 			t.Fatalf("%s schema missing: %#v", schema, schemas)
 		}
 	}
+	sitePatch, ok := schemas["SiteProfilePatch"].(map[string]any)
+	if !ok {
+		t.Fatalf("SiteProfilePatch schema invalid: %#v", schemas["SiteProfilePatch"])
+	}
+	siteProps, ok := sitePatch["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("SiteProfilePatch properties missing: %#v", sitePatch)
+	}
+	for _, prop := range []string{"logo", "favicon", "share_image"} {
+		if _, ok := siteProps[prop]; !ok {
+			t.Fatalf("SiteProfilePatch.%s missing: %#v", prop, siteProps)
+		}
+	}
+	navItem, ok := schemas["NavigationItem"].(map[string]any)
+	if !ok {
+		t.Fatalf("NavigationItem schema invalid: %#v", schemas["NavigationItem"])
+	}
+	navProps, ok := navItem["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("NavigationItem properties missing: %#v", navItem)
+	}
+	urlProp, ok := navProps["url"].(map[string]any)
+	if !ok {
+		t.Fatalf("NavigationItem.url missing: %#v", navProps)
+	}
+	if desc, _ := urlProp["description"].(string); !strings.Contains(desc, "/links/cat/{slug}") {
+		t.Fatalf("NavigationItem.url description missing standard URL rules: %q", desc)
+	}
 }
 
 func TestAPIListPostCategories(t *testing.T) {
@@ -235,6 +263,7 @@ func TestAPISiteStarterPermissionsAndWrites(t *testing.T) {
 		"languages:read",
 		apiScopeSiteRead,
 		apiScopeSiteWrite,
+		apiScopeBrandAssetsWrite,
 		apiScopeNavigationRead,
 		apiScopeNavigationWrite,
 		apiScope("posts", "categories"),
@@ -250,11 +279,15 @@ func TestAPISiteStarterPermissionsAndWrites(t *testing.T) {
 				"hero_title":          "一行命令，跑起完整内容站",
 				"home_featured_title": "推荐阅读",
 				"default_post_author": "产品团队",
+				"logo":                "/uploads/logo-zh.svg",
+				"favicon":             "/uploads/favicon.ico",
+				"share_image":         "/uploads/share-zh.webp",
 			},
 			{
 				"lang":                "en",
 				"hero_title":          "Launch a complete content site with one command",
 				"default_post_author": "Product Team",
+				"share_image":         "/uploads/share-en.webp",
 			},
 		},
 	})
@@ -277,6 +310,18 @@ func TestAPISiteStarterPermissionsAndWrites(t *testing.T) {
 	}
 	if got := s.store.Setting("content.post_author"); got != "产品团队" {
 		t.Fatalf("content.post_author = %q", got)
+	}
+	if got := s.store.Setting("site.logo"); got != "/uploads/logo-zh.svg" {
+		t.Fatalf("site.logo = %q", got)
+	}
+	if got := s.store.Setting("site.favicon"); got != "/uploads/favicon.ico" {
+		t.Fatalf("site.favicon = %q", got)
+	}
+	if got := s.store.Setting("site.share_image"); got != "/uploads/share-zh.webp" {
+		t.Fatalf("site.share_image = %q", got)
+	}
+	if got := s.store.Setting("site.share_image::en"); got != "/uploads/share-en.webp" {
+		t.Fatalf("site.share_image::en = %q", got)
 	}
 
 	navBody, err := json.Marshal(map[string]any{
@@ -347,6 +392,62 @@ func TestAPISiteStarterWriteRequiresScope(t *testing.T) {
 	}
 }
 
+func TestAPISiteProfileBrandAssetsRequireScope(t *testing.T) {
+	s, siteToken := newTestAutomationServer(t, apiScopeSiteWrite)
+	body, err := json.Marshal(map[string]any{"logo": "/uploads/logo.svg"})
+	if err != nil {
+		t.Fatalf("marshal brand body: %v", err)
+	}
+	r := httptest.NewRequest(http.MethodPatch, "/api/admin/v1/site-profile", bytes.NewReader(body))
+	r.Header.Set("Authorization", "Bearer "+siteToken)
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.apiUpdateSiteProfile(w, r)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("brand update with site scope status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	s, brandToken := newTestAutomationServer(t, apiScopeBrandAssetsWrite)
+	body, err = json.Marshal(map[string]any{"hero_title": "blocked"})
+	if err != nil {
+		t.Fatalf("marshal site body: %v", err)
+	}
+	r = httptest.NewRequest(http.MethodPatch, "/api/admin/v1/site-profile", bytes.NewReader(body))
+	r.Header.Set("Authorization", "Bearer "+brandToken)
+	r.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	s.apiUpdateSiteProfile(w, r)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("site update with brand scope status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	body, err = json.Marshal(map[string]any{
+		"logo":        "/uploads/logo.svg",
+		"favicon":     "/uploads/favicon.ico",
+		"share_image": "/uploads/share.webp",
+	})
+	if err != nil {
+		t.Fatalf("marshal brand body: %v", err)
+	}
+	r = httptest.NewRequest(http.MethodPatch, "/api/admin/v1/site-profile", bytes.NewReader(body))
+	r.Header.Set("Authorization", "Bearer "+brandToken)
+	r.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	s.apiUpdateSiteProfile(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("brand update status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if got := s.store.Setting("site.logo"); got != "/uploads/logo.svg" {
+		t.Fatalf("site.logo = %q", got)
+	}
+	if got := s.store.Setting("site.favicon"); got != "/uploads/favicon.ico" {
+		t.Fatalf("site.favicon = %q", got)
+	}
+	if got := s.store.Setting("site.share_image"); got != "/uploads/share.webp" {
+		t.Fatalf("site.share_image = %q", got)
+	}
+}
+
 func TestAutomationStarterZipIncludesBriefAndOpenAPI(t *testing.T) {
 	files, err := automationStarterFiles(automationSkillOptions{
 		apiBase: "https://example.com/api/admin/v1",
@@ -386,6 +487,14 @@ func TestAutomationStarterZipIncludesBriefAndOpenAPI(t *testing.T) {
 		!strings.Contains(got["gcms-site-starter/第一步-让AI出规划.md"], "不允许创建、修改、删除或发布任何内容") ||
 		!strings.Contains(got["gcms-site-starter/第二步-审核后写入草稿.md"], "所有页面、文章和链接默认 status=draft") {
 		t.Fatalf("starter planning workflow missing expected boundary guidance")
+	}
+	if !strings.Contains(got["gcms-site-starter/给AI的任务说明.md"], "文章质量与配图标准") ||
+		!strings.Contains(got["gcms-site-starter/第一步-让AI出规划.md"], "搜索意图") ||
+		!strings.Contains(got["gcms-site-starter/第二步-审核后写入草稿.md"], "POST /media") ||
+		!strings.Contains(got["gcms-site-starter/第二步-审核后写入草稿.md"], "cover_image") ||
+		!strings.Contains(got["gcms-site-starter/工作流.md"], "文章质量与配图验收") ||
+		!strings.Contains(got["gcms-site-starter/SKILL.md"], "需要补图") {
+		t.Fatalf("starter article quality and image guidance missing")
 	}
 	if !strings.Contains(got["gcms-site-starter/SKILL.md"], "gcms-site-starter") || !strings.Contains(got["gcms-site-starter/SKILL.md"], "status: draft") {
 		t.Fatalf("starter skill missing expected guidance")

@@ -504,6 +504,7 @@ func (s *Server) authed(v *View, sess session) {
 	v.CSRF = sess.csrf
 	v.ShowPwWarn = s.passwordWarningVisible(sess, false)
 	v.PlatformCurrentSiteID = sess.currentSiteID
+	v.AdminPreviewPrefix = s.adminSitePreviewPrefix(sess.currentSiteID)
 	v.AdminSiteURL = s.adminSiteURL(sess.currentSiteID, v.EditLang)
 	s.populatePlatformSites(v)
 }
@@ -528,14 +529,21 @@ func (s *Server) adminSiteURL(siteID int64, lang string) string {
 	if !s.langEnabled(lang) {
 		lang = s.defaultLang()
 	}
+	if prefix := s.adminSitePreviewPrefix(siteID); prefix != "" {
+		return localizedPath(prefix, lang, "/")
+	}
+	return "/" + lang + "/"
+}
+
+func (s *Server) adminSitePreviewPrefix(siteID int64) string {
 	if s.platform == nil || siteID <= 0 {
-		return "/" + lang + "/"
+		return ""
 	}
 	site, ok, err := s.platform.GetSite(siteID)
 	if err != nil || !ok || site == nil {
-		return "/" + lang + "/"
+		return ""
 	}
-	return "/admin/sites/" + strconv.FormatInt(siteID, 10) + "/preview/" + lang + "/"
+	return "/admin/sites/" + strconv.FormatInt(siteID, 10) + "/preview"
 }
 
 func (s *Server) adminSiteVisualPreviewURL(siteID int64, lang string) string {
@@ -4101,6 +4109,9 @@ func automationScopesFromFormWithDefault(r *http.Request, useDefault bool) []str
 	if want[apiScopeSiteWrite] {
 		want[apiScopeSiteRead] = true
 	}
+	if want[apiScopeBrandAssetsWrite] {
+		want[apiScopeSiteRead] = true
+	}
 	if want[apiScopeNavigationWrite] {
 		want[apiScopeNavigationRead] = true
 	}
@@ -4117,7 +4128,7 @@ func automationScopesFromFormWithDefault(r *http.Request, useDefault bool) []str
 	if want[apiScopeMediaWrite] {
 		out = append(out, apiScopeMediaWrite)
 	}
-	for _, scope := range []string{apiScopeSiteRead, apiScopeSiteWrite, apiScopeNavigationRead, apiScopeNavigationWrite} {
+	for _, scope := range []string{apiScopeSiteRead, apiScopeSiteWrite, apiScopeBrandAssetsWrite, apiScopeNavigationRead, apiScopeNavigationWrite} {
 		if want[scope] {
 			out = append(out, scope)
 		}
@@ -4140,7 +4151,7 @@ func automationScopesFromFormWithDefault(r *http.Request, useDefault bool) []str
 
 func automationScopeValid(scope string) bool {
 	switch scope {
-	case apiScopeLanguagesRead, apiScopeMediaWrite, apiScopeSiteRead, apiScopeSiteWrite, apiScopeNavigationRead, apiScopeNavigationWrite:
+	case apiScopeLanguagesRead, apiScopeMediaWrite, apiScopeSiteRead, apiScopeSiteWrite, apiScopeBrandAssetsWrite, apiScopeNavigationRead, apiScopeNavigationWrite:
 		return true
 	}
 	for _, col := range automationCollections {

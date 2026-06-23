@@ -350,6 +350,7 @@ type View struct {
 	VisualEdit            bool               // 前台 iframe 可视化编辑模式
 	VisualPreviewURL      string             // 后台可视化编辑 iframe 地址
 	AdminSiteURL          string             // 后台顶部“查看站点”入口
+	AdminPreviewPrefix    string             // 平台多站点下当前站点的前台预览前缀
 	VisualFields          []VisualField      // 可视化编辑侧栏字段
 	VisualGroups          []VisualGroup      // 可视化编辑侧栏字段分组
 	VisualHistory         []VisualLog        // 可视化编辑最近修改
@@ -2537,16 +2538,170 @@ func (s *Server) menuTargetOptions(admins ...*i18n.AdminTr) []MenuTargetOption {
 	}
 	categoryPath := s.archiveConfig(def, "post").Path
 	linksPath := s.archiveConfig(def, "link").Path
-	return []MenuTargetOption{
-		{Value: "home", Label: t("admin.settings.menu.target.home", "首页"), URL: "/", Kind: "preset", Labels: labelsFromKey("nav.home")},
-		{Value: "category", Label: t("admin.settings.menu.target.category", "文章分类页"), URL: categoryPath, Kind: "preset", Labels: archiveLabels("post", "nav.category")},
-		{Value: "links", Label: t("admin.settings.menu.target.links", "链接页"), URL: linksPath, Kind: "preset", Labels: archiveLabels("link", "nav.links")},
-		{Value: "about", Label: t("admin.settings.menu.target.about", "关于页"), URL: "/about", Kind: "preset", Labels: labelsFromKey("nav.about")},
-		{Value: "start", Label: t("admin.settings.menu.target.start", "开始使用页"), URL: "/start", Kind: "preset", Labels: staticLabels("开始使用", "Get Started")},
-		{Value: "search", Label: t("admin.settings.menu.target.search", "搜索页"), URL: "/search", Kind: "preset", Labels: labelsFromKey("nav.search")},
-		{Value: "__custom__", Label: t("admin.settings.menu.target.custom", "自定义站内路径"), Kind: "custom", Labels: map[string]string{}},
-		{Value: "__external__", Label: t("admin.settings.menu.target.external", "外部链接"), Kind: "external", Labels: map[string]string{}},
+	joinPath := func(base, slug string) string {
+		base = "/" + strings.Trim(strings.TrimSpace(base), "/")
+		slug = strings.Trim(strings.TrimSpace(slug), "/")
+		if slug == "" {
+			return base
+		}
+		if base == "/" {
+			return "/" + slug
+		}
+		return strings.TrimRight(base, "/") + "/" + slug
 	}
+	categoryKey := func(c *store.Category) string {
+		if c == nil {
+			return ""
+		}
+		if c.TransGroup != "" {
+			return c.TransGroup
+		}
+		return c.Lang + ":" + c.Slug
+	}
+	pageKey := func(p *store.Post) string {
+		if p == nil {
+			return ""
+		}
+		if p.TransGroup != "" {
+			return p.TransGroup
+		}
+		return p.Lang + ":" + p.Slug
+	}
+	categoryGroups := func(kind string) map[string]map[string]*store.Category {
+		groups := map[string]map[string]*store.Category{}
+		for _, l := range locales {
+			cats, _ := s.store.ListCategories(l.Code, kind)
+			for _, c := range cats {
+				key := categoryKey(c)
+				if key == "" {
+					continue
+				}
+				if groups[key] == nil {
+					groups[key] = map[string]*store.Category{}
+				}
+				groups[key][c.Lang] = c
+			}
+		}
+		return groups
+	}
+	pageGroups := func() map[string]map[string]*store.Post {
+		groups := map[string]map[string]*store.Post{}
+		for _, l := range locales {
+			pages, _ := s.store.ListPages(l.Code)
+			for _, p := range pages {
+				key := pageKey(p)
+				if key == "" {
+					continue
+				}
+				if groups[key] == nil {
+					groups[key] = map[string]*store.Post{}
+				}
+				groups[key][p.Lang] = p
+			}
+		}
+		return groups
+	}
+	categoryLabels := func(group string, fallback string, groups map[string]map[string]*store.Category) map[string]string {
+		labels := map[string]string{}
+		for _, l := range locales {
+			if byLang := groups[group]; byLang != nil {
+				if c := byLang[l.Code]; c != nil && strings.TrimSpace(c.Name) != "" {
+					labels[l.Code] = c.Name
+					continue
+				}
+			}
+			labels[l.Code] = fallback
+		}
+		return labels
+	}
+	pageLabels := func(group string, fallback string, groups map[string]map[string]*store.Post) map[string]string {
+		labels := map[string]string{}
+		for _, l := range locales {
+			if byLang := groups[group]; byLang != nil {
+				if p := byLang[l.Code]; p != nil && strings.TrimSpace(p.Title) != "" {
+					labels[l.Code] = p.Title
+					continue
+				}
+			}
+			labels[l.Code] = fallback
+		}
+		return labels
+	}
+	var opts []MenuTargetOption
+	seenURL := map[string]bool{}
+	add := func(opt MenuTargetOption) {
+		if opt.URL != "" {
+			if seenURL[opt.URL] {
+				return
+			}
+			seenURL[opt.URL] = true
+		}
+		opts = append(opts, opt)
+	}
+	add(MenuTargetOption{Value: "home", Label: t("admin.settings.menu.target.home", "首页"), URL: "/", Kind: "preset", Labels: labelsFromKey("nav.home")})
+	add(MenuTargetOption{Value: "category", Label: t("admin.settings.menu.target.category", "文章分类页"), URL: categoryPath, Kind: "preset", Labels: archiveLabels("post", "nav.category")})
+	add(MenuTargetOption{Value: "links", Label: t("admin.settings.menu.target.links", "链接页"), URL: linksPath, Kind: "preset", Labels: archiveLabels("link", "nav.links")})
+	add(MenuTargetOption{Value: "about", Label: t("admin.settings.menu.target.about", "关于页"), URL: "/about", Kind: "preset", Labels: labelsFromKey("nav.about")})
+	add(MenuTargetOption{Value: "start", Label: t("admin.settings.menu.target.start", "开始使用页"), URL: "/start", Kind: "preset", Labels: staticLabels("开始使用", "Get Started")})
+	add(MenuTargetOption{Value: "search", Label: t("admin.settings.menu.target.search", "搜索页"), URL: "/search", Kind: "preset", Labels: labelsFromKey("nav.search")})
+
+	postGroups := categoryGroups("post")
+	if cats, _ := s.store.ListCategories(def, "post"); cats != nil {
+		prefix := t("admin.settings.menu.target.post_category", "文章分类")
+		for _, c := range cats {
+			slug := strings.TrimSpace(c.Slug)
+			if slug == "" {
+				continue
+			}
+			group := categoryKey(c)
+			add(MenuTargetOption{
+				Value:  "post-category:" + group,
+				Label:  prefix + "：" + c.Name,
+				URL:    joinPath(categoryPath, slug),
+				Kind:   "preset",
+				Labels: categoryLabels(group, c.Name, postGroups),
+			})
+		}
+	}
+	linkGroups := categoryGroups("link")
+	if cats, _ := s.store.ListCategories(def, "link"); cats != nil {
+		prefix := t("admin.settings.menu.target.link_category", "链接分类")
+		for _, c := range cats {
+			slug := strings.TrimSpace(c.Slug)
+			if slug == "" {
+				continue
+			}
+			group := categoryKey(c)
+			add(MenuTargetOption{
+				Value:  "link-category:" + group,
+				Label:  prefix + "：" + c.Name,
+				URL:    joinPath(linksPath, "cat/"+slug),
+				Kind:   "preset",
+				Labels: categoryLabels(group, c.Name, linkGroups),
+			})
+		}
+	}
+	pageGroupsByKey := pageGroups()
+	if pages, _ := s.store.ListPages(def); pages != nil {
+		prefix := t("admin.settings.menu.target.page", "页面")
+		for _, p := range pages {
+			slug := strings.Trim(strings.TrimSpace(p.Slug), "/")
+			if slug == "" || slug == "about" || slug == "start" {
+				continue
+			}
+			group := pageKey(p)
+			add(MenuTargetOption{
+				Value:  "page:" + group,
+				Label:  prefix + "：" + p.Title,
+				URL:    "/" + slug,
+				Kind:   "preset",
+				Labels: pageLabels(group, p.Title, pageGroupsByKey),
+			})
+		}
+	}
+	add(MenuTargetOption{Value: "__custom__", Label: t("admin.settings.menu.target.custom", "自定义站内路径"), Kind: "custom", Labels: map[string]string{}})
+	add(MenuTargetOption{Value: "__external__", Label: t("admin.settings.menu.target.external", "外部链接"), Kind: "external", Labels: map[string]string{}})
+	return opts
 }
 
 // menuEditRows 为后台导航编辑提供回填行：未配置时给出默认菜单可编辑副本（各语种填 i18n 文案）。

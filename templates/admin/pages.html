@@ -23,7 +23,7 @@
         <td class="slug">/{{.Lang}}/{{.Slug}}</td>
         <td class="muted nowrap">{{adminDateTime .UpdatedAt}}</td>
         <td class="right actions">
-          <a class="act-ico" href="/{{.Lang}}/{{.Slug}}" target="_blank" title="{{$.Admin.T "admin.action.view" "查看"}}" aria-label="{{$.Admin.T "admin.action.view" "查看"}}">{{template "icon-extlink"}}</a>
+          <a class="act-ico" href="{{adminPublicContentPath $.AdminPreviewPrefix .Lang "page" .Slug}}" target="_blank" title="{{$.Admin.T "admin.action.view" "查看"}}" aria-label="{{$.Admin.T "admin.action.view" "查看"}}">{{template "icon-extlink"}}</a>
           <a class="act-ico" href="/admin/pages/{{.ID}}/edit" title="{{$.Admin.T "admin.action.edit" "编辑"}}" aria-label="{{$.Admin.T "admin.action.edit" "编辑"}}">{{template "icon-edit"}}</a>
         </td>
       </tr>

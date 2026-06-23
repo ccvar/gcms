@@ -730,8 +730,13 @@ a.overview-log-title { text-decoration: none; }
 .starter-help-steps { counter-reset: starter-help; display: grid; gap: .72rem; margin: .2rem 0 1rem; padding: 0; list-style: none; }
 .starter-help-steps li { counter-increment: starter-help; display: grid; grid-template-columns: 2rem minmax(0, 1fr); gap: .7rem; align-items: start; padding: .72rem .78rem; border: 1px solid var(--line-soft); border-radius: 8px; background: color-mix(in srgb, var(--surface) 88%, var(--accent-wash)); }
 .starter-help-steps li::before { content: counter(starter-help); display: inline-grid; place-items: center; width: 1.65rem; height: 1.65rem; border-radius: 999px; background: color-mix(in srgb, var(--accent) 12%, var(--surface)); color: var(--accent); font: 800 .78rem/1 var(--sans); }
+.starter-help-steps strong,
+.starter-help-steps span { grid-column: 2; }
 .starter-help-steps strong { display: block; margin-bottom: .2rem; color: var(--ink); font-size: .88rem; }
 .starter-help-steps span { color: var(--muted); font-size: .82rem; line-height: 1.55; }
+.starter-help-note { grid-column: 2; margin-top: .18rem; padding: .6rem .68rem; border-radius: 8px; background: color-mix(in srgb, var(--accent-wash) 58%, var(--surface)); }
+.starter-help-note strong { margin-bottom: .16rem; color: var(--accent); font-size: .78rem; }
+.starter-help-note span { color: var(--ink-soft); font-size: .78rem; line-height: 1.55; }
 .starter-help-boundary { padding: .8rem .9rem; border: 1px solid #ecc56a; border-radius: 8px; background: color-mix(in srgb, #fff7df 72%, var(--surface)); }
 .starter-help-boundary strong { display: block; margin-bottom: .35rem; color: #7a5b16; }
 .starter-help-boundary p { margin: 0; color: var(--ink-soft); font-size: .84rem; line-height: 1.6; }

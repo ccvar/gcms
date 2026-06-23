@@ -46,7 +46,8 @@ func parseMenuRows(s string) []MenuRow {
 	}
 	out := rows[:0]
 	for _, m := range rows {
-		if strings.TrimSpace(m.URL) != "" {
+		m.URL = cleanMenuURLValue(m.URL)
+		if m.URL != "" {
 			out = append(out, m)
 		}
 	}
@@ -57,7 +58,7 @@ func parseMenuRows(s string) []MenuRow {
 func buildMenuJSON(urls []string, labelsByLang map[string][]string) string {
 	var list []MenuRow
 	for i, u := range urls {
-		u = strings.TrimSpace(u)
+		u = cleanMenuURLValue(u)
 		if u == "" {
 			continue
 		}
@@ -76,6 +77,29 @@ func buildMenuJSON(urls []string, labelsByLang map[string][]string) string {
 	}
 	b, _ := json.Marshal(list)
 	return string(b)
+}
+
+func cleanMenuURLValue(raw string) string {
+	u := strings.TrimSpace(raw)
+	if u == "" {
+		return ""
+	}
+	decoded := u
+	if v, err := url.PathUnescape(u); err == nil {
+		decoded = strings.TrimSpace(v)
+	}
+	placeholders := map[string]bool{
+		"自定义地址":                        true,
+		"/docs 或 https://example.com":  true,
+		"/docs or https://example.com": true,
+	}
+	if placeholders[u] || placeholders[decoded] {
+		return ""
+	}
+	if !isExternalURL(u) && !strings.HasPrefix(u, "/") {
+		return ""
+	}
+	return u
 }
 
 func isExternalURL(u string) bool {
@@ -123,8 +147,12 @@ func menuOptionLabels() map[string]string {
 func decorateMenuRows(rows []MenuRow, targets []MenuTargetOption) []MenuRow {
 	byURL := map[string]MenuTargetOption{}
 	for _, opt := range targets {
-		if strings.TrimSpace(opt.URL) != "" {
-			byURL[opt.URL] = opt
+		targetURL := strings.TrimSpace(opt.URL)
+		if targetURL != "" {
+			byURL[targetURL] = opt
+			if slug := strings.TrimPrefix(targetURL, "/links/cat/"); slug != targetURL && slug != "" {
+				byURL["/links?cat="+url.QueryEscape(slug)] = opt
+			}
 		}
 	}
 	fallback := menuOptionLabels()
@@ -136,6 +164,7 @@ func decorateMenuRows(rows []MenuRow, targets []MenuTargetOption) []MenuRow {
 	for i := range rows {
 		rows[i].URL = strings.TrimSpace(rows[i].URL)
 		if opt, ok := byURL[rows[i].URL]; ok {
+			rows[i].URL = opt.URL
 			rows[i].TargetValue = opt.Value
 			rows[i].TargetLabel = opt.Label
 			rows[i].TargetKind = opt.Kind

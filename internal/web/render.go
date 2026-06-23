@@ -287,7 +287,8 @@ func funcMap(imageSizes map[string]ImageSize) template.FuncMap {
 			}
 			return t.Local().Format("2006-01-02 15:04:05")
 		},
-		"automationLogParts": automationLogParts,
+		"adminPublicContentPath": adminPublicContentPath,
+		"automationLogParts":     automationLogParts,
 		"isodate": func(t time.Time) string {
 			if t.IsZero() {
 				return ""
@@ -344,6 +345,23 @@ func funcMap(imageSizes map[string]ImageSize) template.FuncMap {
 			}
 			return tr.U(paginationPath(base, page))
 		},
+	}
+}
+
+func adminPublicContentPath(routePrefix, lang, typ, slug string) string {
+	typ = strings.TrimSpace(typ)
+	slug = strings.TrimSpace(slug)
+	slug = strings.TrimLeft(slug, "/")
+	switch typ {
+	case "page":
+		if slug == "" {
+			return localizedPath(routePrefix, lang, "/")
+		}
+		return localizedPath(routePrefix, lang, "/"+slug)
+	case "link":
+		return localizedPath(routePrefix, lang, "/links/"+slug)
+	default:
+		return localizedPath(routePrefix, lang, "/posts/"+slug)
 	}
 }
 

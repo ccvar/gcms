@@ -156,15 +156,15 @@
               <li><strong>{{$.Admin.T "admin.sites.starter_help_step_1" "下载新站包"}}</strong><span>{{$.Admin.T "admin.sites.starter_help_step_1_desc" "点击“下载新站 AI 技能包”，解压后把整个 gcms-site-starter 文件夹交给 AI 工具。"}}</span></li>
               <li><strong>{{$.Admin.T "admin.sites.starter_help_step_2" "确认密钥可用"}}</strong><span>{{$.Admin.T "admin.sites.starter_help_step_2_desc" "如果包里有 .env，通常已经带好连接信息；如果只有 .env.example，把它改名为 .env，并填入 GCMS_API_KEY。"}}</span></li>
               <li><strong>{{$.Admin.T "admin.sites.starter_help_step_3" "用 AI 工具打开文件夹"}}</strong><span>{{$.Admin.T "admin.sites.starter_help_step_3_desc" "在 Codex、Claude Code、Cursor 等工具里打开整个 gcms-site-starter 文件夹，不要只复制零散文件。"}}</span></li>
-              <li><strong>{{$.Admin.T "admin.sites.starter_help_step_4" "填写需求向导"}}</strong><span>{{$.Admin.T "admin.sites.starter_help_step_4_desc" "打开“新站需求向导.md”，用自然语言填写网站方向、目标用户、启用语种、内容风格和不能碰的边界。不确定就写“不确定”。"}}</span></li>
+              <li><strong>{{$.Admin.T "admin.sites.starter_help_step_4" "填写需求向导"}}</strong><span>{{$.Admin.T "admin.sites.starter_help_step_4_desc" "打开“新站需求向导.md”。不用填写标题下面的说明文字，从“1. 网站是做什么的？”开始，把每一行冒号后面的空白补上；不会填就写“不确定”，不需要就写“不需要”。"}}</span></li>
               <li><strong>{{$.Admin.T "admin.sites.starter_help_step_5" "先让 AI 出规划"}}</strong><span>{{$.Admin.T "admin.sites.starter_help_step_5_desc" "复制“第一步-让AI出规划.md”里的提示词发给 AI。此时 AI 只读取站点并输出规划，不会写入任何内容。"}}</span></li>
-              <li><strong>{{$.Admin.T "admin.sites.starter_help_step_6" "你先审核规划"}}</strong><span>{{$.Admin.T "admin.sites.starter_help_step_6_desc" "重点看：网站定位、语种策略、导航菜单、分类、首页文案、页面、文章选题和资源链接是否符合你的想法。"}}</span></li>
+              <li><strong>{{$.Admin.T "admin.sites.starter_help_step_6" "你先审核规划"}}</strong><span>{{$.Admin.T "admin.sites.starter_help_step_6_desc" "重点看：网站定位、语种策略、导航菜单、分类、首页文案、页面、文章选题和资源链接是否符合你的想法。"}}</span><div class="starter-help-note"><strong>{{$.Admin.T "admin.sites.starter_help_plan_refine" "规划不满意怎么办？"}}</strong><span>{{$.Admin.T "admin.sites.starter_help_plan_refine_desc" "不要继续写入草稿。直接告诉 AI 哪里不满意，例如“导航太多，精简成 5 个以内”“英文内容不要直译中文”。满意后再进入下一步。"}}</span></div></li>
               <li><strong>{{$.Admin.T "admin.sites.starter_help_step_7" "确认后写入草稿"}}</strong><span>{{$.Admin.T "admin.sites.starter_help_step_7_desc" "规划没问题后，再复制“第二步-审核后写入草稿.md”。AI 会按顺序完成新站基础内容，默认全部保存为草稿。"}}</span></li>
-              <li><strong>{{$.Admin.T "admin.sites.starter_help_step_8" "后台检查并发布"}}</strong><span>{{$.Admin.T "admin.sites.starter_help_step_8_desc" "回到 GCMS 后台检查草稿内容。只有你明确说“发布这些内容”，并且密钥有发布权限时，AI 才能发布。"}}</span></li>
+              <li><strong>{{$.Admin.T "admin.sites.starter_help_step_8" "后台检查并发布"}}</strong><span>{{$.Admin.T "admin.sites.starter_help_step_8_desc" "回到 GCMS 后台检查草稿内容。只有你明确说“发布这些内容”，并且密钥有发布权限时，AI 才能发布。"}}</span><div class="starter-help-note"><strong>{{$.Admin.T "admin.sites.starter_help_draft_refine" "草稿不满意怎么办？"}}</strong><span>{{$.Admin.T "admin.sites.starter_help_draft_refine_desc" "先不要发布。让 AI 只修改不满意的部分，例如“重写首页 Hero 文案”“只调整这 3 篇文章标题”。改完再回后台复核。"}}</span></div></li>
             </ol>
             <div class="starter-help-boundary">
               <strong>{{$.Admin.T "admin.sites.starter_help_boundary" "关键边界"}}</strong>
-              <p>{{$.Admin.T "admin.sites.starter_help_boundary_desc" "先规划，不写入；确认后，写草稿；最后明确授权，才发布。AI 不会处理后台安全、系统更新、Cloudflare、管理员账号和 API Key。"}}</p>
+              <p>{{$.Admin.T "admin.sites.starter_help_boundary_desc" "先规划，不写入；确认后，写草稿；最后明确授权，才发布。AI 不会处理后台安全、系统更新、Cloudflare、管理员账号、API Key、站点 Logo、浏览器图标和分享图。"}}</p>
             </div>
             <div class="modal-actions">
               <a class="btn" href="#">{{$.Admin.T "admin.action.cancel" "关闭"}}</a>

@@ -971,11 +971,29 @@
         if (input) input.value = labels[code] || "";
       });
     }
+    function decodeMenuValue(value) {
+      try {
+        return decodeURIComponent(value);
+      } catch (err) {
+        return value;
+      }
+    }
+    function cleanCustomMenuURL(value) {
+      value = String(value == null ? "" : value).trim();
+      if (!value) return "";
+      var decoded = decodeMenuValue(value).trim();
+      var placeholder = text("custom-url-placeholder", "/docs 或 https://example.com").trim();
+      var customLabel = text("custom-url", "自定义地址").trim();
+      if (value === placeholder || decoded === placeholder || decoded === customLabel) return "";
+      return value;
+    }
     function syncCustomURL(row) {
       var custom = row.querySelector(".menu-custom-url");
       var hidden = row.querySelector(".menu-url");
       if (!custom || !hidden) return;
-      hidden.value = custom.value.trim();
+      var cleaned = cleanCustomMenuURL(custom.value);
+      if (custom.value.trim() !== cleaned) custom.value = cleaned;
+      hidden.value = cleaned;
       setPreview(row, hidden.value);
       updateMenuPreview();
     }
@@ -996,7 +1014,9 @@
       if (hidden) {
         if (isCustom) {
           if (fillLabels && row.dataset.customTarget !== "1" && custom) custom.value = "";
-          hidden.value = custom ? custom.value.trim() : "";
+          var customURL = custom ? cleanCustomMenuURL(custom.value) : "";
+          if (custom && custom.value.trim() !== customURL) custom.value = customURL;
+          hidden.value = customURL;
         } else {
           hidden.value = url;
           if (custom) custom.value = url;
@@ -1015,6 +1035,7 @@
       row.innerHTML = '<span class="drag-handle" aria-hidden="true">⠿</span><div class="menu-fields"><div class="menu-main"><div class="menu-target-wrap"><label>' + esc(text("target", "指向哪里")) + '</label>' + targetDropdownHTML("__custom__") + '</div><div class="menu-path-preview"><span>' + esc(text("path", "路径")) + '</span><code data-menu-path>' + esc(text("pending", "待填写")) + '</code></div></div><input class="menu-url" type="hidden" name="nav_url"><div class="menu-custom-wrap" data-menu-custom-wrap><label>' + esc(text("custom-url", "自定义地址")) + '</label><input class="menu-custom-url" placeholder="' + esc(text("custom-url-placeholder", "/docs 或 https://example.com")) + '" inputmode="url"></div><details class="menu-label-details" open><summary>' + esc(text("labels", "菜单文字")) + '</summary><div class="menu-labels">' + labelsHTML() + '</div></details></div><button type="button" class="menu-del" data-menu-del data-confirm="' + esc(text("delete-confirm", "删除这个菜单项？保存菜单后生效。")) + '" title="' + esc(text("delete", "删除")) + '" aria-label="' + esc(text("delete", "删除")) + '">' + trash + '</button>';
       box.appendChild(row);
       if (window.adminInitDropdown) window.adminInitDropdown(row.querySelector(".dropdown"));
+      applyTarget(row, "__custom__", false);
       updateMenuPreview();
       var inp = row.querySelector(".menu-custom-url"); if (inp) inp.focus();
     });

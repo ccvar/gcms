@@ -33,6 +33,7 @@ const (
 	apiScopeMediaWrite          = "media:write"
 	apiScopeSiteRead            = "site:read"
 	apiScopeSiteWrite           = "site:write"
+	apiScopeBrandAssetsWrite    = "brand:assets:write"
 	apiScopeNavigationRead      = "navigation:read"
 	apiScopeNavigationWrite     = "navigation:write"
 	apiScopePostCategoriesWrite = "posts:categories:write"
@@ -172,6 +173,9 @@ type apiSiteProfileItem struct {
 	HomeLatestTitle   string `json:"home_latest_title"`
 	DefaultPostAuthor string `json:"default_post_author"`
 	DefaultLinkAuthor string `json:"default_link_author"`
+	Logo              string `json:"logo,omitempty"`
+	Favicon           string `json:"favicon,omitempty"`
+	ShareImage        string `json:"share_image,omitempty"`
 }
 
 type apiSiteProfileInput struct {
@@ -189,6 +193,9 @@ type apiSiteProfileInput struct {
 	HomeLatestTitle   *string `json:"home_latest_title,omitempty"`
 	DefaultPostAuthor *string `json:"default_post_author,omitempty"`
 	DefaultLinkAuthor *string `json:"default_link_author,omitempty"`
+	Logo              *string `json:"logo,omitempty"`
+	Favicon           *string `json:"favicon,omitempty"`
+	ShareImage        *string `json:"share_image,omitempty"`
 }
 
 type apiSiteProfilePatch struct {
@@ -287,7 +294,7 @@ func (s *Server) apiGetSiteProfile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) apiUpdateSiteProfile(w http.ResponseWriter, r *http.Request) {
-	auth, ok := s.requireAutomationScope(w, r, apiScopeSiteWrite)
+	auth, ok := s.requireAutomationAnyScope(w, r, apiScopeSiteWrite, apiScopeBrandAssetsWrite)
 	if !ok {
 		return
 	}
@@ -300,16 +307,24 @@ func (s *Server) apiUpdateSiteProfile(w http.ResponseWriter, r *http.Request) {
 		items = []apiSiteProfileInput{in.apiSiteProfileInput}
 	}
 	if len(items) == 0 {
-		apiError(w, http.StatusBadRequest, "empty_patch", "没有收到需要更新的站点文案。")
+		apiError(w, http.StatusBadRequest, "empty_patch", "没有收到需要更新的站点资料。")
 		return
 	}
 	for i := range items {
+		if items[i].hasTextFields() && !automationScopeAllowed(auth.scopes, apiScopeSiteWrite) {
+			apiError(w, http.StatusForbidden, "missing_scope", "这条访问权限不能修改站点文案。")
+			return
+		}
+		if items[i].hasBrandAssetFields() && !automationScopeAllowed(auth.scopes, apiScopeBrandAssetsWrite) {
+			apiError(w, http.StatusForbidden, "missing_scope", "这条访问权限不能修改品牌资产。")
+			return
+		}
 		if errMsg := s.applyAPISiteProfileInput(&items[i]); errMsg != "" {
 			apiError(w, http.StatusBadRequest, "bad_request", errMsg)
 			return
 		}
 	}
-	_ = s.store.CreateAutomationLog(auth.key.ID, "update", "site", 0, "更新站点文案与首页文案")
+	_ = s.store.CreateAutomationLog(auth.key.ID, "update", "site", 0, "更新站点资料")
 	s.clearGeneratedCaches()
 	writeJSON(w, http.StatusOK, s.apiSiteProfileResponse())
 }
@@ -900,11 +915,19 @@ func (s *Server) apiContentByID(w http.ResponseWriter, r *http.Request, kind str
 	return p, true
 }
 
-func (in apiSiteProfileInput) hasFields() bool {
+func (in apiSiteProfileInput) hasTextFields() bool {
 	return in.Name != nil || in.Tagline != nil || in.Description != nil || in.Keywords != nil ||
 		in.HeroEyebrow != nil || in.HeroTitle != nil || in.HeroDescription != nil || in.FooterNote != nil ||
 		in.HomeFeaturedTitle != nil || in.HomeLinksTitle != nil || in.HomeLatestTitle != nil ||
 		in.DefaultPostAuthor != nil || in.DefaultLinkAuthor != nil
+}
+
+func (in apiSiteProfileInput) hasBrandAssetFields() bool {
+	return in.Logo != nil || in.Favicon != nil || in.ShareImage != nil
+}
+
+func (in apiSiteProfileInput) hasFields() bool {
+	return in.hasTextFields() || in.hasBrandAssetFields()
 }
 
 func (in apiSiteProfilePatch) hasFields() bool {
@@ -937,6 +960,9 @@ func (s *Server) apiSiteProfileItem(lang string) apiSiteProfileItem {
 		HomeLatestTitle:   st.HomeLatest,
 		DefaultPostAuthor: s.defaultContentAuthor("post", lang),
 		DefaultLinkAuthor: s.defaultContentAuthor("link", lang),
+		Logo:              st.Logo,
+		Favicon:           st.Favicon,
+		ShareImage:        st.ShareImage,
 	}
 }
 
@@ -979,6 +1005,22 @@ func (s *Server) applyAPISiteProfileInput(in *apiSiteProfileInput) string {
 		{linkDefaultAuthorKey, in.DefaultLinkAuthor},
 	} {
 		if err := set(item.key, item.value); err != nil {
+			return err.Error()
+		}
+	}
+	for _, item := range []struct {
+		key   string
+		value *string
+	}{
+		{"site.logo", in.Logo},
+		{"site.share_image", in.ShareImage},
+	} {
+		if err := set(item.key, item.value); err != nil {
+			return err.Error()
+		}
+	}
+	if in.Favicon != nil {
+		if err := s.store.SetSetting("site.favicon", strings.TrimSpace(*in.Favicon)); err != nil {
 			return err.Error()
 		}
 	}
