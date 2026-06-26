@@ -1,4 +1,5 @@
 {{define "body"}}  <main>
+  {{if eq .Layout "bento"}}{{template "home_bento" .}}{{else if eq .Layout "index"}}{{template "home_index" .}}{{else if eq .Layout "split"}}{{template "home_split" .}}{{else if eq .Layout "axis"}}{{template "home_axis" .}}{{else}}
     <section class="hero">
       <div class="wrap hero-inner{{if and (eq .Theme "knowledge") .FeatLinks}} has-knowledge-links{{end}}">
         <div class="hero-text">
@@ -293,5 +294,6 @@
       </section>
     </div>
     {{end}}
+  {{end}}
   </main>
 {{end}}

@@ -409,7 +409,7 @@ func NewRenderer(tplFS fs.FS, imageSizes map[string]ImageSize) (*Renderer, error
 		return nil, err
 	}
 	r := &Renderer{sets: map[string]*template.Template{}}
-	partials := []string{"layout.html", "partials/head.html", "partials/header.html", "partials/footer.html"}
+	partials := []string{"layout.html", "partials/head.html", "partials/header.html", "partials/footer.html", "partials/home_bento.html", "partials/home_index.html", "partials/home_split.html", "partials/home_axis.html"}
 
 	for _, name := range []string{"home", "article", "category", "links", "link", "page", "search", "api_docs", "404"} {
 		files := append([]string{}, partials...)
@@ -421,7 +421,7 @@ func NewRenderer(tplFS fs.FS, imageSizes map[string]ImageSize) (*Renderer, error
 		r.sets[name] = t
 	}
 
-	tp, err := template.New("theme_preview").Funcs(funcMap(imageSizes)).ParseFS(sub, "theme_preview.html")
+	tp, err := template.New("theme_preview").Funcs(funcMap(imageSizes)).ParseFS(sub, "theme_preview.html", "partials/home_bento.html", "partials/home_index.html", "partials/home_split.html", "partials/home_axis.html")
 	if err != nil {
 		return nil, err
 	}

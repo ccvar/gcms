@@ -137,6 +137,34 @@ var Themes = []ThemeOption{
 	{"lifestyle", "生活 · Lifestyle", "咖啡/民宿/餐厅/买手店、小品牌温度感官网"},
 	{"knowledge", "知识库 · Knowledge Hub", "搜索优先、分类导航、推荐阅读和更新时间线"},
 	{"sidebar", "侧栏 · Sidebar", "左侧常驻竖栏（品牌+导航）+ 右侧阅读流，个人站 / 文档站气质"},
+	{"bento", "拼贴 · Bento", "错落卡片网格首页（顶栏照旧），靛蓝强调、大圆角，作品集 / 个人主页气质"},
+	{"nocturne", "夜栏 · Nocturne", "深色左栏 + 阅读流，薄荷青强调、等宽点缀，开发者夜间博客 / 暗色文档"},
+	{"terra", "暖砂 · Terra", "暖砂拼贴网格 + 衬线标题，陶土橙强调，创作者作品集 / 个人主页"},
+	{"porcelain", "月白 · Porcelain", "极简留白顶栏 + 文学衬线，青瓷绿强调，写作 / 品牌 / 期刊式站点"},
+	{"index", "索引 · Index", "首页是一张排版化内容索引表：等宽编号 + 发丝线 + 大留白，克制精密的科技感"},
+	{"split", "分屏 · Split", "满屏左右分栏：左侧巨型标题 + 右侧整块精选，黑白克制、大气留白"},
+	{"axis", "中线 · Axis", "全居中宣言式：巨型居中标题 + 中线分隔的居中列表，极致对称留白"},
+}
+
+// themeLayouts 登记“非默认骨架”的主题；未登记者一律 "topbar"（= 现有基础骨架）。
+// 皮（data-theme）与骨（data-theme-layout）解耦：同一套骨架可被多套皮复用，
+// 结构性差异在模板里按 .Layout 分支（骨架数量级），而非按主题名分支（主题数量级）。
+var themeLayouts = map[string]string{
+	"sidebar":  "sidebar",
+	"bento":    "bento",
+	"nocturne": "sidebar",
+	"terra":    "bento",
+	"index":    "index",
+	"split":    "split",
+	"axis":     "axis",
+}
+
+// layoutForTheme 返回主题对应的布局骨架，缺省 "topbar"。
+func layoutForTheme(theme string) string {
+	if l, ok := themeLayouts[theme]; ok {
+		return l
+	}
+	return "topbar"
 }
 
 func validTheme(id string) bool {
@@ -252,6 +280,7 @@ type View struct {
 	Nav          string
 	Year         int
 	Theme        string
+	Layout       string
 	ThemeStyle   template.CSS
 	AssetVer     string
 
@@ -2335,7 +2364,7 @@ func (s *Server) viewForLang(r *http.Request, lang, nav string) *View {
 		tr = tr.WithPrefix(localizedPrefix(prefix, lang))
 	}
 	v := &View{
-		Site: st, Nav: nav, Year: time.Now().Year(), Theme: st.Theme, ThemeStyle: s.themeOverride(),
+		Site: st, Nav: nav, Year: time.Now().Year(), Theme: st.Theme, Layout: layoutForTheme(st.Theme), ThemeStyle: s.themeOverride(),
 		Tr: tr, Lang: lang, AssetVer: s.assetVer,
 		SitemapURL:   previewRootPath(r, "/sitemap.xml"),
 		RobotsURL:    previewRootPath(r, "/robots.txt"),
@@ -2440,6 +2469,7 @@ func (s *Server) applyTheme(v *View, theme string) {
 		return
 	}
 	v.Theme = theme
+	v.Layout = layoutForTheme(theme)
 	v.Site.Theme = theme
 	v.ThemeStyle = s.themeOverrideFor(theme)
 }

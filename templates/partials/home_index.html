@@ -1,0 +1,45 @@
+{{define "home_index"}}
+  <div class="index-wrap">
+    <header class="index-head{{if .FeatLinks}} has-scatter{{end}}">
+      <div class="index-headtext">
+        {{if .Site.HeroEyebrow}}<p class="index-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+        <h1 class="index-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+        <p class="index-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>
+      </div>
+      {{if .FeatLinks}}
+      <div class="index-scatter">
+        {{range .FeatLinks}}
+        <a class="iscatter" href="{{$.Tr.U (printf "/links/%s" .Slug)}}" title="{{.Title}}">
+          {{if .CoverImage}}<img src="{{.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<span class="iscatter-i">{{initial .Title}}</span>{{end}}
+        </a>
+        {{end}}
+      </div>
+      {{end}}
+    </header>
+
+    <section class="index-table" aria-label="{{.Site.HomeLatest}}">
+      <div class="index-colhead" aria-hidden="true">
+        <span>№</span><span>{{.Site.HomeLatest}}</span><span>{{.Tr.T "category.label"}}</span><span>{{.Tr.T "common.date"}}</span>
+      </div>
+      {{with .Featured}}
+      <a class="index-item" href="{{$.Tr.U (printf "/posts/%s" .Slug)}}">
+        <span class="ix-n">01</span>
+        <span class="ix-t">{{.Title}}</span>
+        <span class="ix-c">{{with .Category}}{{.Name}}{{end}}</span>
+        <span class="ix-d"><time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time></span>
+      </a>
+      {{end}}
+      {{range $i, $p := .Posts}}
+      <a class="index-item" href="{{$.Tr.U (printf "/posts/%s" .Slug)}}">
+        <span class="ix-n">{{printf "%02d" (add $i 2)}}</span>
+        <span class="ix-t">{{$p.Title}}</span>
+        <span class="ix-c">{{with $p.Category}}{{.Name}}{{end}}</span>
+        <span class="ix-d"><time datetime="{{$.Tr.ISODate $p.PublishedAt}}">{{$.Tr.Date $p.PublishedAt}}</time></span>
+      </a>
+      {{else}}
+      {{if not .Featured}}<p class="index-empty">{{.Tr.T "home.no_posts"}}</p>{{end}}
+      {{end}}
+      <a class="index-all" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span aria-hidden="true">→</span></a>
+    </section>
+  </div>
+{{end}}
