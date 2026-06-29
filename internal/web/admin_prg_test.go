@@ -53,6 +53,66 @@ func TestAdminSettingsSaveUsesRedirectAfterPost(t *testing.T) {
 	}
 }
 
+func TestAdminSiteSettingsUseCurrentLanguageShareImage(t *testing.T) {
+	s := newTestPublicServer(t, "")
+	h := s.Handler()
+	if err := s.store.SetSetting("site.share_image", "/uploads/share-zh.webp"); err != nil {
+		t.Fatalf("set default share image: %v", err)
+	}
+	if err := s.store.SetSetting("site.share_image::en", "/uploads/share-en.webp"); err != nil {
+		t.Fatalf("set English share image: %v", err)
+	}
+
+	getReq, _ := authedAdminRequest(t, s, http.MethodGet, "/admin/settings/site?lang=en", nil)
+	page := httptest.NewRecorder()
+	h.ServeHTTP(page, getReq)
+	if page.Code != http.StatusOK {
+		t.Fatalf("settings status = %d, body = %s", page.Code, page.Body.String())
+	}
+	body := page.Body.String()
+	if !strings.Contains(body, `name="site_share_image" value="/uploads/share-en.webp"`) {
+		t.Fatalf("English settings should render English share image")
+	}
+	if strings.Contains(body, `name="site_share_image" value="/uploads/share-zh.webp"`) {
+		t.Fatalf("English settings rendered default share image")
+	}
+
+	form := url.Values{
+		"site_name":           {"English Site"},
+		"site_tagline":        {"English Tagline"},
+		"site_description":    {"English Description"},
+		"site_keywords":       {"English Keywords"},
+		"default_post_author": {"English Editors"},
+		"default_link_author": {"English Picks"},
+		"site_favicon":        {"/uploads/favicon.ico"},
+		"site_logo":           {"/uploads/logo.svg"},
+		"site_share_image":    {"/uploads/share-en-next.webp"},
+		"site_brand":          {"logo"},
+	}
+	saveReq, _ := authedAdminRequest(t, s, http.MethodPost, "/admin/settings/site?lang=en", form)
+	saved := httptest.NewRecorder()
+	h.ServeHTTP(saved, saveReq)
+	if saved.Code != http.StatusSeeOther {
+		t.Fatalf("save status = %d, body = %s", saved.Code, saved.Body.String())
+	}
+	if got := s.store.Setting("site.share_image"); got != "/uploads/share-zh.webp" {
+		t.Fatalf("default share image changed to %q", got)
+	}
+	if got := s.store.Setting("site.share_image::en"); got != "/uploads/share-en-next.webp" {
+		t.Fatalf("English share image = %q", got)
+	}
+}
+
+func TestVisualShareImageUsesCurrentLanguageKey(t *testing.T) {
+	s := newTestPublicServer(t, "")
+	if got, want := s.visualStoreKey("site.share_image", "zh"), "site.share_image"; got != want {
+		t.Fatalf("default share image visual key = %q, want %q", got, want)
+	}
+	if got, want := s.visualStoreKey("site.share_image", "en"), "site.share_image::en"; got != want {
+		t.Fatalf("English share image visual key = %q, want %q", got, want)
+	}
+}
+
 func TestAdminCanCreatePageFromPagesScreen(t *testing.T) {
 	s := newTestPublicServer(t, "")
 	h := s.Handler()

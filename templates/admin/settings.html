@@ -206,7 +206,7 @@
           </div>
         </div>
         <div class="field">
-          <label>{{.Admin.T "admin.settings.site.share_image" "分享图"}} <span class="scope-pill global">{{.Admin.T "admin.scope.global" "全站共用"}}</span></label>
+          <label>{{.Admin.T "admin.settings.site.share_image" "分享图"}} <span class="scope-pill">{{.Admin.T "admin.scope.current_lang" "当前语种"}}</span></label>
           <p class="muted" style="margin:.1rem 0 .7rem;font-size:.82rem">{{.Admin.T "admin.settings.site.share_note" "分享到微信、飞书、X 等平台时默认显示；文章有封面时会优先使用文章封面。建议 1200 × 630。"}}</p>
           <div class="uploader uploader-og" data-name="site_share_image">
             <input type="hidden" name="site_share_image" value="{{.Settings.ShareImage}}">

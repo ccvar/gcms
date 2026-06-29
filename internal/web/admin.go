@@ -2417,7 +2417,7 @@ func (s *Server) visualFields(lang string, admins ...*i18n.AdminTr) []VisualFiel
 		text("site", "site.keywords", t("admin.visual.field.keywords", "首页 SEO 关键词"), st.Keywords, t("admin.visual.hint.keywords", "用于首页 meta keywords，多个关键词用逗号分隔。"), true),
 		image("site", "site.logo", t("admin.visual.field.logo", "站点 Logo"), s.store.Setting("site.logo"), t("admin.visual.hint.logo", "显示在页眉和页脚，留空时使用内置默认 Logo。")),
 		image("site", "site.favicon", t("admin.visual.field.favicon", "浏览器图标"), nonEmpty(s.store.Setting("site.favicon"), defaultFaviconPath), t("admin.visual.hint.favicon", "显示在浏览器标签页，建议使用 SVG、PNG 或 ICO。")),
-		image("site", "site.share_image", t("admin.visual.field.share_image", "分享图"), nonEmpty(s.store.Setting("site.share_image"), defaultShareImageURL), t("admin.visual.hint.share_image", "分享到微信、飞书、X 等平台时默认显示，建议 1200×630。")),
+		image("site", "site.share_image", t("admin.visual.field.share_image", "分享图"), nonEmpty(st.ShareImage, defaultShareImageURL), t("admin.visual.hint.share_image", "分享到微信、飞书、X 等平台时默认显示，建议 1200×630。")),
 		text("home", "site.hero_eyebrow", t("admin.visual.field.hero_eyebrow", "Hero 眉标"), st.HeroEyebrow, t("admin.visual.hint.hero_eyebrow", "首页主标题上方的小字。"), false),
 		text("home", "site.hero_title", t("admin.visual.field.hero_title", "Hero 大标题"), st.HeroTitle, t("admin.visual.hint.hero_title", "首页第一屏最醒目的标题，建议短一点。"), true),
 		text("home", "site.hero_description", t("admin.visual.field.hero_description", "Hero 描述"), st.HeroDescription, t("admin.visual.hint.hero_description", "首页大标题下方的说明文案，留空时回退首页 SEO 描述。"), true),
@@ -2887,7 +2887,7 @@ func (s *Server) visualStoreKey(key, lang string) string {
 	case "site.favicon":
 		return "site.favicon"
 	case "site.share_image":
-		return "site.share_image"
+		return s.copyKey("site.share_image", lang)
 	case "hero.image":
 		return s.copyKey("hero.image", lang)
 	case layoutWidthKey:
@@ -3931,6 +3931,7 @@ func (s *Server) showSettings(w http.ResponseWriter, r *http.Request, section, f
 		v.Settings.Tagline = localized("site.tagline", def.Tagline)
 		v.Settings.Description = localized("site.description", def.Description)
 		v.Settings.Keywords = localized("site.keywords", def.Keywords)
+		v.Settings.ShareImage = localized("site.share_image", defaultShareImageURL)
 		authorValue := func(kind string) string {
 			v := strings.TrimSpace(s.store.Setting(s.copyKey(defaultAuthorKey(kind), lang)))
 			if lang == s.defaultLang() && v == "" {
@@ -4314,7 +4315,7 @@ func (s *Server) adminSaveSite(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.store.SetSetting("site.favicon", favicon)
 	_ = s.store.SetSetting("site.logo", strings.TrimSpace(r.FormValue("site_logo")))
-	_ = s.store.SetSetting("site.share_image", shareImage)
+	_ = s.store.SetSetting(s.copyKey("site.share_image", lang), shareImage)
 	brand := r.FormValue("site_brand")
 	if brand != "both" && brand != "text" {
 		brand = "logo"

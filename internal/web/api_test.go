@@ -553,6 +553,56 @@ func TestAPISiteProfileBrandAssetsRequireScope(t *testing.T) {
 	}
 }
 
+func TestAPISiteProfileUpdatesEnglishShareImage(t *testing.T) {
+	s, token := newTestAutomationServer(t, apiScopeBrandAssetsWrite)
+	if err := s.store.SetSetting("site.share_image", "/uploads/share-zh.webp"); err != nil {
+		t.Fatalf("set default share image: %v", err)
+	}
+	body, err := json.Marshal(map[string]any{
+		"lang":        "en",
+		"share_image": "/uploads/share-en.webp",
+	})
+	if err != nil {
+		t.Fatalf("marshal share image body: %v", err)
+	}
+	r := httptest.NewRequest(http.MethodPatch, "/api/admin/v1/site-profile", bytes.NewReader(body))
+	r.Header.Set("Authorization", "Bearer "+token)
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.apiUpdateSiteProfile(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("share image update status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if got := s.store.Setting("site.share_image"); got != "/uploads/share-zh.webp" {
+		t.Fatalf("default site.share_image changed to %q", got)
+	}
+	if got := s.store.Setting("site.share_image::en"); got != "/uploads/share-en.webp" {
+		t.Fatalf("site.share_image::en = %q", got)
+	}
+	if got := s.site("zh").ShareImage; got != "/uploads/share-zh.webp" {
+		t.Fatalf("zh share image = %q", got)
+	}
+	if got := s.site("en").ShareImage; got != "/uploads/share-en.webp" {
+		t.Fatalf("en share image = %q", got)
+	}
+
+	var res struct {
+		Items []apiSiteProfileItem `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
+		t.Fatalf("decode site profile response: %v", err)
+	}
+	for _, item := range res.Items {
+		if item.Lang == "en" {
+			if item.ShareImage != "/uploads/share-en.webp" {
+				t.Fatalf("response English share image = %q", item.ShareImage)
+			}
+			return
+		}
+	}
+	t.Fatalf("response missing English site profile item: %#v", res.Items)
+}
+
 func TestAutomationStarterZipIncludesBriefAndOpenAPI(t *testing.T) {
 	files, err := automationStarterFiles(automationSkillOptions{
 		apiBase: "https://example.com/api/admin/v1",
