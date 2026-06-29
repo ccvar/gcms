@@ -14,10 +14,22 @@
 
   <div class="list-toolbar">
     <div class="status-tabs" role="tablist" aria-label="{{.Admin.T "admin.list.status_filter" "状态筛选"}}">
-      <a href="/admin/posts?lang={{.EditLang}}"{{if not .StatusFilter}} class="active" aria-current="true"{{end}}>{{.Admin.T "admin.list.all_status" "全部"}}</a>
-      <a href="/admin/posts?lang={{.EditLang}}&status=published"{{if eq .StatusFilter "published"}} class="active" aria-current="true"{{end}}>{{.Admin.T "admin.status.published" "已发布"}}</a>
-      <a href="/admin/posts?lang={{.EditLang}}&status=draft"{{if eq .StatusFilter "draft"}} class="active" aria-current="true"{{end}}>{{.Admin.T "admin.status.draft" "草稿"}}</a>
-      <a href="/admin/posts?lang={{.EditLang}}&status=scheduled"{{if eq .StatusFilter "scheduled"}} class="active" aria-current="true"{{end}}>{{.Admin.T "admin.status.scheduled" "定时"}}</a>
+      <a href="/admin/posts?lang={{.EditLang}}{{if .CategoryFilter}}&cat={{.CategoryFilter}}{{end}}"{{if not .StatusFilter}} class="active" aria-current="true"{{end}}>{{.Admin.T "admin.list.all_status" "全部"}}</a>
+      <a href="/admin/posts?lang={{.EditLang}}&status=published{{if .CategoryFilter}}&cat={{.CategoryFilter}}{{end}}"{{if eq .StatusFilter "published"}} class="active" aria-current="true"{{end}}>{{.Admin.T "admin.status.published" "已发布"}}</a>
+      <a href="/admin/posts?lang={{.EditLang}}&status=draft{{if .CategoryFilter}}&cat={{.CategoryFilter}}{{end}}"{{if eq .StatusFilter "draft"}} class="active" aria-current="true"{{end}}>{{.Admin.T "admin.status.draft" "草稿"}}</a>
+      <a href="/admin/posts?lang={{.EditLang}}&status=scheduled{{if .CategoryFilter}}&cat={{.CategoryFilter}}{{end}}"{{if eq .StatusFilter "scheduled"}} class="active" aria-current="true"{{end}}>{{.Admin.T "admin.status.scheduled" "定时"}}</a>
+    </div>
+    <div class="dropdown list-category-filter">
+      <button type="button" class="dd-toggle" aria-haspopup="listbox" aria-expanded="false">
+        <span class="dd-label">{{if .CategoryFilterName}}{{.CategoryFilterName}}{{else if .CategoryFilter}}{{.CategoryFilter}}{{else}}{{.Admin.T "admin.list.all_categories" "全部分类"}}{{end}}</span>
+        <span class="dd-caret" aria-hidden="true">⌄</span>
+      </button>
+      <ul class="dd-menu" role="listbox" aria-label="{{.Admin.T "admin.list.category_filter" "分类筛选"}}">
+        <li role="option" aria-selected="{{if not .CategoryFilter}}true{{else}}false{{end}}"><a href="/admin/posts?lang={{.EditLang}}{{if .StatusFilter}}&status={{.StatusFilter}}{{end}}">{{.Admin.T "admin.list.all_categories" "全部分类"}}</a></li>
+        {{range .Categories}}
+        <li role="option" aria-selected="{{if eq .Slug $.CategoryFilter}}true{{else}}false{{end}}"><a href="/admin/posts?lang={{$.EditLang}}{{if $.StatusFilter}}&status={{$.StatusFilter}}{{end}}&cat={{.Slug}}">{{.Name}}</a></li>
+        {{end}}
+      </ul>
     </div>
   </div>
 
@@ -34,6 +46,7 @@
             <input type="hidden" name="on" value="{{if .Featured}}0{{else}}1{{end}}">
             <input type="hidden" name="lang" value="{{.Lang}}">
             <input type="hidden" name="status" value="{{$.StatusFilter}}">
+            <input type="hidden" name="cat" value="{{$.CategoryFilter}}">
             <input type="hidden" name="page" value="{{$.PageNum}}">
             <button type="submit" class="pin{{if .Featured}} on{{end}}" title="{{if .Featured}}{{$.Admin.T "admin.action.unpin" "取消置顶"}}{{else}}{{$.Admin.T "admin.action.pin" "置顶"}}{{end}}" aria-label="{{$.Admin.T "admin.action.pin" "置顶"}}">
               <svg width="16" height="16" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M12 17.3 5.8 21l1.6-7-5.4-4.7 7.2-.6L12 2l2.8 6.7 7.2.6-5.4 4.7 1.6 7z"/></svg>
@@ -54,6 +67,7 @@
             <input type="hidden" name="_csrf" value="{{$.CSRF}}">
             <input type="hidden" name="lang" value="{{.Lang}}">
             <input type="hidden" name="status" value="{{$.StatusFilter}}">
+            <input type="hidden" name="cat" value="{{$.CategoryFilter}}">
             <input type="hidden" name="page" value="{{$.PageNum}}">
             <button class="del act-ico" type="submit" title="{{$.Admin.T "admin.action.delete" "删除"}}" aria-label="{{$.Admin.T "admin.action.delete" "删除"}}">{{template "icon-trash"}}</button>
           </form>
@@ -66,11 +80,11 @@
   </table>
   {{if gt .TotalPages 1}}
   <nav class="pagination admin-pagination" aria-label="{{.Admin.T "admin.common.pagination" "分页"}}">
-    {{if .HasPrev}}<a href="/admin/posts?lang={{.EditLang}}{{if .StatusFilter}}&status={{.StatusFilter}}{{end}}&page={{.PrevPage}}" aria-label="{{.Admin.T "admin.common.prev_page" "上一页"}}">←</a>{{end}}
+    {{if .HasPrev}}<a href="/admin/posts?lang={{.EditLang}}{{if .StatusFilter}}&status={{.StatusFilter}}{{end}}{{if .CategoryFilter}}&cat={{.CategoryFilter}}{{end}}&page={{.PrevPage}}" aria-label="{{.Admin.T "admin.common.prev_page" "上一页"}}">←</a>{{end}}
     {{range $n := pages .TotalPages}}
-      {{if eq $n $.PageNum}}<span class="cur" aria-current="page">{{$n}}</span>{{else}}<a href="/admin/posts?lang={{$.EditLang}}{{if $.StatusFilter}}&status={{$.StatusFilter}}{{end}}&page={{$n}}">{{$n}}</a>{{end}}
+      {{if eq $n $.PageNum}}<span class="cur" aria-current="page">{{$n}}</span>{{else}}<a href="/admin/posts?lang={{$.EditLang}}{{if $.StatusFilter}}&status={{$.StatusFilter}}{{end}}{{if $.CategoryFilter}}&cat={{$.CategoryFilter}}{{end}}&page={{$n}}">{{$n}}</a>{{end}}
     {{end}}
-    {{if .HasNext}}<a href="/admin/posts?lang={{.EditLang}}{{if .StatusFilter}}&status={{.StatusFilter}}{{end}}&page={{.NextPage}}" aria-label="{{.Admin.T "admin.common.next_page" "下一页"}}">→</a>{{end}}
+    {{if .HasNext}}<a href="/admin/posts?lang={{.EditLang}}{{if .StatusFilter}}&status={{.StatusFilter}}{{end}}{{if .CategoryFilter}}&cat={{.CategoryFilter}}{{end}}&page={{.NextPage}}" aria-label="{{.Admin.T "admin.common.next_page" "下一页"}}">→</a>{{end}}
   </nav>
   {{end}}
 {{end}}

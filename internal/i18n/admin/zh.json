@@ -249,6 +249,8 @@
   "admin.sites.empty": "暂无站点。",
   "admin.list.status_filter": "状态筛选",
   "admin.list.all_status": "全部",
+  "admin.list.category_filter": "分类筛选",
+  "admin.list.all_categories": "全部分类",
   "admin.posts.title": "文章",
   "admin.posts.count": "共 %d 篇",
   "admin.posts.new": "新建文章",

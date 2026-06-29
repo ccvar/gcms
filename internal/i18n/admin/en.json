@@ -249,6 +249,8 @@
   "admin.sites.empty": "No sites yet.",
   "admin.list.status_filter": "Status Filter",
   "admin.list.all_status": "All",
+  "admin.list.category_filter": "Category Filter",
+  "admin.list.all_categories": "All Categories",
   "admin.posts.title": "Posts",
   "admin.posts.count": "%d posts",
   "admin.posts.new": "New Post",

@@ -329,6 +329,8 @@ type View struct {
 	AllPosts              []*store.Post
 	ListTotal             int
 	StatusFilter          string
+	CategoryFilter        string
+	CategoryFilterName    string
 	AdminListPath         string
 	DefaultAuthor         string
 	Edit                  *store.Post

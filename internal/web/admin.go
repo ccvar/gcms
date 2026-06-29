@@ -884,6 +884,10 @@ func adminStatusFilter(r *http.Request) string {
 	}
 }
 
+func adminCategoryFilter(r *http.Request) string {
+	return strings.Trim(strings.TrimSpace(r.URL.Query().Get("cat")), "/")
+}
+
 func (s *Server) adminListRedirect(base string, r *http.Request) string {
 	parts := []string{}
 	if lang := strings.TrimSpace(r.FormValue("lang")); s.langEnabled(lang) {
@@ -892,6 +896,9 @@ func (s *Server) adminListRedirect(base string, r *http.Request) string {
 	switch status := strings.TrimSpace(r.FormValue("status")); status {
 	case "draft", "published", "scheduled":
 		parts = append(parts, "status="+status)
+	}
+	if cat := strings.Trim(strings.TrimSpace(r.FormValue("cat")), "/"); cat != "" {
+		parts = append(parts, "cat="+cat)
 	}
 	if page, err := strconv.Atoi(strings.TrimSpace(r.FormValue("page"))); err == nil && page > 1 {
 		parts = append(parts, "page="+strconv.Itoa(page))
@@ -2102,8 +2109,23 @@ func (s *Server) adminPosts(w http.ResponseWriter, r *http.Request) {
 	sess, _ := s.currentSession(r)
 	lang := s.editLang(r)
 	status := adminStatusFilter(r)
+	category := adminCategoryFilter(r)
 	page := pageParam(r)
-	total, err := s.store.CountAdminContent("post", lang, status)
+	categories, err := s.store.ListCategories(lang, "post")
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	categoryName := ""
+	if category != "" {
+		for _, c := range categories {
+			if c.Slug == category {
+				categoryName = c.Name
+				break
+			}
+		}
+	}
+	total, err := s.store.CountAdminContentFiltered("post", lang, status, category)
 	if err != nil {
 		s.serverError(w, err)
 		return
@@ -2112,7 +2134,7 @@ func (s *Server) adminPosts(w http.ResponseWriter, r *http.Request) {
 	if totalPages > 0 && page > totalPages {
 		page = totalPages
 	}
-	posts, err := s.store.ListAdminContent("post", lang, status, (page-1)*adminListPageSize, adminListPageSize)
+	posts, err := s.store.ListAdminContentFiltered("post", lang, status, category, (page-1)*adminListPageSize, adminListPageSize)
 	if err != nil {
 		s.serverError(w, err)
 		return
@@ -2120,8 +2142,11 @@ func (s *Server) adminPosts(w http.ResponseWriter, r *http.Request) {
 	v := s.adminView(r, "文章")
 	s.authed(v, sess)
 	v.AllPosts = posts
+	v.Categories = categories
 	v.ListTotal = total
 	v.StatusFilter = status
+	v.CategoryFilter = category
+	v.CategoryFilterName = categoryName
 	v.AdminListPath = "/admin/posts"
 	v.EditLang = lang
 	setPagination(v, page, totalPages, "/admin/posts")
@@ -3036,6 +3061,14 @@ func (s *Server) adminContentPreview(w http.ResponseWriter, r *http.Request, typ
 	if p == nil || p.Type != typ {
 		s.notFound(w, r)
 		return
+	}
+	if sess, ok := s.currentSession(r); ok {
+		if prefix := s.adminSitePreviewPrefix(sess.currentSiteID); prefix != "" {
+			ctx := withPreviewRoutePrefix(withPreviewNoindex(r.Context()), prefix)
+			r = r.Clone(ctx)
+			w.Header().Set("X-Robots-Tag", "noindex, nofollow")
+			w.Header().Set("Cache-Control", "no-store")
+		}
 	}
 	s.renderContentPreviewPage(w, r, p, typ)
 }

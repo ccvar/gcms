@@ -69,6 +69,18 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create other preview post: %v", err)
 	}
+	otherDraftPostID, err := otherStore.CreatePost(&store.Post{
+		Type:       "post",
+		Lang:       "zh",
+		Slug:       "preview-draft-link-scope",
+		Title:      "Preview Draft Link Scope",
+		Status:     "draft",
+		Content:    "Draft body",
+		EditorMode: "markdown",
+	})
+	if err != nil {
+		t.Fatalf("create other draft preview post: %v", err)
+	}
 	otherLinkID, err := otherStore.CreatePost(&store.Post{
 		Type:       "link",
 		Lang:       "zh",
@@ -858,6 +870,40 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 	if body := otherPosts.Body.String(); !strings.Contains(body, "API Other Site Draft") {
 		t.Fatalf("platform api-created draft was not visible in other-site admin posts")
 	}
+
+	draftPreview := httptest.NewRecorder()
+	draftPreviewReq := httptest.NewRequest(http.MethodGet, "https://platform.test/admin/posts/"+strconv.FormatInt(otherDraftPostID, 10)+"/preview", nil)
+	draftPreviewReq.AddCookie(&http.Cookie{Name: cookieName, Value: "prefix-token"})
+	h.ServeHTTP(draftPreview, draftPreviewReq)
+	if draftPreview.Code != http.StatusOK {
+		t.Fatalf("other draft preview status = %d, body = %s", draftPreview.Code, draftPreview.Body.String())
+	}
+	if got := draftPreview.Header().Get("X-Robots-Tag"); got != "noindex, nofollow" {
+		t.Fatalf("other draft preview robots header = %q", got)
+	}
+	if body := draftPreview.Body.String(); !strings.Contains(body, "Preview Draft Link Scope") {
+		t.Fatalf("other draft preview did not render draft: %s", body)
+	} else {
+		for _, needle := range []string{
+			`href="` + previewPrefix + `/zh/"`,
+			`href="` + previewPrefix + `/zh/category"`,
+			`href="` + previewPrefix + `/zh/about"`,
+		} {
+			if !strings.Contains(body, needle) {
+				t.Fatalf("other draft preview did not keep internal link %q under preview prefix: %s", needle, body)
+			}
+		}
+		for _, needle := range []string{
+			`href="/zh/"`,
+			`href="/zh/category"`,
+			`href="/zh/about"`,
+		} {
+			if strings.Contains(body, needle) {
+				t.Fatalf("other draft preview rendered root-relative frontend link %q: %s", needle, body)
+			}
+		}
+	}
+
 	for _, tc := range []struct {
 		name      string
 		path      string

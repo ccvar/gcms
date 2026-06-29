@@ -596,6 +596,13 @@ a.overview-log-title { text-decoration: none; }
 .status-tabs a { display: inline-flex; align-items: center; min-height: 30px; padding: .28rem .72rem; border-radius: 7px; color: var(--muted); font-size: .82rem; font-weight: 600; white-space: nowrap; }
 .status-tabs a:hover { color: var(--ink); background: var(--line-soft); }
 .status-tabs a.active { color: var(--accent); background: var(--accent-wash); }
+.list-category-filter { width: min(220px, 100%); margin-left: auto; }
+.list-category-filter .dd-toggle { min-height: 34px; padding: .36rem .72rem; border-radius: 10px; font-size: .82rem; font-weight: 700; color: var(--muted); }
+.list-category-filter.open .dd-toggle,
+.list-category-filter .dd-toggle:hover { color: var(--accent); }
+.list-category-filter .dd-menu { left: auto; min-width: 180px; }
+.list-category-filter .dd-menu li { padding: 0; }
+.list-category-filter .dd-menu a { display: block; padding: .5rem .7rem; border-radius: 6px; color: inherit; text-decoration: none; }
 .admin-pagination { margin-top: 1.4rem; }
 .admin-table { width: 100%; border-collapse: collapse; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
 .admin-table th { text-align: left; font-size: .76rem; letter-spacing: .08em; text-transform: uppercase; color: var(--faint); padding: .9rem 1.1rem; border-bottom: 1px solid var(--line); }

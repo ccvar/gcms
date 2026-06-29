@@ -1304,7 +1304,7 @@ type AdminContentIssues struct {
 	MissingMetaDesc int
 }
 
-func adminContentWhere(kind, lang, status string) (string, []any, error) {
+func adminContentWhere(kind, lang, status, categorySlug string) (string, []any, error) {
 	switch kind {
 	case "post", "link", "page":
 	default:
@@ -1320,18 +1320,30 @@ func adminContentWhere(kind, lang, status string) (string, []any, error) {
 	default:
 		return "", nil, fmt.Errorf("unsupported status: %s", status)
 	}
+	if categorySlug = strings.TrimSpace(categorySlug); categorySlug != "" {
+		if kind == "page" {
+			return "", nil, fmt.Errorf("category filter is not supported for pages")
+		}
+		where += ` AND p.category_id=(SELECT cx.id FROM categories cx WHERE cx.lang=? AND cx.kind=? AND cx.slug=? LIMIT 1)`
+		args = append(args, lang, kind, categorySlug)
+	}
 	return where, args, nil
 }
 
 // ListAdminContent 后台：某语种文章、链接或页面列表（含草稿，可按状态过滤，分页）。
 func (s *Store) ListAdminContent(kind, lang, status string, offset, limit int) ([]*Post, error) {
+	return s.ListAdminContentFiltered(kind, lang, status, "", offset, limit)
+}
+
+// ListAdminContentFiltered 后台：某语种文章、链接或页面列表（含草稿，可按状态和分类过滤，分页）。
+func (s *Store) ListAdminContentFiltered(kind, lang, status, categorySlug string, offset, limit int) ([]*Post, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 20
 	}
 	if offset < 0 {
 		offset = 0
 	}
-	where, args, err := adminContentWhere(kind, lang, status)
+	where, args, err := adminContentWhere(kind, lang, status, categorySlug)
 	if err != nil {
 		return nil, err
 	}
@@ -1341,7 +1353,12 @@ func (s *Store) ListAdminContent(kind, lang, status string, offset, limit int) (
 
 // CountAdminContent 后台：统计某语种文章、链接或页面数量（含草稿，可按状态过滤）。
 func (s *Store) CountAdminContent(kind, lang, status string) (int, error) {
-	where, args, err := adminContentWhere(kind, lang, status)
+	return s.CountAdminContentFiltered(kind, lang, status, "")
+}
+
+// CountAdminContentFiltered 后台：统计某语种文章、链接或页面数量（含草稿，可按状态和分类过滤）。
+func (s *Store) CountAdminContentFiltered(kind, lang, status, categorySlug string) (int, error) {
+	where, args, err := adminContentWhere(kind, lang, status, categorySlug)
 	if err != nil {
 		return 0, err
 	}

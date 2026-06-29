@@ -635,9 +635,10 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 2.5rem 0; }
   --accent: #c2691f; --accent-soft: #d67c2c; --accent-wash: #f6ead7;
   --code-bg: #2a2418;
 }
-[data-theme="notebook"] body { background-color: var(--bg); background-image: repeating-linear-gradient(transparent, transparent 31px, var(--line) 31px, var(--line) 32px); }
-[data-theme="notebook"] .site-header { background: color-mix(in srgb, var(--bg) 92%, transparent); border-bottom: 1px dashed var(--accent); }
-[data-theme="notebook"] .hero { border-bottom: 1px dashed var(--line); }
+[data-theme="notebook"] body { background-color: var(--bg); background-image: repeating-linear-gradient(transparent, transparent 31px, color-mix(in srgb, var(--line) 42%, transparent) 31px, color-mix(in srgb, var(--line) 42%, transparent) 32px); }
+[data-theme="notebook"] .site-header { background: color-mix(in srgb, var(--bg) 94%, transparent); border-bottom: 0; }
+[data-theme="notebook"] .nav a[aria-current="page"]::after { display: none; }
+[data-theme="notebook"] .hero { border-bottom: 0; }
 [data-theme="notebook"] .hero .eyebrow { color: var(--accent); }
 [data-theme="notebook"] .hero-sub { font-family: var(--serif); font-style: italic; }
 [data-theme="notebook"] .section-head h2 { color: var(--accent); }
@@ -729,7 +730,7 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 2.5rem 0; }
 [data-theme="newspaper"] .site-header .wrap { flex-direction: column; height: auto; padding: 1rem 24px .6rem; gap: .5rem; }
 [data-theme="newspaper"] .site-header .brand { font-family: var(--serif); font-size: 2.2rem; font-weight: 800; letter-spacing: .02em; }
 [data-theme="newspaper"] .site-header .brand small { display: none; }
-[data-theme="newspaper"] .nav { gap: 1.6rem; border-top: 1px solid #1a1a1a; border-bottom: 1px solid #1a1a1a; padding: .35rem 0; width: 100%; justify-content: center; }
+[data-theme="newspaper"] .nav { gap: 1.6rem; border-top: 0; border-bottom: 0; padding: .42rem 0 .28rem; width: 100%; justify-content: center; }
 [data-theme="newspaper"] .nav a { font-family: var(--serif); font-variant: small-caps; letter-spacing: .06em; font-size: 1rem; }
 [data-theme="newspaper"] .nav a[aria-current="page"]::after { display: none; }
 [data-theme="newspaper"] .hero { text-align: center; border-bottom: 3px double #1a1a1a; }
