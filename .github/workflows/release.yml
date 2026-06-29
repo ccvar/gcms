@@ -1,7 +1,7 @@
 name: Release
 
-# 推送形如 v1.2.3 的 tag 时：各平台交叉编译并打成「开箱即用」的部署包，
-# 再由单独的发布作业统一创建 GitHub Release 并上传全部产物（避免并发创建 Release 冲突）。
+# 推送形如 v1.2.3 的 tag 时：在同一个发布作业里交叉编译所有平台，
+# 然后直接创建 GitHub Release 并上传产物，不经过 artifact 中转。
 on:
   push:
     tags:
@@ -14,18 +14,9 @@ env:
   RELEASE_REPO: ccvar/gcms-releases
 
 jobs:
-  build:
-    name: 编译打包 ${{ matrix.goos }}/${{ matrix.goarch }}
+  release:
+    name: 编译打包并发布到公开 Release 仓库
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { goos: linux, goarch: amd64 }
-          - { goos: linux, goarch: arm64 }
-          - { goos: darwin, goarch: amd64 }
-          - { goos: darwin, goarch: arm64 }
-          - { goos: windows, goarch: amd64 }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -33,42 +24,7 @@ jobs:
           go-version: "1.23"
           cache: true
 
-      - name: 交叉编译并打包（含预编译二进制 + 启停脚本 + 默认配置 + README）
-        env:
-          VERSION: ${{ github.ref_name }}
-          RELEASE_REPO: ${{ env.RELEASE_REPO }}
-          GCMS_RELEASE_PUBLIC_KEY: ${{ secrets.GCMS_RELEASE_PUBLIC_KEY }}
-        run: |
-          set -e
-          if [ -z "${GCMS_RELEASE_PUBLIC_KEY:-}" ]; then
-            echo "::error::标准发布包要求内置更新验签公钥，请配置 GCMS_RELEASE_PUBLIC_KEY。"
-            exit 1
-          fi
-          printf '%s\n' "$GCMS_RELEASE_PUBLIC_KEY" > scripts/update-public.pem
-          sh scripts/package.sh ${{ matrix.goos }} ${{ matrix.goarch }}
-          # Windows 额外提供 .zip（更通用），并移除其 tar.gz
-          if [ "${{ matrix.goos }}" = "windows" ]; then
-            name="cms-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}"
-            (cd dist && zip -qr "$name.zip" "$name" && rm -f "$name.tar.gz")
-          fi
-          echo "--- 产物 ---"; ls -lh dist/*.tar.gz dist/*.zip 2>/dev/null || true
-
-      - name: 上传构建产物（供发布作业汇总）
-        uses: actions/upload-artifact@v4
-        with:
-          name: pkg-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: |
-            dist/*.tar.gz
-            dist/*.zip
-          if-no-files-found: error
-          retention-days: 3
-
-  release:
-    name: 发布到公开 Release 仓库
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - name: 检查公开仓库发布 Token
+      - name: 检查发布密钥
         env:
           GCMS_RELEASE_TOKEN: ${{ secrets.GCMS_RELEASE_TOKEN }}
           GCMS_RELEASE_PUBLIC_KEY: ${{ secrets.GCMS_RELEASE_PUBLIC_KEY }}
@@ -78,8 +34,8 @@ jobs:
             echo "::error::请在私有源码仓库配置 GCMS_RELEASE_TOKEN，授予 ${RELEASE_REPO} Contents: Read and write 权限。"
             exit 1
           fi
-          if [ -z "$GCMS_RELEASE_PUBLIC_KEY" ]; then
-            echo "::error::请配置 GCMS_RELEASE_PUBLIC_KEY，标准发布包需要携带更新验签公钥。"
+          if [ -z "${GCMS_RELEASE_PUBLIC_KEY:-}" ]; then
+            echo "::error::标准发布包要求内置更新验签公钥，请配置 GCMS_RELEASE_PUBLIC_KEY。"
             exit 1
           fi
           if [ -z "$GCMS_RELEASE_SIGNING_KEY" ]; then
@@ -87,14 +43,37 @@ jobs:
             exit 1
           fi
 
-      - name: 下载全部平台产物
-        uses: actions/download-artifact@v4
-        with:
-          path: dist
-          merge-multiple: true
+      - name: 交叉编译全部平台并打包
+        env:
+          VERSION: ${{ github.ref_name }}
+          RELEASE_REPO: ${{ env.RELEASE_REPO }}
+          GCMS_RELEASE_PUBLIC_KEY: ${{ secrets.GCMS_RELEASE_PUBLIC_KEY }}
+        run: |
+          set -e
+          rm -rf dist
+          printf '%s\n' "$GCMS_RELEASE_PUBLIC_KEY" > scripts/update-public.pem
+
+          for target in \
+            "linux amd64" \
+            "linux arm64" \
+            "darwin amd64" \
+            "darwin arm64" \
+            "windows amd64"
+          do
+            set -- $target
+            goos="$1"
+            goarch="$2"
+            echo "::group::打包 ${goos}/${goarch}"
+            sh scripts/package.sh "$goos" "$goarch"
+            if [ "$goos" = "windows" ]; then
+              name="cms-${VERSION}-${goos}-${goarch}"
+              (cd dist && zip -qr "$name.zip" "$name" && rm -f "$name.tar.gz")
+            fi
+            echo "::endgroup::"
+          done
 
       - name: 列出待发布文件
-        run: ls -lh dist
+        run: ls -lh dist/*.tar.gz dist/*.zip
 
       - name: 生成 SHA256 校验文件
         run: |
