@@ -592,6 +592,42 @@ body.admin { background: var(--line-soft); }
 .admin-table .t { font-weight: 600; color: var(--ink); font-family: var(--serif); }
 .admin-table .t:hover { color: var(--accent); }
 .admin-table .slug { font-size: .76rem; color: var(--faint); font-family: var(--mono); margin-top: .2rem; }
+.content-table { table-layout: fixed; }
+.content-table th,
+.content-table td { min-width: 0; }
+.content-table .content-col-title { width: 36%; }
+.content-table .content-col-url { width: 24%; }
+.content-table .content-col-category { width: 17%; }
+.content-table .content-col-status { width: 9%; }
+.content-table .content-col-date { width: 15%; }
+.content-table .content-col-actions { width: 9%; }
+.links-table .content-col-title { width: 23%; }
+.links-table .content-col-url { width: 26%; }
+.links-table .content-col-category { width: 16%; }
+.links-table .content-col-status { width: 9%; }
+.links-table .content-col-date { width: 16%; }
+.links-table .content-col-actions { width: 10%; }
+.pages-table .content-col-title { width: 42%; }
+.pages-table .content-col-url { width: 34%; }
+.pages-table .content-col-date { width: 16%; }
+.pages-table .content-col-actions { width: 8%; }
+.content-table .title-main { min-width: 0; max-width: 100%; }
+.content-table .t,
+.content-table .slug,
+.content-table .ext-url,
+.content-table td.content-col-category {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.content-table .t,
+.content-table .slug,
+.content-table .ext-url {
+  display: block;
+  max-width: 100%;
+  white-space: nowrap;
+}
+.content-table th.content-col-actions,
+.content-table td.content-col-actions { padding-left: .6rem; padding-right: .7rem; }
 .admin-table .nowrap,
 .admin-table th.nowrap,
 .admin-table td.nowrap { white-space: nowrap; }
@@ -745,6 +781,10 @@ body.admin { background: var(--line-soft); }
 .actions .del.act-ico { color: var(--faint); }
 .actions .del.act-ico:hover { color: #b3261e; background: rgba(179,38,30,.08); }
 .actions .action-icons { display: inline-flex; align-items: center; justify-content: flex-end; gap: .42rem; }
+.content-table .actions .action-icons { width: 100%; gap: .32rem; }
+.content-table .actions .action-icons a,
+.content-table .actions .action-icons form { margin: 0; }
+.content-table .actions .act-ico { width: 1.55rem; height: 1.55rem; padding: 0; }
 .actions .action-icons form { margin: 0; }
 
 /* 编辑器双栏：form 用 display:contents 摊平成网格项 —— 标题/正文/SEO/跨语种在左列叠放，
@@ -1637,6 +1677,7 @@ body.admin { background: var(--line-soft); }
 [data-theme="newspaper"] .hero { text-align: center; border-bottom: 0; }
 [data-theme="newspaper"] .hero-inner { grid-template-columns: 1fr; }
 [data-theme="newspaper"] .hero-text { order: 2; max-width: 820px; margin: 0 auto; }
+[data-theme="newspaper"] .hero-sub { margin-inline: auto; }
 [data-theme="newspaper"] .hero-visual { order: 1; }
 [data-theme="newspaper"] .hero-svg { max-width: 250px; }
 [data-theme="newspaper"] .hero h1 { font-family: var(--serif); font-size: clamp(2.6rem, 6vw, 4.4rem); font-weight: 800; }
@@ -4588,15 +4629,16 @@ body.blk-dragging-active { user-select: none; }
   box-shadow: var(--shadow);
 }
 [data-theme="knowledge"] .link-grid {
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr));
-  gap: .8rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
+  gap: 1rem;
 }
 [data-theme="knowledge"] .link-card {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 104px;
-  gap: 1rem;
+  grid-template-columns: minmax(0, 1fr) 92px;
+  gap: .9rem;
   align-items: start;
-  padding: 1.05rem 1.1rem;
+  min-height: 150px;
+  padding: 1.15rem 1.2rem;
   border-color: var(--line);
   border-radius: 12px;
   background: #fff;
@@ -4610,8 +4652,8 @@ body.blk-dragging-active { user-select: none; }
 [data-theme="knowledge"] .lc-cover {
   grid-column: 2;
   grid-row: 1;
-  width: 104px;
-  height: 78px;
+  width: 92px;
+  height: 68px;
   justify-self: end;
   border-radius: 12px;
   background:
@@ -4631,9 +4673,9 @@ body.blk-dragging-active { user-select: none; }
 }
 [data-theme="knowledge"] .lc-title { font-size: 1rem; }
 [data-theme="knowledge"] .lc-intro {
-  margin-top: .25rem;
+  margin-top: .35rem;
   font-size: .86rem;
-  -webkit-line-clamp: 2;
+  -webkit-line-clamp: 3;
 }
 [data-theme="knowledge"] .post-list {
   display: block;

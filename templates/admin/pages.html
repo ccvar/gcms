@@ -12,19 +12,21 @@
   </div>
   {{end}}
 
-  <table class="admin-table">
+  <table class="admin-table content-table pages-table">
     <thead>
-      <tr><th>{{.Admin.T "admin.common.title" "标题"}}</th><th>URL</th><th class="nowrap">{{.Admin.T "admin.common.updated_at" "更新时间"}}</th><th class="right nowrap">{{.Admin.T "admin.common.actions" "操作"}}</th></tr>
+      <tr><th class="content-col-title">{{.Admin.T "admin.common.title" "标题"}}</th><th class="content-col-url">URL</th><th class="content-col-date nowrap">{{.Admin.T "admin.common.updated_at" "更新时间"}}</th><th class="content-col-actions right nowrap">{{.Admin.T "admin.common.actions" "操作"}}</th></tr>
     </thead>
     <tbody>
       {{range .AllPosts}}
       <tr>
-        <td><a class="t" href="/admin/pages/{{.ID}}/edit">{{.Title}}</a></td>
-        <td class="slug">/{{.Lang}}/{{.Slug}}</td>
-        <td class="muted nowrap">{{adminDateTime .UpdatedAt}}</td>
-        <td class="right actions">
-          <a class="act-ico" href="{{adminPublicContentPath $.AdminPreviewPrefix .Lang "page" .Slug}}" target="_blank" title="{{$.Admin.T "admin.action.view" "查看"}}" aria-label="{{$.Admin.T "admin.action.view" "查看"}}">{{template "icon-extlink"}}</a>
-          <a class="act-ico" href="/admin/pages/{{.ID}}/edit" title="{{$.Admin.T "admin.action.edit" "编辑"}}" aria-label="{{$.Admin.T "admin.action.edit" "编辑"}}">{{template "icon-edit"}}</a>
+        <td class="content-col-title"><a class="t" href="/admin/pages/{{.ID}}/edit">{{.Title}}</a></td>
+        <td class="slug content-col-url">/{{.Lang}}/{{.Slug}}</td>
+        <td class="muted nowrap content-col-date">{{adminDateTime .UpdatedAt}}</td>
+        <td class="right actions content-col-actions">
+          <span class="action-icons">
+            <a class="act-ico" href="{{adminPublicContentPath $.AdminPreviewPrefix .Lang "page" .Slug}}" target="_blank" title="{{$.Admin.T "admin.action.view" "查看"}}" aria-label="{{$.Admin.T "admin.action.view" "查看"}}">{{template "icon-extlink"}}</a>
+            <a class="act-ico" href="/admin/pages/{{.ID}}/edit" title="{{$.Admin.T "admin.action.edit" "编辑"}}" aria-label="{{$.Admin.T "admin.action.edit" "编辑"}}">{{template "icon-edit"}}</a>
+          </span>
         </td>
       </tr>
       {{else}}

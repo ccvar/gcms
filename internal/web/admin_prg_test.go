@@ -282,6 +282,71 @@ func TestAdminListStatusQuickChange(t *testing.T) {
 	}
 }
 
+func TestAdminDeleteEnglishContentKeepsListContext(t *testing.T) {
+	s := newTestPublicServer(t, "")
+	h := s.Handler()
+
+	postID, err := s.store.CreatePost(&store.Post{
+		Type:   "post",
+		Lang:   "en",
+		Slug:   "english-delete-post",
+		Title:  "English Delete Post",
+		Status: "draft",
+	})
+	if err != nil {
+		t.Fatalf("create post: %v", err)
+	}
+	linkID, err := s.store.CreatePost(&store.Post{
+		Type:    "link",
+		Lang:    "en",
+		Slug:    "english-delete-link",
+		Title:   "English Delete Link With A Longer Title",
+		Status:  "draft",
+		LinkURL: "https://example.com/very/long/path/that/should/not/break/the/admin/actions",
+	})
+	if err != nil {
+		t.Fatalf("create link: %v", err)
+	}
+
+	postForm := url.Values{
+		"lang":   {"en"},
+		"status": {"draft"},
+		"cat":    {"guides"},
+		"page":   {"2"},
+	}
+	postReq, _ := authedAdminRequest(t, s, http.MethodPost, "/admin/posts/"+strconv.FormatInt(postID, 10)+"/delete", postForm)
+	postResp := httptest.NewRecorder()
+	h.ServeHTTP(postResp, postReq)
+	if postResp.Code != http.StatusSeeOther {
+		t.Fatalf("post delete status = %d, body = %s", postResp.Code, postResp.Body.String())
+	}
+	if got, want := postResp.Header().Get("Location"), "/admin/posts?lang=en&status=draft&cat=guides&page=2"; got != want {
+		t.Fatalf("post delete Location = %q, want %q", got, want)
+	}
+	if deletedPost, err := s.store.GetPostByID(postID); err != nil || deletedPost != nil {
+		t.Fatalf("deleted English post should not be readable")
+	}
+
+	linkForm := url.Values{
+		"lang":   {"en"},
+		"status": {"draft"},
+		"cat":    {"resources"},
+		"page":   {"3"},
+	}
+	linkReq, _ := authedAdminRequest(t, s, http.MethodPost, "/admin/links/"+strconv.FormatInt(linkID, 10)+"/delete", linkForm)
+	linkResp := httptest.NewRecorder()
+	h.ServeHTTP(linkResp, linkReq)
+	if linkResp.Code != http.StatusSeeOther {
+		t.Fatalf("link delete status = %d, body = %s", linkResp.Code, linkResp.Body.String())
+	}
+	if got, want := linkResp.Header().Get("Location"), "/admin/links?lang=en&status=draft&cat=resources&page=3"; got != want {
+		t.Fatalf("link delete Location = %q, want %q", got, want)
+	}
+	if deletedLink, err := s.store.GetPostByID(linkID); err != nil || deletedLink != nil {
+		t.Fatalf("deleted English link should not be readable")
+	}
+}
+
 func TestAdminLinksCategoryFilter(t *testing.T) {
 	s := newTestPublicServer(t, "")
 	h := s.Handler()

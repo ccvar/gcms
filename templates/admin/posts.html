@@ -33,14 +33,14 @@
     </div>
   </div>
 
-  <table class="admin-table">
+  <table class="admin-table content-table posts-table">
     <thead>
-      <tr><th>{{.Admin.T "admin.common.title" "标题"}}</th><th class="nowrap">{{.Admin.T "admin.common.category" "分类"}}</th><th class="nowrap">{{.Admin.T "admin.common.status" "状态"}}</th><th class="nowrap">{{.Admin.T "admin.common.updated_at" "更新时间"}}</th><th class="right nowrap">{{.Admin.T "admin.common.actions" "操作"}}</th></tr>
+      <tr><th class="content-col-title">{{.Admin.T "admin.common.title" "标题"}}</th><th class="content-col-category nowrap">{{.Admin.T "admin.common.category" "分类"}}</th><th class="content-col-status nowrap">{{.Admin.T "admin.common.status" "状态"}}</th><th class="content-col-date nowrap">{{.Admin.T "admin.common.updated_at" "更新时间"}}</th><th class="content-col-actions right nowrap">{{.Admin.T "admin.common.actions" "操作"}}</th></tr>
     </thead>
     <tbody>
       {{range .AllPosts}}
       <tr>
-        <td class="title-cell">
+        <td class="title-cell content-col-title">
           <form method="post" action="/admin/posts/{{.ID}}/pin" class="pin-form">
             <input type="hidden" name="_csrf" value="{{$.CSRF}}">
             <input type="hidden" name="on" value="{{if .Featured}}0{{else}}1{{end}}">
@@ -57,8 +57,8 @@
             <div class="slug">/{{.Lang}}/posts/{{.Slug}}</div>
           </div>
         </td>
-        <td class="nowrap">{{with .Category}}{{.Name}}{{else}}<span class="muted">{{$.Admin.T "admin.common.empty_dash" "—"}}</span>{{end}}</td>
-        <td class="nowrap">
+        <td class="nowrap content-col-category">{{with .Category}}{{.Name}}{{else}}<span class="muted">{{$.Admin.T "admin.common.empty_dash" "—"}}</span>{{end}}</td>
+        <td class="nowrap content-col-status">
           <details class="status-menu">
             <summary aria-label="{{$.Admin.T "admin.status.change_label" "调整发布状态"}}">{{if eq .Status "scheduled"}}<span class="badge sched">{{$.Admin.T "admin.status.scheduled" "定时"}} · {{isodate .PublishedAt}}</span>{{else if .IsPublished}}<span class="badge pub">{{$.Admin.T "admin.status.published" "已发布"}}</span>{{else}}<span class="badge draft">{{$.Admin.T "admin.status.draft" "草稿"}}</span>{{end}}</summary>
             <div class="status-menu-pop">
@@ -92,18 +92,20 @@
             </div>
           </details>
         </td>
-        <td class="muted nowrap">{{adminDateTime .UpdatedAt}}</td>
-        <td class="right actions">
-          {{if .IsPublished}}<a class="act-ico" href="{{adminPublicContentPath $.AdminPreviewPrefix .Lang "post" .Slug}}" target="_blank" title="{{$.Admin.T "admin.action.view" "查看"}}" aria-label="{{$.Admin.T "admin.action.view" "查看"}}">{{template "icon-extlink"}}</a>{{else}}<a class="act-ico" href="/admin/posts/{{.ID}}/preview" target="_blank" title="{{$.Admin.T "admin.action.preview" "预览"}}" aria-label="{{$.Admin.T "admin.action.preview" "预览"}}">{{template "icon-extlink"}}</a>{{end}}
-          <a class="act-ico" href="/admin/posts/{{.ID}}/edit" title="{{$.Admin.T "admin.action.edit" "编辑"}}" aria-label="{{$.Admin.T "admin.action.edit" "编辑"}}">{{template "icon-edit"}}</a>
-          <form method="post" action="/admin/posts/{{.ID}}/delete" data-confirm="{{printf ($.Admin.T "admin.posts.delete_confirm" "确定删除「%s」？此操作不可撤销。") .Title}}">
-            <input type="hidden" name="_csrf" value="{{$.CSRF}}">
-            <input type="hidden" name="lang" value="{{.Lang}}">
-            <input type="hidden" name="status" value="{{$.StatusFilter}}">
-            <input type="hidden" name="cat" value="{{$.CategoryFilter}}">
-            <input type="hidden" name="page" value="{{$.PageNum}}">
-            <button class="del act-ico" type="submit" title="{{$.Admin.T "admin.action.delete" "删除"}}" aria-label="{{$.Admin.T "admin.action.delete" "删除"}}">{{template "icon-trash"}}</button>
-          </form>
+        <td class="muted nowrap content-col-date">{{adminDateTime .UpdatedAt}}</td>
+        <td class="right actions content-col-actions">
+          <span class="action-icons">
+            {{if .IsPublished}}<a class="act-ico" href="{{adminPublicContentPath $.AdminPreviewPrefix .Lang "post" .Slug}}" target="_blank" title="{{$.Admin.T "admin.action.view" "查看"}}" aria-label="{{$.Admin.T "admin.action.view" "查看"}}">{{template "icon-extlink"}}</a>{{else}}<a class="act-ico" href="/admin/posts/{{.ID}}/preview" target="_blank" title="{{$.Admin.T "admin.action.preview" "预览"}}" aria-label="{{$.Admin.T "admin.action.preview" "预览"}}">{{template "icon-extlink"}}</a>{{end}}
+            <a class="act-ico" href="/admin/posts/{{.ID}}/edit" title="{{$.Admin.T "admin.action.edit" "编辑"}}" aria-label="{{$.Admin.T "admin.action.edit" "编辑"}}">{{template "icon-edit"}}</a>
+            <form method="post" action="/admin/posts/{{.ID}}/delete" data-confirm="{{printf ($.Admin.T "admin.posts.delete_confirm" "确定删除「%s」？此操作不可撤销。") .Title}}">
+              <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+              <input type="hidden" name="lang" value="{{.Lang}}">
+              <input type="hidden" name="status" value="{{$.StatusFilter}}">
+              <input type="hidden" name="cat" value="{{$.CategoryFilter}}">
+              <input type="hidden" name="page" value="{{$.PageNum}}">
+              <button class="del act-ico" type="submit" title="{{$.Admin.T "admin.action.delete" "删除"}}" aria-label="{{$.Admin.T "admin.action.delete" "删除"}}">{{template "icon-trash"}}</button>
+            </form>
+          </span>
         </td>
       </tr>
       {{else}}
