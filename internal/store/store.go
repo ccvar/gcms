@@ -518,26 +518,40 @@ func (s *Store) createIndexes() error {
 }
 
 func (s *Store) createSearchIndex() error {
+	for _, q := range []string{
+		`DROP TRIGGER IF EXISTS posts_search_ai`,
+		`DROP TRIGGER IF EXISTS posts_search_au`,
+		`DROP TRIGGER IF EXISTS posts_search_ad`,
+	} {
+		if _, err := s.db.Exec(q); err != nil {
+			return err
+		}
+	}
+	if !s.hasColumn("post_search", "meta_desc") || !s.hasColumn("post_search", "keywords") {
+		if _, err := s.db.Exec(`DROP TABLE IF EXISTS post_search`); err != nil {
+			return err
+		}
+	}
 	stmts := []string{
 		`CREATE VIRTUAL TABLE IF NOT EXISTS post_search USING fts5(
-			title, excerpt, content,
+			title, excerpt, content, meta_desc, keywords,
 			lang UNINDEXED, type UNINDEXED, status UNINDEXED, published_at UNINDEXED,
 			tokenize='trigram'
 		)`,
-		`CREATE TRIGGER IF NOT EXISTS posts_search_ai AFTER INSERT ON posts BEGIN
-			INSERT INTO post_search(rowid,title,excerpt,content,lang,type,status,published_at)
-			VALUES(new.id,new.title,new.excerpt,new.content,new.lang,new.type,new.status,new.published_at);
+		`CREATE TRIGGER posts_search_ai AFTER INSERT ON posts BEGIN
+			INSERT INTO post_search(rowid,title,excerpt,content,meta_desc,keywords,lang,type,status,published_at)
+			VALUES(new.id,new.title,new.excerpt,new.content,new.meta_desc,new.keywords,new.lang,new.type,new.status,new.published_at);
 		END`,
-		`CREATE TRIGGER IF NOT EXISTS posts_search_au AFTER UPDATE ON posts BEGIN
+		`CREATE TRIGGER posts_search_au AFTER UPDATE ON posts BEGIN
 			DELETE FROM post_search WHERE rowid=old.id;
-			INSERT INTO post_search(rowid,title,excerpt,content,lang,type,status,published_at)
-			VALUES(new.id,new.title,new.excerpt,new.content,new.lang,new.type,new.status,new.published_at);
+			INSERT INTO post_search(rowid,title,excerpt,content,meta_desc,keywords,lang,type,status,published_at)
+			VALUES(new.id,new.title,new.excerpt,new.content,new.meta_desc,new.keywords,new.lang,new.type,new.status,new.published_at);
 		END`,
-		`CREATE TRIGGER IF NOT EXISTS posts_search_ad AFTER DELETE ON posts BEGIN
+		`CREATE TRIGGER posts_search_ad AFTER DELETE ON posts BEGIN
 			DELETE FROM post_search WHERE rowid=old.id;
 		END`,
-		`INSERT OR REPLACE INTO post_search(rowid,title,excerpt,content,lang,type,status,published_at)
-			SELECT id,title,excerpt,content,lang,type,status,published_at FROM posts`,
+		`INSERT OR REPLACE INTO post_search(rowid,title,excerpt,content,meta_desc,keywords,lang,type,status,published_at)
+			SELECT id,title,excerpt,content,meta_desc,keywords,lang,type,status,published_at FROM posts`,
 	}
 	for _, q := range stmts {
 		if _, err := s.db.Exec(q); err != nil {
@@ -1166,7 +1180,7 @@ func (s *Store) Related(p *Post, limit int) ([]*Post, error) {
 		ORDER BY p.published_at DESC LIMIT ?`, p.Lang, p.CategoryID.Int64, p.ID, limit)
 }
 
-// Search 在某语种的标题、摘要与正文中检索；长词优先走 FTS5，短词保留 LIKE 回退。
+// Search 在某语种的标题、摘要、正文、SEO 描述与关键词标签中检索；长词优先走 FTS5，短词保留 LIKE 回退。
 func (s *Store) Search(lang, q string, limit int) ([]*Post, error) {
 	if len([]rune(q)) >= 3 {
 		if posts, err := s.searchFTS(lang, q, limit); err == nil {
@@ -1193,8 +1207,8 @@ func (s *Store) searchFTS(lang, q string, limit int) ([]*Post, error) {
 func (s *Store) searchLike(lang, q string, limit int) ([]*Post, error) {
 	like := "%" + q + "%"
 	return s.queryPostSummaries(`WHERE p.type='post' AND p.status='published' AND p.lang=?
-		AND (p.title LIKE ? OR p.excerpt LIKE ? OR p.content LIKE ?)
-		ORDER BY p.published_at DESC LIMIT ?`, lang, like, like, like, limit)
+		AND (p.title LIKE ? OR p.excerpt LIKE ? OR p.content LIKE ? OR p.meta_desc LIKE ? OR p.keywords LIKE ?)
+		ORDER BY p.published_at DESC LIMIT ?`, lang, like, like, like, like, like, limit)
 }
 
 // AllPublished 某语种全部已发布文章，供 rss 使用。

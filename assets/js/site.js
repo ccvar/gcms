@@ -31,7 +31,7 @@
       })
       .then(function (items) {
         var results = (Array.isArray(items) ? items : []).filter(function (item) {
-          var haystack = [item.title, item.excerpt, item.category, item.type].join(" ").toLowerCase();
+          var haystack = [item.title, item.excerpt, item.category, item.keywords, item.meta_desc, item.type].join(" ").toLowerCase();
           return haystack.indexOf(lower) !== -1;
         }).slice(0, 50);
         if (summary) {
@@ -41,7 +41,7 @@
         }
         if (!results.length) {
           var none = (root.dataset.noneTemplate || root.dataset.none || "No results.").replace("%s", q);
-          root.innerHTML = '<p class="muted">' + escapeHTML(none) + "</p>";
+          root.innerHTML = '<p class="muted search-empty">' + escapeHTML(none) + "</p>";
           return;
         }
         root.innerHTML = results.map(function (item, index) {

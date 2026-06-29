@@ -12,7 +12,7 @@
     </section>
 
     <div class="wrap">
-      <div class="post-list" data-static-search data-index-url="{{.Tr.U "/search-index.json"}}" data-query="{{.Query}}" data-none="{{if .Query}}{{.Tr.Tf "search.none" .Query}}{{else}}{{.Tr.T "search.prompt"}}{{end}}" data-none-template="{{.Tr.T "search.none"}}" data-found-template="{{.Tr.T "search.found"}}">
+      <div class="post-list search-results" data-static-search data-index-url="{{.Tr.U "/search-index.json"}}" data-query="{{.Query}}" data-none="{{if .Query}}{{.Tr.Tf "search.none" .Query}}{{else}}{{.Tr.T "search.prompt"}}{{end}}" data-none-template="{{.Tr.T "search.none"}}" data-found-template="{{.Tr.T "search.found"}}">
         {{range $i, $p := .Posts}}
         <article class="post-item">
           <div class="num">{{printf "%02d" (add $i 1)}}</div>
@@ -26,7 +26,7 @@
           </div>
         </article>
         {{else}}
-        {{if .Query}}<p class="muted">{{.Tr.Tf "search.none" .Query}}</p>{{else}}<p class="muted">{{.Tr.T "search.prompt"}}</p>{{end}}
+        {{if .Query}}<p class="muted search-empty">{{.Tr.Tf "search.none" .Query}}</p>{{else}}<p class="muted search-empty">{{.Tr.T "search.prompt"}}</p>{{end}}
         {{end}}
       </div>
     </div>

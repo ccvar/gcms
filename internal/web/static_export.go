@@ -43,6 +43,8 @@ type staticSearchEntry struct {
 	Type     string `json:"type"`
 	Title    string `json:"title"`
 	Excerpt  string `json:"excerpt,omitempty"`
+	MetaDesc string `json:"meta_desc,omitempty"`
+	Keywords string `json:"keywords,omitempty"`
 	URL      string `json:"url"`
 	Category string `json:"category,omitempty"`
 	Date     string `json:"date,omitempty"`
@@ -342,6 +344,8 @@ func (s *Server) staticSearchIndex(lang string) ([]staticSearchEntry, error) {
 			Type:     "post",
 			Title:    p.Title,
 			Excerpt:  p.Excerpt,
+			MetaDesc: p.MetaDesc,
+			Keywords: p.Keywords,
 			URL:      "/" + lang + "/posts/" + p.Slug,
 			Category: categoryName(p.Category),
 			Date:     p.PublishedAt.Format("2006-01-02"),
@@ -356,11 +360,13 @@ func (s *Server) staticSearchIndex(lang string) ([]staticSearchEntry, error) {
 			continue
 		}
 		out = append(out, staticSearchEntry{
-			Type:    "page",
-			Title:   p.Title,
-			Excerpt: p.Excerpt,
-			URL:     "/" + lang + "/" + p.Slug,
-			Date:    p.PublishedAt.Format("2006-01-02"),
+			Type:     "page",
+			Title:    p.Title,
+			Excerpt:  p.Excerpt,
+			MetaDesc: p.MetaDesc,
+			Keywords: p.Keywords,
+			URL:      "/" + lang + "/" + p.Slug,
+			Date:     p.PublishedAt.Format("2006-01-02"),
 		})
 	}
 	links, err := s.store.AllLinksAllLangs()
