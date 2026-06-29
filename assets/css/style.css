@@ -4233,6 +4233,11 @@ body.blk-dragging-active { user-select: none; }
   border-color: var(--accent);
   color: #fff;
 }
+[data-theme="knowledge"] .btn-primary:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent-soft);
+  color: #fff;
+}
 [data-theme="knowledge"] .hero-visual {
   display: none;
 }

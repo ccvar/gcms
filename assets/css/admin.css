@@ -471,7 +471,7 @@ body.admin { background: var(--line-soft); }
 .admin-head h1 { font-size: 1.7rem; margin: 0; }
 .admin-head .muted { font-size: .9rem; }
 .admin-title-line { display: flex; align-items: baseline; gap: .65rem; flex-wrap: wrap; }
-.admin-title-count { display: inline-flex; align-items: center; min-height: 24px; padding: .08rem .48rem; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--faint); font-size: .78rem; font-weight: 600; line-height: 1.2; white-space: nowrap; }
+.admin-title-count { display: inline-flex; align-items: center; min-height: 24px; padding: 0; color: var(--faint); font-size: .78rem; font-weight: 600; line-height: 1.2; white-space: nowrap; }
 /* 顶部操作按钮更紧凑协调 */
 .admin-head .btn { padding: .42rem .85rem; font-size: .85rem; border-radius: 7px; }
 .admin-head .btn svg { width: 14px; height: 14px; }

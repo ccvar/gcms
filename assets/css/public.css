@@ -3144,6 +3144,11 @@ img.cover, img.article-cover { object-fit: cover; width: 100%; display: block; }
   border-color: var(--accent);
   color: #fff;
 }
+[data-theme="knowledge"] .btn-primary:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent-soft);
+  color: #fff;
+}
 [data-theme="knowledge"] .hero-visual {
   display: none;
 }
