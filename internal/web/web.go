@@ -2326,6 +2326,7 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("GET /admin/pages/{id}/edit", s.requireAuth(s.adminPageEdit))
 	mux.HandleFunc("POST /admin/pages", s.requireAuth(s.adminPageCreate))
 	mux.HandleFunc("POST /admin/pages/{id}", s.requireAuth(s.adminPageSave))
+	mux.HandleFunc("POST /admin/pages/{id}/delete", s.requireAuth(s.adminPageDelete))
 	mux.HandleFunc("POST /admin/pages/{id}/translate", s.requireAuth(s.adminTranslate))
 	mux.HandleFunc("GET /admin/posts/new", s.requireAuth(s.adminNew))
 	mux.HandleFunc("GET /admin/posts/{id}/preview", s.requireAuth(s.adminPostPreview))

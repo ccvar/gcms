@@ -4975,6 +4975,28 @@ func (s *Server) adminPageSave(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, fmt.Sprintf("/admin/pages/%d/edit?saved=1", id), http.StatusSeeOther)
 }
 
+func (s *Server) adminPageDelete(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.checkCSRF(w, r); !ok {
+		return
+	}
+	id := atoi64(r.PathValue("id"))
+	p, err := s.store.GetPostByID(id)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	if p == nil || p.Type != "page" {
+		s.notFound(w, r)
+		return
+	}
+	if err := s.store.DeletePost(id); err != nil {
+		s.serverError(w, err)
+		return
+	}
+	s.clearGeneratedCaches()
+	http.Redirect(w, r, s.adminListRedirect("/admin/pages", r), http.StatusSeeOther)
+}
+
 func pageFromForm(r *http.Request, id int64, lang string) (*store.Post, string) {
 	_ = r.ParseForm()
 	p := &store.Post{

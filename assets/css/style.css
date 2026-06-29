@@ -607,10 +607,10 @@ body.admin { background: var(--line-soft); }
 .links-table .content-col-status { width: 9%; }
 .links-table .content-col-date { width: 16%; }
 .links-table .content-col-actions { width: 10%; }
-.pages-table .content-col-title { width: 42%; }
-.pages-table .content-col-url { width: 34%; }
-.pages-table .content-col-date { width: 16%; }
-.pages-table .content-col-actions { width: 8%; }
+.pages-table .content-col-title { width: 40%; }
+.pages-table .content-col-url { width: 32%; }
+.pages-table .content-col-date { width: 18%; }
+.pages-table .content-col-actions { width: 10%; }
 .content-table .title-main { min-width: 0; max-width: 100%; }
 .content-table .t,
 .content-table .slug,

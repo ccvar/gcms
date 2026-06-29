@@ -347,6 +347,77 @@ func TestAdminDeleteEnglishContentKeepsListContext(t *testing.T) {
 	}
 }
 
+func TestAdminPageDeleteRemovesOnlyPages(t *testing.T) {
+	s := newTestPublicServer(t, "")
+	h := s.Handler()
+
+	pageID, err := s.store.CreatePost(&store.Post{
+		Type:   "page",
+		Lang:   "en",
+		Slug:   "delete-page",
+		Title:  "Delete Page",
+		Status: "published",
+	})
+	if err != nil {
+		t.Fatalf("create page: %v", err)
+	}
+
+	listReq, _ := authedAdminRequest(t, s, http.MethodGet, "/admin/pages?lang=en", nil)
+	list := httptest.NewRecorder()
+	h.ServeHTTP(list, listReq)
+	if list.Code != http.StatusOK {
+		t.Fatalf("pages list status = %d, body = %s", list.Code, list.Body.String())
+	}
+	body := list.Body.String()
+	for _, want := range []string{
+		`action="/admin/pages/` + strconv.FormatInt(pageID, 10) + `/delete"`,
+		`确定删除页面`,
+		`name="lang" value="en"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("pages list missing %q", want)
+		}
+	}
+
+	form := url.Values{"lang": {"en"}}
+	deleteReq, _ := authedAdminRequest(t, s, http.MethodPost, "/admin/pages/"+strconv.FormatInt(pageID, 10)+"/delete", form)
+	deleted := httptest.NewRecorder()
+	h.ServeHTTP(deleted, deleteReq)
+	if deleted.Code != http.StatusSeeOther {
+		t.Fatalf("page delete status = %d, body = %s", deleted.Code, deleted.Body.String())
+	}
+	if got, want := deleted.Header().Get("Location"), "/admin/pages?lang=en"; got != want {
+		t.Fatalf("page delete Location = %q, want %q", got, want)
+	}
+	if deletedPage, err := s.store.GetPostByID(pageID); err != nil || deletedPage != nil {
+		t.Fatalf("deleted page should not be readable")
+	}
+
+	postID, err := s.store.CreatePost(&store.Post{
+		Type:   "post",
+		Lang:   "en",
+		Slug:   "not-a-page",
+		Title:  "Not A Page",
+		Status: "draft",
+	})
+	if err != nil {
+		t.Fatalf("create post: %v", err)
+	}
+	rejectReq, _ := authedAdminRequest(t, s, http.MethodPost, "/admin/pages/"+strconv.FormatInt(postID, 10)+"/delete", url.Values{"lang": {"en"}})
+	rejected := httptest.NewRecorder()
+	h.ServeHTTP(rejected, rejectReq)
+	if rejected.Code != http.StatusNotFound {
+		t.Fatalf("non-page delete status = %d, want %d; body = %s", rejected.Code, http.StatusNotFound, rejected.Body.String())
+	}
+	existingPost, err := s.store.GetPostByID(postID)
+	if err != nil {
+		t.Fatalf("get non-page after rejected delete: %v", err)
+	}
+	if existingPost == nil || existingPost.Type != "post" {
+		t.Fatalf("non-page delete should not remove post, got %#v", existingPost)
+	}
+}
+
 func TestAdminLinksCategoryFilter(t *testing.T) {
 	s := newTestPublicServer(t, "")
 	h := s.Handler()

@@ -26,6 +26,11 @@
           <span class="action-icons">
             <a class="act-ico" href="{{adminPublicContentPath $.AdminPreviewPrefix .Lang "page" .Slug}}" target="_blank" title="{{$.Admin.T "admin.action.view" "查看"}}" aria-label="{{$.Admin.T "admin.action.view" "查看"}}">{{template "icon-extlink"}}</a>
             <a class="act-ico" href="/admin/pages/{{.ID}}/edit" title="{{$.Admin.T "admin.action.edit" "编辑"}}" aria-label="{{$.Admin.T "admin.action.edit" "编辑"}}">{{template "icon-edit"}}</a>
+            <form method="post" action="/admin/pages/{{.ID}}/delete" data-confirm="{{printf ($.Admin.T "admin.pages.delete_confirm" "确定删除页面「%s」？此操作不可撤销。") .Title}}">
+              <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+              <input type="hidden" name="lang" value="{{.Lang}}">
+              <button class="del act-ico" type="submit" title="{{$.Admin.T "admin.action.delete" "删除"}}" aria-label="{{$.Admin.T "admin.action.delete" "删除"}}">{{template "icon-trash"}}</button>
+            </form>
           </span>
         </td>
       </tr>
