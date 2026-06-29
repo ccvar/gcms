@@ -964,6 +964,10 @@
         return '<span class="menu-preview-item' + (ext ? ' is-external' : '') + '" title="' + esc(url) + '"><span>' + esc(label) + '</span>' + (ext ? '<span class="menu-preview-ext" aria-hidden="true">↗</span>' : '') + '</span>';
       }).join("");
     }
+    function markMenuDirty() {
+      var form = box.closest("form");
+      if (form) form.dispatchEvent(new Event("input", { bubbles: true }));
+    }
     function setLabels(row, labels) {
       if (!labels || !Object.keys(labels).length) return;
       langs.forEach(function (code) {
@@ -1037,11 +1041,12 @@
       if (window.adminInitDropdown) window.adminInitDropdown(row.querySelector(".dropdown"));
       applyTarget(row, "__custom__", false);
       updateMenuPreview();
+      markMenuDirty();
       var inp = row.querySelector(".menu-custom-url"); if (inp) inp.focus();
     });
     box.addEventListener("click", function (e) {
       var del = e.target.closest("[data-menu-del]");
-      if (del) { var r = del.closest(".menu-row"); if (r) r.remove(); updateMenuPreview(); }
+      if (del) { var r = del.closest(".menu-row"); if (r) r.remove(); updateMenuPreview(); markMenuDirty(); }
     });
     box.addEventListener("dd:change", function (e) {
       var dd = e.target.closest("[data-menu-target]");
@@ -1078,6 +1083,7 @@
     box.addEventListener("dragend", function () {
       if (dragEl) { dragEl.classList.remove("dragging"); dragEl.draggable = false; }
       dragEl = null;
+      markMenuDirty();
     });
     box.addEventListener("dragover", function (e) {
       if (!dragEl) return;
