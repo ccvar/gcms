@@ -3295,6 +3295,10 @@ func (s *Server) adminPin(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, s.adminListRedirect("/admin/posts", r), http.StatusSeeOther)
 }
 
+func (s *Server) adminPostStatus(w http.ResponseWriter, r *http.Request) {
+	s.adminContentStatus(w, r, "post", "/admin/posts")
+}
+
 // adminTranslate 为某篇内容创建/跳转到指定语种的互译版本（共享 trans_group）。
 func (s *Server) adminTranslate(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.checkCSRF(w, r); !ok {
@@ -3361,8 +3365,23 @@ func (s *Server) adminLinks(w http.ResponseWriter, r *http.Request) {
 	sess, _ := s.currentSession(r)
 	lang := s.editLang(r)
 	status := adminStatusFilter(r)
+	category := adminCategoryFilter(r)
 	page := pageParam(r)
-	total, err := s.store.CountAdminContent("link", lang, status)
+	categories, err := s.store.ListCategories(lang, "link")
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	categoryName := ""
+	if category != "" {
+		for _, c := range categories {
+			if c.Slug == category {
+				categoryName = c.Name
+				break
+			}
+		}
+	}
+	total, err := s.store.CountAdminContentFiltered("link", lang, status, category)
 	if err != nil {
 		s.serverError(w, err)
 		return
@@ -3371,7 +3390,7 @@ func (s *Server) adminLinks(w http.ResponseWriter, r *http.Request) {
 	if totalPages > 0 && page > totalPages {
 		page = totalPages
 	}
-	links, err := s.store.ListAdminContent("link", lang, status, (page-1)*adminListPageSize, adminListPageSize)
+	links, err := s.store.ListAdminContentFiltered("link", lang, status, category, (page-1)*adminListPageSize, adminListPageSize)
 	if err != nil {
 		s.serverError(w, err)
 		return
@@ -3379,8 +3398,11 @@ func (s *Server) adminLinks(w http.ResponseWriter, r *http.Request) {
 	v := s.adminView(r, "链接")
 	s.authed(v, sess)
 	v.AllPosts = links
+	v.Categories = categories
 	v.ListTotal = total
 	v.StatusFilter = status
+	v.CategoryFilter = category
+	v.CategoryFilterName = categoryName
 	v.AdminListPath = "/admin/links"
 	v.EditLang = lang
 	setPagination(v, page, totalPages, "/admin/links")
@@ -3479,6 +3501,56 @@ func (s *Server) adminLinkPin(w http.ResponseWriter, r *http.Request) {
 	_ = s.store.SetFeatured(atoi64(r.PathValue("id")), r.FormValue("on") == "1")
 	s.clearGeneratedCaches()
 	http.Redirect(w, r, s.adminListRedirect("/admin/links", r), http.StatusSeeOther)
+}
+
+func (s *Server) adminLinkStatus(w http.ResponseWriter, r *http.Request) {
+	s.adminContentStatus(w, r, "link", "/admin/links")
+}
+
+func (s *Server) adminContentStatus(w http.ResponseWriter, r *http.Request, kind, listPath string) {
+	if _, ok := s.checkCSRF(w, r); !ok {
+		return
+	}
+	id := atoi64(r.PathValue("id"))
+	p, err := s.store.GetPostByID(id)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	if p == nil || p.Type != kind {
+		s.notFound(w, r)
+		return
+	}
+	target := strings.TrimSpace(r.FormValue("target_status"))
+	now := time.Now()
+	switch target {
+	case "published":
+		p.Status = "published"
+		if p.PublishedAt.IsZero() || p.PublishedAt.After(now) {
+			p.PublishedAt = now
+		}
+	case "draft":
+		p.Status = "draft"
+	case "scheduled":
+		if p.PublishedAt.IsZero() || !p.PublishedAt.After(now) {
+			editKind := "posts"
+			if kind == "link" {
+				editKind = "links"
+			}
+			http.Redirect(w, r, fmt.Sprintf("/admin/%s/%d/edit", editKind, id), http.StatusSeeOther)
+			return
+		}
+		p.Status = "scheduled"
+	default:
+		http.Redirect(w, r, s.adminListRedirect(listPath, r), http.StatusSeeOther)
+		return
+	}
+	if err := s.store.UpdatePost(p); err != nil {
+		s.serverError(w, err)
+		return
+	}
+	s.clearGeneratedCaches()
+	http.Redirect(w, r, s.adminListRedirect(listPath, r), http.StatusSeeOther)
 }
 
 // ---------- 站点设置（分区独立保存）----------
@@ -4654,40 +4726,50 @@ func (s *Server) adminSaveCategoryAll(w http.ResponseWriter, r *http.Request) {
 	}
 	lang := s.editLang(r)
 	kind := catKind(r)
-	title := strings.TrimSpace(r.FormValue("title"))
-	label := strings.TrimSpace(r.FormValue("label"))
-	desc := strings.TrimSpace(r.FormValue("description"))
-	if title == "" {
-		s.showSettings(w, r, "categories", "", "页面标题不能为空。")
+	title := r.FormValue("title")
+	label := r.FormValue("label")
+	desc := r.FormValue("description")
+	_, errMsg, err := s.saveCategoryAllEntry(kind, lang, title, label, desc, r.FormValue("slug"))
+	if err != nil {
+		s.serverError(w, err)
 		return
 	}
-	if label == "" {
-		s.showSettings(w, r, "categories", "", "“全部”按钮文字不能为空。")
+	if errMsg != "" {
+		s.showSettings(w, r, "categories", "", errMsg)
 		return
+	}
+	s.redirectSettings(w, r, "categories", "“全部”入口已保存。")
+}
+
+func (s *Server) saveCategoryAllEntry(kind, lang, title, label, desc, slugRaw string) (ArchiveConfig, string, error) {
+	title = strings.TrimSpace(title)
+	label = strings.TrimSpace(label)
+	desc = strings.TrimSpace(desc)
+	if title == "" {
+		return ArchiveConfig{}, "页面标题不能为空。", nil
+	}
+	if label == "" {
+		return ArchiveConfig{}, "“全部”按钮文字不能为空。", nil
 	}
 	fallbackSlug := "category"
 	if kind == "link" {
 		fallbackSlug = "links"
 	}
-	slug := normalizeArchiveSlug(r.FormValue("slug"), fallbackSlug)
+	slug := normalizeArchiveSlug(slugRaw, fallbackSlug)
 	newPath := archivePath(kind, slug)
 	if kind == "post" && newPath != "/category" {
 		exists, err := s.store.CategorySlugExists(lang, slug, 0)
 		if err != nil {
-			s.serverError(w, err)
-			return
+			return ArchiveConfig{}, "", err
 		}
 		if exists {
-			s.showSettings(w, r, "categories", "", "Slug 已被真实分类占用，请换一个。")
-			return
+			return ArchiveConfig{}, "Slug 已被真实分类占用，请换一个。", nil
 		}
 	} else if kind == "link" && newPath != "/links" {
 		if p, err := s.store.GetLinkBySlug(lang, slug, true); err != nil {
-			s.serverError(w, err)
-			return
+			return ArchiveConfig{}, "", err
 		} else if p != nil {
-			s.showSettings(w, r, "categories", "", "Slug 已被链接详情页占用，请换一个。")
-			return
+			return ArchiveConfig{}, "Slug 已被链接详情页占用，请换一个。", nil
 		}
 	}
 	old := s.archiveConfig(lang, kind)
@@ -4699,15 +4781,12 @@ func (s *Server) adminSaveCategoryAll(w http.ResponseWriter, r *http.Request) {
 	}
 	for field, value := range values {
 		if err := s.store.SetSetting(s.archiveStoreKey(kind, field, lang), value); err != nil {
-			s.serverError(w, err)
-			return
+			return ArchiveConfig{}, "", err
 		}
 	}
-	if kind == "post" {
-		s.syncCategoryNavPath(old.Path, newPath)
-	}
+	s.syncCategoryNavPath(old.Path, newPath)
 	s.clearGeneratedCaches()
-	s.redirectSettings(w, r, "categories", "“全部”入口已保存。")
+	return s.archiveConfig(lang, kind), "", nil
 }
 
 func (s *Server) syncCategoryNavPath(oldPath, newPath string) {

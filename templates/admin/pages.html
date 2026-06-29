@@ -1,7 +1,7 @@
 {{define "body"}}  <div class="admin-head">
-    <div>
+    <div class="admin-title-line">
       <h1>{{.Admin.T "admin.pages.title" "页面"}}</h1>
-      <p class="muted">{{.Admin.T "admin.pages.desc" "独立页面（如「关于」），在此维护内容"}}</p>
+      <span class="admin-title-count">{{.Admin.T "admin.pages.desc" "独立页面（如「关于」），在此维护内容"}}</span>
     </div>
     <a class="btn btn-primary" href="/admin/pages/new?lang={{.EditLang}}">＋ {{.Admin.T "admin.pages.new" "新增页面"}}</a>
   </div>

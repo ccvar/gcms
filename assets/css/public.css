@@ -725,27 +725,28 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 2.5rem 0; }
   --line: #1a1a1a; --line-soft: #d8d4c8;
   --accent: #8b0000; --accent-soft: #a52020; --accent-wash: #f0e2e2;
   --code-bg: #1a1a1a;
+  --news-rule: color-mix(in srgb, #1a1a1a 38%, transparent);
 }
-[data-theme="newspaper"] .site-header { background: var(--bg); border-bottom: 1px solid #1a1a1a; }
+[data-theme="newspaper"] .site-header { background: var(--bg); border-bottom: 1px solid var(--news-rule); }
 [data-theme="newspaper"] .site-header .wrap { flex-direction: column; height: auto; padding: 1rem 24px .6rem; gap: .5rem; }
 [data-theme="newspaper"] .site-header .brand { font-family: var(--serif); font-size: 2.2rem; font-weight: 800; letter-spacing: .02em; }
 [data-theme="newspaper"] .site-header .brand small { display: none; }
 [data-theme="newspaper"] .nav { gap: 1.6rem; border-top: 0; border-bottom: 0; padding: .42rem 0 .28rem; width: 100%; justify-content: center; }
 [data-theme="newspaper"] .nav a { font-family: var(--serif); font-variant: small-caps; letter-spacing: .06em; font-size: 1rem; }
 [data-theme="newspaper"] .nav a[aria-current="page"]::after { display: none; }
-[data-theme="newspaper"] .hero { text-align: center; border-bottom: 3px double #1a1a1a; }
+[data-theme="newspaper"] .hero { text-align: center; border-bottom: 0; }
 [data-theme="newspaper"] .hero-inner { grid-template-columns: 1fr; }
 [data-theme="newspaper"] .hero-text { order: 2; max-width: 820px; margin: 0 auto; }
 [data-theme="newspaper"] .hero-visual { order: 1; }
 [data-theme="newspaper"] .hero-svg { max-width: 250px; }
 [data-theme="newspaper"] .hero h1 { font-family: var(--serif); font-size: clamp(2.6rem, 6vw, 4.4rem); font-weight: 800; }
 [data-theme="newspaper"] .hero .eyebrow { color: var(--accent); }
-[data-theme="newspaper"] .section-head { justify-content: center; border-top: 3px double #1a1a1a; border-bottom: 1px solid #1a1a1a; padding: .5rem 0; }
+[data-theme="newspaper"] .section-head { justify-content: center; border-top: 1px solid var(--news-rule); border-bottom: 0; padding: .75rem 0 0; }
 [data-theme="newspaper"] .section-head h2 { font-family: var(--serif); color: #1a1a1a; text-transform: uppercase; letter-spacing: .1em; }
 [data-theme="newspaper"] .feature .cover { filter: grayscale(1) contrast(1.05); border-radius: 0; }
 [data-theme="newspaper"] .feature h3 { font-family: var(--serif); }
 [data-theme="newspaper"] .post-list { display: block; column-count: 2; column-gap: 2.5rem; }
-[data-theme="newspaper"] .post-item { display: block; break-inside: avoid; grid-template-columns: none; border-top: 1px solid #1a1a1a; padding: .9rem 0; }
+[data-theme="newspaper"] .post-item { display: block; break-inside: avoid; grid-template-columns: none; border-top: 1px solid var(--news-rule); padding: .9rem 0; }
 [data-theme="newspaper"] .post-item:hover { background: none; }
 [data-theme="newspaper"] .post-item .num { display: none; }
 [data-theme="newspaper"] .post-item h3 { font-family: var(--serif); font-size: 1.25rem; }

@@ -151,6 +151,31 @@ type apiCategoryInput struct {
 	TransGroup  *string `json:"trans_group,omitempty"`
 }
 
+type apiCategoryAllEntry struct {
+	Kind        string `json:"kind"`
+	Lang        string `json:"lang"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Label       string `json:"label"`
+	Slug        string `json:"slug"`
+	Path        string `json:"path"`
+	Purpose     string `json:"purpose"`
+	Selectable  bool   `json:"selectable"`
+}
+
+type apiCategoryAllEntryInput struct {
+	Lang        *string `json:"lang,omitempty"`
+	Title       *string `json:"title,omitempty"`
+	Description *string `json:"description,omitempty"`
+	Label       *string `json:"label,omitempty"`
+	Slug        *string `json:"slug,omitempty"`
+}
+
+type apiCategoryAllEntryPatch struct {
+	apiCategoryAllEntryInput
+	Items []apiCategoryAllEntryInput `json:"items,omitempty"`
+}
+
 type apiLanguageItem struct {
 	Code    string `json:"code"`
 	Name    string `json:"name"`
@@ -381,17 +406,12 @@ func (s *Server) apiUpdateNavigation(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) apiListCategories(w http.ResponseWriter, r *http.Request) {
 	collection := r.PathValue("collection")
-	kind := ""
-	switch collection {
-	case "posts":
-		kind = "post"
-	case "links":
-		kind = "link"
-	default:
+	kind, scope, ok := apiCategoryReadTarget(collection)
+	if !ok {
 		apiError(w, http.StatusNotFound, "not_found", "接口不存在。")
 		return
 	}
-	if _, ok := s.requireAutomationScope(w, r, apiScope(collection, "categories")); !ok {
+	if _, ok := s.requireAutomationScope(w, r, scope); !ok {
 		return
 	}
 	lang := strings.TrimSpace(r.URL.Query().Get("lang"))
@@ -420,6 +440,80 @@ func (s *Server) apiListCategories(w http.ResponseWriter, r *http.Request) {
 		items = append(items, apiCategoryItem(cat))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items, "lang": lang, "kind": kind})
+}
+
+func (s *Server) apiGetCategoryAllEntry(w http.ResponseWriter, r *http.Request) {
+	collection := r.PathValue("collection")
+	kind, scope, ok := apiCategoryReadTarget(collection)
+	if !ok {
+		apiError(w, http.StatusNotFound, "not_found", "接口不存在。")
+		return
+	}
+	if _, ok := s.requireAutomationScope(w, r, scope); !ok {
+		return
+	}
+	lang := strings.TrimSpace(r.URL.Query().Get("lang"))
+	if lang == "" {
+		lang = s.defaultLang()
+	}
+	items, errMsg := s.apiCategoryAllEntryItems(kind, lang)
+	if errMsg != "" {
+		apiError(w, http.StatusBadRequest, "bad_lang", errMsg)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items, "lang": lang, "kind": kind})
+}
+
+func (s *Server) apiUpdateCategoryAllEntry(w http.ResponseWriter, r *http.Request) {
+	collection := r.PathValue("collection")
+	kind, scope, ok := apiCategoryWriteTarget(collection)
+	if !ok {
+		apiError(w, http.StatusNotFound, "not_found", "接口不存在。")
+		return
+	}
+	auth, ok := s.requireAutomationScope(w, r, scope)
+	if !ok {
+		return
+	}
+	var in apiCategoryAllEntryPatch
+	if !decodeAPIJSON(w, r, &in) {
+		return
+	}
+	items := in.Items
+	if len(items) == 0 && in.hasFields() {
+		items = []apiCategoryAllEntryInput{in.apiCategoryAllEntryInput}
+	}
+	if len(items) == 0 {
+		apiError(w, http.StatusBadRequest, "empty_patch", "没有收到需要更新的分类入口。")
+		return
+	}
+	out := make([]apiCategoryAllEntry, 0, len(items))
+	for i := range items {
+		lang := s.defaultLang()
+		if items[i].Lang != nil && strings.TrimSpace(*items[i].Lang) != "" {
+			lang = strings.TrimSpace(*items[i].Lang)
+		}
+		if lang == "all" || !s.langEnabled(lang) {
+			apiError(w, http.StatusBadRequest, "bad_lang", "语种未启用。")
+			return
+		}
+		entry, errMsg, err := s.applyAPICategoryAllEntryInput(kind, lang, &items[i])
+		if err != nil {
+			apiError(w, http.StatusInternalServerError, "store_error", err.Error())
+			return
+		}
+		if errMsg != "" {
+			apiError(w, http.StatusBadRequest, "bad_request", errMsg)
+			return
+		}
+		out = append(out, entry)
+	}
+	_ = s.store.CreateAutomationLog(auth.key.ID, "update", kind+"-category-all-entry", 0, "更新"+apiKindName(kind)+"分类总入口")
+	responseLang := "all"
+	if len(out) == 1 {
+		responseLang = out[0].Lang
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": out, "lang": responseLang, "kind": kind})
 }
 
 func (s *Server) apiCreateCategory(w http.ResponseWriter, r *http.Request) {
@@ -1044,6 +1138,21 @@ func (s *Server) apiNavigationResponse() map[string]any {
 	return map[string]any{"default": s.defaultLang(), "languages": langs, "items": items}
 }
 
+func (in apiCategoryAllEntryPatch) hasFields() bool {
+	return in.Lang != nil || in.Title != nil || in.Description != nil || in.Label != nil || in.Slug != nil
+}
+
+func apiCategoryReadTarget(collection string) (kind, scope string, ok bool) {
+	switch collection {
+	case "posts":
+		return "post", apiScope(collection, "categories"), true
+	case "links":
+		return "link", apiScope(collection, "categories"), true
+	default:
+		return "", "", false
+	}
+}
+
 func apiCategoryWriteTarget(collection string) (kind, scope string, ok bool) {
 	switch collection {
 	case "posts":
@@ -1053,6 +1162,67 @@ func apiCategoryWriteTarget(collection string) (kind, scope string, ok bool) {
 	default:
 		return "", "", false
 	}
+}
+
+func (s *Server) apiCategoryAllEntryItems(kind, lang string) ([]apiCategoryAllEntry, string) {
+	if lang == "all" {
+		locales := s.locales()
+		items := make([]apiCategoryAllEntry, 0, len(locales))
+		for _, loc := range locales {
+			items = append(items, s.apiCategoryAllEntryItem(kind, loc.Code))
+		}
+		return items, ""
+	}
+	if !s.langEnabled(lang) {
+		return nil, "语种未启用。"
+	}
+	return []apiCategoryAllEntry{s.apiCategoryAllEntryItem(kind, lang)}, ""
+}
+
+func (s *Server) apiCategoryAllEntryItem(kind, lang string) apiCategoryAllEntry {
+	cfg := s.archiveConfig(lang, kind)
+	return apiCategoryAllEntry{
+		Kind:        kind,
+		Lang:        lang,
+		Title:       cfg.Title,
+		Description: cfg.Description,
+		Label:       cfg.Label,
+		Slug:        cfg.Slug,
+		Path:        cfg.Path,
+		Purpose:     categoryAllEntryPurpose(kind),
+		Selectable:  false,
+	}
+}
+
+func categoryAllEntryPurpose(kind string) string {
+	if kind == "link" {
+		return "链接总入口，控制全部链接列表页的标题、描述、路径和“全部”筛选按钮；它不是可写入 category_id 的真实链接分类。"
+	}
+	return "文章总入口，控制全部文章列表页的标题、描述、路径和“全部”筛选按钮；它不是可写入 category_id 的真实文章分类。"
+}
+
+func (s *Server) applyAPICategoryAllEntryInput(kind, lang string, in *apiCategoryAllEntryInput) (apiCategoryAllEntry, string, error) {
+	current := s.archiveConfig(lang, kind)
+	title := current.Title
+	if in.Title != nil {
+		title = strings.TrimSpace(*in.Title)
+	}
+	desc := current.Description
+	if in.Description != nil {
+		desc = strings.TrimSpace(*in.Description)
+	}
+	label := current.Label
+	if in.Label != nil {
+		label = strings.TrimSpace(*in.Label)
+	}
+	slug := current.Slug
+	if in.Slug != nil {
+		slug = strings.TrimSpace(*in.Slug)
+	}
+	if _, errMsg, err := s.saveCategoryAllEntry(kind, lang, title, label, desc, slug); err != nil || errMsg != "" {
+		return apiCategoryAllEntry{}, errMsg, err
+	}
+	return s.apiCategoryAllEntryItem(kind, lang), "", nil
 }
 
 func (s *Server) uniqueAPICategorySlug(lang, slug string, exceptID int64) string {

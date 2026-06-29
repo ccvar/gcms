@@ -470,6 +470,8 @@ body.admin { background: var(--line-soft); }
 .admin-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 1rem; margin-bottom: 1.8rem; }
 .admin-head h1 { font-size: 1.7rem; margin: 0; }
 .admin-head .muted { font-size: .9rem; }
+.admin-title-line { display: flex; align-items: baseline; gap: .65rem; flex-wrap: wrap; }
+.admin-title-count { display: inline-flex; align-items: center; min-height: 24px; padding: .08rem .48rem; border: 1px solid var(--line); border-radius: 999px; background: var(--surface); color: var(--faint); font-size: .78rem; font-weight: 600; line-height: 1.2; white-space: nowrap; }
 /* 顶部操作按钮更紧凑协调 */
 .admin-head .btn { padding: .42rem .85rem; font-size: .85rem; border-radius: 7px; }
 .admin-head .btn svg { width: 14px; height: 14px; }
@@ -627,6 +629,23 @@ a.overview-log-title { text-decoration: none; }
 .badge.pub { background: #e6f4ea; color: #137333; }
 .badge.draft { background: var(--line-soft); color: var(--muted); }
 .badge.sched { background: #fff4e5; color: #9a6700; }
+.admin-table:has(.status-menu[open]) { overflow: visible; }
+.status-menu { position: relative; display: inline-block; }
+.status-menu summary { list-style: none; display: inline-flex; align-items: center; gap: .24rem; cursor: pointer; outline: none; }
+.status-menu summary::-webkit-details-marker { display: none; }
+.status-menu summary::after { content: "⌄"; color: var(--faint); font-size: .72rem; line-height: 1; transform: translateY(-1px); transition: transform .15s, color .15s; }
+.status-menu summary:hover::after,
+.status-menu[open] summary::after { color: var(--muted); }
+.status-menu[open] summary::after { transform: translateY(-1px) rotate(180deg); }
+.status-menu[open] { z-index: 25; }
+.status-menu-pop { position: absolute; z-index: 40; top: calc(100% + .42rem); left: 0; min-width: 128px; display: grid; gap: .12rem; padding: .32rem; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); box-shadow: 0 14px 32px rgba(27,26,23,.13); }
+.status-menu-pop form { margin: 0; }
+.status-menu-item { width: 100%; border: 0; border-radius: 7px; background: transparent; color: var(--muted); cursor: pointer; font: inherit; font-size: .78rem; font-weight: 700; line-height: 1.2; padding: .48rem .62rem; text-align: left; white-space: nowrap; }
+.status-menu-item:hover { background: var(--accent-wash); color: var(--accent); }
+.status-menu-item.pub:hover { color: #137333; background: color-mix(in srgb, #e6f4ea 70%, var(--surface)); }
+.status-menu-item.sched:hover { color: #9a6700; background: color-mix(in srgb, #fff4e5 72%, var(--surface)); }
+.status-menu-item[disabled] { cursor: default; color: var(--faint); background: var(--line-soft); }
+.status-menu-item[disabled]:hover { color: var(--faint); background: var(--line-soft); }
 .schedule-field { margin-top: .6rem; }
 @media (prefers-color-scheme: dark) { .badge.pub { background: #16301f; color: #7ed99f; } }
 .sites-head { margin-bottom: 1.1rem; }

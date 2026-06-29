@@ -1,11 +1,16 @@
 package web
 
 import (
+	"database/sql"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
+
+	"cms.ccvar.com/internal/store"
 )
 
 func authedAdminRequest(t *testing.T, s *Server, method, target string, form url.Values) (*http.Request, string) {
@@ -180,5 +185,168 @@ func TestCloudflareManualSyncDisablesAutomaticDeploy(t *testing.T) {
 	}
 	if got := s.store.Setting(cloudflareSyncNextAtKey); got != "" {
 		t.Fatalf("sync next at = %q, want empty for manual sync", got)
+	}
+}
+
+func TestAdminListStatusQuickChange(t *testing.T) {
+	s := newTestPublicServer(t, "")
+	h := s.Handler()
+	postID, err := s.store.CreatePost(&store.Post{
+		Type:   "post",
+		Lang:   "zh",
+		Slug:   "quick-status-post",
+		Title:  "Quick Status Post",
+		Status: "draft",
+	})
+	if err != nil {
+		t.Fatalf("create post: %v", err)
+	}
+
+	form := url.Values{
+		"target_status": {"published"},
+		"lang":          {"zh"},
+		"status":        {"draft"},
+		"cat":           {"docs"},
+		"page":          {"2"},
+	}
+	publishReq, _ := authedAdminRequest(t, s, http.MethodPost, "/admin/posts/"+strconv.FormatInt(postID, 10)+"/status", form)
+	publish := httptest.NewRecorder()
+	h.ServeHTTP(publish, publishReq)
+	if publish.Code != http.StatusSeeOther {
+		t.Fatalf("publish status = %d, body = %s", publish.Code, publish.Body.String())
+	}
+	if got, want := publish.Header().Get("Location"), "/admin/posts?lang=zh&status=draft&cat=docs&page=2"; got != want {
+		t.Fatalf("publish Location = %q, want %q", got, want)
+	}
+	updatedPost, err := s.store.GetPostByID(postID)
+	if err != nil {
+		t.Fatalf("get post after publish: %v", err)
+	}
+	if updatedPost.Status != "published" || updatedPost.PublishedAt.IsZero() {
+		t.Fatalf("post after publish = status %q published_at %v", updatedPost.Status, updatedPost.PublishedAt)
+	}
+
+	form.Set("target_status", "draft")
+	form.Set("status", "published")
+	draftReq, _ := authedAdminRequest(t, s, http.MethodPost, "/admin/posts/"+strconv.FormatInt(postID, 10)+"/status", form)
+	draft := httptest.NewRecorder()
+	h.ServeHTTP(draft, draftReq)
+	if draft.Code != http.StatusSeeOther {
+		t.Fatalf("draft status = %d, body = %s", draft.Code, draft.Body.String())
+	}
+	if got, want := draft.Header().Get("Location"), "/admin/posts?lang=zh&status=published&cat=docs&page=2"; got != want {
+		t.Fatalf("draft Location = %q, want %q", got, want)
+	}
+	updatedPost, err = s.store.GetPostByID(postID)
+	if err != nil {
+		t.Fatalf("get post after draft: %v", err)
+	}
+	if updatedPost.Status != "draft" {
+		t.Fatalf("post status after draft = %q, want draft", updatedPost.Status)
+	}
+
+	future := time.Now().Add(2 * time.Hour)
+	linkID, err := s.store.CreatePost(&store.Post{
+		Type:        "link",
+		Lang:        "zh",
+		Slug:        "quick-status-link",
+		Title:       "Quick Status Link",
+		Status:      "draft",
+		LinkURL:     "https://example.com",
+		PublishedAt: future,
+	})
+	if err != nil {
+		t.Fatalf("create link: %v", err)
+	}
+	linkForm := url.Values{
+		"target_status": {"scheduled"},
+		"lang":          {"zh"},
+		"status":        {"draft"},
+		"page":          {"2"},
+	}
+	linkReq, _ := authedAdminRequest(t, s, http.MethodPost, "/admin/links/"+strconv.FormatInt(linkID, 10)+"/status", linkForm)
+	linkResp := httptest.NewRecorder()
+	h.ServeHTTP(linkResp, linkReq)
+	if linkResp.Code != http.StatusSeeOther {
+		t.Fatalf("link status = %d, body = %s", linkResp.Code, linkResp.Body.String())
+	}
+	if got, want := linkResp.Header().Get("Location"), "/admin/links?lang=zh&status=draft&page=2"; got != want {
+		t.Fatalf("link Location = %q, want %q", got, want)
+	}
+	updatedLink, err := s.store.GetPostByID(linkID)
+	if err != nil {
+		t.Fatalf("get link after schedule: %v", err)
+	}
+	if updatedLink.Status != "scheduled" || !updatedLink.PublishedAt.After(time.Now()) {
+		t.Fatalf("link after schedule = status %q published_at %v", updatedLink.Status, updatedLink.PublishedAt)
+	}
+}
+
+func TestAdminLinksCategoryFilter(t *testing.T) {
+	s := newTestPublicServer(t, "")
+	h := s.Handler()
+
+	toolsID, err := s.store.CreateCategory(&store.Category{
+		Kind: "link",
+		Lang: "zh",
+		Slug: "test-tools",
+		Name: "测试工具",
+	})
+	if err != nil {
+		t.Fatalf("create tools category: %v", err)
+	}
+	designID, err := s.store.CreateCategory(&store.Category{
+		Kind: "link",
+		Lang: "zh",
+		Slug: "test-design",
+		Name: "设计资源",
+	})
+	if err != nil {
+		t.Fatalf("create design category: %v", err)
+	}
+
+	if _, err := s.store.CreatePost(&store.Post{
+		Type:       "link",
+		Lang:       "zh",
+		Slug:       "test-alpha-link",
+		Title:      "Alpha Filtered Link",
+		Status:     "published",
+		LinkURL:    "https://alpha.example",
+		CategoryID: sql.NullInt64{Int64: toolsID, Valid: true},
+	}); err != nil {
+		t.Fatalf("create alpha link: %v", err)
+	}
+	if _, err := s.store.CreatePost(&store.Post{
+		Type:       "link",
+		Lang:       "zh",
+		Slug:       "test-beta-link",
+		Title:      "Beta Filtered Link",
+		Status:     "published",
+		LinkURL:    "https://beta.example",
+		CategoryID: sql.NullInt64{Int64: designID, Valid: true},
+	}); err != nil {
+		t.Fatalf("create beta link: %v", err)
+	}
+
+	req, _ := authedAdminRequest(t, s, http.MethodGet, "/admin/links?lang=zh&cat=test-tools", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	for _, want := range []string{
+		`list-category-filter`,
+		`Alpha Filtered Link`,
+		`测试工具`,
+		`/admin/links?lang=zh&status=published&cat=test-tools`,
+		`name="cat" value="test-tools"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("links category page missing %q in body:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "Beta Filtered Link") {
+		t.Fatalf("category filter should hide links from other categories")
 	}
 }

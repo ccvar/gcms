@@ -234,6 +234,10 @@ func automationOpenAPISpec(apiBase string) map[string]any {
 				"get":  automationCategoryListOperation(col),
 				"post": automationCategoryCreateOperation(col),
 			}
+			paths["/"+col.path+"/categories/all-entry"] = map[string]any{
+				"get":   automationCategoryAllEntryGetOperation(col),
+				"patch": automationCategoryAllEntryUpdateOperation(col),
+			}
 			paths["/"+col.path+"/categories/{id}"] = map[string]any{
 				"patch": automationCategoryUpdateOperation(col),
 			}
@@ -367,13 +371,37 @@ func automationCategoryUpdateOperation(col automationCollection) map[string]any 
 func automationCategoryListOperation(col automationCollection) map[string]any {
 	return map[string]any{
 		"summary":     "列出" + col.label + "分类",
-		"description": "只读接口。用于拿到可用分类 ID，创建或更新内容时可写入 category_id。",
+		"description": "只读接口。只返回可写入 category_id 的真实分类。列表页的“全部入口”不是分类，需使用 /" + col.path + "/categories/all-entry 单独读取或更新。",
 		"operationId": "list" + automationOperationSuffix(col.kind+"Categories"),
 		"tags":        []string{col.label},
 		"parameters": []map[string]any{
 			{"name": "lang", "in": "query", "schema": map[string]any{"type": "string", "default": "zh"}, "description": "分类语种。传 all 可返回所有语种的分类。"},
 		},
 		"responses": automationResponses("CategoryListResponse"),
+	}
+}
+
+func automationCategoryAllEntryGetOperation(col automationCollection) map[string]any {
+	return map[string]any{
+		"summary":     "读取" + col.label + "全部入口",
+		"description": col.label + "全部入口用于控制前台总列表页的标题、描述、访问路径和“全部”筛选按钮。它不是可写入 category_id 的真实分类。",
+		"operationId": "get" + automationOperationSuffix(col.kind+"CategoryAllEntry"),
+		"tags":        []string{col.label},
+		"parameters": []map[string]any{
+			{"name": "lang", "in": "query", "schema": map[string]any{"type": "string", "default": "zh"}, "description": "入口语种。传 all 可返回所有语种入口。"},
+		},
+		"responses": automationResponses("CategoryAllEntryResponse"),
+	}
+}
+
+func automationCategoryAllEntryUpdateOperation(col automationCollection) map[string]any {
+	return map[string]any{
+		"summary":     "更新" + col.label + "全部入口",
+		"description": "更新总列表页标题、描述、slug 和“全部”筛选按钮文案。可传单个语种对象，也可传 items 数组批量更新；不要把真实分类写到这里。",
+		"operationId": "update" + automationOperationSuffix(col.kind+"CategoryAllEntry"),
+		"tags":        []string{col.label},
+		"requestBody": automationJSONBody("CategoryAllEntryPatch"),
+		"responses":   automationResponses("CategoryAllEntryResponse"),
 	}
 }
 
@@ -570,6 +598,56 @@ func automationOpenAPISchemas() map[string]any {
 		"CategoryItemResponse": map[string]any{
 			"type":       "object",
 			"properties": map[string]any{"item": map[string]any{"$ref": "#/components/schemas/CategoryItem"}},
+		},
+		"CategoryAllEntryResponse": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"items": map[string]any{
+					"type":  "array",
+					"items": map[string]any{"$ref": "#/components/schemas/CategoryAllEntry"},
+				},
+				"lang": map[string]any{"type": "string"},
+				"kind": map[string]any{"type": "string", "enum": []string{"post", "link"}},
+			},
+		},
+		"CategoryAllEntry": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"kind":        map[string]any{"type": "string", "enum": []string{"post", "link"}},
+				"lang":        map[string]any{"type": "string"},
+				"title":       map[string]any{"type": "string", "description": "前台总列表页标题。"},
+				"description": map[string]any{"type": "string", "description": "前台总列表页描述。"},
+				"label":       map[string]any{"type": "string", "description": "列表筛选里“全部”按钮的文案。"},
+				"slug":        map[string]any{"type": "string", "description": "总列表入口 slug；文章默认 category，链接默认 links。"},
+				"path":        map[string]any{"type": "string", "description": "总列表入口路径，可用于导航菜单 URL。"},
+				"purpose":     map[string]any{"type": "string", "description": "该入口的作用说明。"},
+				"selectable":  map[string]any{"type": "boolean", "description": "始终为 false；不能作为内容的 category_id。"},
+			},
+		},
+		"CategoryAllEntryPatch": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"items": map[string]any{
+					"type":        "array",
+					"description": "批量更新多个语种。也可以直接在顶层传入单个语种字段。",
+					"items":       map[string]any{"$ref": "#/components/schemas/CategoryAllEntryInput"},
+				},
+				"lang":        map[string]any{"type": "string", "description": "语种，留空使用默认语种；不能传 all。"},
+				"title":       map[string]any{"type": "string"},
+				"description": map[string]any{"type": "string"},
+				"label":       map[string]any{"type": "string", "description": "“全部”筛选按钮文案。"},
+				"slug":        map[string]any{"type": "string", "description": "留空或无效时回到默认 slug。"},
+			},
+		},
+		"CategoryAllEntryInput": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"lang":        map[string]any{"type": "string", "description": "语种，留空使用默认语种。"},
+				"title":       map[string]any{"type": "string"},
+				"description": map[string]any{"type": "string"},
+				"label":       map[string]any{"type": "string"},
+				"slug":        map[string]any{"type": "string"},
+			},
 		},
 		"SiteProfileResponse": map[string]any{
 			"type": "object",
@@ -1012,6 +1090,7 @@ func automationStarterBriefMarkdown(opts automationSkillOptions) string {
 		"- 读取启用语种。",
 		"- 读取和更新站点基础文案、Hero 文案、首页分区标题、默认作者。",
 		"- 读取和更新导航菜单。",
+		"- 读取和更新文章/链接的“全部入口”（列表页标题、描述、入口路径和“全部”筛选按钮）。",
 		"- 创建或更新文章分类、链接分类。",
 		"- 创建文章、页面和链接草稿。",
 		"- 上传用户提供的图片，并把返回 URL 用于封面或正文。",
@@ -1029,8 +1108,8 @@ func automationStarterBriefMarkdown(opts automationSkillOptions) string {
 		"",
 		"1. 第一轮只能规划，不能写入。即使用户需求很明确，也要先输出规划给用户审核。",
 		"2. 先读取 `/languages`，确认默认语种和启用语种。",
-		"3. 先读取 `/site-profile`、`/navigation`、`/posts/categories`、`/links/categories`，了解当前状态。",
-		"4. 规划必须包含：定位、导航、首页文案、分类、页面、文章、链接、每个语种的差异、敏感表达风险和写入范围。",
+		"3. 先读取 `/site-profile`、`/navigation`、`/posts/categories/all-entry?lang=all`、`/links/categories/all-entry?lang=all`、`/posts/categories?lang=all`、`/links/categories?lang=all`，了解当前状态。",
+		"4. 规划必须包含：定位、导航、首页文案、文章/链接总入口、真实分类、页面、文章、链接、每个语种的差异、敏感表达风险和写入范围。",
 		"5. 用户明确确认后再写入。",
 		"6. 写入内容时保持 `status: draft`。",
 		"7. 多语种内容使用同一个 `trans_group` 关联。",
@@ -1046,21 +1125,30 @@ func automationStarterBriefMarkdown(opts automationSkillOptions) string {
 		"- 如果缺少图片素材、没有媒体权限或无法得到真实截图，不要伪造截图；先把文章保持草稿，并在最终清单里标注“需要补图”。",
 		"- 写完每篇文章后，用读取或预览接口自检：`cover_image`、摘要、SEO 描述、关键词、分类、正文结构和正文配图是否满足规划；不满足就先修正，再报告。",
 		"",
+		"## 内容模型边界",
+		"",
+		"- 文章 `posts`：适合教程、资讯、案例、观点和 SEO/GEO 内容；可选择一个真实文章分类 `category_id`。",
+		"- 链接 `links`：适合资源导航、产品展示、外部工具和带详情页的目标网址；可选择一个真实链接分类 `category_id`，并必须有 `link_url`。",
+		"- 页面 `pages`：适合关于、功能、价格、FAQ、联系等固定页面；页面没有分类，也不使用 `category_id`。",
+		"- 文章分类/链接分类：是内容可选择的真实分类，用 `/posts/categories`、`/links/categories` 创建或更新，返回的 `id` 才能写入内容的 `category_id`。",
+		"- 全部入口：`/posts/categories/all-entry` 和 `/links/categories/all-entry` 只控制前台总列表页标题、描述、路径和“全部”筛选按钮；它不是分类，不能写入 `category_id`。",
+		"",
 		"## 推荐写入顺序",
 		"",
 		"1. `PATCH /site-profile` 写站点名、标语、描述、Hero、首页标题和默认作者。",
-		"2. `POST /posts/categories` 和 `POST /links/categories` 建分类。",
-		"3. `POST /pages` 建首页以外的基础页面草稿。",
-		"4. `PATCH /navigation` 写菜单顺序和各语种菜单文字，URL 必须引用已经确定的标准入口或真实 slug。",
-		"5. `POST /posts` 建 6-12 篇基础文章草稿。",
-		"6. `POST /links` 建资源链接草稿。",
-		"7. 用列表接口复核缺项，再给用户检查清单。",
+		"2. 如需改列表页文案，`PATCH /posts/categories/all-entry` 和 `PATCH /links/categories/all-entry` 更新总入口。",
+		"3. `POST /posts/categories` 和 `POST /links/categories` 建真实分类。",
+		"4. `POST /pages` 建首页以外的基础页面草稿。",
+		"5. `PATCH /navigation` 写菜单顺序和各语种菜单文字，URL 必须引用全部入口返回的 `path`、真实分类 slug、页面 slug 或外链。",
+		"6. `POST /posts` 建 6-12 篇基础文章草稿。",
+		"7. `POST /links` 建资源链接草稿。",
+		"8. 用列表接口复核缺项，再给用户检查清单。",
 		"",
 		"## 导航 URL 规则",
 		"",
 		"- 首页写 `/`。",
-		"- 文章分类总页写 `/category`，单个文章分类写 `/category/{slug}`。",
-		"- 链接总页写 `/links`，单个链接分类写 `/links/cat/{slug}`。",
+		"- 文章分类总页优先使用 `GET /posts/categories/all-entry?lang=默认语种` 返回的 `path`；单个文章分类写 `/category/{slug}`。",
+		"- 链接总页优先使用 `GET /links/categories/all-entry?lang=默认语种` 返回的 `path`；单个链接分类写 `/links/cat/{slug}`。",
 		"- 页面写 `/{page-slug}`，搜索写 `/search`。",
 		"- 外部网站写完整 `https://...`。",
 		"- 不要把已经创建的文章分类、链接分类或页面写成随意的“自定义站内路径”。",
@@ -1229,6 +1317,8 @@ func automationStarterPlanPrompt() string {
 		"- GET /languages",
 		"- GET /site-profile",
 		"- GET /navigation",
+		"- GET /posts/categories/all-entry?lang=all",
+		"- GET /links/categories/all-entry?lang=all",
 		"- GET /posts/categories?lang=all",
 		"- GET /links/categories?lang=all",
 		"",
@@ -1237,7 +1327,7 @@ func automationStarterPlanPrompt() string {
 		"2. 每个启用语种的表达策略",
 		"3. 建议导航和 URL",
 		"4. 首页文案结构",
-		"5. 文章分类和链接分类",
+		"5. 文章/链接总入口，以及真实文章分类和链接分类",
 		"6. 基础页面清单",
 		"7. 第一批文章选题：每篇都要写明搜索意图、目标读者、主关键词、建议字数、封面图来源和正文配图需求",
 		"8. 文章质量与配图规则：哪些需要真实截图，哪些可以用图解，哪些缺素材需要用户补充",
@@ -1262,9 +1352,10 @@ func automationStarterWritePrompt() string {
 		"我已审核并确认刚才的新站内容规划。请按规划分批写入 GCMS。",
 		"",
 		"写入规则：",
-		"- 先再次读取 /languages、/site-profile、/navigation、/posts/categories?lang=all、/links/categories?lang=all。",
-		"- 按顺序写入：站点文案 -> 分类 -> 页面 -> 导航 -> 文章 -> 链接。",
-		"- 写导航时只使用标准 URL：首页 `/`；文章分类总页 `/category`，单分类 `/category/{slug}`；链接总页 `/links`，链接分类 `/links/cat/{slug}`；页面 `/{page-slug}`；搜索 `/search`；外链用完整 `https://...`。",
+		"- 先再次读取 /languages、/site-profile、/navigation、/posts/categories/all-entry?lang=all、/links/categories/all-entry?lang=all、/posts/categories?lang=all、/links/categories?lang=all。",
+		"- 按顺序写入：站点文案 -> 文章/链接总入口 -> 真实分类 -> 页面 -> 导航 -> 文章 -> 链接。",
+		"- 写导航时只使用标准 URL：首页 `/`；文章分类总页和链接总页优先使用 all-entry 返回的 `path`；单分类 `/category/{slug}`；链接分类 `/links/cat/{slug}`；页面 `/{page-slug}`；搜索 `/search`；外链用完整 `https://...`。",
+		"- `/posts/categories/all-entry` 与 `/links/categories/all-entry` 只改列表页标题、描述、入口路径和“全部”筛选按钮；不要把它们当成真实分类，也不要把它们写入 category_id。",
 		"- 不要把已经创建的文章分类、链接分类或页面写成随意的自定义站内路径。",
 		"- 所有页面、文章和链接默认 status=draft。",
 		"- 多语种对应内容必须使用同一个 trans_group。",
@@ -1305,6 +1396,7 @@ func automationStarterWorkflowMarkdown() string {
 		"- 读取 `/languages`。",
 		"- 读取 `/site-profile`。",
 		"- 读取 `/navigation`。",
+		"- 读取 `/posts/categories/all-entry?lang=all` 和 `/links/categories/all-entry?lang=all`。",
 		"- 读取 `/posts/categories?lang=all` 和 `/links/categories?lang=all`。",
 		"- 如需避免重复，读取现有 `/posts`、`/pages`、`/links`。",
 		"",
@@ -1314,7 +1406,8 @@ func automationStarterWorkflowMarkdown() string {
 		"",
 		"- 每个语种的站点名、标语、描述、Hero 文案。",
 		"- 导航菜单及 URL。",
-		"- 文章分类、链接分类。",
+		"- 文章/链接总入口文案和路径。",
+		"- 真实文章分类、链接分类。",
 		"- 基础页面清单。",
 		"- 第一批文章清单，并写明每篇文章的搜索意图、目标读者、主关键词、建议字数、封面图来源和正文配图需求。",
 		"- 第一批资源链接清单。",
@@ -1333,7 +1426,8 @@ func automationStarterWorkflowMarkdown() string {
 		"## 第四步：写入",
 		"",
 		"- 站点文案：`PATCH /site-profile`。",
-		"- 分类：`POST /posts/categories`、`POST /links/categories`。",
+		"- 文章/链接总入口：`PATCH /posts/categories/all-entry`、`PATCH /links/categories/all-entry`。",
+		"- 真实分类：`POST /posts/categories`、`POST /links/categories`。",
 		"- 页面：`POST /pages`，默认 `draft`。",
 		"- 导航：`PATCH /navigation`，只引用标准入口或已经确定的分类、页面 slug。",
 		"- 文章：`POST /posts`，默认 `draft`。",
@@ -1432,10 +1526,10 @@ func automationStarterSkillMarkdown(apiBase string) string {
 		"## 标准流程",
 		"",
 		"1. 优先读取 `新站需求向导.md`；如有 `站点需求模板.md`，一并读取。",
-		"2. 调用 `/languages`、`/site-profile`、`/navigation`、`/posts/categories?lang=all`、`/links/categories?lang=all` 做只读检查。",
+		"2. 调用 `/languages`、`/site-profile`、`/navigation`、`/posts/categories/all-entry?lang=all`、`/links/categories/all-entry?lang=all`、`/posts/categories?lang=all`、`/links/categories?lang=all` 做只读检查。",
 		"3. 第一轮只输出完整规划，不要马上写入。",
 		"4. 规划要列出会新增、会修改和不会触碰的内容，并提示合规、品牌、版权、隐私和夸大承诺风险。",
-		"5. 用户明确确认后再分批写入：站点文案 -> 分类 -> 页面 -> 导航 -> 文章 -> 链接。",
+		"5. 用户明确确认后再分批写入：站点文案 -> 文章/链接总入口 -> 真实分类 -> 页面 -> 导航 -> 文章 -> 链接。",
 		"6. 所有内容默认 `status: draft`。",
 		"7. 如果用户对规划或草稿不满意，只按反馈调整对应部分，不要扩散修改范围。",
 		"8. 完成后列出每条内容的 id、slug、语种、状态和需要人工复核的点。",
@@ -1449,12 +1543,20 @@ func automationStarterSkillMarkdown(apiBase string) string {
 		"- 真实操作类文章优先使用系统截图；不要伪造截图或使用无关装饰图。",
 		"- 缺素材或缺权限时，保持草稿并在复核清单里标注“需要补图”。",
 		"",
+		"## 内容模型边界",
+		"",
+		"- 文章 `posts` 用于教程、资讯、案例、观点和 SEO/GEO 内容；可写真实文章分类的 `category_id`。",
+		"- 链接 `links` 用于资源导航、产品展示、外部工具和带详情页的目标网址；必须写 `link_url`，可写真实链接分类的 `category_id`。",
+		"- 页面 `pages` 用于关于、功能、价格、FAQ、联系等固定内容；没有分类，不写 `category_id`。",
+		"- `/posts/categories` 和 `/links/categories` 返回真实分类；只有这些分类的 `id` 可以写入内容的 `category_id`。",
+		"- `/posts/categories/all-entry` 和 `/links/categories/all-entry` 是总列表入口，控制列表页标题、描述、路径和“全部”筛选按钮；它们不是分类。",
+		"",
 		"## 边界",
 		"",
 		"- 不要删除内容。",
 		"- 不要修改管理员账号、密码、安全设置、系统更新、Cloudflare 部署、评论配置或 API Key。",
 		"- 没有明确要求或没有品牌资产权限时，不要替换站点 Logo、浏览器图标或分享图。",
-		"- 写导航时只使用标准 URL：首页 `/`；文章分类总页 `/category`，单分类 `/category/{slug}`；链接总页 `/links`，链接分类 `/links/cat/{slug}`；页面 `/{page-slug}`；搜索 `/search`；外链用完整 `https://...`。",
+		"- 写导航时只使用标准 URL：首页 `/`；文章/链接总页优先使用 all-entry 返回的 `path`；单个文章分类 `/category/{slug}`；链接分类 `/links/cat/{slug}`；页面 `/{page-slug}`；搜索 `/search`；外链用完整 `https://...`。",
 		"- 不要默认发布内容；只有用户明确要求并且访问密钥具备发布权限时才发布。",
 		"- 多语种内容不要机械直译；要根据目标读者调整表达，并使用同一个 `trans_group` 关联同组内容。",
 		"- 修改已有内容时，先查到准确 id，再按 id 更新。",
@@ -1521,6 +1623,8 @@ func automationKitReadme(opts automationSkillOptions) string {
 		"交代任务时尽量说清楚：目标资源、语种、范围、动作、素材、不能改的字段、是否允许发布、期望输出格式。",
 		"",
 		"- 先运行 `node scripts/gcms.js doctor` 检查连接、OpenAPI、分类读取和媒体上传权限；只报告结果，不要创建或修改内容。",
+		"- 帮我规划一个资料库网站：先读取语种、站点文案、导航、文章/链接总入口和真实分类，说明文章、链接、页面各自承担什么内容，再给出导航和分类建议；第一轮不要写入。",
+		"- 帮我调整文章总列表页：把“全部文章入口”的标题、描述、slug 和“全部”筛选按钮改得更适合教程站；先读取 `/posts/categories/all-entry?lang=all`，确认后再更新。",
 		"- 检查最近 50 篇中文文章，重点看标题、摘要、SEO 描述、关键词、分类、封面图是否缺失；只输出问题列表和建议，不要修改。",
 		"- 深度检查最近 20 个页面，逐条读取正文，找出缺正文、缺封面、SEO 描述太弱或标题不清楚的页面；按优先级列出 ID、标题、问题和建议。",
 		"- 根据我提供的资料创建一篇中文文章草稿；先查询文章分类并选择合适的 `category_id`，有封面图时先上传媒体并把返回 URL 写入 `cover_image`；状态保持 `draft`。",
@@ -1544,7 +1648,8 @@ func automationKitReadme(opts automationSkillOptions) string {
 		"- 默认让 AI 创建或修改草稿，发布前先人工审核。",
 		"- 修改指定内容时，让 AI 先查 id，再按 id 更新。",
 		"- 发布前复核文章或链接草稿时，让 AI 用 `/posts/{id}/preview` 或 `/links/{id}/preview` 查看渲染后的正文 HTML；需要打开真实前台页面时，用 `/posts/{id}/preview-url` 或 `/links/{id}/preview-url` 生成短期签名链接。",
-		"- 设置分类前，让 AI 先用 `/posts/categories` 或 `/links/categories` 查询可用分类 ID。",
+		"- 设置内容分类前，让 AI 先用 `/posts/categories` 或 `/links/categories` 查询真实分类 ID；不要把 all-entry 当成 `category_id`。",
+		"- 调整文章或链接列表页标题、描述、入口路径和“全部”筛选按钮时，让 AI 使用 `/posts/categories/all-entry` 或 `/links/categories/all-entry`。",
 		"- 设置封面或正文图片前，让 AI 先用 `POST /media` 上传文件，拿返回的 `url` 再写入 `cover_image` 或 Markdown 图片。",
 		"- 更新全部语种时，让 AI 先用 `/languages` 确认启用语种，再按 `trans_group` 找到同组内容，逐条更新各语种 id。",
 	)
@@ -1589,7 +1694,7 @@ func automationSkillMarkdown(apiBase string) string {
 		"",
 		"# GCMS Content Assistant",
 		"",
-		"你是 GCMS 网站内容助手。你可以读取语种和分类、上传媒体，并处理文章、页面、链接。不要增删改站点设置、分类、导航、安全、系统更新。",
+		"你是 GCMS 网站内容助手。你可以读取语种和分类、上传媒体，并处理文章、页面、链接。需要规划导航或分类时，必须区分文章、链接、页面、真实分类和“全部入口”。不要增删改安全、系统更新。",
 		"",
 		"## 连接方式",
 		"",
@@ -1615,14 +1720,24 @@ func automationSkillMarkdown(apiBase string) string {
 		"1. 修改某篇内容前，先用 `q` 或 `slug` 查到准确 `id`。",
 		"2. 新环境、权限变更或接口异常时，先运行 `node scripts/gcms.js doctor`。",
 		"3. 如果查到多个相似结果，先让用户确认。",
-		"4. 需要设置分类时，先用 `GET /posts/categories?lang=...` 或 `GET /links/categories?lang=...` 查询可用分类 ID。",
-		"5. 需要封面或正文图片时，先用 `POST /media` 上传文件，拿返回的 `url` 再写入 `cover_image` 或 Markdown 图片。",
-		"6. 处理多语种内容时，先 `GET /languages` 查看启用语种；如果用户要求更新全部语种，先读取目标内容的 `trans_group`，再用 `lang=all&trans_group=...` 找到同组所有版本，逐条按 id 更新。",
-		"7. 不要把一个语种的正文直接覆盖到其它语种，除非用户明确要求这么做。",
-		"8. 默认只创建或修改草稿。",
-		"9. 只有用户明确要求发布，并且访问密钥有对应资源的发布权限，才设置 `status` 为 `published` 或 `scheduled`。",
-		"10. 发布前优先用 `GET /posts/{id}/preview` 或 `GET /links/{id}/preview` 复核草稿渲染结果；需要浏览器复核时再生成 `preview-url`。",
-		"11. 完成后告诉用户变更了哪些内容、对应 id、语种、状态，以及建议人工复核的点。",
+		"4. 规划导航、分类或站点结构时，先读取 `/posts/categories/all-entry?lang=all`、`/links/categories/all-entry?lang=all`、`/posts/categories?lang=all`、`/links/categories?lang=all`。",
+		"5. 需要设置内容分类时，只能用 `GET /posts/categories?lang=...` 或 `GET /links/categories?lang=...` 返回的真实分类 ID 写入 `category_id`。",
+		"6. 需要调整文章/链接总列表页标题、描述、路径或“全部”筛选按钮时，使用 `PATCH /posts/categories/all-entry` 或 `PATCH /links/categories/all-entry`；all-entry 不是分类。",
+		"7. 需要封面或正文图片时，先用 `POST /media` 上传文件，拿返回的 `url` 再写入 `cover_image` 或 Markdown 图片。",
+		"8. 处理多语种内容时，先 `GET /languages` 查看启用语种；如果用户要求更新全部语种，先读取目标内容的 `trans_group`，再用 `lang=all&trans_group=...` 找到同组所有版本，逐条按 id 更新。",
+		"9. 不要把一个语种的正文直接覆盖到其它语种，除非用户明确要求这么做。",
+		"10. 默认只创建或修改草稿。",
+		"11. 只有用户明确要求发布，并且访问密钥有对应资源的发布权限，才设置 `status` 为 `published` 或 `scheduled`。",
+		"12. 发布前优先用 `GET /posts/{id}/preview` 或 `GET /links/{id}/preview` 复核草稿渲染结果；需要浏览器复核时再生成 `preview-url`。",
+		"13. 完成后告诉用户变更了哪些内容、对应 id、语种、状态，以及建议人工复核的点。",
+		"",
+		"## 内容模型边界",
+		"",
+		"- 文章 `posts`：教程、资讯、案例、观点、SEO/GEO 内容；可选择真实文章分类。",
+		"- 链接 `links`：资源导航、产品展示、外部工具；必须有 `link_url`，可选择真实链接分类。",
+		"- 页面 `pages`：关于、功能、价格、FAQ、联系等固定页面；没有分类。",
+		"- 真实分类：`/posts/categories`、`/links/categories`，返回的 `id` 才能写入内容。",
+		"- 全部入口：`/posts/categories/all-entry`、`/links/categories/all-entry`，只控制总列表页文案、路径和筛选按钮。",
 		"",
 		"## 推荐脚本",
 		"",
@@ -1633,6 +1748,8 @@ func automationSkillMarkdown(apiBase string) string {
 		"- `node scripts/gcms.js upload ./cover.webp`",
 		"- `node scripts/gcms.js categories posts --lang zh`",
 		"- `node scripts/gcms.js categories links --lang zh`",
+		"- `node scripts/gcms.js category-entry posts --lang all`",
+		"- `node scripts/gcms.js update-category-entry posts '{\"lang\":\"zh\",\"title\":\"教程\",\"label\":\"全部\"}'`",
 		"- `node scripts/gcms.js list posts --lang zh --q 关键词`",
 		"- `node scripts/gcms.js list posts --lang all --trans_group 分组值`",
 		"- `node scripts/gcms.js get posts 123`",
@@ -1700,6 +1817,8 @@ function usage(code = 2) {
   out("  gcms.js languages");
   out("  gcms.js upload <file>");
   out("  gcms.js categories <posts|links> [--lang zh|all]");
+  out("  gcms.js category-entry <posts|links> [--lang zh|all]");
+  out("  gcms.js update-category-entry <posts|links> <json|@file>");
   out("  gcms.js list <posts|pages|links> [--lang zh|all] [--q text] [--slug slug] [--trans_group group] [--status draft] [--limit 20]");
   out("  gcms.js get <posts|pages|links> <id>");
   out("  gcms.js preview <posts|links> <id>");
@@ -1907,6 +2026,9 @@ async function doctor() {
       add("openapi_post_preview_path", !!(paths["/posts/{id}/preview"] && paths["/posts/{id}/preview"].get));
       add("openapi_link_preview_path", !!(paths["/links/{id}/preview"] && paths["/links/{id}/preview"].get));
       add("openapi_preview_schema", !!schemas.ContentPreviewResponse && !!schemas.ContentPreview);
+      add("openapi_post_all_entry_path", !!(paths["/posts/categories/all-entry"] && paths["/posts/categories/all-entry"].get && paths["/posts/categories/all-entry"].patch));
+      add("openapi_link_all_entry_path", !!(paths["/links/categories/all-entry"] && paths["/links/categories/all-entry"].get && paths["/links/categories/all-entry"].patch));
+      add("openapi_all_entry_schema", !!schemas.CategoryAllEntryResponse && !!schemas.CategoryAllEntryPatch);
     }
   } catch (err) {
     add("openapi", false, { message: err.message });
@@ -1927,6 +2049,13 @@ async function doctor() {
       add(name + "_categories", cats.ok, { status: cats.status, count: items.length });
     } catch (err) {
       add(name + "_categories", false, { message: err.message });
+    }
+    try {
+      const entry = await rawRequest("GET", "/" + name + "/categories/all-entry?lang=zh");
+      const item = entry.data && Array.isArray(entry.data.items) ? entry.data.items[0] : null;
+      add(name + "_category_all_entry", entry.ok, { status: entry.status, path: item && item.path });
+    } catch (err) {
+      add(name + "_category_all_entry", false, { message: err.message });
     }
   }
 
@@ -1970,6 +2099,24 @@ async function main() {
     const opt = parseOptions(rest);
     const qs = new URLSearchParams(opt);
     print(await request("GET", "/" + collection + "/categories" + (qs.toString() ? "?" + qs.toString() : "")));
+    return;
+  }
+
+  if (cmd === "category-entry") {
+    assertCollection(collection);
+    if (collection === "pages") usage();
+    const opt = parseOptions(rest);
+    const qs = new URLSearchParams(opt);
+    print(await request("GET", "/" + collection + "/categories/all-entry" + (qs.toString() ? "?" + qs.toString() : "")));
+    return;
+  }
+
+  if (cmd === "update-category-entry") {
+    assertCollection(collection);
+    if (collection === "pages") usage();
+    const [body] = rest;
+    if (!body) usage();
+    print(await request("PATCH", "/" + collection + "/categories/all-entry", bodyFromArg(body)));
     return;
   }
 

@@ -248,6 +248,24 @@
   window.adminInitDropdown = initDropdown;
   document.addEventListener("click", closeDD);
 
+  /* 列表里的发布状态快捷菜单：点击空白处收起，避免表格里同时打开多个菜单。 */
+  function closeStatusMenus(except) {
+    document.querySelectorAll(".status-menu[open]").forEach(function (menu) {
+      if (!except || menu !== except) menu.open = false;
+    });
+  }
+  document.addEventListener("click", function (e) {
+    var menu = e.target && e.target.closest ? e.target.closest(".status-menu") : null;
+    if (menu) {
+      closeStatusMenus(menu);
+      return;
+    }
+    closeStatusMenus();
+  });
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") closeStatusMenus();
+  });
+
   /* 状态=定时发布 时显示发布时间输入 */
   var statusDD = document.querySelector(".dropdown[data-status]");
   var schedField = document.querySelector(".schedule-field");

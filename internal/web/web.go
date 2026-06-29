@@ -2208,6 +2208,8 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /api/admin/v1/media", s.apiUploadMedia)
 	mux.HandleFunc("GET /api/admin/v1/{collection}/categories", s.apiListCategories)
 	mux.HandleFunc("POST /api/admin/v1/{collection}/categories", s.apiCreateCategory)
+	mux.HandleFunc("GET /api/admin/v1/{collection}/categories/all-entry", s.apiGetCategoryAllEntry)
+	mux.HandleFunc("PATCH /api/admin/v1/{collection}/categories/all-entry", s.apiUpdateCategoryAllEntry)
 	mux.HandleFunc("PATCH /api/admin/v1/{collection}/categories/{id}", s.apiUpdateCategory)
 	mux.HandleFunc("GET /api/admin/v1/{collection}", s.apiListContent)
 	mux.HandleFunc("POST /api/admin/v1/{collection}", s.apiCreateContent)
@@ -2224,6 +2226,8 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /api/platform/v1/sites/{siteID}/media", s.apiUploadMedia)
 	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/{collection}/categories", s.apiListCategories)
 	mux.HandleFunc("POST /api/platform/v1/sites/{siteID}/{collection}/categories", s.apiCreateCategory)
+	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/{collection}/categories/all-entry", s.apiGetCategoryAllEntry)
+	mux.HandleFunc("PATCH /api/platform/v1/sites/{siteID}/{collection}/categories/all-entry", s.apiUpdateCategoryAllEntry)
 	mux.HandleFunc("PATCH /api/platform/v1/sites/{siteID}/{collection}/categories/{id}", s.apiUpdateCategory)
 	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/{collection}", s.apiListContent)
 	mux.HandleFunc("POST /api/platform/v1/sites/{siteID}/{collection}", s.apiCreateContent)
@@ -2330,6 +2334,7 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /admin/posts/{id}", s.requireAuth(s.adminUpdate))
 	mux.HandleFunc("POST /admin/posts/{id}/delete", s.requireAuth(s.adminDelete))
 	mux.HandleFunc("POST /admin/posts/{id}/pin", s.requireAuth(s.adminPin))
+	mux.HandleFunc("POST /admin/posts/{id}/status", s.requireAuth(s.adminPostStatus))
 	mux.HandleFunc("POST /admin/posts/{id}/translate", s.requireAuth(s.adminTranslate))
 
 	// 链接（type=link）
@@ -2341,6 +2346,7 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /admin/links/{id}", s.requireAuth(s.adminLinkUpdate))
 	mux.HandleFunc("POST /admin/links/{id}/delete", s.requireAuth(s.adminLinkDelete))
 	mux.HandleFunc("POST /admin/links/{id}/pin", s.requireAuth(s.adminLinkPin))
+	mux.HandleFunc("POST /admin/links/{id}/status", s.requireAuth(s.adminLinkStatus))
 	mux.HandleFunc("POST /admin/links/{id}/translate", s.requireAuth(s.adminTranslate))
 
 	// 兜底 404

@@ -342,13 +342,15 @@ X-GCMS-API-Key: gcms_xxx
 |------|-----------|-----------|
 | 语种 | `GET /api/admin/v1/languages` | 只读 |
 | 媒体 | `POST /api/admin/v1/media` | 返回可用于 `cover_image` 的 URL |
-| 文章分类 | `GET /api/admin/v1/posts/categories` | 只读 |
+| 文章分类 | `GET/POST /api/admin/v1/posts/categories` | `PATCH /api/admin/v1/posts/categories/{id}`；真实分类 ID 可写入文章 `category_id` |
+| 文章全部入口 | `GET /api/admin/v1/posts/categories/all-entry` | `PATCH /api/admin/v1/posts/categories/all-entry`；控制文章列表页标题、描述、路径和“全部”筛选按钮，不是分类 |
 | 文章 | `GET/POST /api/admin/v1/posts` | `GET/PATCH /api/admin/v1/posts/{id}`；`GET /api/admin/v1/posts/{id}/preview` |
-| 链接分类 | `GET /api/admin/v1/links/categories` | 只读 |
+| 链接分类 | `GET/POST /api/admin/v1/links/categories` | `PATCH /api/admin/v1/links/categories/{id}`；真实分类 ID 可写入链接 `category_id` |
+| 链接全部入口 | `GET /api/admin/v1/links/categories/all-entry` | `PATCH /api/admin/v1/links/categories/all-entry`；控制链接列表页标题、描述、路径和“全部”筛选按钮，不是分类 |
 | 链接 | `GET/POST /api/admin/v1/links` | `GET/PATCH /api/admin/v1/links/{id}`；`GET /api/admin/v1/links/{id}/preview` |
 | 页面 | `GET/POST /api/admin/v1/pages` | `GET/PATCH /api/admin/v1/pages/{id}` |
 
-第一版不提供删除接口，也不开放站点设置、分类增删改、导航、系统更新等能力。权限按资源分组：`languages:read`、`media:write`、`posts:*`、`links:*`、`pages:*`，文章和链接额外有只读分类权限 `posts:categories`、`links:categories`；内容操作包含 `read`、`write`、`publish`。例如 `posts:write` 只能创建/修改文章草稿；发布、定时发布、修改已发布文章需要 `posts:publish`。文章和链接预览接口属于读取能力，分别使用 `posts:read`、`links:read`。
+当前不提供删除接口，也不开放安全、系统更新、Cloudflare 等平台配置。权限按资源分组：`languages:read`、`media:write`、`site:*`、`navigation:*`、`posts:*`、`links:*`、`pages:*`；文章和链接额外有分类读取/写入权限 `posts:categories`、`posts:categories:write`、`links:categories`、`links:categories:write`。内容操作包含 `read`、`write`、`publish`。例如 `posts:write` 只能创建/修改文章草稿；发布、定时发布、修改已发布文章需要 `posts:publish`。文章和链接预览接口属于读取能力，分别使用 `posts:read`、`links:read`。
 
 修改某篇内容前，外部助手应先查到目标内容的 `id`，再用对应 `id` 更新，避免只凭标题猜测：
 

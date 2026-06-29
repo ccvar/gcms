@@ -1,7 +1,7 @@
 {{define "body"}}  <div class="admin-head">
-    <div>
+    <div class="admin-title-line">
       <h1>{{.Admin.T "admin.links.title" "链接"}}</h1>
-      <p class="muted">{{printf (.Admin.T "admin.links.count" "共 %d 条（资源 / 产品展示，带详情页与目标网址）") .ListTotal}}</p>
+      <span class="admin-title-count">{{printf (.Admin.T "admin.links.count" "共 %d 条（资源 / 产品展示，带详情页与目标网址）") .ListTotal}}</span>
     </div>
     <a class="btn btn-primary" href="/admin/links/new?lang={{.EditLang}}">＋ {{.Admin.T "admin.links.new" "新建链接"}}</a>
   </div>
@@ -14,10 +14,22 @@
 
   <div class="list-toolbar">
     <div class="status-tabs" role="tablist" aria-label="{{.Admin.T "admin.list.status_filter" "状态筛选"}}">
-      <a href="/admin/links?lang={{.EditLang}}"{{if not .StatusFilter}} class="active" aria-current="true"{{end}}>{{.Admin.T "admin.list.all_status" "全部"}}</a>
-      <a href="/admin/links?lang={{.EditLang}}&status=published"{{if eq .StatusFilter "published"}} class="active" aria-current="true"{{end}}>{{.Admin.T "admin.status.published" "已发布"}}</a>
-      <a href="/admin/links?lang={{.EditLang}}&status=draft"{{if eq .StatusFilter "draft"}} class="active" aria-current="true"{{end}}>{{.Admin.T "admin.status.draft" "草稿"}}</a>
-      <a href="/admin/links?lang={{.EditLang}}&status=scheduled"{{if eq .StatusFilter "scheduled"}} class="active" aria-current="true"{{end}}>{{.Admin.T "admin.status.scheduled" "定时"}}</a>
+      <a href="/admin/links?lang={{.EditLang}}{{if .CategoryFilter}}&cat={{.CategoryFilter}}{{end}}"{{if not .StatusFilter}} class="active" aria-current="true"{{end}}>{{.Admin.T "admin.list.all_status" "全部"}}</a>
+      <a href="/admin/links?lang={{.EditLang}}&status=published{{if .CategoryFilter}}&cat={{.CategoryFilter}}{{end}}"{{if eq .StatusFilter "published"}} class="active" aria-current="true"{{end}}>{{.Admin.T "admin.status.published" "已发布"}}</a>
+      <a href="/admin/links?lang={{.EditLang}}&status=draft{{if .CategoryFilter}}&cat={{.CategoryFilter}}{{end}}"{{if eq .StatusFilter "draft"}} class="active" aria-current="true"{{end}}>{{.Admin.T "admin.status.draft" "草稿"}}</a>
+      <a href="/admin/links?lang={{.EditLang}}&status=scheduled{{if .CategoryFilter}}&cat={{.CategoryFilter}}{{end}}"{{if eq .StatusFilter "scheduled"}} class="active" aria-current="true"{{end}}>{{.Admin.T "admin.status.scheduled" "定时"}}</a>
+    </div>
+    <div class="dropdown list-category-filter">
+      <button type="button" class="dd-toggle" aria-haspopup="listbox" aria-expanded="false">
+        <span class="dd-label">{{if .CategoryFilterName}}{{.CategoryFilterName}}{{else if .CategoryFilter}}{{.CategoryFilter}}{{else}}{{.Admin.T "admin.list.all_categories" "全部分类"}}{{end}}</span>
+        <span class="dd-caret" aria-hidden="true">⌄</span>
+      </button>
+      <ul class="dd-menu" role="listbox" aria-label="{{.Admin.T "admin.list.category_filter" "分类筛选"}}">
+        <li role="option" aria-selected="{{if not .CategoryFilter}}true{{else}}false{{end}}"><a href="/admin/links?lang={{.EditLang}}{{if .StatusFilter}}&status={{.StatusFilter}}{{end}}">{{.Admin.T "admin.list.all_categories" "全部分类"}}</a></li>
+        {{range .Categories}}
+        <li role="option" aria-selected="{{if eq .Slug $.CategoryFilter}}true{{else}}false{{end}}"><a href="/admin/links?lang={{$.EditLang}}{{if $.StatusFilter}}&status={{$.StatusFilter}}{{end}}&cat={{.Slug}}">{{.Name}}</a></li>
+        {{end}}
+      </ul>
     </div>
   </div>
 
@@ -34,6 +46,7 @@
             <input type="hidden" name="on" value="{{if .Featured}}0{{else}}1{{end}}">
             <input type="hidden" name="lang" value="{{.Lang}}">
             <input type="hidden" name="status" value="{{$.StatusFilter}}">
+            <input type="hidden" name="cat" value="{{$.CategoryFilter}}">
             <input type="hidden" name="page" value="{{$.PageNum}}">
             <button type="submit" class="pin{{if .Featured}} on{{end}}" title="{{if .Featured}}{{$.Admin.T "admin.action.unpin" "取消置顶"}}{{else}}{{$.Admin.T "admin.action.pin" "置顶"}}{{end}}" aria-label="{{$.Admin.T "admin.action.pin" "置顶"}}">
               <svg width="16" height="16" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M12 17.3 5.8 21l1.6-7-5.4-4.7 7.2-.6L12 2l2.8 6.7 7.2.6-5.4 4.7 1.6 7z"/></svg>
@@ -46,7 +59,40 @@
         </td>
         <td class="slug">{{if .LinkURL}}<a href="{{.LinkURL}}" target="_blank" rel="noopener" class="ext-url">{{.LinkURL}}</a>{{else}}<span class="muted">{{$.Admin.T "admin.common.empty_dash" "—"}}</span>{{end}}</td>
         <td class="nowrap">{{with .Category}}{{.Name}}{{else}}<span class="muted">{{$.Admin.T "admin.common.empty_dash" "—"}}</span>{{end}}</td>
-        <td class="nowrap">{{if eq .Status "scheduled"}}<span class="badge sched">{{$.Admin.T "admin.status.scheduled" "定时"}} · {{isodate .PublishedAt}}</span>{{else if .IsPublished}}<span class="badge pub">{{$.Admin.T "admin.status.published" "已发布"}}</span>{{else}}<span class="badge draft">{{$.Admin.T "admin.status.draft" "草稿"}}</span>{{end}}</td>
+        <td class="nowrap">
+          <details class="status-menu">
+            <summary aria-label="{{$.Admin.T "admin.status.change_label" "调整发布状态"}}">{{if eq .Status "scheduled"}}<span class="badge sched">{{$.Admin.T "admin.status.scheduled" "定时"}} · {{isodate .PublishedAt}}</span>{{else if .IsPublished}}<span class="badge pub">{{$.Admin.T "admin.status.published" "已发布"}}</span>{{else}}<span class="badge draft">{{$.Admin.T "admin.status.draft" "草稿"}}</span>{{end}}</summary>
+            <div class="status-menu-pop">
+              <form method="post" action="/admin/links/{{.ID}}/status">
+                <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+                <input type="hidden" name="target_status" value="published">
+                <input type="hidden" name="lang" value="{{.Lang}}">
+                <input type="hidden" name="status" value="{{$.StatusFilter}}">
+                <input type="hidden" name="cat" value="{{$.CategoryFilter}}">
+                <input type="hidden" name="page" value="{{$.PageNum}}">
+                <button type="submit" class="status-menu-item pub"{{if eq .Status "published"}} disabled aria-current="true"{{end}}>{{$.Admin.T "admin.status.published" "已发布"}}</button>
+              </form>
+              <form method="post" action="/admin/links/{{.ID}}/status"{{if eq .Status "published"}} data-confirm-title="{{$.Admin.T "admin.status.confirm_draft_title" "确认转为草稿"}}" data-confirm-ok="{{$.Admin.T "admin.status.to_draft" "转为草稿"}}" data-confirm="{{printf ($.Admin.T "admin.status.confirm_draft" "将「%s」转为草稿后，前台将不再显示。确定继续？") .Title}}"{{end}}>
+                <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+                <input type="hidden" name="target_status" value="draft">
+                <input type="hidden" name="lang" value="{{.Lang}}">
+                <input type="hidden" name="status" value="{{$.StatusFilter}}">
+                <input type="hidden" name="cat" value="{{$.CategoryFilter}}">
+                <input type="hidden" name="page" value="{{$.PageNum}}">
+                <button type="submit" class="status-menu-item draft"{{if eq .Status "draft"}} disabled aria-current="true"{{end}}>{{$.Admin.T "admin.status.draft" "草稿"}}</button>
+              </form>
+              <form method="post" action="/admin/links/{{.ID}}/status">
+                <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+                <input type="hidden" name="target_status" value="scheduled">
+                <input type="hidden" name="lang" value="{{.Lang}}">
+                <input type="hidden" name="status" value="{{$.StatusFilter}}">
+                <input type="hidden" name="cat" value="{{$.CategoryFilter}}">
+                <input type="hidden" name="page" value="{{$.PageNum}}">
+                <button type="submit" class="status-menu-item sched"{{if eq .Status "scheduled"}} disabled aria-current="true"{{end}}>{{$.Admin.T "admin.status.to_scheduled" "定时发布"}}</button>
+              </form>
+            </div>
+          </details>
+        </td>
         <td class="muted nowrap">{{adminDateTime .UpdatedAt}}</td>
         <td class="right actions">
           {{if .IsPublished}}<a class="act-ico" href="{{adminPublicContentPath $.AdminPreviewPrefix .Lang "link" .Slug}}" target="_blank" title="{{$.Admin.T "admin.action.view" "查看"}}" aria-label="{{$.Admin.T "admin.action.view" "查看"}}">{{template "icon-extlink"}}</a>{{else}}<a class="act-ico" href="/admin/links/{{.ID}}/preview" target="_blank" title="{{$.Admin.T "admin.action.preview" "预览"}}" aria-label="{{$.Admin.T "admin.action.preview" "预览"}}">{{template "icon-extlink"}}</a>{{end}}
@@ -55,6 +101,7 @@
             <input type="hidden" name="_csrf" value="{{$.CSRF}}">
             <input type="hidden" name="lang" value="{{.Lang}}">
             <input type="hidden" name="status" value="{{$.StatusFilter}}">
+            <input type="hidden" name="cat" value="{{$.CategoryFilter}}">
             <input type="hidden" name="page" value="{{$.PageNum}}">
             <button class="del act-ico" type="submit" title="{{$.Admin.T "admin.action.delete" "删除"}}" aria-label="{{$.Admin.T "admin.action.delete" "删除"}}">{{template "icon-trash"}}</button>
           </form>
@@ -67,11 +114,11 @@
   </table>
   {{if gt .TotalPages 1}}
   <nav class="pagination admin-pagination" aria-label="{{.Admin.T "admin.common.pagination" "分页"}}">
-    {{if .HasPrev}}<a href="/admin/links?lang={{.EditLang}}{{if .StatusFilter}}&status={{.StatusFilter}}{{end}}&page={{.PrevPage}}" aria-label="{{.Admin.T "admin.common.prev_page" "上一页"}}">←</a>{{end}}
+    {{if .HasPrev}}<a href="/admin/links?lang={{.EditLang}}{{if .StatusFilter}}&status={{.StatusFilter}}{{end}}{{if .CategoryFilter}}&cat={{.CategoryFilter}}{{end}}&page={{.PrevPage}}" aria-label="{{.Admin.T "admin.common.prev_page" "上一页"}}">←</a>{{end}}
     {{range $n := pages .TotalPages}}
-      {{if eq $n $.PageNum}}<span class="cur" aria-current="page">{{$n}}</span>{{else}}<a href="/admin/links?lang={{$.EditLang}}{{if $.StatusFilter}}&status={{$.StatusFilter}}{{end}}&page={{$n}}">{{$n}}</a>{{end}}
+      {{if eq $n $.PageNum}}<span class="cur" aria-current="page">{{$n}}</span>{{else}}<a href="/admin/links?lang={{$.EditLang}}{{if $.StatusFilter}}&status={{$.StatusFilter}}{{end}}{{if $.CategoryFilter}}&cat={{$.CategoryFilter}}{{end}}&page={{$n}}">{{$n}}</a>{{end}}
     {{end}}
-    {{if .HasNext}}<a href="/admin/links?lang={{.EditLang}}{{if .StatusFilter}}&status={{.StatusFilter}}{{end}}&page={{.NextPage}}" aria-label="{{.Admin.T "admin.common.next_page" "下一页"}}">→</a>{{end}}
+    {{if .HasNext}}<a href="/admin/links?lang={{.EditLang}}{{if .StatusFilter}}&status={{.StatusFilter}}{{end}}{{if .CategoryFilter}}&cat={{.CategoryFilter}}{{end}}&page={{.NextPage}}" aria-label="{{.Admin.T "admin.common.next_page" "下一页"}}">→</a>{{end}}
   </nav>
   {{end}}
 {{end}}

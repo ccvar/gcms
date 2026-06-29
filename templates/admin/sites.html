@@ -86,6 +86,12 @@
 
             {{if .IsDefault}}
             <p class="site-default-note">{{$.Admin.T "admin.sites.default_locked_note" "默认站点使用当前默认入口，不能关闭站点、关闭自动化接口或绑定域名。"}}</p>
+            {{if .ManagementAutomationEnabled}}
+            <div class="site-card-tools site-default-tools">
+              <a class="site-tool-link" href="{{if $.PlatformMode}}/admin/sites/{{.ID}}/automation/skill.zip{{else}}/admin/settings/automation/skill.zip{{end}}">{{template "site-icon-package"}}<span>{{$.Admin.T "admin.sites.download_platform_kit" "AI技能包"}}</span></a>
+              <a class="site-tool-link" href="{{if $.PlatformMode}}/admin/sites/{{.ID}}/automation/starter.zip{{else}}/admin/settings/automation/starter.zip{{end}}">{{template "site-icon-package"}}<span>{{$.Admin.T "admin.sites.download_platform_starter" "下载新站 AI 技能包"}}</span></a>
+            </div>
+            {{end}}
             {{else}}
             <div class="site-card-tools">
               <form method="post" action="/admin/sites/{{.ID}}/status" data-confirm-title="{{if eq .Status "enabled"}}{{$.Admin.T "admin.sites.disable_confirm_title" "确认关闭站点"}}{{else}}{{$.Admin.T "admin.sites.enable_confirm_title" "确认启用站点"}}{{end}}" data-confirm-ok="{{if eq .Status "enabled"}}{{$.Admin.T "admin.sites.disable" "关闭站点"}}{{else}}{{$.Admin.T "admin.sites.enable" "启用站点"}}{{end}}" data-confirm="{{if eq .Status "enabled"}}{{printf ($.Admin.T "admin.sites.disable_confirm" "关闭「%s」后，该站点前台访问会暂停，但数据会保留。确定继续？") .Name}}{{else}}{{printf ($.Admin.T "admin.sites.enable_confirm" "启用「%s」后，该站点会重新允许访问。确定继续？") .Name}}{{end}}">
@@ -93,10 +99,10 @@
                 <input type="hidden" name="status" value="{{if eq .Status "enabled"}}disabled{{else}}enabled{{end}}">
                 <button class="linkbtn" type="submit" data-tooltip="{{if eq .Status "enabled"}}{{$.Admin.T "admin.sites.disable_tip" "暂停该站点访问，不删除数据。"}}{{else}}{{$.Admin.T "admin.sites.enable_tip" "恢复该站点访问。"}}{{end}}">{{if eq .Status "enabled"}}{{$.Admin.T "admin.sites.disable" "关闭站点"}}{{else}}{{$.Admin.T "admin.sites.enable" "启用站点"}}{{end}}</button>
               </form>
-              <form method="post" action="/admin/sites/{{.ID}}/automation" data-confirm-title="{{if .ManagementAutomationEnabled}}{{$.Admin.T "admin.sites.platform_api_disable_confirm_title" "确认关闭自动化接口"}}{{else}}{{$.Admin.T "admin.sites.platform_api_enable_confirm_title" "确认开启自动化接口"}}{{end}}" data-confirm-ok="{{if .ManagementAutomationEnabled}}{{$.Admin.T "admin.sites.platform_api_disable" "关闭自动化接口"}}{{else}}{{$.Admin.T "admin.sites.platform_api_enable" "开启自动化接口"}}{{end}}" data-confirm="{{if .ManagementAutomationEnabled}}{{printf ($.Admin.T "admin.sites.platform_api_disable_confirm" "关闭「%s」的自动化接口后，平台接入包和外部 AI 工具将无法调用该站点。确定继续？") .Name}}{{else}}{{printf ($.Admin.T "admin.sites.platform_api_enable_confirm" "开启「%s」的自动化接口后，外部工具可通过平台入口调用该站点接口。确定继续？") .Name}}{{end}}">
+              <form method="post" action="/admin/sites/{{.ID}}/automation" data-confirm-title="{{if .ManagementAutomationEnabled}}{{$.Admin.T "admin.sites.platform_api_disable_confirm_title" "确认关闭自动化接口"}}{{else}}{{$.Admin.T "admin.sites.platform_api_enable_confirm_title" "确认开启自动化接口"}}{{end}}" data-confirm-ok="{{if .ManagementAutomationEnabled}}{{$.Admin.T "admin.sites.platform_api_disable" "关闭自动化接口"}}{{else}}{{$.Admin.T "admin.sites.platform_api_enable" "开启自动化接口"}}{{end}}" data-confirm="{{if .ManagementAutomationEnabled}}{{printf ($.Admin.T "admin.sites.platform_api_disable_confirm" "关闭「%s」的自动化接口后，AI技能包和外部 AI 工具将无法调用该站点。确定继续？") .Name}}{{else}}{{printf ($.Admin.T "admin.sites.platform_api_enable_confirm" "开启「%s」的自动化接口后，外部工具可通过平台入口调用该站点接口。确定继续？") .Name}}{{end}}">
                 <input type="hidden" name="_csrf" value="{{$.CSRF}}">
                 <input type="hidden" name="enabled" value="{{if .ManagementAutomationEnabled}}0{{else}}1{{end}}">
-                <button class="linkbtn" type="submit" data-tooltip="{{if .ManagementAutomationEnabled}}{{$.Admin.T "admin.sites.platform_api_disable_tip" "停止通过平台入口暴露该站点自动化接口。"}}{{else}}{{$.Admin.T "admin.sites.platform_api_enable_tip" "允许平台接入包和外部 AI 工具调用该站点接口。"}}{{end}}">{{if .ManagementAutomationEnabled}}{{$.Admin.T "admin.sites.platform_api_disable" "关闭自动化接口"}}{{else}}{{$.Admin.T "admin.sites.platform_api_enable" "开启自动化接口"}}{{end}}</button>
+                <button class="linkbtn" type="submit" data-tooltip="{{if .ManagementAutomationEnabled}}{{$.Admin.T "admin.sites.platform_api_disable_tip" "停止通过平台入口暴露该站点自动化接口。"}}{{else}}{{$.Admin.T "admin.sites.platform_api_enable_tip" "允许 AI技能包和外部 AI 工具调用该站点接口。"}}{{end}}">{{if .ManagementAutomationEnabled}}{{$.Admin.T "admin.sites.platform_api_disable" "关闭自动化接口"}}{{else}}{{$.Admin.T "admin.sites.platform_api_enable" "开启自动化接口"}}{{end}}</button>
               </form>
               {{if eq .Status "disabled"}}
               <form method="post" action="/admin/sites/{{.ID}}/archive" data-confirm-title="{{$.Admin.T "admin.sites.archive_confirm_title" "确认归档删除站点"}}" data-confirm-ok="{{$.Admin.T "admin.sites.archive" "归档删除"}}" data-confirm="{{printf ($.Admin.T "admin.sites.archive_confirm" "归档删除「%s」后，该站点会从站点管理中移除，数据会保留到 deleted-sites 目录。确定继续？") .Name}}">
@@ -104,7 +110,7 @@
                 <button class="linkbtn danger" type="submit" data-tooltip="{{$.Admin.T "admin.sites.archive_tip" "从站点列表移除，并把数据移动到归档目录。"}}">{{$.Admin.T "admin.sites.archive" "归档删除"}}</button>
               </form>
               {{end}}
-              {{if .ManagementAutomationEnabled}}<a class="site-tool-link" href="/admin/sites/{{.ID}}/automation/skill.zip">{{template "site-icon-package"}}<span>{{$.Admin.T "admin.sites.download_platform_kit" "下载平台接入包"}}</span></a>{{end}}
+              {{if .ManagementAutomationEnabled}}<a class="site-tool-link" href="/admin/sites/{{.ID}}/automation/skill.zip">{{template "site-icon-package"}}<span>{{$.Admin.T "admin.sites.download_platform_kit" "AI技能包"}}</span></a>{{end}}
               {{if .ManagementAutomationEnabled}}<a class="site-tool-link" href="/admin/sites/{{.ID}}/automation/starter.zip">{{template "site-icon-package"}}<span>{{$.Admin.T "admin.sites.download_platform_starter" "下载新站 AI 技能包"}}</span></a>{{end}}
               {{if .ManagementAutomationEnabled}}<a class="site-tool-link site-tool-help" href="#site-starter-help-{{.ID}}">{{template "site-icon-help"}}<span>{{$.Admin.T "admin.sites.starter_help" "使用帮助"}}</span></a>{{end}}
             </div>
@@ -232,7 +238,7 @@
             <span class="site-automation-icon">{{template "site-icon-plug"}}</span>
             <span>
               <strong>{{.Admin.T "admin.sites.platform_api_enable_new" "允许通过平台入口调用自动化接口"}}</strong>
-              <em>{{.Admin.T "admin.sites.platform_api_enable_new_desc" "创建后可下载平台接入包，供 AI 和外部工具调用。"}}</em>
+              <em>{{.Admin.T "admin.sites.platform_api_enable_new_desc" "创建后可下载 AI技能包，供 AI 和外部工具调用。"}}</em>
             </span>
             <input type="checkbox" name="automation" value="1"{{if or (not .FormErr) (eq (index .FormVals "automation") "1")}} checked{{end}}>
           </label>
