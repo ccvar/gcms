@@ -57,7 +57,7 @@
             <div class="slug">/{{.Lang}}/links/{{.Slug}}</div>
           </div>
         </td>
-        <td class="slug content-col-url">{{if .LinkURL}}<a href="{{.LinkURL}}" target="_blank" rel="noopener" class="ext-url">{{.LinkURL}}</a>{{else}}<span class="muted">{{$.Admin.T "admin.common.empty_dash" "—"}}</span>{{end}}</td>
+        <td class="content-col-url">{{if .LinkURL}}<a href="{{.LinkURL}}" target="_blank" rel="noopener" class="ext-url">{{.LinkURL}}</a>{{else}}<span class="muted">{{$.Admin.T "admin.common.empty_dash" "—"}}</span>{{end}}</td>
         <td class="nowrap content-col-category">{{with .Category}}{{.Name}}{{else}}<span class="muted">{{$.Admin.T "admin.common.empty_dash" "—"}}</span>{{end}}</td>
         <td class="nowrap content-col-status">
           <details class="status-menu">

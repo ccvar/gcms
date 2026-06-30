@@ -20,7 +20,7 @@
       {{range .AllPosts}}
       <tr>
         <td class="content-col-title"><a class="t" href="/admin/pages/{{.ID}}/edit">{{.Title}}</a></td>
-        <td class="slug content-col-url">/{{.Lang}}/{{.Slug}}</td>
+        <td class="content-col-url"><span class="slug">/{{.Lang}}/{{.Slug}}</span></td>
         <td class="muted nowrap content-col-date">{{adminDateTime .UpdatedAt}}</td>
         <td class="right actions content-col-actions">
           <span class="action-icons">
