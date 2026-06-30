@@ -4,7 +4,7 @@
       <div class="wrap read">
         <p class="eyebrow">Automation API</p>
         <h1>自动化接口开放文档</h1>
-        <p>这些接口开放语种、文章分类、链接分类读取、媒体上传、文章与链接草稿预览，以及文章、链接、页面内容操作。站点设置、分类增删改、导航、安全、系统更新不会通过这里开放。</p>
+        <p>这些接口开放语种、文章分类、链接分类读取、媒体上传、文章与链接草稿预览、文章与链接置顶，以及文章、链接、页面内容操作。安全、系统更新不会通过这里开放。</p>
       </div>
     </section>
 
@@ -29,9 +29,9 @@ X-GCMS-API-Key: gcms_xxx</code></pre>
             <tr><td>语种</td><td><code>GET /languages</code></td><td>只读</td><td><code>languages</code></td></tr>
             <tr><td>媒体</td><td><code>POST /media</code></td><td>上传图片</td><td><code>media</code></td></tr>
             <tr><td>文章分类</td><td><code>GET /posts/categories</code></td><td>只读</td><td><code>posts:categories</code></td></tr>
-            <tr><td>文章</td><td><code>GET/POST /posts</code></td><td><code>GET/PATCH /posts/{id}</code><br><code>GET /posts/{id}/preview</code></td><td><code>posts</code></td></tr>
+            <tr><td>文章</td><td><code>GET/POST /posts</code></td><td><code>GET/PATCH /posts/{id}</code><br><code>GET /posts/{id}/preview</code><br><code>PATCH /posts/featured/{id}</code></td><td><code>posts</code></td></tr>
             <tr><td>链接分类</td><td><code>GET /links/categories</code></td><td>只读</td><td><code>links:categories</code></td></tr>
-            <tr><td>链接</td><td><code>GET/POST /links</code></td><td><code>GET/PATCH /links/{id}</code><br><code>GET /links/{id}/preview</code></td><td><code>links</code></td></tr>
+            <tr><td>链接</td><td><code>GET/POST /links</code></td><td><code>GET/PATCH /links/{id}</code><br><code>GET /links/{id}/preview</code><br><code>PATCH /links/featured/{id}</code></td><td><code>links</code></td></tr>
             <tr><td>页面</td><td><code>GET/POST /pages</code></td><td><code>GET/PATCH /pages/{id}</code></td><td><code>pages</code></td></tr>
           </tbody>
         </table>
@@ -46,6 +46,7 @@ X-GCMS-API-Key: gcms_xxx</code></pre>
             <tr><td>获取分类</td><td>列出文章或链接分类，用于获取可写入 <code>category_id</code> 的 ID</td><td><code>posts:categories</code> / <code>links:categories</code></td></tr>
             <tr><td>写草稿</td><td>创建草稿，修改未发布内容</td><td><code>posts:write</code></td></tr>
             <tr><td>发布</td><td>发布、定时发布、修改已发布内容</td><td><code>posts:publish</code></td></tr>
+            <tr><td>置顶</td><td>置顶或取消置顶文章、链接，影响首页精选内容</td><td><code>posts:pin</code> / <code>links:pin</code></td></tr>
           </tbody>
         </table>
 

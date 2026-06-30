@@ -4,7 +4,7 @@
       <h1>{{if $p.ID}}{{.Admin.T "admin.edit.breadcrumb.edit" "编辑"}}{{else}}{{.Admin.T "admin.edit.breadcrumb.new" "新建"}}{{end}} · {{$ct.Name $.EditLang}}</h1>
     </div>
     <div class="edit-actions">
-      {{if $p.ID}}<a class="btn act-view" href="/{{$ct.URLPrefix}}/{{$p.Slug}}" target="_blank">{{.Admin.T "admin.action.view" "查看"}} {{template "icon-extlink"}}</a>{{end}}
+      {{if $p.ID}}<a class="btn act-view" href="{{if eq $p.Status "published"}}/{{$ct.URLPrefix}}/{{$p.Slug}}{{else}}/admin/ext/{{$ct.Key}}/{{$p.ID}}/preview{{end}}" target="_blank">{{if eq $p.Status "published"}}{{.Admin.T "admin.action.view" "查看"}}{{else}}{{.Admin.T "admin.action.preview" "预览"}}{{end}} {{template "icon-extlink"}}</a>{{end}}
       <a class="btn" href="/admin/ext/{{$ct.Key}}">{{.Admin.T "admin.action.cancel" "取消"}}</a>
       <button class="btn btn-primary" type="submit" form="ext-form" data-save>{{.Admin.T "admin.action.save" "保存"}}</button>
     </div>
@@ -15,6 +15,7 @@
   <div class="edit-grid">
   <form method="post" action="{{if $p.ID}}/admin/ext/{{$ct.Key}}/{{$p.ID}}{{else}}/admin/ext/{{$ct.Key}}{{end}}" class="admin-form edit-form" id="ext-form">
     <input type="hidden" name="_csrf" value="{{.CSRF}}">
+    <input type="hidden" name="editor_mode" value="{{if eq $p.EditorMode "rich"}}rich{{else}}markdown{{end}}">
       <div class="form-main">
         <div class="field">
           <label for="title">{{.Admin.T "admin.edit.title_label" "标题"}}</label>
@@ -25,10 +26,15 @@
         <div class="field">
           <label>{{.Label $.EditLang}}{{if .Required}} <span class="req">*</span>{{end}}</label>
           {{if or (eq $t "gallery") (eq $t "image")}}
-          <textarea name="f_{{.Key}}" rows="3" class="mono" placeholder="{{$.Admin.T "admin.ext.url_per_line" "每行一个图片 URL"}}">{{$val}}</textarea>
+          <div class="gallery-up" data-name="f_{{.Key}}"{{if eq $t "gallery"}} data-multiple="1"{{end}}>
+            <textarea name="f_{{.Key}}" class="gu-data" hidden>{{$val}}</textarea>
+            <div class="gu-grid" data-gu-grid></div>
+            <input type="file" accept="image/*"{{if eq $t "gallery"}} multiple{{end}} hidden data-gu-file>
+            <div class="gu-status" data-gu-status></div>
+          </div>
           {{else if eq $t "repeater"}}
           <textarea name="f_{{.Key}}" rows="3" class="mono" placeholder="{{$.Admin.T "admin.ext.kv_per_line" "每行一项，格式：名称: 值"}}">{{$val}}</textarea>
-          {{else if eq $t "textarea"}}
+          {{else if or (eq $t "textarea") (eq $t "markdown")}}
           <textarea name="f_{{.Key}}" rows="3">{{$val}}</textarea>
           {{else if eq $t "number"}}
           <input type="number" step="any" name="f_{{.Key}}" value="{{$val}}">
@@ -58,12 +64,41 @@
         {{end}}
 
         <div class="field">
-          <label for="content">{{.Admin.T "admin.ext.content_md" "正文（Markdown）"}}</label>
-          <textarea id="content" name="content" rows="18" class="mono" spellcheck="false">{{$p.Content}}</textarea>
+          <div class="editor-bar">
+            <label for="content">{{.Admin.T "admin.edit.content" "正文"}}</label>
+            <div class="seg" role="tablist" aria-label="{{.Admin.T "admin.edit.mode" "编辑模式"}}">
+              <button type="button" class="seg-btn is-on" data-mode="markdown" role="tab">Markdown</button>
+              <button type="button" class="seg-btn" data-mode="rich" role="tab">{{.Admin.T "admin.edit.rich_text" "富文本"}}</button>
+            </div>
+          </div>
+          <div class="editor" data-editor>
+            <textarea id="content" name="content" rows="18" spellcheck="false">{{$p.Content}}</textarea>
+            <div class="rich-wrap" hidden>
+              <div class="rich" contenteditable="true" role="textbox" aria-multiline="true" data-placeholder="{{.Admin.T "admin.edit.rich_placeholder" "开始写作…，选中文字弹出工具栏，空行点 ＋ 插入"}}"></div>
+            </div>
+          </div>
         </div>
       </div>
 
       <aside class="form-side">
+        {{if gt (len .Locales) 1}}
+        <div class="field">
+          <label{{if not $p.ID}} id="lang-label"{{end}}>{{.Admin.T "admin.edit.language" "语种"}}</label>
+          {{if $p.ID}}
+          <div class="lang-static">{{range .Locales}}{{if eq .Code $p.Lang}}<span class="lang-chip">{{.Name}}</span>{{end}}{{end}}<span class="muted" style="font-size:.82rem">{{.Admin.T "admin.edit.language_fixed" "（已固定，跨语种维护见下方互译）"}}</span></div>
+          <input type="hidden" name="lang" value="{{$p.Lang}}">
+          {{else}}
+          <div class="dropdown" data-name="lang">
+            <button type="button" class="dd-toggle" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="lang-label"><span class="dd-label">{{range .Locales}}{{if eq .Code $.EditLang}}{{.Name}}{{end}}{{end}}</span><svg class="dd-caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
+            <input type="hidden" name="lang" value="{{.EditLang}}">
+            <ul class="dd-menu" role="listbox">{{range .Locales}}<li role="option" data-value="{{.Code}}" aria-selected="{{if eq .Code $.EditLang}}true{{else}}false{{end}}">{{.Name}}</li>{{end}}</ul>
+          </div>
+          {{end}}
+        </div>
+        {{else}}
+        <input type="hidden" name="lang" value="{{if $p.Lang}}{{$p.Lang}}{{else}}{{.EditLang}}{{end}}">
+        {{end}}
+
         <div class="field">
           <label id="status-label">{{.Admin.T "admin.edit.status" "状态"}}</label>
           <div class="dropdown" data-name="status">
@@ -131,10 +166,75 @@
       </div>
     </fieldset>
   </form>
+
+  {{if and $p.ID (gt (len .Locales) 1)}}
+  <section class="trans-box">
+    <h3>{{.Admin.T "admin.edit.translations" "跨语种 · 互译版本"}}</h3>
+    <p class="muted" style="font-size:.85rem;margin:.1rem 0 .8rem">{{.Admin.T "admin.edit.translations_desc" "同一篇内容的各语种版本独立维护、共享互译关联（用于前台语言切换与 hreflang）。"}}</p>
+    {{if .Trans}}
+    <div class="trans-list">
+      {{range .Trans}}
+      <a class="trans-link" href="/admin/ext/{{$ct.Key}}/{{.ID}}/edit">
+        <span class="lang-chip">{{.Lang}}</span>
+        <span class="trans-title">{{.Title}}</span>
+        <span class="badge {{if .IsPublished}}pub{{else}}draft{{end}}">{{if .IsPublished}}{{$.Admin.T "admin.status.published" "已发布"}}{{else}}{{$.Admin.T "admin.status.draft" "草稿"}}{{end}}</span>
+      </a>
+      {{end}}
+    </div>
+    {{end}}
+    <div class="trans-actions">
+      {{range .Locales}}{{if ne .Code $p.Lang}}{{if not (hasLang $.Trans .Code)}}
+      <form method="post" action="/admin/ext/{{$ct.Key}}/{{$p.ID}}/translate">
+        <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+        <input type="hidden" name="lang" value="{{.Code}}">
+        <button type="submit" class="btn btn-soft">＋ {{printf ($.Admin.T "admin.edit.translate_to" "翻译为 %s") .Name}}</button>
+      </form>
+      {{end}}{{end}}{{end}}
+    </div>
+  </section>
+  {{end}}
+  </div>
+
+  <!-- 富文本气泡工具栏（与文章编辑共用） -->
+  <div class="bubble" hidden>
+    <button type="button" data-cmd="bold" title="{{.Admin.T "admin.edit.bold" "粗体"}}"><b>B</b></button>
+    <button type="button" data-cmd="italic" title="{{.Admin.T "admin.edit.italic" "斜体"}}"><i>I</i></button>
+    <span class="bubble-sep"></span>
+    <button type="button" data-cmd="h2" title="{{.Admin.T "admin.edit.heading" "标题"}}">H2</button>
+    <button type="button" data-cmd="h3" title="{{.Admin.T "admin.edit.subheading" "小标题"}}">H3</button>
+    <button type="button" data-cmd="quote" title="{{.Admin.T "admin.edit.quote" "引用"}}">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M6 17h3l2-4V7H5v6h3zm8 0h3l2-4V7h-6v6h3z"/></svg>
+    </button>
+    <button type="button" data-cmd="link" title="{{.Admin.T "admin.common.link" "链接"}}">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M10 13a5 5 0 0 0 7 0l2-2a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-2 2a5 5 0 0 0 7 7l1-1"/></svg>
+    </button>
+  </div>
+
+  <!-- 链接小弹层（替代系统 prompt） -->
+  <div class="link-pop" hidden>
+    <input type="text" inputmode="url" class="link-input" placeholder="{{.Admin.T "admin.edit.link_pop_placeholder" "粘贴链接，回车确认"}}">
+    <button type="button" class="link-apply" title="{{.Admin.T "admin.edit.confirm" "确认"}}">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg>
+    </button>
+    <button type="button" class="link-close" title="{{.Admin.T "admin.action.close" "关闭"}}" aria-label="{{.Admin.T "admin.action.close" "关闭"}}">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
+    </button>
   </div>
 
 <style>
   .edit-form .req { color: var(--danger); }
   .edit-form textarea.mono { font-family: var(--mono); font-size: .88rem; line-height: 1.7; }
+  /* 图集：多图批量上传 + 缩略图网格 */
+  .gallery-up .gu-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: .55rem; }
+  .gallery-up .gu-cell { position: relative; aspect-ratio: 1; border-radius: 10px; overflow: hidden; border: 1px solid var(--line); background: var(--line-soft); cursor: grab; }
+  .gallery-up .gu-cell:active { cursor: grabbing; }
+  .gallery-up .gu-cell img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .gallery-up .gu-cell.dragging { opacity: .35; }
+  .gallery-up .gu-del { position: absolute; top: 4px; right: 4px; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: 6px; background: color-mix(in srgb, var(--ink) 60%, transparent); color: #fff; cursor: pointer; opacity: 0; transition: opacity var(--speed); }
+  .gallery-up .gu-cell:hover .gu-del, .gallery-up .gu-del:focus-visible { opacity: 1; }
+  .gallery-up .gu-add { aspect-ratio: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .3rem; border: 1.5px dashed var(--line); border-radius: 10px; background: none; color: var(--muted); cursor: pointer; font-size: .78rem; transition: border-color var(--speed), color var(--speed), background var(--speed); }
+  .gallery-up .gu-add:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-wash); }
+  .gallery-up .gu-status { font-size: .82rem; color: var(--muted); margin-top: .5rem; min-height: 1em; }
+  .gallery-up .gu-status.bad { color: var(--danger); }
 </style>
 {{end}}

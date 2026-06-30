@@ -326,11 +326,16 @@ type View struct {
 	ExtTypes      []ExtTypeRow
 	ExtType       *ContentType
 	ExtPosts      []*store.Post
+	ExtDepth      map[int64]int   // 层级类型列表：每条的缩进层级（按 parent 排好序）
+	ExtParent     map[int64]int64 // 层级类型列表：每条的上级 ID（用于同级拖动排序）
 	ExtEdit       *store.Post
 	ExtValues     map[string]string
 	ExtRelOptions []*store.Post // 关联字段（如文档上级）的候选项
-	DocTree       []DocNode     // 层级类型的侧边树
+	DocTree       []DocNode     // 文档左侧导航树（GitBook 式：分类 → 章节，当前页高亮）
+	DocChildren   []DocNode     // 当前文档的下级章节（详情页底部「本节」卡片）
 	TypeForm      *TypeFormView // 可视化类型设计器表单
+	ArchiveTitle  string        // 扩展归档页：后台自定义标题（覆盖类型名）
+	ArchiveIntro  string        // 扩展归档页：后台自定义简介
 
 	PageNum    int
 	TotalPages int
@@ -2234,6 +2239,7 @@ func (s *Server) routes(assetsFS fs.FS) {
 	// 自动化 API（开放语种、站点文案、导航、分类、媒体上传，以及文章 / 页面 / 链接内容操作）。
 	mux.HandleFunc("GET /api/admin/v1/openapi.json", s.apiOpenAPI)
 	mux.HandleFunc("GET /api/admin/v1/languages", s.apiLanguages)
+	mux.HandleFunc("POST /api/admin/v1/languages", s.apiCreateLanguage)
 	mux.HandleFunc("GET /api/admin/v1/types", s.apiContentTypes)
 	mux.HandleFunc("GET /api/admin/v1/site-profile", s.apiGetSiteProfile)
 	mux.HandleFunc("PATCH /api/admin/v1/site-profile", s.apiUpdateSiteProfile)
@@ -2249,10 +2255,13 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /api/admin/v1/{collection}", s.apiCreateContent)
 	mux.HandleFunc("GET /api/admin/v1/{collection}/{id}/preview", s.apiPreviewContent)
 	mux.HandleFunc("POST /api/admin/v1/{collection}/{id}/preview-url", s.apiCreatePreviewURL)
+	mux.HandleFunc("PATCH /api/admin/v1/posts/featured/{id}", s.apiUpdatePostFeatured)
+	mux.HandleFunc("PATCH /api/admin/v1/links/featured/{id}", s.apiUpdateLinkFeatured)
 	mux.HandleFunc("GET /api/admin/v1/{collection}/{id}", s.apiGetContent)
 	mux.HandleFunc("PATCH /api/admin/v1/{collection}/{id}", s.apiUpdateContent)
 	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/openapi.json", s.apiPlatformOpenAPI)
 	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/languages", s.apiLanguages)
+	mux.HandleFunc("POST /api/platform/v1/sites/{siteID}/languages", s.apiCreateLanguage)
 	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/site-profile", s.apiGetSiteProfile)
 	mux.HandleFunc("PATCH /api/platform/v1/sites/{siteID}/site-profile", s.apiUpdateSiteProfile)
 	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/navigation", s.apiGetNavigation)
@@ -2267,6 +2276,8 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /api/platform/v1/sites/{siteID}/{collection}", s.apiCreateContent)
 	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/{collection}/{id}/preview", s.apiPreviewContent)
 	mux.HandleFunc("POST /api/platform/v1/sites/{siteID}/{collection}/{id}/preview-url", s.apiCreatePreviewURL)
+	mux.HandleFunc("PATCH /api/platform/v1/sites/{siteID}/posts/featured/{id}", s.apiUpdatePostFeatured)
+	mux.HandleFunc("PATCH /api/platform/v1/sites/{siteID}/links/featured/{id}", s.apiUpdateLinkFeatured)
 	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/{collection}/{id}", s.apiGetContent)
 	mux.HandleFunc("PATCH /api/platform/v1/sites/{siteID}/{collection}/{id}", s.apiUpdateContent)
 
@@ -2395,9 +2406,14 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("GET /admin/ext/{type}", s.requireAuth(s.adminExtList))
 	mux.HandleFunc("GET /admin/ext/{type}/new", s.requireAuth(s.adminExtNew))
 	mux.HandleFunc("POST /admin/ext/{type}", s.requireAuth(s.adminExtCreate))
+	mux.HandleFunc("GET /admin/ext/{type}/archive", s.requireAuth(s.adminExtArchiveForm))
+	mux.HandleFunc("POST /admin/ext/{type}/archive", s.requireAuth(s.adminExtArchiveSave))
+	mux.HandleFunc("POST /admin/ext/{type}/reorder", s.requireAuth(s.adminExtReorder))
 	mux.HandleFunc("GET /admin/ext/{type}/{id}/edit", s.requireAuth(s.adminExtEdit))
+	mux.HandleFunc("GET /admin/ext/{type}/{id}/preview", s.requireAuth(s.adminExtPreview))
 	mux.HandleFunc("POST /admin/ext/{type}/{id}", s.requireAuth(s.adminExtUpdate))
 	mux.HandleFunc("POST /admin/ext/{type}/{id}/delete", s.requireAuth(s.adminExtDelete))
+	mux.HandleFunc("POST /admin/ext/{type}/{id}/translate", s.requireAuth(s.adminExtTranslate))
 
 	// 兜底 404
 	mux.HandleFunc("GET /", s.notFound)

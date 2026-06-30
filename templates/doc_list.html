@@ -1,0 +1,44 @@
+{{define "body"}}  <main>
+    <section class="page-head">
+      <div class="wrap">
+        <nav class="breadcrumb" style="padding:0 0 1rem" aria-label="{{.Tr.T "common.breadcrumb"}}">
+          <a href="{{.Tr.U "/"}}">{{.Tr.T "nav.home"}}</a><span class="sep">/</span><span aria-current="page">{{if .ArchiveTitle}}{{.ArchiveTitle}}{{else if .CT}}{{.CT.Name .Lang}}{{end}}</span>
+        </nav>
+        {{if .CT}}<p class="eyebrow">{{.CT.Name .Lang}}</p>{{end}}
+        <h1>{{if .ArchiveTitle}}{{.ArchiveTitle}}{{else if .CT}}{{.CT.Name .Lang}}{{end}}</h1>
+        {{if .ArchiveIntro}}<p class="hero-sub">{{.ArchiveIntro}}</p>{{end}}
+      </div>
+    </section>
+
+    <div class="wrap">
+      {{if .DocTree}}
+      <div class="doc-overview">
+        {{range .DocTree}}
+        <section class="doc-ov">
+          <h2 class="doc-ov-h"><a href="{{.URL}}">{{.Title}} <span class="doc-ov-go" aria-hidden="true">→</span></a></h2>
+          {{if .Children}}<ul class="doc-ov-list">{{range .Children}}<li><a href="{{.URL}}"><span class="doc-ov-dot" aria-hidden="true"></span>{{.Title}}</a></li>{{end}}</ul>{{end}}
+        </section>
+        {{end}}
+      </div>
+      {{else}}
+      <p class="muted">{{.Tr.T "links.empty"}}</p>
+      {{end}}
+    </div>
+  </main>
+
+  <style>
+    .doc-overview { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1.1rem; margin-top: 2.6rem; }
+    .doc-ov { border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); padding: 1.2rem 1.35rem 1rem; transition: border-color var(--speed), box-shadow var(--speed); }
+    .doc-ov:hover { border-color: color-mix(in srgb, var(--accent) 28%, var(--line)); box-shadow: var(--shadow); }
+    .doc-ov-h { font-size: 1.06rem; margin: 0 0 .55rem; padding-bottom: .65rem; border-bottom: 1px solid var(--line-soft); }
+    .doc-ov-h a { color: var(--ink); text-decoration: none; display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
+    .doc-ov-h a:hover { color: var(--accent); }
+    .doc-ov-go { color: var(--faint); transition: transform var(--speed), color var(--speed); }
+    .doc-ov-h a:hover .doc-ov-go { color: var(--accent); transform: translateX(3px); }
+    .doc-ov-list { list-style: none; margin: 0; padding: 0; }
+    .doc-ov-list a { display: flex; align-items: center; gap: .55rem; padding: .38rem .1rem; color: var(--ink-soft); text-decoration: none; transition: color var(--speed); }
+    .doc-ov-list a:hover { color: var(--accent); }
+    .doc-ov-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--faint); flex: none; transition: background var(--speed); }
+    .doc-ov-list a:hover .doc-ov-dot { background: var(--accent); }
+  </style>
+{{end}}

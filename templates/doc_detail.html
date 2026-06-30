@@ -1,0 +1,71 @@
+{{define "body"}}{{$p := .Post}}  <main class="wrap doc-shell">
+    <aside class="doc-side">
+      <details class="doc-side-box" open>
+        <summary class="doc-side-summary">{{if .CT}}{{.CT.Name .Lang}}{{else}}{{.Tr.T "common.toc"}}{{end}}</summary>
+        {{if .CT}}<a class="doc-side-home" href="{{.Tr.U (printf "/%s" .CT.URLPrefix)}}">{{if .ArchiveTitle}}{{.ArchiveTitle}}{{else}}{{.CT.Name .Lang}}{{end}}</a>{{end}}
+        <nav class="doc-nav"{{if .CT}} aria-label="{{.CT.Name .Lang}}"{{end}}>{{template "doc-nav" .DocTree}}</nav>
+      </details>
+    </aside>
+    <article class="doc-main">
+      <nav class="breadcrumb" aria-label="{{.Tr.T "common.breadcrumb"}}" style="padding:0 0 1rem">
+        <a href="{{.Tr.U "/"}}">{{.Tr.T "nav.home"}}</a><span class="sep">/</span>
+        {{if .CT}}<a href="{{.Tr.U (printf "/%s" .CT.URLPrefix)}}">{{.CT.Name .Lang}}</a><span class="sep">/</span>{{end}}
+        <span aria-current="page">{{$p.Title}}</span>
+      </nav>
+      <header class="article-head doc-head">
+        <h1>{{$p.Title}}</h1>
+        {{if $p.Excerpt}}<p class="lead">{{$p.Excerpt}}</p>{{end}}
+      </header>
+      {{if $p.CoverImage}}<img class="article-cover doc-cover" src="{{$p.CoverImage}}" alt="{{$p.Title}}" decoding="async"{{imgAttrs $p.CoverImage}}>{{end}}
+      <div class="prose doc-prose">
+        {{.ContentHTML}}
+      </div>
+      {{if .DocChildren}}
+      <nav class="doc-children" aria-label="{{$p.Title}}">
+        {{range .DocChildren}}<a class="doc-child" href="{{.URL}}"><span>{{.Title}}</span><span class="doc-child-go" aria-hidden="true">→</span></a>{{end}}
+      </nav>
+      {{end}}
+    </article>
+  </main>
+  <button class="to-top" aria-label="{{.Tr.T "common.back_top"}}" title="{{.Tr.T "common.back_top"}}">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+  </button>
+
+  <style>
+    .doc-shell { display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 2.6rem; align-items: start; padding-top: 1.6rem; padding-bottom: 3.5rem; }
+    .doc-side { position: sticky; top: 1.6rem; align-self: start; }
+    .doc-side-box { max-height: calc(100vh - 3.2rem); overflow-y: auto; }
+    .doc-side-summary { display: none; }
+    .doc-side-home { display: block; font-weight: 700; font-size: 1.02rem; color: var(--ink); text-decoration: none; margin: 0 0 .9rem; padding-bottom: .8rem; border-bottom: 1px solid var(--line); }
+    .doc-side-home:hover { color: var(--accent); }
+    .doc-nav-list { list-style: none; margin: 0; padding: 0; }
+    .doc-nav > .doc-nav-list > li { margin: 0 0 .45rem; }
+    .doc-nav a { display: block; padding: .38rem .65rem; border-radius: 8px; color: var(--ink-soft); text-decoration: none; font-size: .95rem; line-height: 1.4; transition: background var(--speed), color var(--speed); }
+    .doc-nav > .doc-nav-list > li > a { font-weight: 600; color: var(--ink); }
+    .doc-nav a:hover { background: var(--line-soft); color: var(--accent); }
+    .doc-nav li.active > a { background: var(--accent-wash); color: var(--accent); font-weight: 600; }
+    .doc-nav .doc-nav-list .doc-nav-list { margin: .15rem 0 .35rem; padding-left: .55rem; border-left: 1px solid var(--line); }
+    .doc-nav .doc-nav-list .doc-nav-list a { font-weight: 400; font-size: .92rem; }
+    .doc-main { min-width: 0; }
+    .doc-head h1 { margin: 0 0 .35rem; }
+    .doc-head .lead { color: var(--ink-soft); font-size: 1.08rem; line-height: 1.6; margin: 0 0 1.4rem; }
+    .doc-cover { width: 100%; border-radius: var(--radius); margin: .4rem 0 1.6rem; }
+    .doc-children { display: grid; gap: .6rem; margin-top: 2.4rem; padding-top: 1.4rem; border-top: 1px solid var(--line-soft); }
+    .doc-child { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .85rem 1.1rem; border: 1px solid var(--line); border-radius: var(--radius); color: var(--ink); text-decoration: none; font-weight: 500; transition: border-color var(--speed), color var(--speed); }
+    .doc-child:hover { border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); color: var(--accent); }
+    .doc-child-go { color: var(--faint); transition: transform var(--speed); }
+    .doc-child:hover .doc-child-go { color: var(--accent); transform: translateX(3px); }
+    @media (max-width: 880px) {
+      .doc-shell { grid-template-columns: 1fr; gap: 1.1rem; padding-top: 1rem; }
+      .doc-side { position: static; }
+      .doc-side-box { max-height: none; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); padding: 0 1.1rem; }
+      .doc-side-box[open] { padding: .3rem 1.1rem 1rem; }
+      .doc-side-summary { display: block; cursor: pointer; padding: .9rem .2rem; font-weight: 600; color: var(--ink); list-style: none; }
+      .doc-side-summary::-webkit-details-marker { display: none; }
+      .doc-side-summary::after { content: "▾"; float: right; color: var(--muted); }
+      .doc-side-home { margin-top: .3rem; }
+    }
+  </style>
+{{end}}
+
+{{define "doc-nav"}}<ul class="doc-nav-list">{{range .}}<li{{if .Active}} class="active"{{end}}><a href="{{.URL}}"{{if .Active}} aria-current="page"{{end}}>{{.Title}}</a>{{if .Children}}{{template "doc-nav" .Children}}{{end}}</li>{{end}}</ul>{{end}}

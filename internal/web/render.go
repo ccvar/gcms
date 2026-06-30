@@ -411,7 +411,7 @@ func NewRenderer(tplFS fs.FS, imageSizes map[string]ImageSize) (*Renderer, error
 	r := &Renderer{sets: map[string]*template.Template{}}
 	partials := []string{"layout.html", "partials/head.html", "partials/header.html", "partials/footer.html", "partials/home_bento.html", "partials/home_index.html", "partials/home_split.html", "partials/home_axis.html"}
 
-	for _, name := range []string{"home", "article", "category", "links", "link", "page", "search", "api_docs", "404", "generic_list", "generic_detail"} {
+	for _, name := range []string{"home", "article", "category", "links", "link", "page", "search", "api_docs", "404", "generic_list", "generic_detail", "doc_list", "doc_detail"} {
 		files := append([]string{}, partials...)
 		files = append(files, name+".html")
 		t, err := template.New(name).Funcs(funcMap(imageSizes)).ParseFS(sub, files...)
@@ -427,7 +427,7 @@ func NewRenderer(tplFS fs.FS, imageSizes map[string]ImageSize) (*Renderer, error
 	}
 	r.sets["theme_preview"] = tp
 
-	for _, name := range []string{"login", "dashboard", "posts", "edit", "settings", "pages", "links", "visual", "sites", "platform_settings", "backups", "archived_sites", "updates", "admin_i18n", "security", "extensions", "ext_list", "ext_edit", "ext_type_edit"} {
+	for _, name := range []string{"login", "dashboard", "posts", "edit", "settings", "pages", "links", "visual", "sites", "platform_settings", "backups", "archived_sites", "updates", "admin_i18n", "security", "extensions", "ext_list", "ext_edit", "ext_archive", "ext_type_edit"} {
 		t, err := template.New("admin_"+name).Funcs(funcMap(imageSizes)).ParseFS(sub, "admin/layout.html", "admin/"+name+".html")
 		if err != nil {
 			return nil, err

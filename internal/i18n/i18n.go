@@ -44,6 +44,9 @@ var registry = []Locale{
 	{Code: "fr", Name: "Français", Tag: "fr-FR", OG: "fr_FR", dateFn: dateEN},
 	{Code: "de", Name: "Deutsch", Tag: "de-DE", OG: "de_DE", dateFn: dateEN},
 	{Code: "es", Name: "Español", Tag: "es-ES", OG: "es_ES", dateFn: dateEN},
+	{Code: "vi", Name: "Tiếng Việt", Tag: "vi-VN", OG: "vi_VN", dateFn: dateEN},
+	{Code: "id", Name: "Bahasa Indonesia", Tag: "id-ID", OG: "id_ID", dateFn: dateEN},
+	{Code: "th", Name: "ไทย", Tag: "th-TH", OG: "th_TH", dateFn: dateEN},
 }
 
 func builtinMeta(code string) (Locale, bool) {

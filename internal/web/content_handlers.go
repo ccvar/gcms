@@ -2,10 +2,13 @@ package web
 
 import (
 	"encoding/json"
+	"html/template"
 	"net/http"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"cms.ccvar.com/internal/seo"
 	"cms.ccvar.com/internal/store"
@@ -46,17 +49,26 @@ func (s *Server) extList(w http.ResponseWriter, r *http.Request, ct *ContentType
 	v := s.view(r, ct.Key)
 	v.CT = ct
 	v.Posts = posts
+	v.ArchiveTitle, v.ArchiveIntro = s.extArchiveText(ct.Key, lang)
 	base := "/" + ct.URLPrefix
+	seoTitle := ct.Name(lang)
+	if v.ArchiveTitle != "" {
+		seoTitle = v.ArchiveTitle
+	}
+	seoDesc := v.Site.Description
+	if v.ArchiveIntro != "" {
+		seoDesc = v.ArchiveIntro
+	}
 	v.SEO = seo.Meta{
-		Title:       ct.Name(lang) + " — " + v.Site.Name,
-		Description: v.Site.Description,
+		Title:       seoTitle + " — " + v.Site.Name,
+		Description: seoDesc,
 		Canonical:   v.Site.Abs(base),
 		OGType:      "website",
 	}
 	setPagination(v, page, ceilDiv(total, size), base)
 	v.Langs = s.langSwitchForRequest(r, lang, nil, base)
 	if ct.Hierarchical {
-		v.DocTree = s.buildDocTree(ct, lang, 0)
+		v.DocTree = s.buildDocNav(ct, lang, 0)
 	}
 	s.rnd.Public(w, listTemplate(ct), http.StatusOK, v)
 }
@@ -77,14 +89,29 @@ func (s *Server) extDetail(w http.ResponseWriter, r *http.Request, ct *ContentTy
 		s.notFound(w, r)
 		return
 	}
+	s.renderExtDetail(w, r, ct, p, false)
+}
+
+// renderExtDetail 构建并渲染某条扩展内容的详情视图。
+// preview=true 时用于后台草稿预览（noindex、无 hreflang、不对章节做跳转）。
+func (s *Server) renderExtDetail(w http.ResponseWriter, r *http.Request, ct *ContentType, p *store.Post, preview bool) {
+	lang := p.Lang
+	if lang == "" {
+		lang = langFrom(r)
+	}
 	s.fillDefaultAuthor(p)
-	v := s.view(r, ct.Key)
+	v := s.viewForLang(r, lang, ct.Key)
 	v.CT = ct
 	v.Post = p
 	v.ContentHTML, v.TOC = s.renderedContent(p)
 	v.Fields = renderFieldValues(ct, p, lang)
 	if ct.Hierarchical {
-		v.DocTree = s.buildDocTree(ct, lang, p.ID)
+		// 文档（GitBook 式）：左侧持久导航树——顶层文档为分类、子文档为其下章节，
+		// 各自独立成页，当前页高亮；详情页底部列出本节下级章节。
+		v.DocTree = s.buildDocNav(ct, lang, p.ID)
+		v.DocChildren = activeNodeChildren(v.DocTree)
+		// 标题已由页面 H1 呈现；若正文开头重复了同一标题则去掉，避免出现两次。
+		v.ContentHTML = stripRedundantHeading(v.ContentHTML, p.Title)
 	}
 	canon := publicContentPath(ct.Key, p.Slug)
 	author := strings.TrimSpace(p.Author)
@@ -99,15 +126,20 @@ func (s *Server) extDetail(w http.ResponseWriter, r *http.Request, ct *ContentTy
 		Image:       p.CoverImage,
 		Author:      author,
 	}
-	ph := map[string]string{p.Lang: canon}
-	if trs, _ := s.store.TranslationsPublished(p.TransGroup); trs != nil {
-		for _, t := range trs {
-			if t.Type == ct.Key {
-				ph[t.Lang] = publicContentPath(ct.Key, t.Slug)
+	if preview {
+		v.SEO.Robots = "noindex, nofollow"
+		v.SEO.Alternates = nil
+	} else {
+		ph := map[string]string{p.Lang: canon}
+		if trs, _ := s.store.TranslationsPublished(p.TransGroup); trs != nil {
+			for _, t := range trs {
+				if t.Type == ct.Key {
+					ph[t.Lang] = publicContentPath(ct.Key, t.Slug)
+				}
 			}
 		}
+		v.Langs, v.SEO.Alternates = s.i18nLinksForRequest(r, v.Site.BaseURL, lang, ph)
 	}
-	v.Langs, v.SEO.Alternates = s.i18nLinksForRequest(r, v.Site.BaseURL, lang, ph)
 	s.rnd.Public(w, detailTemplate(ct), http.StatusOK, v)
 }
 
@@ -115,12 +147,18 @@ func listTemplate(ct *ContentType) string {
 	if ct.ListTemplate != "" {
 		return ct.ListTemplate
 	}
+	if ct.Hierarchical {
+		return "doc_list" // 层级类型默认走 GitBook 式文档布局
+	}
 	return "generic_list"
 }
 
 func detailTemplate(ct *ContentType) string {
 	if ct.DetailTemplate != "" {
 		return ct.DetailTemplate
+	}
+	if ct.Hierarchical {
+		return "doc_detail" // 层级类型默认走 GitBook 式文档布局
 	}
 	return "generic_detail"
 }
@@ -207,6 +245,8 @@ func renderFieldValues(ct *ContentType, p *store.Post, lang string) []FieldValue
 			}
 		case FieldRepeater:
 			fv.Pairs = pairsToList(val)
+		case FieldDatetime:
+			fv.Text = formatDatetimeField(scalarString(val))
 		default:
 			fv.Text = scalarString(val)
 		}
@@ -281,6 +321,23 @@ func scalarString(v any) string {
 	return ""
 }
 
+// formatDatetimeField 把 datetime-local 形态的时间串格式化为可读形式。
+func formatDatetimeField(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	for _, layout := range []string{"2006-01-02T15:04", "2006-01-02T15:04:05", "2006-01-02 15:04"} {
+		if t, err := time.Parse(layout, s); err == nil {
+			if t.Hour() == 0 && t.Minute() == 0 {
+				return t.Format("2006 年 1 月 2 日")
+			}
+			return t.Format("2006 年 1 月 2 日 15:04")
+		}
+	}
+	return s
+}
+
 // publicContentPath 返回某条内容的公开路径（按类型路由）。供搜索结果等处生成正确链接。
 func publicContentPath(typ, slug string) string {
 	switch typ {
@@ -318,65 +375,142 @@ type DocNode struct {
 	Children []DocNode
 }
 
-// buildDocTree 由某语种全部已发布的层级内容构建父子树（按 extra.order 再按标题排序）。
-// 父级不存在者视为根；带环路保护。currentID 用于标记当前页高亮。
-func (s *Server) buildDocTree(ct *ContentType, lang string, currentID int64) []DocNode {
-	posts, _ := s.store.AllPublishedByType(ct.Key, lang)
-	if len(posts) == 0 {
-		return nil
+// docParentID 读取某文档的上级 ID（extra.parent）。
+func docParentID(p *store.Post) int64 {
+	if ex := strings.TrimSpace(p.Extra); ex != "" {
+		var m map[string]any
+		if json.Unmarshal([]byte(ex), &m) == nil {
+			return anyToInt64(m["parent"])
+		}
 	}
-	type docMeta struct {
-		post   *store.Post
-		parent int64
-		order  float64
+	return 0
+}
+
+// docOrder 读取某文档的排序权重（extra.order）。
+func docOrder(p *store.Post) float64 {
+	if ex := strings.TrimSpace(p.Extra); ex != "" {
+		var m map[string]any
+		if json.Unmarshal([]byte(ex), &m) == nil {
+			return anyToFloat(m["order"])
+		}
 	}
+	return 0
+}
+
+// docChildren 由某语种全部已发布层级内容构建「上级 → 子级（已按 order、标题排序）」映射。
+// 父级缺失者归到顶层（0）。
+func docChildren(posts []*store.Post) map[int64][]*store.Post {
 	ids := map[int64]bool{}
 	for _, p := range posts {
 		ids[p.ID] = true
 	}
-	childrenOf := map[int64][]docMeta{}
+	childrenOf := map[int64][]*store.Post{}
 	for _, p := range posts {
-		dm := docMeta{post: p}
-		if ex := strings.TrimSpace(p.Extra); ex != "" {
-			var m map[string]any
-			if json.Unmarshal([]byte(ex), &m) == nil {
-				dm.parent = anyToInt64(m["parent"])
-				dm.order = anyToFloat(m["order"])
-			}
+		parent := docParentID(p)
+		if parent != 0 && !ids[parent] {
+			parent = 0
 		}
-		if dm.parent != 0 && !ids[dm.parent] {
-			dm.parent = 0 // 父级缺失 → 当作根
-		}
-		childrenOf[dm.parent] = append(childrenOf[dm.parent], dm)
+		childrenOf[parent] = append(childrenOf[parent], p)
 	}
 	for k := range childrenOf {
 		sort.SliceStable(childrenOf[k], func(i, j int) bool {
-			a, b := childrenOf[k][i], childrenOf[k][j]
-			if a.order != b.order {
-				return a.order < b.order
+			if oa, ob := docOrder(childrenOf[k][i]), docOrder(childrenOf[k][j]); oa != ob {
+				return oa < ob
 			}
-			return a.post.Title < b.post.Title
+			return childrenOf[k][i].Title < childrenOf[k][j].Title
 		})
 	}
+	return childrenOf
+}
+
+// buildDocNav 构建 GitBook 式文档左侧导航树：顶层文档为分类、子文档为其下章节，
+// 各自独立成页（URL 为真实页面路径）。currentID 用于高亮当前页；带环路保护。
+func (s *Server) buildDocNav(ct *ContentType, lang string, currentID int64) []DocNode {
+	posts, _ := s.store.AllPublishedByType(ct.Key, lang)
+	if len(posts) == 0 {
+		return nil
+	}
+	childrenOf := docChildren(posts)
 	seen := map[int64]bool{}
 	var build func(parent int64) []DocNode
 	build = func(parent int64) []DocNode {
 		var out []DocNode
-		for _, dm := range childrenOf[parent] {
-			if seen[dm.post.ID] {
-				continue // 环路保护
+		for _, c := range childrenOf[parent] {
+			if seen[c.ID] {
+				continue
 			}
-			seen[dm.post.ID] = true
+			seen[c.ID] = true
 			out = append(out, DocNode{
-				Title:    dm.post.Title,
-				URL:      "/" + lang + publicContentPath(ct.Key, dm.post.Slug),
-				Active:   dm.post.ID == currentID,
-				Children: build(dm.post.ID),
+				Title:    c.Title,
+				URL:      "/" + lang + publicContentPath(ct.Key, c.Slug),
+				Active:   c.ID == currentID,
+				Children: build(c.ID),
 			})
 		}
 		return out
 	}
 	return build(0)
+}
+
+var docLeadHeadingRe = regexp.MustCompile(`(?is)^\s*<h[1-3][^>]*>(.*?)</h[1-3]>\s*`)
+var docHTMLTagRe = regexp.MustCompile(`<[^>]+>`)
+
+// stripRedundantHeading 去掉正文开头与页面标题完全重复的标题（文档标题已由 H1 呈现）。
+func stripRedundantHeading(html template.HTML, title string) template.HTML {
+	s := string(html)
+	m := docLeadHeadingRe.FindStringSubmatch(s)
+	if m == nil {
+		return html
+	}
+	inner := strings.TrimSpace(docHTMLTagRe.ReplaceAllString(m[1], ""))
+	if inner != "" && inner == strings.TrimSpace(title) {
+		return template.HTML(strings.TrimPrefix(s, m[0]))
+	}
+	return html
+}
+
+// adminDocOrder 把后台层级类型列表（含草稿）按「分类 → 章节」深度优先排序，
+// 并返回每条的缩进层级与上级 ID，让后台列表能展示结构、支持同级拖动排序。
+func adminDocOrder(posts []*store.Post) ([]*store.Post, map[int64]int, map[int64]int64) {
+	childrenOf := docChildren(posts)
+	out := make([]*store.Post, 0, len(posts))
+	depth := map[int64]int{}
+	parent := map[int64]int64{}
+	seen := map[int64]bool{}
+	var walk func(par int64, d int)
+	walk = func(par int64, d int) {
+		for _, c := range childrenOf[par] {
+			if seen[c.ID] {
+				continue
+			}
+			seen[c.ID] = true
+			depth[c.ID] = d
+			parent[c.ID] = par
+			out = append(out, c)
+			walk(c.ID, d+1)
+		}
+	}
+	walk(0, 0)
+	// 兜底：任何没被树覆盖到的（理论上不会有）追加在后面
+	for _, p := range posts {
+		if !seen[p.ID] {
+			out = append(out, p)
+		}
+	}
+	return out, depth, parent
+}
+
+// activeNodeChildren 返回导航树里「当前页」节点的下级章节（供详情页底部列出）。
+func activeNodeChildren(tree []DocNode) []DocNode {
+	for _, n := range tree {
+		if n.Active {
+			return n.Children
+		}
+		if c := activeNodeChildren(n.Children); c != nil {
+			return c
+		}
+	}
+	return nil
 }
 
 func anyToInt64(v any) int64 {

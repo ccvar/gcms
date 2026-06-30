@@ -743,14 +743,14 @@
           </div>
           <table class="admin-table api-endpoints">
           <tbody>
-            <tr><th>{{.Admin.T "admin.settings.automation.languages" "语种"}}</th><td class="slug">GET /languages</td></tr>
+            <tr><th>{{.Admin.T "admin.settings.automation.languages" "语种"}}</th><td class="slug">GET/POST /languages</td></tr>
             <tr><th>{{.Admin.T "admin.settings.automation.site_profile" "站点文案"}}</th><td class="slug">GET/PATCH /site-profile</td></tr>
             <tr><th>{{.Admin.T "admin.settings.automation.navigation" "导航菜单"}}</th><td class="slug">GET/PATCH /navigation</td></tr>
             <tr><th>{{.Admin.T "admin.settings.automation.media" "媒体"}}</th><td class="slug">POST /media</td></tr>
             <tr><th>{{.Admin.T "admin.settings.automation.post_categories" "文章分类"}}</th><td class="slug">GET/POST /posts/categories · PATCH /posts/categories/{id}</td></tr>
             <tr><th>{{.Admin.T "admin.settings.automation.link_categories" "链接分类"}}</th><td class="slug">GET/POST /links/categories · PATCH /links/categories/{id}</td></tr>
-            <tr><th>{{.Admin.T "admin.nav.posts" "文章"}}</th><td class="slug">GET/POST /posts · GET/PATCH /posts/{id} · GET /posts/{id}/preview</td></tr>
-            <tr><th>{{.Admin.T "admin.nav.links" "链接"}}</th><td class="slug">GET/POST /links · GET/PATCH /links/{id} · GET /links/{id}/preview</td></tr>
+            <tr><th>{{.Admin.T "admin.nav.posts" "文章"}}</th><td class="slug">GET/POST /posts · GET/PATCH /posts/{id} · GET /posts/{id}/preview · PATCH /posts/featured/{id}</td></tr>
+            <tr><th>{{.Admin.T "admin.nav.links" "链接"}}</th><td class="slug">GET/POST /links · GET/PATCH /links/{id} · GET /links/{id}/preview · PATCH /links/featured/{id}</td></tr>
             <tr><th>{{.Admin.T "admin.nav.pages" "页面"}}</th><td class="slug">GET/POST /pages · GET/PATCH /pages/{id}</td></tr>
             <tr><th>{{.Admin.T "admin.settings.automation.search" "查找"}}</th><td class="slug">?q=keyword · ?slug=slug · ?lang=zh · ?status=draft</td></tr>
           </tbody>
@@ -914,10 +914,15 @@
               <label for="api-key-name">{{.Admin.T "admin.settings.automation.key_name" "用途名称"}}</label>
               <input id="api-key-name" name="name" placeholder="{{.Admin.T "admin.settings.automation.key_name_placeholder" "内容运营助手"}}" required>
             </div>
+            <div class="scope-tools" data-scope-tools>
+              <button type="button" class="linkbtn" data-scope-action="all">{{.Admin.T "admin.settings.automation.select_all" "全选"}}</button>
+              <button type="button" class="linkbtn" data-scope-action="invert">{{.Admin.T "admin.settings.automation.invert_selection" "反选"}}</button>
+            </div>
             <div class="scope-groups">
               <div class="scope-group scope-group-wide">
                 <strong>{{.Admin.T "admin.settings.automation.base_interfaces" "基础接口"}}</strong>
                 <label><input type="checkbox" name="scopes" value="languages:read" checked><span>{{.Admin.T "admin.settings.automation.languages" "语种"}}</span><small>{{.Admin.T "admin.settings.automation.languages_read_desc" "列出默认语种和启用语种"}}</small></label>
+                <label><input type="checkbox" name="scopes" value="languages:write"><span>{{.Admin.T "admin.settings.automation.languages_write" "新增自定义语种"}}</span><small>{{.Admin.T "admin.settings.automation.languages_write_desc" "为 AI 开通新增自定义语种接口"}}</small></label>
                 <label><input type="checkbox" name="scopes" value="media:write" checked><span>{{.Admin.T "admin.settings.automation.media_upload" "上传媒体"}}</span><small>{{.Admin.T "admin.settings.automation.media_upload_desc" "上传图片并返回可用于封面的 URL"}}</small></label>
               </div>
               <div class="scope-group scope-group-wide">
@@ -936,6 +941,7 @@
                 <label><input type="checkbox" name="scopes" value="posts:categories" checked><span>{{.Admin.T "admin.settings.automation.read_categories" "获取分类"}}</span><small>{{.Admin.T "admin.settings.automation.posts_categories_desc" "列出文章分类和可用 ID"}}</small></label>
                 <label><input type="checkbox" name="scopes" value="posts:write" checked><span>{{.Admin.T "admin.settings.automation.write_draft" "写草稿"}}</span><small>{{.Admin.T "admin.settings.automation.posts_write_desc" "创建草稿，修改未发布文章"}}</small></label>
                 <label><input type="checkbox" name="scopes" value="posts:publish"><span>{{.Admin.T "admin.settings.automation.publish" "发布"}}</span><small>{{.Admin.T "admin.settings.automation.posts_publish_desc" "发布、定时发布、修改已发布文章"}}</small></label>
+                <label><input type="checkbox" name="scopes" value="posts:pin"><span>{{.Admin.T "admin.settings.automation.pin" "置顶"}}</span><small>{{.Admin.T "admin.settings.automation.posts_pin_desc" "置顶或取消置顶文章，影响首页精选"}}</small></label>
               </div>
               <div class="scope-group">
                 <strong>{{.Admin.T "admin.nav.links" "链接"}}</strong>
@@ -943,6 +949,7 @@
                 <label><input type="checkbox" name="scopes" value="links:categories" checked><span>{{.Admin.T "admin.settings.automation.read_categories" "获取分类"}}</span><small>{{.Admin.T "admin.settings.automation.links_categories_desc" "列出链接分类和可用 ID"}}</small></label>
                 <label><input type="checkbox" name="scopes" value="links:write" checked><span>{{.Admin.T "admin.settings.automation.write_draft" "写草稿"}}</span><small>{{.Admin.T "admin.settings.automation.links_write_desc" "创建草稿，修改未发布链接"}}</small></label>
                 <label><input type="checkbox" name="scopes" value="links:publish"><span>{{.Admin.T "admin.settings.automation.publish" "发布"}}</span><small>{{.Admin.T "admin.settings.automation.links_publish_desc" "发布、定时发布、修改已发布链接"}}</small></label>
+                <label><input type="checkbox" name="scopes" value="links:pin"><span>{{.Admin.T "admin.settings.automation.pin" "置顶"}}</span><small>{{.Admin.T "admin.settings.automation.links_pin_desc" "置顶或取消置顶链接，影响首页精选链接"}}</small></label>
               </div>
               <div class="scope-group">
                 <strong>{{.Admin.T "admin.nav.pages" "页面"}}</strong>
@@ -971,10 +978,15 @@
               <label for="api-key-edit-name">{{.Admin.T "admin.settings.automation.key_name" "用途名称"}}</label>
               <input id="api-key-edit-name" name="name" required>
             </div>
+            <div class="scope-tools" data-scope-tools>
+              <button type="button" class="linkbtn" data-scope-action="all">{{.Admin.T "admin.settings.automation.select_all" "全选"}}</button>
+              <button type="button" class="linkbtn" data-scope-action="invert">{{.Admin.T "admin.settings.automation.invert_selection" "反选"}}</button>
+            </div>
             <div class="scope-groups">
               <div class="scope-group scope-group-wide">
                 <strong>{{.Admin.T "admin.settings.automation.base_interfaces" "基础接口"}}</strong>
                 <label><input type="checkbox" name="scopes" value="languages:read" data-scope-edit><span>{{.Admin.T "admin.settings.automation.languages" "语种"}}</span><small>{{.Admin.T "admin.settings.automation.languages_read_desc" "列出默认语种和启用语种"}}</small></label>
+                <label><input type="checkbox" name="scopes" value="languages:write" data-scope-edit><span>{{.Admin.T "admin.settings.automation.languages_write" "新增自定义语种"}}</span><small>{{.Admin.T "admin.settings.automation.languages_write_desc" "为 AI 开通新增自定义语种接口"}}</small></label>
                 <label><input type="checkbox" name="scopes" value="media:write" data-scope-edit><span>{{.Admin.T "admin.settings.automation.media_upload" "上传媒体"}}</span><small>{{.Admin.T "admin.settings.automation.media_upload_desc" "上传图片并返回可用于封面的 URL"}}</small></label>
               </div>
               <div class="scope-group scope-group-wide">
@@ -993,6 +1005,7 @@
                 <label><input type="checkbox" name="scopes" value="posts:categories" data-scope-edit><span>{{.Admin.T "admin.settings.automation.read_categories" "获取分类"}}</span><small>{{.Admin.T "admin.settings.automation.posts_categories_desc" "列出文章分类和可用 ID"}}</small></label>
                 <label><input type="checkbox" name="scopes" value="posts:write" data-scope-edit><span>{{.Admin.T "admin.settings.automation.write_draft" "写草稿"}}</span><small>{{.Admin.T "admin.settings.automation.posts_write_desc" "创建草稿，修改未发布文章"}}</small></label>
                 <label><input type="checkbox" name="scopes" value="posts:publish" data-scope-edit><span>{{.Admin.T "admin.settings.automation.publish" "发布"}}</span><small>{{.Admin.T "admin.settings.automation.posts_publish_desc" "发布、定时发布、修改已发布文章"}}</small></label>
+                <label><input type="checkbox" name="scopes" value="posts:pin" data-scope-edit><span>{{.Admin.T "admin.settings.automation.pin" "置顶"}}</span><small>{{.Admin.T "admin.settings.automation.posts_pin_desc" "置顶或取消置顶文章，影响首页精选"}}</small></label>
               </div>
               <div class="scope-group">
                 <strong>{{.Admin.T "admin.nav.links" "链接"}}</strong>
@@ -1000,6 +1013,7 @@
                 <label><input type="checkbox" name="scopes" value="links:categories" data-scope-edit><span>{{.Admin.T "admin.settings.automation.read_categories" "获取分类"}}</span><small>{{.Admin.T "admin.settings.automation.links_categories_desc" "列出链接分类和可用 ID"}}</small></label>
                 <label><input type="checkbox" name="scopes" value="links:write" data-scope-edit><span>{{.Admin.T "admin.settings.automation.write_draft" "写草稿"}}</span><small>{{.Admin.T "admin.settings.automation.links_write_desc" "创建草稿，修改未发布链接"}}</small></label>
                 <label><input type="checkbox" name="scopes" value="links:publish" data-scope-edit><span>{{.Admin.T "admin.settings.automation.publish" "发布"}}</span><small>{{.Admin.T "admin.settings.automation.links_publish_desc" "发布、定时发布、修改已发布链接"}}</small></label>
+                <label><input type="checkbox" name="scopes" value="links:pin" data-scope-edit><span>{{.Admin.T "admin.settings.automation.pin" "置顶"}}</span><small>{{.Admin.T "admin.settings.automation.links_pin_desc" "置顶或取消置顶链接，影响首页精选链接"}}</small></label>
               </div>
               <div class="scope-group">
                 <strong>{{.Admin.T "admin.nav.pages" "页面"}}</strong>

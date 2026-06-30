@@ -1,6 +1,7 @@
 package web
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -79,6 +80,10 @@ func (s *Server) adminExtList(w http.ResponseWriter, r *http.Request) {
 	v := s.adminView(r, ct.Name(s.adminLang(r)))
 	s.authed(v, sess)
 	v.ExtType = ct
+	if ct.Hierarchical {
+		// 层级类型：按「分类 → 章节」排好序并标注缩进层级，让后台一眼看清结构、支持同级拖动排序。
+		posts, v.ExtDepth, v.ExtParent = adminDocOrder(posts)
+	}
 	v.ExtPosts = posts
 	v.EditLang = lang
 	if r.URL.Query().Get("deleted") == "1" {
@@ -117,6 +122,87 @@ func (s *Server) adminExtEdit(w http.ResponseWriter, r *http.Request) {
 	s.rnd.Admin(w, "ext_edit", http.StatusOK, s.adminExtEditView(r, sess, ct, p, flash, ""))
 }
 
+// adminExtPreview 后台草稿预览：以公开详情模板渲染扩展内容（含草稿），noindex、不跳转章节。
+func (s *Server) adminExtPreview(w http.ResponseWriter, r *http.Request) {
+	ct := s.adminExtType(r)
+	if ct == nil {
+		s.notFound(w, r)
+		return
+	}
+	p, _ := s.store.GetPostByID(atoi64(r.PathValue("id")))
+	if p == nil || p.Type != ct.Key {
+		s.notFound(w, r)
+		return
+	}
+	if sess, ok := s.currentSession(r); ok {
+		if prefix := s.adminSitePreviewPrefix(sess.currentSiteID); prefix != "" {
+			ctx := withPreviewRoutePrefix(withPreviewNoindex(r.Context()), prefix)
+			r = r.Clone(ctx)
+			w.Header().Set("X-Robots-Tag", "noindex, nofollow")
+			w.Header().Set("Cache-Control", "no-store")
+		}
+	}
+	s.renderExtDetail(w, r, ct, p, true)
+}
+
+// adminExtTranslate 为某条扩展内容创建/跳转到目标语种版本（共享 trans_group，复制自定义字段）。
+// 与 adminTranslate 同构，但落点为 /admin/ext/{type}/{id}/edit。
+func (s *Server) adminExtTranslate(w http.ResponseWriter, r *http.Request) {
+	ct := s.adminExtType(r)
+	if ct == nil {
+		s.notFound(w, r)
+		return
+	}
+	if _, ok := s.checkCSRF(w, r); !ok {
+		return
+	}
+	src, _ := s.store.GetPostByID(atoi64(r.PathValue("id")))
+	if src == nil || src.Type != ct.Key {
+		s.notFound(w, r)
+		return
+	}
+	editPath := func(id int64) string { return fmt.Sprintf("/admin/ext/%s/%d/edit", ct.Key, id) }
+	target := strings.TrimSpace(r.FormValue("lang"))
+	if !s.langEnabled(target) || target == src.Lang {
+		http.Redirect(w, r, editPath(src.ID), http.StatusSeeOther)
+		return
+	}
+	// 已存在该语种版本 → 直接跳过去
+	if trs, _ := s.store.TranslationsAll(src.TransGroup, 0); trs != nil {
+		for _, t := range trs {
+			if t.Lang == target {
+				http.Redirect(w, r, editPath(t.ID), http.StatusSeeOther)
+				return
+			}
+		}
+	}
+	np := &store.Post{
+		Type: src.Type, Title: src.Title, Excerpt: src.Excerpt, Content: src.Content,
+		MetaDesc: src.MetaDesc, Keywords: src.Keywords, CoverImage: src.CoverImage, Author: src.Author,
+		Status: "draft", EditorMode: src.EditorMode, Lang: target, TransGroup: src.TransGroup,
+		Extra: src.Extra, // 自定义字段一并带过去（含文档上级/排序）
+	}
+	np.Slug = s.uniqueSlug(target, src.Slug, 0)
+	if src.CategoryID.Valid {
+		if sc, _ := s.store.GetCategoryByID(src.CategoryID.Int64); sc != nil {
+			if cts, _ := s.store.CategoryTranslations(sc.TransGroup); cts != nil {
+				for _, c := range cts {
+					if c.Lang == target {
+						np.CategoryID = sql.NullInt64{Int64: c.ID, Valid: true}
+					}
+				}
+			}
+		}
+	}
+	id, err := s.store.CreatePost(np)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	s.clearGeneratedCaches()
+	http.Redirect(w, r, editPath(id), http.StatusSeeOther)
+}
+
 func (s *Server) adminExtEditView(r *http.Request, sess session, ct *ContentType, p *store.Post, flash, formErr string) *View {
 	v := s.adminView(r, ct.Name(s.adminLang(r)))
 	s.authed(v, sess)
@@ -139,6 +225,9 @@ func (s *Server) adminExtEditView(r *http.Request, sess session, ct *ContentType
 				v.ExtRelOptions = append(v.ExtRelOptions, o)
 			}
 		}
+	}
+	if p.ID != 0 && p.TransGroup != "" {
+		v.Trans, _ = s.store.TranslationsAll(p.TransGroup, p.ID)
 	}
 	return v
 }
@@ -240,6 +329,144 @@ func (s *Server) adminExtDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	s.clearGeneratedCaches()
 	http.Redirect(w, r, "/admin/ext/"+ct.Key+"?deleted=1", http.StatusSeeOther)
+}
+
+// adminExtReorder 保存层级类型同级条目的新顺序（把 extra.order 写为各自在列表中的下标）。
+func (s *Server) adminExtReorder(w http.ResponseWriter, r *http.Request) {
+	ct := s.adminExtType(r)
+	if ct == nil || !ct.Hierarchical {
+		s.notFound(w, r)
+		return
+	}
+	if _, ok := s.checkCSRF(w, r); !ok {
+		return
+	}
+	for i, idStr := range r.Form["ids"] {
+		p, _ := s.store.GetPostByID(atoi64(idStr))
+		if p == nil || p.Type != ct.Key {
+			continue
+		}
+		next := setExtraOrder(p.Extra, i)
+		if next == p.Extra {
+			continue
+		}
+		p.Extra = next
+		if err := s.store.UpdatePost(p); err != nil {
+			s.serverError(w, err)
+			return
+		}
+	}
+	s.clearGeneratedCaches()
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write([]byte(`{"ok":true}`))
+}
+
+// setExtraOrder 只更新 extra JSON 里的 order 字段，保留其它自定义字段。
+func setExtraOrder(extra string, order int) string {
+	m := map[string]any{}
+	if t := strings.TrimSpace(extra); t != "" {
+		_ = json.Unmarshal([]byte(t), &m)
+	}
+	if cur, ok := m["order"].(float64); ok && int(cur) == order {
+		return extra
+	}
+	m["order"] = order
+	b, err := json.Marshal(m)
+	if err != nil {
+		return extra
+	}
+	return string(b)
+}
+
+// ---------- 归档页文案（每站点、分语种自定义标题/简介）----------
+
+const extArchiveMetaKey = "ext_archive_meta"
+
+// extArchiveEntry 是某类型归档页的自定义文案（按语种）。
+type extArchiveEntry struct {
+	Title map[string]string `json:"title,omitempty"`
+	Intro map[string]string `json:"intro,omitempty"`
+}
+
+func (s *Server) extArchiveMetaAll() map[string]extArchiveEntry {
+	out := map[string]extArchiveEntry{}
+	if raw := strings.TrimSpace(s.store.Setting(extArchiveMetaKey)); raw != "" {
+		_ = json.Unmarshal([]byte(raw), &out)
+	}
+	return out
+}
+
+// extArchiveText 返回某类型归档页在某语种下的自定义标题与简介（未设置则为空）。
+func (s *Server) extArchiveText(typeKey, lang string) (title, intro string) {
+	if e, ok := s.extArchiveMetaAll()[typeKey]; ok {
+		return strings.TrimSpace(e.Title[lang]), strings.TrimSpace(e.Intro[lang])
+	}
+	return "", ""
+}
+
+func (s *Server) adminExtArchiveForm(w http.ResponseWriter, r *http.Request) {
+	ct := s.adminExtType(r)
+	if ct == nil {
+		s.notFound(w, r)
+		return
+	}
+	sess, _ := s.currentSession(r)
+	v := s.adminView(r, ct.Name(s.adminLang(r)))
+	s.authed(v, sess)
+	v.ExtType = ct
+	v.EditLang = s.adminLang(r)
+	vals := map[string]string{}
+	if e, ok := s.extArchiveMetaAll()[ct.Key]; ok {
+		for code, t := range e.Title {
+			vals["title_"+code] = t
+		}
+		for code, in := range e.Intro {
+			vals["intro_"+code] = in
+		}
+	}
+	v.ExtValues = vals
+	if r.URL.Query().Get("saved") == "1" {
+		v.Flash = v.Admin.T("admin.ext.saved", "已保存。")
+	}
+	s.rnd.Admin(w, "ext_archive", http.StatusOK, v)
+}
+
+func (s *Server) adminExtArchiveSave(w http.ResponseWriter, r *http.Request) {
+	ct := s.adminExtType(r)
+	if ct == nil {
+		s.notFound(w, r)
+		return
+	}
+	if _, ok := s.checkCSRF(w, r); !ok {
+		return
+	}
+	all := s.extArchiveMetaAll()
+	entry := extArchiveEntry{Title: map[string]string{}, Intro: map[string]string{}}
+	for _, loc := range s.locales() {
+		if t := strings.TrimSpace(r.FormValue("title_" + loc.Code)); t != "" {
+			entry.Title[loc.Code] = t
+		}
+		if in := strings.TrimSpace(r.FormValue("intro_" + loc.Code)); in != "" {
+			entry.Intro[loc.Code] = in
+		}
+	}
+	if len(entry.Title) == 0 && len(entry.Intro) == 0 {
+		delete(all, ct.Key)
+	} else {
+		all[ct.Key] = entry
+	}
+	b, _ := json.Marshal(all)
+	if err := s.store.SetSetting(extArchiveMetaKey, string(b)); err != nil {
+		s.serverError(w, err)
+		return
+	}
+	s.clearGeneratedCaches()
+	if r.Header.Get("X-Requested-With") == "XMLHttpRequest" {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+		return
+	}
+	http.Redirect(w, r, "/admin/ext/"+ct.Key+"/archive?saved=1", http.StatusSeeOther)
 }
 
 // ---------- 自定义字段 <-> 表单 ----------
@@ -572,14 +799,29 @@ func typeFormFromRequest(r *http.Request, key string, isNew bool) *TypeFormView 
 	return f
 }
 
-// typeFieldsFromForm 把设计器的字段行编码为存库用的 JSON（跳过 key 为空的行）。
+// typeFieldsFromForm 把设计器的字段行编码为存库用的 JSON。
+// 标识 key 优先用隐藏的 field_N_key（编辑时回填、保证稳定），为空则按英文名自动生成，
+// 仅有中文名时给个稳定兜底标识；整行为空才跳过。
 func typeFieldsFromForm(r *http.Request) string {
 	var fields []fieldJSON
+	seen := map[string]bool{}
 	for i := 0; i < typeFieldSlots; i++ {
+		labelZh := strings.TrimSpace(r.FormValue(fmt.Sprintf("field_%d_label_zh", i)))
+		labelEn := strings.TrimSpace(r.FormValue(fmt.Sprintf("field_%d_label_en", i)))
 		key := slugify(r.FormValue(fmt.Sprintf("field_%d_key", i)))
+		if key == "" {
+			key = slugify(labelEn)
+		}
+		if key == "" && (labelZh != "" || labelEn != "") {
+			key = fmt.Sprintf("field%d", len(fields)+1)
+		}
 		if key == "" {
 			continue
 		}
+		for base, n := key, 2; seen[key]; n++ {
+			key = fmt.Sprintf("%s-%d", base, n)
+		}
+		seen[key] = true
 		fj := fieldJSON{
 			Key:       key,
 			Label:     map[string]string{},
@@ -587,11 +829,11 @@ func typeFieldsFromForm(r *http.Request) string {
 			Required:  r.FormValue(fmt.Sprintf("field_%d_required", i)) == "1",
 			Localized: r.FormValue(fmt.Sprintf("field_%d_localized", i)) == "1",
 		}
-		if zh := strings.TrimSpace(r.FormValue(fmt.Sprintf("field_%d_label_zh", i))); zh != "" {
-			fj.Label["zh"] = zh
+		if labelZh != "" {
+			fj.Label["zh"] = labelZh
 		}
-		if en := strings.TrimSpace(r.FormValue(fmt.Sprintf("field_%d_label_en", i))); en != "" {
-			fj.Label["en"] = en
+		if labelEn != "" {
+			fj.Label["en"] = labelEn
 		}
 		if fj.Type == "" {
 			fj.Type = "text"

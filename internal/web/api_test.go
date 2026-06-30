@@ -79,6 +79,59 @@ func TestAPILanguages(t *testing.T) {
 	}
 }
 
+func TestAPICreateCustomLanguage(t *testing.T) {
+	s, token := newTestAutomationServer(t, "languages:read,languages:write")
+	body := bytes.NewBufferString(`{"code":"pt","name":"Português","tag":"pt-BR","enable":true,"default":true}`)
+	r := httptest.NewRequest(http.MethodPost, "/api/admin/v1/languages", body)
+	r.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+
+	s.apiCreateLanguage(w, r)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var created struct {
+		Default string `json:"default"`
+		Item    struct {
+			Code    string `json:"code"`
+			Name    string `json:"name"`
+			Tag     string `json:"tag"`
+			OG      string `json:"og"`
+			Default bool   `json:"default"`
+			Enabled bool   `json:"enabled"`
+			Custom  bool   `json:"custom"`
+		} `json:"item"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	if created.Default != "pt" || created.Item.Code != "pt" || created.Item.Name != "Português" || created.Item.Tag != "pt-BR" || created.Item.OG != "pt_BR" || !created.Item.Default || !created.Item.Enabled || !created.Item.Custom {
+		t.Fatalf("unexpected create response: %#v", created)
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/admin/v1/languages", nil)
+	listReq.Header.Set("Authorization", "Bearer "+token)
+	listResp := httptest.NewRecorder()
+	s.apiLanguages(listResp, listReq)
+	if listResp.Code != http.StatusOK {
+		t.Fatalf("list status = %d, body = %s", listResp.Code, listResp.Body.String())
+	}
+	var listed struct {
+		Default string `json:"default"`
+		Items   []struct {
+			Code    string `json:"code"`
+			Default bool   `json:"default"`
+			Custom  bool   `json:"custom"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(listResp.Body.Bytes(), &listed); err != nil {
+		t.Fatalf("decode list response: %v", err)
+	}
+	if listed.Default != "pt" || len(listed.Items) == 0 || listed.Items[0].Code != "pt" || !listed.Items[0].Default || !listed.Items[0].Custom {
+		t.Fatalf("custom language was not enabled as default: %#v", listed)
+	}
+}
+
 func TestAutomationOpenAPIIncludesMediaUpload(t *testing.T) {
 	spec := automationOpenAPISpec("https://example.com/api/admin/v1")
 	paths, ok := spec["paths"].(map[string]any)
@@ -118,6 +171,19 @@ func TestAutomationOpenAPIIncludesMediaUpload(t *testing.T) {
 	if _, ok := schemas["MediaUploadResponse"]; !ok {
 		t.Fatalf("MediaUploadResponse schema missing: %#v", schemas)
 	}
+	languages, ok := paths["/languages"].(map[string]any)
+	if !ok {
+		t.Fatalf("/languages path missing: %#v", paths)
+	}
+	if _, ok := languages["post"].(map[string]any); !ok {
+		t.Fatalf("POST /languages missing: %#v", languages)
+	}
+	if _, ok := schemas["LanguageCreateInput"]; !ok {
+		t.Fatalf("LanguageCreateInput schema missing: %#v", schemas)
+	}
+	if _, ok := schemas["LanguageItemResponse"]; !ok {
+		t.Fatalf("LanguageItemResponse schema missing: %#v", schemas)
+	}
 	for _, path := range []string{"/posts/{id}/preview", "/links/{id}/preview"} {
 		entry, ok := paths[path].(map[string]any)
 		if !ok {
@@ -144,6 +210,19 @@ func TestAutomationOpenAPIIncludesMediaUpload(t *testing.T) {
 			t.Fatalf("POST %s responses missing: %#v", path, post)
 		}
 	}
+	for _, path := range []string{"/posts/featured/{id}", "/links/featured/{id}"} {
+		entry, ok := paths[path].(map[string]any)
+		if !ok {
+			t.Fatalf("%s path missing: %#v", path, paths)
+		}
+		patch, ok := entry["patch"].(map[string]any)
+		if !ok {
+			t.Fatalf("PATCH %s missing: %#v", path, entry)
+		}
+		if patch["requestBody"] == nil || patch["responses"] == nil {
+			t.Fatalf("PATCH %s request/response missing: %#v", path, patch)
+		}
+	}
 	if _, ok := schemas["ContentPreviewResponse"]; !ok {
 		t.Fatalf("ContentPreviewResponse schema missing: %#v", schemas)
 	}
@@ -152,6 +231,9 @@ func TestAutomationOpenAPIIncludesMediaUpload(t *testing.T) {
 	}
 	if _, ok := schemas["PreviewURLResponse"]; !ok {
 		t.Fatalf("PreviewURLResponse schema missing: %#v", schemas)
+	}
+	if _, ok := schemas["FeaturedInput"]; !ok {
+		t.Fatalf("FeaturedInput schema missing: %#v", schemas)
 	}
 	for _, path := range []string{"/site-profile", "/navigation"} {
 		entry, ok := paths[path].(map[string]any)
@@ -914,6 +996,64 @@ func TestAPICreatePostUsesConfiguredDefaultAuthor(t *testing.T) {
 	}
 	if len(logs) != 1 || !strings.Contains(logs[0].Message, "创建文章（草稿 · English）：Default Author Draft") {
 		t.Fatalf("automation log message = %#v", logs)
+	}
+}
+
+func TestAPIUpdateContentFeaturedRequiresPinScope(t *testing.T) {
+	s, token := newTestAutomationServer(t, "posts:read,posts:pin")
+	id, err := s.store.CreatePost(&store.Post{
+		Type:       "post",
+		Lang:       "zh",
+		Slug:       "api-pin-post",
+		Title:      "API Pin Post",
+		Status:     "draft",
+		EditorMode: "markdown",
+	})
+	if err != nil {
+		t.Fatalf("create post: %v", err)
+	}
+	body := bytes.NewReader([]byte(`{"featured":true}`))
+	r := httptest.NewRequest(http.MethodPatch, "/api/admin/v1/posts/featured/"+strconv.FormatInt(id, 10), body)
+	r.SetPathValue("collection", "posts")
+	r.SetPathValue("id", strconv.FormatInt(id, 10))
+	r.Header.Set("Authorization", "Bearer "+token)
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	s.apiUpdateContentFeatured(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	got, err := s.store.GetPostByID(id)
+	if err != nil {
+		t.Fatalf("get post: %v", err)
+	}
+	if got == nil || !got.Featured {
+		t.Fatalf("featured = %v, want true", got != nil && got.Featured)
+	}
+
+	noPinServer, noPinToken := newTestAutomationServer(t, "posts:read")
+	noPinID, err := noPinServer.store.CreatePost(&store.Post{
+		Type:       "post",
+		Lang:       "zh",
+		Slug:       "api-pin-forbidden",
+		Title:      "API Pin Forbidden",
+		Status:     "draft",
+		EditorMode: "markdown",
+	})
+	if err != nil {
+		t.Fatalf("create no pin post: %v", err)
+	}
+	r = httptest.NewRequest(http.MethodPatch, "/api/admin/v1/posts/featured/"+strconv.FormatInt(noPinID, 10), strings.NewReader(`{"featured":true}`))
+	r.SetPathValue("collection", "posts")
+	r.SetPathValue("id", strconv.FormatInt(noPinID, 10))
+	r.Header.Set("Authorization", "Bearer "+noPinToken)
+	r.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+
+	noPinServer.apiUpdateContentFeatured(w, r)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("forbidden status = %d, body = %s", w.Code, w.Body.String())
 	}
 }
 

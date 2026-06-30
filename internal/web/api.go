@@ -30,6 +30,7 @@ const (
 
 const (
 	apiScopeLanguagesRead       = "languages:read"
+	apiScopeLanguagesWrite      = "languages:write"
 	apiScopeMediaWrite          = "media:write"
 	apiScopeSiteRead            = "site:read"
 	apiScopeSiteWrite           = "site:write"
@@ -134,6 +135,10 @@ type apiContentInput struct {
 	Fields map[string]any `json:"fields,omitempty"`
 }
 
+type apiFeaturedInput struct {
+	Featured *bool `json:"featured"`
+}
+
 type apiCategory struct {
 	ID          int64  `json:"id"`
 	Slug        string `json:"slug"`
@@ -182,6 +187,18 @@ type apiLanguageItem struct {
 	Code    string `json:"code"`
 	Name    string `json:"name"`
 	Tag     string `json:"tag"`
+	OG      string `json:"og"`
+	Default bool   `json:"default"`
+	Enabled bool   `json:"enabled"`
+	Custom  bool   `json:"custom"`
+}
+
+type apiLanguageCreateInput struct {
+	Code    string `json:"code"`
+	Name    string `json:"name"`
+	Tag     string `json:"tag"`
+	OG      string `json:"og"`
+	Enable  bool   `json:"enable"`
 	Default bool   `json:"default"`
 }
 
@@ -313,9 +330,59 @@ func (s *Server) apiLanguages(w http.ResponseWriter, r *http.Request) {
 	locales := s.locales()
 	items := make([]apiLanguageItem, 0, len(locales))
 	for _, l := range locales {
-		items = append(items, apiLanguageItem{Code: l.Code, Name: l.Name, Tag: l.Tag, Default: l.Code == def})
+		items = append(items, apiLanguageItem{
+			Code:    l.Code,
+			Name:    l.Name,
+			Tag:     l.Tag,
+			OG:      l.OG,
+			Default: l.Code == def,
+			Enabled: true,
+			Custom:  l.Custom,
+		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"default": def, "items": items})
+}
+
+func (s *Server) apiCreateLanguage(w http.ResponseWriter, r *http.Request) {
+	auth, ok := s.requireAutomationScope(w, r, apiScopeLanguagesWrite)
+	if !ok {
+		return
+	}
+	var in apiLanguageCreateInput
+	if !decodeAPIJSON(w, r, &in) {
+		return
+	}
+	loc, errCode, errMsg, err := s.addCustomLocale(strings.TrimSpace(in.Code), strings.TrimSpace(in.Name), strings.TrimSpace(in.Tag), strings.TrimSpace(in.OG))
+	if err != nil {
+		apiError(w, http.StatusInternalServerError, "store_error", err.Error())
+		return
+	}
+	if errMsg != "" {
+		apiError(w, http.StatusBadRequest, errCode, errMsg)
+		return
+	}
+	if in.Enable || in.Default {
+		if err := s.enableLocale(loc.Code, in.Default); err != nil {
+			apiError(w, http.StatusInternalServerError, "store_error", err.Error())
+			return
+		}
+	}
+	def := s.defaultLang()
+	enabled := s.langEnabled(loc.Code)
+	_ = s.store.CreateAutomationLog(auth.key.ID, "create", "language", 0, "新增自定义语种："+loc.Code)
+	s.clearGeneratedCaches()
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"item": apiLanguageItem{
+			Code:    loc.Code,
+			Name:    loc.Name,
+			Tag:     loc.Tag,
+			OG:      loc.OG,
+			Default: loc.Code == def,
+			Enabled: enabled,
+			Custom:  loc.Custom,
+		},
+		"default": def,
+	})
 }
 
 func (s *Server) apiGetSiteProfile(w http.ResponseWriter, r *http.Request) {
@@ -905,6 +972,59 @@ func (s *Server) apiUpdateContent(w http.ResponseWriter, r *http.Request) {
 	}
 	updated, _ := s.store.GetPostByID(next.ID)
 	_ = s.store.CreateAutomationLog(auth.key.ID, "update", kind, next.ID, s.automationContentLogMessage("update", kind, &next))
+	s.clearGeneratedCaches()
+	writeJSON(w, http.StatusOK, map[string]any{"item": s.apiContentItem(updated, true)})
+}
+
+func (s *Server) apiUpdatePostFeatured(w http.ResponseWriter, r *http.Request) {
+	r.SetPathValue("collection", "posts")
+	s.apiUpdateContentFeatured(w, r)
+}
+
+func (s *Server) apiUpdateLinkFeatured(w http.ResponseWriter, r *http.Request) {
+	r.SetPathValue("collection", "links")
+	s.apiUpdateContentFeatured(w, r)
+}
+
+func (s *Server) apiUpdateContentFeatured(w http.ResponseWriter, r *http.Request) {
+	collection := r.PathValue("collection")
+	if collection != "posts" && collection != "links" {
+		apiError(w, http.StatusNotFound, "not_found", "接口不存在。")
+		return
+	}
+	kind, ok := s.apiContentKind(collection)
+	if !ok {
+		apiError(w, http.StatusNotFound, "not_found", "接口不存在。")
+		return
+	}
+	auth, ok := s.requireAutomationScope(w, r, apiScope(collection, "pin"))
+	if !ok {
+		return
+	}
+	existing, ok := s.apiContentByID(w, r, kind)
+	if !ok {
+		return
+	}
+	var in apiFeaturedInput
+	if !decodeAPIJSON(w, r, &in) {
+		return
+	}
+	if in.Featured == nil {
+		apiError(w, http.StatusBadRequest, "bad_request", "featured 不能为空。")
+		return
+	}
+	if err := s.store.SetFeatured(existing.ID, *in.Featured); err != nil {
+		apiError(w, http.StatusInternalServerError, "store_error", err.Error())
+		return
+	}
+	updated, _ := s.store.GetPostByID(existing.ID)
+	action := "pin"
+	label := "置顶"
+	if !*in.Featured {
+		action = "unpin"
+		label = "取消置顶"
+	}
+	_ = s.store.CreateAutomationLog(auth.key.ID, action, kind, existing.ID, fmt.Sprintf("%s%s：%s", label, apiKindName(kind), existing.Title))
 	s.clearGeneratedCaches()
 	writeJSON(w, http.StatusOK, map[string]any{"item": s.apiContentItem(updated, true)})
 }
@@ -1613,7 +1733,7 @@ func apiScope(collection, action string) string {
 func automationScopeActions(resource string) []string {
 	switch resource {
 	case "posts", "links":
-		return []string{"read", "categories", "categories:write", "write", "publish"}
+		return []string{"read", "categories", "categories:write", "write", "publish", "pin"}
 	default:
 		return []string{"read", "write", "publish"}
 	}

@@ -45,6 +45,10 @@ func TestTypeDesignerEndToEnd(t *testing.T) {
 	if hb := wh.Body.String(); !strings.Contains(hb, "菜谱") || !strings.Contains(hb, "/admin/extensions/types/recipe/edit") {
 		t.Fatalf("hub missing custom type with edit link")
 	}
+	// hub 卡片有齿轮菜单 + 归档页文案弹窗（集成 停用/归档文案/编辑/删除）
+	if hb := wh.Body.String(); !strings.Contains(hb, "ext-menu") || !strings.Contains(hb, `data-archive-modal="recipe"`) || !strings.Contains(hb, `data-archive-open="recipe"`) {
+		t.Fatalf("hub missing gear menu / archive modal")
+	}
 
 	// 3. 通用后台 CRUD 建一条实例
 	inst := url.Values{
@@ -104,6 +108,38 @@ func TestTypeDesignerEndToEnd(t *testing.T) {
 	h.ServeHTTP(w404, httptest.NewRequest(http.MethodGet, "/"+lang+"/recipe/tomato-egg", nil))
 	if w404.Code != http.StatusNotFound {
 		t.Fatalf("recipe detail should 404 after type delete, got %d", w404.Code)
+	}
+}
+
+// TestTypeDesignerDerivedKeys 验证新设计器：字段行不填 key 时，由英文名自动生成稳定标识。
+func TestTypeDesignerDerivedKeys(t *testing.T) {
+	s := newTestPublicServer(t, "")
+	h := s.Handler()
+	form := url.Values{
+		"key": {"happening"}, "name_zh": {"活动二"}, "name_en": {"Happening"},
+		// 不填 field_N_key，只给中英文名 + 类型（模拟新设计器隐藏 key 列）
+		"field_0_label_zh": {"地点"}, "field_0_label_en": {"Venue"}, "field_0_type": {"text"},
+		"field_1_label_zh": {"开始日期"}, "field_1_label_en": {"Start Date"}, "field_1_type": {"datetime"},
+		"field_2_label_zh": {"仅中文字段"}, "field_2_type": {"text"},
+	}
+	rt, _ := authedAdminRequest(t, s, http.MethodPost, "/admin/extensions/types", form)
+	wt := httptest.NewRecorder()
+	h.ServeHTTP(wt, rt)
+	if wt.Code != http.StatusSeeOther {
+		t.Fatalf("create status = %d, body = %s", wt.Code, wt.Body.String())
+	}
+	row, _ := s.store.GetContentType("happening")
+	if row == nil {
+		t.Fatalf("type not stored")
+	}
+	for _, want := range []string{`"key":"venue"`, `"key":"start-date"`} {
+		if !strings.Contains(row.Fields, want) {
+			t.Fatalf("derived field key %q missing in %s", want, row.Fields)
+		}
+	}
+	// 仅中文名的字段也不应被丢弃（兜底标识）
+	if !strings.Contains(row.Fields, "仅中文字段") {
+		t.Fatalf("zh-only field dropped: %s", row.Fields)
 	}
 }
 

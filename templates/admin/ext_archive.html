@@ -1,0 +1,39 @@
+{{define "body"}}{{$ct := .ExtType}}
+<div class="admin-head ext-list-head">
+  <div>
+    <p class="ext-back"><a href="/admin/ext/{{$ct.Key}}">← {{$ct.Name $.EditLang}}</a></p>
+    <h1>{{.Admin.T "admin.ext.archive_title" "归档页文案"}}</h1>
+  </div>
+  <button class="btn btn-primary" type="submit" form="ext-archive-form" data-save>{{.Admin.T "admin.action.save" "保存"}}</button>
+</div>
+{{if .Flash}}<div class="ext-flash">{{.Flash}}</div>{{end}}
+
+<form method="post" action="/admin/ext/{{$ct.Key}}/archive" class="admin-form ext-archive-form" id="ext-archive-form">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+  <p class="muted ext-archive-hint">{{.Admin.T "admin.ext.archive_hint" "自定义该类型归档页（列表页）的标题与简介；留空则使用类型名。可按语种分别填写。"}}</p>
+  {{range .Locales}}
+  <fieldset class="seo-box ext-archive-loc">
+    <legend>{{.Name}}</legend>
+    <div class="field">
+      <label for="title_{{.Code}}">{{$.Admin.T "admin.ext.archive_field_title" "标题"}}</label>
+      <input id="title_{{.Code}}" name="title_{{.Code}}" value="{{index $.ExtValues (printf "title_%s" .Code)}}" placeholder="{{$ct.Name .Code}}">
+    </div>
+    <div class="field">
+      <label for="intro_{{.Code}}">{{$.Admin.T "admin.ext.archive_field_intro" "简介（标题下方说明）"}}</label>
+      <textarea id="intro_{{.Code}}" name="intro_{{.Code}}" rows="2">{{index $.ExtValues (printf "intro_%s" .Code)}}</textarea>
+    </div>
+  </fieldset>
+  {{end}}
+</form>
+
+<style>
+  .ext-archive-form { max-width: var(--w-read); }
+  .ext-archive-hint { margin: 0 0 1.4rem; font-size: .9rem; }
+  .ext-archive-loc { margin-bottom: 1.2rem; }
+  .ext-list-head { align-items: flex-start; }
+  .ext-back { font-size: .85rem; color: var(--muted); margin: 0 0 .35rem; }
+  .ext-back a { color: inherit; }
+  .ext-back a:hover { color: var(--accent); }
+  .ext-flash { background: var(--accent-wash); color: var(--accent); border-radius: 8px; padding: .7rem 1rem; margin-bottom: 1.4rem; font-size: .9rem; }
+</style>
+{{end}}

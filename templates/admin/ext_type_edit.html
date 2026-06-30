@@ -7,59 +7,83 @@
 </div>
 {{if .FormErr}}<div class="form-err">{{.FormErr}}</div>{{end}}
 
-<form method="post" action="{{if $f.IsNew}}/admin/extensions/types{{else}}/admin/extensions/types/{{$f.Key}}{{end}}" class="admin-form type-form">
+{{if $f.IsNew}}
+<div class="type-presets" data-presets>
+  <p class="presets-hint">{{.Admin.T "admin.ext.preset_hint" "从模板开始，几秒搭好；也可以选「空白」自己加字段。"}}</p>
+  <div class="preset-grid">
+    <button type="button" class="preset-card" data-preset="recipe"><span class="preset-name">菜谱</span><span class="preset-fields">食材 · 步骤 · 烹饪时间 · 成品图</span></button>
+    <button type="button" class="preset-card" data-preset="team"><span class="preset-name">团队成员</span><span class="preset-fields">职位 · 简介 · 头像 · 社交链接</span></button>
+    <button type="button" class="preset-card" data-preset="job"><span class="preset-name">招聘职位</span><span class="preset-fields">部门 · 地点 · 类型 · 申请链接</span></button>
+    <button type="button" class="preset-card" data-preset="faq"><span class="preset-name">常见问题</span><span class="preset-fields">答案（+ 分类）</span></button>
+    <button type="button" class="preset-card" data-preset="timeline"><span class="preset-name">时间线</span><span class="preset-fields">日期 · 说明 · 配图</span></button>
+    <button type="button" class="preset-card" data-preset="blank"><span class="preset-name">空白</span><span class="preset-fields">自己定义字段</span></button>
+  </div>
+</div>
+{{end}}
+
+<form method="post" action="{{if $f.IsNew}}/admin/extensions/types{{else}}/admin/extensions/types/{{$f.Key}}{{end}}" class="admin-form type-form" data-type-form>
   <input type="hidden" name="_csrf" value="{{.CSRF}}">
 
   <div class="field-group">
     <div class="form-2col">
-      <div class="field">
-        <label for="key">{{.Admin.T "admin.ext.type_key" "标识 key"}}</label>
-        {{if $f.IsNew}}<input id="key" name="key" value="{{$f.Key}}" required placeholder="recipe">{{else}}<input id="key" value="{{$f.Key}}" disabled>{{end}}
-        <span class="hint">{{.Admin.T "admin.ext.type_key_hint" "也是 URL 前缀；小写字母、数字、连字符"}}</span>
-      </div>
-      <div class="field">
-        <label for="icon">{{.Admin.T "admin.ext.type_icon" "图标名（可选）"}}</label>
-        <input id="icon" name="icon" value="{{$f.Icon}}" placeholder="ti-book">
-      </div>
       <div class="field">
         <label for="name_zh">{{.Admin.T "admin.ext.type_name_zh" "名称（中文）"}}</label>
         <input id="name_zh" name="name_zh" value="{{$f.NameZh}}" required placeholder="菜谱">
       </div>
       <div class="field">
         <label for="name_en">{{.Admin.T "admin.ext.type_name_en" "名称（英文）"}}</label>
-        <input id="name_en" name="name_en" value="{{$f.NameEn}}" placeholder="Recipes">
+        <input id="name_en" name="name_en" value="{{$f.NameEn}}" placeholder="Recipes" data-name-en>
+        <span class="hint">{{.Admin.T "admin.ext.type_name_en_hint" "用来生成网址；留空可在「高级」里手填标识。"}}</span>
       </div>
-    </div>
-    <div class="flag-row">
-      <label class="flag"><input type="checkbox" name="has_category" value="1"{{if $f.HasCategory}} checked{{end}}> {{.Admin.T "admin.ext.type_cat" "启用分类"}}</label>
-      <label class="flag"><input type="checkbox" name="searchable" value="1"{{if $f.Searchable}} checked{{end}}> {{.Admin.T "admin.ext.type_search" "可搜索"}}</label>
-      <label class="flag"><input type="checkbox" name="hierarchical" value="1"{{if $f.Hierarchical}} checked{{end}}> {{.Admin.T "admin.ext.type_hier" "层级（树形）"}}</label>
     </div>
   </div>
 
   <div class="field-group">
-    <h2 class="group-title">{{.Admin.T "admin.ext.type_fields" "自定义字段"}}</h2>
-    <p class="hint type-fields-hint">{{.Admin.T "admin.ext.type_fields_hint" "留空的行会被忽略；标题 / 摘要 / 封面 / 正文为内置字段，无需在此添加。"}}</p>
-    <div class="field-rows">
+    <h2 class="group-title">{{.Admin.T "admin.ext.type_fields" "额外字段"}}</h2>
+    <p class="hint type-fields-hint">{{.Admin.T "admin.ext.type_fields_hint2" "标题 / 摘要 / 封面 / 正文已是内置字段；这里只加该类型特有的字段。"}}</p>
+    <div class="field-rows" data-field-rows>
       <div class="fr-head">
-        <span>key</span>
-        <span>{{.Admin.T "admin.ext.type_field_label" "名称（中 / 英）"}}</span>
+        <span>{{.Admin.T "admin.ext.type_field_label2" "字段名称（中 / 英）"}}</span>
         <span>{{.Admin.T "admin.ext.type_field_type" "类型"}}</span>
         <span class="fr-c">{{.Admin.T "admin.ext.type_field_req" "必填"}}</span>
         <span class="fr-c">{{.Admin.T "admin.ext.type_field_loc" "分语种"}}</span>
+        <span class="fr-c"></span>
       </div>
       {{range $i, $fl := $f.Fields}}
       <div class="fr-row">
-        <input name="field_{{$i}}_key" value="{{$fl.Key}}" placeholder="price">
+        <input type="hidden" name="field_{{$i}}_key" value="{{$fl.Key}}" class="fr-key">
         <div class="fr-labels"><input name="field_{{$i}}_label_zh" value="{{$fl.LabelZh}}" placeholder="{{$.Admin.T "admin.ext.type_field_zh" "中文名"}}"><input name="field_{{$i}}_label_en" value="{{$fl.LabelEn}}" placeholder="English"></div>
-        <select name="field_{{$i}}_type">{{range $.TypeForm.FieldTypes}}<option value="{{.}}"{{if eq . $fl.Type}} selected{{end}}>{{.}}</option>{{end}}</select>
+        <select name="field_{{$i}}_type">{{template "type-options" $fl.Type}}</select>
         <span class="fr-c"><input type="checkbox" name="field_{{$i}}_required" value="1"{{if $fl.Required}} checked{{end}}></span>
         <span class="fr-c"><input type="checkbox" name="field_{{$i}}_localized" value="1"{{if $fl.Localized}} checked{{end}}></span>
+        <span class="fr-c"><button type="button" class="fr-del" data-fr-del title="{{$.Admin.T "admin.action.delete" "删除"}}" aria-label="{{$.Admin.T "admin.action.delete" "删除"}}">✕</button></span>
       </div>
       {{end}}
     </div>
     <button type="button" class="btn btn-add" data-add-field>+ {{.Admin.T "admin.ext.type_add_field" "添加字段"}}</button>
   </div>
+
+  <details class="type-adv"{{if or (not $f.IsNew) .FormErr}} open{{end}}>
+    <summary>{{.Admin.T "admin.ext.type_advanced" "高级设置"}}</summary>
+    <div class="type-adv-body">
+      <div class="form-2col">
+        <div class="field">
+          <label for="key">{{.Admin.T "admin.ext.type_key" "网址标识 key"}}</label>
+          {{if $f.IsNew}}<input id="key" name="key" value="{{$f.Key}}" placeholder="recipe" data-key-field>{{else}}<input id="key" value="{{$f.Key}}" disabled>{{end}}
+          <span class="hint">{{.Admin.T "admin.ext.type_key_hint2" "URL 前缀；小写字母 / 数字 / 连字符。留空会按英文名自动生成。"}}</span>
+        </div>
+        <div class="field">
+          <label for="icon">{{.Admin.T "admin.ext.type_icon" "图标名（可选）"}}</label>
+          <input id="icon" name="icon" value="{{$f.Icon}}" placeholder="ti-book">
+        </div>
+      </div>
+      <div class="flag-row">
+        <label class="flag"><input type="checkbox" name="searchable" value="1"{{if $f.Searchable}} checked{{end}}> {{.Admin.T "admin.ext.type_search2" "可被站内搜索"}}</label>
+        <label class="flag"><input type="checkbox" name="has_category" value="1"{{if $f.HasCategory}} checked{{end}}> {{.Admin.T "admin.ext.type_cat" "启用分类"}}</label>
+        <label class="flag"><input type="checkbox" name="hierarchical" value="1"{{if $f.Hierarchical}} checked{{end}}> {{.Admin.T "admin.ext.type_hier2" "层级（像文档那样分章节）"}}</label>
+      </div>
+    </div>
+  </details>
 
   <div class="edit-actions">
     <button class="btn btn-primary" type="submit">{{.Admin.T "admin.action.save" "保存"}}</button>
@@ -74,42 +98,152 @@
   .ext-back a:hover { color: var(--accent); }
   .ext-prefix { font-family: var(--mono); font-size: .82rem; font-weight: 400; color: var(--faint); }
   .type-form { max-width: 880px; }
+  .type-presets { max-width: 880px; margin: 0 0 1.8rem; }
+  .presets-hint { color: var(--muted); font-size: .9rem; margin: 0 0 .8rem; }
+  .preset-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: .7rem; }
+  .preset-card { display: flex; flex-direction: column; align-items: flex-start; gap: .25rem; text-align: left; padding: .85rem 1rem; border: 1px solid var(--line); border-radius: 11px; background: var(--surface); cursor: pointer; transition: border-color var(--speed), box-shadow var(--speed), transform var(--speed); }
+  .preset-card:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); box-shadow: var(--shadow); transform: translateY(-1px); }
+  .preset-card.active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-wash); }
+  .preset-name { font-weight: 600; font-size: .98rem; color: var(--ink); }
+  .preset-fields { font-size: .78rem; color: var(--faint); }
   .type-form .group-title { font-family: var(--sans); font-size: .82rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--faint); margin: 0 0 .3rem; }
   .type-fields-hint { margin: 0 0 1.1rem; }
-  .flag-row { display: flex; gap: 1.8rem; flex-wrap: wrap; margin-top: .2rem; }
-  .flag { display: inline-flex; align-items: center; gap: .55rem; font-size: .92rem; color: var(--ink-soft); }
-  .flag input { width: auto; }
   .field-rows { display: flex; flex-direction: column; gap: .45rem; }
-  .fr-head, .fr-row { display: grid; grid-template-columns: 1.1fr 2fr 1.05fr .6fr .7fr; gap: .55rem; align-items: center; }
-  .fr-head { font-size: .7rem; text-transform: uppercase; letter-spacing: .06em; color: var(--faint); padding: 0 .2rem .15rem; }
-  .fr-c { text-align: center; }
+  .fr-head, .fr-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(7rem, 9rem) 2.8rem 3.6rem 1.8rem; gap: .7rem; align-items: center; }
+  .fr-head { font-size: .72rem; color: var(--faint); padding: 0 .1rem .15rem; }
+  .fr-c { text-align: center; white-space: nowrap; }
   .fr-labels { display: flex; gap: .4rem; }
   .field-rows input, .field-rows select { width: 100%; padding: .5rem .62rem; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); font: inherit; font-size: .88rem; transition: border-color var(--speed); }
   .field-rows input[type=checkbox] { width: auto; }
   .field-rows input:focus, .field-rows select:focus { outline: none; border-color: var(--accent); }
+  .fr-del { border: 0; background: none; color: var(--faint); cursor: pointer; font-size: .9rem; padding: .2rem; border-radius: 6px; transition: color var(--speed), background var(--speed); }
+  .fr-del:hover { color: var(--danger); background: var(--line-soft); }
   .btn-add { margin-top: .9rem; padding: .42rem .9rem; font-size: .85rem; color: var(--muted); border-style: dashed; }
   .btn-add:hover { color: var(--accent); }
+  .type-adv { max-width: 880px; margin-top: 1.6rem; border: 1px solid var(--line); border-radius: var(--radius); background: color-mix(in srgb, var(--surface) 60%, var(--bg)); }
+  .type-adv > summary { cursor: pointer; padding: .85rem 1.1rem; font-weight: 600; font-size: .92rem; color: var(--ink-soft); list-style: none; }
+  .type-adv > summary::-webkit-details-marker { display: none; }
+  .type-adv > summary::before { content: "▸"; color: var(--muted); margin-right: .5rem; display: inline-block; transition: transform var(--speed); }
+  .type-adv[open] > summary::before { transform: rotate(90deg); }
+  .type-adv-body { padding: 0 1.1rem 1.2rem; }
+  .flag-row { display: flex; gap: 1.8rem; flex-wrap: wrap; margin-top: 1rem; }
+  .flag { display: inline-flex; align-items: center; gap: .55rem; font-size: .92rem; color: var(--ink-soft); }
+  .flag input { width: auto; }
   .type-form .edit-actions { display: flex; gap: .7rem; margin-top: 1.8rem; }
 </style>
 
 <script>
   (function () {
-    var wrap = document.querySelector('.field-rows');
-    var addBtn = document.querySelector('[data-add-field]');
-    if (!wrap || !addBtn) return;
+    var form = document.querySelector('[data-type-form]');
+    if (!form) return;
+    var rowsWrap = form.querySelector('[data-field-rows]');
+    var addBtn = form.querySelector('[data-add-field]');
     var MAX = 8;
-    addBtn.addEventListener('click', function () {
-      var rows = wrap.querySelectorAll('.fr-row');
-      var n = rows.length;
-      if (n >= MAX) return;
-      var clone = rows[n - 1].cloneNode(true);
-      clone.querySelectorAll('input, select').forEach(function (el) {
-        if (el.name) el.name = el.name.replace(/field_\d+_/, 'field_' + n + '_');
-        if (el.type === 'checkbox') el.checked = false; else el.value = '';
+    function slugify(s) { return (s || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, ''); }
+
+    /* 添加 / 删除字段行 */
+    function rowCount() { return rowsWrap.querySelectorAll('.fr-row').length; }
+    function reindex() {
+      rowsWrap.querySelectorAll('.fr-row').forEach(function (row, n) {
+        row.querySelectorAll('input, select').forEach(function (el) {
+          if (el.name) el.name = el.name.replace(/field_\d+_/, 'field_' + n + '_');
+        });
       });
-      wrap.appendChild(clone);
-      if (wrap.querySelectorAll('.fr-row').length >= MAX) addBtn.style.display = 'none';
+    }
+    function addRow(fill) {
+      if (rowCount() >= MAX) return null;
+      var rows = rowsWrap.querySelectorAll('.fr-row');
+      var clone = rows[rows.length - 1].cloneNode(true);
+      clone.querySelectorAll('input, select').forEach(function (el) {
+        if (el.type === 'checkbox') el.checked = false;
+        else if (el.tagName === 'SELECT') el.value = 'text';
+        else el.value = '';
+      });
+      rowsWrap.appendChild(clone);
+      reindex();
+      if (rowCount() >= MAX && addBtn) addBtn.style.display = 'none';
+      return clone;
+    }
+    if (addBtn) addBtn.addEventListener('click', function () { var r = addRow(); if (r) { var i = r.querySelector('input'); if (i) i.focus(); } });
+    rowsWrap.addEventListener('click', function (e) {
+      var del = e.target.closest('[data-fr-del]');
+      if (!del) return;
+      if (rowCount() <= 1) {
+        var row = del.closest('.fr-row');
+        row.querySelectorAll('input').forEach(function (el) { el.type === 'checkbox' ? el.checked = false : el.value = ''; });
+        row.querySelector('select').value = 'text';
+        return;
+      }
+      del.closest('.fr-row').remove();
+      reindex();
+      if (addBtn) addBtn.style.display = '';
+    });
+
+    /* 名称英文 → 自动生成 key（用户手改 key 后不再覆盖） */
+    var nameEn = form.querySelector('[data-name-en]');
+    var keyField = form.querySelector('[data-key-field]');
+    var keyEdited = false;
+    if (keyField) keyField.addEventListener('input', function () { keyEdited = (keyField.value.trim() !== ''); });
+    if (nameEn && keyField) nameEn.addEventListener('input', function () { if (!keyEdited) keyField.value = slugify(nameEn.value); });
+
+    /* 模板预设 */
+    var PRESETS = {
+      recipe: { zh: '菜谱', en: 'Recipes', fields: [['食材', 'Ingredients', 'repeater'], ['步骤', 'Steps', 'textarea'], ['烹饪时间', 'Cook time', 'text'], ['成品图', 'Photos', 'gallery']] },
+      team: { zh: '团队成员', en: 'Team', fields: [['职位', 'Role', 'text'], ['简介', 'Bio', 'textarea'], ['头像', 'Avatar', 'image'], ['社交链接', 'Link', 'url']] },
+      job: { zh: '招聘职位', en: 'Jobs', fields: [['部门', 'Department', 'text'], ['地点', 'Location', 'text'], ['工作类型', 'Type', 'select'], ['申请链接', 'Apply URL', 'url']] },
+      faq: { zh: '常见问题', en: 'FAQ', hasCategory: true, fields: [['答案', 'Answer', 'textarea']] },
+      timeline: { zh: '时间线', en: 'Timeline', fields: [['日期', 'Date', 'datetime'], ['说明', 'Description', 'textarea'], ['配图', 'Image', 'image']] },
+      blank: { zh: '', en: '', fields: [] }
+    };
+    function setRow(row, f) {
+      row.querySelector('.fr-key').value = '';
+      var labels = row.querySelectorAll('.fr-labels input');
+      labels[0].value = f[0]; labels[1].value = f[1];
+      row.querySelector('select').value = f[2];
+      row.querySelectorAll('input[type=checkbox]').forEach(function (c) { c.checked = false; });
+    }
+    function applyPreset(p) {
+      form.querySelector('#name_zh').value = p.zh;
+      if (nameEn) { nameEn.value = p.en; keyEdited = false; if (keyField) keyField.value = slugify(p.en); }
+      var hc = form.querySelector('input[name=has_category]'); if (hc) hc.checked = !!p.hasCategory;
+      // 重置字段行到所需数量
+      var rows = rowsWrap.querySelectorAll('.fr-row');
+      for (var i = rows.length - 1; i > 0; i--) rows[i].remove();
+      if (addBtn) addBtn.style.display = '';
+      var need = Math.max(p.fields.length, 1);
+      while (rowCount() < need) addRow();
+      var allRows = rowsWrap.querySelectorAll('.fr-row');
+      allRows.forEach(function (row, i) {
+        if (i < p.fields.length) setRow(row, p.fields[i]);
+        else { row.querySelector('.fr-key').value = ''; row.querySelectorAll('.fr-labels input').forEach(function (el) { el.value = ''; }); row.querySelector('select').value = 'text'; }
+      });
+      reindex();
+    }
+    var presetWrap = document.querySelector('[data-presets]');
+    if (presetWrap) presetWrap.addEventListener('click', function (e) {
+      var card = e.target.closest('.preset-card');
+      if (!card) return;
+      presetWrap.querySelectorAll('.preset-card').forEach(function (c) { c.classList.remove('active'); });
+      card.classList.add('active');
+      applyPreset(PRESETS[card.getAttribute('data-preset')] || PRESETS.blank);
+      form.querySelector('#name_zh').focus();
     });
   })();
 </script>
 {{end}}
+
+{{define "type-options"}}{{$sel := .}}<optgroup label="常用">
+<option value="text"{{if eq $sel "text"}} selected{{end}}>单行文字</option>
+<option value="textarea"{{if eq $sel "textarea"}} selected{{end}}>多行文字</option>
+<option value="number"{{if eq $sel "number"}} selected{{end}}>数字</option>
+<option value="datetime"{{if eq $sel "datetime"}} selected{{end}}>日期 / 时间</option>
+<option value="image"{{if eq $sel "image"}} selected{{end}}>图片</option>
+<option value="gallery"{{if eq $sel "gallery"}} selected{{end}}>多张图片</option>
+<option value="url"{{if eq $sel "url"}} selected{{end}}>链接</option>
+<option value="select"{{if eq $sel "select"}} selected{{end}}>下拉选项</option>
+<option value="bool"{{if eq $sel "bool"}} selected{{end}}>开关（是 / 否）</option>
+</optgroup><optgroup label="高级">
+<option value="markdown"{{if eq $sel "markdown"}} selected{{end}}>Markdown 正文</option>
+<option value="repeater"{{if eq $sel "repeater"}} selected{{end}}>键值表（如规格参数）</option>
+<option value="relation"{{if eq $sel "relation"}} selected{{end}}>关联内容</option>
+</optgroup>{{end}}

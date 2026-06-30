@@ -214,7 +214,8 @@ func automationStarterFiles(opts automationSkillOptions) ([]automationSkillFile,
 func automationOpenAPISpec(apiBase string) map[string]any {
 	paths := map[string]any{
 		"/languages": map[string]any{
-			"get": automationLanguagesOperation(),
+			"get":  automationLanguagesOperation(),
+			"post": automationLanguageCreateOperation(),
 		},
 		"/site-profile": map[string]any{
 			"get":   automationSiteProfileGetOperation(),
@@ -257,6 +258,9 @@ func automationOpenAPISpec(apiBase string) map[string]any {
 			paths["/"+col.path+"/{id}/preview-url"] = map[string]any{
 				"post": automationPreviewURLOperation(col),
 			}
+			paths["/"+col.path+"/featured/{id}"] = map[string]any{
+				"patch": automationFeaturedOperation(col),
+			}
 		}
 	}
 	return map[string]any{
@@ -264,7 +268,7 @@ func automationOpenAPISpec(apiBase string) map[string]any {
 		"info": map[string]any{
 			"title":       "GCMS Automation API",
 			"version":     "1.0.0",
-			"description": "开放语种、站点文案、导航菜单、分类、媒体上传、文章与链接草稿预览，以及文章、链接、页面的自动化接口。GCMS 不调用 AI API，外部 AI 工具或自动化程序使用访问密钥调用这里的接口。",
+			"description": "开放语种、站点文案、导航菜单、分类、媒体上传、文章与链接草稿预览、文章与链接置顶，以及文章、链接、页面的自动化接口。GCMS 不调用 AI API，外部 AI 工具或自动化程序使用访问密钥调用这里的接口。",
 		},
 		"servers": []map[string]string{{"url": apiBase}},
 		"security": []map[string][]string{
@@ -285,10 +289,21 @@ func automationOpenAPISpec(apiBase string) map[string]any {
 func automationLanguagesOperation() map[string]any {
 	return map[string]any{
 		"summary":     "列出启用语种",
-		"description": "只读接口。用于知道默认语种、启用语种，以及多语种内容更新时需要覆盖哪些语种。",
+		"description": "只读接口。用于知道默认语种、启用语种，以及多语种内容更新时需要覆盖哪些语种。返回项里的 enabled 表示该语种已在前台启用；custom 表示后台或 API 新增的自定义语种。",
 		"operationId": "listLanguages",
 		"tags":        []string{"语种"},
 		"responses":   automationResponses("LanguageListResponse"),
+	}
+}
+
+func automationLanguageCreateOperation() map[string]any {
+	return map[string]any{
+		"summary":     "新增自定义语种",
+		"description": "写接口。用于新增内置列表之外的自定义语种预设，可选择同时启用或设为默认语种。内置语种（如 zh/en/vi/id/th）不要用此接口重复创建，应在后台或已有设置里启用。",
+		"operationId": "createCustomLanguage",
+		"tags":        []string{"语种"},
+		"requestBody": automationJSONBody("LanguageCreateInput"),
+		"responses":   automationResponses("LanguageItemResponse"),
 	}
 }
 
@@ -457,6 +472,18 @@ func automationUpdateOperation(col automationCollection) map[string]any {
 	}
 }
 
+func automationFeaturedOperation(col automationCollection) map[string]any {
+	return map[string]any{
+		"summary":     "设置" + col.label + "置顶",
+		"description": "只修改 featured/置顶状态；文章置顶影响首页精选文章，链接置顶影响首页精选链接。需要对应资源的置顶权限。",
+		"operationId": "set" + automationOperationSuffix(col.path) + "Featured",
+		"tags":        []string{col.label},
+		"parameters":  []map[string]any{automationIDParam()},
+		"requestBody": automationJSONBody("FeaturedInput"),
+		"responses":   automationResponses("ContentItemResponse"),
+	}
+}
+
 func automationPreviewOperation(col automationCollection) map[string]any {
 	return map[string]any{
 		"summary":     "预览" + col.label + "草稿",
@@ -548,17 +575,40 @@ func automationOpenAPISchemas() map[string]any {
 			"properties": map[string]any{
 				"default": map[string]any{"type": "string"},
 				"items": map[string]any{
-					"type": "array",
-					"items": map[string]any{
-						"type": "object",
-						"properties": map[string]any{
-							"code":    map[string]any{"type": "string"},
-							"name":    map[string]any{"type": "string"},
-							"tag":     map[string]any{"type": "string"},
-							"default": map[string]any{"type": "boolean"},
-						},
-					},
+					"type":  "array",
+					"items": map[string]any{"$ref": "#/components/schemas/LanguageItem"},
 				},
+			},
+		},
+		"LanguageItemResponse": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"item":    map[string]any{"$ref": "#/components/schemas/LanguageItem"},
+				"default": map[string]any{"type": "string"},
+			},
+		},
+		"LanguageItem": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"code":    map[string]any{"type": "string", "description": "URL 前缀和内容 lang 值，如 zh、en、vi。"},
+				"name":    map[string]any{"type": "string"},
+				"tag":     map[string]any{"type": "string", "description": "BCP47 语言标记，如 en-US、vi-VN。"},
+				"og":      map[string]any{"type": "string", "description": "Open Graph locale，如 en_US、vi_VN。"},
+				"default": map[string]any{"type": "boolean"},
+				"enabled": map[string]any{"type": "boolean"},
+				"custom":  map[string]any{"type": "boolean"},
+			},
+		},
+		"LanguageCreateInput": map[string]any{
+			"type":     "object",
+			"required": []string{"code"},
+			"properties": map[string]any{
+				"code":    map[string]any{"type": "string", "description": "2-12 位小写字母、数字或短横线，用作 URL 前缀。内置语种不要重复创建。"},
+				"name":    map[string]any{"type": "string", "description": "原生语言名；留空时使用 code。"},
+				"tag":     map[string]any{"type": "string", "description": "BCP47 语言标记；留空时使用 code。"},
+				"og":      map[string]any{"type": "string", "description": "Open Graph locale；留空时由 tag 自动转换。"},
+				"enable":  map[string]any{"type": "boolean", "description": "创建后是否立即启用到前台。"},
+				"default": map[string]any{"type": "boolean", "description": "是否创建后设为默认语种；设为 true 会同时启用。"},
 			},
 		},
 		"CategoryListResponse": map[string]any{
@@ -821,6 +871,13 @@ func automationOpenAPISchemas() map[string]any {
 				"published_at": map[string]any{"type": "string", "format": "date-time"},
 			},
 		},
+		"FeaturedInput": map[string]any{
+			"type":     "object",
+			"required": []string{"featured"},
+			"properties": map[string]any{
+				"featured": map[string]any{"type": "boolean", "description": "true 表示置顶，false 表示取消置顶。只适用于文章和链接。"},
+			},
+		},
 		"ContentItem": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -866,7 +923,13 @@ func automationScopeBadges(scopes string) []string {
 	m := apiScopeMap(scopes)
 	var out []string
 	if m["languages:read"] {
-		out = append(out, "语种：读取")
+		actions := []string{"读取"}
+		if m[apiScopeLanguagesWrite] {
+			actions = append(actions, "新增自定义")
+		}
+		out = append(out, "语种："+strings.Join(actions, "、"))
+	} else if m[apiScopeLanguagesWrite] {
+		out = append(out, "语种：新增自定义")
 	}
 	if m["media:write"] {
 		out = append(out, "媒体：上传")
@@ -919,6 +982,7 @@ func automationActionLabels(scopes map[string]bool, resource string) []string {
 		{"categories:write", "写分类"},
 		{"write", "写草稿"},
 		{"publish", "发布"},
+		{"pin", "置顶"},
 	} {
 		if scopes[resource+":"+action.key] {
 			labels = append(labels, action.label)
@@ -937,7 +1001,13 @@ func automationScopeBadgesAdmin(scopes string, admin *i18n.AdminTr) []string {
 	}
 	var out []string
 	if m["languages:read"] {
-		out = append(out, adminUI(admin, "admin.settings.automation.languages", "语种")+colon+adminUI(admin, "admin.settings.automation.read", "读取"))
+		labels := []string{adminUI(admin, "admin.settings.automation.read", "读取")}
+		if m[apiScopeLanguagesWrite] {
+			labels = append(labels, adminUI(admin, "admin.settings.automation.languages_write", "新增自定义语种"))
+		}
+		out = append(out, adminUI(admin, "admin.settings.automation.languages", "语种")+colon+strings.Join(labels, sep))
+	} else if m[apiScopeLanguagesWrite] {
+		out = append(out, adminUI(admin, "admin.settings.automation.languages", "语种")+colon+adminUI(admin, "admin.settings.automation.languages_write", "新增自定义语种"))
 	}
 	if m["media:write"] {
 		out = append(out, adminUI(admin, "admin.settings.automation.media", "媒体")+colon+adminUI(admin, "admin.settings.automation.media_upload", "上传媒体"))
@@ -1004,6 +1074,7 @@ func automationActionLabelsAdmin(scopes map[string]bool, resource string, admin 
 		{"categories:write", "admin.settings.automation.write_categories", "写分类"},
 		{"write", "admin.settings.automation.write_draft", "写草稿"},
 		{"publish", "admin.settings.automation.publish", "发布"},
+		{"pin", "admin.settings.automation.pin", "置顶"},
 	} {
 		if scopes[resource+":"+action.key] {
 			labels = append(labels, adminUI(admin, action.i18nKey, action.fallback))
@@ -1195,6 +1266,7 @@ func automationStarterWizardMarkdown() string {
 		"## 2. 网站需要哪些语种？",
 		"",
 		"- 启用语种：例如中文、英文",
+		"- 如果需要新增非内置语种：写清语种代码、显示名和 BCP47 标记；越南语 vi、印尼语 id、泰语 th 已是内置预设，只需启用。",
 		"- 默认语种：例如中文",
 		"- 不同语种是否需要不同表达：是 / 否 / 不确定",
 		"",
@@ -1266,6 +1338,7 @@ func automationStarterRequirementsTemplate() string {
 		"- 网站主要目的：产品官网 / 技术文档 / 资源导航 / 教程科普 / 企业展示 / 其他",
 		"- 希望用户看完后做什么：",
 		"- 启用语种：例如中文、英文",
+		"- 自定义语种：例如 pt / Português / pt-BR；越南语 vi、印尼语 id、泰语 th 已内置，不需要自定义创建。",
 		"- 默认语种：",
 		"",
 		"## 内容调性",
@@ -1556,12 +1629,13 @@ func automationStarterSkillMarkdown(apiBase string) string {
 		"",
 		"1. 优先读取 `新站需求向导.md`；如有 `站点需求模板.md`，一并读取。",
 		"2. 调用 `/languages`、`/site-profile`、`/navigation`、`/posts/categories/all-entry?lang=all`、`/links/categories/all-entry?lang=all`、`/posts/categories?lang=all`、`/links/categories?lang=all` 做只读检查。",
-		"3. 第一轮只输出完整规划，不要马上写入。",
-		"4. 规划要列出会新增、会修改和不会触碰的内容，并提示合规、品牌、版权、隐私和夸大承诺风险。",
-		"5. 用户明确确认后再分批写入：站点文案和确认过的 Hero 右侧视觉 -> 文章/链接总入口 -> 真实分类 -> 页面 -> 导航 -> 文章 -> 链接。",
-		"6. 所有内容默认 `status: draft`。",
-		"7. 如果用户对规划或草稿不满意，只按反馈调整对应部分，不要扩散修改范围。",
-		"8. 完成后列出每条内容的 id、slug、语种、状态和需要人工复核的点。",
+		"3. 如果用户要求新增语种，先判断是否为内置语种；越南语 `vi`、印尼语 `id`、泰语 `th` 已内置，只提醒用户启用。只有非内置语种且密钥有 `languages:write` 权限时，才用 `POST /languages` 新增自定义语种。",
+		"4. 第一轮只输出完整规划，不要马上写入。",
+		"5. 规划要列出会新增、会修改和不会触碰的内容，并提示合规、品牌、版权、隐私和夸大承诺风险。",
+		"6. 用户明确确认后再分批写入：必要的自定义语种 -> 站点文案和确认过的 Hero 右侧视觉 -> 文章/链接总入口 -> 真实分类 -> 页面 -> 导航 -> 文章 -> 链接。",
+		"7. 所有内容默认 `status: draft`。",
+		"8. 如果用户对规划或草稿不满意，只按反馈调整对应部分，不要扩散修改范围。",
+		"9. 完成后列出每条内容的 id、slug、语种、状态和需要人工复核的点。",
 		"",
 		"## 文章质量与配图",
 		"",
@@ -1580,6 +1654,7 @@ func automationStarterSkillMarkdown(apiBase string) string {
 		"",
 		"## 内容模型边界",
 		"",
+		"- 语种 `languages`：`GET /languages` 只返回已启用语种；`POST /languages` 只用于新增内置列表之外的自定义语种，可传 `enable:true` 同时启用。不要重复创建 zh、en、vi、id、th 等内置语种。",
 		"- 文章 `posts` 用于教程、资讯、案例、观点和 SEO/GEO 内容；可写真实文章分类的 `category_id`。",
 		"- 链接 `links` 用于资源导航、产品展示、外部工具和带详情页的目标网址；必须写 `link_url`，可写真实链接分类的 `category_id`。",
 		"- 页面 `pages` 用于关于、功能、价格、FAQ、联系等固定内容；没有分类，不写 `category_id`。",
@@ -1751,6 +1826,7 @@ func automationSkillMarkdown(apiBase string) string {
 		"- `publish-review`：发布前复核；只有用户明确要求且权限允许才发布。",
 		"- `preview`：发布前读取文章或链接预览，检查渲染后的正文 HTML、目录和正式 URL。",
 		"- `preview-url`：生成短期有效的前台预览链接，用真实前台模板复核草稿。",
+		"- `pin`：在用户明确要求时，切换文章或链接的置顶状态；置顶会影响首页精选文章或精选链接，不适用于页面。",
 		"",
 		"## 工作规则",
 		"",
@@ -1764,17 +1840,20 @@ func automationSkillMarkdown(apiBase string) string {
 		"8. 需要生成或替换 Hero 右侧动画时，先读取 `/site-profile` 并提出方案，用户确认后再生成；使用 animated WebP，避免白底、闪烁和大文件，上传后写入对应语种的 `hero_image` 并把 `hero_visual` 设为 `image`。",
 		"9. 上传的 SVG 文件也按 `hero_image` 使用，不要切到内联 SVG 模式。",
 		"10. 处理多语种内容时，先 `GET /languages` 查看启用语种；如果用户要求更新全部语种，先读取目标内容的 `trans_group`，再用 `lang=all&trans_group=...` 找到同组所有版本，逐条按 id 更新。",
-		"11. 不要把一个语种的正文直接覆盖到其它语种，除非用户明确要求这么做。",
-		"12. 默认只创建或修改草稿。",
-		"13. 只有用户明确要求发布，并且访问密钥有对应资源的发布权限，才设置 `status` 为 `published` 或 `scheduled`。",
-		"14. 发布前优先用 `GET /posts/{id}/preview` 或 `GET /links/{id}/preview` 复核草稿渲染结果；需要浏览器复核时再生成 `preview-url`。",
-		"15. 完成后告诉用户变更了哪些内容、对应 id、语种、状态，以及建议人工复核的点。",
+		"11. 用户要求新增语种时，先判断是否已内置：`vi` 越南语、`id` 印尼语、`th` 泰语已内置，只需启用；非内置语种且密钥有 `languages:write` 时，可 `POST /languages` 新增自定义语种，可传 `enable:true` 同时启用。",
+		"12. 不要把一个语种的正文直接覆盖到其它语种，除非用户明确要求这么做。",
+		"13. 默认只创建或修改草稿。",
+		"14. 只有用户明确要求发布，并且访问密钥有对应资源的发布权限，才设置 `status` 为 `published` 或 `scheduled`。",
+		"15. 发布前优先用 `GET /posts/{id}/preview` 或 `GET /links/{id}/preview` 复核草稿渲染结果；需要浏览器复核时再生成 `preview-url`。",
+		"16. 需要置顶或取消置顶文章/链接时，先用 `q`、`slug` 或列表查到准确 id，再调用 `PATCH /posts/featured/{id}` 或 `PATCH /links/featured/{id}`，请求体只传 `{\"featured\":true}` 或 `{\"featured\":false}`；需要对应的置顶权限。",
+		"17. 完成后告诉用户变更了哪些内容、对应 id、语种、状态，以及建议人工复核的点。",
 		"",
 		"## 内容模型边界",
 		"",
-		"- 文章 `posts`：教程、资讯、案例、观点、SEO/GEO 内容；可选择真实文章分类。",
-		"- 链接 `links`：资源导航、产品展示、外部工具；必须有 `link_url`，可选择真实链接分类。",
-		"- 页面 `pages`：关于、功能、价格、FAQ、联系等固定页面；没有分类。",
+		"- 语种 `languages`：`GET /languages` 读取已启用语种；`POST /languages` 新增自定义语种预设，不用于重复创建内置语种。",
+		"- 文章 `posts`：教程、资讯、案例、观点、SEO/GEO 内容；可选择真实文章分类，可置顶到首页精选文章。",
+		"- 链接 `links`：资源导航、产品展示、外部工具；必须有 `link_url`，可选择真实链接分类，可置顶到首页精选链接。",
+		"- 页面 `pages`：关于、功能、价格、FAQ、联系等固定页面；没有分类，也没有置顶。",
 		"- 真实分类：`/posts/categories`、`/links/categories`，返回的 `id` 才能写入内容。",
 		"- 全部入口：`/posts/categories/all-entry`、`/links/categories/all-entry`，只控制总列表页文案、路径和筛选按钮。",
 		"",
@@ -1784,6 +1863,7 @@ func automationSkillMarkdown(apiBase string) string {
 		"",
 		"- `node scripts/gcms.js doctor`",
 		"- `node scripts/gcms.js languages`",
+		"- `node scripts/gcms.js language-create '{\"code\":\"pt\",\"name\":\"Português\",\"tag\":\"pt-BR\",\"enable\":true}'`",
 		"- `node scripts/gcms.js upload ./cover.webp`",
 		"- `node scripts/gcms.js categories posts --lang zh`",
 		"- `node scripts/gcms.js categories links --lang zh`",
@@ -1795,6 +1875,8 @@ func automationSkillMarkdown(apiBase string) string {
 		"- `node scripts/gcms.js preview posts 123`",
 		"- `node scripts/gcms.js preview-url posts 123`",
 		"- `node scripts/gcms.js preview links 123`",
+		"- `node scripts/gcms.js pin posts 123 on`",
+		"- `node scripts/gcms.js pin links 123 off`",
 		"- `node scripts/gcms.js create posts '{\"title\":\"标题\",\"content\":\"正文\",\"lang\":\"zh\",\"status\":\"draft\"}'`",
 		"- `node scripts/gcms.js update posts 123 '{\"title\":\"新标题\"}'`",
 		"- `node scripts/gcms.js audit posts --lang zh --limit 50`",
@@ -1854,6 +1936,7 @@ function usage(code = 2) {
   out("  gcms.js help");
   out("  gcms.js doctor");
   out("  gcms.js languages");
+  out("  gcms.js language-create <json|@file>");
   out("  gcms.js upload <file>");
   out("  gcms.js categories <posts|links> [--lang zh|all]");
   out("  gcms.js category-entry <posts|links> [--lang zh|all]");
@@ -1862,6 +1945,7 @@ function usage(code = 2) {
   out("  gcms.js get <posts|pages|links> <id>");
   out("  gcms.js preview <posts|links> <id>");
   out("  gcms.js preview-url <posts|links> <id>");
+  out("  gcms.js pin <posts|links> <id> <on|off>");
   out("  gcms.js create <posts|pages|links> <json|@file>");
   out("  gcms.js update <posts|pages|links> <id> <json|@file>");
   out("  gcms.js audit <posts|pages|links> [--lang zh|all] [--limit 50] [--deep true]");
@@ -1985,6 +2069,12 @@ function boolOption(value) {
   return value === true || value === "true" || value === "1" || value === "yes";
 }
 
+function parseOnOff(value) {
+  if (["on", "true", "1", "yes"].includes(String(value || "").toLowerCase())) return true;
+  if (["off", "false", "0", "no"].includes(String(value || "").toLowerCase())) return false;
+  usage();
+}
+
 function auditItems(collection, data, options = {}) {
   const items = Array.isArray(data.items) ? data.items : [];
   const issues = [];
@@ -2060,11 +2150,16 @@ async function doctor() {
     if (openapi.ok) {
       const paths = openapi.data && openapi.data.paths ? openapi.data.paths : {};
       const schemas = openapi.data && openapi.data.components && openapi.data.components.schemas ? openapi.data.components.schemas : {};
+      add("openapi_language_create_path", !!(paths["/languages"] && paths["/languages"].post));
+      add("openapi_language_create_schema", !!schemas.LanguageCreateInput && !!schemas.LanguageItemResponse);
       add("openapi_media_path", !!(paths["/media"] && paths["/media"].post));
       add("openapi_media_schema", !!schemas.MediaUploadResponse);
       add("openapi_post_preview_path", !!(paths["/posts/{id}/preview"] && paths["/posts/{id}/preview"].get));
       add("openapi_link_preview_path", !!(paths["/links/{id}/preview"] && paths["/links/{id}/preview"].get));
       add("openapi_preview_schema", !!schemas.ContentPreviewResponse && !!schemas.ContentPreview);
+      add("openapi_post_featured_path", !!(paths["/posts/featured/{id}"] && paths["/posts/featured/{id}"].patch));
+      add("openapi_link_featured_path", !!(paths["/links/featured/{id}"] && paths["/links/featured/{id}"].patch));
+      add("openapi_featured_schema", !!schemas.FeaturedInput);
       add("openapi_post_all_entry_path", !!(paths["/posts/categories/all-entry"] && paths["/posts/categories/all-entry"].get && paths["/posts/categories/all-entry"].patch));
       add("openapi_link_all_entry_path", !!(paths["/links/categories/all-entry"] && paths["/links/categories/all-entry"].get && paths["/links/categories/all-entry"].patch));
       add("openapi_all_entry_schema", !!schemas.CategoryAllEntryResponse && !!schemas.CategoryAllEntryPatch);
@@ -2122,6 +2217,13 @@ async function main() {
 
   if (cmd === "languages") {
     print(await request("GET", "/languages"));
+    return;
+  }
+
+  if (cmd === "language-create") {
+    const [body] = [collection, ...rest];
+    if (!body) usage();
+    print(await request("POST", "/languages", bodyFromArg(body)));
     return;
   }
 
@@ -2186,6 +2288,13 @@ async function main() {
     const [id] = rest;
     if (!id || collection === "pages") usage();
     print(await request("POST", "/" + collection + "/" + encodeURIComponent(id) + "/preview-url"));
+    return;
+  }
+
+  if (cmd === "pin") {
+    const [id, value] = rest;
+    if (!id || value == null || collection === "pages") usage();
+    print(await request("PATCH", "/" + collection + "/featured/" + encodeURIComponent(id), { featured: parseOnOff(value) }));
     return;
   }
 

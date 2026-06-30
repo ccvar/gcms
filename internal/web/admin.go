@@ -4153,6 +4153,7 @@ func automationAIBrief(apiBase, token string, scopes []string) string {
 		"",
 		"需要处理多语种内容时，先查看启用语种：",
 		"GET /languages",
+		"需要新增语种时：越南语 vi、印尼语 id、泰语 th 已是内置预设，只需要提醒我在后台启用；如果是不在内置列表里的自定义语种，并且你有语种写权限，可用 POST /languages 新增。",
 		"",
 		"需要设置分类时，先查看可用分类 ID：",
 		"GET /posts/categories?lang=zh",
@@ -4182,6 +4183,11 @@ func automationAIBrief(apiBase, token string, scopes []string) string {
 		"发布前复核文章或链接草稿时，可以读取预览结果，检查渲染后的正文 HTML、目录和正式 URL：",
 		"GET /posts/{id}/preview",
 		"GET /links/{id}/preview",
+		"",
+		"如果我要你置顶或取消置顶文章/链接，先查到准确 id，再调用：",
+		"PATCH /posts/featured/{id}  请求体 {\"featured\":true/false}",
+		"PATCH /links/featured/{id}  请求体 {\"featured\":true/false}",
+		"置顶只影响首页精选文章或精选链接，不适用于页面，也不等同发布。",
 		"",
 		"如果找到多个相似结果，先让我确认。",
 		"",
@@ -4265,10 +4271,14 @@ func automationScopesFromFormWithDefault(r *http.Request, useDefault bool) []str
 		pub := apiScope(col.path, "publish")
 		write := apiScope(col.path, "write")
 		read := apiScope(col.path, "read")
+		pin := apiScope(col.path, "pin")
 		if want[pub] {
 			want[write] = true
 		}
 		if want[write] {
+			want[read] = true
+		}
+		if want[pin] {
 			want[read] = true
 		}
 	}
@@ -4287,9 +4297,15 @@ func automationScopesFromFormWithDefault(r *http.Request, useDefault bool) []str
 	if want[apiScopeLinkCategoriesWrite] {
 		want[apiScope("links", "categories")] = true
 	}
+	if want[apiScopeLanguagesWrite] {
+		want[apiScopeLanguagesRead] = true
+	}
 	var out []string
 	if want[apiScopeLanguagesRead] {
 		out = append(out, apiScopeLanguagesRead)
+	}
+	if want[apiScopeLanguagesWrite] {
+		out = append(out, apiScopeLanguagesWrite)
 	}
 	if want[apiScopeMediaWrite] {
 		out = append(out, apiScopeMediaWrite)
@@ -4317,7 +4333,7 @@ func automationScopesFromFormWithDefault(r *http.Request, useDefault bool) []str
 
 func automationScopeValid(scope string) bool {
 	switch scope {
-	case apiScopeLanguagesRead, apiScopeMediaWrite, apiScopeSiteRead, apiScopeSiteWrite, apiScopeBrandAssetsWrite, apiScopeNavigationRead, apiScopeNavigationWrite:
+	case apiScopeLanguagesRead, apiScopeLanguagesWrite, apiScopeMediaWrite, apiScopeSiteRead, apiScopeSiteWrite, apiScopeBrandAssetsWrite, apiScopeNavigationRead, apiScopeNavigationWrite:
 		return true
 	}
 	for _, col := range automationCollections {
@@ -4731,26 +4747,75 @@ func (s *Server) adminAddLocalePreset(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.checkCSRF(w, r); !ok {
 		return
 	}
-	code := strings.ToLower(strings.TrimSpace(r.FormValue("code")))
-	if !i18n.ValidCode(code) {
-		s.showSettings(w, r, "languages", "", "语种代码非法：需 2–12 位小写字母 / 数字 / 连字符（如 pt、zh-tw）。")
+	_, _, errMsg, err := s.addCustomLocale(
+		r.FormValue("code"),
+		r.FormValue("name"),
+		r.FormValue("tag"),
+		r.FormValue("og"),
+	)
+	if err != nil {
+		s.serverError(w, err)
 		return
 	}
-	if s.i18n.Known(code) {
-		s.showSettings(w, r, "languages", "", "该语种代码已存在（内置或已添加）。")
+	if errMsg != "" {
+		s.showSettings(w, r, "languages", "", errMsg)
 		return
+	}
+	s.clearGeneratedCaches()
+	s.redirectSettings(w, r, "languages", "已新增语种预设，可在上方勾选启用。")
+}
+
+func (s *Server) addCustomLocale(code, name, tag, og string) (i18n.Locale, string, string, error) {
+	code = strings.ToLower(strings.TrimSpace(code))
+	if !i18n.ValidCode(code) {
+		return i18n.Locale{}, "bad_code", "语种代码非法：需 2-12 位小写字母 / 数字 / 连字符（如 pt、zh-tw）。", nil
+	}
+	if s.i18n.Known(code) {
+		return i18n.Locale{}, "language_exists", "该语种代码已存在（内置或已添加）。", nil
 	}
 	cur := s.i18n.Custom()
 	cur = append(cur, i18n.Locale{
 		Code: code,
-		Name: strings.TrimSpace(r.FormValue("name")),
-		Tag:  strings.TrimSpace(r.FormValue("tag")),
-		OG:   strings.TrimSpace(r.FormValue("og")),
+		Name: strings.TrimSpace(name),
+		Tag:  strings.TrimSpace(tag),
+		OG:   strings.TrimSpace(og),
 	})
-	_ = s.store.SetSetting("custom_locales", i18n.MarshalCustom(cur))
-	s.i18n.LoadCustom(s.store.Setting("custom_locales"))
-	s.clearGeneratedCaches()
-	s.redirectSettings(w, r, "languages", "已新增语种预设，可在上方勾选启用。")
+	raw := i18n.MarshalCustom(cur)
+	if err := s.store.SetSetting("custom_locales", raw); err != nil {
+		return i18n.Locale{}, "", "", err
+	}
+	s.i18n.LoadCustom(raw)
+	return s.i18n.Locale(code), "", "", nil
+}
+
+func (s *Server) enableLocale(code string, makeDefault bool) error {
+	code = strings.ToLower(strings.TrimSpace(code))
+	if !s.i18n.Known(code) {
+		return fmt.Errorf("unknown locale: %s", code)
+	}
+	seen := map[string]bool{}
+	codes := []string{}
+	if makeDefault {
+		codes = append(codes, code)
+		seen[code] = true
+	}
+	for _, loc := range s.locales() {
+		if seen[loc.Code] {
+			continue
+		}
+		codes = append(codes, loc.Code)
+		seen[loc.Code] = true
+	}
+	if !seen[code] {
+		codes = append(codes, code)
+	}
+	if len(codes) == 0 {
+		codes = []string{"zh"}
+	}
+	if err := s.store.SetSetting("locales", strings.Join(codes, ",")); err != nil {
+		return err
+	}
+	return s.store.SetSetting("default_lang", codes[0])
 }
 
 // adminDeleteLocalePreset 删除一个自定义语种预设；若它在启用列表里也一并移除。

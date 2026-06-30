@@ -251,30 +251,44 @@ func pickLabel(m map[string]string, lang, fallback string) string {
 
 // ExtTypeRow 是后台「扩展」hub 里的一行：类型 + 启用状态 + 内容数。
 type ExtTypeRow struct {
-	Key       string
-	Name      string
-	Icon      string
-	URLPrefix string
-	Enabled   bool
-	Count     int
-	Custom    bool // 数据库自定义类型（可编辑/删除）
+	Key          string
+	Name         string
+	Icon         string
+	URLPrefix    string
+	Enabled      bool
+	Count        int
+	Custom       bool              // 数据库自定义类型（可编辑/删除）
+	ArchiveTitle map[string]string // 归档页自定义标题（按语种），供 hub 弹窗回填
+	ArchiveIntro map[string]string // 归档页自定义简介（按语种）
 }
 
 // extTypeRows 构建当前站点的扩展类型行（含启用状态与内容数），供后台 hub 渲染。
 func (s *Server) extTypeRows(lang string) []ExtTypeRow {
 	enabled := s.enabledTypeSet()
 	all := s.allExtTypes()
+	meta := s.extArchiveMetaAll()
 	rows := make([]ExtTypeRow, 0, len(all))
 	for _, ct := range all {
 		n := 0
 		if list, _ := s.store.ListAllByType(ct.Key, lang); list != nil {
 			n = len(list)
 		}
-		rows = append(rows, ExtTypeRow{
+		row := ExtTypeRow{
 			Key: ct.Key, Name: ct.Name(lang), Icon: ct.Icon,
 			URLPrefix: ct.URLPrefix, Enabled: enabled[ct.Key], Count: n,
-			Custom: contentTypeByKey(ct.Key) == nil,
-		})
+			Custom:       contentTypeByKey(ct.Key) == nil,
+			ArchiveTitle: map[string]string{},
+			ArchiveIntro: map[string]string{},
+		}
+		if m, ok := meta[ct.Key]; ok {
+			if m.Title != nil {
+				row.ArchiveTitle = m.Title
+			}
+			if m.Intro != nil {
+				row.ArchiveIntro = m.Intro
+			}
+		}
+		rows = append(rows, row)
 	}
 	return rows
 }

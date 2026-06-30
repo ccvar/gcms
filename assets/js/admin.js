@@ -209,6 +209,235 @@
     if (hidden && hidden.value) setUploaderValue(box, hidden.value);
   });
 
+  /* ---------- 图集：左侧批量选图上传 + 缩略图网格（可拖拽排序、单删） ---------- */
+  document.querySelectorAll(".gallery-up").forEach(function (box) {
+    var data = box.querySelector(".gu-data");
+    var grid = box.querySelector("[data-gu-grid]");
+    var file = box.querySelector("[data-gu-file]");
+    var status = box.querySelector("[data-gu-status]");
+    if (!data || !grid || !file) return;
+    var multiple = box.getAttribute("data-multiple") === "1";
+    function urls() {
+      return data.value.split("\n").map(function (s) { return s.trim(); }).filter(Boolean);
+    }
+    function setUrls(list) {
+      if (!multiple) list = list.slice(-1);
+      data.value = list.join("\n");
+      data.dispatchEvent(new Event("input", { bubbles: true })); // 通知脏检查
+      render();
+    }
+    function setStatus(text, bad) {
+      if (!status) return;
+      status.textContent = text || "";
+      status.classList.toggle("bad", !!bad);
+    }
+    function makeTile(url, i) {
+      var cell = document.createElement("div");
+      cell.className = "gu-cell";
+      cell.draggable = multiple;
+      cell.setAttribute("data-i", i);
+      var img = document.createElement("img");
+      img.src = url; img.loading = "lazy"; img.alt = "";
+      var del = document.createElement("button");
+      del.type = "button"; del.className = "gu-del";
+      del.setAttribute("aria-label", "移除");
+      del.setAttribute("title", "移除");
+      del.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>';
+      del.addEventListener("click", function () { var l = urls(); l.splice(i, 1); setUrls(l); });
+      cell.appendChild(img); cell.appendChild(del);
+      return cell;
+    }
+    function makeAdd() {
+      var add = document.createElement("button");
+      add.type = "button"; add.className = "gu-add";
+      add.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg><span>' + (multiple ? "添加图片" : "选择图片") + "</span>";
+      add.addEventListener("click", function () { file.click(); });
+      return add;
+    }
+    function render() {
+      grid.innerHTML = "";
+      var list = urls();
+      list.forEach(function (u, i) { grid.appendChild(makeTile(u, i)); });
+      if (multiple || list.length === 0) grid.appendChild(makeAdd());
+    }
+    file.addEventListener("change", function () {
+      var files = Array.prototype.slice.call(file.files || []);
+      if (!files.length) return;
+      var total = files.length, done = 0, failed = 0, added = urls();
+      setStatus("上传中… (0/" + total + ")");
+      files.reduce(function (chain, f) {
+        return chain.then(function () {
+          return uploadFile(f).then(function (res) {
+            if (res.ok && res.j && res.j.url) added.push(res.j.url); else failed++;
+            done++;
+            setStatus("上传中… (" + done + "/" + total + ")");
+          }).catch(function () { failed++; done++; });
+        });
+      }, Promise.resolve()).then(function () {
+        setUrls(added);
+        setStatus(failed ? (failed + " 张上传失败") : "", failed > 0);
+      });
+      file.value = "";
+    });
+    // 拖拽排序
+    var dragI = null;
+    grid.addEventListener("dragstart", function (e) {
+      var cell = e.target.closest && e.target.closest(".gu-cell");
+      if (!cell) return;
+      dragI = parseInt(cell.getAttribute("data-i"), 10);
+      setTimeout(function () { cell.classList.add("dragging"); }, 0);
+    });
+    grid.addEventListener("dragover", function (e) { if (dragI !== null) e.preventDefault(); });
+    grid.addEventListener("drop", function (e) {
+      if (dragI === null) return;
+      e.preventDefault();
+      var cell = e.target.closest && e.target.closest(".gu-cell");
+      var list = urls();
+      var item = list.splice(dragI, 1)[0];
+      var to = cell ? parseInt(cell.getAttribute("data-i"), 10) : list.length;
+      if (to < 0) to = list.length;
+      list.splice(to, 0, item);
+      dragI = null;
+      setUrls(list);
+    });
+    grid.addEventListener("dragend", function () {
+      dragI = null;
+      grid.querySelectorAll(".gu-cell").forEach(function (c) { c.classList.remove("dragging"); });
+    });
+    render();
+  });
+
+  /* ---------- 后台文档列表：按分类折叠子章节（默认收起，避免章节多时列表过长） ---------- */
+  (function () {
+    var rows = Array.prototype.slice.call(document.querySelectorAll("tr[data-doc-depth]"));
+    if (!rows.length) return;
+    var groups = [], cur = null;
+    rows.forEach(function (tr) {
+      var d = parseInt(tr.getAttribute("data-doc-depth"), 10) || 0;
+      if (d === 0) { cur = { head: tr, children: [] }; groups.push(cur); }
+      else if (cur) { cur.children.push(tr); }
+    });
+    groups.forEach(function (g) {
+      if (!g.children.length) return;
+      var collapsed = true;
+      g.children.forEach(function (tr) { tr.hidden = true; });
+      var link = g.head.querySelector(".title-cell .t");
+      if (!link) return;
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "doc-collapse";
+      btn.setAttribute("aria-expanded", "false");
+      btn.setAttribute("aria-label", "展开 / 收起子章节");
+      btn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg><span class="doc-collapse-n">' + g.children.length + '</span>';
+      link.parentNode.insertBefore(btn, link);
+      btn.addEventListener("click", function () {
+        collapsed = !collapsed;
+        g.children.forEach(function (tr) { tr.hidden = collapsed; });
+        btn.setAttribute("aria-expanded", collapsed ? "false" : "true");
+        btn.classList.toggle("open", !collapsed);
+      });
+    });
+  })();
+
+  /* ---------- 后台文档列表：同级拖动排序（拖整棵子树，落点限同级，保存 extra.order） ---------- */
+  (function () {
+    var table = document.querySelector("table[data-reorder-url]");
+    if (!table) return;
+    var reorderURL = table.getAttribute("data-reorder-url");
+    function rows() { return Array.prototype.slice.call(table.querySelectorAll("tr[data-doc-id]")); }
+    function depthOf(tr) { return parseInt(tr.getAttribute("data-doc-depth"), 10) || 0; }
+    function parentOf(tr) { return tr.getAttribute("data-doc-parent") || "0"; }
+    // 一行的「块」= 它本身 + 紧随其后、depth 更深的所有行（整棵子树）
+    function blockOf(tr) {
+      var rs = rows(), i = rs.indexOf(tr), d = depthOf(tr), out = [tr];
+      for (var j = i + 1; j < rs.length; j++) { if (depthOf(rs[j]) > d) out.push(rs[j]); else break; }
+      return out;
+    }
+    var dragRow = null, dragBlock = null;
+    table.addEventListener("mousedown", function (e) {
+      var h = e.target.closest && e.target.closest(".doc-drag");
+      rows().forEach(function (r) { r.draggable = false; });
+      if (h) { var r = h.closest("tr"); if (r) r.draggable = true; }
+    });
+    table.addEventListener("dragstart", function (e) {
+      var tr = e.target.closest && e.target.closest("tr[data-doc-id]");
+      if (!tr || !tr.draggable) return;
+      dragRow = tr; dragBlock = blockOf(tr);
+      if (e.dataTransfer) { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", tr.getAttribute("data-doc-id") || ""); }
+      setTimeout(function () { dragBlock.forEach(function (r) { r.classList.add("dragging"); }); }, 0);
+    });
+    table.addEventListener("dragover", function (e) {
+      if (!dragRow) return;
+      var tr = e.target.closest && e.target.closest("tr[data-doc-id]");
+      if (!tr || dragBlock.indexOf(tr) >= 0) return;        // 不能落在自己的块里
+      if (parentOf(tr) !== parentOf(dragRow)) return;        // 只允许同级
+      e.preventDefault();
+      var rect = tr.getBoundingClientRect();
+      var after = e.clientY > rect.top + rect.height / 2;
+      var tb = tr.parentNode;
+      var tblock = blockOf(tr);
+      var ref = after ? tblock[tblock.length - 1].nextSibling : tr;
+      dragBlock.forEach(function (r) { tb.insertBefore(r, ref); });
+    });
+    table.addEventListener("drop", function (e) {
+      if (!dragRow) return;
+      e.preventDefault();
+      var pid = parentOf(dragRow);
+      var data = new URLSearchParams();
+      data.set("_csrf", CSRF);
+      rows().forEach(function (r) { if (parentOf(r) === pid) data.append("ids", r.getAttribute("data-doc-id")); });
+      fetch(reorderURL, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8", "X-Requested-With": "XMLHttpRequest" }, body: data.toString() });
+    });
+    table.addEventListener("dragend", function () {
+      if (dragBlock) dragBlock.forEach(function (r) { r.classList.remove("dragging"); r.draggable = false; });
+      dragRow = null; dragBlock = null;
+    });
+  })();
+
+  /* ---------- 扩展卡片：齿轮菜单 + 归档页文案弹窗 ---------- */
+  (function () {
+    var menus = document.querySelectorAll("details.ext-menu");
+    var modals = document.querySelectorAll(".ext-modal");
+    if (!menus.length && !modals.length) return;
+    // 点外部 / Esc 收起齿轮菜单
+    document.addEventListener("click", function (e) {
+      document.querySelectorAll("details.ext-menu[open]").forEach(function (d) { if (!d.contains(e.target)) d.open = false; });
+    });
+    function modalFor(key) { return document.querySelector('[data-archive-modal="' + (key || "").replace(/"/g, '') + '"]'); }
+    function closeModal(m) { if (m) m.hidden = true; }
+    document.querySelectorAll("[data-archive-open]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var d = btn.closest("details.ext-menu"); if (d) d.open = false;
+        var m = modalFor(btn.getAttribute("data-archive-open"));
+        if (!m) return;
+        m.hidden = false;
+        var first = m.querySelector("input, textarea");
+        if (first) setTimeout(function () { first.focus(); }, 0);
+      });
+    });
+    modals.forEach(function (m) {
+      m.querySelectorAll("[data-modal-close]").forEach(function (c) { c.addEventListener("click", function () { closeModal(m); }); });
+      var form = m.querySelector("[data-archive-form]");
+      var status = m.querySelector("[data-archive-status]");
+      if (form) form.addEventListener("submit", function (e) {
+        e.preventDefault();
+        if (status) status.textContent = "保存中…";
+        fetch(form.getAttribute("action"), {
+          method: "POST", credentials: "same-origin",
+          headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8", "X-Requested-With": "XMLHttpRequest" },
+          body: new URLSearchParams(new FormData(form)).toString()
+        }).then(function (r) { if (!r.ok) throw new Error("bad"); return r.json().catch(function () { return {}; }); })
+          .then(function () { if (status) status.textContent = "已保存"; setTimeout(function () { closeModal(m); if (status) status.textContent = ""; }, 650); })
+          .catch(function () { if (status) status.textContent = "保存失败，请重试"; });
+      });
+    });
+    document.addEventListener("keydown", function (e) {
+      if (e.key !== "Escape") return;
+      document.querySelectorAll("details.ext-menu[open]").forEach(function (d) { d.open = false; });
+      document.querySelectorAll(".ext-modal:not([hidden])").forEach(closeModal);
+    });
+  })();
+
   /* ---------- 自定义下拉（替代 <select>） ---------- */
   var openDD = null;
   function closeDD() {
@@ -1178,7 +1407,7 @@
   /* ---------- Markdown ⇄ 富文本编辑器 ---------- */
   initEditor();
   function initEditor() {
-    var form = document.getElementById("post-form");
+    var form = document.getElementById("post-form") || document.getElementById("ext-form");
     if (!form) return;
     var editor = form.querySelector("[data-editor]");
     if (!editor) return;
@@ -1634,6 +1863,26 @@
       if (e.key === "Escape" && !modal.hidden) close();
     });
     if (!modal.hidden && firstInput) setTimeout(function () { firstInput.focus(); firstInput.select(); }, 0);
+  })();
+
+  /* ---------- 自动化权限：全选 / 反选 ---------- */
+  (function () {
+    document.querySelectorAll("[data-scope-tools]").forEach(function (tools) {
+      var form = tools.closest("form");
+      if (!form) return;
+      var checks = Array.prototype.slice.call(form.querySelectorAll('input[name="scopes"]'));
+      tools.querySelectorAll("[data-scope-action]").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          var action = btn.dataset.scopeAction;
+          checks.forEach(function (input) {
+            if (input.disabled) return;
+            if (action === "all") input.checked = true;
+            if (action === "invert") input.checked = !input.checked;
+          });
+          form.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+      });
+    });
   })();
 
   /* ---------- 自动化密钥：修改用途和权限 ---------- */
