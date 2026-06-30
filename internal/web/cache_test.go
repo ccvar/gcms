@@ -24,6 +24,23 @@ func newTestPublicServer(t *testing.T, uploadDir string) *Server {
 	return srv
 }
 
+func TestRootPathNegotiatesBrowserLanguage(t *testing.T) {
+	s := newTestPublicServer(t, "")
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusFound {
+		t.Fatalf("status = %d, want 302", w.Code)
+	}
+	if got, want := w.Header().Get("Location"), "/en/"; got != want {
+		t.Fatalf("location = %q, want %q", got, want)
+	}
+	if got := w.Header().Get("Vary"); got != "Accept-Language" {
+		t.Fatalf("vary = %q, want Accept-Language", got)
+	}
+}
+
 func TestPublicPageCacheAddsETagAndRevalidates(t *testing.T) {
 	s := newTestPublicServer(t, "")
 	h := s.Handler()

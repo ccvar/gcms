@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"hash/fnv"
@@ -285,15 +286,18 @@ type View struct {
 	AssetVer     string
 
 	// 多语种（前台）
-	Tr          *i18n.Tr
-	Lang        string
-	Langs       []LangLink
-	SitemapURL  string
-	RobotsURL   string
-	Admin       *i18n.AdminTr
-	AdminLang   string
-	AdminLangs  []i18n.Locale
-	AdminReturn string
+	Tr                      *i18n.Tr
+	Lang                    string
+	Langs                   []LangLink
+	RootLangRedirect        bool
+	RootLangRedirectLocales template.JS
+	RootLangRedirectDefault template.JS
+	SitemapURL              string
+	RobotsURL               string
+	Admin                   *i18n.AdminTr
+	AdminLang               string
+	AdminLangs              []i18n.Locale
+	AdminReturn             string
 
 	Posts           []*store.Post
 	Featured        *store.Post
@@ -2389,7 +2393,36 @@ func (s *Server) viewForLang(r *http.Request, lang, nav string) *View {
 	v.Langs = s.langSwitchForRequest(r, lang, nil, "/")
 	v.Social = parseSocialLinks(s.store.Setting("social_links"))
 	v.Menu = s.menuItems(r, lang, tr, nav)
+	s.applyRootLangRedirect(v)
 	return v
+}
+
+func (s *Server) applyRootLangRedirect(v *View) {
+	locales := s.locales()
+	if len(locales) <= 1 {
+		return
+	}
+	codes := make([]string, 0, len(locales))
+	for _, loc := range locales {
+		code := strings.TrimSpace(loc.Code)
+		if code != "" {
+			codes = append(codes, code)
+		}
+	}
+	if len(codes) <= 1 {
+		return
+	}
+	localesJSON, err := json.Marshal(codes)
+	if err != nil {
+		return
+	}
+	defaultJSON, err := json.Marshal(s.defaultLang())
+	if err != nil {
+		return
+	}
+	v.RootLangRedirect = true
+	v.RootLangRedirectLocales = template.JS(localesJSON)
+	v.RootLangRedirectDefault = template.JS(defaultJSON)
 }
 
 func (s *Server) giscusForPost(lang string, p *store.Post) *GiscusView {

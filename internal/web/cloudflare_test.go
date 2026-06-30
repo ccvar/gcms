@@ -460,6 +460,46 @@ func TestExportStaticSiteUsesCurrentSiteWhenPlatformHostDiffers(t *testing.T) {
 	}
 }
 
+func TestExportStaticSiteRootIndexIncludesLanguageFallback(t *testing.T) {
+	s := newTestPublicServer(t, "")
+	result, err := s.exportStaticSite(context.Background(), CloudflareConfig{
+		DeployMode:       cloudflareModeWorkerAssets,
+		RoutePattern:     "static.example.com/*",
+		WorkerName:       "gcms-static-example-com",
+		HTMLCacheTTL:     300,
+		SourceMode:       cloudflareSourceModeRedirect,
+		AutoSync:         true,
+		SyncMode:         cloudflareSyncModeRealtime,
+		SyncTime:         cloudflareDefaultSyncTime,
+		OriginURL:        "https://origin.example.com",
+		PagesProjectName: "gcms-static-example-com",
+		Domains:          []CloudflareDomain{{Host: "static.example.com", Primary: true}},
+	})
+	if err != nil {
+		t.Fatalf("export static site: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(result.Dir) })
+	root, ok := result.Files["/index.html"]
+	if !ok {
+		t.Fatalf("root index was not exported")
+	}
+	data, err := os.ReadFile(root.DiskPath)
+	if err != nil {
+		t.Fatalf("read root index: %v", err)
+	}
+	body := string(data)
+	for _, needle := range []string{
+		`window.location.pathname`,
+		`window.navigator.languages`,
+		`window.location.replace("/" + lang + "/")`,
+		`["zh","en"]`,
+	} {
+		if !strings.Contains(body, needle) {
+			t.Fatalf("root index should contain %s", needle)
+		}
+	}
+}
+
 func TestStaticPaginationUsesPrettyPaths(t *testing.T) {
 	s := newTestPublicServer(t, "")
 	if err := s.store.SetSetting(homePostsPerPageKey, "2"); err != nil {

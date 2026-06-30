@@ -8,6 +8,42 @@
   <meta name="description" content="{{.SEO.Description}}">
   {{if .SEO.Keywords}}<meta name="keywords" content="{{.SEO.Keywords}}">{{end}}
   {{if .SEO.Author}}<meta name="author" content="{{.SEO.Author}}">{{end}}
+  {{if .RootLangRedirect}}<script>
+  (function () {
+    var path = window.location.pathname || "/";
+    if (path !== "/" && path !== "/index.html") return;
+    if (window.location.search || window.location.hash) return;
+    var locales = {{.RootLangRedirectLocales}};
+    var defaultLang = {{.RootLangRedirectDefault}};
+    if (!Array.isArray(locales) || locales.length < 2) return;
+    function normalize(value) {
+      return String(value || "").trim().toLowerCase().replace(/_/g, "-");
+    }
+    function matchLocale(value) {
+      var normalized = normalize(value);
+      if (!normalized || normalized === "*") return "";
+      for (var i = 0; i < locales.length; i += 1) {
+        if (normalize(locales[i]) === normalized) return locales[i];
+      }
+      var primary = normalized.split("-")[0];
+      for (var j = 0; j < locales.length; j += 1) {
+        var candidate = normalize(locales[j]);
+        if (candidate === primary || candidate.indexOf(primary + "-") === 0) return locales[j];
+      }
+      return "";
+    }
+    var preferred = window.navigator.languages || [window.navigator.language || ""];
+    for (var i = 0; i < preferred.length; i += 1) {
+      var lang = matchLocale(preferred[i]);
+      if (lang && normalize(lang) !== normalize(defaultLang)) {
+        window.location.replace("/" + lang + "/");
+        return;
+      }
+      if (lang) return;
+    }
+  })();
+  </script>
+  {{end}}
   <meta name="robots" content="{{.SEO.Robots}}">
   <link rel="canonical" href="{{.SEO.Canonical}}">
   {{range .SEO.Alternates}}<link rel="alternate" hreflang="{{.Hreflang}}" href="{{.Href}}">
