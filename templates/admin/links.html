@@ -41,20 +41,22 @@
       {{range .AllPosts}}
       <tr>
         <td class="title-cell content-col-title">
-          <form method="post" action="/admin/links/{{.ID}}/pin" class="pin-form">
-            <input type="hidden" name="_csrf" value="{{$.CSRF}}">
-            <input type="hidden" name="on" value="{{if .Featured}}0{{else}}1{{end}}">
-            <input type="hidden" name="lang" value="{{.Lang}}">
-            <input type="hidden" name="status" value="{{$.StatusFilter}}">
-            <input type="hidden" name="cat" value="{{$.CategoryFilter}}">
-            <input type="hidden" name="page" value="{{$.PageNum}}">
-            <button type="submit" class="pin{{if .Featured}} on{{end}}" title="{{if .Featured}}{{$.Admin.T "admin.action.unpin" "取消置顶"}}{{else}}{{$.Admin.T "admin.action.pin" "置顶"}}{{end}}" aria-label="{{$.Admin.T "admin.action.pin" "置顶"}}">
-              <svg width="16" height="16" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M12 17.3 5.8 21l1.6-7-5.4-4.7 7.2-.6L12 2l2.8 6.7 7.2.6-5.4 4.7 1.6 7z"/></svg>
-            </button>
-          </form>
-          <div class="title-main">
-            <a class="t" href="/admin/links/{{.ID}}/edit">{{.Title}}</a>
-            <div class="slug">/{{.Lang}}/links/{{.Slug}}</div>
+          <div class="title-cell-inner">
+            <form method="post" action="/admin/links/{{.ID}}/pin" class="pin-form">
+              <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+              <input type="hidden" name="on" value="{{if .Featured}}0{{else}}1{{end}}">
+              <input type="hidden" name="lang" value="{{.Lang}}">
+              <input type="hidden" name="status" value="{{$.StatusFilter}}">
+              <input type="hidden" name="cat" value="{{$.CategoryFilter}}">
+              <input type="hidden" name="page" value="{{$.PageNum}}">
+              <button type="submit" class="pin{{if .Featured}} on{{end}}" title="{{if .Featured}}{{$.Admin.T "admin.action.unpin" "取消置顶"}}{{else}}{{$.Admin.T "admin.action.pin" "置顶"}}{{end}}" aria-label="{{$.Admin.T "admin.action.pin" "置顶"}}">
+                <svg width="16" height="16" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M12 17.3 5.8 21l1.6-7-5.4-4.7 7.2-.6L12 2l2.8 6.7 7.2.6-5.4 4.7 1.6 7z"/></svg>
+              </button>
+            </form>
+            <div class="title-main">
+              <a class="t" href="/admin/links/{{.ID}}/edit">{{.Title}}</a>
+              <div class="slug">/{{.Lang}}/links/{{.Slug}}</div>
+            </div>
           </div>
         </td>
         <td class="content-col-url">{{if .LinkURL}}<a href="{{.LinkURL}}" target="_blank" rel="noopener" class="ext-url">{{.LinkURL}}</a>{{else}}<span class="muted">{{$.Admin.T "admin.common.empty_dash" "—"}}</span>{{end}}</td>

@@ -652,7 +652,7 @@ a.overview-log-title { text-decoration: none; }
 .admin-table .nowrap,
 .admin-table th.nowrap,
 .admin-table td.nowrap { white-space: nowrap; }
-.title-cell { display: flex; align-items: flex-start; gap: .55rem; }
+.title-cell-inner { display: flex; align-items: flex-start; gap: .55rem; min-width: 0; }
 .pin-form { margin: 0; flex: none; }
 .pin { background: none; border: 0; cursor: pointer; padding: 2px 0; color: var(--faint); opacity: 0; transition: opacity .15s, color .15s; line-height: 0; }
 .pin svg { fill: none; display: block; }
