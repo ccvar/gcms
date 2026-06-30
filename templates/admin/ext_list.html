@@ -1,39 +1,54 @@
 {{define "body"}}
-<div style="max-width:980px">
-  <div style="display:flex;align-items:center;justify-content:space-between;gap:1rem;margin-bottom:1.2rem">
-    <div>
-      <h1 style="margin:0">{{.ExtType.Name .EditLang}}</h1>
-      <p style="color:#888;margin:.25rem 0 0"><a href="/admin/extensions" style="color:inherit">← {{.Admin.T "admin.ext.title" "扩展"}}</a> · /{{.ExtType.URLPrefix}}</p>
-    </div>
-    <a class="btn btn-primary" href="/admin/ext/{{.ExtType.Key}}/new">+ {{.Admin.T "admin.ext.new" "新建"}}</a>
+<div class="admin-head ext-list-head">
+  <div>
+    <p class="ext-back"><a href="/admin/extensions">← {{.Admin.T "admin.ext.title" "扩展"}}</a></p>
+    <h1>{{.ExtType.Name .EditLang}} <code class="ext-prefix">/{{.ExtType.URLPrefix}}</code></h1>
   </div>
-  {{if .Flash}}<div style="padding:.6rem .9rem;border-radius:8px;background:rgba(46,125,50,.12);color:#1b5e20;margin-bottom:1rem">{{.Flash}}</div>{{end}}
-  <table style="width:100%;border-collapse:collapse">
-    <thead><tr style="text-align:left;border-bottom:1px solid rgba(128,128,128,.3)">
-      <th style="padding:.6rem .4rem">{{.Admin.T "admin.col.title" "标题"}}</th>
-      <th style="padding:.6rem .4rem;width:6rem">{{.Admin.T "admin.col.status" "状态"}}</th>
-      <th style="padding:.6rem .4rem;width:9rem"></th>
-    </tr></thead>
-    <tbody>
-      {{range .ExtPosts}}
-      <tr style="border-bottom:1px solid rgba(128,128,128,.14)">
-        <td style="padding:.6rem .4rem">
-          <a href="/admin/ext/{{$.ExtType.Key}}/{{.ID}}/edit" style="font-weight:500">{{.Title}}</a>
-          <div style="color:#999;font-size:.8rem">/{{$.ExtType.URLPrefix}}/{{.Slug}}</div>
-        </td>
-        <td style="padding:.6rem .4rem;color:#888">{{.Status}}</td>
-        <td style="padding:.6rem .4rem;text-align:right;white-space:nowrap">
-          <a class="btn" href="/admin/ext/{{$.ExtType.Key}}/{{.ID}}/edit">{{$.Admin.T "admin.action.edit" "编辑"}}</a>
-          <form method="post" action="/admin/ext/{{$.ExtType.Key}}/{{.ID}}/delete" style="display:inline;margin:0" data-confirm="{{$.Admin.T "admin.ext.del_confirm" "确认删除这条内容？"}}">
-            <input type="hidden" name="_csrf" value="{{$.CSRF}}">
-            <button class="btn btn-danger" type="submit">{{$.Admin.T "admin.action.delete" "删除"}}</button>
-          </form>
-        </td>
-      </tr>
-      {{else}}
-      <tr><td colspan="3" style="padding:1.4rem .4rem;color:#999">{{.Admin.T "admin.ext.empty" "还没有内容，点右上角「新建」。"}}</td></tr>
-      {{end}}
-    </tbody>
-  </table>
+  <a class="btn btn-primary" href="/admin/ext/{{.ExtType.Key}}/new"><span class="plus">+</span> {{.Admin.T "admin.ext.new" "新建"}}</a>
 </div>
+{{if .Flash}}<div class="ext-flash">{{.Flash}}</div>{{end}}
+
+{{if .ExtPosts}}
+<table class="admin-table content-table ext-table">
+  <thead><tr>
+    <th class="content-col-title">{{.Admin.T "admin.col.title" "标题"}}</th>
+    <th class="content-col-status nowrap">{{.Admin.T "admin.col.status" "状态"}}</th>
+    <th class="content-col-actions right nowrap">{{.Admin.T "admin.common.actions" "操作"}}</th>
+  </tr></thead>
+  <tbody>
+    {{range .ExtPosts}}
+    <tr>
+      <td class="title-cell content-col-title">
+        <a class="t" href="/admin/ext/{{$.ExtType.Key}}/{{.ID}}/edit">{{.Title}}</a>
+        <div class="slug">/{{$.ExtType.URLPrefix}}/{{.Slug}}</div>
+      </td>
+      <td class="nowrap content-col-status">{{if eq .Status "published"}}<span class="badge pub">{{$.Admin.T "admin.status.published" "已发布"}}</span>{{else}}<span class="badge draft">{{$.Admin.T "admin.status.draft" "草稿"}}</span>{{end}}</td>
+      <td class="right actions content-col-actions">
+        <div class="action-icons">
+          <a class="act-ico" href="/admin/ext/{{$.ExtType.Key}}/{{.ID}}/edit" title="{{$.Admin.T "admin.action.edit" "编辑"}}" aria-label="{{$.Admin.T "admin.action.edit" "编辑"}}">{{template "icon-edit"}}</a>
+          <form method="post" action="/admin/ext/{{$.ExtType.Key}}/{{.ID}}/delete" data-confirm="{{$.Admin.T "admin.ext.del_confirm" "确认删除这条内容？"}}"><input type="hidden" name="_csrf" value="{{$.CSRF}}"><button class="del act-ico" type="submit" title="{{$.Admin.T "admin.action.delete" "删除"}}" aria-label="{{$.Admin.T "admin.action.delete" "删除"}}">{{template "icon-trash"}}</button></form>
+        </div>
+      </td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{else}}
+<div class="ext-empty">
+  <p>{{.Admin.T "admin.ext.empty" "还没有内容。"}}</p>
+  <a class="btn btn-primary" href="/admin/ext/{{.ExtType.Key}}/new"><span class="plus">+</span> {{.Admin.T "admin.ext.new" "新建"}}</a>
+</div>
+{{end}}
+
+<style>
+  .ext-list-head { align-items: flex-start; }
+  .ext-list-head h1 { display: flex; align-items: baseline; gap: .6rem; flex-wrap: wrap; }
+  .ext-back { font-size: .85rem; color: var(--muted); margin: 0 0 .35rem; }
+  .ext-back a { color: inherit; }
+  .ext-back a:hover { color: var(--accent); }
+  .ext-prefix { font-family: var(--mono); font-size: .82rem; font-weight: 400; color: var(--faint); }
+  .ext-flash { background: var(--accent-wash); color: var(--accent); border-radius: 8px; padding: .7rem 1rem; margin-bottom: 1.4rem; font-size: .9rem; }
+  .ext-empty { text-align: center; padding: 3.2rem 1rem; border: 1px dashed var(--line); border-radius: var(--radius); color: var(--muted); }
+  .ext-empty p { margin: 0 0 1.1rem; font-size: .95rem; }
+</style>
 {{end}}

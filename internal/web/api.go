@@ -130,6 +130,8 @@ type apiContentInput struct {
 	TransGroup  *string `json:"trans_group,omitempty"`
 	CategoryID  *int64  `json:"category_id,omitempty"`
 	PublishedAt *string `json:"published_at,omitempty"`
+	// Fields 是「扩展」内容类型的自定义字段值（按该类型 schema 的键）。
+	Fields map[string]any `json:"fields,omitempty"`
 }
 
 type apiCategory struct {
@@ -201,6 +203,8 @@ type apiSiteProfileItem struct {
 	Logo              string `json:"logo,omitempty"`
 	Favicon           string `json:"favicon,omitempty"`
 	ShareImage        string `json:"share_image,omitempty"`
+	HeroVisual        string `json:"hero_visual,omitempty"`
+	HeroImage         string `json:"hero_image,omitempty"`
 }
 
 type apiSiteProfileInput struct {
@@ -221,6 +225,8 @@ type apiSiteProfileInput struct {
 	Logo              *string `json:"logo,omitempty"`
 	Favicon           *string `json:"favicon,omitempty"`
 	ShareImage        *string `json:"share_image,omitempty"`
+	HeroVisual        *string `json:"hero_visual,omitempty"`
+	HeroImage         *string `json:"hero_image,omitempty"`
 }
 
 type apiSiteProfilePatch struct {
@@ -238,28 +244,29 @@ type apiNavigationInput struct {
 }
 
 type apiContentItem struct {
-	ID          int64        `json:"id"`
-	Type        string       `json:"type"`
-	Lang        string       `json:"lang"`
-	Slug        string       `json:"slug"`
-	Title       string       `json:"title"`
-	Excerpt     string       `json:"excerpt"`
-	Content     string       `json:"content,omitempty"`
-	MetaDesc    string       `json:"meta_desc"`
-	Keywords    string       `json:"keywords"`
-	CoverImage  string       `json:"cover_image"`
-	Author      string       `json:"author"`
-	Status      string       `json:"status"`
-	Featured    bool         `json:"featured"`
-	EditorMode  string       `json:"editor_mode"`
-	LinkURL     string       `json:"link_url,omitempty"`
-	TransGroup  string       `json:"trans_group"`
-	CategoryID  *int64       `json:"category_id"`
-	Category    *apiCategory `json:"category,omitempty"`
-	URL         string       `json:"url"`
-	PublishedAt string       `json:"published_at,omitempty"`
-	CreatedAt   string       `json:"created_at,omitempty"`
-	UpdatedAt   string       `json:"updated_at,omitempty"`
+	ID          int64          `json:"id"`
+	Type        string         `json:"type"`
+	Lang        string         `json:"lang"`
+	Slug        string         `json:"slug"`
+	Title       string         `json:"title"`
+	Excerpt     string         `json:"excerpt"`
+	Content     string         `json:"content,omitempty"`
+	MetaDesc    string         `json:"meta_desc"`
+	Keywords    string         `json:"keywords"`
+	CoverImage  string         `json:"cover_image"`
+	Author      string         `json:"author"`
+	Status      string         `json:"status"`
+	Featured    bool           `json:"featured"`
+	EditorMode  string         `json:"editor_mode"`
+	LinkURL     string         `json:"link_url,omitempty"`
+	TransGroup  string         `json:"trans_group"`
+	CategoryID  *int64         `json:"category_id"`
+	Category    *apiCategory   `json:"category,omitempty"`
+	URL         string         `json:"url"`
+	PublishedAt string         `json:"published_at,omitempty"`
+	CreatedAt   string         `json:"created_at,omitempty"`
+	UpdatedAt   string         `json:"updated_at,omitempty"`
+	Fields      map[string]any `json:"fields,omitempty"`
 }
 
 type apiContentPreview struct {
@@ -680,7 +687,7 @@ func (s *Server) apiUploadMedia(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) apiListContent(w http.ResponseWriter, r *http.Request) {
 	collection := r.PathValue("collection")
-	kind, ok := apiContentKind(collection)
+	kind, ok := s.apiContentKind(collection)
 	if !ok {
 		apiError(w, http.StatusNotFound, "not_found", "接口不存在。")
 		return
@@ -722,7 +729,7 @@ func (s *Server) apiListContent(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) apiGetContent(w http.ResponseWriter, r *http.Request) {
 	collection := r.PathValue("collection")
-	kind, ok := apiContentKind(collection)
+	kind, ok := s.apiContentKind(collection)
 	if !ok {
 		apiError(w, http.StatusNotFound, "not_found", "接口不存在。")
 		return
@@ -743,7 +750,7 @@ func (s *Server) apiPreviewContent(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusNotFound, "not_found", "草稿预览仅支持文章和链接。")
 		return
 	}
-	kind, _ := apiContentKind(collection)
+	kind, _ := s.apiContentKind(collection)
 	if _, ok := s.requireAutomationScope(w, r, apiScope(collection, "read")); !ok {
 		return
 	}
@@ -780,7 +787,7 @@ func (s *Server) apiCreatePreviewURL(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusNotFound, "not_found", "草稿预览仅支持文章和链接。")
 		return
 	}
-	kind, _ := apiContentKind(collection)
+	kind, _ := s.apiContentKind(collection)
 	if _, ok := s.requireAutomationScope(w, r, apiScope(collection, "read")); !ok {
 		return
 	}
@@ -803,7 +810,7 @@ func (s *Server) apiCreatePreviewURL(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) apiCreateContent(w http.ResponseWriter, r *http.Request) {
 	collection := r.PathValue("collection")
-	kind, ok := apiContentKind(collection)
+	kind, ok := s.apiContentKind(collection)
 	if !ok {
 		apiError(w, http.StatusNotFound, "not_found", "接口不存在。")
 		return
@@ -829,6 +836,7 @@ func (s *Server) apiCreateContent(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusBadRequest, "bad_request", errMsg)
 		return
 	}
+	s.applyExtraFields(p, kind, in.Fields)
 	if publishNeeded && !automationScopeAllowed(auth.scopes, apiScope(collection, "publish")) {
 		apiError(w, http.StatusForbidden, "missing_scope", "这条访问权限不能发布该类内容。")
 		return
@@ -853,7 +861,7 @@ func (s *Server) apiCreateContent(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) apiUpdateContent(w http.ResponseWriter, r *http.Request) {
 	collection := r.PathValue("collection")
-	kind, ok := apiContentKind(collection)
+	kind, ok := s.apiContentKind(collection)
 	if !ok {
 		apiError(w, http.StatusNotFound, "not_found", "接口不存在。")
 		return
@@ -880,6 +888,7 @@ func (s *Server) apiUpdateContent(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusBadRequest, "bad_request", errMsg)
 		return
 	}
+	s.applyExtraFields(&next, kind, in.Fields)
 	if publishNeeded && !automationScopeAllowed(auth.scopes, apiScope(collection, "publish")) {
 		apiError(w, http.StatusForbidden, "missing_scope", "这条访问权限不能发布该类内容。")
 		return
@@ -1017,7 +1026,8 @@ func (in apiSiteProfileInput) hasTextFields() bool {
 }
 
 func (in apiSiteProfileInput) hasBrandAssetFields() bool {
-	return in.Logo != nil || in.Favicon != nil || in.ShareImage != nil
+	return in.Logo != nil || in.Favicon != nil || in.ShareImage != nil ||
+		in.HeroVisual != nil || in.HeroImage != nil
 }
 
 func (in apiSiteProfileInput) hasFields() bool {
@@ -1057,6 +1067,8 @@ func (s *Server) apiSiteProfileItem(lang string) apiSiteProfileItem {
 		Logo:              st.Logo,
 		Favicon:           st.Favicon,
 		ShareImage:        st.ShareImage,
+		HeroVisual:        st.HeroVisual,
+		HeroImage:         st.HeroImage,
 	}
 }
 
@@ -1108,9 +1120,31 @@ func (s *Server) applyAPISiteProfileInput(in *apiSiteProfileInput) string {
 	}{
 		{"site.logo", in.Logo},
 		{"site.share_image", in.ShareImage},
+		{"hero.image", in.HeroImage},
 	} {
 		if err := set(item.key, item.value); err != nil {
 			return err.Error()
+		}
+	}
+	if in.HeroVisual != nil {
+		hv := strings.TrimSpace(*in.HeroVisual)
+		if hv != "" && hv != "image" && hv != "svg" && hv != "anim1" && hv != "anim2" {
+			return "Hero 右侧视觉类型无效。"
+		}
+		if err := s.store.SetSetting(s.copyKey("hero.visual", lang), hv); err != nil {
+			return err.Error()
+		}
+	} else if in.HeroImage != nil {
+		heroImage := strings.TrimSpace(*in.HeroImage)
+		heroVisualKey := s.copyKey("hero.visual", lang)
+		if heroImage != "" {
+			if err := s.store.SetSetting(heroVisualKey, "image"); err != nil {
+				return err.Error()
+			}
+		} else if s.store.Setting(heroVisualKey) == "image" {
+			if err := s.store.SetSetting(heroVisualKey, ""); err != nil {
+				return err.Error()
+			}
 		}
 	}
 	if in.Favicon != nil {
@@ -1495,6 +1529,9 @@ func (s *Server) apiContentItem(p *store.Post, includeContent bool) apiContentIt
 	if includeContent {
 		item.Content = p.Content
 	}
+	if f := s.extraToAPIMap(p.Type, p.Extra); len(f) > 0 {
+		item.Fields = f
+	}
 	return item
 }
 
@@ -1520,17 +1557,10 @@ func apiHeadings(toc []Heading) []apiHeading {
 }
 
 func (s *Server) apiContentURL(p *store.Post) string {
-	base := "/" + p.Lang
-	switch p.Type {
-	case "post":
-		return base + "/posts/" + p.Slug
-	case "link":
-		return base + "/links/" + p.Slug
-	default:
-		return base + "/" + p.Slug
-	}
+	return "/" + p.Lang + publicContentPath(p.Type, p.Slug)
 }
 
+// apiContentKind 把集合名映射到内置内容类型 kind（代码层，无站点上下文）。
 func apiContentKind(collection string) (string, bool) {
 	switch collection {
 	case "posts":
@@ -1539,9 +1569,20 @@ func apiContentKind(collection string) (string, bool) {
 		return "page", true
 	case "links":
 		return "link", true
-	default:
-		return "", false
 	}
+	return "", false
+}
+
+// apiContentKind 方法在内置类型之外，还识别本站数据库里的自定义类型（API 内容端点用）。
+// 集合名即其 URL 前缀（自定义类型前缀恒等于 key）。
+func (s *Server) apiContentKind(collection string) (string, bool) {
+	if kind, ok := apiContentKind(collection); ok {
+		return kind, true
+	}
+	if ct := s.extTypeByPrefix(collection); ct != nil {
+		return ct.Key, true
+	}
+	return "", false
 }
 
 func apiKindName(kind string) string {

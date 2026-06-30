@@ -18,10 +18,10 @@
           <div class="num">{{printf "%02d" (add $i 1)}}</div>
           <div>
             <div class="meta">
-              {{with $p.Category}}<a class="tag" href="{{$.Tr.U (printf "/category/%s" .Slug)}}">{{.Name}}</a><span class="sep">·</span>{{end}}
+              {{if eq $p.Type "post"}}{{with $p.Category}}<a class="tag" href="{{$.Tr.U (printf "/category/%s" .Slug)}}">{{.Name}}</a><span class="sep">·</span>{{end}}{{end}}
               <time datetime="{{$.Tr.ISODate $p.PublishedAt}}">{{$.Tr.Date $p.PublishedAt}}</time>
             </div>
-            <h3><a href="{{$.Tr.U (printf "/posts/%s" $p.Slug)}}">{{$p.Title}}</a></h3>
+            <h3><a href="{{$.Tr.U (contentURL $p)}}">{{$p.Title}}</a></h3>
             <p>{{$p.Excerpt}}</p>
           </div>
         </article>

@@ -33,7 +33,7 @@ func (s *Server) adminExtToggle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := strings.TrimSpace(r.FormValue("type"))
-	ct := contentTypeByKey(key)
+	ct := s.lookupType(key)
 	if ct == nil || ct.Builtin {
 		s.notFound(w, r)
 		return
@@ -56,7 +56,7 @@ func (s *Server) adminExtToggle(w http.ResponseWriter, r *http.Request) {
 
 // adminExtType 解析并校验路由里的 {type}：必须是已注册、非内置、且对本站启用的扩展类型。
 func (s *Server) adminExtType(r *http.Request) *ContentType {
-	ct := contentTypeByKey(strings.TrimSpace(r.PathValue("type")))
+	ct := s.lookupType(strings.TrimSpace(r.PathValue("type")))
 	if ct == nil || ct.Builtin || !s.contentTypeActive(ct.Key) {
 		return nil
 	}
@@ -132,7 +132,25 @@ func (s *Server) adminExtEditView(r *http.Request, sess session, ct *ContentType
 	if ct.HasCategory {
 		v.Categories, _ = s.store.ListCategories(v.EditLang, ct.Key)
 	}
+	if ctHasRelation(ct) {
+		opts, _ := s.store.ListAllByType(ct.Key, v.EditLang)
+		for _, o := range opts {
+			if o.ID != p.ID { // 不能把自己设为上级
+				v.ExtRelOptions = append(v.ExtRelOptions, o)
+			}
+		}
+	}
 	return v
+}
+
+// ctHasRelation 判断类型是否含关联字段（如文档上级）。
+func ctHasRelation(ct *ContentType) bool {
+	for _, f := range ct.Fields {
+		if f.Type == FieldRelation {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) adminExtCreate(w http.ResponseWriter, r *http.Request) {
@@ -348,4 +366,256 @@ func pairsToText(v any) string {
 		lines = append(lines, k+": "+val)
 	}
 	return strings.Join(lines, "\n")
+}
+
+// ---------- Phase 3：可视化类型设计器 ----------
+
+const typeFieldSlots = 8
+
+// reservedTypePrefixes 是不能用作自定义类型 key/前缀的保留字（避免与既有路由冲突）。
+var reservedTypePrefixes = []string{
+	"post", "page", "link", "posts", "pages", "links", "category", "about", "start",
+	"search", "admin", "api", "assets", "uploads", "sitemap", "robots", "rss", "favicon",
+}
+
+// TypeFormView 驱动类型设计器表单。
+type TypeFormView struct {
+	IsNew        bool
+	Key          string
+	NameZh       string
+	NameEn       string
+	Icon         string
+	HasCategory  bool
+	Searchable   bool
+	Hierarchical bool
+	Fields       []TypeFieldForm
+	FieldTypes   []string
+}
+
+// TypeFieldForm 是设计器里一行字段的表单值。
+type TypeFieldForm struct {
+	Key       string
+	LabelZh   string
+	LabelEn   string
+	Type      string
+	Required  bool
+	Localized bool
+}
+
+func typeFieldTypeOptions() []string {
+	return []string{"text", "textarea", "markdown", "number", "datetime", "url", "select", "bool", "image", "gallery", "repeater", "relation"}
+}
+
+// adminTypeKeyValid 校验自定义类型 key：小写字母/数字/连字符，非保留字，且不与已有类型冲突。
+func (s *Server) adminTypeKeyValid(key string) bool {
+	if key == "" || len(key) > 32 {
+		return false
+	}
+	for _, r := range key {
+		if !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-') {
+			return false
+		}
+	}
+	for _, rk := range reservedTypePrefixes {
+		if key == rk {
+			return false
+		}
+	}
+	if contentTypeByKey(key) != nil {
+		return false
+	}
+	if row, _ := s.store.GetContentType(key); row != nil {
+		return false
+	}
+	return true
+}
+
+func (s *Server) adminTypeNew(w http.ResponseWriter, r *http.Request) {
+	sess, _ := s.currentSession(r)
+	v := s.adminView(r, "新建类型")
+	s.authed(v, sess)
+	v.TypeForm = newTypeFormView(nil)
+	s.rnd.Admin(w, "ext_type_edit", http.StatusOK, v)
+}
+
+func (s *Server) adminTypeEdit(w http.ResponseWriter, r *http.Request) {
+	sess, _ := s.currentSession(r)
+	row, _ := s.store.GetContentType(strings.TrimSpace(r.PathValue("key")))
+	if row == nil {
+		s.notFound(w, r)
+		return
+	}
+	v := s.adminView(r, "编辑类型")
+	s.authed(v, sess)
+	v.TypeForm = newTypeFormView(row)
+	s.rnd.Admin(w, "ext_type_edit", http.StatusOK, v)
+}
+
+func (s *Server) adminTypeSave(w http.ResponseWriter, r *http.Request) {
+	sess, ok := s.checkCSRF(w, r)
+	if !ok {
+		return
+	}
+	editKey := strings.TrimSpace(r.PathValue("key"))
+	isNew := editKey == ""
+	key := editKey
+	if isNew {
+		key = slugify(r.FormValue("key"))
+	}
+	if isNew && !s.adminTypeKeyValid(key) {
+		v := s.adminView(r, "新建类型")
+		s.authed(v, sess)
+		v.TypeForm = typeFormFromRequest(r, key, true)
+		v.FormErr = "类型标识无效或已被占用（只能用小写字母、数字、连字符，且不能与已有类型冲突）。"
+		s.rnd.Admin(w, "ext_type_edit", http.StatusOK, v)
+		return
+	}
+	if !isNew {
+		if existing, _ := s.store.GetContentType(key); existing == nil {
+			s.notFound(w, r)
+			return
+		}
+	}
+	row := &store.ContentTypeRow{
+		Key:          key,
+		Name:         labelJSON(r.FormValue("name_zh"), r.FormValue("name_en")),
+		Icon:         strings.TrimSpace(r.FormValue("icon")),
+		URLPrefix:    key,
+		Fields:       typeFieldsFromForm(r),
+		HasCategory:  r.FormValue("has_category") == "1",
+		Searchable:   r.FormValue("searchable") == "1",
+		Hierarchical: r.FormValue("hierarchical") == "1",
+	}
+	if err := s.store.SaveContentType(row); err != nil {
+		s.serverError(w, err)
+		return
+	}
+	// 新建/保存即对本站启用。
+	enabled := s.enabledTypeSet()
+	enabled[key] = true
+	_ = s.store.SetSetting(enabledContentTypesKey, joinEnabledTypes(enabled))
+	s.clearGeneratedCaches()
+	http.Redirect(w, r, "/admin/ext/"+key, http.StatusSeeOther)
+}
+
+func (s *Server) adminTypeDelete(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.checkCSRF(w, r); !ok {
+		return
+	}
+	key := strings.TrimSpace(r.PathValue("key"))
+	if err := s.store.DeleteContentType(key); err != nil {
+		s.serverError(w, err)
+		return
+	}
+	enabled := s.enabledTypeSet()
+	delete(enabled, key)
+	_ = s.store.SetSetting(enabledContentTypesKey, joinEnabledTypes(enabled))
+	s.clearGeneratedCaches()
+	http.Redirect(w, r, "/admin/extensions", http.StatusSeeOther)
+}
+
+func newTypeFormView(row *store.ContentTypeRow) *TypeFormView {
+	f := &TypeFormView{Searchable: true, FieldTypes: typeFieldTypeOptions()}
+	if row == nil {
+		f.IsNew = true
+	} else {
+		names := parseLabelJSON(row.Name, row.Key)
+		f.Key = row.Key
+		f.NameZh = names["zh"]
+		f.NameEn = names["en"]
+		f.Icon = row.Icon
+		f.HasCategory = row.HasCategory
+		f.Searchable = row.Searchable
+		f.Hierarchical = row.Hierarchical
+		for _, fl := range parseFieldsJSON(row.Fields) {
+			f.Fields = append(f.Fields, TypeFieldForm{
+				Key: fl.Key, LabelZh: fl.Labels["zh"], LabelEn: fl.Labels["en"],
+				Type: string(fl.Type), Required: fl.Required, Localized: fl.Localized,
+			})
+		}
+	}
+	show := len(f.Fields) + 2
+	if show < 3 {
+		show = 3
+	}
+	if show > typeFieldSlots {
+		show = typeFieldSlots
+	}
+	for len(f.Fields) < show {
+		f.Fields = append(f.Fields, TypeFieldForm{})
+	}
+	return f
+}
+
+func typeFormFromRequest(r *http.Request, key string, isNew bool) *TypeFormView {
+	f := &TypeFormView{
+		IsNew:        isNew,
+		Key:          key,
+		NameZh:       strings.TrimSpace(r.FormValue("name_zh")),
+		NameEn:       strings.TrimSpace(r.FormValue("name_en")),
+		Icon:         strings.TrimSpace(r.FormValue("icon")),
+		HasCategory:  r.FormValue("has_category") == "1",
+		Searchable:   r.FormValue("searchable") == "1",
+		Hierarchical: r.FormValue("hierarchical") == "1",
+		FieldTypes:   typeFieldTypeOptions(),
+	}
+	for i := 0; i < typeFieldSlots; i++ {
+		f.Fields = append(f.Fields, TypeFieldForm{
+			Key:       strings.TrimSpace(r.FormValue(fmt.Sprintf("field_%d_key", i))),
+			LabelZh:   strings.TrimSpace(r.FormValue(fmt.Sprintf("field_%d_label_zh", i))),
+			LabelEn:   strings.TrimSpace(r.FormValue(fmt.Sprintf("field_%d_label_en", i))),
+			Type:      strings.TrimSpace(r.FormValue(fmt.Sprintf("field_%d_type", i))),
+			Required:  r.FormValue(fmt.Sprintf("field_%d_required", i)) == "1",
+			Localized: r.FormValue(fmt.Sprintf("field_%d_localized", i)) == "1",
+		})
+	}
+	return f
+}
+
+// typeFieldsFromForm 把设计器的字段行编码为存库用的 JSON（跳过 key 为空的行）。
+func typeFieldsFromForm(r *http.Request) string {
+	var fields []fieldJSON
+	for i := 0; i < typeFieldSlots; i++ {
+		key := slugify(r.FormValue(fmt.Sprintf("field_%d_key", i)))
+		if key == "" {
+			continue
+		}
+		fj := fieldJSON{
+			Key:       key,
+			Label:     map[string]string{},
+			Type:      strings.TrimSpace(r.FormValue(fmt.Sprintf("field_%d_type", i))),
+			Required:  r.FormValue(fmt.Sprintf("field_%d_required", i)) == "1",
+			Localized: r.FormValue(fmt.Sprintf("field_%d_localized", i)) == "1",
+		}
+		if zh := strings.TrimSpace(r.FormValue(fmt.Sprintf("field_%d_label_zh", i))); zh != "" {
+			fj.Label["zh"] = zh
+		}
+		if en := strings.TrimSpace(r.FormValue(fmt.Sprintf("field_%d_label_en", i))); en != "" {
+			fj.Label["en"] = en
+		}
+		if fj.Type == "" {
+			fj.Type = "text"
+		}
+		fields = append(fields, fj)
+	}
+	if len(fields) == 0 {
+		return "[]"
+	}
+	b, err := json.Marshal(fields)
+	if err != nil {
+		return "[]"
+	}
+	return string(b)
+}
+
+func labelJSON(zh, en string) string {
+	m := map[string]string{}
+	if zh = strings.TrimSpace(zh); zh != "" {
+		m["zh"] = zh
+	}
+	if en = strings.TrimSpace(en); en != "" {
+		m["en"] = en
+	}
+	b, _ := json.Marshal(m)
+	return string(b)
 }

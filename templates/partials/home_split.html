@@ -5,12 +5,12 @@
       <h1 class="split-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
       <p class="split-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>
       <div class="split-cta">
-        <a class="btn btn-primary" href="{{if .Featured}}{{.Tr.U (printf "/posts/%s" .Featured.Slug)}}{{else}}{{.Tr.U .CategoryAll.Path}}{{end}}">{{.Tr.T "home.cta_start"}} <span class="arrow">→</span></a>
+        <a class="btn btn-primary" href="{{if .Featured}}{{.Tr.U (contentURL .Featured)}}{{else}}{{.Tr.U .CategoryAll.Path}}{{end}}">{{.Tr.T "home.cta_start"}} <span class="arrow">→</span></a>
         <a class="split-textlink" href="{{.Tr.U "/about"}}">{{.Tr.T "home.cta_more"}}</a>
       </div>
     </div>
     {{with .Featured}}
-    <a class="split-right{{if .CoverImage}} has-cover{{end}}" href="{{$.Tr.U (printf "/posts/%s" .Slug)}}"{{if .CoverImage}} style="background-image:url('{{.CoverImage}}')"{{end}}>
+    <a class="split-right{{if .CoverImage}} has-cover{{end}}" href="{{$.Tr.U (contentURL .)}}"{{if .CoverImage}} style="background-image:url('{{.CoverImage}}')"{{end}}>
       <span class="split-kicker">{{$.Site.HomeFeatured}}</span>
       <span class="split-feat">
         <span class="split-fmeta">{{with .Category}}{{.Name}}<span class="dot"> · </span>{{end}}<time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time></span>
@@ -27,7 +27,7 @@
     <div class="split-rest-head"><span>{{.Site.HomeLatest}}</span><a href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span aria-hidden="true">→</span></a></div>
     <div class="split-list">
       {{range $i, $p := .Posts}}
-      <a class="split-row" href="{{$.Tr.U (printf "/posts/%s" .Slug)}}">
+      <a class="split-row" href="{{$.Tr.U (contentURL .)}}">
         <span class="sr-n">{{printf "%02d" (add $i 1)}}</span>
         <span class="sr-t">{{$p.Title}}</span>
         <span class="sr-m">{{with $p.Category}}{{.Name}}{{end}}</span>

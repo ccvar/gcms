@@ -1,0 +1,115 @@
+{{define "body"}}{{$f := .TypeForm}}
+<div class="admin-head ext-type-head">
+  <div>
+    <p class="ext-back"><a href="/admin/extensions">← {{.Admin.T "admin.ext.title" "扩展"}}</a></p>
+    <h1>{{if $f.IsNew}}{{.Admin.T "admin.ext.type_new" "新建内容类型"}}{{else}}{{.Admin.T "admin.ext.type_edit" "编辑内容类型"}} <code class="ext-prefix">{{$f.Key}}</code>{{end}}</h1>
+  </div>
+</div>
+{{if .FormErr}}<div class="form-err">{{.FormErr}}</div>{{end}}
+
+<form method="post" action="{{if $f.IsNew}}/admin/extensions/types{{else}}/admin/extensions/types/{{$f.Key}}{{end}}" class="admin-form type-form">
+  <input type="hidden" name="_csrf" value="{{.CSRF}}">
+
+  <div class="field-group">
+    <div class="form-2col">
+      <div class="field">
+        <label for="key">{{.Admin.T "admin.ext.type_key" "标识 key"}}</label>
+        {{if $f.IsNew}}<input id="key" name="key" value="{{$f.Key}}" required placeholder="recipe">{{else}}<input id="key" value="{{$f.Key}}" disabled>{{end}}
+        <span class="hint">{{.Admin.T "admin.ext.type_key_hint" "也是 URL 前缀；小写字母、数字、连字符"}}</span>
+      </div>
+      <div class="field">
+        <label for="icon">{{.Admin.T "admin.ext.type_icon" "图标名（可选）"}}</label>
+        <input id="icon" name="icon" value="{{$f.Icon}}" placeholder="ti-book">
+      </div>
+      <div class="field">
+        <label for="name_zh">{{.Admin.T "admin.ext.type_name_zh" "名称（中文）"}}</label>
+        <input id="name_zh" name="name_zh" value="{{$f.NameZh}}" required placeholder="菜谱">
+      </div>
+      <div class="field">
+        <label for="name_en">{{.Admin.T "admin.ext.type_name_en" "名称（英文）"}}</label>
+        <input id="name_en" name="name_en" value="{{$f.NameEn}}" placeholder="Recipes">
+      </div>
+    </div>
+    <div class="flag-row">
+      <label class="flag"><input type="checkbox" name="has_category" value="1"{{if $f.HasCategory}} checked{{end}}> {{.Admin.T "admin.ext.type_cat" "启用分类"}}</label>
+      <label class="flag"><input type="checkbox" name="searchable" value="1"{{if $f.Searchable}} checked{{end}}> {{.Admin.T "admin.ext.type_search" "可搜索"}}</label>
+      <label class="flag"><input type="checkbox" name="hierarchical" value="1"{{if $f.Hierarchical}} checked{{end}}> {{.Admin.T "admin.ext.type_hier" "层级（树形）"}}</label>
+    </div>
+  </div>
+
+  <div class="field-group">
+    <h2 class="group-title">{{.Admin.T "admin.ext.type_fields" "自定义字段"}}</h2>
+    <p class="hint type-fields-hint">{{.Admin.T "admin.ext.type_fields_hint" "留空的行会被忽略；标题 / 摘要 / 封面 / 正文为内置字段，无需在此添加。"}}</p>
+    <div class="field-rows">
+      <div class="fr-head">
+        <span>key</span>
+        <span>{{.Admin.T "admin.ext.type_field_label" "名称（中 / 英）"}}</span>
+        <span>{{.Admin.T "admin.ext.type_field_type" "类型"}}</span>
+        <span class="fr-c">{{.Admin.T "admin.ext.type_field_req" "必填"}}</span>
+        <span class="fr-c">{{.Admin.T "admin.ext.type_field_loc" "分语种"}}</span>
+      </div>
+      {{range $i, $fl := $f.Fields}}
+      <div class="fr-row">
+        <input name="field_{{$i}}_key" value="{{$fl.Key}}" placeholder="price">
+        <div class="fr-labels"><input name="field_{{$i}}_label_zh" value="{{$fl.LabelZh}}" placeholder="{{$.Admin.T "admin.ext.type_field_zh" "中文名"}}"><input name="field_{{$i}}_label_en" value="{{$fl.LabelEn}}" placeholder="English"></div>
+        <select name="field_{{$i}}_type">{{range $.TypeForm.FieldTypes}}<option value="{{.}}"{{if eq . $fl.Type}} selected{{end}}>{{.}}</option>{{end}}</select>
+        <span class="fr-c"><input type="checkbox" name="field_{{$i}}_required" value="1"{{if $fl.Required}} checked{{end}}></span>
+        <span class="fr-c"><input type="checkbox" name="field_{{$i}}_localized" value="1"{{if $fl.Localized}} checked{{end}}></span>
+      </div>
+      {{end}}
+    </div>
+    <button type="button" class="btn btn-add" data-add-field>+ {{.Admin.T "admin.ext.type_add_field" "添加字段"}}</button>
+  </div>
+
+  <div class="edit-actions">
+    <button class="btn btn-primary" type="submit">{{.Admin.T "admin.action.save" "保存"}}</button>
+    <a class="btn" href="/admin/extensions">{{.Admin.T "admin.action.cancel" "取消"}}</a>
+  </div>
+</form>
+
+<style>
+  .ext-type-head h1 { font-size: 1.55rem; display: flex; align-items: baseline; gap: .6rem; }
+  .ext-back { font-size: .85rem; color: var(--muted); margin: 0 0 .35rem; }
+  .ext-back a { color: inherit; }
+  .ext-back a:hover { color: var(--accent); }
+  .ext-prefix { font-family: var(--mono); font-size: .82rem; font-weight: 400; color: var(--faint); }
+  .type-form { max-width: 880px; }
+  .type-form .group-title { font-family: var(--sans); font-size: .82rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--faint); margin: 0 0 .3rem; }
+  .type-fields-hint { margin: 0 0 1.1rem; }
+  .flag-row { display: flex; gap: 1.8rem; flex-wrap: wrap; margin-top: .2rem; }
+  .flag { display: inline-flex; align-items: center; gap: .55rem; font-size: .92rem; color: var(--ink-soft); }
+  .flag input { width: auto; }
+  .field-rows { display: flex; flex-direction: column; gap: .45rem; }
+  .fr-head, .fr-row { display: grid; grid-template-columns: 1.1fr 2fr 1.05fr .6fr .7fr; gap: .55rem; align-items: center; }
+  .fr-head { font-size: .7rem; text-transform: uppercase; letter-spacing: .06em; color: var(--faint); padding: 0 .2rem .15rem; }
+  .fr-c { text-align: center; }
+  .fr-labels { display: flex; gap: .4rem; }
+  .field-rows input, .field-rows select { width: 100%; padding: .5rem .62rem; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); font: inherit; font-size: .88rem; transition: border-color var(--speed); }
+  .field-rows input[type=checkbox] { width: auto; }
+  .field-rows input:focus, .field-rows select:focus { outline: none; border-color: var(--accent); }
+  .btn-add { margin-top: .9rem; padding: .42rem .9rem; font-size: .85rem; color: var(--muted); border-style: dashed; }
+  .btn-add:hover { color: var(--accent); }
+  .type-form .edit-actions { display: flex; gap: .7rem; margin-top: 1.8rem; }
+</style>
+
+<script>
+  (function () {
+    var wrap = document.querySelector('.field-rows');
+    var addBtn = document.querySelector('[data-add-field]');
+    if (!wrap || !addBtn) return;
+    var MAX = 8;
+    addBtn.addEventListener('click', function () {
+      var rows = wrap.querySelectorAll('.fr-row');
+      var n = rows.length;
+      if (n >= MAX) return;
+      var clone = rows[n - 1].cloneNode(true);
+      clone.querySelectorAll('input, select').forEach(function (el) {
+        if (el.name) el.name = el.name.replace(/field_\d+_/, 'field_' + n + '_');
+        if (el.type === 'checkbox') el.checked = false; else el.value = '';
+      });
+      wrap.appendChild(clone);
+      if (wrap.querySelectorAll('.fr-row').length >= MAX) addBtn.style.display = 'none';
+    });
+  })();
+</script>
+{{end}}

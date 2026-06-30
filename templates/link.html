@@ -53,7 +53,7 @@
           <div class="section-head"><h2>{{.Tr.T "links.related"}}</h2></div>
           <div class="related-grid">
             {{range .Related}}
-            <a class="card" href="{{$.Tr.U (printf "/links/%s" .Slug)}}">
+            <a class="card" href="{{$.Tr.U (contentURL .)}}">
               <div class="meta">{{with .Category}}<span class="tag">{{.Name}}</span>{{end}}</div>
               <h4>{{.Title}}</h4>
             </a>

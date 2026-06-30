@@ -201,6 +201,21 @@ CREATE TABLE IF NOT EXISTS automation_logs (
   message     TEXT NOT NULL DEFAULT '',
   created_at  TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS content_types (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  key          TEXT NOT NULL UNIQUE,
+  name         TEXT NOT NULL DEFAULT '',
+  icon         TEXT NOT NULL DEFAULT '',
+  url_prefix   TEXT NOT NULL,
+  fields       TEXT NOT NULL DEFAULT '[]',
+  has_category INTEGER NOT NULL DEFAULT 0,
+  searchable   INTEGER NOT NULL DEFAULT 1,
+  hierarchical INTEGER NOT NULL DEFAULT 0,
+  position     INTEGER NOT NULL DEFAULT 0,
+  created_at   TEXT NOT NULL,
+  updated_at   TEXT NOT NULL
+);
 `
 
 func (s *Store) migrate() error {
@@ -1184,35 +1199,64 @@ func (s *Store) Related(p *Post, limit int) ([]*Post, error) {
 		ORDER BY p.published_at DESC LIMIT ?`, p.Lang, p.CategoryID.Int64, p.ID, limit)
 }
 
-// Search 在某语种的标题、摘要、正文、SEO 描述与关键词标签中检索；长词优先走 FTS5，短词保留 LIKE 回退。
+// Search 在某语种的标题、摘要、正文、SEO 描述与关键词标签中检索（默认仅文章）；
+// 长词优先走 FTS5，短词保留 LIKE 回退。
 func (s *Store) Search(lang, q string, limit int) ([]*Post, error) {
+	return s.SearchInTypes(lang, q, []string{"post"}, limit)
+}
+
+// SearchInTypes 在给定的内容类型集合内检索，供「扩展」类型一并进入站内搜索。
+func (s *Store) SearchInTypes(lang, q string, types []string, limit int) ([]*Post, error) {
+	if len(types) == 0 {
+		types = []string{"post"}
+	}
 	if len([]rune(q)) >= 3 {
-		if posts, err := s.searchFTS(lang, q, limit); err == nil {
+		if posts, err := s.searchFTS(lang, q, types, limit); err == nil {
 			return posts, nil
 		}
 	}
-	return s.searchLike(lang, q, limit)
+	return s.searchLike(lang, q, types, limit)
 }
 
-func (s *Store) searchFTS(lang, q string, limit int) ([]*Post, error) {
+func (s *Store) searchFTS(lang, q string, types []string, limit int) ([]*Post, error) {
 	match := `"` + strings.ReplaceAll(strings.TrimSpace(q), `"`, `""`) + `"`
+	inClause, typeArgs := typeIn("type", types)
 	sql := `SELECT ` + postSummaryCols + `
 		FROM posts p
 		JOIN (
 			SELECT rowid, rank FROM post_search
-			WHERE post_search MATCH ? AND lang=? AND type='post' AND status='published'
+			WHERE post_search MATCH ? AND lang=? AND ` + inClause + ` AND status='published'
 			ORDER BY rank LIMIT ?
 		) hit ON hit.rowid = p.id
 		LEFT JOIN categories c ON c.id = p.category_id
 		ORDER BY hit.rank, p.published_at DESC`
-	return s.queryPostRows(sql, true, match, lang, limit)
+	args := append([]any{match, lang}, typeArgs...)
+	args = append(args, limit)
+	return s.queryPostRows(sql, true, args...)
 }
 
-func (s *Store) searchLike(lang, q string, limit int) ([]*Post, error) {
+func (s *Store) searchLike(lang, q string, types []string, limit int) ([]*Post, error) {
 	like := "%" + q + "%"
-	return s.queryPostSummaries(`WHERE p.type='post' AND p.status='published' AND p.lang=?
+	inClause, typeArgs := typeIn("p.type", types)
+	args := append([]any{}, typeArgs...)
+	args = append(args, lang, like, like, like, like, like, limit)
+	return s.queryPostSummaries(`WHERE `+inClause+` AND p.status='published' AND p.lang=?
 		AND (p.title LIKE ? OR p.excerpt LIKE ? OR p.content LIKE ? OR p.meta_desc LIKE ? OR p.keywords LIKE ?)
-		ORDER BY p.published_at DESC LIMIT ?`, lang, like, like, like, like, like, limit)
+		ORDER BY p.published_at DESC LIMIT ?`, args...)
+}
+
+// typeIn 构建 "<col> IN (?,?,..)" 片段及其参数。
+func typeIn(col string, types []string) (string, []any) {
+	if len(types) == 0 {
+		types = []string{"post"}
+	}
+	ph := make([]string, len(types))
+	args := make([]any, len(types))
+	for i, t := range types {
+		ph[i] = "?"
+		args[i] = t
+	}
+	return col + " IN (" + strings.Join(ph, ",") + ")", args
 }
 
 // AllPublished 某语种全部已发布文章，供 rss 使用。
@@ -1334,6 +1378,11 @@ func (s *Store) GetTypedBySlug(typ, lang, slug string, includeDrafts bool) (*Pos
 // ListAllByType 后台：某语种、某类型全部内容（含草稿）。
 func (s *Store) ListAllByType(typ, lang string) ([]*Post, error) {
 	return s.queryPostSummaries(`WHERE p.type=? AND p.lang=? ORDER BY p.updated_at DESC`, typ, lang)
+}
+
+// AllPublishedByType 某语种、某类型全部已发布内容（供搜索索引与静态导出枚举）。
+func (s *Store) AllPublishedByType(typ, lang string) ([]*Post, error) {
+	return s.queryPostSummaries(`WHERE p.type=? AND p.status='published' AND p.lang=? ORDER BY p.published_at DESC`, typ, lang)
 }
 
 // TranslationsPublished 返回与某 trans_group 关联、已发布的各语种内容（含 post 与 page）。

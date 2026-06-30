@@ -7,22 +7,22 @@
           <h1{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
           <p class="hero-sub"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>
           <div class="hero-cta">
-            <a class="btn btn-primary" href="{{if .Featured}}{{.Tr.U (printf "/posts/%s" .Featured.Slug)}}{{else}}{{.Tr.U .CategoryAll.Path}}{{end}}">{{.Tr.T "home.cta_start"}} <span class="arrow">→</span></a>
+            <a class="btn btn-primary" href="{{if .Featured}}{{.Tr.U (contentURL .Featured)}}{{else}}{{.Tr.U .CategoryAll.Path}}{{end}}">{{.Tr.T "home.cta_start"}} <span class="arrow">→</span></a>
             <a class="btn" href="{{.Tr.U "/about"}}">{{.Tr.T "home.cta_more"}}</a>
           </div>
         </div>
         {{if and (eq .Theme "knowledge") .FeatLinks}}
         <aside class="knowledge-links" aria-label="{{.Tr.T "nav.links"}}">
           {{range .FeatLinks}}
-          <a class="knowledge-link" href="{{if .Slug}}{{$.Tr.U (printf "/links/%s" .Slug)}}{{else}}#{{end}}" target="_blank" rel="noopener">
+          <a class="knowledge-link" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}" target="_blank" rel="noopener">
             <span class="kl-cover">{{if .CoverImage}}<img src="{{.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b>{{initial .Title}}</b>{{end}}</span>
             <span class="kl-title">{{.Title}}</span>
           </a>
           {{end}}
         </aside>
         {{end}}
-        <div class="hero-visual" aria-hidden="true"{{if .VisualEdit}} data-visual-edit="hero.image" data-visual-label="Hero 图片" data-visual-kind="image"{{end}}>
-          {{if and (eq .Site.HeroVisual "image") .Site.HeroImage}}<img class="hero-img" src="{{.Site.HeroImage}}" alt="" decoding="async" fetchpriority="high"{{imgAttrs .Site.HeroImage}}{{if .VisualEdit}} data-visual-edit="hero.image" data-visual-label="Hero 图片" data-visual-kind="image"{{end}}>
+        <div class="hero-visual"{{if ne .Site.HeroVisual "image"}} aria-hidden="true"{{end}}{{if .VisualEdit}} data-visual-edit="hero.image" data-visual-label="Hero 图片" data-visual-kind="image"{{end}}>
+          {{if and (eq .Site.HeroVisual "image") .Site.HeroImage}}<img class="hero-img" src="{{.Site.HeroImage}}" alt="{{.Site.HeroAlt}}" decoding="async" fetchpriority="high"{{imgAttrs .Site.HeroImage}}{{if .VisualEdit}} data-visual-edit="hero.image" data-visual-label="Hero 图片" data-visual-kind="image"{{end}}>
           {{else if and (eq .Site.HeroVisual "svg") .Site.HeroSVG}}<div class="hero-embed">{{safeHTML .Site.HeroSVG}}</div>
           {{else if eq .Site.HeroVisual "anim1"}}
           <svg class="hero-svg" viewBox="0 0 480 440" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="{{.Tr.T "home.hero_anim1_label"}}">
@@ -181,7 +181,7 @@
               <time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time>
               <span class="sep">·</span><span class="read-time">{{.ReadingTime}} {{$.Tr.T "common.min"}}</span>
             </div>
-            <h3><a href="{{$.Tr.U (printf "/posts/%s" .Slug)}}">{{.Title}}</a></h3>
+            <h3><a href="{{$.Tr.U (contentURL .)}}">{{.Title}}</a></h3>
             <p>{{.Excerpt}}</p>
           </article>
           {{else}}
@@ -213,9 +213,9 @@
                 <time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time>
                 <span class="sep">·</span><span class="read-time">{{.ReadingTime}} {{$.Tr.T "common.min_read"}}</span>
               </div>
-              <h3><a href="{{$.Tr.U (printf "/posts/%s" .Slug)}}">{{.Title}}</a></h3>
+              <h3><a href="{{$.Tr.U (contentURL .)}}">{{.Title}}</a></h3>
               <p>{{.Excerpt}}</p>
-              <a class="btn" href="{{$.Tr.U (printf "/posts/%s" .Slug)}}">{{$.Tr.T "home.read_more"}} <span class="arrow">→</span></a>
+              <a class="btn" href="{{$.Tr.U (contentURL .)}}">{{$.Tr.T "home.read_more"}} <span class="arrow">→</span></a>
             </div>
           </article>
           {{if $.FeaturedMore}}
@@ -223,7 +223,7 @@
             {{range $.FeaturedMore}}
             <article class="card">
               <div class="meta">{{with .Category}}<a class="tag" href="{{$.Tr.U (printf "/category/%s" .Slug)}}">{{.Name}}</a><span class="sep">·</span>{{end}}<time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time></div>
-              <h4><a href="{{$.Tr.U (printf "/posts/%s" .Slug)}}">{{.Title}}</a></h4>
+              <h4><a href="{{$.Tr.U (contentURL .)}}">{{.Title}}</a></h4>
               <p class="card-excerpt">{{.Excerpt}}</p>
             </article>
             {{end}}
@@ -242,7 +242,7 @@
         <div class="doc-section-body">
           <div class="link-grid home-links">
             {{range .FeatLinks}}
-            <a class="link-card" href="{{$.Tr.U (printf "/links/%s" .Slug)}}">
+            <a class="link-card" href="{{$.Tr.U (contentURL .)}}">
               <div class="lc-cover">{{if .CoverImage}}<img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<span class="lc-mono" aria-hidden="true">{{initial .Title}}</span>{{end}}</div>
               <div class="lc-body">
                 <h3 class="lc-title">{{.Title}} <span class="lc-arrow" aria-hidden="true">→</span></h3>
@@ -272,7 +272,7 @@
                   <time datetime="{{$.Tr.ISODate $p.PublishedAt}}">{{$.Tr.Date $p.PublishedAt}}</time>
                   <span class="sep">·</span><span class="read-time">{{$p.ReadingTime}} {{$.Tr.T "common.min"}}</span>
                 </div>
-                <h3><a href="{{$.Tr.U (printf "/posts/%s" $p.Slug)}}">{{$p.Title}}</a></h3>
+                <h3><a href="{{$.Tr.U (contentURL $p)}}">{{$p.Title}}</a></h3>
                 <p>{{$p.Excerpt}}</p>
               </div>
             </article>

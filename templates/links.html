@@ -24,7 +24,7 @@
 
       <div class="link-grid">
         {{range .Posts}}
-        <a class="link-card" href="{{$.Tr.U (printf "/links/%s" .Slug)}}">
+        <a class="link-card" href="{{$.Tr.U (contentURL .)}}">
           <div class="lc-cover">{{if .CoverImage}}<img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<span class="lc-mono" aria-hidden="true">{{initial .Title}}</span>{{end}}</div>
           <div class="lc-body">
             <h3 class="lc-title">{{.Title}} <span class="lc-arrow" aria-hidden="true">→</span></h3>

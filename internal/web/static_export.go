@@ -116,6 +116,9 @@ func (s *Server) exportStaticSite(ctx context.Context, cfg CloudflareConfig) (*s
 		if err := s.exportPagePages(render, lang, prefix); err != nil {
 			return nil, err
 		}
+		if err := s.exportExtTypePages(render, lang, prefix); err != nil {
+			return nil, err
+		}
 		if err := render(prefix+"/api-docs", prefix+"/api-docs/index.html"); err != nil {
 			return nil, err
 		}
@@ -219,6 +222,40 @@ func (s *Server) exportPostPages(render func(string, string) error, lang, prefix
 	for _, p := range posts {
 		if err := render(prefix+"/posts/"+url.PathEscape(p.Slug), prefix+"/posts/"+p.Slug+"/index.html"); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// exportExtTypePages 导出本站「已启用」扩展类型的归档页（含分页）与各条详情页。
+// 只导出对该站点启用的类型，未启用者完全不产出（与公开路由一致）。
+func (s *Server) exportExtTypePages(render func(string, string) error, lang, prefix string) error {
+	const size = 12 // 与 extList 的分页大小保持一致
+	for _, ct := range s.activeExtContentTypes() {
+		if ct.URLPrefix == "" {
+			continue
+		}
+		base := prefix + "/" + ct.URLPrefix
+		if err := render(base, base+"/index.html"); err != nil {
+			return err
+		}
+		total, err := s.store.CountPublishedByType(ct.Key, lang, 0)
+		if err != nil {
+			return err
+		}
+		for pageNum := 2; pageNum <= ceilDiv(total, size); pageNum++ {
+			if err := render(fmt.Sprintf("%s/page/%d", base, pageNum), fmt.Sprintf("%s/page/%d/index.html", base, pageNum)); err != nil {
+				return err
+			}
+		}
+		items, err := s.store.AllPublishedByType(ct.Key, lang)
+		if err != nil {
+			return err
+		}
+		for _, p := range items {
+			if err := render(base+"/"+url.PathEscape(p.Slug), base+"/"+p.Slug+"/index.html"); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -346,7 +383,7 @@ func (s *Server) staticSearchIndex(lang string) ([]staticSearchEntry, error) {
 			Excerpt:  p.Excerpt,
 			MetaDesc: p.MetaDesc,
 			Keywords: p.Keywords,
-			URL:      "/" + lang + "/posts/" + p.Slug,
+			URL:      "/" + lang + publicContentPath(p.Type, p.Slug),
 			Category: categoryName(p.Category),
 			Date:     p.PublishedAt.Format("2006-01-02"),
 		})
@@ -365,7 +402,7 @@ func (s *Server) staticSearchIndex(lang string) ([]staticSearchEntry, error) {
 			Excerpt:  p.Excerpt,
 			MetaDesc: p.MetaDesc,
 			Keywords: p.Keywords,
-			URL:      "/" + lang + "/" + p.Slug,
+			URL:      "/" + lang + publicContentPath(p.Type, p.Slug),
 			Date:     p.PublishedAt.Format("2006-01-02"),
 		})
 	}
@@ -381,10 +418,32 @@ func (s *Server) staticSearchIndex(lang string) ([]staticSearchEntry, error) {
 			Type:     "link",
 			Title:    p.Title,
 			Excerpt:  p.Excerpt,
-			URL:      "/" + lang + "/links/" + p.Slug,
+			URL:      "/" + lang + publicContentPath(p.Type, p.Slug),
 			Category: categoryName(p.Category),
 			Date:     p.PublishedAt.Format("2006-01-02"),
 		})
+	}
+	// 「扩展」内容类型（仅本站已启用且可搜索的类型）。
+	for _, ct := range s.activeExtContentTypes() {
+		if !ct.Searchable {
+			continue
+		}
+		items, err := s.store.AllPublishedByType(ct.Key, lang)
+		if err != nil {
+			return nil, err
+		}
+		for _, p := range items {
+			out = append(out, staticSearchEntry{
+				Type:     ct.Key,
+				Title:    p.Title,
+				Excerpt:  p.Excerpt,
+				MetaDesc: p.MetaDesc,
+				Keywords: p.Keywords,
+				URL:      "/" + lang + publicContentPath(p.Type, p.Slug),
+				Category: categoryName(p.Category),
+				Date:     p.PublishedAt.Format("2006-01-02"),
+			})
+		}
 	}
 	return out, nil
 }

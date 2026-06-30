@@ -689,7 +689,7 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 		t.Fatalf("preview did not render noindex blog page")
 	} else {
 		for _, needle := range []string{
-			`href="` + previewPrefix + `/zh/posts/preview-internal-link"`,
+			`href="` + previewPrefix + `/zh/posts/preview-internal-link/"`,
 			`href="` + previewPrefix + `/zh/category"`,
 			`href="` + previewPrefix + `/zh/about"`,
 			`href="` + previewPrefix + `/sitemap.xml"`,
@@ -938,24 +938,24 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 		{
 			name:      "posts",
 			path:      "/admin/posts?lang=zh&status=published",
-			wantHref:  previewPrefix + "/zh/posts/preview-internal-link",
-			rootHref:  "/zh/posts/preview-internal-link",
+			wantHref:  previewPrefix + "/zh/posts/preview-internal-link/",
+			rootHref:  "/zh/posts/preview-internal-link/",
 			editPath:  "/admin/posts/" + strconv.FormatInt(otherPostID, 10) + "/edit",
 			editTitle: "Preview Internal Link",
 		},
 		{
 			name:      "links",
 			path:      "/admin/links?lang=zh&status=published",
-			wantHref:  previewPrefix + "/zh/links/preview-resource-link",
-			rootHref:  "/zh/links/preview-resource-link",
+			wantHref:  previewPrefix + "/zh/links/preview-resource-link/",
+			rootHref:  "/zh/links/preview-resource-link/",
 			editPath:  "/admin/links/" + strconv.FormatInt(otherLinkID, 10) + "/edit",
 			editTitle: "Preview Resource Link",
 		},
 		{
 			name:      "pages",
 			path:      "/admin/pages?lang=zh",
-			wantHref:  previewPrefix + "/zh/preview-about",
-			rootHref:  "/zh/preview-about",
+			wantHref:  previewPrefix + "/zh/preview-about/",
+			rootHref:  "/zh/preview-about/",
 			editPath:  "/admin/pages/" + strconv.FormatInt(otherPageID, 10) + "/edit",
 			editTitle: "Preview About Page",
 		},

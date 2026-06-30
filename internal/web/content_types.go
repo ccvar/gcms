@@ -1,6 +1,9 @@
 package web
 
-import "strings"
+import (
+	"sort"
+	"strings"
+)
 
 // 「扩展」内容类型引擎 —— 注册表。
 //
@@ -40,14 +43,15 @@ type FieldOption struct {
 
 // Field 描述一个自定义字段（存入 posts.extra JSON 的一个键）。
 type Field struct {
-	Key       string            // extra JSON 中的键名
-	Labels    map[string]string // 各语种显示名 {zh:..,en:..}
-	Type      FieldType
-	Required  bool
-	Options   []FieldOption     // 仅 select
-	Localized bool              // true=按语种各填；false=跨语种同步（价格/图集/时间等）
-	InList    bool              // 是否在后台列表/归档卡片作为一列展示
-	Help      map[string]string // 帮助文本（各语种）
+	Key        string            // extra JSON 中的键名
+	Labels     map[string]string // 各语种显示名 {zh:..,en:..}
+	Type       FieldType
+	Required   bool
+	Options    []FieldOption     // 仅 select
+	Localized  bool              // true=按语种各填；false=跨语种同步（价格/图集/时间等）
+	InList     bool              // 是否在后台列表/归档卡片作为一列展示
+	Structural bool              // 结构性字段（如层级父级/排序），不在前台作为内容字段展示
+	Help       map[string]string // 帮助文本（各语种）
 }
 
 // Label 返回字段在指定语种下的显示名（回退 zh → en → key）。
@@ -88,9 +92,16 @@ func (ct *ContentType) FieldByKey(key string) *Field {
 type FieldValue struct {
 	Key   string
 	Label string
-	Type  string   // 字段类型字符串（text/number/url/gallery…），便于模板比较
-	Text  string   // 标量展示值
-	List  []string // 多值（gallery/images）
+	Type  string      // 字段类型字符串（text/number/url/gallery…），便于模板比较
+	Text  string      // 标量展示值
+	List  []string    // 多值（gallery/images）
+	Pairs []FieldPair // 键值重复块（repeater，如商品规格）
+}
+
+// FieldPair 是 repeater 字段里的一项键值对。
+type FieldPair struct {
+	K string
+	V string
 }
 
 // contentTypes 是引擎内置注册的全部类型。
@@ -131,8 +142,8 @@ var contentTypes = []*ContentType{
 		Icon: "ti-book", URLPrefix: "docs",
 		Multilingual: true, Searchable: true, Hierarchical: true,
 		Fields: []Field{
-			{Key: "parent", Labels: map[string]string{"zh": "上级文档", "en": "Parent"}, Type: FieldRelation},
-			{Key: "order", Labels: map[string]string{"zh": "排序", "en": "Order"}, Type: FieldNumber},
+			{Key: "parent", Labels: map[string]string{"zh": "上级文档", "en": "Parent"}, Type: FieldRelation, Structural: true},
+			{Key: "order", Labels: map[string]string{"zh": "排序", "en": "Order"}, Type: FieldNumber, Structural: true},
 		},
 	},
 	{
@@ -202,8 +213,9 @@ func (s *Server) enabledTypeSet() map[string]bool {
 // 供 Phase 1+ 的路由、静态导出、搜索索引与 API 枚举使用。
 func (s *Server) activeExtContentTypes() []*ContentType {
 	enabled := s.enabledTypeSet()
-	out := make([]*ContentType, 0, len(enabled))
-	for _, ct := range extContentTypes() {
+	all := s.allExtTypes()
+	out := make([]*ContentType, 0, len(all))
+	for _, ct := range all {
 		if enabled[ct.Key] {
 			out = append(out, ct)
 		}
@@ -214,7 +226,7 @@ func (s *Server) activeExtContentTypes() []*ContentType {
 // contentTypeActive 判断某扩展类型是否对当前站点启用。
 // 内置类型恒返回 false：它们不经此启用机制（始终可用、走既有路径）。
 func (s *Server) contentTypeActive(key string) bool {
-	ct := contentTypeByKey(key)
+	ct := s.lookupType(key)
 	if ct == nil || ct.Builtin {
 		return false
 	}
@@ -245,13 +257,15 @@ type ExtTypeRow struct {
 	URLPrefix string
 	Enabled   bool
 	Count     int
+	Custom    bool // 数据库自定义类型（可编辑/删除）
 }
 
 // extTypeRows 构建当前站点的扩展类型行（含启用状态与内容数），供后台 hub 渲染。
 func (s *Server) extTypeRows(lang string) []ExtTypeRow {
 	enabled := s.enabledTypeSet()
-	rows := make([]ExtTypeRow, 0, len(extContentTypes()))
-	for _, ct := range extContentTypes() {
+	all := s.allExtTypes()
+	rows := make([]ExtTypeRow, 0, len(all))
+	for _, ct := range all {
 		n := 0
 		if list, _ := s.store.ListAllByType(ct.Key, lang); list != nil {
 			n = len(list)
@@ -259,18 +273,20 @@ func (s *Server) extTypeRows(lang string) []ExtTypeRow {
 		rows = append(rows, ExtTypeRow{
 			Key: ct.Key, Name: ct.Name(lang), Icon: ct.Icon,
 			URLPrefix: ct.URLPrefix, Enabled: enabled[ct.Key], Count: n,
+			Custom: contentTypeByKey(ct.Key) == nil,
 		})
 	}
 	return rows
 }
 
-// joinEnabledTypes 把启用集合按注册顺序拼成稳定的逗号串。
+// joinEnabledTypes 把启用集合拼成稳定的逗号串（保留全部已启用键，含数据库自定义类型）。
 func joinEnabledTypes(enabled map[string]bool) string {
 	keys := make([]string, 0, len(enabled))
-	for _, ct := range extContentTypes() {
-		if enabled[ct.Key] {
-			keys = append(keys, ct.Key)
+	for k, on := range enabled {
+		if on {
+			keys = append(keys, k)
 		}
 	}
+	sort.Strings(keys)
 	return strings.Join(keys, ",")
 }

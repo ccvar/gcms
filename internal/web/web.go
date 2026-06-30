@@ -323,11 +323,14 @@ type View struct {
 	Fields []FieldValue
 
 	// 后台「扩展」分区
-	ExtTypes  []ExtTypeRow
-	ExtType   *ContentType
-	ExtPosts  []*store.Post
-	ExtEdit   *store.Post
-	ExtValues map[string]string
+	ExtTypes      []ExtTypeRow
+	ExtType       *ContentType
+	ExtPosts      []*store.Post
+	ExtEdit       *store.Post
+	ExtValues     map[string]string
+	ExtRelOptions []*store.Post // 关联字段（如文档上级）的候选项
+	DocTree       []DocNode     // 层级类型的侧边树
+	TypeForm      *TypeFormView // 可视化类型设计器表单
 
 	PageNum    int
 	TotalPages int
@@ -659,7 +662,7 @@ func (s *Server) Handler() http.Handler {
 }
 
 func (s *Server) siteHandler() http.Handler {
-	return s.securityHeaders(s.withCloudflareCanonicalFrontend(s.withLocale(s.publicPageCache(s.mux))))
+	return s.securityHeaders(s.withCloudflareCanonicalFrontend(s.withLocale(s.publicPageCache(s.contentTypeRouter(s.mux)))))
 }
 
 func (s *Server) runtimePool() *SiteRuntimePool {
@@ -2177,13 +2180,17 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("GET /page/{pageNum}", s.home)
 	mux.HandleFunc("GET /page/{pageNum}/{$}", s.home)
 	mux.HandleFunc("GET /posts/{slug}", s.article)
+	mux.HandleFunc("GET /posts/{slug}/{$}", s.article)
 	mux.HandleFunc("GET /category", s.categoryRoot)
+	mux.HandleFunc("GET /category/{$}", s.categoryRoot)
 	mux.HandleFunc("GET /category/page/{pageNum}", s.categoryRoot)
 	mux.HandleFunc("GET /category/page/{pageNum}/{$}", s.categoryRoot)
 	mux.HandleFunc("GET /category/{slug}", s.category)
+	mux.HandleFunc("GET /category/{slug}/{$}", s.category)
 	mux.HandleFunc("GET /category/{slug}/page/{pageNum}", s.category)
 	mux.HandleFunc("GET /category/{slug}/page/{pageNum}/{$}", s.category)
 	mux.HandleFunc("GET /links", s.links)
+	mux.HandleFunc("GET /links/{$}", s.links)
 	mux.HandleFunc("GET /links/page/{pageNum}", s.links)
 	mux.HandleFunc("GET /links/page/{pageNum}/{$}", s.links)
 	mux.HandleFunc("GET /links/cat/{cat}", s.links)
@@ -2191,13 +2198,19 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("GET /links/cat/{cat}/page/{pageNum}", s.links)
 	mux.HandleFunc("GET /links/cat/{cat}/page/{pageNum}/{$}", s.links)
 	mux.HandleFunc("GET /links/{slug}", s.link)
+	mux.HandleFunc("GET /links/{slug}/{$}", s.link)
 	mux.HandleFunc("GET /api-docs", s.apiDocs)
+	mux.HandleFunc("GET /api-docs/{$}", s.apiDocs)
 	mux.HandleFunc("GET /about", s.about)
+	mux.HandleFunc("GET /about/{$}", s.about)
 	mux.HandleFunc("GET /search", s.search)
+	mux.HandleFunc("GET /search/{$}", s.search)
 	mux.HandleFunc("GET /{slug}", s.page)
 	// 「扩展」内容类型的公开路由（全局注册；未对本站启用时列表回退为按 slug 找页面、
 	// 详情返回 404，保证未用该类型的站点零回归）。
 	s.registerContentTypeRoutes(mux)
+	// 数据库自定义类型的公开路由由 contentTypeRouter 包装器在 mux 之前分发
+	// （避免通配路由与 /assets/ 等子树冲突）。
 
 	// SEO 端点（动态生成）
 	mux.HandleFunc("GET /sitemap.xml", s.sitemap)
@@ -2221,6 +2234,7 @@ func (s *Server) routes(assetsFS fs.FS) {
 	// 自动化 API（开放语种、站点文案、导航、分类、媒体上传，以及文章 / 页面 / 链接内容操作）。
 	mux.HandleFunc("GET /api/admin/v1/openapi.json", s.apiOpenAPI)
 	mux.HandleFunc("GET /api/admin/v1/languages", s.apiLanguages)
+	mux.HandleFunc("GET /api/admin/v1/types", s.apiContentTypes)
 	mux.HandleFunc("GET /api/admin/v1/site-profile", s.apiGetSiteProfile)
 	mux.HandleFunc("PATCH /api/admin/v1/site-profile", s.apiUpdateSiteProfile)
 	mux.HandleFunc("GET /api/admin/v1/navigation", s.apiGetNavigation)
@@ -2373,6 +2387,11 @@ func (s *Server) routes(assetsFS fs.FS) {
 	// 「扩展」内容类型后台
 	mux.HandleFunc("GET /admin/extensions", s.requireAuth(s.adminExtHub))
 	mux.HandleFunc("POST /admin/extensions/toggle", s.requireAuth(s.adminExtToggle))
+	mux.HandleFunc("GET /admin/extensions/types/new", s.requireAuth(s.adminTypeNew))
+	mux.HandleFunc("POST /admin/extensions/types", s.requireAuth(s.adminTypeSave))
+	mux.HandleFunc("GET /admin/extensions/types/{key}/edit", s.requireAuth(s.adminTypeEdit))
+	mux.HandleFunc("POST /admin/extensions/types/{key}", s.requireAuth(s.adminTypeSave))
+	mux.HandleFunc("POST /admin/extensions/types/{key}/delete", s.requireAuth(s.adminTypeDelete))
 	mux.HandleFunc("GET /admin/ext/{type}", s.requireAuth(s.adminExtList))
 	mux.HandleFunc("GET /admin/ext/{type}/new", s.requireAuth(s.adminExtNew))
 	mux.HandleFunc("POST /admin/ext/{type}", s.requireAuth(s.adminExtCreate))
@@ -3021,11 +3040,11 @@ func (s *Server) article(w http.ResponseWriter, r *http.Request) {
 	v.Next, _ = s.store.NextPost(p)
 	v.Related, _ = s.store.Related(p, 3)
 	v.Giscus = s.giscusForPost(lang, p)
-	ph := map[string]string{p.Lang: "/posts/" + p.Slug}
+	ph := map[string]string{p.Lang: publicContentPath(p.Type, p.Slug)}
 	if trs, _ := s.store.TranslationsPublished(p.TransGroup); trs != nil {
 		for _, t := range trs {
 			if t.Type == "post" {
-				ph[t.Lang] = "/posts/" + t.Slug
+				ph[t.Lang] = publicContentPath(t.Type, t.Slug)
 			}
 		}
 	}
@@ -3175,11 +3194,11 @@ func (s *Server) link(w http.ResponseWriter, r *http.Request) {
 	v.Post = p
 	v.ContentHTML, v.TOC = s.renderedContent(p)
 	v.Related, _ = s.store.RelatedLinks(p, 6)
-	ph := map[string]string{p.Lang: "/links/" + p.Slug}
+	ph := map[string]string{p.Lang: publicContentPath(p.Type, p.Slug)}
 	if trs, _ := s.store.TranslationsPublished(p.TransGroup); trs != nil {
 		for _, t := range trs {
 			if t.Type == "link" {
-				ph[t.Lang] = "/links/" + t.Slug
+				ph[t.Lang] = publicContentPath(t.Type, t.Slug)
 			}
 		}
 	}
@@ -3228,11 +3247,11 @@ func (s *Server) renderPageBySlug(w http.ResponseWriter, r *http.Request, slug s
 	v.SEO = v.Site.Page(p)
 	v.Page = p
 	v.ContentHTML, _ = s.renderedContent(p)
-	ph := map[string]string{p.Lang: "/" + p.Slug}
+	ph := map[string]string{p.Lang: publicContentPath(p.Type, p.Slug)}
 	if trs, _ := s.store.TranslationsPublished(p.TransGroup); trs != nil {
 		for _, t := range trs {
 			if t.Type == "page" {
-				ph[t.Lang] = "/" + t.Slug
+				ph[t.Lang] = publicContentPath(t.Type, t.Slug)
 			}
 		}
 	}
@@ -3248,7 +3267,7 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 	v.SEO.Title = v.Tr.T("search.title") + " — " + v.Site.Name
 	v.Query = q
 	if q != "" {
-		posts, _ := s.store.Search(lang, q, 50)
+		posts, _ := s.store.SearchInTypes(lang, q, s.searchableTypes(), 50)
 		v.Posts = posts
 		v.Results = len(posts)
 	}
@@ -3299,14 +3318,21 @@ func (s *Server) sitemap(w http.ResponseWriter, r *http.Request) {
 	b.WriteString(xml.Header)
 	b.WriteString(`<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">` + "\n")
 
-	writeGroup := func(byLang map[string]string, freq, prio string) {
+	type sitemapURL struct {
+		Path    string
+		LastMod time.Time
+	}
+	writeGroup := func(byLang map[string]sitemapURL, freq, prio string) {
 		for _, l := range locales {
-			p, ok := byLang[l.Code]
-			if !ok {
+			item, ok := byLang[l.Code]
+			if !ok || item.Path == "" {
 				continue
 			}
 			b.WriteString("  <url>\n")
-			b.WriteString("    <loc>" + xmlEsc(abs("/"+l.Code+p)) + "</loc>\n")
+			b.WriteString("    <loc>" + xmlEsc(abs("/"+l.Code+item.Path)) + "</loc>\n")
+			if lm := sitemapLastMod(item.LastMod); lm != "" {
+				b.WriteString("    <lastmod>" + lm + "</lastmod>\n")
+			}
 			if freq != "" {
 				b.WriteString("    <changefreq>" + freq + "</changefreq>\n")
 			}
@@ -3314,48 +3340,48 @@ func (s *Server) sitemap(w http.ResponseWriter, r *http.Request) {
 				b.WriteString("    <priority>" + prio + "</priority>\n")
 			}
 			for _, a := range locales {
-				if ap, ok := byLang[a.Code]; ok {
-					b.WriteString(`    <xhtml:link rel="alternate" hreflang="` + a.Tag + `" href="` + xmlEsc(abs("/"+a.Code+ap)) + `"/>` + "\n")
+				if alt, ok := byLang[a.Code]; ok && alt.Path != "" {
+					b.WriteString(`    <xhtml:link rel="alternate" hreflang="` + a.Tag + `" href="` + xmlEsc(abs("/"+a.Code+alt.Path)) + `"/>` + "\n")
 				}
 			}
-			if dp, ok := byLang[def]; ok {
-				b.WriteString(`    <xhtml:link rel="alternate" hreflang="x-default" href="` + xmlEsc(abs("/"+def+dp)) + `"/>` + "\n")
+			if dp, ok := byLang[def]; ok && dp.Path != "" {
+				b.WriteString(`    <xhtml:link rel="alternate" hreflang="x-default" href="` + xmlEsc(abs("/"+def+dp.Path)) + `"/>` + "\n")
 			}
 			b.WriteString("  </url>\n")
 		}
 	}
 
 	// 首页（全语种）
-	home := map[string]string{}
+	home := map[string]sitemapURL{}
 	for _, l := range locales {
-		home[l.Code] = "/"
+		home[l.Code] = sitemapURL{Path: "/"}
 	}
 	writeGroup(home, "daily", "1.0")
 
 	// 链接列表页（全语种）
-	linksList := map[string]string{}
+	linksList := map[string]sitemapURL{}
 	for _, l := range locales {
-		linksList[l.Code] = "/links"
+		linksList[l.Code] = sitemapURL{Path: "/links"}
 	}
 	writeGroup(linksList, "weekly", "0.6")
 
-	categoryAll := map[string]string{}
+	categoryAll := map[string]sitemapURL{}
 	for _, l := range locales {
-		categoryAll[l.Code] = s.archiveConfig(l.Code, "post").Path
+		categoryAll[l.Code] = sitemapURL{Path: s.archiveConfig(l.Code, "post").Path}
 	}
 	writeGroup(categoryAll, "weekly", "0.7")
 
-	groupBy := func(items func(add func(group, lang, path string))) []map[string]string {
-		gm := map[string]map[string]string{}
+	groupBy := func(items func(add func(group, lang, path string, lastMod time.Time))) []map[string]sitemapURL {
+		gm := map[string]map[string]sitemapURL{}
 		var order []string
-		items(func(group, lang, path string) {
+		items(func(group, lang, path string, lastMod time.Time) {
 			if gm[group] == nil {
-				gm[group] = map[string]string{}
+				gm[group] = map[string]sitemapURL{}
 				order = append(order, group)
 			}
-			gm[group][lang] = path
+			gm[group][lang] = sitemapURL{Path: path, LastMod: lastMod}
 		})
-		out := make([]map[string]string, 0, len(order))
+		out := make([]map[string]sitemapURL, 0, len(order))
 		for _, g := range order {
 			out = append(out, gm[g])
 		}
@@ -3363,36 +3389,36 @@ func (s *Server) sitemap(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if cats, err := s.store.AllCategories("post"); err == nil {
-		for _, g := range groupBy(func(add func(group, lang, path string)) {
+		for _, g := range groupBy(func(add func(group, lang, path string, lastMod time.Time)) {
 			for _, c := range cats {
-				add(c.TransGroup, c.Lang, "/category/"+c.Slug)
+				add(c.TransGroup, c.Lang, "/category/"+c.Slug, time.Time{})
 			}
 		}) {
 			writeGroup(g, "weekly", "0.7")
 		}
 	}
 	if posts, err := s.store.AllPublishedAllLangs(); err == nil {
-		for _, g := range groupBy(func(add func(group, lang, path string)) {
+		for _, g := range groupBy(func(add func(group, lang, path string, lastMod time.Time)) {
 			for _, p := range posts {
-				add(p.TransGroup, p.Lang, "/posts/"+p.Slug)
+				add(p.TransGroup, p.Lang, publicContentPath(p.Type, p.Slug), contentLastMod(p))
 			}
 		}) {
 			writeGroup(g, "monthly", "0.8")
 		}
 	}
 	if pages, err := s.store.AllPagesAllLangs(); err == nil {
-		for _, g := range groupBy(func(add func(group, lang, path string)) {
+		for _, g := range groupBy(func(add func(group, lang, path string, lastMod time.Time)) {
 			for _, p := range pages {
-				add(p.TransGroup, p.Lang, "/"+p.Slug)
+				add(p.TransGroup, p.Lang, publicContentPath(p.Type, p.Slug), contentLastMod(p))
 			}
 		}) {
 			writeGroup(g, "monthly", "0.6")
 		}
 	}
 	if links, err := s.store.AllLinksAllLangs(); err == nil {
-		for _, g := range groupBy(func(add func(group, lang, path string)) {
+		for _, g := range groupBy(func(add func(group, lang, path string, lastMod time.Time)) {
 			for _, p := range links {
-				add(p.TransGroup, p.Lang, "/links/"+p.Slug)
+				add(p.TransGroup, p.Lang, publicContentPath(p.Type, p.Slug), contentLastMod(p))
 			}
 		}) {
 			writeGroup(g, "monthly", "0.7")
@@ -3405,6 +3431,26 @@ func (s *Server) sitemap(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Cache-Control", generatedEndpointCacheControl)
 	_, _ = w.Write(body)
+}
+
+func contentLastMod(p *store.Post) time.Time {
+	if p == nil {
+		return time.Time{}
+	}
+	if !p.UpdatedAt.IsZero() {
+		return p.UpdatedAt
+	}
+	if !p.PublishedAt.IsZero() {
+		return p.PublishedAt
+	}
+	return p.CreatedAt
+}
+
+func sitemapLastMod(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
 }
 
 type rssItem struct {
@@ -3456,8 +3502,8 @@ func (s *Server) rss(w http.ResponseWriter, r *http.Request) {
 			}
 			feed.Channel.Items = append(feed.Channel.Items, rssItem{
 				Title:       p.Title,
-				Link:        site.Abs("/posts/" + p.Slug),
-				GUID:        site.Abs("/posts/" + p.Slug),
+				Link:        site.Abs(publicContentPath(p.Type, p.Slug)),
+				GUID:        site.Abs(publicContentPath(p.Type, p.Slug)),
 				Description: p.Excerpt,
 				Category:    cat,
 				PubDate:     p.PublishedAt.Format(time.RFC1123Z),

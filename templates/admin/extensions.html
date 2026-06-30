@@ -1,36 +1,67 @@
 {{define "body"}}
-<div style="max-width:920px">
-  <h1>{{.Admin.T "admin.ext.title" "扩展"}}</h1>
-  <p style="color:#888;margin:.25rem 0 1.5rem">{{.Admin.T "admin.ext.sub" "在文章、页面、链接之外，启用更多内容类型；每个站点独立启用。"}}</p>
-  {{if .Flash}}<div style="padding:.6rem .9rem;border-radius:8px;background:rgba(46,125,50,.12);color:#1b5e20;margin-bottom:1.2rem">{{.Flash}}</div>{{end}}
-  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:1rem">
-    {{range .ExtTypes}}
-    <div style="border:1px solid rgba(128,128,128,.28);border-radius:12px;padding:1.1rem 1.2rem">
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:.5rem;margin-bottom:.35rem">
-        <strong style="font-size:1.05rem">{{.Name}}</strong>
-        {{if .Enabled}}<span style="font-size:.72rem;color:#1b5e20;background:rgba(46,125,50,.14);padding:.12rem .55rem;border-radius:999px">{{$.Admin.T "admin.ext.on" "已启用"}}</span>{{end}}
-      </div>
-      <div style="color:#999;font-size:.82rem;margin-bottom:1rem">/{{.URLPrefix}} · {{.Count}} {{$.Admin.T "admin.ext.items" "条"}}</div>
-      <div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap">
-        {{if .Enabled}}
-        <a class="btn" href="/admin/ext/{{.Key}}">{{$.Admin.T "admin.ext.manage" "管理"}} →</a>
-        <form method="post" action="/admin/extensions/toggle" style="margin:0">
-          <input type="hidden" name="_csrf" value="{{$.CSRF}}">
-          <input type="hidden" name="type" value="{{.Key}}">
-          <input type="hidden" name="on" value="0">
-          <button class="btn" type="submit">{{$.Admin.T "admin.ext.disable" "停用"}}</button>
-        </form>
-        {{else}}
-        <form method="post" action="/admin/extensions/toggle" style="margin:0">
-          <input type="hidden" name="_csrf" value="{{$.CSRF}}">
-          <input type="hidden" name="type" value="{{.Key}}">
-          <input type="hidden" name="on" value="1">
-          <button class="btn btn-primary" type="submit">{{$.Admin.T "admin.ext.enable" "启用"}}</button>
-        </form>
-        {{end}}
-      </div>
-    </div>
-    {{end}}
+<div class="admin-head ext-hub-head">
+  <div>
+    <h1>{{.Admin.T "admin.ext.title" "扩展"}}</h1>
+    <p class="muted">{{.Admin.T "admin.ext.sub" "在文章、页面、链接之外，启用更多内容类型；每个站点独立启用。"}}</p>
   </div>
+  <a class="btn btn-primary" href="/admin/extensions/types/new"><span class="plus">+</span> {{.Admin.T "admin.ext.type_new" "新建内容类型"}}</a>
 </div>
+{{if .Flash}}<div class="ext-flash">{{.Flash}}</div>{{end}}
+
+<div class="ext-grid">
+  {{range .ExtTypes}}
+  <div class="ext-card{{if .Enabled}} on{{end}}">
+    <div class="ext-card-top">
+      <span class="ext-ico">{{template "ext-icon" .Key}}</span>
+      <div class="ext-card-name">
+        <h3>{{.Name}}{{if .Custom}} <span class="ext-custom-tag">{{$.Admin.T "admin.ext.custom" "自定义"}}</span>{{end}}</h3>
+        <p class="ext-card-meta"><code>/{{.URLPrefix}}</code> · {{.Count}} {{$.Admin.T "admin.ext.items" "条"}}</p>
+      </div>
+      {{if .Enabled}}<span class="badge pub">{{$.Admin.T "admin.ext.on" "已启用"}}</span>{{end}}
+    </div>
+    <div class="ext-card-actions">
+      {{if .Enabled}}
+      <a class="btn btn-mini" href="/admin/ext/{{.Key}}">{{$.Admin.T "admin.ext.manage" "管理"}} <span class="arrow">→</span></a>
+      <form method="post" action="/admin/extensions/toggle"><input type="hidden" name="_csrf" value="{{$.CSRF}}"><input type="hidden" name="type" value="{{.Key}}"><input type="hidden" name="on" value="0"><button class="link-btn" type="submit">{{$.Admin.T "admin.ext.disable" "停用"}}</button></form>
+      {{else}}
+      <form method="post" action="/admin/extensions/toggle"><input type="hidden" name="_csrf" value="{{$.CSRF}}"><input type="hidden" name="type" value="{{.Key}}"><input type="hidden" name="on" value="1"><button class="btn btn-mini btn-primary" type="submit">{{$.Admin.T "admin.ext.enable" "启用"}}</button></form>
+      {{end}}
+      {{if .Custom}}
+      <span class="ext-card-tools actions"><span class="action-icons">
+        <a class="act-ico" href="/admin/extensions/types/{{.Key}}/edit" title="{{$.Admin.T "admin.action.edit" "编辑"}}" aria-label="{{$.Admin.T "admin.action.edit" "编辑"}}">{{template "icon-edit"}}</a>
+        <form method="post" action="/admin/extensions/types/{{.Key}}/delete" data-confirm="{{$.Admin.T "admin.ext.type_del_confirm" "删除该类型？其下内容不会被删除。"}}"><input type="hidden" name="_csrf" value="{{$.CSRF}}"><button class="del act-ico" type="submit" title="{{$.Admin.T "admin.action.delete" "删除"}}" aria-label="{{$.Admin.T "admin.action.delete" "删除"}}">{{template "icon-trash"}}</button></form>
+      </span></span>
+      {{end}}
+    </div>
+  </div>
+  {{end}}
+</div>
+
+<style>
+  .ext-hub-head { align-items: flex-start; }
+  .ext-hub-head h1 { margin: 0 0 .45rem; }
+  .ext-flash { background: var(--accent-wash); color: var(--accent); border-radius: 8px; padding: .7rem 1rem; margin-bottom: 1.4rem; font-size: .9rem; }
+  .ext-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(266px, 1fr)); gap: 1.1rem; }
+  .ext-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 1.25rem 1.35rem; transition: border-color var(--speed), box-shadow var(--speed); }
+  .ext-card:hover { border-color: color-mix(in srgb, var(--accent) 42%, var(--line)); box-shadow: var(--shadow); }
+  .ext-card.on { border-color: color-mix(in srgb, var(--accent) 24%, var(--line)); }
+  .ext-card-top { display: flex; align-items: center; gap: .8rem; margin-bottom: 1.15rem; }
+  .ext-ico { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; border-radius: 10px; background: var(--accent-wash); color: var(--accent); flex: none; }
+  .ext-ico svg { display: block; }
+  .ext-card-name { min-width: 0; flex: 1; }
+  .ext-card-name h3 { font-size: 1.1rem; margin: 0; display: flex; align-items: center; gap: .45rem; }
+  .ext-custom-tag { font-family: var(--sans); font-size: .62rem; font-weight: 700; letter-spacing: .04em; color: var(--muted); background: var(--line-soft); padding: .1rem .42rem; border-radius: 5px; }
+  .ext-card-meta { color: var(--faint); font-size: .8rem; margin: .2rem 0 0; }
+  .ext-card-meta code { font-family: var(--mono); font-size: .78rem; color: var(--muted); }
+  .ext-card .badge { flex: none; align-self: flex-start; }
+  .ext-card-actions { display: flex; align-items: center; gap: .55rem; }
+  .ext-card-actions form { margin: 0; }
+  .btn-mini { padding: .42rem .95rem; font-size: .86rem; }
+  .link-btn { background: none; border: 0; color: var(--muted); font: inherit; font-size: .86rem; cursor: pointer; padding: .42rem .25rem; transition: color var(--speed); }
+  .link-btn:hover { color: var(--accent); }
+  .ext-card-tools { margin-left: auto; }
+  .ext-card-tools .action-icons { gap: .3rem; }
+</style>
 {{end}}
+
+{{define "ext-icon"}}<svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">{{if eq . "product"}}<path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/>{{else if eq . "doc"}}<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5z"/><path d="M9 7h7M9 11h7"/>{{else if eq . "event"}}<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>{{else if eq . "gallery"}}<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.8"/><path d="m21 15-5-5L5 21"/>{{else}}<path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="m2 17 10 5 10-5M2 12l10 5 10-5"/>{{end}}</svg>{{end}}

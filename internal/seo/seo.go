@@ -63,6 +63,37 @@ func (s Site) Abs(path string) string {
 	return s.base() + s.Prefix + path
 }
 
+func (s Site) AbsDir(path string) string {
+	return s.Abs(trailingSlash(path))
+}
+
+func trailingSlash(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" || path == "/" {
+		return "/"
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	if strings.HasSuffix(path, "/") {
+		return path
+	}
+	return path + "/"
+}
+
+func compactText(s string) string {
+	return strings.Join(strings.Fields(strings.TrimSpace(s)), " ")
+}
+
+func (s Site) HeroAlt() string {
+	for _, v := range []string{s.HeroTitle, s.Tagline, s.Name} {
+		if text := compactText(v); text != "" {
+			return text
+		}
+	}
+	return "首页主视觉"
+}
+
 func (s Site) langTag() string {
 	if s.LangTag != "" {
 		return s.LangTag
@@ -185,7 +216,7 @@ func (s Site) Home() Meta {
 
 // Article 文章详情：BlogPosting + BreadcrumbList。
 func (s Site) Article(p *store.Post) Meta {
-	canon := s.Abs("/posts/" + p.Slug)
+	canon := s.AbsDir("/posts/" + p.Slug)
 	desc := p.MetaDesc
 	if desc == "" {
 		desc = p.Excerpt
@@ -284,7 +315,7 @@ func (s Site) categoryMeta(c *store.Category, path, canon string) Meta {
 
 // Page 静态页（如关于）：AboutPage/WebPage + BreadcrumbList。
 func (s Site) Page(p *store.Post) Meta {
-	canon := s.Abs("/" + p.Slug)
+	canon := s.AbsDir("/" + p.Slug)
 	desc := p.MetaDesc
 	if desc == "" {
 		desc = p.Excerpt
@@ -351,7 +382,7 @@ func (s Site) Links(cat *store.Category) Meta {
 // Link 链接详情页：WebPage(指向外部资源) + BreadcrumbList。
 func (s Site) Link(p *store.Post) Meta {
 	label := s.linksLabel()
-	canon := s.Abs("/links/" + p.Slug)
+	canon := s.AbsDir("/links/" + p.Slug)
 	desc := p.MetaDesc
 	if desc == "" {
 		desc = p.Excerpt
@@ -367,6 +398,7 @@ func (s Site) Link(p *store.Post) Meta {
 		"@context": "https://schema.org", "@type": "WebPage",
 		"name": p.Title, "description": desc, "url": canon,
 		"inLanguage": s.langTag(), "primaryImageOfPage": img,
+		"mainEntity": map[string]any{"@id": canon + "#product"},
 	}
 	if p.LinkURL != "" {
 		page["significantLink"] = p.LinkURL
@@ -374,11 +406,149 @@ func (s Site) Link(p *store.Post) Meta {
 	if p.Keywords != "" {
 		page["keywords"] = p.Keywords
 	}
+	product := map[string]any{
+		"@context":    "https://schema.org",
+		"@type":       "Product",
+		"@id":         canon + "#product",
+		"name":        p.Title,
+		"description": desc,
+		"url":         canon,
+		"image":       img,
+		"inLanguage":  s.langTag(),
+		"brand":       map[string]any{"@type": "Brand", "name": s.Name},
+	}
+	if p.Category != nil && p.Category.Name != "" {
+		product["category"] = p.Category.Name
+	}
+	if p.LinkURL != "" {
+		product["sameAs"] = p.LinkURL
+	}
 	crumbs := s.breadcrumb([]crumb{{s.homeLabel(), s.Abs("/")}, {label, s.Abs("/links")}, {p.Title, ""}})
+	jsonld := []any{page, product, crumbs}
+	if faq := faqPageFromMarkdown(p.Content, s.langTag()); faq != nil {
+		jsonld = append(jsonld, faq)
+	}
 	return Meta{
 		Title: p.Title + " — " + s.Name, Description: desc, Keywords: p.Keywords, Canonical: canon,
-		Robots: defaultRobots, OGType: "website", Image: img, JSONLD: []any{page, crumbs},
+		Robots: defaultRobots, OGType: "website", Image: img, JSONLD: jsonld,
 	}
+}
+
+type faqPair struct {
+	Question string
+	Answer   string
+}
+
+func faqPageFromMarkdown(markdown, lang string) map[string]any {
+	pairs := faqPairsFromMarkdown(markdown)
+	if len(pairs) == 0 {
+		return nil
+	}
+	items := make([]any, 0, len(pairs))
+	for _, p := range pairs {
+		items = append(items, map[string]any{
+			"@type": "Question",
+			"name":  p.Question,
+			"acceptedAnswer": map[string]any{
+				"@type": "Answer",
+				"text":  p.Answer,
+			},
+		})
+	}
+	faq := map[string]any{
+		"@context":   "https://schema.org",
+		"@type":      "FAQPage",
+		"mainEntity": items,
+	}
+	if lang != "" {
+		faq["inLanguage"] = lang
+	}
+	return faq
+}
+
+func faqPairsFromMarkdown(markdown string) []faqPair {
+	var pairs []faqPair
+	var question string
+	var answer []string
+	flush := func() {
+		q := compactText(question)
+		a := compactText(strings.Join(answer, " "))
+		if q != "" && a != "" {
+			pairs = append(pairs, faqPair{Question: q, Answer: a})
+		}
+		question = ""
+		answer = nil
+	}
+
+	for _, raw := range strings.Split(strings.ReplaceAll(markdown, "\r\n", "\n"), "\n") {
+		line := strings.TrimSpace(raw)
+		if q, ok := faqQuestion(line); ok {
+			flush()
+			question = q
+			if a := faqInlineAnswer(line); a != "" {
+				answer = append(answer, a)
+			}
+			continue
+		}
+		if question == "" {
+			continue
+		}
+		if line == "" {
+			continue
+		}
+		if a := faqAnswerLine(line); a != "" {
+			answer = append(answer, a)
+			continue
+		}
+		answer = append(answer, stripMarkdownMarkers(line))
+	}
+	flush()
+	return pairs
+}
+
+func faqQuestion(line string) (string, bool) {
+	line = stripMarkdownMarkers(line)
+	for _, p := range []string{"Q:", "Q：", "问：", "问题："} {
+		if strings.HasPrefix(line, p) {
+			q := compactText(strings.TrimSpace(splitFAQAnswer(strings.TrimPrefix(line, p))[0]))
+			return q, q != ""
+		}
+	}
+	if strings.HasSuffix(line, "?") || strings.HasSuffix(line, "？") {
+		return compactText(line), true
+	}
+	return "", false
+}
+
+func splitFAQAnswer(line string) []string {
+	for _, sep := range []string{" A:", " A：", " 答：", " 答案："} {
+		if i := strings.Index(line, sep); i >= 0 {
+			return []string{line[:i], line[i+len(sep):]}
+		}
+	}
+	return []string{line, ""}
+}
+
+func faqInlineAnswer(line string) string {
+	return stripMarkdownMarkers(splitFAQAnswer(line)[1])
+}
+
+func faqAnswerLine(line string) string {
+	line = stripMarkdownMarkers(line)
+	for _, p := range []string{"A:", "A：", "答：", "答案："} {
+		if strings.HasPrefix(line, p) {
+			return stripMarkdownMarkers(strings.TrimSpace(strings.TrimPrefix(line, p)))
+		}
+	}
+	return ""
+}
+
+func stripMarkdownMarkers(line string) string {
+	line = strings.TrimSpace(line)
+	line = strings.TrimLeft(line, "#> \t")
+	line = strings.TrimSpace(strings.TrimPrefix(line, "- "))
+	line = strings.TrimSpace(strings.TrimPrefix(line, "* "))
+	return strings.Trim(line, "`*_ ")
 }
 
 // Search 搜索结果页：不应被索引。

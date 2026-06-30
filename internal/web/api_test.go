@@ -199,7 +199,7 @@ func TestAutomationOpenAPIIncludesMediaUpload(t *testing.T) {
 	if !ok {
 		t.Fatalf("SiteProfilePatch properties missing: %#v", sitePatch)
 	}
-	for _, prop := range []string{"logo", "favicon", "share_image"} {
+	for _, prop := range []string{"logo", "favicon", "share_image", "hero_visual", "hero_image"} {
 		if _, ok := siteProps[prop]; !ok {
 			t.Fatalf("SiteProfilePatch.%s missing: %#v", prop, siteProps)
 		}
@@ -387,12 +387,15 @@ func TestAPISiteStarterPermissionsAndWrites(t *testing.T) {
 				"logo":                "/uploads/logo-zh.svg",
 				"favicon":             "/uploads/favicon.ico",
 				"share_image":         "/uploads/share-zh.webp",
+				"hero_visual":         "image",
+				"hero_image":          "/uploads/hero-zh.webp",
 			},
 			{
 				"lang":                "en",
 				"hero_title":          "Launch a complete content site with one command",
 				"default_post_author": "Product Team",
 				"share_image":         "/uploads/share-en.webp",
+				"hero_image":          "/uploads/hero-en.webp",
 			},
 		},
 	})
@@ -427,6 +430,18 @@ func TestAPISiteStarterPermissionsAndWrites(t *testing.T) {
 	}
 	if got := s.store.Setting("site.share_image::en"); got != "/uploads/share-en.webp" {
 		t.Fatalf("site.share_image::en = %q", got)
+	}
+	if got := s.store.Setting("hero.visual"); got != "image" {
+		t.Fatalf("hero.visual = %q", got)
+	}
+	if got := s.store.Setting("hero.image"); got != "/uploads/hero-zh.webp" {
+		t.Fatalf("hero.image = %q", got)
+	}
+	if got := s.store.Setting("hero.visual::en"); got != "image" {
+		t.Fatalf("hero.visual::en = %q", got)
+	}
+	if got := s.store.Setting("hero.image::en"); got != "/uploads/hero-en.webp" {
+		t.Fatalf("hero.image::en = %q", got)
 	}
 
 	navBody, err := json.Marshal(map[string]any{
@@ -530,6 +545,7 @@ func TestAPISiteProfileBrandAssetsRequireScope(t *testing.T) {
 		"logo":        "/uploads/logo.svg",
 		"favicon":     "/uploads/favicon.ico",
 		"share_image": "/uploads/share.webp",
+		"hero_image":  "/uploads/hero.webp",
 	})
 	if err != nil {
 		t.Fatalf("marshal brand body: %v", err)
@@ -551,6 +567,12 @@ func TestAPISiteProfileBrandAssetsRequireScope(t *testing.T) {
 	if got := s.store.Setting("site.share_image"); got != "/uploads/share.webp" {
 		t.Fatalf("site.share_image = %q", got)
 	}
+	if got := s.store.Setting("hero.visual"); got != "image" {
+		t.Fatalf("hero.visual = %q", got)
+	}
+	if got := s.store.Setting("hero.image"); got != "/uploads/hero.webp" {
+		t.Fatalf("hero.image = %q", got)
+	}
 }
 
 func TestAPISiteProfileUpdatesEnglishShareImage(t *testing.T) {
@@ -558,9 +580,13 @@ func TestAPISiteProfileUpdatesEnglishShareImage(t *testing.T) {
 	if err := s.store.SetSetting("site.share_image", "/uploads/share-zh.webp"); err != nil {
 		t.Fatalf("set default share image: %v", err)
 	}
+	if err := s.store.SetSetting("hero.image", "/uploads/hero-zh.webp"); err != nil {
+		t.Fatalf("set default hero image: %v", err)
+	}
 	body, err := json.Marshal(map[string]any{
 		"lang":        "en",
 		"share_image": "/uploads/share-en.webp",
+		"hero_image":  "/uploads/hero-en.webp",
 	})
 	if err != nil {
 		t.Fatalf("marshal share image body: %v", err)
@@ -579,6 +605,15 @@ func TestAPISiteProfileUpdatesEnglishShareImage(t *testing.T) {
 	if got := s.store.Setting("site.share_image::en"); got != "/uploads/share-en.webp" {
 		t.Fatalf("site.share_image::en = %q", got)
 	}
+	if got := s.store.Setting("hero.image"); got != "/uploads/hero-zh.webp" {
+		t.Fatalf("default hero.image changed to %q", got)
+	}
+	if got := s.store.Setting("hero.visual::en"); got != "image" {
+		t.Fatalf("hero.visual::en = %q", got)
+	}
+	if got := s.store.Setting("hero.image::en"); got != "/uploads/hero-en.webp" {
+		t.Fatalf("hero.image::en = %q", got)
+	}
 	if got := s.site("zh").ShareImage; got != "/uploads/share-zh.webp" {
 		t.Fatalf("zh share image = %q", got)
 	}
@@ -596,6 +631,12 @@ func TestAPISiteProfileUpdatesEnglishShareImage(t *testing.T) {
 		if item.Lang == "en" {
 			if item.ShareImage != "/uploads/share-en.webp" {
 				t.Fatalf("response English share image = %q", item.ShareImage)
+			}
+			if item.HeroVisual != "image" {
+				t.Fatalf("response English hero visual = %q", item.HeroVisual)
+			}
+			if item.HeroImage != "/uploads/hero-en.webp" {
+				t.Fatalf("response English hero image = %q", item.HeroImage)
 			}
 			return
 		}
@@ -646,8 +687,11 @@ func TestAutomationStarterZipIncludesBriefAndOpenAPI(t *testing.T) {
 		t.Fatalf("starter planning workflow missing expected boundary guidance")
 	}
 	if !strings.Contains(got["gcms-site-starter/给AI的任务说明.md"], "文章质量与配图标准") ||
+		!strings.Contains(got["gcms-site-starter/给AI的任务说明.md"], "Hero 右侧动画标准") ||
 		!strings.Contains(got["gcms-site-starter/第一步-让AI出规划.md"], "搜索意图") ||
+		!strings.Contains(got["gcms-site-starter/第一步-让AI出规划.md"], "Hero 右侧视觉方案") ||
 		!strings.Contains(got["gcms-site-starter/第二步-审核后写入草稿.md"], "POST /media") ||
+		!strings.Contains(got["gcms-site-starter/第二步-审核后写入草稿.md"], "hero_image") ||
 		!strings.Contains(got["gcms-site-starter/第二步-审核后写入草稿.md"], "cover_image") ||
 		!strings.Contains(got["gcms-site-starter/工作流.md"], "文章质量与配图验收") ||
 		!strings.Contains(got["gcms-site-starter/SKILL.md"], "需要补图") {
@@ -658,7 +702,8 @@ func TestAutomationStarterZipIncludesBriefAndOpenAPI(t *testing.T) {
 	}
 	if !strings.Contains(got["gcms-site-starter/references/openapi.json"], `"/site-profile"`) ||
 		!strings.Contains(got["gcms-site-starter/references/openapi.json"], `"CategoryInput"`) ||
-		!strings.Contains(got["gcms-site-starter/references/openapi.json"], `"CategoryAllEntryPatch"`) {
+		!strings.Contains(got["gcms-site-starter/references/openapi.json"], `"CategoryAllEntryPatch"`) ||
+		!strings.Contains(got["gcms-site-starter/references/openapi.json"], `"hero_image"`) {
 		t.Fatalf("starter openapi missing site starter paths/schemas")
 	}
 	if !strings.Contains(got["gcms-site-starter/.env"], "GCMS_API_KEY=gcms_test") {
@@ -946,8 +991,8 @@ func TestAPIPreviewPostAndLinkDrafts(t *testing.T) {
 		wantURL    string
 		wantHTML   string
 	}{
-		{"posts", postID, "https://example.test/zh/posts/api-preview-post", "<h2 id=\"section\">Section</h2>"},
-		{"links", linkID, "https://example.test/zh/links/api-preview-link", "<h2 id=\"link-section\">Link Section</h2>"},
+		{"posts", postID, "https://example.test/zh/posts/api-preview-post/", "<h2 id=\"section\">Section</h2>"},
+		{"links", linkID, "https://example.test/zh/links/api-preview-link/", "<h2 id=\"link-section\">Link Section</h2>"},
 	} {
 		r := httptest.NewRequest(http.MethodGet, "/api/admin/v1/"+tc.collection+"/"+strconv.FormatInt(tc.id, 10)+"/preview", nil)
 		r.SetPathValue("collection", tc.collection)

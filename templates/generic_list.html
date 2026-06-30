@@ -11,6 +11,9 @@
     </section>
 
     <div class="wrap">
+      {{if .DocTree}}
+      <nav class="doc-nav doc-index"{{if .CT}} aria-label="{{.CT.Name .Lang}}"{{end}}>{{template "doc-tree" .DocTree}}</nav>
+      {{else}}
       {{if .Categories}}
       <nav class="cat-nav" aria-label="{{.Tr.T "common.breadcrumb"}}">
         <a href="{{.Tr.U (printf "/%s" .CT.URLPrefix)}}"{{if not .Category}} class="active"{{end}}>{{.CT.Name .Lang}}</a>
@@ -22,7 +25,7 @@
 
       <div class="link-grid">
         {{range .Posts}}
-        <a class="link-card" href="{{$.Tr.U (printf "/%s/%s" $.CT.URLPrefix .Slug)}}">
+        <a class="link-card" href="{{$.Tr.U (contentURL .)}}">
           <div class="lc-cover">{{if .CoverImage}}<img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<span class="lc-mono" aria-hidden="true">{{initial .Title}}</span>{{end}}</div>
           <div class="lc-body">
             <h3 class="lc-title">{{.Title}} <span class="lc-arrow" aria-hidden="true">→</span></h3>
@@ -44,6 +47,9 @@
         {{if .HasNext}}<a href="{{pageURL .Tr .BasePath .NextPage}}" aria-label="{{.Tr.T "common.next_page"}}">→</a>{{end}}
       </nav>
       {{end}}
+      {{end}}
     </div>
   </main>
 {{end}}
+
+{{define "doc-tree"}}<ul class="doc-tree">{{range .}}<li><a href="{{.URL}}"{{if .Active}} class="active"{{end}}>{{.Title}}</a>{{if .Children}}{{template "doc-tree" .Children}}{{end}}</li>{{end}}</ul>{{end}}

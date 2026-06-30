@@ -271,6 +271,8 @@ func funcMap(imageSizes map[string]ImageSize) template.FuncMap {
 		},
 		// safeHTML 把可信（后台录入）的字符串作为原始 HTML 输出，用于内联 SVG。
 		"safeHTML": func(s string) template.HTML { return template.HTML(s) },
+		// contentURL 按内容类型返回其公开路径（搜索结果链接用）。
+		"contentURL": func(p *store.Post) string { return publicContentPath(p.Type, p.Slug) },
 		"json": func(v any) string {
 			b, _ := json.Marshal(v)
 			return string(b)
@@ -357,11 +359,9 @@ func adminPublicContentPath(routePrefix, lang, typ, slug string) string {
 		if slug == "" {
 			return localizedPath(routePrefix, lang, "/")
 		}
-		return localizedPath(routePrefix, lang, "/"+slug)
-	case "link":
-		return localizedPath(routePrefix, lang, "/links/"+slug)
+		return localizedPath(routePrefix, lang, publicContentPath(typ, slug))
 	default:
-		return localizedPath(routePrefix, lang, "/posts/"+slug)
+		return localizedPath(routePrefix, lang, publicContentPath(typ, slug))
 	}
 }
 
@@ -427,7 +427,7 @@ func NewRenderer(tplFS fs.FS, imageSizes map[string]ImageSize) (*Renderer, error
 	}
 	r.sets["theme_preview"] = tp
 
-	for _, name := range []string{"login", "dashboard", "posts", "edit", "settings", "pages", "links", "visual", "sites", "platform_settings", "backups", "archived_sites", "updates", "admin_i18n", "security", "extensions", "ext_list", "ext_edit"} {
+	for _, name := range []string{"login", "dashboard", "posts", "edit", "settings", "pages", "links", "visual", "sites", "platform_settings", "backups", "archived_sites", "updates", "admin_i18n", "security", "extensions", "ext_list", "ext_edit", "ext_type_edit"} {
 		t, err := template.New("admin_"+name).Funcs(funcMap(imageSizes)).ParseFS(sub, "admin/layout.html", "admin/"+name+".html")
 		if err != nil {
 			return nil, err

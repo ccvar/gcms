@@ -19,7 +19,7 @@ func TestExtTypeEnabledServesArchiveAndDetail(t *testing.T) {
 	if _, err := s.store.CreatePost(&store.Post{
 		Type: "product", Lang: "zh", Slug: "ext-prod-1", Title: "演示商品",
 		Excerpt: "一句话简介", Status: "published",
-		Extra:   `{"price":199,"gallery":["/u/a.webp","/u/b.webp"]}`,
+		Extra: `{"price":199,"gallery":["/u/a.webp","/u/b.webp"]}`,
 	}); err != nil {
 		t.Fatalf("create product: %v", err)
 	}

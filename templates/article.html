@@ -49,13 +49,13 @@
           {{if or .Prev .Next}}
           <nav class="pager" aria-label="{{.Tr.T "common.article_nav"}}">
             {{with .Prev}}
-            <a class="prev" href="{{$.Tr.U (printf "/posts/%s" .Slug)}}">
+            <a class="prev" href="{{$.Tr.U (contentURL .)}}">
               <div class="dir">← {{$.Tr.T "common.prev"}}</div>
               <div class="t">{{.Title}}</div>
             </a>
             {{else}}<span></span>{{end}}
             {{with .Next}}
-            <a class="next" href="{{$.Tr.U (printf "/posts/%s" .Slug)}}">
+            <a class="next" href="{{$.Tr.U (contentURL .)}}">
               <div class="dir">{{$.Tr.T "common.next"}} →</div>
               <div class="t">{{.Title}}</div>
             </a>
@@ -90,7 +90,7 @@
             {{range .Related}}
             <article class="card">
               <div class="meta">{{with .Category}}<a class="tag" href="{{$.Tr.U (printf "/category/%s" .Slug)}}">{{.Name}}</a>{{end}}</div>
-              <h4><a href="{{$.Tr.U (printf "/posts/%s" .Slug)}}">{{.Title}}</a></h4>
+              <h4><a href="{{$.Tr.U (contentURL .)}}">{{.Title}}</a></h4>
             </article>
             {{end}}
           </div>

@@ -28,7 +28,7 @@
               <time datetime="{{$.Tr.ISODate $p.PublishedAt}}">{{$.Tr.Date $p.PublishedAt}}</time>
               <span class="sep">·</span><span class="read-time">{{$p.ReadingTime}} {{$.Tr.T "common.min"}}</span>
             </div>
-            <h3><a href="{{$.Tr.U (printf "/posts/%s" $p.Slug)}}">{{$p.Title}}</a></h3>
+            <h3><a href="{{$.Tr.U (contentURL $p)}}">{{$p.Title}}</a></h3>
             <p>{{$p.Excerpt}}</p>
           </div>
         </article>
