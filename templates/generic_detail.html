@@ -1,0 +1,62 @@
+{{define "body"}}{{$p := .Post}}  <main class="wrap">
+    <div class="article-grid{{if .TOC}} has-toc{{end}}">
+      <nav class="breadcrumb article-bc" aria-label="{{.Tr.T "common.breadcrumb"}}">
+        <a href="{{.Tr.U "/"}}">{{.Tr.T "nav.home"}}</a><span class="sep">/</span>
+        {{if .CT}}<a href="{{.Tr.U (printf "/%s" .CT.URLPrefix)}}">{{.CT.Name .Lang}}</a><span class="sep">/</span>{{end}}
+        {{with $p.Category}}<a href="{{$.Tr.U (printf "/%s/cat/%s" $.CT.URLPrefix .Slug)}}">{{.Name}}</a><span class="sep">/</span>{{end}}
+        <span aria-current="page">{{$p.Title}}</span>
+      </nav>
+      {{if .TOC}}
+      <aside class="toc-rail">
+        <details class="toc" open>
+          <summary>{{.Tr.T "common.toc"}}</summary>
+          <ul>
+            {{range .TOC}}<li class="lv{{.Level}}"><a href="#{{.ID}}">{{.Text}}</a></li>
+            {{end}}
+          </ul>
+        </details>
+      </aside>
+      {{end}}
+
+      <div class="article-col">
+        <article class="article-main">
+          <header class="article-head">
+            {{with $p.Category}}<p class="kicker">{{.Name}}</p>{{end}}
+            <h1>{{$p.Title}}</h1>
+            {{if $p.Excerpt}}<p class="lead">{{$p.Excerpt}}</p>{{end}}
+          </header>
+
+          {{if $p.CoverImage}}<img class="article-cover" src="{{$p.CoverImage}}" alt="{{$p.Title}}" decoding="async" fetchpriority="high"{{imgAttrs $p.CoverImage}}>{{end}}
+
+          {{if .Fields}}
+          <dl class="field-list">
+            {{range .Fields}}
+              {{if .List}}
+              <dt>{{.Label}}</dt>
+              <dd class="field-gallery">{{range .List}}<img src="{{.}}" alt="" loading="lazy" decoding="async"{{imgAttrs .}}>{{end}}</dd>
+              {{else if .Text}}
+              <dt>{{.Label}}</dt>
+              {{if eq .Type "url"}}<dd><a href="{{.Text}}" target="_blank" rel="noopener nofollow">{{.Text}} <span class="arrow">↗</span></a></dd>{{else}}<dd>{{.Text}}</dd>{{end}}
+              {{end}}
+            {{end}}
+          </dl>
+          {{end}}
+
+          <div class="prose">
+            {{.ContentHTML}}
+          </div>
+
+          <div class="article-foot">
+            <div class="tag-row">
+              {{with $p.Category}}<a class="tag" href="{{$.Tr.U (printf "/%s/cat/%s" $.CT.URLPrefix .Slug)}}">{{.Name}}</a>{{end}}
+              {{range $p.KeywordList}}<a class="tag" href="{{$.Tr.U (printf "/search?q=%s" .)}}">{{.}}</a>{{end}}
+            </div>
+          </div>
+        </article>
+      </div>
+    </div>
+  </main>
+  <button class="to-top" aria-label="{{.Tr.T "common.back_top"}}" title="{{.Tr.T "common.back_top"}}">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+  </button>
+{{end}}

@@ -14,6 +14,7 @@
   <div class="sites-layout">
     <div class="site-card-list">
       {{range .PlatformSites}}
+      {{$site := .}}
       <article class="site-card{{if .IsDefault}} is-default{{end}}{{if eq .Status "disabled"}} is-disabled{{end}}">
         <div class="site-card-locked-area"{{if eq .Status "disabled"}} aria-disabled="true"{{end}}>
           <div class="site-card-main"{{if eq .Status "disabled"}} inert{{end}}>
@@ -41,7 +42,16 @@
               <input type="hidden" name="_csrf" value="{{$.CSRF}}">
               <button class="btn btn-primary icon-text" type="submit">{{template "site-icon-enter"}}<span>{{$.Admin.T "admin.sites.enter" "进入后台"}}</span></button>
             </form>
-            <a class="site-card-preview" href="/admin/sites/{{.ID}}/preview/{{$.EditLang}}/" target="_blank" rel="noopener"><span>{{$.Admin.T "admin.nav.view_site" "查看站点"}}</span><span class="ext-arrow" aria-hidden="true">↗</span></a>
+            <div class="site-card-links">
+              {{with index $.PlatformOfficialURLs .ID}}
+                <a class="site-card-official" href="{{.}}" target="_blank" rel="noopener">
+                  <span>{{$.Admin.T "admin.sites.official_site" "正式站点"}}</span>
+                  {{with index $.PlatformOfficialHosts $site.ID}}<strong>{{.}}</strong>{{end}}
+                  <span class="ext-arrow" aria-hidden="true">↗</span>
+                </a>
+              {{end}}
+              <a class="site-card-preview" href="/admin/sites/{{.ID}}/preview/{{$.EditLang}}/" target="_blank" rel="noopener"><span>{{$.Admin.T "admin.sites.preview_site" "预览站点"}}</span><span class="ext-arrow" aria-hidden="true">↗</span></a>
+            </div>
           </div>
 
           {{if eq .Status "disabled"}}

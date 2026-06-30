@@ -1,0 +1,82 @@
+{{define "body"}}{{$ct := .ExtType}}{{$p := .ExtEdit}}{{$inp := "width:100%;padding:.5rem;border:1px solid rgba(128,128,128,.4);border-radius:8px;box-sizing:border-box"}}
+<div style="max-width:760px">
+  <p style="color:#888;margin:0 0 1rem"><a href="/admin/ext/{{$ct.Key}}" style="color:inherit">← {{$ct.Name $.EditLang}}</a></p>
+  <h1 style="margin:0 0 1.2rem">{{if $p.ID}}{{.Admin.T "admin.ext.edit" "编辑"}}{{else}}{{.Admin.T "admin.ext.new" "新建"}}{{end}} · {{$ct.Name $.EditLang}}</h1>
+  {{if .Flash}}<div style="padding:.6rem .9rem;border-radius:8px;background:rgba(46,125,50,.12);color:#1b5e20;margin-bottom:1rem">{{.Flash}}</div>{{end}}
+  {{if .FormErr}}<div style="padding:.6rem .9rem;border-radius:8px;background:rgba(198,40,40,.12);color:#b71c1c;margin-bottom:1rem">{{.FormErr}}</div>{{end}}
+  <form method="post" action="{{if $p.ID}}/admin/ext/{{$ct.Key}}/{{$p.ID}}{{else}}/admin/ext/{{$ct.Key}}{{end}}">
+    <input type="hidden" name="_csrf" value="{{.CSRF}}">
+
+    <label style="display:block;margin-bottom:1rem">
+      <span style="display:block;font-weight:500;margin-bottom:.3rem">{{.Admin.T "admin.col.title" "标题"}}</span>
+      <input name="title" value="{{$p.Title}}" required style="{{$inp}}">
+    </label>
+    <label style="display:block;margin-bottom:1rem">
+      <span style="display:block;font-weight:500;margin-bottom:.3rem">Slug</span>
+      <input name="slug" value="{{$p.Slug}}" placeholder="{{.Admin.T "admin.ext.slug_ph" "留空自动生成"}}" style="{{$inp}}">
+    </label>
+    <label style="display:block;margin-bottom:1rem">
+      <span style="display:block;font-weight:500;margin-bottom:.3rem">{{.Admin.T "admin.col.excerpt" "摘要"}}</span>
+      <textarea name="excerpt" rows="2" style="{{$inp}}">{{$p.Excerpt}}</textarea>
+    </label>
+    <label style="display:block;margin-bottom:1rem">
+      <span style="display:block;font-weight:500;margin-bottom:.3rem">{{.Admin.T "admin.col.cover" "封面图 URL"}}</span>
+      <input name="cover_image" value="{{$p.CoverImage}}" style="{{$inp}}">
+    </label>
+
+    {{range $ct.Fields}}{{$val := index $.ExtValues .Key}}{{$t := printf "%s" .Type}}
+    <label style="display:block;margin-bottom:1rem">
+      <span style="display:block;font-weight:500;margin-bottom:.3rem">{{.Label $.EditLang}}{{if .Required}} <span style="color:#c62828">*</span>{{end}}{{with index .Help $.EditLang}} <small style="color:#999;font-weight:400">{{.}}</small>{{end}}</span>
+      {{if or (eq $t "gallery") (eq $t "image")}}
+      <textarea name="f_{{.Key}}" rows="3" placeholder="{{$.Admin.T "admin.ext.url_per_line" "每行一个图片 URL"}}" style="{{$inp}}">{{$val}}</textarea>
+      {{else if eq $t "repeater"}}
+      <textarea name="f_{{.Key}}" rows="3" placeholder="{{$.Admin.T "admin.ext.kv_per_line" "每行一项，格式：名称: 值"}}" style="{{$inp}}">{{$val}}</textarea>
+      {{else if eq $t "textarea"}}
+      <textarea name="f_{{.Key}}" rows="3" style="{{$inp}}">{{$val}}</textarea>
+      {{else if eq $t "number"}}
+      <input type="number" step="any" name="f_{{.Key}}" value="{{$val}}" style="{{$inp}}">
+      {{else if eq $t "datetime"}}
+      <input type="datetime-local" name="f_{{.Key}}" value="{{$val}}" style="{{$inp}}">
+      {{else if eq $t "url"}}
+      <input type="url" name="f_{{.Key}}" value="{{$val}}" style="{{$inp}}">
+      {{else if eq $t "bool"}}
+      <input type="checkbox" name="f_{{.Key}}" value="1"{{if eq $val "1"}} checked{{end}}>
+      {{else if eq $t "select"}}
+      <select name="f_{{.Key}}" style="{{$inp}}">{{range .Options}}<option value="{{.Value}}"{{if eq $val .Value}} selected{{end}}>{{index .Labels $.EditLang}}</option>{{end}}</select>
+      {{else}}
+      <input name="f_{{.Key}}" value="{{$val}}" style="{{$inp}}">
+      {{end}}
+    </label>
+    {{end}}
+
+    {{if $ct.HasCategory}}
+    <label style="display:block;margin-bottom:1rem">
+      <span style="display:block;font-weight:500;margin-bottom:.3rem">{{.Admin.T "admin.col.category" "分类"}}</span>
+      <select name="category_id" style="{{$inp}}">
+        <option value="">—</option>
+        {{range .Categories}}<option value="{{.ID}}"{{if and $p.CategoryID.Valid (eq .ID $p.CategoryID.Int64)}} selected{{end}}>{{.Name}}</option>{{end}}
+      </select>
+    </label>
+    {{end}}
+
+    <label style="display:block;margin-bottom:1rem">
+      <span style="display:block;font-weight:500;margin-bottom:.3rem">{{.Admin.T "admin.col.content" "正文（Markdown）"}}</span>
+      <textarea name="content" rows="10" style="{{$inp}};font-family:ui-monospace,monospace">{{$p.Content}}</textarea>
+    </label>
+
+    <label style="display:block;margin-bottom:1.5rem">
+      <span style="display:block;font-weight:500;margin-bottom:.3rem">{{.Admin.T "admin.col.status" "状态"}}</span>
+      <select name="status" style="padding:.5rem;border:1px solid rgba(128,128,128,.4);border-radius:8px">
+        <option value="draft"{{if eq $p.Status "draft"}} selected{{end}}>{{.Admin.T "admin.status.draft" "草稿"}}</option>
+        <option value="published"{{if eq $p.Status "published"}} selected{{end}}>{{.Admin.T "admin.status.published" "已发布"}}</option>
+      </select>
+    </label>
+
+    <div style="display:flex;gap:.6rem;align-items:center">
+      <button class="btn btn-primary" type="submit">{{.Admin.T "admin.action.save" "保存"}}</button>
+      <a class="btn" href="/admin/ext/{{$ct.Key}}">{{.Admin.T "admin.action.cancel" "取消"}}</a>
+      {{if $p.ID}}<a class="btn" href="/{{$ct.URLPrefix}}/{{$p.Slug}}" target="_blank" style="margin-left:auto">{{.Admin.T "admin.ext.view" "查看"}} ↗</a>{{end}}
+    </div>
+  </form>
+</div>
+{{end}}

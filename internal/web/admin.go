@@ -571,6 +571,8 @@ func (s *Server) populatePlatformSites(v *View) {
 	}
 	v.PlatformSites = sites
 	v.PlatformSiteIcons = map[int64]string{}
+	v.PlatformOfficialURLs = map[int64]string{}
+	v.PlatformOfficialHosts = map[int64]string{}
 	for _, site := range sites {
 		if site == nil {
 			continue
@@ -578,7 +580,55 @@ func (s *Server) populatePlatformSites(v *View) {
 		if icon := s.platformSiteIconURL(site.ID); icon != "" {
 			v.PlatformSiteIcons[site.ID] = icon
 		}
+		if href, host := s.platformOfficialSiteURL(site.ID); href != "" && host != "" {
+			v.PlatformOfficialURLs[site.ID] = href
+			v.PlatformOfficialHosts[site.ID] = host
+		}
 	}
+}
+
+func (s *Server) platformOfficialSiteURL(siteID int64) (string, string) {
+	if siteID <= 0 {
+		return "", ""
+	}
+	var site *platform.Site
+	if s.platform != nil {
+		if loaded, found, err := s.platform.GetSite(siteID); err == nil && found {
+			site = loaded
+		}
+	}
+	if site != nil && site.Status != "enabled" {
+		return "", ""
+	}
+	siteServer := s
+	if rt, ok := s.runtimePool().runtimeByID(siteID); ok && rt != nil {
+		if site == nil {
+			site = rt.Site
+		}
+		if rt.server != nil {
+			siteServer = rt.server
+		} else if rt.Store != nil {
+			siteServer = s.cloneForRuntime(rt)
+		}
+	}
+	if site != nil && site.Status != "enabled" {
+		return "", ""
+	}
+	if siteServer == nil || siteServer.store == nil {
+		return "", ""
+	}
+	view := siteServer.cloudflareView()
+	if view == nil || view.Status == nil || !cloudflareStatusPublished(view.Status) {
+		return "", ""
+	}
+	host := strings.TrimSpace(view.Config.primaryHost())
+	if host == "" {
+		host = strings.TrimSpace(view.Status.PrimaryDomain)
+	}
+	if host == "" {
+		return "", ""
+	}
+	return "https://" + host + "/", host
 }
 
 func (s *Server) platformSiteIconURL(siteID int64) string {
@@ -1001,6 +1051,13 @@ func (s *Server) showAdminSites(w http.ResponseWriter, r *http.Request, status i
 			DBPath:                      "CMS_DB",
 			UploadDir:                   s.uploadDir,
 		}}
+		v.PlatformSiteIcons = map[int64]string{}
+		v.PlatformOfficialURLs = map[int64]string{}
+		v.PlatformOfficialHosts = map[int64]string{}
+		if href, host := s.platformOfficialSiteURL(1); href != "" && host != "" {
+			v.PlatformOfficialURLs[1] = href
+			v.PlatformOfficialHosts[1] = host
+		}
 		s.rnd.Admin(w, "sites", status, v)
 		return
 	}
@@ -4102,6 +4159,7 @@ func automationAIBrief(apiBase, token string, scopes []string) string {
 		"",
 		"需要设置封面图或正文图片时，先上传媒体文件，拿返回的 url 再写入 cover_image 或 Markdown 图片：",
 		"POST /media",
+		"图片上传规则：所有通过媒体接口上传的图片资源，上传前必须先转成 WebP（.webp）格式；不要直接上传 jpg、png、gif 原图。",
 		"",
 		"如果我要你修改某篇内容，请先找到它的 id，不要只凭标题猜。",
 		"可以这样查找：",

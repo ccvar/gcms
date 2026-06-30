@@ -318,6 +318,17 @@ type View struct {
 	ContentHTML template.HTML
 	TOC         []Heading
 
+	// 扩展内容类型（通用兜底模板 generic_* 用）
+	CT     *ContentType
+	Fields []FieldValue
+
+	// 后台「扩展」分区
+	ExtTypes  []ExtTypeRow
+	ExtType   *ContentType
+	ExtPosts  []*store.Post
+	ExtEdit   *store.Post
+	ExtValues map[string]string
+
 	PageNum    int
 	TotalPages int
 	HasPrev    bool
@@ -397,7 +408,9 @@ type View struct {
 	PlatformSites         []*platform.Site   // 平台综合后台：站点列表
 	PlatformDomains       map[int64][]*platform.SiteDomain
 	PlatformSiteIcons     map[int64]string
-	PlatformCurrentSiteID int64 // 平台会话中当前选择的站点
+	PlatformOfficialURLs  map[int64]string // 已发布到 Cloudflare 的正式站点入口
+	PlatformOfficialHosts map[int64]string // 正式站点入口展示域名
+	PlatformCurrentSiteID int64            // 平台会话中当前选择的站点
 	ArchivedSites         []*platform.ArchivedSite
 	ArchivedSiteIcons     map[int64]string
 	BackupConfig          backup.Config
@@ -2182,6 +2195,9 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("GET /about", s.about)
 	mux.HandleFunc("GET /search", s.search)
 	mux.HandleFunc("GET /{slug}", s.page)
+	// 「扩展」内容类型的公开路由（全局注册；未对本站启用时列表回退为按 slug 找页面、
+	// 详情返回 404，保证未用该类型的站点零回归）。
+	s.registerContentTypeRoutes(mux)
 
 	// SEO 端点（动态生成）
 	mux.HandleFunc("GET /sitemap.xml", s.sitemap)
@@ -2353,6 +2369,16 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /admin/links/{id}/pin", s.requireAuth(s.adminLinkPin))
 	mux.HandleFunc("POST /admin/links/{id}/status", s.requireAuth(s.adminLinkStatus))
 	mux.HandleFunc("POST /admin/links/{id}/translate", s.requireAuth(s.adminTranslate))
+
+	// 「扩展」内容类型后台
+	mux.HandleFunc("GET /admin/extensions", s.requireAuth(s.adminExtHub))
+	mux.HandleFunc("POST /admin/extensions/toggle", s.requireAuth(s.adminExtToggle))
+	mux.HandleFunc("GET /admin/ext/{type}", s.requireAuth(s.adminExtList))
+	mux.HandleFunc("GET /admin/ext/{type}/new", s.requireAuth(s.adminExtNew))
+	mux.HandleFunc("POST /admin/ext/{type}", s.requireAuth(s.adminExtCreate))
+	mux.HandleFunc("GET /admin/ext/{type}/{id}/edit", s.requireAuth(s.adminExtEdit))
+	mux.HandleFunc("POST /admin/ext/{type}/{id}", s.requireAuth(s.adminExtUpdate))
+	mux.HandleFunc("POST /admin/ext/{type}/{id}/delete", s.requireAuth(s.adminExtDelete))
 
 	// 兜底 404
 	mux.HandleFunc("GET /", s.notFound)
@@ -2716,6 +2742,24 @@ func (s *Server) menuTargetOptions(admins ...*i18n.AdminTr) []MenuTargetOption {
 	add(MenuTargetOption{Value: "about", Label: t("admin.settings.menu.target.about", "关于页"), URL: "/about", Kind: "preset", Labels: labelsFromKey("nav.about")})
 	add(MenuTargetOption{Value: "start", Label: t("admin.settings.menu.target.start", "开始使用页"), URL: "/start", Kind: "preset", Labels: staticLabels("开始使用", "Get Started")})
 	add(MenuTargetOption{Value: "search", Label: t("admin.settings.menu.target.search", "搜索页"), URL: "/search", Kind: "preset", Labels: labelsFromKey("nav.search")})
+
+	// 「扩展」内容类型的归档页（仅本站已启用的类型）
+	for _, ct := range s.activeExtContentTypes() {
+		if ct.URLPrefix == "" {
+			continue
+		}
+		labels := map[string]string{}
+		for k, v := range ct.Names {
+			labels[k] = v
+		}
+		add(MenuTargetOption{
+			Value:  "ext:" + ct.Key,
+			Label:  ct.Name(def),
+			URL:    "/" + ct.URLPrefix,
+			Kind:   "preset",
+			Labels: labels,
+		})
+	}
 
 	postGroups := categoryGroups("post")
 	if cats, _ := s.store.ListCategories(def, "post"); cats != nil {

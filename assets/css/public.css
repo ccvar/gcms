@@ -1019,6 +1019,8 @@ img.cover, img.article-cover { object-fit: cover; width: 100%; display: block; }
   height: 100%;
   border-radius: 0;
   box-shadow: none;
+  object-fit: contain;
+  object-position: center;
   background:
     linear-gradient(135deg, rgba(15,124,255,.76), rgba(22,199,183,.68)),
     linear-gradient(180deg, #eef4fb, #fff);
@@ -1063,6 +1065,16 @@ img.cover, img.article-cover { object-fit: cover; width: 100%; display: block; }
     linear-gradient(180deg, rgba(255,255,255,.24) 1px, transparent 1px),
     linear-gradient(135deg, var(--accent), var(--accent-soft));
   background-size: 18px 18px, 18px 18px, auto;
+}
+[data-theme="product"] .lc-cover img,
+[data-theme="product"] img.article-cover {
+  object-fit: contain;
+  object-position: center;
+  background:
+    linear-gradient(90deg, rgba(15,124,255,.08) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(15,124,255,.07) 1px, transparent 1px),
+    linear-gradient(135deg, rgba(239,246,255,.96), rgba(236,253,245,.88));
+  background-size: 22px 22px, 22px 22px, auto;
 }
 [data-theme="product"] .lc-mono {
   background: linear-gradient(135deg, var(--accent), var(--accent-soft));

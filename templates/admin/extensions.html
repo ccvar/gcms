@@ -1,0 +1,36 @@
+{{define "body"}}
+<div style="max-width:920px">
+  <h1>{{.Admin.T "admin.ext.title" "扩展"}}</h1>
+  <p style="color:#888;margin:.25rem 0 1.5rem">{{.Admin.T "admin.ext.sub" "在文章、页面、链接之外，启用更多内容类型；每个站点独立启用。"}}</p>
+  {{if .Flash}}<div style="padding:.6rem .9rem;border-radius:8px;background:rgba(46,125,50,.12);color:#1b5e20;margin-bottom:1.2rem">{{.Flash}}</div>{{end}}
+  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:1rem">
+    {{range .ExtTypes}}
+    <div style="border:1px solid rgba(128,128,128,.28);border-radius:12px;padding:1.1rem 1.2rem">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:.5rem;margin-bottom:.35rem">
+        <strong style="font-size:1.05rem">{{.Name}}</strong>
+        {{if .Enabled}}<span style="font-size:.72rem;color:#1b5e20;background:rgba(46,125,50,.14);padding:.12rem .55rem;border-radius:999px">{{$.Admin.T "admin.ext.on" "已启用"}}</span>{{end}}
+      </div>
+      <div style="color:#999;font-size:.82rem;margin-bottom:1rem">/{{.URLPrefix}} · {{.Count}} {{$.Admin.T "admin.ext.items" "条"}}</div>
+      <div style="display:flex;gap:.5rem;align-items:center;flex-wrap:wrap">
+        {{if .Enabled}}
+        <a class="btn" href="/admin/ext/{{.Key}}">{{$.Admin.T "admin.ext.manage" "管理"}} →</a>
+        <form method="post" action="/admin/extensions/toggle" style="margin:0">
+          <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+          <input type="hidden" name="type" value="{{.Key}}">
+          <input type="hidden" name="on" value="0">
+          <button class="btn" type="submit">{{$.Admin.T "admin.ext.disable" "停用"}}</button>
+        </form>
+        {{else}}
+        <form method="post" action="/admin/extensions/toggle" style="margin:0">
+          <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+          <input type="hidden" name="type" value="{{.Key}}">
+          <input type="hidden" name="on" value="1">
+          <button class="btn btn-primary" type="submit">{{$.Admin.T "admin.ext.enable" "启用"}}</button>
+        </form>
+        {{end}}
+      </div>
+    </div>
+    {{end}}
+  </div>
+</div>
+{{end}}

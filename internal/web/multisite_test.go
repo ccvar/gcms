@@ -233,6 +233,9 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 	if body := platformPage.Body.String(); !strings.Contains(body, `2 个站点`) {
 		t.Fatalf("platform page did not render site count")
 	}
+	if body := platformPage.Body.String(); !strings.Contains(body, `预览站点`) || strings.Contains(body, `正式站点`) || strings.Contains(body, `查看站点`) {
+		t.Fatalf("platform page did not render preview-only site links before Cloudflare publish")
+	}
 	if body := platformPage.Body.String(); !strings.Contains(body, `data-site-create-open`) || !strings.Contains(body, `data-site-create-modal`) {
 		t.Fatalf("platform page did not render create-site modal")
 	}
@@ -246,6 +249,26 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 	otherIconPath := "/admin/sites/" + strconv.FormatInt(otherSite.ID, 10) + "/uploads/blog-icon.ico"
 	if body := platformPage.Body.String(); !strings.Contains(body, `class="site-card-icon"`) || !strings.Contains(body, defaultIconPath) || !strings.Contains(body, otherIconPath) {
 		t.Fatalf("platform page did not render site icons")
+	}
+	otherRuntime, ok := srv.runtimePool().runtimeByID(otherSite.ID)
+	if !ok || otherRuntime == nil || otherRuntime.Store == nil || otherRuntime.server == nil {
+		t.Fatalf("other site runtime missing")
+	}
+	if err := otherRuntime.Store.SetSetting(cloudflareDomainsKey, encodeCloudflareDomains([]CloudflareDomain{{Host: "blog.test", Primary: true}})); err != nil {
+		t.Fatalf("set other Cloudflare domain: %v", err)
+	}
+	otherRuntime.server.writeCloudflareStatus(CloudflareStatus{
+		Status:       "success",
+		Message:      "Cloudflare 静态站已部署",
+		LastDeployAt: time.Now().UTC().Format(time.RFC3339),
+		Published:    true,
+	})
+	publishedPlatformPage := getPlatform("/admin/sites")
+	if publishedPlatformPage.Code != http.StatusOK {
+		t.Fatalf("published platform page status = %d, body = %s", publishedPlatformPage.Code, publishedPlatformPage.Body.String())
+	}
+	if body := publishedPlatformPage.Body.String(); !strings.Contains(body, `正式站点`) || !strings.Contains(body, `blog.test`) || !strings.Contains(body, `href="https://blog.test/"`) || !strings.Contains(body, `预览站点`) {
+		t.Fatalf("platform page did not render Cloudflare official site link: %s", body)
 	}
 	defaultIcon := httptest.NewRecorder()
 	defaultIconReq := httptest.NewRequest(http.MethodGet, "https://platform.test"+defaultIconPath, nil)

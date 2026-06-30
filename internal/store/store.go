@@ -49,6 +49,7 @@ type Post struct {
 	CategoryID      sql.NullInt64
 	Category        *Category
 	LinkURL         string // 仅 type=link：指向的目标网址
+	Extra           string // 扩展内容类型的自定义字段值（JSON 对象）；内置 post/page/link 一般为空
 
 	PublishedAt time.Time
 	CreatedAt   time.Time
@@ -157,6 +158,7 @@ CREATE TABLE IF NOT EXISTS posts (
   lang         TEXT NOT NULL DEFAULT 'zh',
   trans_group  TEXT NOT NULL DEFAULT '',
   link_url     TEXT NOT NULL DEFAULT '',
+  extra        TEXT NOT NULL DEFAULT '',
   category_id  INTEGER REFERENCES categories(id) ON DELETE SET NULL,
   published_at TEXT,
   created_at   TEXT NOT NULL,
@@ -216,6 +218,8 @@ func (s *Store) migrate() error {
 	}
 	// 「链接」内容类型新增列（幂等，须在多语种重建之后补，确保重建后的表也带上）。
 	s.addColumnIfMissing("posts", "link_url", "TEXT NOT NULL DEFAULT ''")
+	// 「扩展」内容类型的自定义字段值（JSON）。幂等补列，随 store.Open 自动铺到所有站点库（含未来新建站点）。
+	s.addColumnIfMissing("posts", "extra", "TEXT NOT NULL DEFAULT ''")
 	s.addColumnIfMissing("categories", "kind", "TEXT NOT NULL DEFAULT 'post'")
 	// 索引在表结构（含 lang/trans_group）就绪后统一创建，兼容新旧库。
 	if err := s.createIndexes(); err != nil {
@@ -920,11 +924,11 @@ func (s *Store) ListAutomationLogs(limit int) ([]*AutomationLog, error) {
 // ---------- 查询：公开站点 ----------
 
 const postCols = `p.id,p.type,p.slug,p.title,p.excerpt,p.content,p.meta_desc,p.keywords,
-	p.cover_image,p.author,p.status,p.featured,p.editor_mode,p.comments_enabled,p.link_url,p.lang,p.trans_group,p.category_id,p.published_at,p.created_at,p.updated_at,
+	p.cover_image,p.author,p.status,p.featured,p.editor_mode,p.comments_enabled,p.link_url,p.lang,p.trans_group,p.extra,p.category_id,p.published_at,p.created_at,p.updated_at,
 	c.id,c.slug,c.name,c.description`
 
 const postSummaryCols = `p.id,p.type,p.slug,p.title,p.excerpt,'' AS content,p.meta_desc,p.keywords,
-	p.cover_image,p.author,p.status,p.featured,p.editor_mode,p.comments_enabled,p.link_url,p.lang,p.trans_group,p.category_id,p.published_at,p.created_at,p.updated_at,
+	p.cover_image,p.author,p.status,p.featured,p.editor_mode,p.comments_enabled,p.link_url,p.lang,p.trans_group,p.extra,p.category_id,p.published_at,p.created_at,p.updated_at,
 	c.id,c.slug,c.name,c.description,length(p.content)`
 
 func scanPost(sc interface{ Scan(...any) error }, hasContentLen bool) (*Post, error) {
@@ -936,7 +940,7 @@ func scanPost(sc interface{ Scan(...any) error }, hasContentLen bool) (*Post, er
 	var commentsEnabled int
 	var contentLen sql.NullInt64
 	dest := []any{&p.ID, &p.Type, &p.Slug, &p.Title, &p.Excerpt, &p.Content, &p.MetaDesc,
-		&p.Keywords, &p.CoverImage, &p.Author, &p.Status, &featured, &p.EditorMode, &commentsEnabled, &p.LinkURL, &p.Lang, &p.TransGroup,
+		&p.Keywords, &p.CoverImage, &p.Author, &p.Status, &featured, &p.EditorMode, &commentsEnabled, &p.LinkURL, &p.Lang, &p.TransGroup, &p.Extra,
 		&p.CategoryID, &pub, &created, &updated,
 		&cID, &cSlug, &cName, &cDesc}
 	if hasContentLen {
@@ -1289,6 +1293,49 @@ func (s *Store) ListAllLinks(lang string) ([]*Post, error) {
 	return s.queryPostSummaries(`WHERE p.type='link' AND p.lang=? ORDER BY p.updated_at DESC`, lang)
 }
 
+// ---------- 查询：「扩展」内容类型（按 type 泛化）----------
+
+// ListPublishedByType 返回某语种、某类型已发布内容（可按分类过滤，置顶优先、发布时间倒序，分页）。
+func (s *Store) ListPublishedByType(typ, lang string, catID int64, offset, limit int) ([]*Post, error) {
+	if catID > 0 {
+		return s.queryPostSummaries(`WHERE p.type=? AND p.status='published' AND p.lang=? AND p.category_id=?
+			ORDER BY p.featured DESC, p.published_at DESC, p.id DESC LIMIT ? OFFSET ?`, typ, lang, catID, limit, offset)
+	}
+	return s.queryPostSummaries(`WHERE p.type=? AND p.status='published' AND p.lang=?
+		ORDER BY p.featured DESC, p.published_at DESC, p.id DESC LIMIT ? OFFSET ?`, typ, lang, limit, offset)
+}
+
+// CountPublishedByType 统计某语种、某类型已发布条目数（可按分类）。
+func (s *Store) CountPublishedByType(typ, lang string, catID int64) (int, error) {
+	q := `SELECT COUNT(*) FROM posts WHERE type=? AND status='published' AND lang=?`
+	args := []any{typ, lang}
+	if catID > 0 {
+		q += ` AND category_id=?`
+		args = append(args, catID)
+	}
+	var n int
+	err := s.db.QueryRow(q, args...).Scan(&n)
+	return n, err
+}
+
+// GetTypedBySlug 取某语种、某类型单条内容。includeDrafts 为 true 时也返回草稿（供后台预览）。
+func (s *Store) GetTypedBySlug(typ, lang, slug string, includeDrafts bool) (*Post, error) {
+	where := `WHERE p.slug=? AND p.lang=? AND p.type=?`
+	if !includeDrafts {
+		where += ` AND p.status='published'`
+	}
+	posts, err := s.queryPosts(where+` LIMIT 1`, slug, lang, typ)
+	if err != nil || len(posts) == 0 {
+		return nil, err
+	}
+	return posts[0], nil
+}
+
+// ListAllByType 后台：某语种、某类型全部内容（含草稿）。
+func (s *Store) ListAllByType(typ, lang string) ([]*Post, error) {
+	return s.queryPostSummaries(`WHERE p.type=? AND p.lang=? ORDER BY p.updated_at DESC`, typ, lang)
+}
+
 // TranslationsPublished 返回与某 trans_group 关联、已发布的各语种内容（含 post 与 page）。
 // 供前台构建语言切换与 hreflang 备份链接。
 func (s *Store) TranslationsPublished(group string) ([]*Post, error) {
@@ -1556,11 +1603,11 @@ func (s *Store) CreatePost(p *Post) (int64, error) {
 		p.TransGroup = p.Lang + ":" + p.Slug
 	}
 	res, err := s.db.Exec(`INSERT INTO posts
-		(type,slug,title,excerpt,content,meta_desc,keywords,cover_image,author,status,featured,editor_mode,comments_enabled,link_url,lang,trans_group,category_id,published_at,created_at,updated_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		(type,slug,title,excerpt,content,meta_desc,keywords,cover_image,author,status,featured,editor_mode,comments_enabled,link_url,lang,trans_group,extra,category_id,published_at,created_at,updated_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		nz(p.Type, "post"), p.Slug, p.Title, p.Excerpt, p.Content, p.MetaDesc, p.Keywords, p.CoverImage,
 		p.Author, p.Status, boolInt(p.Featured), nz(p.EditorMode, "markdown"), boolInt(p.CommentsEnabled), p.LinkURL, p.Lang, p.TransGroup,
-		p.CategoryID, nullTime(p.PublishedAt), fmtTime(p.CreatedAt), fmtTime(p.UpdatedAt))
+		p.Extra, p.CategoryID, nullTime(p.PublishedAt), fmtTime(p.CreatedAt), fmtTime(p.UpdatedAt))
 	if err != nil {
 		return 0, err
 	}
@@ -1573,10 +1620,10 @@ func (s *Store) UpdatePost(p *Post) error {
 		p.PublishedAt = p.UpdatedAt
 	}
 	_, err := s.db.Exec(`UPDATE posts SET
-		slug=?,title=?,excerpt=?,content=?,meta_desc=?,keywords=?,cover_image=?,author=?,status=?,featured=?,editor_mode=?,comments_enabled=?,link_url=?,trans_group=?,category_id=?,published_at=?,updated_at=?
+		slug=?,title=?,excerpt=?,content=?,meta_desc=?,keywords=?,cover_image=?,author=?,status=?,featured=?,editor_mode=?,comments_enabled=?,link_url=?,trans_group=?,extra=?,category_id=?,published_at=?,updated_at=?
 		WHERE id=?`,
 		p.Slug, p.Title, p.Excerpt, p.Content, p.MetaDesc, p.Keywords, p.CoverImage, p.Author, p.Status,
-		boolInt(p.Featured), nz(p.EditorMode, "markdown"), boolInt(p.CommentsEnabled), p.LinkURL, p.TransGroup, p.CategoryID, nullTime(p.PublishedAt), fmtTime(p.UpdatedAt), p.ID)
+		boolInt(p.Featured), nz(p.EditorMode, "markdown"), boolInt(p.CommentsEnabled), p.LinkURL, p.TransGroup, p.Extra, p.CategoryID, nullTime(p.PublishedAt), fmtTime(p.UpdatedAt), p.ID)
 	return err
 }
 
