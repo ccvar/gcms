@@ -754,13 +754,13 @@ a.overview-log-title { text-decoration: none; }
 .site-info-grid dt { margin: 0 0 .28rem; color: var(--faint); font-size: .68rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .site-info-grid dd { margin: 0; display: grid; gap: .22rem; color: var(--muted); font-size: .8rem; line-height: 1.45; }
 .site-info-grid code { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-family: var(--mono); font-size: .78rem; background: transparent; }
-.site-domain { display: flex; align-items: center; gap: .4rem; min-width: 0; color: var(--muted); font-family: var(--mono); font-size: .78rem; }
+.site-domain { display: flex; flex-direction: column; align-items: flex-start; gap: .28rem; min-width: 0; color: var(--muted); font-family: var(--mono); font-size: .78rem; }
 .site-domain.primary { color: var(--ink-soft); }
-.site-domain .sd-host { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.site-domain .sd-host { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .site-domain-tag { flex: none; font-family: var(--sans); font-size: .68rem; font-weight: 700; letter-spacing: .02em; padding: .05rem .42rem; border-radius: 999px; background: var(--line-soft); color: var(--muted); }
 .site-domain.primary .site-domain-tag { background: var(--accent-wash); color: var(--accent); }
 .site-domain-row { display: flex; align-items: flex-start; gap: .7rem; min-width: 0; }
-.site-domain-list { flex: 1 1 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: .22rem; min-width: 0; }
+.site-domain-list { flex: 1 1 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: .7rem; min-width: 0; }
 .site-domain-bind { flex: none; display: inline-flex; align-items: center; gap: .24rem; color: var(--accent); font-size: .78rem; font-weight: 700; line-height: 1.45; white-space: nowrap; }
 .site-domain-bind svg { flex: none; width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .site-domain-bind:hover { text-decoration: underline; }

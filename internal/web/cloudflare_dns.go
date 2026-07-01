@@ -62,10 +62,7 @@ func upsertCloudflareRecord(ctx context.Context, cfg CloudflareConfig, recordTyp
 // at the server IP(s) using the platform Cloudflare token. Hosts whose zone is not in
 // the account are reported as skipped rather than failing the batch.
 func applyCloudflareDNS(ctx context.Context, token, ipv4, ipv6 string, hosts []string) ([]cloudflareDNSResult, error) {
-	zones, err := listCloudflareZones(ctx, token)
-	if err != nil {
-		return nil, err
-	}
+	zoneCache := map[string]cloudflareZone{}
 	seen := map[string]bool{}
 	var results []cloudflareDNSResult
 	for _, host := range hosts {
@@ -74,9 +71,12 @@ func applyCloudflareDNS(ctx context.Context, token, ipv4, ipv6 string, hosts []s
 			continue
 		}
 		seen[host] = true
-		zone := matchCloudflareZone(host, zones)
+		zone, err := findCloudflareZoneForHost(ctx, token, host, zoneCache)
+		if err != nil {
+			return nil, err
+		}
 		if zone.ID == "" {
-			results = append(results, cloudflareDNSResult{Host: host, Msg: "不在已授权的 Cloudflare 账号，请手动配置 DNS"})
+			results = append(results, cloudflareDNSResult{Host: host, Msg: "未找到对应 Cloudflare Zone（确认 Token 有 Zone:Read 权限并覆盖该域名）"})
 			continue
 		}
 		cfg := CloudflareConfig{APIToken: token, ZoneID: zone.ID}
@@ -98,4 +98,36 @@ func applyCloudflareDNS(ctx context.Context, token, ipv4, ipv6 string, hosts []s
 		}
 	}
 	return results, nil
+}
+
+// findCloudflareZoneForHost resolves the Cloudflare zone for host by querying each
+// candidate zone name (host, then each parent domain) via /zones?name=X. This is an
+// exact per-zone lookup — unaffected by account pagination or zone-scoped tokens,
+// unlike listing all zones. Results are cached per candidate name across hosts.
+// Empty zone ID (no error) = host's zone is not in the token's account.
+func findCloudflareZoneForHost(ctx context.Context, token, host string, cache map[string]cloudflareZone) (cloudflareZone, error) {
+	for _, cand := range cloudflareZoneNameCandidates(host) {
+		if z, ok := cache[cand]; ok {
+			if z.ID != "" {
+				return z, nil
+			}
+			continue
+		}
+		zones, err := listCloudflareZonesByName(ctx, token, cand)
+		if err != nil {
+			return cloudflareZone{}, err
+		}
+		var found cloudflareZone
+		for _, z := range zones {
+			if sameCloudflareDNSName(z.Name, cand) {
+				found = z
+				break
+			}
+		}
+		cache[cand] = found
+		if found.ID != "" {
+			return found, nil
+		}
+	}
+	return cloudflareZone{}, nil
 }

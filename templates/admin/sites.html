@@ -191,7 +191,7 @@
                     <span class="cf-ip-col"><label for="cf-ipv4-{{.ID}}">{{$.Admin.T "admin.sites.server_ipv4" "服务器 IPv4"}}</label><input id="cf-ipv4-{{.ID}}" name="server_ipv4" value="{{$.CFServerIPv4}}" placeholder="1.2.3.4" autocomplete="off" spellcheck="false"></span>
                     <span class="cf-ip-col"><label for="cf-ipv6-{{.ID}}">{{$.Admin.T "admin.sites.server_ipv6" "服务器 IPv6（可选）"}}</label><input id="cf-ipv6-{{.ID}}" name="server_ipv6" value="{{$.CFServerIPv6}}" placeholder="2001:db8::1" autocomplete="off" spellcheck="false"></span>
                   </div>
-                  <small><label class="inline-check"><input type="checkbox" name="cf_dns" value="1"> {{$.Admin.T "admin.sites.cf_dns_apply" "保存后用 Cloudflare 自动把这些域名指向本服务器"}}</label></small>
+                  <small><label class="inline-check"><input type="checkbox" name="cf_dns" value="1" checked> {{$.Admin.T "admin.sites.cf_dns_apply" "保存后用 Cloudflare 自动把这些域名指向本服务器"}}</label></small>
                 </div>
               </details>
               <div class="modal-actions">
