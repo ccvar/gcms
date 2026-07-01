@@ -2085,8 +2085,15 @@ func (s *Server) adminSaveSiteDomains(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, err)
 		return
 	}
+	var flashes []string
 	if msg := s.handleCloudflareDNSFromForm(r, specs); msg != "" {
-		s.sess.setSettingsFlash(sessionToken(r), settingsFlash{Flash: msg})
+		flashes = append(flashes, msg)
+	}
+	if msg := s.syncCaddyDomains(); msg != "" {
+		flashes = append(flashes, msg)
+	}
+	if len(flashes) > 0 {
+		s.sess.setSettingsFlash(sessionToken(r), settingsFlash{Flash: strings.Join(flashes, " ")})
 	}
 	http.Redirect(w, r, "/admin/sites", http.StatusSeeOther)
 }

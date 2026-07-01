@@ -53,6 +53,7 @@ load_conf() {
       CMS_DB)               [ -n "${CMS_DB:-}" ]               || CMS_DB="$v" ;;
       GO_VERSION)           [ -n "${GO_VERSION:-}" ]           || GO_VERSION="$v" ;;
       GCMS_CADDY_ONDEMAND)  [ -n "${GCMS_CADDY_ONDEMAND:-}" ]  || GCMS_CADDY_ONDEMAND="$v" ;;
+      GCMS_CADDY_MANAGE)    [ -n "${GCMS_CADDY_MANAGE:-}" ]    || GCMS_CADDY_MANAGE="$v" ;;
     esac
   done < "$CONF"
 }
@@ -180,6 +181,7 @@ start() {
   export BASE_URL="$(base_url)"
   export CMS_DB
   [ -n "${GCMS_CADDY_ONDEMAND:-}" ] && export GCMS_CADDY_ONDEMAND
+  [ -n "${GCMS_CADDY_MANAGE:-}" ] && export GCMS_CADDY_MANAGE
   cd "$ROOT"
   # 单 > 截断日志：本次启动只保留本次运行日志，不混入历史
   # 直接后台运行二进制并记录其真实 PID（nohup 会 exec 二进制，PID 不变）；脱离终端
