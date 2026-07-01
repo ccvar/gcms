@@ -682,7 +682,7 @@ caddy_setup() {
 
   # gcms 只管理「标记段」内的按需签发配置；标记之外的任何域名 / 配置一律原样保留。
   managed="# >>> gcms managed —— 请勿手动编辑本区块，caddy-setup 会自动重写 >>>
-# 按需签发 TLS + 反代到 gcms。新增站点域名无需改此文件：Caddy 会向 gcms 询问该域名是否可签发。
+# 按需签发 TLS + 压缩 + 反代到 gcms。新增站点域名无需改此文件：Caddy 会向 gcms 询问该域名是否可签发。
 {
 	on_demand_tls {
 		ask $ask
@@ -692,6 +692,7 @@ https:// {
 	tls {
 		on_demand
 	}
+	encode zstd gzip
 	reverse_proxy $target
 }
 # <<< gcms managed <<<"

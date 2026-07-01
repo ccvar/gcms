@@ -2429,7 +2429,7 @@
     var SKIP = /\/(delete|pin|translate|reorder|logout|login)\b/;
     var IGNORE = { _csrf: 1, editor_mode: 1 }; // 不参与「是否改动」比较的字段
     document.querySelectorAll(".admin-main form, form#post-form").forEach(function (form) {
-      if (form.matches("[data-confirm]")) return;
+      if (form.matches("[data-confirm], [data-no-dirty]")) return; // data-no-dirty：允许原样重新提交（如域名绑定会重跑 DNS）
       if (SKIP.test(form.getAttribute("action") || "")) return;
       var saveBtns = submitBtnsFor(form);
       if (!saveBtns.length) return;

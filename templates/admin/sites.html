@@ -61,6 +61,13 @@
                   {{with index $.PlatformOfficialHosts $site.ID}}<strong>{{.}}</strong>{{end}}
                   <span class="ext-arrow" aria-hidden="true">↗</span>
                 </a>
+              {{else}}
+                {{if not $site.IsDefault}}{{range index $.PlatformDomains $site.ID}}{{if .IsPrimary}}
+                <a class="site-card-official site-card-bound" href="{{.Scheme}}://{{.Host}}" target="_blank" rel="noopener" aria-label="{{.Host}}">
+                  <strong>{{.Host}}</strong>
+                  <span class="ext-arrow" aria-hidden="true">↗</span>
+                </a>
+                {{end}}{{end}}{{end}}
               {{end}}
               <a class="site-card-preview" href="{{index $.PlatformPreviewURLs .ID}}" target="_blank" rel="noopener"><span>{{$.Admin.T "admin.sites.preview_site" "预览站点"}}</span><span class="ext-arrow" aria-hidden="true">↗</span></a>
             </div>
@@ -88,14 +95,14 @@
                     <span class="muted">{{$.Admin.T "admin.sites.default_domain_note" "使用当前默认入口"}}</span>
                   {{else}}
                     <span class="site-domain-row">
+                      {{$sid := .ID}}
                       <span class="site-domain-list">
-                        {{with index $.PlatformDomains .ID}}
-                          {{range .}}<span class="site-domain{{if .IsPrimary}} primary{{end}}"><span class="sd-host" title="{{.Scheme}}://{{.Host}}">{{if .IsPrimary}}★ {{end}}{{.Scheme}}://{{.Host}}</span><span class="site-domain-tag">{{if .IsPrimary}}{{$.Admin.T "admin.sites.domain_primary" "主域名"}}{{else if .RedirectToPrimary}}{{$.Admin.T "admin.sites.domain_alias" "别名 · 跳转"}}{{else}}{{$.Admin.T "admin.sites.domain_extra" "别名"}}{{end}}</span></span>{{end}}
+                        {{with index $.PlatformDomains $sid}}
+                          {{range .}}<span class="site-domain{{if .IsPrimary}} primary{{end}}"><span class="sd-host" title="{{.Scheme}}://{{.Host}}">{{if .IsPrimary}}★ {{end}}{{.Scheme}}://{{.Host}}</span><span class="sd-meta"><span class="site-domain-tag">{{if .IsPrimary}}{{$.Admin.T "admin.sites.domain_primary" "主域名"}}{{else if .RedirectToPrimary}}{{$.Admin.T "admin.sites.domain_alias" "别名 · 跳转"}}{{else}}{{$.Admin.T "admin.sites.domain_extra" "别名"}}{{end}}</span>{{if .IsPrimary}}<a class="site-domain-bind" href="#site-domain-modal-{{$sid}}">{{template "site-icon-link"}}<span>{{$.Admin.T "admin.sites.bind_domain_short" "绑定"}}</span></a>{{end}}</span></span>{{end}}
                         {{else}}
-                          <span class="muted">{{$.Admin.T "admin.sites.no_domain" "未绑定域名"}}</span>
+                          <span class="site-domain-empty"><span class="muted">{{$.Admin.T "admin.sites.no_domain" "未绑定域名"}}</span><a class="site-domain-bind" href="#site-domain-modal-{{$sid}}">{{template "site-icon-link"}}<span>{{$.Admin.T "admin.sites.bind_domain_short" "绑定"}}</span></a></span>
                         {{end}}
                       </span>
-                      <a class="site-domain-bind" href="#site-domain-modal-{{.ID}}">{{template "site-icon-link"}}<span>{{$.Admin.T "admin.sites.bind_domain_short" "绑定"}}</span></a>
                     </span>
                   {{end}}
                 </dd>
@@ -148,7 +155,7 @@
               </div>
               <a class="modal-x" href="#" aria-label="{{$.Admin.T "admin.action.cancel" "取消"}}">×</a>
             </div>
-            <form class="admin-form site-domain-form site-domain-modal-form" method="post" action="/admin/sites/{{.ID}}/domains">
+            <form class="admin-form site-domain-form site-domain-modal-form" method="post" action="/admin/sites/{{.ID}}/domains" data-no-dirty>
               <input type="hidden" name="_csrf" value="{{$.CSRF}}">
               {{$form := index $.PlatformDomainForms .ID}}
               <div class="field">
@@ -176,7 +183,7 @@
               <details class="domain-cf">
                 <summary>{{template "site-icon-cloudflare"}}{{$.Admin.T "admin.sites.cf_dns_summary" "域名托管在 Cloudflare？一键自动配置 DNS"}}</summary>
                 <div class="domain-cf-body">
-                  <p class="field-hint">{{$.Admin.T "admin.sites.cf_dns_desc" "授权后，可自动把上面这些域名的 DNS A / AAAA 记录指向本服务器（灰云 / 仅 DNS），无需登录 Cloudflare 后台。"}}</p>
+                  <p class="field-hint">{{$.Admin.T "admin.sites.cf_dns_desc" "授权后，可自动把上面这些域名的 DNS A / AAAA 记录指向本服务器，无需登录 Cloudflare 后台。"}}</p>
                   <div class="field">
                     <label for="cf-token-{{.ID}}">{{$.Admin.T "admin.sites.cf_token" "Cloudflare API Token"}}</label>
                     {{if $.CFDNSTokenSet}}
@@ -192,6 +199,7 @@
                     <span class="cf-ip-col"><label for="cf-ipv6-{{.ID}}">{{$.Admin.T "admin.sites.server_ipv6" "服务器 IPv6（可选）"}}</label><input id="cf-ipv6-{{.ID}}" name="server_ipv6" value="{{$.CFServerIPv6}}" placeholder="2001:db8::1" autocomplete="off" spellcheck="false"></span>
                   </div>
                   <small><label class="inline-check"><input type="checkbox" name="cf_dns" value="1" checked> {{$.Admin.T "admin.sites.cf_dns_apply" "保存后用 Cloudflare 自动把这些域名指向本服务器"}}</label></small>
+                  <small><label class="inline-check"><input type="checkbox" name="cf_proxied" value="1"{{if $.CFProxied}} checked{{end}}> {{$.Admin.T "admin.sites.cf_proxied" "通过 Cloudflare 代理（橙云 · CDN / 防护）——需源站证书 + CF SSL 设为 Full；默认灰云仅 DNS"}}</label></small>
                 </div>
               </details>
               <div class="modal-actions">

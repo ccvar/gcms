@@ -461,6 +461,7 @@ type View struct {
 	CFServerIPv4          string       // 记住的服务器 IPv4（DNS A 记录目标）
 	CFServerIPv6          string       // 记住的服务器 IPv6（DNS AAAA 记录目标，可选）
 	CFAuthorizeURL        string       // Cloudflare 授权模板链接
+	CFProxied             bool         // 「橙云代理」开关的记忆状态（勾选=写代理记录）
 }
 
 type OverviewStat struct {

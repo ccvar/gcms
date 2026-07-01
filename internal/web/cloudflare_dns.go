@@ -10,6 +10,11 @@ const (
 	platformCFDNSTokenKey = "cloudflare.dns_token"
 	platformServerIPv4Key = "cloudflare.server_ipv4"
 	platformServerIPv6Key = "cloudflare.server_ipv6"
+	// platformCFProxiedKey remembers the "橙云代理" toggle: unset or "1" = write orange-cloud
+	// (proxied) records — the default (checked); "0" = grey-cloud (DNS-only). Orange-cloud
+	// only works when the origin serves a cert Cloudflare accepts (e.g. Caddy `tls internal`
+	// + CF SSL mode = Full), which is the operator's responsibility.
+	platformCFProxiedKey = "cloudflare.dns_proxied"
 )
 
 // cloudflareDNSResult reports one host's DNS auto-config outcome.
@@ -19,49 +24,86 @@ type cloudflareDNSResult struct {
 	Msg  string
 }
 
-// dnsAction is how a desired record reconciles against the existing ones.
-type dnsAction struct {
-	Op       string // "create" | "update" | "skip"
-	RecordID string
+// dnsPlan reconciles a host's records of one type against the desired state so the host
+// ends up with exactly one record pointing at the right content and proxy mode.
+type dnsPlan struct {
+	DeleteIDs []string // conflicting CNAME(s) + duplicate/stale same-type records to remove
+	UpdateID  string   // non-empty: update this record to the desired content/proxy
+	Create    bool     // true: no usable record exists, create a fresh one
 }
 
-// chooseDNSAction decides whether to create, update, or skip a record of the given
-// type so that it points at content.
-func chooseDNSAction(existing []cloudflareDNSRecord, recordType, content string) dnsAction {
+// cloudflareRecordProxied reports whether rec is orange-cloud (proxied).
+func cloudflareRecordProxied(rec cloudflareDNSRecord) bool {
+	return rec.Proxied != nil && *rec.Proxied
+}
+
+// planCloudflareRecord decides how to make host resolve to a single recordType record
+// pointing at content with the given proxy mode. It removes a conflicting CNAME (CF
+// error 81054) and collapses duplicate/stale records of the same type down to one,
+// updating that record in place when its content or proxy mode differs. This keeps a
+// re-bind idempotent and prevents a leftover record from a previous deployment (e.g. an
+// old Cloudflare Pages A record) from making the host resolve to two different IPs.
+func planCloudflareRecord(existing []cloudflareDNSRecord, recordType, content string, proxied bool) dnsPlan {
 	recordType = strings.ToUpper(strings.TrimSpace(recordType))
 	content = strings.TrimSpace(content)
+	var plan dnsPlan
+	var sameType []cloudflareDNSRecord
 	for _, rec := range existing {
-		if strings.ToUpper(strings.TrimSpace(rec.Type)) != recordType {
+		rt := strings.ToUpper(strings.TrimSpace(rec.Type))
+		if rt == recordType {
+			sameType = append(sameType, rec)
 			continue
 		}
-		if strings.EqualFold(strings.TrimSpace(rec.Content), content) {
-			return dnsAction{Op: "skip", RecordID: rec.ID}
+		// A CNAME can't coexist with A/AAAA of the same name; drop it either way.
+		if rt == "CNAME" || recordType == "CNAME" {
+			plan.DeleteIDs = append(plan.DeleteIDs, rec.ID)
 		}
-		return dnsAction{Op: "update", RecordID: rec.ID}
 	}
-	return dnsAction{Op: "create"}
+	if len(sameType) == 0 {
+		plan.Create = true
+		return plan
+	}
+	// Keep the first record; delete the rest so the host resolves to a single IP.
+	keep := sameType[0]
+	for _, dup := range sameType[1:] {
+		plan.DeleteIDs = append(plan.DeleteIDs, dup.ID)
+	}
+	if strings.EqualFold(strings.TrimSpace(keep.Content), content) && cloudflareRecordProxied(keep) == proxied {
+		return plan // already correct; only duplicates (if any) get removed
+	}
+	plan.UpdateID = keep.ID
+	return plan
 }
 
-// upsertCloudflareRecord points host's recordType (A/AAAA) at content, grey-cloud.
-func upsertCloudflareRecord(ctx context.Context, cfg CloudflareConfig, recordType, host, content string) error {
+// upsertCloudflareRecord makes host's recordType (A/AAAA) resolve to exactly one record
+// pointing at content with the given proxy mode, removing conflicting/duplicate records.
+func upsertCloudflareRecord(ctx context.Context, cfg CloudflareConfig, recordType, host, content string, proxied bool) error {
+	recordType = strings.ToUpper(strings.TrimSpace(recordType))
 	existing, err := listCloudflareDNSRecords(ctx, cfg, host)
 	if err != nil {
 		return err
 	}
-	switch act := chooseDNSAction(existing, recordType, content); act.Op {
-	case "skip":
-		return nil
-	case "update":
-		return putCloudflareDNSRecord(ctx, cfg, act.RecordID, recordType, host, content, false)
+	plan := planCloudflareRecord(existing, recordType, content, proxied)
+	for _, id := range plan.DeleteIDs {
+		if err := deleteCloudflareDNSRecord(ctx, cfg, id); err != nil {
+			return err
+		}
+	}
+	switch {
+	case plan.UpdateID != "":
+		return putCloudflareDNSRecord(ctx, cfg, plan.UpdateID, recordType, host, content, proxied)
+	case plan.Create:
+		return createCloudflareDNSRecord(ctx, cfg, recordType, host, content, proxied)
 	default:
-		return createCloudflareDNSRecord(ctx, cfg, recordType, host, content, false)
+		return nil
 	}
 }
 
-// applyCloudflareDNS upserts grey-cloud (DNS-only) A/AAAA records pointing every host
-// at the server IP(s) using the platform Cloudflare token. Hosts whose zone is not in
-// the account are reported as skipped rather than failing the batch.
-func applyCloudflareDNS(ctx context.Context, token, ipv4, ipv6 string, hosts []string) ([]cloudflareDNSResult, error) {
+// applyCloudflareDNS upserts A/AAAA records pointing every host at the server IP(s) using
+// the platform Cloudflare token. proxied selects orange-cloud (CDN/proxy) vs grey-cloud
+// (DNS-only). Hosts whose zone is not in the account are reported as skipped rather than
+// failing the batch.
+func applyCloudflareDNS(ctx context.Context, token, ipv4, ipv6 string, hosts []string, proxied bool) ([]cloudflareDNSResult, error) {
 	zoneCache := map[string]cloudflareZone{}
 	seen := map[string]bool{}
 	var results []cloudflareDNSResult
@@ -82,12 +124,12 @@ func applyCloudflareDNS(ctx context.Context, token, ipv4, ipv6 string, hosts []s
 		cfg := CloudflareConfig{APIToken: token, ZoneID: zone.ID}
 		var errs []string
 		if ipv4 != "" {
-			if err := upsertCloudflareRecord(ctx, cfg, "A", host, ipv4); err != nil {
+			if err := upsertCloudflareRecord(ctx, cfg, "A", host, ipv4, proxied); err != nil {
 				errs = append(errs, "A "+err.Error())
 			}
 		}
 		if ipv6 != "" {
-			if err := upsertCloudflareRecord(ctx, cfg, "AAAA", host, ipv6); err != nil {
+			if err := upsertCloudflareRecord(ctx, cfg, "AAAA", host, ipv6, proxied); err != nil {
 				errs = append(errs, "AAAA "+err.Error())
 			}
 		}

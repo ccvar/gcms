@@ -1060,6 +1060,7 @@ func (s *Server) showAdminSites(w http.ResponseWriter, r *http.Request, status i
 		v.CFServerIPv4 = s.platform.Setting(platformServerIPv4Key)
 		v.CFServerIPv6 = s.platform.Setting(platformServerIPv6Key)
 		v.CFAuthorizeURL = cloudflareAPITokenTemplateURL("GCMS DNS")
+		v.CFProxied = s.platform.Setting(platformCFProxiedKey) != "0" // 默认勾选：未设置或 "1" 都勾上，仅显式 "0" 取消
 	}
 	if s.platform == nil {
 		siteName := strings.TrimSpace(s.store.Setting("site.name"))
@@ -2101,6 +2102,7 @@ func (s *Server) handleCloudflareDNSFromForm(r *http.Request, specs []platform.S
 	ipv4 := strings.TrimSpace(r.FormValue("server_ipv4"))
 	ipv6 := strings.TrimSpace(r.FormValue("server_ipv6"))
 	wantDNS := r.FormValue("cf_dns") == "1"
+	proxied := r.FormValue("cf_proxied") == "1"
 	if pasted == "" && ipv4 == "" && ipv6 == "" && !wantDNS {
 		return "" // Cloudflare section untouched
 	}
@@ -2128,6 +2130,11 @@ func (s *Server) handleCloudflareDNSFromForm(r *http.Request, specs []platform.S
 	if ipv6 != "" {
 		_ = s.platform.SetSetting(platformServerIPv6Key, ipv6)
 	}
+	cfProxied := "1"
+	if !proxied {
+		cfProxied = "0"
+	}
+	_ = s.platform.SetSetting(platformCFProxiedKey, cfProxied)
 
 	if !wantDNS {
 		return ""
@@ -2151,7 +2158,7 @@ func (s *Server) handleCloudflareDNSFromForm(r *http.Request, specs []platform.S
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
-	results, err := applyCloudflareDNS(ctx, token, ipv4, ipv6, hosts)
+	results, err := applyCloudflareDNS(ctx, token, ipv4, ipv6, hosts, proxied)
 	if err != nil {
 		return "读取 Cloudflare 域名失败：" + err.Error()
 	}
@@ -2163,9 +2170,13 @@ func (s *Server) handleCloudflareDNSFromForm(r *http.Request, specs []platform.S
 			failParts = append(failParts, res.Host+"（"+res.Msg+"）")
 		}
 	}
+	mode := "灰云 · 仅 DNS"
+	if proxied {
+		mode = "橙云 · 已代理"
+	}
 	var b strings.Builder
 	if len(okHosts) > 0 {
-		fmt.Fprintf(&b, "已通过 Cloudflare 把 %s 的 DNS 指向本服务器。", strings.Join(okHosts, "、"))
+		fmt.Fprintf(&b, "已通过 Cloudflare 把 %s 的 DNS 指向本服务器（%s）。", strings.Join(okHosts, "、"), mode)
 	}
 	if len(failParts) > 0 {
 		fmt.Fprintf(&b, " 未处理：%s。", strings.Join(failParts, "；"))

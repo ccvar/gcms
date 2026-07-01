@@ -756,7 +756,9 @@ a.overview-log-title { text-decoration: none; }
 .site-info-grid code { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-family: var(--mono); font-size: .78rem; background: transparent; }
 .site-domain { display: flex; flex-direction: column; align-items: flex-start; gap: .28rem; min-width: 0; color: var(--muted); font-family: var(--mono); font-size: .78rem; }
 .site-domain.primary { color: var(--ink-soft); }
-.site-domain .sd-host { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.site-domain .sd-host { max-width: 100%; overflow-wrap: anywhere; word-break: break-word; line-height: 1.42; }
+.site-domain .sd-meta { display: inline-flex; align-items: center; flex-wrap: wrap; gap: .12rem .5rem; }
+.site-domain-empty { display: inline-flex; align-items: center; gap: .6rem; }
 .site-domain-tag { flex: none; font-family: var(--sans); font-size: .68rem; font-weight: 700; letter-spacing: .02em; padding: .05rem .42rem; border-radius: 999px; background: var(--line-soft); color: var(--muted); }
 .site-domain.primary .site-domain-tag { background: var(--accent-wash); color: var(--accent); }
 .site-domain-row { display: flex; align-items: flex-start; gap: .7rem; min-width: 0; }
@@ -816,7 +818,7 @@ a.overview-log-title { text-decoration: none; }
 /* 域名弹窗内容变长（含 Cloudflare 段）时：标题栏固定、表单区域内部滚动 */
 .site-domain-modal .site-domain-modal-card { display: grid; grid-template-rows: auto minmax(0, 1fr); max-height: min(88vh, 820px); padding: 0; overflow: hidden; }
 .site-domain-modal-card .site-modal-head { margin: 0; padding: 1.3rem 1.6rem .9rem; border-bottom: 1px solid var(--line-soft); }
-.site-domain-modal-card .site-modal-head + form { min-height: 0; overflow-y: auto; padding: 1.1rem 1.6rem 1.35rem; }
+.site-domain-modal-card .site-modal-head + form { min-height: 0; overflow-y: auto; padding: 1.1rem 1.6rem 0; }
 .starter-help-goal { margin: -.15rem 0 1rem; padding: .82rem .9rem; border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--line)); border-radius: 8px; background: color-mix(in srgb, var(--accent-wash) 58%, var(--surface)); }
 .starter-help-goal strong { display: block; margin-bottom: .35rem; color: var(--accent); font-size: .86rem; }
 .starter-help-goal p { margin: 0; color: var(--ink-soft); font-size: .84rem; line-height: 1.62; }
@@ -836,7 +838,7 @@ a.overview-log-title { text-decoration: none; }
 .site-domain-modal-form { display: flex; flex-direction: column; align-items: stretch; gap: .9rem; padding: 0; }
 .site-domain-modal-form > * { flex: none; }
 .site-domain-modal-form .field { margin: 0; }
-.site-domain-modal-form .modal-actions { margin-top: .1rem; }
+.site-domain-modal-form .modal-actions { position: sticky; bottom: 0; z-index: 1; margin: .2rem -1.6rem 0; padding: .85rem 1.6rem; border-top: 1px solid var(--line-soft); background: color-mix(in srgb, var(--surface) 88%, var(--line-soft)); }
 .site-domain-modal-form textarea { width: 100%; }
 .site-domain-modal-form .field-hint { display: block; margin-top: .35rem; color: var(--muted); font-size: .78rem; line-height: 1.5; }
 .site-domain-modal-form small { display: block; margin-top: .4rem; }
