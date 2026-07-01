@@ -1404,6 +1404,59 @@
     }
   })();
 
+  /* 主题放大预览：卡片角上的放大按钮 → 弹窗大图（缩放适配），可直接「选用此主题」 */
+  (function () {
+    var modal = document.querySelector("[data-tp-modal]");
+    if (!modal) return;
+    var frame = modal.querySelector("[data-tp-frame]");
+    var stage = modal.querySelector("[data-tp-stage]");
+    var titleEl = modal.querySelector("[data-tp-title]");
+    var selectBtn = modal.querySelector("[data-tp-select]");
+    var FW = 1120, FH = 720, curId = null;
+    function fit() {
+      if (modal.hidden || !stage) return;
+      var w = stage.clientWidth;
+      if (!w) return; // 尚未布局：fitSoon / ResizeObserver 会再触发
+      var s = w / FW;
+      frame.style.transform = "scale(" + s + ")";
+      stage.style.height = Math.round(FH * s) + "px";
+    }
+    function fitSoon() { // 弹窗刚显示时轮询到舞台有宽度再缩放（setTimeout 在后台标签页也会跑）
+      var n = 0;
+      (function loop() {
+        if (modal.hidden) return;
+        if (stage && stage.clientWidth) { fit(); return; }
+        if (n++ < 30) setTimeout(loop, 60);
+      })();
+    }
+    if (window.ResizeObserver && stage) new ResizeObserver(fit).observe(stage);
+    function open(id, name) {
+      curId = id;
+      if (titleEl && name) titleEl.textContent = name;
+      frame.src = "/admin/theme-preview/" + encodeURIComponent(id);
+      modal.hidden = false;
+      fitSoon(); // 等布局完成后再按舞台宽度缩放
+    }
+    if (frame) frame.addEventListener("load", fit);
+    function close() { modal.hidden = true; frame.src = "about:blank"; curId = null; }
+    document.querySelectorAll("[data-tp-open]").forEach(function (btn) {
+      btn.addEventListener("click", function (e) {
+        e.preventDefault(); e.stopPropagation();
+        open(btn.getAttribute("data-tp-id"), btn.getAttribute("data-tp-name"));
+      });
+    });
+    modal.querySelectorAll("[data-tp-close]").forEach(function (c) { c.addEventListener("click", close); });
+    if (selectBtn) selectBtn.addEventListener("click", function () {
+      if (curId) {
+        var r = document.querySelector('.theme-picker input[type=radio][value="' + curId + '"]');
+        if (r) { r.checked = true; r.dispatchEvent(new Event("change", { bubbles: true })); }
+      }
+      close();
+    });
+    document.addEventListener("keydown", function (e) { if (e.key === "Escape" && !modal.hidden) close(); });
+    window.addEventListener("resize", fit);
+  })();
+
   /* ---------- Markdown ⇄ 富文本编辑器 ---------- */
   initEditor();
   function initEditor() {
@@ -1865,23 +1918,45 @@
     if (!modal.hidden && firstInput) setTimeout(function () { firstInput.focus(); firstInput.select(); }, 0);
   })();
 
-  /* ---------- 自动化权限：全选 / 反选 ---------- */
+  /* ---------- 自动化权限：全选 ---------- */
   (function () {
     document.querySelectorAll("[data-scope-tools]").forEach(function (tools) {
       var form = tools.closest("form");
       if (!form) return;
       var checks = Array.prototype.slice.call(form.querySelectorAll('input[name="scopes"]'));
-      tools.querySelectorAll("[data-scope-action]").forEach(function (btn) {
-        btn.addEventListener("click", function () {
-          var action = btn.dataset.scopeAction;
-          checks.forEach(function (input) {
-            if (input.disabled) return;
-            if (action === "all") input.checked = true;
-            if (action === "invert") input.checked = !input.checked;
-          });
-          form.dispatchEvent(new Event("input", { bubbles: true }));
+      var all = tools.querySelector("[data-scope-all]");
+      if (!all) return;
+      function enabledChecks() {
+        return checks.filter(function (input) { return !input.disabled; });
+      }
+      function update() {
+        var enabled = enabledChecks();
+        var checked = enabled.filter(function (input) { return input.checked; }).length;
+        all.checked = enabled.length > 0 && checked === enabled.length;
+        all.indeterminate = checked > 0 && checked < enabled.length;
+        all.disabled = enabled.length === 0;
+      }
+      all.addEventListener("change", function () {
+        var shouldCheck = all.checked;
+        all.indeterminate = false;
+        enabledChecks().forEach(function (input) {
+          input.checked = shouldCheck;
         });
+        update();
+        form.dispatchEvent(new Event("input", { bubbles: true }));
       });
+      checks.forEach(function (input) {
+        input.addEventListener("change", update);
+      });
+      form.addEventListener("input", function (e) {
+        if (e.target === all) return;
+        update();
+      });
+      form.addEventListener("change", function (e) {
+        if (e.target === all) return;
+        update();
+      });
+      update();
     });
   })();
 

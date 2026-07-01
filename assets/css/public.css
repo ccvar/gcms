@@ -4315,3 +4315,122 @@ img.cover, img.article-cover { object-fit: cover; width: 100%; display: block; }
 [data-theme-layout="axis"] .post-item h3 { font-size: clamp(1.3rem, 2.2vw, 1.7rem); font-weight: 600; letter-spacing: -.02em; margin: 0; }
 [data-theme-layout="axis"] .post-item h3 a:hover { text-decoration: underline; text-underline-offset: 4px; }
 [data-theme-layout="axis"] .post-item p { display: none; }
+
+/* =====================================================================
+   附加主题（4 套 · 纯皮 · topbar 骨架）—— 文选 / 蓝图 / 孔版 / 和敬
+   取向：扎根真实的印刷 / 制图 / 出版 / 和风传统，刻意避开通用 SaaS·AI 观感。
+   ===================================================================== */
+
+/* ---- 文选 · Journal：学刊小开本，窄栏、克制衬线、文本优先 ---- */
+:root[data-theme="journal"] {
+  --bg: #faf8f3; --surface: #fffefb;
+  --ink: #211f1a; --ink-soft: #45413a; --muted: #736d62; --faint: #a39b8c;
+  --line: #e3ddd0; --line-soft: #efe9dd;
+  --accent: #6a2b2b; --accent-soft: #834040; --accent-wash: #f3e9e6;
+  --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, "Songti SC", "Noto Serif CJK SC", serif;
+  --sans: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, "Songti SC", "Noto Serif CJK SC", serif;
+  --w-read: 660px; --radius: 2px;
+}
+[data-theme="journal"] body { font-family: var(--serif); }
+[data-theme="journal"] .site-header { border-bottom: 1px solid var(--ink); }
+[data-theme="journal"] .nav a { font-size: .9rem; }
+[data-theme="journal"] .nav a[aria-current="page"]::after { display: none; }
+[data-theme="journal"] .nav a[aria-current="page"] { text-decoration: underline; text-underline-offset: 4px; }
+[data-theme="journal"] .hero { padding: 3.6rem 0 2.6rem; }
+[data-theme="journal"] .hero .eyebrow { font-family: var(--serif); font-style: italic; text-transform: none; letter-spacing: .01em; font-weight: 400; font-size: .98rem; }
+[data-theme="journal"] .hero h1 { font-weight: 600; font-size: clamp(2rem, 4vw, 2.9rem); letter-spacing: 0; }
+[data-theme="journal"] .hero-sub { font-style: italic; font-size: 1.12rem; }
+[data-theme="journal"] .section-head h2 { font-family: var(--serif); text-transform: none; letter-spacing: .03em; font-style: italic; font-weight: 400; color: var(--accent); font-size: 1.15rem; }
+[data-theme="journal"] .post-item .num { font-style: italic; color: var(--accent); }
+[data-theme="journal"] .post-item h3 { font-weight: 600; }
+[data-theme="journal"] .feature { grid-template-columns: 1fr; gap: .6rem; }
+[data-theme="journal"] .feature .cover { display: none; }
+[data-theme="journal"] .feature h3 { font-weight: 600; }
+[data-theme="journal"] .link-card { border-radius: 2px; box-shadow: none; }
+[data-theme="journal"] .tag { background: none; color: var(--accent); border: 1px solid var(--line); border-radius: 2px; }
+
+/* ---- 蓝图 · Blueprint：方格纸 + 墨线 + 等宽技术标注 + 角落标题栏 ---- */
+:root[data-theme="blueprint"] {
+  --bg: #eef1f5; --surface: #f8fafc;
+  --ink: #1c2733; --ink-soft: #3a4757; --muted: #647184; --faint: #93a0b2;
+  --line: #c2cdda; --line-soft: #d8e0ea;
+  --accent: #2d5c8a; --accent-soft: #3a6fa3; --accent-wash: #e2ebf4;
+  --radius: 0px;
+}
+[data-theme="blueprint"] body {
+  background-color: var(--bg);
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--accent) 11%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--accent) 11%, transparent) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+[data-theme="blueprint"] .site-header { background: color-mix(in srgb, var(--bg) 86%, transparent); backdrop-filter: blur(3px); border-bottom: 1px solid var(--accent); }
+[data-theme="blueprint"] .brand, [data-theme="blueprint"] .nav a { font-family: var(--mono); }
+[data-theme="blueprint"] .nav a { font-size: .82rem; text-transform: uppercase; letter-spacing: .02em; }
+[data-theme="blueprint"] .hero { position: relative; margin-top: 1.6rem; padding: 2.6rem 2.2rem; border: 1px solid var(--accent); background: color-mix(in srgb, var(--surface) 72%, transparent); }
+[data-theme="blueprint"] .hero::before { content: "DWG-01"; position: absolute; top: 0; right: 0; font-family: var(--mono); font-size: .66rem; letter-spacing: .1em; color: var(--accent); background: var(--surface); border-left: 1px solid var(--accent); border-bottom: 1px solid var(--accent); padding: .35rem .6rem; }
+[data-theme="blueprint"] .hero .eyebrow { font-family: var(--mono); }
+[data-theme="blueprint"] .hero h1 { letter-spacing: -.02em; }
+[data-theme="blueprint"] .hero-sub { font-family: var(--mono); font-size: .92rem; line-height: 1.75; }
+[data-theme="blueprint"] .section-head h2 { font-family: var(--mono); color: var(--accent); }
+[data-theme="blueprint"] .post-item { border-top: 1px solid var(--line); }
+[data-theme="blueprint"] .post-item .num { font-family: var(--mono); color: var(--accent); }
+[data-theme="blueprint"] .feature { padding: 1.8rem; gap: 1.8rem; border: 1px solid var(--accent); background: var(--surface); }
+[data-theme="blueprint"] .feature .cover { border: 1px solid var(--accent); border-radius: 0; box-shadow: none; background: repeating-linear-gradient(45deg, color-mix(in srgb, var(--accent) 9%, var(--surface)) 0 8px, var(--surface) 8px 16px); }
+[data-theme="blueprint"] .tag { font-family: var(--mono); background: none; border: 1px solid var(--accent); color: var(--accent); border-radius: 0; font-size: .7rem; text-transform: uppercase; }
+[data-theme="blueprint"] .link-card { border: 1px solid var(--accent); border-radius: 0; box-shadow: none; }
+
+/* ---- 孔版 · Risograph：双专色叠印 + 网点 + 套印偏移，独立印刷感 ---- */
+:root[data-theme="riso"] {
+  --bg: #f2efe6; --surface: #f7f4ec;
+  --ink: #2a2640; --ink-soft: #45406a; --muted: #6f6a8c; --faint: #a09bb0;
+  --line: #d9d3c4; --line-soft: #e6e0d2;
+  --accent: #f0476a; --accent-soft: #ff6184; --accent-wash: #fde3e9;
+  --riso-blue: #3b4cc0; --radius: 4px;
+}
+[data-theme="riso"] body { background-color: var(--bg); background-image: radial-gradient(color-mix(in srgb, var(--ink) 7%, transparent) 1px, transparent 1.5px); background-size: 7px 7px; }
+[data-theme="riso"] .site-header { background: var(--riso-blue); border-bottom: 0; }
+[data-theme="riso"] .brand, [data-theme="riso"] .brand-name, [data-theme="riso"] .nav a, [data-theme="riso"] .nav .search-ico { color: #fff; }
+[data-theme="riso"] .brand .dot { color: var(--accent); }
+[data-theme="riso"] .nav a:hover, [data-theme="riso"] .nav a[aria-current="page"] { color: var(--accent); }
+[data-theme="riso"] .nav a[aria-current="page"]::after { background: var(--accent); bottom: -20px; }
+[data-theme="riso"] .hero .eyebrow { color: var(--accent); }
+[data-theme="riso"] .hero h1 { font-weight: 800; letter-spacing: -.02em; color: var(--riso-blue); text-shadow: 3px 3px 0 var(--accent); }
+[data-theme="riso"] .section-head h2 { color: var(--riso-blue); font-weight: 800; }
+[data-theme="riso"] .post-item .num { color: var(--accent); font-weight: 800; }
+[data-theme="riso"] .post-item h3 a:hover { color: var(--riso-blue); }
+[data-theme="riso"] .feature .cover { border-radius: 4px; box-shadow: 6px 6px 0 var(--riso-blue); background: var(--accent); }
+[data-theme="riso"] .feature h3 a:hover { color: var(--accent); }
+[data-theme="riso"] .link-card { border: 2px solid var(--ink); border-radius: 4px; box-shadow: 5px 5px 0 var(--riso-blue); }
+[data-theme="riso"] .link-card:hover { transform: translate(-2px, -2px); box-shadow: 7px 7px 0 var(--accent); border-color: var(--ink); }
+[data-theme="riso"] .tag { background: var(--accent); color: #fff; border-radius: 3px; }
+
+/* ---- 和敬 · Quiet：和风留白、竖向节奏、发丝线、一点朱印 ---- */
+:root[data-theme="quiet"] {
+  --bg: #f7f5f0; --surface: #fcfbf7;
+  --ink: #2b2a27; --ink-soft: #55524c; --muted: #8a857b; --faint: #b3ada1;
+  --line: #e9e4d9; --line-soft: #f2eee5;
+  --accent: #b5402f; --accent-soft: #c8543f; --accent-wash: #f4e7e2;
+  --serif: "Hiragino Mincho ProN", "Songti SC", "Noto Serif CJK SC", Georgia, serif;
+  --w-read: 680px; --radius: 1px;
+}
+[data-theme="quiet"] body { line-height: 1.9; }
+[data-theme="quiet"] .site-header { border-bottom: 1px solid var(--line-soft); }
+[data-theme="quiet"] .site-header .wrap { height: 84px; }
+[data-theme="quiet"] .nav { gap: 2.3rem; }
+[data-theme="quiet"] .nav a { font-size: .86rem; letter-spacing: .08em; }
+[data-theme="quiet"] .nav a[aria-current="page"]::after { display: none; }
+[data-theme="quiet"] .hero { padding: 7rem 0 5rem; border-bottom: 0; }
+[data-theme="quiet"] .hero .eyebrow { letter-spacing: .4em; font-size: .68rem; }
+[data-theme="quiet"] .hero h1 { font-family: var(--serif); font-weight: 500; font-size: clamp(1.9rem, 3.6vw, 2.8rem); line-height: 1.5; letter-spacing: .04em; }
+[data-theme="quiet"] .hero-sub { font-size: 1.02rem; line-height: 1.9; letter-spacing: .03em; }
+[data-theme="quiet"] .section-head { margin: 5rem 0 2rem; }
+[data-theme="quiet"] .section-head h2 { letter-spacing: .3em; font-weight: 500; font-size: .8rem; position: relative; padding-left: 1.1rem; }
+[data-theme="quiet"] .section-head h2::before { content: ""; position: absolute; left: 0; top: 50%; transform: translateY(-50%); width: 8px; height: 8px; background: var(--accent); border-radius: 1px; }
+[data-theme="quiet"] .post-item { padding: 1.7rem 0; border-top: 1px solid var(--line-soft); }
+[data-theme="quiet"] .post-item .num { color: var(--faint); }
+[data-theme="quiet"] .feature { grid-template-columns: 1fr; gap: 1.4rem; padding: 3.5rem 0; }
+[data-theme="quiet"] .feature .cover { aspect-ratio: 3 / 1; border-radius: 1px; box-shadow: none; filter: saturate(.85); }
+[data-theme="quiet"] .feature h3 { font-family: var(--serif); font-weight: 500; }
+[data-theme="quiet"] .link-card { border-color: var(--line-soft); border-radius: 1px; box-shadow: none; }
+[data-theme="quiet"] .tag { background: none; color: var(--muted); border: 1px solid var(--line); border-radius: 1px; }

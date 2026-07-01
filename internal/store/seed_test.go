@@ -199,8 +199,8 @@ func TestDefaultSeedIsProductShowcase(t *testing.T) {
 		t.Fatalf("content assistant skill post missing")
 	} else if post.Category == nil || post.Category.Slug != "ops" {
 		t.Fatalf("content assistant skill category = %#v, want ops", post.Category)
-	} else if !strings.Contains(post.Content, "下载 AI 接入包") || !strings.Contains(post.Content, "node scripts/gcms.js doctor") {
-		t.Fatalf("content assistant skill post should explain download and doctor: %s", post.Content)
+	} else if !strings.Contains(post.Content, "AI技能包") || !strings.Contains(post.Content, "node scripts/gcms.js doctor") || !strings.Contains(post.Content, "GET /languages") {
+		t.Fatalf("content assistant skill post should explain download and connection check: %s", post.Content)
 	}
 	if post, err := st.GetPostBySlug("en", "gcms-content-assistant-skill", true); err != nil {
 		t.Fatalf("get english content assistant skill post: %v", err)
@@ -208,8 +208,8 @@ func TestDefaultSeedIsProductShowcase(t *testing.T) {
 		t.Fatalf("english content assistant skill post missing")
 	} else if post.TransGroup != "s-content-assistant-skill" {
 		t.Fatalf("english content assistant skill trans_group = %q", post.TransGroup)
-	} else if !strings.Contains(post.Content, "Download AI Package") || !strings.Contains(post.Content, "node scripts/gcms.js doctor") {
-		t.Fatalf("english content assistant skill post should explain download and doctor: %s", post.Content)
+	} else if !strings.Contains(post.Content, "Download AI Package") || !strings.Contains(post.Content, "node scripts/gcms.js doctor") || !strings.Contains(post.Content, "GET /languages") {
+		t.Fatalf("english content assistant skill post should explain download and connection check: %s", post.Content)
 	}
 }
 

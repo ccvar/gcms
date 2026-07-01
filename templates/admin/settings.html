@@ -362,12 +362,44 @@
             {{range .Cards}}
             <label class="theme-card{{if eq .ID $.Settings.Theme}} sel{{end}}">
               <input type="radio" name="theme" value="{{.ID}}" data-accent="{{.Accent}}" data-radius="{{.Radius}}" data-custom="{{if .Custom}}1{{end}}" data-theme-name="{{.Name}}"{{if eq .ID $.Settings.Theme}} checked{{end}}>
-              <span class="tc-prev tc-live tc-{{.ID}}" aria-hidden="true" data-theme-preview><iframe data-src="/admin/theme-preview/{{.ID}}" title="{{.Name}} {{$.Admin.T "admin.settings.theme.preview_title_suffix" "主题预览"}}" loading="lazy" tabindex="-1"></iframe></span>
+              <span class="tc-prev tc-live tc-{{.ID}}" aria-hidden="true" data-theme-preview><iframe data-src="/admin/theme-preview/{{.ID}}" title="{{.Name}} {{$.Admin.T "admin.settings.theme.preview_title_suffix" "主题预览"}}" loading="lazy" tabindex="-1"></iframe><button type="button" class="tc-zoom" data-tp-open data-tp-id="{{.ID}}" data-tp-name="{{.Name}}" title="{{$.Admin.T "admin.settings.theme.preview_full" "放大预览"}}" aria-label="{{$.Admin.T "admin.settings.theme.preview_full" "放大预览"}}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg></button></span>
               <span class="tc-name">{{.Name}}</span>
               <span class="tc-desc">{{.Desc}}</span>
             </label>
             {{end}}
           </div>
+
+          <div class="tp-modal" data-tp-modal hidden>
+            <div class="tp-modal-backdrop" data-tp-close></div>
+            <div class="tp-modal-card">
+              <div class="tp-modal-head">
+                <strong data-tp-title>{{.Admin.T "admin.settings.theme.preview_full" "放大预览"}}</strong>
+                <div class="tp-modal-actions">
+                  <button type="button" class="btn btn-primary tp-select" data-tp-select>{{.Admin.T "admin.settings.theme.preview_select" "选用此主题"}}</button>
+                  <button type="button" class="tp-modal-x" data-tp-close aria-label="{{.Admin.T "admin.action.close" "关闭"}}">✕</button>
+                </div>
+              </div>
+              <div class="tp-modal-stage" data-tp-stage><iframe data-tp-frame title="{{.Admin.T "admin.settings.theme.preview_full" "放大预览"}}" tabindex="-1"></iframe></div>
+            </div>
+          </div>
+          <style>
+            .tc-prev { position: relative; }
+            .tc-zoom { position: absolute; top: .4rem; right: .4rem; z-index: 3; display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 7px; background: color-mix(in srgb, var(--ink) 52%, transparent); color: #fff; cursor: pointer; opacity: 0; transition: opacity .15s, background .15s; }
+            .theme-card:hover .tc-zoom, .tc-zoom:focus-visible { opacity: 1; }
+            .tc-zoom:hover { background: var(--ink); }
+            .tp-modal { position: fixed; inset: 0; z-index: 80; display: flex; align-items: center; justify-content: center; padding: 2rem; }
+            .tp-modal[hidden] { display: none; }
+            .tp-modal-backdrop { position: absolute; inset: 0; background: color-mix(in srgb, var(--ink) 46%, transparent); backdrop-filter: blur(2px); }
+            .tp-modal-card { position: relative; width: min(1120px, 94vw); max-height: 92vh; display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); overflow: hidden; }
+            .tp-modal-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .8rem 1.1rem; border-bottom: 1px solid var(--line); }
+            .tp-modal-head strong { font-size: 1rem; }
+            .tp-modal-actions { display: flex; align-items: center; gap: .6rem; }
+            .tp-select { padding: .42rem .9rem; font-size: .85rem; }
+            .tp-modal-x { border: 0; background: none; color: var(--muted); font-size: 1.05rem; cursor: pointer; padding: .2rem .5rem; border-radius: 7px; line-height: 1; }
+            .tp-modal-x:hover { background: var(--line-soft); color: var(--ink); }
+            .tp-modal-stage { position: relative; width: 100%; overflow: hidden; background: var(--line-soft); }
+            .tp-modal-stage iframe { width: 1120px; height: 720px; border: 0; transform-origin: top left; display: block; }
+          </style>
         </div>
       </form>
 
@@ -818,7 +850,7 @@
           <div class="modal-backdrop" data-secret-close></div>
           <div class="modal-card secret-modal-card" role="dialog" aria-modal="true" aria-labelledby="api-secret-title">
             <h3 id="api-secret-title">{{if .NewAPIName}}{{.NewAPIName}}{{.Admin.T "admin.settings.automation.secret_title_suffix" "的访问密钥"}}{{else}}{{.Admin.T "admin.settings.automation.new_secret_title" "新的外部助手的访问密钥"}}{{end}}</h3>
-            <p class="muted secret-modal-note">{{.Admin.T "admin.settings.automation.secret_note" "完整密钥只显示这一次。建议下载 AI 接入包，里面包含密钥文件、OpenAPI 描述文件和给 AI 助手的说明。"}}</p>
+            <p class="muted secret-modal-note">{{.Admin.T "admin.settings.automation.secret_note" "完整密钥只显示这一次。建议下载 AI技能包，里面包含密钥文件、OpenAPI 描述文件、脚本和给 AI 助手的说明。"}}</p>
             <div class="api-secret">
               <strong>{{.Admin.T "admin.settings.automation.full_secret" "完整密钥"}}</strong>
               <div class="secret-copy">
@@ -859,7 +891,7 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16"/><path d="M4 12h16"/><path d="M4 17h10"/><circle cx="18" cy="17" r="2"/></svg>
             <span>{{.Admin.T "admin.settings.automation.integration" "接入方式"}}</span>
           </h3>
-          <p class="muted automation-note">{{.Admin.T "admin.settings.automation.integration_note" "OpenAPI 是接口说明，所有访问权限共用；真正能操作网站的是上面创建出来的访问密钥。创建成功时可下载已写入密钥的专属使用包。"}}</p>
+          <p class="muted automation-note">{{.Admin.T "admin.settings.automation.integration_note" "OpenAPI 是接口说明，所有访问权限共用；真正能操作网站的是上面创建出来的访问密钥。创建成功时可下载已写入密钥的 AI技能包。"}}</p>
           <div class="automation-help">
             <div class="help-title">
               <span class="cap-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 0 1 4.7 1.2c0 1.8-2.2 2.2-2.2 3.8"/><path d="M12 17h.01"/></svg></span>
@@ -915,8 +947,7 @@
               <input id="api-key-name" name="name" placeholder="{{.Admin.T "admin.settings.automation.key_name_placeholder" "内容运营助手"}}" required>
             </div>
             <div class="scope-tools" data-scope-tools>
-              <button type="button" class="linkbtn" data-scope-action="all">{{.Admin.T "admin.settings.automation.select_all" "全选"}}</button>
-              <button type="button" class="linkbtn" data-scope-action="invert">{{.Admin.T "admin.settings.automation.invert_selection" "反选"}}</button>
+              <label class="scope-all"><input type="checkbox" data-scope-all><span>{{.Admin.T "admin.settings.automation.select_all_permissions" "全选权限"}}</span></label>
             </div>
             <div class="scope-groups">
               <div class="scope-group scope-group-wide">
@@ -979,8 +1010,7 @@
               <input id="api-key-edit-name" name="name" required>
             </div>
             <div class="scope-tools" data-scope-tools>
-              <button type="button" class="linkbtn" data-scope-action="all">{{.Admin.T "admin.settings.automation.select_all" "全选"}}</button>
-              <button type="button" class="linkbtn" data-scope-action="invert">{{.Admin.T "admin.settings.automation.invert_selection" "反选"}}</button>
+              <label class="scope-all"><input type="checkbox" data-scope-all><span>{{.Admin.T "admin.settings.automation.select_all_permissions" "全选权限"}}</span></label>
             </div>
             <div class="scope-groups">
               <div class="scope-group scope-group-wide">

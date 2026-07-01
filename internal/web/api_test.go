@@ -726,6 +726,90 @@ func TestAPISiteProfileUpdatesEnglishShareImage(t *testing.T) {
 	t.Fatalf("response missing English site profile item: %#v", res.Items)
 }
 
+func TestAutomationSkillZipKeepsLegacyStructure(t *testing.T) {
+	files, err := automationSkillFiles(automationSkillOptions{
+		apiBase: "https://example.com/api/admin/v1",
+		token:   "gcms_test",
+		name:    "content bot",
+		scopes:  strings.Join([]string{apiScopeLanguagesRead, "posts:read", "posts:pin"}, ","),
+	})
+	if err != nil {
+		t.Fatalf("automationSkillFiles: %v", err)
+	}
+	got := map[string]string{}
+	for _, file := range files {
+		got[file.name] = file.body
+	}
+	for _, name := range []string{
+		"README.md",
+		"gcms-content-assistant/.env",
+		"gcms-content-assistant/AI助手说明.md",
+		"gcms-content-assistant/SKILL.md",
+		"gcms-content-assistant/agents/openai.yaml",
+		"gcms-content-assistant/references/openapi.json",
+		"gcms-content-assistant/scripts/gcms.js",
+	} {
+		if got[name] == "" {
+			t.Fatalf("legacy skill package missing %s: %#v", name, got)
+		}
+	}
+	for _, name := range []string{
+		"gcms-content-assistant/README.md",
+		"gcms-content-assistant/.env.example",
+	} {
+		if got[name] != "" {
+			t.Fatalf("skill file %s should not be generated for keyed package", name)
+		}
+	}
+	readme := got["README.md"]
+	for _, want := range []string{
+		"gcms-content-assistant/AI助手说明.md",
+		"gcms-content-assistant/SKILL.md",
+		"gcms-content-assistant/references/openapi.json",
+		"gcms-content-assistant/scripts/gcms.js",
+		"node scripts/gcms.js doctor",
+		"POST /languages",
+		"PATCH /posts/featured/{id}",
+		"PATCH /links/featured/{id}",
+		"/posts/categories/all-entry",
+		"所有图片资源必须先转成 WebP",
+		"Hero 右侧动画",
+	} {
+		if !strings.Contains(readme, want) {
+			t.Fatalf("skill README missing %q", want)
+		}
+	}
+	skill := got["gcms-content-assistant/SKILL.md"]
+	for _, want := range []string{
+		"language-create",
+		"hero-visual",
+		"PATCH /posts/featured/{id}",
+	} {
+		if !strings.Contains(skill, want) {
+			t.Fatalf("skill instructions missing %q", want)
+		}
+	}
+	script := got["gcms-content-assistant/scripts/gcms.js"]
+	for _, want := range []string{
+		"language-create",
+		"category-entry",
+		"/featured/",
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("skill script missing %q", want)
+		}
+	}
+	openapi := got["gcms-content-assistant/references/openapi.json"]
+	for _, want := range []string{
+		`"/languages"`,
+		`"/posts/featured/{id}"`,
+	} {
+		if !strings.Contains(openapi, want) {
+			t.Fatalf("skill OpenAPI missing %q", want)
+		}
+	}
+}
+
 func TestAutomationStarterZipIncludesBriefAndOpenAPI(t *testing.T) {
 	files, err := automationStarterFiles(automationSkillOptions{
 		apiBase: "https://example.com/api/admin/v1",
