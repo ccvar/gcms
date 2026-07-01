@@ -212,10 +212,11 @@ func reloadCaddy(cfile string) error {
 // Returns a short status for the admin flash (empty when disabled/not applicable).
 func (s *Server) syncCaddyDomains() string {
 	if !caddyManageEnabled() || s.platform == nil {
-		return ""
+		return "" // 未开启 GCMS_CADDY_MANAGE：静默不动 Caddy
 	}
+	// 已开启：以下任何跳过 / 失败都返回可见提示，便于排查（不再静默）。
 	if _, err := exec.LookPath("caddy"); err != nil {
-		return "" // Caddy 未安装，跳过
+		return "已开启 Caddy 自动写入，但在 gcms 进程的 PATH 中未找到 caddy 命令。"
 	}
 	sites, err := s.platform.Sites()
 	if err != nil {
