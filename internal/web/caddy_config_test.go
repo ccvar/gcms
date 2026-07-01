@@ -55,6 +55,22 @@ func TestRenderCaddyDomainsFile(t *testing.T) {
 	}
 }
 
+func TestCaddyManageEnabled(t *testing.T) {
+	t.Setenv("GCMS_CADDY_MANAGE", "1")
+	if !caddyManageEnabled() {
+		t.Error("GCMS_CADDY_MANAGE=1 should enable")
+	}
+	t.Setenv("GCMS_CADDY_MANAGE", "yes")
+	if !caddyManageEnabled() {
+		t.Error("GCMS_CADDY_MANAGE=yes should enable")
+	}
+	// Explicit off wins even if the setup-caddy.sh file happens to exist.
+	t.Setenv("GCMS_CADDY_MANAGE", "0")
+	if caddyManageEnabled() {
+		t.Error("GCMS_CADDY_MANAGE=0 should disable")
+	}
+}
+
 func TestCaddyReverseProxyTarget(t *testing.T) {
 	t.Setenv("ADDR", ":8080")
 	if got := caddyReverseProxyTarget(); got != "127.0.0.1:8080" {

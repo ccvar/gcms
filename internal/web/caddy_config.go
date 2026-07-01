@@ -14,11 +14,20 @@ import (
 )
 
 // caddyManageEnabled reports whether gcms should write the Caddy domain file and reload
-// Caddy when domains are saved. Opt-in via GCMS_CADDY_MANAGE=1 because it writes system
-// config and reloads Caddy; off by default (no Caddy files are touched, unchanged behavior).
+// Caddy on domain save. An explicit GCMS_CADDY_MANAGE wins (1/true/on/yes → on,
+// 0/false/off/no → off). When it is unset, gcms auto-enables if the setup-caddy.sh layout
+// is present — /etc/caddy/conf.d/gcms.caddy already exists — since that file is created by
+// setup-caddy.sh and declared gcms-managed. This lets those installs work without any
+// extra env plumbing (avoiding the cms.conf/whitelist dependency), while other setups stay
+// untouched unless the flag is explicitly turned on.
 func caddyManageEnabled() bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv("GCMS_CADDY_MANAGE"))) {
 	case "1", "true", "on", "yes":
+		return true
+	case "0", "false", "off", "no":
+		return false
+	}
+	if _, err := os.Stat("/etc/caddy/conf.d/gcms.caddy"); err == nil {
 		return true
 	}
 	return false
