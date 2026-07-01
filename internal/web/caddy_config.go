@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -9,6 +10,7 @@ import (
 	"os/exec"
 	"sort"
 	"strings"
+	"time"
 
 	"cms.ccvar.com/internal/platform"
 )
@@ -144,14 +146,58 @@ func (s *Server) caddySiteManifest() (string, error) {
 	return renderCaddyManifest(sites, domains, caddyReverseProxyTarget()), nil
 }
 
-// caddyResyncHint reminds the admin to run the sync script after saving domains. Shown only
-// when caddy is installed, so non-Caddy setups aren't nagged. gcms itself never writes Caddy
-// files — the sudo sync script (scripts/gcms-caddy-sync.sh) is the sole writer.
-func caddyResyncHint() string {
-	if _, err := exec.LookPath("caddy"); err != nil {
+// applyCaddySites pushes the current sites into Caddy after a domain save. When gcms runs as
+// root it executes the sync script directly, so binding a domain takes effect immediately;
+// otherwise it returns a reminder to run the sudo script by hand. The script does all the
+// privileged, validated, rollback-safe work — gcms never writes Caddy files itself. Returns a
+// status line for the admin flash ("" when there is no Caddy on the box).
+func (s *Server) applyCaddySites() string {
+	if s.platform == nil {
 		return ""
 	}
-	return "如需让 Caddy 生效：sudo sh scripts/gcms-caddy-sync.sh（或等待定时同步）。"
+	if _, err := exec.LookPath("caddy"); err != nil {
+		return "" // 没装 Caddy：不处理、不提示
+	}
+	script := caddySyncScriptPath()
+	if script == "" || os.Geteuid() != 0 {
+		// 脚本不在，或 gcms 非 root（无法执行需 root 的同步）→ 提示手动运行。
+		return "域名已保存。让 Caddy 生效请运行：sudo sh scripts/gcms-caddy-sync.sh（或配置定时同步）。"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "sh", script).CombinedOutput()
+	msg := lastNonEmptyLine(string(out))
+	if err != nil {
+		if msg == "" {
+			msg = strings.TrimSpace(err.Error())
+		}
+		return "Caddy 同步未完成：" + msg
+	}
+	if msg == "" {
+		msg = "已同步并重载 Caddy。"
+	}
+	return msg
+}
+
+// caddySyncScriptPath returns the sync script's path (relative to gcms's working directory,
+// which cms.sh sets to the install root) when it exists, else "".
+func caddySyncScriptPath() string {
+	const p = "scripts/gcms-caddy-sync.sh"
+	if st, err := os.Stat(p); err == nil && !st.IsDir() {
+		return p
+	}
+	return ""
+}
+
+// lastNonEmptyLine returns the last non-blank line of s — the sync script's summary/error line.
+func lastNonEmptyLine(s string) string {
+	lines := strings.Split(s, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if t := strings.TrimSpace(lines[i]); t != "" {
+			return t
+		}
+	}
+	return ""
 }
 
 // caddyConfigHandler serves the per-site Caddy manifest as text/plain for the sync script

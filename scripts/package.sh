@@ -97,14 +97,14 @@ ok "已编译 → releases/$VERSION/bin/cms$BINEXT （$(du -h "$RELEASE_DIR/bin/
 restore_assets
 
 # ---- 拷贝启停脚本与默认配置 ----
-cp "$SCRIPT_DIR/cms.sh" "$SCRIPT_DIR/cms.ps1" "$DIR/scripts/"
-cp "$SCRIPT_DIR/cms.sh" "$SCRIPT_DIR/cms.ps1" "$RELEASE_DIR/scripts/"
+cp "$SCRIPT_DIR/cms.sh" "$SCRIPT_DIR/cms.ps1" "$SCRIPT_DIR/gcms-caddy-sync.sh" "$DIR/scripts/"
+cp "$SCRIPT_DIR/cms.sh" "$SCRIPT_DIR/cms.ps1" "$SCRIPT_DIR/gcms-caddy-sync.sh" "$RELEASE_DIR/scripts/"
 if [ -f "$SCRIPT_DIR/update-public.pem" ]; then
   cp "$SCRIPT_DIR/update-public.pem" "$DIR/scripts/"
   cp "$SCRIPT_DIR/update-public.pem" "$RELEASE_DIR/scripts/"
 fi
-chmod +x "$DIR/scripts/cms.sh"
-chmod +x "$RELEASE_DIR/scripts/cms.sh"
+chmod +x "$DIR/scripts/cms.sh" "$DIR/scripts/gcms-caddy-sync.sh"
+chmod +x "$RELEASE_DIR/scripts/cms.sh" "$RELEASE_DIR/scripts/gcms-caddy-sync.sh"
 sed 's#^CMS_DB=.*#CMS_DB=shared/data/cms.db#' "$SCRIPT_DIR/cms.conf" > "$DIR/shared/cms.conf"
 
 # ---- 写入发布包元信息，启动脚本用来提示平台不匹配 ----
