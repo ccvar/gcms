@@ -979,6 +979,11 @@ func (s *Server) serveWithRuntime(w http.ResponseWriter, r *http.Request) {
 		s.caddyAsk(w, r)
 		return
 	}
+	// Loopback-only: the sudo sync script fetches the rendered Caddy domain config here.
+	if r.URL.Path == "/internal/caddy/config" {
+		s.caddyConfigHandler(w, r)
+		return
+	}
 	pool := s.runtimePool()
 	if pool == nil {
 		s.siteHandler().ServeHTTP(w, r)

@@ -2089,7 +2089,7 @@ func (s *Server) adminSaveSiteDomains(w http.ResponseWriter, r *http.Request) {
 	if msg := s.handleCloudflareDNSFromForm(r, specs); msg != "" {
 		flashes = append(flashes, msg)
 	}
-	if msg := s.syncCaddyDomains(); msg != "" {
+	if msg := caddyResyncHint(); msg != "" {
 		flashes = append(flashes, msg)
 	}
 	if len(flashes) > 0 {

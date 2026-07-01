@@ -1,40 +1,24 @@
 package web
 
 import (
-	"context"
 	"fmt"
+	"io"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
 	"cms.ccvar.com/internal/platform"
 )
 
-// caddyManageEnabled reports whether gcms should write the Caddy domain file and reload
-// Caddy on domain save. An explicit GCMS_CADDY_MANAGE wins (1/true/on/yes → on,
-// 0/false/off/no → off). When it is unset, gcms auto-enables if the setup-caddy.sh layout
-// is present — /etc/caddy/conf.d/gcms.caddy already exists — since that file is created by
-// setup-caddy.sh and declared gcms-managed. This lets those installs work without any
-// extra env plumbing (avoiding the cms.conf/whitelist dependency), while other setups stay
-// untouched unless the flag is explicitly turned on.
-func caddyManageEnabled() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("GCMS_CADDY_MANAGE"))) {
-	case "1", "true", "on", "yes":
-		return true
-	case "0", "false", "off", "no":
-		return false
-	}
-	if _, err := os.Stat("/etc/caddy/conf.d/gcms.caddy"); err == nil {
-		return true
-	}
-	return false
-}
+// caddyManifestSentinel is the first line of the manifest, so the sync script can tell a
+// real gcms response from an error page or a wrong service before touching any file.
+const caddyManifestSentinel = "# gcms-caddy-manifest v1"
 
 // caddyReverseProxyTarget returns the local address Caddy reverse-proxies to, derived from
-// gcms's own ADDR (":8080" -> "127.0.0.1:8080"), matching setup-caddy.sh / scripts/cms.sh.
+// gcms's own ADDR (":8080" -> "127.0.0.1:8080"), matching setup-caddy.sh.
 func caddyReverseProxyTarget() string {
 	addr := strings.TrimSpace(os.Getenv("ADDR"))
 	if addr == "" {
@@ -46,44 +30,50 @@ func caddyReverseProxyTarget() string {
 	return addr
 }
 
-// caddyConfigFile resolves the file gcms owns for its domain blocks. It prefers the
-// setup-caddy.sh layout — /etc/caddy/conf.d/gcms.caddy, picked up by the main Caddyfile's
-// `import /etc/caddy/conf.d/*.caddy` — then /etc/caddy/gcms.caddy, then <cwd>/gcms.caddy.
-func caddyConfigFile() string {
-	if caddyDirWritable("/etc/caddy/conf.d") {
-		return "/etc/caddy/conf.d/gcms.caddy"
+// caddySiteFilename returns the dedicated Caddy filename for a site keyed by its primary
+// host, e.g. "gcms-ubnas.com.caddy". The "gcms-" prefix (with the dash) never collides with
+// the installer's own "gcms.caddy", so the sync script's `gcms-*.caddy` orphan sweep can
+// never touch the install file. Returns "" for a host with any character unsafe in a
+// filename, so a malformed host can never produce a weird path.
+func caddySiteFilename(host string) string {
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "" || strings.HasPrefix(host, ".") || strings.HasPrefix(host, "-") || strings.Contains(host, "..") {
+		return ""
 	}
-	if caddyDirWritable("/etc/caddy") {
-		return "/etc/caddy/gcms.caddy"
+	for _, r := range host {
+		if !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '.' || r == '-') {
+			return "" // 只允许主机名字符，杜绝路径穿越 / 怪异文件名
+		}
 	}
-	if wd, err := os.Getwd(); err == nil && wd != "" {
-		return filepath.Join(wd, "gcms.caddy")
-	}
-	return "gcms.caddy"
+	return "gcms-" + host + ".caddy"
 }
 
-// caddyDirWritable reports whether dir exists and gcms can create files in it.
-func caddyDirWritable(dir string) bool {
-	info, err := os.Stat(dir)
-	if err != nil || !info.IsDir() {
-		return false
+// renderCaddySiteBlock renders the Caddy config for ONE site: an alias→primary 301 redirect
+// block per redirecting alias, plus a serving block for the primary and any non-redirecting
+// aliases, with gzip/zstd compression. No tls directive — Caddy automatic HTTPS/ACME applies.
+func renderCaddySiteBlock(primary *platform.SiteDomain, aliases []*platform.SiteDomain, target string) string {
+	var b strings.Builder
+	var shared []string
+	for _, d := range aliases {
+		if d.RedirectToPrimary {
+			// Serving blocks are always auto-HTTPS, so the canonical is https — redirect
+			// there regardless of the stored scheme to avoid a downgrade.
+			fmt.Fprintf(&b, "%s {\n\tredir https://%s{uri} permanent\n}\n\n", d.Host, primary.Host)
+		} else {
+			shared = append(shared, d.Host)
+		}
 	}
-	f, err := os.CreateTemp(dir, ".gcms-probe-*")
-	if err != nil {
-		return false
-	}
-	name := f.Name()
-	_ = f.Close()
-	_ = os.Remove(name)
-	return true
+	hosts := append([]string{primary.Host}, shared...)
+	fmt.Fprintf(&b, "%s {\n\tencode zstd gzip\n\n\treverse_proxy %s\n}\n", strings.Join(hosts, " "), target)
+	return b.String()
 }
 
-// renderCaddyDomainsFile builds the entire gcms-owned Caddy file for every non-default
-// site's bound domains: one alias→primary 301 redirect block per redirecting alias, a
-// shared serving block for the primary plus any non-redirecting aliases, and gzip/zstd
-// compression — matching the setup-caddy.sh template. No tls directive (Caddy's automatic
-// HTTPS/ACME applies). gcms owns this file outright, so it is written wholesale.
-func renderCaddyDomainsFile(sites []*platform.Site, domains []*platform.SiteDomain, target string) string {
+// renderCaddyManifest builds the per-site manifest the sync script consumes: a sentinel line,
+// then for every non-default site with a primary domain a "=== <filename> ===" header followed
+// by that site's Caddy block. One file per site keeps sites isolated and lets the script
+// reconcile safely (write the current set, delete orphaned gcms-*.caddy). Sites keyed by an
+// invalid or duplicate primary host are skipped.
+func renderCaddyManifest(sites []*platform.Site, domains []*platform.SiteDomain, target string) string {
 	defaultID := int64(0)
 	for _, st := range sites {
 		if st != nil && st.IsDefault {
@@ -103,105 +93,107 @@ func renderCaddyDomainsFile(sites []*platform.Site, domains []*platform.SiteDoma
 	}
 	sort.Slice(order, func(i, j int) bool { return order[i] < order[j] })
 
-	var b strings.Builder
-	b.WriteString("# 由 gcms 自动生成（保存域名时重写）。本文件由 gcms 独占管理，请勿手动编辑。\n")
-	b.WriteString("# 生效方式：主 Caddyfile 的 `import /etc/caddy/conf.d/*.caddy`。\n")
+	var body strings.Builder
+	seen := map[string]bool{}
+	count := 0
 	for _, sid := range order {
 		var primary *platform.SiteDomain
+		var aliases []*platform.SiteDomain
 		for _, d := range bySite[sid] {
 			if d.IsPrimary {
-				primary = d
-				break
+				if primary == nil {
+					primary = d
+				}
+				continue
 			}
+			aliases = append(aliases, d)
 		}
 		if primary == nil {
 			continue // 无主域名，跳过
 		}
-		scheme := strings.TrimSpace(primary.Scheme)
-		if scheme == "" {
-			scheme = "https"
+		fname := caddySiteFilename(primary.Host)
+		if fname == "" || seen[fname] {
+			continue // 非法文件名，或与其它站点主域名撞名
 		}
-		var shared []string
-		for _, d := range bySite[sid] {
-			if d.IsPrimary {
-				continue
-			}
-			if d.RedirectToPrimary {
-				fmt.Fprintf(&b, "\n%s {\n\tredir %s://%s{uri} permanent\n}\n", d.Host, scheme, primary.Host)
-			} else {
-				shared = append(shared, d.Host)
-			}
-		}
-		hosts := append([]string{primary.Host}, shared...)
-		fmt.Fprintf(&b, "\n%s {\n\tencode zstd gzip\n\n\treverse_proxy %s\n}\n", strings.Join(hosts, " "), target)
+		seen[fname] = true
+		fmt.Fprintf(&body, "=== %s ===\n%s", fname, renderCaddySiteBlock(primary, aliases, target))
+		count++
 	}
+	// Header declares the site count so the sync script can tell a legitimate zero-site
+	// manifest from a parse failure/truncation (and refuse to wipe on the latter).
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s sites=%d\n", caddyManifestSentinel, count)
+	b.WriteString(body.String())
 	return b.String()
 }
 
-// writeCaddyDomainsFile writes content to path wholesale (gcms owns the file), backing up
-// the previous version to path+".bak" first.
-func writeCaddyDomainsFile(path, content string) error {
-	if existing, err := os.ReadFile(path); err == nil && len(existing) > 0 {
-		_ = os.WriteFile(path+".bak", existing, 0o644)
-	}
-	return os.WriteFile(path, []byte(content), 0o644)
-}
-
-// reloadCaddy reloads Caddy so a rewritten domain file takes effect. It prefers the main
-// Caddyfile (which imports the gcms file and holds any other sites) over reloading the gcms
-// file alone, mirroring setup-caddy.sh so other sites are never dropped.
-func reloadCaddy(cfile string) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer cancel()
-	run := func(name string, args ...string) bool {
-		if _, err := exec.LookPath(name); err != nil {
-			return false
-		}
-		return exec.CommandContext(ctx, name, args...).Run() == nil
-	}
-	if _, err := os.Stat("/etc/caddy/Caddyfile"); err == nil {
-		if run("systemctl", "reload", "caddy") {
-			return nil
-		}
-		if run("caddy", "reload", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile") {
-			return nil
-		}
-		return fmt.Errorf("reload via main Caddyfile failed")
-	}
-	if run("caddy", "reload", "--config", cfile, "--adapter", "caddyfile") {
-		return nil
-	}
-	if run("systemctl", "reload", "caddy") {
-		return nil
-	}
-	return fmt.Errorf("reload failed")
-}
-
-// syncCaddyDomains rewrites the gcms-owned Caddy domain file from all sites and reloads
-// Caddy. No-op unless GCMS_CADDY_MANAGE=1. Once enabled, every outcome returns a visible
-// status for the admin flash so failures are never silent.
-func (s *Server) syncCaddyDomains() string {
-	if !caddyManageEnabled() || s.platform == nil {
-		return "" // 未开启 GCMS_CADDY_MANAGE：静默不动 Caddy
-	}
-	if _, err := exec.LookPath("caddy"); err != nil {
-		return "已开启 Caddy 自动写入，但在 gcms 进程的 PATH 中未找到 caddy 命令。"
+// caddySiteManifest renders the current per-site Caddy manifest. Always includes the sentinel
+// (even with zero sites) so a successful-but-empty response is distinguishable from a failure.
+func (s *Server) caddySiteManifest() (string, error) {
+	if s.platform == nil {
+		return caddyManifestSentinel + " sites=0\n", nil
 	}
 	sites, err := s.platform.Sites()
 	if err != nil {
-		return "读取站点失败，未更新 Caddy 配置。"
+		return "", err
 	}
 	domains, err := s.platform.SiteDomains()
 	if err != nil {
-		return "读取域名失败，未更新 Caddy 配置。"
+		return "", err
 	}
-	content := renderCaddyDomainsFile(sites, domains, caddyReverseProxyTarget())
-	path := caddyConfigFile()
-	if err := writeCaddyDomainsFile(path, content); err != nil {
-		return "Caddy 配置写入失败（" + err.Error() + "），请检查权限。"
+	return renderCaddyManifest(sites, domains, caddyReverseProxyTarget()), nil
+}
+
+// caddyResyncHint reminds the admin to run the sync script after saving domains. Shown only
+// when caddy is installed, so non-Caddy setups aren't nagged. gcms itself never writes Caddy
+// files — the sudo sync script (scripts/gcms-caddy-sync.sh) is the sole writer.
+func caddyResyncHint() string {
+	if _, err := exec.LookPath("caddy"); err != nil {
+		return ""
 	}
-	if err := reloadCaddy(path); err != nil {
-		return "Caddy 配置已写入 " + path + "，但自动重载失败，请手动执行 systemctl reload caddy。"
+	return "如需让 Caddy 生效：sudo sh scripts/gcms-caddy-sync.sh（或等待定时同步）。"
+}
+
+// caddyConfigHandler serves the per-site Caddy manifest as text/plain for the sync script
+// (scripts/gcms-caddy-sync.sh) to apply. Only requests made directly to gcms on loopback are
+// served — proxied/public requests are rejected — so it is never reachable through the reverse
+// proxy. Read-only; it reveals only already-public domains.
+func (s *Server) caddyConfigHandler(w http.ResponseWriter, r *http.Request) {
+	if !remoteIsLoopback(r.RemoteAddr) || !hostIsLoopback(r.Host) || r.Header.Get("X-Forwarded-For") != "" {
+		http.NotFound(w, r)
+		return
 	}
-	return "已更新并重载 Caddy 配置（" + path + "）。"
+	content, err := s.caddySiteManifest()
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = io.WriteString(w, content)
+}
+
+// hostIsLoopback reports whether a Host header names a loopback address (127.0.0.1/::1/
+// localhost, optional port). Distinguishes a direct local curl from a proxied public request.
+func hostIsLoopback(hostport string) bool {
+	h := strings.TrimSpace(hostport)
+	if hh, _, err := net.SplitHostPort(h); err == nil {
+		h = hh
+	}
+	h = strings.ToLower(strings.Trim(h, "[]"))
+	if h == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(h)
+	return ip != nil && ip.IsLoopback()
+}
+
+// remoteIsLoopback reports whether a RemoteAddr is a loopback IP.
+func remoteIsLoopback(remoteAddr string) bool {
+	h := remoteAddr
+	if hh, _, err := net.SplitHostPort(remoteAddr); err == nil {
+		h = hh
+	}
+	ip := net.ParseIP(strings.TrimSpace(h))
+	return ip != nil && ip.IsLoopback()
 }
