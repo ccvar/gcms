@@ -169,6 +169,7 @@ var Themes = []ThemeOption{
 	{"blueprint", "蓝图 · Blueprint", "工程制图：方格纸底纹 + 墨线 + 等宽技术标注 + 角落标题栏"},
 	{"riso", "孔版 · Risograph", "独立孔版印刷：双专色叠印、网点质感、套印偏移、硬阴影"},
 	{"quiet", "和敬 · Quiet", "和风留白：极阔间距、竖向节奏、发丝线、一点朱印强调"},
+	{"lucid", "明快 · Lucid", "亮白极简 + 暖橙强调：现代无衬线、扁平圆角卡片、胶囊按钮、宽松留白——科普 / 金融式的清晰亲和"},
 }
 
 // themeLayouts 登记“非默认骨架”的主题；未登记者一律 "topbar"（= 现有基础骨架）。
@@ -445,6 +446,8 @@ type View struct {
 	PlatformPreviewURLs   map[int64]string // 平台站点页：按各站点默认语种生成的预览入口
 	PlatformOfficialURLs  map[int64]string // 已发布到 Cloudflare 的正式站点入口
 	PlatformOfficialHosts map[int64]string // 正式站点入口展示域名
+	PlatformLocaleCounts  map[int64]int    // 每站点：启用语种数
+	PlatformContentCounts map[int64]int    // 每站点：主语种内容条数（含草稿）
 	PlatformCurrentSiteID int64            // 平台会话中当前选择的站点
 	ArchivedSites         []*platform.ArchivedSite
 	ArchivedSiteIcons     map[int64]string

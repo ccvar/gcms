@@ -680,21 +680,21 @@ caddy_setup() {
   esac
   ask="http://$target/internal/caddy/ask"
 
-  snippet="# ---- gcms 自动生成：Caddy 按需签发 TLS + 反向代理 ----
-# 由 scripts/cms.sh caddy-setup 生成。import 到主 Caddyfile，或直接作为独立配置使用。
-# 新增站点域名后无需再改本文件：Caddy 会向 gcms 询问该域名是否可签发。
+  # gcms 只管理「标记段」内的按需签发配置；标记之外的任何域名 / 配置一律原样保留。
+  managed="# >>> gcms managed —— 请勿手动编辑本区块，caddy-setup 会自动重写 >>>
+# 按需签发 TLS + 反代到 gcms。新增站点域名无需改此文件：Caddy 会向 gcms 询问该域名是否可签发。
 {
 	on_demand_tls {
 		ask $ask
 	}
 }
-
 https:// {
 	tls {
 		on_demand
 	}
 	reverse_proxy $target
-}"
+}
+# <<< gcms managed <<<"
 
   if ! command -v caddy >/dev/null 2>&1; then
     err "未检测到 caddy 命令：自动接入仅支持已安装 Caddy 的服务器。"
@@ -704,7 +704,7 @@ https:// {
     info "     1. 把域名 DNS A/AAAA 记录指向本服务器 IP；"
     info "     2. 在反向代理（Caddy / Nginx）里把该域名转发到 $target。"
     info "若使用 Caddy，可参考以下配置（按需签发，新增域名无需改配置）："
-    printf '%s\n' "$snippet"
+    printf '%s\n' "$managed"
     return 0
   fi
 
@@ -714,31 +714,58 @@ https:// {
   else
     cfile="$ROOT/gcms.caddy"
   fi
-  if ! printf '%s\n' "$snippet" > "$cfile" 2>/dev/null; then
-    err "无法写入 $cfile（可能需要 root 权限）。以下为配置内容，请手动保存并 reload："
-    printf '%s\n' "$snippet"
-    return 1
-  fi
-  ok "已写出 Caddy 配置：$cfile"
 
-  main=/etc/caddy/Caddyfile
-  if [ -f "$main" ]; then
-    if grep -q 'gcms.caddy' "$main" 2>/dev/null; then
-      info "主 Caddyfile 已 import gcms.caddy。"
+  bstart=""; bend=""
+  if [ -f "$cfile" ]; then
+    bstart=$(grep -n 'gcms managed ——' "$cfile" 2>/dev/null | head -1 | cut -d: -f1)
+    bend=$(grep -n '<<< gcms managed <<<' "$cfile" 2>/dev/null | head -1 | cut -d: -f1)
+  fi
+  if [ -f "$cfile" ] && [ -n "$bstart" ] && [ -n "$bend" ] && [ "$bend" -ge "$bstart" ]; then
+    # 已有 gcms 标记段：只替换标记之间，其余行原样保留。
+    tmp="$cfile.tmp.$$"
+    if { sed -n "1,$((bstart-1))p" "$cfile"; printf '%s\n' "$managed"; sed -n "$((bend+1)),\$p" "$cfile"; } > "$tmp" 2>/dev/null && mv "$tmp" "$cfile" 2>/dev/null; then
+      ok "已更新 $cfile 的 gcms 托管区块（区块外配置原样保留）。"
     else
-      info "请在 $main 顶部加入一行：  import $cfile"
+      rm -f "$tmp"; err "更新 $cfile 失败（可能需要 root 权限）。"; printf '%s\n' "$managed"; return 1
+    fi
+  elif [ -f "$cfile" ]; then
+    # 文件已存在但没有 gcms 标记：备份后「追加」，绝不覆盖你原有的域名 / 配置。
+    cp "$cfile" "$cfile.bak" 2>/dev/null
+    if printf '\n%s\n' "$managed" >> "$cfile" 2>/dev/null; then
+      ok "已把 gcms 托管区块追加到 $cfile（原有内容保留，备份 $cfile.bak）。"
+    else
+      err "追加写入 $cfile 失败（可能需要 root 权限）。"; return 1
     fi
   else
-    info "未发现 $main。可直接用本文件启动：caddy run --config $cfile --adapter caddyfile"
+    # 文件不存在：新建。
+    if printf '%s\n' "$managed" > "$cfile" 2>/dev/null; then
+      ok "已写出 Caddy 配置：$cfile"
+    else
+      err "无法写入 $cfile（可能需要 root 权限）。以下为配置内容，请手动保存："; printf '%s\n' "$managed"; return 1
+    fi
   fi
 
-  # 重载 Caddy（优先 caddy reload，其次 systemctl）。
-  if caddy reload --config "$cfile" --adapter caddyfile >/dev/null 2>&1; then
-    ok "Caddy 已重载。"
-  elif command -v systemctl >/dev/null 2>&1 && systemctl reload caddy >/dev/null 2>&1; then
-    ok "Caddy 已通过 systemctl 重载。"
+  # 重载：有主 Caddyfile 就重载「主文件」（它 import 了 gcms.caddy，含其他站点），
+  # 绝不用 `caddy reload --config gcms.caddy` 把运行配置替换成只有 gcms.caddy。
+  main=/etc/caddy/Caddyfile
+  if [ -f "$main" ]; then
+    grep -q 'gcms.caddy' "$main" 2>/dev/null || info "请在 $main 顶部加入一行：  import $cfile"
+    if command -v systemctl >/dev/null 2>&1 && systemctl reload caddy >/dev/null 2>&1; then
+      ok "Caddy 已通过 systemctl 重载（读主 Caddyfile，含其他站点）。"
+    elif caddy reload --config "$main" --adapter caddyfile >/dev/null 2>&1; then
+      ok "Caddy 已重载主 Caddyfile。"
+    else
+      info "请手动重载：systemctl reload caddy  或  caddy reload --config $main"
+    fi
   else
-    info "请手动重载 Caddy：  caddy reload   或   systemctl reload caddy"
+    info "未发现 $main。可用本文件独立启动：caddy run --config $cfile --adapter caddyfile"
+    if caddy reload --config "$cfile" --adapter caddyfile >/dev/null 2>&1; then
+      ok "Caddy 已重载（gcms.caddy 独立配置）。"
+    elif command -v systemctl >/dev/null 2>&1 && systemctl reload caddy >/dev/null 2>&1; then
+      ok "Caddy 已通过 systemctl 重载。"
+    else
+      info "请手动重载 Caddy：  systemctl reload caddy  或  caddy reload --config $cfile"
+    fi
   fi
 
   set_conf GCMS_CADDY_ONDEMAND 1

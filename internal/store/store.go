@@ -1477,6 +1477,13 @@ func (s *Store) CountAdminContentFiltered(kind, lang, status, categorySlug strin
 	return n, err
 }
 
+// CountContent 统计某语种下的全部内容行数（所有类型、含草稿），用于站点概览徽标。
+func (s *Store) CountContent(lang string) (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM posts WHERE lang=?`, lang).Scan(&n)
+	return n, err
+}
+
 func (s *Store) AdminContentStatusCounts(lang string) (map[string]AdminContentCounts, error) {
 	counts := map[string]AdminContentCounts{
 		"post": {},

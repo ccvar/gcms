@@ -37,6 +37,7 @@
                   <h3>{{.Name}}</h3>
                   <p class="site-meta">
                     <span>{{.Slug}}</span>
+                    {{$lc := index $.PlatformLocaleCounts .ID}}{{if gt $lc 0}}<span>{{printf ($.Admin.T "admin.sites.locale_count" "%d 语种") $lc}}</span><span>{{printf ($.Admin.T "admin.sites.content_count" "%d 条内容") (index $.PlatformContentCounts .ID)}}</span>{{end}}
                     {{if .IsDefault}}<span>{{$.Admin.T "admin.sites.default" "默认站点"}}</span>{{end}}
                     {{if eq .ID $.PlatformCurrentSiteID}}<span>{{$.Admin.T "admin.sites.current_badge" "当前后台"}}</span>{{end}}
                   </p>
@@ -56,8 +57,7 @@
             </form>
             <div class="site-card-links">
               {{with index $.PlatformOfficialURLs .ID}}
-                <a class="site-card-official" href="{{.}}" target="_blank" rel="noopener">
-                  <span>{{$.Admin.T "admin.sites.official_site" "正式站点"}}</span>
+                <a class="site-card-official" href="{{.}}" target="_blank" rel="noopener" aria-label="{{$.Admin.T "admin.sites.official_site" "正式站点"}}">
                   {{with index $.PlatformOfficialHosts $site.ID}}<strong>{{.}}</strong>{{end}}
                   <span class="ext-arrow" aria-hidden="true">↗</span>
                 </a>
@@ -90,7 +90,7 @@
                     <span class="site-domain-row">
                       <span class="site-domain-list">
                         {{with index $.PlatformDomains .ID}}
-                          {{range .}}<span class="site-domain{{if .IsPrimary}} primary{{end}}">{{if .IsPrimary}}★ {{end}}{{.Scheme}}://{{.Host}}<span class="site-domain-tag">{{if .IsPrimary}}{{$.Admin.T "admin.sites.domain_primary" "主域名"}}{{else if .RedirectToPrimary}}{{$.Admin.T "admin.sites.domain_alias" "别名 · 跳转"}}{{else}}{{$.Admin.T "admin.sites.domain_extra" "别名"}}{{end}}</span></span>{{end}}
+                          {{range .}}<span class="site-domain{{if .IsPrimary}} primary{{end}}"><span class="sd-host" title="{{.Scheme}}://{{.Host}}">{{if .IsPrimary}}★ {{end}}{{.Scheme}}://{{.Host}}</span><span class="site-domain-tag">{{if .IsPrimary}}{{$.Admin.T "admin.sites.domain_primary" "主域名"}}{{else if .RedirectToPrimary}}{{$.Admin.T "admin.sites.domain_alias" "别名 · 跳转"}}{{else}}{{$.Admin.T "admin.sites.domain_extra" "别名"}}{{end}}</span></span>{{end}}
                         {{else}}
                           <span class="muted">{{$.Admin.T "admin.sites.no_domain" "未绑定域名"}}</span>
                         {{end}}
@@ -180,7 +180,7 @@
                   <div class="field">
                     <label for="cf-token-{{.ID}}">{{$.Admin.T "admin.sites.cf_token" "Cloudflare API Token"}}</label>
                     {{if $.CFDNSTokenSet}}
-                    <p class="cf-token-state">{{$.Admin.T "admin.sites.cf_token_set" "已授权"}} · <code>{{$.CFDNSFingerprint}}</code></p>
+                    <p class="cf-token-state">{{$.Admin.T "admin.sites.cf_token_set" "已授权"}} · <code>{{$.CFDNSFingerprint}}</code> · <a class="cf-authorize-link" href="{{$.CFAuthorizeURL}}" target="_blank" rel="noopener">{{$.Admin.T "admin.sites.cf_reauthorize" "重新授权"}} ↗</a></p>
                     <input id="cf-token-{{.ID}}" name="cf_token" placeholder="{{$.Admin.T "admin.sites.cf_token_replace" "重新授权可粘贴新 Token；留空保持不变"}}" autocomplete="off" spellcheck="false">
                     {{else}}
                     <a class="cf-authorize-link" href="{{$.CFAuthorizeURL}}" target="_blank" rel="noopener">{{$.Admin.T "admin.sites.cf_authorize" "打开 Cloudflare 授权模板"}} ↗</a>

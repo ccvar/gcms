@@ -1084,6 +1084,7 @@ func (s *Server) showAdminSites(w http.ResponseWriter, r *http.Request, status i
 			v.PlatformOfficialURLs[1] = href
 			v.PlatformOfficialHosts[1] = host
 		}
+		s.setSiteCounts(v, 1, s.store)
 		s.rnd.Admin(w, "sites", status, v)
 		return
 	}
@@ -1121,7 +1122,38 @@ func (s *Server) showAdminSites(w http.ResponseWriter, r *http.Request, status i
 		v.PlatformDomainForms[siteID] = form
 	}
 	v.PlatformSites = sites
+	for _, site := range sites {
+		if site == nil {
+			continue
+		}
+		if rt, ok := s.runtimePool().runtimeByID(site.ID); ok && rt != nil {
+			s.setSiteCounts(v, site.ID, rt.Store)
+		}
+	}
 	s.rnd.Admin(w, "sites", status, v)
+}
+
+// setSiteCounts fills the platform site card's 语种 / 内容 badges for one site's store:
+// enabled-locale count and content rows in the default language (all types, incl. drafts).
+func (s *Server) setSiteCounts(v *View, siteID int64, st *store.Store) {
+	if v == nil || st == nil {
+		return
+	}
+	if v.PlatformLocaleCounts == nil {
+		v.PlatformLocaleCounts = map[int64]int{}
+	}
+	if v.PlatformContentCounts == nil {
+		v.PlatformContentCounts = map[int64]int{}
+	}
+	locs := s.i18n.Active(st.Setting("locales"))
+	v.PlatformLocaleCounts[siteID] = len(locs)
+	dl := "zh"
+	if len(locs) > 0 {
+		dl = locs[0].Code
+	}
+	if n, err := st.CountContent(dl); err == nil {
+		v.PlatformContentCounts[siteID] = n
+	}
 }
 
 func (s *Server) adminCreateSite(w http.ResponseWriter, r *http.Request) {
