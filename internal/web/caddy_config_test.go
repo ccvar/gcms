@@ -7,7 +7,7 @@ import (
 	"cms.ccvar.com/internal/platform"
 )
 
-func TestRenderCaddyDomainsSection(t *testing.T) {
+func TestRenderCaddyDomainsFile(t *testing.T) {
 	sites := []*platform.Site{
 		{ID: 1, IsDefault: true},  // default site: never written
 		{ID: 2, IsDefault: false}, // alias + 301
@@ -22,7 +22,7 @@ func TestRenderCaddyDomainsSection(t *testing.T) {
 		{SiteID: 3, Scheme: "https", Host: "www.b.com", RedirectToPrimary: false, Enabled: true},
 		{SiteID: 4, Scheme: "https", Host: "c.com", IsPrimary: true, Enabled: true},
 	}
-	out := renderCaddyDomainsSection(sites, domains, "127.0.0.1:8080")
+	out := renderCaddyDomainsFile(sites, domains, "127.0.0.1:8080")
 
 	// Default site's domain must never appear.
 	if strings.Contains(out, "default-bound.test") {
@@ -46,42 +46,22 @@ func TestRenderCaddyDomainsSection(t *testing.T) {
 	if !strings.Contains(out, "c.com {\n\tencode zstd gzip\n\n\treverse_proxy 127.0.0.1:8080\n}") {
 		t.Errorf("missing block for c.com:\n%s", out)
 	}
-	// Markers present.
-	if !strings.Contains(out, caddyDomainsStart) || !strings.Contains(out, caddyDomainsEnd) {
-		t.Errorf("section missing managed markers")
+	// Header comment marking gcms ownership; no on-demand/tls directive.
+	if !strings.Contains(out, "由 gcms 自动生成") {
+		t.Errorf("missing gcms ownership header:\n%s", out)
+	}
+	if strings.Contains(out, "tls ") || strings.Contains(out, "on_demand") {
+		t.Errorf("unexpected tls/on_demand directive (template is ACME-default):\n%s", out)
 	}
 }
 
-func TestSpliceCaddyManagedSection(t *testing.T) {
-	section := caddyDomainsStart + "\nexample.com {\n\treverse_proxy 127.0.0.1:8080\n}\n" + caddyDomainsEnd
-
-	// Empty file -> just the section.
-	if got := spliceCaddyManagedSection("", section); !strings.Contains(got, "example.com") {
-		t.Errorf("empty splice dropped the section")
+func TestCaddyReverseProxyTarget(t *testing.T) {
+	t.Setenv("ADDR", ":8080")
+	if got := caddyReverseProxyTarget(); got != "127.0.0.1:8080" {
+		t.Errorf("ADDR=:8080 -> %q, want 127.0.0.1:8080", got)
 	}
-
-	// No markers -> append, preserving the existing hand-written config.
-	existing := "other.com {\n\treverse_proxy 127.0.0.1:9999\n}\n"
-	got := spliceCaddyManagedSection(existing, section)
-	if !strings.Contains(got, "other.com") || !strings.Contains(got, "example.com") {
-		t.Errorf("append lost existing or new content:\n%s", got)
-	}
-
-	// Markers present -> replace only between them; preamble and trailing config survive.
-	withMarkers := "keep-before.com {\n\treverse_proxy x\n}\n\n" +
-		caddyDomainsStart + "\nOLD.com {\n\treverse_proxy y\n}\n" + caddyDomainsEnd +
-		"\n\nkeep-after.com {\n\treverse_proxy z\n}\n"
-	got = spliceCaddyManagedSection(withMarkers, section)
-	if !strings.Contains(got, "keep-before.com") || !strings.Contains(got, "keep-after.com") {
-		t.Errorf("replace clobbered surrounding config:\n%s", got)
-	}
-	if strings.Contains(got, "OLD.com") {
-		t.Errorf("replace left stale managed content:\n%s", got)
-	}
-	if !strings.Contains(got, "example.com") {
-		t.Errorf("replace did not insert new section:\n%s", got)
-	}
-	if strings.Count(got, caddyDomainsStart) != 1 || strings.Count(got, caddyDomainsEnd) != 1 {
-		t.Errorf("marker count drifted:\n%s", got)
+	t.Setenv("ADDR", "127.0.0.1:9000")
+	if got := caddyReverseProxyTarget(); got != "127.0.0.1:9000" {
+		t.Errorf("ADDR=127.0.0.1:9000 -> %q, want unchanged", got)
 	}
 }
