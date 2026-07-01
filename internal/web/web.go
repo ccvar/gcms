@@ -973,6 +973,9 @@ func isLocalHostOnly(host string) bool {
 }
 
 func (s *Server) serveWithRuntime(w http.ResponseWriter, r *http.Request) {
+	// Identity marker so the domain-bind wizard's verify step can confirm a domain actually
+	// reaches THIS gcms instance (read from the response header, cheap, unconditional).
+	w.Header().Set("X-Gcms", "1")
 	// Caddy on-demand TLS ask — must answer regardless of Host (Caddy calls it on
 	// 127.0.0.1) and before any host-based routing.
 	if r.URL.Path == "/internal/caddy/ask" {
@@ -2405,6 +2408,10 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /admin/sites/{id}/status", s.requireAuth(s.adminSetSiteStatus))
 	mux.HandleFunc("POST /admin/sites/{id}/automation", s.requireAuth(s.adminSetSiteAutomation))
 	mux.HandleFunc("POST /admin/sites/{id}/domains", s.requireAuth(s.adminSaveSiteDomains))
+	mux.HandleFunc("GET /admin/sites/{id}/wizard/proxy", s.requireAuth(s.adminWizardProxyDetect))
+	mux.HandleFunc("POST /admin/sites/{id}/wizard/dns", s.requireAuth(s.adminWizardDNSDetect))
+	mux.HandleFunc("POST /admin/sites/{id}/wizard/verify", s.requireAuth(s.adminWizardVerify))
+	mux.HandleFunc("GET /admin/sites/{id}/wizard/status", s.requireAuth(s.adminWizardStatus))
 	mux.HandleFunc("POST /admin/sites/{id}/archive", s.requireAuth(s.adminArchiveSite))
 	mux.HandleFunc("GET /admin/sites/{id}/uploads/{name}", s.requireAuth(s.adminSiteUpload))
 	mux.HandleFunc("GET /admin/platform/settings", s.requireAuth(s.adminPlatformSettings))

@@ -2563,3 +2563,173 @@
   });
   start();
 })();
+
+/* ---------- 绑定访问域名向导（stepper + 探测/验证） ---------- */
+(function () {
+  var forms = document.querySelectorAll('form[data-domain-wizard]');
+  if (!forms.length) return;
+
+  function jget(url) {
+    return fetch(url, { headers: { "Accept": "application/json", "X-Requested-With": "XMLHttpRequest" }, credentials: "same-origin" })
+      .then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; });
+  }
+  function jpost(url, params) {
+    return fetch(url, { method: "POST", credentials: "same-origin", headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8", "X-Requested-With": "XMLHttpRequest" }, body: new URLSearchParams(params).toString() })
+      .then(function (r) { return r.ok ? r.json().catch(function () { return null; }) : null; }).catch(function () { return null; });
+  }
+
+  forms.forEach(function (form) {
+    var id = form.getAttribute("data-site-id");
+    var steps = form.querySelector("[data-wizard-steps]");
+    var hostInput = form.querySelector("[data-wizard-host]");
+    if (!steps || !hostInput) return;
+    var panels = form.querySelectorAll(".dw-panel");
+    var stepBtns = steps.querySelectorAll(".dw-step");
+    var prev = form.querySelector("[data-wizard-prev]");
+    var next = form.querySelector("[data-wizard-next]");
+    var finish = form.querySelector("[data-wizard-finish]");
+    var statusEl = form.querySelector("[data-wizard-status]");
+    var csrf = (form.querySelector('input[name="_csrf"]') || {}).value || "";
+    var msgChecking = form.getAttribute("data-msg-checking") || "检测中…";
+    var msgCopied = form.getAttribute("data-msg-copied") || "已复制";
+    var msgDomainReq = form.getAttribute("data-msg-domain-required") || "请先填写主域名";
+    var cur = 1, proxyDone = false, dnsHost = "";
+
+    function host() { return (hostInput.value || "").trim().replace(/^https?:\/\//i, "").replace(/\/.*$/, "").toLowerCase(); }
+    function setState(n, st) { var b = stepBtns[n - 1]; if (b) b.setAttribute("data-step-state", st); }
+    function unlockAll() { stepBtns.forEach(function (b) { b.removeAttribute("data-locked"); }); }
+
+    function setStep(n) {
+      cur = n;
+      steps.setAttribute("data-active-step", String(n));
+      panels.forEach(function (p) { p.classList.toggle("is-active", p.getAttribute("data-step") === String(n)); });
+      if (prev) prev.hidden = n <= 1;
+      if (next) next.hidden = n >= 4;
+      if (finish) finish.hidden = n < 4;
+      if (n === 3 && !proxyDone) runProxy();
+      if (n === 4) runVerify();
+    }
+
+    function fillTokens(ip, target) {
+      var h = host() || "你的域名";
+      form.querySelectorAll("[data-tok-host]").forEach(function (e) { e.textContent = h; });
+      if (ip) form.querySelectorAll("[data-tok-ip]").forEach(function (e) { e.textContent = ip; });
+      if (target) form.querySelectorAll("[data-tok-target]").forEach(function (e) { e.textContent = target; });
+    }
+
+    function runProxy() {
+      proxyDone = true; setState(3, "running");
+      jget("/admin/sites/" + id + "/wizard/proxy").then(function (d) {
+        if (!d) { setState(3, "pending"); return; }
+        var p = d.proxy || {};
+        var kind = p.kind === "caddy" ? (p.on_demand ? "caddy-auto" : "caddy") : (p.kind === "nginx" ? "nginx" : "other");
+        form.querySelectorAll("[data-proxy-guide] .dw-proxy-variant").forEach(function (v) { v.hidden = v.getAttribute("data-proxy") !== kind; });
+        fillTokens((d.server_ip && d.server_ip.ipv4) || "", d.target || "127.0.0.1:8080");
+        setState(3, "done");
+      });
+    }
+
+    function runDNS() {
+      var h = host();
+      if (!h || h.indexOf(".") < 0 || h === dnsHost) return;
+      dnsHost = h; setState(2, "running"); if (statusEl) statusEl.textContent = msgChecking;
+      jpost("/admin/sites/" + id + "/wizard/dns", { host: h, _csrf: csrf }).then(function (d) {
+        if (statusEl) statusEl.textContent = "";
+        var cf = form.querySelector("[data-dns-cloudflare]"), manual = form.querySelector("[data-dns-manual]");
+        var cfDns = form.querySelector('input[name="cf_dns"]');
+        if (d && d.provider === "cloudflare") { if (cf) cf.hidden = false; if (manual) manual.hidden = true; if (cfDns) cfDns.checked = true; }
+        else if (d && d.provider === "other") { if (cf) cf.hidden = true; if (manual) manual.hidden = false; if (cfDns) cfDns.checked = false; fillTokens("", ""); }
+        else { if (cf) cf.hidden = false; if (manual) manual.hidden = false; }
+        setState(2, "done");
+      });
+    }
+
+    function runVerify() {
+      var h = host(); if (!h) return;
+      var box = form.querySelector("[data-verify-box]"), out = form.querySelector("[data-verify-result]");
+      if (box) box.setAttribute("data-step-state", "running");
+      setState(4, "running"); if (out) out.hidden = true; if (statusEl) statusEl.textContent = msgChecking;
+      jpost("/admin/sites/" + id + "/wizard/verify", { host: h, _csrf: csrf }).then(function (d) {
+        if (statusEl) statusEl.textContent = "";
+        if (out) out.hidden = false;
+        if (d && d.ok) { if (box) box.setAttribute("data-step-state", "done"); setState(4, "done"); if (out) out.textContent = "验证通过：" + h + " 已可正常访问。"; }
+        else { if (box) box.setAttribute("data-step-state", "failed"); setState(4, "failed"); if (out) out.textContent = verifyMsg(d, h); }
+      });
+    }
+    function verifyMsg(d, h) {
+      if (!d) return "验证失败：无法完成检测，可稍后再试或直接保存。";
+      if (d.reason === "unreachable") return "还无法访问 " + h + "（DNS 可能在传播、或证书还没签发）。可稍等重试，或直接保存。";
+      if (d.reason === "not_gcms") return h + " 能打开，但看起来不是本站在服务（可能是缓存 / 其它代理）。可直接保存。";
+      if (d.reason === "bad_status") return h + " 返回了 " + (d.status || "异常") + "。检查反代与证书后重试，或直接保存。";
+      return "验证未通过，可稍后重试或直接保存。";
+    }
+
+    if (next) next.addEventListener("click", function () {
+      if (cur === 1 && !host()) { setState(1, "failed"); if (statusEl) statusEl.textContent = msgDomainReq; hostInput.focus(); return; }
+      if (cur === 1) { setState(1, "done"); if (statusEl) statusEl.textContent = ""; unlockAll(); runDNS(); }
+      setStep(Math.min(4, cur + 1));
+    });
+    if (prev) prev.addEventListener("click", function () { setStep(Math.max(1, cur - 1)); });
+    stepBtns.forEach(function (b, i) { b.addEventListener("click", function () { if (!b.hasAttribute("data-locked")) setStep(i + 1); }); });
+    hostInput.addEventListener("blur", function () {
+      if (host() !== dnsHost) setState(4, "pending");
+      if (host()) runDNS();
+    });
+
+    form.querySelectorAll(".dw-copy").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var t = form.querySelector(btn.getAttribute("data-copy-target")); if (!t) return;
+        var txt = t.textContent, orig = btn.textContent;
+        var done = function () { btn.textContent = msgCopied; setTimeout(function () { btn.textContent = orig; }, 1200); };
+        if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done, done); else done();
+      });
+    });
+
+    var modal = form.closest(".site-domain-modal");
+    function onOpen() {
+      if (!modal || location.hash !== "#" + modal.id) return;
+      if (!proxyDone) runProxy();
+      if (host()) runDNS();
+    }
+    window.addEventListener("hashchange", onOpen);
+
+    setStep(1);
+    if (host()) { setState(1, "done"); unlockAll(); }
+    onOpen();
+  });
+})();
+
+/* ---------- 站点卡片：绑定状态（DNS + 可达性，异步逐个填充） ---------- */
+(function () {
+  var els = document.querySelectorAll("[data-domain-status]");
+  if (!els.length) return;
+  function check(el) {
+    var url = el.getAttribute("data-status-url");
+    var txt = el.querySelector("[data-status-text]");
+    var orig = txt ? txt.textContent : "";
+    var lbl = function (k) { return el.getAttribute("data-s-" + k) || ""; };
+    el.setAttribute("data-stage", "checking");
+    if (txt && lbl("checking")) txt.textContent = lbl("checking");
+    return fetch(url, { headers: { "Accept": "application/json", "X-Requested-With": "XMLHttpRequest" }, credentials: "same-origin" })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) {
+        var stage = (d && d.stage) || "";
+        if (stage === "ok" || stage === "pending" || stage === "dns") {
+          el.setAttribute("data-stage", stage);
+          if (txt) txt.textContent = lbl(stage) || orig;
+        } else {
+          el.removeAttribute("data-stage");
+          if (txt) txt.textContent = orig;
+        }
+      })
+      .catch(function () { el.removeAttribute("data-stage"); if (txt) txt.textContent = orig; });
+  }
+  var list = Array.prototype.slice.call(els), i = 0, active = 0, LIMIT = 3;
+  function pump() {
+    while (active < LIMIT && i < list.length) {
+      active++;
+      check(list[i++]).then(function () { active--; pump(); }, function () { active--; pump(); });
+    }
+  }
+  pump();
+})();

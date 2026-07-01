@@ -83,7 +83,7 @@
 
         <details class="site-card-details">
           <summary>
-            <span class="site-details-title{{if index $.PlatformOfficialURLs .ID}} is-cf{{end}}">{{if index $.PlatformOfficialURLs .ID}}{{template "site-icon-cloudflare"}}<span>Cloudflare</span>{{else}}{{template "site-icon-server"}}<span>{{$.Admin.T "admin.sites.deploy_server" "服务器"}}</span>{{end}}</span>
+            {{if index $.PlatformOfficialURLs .ID}}<span class="site-details-title is-cf">{{template "site-icon-cloudflare"}}<span>Cloudflare</span></span>{{else if index $.PlatformDomains .ID}}<span class="site-details-title" data-domain-status data-status-url="/admin/sites/{{.ID}}/wizard/status" data-s-checking="{{$.Admin.T "admin.sites.status_checking" "检测中…"}}" data-s-ok="{{$.Admin.T "admin.sites.status_live" "已生效"}}" data-s-pending="{{$.Admin.T "admin.sites.status_pending" "待生效"}}" data-s-dns="{{$.Admin.T "admin.sites.status_dns" "DNS 待配置"}}">{{template "site-icon-server"}}<span data-status-text>{{$.Admin.T "admin.sites.deploy_server" "服务器"}}</span></span>{{end}}
             <small>{{if .IsDefault}}{{$.Admin.T "admin.sites.default_domain_note" "使用当前默认入口"}}{{else}}{{$.Admin.T "admin.sites.details_hint" "域名、接口和文件路径"}}{{end}}</small>
           </summary>
           <div class="site-details-body">
@@ -155,35 +155,35 @@
               </div>
               <a class="modal-x" href="#" aria-label="{{$.Admin.T "admin.action.cancel" "取消"}}">×</a>
             </div>
-            <form class="admin-form site-domain-form site-domain-modal-form" method="post" action="/admin/sites/{{.ID}}/domains" data-no-dirty>
+            <form class="admin-form site-domain-form site-domain-modal-form" method="post" action="/admin/sites/{{.ID}}/domains" data-no-dirty data-domain-wizard data-site-id="{{.ID}}"
+                  data-msg-checking="{{$.Admin.T "admin.sites.wizard_checking" "检测中…"}}"
+                  data-msg-copied="{{$.Admin.T "admin.sites.wizard_copied" "已复制"}}"
+                  data-msg-domain-required="{{$.Admin.T "admin.sites.wizard_domain_required" "请先填写主域名"}}">
               <input type="hidden" name="_csrf" value="{{$.CSRF}}">
               {{$form := index $.PlatformDomainForms .ID}}
-              <div class="field">
-                <label for="site-domain-host-{{.ID}}">{{$.Admin.T "admin.sites.domain_primary" "主域名"}}</label>
-                <input id="site-domain-host-{{.ID}}" name="primary_domain" value="{{$form.PrimaryHost}}" placeholder="www.example.com">
-                <small class="field-hint">{{$.Admin.T "admin.sites.primary_domain_hint" "访客最终打开的正式域名。"}}</small>
-              </div>
-              <div class="field">
-                <label for="site-alias-{{.ID}}">{{$.Admin.T "admin.sites.alias_domains" "别名域名（可选）"}}</label>
-                <textarea id="site-alias-{{.ID}}" name="alias_domains" rows="3" placeholder="{{$.Admin.T "admin.sites.alias_placeholder" "例如 www.example.com，每行一个"}}">{{$form.AliasText}}</textarea>
-                <small><label class="inline-check"><input type="checkbox" name="redirect_aliases" value="1"{{if $form.RedirectAliases}} checked{{end}}> {{$.Admin.T "admin.sites.redirect_aliases" "别名域名 301 跳转到主域名（取消勾选则各自独立访问）"}}</label></small>
-              </div>
-              <div class="domain-howto{{if $.CaddyOnDemand}} is-auto{{end}}">
-                {{if $.CaddyOnDemand}}
-                <strong>{{$.Admin.T "admin.sites.domain_howto_auto_title" "已启用 Caddy 自动接入"}}</strong>
-                <p>{{$.Admin.T "admin.sites.domain_howto_auto" "把该域名的 DNS 解析到本服务器，HTTPS 证书会自动签发，无需手动改配置。"}}</p>
-                {{else}}
-                <strong>{{$.Admin.T "admin.sites.domain_howto_title" "如何让域名生效"}}</strong>
-                <ol>
-                  <li>{{$.Admin.T "admin.sites.domain_howto_dns" "把域名的 DNS A / AAAA 记录指向本服务器 IP。"}}</li>
-                  <li>{{$.Admin.T "admin.sites.domain_howto_proxy" "在你的反向代理（Caddy / Nginx）里，把该域名转发到 gcms 监听端口。"}}</li>
-                </ol>
-                {{end}}
-              </div>
-              <details class="domain-cf">
-                <summary>{{template "site-icon-cloudflare"}}{{$.Admin.T "admin.sites.cf_dns_summary" "域名托管在 Cloudflare？一键自动配置 DNS"}}</summary>
-                <div class="domain-cf-body">
-                  <p class="field-hint">{{$.Admin.T "admin.sites.cf_dns_desc" "授权后，可自动把上面这些域名的 DNS A / AAAA 记录指向本服务器，无需登录 Cloudflare 后台。"}}</p>
+              <nav class="dw-steps" data-wizard-steps data-active-step="1" aria-label="{{$.Admin.T "admin.sites.wizard_progress" "绑定进度"}}">
+                <button type="button" class="dw-step" data-goto-step="1" data-step-state="pending"><span class="dw-step-num">1</span><span class="dw-step-label">{{$.Admin.T "admin.sites.wizard_step_domain" "域名"}}</span><span class="dw-step-tick" aria-hidden="true"></span></button>
+                <button type="button" class="dw-step" data-goto-step="2" data-step-state="pending" data-locked><span class="dw-step-num">2</span><span class="dw-step-label">{{$.Admin.T "admin.sites.wizard_step_dns" "DNS"}}</span><span class="dw-step-tick" aria-hidden="true"></span></button>
+                <button type="button" class="dw-step" data-goto-step="3" data-step-state="pending" data-locked><span class="dw-step-num">3</span><span class="dw-step-label">{{$.Admin.T "admin.sites.wizard_step_proxy" "反向代理"}}</span><span class="dw-step-tick" aria-hidden="true"></span></button>
+                <button type="button" class="dw-step" data-goto-step="4" data-step-state="pending" data-locked><span class="dw-step-num">4</span><span class="dw-step-label">{{$.Admin.T "admin.sites.wizard_step_verify" "验证"}}</span><span class="dw-step-tick" aria-hidden="true"></span></button>
+              </nav>
+
+              <section class="dw-panel is-active" data-step="1">
+                <div class="field">
+                  <label for="site-domain-host-{{.ID}}">{{$.Admin.T "admin.sites.domain_primary" "主域名"}}</label>
+                  <input id="site-domain-host-{{.ID}}" name="primary_domain" value="{{$form.PrimaryHost}}" placeholder="www.example.com" data-wizard-host>
+                  <small class="field-hint">{{$.Admin.T "admin.sites.primary_domain_hint" "访客最终打开的正式域名。"}}</small>
+                </div>
+                <div class="field">
+                  <label for="site-alias-{{.ID}}">{{$.Admin.T "admin.sites.alias_domains" "别名域名（可选）"}}</label>
+                  <textarea id="site-alias-{{.ID}}" name="alias_domains" rows="3" placeholder="{{$.Admin.T "admin.sites.alias_placeholder" "例如 www.example.com，每行一个"}}">{{$form.AliasText}}</textarea>
+                  <small><label class="inline-check"><input type="checkbox" name="redirect_aliases" value="1"{{if $form.RedirectAliases}} checked{{end}}> {{$.Admin.T "admin.sites.redirect_aliases" "别名域名 301 跳转到主域名（取消勾选则各自独立访问）"}}</label></small>
+                </div>
+              </section>
+
+              <section class="dw-panel" data-step="2">
+                <div class="domain-cf is-open" data-dns-cloudflare>
+                  <p class="field-hint" data-dns-headline>{{$.Admin.T "admin.sites.cf_dns_desc" "授权后，可自动把上面这些域名的 DNS A / AAAA 记录指向本服务器，无需登录 Cloudflare 后台。"}}</p>
                   <div class="field">
                     <label for="cf-token-{{.ID}}">{{$.Admin.T "admin.sites.cf_token" "Cloudflare API Token"}}</label>
                     {{if $.CFDNSTokenSet}}
@@ -201,10 +201,56 @@
                   <small><label class="inline-check"><input type="checkbox" name="cf_dns" value="1" checked> {{$.Admin.T "admin.sites.cf_dns_apply" "保存后用 Cloudflare 自动把这些域名指向本服务器"}}</label></small>
                   <small><label class="inline-check"><input type="checkbox" name="cf_proxied" value="1"{{if $.CFProxied}} checked{{end}}> {{$.Admin.T "admin.sites.cf_proxied" "通过 Cloudflare 代理（橙云 · CDN / 防护）——需源站证书 + CF SSL 设为 Full；默认灰云仅 DNS"}}</label></small>
                 </div>
-              </details>
-              <div class="modal-actions">
+                <div class="dw-manual" data-dns-manual hidden>
+                  <p class="field-hint">{{$.Admin.T "admin.sites.wizard_dns_manual" "你的域名不在 Cloudflare。请到 DNS 服务商添加一条记录，指向本服务器："}}</p>
+                  <pre class="dw-code" data-dns-record><code>A    <span data-tok-host>{{$form.PrimaryHost}}</span>    <span data-tok-ip>{{$.CFServerIPv4}}</span></code></pre>
+                  <button type="button" class="btn dw-copy" data-copy-target="[data-dns-record]">{{$.Admin.T "admin.sites.wizard_copy" "复制"}}</button>
+                </div>
+              </section>
+
+              <section class="dw-panel" data-step="3">
+                <div class="domain-howto" data-proxy-guide>
+                  <div class="dw-proxy-variant" data-proxy="caddy-auto"{{if not $.CaddyOnDemand}} hidden{{end}}>
+                    <strong>{{$.Admin.T "admin.sites.wizard_proxy_caddy_auto_title" "已启用 Caddy 自动接入"}}</strong>
+                    <p>{{$.Admin.T "admin.sites.wizard_proxy_caddy_auto_desc" "把该域名 DNS 解析到本服务器即可，HTTPS 证书自动签发、保存后自动生效，无需改配置。"}}</p>
+                  </div>
+                  <div class="dw-proxy-variant" data-proxy="caddy" hidden>
+                    <strong>{{$.Admin.T "admin.sites.wizard_proxy_caddy_title" "检测到 Caddy"}}</strong>
+                    <p>{{$.Admin.T "admin.sites.wizard_proxy_caddy_desc" "保存域名后，gcms 会自动为该域名写入 Caddy 站点配置并重载。"}}</p>
+                  </div>
+                  <div class="dw-proxy-variant" data-proxy="nginx" hidden>
+                    <strong>{{$.Admin.T "admin.sites.wizard_proxy_nginx_title" "检测到 Nginx —— 需手动加一段配置"}}</strong>
+                    <pre class="dw-code" data-proxy-nginx><code>server {
+    listen 443 ssl;
+    server_name <span data-tok-host>{{$form.PrimaryHost}}</span>;
+    location / {
+        proxy_pass http://<span data-tok-target>127.0.0.1:8080</span>;
+        proxy_set_header Host $host;
+    }
+}</code></pre>
+                    <button type="button" class="btn dw-copy" data-copy-target="[data-proxy-nginx]">{{$.Admin.T "admin.sites.wizard_copy_config" "复制配置"}}</button>
+                    <p class="field-hint">{{$.Admin.T "admin.sites.wizard_proxy_nginx_desc" "加到 Nginx 后 reload（并确保有该域名的证书），再回来做验证。"}}</p>
+                  </div>
+                  <div class="dw-proxy-variant" data-proxy="other"{{if $.CaddyOnDemand}} hidden{{end}}>
+                    <strong>{{$.Admin.T "admin.sites.wizard_proxy_other_title" "未检测到反向代理"}}</strong>
+                    <p>{{$.Admin.T "admin.sites.wizard_proxy_other_desc" "推荐安装 Caddy（自动 HTTPS）：运行 cms.sh caddy-setup；或在你现有的反代里把该域名转发到 gcms 监听端口。"}}</p>
+                  </div>
+                </div>
+              </section>
+
+              <section class="dw-panel" data-step="4">
+                <div class="dw-verify" data-verify-box data-step-state="pending">
+                  <p class="field-hint">{{$.Admin.T "admin.sites.wizard_verify_intro" "点击下方“验证并保存”会先检测该域名能否正常访问，再保存绑定。"}}</p>
+                  <p class="dw-verify-result" data-verify-result hidden></p>
+                </div>
+              </section>
+
+              <div class="modal-actions dw-nav">
                 <a class="btn" href="#">{{$.Admin.T "admin.action.cancel" "取消"}}</a>
-                <button class="btn btn-primary" type="submit">{{$.Admin.T "admin.sites.save_domains" "保存域名"}}</button>
+                <span class="dw-nav-status" data-wizard-status aria-live="polite"></span>
+                <button type="button" class="btn" data-wizard-prev hidden>{{$.Admin.T "admin.sites.wizard_prev" "上一步"}}</button>
+                <button type="button" class="btn btn-primary" data-wizard-next>{{$.Admin.T "admin.sites.wizard_next" "下一步"}}</button>
+                <button class="btn btn-primary" type="submit" data-wizard-finish hidden>{{$.Admin.T "admin.sites.wizard_finish" "验证并保存"}}</button>
               </div>
             </form>
           </div>
@@ -276,10 +322,6 @@
           <div class="field">
             <label for="site-name">{{.Admin.T "admin.sites.display_name" "站点名称"}}</label>
             <input id="site-name" name="name" value="{{index .FormVals "name"}}" placeholder="{{.Admin.T "admin.sites.display_name_placeholder" "品牌官网 / 文档中心"}}">
-          </div>
-          <div class="field">
-            <label for="site-domain">{{.Admin.T "admin.sites.domain_optional" "访问域名（可选）"}}</label>
-            <input id="site-domain" name="domain" value="{{index .FormVals "domain"}}" placeholder="blog.example.com" inputmode="url" autocapitalize="none" autocomplete="off" spellcheck="false">
           </div>
           <div class="field">
             <label>{{.Admin.T "admin.sites.seed_mode" "初始化内容"}}</label>
