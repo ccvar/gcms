@@ -34,8 +34,9 @@ import (
 // ---------- 会话 ----------
 
 const (
-	cookieName      = "ccvar_sess"
-	adminLangCookie = "gcms_admin_lang"
+	cookieName               = "ccvar_sess"
+	adminLangCookie          = "gcms_admin_lang"
+	localeCatalogsSettingKey = "locale_catalogs"
 )
 
 type session struct {
@@ -571,12 +572,14 @@ func (s *Server) populatePlatformSites(v *View) {
 	}
 	v.PlatformSites = sites
 	v.PlatformSiteIcons = map[int64]string{}
+	v.PlatformPreviewURLs = map[int64]string{}
 	v.PlatformOfficialURLs = map[int64]string{}
 	v.PlatformOfficialHosts = map[int64]string{}
 	for _, site := range sites {
 		if site == nil {
 			continue
 		}
+		v.PlatformPreviewURLs[site.ID] = s.platformSitePreviewURL(site.ID)
 		if icon := s.platformSiteIconURL(site.ID); icon != "" {
 			v.PlatformSiteIcons[site.ID] = icon
 		}
@@ -585,6 +588,18 @@ func (s *Server) populatePlatformSites(v *View) {
 			v.PlatformOfficialHosts[site.ID] = host
 		}
 	}
+}
+
+func (s *Server) platformSitePreviewURL(siteID int64) string {
+	prefix := s.adminSitePreviewPrefix(siteID)
+	if prefix == "" {
+		return "/" + s.defaultLang() + "/"
+	}
+	siteServer := s
+	if rt, ok := s.runtimePool().runtimeByID(siteID); ok && rt != nil && rt.server != nil {
+		siteServer = rt.server
+	}
+	return localizedPath(prefix, siteServer.defaultLang(), "/")
 }
 
 func (s *Server) platformOfficialSiteURL(siteID int64) (string, string) {
@@ -1036,6 +1051,16 @@ func (s *Server) showAdminSites(w http.ResponseWriter, r *http.Request, status i
 		formVals = map[string]string{}
 	}
 	v.FormVals = formVals
+	v.ServerHealth = s.serverHealthSnapshot()
+	v.CaddyOnDemand = caddyOnDemandEnabled()
+	if s.platform != nil {
+		cfTok := strings.TrimSpace(s.platform.Setting(platformCFDNSTokenKey))
+		v.CFDNSTokenSet = cfTok != ""
+		v.CFDNSFingerprint = cloudflareTokenFingerprint(cfTok)
+		v.CFServerIPv4 = s.platform.Setting(platformServerIPv4Key)
+		v.CFServerIPv6 = s.platform.Setting(platformServerIPv6Key)
+		v.CFAuthorizeURL = cloudflareAPITokenTemplateURL("GCMS DNS")
+	}
 	if s.platform == nil {
 		siteName := strings.TrimSpace(s.store.Setting("site.name"))
 		if siteName == "" {
@@ -1052,6 +1077,7 @@ func (s *Server) showAdminSites(w http.ResponseWriter, r *http.Request, status i
 			UploadDir:                   s.uploadDir,
 		}}
 		v.PlatformSiteIcons = map[int64]string{}
+		v.PlatformPreviewURLs = map[int64]string{1: "/" + s.defaultLang() + "/"}
 		v.PlatformOfficialURLs = map[int64]string{}
 		v.PlatformOfficialHosts = map[int64]string{}
 		if href, host := s.platformOfficialSiteURL(1); href != "" && host != "" {
@@ -1076,6 +1102,23 @@ func (s *Server) showAdminSites(w http.ResponseWriter, r *http.Request, status i
 		if d != nil && d.Enabled {
 			v.PlatformDomains[d.SiteID] = append(v.PlatformDomains[d.SiteID], d)
 		}
+	}
+	v.PlatformDomainForms = map[int64]SiteDomainForm{}
+	for siteID, ds := range v.PlatformDomains {
+		form := SiteDomainForm{}
+		var aliases []string
+		for _, d := range ds {
+			if d.IsPrimary {
+				form.PrimaryHost = d.Host
+			} else {
+				aliases = append(aliases, d.Host)
+				if d.RedirectToPrimary {
+					form.RedirectAliases = true
+				}
+			}
+		}
+		form.AliasText = strings.Join(aliases, "\n")
+		v.PlatformDomainForms[siteID] = form
 	}
 	v.PlatformSites = sites
 	s.rnd.Admin(w, "sites", status, v)
@@ -1931,7 +1974,9 @@ func (s *Server) adminDeleteArchivedSite(w http.ResponseWriter, r *http.Request)
 	http.Redirect(w, r, "/admin/archived-sites", http.StatusSeeOther)
 }
 
-func (s *Server) adminAddSiteDomain(w http.ResponseWriter, r *http.Request) {
+// adminSaveSiteDomains replaces a site's whole domain set from the modal form:
+// one 主域名 + an 别名 textarea (one host per line) + a single 301 checkbox.
+func (s *Server) adminSaveSiteDomains(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.checkCSRF(w, r); !ok {
 		return
 	}
@@ -1956,16 +2001,50 @@ func (s *Server) adminAddSiteDomain(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "默认站点使用当前默认入口，不能绑定域名", http.StatusBadRequest)
 		return
 	}
-	scheme, host, err := parseSiteDomainInput(r.FormValue("host"))
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+
+	primaryRaw := strings.TrimSpace(r.FormValue("primary_domain"))
+	aliasRaw := strings.TrimSpace(r.FormValue("alias_domains"))
+	redirect := r.FormValue("redirect_aliases") == "1"
+	if primaryRaw == "" && aliasRaw != "" {
+		http.Error(w, "请先填写主域名，再添加别名域名", http.StatusBadRequest)
 		return
 	}
-	if s.domainConflictsWithPlatformHost(site, host) {
-		http.Error(w, "非默认站点不能绑定平台默认 Host", http.StatusBadRequest)
-		return
+
+	var specs []platform.SiteDomainSpec
+	seen := map[string]bool{}
+	add := func(raw string, primary bool) error {
+		scheme, host, err := parseSiteDomainInput(raw)
+		if err != nil {
+			return err
+		}
+		if s.domainConflictsWithPlatformHost(site, host) {
+			return fmt.Errorf("非默认站点不能绑定平台默认 Host")
+		}
+		if seen[host] {
+			return nil // 去重：与主域名或已列出的别名重复
+		}
+		seen[host] = true
+		specs = append(specs, platform.SiteDomainSpec{Scheme: scheme, Host: host, Primary: primary, Redirect: !primary && redirect})
+		return nil
 	}
-	if err := s.platform.AddSiteDomain(id, scheme, host, r.FormValue("primary") == "1", r.FormValue("redirect") == "1"); err != nil {
+
+	if primaryRaw != "" {
+		if err := add(primaryRaw, true); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	for _, line := range strings.Split(aliasRaw, "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		if err := add(line, false); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+
+	if err := s.platform.ReplaceSiteDomains(id, specs); err != nil {
 		s.serverError(w, err)
 		return
 	}
@@ -1973,7 +2052,93 @@ func (s *Server) adminAddSiteDomain(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, err)
 		return
 	}
+	if msg := s.handleCloudflareDNSFromForm(r, specs); msg != "" {
+		s.sess.setSettingsFlash(sessionToken(r), settingsFlash{Flash: msg})
+	}
 	http.Redirect(w, r, "/admin/sites", http.StatusSeeOther)
+}
+
+// handleCloudflareDNSFromForm saves the platform-level Cloudflare DNS token + server
+// IPs from the domain modal, and (when the checkbox is set) upserts grey-cloud A/AAAA
+// records pointing the just-saved domains at the server. Returns a flash message.
+func (s *Server) handleCloudflareDNSFromForm(r *http.Request, specs []platform.SiteDomainSpec) string {
+	if s.platform == nil {
+		return ""
+	}
+	pasted := strings.TrimSpace(r.FormValue("cf_token"))
+	ipv4 := strings.TrimSpace(r.FormValue("server_ipv4"))
+	ipv6 := strings.TrimSpace(r.FormValue("server_ipv6"))
+	wantDNS := r.FormValue("cf_dns") == "1"
+	if pasted == "" && ipv4 == "" && ipv6 == "" && !wantDNS {
+		return "" // Cloudflare section untouched
+	}
+
+	if ipv4 != "" && net.ParseIP(ipv4).To4() == nil {
+		return "服务器 IPv4 格式不正确：" + ipv4
+	}
+	if ipv6 != "" && net.ParseIP(ipv6) == nil {
+		return "服务器 IPv6 格式不正确：" + ipv6
+	}
+
+	token := strings.TrimSpace(s.platform.Setting(platformCFDNSTokenKey))
+	if pasted != "" {
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		defer cancel()
+		if err := verifyCloudflareAPITokenLive(ctx, pasted); err != nil {
+			return "Cloudflare Token 校验失败：" + err.Error()
+		}
+		_ = s.platform.SetSetting(platformCFDNSTokenKey, pasted)
+		token = pasted
+	}
+	if ipv4 != "" {
+		_ = s.platform.SetSetting(platformServerIPv4Key, ipv4)
+	}
+	if ipv6 != "" {
+		_ = s.platform.SetSetting(platformServerIPv6Key, ipv6)
+	}
+
+	if !wantDNS {
+		return ""
+	}
+	if token == "" {
+		return "尚未授权 Cloudflare Token，无法自动配置 DNS。"
+	}
+	if ipv4 == "" {
+		ipv4 = strings.TrimSpace(s.platform.Setting(platformServerIPv4Key))
+	}
+	if ipv6 == "" {
+		ipv6 = strings.TrimSpace(s.platform.Setting(platformServerIPv6Key))
+	}
+	if ipv4 == "" && ipv6 == "" {
+		return "请先填写服务器 IPv4（或 IPv6），才能自动配置 DNS。"
+	}
+
+	var hosts []string
+	for _, sp := range specs {
+		hosts = append(hosts, sp.Host)
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	results, err := applyCloudflareDNS(ctx, token, ipv4, ipv6, hosts)
+	if err != nil {
+		return "读取 Cloudflare 域名失败：" + err.Error()
+	}
+	var okHosts, failParts []string
+	for _, res := range results {
+		if res.OK {
+			okHosts = append(okHosts, res.Host)
+		} else {
+			failParts = append(failParts, res.Host+"（"+res.Msg+"）")
+		}
+	}
+	var b strings.Builder
+	if len(okHosts) > 0 {
+		fmt.Fprintf(&b, "已通过 Cloudflare 把 %s 的 DNS 指向本服务器。", strings.Join(okHosts, "、"))
+	}
+	if len(failParts) > 0 {
+		fmt.Fprintf(&b, " 未处理：%s。", strings.Join(failParts, "；"))
+	}
+	return strings.TrimSpace(b.String())
 }
 
 func (s *Server) adminSiteUpload(w http.ResponseWriter, r *http.Request) {
@@ -3946,6 +4111,7 @@ func (s *Server) showSettings(w http.ResponseWriter, r *http.Request, section, f
 	v.Flash = flash
 	v.FormErr = formErr
 	v.AdminI18NJSON = s.adminI18NRaw(v.AdminLang)
+	v.LocaleCatalogs = s.localeCatalogViews(v.Admin)
 	v.Social = parseSocialLinks(s.store.Setting("social_links"))
 	v.APIBaseURL = s.automationBaseURL(r, sess.currentSiteID)
 	v.OpenAPIURL = strings.TrimRight(v.APIBaseURL, "/") + "/openapi.json"
@@ -4153,7 +4319,11 @@ func automationAIBrief(apiBase, token string, scopes []string) string {
 		"",
 		"需要处理多语种内容时，先查看启用语种：",
 		"GET /languages",
-		"需要新增语种时：越南语 vi、印尼语 id、泰语 th 已是内置预设，只需要提醒我在后台启用；如果是不在内置列表里的自定义语种，并且你有语种写权限，可用 POST /languages 新增。",
+		"需要查看未启用的内置语种时：GET /languages?include_disabled=true。越南语 vi、印尼语 id、泰语 th 已是内置预设，不要重复创建。",
+		"需要新增自定义语种时：如果是不在内置列表里的自定义语种，并且你有 languages:write 权限，可用 POST /languages 新增。",
+		"需要启用或禁用语种时：如果你有 languages:enable 权限，可用 PATCH /languages/{code}，请求体为 {\"enabled\":true} 或 {\"enabled\":false}；当前默认语种不能禁用。",
+		"需要设置默认语种时：如果你有 languages:default 权限，可用 PATCH /languages/{code}，请求体为 {\"default\":true}；设为默认会自动启用该语种。",
+		"需要维护前台按钮、页脚、搜索空状态等系统文案时：先 GET /languages/{code}/catalog；如果你有 languages:catalog 权限，可用 PATCH /languages/{code}/catalog 写入 {\"catalog\":{...}}。自定义语种或新启用语种出现 home.xxx、footer.xxx 这类 key 时，优先补这里，不要改文章正文替代。",
 		"",
 		"需要设置分类时，先查看可用分类 ID：",
 		"GET /posts/categories?lang=zh",
@@ -4297,7 +4467,7 @@ func automationScopesFromFormWithDefault(r *http.Request, useDefault bool) []str
 	if want[apiScopeLinkCategoriesWrite] {
 		want[apiScope("links", "categories")] = true
 	}
-	if want[apiScopeLanguagesWrite] {
+	if want[apiScopeLanguagesWrite] || want[apiScopeLanguagesEnable] || want[apiScopeLanguagesDefault] || want[apiScopeLanguagesCatalog] {
 		want[apiScopeLanguagesRead] = true
 	}
 	var out []string
@@ -4306,6 +4476,15 @@ func automationScopesFromFormWithDefault(r *http.Request, useDefault bool) []str
 	}
 	if want[apiScopeLanguagesWrite] {
 		out = append(out, apiScopeLanguagesWrite)
+	}
+	if want[apiScopeLanguagesEnable] {
+		out = append(out, apiScopeLanguagesEnable)
+	}
+	if want[apiScopeLanguagesDefault] {
+		out = append(out, apiScopeLanguagesDefault)
+	}
+	if want[apiScopeLanguagesCatalog] {
+		out = append(out, apiScopeLanguagesCatalog)
 	}
 	if want[apiScopeMediaWrite] {
 		out = append(out, apiScopeMediaWrite)
@@ -4333,7 +4512,7 @@ func automationScopesFromFormWithDefault(r *http.Request, useDefault bool) []str
 
 func automationScopeValid(scope string) bool {
 	switch scope {
-	case apiScopeLanguagesRead, apiScopeLanguagesWrite, apiScopeMediaWrite, apiScopeSiteRead, apiScopeSiteWrite, apiScopeBrandAssetsWrite, apiScopeNavigationRead, apiScopeNavigationWrite:
+	case apiScopeLanguagesRead, apiScopeLanguagesWrite, apiScopeLanguagesEnable, apiScopeLanguagesDefault, apiScopeLanguagesCatalog, apiScopeMediaWrite, apiScopeSiteRead, apiScopeSiteWrite, apiScopeBrandAssetsWrite, apiScopeNavigationRead, apiScopeNavigationWrite:
 		return true
 	}
 	for _, col := range automationCollections {
@@ -4635,6 +4814,82 @@ func (s *Server) adminSaveAdminI18N(w http.ResponseWriter, r *http.Request) {
 	s.redirectSettings(w, r, "languages", flash)
 }
 
+func (s *Server) localeCatalogViews(admin *i18n.AdminTr) map[string]LocaleCatalogView {
+	out := map[string]LocaleCatalogView{}
+	def := s.defaultLang()
+	for _, loc := range s.i18n.All() {
+		code := loc.Code
+		source := s.i18n.CatalogSource(code)
+		override := s.i18n.CatalogOverride(code)
+		catalog := s.i18n.Catalog(code, def)
+		out[code] = LocaleCatalogView{
+			Code:          code,
+			JSON:          i18n.MarshalCatalog(catalog),
+			Source:        source,
+			SourceLabel:   localeCatalogSourceLabel(admin, source),
+			OverrideCount: len(override),
+			KeyCount:      len(catalog),
+		}
+	}
+	return out
+}
+
+func localeCatalogSourceLabel(admin *i18n.AdminTr, source string) string {
+	switch source {
+	case "custom":
+		return admin.T("admin.settings.languages.catalog_source_custom", "已自定义")
+	case "builtin":
+		return admin.T("admin.settings.languages.catalog_source_builtin", "内置")
+	default:
+		return admin.T("admin.settings.languages.catalog_source_fallback", "回落")
+	}
+}
+
+func (s *Server) saveLocaleCatalog(code string, catalog map[string]string) error {
+	code = strings.ToLower(strings.TrimSpace(code))
+	if code == "" || !s.i18n.Known(code) {
+		return fmt.Errorf("unknown locale: %s", code)
+	}
+	overrides := i18n.ParseCatalogOverrides(s.store.Setting(localeCatalogsSettingKey))
+	if overrides == nil {
+		overrides = map[string]map[string]string{}
+	}
+	if len(catalog) == 0 {
+		delete(overrides, code)
+	} else {
+		overrides[code] = i18n.SanitizeCatalog(catalog)
+	}
+	raw := i18n.MarshalCatalogOverrides(overrides)
+	if err := s.store.SetSetting(localeCatalogsSettingKey, raw); err != nil {
+		return err
+	}
+	s.i18n.LoadCatalogOverrides(raw)
+	s.clearGeneratedCaches()
+	return nil
+}
+
+func (s *Server) adminSaveLocaleCatalog(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.checkCSRF(w, r); !ok {
+		return
+	}
+	admin := s.adminView(r, "设置").Admin
+	code := strings.ToLower(strings.TrimSpace(r.FormValue("code")))
+	if code == "" || !s.i18n.Known(code) {
+		s.showSettings(w, r, "languages", "", admin.T("admin.settings.languages.catalog_bad_lang", "语种不存在。"))
+		return
+	}
+	catalog, err := i18n.ParseCatalog(r.FormValue("catalog_json"))
+	if err != nil {
+		s.showSettings(w, r, "languages", "", admin.T("admin.settings.languages.catalog_invalid", "字典 JSON 格式不正确。"))
+		return
+	}
+	if err := s.saveLocaleCatalog(code, catalog); err != nil {
+		s.serverError(w, err)
+		return
+	}
+	s.redirectSettings(w, r, "languages", admin.T("admin.settings.languages.catalog_saved", "语种字典已保存。"))
+}
+
 func (s *Server) adminClearDemoContent(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.checkCSRF(w, r); !ok {
 		return
@@ -4818,6 +5073,29 @@ func (s *Server) enableLocale(code string, makeDefault bool) error {
 	return s.store.SetSetting("default_lang", codes[0])
 }
 
+func (s *Server) disableLocale(code string) error {
+	code = strings.ToLower(strings.TrimSpace(code))
+	if !s.i18n.Known(code) {
+		return fmt.Errorf("unknown locale: %s", code)
+	}
+	if code == s.defaultLang() {
+		return fmt.Errorf("default locale cannot be disabled: %s", code)
+	}
+	seen := map[string]bool{}
+	codes := []string{}
+	for _, loc := range s.locales() {
+		if loc.Code == code || seen[loc.Code] {
+			continue
+		}
+		codes = append(codes, loc.Code)
+		seen[loc.Code] = true
+	}
+	if len(codes) == 0 {
+		codes = []string{"zh"}
+	}
+	return s.store.SetSetting("locales", strings.Join(codes, ","))
+}
+
 // adminDeleteLocalePreset 删除一个自定义语种预设；若它在启用列表里也一并移除。
 func (s *Server) adminDeleteLocalePreset(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.checkCSRF(w, r); !ok {
@@ -4832,6 +5110,11 @@ func (s *Server) adminDeleteLocalePreset(w http.ResponseWriter, r *http.Request)
 	}
 	_ = s.store.SetSetting("custom_locales", i18n.MarshalCustom(kept))
 	s.i18n.LoadCustom(s.store.Setting("custom_locales"))
+	overrides := i18n.ParseCatalogOverrides(s.store.Setting(localeCatalogsSettingKey))
+	delete(overrides, strings.ToLower(strings.TrimSpace(code)))
+	rawCatalogs := i18n.MarshalCatalogOverrides(overrides)
+	_ = s.store.SetSetting(localeCatalogsSettingKey, rawCatalogs)
+	s.i18n.LoadCatalogOverrides(rawCatalogs)
 	// 同步清理启用列表（Active 会自动丢弃已不可用的语种码）
 	act := s.locales()
 	codes := make([]string, 0, len(act))

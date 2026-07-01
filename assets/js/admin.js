@@ -2514,3 +2514,52 @@
     return blocks.join("\n\n").replace(/\n{3,}/g, "\n\n").trim() + "\n";
   }
 })();
+
+// 服务器健康度：站点管理页顶部的负载 / 内存 / 磁盘小指示，轮询刷新，隐藏标签页时暂停。
+(function () {
+  var el = document.querySelector("[data-server-health]");
+  if (!el) return;
+  var endpoint = el.getAttribute("data-endpoint") || "/admin/server-health";
+  var loadEl = el.querySelector("[data-sh-load]");
+  var memEl = el.querySelector("[data-sh-mem]");
+  var diskEl = el.querySelector("[data-sh-disk]");
+  var tipTpl = el.getAttribute("data-sh-tip-tpl") || "";
+  var timer = null;
+
+  function fixed2(n) { return (typeof n === "number" ? n : 0).toFixed(2); }
+
+  function apply(d) {
+    if (!d || !d.available) {
+      el.classList.add("is-na");
+      el.setAttribute("data-status", "na");
+      return;
+    }
+    el.classList.remove("is-na");
+    el.setAttribute("data-status", d.status || "ok");
+    if (loadEl) loadEl.textContent = fixed2(d.load1);
+    if (memEl) memEl.textContent = (d.mem_pct || 0) + "%";
+    if (diskEl) diskEl.textContent = (d.disk_pct || 0) + "%";
+    if (tipTpl) {
+      el.setAttribute("data-tooltip", tipTpl
+        .replace("{1}", fixed2(d.load1))
+        .replace("{5}", fixed2(d.load5))
+        .replace("{15}", fixed2(d.load15))
+        .replace("{n}", d.num_cpu || 1));
+    }
+  }
+
+  function poll() {
+    fetch(endpoint, { headers: { "Accept": "application/json" }, credentials: "same-origin" })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(apply)
+      .catch(function () {});
+  }
+
+  function start() { if (!timer) { poll(); timer = setInterval(poll, 5000); } }
+  function stop() { if (timer) { clearInterval(timer); timer = null; } }
+
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden) stop(); else start();
+  });
+  start();
+})();

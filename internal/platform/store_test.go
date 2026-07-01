@@ -123,3 +123,83 @@ func TestBootstrapDefaultSiteAndPlatformSession(t *testing.T) {
 		t.Fatalf("disable old default: %v", err)
 	}
 }
+
+func TestReplaceSiteDomains(t *testing.T) {
+	dir := t.TempDir()
+	hashBytes, err := bcrypt.GenerateFromPassword([]byte(store.DefaultAdminPassword), bcrypt.DefaultCost)
+	if err != nil {
+		t.Fatalf("hash password: %v", err)
+	}
+	ps, err := Open(filepath.Join(dir, "system.db"))
+	if err != nil {
+		t.Fatalf("open platform store: %v", err)
+	}
+	t.Cleanup(func() { _ = ps.Close() })
+	if err := ps.BootstrapDefaultSite(DefaultSiteBootstrap{
+		Slug: "main", Name: "Main", DBPath: filepath.Join(dir, "cms.db"),
+		UploadDir: filepath.Join(dir, "uploads"), AdminUser: "admin",
+		AdminPasswordHash: string(hashBytes),
+	}); err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+	site, err := ps.DefaultSite()
+	if err != nil {
+		t.Fatalf("default site: %v", err)
+	}
+
+	byHost := func() map[string]*SiteDomain {
+		all, err := ps.SiteDomains()
+		if err != nil {
+			t.Fatalf("list domains: %v", err)
+		}
+		m := map[string]*SiteDomain{}
+		for _, d := range all {
+			if d.SiteID == site.ID {
+				m[d.Host] = d
+			}
+		}
+		return m
+	}
+
+	// Primary + one redirecting alias + one independent alias.
+	if err := ps.ReplaceSiteDomains(site.ID, []SiteDomainSpec{
+		{Scheme: "https", Host: "a.com", Primary: true},
+		{Scheme: "https", Host: "www.a.com", Redirect: true},
+		{Scheme: "https", Host: "b.com", Redirect: false},
+	}); err != nil {
+		t.Fatalf("replace: %v", err)
+	}
+	m := byHost()
+	if len(m) != 3 {
+		t.Fatalf("want 3 domains, got %d", len(m))
+	}
+	if !m["a.com"].IsPrimary || m["a.com"].RedirectToPrimary {
+		t.Fatalf("a.com should be primary non-redirect: %#v", m["a.com"])
+	}
+	if m["www.a.com"].IsPrimary || !m["www.a.com"].RedirectToPrimary {
+		t.Fatalf("www.a.com should be redirecting alias: %#v", m["www.a.com"])
+	}
+	if m["b.com"].IsPrimary || m["b.com"].RedirectToPrimary {
+		t.Fatalf("b.com should be independent alias: %#v", m["b.com"])
+	}
+
+	// Replace with a different set — old aliases must be gone.
+	if err := ps.ReplaceSiteDomains(site.ID, []SiteDomainSpec{
+		{Scheme: "https", Host: "a.com", Primary: true},
+		{Scheme: "https", Host: "c.com", Redirect: true},
+	}); err != nil {
+		t.Fatalf("replace 2: %v", err)
+	}
+	m = byHost()
+	if len(m) != 2 || m["www.a.com"] != nil || m["b.com"] != nil || m["c.com"] == nil {
+		t.Fatalf("replace did not swap domain set: %#v", m)
+	}
+
+	// Empty spec clears everything.
+	if err := ps.ReplaceSiteDomains(site.ID, nil); err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+	if m = byHost(); len(m) != 0 {
+		t.Fatalf("want 0 domains after clear, got %d", len(m))
+	}
+}

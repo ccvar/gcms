@@ -26,7 +26,7 @@ X-GCMS-API-Key: gcms_xxx</code></pre>
         <table>
           <thead><tr><th>资源</th><th>列表 / 创建</th><th>读取 / 更新</th><th>权限前缀</th></tr></thead>
           <tbody>
-            <tr><td>语种</td><td><code>GET /languages</code></td><td>只读</td><td><code>languages</code></td></tr>
+            <tr><td>语种</td><td><code>GET /languages</code><br><code>POST /languages</code><br><code>PATCH /languages/{code}</code><br><code>GET/PATCH /languages/{code}/catalog</code></td><td>读取、新增自定义、启用/禁用、设置默认、前台字典</td><td><code>languages</code></td></tr>
             <tr><td>媒体</td><td><code>POST /media</code></td><td>上传图片</td><td><code>media</code></td></tr>
             <tr><td>文章分类</td><td><code>GET /posts/categories</code></td><td>只读</td><td><code>posts:categories</code></td></tr>
             <tr><td>文章</td><td><code>GET/POST /posts</code></td><td><code>GET/PATCH /posts/{id}</code><br><code>GET /posts/{id}/preview</code><br><code>PATCH /posts/featured/{id}</code></td><td><code>posts</code></td></tr>
@@ -41,6 +41,10 @@ X-GCMS-API-Key: gcms_xxx</code></pre>
           <thead><tr><th>小权限</th><th>能做什么</th><th>例子</th></tr></thead>
           <tbody>
             <tr><td>读取语种</td><td>列出默认语种和启用语种</td><td><code>languages:read</code></td></tr>
+            <tr><td>新增自定义语种</td><td>新增内置列表之外的语种预设</td><td><code>languages:write</code></td></tr>
+            <tr><td>启用/禁用语种</td><td>启用或关闭前台语种；当前默认语种不能禁用</td><td><code>languages:enable</code></td></tr>
+            <tr><td>设置默认语种</td><td>调整浏览器语言无法匹配时的兜底语种</td><td><code>languages:default</code></td></tr>
+            <tr><td>修改语种字典</td><td>维护前台按钮、页脚、搜索空状态等系统文案</td><td><code>languages:catalog</code></td></tr>
             <tr><td>上传媒体</td><td>上传图片并返回可用于 <code>cover_image</code> 或正文 Markdown 的 URL</td><td><code>media:write</code></td></tr>
             <tr><td>读取</td><td>列出和查看内容；文章和链接还可读取草稿预览</td><td><code>posts:read</code></td></tr>
             <tr><td>获取分类</td><td>列出文章或链接分类，用于获取可写入 <code>category_id</code> 的 ID</td><td><code>posts:categories</code> / <code>links:categories</code></td></tr>
@@ -86,6 +90,16 @@ X-GCMS-API-Key: gcms_xxx</code></pre>
         <p>查看当前启用语种：</p>
         <pre><code>curl '{{.Site.Root "/api/admin/v1/languages"}}' \
   -H 'Authorization: Bearer gcms_xxx'</code></pre>
+
+        <p>查看某个语种的前台系统文案字典。自定义语种或新启用语种如果出现 <code>home.xxx</code>、<code>footer.xxx</code> 这类 key，可先读取再补齐：</p>
+        <pre><code>curl '{{.Site.Root "/api/admin/v1/languages/id/catalog"}}' \
+  -H 'Authorization: Bearer gcms_xxx'</code></pre>
+
+        <p>修改语种字典。这里只管模板系统文案，不会修改文章、页面或链接正文：</p>
+        <pre><code>curl -X PATCH '{{.Site.Root "/api/admin/v1/languages/id/catalog"}}' \
+  -H 'Authorization: Bearer gcms_xxx' \
+  -H 'Content-Type: application/json' \
+  -d '{"catalog":{"home.cta_start":"Mulai membaca","footer.about":"Tentang"}}'</code></pre>
 
         <p>查看当前语种下的文章分类，拿到创建或更新文章可用的 <code>category_id</code>：</p>
         <pre><code>curl '{{.Site.Root "/api/admin/v1/posts/categories"}}?lang=zh' \

@@ -58,6 +58,13 @@ type Server struct {
 	runtimes  *SiteRuntimePool
 }
 
+// SiteDomainForm pre-fills the domain-binding modal for one site.
+type SiteDomainForm struct {
+	PrimaryHost     string // 主域名（host，可空）
+	AliasText       string // 别名域名，一行一个
+	RedirectAliases bool   // 别名是否 301 跳转到主域名
+}
+
 type SiteRuntime struct {
 	Site      *platform.Site
 	Store     *store.Store
@@ -69,9 +76,22 @@ type SiteRuntime struct {
 type SiteRuntimePool struct {
 	byID          map[int64]*SiteRuntime
 	byHost        map[string]*SiteRuntime
+	redirects     map[string]string // 别名 Host -> 主域名基址（scheme://host），命中即 301
 	defaultSite   *SiteRuntime
 	platformHost  string
 	localPlatform bool
+}
+
+// redirectTarget returns the primary base URL an alias host should 301 to, or "".
+func (p *SiteRuntimePool) redirectTarget(rawHost string) string {
+	if p == nil || len(p.redirects) == 0 {
+		return ""
+	}
+	host := normalizeRuntimeHost(rawHost)
+	if host == "" {
+		return ""
+	}
+	return p.redirects[host]
 }
 
 type contentCacheEntry struct {
@@ -395,10 +415,11 @@ type View struct {
 	APIDocsURL            string
 	SkillPackageURL       string
 	StarterPackageURL     string
-	EditLang              string             // 后台当前操作的内容语种
-	Locales               []i18n.Locale      // 已启用语种
-	AllLocales            []i18n.Locale      // 全部可选语种（内置 + 自定义，语言设置勾选）
-	CustomLocales         []i18n.Locale      // 自定义预设（可删除）
+	EditLang              string        // 后台当前操作的内容语种
+	Locales               []i18n.Locale // 已启用语种
+	AllLocales            []i18n.Locale // 全部可选语种（内置 + 自定义，语言设置勾选）
+	CustomLocales         []i18n.Locale // 自定义预设（可删除）
+	LocaleCatalogs        map[string]LocaleCatalogView
 	AdminI18NJSON         string             // 当前后台语种的用户覆盖翻译 JSON
 	Trans                 []*store.Post      // 当前编辑文章的互译版本
 	Social                []SocialLink       // 页脚社交链接（前台渲染 / 后台回填）
@@ -419,7 +440,9 @@ type View struct {
 	OverviewStatus        []OverviewStatus   // 后台概览：系统状态
 	PlatformSites         []*platform.Site   // 平台综合后台：站点列表
 	PlatformDomains       map[int64][]*platform.SiteDomain
+	PlatformDomainForms   map[int64]SiteDomainForm // 每站点：绑定域名弹窗的预填数据
 	PlatformSiteIcons     map[int64]string
+	PlatformPreviewURLs   map[int64]string // 平台站点页：按各站点默认语种生成的预览入口
 	PlatformOfficialURLs  map[int64]string // 已发布到 Cloudflare 的正式站点入口
 	PlatformOfficialHosts map[int64]string // 正式站点入口展示域名
 	PlatformCurrentSiteID int64            // 平台会话中当前选择的站点
@@ -428,6 +451,13 @@ type View struct {
 	BackupConfig          backup.Config
 	BackupRecords         []*backup.BackupRecord
 	BackupDir             string
+	ServerHealth          ServerHealth // 平台站点页：服务器负载 / 内存 / 磁盘快照
+	CaddyOnDemand         bool         // 已启用 Caddy 按需签发（决定域名绑定指引显示自动/手动）
+	CFDNSTokenSet         bool         // 平台级 Cloudflare DNS 令牌已授权
+	CFDNSFingerprint      string       // 已授权令牌指纹（展示用）
+	CFServerIPv4          string       // 记住的服务器 IPv4（DNS A 记录目标）
+	CFServerIPv6          string       // 记住的服务器 IPv6（DNS AAAA 记录目标，可选）
+	CFAuthorizeURL        string       // Cloudflare 授权模板链接
 }
 
 type OverviewStat struct {
@@ -488,6 +518,15 @@ type VisualLog struct {
 	Old   string `json:"old"`
 	New   string `json:"new"`
 	At    string `json:"at"`
+}
+
+type LocaleCatalogView struct {
+	Code          string
+	JSON          string
+	Source        string
+	SourceLabel   string
+	OverrideCount int
+	KeyCount      int
 }
 
 // GiscusView 是前台文章页渲染 giscus 所需的受控配置。
@@ -652,6 +691,7 @@ func NewWithPlatform(st *store.Store, ps *platform.Store, baseURL, uploadDir str
 		cloudflareStatusFile: cloudflareStatusPath(),
 	}
 	s.i18n.LoadCustom(st.Setting("custom_locales")) // 合并后台新增的自定义语种预设
+	s.i18n.LoadCatalogOverrides(st.Setting("locale_catalogs"))
 	s.migratePlatformAdminI18N()
 	s.routes(assetsFS)
 	if ps != nil {
@@ -729,6 +769,7 @@ func (s *Server) reloadRuntimePool() error {
 	pool := &SiteRuntimePool{
 		byID:          map[int64]*SiteRuntime{},
 		byHost:        map[string]*SiteRuntime{},
+		redirects:     map[string]string{},
 		platformHost:  normalizeRuntimeHost(baseURLHost(s.baseURL)),
 		localPlatform: isLocalBaseURL(s.baseURL),
 	}
@@ -750,10 +791,25 @@ func (s *Server) reloadRuntimePool() error {
 		if site.IsDefault {
 			continue
 		}
-		for _, d := range domainsBySite[site.ID] {
+		siteDomains := domainsBySite[site.ID]
+		primaryBase := ""
+		for _, d := range siteDomains {
+			if d.IsPrimary {
+				if normalizeRuntimeHost(d.Host) != "" {
+					primaryBase = d.Scheme + "://" + d.Host
+				}
+				break
+			}
+		}
+		for _, d := range siteDomains {
 			host := normalizeRuntimeHost(d.Host)
-			if host != "" {
-				pool.byHost[host] = rt
+			if host == "" {
+				continue
+			}
+			pool.byHost[host] = rt
+			// 别名域名（标记跳转、且不是主域名）在有主域名时映射为 301 目标。
+			if d.RedirectToPrimary && !d.IsPrimary && primaryBase != "" {
+				pool.redirects[host] = primaryBase
 			}
 		}
 	}
@@ -816,6 +872,7 @@ func (s *Server) cloneForRuntime(rt *SiteRuntime) *Server {
 		cloudflareStatusFile: cloudflareStatusPathForRuntime(rt),
 	}
 	clone.i18n.LoadCustom(rt.Store.Setting("custom_locales"))
+	clone.i18n.LoadCatalogOverrides(rt.Store.Setting("locale_catalogs"))
 	clone.routes(s.assetsFS)
 	return clone
 }
@@ -912,6 +969,12 @@ func isLocalHostOnly(host string) bool {
 }
 
 func (s *Server) serveWithRuntime(w http.ResponseWriter, r *http.Request) {
+	// Caddy on-demand TLS ask — must answer regardless of Host (Caddy calls it on
+	// 127.0.0.1) and before any host-based routing.
+	if r.URL.Path == "/internal/caddy/ask" {
+		s.caddyAsk(w, r)
+		return
+	}
 	pool := s.runtimePool()
 	if pool == nil {
 		s.siteHandler().ServeHTTP(w, r)
@@ -950,7 +1013,12 @@ func (s *Server) serveWithRuntime(w http.ResponseWriter, r *http.Request) {
 		rt.server.siteHandler().ServeHTTP(w, r)
 		return
 	}
-	rt, ok := pool.runtimeByHost(requestHost(r))
+	reqHost := requestHost(r)
+	if target := pool.redirectTarget(reqHost); target != "" {
+		http.Redirect(w, r, target+r.URL.RequestURI(), http.StatusMovedPermanently)
+		return
+	}
+	rt, ok := pool.runtimeByHost(reqHost)
 	if !ok || rt == nil || rt.server == nil {
 		http.NotFound(w, r)
 		return
@@ -2240,21 +2308,36 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /admin/upload", s.requireAuth(s.adminUpload))
 	mux.HandleFunc("POST /admin/render", s.requireAuth(s.adminRender))
 
+	apiCollection := func(collection string, h http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			r.SetPathValue("collection", collection)
+			h(w, r)
+		}
+	}
+
 	// 自动化 API（开放语种、站点文案、导航、分类、媒体上传，以及文章 / 页面 / 链接内容操作）。
 	mux.HandleFunc("GET /api/admin/v1/openapi.json", s.apiOpenAPI)
 	mux.HandleFunc("GET /api/admin/v1/languages", s.apiLanguages)
 	mux.HandleFunc("POST /api/admin/v1/languages", s.apiCreateLanguage)
+	mux.HandleFunc("PATCH /api/admin/v1/languages/{code}", s.apiUpdateLanguage)
+	mux.HandleFunc("GET /api/admin/v1/languages/{code}/catalog", s.apiGetLanguageCatalog)
+	mux.HandleFunc("PATCH /api/admin/v1/languages/{code}/catalog", s.apiUpdateLanguageCatalog)
 	mux.HandleFunc("GET /api/admin/v1/types", s.apiContentTypes)
 	mux.HandleFunc("GET /api/admin/v1/site-profile", s.apiGetSiteProfile)
 	mux.HandleFunc("PATCH /api/admin/v1/site-profile", s.apiUpdateSiteProfile)
 	mux.HandleFunc("GET /api/admin/v1/navigation", s.apiGetNavigation)
 	mux.HandleFunc("PATCH /api/admin/v1/navigation", s.apiUpdateNavigation)
 	mux.HandleFunc("POST /api/admin/v1/media", s.apiUploadMedia)
-	mux.HandleFunc("GET /api/admin/v1/{collection}/categories", s.apiListCategories)
-	mux.HandleFunc("POST /api/admin/v1/{collection}/categories", s.apiCreateCategory)
-	mux.HandleFunc("GET /api/admin/v1/{collection}/categories/all-entry", s.apiGetCategoryAllEntry)
-	mux.HandleFunc("PATCH /api/admin/v1/{collection}/categories/all-entry", s.apiUpdateCategoryAllEntry)
-	mux.HandleFunc("PATCH /api/admin/v1/{collection}/categories/{id}", s.apiUpdateCategory)
+	mux.HandleFunc("GET /api/admin/v1/posts/categories", apiCollection("posts", s.apiListCategories))
+	mux.HandleFunc("POST /api/admin/v1/posts/categories", apiCollection("posts", s.apiCreateCategory))
+	mux.HandleFunc("GET /api/admin/v1/posts/categories/all-entry", apiCollection("posts", s.apiGetCategoryAllEntry))
+	mux.HandleFunc("PATCH /api/admin/v1/posts/categories/all-entry", apiCollection("posts", s.apiUpdateCategoryAllEntry))
+	mux.HandleFunc("PATCH /api/admin/v1/posts/categories/{id}", apiCollection("posts", s.apiUpdateCategory))
+	mux.HandleFunc("GET /api/admin/v1/links/categories", apiCollection("links", s.apiListCategories))
+	mux.HandleFunc("POST /api/admin/v1/links/categories", apiCollection("links", s.apiCreateCategory))
+	mux.HandleFunc("GET /api/admin/v1/links/categories/all-entry", apiCollection("links", s.apiGetCategoryAllEntry))
+	mux.HandleFunc("PATCH /api/admin/v1/links/categories/all-entry", apiCollection("links", s.apiUpdateCategoryAllEntry))
+	mux.HandleFunc("PATCH /api/admin/v1/links/categories/{id}", apiCollection("links", s.apiUpdateCategory))
 	mux.HandleFunc("GET /api/admin/v1/{collection}", s.apiListContent)
 	mux.HandleFunc("POST /api/admin/v1/{collection}", s.apiCreateContent)
 	mux.HandleFunc("GET /api/admin/v1/{collection}/{id}/preview", s.apiPreviewContent)
@@ -2266,16 +2349,24 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/openapi.json", s.apiPlatformOpenAPI)
 	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/languages", s.apiLanguages)
 	mux.HandleFunc("POST /api/platform/v1/sites/{siteID}/languages", s.apiCreateLanguage)
+	mux.HandleFunc("PATCH /api/platform/v1/sites/{siteID}/languages/{code}", s.apiUpdateLanguage)
+	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/languages/{code}/catalog", s.apiGetLanguageCatalog)
+	mux.HandleFunc("PATCH /api/platform/v1/sites/{siteID}/languages/{code}/catalog", s.apiUpdateLanguageCatalog)
 	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/site-profile", s.apiGetSiteProfile)
 	mux.HandleFunc("PATCH /api/platform/v1/sites/{siteID}/site-profile", s.apiUpdateSiteProfile)
 	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/navigation", s.apiGetNavigation)
 	mux.HandleFunc("PATCH /api/platform/v1/sites/{siteID}/navigation", s.apiUpdateNavigation)
 	mux.HandleFunc("POST /api/platform/v1/sites/{siteID}/media", s.apiUploadMedia)
-	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/{collection}/categories", s.apiListCategories)
-	mux.HandleFunc("POST /api/platform/v1/sites/{siteID}/{collection}/categories", s.apiCreateCategory)
-	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/{collection}/categories/all-entry", s.apiGetCategoryAllEntry)
-	mux.HandleFunc("PATCH /api/platform/v1/sites/{siteID}/{collection}/categories/all-entry", s.apiUpdateCategoryAllEntry)
-	mux.HandleFunc("PATCH /api/platform/v1/sites/{siteID}/{collection}/categories/{id}", s.apiUpdateCategory)
+	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/posts/categories", apiCollection("posts", s.apiListCategories))
+	mux.HandleFunc("POST /api/platform/v1/sites/{siteID}/posts/categories", apiCollection("posts", s.apiCreateCategory))
+	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/posts/categories/all-entry", apiCollection("posts", s.apiGetCategoryAllEntry))
+	mux.HandleFunc("PATCH /api/platform/v1/sites/{siteID}/posts/categories/all-entry", apiCollection("posts", s.apiUpdateCategoryAllEntry))
+	mux.HandleFunc("PATCH /api/platform/v1/sites/{siteID}/posts/categories/{id}", apiCollection("posts", s.apiUpdateCategory))
+	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/links/categories", apiCollection("links", s.apiListCategories))
+	mux.HandleFunc("POST /api/platform/v1/sites/{siteID}/links/categories", apiCollection("links", s.apiCreateCategory))
+	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/links/categories/all-entry", apiCollection("links", s.apiGetCategoryAllEntry))
+	mux.HandleFunc("PATCH /api/platform/v1/sites/{siteID}/links/categories/all-entry", apiCollection("links", s.apiUpdateCategoryAllEntry))
+	mux.HandleFunc("PATCH /api/platform/v1/sites/{siteID}/links/categories/{id}", apiCollection("links", s.apiUpdateCategory))
 	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/{collection}", s.apiListContent)
 	mux.HandleFunc("POST /api/platform/v1/sites/{siteID}/{collection}", s.apiCreateContent)
 	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/{collection}/{id}/preview", s.apiPreviewContent)
@@ -2296,6 +2387,7 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /admin/dismiss-pw", s.requireAuth(s.adminDismissPw))
 	mux.HandleFunc("GET /admin", s.requireAuth(s.adminDashboard))
 	mux.HandleFunc("GET /admin/sites", s.requireAuth(s.adminSites))
+	mux.HandleFunc("GET /admin/server-health", s.requireAuth(s.adminServerHealth))
 	mux.HandleFunc("POST /admin/sites", s.requireAuth(s.adminCreateSite))
 	mux.HandleFunc("POST /admin/sites/{id}/enter", s.requireAuth(s.adminEnterSite))
 	mux.HandleFunc("GET /admin/sites/{id}/automation/skill.zip", s.requireAuth(s.adminDownloadPlatformAutomationSkill))
@@ -2303,7 +2395,7 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /admin/sites/{id}/default", s.requireAuth(s.adminSetDefaultSite))
 	mux.HandleFunc("POST /admin/sites/{id}/status", s.requireAuth(s.adminSetSiteStatus))
 	mux.HandleFunc("POST /admin/sites/{id}/automation", s.requireAuth(s.adminSetSiteAutomation))
-	mux.HandleFunc("POST /admin/sites/{id}/domains", s.requireAuth(s.adminAddSiteDomain))
+	mux.HandleFunc("POST /admin/sites/{id}/domains", s.requireAuth(s.adminSaveSiteDomains))
 	mux.HandleFunc("POST /admin/sites/{id}/archive", s.requireAuth(s.adminArchiveSite))
 	mux.HandleFunc("GET /admin/sites/{id}/uploads/{name}", s.requireAuth(s.adminSiteUpload))
 	mux.HandleFunc("GET /admin/platform/settings", s.requireAuth(s.adminPlatformSettings))
@@ -2353,6 +2445,7 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /admin/settings/copy", s.requireAuth(s.adminSaveCopy))
 	mux.HandleFunc("POST /admin/settings/menu", s.requireAuth(s.adminSaveMenu))
 	mux.HandleFunc("POST /admin/settings/languages", s.requireAuth(s.adminSaveLanguages))
+	mux.HandleFunc("POST /admin/settings/languages/catalog", s.requireAuth(s.adminSaveLocaleCatalog))
 	mux.HandleFunc("POST /admin/settings/languages/preset", s.requireAuth(s.adminAddLocalePreset))
 	mux.HandleFunc("POST /admin/settings/languages/preset/delete", s.requireAuth(s.adminDeleteLocalePreset))
 	mux.HandleFunc("POST /admin/settings/categories/all", s.requireAuth(s.adminSaveCategoryAll))

@@ -254,6 +254,21 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 	if !ok || otherRuntime == nil || otherRuntime.Store == nil || otherRuntime.server == nil {
 		t.Fatalf("other site runtime missing")
 	}
+	if err := otherRuntime.Store.SetSetting("locales", "id"); err != nil {
+		t.Fatalf("set other site id locale: %v", err)
+	}
+	idLangPlatformPage := getPlatform("/admin/sites")
+	if idLangPlatformPage.Code != http.StatusOK {
+		t.Fatalf("id-lang platform page status = %d, body = %s", idLangPlatformPage.Code, idLangPlatformPage.Body.String())
+	}
+	otherIDPreviewPath := "/admin/sites/" + strconv.FormatInt(otherSite.ID, 10) + "/preview/id/"
+	otherWrongPreviewPath := "/admin/sites/" + strconv.FormatInt(otherSite.ID, 10) + "/preview/zh/"
+	if body := idLangPlatformPage.Body.String(); !strings.Contains(body, `href="`+otherIDPreviewPath+`"`) || strings.Contains(body, `href="`+otherWrongPreviewPath+`"`) {
+		t.Fatalf("platform page did not use site default language for preview link")
+	}
+	if err := otherRuntime.Store.SetSetting("locales", "zh"); err != nil {
+		t.Fatalf("restore other site zh locale: %v", err)
+	}
 	if err := otherRuntime.Store.SetSetting(cloudflareDomainsKey, encodeCloudflareDomains([]CloudflareDomain{{Host: "blog.test", Primary: true}})); err != nil {
 		t.Fatalf("set other Cloudflare domain: %v", err)
 	}

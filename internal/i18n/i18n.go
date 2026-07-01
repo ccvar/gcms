@@ -76,12 +76,13 @@ type Manager struct {
 	cats      map[string]map[string]string // code -> key -> text
 	adminCats map[string]map[string]string // code -> admin key -> text
 	mu        sync.RWMutex
-	custom    []Locale // 后台新增的自定义预设
+	custom    []Locale                     // 后台新增的自定义预设
+	overrides map[string]map[string]string // code -> key -> text，站点级前台字典覆盖
 }
 
 // New 加载 embed 的文案目录。
 func New() *Manager {
-	m := &Manager{cats: map[string]map[string]string{}, adminCats: loadAdminCatalogs()}
+	m := &Manager{cats: map[string]map[string]string{}, adminCats: loadAdminCatalogs(), overrides: map[string]map[string]string{}}
 	entries, _ := localesFS.ReadDir("locales")
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
@@ -188,6 +189,179 @@ func MarshalCustom(ls []Locale) string {
 	return string(b)
 }
 
+// ParseCatalog 解析单个语种的前台字典 JSON。空输入或空对象表示清空覆盖。
+func ParseCatalog(jsonStr string) (map[string]string, error) {
+	jsonStr = strings.TrimSpace(jsonStr)
+	if jsonStr == "" {
+		return nil, nil
+	}
+	var kv map[string]string
+	if err := json.Unmarshal([]byte(jsonStr), &kv); err != nil {
+		return nil, err
+	}
+	return SanitizeCatalog(kv), nil
+}
+
+// SanitizeCatalog 规范化前台字典：去掉空 key，保留空 value 用于显式覆盖为空文案。
+func SanitizeCatalog(kv map[string]string) map[string]string {
+	if len(kv) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(kv))
+	for k, v := range kv {
+		k = strings.TrimSpace(k)
+		if k == "" {
+			continue
+		}
+		out[k] = strings.TrimSpace(v)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// MarshalCatalog 把单个语种字典格式化为便于后台编辑的 JSON。
+func MarshalCatalog(kv map[string]string) string {
+	if kv == nil {
+		kv = map[string]string{}
+	}
+	b, _ := json.MarshalIndent(kv, "", "  ")
+	return string(b)
+}
+
+// ParseCatalogOverrides 解析站点级前台字典覆盖（settings.locale_catalogs）。
+func ParseCatalogOverrides(jsonStr string) map[string]map[string]string {
+	if strings.TrimSpace(jsonStr) == "" {
+		return nil
+	}
+	var raw map[string]map[string]string
+	if json.Unmarshal([]byte(jsonStr), &raw) != nil {
+		return nil
+	}
+	out := map[string]map[string]string{}
+	for code, cat := range raw {
+		code = strings.ToLower(strings.TrimSpace(code))
+		if !ValidCode(code) {
+			continue
+		}
+		if clean := SanitizeCatalog(cat); len(clean) > 0 {
+			out[code] = clean
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// MarshalCatalogOverrides 把站点级前台字典覆盖序列化回 settings。
+func MarshalCatalogOverrides(cats map[string]map[string]string) string {
+	if len(cats) == 0 {
+		return "{}"
+	}
+	clean := map[string]map[string]string{}
+	for code, cat := range cats {
+		code = strings.ToLower(strings.TrimSpace(code))
+		if !ValidCode(code) {
+			continue
+		}
+		if c := SanitizeCatalog(cat); len(c) > 0 {
+			clean[code] = c
+		}
+	}
+	if len(clean) == 0 {
+		return "{}"
+	}
+	b, _ := json.Marshal(clean)
+	return string(b)
+}
+
+// SetCatalogOverrides 用解析好的站点级前台字典覆盖替换当前集合（线程安全）。
+func (m *Manager) SetCatalogOverrides(cats map[string]map[string]string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.overrides = cloneNestedCatalog(cats)
+}
+
+// LoadCatalogOverrides 从 settings JSON 中加载站点级前台字典覆盖。
+func (m *Manager) LoadCatalogOverrides(jsonStr string) {
+	m.SetCatalogOverrides(ParseCatalogOverrides(jsonStr))
+}
+
+// CatalogOverride 返回某语种的覆盖字典拷贝。
+func (m *Manager) CatalogOverride(code string) map[string]string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return cloneCatalog(m.overrides[strings.ToLower(strings.TrimSpace(code))])
+}
+
+// CatalogSource 返回某语种前台字典的主要来源：custom 表示存在站点覆盖。
+func (m *Manager) CatalogSource(code string) string {
+	code = strings.ToLower(strings.TrimSpace(code))
+	m.mu.RLock()
+	if len(m.overrides[code]) > 0 {
+		m.mu.RUnlock()
+		return "custom"
+	}
+	m.mu.RUnlock()
+	if len(m.cats[code]) > 0 {
+		return "builtin"
+	}
+	return "fallback"
+}
+
+// Catalog 返回某语种可生效的完整前台字典：英文/中文兜底、默认语种、目标语种、站点覆盖依次叠加。
+func (m *Manager) Catalog(code, defaultCode string) map[string]string {
+	code = m.Locale(code).Code
+	defaultCode = strings.ToLower(strings.TrimSpace(defaultCode))
+	out := map[string]string{}
+	mergeCatalog(out, m.cats["en"])
+	mergeCatalog(out, m.cats["zh"])
+	mergeCatalog(out, m.cats[defaultCode])
+	mergeCatalog(out, m.CatalogOverride(defaultCode))
+	mergeCatalog(out, m.cats[code])
+	mergeCatalog(out, m.CatalogOverride(code))
+	return out
+}
+
+// CatalogKeyCount 返回某语种可生效的前台字典 key 数。
+func (m *Manager) CatalogKeyCount(code, defaultCode string) int {
+	return len(m.Catalog(code, defaultCode))
+}
+
+func cloneCatalog(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
+}
+
+func cloneNestedCatalog(in map[string]map[string]string) map[string]map[string]string {
+	if len(in) == 0 {
+		return map[string]map[string]string{}
+	}
+	out := make(map[string]map[string]string, len(in))
+	for code, cat := range in {
+		if clean := cloneCatalog(cat); len(clean) > 0 {
+			out[code] = clean
+		}
+	}
+	return out
+}
+
+func mergeCatalog(dst, src map[string]string) {
+	for k, v := range src {
+		if k != "" {
+			dst[k] = v
+		}
+	}
+}
+
 // Known 报告某语种码是否可用（内置或自定义）。
 func (m *Manager) Known(code string) bool { _, ok := m.meta(code); return ok }
 
@@ -233,20 +407,28 @@ func (m *Manager) Default(conf string) string { return m.Active(conf)[0].Code }
 
 // Tr 是「绑定到某语种」的翻译助手，随每个请求构建并放进模板数据。
 type Tr struct {
-	Loc      Locale
-	prefix   string
-	cat      map[string]string
-	fallback map[string]string
+	Loc              Locale
+	prefix           string
+	cat              map[string]string
+	override         map[string]string
+	fallback         map[string]string
+	fallbackOverride map[string]string
+	zh               map[string]string
+	en               map[string]string
 }
 
 // Tr 构建某语种的助手；defaultCode 用作文案回退。
 func (m *Manager) Tr(code, defaultCode string) *Tr {
 	loc := m.Locale(code)
 	return &Tr{
-		Loc:      loc,
-		prefix:   "/" + loc.Code,
-		cat:      m.cats[loc.Code],
-		fallback: m.cats[defaultCode],
+		Loc:              loc,
+		prefix:           "/" + loc.Code,
+		cat:              m.cats[loc.Code],
+		override:         m.CatalogOverride(loc.Code),
+		fallback:         m.cats[defaultCode],
+		fallbackOverride: m.CatalogOverride(defaultCode),
+		zh:               m.cats["zh"],
+		en:               m.cats["en"],
 	}
 }
 
@@ -271,15 +453,35 @@ func (t *Tr) WithPrefix(prefix string) *Tr {
 	return &cp
 }
 
-// T 取一条界面文案：先查本语种，缺失回退默认语种，再缺失返回 key 本身。
+// T 取一条界面文案：先查本语种，缺失回退默认语种，再回退内置中/英文，最后返回 key 本身。
 func (t *Tr) T(key string) string {
+	if t.override != nil {
+		if v, ok := t.override[key]; ok {
+			return v
+		}
+	}
 	if t.cat != nil {
 		if v, ok := t.cat[key]; ok && v != "" {
 			return v
 		}
 	}
+	if t.fallbackOverride != nil {
+		if v, ok := t.fallbackOverride[key]; ok {
+			return v
+		}
+	}
 	if t.fallback != nil {
 		if v, ok := t.fallback[key]; ok && v != "" {
+			return v
+		}
+	}
+	if t.zh != nil {
+		if v, ok := t.zh[key]; ok && v != "" {
+			return v
+		}
+	}
+	if t.en != nil {
+		if v, ok := t.en[key]; ok && v != "" {
 			return v
 		}
 	}

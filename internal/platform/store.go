@@ -558,6 +558,46 @@ func (s *Store) AddSiteDomain(siteID int64, scheme, host string, primary, redire
 	return tx.Commit()
 }
 
+// SiteDomainSpec describes one domain to bind when replacing a site's domain set.
+type SiteDomainSpec struct {
+	Scheme   string
+	Host     string
+	Primary  bool
+	Redirect bool
+}
+
+// ReplaceSiteDomains atomically replaces every domain bound to a site with specs
+// (primary first, then aliases). An empty slice clears all domains (unbinds the site).
+func (s *Store) ReplaceSiteDomains(siteID int64, specs []SiteDomainSpec) error {
+	if s == nil {
+		return nil
+	}
+	now := fmtTime(time.Now())
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM site_domains WHERE site_id=?`, siteID); err != nil {
+		return err
+	}
+	for _, d := range specs {
+		scheme := strings.TrimSpace(strings.ToLower(d.Scheme))
+		if scheme != "http" && scheme != "https" {
+			scheme = "https"
+		}
+		host := strings.TrimSpace(strings.ToLower(d.Host))
+		if host == "" {
+			continue
+		}
+		if _, err := tx.Exec(`INSERT INTO site_domains(site_id,scheme,host,is_primary,redirect_to_primary,enabled,created_at,updated_at)
+			VALUES(?,?,?,?,?,?,?,?)`, siteID, scheme, host, boolInt(d.Primary), boolInt(d.Redirect), 1, now, now); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 func (s *Store) ArchiveSite(id int64, archivePath string) (*ArchivedSite, error) {
 	if s == nil {
 		return nil, sql.ErrConnDone

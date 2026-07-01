@@ -217,6 +217,13 @@ func automationOpenAPISpec(apiBase string) map[string]any {
 			"get":  automationLanguagesOperation(),
 			"post": automationLanguageCreateOperation(),
 		},
+		"/languages/{code}": map[string]any{
+			"patch": automationLanguageUpdateOperation(),
+		},
+		"/languages/{code}/catalog": map[string]any{
+			"get":   automationLanguageCatalogGetOperation(),
+			"patch": automationLanguageCatalogUpdateOperation(),
+		},
 		"/site-profile": map[string]any{
 			"get":   automationSiteProfileGetOperation(),
 			"patch": automationSiteProfileUpdateOperation(),
@@ -268,7 +275,7 @@ func automationOpenAPISpec(apiBase string) map[string]any {
 		"info": map[string]any{
 			"title":       "GCMS Automation API",
 			"version":     "1.0.0",
-			"description": "开放语种、站点文案、导航菜单、分类、媒体上传、文章与链接草稿预览、文章与链接置顶，以及文章、链接、页面的自动化接口。GCMS 不调用 AI API，外部 AI 工具或自动化程序使用访问密钥调用这里的接口。",
+			"description": "开放语种读取、新增、启用/禁用、默认语种设置、前台字典、站点文案、导航菜单、分类、媒体上传、文章与链接草稿预览、文章与链接置顶，以及文章、链接、页面的自动化接口。GCMS 不调用 AI API，外部 AI 工具或自动化程序使用访问密钥调用这里的接口。",
 		},
 		"servers": []map[string]string{{"url": apiBase}},
 		"security": []map[string][]string{
@@ -289,21 +296,60 @@ func automationOpenAPISpec(apiBase string) map[string]any {
 func automationLanguagesOperation() map[string]any {
 	return map[string]any{
 		"summary":     "列出启用语种",
-		"description": "只读接口。用于知道默认语种、启用语种，以及多语种内容更新时需要覆盖哪些语种。返回项里的 enabled 表示该语种已在前台启用；custom 表示后台或 API 新增的自定义语种。",
+		"description": "只读接口。默认只返回前台启用语种；传 include_disabled=true 可返回所有内置和自定义语种，便于判断 vi/id/th 等预设是否已启用；传 include_catalog=true 可在每个语种项里带出前台模板字典。返回项里的 enabled 表示该语种已在前台启用；custom 表示后台或 API 新增的自定义语种；catalog_source 表示字典来源。",
 		"operationId": "listLanguages",
 		"tags":        []string{"语种"},
-		"responses":   automationResponses("LanguageListResponse"),
+		"parameters": []map[string]any{
+			{"name": "include_disabled", "in": "query", "schema": map[string]any{"type": "boolean", "default": false}, "description": "传 true 返回所有内置和自定义语种，未启用项 enabled=false。"},
+			{"name": "include_catalog", "in": "query", "schema": map[string]any{"type": "boolean", "default": false}, "description": "传 true 时，每个语种项会附带生效后的前台模板字典 catalog。"},
+		},
+		"responses": automationResponses("LanguageListResponse"),
 	}
 }
 
 func automationLanguageCreateOperation() map[string]any {
 	return map[string]any{
 		"summary":     "新增自定义语种",
-		"description": "写接口。用于新增内置列表之外的自定义语种预设，可选择同时启用或设为默认语种。内置语种（如 zh/en/vi/id/th）不要用此接口重复创建，应在后台或已有设置里启用。",
+		"description": "写接口。用于新增内置列表之外的自定义语种预设，可选择同时启用或设为默认语种。内置语种（如 zh/en/vi/id/th）不要用此接口重复创建，应使用 PATCH /languages/{code} 启用。",
 		"operationId": "createCustomLanguage",
 		"tags":        []string{"语种"},
 		"requestBody": automationJSONBody("LanguageCreateInput"),
 		"responses":   automationResponses("LanguageItemResponse"),
+	}
+}
+
+func automationLanguageUpdateOperation() map[string]any {
+	return map[string]any{
+		"summary":     "启用/禁用语种或设置默认语种",
+		"description": "写接口。传 enabled=true/false 启用或禁用语种，需要 languages:enable 权限；传 default=true 设置默认语种，需要 languages:default 权限，并会自动启用该语种。当前默认语种不能禁用。",
+		"operationId": "updateLanguageSettings",
+		"tags":        []string{"语种"},
+		"parameters":  []map[string]any{automationLanguageCodeParam()},
+		"requestBody": automationJSONBody("LanguageUpdateInput"),
+		"responses":   automationResponses("LanguageItemResponse"),
+	}
+}
+
+func automationLanguageCatalogGetOperation() map[string]any {
+	return map[string]any{
+		"summary":     "读取语种前台字典",
+		"description": "只读接口。读取指定语种最终生效的前台模板文案字典，用于按钮、页脚、搜索空状态、导航辅助文字等系统文案。自定义语种或新启用语种如果缺少字典，前台会回落默认语种；AI 可先读取这里再补齐目标语种文案。",
+		"operationId": "getLanguageCatalog",
+		"tags":        []string{"语种"},
+		"parameters":  []map[string]any{automationLanguageCodeParam()},
+		"responses":   automationResponses("LanguageCatalogResponse"),
+	}
+}
+
+func automationLanguageCatalogUpdateOperation() map[string]any {
+	return map[string]any{
+		"summary":     "更新语种前台字典",
+		"description": "写接口。覆盖指定语种的前台模板文案字典，需要 languages:catalog 权限。请求体传 catalog 对象；传空对象可清空该语种自定义覆盖并恢复继承。只维护系统模板文案，不修改文章、链接、页面正文。",
+		"operationId": "updateLanguageCatalog",
+		"tags":        []string{"语种"},
+		"parameters":  []map[string]any{automationLanguageCodeParam()},
+		"requestBody": automationJSONBody("LanguageCatalogInput"),
+		"responses":   automationResponses("LanguageCatalogResponse"),
 	}
 }
 
@@ -521,6 +567,14 @@ func automationIDParam() map[string]any {
 	}
 }
 
+func automationLanguageCodeParam() map[string]any {
+	return map[string]any{
+		"name": "code", "in": "path", "required": true,
+		"schema":      map[string]any{"type": "string", "example": "vi"},
+		"description": "语种代码，例如 zh、en、vi、id、th 或自定义语种代码。",
+	}
+}
+
 func automationJSONBody(schema string) map[string]any {
 	return map[string]any{
 		"required": true,
@@ -590,13 +644,33 @@ func automationOpenAPISchemas() map[string]any {
 		"LanguageItem": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"code":    map[string]any{"type": "string", "description": "URL 前缀和内容 lang 值，如 zh、en、vi。"},
-				"name":    map[string]any{"type": "string"},
-				"tag":     map[string]any{"type": "string", "description": "BCP47 语言标记，如 en-US、vi-VN。"},
-				"og":      map[string]any{"type": "string", "description": "Open Graph locale，如 en_US、vi_VN。"},
-				"default": map[string]any{"type": "boolean"},
-				"enabled": map[string]any{"type": "boolean"},
-				"custom":  map[string]any{"type": "boolean"},
+				"code":           map[string]any{"type": "string", "description": "URL 前缀和内容 lang 值，如 zh、en、vi。"},
+				"name":           map[string]any{"type": "string"},
+				"tag":            map[string]any{"type": "string", "description": "BCP47 语言标记，如 en-US、vi-VN。"},
+				"og":             map[string]any{"type": "string", "description": "Open Graph locale，如 en_US、vi_VN。"},
+				"default":        map[string]any{"type": "boolean"},
+				"enabled":        map[string]any{"type": "boolean"},
+				"custom":         map[string]any{"type": "boolean"},
+				"catalog_source": map[string]any{"type": "string", "enum": []string{"builtin", "custom", "fallback"}, "description": "前台模板字典来源：builtin 内置、custom 站点自定义覆盖、fallback 回落默认/中英字典。"},
+				"catalog_keys":   map[string]any{"type": "integer", "description": "当前语种最终可用的前台模板字典 key 数。"},
+				"catalog":        map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}, "description": "只有 include_catalog=true 时返回；用于按钮、页脚、搜索空状态等系统文案。"},
+			},
+		},
+		"LanguageCatalogResponse": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"code":           map[string]any{"type": "string"},
+				"default":        map[string]any{"type": "boolean"},
+				"catalog_source": map[string]any{"type": "string", "enum": []string{"builtin", "custom", "fallback"}},
+				"catalog_keys":   map[string]any{"type": "integer"},
+				"catalog":        map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}},
+			},
+		},
+		"LanguageCatalogInput": map[string]any{
+			"type":     "object",
+			"required": []string{"catalog"},
+			"properties": map[string]any{
+				"catalog": map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "string"}, "description": "指定语种的前台模板文案覆盖；空对象表示清空覆盖，恢复继承。"},
 			},
 		},
 		"LanguageCreateInput": map[string]any{
@@ -609,6 +683,13 @@ func automationOpenAPISchemas() map[string]any {
 				"og":      map[string]any{"type": "string", "description": "Open Graph locale；留空时由 tag 自动转换。"},
 				"enable":  map[string]any{"type": "boolean", "description": "创建后是否立即启用到前台。"},
 				"default": map[string]any{"type": "boolean", "description": "是否创建后设为默认语种；设为 true 会同时启用。"},
+			},
+		},
+		"LanguageUpdateInput": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"enabled": map[string]any{"type": "boolean", "description": "true 启用语种，false 禁用语种；需要 languages:enable。不能禁用当前默认语种。"},
+				"default": map[string]any{"type": "boolean", "description": "传 true 设置为默认语种；需要 languages:default，并会自动启用该语种。"},
 			},
 		},
 		"CategoryListResponse": map[string]any{
@@ -927,9 +1008,31 @@ func automationScopeBadges(scopes string) []string {
 		if m[apiScopeLanguagesWrite] {
 			actions = append(actions, "新增自定义")
 		}
+		if m[apiScopeLanguagesEnable] {
+			actions = append(actions, "启用/禁用")
+		}
+		if m[apiScopeLanguagesDefault] {
+			actions = append(actions, "设置默认")
+		}
+		if m[apiScopeLanguagesCatalog] {
+			actions = append(actions, "修改字典")
+		}
 		out = append(out, "语种："+strings.Join(actions, "、"))
-	} else if m[apiScopeLanguagesWrite] {
-		out = append(out, "语种：新增自定义")
+	} else if m[apiScopeLanguagesWrite] || m[apiScopeLanguagesEnable] || m[apiScopeLanguagesDefault] || m[apiScopeLanguagesCatalog] {
+		actions := []string{}
+		if m[apiScopeLanguagesWrite] {
+			actions = append(actions, "新增自定义")
+		}
+		if m[apiScopeLanguagesEnable] {
+			actions = append(actions, "启用/禁用")
+		}
+		if m[apiScopeLanguagesDefault] {
+			actions = append(actions, "设置默认")
+		}
+		if m[apiScopeLanguagesCatalog] {
+			actions = append(actions, "修改字典")
+		}
+		out = append(out, "语种："+strings.Join(actions, "、"))
 	}
 	if m["media:write"] {
 		out = append(out, "媒体：上传")
@@ -1005,9 +1108,31 @@ func automationScopeBadgesAdmin(scopes string, admin *i18n.AdminTr) []string {
 		if m[apiScopeLanguagesWrite] {
 			labels = append(labels, adminUI(admin, "admin.settings.automation.languages_write", "新增自定义语种"))
 		}
+		if m[apiScopeLanguagesEnable] {
+			labels = append(labels, adminUI(admin, "admin.settings.automation.languages_enable", "启用/禁用语种"))
+		}
+		if m[apiScopeLanguagesDefault] {
+			labels = append(labels, adminUI(admin, "admin.settings.automation.languages_default", "设置默认语种"))
+		}
+		if m[apiScopeLanguagesCatalog] {
+			labels = append(labels, adminUI(admin, "admin.settings.automation.languages_catalog", "修改语种字典"))
+		}
 		out = append(out, adminUI(admin, "admin.settings.automation.languages", "语种")+colon+strings.Join(labels, sep))
-	} else if m[apiScopeLanguagesWrite] {
-		out = append(out, adminUI(admin, "admin.settings.automation.languages", "语种")+colon+adminUI(admin, "admin.settings.automation.languages_write", "新增自定义语种"))
+	} else if m[apiScopeLanguagesWrite] || m[apiScopeLanguagesEnable] || m[apiScopeLanguagesDefault] || m[apiScopeLanguagesCatalog] {
+		labels := []string{}
+		if m[apiScopeLanguagesWrite] {
+			labels = append(labels, adminUI(admin, "admin.settings.automation.languages_write", "新增自定义语种"))
+		}
+		if m[apiScopeLanguagesEnable] {
+			labels = append(labels, adminUI(admin, "admin.settings.automation.languages_enable", "启用/禁用语种"))
+		}
+		if m[apiScopeLanguagesDefault] {
+			labels = append(labels, adminUI(admin, "admin.settings.automation.languages_default", "设置默认语种"))
+		}
+		if m[apiScopeLanguagesCatalog] {
+			labels = append(labels, adminUI(admin, "admin.settings.automation.languages_catalog", "修改语种字典"))
+		}
+		out = append(out, adminUI(admin, "admin.settings.automation.languages", "语种")+colon+strings.Join(labels, sep))
 	}
 	if m["media:write"] {
 		out = append(out, adminUI(admin, "admin.settings.automation.media", "媒体")+colon+adminUI(admin, "admin.settings.automation.media_upload", "上传媒体"))
@@ -1217,6 +1342,7 @@ func automationStarterBriefMarkdown(opts automationSkillOptions) string {
 		"- 文章 `posts`：适合教程、资讯、案例、观点和 SEO/GEO 内容；可选择一个真实文章分类 `category_id`。",
 		"- 链接 `links`：适合资源导航、产品展示、外部工具和带详情页的目标网址；可选择一个真实链接分类 `category_id`，并必须有 `link_url`。",
 		"- 页面 `pages`：适合关于、功能、价格、FAQ、联系等固定页面；页面没有分类，也不使用 `category_id`。",
+		"- 语种字典：`GET /languages/{code}/catalog` 读取前台模板系统文案；`PATCH /languages/{code}/catalog` 修改按钮、页脚、搜索空状态等 key。启用自定义语种或新市场语种时要检查字典，避免前台显示 `home.xxx`、`footer.xxx`。",
 		"- 文章分类/链接分类：是内容可选择的真实分类，用 `/posts/categories`、`/links/categories` 创建或更新，返回的 `id` 才能写入内容的 `category_id`。",
 		"- 全部入口：`/posts/categories/all-entry` 和 `/links/categories/all-entry` 只控制前台总列表页标题、描述、路径和“全部”筛选按钮；它不是分类，不能写入 `category_id`。",
 		"",
@@ -1266,7 +1392,7 @@ func automationStarterWizardMarkdown() string {
 		"## 2. 网站需要哪些语种？",
 		"",
 		"- 启用语种：例如中文、英文",
-		"- 如果需要新增非内置语种：写清语种代码、显示名和 BCP47 标记；越南语 vi、印尼语 id、泰语 th 已是内置预设，只需启用。",
+		"- 如果需要新增非内置语种：写清语种代码、显示名和 BCP47 标记；越南语 vi、印尼语 id、泰语 th 已是内置预设，有权限时可直接启用。",
 		"- 默认语种：例如中文",
 		"- 不同语种是否需要不同表达：是 / 否 / 不确定",
 		"",
@@ -1629,7 +1755,7 @@ func automationStarterSkillMarkdown(apiBase string) string {
 		"",
 		"1. 优先读取 `新站需求向导.md`；如有 `站点需求模板.md`，一并读取。",
 		"2. 调用 `/languages`、`/site-profile`、`/navigation`、`/posts/categories/all-entry?lang=all`、`/links/categories/all-entry?lang=all`、`/posts/categories?lang=all`、`/links/categories?lang=all` 做只读检查。",
-		"3. 如果用户要求新增语种，先判断是否为内置语种；越南语 `vi`、印尼语 `id`、泰语 `th` 已内置，只提醒用户启用。只有非内置语种且密钥有 `languages:write` 权限时，才用 `POST /languages` 新增自定义语种。",
+		"3. 如果用户要求处理语种，先 `GET /languages?include_disabled=true&include_catalog=true`。越南语 `vi`、印尼语 `id`、泰语 `th` 已内置，不要重复创建；有 `languages:enable` 权限时用 `PATCH /languages/{code}` 启用。只有非内置语种且密钥有 `languages:write` 权限时，才用 `POST /languages` 新增自定义语种；如果目标语种的前台按钮、页脚、搜索空状态出现 `home.xxx`、`footer.xxx` 等 key，有 `languages:catalog` 权限时用 `/languages/{code}/catalog` 补齐字典。",
 		"4. 第一轮只输出完整规划，不要马上写入。",
 		"5. 规划要列出会新增、会修改和不会触碰的内容，并提示合规、品牌、版权、隐私和夸大承诺风险。",
 		"6. 用户明确确认后再分批写入：必要的自定义语种 -> 站点文案和确认过的 Hero 右侧视觉 -> 文章/链接总入口 -> 真实分类 -> 页面 -> 导航 -> 文章 -> 链接。",
@@ -1654,7 +1780,7 @@ func automationStarterSkillMarkdown(apiBase string) string {
 		"",
 		"## 内容模型边界",
 		"",
-		"- 语种 `languages`：`GET /languages` 只返回已启用语种；`POST /languages` 只用于新增内置列表之外的自定义语种，可传 `enable:true` 同时启用。不要重复创建 zh、en、vi、id、th 等内置语种。",
+		"- 语种 `languages`：`GET /languages` 只返回已启用语种；`GET /languages?include_disabled=true` 可查看内置和自定义语种；`GET /languages?include_catalog=true` 或 `GET /languages/{code}/catalog` 可查看前台模板字典；`PATCH /languages/{code}/catalog` 用于修改按钮、页脚、搜索空状态等系统文案；`POST /languages` 只用于新增内置列表之外的自定义语种；`PATCH /languages/{code}` 用于启用/禁用或设置默认。不要重复创建 zh、en、vi、id、th 等内置语种。",
 		"- 文章 `posts` 用于教程、资讯、案例、观点和 SEO/GEO 内容；可写真实文章分类的 `category_id`。",
 		"- 链接 `links` 用于资源导航、产品展示、外部工具和带详情页的目标网址；必须写 `link_url`，可写真实链接分类的 `category_id`。",
 		"- 页面 `pages` 用于关于、功能、价格、FAQ、联系等固定内容；没有分类，不写 `category_id`。",
@@ -1741,7 +1867,7 @@ func automationKitReadme(opts automationSkillOptions) string {
 		"",
 		"## 内容模型边界",
 		"",
-		"- 语种 `languages`：读取启用语种；有 `languages:write` 权限时可以新增自定义语种。`vi` 越南语、`id` 印尼语、`th` 泰语已是后台预设语种，通常只需启用。",
+		"- 语种 `languages`：读取启用语种；传 `include_disabled=true` 可查看所有内置和自定义语种；传 `include_catalog=true` 可带出前台模板字典；有 `languages:write` 可新增自定义语种；有 `languages:enable` 可启用/禁用语种；有 `languages:default` 可设置默认语种；有 `languages:catalog` 可修改按钮、页脚、搜索空状态等前台系统文案。`vi` 越南语、`id` 印尼语、`th` 泰语已是后台预设语种，不要重复创建。",
 		"- 文章 `posts`：教程、资讯、案例、观点、SEO/GEO 内容；可设置真实文章分类，可置顶到首页精选文章。",
 		"- 链接 `links`：资源导航、产品展示、外部工具；必须有 `link_url`，可设置真实链接分类，可置顶到首页精选链接。",
 		"- 页面 `pages`：关于、功能、价格、FAQ、联系等固定页面；没有分类，也没有置顶。",
@@ -1750,8 +1876,11 @@ func automationKitReadme(opts automationSkillOptions) string {
 		"",
 		"## 已开放能力",
 		"",
-		"- 读取语种：`GET /languages`。",
+		"- 读取语种：`GET /languages`；需要查看未启用预设时用 `GET /languages?include_disabled=true`。",
 		"- 新增自定义语种：`POST /languages`，需要 `languages:write` 权限。",
+		"- 启用/禁用语种：`PATCH /languages/{code}`，请求体为 `{\"enabled\":true}` 或 `{\"enabled\":false}`，需要 `languages:enable` 权限。",
+		"- 设置默认语种：`PATCH /languages/{code}`，请求体为 `{\"default\":true}`，需要 `languages:default` 权限；设置默认会自动启用该语种。",
+		"- 读取/修改语种前台字典：`GET/PATCH /languages/{code}/catalog`。字典只管模板系统文案，例如 `home.cta_start`、`footer.about`、搜索空状态和页脚链接；需要 `languages:catalog` 权限。",
 		"- 读取/更新站点文案、首页 Hero、品牌资产和分享图：`GET/PATCH /site-profile`。",
 		"- 读取/更新导航菜单：`GET/PATCH /navigation`。",
 		"- 上传媒体：`POST /media`。所有图片资源必须先转成 WebP（`.webp`）再上传；动画也优先用 animated WebP。",
@@ -1761,6 +1890,18 @@ func automationKitReadme(opts automationSkillOptions) string {
 		"- 读取/创建/修改文章分类和链接分类：`GET/POST/PATCH /posts/categories`、`GET/POST/PATCH /links/categories`。",
 		"- 修改“全部”入口文案和描述：`GET/PATCH /posts/categories/all-entry`、`GET/PATCH /links/categories/all-entry`。",
 		"",
+		"## 常用脚本命令",
+		"",
+		"- `node scripts/gcms.js doctor`",
+		"- `node scripts/gcms.js languages`",
+		"- `node scripts/gcms.js languages --all`",
+		"- `node scripts/gcms.js languages --all --catalog`",
+		"- `node scripts/gcms.js language-enable vi on`",
+		"- `node scripts/gcms.js language-enable vi off`",
+		"- `node scripts/gcms.js language-default en`",
+		"- `node scripts/gcms.js language-catalog id`",
+		"- `node scripts/gcms.js language-catalog-update id '{\"catalog\":{\"home.cta_start\":\"Mulai membaca\",\"footer.about\":\"Tentang\"}}'`",
+		"",
 		"## 操作规则",
 		"",
 		"- 第一次接入、权限变更或接口异常时，先读取 OpenAPI，并请求 `GET /languages`、分类接口和必要的只读接口做检查。",
@@ -1769,6 +1910,9 @@ func automationKitReadme(opts automationSkillOptions) string {
 		"- 修改指定内容前，先用 `q`、`slug` 或列表查到准确 `id`；多个结果先让用户确认。",
 		"- 设置内容分类前，先读取真实分类 ID；不要把 all-entry 当成 `category_id`。",
 		"- 处理多语种内容时，先读取启用语种；需要更新同组内容时，先用 `trans_group` 找到同组各语种版本，再逐条按 id 更新。",
+		"- 启用内置语种前先读 `GET /languages?include_disabled=true`；不要用 `POST /languages` 重复创建 zh、en、vi、id、th 等内置语种。",
+		"- 禁用语种前确认它不是当前默认语种；需要切换默认语种时先用 `PATCH /languages/{code}` 写 `{\"default\":true}`。",
+		"- 新增或启用非中英文语种后，如果前台出现 `home.xxx`、`footer.xxx`、`search.xxx` 等未翻译 key，先读取 `GET /languages/{code}/catalog`，再用 `PATCH /languages/{code}/catalog` 补齐对应字典；不要用文章、页面或导航去替代系统字典。",
 		"- 需要替换封面、正文图片、分享图或 Hero 右侧视觉时，先转 WebP，再上传到 `/media`，最后把返回 URL 写入对应字段。",
 		"- Hero 右侧动画必须先给方案，用户确认后再生成和上传；避免白底、闪烁和过大的文件。",
 		"- 不要删除内容，不要改管理员账号、密码、安全设置、系统更新、Cloudflare 部署、评论配置或 API Key。",
@@ -1782,7 +1926,9 @@ func automationKitReadme(opts automationSkillOptions) string {
 		"- 帮我规划一个资料库网站：先读取语种、站点文案、导航、文章/链接总入口和真实分类，说明文章、链接、页面各自承担什么内容，再给出导航和分类建议；第一轮不要写入。",
 		"- 帮我调整文章总列表页：把“全部文章入口”的标题、描述、slug 和“全部”筛选按钮改得更适合教程站；先读取 `/posts/categories/all-entry?lang=all`，确认后再更新。",
 		"- 帮我把文章“全部”入口的文案改成“全部教程”，描述改成更适合新手学习；先读取 `/posts/categories/all-entry?lang=zh`，确认字段后再提交。",
-		"- 帮我新增越南语站点内容入口：先检查 `vi` 是否已启用，未启用时新增或启用越南语，然后给出导航和分类翻译建议；先不要写入内容。",
+		"- 帮我启用越南语站点内容入口：先读取 `GET /languages?include_disabled=true` 检查 `vi`，未启用时调用 `PATCH /languages/vi` 写 `{\"enabled\":true}`，然后给出导航和分类翻译建议；先不要写入内容。",
+		"- 把英文设为默认语种：先读取 `GET /languages?include_disabled=true`，确认 `en` 存在后调用 `PATCH /languages/en` 写 `{\"default\":true}`，完成后回读语种列表。",
+		"- 帮我补齐印尼语前台系统文案：先读取 `GET /languages/id/catalog`，把按钮、页脚、搜索空状态这类 key 翻译成印尼语，再调用 `PATCH /languages/id/catalog` 写入 `catalog` 对象；不要改文章正文。",
 		"- 检查最近 50 篇中文文章，重点看标题、摘要、SEO 描述、关键词、分类、封面图是否缺失；只输出问题列表和建议，不要修改。",
 		"- 深度检查最近 20 个页面，逐条读取正文，找出缺正文、缺封面、SEO 描述太弱或标题不清楚的页面；按优先级列出 ID、标题、问题和建议。",
 		"- 根据我提供的资料创建一篇中文文章草稿；先查询文章分类并选择合适的 `category_id`，有封面图时先转成 WebP 再上传媒体，并把返回 URL 写入 `cover_image`；状态保持 `draft`。",
@@ -1810,6 +1956,7 @@ func automationKitReadme(opts automationSkillOptions) string {
 		"- 调整文章或链接列表页标题、描述、入口路径和“全部”筛选按钮时，让 AI 使用 `/posts/categories/all-entry` 或 `/links/categories/all-entry`。",
 		"- 设置封面、正文图片或 Hero 右侧视觉前，让 AI 先把图片转成 WebP（.webp），再用 `POST /media` 上传文件；Hero 右侧动画写入 `hero_image` 并设置 `hero_visual:image`。",
 		"- 更新全部语种时，让 AI 先用 `/languages` 确认启用语种，再按 `trans_group` 找到同组内容，逐条更新各语种 id。",
+		"- 让 AI 启用/禁用语种、设置默认语种或补前台系统文案时，先读 `/languages?include_disabled=true&include_catalog=true`；默认语种不能禁用，内置语种不要重复创建；前台露出 `home.xxx`、`footer.xxx` 等 key 时用语种字典修复。",
 		"- 置顶文章或链接前，让 AI 先查到准确 id，并确认访问密钥有对应置顶权限。",
 	)
 	return strings.Join(lines, "\n") + "\n"
@@ -1869,6 +2016,7 @@ func automationSkillMarkdown(apiBase string) string {
 		"- `draft`：创建草稿，默认 `status` 为 `draft`。",
 		"- `update`：先找到准确 id，再按字段更新。",
 		"- `media`：先把用户提供的图片转成 WebP（.webp），再上传文件，把返回 URL 用于封面、正文图片或已确认的 Hero 右侧视觉。",
+		"- `language-settings`：在用户明确要求且权限允许时，启用/禁用语种或设置默认语种；先读取所有语种状态。",
 		"- `hero-visual`：用户明确要求且权限允许时，为首页 Hero 右侧生成或替换轻量动画；上传 animated WebP，再用 `PATCH /site-profile` 写 `hero_image` 与 `hero_visual:image`。",
 		"- `multilingual`：先查语种和 `trans_group`，逐条处理各语种版本。",
 		"- `publish-review`：发布前复核；只有用户明确要求且权限允许才发布。",
@@ -1888,7 +2036,7 @@ func automationSkillMarkdown(apiBase string) string {
 		"8. 需要生成或替换 Hero 右侧动画时，先读取 `/site-profile` 并提出方案，用户确认后再生成；使用 animated WebP，避免白底、闪烁和大文件，上传后写入对应语种的 `hero_image` 并把 `hero_visual` 设为 `image`。",
 		"9. 上传的 SVG 文件也按 `hero_image` 使用，不要切到内联 SVG 模式。",
 		"10. 处理多语种内容时，先 `GET /languages` 查看启用语种；如果用户要求更新全部语种，先读取目标内容的 `trans_group`，再用 `lang=all&trans_group=...` 找到同组所有版本，逐条按 id 更新。",
-		"11. 用户要求新增语种时，先判断是否已内置：`vi` 越南语、`id` 印尼语、`th` 泰语已内置，只需启用；非内置语种且密钥有 `languages:write` 时，可 `POST /languages` 新增自定义语种，可传 `enable:true` 同时启用。",
+		"11. 用户要求处理语种设置时，先 `GET /languages?include_disabled=true&include_catalog=true`。`vi` 越南语、`id` 印尼语、`th` 泰语已内置，不要重复创建；启用/禁用用 `PATCH /languages/{code}` 写 `{\"enabled\":true/false}`，需要 `languages:enable`；设置默认用 `{\"default\":true}`，需要 `languages:default`；默认语种不能禁用；出现未翻译 key 时用 `GET/PATCH /languages/{code}/catalog` 维护前台字典，需要 `languages:catalog`。",
 		"12. 不要把一个语种的正文直接覆盖到其它语种，除非用户明确要求这么做。",
 		"13. 默认只创建或修改草稿。",
 		"14. 只有用户明确要求发布，并且访问密钥有对应资源的发布权限，才设置 `status` 为 `published` 或 `scheduled`。",
@@ -1898,7 +2046,7 @@ func automationSkillMarkdown(apiBase string) string {
 		"",
 		"## 内容模型边界",
 		"",
-		"- 语种 `languages`：`GET /languages` 读取已启用语种；`POST /languages` 新增自定义语种预设，不用于重复创建内置语种。",
+		"- 语种 `languages`：`GET /languages` 读取已启用语种；`GET /languages?include_disabled=true` 查看所有内置和自定义语种；`GET /languages/{code}/catalog` 读取前台模板字典；`PATCH /languages/{code}/catalog` 修改按钮、页脚、搜索等系统文案；`POST /languages` 新增自定义语种预设；`PATCH /languages/{code}` 启用/禁用或设置默认语种。",
 		"- 文章 `posts`：教程、资讯、案例、观点、SEO/GEO 内容；可选择真实文章分类，可置顶到首页精选文章。",
 		"- 链接 `links`：资源导航、产品展示、外部工具；必须有 `link_url`，可选择真实链接分类，可置顶到首页精选链接。",
 		"- 页面 `pages`：关于、功能、价格、FAQ、联系等固定页面；没有分类，也没有置顶。",
@@ -1911,7 +2059,13 @@ func automationSkillMarkdown(apiBase string) string {
 		"",
 		"- `node scripts/gcms.js doctor`",
 		"- `node scripts/gcms.js languages`",
+		"- `node scripts/gcms.js languages --all`",
+		"- `node scripts/gcms.js languages --all --catalog`",
 		"- `node scripts/gcms.js language-create '{\"code\":\"pt\",\"name\":\"Português\",\"tag\":\"pt-BR\",\"enable\":true}'`",
+		"- `node scripts/gcms.js language-enable vi on`",
+		"- `node scripts/gcms.js language-default en`",
+		"- `node scripts/gcms.js language-catalog id`",
+		"- `node scripts/gcms.js language-catalog-update id '{\"catalog\":{\"home.cta_start\":\"Mulai membaca\"}}'`",
 		"- `node scripts/gcms.js upload ./cover.webp`",
 		"- `node scripts/gcms.js categories posts --lang zh`",
 		"- `node scripts/gcms.js categories links --lang zh`",
@@ -1983,8 +2137,12 @@ function usage(code = 2) {
   out("Usage:");
   out("  gcms.js help");
   out("  gcms.js doctor");
-  out("  gcms.js languages");
+  out("  gcms.js languages [--all]");
   out("  gcms.js language-create <json|@file>");
+  out("  gcms.js language-enable <code> <on|off>");
+  out("  gcms.js language-default <code>");
+  out("  gcms.js language-catalog <code>");
+  out("  gcms.js language-catalog-update <code> <json|@file>");
   out("  gcms.js upload <file>");
   out("  gcms.js categories <posts|links> [--lang zh|all]");
   out("  gcms.js category-entry <posts|links> [--lang zh|all]");
@@ -2200,6 +2358,10 @@ async function doctor() {
       const schemas = openapi.data && openapi.data.components && openapi.data.components.schemas ? openapi.data.components.schemas : {};
       add("openapi_language_create_path", !!(paths["/languages"] && paths["/languages"].post));
       add("openapi_language_create_schema", !!schemas.LanguageCreateInput && !!schemas.LanguageItemResponse);
+      add("openapi_language_update_path", !!(paths["/languages/{code}"] && paths["/languages/{code}"].patch));
+      add("openapi_language_update_schema", !!schemas.LanguageUpdateInput);
+      add("openapi_language_catalog_path", !!(paths["/languages/{code}/catalog"] && paths["/languages/{code}/catalog"].get && paths["/languages/{code}/catalog"].patch));
+      add("openapi_language_catalog_schema", !!schemas.LanguageCatalogResponse && !!schemas.LanguageCatalogInput);
       add("openapi_media_path", !!(paths["/media"] && paths["/media"].post));
       add("openapi_media_schema", !!schemas.MediaUploadResponse);
       add("openapi_post_preview_path", !!(paths["/posts/{id}/preview"] && paths["/posts/{id}/preview"].get));
@@ -2264,7 +2426,11 @@ async function main() {
   }
 
   if (cmd === "languages") {
-    print(await request("GET", "/languages"));
+    const args = [collection, ...rest];
+    const qs = new URLSearchParams();
+    if (args.includes("--all") || args.includes("--include-disabled")) qs.set("include_disabled", "true");
+    if (args.includes("--catalog") || args.includes("--include-catalog")) qs.set("include_catalog", "true");
+    print(await request("GET", "/languages" + (qs.toString() ? "?" + qs.toString() : "")));
     return;
   }
 
@@ -2272,6 +2438,35 @@ async function main() {
     const [body] = [collection, ...rest];
     if (!body) usage();
     print(await request("POST", "/languages", bodyFromArg(body)));
+    return;
+  }
+
+  if (cmd === "language-enable") {
+    const [code, value] = [collection, ...rest];
+    if (!code || !value) usage();
+    print(await request("PATCH", "/languages/" + encodeURIComponent(code), { enabled: parseOnOff(value) }));
+    return;
+  }
+
+  if (cmd === "language-default") {
+    const [code] = [collection, ...rest];
+    if (!code) usage();
+    print(await request("PATCH", "/languages/" + encodeURIComponent(code), { default: true }));
+    return;
+  }
+
+  if (cmd === "language-catalog") {
+    const [code] = [collection, ...rest];
+    if (!code) usage();
+    print(await request("GET", "/languages/" + encodeURIComponent(code) + "/catalog"));
+    return;
+  }
+
+  if (cmd === "language-catalog-update") {
+    const [code, body] = [collection, ...rest];
+    if (!code || !body) usage();
+    const parsed = bodyFromArg(body);
+    print(await request("PATCH", "/languages/" + encodeURIComponent(code) + "/catalog", parsed && Object.prototype.hasOwnProperty.call(parsed, "catalog") ? parsed : { catalog: parsed }));
     return;
   }
 

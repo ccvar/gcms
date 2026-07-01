@@ -565,12 +565,14 @@
         <input type="hidden" name="_csrf" value="{{.CSRF}}">
         <p class="muted" style="margin:.1rem 0 1rem;font-size:.9rem">{{.Admin.T "admin.settings.languages.front_desc" "勾选要在前台启用的语种。「默认」语种是浏览器语言无法匹配启用语种时的兜底访问语种，也是文案与内容的回落语种；访问 / 会先按浏览器语言协商，每个语种的 URL 形如 /en/…。"}}</p>
         <table class="admin-table lang-table">
-          <thead><tr><th>{{.Admin.T "admin.settings.languages.language" "语种"}}</th><th>{{.Admin.T "admin.settings.languages.code_tag" "代码 · 标记"}}</th><th class="center">{{.Admin.T "admin.settings.languages.enabled" "启用"}}</th><th class="center">{{.Admin.T "admin.settings.languages.default" "默认"}}</th></tr></thead>
+          <thead><tr><th>{{.Admin.T "admin.settings.languages.language" "语种"}}</th><th>{{.Admin.T "admin.settings.languages.code_tag" "代码 · 标记"}}</th><th>{{.Admin.T "admin.settings.languages.catalog" "字典"}}</th><th class="center">{{.Admin.T "admin.settings.languages.enabled" "启用"}}</th><th class="center">{{.Admin.T "admin.settings.languages.default" "默认"}}</th></tr></thead>
           <tbody>
             {{range .AllLocales}}
+            {{$cat := index $.LocaleCatalogs .Code}}
             <tr>
               <td><strong>{{.Name}}</strong></td>
               <td class="slug">{{.Code}} · {{.Tag}}{{if .Custom}} <span class="mini-tag">{{$.Admin.T "admin.settings.languages.custom" "自定义"}}</span>{{end}}</td>
+              <td class="lang-catalog-cell"><a class="linkbtn" href="#locale-catalog-{{.Code}}">{{$.Admin.T "admin.settings.languages.catalog_edit" "编辑字典"}}</a> <span class="mini-tag">{{$cat.SourceLabel}}</span></td>
               <td class="center"><input type="checkbox" name="enabled" value="{{.Code}}"{{if localeOn $.Locales .Code}} checked{{end}}></td>
               <td class="center"><input type="radio" name="default_lang" value="{{.Code}}"{{if eq .Code $.EditLang}} checked{{end}}></td>
             </tr>
@@ -579,6 +581,29 @@
         </table>
         <button class="btn btn-primary" type="submit" style="margin-top:1rem">{{.Admin.T "admin.settings.languages.save" "保存语言设置"}}</button>
       </form>
+
+      {{range .AllLocales}}
+      {{$cat := index $.LocaleCatalogs .Code}}
+      <div class="modal locale-catalog-modal" id="locale-catalog-{{.Code}}">
+        <a class="modal-backdrop" href="#" aria-label="{{$.Admin.T "admin.action.close" "关闭"}}"></a>
+        <div class="modal-card locale-catalog-card" role="dialog" aria-modal="true" aria-labelledby="locale-catalog-title-{{.Code}}">
+          <h3 id="locale-catalog-title-{{.Code}}">{{$.Admin.T "admin.settings.languages.catalog_modal_title" "编辑前台字典"}} · {{.Name}}</h3>
+          <p class="muted">{{$.Admin.T "admin.settings.languages.catalog_desc" "这里维护前台模板里的系统文案，例如按钮、页脚、搜索空状态和导航辅助文字。只改当前语种；保存空对象可恢复继承。"}} <span class="mini-tag">{{$cat.SourceLabel}}</span> <span class="mini-tag">{{$cat.KeyCount}} keys</span></p>
+          <form method="post" action="/admin/settings/languages/catalog" class="admin-form">
+            <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+            <input type="hidden" name="code" value="{{.Code}}">
+            <div class="field">
+              <label for="locale-catalog-json-{{.Code}}">{{$.Admin.T "admin.settings.languages.catalog_json" "字典 JSON"}}</label>
+              <textarea id="locale-catalog-json-{{.Code}}" class="locale-catalog-json" name="catalog_json" rows="18" spellcheck="false">{{$cat.JSON}}</textarea>
+            </div>
+            <div class="modal-actions">
+              <a class="btn" href="#">{{$.Admin.T "admin.action.cancel" "取消"}}</a>
+              <button class="btn btn-primary" type="submit">{{$.Admin.T "admin.settings.languages.catalog_save" "保存字典"}}</button>
+            </div>
+          </form>
+        </div>
+      </div>
+      {{end}}
 
       <div class="field-group" style="margin-top:1.8rem;border-top:1px solid var(--line);padding-top:1.4rem">
         <h3 class="group-head">{{.Admin.T "admin.settings.languages.custom_presets" "自定义语种预设"}}</h3>
@@ -775,7 +800,7 @@
           </div>
           <table class="admin-table api-endpoints">
           <tbody>
-            <tr><th>{{.Admin.T "admin.settings.automation.languages" "语种"}}</th><td class="slug">GET/POST /languages</td></tr>
+            <tr><th>{{.Admin.T "admin.settings.automation.languages" "语种"}}</th><td class="slug">GET/POST /languages · PATCH /languages/{code}</td></tr>
             <tr><th>{{.Admin.T "admin.settings.automation.site_profile" "站点文案"}}</th><td class="slug">GET/PATCH /site-profile</td></tr>
             <tr><th>{{.Admin.T "admin.settings.automation.navigation" "导航菜单"}}</th><td class="slug">GET/PATCH /navigation</td></tr>
             <tr><th>{{.Admin.T "admin.settings.automation.media" "媒体"}}</th><td class="slug">POST /media</td></tr>
@@ -954,6 +979,9 @@
                 <strong>{{.Admin.T "admin.settings.automation.base_interfaces" "基础接口"}}</strong>
                 <label><input type="checkbox" name="scopes" value="languages:read" checked><span>{{.Admin.T "admin.settings.automation.languages" "语种"}}</span><small>{{.Admin.T "admin.settings.automation.languages_read_desc" "列出默认语种和启用语种"}}</small></label>
                 <label><input type="checkbox" name="scopes" value="languages:write"><span>{{.Admin.T "admin.settings.automation.languages_write" "新增自定义语种"}}</span><small>{{.Admin.T "admin.settings.automation.languages_write_desc" "为 AI 开通新增自定义语种接口"}}</small></label>
+                <label><input type="checkbox" name="scopes" value="languages:enable"><span>{{.Admin.T "admin.settings.automation.languages_enable" "启用/禁用语种"}}</span><small>{{.Admin.T "admin.settings.automation.languages_enable_desc" "为 AI 开通启用或关闭前台语种接口"}}</small></label>
+                <label><input type="checkbox" name="scopes" value="languages:default"><span>{{.Admin.T "admin.settings.automation.languages_default" "设置默认语种"}}</span><small>{{.Admin.T "admin.settings.automation.languages_default_desc" "允许 AI 调整浏览器语言无法匹配时的兜底语种"}}</small></label>
+                <label><input type="checkbox" name="scopes" value="languages:catalog"><span>{{.Admin.T "admin.settings.automation.languages_catalog" "修改语种字典"}}</span><small>{{.Admin.T "admin.settings.automation.languages_catalog_desc" "维护前台按钮、页脚和搜索等系统文案"}}</small></label>
                 <label><input type="checkbox" name="scopes" value="media:write" checked><span>{{.Admin.T "admin.settings.automation.media_upload" "上传媒体"}}</span><small>{{.Admin.T "admin.settings.automation.media_upload_desc" "上传图片并返回可用于封面的 URL"}}</small></label>
               </div>
               <div class="scope-group scope-group-wide">
@@ -1017,6 +1045,9 @@
                 <strong>{{.Admin.T "admin.settings.automation.base_interfaces" "基础接口"}}</strong>
                 <label><input type="checkbox" name="scopes" value="languages:read" data-scope-edit><span>{{.Admin.T "admin.settings.automation.languages" "语种"}}</span><small>{{.Admin.T "admin.settings.automation.languages_read_desc" "列出默认语种和启用语种"}}</small></label>
                 <label><input type="checkbox" name="scopes" value="languages:write" data-scope-edit><span>{{.Admin.T "admin.settings.automation.languages_write" "新增自定义语种"}}</span><small>{{.Admin.T "admin.settings.automation.languages_write_desc" "为 AI 开通新增自定义语种接口"}}</small></label>
+                <label><input type="checkbox" name="scopes" value="languages:enable" data-scope-edit><span>{{.Admin.T "admin.settings.automation.languages_enable" "启用/禁用语种"}}</span><small>{{.Admin.T "admin.settings.automation.languages_enable_desc" "为 AI 开通启用或关闭前台语种接口"}}</small></label>
+                <label><input type="checkbox" name="scopes" value="languages:default" data-scope-edit><span>{{.Admin.T "admin.settings.automation.languages_default" "设置默认语种"}}</span><small>{{.Admin.T "admin.settings.automation.languages_default_desc" "允许 AI 调整浏览器语言无法匹配时的兜底语种"}}</small></label>
+                <label><input type="checkbox" name="scopes" value="languages:catalog" data-scope-edit><span>{{.Admin.T "admin.settings.automation.languages_catalog" "修改语种字典"}}</span><small>{{.Admin.T "admin.settings.automation.languages_catalog_desc" "维护前台按钮、页脚和搜索等系统文案"}}</small></label>
                 <label><input type="checkbox" name="scopes" value="media:write" data-scope-edit><span>{{.Admin.T "admin.settings.automation.media_upload" "上传媒体"}}</span><small>{{.Admin.T "admin.settings.automation.media_upload_desc" "上传图片并返回可用于封面的 URL"}}</small></label>
               </div>
               <div class="scope-group scope-group-wide">

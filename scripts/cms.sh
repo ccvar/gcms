@@ -48,10 +48,11 @@ load_conf() {
     case "$k" in ''|\#*) continue ;; esac
     v=$(printf '%s' "$v" | sed 's/[[:space:]]*#.*$//; s/^[[:space:]]*//; s/[[:space:]]*$//')
     case "$k" in
-      ADDR)       [ -n "${ADDR:-}" ]       || ADDR="$v" ;;
-      BASE_URL)   [ -n "${BASE_URL:-}" ]   || BASE_URL="$v" ;;
-      CMS_DB)     [ -n "${CMS_DB:-}" ]     || CMS_DB="$v" ;;
-      GO_VERSION) [ -n "${GO_VERSION:-}" ] || GO_VERSION="$v" ;;
+      ADDR)                 [ -n "${ADDR:-}" ]                 || ADDR="$v" ;;
+      BASE_URL)             [ -n "${BASE_URL:-}" ]             || BASE_URL="$v" ;;
+      CMS_DB)               [ -n "${CMS_DB:-}" ]               || CMS_DB="$v" ;;
+      GO_VERSION)           [ -n "${GO_VERSION:-}" ]           || GO_VERSION="$v" ;;
+      GCMS_CADDY_ONDEMAND)  [ -n "${GCMS_CADDY_ONDEMAND:-}" ]  || GCMS_CADDY_ONDEMAND="$v" ;;
     esac
   done < "$CONF"
 }
@@ -178,6 +179,7 @@ start() {
   export ADDR
   export BASE_URL="$(base_url)"
   export CMS_DB
+  [ -n "${GCMS_CADDY_ONDEMAND:-}" ] && export GCMS_CADDY_ONDEMAND
   cd "$ROOT"
   # 单 > 截断日志：本次启动只保留本次运行日志，不混入历史
   # 直接后台运行二进制并记录其真实 PID（nohup 会 exec 二进制，PID 不变）；脱离终端
@@ -653,6 +655,97 @@ upgrade() {
   ok "升级完成：$current_version → $new_version（服务原本未运行，未自动启动）"
 }
 
+# 在 cms.conf 中新增或更新一个 KEY=VALUE（awk 实现，macOS / Linux 通用）。
+set_conf() {
+  key="$1"; val="$2"
+  [ -f "$CONF" ] || : > "$CONF"
+  if grep -qE "^[[:space:]]*${key}=" "$CONF" 2>/dev/null; then
+    tmp="${CONF}.tmp.$$"
+    awk -v k="$key" -v v="$val" '
+      { t=$0; sub(/^[[:space:]]+/,"",t)
+        if (index(t, k"=")==1) print k"="v; else print $0 }
+    ' "$CONF" > "$tmp" && mv "$tmp" "$CONF"
+  else
+    printf '%s=%s\n' "$key" "$val" >> "$CONF"
+  fi
+}
+
+# 生成 gcms 的 Caddy 配置（按需签发 TLS + 反代到 gcms），并尽量接入本机 Caddy。
+# 仅对已安装 Caddy 的服务器做自动接入；未安装则打印手动绑定域名的指引。
+caddy_setup() {
+  # gcms 监听目标：ADDR=:8080 -> 127.0.0.1:8080
+  case "$ADDR" in
+    :*) target="127.0.0.1$ADDR" ;;
+    *)  target="$ADDR" ;;
+  esac
+  ask="http://$target/internal/caddy/ask"
+
+  snippet="# ---- gcms 自动生成：Caddy 按需签发 TLS + 反向代理 ----
+# 由 scripts/cms.sh caddy-setup 生成。import 到主 Caddyfile，或直接作为独立配置使用。
+# 新增站点域名后无需再改本文件：Caddy 会向 gcms 询问该域名是否可签发。
+{
+	on_demand_tls {
+		ask $ask
+	}
+}
+
+https:// {
+	tls {
+		on_demand
+	}
+	reverse_proxy $target
+}"
+
+  if ! command -v caddy >/dev/null 2>&1; then
+    err "未检测到 caddy 命令：自动接入仅支持已安装 Caddy 的服务器。"
+    info "你可以选择其一："
+    info "  A) 安装 Caddy（https://caddyserver.com/docs/install）后重新运行：$0 caddy-setup"
+    info "  B) 用你现有的反向代理手动绑定域名："
+    info "     1. 把域名 DNS A/AAAA 记录指向本服务器 IP；"
+    info "     2. 在反向代理（Caddy / Nginx）里把该域名转发到 $target。"
+    info "若使用 Caddy，可参考以下配置（按需签发，新增域名无需改配置）："
+    printf '%s\n' "$snippet"
+    return 0
+  fi
+
+  # 已安装 Caddy：优先写入 /etc/caddy/gcms.caddy，否则写到项目目录。
+  if [ -d /etc/caddy ] && { [ "$(id -u)" = 0 ] || [ -w /etc/caddy ]; }; then
+    cfile="/etc/caddy/gcms.caddy"
+  else
+    cfile="$ROOT/gcms.caddy"
+  fi
+  if ! printf '%s\n' "$snippet" > "$cfile" 2>/dev/null; then
+    err "无法写入 $cfile（可能需要 root 权限）。以下为配置内容，请手动保存并 reload："
+    printf '%s\n' "$snippet"
+    return 1
+  fi
+  ok "已写出 Caddy 配置：$cfile"
+
+  main=/etc/caddy/Caddyfile
+  if [ -f "$main" ]; then
+    if grep -q 'gcms.caddy' "$main" 2>/dev/null; then
+      info "主 Caddyfile 已 import gcms.caddy。"
+    else
+      info "请在 $main 顶部加入一行：  import $cfile"
+    fi
+  else
+    info "未发现 $main。可直接用本文件启动：caddy run --config $cfile --adapter caddyfile"
+  fi
+
+  # 重载 Caddy（优先 caddy reload，其次 systemctl）。
+  if caddy reload --config "$cfile" --adapter caddyfile >/dev/null 2>&1; then
+    ok "Caddy 已重载。"
+  elif command -v systemctl >/dev/null 2>&1 && systemctl reload caddy >/dev/null 2>&1; then
+    ok "Caddy 已通过 systemctl 重载。"
+  else
+    info "请手动重载 Caddy：  caddy reload   或   systemctl reload caddy"
+  fi
+
+  set_conf GCMS_CADDY_ONDEMAND 1
+  ok "已在 $CONF 记录 GCMS_CADDY_ONDEMAND=1。"
+  info "重启 gcms 使后台“域名绑定”显示自动接入：$0 restart"
+}
+
 usage() {
   cat <<EOF
 CCVAR 简记 CMS · 启停脚本（macOS / Linux）
@@ -669,6 +762,9 @@ CCVAR 简记 CMS · 启停脚本（macOS / Linux）
   upgrade   从公开发布仓库升级到最新版本，可选指定版本：upgrade v1.0.5。
   upgrade-status
             输出最近一次升级状态（run/upgrade.json）。
+  caddy-setup
+            为已安装 Caddy 的服务器生成按需签发 TLS + 反代配置并重载；
+            未安装 Caddy 时打印手动绑定域名的指引。
   help      显示本帮助（无参数时同样显示）。
 
 说明：
@@ -700,6 +796,7 @@ case "${1:-}" in
   logs)    logs ;;
   upgrade) shift; upgrade "${1:-}" ;;
   upgrade-status) upgrade_status ;;
+  caddy-setup) caddy_setup ;;
   ""|help|-h|--help) usage ;;
   *) printf "未知命令：%s\n\n" "$1"; usage; exit 2 ;;
 esac

@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"cms.ccvar.com/internal/i18n"
 	"cms.ccvar.com/internal/store"
 )
 
@@ -31,6 +32,9 @@ const (
 const (
 	apiScopeLanguagesRead       = "languages:read"
 	apiScopeLanguagesWrite      = "languages:write"
+	apiScopeLanguagesEnable     = "languages:enable"
+	apiScopeLanguagesDefault    = "languages:default"
+	apiScopeLanguagesCatalog    = "languages:catalog"
 	apiScopeMediaWrite          = "media:write"
 	apiScopeSiteRead            = "site:read"
 	apiScopeSiteWrite           = "site:write"
@@ -184,13 +188,16 @@ type apiCategoryAllEntryPatch struct {
 }
 
 type apiLanguageItem struct {
-	Code    string `json:"code"`
-	Name    string `json:"name"`
-	Tag     string `json:"tag"`
-	OG      string `json:"og"`
-	Default bool   `json:"default"`
-	Enabled bool   `json:"enabled"`
-	Custom  bool   `json:"custom"`
+	Code          string            `json:"code"`
+	Name          string            `json:"name"`
+	Tag           string            `json:"tag"`
+	OG            string            `json:"og"`
+	Default       bool              `json:"default"`
+	Enabled       bool              `json:"enabled"`
+	Custom        bool              `json:"custom"`
+	CatalogSource string            `json:"catalog_source"`
+	CatalogKeys   int               `json:"catalog_keys"`
+	Catalog       map[string]string `json:"catalog,omitempty"`
 }
 
 type apiLanguageCreateInput struct {
@@ -200,6 +207,15 @@ type apiLanguageCreateInput struct {
 	OG      string `json:"og"`
 	Enable  bool   `json:"enable"`
 	Default bool   `json:"default"`
+}
+
+type apiLanguageUpdateInput struct {
+	Enabled *bool `json:"enabled,omitempty"`
+	Default *bool `json:"default,omitempty"`
+}
+
+type apiLanguageCatalogInput struct {
+	Catalog map[string]string `json:"catalog"`
 }
 
 type apiSiteProfileItem struct {
@@ -326,21 +342,22 @@ func (s *Server) apiLanguages(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requireAutomationScope(w, r, apiScopeLanguagesRead); !ok {
 		return
 	}
-	def := s.defaultLang()
+	includeDisabled := parseAPIBool(r.URL.Query().Get("include_disabled")) || strings.EqualFold(r.URL.Query().Get("lang"), "all")
+	includeCatalog := parseAPIBool(r.URL.Query().Get("include_catalog")) || parseAPIBool(r.URL.Query().Get("catalog"))
 	locales := s.locales()
-	items := make([]apiLanguageItem, 0, len(locales))
-	for _, l := range locales {
-		items = append(items, apiLanguageItem{
-			Code:    l.Code,
-			Name:    l.Name,
-			Tag:     l.Tag,
-			OG:      l.OG,
-			Default: l.Code == def,
-			Enabled: true,
-			Custom:  l.Custom,
-		})
+	if includeDisabled {
+		locales = s.i18n.All()
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"default": def, "items": items})
+	items := make([]apiLanguageItem, 0, len(locales))
+	seen := map[string]bool{}
+	for _, l := range locales {
+		if seen[l.Code] {
+			continue
+		}
+		items = append(items, s.apiLanguageItem(l.Code, includeCatalog))
+		seen[l.Code] = true
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"default": s.defaultLang(), "items": items})
 }
 
 func (s *Server) apiCreateLanguage(w http.ResponseWriter, r *http.Request) {
@@ -368,21 +385,150 @@ func (s *Server) apiCreateLanguage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	def := s.defaultLang()
-	enabled := s.langEnabled(loc.Code)
 	_ = s.store.CreateAutomationLog(auth.key.ID, "create", "language", 0, "新增自定义语种："+loc.Code)
 	s.clearGeneratedCaches()
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"item": apiLanguageItem{
-			Code:    loc.Code,
-			Name:    loc.Name,
-			Tag:     loc.Tag,
-			OG:      loc.OG,
-			Default: loc.Code == def,
-			Enabled: enabled,
-			Custom:  loc.Custom,
-		},
+		"item":    s.apiLanguageItem(loc.Code, false),
 		"default": def,
 	})
+}
+
+func (s *Server) apiUpdateLanguage(w http.ResponseWriter, r *http.Request) {
+	auth, ok := s.requireAutomationAnyScope(w, r, apiScopeLanguagesEnable, apiScopeLanguagesDefault)
+	if !ok {
+		return
+	}
+	code := strings.ToLower(strings.TrimSpace(r.PathValue("code")))
+	if code == "" || !s.i18n.Known(code) {
+		apiError(w, http.StatusBadRequest, "bad_lang", "语种不存在。")
+		return
+	}
+	var in apiLanguageUpdateInput
+	if !decodeAPIJSON(w, r, &in) {
+		return
+	}
+	if in.Enabled == nil && in.Default == nil {
+		apiError(w, http.StatusBadRequest, "empty_patch", "没有收到需要更新的语种设置。")
+		return
+	}
+	if in.Enabled != nil && !automationScopeAllowed(auth.scopes, apiScopeLanguagesEnable) {
+		apiError(w, http.StatusForbidden, "missing_scope", "这条访问权限不能启用或禁用语种。")
+		return
+	}
+	if in.Default != nil && !*in.Default {
+		apiError(w, http.StatusBadRequest, "bad_request", "设置默认语种时 default 只能传 true。")
+		return
+	}
+	if in.Default != nil && *in.Default && !automationScopeAllowed(auth.scopes, apiScopeLanguagesDefault) {
+		apiError(w, http.StatusForbidden, "missing_scope", "这条访问权限不能设置默认语种。")
+		return
+	}
+	if in.Default != nil && *in.Default && in.Enabled != nil && !*in.Enabled {
+		apiError(w, http.StatusBadRequest, "bad_request", "不能同时禁用并设为默认语种。")
+		return
+	}
+	if in.Enabled != nil && !*in.Enabled && code == s.defaultLang() {
+		apiError(w, http.StatusBadRequest, "bad_request", "默认语种不能禁用，请先设置其它默认语种。")
+		return
+	}
+
+	action := "update"
+	if in.Default != nil && *in.Default {
+		if err := s.enableLocale(code, true); err != nil {
+			apiError(w, http.StatusInternalServerError, "store_error", err.Error())
+			return
+		}
+		action = "set_default"
+	} else if in.Enabled != nil {
+		if *in.Enabled {
+			if err := s.enableLocale(code, false); err != nil {
+				apiError(w, http.StatusInternalServerError, "store_error", err.Error())
+				return
+			}
+			action = "enable"
+		} else {
+			if err := s.disableLocale(code); err != nil {
+				apiError(w, http.StatusInternalServerError, "store_error", err.Error())
+				return
+			}
+			action = "disable"
+		}
+	}
+	_ = s.store.CreateAutomationLog(auth.key.ID, action, "language", 0, "更新语种设置："+code)
+	s.clearGeneratedCaches()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"item":    s.apiLanguageItem(code, false),
+		"default": s.defaultLang(),
+	})
+}
+
+func (s *Server) apiLanguageItem(code string, includeCatalog bool) apiLanguageItem {
+	loc := s.i18n.Locale(code)
+	def := s.defaultLang()
+	item := apiLanguageItem{
+		Code:          loc.Code,
+		Name:          loc.Name,
+		Tag:           loc.Tag,
+		OG:            loc.OG,
+		Default:       loc.Code == def,
+		Enabled:       s.langEnabled(loc.Code),
+		Custom:        loc.Custom,
+		CatalogSource: s.i18n.CatalogSource(loc.Code),
+		CatalogKeys:   s.i18n.CatalogKeyCount(loc.Code, def),
+	}
+	if includeCatalog {
+		item.Catalog = s.i18n.Catalog(loc.Code, def)
+	}
+	return item
+}
+
+func (s *Server) apiGetLanguageCatalog(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireAutomationScope(w, r, apiScopeLanguagesRead); !ok {
+		return
+	}
+	code := strings.ToLower(strings.TrimSpace(r.PathValue("code")))
+	if code == "" || !s.i18n.Known(code) {
+		apiError(w, http.StatusBadRequest, "bad_lang", "语种不存在。")
+		return
+	}
+	writeJSON(w, http.StatusOK, s.apiLanguageCatalogResponse(code))
+}
+
+func (s *Server) apiUpdateLanguageCatalog(w http.ResponseWriter, r *http.Request) {
+	auth, ok := s.requireAutomationScope(w, r, apiScopeLanguagesCatalog)
+	if !ok {
+		return
+	}
+	code := strings.ToLower(strings.TrimSpace(r.PathValue("code")))
+	if code == "" || !s.i18n.Known(code) {
+		apiError(w, http.StatusBadRequest, "bad_lang", "语种不存在。")
+		return
+	}
+	var in apiLanguageCatalogInput
+	if !decodeAPIJSON(w, r, &in) {
+		return
+	}
+	if in.Catalog == nil {
+		apiError(w, http.StatusBadRequest, "empty_catalog", "请传入 catalog 对象。")
+		return
+	}
+	if err := s.saveLocaleCatalog(code, i18n.SanitizeCatalog(in.Catalog)); err != nil {
+		apiError(w, http.StatusInternalServerError, "store_error", err.Error())
+		return
+	}
+	_ = s.store.CreateAutomationLog(auth.key.ID, "update", "language_catalog", 0, "更新语种字典："+code)
+	writeJSON(w, http.StatusOK, s.apiLanguageCatalogResponse(code))
+}
+
+func (s *Server) apiLanguageCatalogResponse(code string) map[string]any {
+	def := s.defaultLang()
+	return map[string]any{
+		"code":           code,
+		"default":        code == def,
+		"catalog_source": s.i18n.CatalogSource(code),
+		"catalog_keys":   s.i18n.CatalogKeyCount(code, def),
+		"catalog":        s.i18n.Catalog(code, def),
+	}
 }
 
 func (s *Server) apiGetSiteProfile(w http.ResponseWriter, r *http.Request) {
@@ -1782,6 +1928,15 @@ func apiIntParam(r *http.Request, key string, def int) int {
 		return def
 	}
 	return n
+}
+
+func parseAPIBool(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func parseAPITime(s string) (time.Time, error) {

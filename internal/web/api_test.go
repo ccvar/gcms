@@ -132,6 +132,131 @@ func TestAPICreateCustomLanguage(t *testing.T) {
 	}
 }
 
+func TestAPIUpdateLanguageSettings(t *testing.T) {
+	s, token := newTestAutomationServer(t, "languages:read,languages:enable,languages:default")
+
+	enableReq := httptest.NewRequest(http.MethodPatch, "/api/admin/v1/languages/vi", bytes.NewBufferString(`{"enabled":true}`))
+	enableReq.SetPathValue("code", "vi")
+	enableReq.Header.Set("Authorization", "Bearer "+token)
+	enableResp := httptest.NewRecorder()
+	s.apiUpdateLanguage(enableResp, enableReq)
+	if enableResp.Code != http.StatusOK {
+		t.Fatalf("enable status = %d, body = %s", enableResp.Code, enableResp.Body.String())
+	}
+	var enabled struct {
+		Default string          `json:"default"`
+		Item    apiLanguageItem `json:"item"`
+	}
+	if err := json.Unmarshal(enableResp.Body.Bytes(), &enabled); err != nil {
+		t.Fatalf("decode enable response: %v", err)
+	}
+	if enabled.Default != "zh" || enabled.Item.Code != "vi" || !enabled.Item.Enabled || enabled.Item.Default {
+		t.Fatalf("unexpected enable response: %#v", enabled)
+	}
+
+	defaultReq := httptest.NewRequest(http.MethodPatch, "/api/admin/v1/languages/en", bytes.NewBufferString(`{"default":true}`))
+	defaultReq.SetPathValue("code", "en")
+	defaultReq.Header.Set("Authorization", "Bearer "+token)
+	defaultResp := httptest.NewRecorder()
+	s.apiUpdateLanguage(defaultResp, defaultReq)
+	if defaultResp.Code != http.StatusOK {
+		t.Fatalf("default status = %d, body = %s", defaultResp.Code, defaultResp.Body.String())
+	}
+	var def struct {
+		Default string          `json:"default"`
+		Item    apiLanguageItem `json:"item"`
+	}
+	if err := json.Unmarshal(defaultResp.Body.Bytes(), &def); err != nil {
+		t.Fatalf("decode default response: %v", err)
+	}
+	if def.Default != "en" || def.Item.Code != "en" || !def.Item.Enabled || !def.Item.Default || s.defaultLang() != "en" {
+		t.Fatalf("unexpected default response: %#v", def)
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/admin/v1/languages?include_disabled=true", nil)
+	listReq.Header.Set("Authorization", "Bearer "+token)
+	listResp := httptest.NewRecorder()
+	s.apiLanguages(listResp, listReq)
+	if listResp.Code != http.StatusOK {
+		t.Fatalf("list status = %d, body = %s", listResp.Code, listResp.Body.String())
+	}
+	if !strings.Contains(listResp.Body.String(), `"code":"vi"`) {
+		t.Fatalf("include_disabled list should contain vi: %s", listResp.Body.String())
+	}
+
+	disableDefaultReq := httptest.NewRequest(http.MethodPatch, "/api/admin/v1/languages/en", bytes.NewBufferString(`{"enabled":false}`))
+	disableDefaultReq.SetPathValue("code", "en")
+	disableDefaultReq.Header.Set("Authorization", "Bearer "+token)
+	disableDefaultResp := httptest.NewRecorder()
+	s.apiUpdateLanguage(disableDefaultResp, disableDefaultReq)
+	if disableDefaultResp.Code != http.StatusBadRequest {
+		t.Fatalf("disable default status = %d, body = %s", disableDefaultResp.Code, disableDefaultResp.Body.String())
+	}
+}
+
+func TestAPIUpdateLanguageRequiresSpecificScope(t *testing.T) {
+	s, token := newTestAutomationServer(t, "languages:default")
+	req := httptest.NewRequest(http.MethodPatch, "/api/admin/v1/languages/vi", bytes.NewBufferString(`{"enabled":true}`))
+	req.SetPathValue("code", "vi")
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+
+	s.apiUpdateLanguage(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+}
+
+func TestAPILanguageCatalog(t *testing.T) {
+	s, token := newTestAutomationServer(t, "languages:read,languages:catalog")
+
+	getReq := httptest.NewRequest(http.MethodGet, "/api/admin/v1/languages/id/catalog", nil)
+	getReq.SetPathValue("code", "id")
+	getReq.Header.Set("Authorization", "Bearer "+token)
+	getResp := httptest.NewRecorder()
+	s.apiGetLanguageCatalog(getResp, getReq)
+	if getResp.Code != http.StatusOK {
+		t.Fatalf("get status = %d, body = %s", getResp.Code, getResp.Body.String())
+	}
+	if !strings.Contains(getResp.Body.String(), `"catalog"`) {
+		t.Fatalf("catalog response missing catalog: %s", getResp.Body.String())
+	}
+
+	updateReq := httptest.NewRequest(http.MethodPatch, "/api/admin/v1/languages/id/catalog", bytes.NewBufferString(`{"catalog":{"home.cta_start":"Mulai membaca","footer.about":"Tentang"}}`))
+	updateReq.SetPathValue("code", "id")
+	updateReq.Header.Set("Authorization", "Bearer "+token)
+	updateResp := httptest.NewRecorder()
+	s.apiUpdateLanguageCatalog(updateResp, updateReq)
+	if updateResp.Code != http.StatusOK {
+		t.Fatalf("update status = %d, body = %s", updateResp.Code, updateResp.Body.String())
+	}
+	var got struct {
+		Code          string            `json:"code"`
+		CatalogSource string            `json:"catalog_source"`
+		Catalog       map[string]string `json:"catalog"`
+	}
+	if err := json.Unmarshal(updateResp.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode update response: %v", err)
+	}
+	if got.Code != "id" || got.CatalogSource != "custom" || got.Catalog["home.cta_start"] != "Mulai membaca" {
+		t.Fatalf("unexpected catalog response: %#v", got)
+	}
+	if translated := s.i18n.Tr("id", "zh").T("home.cta_start"); translated != "Mulai membaca" {
+		t.Fatalf("translated home.cta_start = %q", translated)
+	}
+
+	listReq := httptest.NewRequest(http.MethodGet, "/api/admin/v1/languages?include_disabled=true&include_catalog=true", nil)
+	listReq.Header.Set("Authorization", "Bearer "+token)
+	listResp := httptest.NewRecorder()
+	s.apiLanguages(listResp, listReq)
+	if listResp.Code != http.StatusOK {
+		t.Fatalf("list status = %d, body = %s", listResp.Code, listResp.Body.String())
+	}
+	if !strings.Contains(listResp.Body.String(), `"catalog_source":"custom"`) || !strings.Contains(listResp.Body.String(), `"home.cta_start":"Mulai membaca"`) {
+		t.Fatalf("list catalog response missing updated catalog: %s", listResp.Body.String())
+	}
+}
+
 func TestAutomationOpenAPIIncludesMediaUpload(t *testing.T) {
 	spec := automationOpenAPISpec("https://example.com/api/admin/v1")
 	paths, ok := spec["paths"].(map[string]any)
@@ -178,11 +303,37 @@ func TestAutomationOpenAPIIncludesMediaUpload(t *testing.T) {
 	if _, ok := languages["post"].(map[string]any); !ok {
 		t.Fatalf("POST /languages missing: %#v", languages)
 	}
+	languageUpdate, ok := paths["/languages/{code}"].(map[string]any)
+	if !ok {
+		t.Fatalf("/languages/{code} path missing: %#v", paths)
+	}
+	if _, ok := languageUpdate["patch"].(map[string]any); !ok {
+		t.Fatalf("PATCH /languages/{code} missing: %#v", languageUpdate)
+	}
 	if _, ok := schemas["LanguageCreateInput"]; !ok {
 		t.Fatalf("LanguageCreateInput schema missing: %#v", schemas)
 	}
+	if _, ok := schemas["LanguageUpdateInput"]; !ok {
+		t.Fatalf("LanguageUpdateInput schema missing: %#v", schemas)
+	}
 	if _, ok := schemas["LanguageItemResponse"]; !ok {
 		t.Fatalf("LanguageItemResponse schema missing: %#v", schemas)
+	}
+	languageCatalog, ok := paths["/languages/{code}/catalog"].(map[string]any)
+	if !ok {
+		t.Fatalf("/languages/{code}/catalog path missing: %#v", paths)
+	}
+	if _, ok := languageCatalog["get"].(map[string]any); !ok {
+		t.Fatalf("GET /languages/{code}/catalog missing: %#v", languageCatalog)
+	}
+	if _, ok := languageCatalog["patch"].(map[string]any); !ok {
+		t.Fatalf("PATCH /languages/{code}/catalog missing: %#v", languageCatalog)
+	}
+	if _, ok := schemas["LanguageCatalogResponse"]; !ok {
+		t.Fatalf("LanguageCatalogResponse schema missing: %#v", schemas)
+	}
+	if _, ok := schemas["LanguageCatalogInput"]; !ok {
+		t.Fatalf("LanguageCatalogInput schema missing: %#v", schemas)
 	}
 	for _, path := range []string{"/posts/{id}/preview", "/links/{id}/preview"} {
 		entry, ok := paths[path].(map[string]any)
@@ -769,6 +920,11 @@ func TestAutomationSkillZipKeepsLegacyStructure(t *testing.T) {
 		"gcms-content-assistant/scripts/gcms.js",
 		"node scripts/gcms.js doctor",
 		"POST /languages",
+		"PATCH /languages/{code}",
+		"language-enable vi on",
+		"language-default en",
+		"language-catalog id",
+		"PATCH /languages/{code}/catalog",
 		"PATCH /posts/featured/{id}",
 		"PATCH /links/featured/{id}",
 		"/posts/categories/all-entry",
@@ -782,6 +938,10 @@ func TestAutomationSkillZipKeepsLegacyStructure(t *testing.T) {
 	skill := got["gcms-content-assistant/SKILL.md"]
 	for _, want := range []string{
 		"language-create",
+		"language-enable",
+		"language-default",
+		"language-catalog",
+		"languages:catalog",
 		"hero-visual",
 		"PATCH /posts/featured/{id}",
 	} {
@@ -792,6 +952,9 @@ func TestAutomationSkillZipKeepsLegacyStructure(t *testing.T) {
 	script := got["gcms-content-assistant/scripts/gcms.js"]
 	for _, want := range []string{
 		"language-create",
+		"language-enable",
+		"language-default",
+		"language-catalog",
 		"category-entry",
 		"/featured/",
 	} {
@@ -802,6 +965,8 @@ func TestAutomationSkillZipKeepsLegacyStructure(t *testing.T) {
 	openapi := got["gcms-content-assistant/references/openapi.json"]
 	for _, want := range []string{
 		`"/languages"`,
+		`"/languages/{code}"`,
+		`"/languages/{code}/catalog"`,
 		`"/posts/featured/{id}"`,
 	} {
 		if !strings.Contains(openapi, want) {
