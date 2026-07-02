@@ -235,10 +235,10 @@
           </div>
         </div>
 
-        <div class="field">
-          <label>{{.Admin.T "admin.settings.site.social" "社交链接"}} <span class="scope-pill global">{{.Admin.T "admin.scope.global" "全站共用"}}</span></label>
-          <p class="muted" style="margin:.1rem 0 .7rem;font-size:.82rem">{{.Admin.T "admin.settings.site.social_note" "填主页 / 资料链接即可，图标按域名自动识别（GitHub、X、YouTube、Telegram、LinkedIn、微博、邮箱 mailto: 等）；名称留空自动命名，拖空即不显示。"}}</p>
-          <div class="social-rows" data-social-rows>
+	        <div class="field">
+	          <label>{{.Admin.T "admin.settings.site.social" "社交链接"}} <span class="scope-pill global">{{.Admin.T "admin.scope.global" "全站共用"}}</span></label>
+	          <p class="muted" style="margin:.1rem 0 .7rem;font-size:.82rem">{{.Admin.T "admin.settings.site.social_note" "填主页 / 资料链接即可，图标按域名自动识别（GitHub、X、YouTube、Telegram、LinkedIn、微博、邮箱 mailto: 等）；名称留空自动命名，拖空即不显示。"}}</p>
+	          <div class="social-rows" data-social-rows>
             {{range .Social}}
             <div class="social-row">
               <input name="social_url" value="{{.URL}}" placeholder="{{$.Admin.T "admin.settings.site.social_url_placeholder" "https://github.com/you 或 mailto:you@example.com"}}" inputmode="url">
@@ -246,10 +246,93 @@
               <button type="button" class="social-del" data-social-del data-confirm="{{$.Admin.T "admin.settings.site.delete_social_confirm" "删除这条社交链接？保存站点信息后生效。"}}" title="{{$.Admin.T "admin.action.delete" "删除"}}" aria-label="{{$.Admin.T "admin.action.delete" "删除"}}">{{template "icon-trash"}}</button>
             </div>
             {{end}}
-          </div>
-          <button type="button" class="btn btn-soft" data-social-add>＋ {{.Admin.T "admin.settings.site.add_link" "添加链接"}}</button>
-        </div>
-        </div>
+	          </div>
+	          <button type="button" class="btn btn-soft" data-social-add>＋ {{.Admin.T "admin.settings.site.add_link" "添加链接"}}</button>
+	        </div>
+
+	        <div class="field external-policy">
+	          <label>{{.Admin.T "admin.settings.site.external_policy" "站外链接策略"}} <span class="scope-pill global">{{.Admin.T "admin.scope.global" "全站共用"}}</span></label>
+	          <p class="muted external-policy-note">{{.Admin.T "admin.settings.site.external_policy_note" "用于控制前台打开外部网站时自动追加的 target 与 rel 属性；站内链接不会受影响。域名规则会覆盖默认策略；新规则默认保留 noopener / noreferrer，避免新窗口安全和来源泄露问题。"}}</p>
+	          <div class="external-policy-card">
+	            <div class="external-policy-head">
+	              <strong>{{.Admin.T "admin.settings.site.external_default" "默认站外链接"}}</strong>
+	              <label class="inline-check">
+	                <input type="checkbox" name="external_default_target_blank" value="1"{{if .Settings.ExternalLinks.DefaultTargetBlank}} checked{{end}}>
+	                <span>{{.Admin.T "admin.settings.site.external_blank" "新窗口打开"}}</span>
+	              </label>
+	            </div>
+	            <div class="external-rel-grid">
+	              {{range .Settings.ExternalLinks.RelOptions}}
+	              <label class="external-rel-option">
+	                <input type="checkbox" name="external_default_rel" value="{{.Token}}"{{if index $.Settings.ExternalLinks.DefaultRel .Token}} checked{{end}}>
+	                <span>
+	                  <strong>{{.Label}}</strong>
+	                  <small>{{.Note}}</small>
+	                </span>
+	              </label>
+	              {{end}}
+	            </div>
+	          </div>
+
+	          <div class="external-rule-list" data-external-rule-list data-next-index="{{len .Settings.ExternalLinks.Rules}}">
+	            {{range $rule := .Settings.ExternalLinks.Rules}}
+	            <div class="external-rule-row" data-external-rule>
+	              <input type="hidden" name="external_rule_index" value="{{$rule.Index}}">
+	              <div class="external-rule-main">
+	                <div class="external-rule-domain">
+	                  <label>{{$.Admin.T "admin.settings.site.external_domain" "域名规则"}}</label>
+	                  <input name="external_rule_domain_{{$rule.Index}}" value="{{$rule.Domain}}" placeholder="example.com" inputmode="url">
+	                </div>
+	                <button type="button" class="external-rule-del" data-external-rule-del title="{{$.Admin.T "admin.action.delete" "删除"}}" aria-label="{{$.Admin.T "admin.action.delete" "删除"}}">{{template "icon-trash"}}</button>
+	              </div>
+	              <div class="external-rule-flags">
+	                <label class="inline-check"><input type="checkbox" name="external_rule_subdomains_{{$rule.Index}}" value="1"{{if $rule.IncludeSubdomains}} checked{{end}}><span>{{$.Admin.T "admin.settings.site.external_subdomains" "包含子域名"}}</span></label>
+	                <label class="inline-check"><input type="checkbox" name="external_rule_target_blank_{{$rule.Index}}" value="1"{{if $rule.TargetBlank}} checked{{end}}><span>{{$.Admin.T "admin.settings.site.external_blank" "新窗口打开"}}</span></label>
+	              </div>
+	              <div class="external-rel-grid compact">
+	                {{range $opt := $.Settings.ExternalLinks.RelOptions}}
+	                <label class="external-rel-option">
+	                  <input type="checkbox" name="external_rule_rel_{{$rule.Index}}" value="{{$opt.Token}}"{{if index $rule.Rel $opt.Token}} checked{{end}}>
+	                  <span>
+	                    <strong>{{$opt.Label}}</strong>
+	                    <small>{{$opt.Note}}</small>
+	                  </span>
+	                </label>
+	                {{end}}
+	              </div>
+	            </div>
+	            {{end}}
+	          </div>
+	          <button type="button" class="btn btn-soft" data-external-rule-add>＋ {{.Admin.T "admin.settings.site.external_add_rule" "添加域名规则"}}</button>
+	          <template data-external-rule-template>
+	            <div class="external-rule-row" data-external-rule>
+	              <input type="hidden" name="external_rule_index" value="__INDEX__">
+	              <div class="external-rule-main">
+	                <div class="external-rule-domain">
+	                  <label>{{.Admin.T "admin.settings.site.external_domain" "域名规则"}}</label>
+	                  <input name="external_rule_domain___INDEX__" placeholder="example.com" inputmode="url">
+	                </div>
+	                <button type="button" class="external-rule-del" data-external-rule-del title="{{.Admin.T "admin.action.delete" "删除"}}" aria-label="{{.Admin.T "admin.action.delete" "删除"}}">{{template "icon-trash"}}</button>
+	              </div>
+	              <div class="external-rule-flags">
+	                <label class="inline-check"><input type="checkbox" name="external_rule_subdomains___INDEX__" value="1" checked><span>{{.Admin.T "admin.settings.site.external_subdomains" "包含子域名"}}</span></label>
+	                <label class="inline-check"><input type="checkbox" name="external_rule_target_blank___INDEX__" value="1" checked><span>{{.Admin.T "admin.settings.site.external_blank" "新窗口打开"}}</span></label>
+	              </div>
+	              <div class="external-rel-grid compact">
+	                {{range .Settings.ExternalLinks.RelOptions}}
+	                <label class="external-rel-option">
+	                  <input type="checkbox" name="external_rule_rel___INDEX__" value="{{.Token}}"{{if or (eq .Token "noopener") (eq .Token "noreferrer")}} checked{{end}}>
+	                  <span>
+	                    <strong>{{.Label}}</strong>
+	                    <small>{{.Note}}</small>
+	                  </span>
+	                </label>
+	                {{end}}
+	              </div>
+	            </div>
+	          </template>
+	        </div>
+	        </div>
 
         <div class="field-group">
           <h3 class="group-head with-icon">

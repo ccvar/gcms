@@ -82,8 +82,13 @@ func RenderContent(src string) (template.HTML, []Heading) {
 }
 
 func RenderContentWithImages(src string, imageSizes map[string]ImageSize) (template.HTML, []Heading) {
+	return RenderContentWithLinkPolicy(src, imageSizes, nil)
+}
+
+func RenderContentWithLinkPolicy(src string, imageSizes map[string]ImageSize, linkPolicy *ExternalLinkPolicy) (template.HTML, []Heading) {
 	source := []byte(src)
 	doc := gmark.Parser().Parse(text.NewReader(source))
+	decorateMarkdownLinks(doc, linkPolicy)
 
 	var toc []Heading
 	used := map[string]int{}
@@ -409,7 +414,7 @@ func NewRenderer(tplFS fs.FS, imageSizes map[string]ImageSize) (*Renderer, error
 		return nil, err
 	}
 	r := &Renderer{sets: map[string]*template.Template{}}
-	partials := []string{"layout.html", "partials/head.html", "partials/header.html", "partials/footer.html", "partials/home_bento.html", "partials/home_index.html", "partials/home_split.html", "partials/home_axis.html"}
+	partials := []string{"layout.html", "partials/head.html", "partials/header.html", "partials/footer.html", "partials/home_bento.html", "partials/home_index.html", "partials/home_split.html", "partials/home_axis.html", "partials/home_bands.html", "partials/home_ticker.html"}
 
 	for _, name := range []string{"home", "article", "category", "links", "link", "page", "search", "api_docs", "404", "generic_list", "generic_detail", "doc_list", "doc_detail"} {
 		files := append([]string{}, partials...)
@@ -421,7 +426,7 @@ func NewRenderer(tplFS fs.FS, imageSizes map[string]ImageSize) (*Renderer, error
 		r.sets[name] = t
 	}
 
-	tp, err := template.New("theme_preview").Funcs(funcMap(imageSizes)).ParseFS(sub, "theme_preview.html", "partials/home_bento.html", "partials/home_index.html", "partials/home_split.html", "partials/home_axis.html")
+	tp, err := template.New("theme_preview").Funcs(funcMap(imageSizes)).ParseFS(sub, "theme_preview.html", "partials/home_bento.html", "partials/home_index.html", "partials/home_split.html", "partials/home_axis.html", "partials/home_bands.html", "partials/home_ticker.html")
 	if err != nil {
 		return nil, err
 	}

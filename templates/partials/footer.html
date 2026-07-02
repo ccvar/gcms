@@ -7,7 +7,7 @@
       <div class="f-cols">
         <div class="f-col"><h4>{{.Tr.T "footer.content"}}</h4><a href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "footer.all_categories"}}</a><a href="{{.Tr.U "/"}}">{{.Tr.T "footer.featured"}}</a><a href="{{.Tr.U "/rss.xml"}}">{{.Tr.T "footer.rss"}}</a></div>
         <div class="f-col"><h4>{{.Tr.T "footer.site"}}</h4><a href="{{.Tr.U "/about"}}">{{.Tr.T "footer.about"}}</a><a href="{{.SitemapURL}}">{{.Tr.T "footer.sitemap"}}</a><a href="{{.RobotsURL}}">{{.Tr.T "footer.robots"}}</a></div>
-        <div class="f-col"><h4>{{.Tr.T "footer.follow"}}</h4>{{if .Social}}{{range .Social}}<a class="soc" href="{{.URL}}"{{if .Blank}} target="_blank" rel="noopener"{{end}}>{{.Icon}}<span>{{.Name}}</span></a>{{end}}{{else}}<a href="{{.Tr.U "/rss.xml"}}">{{.Tr.T "footer.rss"}}</a>{{end}}</div>
+        <div class="f-col"><h4>{{.Tr.T "footer.follow"}}</h4>{{if .Social}}{{range .Social}}<a class="soc" href="{{.URL}}"{{$.ExternalLinkAttrs .URL}}>{{.Icon}}<span>{{.Name}}</span></a>{{end}}{{else}}<a href="{{.Tr.U "/rss.xml"}}">{{.Tr.T "footer.rss"}}</a>{{end}}</div>
       </div>
     </div>
   </footer>

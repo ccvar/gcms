@@ -27,7 +27,7 @@
             {{if $p.Excerpt}}<p class="lead">{{$p.Excerpt}}</p>{{end}}
             {{if $p.LinkURL}}
             <div class="link-visit-row">
-              <a class="btn btn-primary" href="{{$p.LinkURL}}" target="_blank" rel="noopener nofollow">{{.Tr.T "links.visit"}} <span class="arrow">↗</span></a>
+              <a class="btn btn-primary" href="{{$p.LinkURL}}"{{.ExternalLinkAttrs $p.LinkURL}}>{{.Tr.T "links.visit"}} <span class="arrow">↗</span></a>
               <span class="link-url muted">{{$p.LinkURL}}</span>
             </div>
             {{end}}
@@ -44,7 +44,7 @@
               {{with $p.Category}}<a class="tag" href="{{$.Tr.U (printf "/links/cat/%s" .Slug)}}">{{.Name}}</a>{{end}}
               {{range $p.KeywordList}}<a class="tag" href="{{$.Tr.U (printf "/search?q=%s" .)}}">{{.}}</a>{{end}}
             </div>
-            {{if $p.LinkURL}}<a class="btn" href="{{$p.LinkURL}}" target="_blank" rel="noopener nofollow">{{$.Tr.T "links.visit"}} <span class="arrow">↗</span></a>{{end}}
+            {{if $p.LinkURL}}<a class="btn" href="{{$p.LinkURL}}"{{$.ExternalLinkAttrs $p.LinkURL}}>{{$.Tr.T "links.visit"}} <span class="arrow">↗</span></a>{{end}}
           </div>
         </article>
 

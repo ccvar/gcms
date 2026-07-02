@@ -1,0 +1,44 @@
+{{define "home_ticker"}}
+  {{if .Categories}}
+  <div class="tick-marquee" aria-hidden="true">
+    <div class="tick-track">
+      {{range .Categories}}<span class="tick-chip"><b>{{.Name}}</b><span class="tick-num">{{.Count}}</span></span>{{end}}
+      {{range .Categories}}<span class="tick-chip"><b>{{.Name}}</b><span class="tick-num">{{.Count}}</span></span>{{end}}
+    </div>
+  </div>
+  {{end}}
+
+  <section class="tick-hero">
+    <div class="tick-in">
+      {{if .Site.HeroEyebrow}}<p class="tick-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+      <h1 class="tick-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+      <p class="tick-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>
+      <div class="tick-cta">
+        <a class="btn btn-primary" href="{{if .Featured}}{{.Tr.U (contentURL .Featured)}}{{else}}{{.Tr.U .CategoryAll.Path}}{{end}}">{{.Tr.T "home.cta_start"}} <span class="arrow">→</span></a>
+        <a class="btn" href="{{.Tr.U "/about"}}">{{.Tr.T "home.cta_more"}}</a>
+      </div>
+    </div>
+  </section>
+
+  {{if .Posts}}
+  <section class="tick-feed">
+    <div class="tick-in">
+      <div class="tick-head"><span class="tick-live"><span class="tick-dot" aria-hidden="true"></span>{{.Site.HomeLatest}}</span><a href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a></div>
+      <div class="tick-list">
+        {{with .Featured}}
+        <a class="tick-row is-feat" href="{{$.Tr.U (contentURL .)}}">
+          <span class="tick-time"><time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time></span>
+          <span class="tick-body"><span class="tick-cat">{{with .Category}}{{.Name}}{{end}}</span><span class="tick-title">{{.Title}}</span></span>
+        </a>
+        {{end}}
+        {{range .Posts}}
+        <a class="tick-row" href="{{$.Tr.U (contentURL .)}}">
+          <span class="tick-time"><time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time></span>
+          <span class="tick-body"><span class="tick-cat">{{with .Category}}{{.Name}}{{end}}</span><span class="tick-title">{{.Title}}</span></span>
+        </a>
+        {{end}}
+      </div>
+    </div>
+  </section>
+  {{end}}
+{{end}}

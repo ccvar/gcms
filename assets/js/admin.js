@@ -1108,6 +1108,33 @@
     });
   })();
 
+  /* 站外链接策略：域名规则增 / 删 */
+  (function () {
+    var list = document.querySelector("[data-external-rule-list]");
+    var tpl = document.querySelector("[data-external-rule-template]");
+    var addBtn = document.querySelector("[data-external-rule-add]");
+    if (!list || !tpl || !addBtn) return;
+    var next = parseInt(list.getAttribute("data-next-index") || "0", 10);
+    if (!isFinite(next) || next < 0) next = 0;
+    addBtn.addEventListener("click", function () {
+      var html = tpl.innerHTML.replace(/__INDEX__/g, String(next++));
+      list.setAttribute("data-next-index", String(next));
+      var wrap = document.createElement("div");
+      wrap.innerHTML = html.trim();
+      var row = wrap.firstElementChild;
+      if (!row) return;
+      list.appendChild(row);
+      var input = row.querySelector("input[inputmode='url']");
+      if (input) input.focus();
+    });
+    list.addEventListener("click", function (e) {
+      var btn = e.target.closest("[data-external-rule-del]");
+      if (!btn) return;
+      var row = btn.closest("[data-external-rule]");
+      if (row) row.remove();
+    });
+  })();
+
   /* 导航菜单：常用目标 / 自定义路径 / 增删 / 拖动排序 */
   (function () {
     var box = document.querySelector("[data-menu-rows]");

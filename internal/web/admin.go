@@ -4152,6 +4152,7 @@ func (s *Server) showSettings(w http.ResponseWriter, r *http.Request, section, f
 		GiscusReactions:     s.store.Setting("comments.giscus.reactions") != "0",
 		GiscusInputPosition: commentInputPosition(s.store.Setting("comments.giscus.input_position")),
 		GiscusTheme:         commentTheme(s.store.Setting("comments.giscus.theme")),
+		ExternalLinks:       s.externalLinkPolicy().Form(),
 	}
 	v.Themes = make([]ThemeOption, 0, len(Themes))
 	for _, t := range Themes {
@@ -4631,6 +4632,7 @@ func (s *Server) adminSaveSite(w http.ResponseWriter, r *http.Request) {
 	_ = s.store.SetSetting(homeLinksLimitKey, strconv.Itoa(linksLimit))
 	_ = s.store.SetSetting(homePostsPerPageKey, strconv.Itoa(postsPerPage))
 	_ = s.store.SetSetting("social_links", buildSocialJSON(r.Form["social_url"], r.Form["social_label"]))
+	_ = s.store.SetSetting(externalLinkPolicyKey, externalLinkPolicyFromForm(r.Form).JSON())
 	_ = s.store.SetSetting("inject.head", strings.TrimSpace(r.FormValue("inject_head")))
 	_ = s.store.SetSetting("inject.body", strings.TrimSpace(r.FormValue("inject_body")))
 	s.clearGeneratedCaches()
@@ -5727,7 +5729,8 @@ func (s *Server) adminUpload(w http.ResponseWriter, r *http.Request) {
 // adminRender 把请求体里的 Markdown 渲染成 HTML，供富文本编辑器进入时初始化。
 func (s *Server) adminRender(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
-	html, _ := RenderContentWithImages(string(body), s.imageSizes)
+	policy := s.externalLinkPolicy()
+	html, _ := RenderContentWithLinkPolicy(string(body), s.imageSizes, &policy)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write([]byte(html))
 }

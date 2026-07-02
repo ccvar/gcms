@@ -1,0 +1,65 @@
+{{define "home_bands"}}
+  <section class="bands-band bands-hero">
+    <div class="bands-in">
+      {{if .Site.HeroEyebrow}}<p class="bands-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+      <h1 class="bands-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+      <p class="bands-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>
+      <div class="bands-cta">
+        <a class="btn btn-primary" href="{{if .Featured}}{{.Tr.U (contentURL .Featured)}}{{else}}{{.Tr.U .CategoryAll.Path}}{{end}}">{{.Tr.T "home.cta_start"}} <span class="arrow">→</span></a>
+        <a class="btn" href="{{.Tr.U "/about"}}">{{.Tr.T "home.cta_more"}}</a>
+      </div>
+    </div>
+  </section>
+
+  {{with .Featured}}
+  <section class="bands-band bands-featured">
+    <div class="bands-in">
+      <p class="bands-kicker">{{$.Site.HomeFeatured}}</p>
+      <article class="bands-feat{{if not .CoverImage}} no-cover{{end}}">
+        {{if .CoverImage}}<a class="bands-feat-cover" href="{{$.Tr.U (contentURL .)}}"><img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}></a>{{end}}
+        <div class="bands-feat-body">
+          <div class="meta">{{with .Category}}<span class="tag">{{.Name}}</span><span class="sep">·</span>{{end}}<time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time></div>
+          <h2><a href="{{$.Tr.U (contentURL .)}}">{{.Title}}</a></h2>
+          <p>{{.Excerpt}}</p>
+          <a class="btn" href="{{$.Tr.U (contentURL .)}}">{{$.Tr.T "home.read_more"}} <span class="arrow">→</span></a>
+        </div>
+      </article>
+    </div>
+  </section>
+  {{end}}
+
+  {{if .FeatLinks}}
+  <section class="bands-band bands-links">
+    <div class="bands-in">
+      <p class="bands-kicker">{{.Site.HomeLinks}}</p>
+      <div class="bands-link-grid">
+        {{range .FeatLinks}}
+        <a class="bands-link" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+          <span class="bands-link-ic">{{if .CoverImage}}<img src="{{.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b>{{initial .Title}}</b>{{end}}</span>
+          <span class="bands-link-t">{{.Title}} <span class="arrow" aria-hidden="true">→</span></span>
+          {{if .Excerpt}}<span class="bands-link-d">{{.Excerpt}}</span>{{end}}
+        </a>
+        {{end}}
+      </div>
+    </div>
+  </section>
+  {{end}}
+
+  {{if .Posts}}
+  <section class="bands-band bands-latest">
+    <div class="bands-in">
+      <div class="bands-head"><p class="bands-kicker">{{.Site.HomeLatest}}</p><a href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow">→</span></a></div>
+      <div class="bands-list">
+        {{range $i, $p := .Posts}}
+        <a class="bands-row" href="{{$.Tr.U (contentURL $p)}}">
+          <span class="bands-n">{{printf "%02d" (add $i 1)}}</span>
+          <span class="bands-rt">{{$p.Title}}</span>
+          <span class="bands-rm">{{with $p.Category}}{{.Name}}{{end}}</span>
+          <span class="bands-rd"><time datetime="{{$.Tr.ISODate $p.PublishedAt}}">{{$.Tr.Date $p.PublishedAt}}</time></span>
+        </a>
+        {{end}}
+      </div>
+    </div>
+  </section>
+  {{end}}
+{{end}}

@@ -34,7 +34,7 @@
             {{if .List}}
             <div class="ext-block">
               <div class="ext-block-label">{{.Label}}</div>
-              <div class="ext-gallery">{{range .List}}<a class="ext-shot" href="{{.}}" target="_blank" rel="noopener"><img src="{{.}}" alt="{{$p.Title}}" loading="lazy" decoding="async"{{imgAttrs .}}></a>{{end}}</div>
+              <div class="ext-gallery">{{range .List}}<a class="ext-shot" href="{{.}}"{{$.ExternalLinkAttrs .}}><img src="{{.}}" alt="{{$p.Title}}" loading="lazy" decoding="async"{{imgAttrs .}}></a>{{end}}</div>
             </div>
             {{else if .Pairs}}
             <div class="ext-block">
@@ -44,7 +44,7 @@
             {{else if .Text}}
             <div class="ext-row">
               <span class="ext-row-label">{{.Label}}</span>
-              <span class="ext-row-val">{{if eq .Type "url"}}<a class="ext-url" href="{{.Text}}" target="_blank" rel="noopener nofollow">{{.Text}} <span class="arrow">↗</span></a>{{else}}{{.Text}}{{end}}</span>
+              <span class="ext-row-val">{{if eq .Type "url"}}<a class="ext-url" href="{{.Text}}"{{$.ExternalLinkAttrs .Text}}>{{.Text}} <span class="arrow">↗</span></a>{{else}}{{.Text}}{{end}}</span>
             </div>
             {{end}}
             {{end}}

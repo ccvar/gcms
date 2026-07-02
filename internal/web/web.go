@@ -170,6 +170,9 @@ var Themes = []ThemeOption{
 	{"riso", "孔版 · Risograph", "独立孔版印刷：双专色叠印、网点质感、套印偏移、硬阴影"},
 	{"quiet", "和敬 · Quiet", "和风留白：极阔间距、竖向节奏、发丝线、一点朱印强调"},
 	{"lucid", "明快 · Lucid", "亮白极简 + 暖橙强调：现代无衬线、扁平圆角卡片、胶囊按钮、宽松留白——科普 / 金融式的清晰亲和"},
+	{"aurora", "霓白 · Aurora", "浅色玻璃拟态：柔和渐变网格底 + 磨砂半透卡片 + 渐变标题，靛紫强调——Web3 发布页 / L2·DeFi 的高级科技感"},
+	{"bands", "光带 · Bands", "全宽交替色带分区：一屏一段的纵向叙事带，电光蓝强调、超大无衬线——现代营销 / Web3 推广落地页"},
+	{"ticker", "流光 · Ticker", "顶部滚动行情/生态跑马灯 + 下方实时信息流：等宽数字、翠绿涨色强调——Web3 实时感信息站"},
 }
 
 // themeLayouts 登记“非默认骨架”的主题；未登记者一律 "topbar"（= 现有基础骨架）。
@@ -183,6 +186,8 @@ var themeLayouts = map[string]string{
 	"index":    "index",
 	"split":    "split",
 	"axis":     "axis",
+	"bands":    "bands",
+	"ticker":   "ticker",
 }
 
 // layoutForTheme 返回主题对应的布局骨架，缺省 "topbar"。
@@ -314,6 +319,7 @@ type View struct {
 	Tr                      *i18n.Tr
 	Lang                    string
 	Langs                   []LangLink
+	ExternalLinks           ExternalLinkPolicy
 	RootLangRedirect        bool
 	RootLangRedirectLocales template.JS
 	RootLangRedirectDefault template.JS
@@ -610,6 +616,7 @@ type SettingsForm struct {
 	AllSlug        string
 	AllPath        string
 	AllDescription string
+	ExternalLinks  ExternalLinkPolicyForm
 }
 
 const (
@@ -2044,7 +2051,8 @@ func (s *Server) renderedContent(p *store.Post) (template.HTML, []Heading) {
 	}
 	s.cacheMu.RUnlock()
 
-	html, toc := RenderContentWithImages(p.Content, s.imageSizes)
+	policy := s.externalLinkPolicy()
+	html, toc := RenderContentWithLinkPolicy(p.Content, s.imageSizes, &policy)
 	s.cacheMu.Lock()
 	if len(s.content) > 512 {
 		s.content = map[string]contentCacheEntry{}
@@ -2553,11 +2561,12 @@ func (s *Server) viewForLang(r *http.Request, lang, nav string) *View {
 	v := &View{
 		Site: st, Nav: nav, Year: time.Now().Year(), Theme: st.Theme, Layout: layoutForTheme(st.Theme), ThemeStyle: s.themeOverride(),
 		Tr: tr, Lang: lang, AssetVer: s.assetVer,
-		SitemapURL:   previewRootPath(r, "/sitemap.xml"),
-		RobotsURL:    previewRootPath(r, "/robots.txt"),
-		CategoryAll:  s.archiveConfig(lang, "post"),
-		LinksAll:     s.archiveConfig(lang, "link"),
-		ForceNoindex: previewNoindexFrom(r.Context()),
+		SitemapURL:    previewRootPath(r, "/sitemap.xml"),
+		RobotsURL:     previewRootPath(r, "/robots.txt"),
+		CategoryAll:   s.archiveConfig(lang, "post"),
+		LinksAll:      s.archiveConfig(lang, "link"),
+		ExternalLinks: s.externalLinkPolicy(),
+		ForceNoindex:  previewNoindexFrom(r.Context()),
 	}
 	if r.URL.Query().Get("visual_edit") == "1" {
 		if _, ok := s.currentSession(r); ok {
