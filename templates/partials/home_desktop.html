@@ -1,0 +1,103 @@
+{{define "home_desktop"}}
+  <div class="dsk-wrap">
+    <div class="dsk-surface">
+
+      {{/* ---------- HERO band (the "log-in / welcome" strip above the desktop) ---------- */}}
+      <header class="dsk-hero">
+        {{if .Site.HeroEyebrow}}<p class="dsk-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+        <h1 class="dsk-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+        <p class="dsk-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>
+        <div class="dsk-cta">
+          <a class="btn btn-primary" href="{{if .Featured}}{{.Tr.U (contentURL .Featured)}}{{else}}{{.Tr.U .CategoryAll.Path}}{{end}}">{{.Tr.T "home.cta_start"}} <span class="arrow">→</span></a>
+          <a class="btn" href="{{.Tr.U "/about"}}">{{.Tr.T "home.cta_more"}}</a>
+        </div>
+      </header>
+
+      {{/* ---------- the desktop canvas ---------- */}}
+      {{if or .Featured .Categories .Posts .FeatLinks}}
+      <div class="dsk-canvas">
+        <div class="dsk-desk">
+
+          {{/* Featured = the big open window */}}
+          {{with .Featured}}
+          <section class="dsk-window dsk-win-feat">
+            <div class="dsk-titlebar">
+              <span class="dsk-lights" aria-hidden="true"><i class="dsk-l dsk-l-min"></i><i class="dsk-l dsk-l-max"></i><i class="dsk-l dsk-l-close"></i></span>
+              <span class="dsk-winname">{{$.Site.HomeFeatured}}</span>
+            </div>
+            <a class="dsk-win-body dsk-feat-body{{if not .CoverImage}} no-cover{{end}}" href="{{$.Tr.U (contentURL .)}}">
+              <span class="dsk-feat-cover">
+                {{if .CoverImage}}<img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b class="dsk-cover-gen" aria-hidden="true">{{initial .Title}}</b>{{end}}
+              </span>
+              <span class="dsk-feat-text">
+                <span class="dsk-feat-meta">{{with .Category}}<span class="dsk-chip">{{.Name}}</span>{{end}}<time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time></span>
+                <span class="dsk-feat-title">{{.Title}}</span>
+                {{if .Excerpt}}<span class="dsk-feat-ex">{{.Excerpt}}</span>{{end}}
+                <span class="dsk-feat-more">{{$.Tr.T "home.read_more"}} <span class="arrow" aria-hidden="true">→</span></span>
+              </span>
+            </a>
+          </section>
+          {{end}}
+
+          {{/* Categories = scatter of folder icons */}}
+          {{if .Categories}}
+          <section class="dsk-folders" aria-label="{{.Tr.T "nav.category"}}">
+            {{range .Categories}}
+            <a class="dsk-folder" href="{{$.Tr.U (printf "/category/%s" .Slug)}}">
+              <span class="dsk-folder-ic" aria-hidden="true"><span class="dsk-folder-tab"></span><span class="dsk-folder-body"></span></span>
+              <span class="dsk-folder-badge">{{.Count}}</span>
+              <span class="dsk-folder-label">{{.Name}}</span>
+            </a>
+            {{end}}
+          </section>
+          {{end}}
+
+          {{/* Posts = a second window styled as a file list */}}
+          {{if .Posts}}
+          <section class="dsk-window dsk-win-files">
+            <div class="dsk-titlebar">
+              <span class="dsk-lights" aria-hidden="true"><i class="dsk-l dsk-l-min"></i><i class="dsk-l dsk-l-max"></i><i class="dsk-l dsk-l-close"></i></span>
+              <span class="dsk-winname">{{.Site.HomeLatest}}</span>
+              <a class="dsk-win-all" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+            </div>
+            <div class="dsk-win-body dsk-filelist">
+              <div class="dsk-file-head" aria-hidden="true"><span>Name</span><span>Kind</span><span>Modified</span></div>
+              {{range $i, $p := .Posts}}
+              <a class="dsk-file" href="{{$.Tr.U (contentURL $p)}}">
+                <span class="dsk-file-name"><span class="dsk-doc" aria-hidden="true"></span><span class="dsk-file-t">{{$p.Title}}</span></span>
+                <span class="dsk-file-kind">{{with $p.Category}}{{.Name}}{{else}}—{{end}}</span>
+                <span class="dsk-file-date"><time datetime="{{$.Tr.ISODate $p.PublishedAt}}">{{$.Tr.Date $p.PublishedAt}}</time></span>
+              </a>
+              {{end}}
+            </div>
+          </section>
+          {{end}}
+
+          {{/* FeatLinks = shortcut icons along the right edge */}}
+          {{if .FeatLinks}}
+          <aside class="dsk-shortcuts" aria-label="{{.Site.HomeLinks}}">
+            {{range .FeatLinks}}
+            <a class="dsk-shortcut" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+              <span class="dsk-shortcut-ic">{{if .CoverImage}}<img src="{{.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}<span class="dsk-shortcut-arrow" aria-hidden="true">↗</span></span>
+              <span class="dsk-shortcut-label">{{.Title}}</span>
+            </a>
+            {{end}}
+          </aside>
+          {{end}}
+
+        </div>
+
+        {{/* ---------- faux taskbar pinned to the bottom of the section ---------- */}}
+        <div class="dsk-taskbar">
+          <a class="dsk-start" href="{{.Tr.U .CategoryAll.Path}}"><span class="dsk-start-orb" aria-hidden="true"></span><span class="dsk-start-t">{{.Tr.T "nav.category"}}</span></a>
+          <div class="dsk-tray">
+            {{if .Site.HeroEyebrow}}<span class="dsk-tray-tag">{{.Site.HeroEyebrow}}</span>{{end}}
+            <span class="dsk-tray-clock"><span class="dsk-tray-dot" aria-hidden="true"></span>{{.Site.HomeLinks}}</span>
+          </div>
+        </div>
+      </div>
+      {{end}}
+
+    </div>
+  </div>
+{{end}}

@@ -1,0 +1,35 @@
+{{define "home_constellation"}}
+  <section class="cst" data-cst>
+    <div class="cst-in">
+      <div class="cst-head">
+        {{if .Site.HeroEyebrow}}<p class="cst-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+        <h1 class="cst-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+        {{if .Site.HeroDescription}}<p class="cst-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+      </div>
+      {{if .Categories}}
+      <div class="cst-filter" role="group" aria-label="{{.Tr.T "nav.category"}}">
+        <a class="cst-chip is-active" href="{{.Tr.U .CategoryAll.Path}}" data-cat="all">{{.CategoryAll.Label}}</a>
+        {{range .Categories}}<a class="cst-chip" href="{{$.Tr.U (printf "/category/%s" .Slug)}}" data-cat="{{.Slug}}">{{.Name}}<span class="cst-n">{{.Count}}</span></a>{{end}}
+        <input type="search" class="cst-search" hidden placeholder="{{.Tr.T "nav.search"}}" aria-label="{{.Tr.T "nav.search"}}">
+      </div>
+      {{end}}
+      <div class="cst-grid">
+        {{with .Featured}}
+        <a class="cst-card" href="{{$.Tr.U (contentURL .)}}" data-cat="{{with .Category}}{{.Slug}}{{end}}" data-text="{{.Title}} {{.Excerpt}}">
+          <span class="cst-logo">{{if .CoverImage}}<img src="{{.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}</span>
+          <span class="cst-body"><span class="cst-title">{{.Title}}</span>{{if .Excerpt}}<span class="cst-ex">{{.Excerpt}}</span>{{end}}</span>
+          {{with .Category}}<span class="cst-tag">{{.Name}}</span>{{end}}
+        </a>
+        {{end}}
+        {{range .Posts}}
+        <a class="cst-card" href="{{$.Tr.U (contentURL .)}}" data-cat="{{with .Category}}{{.Slug}}{{end}}" data-text="{{.Title}} {{.Excerpt}}">
+          <span class="cst-logo">{{if .CoverImage}}<img src="{{.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}</span>
+          <span class="cst-body"><span class="cst-title">{{.Title}}</span>{{if .Excerpt}}<span class="cst-ex">{{.Excerpt}}</span>{{end}}</span>
+          {{with .Category}}<span class="cst-tag">{{.Name}}</span>{{end}}
+        </a>
+        {{end}}
+      </div>
+      <p class="cst-empty" hidden>{{.Tr.T "home.no_posts"}}</p>
+    </div>
+  </section>
+{{end}}

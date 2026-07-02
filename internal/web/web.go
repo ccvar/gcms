@@ -173,21 +173,45 @@ var Themes = []ThemeOption{
 	{"aurora", "霓白 · Aurora", "浅色玻璃拟态：柔和渐变网格底 + 磨砂半透卡片 + 渐变标题，靛紫强调——Web3 发布页 / L2·DeFi 的高级科技感"},
 	{"bands", "光带 · Bands", "全宽交替色带分区：一屏一段的纵向叙事带，电光蓝强调、超大无衬线——现代营销 / Web3 推广落地页"},
 	{"ticker", "流光 · Ticker", "顶部滚动行情/生态跑马灯 + 下方实时信息流：等宽数字、翠绿涨色强调——Web3 实时感信息站"},
+	{"liftoff", "起飞 · Liftoff", "单一 CTA 的 MINT/DROP 发射页：巨型标题 + 供给进度条 + 主按钮，右侧大方形艺术框——NFT 铸造 / 代币发售落地页"},
+	{"board", "看板 · Board", "多列看板/路线图：全宽横幅精选 + 横向泳道列（分类分组）与紧凑迷你卡片，靛蓝强调——产品工具 / 产品路线图"},
+	{"timeline", "时间线 · Timeline", "居中竖脊时间线：单发丝线主轴 + 圆点节点 + 等宽日期，衬线标题、暖纸墨色——档案编年 / 更新日志 / 路线图"},
+	{"deck", "横卷 · Deck", "横向滚动影卷：整屏卡片 scroll-snap 侧滑 + 锚点翻页，作品集 / 时装 lookbook / 案例集（纯 CSS 横向）"},
+	{"poster", "封幕 · Poster", "整屏封面图 + 压图大字 + 纵向 scroll-snap 分屏折叠：杂志封面 / 品牌发布会 / mint 落地页"},
+	{"uptime", "健康 · Uptime", "状态页：总状态横幅 + 组件在线率格条 + 事件时间线，RPC / 节点 / 协议状态页"},
+	{"profile", "名帖 · Profile", "无导航个人页：头像 + 可点大按钮链接栈，Linktree 式创作者 / 项目 bio 页"},
+	{"bloom", "草木 · Bloom", "有机曲面：blob 裁剪 hero + 藤蔓脊左右交错叶卡 + 波浪分隔，养生 / 有机 / 手作品牌"},
+	{"desktop", "千禧 · Desktop", "仿千禧 OS 桌面：窗口容器 + 文件夹散布 + 任务栏，frutiger-aero 光泽玩味"},
+	{"cinema", "夜幕 · Cinema", "宽荧幕影格：2.39:1 黑边 + 灰度整屏场景 + 时间码，影像 / 摄影 / 电影质感"},
+	{"collage", "喧哗 · Collage", "反网格拼贴：叠错旋转卡片 + 便签胶带 + 涂鸦箭头，音乐节 / 潮牌 / zine"},
+	{"constellation", "星图 · Constellation", "可筛选生态名录：分类芯片 + 实时搜索过滤项目卡片网格（渐进增强，需前端 JS），Web3 生态 / 项目墙 / dApp 目录"},
 }
 
 // themeLayouts 登记“非默认骨架”的主题；未登记者一律 "topbar"（= 现有基础骨架）。
 // 皮（data-theme）与骨（data-theme-layout）解耦：同一套骨架可被多套皮复用，
 // 结构性差异在模板里按 .Layout 分支（骨架数量级），而非按主题名分支（主题数量级）。
 var themeLayouts = map[string]string{
-	"sidebar":  "sidebar",
-	"bento":    "bento",
-	"nocturne": "sidebar",
-	"terra":    "bento",
-	"index":    "index",
-	"split":    "split",
-	"axis":     "axis",
-	"bands":    "bands",
-	"ticker":   "ticker",
+	"sidebar":       "sidebar",
+	"bento":         "bento",
+	"nocturne":      "sidebar",
+	"terra":         "bento",
+	"index":         "index",
+	"split":         "split",
+	"axis":          "axis",
+	"bands":         "bands",
+	"ticker":        "ticker",
+	"liftoff":       "liftoff",
+	"board":         "board",
+	"timeline":      "timeline",
+	"deck":          "deck",
+	"poster":        "poster",
+	"uptime":        "uptime",
+	"profile":       "profile",
+	"bloom":         "bloom",
+	"desktop":       "desktop",
+	"cinema":        "cinema",
+	"collage":       "collage",
+	"constellation": "constellation",
 }
 
 // layoutForTheme 返回主题对应的布局骨架，缺省 "topbar"。
@@ -215,6 +239,10 @@ var themeAccentDefault = map[string]string{
 	"exchange": "#00f5a0", "academy": "#2563eb", "garment": "#0f766e",
 	"institution": "#8a1f2d", "studio": "#ff4f5e", "lifestyle": "#2f7d57",
 	"knowledge": "#0f766e",
+	"liftoff":   "#e5157a", "board": "#4f46e5", "timeline": "#9a5b1e", "deck": "#b0742c",
+	"poster": "#e8402a", "uptime": "#16a34a", "profile": "#f0653c", "bloom": "#5c7a4a",
+	"desktop": "#1e7fe0", "cinema": "#7fb4d8", "collage": "#e5343a",
+	"constellation": "#5b6cf0",
 }
 var themeRadiusDefault = map[string]string{
 	"editorial": "10", "magazine": "12", "terminal": "6", "brutalist": "0",
@@ -222,6 +250,10 @@ var themeRadiusDefault = map[string]string{
 	"exchange": "16", "academy": "16", "garment": "12",
 	"institution": "8", "studio": "4", "lifestyle": "18",
 	"knowledge": "8",
+	"liftoff":   "20", "board": "10", "timeline": "8", "deck": "2",
+	"poster": "0", "uptime": "8", "profile": "20", "bloom": "24",
+	"desktop": "6", "cinema": "0", "collage": "4",
+	"constellation": "14",
 }
 
 const (
@@ -237,6 +269,68 @@ const (
 	minHomePostsPerPage     = 1
 	maxHomePostsPerPage     = 50
 )
+
+const (
+	homeSectionsKey = "home.sections" // 首页版块顺序 + 开关（JSON）
+	homeHeroKey     = "home.hero"     // 首页 Hero 开关（"0" 关，其余为开）
+)
+
+// HomeSection 是默认首页布局里一个可编排的内容版块。
+type HomeSection struct {
+	Key string `json:"key"`
+	On  bool   `json:"on"`
+}
+
+// homeSectionKeys 是允许的内容版块键（Hero 单独用开关控制，不入此列表）。
+var homeSectionKeys = map[string]bool{"featured": true, "links": true, "latest": true, "categories": true}
+
+// defaultHomeSections 是默认顺序：分类默认关闭以保持现有首页外观不变。
+var defaultHomeSections = []HomeSection{
+	{"featured", true}, {"links", true}, {"latest", true}, {"categories", false},
+}
+
+// normalizeHomeSections 校验/补齐版块列表：只保留已知键、去重、缺失的补默认，保证 4 个内容版块都在。
+func normalizeHomeSections(in []HomeSection) []HomeSection {
+	seen := map[string]bool{}
+	out := make([]HomeSection, 0, len(defaultHomeSections))
+	for _, sec := range in {
+		if homeSectionKeys[sec.Key] && !seen[sec.Key] {
+			out = append(out, HomeSection{sec.Key, sec.On})
+			seen[sec.Key] = true
+		}
+	}
+	for _, d := range defaultHomeSections {
+		if !seen[d.Key] {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// homeSectionConfig 读取并规整首页版块配置，返回（有序版块, Hero 是否显示）。
+func (s *Server) homeSectionConfig() ([]HomeSection, bool) {
+	heroOn := s.store.Setting(homeHeroKey) != "0" // 缺省为开
+	raw := strings.TrimSpace(s.store.Setting(homeSectionsKey))
+	if raw == "" {
+		return normalizeHomeSections(nil), heroOn
+	}
+	var stored []HomeSection
+	if err := json.Unmarshal([]byte(raw), &stored); err != nil {
+		return normalizeHomeSections(nil), heroOn
+	}
+	return normalizeHomeSections(stored), heroOn
+}
+
+// sanitizeHomeSectionsJSON 校验后台提交的版块 JSON 并重新序列化（绝不原样存用户输入）。
+func sanitizeHomeSectionsJSON(raw string) string {
+	raw = strings.TrimSpace(raw)
+	var in []HomeSection
+	if raw != "" {
+		_ = json.Unmarshal([]byte(raw), &in)
+	}
+	b, _ := json.Marshal(normalizeHomeSections(in))
+	return string(b)
+}
 
 func normalizeLayoutWidth(v string) string {
 	switch strings.TrimSpace(v) {
@@ -334,6 +428,8 @@ type View struct {
 	Featured        *store.Post
 	FeaturedMore    []*store.Post
 	FeatLinks       []*store.Post
+	HomeSections    []HomeSection // 首页可编排版块（默认布局；有序 + 开关）
+	HomeHero        bool          // 首页是否显示 Hero 版块
 	Post            *store.Post
 	Page            *store.Post
 	Categories      []*store.Category
@@ -380,94 +476,102 @@ type View struct {
 	Results int
 
 	// 后台
-	AllPosts              []*store.Post
-	ListTotal             int
-	StatusFilter          string
-	CategoryFilter        string
-	CategoryFilterName    string
-	AdminListPath         string
-	DefaultAuthor         string
-	Edit                  *store.Post
-	IsPage                bool
-	IsLink                bool
-	EditBase              string // 编辑表单的后台路径基：posts | pages | links
-	EditListURL           string // 返回列表的后台 URL
-	EditTypeLabel         string // 文章 | 页面 | 链接
-	Authed                bool
-	PlatformMode          bool // 当前实例启用了平台级多站点
-	PlatformAdminView     bool // 平台级管理页，不显示当前站点后台导航
-	ShowPwWarn            bool // 仍为默认密码且本会话未关闭提示
-	CSRF                  string
-	Flash                 string
-	FormErr               string
-	Settings              *SettingsForm
-	Themes                []ThemeOption
-	Cards                 []ThemeCard
-	Section               string
-	CatKind               string // 分类管理当前类型：post | link
-	EditCat               *store.Category
-	FormVals              map[string]string // 表单回填（分类新增/编辑出错时）
-	Update                *UpdateInfo       // 系统更新检查
-	Upgrade               *UpgradeStatus    // 系统升级任务状态
-	Cloudflare            *CloudflareView   // Cloudflare Worker 部署配置与状态
-	AutomationKeys        []*store.AutomationKey
-	AutomationLogs        []*store.AutomationLog
-	NewAPISecret          string
-	NewAPIName            string
-	NewAPIScopes          string
-	NewAIBrief            string
-	NewAPIKeyID           int64
-	APIBaseURL            string
-	OpenAPIURL            string
-	APIDocsURL            string
-	SkillPackageURL       string
-	StarterPackageURL     string
-	EditLang              string        // 后台当前操作的内容语种
-	Locales               []i18n.Locale // 已启用语种
-	AllLocales            []i18n.Locale // 全部可选语种（内置 + 自定义，语言设置勾选）
-	CustomLocales         []i18n.Locale // 自定义预设（可删除）
-	LocaleCatalogs        map[string]LocaleCatalogView
-	AdminI18NJSON         string             // 当前后台语种的用户覆盖翻译 JSON
-	Trans                 []*store.Post      // 当前编辑文章的互译版本
-	Social                []SocialLink       // 页脚社交链接（前台渲染 / 后台回填）
-	Menu                  []MenuItem         // 前台页眉导航（按当前语种解析）
-	MenuEdit              []MenuRow          // 后台导航菜单编辑（URL + 各语种标签）
-	MenuTargets           []MenuTargetOption // 后台导航菜单可选入口
-	VisualEdit            bool               // 前台 iframe 可视化编辑模式
-	VisualPreviewURL      string             // 后台可视化编辑 iframe 地址
-	AdminSiteURL          string             // 后台顶部“查看站点”入口
-	AdminPreviewPrefix    string             // 平台多站点下当前站点的前台预览前缀
-	VisualFields          []VisualField      // 可视化编辑侧栏字段
-	VisualGroups          []VisualGroup      // 可视化编辑侧栏字段分组
-	VisualHistory         []VisualLog        // 可视化编辑最近修改
-	LayoutWidth           string             // 前台内容最大宽度预设（空=跟随主题）
-	OverviewStats         []OverviewStat     // 后台概览：内容状态
-	OverviewTasks         []OverviewTask     // 后台概览：待处理事项
-	OverviewRecent        []*store.Post      // 后台概览：最近更新
-	OverviewStatus        []OverviewStatus   // 后台概览：系统状态
-	PlatformSites         []*platform.Site   // 平台综合后台：站点列表
-	PlatformDomains       map[int64][]*platform.SiteDomain
-	PlatformDomainForms   map[int64]SiteDomainForm // 每站点：绑定域名弹窗的预填数据
-	PlatformSiteIcons     map[int64]string
-	PlatformPreviewURLs   map[int64]string // 平台站点页：按各站点默认语种生成的预览入口
-	PlatformOfficialURLs  map[int64]string // 已发布到 Cloudflare 的正式站点入口
-	PlatformOfficialHosts map[int64]string // 正式站点入口展示域名
-	PlatformLocaleCounts  map[int64]int    // 每站点：启用语种数
-	PlatformContentCounts map[int64]int    // 每站点：主语种内容条数（含草稿）
-	PlatformCurrentSiteID int64            // 平台会话中当前选择的站点
-	ArchivedSites         []*platform.ArchivedSite
-	ArchivedSiteIcons     map[int64]string
-	BackupConfig          backup.Config
-	BackupRecords         []*backup.BackupRecord
-	BackupDir             string
-	ServerHealth          ServerHealth // 平台站点页：服务器负载 / 内存 / 磁盘快照
-	CaddyOnDemand         bool         // 已启用 Caddy 按需签发（决定域名绑定指引显示自动/手动）
-	CFDNSTokenSet         bool         // 平台级 Cloudflare DNS 令牌已授权
-	CFDNSFingerprint      string       // 已授权令牌指纹（展示用）
-	CFServerIPv4          string       // 记住的服务器 IPv4（DNS A 记录目标）
-	CFServerIPv6          string       // 记住的服务器 IPv6（DNS AAAA 记录目标，可选）
-	CFAuthorizeURL        string       // Cloudflare 授权模板链接
-	CFProxied             bool         // 「橙云代理」开关的记忆状态（勾选=写代理记录）
+	AllPosts                    []*store.Post
+	ListTotal                   int
+	StatusFilter                string
+	CategoryFilter              string
+	CategoryFilterName          string
+	AdminListPath               string
+	DefaultAuthor               string
+	Edit                        *store.Post
+	IsPage                      bool
+	IsLink                      bool
+	EditBase                    string // 编辑表单的后台路径基：posts | pages | links
+	EditListURL                 string // 返回列表的后台 URL
+	EditTypeLabel               string // 文章 | 页面 | 链接
+	Authed                      bool
+	PlatformMode                bool // 当前实例启用了平台级多站点
+	PlatformAdminView           bool // 平台级管理页，不显示当前站点后台导航
+	ShowPwWarn                  bool // 仍为默认密码且本会话未关闭提示
+	CSRF                        string
+	Flash                       string
+	FormErr                     string
+	Settings                    *SettingsForm
+	Themes                      []ThemeOption
+	Cards                       []ThemeCard
+	Section                     string
+	CatKind                     string // 分类管理当前类型：post | link
+	EditCat                     *store.Category
+	FormVals                    map[string]string // 表单回填（分类新增/编辑出错时）
+	Update                      *UpdateInfo       // 系统更新检查
+	Upgrade                     *UpgradeStatus    // 系统升级任务状态
+	Cloudflare                  *CloudflareView   // Cloudflare Worker 部署配置与状态
+	AutomationKeys              []*store.AutomationKey
+	AutomationLogs              []*store.AutomationLog
+	NewAPISecret                string
+	NewAPIName                  string
+	NewAPIScopes                string
+	NewAIBrief                  string
+	NewAPIKeyID                 int64
+	APIBaseURL                  string
+	OpenAPIURL                  string
+	APIDocsURL                  string
+	SkillPackageURL             string
+	StarterPackageURL           string
+	EditLang                    string        // 后台当前操作的内容语种
+	Locales                     []i18n.Locale // 已启用语种
+	AllLocales                  []i18n.Locale // 全部可选语种（内置 + 自定义，语言设置勾选）
+	CustomLocales               []i18n.Locale // 自定义预设（可删除）
+	LocaleCatalogs              map[string]LocaleCatalogView
+	AdminI18NJSON               string             // 当前后台语种的用户覆盖翻译 JSON
+	Trans                       []*store.Post      // 当前编辑文章的互译版本
+	Social                      []SocialLink       // 页脚社交链接（前台渲染 / 后台回填）
+	Menu                        []MenuItem         // 前台页眉导航（按当前语种解析）
+	MenuEdit                    []MenuRow          // 后台导航菜单编辑（URL + 各语种标签）
+	MenuTargets                 []MenuTargetOption // 后台导航菜单可选入口
+	VisualEdit                  bool               // 前台 iframe 可视化编辑模式
+	VisualPreviewURL            string             // 后台可视化编辑 iframe 地址
+	AdminSiteURL                string             // 后台顶部“查看站点”入口
+	AdminPreviewPrefix          string             // 平台多站点下当前站点的前台预览前缀
+	VisualFields                []VisualField      // 可视化编辑侧栏字段
+	VisualGroups                []VisualGroup      // 可视化编辑侧栏字段分组
+	VisualHistory               []VisualLog        // 可视化编辑最近修改
+	LayoutWidth                 string             // 前台内容最大宽度预设（空=跟随主题）
+	OverviewStats               []OverviewStat     // 后台概览：内容状态
+	OverviewTasks               []OverviewTask     // 后台概览：待处理事项
+	OverviewRecent              []*store.Post      // 后台概览：最近更新
+	OverviewStatus              []OverviewStatus   // 后台概览：系统状态
+	PlatformSites               []*platform.Site   // 平台综合后台：站点列表
+	PlatformDomains             map[int64][]*platform.SiteDomain
+	PlatformDomainForms         map[int64]SiteDomainForm // 每站点：绑定域名弹窗的预填数据
+	PlatformSiteIcons           map[int64]string
+	PlatformPreviewURLs         map[int64]string // 平台站点页：按各站点默认语种生成的预览入口
+	PlatformOfficialURLs        map[int64]string // 已发布到 Cloudflare 的正式站点入口
+	PlatformOfficialHosts       map[int64]string // 正式站点入口展示域名
+	PlatformCFDeployAt          map[int64]string // 每站点：Cloudflare 最近部署时间（RFC3339，空=未记录）
+	PlatformCFStatus            map[int64]string // 每站点：Cloudflare 部署状态（running/success/failed/空）
+	PlatformLocaleCounts        map[int64]int    // 每站点：启用语种数
+	PlatformContentCounts       map[int64]int    // 每站点：主语种内容条数（含草稿）
+	PlatformCurrentSiteID       int64            // 平台会话中当前选择的站点
+	GoogleOAuthConfigured       bool             // 平台级 Google OAuth 客户端已配置
+	GoogleOAuthClientID         string           // 平台级 Google OAuth Client ID（后台表单回填）
+	GoogleOAuthRedirectURL      string           // 平台级 Google OAuth 回调地址（后台表单回填）
+	GoogleOAuthSecretSet        bool             // 平台级 Google OAuth Client Secret 已配置
+	GoogleAnalyticsAccounts     []*platform.GoogleAccount
+	GoogleSearchConsoleAccounts []*platform.GoogleAccount
+	ArchivedSites               []*platform.ArchivedSite
+	ArchivedSiteIcons           map[int64]string
+	BackupConfig                backup.Config
+	BackupRecords               []*backup.BackupRecord
+	BackupDir                   string
+	ServerHealth                ServerHealth // 平台站点页：服务器负载 / 内存 / 磁盘快照
+	CaddyOnDemand               bool         // 已启用 Caddy 按需签发（决定域名绑定指引显示自动/手动）
+	CFDNSTokenSet               bool         // 平台级 Cloudflare DNS 令牌已授权
+	CFDNSFingerprint            string       // 已授权令牌指纹（展示用）
+	CFServerIPv4                string       // 记住的服务器 IPv4（DNS A 记录目标）
+	CFServerIPv6                string       // 记住的服务器 IPv6（DNS AAAA 记录目标，可选）
+	CFAuthorizeURL              string       // Cloudflare 授权模板链接
+	CFProxied                   bool         // 「橙云代理」开关的记忆状态（勾选=写代理记录）
 }
 
 type OverviewStat struct {
@@ -592,6 +696,9 @@ type SettingsForm struct {
 	// 首页显示数量（站点信息）
 	HomeLinksLimit   string
 	HomePostsPerPage string
+	// 首页版块编排（默认布局：有序 + 开关）
+	HomeSections []HomeSection
+	HomeHero     bool
 	// 各栏目标题的语种默认值（作为输入框 placeholder 提示）
 	HomeFeaturedDef string
 	HomeLinksDef    string
@@ -1244,6 +1351,10 @@ func platformOnlyPath(path string) bool {
 	case path == "/admin/security":
 		return true
 	case path == "/admin/platform/settings":
+		return true
+	case path == "/admin/server-health":
+		return true
+	case strings.HasPrefix(path, "/admin/google/oauth/") || strings.HasPrefix(path, "/admin/google/accounts/"):
 		return true
 	case path == "/admin/backups" || strings.HasPrefix(path, "/admin/backups/"):
 		return true
@@ -2408,6 +2519,10 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("GET /admin", s.requireAuth(s.adminDashboard))
 	mux.HandleFunc("GET /admin/sites", s.requireAuth(s.adminSites))
 	mux.HandleFunc("GET /admin/server-health", s.requireAuth(s.adminServerHealth))
+	mux.HandleFunc("GET /admin/google/oauth/start", s.requireAuth(s.adminGoogleOAuthStart))
+	mux.HandleFunc("GET /admin/google/oauth/callback", s.requireAuth(s.adminGoogleOAuthCallback))
+	mux.HandleFunc("POST /admin/google/oauth/config", s.requireAuth(s.adminGoogleOAuthConfig))
+	mux.HandleFunc("POST /admin/google/accounts/delete", s.requireAuth(s.adminGoogleAccountDelete))
 	mux.HandleFunc("POST /admin/sites", s.requireAuth(s.adminCreateSite))
 	mux.HandleFunc("POST /admin/sites/{id}/enter", s.requireAuth(s.adminEnterSite))
 	mux.HandleFunc("GET /admin/sites/{id}/automation/skill.zip", s.requireAuth(s.adminDownloadPlatformAutomationSkill))
@@ -2416,6 +2531,8 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /admin/sites/{id}/status", s.requireAuth(s.adminSetSiteStatus))
 	mux.HandleFunc("POST /admin/sites/{id}/automation", s.requireAuth(s.adminSetSiteAutomation))
 	mux.HandleFunc("POST /admin/sites/{id}/domains", s.requireAuth(s.adminSaveSiteDomains))
+	mux.HandleFunc("POST /admin/sites/{id}/cloudflare/deploy", s.requireAuth(s.adminPlatformSiteCloudflareDeploy))
+	mux.HandleFunc("GET /admin/sites/{id}/cloudflare/status", s.requireAuth(s.adminPlatformSiteCloudflareStatus))
 	mux.HandleFunc("GET /admin/sites/{id}/wizard/proxy", s.requireAuth(s.adminWizardProxyDetect))
 	mux.HandleFunc("POST /admin/sites/{id}/wizard/dns", s.requireAuth(s.adminWizardDNSDetect))
 	mux.HandleFunc("POST /admin/sites/{id}/wizard/verify", s.requireAuth(s.adminWizardVerify))
@@ -2576,6 +2693,9 @@ func (s *Server) viewForLang(r *http.Request, lang, nav string) *View {
 	v.Langs = s.langSwitchForRequest(r, lang, nil, "/")
 	v.Social = parseSocialLinks(s.store.Setting("social_links"))
 	v.Menu = s.menuItems(r, lang, tr, nav)
+	if nav == "home" {
+		v.HomeSections, v.HomeHero = s.homeSectionConfig()
+	}
 	s.applyRootLangRedirect(v)
 	return v
 }

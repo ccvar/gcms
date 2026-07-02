@@ -1,0 +1,111 @@
+{{define "home_deck"}}
+  {{/* Panel numbering: hero=deck-p1. Featured (if any)=deck-p2, then Posts continue.
+       $base = index offset so a Post at range-index $i becomes panel ($base + $i).
+       If Featured exists, Post0 -> p3 (base 3); else Post0 -> p2 (base 2). */}}
+  {{$hasFeat := .Featured}}
+  {{$base := 2}}{{if $hasFeat}}{{$base = 3}}{{end}}
+  {{$postCount := len .Posts}}
+  {{/* last content panel index (before optional links panel) */}}
+  {{$lastContent := 1}}
+  {{if $hasFeat}}{{$lastContent = 2}}{{end}}
+  {{if .Posts}}{{$lastContent = add $base (add $postCount -1)}}{{end}}
+  {{$hasLinks := .FeatLinks}}
+  {{$linksId := add $lastContent 1}}
+  {{$total := $lastContent}}{{if $hasLinks}}{{$total = $linksId}}{{end}}
+
+  <section class="deck-shell" aria-label="{{.Site.HomeLatest}}">
+    <div class="deck-track">
+
+      {{/* ---- Panel 1: hero ---- */}}
+      <article class="deck-panel deck-hero" id="deck-p1">
+        <div class="deck-hero-in">
+          {{if .Site.HeroEyebrow}}<p class="deck-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+          <h1 class="deck-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+          <p class="deck-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>
+          <div class="deck-cta">
+            <a class="btn btn-primary" href="{{if .Featured}}{{.Tr.U (contentURL .Featured)}}{{else}}{{.Tr.U .CategoryAll.Path}}{{end}}">{{.Tr.T "home.cta_start"}} <span class="arrow">→</span></a>
+            <a class="btn" href="{{.Tr.U "/about"}}">{{.Tr.T "home.cta_more"}}</a>
+          </div>
+        </div>
+        <div class="deck-ctl">
+          <span class="deck-idx"><span class="deck-idx-n">01</span><span class="deck-idx-sep">/</span><span class="deck-idx-t">{{printf "%02d" $total}}</span></span>
+          <span class="deck-nav">
+            <span class="deck-chev is-off" aria-hidden="true">‹</span>
+            {{if gt $total 1}}<a class="deck-chev" href="#deck-p2" aria-label="{{.Tr.T "home.cta_more"}}">›</a>{{else}}<span class="deck-chev is-off" aria-hidden="true">›</span>{{end}}
+          </span>
+        </div>
+      </article>
+
+      {{/* ---- Featured panel (deck-p2) ---- */}}
+      {{with .Featured}}
+      <article class="deck-panel deck-slide{{if not .CoverImage}} no-cover{{end}}" id="deck-p2"{{if .CoverImage}} style="background-image:url('{{.CoverImage}}')"{{end}}>
+        {{if not .CoverImage}}<span class="deck-gen" aria-hidden="true">{{initial .Title}}</span>{{end}}
+        <a class="deck-hit" href="{{$.Tr.U (contentURL .)}}" aria-label="{{.Title}}"></a>
+        <div class="deck-cap">
+          <span class="deck-flag">{{$.Site.HomeFeatured}}</span>
+          <span class="deck-cap-meta">{{with .Category}}<a class="deck-cat" href="{{$.Tr.U (printf "/category/%s" .Slug)}}">{{.Name}}</a>{{end}}<time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time></span>
+          <h2 class="deck-cap-title"><a href="{{$.Tr.U (contentURL .)}}">{{.Title}}</a></h2>
+          {{if .Excerpt}}<p class="deck-cap-ex">{{.Excerpt}}</p>{{end}}
+        </div>
+        <div class="deck-ctl">
+          <span class="deck-idx"><span class="deck-idx-n">02</span><span class="deck-idx-sep">/</span><span class="deck-idx-t">{{printf "%02d" $total}}</span></span>
+          <span class="deck-nav">
+            <a class="deck-chev" href="#deck-p1" aria-label="prev">‹</a>
+            {{if gt $total 2}}<a class="deck-chev" href="#deck-p3" aria-label="next">›</a>{{else}}<span class="deck-chev is-off" aria-hidden="true">›</span>{{end}}
+          </span>
+        </div>
+      </article>
+      {{end}}
+
+      {{/* ---- Post panels ---- */}}
+      {{range $i, $p := .Posts}}
+      {{$n := add $base $i}}
+      <article class="deck-panel deck-slide{{if not $p.CoverImage}} no-cover{{end}}" id="deck-p{{$n}}"{{if $p.CoverImage}} style="background-image:url('{{$p.CoverImage}}')"{{end}}>
+        {{if not $p.CoverImage}}<span class="deck-gen" aria-hidden="true">{{initial $p.Title}}</span>{{end}}
+        <a class="deck-hit" href="{{$.Tr.U (contentURL $p)}}" aria-label="{{$p.Title}}"></a>
+        <div class="deck-cap">
+          <span class="deck-cap-meta">{{with $p.Category}}<a class="deck-cat" href="{{$.Tr.U (printf "/category/%s" .Slug)}}">{{.Name}}</a>{{end}}<time datetime="{{$.Tr.ISODate $p.PublishedAt}}">{{$.Tr.Date $p.PublishedAt}}</time></span>
+          <h2 class="deck-cap-title"><a href="{{$.Tr.U (contentURL $p)}}">{{$p.Title}}</a></h2>
+          {{if $p.Excerpt}}<p class="deck-cap-ex">{{$p.Excerpt}}</p>{{end}}
+        </div>
+        <div class="deck-ctl">
+          <span class="deck-idx"><span class="deck-idx-n">{{printf "%02d" $n}}</span><span class="deck-idx-sep">/</span><span class="deck-idx-t">{{printf "%02d" $total}}</span></span>
+          <span class="deck-nav">
+            <a class="deck-chev" href="#deck-p{{add $n -1}}" aria-label="prev">‹</a>
+            {{if lt $n $total}}<a class="deck-chev" href="#deck-p{{add $n 1}}" aria-label="next">›</a>{{else}}<span class="deck-chev is-off" aria-hidden="true">›</span>{{end}}
+          </span>
+        </div>
+      </article>
+      {{end}}
+
+      {{/* ---- Optional final links panel ---- */}}
+      {{if $hasLinks}}
+      <article class="deck-panel deck-links" id="deck-p{{$linksId}}">
+        <div class="deck-links-in">
+          <p class="deck-flag deck-flag-dark">{{.Site.HomeLinks}}</p>
+          <div class="deck-link-grid{{if eq (len .FeatLinks) 1}} is-single{{end}}">
+            {{range .FeatLinks}}
+            <a class="deck-link" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+              <span class="deck-link-ic">{{if .CoverImage}}<img src="{{.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b>{{initial .Title}}</b>{{end}}</span>
+              <span class="deck-link-body">
+                <span class="deck-link-t">{{.Title}} <span class="arrow" aria-hidden="true">→</span></span>
+                {{if .Excerpt}}<span class="deck-link-x">{{.Excerpt}}</span>{{end}}
+              </span>
+            </a>
+            {{end}}
+          </div>
+        </div>
+        <div class="deck-ctl">
+          <span class="deck-idx"><span class="deck-idx-n">{{printf "%02d" $linksId}}</span><span class="deck-idx-sep">/</span><span class="deck-idx-t">{{printf "%02d" $total}}</span></span>
+          <span class="deck-nav">
+            <a class="deck-chev" href="#deck-p{{$lastContent}}" aria-label="prev">‹</a>
+            <span class="deck-chev is-off" aria-hidden="true">›</span>
+          </span>
+        </div>
+      </article>
+      {{end}}
+
+    </div>
+    <p class="deck-hint" aria-hidden="true">{{$total}} · ⇄</p>
+  </section>
+{{end}}

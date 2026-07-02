@@ -1,0 +1,115 @@
+{{define "home_poster"}}
+  {{/* cover lines: use Featured's teaser stack from the first few Posts titles up the right margin */}}
+  <div class="poster-scroll">
+
+    {{/* ===== FOLD 1 — full-bleed cover ===== */}}
+    <section class="poster-fold poster-cover{{if and .Featured .Featured.CoverImage}} has-cover{{else}} no-cover{{end}}" id="poster-top"{{if and .Featured .Featured.CoverImage}} style="background-image:url('{{.Featured.CoverImage}}')"{{end}}>
+      {{if or (not .Featured) (not .Featured.CoverImage)}}
+      <span class="poster-cover-gen" aria-hidden="true"><b>{{if .Featured}}{{initial .Featured.Title}}{{else}}{{initial .Site.HeroTitle}}{{end}}</b></span>
+      {{end}}
+      <span class="poster-scrim" aria-hidden="true"></span>
+
+      <div class="poster-cover-in">
+        <div class="poster-masthead">
+          <span class="poster-mast-l">{{if .Site.HeroEyebrow}}<span{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</span>{{else}}{{.Site.HomeFeatured}}{{end}}</span>
+          <span class="poster-mast-r">{{if .Featured}}{{with .Featured.Category}}{{.Name}}{{end}}{{end}}</span>
+        </div>
+
+        {{if .Posts}}
+        <ul class="poster-lines" aria-hidden="true">
+          {{range $i, $p := .Posts}}{{if lt $i 4}}<li class="poster-line poster-line-{{add $i 1}}"><span>{{$p.Title}}</span></li>{{end}}{{end}}
+        </ul>
+        {{end}}
+
+        <div class="poster-cover-foot">
+          <h1 class="poster-title"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+          {{if .Site.HeroDescription}}<p class="poster-sub"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+          <div class="poster-cta">
+            <a class="btn btn-primary" href="{{if .Featured}}{{.Tr.U (contentURL .Featured)}}{{else}}{{.Tr.U .CategoryAll.Path}}{{end}}">{{.Tr.T "home.cta_start"}} <span class="arrow">→</span></a>
+            <a class="btn" href="{{.Tr.U "/about"}}">{{.Tr.T "home.cta_more"}}</a>
+          </div>
+        </div>
+
+        <a class="poster-cue" href="#poster-fold-2" aria-label="scroll"><span class="poster-chev" aria-hidden="true"></span></a>
+      </div>
+    </section>
+
+    {{/* ===== FOLD 2 — Featured detail ===== */}}
+    {{with .Featured}}
+    <section class="poster-fold poster-detail" id="poster-fold-2">
+      <div class="poster-detail-in">
+        <p class="poster-kicker">{{$.Site.HomeFeatured}}</p>
+        <div class="poster-detail-meta">
+          {{with .Category}}<a class="poster-chip" href="{{$.Tr.U (printf "/category/%s" .Slug)}}">{{.Name}}</a>{{end}}
+          <time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time>
+        </div>
+        <h2 class="poster-detail-title"><a href="{{$.Tr.U (contentURL .)}}">{{.Title}}</a></h2>
+        {{if .Excerpt}}<p class="poster-detail-ex">{{.Excerpt}}</p>{{end}}
+        <a class="btn" href="{{$.Tr.U (contentURL .)}}">{{$.Tr.T "home.read_more"}} <span class="arrow">→</span></a>
+      </div>
+    </section>
+    {{end}}
+
+    {{/* ===== FOLD 3 — category tiles ===== */}}
+    {{if .Categories}}
+    <section class="poster-fold poster-cats" id="poster-fold-cats">
+      <div class="poster-fold-in">
+        <p class="poster-kicker">{{.Tr.T "nav.category"}}</p>
+        <div class="poster-cat-grid">
+          {{range .Categories}}
+          <a class="poster-cat" href="{{$.Tr.U (printf "/category/%s" .Slug)}}">
+            <span class="poster-cat-name">{{.Name}}</span>
+            <span class="poster-cat-foot"><b class="poster-cat-num">{{printf "%02d" .Count}}</b><span class="arrow" aria-hidden="true">→</span></span>
+          </a>
+          {{end}}
+        </div>
+      </div>
+    </section>
+    {{end}}
+
+    {{/* ===== FOLD 4 — latest posts index ===== */}}
+    {{if .Posts}}
+    <section class="poster-fold poster-latest" id="poster-fold-latest">
+      <div class="poster-fold-in">
+        <div class="poster-head">
+          <p class="poster-kicker">{{.Site.HomeLatest}}</p>
+          <a class="poster-viewall" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+        </div>
+        <div class="poster-list">
+          {{range $i, $p := .Posts}}
+          <a class="poster-row" href="{{$.Tr.U (contentURL $p)}}">
+            <span class="poster-n">{{printf "%02d" (add $i 1)}}</span>
+            <span class="poster-rt">{{$p.Title}}</span>
+            <span class="poster-rm">{{with $p.Category}}{{.Name}}{{end}}</span>
+            <span class="poster-rd"><time datetime="{{$.Tr.ISODate $p.PublishedAt}}">{{$.Tr.Date $p.PublishedAt}}</time></span>
+          </a>
+          {{end}}
+        </div>
+      </div>
+    </section>
+    {{end}}
+
+    {{/* ===== FOLD 5 — horizontal filmstrip of portrait cards ===== */}}
+    {{if .FeatLinks}}
+    <section class="poster-fold poster-strip-fold" id="poster-fold-strip">
+      <div class="poster-strip-head">
+        <p class="poster-kicker">{{.Site.HomeLinks}}</p>
+        <span class="poster-strip-hint" aria-hidden="true">→</span>
+      </div>
+      <div class="poster-strip">
+        {{range .FeatLinks}}
+        <a class="poster-card{{if not .CoverImage}} no-cover{{end}}" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}"{{if .CoverImage}} style="background-image:url('{{.CoverImage}}')"{{end}}>
+          {{if not .CoverImage}}<span class="poster-card-gen" aria-hidden="true"><b>{{initial .Title}}</b></span>{{end}}
+          <span class="poster-card-scrim" aria-hidden="true"></span>
+          <span class="poster-card-body">
+            <span class="poster-card-t">{{.Title}}</span>
+            {{if .Excerpt}}<span class="poster-card-x">{{.Excerpt}}</span>{{end}}
+          </span>
+        </a>
+        {{end}}
+      </div>
+    </section>
+    {{end}}
+
+  </div>
+{{end}}

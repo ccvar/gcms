@@ -1,0 +1,71 @@
+{{define "home_timeline"}}
+  <div class="tl-wrap">
+    <header class="tl-hero">
+      {{if .Site.HeroEyebrow}}<p class="tl-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+      <h1 class="tl-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+      <p class="tl-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>
+      <div class="tl-cta">
+        <a class="btn btn-primary" href="{{if .Featured}}{{.Tr.U (contentURL .Featured)}}{{else}}{{.Tr.U .CategoryAll.Path}}{{end}}">{{.Tr.T "home.cta_start"}} <span class="arrow">→</span></a>
+        <a class="btn" href="{{.Tr.U "/about"}}">{{.Tr.T "home.cta_more"}}</a>
+      </div>
+      {{if .Categories}}
+      <nav class="tl-filters" aria-label="{{.Tr.T "nav.category"}}">
+        {{range .Categories}}<a class="tl-chip" href="{{$.Tr.U (printf "/category/%s" .Slug)}}"><span class="tl-chip-name">{{.Name}}</span><span class="tl-chip-num">{{.Count}}</span></a>{{end}}
+      </nav>
+      {{end}}
+    </header>
+
+    {{if or .Featured .Posts}}
+    <div class="tl-spine">
+      <ol class="tl-line">
+        {{with .Featured}}
+        <li class="tl-node tl-node-feat">
+          <span class="tl-dot tl-dot-feat" aria-hidden="true"></span>
+          <span class="tl-date"><span class="tl-kicker">{{$.Site.HomeFeatured}}</span><time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time></span>
+          <a class="tl-card tl-card-feat" href="{{$.Tr.U (contentURL .)}}">
+            {{if .CoverImage}}<span class="tl-cover" style="background-image:url('{{.CoverImage}}')"></span>{{else}}<span class="tl-cover tl-cover-gen"><b aria-hidden="true">{{initial .Title}}</b></span>{{end}}
+            <span class="tl-card-body">
+              <span class="tl-meta">{{with .Category}}<span class="tl-cat">{{.Name}}</span>{{end}}<time class="tl-inline-date" datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time></span>
+              <span class="tl-title">{{.Title}}</span>
+              {{if .Excerpt}}<span class="tl-ex">{{.Excerpt}}</span>{{end}}
+              <span class="tl-more">{{$.Tr.T "home.read_more"}} <span class="arrow" aria-hidden="true">→</span></span>
+            </span>
+          </a>
+        </li>
+        {{end}}
+
+        {{if .Posts}}
+        <li class="tl-header" aria-hidden="true"><span class="tl-header-in">{{.Site.HomeLatest}}</span></li>
+        {{range .Posts}}
+        <li class="tl-node">
+          <span class="tl-dot" aria-hidden="true"></span>
+          <span class="tl-date"><time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time></span>
+          <a class="tl-card" href="{{$.Tr.U (contentURL .)}}">
+            <span class="tl-meta">{{with .Category}}<span class="tl-cat">{{.Name}}</span>{{end}}<time class="tl-inline-date" datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time></span>
+            <span class="tl-title">{{.Title}}</span>
+            {{if .Excerpt}}<span class="tl-ex">{{.Excerpt}}</span>{{end}}
+          </a>
+        </li>
+        {{end}}
+        {{end}}
+      </ol>
+    </div>
+    {{end}}
+
+    {{if .FeatLinks}}
+    <section class="tl-links" aria-label="{{.Site.HomeLinks}}">
+      <p class="tl-links-h">{{.Site.HomeLinks}}</p>
+      <div class="tl-links-grid">
+        {{range .FeatLinks}}
+        <a class="tl-link" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+          <span class="tl-link-ic">{{if .CoverImage}}<img src="{{.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b>{{initial .Title}}</b>{{end}}</span>
+          <span class="tl-link-t">{{.Title}} <span class="arrow" aria-hidden="true">→</span></span>
+        </a>
+        {{end}}
+      </div>
+    </section>
+    {{end}}
+
+    <div class="tl-foot"><a href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a></div>
+  </div>
+{{end}}

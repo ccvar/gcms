@@ -1,0 +1,86 @@
+{{define "home_collage"}}
+  <div class="col-wrap">
+
+    <section class="col-hero">
+      <svg class="col-doodle col-doodle-1" viewBox="0 0 120 120" aria-hidden="true" focusable="false"><path d="M6 96 C 40 40, 74 30, 108 20" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-dasharray="2 12"/><path d="M92 12 L112 18 L98 34" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <div class="col-hero-in">
+        {{if .Site.HeroEyebrow}}<p class="col-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+        <h1 class="col-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+        <p class="col-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>
+        <div class="col-cta">
+          <a class="btn btn-primary" href="{{if .Featured}}{{.Tr.U (contentURL .Featured)}}{{else}}{{.Tr.U .CategoryAll.Path}}{{end}}">{{.Tr.T "home.cta_start"}} <span class="arrow">→</span></a>
+          <a class="btn" href="{{.Tr.U "/about"}}">{{.Tr.T "home.cta_more"}}</a>
+        </div>
+      </div>
+    </section>
+
+    {{if .Categories}}
+    <section class="col-cloud" aria-label="{{.Tr.T "nav.category"}}">
+      {{range .Categories}}
+      <a class="col-tag" href="{{$.Tr.U (printf "/category/%s" .Slug)}}">
+        <span class="col-tag-name">{{.Name}}</span><span class="col-tag-num">{{.Count}}</span>
+      </a>
+      {{end}}
+    </section>
+    {{end}}
+
+    {{with .Featured}}
+    <section class="col-featwrap">
+      <p class="col-kicker">{{$.Site.HomeFeatured}}</p>
+      <a class="col-feat{{if not .CoverImage}} no-cover{{end}}" href="{{$.Tr.U (contentURL .)}}">
+        <span class="col-feat-frame">
+          {{if .CoverImage}}<img class="col-feat-img" src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<span class="col-feat-gen" aria-hidden="true">{{initial .Title}}</span>{{end}}
+          {{with .Category}}<span class="col-sticker">{{.Name}}</span>{{end}}
+        </span>
+        <span class="col-feat-body">
+          <span class="col-feat-meta"><time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time></span>
+          <span class="col-feat-title">{{.Title}}</span>
+          {{if .Excerpt}}<span class="col-feat-ex">{{.Excerpt}}</span>{{end}}
+          <span class="col-feat-more">{{$.Tr.T "home.read_more"}} <span class="arrow" aria-hidden="true">→</span></span>
+        </span>
+      </a>
+    </section>
+    {{end}}
+
+    {{if .Posts}}
+    <section class="col-scatter">
+      <div class="col-head">
+        <p class="col-kicker">{{.Site.HomeLatest}}</p>
+        <a class="col-viewall" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+        <svg class="col-doodle col-doodle-2" viewBox="0 0 120 60" aria-hidden="true" focusable="false"><path d="M4 30 L104 30" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-dasharray="1 11"/><path d="M88 14 L112 30 L88 46" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </div>
+      <div class="col-pile">
+        {{range $i, $p := .Posts}}
+        <a class="col-card{{if not $p.CoverImage}} no-cover{{end}}" href="{{$.Tr.U (contentURL $p)}}">
+          <span class="col-card-n" aria-hidden="true">{{printf "%02d" (add $i 1)}}</span>
+          {{if $p.CoverImage}}<span class="col-card-cover"><img src="{{$p.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs $p.CoverImage}}></span>{{end}}
+          <span class="col-card-body">
+            {{with $p.Category}}<span class="col-chip">{{.Name}}</span>{{end}}
+            <span class="col-card-title">{{$p.Title}}</span>
+            {{if $p.Excerpt}}<span class="col-card-ex">{{$p.Excerpt}}</span>{{end}}
+            <span class="col-card-date"><time datetime="{{$.Tr.ISODate $p.PublishedAt}}">{{$.Tr.Date $p.PublishedAt}}</time></span>
+          </span>
+        </a>
+        {{end}}
+      </div>
+    </section>
+    {{end}}
+
+    {{if .FeatLinks}}
+    <section class="col-tapes">
+      <p class="col-kicker">{{.Site.HomeLinks}}</p>
+      <div class="col-tape-row">
+        {{range .FeatLinks}}
+        <a class="col-tape" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+          <span class="col-tape-pin" aria-hidden="true"></span>
+          <span class="col-tape-ic">{{if .CoverImage}}<img src="{{.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b>{{initial .Title}}</b>{{end}}</span>
+          <span class="col-tape-t">{{.Title}} <span class="arrow" aria-hidden="true">↗</span></span>
+          {{if .Excerpt}}<span class="col-tape-d">{{.Excerpt}}</span>{{end}}
+        </a>
+        {{end}}
+      </div>
+    </section>
+    {{end}}
+
+  </div>
+{{end}}

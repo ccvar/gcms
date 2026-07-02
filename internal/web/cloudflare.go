@@ -1850,6 +1850,93 @@ func (s *Server) adminStartCloudflareDeploy(w http.ResponseWriter, r *http.Reque
 	s.redirectSettings(w, r, "cloudflare", "Cloudflare 部署任务已启动，请稍后刷新状态。")
 }
 
+// adminPlatformSiteCloudflareDeploy 在平台「站点管理」页为指定站点触发一次 Cloudflare 重新发布，
+// 在该站点自己的运行时（rt.server）上下文里执行，从而使用该站点的配置、内容与部署状态文件。
+func (s *Server) adminPlatformSiteCloudflareDeploy(w http.ResponseWriter, r *http.Request) {
+	jsonReq := wantsJSON(r)
+	if _, ok := s.checkCSRF(w, r); !ok {
+		return
+	}
+	if s.platform == nil {
+		if jsonReq {
+			writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "message": "非平台模式，无法按站点部署。"})
+			return
+		}
+		http.NotFound(w, r)
+		return
+	}
+	id, err := strconv.ParseInt(strings.TrimSpace(r.PathValue("id")), 10, 64)
+	if err != nil || id <= 0 {
+		if jsonReq {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "无效的站点编号。"})
+			return
+		}
+		http.Redirect(w, r, "/admin/sites", http.StatusSeeOther)
+		return
+	}
+	rt, ok := s.runtimePool().runtimeByID(id)
+	if !ok || rt == nil || rt.server == nil {
+		if jsonReq {
+			writeJSON(w, http.StatusNotFound, map[string]any{"ok": false, "message": "站点不存在或未就绪。"})
+			return
+		}
+		http.Redirect(w, r, "/admin/sites", http.StatusSeeOther)
+		return
+	}
+	cfg := rt.server.cloudflareConfig()
+	if err := cfg.validateDeploy(); err != nil {
+		if jsonReq {
+			writeJSON(w, http.StatusBadRequest, rt.server.cloudflareJSONPayload(r, false, err.Error()))
+			return
+		}
+		http.Redirect(w, r, "/admin/sites", http.StatusSeeOther)
+		return
+	}
+	if err := rt.server.queueCloudflareDeploy(cfg); err != nil {
+		if jsonReq {
+			writeJSON(w, http.StatusConflict, rt.server.cloudflareJSONPayload(r, false, err.Error()))
+			return
+		}
+		http.Redirect(w, r, "/admin/sites", http.StatusSeeOther)
+		return
+	}
+	if jsonReq {
+		writeJSON(w, http.StatusAccepted, rt.server.cloudflareJSONPayload(r, true, "Cloudflare 部署任务已启动。"))
+		return
+	}
+	http.Redirect(w, r, "/admin/sites", http.StatusSeeOther)
+}
+
+// adminPlatformSiteCloudflareStatus 供「站点管理」卡片轮询指定站点的 Cloudflare 部署状态，
+// 用于把徽标从「部署中」切换回最近部署时间。只读，无副作用。
+func (s *Server) adminPlatformSiteCloudflareStatus(w http.ResponseWriter, r *http.Request) {
+	if s.platform == nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"ok": false})
+		return
+	}
+	id, err := strconv.ParseInt(strings.TrimSpace(r.PathValue("id")), 10, 64)
+	if err != nil || id <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false})
+		return
+	}
+	rt, ok := s.runtimePool().runtimeByID(id)
+	if !ok || rt == nil {
+		writeJSON(w, http.StatusNotFound, map[string]any{"ok": false})
+		return
+	}
+	status, lastDeployAt := "", ""
+	if st := readCloudflareStatusFile(cloudflareStatusPathForRuntime(rt)); st != nil {
+		status = strings.TrimSpace(st.Status)
+		lastDeployAt = strings.TrimSpace(st.LastDeployAt)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":           true,
+		"status":       status,
+		"running":      status == "running",
+		"lastDeployAt": lastDeployAt,
+	})
+}
+
 func (s *Server) adminStartCloudflareUnpublish(w http.ResponseWriter, r *http.Request) {
 	jsonReq := wantsJSON(r)
 	if _, ok := s.checkCSRF(w, r); !ok {

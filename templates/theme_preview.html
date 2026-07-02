@@ -38,7 +38,7 @@
   </header>
 
   <main class="preview-page">
-    {{if eq .Layout "bento"}}{{template "home_bento" .}}{{else if eq .Layout "index"}}{{template "home_index" .}}{{else if eq .Layout "split"}}{{template "home_split" .}}{{else if eq .Layout "axis"}}{{template "home_axis" .}}{{else if eq .Layout "bands"}}{{template "home_bands" .}}{{else if eq .Layout "ticker"}}{{template "home_ticker" .}}{{else}}
+    {{if eq .Layout "bento"}}{{template "home_bento" .}}{{else if eq .Layout "index"}}{{template "home_index" .}}{{else if eq .Layout "split"}}{{template "home_split" .}}{{else if eq .Layout "axis"}}{{template "home_axis" .}}{{else if eq .Layout "bands"}}{{template "home_bands" .}}{{else if eq .Layout "ticker"}}{{template "home_ticker" .}}{{else if eq .Layout "timeline"}}{{template "home_timeline" .}}{{else if eq .Layout "board"}}{{template "home_board" .}}{{else if eq .Layout "liftoff"}}{{template "home_liftoff" .}}{{else if eq .Layout "deck"}}{{template "home_deck" .}}{{else if eq .Layout "poster"}}{{template "home_poster" .}}{{else if eq .Layout "uptime"}}{{template "home_uptime" .}}{{else if eq .Layout "profile"}}{{template "home_profile" .}}{{else if eq .Layout "bloom"}}{{template "home_bloom" .}}{{else if eq .Layout "desktop"}}{{template "home_desktop" .}}{{else if eq .Layout "cinema"}}{{template "home_cinema" .}}{{else if eq .Layout "collage"}}{{template "home_collage" .}}{{else if eq .Layout "constellation"}}{{template "home_constellation" .}}{{else}}
     <section class="hero">
       <div class="wrap hero-inner{{if and (eq .Theme "knowledge") .FeatLinks}} has-knowledge-links{{end}}">
         <div class="hero-text">

@@ -1,0 +1,101 @@
+{{define "home_cinema"}}
+  <div class="cin-reel">
+    {{/* ===== SCOPE BAND: featured cover fills a 2.39:1 letterboxed strip with a title card ===== */}}
+    <section class="cin-scope">
+      {{with .Featured}}
+      <a class="cin-scope-link{{if .CoverImage}} has-cover{{end}}" href="{{$.Tr.U (contentURL .)}}">
+        {{if .CoverImage}}<span class="cin-scope-cover" aria-hidden="true" style="background-image:url('{{.CoverImage}}')"></span>{{else}}<span class="cin-scope-gen" aria-hidden="true"><b>{{initial .Title}}</b></span>{{end}}
+        <span class="cin-scope-veil" aria-hidden="true"></span>
+        <span class="cin-scope-card">
+          <span class="cin-scope-eyebrow"{{if $.VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{if $.Site.HeroEyebrow}}{{$.Site.HeroEyebrow}}{{else}}{{$.Site.HomeFeatured}}{{end}}</span>
+          <span class="cin-scope-title">{{.Title}}</span>
+          <span class="cin-scope-meta">{{with .Category}}<span class="cin-cat">{{.Name}}</span><span class="cin-slash" aria-hidden="true">/</span>{{end}}<time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time></span>
+        </span>
+      </a>
+      {{else}}
+      {{/* No featured post — the scope band becomes a title-card for the hero copy itself */}}
+      <div class="cin-scope-link cin-scope-solo">
+        <span class="cin-scope-veil" aria-hidden="true"></span>
+        <span class="cin-scope-card">
+          {{if .Site.HeroEyebrow}}<span class="cin-scope-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</span>{{end}}
+          <span class="cin-scope-title" {{if .VisualEdit}}data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{.Site.HeroTitle}}</span>
+          <a class="btn btn-primary cin-scope-cta" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.cta_start"}} <span class="arrow">→</span></a>
+        </span>
+      </div>
+      {{end}}
+    </section>
+
+    {{/* ===== HERO MARQUEE: the "opening crawl" strip — hero copy set as a film logline ===== */}}
+    {{if .Featured}}
+    <section class="cin-logline">
+      <div class="cin-logline-in">
+        <h1 class="cin-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+        {{if .Site.HeroDescription}}<p class="cin-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+        <div class="cin-cta">
+          <a class="btn btn-primary" href="{{.Tr.U (contentURL .Featured)}}">{{.Tr.T "home.cta_start"}} <span class="arrow">→</span></a>
+          <a class="btn cin-btn-ghost" href="{{.Tr.U "/about"}}">{{.Tr.T "home.cta_more"}}</a>
+        </div>
+      </div>
+    </section>
+    {{end}}
+
+    {{/* ===== SCENES: one tall near-full-height duotone frame per post, split by black cuts ===== */}}
+    {{if .Posts}}
+    <div class="cin-scenes" aria-label="{{.Site.HomeLatest}}">
+      {{range $i, $p := .Posts}}
+      <section class="cin-cut" aria-hidden="true"></section>
+      <section class="cin-scene">
+        <a class="cin-scene-link{{if $p.CoverImage}} has-cover{{end}}" href="{{$.Tr.U (contentURL $p)}}">
+          {{if $p.CoverImage}}<span class="cin-scene-cover" aria-hidden="true" style="background-image:url('{{$p.CoverImage}}')"></span>{{else}}<span class="cin-scene-gen" aria-hidden="true"><b>{{initial $p.Title}}</b></span>{{end}}
+          <span class="cin-scene-veil" aria-hidden="true"></span>
+          <span class="cin-scene-body">
+            <span class="cin-timecode">{{printf "%02d" (add $i 1)}}{{with $p.Category}}<span class="cin-tc-dot" aria-hidden="true"> · </span><span class="cin-tc-cat">{{.Name}}</span>{{end}}</span>
+            <span class="cin-scene-title">{{$p.Title}}</span>
+            <span class="cin-scene-foot"><time datetime="{{$.Tr.ISODate $p.PublishedAt}}">{{$.Tr.Date $p.PublishedAt}}</time><span class="cin-scene-more">{{$.Tr.T "home.read_more"}} <span class="arrow" aria-hidden="true">→</span></span></span>
+          </span>
+        </a>
+      </section>
+      {{end}}
+    </div>
+    {{end}}
+
+    {{/* ===== END CARD: category index + featured links, styled like closing credits ===== */}}
+    {{if or .Categories .FeatLinks}}
+    <section class="cin-cut cin-cut-tall" aria-hidden="true"></section>
+    <section class="cin-credits">
+      <div class="cin-credits-in">
+        {{if .Categories}}
+        <div class="cin-credit-col">
+          <h2 class="cin-credit-h">{{.Tr.T "nav.category"}}</h2>
+          <div class="cin-credit-list">
+            {{range .Categories}}
+            <a class="cin-credit-row" href="{{$.Tr.U (printf "/category/%s" .Slug)}}">
+              <span class="cin-credit-name">{{.Name}}</span>
+              <span class="cin-credit-num">{{printf "%02d" .Count}}</span>
+            </a>
+            {{end}}
+          </div>
+        </div>
+        {{end}}
+        {{if .FeatLinks}}
+        <div class="cin-credit-col">
+          <h2 class="cin-credit-h">{{.Site.HomeLinks}}</h2>
+          <div class="cin-credit-list">
+            {{range .FeatLinks}}
+            <a class="cin-credit-row cin-credit-link" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+              <span class="cin-credit-ic">{{if .CoverImage}}<img src="{{.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}</span>
+              <span class="cin-credit-name">{{.Title}}</span>
+              <span class="cin-credit-arrow arrow" aria-hidden="true">→</span>
+            </a>
+            {{end}}
+          </div>
+        </div>
+        {{end}}
+      </div>
+      <div class="cin-credits-foot">
+        <a class="btn cin-btn-ghost" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+    </section>
+    {{end}}
+  </div>
+{{end}}

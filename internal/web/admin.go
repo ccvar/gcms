@@ -1061,6 +1061,17 @@ func (s *Server) showAdminSites(w http.ResponseWriter, r *http.Request, status i
 		v.CFServerIPv6 = s.platform.Setting(platformServerIPv6Key)
 		v.CFAuthorizeURL = cloudflareAPITokenTemplateURL("GCMS DNS")
 		v.CFProxied = s.platform.Setting(platformCFProxiedKey) != "0" // 默认勾选：未设置或 "1" 都勾上，仅显式 "0" 取消
+		googleCfg := s.googleOAuthConfig(r)
+		v.GoogleOAuthConfigured = googleCfg.ClientID != "" && googleCfg.ClientSecret != ""
+		v.GoogleOAuthClientID = googleCfg.ClientID
+		v.GoogleOAuthRedirectURL = googleCfg.RedirectURL
+		v.GoogleOAuthSecretSet = googleCfg.ClientSecret != ""
+		if accounts, err := s.platform.GoogleAccounts(platform.GoogleServiceAnalytics); err == nil {
+			v.GoogleAnalyticsAccounts = accounts
+		}
+		if accounts, err := s.platform.GoogleAccounts(platform.GoogleServiceSearchConsole); err == nil {
+			v.GoogleSearchConsoleAccounts = accounts
+		}
 	}
 	if s.platform == nil {
 		siteName := strings.TrimSpace(s.store.Setting("site.name"))
@@ -1123,12 +1134,21 @@ func (s *Server) showAdminSites(w http.ResponseWriter, r *http.Request, status i
 		v.PlatformDomainForms[siteID] = form
 	}
 	v.PlatformSites = sites
+	v.PlatformCFDeployAt = map[int64]string{}
+	v.PlatformCFStatus = map[int64]string{}
 	for _, site := range sites {
 		if site == nil {
 			continue
 		}
 		if rt, ok := s.runtimePool().runtimeByID(site.ID); ok && rt != nil {
 			s.setSiteCounts(v, site.ID, rt.Store)
+			// 已发布到 Cloudflare 的站点：读取其最近部署时间与部署状态（供卡片展示 + 轮询初值）。
+			if _, isCF := v.PlatformOfficialURLs[site.ID]; isCF {
+				if st := readCloudflareStatusFile(cloudflareStatusPathForRuntime(rt)); st != nil {
+					v.PlatformCFDeployAt[site.ID] = strings.TrimSpace(st.LastDeployAt)
+					v.PlatformCFStatus[site.ID] = strings.TrimSpace(st.Status)
+				}
+			}
 		}
 	}
 	s.rnd.Admin(w, "sites", status, v)
@@ -4159,6 +4179,7 @@ func (s *Server) showSettings(w http.ResponseWriter, r *http.Request, section, f
 		v.Themes = append(v.Themes, themeOptionForAdmin(t, v.AdminLang))
 	}
 	v.Cards = cards
+	v.Settings.HomeSections, v.Settings.HomeHero = s.homeSectionConfig()
 	v.Flash = flash
 	v.FormErr = formErr
 	v.AdminI18NJSON = s.adminI18NRaw(v.AdminLang)
@@ -4672,6 +4693,14 @@ func (s *Server) adminSaveAppearance(w http.ResponseWriter, r *http.Request) {
 	_ = s.store.SetSetting("hero.visual", hv)
 	_ = s.store.SetSetting("hero.image", strings.TrimSpace(r.FormValue("hero_image")))
 	_ = s.store.SetSetting("hero.svg", strings.TrimSpace(r.FormValue("hero_svg")))
+
+	// 首页版块：Hero 开关 + 版块顺序/显示（仅默认布局）——与「选主题」同处一屏保存
+	homeHero := "1"
+	if r.FormValue("home_hero") != "1" {
+		homeHero = "0"
+	}
+	_ = s.store.SetSetting(homeHeroKey, homeHero)
+	_ = s.store.SetSetting(homeSectionsKey, sanitizeHomeSectionsJSON(r.FormValue("home_sections")))
 
 	s.clearGeneratedCaches()
 	s.redirectSettings(w, r, "appearance", "外观设置已保存。")

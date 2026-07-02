@@ -159,3 +159,38 @@
     });
   });
 })();
+
+/* 星图 · Constellation：分类芯片 + 实时搜索筛选（渐进增强；无 JS 时分类是链接、全部展示） */
+(function () {
+  var root = document.querySelector("[data-cst]");
+  if (!root) return;
+  var chips = [].slice.call(root.querySelectorAll(".cst-chip"));
+  var cards = [].slice.call(root.querySelectorAll(".cst-card"));
+  var search = root.querySelector(".cst-search");
+  var empty = root.querySelector(".cst-empty");
+  if (!cards.length) return;
+  if (search) search.hidden = false;
+  var activeCat = "all";
+  function apply() {
+    var q = ((search && search.value) || "").trim().toLowerCase();
+    var shown = 0;
+    for (var i = 0; i < cards.length; i++) {
+      var c = cards[i];
+      var okCat = activeCat === "all" || (c.getAttribute("data-cat") || "") === activeCat;
+      var okText = !q || (c.getAttribute("data-text") || "").toLowerCase().indexOf(q) !== -1;
+      var show = okCat && okText;
+      c.hidden = !show;
+      if (show) shown++;
+    }
+    if (empty) empty.hidden = shown !== 0;
+  }
+  chips.forEach(function (ch) {
+    ch.addEventListener("click", function (e) {
+      e.preventDefault();
+      activeCat = ch.getAttribute("data-cat") || "all";
+      chips.forEach(function (x) { x.classList.toggle("is-active", x === ch); });
+      apply();
+    });
+  });
+  if (search) search.addEventListener("input", apply);
+})();

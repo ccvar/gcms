@@ -203,3 +203,83 @@ func TestReplaceSiteDomains(t *testing.T) {
 		t.Fatalf("want 0 domains after clear, got %d", len(m))
 	}
 }
+
+func TestGoogleOAuthStateAndAccounts(t *testing.T) {
+	dir := t.TempDir()
+	ps, err := Open(filepath.Join(dir, "system.db"))
+	if err != nil {
+		t.Fatalf("open platform store: %v", err)
+	}
+	t.Cleanup(func() { _ = ps.Close() })
+
+	if err := ps.CreateGoogleOAuthState("state-1", "ga", time.Now().Add(time.Minute)); err != nil {
+		t.Fatalf("create oauth state: %v", err)
+	}
+	service, ok, err := ps.ConsumeGoogleOAuthState("state-1")
+	if err != nil || !ok {
+		t.Fatalf("consume oauth state: service=%q ok=%v err=%v", service, ok, err)
+	}
+	if service != GoogleServiceAnalytics {
+		t.Fatalf("oauth service = %q, want %q", service, GoogleServiceAnalytics)
+	}
+	if service, ok, err = ps.ConsumeGoogleOAuthState("state-1"); err != nil || ok || service != "" {
+		t.Fatalf("state should be single-use: service=%q ok=%v err=%v", service, ok, err)
+	}
+	if err := ps.CreateGoogleOAuthState("expired", GoogleServiceSearchConsole, time.Now().Add(-time.Minute)); err != nil {
+		t.Fatalf("create expired oauth state: %v", err)
+	}
+	if service, ok, err = ps.ConsumeGoogleOAuthState("expired"); err != nil || ok || service != "" {
+		t.Fatalf("expired state should be rejected: service=%q ok=%v err=%v", service, ok, err)
+	}
+
+	expiry := time.Now().Add(time.Hour).Truncate(time.Second)
+	if err := ps.UpsertGoogleAccount(&GoogleAccount{
+		Service:         GoogleServiceAnalytics,
+		GoogleAccountID: "google-1",
+		Email:           "old@example.com",
+		Name:            "Old Name",
+		Picture:         "https://example.com/old.png",
+		Scopes:          "openid profile",
+		AccessToken:     "access-1",
+		RefreshToken:    "refresh-1",
+		TokenExpiry:     expiry,
+	}); err != nil {
+		t.Fatalf("upsert google account: %v", err)
+	}
+	if err := ps.UpsertGoogleAccount(&GoogleAccount{
+		Service:         "google_analytics",
+		GoogleAccountID: "google-1",
+		Email:           "new@example.com",
+		Name:            "New Name",
+		Picture:         "https://example.com/new.png",
+		Scopes:          "openid profile analytics",
+		AccessToken:     "access-2",
+		TokenExpiry:     expiry.Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("upsert google account without refresh token: %v", err)
+	}
+	accounts, err := ps.GoogleAccounts(GoogleServiceAnalytics)
+	if err != nil {
+		t.Fatalf("list google accounts: %v", err)
+	}
+	if len(accounts) != 1 {
+		t.Fatalf("got %d google accounts, want 1", len(accounts))
+	}
+	acc := accounts[0]
+	if acc.Email != "new@example.com" || acc.Name != "New Name" || acc.AccessToken != "access-2" {
+		t.Fatalf("account fields were not updated: %#v", acc)
+	}
+	if acc.RefreshToken != "refresh-1" {
+		t.Fatalf("refresh token = %q, want preserved refresh-1", acc.RefreshToken)
+	}
+	if err := ps.DeleteGoogleAccount(GoogleServiceAnalytics, "google-1"); err != nil {
+		t.Fatalf("delete google account: %v", err)
+	}
+	accounts, err = ps.GoogleAccounts(GoogleServiceAnalytics)
+	if err != nil {
+		t.Fatalf("list google accounts after delete: %v", err)
+	}
+	if len(accounts) != 0 {
+		t.Fatalf("got %d google accounts after delete, want 0", len(accounts))
+	}
+}

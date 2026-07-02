@@ -131,6 +131,276 @@
     window.addEventListener("scroll", function () { if (current) place(current); }, true);
   })();
 
+  /* ---------- 站点管理：Google 账号授权配置 ---------- */
+  (function () {
+    var connects = Array.prototype.slice.call(document.querySelectorAll("[data-google-connect]"));
+    var oauthRoot = document.querySelector("[data-google-oauth-root]");
+    var connectorsWrap = document.querySelector("[data-google-connectors]");
+    if (!connects.length && !oauthRoot) return;
+    var allConnects = connects.slice();
+    if (oauthRoot) allConnects.unshift(oauthRoot);
+
+    function closeOthers(active) {
+      allConnects.forEach(function (root) {
+        if (root !== active) root.open = false;
+      });
+    }
+
+    function closeAll() {
+      allConnects.forEach(function (root) { root.open = false; });
+    }
+
+    function showPanel(root) {
+      var panel = root.querySelector("[data-google-config-panel]");
+      if (!panel) return;
+      panel.hidden = false;
+      var summary = root.querySelector("[data-google-oauth-summary]");
+      if (summary) summary.hidden = true;
+      var first = panel.querySelector("input");
+      if (first) window.setTimeout(function () { first.focus(); }, 40);
+    }
+
+    function showSummary(root) {
+      var summary = root.querySelector("[data-google-oauth-summary]");
+      var panel = root.querySelector("[data-google-config-panel]");
+      if (summary) summary.hidden = false;
+      if (panel) panel.hidden = true;
+    }
+
+    function setStatus(form, message, isError) {
+      var status = form.querySelector("[data-google-oauth-status]");
+      if (!status) return;
+      status.textContent = message || "";
+      status.hidden = !message;
+      status.classList.toggle("is-error", !!isError);
+    }
+
+    function formatGoogleCount(root, count) {
+      var tpl = root.getAttribute("data-google-count-template") || "%d 个账号";
+      return tpl.replace("%d", String(count));
+    }
+
+    function updateGoogleAccountState(root) {
+      var count = root.querySelectorAll(".google-account-list li").length;
+      var headCount = root.querySelector(".google-connect-head span");
+      if (headCount) headCount.textContent = formatGoogleCount(root, count);
+      root.classList.toggle("is-configured", count > 0);
+      root.classList.toggle("is-missing", count === 0);
+      var summary = root.querySelector("summary");
+      if (summary) {
+        var tip = summary.getAttribute(count > 0 ? "data-ready-tooltip" : "data-missing-tooltip");
+        if (tip) summary.setAttribute("data-tooltip", tip);
+      }
+      return count;
+    }
+
+    function showGoogleEmpty(root, list) {
+      if (root.querySelector(".google-connect-empty")) return;
+      var empty = document.createElement("p");
+      empty.className = "google-connect-empty";
+      empty.textContent = root.getAttribute("data-google-empty-label") || "还没有授权账号。";
+      if (list) {
+        list.replaceWith(empty);
+        return;
+      }
+      var head = root.querySelector(".google-connect-head");
+      if (head && head.parentNode) head.parentNode.insertBefore(empty, head.nextSibling);
+    }
+
+    function enableAuthorize(root) {
+      root.classList.remove("is-disabled");
+      root.removeAttribute("data-google-oauth-disabled");
+      var hasAccounts = updateGoogleAccountState(root) > 0;
+      var summary = root.querySelector("summary");
+      if (summary) {
+        summary.removeAttribute("aria-disabled");
+        var tip = summary.getAttribute(hasAccounts ? "data-ready-tooltip" : "data-missing-tooltip");
+        if (tip) summary.setAttribute("data-tooltip", tip);
+      }
+      var hint = root.querySelector(".google-connect-disabled-hint");
+      if (hint) hint.hidden = true;
+      var actions = root.querySelector(".google-connect-actions");
+      if (!actions) return;
+      var startURL = root.getAttribute("data-google-start-url") || "";
+      if (!startURL) return;
+      var add = actions.querySelector(".google-connect-add");
+      var readyLabel = root.getAttribute("data-google-add-label") || "新增授权账号";
+      if (add && add.tagName !== "A") {
+        var link = document.createElement("a");
+        link.className = add.className.replace(/\bis-disabled\b/g, "").trim() || "google-connect-add";
+        link.setAttribute("data-google-authorize", "");
+        link.href = startURL;
+        var loadingLabel = root.getAttribute("data-google-loading-label");
+        if (loadingLabel) link.setAttribute("data-loading-label", loadingLabel);
+        link.innerHTML = add.innerHTML;
+        var label = link.querySelector("span");
+        if (label) label.textContent = readyLabel;
+        add.replaceWith(link);
+      } else if (add) {
+        add.classList.remove("is-disabled");
+        var addLabel = add.querySelector("span");
+        if (addLabel) addLabel.textContent = readyLabel;
+      }
+    }
+
+    function markOAuthReady() {
+      if (connectorsWrap) connectorsWrap.setAttribute("data-google-oauth-ready", "1");
+      if (oauthRoot) {
+        oauthRoot.classList.remove("is-missing");
+        oauthRoot.classList.add("is-configured");
+        var state = oauthRoot.querySelector("[data-google-oauth-state]");
+        if (state) {
+          state.textContent = (connectorsWrap && connectorsWrap.getAttribute("data-google-oauth-ready-label")) || "已配置";
+        }
+        var summary = oauthRoot.querySelector("summary");
+        if (summary) {
+          var tip = summary.getAttribute("data-ready-tooltip");
+          if (tip) summary.setAttribute("data-tooltip", tip);
+        }
+      }
+      connects.forEach(enableAuthorize);
+    }
+
+    document.addEventListener("click", function (e) {
+      var opener = e.target.closest && e.target.closest("[data-google-open-oauth]");
+      var editor = e.target.closest && e.target.closest("[data-google-config-edit]");
+      var cancel = e.target.closest && e.target.closest("[data-google-config-cancel]");
+      var authorize = e.target.closest && e.target.closest("[data-google-authorize]");
+      var root = e.target.closest && e.target.closest(".google-connect");
+      if (!root) {
+        closeAll();
+        return;
+      }
+      closeOthers(root);
+      if (opener) {
+        e.preventDefault();
+        if (!oauthRoot) return;
+        closeOthers(oauthRoot);
+        oauthRoot.open = true;
+        showPanel(oauthRoot);
+        return;
+      }
+      if (editor) {
+        e.preventDefault();
+        showPanel(root);
+        return;
+      }
+      if (cancel) {
+        e.preventDefault();
+        showSummary(root);
+        return;
+      }
+      if (authorize) {
+        authorize.classList.add("is-loading");
+        authorize.setAttribute("aria-busy", "true");
+        var label = authorize.querySelector("span");
+        if (label) {
+          if (!authorize.getAttribute("data-original-label")) {
+            authorize.setAttribute("data-original-label", label.textContent || "");
+          }
+          label.textContent = authorize.getAttribute("data-loading-label") || "正在打开 Google 授权...";
+        }
+      }
+    });
+
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape") closeAll();
+    });
+
+    document.querySelectorAll(".google-oauth-form").forEach(function (form) {
+      form.addEventListener("submit", function (e) {
+        e.preventDefault();
+        var btn = form.querySelector(".google-oauth-save");
+        var oldText = btn ? btn.textContent : "";
+        if (btn) { btn.disabled = true; btn.textContent = "保存中…"; }
+        setStatus(form, "", false);
+        var data = new URLSearchParams(new FormData(form));
+        fetch(form.action, {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {
+            "Accept": "application/json",
+            "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+            "X-Requested-With": "XMLHttpRequest"
+          },
+          body: data.toString()
+        }).then(function (res) {
+          return res.json().catch(function () { return {}; }).then(function (json) {
+            if (!res.ok || json.ok === false) throw new Error(json.message || "保存失败");
+            return json;
+          });
+        }).then(function (json) {
+          var message = form.getAttribute("data-success-message") || json.message || "已保存";
+          setStatus(form, message, false);
+          if (oauthRoot) {
+            var client = oauthRoot.querySelector("[data-google-oauth-client]");
+            var secret = oauthRoot.querySelector("[data-google-oauth-secret]");
+            var redirect = oauthRoot.querySelector("[data-google-oauth-redirect]");
+            var clientInput = form.querySelector('input[name="client_id"]');
+            var redirectInput = form.querySelector('input[name="redirect_url"]');
+            if (client && clientInput) client.textContent = clientInput.value || "-";
+            if (secret) secret.textContent = form.getAttribute("data-secret-summary") || "已保存（不会明文显示）";
+            if (redirect && redirectInput) redirect.textContent = redirectInput.value || "-";
+            showSummary(oauthRoot);
+          }
+          document.querySelectorAll(".google-oauth-form").forEach(function (f) {
+            var missingHint = f.querySelector(".google-connect-hint");
+            if (missingHint) missingHint.hidden = true;
+            var cancel = f.querySelector("[data-google-config-cancel]");
+            if (cancel) cancel.hidden = false;
+            var secret = f.querySelector('input[name="client_secret"]');
+            if (secret) {
+              secret.required = false;
+              secret.value = "";
+              secret.placeholder = f.getAttribute("data-secret-saved-placeholder") || secret.placeholder;
+            }
+          });
+          markOAuthReady();
+        }).catch(function (err) {
+          setStatus(form, err && err.message ? err.message : "保存失败", true);
+        }).finally(function () {
+          if (btn) { btn.disabled = false; btn.textContent = oldText; }
+        });
+      });
+    });
+
+    document.querySelectorAll("[data-google-account-unlink]").forEach(function (form) {
+      form.addEventListener("submit", function (e) {
+        e.preventDefault();
+        var btn = form.querySelector("button");
+        if (btn) btn.disabled = true;
+        var data = new URLSearchParams(new FormData(form));
+        fetch(form.action, {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {
+            "Accept": "application/json",
+            "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+            "X-Requested-With": "XMLHttpRequest"
+          },
+          body: data.toString()
+        }).then(function (res) {
+          return res.json().catch(function () { return {}; }).then(function (json) {
+            if (!res.ok || json.ok === false) throw new Error(json.message || "解除绑定失败");
+            return json;
+          });
+        }).then(function () {
+          var root = form.closest(".google-connect");
+          var item = form.closest("li");
+          var list = form.closest(".google-account-list");
+          if (item) item.remove();
+          if (root) {
+            if (list && !list.querySelector("li")) showGoogleEmpty(root, list);
+            updateGoogleAccountState(root);
+          }
+        }).catch(function (err) {
+          window.alert(err && err.message ? err.message : "解除绑定失败");
+          if (btn) btn.disabled = false;
+        });
+      });
+    });
+  })();
+
   /* ---------- 上传：浏览器支持时先把 png/jpg 转成 WebP ---------- */
   function maybeWebp(file) {
     return new Promise(function (resolve) {
@@ -2759,4 +3029,129 @@
     }
   }
   pump();
+})();
+
+/* ---------- 站点卡片：Cloudflare 部署状态（部署中 → 完成后显示最近部署时间）+ 一键发布 ---------- */
+(function () {
+  function rel(box, v) {
+    var d = v ? new Date(v) : null;
+    if (!v || !d || isNaN(d.getTime())) return "";
+    var s = Math.max(0, Math.floor((Date.now() - d.getTime()) / 1000));
+    if (s < 60) return box.getAttribute("data-just") || "刚刚";
+    if (s < 3600) return (box.getAttribute("data-min") || "%d 分钟前").replace("%d", Math.floor(s / 60));
+    if (s < 86400) return (box.getAttribute("data-hour") || "%d 小时前").replace("%d", Math.floor(s / 3600));
+    if (s < 2592000) return (box.getAttribute("data-day") || "%d 天前").replace("%d", Math.floor(s / 86400));
+    return d.toLocaleString();
+  }
+  function showTime(box, v) {
+    box.classList.remove("is-running");
+    box.classList.remove("is-failed");
+    box.setAttribute("data-deploy-at", v || "");
+    if (v) { box.textContent = rel(box, v); box.title = new Date(v).toLocaleString(); }
+    else { box.textContent = ""; box.title = ""; }
+  }
+  function showRunning(box) {
+    box.classList.remove("is-failed");
+    box.classList.add("is-running");
+    box.textContent = box.getAttribute("data-running") || "部署中";
+    box.title = "";
+  }
+  function showFailed(box) {
+    box.classList.remove("is-running");
+    box.classList.add("is-failed");
+    box.textContent = box.getAttribute("data-failed") || "失败";
+    box.title = "";
+  }
+  function reenable(box) {
+    var card = box.closest(".site-card");
+    var btn = card && card.querySelector(".site-cf-deploy-btn");
+    if (btn) { btn.disabled = false; if (btn._cfLabel) btn.textContent = btn._cfLabel; }
+  }
+  function poll(box) {
+    if (box._cfTimer) return;
+    var url = box.getAttribute("data-status-url");
+    if (!url) return;
+    box._cfTimer = setInterval(function () {
+      fetch(url, { headers: { "Accept": "application/json" }, credentials: "same-origin" })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          if (!d) return;
+          if (d.running) { showRunning(box); return; }
+          clearInterval(box._cfTimer); box._cfTimer = 0;
+          box.setAttribute("data-cf-status", d.status || "");
+          if (d.status === "failed") showFailed(box);
+          else showTime(box, d.lastDeployAt || box.getAttribute("data-deploy-at") || "");
+          reenable(box);
+        })
+        .catch(function () {});
+    }, 4000);
+  }
+  var boxes = document.querySelectorAll("[data-cf-poll]");
+  for (var i = 0; i < boxes.length; i++) {
+    var box = boxes[i];
+    var st0 = box.getAttribute("data-cf-status");
+    if (st0 === "running") { showRunning(box); poll(box); }
+    else if (st0 === "failed") showFailed(box);
+    else showTime(box, box.getAttribute("data-deploy-at"));
+  }
+  // 「发布最新内容」：确认弹层通过后，AJAX 提交并立即把徽标切到「部署中」+ 轮询，完成后显示时间。
+  document.addEventListener("submit", function (e) {
+    var form = e.target;
+    if (!form || !form.matches || !form.matches("form.site-cf-deploy")) return;
+    e.preventDefault();
+    var card = form.closest(".site-card");
+    var box = card && card.querySelector("[data-cf-poll]");
+    var btn = form.querySelector(".site-cf-deploy-btn");
+    if (btn) { btn._cfLabel = btn.textContent; btn.disabled = true; }
+    var body = new URLSearchParams();
+    new FormData(form).forEach(function (v, k) { body.append(k, v); });
+    fetch(form.action, { method: "POST", body: body, headers: { "Accept": "application/json", "Content-Type": "application/x-www-form-urlencoded" }, credentials: "same-origin" })
+      .then(function (r) { return r.json().catch(function () { return {}; }); })
+      .then(function () {
+        if (box) { box.setAttribute("data-cf-status", "running"); showRunning(box); poll(box); }
+      })
+      .catch(function () { if (btn) { btn.disabled = false; if (btn._cfLabel) btn.textContent = btn._cfLabel; } });
+  }, false);
+})();
+
+/* ---------- 设置：首页版块 拖拽排序 + 显示开关，序列化到隐藏字段 ---------- */
+(function () {
+  var list = document.querySelector("[data-home-sections]");
+  if (!list) return;
+  var input = document.querySelector("[data-home-sections-input]");
+  function serialize() {
+    if (!input) return;
+    var rows = Array.prototype.slice.call(list.querySelectorAll(".home-section-row"));
+    input.value = JSON.stringify(rows.map(function (r) {
+      var cb = r.querySelector(".hs-on");
+      return { key: r.getAttribute("data-key"), on: !!(cb && cb.checked) };
+    }));
+  }
+  var dragEl = null;
+  list.addEventListener("dragstart", function (e) {
+    var row = e.target.closest && e.target.closest(".home-section-row");
+    if (!row) return;
+    dragEl = row;
+    setTimeout(function () { row.classList.add("dragging"); }, 0);
+  });
+  list.addEventListener("dragend", function () {
+    if (dragEl) dragEl.classList.remove("dragging");
+    dragEl = null;
+    serialize();
+  });
+  list.addEventListener("dragover", function (e) {
+    if (!dragEl) return;
+    e.preventDefault();
+    var rows = Array.prototype.slice.call(list.querySelectorAll(".home-section-row:not(.dragging)"));
+    var after = null;
+    for (var i = 0; i < rows.length; i++) {
+      var rect = rows[i].getBoundingClientRect();
+      if (e.clientY < rect.top + rect.height / 2) { after = rows[i]; break; }
+    }
+    if (after) list.insertBefore(dragEl, after); else list.appendChild(dragEl);
+  });
+  list.addEventListener("change", function (e) {
+    if (e.target && e.target.classList && e.target.classList.contains("hs-on")) serialize();
+  });
+  serialize();
 })();

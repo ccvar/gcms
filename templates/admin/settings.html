@@ -438,6 +438,25 @@
           </div>
         </div>
 
+        <details class="field-group home-sections-group">
+          <summary class="group-head with-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="4" rx="1"/><rect x="3" y="10" width="18" height="4" rx="1"/><rect x="3" y="16" width="18" height="4" rx="1"/></svg>
+            <span>{{.Admin.T "admin.settings.appearance.home_sections" "首页版块"}}</span>
+          </summary>
+          <p class="muted" style="margin:-.2rem 0 .9rem;font-size:.85rem">{{.Admin.T "admin.settings.appearance.home_sections_note" "仅作用于「标准/默认」首页布局：拖拽调整版块顺序、勾选显示或隐藏。策划主题（如 Bands / Ticker）保持各自固定结构。"}}</p>
+          <label class="inline-check" style="margin-bottom:.7rem"><input type="checkbox" name="home_hero" value="1"{{if .Settings.HomeHero}} checked{{end}}> {{.Admin.T "admin.settings.appearance.home_hero" "显示首页 Hero（大标题横幅）"}}</label>
+          <ul class="home-sections" data-home-sections>
+            {{range .Settings.HomeSections}}
+            <li class="home-section-row" data-key="{{.Key}}" draggable="true">
+              <span class="hs-handle" aria-hidden="true">⠿</span>
+              <span class="hs-label">{{if eq .Key "featured"}}{{$.Admin.T "admin.settings.appearance.section_featured" "精选"}}{{else if eq .Key "links"}}{{$.Admin.T "admin.settings.appearance.section_links" "精选链接"}}{{else if eq .Key "categories"}}{{$.Admin.T "admin.settings.appearance.section_categories" "分类"}}{{else if eq .Key "latest"}}{{$.Admin.T "admin.settings.appearance.section_latest" "最新"}}{{else}}{{.Key}}{{end}}</span>
+              <label class="hs-toggle inline-check"><input type="checkbox" class="hs-on"{{if .On}} checked{{end}}> {{$.Admin.T "admin.settings.appearance.section_show" "显示"}}</label>
+            </li>
+            {{end}}
+          </ul>
+          <input type="hidden" name="home_sections" data-home-sections-input value="">
+        </details>
+
         <div class="field-group">
           <h3 class="group-head">{{.Admin.T "admin.settings.appearance.themes" "可选主题"}}</h3>
           <p class="muted" style="margin:-.2rem 0 .9rem;font-size:.85rem">{{.Admin.T "admin.settings.appearance.themes_desc" "十九套主题布局结构各异（页眉、首页列表、卡片样式），点选即切换、上方保存即生效。"}}</p>

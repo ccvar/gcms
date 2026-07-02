@@ -1,5 +1,6 @@
 {{define "body"}}  <main>
-  {{if eq .Layout "bento"}}{{template "home_bento" .}}{{else if eq .Layout "index"}}{{template "home_index" .}}{{else if eq .Layout "split"}}{{template "home_split" .}}{{else if eq .Layout "axis"}}{{template "home_axis" .}}{{else if eq .Layout "bands"}}{{template "home_bands" .}}{{else if eq .Layout "ticker"}}{{template "home_ticker" .}}{{else}}
+  {{if eq .Layout "bento"}}{{template "home_bento" .}}{{else if eq .Layout "index"}}{{template "home_index" .}}{{else if eq .Layout "split"}}{{template "home_split" .}}{{else if eq .Layout "axis"}}{{template "home_axis" .}}{{else if eq .Layout "bands"}}{{template "home_bands" .}}{{else if eq .Layout "ticker"}}{{template "home_ticker" .}}{{else if eq .Layout "board"}}{{template "home_board" .}}{{else if eq .Layout "liftoff"}}{{template "home_liftoff" .}}{{else if eq .Layout "timeline"}}{{template "home_timeline" .}}{{else if eq .Layout "deck"}}{{template "home_deck" .}}{{else if eq .Layout "poster"}}{{template "home_poster" .}}{{else if eq .Layout "uptime"}}{{template "home_uptime" .}}{{else if eq .Layout "profile"}}{{template "home_profile" .}}{{else if eq .Layout "bloom"}}{{template "home_bloom" .}}{{else if eq .Layout "desktop"}}{{template "home_desktop" .}}{{else if eq .Layout "cinema"}}{{template "home_cinema" .}}{{else if eq .Layout "collage"}}{{template "home_collage" .}}{{else if eq .Layout "constellation"}}{{template "home_constellation" .}}{{else}}
+    {{if .HomeHero}}
     <section class="hero">
       <div class="wrap hero-inner{{if and (eq .Theme "knowledge") .FeatLinks}} has-knowledge-links{{end}}">
         <div class="hero-text">
@@ -149,6 +150,7 @@
         </div>
       </div>
     </section>
+    {{end}}
 
     {{if eq .Theme "knowledge"}}
     <div class="wrap knowledge-docs" data-knowledge-docs>
@@ -198,7 +200,9 @@
     {{else}}
 
     <div class="wrap home-docs">
-      {{with .Featured}}
+      {{range .HomeSections}}{{if .On}}
+      {{if eq .Key "featured"}}
+      {{with $.Featured}}
       <section class="doc-section">
         <div class="section-head">
           <h2{{if $.VisualEdit}} data-visual-edit="home.featured_title" data-visual-label="首页精选标题"{{end}}>{{$.Site.HomeFeatured}}</h2>
@@ -233,15 +237,16 @@
       </section>
       {{end}}
 
-      {{if .FeatLinks}}
+      {{else if eq .Key "links"}}
+      {{if $.FeatLinks}}
       <section class="doc-section">
         <div class="section-head">
-          <h2{{if .VisualEdit}} data-visual-edit="home.links_title" data-visual-label="首页链接标题"{{end}}>{{.Site.HomeLinks}}</h2>
-          <a href="{{.Tr.U "/links"}}">{{.Tr.T "home.view_all"}} <span class="arrow">→</span></a>
+          <h2{{if $.VisualEdit}} data-visual-edit="home.links_title" data-visual-label="首页链接标题"{{end}}>{{$.Site.HomeLinks}}</h2>
+          <a href="{{$.Tr.U "/links"}}">{{$.Tr.T "home.view_all"}} <span class="arrow">→</span></a>
         </div>
         <div class="doc-section-body">
           <div class="link-grid home-links">
-            {{range .FeatLinks}}
+            {{range $.FeatLinks}}
             <a class="link-card" href="{{$.Tr.U (contentURL .)}}">
               <div class="lc-cover">{{if .CoverImage}}<img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<span class="lc-mono" aria-hidden="true">{{initial .Title}}</span>{{end}}</div>
               <div class="lc-body">
@@ -256,14 +261,36 @@
       </section>
       {{end}}
 
+      {{else if eq .Key "categories"}}
+      {{if $.Categories}}
       <section class="doc-section">
         <div class="section-head">
-          <h2{{if .VisualEdit}} data-visual-edit="home.latest_title" data-visual-label="首页最新标题"{{end}}>{{.Site.HomeLatest}}</h2>
-          <a href="{{.Tr.U "/rss.xml"}}">{{.Tr.T "footer.rss"}}</a>
+          <h2>{{$.Tr.T "nav.category"}}</h2>
+          <a href="{{$.Tr.U $.CategoryAll.Path}}">{{$.Tr.T "home.view_all"}} <span class="arrow">→</span></a>
+        </div>
+        <div class="doc-section-body">
+          <div class="home-cat-grid">
+            {{range $.Categories}}
+            <a class="home-cat" href="{{$.Tr.U (printf "/category/%s" .Slug)}}">
+              <span class="home-cat-name">{{.Name}}</span>
+              {{if .Description}}<span class="home-cat-desc">{{.Description}}</span>{{end}}
+              {{if .Count}}<span class="home-cat-n">{{.Count}}</span>{{end}}
+            </a>
+            {{end}}
+          </div>
+        </div>
+      </section>
+      {{end}}
+
+      {{else if eq .Key "latest"}}
+      <section class="doc-section">
+        <div class="section-head">
+          <h2{{if $.VisualEdit}} data-visual-edit="home.latest_title" data-visual-label="首页最新标题"{{end}}>{{$.Site.HomeLatest}}</h2>
+          <a href="{{$.Tr.U "/rss.xml"}}">{{$.Tr.T "footer.rss"}}</a>
         </div>
         <div class="doc-section-body">
           <div class="post-list">
-            {{range $i, $p := .Posts}}
+            {{range $i, $p := $.Posts}}
             <article class="post-item">
               <div class="num">{{printf "%02d" (add $i 1)}}</div>
               <div>
@@ -277,21 +304,23 @@
               </div>
             </article>
             {{else}}
-            <p class="muted">{{.Tr.T "home.no_posts"}}</p>
+            <p class="muted">{{$.Tr.T "home.no_posts"}}</p>
             {{end}}
           </div>
 
-          {{if gt .TotalPages 1}}
-          <nav class="pagination" aria-label="{{.Tr.T "common.pagination"}}">
-            {{if .HasPrev}}<a href="{{pageURL .Tr "/" .PrevPage}}" aria-label="{{.Tr.T "common.prev_page"}}">←</a>{{end}}
-            {{range $n := pages .TotalPages}}
+          {{if gt $.TotalPages 1}}
+          <nav class="pagination" aria-label="{{$.Tr.T "common.pagination"}}">
+            {{if $.HasPrev}}<a href="{{pageURL $.Tr "/" $.PrevPage}}" aria-label="{{$.Tr.T "common.prev_page"}}">←</a>{{end}}
+            {{range $n := pages $.TotalPages}}
               {{if eq $n $.PageNum}}<span class="cur" aria-current="page">{{$n}}</span>{{else}}<a href="{{pageURL $.Tr "/" $n}}">{{$n}}</a>{{end}}
             {{end}}
-            {{if .HasNext}}<a href="{{pageURL .Tr "/" .NextPage}}" aria-label="{{.Tr.T "common.next_page"}}">→</a>{{end}}
+            {{if $.HasNext}}<a href="{{pageURL $.Tr "/" $.NextPage}}" aria-label="{{$.Tr.T "common.next_page"}}">→</a>{{end}}
           </nav>
           {{end}}
         </div>
       </section>
+      {{end}}
+      {{end}}{{end}}
     </div>
     {{end}}
   {{end}}

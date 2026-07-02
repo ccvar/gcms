@@ -1,0 +1,86 @@
+{{define "home_board"}}
+  <div class="board-wrap">
+
+    <header class="board-hero">
+      {{if .Site.HeroEyebrow}}<p class="board-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}><span class="board-eyebrow-dot" aria-hidden="true"></span>{{.Site.HeroEyebrow}}</p>{{end}}
+      <h1 class="board-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+      <p class="board-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>
+      <div class="board-cta">
+        <a class="btn btn-primary" href="{{if .Featured}}{{.Tr.U (contentURL .Featured)}}{{else}}{{.Tr.U .CategoryAll.Path}}{{end}}">{{.Tr.T "home.cta_start"}} <span class="arrow">→</span></a>
+        <a class="btn" href="{{.Tr.U "/about"}}">{{.Tr.T "home.cta_more"}}</a>
+      </div>
+    </header>
+
+    {{with .Featured}}
+    <a class="board-banner{{if .CoverImage}} has-cover{{end}}" href="{{$.Tr.U (contentURL .)}}">
+      {{if .CoverImage}}
+      <span class="board-banner-cover"><img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}></span>
+      {{else}}
+      <span class="board-banner-cover board-banner-gen"><b aria-hidden="true">{{initial .Title}}</b></span>
+      {{end}}
+      <span class="board-banner-body">
+        <span class="board-banner-kicker"><span class="board-flag" aria-hidden="true">★</span>{{$.Site.HomeFeatured}}</span>
+        <span class="board-banner-meta">{{with .Category}}<span class="board-chip">{{.Name}}</span>{{end}}<time class="board-mono" datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time></span>
+        <span class="board-banner-title">{{.Title}}</span>
+        {{if .Excerpt}}<span class="board-banner-ex">{{.Excerpt}}</span>{{end}}
+        <span class="board-banner-more">{{$.Site.HomeFeatured}} <span class="arrow" aria-hidden="true">→</span></span>
+      </span>
+    </a>
+    {{end}}
+
+    {{if .KnowledgeGroups}}
+    <section class="board-lanes" aria-label="{{.Site.HomeLatest}}">
+      {{range .KnowledgeGroups}}
+      <div class="board-lane">
+        <a class="board-lane-head" href="{{$.Tr.U .Path}}">
+          <span class="board-lane-name">{{.Title}}</span>
+          <span class="board-lane-count board-mono">{{.Count}}</span>
+        </a>
+        <div class="board-lane-body">
+          {{if .Posts}}
+          {{range .Posts}}
+          <a class="board-card" href="{{$.Tr.U (contentURL .)}}">
+            {{with .Category}}<span class="board-card-cat">{{.Name}}</span>{{end}}
+            <span class="board-card-title">{{.Title}}</span>
+            <time class="board-card-date board-mono" datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time>
+          </a>
+          {{end}}
+          {{else}}
+          <a class="board-empty" href="{{$.Tr.U .Path}}">{{$.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+          {{end}}
+        </div>
+      </div>
+      {{end}}
+    </section>
+    {{else if .Categories}}
+    <section class="board-lanes" aria-label="{{.Tr.T "nav.category"}}">
+      {{range .Categories}}
+      <div class="board-lane">
+        <a class="board-lane-head" href="{{$.Tr.U (printf "/category/%s" .Slug)}}">
+          <span class="board-lane-name">{{.Name}}</span>
+          <span class="board-lane-count board-mono">{{.Count}}</span>
+        </a>
+        <div class="board-lane-body">
+          <a class="board-empty" href="{{$.Tr.U (printf "/category/%s" .Slug)}}">{{$.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+        </div>
+      </div>
+      {{end}}
+    </section>
+    {{end}}
+
+    {{if .FeatLinks}}
+    <section class="board-links">
+      <div class="board-links-head">{{.Site.HomeLinks}}</div>
+      <div class="board-links-row">
+        {{range .FeatLinks}}
+        <a class="board-link" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+          <span class="board-link-ic">{{if .CoverImage}}<img src="{{.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b>{{initial .Title}}</b>{{end}}</span>
+          <span class="board-link-t">{{.Title}}</span>
+        </a>
+        {{end}}
+      </div>
+    </section>
+    {{end}}
+
+  </div>
+{{end}}

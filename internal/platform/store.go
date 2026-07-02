@@ -165,6 +165,35 @@ CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL DEFAULT ''
 );
+
+CREATE TABLE IF NOT EXISTS platform_google_accounts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  service TEXT NOT NULL,
+  google_account_id TEXT NOT NULL,
+  email TEXT NOT NULL DEFAULT '',
+  name TEXT NOT NULL DEFAULT '',
+  picture TEXT NOT NULL DEFAULT '',
+  scopes TEXT NOT NULL DEFAULT '',
+  access_token TEXT NOT NULL DEFAULT '',
+  refresh_token TEXT NOT NULL DEFAULT '',
+  token_expiry TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(service, google_account_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_platform_google_accounts_service_updated
+ON platform_google_accounts(service, updated_at DESC, id DESC);
+
+CREATE TABLE IF NOT EXISTS platform_google_oauth_states (
+  state TEXT PRIMARY KEY,
+  service TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_platform_google_oauth_states_expires
+ON platform_google_oauth_states(expires_at);
 `
 
 func Open(path string) (*Store, error) {

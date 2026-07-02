@@ -1,0 +1,103 @@
+{{define "home_liftoff"}}
+  {{$art := .Featured}}
+  <section class="lo-hero">
+    <div class="lo-in lo-hero-grid">
+      <div class="lo-lead">
+        {{if .Site.HeroEyebrow}}<p class="lo-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}><span class="lo-dot" aria-hidden="true"></span>{{.Site.HeroEyebrow}}</p>{{end}}
+        <h1 class="lo-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+        {{if .Site.HeroDescription}}<p class="lo-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+
+        <div class="lo-supply" role="group" aria-label="{{.Site.HomeFeatured}}">
+          <div class="lo-supply-top">
+            <span class="lo-supply-label">{{.Site.HomeFeatured}}</span>
+            <span class="lo-supply-pct" aria-hidden="true">62%</span>
+          </div>
+          <div class="lo-track">
+            <span class="lo-fill"></span>
+          </div>
+          <div class="lo-supply-bot">
+            <span class="lo-frac"><b>6,180</b> <span class="lo-frac-sep">/</span> 10,000</span>
+            <span class="lo-supply-note">REMAINING / 剩余可领</span>
+          </div>
+        </div>
+
+        <div class="lo-cta">
+          <a class="btn btn-primary lo-mint" href="{{if .Featured}}{{.Tr.U (contentURL .Featured)}}{{else}}{{.Tr.U .CategoryAll.Path}}{{end}}">{{.Tr.T "home.cta_start"}} <span class="arrow">→</span></a>
+          <a class="lo-textlink" href="{{.Tr.U "/about"}}">{{.Tr.T "home.cta_more"}}</a>
+        </div>
+      </div>
+
+      <div class="lo-art-col">
+        {{with $art}}
+        <a class="lo-art{{if not .CoverImage}} is-gen{{end}}" href="{{$.Tr.U (contentURL .)}}"{{if .CoverImage}} style="background-image:url('{{.CoverImage}}')"{{end}}>
+          {{if not .CoverImage}}<span class="lo-art-mark" aria-hidden="true">{{initial .Title}}</span>{{end}}
+          <span class="lo-art-tag">{{with .Category}}{{.Name}}{{else}}{{$.Site.HomeFeatured}}{{end}}</span>
+          <span class="lo-art-cap">{{.Title}}</span>
+        </a>
+        {{else}}
+        <span class="lo-art is-gen" aria-hidden="true">
+          <span class="lo-art-mark">{{initial .Site.HeroTitle}}</span>
+          <span class="lo-art-tag">{{.Site.HomeFeatured}}</span>
+        </span>
+        {{end}}
+      </div>
+    </div>
+  </section>
+
+  {{if .Categories}}
+  <section class="lo-phases">
+    <div class="lo-in">
+      <div class="lo-sec-head"><span class="lo-sec-title">{{.Tr.T "nav.category"}}</span></div>
+      <div class="lo-phase-strip">
+        {{range $i, $c := .Categories}}
+        <a class="lo-phase{{if eq $i 0}} is-active{{end}}" href="{{$.Tr.U (printf "/category/%s" $c.Slug)}}">
+          <span class="lo-phase-top">
+            <span class="lo-phase-n">{{printf "%02d" (add $i 1)}}</span>
+            <span class="lo-phase-state">{{if eq $i 0}}● LIVE{{else}}○ SOON{{end}}</span>
+          </span>
+          <span class="lo-phase-name">{{$c.Name}}</span>
+          <span class="lo-phase-alloc"><b>{{$c.Count}}</b> <span class="lo-phase-unit">alloc</span></span>
+        </a>
+        {{end}}
+      </div>
+    </div>
+  </section>
+  {{end}}
+
+  {{if .FeatLinks}}
+  <section class="lo-chips">
+    <div class="lo-in">
+      <div class="lo-sec-head"><span class="lo-sec-title">{{.Site.HomeLinks}}</span></div>
+      <div class="lo-chip-row">
+        {{range .FeatLinks}}
+        <a class="lo-chip" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+          <span class="lo-chip-ic">{{if .CoverImage}}<img src="{{.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b>{{initial .Title}}</b>{{end}}</span>
+          <span class="lo-chip-t">{{.Title}}</span>
+          <span class="arrow" aria-hidden="true">→</span>
+        </a>
+        {{end}}
+      </div>
+    </div>
+  </section>
+  {{end}}
+
+  {{if .Posts}}
+  <section class="lo-news">
+    <div class="lo-in">
+      <div class="lo-sec-head"><span class="lo-sec-title">{{.Site.HomeLatest}}</span><a class="lo-viewall" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a></div>
+      <div class="lo-news-list">
+        {{range $i, $p := .Posts}}{{if lt $i 3}}
+        <a class="lo-news-row" href="{{$.Tr.U (contentURL $p)}}">
+          <span class="lo-news-n">{{printf "%02d" (add $i 1)}}</span>
+          <span class="lo-news-body">
+            <span class="lo-news-title">{{$p.Title}}</span>
+            {{if $p.Excerpt}}<span class="lo-news-ex">{{$p.Excerpt}}</span>{{end}}
+          </span>
+          <span class="lo-news-meta">{{with $p.Category}}<span class="lo-news-cat">{{.Name}}</span>{{end}}<time datetime="{{$.Tr.ISODate $p.PublishedAt}}">{{$.Tr.Date $p.PublishedAt}}</time></span>
+        </a>
+        {{end}}{{end}}
+      </div>
+    </div>
+  </section>
+  {{end}}
+{{end}}

@@ -1,0 +1,126 @@
+{{define "home_uptime"}}
+  <div class="up-wrap">
+    <section class="up-banner{{if .Featured}} is-incident{{end}}">
+      <div class="up-in up-banner-in">
+        <span class="up-banner-badge" aria-hidden="true">
+          {{if .Featured}}<span class="up-dot up-dot-amber up-dot-live"></span>{{else}}<span class="up-dot up-dot-ok"></span>{{end}}
+        </span>
+        <div class="up-banner-text">
+          {{if .Site.HeroEyebrow}}<p class="up-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+          <h1 class="up-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+          {{if .Site.HeroDescription}}<p class="up-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+        </div>
+        <div class="up-banner-status">
+          {{if .Featured}}<span class="up-pill up-pill-degraded">Investigating</span>{{else}}<span class="up-pill up-pill-ok">All systems operational</span>{{end}}
+        </div>
+      </div>
+    </section>
+
+    <div class="up-in up-body">
+      <section class="up-active" aria-label="Active incident">
+        {{with .Featured}}
+        <a class="up-incident{{if .CoverImage}} has-cover{{end}}" href="{{$.Tr.U (contentURL .)}}">
+          <span class="up-incident-cover">
+            {{if .CoverImage}}<img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}
+          </span>
+          <span class="up-incident-body">
+            <span class="up-incident-head">
+              <span class="up-tag up-tag-degraded"><span class="up-dot up-dot-amber"></span>Active incident</span>
+              {{with .Category}}<span class="up-cat">{{.Name}}</span>{{end}}
+              <time class="up-incident-time" datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time>
+            </span>
+            <span class="up-incident-title">{{.Title}}</span>
+            {{if .Excerpt}}<span class="up-incident-ex">{{.Excerpt}}</span>{{end}}
+            <span class="up-incident-more">{{$.Tr.T "home.read_more"}} <span class="arrow" aria-hidden="true">→</span></span>
+          </span>
+        </a>
+        {{else}}
+        <div class="up-calm">
+          <span class="up-calm-dot" aria-hidden="true"><span class="up-dot up-dot-ok up-dot-live"></span></span>
+          <span class="up-calm-text">
+            <b>No active incidents</b>
+            <small>All systems operational</small>
+          </span>
+          <a class="btn" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+        </div>
+        {{end}}
+      </section>
+
+      {{if .Categories}}
+      <section class="up-panel up-components" aria-label="{{.Tr.T "nav.category"}}">
+        <div class="up-panel-head">
+          <span class="up-panel-title">{{if .Site.HomeLinks}}{{.Site.HomeLinks}}{{else}}{{.Tr.T "nav.category"}}{{end}}</span>
+          <span class="up-legend" aria-hidden="true">
+            <span class="up-legend-i"><span class="up-swatch up-swatch-ok"></span>operational</span>
+            <span class="up-legend-i"><span class="up-swatch up-swatch-amber"></span>degraded</span>
+            <span class="up-legend-i"><span class="up-swatch up-swatch-down"></span>outage</span>
+          </span>
+        </div>
+        <div class="up-rows">
+          {{range .Categories}}
+          <a class="up-row" href="{{$.Tr.U (printf "/category/%s" .Slug)}}">
+            <span class="up-row-name" title="{{.Name}}">{{.Name}}</span>
+            <span class="up-row-status">
+              {{if .Count}}<span class="up-pill up-pill-degraded"><span class="up-dot up-dot-amber"></span>Degraded</span>{{else}}<span class="up-pill up-pill-ok"><span class="up-dot up-dot-ok"></span>Operational</span>{{end}}
+            </span>
+            <span class="up-bar" aria-hidden="true">
+              {{range (pages 90)}}<span class="up-tick"></span>{{end}}
+            </span>
+            <span class="up-row-metric">
+              <span class="up-row-num">{{.Count}}</span>
+              <span class="up-row-lbl">incidents</span>
+            </span>
+          </a>
+          {{end}}
+        </div>
+        <div class="up-uptime-foot" aria-hidden="true">
+          <span>90 days ago</span>
+          <span class="up-uptime-pct">99.9% uptime</span>
+          <span>today</span>
+        </div>
+      </section>
+      {{end}}
+
+      {{if .Posts}}
+      <section class="up-panel up-history" aria-label="{{.Site.HomeLatest}}">
+        <div class="up-panel-head">
+          <span class="up-panel-title">{{if .Site.HomeLatest}}{{.Site.HomeLatest}}{{else}}Incident history{{end}}</span>
+          <a class="up-panel-link" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+        </div>
+        <ol class="up-timeline">
+          {{range $i, $p := .Posts}}
+          <li class="up-event">
+            <a class="up-event-in" href="{{$.Tr.U (contentURL $p)}}">
+              <span class="up-event-mark" aria-hidden="true"><span class="up-dot up-dot-ok up-event-dot"></span></span>
+              <span class="up-event-time"><time datetime="{{$.Tr.ISODate $p.PublishedAt}}">{{$.Tr.Date $p.PublishedAt}}</time></span>
+              <span class="up-event-body">
+                {{with $p.Category}}<span class="up-cat">{{.Name}}</span>{{end}}
+                <span class="up-event-title">{{$p.Title}}</span>
+                {{if $p.Excerpt}}<span class="up-event-ex">{{$p.Excerpt}}</span>{{end}}
+              </span>
+            </a>
+          </li>
+          {{end}}
+        </ol>
+      </section>
+      {{end}}
+    </div>
+
+    {{if .FeatLinks}}
+    <footer class="up-footer">
+      <div class="up-in up-footer-in">
+        <span class="up-footer-lead">{{if .Site.HomeLinks}}{{.Site.HomeLinks}}{{else}}Resources{{end}}</span>
+        <nav class="up-chips">
+          {{range .FeatLinks}}
+          <a class="up-chip" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+            <span class="up-chip-ic" aria-hidden="true">{{if .CoverImage}}<img src="{{.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b>{{initial .Title}}</b>{{end}}</span>
+            <span class="up-chip-t">{{.Title}}</span>
+            <span class="arrow" aria-hidden="true">→</span>
+          </a>
+          {{end}}
+        </nav>
+      </div>
+    </footer>
+    {{end}}
+  </div>
+{{end}}
