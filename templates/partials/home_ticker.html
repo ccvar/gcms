@@ -1,4 +1,6 @@
 {{define "home_ticker"}}
+  {{$hasHeroRight := or .Featured .Categories}}
+  {{$hasSide := or (and .Featured .Categories) .FeatLinks}}
   {{if .Categories}}
   <div class="tick-marquee" aria-hidden="true">
     <div class="tick-track">
@@ -6,39 +8,90 @@
       {{range .Categories}}<span class="tick-chip"><b>{{.Name}}</b><span class="tick-num">{{.Count}}</span></span>{{end}}
     </div>
   </div>
+  {{else if or .Featured .Posts}}
+  <div class="tick-marquee" aria-hidden="true">
+    <div class="tick-track">
+      {{with .Featured}}<span class="tick-chip"><b>{{.Title}}</b></span>{{end}}{{range .Posts}}<span class="tick-chip"><b>{{.Title}}</b></span>{{end}}
+      {{with .Featured}}<span class="tick-chip"><b>{{.Title}}</b></span>{{end}}{{range .Posts}}<span class="tick-chip"><b>{{.Title}}</b></span>{{end}}
+    </div>
+  </div>
   {{end}}
 
   <section class="tick-hero">
-    <div class="tick-in">
-      {{if .Site.HeroEyebrow}}<p class="tick-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
-      <h1 class="tick-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
-      <p class="tick-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>
-      <div class="tick-cta">
-        <a class="btn btn-primary" href="{{if .Featured}}{{.Tr.U (contentURL .Featured)}}{{else}}{{.Tr.U .CategoryAll.Path}}{{end}}">{{.Tr.T "home.cta_start"}} <span class="arrow">→</span></a>
-        <a class="btn" href="{{.Tr.U "/about"}}">{{.Tr.T "home.cta_more"}}</a>
+    <div class="tick-in tick-hero-grid{{if not $hasHeroRight}} is-solo{{end}}">
+      <div class="tick-lead">
+        {{if .Site.HeroEyebrow}}<p class="tick-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+        <h1 class="tick-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+        <p class="tick-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>
+        <div class="tick-cta">
+          <a class="btn btn-primary" href="{{if .Featured}}{{.Tr.U (contentURL .Featured)}}{{else}}{{.Tr.U .CategoryAll.Path}}{{end}}">{{.Tr.T "home.cta_start"}} <span class="arrow">→</span></a>
+          <a class="btn" href="{{.Tr.U "/about"}}">{{.Tr.T "home.cta_more"}}</a>
+        </div>
       </div>
+      {{with .Featured}}
+      <a class="tick-panel tick-feat has-cover" href="{{$.Tr.U (contentURL .)}}">
+        <span class="tick-panel-head"><span class="tick-dot" aria-hidden="true"></span>{{$.Site.HomeFeatured}}</span>
+        {{if .CoverImage}}<span class="tick-feat-cover" style="background-image:url('{{.CoverImage}}')"></span>{{else}}<span class="tick-feat-cover tick-feat-cover-gen"><b aria-hidden="true">{{initial .Title}}</b></span>{{end}}
+        <span class="tick-feat-body">
+          <span class="tick-feat-meta">{{with .Category}}<span class="tick-cat">{{.Name}}</span>{{end}}<time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time></span>
+          <span class="tick-feat-title">{{.Title}}</span>
+          {{if .Excerpt}}<span class="tick-feat-ex">{{.Excerpt}}</span>{{end}}
+        </span>
+      </a>
+      {{else}}{{if .Categories}}
+      <aside class="tick-panel tick-board">
+        <div class="tick-panel-head"><span class="tick-dot" aria-hidden="true"></span>{{.Tr.T "nav.category"}}</div>
+        <div class="tick-board-list">
+          {{range .Categories}}<a class="tick-board-row" href="{{$.Tr.U (printf "/category/%s" .Slug)}}"><span class="tick-board-name">{{.Name}}</span><span class="tick-num">{{.Count}}</span></a>{{end}}
+        </div>
+      </aside>
+      {{end}}{{end}}
     </div>
   </section>
 
-  {{if .Posts}}
-  <section class="tick-feed">
-    <div class="tick-in">
-      <div class="tick-head"><span class="tick-live"><span class="tick-dot" aria-hidden="true"></span>{{.Site.HomeLatest}}</span><a href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a></div>
-      <div class="tick-list">
-        {{with .Featured}}
-        <a class="tick-row is-feat" href="{{$.Tr.U (contentURL .)}}">
-          <span class="tick-time"><time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time></span>
-          <span class="tick-body"><span class="tick-cat">{{with .Category}}{{.Name}}{{end}}</span><span class="tick-title">{{.Title}}</span></span>
-        </a>
+  {{if or .Posts $hasSide}}
+  <div class="tick-board-wrap">
+    <div class="tick-in tick-grid{{if or (not .Posts) (not $hasSide)}} is-solo{{end}}">
+      {{if .Posts}}
+      <section class="tick-main">
+        <div class="tick-head"><span class="tick-live"><span class="tick-dot" aria-hidden="true"></span>{{.Site.HomeLatest}}</span><a href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a></div>
+        <div class="tick-list">
+          {{range .Posts}}
+          <a class="tick-row" href="{{$.Tr.U (contentURL .)}}">
+            <span class="tick-time"><time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time></span>
+            <span class="tick-body">{{with .Category}}<span class="tick-cat">{{.Name}}</span>{{end}}<span class="tick-title">{{.Title}}</span></span>
+          </a>
+          {{end}}
+        </div>
+      </section>
+      {{end}}
+
+      {{if $hasSide}}
+      <aside class="tick-side">
+        {{if and .Featured .Categories}}
+        <div class="tick-card">
+          <div class="tick-card-h">{{.Tr.T "nav.category"}}</div>
+          <div class="tick-board-list">
+            {{range .Categories}}<a class="tick-board-row" href="{{$.Tr.U (printf "/category/%s" .Slug)}}"><span class="tick-board-name">{{.Name}}</span><span class="tick-num">{{.Count}}</span></a>{{end}}
+          </div>
+        </div>
         {{end}}
-        {{range .Posts}}
-        <a class="tick-row" href="{{$.Tr.U (contentURL .)}}">
-          <span class="tick-time"><time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time></span>
-          <span class="tick-body"><span class="tick-cat">{{with .Category}}{{.Name}}{{end}}</span><span class="tick-title">{{.Title}}</span></span>
-        </a>
+        {{if .FeatLinks}}
+        <div class="tick-card">
+          <div class="tick-card-h">{{.Site.HomeLinks}}</div>
+          <div class="tick-link-list">
+            {{range .FeatLinks}}
+            <a class="tick-link" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+              <span class="tick-link-ic">{{if .CoverImage}}<img src="{{.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b>{{initial .Title}}</b>{{end}}</span>
+              <span class="tick-link-t">{{.Title}}</span>
+            </a>
+            {{end}}
+          </div>
+        </div>
         {{end}}
-      </div>
+      </aside>
+      {{end}}
     </div>
-  </section>
+  </div>
   {{end}}
 {{end}}
