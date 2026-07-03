@@ -907,6 +907,11 @@ func scanAutomationKey(sc interface{ Scan(...any) error }) (*AutomationKey, erro
 }
 
 func (s *Store) CreateAutomationLog(keyID int64, action, targetType string, targetID int64, message string) error {
+	// 平台密钥（多站）请求不属于本站 automation_keys，keyID<=0 时直接跳过，
+	// 避免向 FK 列写入无效引用（平台审计另存 platform_automation_logs）。
+	if keyID <= 0 {
+		return nil
+	}
 	_, err := s.db.Exec(`INSERT INTO automation_logs(key_id,action,target_type,target_id,message,created_at)
 		VALUES(?,?,?,?,?,?)`, keyID, action, targetType, targetID, message, fmtTime(time.Now()))
 	return err
@@ -1482,6 +1487,26 @@ func (s *Store) CountContent(lang string) (int, error) {
 	var n int
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM posts WHERE lang=?`, lang).Scan(&n)
 	return n, err
+}
+
+// LastPublicUpdate 返回「对外可见内容」上次变化的时间：已发布且已到发布时间的内容里 updated_at 的最大值。
+// 服务器动态托管——任何已发布内容一保存即对外生效，因此这个时间就是公开站点上次真正变化的时刻。
+// 草稿和未到时间的定时内容都不计入（尚未对外）。没有任何已发布内容时返回 ok=false。
+func (s *Store) LastPublicUpdate() (time.Time, bool, error) {
+	var v sql.NullString
+	err := s.db.QueryRow(`SELECT MAX(updated_at) FROM posts
+		WHERE status='published' AND (published_at IS NULL OR published_at<=?)`, fmtTime(time.Now())).Scan(&v)
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	if !v.Valid || strings.TrimSpace(v.String) == "" {
+		return time.Time{}, false, nil
+	}
+	t, perr := time.Parse(time.RFC3339, v.String)
+	if perr != nil {
+		return time.Time{}, false, nil
+	}
+	return t, true, nil
 }
 
 func (s *Store) AdminContentStatusCounts(lang string) (map[string]AdminContentCounts, error) {

@@ -1,0 +1,240 @@
+package web
+
+import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strconv"
+	"testing"
+	"time"
+
+	"cms.ccvar.com/internal/platform"
+	"cms.ccvar.com/internal/store"
+	"golang.org/x/crypto/bcrypt"
+)
+
+// setupPlatformAutomation 起一个双站点平台服务器（default + blog，均开启自动化），返回句柄与站点。
+func setupPlatformAutomation(t *testing.T) (*Server, http.Handler, *platform.Store, *platform.Site, *platform.Site) {
+	return newPlatformTestServerBase(t, "https://platform.test")
+}
+
+// newPlatformTestServerBase 同上，但可指定 baseURL（本地 base 便于让真实 node CLI 打到 httptest.Server）。
+func newPlatformTestServerBase(t *testing.T, baseURL string) (*Server, http.Handler, *platform.Store, *platform.Site, *platform.Site) {
+	t.Helper()
+	dir := t.TempDir()
+
+	defaultDB := filepath.Join(dir, "default.db")
+	defaultStore, err := store.Open(defaultDB)
+	if err != nil {
+		t.Fatalf("open default store: %v", err)
+	}
+	t.Cleanup(func() { _ = defaultStore.Close() })
+	if err := defaultStore.SetSetting("site.name", "Default Site"); err != nil {
+		t.Fatalf("set default name: %v", err)
+	}
+	defaultUploadDir := filepath.Join(dir, "default-uploads")
+	if err := os.MkdirAll(defaultUploadDir, 0o755); err != nil {
+		t.Fatalf("mk default uploads: %v", err)
+	}
+
+	// 第二个站点：先建好 DB 文件（运行时会打开它）。
+	blogDB := filepath.Join(dir, "blog.db")
+	blogStore, err := store.Open(blogDB)
+	if err != nil {
+		t.Fatalf("open blog store: %v", err)
+	}
+	_ = blogStore.SetSetting("site.name", "Blog Site")
+	if err := blogStore.Close(); err != nil {
+		t.Fatalf("close blog store: %v", err)
+	}
+	blogUploadDir := filepath.Join(dir, "blog-uploads")
+	if err := os.MkdirAll(blogUploadDir, 0o755); err != nil {
+		t.Fatalf("mk blog uploads: %v", err)
+	}
+
+	ps, err := platform.Open(filepath.Join(dir, "system.db"))
+	if err != nil {
+		t.Fatalf("open platform store: %v", err)
+	}
+	t.Cleanup(func() { _ = ps.Close() })
+	hash, err := bcrypt.GenerateFromPassword([]byte(store.DefaultAdminPassword), bcrypt.DefaultCost)
+	if err != nil {
+		t.Fatalf("hash: %v", err)
+	}
+	if err := ps.BootstrapDefaultSite(platform.DefaultSiteBootstrap{
+		Slug: "main", Name: "Default Site", DBPath: defaultDB, UploadDir: defaultUploadDir,
+		AdminUser: "admin", AdminPasswordHash: string(hash), ManagementAutomationEnabled: true,
+	}); err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+	defaultSite, err := ps.DefaultSite()
+	if err != nil {
+		t.Fatalf("default site: %v", err)
+	}
+	blogSite, err := ps.CreateSite("blog", "Blog Site", blogDB, blogUploadDir, true)
+	if err != nil {
+		t.Fatalf("create blog site: %v", err)
+	}
+
+	srv, err := NewWithPlatform(defaultStore, ps, baseURL, defaultUploadDir, os.DirFS("../.."), os.DirFS("../.."))
+	if err != nil {
+		t.Fatalf("new platform server: %v", err)
+	}
+	return srv, srv.Handler(), ps, defaultSite, blogSite
+}
+
+func platformAPIReq(t *testing.T, h http.Handler, method, path, token string, body []byte) *httptest.ResponseRecorder {
+	t.Helper()
+	var r *http.Request
+	if body != nil {
+		r = httptest.NewRequest(method, "https://platform.test"+path, bytes.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+	} else {
+		r = httptest.NewRequest(method, "https://platform.test"+path, nil)
+	}
+	if token != "" {
+		r.Header.Set("Authorization", "Bearer "+token)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, r)
+	return rec
+}
+
+func TestPlatformKeyDispatchMembership(t *testing.T) {
+	_, h, ps, defaultSite, blogSite := setupPlatformAutomation(t)
+
+	// allowlist 密钥，仅授权 blog。
+	token := "gcmsp_dispatch1234567"
+	if _, err := ps.CreatePlatformKey("bot", token, token[:13], platform.KeyMembershipAllowlist,
+		"posts:read,posts:write,languages:read", []int64{blogSite.ID}, time.Time{}); err != nil {
+		t.Fatalf("create platform key: %v", err)
+	}
+
+	// 授权站点 → 200。
+	ok := platformAPIReq(t, h, http.MethodGet, "/api/platform/v1/sites/"+strconv.FormatInt(blogSite.ID, 10)+"/languages", token, nil)
+	if ok.Code != http.StatusOK {
+		t.Fatalf("allowed site status = %d, body = %s", ok.Code, ok.Body.String())
+	}
+
+	// 非授权站点 → 403 site_forbidden。
+	forbidden := platformAPIReq(t, h, http.MethodGet, "/api/platform/v1/sites/"+strconv.FormatInt(defaultSite.ID, 10)+"/languages", token, nil)
+	if forbidden.Code != http.StatusForbidden {
+		t.Fatalf("forbidden site status = %d, body = %s", forbidden.Code, forbidden.Body.String())
+	}
+
+	// 无效 token（非平台密钥且非站点密钥）→ 回退站点路径后 401。
+	bad := platformAPIReq(t, h, http.MethodGet, "/api/platform/v1/sites/"+strconv.FormatInt(blogSite.ID, 10)+"/languages", "gcmsp_not_a_real_key", nil)
+	if bad.Code != http.StatusUnauthorized {
+		t.Fatalf("bad token status = %d, want 401, body = %s", bad.Code, bad.Body.String())
+	}
+}
+
+func TestPlatformKeyDiscoveryContract(t *testing.T) {
+	_, h, ps, _, blogSite := setupPlatformAutomation(t)
+	token := "gcmsp_discovery123456"
+	if _, err := ps.CreatePlatformKey("bot", token, token[:13], platform.KeyMembershipAllowlist,
+		"posts:read", []int64{blogSite.ID}, time.Time{}); err != nil {
+		t.Fatalf("create key: %v", err)
+	}
+
+	// 缺 token → 401。
+	if noTok := platformAPIReq(t, h, http.MethodGet, "/api/platform/v1/sites", "", nil); noTok.Code != http.StatusUnauthorized {
+		t.Fatalf("discovery without token status = %d, want 401", noTok.Code)
+	}
+
+	rec := platformAPIReq(t, h, http.MethodGet, "/api/platform/v1/sites", token, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("discovery status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var payload struct {
+		Items []struct {
+			ID           int64    `json:"id"`
+			Slug         string   `json:"slug"`
+			Name         string   `json:"name"`
+			Capabilities []string `json:"capabilities"`
+			APIBase      string   `json:"api_base"`
+		} `json:"items"`
+		AllSites bool `json:"all_sites"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal discovery: %v (body=%s)", err, rec.Body.String())
+	}
+	if payload.AllSites {
+		t.Fatalf("all_sites should be false for allowlist key")
+	}
+	if len(payload.Items) != 1 {
+		t.Fatalf("discovery items = %d, want 1 (blog only): %s", len(payload.Items), rec.Body.String())
+	}
+	it := payload.Items[0]
+	if it.ID != blogSite.ID || it.Slug != "blog" {
+		t.Fatalf("discovery item mismatch: %#v", it)
+	}
+	if len(it.Capabilities) == 0 || it.Capabilities[0] != "posts:read" {
+		t.Fatalf("discovery capabilities = %v, want posts:read", it.Capabilities)
+	}
+	wantBase := "https://platform.test/api/platform/v1/sites/" + strconv.FormatInt(blogSite.ID, 10)
+	if it.APIBase != wantBase {
+		t.Fatalf("discovery api_base = %q, want %q", it.APIBase, wantBase)
+	}
+}
+
+func TestPlatformKeyAuditRouting(t *testing.T) {
+	_, h, ps, _, blogSite := setupPlatformAutomation(t)
+	token := "gcmsp_audit1234567890"
+	if _, err := ps.CreatePlatformKey("bot", token, token[:13], platform.KeyMembershipAll,
+		"posts:read,posts:write", nil, time.Time{}); err != nil {
+		t.Fatalf("create key: %v", err)
+	}
+	body, _ := json.Marshal(map[string]any{"title": "Platform Draft", "lang": "zh", "status": "draft"})
+	rec := platformAPIReq(t, h, http.MethodPost, "/api/platform/v1/sites/"+strconv.FormatInt(blogSite.ID, 10)+"/posts", token, body)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create post status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	// 审计必须写入平台库（红队 FK 修复：绝不向站库 FK 列写 sentinel）。
+	logs, err := ps.ListPlatformAutomationLogs(50)
+	if err != nil {
+		t.Fatalf("list platform logs: %v", err)
+	}
+	if len(logs) == 0 {
+		t.Fatalf("platform action produced no audit row")
+	}
+	found := false
+	for _, l := range logs {
+		if l.SiteID == blogSite.ID && l.Action == "create" && l.KeyID > 0 {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no platform_automation_logs row for the create on blog site: %#v", logs)
+	}
+}
+
+func TestPlatformKeyGlobalKillSwitch(t *testing.T) {
+	srv, h, ps, _, blogSite := setupPlatformAutomation(t)
+	token := "gcmsp_kill12345678901"
+	if _, err := ps.CreatePlatformKey("bot", token, token[:13], platform.KeyMembershipAll,
+		"languages:read", nil, time.Time{}); err != nil {
+		t.Fatalf("create key: %v", err)
+	}
+	path := "/api/platform/v1/sites/" + strconv.FormatInt(blogSite.ID, 10) + "/languages"
+	if ok := platformAPIReq(t, h, http.MethodGet, path, token, nil); ok.Code != http.StatusOK {
+		t.Fatalf("before kill switch status = %d", ok.Code)
+	}
+	// 全局急停。
+	if err := ps.SetSetting(platformAutomationKillSwitchKey, "1"); err != nil {
+		t.Fatalf("set kill switch: %v", err)
+	}
+	if !srv.platformAutomationKilled() {
+		t.Fatalf("kill switch not detected")
+	}
+	if killed := platformAPIReq(t, h, http.MethodGet, path, token, nil); killed.Code != http.StatusForbidden {
+		t.Fatalf("after kill switch status = %d, want 403, body = %s", killed.Code, killed.Body.String())
+	}
+	// 发现端点也应急停。
+	if disc := platformAPIReq(t, h, http.MethodGet, "/api/platform/v1/sites", token, nil); disc.Code != http.StatusForbidden {
+		t.Fatalf("discovery after kill switch status = %d, want 403", disc.Code)
+	}
+}

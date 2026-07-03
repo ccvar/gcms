@@ -140,14 +140,42 @@
     var allConnects = connects.slice();
     if (oauthRoot) allConnects.unshift(oauthRoot);
 
+    function updateOAuthDetailToggle(root, isOpen) {
+      if (!root) return;
+      var toggle = root.querySelector("[data-google-oauth-detail-toggle]");
+      if (!toggle) return;
+      toggle.classList.toggle("is-open", !!isOpen);
+      toggle.setAttribute("aria-expanded", isOpen ? "true" : "false");
+      var label = toggle.getAttribute(isOpen ? "data-close-label" : "data-open-label");
+      if (label) {
+        toggle.setAttribute("aria-label", label);
+        toggle.setAttribute("data-tooltip", label);
+      }
+    }
+
+    function setOAuthDetail(root, show) {
+      if (!root) return;
+      var detail = root.querySelector("[data-google-oauth-detail]");
+      if (!detail) return;
+      var visible = typeof show === "boolean" ? show : (detail.hidden || !detail.open);
+      detail.hidden = !visible;
+      detail.open = visible;
+      updateOAuthDetailToggle(root, visible);
+    }
+
+    function closeConnect(root) {
+      root.open = false;
+      if (root.matches && root.matches("[data-google-oauth-root]")) setOAuthDetail(root, false);
+    }
+
     function closeOthers(active) {
       allConnects.forEach(function (root) {
-        if (root !== active) root.open = false;
+        if (root !== active) closeConnect(root);
       });
     }
 
     function closeAll() {
-      allConnects.forEach(function (root) { root.open = false; });
+      allConnects.forEach(closeConnect);
     }
 
     function showPanel(root) {
@@ -156,6 +184,7 @@
       panel.hidden = false;
       var summary = root.querySelector("[data-google-oauth-summary]");
       if (summary) summary.hidden = true;
+      setOAuthDetail(root, false);
       var first = panel.querySelector("input");
       if (first) window.setTimeout(function () { first.focus(); }, 40);
     }
@@ -165,6 +194,7 @@
       var panel = root.querySelector("[data-google-config-panel]");
       if (summary) summary.hidden = false;
       if (panel) panel.hidden = true;
+      setOAuthDetail(root, false);
     }
 
     function setStatus(form, message, isError) {
@@ -205,6 +235,16 @@
       }
       var head = root.querySelector(".google-connect-head");
       if (head && head.parentNode) head.parentNode.insertBefore(empty, head.nextSibling);
+    }
+
+    function updateGoogleAccountScope(scope) {
+      if (!scope) return;
+      var count = scope.querySelectorAll(".google-account-list li").length;
+      var countEl = scope.querySelector("[data-google-account-count]");
+      if (countEl) {
+        var tpl = scope.getAttribute("data-google-count-template") || "%d 个账号";
+        countEl.textContent = tpl.replace("%d", String(count));
+      }
     }
 
     function enableAuthorize(root) {
@@ -265,6 +305,7 @@
       var opener = e.target.closest && e.target.closest("[data-google-open-oauth]");
       var editor = e.target.closest && e.target.closest("[data-google-config-edit]");
       var cancel = e.target.closest && e.target.closest("[data-google-config-cancel]");
+      var detailToggle = e.target.closest && e.target.closest("[data-google-oauth-detail-toggle]");
       var authorize = e.target.closest && e.target.closest("[data-google-authorize]");
       var root = e.target.closest && e.target.closest(".google-connect");
       if (!root) {
@@ -278,6 +319,11 @@
         closeOthers(oauthRoot);
         oauthRoot.open = true;
         showPanel(oauthRoot);
+        return;
+      }
+      if (detailToggle) {
+        e.preventDefault();
+        setOAuthDetail(root);
         return;
       }
       if (editor) {
@@ -305,6 +351,14 @@
 
     document.addEventListener("keydown", function (e) {
       if (e.key === "Escape") closeAll();
+    });
+
+    document.querySelectorAll("[data-google-oauth-detail]").forEach(function (detail) {
+      detail.addEventListener("toggle", function () {
+        if (detail.hidden) return;
+        var root = detail.closest && detail.closest("[data-google-oauth-root]");
+        updateOAuthDetailToggle(root, detail.open);
+      });
     });
 
     document.querySelectorAll(".google-oauth-form").forEach(function (form) {
@@ -386,10 +440,14 @@
           });
         }).then(function () {
           var root = form.closest(".google-connect");
+          var scope = form.closest("[data-google-account-scope]");
           var item = form.closest("li");
           var list = form.closest(".google-account-list");
           if (item) item.remove();
-          if (root) {
+          if (scope) {
+            if (list && !list.querySelector("li")) showGoogleEmpty(scope, list);
+            updateGoogleAccountScope(scope);
+          } else if (root) {
             if (list && !list.querySelector("li")) showGoogleEmpty(root, list);
             updateGoogleAccountState(root);
           }
@@ -397,6 +455,745 @@
           window.alert(err && err.message ? err.message : "解除绑定失败");
           if (btn) btn.disabled = false;
         });
+      });
+    });
+  })();
+
+  /* ---------- 站点管理：Google 站点接入弹窗 ---------- */
+  (function () {
+    document.addEventListener("click", function (e) {
+      var badge = e.target.closest && e.target.closest(".site-google-badge");
+      if (badge) {
+        var card = badge.closest(".site-card");
+        var details = card && card.querySelector(".site-card-details");
+        if (details) details.open = true;
+      }
+
+      var tab = e.target.closest && e.target.closest("[data-google-tab]");
+      if (tab) {
+        e.preventDefault();
+        var tabs = tab.closest("[data-google-tabs]");
+        var card = tab.closest(".site-google-modal-card");
+        if (!tabs || !card) return;
+        var name = tab.getAttribute("data-google-tab") || "";
+        tabs.querySelectorAll("[data-google-tab]").forEach(function (btn) {
+          btn.classList.toggle("is-active", btn === tab);
+        });
+        card.querySelectorAll("[data-google-tab-panel]").forEach(function (panel) {
+          panel.hidden = panel.getAttribute("data-google-tab-panel") !== name;
+        });
+        return;
+      }
+
+      var toggle = e.target.closest && e.target.closest("[data-google-edit-toggle]");
+      if (!toggle) return;
+      e.preventDefault();
+      var form = toggle.closest("form");
+      if (!form) return;
+      var panel = form.querySelector("[data-google-edit-panel]");
+      if (!panel) return;
+      panel.hidden = !panel.hidden;
+      toggle.textContent = panel.hidden
+        ? (toggle.getAttribute("data-edit-label") || "修改选项")
+        : (toggle.getAttribute("data-close-label") || "收起修改项");
+    });
+  })();
+
+	  /* ---------- 站点管理：自动创建 GA4 Web 数据流 ---------- */
+	  (function () {
+	    var forms = Array.prototype.slice.call(document.querySelectorAll("[data-ga-stream-form]"));
+	    if (!forms.length) return;
+
+    function setStatus(form, message, isError) {
+      var status = form.querySelector("[data-ga-stream-status]");
+      if (!status) return;
+      status.textContent = message || "";
+      status.classList.toggle("is-error", !!isError);
+    }
+
+	    function selectedText(select) {
+	      if (!select) return "";
+	      var opt = select.options[select.selectedIndex];
+	      return opt ? (opt.textContent || "").trim() : "";
+	    }
+
+	    function selectedOption(select) {
+	      if (!select) return null;
+	      return select.options[select.selectedIndex] || null;
+	    }
+
+	    function meaningfulOptionCount(select) {
+	      if (!select) return 0;
+	      return Array.prototype.filter.call(select.options, function (opt) {
+	        return !!opt.value;
+	      }).length;
+	    }
+
+	    function selectOnlyMeaningfulOption(select) {
+	      if (!select) return;
+	      var meaningful = Array.prototype.filter.call(select.options, function (opt) {
+	        return !!opt.value;
+	      });
+	      if (meaningful.length === 1) select.value = meaningful[0].value;
+	    }
+
+	    function propertyAutoLabel() {
+	      return "自动匹配当前域名";
+	    }
+
+	    function propertyCreateLabel() {
+	      return "创建新的 GA4 属性和统计代码";
+	    }
+
+	    function setRowPanel(form, name, open) {
+	      var panel = form.querySelector('[data-ga-row-panel="' + name + '"]');
+	      var btn = form.querySelector('[data-ga-row-edit="' + name + '"]');
+	      if (!panel) return;
+	      panel.hidden = !open;
+	      if (btn) btn.setAttribute("aria-expanded", open ? "true" : "false");
+	    }
+
+	    function closeRowPanels(form, except) {
+	      form.querySelectorAll("[data-ga-row-panel]").forEach(function (panel) {
+	        var name = panel.getAttribute("data-ga-row-panel") || "";
+	        if (except && name === except) return;
+	        setRowPanel(form, name, false);
+	      });
+	    }
+
+	    function setPropertyLoading(form, loading, message) {
+	      var row = form.querySelector('[data-ga-row="property"]');
+	      var btn = form.querySelector('[data-ga-row-edit="property"]');
+	      if (loading) {
+	        form.setAttribute("data-ga-property-loading", "1");
+	        form.setAttribute("data-ga-property-loading-message", message || "正在读取这个账号可访问的 GA4 属性...");
+	        closeRowPanels(form);
+	      } else {
+	        form.removeAttribute("data-ga-property-loading");
+	        form.removeAttribute("data-ga-property-loading-message");
+	      }
+	      if (row) row.classList.toggle("is-loading", !!loading);
+	      if (btn) {
+	        btn.disabled = !!loading;
+	        btn.setAttribute("aria-disabled", loading ? "true" : "false");
+	      }
+	    }
+
+	    function updateSummary(form) {
+	      var account = form.querySelector("[data-ga-account-select]");
+	      var property = form.querySelector("[data-ga-property-select]");
+	      var analyticsAccount = form.querySelector("[data-ga-analytics-account-select]");
+	      var uri = form.querySelector("[data-ga-default-uri]");
+	      var accountSummary = form.querySelector("[data-ga-account-summary]");
+	      var propertySummary = form.querySelector("[data-ga-property-summary]");
+	      var uriSummary = form.querySelector("[data-ga-uri-summary]");
+	      if (accountSummary) {
+	        accountSummary.textContent = account && account.value ? selectedText(account) : "还没有授权账号";
+	      }
+	      if (propertySummary) {
+	        if (form.getAttribute("data-ga-property-loading") === "1") {
+	          propertySummary.textContent = form.getAttribute("data-ga-property-loading-message") || "正在读取这个账号可访问的 GA4 属性...";
+	        } else if (property && property.value === "__create__") {
+	          var analyticsAccountWrap = form.querySelector("[data-ga-analytics-account-wrap]");
+	          propertySummary.textContent = propertyCreateLabel();
+	          if (analyticsAccountWrap && !analyticsAccountWrap.hidden && analyticsAccount && analyticsAccount.value) {
+	            propertySummary.textContent += " · " + selectedText(analyticsAccount);
+	          }
+	        } else if (property && property.value) {
+	          propertySummary.textContent = selectedText(property);
+	        } else {
+	          propertySummary.textContent = propertyAutoLabel();
+	        }
+	      }
+	      if (uriSummary && uri) {
+	        uriSummary.textContent = (uri.value || "").trim() || "自动使用站点入口";
+	      }
+	      updateSubmit(form);
+	    }
+
+	    function setOptions(select, options) {
+	      select.innerHTML = "";
+	      options.forEach(function (item) {
+	        var opt = document.createElement("option");
+	        opt.value = item.value || "";
+	        opt.textContent = item.label || "";
+	        if (item.dataset) {
+	          Object.keys(item.dataset).forEach(function (key) {
+	            opt.setAttribute("data-" + key, item.dataset[key]);
+	          });
+	        }
+	        select.appendChild(opt);
+	      });
+	      if (window.adminRefreshDropdown) window.adminRefreshDropdown(select);
+	    }
+
+	    function optionLabel(property) {
+	      if (property) {
+	        var streamParts = [
+	          property.matched_data_stream_display_name || property.data_stream_display_name || "",
+	          property.matched_default_uri || property.default_uri || "",
+	          property.matched_data_stream_id || property.data_stream_id || "",
+	          property.matched_measurement_id || property.measurement_id || ""
+	        ].filter(Boolean);
+	        if (streamParts.length) return streamParts.join(" · ");
+	      }
+	      var label = property.display_name || property.name || "";
+	      var account = property.account_display_name || "";
+	      if (account && label && label.indexOf(account) === -1) label += " · " + account;
+	      if (property.name && label.indexOf(property.name) === -1) label += " · " + property.name;
+	      var measurementID = property.matched_measurement_id || property.measurement_id || "";
+	      if (measurementID && label.indexOf(measurementID) === -1) {
+	        label += " · " + measurementID;
+	      }
+	      if (property.matched) label = "已匹配 · " + label;
+	      return label || property.name || "GA4 属性";
+	    }
+
+	    function accountLabel(account) {
+	      var id = "";
+	      if (account.name) {
+	        var parts = String(account.name).split("/");
+	        id = parts.length ? parts[parts.length - 1] : account.name;
+	      }
+	      var label = account.display_name || "";
+	      if (label && id) return label + "/" + id;
+	      if (id) return id;
+	      label = account.display_name || account.name || "";
+	      return label || account.name || "Analytics 账号";
+	    }
+
+	    function updatePropertyMode(form) {
+	      var property = form.querySelector("[data-ga-property-select]");
+	      var mode = form.querySelector("[data-ga-property-mode]");
+	      var wrap = form.querySelector("[data-ga-analytics-account-wrap]");
+	      var analyticsAccount = form.querySelector("[data-ga-analytics-account-select]");
+	      var createMode = !!(property && property.value === "__create__");
+	      var accountCount = meaningfulOptionCount(analyticsAccount);
+	      var needsAccountChoice = createMode && accountCount > 1;
+	      if (mode) mode.value = createMode ? "create" : "";
+	      if (wrap) wrap.hidden = !needsAccountChoice;
+	      if (analyticsAccount) {
+	        if (createMode && accountCount === 1) {
+	          selectOnlyMeaningfulOption(analyticsAccount);
+	        } else if (!createMode) {
+	          analyticsAccount.value = "";
+	        }
+	        analyticsAccount.disabled = !needsAccountChoice;
+	      }
+	      if (window.adminRefreshDropdown && analyticsAccount) window.adminRefreshDropdown(analyticsAccount);
+	    }
+
+	    function updateSubmit(form) {
+	      var submit = form.querySelector("[data-ga-create-submit]");
+	      var account = form.querySelector("[data-ga-account-select]");
+	      var property = form.querySelector("[data-ga-property-select]");
+	      var analyticsAccount = form.querySelector("[data-ga-analytics-account-select]");
+	      if (!submit) return;
+	      var loading = form.getAttribute("data-ga-property-loading") === "1" || !!(property && property.disabled && account && account.value);
+	      var createMode = !!(property && property.value === "__create__");
+	      var analyticsAccountCount = meaningfulOptionCount(analyticsAccount);
+	      var needsAnalyticsAccount = createMode && analyticsAccountCount > 1;
+	      var missingAnalyticsAccountBase = createMode && analyticsAccount && analyticsAccountCount === 0;
+	      var enabled = form.getAttribute("data-ga-current-enabled") === "1";
+	      var labelEnable = submit.getAttribute("data-label-enable") || "启用统计";
+	      var labelCreate = submit.getAttribute("data-label-create") || "创建并更新统计";
+	      var labelUpdate = submit.getAttribute("data-label-update") || "修改统计";
+	      submit.disabled = loading || !(account && account.value) || missingAnalyticsAccountBase || (needsAnalyticsAccount && !analyticsAccount.value);
+	      submit.textContent = createMode ? labelCreate : (enabled ? labelUpdate : labelEnable);
+	    }
+
+	    function loadProperties(form) {
+	      var account = form.querySelector("[data-ga-account-select]");
+	      var property = form.querySelector("[data-ga-property-select]");
+	      var analyticsAccount = form.querySelector("[data-ga-analytics-account-select]");
+	      if (!account || !property) return;
+	      var accountID = account.value || "";
+	      property.disabled = true;
+	      if (analyticsAccount) {
+	        analyticsAccount.disabled = true;
+	        setOptions(analyticsAccount, [{ value: "", label: "自动选择 Analytics 账号" }]);
+	      }
+	      if (!accountID) {
+	        setPropertyLoading(form, false);
+	        setOptions(property, [{ value: "", label: "先选择授权账号" }]);
+	        setStatus(form, "", false);
+	        updatePropertyMode(form);
+	        updateSummary(form);
+	        return;
+	      }
+	      setOptions(property, [{ value: "", label: "正在读取 GA4 属性..." }]);
+	      setPropertyLoading(form, true, "正在读取这个账号可访问的 GA4 属性...");
+	      updateSummary(form);
+	      var uri = form.querySelector("[data-ga-default-uri]");
+	      var defaultURI = uri ? (uri.value || "").trim() : "";
+	      setStatus(form, "", false);
+	      fetch("/admin/google/analytics/properties?account=" + encodeURIComponent(accountID) + "&default_uri=" + encodeURIComponent(defaultURI), {
+	        credentials: "same-origin",
+	        headers: { "Accept": "application/json", "X-Requested-With": "XMLHttpRequest" }
+	      }).then(function (res) {
+        return res.json().catch(function () { return {}; }).then(function (json) {
+          if (!res.ok || json.ok === false) throw new Error(json.message || "读取 GA4 属性失败");
+          return json;
+        });
+	      }).then(function (json) {
+	        setPropertyLoading(form, false);
+	        var list = Array.isArray(json.properties) ? json.properties : [];
+	        var accounts = Array.isArray(json.accounts) ? json.accounts : [];
+	        if (analyticsAccount) {
+	          setOptions(analyticsAccount, [{ value: "", label: "自动选择 Analytics 账号" }].concat(accounts.map(function (item) {
+	            return { value: item.name, label: accountLabel(item) };
+	          })));
+	          if (accounts.length === 1) analyticsAccount.value = accounts[0].name || "";
+	        }
+		        setOptions(property, [{ value: "__create__", label: propertyCreateLabel() }].concat(list.map(function (item) {
+		          return {
+		            value: item.name,
+		            label: optionLabel(item),
+		            dataset: {
+		              matched: item.matched ? "1" : "",
+		              "measurement-id": item.matched_measurement_id || item.measurement_id || ""
+		            }
+		          };
+		        })));
+	        var current = property.getAttribute("data-current-property") || "";
+	        var hasCurrent = current && list.some(function (item) { return item.name === current; });
+	        var matched = list.find(function (item) { return item && item.matched; });
+	        if (hasCurrent) {
+	          property.value = current;
+	        } else if (matched && matched.name) {
+	          property.value = matched.name;
+	        } else {
+	          property.value = "__create__";
+	        }
+	        property.disabled = false;
+	        if (window.adminRefreshDropdown) window.adminRefreshDropdown(property);
+	        updatePropertyMode(form);
+	        if (matched && !hasCurrent) {
+	          setStatus(form, "已找到当前域名已有 GA4 数据流，点击启用统计即可接管。", false);
+	          closeRowPanels(form);
+	        } else if (property.value === "__create__") {
+	          if (!accounts.length) {
+	            setRowPanel(form, "property", true);
+	            setStatus(form, "当前授权账号没有可用 Analytics 账号，请先在 Google Analytics 中开通。", true);
+	          } else if (accounts.length > 1 && !(analyticsAccount && analyticsAccount.value)) {
+	            setRowPanel(form, "property", true);
+	            setStatus(form, "没有匹配到当前域名的数据流；请选择 Analytics 账号后创建新的 GA4 属性和统计代码。", false);
+	          } else {
+	            setStatus(form, "没有匹配到当前域名的数据流；点击创建并启用统计代码会新建 GA4 属性和数据流。", false);
+	            closeRowPanels(form);
+	          }
+	        } else {
+	          setStatus(form, "将使用当前选择的 GA4 属性；若该属性下没有匹配数据流，会自动创建 Web 数据流。", false);
+	          closeRowPanels(form);
+	        }
+	        updateSummary(form);
+	      }).catch(function (err) {
+	        setPropertyLoading(form, false);
+	        setOptions(property, [{ value: "", label: "读取失败" }]);
+	        setStatus(form, err && err.message ? err.message : "读取 GA4 属性失败", true);
+	        updatePropertyMode(form);
+	        updateSummary(form);
+	      });
+	    }
+
+	    forms.forEach(function (form) {
+	      var account = form.querySelector("[data-ga-account-select]");
+	      var property = form.querySelector("[data-ga-property-select]");
+	      var analyticsAccount = form.querySelector("[data-ga-analytics-account-select]");
+	      var submit = form.querySelector("[data-ga-create-submit]");
+	      form.querySelectorAll("[data-ga-row-edit]").forEach(function (btn) {
+	        btn.addEventListener("click", function () {
+	          if (btn.disabled) return;
+	          var name = btn.getAttribute("data-ga-row-edit") || "";
+	          var panel = form.querySelector('[data-ga-row-panel="' + name + '"]');
+	          var open = !!(panel && panel.hidden);
+	          closeRowPanels(form, name);
+	          setRowPanel(form, name, open);
+	        });
+	      });
+	      if (account) {
+	        account.addEventListener("change", function () {
+	          if (property) property.setAttribute("data-current-property", "");
+	          loadProperties(form);
+	        });
+	        if (account.value) loadProperties(form);
+	        else updateSummary(form);
+	      }
+	      if (property) property.addEventListener("change", function () {
+	        updatePropertyMode(form);
+	        updateSummary(form);
+	      });
+	      if (analyticsAccount) analyticsAccount.addEventListener("change", function () { updateSummary(form); });
+	      updatePropertyMode(form);
+	      updateSummary(form);
+	      form.addEventListener("submit", function (e) {
+	        var submitter = e.submitter || document.activeElement;
+	        if (submitter && submitter.name === "action" && submitter.value === "delete") return;
+	        var createMode = !!(property && property.value === "__create__");
+	        if (!account || !account.value) {
+	          e.preventDefault();
+	          setRowPanel(form, "account", true);
+	          setStatus(form, "请选择授权账号后再启用统计。", true);
+	          updateSubmit(form);
+	          return;
+	        }
+	        var analyticsAccountCount = meaningfulOptionCount(analyticsAccount);
+	        if (createMode && analyticsAccount && analyticsAccountCount === 0) {
+	          e.preventDefault();
+	          setRowPanel(form, "property", true);
+	          setStatus(form, "当前授权账号没有可用 Analytics 账号，请先在 Google Analytics 中开通。", true);
+	          updateSubmit(form);
+	          return;
+	        }
+	        if (createMode && analyticsAccountCount > 1 && (!analyticsAccount || !analyticsAccount.value)) {
+	          e.preventDefault();
+	          setRowPanel(form, "property", true);
+	          setStatus(form, "自动创建 GA4 属性前，请先选择 Analytics 账号。", true);
+	          updateSubmit(form);
+	          return;
+	        }
+	        if (!submit) return;
+	        var enabled = form.getAttribute("data-ga-current-enabled") === "1";
+	        submit.disabled = true;
+	        submit.setAttribute("aria-busy", "true");
+	        submit.textContent = submit.getAttribute("data-label-updating") || (enabled ? "正在修改..." : "正在启用...");
+	        setStatus(form, "正在按域名匹配已有数据流；匹配不到时会按当前设置创建。", false);
+	      });
+	    });
+	  })();
+
+  /* ---------- 站点管理：Google Search Console 站点属性 ---------- */
+  (function () {
+    var forms = Array.prototype.slice.call(document.querySelectorAll("[data-gsc-site-form]"));
+    if (!forms.length) return;
+    var SEARCH_CONSOLE_MANAGE_SCOPE = "https://www.googleapis.com/auth/webmasters";
+
+    function setStatus(form, message, isError) {
+      var status = form.querySelector("[data-gsc-site-status]");
+      if (!status) return;
+      status.textContent = message || "";
+      status.classList.toggle("is-error", !!isError);
+    }
+
+    function setRowPanel(form, name, open) {
+      var panel = form.querySelector('[data-gsc-row-panel="' + name + '"]');
+      var btn = form.querySelector('[data-gsc-row-edit="' + name + '"]');
+      if (!panel) return;
+      panel.hidden = !open;
+      if (btn) btn.setAttribute("aria-expanded", open ? "true" : "false");
+    }
+
+    function closeRowPanels(form, except) {
+      form.querySelectorAll("[data-gsc-row-panel]").forEach(function (panel) {
+        var name = panel.getAttribute("data-gsc-row-panel") || "";
+        if (except && name === except) return;
+        setRowPanel(form, name, false);
+      });
+    }
+
+    function setPropertyLoading(form, loading, message) {
+      var row = form.querySelector('[data-gsc-row="property"]');
+      if (loading) {
+        form.setAttribute("data-gsc-property-loading", "1");
+        form.setAttribute("data-gsc-property-loading-message", message || "正在检查当前站点属性...");
+        closeRowPanels(form);
+      } else {
+        form.removeAttribute("data-gsc-property-loading");
+        form.removeAttribute("data-gsc-property-loading-message");
+      }
+      if (row) row.classList.toggle("is-loading", !!loading);
+    }
+
+    function normalizeSiteURL(value) {
+      value = (value || "").trim();
+      if (!value) return "";
+      if (value.indexOf("sc-domain:") === 0) return value.toLowerCase();
+      return value.replace(/\/+$/, "").toLowerCase();
+    }
+
+    function selectedText(select, fallback) {
+      if (!select) return fallback || "";
+      var option = select.options[select.selectedIndex];
+      if (!option || !select.value) return fallback || "";
+      return (option.textContent || option.value || "").trim();
+    }
+
+    function selectedScopes(select) {
+      if (!select) return "";
+      var option = select.options[select.selectedIndex];
+      return option ? (option.getAttribute("data-scopes") || "") : "";
+    }
+
+    function selectedAccountCanManageSearchConsole(select) {
+      var scopes = selectedScopes(select).trim();
+      if (!scopes) return true;
+      return scopes.split(/\s+/).indexOf(SEARCH_CONSOLE_MANAGE_SCOPE) !== -1;
+    }
+
+    function clearWritePermissionBlock(form) {
+      form.removeAttribute("data-gsc-needs-write-permission");
+    }
+
+    function setWritePermissionBlock(form) {
+      form.setAttribute("data-gsc-needs-write-permission", "1");
+    }
+
+    function writePermissionMessage() {
+      return "当前授权账号只有 Google Search Console 读取权限，且没有匹配到当前站点属性。请重新新增 Google 授权账号并允许 Search Console 管理权限，或先在 Google Search Console 手动添加并验证当前域名。";
+    }
+
+    function defaultURI(form) {
+      var uri = form.querySelector("[data-gsc-default-uri]");
+      return uri ? (uri.value || "").trim() : "";
+    }
+
+    function compareKeys(value) {
+      var normalized = normalizeSiteURL(value);
+      if (!normalized) return [];
+      var keys = [normalized];
+      if (normalized.indexOf("sc-domain:") !== 0) {
+        try {
+          var parsed = new URL(normalized);
+          var host = (parsed.hostname || "").toLowerCase();
+          if (host) {
+            keys.push("sc-domain:" + host);
+            if (host.indexOf("www.") === 0) keys.push("sc-domain:" + host.slice(4));
+          }
+        } catch (err) {}
+      }
+      return keys.filter(function (key, idx) {
+        return key && keys.indexOf(key) === idx;
+      });
+    }
+
+    function isVerifiedSite(item) {
+      var level = String(item && item.permission_level || "").trim().toLowerCase();
+      return level === "siteowner" || level === "sitefulluser" || level === "siterestricteduser";
+    }
+
+    function pickCurrentSite(list, target) {
+      var keys = compareKeys(target);
+      var picked = "";
+      if (!keys.length) return "";
+      keys.some(function (key) {
+        return list.some(function (item) {
+          if (!isVerifiedSite(item)) return false;
+          if (normalizeSiteURL(item.url) === key) {
+            picked = item.url || "";
+            return true;
+          }
+          return false;
+        });
+      });
+      return picked;
+    }
+
+    function pickAnyCurrentSite(list, target) {
+      var keys = compareKeys(target);
+      var picked = "";
+      if (!keys.length) return "";
+      keys.some(function (key) {
+        return list.some(function (item) {
+          if (normalizeSiteURL(item.url) === key) {
+            picked = item.url || "";
+            return true;
+          }
+          return false;
+        });
+      });
+      return picked;
+    }
+
+    function googleSearchConsoleVerifyURL(property) {
+      property = (property || "").trim();
+      if (!property) return "https://search.google.com/search-console";
+      return "https://search.google.com/search-console?resource_id=" + encodeURIComponent(property);
+    }
+
+    function setPendingState(form, pending, property) {
+      var input = form.querySelector("[data-gsc-property-input]");
+      var panel = form.querySelector("[data-gsc-pending-panel]");
+      var link = form.querySelector("[data-gsc-verify-link]");
+      if (property && input) input.value = property;
+      if (pending) form.setAttribute("data-gsc-pending", "1");
+      else form.removeAttribute("data-gsc-pending");
+      if (panel) panel.hidden = !pending;
+      if (link) link.href = googleSearchConsoleVerifyURL(input ? input.value : property);
+    }
+
+    function updateSummary(form) {
+      var account = form.querySelector("[data-gsc-account-select]");
+      var input = form.querySelector("[data-gsc-property-input]");
+      var accountSummary = form.querySelector("[data-gsc-account-summary]");
+      var uriSummary = form.querySelector("[data-gsc-uri-summary]");
+      var propertySummary = form.querySelector("[data-gsc-property-summary]");
+      if (accountSummary) accountSummary.textContent = selectedText(account, "还没有授权账号");
+      if (uriSummary) uriSummary.textContent = defaultURI(form) || "自动使用站点入口";
+      if (propertySummary) {
+        if (form.getAttribute("data-gsc-property-loading") === "1") {
+          propertySummary.textContent = form.getAttribute("data-gsc-property-loading-message") || "正在检查当前站点属性...";
+        } else {
+          var value = input && input.value.trim();
+          if (form.getAttribute("data-gsc-pending") === "1" && value) {
+            propertySummary.textContent = "待验证：" + value;
+          } else if (form.getAttribute("data-gsc-property-matched") === "1" && value) {
+            propertySummary.textContent = value;
+          } else if (form.getAttribute("data-gsc-current-enabled") === "1" && value) {
+            propertySummary.textContent = value;
+          } else {
+            propertySummary.textContent = "自动匹配或添加当前站点属性";
+          }
+        }
+      }
+      updateSubmit(form);
+    }
+
+    function updateSubmit(form) {
+      var submit = form.querySelector("[data-gsc-auto-submit]");
+      var account = form.querySelector("[data-gsc-account-select]");
+      if (!submit) return;
+      var loading = form.getAttribute("data-gsc-property-loading") === "1";
+      var enabled = form.getAttribute("data-gsc-current-enabled") === "1";
+      var pending = form.getAttribute("data-gsc-pending") === "1";
+      var needsWritePermission = form.getAttribute("data-gsc-needs-write-permission") === "1";
+      var labelEnable = submit.getAttribute("data-label-enable") || "启用搜索数据接入";
+      var labelPending = submit.getAttribute("data-label-pending") || "我已验证，重新检测并启用";
+      var labelUpdate = submit.getAttribute("data-label-update") || "修改搜索接入";
+      submit.disabled = loading || !(account && account.value) || (needsWritePermission && !pending);
+      submit.textContent = enabled ? labelUpdate : (pending ? labelPending : labelEnable);
+    }
+
+    function loadSites(form) {
+      var account = form.querySelector("[data-gsc-account-select]");
+      var input = form.querySelector("[data-gsc-property-input]");
+      if (!account || !input) return;
+      var accountID = account.value || "";
+      var fallbackURI = defaultURI(form);
+      var pending = form.getAttribute("data-gsc-pending") === "1";
+      var target = pending && input.value.trim() ? input.value.trim() : fallbackURI;
+      if (!accountID) {
+        setPropertyLoading(form, false);
+        form.removeAttribute("data-gsc-property-matched");
+        clearWritePermissionBlock(form);
+        setStatus(form, "", false);
+        input.value = "";
+        updateSummary(form);
+        return;
+      }
+      input.value = target;
+      form.removeAttribute("data-gsc-property-matched");
+      setPropertyLoading(form, true, "正在检查当前站点属性...");
+      setStatus(form, "", false);
+      updateSummary(form);
+      fetch("/admin/google/search-console/sites?account=" + encodeURIComponent(accountID), {
+        credentials: "same-origin",
+        headers: { "Accept": "application/json", "X-Requested-With": "XMLHttpRequest" }
+      }).then(function (res) {
+        return res.json().catch(function () { return {}; }).then(function (json) {
+          if (!res.ok || json.ok === false) throw new Error(json.message || "读取 Google Search Console 属性失败");
+          return json;
+        });
+      }).then(function (json) {
+        setPropertyLoading(form, false);
+        var list = Array.isArray(json.sites) ? json.sites : [];
+        var canManage = selectedAccountCanManageSearchConsole(account);
+        if (!list.length) {
+          input.value = target;
+          form.removeAttribute("data-gsc-property-matched");
+          if (pending) {
+            clearWritePermissionBlock(form);
+            setPendingState(form, true, target);
+            setStatus(form, "站点属性已添加，但 Google 仍要求完成所有权验证。请先打开 Search Console 完成验证，回来后点击重新检测。", false);
+          } else if (canManage) {
+            clearWritePermissionBlock(form);
+            setStatus(form, "没有读取到当前账号的已验证属性，启用后会尝试添加当前站点属性；Google 仍可能要求验证。", false);
+          } else {
+            setWritePermissionBlock(form);
+            setStatus(form, writePermissionMessage(), true);
+          }
+          updateSummary(form);
+          return;
+        }
+        var picked = pickCurrentSite(list, target);
+        if (picked) {
+          input.value = picked;
+          form.setAttribute("data-gsc-property-matched", "1");
+          setPendingState(form, false, picked);
+          clearWritePermissionBlock(form);
+          setStatus(form, "已匹配到当前站点的 Google Search Console 属性，可直接启用。", false);
+        } else {
+          var added = pickAnyCurrentSite(list, target);
+          input.value = added || target;
+          form.removeAttribute("data-gsc-property-matched");
+          if (pending || added) {
+            clearWritePermissionBlock(form);
+            setPendingState(form, true, input.value);
+            setStatus(form, "站点属性已添加，但 Google 仍要求完成所有权验证。请先打开 Search Console 完成验证，回来后点击重新检测。", false);
+          } else if (canManage) {
+            clearWritePermissionBlock(form);
+            setStatus(form, "未找到当前站点属性，启用后会尝试自动添加；Google 仍可能要求验证。", false);
+          } else {
+            setWritePermissionBlock(form);
+            setStatus(form, writePermissionMessage(), true);
+          }
+        }
+        updateSummary(form);
+      }).catch(function (err) {
+        setPropertyLoading(form, false);
+        form.removeAttribute("data-gsc-property-matched");
+        clearWritePermissionBlock(form);
+        input.value = target;
+        setStatus(form, err && err.message ? err.message : "读取 Google Search Console 属性失败", true);
+        updateSummary(form);
+      });
+    }
+
+    forms.forEach(function (form) {
+      var account = form.querySelector("[data-gsc-account-select]");
+      var input = form.querySelector("[data-gsc-property-input]");
+      var submit = form.querySelector("[data-gsc-auto-submit]");
+      form.querySelectorAll("[data-gsc-row-edit]").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          if (btn.disabled) return;
+          var name = btn.getAttribute("data-gsc-row-edit") || "";
+          var panel = form.querySelector('[data-gsc-row-panel="' + name + '"]');
+          var open = !!(panel && panel.hidden);
+          closeRowPanels(form, name);
+          setRowPanel(form, name, open);
+        });
+      });
+      if (account) {
+        account.addEventListener("change", function () {
+          loadSites(form);
+        });
+        if (account.value) loadSites(form);
+      }
+      if (input) input.addEventListener("input", function () { updateSummary(form); });
+      updateSummary(form);
+      form.addEventListener("submit", function (e) {
+        var submitter = e.submitter || document.activeElement;
+        if (submitter && submitter.name === "action" && submitter.value === "delete") return;
+        if (!account || !account.value) {
+          e.preventDefault();
+          setRowPanel(form, "account", true);
+          setStatus(form, "请选择 Google Search Console 授权账号后再启用搜索数据。", true);
+          updateSubmit(form);
+          return;
+        }
+        var pending = form.getAttribute("data-gsc-pending") === "1";
+        if (form.getAttribute("data-gsc-needs-write-permission") === "1" && !pending) {
+          e.preventDefault();
+          setStatus(form, writePermissionMessage(), true);
+          updateSubmit(form);
+          return;
+        }
+        if (input && !input.value.trim()) input.value = defaultURI(form);
+        if (submit) {
+          submit.disabled = true;
+          submit.setAttribute("aria-busy", "true");
+          submit.textContent = submit.getAttribute("data-label-updating") || "正在处理...";
+        }
+        setStatus(form, pending ? "正在重新检测 Google 是否已完成所有权验证..." : "正在接入当前站点属性；没有匹配项时会尝试自动添加。", false);
       });
     });
   })();
@@ -717,9 +1514,127 @@
     if (!dd || dd.dataset.ddReady === "1") return;
     var toggle = dd.querySelector(".dd-toggle");
     var label = dd.querySelector(".dd-label");
-    var hidden = dd.querySelector('input[type="hidden"]');
+	    var nativeSelect = dd.querySelector("select[data-dropdown-native]");
+	    var menu = dd.querySelector(".dd-menu");
+	    var nativeItems = [];
+	    var hidden = dd.querySelector('input[type="hidden"]');
+	    if (!toggle) return;
+	    if (nativeSelect) {
+	      dd.dataset.ddReady = "1";
+	      var searchInput = null;
+	      var emptyItem = null;
+	      if (menu && dd.hasAttribute("data-dropdown-search")) {
+	        dd.classList.add("has-search");
+	        var searchWrap = dd.querySelector(".dd-search-wrap");
+	        if (!searchWrap) {
+	          searchWrap = document.createElement("div");
+	          searchWrap.className = "dd-search-wrap";
+	          searchInput = document.createElement("input");
+	          searchInput.className = "dd-search";
+	          searchInput.type = "search";
+	          searchInput.autocomplete = "off";
+	          searchInput.spellcheck = false;
+	          searchInput.placeholder = dd.getAttribute("data-dropdown-search-placeholder") || "搜索";
+	          searchWrap.appendChild(searchInput);
+	          dd.insertBefore(searchWrap, menu);
+	        } else {
+	          searchInput = searchWrap.querySelector(".dd-search");
+	        }
+	        if (searchInput) {
+	          searchInput.addEventListener("click", function (e) { e.stopPropagation(); });
+	          searchInput.addEventListener("keydown", function (e) { e.stopPropagation(); });
+	          searchInput.addEventListener("input", function () { filterNativeMenu(); });
+	        }
+	      }
+	      function syncNativeLabel() {
+	        var selected = nativeSelect.options[nativeSelect.selectedIndex] || nativeSelect.options[0];
+	        if (label) label.textContent = selected ? (selected.textContent || "").trim() : "";
+	        nativeItems.forEach(function (li) {
+	          li.setAttribute("aria-selected", li.getAttribute("data-value") === nativeSelect.value ? "true" : "false");
+        });
+	        dd.classList.toggle("is-disabled", !!nativeSelect.disabled);
+	        toggle.disabled = !!nativeSelect.disabled;
+	        if (nativeSelect.disabled && openDD === dd) closeDD();
+	      }
+	      function filterNativeMenu() {
+	        if (!searchInput || !menu) return;
+	        var q = (searchInput.value || "").trim().toLowerCase();
+	        var visible = 0;
+	        nativeItems.forEach(function (li) {
+	          var text = (li.textContent || "").toLowerCase();
+	          var matched = !q || text.indexOf(q) !== -1;
+	          li.hidden = !matched;
+	          if (matched && li.getAttribute("aria-disabled") !== "true") visible += 1;
+	        });
+	        if (!emptyItem) {
+	          emptyItem = document.createElement("li");
+	          emptyItem.className = "dd-empty";
+	          emptyItem.setAttribute("aria-disabled", "true");
+	          emptyItem.textContent = "没有匹配项";
+	          menu.appendChild(emptyItem);
+	        }
+	        emptyItem.hidden = visible !== 0;
+	      }
+	      function chooseNative(li) {
+	        if (!li || li.getAttribute("aria-disabled") === "true") return;
+	        nativeSelect.value = li.getAttribute("data-value") || "";
+	        nativeSelect.dispatchEvent(new Event("change", { bubbles: true }));
+	        syncNativeLabel();
+      }
+      function rebuildNativeMenu() {
+        nativeItems = [];
+	        if (!menu) {
+	          syncNativeLabel();
+	          return;
+	        }
+	        menu.innerHTML = "";
+	        emptyItem = null;
+	        Array.prototype.slice.call(nativeSelect.options).forEach(function (opt) {
+	          var li = document.createElement("li");
+	          li.setAttribute("role", "option");
+	          li.setAttribute("data-value", opt.value || "");
+          li.setAttribute("aria-selected", opt.selected ? "true" : "false");
+          if (opt.disabled) li.setAttribute("aria-disabled", "true");
+          li.textContent = (opt.textContent || "").trim();
+          li.addEventListener("click", function () { chooseNative(li); closeDD(); });
+	          menu.appendChild(li);
+	          nativeItems.push(li);
+	        });
+	        filterNativeMenu();
+	        syncNativeLabel();
+	      }
+      dd._refreshSelectDropdown = rebuildNativeMenu;
+      toggle.addEventListener("click", function (e) {
+        e.stopPropagation();
+	        if (nativeSelect.disabled) return;
+	        var willOpen = !dd.classList.contains("open");
+	        closeDD();
+	        if (willOpen) {
+	          dd.classList.add("open");
+	          toggle.setAttribute("aria-expanded", "true");
+	          openDD = dd;
+	          if (searchInput) {
+	            searchInput.value = "";
+	            filterNativeMenu();
+	            setTimeout(function () { searchInput.focus(); }, 0);
+	          }
+	        }
+	      });
+	      nativeSelect.addEventListener("change", syncNativeLabel);
+	      dd.addEventListener("keydown", function (e) {
+	        var enabled = nativeItems.filter(function (x) { return x.getAttribute("aria-disabled") !== "true" && !x.hidden; });
+	        var cur = enabled.findIndex(function (x) { return x.getAttribute("data-value") === nativeSelect.value; });
+        if (e.key === "Escape") { closeDD(); toggle.focus(); }
+        else if (e.key === "ArrowDown") { e.preventDefault(); chooseNative(enabled[Math.min(enabled.length - 1, cur + 1)] || enabled[0]); }
+        else if (e.key === "ArrowUp") { e.preventDefault(); chooseNative(enabled[Math.max(0, cur - 1)] || enabled[0]); }
+      });
+      if (window.MutationObserver) {
+        new MutationObserver(rebuildNativeMenu).observe(nativeSelect, { childList: true, subtree: true, attributes: true });
+      }
+      rebuildNativeMenu();
+      return;
+    }
     var items = Array.prototype.slice.call(dd.querySelectorAll(".dd-menu li"));
-    if (!toggle) return;
     dd.dataset.ddReady = "1";
     function select(li) {
       if (!li) return;
@@ -745,6 +1660,12 @@
   }
   document.querySelectorAll(".dropdown").forEach(initDropdown);
   window.adminInitDropdown = initDropdown;
+  window.adminRefreshDropdown = function (target) {
+    var dd = target && target.closest ? target.closest(".dropdown[data-select-dropdown]") : null;
+    if (!dd) return;
+    if (typeof dd._refreshSelectDropdown === "function") dd._refreshSelectDropdown();
+    else initDropdown(dd);
+  };
   document.addEventListener("click", closeDD);
 
   /* 列表里的发布状态快捷菜单：点击空白处收起，避免表格里同时打开多个菜单。 */
@@ -2195,7 +3116,9 @@
     }
     var modal = document.querySelector("[data-secret-modal]");
     if (!modal) return;
-    var firstInput = modal.querySelector("#new-api-secret");
+    // 单站与平台两处密钥弹窗共用本 IIFE：单站是 #new-api-secret，平台是 #new-platform-secret，
+    // 统一取 .api-secret 里的只读输入框，保证复制/自动选中在两个页面都生效。
+    var firstInput = modal.querySelector(".api-secret input[readonly]") || modal.querySelector("#new-api-secret");
     function open() {
       modal.hidden = false;
       if (firstInput) setTimeout(function () { firstInput.focus(); firstInput.select(); }, 0);
@@ -2287,6 +3210,63 @@
       btn.addEventListener("click", function () { open(btn); });
     });
     modal.querySelectorAll("[data-key-edit-close]").forEach(function (btn) {
+      btn.addEventListener("click", close);
+    });
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && !modal.hidden) close();
+    });
+  })();
+
+  /* ---------- 平台密钥：成员范围切换（选“全部站点”时禁用站点勾选） ---------- */
+  (function () {
+    document.querySelectorAll("[data-site-checklist]").forEach(function (list) {
+      var form = list.closest("form");
+      if (!form) return;
+      var boxes = Array.prototype.slice.call(list.querySelectorAll('input[name="site_ids"]'));
+      function sync() {
+        var all = form.querySelector('[data-membership-radio][value="all"]');
+        var isAll = !!(all && all.checked);
+        list.classList.toggle("is-muted", isAll);
+        boxes.forEach(function (b) { b.disabled = isAll; });
+      }
+      form.addEventListener("change", sync);
+      sync();
+    });
+  })();
+
+  /* ---------- 平台密钥：修改用途、可管站点和权限 ---------- */
+  (function () {
+    var modal = document.getElementById("platform-key-edit-modal");
+    if (!modal) return;
+    var idEl = modal.querySelector("#platform-key-edit-id");
+    var nameEl = modal.querySelector("#platform-key-edit-name");
+    var form = modal.querySelector("form");
+    var scopeChecks = Array.prototype.slice.call(modal.querySelectorAll('input[name="scopes"]'));
+    var siteChecks = Array.prototype.slice.call(modal.querySelectorAll('input[name="site_ids"]'));
+    function close() { modal.hidden = true; }
+    function open(btn) {
+      var scopes = {};
+      (btn.dataset.scopes || "").split(",").forEach(function (s) { s = s.trim(); if (s) scopes[s] = true; });
+      var sites = {};
+      (btn.dataset.sites || "").split(",").forEach(function (s) { s = s.trim(); if (s) sites[s] = true; });
+      if (idEl) idEl.value = btn.dataset.id || "";
+      if (nameEl) nameEl.value = btn.dataset.name || "";
+      scopeChecks.forEach(function (input) { input.checked = !!scopes[input.value]; });
+      siteChecks.forEach(function (input) { input.checked = !!sites[input.value]; });
+      var mode = btn.dataset.membership === "all" ? "all" : "allowlist";
+      var radio = form.querySelector('[data-membership-radio][value="' + mode + '"]');
+      if (radio) radio.checked = true;
+      modal.hidden = false;
+      if (form) {
+        form.dispatchEvent(new Event("change", { bubbles: true }));
+        form.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+      setTimeout(function () { if (nameEl) nameEl.focus(); }, 0);
+    }
+    document.querySelectorAll("[data-pkey-edit]").forEach(function (btn) {
+      btn.addEventListener("click", function () { open(btn); });
+    });
+    modal.querySelectorAll("[data-pkey-edit-close]").forEach(function (btn) {
       btn.addEventListener("click", close);
     });
     document.addEventListener("keydown", function (e) {
@@ -2996,30 +3976,51 @@
   });
 })();
 
-/* ---------- 站点卡片：绑定状态（DNS + 可达性，异步逐个填充） ---------- */
+/* ---------- 站点卡片：服务器托管站"服务器 · 内容上次对外更新"，并异步检测自定义域名绑定状态 ---------- */
 (function () {
+  // 相对时间（与 Cloudflare 卡片同格式）：读取 data-ago(ISO) + data-just/min/hour/day。
+  function agoText(el) {
+    var v = el.getAttribute("data-ago");
+    var d = v ? new Date(v) : null;
+    if (!v || !d || isNaN(d.getTime())) return "";
+    var s = Math.max(0, Math.floor((Date.now() - d.getTime()) / 1000));
+    if (s < 60) return el.getAttribute("data-just") || "刚刚";
+    if (s < 3600) return (el.getAttribute("data-min") || "%d 分钟前").replace("%d", Math.floor(s / 60));
+    if (s < 86400) return (el.getAttribute("data-hour") || "%d 小时前").replace("%d", Math.floor(s / 3600));
+    if (s < 2592000) return (el.getAttribute("data-day") || "%d 天前").replace("%d", Math.floor(s / 86400));
+    return d.toLocaleString();
+  }
+  // 首屏渲染所有 [data-ago]（服务器动态托管，内容一保存即对外生效，无需轮询；刷新即更新）。
+  document.querySelectorAll("[data-ago]").forEach(function (el) {
+    el.textContent = agoText(el);
+    var v = el.getAttribute("data-ago");
+    if (v) { var d = new Date(v); if (!isNaN(d.getTime())) el.title = d.toLocaleString(); }
+  });
+
+  // 绑定了自定义域名的站点：异步检测 DNS/可达性。未生效时用后缀提示（待生效 / DNS 待配置），
+  // 已生效或用默认入口时回到"内容上次对外更新"时间——稳态与 CF 卡片一样是中性色，仅问题态着色。
   var els = document.querySelectorAll("[data-domain-status]");
   if (!els.length) return;
   function check(el) {
     var url = el.getAttribute("data-status-url");
-    var txt = el.querySelector("[data-status-text]");
-    var orig = txt ? txt.textContent : "";
+    var suf = el.querySelector("[data-server-suffix]");
     var lbl = function (k) { return el.getAttribute("data-s-" + k) || ""; };
+    var timeText = suf ? agoText(suf) : "";
     el.setAttribute("data-stage", "checking");
-    if (txt && lbl("checking")) txt.textContent = lbl("checking");
+    if (suf && lbl("checking")) suf.textContent = lbl("checking");
     return fetch(url, { headers: { "Accept": "application/json", "X-Requested-With": "XMLHttpRequest" }, credentials: "same-origin" })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (d) {
         var stage = (d && d.stage) || "";
-        if (stage === "ok" || stage === "pending" || stage === "dns") {
+        if (stage === "pending" || stage === "dns") {
           el.setAttribute("data-stage", stage);
-          if (txt) txt.textContent = lbl(stage) || orig;
+          if (suf) suf.textContent = lbl(stage);
         } else {
-          el.removeAttribute("data-stage");
-          if (txt) txt.textContent = orig;
+          el.removeAttribute("data-stage"); // ok / 未知都回到中性的更新时间
+          if (suf) suf.textContent = timeText;
         }
       })
-      .catch(function () { el.removeAttribute("data-stage"); if (txt) txt.textContent = orig; });
+      .catch(function () { el.removeAttribute("data-stage"); if (suf) suf.textContent = timeText; });
   }
   var list = Array.prototype.slice.call(els), i = 0, active = 0, LIMIT = 3;
   function pump() {
@@ -3029,6 +4030,128 @@
     }
   }
   pump();
+})();
+
+/* ---------- 站点卡片：Google Analytics 近 7 日摘要 ---------- */
+(function () {
+  var els = document.querySelectorAll("[data-ga-summary]");
+  if (!els.length) return;
+  var STALE_MS = 60 * 60 * 1000;
+  function summaryText(el, active, sessions) {
+    var tpl = el.getAttribute("data-ok-template") || "近 7 日：活跃用户 {active} · 访问 {sessions}";
+    return tpl.replace("{active}", active == null ? 0 : active).replace("{sessions}", sessions == null ? 0 : sessions);
+  }
+  function labelEl(el) {
+    return el.querySelector("[data-ga-summary-text]") || el;
+  }
+  function isStale(el) {
+    var raw = el.getAttribute("data-fetched-at") || "";
+    if (!raw) return true;
+    var d = new Date(raw);
+    if (isNaN(d.getTime())) return true;
+    return Date.now() - d.getTime() > STALE_MS;
+  }
+  function setState(el, state, payload) {
+    payload = payload || {};
+    el.classList.remove("is-ready", "is-error", "is-loading");
+    if (state) el.classList.add("is-" + state);
+    var text = el.getAttribute("data-enabled-label") || "统计已启用";
+    if (state === "ready") text = summaryText(el, payload.active_users_7d, payload.sessions_7d);
+    else if (state === "error") text = el.getAttribute("data-error-label") || "数据暂不可用";
+    else if (state === "loading") text = el.getAttribute("data-loading-label") || "正在刷新统计";
+    labelEl(el).textContent = text;
+    if (payload.fetched_at) el.setAttribute("data-fetched-at", payload.fetched_at);
+    var tip = payload.error_message || el.getAttribute("data-tooltip") || text;
+    el.setAttribute("data-tooltip", tip);
+    el.setAttribute("title", tip);
+  }
+  function refresh(el) {
+    if (el.getAttribute("data-refresh") !== "1" || !isStale(el)) return;
+    var url = el.getAttribute("data-url");
+    if (!url) return;
+    var body = new URLSearchParams();
+    body.append("_csrf", el.getAttribute("data-csrf") || "");
+    setState(el, "loading");
+    fetch(url, {
+      method: "POST",
+      body: body,
+      headers: { "Accept": "application/json", "Content-Type": "application/x-www-form-urlencoded" },
+      credentials: "same-origin"
+    })
+      .then(function (r) { return r.json().catch(function () { return {}; }); })
+      .then(function (d) {
+        if (d && d.status === "ok") setState(el, "ready", d);
+        else setState(el, "error", d || {});
+      })
+      .catch(function () {
+        setState(el, "error", { error_message: el.getAttribute("data-error-label") || "数据暂不可用" });
+      });
+  }
+  Array.prototype.slice.call(els).forEach(function (el, idx) {
+    if (el.getAttribute("data-refresh") !== "1" || !isStale(el)) return;
+    setTimeout(function () { refresh(el); }, idx * 250);
+  });
+})();
+
+/* ---------- 站点卡片：Google Search Console 近 7 日摘要 ---------- */
+(function () {
+  var els = document.querySelectorAll("[data-gsc-summary]");
+  if (!els.length) return;
+  var STALE_MS = 60 * 60 * 1000;
+  function summaryText(el, clicks, impressions) {
+    var tpl = el.getAttribute("data-ok-template") || "近 7 日：点击 {clicks} · 曝光 {impressions}";
+    return tpl.replace("{clicks}", clicks == null ? 0 : clicks).replace("{impressions}", impressions == null ? 0 : impressions);
+  }
+  function labelEl(el) {
+    return el.querySelector("[data-gsc-summary-text]") || el;
+  }
+  function isStale(el) {
+    var raw = el.getAttribute("data-fetched-at") || "";
+    if (!raw) return true;
+    var d = new Date(raw);
+    if (isNaN(d.getTime())) return true;
+    return Date.now() - d.getTime() > STALE_MS;
+  }
+  function setState(el, state, payload) {
+    payload = payload || {};
+    el.classList.remove("is-ready", "is-error", "is-loading");
+    if (state) el.classList.add("is-" + state);
+    var text = el.getAttribute("data-enabled-label") || "搜索已接入";
+    if (state === "ready") text = summaryText(el, payload.clicks_7d, payload.impressions_7d);
+    else if (state === "error") text = el.getAttribute("data-error-label") || "搜索数据暂不可用";
+    else if (state === "loading") text = el.getAttribute("data-loading-label") || "正在刷新搜索数据";
+    labelEl(el).textContent = text;
+    if (payload.fetched_at) el.setAttribute("data-fetched-at", payload.fetched_at);
+    var tip = payload.error_message || el.getAttribute("data-tooltip") || text;
+    el.setAttribute("data-tooltip", tip);
+    el.setAttribute("title", tip);
+  }
+  function refresh(el) {
+    if (el.getAttribute("data-refresh") !== "1" || !isStale(el)) return;
+    var url = el.getAttribute("data-url");
+    if (!url) return;
+    var body = new URLSearchParams();
+    body.append("_csrf", el.getAttribute("data-csrf") || "");
+    setState(el, "loading");
+    fetch(url, {
+      method: "POST",
+      body: body,
+      headers: { "Accept": "application/json", "Content-Type": "application/x-www-form-urlencoded" },
+      credentials: "same-origin"
+    })
+      .then(function (r) { return r.json().catch(function () { return {}; }); })
+      .then(function (d) {
+        if (d && d.status === "ok") setState(el, "ready", d);
+        else setState(el, "error", d || {});
+      })
+      .catch(function () {
+        setState(el, "error", { error_message: el.getAttribute("data-error-label") || "搜索数据暂不可用" });
+      });
+  }
+  Array.prototype.slice.call(els).forEach(function (el, idx) {
+    if (el.getAttribute("data-refresh") !== "1" || !isStale(el)) return;
+    setTimeout(function () { refresh(el); }, idx * 300);
+  });
 })();
 
 /* ---------- 站点卡片：Cloudflare 部署状态（部署中 → 完成后显示最近部署时间）+ 一键发布 ---------- */

@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"database/sql"
@@ -21,6 +22,44 @@ import (
 type automationAuth struct {
 	key    *store.AutomationKey
 	scopes map[string]bool
+	// platform 为 true 时，本次请求由一把「平台密钥」（多站）鉴权，
+	// key 为 nil，审计写入 platform_automation_logs（见 recordAutomationLog）。
+	platform  bool
+	platKeyID int64
+}
+
+// platformIdentity 由 servePlatformAPI 在平台层完成鉴权/限流/成员校验后注入 context，
+// 供 requireAutomationToken 短路复用，避免二次限流与站库 token 查找。
+type platformIdentity struct {
+	keyID  int64
+	scopes map[string]bool
+}
+
+type ctxKeyPlatformIdentity struct{}
+
+func withPlatformIdentity(ctx context.Context, id *platformIdentity) context.Context {
+	return context.WithValue(ctx, ctxKeyPlatformIdentity{}, id)
+}
+
+func platformIdentityFrom(ctx context.Context) (*platformIdentity, bool) {
+	v, ok := ctx.Value(ctxKeyPlatformIdentity{}).(*platformIdentity)
+	return v, ok && v != nil
+}
+
+// recordAutomationLog 把一次自动化动作写入审计：平台密钥 → 平台库，站点密钥 → 站库。
+func (s *Server) recordAutomationLog(auth *automationAuth, action, kind string, targetID int64, message string) {
+	if auth == nil {
+		return
+	}
+	if auth.platform {
+		if s.platform != nil {
+			_ = s.platform.CreatePlatformAutomationLog(auth.platKeyID, s.platformSiteID, action, kind, targetID, message)
+		}
+		return
+	}
+	if auth.key != nil {
+		_ = s.store.CreateAutomationLog(auth.key.ID, action, kind, targetID, message)
+	}
 }
 
 const (
@@ -385,7 +424,7 @@ func (s *Server) apiCreateLanguage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	def := s.defaultLang()
-	_ = s.store.CreateAutomationLog(auth.key.ID, "create", "language", 0, "新增自定义语种："+loc.Code)
+	s.recordAutomationLog(auth, "create", "language", 0, "新增自定义语种："+loc.Code)
 	s.clearGeneratedCaches()
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"item":    s.apiLanguageItem(loc.Code, false),
@@ -454,7 +493,7 @@ func (s *Server) apiUpdateLanguage(w http.ResponseWriter, r *http.Request) {
 			action = "disable"
 		}
 	}
-	_ = s.store.CreateAutomationLog(auth.key.ID, action, "language", 0, "更新语种设置："+code)
+	s.recordAutomationLog(auth, action, "language", 0, "更新语种设置："+code)
 	s.clearGeneratedCaches()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"item":    s.apiLanguageItem(code, false),
@@ -516,7 +555,7 @@ func (s *Server) apiUpdateLanguageCatalog(w http.ResponseWriter, r *http.Request
 		apiError(w, http.StatusInternalServerError, "store_error", err.Error())
 		return
 	}
-	_ = s.store.CreateAutomationLog(auth.key.ID, "update", "language_catalog", 0, "更新语种字典："+code)
+	s.recordAutomationLog(auth, "update", "language_catalog", 0, "更新语种字典："+code)
 	writeJSON(w, http.StatusOK, s.apiLanguageCatalogResponse(code))
 }
 
@@ -569,7 +608,7 @@ func (s *Server) apiUpdateSiteProfile(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	_ = s.store.CreateAutomationLog(auth.key.ID, "update", "site", 0, "更新站点资料")
+	s.recordAutomationLog(auth, "update", "site", 0, "更新站点资料")
 	s.clearGeneratedCaches()
 	writeJSON(w, http.StatusOK, s.apiSiteProfileResponse())
 }
@@ -619,7 +658,7 @@ func (s *Server) apiUpdateNavigation(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusInternalServerError, "store_error", err.Error())
 		return
 	}
-	_ = s.store.CreateAutomationLog(auth.key.ID, "update", "navigation", 0, "更新前台导航菜单")
+	s.recordAutomationLog(auth, "update", "navigation", 0, "更新前台导航菜单")
 	s.clearGeneratedCaches()
 	writeJSON(w, http.StatusOK, s.apiNavigationResponse())
 }
@@ -728,7 +767,7 @@ func (s *Server) apiUpdateCategoryAllEntry(w http.ResponseWriter, r *http.Reques
 		}
 		out = append(out, entry)
 	}
-	_ = s.store.CreateAutomationLog(auth.key.ID, "update", kind+"-category-all-entry", 0, "更新"+apiKindName(kind)+"分类总入口")
+	s.recordAutomationLog(auth, "update", kind+"-category-all-entry", 0, "更新"+apiKindName(kind)+"分类总入口")
 	responseLang := "all"
 	if len(out) == 1 {
 		responseLang = out[0].Lang
@@ -793,7 +832,7 @@ func (s *Server) apiCreateCategory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cat, _ = s.store.GetCategoryByID(id)
-	_ = s.store.CreateAutomationLog(auth.key.ID, "create", kind+"-category", id, "创建"+apiKindName(kind)+"分类："+name)
+	s.recordAutomationLog(auth, "create", kind+"-category", id, "创建"+apiKindName(kind)+"分类："+name)
 	s.clearGeneratedCaches()
 	writeJSON(w, http.StatusCreated, map[string]any{"item": apiCategoryItem(cat)})
 }
@@ -859,7 +898,7 @@ func (s *Server) apiUpdateCategory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	updated, _ := s.store.GetCategoryByID(next.ID)
-	_ = s.store.CreateAutomationLog(auth.key.ID, "update", kind+"-category", next.ID, "更新"+apiKindName(kind)+"分类："+next.Name)
+	s.recordAutomationLog(auth, "update", kind+"-category", next.ID, "更新"+apiKindName(kind)+"分类："+next.Name)
 	s.clearGeneratedCaches()
 	writeJSON(w, http.StatusOK, map[string]any{"item": apiCategoryItem(updated)})
 }
@@ -894,7 +933,7 @@ func (s *Server) apiUploadMedia(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	_ = s.store.CreateAutomationLog(auth.key.ID, "upload", "media", 0, "上传媒体："+result.URL)
+	s.recordAutomationLog(auth, "upload", "media", 0, "上传媒体："+result.URL)
 	writeJSON(w, http.StatusCreated, map[string]any{"url": result.URL, "name": result.Name, "size": result.Size})
 }
 
@@ -1067,7 +1106,7 @@ func (s *Server) apiCreateContent(w http.ResponseWriter, r *http.Request) {
 	}
 	p.ID = id
 	created, _ := s.store.GetPostByID(id)
-	_ = s.store.CreateAutomationLog(auth.key.ID, "create", kind, id, s.automationContentLogMessage("create", kind, created))
+	s.recordAutomationLog(auth, "create", kind, id, s.automationContentLogMessage("create", kind, created))
 	s.clearGeneratedCaches()
 	writeJSON(w, http.StatusCreated, map[string]any{"item": s.apiContentItem(created, true)})
 }
@@ -1117,7 +1156,7 @@ func (s *Server) apiUpdateContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	updated, _ := s.store.GetPostByID(next.ID)
-	_ = s.store.CreateAutomationLog(auth.key.ID, "update", kind, next.ID, s.automationContentLogMessage("update", kind, &next))
+	s.recordAutomationLog(auth, "update", kind, next.ID, s.automationContentLogMessage("update", kind, &next))
 	s.clearGeneratedCaches()
 	writeJSON(w, http.StatusOK, map[string]any{"item": s.apiContentItem(updated, true)})
 }
@@ -1170,7 +1209,7 @@ func (s *Server) apiUpdateContentFeatured(w http.ResponseWriter, r *http.Request
 		action = "unpin"
 		label = "取消置顶"
 	}
-	_ = s.store.CreateAutomationLog(auth.key.ID, action, kind, existing.ID, fmt.Sprintf("%s%s：%s", label, apiKindName(kind), existing.Title))
+	s.recordAutomationLog(auth, action, kind, existing.ID, fmt.Sprintf("%s%s：%s", label, apiKindName(kind), existing.Title))
 	s.clearGeneratedCaches()
 	writeJSON(w, http.StatusOK, map[string]any{"item": s.apiContentItem(updated, true)})
 }
@@ -1218,6 +1257,11 @@ func (s *Server) apiLangLabel(code string) string {
 }
 
 func (s *Server) requireAutomationToken(w http.ResponseWriter, r *http.Request) (*automationAuth, bool) {
+	// 平台密钥路径：鉴权与限流已在 servePlatformAPI 平台层完成。
+	// 此分支必须是本函数第一条语句——放在 checkAPIRateLimit 之前，否则平台请求会被二次计数、令牌桶减半。
+	if pid, ok := platformIdentityFrom(r.Context()); ok {
+		return &automationAuth{platform: true, platKeyID: pid.keyID, scopes: pid.scopes}, true
+	}
 	token := apiTokenFromRequest(r)
 	if !s.checkAPIRateLimit(w, r, token) {
 		return nil, false

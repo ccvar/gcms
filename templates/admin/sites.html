@@ -25,96 +25,74 @@
               <strong>{{.Admin.T "admin.sites.google_oauth_title" "Google OAuth 配置"}}</strong>
               <span data-google-oauth-state>{{if .GoogleOAuthConfigured}}{{.Admin.T "admin.sites.google_oauth_ready" "已配置"}}{{else}}{{.Admin.T "admin.sites.google_oauth_missing_badge" "未配置"}}{{end}}</span>
             </div>
-            <p class="google-connect-empty">{{.Admin.T "admin.sites.google_oauth_desc" "先保存 Google OAuth 客户端，Google Analytics 和 Search Console 才能新增授权账号。"}}</p>
+            <p class="google-connect-empty">{{.Admin.T "admin.sites.google_oauth_desc" "先保存 Google OAuth 客户端，Google Analytics 和 Google Search Console 才能新增授权账号。"}}</p>
             <div class="google-oauth-summary" data-google-oauth-summary{{if not .GoogleOAuthConfigured}} hidden{{end}}>
-              <div class="google-oauth-ready">
-                <span>{{template "site-icon-check"}}</span>
-                <span>
-                  <strong>{{.Admin.T "admin.sites.google_oauth_configured_title" "OAuth 已配置"}}</strong>
-                  <small>{{.Admin.T "admin.sites.google_oauth_configured_desc" "新增授权账号会使用当前 Client ID。"}}</small>
-                </span>
-              </div>
-              <dl class="google-oauth-meta">
-                <div>
-                  <dt>{{.Admin.T "admin.sites.google_client_id" "Client ID"}}</dt>
-                  <dd data-google-oauth-client>{{if .GoogleOAuthClientID}}{{.GoogleOAuthClientID}}{{else}}-{{end}}</dd>
+	              <div class="google-oauth-ready">
+	                <span>{{template "site-icon-check"}}</span>
+	                <span>
+	                  <strong>{{.Admin.T "admin.sites.google_oauth_configured_title" "OAuth 已配置"}}</strong>
+	                  <small>{{.Admin.T "admin.sites.google_oauth_configured_desc" "新增授权账号会使用当前 Client ID。"}}</small>
+	                </span>
+	                <button class="google-oauth-view-toggle" type="button" data-google-oauth-detail-toggle data-open-label="{{.Admin.T "admin.sites.google_oauth_detail" "查看 OAuth 配置"}}" data-close-label="{{.Admin.T "admin.sites.google_oauth_hide_detail" "收起 OAuth 配置"}}" data-tooltip="{{.Admin.T "admin.sites.google_oauth_detail" "查看 OAuth 配置"}}" aria-label="{{.Admin.T "admin.sites.google_oauth_detail" "查看 OAuth 配置"}}" aria-expanded="false">{{template "site-icon-eye"}}</button>
+	              </div>
+	              <details class="google-oauth-detail" data-google-oauth-detail hidden>
+	                <summary><span>{{.Admin.T "admin.sites.google_oauth_detail" "查看 OAuth 配置"}}</span><small>{{.Admin.T "admin.sites.google_oauth_detail_hint" "Client ID / Secret / Redirect URI"}}</small></summary>
+	                <div class="google-oauth-detail-body">
+                  <dl class="google-oauth-meta">
+                    <div>
+                      <dt>{{.Admin.T "admin.sites.google_client_id" "Client ID"}}</dt>
+                      <dd data-google-oauth-client>{{if .GoogleOAuthClientID}}{{.GoogleOAuthClientID}}{{else}}-{{end}}</dd>
+                    </div>
+                    <div>
+                      <dt>{{.Admin.T "admin.sites.google_client_secret" "Client Secret"}}</dt>
+                      <dd data-google-oauth-secret>{{if .GoogleOAuthSecretSet}}{{.Admin.T "admin.sites.google_secret_saved_summary" "已保存（不会明文显示）"}}{{else}}-{{end}}</dd>
+                    </div>
+                    <div>
+                      <dt>{{.Admin.T "admin.sites.google_redirect_uri" "Redirect URI"}}</dt>
+                      <dd data-google-oauth-redirect>{{if .GoogleOAuthRedirectURL}}{{.GoogleOAuthRedirectURL}}{{else}}-{{end}}</dd>
+                    </div>
+                  </dl>
+                  <p class="google-oauth-note">{{.Admin.T "admin.sites.google_oauth_google_name_note" "Google 授权页显示的是该 Client ID 所属项目的 OAuth 同意屏幕应用名；如果名称不对，请检查 Google Cloud 项目和同意屏幕。"}}</p>
+                  <div class="google-oauth-detail-actions">
+                    <button class="google-connect-config" type="button" data-google-config-edit>{{template "site-icon-edit"}}<span>{{.Admin.T "admin.sites.google_edit_oauth" "修改 OAuth 配置"}}</span></button>
+                    <form class="google-oauth-clear-form" method="post" action="/admin/google/oauth/clear" data-no-dirty data-confirm-title="{{.Admin.T "admin.sites.google_clear_oauth_title" "确认清除 OAuth 配置"}}" data-confirm-ok="{{.Admin.T "admin.sites.google_clear_oauth_ok" "清除配置"}}" data-confirm="{{.Admin.T "admin.sites.google_clear_oauth_confirm" "只会清除本机保存的 OAuth Client、授权账号和站点 Google 接入记录；不会删除 Google 账号或 Google Cloud 项目。确定继续？"}}">
+                      <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+                      <button class="google-connect-config danger" type="submit">{{template "icon-trash"}}<span>{{.Admin.T "admin.sites.google_clear_oauth" "清除 OAuth 配置"}}</span></button>
+                    </form>
+                  </div>
                 </div>
-                <div>
-                  <dt>{{.Admin.T "admin.sites.google_client_secret" "Client Secret"}}</dt>
-                  <dd data-google-oauth-secret>{{if .GoogleOAuthSecretSet}}{{.Admin.T "admin.sites.google_secret_saved_summary" "已保存（不会明文显示）"}}{{else}}-{{end}}</dd>
-                </div>
-                <div>
-                  <dt>{{.Admin.T "admin.sites.google_redirect_uri" "Redirect URI"}}</dt>
-                  <dd data-google-oauth-redirect>{{if .GoogleOAuthRedirectURL}}{{.GoogleOAuthRedirectURL}}{{else}}-{{end}}</dd>
-                </div>
-              </dl>
-              <p class="google-oauth-note">{{.Admin.T "admin.sites.google_oauth_google_name_note" "Google 授权页显示的是该 Client ID 所属项目的 OAuth 同意屏幕应用名；如果名称不对，请检查 Google Cloud 项目和同意屏幕。"}}</p>
-              <button class="google-connect-config" type="button" data-google-config-edit>{{template "site-icon-edit"}}<span>{{.Admin.T "admin.sites.google_edit_oauth" "修改 OAuth 配置"}}</span></button>
+              </details>
             </div>
             <div class="google-oauth-panel" data-google-config-panel{{if .GoogleOAuthConfigured}} hidden{{end}}>
               {{template "google-oauth-config-form" .}}
             </div>
-          </div>
-        </details>
-        <details class="google-connect{{if not .GoogleOAuthConfigured}} is-disabled{{else if not .GoogleAnalyticsAccounts}} is-missing{{else}} is-configured{{end}}" data-google-connect data-google-start-url="/admin/google/oauth/start?service=analytics" data-google-add-label="{{.Admin.T "admin.sites.google_add_account" "新增授权账号"}}" data-google-loading-label="{{.Admin.T "admin.sites.google_authorizing" "正在打开 Google 授权..."}}" data-google-empty-label="{{.Admin.T "admin.sites.google_empty" "还没有授权账号。"}}" data-google-count-template="{{.Admin.T "admin.sites.google_accounts_count" "%d 个账号"}}">
-          <summary data-tooltip="{{if not .GoogleOAuthConfigured}}{{.Admin.T "admin.sites.google_analytics_tip_locked" "Google Analytics：请先配置 Google OAuth，再授权统计账号。"}}{{else if .GoogleAnalyticsAccounts}}{{.Admin.T "admin.sites.google_analytics_tip_ready" "Google Analytics：已授权账号，可接入站点访问统计。"}}{{else}}{{.Admin.T "admin.sites.google_analytics_tip_missing" "Google Analytics：还没有授权账号，点击后可新增授权。"}}{{end}}" data-missing-tooltip="{{.Admin.T "admin.sites.google_analytics_tip_missing" "Google Analytics：还没有授权账号，点击后可新增授权。"}}" data-ready-tooltip="{{.Admin.T "admin.sites.google_analytics_tip_ready" "Google Analytics：已授权账号，可接入站点访问统计。"}}" aria-label="Google Analytics">{{template "site-icon-google-analytics"}}</summary>
-          <div class="google-connect-pop">
-            <div class="google-connect-head">
-              <strong>Google Analytics</strong>
-              <span>{{printf (.Admin.T "admin.sites.google_accounts_count" "%d 个账号") (len .GoogleAnalyticsAccounts)}}</span>
+            <div class="google-account-scope" data-google-account-scope data-google-count-template="{{.Admin.T "admin.sites.google_accounts_count" "%d 个账号"}}" data-google-empty-label="{{.Admin.T "admin.sites.google_empty" "还没有授权账号。"}}">
+              <div class="google-connect-head">
+                <strong>{{.Admin.T "admin.sites.google_authorized_accounts" "授权账号"}}</strong>
+                <span data-google-account-count>{{printf (.Admin.T "admin.sites.google_accounts_count" "%d 个账号") (len .GoogleAccounts)}}</span>
+              </div>
+              {{if .GoogleAccounts}}
+                <ul class="google-account-list">
+                  {{range .GoogleAccounts}}
+                  <li>
+                    {{if .Picture}}<img src="{{.Picture}}" alt="" referrerpolicy="no-referrer">{{else}}<span class="google-account-avatar">G</span>{{end}}
+                    <span><strong>{{if .Email}}{{.Email}}{{else}}{{.Name}}{{end}}</strong><small>{{adminDateTime .UpdatedAt}}</small></span>
+                    <form class="google-account-unlink-form" method="post" action="/admin/google/accounts/delete" data-google-account-unlink data-confirm-title="{{$.Admin.T "admin.sites.google_unlink_confirm_title" "确认解绑"}}" data-confirm-ok="{{$.Admin.T "admin.sites.google_unlink_ok" "解绑"}}" data-confirm="{{$.Admin.T "admin.sites.google_unlink_confirm" "确定解除绑定该授权账号？解除后不会删除 Google 账号，只是不再让本站使用它。"}}">
+                      <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+                      <input type="hidden" name="service" value="all">
+                      <input type="hidden" name="google_account_id" value="{{.GoogleAccountID}}">
+                      <button class="google-account-unlink" type="submit" data-tooltip="{{$.Admin.T "admin.sites.google_unlink_account_tip" "解除绑定该授权账号"}}">{{template "site-icon-unlink"}}<span class="sr-only">{{$.Admin.T "admin.sites.google_unlink_account" "解除绑定"}}</span></button>
+                    </form>
+                  </li>
+                  {{end}}
+                </ul>
+              {{else}}
+                <p class="google-connect-empty">{{.Admin.T "admin.sites.google_empty" "还没有授权账号。"}}</p>
+              {{end}}
             </div>
-            {{if .GoogleAnalyticsAccounts}}
-              <ul class="google-account-list">
-                {{range .GoogleAnalyticsAccounts}}
-                <li>
-                  {{if .Picture}}<img src="{{.Picture}}" alt="" referrerpolicy="no-referrer">{{else}}<span class="google-account-avatar">G</span>{{end}}
-                  <span><strong>{{if .Email}}{{.Email}}{{else}}{{.Name}}{{end}}</strong><small>{{adminDateTime .UpdatedAt}}</small></span>
-                  <form class="google-account-unlink-form" method="post" action="/admin/google/accounts/delete" data-google-account-unlink data-confirm-title="{{$.Admin.T "admin.sites.google_unlink_confirm_title" "确认解绑"}}" data-confirm-ok="{{$.Admin.T "admin.sites.google_unlink_ok" "解绑"}}" data-confirm="{{$.Admin.T "admin.sites.google_unlink_confirm" "确定解除绑定该授权账号？解除后不会删除 Google 账号，只是不再让本站使用它。"}}">
-                    <input type="hidden" name="_csrf" value="{{$.CSRF}}">
-                    <input type="hidden" name="service" value="analytics">
-                    <input type="hidden" name="google_account_id" value="{{.GoogleAccountID}}">
-                    <button class="google-account-unlink" type="submit" data-tooltip="{{$.Admin.T "admin.sites.google_unlink_account_tip" "解除绑定该授权账号"}}">{{template "site-icon-unlink"}}<span class="sr-only">{{$.Admin.T "admin.sites.google_unlink_account" "解除绑定"}}</span></button>
-                  </form>
-                </li>
-                {{end}}
-              </ul>
-            {{else}}
-              <p class="google-connect-empty">{{.Admin.T "admin.sites.google_empty" "还没有授权账号。"}}</p>
-            {{end}}
-            {{if not .GoogleOAuthConfigured}}<p class="google-connect-hint google-connect-disabled-hint">{{.Admin.T "admin.sites.google_authorize_locked_hint" "请先在 OAuth 配置入口保存 Client ID 和 Client Secret，再授权账号。"}}</p>{{end}}
+            {{if not .GoogleOAuthConfigured}}<p class="google-connect-hint google-connect-disabled-hint">{{.Admin.T "admin.sites.google_authorize_locked_hint" "请先保存 Client ID 和 Client Secret，再新增授权账号。"}}</p>{{end}}
             <div class="google-connect-actions">
-              {{if .GoogleOAuthConfigured}}<a class="google-connect-add" data-google-authorize data-loading-label="{{.Admin.T "admin.sites.google_authorizing" "正在打开 Google 授权..."}}" href="/admin/google/oauth/start?service=analytics">{{template "site-icon-plus"}}<span>{{.Admin.T "admin.sites.google_add_account" "新增授权账号"}}</span></a>{{else}}<button class="google-connect-add is-disabled" type="button" data-google-open-oauth>{{template "site-icon-plus"}}<span>{{.Admin.T "admin.sites.google_add_after_config" "先配置 OAuth"}}</span></button>{{end}}
-            </div>
-          </div>
-        </details>
-        <details class="google-connect{{if not .GoogleOAuthConfigured}} is-disabled{{else if not .GoogleSearchConsoleAccounts}} is-missing{{else}} is-configured{{end}}" data-google-connect data-google-start-url="/admin/google/oauth/start?service=search_console" data-google-add-label="{{.Admin.T "admin.sites.google_add_account" "新增授权账号"}}" data-google-loading-label="{{.Admin.T "admin.sites.google_authorizing" "正在打开 Google 授权..."}}" data-google-empty-label="{{.Admin.T "admin.sites.google_empty" "还没有授权账号。"}}" data-google-count-template="{{.Admin.T "admin.sites.google_accounts_count" "%d 个账号"}}">
-          <summary data-tooltip="{{if not .GoogleOAuthConfigured}}{{.Admin.T "admin.sites.google_search_tip_locked" "Google Search Console：请先配置 Google OAuth，再授权搜索数据账号。"}}{{else if .GoogleSearchConsoleAccounts}}{{.Admin.T "admin.sites.google_search_tip_ready" "Google Search Console：已授权账号，可接入搜索表现数据。"}}{{else}}{{.Admin.T "admin.sites.google_search_tip_missing" "Google Search Console：还没有授权账号，点击后可新增授权。"}}{{end}}" data-missing-tooltip="{{.Admin.T "admin.sites.google_search_tip_missing" "Google Search Console：还没有授权账号，点击后可新增授权。"}}" data-ready-tooltip="{{.Admin.T "admin.sites.google_search_tip_ready" "Google Search Console：已授权账号，可接入搜索表现数据。"}}" aria-label="Google Search Console">{{template "site-icon-google-search-console"}}</summary>
-          <div class="google-connect-pop">
-            <div class="google-connect-head">
-              <strong>Google Search Console</strong>
-              <span>{{printf (.Admin.T "admin.sites.google_accounts_count" "%d 个账号") (len .GoogleSearchConsoleAccounts)}}</span>
-            </div>
-            {{if .GoogleSearchConsoleAccounts}}
-              <ul class="google-account-list">
-                {{range .GoogleSearchConsoleAccounts}}
-                <li>
-                  {{if .Picture}}<img src="{{.Picture}}" alt="" referrerpolicy="no-referrer">{{else}}<span class="google-account-avatar">G</span>{{end}}
-                  <span><strong>{{if .Email}}{{.Email}}{{else}}{{.Name}}{{end}}</strong><small>{{adminDateTime .UpdatedAt}}</small></span>
-                  <form class="google-account-unlink-form" method="post" action="/admin/google/accounts/delete" data-google-account-unlink data-confirm-title="{{$.Admin.T "admin.sites.google_unlink_confirm_title" "确认解绑"}}" data-confirm-ok="{{$.Admin.T "admin.sites.google_unlink_ok" "解绑"}}" data-confirm="{{$.Admin.T "admin.sites.google_unlink_confirm" "确定解除绑定该授权账号？解除后不会删除 Google 账号，只是不再让本站使用它。"}}">
-                    <input type="hidden" name="_csrf" value="{{$.CSRF}}">
-                    <input type="hidden" name="service" value="search_console">
-                    <input type="hidden" name="google_account_id" value="{{.GoogleAccountID}}">
-                    <button class="google-account-unlink" type="submit" data-tooltip="{{$.Admin.T "admin.sites.google_unlink_account_tip" "解除绑定该授权账号"}}">{{template "site-icon-unlink"}}<span class="sr-only">{{$.Admin.T "admin.sites.google_unlink_account" "解除绑定"}}</span></button>
-                  </form>
-                </li>
-                {{end}}
-              </ul>
-            {{else}}
-              <p class="google-connect-empty">{{.Admin.T "admin.sites.google_empty" "还没有授权账号。"}}</p>
-            {{end}}
-            {{if not .GoogleOAuthConfigured}}<p class="google-connect-hint google-connect-disabled-hint">{{.Admin.T "admin.sites.google_authorize_locked_hint" "请先在 OAuth 配置入口保存 Client ID 和 Client Secret，再授权账号。"}}</p>{{end}}
-            <div class="google-connect-actions">
-              {{if .GoogleOAuthConfigured}}<a class="google-connect-add" data-google-authorize data-loading-label="{{.Admin.T "admin.sites.google_authorizing" "正在打开 Google 授权..."}}" href="/admin/google/oauth/start?service=search_console">{{template "site-icon-plus"}}<span>{{.Admin.T "admin.sites.google_add_account" "新增授权账号"}}</span></a>{{else}}<button class="google-connect-add is-disabled" type="button" data-google-open-oauth>{{template "site-icon-plus"}}<span>{{.Admin.T "admin.sites.google_add_after_config" "先配置 OAuth"}}</span></button>{{end}}
+              {{if .GoogleOAuthConfigured}}<a class="google-connect-add" data-google-authorize data-loading-label="{{.Admin.T "admin.sites.google_authorizing" "正在打开 Google 授权..."}}" href="/admin/google/oauth/start?service=all">{{template "site-icon-plus"}}<span>{{.Admin.T "admin.sites.google_add_account" "新增授权账号"}}</span></a>{{else}}<button class="google-connect-add is-disabled" type="button" data-google-open-oauth>{{template "site-icon-plus"}}<span>{{.Admin.T "admin.sites.google_add_after_config" "先配置 OAuth"}}</span></button>{{end}}
             </div>
           </div>
         </details>
@@ -129,25 +107,52 @@
     <div class="site-card-list">
       {{range .PlatformSites}}
       {{$site := .}}
-      <article class="site-card{{if .IsDefault}} is-default{{end}}{{if eq .Status "disabled"}} is-disabled{{end}}">
+      {{$google := index $.SiteGoogleIntegrations .ID}}
+      {{$ga := index $google "analytics"}}
+      {{$gsc := index $google "search_console"}}
+      {{$googleURI := index $.PlatformGoogleDefaultURIs .ID}}
+      {{$gaSummary := index $.SiteGoogleAnalyticsSummaries .ID}}
+      {{$gscSummary := index $.SiteGoogleSearchSummaries .ID}}
+      <article id="site-card-{{.ID}}" class="site-card{{if .IsDefault}} is-default{{end}}{{if eq .Status "disabled"}} is-disabled{{end}}">
         <div class="site-card-locked-area"{{if eq .Status "disabled"}} aria-disabled="true"{{end}}>
           <div class="site-card-main"{{if eq .Status "disabled"}} inert{{end}}>
             <div class="site-title-row">
-              <div class="site-card-identity">
-                {{with index $.PlatformSiteIcons .ID}}<img class="site-card-icon" src="{{.}}" alt="" decoding="async">{{else}}<span class="site-card-icon fallback">{{template "site-icon-empty"}}</span>{{end}}
-                <div>
-                  <h3>{{.Name}}</h3>
-                  <p class="site-meta">
-                    <span>{{.Slug}}</span>
-                    {{$lc := index $.PlatformLocaleCounts .ID}}{{if gt $lc 0}}<span>{{printf ($.Admin.T "admin.sites.locale_count" "%d 语种") $lc}}</span><span>{{printf ($.Admin.T "admin.sites.content_count" "%d 条内容") (index $.PlatformContentCounts .ID)}}</span>{{end}}
-                    {{if .IsDefault}}<span>{{$.Admin.T "admin.sites.default" "默认站点"}}</span>{{end}}
-                    {{if eq .ID $.PlatformCurrentSiteID}}<span>{{$.Admin.T "admin.sites.current_badge" "当前后台"}}</span>{{end}}
-                  </p>
+              <div class="site-card-lead">
+                <div class="site-card-identity">
+                  {{with index $.PlatformSiteIcons .ID}}<img class="site-card-icon" src="{{.}}" alt="" decoding="async">{{else}}<span class="site-card-icon fallback">{{template "site-icon-empty"}}</span>{{end}}
+                  <div>
+                    <h3>{{.Name}}</h3>
+                    <p class="site-meta">
+                      <span>{{.Slug}}</span>
+                      {{$lc := index $.PlatformLocaleCounts .ID}}{{if gt $lc 0}}<span>{{printf ($.Admin.T "admin.sites.locale_count" "%d语种") $lc}}</span><span>{{printf ($.Admin.T "admin.sites.content_count" "%d条内容") (index $.PlatformContentCounts .ID)}}</span>{{end}}
+                      {{if .IsDefault}}<span>{{$.Admin.T "admin.sites.default" "默认站点"}}</span>{{end}}
+                      {{if eq .ID $.PlatformCurrentSiteID}}<span>{{$.Admin.T "admin.sites.current_badge" "当前后台"}}</span>{{end}}
+                    </p>
+                  </div>
                 </div>
               </div>
-              <div class="site-badges">
-                {{if eq .Status "enabled"}}<span class="badge pub" data-tooltip="{{$.Admin.T "admin.sites.status_enabled_tip" "站点状态：已启用。该站点可访问，也可以进入后台管理。"}}" aria-label="{{$.Admin.T "admin.sites.status_enabled_tip" "站点状态：已启用。该站点可访问，也可以进入后台管理。"}}">{{template "site-icon-status"}}<span>{{$.Admin.T "admin.sites.enabled" "站点启用"}}</span></span>{{else}}<span class="badge draft" data-tooltip="{{$.Admin.T "admin.sites.status_disabled_tip" "站点状态：已关闭。该站点暂不可访问。"}}" aria-label="{{$.Admin.T "admin.sites.status_disabled_tip" "站点状态：已关闭。该站点暂不可访问。"}}">{{template "site-icon-status"}}<span>{{$.Admin.T "admin.sites.disabled" "站点关闭"}}</span></span>{{end}}
-                {{if .ManagementAutomationEnabled}}<span class="badge sched" data-tooltip="{{$.Admin.T "admin.sites.platform_api_on_tip" "自动化接口：已开启。AI 和外部工具可通过平台入口调用该站点接口。"}}" aria-label="{{$.Admin.T "admin.sites.platform_api_on_tip" "自动化接口：已开启。AI 和外部工具可通过平台入口调用该站点接口。"}}">{{template "site-icon-plug"}}<span>{{$.Admin.T "admin.sites.platform_api_on" "接口已开"}}</span></span>{{else}}<span class="badge draft" data-tooltip="{{$.Admin.T "admin.sites.platform_api_off_tip" "自动化接口：已关闭。平台入口不会暴露该站点接口。"}}" aria-label="{{$.Admin.T "admin.sites.platform_api_off_tip" "自动化接口：已关闭。平台入口不会暴露该站点接口。"}}">{{template "site-icon-plug"}}<span>{{$.Admin.T "admin.sites.platform_api_off" "接口关闭"}}</span></span>{{end}}
+              <div class="site-card-right">
+                <div class="site-badges">
+                  <a class="site-google-badge{{if and $ga $ga.Enabled}} is-on{{else}} is-missing{{end}}" href="#site-google-analytics-modal-{{.ID}}" data-tooltip="{{if and $ga $ga.Enabled}}{{$.Admin.T "admin.sites.google_analytics_site_tip_ready" "Google Analytics：已接入，点击修改统计配置。"}}{{else}}{{$.Admin.T "admin.sites.google_analytics_site_tip_missing" "Google Analytics：未接入，点击配置统计。"}}{{end}}" aria-label="{{if and $ga $ga.Enabled}}{{$.Admin.T "admin.sites.google_analytics_site_tip_ready" "Google Analytics：已接入，点击修改统计配置。"}}{{else}}{{$.Admin.T "admin.sites.google_analytics_site_tip_missing" "Google Analytics：未接入，点击配置统计。"}}{{end}}">{{template "site-icon-google-analytics"}}</a>
+                  <a class="site-google-badge{{if and $gsc $gsc.Enabled}} is-on{{else}} is-missing{{end}}" href="#site-google-search-modal-{{.ID}}" data-tooltip="{{if and $gsc $gsc.Enabled}}{{$.Admin.T "admin.sites.google_search_site_tip_ready" "Google Search Console：已接入，点击修改搜索配置。"}}{{else}}{{$.Admin.T "admin.sites.google_search_site_tip_missing" "Google Search Console：未接入，点击配置搜索数据。"}}{{end}}" aria-label="{{if and $gsc $gsc.Enabled}}{{$.Admin.T "admin.sites.google_search_site_tip_ready" "Google Search Console：已接入，点击修改搜索配置。"}}{{else}}{{$.Admin.T "admin.sites.google_search_site_tip_missing" "Google Search Console：未接入，点击配置搜索数据。"}}{{end}}">{{template "site-icon-google-search-console"}}</a>
+                  {{if .ManagementAutomationEnabled}}<span class="badge sched" data-tooltip="{{$.Admin.T "admin.sites.platform_api_on_tip" "自动化接口：已开启。AI 和外部工具可通过平台入口调用该站点接口。"}}" aria-label="{{$.Admin.T "admin.sites.platform_api_on_tip" "自动化接口：已开启。AI 和外部工具可通过平台入口调用该站点接口。"}}">{{template "site-icon-plug"}}<span>{{$.Admin.T "admin.sites.platform_api_on" "接口已开"}}</span></span>{{else}}<span class="badge draft" data-tooltip="{{$.Admin.T "admin.sites.platform_api_off_tip" "自动化接口：已关闭。平台入口不会暴露该站点接口。"}}" aria-label="{{$.Admin.T "admin.sites.platform_api_off_tip" "自动化接口：已关闭。平台入口不会暴露该站点接口。"}}">{{template "site-icon-plug"}}<span>{{$.Admin.T "admin.sites.platform_api_off" "接口关闭"}}</span></span>{{end}}
+                </div>
+                {{if or (and $ga $ga.Enabled) (and $gsc $gsc.Enabled)}}
+                <div class="site-card-metrics">
+                  {{if and $ga $ga.Enabled}}
+                    {{$gaCanRefresh := and $ga.GoogleAccountID $ga.Property $ga.MeasurementID}}
+                    <span class="site-ga-summary{{if and $gaSummary (eq $gaSummary.Status "ok")}} is-ready{{else if and $gaSummary (eq $gaSummary.Status "error")}} is-error{{end}}" data-ga-summary data-site-id="{{.ID}}" data-url="/admin/sites/{{.ID}}/google/analytics/summary" data-csrf="{{$.CSRF}}" data-refresh="{{if $gaCanRefresh}}1{{else}}0{{end}}" data-ok-template="{{$.Admin.T "admin.sites.google_analytics_summary" "GA：活跃 {active} · 访问 {sessions}"}}" data-error-label="{{$.Admin.T "admin.sites.google_analytics_unavailable" "数据暂不可用"}}" data-enabled-label="{{$.Admin.T "admin.sites.google_analytics_enabled" "统计已启用"}}" data-loading-label="{{$.Admin.T "admin.sites.google_analytics_loading" "正在刷新统计"}}" data-fetched-at="{{if $gaSummary}}{{$gaSummary.FetchedAt.Format "2006-01-02T15:04:05Z07:00"}}{{end}}" data-tooltip="{{if and $gaSummary $gaSummary.ErrorMessage}}{{$gaSummary.ErrorMessage}}{{else}}{{$.Admin.T "admin.sites.google_analytics_summary_tip" "Google Analytics 近 7 日数据。"}}{{end}}">
+                      <span data-ga-summary-text>{{if and $gaSummary (eq $gaSummary.Status "ok")}}{{printf ($.Admin.T "admin.sites.google_analytics_summary_printf" "GA：活跃 %d · 访问 %d") $gaSummary.ActiveUsers7D $gaSummary.Sessions7D}}{{else if and $gaSummary (eq $gaSummary.Status "error")}}{{$.Admin.T "admin.sites.google_analytics_unavailable" "数据暂不可用"}}{{else}}{{$.Admin.T "admin.sites.google_analytics_enabled" "统计已启用"}}{{end}}</span>
+                    </span>
+                  {{end}}
+                  {{if and $gsc $gsc.Enabled}}
+                    {{$gscCanRefresh := and $gsc.GoogleAccountID $gsc.Property}}
+                    <span class="site-gsc-summary{{if and $gscSummary (eq $gscSummary.Status "ok")}} is-ready{{else if and $gscSummary (eq $gscSummary.Status "error")}} is-error{{end}}" data-gsc-summary data-site-id="{{.ID}}" data-url="/admin/sites/{{.ID}}/google/search-console/summary" data-csrf="{{$.CSRF}}" data-refresh="{{if $gscCanRefresh}}1{{else}}0{{end}}" data-ok-template="{{$.Admin.T "admin.sites.google_search_summary" "GSC：点击 {clicks} · 曝光 {impressions}"}}" data-error-label="{{$.Admin.T "admin.sites.google_search_unavailable" "搜索数据暂不可用"}}" data-enabled-label="{{$.Admin.T "admin.sites.google_search_enabled" "搜索已接入"}}" data-loading-label="{{$.Admin.T "admin.sites.google_search_loading" "正在刷新搜索数据"}}" data-fetched-at="{{if $gscSummary}}{{$gscSummary.FetchedAt.Format "2006-01-02T15:04:05Z07:00"}}{{end}}" data-tooltip="{{if and $gscSummary $gscSummary.ErrorMessage}}{{$gscSummary.ErrorMessage}}{{else}}{{$.Admin.T "admin.sites.google_search_summary_tip" "Google Search Console 近 7 日搜索数据。"}}{{end}}">
+                      <span data-gsc-summary-text>{{if and $gscSummary (eq $gscSummary.Status "ok")}}{{printf ($.Admin.T "admin.sites.google_search_summary_printf" "GSC：点击 %d · 曝光 %d") $gscSummary.Clicks7D $gscSummary.Impressions7D}}{{else if and $gscSummary (eq $gscSummary.Status "error")}}{{$.Admin.T "admin.sites.google_search_unavailable" "搜索数据暂不可用"}}{{else}}{{$.Admin.T "admin.sites.google_search_enabled" "搜索已接入"}}{{end}}</span>
+                    </span>
+                  {{end}}
+                </div>
+                {{end}}
               </div>
             </div>
           </div>
@@ -185,7 +190,9 @@
 
         <details class="site-card-details">
           <summary>
-            {{if index $.PlatformOfficialURLs .ID}}<span class="site-details-title is-cf">{{template "site-icon-cloudflare"}}<span>Cloudflare</span>{{$cfSt := index $.PlatformCFStatus .ID}}{{$cfAt := index $.PlatformCFDeployAt .ID}}{{if or (eq $cfSt "running") $cfAt}}<span class="site-cf-status{{if eq $cfSt "running"}} is-running{{end}}" data-cf-poll data-status-url="/admin/sites/{{.ID}}/cloudflare/status" data-cf-status="{{$cfSt}}" data-deploy-at="{{$cfAt}}" data-running="{{$.Admin.T "admin.settings.cloudflare.running" "部署中"}}" data-failed="{{$.Admin.T "admin.settings.cloudflare.failed" "失败"}}" data-just="{{$.Admin.T "admin.settings.cloudflare.just_now" "刚刚"}}" data-min="{{$.Admin.T "admin.settings.cloudflare.minutes_ago" "%d 分钟前"}}" data-hour="{{$.Admin.T "admin.settings.cloudflare.hours_ago" "%d 小时前"}}" data-day="{{$.Admin.T "admin.settings.cloudflare.days_ago" "%d 天前"}}">{{if eq $cfSt "running"}}{{$.Admin.T "admin.settings.cloudflare.running" "部署中"}}{{else}}{{$cfAt}}{{end}}</span>{{end}}</span>{{else if index $.PlatformDomains .ID}}<span class="site-details-title" data-domain-status data-status-url="/admin/sites/{{.ID}}/wizard/status" data-s-checking="{{$.Admin.T "admin.sites.status_checking" "检测中…"}}" data-s-ok="{{$.Admin.T "admin.sites.status_live" "已生效"}}" data-s-pending="{{$.Admin.T "admin.sites.status_pending" "待生效"}}" data-s-dns="{{$.Admin.T "admin.sites.status_dns" "DNS 待配置"}}">{{template "site-icon-server"}}<span data-status-text>{{$.Admin.T "admin.sites.deploy_server" "服务器"}}</span></span>{{end}}
+            <span class="site-details-left">
+              {{if index $.PlatformOfficialURLs .ID}}<span class="site-details-title is-cf">{{template "site-icon-cloudflare"}}<span>Cloudflare</span>{{$cfSt := index $.PlatformCFStatus .ID}}{{$cfAt := index $.PlatformCFDeployAt .ID}}{{if or (eq $cfSt "running") $cfAt}}<span class="site-cf-status{{if eq $cfSt "running"}} is-running{{end}}" data-cf-poll data-status-url="/admin/sites/{{.ID}}/cloudflare/status" data-cf-status="{{$cfSt}}" data-deploy-at="{{$cfAt}}" data-running="{{$.Admin.T "admin.settings.cloudflare.running" "部署中"}}" data-failed="{{$.Admin.T "admin.settings.cloudflare.failed" "失败"}}" data-just="{{$.Admin.T "admin.settings.cloudflare.just_now" "刚刚"}}" data-min="{{$.Admin.T "admin.settings.cloudflare.minutes_ago" "%d 分钟前"}}" data-hour="{{$.Admin.T "admin.settings.cloudflare.hours_ago" "%d 小时前"}}" data-day="{{$.Admin.T "admin.settings.cloudflare.days_ago" "%d 天前"}}">{{if eq $cfSt "running"}}{{$.Admin.T "admin.settings.cloudflare.running" "部署中"}}{{else}}{{$cfAt}}{{end}}</span>{{end}}</span>{{else}}{{$upd := index $.PlatformContentUpdatedAt .ID}}<span class="site-details-title"{{if index $.PlatformDomains .ID}} data-domain-status data-status-url="/admin/sites/{{.ID}}/wizard/status" data-s-checking="{{$.Admin.T "admin.sites.status_checking" "检测中…"}}" data-s-pending="{{$.Admin.T "admin.sites.status_pending" "待生效"}}" data-s-dns="{{$.Admin.T "admin.sites.status_dns" "DNS 待配置"}}"{{end}}>{{template "site-icon-server"}}<span>{{$.Admin.T "admin.sites.deploy_server" "服务器"}}</span>{{if or (index $.PlatformDomains .ID) $upd}}<span class="site-cf-status" data-server-suffix data-ago="{{$upd}}" data-just="{{$.Admin.T "admin.settings.cloudflare.just_now" "刚刚"}}" data-min="{{$.Admin.T "admin.settings.cloudflare.minutes_ago" "%d 分钟前"}}" data-hour="{{$.Admin.T "admin.settings.cloudflare.hours_ago" "%d 小时前"}}" data-day="{{$.Admin.T "admin.settings.cloudflare.days_ago" "%d 天前"}}"></span>{{end}}</span>{{end}}
+            </span>
             <small>{{if .IsDefault}}{{$.Admin.T "admin.sites.default_domain_note" "使用当前默认入口"}}{{else}}{{$.Admin.T "admin.sites.details_hint" "域名、接口和文件路径"}}{{end}}</small>
           </summary>
           <div class="site-details-body">
@@ -224,6 +231,181 @@
                 <dd><code>{{.DBPath}}</code><code>{{.UploadDir}}</code></dd>
               </div>
             </dl>
+
+            <div class="modal site-google-modal" id="site-google-analytics-modal-{{.ID}}" aria-hidden="true">
+              <a class="modal-backdrop" href="#site-card-{{.ID}}" aria-label="{{$.Admin.T "admin.close" "关闭"}}"></a>
+              <div class="modal-card site-google-modal-card" role="dialog" aria-modal="true" aria-labelledby="site-google-analytics-title-{{.ID}}">
+                <div class="site-modal-head">
+                  <div>
+                    <h3 id="site-google-analytics-title-{{.ID}}">Google Analytics</h3>
+                    <p class="muted">{{$.Admin.T "admin.sites.google_analytics_modal_desc" "自动模式会先查找当前域名已有的数据流，存在则复用；不存在才创建。"}}</p>
+                  </div>
+                  <a class="modal-x" href="#site-card-{{.ID}}" aria-label="{{$.Admin.T "admin.close" "关闭"}}">×</a>
+                </div>
+                <div class="site-google-modal-body">
+                  <section data-google-tab-panel="auto">
+	                    <form class="site-google-subform" method="post" action="/admin/sites/{{.ID}}/google/analytics/stream" data-ga-stream-form data-ga-auto-default="1" data-ga-current-enabled="{{if and $ga $ga.Enabled}}1{{end}}" data-ga-current-measurement="{{if $ga}}{{$ga.MeasurementID}}{{end}}" data-no-dirty data-confirm-title="{{$.Admin.T "admin.sites.google_auto_confirm_title" "确认启用统计"}}" data-confirm-ok="{{$.Admin.T "admin.sites.google_auto_confirm_ok" "开始启用"}}" data-confirm="{{$.Admin.T "admin.sites.google_auto_confirm" "系统会先查找该域名在所选 GA4 属性下是否已有 Web 数据流；已有则复用，没有才创建。确定继续？"}}">
+		                      <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+		                      <input type="hidden" name="service" value="analytics">
+			                      <input type="hidden" name="property_mode" value="" data-ga-property-mode>
+			                      <input type="hidden" name="default_uri" value="{{$googleURI}}" data-ga-default-uri>
+		                      <div class="site-google-auto-card">
+	                        {{if not $.GoogleAnalyticsAccounts}}
+	                        <div class="site-google-empty-state">
+	                          <strong>{{$.Admin.T "admin.sites.google_no_authorized_account" "还没有授权账号"}}</strong>
+	                          <span>{{$.Admin.T "admin.sites.google_authorize_first" "没有账号时，先到顶部 Google 图标授权。"}}</span>
+	                          {{if $.GoogleOAuthConfigured}}<a class="linkbtn" data-google-authorize data-loading-label="{{$.Admin.T "admin.sites.google_authorizing" "正在打开 Google 授权..."}}" href="/admin/google/oauth/start?service=all">{{$.Admin.T "admin.sites.google_add_account" "新增授权账号"}}</a>{{end}}
+	                        </div>
+	                        {{end}}
+	                        <div class="site-google-flow">
+	                          <div class="site-google-row" data-ga-row="account">
+	                            <span class="site-google-row-label">{{$.Admin.T "admin.sites.google_account" "授权账号"}}</span>
+	                            <strong class="site-google-row-value" data-ga-account-summary>{{if $.GoogleAnalyticsAccounts}}{{$.Admin.T "admin.sites.google_auto_first_account" "默认使用第一个授权账号"}}{{else}}{{$.Admin.T "admin.sites.google_no_authorized_account" "还没有授权账号"}}{{end}}</strong>
+	                            {{if gt (len $.GoogleAnalyticsAccounts) 1}}<button class="site-google-row-edit" type="button" data-ga-row-edit="account" data-tooltip="{{$.Admin.T "admin.sites.google_change_account" "更换授权账号"}}" aria-label="{{$.Admin.T "admin.sites.google_change_account" "更换授权账号"}}">{{template "site-icon-edit"}}</button>{{end}}
+	                          </div>
+	                          <div class="site-google-row-panel" data-ga-row-panel="account" hidden>
+	                            <div class="site-google-field">
+	                              <span>{{$.Admin.T "admin.sites.google_account" "授权账号"}}</span>
+	                              <div class="dropdown site-google-select" data-select-dropdown>
+	                                <button type="button" class="dd-toggle" aria-haspopup="listbox" aria-expanded="false">
+	                                  <span class="dd-label">{{$.Admin.T "admin.sites.google_choose_account" "选择授权账号"}}</span>
+	                                  <span class="dd-caret" aria-hidden="true">⌄</span>
+	                                </button>
+	                                <select class="dd-native" name="google_account_id" data-dropdown-native data-ga-account-select>
+	                                  <option value="">{{$.Admin.T "admin.sites.google_choose_account" "选择授权账号"}}</option>
+	                                  {{range $idx, $account := $.GoogleAnalyticsAccounts}}
+	                                  <option value="{{$account.GoogleAccountID}}"{{if or (and $ga (eq $ga.GoogleAccountID $account.GoogleAccountID)) (and (not $ga) (eq $idx 0))}} selected{{end}}>{{if $account.Email}}{{$account.Email}}{{else}}{{if $account.Name}}{{$account.Name}}{{else}}{{$account.GoogleAccountID}}{{end}}{{end}}</option>
+	                                  {{end}}
+	                                </select>
+	                                <ul class="dd-menu" role="listbox"></ul>
+	                              </div>
+	                            </div>
+	                          </div>
+	                          <div class="site-google-row is-fixed" data-ga-row="uri">
+	                            <span class="site-google-row-label">{{$.Admin.T "admin.sites.google_default_uri" "网站地址"}}</span>
+	                            <strong class="site-google-row-value" data-ga-uri-summary>{{if $googleURI}}{{$googleURI}}{{else}}{{$.Admin.T "admin.sites.google_auto_domain" "自动使用站点入口"}}{{end}}</strong>
+	                          </div>
+	                          <div class="site-google-row" data-ga-row="property">
+	                            <span class="site-google-row-label">{{$.Admin.T "admin.sites.google_analytics_property" "GA4 属性"}}</span>
+	                            <strong class="site-google-row-value" data-ga-property-summary>{{$.Admin.T "admin.sites.google_auto_property_rule" "自动匹配当前域名"}}</strong>
+	                            <button class="site-google-row-edit" type="button" data-ga-row-edit="property" data-tooltip="{{$.Admin.T "admin.sites.google_change_property" "更换或新建 GA4 属性"}}" aria-label="{{$.Admin.T "admin.sites.google_change_property" "更换或新建 GA4 属性"}}">{{template "site-icon-edit"}}</button>
+	                          </div>
+	                          <div class="site-google-row-panel" data-ga-row-panel="property" hidden>
+		                          <div class="site-google-field">
+		                            <span>{{$.Admin.T "admin.sites.google_analytics_property" "GA4 属性"}}</span>
+		                            <div class="dropdown site-google-select" data-select-dropdown data-dropdown-search data-dropdown-search-placeholder="{{$.Admin.T "admin.sites.google_property_search_placeholder" "搜索 GA4 属性"}}">
+		                              <button type="button" class="dd-toggle" aria-haspopup="listbox" aria-expanded="false">
+		                                <span class="dd-label">{{$.Admin.T "admin.sites.google_property_wait" "先选择授权账号"}}</span>
+		                                <span class="dd-caret" aria-hidden="true">⌄</span>
+	                              </button>
+	                              <select class="dd-native" name="property" data-dropdown-native data-ga-property-select data-current-property="{{if $ga}}{{$ga.Property}}{{end}}" disabled>
+	                                <option value="">{{$.Admin.T "admin.sites.google_property_wait" "先选择授权账号"}}</option>
+	                              </select>
+		                              <ul class="dd-menu" role="listbox"></ul>
+		                            </div>
+		                          </div>
+		                          <div class="site-google-field" data-ga-analytics-account-wrap hidden>
+		                            <span>{{$.Admin.T "admin.sites.google_analytics_account" "Analytics 账号"}}</span>
+		                            <div class="dropdown site-google-select" data-select-dropdown>
+		                              <button type="button" class="dd-toggle" aria-haspopup="listbox" aria-expanded="false">
+		                                <span class="dd-label">{{$.Admin.T "admin.sites.google_analytics_account_auto" "自动选择 Analytics 账号"}}</span>
+		                                <span class="dd-caret" aria-hidden="true">⌄</span>
+		                              </button>
+		                              <select class="dd-native" name="analytics_account" data-dropdown-native data-ga-analytics-account-select disabled>
+		                                <option value="">{{$.Admin.T "admin.sites.google_analytics_account_auto" "自动选择 Analytics 账号"}}</option>
+		                              </select>
+		                              <ul class="dd-menu" role="listbox"></ul>
+		                            </div>
+		                            <small>{{$.Admin.T "admin.sites.google_analytics_account_hint" "仅在选择自动创建 GA4 属性时使用。"}}</small>
+		                          </div>
+	                          </div>
+	                        </div>
+	                      </div>
+	                      <div class="site-google-actions">
+	                        <button class="btn" type="submit" data-ga-create-submit data-label-enable="{{$.Admin.T "admin.sites.google_create_stream" "启用统计"}}" data-label-create="{{$.Admin.T "admin.sites.google_create_update_stream" "创建并更新统计"}}" data-label-update="{{$.Admin.T "admin.sites.google_update_analytics" "修改统计"}}" data-label-updating="{{$.Admin.T "admin.sites.google_updating_analytics" "正在修改..."}}">{{if and $ga $ga.Enabled}}{{$.Admin.T "admin.sites.google_update_analytics" "修改统计"}}{{else}}{{$.Admin.T "admin.sites.google_create_stream" "启用统计"}}{{end}}</button>
+	                        {{if and $ga $ga.Enabled}}<button class="linkbtn danger" type="submit" formaction="/admin/sites/{{.ID}}/google" name="action" value="delete" formnovalidate data-confirm-title="{{$.Admin.T "admin.sites.google_remove_analytics_title" "确认移除统计"}}" data-confirm-ok="{{$.Admin.T "admin.sites.google_remove_analytics" "移除统计"}}" data-confirm="{{$.Admin.T "admin.sites.google_remove_analytics_confirm" "移除后该站点不再注入 Google Analytics 统计代码，历史数据不会被删除。确定继续？"}}">{{$.Admin.T "admin.sites.google_remove_analytics" "移除统计"}}</button>{{end}}
+	                        <span class="site-google-status" data-ga-stream-status aria-live="polite"></span>
+	                      </div>
+	                    </form>
+	                  </section>
+	                </div>
+              </div>
+            </div>
+
+            <div class="modal site-google-modal" id="site-google-search-modal-{{.ID}}" aria-hidden="true">
+              <a class="modal-backdrop" href="#site-card-{{.ID}}" aria-label="{{$.Admin.T "admin.close" "关闭"}}"></a>
+              <div class="modal-card site-google-modal-card" role="dialog" aria-modal="true" aria-labelledby="site-google-search-title-{{.ID}}">
+                <div class="site-modal-head">
+                  <div>
+                    <h3 id="site-google-search-title-{{.ID}}">{{$.Admin.T "admin.sites.google_search_console" "Google Search Console"}}</h3>
+                    <p class="muted">{{$.Admin.T "admin.sites.google_search_modal_desc" "自动模式会先匹配已验证站点属性，找不到时尝试添加；Google 仍可能要求完成所有权验证。"}}</p>
+                  </div>
+                  <a class="modal-x" href="#site-card-{{.ID}}" aria-label="{{$.Admin.T "admin.close" "关闭"}}">×</a>
+                </div>
+                <div class="site-google-modal-body">
+                  <form class="site-google-subform" method="post" action="/admin/sites/{{.ID}}/google/search-console/property" data-gsc-site-form data-gsc-current-enabled="{{if and $gsc $gsc.Enabled}}1{{end}}" data-gsc-pending="{{if and $gsc $gsc.Property (not $gsc.Enabled)}}1{{end}}" data-no-dirty data-confirm-title="{{$.Admin.T "admin.sites.google_search_auto_confirm_title" "确认启用搜索数据"}}" data-confirm-ok="{{$.Admin.T "admin.sites.google_search_auto_confirm_ok" "开始启用"}}" data-confirm="{{$.Admin.T "admin.sites.google_search_auto_confirm" "系统会先匹配该域名已有的 Google Search Console 属性；没有匹配项时会尝试添加站点属性。确定继续？"}}">
+                    <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+                    <input type="hidden" name="service" value="search_console">
+                    <input type="hidden" name="default_uri" value="{{$googleURI}}" data-gsc-default-uri>
+                    <input type="hidden" name="property" data-gsc-property-input value="{{if $gsc}}{{$gsc.Property}}{{end}}">
+                    <div class="site-google-auto-card">
+                      {{if not $.GoogleSearchConsoleAccounts}}
+                      <div class="site-google-empty-state">
+                        <strong>{{$.Admin.T "admin.sites.google_no_authorized_account" "还没有授权账号"}}</strong>
+                        <span>{{$.Admin.T "admin.sites.google_authorize_first" "没有账号时，先到顶部 Google 图标授权。"}}</span>
+                        {{if $.GoogleOAuthConfigured}}<a class="linkbtn" data-google-authorize data-loading-label="{{$.Admin.T "admin.sites.google_authorizing" "正在打开 Google 授权..."}}" href="/admin/google/oauth/start?service=all">{{$.Admin.T "admin.sites.google_add_account" "新增授权账号"}}</a>{{end}}
+                      </div>
+                      {{end}}
+                      <div class="site-google-flow">
+                        <div class="site-google-row" data-gsc-row="account">
+                          <span class="site-google-row-label">{{$.Admin.T "admin.sites.google_account" "授权账号"}}</span>
+                          <strong class="site-google-row-value" data-gsc-account-summary>{{if $.GoogleSearchConsoleAccounts}}{{$.Admin.T "admin.sites.google_auto_first_account" "默认使用第一个授权账号"}}{{else}}{{$.Admin.T "admin.sites.google_no_authorized_account" "还没有授权账号"}}{{end}}</strong>
+                          {{if gt (len $.GoogleSearchConsoleAccounts) 1}}<button class="site-google-row-edit" type="button" data-gsc-row-edit="account" data-tooltip="{{$.Admin.T "admin.sites.google_change_account" "更换授权账号"}}" aria-label="{{$.Admin.T "admin.sites.google_change_account" "更换授权账号"}}">{{template "site-icon-edit"}}</button>{{end}}
+                        </div>
+                        <div class="site-google-row-panel" data-gsc-row-panel="account" hidden>
+                          <div class="site-google-field">
+                            <span>{{$.Admin.T "admin.sites.google_account" "授权账号"}}</span>
+                            <div class="dropdown site-google-select" data-select-dropdown>
+                              <button type="button" class="dd-toggle" aria-haspopup="listbox" aria-expanded="false">
+                                <span class="dd-label">{{$.Admin.T "admin.sites.google_choose_account" "选择授权账号"}}</span>
+                                <span class="dd-caret" aria-hidden="true">⌄</span>
+                              </button>
+                              <select class="dd-native" name="google_account_id" data-dropdown-native data-gsc-account-select>
+                                <option value="">{{$.Admin.T "admin.sites.google_choose_account" "选择授权账号"}}</option>
+                                {{range $idx, $account := $.GoogleSearchConsoleAccounts}}
+                                <option value="{{$account.GoogleAccountID}}" data-scopes="{{$account.Scopes}}"{{if or (and $gsc (eq $gsc.GoogleAccountID $account.GoogleAccountID)) (and (not $gsc) (eq $idx 0))}} selected{{end}}>{{if $account.Email}}{{$account.Email}}{{else}}{{if $account.Name}}{{$account.Name}}{{else}}{{$account.GoogleAccountID}}{{end}}{{end}}</option>
+                                {{end}}
+                              </select>
+                              <ul class="dd-menu" role="listbox"></ul>
+                            </div>
+                          </div>
+                        </div>
+                        <div class="site-google-row is-fixed" data-gsc-row="uri">
+                          <span class="site-google-row-label">{{$.Admin.T "admin.sites.google_default_uri" "网站地址"}}</span>
+                          <strong class="site-google-row-value" data-gsc-uri-summary>{{if $googleURI}}{{$googleURI}}{{else}}{{$.Admin.T "admin.sites.google_auto_domain" "自动使用站点入口"}}{{end}}</strong>
+                        </div>
+                        <div class="site-google-row is-fixed" data-gsc-row="property">
+                          <span class="site-google-row-label">{{$.Admin.T "admin.sites.google_property" "站点属性"}}</span>
+                          <strong class="site-google-row-value" data-gsc-property-summary>{{if and $gsc $gsc.Property}}{{$gsc.Property}}{{else}}{{$.Admin.T "admin.sites.google_search_auto_property_rule" "自动匹配或添加当前站点属性"}}{{end}}</strong>
+                        </div>
+                      </div>
+                      <div class="site-google-next-step" data-gsc-pending-panel{{if not (and $gsc $gsc.Property (not $gsc.Enabled))}} hidden{{end}}>
+                        <strong>{{$.Admin.T "admin.sites.google_search_verify_title" "待完成 Google 所有权验证"}}</strong>
+                        <span>{{$.Admin.T "admin.sites.google_search_verify_desc" "站点属性已添加到 Google Search Console，但 Google 还没有确认所有权。请先去 Search Console 按提示完成验证，回来后重新检测并启用。"}}</span>
+                        <div class="site-google-next-actions">
+                          <a class="linkbtn" href="https://search.google.com/search-console" target="_blank" rel="noopener noreferrer" data-gsc-verify-link>{{$.Admin.T "admin.sites.google_search_verify_open" "打开 Search Console 验证"}} ↗</a>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="site-google-actions">
+                      <button class="btn" type="submit" data-gsc-auto-submit data-label-enable="{{$.Admin.T "admin.sites.google_enable_search" "启用搜索数据接入"}}" data-label-pending="{{$.Admin.T "admin.sites.google_recheck_search" "我已验证，重新检测并启用"}}" data-label-update="{{$.Admin.T "admin.sites.google_update_search" "修改搜索接入"}}" data-label-updating="{{$.Admin.T "admin.sites.google_updating_search" "正在修改..."}}">{{if and $gsc $gsc.Enabled}}{{$.Admin.T "admin.sites.google_update_search" "修改搜索接入"}}{{else if and $gsc $gsc.Property}}{{$.Admin.T "admin.sites.google_recheck_search" "我已验证，重新检测并启用"}}{{else}}{{$.Admin.T "admin.sites.google_enable_search" "启用搜索数据接入"}}{{end}}</button>
+                      {{if and $gsc $gsc.Enabled}}<button class="linkbtn danger" type="submit" formaction="/admin/sites/{{.ID}}/google" name="action" value="delete" formnovalidate data-confirm-title="{{$.Admin.T "admin.sites.google_remove_search_title" "确认移除搜索接入"}}" data-confirm-ok="{{$.Admin.T "admin.sites.google_remove_search" "移除搜索接入"}}" data-confirm="{{$.Admin.T "admin.sites.google_remove_search_confirm" "移除后该站点不再读取 Google Search Console 搜索数据，Google 里的站点属性不会被删除。确定继续？"}}">{{$.Admin.T "admin.sites.google_remove_search" "移除搜索接入"}}</button>{{end}}
+                      <span class="site-google-status" data-gsc-site-status aria-live="polite"></span>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            </div>
 
             {{if .IsDefault}}
             <p class="site-default-note">{{$.Admin.T "admin.sites.default_locked_note" "默认站点使用当前默认入口，不能关闭站点、关闭自动化接口或绑定域名。"}}</p>
@@ -484,6 +666,22 @@
         <li>{{.Admin.T "admin.sites.google_oauth_guide_step3" "创建后复制 Client ID 和 Client Secret，粘贴到这里保存。"}}</li>
       </ol>
     </div>
+    <div class="google-oauth-api-checklist">
+      <strong>{{.Admin.T "admin.sites.google_api_check_title" "同一个 Google Cloud 项目还需要启用"}}</strong>
+      <p>{{if .GoogleOAuthProjectID}}{{printf (.Admin.T "admin.sites.google_api_check_project" "当前 Client ID 推断项目号：%s。") .GoogleOAuthProjectID}}{{else}}{{.Admin.T "admin.sites.google_api_check_no_project" "保存 Client ID 后，系统会按 Client ID 推断项目号并生成对应启用链接。"}}{{end}}</p>
+      <div>
+        <a href="{{.GoogleAnalyticsAdminAPIURL}}" target="_blank" rel="noopener"><span>{{.Admin.T "admin.sites.google_enable_ga_admin_api" "启用 Google Analytics Admin API"}}</span><span class="ext-arrow" aria-hidden="true">↗</span></a>
+        <small>{{.Admin.T "admin.sites.google_enable_ga_admin_api_hint" "自动读取 GA4 属性、查找或创建 Web 数据流需要它。"}}</small>
+      </div>
+      <div>
+        <a href="{{.GoogleAnalyticsDataAPIURL}}" target="_blank" rel="noopener"><span>{{.Admin.T "admin.sites.google_enable_ga_data_api" "启用 Google Analytics Data API"}}</span><span class="ext-arrow" aria-hidden="true">↗</span></a>
+        <small>{{.Admin.T "admin.sites.google_enable_ga_data_api_hint" "读取站点卡片的近 7 日活跃用户和访问次数需要它。"}}</small>
+      </div>
+      <div>
+        <a href="{{.GoogleSearchConsoleAPIURL}}" target="_blank" rel="noopener"><span>{{.Admin.T "admin.sites.google_enable_search_console_api" "启用 Google Search Console API"}}</span><span class="ext-arrow" aria-hidden="true">↗</span></a>
+        <small>{{.Admin.T "admin.sites.google_enable_search_console_api_hint" "读取或自动添加 Google Search Console 站点属性需要它。"}}</small>
+      </div>
+    </div>
     <p class="google-oauth-status" data-google-oauth-status hidden></p>
     <label>
       <span>{{.Admin.T "admin.sites.google_client_id" "Client ID"}}</span>
@@ -510,9 +708,10 @@
 {{define "site-icon-enter"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/></svg>{{end}}
 {{define "site-icon-plus"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg>{{end}}
 {{define "site-icon-check"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>{{end}}
+{{define "site-icon-eye"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.5-6.5 9.5-6.5 9.5 6.5 9.5 6.5-3.5 6.5-9.5 6.5S2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.8"/></svg>{{end}}
 {{define "site-icon-edit"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4z"/></svg>{{end}}
 {{define "site-icon-unlink"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18.8 12.6a5 5 0 0 0 .3-6.6 5 5 0 0 0-7.1-.2l-1.2 1.2"/><path d="M5.2 11.4a5 5 0 0 0-.3 6.6 5 5 0 0 0 7.1.2l1.2-1.2"/><path d="m8 8-3-3"/><path d="m16 16 3 3"/></svg>{{end}}
-{{define "site-icon-google-oauth"}}<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="7.5" cy="15.5" r="3.5"/><path d="M10 13 20 3"/><path d="m16.5 6.5 2 2"/><path d="m14 9 2 2"/></svg>{{end}}
+{{define "site-icon-google-oauth"}}<img class="google-connect-logo google-auth-logo" src="/assets/icons/google-auth.svg" alt="" aria-hidden="true">{{end}}
 {{define "site-icon-google-analytics"}}<img class="google-connect-logo" src="/assets/icons/google-analytics.svg" alt="" aria-hidden="true">{{end}}
 {{define "site-icon-google-search-console"}}<img class="google-connect-logo" src="/assets/icons/google-search-console.svg" alt="" aria-hidden="true">{{end}}
 {{define "site-icon-package"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.3 7 12 12l8.7-5"/><path d="M12 22V12"/></svg>{{end}}

@@ -1,0 +1,225 @@
+{{define "body"}}
+  <div class="admin-head">
+    <div>
+      <h1>{{.Admin.T "admin.platform_keys.page_title" "平台 AI 接入"}}</h1>
+      <p class="muted">{{.Admin.T "admin.platform_keys.page_subtitle" "一把平台密钥即可让 AI（Codex、Claude Code、Cursor 等）同时管理多个站点。"}}</p>
+    </div>
+  </div>
+
+  {{if .Flash}}<div class="flash">{{.Flash}}</div>{{end}}
+
+  <section class="field-group platform-keys" id="platform-keys">
+    <div class="automation-toolbar">
+      <h3 class="group-head with-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7.5" cy="14.5" r="3.5"/><path d="M10 12l8-8"/><path d="M15 7l2 2"/></svg>
+        <span>{{.Admin.T "admin.platform_keys.title" "平台 AI 访问密钥（管理多个站点）"}}</span>
+      </h3>
+      <a class="btn btn-primary" href="#platform-key-modal">{{.Admin.T "admin.platform_keys.create" "创建平台密钥"}}</a>
+    </div>
+    <p class="muted automation-note">{{.Admin.T "admin.platform_keys.note" "一把平台密钥可管理多个站点：AI 先发现可管站点，再对每个站点用 --site 操作。泄露风险比单站密钥更大，只放本地 .env，不要贴进普通聊天窗口。"}}</p>
+    <div class="key-warning">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.3 4.2 2.8 17.4A2 2 0 0 0 4.5 20h15a2 2 0 0 0 1.7-2.6L13.7 4.2a2 2 0 0 0-3.4 0z"/></svg>
+      <span>{{.Admin.T "admin.platform_keys.secret_once" "完整密钥只在创建或重新生成后显示一次。刷新后如需再次拿到完整密钥，请重新生成。"}}</span>
+    </div>
+    <table class="admin-table automation-key-table platform-key-table">
+      <thead><tr><th>{{.Admin.T "admin.settings.automation.purpose" "用途"}}</th><th>{{.Admin.T "admin.platform_keys.sites" "可管站点"}}</th><th>{{.Admin.T "admin.settings.automation.scopes" "权限"}}</th><th>{{.Admin.T "admin.settings.automation.last_used" "最近使用"}}</th><th class="right">{{.Admin.T "admin.common.actions" "操作"}}</th></tr></thead>
+      <tbody>
+        {{range .PlatformKeys}}
+        {{$canViewSecret := and $.NewPlatformSecret (eq .ID $.NewPlatformKeyID)}}
+        <tr>
+          <td><strong>{{.Name}}</strong><div class="slug">{{$.Admin.T "admin.settings.automation.prefix" "密钥开头："}}{{.TokenPrefix}}...</div>{{if not .RevokedAt.IsZero}}<span class="badge draft">{{$.Admin.T "admin.settings.automation.revoked" "已吊销"}}</span>{{end}}</td>
+          <td>
+            {{if eq .MembershipMode "all"}}<span class="mini-tag pkey-all">{{$.Admin.T "admin.platform_keys.all_sites" "全部站点（含新增）"}}</span>
+            {{else}}<span class="scope-list">{{range .AllowedSiteIDs}}<span class="mini-tag">#{{.}}</span>{{else}}<span class="muted">{{$.Admin.T "admin.platform_keys.no_sites" "未选站点"}}</span>{{end}}</span>{{end}}
+          </td>
+          <td><span class="scope-list">{{range automationScopeBadgesAdmin .Scopes $.Admin}}<span class="mini-tag">{{.}}</span>{{end}}</span></td>
+          <td class="slug">{{if not .LastUsedAt.IsZero}}{{.LastUsedAt.Format "2006-01-02 15:04"}}{{else}}-{{end}}</td>
+          <td class="right actions key-actions">
+            {{if .RevokedAt.IsZero}}
+            {{if $canViewSecret}}<button type="button" class="linkbtn" data-secret-open>{{$.Admin.T "admin.action.view" "查看"}}</button>{{end}}
+            <button type="button" class="linkbtn" data-pkey-edit data-id="{{.ID}}" data-name="{{.Name}}" data-scopes="{{.Scopes}}" data-membership="{{.MembershipMode}}" data-sites="{{range $i, $sid := .AllowedSiteIDs}}{{if $i}},{{end}}{{$sid}}{{end}}">{{$.Admin.T "admin.settings.automation.edit_permissions" "修改权限"}}</button>
+            <form method="post" action="/admin/sites/automation/keys/regenerate" data-confirm-title="{{$.Admin.T "admin.settings.automation.regenerate" "重新生成"}}" data-confirm-ok="{{$.Admin.T "admin.settings.automation.regenerate" "重新生成"}}" data-confirm="{{printf ($.Admin.T "admin.platform_keys.regenerate_confirm" "重新生成「%s」的平台密钥？旧密钥会立即失效，使用它的外部工具需要改用新密钥。") .Name}}">
+              <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+              <input type="hidden" name="id" value="{{.ID}}">
+              <button class="linkbtn" type="submit">{{$.Admin.T "admin.settings.automation.regenerate" "重新生成"}}</button>
+            </form>
+            <form method="post" action="/admin/sites/automation/keys/revoke" data-confirm="{{printf ($.Admin.T "admin.platform_keys.revoke_confirm" "吊销「%s」的平台密钥？吊销后使用它的自动化任务会立即失效（可能影响多个站点）。") .Name}}">
+              <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+              <input type="hidden" name="id" value="{{.ID}}">
+              <button class="del" type="submit">{{$.Admin.T "admin.settings.automation.revoke" "吊销"}}</button>
+            </form>
+            {{else}}
+            <form method="post" action="/admin/sites/automation/keys/delete" data-confirm-title="{{$.Admin.T "admin.action.delete" "删除"}}" data-confirm-ok="{{$.Admin.T "admin.action.delete" "删除"}}" data-confirm="{{printf ($.Admin.T "admin.platform_keys.delete_confirm" "删除「%s」这条已吊销的平台密钥记录？") .Name}}">
+              <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+              <input type="hidden" name="id" value="{{.ID}}">
+              <button class="del act-ico" type="submit" title="{{$.Admin.T "admin.action.delete" "删除"}}" aria-label="{{$.Admin.T "admin.action.delete" "删除"}}">{{template "icon-trash"}}</button>
+            </form>
+            {{end}}
+          </td>
+        </tr>
+        {{else}}<tr><td colspan="5" class="muted">{{.Admin.T "admin.platform_keys.empty" "还没有平台密钥。点右上角“创建平台密钥”，创建成功后可在列表中点“查看”复制密钥并下载薄技能包。"}}</td></tr>{{end}}
+      </tbody>
+    </table>
+
+    {{if .NewPlatformSecret}}
+    <div class="modal api-secret-modal" id="platform-secret-modal" data-secret-modal>
+      <div class="modal-backdrop" data-secret-close></div>
+      <div class="modal-card secret-modal-card" role="dialog" aria-modal="true" aria-labelledby="platform-secret-title">
+        <h3 id="platform-secret-title">{{if .NewPlatformName}}{{.NewPlatformName}}{{.Admin.T "admin.settings.automation.secret_title_suffix" "的访问密钥"}}{{else}}{{.Admin.T "admin.platform_keys.new_secret_title" "新的平台访问密钥"}}{{end}}</h3>
+        <p class="muted secret-modal-note">{{.Admin.T "admin.platform_keys.secret_note" "完整密钥只显示这一次。建议下载平台薄技能包，里面含密钥文件、多站 CLI 和给 AI 的说明。密钥可管多个站点，务必只放本地。"}}</p>
+        <div class="api-secret">
+          <strong>{{.Admin.T "admin.settings.automation.full_secret" "完整密钥"}}</strong>
+          <div class="secret-copy">
+            <input id="new-platform-secret" value="{{.NewPlatformSecret}}" readonly>
+            <button type="button" class="icon-btn" data-copy-target="new-platform-secret" title="{{.Admin.T "admin.settings.automation.copy_secret" "复制密钥"}}" aria-label="{{.Admin.T "admin.settings.automation.copy_secret" "复制密钥"}}">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            </button>
+          </div>
+          <div class="secret-actions">
+            <form method="post" action="{{.PlatformSkillURL}}" data-no-busy>
+              <input type="hidden" name="_csrf" value="{{.CSRF}}">
+              <input type="hidden" name="token" value="{{.NewPlatformSecret}}">
+              <input type="hidden" name="name" value="{{.NewPlatformName}}">
+              <input type="hidden" name="scopes" value="{{.NewPlatformScopes}}">
+              <button class="btn btn-primary" type="submit">{{.Admin.T "admin.platform_keys.download_kit" "下载平台薄技能包"}}</button>
+            </form>
+          </div>
+          <label for="platform-ai-brief">{{.Admin.T "admin.settings.automation.ai_brief" "给 AI 助手的说明"}}</label>
+          <textarea id="platform-ai-brief" readonly rows="13">{{.NewPlatformBrief}}</textarea>
+          <button type="button" class="btn btn-primary" data-copy-target="platform-ai-brief">{{.Admin.T "admin.settings.automation.copy_brief" "复制说明"}}</button>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn" data-secret-close>{{.Admin.T "admin.settings.automation.close_window" "关闭窗口"}}</button>
+        </div>
+      </div>
+    </div>
+    {{end}}
+
+    {{if .PlatformKeyLogs}}
+    <details class="field-group platform-key-audit">
+      <summary class="group-head">{{.Admin.T "admin.platform_keys.audit" "跨站操作记录"}}</summary>
+      <table class="admin-table">
+        <thead><tr><th>{{.Admin.T "admin.platform_keys.audit_time" "时间"}}</th><th>{{.Admin.T "admin.platform_keys.audit_site" "站点"}}</th><th>{{.Admin.T "admin.platform_keys.audit_action" "动作"}}</th><th>{{.Admin.T "admin.platform_keys.audit_detail" "说明"}}</th></tr></thead>
+        <tbody>
+          {{range .PlatformKeyLogs}}
+          <tr><td class="slug">{{.At.Format "2006-01-02 15:04"}}</td><td class="slug">#{{.SiteID}}</td><td>{{.Action}}{{if .Kind}} · {{.Kind}}{{end}}</td><td>{{.Message}}</td></tr>
+          {{end}}
+        </tbody>
+      </table>
+    </details>
+    {{end}}
+  </section>
+
+  {{template "platform-key-modal" .}}
+  {{template "platform-key-edit-modal" .}}
+{{end}}
+
+{{define "platform-scope-fields"}}
+<div class="scope-tools" data-scope-tools>
+  <label class="scope-all"><input type="checkbox" data-scope-all><span>{{.Admin.T "admin.settings.automation.select_all_permissions" "全选权限"}}</span></label>
+</div>
+<div class="scope-groups">
+  <div class="scope-group scope-group-wide">
+    <strong>{{.Admin.T "admin.settings.automation.base_interfaces" "基础接口"}}</strong>
+    <label><input type="checkbox" name="scopes" value="languages:read" checked><span>{{.Admin.T "admin.settings.automation.languages" "语种"}}</span><small>{{.Admin.T "admin.settings.automation.languages_read_desc" "列出默认语种和启用语种"}}</small></label>
+    <label><input type="checkbox" name="scopes" value="languages:write"><span>{{.Admin.T "admin.settings.automation.languages_write" "新增自定义语种"}}</span><small>{{.Admin.T "admin.settings.automation.languages_write_desc" "为 AI 开通新增自定义语种接口"}}</small></label>
+    <label><input type="checkbox" name="scopes" value="languages:enable"><span>{{.Admin.T "admin.settings.automation.languages_enable" "启用/禁用语种"}}</span><small>{{.Admin.T "admin.settings.automation.languages_enable_desc" "为 AI 开通启用或关闭前台语种接口"}}</small></label>
+    <label><input type="checkbox" name="scopes" value="languages:default"><span>{{.Admin.T "admin.settings.automation.languages_default" "设置默认语种"}}</span><small>{{.Admin.T "admin.settings.automation.languages_default_desc" "允许 AI 调整浏览器语言无法匹配时的兜底语种"}}</small></label>
+    <label><input type="checkbox" name="scopes" value="languages:catalog"><span>{{.Admin.T "admin.settings.automation.languages_catalog" "修改语种字典"}}</span><small>{{.Admin.T "admin.settings.automation.languages_catalog_desc" "维护前台按钮、页脚和搜索等系统文案"}}</small></label>
+    <label><input type="checkbox" name="scopes" value="media:write" checked><span>{{.Admin.T "admin.settings.automation.media_upload" "上传媒体"}}</span><small>{{.Admin.T "admin.settings.automation.media_upload_desc" "上传图片并返回可用于封面的 URL"}}</small></label>
+  </div>
+  <div class="scope-group scope-group-wide">
+    <strong>{{.Admin.T "admin.settings.automation.site_starter" "新站初始化"}}</strong>
+    <label><input type="checkbox" name="scopes" value="site:read"><span>{{.Admin.T "admin.settings.automation.site_profile_read" "读取站点文案"}}</span><small>{{.Admin.T "admin.settings.automation.site_profile_read_desc" "读取站点名称、Hero、首页标题和默认作者"}}</small></label>
+    <label><input type="checkbox" name="scopes" value="site:write"><span>{{.Admin.T "admin.settings.automation.site_profile_write" "修改站点文案"}}</span><small>{{.Admin.T "admin.settings.automation.site_profile_write_desc" "更新多语种站点文案、首页标题和默认作者"}}</small></label>
+    <label><input type="checkbox" name="scopes" value="brand:assets:write"><span>{{.Admin.T "admin.settings.automation.brand_assets_write" "修改品牌资产"}}</span><small>{{.Admin.T "admin.settings.automation.brand_assets_write_desc" "更新站点 Logo、浏览器图标和分享图"}}</small></label>
+    <label><input type="checkbox" name="scopes" value="navigation:read"><span>{{.Admin.T "admin.settings.automation.navigation_read" "读取导航"}}</span><small>{{.Admin.T "admin.settings.automation.navigation_read_desc" "查看当前导航菜单和各语种文字"}}</small></label>
+    <label><input type="checkbox" name="scopes" value="navigation:write"><span>{{.Admin.T "admin.settings.automation.navigation_write" "修改导航"}}</span><small>{{.Admin.T "admin.settings.automation.navigation_write_desc" "写入导航顺序、链接和多语种菜单文字"}}</small></label>
+    <label><input type="checkbox" name="scopes" value="posts:categories:write"><span>{{.Admin.T "admin.settings.automation.post_categories_write" "写文章分类"}}</span><small>{{.Admin.T "admin.settings.automation.post_categories_write_desc" "创建或更新文章分类"}}</small></label>
+    <label><input type="checkbox" name="scopes" value="links:categories:write"><span>{{.Admin.T "admin.settings.automation.link_categories_write" "写链接分类"}}</span><small>{{.Admin.T "admin.settings.automation.link_categories_write_desc" "创建或更新链接分类"}}</small></label>
+  </div>
+  <div class="scope-group">
+    <strong>{{.Admin.T "admin.nav.posts" "文章"}}</strong>
+    <label><input type="checkbox" name="scopes" value="posts:read" checked><span>{{.Admin.T "admin.settings.automation.read" "读取"}}</span><small>{{.Admin.T "admin.settings.automation.posts_read_desc" "列出和查看文章"}}</small></label>
+    <label><input type="checkbox" name="scopes" value="posts:categories" checked><span>{{.Admin.T "admin.settings.automation.read_categories" "获取分类"}}</span><small>{{.Admin.T "admin.settings.automation.posts_categories_desc" "列出文章分类和可用 ID"}}</small></label>
+    <label><input type="checkbox" name="scopes" value="posts:write" checked><span>{{.Admin.T "admin.settings.automation.write_draft" "写草稿"}}</span><small>{{.Admin.T "admin.settings.automation.posts_write_desc" "创建草稿，修改未发布文章"}}</small></label>
+    <label><input type="checkbox" name="scopes" value="posts:publish"><span>{{.Admin.T "admin.settings.automation.publish" "发布"}}</span><small>{{.Admin.T "admin.settings.automation.posts_publish_desc" "发布、定时发布、修改已发布文章"}}</small></label>
+    <label><input type="checkbox" name="scopes" value="posts:pin"><span>{{.Admin.T "admin.settings.automation.pin" "置顶"}}</span><small>{{.Admin.T "admin.settings.automation.posts_pin_desc" "置顶或取消置顶文章，影响首页精选"}}</small></label>
+  </div>
+  <div class="scope-group">
+    <strong>{{.Admin.T "admin.nav.links" "链接"}}</strong>
+    <label><input type="checkbox" name="scopes" value="links:read" checked><span>{{.Admin.T "admin.settings.automation.read" "读取"}}</span><small>{{.Admin.T "admin.settings.automation.links_read_desc" "列出和查看链接"}}</small></label>
+    <label><input type="checkbox" name="scopes" value="links:categories" checked><span>{{.Admin.T "admin.settings.automation.read_categories" "获取分类"}}</span><small>{{.Admin.T "admin.settings.automation.links_categories_desc" "列出链接分类和可用 ID"}}</small></label>
+    <label><input type="checkbox" name="scopes" value="links:write" checked><span>{{.Admin.T "admin.settings.automation.write_draft" "写草稿"}}</span><small>{{.Admin.T "admin.settings.automation.links_write_desc" "创建草稿，修改未发布链接"}}</small></label>
+    <label><input type="checkbox" name="scopes" value="links:publish"><span>{{.Admin.T "admin.settings.automation.publish" "发布"}}</span><small>{{.Admin.T "admin.settings.automation.links_publish_desc" "发布、定时发布、修改已发布链接"}}</small></label>
+    <label><input type="checkbox" name="scopes" value="links:pin"><span>{{.Admin.T "admin.settings.automation.pin" "置顶"}}</span><small>{{.Admin.T "admin.settings.automation.links_pin_desc" "置顶或取消置顶链接，影响首页精选链接"}}</small></label>
+  </div>
+  <div class="scope-group">
+    <strong>{{.Admin.T "admin.nav.pages" "页面"}}</strong>
+    <label><input type="checkbox" name="scopes" value="pages:read" checked><span>{{.Admin.T "admin.settings.automation.read" "读取"}}</span><small>{{.Admin.T "admin.settings.automation.pages_read_desc" "列出和查看页面"}}</small></label>
+    <label><input type="checkbox" name="scopes" value="pages:write" checked><span>{{.Admin.T "admin.settings.automation.write_draft" "写草稿"}}</span><small>{{.Admin.T "admin.settings.automation.pages_write_desc" "创建草稿，修改未发布页面"}}</small></label>
+    <label><input type="checkbox" name="scopes" value="pages:publish"><span>{{.Admin.T "admin.settings.automation.publish" "发布"}}</span><small>{{.Admin.T "admin.settings.automation.pages_publish_desc" "发布、定时发布、修改已发布页面"}}</small></label>
+  </div>
+</div>
+{{end}}
+
+{{define "platform-membership-fields"}}
+<div class="field pkey-membership">
+  <span class="field-label">{{.Admin.T "admin.platform_keys.membership" "可管站点"}}</span>
+  <label class="inline-check"><input type="radio" name="membership" value="allowlist" checked data-membership-radio><span>{{.Admin.T "admin.platform_keys.membership_allowlist" "指定站点（推荐）"}}</span></label>
+  <label class="inline-check"><input type="radio" name="membership" value="all" data-membership-radio><span>{{.Admin.T "admin.platform_keys.membership_all" "全部站点（含以后新增）"}}</span></label>
+  <div class="pkey-site-checklist" data-site-checklist>
+    {{range .PlatformSites}}
+    <label class="checkline"><input type="checkbox" name="site_ids" value="{{.ID}}"><span>{{.Name}} <small class="slug">{{.Slug}}{{if not .ManagementAutomationEnabled}} · {{$.Admin.T "admin.platform_keys.site_api_off" "接口未开"}}{{end}}</small></span></label>
+    {{else}}
+    <p class="muted">{{.Admin.T "admin.platform_keys.no_manageable_sites" "暂无站点可选。"}}</p>
+    {{end}}
+  </div>
+</div>
+{{end}}
+
+{{define "platform-key-modal"}}
+<div class="modal api-key-modal" id="platform-key-modal">
+  <a class="modal-backdrop" href="#" aria-label="{{.Admin.T "admin.action.close" "关闭"}}"></a>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="platform-key-modal-title">
+    <h3 id="platform-key-modal-title">{{.Admin.T "admin.platform_keys.create" "创建平台密钥"}}</h3>
+    <form method="post" action="/admin/sites/automation/keys" class="admin-form">
+      <input type="hidden" name="_csrf" value="{{.CSRF}}">
+      <div class="field">
+        <label for="platform-key-name">{{.Admin.T "admin.settings.automation.key_name" "用途名称"}}</label>
+        <input id="platform-key-name" name="name" placeholder="{{.Admin.T "admin.platform_keys.name_placeholder" "多站内容助手"}}" required>
+      </div>
+      {{template "platform-membership-fields" .}}
+      {{template "platform-scope-fields" .}}
+      <div class="modal-actions">
+        <a class="btn" href="#">{{.Admin.T "admin.action.cancel" "取消"}}</a>
+        <button class="btn btn-primary" type="submit">{{.Admin.T "admin.platform_keys.create" "创建平台密钥"}}</button>
+      </div>
+    </form>
+  </div>
+</div>
+{{end}}
+
+{{define "platform-key-edit-modal"}}
+<div class="modal api-edit-modal" id="platform-key-edit-modal" hidden>
+  <button class="modal-backdrop" type="button" data-pkey-edit-close aria-label="{{.Admin.T "admin.action.close" "关闭"}}"></button>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="platform-key-edit-title">
+    <h3 id="platform-key-edit-title">{{.Admin.T "admin.settings.automation.edit_permissions" "修改权限"}}</h3>
+    <p class="muted" style="margin:-.35rem 0 1rem;font-size:.85rem">{{.Admin.T "admin.platform_keys.edit_note" "调整用途名称、可管站点和权限，不会改变已经复制出去的密钥。"}}</p>
+    <form method="post" action="/admin/sites/automation/keys/update" class="admin-form">
+      <input type="hidden" name="_csrf" value="{{.CSRF}}">
+      <input type="hidden" name="id" id="platform-key-edit-id">
+      <div class="field">
+        <label for="platform-key-edit-name">{{.Admin.T "admin.settings.automation.key_name" "用途名称"}}</label>
+        <input id="platform-key-edit-name" name="name" required>
+      </div>
+      {{template "platform-membership-fields" .}}
+      {{template "platform-scope-fields" .}}
+      <div class="modal-actions">
+        <button class="btn" type="button" data-pkey-edit-close>{{.Admin.T "admin.action.cancel" "取消"}}</button>
+        <button class="btn btn-primary" type="submit">{{.Admin.T "admin.action.save" "保存"}}</button>
+      </div>
+    </form>
+  </div>
+</div>
+{{end}}

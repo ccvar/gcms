@@ -272,6 +272,41 @@ func TestGoogleOAuthStateAndAccounts(t *testing.T) {
 	if acc.RefreshToken != "refresh-1" {
 		t.Fatalf("refresh token = %q, want preserved refresh-1", acc.RefreshToken)
 	}
+	site, err := ps.CreateSite("google-site", "Google Site", filepath.Join(dir, "site.db"), filepath.Join(dir, "uploads"), true)
+	if err != nil {
+		t.Fatalf("create google integration site: %v", err)
+	}
+	if err := ps.UpsertSiteGoogleIntegration(&SiteGoogleIntegration{
+		SiteID:          site.ID,
+		Service:         "ga",
+		GoogleAccountID: "google-1",
+		MeasurementID:   "G-ABC123",
+		Property:        "properties/123",
+		DataStream:      "properties/123/dataStreams/456",
+		Enabled:         true,
+	}); err != nil {
+		t.Fatalf("upsert site google integration: %v", err)
+	}
+	integration, ok, err := ps.SiteGoogleIntegration(site.ID, GoogleServiceAnalytics)
+	if err != nil || !ok {
+		t.Fatalf("get site google integration: ok=%v err=%v", ok, err)
+	}
+	if integration.Service != GoogleServiceAnalytics || integration.GoogleAccountID != "google-1" || integration.MeasurementID != "G-ABC123" || integration.Property != "properties/123" || integration.DataStream != "properties/123/dataStreams/456" || !integration.Enabled {
+		t.Fatalf("site google integration mismatch: %#v", integration)
+	}
+	integrations, err := ps.SiteGoogleIntegrations()
+	if err != nil {
+		t.Fatalf("list site google integrations: %v", err)
+	}
+	if got := integrations[site.ID][GoogleServiceAnalytics]; got == nil || got.MeasurementID != "G-ABC123" {
+		t.Fatalf("site google integrations map mismatch: %#v", integrations)
+	}
+	if err := ps.DeleteSiteGoogleIntegration(site.ID, GoogleServiceAnalytics); err != nil {
+		t.Fatalf("delete site google integration: %v", err)
+	}
+	if _, ok, err := ps.SiteGoogleIntegration(site.ID, GoogleServiceAnalytics); err != nil || ok {
+		t.Fatalf("site google integration should be deleted: ok=%v err=%v", ok, err)
+	}
 	if err := ps.DeleteGoogleAccount(GoogleServiceAnalytics, "google-1"); err != nil {
 		t.Fatalf("delete google account: %v", err)
 	}
@@ -281,5 +316,76 @@ func TestGoogleOAuthStateAndAccounts(t *testing.T) {
 	}
 	if len(accounts) != 0 {
 		t.Fatalf("got %d google accounts after delete, want 0", len(accounts))
+	}
+}
+
+func TestClearGoogleOAuthDataRemovesLocalGoogleState(t *testing.T) {
+	dir := t.TempDir()
+	ps, err := Open(filepath.Join(dir, "system.db"))
+	if err != nil {
+		t.Fatalf("open platform store: %v", err)
+	}
+	t.Cleanup(func() { _ = ps.Close() })
+
+	settingKeys := []string{"google.oauth.client_id", "google.oauth.client_secret", "google.oauth.redirect_url"}
+	for _, key := range settingKeys {
+		if err := ps.SetSetting(key, "value-"+key); err != nil {
+			t.Fatalf("set %s: %v", key, err)
+		}
+	}
+	if err := ps.CreateGoogleOAuthState("state-clear", GoogleServiceAll, time.Now().Add(time.Minute)); err != nil {
+		t.Fatalf("create oauth state: %v", err)
+	}
+	for _, service := range []string{GoogleServiceAnalytics, GoogleServiceSearchConsole} {
+		if err := ps.UpsertGoogleAccount(&GoogleAccount{
+			Service:         service,
+			GoogleAccountID: "google-1",
+			Email:           service + "@example.com",
+			AccessToken:     "access",
+			RefreshToken:    "refresh",
+			TokenExpiry:     time.Now().Add(time.Hour),
+		}); err != nil {
+			t.Fatalf("upsert %s account: %v", service, err)
+		}
+	}
+	site, err := ps.CreateSite("google-clear", "Google Clear", filepath.Join(dir, "site.db"), filepath.Join(dir, "uploads"), true)
+	if err != nil {
+		t.Fatalf("create site: %v", err)
+	}
+	for _, service := range []string{GoogleServiceAnalytics, GoogleServiceSearchConsole} {
+		if err := ps.UpsertSiteGoogleIntegration(&SiteGoogleIntegration{
+			SiteID:          site.ID,
+			Service:         service,
+			GoogleAccountID: "google-1",
+			MeasurementID:   "G-CLEAR",
+			Property:        "properties/123",
+			Enabled:         true,
+		}); err != nil {
+			t.Fatalf("upsert %s integration: %v", service, err)
+		}
+	}
+
+	if err := ps.ClearGoogleOAuthData(settingKeys...); err != nil {
+		t.Fatalf("clear google oauth data: %v", err)
+	}
+	for _, key := range settingKeys {
+		if value, ok, err := ps.LookupSetting(key); err != nil || ok || value != "" {
+			t.Fatalf("setting %s should be removed: value=%q ok=%v err=%v", key, value, ok, err)
+		}
+	}
+	if service, ok, err := ps.ConsumeGoogleOAuthState("state-clear"); err != nil || ok || service != "" {
+		t.Fatalf("oauth state should be cleared: service=%q ok=%v err=%v", service, ok, err)
+	}
+	for _, service := range []string{GoogleServiceAnalytics, GoogleServiceSearchConsole} {
+		accounts, err := ps.GoogleAccounts(service)
+		if err != nil {
+			t.Fatalf("list %s accounts: %v", service, err)
+		}
+		if len(accounts) != 0 {
+			t.Fatalf("%s accounts should be cleared: %#v", service, accounts)
+		}
+		if _, ok, err := ps.SiteGoogleIntegration(site.ID, service); err != nil || ok {
+			t.Fatalf("%s integration should be cleared: ok=%v err=%v", service, ok, err)
+		}
 	}
 }

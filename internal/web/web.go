@@ -36,6 +36,7 @@ type Server struct {
 	rnd             *Renderer
 	baseURL         string
 	platformBaseURL string
+	platformSiteID  int64
 	uploadDir       string
 	sess            *sessions
 	login           *loginLimiter
@@ -476,102 +477,121 @@ type View struct {
 	Results int
 
 	// 后台
-	AllPosts                    []*store.Post
-	ListTotal                   int
-	StatusFilter                string
-	CategoryFilter              string
-	CategoryFilterName          string
-	AdminListPath               string
-	DefaultAuthor               string
-	Edit                        *store.Post
-	IsPage                      bool
-	IsLink                      bool
-	EditBase                    string // 编辑表单的后台路径基：posts | pages | links
-	EditListURL                 string // 返回列表的后台 URL
-	EditTypeLabel               string // 文章 | 页面 | 链接
-	Authed                      bool
-	PlatformMode                bool // 当前实例启用了平台级多站点
-	PlatformAdminView           bool // 平台级管理页，不显示当前站点后台导航
-	ShowPwWarn                  bool // 仍为默认密码且本会话未关闭提示
-	CSRF                        string
-	Flash                       string
-	FormErr                     string
-	Settings                    *SettingsForm
-	Themes                      []ThemeOption
-	Cards                       []ThemeCard
-	Section                     string
-	CatKind                     string // 分类管理当前类型：post | link
-	EditCat                     *store.Category
-	FormVals                    map[string]string // 表单回填（分类新增/编辑出错时）
-	Update                      *UpdateInfo       // 系统更新检查
-	Upgrade                     *UpgradeStatus    // 系统升级任务状态
-	Cloudflare                  *CloudflareView   // Cloudflare Worker 部署配置与状态
-	AutomationKeys              []*store.AutomationKey
-	AutomationLogs              []*store.AutomationLog
-	NewAPISecret                string
-	NewAPIName                  string
-	NewAPIScopes                string
-	NewAIBrief                  string
-	NewAPIKeyID                 int64
-	APIBaseURL                  string
-	OpenAPIURL                  string
-	APIDocsURL                  string
-	SkillPackageURL             string
-	StarterPackageURL           string
-	EditLang                    string        // 后台当前操作的内容语种
-	Locales                     []i18n.Locale // 已启用语种
-	AllLocales                  []i18n.Locale // 全部可选语种（内置 + 自定义，语言设置勾选）
-	CustomLocales               []i18n.Locale // 自定义预设（可删除）
-	LocaleCatalogs              map[string]LocaleCatalogView
-	AdminI18NJSON               string             // 当前后台语种的用户覆盖翻译 JSON
-	Trans                       []*store.Post      // 当前编辑文章的互译版本
-	Social                      []SocialLink       // 页脚社交链接（前台渲染 / 后台回填）
-	Menu                        []MenuItem         // 前台页眉导航（按当前语种解析）
-	MenuEdit                    []MenuRow          // 后台导航菜单编辑（URL + 各语种标签）
-	MenuTargets                 []MenuTargetOption // 后台导航菜单可选入口
-	VisualEdit                  bool               // 前台 iframe 可视化编辑模式
-	VisualPreviewURL            string             // 后台可视化编辑 iframe 地址
-	AdminSiteURL                string             // 后台顶部“查看站点”入口
-	AdminPreviewPrefix          string             // 平台多站点下当前站点的前台预览前缀
-	VisualFields                []VisualField      // 可视化编辑侧栏字段
-	VisualGroups                []VisualGroup      // 可视化编辑侧栏字段分组
-	VisualHistory               []VisualLog        // 可视化编辑最近修改
-	LayoutWidth                 string             // 前台内容最大宽度预设（空=跟随主题）
-	OverviewStats               []OverviewStat     // 后台概览：内容状态
-	OverviewTasks               []OverviewTask     // 后台概览：待处理事项
-	OverviewRecent              []*store.Post      // 后台概览：最近更新
-	OverviewStatus              []OverviewStatus   // 后台概览：系统状态
-	PlatformSites               []*platform.Site   // 平台综合后台：站点列表
-	PlatformDomains             map[int64][]*platform.SiteDomain
-	PlatformDomainForms         map[int64]SiteDomainForm // 每站点：绑定域名弹窗的预填数据
-	PlatformSiteIcons           map[int64]string
-	PlatformPreviewURLs         map[int64]string // 平台站点页：按各站点默认语种生成的预览入口
-	PlatformOfficialURLs        map[int64]string // 已发布到 Cloudflare 的正式站点入口
-	PlatformOfficialHosts       map[int64]string // 正式站点入口展示域名
-	PlatformCFDeployAt          map[int64]string // 每站点：Cloudflare 最近部署时间（RFC3339，空=未记录）
-	PlatformCFStatus            map[int64]string // 每站点：Cloudflare 部署状态（running/success/failed/空）
-	PlatformLocaleCounts        map[int64]int    // 每站点：启用语种数
-	PlatformContentCounts       map[int64]int    // 每站点：主语种内容条数（含草稿）
-	PlatformCurrentSiteID       int64            // 平台会话中当前选择的站点
-	GoogleOAuthConfigured       bool             // 平台级 Google OAuth 客户端已配置
-	GoogleOAuthClientID         string           // 平台级 Google OAuth Client ID（后台表单回填）
-	GoogleOAuthRedirectURL      string           // 平台级 Google OAuth 回调地址（后台表单回填）
-	GoogleOAuthSecretSet        bool             // 平台级 Google OAuth Client Secret 已配置
-	GoogleAnalyticsAccounts     []*platform.GoogleAccount
-	GoogleSearchConsoleAccounts []*platform.GoogleAccount
-	ArchivedSites               []*platform.ArchivedSite
-	ArchivedSiteIcons           map[int64]string
-	BackupConfig                backup.Config
-	BackupRecords               []*backup.BackupRecord
-	BackupDir                   string
-	ServerHealth                ServerHealth // 平台站点页：服务器负载 / 内存 / 磁盘快照
-	CaddyOnDemand               bool         // 已启用 Caddy 按需签发（决定域名绑定指引显示自动/手动）
-	CFDNSTokenSet               bool         // 平台级 Cloudflare DNS 令牌已授权
-	CFDNSFingerprint            string       // 已授权令牌指纹（展示用）
-	CFServerIPv4                string       // 记住的服务器 IPv4（DNS A 记录目标）
-	CFServerIPv6                string       // 记住的服务器 IPv6（DNS AAAA 记录目标，可选）
-	CFAuthorizeURL              string       // Cloudflare 授权模板链接
-	CFProxied                   bool         // 「橙云代理」开关的记忆状态（勾选=写代理记录）
+	AllPosts                     []*store.Post
+	ListTotal                    int
+	StatusFilter                 string
+	CategoryFilter               string
+	CategoryFilterName           string
+	AdminListPath                string
+	DefaultAuthor                string
+	Edit                         *store.Post
+	IsPage                       bool
+	IsLink                       bool
+	EditBase                     string // 编辑表单的后台路径基：posts | pages | links
+	EditListURL                  string // 返回列表的后台 URL
+	EditTypeLabel                string // 文章 | 页面 | 链接
+	Authed                       bool
+	PlatformMode                 bool // 当前实例启用了平台级多站点
+	PlatformAdminView            bool // 平台级管理页，不显示当前站点后台导航
+	ShowPwWarn                   bool // 仍为默认密码且本会话未关闭提示
+	CSRF                         string
+	Flash                        string
+	FormErr                      string
+	Settings                     *SettingsForm
+	Themes                       []ThemeOption
+	Cards                        []ThemeCard
+	Section                      string
+	CatKind                      string // 分类管理当前类型：post | link
+	EditCat                      *store.Category
+	FormVals                     map[string]string // 表单回填（分类新增/编辑出错时）
+	Update                       *UpdateInfo       // 系统更新检查
+	Upgrade                      *UpgradeStatus    // 系统升级任务状态
+	Cloudflare                   *CloudflareView   // Cloudflare Worker 部署配置与状态
+	AutomationKeys               []*store.AutomationKey
+	AutomationLogs               []*store.AutomationLog
+	NewAPISecret                 string
+	NewAPIName                   string
+	NewAPIScopes                 string
+	NewAIBrief                   string
+	NewAPIKeyID                  int64
+	APIBaseURL                   string
+	OpenAPIURL                   string
+	APIDocsURL                   string
+	SkillPackageURL              string
+	StarterPackageURL            string
+	EditLang                     string        // 后台当前操作的内容语种
+	Locales                      []i18n.Locale // 已启用语种
+	AllLocales                   []i18n.Locale // 全部可选语种（内置 + 自定义，语言设置勾选）
+	CustomLocales                []i18n.Locale // 自定义预设（可删除）
+	LocaleCatalogs               map[string]LocaleCatalogView
+	AdminI18NJSON                string                                 // 当前后台语种的用户覆盖翻译 JSON
+	Trans                        []*store.Post                          // 当前编辑文章的互译版本
+	Social                       []SocialLink                           // 页脚社交链接（前台渲染 / 后台回填）
+	Menu                         []MenuItem                             // 前台页眉导航（按当前语种解析）
+	MenuEdit                     []MenuRow                              // 后台导航菜单编辑（URL + 各语种标签）
+	MenuTargets                  []MenuTargetOption                     // 后台导航菜单可选入口
+	VisualEdit                   bool                                   // 前台 iframe 可视化编辑模式
+	VisualPreviewURL             string                                 // 后台可视化编辑 iframe 地址
+	AdminSiteURL                 string                                 // 后台顶部“查看站点”入口
+	AdminPreviewPrefix           string                                 // 平台多站点下当前站点的前台预览前缀
+	VisualFields                 []VisualField                          // 可视化编辑侧栏字段
+	VisualGroups                 []VisualGroup                          // 可视化编辑侧栏字段分组
+	VisualHistory                []VisualLog                            // 可视化编辑最近修改
+	LayoutWidth                  string                                 // 前台内容最大宽度预设（空=跟随主题）
+	OverviewStats                []OverviewStat                         // 后台概览：内容状态
+	OverviewTasks                []OverviewTask                         // 后台概览：待处理事项
+	OverviewRecent               []*store.Post                          // 后台概览：最近更新
+	OverviewStatus               []OverviewStatus                       // 后台概览：系统状态
+	PlatformSites                []*platform.Site                       // 平台综合后台：站点列表
+	PlatformKeys                 []*platform.PlatformAutomationKey      // 平台自动化密钥（多站 AI 管理）
+	PlatformKeyLogs              []*platform.PlatformAutomationLogEntry // 跨站审计时间线
+	PlatformSkillURL             string                                 // 平台薄包下载入口（reveal 弹窗内嵌）
+	NewPlatformSecret            string                                 // 新建/重生成后一次性显示的平台密钥明文
+	NewPlatformName              string
+	NewPlatformScopes            string
+	NewPlatformKeyID             int64
+	NewPlatformMembership        string
+	NewPlatformBrief             string // 给 AI 的接入说明（平台版）
+	PlatformDomains              map[int64][]*platform.SiteDomain
+	PlatformDomainForms          map[int64]SiteDomainForm // 每站点：绑定域名弹窗的预填数据
+	PlatformSiteIcons            map[int64]string
+	PlatformPreviewURLs          map[int64]string // 平台站点页：按各站点默认语种生成的预览入口
+	PlatformOfficialURLs         map[int64]string // 已发布到 Cloudflare 的正式站点入口
+	PlatformOfficialHosts        map[int64]string // 正式站点入口展示域名
+	PlatformCFDeployAt           map[int64]string // 每站点：Cloudflare 最近部署时间（RFC3339，空=未记录）
+	PlatformCFStatus             map[int64]string // 每站点：Cloudflare 部署状态（running/success/failed/空）
+	PlatformLocaleCounts         map[int64]int    // 每站点：启用语种数
+	PlatformContentCounts        map[int64]int    // 每站点：主语种内容条数（含草稿）
+	PlatformContentUpdatedAt     map[int64]string // 每站点：对外可见内容上次更新时间（RFC3339，空=无已发布内容）；服务器托管站展示"服务器 · X 前"
+	PlatformCurrentSiteID        int64            // 平台会话中当前选择的站点
+	GoogleOAuthConfigured        bool             // 平台级 Google OAuth 客户端已配置
+	GoogleOAuthClientID          string           // 平台级 Google OAuth Client ID（后台表单回填）
+	GoogleOAuthRedirectURL       string           // 平台级 Google OAuth 回调地址（后台表单回填）
+	GoogleOAuthSecretSet         bool             // 平台级 Google OAuth Client Secret 已配置
+	GoogleOAuthProjectID         string           // 从 OAuth Client ID 推断出的 Google Cloud 项目号（展示/跳转用）
+	GoogleAnalyticsAdminAPIURL   string           // Analytics Admin API 启用入口
+	GoogleAnalyticsDataAPIURL    string           // Analytics Data API 启用入口
+	GoogleSearchConsoleAPIURL    string           // Search Console API 启用入口
+	GoogleAccounts               []*platform.GoogleAccount
+	GoogleAnalyticsAccounts      []*platform.GoogleAccount
+	GoogleSearchConsoleAccounts  []*platform.GoogleAccount
+	SiteGoogleIntegrations       map[int64]map[string]*platform.SiteGoogleIntegration
+	SiteGoogleAnalyticsSummaries map[int64]*platform.SiteGoogleAnalyticsSummary
+	SiteGoogleSearchSummaries    map[int64]*platform.SiteGoogleSearchConsoleSummary
+	PlatformGoogleDefaultURIs    map[int64]string // 每站点自动创建 GA/匹配 Search Console 时优先使用的网站地址
+	ArchivedSites                []*platform.ArchivedSite
+	ArchivedSiteIcons            map[int64]string
+	BackupConfig                 backup.Config
+	BackupRecords                []*backup.BackupRecord
+	BackupDir                    string
+	ServerHealth                 ServerHealth // 平台站点页：服务器负载 / 内存 / 磁盘快照
+	CaddyOnDemand                bool         // 已启用 Caddy 按需签发（决定域名绑定指引显示自动/手动）
+	CFDNSTokenSet                bool         // 平台级 Cloudflare DNS 令牌已授权
+	CFDNSFingerprint             string       // 已授权令牌指纹（展示用）
+	CFServerIPv4                 string       // 记住的服务器 IPv4（DNS A 记录目标）
+	CFServerIPv6                 string       // 记住的服务器 IPv6（DNS AAAA 记录目标，可选）
+	CFAuthorizeURL               string       // Cloudflare 授权模板链接
+	CFProxied                    bool         // 「橙云代理」开关的记忆状态（勾选=写代理记录）
 }
 
 type OverviewStat struct {
@@ -959,6 +979,7 @@ func (s *Server) runtimeForSite(site *platform.Site, domains []*platform.SiteDom
 	if site.IsDefault {
 		s.baseURL = baseURL
 		s.uploadDir = uploadDir
+		s.platformSiteID = site.ID
 		rt.server = s
 		return rt, nil
 	}
@@ -976,6 +997,7 @@ func (s *Server) cloneForRuntime(rt *SiteRuntime) *Server {
 		rnd:                  s.rnd,
 		baseURL:              rt.BaseURL,
 		platformBaseURL:      s.platformBaseURL,
+		platformSiteID:       rt.Site.ID,
 		uploadDir:            rt.UploadDir,
 		sess:                 s.sess,
 		login:                s.login,
@@ -1297,9 +1319,22 @@ func sitePreviewTarget(path string) (int64, string, bool) {
 	return id, tail, true
 }
 
+// platformAutomationKillSwitchKey 是全局急停开关（平台设置）。置为 "1" 时，所有平台密钥请求一律 403，
+// 用于事故一键封禁（不影响站点密钥与后台）。
+const platformAutomationKillSwitchKey = "platform_automation_disabled"
+
+func (s *Server) platformAutomationKilled() bool {
+	return s.platform != nil && s.platform.Setting(platformAutomationKillSwitchKey) == "1"
+}
+
 func (s *Server) servePlatformAPI(w http.ResponseWriter, r *http.Request, pool *SiteRuntimePool) {
 	if !s.platformHostAllowed(r, pool) {
 		http.NotFound(w, r)
+		return
+	}
+	// 发现端点：GET /api/platform/v1/sites（含结尾斜杠），在解析数字 siteID 之前拦截。
+	if p := r.URL.Path; p == "/api/platform/v1/sites" || p == "/api/platform/v1/sites/" {
+		s.servePlatformDiscovery(w, r)
 		return
 	}
 	siteID, ok := platformAPISiteID(r.URL.Path)
@@ -1307,6 +1342,23 @@ func (s *Server) servePlatformAPI(w http.ResponseWriter, r *http.Request, pool *
 		http.NotFound(w, r)
 		return
 	}
+	// 平台密钥鉴权：若 token 命中 platform_automation_keys，则在此处完成鉴权 + 成员/开关校验，
+	// 再把合成身份注入 context，交由站点 handler 原样处理。
+	// 若 token 不是平台密钥（未命中），**不要 401**——回退到站点路径，保证既有站点密钥（gcms_）
+	// 通过平台命名空间调用时仍然可用（向后兼容 / invariant 4）。
+	token := apiTokenFromRequest(r)
+	if s.platform != nil && token != "" {
+		key, isPlat, err := s.platform.GetPlatformKeyByToken(token)
+		if err != nil {
+			apiError(w, http.StatusInternalServerError, "auth_error", err.Error())
+			return
+		}
+		if isPlat {
+			s.servePlatformKeyRequest(w, r, pool, key, siteID)
+			return
+		}
+	}
+	// 站点密钥路径（保持原逻辑不变）。
 	rt, ok := pool.runtimeByID(siteID)
 	if !ok || rt == nil || rt.server == nil || rt.Site == nil {
 		http.NotFound(w, r)
@@ -1317,6 +1369,97 @@ func (s *Server) servePlatformAPI(w http.ResponseWriter, r *http.Request, pool *
 		return
 	}
 	rt.server.siteHandler().ServeHTTP(w, r)
+}
+
+// servePlatformKeyRequest 处理一把平台密钥对某个站点的调用：
+// 限流（仅此一次）→ 全局急停 → 实时成员/站点开关校验（读平台库，非缓存 rt.Site）→ 注入身份 → 交站点 handler。
+func (s *Server) servePlatformKeyRequest(w http.ResponseWriter, r *http.Request, pool *SiteRuntimePool, key *platform.PlatformAutomationKey, siteID int64) {
+	token := apiTokenFromRequest(r)
+	// 平台层限流一次；requireAutomationToken 在平台身份下会跳过限流，避免二次计数。
+	if !s.checkAPIRateLimit(w, r, token) {
+		return
+	}
+	if s.platformAutomationKilled() {
+		apiError(w, http.StatusForbidden, "platform_automation_disabled", "平台自动化已被全局关闭。")
+		return
+	}
+	allowed, err := s.platform.PlatformKeyCanAccessSite(key, siteID)
+	if err != nil {
+		apiError(w, http.StatusInternalServerError, "auth_error", err.Error())
+		return
+	}
+	if !allowed {
+		apiError(w, http.StatusForbidden, "site_forbidden", "该密钥无权管理此站点，或站点未开启自动化。")
+		return
+	}
+	rt, ok := pool.runtimeByID(siteID)
+	if !ok || rt == nil || rt.server == nil || rt.Site == nil {
+		apiError(w, http.StatusNotFound, "site_not_found", "站点不存在。")
+		return
+	}
+	_ = s.platform.TouchPlatformKey(key.ID)
+	ctx := withPlatformIdentity(r.Context(), &platformIdentity{keyID: key.ID, scopes: apiScopeMap(key.Scopes)})
+	rt.server.siteHandler().ServeHTTP(w, r.WithContext(ctx))
+}
+
+// servePlatformDiscovery 回应 GET /api/platform/v1/sites：仅平台密钥可用，返回该密钥当前**实际可管**的站点集。
+// 契约（已冻结，CLI 是硬消费方）：{"items":[{"id","slug","name","capabilities","api_base"}],"all_sites":bool}
+func (s *Server) servePlatformDiscovery(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		apiError(w, http.StatusMethodNotAllowed, "method_not_allowed", "仅支持 GET。")
+		return
+	}
+	if s.platform == nil {
+		apiError(w, http.StatusNotFound, "platform_api_disabled", "未启用平台模式。")
+		return
+	}
+	token := apiTokenFromRequest(r)
+	if !s.checkAPIRateLimit(w, r, token) {
+		return
+	}
+	if token == "" {
+		apiError(w, http.StatusUnauthorized, "missing_token", "缺少访问密钥。")
+		return
+	}
+	key, isPlat, err := s.platform.GetPlatformKeyByToken(token)
+	if err != nil {
+		apiError(w, http.StatusInternalServerError, "auth_error", err.Error())
+		return
+	}
+	if !isPlat {
+		// 仅平台密钥可发现（站点密钥不暴露跨站清单）。
+		apiError(w, http.StatusUnauthorized, "invalid_token", "访问密钥无效或不是平台密钥。")
+		return
+	}
+	if s.platformAutomationKilled() {
+		apiError(w, http.StatusForbidden, "platform_automation_disabled", "平台自动化已被全局关闭。")
+		return
+	}
+	sites, err := s.platform.ManageableSites(key)
+	if err != nil {
+		apiError(w, http.StatusInternalServerError, "store_error", err.Error())
+		return
+	}
+	caps := key.ScopeList()
+	if caps == nil {
+		caps = []string{}
+	}
+	base := strings.TrimRight(s.platformPublicBaseURL(r), "/")
+	items := make([]map[string]any, 0, len(sites))
+	for _, site := range sites {
+		items = append(items, map[string]any{
+			"id":           site.ID,
+			"slug":         site.Slug,
+			"name":         site.Name,
+			"capabilities": caps,
+			"api_base":     fmt.Sprintf("%s/api/platform/v1/sites/%d", base, site.ID),
+		})
+	}
+	_ = s.platform.TouchPlatformKey(key.ID)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"items":     items,
+		"all_sites": key.MembershipMode == platform.KeyMembershipAll,
+	})
 }
 
 func platformAPISiteID(path string) (int64, bool) {
@@ -1354,7 +1497,7 @@ func platformOnlyPath(path string) bool {
 		return true
 	case path == "/admin/server-health":
 		return true
-	case strings.HasPrefix(path, "/admin/google/oauth/") || strings.HasPrefix(path, "/admin/google/accounts/"):
+	case strings.HasPrefix(path, "/admin/google/oauth/") || strings.HasPrefix(path, "/admin/google/accounts/") || strings.HasPrefix(path, "/admin/google/analytics/") || strings.HasPrefix(path, "/admin/google/search-console/"):
 		return true
 	case path == "/admin/backups" || strings.HasPrefix(path, "/admin/backups/"):
 		return true
@@ -1369,6 +1512,8 @@ func platformOnlyPath(path string) bool {
 	case path == "/admin/settings/admin-i18n":
 		return true
 	case path == "/admin/sites" || strings.HasPrefix(path, "/admin/sites/"):
+		return true
+	case path == "/admin/automation" || strings.HasPrefix(path, "/admin/automation/"):
 		return true
 	case strings.HasPrefix(path, "/api/platform/"):
 		return true
@@ -1555,7 +1700,7 @@ func cspReportOnly(path string) string {
 	if strings.HasPrefix(path, "/admin") {
 		return common + " script-src 'self' 'unsafe-inline'; connect-src 'self' https://api.github.com https://github.com; frame-src 'self'; frame-ancestors 'self'"
 	}
-	return common + " script-src 'self' 'unsafe-inline' https://giscus.app; connect-src 'self' https://giscus.app https://api.github.com https://github.com; frame-src 'self' https://giscus.app; frame-ancestors 'self'"
+	return common + " script-src 'self' 'unsafe-inline' https://giscus.app https://www.googletagmanager.com; connect-src 'self' https://giscus.app https://api.github.com https://github.com https://www.google-analytics.com https://region1.google-analytics.com; frame-src 'self' https://giscus.app; frame-ancestors 'self'"
 }
 
 // ---------- 多语种基础设施 ----------
@@ -2522,7 +2667,10 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("GET /admin/google/oauth/start", s.requireAuth(s.adminGoogleOAuthStart))
 	mux.HandleFunc("GET /admin/google/oauth/callback", s.requireAuth(s.adminGoogleOAuthCallback))
 	mux.HandleFunc("POST /admin/google/oauth/config", s.requireAuth(s.adminGoogleOAuthConfig))
+	mux.HandleFunc("POST /admin/google/oauth/clear", s.requireAuth(s.adminGoogleOAuthClear))
 	mux.HandleFunc("POST /admin/google/accounts/delete", s.requireAuth(s.adminGoogleAccountDelete))
+	mux.HandleFunc("GET /admin/google/analytics/properties", s.requireAuth(s.adminGoogleAnalyticsProperties))
+	mux.HandleFunc("GET /admin/google/search-console/sites", s.requireAuth(s.adminGoogleSearchConsoleSites))
 	mux.HandleFunc("POST /admin/sites", s.requireAuth(s.adminCreateSite))
 	mux.HandleFunc("POST /admin/sites/{id}/enter", s.requireAuth(s.adminEnterSite))
 	mux.HandleFunc("GET /admin/sites/{id}/automation/skill.zip", s.requireAuth(s.adminDownloadPlatformAutomationSkill))
@@ -2531,6 +2679,11 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /admin/sites/{id}/status", s.requireAuth(s.adminSetSiteStatus))
 	mux.HandleFunc("POST /admin/sites/{id}/automation", s.requireAuth(s.adminSetSiteAutomation))
 	mux.HandleFunc("POST /admin/sites/{id}/domains", s.requireAuth(s.adminSaveSiteDomains))
+	mux.HandleFunc("POST /admin/sites/{id}/google", s.requireAuth(s.adminSaveSiteGoogleIntegration))
+	mux.HandleFunc("POST /admin/sites/{id}/google/analytics/summary", s.requireAuth(s.adminGoogleAnalyticsSummary))
+	mux.HandleFunc("POST /admin/sites/{id}/google/analytics/stream", s.requireAuth(s.adminCreateGoogleAnalyticsStream))
+	mux.HandleFunc("POST /admin/sites/{id}/google/search-console/property", s.requireAuth(s.adminCreateGoogleSearchConsoleProperty))
+	mux.HandleFunc("POST /admin/sites/{id}/google/search-console/summary", s.requireAuth(s.adminGoogleSearchConsoleSummary))
 	mux.HandleFunc("POST /admin/sites/{id}/cloudflare/deploy", s.requireAuth(s.adminPlatformSiteCloudflareDeploy))
 	mux.HandleFunc("GET /admin/sites/{id}/cloudflare/status", s.requireAuth(s.adminPlatformSiteCloudflareStatus))
 	mux.HandleFunc("GET /admin/sites/{id}/wizard/proxy", s.requireAuth(s.adminWizardProxyDetect))
@@ -2598,6 +2751,14 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /admin/settings/automation/keys/regenerate", s.requireAuth(s.adminRegenerateAutomationKey))
 	mux.HandleFunc("POST /admin/settings/automation/keys/revoke", s.requireAuth(s.adminRevokeAutomationKey))
 	mux.HandleFunc("POST /admin/settings/automation/keys/delete", s.requireAuth(s.adminDeleteAutomationKey))
+	mux.HandleFunc("GET /admin/automation", s.requireAuth(s.adminPlatformAutomation))
+	mux.HandleFunc("GET /admin/automation/platform-skill.zip", s.requireAuth(s.adminDownloadPlatformSkill))
+	mux.HandleFunc("POST /admin/automation/platform-skill.zip", s.requireAuth(s.adminDownloadPlatformSkill))
+	mux.HandleFunc("POST /admin/sites/automation/keys", s.requireAuth(s.adminCreatePlatformKey))
+	mux.HandleFunc("POST /admin/sites/automation/keys/update", s.requireAuth(s.adminUpdatePlatformKey))
+	mux.HandleFunc("POST /admin/sites/automation/keys/regenerate", s.requireAuth(s.adminRegeneratePlatformKey))
+	mux.HandleFunc("POST /admin/sites/automation/keys/revoke", s.requireAuth(s.adminRevokePlatformKey))
+	mux.HandleFunc("POST /admin/sites/automation/keys/delete", s.requireAuth(s.adminDeletePlatformKey))
 	mux.HandleFunc("GET /admin/settings/automation/skill.zip", s.requireAuth(s.adminDownloadAutomationSkill))
 	mux.HandleFunc("POST /admin/settings/automation/skill.zip", s.requireAuth(s.adminDownloadAutomationSkill))
 	mux.HandleFunc("GET /admin/settings/automation/starter.zip", s.requireAuth(s.adminDownloadAutomationStarter))
@@ -2671,6 +2832,7 @@ func (s *Server) viewForLang(r *http.Request, lang, nav string) *View {
 	}
 	st := s.site(lang)
 	st.BaseURL = s.publicBaseURL(r)
+	s.applySiteGoogleIntegrations(r, &st)
 	tr := s.i18n.Tr(lang, s.defaultLang())
 	if prefix := previewRoutePrefixFrom(r.Context()); prefix != "" {
 		tr = tr.WithPrefix(localizedPrefix(prefix, lang))

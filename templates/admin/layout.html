@@ -58,6 +58,7 @@
         {{if .PlatformAdminView}}
         {{if .Authed}}
         <a href="/admin/sites"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 3 7.5 12 12l9-4.5L12 3Z"/><path d="m3 12 9 4.5 9-4.5"/><path d="m3 16.5 9 4.5 9-4.5"/></svg>{{.Admin.T "admin.sites.title" "站点管理"}}</a>
+        <a href="/admin/automation"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l1.5 4.2L18 9l-4.5 1.8L12 15l-1.5-4.2L6 9l4.5-1.8L12 3Z"/><path d="M18.5 14.5l.7 1.9L21 17l-1.8.6L18.5 20l-.7-1.9L16 17l1.8-.6.7-1.9Z"/></svg>{{.Admin.T "admin.platform.automation.title" "AI 接入"}}</a>
         <a href="/admin/platform/settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 21v-7"/><path d="M4 10V3"/><path d="M12 21v-9"/><path d="M12 8V3"/><path d="M20 21v-5"/><path d="M20 12V3"/><path d="M2 14h4"/><path d="M10 8h4"/><path d="M18 16h4"/></svg>{{.Admin.T "admin.platform.settings.title" "设置"}}</a>
         <form method="post" action="/admin/logout">
           <input type="hidden" name="_csrf" value="{{.CSRF}}">

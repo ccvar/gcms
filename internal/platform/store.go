@@ -194,6 +194,84 @@ CREATE TABLE IF NOT EXISTS platform_google_oauth_states (
 
 CREATE INDEX IF NOT EXISTS idx_platform_google_oauth_states_expires
 ON platform_google_oauth_states(expires_at);
+
+CREATE TABLE IF NOT EXISTS site_google_integrations (
+  site_id INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+  service TEXT NOT NULL,
+  google_account_id TEXT NOT NULL DEFAULT '',
+  measurement_id TEXT NOT NULL DEFAULT '',
+  property TEXT NOT NULL DEFAULT '',
+  data_stream TEXT NOT NULL DEFAULT '',
+  enabled INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY(site_id, service)
+);
+
+CREATE INDEX IF NOT EXISTS idx_site_google_integrations_service_enabled
+ON site_google_integrations(service, enabled);
+
+CREATE TABLE IF NOT EXISTS site_google_analytics_summaries (
+  site_id INTEGER PRIMARY KEY REFERENCES sites(id) ON DELETE CASCADE,
+  property TEXT NOT NULL DEFAULT '',
+  measurement_id TEXT NOT NULL DEFAULT '',
+  active_users_7d INTEGER NOT NULL DEFAULT 0,
+  sessions_7d INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT '',
+  error_message TEXT NOT NULL DEFAULT '',
+  fetched_at TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS site_google_search_console_summaries (
+  site_id INTEGER PRIMARY KEY REFERENCES sites(id) ON DELETE CASCADE,
+  property TEXT NOT NULL DEFAULT '',
+  clicks_7d INTEGER NOT NULL DEFAULT 0,
+  impressions_7d INTEGER NOT NULL DEFAULT 0,
+  ctr_7d REAL NOT NULL DEFAULT 0,
+  position_7d REAL NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT '',
+  error_message TEXT NOT NULL DEFAULT '',
+  fetched_at TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS platform_automation_keys (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  name            TEXT NOT NULL,
+  token_hash      TEXT NOT NULL UNIQUE,
+  token_prefix    TEXT NOT NULL,
+  membership_mode TEXT NOT NULL DEFAULT 'allowlist',
+  scopes          TEXT NOT NULL DEFAULT '',
+  expires_at      TEXT,
+  last_used_at    TEXT,
+  created_at      TEXT NOT NULL,
+  revoked_at      TEXT
+);
+
+CREATE TABLE IF NOT EXISTS platform_automation_key_sites (
+  key_id     INTEGER NOT NULL REFERENCES platform_automation_keys(id) ON DELETE CASCADE,
+  site_id    INTEGER NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(key_id, site_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_platform_automation_key_sites_site
+ON platform_automation_key_sites(site_id);
+
+CREATE TABLE IF NOT EXISTS platform_automation_logs (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  key_id    INTEGER REFERENCES platform_automation_keys(id) ON DELETE SET NULL,
+  site_id   INTEGER NOT NULL DEFAULT 0,
+  action    TEXT NOT NULL,
+  kind      TEXT NOT NULL DEFAULT '',
+  target_id INTEGER NOT NULL DEFAULT 0,
+  message   TEXT NOT NULL DEFAULT '',
+  at        TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_platform_automation_logs_key
+ON platform_automation_logs(key_id, id DESC);
 `
 
 func Open(path string) (*Store, error) {
@@ -212,7 +290,43 @@ func Open(path string) (*Store, error) {
 		_ = s.Close()
 		return nil, fmt.Errorf("平台数据库迁移失败: %w", err)
 	}
+	if err := s.migrate(); err != nil {
+		_ = s.Close()
+		return nil, fmt.Errorf("平台数据库迁移失败: %w", err)
+	}
 	return s, nil
+}
+
+func (s *Store) migrate() error {
+	if s == nil {
+		return nil
+	}
+	return s.ensureColumn("site_google_integrations", "data_stream", "TEXT NOT NULL DEFAULT ''")
+}
+
+func (s *Store) ensureColumn(table, column, definition string) error {
+	rows, err := s.db.Query(`PRAGMA table_info(` + table + `)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull, pk int
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
+			return err
+		}
+		if name == column {
+			return rows.Err()
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`ALTER TABLE ` + table + ` ADD COLUMN ` + column + ` ` + definition)
+	return err
 }
 
 func (s *Store) Path() string {
@@ -1075,4 +1189,391 @@ func boolInt(v bool) int {
 		return 1
 	}
 	return 0
+}
+
+// ===================== 平台级自动化密钥（多站 AI 管理，v2） =====================
+
+const (
+	KeyMembershipAll       = "all"
+	KeyMembershipAllowlist = "allowlist"
+)
+
+const platformKeyCols = `id,name,token_prefix,membership_mode,scopes,expires_at,last_used_at,created_at,revoked_at`
+
+// PlatformAutomationKey 是一把可管理多个站点的平台密钥（存平台库，非站库）。
+type PlatformAutomationKey struct {
+	ID             int64
+	Name           string
+	TokenPrefix    string
+	MembershipMode string // all | allowlist
+	Scopes         string // 逗号分隔，复用 apiScope 词表
+	AllowedSiteIDs []int64
+	ExpiresAt      time.Time
+	LastUsedAt     time.Time
+	CreatedAt      time.Time
+	RevokedAt      time.Time
+}
+
+// PlatformAutomationLogEntry 是一条跨站审计记录。
+type PlatformAutomationLogEntry struct {
+	ID       int64
+	KeyID    int64
+	SiteID   int64
+	Action   string
+	Kind     string
+	TargetID int64
+	Message  string
+	At       time.Time
+}
+
+// ScopeList 拆出能力列表。
+func (k *PlatformAutomationKey) ScopeList() []string {
+	var out []string
+	for _, s := range strings.Split(k.Scopes, ",") {
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// Active 报告密钥是否仍有效（未吊销、未过期）。
+func (k *PlatformAutomationKey) Active() bool {
+	if k == nil || !k.RevokedAt.IsZero() {
+		return false
+	}
+	if !k.ExpiresAt.IsZero() && time.Now().After(k.ExpiresAt) {
+		return false
+	}
+	return true
+}
+
+// CanManageSite 只判成员范围；站点自身 enabled / automation-on 由 PlatformKeyCanAccessSite 实时查库判定。
+func (k *PlatformAutomationKey) CanManageSite(siteID int64) bool {
+	if k == nil || !k.Active() {
+		return false
+	}
+	if k.MembershipMode == KeyMembershipAll {
+		return true
+	}
+	for _, id := range k.AllowedSiteIDs {
+		if id == siteID {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizePlatformMembership(mode string) string {
+	if mode == KeyMembershipAll {
+		return KeyMembershipAll
+	}
+	return KeyMembershipAllowlist
+}
+
+func dedupInt64(in []int64) []int64 {
+	seen := map[int64]bool{}
+	var out []int64
+	for _, v := range in {
+		if v > 0 && !seen[v] {
+			seen[v] = true
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+func scanPlatformKey(row interface{ Scan(...any) error }) (*PlatformAutomationKey, error) {
+	var k PlatformAutomationKey
+	var expires, lastUsed, revoked sql.NullString
+	var created string
+	if err := row.Scan(&k.ID, &k.Name, &k.TokenPrefix, &k.MembershipMode, &k.Scopes, &expires, &lastUsed, &created, &revoked); err != nil {
+		return nil, err
+	}
+	k.ExpiresAt = parseTime(expires.String)
+	k.LastUsedAt = parseTime(lastUsed.String)
+	k.CreatedAt = parseTime(created)
+	k.RevokedAt = parseTime(revoked.String)
+	return &k, nil
+}
+
+func (s *Store) platformKeyAllowedSiteIDs(keyID int64) ([]int64, error) {
+	rows, err := s.db.Query(`SELECT site_id FROM platform_automation_key_sites WHERE key_id=? ORDER BY site_id`, keyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// CreatePlatformKey 插入一把密钥；token 明文由调用方生成（只显示一次），此处只存 SHA-256。mode!="all" 按 allowlist。
+func (s *Store) CreatePlatformKey(name, token, prefix, mode, scopes string, allowedSiteIDs []int64, expiresAt time.Time) (int64, error) {
+	if s == nil {
+		return 0, sql.ErrConnDone
+	}
+	mode = normalizePlatformMembership(mode)
+	now := fmtTime(time.Now())
+	var exp any
+	if !expiresAt.IsZero() {
+		exp = fmtTime(expiresAt)
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	res, err := tx.Exec(`INSERT INTO platform_automation_keys(name,token_hash,token_prefix,membership_mode,scopes,expires_at,created_at)
+		VALUES(?,?,?,?,?,?,?)`,
+		strings.TrimSpace(name), sessionTokenHash(token), prefix, mode, strings.TrimSpace(scopes), exp, now)
+	if err != nil {
+		return 0, err
+	}
+	id, _ := res.LastInsertId()
+	if mode == KeyMembershipAllowlist {
+		for _, sid := range dedupInt64(allowedSiteIDs) {
+			if _, err := tx.Exec(`INSERT OR IGNORE INTO platform_automation_key_sites(key_id,site_id,created_at) VALUES(?,?,?)`, id, sid, now); err != nil {
+				return 0, err
+			}
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+// GetPlatformKeyByToken 按明文 token 查有效密钥并水化白名单；未命中/吊销/过期一律 (nil,false,nil)。
+func (s *Store) GetPlatformKeyByToken(token string) (*PlatformAutomationKey, bool, error) {
+	if s == nil || strings.TrimSpace(token) == "" {
+		return nil, false, nil
+	}
+	row := s.db.QueryRow(`SELECT `+platformKeyCols+` FROM platform_automation_keys WHERE token_hash=?`, sessionTokenHash(token))
+	k, err := scanPlatformKey(row)
+	if err == sql.ErrNoRows {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	if !k.Active() {
+		return nil, false, nil
+	}
+	if k.MembershipMode == KeyMembershipAllowlist {
+		if k.AllowedSiteIDs, err = s.platformKeyAllowedSiteIDs(k.ID); err != nil {
+			return nil, false, err
+		}
+	}
+	return k, true, nil
+}
+
+// GetPlatformKey 按 id 取（含已吊销/过期，供后台展示），水化白名单。
+func (s *Store) GetPlatformKey(id int64) (*PlatformAutomationKey, bool, error) {
+	if s == nil {
+		return nil, false, nil
+	}
+	row := s.db.QueryRow(`SELECT `+platformKeyCols+` FROM platform_automation_keys WHERE id=?`, id)
+	k, err := scanPlatformKey(row)
+	if err == sql.ErrNoRows {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	if k.AllowedSiteIDs, err = s.platformKeyAllowedSiteIDs(k.ID); err != nil {
+		return nil, false, err
+	}
+	return k, true, nil
+}
+
+// ListPlatformKeys 列出所有密钥（含白名单），供后台管理。
+func (s *Store) ListPlatformKeys() ([]*PlatformAutomationKey, error) {
+	if s == nil {
+		return nil, nil
+	}
+	rows, err := s.db.Query(`SELECT ` + platformKeyCols + ` FROM platform_automation_keys ORDER BY id DESC`)
+	if err != nil {
+		return nil, err
+	}
+	var out []*PlatformAutomationKey
+	for rows.Next() {
+		k, err := scanPlatformKey(rows)
+		if err != nil {
+			rows.Close()
+			return nil, err
+		}
+		out = append(out, k)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for _, k := range out {
+		if k.AllowedSiteIDs, err = s.platformKeyAllowedSiteIDs(k.ID); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// UpdatePlatformKey 更新名称/成员模式/能力/白名单/过期（不改 token）。
+func (s *Store) UpdatePlatformKey(id int64, name, mode, scopes string, allowedSiteIDs []int64, expiresAt time.Time) error {
+	if s == nil {
+		return sql.ErrConnDone
+	}
+	mode = normalizePlatformMembership(mode)
+	var exp any
+	if !expiresAt.IsZero() {
+		exp = fmtTime(expiresAt)
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`UPDATE platform_automation_keys SET name=?,membership_mode=?,scopes=?,expires_at=? WHERE id=?`,
+		strings.TrimSpace(name), mode, strings.TrimSpace(scopes), exp, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM platform_automation_key_sites WHERE key_id=?`, id); err != nil {
+		return err
+	}
+	if mode == KeyMembershipAllowlist {
+		now := fmtTime(time.Now())
+		for _, sid := range dedupInt64(allowedSiteIDs) {
+			if _, err := tx.Exec(`INSERT OR IGNORE INTO platform_automation_key_sites(key_id,site_id,created_at) VALUES(?,?,?)`, id, sid, now); err != nil {
+				return err
+			}
+		}
+	}
+	return tx.Commit()
+}
+
+// RotatePlatformKeyToken 只换 token（保留名称/成员/能力/白名单），重置最近使用时间。仅未吊销的密钥可换。
+func (s *Store) RotatePlatformKeyToken(id int64, token, prefix string) error {
+	if s == nil {
+		return sql.ErrConnDone
+	}
+	res, err := s.db.Exec(`UPDATE platform_automation_keys
+		SET token_hash=?, token_prefix=?, last_used_at=NULL
+		WHERE id=? AND revoked_at IS NULL`, sessionTokenHash(token), prefix, id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// TouchPlatformKey 记录最近使用时间。
+func (s *Store) TouchPlatformKey(id int64) error {
+	if s == nil {
+		return nil
+	}
+	_, err := s.db.Exec(`UPDATE platform_automation_keys SET last_used_at=? WHERE id=?`, fmtTime(time.Now()), id)
+	return err
+}
+
+// RevokePlatformKey 吊销（软删，保留审计）。
+func (s *Store) RevokePlatformKey(id int64) error {
+	if s == nil {
+		return sql.ErrConnDone
+	}
+	_, err := s.db.Exec(`UPDATE platform_automation_keys SET revoked_at=? WHERE id=? AND revoked_at IS NULL`, fmtTime(time.Now()), id)
+	return err
+}
+
+// DeletePlatformKey 物理删除（连带白名单级联；审计 key_id 置空保留）。
+func (s *Store) DeletePlatformKey(id int64) error {
+	if s == nil {
+		return sql.ErrConnDone
+	}
+	_, err := s.db.Exec(`DELETE FROM platform_automation_keys WHERE id=?`, id)
+	return err
+}
+
+// PlatformKeyCanAccessSite 实时判定：成员范围 + 站点 enabled + automation-on（分发层用，避免读缓存的 rt.Site）。
+func (s *Store) PlatformKeyCanAccessSite(k *PlatformAutomationKey, siteID int64) (bool, error) {
+	if k == nil || !k.CanManageSite(siteID) {
+		return false, nil
+	}
+	site, ok, err := s.GetSite(siteID)
+	if err != nil || !ok || site == nil {
+		return false, err
+	}
+	return site.Status == "enabled" && site.ManagementAutomationEnabled, nil
+}
+
+// ManageableSites 返回该密钥当前**实际可管**的站点（成员 ∩ enabled ∩ automation-on）。
+// 发现接口与分发共用它，保证"能发现即能调用"。
+func (s *Store) ManageableSites(k *PlatformAutomationKey) ([]*Site, error) {
+	if s == nil || k == nil {
+		return nil, nil
+	}
+	sites, err := s.Sites()
+	if err != nil {
+		return nil, err
+	}
+	var out []*Site
+	for _, st := range sites {
+		if st == nil || st.Status != "enabled" || !st.ManagementAutomationEnabled {
+			continue
+		}
+		if k.CanManageSite(st.ID) {
+			out = append(out, st)
+		}
+	}
+	return out, nil
+}
+
+// CreatePlatformAutomationLog 记录一条跨站审计（keyID<=0 时以 NULL 存，保留吊销后的历史）。
+func (s *Store) CreatePlatformAutomationLog(keyID, siteID int64, action, kind string, targetID int64, message string) error {
+	if s == nil {
+		return nil
+	}
+	var kid any
+	if keyID > 0 {
+		kid = keyID
+	}
+	_, err := s.db.Exec(`INSERT INTO platform_automation_logs(key_id,site_id,action,kind,target_id,message,at) VALUES(?,?,?,?,?,?,?)`,
+		kid, siteID, action, kind, targetID, strings.TrimSpace(message), fmtTime(time.Now()))
+	return err
+}
+
+// ListPlatformAutomationLogs 取最近的跨站审计（供后台时间线）。
+func (s *Store) ListPlatformAutomationLogs(limit int) ([]*PlatformAutomationLogEntry, error) {
+	if s == nil {
+		return nil, nil
+	}
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	rows, err := s.db.Query(`SELECT id,COALESCE(key_id,0),site_id,action,kind,target_id,message,at FROM platform_automation_logs ORDER BY id DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*PlatformAutomationLogEntry
+	for rows.Next() {
+		var e PlatformAutomationLogEntry
+		var at string
+		if err := rows.Scan(&e.ID, &e.KeyID, &e.SiteID, &e.Action, &e.Kind, &e.TargetID, &e.Message, &at); err != nil {
+			return nil, err
+		}
+		e.At = parseTime(at)
+		out = append(out, &e)
+	}
+	return out, rows.Err()
 }

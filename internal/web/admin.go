@@ -48,11 +48,12 @@ type session struct {
 }
 
 type settingsFlash struct {
-	Flash        string
-	FormErr      string
-	NewAPISecret []string
-	SiteFormErr  string
-	SiteFormVals map[string]string
+	Flash             string
+	FormErr           string
+	NewAPISecret      []string
+	NewPlatformSecret []string
+	SiteFormErr       string
+	SiteFormVals      map[string]string
 }
 
 type sessions struct {
@@ -1066,11 +1067,25 @@ func (s *Server) showAdminSites(w http.ResponseWriter, r *http.Request, status i
 		v.GoogleOAuthClientID = googleCfg.ClientID
 		v.GoogleOAuthRedirectURL = googleCfg.RedirectURL
 		v.GoogleOAuthSecretSet = googleCfg.ClientSecret != ""
+		v.GoogleOAuthProjectID = googleCloudProjectNumberFromClientID(googleCfg.ClientID)
+		v.GoogleAnalyticsAdminAPIURL = googleCloudAPIEnableURL("analyticsadmin.googleapis.com", v.GoogleOAuthProjectID)
+		v.GoogleAnalyticsDataAPIURL = googleCloudAPIEnableURL("analyticsdata.googleapis.com", v.GoogleOAuthProjectID)
+		v.GoogleSearchConsoleAPIURL = googleCloudAPIEnableURL("webmasters.googleapis.com", v.GoogleOAuthProjectID)
 		if accounts, err := s.platform.GoogleAccounts(platform.GoogleServiceAnalytics); err == nil {
 			v.GoogleAnalyticsAccounts = accounts
 		}
 		if accounts, err := s.platform.GoogleAccounts(platform.GoogleServiceSearchConsole); err == nil {
 			v.GoogleSearchConsoleAccounts = accounts
+		}
+		v.GoogleAccounts = mergeGoogleAccounts(v.GoogleAnalyticsAccounts, v.GoogleSearchConsoleAccounts)
+		if integrations, err := s.platform.SiteGoogleIntegrations(); err == nil {
+			v.SiteGoogleIntegrations = integrations
+		}
+		if summaries, err := s.platform.SiteGoogleAnalyticsSummaries(); err == nil {
+			v.SiteGoogleAnalyticsSummaries = summaries
+		}
+		if summaries, err := s.platform.SiteGoogleSearchConsoleSummaries(); err == nil {
+			v.SiteGoogleSearchSummaries = summaries
 		}
 	}
 	if s.platform == nil {
@@ -1092,6 +1107,12 @@ func (s *Server) showAdminSites(w http.ResponseWriter, r *http.Request, status i
 		v.PlatformPreviewURLs = map[int64]string{1: "/" + s.defaultLang() + "/"}
 		v.PlatformOfficialURLs = map[int64]string{}
 		v.PlatformOfficialHosts = map[int64]string{}
+		v.PlatformGoogleDefaultURIs = map[int64]string{1: s.defaultGoogleAnalyticsURI(r, v.PlatformSites[0])}
+		v.SiteGoogleAnalyticsSummaries = map[int64]*platform.SiteGoogleAnalyticsSummary{}
+		v.SiteGoogleSearchSummaries = map[int64]*platform.SiteGoogleSearchConsoleSummary{}
+		v.SiteGoogleIntegrations = map[int64]map[string]*platform.SiteGoogleIntegration{
+			1: {},
+		}
 		if href, host := s.platformOfficialSiteURL(1); href != "" && host != "" {
 			v.PlatformOfficialURLs[1] = href
 			v.PlatformOfficialHosts[1] = host
@@ -1134,6 +1155,24 @@ func (s *Server) showAdminSites(w http.ResponseWriter, r *http.Request, status i
 		v.PlatformDomainForms[siteID] = form
 	}
 	v.PlatformSites = sites
+	v.PlatformGoogleDefaultURIs = map[int64]string{}
+	if v.SiteGoogleAnalyticsSummaries == nil {
+		v.SiteGoogleAnalyticsSummaries = map[int64]*platform.SiteGoogleAnalyticsSummary{}
+	}
+	if v.SiteGoogleSearchSummaries == nil {
+		v.SiteGoogleSearchSummaries = map[int64]*platform.SiteGoogleSearchConsoleSummary{}
+	}
+	if v.SiteGoogleIntegrations == nil {
+		v.SiteGoogleIntegrations = map[int64]map[string]*platform.SiteGoogleIntegration{}
+	}
+	for _, site := range sites {
+		if site != nil && v.SiteGoogleIntegrations[site.ID] == nil {
+			v.SiteGoogleIntegrations[site.ID] = map[string]*platform.SiteGoogleIntegration{}
+		}
+		if site != nil {
+			v.PlatformGoogleDefaultURIs[site.ID] = s.defaultGoogleAnalyticsURI(r, site)
+		}
+	}
 	v.PlatformCFDeployAt = map[int64]string{}
 	v.PlatformCFStatus = map[int64]string{}
 	for _, site := range sites {
@@ -1154,6 +1193,31 @@ func (s *Server) showAdminSites(w http.ResponseWriter, r *http.Request, status i
 	s.rnd.Admin(w, "sites", status, v)
 }
 
+func mergeGoogleAccounts(lists ...[]*platform.GoogleAccount) []*platform.GoogleAccount {
+	seen := map[string]bool{}
+	var out []*platform.GoogleAccount
+	for _, list := range lists {
+		for _, acc := range list {
+			if acc == nil {
+				continue
+			}
+			key := strings.TrimSpace(acc.GoogleAccountID)
+			if key == "" {
+				key = strings.TrimSpace(acc.Email)
+			}
+			if key == "" {
+				key = strings.TrimSpace(acc.Name)
+			}
+			if key == "" || seen[key] {
+				continue
+			}
+			seen[key] = true
+			out = append(out, acc)
+		}
+	}
+	return out
+}
+
 // setSiteCounts fills the platform site card's 语种 / 内容 badges for one site's store:
 // enabled-locale count and content rows in the default language (all types, incl. drafts).
 func (s *Server) setSiteCounts(v *View, siteID int64, st *store.Store) {
@@ -1166,6 +1230,9 @@ func (s *Server) setSiteCounts(v *View, siteID int64, st *store.Store) {
 	if v.PlatformContentCounts == nil {
 		v.PlatformContentCounts = map[int64]int{}
 	}
+	if v.PlatformContentUpdatedAt == nil {
+		v.PlatformContentUpdatedAt = map[int64]string{}
+	}
 	locs := s.i18n.Active(st.Setting("locales"))
 	v.PlatformLocaleCounts[siteID] = len(locs)
 	dl := "zh"
@@ -1174,6 +1241,10 @@ func (s *Server) setSiteCounts(v *View, siteID int64, st *store.Store) {
 	}
 	if n, err := st.CountContent(dl); err == nil {
 		v.PlatformContentCounts[siteID] = n
+	}
+	// 对外内容上次更新时间（服务器托管站卡片展示"服务器 · X 前"）。
+	if t, ok, err := st.LastPublicUpdate(); err == nil && ok {
+		v.PlatformContentUpdatedAt[siteID] = t.UTC().Format(time.RFC3339)
 	}
 }
 
