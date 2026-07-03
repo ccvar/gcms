@@ -4,6 +4,21 @@
   "use strict";
   var CSRF = (document.body && document.body.dataset.csrf) || "";
 
+  // 页面级浮层提示：AJAX 操作后复现刷新前那种成功/失败提示（成功用 flash 强调色 / 失败红），
+  // 固定悬浮在顶部、盖在弹窗之上，几秒后自动消失。
+  window.adminShowFlash = function (message, isError) {
+    message = String(message || "").trim();
+    if (!message) return;
+    var old = document.querySelector(".admin-toast");
+    if (old && old.parentNode) old.parentNode.removeChild(old);
+    var el = document.createElement("div");
+    el.className = "admin-toast flash" + (isError ? " is-error" : "");
+    el.setAttribute("role", isError ? "alert" : "status");
+    el.textContent = message;
+    document.body.appendChild(el);
+    setTimeout(function () { if (el && el.parentNode) el.parentNode.removeChild(el); }, 6000);
+  };
+
   function copyTextToClipboard(text) {
     text = String(text || "");
     if (!text) return Promise.reject(new Error("empty"));
@@ -461,12 +476,25 @@
 
   /* ---------- 站点管理：Google 站点接入弹窗 ---------- */
   (function () {
+    function liftGoogleModalsFromDetails() {
+      Array.prototype.slice.call(document.querySelectorAll(".site-card-details")).forEach(function (details) {
+        var parent = details.parentNode;
+        if (!parent) return;
+        var anchor = details.nextSibling;
+        Array.prototype.slice.call(details.querySelectorAll(".site-google-modal")).forEach(function (modal) {
+          parent.insertBefore(modal, anchor);
+        });
+      });
+    }
+
+    liftGoogleModalsFromDetails();
+
     document.addEventListener("click", function (e) {
       var badge = e.target.closest && e.target.closest(".site-google-badge");
       if (badge) {
         var card = badge.closest(".site-card");
         var details = card && card.querySelector(".site-card-details");
-        if (details) details.open = true;
+        if (details) details.open = false;
       }
 
       var tab = e.target.closest && e.target.closest("[data-google-tab]");
@@ -732,7 +760,7 @@
 	        headers: { "Accept": "application/json", "X-Requested-With": "XMLHttpRequest" }
 	      }).then(function (res) {
         return res.json().catch(function () { return {}; }).then(function (json) {
-          if (!res.ok || json.ok === false) throw new Error(json.message || "读取 GA4 属性失败");
+          if (!res.ok || json.ok === false) throw new Error(json.message || ("读取 GA4 属性失败（HTTP " + res.status + (res.statusText ? " " + res.statusText : "") + "）"));
           return json;
         });
 	      }).then(function (json) {
@@ -791,11 +819,98 @@
 	        setPropertyLoading(form, false);
 	        setOptions(property, [{ value: "", label: "读取失败" }]);
 	        setStatus(form, err && err.message ? err.message : "读取 GA4 属性失败", true);
+	        // 失败时在错误信息后补一个「↻ 重试」按钮，点一下重新读取（不用刷新整页）。
+	        var retryStatus = form.querySelector("[data-ga-stream-status]");
+	        if (retryStatus) {
+	          var retryBtn = document.createElement("button");
+	          retryBtn.type = "button";
+	          retryBtn.className = "linkbtn ga-retry";
+	          retryBtn.textContent = "↻ 重试";
+	          retryBtn.title = "重新读取 GA4 属性";
+	          retryBtn.setAttribute("aria-label", "重新读取 GA4 属性");
+	          retryBtn.addEventListener("click", function () { loadProperties(form); });
+	          retryStatus.appendChild(document.createTextNode("　"));
+	          retryStatus.appendChild(retryBtn);
+	        }
 	        updatePropertyMode(form);
 	        updateSummary(form);
 	      });
 	    }
 
+	    // 启用/修改统计：AJAX 提交（不刷新整页）。成功就地更新弹窗与卡片徽章；
+	    // 返回非 JSON、网络异常等意外情况一律回退到原生提交（整页刷新），保证绝不弄坏既有流程。
+	    function gaStreamAjaxSubmit(form, submit) {
+	      fetch(form.getAttribute("action"), {
+	        method: "POST",
+	        credentials: "same-origin",
+	        headers: { "Accept": "application/json", "X-Requested-With": "XMLHttpRequest" },
+	        body: new FormData(form)
+	      }).then(function (res) {
+	        return res.json().then(function (j) { return { res: res, json: j }; }, function () { return { res: res, json: null }; });
+	      }).then(function (r) {
+	        if (!r.json) { form.submit(); return; }
+	        if (!r.res.ok || r.json.ok === false) {
+	          setStatus(form, r.json.message || "启用统计失败，请重试。", true);
+	          if (submit) submit.removeAttribute("aria-busy");
+	          updateSubmit(form);
+	          return;
+	        }
+	        gaStreamOnEnabled(form, submit, r.json);
+	      }).catch(function () { form.submit(); });
+	    }
+	    function gaStreamOnEnabled(form, submit, json) {
+	      var msg = (json && json.message) || "统计已启用。";
+	      // 弹窗内：标记已启用、恢复按钮为"修改统计"、就地提示。
+	      form.setAttribute("data-ga-current-enabled", "1");
+	      if (json && json.measurement_id) form.setAttribute("data-ga-current-measurement", json.measurement_id);
+	      if (submit) submit.removeAttribute("aria-busy");
+	      setStatus(form, msg, false);
+	      updateSubmit(form);
+	      updateSummary(form);
+	      // 页面级成功提示（复现刷新前那条顶部 flash）。
+	      if (window.adminShowFlash) window.adminShowFlash(msg, false);
+	      var modal = form.closest(".site-google-modal");
+	      var siteId = modal && modal.id ? modal.id.replace(/^site-google-analytics-modal-/, "") : "";
+	      var badge = modal && modal.id ? document.querySelector('a.site-google-badge[href="#' + modal.id + '"]') : null;
+	      if (badge && siteId) {
+	        badge.classList.remove("is-missing");
+	        badge.classList.add("is-on");
+	        var right = badge.closest(".site-card-right");
+	        if (right) {
+	          var metrics = right.querySelector(".site-card-metrics");
+	          if (!metrics) {
+	            metrics = document.createElement("div");
+	            metrics.className = "site-card-metrics";
+	            var badges = right.querySelector(".site-badges");
+	            if (badges && badges.parentNode) badges.parentNode.insertBefore(metrics, badges.nextSibling);
+	            else right.appendChild(metrics);
+	          }
+	          var span = metrics.querySelector("[data-ga-summary]");
+	          if (!span) {
+	            span = document.createElement("span");
+	            span.className = "site-ga-summary";
+	            span.setAttribute("data-ga-summary", "");
+	            var proto = document.querySelector('[data-ga-summary][data-ok-template]'); // 从已有卡片借用 i18n 文案
+	            var labels = { "data-ok-template": "GA：活跃 {active} · 访问 {sessions}", "data-enabled-label": "统计已启用", "data-loading-label": "正在刷新统计", "data-error-label": "数据暂不可用" };
+	            Object.keys(labels).forEach(function (k) { span.setAttribute(k, (proto && proto.getAttribute(k)) || labels[k]); });
+	            var t = document.createElement("span");
+	            t.setAttribute("data-ga-summary-text", "");
+	            t.textContent = span.getAttribute("data-enabled-label");
+	            span.appendChild(t);
+	            metrics.insertBefore(span, metrics.firstChild);
+	          }
+	          // 立刻拉一次真实数据：有数据→"活跃 X · 访问 Y"，暂无→保持"统计已启用"。
+	          span.setAttribute("data-site-id", siteId);
+	          span.setAttribute("data-url", "/admin/sites/" + siteId + "/google/analytics/summary");
+	          span.setAttribute("data-csrf", (form.querySelector('input[name="_csrf"]') || {}).value || (document.body && document.body.dataset.csrf) || "");
+	          span.setAttribute("data-refresh", "1");
+	          span.removeAttribute("data-fetched-at");
+	          if (window.gcmsGaSummaryRefresh) window.gcmsGaSummaryRefresh(span);
+	        }
+	      }
+	      // 成功后关闭弹窗（回到卡片；toast 固定悬浮仍可见）。
+	      if (siteId) { try { window.location.hash = "site-card-" + siteId; } catch (e) {} }
+	    }
 	    forms.forEach(function (form) {
 	      var account = form.querySelector("[data-ga-account-select]");
 	      var property = form.querySelector("[data-ga-property-select]");
@@ -858,6 +973,9 @@
 	        submit.setAttribute("aria-busy", "true");
 	        submit.textContent = submit.getAttribute("data-label-updating") || (enabled ? "正在修改..." : "正在启用...");
 	        setStatus(form, "正在按域名匹配已有数据流；匹配不到时会按当前设置创建。", false);
+	        // 不刷新整页：改用 AJAX 提交，成功就地更新；任何异常自动回退到原生提交（刷新），绝不弄坏原流程。
+	        e.preventDefault();
+	        gaStreamAjaxSubmit(form, submit);
 	      });
 	    });
 	  })();
@@ -1148,6 +1266,85 @@
       });
     }
 
+    // 启用/重新检测搜索：AJAX（不刷新整页）。返回"待验证"→切到去验证+重新检测态、弹窗保持打开；
+    // 返回"已启用"→顶部提示 + 翻徽章 + 拉搜索摘要 + 关闭弹窗。异常一律回退到原生提交（刷新）。
+    function gscStreamAjaxSubmit(form, submit) {
+      fetch(form.getAttribute("action"), {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Accept": "application/json", "X-Requested-With": "XMLHttpRequest" },
+        body: new FormData(form)
+      }).then(function (res) {
+        return res.json().then(function (j) { return { res: res, json: j }; }, function () { return { res: res, json: null }; });
+      }).then(function (r) {
+        if (!r.json) { form.submit(); return; }
+        if (!r.res.ok || r.json.ok === false) {
+          setStatus(form, r.json.message || "操作失败，请重试。", true);
+          if (submit) submit.removeAttribute("aria-busy");
+          updateSubmit(form);
+          return;
+        }
+        gscStreamOnResult(form, submit, r.json);
+      }).catch(function () { form.submit(); });
+    }
+    function gscStreamOnResult(form, submit, json) {
+      var msg = (json && json.message) || "";
+      if (submit) submit.removeAttribute("aria-busy");
+      // 需要先完成所有权验证：切到"去验证 + 重新检测"状态，弹窗保持打开，不翻徽章。
+      if (json && json.enabled === false && json.needs_verification) {
+        setPendingState(form, true, json.property);
+        setStatus(form, msg || "站点属性已添加，请在 Search Console 完成所有权验证后点击重新检测。", false);
+        updateSubmit(form);
+        updateSummary(form);
+        if (window.adminShowFlash && msg) window.adminShowFlash(msg, false);
+        return;
+      }
+      // 已验证/已启用：与 GA 一致——顶部提示 + 翻徽章 + 拉搜索摘要 + 关闭弹窗。
+      setPendingState(form, false, json && json.property);
+      setStatus(form, msg || "搜索已接入。", false);
+      updateSubmit(form);
+      updateSummary(form);
+      if (window.adminShowFlash) window.adminShowFlash(msg || "搜索已接入。", false);
+      var modal = form.closest(".site-google-modal");
+      var siteId = modal && modal.id ? modal.id.replace(/^site-google-search-modal-/, "") : "";
+      var badge = modal && modal.id ? document.querySelector('a.site-google-badge[href="#' + modal.id + '"]') : null;
+      if (badge && siteId) {
+        badge.classList.remove("is-missing");
+        badge.classList.add("is-on");
+        var right = badge.closest(".site-card-right");
+        if (right) {
+          var metrics = right.querySelector(".site-card-metrics");
+          if (!metrics) {
+            metrics = document.createElement("div");
+            metrics.className = "site-card-metrics";
+            var badges = right.querySelector(".site-badges");
+            if (badges && badges.parentNode) badges.parentNode.insertBefore(metrics, badges.nextSibling);
+            else right.appendChild(metrics);
+          }
+          var span = metrics.querySelector("[data-gsc-summary]");
+          if (!span) {
+            span = document.createElement("span");
+            span.className = "site-gsc-summary";
+            span.setAttribute("data-gsc-summary", "");
+            var proto = document.querySelector('[data-gsc-summary][data-ok-template]');
+            var labels = { "data-ok-template": "GSC：点击 {clicks} · 曝光 {impressions}", "data-enabled-label": "搜索已接入", "data-loading-label": "正在刷新搜索数据", "data-error-label": "搜索数据暂不可用" };
+            Object.keys(labels).forEach(function (k) { span.setAttribute(k, (proto && proto.getAttribute(k)) || labels[k]); });
+            var t = document.createElement("span");
+            t.setAttribute("data-gsc-summary-text", "");
+            t.textContent = span.getAttribute("data-enabled-label");
+            span.appendChild(t);
+            metrics.appendChild(span); // GSC 摘要排在 GA 之后
+          }
+          span.setAttribute("data-site-id", siteId);
+          span.setAttribute("data-url", "/admin/sites/" + siteId + "/google/search-console/summary");
+          span.setAttribute("data-csrf", (form.querySelector('input[name="_csrf"]') || {}).value || (document.body && document.body.dataset.csrf) || "");
+          span.setAttribute("data-refresh", "1");
+          span.removeAttribute("data-fetched-at");
+          if (window.gcmsGscSummaryRefresh) window.gcmsGscSummaryRefresh(span);
+        }
+      }
+      if (siteId) { try { window.location.hash = "site-card-" + siteId; } catch (e) {} }
+    }
     forms.forEach(function (form) {
       var account = form.querySelector("[data-gsc-account-select]");
       var input = form.querySelector("[data-gsc-property-input]");
@@ -1194,6 +1391,9 @@
           submit.textContent = submit.getAttribute("data-label-updating") || "正在处理...";
         }
         setStatus(form, pending ? "正在重新检测 Google 是否已完成所有权验证..." : "正在接入当前站点属性；没有匹配项时会尝试自动添加。", false);
+        // 不刷新整页：AJAX 提交，就地处理"待验证 / 已启用"两种结果；异常回退到原生提交（刷新）。
+        e.preventDefault();
+        gscStreamAjaxSubmit(form, submit);
       });
     });
   })();
@@ -4034,6 +4234,7 @@
 
 /* ---------- 站点卡片：Google Analytics 近 7 日摘要 ---------- */
 (function () {
+  window.gcmsGaSummaryRefresh = function (el) { return refresh(el); }; // 先暴露刷新函数：页面上暂无已启用站点时 els 为空会提前 return，那时启用流程仍需拿到它
   var els = document.querySelectorAll("[data-ga-summary]");
   if (!els.length) return;
   var STALE_MS = 60 * 60 * 1000;
@@ -4095,6 +4296,7 @@
 
 /* ---------- 站点卡片：Google Search Console 近 7 日摘要 ---------- */
 (function () {
+  window.gcmsGscSummaryRefresh = function (el) { return refresh(el); }; // 先暴露刷新函数：页面上暂无已启用站点时 els 为空会提前 return，那时启用流程仍需拿到它
   var els = document.querySelectorAll("[data-gsc-summary]");
   if (!els.length) return;
   var STALE_MS = 60 * 60 * 1000;

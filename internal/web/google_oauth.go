@@ -1354,15 +1354,17 @@ func (s *Server) defaultGoogleAnalyticsURI(r *http.Request, site *platform.Site)
 	if s == nil {
 		return ""
 	}
-	if site != nil && site.IsDefault {
-		return s.platformPublicBaseURL(r)
-	}
+	// GA/GSC 追踪的是站点**对外公开**的地址（真实访客访问的域名），不是平台后台自身的 host。
+	// 因此默认站点也要优先用它的正式站/绑定域名（如 ccvar.com），只有在完全没有对外域名时，
+	// 才回退到平台 host（见函数末尾）——早期版本对默认站直接返回平台 host（cms.ccvar.com）是错的。
 	if site != nil {
 		if href, _ := s.platformOfficialSiteURL(site.ID); href != "" {
 			return href
 		}
 	}
-	if s.platform != nil && site != nil {
+	// 默认站点不使用其存储的绑定域名（平台强制默认站走平台入口），只有非默认站点才回退到绑定域名；
+	// 默认站点没有正式站入口时，最后回退到平台 host。
+	if s.platform != nil && site != nil && !site.IsDefault {
 		domains, err := s.platform.SiteDomains()
 		if err == nil {
 			var first *platform.SiteDomain
