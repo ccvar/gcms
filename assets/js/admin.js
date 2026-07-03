@@ -19,6 +19,27 @@
     setTimeout(function () { if (el && el.parentNode) el.parentNode.removeChild(el); }, 6000);
   };
 
+  // 切换 URL hash 但保持滚动位置（同一帧内先设 hash 再还原滚动，浏览器来不及绘制跳动）。
+  // 用于 :target 弹窗的开/关：否则打开会跳到弹窗锚点、关闭会跳回卡片锚点，视觉上"闪一下"。
+  window.gcmsSetHashKeepScroll = function (hash) {
+    var x = window.pageXOffset, y = window.pageYOffset;
+    if (hash && hash !== "#") window.location.hash = hash;
+    else if (window.history && window.history.replaceState) window.history.replaceState(null, document.title, window.location.pathname + window.location.search);
+    else window.location.hash = "";
+    window.scrollTo(x, y);
+  };
+  // 拦截 Google 弹窗的打开（徽章）与关闭（背板 / ×）链接，改用保持滚动的 hash 切换。
+  document.addEventListener("click", function (e) {
+    var a = e.target && e.target.closest ? e.target.closest("a[href]") : null;
+    if (!a) return;
+    var href = a.getAttribute("href") || "";
+    var isOpen = /^#site-google-(analytics|search)-modal-/.test(href);
+    var isClose = /^#site-card-/.test(href) && !!a.closest(".site-google-modal");
+    if (!isOpen && !isClose) return;
+    e.preventDefault();
+    window.gcmsSetHashKeepScroll(href);
+  });
+
   function copyTextToClipboard(text) {
     text = String(text || "");
     if (!text) return Promise.reject(new Error("empty"));
@@ -909,7 +930,7 @@
 	        }
 	      }
 	      // 成功后关闭弹窗（回到卡片；toast 固定悬浮仍可见）。
-	      if (siteId) { try { window.location.hash = "site-card-" + siteId; } catch (e) {} }
+	      if (siteId) { try { window.gcmsSetHashKeepScroll("#site-card-" + siteId); } catch (e) {} }
 	    }
 	    forms.forEach(function (form) {
 	      var account = form.querySelector("[data-ga-account-select]");
@@ -1343,7 +1364,7 @@
           if (window.gcmsGscSummaryRefresh) window.gcmsGscSummaryRefresh(span);
         }
       }
-      if (siteId) { try { window.location.hash = "site-card-" + siteId; } catch (e) {} }
+      if (siteId) { try { window.gcmsSetHashKeepScroll("#site-card-" + siteId); } catch (e) {} }
     }
     forms.forEach(function (form) {
       var account = form.querySelector("[data-gsc-account-select]");
