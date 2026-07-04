@@ -1550,22 +1550,27 @@ func (s *Server) servePlatformDiscovery(w http.ResponseWriter, r *http.Request, 
 	})
 }
 
-// discoverySiteURL 给出站点对外可访问的公开地址；非默认站且没有已启用域名时返回空（避免误导到平台地址）。
+// discoverySiteURL 给出站点对外可访问的公开地址，与站点管理卡片上的官方域名保持一致：
+// 优先取该站已发布的 Cloudflare 主域名（默认站 gcms → ccvar.com，其它站 → 各自域名），
+// 未发布 Cloudflare 时回退到已启用的 SiteDomain 记录（含默认站）；都没有则返回空，避免误导到平台地址。
 func (s *Server) discoverySiteURL(site *platform.Site, domains []*platform.SiteDomain) string {
 	if site == nil {
 		return ""
 	}
-	if !site.IsDefault {
-		hasEnabled := false
-		for _, d := range domains {
-			if d != nil && d.Enabled {
-				hasEnabled = true
-				break
-			}
+	// 与 adminSites 卡片同源：platformOfficialSiteURL 取站点已启用且已发布的 Cloudflare 主域名。
+	if href, _ := s.platformOfficialSiteURL(site.ID); href != "" {
+		return strings.TrimRight(href, "/")
+	}
+	// 回退：仅当站点有已启用域名时用 SiteDomain 记录（默认站也走同一闸门，绝不回退到平台地址）。
+	hasEnabled := false
+	for _, d := range domains {
+		if d != nil && d.Enabled {
+			hasEnabled = true
+			break
 		}
-		if !hasEnabled {
-			return ""
-		}
+	}
+	if !hasEnabled {
+		return ""
 	}
 	return s.siteBaseURL(site, domains)
 }
