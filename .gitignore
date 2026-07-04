@@ -27,3 +27,9 @@
 
 # Release workflow 从 Secret 临时写入的更新验签公钥
 /scripts/update-public.pem
+
+# gcms Pilot 桌面客户端（desktop/ 子项目）构建产物
+/desktop/node_modules/
+/desktop/dist/
+/desktop/src-tauri/target/
+/desktop/src-tauri/gen/schemas/

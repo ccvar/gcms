@@ -74,7 +74,7 @@ fi
 
 GOOS=${1:-$(go env GOOS)}
 GOARCH=${2:-$(go env GOARCH)}
-VERSION=${VERSION:-$(git -C "$ROOT" describe --tags --always --dirty 2>/dev/null || date +%Y%m%d)}
+VERSION=${VERSION:-$(git -C "$ROOT" describe --tags --match 'v[0-9]*' --always --dirty 2>/dev/null || date +%Y%m%d)}
 COMMIT=${COMMIT:-$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)}
 BUILT_AT=${BUILT_AT:-$(date -u '+%Y-%m-%dT%H:%M:%SZ')}
 RELEASE_REPO=${RELEASE_REPO:-ccvar/gcms-releases}
