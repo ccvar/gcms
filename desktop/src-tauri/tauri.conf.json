@@ -13,10 +13,10 @@
     "windows": [
       {
         "title": "gcms Pilot",
-        "width": 1180,
-        "height": 780,
-        "minWidth": 900,
-        "minHeight": 600,
+        "width": 1040,
+        "height": 720,
+        "minWidth": 820,
+        "minHeight": 560,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true
       }

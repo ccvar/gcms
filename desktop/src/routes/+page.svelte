@@ -65,17 +65,22 @@
   async function loadTasks() { try { tasks = await invoke<ScheduledTask[]>('list_tasks'); } catch (e) { say(String(e), 'err'); } }
 
   interface TaskForm {
-    id: string | null; connId: string; connName: string; site: string; taskType: string; brain: string; model: string;
+    id: string | null; connId: string; connName: string; site: string; taskType: string; brain: string; model: string; modelCustom: string;
     title: string; prompt: string; period: string; firstRun: string; enabled: boolean;
   }
   let taskModalOpen = $state(false);
   let tf = $state<TaskForm>(freshTaskForm());
   function freshTaskForm(): TaskForm {
+    const brain = brainUsable('claude') ? 'claude' : brainUsable('codex') ? 'codex' : 'claude';
     return {
       id: null, connId: activeConnId, connName: activeConn?.name ?? '', site: sites[0]?.slug ?? '', taskType: 'article',
-      brain: brainUsable('claude') ? 'claude' : brainUsable('codex') ? 'codex' : 'claude', model: 'sonnet',
+      brain, model: defaultModelFor(brain), modelCustom: '',
       title: '', prompt: '', period: '1440', firstRun: '', enabled: true,
     };
+  }
+  // 存的是「有效模型」单串。回填时据引擎还原：是该引擎预设档位 → 档位；否则 → 自定义 ID。
+  function splitModel(b: string, m: string): { model: string; modelCustom: string } {
+    return isPresetModel(b, m) ? { model: m, modelCustom: '' } : { model: defaultModelFor(b), modelCustom: m || '' };
   }
   function openNewTask() { tf = freshTaskForm(); taskModalOpen = true; }
   // AI 在对话里提议的定时任务 → 用当前会话的站点/模型预填，弹确认卡让用户确认/微调。
@@ -85,7 +90,7 @@
     const firstRunSecs = p.first_run && !isNaN(new Date(p.first_run).getTime()) ? Math.floor(new Date(p.first_run).getTime() / 1000) : 0;
     tf = {
       id: null, connId: c.conn_id, connName: c.conn_name, site: c.site_slug,
-      taskType: c.task_type === 'free' ? 'free' : 'article', brain: c.brain, model: c.model || 'sonnet',
+      taskType: c.task_type === 'free' ? 'free' : 'article', brain: c.brain, ...splitModel(c.brain, c.model),
       title: p.title, prompt: p.prompt, period: String(p.every_minutes || 1440),
       firstRun: firstRunSecs ? toLocalInput(firstRunSecs) : '', enabled: true,
     };
@@ -94,7 +99,7 @@
   function openEditTask(t: ScheduledTask) {
     // 编辑保留任务原本所属的连接，绝不改绑到当前活动连接。
     tf = {
-      id: t.id, connId: t.conn_id, connName: t.conn_name, site: t.site_slug, taskType: t.task_type, brain: t.brain, model: t.model || 'sonnet',
+      id: t.id, connId: t.conn_id, connName: t.conn_name, site: t.site_slug, taskType: t.task_type, brain: t.brain, ...splitModel(t.brain, t.model),
       title: t.title, prompt: t.prompt, period: String(t.interval_minutes),
       firstRun: t.next_run ? toLocalInput(t.next_run) : '', enabled: t.enabled,
     };
@@ -122,9 +127,10 @@
     const siteName = tf.connId === activeConnId ? (site?.name || tf.site) : (tf.site);
     const firstRun = tf.firstRun ? Math.floor(new Date(tf.firstRun).getTime() / 1000) : 0;
     try {
+      const model = tf.modelCustom.trim() || tf.model;
       await invoke('save_task', {
         id: tf.id, connId, siteSlug: tf.site, siteName,
-        taskType: tf.taskType, brain: tf.brain, model: tf.brain === 'claude' ? tf.model : '',
+        taskType: tf.taskType, brain: tf.brain, model,
         title: tf.title, prompt: tf.prompt, intervalMinutes: parseInt(tf.period) || 1440, firstRun, enabled: tf.enabled,
       });
       taskModalOpen = false; await loadTasks();
@@ -160,7 +166,18 @@
   let lTask = $state<TaskType>(prefs.taskType);
   let lBrain = $state<Brain>(prefs.brain);
   let lModel = $state(prefs.model);
+  let lModelCustom = $state(prefs.modelCustom ?? '');
+  let showLCustom = $state(!!(prefs.modelCustom ?? '').trim());
   let lDraft = $state('');
+  // 有效模型：自定义 ID 优先；否则用当前引擎的档位值（Claude=别名、Codex=模型 ID 或 '' 走默认）。
+  const lModelEff = $derived(lModelCustom.trim() || lModel);
+  // 切换引擎后，若当前档位不属于该引擎，重置为该引擎默认档位（避免下拉空选/发错模型）。
+  $effect(() => { if (!isPresetModel(lBrain, lModel)) lModel = defaultModelFor(lBrain); });
+  $effect(() => { if (!isPresetModel(tf.brain, tf.model)) tf.model = defaultModelFor(tf.brain); });
+  // 自定义模型输入框的占位示例，按当前引擎给不同提示。
+  function modelPlaceholder(b: string): string {
+    return b === 'codex' ? '如 gpt-5.3-codex-spark / o3（留空用上方档位）' : '如 claude-opus-4-8（留空用上方档位）';
+  }
 
   // ---------- composer / live turn ----------
   let draft = $state('');
@@ -171,7 +188,59 @@
 
   const viewingBusy = $derived(busy && activeConvId === busyConvId);
 
-  function startDrag(e: MouseEvent) { if (e.button === 0) getCurrentWindow().startDragging().catch(() => {}); }
+  // 拖动窗口：忽略交互元素（按钮/输入等），否则点它们会误触发拖动。
+  function startDrag(e: MouseEvent) {
+    if (e.button !== 0) return;
+    const t = e.target as HTMLElement;
+    if (t.closest('button, a, input, textarea, select, [role="button"], [data-no-drag]')) return;
+    getCurrentWindow().startDragging().catch(() => {});
+  }
+
+  // 侧栏折叠 + 可拖拽宽度（持久化）。
+  let railCollapsed = $state(loadRailFlag());
+  let railWidth = $state(loadRailWidth());
+  function loadRailFlag(): boolean { try { return localStorage.getItem('gcms.pilot.railCollapsed') === '1'; } catch { return false; } }
+  function loadRailWidth(): number { try { const n = parseInt(localStorage.getItem('gcms.pilot.railWidth') || ''); return n >= 190 && n <= 460 ? n : 240; } catch { return 240; } }
+  function toggleRail() { railCollapsed = !railCollapsed; try { localStorage.setItem('gcms.pilot.railCollapsed', railCollapsed ? '1' : '0'); } catch { /* */ } }
+  function startResize(e: MouseEvent) {
+    e.preventDefault();
+    const onMove = (ev: MouseEvent) => { railWidth = Math.min(460, Math.max(190, Math.round(ev.clientX))); };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      try { localStorage.setItem('gcms.pilot.railWidth', String(railWidth)); } catch { /* */ }
+    };
+    document.body.style.cursor = 'col-resize';
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }
+
+  // 会话搜索：按标题 / 站点名 / slug / 域名匹配。
+  let searchOpen = $state(false);
+  let searchQ = $state('');
+  let searchInput = $state<HTMLInputElement | null>(null);
+  function openSearch() { searchOpen = true; searchQ = ''; requestAnimationFrame(() => searchInput?.focus()); }
+  const searchResults = $derived.by(() => {
+    const q = searchQ.trim().toLowerCase();
+    const list = convos.filter((c) => {
+      if (!q) return true;
+      const site = sites.find((s) => s.slug === c.site_slug);
+      const host = site?.url ? hostOf(site.url).toLowerCase() : '';
+      return (c.title || '').toLowerCase().includes(q)
+        || (c.site_name || '').toLowerCase().includes(q)
+        || (c.site_slug || '').toLowerCase().includes(q)
+        || host.includes(q);
+    });
+    return list.slice(0, 60);
+  });
+  function pickSearch(id: string) { searchOpen = false; openConv(id); }
+  $effect(() => {
+    if (!searchOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') searchOpen = false; };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  });
   function say(m: string, k: 'ok' | 'err' = 'ok') { flash = m; flashKind = k; setTimeout(() => (flash = ''), k === 'err' ? 8000 : 4000); }
   function brainUsable(b: Brain): boolean { const s = b === 'claude' ? brains?.claude : brains?.codex; return !!s && s.found && s.logged_in !== false; }
   function hostOf(u: string): string { try { return new URL(u).host; } catch { return u; } }
@@ -283,20 +352,21 @@
   async function startChat() {
     if (busy || !lSite || !lDraft.trim() || !brainUsable(lBrain)) return;
     const site = sites.find((s) => s.slug === lSite);
-    prefs = { brain: lBrain, model: lModel, taskType: lTask }; savePrefs(prefs);
+    prefs = { brain: lBrain, model: lModel, modelCustom: lModelCustom.trim(), taskType: lTask }; savePrefs(prefs);
+    const model = lModelEff;
     const text = lDraft.trim();
     const id = crypto.randomUUID();
     const now = Math.floor(Date.now() / 1000);
     beginTurn(id, {
       id, conn_id: activeConnId, conn_name: activeConn?.name ?? '', site_slug: lSite, site_name: site?.name || lSite,
-      task_type: lTask, brain: lBrain, model: lBrain === 'claude' ? lModel : '', session_ref: '',
+      task_type: lTask, brain: lBrain, model, session_ref: '',
       title: text.slice(0, 30), messages: [optimisticUser(text)], status: 'running', created_at: now, updated_at: now,
     });
     lDraft = '';
     try {
       const conv = await invoke<Conversation>('start_conversation', {
         convId: id, connId: activeConnId, siteSlug: lSite, siteName: site?.name || lSite,
-        taskType: lTask, brain: lBrain, model: lBrain === 'claude' ? lModel : '',
+        taskType: lTask, brain: lBrain, model,
         message: text, onEvent: makeChannel(),
       });
       await refreshConvos(); endTurn(conv);
@@ -375,11 +445,24 @@
     { value: 'claude', label: 'Claude', icon: 'claude', disabled: !brainUsable('claude'), sub: brainUsable('claude') ? '' : brains?.claude.found ? '未登录' : '未安装' },
     { value: 'codex', label: 'OpenAI Codex', icon: 'codex', disabled: !brainUsable('codex'), sub: brainUsable('codex') ? '' : brains?.codex.found ? '未登录' : '未安装' },
   ]);
-  const modelOpts = [
-    { value: 'sonnet', label: 'Sonnet', sub: '性价比之选' },
-    { value: 'opus', label: 'Opus', sub: '最强' },
-    { value: 'haiku', label: 'Haiku', sub: '最快' },
+  // Claude 档位 = 别名（--model sonnet/opus/haiku），永远指向该档「当前最新」，
+  // 厂商发新版自动跟随、无需更新客户端。sub 版本号仅「当前实际版本」提示，可能滞后。
+  const CLAUDE_MODELS = [
+    { value: 'sonnet', label: 'Sonnet', sub: '性价比 · 当前 Sonnet 5' },
+    { value: 'opus', label: 'Opus', sub: '最强 · 当前 Opus 4.8' },
+    { value: 'haiku', label: 'Haiku', sub: '最快 · 当前 Haiku 4.5' },
   ];
+  // Codex 档位 = 具体模型 ID（-c model=）。首项「跟随 Codex 默认」= 不覆盖本地 codex 配置。
+  // 型号取自本机 codex 模型清单，会随厂商更新；要用别的新模型走下方「自定义模型 ID」。
+  const CODEX_MODELS = [
+    { value: '', label: '跟随 Codex 默认', sub: '用本地 codex 配置' },
+    { value: 'gpt-5.5', label: 'GPT-5.5', sub: '前沿 · 复杂任务' },
+    { value: 'gpt-5.4', label: 'GPT-5.4', sub: '日常之选' },
+    { value: 'gpt-5.4-mini', label: 'GPT-5.4-Mini', sub: '最快最省' },
+  ];
+  function modelOptsFor(b: string) { return b === 'codex' ? CODEX_MODELS : CLAUDE_MODELS; }
+  function defaultModelFor(b: string): string { return b === 'codex' ? '' : 'sonnet'; }
+  function isPresetModel(b: string, m: string): boolean { return modelOptsFor(b).some((o) => o.value === m); }
 
   // 会话按日期分组（后端已按 updated_at 倒序）
   const grouped = $derived.by(() => {
@@ -403,12 +486,31 @@
 </script>
 
 <main class="app">
-  <!-- 融合式标题栏：透明拖拽条，红绿灯浮在内容上（macOS Overlay） -->
+  <!-- 融合式标题栏：透明拖拽条铺满顶部，红绿灯与工具按钮浮在其上（macOS Overlay） -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="titlebar" data-tauri-drag-region aria-hidden="true" onmousedown={startDrag}></div>
 
+  <!-- 顶部工具：折叠侧栏 + 搜索会话（紧挨红绿灯右侧，始终可见） -->
+  <div class="win-tools">
+    <button class="wt" onclick={toggleRail} title={railCollapsed ? '展开侧栏' : '折叠侧栏'} aria-label="折叠侧栏">
+      <svg width="16" height="16" viewBox="0 0 18 18" fill="none">
+        <rect x="2.5" y="3.5" width="13" height="11" rx="2" stroke="currentColor" stroke-width="1.3" />
+        <path d="M7 3.7v10.6" stroke="currentColor" stroke-width="1.3" />
+        <rect x="3.4" y="4.4" width="2.7" height="9.2" rx="1" fill="currentColor" opacity=".28" />
+      </svg>
+    </button>
+    <button class="wt" onclick={openSearch} disabled={!activeConn} title="搜索会话" aria-label="搜索会话">
+      <svg width="16" height="16" viewBox="0 0 18 18" fill="none">
+        <circle cx="8" cy="8" r="5" stroke="currentColor" stroke-width="1.4" />
+        <path d="M11.7 11.7L15 15" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+      </svg>
+    </button>
+  </div>
+
   <!-- 左栏 -->
-  <aside class="rail">
+  <aside class="rail" class:collapsed={railCollapsed} style="width:{railWidth}px">
+    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+    <div class="rail-resize" title="拖动调整宽度" onmousedown={startResize} role="separator" aria-orientation="vertical"></div>
     <div class="rail-head">
       <button class="newchat" onclick={newChat} disabled={busy || !activeConn} title="新对话">
         <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
@@ -467,7 +569,7 @@
           <button class="cs-act" onclick={() => { switcherOpen = false; setupOpen = true; }}>连接与模型设置…</button>
         </div>
       {/if}
-    <button class="rail-foot" onclick={() => { if (conns.length === 0) { setupOpen = true; } else { switcherOpen = !switcherOpen; } }}>
+    <button class="rail-foot" class:open={switcherOpen} onclick={() => { if (conns.length === 0) { setupOpen = true; } else { switcherOpen = !switcherOpen; } }}>
       <SiteMark size={18} />
       <span class="foot-main">
         <b>{activeConn?.name ?? '未连接'}</b>
@@ -481,8 +583,8 @@
           <circle cx="6.6" cy="11" r="1.7" stroke="currentColor" stroke-width="1.3" />
         </svg>
       {:else}
-        <svg class="foot-chev" class:up={switcherOpen} width="14" height="14" viewBox="0 0 12 12" fill="none">
-          <path d="M3 7.5L6 4.5L9 7.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+        <svg class="foot-chev" class:up={switcherOpen} width="13" height="13" viewBox="0 0 12 12" fill="none">
+          <path d="M2.75 7.5L6 4.25L9.25 7.5" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" stroke-linejoin="round" />
         </svg>
       {/if}
     </button>
@@ -504,7 +606,7 @@
       </div>
 
     {:else if view === 'launcher'}
-      <div class="center">
+      <div class="center launch-center">
         <div class="launcher">
           <h1>想让它帮你做点什么？</h1>
           <p class="sub">选好站点和模型，像聊天一样把需求说清楚，它会边聊边把事情做掉。</p>
@@ -512,7 +614,8 @@
           <div class="task-seg">
             {#each [['article', '内容创作', '策划并撰写文章'], ['sitebuild', '新站建设', '从零搭建整个站点'], ['free', '自由对话', '任意内容运营']] as t (t[0])}
               <button class:on={lTask === t[0]} onclick={() => (lTask = t[0] as TaskType)}>
-                <b>{t[1]}</b><small>{t[2]}</small>
+                {@render taskIcon(t[0])}
+                <span class="ts-txt"><b>{t[1]}</b><small>{t[2]}</small></span>
               </button>
             {/each}
           </div>
@@ -520,9 +623,21 @@
           <div class="launch-row">
             <div class="pick"><span class="pick-lbl">站点<button class="mini-rfz" title="刷新站点" onclick={refreshSites}>{@render refreshIcon(discoveryLoading)}</button></span><Dropdown bind:value={lSite} options={siteOpts} placeholder="选择站点" /></div>
             <div class="pick"><span>模型</span><Dropdown bind:value={lBrain} options={brainOpts} /></div>
-            {#if lBrain === 'claude'}
-              <div class="pick"><span>档位</span><Dropdown bind:value={lModel} options={modelOpts} /></div>
-            {/if}
+            <div class="pick">
+              <span>档位</span>
+              <Dropdown bind:value={lModel} options={modelOptsFor(lBrain)} />
+              <div class="adv-model">
+                {#if showLCustom}
+                  <div class="adv-field">
+                    <span class="adv-lbl">自定义模型 ID<button class="adv-x" title="清除" onclick={() => { lModelCustom = ''; showLCustom = false; }}>清除</button></span>
+                    <input class="tin" bind:value={lModelCustom} placeholder={modelPlaceholder(lBrain)} spellcheck="false" autocapitalize="off" autocorrect="off" />
+                    <small class="adv-hint">留空则用上方档位{lBrain === 'claude' ? '（别名自动跟随最新）' : ''}；填了就锁定此模型。</small>
+                  </div>
+                {:else}
+                  <button class="adv-toggle" onclick={() => (showLCustom = true)}>{@render plusIcon()}自定义模型 ID</button>
+                {/if}
+              </div>
+            </div>
           </div>
 
           <div class="composer big">
@@ -582,7 +697,7 @@
               <div class="cal-mark">⏰</div>
               <b>还没有定时任务</b>
               <p>建一个让它按时自动干活，比如「每天早上 9 点，围绕本周热点写一篇文章存草稿」。</p>
-              <button class="btn primary" onclick={openNewTask} style="margin-top:14px">＋ 新建任务</button>
+              <button class="btn primary sm" onclick={openNewTask} style="margin-top:16px">＋ 新建任务</button>
             </div>
           {:else}
             {#each tasks as t (t.id)}
@@ -656,6 +771,35 @@
   </section>
 </main>
 
+<!-- 会话搜索（Claude Code 风格：顶部圆角搜索框 + 结果列表） -->
+{#if searchOpen}
+  <div class="mask" role="presentation" onclick={() => (searchOpen = false)}></div>
+  <div class="search-box" role="dialog" aria-modal="true" aria-label="搜索会话">
+      <div class="search-head">
+        <svg class="si-ic" width="16" height="16" viewBox="0 0 18 18" fill="none">
+          <circle cx="8" cy="8" r="5" stroke="currentColor" stroke-width="1.4" />
+          <path d="M11.7 11.7L15 15" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+        </svg>
+        <input bind:this={searchInput} bind:value={searchQ} placeholder="按标题、站点名或域名搜索会话…" spellcheck="false" autocapitalize="off" autocorrect="off" />
+        <kbd>esc</kbd>
+      </div>
+      <div class="search-list">
+        {#if searchResults.length === 0}
+          <p class="search-empty">没有匹配的会话</p>
+        {:else}
+          {#each searchResults as c (c.id)}
+            {@const site = sites.find((s) => s.slug === c.site_slug)}
+            <button class="search-item {activeConvId === c.id ? 'on' : ''}" onclick={() => pickSearch(c.id)}>
+              <SiteFav src={siteFav(c.site_slug)} label={c.site_slug} size={15} />
+              <span class="si-main"><b>{c.title || '未命名会话'}</b><small>{c.site_name || c.site_slug}{#if site?.url} · {hostOf(site.url)}{/if}</small></span>
+              {@render brainTag(c.brain, brainLabel(c.brain))}
+            </button>
+          {/each}
+        {/if}
+      </div>
+  </div>
+{/if}
+
 <!-- 消息气泡片段 -->
 {#snippet bubble(m: Message)}
   {#if m.role === 'user'}
@@ -695,6 +839,18 @@
 {/snippet}
 
 {#snippet plusIcon()}<svg class="plus-ic" width="13" height="13" viewBox="0 0 14 14" fill="none"><path d="M7 2.4v9.2M2.4 7h9.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /></svg>{/snippet}
+
+{#snippet taskIcon(kind: string)}
+  <span class="ts-ic">
+    {#if kind === 'article'}
+      <svg width="17" height="17" viewBox="0 0 20 20" fill="none"><path d="M12.4 3H6.2A1.7 1.7 0 0 0 4.5 4.7v10.6A1.7 1.7 0 0 0 6.2 17h7.6a1.7 1.7 0 0 0 1.7-1.7V6.1L12.4 3Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" /><path d="M12 3.3V6a1 1 0 0 0 1 1h2.7M7.6 10.4h4.8M7.6 13h4.8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /></svg>
+    {:else if kind === 'sitebuild'}
+      <svg width="17" height="17" viewBox="0 0 20 20" fill="none"><rect x="3.3" y="3.3" width="13.4" height="13.4" rx="2.2" stroke="currentColor" stroke-width="1.4" /><path d="M3.5 7.6h13M7.6 7.8v8.8" stroke="currentColor" stroke-width="1.4" /></svg>
+    {:else}
+      <svg width="17" height="17" viewBox="0 0 20 20" fill="none"><path d="M4 6.6A2.6 2.6 0 0 1 6.6 4h6.8A2.6 2.6 0 0 1 16 6.6v3.9a2.6 2.6 0 0 1-2.6 2.6H8.2l-3.1 2.7a.42.42 0 0 1-.7-.32V6.6Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" /></svg>
+    {/if}
+  </span>
+{/snippet}
 
 {#snippet cmds(tools: ToolCall[])}
   <details class="cmds">
@@ -783,8 +939,10 @@
       </div>
       <div class="trow">
         <div class="tfield"><span>模型</span><Dropdown bind:value={tf.brain} options={brainOpts} /></div>
-        {#if tf.brain === 'claude'}<div class="tfield"><span>档位</span><Dropdown bind:value={tf.model} options={modelOpts} /></div>{/if}
+        <div class="tfield"><span>档位</span><Dropdown bind:value={tf.model} options={modelOptsFor(tf.brain)} /></div>
       </div>
+      <div class="tfield"><span>自定义模型 ID（可选，留空用上面档位）</span>
+        <input class="tin" bind:value={tf.modelCustom} placeholder={modelPlaceholder(tf.brain)} spellcheck="false" autocapitalize="off" autocorrect="off" /></div>
       <div class="tfield"><span>任务名称（可选）</span><input class="tin" bind:value={tf.title} placeholder="例如：每日热点速写" /></div>
       <div class="tfield"><span>指令（每次到点就把这句话发给模型）</span>
         <textarea bind:value={tf.prompt} rows="3" placeholder="例如：围绕本周科技热点写一篇 800 字左右的中文文章，存草稿，完成后给我预览链接"></textarea></div>
@@ -825,10 +983,22 @@
   .app { display: flex; height: 100vh; overflow: hidden; }
 
   /* 融合标题栏：全宽透明拖拽条，红绿灯浮在其上，两列各自的底色透出来 */
-  .titlebar { position: fixed; top: 0; left: 0; width: 260px; height: 30px; z-index: 6; }
+  /* 拖拽条铺满整个顶部（含主区域），内容靠 .rail/.main 的 padding-top 让开 30px。 */
+  .titlebar { position: fixed; top: 0; left: 0; right: 0; width: 100%; height: 30px; z-index: 6; }
+  /* 顶部工具按钮：浮在拖拽条之上、紧挨红绿灯右侧。 */
+  .win-tools { position: fixed; top: 0; left: 80px; height: 30px; display: flex; align-items: center; gap: 1px; z-index: 8; }
+  .wt { display: inline-flex; align-items: center; justify-content: center; width: 27px; height: 24px; border: none; background: none; border-radius: 6px; color: var(--dim); cursor: pointer; -webkit-app-region: no-drag; }
+  .wt:hover { background: rgba(0, 0, 0, .06); color: var(--text); }
+  .wt:disabled { opacity: .4; cursor: default; }
+  .wt:disabled:hover { background: none; color: var(--dim); }
 
   /* ---- 左栏 ---- */
-  .rail { width: 260px; flex: none; display: flex; flex-direction: column; background: var(--rail); border-right: 1px solid var(--border); padding-top: 30px; }
+  .rail { position: relative; width: 240px; flex: none; display: flex; flex-direction: column; background: var(--rail); border-right: 1px solid var(--border); padding-top: 30px; }
+  .rail.collapsed { display: none; }
+  /* 右缘拖拽把手：改侧栏宽度。 */
+  .rail-resize { position: absolute; top: 30px; right: -3px; bottom: 0; width: 7px; cursor: col-resize; z-index: 5; }
+  .rail-resize::after { content: ''; position: absolute; top: 0; bottom: 0; right: 3px; width: 2px; background: var(--accent); opacity: 0; transition: opacity .12s; }
+  .rail-resize:hover::after { opacity: .5; }
   .rail-head { padding: 8px 8px 8px; display: flex; flex-direction: column; gap: 2px; }
   .newchat { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 10px;
     background: none; color: var(--text); border: none; border-radius: 9px; font-size: 13.5px; font-weight: 550; cursor: pointer; text-align: left; }
@@ -862,6 +1032,7 @@
   .rail-foot { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border: none; border-top: 1px solid var(--border); background: none; cursor: pointer; text-align: left; -webkit-appearance: none; appearance: none; box-shadow: none; }
   .rail-foot:focus, .rail-foot:active { outline: none; box-shadow: none; }
   .rail-foot:hover { background: #f1efe9; }
+  .rail-foot.open { background: #f1efe9; border-top-color: transparent; }
   .foot-dots { display: flex; gap: 3px; }
   .foot-main { flex: 1; min-width: 0; }
   .foot-main b { display: block; font-size: 12.5px; line-height: 1.15; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -872,9 +1043,9 @@
 
   .foot-wrap { position: relative; }
   .conn-switch {
-    position: absolute; left: 8px; right: 8px; bottom: calc(100% + 6px); z-index: 40;
-    background: #fff; border: 1px solid var(--border); border-radius: 12px;
-    box-shadow: 0 12px 32px rgba(30,25,15,.16); padding: 5px;
+    position: absolute; left: 8px; right: 8px; bottom: calc(100% + 4px); z-index: 40;
+    background: #fff; border: 1px solid var(--border2); border-radius: 12px;
+    box-shadow: 0 10px 30px rgba(30,25,15,.15); padding: 5px;
     animation: pop .1s ease-out;
   }
   .cs-item {
@@ -900,11 +1071,15 @@
   .dot.ok { background: #16a34a; } .dot.warn { background: #d97706; } .dot.off { background: #cfccc4; }
 
   /* ---- 主区 ---- */
-  .main { flex: 1; position: relative; display: flex; flex-direction: column; min-width: 0; padding-top: 0; }
+  .main { flex: 1; position: relative; display: flex; flex-direction: column; min-width: 0; padding-top: 30px; }
   .flash { position: absolute; top: 40px; left: 50%; transform: translateX(-50%); z-index: 40; background: #14231a; color: #fff; padding: 9px 16px; border-radius: 10px; font-size: 13px; box-shadow: var(--shadow); max-width: 70%; }
   .flash.err { background: var(--err); }
 
-  .center { flex: 1; display: flex; align-items: center; justify-content: center; overflow-y: auto; padding: 24px; }
+  /* safe center：内容比可视区高时退回顶对齐可滚动，避免居中把顶部裁掉。 */
+  .center { flex: 1; display: flex; align-items: safe center; justify-content: center; overflow-y: auto; padding: 24px; }
+  /* 启动页：上下居中、左右铺满主区域宽度。 */
+  .center.launch-center { align-items: safe center; justify-content: flex-start; padding: 24px 40px; }
+  .center.launch-center .launcher { width: 100%; }
   .hero-card { text-align: center; max-width: 420px; }
   .hero-mark { font-size: 40px; color: var(--accent); }
   .hero-card h1 { font-size: 22px; margin: 12px 0 8px; }
@@ -914,13 +1089,16 @@
   .launcher h1 { font-size: 26px; margin: 0 0 6px; letter-spacing: -.01em; }
   .launcher .sub { color: var(--dim); margin: 0 0 22px; }
   .task-seg { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 16px; }
-  .task-seg button { text-align: left; background: var(--card); border: 1px solid var(--border2); border-radius: 12px; padding: 12px 14px; cursor: pointer; display: flex; flex-direction: column; gap: 2px; transition: border-color .12s, background .12s; }
-  .task-seg button:hover { border-color: var(--border2); }
+  .task-seg button { text-align: left; background: var(--card); border: 1px solid var(--border2); border-radius: 12px; padding: 11px 13px; cursor: pointer; display: flex; align-items: center; gap: 10px; transition: border-color .12s, background .12s; }
+  .task-seg button:hover { border-color: #cfccc2; }
   .task-seg button.on { border-color: var(--accent); background: var(--accent-soft); }
-  .task-seg b { font-size: 14px; }
-  .task-seg small { color: var(--dim); font-size: 12px; }
+  .ts-ic { flex: none; width: 30px; height: 30px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; background: #edecef; color: var(--dim); transition: background .12s, color .12s; }
+  .task-seg button.on .ts-ic { background: #fff; color: var(--accent); }
+  .ts-txt { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+  .task-seg b { font-size: 13.5px; }
+  .task-seg small { color: var(--dim); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-  .launch-row { display: flex; gap: 12px; margin-bottom: 26px; flex-wrap: wrap; }
+  .launch-row { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 26px; flex-wrap: wrap; }
   .pick { display: flex; flex-direction: column; gap: 5px; flex: 1; min-width: 140px; }
   .pick > span { font-size: 12px; color: var(--dim); }
   .pick-lbl { display: inline-flex; align-items: center; gap: 4px; }
@@ -928,6 +1106,31 @@
   .mini-rfz:hover { color: var(--accent); background: var(--accent-soft); }
   .tin, textarea { font-family: inherit; font-size: 14px; color: var(--text); background: #fff; border: 1.5px solid var(--border2); border-radius: 10px; padding: 9px 11px; }
   .tin:focus, textarea:focus { outline: none; border-color: #b7b2a6; box-shadow: none; }
+
+  .adv-model { margin-top: 1px; }
+  .adv-toggle { display: inline-flex; align-items: center; gap: 5px; background: none; border: none; padding: 2px; cursor: pointer; color: var(--dim); font: inherit; font-size: 12.5px; border-radius: 6px; }
+  .adv-toggle:hover, .adv-toggle:hover :global(.plus-ic) { color: var(--accent); }
+  .adv-toggle :global(.plus-ic) { color: var(--faint); }
+  .adv-field { display: flex; flex-direction: column; gap: 6px; }
+  .adv-field .tin { width: 100%; }
+  .adv-lbl { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--dim); }
+  .adv-x { margin-left: auto; background: none; border: none; padding: 0; cursor: pointer; color: var(--faint); font: inherit; font-size: 11.5px; }
+  .adv-x:hover { color: var(--accent); }
+  .adv-hint { color: var(--faint); font-size: 11px; line-height: 1.45; }
+
+  /* 会话搜索（命令面板式；.mask 提供遮罩，box 居中于顶部） */
+  .search-box { position: fixed; z-index: 61; top: 12vh; left: 50%; transform: translateX(-50%); width: min(560px, 92vw); background: #fff; border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 24px 60px rgba(20, 15, 8, .28); overflow: hidden; display: flex; flex-direction: column; max-height: 66vh; }
+  .search-head { display: flex; align-items: center; gap: 10px; padding: 12px 15px; border-bottom: 1px solid var(--border); }
+  .search-head .si-ic { color: var(--faint); flex: none; }
+  .search-head input { flex: 1; min-width: 0; border: none; outline: none; background: none; font: inherit; font-size: 15px; color: var(--text); }
+  .search-head kbd { font: inherit; font-size: 10.5px; color: var(--faint); border: 1px solid var(--border2); border-radius: 5px; padding: 1px 6px; background: var(--rail); flex: none; }
+  .search-list { overflow-y: auto; padding: 6px; }
+  .search-empty { text-align: center; color: var(--faint); font-size: 13px; padding: 26px 12px; margin: 0; }
+  .search-item { width: 100%; display: flex; align-items: center; gap: 10px; background: none; border: none; border-radius: 9px; padding: 9px 10px; cursor: pointer; text-align: left; color: var(--text); }
+  .search-item:hover, .search-item.on { background: #f4f3ef; }
+  .si-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+  .si-main b { font-weight: 500; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .si-main small { color: var(--dim); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
   /* 输入框（仿 Claude Code：整块圆角边框，聚焦时高亮，发送按钮嵌在框内） */
   .composer.big, .composer-wrap .composer { position: relative; background: #fff; border: 1px solid var(--border2); border-radius: 22px; box-shadow: none; transition: border-color .12s, box-shadow .12s; }
@@ -1036,6 +1239,7 @@
   .btn.ghost { border-color: var(--border); }
   .btn.small { padding: 4px 10px; font-size: 12px; }
   .btn.lg { padding: 10px 22px; font-size: 15px; }
+  .btn.sm { padding: 5px 12px; font-size: 12px; border-radius: 8px; }
   .btn.soft { display: inline-flex; align-items: center; gap: 5px; background: var(--accent-soft); color: var(--accent); border: 1px solid #dcdcf5; font-weight: 550; }
   .btn.soft:hover { background: #e5e6fb; }
   .plus-ic { flex: none; }

@@ -17,7 +17,6 @@ use crate::convo::{TaskProposal, ToolCall};
 use crate::keychain;
 use crate::pack::Connection;
 
-const CLAUDE_MODELS: &[&str] = &["sonnet", "opus", "haiku"];
 const ALLOWED_TOOLS: &str = "Bash(node scripts/gcms.js:*),Read,Grep,Glob";
 
 #[derive(Clone, Serialize)]
@@ -133,7 +132,7 @@ pub async fn run_turn(
     };
 
     let build = if brain == "codex" {
-        build_codex(&conn, &session_ref, is_first, system.as_deref(), &message, &api_key)
+        build_codex(&conn, &model, &session_ref, is_first, system.as_deref(), &message, &api_key)
     } else {
         match build_claude(&conn, &model, &session_ref, is_first, system.as_deref(), &message, &api_key) {
             Ok(c) => Ok(c),
@@ -267,12 +266,15 @@ fn build_claude(
     message: &str,
     api_key: &str,
 ) -> Result<Command, String> {
+    // 空 → 默认档位；别名（sonnet/opus/haiku）或完整模型 ID（如 claude-opus-4-8）都放行，
+    // 只挡形似参数/含空白的非法值。claude --model 同时接受别名与完整 ID。
+    let model = model.trim();
     let model = if model.is_empty() {
         "sonnet"
-    } else if CLAUDE_MODELS.contains(&model) {
-        model
+    } else if model.starts_with('-') || model.contains(char::is_whitespace) {
+        return Err(format!("无效的模型标识: {model}"));
     } else {
-        return Err(format!("不支持的模型别名: {model}"));
+        model
     };
     let mut cmd = Command::new("claude");
     cmd.arg("-p").arg(message);
@@ -302,6 +304,7 @@ fn build_claude(
 
 fn build_codex(
     conn: &Connection,
+    model: &str,
     session_ref: &str,
     is_first: bool,
     system: Option<&str>,
@@ -323,17 +326,25 @@ fn build_codex(
         cmd.arg("--json")
             .args(["--sandbox", "workspace-write"])
             .args(["-c", "sandbox_workspace_write.network_access=true"])
-            .arg("--skip-git-repo-check")
-            .arg(&prompt);
+            .arg("--skip-git-repo-check");
     } else {
         cmd.arg("resume")
             .arg(session_ref)
             .arg("--json")
             .arg("--skip-git-repo-check")
             .args(["-c", "sandbox_mode=workspace-write"])
-            .args(["-c", "sandbox_workspace_write.network_access=true"])
-            .arg(&prompt);
+            .args(["-c", "sandbox_workspace_write.network_access=true"]);
     }
+    // 自定义模型 ID（可选）：非空则用 -c model=<id> 覆盖 codex 本地默认；留空用其默认。
+    // 与既有 -c sandbox_* 一致用裸字符串；含空白/形似参数的非法值直接拒。
+    let model = model.trim();
+    if !model.is_empty() {
+        if model.starts_with('-') || model.contains(char::is_whitespace) {
+            return Err(format!("无效的模型标识: {model}"));
+        }
+        cmd.args(["-c", &format!("model={model}")]);
+    }
+    cmd.arg(&prompt);
     cmd.current_dir(&conn.skill_dir)
         .env("GCMS_API_BASE", &conn.api_base)
         .env("GCMS_API_KEY", api_key)
