@@ -1540,6 +1540,7 @@ func (s *Server) servePlatformDiscovery(w http.ResponseWriter, r *http.Request, 
 			"api_base":     fmt.Sprintf("%s/api/platform/v1/sites/%d", base, site.ID),
 			"url":          s.discoverySiteURL(site, domainsBySite[site.ID]),
 			"logo":         s.discoverySiteLogo(pool, site, domainsBySite[site.ID]),
+			"favicon":      s.discoverySiteFavicon(site, domainsBySite[site.ID]),
 		})
 	}
 	_ = s.platform.TouchPlatformKey(key.ID)
@@ -1590,6 +1591,30 @@ func (s *Server) discoverySiteLogo(pool *SiteRuntimePool, site *platform.Site, d
 		return ""
 	}
 	return base + "/" + strings.TrimLeft(logo, "/")
+}
+
+// discoverySiteFavicon 给出站点的 favicon（ico）绝对地址，供客户端优先用作站点小图标。
+// 复用 platformSiteIconURL 的按站解析（site.favicon / 旧版上传 / 默认），已是绝对/data: 的原样返回，
+// 相对路径用站点公开地址（无则平台根地址）补全；拿不到则返回空由客户端回退。
+func (s *Server) discoverySiteFavicon(site *platform.Site, domains []*platform.SiteDomain) string {
+	if site == nil {
+		return ""
+	}
+	raw := strings.TrimSpace(s.platformSiteIconURL(site.ID))
+	if raw == "" {
+		return ""
+	}
+	if strings.HasPrefix(raw, "http://") || strings.HasPrefix(raw, "https://") || strings.HasPrefix(raw, "data:") {
+		return raw
+	}
+	base := s.discoverySiteURL(site, domains)
+	if base == "" {
+		base = strings.TrimRight(strings.TrimSpace(s.baseURL), "/")
+	}
+	if base == "" {
+		return ""
+	}
+	return base + "/" + strings.TrimLeft(raw, "/")
 }
 
 func platformAPISiteID(path string) (int64, bool) {
