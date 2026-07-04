@@ -1598,24 +1598,33 @@ func (s *Server) discoverySiteLogo(pool *SiteRuntimePool, site *platform.Site, d
 	return base + "/" + strings.TrimLeft(logo, "/")
 }
 
-// discoverySiteFavicon 给出站点的 favicon（ico）绝对地址，供客户端优先用作站点小图标。
-// 复用 platformSiteIconURL 的按站解析（site.favicon / 旧版上传 / 默认），已是绝对/data: 的原样返回，
-// 相对路径用站点公开地址（无则平台根地址）补全；拿不到则返回空由客户端回退。
+// discoverySiteFavicon 给出站点 favicon 的**公开**绝对地址，供无 admin 会话的客户端（gcms Pilot）加载。
+// 关键：**不能**走 platformSiteIconURL——它把上传图标改写成鉴权的 /admin/sites/{id}/uploads/... 路由，
+// 已发布的 Cloudflare 静态站按 /admin 前缀直接 404、平台侧则 302 到登录页（仅认 cookie，不认 API key）。
+// 改为直接读站点自己的 site.favicon（导出会把 /uploads、/assets 一并发布），用站点公开域名绝对化；
+// data:/绝对 URL 原样返回；只放行导出真正会服务的公开前缀，其余（含无公开域名）返回空由客户端回退。
 func (s *Server) discoverySiteFavicon(site *platform.Site, domains []*platform.SiteDomain) string {
 	if site == nil {
 		return ""
 	}
-	raw := strings.TrimSpace(s.platformSiteIconURL(site.ID))
+	raw := ""
+	if rt, ok := s.runtimePool().runtimeByID(site.ID); ok && rt != nil && rt.Store != nil {
+		raw = strings.TrimSpace(rt.Store.Setting("site.favicon"))
+	}
+	if raw == "" && site.IsDefault {
+		raw = defaultFaviconPath // "/assets/favicon.svg"，导出会发布
+	}
 	if raw == "" {
 		return ""
 	}
 	if strings.HasPrefix(raw, "http://") || strings.HasPrefix(raw, "https://") || strings.HasPrefix(raw, "data:") {
 		return raw
 	}
-	base := s.discoverySiteURL(site, domains)
-	if base == "" {
-		base = strings.TrimRight(strings.TrimSpace(s.baseURL), "/")
+	// 仅 /assets、/uploads、/favicon.ico 在导出上公开可取；其余（含 /admin 改写）一律不发。
+	if !(strings.HasPrefix(raw, "/assets/") || strings.HasPrefix(raw, "/uploads/") || raw == "/favicon.ico") {
+		return ""
 	}
+	base := s.discoverySiteURL(site, domains)
 	if base == "" {
 		return ""
 	}
