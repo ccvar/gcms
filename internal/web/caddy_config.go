@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -146,6 +147,12 @@ func (s *Server) caddySiteManifest() (string, error) {
 	return renderCaddyManifest(sites, domains, caddyReverseProxyTarget()), nil
 }
 
+// caddyAutoSyncAvailable 报告"保存域名后能否自动写入并重载 Caddy"：
+// 与 applyCaddySites 的自动路径同判据（root 运行 + 同步脚本存在）。向导第 3 步据此措辞。
+func caddyAutoSyncAvailable() bool {
+	return caddySyncScriptPath() != "" && os.Geteuid() == 0
+}
+
 // applyCaddySites pushes the current sites into Caddy after a domain save. When gcms runs as
 // root it executes the sync script directly, so binding a domain takes effect immediately;
 // otherwise it returns a reminder to run the sudo script by hand. The script does all the
@@ -182,9 +189,21 @@ func (s *Server) applyCaddySites() string {
 // caddySyncScriptPath returns the sync script's path (relative to gcms's working directory,
 // which cms.sh sets to the install root) when it exists, else "".
 func caddySyncScriptPath() string {
-	const p = "scripts/gcms-caddy-sync.sh"
-	if st, err := os.Stat(p); err == nil && !st.IsDir() {
-		return p
+	// 不依赖进程 CWD（systemd 的 WorkingDirectory 常不是安装目录）：
+	// 依次尝试 CWD 相对路径、可执行文件旁、发布包布局（包根/scripts，二进制在 current/bin/）。
+	candidates := []string{"scripts/gcms-caddy-sync.sh"}
+	if exe, err := os.Executable(); err == nil {
+		d := filepath.Dir(exe)
+		candidates = append(candidates,
+			filepath.Join(d, "scripts", "gcms-caddy-sync.sh"),
+			filepath.Join(d, "..", "scripts", "gcms-caddy-sync.sh"),
+			filepath.Join(d, "..", "..", "scripts", "gcms-caddy-sync.sh"),
+		)
+	}
+	for _, p := range candidates {
+		if st, err := os.Stat(p); err == nil && !st.IsDir() {
+			return p
+		}
 	}
 	return ""
 }

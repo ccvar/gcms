@@ -1114,6 +1114,7 @@ a.overview-log-title { text-decoration: none; }
 .dw-verify[data-step-state="failed"] .dw-verify-result { background: color-mix(in srgb, #c0392b 10%, var(--surface)); color: #c0392b; }
 .site-domain-modal-form .dw-nav { justify-content: flex-start; align-items: center; }
 .dw-nav [data-wizard-status] { margin-left: auto; color: var(--muted); font-size: .8rem; }
+.dw-nav [data-wizard-status].is-error { color: #b3261e; font-weight: 700; } /* 验证并保存的就地校验错误 */
 @media (max-width: 520px) { .dw-step-label { display: none; } }
 .site-default-note { margin: 0; padding: .72rem .78rem; border: 1px solid var(--line-soft); border-radius: 8px; color: var(--muted); background: color-mix(in srgb, var(--surface) 72%, var(--line-soft)); font-size: .8rem; line-height: 1.55; }
 .site-empty { grid-column: 1 / -1; background: var(--surface); }

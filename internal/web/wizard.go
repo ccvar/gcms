@@ -17,6 +17,9 @@ func (s *Server) adminWizardProxyDetect(w http.ResponseWriter, r *http.Request) 
 		"proxy":     detectReverseProxy(),
 		"server_ip": s.serverPublicIP(),
 		"target":    caddyReverseProxyTarget(),
+		// 保存后能否真的自动写入并重载 Caddy（root + 同步脚本，与 applyCaddySites 同判据）；
+		// 否则第 3 步要提示手动同步，不能过度承诺"自动生效"。
+		"caddy_auto": caddyAutoSyncAvailable(),
 	})
 }
 

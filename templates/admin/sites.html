@@ -512,6 +512,10 @@
                     <strong>{{$.Admin.T "admin.sites.wizard_proxy_caddy_title" "检测到 Caddy"}}</strong>
                     <p>{{$.Admin.T "admin.sites.wizard_proxy_caddy_desc" "保存域名后，gcms 会自动为该域名写入 Caddy 站点配置并重载。"}}</p>
                   </div>
+                  <div class="dw-proxy-variant" data-proxy="caddy-manual" hidden>
+                    <strong>{{$.Admin.T "admin.sites.wizard_proxy_caddy_manual_title" "检测到 Caddy —— 保存后需手动同步一次"}}</strong>
+                    <p>{{$.Admin.T "admin.sites.wizard_proxy_caddy_manual_desc" "当前 gcms 非 root 运行，无法直接改 Caddy 配置。保存域名后请在服务器上运行：sudo sh scripts/gcms-caddy-sync.sh（或配置定时同步 / 用 cms.sh caddy-setup 开启自动接入）。"}}</p>
+                  </div>
                   <div class="dw-proxy-variant" data-proxy="nginx" hidden>
                     <strong>{{$.Admin.T "admin.sites.wizard_proxy_nginx_title" "检测到 Nginx —— 需手动加一段配置"}}</strong>
                     <pre class="dw-code" data-proxy-nginx><code>server {

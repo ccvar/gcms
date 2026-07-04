@@ -4123,6 +4123,8 @@
         if (!d) { setState(3, "pending"); return; }
         var p = d.proxy || {};
         var kind = p.kind === "caddy" ? (p.on_demand ? "caddy-auto" : "caddy") : (p.kind === "nginx" ? "nginx" : "other");
+        if (kind === "caddy" && !d.caddy_auto) kind = "caddy-manual"; // 非 root/无脚本：不许诺"自动生效"，给手动同步指引
+
         form.querySelectorAll("[data-proxy-guide] .dw-proxy-variant").forEach(function (v) { v.hidden = v.getAttribute("data-proxy") !== kind; });
         fillTokens((d.server_ip && d.server_ip.ipv4) || "", d.target || "127.0.0.1:8080");
         setState(3, "done");
@@ -4192,6 +4194,30 @@
       if (host()) runDNS();
     }
     window.addEventListener("hashchange", onOpen);
+
+    // 验证并保存：AJAX 提交，不跳页——校验失败就地红字、弹窗保持打开；成功才跳回站点页（带成功横幅）。
+    // 返回非 JSON / 网络异常一律回退原生提交，保证最坏情况等于旧行为。
+    var finishLabel = finish ? finish.textContent : "";
+    function submitFail(msg) {
+      if (statusEl) { statusEl.textContent = msg; statusEl.classList.add("is-error"); }
+      if (finish) { finish.disabled = false; delete finish.dataset.busy; finish.textContent = finishLabel; }
+    }
+    form.addEventListener("submit", function (e) {
+      e.preventDefault();
+      if (statusEl) statusEl.classList.remove("is-error");
+      fetch(form.getAttribute("action"), {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Accept": "application/json", "X-Requested-With": "XMLHttpRequest" },
+        body: new FormData(form)
+      }).then(function (res) {
+        return res.json().then(function (j) { return { res: res, json: j }; }, function () { return { res: res, json: null }; });
+      }).then(function (r) {
+        if (!r.json) { form.submit(); return; }
+        if (r.json.ok === false) { submitFail(r.json.message || "保存失败，请重试。"); return; }
+        window.location.assign(r.json.redirect || "/admin/sites");
+      }).catch(function () { form.submit(); });
+    });
 
     setStep(1);
     if (host()) { setState(1, "done"); unlockAll(); }

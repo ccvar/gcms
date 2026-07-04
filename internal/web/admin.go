@@ -2126,11 +2126,24 @@ func (s *Server) adminSaveSiteDomains(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 校验错误不再回裸文本页（会把用户甩出后台）：
+	// 向导走 AJAX（wantsJSON）→ 返回 JSON，就地红字、弹窗不关；
+	// 原生提交兜底 → 顶部 Flash 提示 + 留在站点管理页。
+	jsonReq := wantsJSON(r)
+	failBack := func(msg string) {
+		if jsonReq {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": msg})
+			return
+		}
+		s.sess.setSettingsFlash(sessionToken(r), settingsFlash{Flash: "绑定域名未保存：" + msg})
+		http.Redirect(w, r, "/admin/sites", http.StatusSeeOther)
+	}
+
 	primaryRaw := strings.TrimSpace(r.FormValue("primary_domain"))
 	aliasRaw := strings.TrimSpace(r.FormValue("alias_domains"))
 	redirect := r.FormValue("redirect_aliases") == "1"
 	if primaryRaw == "" && aliasRaw != "" {
-		http.Error(w, "请先填写主域名，再添加别名域名", http.StatusBadRequest)
+		failBack("请先填写主域名，再添加别名域名")
 		return
 	}
 
@@ -2154,7 +2167,7 @@ func (s *Server) adminSaveSiteDomains(w http.ResponseWriter, r *http.Request) {
 
 	if primaryRaw != "" {
 		if err := add(primaryRaw, true); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failBack("主域名：" + err.Error())
 			return
 		}
 	}
@@ -2163,7 +2176,7 @@ func (s *Server) adminSaveSiteDomains(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if err := add(line, false); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			failBack("别名域名：" + err.Error())
 			return
 		}
 	}
@@ -2185,6 +2198,11 @@ func (s *Server) adminSaveSiteDomains(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(flashes) > 0 {
 		s.sess.setSettingsFlash(sessionToken(r), settingsFlash{Flash: strings.Join(flashes, " ")})
+	}
+	if jsonReq {
+		// 成功后前端跳回站点页（flash 已备好，落地即见横幅）。
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "redirect": "/admin/sites"})
+		return
 	}
 	http.Redirect(w, r, "/admin/sites", http.StatusSeeOther)
 }
@@ -2440,10 +2458,11 @@ func parseSiteDomainInput(raw string) (scheme, host string, err error) {
 	if raw == "" {
 		return "", "", fmt.Errorf("域名不能为空")
 	}
+	// 错误消息必须带上原始值：别名 textarea 一行出错会整单失败，不指明是哪一行用户没法自查。
 	if strings.Contains(raw, "://") {
 		u, err := url.Parse(raw)
 		if err != nil || u.Host == "" {
-			return "", "", fmt.Errorf("域名格式不正确")
+			return "", "", fmt.Errorf("域名「%s」格式不正确（示例：www.example.com，每行一个）", raw)
 		}
 		scheme = u.Scheme
 		host = u.Host
@@ -2452,8 +2471,8 @@ func parseSiteDomainInput(raw string) (scheme, host string, err error) {
 		host = raw
 	}
 	host = normalizeRuntimeHost(host)
-	if host == "" || strings.Contains(host, "/") {
-		return "", "", fmt.Errorf("域名格式不正确")
+	if host == "" || strings.ContainsAny(host, "/ \t") {
+		return "", "", fmt.Errorf("域名「%s」格式不正确（不能包含空格或路径；多个域名请分行填写）", raw)
 	}
 	if scheme != "http" && scheme != "https" {
 		scheme = "https"
