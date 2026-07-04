@@ -957,6 +957,10 @@ func TestAutomationSkillZipKeepsLegacyStructure(t *testing.T) {
 		"language-catalog",
 		"category-entry",
 		"/featured/",
+		`cmd === "site-profile"`,
+		`cmd === "site-profile-update"`,
+		`cmd === "navigation"`,
+		`cmd === "navigation-update"`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("skill script missing %q", want)

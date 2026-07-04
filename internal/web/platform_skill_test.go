@@ -37,7 +37,8 @@ func TestPlatformSkillFilesTokenless(t *testing.T) {
 		t.Fatalf("pack missing gcms.js; entries: %v", keysOf(entries))
 	}
 	// The multi-site CLI must have discovery + per-site routing, not the single-site shape.
-	for _, needle := range []string{"fetchSites", "resolveSite", "extractSite", `cmd === "sites"`, `"/sites/"`, "--site"} {
+	for _, needle := range []string{"fetchSites", "resolveSite", "extractSite", `cmd === "sites"`, `"/sites/"`, "--site",
+		`cmd === "site-profile"`, `cmd === "site-profile-update"`, `cmd === "navigation"`, `cmd === "navigation-update"`} {
 		if !strings.Contains(cli, needle) {
 			t.Fatalf("gcms.js missing %q", needle)
 		}
@@ -92,13 +93,18 @@ func TestPlatformSkillScriptNodeCheck(t *testing.T) {
 		t.Skip("node not installed; skipping JS syntax check")
 	}
 	dir := t.TempDir()
-	scriptPath := filepath.Join(dir, "gcms.js")
-	if err := os.WriteFile(scriptPath, []byte(platformSkillScript()), 0o644); err != nil {
-		t.Fatalf("write script: %v", err)
-	}
-	out, err := exec.Command(node, "--check", scriptPath).CombinedOutput()
-	if err != nil {
-		t.Fatalf("node --check failed: %v\n%s", err, out)
+	for name, script := range map[string]string{
+		"platform.js": platformSkillScript(),
+		"persite.js":  automationSkillScript(),
+	} {
+		scriptPath := filepath.Join(dir, name)
+		if err := os.WriteFile(scriptPath, []byte(script), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+		out, err := exec.Command(node, "--check", scriptPath).CombinedOutput()
+		if err != nil {
+			t.Fatalf("node --check %s failed: %v\n%s", name, err, out)
+		}
 	}
 }
 
@@ -168,7 +174,7 @@ func TestPlatformCLILiveEndToEnd(t *testing.T) {
 
 	token := "gcmsp_liveclitoken12345"
 	if _, err := ps.CreatePlatformKey("cli", token, token[:13], "all",
-		"posts:read,posts:write,posts:categories,links:categories,languages:read,media:write", nil, time.Time{}); err != nil {
+		"posts:read,posts:write,posts:categories,links:categories,languages:read,media:write,site:read,site:write,navigation:read", nil, time.Time{}); err != nil {
 		t.Fatalf("create platform key: %v", err)
 	}
 
@@ -221,6 +227,28 @@ func TestPlatformCLILiveEndToEnd(t *testing.T) {
 	}
 	if !strings.Contains(out, "CLI Live Draft") {
 		t.Fatalf("list did not include the created draft: %s", out)
+	}
+
+	// site-profile roundtrip: PATCH via CLI then read back (新站建设 depends on these commands).
+	out, errOut, err = run("site-profile-update", "--site", "blog", `{"lang":"zh","hero_title":"CLI E2E Hero"}`)
+	if err != nil {
+		t.Fatalf("site-profile-update failed: %v\nstdout: %s\nstderr: %s", err, out, errOut)
+	}
+	out, errOut, err = run("site-profile", "--site", "blog")
+	if err != nil {
+		t.Fatalf("site-profile failed: %v\nstderr: %s", err, errOut)
+	}
+	if !strings.Contains(out, "CLI E2E Hero") {
+		t.Fatalf("site-profile did not reflect the update: %s", out)
+	}
+
+	// navigation read must work under navigation:read.
+	out, errOut, err = run("navigation", "--site", "blog")
+	if err != nil {
+		t.Fatalf("navigation failed: %v\nstderr: %s", err, errOut)
+	}
+	if !strings.Contains(out, `"items"`) {
+		t.Fatalf("navigation output unexpected: %s", out)
 	}
 
 	// numeric-id selector must also work.

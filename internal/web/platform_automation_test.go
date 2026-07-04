@@ -160,6 +160,8 @@ func TestPlatformKeyDiscoveryContract(t *testing.T) {
 			Name         string   `json:"name"`
 			Capabilities []string `json:"capabilities"`
 			APIBase      string   `json:"api_base"`
+			URL          string   `json:"url"`
+			Logo         string   `json:"logo"`
 		} `json:"items"`
 		AllSites bool `json:"all_sites"`
 	}
@@ -182,6 +184,13 @@ func TestPlatformKeyDiscoveryContract(t *testing.T) {
 	wantBase := "https://platform.test/api/platform/v1/sites/" + strconv.FormatInt(blogSite.ID, 10)
 	if it.APIBase != wantBase {
 		t.Fatalf("discovery api_base = %q, want %q", it.APIBase, wantBase)
+	}
+	// 附加展示字段：blog 站绑定了 blog.test 域名 → url 是它的公开地址；未设置 Logo → 空。
+	if it.URL != "https://blog.test" {
+		t.Fatalf("discovery url = %q, want https://blog.test", it.URL)
+	}
+	if it.Logo != "" {
+		t.Fatalf("discovery logo should be empty when site.logo unset, got %q", it.Logo)
 	}
 }
 

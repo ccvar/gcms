@@ -2066,6 +2066,10 @@ func automationSkillMarkdown(apiBase string) string {
 		"- `node scripts/gcms.js language-default en`",
 		"- `node scripts/gcms.js language-catalog id`",
 		"- `node scripts/gcms.js language-catalog-update id '{\"catalog\":{\"home.cta_start\":\"Mulai membaca\"}}'`",
+		"- `node scripts/gcms.js site-profile`（读取站点文案 / Hero / 首页标题）",
+		"- `node scripts/gcms.js site-profile-update '{\"lang\":\"zh\",\"hero_title\":\"新标题\"}'`",
+		"- `node scripts/gcms.js navigation`",
+		"- `node scripts/gcms.js navigation-update @nav.json`",
 		"- `node scripts/gcms.js upload ./cover.webp`",
 		"- `node scripts/gcms.js categories posts --lang zh`",
 		"- `node scripts/gcms.js categories links --lang zh`",
@@ -2143,6 +2147,10 @@ function usage(code = 2) {
   out("  gcms.js language-default <code>");
   out("  gcms.js language-catalog <code>");
   out("  gcms.js language-catalog-update <code> <json|@file>");
+  out("  gcms.js site-profile");
+  out("  gcms.js site-profile-update <json|@file>");
+  out("  gcms.js navigation");
+  out("  gcms.js navigation-update <json|@file>");
   out("  gcms.js upload <file>");
   out("  gcms.js categories <posts|links> [--lang zh|all]");
   out("  gcms.js category-entry <posts|links> [--lang zh|all]");
@@ -2467,6 +2475,30 @@ async function main() {
     if (!code || !body) usage();
     const parsed = bodyFromArg(body);
     print(await request("PATCH", "/languages/" + encodeURIComponent(code) + "/catalog", parsed && Object.prototype.hasOwnProperty.call(parsed, "catalog") ? parsed : { catalog: parsed }));
+    return;
+  }
+
+  if (cmd === "site-profile") {
+    print(await request("GET", "/site-profile"));
+    return;
+  }
+
+  if (cmd === "site-profile-update") {
+    const [body] = [collection, ...rest];
+    if (!body) usage();
+    print(await request("PATCH", "/site-profile", bodyFromArg(body)));
+    return;
+  }
+
+  if (cmd === "navigation") {
+    print(await request("GET", "/navigation"));
+    return;
+  }
+
+  if (cmd === "navigation-update") {
+    const [body] = [collection, ...rest];
+    if (!body) usage();
+    print(await request("PATCH", "/navigation", bodyFromArg(body)));
     return;
   }
 

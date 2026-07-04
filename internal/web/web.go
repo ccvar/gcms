@@ -1411,7 +1411,7 @@ func (s *Server) servePlatformAPI(w http.ResponseWriter, r *http.Request, pool *
 	}
 	// 发现端点：GET /api/platform/v1/sites（含结尾斜杠），在解析数字 siteID 之前拦截。
 	if p := r.URL.Path; p == "/api/platform/v1/sites" || p == "/api/platform/v1/sites/" {
-		s.servePlatformDiscovery(w, r)
+		s.servePlatformDiscovery(w, r, pool)
 		return
 	}
 	siteID, ok := platformAPISiteID(r.URL.Path)
@@ -1481,7 +1481,8 @@ func (s *Server) servePlatformKeyRequest(w http.ResponseWriter, r *http.Request,
 
 // servePlatformDiscovery 回应 GET /api/platform/v1/sites：仅平台密钥可用，返回该密钥当前**实际可管**的站点集。
 // 契约（已冻结，CLI 是硬消费方）：{"items":[{"id","slug","name","capabilities","api_base"}],"all_sites":bool}
-func (s *Server) servePlatformDiscovery(w http.ResponseWriter, r *http.Request) {
+// 附加字段（可选、只增不改，供 gcms Pilot 等客户端展示）："url" 站点公开地址（无法确定时为空）、"logo" 站点 Logo 绝对地址（未设置时为空）。
+func (s *Server) servePlatformDiscovery(w http.ResponseWriter, r *http.Request, pool *SiteRuntimePool) {
 	if r.Method != http.MethodGet {
 		apiError(w, http.StatusMethodNotAllowed, "method_not_allowed", "仅支持 GET。")
 		return
@@ -1522,6 +1523,13 @@ func (s *Server) servePlatformDiscovery(w http.ResponseWriter, r *http.Request) 
 		caps = []string{}
 	}
 	base := strings.TrimRight(s.platformPublicBaseURL(r), "/")
+	allDomains, _ := s.platform.SiteDomains()
+	domainsBySite := map[int64][]*platform.SiteDomain{}
+	for _, d := range allDomains {
+		if d != nil {
+			domainsBySite[d.SiteID] = append(domainsBySite[d.SiteID], d)
+		}
+	}
 	items := make([]map[string]any, 0, len(sites))
 	for _, site := range sites {
 		items = append(items, map[string]any{
@@ -1530,6 +1538,8 @@ func (s *Server) servePlatformDiscovery(w http.ResponseWriter, r *http.Request) 
 			"name":         site.Name,
 			"capabilities": caps,
 			"api_base":     fmt.Sprintf("%s/api/platform/v1/sites/%d", base, site.ID),
+			"url":          s.discoverySiteURL(site, domainsBySite[site.ID]),
+			"logo":         s.discoverySiteLogo(pool, site, domainsBySite[site.ID]),
 		})
 	}
 	_ = s.platform.TouchPlatformKey(key.ID)
@@ -1537,6 +1547,49 @@ func (s *Server) servePlatformDiscovery(w http.ResponseWriter, r *http.Request) 
 		"items":     items,
 		"all_sites": key.MembershipMode == platform.KeyMembershipAll,
 	})
+}
+
+// discoverySiteURL 给出站点对外可访问的公开地址；非默认站且没有已启用域名时返回空（避免误导到平台地址）。
+func (s *Server) discoverySiteURL(site *platform.Site, domains []*platform.SiteDomain) string {
+	if site == nil {
+		return ""
+	}
+	if !site.IsDefault {
+		hasEnabled := false
+		for _, d := range domains {
+			if d != nil && d.Enabled {
+				hasEnabled = true
+				break
+			}
+		}
+		if !hasEnabled {
+			return ""
+		}
+	}
+	return s.siteBaseURL(site, domains)
+}
+
+// discoverySiteLogo 读取站点的 site.logo 设置并转成绝对地址；拿不到公开地址的相对 Logo 返回空。
+func (s *Server) discoverySiteLogo(pool *SiteRuntimePool, site *platform.Site, domains []*platform.SiteDomain) string {
+	if pool == nil || site == nil {
+		return ""
+	}
+	rt, ok := pool.runtimeByID(site.ID)
+	if !ok || rt == nil || rt.Store == nil {
+		return ""
+	}
+	logo := strings.TrimSpace(rt.Store.Setting("site.logo"))
+	if logo == "" {
+		return ""
+	}
+	if strings.HasPrefix(logo, "http://") || strings.HasPrefix(logo, "https://") {
+		return logo
+	}
+	base := s.discoverySiteURL(site, domains)
+	if base == "" {
+		return ""
+	}
+	return base + "/" + strings.TrimLeft(logo, "/")
 }
 
 func platformAPISiteID(path string) (int64, bool) {

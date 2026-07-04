@@ -290,6 +290,10 @@ func platformSkillMarkdown(apiBase string) string {
 		"- `node scripts/gcms.js sites`",
 		"- `node scripts/gcms.js doctor --site blog`",
 		"- `node scripts/gcms.js languages --site blog --all`",
+		"- `node scripts/gcms.js site-profile --site blog`（读取站点文案 / Hero / 首页标题）",
+		"- `node scripts/gcms.js site-profile-update --site blog '{\"lang\":\"zh\",\"hero_title\":\"新标题\"}'`",
+		"- `node scripts/gcms.js navigation --site blog`",
+		"- `node scripts/gcms.js navigation-update --site blog @nav.json`",
 		"- `node scripts/gcms.js categories posts --site blog --lang zh`",
 		"- `node scripts/gcms.js list posts --site blog --lang zh --q 关键词`",
 		"- `node scripts/gcms.js get posts --site blog 123`",
@@ -346,6 +350,10 @@ function usage(code = 2) {
   out("  gcms.js language-default --site <slug|id> <code>");
   out("  gcms.js language-catalog --site <slug|id> <code>");
   out("  gcms.js language-catalog-update --site <slug|id> <code> <json|@file>");
+  out("  gcms.js site-profile --site <slug|id>");
+  out("  gcms.js site-profile-update --site <slug|id> <json|@file>");
+  out("  gcms.js navigation --site <slug|id>");
+  out("  gcms.js navigation-update --site <slug|id> <json|@file>");
   out("  gcms.js upload --site <slug|id> <file>");
   out("  gcms.js categories --site <slug|id> <posts|links> [--lang zh|all]");
   out("  gcms.js category-entry --site <slug|id> <posts|links> [--lang zh|all]");
@@ -730,6 +738,30 @@ async function main() {
     if (!code || !body) usage();
     const parsedBody = bodyFromArg(body);
     print(await request("PATCH", P("/languages/" + encodeURIComponent(code) + "/catalog"), parsedBody && Object.prototype.hasOwnProperty.call(parsedBody, "catalog") ? parsedBody : { catalog: parsedBody }));
+    return;
+  }
+
+  if (cmd === "site-profile") {
+    print(await request("GET", P("/site-profile")));
+    return;
+  }
+
+  if (cmd === "site-profile-update") {
+    const body = collection;
+    if (!body) usage();
+    print(await request("PATCH", P("/site-profile"), bodyFromArg(body)));
+    return;
+  }
+
+  if (cmd === "navigation") {
+    print(await request("GET", P("/navigation")));
+    return;
+  }
+
+  if (cmd === "navigation-update") {
+    const body = collection;
+    if (!body) usage();
+    print(await request("PATCH", P("/navigation"), bodyFromArg(body)));
     return;
   }
 
