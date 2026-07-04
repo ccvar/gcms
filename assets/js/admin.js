@@ -4095,6 +4095,17 @@
     var msgDomainReq = form.getAttribute("data-msg-domain-required") || "请先填写主域名";
     var cur = 1, proxyDone = false, dnsHost = "";
 
+    // 未完成的绑定草稿（域名/别名/301勾选/所在步骤）存 localStorage：
+    // 刷新页面重开向导可回填并跳回离开的那一步；保存成功即清除。
+    var aliasEl = form.querySelector('textarea[name="alias_domains"]');
+    var redirEl = form.querySelector('input[name="redirect_aliases"]');
+    var draftKey = "gcms.dwdraft." + id;
+    function saveDraft() {
+      try { localStorage.setItem(draftKey, JSON.stringify({ h: hostInput.value, a: aliasEl ? aliasEl.value : "", r: !!(redirEl && redirEl.checked), s: cur })); } catch (e) {}
+    }
+    function clearDraft() { try { localStorage.removeItem(draftKey); } catch (e) {} }
+    function loadDraft() { try { return JSON.parse(localStorage.getItem(draftKey) || "null"); } catch (e) { return null; } }
+
     function host() { return (hostInput.value || "").trim().replace(/^https?:\/\//i, "").replace(/\/.*$/, "").toLowerCase(); }
     function setState(n, st) { var b = stepBtns[n - 1]; if (b) b.setAttribute("data-step-state", st); }
     function unlockAll() { stepBtns.forEach(function (b) { b.removeAttribute("data-locked"); }); }
@@ -4215,12 +4226,36 @@
       }).then(function (r) {
         if (!r.json) { form.submit(); return; }
         if (r.json.ok === false) { submitFail(r.json.message || "保存失败，请重试。"); return; }
+        clearDraft(); // 绑定完成，草稿使命结束
         window.location.assign(r.json.redirect || "/admin/sites");
       }).catch(function () { form.submit(); });
     });
 
+    // 输入与步骤变化即存草稿（next/prev/步骤点按在原监听之后绑定，此时 cur 已更新）。
+    [hostInput, aliasEl, redirEl].forEach(function (el) {
+      if (!el) return;
+      el.addEventListener("input", saveDraft);
+      el.addEventListener("change", saveDraft);
+    });
+    [prev, next].forEach(function (b) { if (b) b.addEventListener("click", saveDraft); });
+    stepBtns.forEach(function (b) { b.addEventListener("click", saveDraft); });
+
     setStep(1);
-    if (host()) { setState(1, "done"); unlockAll(); }
+    if (host()) {
+      // 服务器已有已保存的绑定：以服务端为准，废弃本地草稿。
+      clearDraft();
+      setState(1, "done"); unlockAll();
+    } else {
+      var draft = loadDraft();
+      if (draft && (draft.h || "").trim()) {
+        hostInput.value = draft.h;
+        if (aliasEl && draft.a) aliasEl.value = draft.a;
+        if (redirEl) redirEl.checked = !!draft.r;
+        setState(1, "done"); unlockAll();
+        var ds = Math.min(Math.max(parseInt(draft.s, 10) || 1, 1), 4);
+        if (ds > 1) setStep(ds); // 跳回离开时所在步骤（步骤内检测会重新实时跑）
+      }
+    }
     onOpen();
   });
 })();
@@ -4265,7 +4300,9 @@
           el.setAttribute("data-stage", stage);
           if (suf) suf.textContent = lbl(stage);
         } else {
-          el.removeAttribute("data-stage"); // ok / 未知都回到中性的更新时间
+          // 已生效/未知：回到中性的"内容上次对外更新时间"（成功态不需要再念"已生效"，
+          // 只有进行中的阶段——检测中/待生效/DNS 待配置——才值得占显示位）。
+          el.removeAttribute("data-stage");
           if (suf) suf.textContent = timeText;
         }
       })

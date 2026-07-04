@@ -2597,6 +2597,7 @@ input[type=range] { accent-color: var(--accent); }
 
 /* ---------- 站点卡片：Cloudflare 最近部署 + 发布最新内容 ---------- */
 .site-cf-status { margin-left: .45rem; font-family: var(--mono); font-size: .72rem; font-weight: 500; color: var(--muted); letter-spacing: .01em; }
+.site-details-title[data-stage] .site-cf-status { color: inherit; } /* 域名阶段激活时（已生效绿/待生效琥珀/DNS红）后缀跟随阶段色 */
 .site-cf-status.is-running { display: inline-flex; align-items: center; gap: .34rem; color: #b45309; font-weight: 700; }
 .site-cf-status.is-running::before { content: ""; width: .5rem; height: .5rem; border-radius: 999px; background: #f38020; animation: cf-pulse 1.4s ease-out infinite; }
 .site-cf-status.is-failed { color: #dc2626; font-weight: 700; }

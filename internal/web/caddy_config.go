@@ -147,10 +147,212 @@ func (s *Server) caddySiteManifest() (string, error) {
 	return renderCaddyManifest(sites, domains, caddyReverseProxyTarget()), nil
 }
 
+// caddyConfDir / caddyMainFile：与同步脚本同一套环境变量与默认值。
+func caddyConfDir() string {
+	if v := strings.TrimSpace(os.Getenv("CADDY_CONF_DIR")); v != "" {
+		return v
+	}
+	return "/etc/caddy/conf.d"
+}
+
+func caddyMainFile() string {
+	if v := strings.TrimSpace(os.Getenv("CADDYFILE")); v != "" {
+		return v
+	}
+	return "/etc/caddy/Caddyfile"
+}
+
+// caddyConfDirWritable 探测 gcms 能否直接写站点配置目录（root 或目录对进程可写）。
+func caddyConfDirWritable() bool {
+	dir := caddyConfDir()
+	f, err := os.CreateTemp(dir, ".gcms-probe-*")
+	if err != nil {
+		return false
+	}
+	name := f.Name()
+	_ = f.Close()
+	_ = os.Remove(name)
+	return true
+}
+
 // caddyAutoSyncAvailable 报告"保存域名后能否自动写入并重载 Caddy"：
-// 与 applyCaddySites 的自动路径同判据（root 运行 + 同步脚本存在）。向导第 3 步据此措辞。
+// 直写（conf 目录可写）或脚本（root + 脚本在）任一可行即为真。向导第 3 步据此措辞。
 func caddyAutoSyncAvailable() bool {
+	if _, err := exec.LookPath("caddy"); err != nil {
+		return false
+	}
+	if caddyConfDirWritable() {
+		return true
+	}
 	return caddySyncScriptPath() != "" && os.Geteuid() == 0
+}
+
+// caddyDesiredFiles 计算当前应存在的整组站点文件：文件名 → 配置内容。
+// 与 renderCaddyManifest 同一套规则（跳过默认站点/无主域名/非法或撞名文件名）。
+func caddyDesiredFiles(sites []*platform.Site, domains []*platform.SiteDomain, target string) map[string]string {
+	defaultID := int64(0)
+	for _, st := range sites {
+		if st != nil && st.IsDefault {
+			defaultID = st.ID
+		}
+	}
+	bySite := map[int64][]*platform.SiteDomain{}
+	var order []int64
+	for _, d := range domains {
+		if d == nil || !d.Enabled || d.SiteID == defaultID {
+			continue
+		}
+		if _, ok := bySite[d.SiteID]; !ok {
+			order = append(order, d.SiteID)
+		}
+		bySite[d.SiteID] = append(bySite[d.SiteID], d)
+	}
+	sort.Slice(order, func(i, j int) bool { return order[i] < order[j] })
+	out := map[string]string{}
+	for _, sid := range order {
+		var primary *platform.SiteDomain
+		var aliases []*platform.SiteDomain
+		for _, d := range bySite[sid] {
+			if d.IsPrimary {
+				if primary == nil {
+					primary = d
+				}
+				continue
+			}
+			aliases = append(aliases, d)
+		}
+		if primary == nil {
+			continue
+		}
+		fname := caddySiteFilename(primary.Host)
+		if fname == "" {
+			continue
+		}
+		if _, dup := out[fname]; dup {
+			continue
+		}
+		out[fname] = renderCaddySiteBlock(primary, aliases, target)
+	}
+	return out
+}
+
+// caddyValidate / caddyReload：与同步脚本同语义（systemctl reload 优先，退回 caddy reload）。
+func caddyValidate(ctx context.Context, config string) error {
+	return exec.CommandContext(ctx, "caddy", "validate", "--config", config, "--adapter", "caddyfile").Run()
+}
+
+func caddyReload(ctx context.Context) bool {
+	if _, err := exec.LookPath("systemctl"); err == nil {
+		if exec.CommandContext(ctx, "systemctl", "reload", "caddy").Run() == nil {
+			return true
+		}
+	}
+	if _, err := os.Stat(caddyMainFile()); err == nil {
+		if exec.CommandContext(ctx, "caddy", "reload", "--config", caddyMainFile(), "--adapter", "caddyfile").Run() == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// applyCaddyDirect 直写模式（应用户要求恢复 v1.0.91 的"保存即写 gcms-<域名>.caddy 并重载"体验）：
+// gcms 对 conf.d 有写权限时，按同步脚本的同一套安全语义直接落盘——
+// 逐个文件先校验；备份整组 gcms-*.caddy（绝不碰安装文件 gcms.caddy）；原子写 + 清理孤儿；
+// 装配后再校验主 Caddyfile（跨站冲突）；重载；任何失败整组回滚。
+// 返回 (面向 flash 的结果消息, 是否已处理)；目录不可写等前置不满足时 handled=false，交由脚本/手动路径。
+func (s *Server) applyCaddyDirect() (string, bool) {
+	if !caddyConfDirWritable() {
+		return "", false
+	}
+	sites, err := s.platform.Sites()
+	if err != nil {
+		return "Caddy 直写未完成：读取站点失败：" + err.Error(), true
+	}
+	domains, err := s.platform.SiteDomains()
+	if err != nil {
+		return "Caddy 直写未完成：读取域名失败：" + err.Error(), true
+	}
+	desired := caddyDesiredFiles(sites, domains, caddyReverseProxyTarget())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	confDir := caddyConfDir()
+
+	// 1) 落盘前逐个语法校验（写到临时文件校验，不碰 conf.d 正式文件）。
+	for name, content := range desired {
+		tmp, err := os.CreateTemp("", "gcms-caddy-*.caddy")
+		if err != nil {
+			return "Caddy 直写未完成：" + err.Error(), true
+		}
+		_, werr := tmp.WriteString(content)
+		_ = tmp.Close()
+		if werr == nil {
+			werr = caddyValidate(ctx, tmp.Name())
+		}
+		_ = os.Remove(tmp.Name())
+		if werr != nil {
+			return "Caddy 直写未完成：站点配置 " + name + " 语法校验未通过，未改动 Caddy。", true
+		}
+	}
+
+	// 2) 备份当前整组 gcms-*.caddy（内容进内存，供整组回滚）。
+	existing := map[string][]byte{}
+	entries, _ := os.ReadDir(confDir)
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasPrefix(name, "gcms-") || !strings.HasSuffix(name, ".caddy") {
+			continue
+		}
+		if b, err := os.ReadFile(filepath.Join(confDir, name)); err == nil {
+			existing[name] = b
+		}
+	}
+	restore := func() {
+		for name := range desired {
+			if _, was := existing[name]; !was {
+				_ = os.Remove(filepath.Join(confDir, name))
+			}
+		}
+		for name, b := range existing {
+			_ = os.WriteFile(filepath.Join(confDir, name), b, 0o644)
+		}
+	}
+
+	// 3) 原子写目标组 + 删除孤儿（后台已不存在的 gcms-*.caddy）。
+	for name, content := range desired {
+		tmp := filepath.Join(confDir, name+".tmp")
+		if err := os.WriteFile(tmp, []byte(content), 0o644); err != nil {
+			restore()
+			return "Caddy 直写未完成：" + err.Error(), true
+		}
+		if err := os.Rename(tmp, filepath.Join(confDir, name)); err != nil {
+			_ = os.Remove(tmp)
+			restore()
+			return "Caddy 直写未完成：" + err.Error(), true
+		}
+	}
+	removed := 0
+	for name := range existing {
+		if _, keep := desired[name]; !keep {
+			_ = os.Remove(filepath.Join(confDir, name))
+			removed++
+		}
+	}
+
+	// 4) 装配后校验主 Caddyfile（跨站域名冲突等），失败整组回滚。
+	if _, err := os.Stat(caddyMainFile()); err == nil {
+		if err := caddyValidate(ctx, caddyMainFile()); err != nil {
+			restore()
+			_ = caddyReload(ctx)
+			return "Caddy 直写未完成：写入后主 Caddyfile 校验未通过（域名是否与其它站点冲突？），已整组回滚。", true
+		}
+	}
+
+	// 5) 重载。
+	if !caddyReload(ctx) {
+		return fmt.Sprintf("已写入 %d 个站点配置（清理 %d 个），但重载 Caddy 失败，请手动执行 systemctl reload caddy。", len(desired), removed), true
+	}
+	return fmt.Sprintf("已写入 %d 个 Caddy 站点配置（清理 %d 个）并重载生效。", len(desired), removed), true
 }
 
 // applyCaddySites pushes the current sites into Caddy after a domain save. When gcms runs as
@@ -165,9 +367,13 @@ func (s *Server) applyCaddySites() string {
 	if _, err := exec.LookPath("caddy"); err != nil {
 		return "" // 没装 Caddy：不处理、不提示
 	}
+	// 直写模式优先：conf.d 可写就直接落盘 gcms-<域名>.caddy 并重载（同脚本的校验/回滚语义）。
+	if msg, handled := s.applyCaddyDirect(); handled {
+		return msg
+	}
 	script := caddySyncScriptPath()
 	if script == "" || os.Geteuid() != 0 {
-		// 脚本不在，或 gcms 非 root（无法执行需 root 的同步）→ 提示手动运行。
+		// 目录不可写、脚本不在或非 root → 提示手动运行。
 		return "域名已保存。让 Caddy 生效请运行：sudo sh scripts/gcms-caddy-sync.sh（或配置定时同步）。"
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
