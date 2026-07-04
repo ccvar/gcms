@@ -5,6 +5,7 @@
   import { openUrl } from '@tauri-apps/plugin-opener';
   import BrainIcon from '$lib/BrainIcon.svelte';
   import SiteMark from '$lib/SiteMark.svelte';
+  import SiteFav from '$lib/SiteFav.svelte';
   import type {
     Connection, Discovery, Site, BrainsInfo, Brain, ImportOutcome,
     Conversation, Message, TaskType, TurnEvent, ToolCall, ScheduledItem, ScheduledTask, TaskProposal,
@@ -20,6 +21,16 @@
   let brains = $state<BrainsInfo | null>(null);
   let importBusy = $state(false);
   let setupOpen = $state(false);
+  let switcherOpen = $state(false);
+  let footerEl = $state<HTMLElement | null>(null);
+  $effect(() => {
+    if (!switcherOpen) return;
+    const onDoc = (e: MouseEvent) => { if (footerEl && !footerEl.contains(e.target as Node)) switcherOpen = false; };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') switcherOpen = false; };
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onKey); };
+  });
   let flash = $state('');
   let flashKind = $state<'ok' | 'err'>('ok');
 
@@ -164,9 +175,15 @@
   function say(m: string, k: 'ok' | 'err' = 'ok') { flash = m; flashKind = k; setTimeout(() => (flash = ''), k === 'err' ? 8000 : 4000); }
   function brainUsable(b: Brain): boolean { const s = b === 'claude' ? brains?.claude : brains?.codex; return !!s && s.found && s.logged_in !== false; }
   function hostOf(u: string): string { try { return new URL(u).host; } catch { return u; } }
+  // 从当前发现结果里按 slug 找站点图标（favicon 优先，其次 logo）；找不到返回空由 SiteFav 用首字母兜底。
+  function siteFav(slug: string): string { const s = sites.find((x) => x.slug === slug); return s?.favicon || s?.logo || ''; }
 
   async function refreshConns() { try { conns = await invoke('list_connections'); if (!activeConnId && conns.length) selectConn(conns[0].id); } catch (e) { say(String(e), 'err'); } }
   async function refreshBrains() { try { brains = await invoke('detect_brains'); } catch (e) { say(String(e), 'err'); } }
+  // 技能包新增/移除站点后，重新拉取当前连接的可管站点列表。
+  async function refreshSites() { if (activeConnId && !discoveryLoading) await selectConn(activeConnId); }
+  let brainsBusy = $state(false);
+  async function refreshBrainsManual() { brainsBusy = true; try { await refreshBrains(); } finally { brainsBusy = false; } }
   async function refreshConvos() { try { convos = await invoke('list_conversations'); } catch (e) { say(String(e), 'err'); } }
 
   let selSeq = 0;
@@ -353,7 +370,7 @@
   const shownMessages = $derived((activeConv?.messages ?? []).filter((m) => !m.hidden));
 
   // 下拉选项
-  const siteOpts = $derived(sites.map((s) => ({ value: s.slug, label: s.name || s.slug, sub: s.slug, img: s.logo || '' })));
+  const siteOpts = $derived(sites.map((s) => ({ value: s.slug, label: s.name || s.slug, sub: s.url ? hostOf(s.url) : '未绑定域名', img: s.favicon || s.logo || '' })));
   const brainOpts = $derived([
     { value: 'claude', label: 'Claude', icon: 'claude', disabled: !brainUsable('claude'), sub: brainUsable('claude') ? '' : brains?.claude.found ? '未登录' : '未安装' },
     { value: 'codex', label: 'OpenAI Codex', icon: 'codex', disabled: !brainUsable('codex'), sub: brainUsable('codex') ? '' : brains?.codex.found ? '未登录' : '未安装' },
@@ -427,7 +444,7 @@
             onclick={() => openConv(c.id)} onkeydown={(e) => e.key === 'Enter' && openConv(c.id)}>
             <div class="convo-body">
               <span class="convo-title">{c.title}</span>
-              <span class="convo-meta"><span class="cmono">{c.site_slug}</span><span class="cdot">·</span>{@render brainTag(c.brain, brainLabel(c.brain))}{#if c.status === 'running'}<span class="mini-run"></span>{/if}</span>
+              <span class="convo-meta"><SiteFav src={siteFav(c.site_slug)} label={c.site_slug} size={12} /><span class="cmono">{c.site_slug}</span><span class="cdot">·</span>{@render brainTag(c.brain, brainLabel(c.brain))}{#if c.status === 'running'}<span class="mini-run"></span>{/if}</span>
             </div>
             <button class="convo-x" title="删除对话" onclick={(e) => { e.stopPropagation(); deleteConv(c.id); }}>×</button>
           </div>
@@ -435,19 +452,41 @@
       {/each}
     </div>
 
-    <button class="rail-foot" onclick={() => (setupOpen = true)}>
-      <SiteMark size={20} />
+    <div class="foot-wrap" bind:this={footerEl}>
+      {#if switcherOpen}
+        <div class="conn-switch">
+          {#each conns as c (c.id)}
+            <button class="cs-item {activeConnId === c.id ? 'on' : ''}" onclick={() => { selectConn(c.id); switcherOpen = false; }}>
+              <SiteMark size={18} />
+              <span class="cs-main"><b>{c.name}</b><small>{c.key_prefix} · {c.key_kind === 'gcmsp_' ? '平台' : '单站'}</small></span>
+              {#if activeConnId === c.id}<span class="cs-check">✓</span>{/if}
+            </button>
+          {/each}
+          <div class="cs-div"></div>
+          <button class="cs-act" onclick={() => { switcherOpen = false; importPack(); }}>{@render plusIcon()}导入技能包</button>
+          <button class="cs-act" onclick={() => { switcherOpen = false; setupOpen = true; }}>连接与模型设置…</button>
+        </div>
+      {/if}
+    <button class="rail-foot" onclick={() => { if (conns.length === 0) { setupOpen = true; } else { switcherOpen = !switcherOpen; } }}>
+      <SiteMark size={18} />
       <span class="foot-main">
         <b>{activeConn?.name ?? '未连接'}</b>
         <small>{activeConn ? `${sites.length} 个站点` : '点此导入技能包'}</small>
       </span>
-      <svg class="foot-gear" width="16" height="16" viewBox="0 0 16 16" fill="none">
-        <path d="M2 5h5.2M10.8 5H14" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
-        <path d="M2 11h2.8M8.4 11H14" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
-        <circle cx="9" cy="5" r="1.7" stroke="currentColor" stroke-width="1.3" />
-        <circle cx="6.6" cy="11" r="1.7" stroke="currentColor" stroke-width="1.3" />
-      </svg>
+      {#if conns.length === 0}
+        <svg class="foot-gear" width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <path d="M2 5h5.2M10.8 5H14" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
+          <path d="M2 11h2.8M8.4 11H14" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
+          <circle cx="9" cy="5" r="1.7" stroke="currentColor" stroke-width="1.3" />
+          <circle cx="6.6" cy="11" r="1.7" stroke="currentColor" stroke-width="1.3" />
+        </svg>
+      {:else}
+        <svg class="foot-chev" class:up={switcherOpen} width="14" height="14" viewBox="0 0 12 12" fill="none">
+          <path d="M3 7.5L6 4.5L9 7.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+      {/if}
     </button>
+    </div>
   </aside>
 
   <!-- 主区 -->
@@ -479,7 +518,7 @@
           </div>
 
           <div class="launch-row">
-            <div class="pick"><span>站点</span><Dropdown bind:value={lSite} options={siteOpts} placeholder="选择站点" /></div>
+            <div class="pick"><span class="pick-lbl">站点<button class="mini-rfz" title="刷新站点" onclick={refreshSites}>{@render refreshIcon(discoveryLoading)}</button></span><Dropdown bind:value={lSite} options={siteOpts} placeholder="选择站点" /></div>
             <div class="pick"><span>模型</span><Dropdown bind:value={lBrain} options={brainOpts} /></div>
             {#if lBrain === 'claude'}
               <div class="pick"><span>档位</span><Dropdown bind:value={lModel} options={modelOpts} /></div>
@@ -499,7 +538,7 @@
     {:else if view === 'schedule'}
       <header class="thread-head">
         <div class="th-info"><b>排期</b><small>各站点待定时发布的内容 · 由 gcms 服务端到点自动发布</small></div>
-        <button class="btn ghost small" onclick={loadScheduled} disabled={schedLoading}>{schedLoading ? '刷新中…' : '刷新'}</button>
+        <button class="icon-btn" onclick={loadScheduled} disabled={schedLoading} title="刷新">{@render refreshIcon(schedLoading)}</button>
       </header>
       <div class="thread">
         <div class="sched-inner">
@@ -534,7 +573,7 @@
     {:else if view === 'tasks'}
       <header class="thread-head">
         <div class="th-info"><b>定时任务</b><small>到点自动开一个新对话执行 · 需保持 Pilot 在后台（托盘）运行</small></div>
-        <button class="btn primary small" onclick={openNewTask}>＋ 新建任务</button>
+        <button class="btn soft" onclick={openNewTask}>{@render plusIcon()}新建任务</button>
       </header>
       <div class="thread">
         <div class="sched-inner">
@@ -580,7 +619,7 @@
       <header class="thread-head">
         <div class="th-info">
           <b>{activeConv?.title}</b>
-          <small>{activeConv?.site_name || activeConv?.site_slug} · {taskLabel(activeConv?.task_type ?? '')} · {@render brainTag(activeConv?.brain ?? 'claude', brainLabel(activeConv?.brain ?? '') + (activeConv?.brain === 'claude' && activeConv?.model ? ` ${activeConv.model}` : ''))}</small>
+          <small><SiteFav src={siteFav(activeConv?.site_slug ?? '')} label={activeConv?.site_slug ?? ''} size={13} /> {activeConv?.site_name || activeConv?.site_slug} · {taskLabel(activeConv?.task_type ?? '')} · {@render brainTag(activeConv?.brain ?? 'claude', brainLabel(activeConv?.brain ?? '') + (activeConv?.brain === 'claude' && activeConv?.model ? ` ${activeConv.model}` : ''))}</small>
         </div>
       </header>
 
@@ -648,6 +687,15 @@
 
 {#snippet brainTag(brain: string, label: string)}<span class="btag"><BrainIcon {brain} size={12} />{label}</span>{/snippet}
 
+{#snippet refreshIcon(spinning: boolean)}
+  <svg class="rfz {spinning ? 'spin' : ''}" width="15" height="15" viewBox="0 0 16 16" fill="none">
+    <path d="M13.6 8a5.6 5.6 0 1 1-1.7-4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+    <path d="M13.9 2.3V5.1H11.1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
+  </svg>
+{/snippet}
+
+{#snippet plusIcon()}<svg class="plus-ic" width="13" height="13" viewBox="0 0 14 14" fill="none"><path d="M7 2.4v9.2M2.4 7h9.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /></svg>{/snippet}
+
 {#snippet cmds(tools: ToolCall[])}
   <details class="cmds">
     <summary>
@@ -668,17 +716,24 @@
   <div class="sheet">
     <header class="sheet-head"><b>连接与模型</b><button class="x" onclick={() => (setupOpen = false)}>×</button></header>
     <div class="sheet-body">
-      <div class="sec-head"><span>连接</span><button class="btn small" onclick={importPack} disabled={importBusy}>{importBusy ? '导入中…' : '＋导入技能包'}</button></div>
+      <div class="sec-head"><span>连接</span><button class="btn small ghost" onclick={importPack} disabled={importBusy}>{importBusy ? '导入中…' : '＋ 导入'}</button></div>
       {#if conns.length === 0}<p class="hint">还没有连接。导入 gcms 平台技能包 zip。</p>{/if}
-      {#each conns as c (c.id)}
-        <label class="conn-row {activeConnId === c.id ? 'on' : ''}">
-          <input type="radio" name="conn" checked={activeConnId === c.id} onchange={() => { selectConn(c.id); }} />
-          <span class="conn-main"><b>{c.name}</b><small>{c.key_prefix} · {c.key_kind === 'gcmsp_' ? '平台' : '单站'}</small></span>
-          <button class="x sm" onclick={(e) => { e.preventDefault(); removeConn(c.id); }}>×</button>
-        </label>
-      {/each}
+      <div class="conn-list">
+        {#each conns as c (c.id)}
+          <div class="conn-row {activeConnId === c.id ? 'on' : ''}" role="button" tabindex="0"
+            onclick={() => selectConn(c.id)} onkeydown={(e) => e.key === 'Enter' && selectConn(c.id)}>
+            <SiteMark size={22} />
+            <span class="conn-main"><b>{c.name}</b>
+              <small>{c.key_prefix} · {c.key_kind === 'gcmsp_' ? '平台' : '单站'}{#if activeConnId === c.id} · {sites.length} 站点{/if}</small></span>
+            {#if activeConnId === c.id}
+              <button class="icon-btn sm" title="刷新站点（技能包新增站点后点这里）" onclick={(e) => { e.stopPropagation(); refreshSites(); }}>{@render refreshIcon(discoveryLoading)}</button>
+            {/if}
+            <button class="x sm" title="删除连接" onclick={(e) => { e.stopPropagation(); removeConn(c.id); }}>×</button>
+          </div>
+        {/each}
+      </div>
 
-      <div class="sec-head mt"><span>本地模型</span><button class="btn small ghost" onclick={refreshBrains}>刷新</button></div>
+      <div class="sec-head mt"><span>本地模型</span><button class="icon-btn" onclick={refreshBrainsManual} title="刷新">{@render refreshIcon(brainsBusy)}</button></div>
       {#if brains}
         {#each [{ b: 'claude' as Brain, st: brains.claude, name: 'Claude Code', cmd: 'npm i -g @anthropic-ai/claude-code' }, { b: 'codex' as Brain, st: brains.codex, name: 'OpenAI Codex', cmd: 'npm i -g @openai/codex' }] as r (r.b)}
           <div class="brain-row">
@@ -770,17 +825,17 @@
   .app { display: flex; height: 100vh; overflow: hidden; }
 
   /* 融合标题栏：全宽透明拖拽条，红绿灯浮在其上，两列各自的底色透出来 */
-  .titlebar { position: fixed; top: 0; left: 0; right: 0; height: 30px; z-index: 6; }
+  .titlebar { position: fixed; top: 0; left: 0; width: 260px; height: 30px; z-index: 6; }
 
   /* ---- 左栏 ---- */
   .rail { width: 260px; flex: none; display: flex; flex-direction: column; background: var(--rail); border-right: 1px solid var(--border); padding-top: 30px; }
-  .rail-head { padding: 8px 12px 10px; display: flex; flex-direction: column; gap: 3px; }
-  .newchat { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 12px;
+  .rail-head { padding: 8px 8px 8px; display: flex; flex-direction: column; gap: 2px; }
+  .newchat { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 10px;
     background: none; color: var(--text); border: none; border-radius: 9px; font-size: 13.5px; font-weight: 550; cursor: pointer; text-align: left; }
   .newchat:hover { background: #f1efe9; }
   .newchat:disabled { opacity: .5; cursor: default; }
   .newchat svg { flex: none; color: var(--accent); }
-  .railnav { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 12px; background: none;
+  .railnav { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 10px; background: none;
     border: none; border-radius: 9px; font-size: 13px; color: var(--dim); cursor: pointer; text-align: left; margin-top: -4px; }
   .railnav:hover { background: #f1efe9; color: var(--text); }
   .railnav.on { background: #eae7ff; color: var(--accent); font-weight: 550; }
@@ -789,9 +844,9 @@
 
   .convos { flex: 1; overflow-y: auto; padding: 4px 8px 8px; display: flex; flex-direction: column; gap: 1px; }
   .rail-empty { color: var(--faint); font-size: 12px; padding: 10px 8px; line-height: 1.7; }
-  .grp { font-size: 10.5px; font-weight: 600; letter-spacing: .04em; color: var(--faint); padding: 12px 8px 4px; text-transform: uppercase; }
+  .grp { font-size: 10.5px; font-weight: 600; letter-spacing: .04em; color: var(--faint); padding: 12px 10px 4px; text-transform: uppercase; }
   .grp:first-child { padding-top: 4px; }
-  .convo { position: relative; display: flex; align-items: center; gap: 6px; border-radius: 8px; padding: 7px 9px; cursor: pointer; }
+  .convo { position: relative; display: flex; align-items: center; gap: 6px; border-radius: 8px; padding: 7px 10px; cursor: pointer; }
   .convo:hover { background: #f1efe9; }
   .convo.on { background: #e9e7e0; }
   .convo-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
@@ -804,19 +859,48 @@
   .convo:hover .convo-x { opacity: 1; }
   .convo-x:hover { color: var(--err); background: #fff; }
 
-  .rail-foot { display: flex; align-items: center; gap: 9px; padding: 10px 12px; border: none; border-top: 1px solid var(--border); background: none; cursor: pointer; text-align: left; -webkit-appearance: none; appearance: none; box-shadow: none; }
+  .rail-foot { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border: none; border-top: 1px solid var(--border); background: none; cursor: pointer; text-align: left; -webkit-appearance: none; appearance: none; box-shadow: none; }
   .rail-foot:focus, .rail-foot:active { outline: none; box-shadow: none; }
   .rail-foot:hover { background: #f1efe9; }
   .foot-dots { display: flex; gap: 3px; }
   .foot-main { flex: 1; min-width: 0; }
-  .foot-main b { display: block; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .foot-main small { color: var(--dim); font-size: 11px; }
+  .foot-main b { display: block; font-size: 12.5px; line-height: 1.15; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .foot-main small { display: block; color: var(--dim); font-size: 10.5px; line-height: 1.1; }
   .foot-gear { color: var(--faint); font-size: 14px; }
+  .foot-chev { color: var(--faint); flex: none; transition: transform .15s; }
+  .foot-chev.up { transform: rotate(180deg); }
+
+  .foot-wrap { position: relative; }
+  .conn-switch {
+    position: absolute; left: 8px; right: 8px; bottom: calc(100% + 6px); z-index: 40;
+    background: #fff; border: 1px solid var(--border); border-radius: 12px;
+    box-shadow: 0 12px 32px rgba(30,25,15,.16); padding: 5px;
+    animation: pop .1s ease-out;
+  }
+  .cs-item {
+    width: 100%; display: flex; align-items: center; gap: 9px;
+    background: none; border: none; border-radius: 8px; padding: 7px 9px; cursor: pointer; text-align: left; font: inherit;
+    color: var(--text);
+  }
+  .cs-item:hover { background: #f4f3ef; }
+  .cs-item.on { background: #efeee9; }
+  .cs-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .cs-main b { font-weight: 500; font-size: 13px; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cs-main small { color: var(--dim); font-size: 11px; line-height: 1.25; }
+  .cs-check { color: var(--accent); flex: none; font-size: 13px; }
+  .cs-div { height: 1px; background: var(--border); margin: 5px 4px; }
+  .cs-act {
+    width: 100%; display: flex; align-items: center; gap: 8px;
+    background: none; border: none; border-radius: 8px; padding: 7px 9px; cursor: pointer; text-align: left;
+    font: inherit; font-size: 12.5px; color: var(--dim);
+  }
+  .cs-act:hover { background: #f4f3ef; color: var(--text); }
+  .cs-act :global(svg) { color: var(--faint); flex: none; }
   .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
   .dot.ok { background: #16a34a; } .dot.warn { background: #d97706; } .dot.off { background: #cfccc4; }
 
   /* ---- 主区 ---- */
-  .main { flex: 1; position: relative; display: flex; flex-direction: column; min-width: 0; padding-top: 30px; }
+  .main { flex: 1; position: relative; display: flex; flex-direction: column; min-width: 0; padding-top: 0; }
   .flash { position: absolute; top: 40px; left: 50%; transform: translateX(-50%); z-index: 40; background: #14231a; color: #fff; padding: 9px 16px; border-radius: 10px; font-size: 13px; box-shadow: var(--shadow); max-width: 70%; }
   .flash.err { background: var(--err); }
 
@@ -830,21 +914,24 @@
   .launcher h1 { font-size: 26px; margin: 0 0 6px; letter-spacing: -.01em; }
   .launcher .sub { color: var(--dim); margin: 0 0 22px; }
   .task-seg { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 16px; }
-  .task-seg button { text-align: left; background: var(--card); border: 1.5px solid var(--border); border-radius: 12px; padding: 12px 14px; cursor: pointer; display: flex; flex-direction: column; gap: 2px; transition: border-color .12s, background .12s; }
+  .task-seg button { text-align: left; background: var(--card); border: 1px solid var(--border2); border-radius: 12px; padding: 12px 14px; cursor: pointer; display: flex; flex-direction: column; gap: 2px; transition: border-color .12s, background .12s; }
   .task-seg button:hover { border-color: var(--border2); }
   .task-seg button.on { border-color: var(--accent); background: var(--accent-soft); }
   .task-seg b { font-size: 14px; }
   .task-seg small { color: var(--dim); font-size: 12px; }
 
-  .launch-row { display: flex; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
+  .launch-row { display: flex; gap: 12px; margin-bottom: 26px; flex-wrap: wrap; }
   .pick { display: flex; flex-direction: column; gap: 5px; flex: 1; min-width: 140px; }
   .pick > span { font-size: 12px; color: var(--dim); }
+  .pick-lbl { display: inline-flex; align-items: center; gap: 4px; }
+  .mini-rfz { background: none; border: none; padding: 1px; cursor: pointer; color: var(--faint); display: inline-flex; border-radius: 5px; }
+  .mini-rfz:hover { color: var(--accent); background: var(--accent-soft); }
   .tin, textarea { font-family: inherit; font-size: 14px; color: var(--text); background: #fff; border: 1.5px solid var(--border2); border-radius: 10px; padding: 9px 11px; }
-  .tin:focus, textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .tin:focus, textarea:focus { outline: none; border-color: #b7b2a6; box-shadow: none; }
 
   /* 输入框（仿 Claude Code：整块圆角边框，聚焦时高亮，发送按钮嵌在框内） */
-  .composer.big, .composer-wrap .composer { position: relative; background: #fff; border: 1px solid var(--border); border-radius: 22px; box-shadow: none; transition: border-color .12s, box-shadow .12s; }
-  .composer.big:focus-within, .composer-wrap .composer:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .composer.big, .composer-wrap .composer { position: relative; background: #fff; border: 1px solid var(--border2); border-radius: 22px; box-shadow: none; transition: border-color .12s, box-shadow .12s; }
+  .composer.big:focus-within, .composer-wrap .composer:focus-within { border-color: #b7b2a6; box-shadow: none; }
   .composer.big textarea, .composer-wrap textarea { width: 100%; resize: none; border: none; background: none; box-shadow: none; padding: 14px 52px 14px 17px; line-height: 1.6; max-height: 200px; display: block; }
   .composer.big textarea:focus, .composer-wrap textarea:focus { outline: none; box-shadow: none; border: none; }
   .composer .send { position: absolute; right: 9px; bottom: 9px; width: 32px; height: 32px; border-radius: 50%; border: none; background: var(--accent); color: #fff; font-size: 16px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background .12s, transform .08s; }
@@ -854,9 +941,9 @@
   .composer .send.stop { background: var(--text); }
 
   /* ---- 线程 ---- */
-  .thread-head { flex: none; padding: 11px 24px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .thread-head { flex: none; padding: 13px 24px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
   .th-info b { display: block; font-size: 15px; line-height: 1.35; }
-  .th-info small { display: block; color: var(--dim); font-size: 12px; line-height: 1.45; margin-top: 1px; }
+  .th-info small { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; color: var(--dim); font-size: 12px; margin-top: 2px; }
   .btag { display: inline-flex; align-items: center; gap: 4px; }
   .thread { flex: 1; overflow-y: auto; }
   .thread-inner { max-width: 760px; margin: 0 auto; padding: 22px 24px 8px; display: flex; flex-direction: column; gap: 20px; }
@@ -949,6 +1036,16 @@
   .btn.ghost { border-color: var(--border); }
   .btn.small { padding: 4px 10px; font-size: 12px; }
   .btn.lg { padding: 10px 22px; font-size: 15px; }
+  .btn.soft { display: inline-flex; align-items: center; gap: 5px; background: var(--accent-soft); color: var(--accent); border: 1px solid #dcdcf5; font-weight: 550; }
+  .btn.soft:hover { background: #e5e6fb; }
+  .plus-ic { flex: none; }
+  .icon-btn { background: none; border: none; cursor: pointer; padding: 6px; border-radius: 8px; color: var(--dim); display: inline-flex; align-items: center; justify-content: center; }
+  .icon-btn:hover { background: #f1efe9; color: var(--text); }
+  .icon-btn:disabled { opacity: .55; cursor: default; }
+  .rfz { display: block; }
+  .rfz.spin { animation: rspin .8s linear infinite; }
+  @keyframes rspin { to { transform: rotate(360deg); } }
+  @keyframes pop { from { opacity: 0; transform: translateY(4px); } }
   .x { background: none; border: none; color: var(--faint); font-size: 20px; cursor: pointer; line-height: 1; }
   .x:hover { color: var(--err); } .x.sm { font-size: 15px; }
 
@@ -957,13 +1054,17 @@
   .sheet { top: 0; right: 0; bottom: 0; width: min(400px, 92vw); border-radius: 0; }
   .modal { top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(440px, 92vw); border-radius: 14px; overflow: hidden; }
   .sheet-head { display: flex; justify-content: space-between; align-items: center; padding: 15px 18px; border-bottom: 1px solid var(--border); }
-  .sheet-body { padding: 16px 18px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
-  .sec-head { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: var(--dim); font-weight: 600; }
-  .sec-head.mt { margin-top: 14px; }
-  .conn-row { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border: 1.5px solid var(--border); border-radius: 10px; cursor: pointer; }
-  .conn-row.on { border-color: var(--accent); background: var(--accent-soft); }
+  .sheet-body { padding: 16px 18px; overflow-y: auto; display: flex; flex-direction: column; gap: 7px; }
+  .sec-head { display: flex; justify-content: space-between; align-items: center; font-size: 11px; letter-spacing: .03em; text-transform: uppercase; color: var(--faint); font-weight: 600; margin-bottom: 1px; }
+  .sec-head.mt { margin-top: 16px; }
+  .conn-list { display: flex; flex-direction: column; gap: 5px; }
+  .conn-row { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border: 1px solid var(--border); border-radius: 11px; cursor: pointer; transition: border-color .12s, background .12s; }
+  .conn-row:hover { background: #faf9f6; }
+  .conn-row.on { border-color: #cfc9ec; background: #f7f6ff; }
+  .conn-row :global(.sm) { border-radius: 6px; }
   .conn-main { flex: 1; min-width: 0; } .conn-main b { display: block; font-size: 13.5px; } .conn-main small { color: var(--dim); font-size: 11px; }
-  .brain-row { display: flex; align-items: center; gap: 9px; padding: 6px 2px; }
+  .icon-btn.sm { padding: 4px; border-radius: 7px; }
+  .brain-row { display: flex; align-items: center; gap: 9px; padding: 5px 2px; }
   .brain-main { flex: 1; } .brain-main b { display: block; font-size: 13.5px; } .brain-main small { color: var(--dim); font-size: 11px; }
   .hint { color: var(--dim); font-size: 12px; margin: 2px 0; line-height: 1.6; }
   .hint.mono { font-family: ui-monospace, monospace; font-size: 11px; color: var(--faint); background: #f6f5f1; padding: 5px 8px; border-radius: 6px; }

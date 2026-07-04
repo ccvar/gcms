@@ -16,6 +16,7 @@ export interface Site {
   api_base: string;
   url?: string;
   logo?: string;
+  favicon?: string;
 }
 
 export interface Discovery {

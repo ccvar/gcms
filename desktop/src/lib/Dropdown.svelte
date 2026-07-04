@@ -13,6 +13,8 @@
   let open = $state(false);
   let root: HTMLDivElement | undefined = $state();
   let menuStyle = $state('');
+  let failed = $state(new Set<string>());
+  function markFailed(src: string) { const n = new Set(failed); n.add(src); failed = n; }
   const current = $derived(options.find((o) => o.value === value));
 
   // 菜单用 fixed 定位（坐标取自触发器），这样不会被弹窗/滚动容器的 overflow 裁掉。
@@ -77,7 +79,7 @@
 
 {#snippet lead(o: Opt)}
   {#if o.icon}<BrainIcon brain={o.icon} size={16} />
-  {:else if o.img}<img class="dd-fav" src={o.img} alt="" loading="lazy" />
+  {:else if o.img && !failed.has(o.img)}<img class="dd-fav" src={o.img} alt="" loading="lazy" onerror={() => markFailed(o.img!)} />
   {:else if 'img' in o}<span class="dd-fav ph">{(o.label || '?').slice(0, 1).toUpperCase()}</span>{/if}
 {/snippet}
 
@@ -85,11 +87,11 @@
   .dd { position: relative; width: 100%; }
   .dd-trigger {
     width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px;
-    background: #fff; border: 1.5px solid var(--border2, #e1dfd8); border-radius: 10px;
-    padding: 9px 11px; font: inherit; font-size: 14px; color: var(--text, #26241f); cursor: pointer; text-align: left;
+    background: #fff; border: 1px solid var(--border2, #e1dfd8); border-radius: 10px;
+    padding: 7px 11px; font: inherit; font-size: 14px; color: var(--text, #26241f); cursor: pointer; text-align: left;
   }
   .dd-trigger:hover { border-color: #cfccc2; }
-  .dd-trigger.open { border-color: var(--accent, #4f46e5); box-shadow: 0 0 0 3px var(--accent-soft, #eef0fe); }
+  .dd-trigger.open { border-color: #b7b2a6; box-shadow: none; }
   .dd-trigger:disabled { opacity: .55; cursor: default; }
   .dd-label { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
   .dd-label :global(.bi) { flex: none; }
@@ -107,16 +109,16 @@
   }
   @keyframes pop { from { opacity: 0; transform: translateY(-4px); } }
   .dd-opt {
-    width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px;
-    background: none; border: none; border-radius: 8px; padding: 8px 10px; cursor: pointer; text-align: left; font: inherit;
+    width: 100%; display: flex; align-items: center; gap: 9px;
+    background: none; border: none; border-radius: 8px; padding: 7px 10px; cursor: pointer; text-align: left; font: inherit;
     color: var(--text, #26241f);
   }
   .dd-opt:hover { background: #f4f3ef; }
-  .dd-opt.sel { background: var(--accent-soft, #eef0fe); }
+  .dd-opt.sel { background: #efeee9; }
   .dd-opt.disabled { opacity: .4; cursor: default; }
   .dd-opt.disabled:hover { background: none; }
-  .dd-otext { display: flex; flex-direction: column; gap: 0; min-width: 0; }
-  .dd-otext b { font-weight: 500; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .dd-otext small { color: var(--dim, #6f6b62); font-size: 11.5px; }
-  .dd-check { color: var(--accent, #4f46e5); flex: none; font-size: 13px; }
+  .dd-otext { display: flex; flex-direction: column; gap: 0; min-width: 0; flex: 1; }
+  .dd-otext b { font-weight: 500; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .dd-otext small { color: var(--dim, #6f6b62); font-size: 11.5px; line-height: 1.3; }
+  .dd-check { color: var(--accent, #4f46e5); flex: none; font-size: 13px; margin-left: auto; }
 </style>
