@@ -1,0 +1,78 @@
+{{define "home_masonry"}}
+  {{- /* 瀑布 · Masonry —— Pinterest 式 CSS 多列瀑布流：分类胶囊 + 宽幅精选卡 + Posts/FeatLinks 混排变高卡片（纯 CSS multi-column） */ -}}
+  <div class="ms-wrap">
+
+    <header class="ms-hero">
+      {{if .Site.HeroEyebrow}}<p class="ms-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+      <h1 class="ms-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+      {{if .Site.HeroDescription}}<p class="ms-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+      <div class="ms-cta">
+        <a class="btn btn-primary" href="{{if .Featured}}{{.Tr.U (contentURL .Featured)}}{{else}}{{.Tr.U .CategoryAll.Path}}{{end}}">{{.Tr.T "home.cta_start"}} <span class="arrow">→</span></a>
+        <a class="btn" href="{{.Tr.U "/about"}}">{{.Tr.T "home.cta_more"}}</a>
+      </div>
+    </header>
+
+    {{if .Categories}}
+    <nav class="ms-chips" aria-label="{{.Tr.T "nav.category"}}">
+      <a class="ms-chip is-all" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}}</a>
+      {{range .Categories}}
+      <a class="ms-chip" href="{{$.Tr.U (printf "/category/%s" .Slug)}}"><span class="ms-chip-t">{{.Name}}</span><span class="ms-chip-n">{{.Count}}</span></a>
+      {{end}}
+    </nav>
+    {{end}}
+
+    {{with .Featured}}
+    <a class="ms-feat{{if not .CoverImage}} no-cover{{end}}" href="{{$.Tr.U (contentURL .)}}">
+      <span class="ms-feat-media">
+        {{if .CoverImage}}<img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<span class="ms-feat-gen" aria-hidden="true"><b>{{initial .Title}}</b></span>{{end}}
+      </span>
+      <span class="ms-feat-body">
+        <span class="ms-kicker">{{$.Site.HomeFeatured}}</span>
+        <span class="ms-feat-title">{{.Title}}</span>
+        {{if .Excerpt}}<span class="ms-feat-ex">{{.Excerpt}}</span>{{end}}
+        <span class="ms-feat-meta">{{with .Category}}<span class="ms-cat">{{.Name}}</span>{{end}}<time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time></span>
+        <span class="ms-feat-more">{{$.Tr.T "home.read_more"}} <span class="arrow" aria-hidden="true">→</span></span>
+      </span>
+    </a>
+    {{end}}
+
+    {{if or .Posts .FeatLinks}}
+    <section class="ms-stream">
+      <div class="ms-head">
+        <p class="ms-kicker">{{.Site.HomeLatest}}</p>
+        <a class="ms-viewall" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="ms-flow">
+        {{range .Posts}}
+        <a class="ms-card" href="{{$.Tr.U (contentURL .)}}">
+          {{if .CoverImage}}
+          <span class="ms-card-media"><img src="{{.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}></span>
+          {{else}}
+          <span class="ms-card-media ms-card-gen" aria-hidden="true"><b>{{initial .Title}}</b></span>
+          {{end}}
+          <span class="ms-card-body">
+            {{with .Category}}<span class="ms-cat">{{.Name}}</span>{{end}}
+            <span class="ms-card-title">{{.Title}}</span>
+            {{if .Excerpt}}<span class="ms-card-ex">{{.Excerpt}}</span>{{end}}
+            <time class="ms-card-date" datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time>
+          </span>
+        </a>
+        {{end}}
+        {{range .FeatLinks}}
+        <a class="ms-card ms-pin" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+          <span class="ms-pin-head">
+            <span class="ms-pin-ic">{{if .CoverImage}}<img src="{{.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}</span>
+            <span class="ms-pin-tag">{{$.Site.HomeLinks}}</span>
+          </span>
+          <span class="ms-card-body">
+            <span class="ms-card-title">{{.Title}} <span class="arrow" aria-hidden="true">↗</span></span>
+            {{if .Excerpt}}<span class="ms-card-ex">{{.Excerpt}}</span>{{end}}
+          </span>
+        </a>
+        {{end}}
+      </div>
+    </section>
+    {{end}}
+
+  </div>
+{{end}}

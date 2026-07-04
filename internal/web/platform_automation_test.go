@@ -78,6 +78,10 @@ func newPlatformTestServerBase(t *testing.T, baseURL string) (*Server, http.Hand
 	if err != nil {
 		t.Fatalf("create blog site: %v", err)
 	}
+	// 给 blog 站绑一个前台域名，便于用例访问其公共页面（如主题试穿的缓存不污染断言）。
+	if err := ps.AddSiteDomain(blogSite.ID, "https", "blog.test", true, true); err != nil {
+		t.Fatalf("add blog domain: %v", err)
+	}
 
 	srv, err := NewWithPlatform(defaultStore, ps, baseURL, defaultUploadDir, os.DirFS("../.."), os.DirFS("../.."))
 	if err != nil {

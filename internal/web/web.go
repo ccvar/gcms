@@ -186,6 +186,38 @@ var Themes = []ThemeOption{
 	{"cinema", "夜幕 · Cinema", "宽荧幕影格：2.39:1 黑边 + 灰度整屏场景 + 时间码，影像 / 摄影 / 电影质感"},
 	{"collage", "喧哗 · Collage", "反网格拼贴：叠错旋转卡片 + 便签胶带 + 涂鸦箭头，音乐节 / 潮牌 / zine"},
 	{"constellation", "星图 · Constellation", "可筛选生态名录：分类芯片 + 实时搜索过滤项目卡片网格（渐进增强，需前端 JS），Web3 生态 / 项目墙 / dApp 目录"},
+	{"gilded", "鎏金 · Gilded", "浓咖黑底 + 鎏金强调、轻字重衬线大标题，威士忌 / 珠宝 / 精品工作室的暗夜奢华官网"},
+	{"grove", "松涧 · Grove", "奶油纸底 + 深松绿侧栏、蜜色高亮，衬线标题，茶园 / 花艺 / 自然生活博客"},
+	{"obsidian", "曜石 · Obsidian", "石墨黑拼贴卡片 + 荧光青柠强调、等宽数字，开发者夜间主页 / 科技作品集"},
+	{"codex", "典藏 · Codex", "缃色纸底 + 牛血红强调、衬线条目与双细线表头，文博收藏 / 人文档案的目录页"},
+	{"gilt", "乌金 · Gilt", "满屏分屏换上乌木鎏金深色皮：衬线巨题 + 黄铜金强调，画廊 / 高端品牌 / 收藏站的夜场气质"},
+	{"zenith", "苍穹 · Zenith", "全居中宣言浸入星夜深蓝：衬线巨题、星光淡蓝强调、极致对称留白，宣言 / 诗集 / 概念项目的静谧夜航感"},
+	{"fir", "杉野 · Fir", "全宽色带换成米纸松绿：衬线大标题 + 胶囊按钮、自然系配色，有机食品 / 手作 / 户外品牌落地页"},
+	{"ember", "琥珀 · Ember", "行情跑马灯切入夜盘：石墨深底 + 琥珀信号色、等宽时间戳微光，加密行情 / 数据面板 / 夜间信息站的终端质感"},
+	{"ignition", "点火 · Ignition", "深空发射控制台：暗夜蓝黑底 + 琥珀→火焰渐变进度与 CTA，遥测仪表气质——夜间 mint / 代币发售 / 硬核项目发射页"},
+	{"cork", "软木 · Cork", "软木告示板：牛皮纸暖底 + 蜡印红图钉、衬线标题的泳道看板——编辑部选题板 / 社区公告栏 / 个人项目路线图"},
+	{"orbit", "星轨 · Orbit", "深空观测夜志：蓝黑夜幕 + 星点辉光节点、冰蓝等宽刻度——太空/天文主题编年、黑客松 build log、暗色版本路线图"},
+	{"runway", "秀场 · Runway", "午夜秀场影卷：黑幕整屏横滑 + 绯红舞台光、紧排无衬线大字——时装 lookbook / 暗调摄影集 / 品牌大片发布"},
+	{"velvet", "丝绒 · Velvet", "整屏封面折叠改走深夜高定：丝绒暗底、香槟金衬线大字——时装屋 / 香氛美妆 / 画廊发布会"},
+	{"pulse", "脉冲 · Pulse", "状态页换深色指挥台：冰青读数、等宽标题、暗夜机房气质——节点监控 / 基础设施 / API 状态页"},
+	{"onyx", "玄玉 · Onyx", "链接栈 bio 页换黑曜暗卡：荧光青柠强调、等宽名字——开发者 / 极客创作者 / 工具作者主页"},
+	{"lotus", "青荷 · Lotus", "草木曲面转冷调水岸：青雾纸底、荷粉 + 湖水青点缀、圆润无衬线——SPA / 花艺 / 疗愈生活品牌"},
+	{"vapor", "幻夜 · Vapor", "千禧桌面开进午夜：暗紫夜幕 + 霓粉窗格、荧光绿高光，蒸汽波气质的电玩 / 复古社区 / 玩乐个人站"},
+	{"matinee", "日场 · Matinee", "宽荧幕影格翻成日场画册：暖纸白 + 酒红字幕卡、衬线大标题、银盐灰阶影像，摄影集 / 展览画册 / 品牌影像站"},
+	{"rave", "夜电 · Rave", "反网格拼贴开进深夜：黑纸白墨硬阴影、只留荧光黄绿一击、等宽打字机标题，地下演出 / 电子厂牌 / 夜行 zine"},
+	{"astrolabe", "浑天 · Astrolabe", "星图名录换上真正的夜空：墨蓝底 + 星辉琥珀、衬线标题、细星点底纹，天文馆气质的生态目录 / 项目墙 / 收藏索引"},
+	{"masonry", "瀑布 · Masonry", "Pinterest 式多列瀑布流：居中题签 + 分类胶囊 + 宽幅精选卡，变高卡片沿 2–4 列自然下落，亮白画廊大留白——图库 / 灵感墙 / 设计收藏"},
+	{"darkroom", "暗房 · Darkroom", "瀑布流坠入暗房夜场：近黑展墙 + 安全灯红强调，灰阶封面悬停显色、首字母红印生成块——摄影作品集 / 夜间画廊 / 视觉档案"},
+	{"feed", "动态 · Feed", "社交微博式动态流：左侧常驻名片栏 + 居中单列帖子卡（置顶精选、头像缩略），天蓝清爽——个人动态 / build-in-public / 短内容"},
+	{"noir", "夜航 · Noir", "动态流熄灯开夜航：纯黑 AMOLED 底 + 霓虹紫强调、等宽时间戳的暗夜卡片流——深夜开发者动态 / 暗色个人微博"},
+	{"gazette", "头版 · Gazette", "对开报纸头版：巨型衬线报头 + 粗细双线 + 分栏线多栏正文与双线简报框，象牙纸底、牛血红眉题——新闻 / 评论 / 编辑部站点"},
+	{"tabloid", "街报 · Tabloid", "头版骨架换上街头小报皮：黑底大写无衬线巨题 + 猩红色块眉题、高反差白墨双线——潮流资讯 / 音乐现场 / 争议话题评论"},
+	{"manual", "手册 · Manual", "三栏手册页：左侧章节目录 + 中间编号小节 + 右侧速览卡，青灰蓝冷静克制——文档站 / 产品手册 / API 参考"},
+	{"kernel", "内核 · Kernel", "手册三栏换上石墨夜色工程皮：等宽标题 + 钢蓝强调、man page 气质——开发者文档 / 运维手册 / API 参考"},
+	{"almanac", "月历 · Almanac", "月历首页：双线刊头 + 七列月格把文章钉成日子 + 点线议程清单，暖手帐纸配朱红图钉——活动日程 / 更新日志 / 期刊连载"},
+	{"nightshift", "夜班 · Nightshift", "月历骨架值夜班：墨蓝夜底、霓虹紫发光图钉与等宽日号，月格与议程改走排程台质感——夜场演出 / 电竞赛程 / 链上活动日历"},
+	{"inbox", "收件箱 · Inbox", "邮件客户端三栏：左侧文件夹栏（分类+标签）+ 中间邮件列表（未读点/发件人/摘要）+ 右侧精选阅读窗格，经典浅色邮件质感——通讯归档 / 新闻简报 / 站内公告"},
+	{"midnight", "午夜 · Midnight", "三栏邮件客户端熄灯夜读：墨蓝夜幕 + 冰蓝强调、未读点辉光、星标鎏金——开发者简报 / 夜间通讯 / 更新公告"},
 }
 
 // themeLayouts 登记“非默认骨架”的主题；未登记者一律 "topbar"（= 现有基础骨架）。
@@ -213,6 +245,33 @@ var themeLayouts = map[string]string{
 	"cinema":        "cinema",
 	"collage":       "collage",
 	"constellation": "constellation",
+	// 皮肤复用骨架（新皮 → 既有骨）
+	"grove":     "sidebar",
+	"obsidian":  "bento",
+	"codex":     "index",
+	"gilt":      "split",
+	"zenith":    "axis",
+	"fir":       "bands",
+	"ember":     "ticker",
+	"ignition":  "liftoff",
+	"cork":      "board",
+	"orbit":     "timeline",
+	"runway":    "deck",
+	"velvet":    "poster",
+	"pulse":     "uptime",
+	"onyx":      "profile",
+	"lotus":     "bloom",
+	"vapor":     "desktop",
+	"matinee":   "cinema",
+	"rave":      "collage",
+	"astrolabe": "constellation",
+	// 新骨架（原生皮 + 反差皮）
+	"masonry": "masonry", "darkroom": "masonry",
+	"feed": "feed", "noir": "feed",
+	"gazette": "gazette", "tabloid": "gazette",
+	"manual": "manual", "kernel": "manual",
+	"almanac": "almanac", "nightshift": "almanac",
+	"inbox": "inbox", "midnight": "inbox",
 }
 
 // layoutForTheme 返回主题对应的布局骨架，缺省 "topbar"。
@@ -244,6 +303,15 @@ var themeAccentDefault = map[string]string{
 	"poster": "#e8402a", "uptime": "#16a34a", "profile": "#f0653c", "bloom": "#5c7a4a",
 	"desktop": "#1e7fe0", "cinema": "#7fb4d8", "collage": "#e5343a",
 	"constellation": "#5b6cf0",
+	"gilded":        "#c9a24b",
+	"grove":         "#3e6b4f", "obsidian": "#b8e34c", "codex": "#8c2f2b", "gilt": "#d4a24e",
+	"zenith": "#a8b8ff", "fir": "#3e6b4f", "ember": "#e8a13d", "ignition": "#ffb224",
+	"cork": "#bf3b2b", "orbit": "#62d0ff", "runway": "#e13558", "velvet": "#c9a25c",
+	"pulse": "#38cfe0", "onyx": "#c3f53c", "lotus": "#c2517b", "vapor": "#ff5fc1",
+	"matinee": "#a4343a", "rave": "#cff24d", "astrolabe": "#e5b04e",
+	"masonry": "#d6335c", "darkroom": "#e6483c", "feed": "#1d9bf0", "noir": "#8b5cf6",
+	"gazette": "#7d1d12", "tabloid": "#f5142e", "manual": "#3a6ea5", "kernel": "#7aa2f7",
+	"almanac": "#bf4229", "nightshift": "#8f6bff", "inbox": "#2563eb", "midnight": "#7aa2ff",
 }
 var themeRadiusDefault = map[string]string{
 	"editorial": "10", "magazine": "12", "terminal": "6", "brutalist": "0",
@@ -255,6 +323,15 @@ var themeRadiusDefault = map[string]string{
 	"poster": "0", "uptime": "8", "profile": "20", "bloom": "24",
 	"desktop": "6", "cinema": "0", "collage": "4",
 	"constellation": "14",
+	"gilded":        "6",
+	"grove":         "10", "obsidian": "12", "codex": "0", "gilt": "0",
+	"zenith": "0", "fir": "6", "ember": "10", "ignition": "12",
+	"cork": "8", "orbit": "8", "runway": "0", "velvet": "0",
+	"pulse": "6", "onyx": "14", "lotus": "22", "vapor": "14",
+	"matinee": "2", "rave": "4", "astrolabe": "16",
+	"masonry": "14", "darkroom": "10", "feed": "16", "noir": "16",
+	"gazette": "0", "tabloid": "0", "manual": "8", "kernel": "6",
+	"almanac": "10", "nightshift": "10", "inbox": "10", "midnight": "10",
 }
 
 const (
@@ -1711,6 +1788,7 @@ const langKey ctxKey = 0
 const publicBaseKey ctxKey = 1
 const previewNoindexKey ctxKey = 2
 const previewRoutePrefixKey ctxKey = 3
+const previewThemeKey ctxKey = 4
 
 func withLang(ctx context.Context, lang string) context.Context {
 	return context.WithValue(ctx, langKey, lang)
@@ -1739,6 +1817,20 @@ func previewNoindexFrom(ctx context.Context) bool {
 
 func previewRoutePrefixFrom(ctx context.Context) string {
 	v, _ := ctx.Value(previewRoutePrefixKey).(string)
+	return v
+}
+
+// withPreviewTheme / previewThemeFrom：主题试穿预览——在不改站点设置的前提下，
+// 让本次请求树里的所有前台页面按候选主题渲染（viewForLang 统一读取）。
+func withPreviewTheme(ctx context.Context, theme string) context.Context {
+	if strings.TrimSpace(theme) == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, previewThemeKey, theme)
+}
+
+func previewThemeFrom(ctx context.Context) string {
+	v, _ := ctx.Value(previewThemeKey).(string)
 	return v
 }
 
@@ -2719,6 +2811,8 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("GET /admin/settings", s.requireAuth(s.adminSettings))
 	mux.HandleFunc("GET /admin/settings/{section}", s.requireAuth(s.adminSettingsSection))
 	mux.HandleFunc("GET /admin/theme-preview/{theme}", s.requireAuth(s.adminThemePreview))
+	mux.HandleFunc("GET /admin/theme-browse/{theme}", s.requireAuth(s.adminThemeBrowse))
+	mux.HandleFunc("GET /admin/theme-browse/{theme}/{rest...}", s.requireAuth(s.adminThemeBrowse))
 	mux.HandleFunc("GET /admin/settings/updates/status", s.requireAuth(s.adminUpgradeStatus))
 	mux.HandleFunc("GET /admin/settings/updates/check", s.requireAuth(s.adminUpdateCheck))
 	mux.HandleFunc("GET /admin/settings/cloudflare/status", s.requireAuth(s.adminCloudflareStatus))
@@ -2846,6 +2940,10 @@ func (s *Server) viewForLang(r *http.Request, lang, nav string) *View {
 		LinksAll:      s.archiveConfig(lang, "link"),
 		ExternalLinks: s.externalLinkPolicy(),
 		ForceNoindex:  previewNoindexFrom(r.Context()),
+	}
+	// 主题试穿：预览请求树内所有页面换候选主题渲染（不改站点设置、不进公共页缓存）。
+	if th := previewThemeFrom(r.Context()); th != "" {
+		s.applyTheme(v, th)
 	}
 	if r.URL.Query().Get("visual_edit") == "1" {
 		if _, ok := s.currentSession(r); ok {
@@ -3278,6 +3376,34 @@ func (s *Server) menuEditRows(admins ...*i18n.AdminTr) []MenuRow {
 
 func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 	s.renderHome(w, r)
+}
+
+// adminThemeBrowse 主题试穿：用站点真实数据、按候选主题渲染整个前台，且可正常翻页——
+// 站内链接经 previewRoutePrefix 改写回到 /admin/theme-browse/{theme} 前缀下，noindex + 不进公共缓存。
+func (s *Server) adminThemeBrowse(w http.ResponseWriter, r *http.Request) {
+	theme := r.PathValue("theme")
+	if !validTheme(theme) {
+		s.notFound(w, r)
+		return
+	}
+	rest := "/" + strings.TrimPrefix(r.PathValue("rest"), "/")
+	if rest == "/" {
+		rest = "/" + s.defaultLang() + "/"
+	}
+	// 防递归/越界：试穿只服务前台路径。
+	if strings.HasPrefix(rest, "/admin") || strings.HasPrefix(rest, "/api") {
+		s.notFound(w, r)
+		return
+	}
+	nextURL := *r.URL
+	nextURL.Path = rest
+	prefix := "/admin/theme-browse/" + theme
+	ctx := withPreviewTheme(withPreviewRoutePrefix(withPreviewNoindex(r.Context()), prefix), theme)
+	req := r.Clone(ctx)
+	req.URL = &nextURL
+	w.Header().Set("X-Robots-Tag", "noindex, nofollow")
+	w.Header().Set("Cache-Control", "no-store")
+	s.siteHandler().ServeHTTP(w, req)
 }
 
 func (s *Server) adminThemePreview(w http.ResponseWriter, r *http.Request) {

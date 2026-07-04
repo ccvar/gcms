@@ -1,0 +1,87 @@
+{{define "home_manual"}}
+  {{/* manual 手册 —— 三栏文档首页：左章节 rail / 中编号小节 / 右速览卡（纯 CSS，无 JS） */}}
+  <div class="mn-wrap">
+    <div class="mn-grid{{if not (or .Featured .FeatLinks)}} mn-solo{{end}}">
+
+      <aside class="mn-rail" aria-label="{{.Tr.T "nav.category"}}">
+        <p class="mn-rail-head">{{.Tr.T "nav.category"}}</p>
+        <nav class="mn-chapters">
+          {{range .Categories}}
+          <a class="mn-chapter" href="{{$.Tr.U (printf "/category/%s" .Slug)}}">
+            <span class="mn-chapter-name">{{.Name}}</span>
+            <span class="mn-chapter-count">{{.Count}}</span>
+          </a>
+          {{end}}
+          <a class="mn-chapter mn-chapter-all" href="{{.Tr.U .CategoryAll.Path}}">
+            <span class="mn-chapter-name">{{.Tr.T "home.view_all"}}</span>
+            <span class="arrow" aria-hidden="true">→</span>
+          </a>
+        </nav>
+      </aside>
+
+      <section class="mn-doc">
+        <header class="mn-intro">
+          {{if .Site.HeroEyebrow}}<p class="mn-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+          <h1 class="mn-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+          {{if .Site.HeroDescription}}<p class="mn-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+          <div class="mn-cta">
+            <a class="btn btn-primary" href="{{if .Featured}}{{.Tr.U (contentURL .Featured)}}{{else}}{{.Tr.U .CategoryAll.Path}}{{end}}">{{.Tr.T "home.cta_start"}} <span class="arrow" aria-hidden="true">→</span></a>
+            <a class="btn" href="{{.Tr.U "/about"}}">{{.Tr.T "home.cta_more"}}</a>
+          </div>
+        </header>
+
+        <div class="mn-sec-head">
+          <span class="mn-sec-title">{{if .Site.HomeLatest}}{{.Site.HomeLatest}}{{else}}{{.Tr.T "home.latest"}}{{end}}</span>
+          <a class="mn-sec-link" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+        </div>
+
+        {{if .Posts}}
+        <ol class="mn-sections">
+          {{range .Posts}}
+          <li class="mn-section">
+            <a class="mn-section-in" href="{{$.Tr.U (contentURL .)}}">
+              <span class="mn-num" aria-hidden="true"></span>
+              <span class="mn-section-body">
+                <span class="mn-section-t">{{.Title}}</span>
+                {{if .Excerpt}}<span class="mn-section-ex">{{.Excerpt}}</span>{{end}}
+                <span class="mn-section-meta">{{with .Category}}<span class="mn-chip">{{.Name}}</span>{{end}}<time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time></span>
+              </span>
+              <span class="mn-section-go arrow" aria-hidden="true">→</span>
+            </a>
+          </li>
+          {{end}}
+        </ol>
+        {{else}}
+        <p class="mn-blank">{{.Tr.T "home.no_posts"}} <a href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a></p>
+        {{end}}
+      </section>
+
+      {{if or .Featured .FeatLinks}}
+      <aside class="mn-side">
+        {{with .Featured}}
+        <a class="mn-callout" href="{{$.Tr.U (contentURL .)}}">
+          <span class="mn-callout-k">{{if $.Site.HomeFeatured}}{{$.Site.HomeFeatured}}{{else}}{{$.Tr.T "home.featured"}}{{end}}</span>
+          <span class="mn-callout-cover{{if not .CoverImage}} mn-callout-gen{{end}}"{{if .CoverImage}} style="background-image:url('{{.CoverImage}}')"{{end}}>{{if not .CoverImage}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}</span>
+          <span class="mn-callout-t">{{.Title}}</span>
+          {{if .Excerpt}}<span class="mn-callout-ex">{{.Excerpt}}</span>{{end}}
+          <span class="mn-callout-meta">{{with .Category}}<span class="mn-chip">{{.Name}}</span>{{end}}<time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time></span>
+        </a>
+        {{end}}
+        {{if .FeatLinks}}
+        <nav class="mn-quick" aria-label="{{if .Site.HomeLinks}}{{.Site.HomeLinks}}{{else}}{{.Tr.T "home.links"}}{{end}}">
+          <p class="mn-quick-head">{{if .Site.HomeLinks}}{{.Site.HomeLinks}}{{else}}{{.Tr.T "home.links"}}{{end}}</p>
+          {{range .FeatLinks}}
+          <a class="mn-quick-link" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+            <span class="mn-quick-ic" aria-hidden="true">{{if .CoverImage}}<img src="{{.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b>{{initial .Title}}</b>{{end}}</span>
+            <span class="mn-quick-t">{{.Title}}</span>
+            <span class="arrow" aria-hidden="true">→</span>
+          </a>
+          {{end}}
+        </nav>
+        {{end}}
+      </aside>
+      {{end}}
+
+    </div>
+  </div>
+{{end}}

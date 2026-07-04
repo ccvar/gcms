@@ -459,12 +459,12 @@
 
         <div class="field-group">
           <h3 class="group-head">{{.Admin.T "admin.settings.appearance.themes" "可选主题"}}</h3>
-          <p class="muted" style="margin:-.2rem 0 .9rem;font-size:.85rem">{{.Admin.T "admin.settings.appearance.themes_desc" "十九套主题布局结构各异（页眉、首页列表、卡片样式），点选即切换、上方保存即生效。"}}</p>
+          <p class="muted" style="margin:-.2rem 0 .9rem;font-size:.85rem">{{.Admin.T "admin.settings.appearance.themes_desc" "多套主题布局结构各异（页眉、首页列表、卡片样式），点选即切换、上方保存即生效。"}}</p>
           <div class="theme-picker">
             {{range .Cards}}
             <label class="theme-card{{if eq .ID $.Settings.Theme}} sel{{end}}">
               <input type="radio" name="theme" value="{{.ID}}" data-accent="{{.Accent}}" data-radius="{{.Radius}}" data-custom="{{if .Custom}}1{{end}}" data-theme-name="{{.Name}}"{{if eq .ID $.Settings.Theme}} checked{{end}}>
-              <span class="tc-prev tc-live tc-{{.ID}}" aria-hidden="true" data-theme-preview><iframe data-src="/admin/theme-preview/{{.ID}}" title="{{.Name}} {{$.Admin.T "admin.settings.theme.preview_title_suffix" "主题预览"}}" loading="lazy" tabindex="-1"></iframe><button type="button" class="tc-zoom" data-tp-open data-tp-id="{{.ID}}" data-tp-name="{{.Name}}" title="{{$.Admin.T "admin.settings.theme.preview_full" "放大预览"}}" aria-label="{{$.Admin.T "admin.settings.theme.preview_full" "放大预览"}}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg></button></span>
+              <span class="tc-prev tc-live tc-{{.ID}}" aria-hidden="true" data-theme-preview><iframe data-src="/admin/theme-preview/{{.ID}}" title="{{.Name}} {{$.Admin.T "admin.settings.theme.preview_title_suffix" "主题预览"}}" loading="lazy" tabindex="-1"></iframe><button type="button" class="tc-zoom" data-tp-open data-tp-id="{{.ID}}" data-tp-name="{{.Name}}" title="{{$.Admin.T "admin.settings.theme.preview_full" "放大预览"}}" aria-label="{{$.Admin.T "admin.settings.theme.preview_full" "放大预览"}}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg></button><a class="tc-zoom tc-browse" href="/admin/theme-browse/{{.ID}}/" target="_blank" rel="noopener" title="{{$.Admin.T "admin.settings.theme.browse_real" "真实预览（站点数据，可翻页）"}}" aria-label="{{$.Admin.T "admin.settings.theme.browse_real" "真实预览（站点数据，可翻页）"}}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3.6 9h16.8M3.6 15h16.8"/><path d="M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18"/></svg></a></span>
               <span class="tc-name">{{.Name}}</span>
               <span class="tc-desc">{{.Desc}}</span>
             </label>
@@ -477,6 +477,7 @@
               <div class="tp-modal-head">
                 <strong data-tp-title>{{.Admin.T "admin.settings.theme.preview_full" "放大预览"}}</strong>
                 <div class="tp-modal-actions">
+                  <a class="btn" data-tp-browse href="#" target="_blank" rel="noopener">{{.Admin.T "admin.settings.theme.browse_real_short" "真实预览"}}</a>
                   <button type="button" class="btn btn-primary tp-select" data-tp-select>{{.Admin.T "admin.settings.theme.preview_select" "选用此主题"}}</button>
                   <button type="button" class="tp-modal-x" data-tp-close aria-label="{{.Admin.T "admin.action.close" "关闭"}}">✕</button>
                 </div>
@@ -489,6 +490,7 @@
             .tc-zoom { position: absolute; top: .4rem; right: .4rem; z-index: 3; display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 7px; background: color-mix(in srgb, var(--ink) 52%, transparent); color: #fff; cursor: pointer; opacity: 0; transition: opacity .15s, background .15s; }
             .theme-card:hover .tc-zoom, .tc-zoom:focus-visible { opacity: 1; }
             .tc-zoom:hover { background: var(--ink); }
+            .tc-browse { right: calc(.4rem + 28px + .3rem); text-decoration: none; } /* 真实预览（可翻页）：放大按钮左侧 */
             .tp-modal { position: fixed; inset: 0; z-index: 80; display: flex; align-items: center; justify-content: center; padding: 2rem; }
             .tp-modal[hidden] { display: none; }
             .tp-modal-backdrop { position: absolute; inset: 0; background: color-mix(in srgb, var(--ink) 46%, transparent); backdrop-filter: blur(2px); }

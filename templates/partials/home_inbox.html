@@ -1,0 +1,108 @@
+{{define "home_inbox"}}{{/* inbox — 收件箱：邮件客户端三栏（左文件夹栏 / 中邮件列表 / 右阅读窗格），纯 CSS 无 JS */}}
+  <div class="ib-wrap">
+
+    <header class="ib-hero">
+      {{if .Site.HeroEyebrow}}<p class="ib-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+      <h1 class="ib-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+      {{if .Site.HeroDescription}}<p class="ib-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+    </header>
+
+    <div class="ib-app">
+
+      <aside class="ib-rail" aria-label="{{.Tr.T "nav.category"}}">
+        <div class="ib-rail-sec">
+          <p class="ib-rail-head">{{.Tr.T "nav.category"}}</p>
+          <nav class="ib-folders">
+            <a class="ib-folder is-inbox" href="{{.Tr.U .CategoryAll.Path}}">
+              <span class="ib-folder-ic" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg></span>
+              <span class="ib-folder-name">{{.CategoryAll.Label}}</span>
+              {{if .Posts}}<span class="ib-count">{{len .Posts}}</span>{{end}}
+            </a>
+            {{range .Categories}}
+            <a class="ib-folder" href="{{$.Tr.U (printf "/category/%s" .Slug)}}">
+              <span class="ib-folder-ic" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></span>
+              <span class="ib-folder-name">{{.Name}}</span>
+              {{if .Count}}<span class="ib-count">{{.Count}}</span>{{end}}
+            </a>
+            {{end}}
+          </nav>
+        </div>
+        {{if .FeatLinks}}
+        <div class="ib-rail-sec">
+          <p class="ib-rail-head">{{.Site.HomeLinks}}</p>
+          <nav class="ib-tags">
+            {{range .FeatLinks}}
+            <a class="ib-tag" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}"><span class="ib-tag-dot" aria-hidden="true"></span><span class="ib-tag-t">{{.Title}}</span></a>
+            {{end}}
+          </nav>
+        </div>
+        {{end}}
+      </aside>
+
+      <section class="ib-list" aria-label="{{.Site.HomeLatest}}">
+        <div class="ib-list-head">
+          <span class="ib-list-title">{{.Site.HomeLatest}}</span>
+          <a class="ib-list-all" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+        </div>
+        {{if .Posts}}
+        <div class="ib-rows">
+          {{range .Posts}}
+          <a class="ib-row" href="{{$.Tr.U (contentURL .)}}">
+            <span class="ib-dot" aria-hidden="true"></span>
+            <span class="ib-avatar{{if not .CoverImage}} ib-avatar-gen{{end}}"{{if .CoverImage}} style="background-image:url('{{.CoverImage}}')"{{end}}>{{if not .CoverImage}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}</span>
+            <span class="ib-row-main">
+              <span class="ib-row-top">
+                <span class="ib-row-from">{{with .Category}}{{.Name}}{{else}}{{$.Site.Name}}{{end}}</span>
+                <time class="ib-row-date" datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time>
+              </span>
+              <span class="ib-row-subject">{{.Title}}</span>
+              {{if .Excerpt}}<span class="ib-row-snippet">{{.Excerpt}}</span>{{end}}
+            </span>
+          </a>
+          {{end}}
+        </div>
+        {{else}}
+        <div class="ib-list-empty">
+          <span class="ib-list-empty-ic" aria-hidden="true">✓</span>
+          <p>{{.Tr.T "home.no_posts"}}</p>
+        </div>
+        {{end}}
+      </section>
+
+      <section class="ib-read" aria-label="{{.Site.HomeFeatured}}">
+        {{with .Featured}}
+        <article class="ib-mail">
+          <div class="ib-mail-head">
+            <span class="ib-kicker"><span class="ib-star" aria-hidden="true">★</span>{{$.Site.HomeFeatured}}</span>
+            {{with .Category}}<span class="ib-chip">{{.Name}}</span>{{end}}
+          </div>
+          <h2 class="ib-subject">{{.Title}}</h2>
+          <div class="ib-meta">
+            <span class="ib-meta-avatar{{if not .CoverImage}} ib-avatar-gen{{end}}"{{if .CoverImage}} style="background-image:url('{{.CoverImage}}')"{{end}}>{{if not .CoverImage}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}</span>
+            <span class="ib-meta-cols">
+              <span class="ib-meta-from">{{with .Category}}{{.Name}}{{else}}{{$.Site.Name}}{{end}}</span>
+              <time class="ib-meta-date" datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time>
+            </span>
+          </div>
+          {{if .CoverImage}}
+          <a class="ib-attach" href="{{$.Tr.U (contentURL .)}}"><img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}></a>
+          {{end}}
+          {{if .Excerpt}}<p class="ib-body">{{.Excerpt}}</p>{{end}}
+          <div class="ib-mail-cta">
+            <a class="btn btn-primary" href="{{$.Tr.U (contentURL .)}}">{{$.Tr.T "home.read_more"}} <span class="arrow" aria-hidden="true">→</span></a>
+            <a class="btn" href="{{$.Tr.U "/about"}}">{{$.Tr.T "home.cta_more"}}</a>
+          </div>
+        </article>
+        {{else}}
+        <div class="ib-read-empty">
+          <span class="ib-read-empty-ic" aria-hidden="true"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg></span>
+          <p class="ib-read-empty-t">{{.Site.Name}}</p>
+          {{if .Site.HeroDescription}}<p class="ib-read-empty-d">{{.Site.HeroDescription}}</p>{{end}}
+          <a class="btn" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+        </div>
+        {{end}}
+      </section>
+
+    </div>
+  </div>
+{{end}}

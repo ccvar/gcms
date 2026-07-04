@@ -2851,6 +2851,7 @@
     var stage = modal.querySelector("[data-tp-stage]");
     var titleEl = modal.querySelector("[data-tp-title]");
     var selectBtn = modal.querySelector("[data-tp-select]");
+    var browseBtn = modal.querySelector("[data-tp-browse]");
     var FW = 1120, FH = 720, curId = null;
     function fit() {
       if (modal.hidden || !stage) return;
@@ -2873,6 +2874,7 @@
       curId = id;
       if (titleEl && name) titleEl.textContent = name;
       frame.src = "/admin/theme-preview/" + encodeURIComponent(id);
+      if (browseBtn) browseBtn.href = "/admin/theme-browse/" + encodeURIComponent(id) + "/";
       modal.hidden = false;
       fitSoon(); // 等布局完成后再按舞台宽度缩放
     }

@@ -1,0 +1,89 @@
+{{define "home_almanac"}}
+  <div class="al-wrap">
+    {{/* ===== MASTHEAD: centered almanac cover page between double rules ===== */}}
+    <header class="al-masthead">
+      {{if .Site.HeroEyebrow}}<p class="al-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+      <h1 class="al-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+      {{if .Site.HeroDescription}}<p class="al-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+      <div class="al-cta">
+        <a class="btn btn-primary" href="{{if .Featured}}{{.Tr.U (contentURL .Featured)}}{{else}}{{.Tr.U .CategoryAll.Path}}{{end}}">{{.Tr.T "home.cta_start"}} <span class="arrow">→</span></a>
+        <a class="btn" href="{{.Tr.U "/about"}}">{{.Tr.T "home.cta_more"}}</a>
+      </div>
+      {{if .Categories}}
+      <nav class="al-legend" aria-label="{{.Tr.T "nav.category"}}">
+        {{range .Categories}}<a class="al-chip" href="{{$.Tr.U (printf "/category/%s" .Slug)}}"><span class="al-chip-dot" aria-hidden="true"></span><span class="al-chip-name">{{.Name}}</span><b>{{.Count}}</b></a>{{end}}
+      </nav>
+      {{end}}
+    </header>
+
+    {{/* ===== HIGHLIGHT: featured as the this-month banner, big day number over the media ===== */}}
+    {{with .Featured}}
+    {{$iso := $.Tr.ISODate .PublishedAt}}
+    <a class="al-hl{{if .CoverImage}} has-cover{{end}}" href="{{$.Tr.U (contentURL .)}}">
+      <span class="al-hl-media{{if not .CoverImage}} al-hl-gen{{end}}"{{if .CoverImage}} style="background-image:url('{{.CoverImage}}')"{{end}}>
+        {{if not .CoverImage}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}
+        {{if eq (len $iso) 10}}<span class="al-hl-day" aria-hidden="true">{{slice $iso 8 10}}</span>{{end}}
+      </span>
+      <span class="al-hl-body">
+        <span class="al-hl-kicker">{{$.Site.HomeFeatured}}</span>
+        <span class="al-hl-meta">{{with .Category}}<span class="al-cat">{{.Name}}</span>{{end}}<time datetime="{{$iso}}">{{$.Tr.Date .PublishedAt}}</time></span>
+        <span class="al-hl-title">{{.Title}}</span>
+        {{if .Excerpt}}<span class="al-hl-ex">{{.Excerpt}}</span>{{end}}
+        <span class="al-hl-more">{{$.Tr.T "home.read_more"}} <span class="arrow" aria-hidden="true">→</span></span>
+      </span>
+    </a>
+    {{end}}
+
+    {{if .Posts}}
+    {{/* ===== MONTH LATTICE: poetic 7-col grid — posts pinned as day cells, empty day squares drawn by the container background ===== */}}
+    <section class="al-month" aria-label="{{.Site.HomeLatest}}">
+      <div class="al-month-head">
+        <span class="al-month-label">{{.Site.HomeLatest}}</span>
+        <a class="al-month-all" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="al-grid">
+        {{range .Posts}}
+        {{$iso := $.Tr.ISODate .PublishedAt}}
+        <a class="al-cell" href="{{$.Tr.U (contentURL .)}}">
+          <span class="al-cell-pin" aria-hidden="true"></span>
+          {{if eq (len $iso) 10}}<b class="al-cell-day" aria-hidden="true">{{slice $iso 8 10}}</b><span class="al-cell-mo" aria-hidden="true">{{slice $iso 0 7}}</span>{{end}}
+          <span class="al-cell-title">{{.Title}}</span>
+        </a>
+        {{end}}
+      </div>
+    </section>
+
+    {{/* ===== AGENDA: dotted-leader schedule list of the same month ===== */}}
+    <section class="al-agenda">
+      <ol class="al-agenda-list">
+        {{range .Posts}}
+        <li class="al-item">
+          <a class="al-item-link" href="{{$.Tr.U (contentURL .)}}">
+            <time class="al-item-date" datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time>
+            <span class="al-item-title">{{.Title}}</span>
+            <span class="al-item-leader" aria-hidden="true"></span>
+            {{with .Category}}<span class="al-cat">{{.Name}}</span>{{end}}
+            <span class="al-item-arrow arrow" aria-hidden="true">→</span>
+          </a>
+        </li>
+        {{end}}
+      </ol>
+    </section>
+    {{end}}
+
+    {{/* ===== NOTES: featured links as margin notes ===== */}}
+    {{if .FeatLinks}}
+    <section class="al-notes" aria-label="{{.Site.HomeLinks}}">
+      <p class="al-notes-h">{{.Site.HomeLinks}}</p>
+      <div class="al-notes-row">
+        {{range .FeatLinks}}
+        <a class="al-note" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+          <span class="al-note-ic">{{if .CoverImage}}<img src="{{.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}</span>
+          <span class="al-note-t">{{.Title}}</span>
+        </a>
+        {{end}}
+      </div>
+    </section>
+    {{end}}
+  </div>
+{{end}}

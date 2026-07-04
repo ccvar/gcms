@@ -1,0 +1,87 @@
+{{define "home_feed"}}
+  <div class="fd-wrap">
+
+    <aside class="fd-side">
+      <div class="fd-side-in">
+        <section class="fd-card">
+          <span class="fd-avatar" aria-hidden="true"><b>{{initial .Site.HeroTitle}}</b></span>
+          {{if .Site.HeroEyebrow}}<p class="fd-handle"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+          <h1 class="fd-name"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{.Site.HeroTitle}}</h1>
+          {{if .Site.HeroDescription}}<p class="fd-bio"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+          <div class="fd-cta">
+            <a class="btn btn-primary" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.cta_start"}} <span class="arrow" aria-hidden="true">→</span></a>
+            <a class="btn" href="{{.Tr.U "/about"}}">{{.Tr.T "home.cta_more"}}</a>
+          </div>
+        </section>
+
+        {{if .FeatLinks}}
+        <nav class="fd-block" aria-label="{{.Site.HomeLinks}}">
+          <p class="fd-block-label">{{.Site.HomeLinks}}</p>
+          <div class="fd-links">
+            {{range .FeatLinks}}
+            <a class="fd-link" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+              <span class="fd-link-ic">{{if .CoverImage}}<img src="{{.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}</span>
+              <span class="fd-link-t">{{.Title}}</span>
+              <span class="fd-link-arrow arrow" aria-hidden="true">→</span>
+            </a>
+            {{end}}
+          </div>
+        </nav>
+        {{end}}
+
+        {{if .Categories}}
+        <nav class="fd-block" aria-label="{{.Tr.T "nav.category"}}">
+          <p class="fd-block-label">{{.Tr.T "nav.category"}}</p>
+          <div class="fd-tags">
+            {{range .Categories}}
+            <a class="fd-tag" href="{{$.Tr.U (printf "/category/%s" .Slug)}}">{{.Name}}<b class="fd-tag-n">{{.Count}}</b></a>
+            {{end}}
+          </div>
+        </nav>
+        {{end}}
+      </div>
+    </aside>
+
+    <section class="fd-stream">
+      {{if or .Featured .Posts}}
+      <div class="fd-stream-head">
+        <span>{{.Site.HomeLatest}}</span>
+        <a href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+
+      {{with .Featured}}
+      <a class="fd-post fd-pinned" href="{{$.Tr.U (contentURL .)}}">
+        <span class="fd-pin"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16 9V4h1c.55 0 1-.45 1-1s-.45-1-1-1H7c-.55 0-1 .45-1 1s.45 1 1 1h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3z"/></svg>{{$.Site.HomeFeatured}}</span>
+        <span class="fd-ava{{if not .CoverImage}} fd-ava-gen{{end}}"{{if .CoverImage}} style="background-image:url('{{.CoverImage}}')"{{end}}>{{if not .CoverImage}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}</span>
+        <span class="fd-post-body">
+          <span class="fd-post-line"><b class="fd-post-name">{{$.Site.Name}}</b><time class="fd-post-time" datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time>{{with .Category}}<span class="fd-post-cat">{{.Name}}</span>{{end}}</span>
+          <span class="fd-post-t">{{.Title}}</span>
+          {{if .Excerpt}}<span class="fd-post-ex">{{.Excerpt}}</span>{{end}}
+        </span>
+      </a>
+      {{end}}
+
+      {{range .Posts}}
+      <a class="fd-post" href="{{$.Tr.U (contentURL .)}}">
+        <span class="fd-ava{{if not .CoverImage}} fd-ava-gen{{end}}"{{if .CoverImage}} style="background-image:url('{{.CoverImage}}')"{{end}}>{{if not .CoverImage}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}</span>
+        <span class="fd-post-body">
+          <span class="fd-post-line"><b class="fd-post-name">{{$.Site.Name}}</b><time class="fd-post-time" datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time>{{with .Category}}<span class="fd-post-cat">{{.Name}}</span>{{end}}</span>
+          <span class="fd-post-t">{{.Title}}</span>
+          {{if .Excerpt}}<span class="fd-post-ex">{{.Excerpt}}</span>{{end}}
+        </span>
+      </a>
+      {{end}}
+
+      {{if .Posts}}
+      <a class="fd-more" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      {{end}}
+      {{else}}
+      <div class="fd-empty">
+        <span class="fd-empty-t">{{.Site.HomeLatest}}</span>
+        <a class="btn" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      {{end}}
+    </section>
+
+  </div>
+{{end}}
