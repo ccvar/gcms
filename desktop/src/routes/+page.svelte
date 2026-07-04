@@ -488,7 +488,7 @@
 <main class="app">
   <!-- 融合式标题栏：透明拖拽条铺满顶部，红绿灯与工具按钮浮在其上（macOS Overlay） -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="titlebar" data-tauri-drag-region aria-hidden="true" onmousedown={startDrag}></div>
+  <div class="titlebar" data-tauri-drag-region aria-hidden="true" onmousedown={startDrag} style="width:{railCollapsed ? 140 : railWidth}px"></div>
 
   <!-- 顶部工具：折叠侧栏 + 搜索会话（紧挨红绿灯右侧，始终可见） -->
   <div class="win-tools">
@@ -596,7 +596,8 @@
     {#if flash}<div class="flash {flashKind}">{flash}</div>{/if}
 
     {#if !activeConn}
-      <div class="center">
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="center" data-tauri-drag-region onmousedown={startDrag}>
         <div class="hero-card">
           <div class="hero-mark">✦</div>
           <h1>开始之前，先导入技能包</h1>
@@ -606,7 +607,8 @@
       </div>
 
     {:else if view === 'launcher'}
-      <div class="center launch-center">
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="center launch-center" data-tauri-drag-region onmousedown={startDrag}>
         <div class="launcher">
           <h1>想让它帮你做点什么？</h1>
           <p class="sub">选好站点和模型，像聊天一样把需求说清楚，它会边聊边把事情做掉。</p>
@@ -651,7 +653,8 @@
       </div>
 
     {:else if view === 'schedule'}
-      <header class="thread-head">
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <header class="thread-head" data-tauri-drag-region onmousedown={startDrag}>
         <div class="th-info"><b>排期</b><small>各站点待定时发布的内容 · 由 gcms 服务端到点自动发布</small></div>
         <button class="icon-btn" onclick={loadScheduled} disabled={schedLoading} title="刷新">{@render refreshIcon(schedLoading)}</button>
       </header>
@@ -686,7 +689,8 @@
       </div>
 
     {:else if view === 'tasks'}
-      <header class="thread-head">
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <header class="thread-head" data-tauri-drag-region onmousedown={startDrag}>
         <div class="th-info"><b>定时任务</b><small>到点自动开一个新对话执行 · 需保持 Pilot 在后台（托盘）运行</small></div>
         <button class="btn soft" onclick={openNewTask}>{@render plusIcon()}新建任务</button>
       </header>
@@ -697,7 +701,7 @@
               <div class="cal-mark">⏰</div>
               <b>还没有定时任务</b>
               <p>建一个让它按时自动干活，比如「每天早上 9 点，围绕本周热点写一篇文章存草稿」。</p>
-              <button class="btn primary sm" onclick={openNewTask} style="margin-top:16px">＋ 新建任务</button>
+              <button class="btn soft" onclick={openNewTask} style="margin-top:16px">{@render plusIcon()}新建任务</button>
             </div>
           {:else}
             {#each tasks as t (t.id)}
@@ -731,7 +735,8 @@
 
     {:else}
       <!-- 对话线程 -->
-      <header class="thread-head">
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <header class="thread-head" data-tauri-drag-region onmousedown={startDrag}>
         <div class="th-info">
           <b>{activeConv?.title}</b>
           <small><SiteFav src={siteFav(activeConv?.site_slug ?? '')} label={activeConv?.site_slug ?? ''} size={13} /> {activeConv?.site_name || activeConv?.site_slug} · {taskLabel(activeConv?.task_type ?? '')} · {@render brainTag(activeConv?.brain ?? 'claude', brainLabel(activeConv?.brain ?? '') + (activeConv?.brain === 'claude' && activeConv?.model ? ` ${activeConv.model}` : ''))}</small>
@@ -893,10 +898,10 @@
       {#if brains}
         {#each [{ b: 'claude' as Brain, st: brains.claude, name: 'Claude Code', cmd: 'npm i -g @anthropic-ai/claude-code' }, { b: 'codex' as Brain, st: brains.codex, name: 'OpenAI Codex', cmd: 'npm i -g @openai/codex' }] as r (r.b)}
           <div class="brain-row">
-            <span class="dot {r.st.found && r.st.logged_in ? 'ok' : r.st.found ? 'warn' : 'off'}"></span>
-            <BrainIcon brain={r.b} size={17} />
+            <span class="brain-ic"><BrainIcon brain={r.b} size={18} /></span>
             <span class="brain-main"><b>{r.name}</b>
               <small>{#if !r.st.found}未安装{:else if r.st.logged_in === false}未登录{:else}{r.st.version || '已就绪'}{/if}</small></span>
+            <span class="dot {r.st.found && r.st.logged_in ? 'ok' : r.st.found ? 'warn' : 'off'}"></span>
             {#if r.st.found && r.st.logged_in === false}<button class="btn small primary" onclick={() => authorize(r.b)}>去授权</button>{/if}
           </div>
           {#if !r.st.found}<p class="hint mono">安装：{r.cmd}</p>{/if}
@@ -982,9 +987,17 @@
   :global([role='button']:focus-visible), :global(summary:focus), :global(a:focus) { outline: none; box-shadow: none; }
   .app { display: flex; height: 100vh; overflow: hidden; }
 
+  /* 细滚动条（macOS overlay 风格）：细、圆角、透明轨道，thumb 用 padding-box 内缩显得更细。 */
+  :global(::-webkit-scrollbar) { width: 10px; height: 10px; }
+  :global(::-webkit-scrollbar-track) { background: transparent; }
+  :global(::-webkit-scrollbar-thumb) { background-color: rgba(60, 54, 44, .22); border-radius: 8px; border: 3px solid transparent; background-clip: padding-box; }
+  :global(::-webkit-scrollbar-thumb:hover) { background-color: rgba(60, 54, 44, .4); border: 2px solid transparent; background-clip: padding-box; }
+  :global(::-webkit-scrollbar-corner) { background: transparent; }
+
   /* 融合标题栏：全宽透明拖拽条，红绿灯浮在其上，两列各自的底色透出来 */
-  /* 拖拽条铺满整个顶部（含主区域），内容靠 .rail/.main 的 padding-top 让开 30px。 */
-  .titlebar { position: fixed; top: 0; left: 0; right: 0; width: 100%; height: 30px; z-index: 6; }
+  /* 拖拽条只盖住左栏顶部（红绿灯+工具区）；主区域顶部改由各页头/启动页自身承担拖拽，
+     这样内容能贴近顶部又不被拖拽条挡住按钮。 */
+  .titlebar { position: fixed; top: 0; left: 0; height: 30px; z-index: 6; }
   /* 顶部工具按钮：浮在拖拽条之上、紧挨红绿灯右侧。 */
   .win-tools { position: fixed; top: 0; left: 80px; height: 30px; display: flex; align-items: center; gap: 1px; z-index: 8; }
   .wt { display: inline-flex; align-items: center; justify-content: center; width: 27px; height: 24px; border: none; background: none; border-radius: 6px; color: var(--dim); cursor: pointer; -webkit-app-region: no-drag; }
@@ -996,9 +1009,8 @@
   .rail { position: relative; width: 240px; flex: none; display: flex; flex-direction: column; background: var(--rail); border-right: 1px solid var(--border); padding-top: 30px; }
   .rail.collapsed { display: none; }
   /* 右缘拖拽把手：改侧栏宽度。 */
+  /* 只用 col-resize 光标提示，不画任何指示线（避免拖动时多出一条竖线）。 */
   .rail-resize { position: absolute; top: 30px; right: -3px; bottom: 0; width: 7px; cursor: col-resize; z-index: 5; }
-  .rail-resize::after { content: ''; position: absolute; top: 0; bottom: 0; right: 3px; width: 2px; background: var(--accent); opacity: 0; transition: opacity .12s; }
-  .rail-resize:hover::after { opacity: .5; }
   .rail-head { padding: 8px 8px 8px; display: flex; flex-direction: column; gap: 2px; }
   .newchat { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 10px;
     background: none; color: var(--text); border: none; border-radius: 9px; font-size: 13.5px; font-weight: 550; cursor: pointer; text-align: left; }
@@ -1029,7 +1041,7 @@
   .convo:hover .convo-x { opacity: 1; }
   .convo-x:hover { color: var(--err); background: #fff; }
 
-  .rail-foot { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border: none; border-top: 1px solid var(--border); background: none; cursor: pointer; text-align: left; -webkit-appearance: none; appearance: none; box-shadow: none; }
+  .rail-foot { width: 100%; display: flex; align-items: center; gap: 8px; padding: 8px 12px; border: none; border-top: 1px solid var(--border); background: none; cursor: pointer; text-align: left; -webkit-appearance: none; appearance: none; box-shadow: none; }
   .rail-foot:focus, .rail-foot:active { outline: none; box-shadow: none; }
   .rail-foot:hover { background: #f1efe9; }
   .rail-foot.open { background: #f1efe9; border-top-color: transparent; }
@@ -1071,7 +1083,7 @@
   .dot.ok { background: #16a34a; } .dot.warn { background: #d97706; } .dot.off { background: #cfccc4; }
 
   /* ---- 主区 ---- */
-  .main { flex: 1; position: relative; display: flex; flex-direction: column; min-width: 0; padding-top: 30px; }
+  .main { flex: 1; position: relative; display: flex; flex-direction: column; min-width: 0; padding-top: 0; }
   .flash { position: absolute; top: 40px; left: 50%; transform: translateX(-50%); z-index: 40; background: #14231a; color: #fff; padding: 9px 16px; border-radius: 10px; font-size: 13px; box-shadow: var(--shadow); max-width: 70%; }
   .flash.err { background: var(--err); }
 
@@ -1103,6 +1115,7 @@
   .pick > span { font-size: 12px; color: var(--dim); }
   .pick-lbl { display: inline-flex; align-items: center; gap: 4px; }
   .mini-rfz { background: none; border: none; padding: 1px; cursor: pointer; color: var(--faint); display: inline-flex; border-radius: 5px; }
+  .mini-rfz .rfz { width: 12px; height: 12px; }
   .mini-rfz:hover { color: var(--accent); background: var(--accent-soft); }
   .tin, textarea { font-family: inherit; font-size: 14px; color: var(--text); background: #fff; border: 1.5px solid var(--border2); border-radius: 10px; padding: 9px 11px; }
   .tin:focus, textarea:focus { outline: none; border-color: #b7b2a6; box-shadow: none; }
@@ -1240,8 +1253,9 @@
   .btn.small { padding: 4px 10px; font-size: 12px; }
   .btn.lg { padding: 10px 22px; font-size: 15px; }
   .btn.sm { padding: 5px 12px; font-size: 12px; border-radius: 8px; }
-  .btn.soft { display: inline-flex; align-items: center; gap: 5px; background: var(--accent-soft); color: var(--accent); border: 1px solid #dcdcf5; font-weight: 550; }
-  .btn.soft:hover { background: #e5e6fb; }
+  .btn.soft { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; background: #fff; color: var(--text); border: 1px solid var(--border2); border-radius: 9px; font-weight: 500; }
+  .btn.soft:hover { background: var(--rail); border-color: #cfccc2; }
+  .btn.soft .plus-ic { color: var(--dim); }
   .plus-ic { flex: none; }
   .icon-btn { background: none; border: none; cursor: pointer; padding: 6px; border-radius: 8px; color: var(--dim); display: inline-flex; align-items: center; justify-content: center; }
   .icon-btn:hover { background: #f1efe9; color: var(--text); }
@@ -1268,8 +1282,9 @@
   .conn-row :global(.sm) { border-radius: 6px; }
   .conn-main { flex: 1; min-width: 0; } .conn-main b { display: block; font-size: 13.5px; } .conn-main small { color: var(--dim); font-size: 11px; }
   .icon-btn.sm { padding: 4px; border-radius: 7px; }
-  .brain-row { display: flex; align-items: center; gap: 9px; padding: 5px 2px; }
-  .brain-main { flex: 1; } .brain-main b { display: block; font-size: 13.5px; } .brain-main small { color: var(--dim); font-size: 11px; }
+  .brain-row { display: flex; align-items: center; gap: 11px; padding: 8px 2px; }
+  .brain-ic { flex: none; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; }
+  .brain-main { flex: 1; min-width: 0; } .brain-main b { display: block; font-size: 13.5px; line-height: 1.3; } .brain-main small { color: var(--dim); font-size: 11px; line-height: 1.25; }
   .hint { color: var(--dim); font-size: 12px; margin: 2px 0; line-height: 1.6; }
   .hint.mono { font-family: ui-monospace, monospace; font-size: 11px; color: var(--faint); background: #f6f5f1; padding: 5px 8px; border-radius: 6px; }
   .hint.tos { color: var(--faint); margin-top: 12px; }
