@@ -357,7 +357,7 @@
   "admin.sites.wizard_step_verify": "Verify",
   "admin.sites.wizard_prev": "Back",
   "admin.sites.wizard_next": "Next",
-  "admin.sites.wizard_finish": "Verify & save",
+  "admin.sites.wizard_finish": "Save binding",
   "admin.sites.wizard_checking": "Checking…",
   "admin.sites.wizard_copy": "Copy",
   "admin.sites.wizard_copy_config": "Copy config",
@@ -372,7 +372,7 @@
   "admin.sites.wizard_proxy_nginx_desc": "Add this to Nginx and reload (make sure the domain has a certificate), then come back and verify.",
   "admin.sites.wizard_proxy_other_title": "No reverse proxy detected",
   "admin.sites.wizard_proxy_other_desc": "We recommend installing Caddy (automatic HTTPS): run cms.sh caddy-setup; or forward this domain to gcms's listen port in your existing proxy.",
-  "admin.sites.wizard_verify_intro": "“Verify & save” first checks whether the domain is reachable, then saves the binding.",
+  "admin.sites.wizard_verify_intro": "Saving writes the reverse-proxy config and reloads it — the domain starts serving after that. Reopening a saved binding re-checks it here.",
   "admin.sites.domain_extra": "Alias",
   "admin.sites.set_primary": "Set primary",
   "admin.sites.set_primary_tip": "Make this the primary domain",
@@ -1275,5 +1275,6 @@
   "admin.settings.admin_i18n.saved": "Interface text saved.",
   "admin.settings.admin_i18n.invalid": "Interface text JSON is invalid.",
   "admin.platform.admin_i18n.subtitle": "Manage the button, menu, and hint text shown in the admin. Saved changes apply to every site admin.",
-  "admin.platform.admin_i18n.hint": "Only include keys you want to override. Save an empty object or clear the field to return to the built-in interface text."
+  "admin.platform.admin_i18n.hint": "Only include keys you want to override. Save an empty object or clear the field to return to the built-in interface text.",
+  "admin.sites.wizard_verify_presave": "The proxy config is written only after you save, so it's normal that the domain isn't reachable yet — just click “Save binding”."
 }

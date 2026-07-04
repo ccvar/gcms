@@ -4093,6 +4093,10 @@
     var msgChecking = form.getAttribute("data-msg-checking") || "检测中…";
     var msgCopied = form.getAttribute("data-msg-copied") || "已复制";
     var msgDomainReq = form.getAttribute("data-msg-domain-required") || "请先填写主域名";
+    var msgVerifyPresave = form.getAttribute("data-msg-verify-presave") || "保存后才会写入反向代理配置、域名才开始服务——现在打不开是正常的，直接点「保存绑定」即可。";
+    // 服务端预填了主域名 = 该站已有已保存的绑定（草稿恢复不算）。
+    // 未保存的绑定在第 4 步不做注定失败的可达性检测（配置要保存后才写入——先有鸡还是先有蛋），只给中性引导。
+    var savedBinding = !!(hostInput.value || "").trim();
     var cur = 1, proxyDone = false, dnsHost = "";
 
     // 未完成的绑定草稿（域名/别名/301勾选/所在步骤）存 localStorage：
@@ -4160,6 +4164,14 @@
     function runVerify() {
       var h = host(); if (!h) return;
       var box = form.querySelector("[data-verify-box]"), out = form.querySelector("[data-verify-result]");
+      if (!savedBinding) {
+        // 尚未保存：不跑可达性检测（必然失败会误导用户），中性提示"先保存"。
+        if (box) box.setAttribute("data-step-state", "pending");
+        setState(4, "pending");
+        if (out) { out.hidden = false; out.textContent = msgVerifyPresave; }
+        if (statusEl) statusEl.textContent = "";
+        return;
+      }
       if (box) box.setAttribute("data-step-state", "running");
       setState(4, "running"); if (out) out.hidden = true; if (statusEl) statusEl.textContent = msgChecking;
       jpost("/admin/sites/" + id + "/wizard/verify", { host: h, _csrf: csrf }).then(function (d) {
@@ -4285,13 +4297,15 @@
   // 已生效或用默认入口时回到"内容上次对外更新"时间——稳态与 CF 卡片一样是中性色，仅问题态着色。
   var els = document.querySelectorAll("[data-domain-status]");
   if (!els.length) return;
-  function check(el) {
+  function check(el, quiet) {
     var url = el.getAttribute("data-status-url");
     var suf = el.querySelector("[data-server-suffix]");
     var lbl = function (k) { return el.getAttribute("data-s-" + k) || ""; };
     var timeText = suf ? agoText(suf) : "";
-    el.setAttribute("data-stage", "checking");
-    if (suf && lbl("checking")) suf.textContent = lbl("checking");
+    if (!quiet) { // 静默复检不闪"检测中…"，避免待生效轮询时文字来回跳
+      el.setAttribute("data-stage", "checking");
+      if (suf && lbl("checking")) suf.textContent = lbl("checking");
+    }
     return fetch(url, { headers: { "Accept": "application/json", "X-Requested-With": "XMLHttpRequest" }, credentials: "same-origin" })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (d) {
@@ -4308,11 +4322,30 @@
       })
       .catch(function () { el.removeAttribute("data-stage"); if (suf) suf.textContent = timeText; });
   }
+  // 待生效/DNS 待配置时自动轮询到翻绿为止（约 10 分钟上限），页面无需手动刷新；
+  // 后台标签页只挂起计时不打接口，复检走静默模式（不闪"检测中…"）。
+  function recheckDelay(el, stage) {
+    var attr = stage === "dns" ? "data-recheck-dns" : "data-recheck-pending";
+    var v = parseInt(el.getAttribute(attr) || "", 10);
+    if (!isFinite(v) || v <= 0) v = stage === "dns" ? 30000 : 15000;
+    return v;
+  }
+  function scheduleRecheck(el, n) {
+    var stage = el.getAttribute("data-stage");
+    if (stage !== "pending" && stage !== "dns") return; // 已生效/无状态：停
+    if (n > 40) return; // 上限后交还给手动刷新
+    setTimeout(function () {
+      if (document.hidden) { scheduleRecheck(el, n); return; }
+      check(el, true).then(function () { scheduleRecheck(el, n + 1); }, function () { scheduleRecheck(el, n + 1); });
+    }, recheckDelay(el, stage));
+  }
   var list = Array.prototype.slice.call(els), i = 0, active = 0, LIMIT = 3;
   function pump() {
     while (active < LIMIT && i < list.length) {
       active++;
-      check(list[i++]).then(function () { active--; pump(); }, function () { active--; pump(); });
+      (function (el) {
+        check(el).then(function () { active--; scheduleRecheck(el, 1); pump(); }, function () { active--; pump(); });
+      })(list[i++]);
     }
   }
   pump();

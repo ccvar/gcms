@@ -357,7 +357,7 @@
   "admin.sites.wizard_step_verify": "验证",
   "admin.sites.wizard_prev": "上一步",
   "admin.sites.wizard_next": "下一步",
-  "admin.sites.wizard_finish": "验证并保存",
+  "admin.sites.wizard_finish": "保存绑定",
   "admin.sites.wizard_checking": "检测中…",
   "admin.sites.wizard_copy": "复制",
   "admin.sites.wizard_copy_config": "复制配置",
@@ -372,7 +372,7 @@
   "admin.sites.wizard_proxy_nginx_desc": "加到 Nginx 后 reload（并确保有该域名的证书），再回来做验证。",
   "admin.sites.wizard_proxy_other_title": "未检测到反向代理",
   "admin.sites.wizard_proxy_other_desc": "推荐安装 Caddy（自动 HTTPS）：运行 cms.sh caddy-setup；或在你现有的反代里把该域名转发到 gcms 监听端口。",
-  "admin.sites.wizard_verify_intro": "点击下方“验证并保存”会先检测该域名能否正常访问，再保存绑定。",
+  "admin.sites.wizard_verify_intro": "保存绑定后 gcms 会写入反向代理配置并重载，域名随后才开始服务；已绑定的域名重新打开时会在这里自动复检。",
   "admin.sites.domain_extra": "别名",
   "admin.sites.set_primary": "设为主",
   "admin.sites.set_primary_tip": "设为主域名",
@@ -1275,5 +1275,6 @@
   "admin.settings.admin_i18n.saved": "界面文字已保存。",
   "admin.settings.admin_i18n.invalid": "界面文字 JSON 格式不正确。",
   "admin.platform.admin_i18n.subtitle": "这里管理后台里显示的按钮、菜单和提示文字，保存后会应用到所有站点后台。",
-  "admin.platform.admin_i18n.hint": "只填写需要覆盖的 key。保存为空对象或清空输入框时，会恢复系统默认界面文字。"
+  "admin.platform.admin_i18n.hint": "只填写需要覆盖的 key。保存为空对象或清空输入框时，会恢复系统默认界面文字。",
+  "admin.sites.wizard_verify_presave": "保存后 gcms 才会写入反向代理配置、域名才开始服务——现在打不开是正常的，直接点「保存绑定」即可。"
 }

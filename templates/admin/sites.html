@@ -452,7 +452,8 @@
             <form class="admin-form site-domain-form site-domain-modal-form" method="post" action="/admin/sites/{{.ID}}/domains" data-no-dirty data-domain-wizard data-site-id="{{.ID}}"
                   data-msg-checking="{{$.Admin.T "admin.sites.wizard_checking" "检测中…"}}"
                   data-msg-copied="{{$.Admin.T "admin.sites.wizard_copied" "已复制"}}"
-                  data-msg-domain-required="{{$.Admin.T "admin.sites.wizard_domain_required" "请先填写主域名"}}">
+                  data-msg-domain-required="{{$.Admin.T "admin.sites.wizard_domain_required" "请先填写主域名"}}"
+                  data-msg-verify-presave="{{$.Admin.T "admin.sites.wizard_verify_presave" "保存后 gcms 才会写入反向代理配置、域名才开始服务——现在打不开是正常的，直接点「保存绑定」即可。"}}">
               <input type="hidden" name="_csrf" value="{{$.CSRF}}">
               {{$form := index $.PlatformDomainForms .ID}}
               <nav class="dw-steps" data-wizard-steps data-active-step="1" aria-label="{{$.Admin.T "admin.sites.wizard_progress" "绑定进度"}}">
@@ -538,7 +539,7 @@
 
               <section class="dw-panel" data-step="4">
                 <div class="dw-verify" data-verify-box data-step-state="pending">
-                  <p class="field-hint">{{$.Admin.T "admin.sites.wizard_verify_intro" "点击下方“验证并保存”会先检测该域名能否正常访问，再保存绑定。"}}</p>
+                  <p class="field-hint">{{$.Admin.T "admin.sites.wizard_verify_intro" "保存绑定后 gcms 会写入反向代理配置并重载，域名随后才开始服务；已绑定的域名重新打开时会在这里自动复检。"}}</p>
                   <p class="dw-verify-result" data-verify-result hidden></p>
                 </div>
               </section>
@@ -548,7 +549,7 @@
                 <span class="dw-nav-status" data-wizard-status aria-live="polite"></span>
                 <button type="button" class="btn" data-wizard-prev hidden>{{$.Admin.T "admin.sites.wizard_prev" "上一步"}}</button>
                 <button type="button" class="btn btn-primary" data-wizard-next>{{$.Admin.T "admin.sites.wizard_next" "下一步"}}</button>
-                <button class="btn btn-primary" type="submit" data-wizard-finish hidden>{{$.Admin.T "admin.sites.wizard_finish" "验证并保存"}}</button>
+                <button class="btn btn-primary" type="submit" data-wizard-finish hidden>{{$.Admin.T "admin.sites.wizard_finish" "保存绑定"}}</button>
               </div>
             </form>
           </div>
