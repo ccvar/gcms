@@ -235,6 +235,8 @@
     getCurrentWindow().startDragging().catch(() => {});
   }
 
+  // Windows 无 macOS 红绿灯（窗口控件在右侧），顶部工具按钮改靠左对齐，别飘在中间。
+  const isWindows = typeof navigator !== 'undefined' && /Windows/i.test(navigator.userAgent);
   // 全屏时无红绿灯，顶部工具按钮改与左栏菜单左对齐。
   let isFullscreen = $state(false);
   $effect(() => {
@@ -625,7 +627,7 @@
   <div class="titlebar" data-tauri-drag-region aria-hidden="true" onmousedown={startDrag} style="width:{railCollapsed ? 140 : railWidth}px"></div>
 
   <!-- 顶部工具：折叠侧栏 + 搜索会话（窗口模式紧挨红绿灯右侧；全屏时无红绿灯，与左栏菜单左对齐） -->
-  <div class="win-tools" class:fs={isFullscreen}>
+  <div class="win-tools" class:fs={isFullscreen} class:win={isWindows}>
     <button class="wt" onclick={toggleRail} title={railCollapsed ? '展开侧栏' : '折叠侧栏'} aria-label="折叠侧栏">
       <svg width="16" height="16" viewBox="0 0 18 18" fill="none">
         <rect x="2.5" y="3.5" width="13" height="11" rx="2" stroke="currentColor" stroke-width="1.3" />
@@ -1243,6 +1245,8 @@
   .win-tools { position: fixed; top: 0; left: 80px; height: 30px; display: flex; align-items: center; gap: 1px; z-index: 8; }
   /* 全屏无红绿灯：左移到与左栏菜单图标同一左边界（rail-head 8px + 按钮 padding 让开）。 */
   .win-tools.fs { left: 12px; }
+  /* Windows 无红绿灯：靠左边缘，不飘在中间。 */
+  .win-tools.win { left: 12px; }
   .wt { display: inline-flex; align-items: center; justify-content: center; width: 27px; height: 24px; border: none; background: none; border-radius: 6px; color: var(--dim); cursor: pointer; -webkit-app-region: no-drag; }
   .wt:hover { background: rgba(0, 0, 0, .06); color: var(--text); }
   .wt:disabled { opacity: .4; cursor: default; }
