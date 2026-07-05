@@ -180,9 +180,14 @@ pub async fn run_turn(
     let status = tokio::select! {
         s = child.wait() => s.ok(),
         _ = &mut kill_rx => {
+            // 杀整棵进程树，别留下带着密钥继续写 CMS 的孙进程（node/bash 等）。
             #[cfg(unix)]
             if let Some(pid) = pid {
                 let _ = std::process::Command::new("kill").args(["-9", &format!("-{pid}")]).status();
+            }
+            #[cfg(windows)]
+            if let Some(pid) = pid {
+                let _ = std::process::Command::new("taskkill").args(["/T", "/F", "/PID", &pid.to_string()]).status();
             }
             let _ = child.kill().await;
             child.wait().await.ok()

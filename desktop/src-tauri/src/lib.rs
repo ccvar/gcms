@@ -508,16 +508,15 @@ fn title_from(message: &str) -> String {
 /// claude auth login / codex login 会自动拉起浏览器完成授权）。
 #[tauri::command]
 fn open_brain_login(app: tauri::AppHandle, brain: String) -> Result<(), String> {
-    let (login_cmd, status_check) = match brain.as_str() {
-        "claude" => (
-            "claude auth login --claudeai",
-            r#"claude auth status --json 2>/dev/null | grep -q '"loggedIn": true'"#,
-        ),
-        "codex" => (
-            "codex login",
-            "codex login status 2>/dev/null | grep -qi 'logged in'",
-        ),
+    let login_cmd = match brain.as_str() {
+        "claude" => "claude auth login --claudeai",
+        "codex" => "codex login",
         other => return Err(format!("未知的执行引擎: {other}")),
+    };
+    // 登录成功标记：claude 读 --json 的 loggedIn=true，codex 读输出里的 "logged in"。
+    let (status_cmd, marker) = match brain.as_str() {
+        "claude" => ("claude auth status --json", r#""loggedIn": true"#),
+        _ => ("codex login status", "logged in"),
     };
     let dir = app
         .path()
@@ -525,9 +524,12 @@ fn open_brain_login(app: tauri::AppHandle, brain: String) -> Result<(), String> 
         .map_err(|e| e.to_string())?
         .join("login");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let file = dir.join(format!("{brain}-login.command"));
-    let script = format!(
-        r#"#!/bin/zsh -il
+
+    #[cfg(target_os = "macos")]
+    {
+        let file = dir.join(format!("{brain}-login.command"));
+        let script = format!(
+            r#"#!/bin/zsh -il
 clear
 echo "GCMS Pilot · {brain} 授权登录"
 echo "浏览器会自动打开，完成登录后【先回到这个窗口】等它打出结果，再关闭。"
@@ -545,7 +547,7 @@ if [ -n "$HTTPS_PROXY$https_proxy" ]; then
 fi
 {login_cmd}
 echo
-if {status_check}; then
+if {status_cmd} 2>/dev/null | grep -qi '{marker}'; then
   echo "✅ 登录成功！现在可以关闭这个窗口，GCMS Pilot 里的状态灯会自动变绿。"
 else
   echo "❌ 登录还没完成。请截图上面的输出，或重新在 Pilot 里点「去授权」再试一次。"
@@ -553,18 +555,54 @@ fi
 echo
 read -s -k 1 "?按任意键关闭这个窗口…"
 "#
-    );
-    std::fs::write(&file, script).map_err(|e| e.to_string())?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755))
-            .map_err(|e| e.to_string())?;
+        );
+        std::fs::write(&file, script).map_err(|e| e.to_string())?;
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755))
+                .map_err(|e| e.to_string())?;
+        }
+        std::process::Command::new("open")
+            .arg(&file)
+            .spawn()
+            .map_err(|e| format!("打开终端失败: {e}"))?;
     }
-    std::process::Command::new("open")
-        .arg(&file)
-        .spawn()
-        .map_err(|e| format!("打开终端失败: {e}"))?;
+
+    #[cfg(target_os = "windows")]
+    {
+        // PowerShell：UTF-8 输出 + 跑登录命令 + 状态自查。系统代理由 CLI / 环境变量自行处理。
+        let file = dir.join(format!("{brain}-login.ps1"));
+        let script = format!(
+            "$OutputEncoding = [Console]::OutputEncoding = [Text.Encoding]::UTF8\r\n\
+             Write-Host 'GCMS Pilot · {brain} 授权登录'\r\n\
+             Write-Host '浏览器会自动打开，完成登录后先回到这个窗口等它打出结果，再关闭。'\r\n\
+             Write-Host ''\r\n\
+             {login_cmd}\r\n\
+             Write-Host ''\r\n\
+             if ({status_cmd} 2>$null | Select-String -SimpleMatch '{marker}') {{\r\n\
+             Write-Host '[OK] 登录成功！现在可以关闭这个窗口，GCMS Pilot 里的状态灯会自动变绿。'\r\n\
+             }} else {{\r\n\
+             Write-Host '[X] 登录还没完成。请截图上面的输出，或重新在 Pilot 里点「去授权」再试一次。'\r\n\
+             }}\r\n\
+             Read-Host '按回车关闭这个窗口'\r\n"
+        );
+        std::fs::write(&file, script).map_err(|e| e.to_string())?;
+        // 用 cmd start 拉起一个可见的 PowerShell 窗口跑这个临时脚本。
+        std::process::Command::new("cmd")
+            .args([
+                "/c", "start", "", "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+            ])
+            .arg(&file)
+            .spawn()
+            .map_err(|e| format!("打开终端失败: {e}"))?;
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        let _ = (login_cmd, status_cmd, marker);
+        return Err("当前平台暂不支持一键授权".to_string());
+    }
+
     Ok(())
 }
 

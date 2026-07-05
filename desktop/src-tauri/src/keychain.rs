@@ -13,10 +13,19 @@ const SERVICE: &str = "com.ccvar.gcms.pilot";
 fn ensure_store() -> Result<(), String> {
     static INIT: OnceLock<Result<(), String>> = OnceLock::new();
     INIT.get_or_init(|| {
+        #[cfg(target_os = "macos")]
         let store = apple_native_keyring_store::keychain::Store::new()
             .map_err(|e| format!("初始化钥匙串存储失败: {e}"))?;
-        keyring_core::set_default_store(store);
-        Ok(())
+        #[cfg(target_os = "windows")]
+        let store = windows_native_keyring_store::Store::new()
+            .map_err(|e| format!("初始化凭据存储失败: {e}"))?;
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        return Err("当前平台暂不支持原生密钥存储".to_string());
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        {
+            keyring_core::set_default_store(store);
+            Ok(())
+        }
     })
     .clone()
 }

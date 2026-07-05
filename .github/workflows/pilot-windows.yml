@@ -1,0 +1,79 @@
+name: Pilot Windows (test)
+
+# 推形如 pilot-win-0.1.4 的 tag 时：在 windows runner 上原生打包 GCMS Pilot（NSIS .exe），
+# 发布到 ccvar/gcms-pilot-releases 供 Windows 下载验收。与 macOS 发布（pilot-v*）完全独立，互不影响。
+on:
+  push:
+    tags:
+      - "pilot-win-*"
+
+permissions:
+  contents: read
+
+env:
+  RELEASE_REPO: ccvar/gcms-pilot-releases
+
+jobs:
+  windows:
+    name: 打包 GCMS Pilot（Windows / NSIS）
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 检查发布密钥
+        shell: bash
+        run: |
+          if [ -z "${{ secrets.PILOT_RELEASES_TOKEN }}" ]; then
+            echo "::error::缺少 PILOT_RELEASES_TOKEN（需对 ${RELEASE_REPO} 授予 Contents 读写）。"; exit 1
+          fi
+          if [ -z "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}" ]; then
+            echo "::error::缺少 TAURI_SIGNING_PRIVATE_KEY（更新包 ed25519 签名私钥）。"; exit 1
+          fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+
+      - name: 安装前端依赖
+        run: npm ci
+
+      - name: 构建 Windows（NSIS）+ ed25519 更新签名
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+        run: npm run tauri build -- --bundles nsis
+
+      - name: 收集安装包
+        shell: bash
+        env:
+          REF: ${{ github.ref_name }}
+        run: |
+          set -e
+          bundle="src-tauri/target/release/bundle"
+          out="$GITHUB_WORKSPACE/pilot-win-dist"
+          ver="${REF#pilot-win-}"
+          rm -rf "$out"; mkdir -p "$out"
+          exe=$(ls "$bundle"/nsis/*-setup.exe | head -1)
+          cp "$exe" "$out/GCMS-Pilot_${ver}_x64-setup.exe"
+          ls -lh "$out"
+
+      - name: 发布 Release（上传到公开 pilot-releases 仓）
+        uses: softprops/action-gh-release@v2
+        with:
+          repository: ${{ env.RELEASE_REPO }}
+          token: ${{ secrets.PILOT_RELEASES_TOKEN }}
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          make_latest: false
+          fail_on_unmatched_files: false
+          files: |
+            pilot-win-dist/*.exe
