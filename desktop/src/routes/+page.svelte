@@ -294,13 +294,24 @@
   let appVersion = $state('');
   let updBusy = $state(false);
   let updMsg = $state('');
+  let updAvail = $state(''); // 非空 = 静默检查到的新版本号，驱动侧栏右上角「待更新」图标
   getVersion().then((v) => (appVersion = v)).catch(() => { /* */ });
+  // 静默检查：只置「有更新」标记，不弹窗、不自动下载；失败（离线 / 非 Tauri 环境）静默忽略。
+  async function checkUpdateSilent() {
+    if (updBusy) return;
+    try {
+      const upd = await checkUpdate();
+      updAvail = upd ? upd.version : '';
+      if (upd) { try { await upd.close(); } catch { /* */ } } // 释放句柄，点击时再重新拉取下载
+    } catch { /* 离线 / dev 无后端：忽略 */ }
+  }
   async function runUpdate() {
     if (updBusy) return;
     updBusy = true; updMsg = '检查中…';
     try {
       const upd = await checkUpdate();
-      if (!upd) { updMsg = '已是最新版本'; return; }
+      if (!upd) { updAvail = ''; updMsg = '已是最新版本'; return; }
+      updAvail = upd.version;
       const ok = await confirmDialog(`发现新版本 ${upd.version}，现在下载更新并重启？`, { title: '有可用更新', kind: 'info' });
       if (!ok) { updMsg = `有新版本 ${upd.version} 可用`; return; }
       updMsg = '下载安装中…';
@@ -310,6 +321,9 @@
     } catch (e) { updMsg = '检查更新失败：' + String(e); }
     finally { updBusy = false; }
   }
+  // 启动后稍等再静默查一次（让窗口先就绪），之后每 6 小时查一次（应用常驻，SPA 不卸载无需清理）。
+  setTimeout(checkUpdateSilent, 4000);
+  setInterval(checkUpdateSilent, 6 * 60 * 60 * 1000);
   async function refreshConvos() { try { convos = await invoke('list_conversations'); } catch (e) { say(String(e), 'err'); } }
 
   let selSeq = 0;
@@ -589,6 +603,16 @@
   <aside class="rail" class:collapsed={railCollapsed} style="width:{railWidth}px">
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
     <div class="rail-resize" title="拖动调整宽度" onmousedown={startResize} role="separator" aria-orientation="vertical"></div>
+    {#if updAvail}
+      <button class="win-upd wt upd" onclick={runUpdate} disabled={updBusy}
+        title={updBusy ? (updMsg || '更新中…') : `有新版本 ${updAvail}，点击下载并更新`} aria-label="有可用更新">
+        <svg width="15" height="15" viewBox="0 0 18 18" fill="none">
+          <path d="M9 3v7.4M5.8 7.2 9 10.4l3.2-3.2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
+          <path d="M4.2 14.3h9.6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+        </svg>
+        <span class="upd-dot"></span>
+      </button>
+    {/if}
     <div class="rail-head">
       <button class="newchat" onclick={newChat} disabled={busy || !activeConn} title="新对话">
         <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
@@ -1118,6 +1142,12 @@
   .wt:hover { background: rgba(0, 0, 0, .06); color: var(--text); }
   .wt:disabled { opacity: .4; cursor: default; }
   .wt:disabled:hover { background: none; color: var(--dim); }
+  /* 待更新图标：锚在侧栏右上角（跟随 rail 右边界），静默检查发现新版时出现。 */
+  .win-upd { position: absolute; top: 3px; right: 8px; z-index: 8; }
+  .wt.upd { position: relative; color: var(--accent); }
+  .wt.upd:hover { background: rgba(79, 70, 229, .10); color: var(--accent); }
+  .wt.upd:disabled { opacity: .55; }
+  .upd-dot { position: absolute; top: 2px; right: 3px; width: 6px; height: 6px; border-radius: 50%; background: #ef4444; border: 1.5px solid var(--rail); }
 
   /* ---- 左栏 ---- */
   .rail { position: relative; width: 240px; flex: none; display: flex; flex-direction: column; background: var(--rail); border-right: 1px solid var(--border); padding-top: 30px; }
