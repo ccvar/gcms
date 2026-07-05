@@ -80,6 +80,16 @@ async fn detect_brains() -> Result<brains::BrainsInfo, String> {
     Ok(brains::detect().await)
 }
 
+/// 手动「重新检测」：先重新导入登录 shell 的 PATH（装完 CLI 后新增的目录也能认到），再探测。
+/// 自动轮询仍用轻量的 detect_brains（不每 6s 起登录 shell）。
+#[tauri::command]
+async fn redetect_brains() -> Result<brains::BrainsInfo, String> {
+    tauri::async_runtime::spawn_blocking(path_env::fix)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(brains::detect().await)
+}
+
 /// 排期：查该连接下各站点待定时发布的内容（只读反映 gcms 服务端状态）。
 #[tauri::command]
 async fn list_scheduled(
@@ -675,6 +685,7 @@ pub fn run() {
             remove_connection,
             discover_sites,
             detect_brains,
+            redetect_brains,
             list_scheduled,
             open_brain_login,
             list_conversations,

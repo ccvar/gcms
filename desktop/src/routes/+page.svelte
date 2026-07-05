@@ -301,16 +301,23 @@
 
   async function refreshConns() { try { conns = await invoke('list_connections'); if (!activeConnId && conns.length) selectConn(conns[0].id); } catch (e) { say(String(e), 'err'); } }
   async function refreshBrains() { try { brains = await invoke('detect_brains'); } catch (e) { say(String(e), 'err'); } }
+  let copiedCmd = $state('');
+  async function copyCmd(cmd: string) {
+    try { await navigator.clipboard.writeText(cmd); copiedCmd = cmd; setTimeout(() => { if (copiedCmd === cmd) copiedCmd = ''; }, 1500); }
+    catch { say('复制失败，请手动选中命令复制', 'err'); }
+  }
   // 技能包新增/移除站点后，重新拉取当前连接的可管站点列表。
   async function refreshSites() { if (activeConnId && !discoveryLoading) await selectConn(activeConnId); }
   let brainsBusy = $state(false);
-  async function refreshBrainsManual() { brainsBusy = true; try { await refreshBrains(); } finally { brainsBusy = false; } }
+  // 手动重新检测：走 redetect_brains（后端先重读登录 shell 的 PATH，再探测）——治「装/登录完仍显示未安装/未登录」。
+  async function refreshBrainsManual() { brainsBusy = true; try { brains = await invoke('redetect_brains'); } catch (e) { say(String(e), 'err'); } finally { brainsBusy = false; } }
 
   // 应用版本 + 在线检查更新（Tauri updater：拉 release 仓 latest.json，ed25519 验签后下载安装再重启）。
   let appVersion = $state('');
   let updBusy = $state(false);
   let updMsg = $state('');
-  let updAvail = $state(''); // 非空 = 静默检查到的新版本号，驱动侧栏右上角「待更新」图标
+  let updPct = $state(-1); // 下载进度 0-100；-1 = 不确定（无 content-length）
+  let updAvail = $state(''); // 非空 = 静默检查到的新版本号，驱动工具栏「待更新」图标
   getVersion().then((v) => (appVersion = v)).catch(() => { /* */ });
   // 静默检查：只置「有更新」标记，不弹窗、不自动下载；失败（离线 / 非 Tauri 环境）静默忽略。
   async function checkUpdateSilent() {
@@ -323,18 +330,23 @@
   }
   async function runUpdate() {
     if (updBusy) return;
-    updBusy = true; updMsg = '检查中…';
+    updBusy = true; updMsg = '检查中…'; updPct = -1;
     try {
       const upd = await checkUpdate();
       if (!upd) { updAvail = ''; updMsg = '已是最新版本'; return; }
       updAvail = upd.version;
       const ok = await confirmDialog(`发现新版本 ${upd.version}，现在下载更新并重启？`, { title: '有可用更新', kind: 'info' });
-      if (!ok) { updMsg = `有新版本 ${upd.version} 可用`; return; }
-      updMsg = '下载安装中…';
-      await upd.downloadAndInstall();
-      updMsg = '更新完成，正在重启…';
+      if (!ok) { updMsg = ''; return; }
+      let total = 0, got = 0;
+      updMsg = '准备下载…'; updPct = 0;
+      await upd.downloadAndInstall((ev) => {
+        if (ev.event === 'Started') { total = ev.data.contentLength ?? 0; got = 0; updPct = 0; updMsg = '下载更新…'; }
+        else if (ev.event === 'Progress') { got += ev.data.chunkLength; updPct = total > 0 ? Math.min(100, Math.round((got / total) * 100)) : -1; updMsg = total > 0 ? `下载更新 ${updPct}%` : '下载更新…'; }
+        else if (ev.event === 'Finished') { updPct = 100; updMsg = '安装中…'; }
+      });
+      updMsg = '即将重启…'; updPct = 100;
       await relaunch();
-    } catch (e) { updMsg = '检查更新失败：' + String(e); }
+    } catch (e) { updMsg = '更新失败：' + String(e); updPct = -1; }
     finally { updBusy = false; }
   }
   // 启动后稍等再静默查一次（让窗口先就绪），之后每 6 小时查一次（应用常驻，SPA 不卸载无需清理）。
@@ -627,22 +639,34 @@
         <path d="M11.7 11.7L15 15" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
       </svg>
     </button>
+    {#if updAvail}
+      <button class="wt upd" onclick={runUpdate} disabled={updBusy}
+        title={updBusy ? (updMsg || '更新中…') : `有新版本 ${updAvail}，点击下载并更新`} aria-label="有可用更新">
+        {#if updBusy}
+          <svg class="upd-spin" width="15" height="15" viewBox="0 0 18 18" fill="none"><path d="M15.5 9a6.5 6.5 0 1 1-2-4.72" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" /></svg>
+        {:else}
+          <svg width="15" height="15" viewBox="0 0 18 18" fill="none">
+            <path d="M9 3v7.4M5.8 7.2 9 10.4l3.2-3.2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
+            <path d="M4.2 14.3h9.6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+          </svg>
+          <span class="upd-dot"></span>
+        {/if}
+      </button>
+    {/if}
   </div>
+
+  {#if updBusy}
+    <div class="upd-toast" role="status">
+      <svg class="upd-spin" width="13" height="13" viewBox="0 0 18 18" fill="none"><path d="M15.5 9a6.5 6.5 0 1 1-2-4.72" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /></svg>
+      <span class="upd-toast-msg">{updMsg}</span>
+      {#if updPct >= 0}<span class="upd-toast-bar"><span style="width:{updPct}%"></span></span>{/if}
+    </div>
+  {/if}
 
   <!-- 左栏 -->
   <aside class="rail" class:collapsed={railCollapsed} style="width:{railWidth}px">
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
     <div class="rail-resize" title="拖动调整宽度" onmousedown={startResize} role="separator" aria-orientation="vertical"></div>
-    {#if updAvail}
-      <button class="win-upd wt upd" onclick={runUpdate} disabled={updBusy}
-        title={updBusy ? (updMsg || '更新中…') : `有新版本 ${updAvail}，点击下载并更新`} aria-label="有可用更新">
-        <svg width="15" height="15" viewBox="0 0 18 18" fill="none">
-          <path d="M9 3v7.4M5.8 7.2 9 10.4l3.2-3.2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
-          <path d="M4.2 14.3h9.6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
-        </svg>
-        <span class="upd-dot"></span>
-      </button>
-    {/if}
     <div class="rail-head">
       <button class="newchat" onclick={newChat} disabled={busy || !activeConn} title="新对话">
         <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
@@ -747,17 +771,31 @@
           <button class="btn soft hero-import" onclick={importPack} disabled={importBusy}>{@render plusIcon()}{importBusy ? '导入中…' : '导入技能包'}</button>
           {#if brains}
             <div class="cli-guide" data-no-drag>
-              <div class="cli-guide-h">本地 CLI 准备（至少装好并登录一个）</div>
+              <div class="cli-guide-h"><span>本地 CLI 准备（至少装好并登录一个）</span><button class="cli-redetect" onclick={refreshBrainsManual} disabled={brainsBusy} title="装好 / 登录完点这里重新检测（会重新读取 PATH）">{@render refreshIcon(brainsBusy)}<span>重新检测</span></button></div>
               {#each [{ b: 'claude' as Brain, st: brains.claude, name: 'Claude Code', cmd: 'npm i -g @anthropic-ai/claude-code' }, { b: 'codex' as Brain, st: brains.codex, name: 'OpenAI Codex', cmd: 'npm i -g @openai/codex' }] as r (r.b)}
-                <div class="cli-row">
-                  <BrainIcon brain={r.b} size={16} />
-                  <span class="cli-name">{r.name}</span>
+                <div class="cli-item">
+                  <div class="cli-row">
+                    <BrainIcon brain={r.b} size={16} />
+                    <span class="cli-name">{r.name}</span>
+                    {#if !r.st.found}
+                      <span class="cli-tag bad">未安装</span>
+                    {:else if r.st.logged_in === false}
+                      <span class="cli-tag warn">未登录</span><button class="btn sm" onclick={() => authorize(r.b)}>去授权</button>
+                    {:else}
+                      <span class="cli-tag ok">✓ {r.st.version || '已就绪'}</span>
+                    {/if}
+                  </div>
                   {#if !r.st.found}
-                    <span class="cli-tag bad">未安装</span><code class="cli-cmd">{r.cmd}</code>
-                  {:else if r.st.logged_in === false}
-                    <span class="cli-tag warn">未登录</span><button class="btn sm" onclick={() => authorize(r.b)}>去授权</button>
-                  {:else}
-                    <span class="cli-tag ok">✓ {r.st.version || '已就绪'}</span>
+                    <div class="cli-cmd-row">
+                      <code class="cli-cmd" title={r.cmd}>{r.cmd}</code>
+                      <button class="cli-copy" title="复制命令" aria-label="复制安装命令" onclick={() => copyCmd(r.cmd)}>
+                        {#if copiedCmd === r.cmd}
+                          <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M3.5 8.5l3 3 6-7" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></svg>
+                        {:else}
+                          <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><rect x="5.4" y="5.4" width="8.2" height="8.2" rx="1.6" stroke="currentColor" stroke-width="1.3" /><path d="M10.6 5.4V4.1A1.6 1.6 0 0 0 9 2.5H4.1A1.6 1.6 0 0 0 2.5 4.1V9a1.6 1.6 0 0 0 1.6 1.6h1.3" stroke="currentColor" stroke-width="1.3" /></svg>
+                        {/if}
+                      </button>
+                    </div>
                   {/if}
                 </div>
               {/each}
@@ -1210,11 +1248,18 @@
   .wt:disabled { opacity: .4; cursor: default; }
   .wt:disabled:hover { background: none; color: var(--dim); }
   /* 待更新图标：锚在侧栏右上角（跟随 rail 右边界），静默检查发现新版时出现。 */
-  .win-upd { position: absolute; top: 3px; right: 8px; z-index: 8; }
-  .wt.upd { position: relative; color: var(--accent); }
-  .wt.upd:hover { background: rgba(79, 70, 229, .10); color: var(--accent); }
+  /* 待更新指示：并入 win-tools，样式同折叠/搜索（无底、灰色 + 悬停高亮），仅右上角一个柔和强调色小点。 */
+  .wt.upd { position: relative; }
   .wt.upd:disabled { opacity: .55; }
-  .upd-dot { position: absolute; top: 2px; right: 3px; width: 6px; height: 6px; border-radius: 50%; background: #ef4444; border: 1.5px solid var(--rail); }
+  .upd-dot { position: absolute; top: 3px; right: 4px; width: 5px; height: 5px; border-radius: 50%; background: var(--accent); border: 1.5px solid var(--rail); }
+  .upd-spin { animation: upd-spin .7s linear infinite; transform-origin: center; }
+  @keyframes upd-spin { to { transform: rotate(360deg); } }
+  /* 更新进度小药丸：点更新后顶部居中显示 状态文字 + 进度条，直到重启。 */
+  .upd-toast { position: fixed; top: 5px; left: 50%; transform: translateX(-50%); z-index: 100; display: flex; align-items: center; gap: 8px; padding: 5px 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 999px; box-shadow: var(--shadow-lg); font-size: 12px; color: var(--text); -webkit-app-region: no-drag; }
+  .upd-toast .upd-spin { color: var(--accent); flex: none; }
+  .upd-toast-msg { white-space: nowrap; }
+  .upd-toast-bar { width: 84px; height: 4px; border-radius: 2px; background: var(--border); overflow: hidden; flex: none; }
+  .upd-toast-bar > span { display: block; height: 100%; background: var(--accent); border-radius: 2px; transition: width .2s ease; }
 
   /* ---- 左栏 ---- */
   .rail { position: relative; width: 240px; flex: none; display: flex; flex-direction: column; background: var(--rail); border-right: 1px solid var(--border); padding-top: 30px; }
@@ -1319,14 +1364,23 @@
   .hero-card p { color: var(--dim); margin: 0 0 18px; }
   .hero-import { margin: 0 auto; }
   .cli-guide { margin-top: 22px; text-align: left; border-top: 1px solid var(--border); padding-top: 14px; }
-  .cli-guide-h { font-size: 11px; letter-spacing: .03em; text-transform: uppercase; color: var(--faint); font-weight: 600; margin-bottom: 6px; }
-  .cli-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; padding: 5px 0; font-size: 13px; }
-  .cli-name { flex: 1; min-width: 0; font-weight: 500; white-space: nowrap; }
+  .cli-guide-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11px; letter-spacing: .03em; text-transform: uppercase; color: var(--faint); font-weight: 600; margin-bottom: 6px; }
+  .cli-redetect { display: inline-flex; align-items: center; gap: 4px; flex: none; background: none; border: none; padding: 2px 6px; border-radius: 6px; cursor: pointer; color: var(--dim); font: inherit; font-size: 11px; font-weight: 500; letter-spacing: 0; text-transform: none; }
+  .cli-redetect:hover { background: rgba(0, 0, 0, .06); color: var(--text); }
+  .cli-redetect:disabled { opacity: .55; cursor: default; }
+  .cli-redetect :global(svg) { width: 12px; height: 12px; }
+  .cli-item { padding: 3px 0; }
+  .cli-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+  .cli-name { width: 100px; flex: none; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* 命令单独一行、缩进对齐名字，末尾复制按钮。 */
+  .cli-cmd-row { display: flex; align-items: center; gap: 6px; margin: 3px 0 0 24px; }
+  .cli-copy { flex: none; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; border: none; background: none; border-radius: 5px; color: var(--faint); cursor: pointer; }
+  .cli-copy:hover { background: rgba(0, 0, 0, .06); color: var(--text); }
   .cli-tag { flex: none; font-size: 11px; padding: 1px 7px; border-radius: 6px; font-weight: 600; }
   .cli-tag.ok { color: #1a7f4b; background: #e7f4ec; }
   .cli-tag.warn { color: #9a6a00; background: #f7efd9; }
   .cli-tag.bad { color: #9a3b2f; background: #f6e7e3; }
-  .cli-cmd { font-family: ui-monospace, monospace; font-size: 10.5px; color: var(--faint); background: #f6f5f1; padding: 2px 6px; border-radius: 5px; overflow-wrap: anywhere; user-select: text; cursor: text; }
+  .cli-cmd { flex: 1; min-width: 0; font-family: ui-monospace, monospace; font-size: 10.5px; color: var(--faint); background: #f6f5f1; padding: 3px 8px; border-radius: 5px; overflow-wrap: anywhere; user-select: text; cursor: text; }
   /* 提高优先级压过 .hero-card p（后者 margin/color 更 specific，会把 top margin 顶成 0）。 */
   .cli-guide .cli-note { display: flex; align-items: center; gap: 5px; font-size: 11.5px; line-height: 1.5; color: var(--faint); margin: 12px 0 0; }
   .cli-note-ic { flex: none; color: var(--faint); }
