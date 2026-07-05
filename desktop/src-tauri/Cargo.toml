@@ -32,4 +32,6 @@ keyring-core = "1.0.0"
 apple-native-keyring-store = { version = "1.0.0", features = ["keychain"] }
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
 tauri-plugin-notification = "2.3.3"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 

@@ -8,14 +8,26 @@
     options,
     placeholder = '选择…',
     disabled = false,
-  }: { value: string; options: Opt[]; placeholder?: string; disabled?: boolean } = $props();
+    compact = false,
+    searchable = false,
+    onchange,
+  }: { value: string; options: Opt[]; placeholder?: string; disabled?: boolean; compact?: boolean; searchable?: boolean; onchange?: (value: string) => void } = $props();
 
   let open = $state(false);
   let root: HTMLDivElement | undefined = $state();
   let menuStyle = $state('');
   let failed = $state(new Set<string>());
+  let query = $state('');
+  let searchEl: HTMLInputElement | null = $state(null);
   function markFailed(src: string) { const n = new Set(failed); n.add(src); failed = n; }
   const current = $derived(options.find((o) => o.value === value));
+  // 选项多时在菜单顶部给搜索框，按名称/子标题（站点域名）过滤。
+  const showSearch = $derived(searchable && options.length > 6);
+  const filtered = $derived.by(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return options;
+    return options.filter((o) => o.label.toLowerCase().includes(q) || (o.sub ?? '').toLowerCase().includes(q) || o.value.toLowerCase().includes(q));
+  });
 
   // 菜单用 fixed 定位（坐标取自触发器），这样不会被弹窗/滚动容器的 overflow 裁掉。
   function position() {
@@ -23,13 +35,22 @@
     const btn = root.querySelector('.dd-trigger') as HTMLElement | null;
     if (!btn) return;
     const r = btn.getBoundingClientRect();
-    // 始终向下展开，高度自适应可用空间（不足则内部滚动），绝不向上翻盖住上方内容。
+    // 下方空间不足且上方更宽裕时向上翻，避免菜单被窗口底边裁掉（输入框底栏的下拉会靠底）。
     const belowSpace = window.innerHeight - r.bottom - 12;
-    const maxH = Math.min(300, Math.max(96, belowSpace));
-    menuStyle = `top:${Math.round(r.bottom + 6)}px; left:${Math.round(r.left)}px; width:${Math.round(r.width)}px; max-height:${Math.round(maxH)}px;`;
+    const aboveSpace = r.top - 12;
+    const up = belowSpace < 220 && aboveSpace > belowSpace;
+    const maxH = Math.min(300, Math.max(96, up ? aboveSpace : belowSpace));
+    // 紧凑模式触发器很窄，菜单加宽到 ≥240px；靠右时钳制左边界防溢出。
+    const width = compact ? Math.max(r.width, 240) : r.width;
+    let left = r.left;
+    if (compact) left = Math.max(12, Math.min(left, window.innerWidth - width - 12));
+    const vert = up
+      ? `bottom:${Math.round(window.innerHeight - r.top + 6)}px`
+      : `top:${Math.round(r.bottom + 6)}px`;
+    menuStyle = `${vert}; left:${Math.round(left)}px; width:${Math.round(width)}px; max-height:${Math.round(maxH)}px;`;
   }
-  function toggle() { if (disabled) return; open = !open; if (open) requestAnimationFrame(position); }
-  function pick(o: Opt) { if (o.disabled) return; value = o.value; open = false; }
+  function toggle() { if (disabled) return; open = !open; if (open) { query = ''; requestAnimationFrame(() => { position(); if (showSearch) searchEl?.focus(); }); } }
+  function pick(o: Opt) { if (o.disabled) return; const changed = o.value !== value; value = o.value; open = false; if (changed) onchange?.(o.value); }
   function onDoc(e: MouseEvent) { if (root && !root.contains(e.target as Node)) open = false; }
   function onKey(e: KeyboardEvent) { if (e.key === 'Escape') open = false; }
   // 只在「菜单之外」的滚动才收起；菜单自身内部滚动（选项多时）不关闭。
@@ -41,13 +62,14 @@
 
   $effect(() => {
     if (!open) return;
-    document.addEventListener('mousedown', onDoc);
+    // 捕获阶段：先于拖拽区/触发器的 mousedown 处理，点空白（含 data-tauri-drag-region）也能关闭。
+    document.addEventListener('mousedown', onDoc, true);
     document.addEventListener('keydown', onKey);
     // 任意祖先滚动就关闭（fixed 菜单不会跟着滚）。
     window.addEventListener('scroll', onScroll, true);
     window.addEventListener('resize', onScroll);
     return () => {
-      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('mousedown', onDoc, true);
       document.removeEventListener('keydown', onKey);
       window.removeEventListener('scroll', onScroll, true);
       window.removeEventListener('resize', onScroll);
@@ -55,8 +77,8 @@
   });
 </script>
 
-<div class="dd" bind:this={root}>
-  <button type="button" class="dd-trigger" class:open onclick={toggle} {disabled}>
+<div class="dd" class:compact bind:this={root}>
+  <button type="button" class="dd-trigger" class:open class:compact onclick={toggle} {disabled}>
     <span class="dd-label" class:placeholder={!current}>
       {#if current}{@render lead(current)}{/if}{current?.label ?? placeholder}
     </span>
@@ -66,13 +88,19 @@
   </button>
   {#if open}
     <div class="dd-menu" style={menuStyle}>
-      {#each options as o (o.value)}
+      {#if showSearch}
+        <div class="dd-search">
+          <input bind:this={searchEl} bind:value={query} placeholder="搜索站点…" spellcheck="false" autocapitalize="off" autocorrect="off" />
+        </div>
+      {/if}
+      {#each filtered as o (o.value)}
         <button type="button" class="dd-opt" class:sel={o.value === value} class:disabled={o.disabled} onclick={() => pick(o)}>
           {@render lead(o)}
           <span class="dd-otext"><b>{o.label}</b>{#if o.sub}<small>{o.sub}</small>{/if}</span>
           {#if o.value === value}<span class="dd-check">✓</span>{/if}
         </button>
       {/each}
+      {#if filtered.length === 0}<div class="dd-empty">无匹配站点</div>{/if}
     </div>
   {/if}
 </div>
@@ -85,6 +113,7 @@
 
 <style>
   .dd { position: relative; width: 100%; }
+  .dd.compact { width: auto; }
   .dd-trigger {
     width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px;
     background: #fff; border: 1px solid var(--border2, #e1dfd8); border-radius: 10px;
@@ -92,6 +121,10 @@
   }
   .dd-trigger:hover { border-color: #cfccc2; }
   .dd-trigger.open { border-color: #b7b2a6; box-shadow: none; }
+  /* 紧凑 chip：无边框、透明底、自适应宽，用于输入框底栏。 */
+  .dd-trigger.compact { width: auto; gap: 5px; padding: 4px 8px; font-size: 13px; border-color: transparent; background: transparent; border-radius: 8px; max-width: 200px; }
+  .dd-trigger.compact:hover { background: #f1efe9; border-color: transparent; }
+  .dd-trigger.compact.open { background: #ecebe6; border-color: transparent; }
   .dd-trigger:disabled { opacity: .55; cursor: default; }
   .dd-label { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
   .dd-label :global(.bi) { flex: none; }
@@ -121,4 +154,7 @@
   .dd-otext b { font-weight: 500; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .dd-otext small { color: var(--dim, #6f6b62); font-size: 11.5px; line-height: 1.3; }
   .dd-check { color: var(--accent, #4f46e5); flex: none; font-size: 13px; margin-left: auto; }
+  .dd-search { position: sticky; top: 0; z-index: 1; background: #fff; padding: 2px 2px 5px; margin-bottom: 2px; border-bottom: 1px solid var(--border, #ecebe6); }
+  .dd-search input { width: 100%; border: none; outline: none; background: #f4f3ef; border-radius: 7px; padding: 6px 9px; font: inherit; font-size: 13px; color: var(--text, #26241f); }
+  .dd-empty { padding: 14px 12px; text-align: center; color: var(--faint, #a29d93); font-size: 12.5px; }
 </style>

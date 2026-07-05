@@ -3,14 +3,15 @@ import type { Brain, TaskType } from './types';
 export interface Prefs {
   brain: Brain;
   model: string;
-  /** 可选的自定义模型 ID（留空 → 用 model 档位别名 / codex 默认）。 */
-  modelCustom: string;
+  /** 全局自定义模型 ID（按厂商分开；留空 → 用档位别名 / codex 默认）。在「连接与模型」里设置。 */
+  customClaude: string;
+  customCodex: string;
   taskType: TaskType;
 }
 
 const KEY = 'gcms.pilot.prefs';
 
-export const DEFAULT_PREFS: Prefs = { brain: 'claude', model: 'sonnet', modelCustom: '', taskType: 'article' };
+export const DEFAULT_PREFS: Prefs = { brain: 'claude', model: 'sonnet', customClaude: '', customCodex: '', taskType: 'article' };
 
 export function loadPrefs(): Prefs {
   try {

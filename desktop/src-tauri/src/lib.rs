@@ -106,6 +106,19 @@ fn cancel_turn(state: tauri::State<'_, AppState>, conv_id: String) -> bool {
     state.runs.cancel(&conv_id)
 }
 
+/// 会话进行中切换模型（同厂商档位）：仅改存储里的 model，下一轮 send_message 读到即用；
+/// 厂商/站点不可改（session/thread 与厂商绑定，站点决定 api/key/cwd）。
+#[tauri::command]
+fn set_conversation_model(
+    state: tauri::State<'_, AppState>,
+    conv_id: String,
+    model: String,
+) -> Result<Option<Conversation>, String> {
+    state
+        .convos
+        .mutate(&conv_id, now_secs(), move |c| c.model = model)
+}
+
 // ---- 定时任务 ----
 
 #[tauri::command]
@@ -586,6 +599,8 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
@@ -626,6 +641,7 @@ pub fn run() {
             start_conversation,
             send_message,
             cancel_turn,
+            set_conversation_model,
             list_tasks,
             save_task,
             delete_task,

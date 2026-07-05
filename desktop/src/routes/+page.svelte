@@ -1,8 +1,11 @@
 <script lang="ts">
   import { invoke, Channel } from '@tauri-apps/api/core';
   import { getCurrentWindow } from '@tauri-apps/api/window';
+  import { getVersion } from '@tauri-apps/api/app';
   import { open, confirm as confirmDialog } from '@tauri-apps/plugin-dialog';
   import { openUrl } from '@tauri-apps/plugin-opener';
+  import { check as checkUpdate } from '@tauri-apps/plugin-updater';
+  import { relaunch } from '@tauri-apps/plugin-process';
   import BrainIcon from '$lib/BrainIcon.svelte';
   import SiteMark from '$lib/SiteMark.svelte';
   import SiteFav from '$lib/SiteFav.svelte';
@@ -27,9 +30,10 @@
     if (!switcherOpen) return;
     const onDoc = (e: MouseEvent) => { if (footerEl && !footerEl.contains(e.target as Node)) switcherOpen = false; };
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') switcherOpen = false; };
-    document.addEventListener('mousedown', onDoc);
+    // 捕获阶段：点空白（含拖拽区）也能关闭切换器。
+    document.addEventListener('mousedown', onDoc, true);
     document.addEventListener('keydown', onKey);
-    return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onKey); };
+    return () => { document.removeEventListener('mousedown', onDoc, true); document.removeEventListener('keydown', onKey); };
   });
   let flash = $state('');
   let flashKind = $state<'ok' | 'err'>('ok');
@@ -41,6 +45,15 @@
   let convos = $state<Conversation[]>([]);
   let activeConvId = $state('');
   let activeConv = $state<Conversation | null>(null);
+  // 进行中会话可切换模型（同厂商档位）；threadModel 跟随活动会话、改动即持久化。
+  let threadModel = $state('');
+  async function persistThreadModel(m: string) {
+    if (!activeConv || m === activeConv.model) return;
+    try {
+      const u = await invoke<Conversation | null>('set_conversation_model', { convId: activeConv.id, model: m });
+      if (u && activeConvId === u.id) activeConv = u;
+    } catch (e) { say(String(e), 'err'); }
+  }
   let view = $state<'launcher' | 'thread' | 'schedule' | 'tasks'>('launcher');
 
   // 排期视图
@@ -70,6 +83,12 @@
   }
   let taskModalOpen = $state(false);
   let tf = $state<TaskForm>(freshTaskForm());
+  // 已从对话提议卡成功创建过的定时任务（按内容 key，持久化）→ 卡片显示「已创建」防重复点。
+  let createdProposals = $state(loadCreatedProposals());
+  let pendingProposalKey = $state('');
+  function proposalKey(p: TaskProposal): string { return `${p.title}|${p.prompt}|${p.every_minutes}|${p.first_run}`; }
+  function loadCreatedProposals(): Set<string> { try { return new Set<string>(JSON.parse(localStorage.getItem('gcms.pilot.createdProposals') || '[]')); } catch { return new Set(); } }
+  function markProposalCreated(key: string) { if (!key) return; const n = new Set(createdProposals); n.add(key); createdProposals = n; try { localStorage.setItem('gcms.pilot.createdProposals', JSON.stringify([...n])); } catch { /* */ } }
   function freshTaskForm(): TaskForm {
     const brain = brainUsable('claude') ? 'claude' : brainUsable('codex') ? 'codex' : 'claude';
     return {
@@ -82,11 +101,12 @@
   function splitModel(b: string, m: string): { model: string; modelCustom: string } {
     return isPresetModel(b, m) ? { model: m, modelCustom: '' } : { model: defaultModelFor(b), modelCustom: m || '' };
   }
-  function openNewTask() { tf = freshTaskForm(); taskModalOpen = true; }
+  function openNewTask() { pendingProposalKey = ''; tf = freshTaskForm(); taskModalOpen = true; }
   // AI 在对话里提议的定时任务 → 用当前会话的站点/模型预填，弹确认卡让用户确认/微调。
   function openTaskFromProposal(p: TaskProposal) {
     const c = activeConv;
     if (!c) return;
+    pendingProposalKey = proposalKey(p);
     const firstRunSecs = p.first_run && !isNaN(new Date(p.first_run).getTime()) ? Math.floor(new Date(p.first_run).getTime() / 1000) : 0;
     tf = {
       id: null, connId: c.conn_id, connName: c.conn_name, site: c.site_slug,
@@ -97,6 +117,7 @@
     taskModalOpen = true;
   }
   function openEditTask(t: ScheduledTask) {
+    pendingProposalKey = '';
     // 编辑保留任务原本所属的连接，绝不改绑到当前活动连接。
     tf = {
       id: t.id, connId: t.conn_id, connName: t.conn_name, site: t.site_slug, taskType: t.task_type, brain: t.brain, ...splitModel(t.brain, t.model),
@@ -133,6 +154,7 @@
         taskType: tf.taskType, brain: tf.brain, model,
         title: tf.title, prompt: tf.prompt, intervalMinutes: parseInt(tf.period) || 1440, firstRun, enabled: tf.enabled,
       });
+      if (pendingProposalKey) { markProposalCreated(pendingProposalKey); pendingProposalKey = ''; }
       taskModalOpen = false; await loadTasks();
     } catch (e) { say(String(e), 'err'); }
   }
@@ -161,22 +183,23 @@
   ];
 
   // ---------- launcher form ----------
-  let prefs = loadPrefs();
+  let prefs = $state(loadPrefs());
   let lSite = $state('');
   let lTask = $state<TaskType>(prefs.taskType);
   let lBrain = $state<Brain>(prefs.brain);
   let lModel = $state(prefs.model);
-  let lModelCustom = $state(prefs.modelCustom ?? '');
-  let showLCustom = $state(!!(prefs.modelCustom ?? '').trim());
   let lDraft = $state('');
-  // 有效模型：自定义 ID 优先；否则用当前引擎的档位值（Claude=别名、Codex=模型 ID 或 '' 走默认）。
-  const lModelEff = $derived(lModelCustom.trim() || lModel);
+  // 全局自定义模型 ID（按厂商，在「连接与模型」里设置）。
+  function customOf(b: string): string { return (b === 'codex' ? prefs.customCodex : prefs.customClaude) ?? ''; }
+  function setCustom(b: string, v: string) { if (b === 'codex') prefs.customCodex = v; else prefs.customClaude = v; savePrefs(prefs); }
+  // 有效模型：该厂商的全局自定义 ID 优先；否则用档位（Claude=别名、Codex=模型 ID 或 '' 走默认）。
+  const lModelEff = $derived(customOf(lBrain).trim() || lModel);
   // 切换引擎后，若当前档位不属于该引擎，重置为该引擎默认档位（避免下拉空选/发错模型）。
   $effect(() => { if (!isPresetModel(lBrain, lModel)) lModel = defaultModelFor(lBrain); });
   $effect(() => { if (!isPresetModel(tf.brain, tf.model)) tf.model = defaultModelFor(tf.brain); });
   // 自定义模型输入框的占位示例，按当前引擎给不同提示。
   function modelPlaceholder(b: string): string {
-    return b === 'codex' ? '如 gpt-5.3-codex-spark / o3（留空用上方档位）' : '如 claude-opus-4-8（留空用上方档位）';
+    return b === 'codex' ? '如 gpt-5.3-codex-spark / o3（留空用上方模型）' : '如 claude-opus-4-8（留空用上方模型）';
   }
 
   // ---------- composer / live turn ----------
@@ -195,6 +218,17 @@
     if (t.closest('button, a, input, textarea, select, [role="button"], [data-no-drag]')) return;
     getCurrentWindow().startDragging().catch(() => {});
   }
+
+  // 全屏时无红绿灯，顶部工具按钮改与左栏菜单左对齐。
+  let isFullscreen = $state(false);
+  $effect(() => {
+    const win = getCurrentWindow();
+    let unlisten: (() => void) | undefined;
+    const sync = async () => { try { isFullscreen = await win.isFullscreen(); } catch { /* */ } };
+    sync();
+    win.onResized(sync).then((u) => (unlisten = u)).catch(() => {});
+    return () => unlisten?.();
+  });
 
   // 侧栏折叠 + 可拖拽宽度（持久化）。
   let railCollapsed = $state(loadRailFlag());
@@ -245,7 +279,9 @@
   function brainUsable(b: Brain): boolean { const s = b === 'claude' ? brains?.claude : brains?.codex; return !!s && s.found && s.logged_in !== false; }
   function hostOf(u: string): string { try { return new URL(u).host; } catch { return u; } }
   // 从当前发现结果里按 slug 找站点图标（favicon 优先，其次 logo）；找不到返回空由 SiteFav 用首字母兜底。
-  function siteFav(slug: string): string { const s = sites.find((x) => x.slug === slug); return s?.favicon || s?.logo || ''; }
+  // 站点公开地址猜标准 favicon 位置，作为 discovery favicon/logo 之外的兜底（SiteFav 加载失败再退首字母）。
+  function faviconGuess(url?: string): string { const u = (url ?? '').trim(); return u ? u.replace(/\/+$/, '') + '/favicon.ico' : ''; }
+  function siteFav(slug: string): string { const s = sites.find((x) => x.slug === slug); return s?.favicon || s?.logo || faviconGuess(s?.url); }
 
   async function refreshConns() { try { conns = await invoke('list_connections'); if (!activeConnId && conns.length) selectConn(conns[0].id); } catch (e) { say(String(e), 'err'); } }
   async function refreshBrains() { try { brains = await invoke('detect_brains'); } catch (e) { say(String(e), 'err'); } }
@@ -253,6 +289,27 @@
   async function refreshSites() { if (activeConnId && !discoveryLoading) await selectConn(activeConnId); }
   let brainsBusy = $state(false);
   async function refreshBrainsManual() { brainsBusy = true; try { await refreshBrains(); } finally { brainsBusy = false; } }
+
+  // 应用版本 + 在线检查更新（Tauri updater：拉 release 仓 latest.json，ed25519 验签后下载安装再重启）。
+  let appVersion = $state('');
+  let updBusy = $state(false);
+  let updMsg = $state('');
+  getVersion().then((v) => (appVersion = v)).catch(() => { /* */ });
+  async function runUpdate() {
+    if (updBusy) return;
+    updBusy = true; updMsg = '检查中…';
+    try {
+      const upd = await checkUpdate();
+      if (!upd) { updMsg = '已是最新版本'; return; }
+      const ok = await confirmDialog(`发现新版本 ${upd.version}，现在下载更新并重启？`, { title: '有可用更新', kind: 'info' });
+      if (!ok) { updMsg = `有新版本 ${upd.version} 可用`; return; }
+      updMsg = '下载安装中…';
+      await upd.downloadAndInstall();
+      updMsg = '更新完成，正在重启…';
+      await relaunch();
+    } catch (e) { updMsg = '检查更新失败：' + String(e); }
+    finally { updBusy = false; }
+  }
   async function refreshConvos() { try { convos = await invoke('list_conversations'); } catch (e) { say(String(e), 'err'); } }
 
   let selSeq = 0;
@@ -308,7 +365,8 @@
   async function openConv(id: string) {
     const c = await invoke<Conversation | null>('get_conversation', { id });
     if (!c) { await refreshConvos(); return; }
-    activeConv = c; activeConvId = id; view = 'thread';
+    activeConv = c; activeConvId = id; threadModel = c.model; view = 'thread';
+    expandSite(c.site_slug);
     scrollSoon(true);
   }
   async function deleteConv(id: string) {
@@ -331,13 +389,13 @@
   // 乐观：立刻把用户消息塞进当前/合成会话，activeConvId 立即等于 convId，
   // 首轮也能流式渲染 + 停止（cancel 键对准真正的注册表 key）。
   function beginTurn(convId: string, optimistic: Conversation) {
-    activeConv = optimistic; activeConvId = convId;
+    activeConv = optimistic; activeConvId = convId; threadModel = optimistic.model;
     busy = true; busyConvId = convId; live = { text: '', tools: [], error: '' };
     view = 'thread'; scrollSoon(true);
   }
   function endTurn(conv: Conversation | null) {
     // 仅当用户仍停留在这条会话时用权威结果覆盖，避免打断已切走的用户。
-    if (conv && activeConvId === busyConvId) { activeConv = conv; activeConvId = conv.id; }
+    if (conv && activeConvId === busyConvId) { activeConv = conv; activeConvId = conv.id; threadModel = conv.model; }
     busy = false; busyConvId = ''; live = { text: '', tools: [], error: '' };
   }
   async function failTurn(e: unknown, convId: string) {
@@ -352,7 +410,7 @@
   async function startChat() {
     if (busy || !lSite || !lDraft.trim() || !brainUsable(lBrain)) return;
     const site = sites.find((s) => s.slug === lSite);
-    prefs = { brain: lBrain, model: lModel, modelCustom: lModelCustom.trim(), taskType: lTask }; savePrefs(prefs);
+    prefs.brain = lBrain; prefs.model = lModel; prefs.taskType = lTask; savePrefs(prefs);
     const model = lModelEff;
     const text = lDraft.trim();
     const id = crypto.randomUUID();
@@ -440,7 +498,7 @@
   const shownMessages = $derived((activeConv?.messages ?? []).filter((m) => !m.hidden));
 
   // 下拉选项
-  const siteOpts = $derived(sites.map((s) => ({ value: s.slug, label: s.name || s.slug, sub: s.url ? hostOf(s.url) : '未绑定域名', img: s.favicon || s.logo || '' })));
+  const siteOpts = $derived(sites.map((s) => ({ value: s.slug, label: s.name || s.slug, sub: s.url ? hostOf(s.url) : '未绑定域名', img: s.favicon || s.logo || faviconGuess(s.url) })));
   const brainOpts = $derived([
     { value: 'claude', label: 'Claude', icon: 'claude', disabled: !brainUsable('claude'), sub: brainUsable('claude') ? '' : brains?.claude.found ? '未登录' : '未安装' },
     { value: 'codex', label: 'OpenAI Codex', icon: 'codex', disabled: !brainUsable('codex'), sub: brainUsable('codex') ? '' : brains?.codex.found ? '未登录' : '未安装' },
@@ -464,25 +522,45 @@
   function defaultModelFor(b: string): string { return b === 'codex' ? '' : 'sonnet'; }
   function isPresetModel(b: string, m: string): boolean { return modelOptsFor(b).some((o) => o.value === m); }
 
-  // 会话按日期分组（后端已按 updated_at 倒序）
+  // 会话按「站点 → 任务类型」两级分组：站点按最近活动倒序；任务类型固定顺序，只留有会话的。
+  const TASK_ORDER = ['article', 'sitebuild', 'free'];
   const grouped = $derived.by(() => {
-    const t0 = new Date(); t0.setHours(0, 0, 0, 0);
-    const day = t0.getTime();
-    const groups = [
-      { label: '今天', items: [] as Conversation[] },
-      { label: '昨天', items: [] as Conversation[] },
-      { label: '过去 7 天', items: [] as Conversation[] },
-      { label: '更早', items: [] as Conversation[] },
-    ];
+    const bySite = new Map<string, { slug: string; name: string; recent: number; convs: Conversation[] }>();
     for (const c of convos) {
-      const ms = c.updated_at * 1000;
-      if (ms >= day) groups[0].items.push(c);
-      else if (ms >= day - 864e5) groups[1].items.push(c);
-      else if (ms >= day - 7 * 864e5) groups[2].items.push(c);
-      else groups[3].items.push(c);
+      const key = c.site_slug || '(未指定站点)';
+      let g = bySite.get(key);
+      if (!g) { g = { slug: key, name: c.site_name || c.site_slug || key, recent: 0, convs: [] }; bySite.set(key, g); }
+      g.convs.push(c);
+      if (c.updated_at > g.recent) g.recent = c.updated_at;
     }
-    return groups.filter((g) => g.items.length);
+    const sites = [...bySite.values()].sort((a, b) => b.recent - a.recent);
+    return sites.map((s) => {
+      const subs: { type: string; label: string; items: Conversation[] }[] = [];
+      for (const t of TASK_ORDER) {
+        const items = s.convs.filter((c) => c.task_type === t).sort((a, b) => b.updated_at - a.updated_at);
+        if (items.length) subs.push({ type: t, label: taskLabel(t), items });
+      }
+      const others = s.convs.filter((c) => !TASK_ORDER.includes(c.task_type)).sort((a, b) => b.updated_at - a.updated_at);
+      if (others.length) subs.push({ type: 'other', label: '其它', items: others });
+      return { slug: s.slug, name: s.name, count: s.convs.length, subs };
+    });
   });
+  // 站点分组折叠态（持久化）；默认全展开，打开某会话时自动展开其站点。
+  let collapsedSites = $state(loadCollapsedSites());
+  function loadCollapsedSites(): Set<string> { try { return new Set<string>(JSON.parse(localStorage.getItem('gcms.pilot.collapsedSites') || '[]')); } catch { return new Set(); } }
+  function persistCollapsedSites() { try { localStorage.setItem('gcms.pilot.collapsedSites', JSON.stringify([...collapsedSites])); } catch { /* */ } }
+  function toggleSite(slug: string) { const n = new Set(collapsedSites); if (n.has(slug)) n.delete(slug); else n.add(slug); collapsedSites = n; persistCollapsedSites(); }
+  function expandSite(slug: string) { if (collapsedSites.has(slug)) { const n = new Set(collapsedSites); n.delete(slug); collapsedSites = n; persistCollapsedSites(); } }
+  // 侧栏会话时间标签：今天 / 昨天 / N 天前 / 更早日期。
+  function relTime(secs: number): string {
+    const t0 = new Date(); t0.setHours(0, 0, 0, 0);
+    const day = t0.getTime(); const ms = secs * 1000;
+    if (ms >= day) return '今天';
+    if (ms >= day - 864e5) return '昨天';
+    const n = Math.floor((day - ms) / 864e5) + 1;
+    if (n <= 7) return `${n} 天前`;
+    const d = new Date(ms); return `${d.getMonth() + 1}/${d.getDate()}`;
+  }
 </script>
 
 <main class="app">
@@ -490,8 +568,8 @@
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="titlebar" data-tauri-drag-region aria-hidden="true" onmousedown={startDrag} style="width:{railCollapsed ? 140 : railWidth}px"></div>
 
-  <!-- 顶部工具：折叠侧栏 + 搜索会话（紧挨红绿灯右侧，始终可见） -->
-  <div class="win-tools">
+  <!-- 顶部工具：折叠侧栏 + 搜索会话（窗口模式紧挨红绿灯右侧；全屏时无红绿灯，与左栏菜单左对齐） -->
+  <div class="win-tools" class:fs={isFullscreen}>
     <button class="wt" onclick={toggleRail} title={railCollapsed ? '展开侧栏' : '折叠侧栏'} aria-label="折叠侧栏">
       <svg width="16" height="16" viewBox="0 0 18 18" fill="none">
         <rect x="2.5" y="3.5" width="13" height="11" rx="2" stroke="currentColor" stroke-width="1.3" />
@@ -539,18 +617,28 @@
       {#if convos.length === 0}
         <p class="rail-empty">还没有对话。<br />选好站点和模型，直接说你想做什么。</p>
       {/if}
-      {#each grouped as g (g.label)}
-        <div class="grp">{g.label}</div>
-        {#each g.items as c (c.id)}
-          <div class="convo {activeConvId === c.id ? 'on' : ''}" role="button" tabindex="0"
-            onclick={() => openConv(c.id)} onkeydown={(e) => e.key === 'Enter' && openConv(c.id)}>
-            <div class="convo-body">
-              <span class="convo-title">{c.title}</span>
-              <span class="convo-meta"><SiteFav src={siteFav(c.site_slug)} label={c.site_slug} size={12} /><span class="cmono">{c.site_slug}</span><span class="cdot">·</span>{@render brainTag(c.brain, brainLabel(c.brain))}{#if c.status === 'running'}<span class="mini-run"></span>{/if}</span>
-            </div>
-            <button class="convo-x" title="删除对话" onclick={(e) => { e.stopPropagation(); deleteConv(c.id); }}>×</button>
-          </div>
-        {/each}
+      {#each grouped as g (g.slug)}
+        <button class="site-grp" onclick={() => toggleSite(g.slug)} title={g.name}>
+          <svg class="site-grp-chev" class:collapsed={collapsedSites.has(g.slug)} width="10" height="10" viewBox="0 0 12 12" fill="none"><path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>
+          <SiteFav src={siteFav(g.slug)} label={g.slug} size={14} />
+          <span class="site-grp-name">{g.name}</span>
+          <span class="site-grp-count">{g.count}</span>
+        </button>
+        {#if !collapsedSites.has(g.slug)}
+          {#each g.subs as sub (sub.type)}
+            <div class="subgrp">{sub.label}</div>
+            {#each sub.items as c (c.id)}
+              <div class="convo {activeConvId === c.id ? 'on' : ''}" role="button" tabindex="0"
+                onclick={() => openConv(c.id)} onkeydown={(e) => e.key === 'Enter' && openConv(c.id)}>
+                <div class="convo-body">
+                  <span class="convo-title">{c.title}</span>
+                  <span class="convo-meta">{@render brainTag(c.brain, brainLabel(c.brain))}<span class="cdot">·</span>{relTime(c.updated_at)}{#if c.status === 'running'}<span class="mini-run"></span>{/if}</span>
+                </div>
+                <button class="convo-x" title="删除对话" onclick={(e) => { e.stopPropagation(); deleteConv(c.id); }}>×</button>
+              </div>
+            {/each}
+          {/each}
+        {/if}
       {/each}
     </div>
 
@@ -622,33 +710,24 @@
             {/each}
           </div>
 
-          <div class="launch-row">
-            <div class="pick"><span class="pick-lbl">站点<button class="mini-rfz" title="刷新站点" onclick={refreshSites}>{@render refreshIcon(discoveryLoading)}</button></span><Dropdown bind:value={lSite} options={siteOpts} placeholder="选择站点" /></div>
-            <div class="pick"><span>模型</span><Dropdown bind:value={lBrain} options={brainOpts} /></div>
-            <div class="pick">
-              <span>档位</span>
-              <Dropdown bind:value={lModel} options={modelOptsFor(lBrain)} />
-              <div class="adv-model">
-                {#if showLCustom}
-                  <div class="adv-field">
-                    <span class="adv-lbl">自定义模型 ID<button class="adv-x" title="清除" onclick={() => { lModelCustom = ''; showLCustom = false; }}>清除</button></span>
-                    <input class="tin" bind:value={lModelCustom} placeholder={modelPlaceholder(lBrain)} spellcheck="false" autocapitalize="off" autocorrect="off" />
-                    <small class="adv-hint">留空则用上方档位{lBrain === 'claude' ? '（别名自动跟随最新）' : ''}；填了就锁定此模型。</small>
-                  </div>
-                {:else}
-                  <button class="adv-toggle" onclick={() => (showLCustom = true)}>{@render plusIcon()}自定义模型 ID</button>
-                {/if}
-              </div>
-            </div>
-          </div>
-
           <div class="composer big">
             <textarea bind:value={lDraft} rows="3"
               placeholder={lTask === 'sitebuild' ? '例如：帮我搭一个介绍露营装备的中文站，风格轻松，先给我一个方案' : '例如：帮我写一篇 2026 年 macOS 效率工具盘点，先列个提纲'}
               onkeydown={(e) => onComposerKey(e, startChat)}></textarea>
-            <button class="send" onclick={startChat} disabled={!lSite || !lDraft.trim() || !brainUsable(lBrain)} title="发送（Enter）">↑</button>
+            <div class="composer-bar">
+              <div class="cb-left">
+                <Dropdown compact searchable bind:value={lSite} options={siteOpts} placeholder="选择站点" />
+                <button class="cb-rfz" title="刷新站点" onclick={refreshSites}>{@render refreshIcon(discoveryLoading)}</button>
+              </div>
+              <div class="cb-right">
+                <Dropdown compact bind:value={lBrain} options={brainOpts} />
+                <Dropdown compact bind:value={lModel} options={modelOptsFor(lBrain)} />
+                <button class="send" onclick={startChat} disabled={!lSite || !lDraft.trim() || !brainUsable(lBrain)} title="发送（Enter）">↑</button>
+              </div>
+            </div>
           </div>
-          {#if !brainUsable(lBrain)}<p class="hint warn-text">所选模型未就绪，点左下角设置里「去授权」。</p>{/if}
+          {#if !brainUsable(lBrain)}<p class="hint warn-text">所选厂商未就绪，点左下角设置里「去授权」。</p>{/if}
+          {#if customOf(lBrain).trim()}<p class="hint">已用全局自定义模型 <b>{customOf(lBrain).trim()}</b>（在「连接与模型」里改）。</p>{/if}
         </div>
       </div>
 
@@ -712,8 +791,10 @@
                 <div class="task-body">
                   <b>{t.title}</b>
                   <div class="task-meta">
-                    <span class="cmono">{t.site_slug}</span> · {@render brainTag(t.brain, brainLabel(t.brain))} · {periodLabel(t.interval_minutes)}
-                    {#if t.enabled}· 下次 {fmtSched(new Date(t.next_run * 1000).toISOString())}{/if}
+                    <SiteFav src={siteFav(t.site_slug)} label={t.site_slug} size={13} /><span class="cmono">{t.site_slug}</span>
+                    <span class="cdot">·</span>{@render brainTag(t.brain, brainLabel(t.brain))}
+                    <span class="cdot">·</span>{periodLabel(t.interval_minutes)}
+                    {#if t.enabled}<span class="cdot">·</span>下次 {fmtSched(new Date(t.next_run * 1000).toISOString())}{/if}
                   </div>
                   {#if t.last_run}
                     <div class="task-last {t.last_status}">
@@ -723,8 +804,12 @@
                   {/if}
                 </div>
                 <div class="task-actions">
-                  <button class="btn small ghost" onclick={() => runTaskNow(t)}>立即运行</button>
-                  <button class="btn small ghost" onclick={() => openEditTask(t)}>编辑</button>
+                  <button class="icon-btn" title="立即运行" onclick={() => runTaskNow(t)} aria-label="立即运行">
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M5 3.4l7.2 4.6L5 12.6z" fill="currentColor" /></svg>
+                  </button>
+                  <button class="icon-btn" title="编辑" onclick={() => openEditTask(t)} aria-label="编辑">
+                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M11.5 2.5l2 2L6 12l-2.5.5L4 10l7.5-7.5z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" /></svg>
+                  </button>
                   <button class="x sm" title="删除" onclick={() => deleteTask(t)}>×</button>
                 </div>
               </div>
@@ -765,11 +850,20 @@
         <div class="composer">
           <textarea bind:value={draft} rows="1" placeholder="继续说…（Enter 发送，Shift+Enter 换行）"
             disabled={busy} onkeydown={(e) => onComposerKey(e, send)}></textarea>
-          {#if busy && viewingBusy}
-            <button class="send stop" onclick={stop} title="停止">■</button>
-          {:else}
-            <button class="send" onclick={send} disabled={busy || !draft.trim()} title="发送（Enter）">↑</button>
-          {/if}
+          <div class="composer-bar">
+            <div class="cb-left">
+              <span class="cb-ro" title="会话的站点已固定，不可更改"><SiteFav src={siteFav(activeConv?.site_slug ?? '')} label={activeConv?.site_slug ?? ''} size={15} /><span class="cb-ro-t">{activeConv?.site_name || activeConv?.site_slug}</span></span>
+            </div>
+            <div class="cb-right">
+              <span class="cb-ro" title="会话的厂商已固定，不可更改">{@render brainTag(activeConv?.brain ?? 'claude', brainLabel(activeConv?.brain ?? ''))}</span>
+              <Dropdown compact bind:value={threadModel} options={modelOptsFor(activeConv?.brain ?? 'claude')} onchange={persistThreadModel} disabled={busy} />
+              {#if busy && viewingBusy}
+                <button class="send stop" onclick={stop} title="停止">■</button>
+              {:else}
+                <button class="send" onclick={send} disabled={busy || !draft.trim()} title="发送（Enter）">↑</button>
+              {/if}
+            </div>
+          </div>
         </div>
       </div>
     {/if}
@@ -820,7 +914,11 @@
             <b class="proposal-title">{m.proposal.title}</b>
             <div class="proposal-meta">{periodLabel(m.proposal.every_minutes)}{#if m.proposal.first_run} · 首次 {fmtSched(m.proposal.first_run)}{/if}</div>
             <div class="proposal-prompt">{m.proposal.prompt}</div>
-            <button class="btn primary small" onclick={() => m.proposal && openTaskFromProposal(m.proposal)}>创建定时任务…</button>
+            {#if createdProposals.has(proposalKey(m.proposal))}
+              <div class="proposal-done">✓ 已创建定时任务，可在左栏「定时任务」查看</div>
+            {:else}
+              <button class="btn primary small" onclick={() => m.proposal && openTaskFromProposal(m.proposal)}>创建定时任务…</button>
+            {/if}
           </div>
         {/if}
       </div>
@@ -901,13 +999,25 @@
             <span class="brain-ic"><BrainIcon brain={r.b} size={18} /></span>
             <span class="brain-main"><b>{r.name}</b>
               <small>{#if !r.st.found}未安装{:else if r.st.logged_in === false}未登录{:else}{r.st.version || '已就绪'}{/if}</small></span>
-            <span class="dot {r.st.found && r.st.logged_in ? 'ok' : r.st.found ? 'warn' : 'off'}"></span>
+            <span class="brain-dot"><span class="dot {r.st.found && r.st.logged_in ? 'ok' : r.st.found ? 'warn' : 'off'}"></span></span>
             {#if r.st.found && r.st.logged_in === false}<button class="btn small primary" onclick={() => authorize(r.b)}>去授权</button>{/if}
           </div>
           {#if !r.st.found}<p class="hint mono">安装：{r.cmd}</p>{/if}
+          {#if r.st.found}
+            <input class="tin brain-custom" value={customOf(r.b)} oninput={(e) => setCustom(r.b, e.currentTarget.value)}
+              placeholder={r.b === 'codex' ? '自定义模型 ID（选填，覆盖档位）如 gpt-5.5 / o3' : '自定义模型 ID（选填，覆盖档位）如 claude-opus-4-8'}
+              spellcheck="false" autocapitalize="off" autocorrect="off" />
+          {/if}
         {/each}
       {/if}
-      <p class="hint tos">仅限本人订阅账户驱动本地官方 CLI；密钥保存在 macOS 钥匙串。</p>
+      <p class="hint tos">自定义模型 ID 为全局默认（按厂商），留空则用会话里选的档位；仅限本人订阅账户驱动本地官方 CLI，密钥存 macOS 钥匙串。</p>
+
+      <div class="sec-head mt"><span>关于</span></div>
+      <div class="brain-row">
+        <span class="brain-ic"><SiteMark size={18} /></span>
+        <span class="brain-main"><b>gcms Pilot</b><small>{appVersion ? `v${appVersion}` : ''}{updMsg ? ` · ${updMsg}` : ''}</small></span>
+        <button class="btn small ghost" onclick={runUpdate} disabled={updBusy}>{updBusy ? '检查中…' : '检查更新'}</button>
+      </div>
     </div>
   </div>
 {/if}
@@ -943,10 +1053,10 @@
         <div class="tfield"><span>类型</span><Dropdown bind:value={tf.taskType} options={taskTypeOpts} /></div>
       </div>
       <div class="trow">
-        <div class="tfield"><span>模型</span><Dropdown bind:value={tf.brain} options={brainOpts} /></div>
-        <div class="tfield"><span>档位</span><Dropdown bind:value={tf.model} options={modelOptsFor(tf.brain)} /></div>
+        <div class="tfield"><span>厂商</span><Dropdown bind:value={tf.brain} options={brainOpts} /></div>
+        <div class="tfield"><span>模型</span><Dropdown bind:value={tf.model} options={modelOptsFor(tf.brain)} /></div>
       </div>
-      <div class="tfield"><span>自定义模型 ID（可选，留空用上面档位）</span>
+      <div class="tfield"><span>自定义模型 ID（可选，留空用上面模型）</span>
         <input class="tin" bind:value={tf.modelCustom} placeholder={modelPlaceholder(tf.brain)} spellcheck="false" autocapitalize="off" autocorrect="off" /></div>
       <div class="tfield"><span>任务名称（可选）</span><input class="tin" bind:value={tf.title} placeholder="例如：每日热点速写" /></div>
       <div class="tfield"><span>指令（每次到点就把这句话发给模型）</span>
@@ -1000,6 +1110,8 @@
   .titlebar { position: fixed; top: 0; left: 0; height: 30px; z-index: 6; }
   /* 顶部工具按钮：浮在拖拽条之上、紧挨红绿灯右侧。 */
   .win-tools { position: fixed; top: 0; left: 80px; height: 30px; display: flex; align-items: center; gap: 1px; z-index: 8; }
+  /* 全屏无红绿灯：左移到与左栏菜单图标同一左边界（rail-head 8px + 按钮 padding 让开）。 */
+  .win-tools.fs { left: 12px; }
   .wt { display: inline-flex; align-items: center; justify-content: center; width: 27px; height: 24px; border: none; background: none; border-radius: 6px; color: var(--dim); cursor: pointer; -webkit-app-region: no-drag; }
   .wt:hover { background: rgba(0, 0, 0, .06); color: var(--text); }
   .wt:disabled { opacity: .4; cursor: default; }
@@ -1028,7 +1140,17 @@
   .rail-empty { color: var(--faint); font-size: 12px; padding: 10px 8px; line-height: 1.7; }
   .grp { font-size: 10.5px; font-weight: 600; letter-spacing: .04em; color: var(--faint); padding: 12px 10px 4px; text-transform: uppercase; }
   .grp:first-child { padding-top: 4px; }
-  .convo { position: relative; display: flex; align-items: center; gap: 6px; border-radius: 8px; padding: 7px 10px; cursor: pointer; }
+  /* 站点分组头（可折叠） */
+  .site-grp { width: 100%; display: flex; align-items: center; gap: 6px; padding: 9px 8px 4px; margin-top: 2px; background: none; border: none; cursor: pointer; text-align: left; -webkit-appearance: none; appearance: none; }
+  .site-grp:first-child { margin-top: 0; }
+  .site-grp:hover .site-grp-name { color: var(--accent); }
+  .site-grp-chev { color: var(--faint); flex: none; transition: transform .12s; }
+  .site-grp-chev.collapsed { transform: rotate(-90deg); }
+  .site-grp-name { flex: 1; min-width: 0; font-size: 12.5px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .site-grp-count { flex: none; font-size: 10.5px; color: var(--faint); }
+  /* 任务类型子组标签 */
+  .subgrp { font-size: 10px; font-weight: 600; letter-spacing: .04em; color: var(--faint); padding: 5px 8px 2px 20px; }
+  .convo { position: relative; display: flex; align-items: center; gap: 6px; border-radius: 8px; padding: 7px 10px 7px 24px; cursor: pointer; }
   .convo:hover { background: #f1efe9; }
   .convo.on { background: #e9e7e0; }
   .convo-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
@@ -1100,7 +1222,7 @@
   .launcher { width: min(680px, 100%); }
   .launcher h1 { font-size: 26px; margin: 0 0 6px; letter-spacing: -.01em; }
   .launcher .sub { color: var(--dim); margin: 0 0 22px; }
-  .task-seg { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 16px; }
+  .task-seg { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 30px; }
   .task-seg button { text-align: left; background: var(--card); border: 1px solid var(--border2); border-radius: 12px; padding: 11px 13px; cursor: pointer; display: flex; align-items: center; gap: 10px; transition: border-color .12s, background .12s; }
   .task-seg button:hover { border-color: #cfccc2; }
   .task-seg button.on { border-color: var(--accent); background: var(--accent-soft); }
@@ -1110,26 +1232,8 @@
   .task-seg b { font-size: 13.5px; }
   .task-seg small { color: var(--dim); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-  .launch-row { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 26px; flex-wrap: wrap; }
-  .pick { display: flex; flex-direction: column; gap: 5px; flex: 1; min-width: 140px; }
-  .pick > span { font-size: 12px; color: var(--dim); }
-  .pick-lbl { display: inline-flex; align-items: center; gap: 4px; }
-  .mini-rfz { background: none; border: none; padding: 1px; cursor: pointer; color: var(--faint); display: inline-flex; border-radius: 5px; }
-  .mini-rfz .rfz { width: 12px; height: 12px; }
-  .mini-rfz:hover { color: var(--accent); background: var(--accent-soft); }
   .tin, textarea { font-family: inherit; font-size: 14px; color: var(--text); background: #fff; border: 1.5px solid var(--border2); border-radius: 10px; padding: 9px 11px; }
   .tin:focus, textarea:focus { outline: none; border-color: #b7b2a6; box-shadow: none; }
-
-  .adv-model { margin-top: 1px; }
-  .adv-toggle { display: inline-flex; align-items: center; gap: 5px; background: none; border: none; padding: 2px; cursor: pointer; color: var(--dim); font: inherit; font-size: 12.5px; border-radius: 6px; }
-  .adv-toggle:hover, .adv-toggle:hover :global(.plus-ic) { color: var(--accent); }
-  .adv-toggle :global(.plus-ic) { color: var(--faint); }
-  .adv-field { display: flex; flex-direction: column; gap: 6px; }
-  .adv-field .tin { width: 100%; }
-  .adv-lbl { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--dim); }
-  .adv-x { margin-left: auto; background: none; border: none; padding: 0; cursor: pointer; color: var(--faint); font: inherit; font-size: 11.5px; }
-  .adv-x:hover { color: var(--accent); }
-  .adv-hint { color: var(--faint); font-size: 11px; line-height: 1.45; }
 
   /* 会话搜索（命令面板式；.mask 提供遮罩，box 居中于顶部） */
   .search-box { position: fixed; z-index: 61; top: 12vh; left: 50%; transform: translateX(-50%); width: min(560px, 92vw); background: #fff; border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 24px 60px rgba(20, 15, 8, .28); overflow: hidden; display: flex; flex-direction: column; max-height: 66vh; }
@@ -1146,7 +1250,7 @@
   .si-main small { color: var(--dim); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
   /* 输入框（仿 Claude Code：整块圆角边框，聚焦时高亮，发送按钮嵌在框内） */
-  .composer.big, .composer-wrap .composer { position: relative; background: #fff; border: 1px solid var(--border2); border-radius: 22px; box-shadow: none; transition: border-color .12s, box-shadow .12s; }
+  .composer.big, .composer-wrap .composer { position: relative; background: #fff; border: 1px solid var(--border2); border-radius: 12px; box-shadow: none; transition: border-color .12s, box-shadow .12s; }
   .composer.big:focus-within, .composer-wrap .composer:focus-within { border-color: #b7b2a6; box-shadow: none; }
   .composer.big textarea, .composer-wrap textarea { width: 100%; resize: none; border: none; background: none; box-shadow: none; padding: 14px 52px 14px 17px; line-height: 1.6; max-height: 200px; display: block; }
   .composer.big textarea:focus, .composer-wrap textarea:focus { outline: none; box-shadow: none; border: none; }
@@ -1155,6 +1259,19 @@
   .composer .send:active { transform: scale(.92); }
   .composer .send:disabled { background: #dcdad2; cursor: default; transform: none; }
   .composer .send.stop { background: var(--text); }
+  /* composer：竖排 textarea + 底栏（启动页站点在左；会话页只读厂商在左，模型/发送在右）。 */
+  .composer.big, .composer-wrap .composer { display: flex; flex-direction: column; }
+  .composer.big textarea, .composer-wrap textarea { padding: 12px 16px 6px 16px; }
+  .composer-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 8px 8px; }
+  .cb-left { display: flex; align-items: center; gap: 1px; flex: 1; min-width: 0; }
+  .cb-right { display: flex; align-items: center; gap: 3px; flex: none; }
+  .composer-bar .send { position: static; width: 30px; height: 30px; margin-left: 3px; font-size: 15px; }
+  .cb-rfz { background: none; border: none; padding: 4px; cursor: pointer; color: var(--faint); display: inline-flex; border-radius: 6px; flex: none; }
+  .cb-rfz:hover { color: var(--accent); background: var(--accent-soft); }
+  .cb-rfz .rfz { width: 13px; height: 13px; }
+  /* 会话页只读徽标（站点/厂商，不可改）。 */
+  .cb-ro { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; color: var(--dim); font-size: 13px; opacity: .9; min-width: 0; }
+  .cb-ro-t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
   /* ---- 线程 ---- */
   .thread-head { flex: none; padding: 13px 24px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
@@ -1218,6 +1335,7 @@
   .proposal-meta { font-size: 12px; color: var(--dim); }
   .proposal-prompt { font-size: 12.5px; color: var(--text); background: #fff; border: 1px solid var(--border); border-radius: 8px; padding: 7px 9px; width: 100%; white-space: pre-wrap; word-break: break-word; }
   .proposal .btn { margin-top: 3px; }
+  .proposal-done { margin-top: 3px; display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; font-weight: 500; color: #16a34a; }
 
   /* 定时任务 */
   .task-card { display: flex; align-items: flex-start; gap: 12px; padding: 13px 14px; background: var(--card);
@@ -1230,7 +1348,8 @@
   .switch.on span { transform: translateX(14px); }
   .task-body { flex: 1; min-width: 0; }
   .task-body b { font-weight: 550; }
-  .task-meta { font-size: 12px; color: var(--dim); margin-top: 2px; }
+  .task-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; font-size: 12px; color: var(--dim); margin-top: 3px; }
+  .task-meta .cdot { color: var(--faint); }
   .task-last { font-size: 12px; margin-top: 5px; color: var(--dim); display: flex; gap: 6px; flex-wrap: wrap; align-items: baseline; }
   .task-last.ok { color: var(--ok); } .task-last.error { color: var(--err); }
   .task-actions { display: flex; align-items: center; gap: 4px; flex: none; }
@@ -1253,7 +1372,7 @@
   .btn.small { padding: 4px 10px; font-size: 12px; }
   .btn.lg { padding: 10px 22px; font-size: 15px; }
   .btn.sm { padding: 5px 12px; font-size: 12px; border-radius: 8px; }
-  .btn.soft { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; background: #fff; color: var(--text); border: 1px solid var(--border2); border-radius: 9px; font-weight: 500; }
+  .btn.soft { display: inline-flex; align-items: center; gap: 6px; padding: 3px 12px; background: #fff; color: var(--text); border: 1px solid var(--border2); border-radius: 9px; font-weight: 500; }
   .btn.soft:hover { background: var(--rail); border-color: #cfccc2; }
   .btn.soft .plus-ic { color: var(--dim); }
   .plus-ic { flex: none; }
@@ -1282,9 +1401,12 @@
   .conn-row :global(.sm) { border-radius: 6px; }
   .conn-main { flex: 1; min-width: 0; } .conn-main b { display: block; font-size: 13.5px; } .conn-main small { color: var(--dim); font-size: 11px; }
   .icon-btn.sm { padding: 4px; border-radius: 7px; }
-  .brain-row { display: flex; align-items: center; gap: 11px; padding: 8px 2px; }
+  .brain-row { display: flex; align-items: center; gap: 11px; padding: 8px 0; }
+  /* 状态点放进与 .icon-btn 同宽(27px)的居中盒，右缘、图标中心都与本地模型区的刷新图标对齐。 */
+  .brain-dot { flex: none; width: 27px; display: inline-flex; align-items: center; justify-content: center; }
   .brain-ic { flex: none; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; }
   .brain-main { flex: 1; min-width: 0; } .brain-main b { display: block; font-size: 13.5px; line-height: 1.3; } .brain-main small { color: var(--dim); font-size: 11px; line-height: 1.25; }
+  .brain-custom { width: calc(100% - 33px); margin: -2px 0 6px 33px; font-size: 12px; padding: 6px 9px; }
   .hint { color: var(--dim); font-size: 12px; margin: 2px 0; line-height: 1.6; }
   .hint.mono { font-family: ui-monospace, monospace; font-size: 11px; color: var(--faint); background: #f6f5f1; padding: 5px 8px; border-radius: 6px; }
   .hint.tos { color: var(--faint); margin-top: 12px; }

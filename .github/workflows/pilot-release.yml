@@ -1,0 +1,108 @@
+name: Pilot Release
+
+# 推送形如 pilot-v0.1.0 的 tag 时：在 macOS runner 上打包 gcms Pilot（desktop/），
+# 用 ed25519 私钥给更新包签名，生成 latest.json，发布到公开的 pilot-releases 仓。
+on:
+  push:
+    tags:
+      - "pilot-v*"
+
+permissions:
+  contents: read
+
+env:
+  RELEASE_REPO: ccvar/gcms-pilot-releases
+
+jobs:
+  release:
+    name: 打包 gcms Pilot 并发布到 pilot-releases 仓
+    runs-on: macos-latest # macos-14 = Apple Silicon (aarch64)
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 检查发布密钥
+        run: |
+          if [ -z "${{ secrets.PILOT_RELEASES_TOKEN }}" ]; then
+            echo "::error::缺少 PILOT_RELEASES_TOKEN（需对 ${RELEASE_REPO} 授予 Contents: Read and write）。"
+            exit 1
+          fi
+          if [ -z "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}" ]; then
+            echo "::error::缺少 TAURI_SIGNING_PRIVATE_KEY（更新包 ed25519 签名私钥），否则自动升级无法验签。"
+            exit 1
+          fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+
+      - name: 安装前端依赖
+        run: npm ci
+
+      - name: 构建 + ed25519 更新签名
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+        run: npm run tauri build -- --target aarch64-apple-darwin
+
+      - name: 收集产物并生成 latest.json（更新清单）
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -e
+          bundle="src-tauri/target/aarch64-apple-darwin/release/bundle"
+          ver="${VERSION#pilot-v}"            # pilot-v0.1.0 -> 0.1.0
+          out="$GITHUB_WORKSPACE/pilot-dist"
+          rm -rf "$out"; mkdir -p "$out"
+
+          dmg=$(ls "$bundle"/dmg/*.dmg | head -1)
+          targz=$(ls "$bundle"/macos/*.app.tar.gz | head -1)
+          sig=$(ls "$bundle"/macos/*.app.tar.gz.sig | head -1)
+
+          cp "$dmg" "$out/gcms-Pilot_${ver}_aarch64.dmg"
+          cp "$targz" "$out/gcms-Pilot_${ver}_aarch64.app.tar.gz"
+
+          python3 - "$out" "$ver" "$VERSION" "$RELEASE_REPO" "$sig" <<'PY'
+          import sys, json, datetime, pathlib
+          out, ver, tag, repo, sigpath = sys.argv[1:6]
+          sig = pathlib.Path(sigpath).read_text().strip()
+          base = f"https://github.com/{repo}/releases/download/{tag}"
+          data = {
+              "version": ver,
+              "notes": f"gcms Pilot {ver}",
+              "pub_date": datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+              "platforms": {
+                  "darwin-aarch64": {
+                      "signature": sig,
+                      "url": f"{base}/gcms-Pilot_{ver}_aarch64.app.tar.gz",
+                  }
+              },
+          }
+          pathlib.Path(out, "latest.json").write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+          PY
+          ls -lh "$out"
+          cat "$out/latest.json"
+
+      - name: 发布 Release（上传到公开 pilot-releases 仓）
+        uses: softprops/action-gh-release@v2
+        with:
+          repository: ${{ env.RELEASE_REPO }}
+          token: ${{ secrets.PILOT_RELEASES_TOKEN }}
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          make_latest: true
+          fail_on_unmatched_files: false
+          files: |
+            pilot-dist/*.dmg
+            pilot-dist/*.app.tar.gz
+            pilot-dist/latest.json

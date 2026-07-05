@@ -13,8 +13,8 @@
     "windows": [
       {
         "title": "gcms Pilot",
-        "width": 1040,
-        "height": 720,
+        "width": 820,
+        "height": 560,
         "minWidth": 820,
         "minHeight": 560,
         "titleBarStyle": "Overlay",
@@ -27,6 +27,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": ["app", "dmg"],
     "category": "Productivity",
     "shortDescription": "本地 AI 内容驾驶舱",
@@ -40,5 +41,13 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/ccvar/gcms-pilot-releases/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDg3QzYxRkM4MjlDQ0FDRUEKUldUcXJNd3B5Qi9HaDRwdUVuMW9SeEtoWW1KSEt1N1U2SXJOVzdrdi9tbFdQd3R3SEV3MzNwMFoK"
+    }
   }
 }
