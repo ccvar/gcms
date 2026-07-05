@@ -70,12 +70,14 @@ fn fix_windows() {
     let mut dirs: Vec<String> = Vec::new();
 
     // 1) 注册表里的当前 PATH（User + Machine）——反映刚装的 CLI，GUI 进程的快照里没有。
+    use std::os::windows::process::CommandExt;
     if let Ok(out) = std::process::Command::new("powershell")
         .args([
             "-NoProfile",
             "-Command",
             "[Environment]::GetEnvironmentVariable('Path','User') + ';' + [Environment]::GetEnvironmentVariable('Path','Machine')",
         ])
+        .creation_flags(0x0800_0000) // CREATE_NO_WINDOW：不弹控制台窗口
         .output()
     {
         if out.status.success() {

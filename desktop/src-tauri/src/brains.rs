@@ -34,13 +34,15 @@ pub async fn detect() -> BrainsInfo {
 }
 
 async fn run_capture(program: &str, args: &[&str], timeout: Duration) -> Option<(bool, String)> {
-    let child = Command::new(program)
-        .args(args)
+    let mut c = Command::new(program);
+    c.args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .output();
+        .kill_on_drop(true);
+    #[cfg(target_os = "windows")]
+    c.creation_flags(0x0800_0000); // CREATE_NO_WINDOW：检测 CLI 不弹控制台
+    let child = c.output();
     match tokio::time::timeout(timeout, child).await {
         Ok(Ok(out)) => {
             let mut text = String::from_utf8_lossy(&out.stdout).into_owned();

@@ -213,6 +213,13 @@
   // 切换引擎后，若当前档位不属于该引擎（launcher 含自定义），重置为该引擎默认档位（避免下拉空选/发错模型）。
   $effect(() => { if (!isLauncherModel(lBrain, lModel)) lModel = defaultModelFor(lBrain); });
   $effect(() => { if (!isPresetModel(tf.brain, tf.model)) tf.model = defaultModelFor(tf.brain); });
+  // 首次识别出本地 CLI 后：若默认厂商不可用（只装/登录了另一个），把 composer 默认厂商切到可用的那个；之后尊重手动选择。
+  let brainAutoSet = false;
+  $effect(() => {
+    if (!brains || brainAutoSet) return;
+    brainAutoSet = true;
+    if (!brainUsable(lBrain)) lBrain = brainUsable('claude') ? 'claude' : brainUsable('codex') ? 'codex' : lBrain;
+  });
   // 自定义模型输入框的占位示例，按当前引擎给不同提示。
   function modelPlaceholder(b: string): string {
     return b === 'codex' ? '如 gpt-5.3-codex-spark / o3（留空用上方模型）' : '如 claude-opus-4-8（留空用上方模型）';
@@ -621,7 +628,7 @@
   }
 </script>
 
-<main class="app">
+<main class="app" class:win={isWindows}>
   <!-- 融合式标题栏：透明拖拽条铺满顶部，红绿灯与工具按钮浮在其上（macOS Overlay） -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="titlebar" data-tauri-drag-region aria-hidden="true" onmousedown={startDrag} style="width:{railCollapsed ? 140 : railWidth}px"></div>
@@ -1223,6 +1230,9 @@
   :global(button:focus), :global(button:focus-visible), :global([role='button']:focus),
   :global([role='button']:focus-visible), :global(summary:focus), :global(a:focus) { outline: none; box-shadow: none; }
   .app { display: flex; height: 100vh; overflow: hidden; }
+  /* Windows：主内容左上角轻微圆角，跟原生标题栏之间更柔和（角落露出 rail 色）。macOS 无原生标题栏不需要。 */
+  .app.win { background: var(--rail); }
+  .app.win .main { background: var(--bg); border-top-left-radius: 12px; }
 
   /* 细滚动条（macOS overlay 风格）：细、圆角、透明轨道，thumb 用 padding-box 内缩显得更细。 */
   :global(::-webkit-scrollbar) { width: 10px; height: 10px; }

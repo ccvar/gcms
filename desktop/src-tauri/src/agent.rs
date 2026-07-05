@@ -149,6 +149,8 @@ pub async fn run_turn(
 
     #[cfg(unix)]
     cmd.process_group(0);
+    #[cfg(windows)]
+    cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW：跑 CLI 不弹控制台
 
     let mut child = match cmd.spawn() {
         Ok(c) => c,
@@ -187,7 +189,8 @@ pub async fn run_turn(
             }
             #[cfg(windows)]
             if let Some(pid) = pid {
-                let _ = std::process::Command::new("taskkill").args(["/T", "/F", "/PID", &pid.to_string()]).status();
+                use std::os::windows::process::CommandExt;
+                let _ = std::process::Command::new("taskkill").args(["/T", "/F", "/PID", &pid.to_string()]).creation_flags(0x0800_0000).status();
             }
             let _ = child.kill().await;
             child.wait().await.ok()
