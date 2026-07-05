@@ -128,7 +128,7 @@
   .dd-trigger:disabled { opacity: .55; cursor: default; }
   .dd-label { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
   .dd-label :global(.bi) { flex: none; }
-  .dd-fav { width: 17px; height: 17px; border-radius: 5px; flex: none; object-fit: contain; background: #f0eee9; border: 1px solid var(--border, #ecebe6); }
+  .dd-fav { width: 17px; height: 17px; border-radius: 5px; flex: none; object-fit: contain; background: #f0eee9; }
   .dd-fav.ph { display: inline-flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 600; color: var(--dim, #6f6b62); border: none; background: #e7e4dd; }
   .dd-label.placeholder { color: var(--faint, #a29d93); }
   .dd-chev { color: var(--faint, #a29d93); flex: none; transition: transform .15s; }

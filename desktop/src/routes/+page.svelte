@@ -654,7 +654,7 @@
           {/each}
           <div class="cs-div"></div>
           <button class="cs-act" onclick={() => { switcherOpen = false; importPack(); }}>{@render plusIcon()}导入技能包</button>
-          <button class="cs-act" onclick={() => { switcherOpen = false; setupOpen = true; }}>连接与模型设置…</button>
+          <button class="cs-act" onclick={() => { switcherOpen = false; setupOpen = true; }}>{@render gearIcon()}连接与模型设置…</button>
         </div>
       {/if}
     <button class="rail-foot" class:open={switcherOpen} onclick={() => { if (conns.length === 0) { setupOpen = true; } else { switcherOpen = !switcherOpen; } }}>
@@ -943,6 +943,8 @@
 
 {#snippet plusIcon()}<svg class="plus-ic" width="13" height="13" viewBox="0 0 14 14" fill="none"><path d="M7 2.4v9.2M2.4 7h9.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /></svg>{/snippet}
 
+{#snippet gearIcon()}<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M2 5.3h3.5M9.3 5.3H14M2 10.7h5.1M10.9 10.7H14" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" /><circle cx="7.4" cy="5.3" r="1.6" stroke="currentColor" stroke-width="1.3" /><circle cx="9" cy="10.7" r="1.6" stroke="currentColor" stroke-width="1.3" /></svg>{/snippet}
+
 {#snippet taskIcon(kind: string)}
   <span class="ts-ic">
     {#if kind === 'article'}
@@ -1149,7 +1151,7 @@
   .site-grp-name { flex: 1; min-width: 0; font-size: 12.5px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .site-grp-count { flex: none; font-size: 10.5px; color: var(--faint); }
   /* 任务类型子组标签 */
-  .subgrp { font-size: 10px; font-weight: 600; letter-spacing: .04em; color: var(--faint); padding: 5px 8px 2px 20px; }
+  .subgrp { font-size: 10px; font-weight: 600; letter-spacing: .04em; color: var(--faint); padding: 1px 8px 1px 20px; }
   .convo { position: relative; display: flex; align-items: center; gap: 6px; border-radius: 8px; padding: 7px 10px 7px 24px; cursor: pointer; }
   .convo:hover { background: #f1efe9; }
   .convo.on { background: #e9e7e0; }
@@ -1406,9 +1408,9 @@
   .brain-dot { flex: none; width: 27px; display: inline-flex; align-items: center; justify-content: center; }
   .brain-ic { flex: none; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; }
   .brain-main { flex: 1; min-width: 0; } .brain-main b { display: block; font-size: 13.5px; line-height: 1.3; } .brain-main small { color: var(--dim); font-size: 11px; line-height: 1.25; }
-  .brain-custom { width: calc(100% - 33px); margin: -2px 0 6px 33px; font-size: 12px; padding: 6px 9px; }
+  .brain-custom { width: 100%; margin: -2px 0 8px 0; font-size: 12px; padding: 6px 9px; }
   .hint { color: var(--dim); font-size: 12px; margin: 2px 0; line-height: 1.6; }
-  .hint.mono { font-family: ui-monospace, monospace; font-size: 11px; color: var(--faint); background: #f6f5f1; padding: 5px 8px; border-radius: 6px; }
+  .hint.mono { font-family: ui-monospace, monospace; font-size: 11px; color: var(--faint); background: #f6f5f1; padding: 5px 8px; border-radius: 6px; overflow-wrap: anywhere; }
   .hint.tos { color: var(--faint); margin-top: 12px; }
   .warn-text { color: var(--warn); }
   .dim { color: var(--dim); }

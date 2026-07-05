@@ -12,6 +12,6 @@
 {/if}
 
 <style>
-  .sf { flex: none; border-radius: 4px; object-fit: contain; background: #f0eee9; border: 1px solid var(--border, #ecebe6); vertical-align: -0.15em; }
+  .sf { flex: none; border-radius: 4px; object-fit: contain; background: #f0eee9; vertical-align: -0.15em; }
   .sf.ph { display: inline-flex; align-items: center; justify-content: center; font-weight: 600; color: var(--dim, #6f6b62); border: none; background: #e7e4dd; }
 </style>

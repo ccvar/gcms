@@ -27,6 +27,10 @@ export default defineConfig(async () => ({
     watch: {
       // 3. tell Vite to ignore watching `src-tauri`
       ignored: ["**/src-tauri/**"],
+      // 4. 本机 macOS fs-events 会漏派发变更事件（表现为 HMR 一直转出旧样式、改了没变），
+      //    改用轮询保证每次编辑都被捕获。仅 dev watch 生效，不影响 build。
+      usePolling: true,
+      interval: 300,
     },
   },
 }));
