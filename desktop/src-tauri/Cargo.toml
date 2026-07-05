@@ -40,4 +40,6 @@ apple-native-keyring-store = { version = "1.0.0", features = ["keychain"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-native-keyring-store = "1.1.0"
+# 与 Tauri 同版本（0.61.3），保证 hwnd() 的 HWND 类型一致；用于给标题栏上色（DWM）。
+windows = { version = "0.61", features = ["Win32_Graphics_Dwm", "Win32_Foundation"] }
 

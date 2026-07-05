@@ -616,6 +616,35 @@ read -s -k 1 "?按任意键关闭这个窗口…"
     Ok(())
 }
 
+/// Windows 11：把原生标题栏背景/文字色设成与左栏（rail）一致，消除白色标题栏与米色侧栏的割裂。
+/// Win10 不支持该 DWM 属性，调用失败被忽略（标题栏维持系统默认）。
+#[cfg(target_os = "windows")]
+fn style_titlebar_windows(w: &tauri::WebviewWindow) {
+    use windows::Win32::Foundation::COLORREF;
+    use windows::Win32::Graphics::Dwm::{
+        DwmSetWindowAttribute, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR,
+    };
+    let Ok(hwnd) = w.hwnd() else { return };
+    // COLORREF = 0x00BBGGRR。rail #faf9f7 → 0x00F7F9FA；标题文字 --text #26241f → 0x001F2426。
+    let caption = COLORREF(0x00F7F9FA);
+    let text = COLORREF(0x001F2426);
+    let sz = std::mem::size_of::<COLORREF>() as u32;
+    unsafe {
+        let _ = DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_CAPTION_COLOR,
+            &caption as *const _ as *const core::ffi::c_void,
+            sz,
+        );
+        let _ = DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_TEXT_COLOR,
+            &text as *const _ as *const core::ffi::c_void,
+            sz,
+        );
+    }
+}
+
 fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     let show = MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "退出 GCMS Pilot", true, None::<&str>)?;
@@ -669,6 +698,10 @@ pub fn run() {
             });
             setup_tray(app.handle())?;
             spawn_scheduler(app.handle().clone());
+            #[cfg(target_os = "windows")]
+            if let Some(w) = app.get_webview_window("main") {
+                style_titlebar_windows(&w);
+            }
             Ok(())
         })
         .on_window_event(|window, event| {
