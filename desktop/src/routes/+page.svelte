@@ -1041,7 +1041,7 @@
       <div class="sec-head mt"><span>关于</span></div>
       <div class="brain-row">
         <span class="brain-ic"><SiteMark size={18} /></span>
-        <span class="brain-main"><b>gcms Pilot</b><small>{appVersion ? `v${appVersion}` : ''}{updMsg ? ` · ${updMsg}` : ''}</small></span>
+        <span class="brain-main"><b>GCMS Pilot</b><small>{appVersion ? `v${appVersion}` : ''}{updMsg ? ` · ${updMsg}` : ''}</small></span>
         <button class="btn small ghost" onclick={runUpdate} disabled={updBusy}>{updBusy ? '检查中…' : '检查更新'}</button>
       </div>
     </div>

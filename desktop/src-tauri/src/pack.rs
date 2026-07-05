@@ -137,7 +137,7 @@ impl ConnStore {
             keychain::set_key(&conn_id, &api_key)?;
             let mut f = fs::File::create(&env_path).map_err(|e| format!("重写 .env: {e}"))?;
             writeln!(f, "GCMS_API_BASE={api_base}").map_err(|e| e.to_string())?;
-            writeln!(f, "# GCMS_API_KEY 已由 gcms Pilot 保管在 macOS 钥匙串，运行时自动注入")
+            writeln!(f, "# GCMS_API_KEY 已由 GCMS Pilot 保管在 macOS 钥匙串，运行时自动注入")
                 .map_err(|e| e.to_string())?;
 
             let conn = Connection {

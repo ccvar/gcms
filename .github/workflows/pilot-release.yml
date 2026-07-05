@@ -1,6 +1,6 @@
 name: Pilot Release
 
-# 推送形如 pilot-v0.1.0 的 tag 时：在 macOS runner 上打包 gcms Pilot（desktop/），
+# 推送形如 pilot-v0.1.0 的 tag 时：在 macOS runner 上打包 GCMS Pilot（desktop/），
 # 用 ed25519 私钥给更新包签名，生成 latest.json，发布到公开的 pilot-releases 仓。
 on:
   push:
@@ -15,7 +15,7 @@ env:
 
 jobs:
   release:
-    name: 打包 gcms Pilot 并发布到 pilot-releases 仓
+    name: 打包 GCMS Pilot 并发布到 pilot-releases 仓
     runs-on: macos-latest # macos-14 = Apple Silicon (aarch64)
     defaults:
       run:
@@ -69,8 +69,8 @@ jobs:
           targz=$(ls "$bundle"/macos/*.app.tar.gz | head -1)
           sig=$(ls "$bundle"/macos/*.app.tar.gz.sig | head -1)
 
-          cp "$dmg" "$out/gcms-Pilot_${ver}_aarch64.dmg"
-          cp "$targz" "$out/gcms-Pilot_${ver}_aarch64.app.tar.gz"
+          cp "$dmg" "$out/GCMS-Pilot_${ver}_aarch64.dmg"
+          cp "$targz" "$out/GCMS-Pilot_${ver}_aarch64.app.tar.gz"
 
           python3 - "$out" "$ver" "$VERSION" "$RELEASE_REPO" "$sig" <<'PY'
           import sys, json, datetime, pathlib
@@ -79,12 +79,12 @@ jobs:
           base = f"https://github.com/{repo}/releases/download/{tag}"
           data = {
               "version": ver,
-              "notes": f"gcms Pilot {ver}",
+              "notes": f"GCMS Pilot {ver}",
               "pub_date": datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
               "platforms": {
                   "darwin-aarch64": {
                       "signature": sig,
-                      "url": f"{base}/gcms-Pilot_{ver}_aarch64.app.tar.gz",
+                      "url": f"{base}/GCMS-Pilot_{ver}_aarch64.app.tar.gz",
                   }
               },
           }

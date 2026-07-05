@@ -1,4 +1,4 @@
-# gcms Pilot
+# GCMS Pilot
 
 本地 AI 内容驾驶舱 —— macOS 桌面客户端（Tauri 2 + Svelte 5）。导入 gcms 平台技能包，
 用**你自己本地的** Claude Code CLI / OpenAI Codex CLI（订阅账户，无额外 API 计费）为
@@ -32,8 +32,9 @@ npm run tauri dev
 npm run tauri build
 ```
 
-产物在 `src-tauri/target/release/bundle/`（`.app` 与 `.dmg`）。v0 为**本人自用、未做代码签名**，
-首次打开需在「系统设置 → 隐私与安全性」放行，或 `xattr -dr com.apple.quarantine "gcms Pilot.app"`。
+产物在 `src-tauri/target/release/bundle/`（`.app` 与 `.dmg`）。发布版做了 **ad-hoc 签名**但未公证，
+从网上下载后被隔离会误报「已损坏」——最稳的放行是终端一行 `xattr -cr "/Applications/GCMS Pilot.app"`
+（详见 [RELEASE.md](RELEASE.md) 用户侧一节）。
 
 ## 尚未接入（对外分发前的前置）
 

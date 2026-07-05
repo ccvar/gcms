@@ -525,7 +525,7 @@ fn open_brain_login(app: tauri::AppHandle, brain: String) -> Result<(), String> 
     let script = format!(
         r#"#!/bin/zsh -il
 clear
-echo "gcms Pilot · {brain} 授权登录"
+echo "GCMS Pilot · {brain} 授权登录"
 echo "浏览器会自动打开，完成登录后【先回到这个窗口】等它打出结果，再关闭。"
 echo
 if [ -z "$HTTPS_PROXY$https_proxy" ]; then
@@ -542,7 +542,7 @@ fi
 {login_cmd}
 echo
 if {status_check}; then
-  echo "✅ 登录成功！现在可以关闭这个窗口，gcms Pilot 里的状态灯会自动变绿。"
+  echo "✅ 登录成功！现在可以关闭这个窗口，GCMS Pilot 里的状态灯会自动变绿。"
 else
   echo "❌ 登录还没完成。请截图上面的输出，或重新在 Pilot 里点「去授权」再试一次。"
 fi
@@ -566,11 +566,11 @@ read -s -k 1 "?按任意键关闭这个窗口…"
 
 fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     let show = MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "退出 gcms Pilot", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "退出 GCMS Pilot", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&show, &quit])?;
     let mut builder = TrayIconBuilder::new()
         .menu(&menu)
-        .tooltip("gcms Pilot")
+        .tooltip("GCMS Pilot")
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => show_main(app),
             "quit" => app.exit(0),

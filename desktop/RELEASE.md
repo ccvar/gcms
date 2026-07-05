@@ -1,6 +1,6 @@
-# gcms Pilot —— GitHub 打包 + 在线自动升级
+# GCMS Pilot —— GitHub 打包 + 在线自动升级
 
-跟 gcms 服务端一样「打 tag → CI 打包 → 发布到公开 releases 仓」，外加桌面端自动升级（Tauri updater，ed25519 验签）。当前为**未签名版**（没走 Apple 代码签名/公证）。
+跟 gcms 服务端一样「打 tag → CI 打包 → 发布到公开 releases 仓」，外加桌面端自动升级（Tauri updater，ed25519 验签）。当前做了 **ad-hoc 签名**（`bundle.macOS.signingIdentity = "-"`，免 Apple 证书）但**未公证**——首次从网上下载安装仍需手动放行一次（见下方「用户侧」）。
 
 ## 机制
 
@@ -30,10 +30,21 @@ git push origin pilot-v0.1.1
 
 CI 跑完后，`gcms-pilot-releases` 会出一个 `pilot-v0.1.1` release，带 `.dmg`/`.app.tar.gz`/`latest.json`。老用户点「检查更新」即可升级。
 
-## 用户侧
+## 用户侧（首次安装：绕过「已损坏」）
 
-- **首次安装**（未签名）：下载 `.dmg` → 拖入 Applications → 首次打开右键「打开」一次绕过 Gatekeeper（或 `xattr -dr com.apple.quarantine "/Applications/gcms Pilot.app"`）。
-- **之后升级**：app 内「检查更新」自动完成，无需再绕 Gatekeeper。
+未公证的 app 从网上下载后会被打上 `com.apple.quarantine` 隔离属性，Apple Silicon 上 Gatekeeper 会误报 **「"GCMS Pilot" 已损坏，无法打开」**（并非真的损坏）。已做 ad-hoc 签名缓解，但下载分发仍需**下载者首次手动放行一次**，三选一（从稳到弱）：
+
+- **最稳（终端一行，必成）**：把 app 拖进「应用程序」后执行，然后正常双击打开：
+  ```bash
+  xattr -cr "/Applications/GCMS Pilot.app"
+  ```
+- **系统设置放行**（macOS 15+）：双击被拦 → 系统设置 → 隐私与安全性 → 底部「仍要打开」。
+- **右键打开**（macOS 14 及更早）：Finder 里右键 app →「打开」→ 再点「打开」。
+
+> 分发给别人时，把上面那条 `xattr -cr …` 命令一起发给对方最省事。
+
+- **之后升级**：app 内「检查更新」自动完成（updater 装的包不带隔离属性），**无需再放行**。
+- **彻底免放行**：只能靠 Apple 代码签名 + 公证（见下节），ad-hoc 签名做不到。
 
 ## 以后要「双击即开 + 静默」
 
