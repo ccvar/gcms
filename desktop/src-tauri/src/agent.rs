@@ -17,8 +17,6 @@ use crate::convo::{TaskProposal, ToolCall};
 use crate::keychain;
 use crate::pack::Connection;
 
-const ALLOWED_TOOLS: &str = "Bash(node scripts/gcms.js:*),Read,Grep,Glob";
-
 #[derive(Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum TurnEvent {
@@ -298,8 +296,8 @@ fn build_claude(
         .arg("--verbose")
         .arg("--include-partial-messages")
         .args(["--model", model])
-        .args(["--permission-mode", "dontAsk"])
-        .args(["--allowedTools", ALLOWED_TOOLS])
+        // 全自动：放行所有工具、不再中途要权限（用户自己的 claude + 机器，cwd 限在技能包目录）。
+        .arg("--dangerously-skip-permissions")
         .current_dir(&conn.skill_dir)
         .env("GCMS_API_BASE", &conn.api_base)
         .env("GCMS_API_KEY", api_key)

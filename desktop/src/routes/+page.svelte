@@ -227,12 +227,13 @@
 
   // ---------- composer / live turn ----------
   let draft = $state('');
-  let busy = $state(false);
-  let busyConvId = $state('');
-  let live = $state<{ text: string; tools: ToolCall[]; error: string }>({ text: '', tools: [], error: '' });
+  // 并发对话：running = convId → connId（在跑的对话；带 connId 便于删连接时可靠判定）；lives = 每个对话的流式缓冲。
+  let running = $state<Record<string, string>>({});
+  let lives = $state<Record<string, { text: string; tools: ToolCall[]; error: string }>>({});
   let threadEl = $state<HTMLDivElement | null>(null);
 
-  const viewingBusy = $derived(busy && activeConvId === busyConvId);
+  const viewBusy = $derived(!!running[activeConvId]); // 当前查看的对话是否在跑
+  const liveView = $derived(lives[activeConvId]); // 当前对话的流式缓冲（可能 undefined）
 
   // 拖动窗口：忽略交互元素（按钮/输入等），否则点它们会误触发拖动。
   function startDrag(e: MouseEvent) {
@@ -401,7 +402,8 @@
   }
   async function removeConn(id: string) {
     // 该连接下有对话正在跑一轮时不删：否则删掉会话行会让在途回合回写失败（「会话丢失」），子进程还在用已删的密钥/目录。
-    if ((busy && activeConv?.conn_id === id) || convos.some((c) => c.conn_id === id && c.status === 'running')) {
+    const runningUnderConn = Object.values(running).includes(id);
+    if (runningUnderConn || convos.some((c) => c.conn_id === id && c.status === 'running')) {
       say('该连接下有对话正在运行，请先点停止结束这一轮，再删除连接。', 'err');
       return;
     }
@@ -419,7 +421,6 @@
 
   // ---------- 对话导航 ----------
   function newChat() {
-    if (busy) return;
     view = 'launcher'; activeConvId = ''; activeConv = null; lDraft = '';
     if (!lSite && sites.length) lSite = sites[0].slug;
     if (!brainUsable(lBrain)) lBrain = brainUsable('claude') ? 'claude' : brainUsable('codex') ? 'codex' : 'claude';
@@ -432,16 +433,20 @@
     scrollSoon(true);
   }
   async function deleteConv(id: string) {
+    // 对话进行中不删：否则删掉会话行会孤儿掉后台在跑的 CLI 子进程 + 触发「会话丢失」。先停止再删。
+    if (running[id]) { say('对话进行中，请先点停止再删除。', 'err'); return; }
     try { await invoke('delete_conversation', { id }); if (activeConvId === id) { activeConvId = ''; activeConv = null; view = 'launcher'; } await refreshConvos(); } catch (e) { say(String(e), 'err'); }
   }
 
   // ---------- 运行一轮 ----------
-  function makeChannel(): Channel<TurnEvent> {
+  function makeChannel(convId: string): Channel<TurnEvent> {
     const ch = new Channel<TurnEvent>();
     ch.onmessage = (ev) => {
-      if (ev.type === 'delta') { live.text += ev.text; scrollSoon(); }
-      else if (ev.type === 'tool') { live.tools = [...live.tools, { label: ev.label, detail: ev.detail }]; scrollSoon(); }
-      else if (ev.type === 'done') { if (!ev.ok) live.error = ev.error; }
+      const buf = lives[convId];
+      if (!buf) return; // 该对话已结束/被清（切走后仍可能收到尾包）
+      if (ev.type === 'delta') { buf.text += ev.text; if (activeConvId === convId) scrollSoon(); }
+      else if (ev.type === 'tool') { buf.tools = [...buf.tools, { label: ev.label, detail: ev.detail }]; if (activeConvId === convId) scrollSoon(); }
+      else if (ev.type === 'done') { if (!ev.ok) buf.error = ev.error; }
     };
     return ch;
   }
@@ -451,18 +456,23 @@
   // 乐观：立刻把用户消息塞进当前/合成会话，activeConvId 立即等于 convId，
   // 首轮也能流式渲染 + 停止（cancel 键对准真正的注册表 key）。
   function beginTurn(convId: string, optimistic: Conversation) {
+    lives[convId] = { text: '', tools: [], error: '' };
+    running[convId] = optimistic.conn_id;
     activeConv = optimistic; activeConvId = convId; threadModel = optimistic.model;
-    busy = true; busyConvId = convId; live = { text: '', tools: [], error: '' };
     view = 'thread'; scrollSoon(true);
   }
-  function endTurn(conv: Conversation | null) {
-    // 仅当用户仍停留在这条会话时用权威结果覆盖，避免打断已切走的用户。
-    if (conv && activeConvId === busyConvId) { activeConv = conv; activeConvId = conv.id; threadModel = conv.model; }
-    busy = false; busyConvId = ''; live = { text: '', tools: [], error: '' };
+  function endTurn(conv: Conversation | null, convId: string) {
+    // 仅当用户仍停留在这条会话时用权威结果覆盖，避免打断已切到别的会话的用户。
+    if (conv && activeConvId === convId) { activeConv = conv; threadModel = conv.model; }
+    delete running[convId];
+    delete lives[convId];
   }
   async function failTurn(e: unknown, convId: string) {
-    busy = false; busyConvId = ''; live = { text: '', tools: [], error: '' };
-    say(String(e), 'err');
+    delete running[convId];
+    delete lives[convId];
+    // 仅当用户仍在看这条会话时才弹错误提示——后台会话的失败不打断前台（成功也不弹，见 endTurn），
+    // 失败态已落库，切回该会话即可看到。
+    if (activeConvId === convId) say(String(e), 'err');
     await refreshConvos();
     const reloaded = await invoke<Conversation | null>('get_conversation', { id: convId });
     if (reloaded) { if (activeConvId === convId) activeConv = reloaded; }
@@ -470,41 +480,44 @@
   }
 
   async function startChat() {
-    if (busy || !lSite || !lDraft.trim() || !brainUsable(lBrain)) return;
+    if (!lSite || !lDraft.trim() || !brainUsable(lBrain)) return;
     const site = sites.find((s) => s.slug === lSite);
     prefs.brain = lBrain; prefs.model = lModel; prefs.taskType = lTask; savePrefs(prefs);
     const model = lModel;
     const text = lDraft.trim();
     const id = crypto.randomUUID();
     const now = Math.floor(Date.now() / 1000);
-    beginTurn(id, {
+    const optimistic: Conversation = {
       id, conn_id: activeConnId, conn_name: activeConn?.name ?? '', site_slug: lSite, site_name: site?.name || lSite,
       task_type: lTask, brain: lBrain, model, session_ref: '',
       title: text.slice(0, 30), messages: [optimisticUser(text)], status: 'running', created_at: now, updated_at: now,
-    });
+    };
+    // 立刻塞进侧栏，这样即便用户随后切走/新开对话，这条新会话也带着 running 圈可见，不必等这一轮跑完才出现。
+    convos = [optimistic, ...convos];
+    beginTurn(id, optimistic);
     lDraft = '';
     try {
       const conv = await invoke<Conversation>('start_conversation', {
         convId: id, connId: activeConnId, siteSlug: lSite, siteName: site?.name || lSite,
         taskType: lTask, brain: lBrain, model,
-        message: text, onEvent: makeChannel(),
+        message: text, onEvent: makeChannel(id),
       });
-      await refreshConvos(); endTurn(conv);
+      await refreshConvos(); endTurn(conv, id);
     } catch (e) { await failTurn(e, id); }
   }
 
   async function send() {
-    if (busy || !activeConv || !draft.trim()) return;
+    if (!activeConv || !draft.trim() || running[activeConv.id]) return;
     const text = draft.trim(); draft = '';
     const id = activeConv.id;
     beginTurn(id, { ...activeConv, messages: [...activeConv.messages, optimisticUser(text)], status: 'running' });
     try {
-      const conv = await invoke<Conversation>('send_message', { convId: id, message: text, onEvent: makeChannel() });
-      await refreshConvos(); endTurn(conv);
+      const conv = await invoke<Conversation>('send_message', { convId: id, message: text, onEvent: makeChannel(id) });
+      await refreshConvos(); endTurn(conv, id);
     } catch (e) { await failTurn(e, id); }
   }
 
-  async function stop() { if (busyConvId) { try { await invoke('cancel_turn', { convId: busyConvId }); } catch { /* */ } } }
+  async function stop() { if (running[activeConvId]) { try { await invoke('cancel_turn', { convId: activeConvId }); } catch { /* */ } } }
 
   function scrollSoon(force = false) {
     requestAnimationFrame(() => {
@@ -677,7 +690,7 @@
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
     <div class="rail-resize" title="拖动调整宽度" onmousedown={startResize} role="separator" aria-orientation="vertical"></div>
     <div class="rail-head">
-      <button class="newchat" onclick={newChat} disabled={busy || !activeConn} title="新对话">
+      <button class="newchat" onclick={newChat} disabled={!activeConn} title="新对话">
         <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
           <path d="M11.5 2.5l2 2L6 12l-2.5.5L4 10l7.5-7.5z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" />
           <path d="M2.5 13.5h11" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
@@ -719,7 +732,7 @@
                 onclick={() => openConv(c.id)} onkeydown={(e) => e.key === 'Enter' && openConv(c.id)}>
                 <div class="convo-body">
                   <span class="convo-title">{c.title}</span>
-                  <span class="convo-meta">{@render brainTag(c.brain, brainLabel(c.brain))}<span class="cdot">·</span>{relTime(c.updated_at)}{#if c.status === 'running'}<span class="mini-run"></span>{/if}</span>
+                  <span class="convo-meta">{@render brainTag(c.brain, brainLabel(c.brain))}<span class="cdot">·</span>{relTime(c.updated_at)}{#if c.status === 'running' || running[c.id]}<span class="mini-run"></span>{/if}</span>
                 </div>
                 <button class="convo-x" title="删除对话" onclick={(e) => { e.stopPropagation(); deleteConv(c.id); }}>×</button>
               </div>
@@ -796,7 +809,7 @@
                       {/if}
                     </button>
                   {:else if r.st.logged_in === false}
-                    <span class="cli-tag warn">未登录</span><button class="btn sm" onclick={() => authorize(r.b)}>去授权</button>
+                    <span class="cli-tag warn">未登录</span><button class="authbtn" onclick={() => authorize(r.b)}>去授权{@render extIcon()}</button>
                   {:else}
                     <span class="cli-tag ok">✓ {r.st.version || '已就绪'}</span>
                   {/if}
@@ -946,12 +959,12 @@
           {#each shownMessages as m, i (i)}
             {@render bubble(m)}
           {/each}
-          {#if viewingBusy}
+          {#if viewBusy && liveView}
             <div class="msg assistant">
               <div class="body">
-                {#if live.tools.length}{@render cmds(live.tools)}{/if}
-                {#if live.text}<div class="text">{@render richText(live.text)}</div>{/if}
-                {#if live.error}<div class="err-note">{live.error}</div>
+                {#if liveView.tools.length}{@render cmds(liveView.tools)}{/if}
+                {#if liveView.text}<div class="text">{@render richText(liveView.text)}</div>{/if}
+                {#if liveView.error}<div class="err-note">{liveView.error}</div>
                 {:else}<div class="typing"><span></span><span></span><span></span></div>{/if}
               </div>
             </div>
@@ -962,18 +975,18 @@
       <div class="composer-wrap">
         <div class="composer">
           <textarea bind:value={draft} rows="1" placeholder="继续说…（Enter 发送，Shift+Enter 换行）"
-            disabled={busy} onkeydown={(e) => onComposerKey(e, send)}></textarea>
+            disabled={viewBusy} onkeydown={(e) => onComposerKey(e, send)}></textarea>
           <div class="composer-bar">
             <div class="cb-left">
               <span class="cb-ro" title="会话的站点已固定，不可更改"><SiteFav src={siteFav(activeConv?.site_slug ?? '')} label={activeConv?.site_slug ?? ''} size={15} /><span class="cb-ro-t">{activeConv?.site_name || activeConv?.site_slug}</span></span>
             </div>
             <div class="cb-right">
               <span class="cb-ro" title="会话的厂商已固定，不可更改">{@render brainTag(activeConv?.brain ?? 'claude', brainLabel(activeConv?.brain ?? ''))}</span>
-              <Dropdown compact bind:value={threadModel} options={launcherModelOpts(activeConv?.brain ?? 'claude')} onchange={persistThreadModel} disabled={busy} />
-              {#if busy && viewingBusy}
+              <Dropdown compact bind:value={threadModel} options={launcherModelOpts(activeConv?.brain ?? 'claude')} onchange={persistThreadModel} disabled={viewBusy} />
+              {#if viewBusy}
                 <button class="send stop" onclick={stop} title="停止">■</button>
               {:else}
-                <button class="send" onclick={send} disabled={busy || !draft.trim()} title="发送（Enter）">↑</button>
+                <button class="send" onclick={send} disabled={!draft.trim()} title="发送（Enter）">↑</button>
               {/if}
             </div>
           </div>
@@ -1057,6 +1070,7 @@
 {#snippet plusIcon()}<svg class="plus-ic" width="13" height="13" viewBox="0 0 14 14" fill="none"><path d="M7 2.4v9.2M2.4 7h9.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /></svg>{/snippet}
 
 {#snippet gearIcon()}<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M2 5.3h3.5M9.3 5.3H14M2 10.7h5.1M10.9 10.7H14" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" /><circle cx="7.4" cy="5.3" r="1.6" stroke="currentColor" stroke-width="1.3" /><circle cx="9" cy="10.7" r="1.6" stroke="currentColor" stroke-width="1.3" /></svg>{/snippet}
+{#snippet extIcon()}<svg class="ext-ic" width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M9 3.2h3.8V7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /><path d="M12.4 3.6 7.1 8.9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /><path d="M11 9.6v2a1.4 1.4 0 0 1-1.4 1.4H4.5A1.4 1.4 0 0 1 3.1 11.6V6.5A1.4 1.4 0 0 1 4.5 5.1h2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>{/snippet}
 
 {#snippet taskIcon(kind: string)}
   <span class="ts-ic">
@@ -1117,7 +1131,7 @@
             <span class="brain-main"><b>{r.name}</b>
               <small>{#if !r.st.found}未安装{:else if r.st.logged_in === false}未登录{:else}{r.st.version || '已就绪'}{/if}</small></span>
             <span class="brain-dot"><span class="dot {r.st.found && r.st.logged_in ? 'ok' : r.st.found ? 'warn' : 'off'}"></span></span>
-            {#if r.st.found && r.st.logged_in === false}<button class="btn small primary" onclick={() => authorize(r.b)}>去授权</button>{/if}
+            {#if r.st.found && r.st.logged_in === false}<button class="authbtn" onclick={() => authorize(r.b)}>去授权{@render extIcon()}</button>{/if}
           </div>
           {#if !r.st.found}<p class="hint mono">安装：{r.cmd}</p>{/if}
           {#if r.st.found}
@@ -1546,6 +1560,9 @@
   .btn.soft { display: inline-flex; align-items: center; gap: 6px; padding: 3px 12px; background: #fff; color: var(--text); border: 1px solid var(--border2); border-radius: 9px; font-weight: 500; }
   .btn.soft:hover { background: var(--rail); border-color: #cfccc2; }
   .btn.soft .plus-ic { color: var(--dim); }
+  .authbtn { display: inline-flex; align-items: center; gap: 3px; background: none; border: none; padding: 1px 2px; color: var(--accent); font-size: 12px; font-weight: 550; line-height: 1; cursor: pointer; }
+  .authbtn:hover { color: var(--accent-h); }
+  .authbtn .ext-ic { flex: none; }
   .plus-ic { flex: none; }
   .icon-btn { background: none; border: none; cursor: pointer; padding: 6px; border-radius: 8px; color: var(--dim); display: inline-flex; align-items: center; justify-content: center; }
   .icon-btn:hover { background: #f1efe9; color: var(--text); }

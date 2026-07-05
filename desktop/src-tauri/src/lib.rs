@@ -698,6 +698,8 @@ pub fn run() {
             });
             setup_tray(app.handle())?;
             spawn_scheduler(app.handle().clone());
+            // 每次启动都把主窗口显示并置前——修复自动更新 relaunch 后 macOS 不激活、窗口看不到（要点 Dock 才出来）。
+            show_main(app.handle());
             #[cfg(target_os = "windows")]
             if let Some(w) = app.get_webview_window("main") {
                 style_titlebar_windows(&w);
