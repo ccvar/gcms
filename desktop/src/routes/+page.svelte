@@ -9,6 +9,7 @@
   import BrainIcon from '$lib/BrainIcon.svelte';
   import SiteMark from '$lib/SiteMark.svelte';
   import SiteFav from '$lib/SiteFav.svelte';
+  import AppIcon from '$lib/AppIcon.svelte';
   import type {
     Connection, Discovery, Site, BrainsInfo, Brain, ImportOutcome,
     Conversation, Message, TaskType, TurnEvent, ToolCall, ScheduledItem, ScheduledTask, TaskProposal,
@@ -189,13 +190,28 @@
   let lBrain = $state<Brain>(prefs.brain);
   let lModel = $state(prefs.model);
   let lDraft = $state('');
-  // 全局自定义模型 ID（按厂商，在「连接与模型」里设置）。
-  function customOf(b: string): string { return (b === 'codex' ? prefs.customCodex : prefs.customClaude) ?? ''; }
-  function setCustom(b: string, v: string) { if (b === 'codex') prefs.customCodex = v; else prefs.customClaude = v; savePrefs(prefs); }
-  // 有效模型：该厂商的全局自定义 ID 优先；否则用档位（Claude=别名、Codex=模型 ID 或 '' 走默认）。
-  const lModelEff = $derived(customOf(lBrain).trim() || lModel);
-  // 切换引擎后，若当前档位不属于该引擎，重置为该引擎默认档位（避免下拉空选/发错模型）。
-  $effect(() => { if (!isPresetModel(lBrain, lModel)) lModel = defaultModelFor(lBrain); });
+  // 全局自定义模型 ID（按厂商，可多个，在「连接与模型」里增删）；作为该厂商模型下拉的附加档位。
+  let customDraft = $state<Record<string, string>>({ claude: '', codex: '' });
+  let customOpen = $state<Record<string, boolean>>({ claude: false, codex: false });
+  function customsOf(b: string): string[] { return (b === 'codex' ? prefs.customCodexIds : prefs.customClaudeIds) ?? []; }
+  function addCustom(b: string) {
+    const v = (customDraft[b] ?? '').trim();
+    if (!v) return;
+    const arr = customsOf(b);
+    if (!arr.includes(v)) { arr.push(v); savePrefs(prefs); }
+    customDraft[b] = '';
+  }
+  function removeCustom(b: string, id: string) {
+    const arr = customsOf(b);
+    const i = arr.indexOf(id);
+    if (i < 0) return;
+    arr.splice(i, 1);
+    savePrefs(prefs);
+    if (lBrain === b && lModel === id) lModel = defaultModelFor(b);
+    if (tf.brain === b && tf.model === id) tf.model = defaultModelFor(b);
+  }
+  // 切换引擎后，若当前档位不属于该引擎（launcher 含自定义），重置为该引擎默认档位（避免下拉空选/发错模型）。
+  $effect(() => { if (!isLauncherModel(lBrain, lModel)) lModel = defaultModelFor(lBrain); });
   $effect(() => { if (!isPresetModel(tf.brain, tf.model)) tf.model = defaultModelFor(tf.brain); });
   // 自定义模型输入框的占位示例，按当前引擎给不同提示。
   function modelPlaceholder(b: string): string {
@@ -363,9 +379,20 @@
     keyErr = ''; await doImport(keyZip, k);
   }
   async function removeConn(id: string) {
-    const yes = await confirmDialog('删除这个连接？技能包目录与钥匙串里的密钥都会清除。', { title: '删除连接', kind: 'warning' });
+    // 该连接下有对话正在跑一轮时不删：否则删掉会话行会让在途回合回写失败（「会话丢失」），子进程还在用已删的密钥/目录。
+    if ((busy && activeConv?.conn_id === id) || convos.some((c) => c.conn_id === id && c.status === 'running')) {
+      say('该连接下有对话正在运行，请先点停止结束这一轮，再删除连接。', 'err');
+      return;
+    }
+    const yes = await confirmDialog('删除这个连接？技能包目录、钥匙串密钥，以及该连接下的所有对话都会一并删除。', { title: '删除连接', kind: 'warning' });
     if (!yes) return;
-    try { await invoke('remove_connection', { id }); if (activeConnId === id) { activeConnId = ''; discovery = null; } await refreshConns(); } catch (e) { say(String(e), 'err'); }
+    try {
+      await invoke('remove_connection', { id });
+      if (activeConnId === id) { activeConnId = ''; discovery = null; }
+      if (activeConv?.conn_id === id) { activeConv = null; activeConvId = ''; view = 'launcher'; }
+      await refreshConns();
+      await refreshConvos();
+    } catch (e) { say(String(e), 'err'); }
   }
   async function authorize(b: Brain) { try { await invoke('open_brain_login', { brain: b }); say('已打开终端，完成授权后自动刷新'); } catch (e) { say(String(e), 'err'); } }
 
@@ -425,7 +452,7 @@
     if (busy || !lSite || !lDraft.trim() || !brainUsable(lBrain)) return;
     const site = sites.find((s) => s.slug === lSite);
     prefs.brain = lBrain; prefs.model = lModel; prefs.taskType = lTask; savePrefs(prefs);
-    const model = lModelEff;
+    const model = lModel;
     const text = lDraft.trim();
     const id = crypto.randomUUID();
     const now = Math.floor(Date.now() / 1000);
@@ -533,8 +560,11 @@
     { value: 'gpt-5.4-mini', label: 'GPT-5.4-Mini', sub: '最快最省' },
   ];
   function modelOptsFor(b: string) { return b === 'codex' ? CODEX_MODELS : CLAUDE_MODELS; }
+  // launcher / 会话里可选：预设档位 + 该厂商的全局自定义模型 ID（定时任务表单仍只用预设 + 自己的 modelCustom）。
+  function launcherModelOpts(b: string) { return [...modelOptsFor(b), ...customsOf(b).map((id) => ({ value: id, label: id, sub: '自定义' }))]; }
   function defaultModelFor(b: string): string { return b === 'codex' ? '' : 'sonnet'; }
   function isPresetModel(b: string, m: string): boolean { return modelOptsFor(b).some((o) => o.value === m); }
+  function isLauncherModel(b: string, m: string): boolean { return launcherModelOpts(b).some((o) => o.value === m); }
 
   // 会话按「站点 → 任务类型」两级分组：站点按最近活动倒序；任务类型固定顺序，只留有会话的。
   const TASK_ORDER = ['article', 'sitebuild', 'free'];
@@ -682,7 +712,7 @@
         </div>
       {/if}
     <button class="rail-foot" class:open={switcherOpen} onclick={() => { if (conns.length === 0) { setupOpen = true; } else { switcherOpen = !switcherOpen; } }}>
-      <SiteMark size={18} />
+      {#if activeConn && sites.length}<SiteFav src={siteFav(sites[0].slug)} label={sites[0].slug} size={18} />{:else}<AppIcon size={18} />{/if}
       <span class="foot-main">
         <b>{activeConn?.name ?? '未连接'}</b>
         <small>{activeConn ? `${sites.length} 个站点` : '点此导入技能包'}</small>
@@ -711,10 +741,29 @@
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div class="center" data-tauri-drag-region onmousedown={startDrag}>
         <div class="hero-card">
-          <div class="hero-mark">✦</div>
+          <div class="hero-mark"><AppIcon size={54} /></div>
           <h1>开始之前，先导入技能包</h1>
           <p>在 gcms 后台「平台密钥」页下载技能包 zip，导入后即可用本地 Claude / Codex 为你的站点干活。</p>
-          <button class="btn primary lg" onclick={importPack} disabled={importBusy}>{importBusy ? '导入中…' : '导入技能包'}</button>
+          <button class="btn soft hero-import" onclick={importPack} disabled={importBusy}>{@render plusIcon()}{importBusy ? '导入中…' : '导入技能包'}</button>
+          {#if brains}
+            <div class="cli-guide" data-no-drag>
+              <div class="cli-guide-h">本地 CLI 准备（至少装好并登录一个）</div>
+              {#each [{ b: 'claude' as Brain, st: brains.claude, name: 'Claude Code', cmd: 'npm i -g @anthropic-ai/claude-code' }, { b: 'codex' as Brain, st: brains.codex, name: 'OpenAI Codex', cmd: 'npm i -g @openai/codex' }] as r (r.b)}
+                <div class="cli-row">
+                  <BrainIcon brain={r.b} size={16} />
+                  <span class="cli-name">{r.name}</span>
+                  {#if !r.st.found}
+                    <span class="cli-tag bad">未安装</span><code class="cli-cmd">{r.cmd}</code>
+                  {:else if r.st.logged_in === false}
+                    <span class="cli-tag warn">未登录</span><button class="btn sm" onclick={() => authorize(r.b)}>去授权</button>
+                  {:else}
+                    <span class="cli-tag ok">✓ {r.st.version || '已就绪'}</span>
+                  {/if}
+                </div>
+              {/each}
+              <p class="cli-note"><svg class="cli-note-ic" width="13" height="13" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.4" stroke="currentColor" stroke-width="1.3" /><path d="M8 7.3v3.4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /><circle cx="8" cy="4.8" r="0.95" fill="currentColor" /></svg><span>安装/登录后状态灯自动变绿；密钥只进 macOS 钥匙串，绝不落盘。</span></p>
+            </div>
+          {/if}
         </div>
       </div>
 
@@ -745,13 +794,12 @@
               </div>
               <div class="cb-right">
                 <Dropdown compact bind:value={lBrain} options={brainOpts} />
-                <Dropdown compact bind:value={lModel} options={modelOptsFor(lBrain)} />
+                <Dropdown compact bind:value={lModel} options={launcherModelOpts(lBrain)} />
                 <button class="send" onclick={startChat} disabled={!lSite || !lDraft.trim() || !brainUsable(lBrain)} title="发送（Enter）">↑</button>
               </div>
             </div>
           </div>
           {#if !brainUsable(lBrain)}<p class="hint warn-text">所选厂商未就绪，点左下角设置里「去授权」。</p>{/if}
-          {#if customOf(lBrain).trim()}<p class="hint">已用全局自定义模型 <b>{customOf(lBrain).trim()}</b>（在「连接与模型」里改）。</p>{/if}
         </div>
       </div>
 
@@ -880,7 +928,7 @@
             </div>
             <div class="cb-right">
               <span class="cb-ro" title="会话的厂商已固定，不可更改">{@render brainTag(activeConv?.brain ?? 'claude', brainLabel(activeConv?.brain ?? ''))}</span>
-              <Dropdown compact bind:value={threadModel} options={modelOptsFor(activeConv?.brain ?? 'claude')} onchange={persistThreadModel} disabled={busy} />
+              <Dropdown compact bind:value={threadModel} options={launcherModelOpts(activeConv?.brain ?? 'claude')} onchange={persistThreadModel} disabled={busy} />
               {#if busy && viewingBusy}
                 <button class="send stop" onclick={stop} title="停止">■</button>
               {:else}
@@ -1020,7 +1068,9 @@
 
       <div class="sec-head mt"><span>本地模型</span><button class="icon-btn" onclick={refreshBrainsManual} title="刷新">{@render refreshIcon(brainsBusy)}</button></div>
       {#if brains}
+        <div class="brains-list">
         {#each [{ b: 'claude' as Brain, st: brains.claude, name: 'Claude Code', cmd: 'npm i -g @anthropic-ai/claude-code' }, { b: 'codex' as Brain, st: brains.codex, name: 'OpenAI Codex', cmd: 'npm i -g @openai/codex' }] as r (r.b)}
+          <div class="brain-block">
           <div class="brain-row">
             <span class="brain-ic"><BrainIcon brain={r.b} size={18} /></span>
             <span class="brain-main"><b>{r.name}</b>
@@ -1030,17 +1080,34 @@
           </div>
           {#if !r.st.found}<p class="hint mono">安装：{r.cmd}</p>{/if}
           {#if r.st.found}
-            <input class="tin brain-custom" value={customOf(r.b)} oninput={(e) => setCustom(r.b, e.currentTarget.value)}
-              placeholder={r.b === 'codex' ? '自定义模型 ID（选填，覆盖档位）如 gpt-5.5 / o3' : '自定义模型 ID（选填，覆盖档位）如 claude-opus-4-8'}
-              spellcheck="false" autocapitalize="off" autocorrect="off" />
+            <div class="cust">
+              <button class="cust-head" type="button" onclick={() => (customOpen[r.b] = !customOpen[r.b])}>
+                <svg class="cust-chev" class:open={customOpen[r.b]} width="10" height="10" viewBox="0 0 12 12" fill="none"><path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>
+                自定义模型{#if customsOf(r.b).length}<span class="cust-n">{customsOf(r.b).length}</span>{/if}
+              </button>
+              {#if customOpen[r.b]}
+                <div class="cust-body">
+                  {#each customsOf(r.b) as id (id)}
+                    <div class="cust-chip"><span class="cust-id">{id}</span><button class="cust-x" title="删除" onclick={() => removeCustom(r.b, id)}>×</button></div>
+                  {/each}
+                  <div class="cust-add">
+                    <input class="tin" bind:value={customDraft[r.b]} placeholder={r.b === 'codex' ? '如 gpt-5.5 / o3' : '如 claude-opus-4-8'}
+                      spellcheck="false" autocapitalize="off" autocorrect="off" onkeydown={(e) => e.key === 'Enter' && addCustom(r.b)} />
+                    <button class="btn sm" onclick={() => addCustom(r.b)} disabled={!(customDraft[r.b] ?? '').trim()}>添加</button>
+                  </div>
+                </div>
+              {/if}
+            </div>
           {/if}
+          </div>
         {/each}
+        </div>
       {/if}
-      <p class="hint tos">自定义模型 ID 为全局默认（按厂商），留空则用会话里选的档位；仅限本人订阅账户驱动本地官方 CLI，密钥存 macOS 钥匙串。</p>
+      <p class="hint tos">自定义模型 ID 会作为该厂商模型下拉里的附加档位（可加多个）；仅限本人订阅账户驱动本地官方 CLI，密钥存 macOS 钥匙串。</p>
 
       <div class="sec-head mt"><span>关于</span></div>
       <div class="brain-row">
-        <span class="brain-ic"><SiteMark size={18} /></span>
+        <span class="brain-ic"><AppIcon size={20} /></span>
         <span class="brain-main"><b>GCMS Pilot</b><small>{appVersion ? `v${appVersion}` : ''}{updMsg ? ` · ${updMsg}` : ''}</small></span>
         <button class="btn small ghost" onclick={runUpdate} disabled={updBusy}>{updBusy ? '检查中…' : '检查更新'}</button>
       </div>
@@ -1247,9 +1314,22 @@
   .center.launch-center { align-items: safe center; justify-content: flex-start; padding: 24px 40px; }
   .center.launch-center .launcher { width: 100%; }
   .hero-card { text-align: center; max-width: 420px; }
-  .hero-mark { font-size: 40px; color: var(--accent); }
+  .hero-mark { display: flex; justify-content: center; margin-bottom: 6px; }
   .hero-card h1 { font-size: 22px; margin: 12px 0 8px; }
-  .hero-card p { color: var(--dim); margin: 0 0 20px; }
+  .hero-card p { color: var(--dim); margin: 0 0 18px; }
+  .hero-import { margin: 0 auto; }
+  .cli-guide { margin-top: 22px; text-align: left; border-top: 1px solid var(--border); padding-top: 14px; }
+  .cli-guide-h { font-size: 11px; letter-spacing: .03em; text-transform: uppercase; color: var(--faint); font-weight: 600; margin-bottom: 6px; }
+  .cli-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; padding: 5px 0; font-size: 13px; }
+  .cli-name { flex: 1; min-width: 0; font-weight: 500; white-space: nowrap; }
+  .cli-tag { flex: none; font-size: 11px; padding: 1px 7px; border-radius: 6px; font-weight: 600; }
+  .cli-tag.ok { color: #1a7f4b; background: #e7f4ec; }
+  .cli-tag.warn { color: #9a6a00; background: #f7efd9; }
+  .cli-tag.bad { color: #9a3b2f; background: #f6e7e3; }
+  .cli-cmd { font-family: ui-monospace, monospace; font-size: 10.5px; color: var(--faint); background: #f6f5f1; padding: 2px 6px; border-radius: 5px; overflow-wrap: anywhere; user-select: text; cursor: text; }
+  /* 提高优先级压过 .hero-card p（后者 margin/color 更 specific，会把 top margin 顶成 0）。 */
+  .cli-guide .cli-note { display: flex; align-items: center; gap: 5px; font-size: 11.5px; line-height: 1.5; color: var(--faint); margin: 12px 0 0; }
+  .cli-note-ic { flex: none; color: var(--faint); }
 
   .launcher { width: min(680px, 100%); }
   .launcher h1 { font-size: 26px; margin: 0 0 6px; letter-spacing: -.01em; }
@@ -1425,20 +1505,38 @@
   .sheet-head { display: flex; justify-content: space-between; align-items: center; padding: 15px 18px; border-bottom: 1px solid var(--border); }
   .sheet-body { padding: 16px 18px; overflow-y: auto; display: flex; flex-direction: column; gap: 7px; }
   .sec-head { display: flex; justify-content: space-between; align-items: center; font-size: 11px; letter-spacing: .03em; text-transform: uppercase; color: var(--faint); font-weight: 600; margin-bottom: 1px; }
-  .sec-head.mt { margin-top: 16px; }
+  .sec-head.mt { margin-top: 12px; }
   .conn-list { display: flex; flex-direction: column; gap: 5px; }
-  .conn-row { display: flex; align-items: center; gap: 10px; padding: 9px 10px; border: 1px solid var(--border); border-radius: 11px; cursor: pointer; transition: border-color .12s, background .12s; }
+  .conn-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 11px; cursor: pointer; transition: border-color .12s, background .12s; }
   .conn-row:hover { background: #faf9f6; }
   .conn-row.on { border-color: #cfc9ec; background: #f7f6ff; }
   .conn-row :global(.sm) { border-radius: 6px; }
   .conn-main { flex: 1; min-width: 0; } .conn-main b { display: block; font-size: 13.5px; } .conn-main small { color: var(--dim); font-size: 11px; }
   .icon-btn.sm { padding: 4px; border-radius: 7px; }
-  .brain-row { display: flex; align-items: center; gap: 11px; padding: 8px 0; }
+  .brain-row { display: flex; align-items: center; gap: 11px; padding: 0; }
   /* 状态点放进与 .icon-btn 同宽(27px)的居中盒，右缘、图标中心都与本地模型区的刷新图标对齐。 */
   .brain-dot { flex: none; width: 27px; display: inline-flex; align-items: center; justify-content: center; }
   .brain-ic { flex: none; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; }
-  .brain-main { flex: 1; min-width: 0; } .brain-main b { display: block; font-size: 13.5px; line-height: 1.3; } .brain-main small { color: var(--dim); font-size: 11px; line-height: 1.25; }
-  .brain-custom { width: 100%; margin: -2px 0 8px 0; font-size: 12px; padding: 6px 9px; }
+  .brain-main { flex: 1; min-width: 0; } .brain-main b { display: block; font-size: 13.5px; line-height: 1.15; } .brain-main small { color: var(--dim); font-size: 11px; line-height: 1.1; }
+  /* 自定义模型：折叠管理器（对齐大脑名，缩进 33px = 图标 22 + gap 11） */
+  /* 大脑列表：整列作为一个 sheet-body 子项，块间距自控（不吃 sheet-body 的 7px gap）。 */
+  .brains-list { display: flex; flex-direction: column; gap: 4px; }
+  /* 每个大脑（行 + 自定义模型）成一块，块内贴紧。 */
+  .brain-block { display: flex; flex-direction: column; gap: 0; }
+  .cust { margin: 0 0 0 33px; }
+  .cust-head { display: inline-flex; align-items: center; gap: 5px; background: none; border: none; padding: 0; cursor: pointer; font: inherit; font-size: 11.5px; color: var(--dim); -webkit-appearance: none; appearance: none; }
+  .cust-head:hover { color: var(--text); }
+  .cust-chev { color: var(--faint); flex: none; transition: transform .12s; }
+  .cust-chev:not(.open) { transform: rotate(-90deg); }
+  .cust-n { min-width: 15px; height: 15px; padding: 0 4px; display: inline-flex; align-items: center; justify-content: center; background: var(--border); color: var(--dim); border-radius: 8px; font-size: 10px; font-weight: 600; }
+  .cust-body { display: flex; flex-direction: column; gap: 5px; margin: 4px 0 4px; }
+  .cust-chip { display: flex; align-items: center; gap: 6px; background: #f6f5f1; border: 1px solid var(--border); border-radius: 8px; padding: 4px 6px 4px 9px; }
+  .cust-id { flex: 1; min-width: 0; font-family: ui-monospace, monospace; font-size: 11.5px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .cust-x { flex: none; background: none; border: none; color: var(--faint); font-size: 15px; line-height: 1; padding: 0 3px; border-radius: 5px; cursor: pointer; }
+  .cust-x:hover { color: var(--err); background: #fff; }
+  .cust-add { display: flex; gap: 6px; align-items: center; }
+  .cust-add .tin { flex: 1; min-width: 0; width: auto; font-size: 12px; line-height: 1.3; padding: 5px 10px; border-radius: 8px; }
+  .cust-add .btn { flex: none; }
   .hint { color: var(--dim); font-size: 12px; margin: 2px 0; line-height: 1.6; }
   .hint.mono { font-family: ui-monospace, monospace; font-size: 11px; color: var(--faint); background: #f6f5f1; padding: 5px 8px; border-radius: 6px; overflow-wrap: anywhere; }
   .hint.tos { color: var(--faint); margin-top: 12px; }

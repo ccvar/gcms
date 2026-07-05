@@ -168,6 +168,18 @@ impl ConvStore {
         self.save(&list)
     }
 
+    /// 删除某连接下的所有对话（删连接时级联清理，避免留下够不到密钥的孤儿会话）。
+    pub fn remove_by_conn_id(&self, conn_id: &str) -> Result<(), String> {
+        let _g = self.lock.lock().unwrap();
+        let mut list = self.read();
+        let before = list.len();
+        list.retain(|c| c.conn_id != conn_id);
+        if list.len() != before {
+            self.save(&list)?;
+        }
+        Ok(())
+    }
+
     /// 启动时把残留 running 的会话置回 idle（进程随退出被杀，不可能还在跑）。
     pub fn mark_idle(&self, now: u64) {
         let _g = self.lock.lock().unwrap();

@@ -3,24 +3,37 @@ import type { Brain, TaskType } from './types';
 export interface Prefs {
   brain: Brain;
   model: string;
-  /** 全局自定义模型 ID（按厂商分开；留空 → 用档位别名 / codex 默认）。在「连接与模型」里设置。 */
-  customClaude: string;
-  customCodex: string;
+  /** 全局自定义模型 ID 列表（按厂商分开）；作为该厂商模型下拉里的附加档位。在「连接与模型」里增删。 */
+  customClaudeIds: string[];
+  customCodexIds: string[];
   taskType: TaskType;
 }
 
 const KEY = 'gcms.pilot.prefs';
 
-export const DEFAULT_PREFS: Prefs = { brain: 'claude', model: 'sonnet', customClaude: '', customCodex: '', taskType: 'article' };
+export const DEFAULT_PREFS: Prefs = { brain: 'claude', model: 'sonnet', customClaudeIds: [], customCodexIds: [], taskType: 'article' };
 
 export function loadPrefs(): Prefs {
   try {
     const raw = localStorage.getItem(KEY);
-    if (raw) return { ...DEFAULT_PREFS, ...JSON.parse(raw) };
+    if (raw) {
+      const p = { ...DEFAULT_PREFS, ...JSON.parse(raw) } as Prefs & { customClaude?: string; customCodex?: string };
+      // 始终用全新数组（避免共享 DEFAULT_PREFS 的引用被后续 push/splice 污染）。
+      p.customClaudeIds = Array.isArray(p.customClaudeIds) ? [...p.customClaudeIds] : [];
+      p.customCodexIds = Array.isArray(p.customCodexIds) ? [...p.customCodexIds] : [];
+      // 迁移旧的单串自定义模型 → 数组。
+      const c = (p.customClaude ?? '').trim();
+      const x = (p.customCodex ?? '').trim();
+      if (c && !p.customClaudeIds.includes(c)) p.customClaudeIds.push(c);
+      if (x && !p.customCodexIds.includes(x)) p.customCodexIds.push(x);
+      delete p.customClaude;
+      delete p.customCodex;
+      return p;
+    }
   } catch {
     /* ignore */
   }
-  return { ...DEFAULT_PREFS };
+  return { ...DEFAULT_PREFS, customClaudeIds: [], customCodexIds: [] };
 }
 
 export function savePrefs(p: Prefs): void {

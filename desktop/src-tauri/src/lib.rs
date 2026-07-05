@@ -57,9 +57,13 @@ async fn import_pack(
 #[tauri::command]
 async fn remove_connection(state: tauri::State<'_, AppState>, id: String) -> Result<(), String> {
     let store = state.conns.clone();
-    tauri::async_runtime::spawn_blocking(move || store.remove(&id))
-        .await
-        .map_err(|e| e.to_string())?
+    let convos = state.convos.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        store.remove(&id)?; // 先删连接本体（钥匙串 + 技能目录）
+        convos.remove_by_conn_id(&id) // 再级联删该连接下的所有对话
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
