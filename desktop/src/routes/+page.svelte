@@ -775,29 +775,23 @@
             <div class="cli-guide" data-no-drag>
               <div class="cli-guide-h"><span>本地 CLI 准备（至少装好并登录一个）</span><button class="cli-redetect" onclick={refreshBrainsManual} disabled={brainsBusy} title="装好 / 登录完点这里重新检测（会重新读取 PATH）">{@render refreshIcon(brainsBusy)}<span>重新检测</span></button></div>
               {#each [{ b: 'claude' as Brain, st: brains.claude, name: 'Claude Code', cmd: 'npm i -g @anthropic-ai/claude-code' }, { b: 'codex' as Brain, st: brains.codex, name: 'OpenAI Codex', cmd: 'npm i -g @openai/codex' }] as r (r.b)}
-                <div class="cli-item">
-                  <div class="cli-row">
-                    <BrainIcon brain={r.b} size={16} />
-                    <span class="cli-name">{r.name}</span>
-                    {#if !r.st.found}
-                      <span class="cli-tag bad">未安装</span>
-                    {:else if r.st.logged_in === false}
-                      <span class="cli-tag warn">未登录</span><button class="btn sm" onclick={() => authorize(r.b)}>去授权</button>
-                    {:else}
-                      <span class="cli-tag ok">✓ {r.st.version || '已就绪'}</span>
-                    {/if}
-                  </div>
+                <div class="cli-row">
+                  <BrainIcon brain={r.b} size={16} />
+                  <span class="cli-name">{r.name}</span>
                   {#if !r.st.found}
-                    <div class="cli-cmd-row">
-                      <code class="cli-cmd" title={r.cmd}>{r.cmd}</code>
-                      <button class="cli-copy" title="复制命令" aria-label="复制安装命令" onclick={() => copyCmd(r.cmd)}>
-                        {#if copiedCmd === r.cmd}
-                          <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M3.5 8.5l3 3 6-7" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></svg>
-                        {:else}
-                          <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><rect x="5.4" y="5.4" width="8.2" height="8.2" rx="1.6" stroke="currentColor" stroke-width="1.3" /><path d="M10.6 5.4V4.1A1.6 1.6 0 0 0 9 2.5H4.1A1.6 1.6 0 0 0 2.5 4.1V9a1.6 1.6 0 0 0 1.6 1.6h1.3" stroke="currentColor" stroke-width="1.3" /></svg>
-                        {/if}
-                      </button>
-                    </div>
+                    <span class="cli-tag bad">未安装</span>
+                    <code class="cli-cmd" title={r.cmd}>{r.cmd}</code>
+                    <button class="cli-copy" title="复制命令" aria-label="复制安装命令" onclick={() => copyCmd(r.cmd)}>
+                      {#if copiedCmd === r.cmd}
+                        <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M3.5 8.5l3 3 6-7" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></svg>
+                      {:else}
+                        <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><rect x="5.4" y="5.4" width="8.2" height="8.2" rx="1.6" stroke="currentColor" stroke-width="1.3" /><path d="M10.6 5.4V4.1A1.6 1.6 0 0 0 9 2.5H4.1A1.6 1.6 0 0 0 2.5 4.1V9a1.6 1.6 0 0 0 1.6 1.6h1.3" stroke="currentColor" stroke-width="1.3" /></svg>
+                      {/if}
+                    </button>
+                  {:else if r.st.logged_in === false}
+                    <span class="cli-tag warn">未登录</span><button class="btn sm" onclick={() => authorize(r.b)}>去授权</button>
+                  {:else}
+                    <span class="cli-tag ok">✓ {r.st.version || '已就绪'}</span>
                   {/if}
                 </div>
               {/each}
@@ -1362,7 +1356,7 @@
   /* 启动页：上下居中、左右铺满主区域宽度。 */
   .center.launch-center { align-items: safe center; justify-content: flex-start; padding: 24px 40px; }
   .center.launch-center .launcher { width: 100%; }
-  .hero-card { text-align: center; max-width: 420px; }
+  .hero-card { text-align: center; max-width: 460px; }
   .hero-mark { display: flex; justify-content: center; margin-bottom: 6px; }
   .hero-card h1 { font-size: 22px; margin: 12px 0 8px; }
   .hero-card p { color: var(--dim); margin: 0 0 18px; }
@@ -1373,18 +1367,15 @@
   .cli-redetect:hover { background: rgba(0, 0, 0, .06); color: var(--text); }
   .cli-redetect:disabled { opacity: .55; cursor: default; }
   .cli-redetect :global(svg) { width: 12px; height: 12px; }
-  .cli-item { padding: 3px 0; }
-  .cli-row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+  .cli-row { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 13px; }
   .cli-name { width: 100px; flex: none; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  /* 命令单独一行、缩进对齐名字，末尾复制按钮。 */
-  .cli-cmd-row { display: flex; align-items: center; gap: 6px; margin: 3px 0 0 24px; }
   .cli-copy { flex: none; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; border: none; background: none; border-radius: 5px; color: var(--faint); cursor: pointer; }
   .cli-copy:hover { background: rgba(0, 0, 0, .06); color: var(--text); }
   .cli-tag { flex: none; font-size: 11px; padding: 1px 7px; border-radius: 6px; font-weight: 600; }
   .cli-tag.ok { color: #1a7f4b; background: #e7f4ec; }
   .cli-tag.warn { color: #9a6a00; background: #f7efd9; }
   .cli-tag.bad { color: #9a3b2f; background: #f6e7e3; }
-  .cli-cmd { flex: 1; min-width: 0; font-family: ui-monospace, monospace; font-size: 10.5px; color: var(--faint); background: #f6f5f1; padding: 3px 8px; border-radius: 5px; overflow-wrap: anywhere; user-select: text; cursor: text; }
+  .cli-cmd { flex: 0 1 auto; min-width: 0; font-family: ui-monospace, monospace; font-size: 10.5px; color: var(--faint); background: #f6f5f1; padding: 3px 8px; border-radius: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; user-select: text; cursor: text; }
   /* 提高优先级压过 .hero-card p（后者 margin/color 更 specific，会把 top margin 顶成 0）。 */
   .cli-guide .cli-note { display: flex; align-items: center; gap: 5px; font-size: 11.5px; line-height: 1.5; color: var(--faint); margin: 12px 0 0; }
   .cli-note-ic { flex: none; color: var(--faint); }
