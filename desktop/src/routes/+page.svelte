@@ -15,6 +15,7 @@
     Conversation, Message, TaskType, TurnEvent, ToolCall, ScheduledItem, ScheduledTask, TaskProposal,
   } from '$lib/types';
   import { loadPrefs, savePrefs } from '$lib/defaults';
+  import { PRESET_PROMPTS, loadUserPrompts, saveUserPrompts, newPromptId, type Prompt } from '$lib/prompts';
   import Dropdown from '$lib/Dropdown.svelte';
 
   // ---------- setup ----------
@@ -55,7 +56,17 @@
       if (u && activeConvId === u.id) activeConv = u;
     } catch (e) { say(String(e), 'err'); }
   }
-  let view = $state<'launcher' | 'thread' | 'schedule' | 'tasks'>('launcher');
+  // 进行中会话可切换权限档位；基座模式钉在会话创建时（改档要新对话才全生效），但钩子每轮重生成，
+  // 故「自动/询问」的拦截逻辑仍随时可调（见 permit.rs / lib.rs 说明）。
+  let threadPerm = $state('');
+  async function persistThreadPerm(p: string) {
+    if (!activeConv || p === (activeConv.perm_mode || 'full')) return;
+    try {
+      const u = await invoke<Conversation | null>('set_conversation_perm_mode', { convId: activeConv.id, permMode: p });
+      if (u && activeConvId === u.id) activeConv = u;
+    } catch (e) { say(String(e), 'err'); }
+  }
+  let view = $state<'launcher' | 'thread' | 'schedule' | 'tasks' | 'templates' | 'prompts'>('launcher');
 
   // 排期视图
   let sched = $state<ScheduledItem[]>([]);
@@ -186,9 +197,69 @@
   // ---------- launcher form ----------
   let prefs = $state(loadPrefs());
   let lSite = $state('');
+  // Cloudflare 建站：连接是 CF 时，lSite 复用为「项目名」，站点选择器换成项目输入。
+  const isCfConn = $derived(activeConn?.kind === 'cloudflare');
+  let cfProjects = $state<string[]>([]);
+  const activeConvIsCf = $derived(!!activeConv && conns.find((c) => c.id === activeConv!.conn_id)?.kind === 'cloudflare');
+  let previewBusy = $state(false);
+  let cfReady = $state(false); // 项目是否已建出可预览/部署的内容（否则预览/部署置灰）
+  async function checkCfReady() {
+    if (!activeConvIsCf || !activeConv) { cfReady = false; return; }
+    try { cfReady = await invoke<boolean>('cf_project_ready', { connId: activeConv.conn_id, project: activeConv.site_slug }); }
+    catch { cfReady = false; }
+  }
+  async function startPreview() {
+    if (!activeConv || previewBusy) return;
+    previewBusy = true;
+    say('正在启动本地预览…（约 2 秒后打开预览窗）');
+    try {
+      await invoke('cf_preview_start', { connId: activeConv.conn_id, project: activeConv.site_slug });
+      say('本地预览已打开（:8788）·关掉预览窗即停止');
+    } catch (e) { say(String(e), 'err'); }
+    finally { previewBusy = false; }
+  }
+  let wrInstalling = $state(false);
+  async function installWrangler() {
+    if (wrInstalling) return;
+    wrInstalling = true;
+    try { const m = await invoke<string>('install_wrangler'); say(m); await refreshBrainsManual(); }
+    catch (e) { say(String(e), 'err'); }
+    finally { wrInstalling = false; }
+  }
+  function fillDeploy() {
+    if (viewBusy) return;
+    // 预填一条部署指令，用户可补上域名后发送；真正的 wrangler deploy 会经权限确认。
+    draft = '把当前项目构建并部署到 Cloudflare Pages。若要绑定自定义域名，用这个域名：';
+  }
   let lTask = $state<TaskType>(prefs.taskType);
   let lBrain = $state<Brain>(prefs.brain);
   let lModel = $state(prefs.model);
+  let lPerm = $state<string>(prefs.perm ?? 'full');
+  const permOpts = [
+    { value: 'plan', label: '计划', sub: '只读 · 只给方案' },
+    { value: 'ask', label: '询问', sub: '每步都要你批准' },
+    { value: 'auto', label: '自动', sub: '仅危险动作确认' },
+    { value: 'full', label: '全自动', sub: '全程不拦' },
+  ];
+  // 权限档位按风险给下拉文字上色：自动=警告色、全自动(全程不拦)=危险色，计划/询问保持中性。
+  function permTone(v: string): string { return v === 'full' ? 'danger' : v === 'auto' ? 'warn' : ''; }
+  // 待批工具调用：询问/自动档下钩子把请求写在后端 pending 目录，UI 轮询渲染批准卡。
+  type Permit = { id: string; conv: string; tool: string; cmd: string; dangerous: boolean; mode: string; ts: number };
+  let pendingPermits = $state<Permit[]>([]);
+  const activePermits = $derived(pendingPermits.filter((p) => p.conv === activeConvId));
+  const permConvs = $derived(new Set(pendingPermits.map((p) => p.conv))); // 哪些对话有待批（含后台的，侧栏标出来）
+  $effect(() => { if (activePermits.length) scrollSoon(true); }); // 待批卡一出现就滚到它，不用手动翻
+  async function respondPermit(id: string, allow: boolean) {
+    pendingPermits = pendingPermits.filter((p) => p.id !== id); // 乐观移除
+    try { await invoke('respond_permit', { id, allow }); } catch (e) { say(String(e), 'err'); }
+  }
+  $effect(() => {
+    const t = setInterval(async () => {
+      if (!Object.keys(running).length) { if (pendingPermits.length) pendingPermits = []; return; }
+      try { pendingPermits = await invoke<Permit[]>('list_pending_permits'); } catch { /* */ }
+    }, 600);
+    return () => clearInterval(t);
+  });
   let lDraft = $state('');
   // 全局自定义模型 ID（按厂商，可多个，在「连接与模型」里增删）；作为该厂商模型下拉的附加档位。
   let customDraft = $state<Record<string, string>>({ claude: '', codex: '' });
@@ -284,6 +355,7 @@
   const searchResults = $derived.by(() => {
     const q = searchQ.trim().toLowerCase();
     const list = convos.filter((c) => {
+      if (c.conn_id !== activeConnId) return false; // 只搜当前连接下的会话，别把别的连接（gcms）串进来
       if (!q) return true;
       const site = sites.find((s) => s.slug === c.site_slug);
       const host = site?.url ? hostOf(site.url).toLowerCase() : '';
@@ -304,6 +376,31 @@
   function say(m: string, k: 'ok' | 'err' = 'ok') { flash = m; flashKind = k; setTimeout(() => (flash = ''), k === 'err' ? 8000 : 4000); }
   function brainUsable(b: Brain): boolean { const s = b === 'claude' ? brains?.claude : brains?.codex; return !!s && s.found && s.logged_in !== false; }
   function hostOf(u: string): string { try { return new URL(u).host; } catch { return u; } }
+
+  // 从对话里认出这个项目已部署的线上地址（AI 部署完都会说「访问 https://xxx」）。
+  // 优先自定义域名，其次 *.pages.dev；忽略 localhost / CDN / 文档等无关链接。
+  function detectSiteUrl(convs: (Conversation | null)[]): string {
+    const re = /https?:\/\/[a-z0-9.-]+\.[a-z]{2,}[^\s`"'）)，。；]*/gi;
+    let custom = '', pages = '';
+    for (const c of convs) {
+      if (!c) continue;
+      for (const m of c.messages) {
+        if (m.role !== 'assistant' || m.hidden) continue;
+        const found = m.text.match(re);
+        if (!found) continue;
+        for (let u of found) {
+          u = u.replace(/[.,;)]+$/, '');
+          const host = u.replace(/^https?:\/\//i, '').split('/')[0].toLowerCase();
+          if (host.includes('localhost') || host.startsWith('127.') || host.includes('cloudflare.com')
+            || host.includes('developers.') || host.includes('tailwindcss.com') || host.includes('github')
+            || host.includes('npmjs') || host.includes('unpkg') || host.includes('jsdelivr')) continue;
+          if (host.endsWith('.pages.dev')) pages = u; else custom = u;
+        }
+      }
+    }
+    return custom || pages;
+  }
+  const activeSiteUrl = $derived(activeConvIsCf && activeConv ? detectSiteUrl([activeConv]) : '');
   // 从当前发现结果里按 slug 找站点图标（favicon 优先，其次 logo）；找不到返回空由 SiteFav 用首字母兜底。
   // 站点公开地址猜标准 favicon 位置，作为 discovery favicon/logo 之外的兜底（SiteFav 加载失败再退首字母）。
   function faviconGuess(url?: string): string { const u = (url ?? '').trim(); return u ? u.replace(/\/+$/, '') + '/favicon.ico' : ''; }
@@ -366,7 +463,26 @@
 
   let selSeq = 0;
   async function selectConn(id: string) {
-    const seq = ++selSeq; activeConnId = id; discovery = null; discoveryLoading = true;
+    const switching = id !== activeConnId;
+    const conn = conns.find((c) => c.id === id);
+    const seq = ++selSeq; activeConnId = id; discovery = null;
+    if (switching) {
+      // 换连接＝换工作区：关掉上个连接的对话/排期/定时任务视图，别串场。
+      // 模板库 / 提示词库只在 CF 连接下有；切到 gcms 时也退回启动页。
+      activeConvId = ''; activeConv = null;
+      if (view === 'thread' || view === 'schedule' || view === 'tasks' || ((view === 'templates' || view === 'prompts') && conn?.kind !== 'cloudflare')) view = 'launcher';
+    }
+    if (conn?.kind === 'cloudflare') {
+      // 只在真正换连接时清输入 + 拨默认档；同连接重选（如刷新）不动用户已填的项目名。
+      if (switching) {
+        cfProjects = []; lSite = '';
+        if (lPerm === 'full') lPerm = 'auto'; // CF 默认「自动」——部署/改 DNS 弹确认，防手滑
+      }
+      try { const ps = await invoke<string[]>('list_cf_projects', { connId: id }); if (seq === selSeq) cfProjects = ps; }
+      catch (e) { if (seq === selSeq) say(String(e), 'err'); }
+      return;
+    }
+    discoveryLoading = true;
     try { const r = await invoke<Discovery>('discover_sites', { connId: id }); if (seq === selSeq) discovery = r; }
     catch (e) { if (seq === selSeq) say(String(e), 'err'); }
     finally { if (seq === selSeq) { discoveryLoading = false; if (!lSite && discovery?.items.length) lSite = discovery.items[0].slug; } }
@@ -400,6 +516,140 @@
     if (!k.startsWith('gcmsp_') && !k.startsWith('gcms_')) { keyErr = '密钥前缀应为 gcmsp_ 或 gcms_'; return; }
     keyErr = ''; await doImport(keyZip, k);
   }
+
+  // ---------- 连接 Cloudflare ----------
+  const CF_TOKEN_URL = 'https://dash.cloudflare.com/profile/api-tokens';
+  let cfOpen = $state(false);
+  let cfToken = $state('');
+  let cfVerifying = $state(false);
+  let cfConnecting = $state(false);
+  let cfErr = $state('');
+  let cfAccounts = $state<{ id: string; name: string }[]>([]);
+  let cfZones = $state<{ id: string; name: string }[]>([]);
+  let cfAccountId = $state('');
+  let cfName = $state('');
+  let cfPermsOpen = $state(false);
+  function openCfConnect() { cfOpen = true; cfToken = ''; cfErr = ''; cfAccounts = []; cfZones = []; cfAccountId = ''; cfName = ''; cfPermsOpen = false; }
+  async function verifyCf() {
+    if (!cfToken.trim()) return;
+    cfVerifying = true; cfErr = '';
+    try {
+      const v = await invoke<{ token_status: string; accounts: { id: string; name: string }[]; zones: { id: string; name: string }[] }>('verify_cf_token', { token: cfToken.trim() });
+      cfAccounts = v.accounts; cfZones = v.zones;
+      if (v.accounts.length === 1) cfAccountId = v.accounts[0].id;
+      if (!cfName.trim() && v.accounts.length) cfName = (v.accounts.find((a) => a.id === cfAccountId) ?? v.accounts[0]).name;
+      if (!v.accounts.length) cfErr = 'Token 有效，但没有可用账号（需要 Account 级权限）。';
+    } catch (e) { cfErr = String(e); }
+    finally { cfVerifying = false; }
+  }
+  async function confirmCf() {
+    if (!cfAccountId) { cfErr = '请先选择一个账号'; return; }
+    cfConnecting = true; cfErr = '';
+    try {
+      const conn = await invoke<Connection>('connect_cloudflare', { name: cfName.trim(), token: cfToken.trim(), accountId: cfAccountId });
+      cfOpen = false; say(`已连接 Cloudflare「${conn.name}」`); await refreshConns(); await selectConn(conn.id);
+    } catch (e) { cfErr = String(e); }
+    finally { cfConnecting = false; }
+  }
+
+  // ---------- 模板库 ----------
+  type Template = { slug: string; name: string; desc: string; created_at: number };
+  let templates = $state<Template[]>([]);
+  let templatesLoading = $state(false);
+  let tmplHtml = $state<Record<string, string>>({}); // 每个模板的入口 HTML，做真实缩略图
+  async function loadTemplates() {
+    templatesLoading = true;
+    try {
+      templates = await invoke<Template[]>('list_templates');
+      const map: Record<string, string> = {};
+      await Promise.all(templates.map(async (t) => {
+        try { map[t.slug] = await invoke<string>('template_index_html', { slug: t.slug }); } catch { map[t.slug] = ''; }
+      }));
+      tmplHtml = map;
+    } catch (e) { say(String(e), 'err'); }
+    finally { templatesLoading = false; }
+  }
+  function openTemplates() { view = 'templates'; activeConvId = ''; activeConv = null; loadTemplates(); }
+  async function delTemplate(t: Template) {
+    const yes = await confirmDialog(`删除模板「${t.name}」？`, { title: '删除模板', kind: 'warning' });
+    if (!yes) return;
+    try { await invoke('delete_template', { slug: t.slug }); await loadTemplates(); } catch (e) { say(String(e), 'err'); }
+  }
+  async function previewTemplate(t: Template) {
+    say('正在启动模板预览…（约 2 秒后打开预览窗）');
+    try { await invoke('cf_preview_template', { slug: t.slug }); say('模板预览已打开（:8788）·关掉预览窗即停'); } catch (e) { say(String(e), 'err'); }
+  }
+  // 存为模板（从 CF 会话）
+  let saveTmplOpen = $state(false); let saveTmplName = $state(''); let saveTmplDesc = $state(''); let saveTmplBusy = $state(false); let saveTmplErr = $state('');
+  function openSaveTmpl() { if (!activeConv) return; saveTmplName = activeConv.site_slug; saveTmplDesc = ''; saveTmplErr = ''; saveTmplOpen = true; }
+  async function confirmSaveTmpl() {
+    if (!activeConv || !saveTmplName.trim()) return;
+    saveTmplBusy = true; saveTmplErr = '';
+    try {
+      await invoke('save_as_template', { connId: activeConv.conn_id, project: activeConv.site_slug, name: saveTmplName.trim(), desc: saveTmplDesc.trim() });
+      saveTmplOpen = false; say('已存为模板');
+    } catch (e) { saveTmplErr = String(e); }
+    finally { saveTmplBusy = false; }
+  }
+  // 用模板建站
+  let useTmplOpen = $state(false); let useTmplSlug = $state(''); let useTmplName = $state(''); let useTmplProject = $state(''); let useTmplBusy = $state(false); let useTmplErr = $state('');
+  function openUseTmpl(t: Template) { useTmplSlug = t.slug; useTmplName = t.name; useTmplProject = ''; useTmplErr = ''; useTmplOpen = true; }
+  async function confirmUseTmpl() {
+    if (!useTmplProject.trim()) { useTmplErr = '给新项目起个名'; return; }
+    if (!isCfConn) { useTmplErr = '请先在左下角切到一个 Cloudflare 连接'; return; }
+    useTmplBusy = true; useTmplErr = '';
+    try {
+      const cid = activeConnId;
+      const proj = useTmplProject.trim();
+      await invoke('use_template', { slug: useTmplSlug, connId: cid, project: proj });
+      useTmplOpen = false;
+      say(`已用模板「${useTmplName}」建好项目，接着描述你要的定制吧`);
+      activeConvId = ''; activeConv = null; view = 'launcher';
+      await selectConn(cid); // 刷新项目列表（会清空 lSite）
+      lSite = proj;
+    } catch (e) { useTmplErr = String(e); }
+    finally { useTmplBusy = false; }
+  }
+  // ---------- 提示词库 ----------
+  // 预设（内置只读）+ 用户自建（存 localStorage）。点一下把内容填进启动页对话框开始建站。
+  let userPrompts = $state<Prompt[]>(loadUserPrompts());
+  let allPrompts = $derived<Prompt[]>([...PRESET_PROMPTS, ...userPrompts]);
+  function openPrompts() { view = 'prompts'; activeConvId = ''; activeConv = null; }
+  function usePrompt(p: Prompt) {
+    lDraft = p.body;
+    view = 'launcher';
+    activeConvId = ''; activeConv = null;
+    say(isCfConn ? '已填入建站需求，起个项目名就能开始' : '已填入需求，选好站点就能开始');
+  }
+  async function copyPrompt(p: Prompt) {
+    try { await navigator.clipboard.writeText(p.body); say('已复制提示词'); }
+    catch { say('复制失败，请手动选择复制', 'err'); }
+  }
+  // 新增 / 编辑（只对用户自建的）
+  let promptEditOpen = $state(false);
+  let promptEditId = $state('');   // '' = 新增
+  let promptEditTitle = $state('');
+  let promptEditBody = $state('');
+  function openNewPrompt() { promptEditId = ''; promptEditTitle = ''; promptEditBody = ''; promptEditOpen = true; }
+  function openEditPrompt(p: Prompt) { promptEditId = p.id; promptEditTitle = p.title; promptEditBody = p.body; promptEditOpen = true; }
+  function savePrompt() {
+    const title = promptEditTitle.trim(); const body = promptEditBody.trim();
+    if (!title || !body) return;
+    if (promptEditId) {
+      userPrompts = userPrompts.map((p) => (p.id === promptEditId ? { ...p, title, body } : p));
+    } else {
+      userPrompts = [...userPrompts, { id: newPromptId(), title, body, created_at: Date.now() }];
+    }
+    if (!saveUserPrompts(userPrompts)) { say('保存失败：本地存储写入异常', 'err'); return; } // 存不下就别假装成功、保持弹窗开着
+    promptEditOpen = false;
+  }
+  async function deletePrompt(p: Prompt) {
+    const yes = await confirmDialog(`删除提示词「${p.title}」？`, { title: '删除提示词', kind: 'warning' });
+    if (!yes) return;
+    userPrompts = userPrompts.filter((x) => x.id !== p.id);
+    if (!saveUserPrompts(userPrompts)) say('删除已生效，但本地存储写入异常，重启后可能恢复', 'err');
+  }
+
   async function removeConn(id: string) {
     // 该连接下有对话正在跑一轮时不删：否则删掉会话行会让在途回合回写失败（「会话丢失」），子进程还在用已删的密钥/目录。
     const runningUnderConn = Object.values(running).includes(id);
@@ -428,8 +678,12 @@
   async function openConv(id: string) {
     const c = await invoke<Conversation | null>('get_conversation', { id });
     if (!c) { await refreshConvos(); return; }
-    activeConv = c; activeConvId = id; threadModel = c.model; view = 'thread';
+    // 打开的对话可能属于别的连接（从搜索/任务链接进来）——切到它自己的连接，否则侧栏会把它过滤掉。
+    if (c.conn_id !== activeConnId) activeConnId = c.conn_id;
+    activeConv = c; activeConvId = id; threadModel = c.model; threadPerm = c.perm_mode || 'full'; view = 'thread';
+    attachments = []; // 换会话清掉未发送的附件
     expandSite(c.site_slug);
+    checkCfReady();
     scrollSoon(true);
   }
   async function deleteConv(id: string) {
@@ -458,14 +712,16 @@
   function beginTurn(convId: string, optimistic: Conversation) {
     lives[convId] = { text: '', tools: [], error: '' };
     running[convId] = optimistic.conn_id;
-    activeConv = optimistic; activeConvId = convId; threadModel = optimistic.model;
+    activeConv = optimistic; activeConvId = convId; threadModel = optimistic.model; threadPerm = optimistic.perm_mode || 'full';
+    cfReady = false; // 本轮跑完再重新判定是否已建出内容
     view = 'thread'; scrollSoon(true);
   }
   function endTurn(conv: Conversation | null, convId: string) {
     // 仅当用户仍停留在这条会话时用权威结果覆盖，避免打断已切到别的会话的用户。
-    if (conv && activeConvId === convId) { activeConv = conv; threadModel = conv.model; }
+    if (conv && activeConvId === convId) { activeConv = conv; threadModel = conv.model; threadPerm = conv.perm_mode || 'full'; }
     delete running[convId];
     delete lives[convId];
+    if (activeConvId === convId) checkCfReady(); // 这轮可能写了文件，重新判定预览/部署是否可用
   }
   async function failTurn(e: unknown, convId: string) {
     delete running[convId];
@@ -480,16 +736,17 @@
   }
 
   async function startChat() {
-    if (!lSite || !lDraft.trim() || !brainUsable(lBrain)) return;
+    if (!lSite.trim() || !lDraft.trim() || !brainUsable(lBrain)) return;
     const site = sites.find((s) => s.slug === lSite);
-    prefs.brain = lBrain; prefs.model = lModel; prefs.taskType = lTask; savePrefs(prefs);
+    const taskType = isCfConn ? 'sitebuild' : lTask;
+    prefs.brain = lBrain; prefs.model = lModel; prefs.taskType = lTask; prefs.perm = lPerm; savePrefs(prefs);
     const model = lModel;
     const text = lDraft.trim();
     const id = crypto.randomUUID();
     const now = Math.floor(Date.now() / 1000);
     const optimistic: Conversation = {
       id, conn_id: activeConnId, conn_name: activeConn?.name ?? '', site_slug: lSite, site_name: site?.name || lSite,
-      task_type: lTask, brain: lBrain, model, session_ref: '',
+      task_type: taskType, brain: lBrain, model, perm_mode: lPerm, session_ref: '',
       title: text.slice(0, 30), messages: [optimisticUser(text)], status: 'running', created_at: now, updated_at: now,
     };
     // 立刻塞进侧栏，这样即便用户随后切走/新开对话，这条新会话也带着 running 圈可见，不必等这一轮跑完才出现。
@@ -499,16 +756,54 @@
     try {
       const conv = await invoke<Conversation>('start_conversation', {
         convId: id, connId: activeConnId, siteSlug: lSite, siteName: site?.name || lSite,
-        taskType: lTask, brain: lBrain, model,
+        taskType, brain: lBrain, model, permMode: lPerm,
         message: text, onEvent: makeChannel(id),
       });
       await refreshConvos(); endTurn(conv, id);
     } catch (e) { await failTurn(e, id); }
   }
 
+  // ---------- 附件：粘贴/拖拽文件到输入框，存进项目目录供 AI 读取 ----------
+  type Attach = { name: string; path: string; preview: string };
+  let attachments = $state<Attach[]>([]);
+  let attaching = $state(false);
+  async function attachFile(f: File) {
+    if (!activeConv) { say('先进入一个对话再添加文件', 'err'); return; }
+    if (f.size > 25 * 1024 * 1024) { say('文件太大（上限 25MB）', 'err'); return; }
+    attaching = true;
+    try {
+      const buf = new Uint8Array(await f.arrayBuffer());
+      const path = await invoke<string>('save_attachment', { connId: activeConv.conn_id, project: activeConv.site_slug, filename: f.name, data: Array.from(buf) });
+      let preview = '';
+      if (f.type.startsWith('image/')) {
+        preview = await new Promise<string>((res) => { const r = new FileReader(); r.onload = () => res(String(r.result)); r.onerror = () => res(''); r.readAsDataURL(f); });
+      }
+      attachments = [...attachments, { name: path.split('/').pop() || f.name, path, preview }];
+    } catch (e) { say(String(e), 'err'); }
+    finally { attaching = false; }
+  }
+  function removeAttachment(i: number) { attachments = attachments.filter((_, idx) => idx !== i); }
+  function onComposerPaste(e: ClipboardEvent) {
+    const items = e.clipboardData?.items; if (!items) return;
+    let handled = false;
+    for (const it of items) { if (it.kind === 'file') { const f = it.getAsFile(); if (f) { attachFile(f); handled = true; } } }
+    if (handled) e.preventDefault();
+  }
+  function onComposerDrop(e: DragEvent) {
+    const files = e.dataTransfer?.files;
+    if (files && files.length) { e.preventDefault(); for (const f of Array.from(files)) attachFile(f); }
+  }
+  function onComposerDragOver(e: DragEvent) { if (e.dataTransfer?.types?.includes('Files')) e.preventDefault(); }
+
   async function send() {
-    if (!activeConv || !draft.trim() || running[activeConv.id]) return;
-    const text = draft.trim(); draft = '';
+    if (!activeConv || running[activeConv.id]) return;
+    const atts = attachments;
+    if (!draft.trim() && !atts.length) return;
+    let text = draft.trim();
+    if (atts.length) {
+      text += (text ? '\n\n' : '') + '附件（已存在项目里，可直接读取使用）：\n' + atts.map((a) => `- ${a.path}`).join('\n');
+    }
+    draft = ''; attachments = [];
     const id = activeConv.id;
     beginTurn(id, { ...activeConv, messages: [...activeConv.messages, optimisticUser(text)], status: 'running' });
     try {
@@ -526,12 +821,15 @@
       if (force || near) threadEl.scrollTop = threadEl.scrollHeight;
     });
   }
+  // 输入法组合中（候选框开着）按回车是确认候选词，不能当发送。isComposing 在部分 webview 不可靠，
+  // 叠加手动组合标记 + keyCode===229（IME 处理中）双保险。
+  let composing = false;
   function onComposerKey(e: KeyboardEvent, fn: () => void) {
-    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); fn(); }
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !composing && e.keyCode !== 229) { e.preventDefault(); fn(); }
   }
 
   // linkify + 段落
-  const urlRe = /(https?:\/\/[^\s)"'」』】>，。；：！？、（）《》]+)/g;
+  const urlRe = /(https?:\/\/[^\s)"'`」』】>，。；：！？、（）《》]+)/g;
   function segs(text: string): { t: string; link: boolean }[] {
     const out: { t: string; link: boolean }[] = [];
     let last = 0; let m: RegExpExecArray | null; urlRe.lastIndex = 0;
@@ -605,6 +903,7 @@
   const grouped = $derived.by(() => {
     const bySite = new Map<string, { slug: string; name: string; recent: number; convs: Conversation[] }>();
     for (const c of convos) {
+      if (c.conn_id !== activeConnId) continue; // 侧栏只显示当前连接的对话，别串场
       const key = c.site_slug || '(未指定站点)';
       let g = bySite.get(key);
       if (!g) { g = { slug: key, name: c.site_name || c.site_slug || key, recent: 0, convs: [] }; bySite.set(key, g); }
@@ -620,9 +919,12 @@
       }
       const others = s.convs.filter((c) => !TASK_ORDER.includes(c.task_type)).sort((a, b) => b.updated_at - a.updated_at);
       if (others.length) subs.push({ type: 'other', label: '其它', items: others });
-      return { slug: s.slug, name: s.name, count: s.convs.length, subs };
+      return { slug: s.slug, name: s.name, count: s.convs.length, subs, url: isCfConn ? detectSiteUrl(s.convs) : '' };
     });
   });
+  // CF 页脚：有域名（已部署）的项目算「站点」。
+  const cfSiteCount = $derived(grouped.filter((g) => g.url).length);
+  function faviconOf(u: string): string { try { return new URL(u).origin + '/favicon.ico'; } catch { return ''; } }
   // 站点分组折叠态（持久化）；默认全展开，打开某会话时自动展开其站点。
   let collapsedSites = $state(loadCollapsedSites());
   function loadCollapsedSites(): Set<string> { try { return new Set<string>(JSON.parse(localStorage.getItem('gcms.pilot.collapsedSites') || '[]')); } catch { return new Set(); } }
@@ -697,6 +999,7 @@
         </svg>
         新对话
       </button>
+      {#if !isCfConn}
       <button class="railnav {view === 'schedule' ? 'on' : ''}" onclick={openSchedule} disabled={!activeConn}>
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
           <rect x="2.5" y="3" width="11" height="10.5" rx="1.5" stroke="currentColor" stroke-width="1.3" />
@@ -711,6 +1014,25 @@
         </svg>
         定时任务
       </button>
+      {/if}
+      {#if isCfConn}
+      <button class="railnav {view === 'templates' ? 'on' : ''}" onclick={openTemplates}>
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+          <rect x="2.5" y="2.5" width="4.5" height="4.5" rx="1" stroke="currentColor" stroke-width="1.3" />
+          <rect x="9" y="2.5" width="4.5" height="4.5" rx="1" stroke="currentColor" stroke-width="1.3" />
+          <rect x="2.5" y="9" width="4.5" height="4.5" rx="1" stroke="currentColor" stroke-width="1.3" />
+          <rect x="9" y="9" width="4.5" height="4.5" rx="1" stroke="currentColor" stroke-width="1.3" />
+        </svg>
+        模板库
+      </button>
+      <button class="railnav {view === 'prompts' ? 'on' : ''}" onclick={openPrompts}>
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+          <path d="M3 3h10a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H6.5L4 13.2V11H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" />
+          <path d="M5.2 6.2h5.6M5.2 8.4h3.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
+        </svg>
+        提示词
+      </button>
+      {/if}
     </div>
 
     <div class="convos">
@@ -720,19 +1042,22 @@
       {#each grouped as g (g.slug)}
         <button class="site-grp" onclick={() => toggleSite(g.slug)} title={g.name}>
           <svg class="site-grp-chev" class:collapsed={collapsedSites.has(g.slug)} width="10" height="10" viewBox="0 0 12 12" fill="none"><path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>
-          <SiteFav src={siteFav(g.slug)} label={g.slug} size={14} />
+          {#if isCfConn}{#if g.url}<img class="site-grp-fav" src={faviconOf(g.url)} alt="" onerror={(e) => ((e.currentTarget as HTMLImageElement).style.display = 'none')} />{/if}{:else}<SiteFav src={siteFav(g.slug)} label={g.slug} size={14} />{/if}
           <span class="site-grp-name">{g.name}</span>
-          <span class="site-grp-count">{g.count}</span>
+          {#if g.url}<span class="site-grp-host" title={hostOf(g.url)}>{hostOf(g.url)}</span>{/if}
         </button>
         {#if !collapsedSites.has(g.slug)}
           {#each g.subs as sub (sub.type)}
-            <div class="subgrp">{sub.label}</div>
+            {#if !isCfConn}<div class="subgrp">{sub.label}</div>{/if}
             {#each sub.items as c (c.id)}
               <div class="convo {activeConvId === c.id ? 'on' : ''}" role="button" tabindex="0"
                 onclick={() => openConv(c.id)} onkeydown={(e) => e.key === 'Enter' && openConv(c.id)}>
                 <div class="convo-body">
+                  <span class="convo-bi" title={brainLabel(c.brain)}><BrainIcon brain={c.brain} size={12} /></span>
                   <span class="convo-title">{c.title}</span>
-                  <span class="convo-meta">{@render brainTag(c.brain, brainLabel(c.brain))}<span class="cdot">·</span>{relTime(c.updated_at)}{#if c.status === 'running' || running[c.id]}<span class="mini-run"></span>{/if}</span>
+                  {#if c.status === 'running' || running[c.id]}<span class="mini-run"></span>{/if}
+                  {#if permConvs.has(c.id)}<span class="mini-permit" title="有操作等你批准">待批</span>{/if}
+                  <span class="convo-when">{relTime(c.updated_at)}</span>
                 </div>
                 <button class="convo-x" title="删除对话" onclick={(e) => { e.stopPropagation(); deleteConv(c.id); }}>×</button>
               </div>
@@ -747,21 +1072,22 @@
         <div class="conn-switch">
           {#each conns as c (c.id)}
             <button class="cs-item {activeConnId === c.id ? 'on' : ''}" onclick={() => { selectConn(c.id); switcherOpen = false; }}>
-              <SiteMark size={18} />
-              <span class="cs-main"><b>{c.name}</b><small>{c.key_prefix} · {c.key_kind === 'gcmsp_' ? '平台' : '单站'}</small></span>
+              {#if c.kind === 'cloudflare'}{@render cfMark(18)}{:else}<SiteMark size={18} />{/if}
+              <span class="cs-main"><b>{c.name}</b><small>{c.key_prefix} · {c.kind === 'cloudflare' ? 'Cloudflare' : c.key_kind === 'gcmsp_' ? '平台' : '单站'}</small></span>
               {#if activeConnId === c.id}<span class="cs-check">✓</span>{/if}
             </button>
           {/each}
           <div class="cs-div"></div>
           <button class="cs-act" onclick={() => { switcherOpen = false; importPack(); }}>{@render plusIcon()}导入技能包</button>
+          <button class="cs-act" onclick={() => { switcherOpen = false; openCfConnect(); }}>{@render cfMark(15)}连接 Cloudflare</button>
           <button class="cs-act" onclick={() => { switcherOpen = false; setupOpen = true; }}>{@render gearIcon()}连接与模型设置…</button>
         </div>
       {/if}
     <button class="rail-foot" class:open={switcherOpen} onclick={() => { if (conns.length === 0) { setupOpen = true; } else { switcherOpen = !switcherOpen; } }}>
-      {#if activeConn && sites.length}<SiteFav src={siteFav(sites[0].slug)} label={sites[0].slug} size={18} />{:else}<AppIcon size={18} />{/if}
+      {#if isCfConn}{@render cfMark(18)}{:else if activeConn && sites.length}<SiteFav src={siteFav(sites[0].slug)} label={sites[0].slug} size={18} />{:else}<AppIcon size={18} />{/if}
       <span class="foot-main">
         <b>{activeConn?.name ?? '未连接'}</b>
-        <small>{activeConn ? `${sites.length} 个站点` : '点此导入技能包'}</small>
+        <small>{isCfConn ? `${cfProjects.length} 个项目${cfSiteCount ? ` · ${cfSiteCount} 个站点` : ''}` : activeConn ? `${sites.length} 个站点` : '点此导入技能包'}</small>
       </span>
       {#if conns.length === 0}
         <svg class="foot-gear" width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -788,9 +1114,12 @@
       <div class="center" data-tauri-drag-region onmousedown={startDrag}>
         <div class="hero-card">
           <div class="hero-mark"><AppIcon size={54} /></div>
-          <h1>开始之前，先导入技能包</h1>
-          <p>在 gcms 后台「平台密钥」页下载技能包 zip，导入后即可用本地 Claude / Codex 为你的站点干活。</p>
-          <button class="btn soft hero-import" onclick={importPack} disabled={importBusy}>{@render plusIcon()}{importBusy ? '导入中…' : '导入技能包'}</button>
+          <h1>开始之前，先连接一个来源</h1>
+          <p>导入 gcms 技能包为你的站点做内容，或连接 Cloudflare 让本地 Claude / Codex 帮你建站并部署。</p>
+          <div class="hero-btns">
+            <button class="btn soft hero-import" onclick={importPack} disabled={importBusy}>{@render plusIcon()}{importBusy ? '导入中…' : '导入技能包'}</button>
+            <button class="btn soft hero-import" onclick={openCfConnect}>{@render cfMark(15)}连接 Cloudflare</button>
+          </div>
           {#if brains}
             <div class="cli-guide" data-no-drag>
               <div class="cli-guide-h"><span>本地 CLI 准备（至少装好并登录一个）</span><button class="cli-redetect" onclick={refreshBrainsManual} disabled={brainsBusy} title="装好 / 登录完点这里重新检测（会重新读取 PATH）">{@render refreshIcon(brainsBusy)}<span>重新检测</span></button></div>
@@ -809,7 +1138,7 @@
                       {/if}
                     </button>
                   {:else if r.st.logged_in === false}
-                    <span class="cli-tag warn">未登录</span><button class="authbtn" onclick={() => authorize(r.b)}>去授权{@render extIcon()}</button>
+                    <span class="cli-tag warn">未登录</span><button class="authbtn" onclick={() => authorize(r.b)}>去授权 ↗</button>
                   {:else}
                     <span class="cli-tag ok">✓ {r.st.version || '已就绪'}</span>
                   {/if}
@@ -825,35 +1154,47 @@
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div class="center launch-center" data-tauri-drag-region onmousedown={startDrag}>
         <div class="launcher">
-          <h1>想让它帮你做点什么？</h1>
-          <p class="sub">选好站点和模型，像聊天一样把需求说清楚，它会边聊边把事情做掉。</p>
-
-          <div class="task-seg">
-            {#each [['article', '内容创作', '策划并撰写文章'], ['sitebuild', '新站建设', '从零搭建整个站点'], ['free', '自由对话', '任意内容运营']] as t (t[0])}
-              <button class:on={lTask === t[0]} onclick={() => (lTask = t[0] as TaskType)}>
-                {@render taskIcon(t[0])}
-                <span class="ts-txt"><b>{t[1]}</b><small>{t[2]}</small></span>
-              </button>
-            {/each}
-          </div>
+          {#if isCfConn}
+            <h1>让 AI 帮你建个站</h1>
+            <p class="sub">给项目起个名，描述你想要的网站——边聊边建，随时本地预览，满意了再部署到 Cloudflare。</p>
+          {:else}
+            <h1>想让它帮你做点什么？</h1>
+            <p class="sub">选好站点和模型，像聊天一样把需求说清楚，它会边聊边把事情做掉。</p>
+            <div class="task-seg">
+              {#each [['article', '内容创作', '策划并撰写文章'], ['sitebuild', '新站建设', '从零搭建整个站点'], ['free', '自由对话', '任意内容运营']] as t (t[0])}
+                <button class:on={lTask === t[0]} onclick={() => (lTask = t[0] as TaskType)}>
+                  {@render taskIcon(t[0])}
+                  <span class="ts-txt"><b>{t[1]}</b><small>{t[2]}</small></span>
+                </button>
+              {/each}
+            </div>
+          {/if}
 
           <div class="composer big">
             <textarea bind:value={lDraft} rows="3"
-              placeholder={lTask === 'sitebuild' ? '例如：帮我搭一个介绍露营装备的中文站，风格轻松，先给我一个方案' : '例如：帮我写一篇 2026 年 macOS 效率工具盘点，先列个提纲'}
+              placeholder={isCfConn ? '例如：做个卖手冲咖啡的落地页，深色调，留个邮箱订阅表单存到 D1，先给我方案' : lTask === 'sitebuild' ? '例如：帮我搭一个介绍露营装备的中文站，风格轻松，先给我一个方案' : '例如：帮我写一篇 2026 年 macOS 效率工具盘点，先列个提纲'}
+              oncompositionstart={() => (composing = true)} oncompositionend={() => (composing = false)}
               onkeydown={(e) => onComposerKey(e, startChat)}></textarea>
             <div class="composer-bar">
               <div class="cb-left">
-                <Dropdown compact searchable bind:value={lSite} options={siteOpts} placeholder="选择站点" />
-                <button class="cb-rfz" title="刷新站点" onclick={refreshSites}>{@render refreshIcon(discoveryLoading)}</button>
+                {#if isCfConn}
+                  <input class="cf-proj-in" bind:value={lSite} placeholder="项目名，如 coffee-landing" spellcheck="false" autocapitalize="off" autocorrect="off" />
+                {:else}
+                  <Dropdown compact searchable bind:value={lSite} options={siteOpts} placeholder="选择站点" />
+                  <button class="cb-rfz" title="刷新站点" onclick={refreshSites}>{@render refreshIcon(discoveryLoading)}</button>
+                {/if}
               </div>
               <div class="cb-right">
+                <Dropdown compact bind:value={lPerm} options={permOpts} tone={permTone(lPerm)} />
                 <Dropdown compact bind:value={lBrain} options={brainOpts} />
                 <Dropdown compact bind:value={lModel} options={launcherModelOpts(lBrain)} />
-                <button class="send" onclick={startChat} disabled={!lSite || !lDraft.trim() || !brainUsable(lBrain)} title="发送（Enter）">↑</button>
+                <button class="send" onclick={startChat} disabled={!lSite.trim() || !lDraft.trim() || !brainUsable(lBrain)} title="发送（Enter）">↑</button>
               </div>
             </div>
           </div>
           {#if !brainUsable(lBrain)}<p class="hint warn-text">所选厂商未就绪，点左下角设置里「去授权」。</p>{/if}
+          {#if isCfConn && brains?.wrangler && !brains.wrangler.found}{@render wrNote()}{/if}
+          {#if isCfConn && lBrain === 'codex' && (lPerm === 'ask' || lPerm === 'auto')}<p class="hint">Codex 不支持逐命令确认——「询问 / 自动」的危险动作弹卡只对 Claude 生效；要精细控制建议用 Claude。</p>{/if}
         </div>
       </div>
 
@@ -897,7 +1238,7 @@
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <header class="thread-head" data-tauri-drag-region onmousedown={startDrag}>
         <div class="th-info"><b>定时任务</b><small>到点自动开一个新对话执行 · 需保持 Pilot 在后台（托盘）运行</small></div>
-        <button class="btn soft" onclick={openNewTask}>{@render plusIcon()}新建任务</button>
+        <button class="btn soft bare" onclick={openNewTask}>{@render plusIcon()}新建任务</button>
       </header>
       <div class="thread">
         <div class="sched-inner">
@@ -906,7 +1247,7 @@
               <div class="cal-mark">⏰</div>
               <b>还没有定时任务</b>
               <p>建一个让它按时自动干活，比如「每天早上 9 点，围绕本周热点写一篇文章存草稿」。</p>
-              <button class="btn soft" onclick={openNewTask} style="margin-top:16px">{@render plusIcon()}新建任务</button>
+              <button class="btn soft bare" onclick={openNewTask} style="margin-top:16px">{@render plusIcon()}新建任务</button>
             </div>
           {:else}
             {#each tasks as t (t.id)}
@@ -944,13 +1285,84 @@
         </div>
       </div>
 
+    {:else if view === 'templates'}
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <header class="thread-head" data-tauri-drag-region onmousedown={startDrag}>
+        <div class="th-info"><b>模板库</b><small>把做好的站点存成模板，之后引用它快速起新项目</small></div>
+        <button class="icon-btn" onclick={loadTemplates} disabled={templatesLoading} title="刷新">{@render refreshIcon(templatesLoading)}</button>
+      </header>
+      <div class="thread">
+        <div class="sched-inner">
+          {#if templates.length === 0}
+            <div class="sched-empty">
+              <div class="cal-mark">🧩</div>
+              <b>还没有模板</b>
+              <p>在一个 Cloudflare 站点项目对话里点「存模板」，做得好的站就能沉淀下来复用。</p>
+            </div>
+          {:else}
+            <div class="tmpl-grid">
+              {#each templates as t (t.slug)}
+                <div class="tmpl-card">
+                  <div class="tmpl-thumb">
+                    {#if tmplHtml[t.slug]}
+                      <iframe class="tmpl-frame" srcdoc={tmplHtml[t.slug]} sandbox="allow-scripts" title={t.name} tabindex="-1" scrolling="no"></iframe>
+                    {:else}
+                      <span class="tmpl-letter">{t.name.slice(0, 1)}</span>
+                    {/if}
+                    <div class="tmpl-hover">
+                      <button class="tmpl-act" aria-label="预览真实页面" onclick={() => previewTemplate(t)} data-tip="预览真实页面"><svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M1.6 8s2.4-4.4 6.4-4.4S14.4 8 14.4 8s-2.4 4.4-6.4 4.4S1.6 8 1.6 8Z" stroke="currentColor" stroke-width="1.2" /><circle cx="8" cy="8" r="1.9" stroke="currentColor" stroke-width="1.2" /></svg></button>
+                      <button class="tmpl-act primary" aria-label="用它建新站" onclick={() => openUseTmpl(t)} data-tip="用它建新站"><svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M8 3.2v9.6M3.2 8h9.6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /></svg></button>
+                      <button class="tmpl-act" aria-label="删除模板" onclick={() => delTemplate(t)} data-tip="删除模板"><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M3 4.6h10M6.4 4.6V3.3h3.2V4.6M4.6 4.6l.6 8.1h5.6l.6-8.1" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
+                    </div>
+                  </div>
+                  <div class="tmpl-body">
+                    <b>{t.name}</b>
+                    <div class="tmpl-sub"><span class="tmpl-desc">{t.desc || ''}</span><span class="tmpl-meta">{relTime(t.created_at)}</span></div>
+                  </div>
+                </div>
+              {/each}
+            </div>
+          {/if}
+        </div>
+      </div>
+
+    {:else if view === 'prompts'}
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <header class="thread-head" data-tauri-drag-region onmousedown={startDrag}>
+        <div class="th-info"><b>提示词库</b><small>常用建站需求，点「用它建站」填进对话框就能开始；也能存自己的。</small></div>
+        <button class="btn soft bare" onclick={openNewPrompt}>{@render plusIcon()}新增提示词</button>
+      </header>
+      <div class="thread">
+        <div class="sched-inner">
+          <div class="prompt-grid">
+            {#each allPrompts as p (p.id)}
+              <div class="prompt-card">
+                <div class="prompt-top">
+                  <b class="prompt-title">{p.title}</b>
+                  {#if p.builtin}<span class="prompt-tag">预设</span>{/if}
+                </div>
+                <p class="prompt-body">{p.body}</p>
+                <div class="prompt-acts">
+                  <button class="prompt-act primary" aria-label="用它建站" data-tip="用它建站" onclick={() => usePrompt(p)}><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 3.2v9.6M3.2 8h9.6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /></svg></button>
+                  <button class="prompt-act" aria-label="复制提示词" data-tip="复制" onclick={() => copyPrompt(p)}><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="5.5" y="5.5" width="7.6" height="8" rx="1.4" stroke="currentColor" stroke-width="1.2" /><path d="M10.6 5.5V4.2A1.4 1.4 0 0 0 9.2 2.8H4A1.4 1.4 0 0 0 2.6 4.2v5.2A1.4 1.4 0 0 0 4 10.8h1.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" /></svg></button>
+                  {#if !p.builtin}
+                    <button class="prompt-act" aria-label="编辑提示词" data-tip="编辑" onclick={() => openEditPrompt(p)}><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M10.8 2.9l2.3 2.3M11.4 2.3l2.3 2.3-8 8-3 .7.7-3 8-8z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /></svg></button>
+                    <button class="prompt-act" aria-label="删除提示词" data-tip="删除" onclick={() => deletePrompt(p)}><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M3 4.6h10M6.4 4.6V3.3h3.2V4.6M4.6 4.6l.6 8.1h5.6l.6-8.1" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
+                  {/if}
+                </div>
+              </div>
+            {/each}
+          </div>
+        </div>
+      </div>
+
     {:else}
       <!-- 对话线程 -->
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <header class="thread-head" data-tauri-drag-region onmousedown={startDrag}>
         <div class="th-info">
           <b>{activeConv?.title}</b>
-          <small><SiteFav src={siteFav(activeConv?.site_slug ?? '')} label={activeConv?.site_slug ?? ''} size={13} /> {activeConv?.site_name || activeConv?.site_slug} · {taskLabel(activeConv?.task_type ?? '')} · {@render brainTag(activeConv?.brain ?? 'claude', brainLabel(activeConv?.brain ?? '') + (activeConv?.brain === 'claude' && activeConv?.model ? ` ${activeConv.model}` : ''))}</small>
+          <small>{#if activeConvIsCf}{@render cfMark(13)}{:else}<SiteFav src={siteFav(activeConv?.site_slug ?? '')} label={activeConv?.site_slug ?? ''} size={13} />{/if} {activeConv?.site_name || activeConv?.site_slug} · {taskLabel(activeConv?.task_type ?? '')} · {@render brainTag(activeConv?.brain ?? 'claude', brainLabel(activeConv?.brain ?? '') + (activeConv?.brain === 'claude' && activeConv?.model ? ` ${activeConv.model}` : ''))}{#if activeSiteUrl} · <button class="th-site-link" onclick={() => openUrl(activeSiteUrl)} title={activeSiteUrl}>{hostOf(activeSiteUrl)} ↗</button>{/if}</small>
         </div>
       </header>
 
@@ -969,24 +1381,63 @@
               </div>
             </div>
           {/if}
+          {#each activePermits as p (p.id)}
+            <div class="msg assistant">
+              <div class="permit-card" class:danger={p.dangerous}>
+                <div class="permit-head"><span class="permit-dot"></span>需要你确认这个操作{#if p.dangerous}<span class="permit-tag">危险 · 对线上生效</span>{/if}</div>
+                <div class="permit-meta">{p.tool}{#if p.mode === 'ask'} · 询问档{/if}</div>
+                {#if p.cmd}<code class="permit-cmd">{p.cmd}</code>{/if}
+                <div class="permit-act">
+                  <button class="btn sm" onclick={() => respondPermit(p.id, false)}>拒绝</button>
+                  <button class="btn sm primary" onclick={() => respondPermit(p.id, true)}>批准</button>
+                </div>
+              </div>
+            </div>
+          {/each}
         </div>
       </div>
 
       <div class="composer-wrap">
+        {#if activeConvIsCf}
+          <div class="cf-bar">
+            <button class="cb-prev" onclick={startPreview} disabled={previewBusy || !cfReady} data-tip={cfReady ? '在本机跑起来看效果（关预览窗即停）' : '先让 AI 建出页面再预览'}><svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M1.6 8s2.4-4.4 6.4-4.4S14.4 8 14.4 8s-2.4 4.4-6.4 4.4S1.6 8 1.6 8Z" stroke="currentColor" stroke-width="1.2" /><circle cx="8" cy="8" r="1.9" stroke="currentColor" stroke-width="1.2" /></svg>{previewBusy ? '启动中…' : '预览'}</button>
+            <button class="cb-prev" onclick={fillDeploy} disabled={viewBusy || !cfReady} data-tip={cfReady ? '发布到 Cloudflare 上线' : '先让 AI 建出页面再部署'}><svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M8 12.5V4M4.5 7 8 3.5 11.5 7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>部署</button>
+            <button class="cb-prev dim" onclick={openSaveTmpl} disabled={!cfReady} data-tip={cfReady ? '存成模板，以后一键复用' : '先让 AI 建出页面再存'}><svg width="12" height="12" viewBox="0 0 16 16" fill="none"><rect x="2.6" y="2.6" width="4.3" height="4.3" rx="1" stroke="currentColor" stroke-width="1.3" /><rect x="9.1" y="2.6" width="4.3" height="4.3" rx="1" stroke="currentColor" stroke-width="1.3" /><rect x="2.6" y="9.1" width="4.3" height="4.3" rx="1" stroke="currentColor" stroke-width="1.3" /><rect x="9.1" y="9.1" width="4.3" height="4.3" rx="1" stroke="currentColor" stroke-width="1.3" /></svg>存模板</button>
+          </div>
+        {/if}
         <div class="composer">
-          <textarea bind:value={draft} rows="1" placeholder="继续说…（Enter 发送，Shift+Enter 换行）"
-            disabled={viewBusy} onkeydown={(e) => onComposerKey(e, send)}></textarea>
+          {#if attachments.length}
+            <div class="attach-row">
+              {#each attachments as a, i (a.path)}
+                <div class="attach-chip">
+                  {#if a.preview}<img class="attach-img" src={a.preview} alt="" />{:else}<span class="attach-ic"><svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M9 1.8H4.5A1.3 1.3 0 0 0 3.2 3.1v9.8a1.3 1.3 0 0 0 1.3 1.3h7a1.3 1.3 0 0 0 1.3-1.3V5.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /><path d="M9 1.8v3.7h3.8" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /></svg></span>{/if}
+                  <span class="attach-name" title={a.name}>{a.name}</span>
+                  <button class="attach-x" aria-label="移除附件" onclick={() => removeAttachment(i)}>×</button>
+                </div>
+              {/each}
+              {#if attaching}<span class="attach-loading">上传中…</span>{/if}
+            </div>
+          {/if}
+          <textarea bind:value={draft} rows="1" placeholder="继续说…（Enter 发送，Shift+Enter 换行，可粘贴/拖入文件）"
+            disabled={viewBusy} oncompositionstart={() => (composing = true)} oncompositionend={() => (composing = false)}
+            onpaste={onComposerPaste} ondrop={onComposerDrop} ondragover={onComposerDragOver}
+            onkeydown={(e) => onComposerKey(e, send)}></textarea>
           <div class="composer-bar">
             <div class="cb-left">
-              <span class="cb-ro" title="会话的站点已固定，不可更改"><SiteFav src={siteFav(activeConv?.site_slug ?? '')} label={activeConv?.site_slug ?? ''} size={15} /><span class="cb-ro-t">{activeConv?.site_name || activeConv?.site_slug}</span></span>
+              {#if activeConvIsCf}
+                <span class="cb-ro" title="项目已固定"><span class="cb-ro-t">{activeConv?.site_slug}</span></span>
+              {:else}
+                <span class="cb-ro" title="会话的站点已固定，不可更改"><SiteFav src={siteFav(activeConv?.site_slug ?? '')} label={activeConv?.site_slug ?? ''} size={15} /><span class="cb-ro-t">{activeConv?.site_name || activeConv?.site_slug}</span></span>
+              {/if}
             </div>
             <div class="cb-right">
+              <Dropdown compact bind:value={threadPerm} options={permOpts} tone={permTone(threadPerm)} onchange={persistThreadPerm} disabled={viewBusy} />
               <span class="cb-ro" title="会话的厂商已固定，不可更改">{@render brainTag(activeConv?.brain ?? 'claude', brainLabel(activeConv?.brain ?? ''))}</span>
               <Dropdown compact bind:value={threadModel} options={launcherModelOpts(activeConv?.brain ?? 'claude')} onchange={persistThreadModel} disabled={viewBusy} />
               {#if viewBusy}
                 <button class="send stop" onclick={stop} title="停止">■</button>
               {:else}
-                <button class="send" onclick={send} disabled={!draft.trim()} title="发送（Enter）">↑</button>
+                <button class="send" onclick={send} disabled={!draft.trim() && !attachments.length} title="发送（Enter）">↑</button>
               {/if}
             </div>
           </div>
@@ -1070,7 +1521,8 @@
 {#snippet plusIcon()}<svg class="plus-ic" width="13" height="13" viewBox="0 0 14 14" fill="none"><path d="M7 2.4v9.2M2.4 7h9.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /></svg>{/snippet}
 
 {#snippet gearIcon()}<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M2 5.3h3.5M9.3 5.3H14M2 10.7h5.1M10.9 10.7H14" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" /><circle cx="7.4" cy="5.3" r="1.6" stroke="currentColor" stroke-width="1.3" /><circle cx="9" cy="10.7" r="1.6" stroke="currentColor" stroke-width="1.3" /></svg>{/snippet}
-{#snippet extIcon()}<svg class="ext-ic" width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M9 3.2h3.8V7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /><path d="M12.4 3.6 7.1 8.9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /><path d="M11 9.6v2a1.4 1.4 0 0 1-1.4 1.4H4.5A1.4 1.4 0 0 1 3.1 11.6V6.5A1.4 1.4 0 0 1 4.5 5.1h2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>{/snippet}
+{#snippet cfMark(size: number)}<svg class="cf-mark" width={size} height={size} viewBox="0 0 128 128"><path fill="#fff" d="m115.679 69.288l-15.591-8.94l-2.689-1.163l-63.781.436v32.381h82.061z" /><path fill="#f38020" d="M87.295 89.022c.763-2.617.472-5.015-.8-6.796c-1.163-1.635-3.125-2.58-5.488-2.689l-44.737-.581c-.291 0-.545-.145-.691-.363s-.182-.509-.109-.8c.145-.436.581-.763 1.054-.8l45.137-.581c5.342-.254 11.157-4.579 13.192-9.885l2.58-6.723c.109-.291.145-.581.073-.872c-2.906-13.158-14.644-22.97-28.672-22.97c-12.938 0-23.913 8.359-27.838 19.952a13.35 13.35 0 0 0-9.267-2.58c-6.215.618-11.193 5.597-11.811 11.811c-.145 1.599-.036 3.162.327 4.615C10.104 70.051 2 78.337 2 88.549c0 .909.073 1.817.182 2.726a.895.895 0 0 0 .872.763h82.57c.472 0 .909-.327 1.054-.8z" /><path fill="#faae40" d="M101.542 60.275c-.4 0-.836 0-1.236.036c-.291 0-.545.218-.654.509l-1.744 6.069c-.763 2.617-.472 5.015.8 6.796c1.163 1.635 3.125 2.58 5.488 2.689l9.522.581c.291 0 .545.145.691.363s.182.545.109.8c-.145.436-.581.763-1.054.8l-9.924.582c-5.379.254-11.157 4.579-13.192 9.885l-.727 1.853c-.145.363.109.727.509.727h34.089c.4 0 .763-.254.872-.654c.581-2.108.909-4.325.909-6.614c0-13.447-10.975-24.422-24.458-24.422" /></svg>{/snippet}
+{#snippet wrNote()}<div class="wr-note"><svg class="wr-ic" width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.6" stroke="currentColor" stroke-width="1.3" /><path d="M8 4.8v4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" /><circle cx="8" cy="11.1" r="0.6" fill="currentColor" /></svg><span>还没装 wrangler，预览 / 部署要用</span><button class="wr-btn" onclick={installWrangler} disabled={wrInstalling}>{wrInstalling ? '安装中…' : '一键安装'}</button></div>{/snippet}
 
 {#snippet taskIcon(kind: string)}
   <span class="ts-ic">
@@ -1104,16 +1556,16 @@
   <div class="sheet">
     <header class="sheet-head"><b>连接与模型</b><button class="x" onclick={() => (setupOpen = false)}>×</button></header>
     <div class="sheet-body">
-      <div class="sec-head"><span>连接</span><button class="btn small ghost" onclick={importPack} disabled={importBusy}>{importBusy ? '导入中…' : '＋ 导入'}</button></div>
-      {#if conns.length === 0}<p class="hint">还没有连接。导入 gcms 平台技能包 zip。</p>{/if}
+      <div class="sec-head"><span>连接</span><span class="sec-acts"><button class="btn small ghost bare" onclick={openCfConnect}>{@render cfMark(13)} Cloudflare</button><button class="btn small ghost bare" onclick={importPack} disabled={importBusy}>{importBusy ? '导入中…' : '＋ 导入'}</button></span></div>
+      {#if conns.length === 0}<p class="hint">还没有连接。导入 gcms 技能包，或连接 Cloudflare。</p>{/if}
       <div class="conn-list">
         {#each conns as c (c.id)}
           <div class="conn-row {activeConnId === c.id ? 'on' : ''}" role="button" tabindex="0"
             onclick={() => selectConn(c.id)} onkeydown={(e) => e.key === 'Enter' && selectConn(c.id)}>
-            <SiteMark size={22} />
+            {#if c.kind === 'cloudflare'}{@render cfMark(22)}{:else}<SiteMark size={22} />{/if}
             <span class="conn-main"><b>{c.name}</b>
-              <small>{c.key_prefix} · {c.key_kind === 'gcmsp_' ? '平台' : '单站'}{#if activeConnId === c.id} · {sites.length} 站点{/if}</small></span>
-            {#if activeConnId === c.id}
+              <small>{c.key_prefix} · {c.kind === 'cloudflare' ? 'Cloudflare' : c.key_kind === 'gcmsp_' ? '平台' : '单站'}{#if activeConnId === c.id && c.kind !== 'cloudflare'} · {sites.length} 站点{/if}</small></span>
+            {#if activeConnId === c.id && c.kind !== 'cloudflare'}
               <button class="icon-btn sm" title="刷新站点（技能包新增站点后点这里）" onclick={(e) => { e.stopPropagation(); refreshSites(); }}>{@render refreshIcon(discoveryLoading)}</button>
             {/if}
             <button class="x sm" title="删除连接" onclick={(e) => { e.stopPropagation(); removeConn(c.id); }}>×</button>
@@ -1131,7 +1583,7 @@
             <span class="brain-main"><b>{r.name}</b>
               <small>{#if !r.st.found}未安装{:else if r.st.logged_in === false}未登录{:else}{r.st.version || '已就绪'}{/if}</small></span>
             <span class="brain-dot"><span class="dot {r.st.found && r.st.logged_in ? 'ok' : r.st.found ? 'warn' : 'off'}"></span></span>
-            {#if r.st.found && r.st.logged_in === false}<button class="authbtn" onclick={() => authorize(r.b)}>去授权{@render extIcon()}</button>{/if}
+            {#if r.st.found && r.st.logged_in === false}<button class="authbtn" onclick={() => authorize(r.b)}>去授权 ↗</button>{/if}
           </div>
           {#if !r.st.found}<p class="hint mono">安装：{r.cmd}</p>{/if}
           {#if r.st.found}
@@ -1164,7 +1616,7 @@
       <div class="brain-row">
         <span class="brain-ic"><AppIcon size={20} /></span>
         <span class="brain-main"><b>GCMS Pilot</b><small>{appVersion ? `v${appVersion}` : ''}{updMsg ? ` · ${updMsg}` : ''}</small></span>
-        <button class="btn small ghost" onclick={runUpdate} disabled={updBusy}>{updBusy ? '检查中…' : '检查更新'}</button>
+        <button class="btn small ghost bare" onclick={runUpdate} disabled={updBusy}>{updBusy ? '检查中…' : '检查更新'}</button>
       </div>
     </div>
   </div>
@@ -1182,6 +1634,106 @@
       <div class="row-end">
         <button class="btn ghost" onclick={() => (keyOpen = false)} disabled={importBusy}>取消</button>
         <button class="btn primary" onclick={confirmKey} disabled={importBusy || !keyVal.trim()}>{importBusy ? '导入中…' : '导入'}</button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- 连接 Cloudflare -->
+{#if cfOpen}
+  <div class="mask" role="presentation" onclick={() => !cfConnecting && !cfVerifying && (cfOpen = false)}></div>
+  <div class="modal cf-modal">
+    <header class="sheet-head"><div><b>连接 {@render cfMark(15)} Cloudflare</b><small class="dim" style="margin-left:10px">token 只进钥匙串，绝不落盘</small></div><button class="x" onclick={() => (cfOpen = false)} disabled={cfConnecting}>×</button></header>
+    <div class="sheet-body">
+      <div class="cf-step">
+        <p class="cf-step-t">① 在 Cloudflare 建一个 API Token（选 <b>Create Custom Token</b>）</p>
+        <button class="cf-perms-toggle" type="button" onclick={() => (cfPermsOpen = !cfPermsOpen)}>
+          <svg class="cf-chev" class:open={cfPermsOpen} width="10" height="10" viewBox="0 0 12 12" fill="none"><path d="M3 4.5 6 7.5 9 4.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>
+          所需权限（5 项）
+        </button>
+        {#if cfPermsOpen}
+          <ul class="cf-perms">
+            <li>Account · Cloudflare Pages · <b>Edit</b></li>
+            <li>Account · Workers Scripts · <b>Edit</b></li>
+            <li>Account · D1 · <b>Edit</b></li>
+            <li>Zone · DNS · <b>Edit</b>（绑定自定义域名用）</li>
+            <li>Zone · Zone · <b>Read</b></li>
+          </ul>
+        {/if}
+        <button class="btn soft" onclick={() => openUrl(CF_TOKEN_URL)}>打开 {@render cfMark(14)} Cloudflare 令牌页 ↗</button>
+      </div>
+      <div class="cf-step">
+        <p class="cf-step-t">② 把生成的 Token 粘到这里：</p>
+        <div class="cf-row">
+          <input class="tin" type="password" bind:value={cfToken} placeholder="粘贴 API Token" autocomplete="off" spellcheck="false" onkeydown={(e) => e.key === 'Enter' && verifyCf()} />
+          <button class="btn small primary" onclick={verifyCf} disabled={cfVerifying || !cfToken.trim()}>{cfVerifying ? '验证中…' : '验证'}</button>
+        </div>
+      </div>
+      {#if cfAccounts.length}
+        <div class="cf-step">
+          <p class="cf-step-t">③ 选择账号 · 给连接起个名：</p>
+          <Dropdown bind:value={cfAccountId} options={cfAccounts.map((a) => ({ value: a.id, label: a.name, sub: a.id }))} placeholder="选择账号" />
+          <input class="tin" style="margin-top:7px" bind:value={cfName} placeholder="连接名称（可留默认）" />
+          {#if cfZones.length}<p class="hint">可管理域名：{cfZones.slice(0, 6).map((z) => z.name).join('、')}{cfZones.length > 6 ? ` 等 ${cfZones.length} 个` : ''}</p>{:else}<p class="hint">没检测到可管理域名——绑定自定义域名需 Zone 权限，可稍后补 token。</p>{/if}
+        </div>
+      {/if}
+      {#if brains?.wrangler && !brains.wrangler.found}{@render wrNote()}{/if}
+      {#if cfErr}<div class="err-note">{cfErr}</div>{/if}
+      <div class="row-end">
+        <button class="btn small ghost" onclick={() => (cfOpen = false)} disabled={cfConnecting}>取消</button>
+        <button class="btn small primary" onclick={confirmCf} disabled={cfConnecting || !cfAccountId}>{cfConnecting ? '连接中…' : '连接'}</button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- 存为模板 -->
+{#if saveTmplOpen}
+  <div class="mask" role="presentation" onclick={() => !saveTmplBusy && (saveTmplOpen = false)}></div>
+  <div class="modal">
+    <header class="sheet-head"><b>存为模板</b><button class="x" onclick={() => (saveTmplOpen = false)} disabled={saveTmplBusy}>×</button></header>
+    <div class="sheet-body">
+      <p class="hint">当前项目会被复制成模板（自动去掉密钥、依赖、构建产物），之后可引用它快速建站。</p>
+      <input class="tin" bind:value={saveTmplName} placeholder="模板名，如 minimal-landing" spellcheck="false" />
+      <input class="tin" style="margin-top:7px" bind:value={saveTmplDesc} placeholder="一句话描述（可选）" />
+      {#if saveTmplErr}<div class="err-note">{saveTmplErr}</div>{/if}
+      <div class="row-end">
+        <button class="btn ghost" onclick={() => (saveTmplOpen = false)} disabled={saveTmplBusy}>取消</button>
+        <button class="btn primary" onclick={confirmSaveTmpl} disabled={saveTmplBusy || !saveTmplName.trim()}>{saveTmplBusy ? '保存中…' : '存为模板'}</button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- 用模板建站 -->
+{#if useTmplOpen}
+  <div class="mask" role="presentation" onclick={() => !useTmplBusy && (useTmplOpen = false)}></div>
+  <div class="modal">
+    <header class="sheet-head"><div><b>用模板建站</b><small class="dim" style="margin-left:10px">{useTmplName}</small></div><button class="x" onclick={() => (useTmplOpen = false)} disabled={useTmplBusy}>×</button></header>
+    <div class="sheet-body">
+      {#if !isCfConn}<p class="hint warn-text">请先在左下角切到一个 Cloudflare 连接，再用模板建站。</p>{/if}
+      <p class="hint">给新项目起个名，模板文件会拷进去，然后在对话里描述你的定制。</p>
+      <input class="tin" bind:value={useTmplProject} placeholder="新项目名，如 my-landing" spellcheck="false" onkeydown={(e) => e.key === 'Enter' && confirmUseTmpl()} />
+      {#if useTmplErr}<div class="err-note">{useTmplErr}</div>{/if}
+      <div class="row-end">
+        <button class="btn ghost" onclick={() => (useTmplOpen = false)} disabled={useTmplBusy}>取消</button>
+        <button class="btn primary" onclick={confirmUseTmpl} disabled={useTmplBusy || !useTmplProject.trim() || !isCfConn}>{useTmplBusy ? '创建中…' : '创建项目'}</button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- 提示词 新建/编辑 -->
+{#if promptEditOpen}
+  <div class="mask" role="presentation" onclick={() => (promptEditOpen = false)}></div>
+  <div class="modal wide">
+    <header class="sheet-head"><b>{promptEditId ? '编辑提示词' : '新增提示词'}</b><button class="x" onclick={() => (promptEditOpen = false)}>×</button></header>
+    <div class="sheet-body">
+      <input class="tin" bind:value={promptEditTitle} placeholder="标题，如 手冲咖啡落地页" spellcheck="false" />
+      <textarea class="tin" style="margin-top:7px; min-height:150px; line-height:1.5" bind:value={promptEditBody} placeholder="写清楚你要什么样的网站：给谁看、要哪些区块、风格方向，合适的话让它把表单存进 D1，结尾让它先给方案。"></textarea>
+      <div class="row-end">
+        <button class="btn ghost" onclick={() => (promptEditOpen = false)}>取消</button>
+        <button class="btn primary" onclick={savePrompt} disabled={!promptEditTitle.trim() || !promptEditBody.trim()}>保存</button>
       </div>
     </div>
   </div>
@@ -1312,22 +1864,27 @@
   .site-grp:hover .site-grp-name { color: var(--accent); }
   .site-grp-chev { color: var(--faint); flex: none; transition: transform .12s; }
   .site-grp-chev.collapsed { transform: rotate(-90deg); }
-  .site-grp-name { flex: 1; min-width: 0; font-size: 12.5px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .site-grp-count { flex: none; font-size: 10.5px; color: var(--faint); }
+  .site-grp-name { flex: 0 1 auto; max-width: 58%; min-width: 0; font-size: 12.5px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .site-grp-host { flex: 0 1 auto; min-width: 0; font-size: 10.5px; color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .th-site-link { background: none; border: none; padding: 0; margin: 0; color: var(--accent); cursor: pointer; font: inherit; }
+  .th-site-link:hover { text-decoration: underline; }
   /* 任务类型子组标签 */
   .subgrp { font-size: 10px; font-weight: 600; letter-spacing: .04em; color: var(--faint); padding: 1px 8px 1px 20px; }
-  .convo { position: relative; display: flex; align-items: center; gap: 6px; border-radius: 8px; padding: 7px 10px 7px 24px; cursor: pointer; }
+  .convo { position: relative; display: flex; align-items: center; gap: 6px; border-radius: 8px; margin: 0 8px; padding: 1px 6px 1px 16px; cursor: pointer; }
   .convo:hover { background: #f1efe9; }
   .convo.on { background: #e9e7e0; }
-  .convo-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-  .convo-title { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .convo-meta { font-size: 11px; color: var(--dim); display: flex; align-items: center; gap: 4px; white-space: nowrap; overflow: hidden; }
+  .convo-body { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; }
+  .convo-bi { flex: none; display: inline-flex; align-items: center; }
+  .convo-title { flex: 1; min-width: 0; font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .convo-when { flex: none; font-size: 11px; color: var(--dim); }
   .cmono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; }
   .cdot { color: var(--faint); }
   .mini-run { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: pulse 1.1s infinite; flex: none; }
-  .convo-x { background: none; border: none; color: var(--faint); font-size: 16px; line-height: 1; opacity: 0; padding: 1px 4px; border-radius: 5px; cursor: pointer; flex: none; }
-  .convo:hover .convo-x { opacity: 1; }
-  .convo-x:hover { color: var(--err); background: #fff; }
+  .mini-permit { font-size: 10px; font-weight: 600; color: #b45309; background: #faf1d8; padding: 0 5px; border-radius: 4px; flex: none; }
+  .convo-x { display: none; background: none; border: none; color: var(--faint); font-size: 16px; line-height: 1; padding: 1px 2px 1px 4px; border-radius: 5px; cursor: pointer; flex: none; }
+  .convo:hover .convo-x, .convo:focus-within .convo-x { display: block; }
+  .convo:hover .convo-when, .convo:focus-within .convo-when { display: none; }
+  .convo-x:hover { color: var(--dim); }
 
   .rail-foot { width: 100%; display: flex; align-items: center; gap: 8px; padding: 8px 12px; border: none; border-top: 1px solid var(--border); background: none; cursor: pointer; text-align: left; -webkit-appearance: none; appearance: none; box-shadow: none; }
   .rail-foot:focus, .rail-foot:active { outline: none; box-shadow: none; }
@@ -1475,7 +2032,7 @@
   /* 命令列表：默认收起，点击展开 */
   .cmds { margin-bottom: 9px; }
   .cmds summary { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; list-style: none; width: fit-content;
-    font-size: 12px; color: var(--dim); background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 4px 10px; user-select: none; }
+    font-size: 12px; color: var(--dim); border-radius: 8px; padding: 4px 8px; margin-left: -8px; user-select: none; }
   .cmds summary::-webkit-details-marker { display: none; }
   .cmds summary:hover { background: #f1efe9; }
   .cmds .cmd-ic { color: var(--accent); flex: none; }
@@ -1560,9 +2117,96 @@
   .btn.soft { display: inline-flex; align-items: center; gap: 6px; padding: 3px 12px; background: #fff; color: var(--text); border: 1px solid var(--border2); border-radius: 9px; font-weight: 500; }
   .btn.soft:hover { background: var(--rail); border-color: #cfccc2; }
   .btn.soft .plus-ic { color: var(--dim); }
+  /* 无边框动作按钮（头部次要动作）：去边框去底，仅 hover 有淡底 */
+  .btn.bare { border: none; background: none; }
+  .btn.bare:hover { background: var(--rail); border-color: transparent; }
   .authbtn { display: inline-flex; align-items: center; gap: 3px; background: none; border: none; padding: 1px 2px; color: var(--accent); font-size: 12px; font-weight: 550; line-height: 1; cursor: pointer; }
   .authbtn:hover { color: var(--accent-h); }
-  .authbtn .ext-ic { flex: none; }
+  .permit-card { border: 1px solid var(--border2); border-radius: 11px; overflow: hidden; background: #fff; max-width: 480px; }
+  .permit-card.danger { border-color: #f0d9a8; }
+  .permit-head { display: flex; align-items: center; gap: 7px; padding: 8px 12px; font-size: 12px; font-weight: 600; color: var(--text); background: #f6f5f1; border-bottom: 0.5px solid var(--border); }
+  .permit-card.danger .permit-head { color: #8a5a08; background: #fdf6e6; border-bottom-color: #f0e3c4; }
+  .permit-dot { width: 7px; height: 7px; border-radius: 50%; background: #b45309; flex: none; }
+  .permit-tag { margin-left: auto; font-size: 10px; font-weight: 600; color: #b45309; background: #faf1d8; padding: 1px 7px; border-radius: 5px; }
+  .permit-meta { padding: 9px 12px 0; font-size: 11px; color: var(--dim); }
+  .permit-cmd { display: block; margin: 6px 12px 0; font-size: 12px; background: #17130f; color: #e8dcc8; padding: 8px 10px; border-radius: 7px; white-space: pre-wrap; word-break: break-all; }
+  .permit-act { display: flex; gap: 8px; padding: 10px 12px 12px; }
+  .permit-act .btn { flex: 1; }
+  .cf-mark { flex: none; display: inline-block; vertical-align: middle; }
+  .hero-btns { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+  .sec-acts { display: inline-flex; gap: 6px; align-items: center; }
+  .sec-acts .btn { display: inline-flex; align-items: center; gap: 5px; }
+  .cf-modal { width: min(440px, 94vw); max-height: 88vh; }
+  .cf-modal .tin { padding: 6px 10px; font-size: 12.5px; }
+  .cf-step { border-top: 0.5px solid var(--border); padding-top: 12px; margin-top: 6px; }
+  .cf-step:first-child { border-top: none; padding-top: 0; margin-top: 0; }
+  .cf-step-t { font-size: 13px; color: var(--text); margin: 0 0 7px; line-height: 1.5; }
+  .cf-perms { margin: 0 0 9px; padding-left: 0; list-style: none; display: flex; flex-direction: column; gap: 3px; }
+  .cf-perms li { font-size: 12px; color: var(--dim); padding-left: 13px; position: relative; }
+  .cf-perms li::before { content: '·'; position: absolute; left: 4px; color: #f6821f; font-weight: 700; }
+  .cf-perms li b { color: var(--text); font-weight: 550; }
+  .cf-row { display: flex; gap: 8px; }
+  .cf-row .tin { flex: 1; }
+  .wr-note { display: flex; align-items: center; gap: 7px; width: fit-content; max-width: 100%; margin-top: 12px; font-size: 12px; color: #8a5a08; }
+  .wr-note .wr-ic { flex: none; color: #d9a400; }
+  .wr-note span { color: #8a5a08; }
+  .wr-btn { flex: none; border: none; background: #d9a400; color: #fff; font-size: 11px; font-weight: 500; padding: 3px 9px; border-radius: 6px; cursor: pointer; }
+  .wr-btn:hover { background: #c08f00; }
+  .wr-btn:disabled { opacity: .6; cursor: default; }
+  .cf-perms-toggle { display: inline-flex; align-items: center; gap: 5px; background: none; border: none; padding: 0 0 8px; font-size: 12px; color: var(--dim); cursor: pointer; }
+  .cf-perms-toggle:hover { color: var(--text); }
+  .cf-chev { flex: none; transition: transform .12s; }
+  .cf-chev.open { transform: rotate(180deg); }
+  .cf-proj-in { border: none; background: none; font-size: 13px; color: var(--text); padding: 3px 6px; min-width: 150px; outline: none; }
+  .cf-proj-in::placeholder { color: #b3ada2; }
+  .cb-prev { position: relative; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; font-size: 12px; padding: 3px 8px; border: none; background: none; color: var(--accent); cursor: pointer; font-weight: 500; border-radius: 6px; }
+  .cb-prev:hover:not(:disabled) { background: var(--rail); }
+  .cb-prev:disabled { opacity: .45; cursor: default; }
+  .cb-prev.dim { color: var(--dim); font-weight: 400; }
+  .cb-prev svg { flex: none; }
+  /* 自定义悬停提示（不用系统 title） */
+  .cb-prev[data-tip]:hover::after { content: attr(data-tip); position: absolute; bottom: calc(100% + 7px); left: 0; background: #26241f; color: #fff; font-size: 11px; font-weight: 400; line-height: 1.4; padding: 6px 9px; border-radius: 7px; width: max-content; max-width: 220px; white-space: normal; z-index: 40; pointer-events: none; box-shadow: 0 5px 16px rgba(0, 0, 0, .18); }
+  .cf-bar { max-width: 760px; margin: 0 auto 6px; display: flex; align-items: center; gap: 2px; flex-wrap: wrap; }
+  .attach-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 10px 14px 2px; }
+  .attach-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 190px; padding: 3px 4px 3px 6px; background: var(--panel); border: 1px solid var(--border2); border-radius: 8px; font-size: 12px; }
+  .attach-img { width: 24px; height: 24px; object-fit: cover; border-radius: 4px; flex: none; }
+  .attach-ic { color: var(--dim); flex: none; display: inline-flex; }
+  .attach-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+  .attach-x { flex: none; border: none; background: none; color: var(--dim); cursor: pointer; font-size: 14px; line-height: 1; padding: 0 2px; }
+  .attach-x:hover { color: var(--err); }
+  .attach-loading { font-size: 11px; color: var(--dim); }
+  /* 提示词库 */
+  .prompt-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(272px, 1fr)); gap: 12px; }
+  .prompt-card { display: flex; flex-direction: column; background: var(--card); border: 1px solid var(--border2); border-radius: 12px; padding: 13px 14px 11px; }
+  .prompt-top { display: flex; align-items: center; gap: 7px; margin-bottom: 6px; }
+  .prompt-title { font-size: 13.5px; font-weight: 600; color: var(--text); flex: 1; min-width: 0; }
+  .prompt-tag { flex: none; font-size: 10px; font-weight: 600; color: var(--accent); background: #eae7ff; padding: 1px 6px; border-radius: 5px; }
+  .prompt-body { margin: 0 0 11px; font-size: 12.5px; line-height: 1.5; color: var(--dim); display: -webkit-box; -webkit-line-clamp: 5; line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden; }
+  .prompt-acts { display: flex; align-items: center; gap: 4px; margin-top: auto; }
+  .prompt-act { position: relative; width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border: none; border-radius: 8px; background: none; color: var(--dim); cursor: pointer; }
+  .prompt-act:hover { color: var(--text); background: var(--rail); }
+  .prompt-act.primary { background: var(--accent); color: #fff; }
+  .prompt-act.primary:hover { background: var(--accent-h); color: #fff; }
+  .prompt-act svg { flex: none; }
+  .prompt-act[data-tip]:hover::after { content: attr(data-tip); position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%); background: #26241f; color: #fff; font-size: 10.5px; line-height: 1.35; padding: 4px 8px; border-radius: 6px; width: max-content; z-index: 40; pointer-events: none; box-shadow: 0 5px 16px rgba(0, 0, 0, .18); }
+  .tmpl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+  .tmpl-card { display: flex; flex-direction: column; background: var(--card); border: 1px solid var(--border2); border-radius: 12px; overflow: hidden; }
+  .tmpl-thumb { position: relative; height: 158px; overflow: hidden; background: #fff; display: flex; align-items: center; justify-content: center; border-bottom: 1px solid var(--border); }
+  .tmpl-frame { position: absolute; top: 0; left: 0; width: 1280px; height: 860px; border: 0; transform: scale(0.23); transform-origin: top left; pointer-events: none; background: #fff; }
+  .tmpl-letter { font-size: 40px; font-weight: 600; color: #a03c2b; }
+  .tmpl-hover { position: absolute; inset: 0; display: flex; align-items: flex-end; justify-content: center; gap: 8px; padding: 10px; background: linear-gradient(to top, rgba(0, 0, 0, .4), rgba(0, 0, 0, .05) 45%, transparent 70%); opacity: 0; transition: opacity .12s; }
+  .tmpl-card:hover .tmpl-hover { opacity: 1; }
+  .tmpl-act { position: relative; width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center; border: none; border-radius: 7px; background: rgba(255, 255, 255, .95); color: var(--text); cursor: pointer; box-shadow: 0 2px 8px rgba(0, 0, 0, .15); }
+  .tmpl-act.primary { background: var(--accent); color: #fff; }
+  .tmpl-act:hover { transform: translateY(-1px); }
+  .tmpl-act svg { flex: none; width: 13px; height: 13px; }
+  .tmpl-act[data-tip]:hover::after { content: attr(data-tip); position: absolute; bottom: calc(100% + 7px); left: 50%; transform: translateX(-50%); background: #26241f; color: #fff; font-size: 10.5px; line-height: 1.35; padding: 4px 8px; border-radius: 6px; width: max-content; z-index: 40; pointer-events: none; box-shadow: 0 5px 16px rgba(0, 0, 0, .18); }
+  .tmpl-body { padding: 10px 12px 12px; flex: 1; }
+  .tmpl-body b { font-size: 13px; }
+  .tmpl-sub { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-top: 4px; }
+  .tmpl-desc { flex: 1; min-width: 0; font-size: 12px; color: var(--dim); line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tmpl-meta { flex: none; font-size: 11px; color: #b3ada2; }
+  .site-grp-fav { width: 14px; height: 14px; border-radius: 3px; flex: none; object-fit: cover; }
   .plus-ic { flex: none; }
   .icon-btn { background: none; border: none; cursor: pointer; padding: 6px; border-radius: 8px; color: var(--dim); display: inline-flex; align-items: center; justify-content: center; }
   .icon-btn:hover { background: #f1efe9; color: var(--text); }
@@ -1587,16 +2231,16 @@
   .conn-row:hover { background: #faf9f6; }
   .conn-row.on { border-color: #cfc9ec; background: #f7f6ff; }
   .conn-row :global(.sm) { border-radius: 6px; }
-  .conn-main { flex: 1; min-width: 0; } .conn-main b { display: block; font-size: 13.5px; } .conn-main small { color: var(--dim); font-size: 11px; }
+  .conn-main { flex: 1; min-width: 0; } .conn-main b { display: block; font-size: 13.5px; } .conn-main small { display: block; color: var(--dim); font-size: 11px; }
   .icon-btn.sm { padding: 4px; border-radius: 7px; }
   .brain-row { display: flex; align-items: center; gap: 11px; padding: 0; }
   /* 状态点放进与 .icon-btn 同宽(27px)的居中盒，右缘、图标中心都与本地模型区的刷新图标对齐。 */
   .brain-dot { flex: none; width: 27px; display: inline-flex; align-items: center; justify-content: center; }
   .brain-ic { flex: none; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; }
-  .brain-main { flex: 1; min-width: 0; } .brain-main b { display: block; font-size: 13.5px; line-height: 1.15; } .brain-main small { color: var(--dim); font-size: 11px; line-height: 1.1; }
+  .brain-main { flex: 1; min-width: 0; } .brain-main b { display: block; font-size: 13.5px; line-height: 1.15; } .brain-main small { display: block; color: var(--dim); font-size: 11px; line-height: 1.1; }
   /* 自定义模型：折叠管理器（对齐大脑名，缩进 33px = 图标 22 + gap 11） */
   /* 大脑列表：整列作为一个 sheet-body 子项，块间距自控（不吃 sheet-body 的 7px gap）。 */
-  .brains-list { display: flex; flex-direction: column; gap: 4px; }
+  .brains-list { display: flex; flex-direction: column; gap: 14px; }
   /* 每个大脑（行 + 自定义模型）成一块，块内贴紧。 */
   .brain-block { display: flex; flex-direction: column; gap: 0; }
   .cust { margin: 0 0 0 33px; }

@@ -12,14 +12,24 @@ use crate::keychain;
 pub struct Connection {
     pub id: String,
     pub name: String,
+    /// 连接类型：gcms（导入技能包）| cloudflare（CF token 建站）。旧连接缺省即 gcms。
+    #[serde(default = "default_kind")]
+    pub kind: String,
     pub api_base: String,
-    /// 技能目录（gcms.js 的 cwd），绝对路径。
+    /// 技能目录（gcms.js 的 cwd）；CF 连接则是该连接的工作区目录（技能包 + 项目都在其下）。
     pub skill_dir: String,
     /// 仅用于展示的 key 前缀，完整 key 在 Keychain。
     pub key_prefix: String,
-    /// gcmsp_（平台多站）或 gcms_（单站）。
+    /// gcmsp_（平台多站）/ gcms_（单站）/ cf_token（Cloudflare）。
     pub key_kind: String,
+    /// Cloudflare 账号 id（仅 kind=cloudflare）；gcms 连接为空。
+    #[serde(default)]
+    pub account_id: String,
     pub created_at: String,
+}
+
+fn default_kind() -> String {
+    "gcms".into()
 }
 
 /// 导入结果：包里没有嵌密钥且调用方也没提供时，返回 NeedsKey 让 UI 弹输入框。
@@ -145,10 +155,12 @@ impl ConnStore {
                 name: name
                     .filter(|s| !s.trim().is_empty())
                     .unwrap_or_else(|| default_name(&api_base)),
+                kind: "gcms".into(),
                 api_base,
                 skill_dir: skill_dir.to_string_lossy().into_owned(),
                 key_prefix: prefix,
                 key_kind: key_kind.to_string(),
+                account_id: String::new(),
                 created_at: chrono_now(),
             };
             let mut conns = self.list();
@@ -163,6 +175,51 @@ impl ConnStore {
             let _ = keychain::delete_key(&conn_id);
         }
         result
+    }
+
+    /// 连接 Cloudflare：token 进钥匙串，建该连接的工作区目录，写 connections.json。
+    /// 调用方应已先验证过 token（lib.rs 的 connect_cloudflare 会验证）。
+    pub fn add_cloudflare(
+        &self,
+        name: &str,
+        token: &str,
+        account_id: &str,
+    ) -> Result<Connection, String> {
+        let token = token.trim();
+        if token.is_empty() {
+            return Err("Token 不能为空".into());
+        }
+        let prefix = keychain::key_prefix(token);
+        // 去重：同账号 + 同 token 前缀视为同一连接。
+        if let Some(dup) = self.list().iter().find(|c| {
+            c.kind == "cloudflare" && c.account_id == account_id && c.key_prefix == prefix
+        }) {
+            return Err(format!("已存在相同的 Cloudflare 连接「{}」。", dup.name));
+        }
+        let conn_id = uuid::Uuid::new_v4().to_string();
+        // 每个 CF 连接一个工作区目录（内置技能包 + 站点项目都放这下面；Slice 3 填充）。
+        let dir = self.packs_dir.join(&conn_id);
+        fs::create_dir_all(&dir).map_err(|e| format!("create cf workspace: {e}"))?;
+        keychain::set_key(&conn_id, token)?;
+        let conn = Connection {
+            id: conn_id.clone(),
+            name: if name.trim().is_empty() { "Cloudflare".into() } else { name.trim().into() },
+            kind: "cloudflare".into(),
+            api_base: String::new(),
+            skill_dir: dir.to_string_lossy().into_owned(),
+            key_prefix: prefix,
+            key_kind: "cf_token".into(),
+            account_id: account_id.trim().to_string(),
+            created_at: chrono_now(),
+        };
+        let mut conns = self.list();
+        conns.push(conn.clone());
+        if let Err(e) = self.save(&conns) {
+            let _ = keychain::delete_key(&conn_id);
+            let _ = fs::remove_dir_all(&dir);
+            return Err(e);
+        }
+        Ok(conn)
     }
 
     pub fn remove(&self, id: &str) -> Result<(), String> {

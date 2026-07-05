@@ -7,11 +7,13 @@ export interface Prefs {
   customClaudeIds: string[];
   customCodexIds: string[];
   taskType: TaskType;
+  /** 权限档位默认值：plan | ask | auto | full。默认 full（保持既有全自动，不改现有 gcms 行为）。 */
+  perm: string;
 }
 
 const KEY = 'gcms.pilot.prefs';
 
-export const DEFAULT_PREFS: Prefs = { brain: 'claude', model: 'sonnet', customClaudeIds: [], customCodexIds: [], taskType: 'article' };
+export const DEFAULT_PREFS: Prefs = { brain: 'claude', model: 'sonnet', customClaudeIds: [], customCodexIds: [], taskType: 'article', perm: 'full' };
 
 export function loadPrefs(): Prefs {
   try {

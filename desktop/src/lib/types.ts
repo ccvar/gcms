@@ -1,10 +1,14 @@
 export interface Connection {
   id: string;
   name: string;
+  /** gcms（导入技能包）| cloudflare（CF token 建站）。旧连接缺省即 gcms。 */
+  kind: string;
   api_base: string;
   skill_dir: string;
   key_prefix: string;
   key_kind: string;
+  /** Cloudflare 账号 id（仅 kind=cloudflare）。 */
+  account_id: string;
   created_at: string;
 }
 
@@ -43,6 +47,8 @@ export interface BrainStatus {
 export interface BrainsInfo {
   claude: BrainStatus;
   codex: BrainStatus;
+  /** Cloudflare 部署工具（wrangler）；用 env token，logged_in 恒为 null。 */
+  wrangler: BrainStatus;
   path_env: string;
 }
 
@@ -81,6 +87,8 @@ export interface Conversation {
   task_type: TaskType;
   brain: Brain;
   model: string;
+  /** 权限档位：plan | ask | auto | full。空串＝旧会话＝full。 */
+  perm_mode: string;
   session_ref: string;
   title: string;
   messages: Message[];

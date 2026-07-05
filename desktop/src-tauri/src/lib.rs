@@ -1,14 +1,18 @@
 mod agent;
 mod brains;
+mod cf;
+mod cf_templates;
 mod convo;
 mod discovery;
 mod keychain;
 mod pack;
 mod path_env;
+mod permit;
 mod scheduled;
 mod tasks;
 
 use std::collections::HashSet;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::ipc::Channel;
@@ -27,6 +31,10 @@ struct AppState {
     runs: agent::RunRegistry,
     /// 正在跑的定时任务 id（调度器与 run_task_now 共享，防止同一任务被重复触发）。
     firing: Arc<Mutex<HashSet<String>>>,
+    /// 应用数据目录（权限钩子资产 + 待批请求落在 <data_dir>/permit 下）。
+    data_dir: PathBuf,
+    /// 当前运行的本地预览（wrangler dev）进程；一次只跑一个。
+    preview: Arc<Mutex<Option<PreviewHandle>>>,
 }
 
 fn now_secs() -> u64 {
@@ -34,6 +42,44 @@ fn now_secs() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+/// 项目 slug：ASCII 小写字母/数字/连字符（CF 建站的 site_slug 复用为项目名）。
+fn cf_project_slug(s: &str) -> String {
+    let slug: String = s
+        .trim()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' })
+        .collect();
+    let slug = slug.trim_matches('-').to_string();
+    if slug.is_empty() { "site".into() } else { slug }
+}
+
+/// 附件文件名消毒：只留安全字符，去路径，限长。
+fn sanitize_filename(name: &str) -> String {
+    let base = std::path::Path::new(name)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("file");
+    let cleaned: String = base
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' { c } else { '_' })
+        .collect();
+    let cleaned: String = cleaned.trim_matches('.').chars().take(80).collect();
+    if cleaned.is_empty() { "file".into() } else { cleaned }
+}
+
+/// 本轮 cwd：CF 连接＝该连接工作区下的项目目录（按需创建）；gcms＝技能包目录（返回空由 run_turn 兜底）。
+fn resolve_work_dir(conn: &pack::Connection, site_slug: &str) -> Result<String, String> {
+    if conn.kind == "cloudflare" {
+        let dir = std::path::Path::new(&conn.skill_dir)
+            .join("projects")
+            .join(cf_project_slug(site_slug));
+        std::fs::create_dir_all(&dir).map_err(|e| format!("建项目目录失败: {e}"))?;
+        Ok(dir.to_string_lossy().into_owned())
+    } else {
+        Ok(String::new())
+    }
 }
 
 #[tauri::command]
@@ -80,6 +126,421 @@ async fn detect_brains() -> Result<brains::BrainsInfo, String> {
     Ok(brains::detect().await)
 }
 
+/// 验证 Cloudflare API Token 并返回可用账号 + 域名（UI 据此让用户选默认账号）。
+#[tauri::command]
+async fn verify_cf_token(token: String) -> Result<cf::CfVerify, String> {
+    cf::verify_token(&token).await
+}
+
+/// 连接 Cloudflare：再验证一遍 token（防被吊销）→ 存钥匙串 + 建工作区 + 写 connections.json。
+#[tauri::command]
+async fn connect_cloudflare(
+    state: tauri::State<'_, AppState>,
+    name: String,
+    token: String,
+    account_id: String,
+) -> Result<pack::Connection, String> {
+    cf::verify_token(&token).await?;
+    let store = state.conns.clone();
+    tauri::async_runtime::spawn_blocking(move || store.add_cloudflare(&name, &token, &account_id))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// 把粘贴/拖拽的文件存进当前会话的工作目录 uploads/ 下，返回相对路径（AI 可直接读取）。
+/// CF 会话＝项目目录；gcms 会话＝技能包目录。
+#[tauri::command]
+fn save_attachment(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    project: String,
+    filename: String,
+    data: Vec<u8>,
+) -> Result<String, String> {
+    if data.len() > 25_000_000 {
+        return Err("文件太大（上限 25MB）".into());
+    }
+    let conn = state.conns.get(&conn_id)?;
+    let dir = {
+        let w = resolve_work_dir(&conn, &project)?;
+        if w.is_empty() { conn.skill_dir.clone() } else { w }
+    };
+    if dir.is_empty() {
+        return Err("没有可用的工作目录".into());
+    }
+    let up = std::path::Path::new(&dir).join("uploads");
+    std::fs::create_dir_all(&up).map_err(|e| format!("建 uploads 目录失败: {e}"))?;
+    let safe = sanitize_filename(&filename);
+    let mut target = up.join(&safe);
+    if target.exists() {
+        let p = std::path::Path::new(&safe);
+        let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("file");
+        let ext = p
+            .extension()
+            .and_then(|s| s.to_str())
+            .map(|e| format!(".{e}"))
+            .unwrap_or_default();
+        for i in 1..1000 {
+            let cand = up.join(format!("{stem}-{i}{ext}"));
+            if !cand.exists() {
+                target = cand;
+                break;
+            }
+        }
+    }
+    std::fs::write(&target, &data).map_err(|e| format!("保存附件失败: {e}"))?;
+    let name = target.file_name().and_then(|n| n.to_str()).unwrap_or(&safe).to_string();
+    Ok(format!("uploads/{name}"))
+}
+
+/// 列出某 CF 连接工作区下已有的站点项目（<workspace>/projects/* 目录名）。
+#[tauri::command]
+fn list_cf_projects(state: tauri::State<'_, AppState>, conn_id: String) -> Vec<String> {
+    let Ok(conn) = state.conns.get(&conn_id) else { return vec![] };
+    if conn.kind != "cloudflare" {
+        return vec![];
+    }
+    let dir = std::path::Path::new(&conn.skill_dir).join("projects");
+    let Ok(rd) = std::fs::read_dir(&dir) else { return vec![] };
+    let mut v: Vec<String> = rd
+        .flatten()
+        .filter(|e| e.path().is_dir())
+        .filter_map(|e| e.file_name().to_str().map(|s| s.to_string()))
+        .collect();
+    v.sort();
+    v
+}
+
+/// 项目是否已经建出可预览/部署的内容（有 index.html / *.html / package.json）。
+/// 前端据此在"还只给了方案、没写文件"时把预览/部署置灰，避免点太早。
+#[tauri::command]
+fn cf_project_ready(state: tauri::State<'_, AppState>, conn_id: String, project: String) -> bool {
+    let Ok(conn) = state.conns.get(&conn_id) else { return false };
+    if conn.kind != "cloudflare" {
+        return false;
+    }
+    let dir = std::path::Path::new(&conn.skill_dir)
+        .join("projects")
+        .join(cf_project_slug(&project));
+    fn has_site(dir: &std::path::Path, depth: u8) -> bool {
+        let Ok(rd) = std::fs::read_dir(dir) else { return false };
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let p = e.path();
+            if p.is_file() {
+                if name == "index.html" || name == "package.json" || name.ends_with(".html") {
+                    return true;
+                }
+            } else if depth < 3 && p.is_dir() && !name.starts_with('.') && name != "node_modules" {
+                if has_site(&p, depth + 1) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+    has_site(&dir, 0)
+}
+
+// ---- 本地预览（wrangler pages dev + 预览窗口）----
+
+struct PreviewHandle {
+    child: std::process::Child,
+    #[allow(dead_code)]
+    url: String,
+    #[allow(dead_code)]
+    project: String,
+}
+
+const PREVIEW_DEFAULT_PORT: u16 = 8788;
+
+/// pilot.json → (dev 命令, 产物目录, 预览端口)。缺省 dev=None、out=""、port=8788。
+/// 自定义 dev 命令监听的端口必须在 pilot.json 的 "port" 里写对，否则预览窗打不开。
+fn read_pilot_json(dir: &std::path::Path) -> (Option<String>, String, u16) {
+    let Ok(raw) = std::fs::read(dir.join("pilot.json")) else {
+        return (None, String::new(), PREVIEW_DEFAULT_PORT);
+    };
+    let Ok(v) = serde_json::from_slice::<serde_json::Value>(&raw) else {
+        return (None, String::new(), PREVIEW_DEFAULT_PORT);
+    };
+    let dev = v
+        .get("dev")
+        .and_then(|x| x.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+    let out = v.get("out").and_then(|x| x.as_str()).unwrap_or("").trim().to_string();
+    let port = v
+        .get("port")
+        .and_then(|x| x.as_u64())
+        .filter(|p| *p >= 1 && *p <= 65535)
+        .map(|p| p as u16)
+        .unwrap_or(PREVIEW_DEFAULT_PORT);
+    (dev, out, port)
+}
+
+/// 杀掉当前预览进程树并回收（避免僵尸）。
+fn stop_preview(state: &AppState) {
+    if let Some(mut h) = state.preview.lock().unwrap().take() {
+        let pid = h.child.id();
+        #[cfg(unix)]
+        {
+            let _ = std::process::Command::new("kill")
+                .args(["-9", &format!("-{pid}")])
+                .status();
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            let _ = std::process::Command::new("taskkill")
+                .args(["/T", "/F", "/PID", &pid.to_string()])
+                .creation_flags(0x0800_0000)
+                .status();
+        }
+        let _ = h.child.kill();
+        let _ = h.child.wait();
+    }
+}
+
+fn open_preview_window(app: &AppHandle, url: &str) -> Result<(), String> {
+    if let Some(w) = app.get_webview_window("preview") {
+        let _ = w.eval(&format!("window.location.replace('{url}')"));
+        let _ = w.show();
+        let _ = w.set_focus();
+        return Ok(());
+    }
+    let parsed = url.parse().map_err(|e| format!("预览地址解析失败: {e}"))?;
+    tauri::WebviewWindowBuilder::new(app, "preview", tauri::WebviewUrl::External(parsed))
+        .title("本地预览")
+        .inner_size(1024.0, 728.0)
+        .build()
+        .map_err(|e| format!("打开预览窗口失败: {e}"))?;
+    Ok(())
+}
+
+/// 启动本地预览：在项目目录里跑 dev（pilot.json 的 dev，或 `wrangler pages dev`），开预览窗。
+#[tauri::command]
+async fn cf_preview_start(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    project: String,
+) -> Result<String, String> {
+    let conn = state.conns.get(&conn_id)?;
+    if conn.kind != "cloudflare" {
+        return Err("这个连接不是 Cloudflare".into());
+    }
+    let token = keychain::get_key(&conn.id)?;
+    let dir = resolve_work_dir(&conn, &project)?;
+    let (dev_cmd, out, port) = read_pilot_json(std::path::Path::new(&dir));
+    stop_preview(&state); // 一次只跑一个预览
+    let shell_cmd = match dev_cmd {
+        Some(d) => d,
+        None => format!(
+            "wrangler pages dev {} --ip 127.0.0.1 --port {}",
+            if out.is_empty() { ".".to_string() } else { out },
+            port
+        ),
+    };
+    #[cfg(windows)]
+    let mut c = {
+        let mut c = std::process::Command::new("cmd");
+        c.arg("/C").arg(&shell_cmd);
+        c
+    };
+    #[cfg(not(windows))]
+    let mut c = {
+        let mut c = std::process::Command::new("sh");
+        c.arg("-c").arg(&shell_cmd);
+        c
+    };
+    c.current_dir(&dir).env("CLOUDFLARE_API_TOKEN", &token);
+    if !conn.account_id.is_empty() {
+        c.env("CLOUDFLARE_ACCOUNT_ID", &conn.account_id);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        c.process_group(0); // 整组，停预览时连 node 子进程一起杀
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        c.creation_flags(0x0800_0000);
+    }
+    let child = c.spawn().map_err(|e| format!("启动预览失败（确认已装 wrangler）: {e}"))?;
+    let url = format!("http://127.0.0.1:{port}");
+    *state.preview.lock().unwrap() = Some(PreviewHandle {
+        child,
+        url: url.clone(),
+        project,
+    });
+    // dev server 起来要一两秒，稍等再开窗（起不来窗里刷新即可）。
+    tokio::time::sleep(Duration::from_millis(2500)).await;
+    open_preview_window(&app, &url)?;
+    Ok(url)
+}
+
+#[tauri::command]
+fn cf_preview_stop(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<(), String> {
+    stop_preview(&state);
+    if let Some(w) = app.get_webview_window("preview") {
+        let _ = w.close();
+    }
+    Ok(())
+}
+
+/// 预览一个模板：在模板目录里跑 wrangler pages dev + 开预览窗，看它真实的样子。
+#[tauri::command]
+async fn cf_preview_template(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+    slug: String,
+) -> Result<String, String> {
+    if slug.is_empty() || !slug.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return Err("非法模板名".into());
+    }
+    let dir = state.data_dir.join("templates").join(&slug);
+    if !dir.is_dir() {
+        return Err("模板不存在".into());
+    }
+    let (dev_cmd, out, port) = read_pilot_json(&dir);
+    // 静态预览不一定需要 token；有 CF 连接就顺手带上（模板含绑定时用得到）。
+    let token = state
+        .conns
+        .list()
+        .iter()
+        .find(|c| c.kind == "cloudflare")
+        .and_then(|c| keychain::get_key(&c.id).ok())
+        .unwrap_or_default();
+    stop_preview(&state);
+    let shell_cmd = match dev_cmd {
+        Some(d) => d,
+        None => format!(
+            "wrangler pages dev {} --ip 127.0.0.1 --port {}",
+            if out.is_empty() { ".".to_string() } else { out },
+            port
+        ),
+    };
+    #[cfg(windows)]
+    let mut c = {
+        let mut c = std::process::Command::new("cmd");
+        c.arg("/C").arg(&shell_cmd);
+        c
+    };
+    #[cfg(not(windows))]
+    let mut c = {
+        let mut c = std::process::Command::new("sh");
+        c.arg("-c").arg(&shell_cmd);
+        c
+    };
+    c.current_dir(&dir);
+    if !token.is_empty() {
+        c.env("CLOUDFLARE_API_TOKEN", &token);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        c.process_group(0);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        c.creation_flags(0x0800_0000);
+    }
+    let child = c.spawn().map_err(|e| format!("启动预览失败（确认已装 wrangler）: {e}"))?;
+    let url = format!("http://127.0.0.1:{port}");
+    *state.preview.lock().unwrap() = Some(PreviewHandle {
+        child,
+        url: url.clone(),
+        project: format!("template:{slug}"),
+    });
+    tokio::time::sleep(Duration::from_millis(2500)).await;
+    open_preview_window(&app, &url)?;
+    Ok(url)
+}
+
+// ---- 模板库 ----
+
+#[tauri::command]
+fn list_templates(state: tauri::State<'_, AppState>) -> Vec<cf_templates::Template> {
+    cf_templates::list(&state.data_dir.join("templates"))
+}
+
+/// 读模板入口 HTML（模板卡用 iframe srcdoc 展示真实样子）。找不到返回空串；过大截断。
+#[tauri::command]
+fn template_index_html(state: tauri::State<'_, AppState>, slug: String) -> String {
+    if slug.is_empty() || !slug.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return String::new();
+    }
+    let dir = state.data_dir.join("templates").join(&slug);
+    let mut path = dir.join("index.html");
+    if !path.is_file() {
+        if let Ok(rd) = std::fs::read_dir(&dir) {
+            if let Some(h) = rd
+                .flatten()
+                .map(|e| e.path())
+                .find(|p| p.extension().and_then(|x| x.to_str()) == Some("html"))
+            {
+                path = h;
+            }
+        }
+    }
+    match std::fs::read_to_string(&path) {
+        Ok(s) if s.len() <= 900_000 => s,
+        Ok(s) => s.chars().take(400_000).collect(),
+        Err(_) => String::new(),
+    }
+}
+
+/// 把某 CF 项目存成模板（沉淀）。
+#[tauri::command]
+async fn save_as_template(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    project: String,
+    name: String,
+    desc: String,
+) -> Result<cf_templates::Template, String> {
+    let conn = state.conns.get(&conn_id)?;
+    if conn.kind != "cloudflare" {
+        return Err("只有 Cloudflare 站点项目能存为模板".into());
+    }
+    let src = resolve_work_dir(&conn, &project)?;
+    let tdir = state.data_dir.join("templates");
+    tauri::async_runtime::spawn_blocking(move || {
+        cf_templates::save(&tdir, &name, &desc, std::path::Path::new(&src))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn delete_template(state: tauri::State<'_, AppState>, slug: String) -> Result<(), String> {
+    cf_templates::delete(&state.data_dir.join("templates"), &slug)
+}
+
+/// 引用模板到某 CF 连接下的新项目（拷贝模板文件，之后在对话里定制）。
+#[tauri::command]
+async fn use_template(
+    state: tauri::State<'_, AppState>,
+    slug: String,
+    conn_id: String,
+    project: String,
+) -> Result<(), String> {
+    let conn = state.conns.get(&conn_id)?;
+    if conn.kind != "cloudflare" {
+        return Err("请先切到一个 Cloudflare 连接再用模板建站".into());
+    }
+    let dest = resolve_work_dir(&conn, &project)?;
+    let tdir = state.data_dir.join("templates");
+    tauri::async_runtime::spawn_blocking(move || {
+        cf_templates::instantiate(&tdir, &slug, std::path::Path::new(&dest))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// 手动「重新检测」：先重新导入登录 shell 的 PATH（装完 CLI 后新增的目录也能认到），再探测。
 /// 自动轮询仍用轻量的 detect_brains（不每 6s 起登录 shell）。
 #[tauri::command]
@@ -88,6 +549,39 @@ async fn redetect_brains() -> Result<brains::BrainsInfo, String> {
         .await
         .map_err(|e| e.to_string())?;
     Ok(brains::detect().await)
+}
+
+/// 一键安装 wrangler（npm i -g wrangler）。npm 走已修复的 PATH。可能耗时半分钟到一两分钟。
+#[tauri::command]
+async fn install_wrangler() -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let mut c = std::process::Command::new("npm");
+        c.args(["install", "-g", "wrangler"]);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            c.creation_flags(0x0800_0000);
+        }
+        let out = c
+            .output()
+            .map_err(|e| format!("运行 npm 失败（确认已装 Node/npm）: {e}"))?;
+        if out.status.success() {
+            Ok("wrangler 安装完成".to_string())
+        } else {
+            let err = String::from_utf8_lossy(&out.stderr);
+            let last: String = err
+                .lines()
+                .rev()
+                .find(|l| !l.trim().is_empty())
+                .unwrap_or("未知错误")
+                .chars()
+                .take(200)
+                .collect();
+            Err(format!("安装失败：{last}"))
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// 排期：查该连接下各站点待定时发布的内容（只读反映 gcms 服务端状态）。
@@ -131,6 +625,36 @@ fn set_conversation_model(
     state
         .convos
         .mutate(&conv_id, now_secs(), move |c| c.model = model)
+}
+
+/// 会话进行中切换权限档位（plan/ask/auto/full）：仅改存储，下一轮 send_message 读到即用。
+/// 注意 claude 把权限档位钉在会话创建时，改基座模式要新对话才全生效；但钩子每轮重生成，
+/// 故「自动/询问」的拦截逻辑仍随时可调（详见 permit.rs）。
+#[tauri::command]
+fn set_conversation_perm_mode(
+    state: tauri::State<'_, AppState>,
+    conv_id: String,
+    perm_mode: String,
+) -> Result<Option<Conversation>, String> {
+    state
+        .convos
+        .mutate(&conv_id, now_secs(), move |c| c.perm_mode = perm_mode)
+}
+
+/// 列出所有等待用户批准的工具调用（钩子写在 <data_dir>/permit/pending）。UI 轮询它渲染批准卡。
+#[tauri::command]
+fn list_pending_permits(state: tauri::State<'_, AppState>) -> Vec<permit::PendingPermit> {
+    permit::list_pending(&state.data_dir.join("permit").join("pending"))
+}
+
+/// 应答一条待批请求：allow=放行 / 否则拒绝。钩子轮询到响应文件后据此放行或拦截。
+#[tauri::command]
+fn respond_permit(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    allow: bool,
+) -> Result<(), String> {
+    permit::respond(&state.data_dir.join("permit").join("pending"), &id, allow)
 }
 
 // ---- 定时任务 ----
@@ -247,8 +771,9 @@ fn run_task_now(state: tauri::State<'_, AppState>, app: AppHandle, id: String) -
     let runs = state.runs.clone();
     let tstore = state.tasks.clone();
     let firing = state.firing.clone();
+    let data_dir = state.data_dir.clone();
     tauri::async_runtime::spawn(async move {
-        fire_task(app, conns, convos, runs, tstore, task).await;
+        fire_task(app, conns, convos, runs, tstore, task, data_dir).await;
         firing.lock().unwrap().remove(&id);
     });
     Ok(())
@@ -262,14 +787,17 @@ async fn fire_task(
     runs: agent::RunRegistry,
     tstore: tasks::TaskStore,
     task: ScheduledTask,
+    data_dir: PathBuf,
 ) {
     let conv_id = uuid::Uuid::new_v4().to_string();
     // 后台运行没有前端接收方，用一个丢弃事件的 Channel。
     let sink: Channel<agent::TurnEvent> = Channel::new(|_| Ok(()));
+    // 定时任务无人值守：只能全自动（询问/自动档会卡在等批准，永远回不来）。
     let res = create_conversation(
         conns, convos, runs, conv_id,
         task.conn_id.clone(), task.site_slug.clone(), task.site_name.clone(),
-        task.task_type.clone(), task.brain.clone(), task.model.clone(), task.prompt.clone(), sink,
+        task.task_type.clone(), task.brain.clone(), task.model.clone(),
+        "full".into(), task.prompt.clone(), sink, data_dir,
     )
     .await;
 
@@ -341,8 +869,9 @@ fn spawn_scheduler(app: AppHandle) {
                 let tstore = state.tasks.clone();
                 let running2 = running.clone();
                 let tid = t.id.clone();
+                let data_dir = state.data_dir.clone();
                 tauri::async_runtime::spawn(async move {
-                    fire_task(app2, conns, convos, runs, tstore, t).await;
+                    fire_task(app2, conns, convos, runs, tstore, t, data_dir).await;
                     running2.lock().unwrap().remove(&tid);
                 });
             }
@@ -360,7 +889,9 @@ fn assistant_msg(res: &agent::TurnResult, now: u64) -> Message {
         tools: res.tools.clone(),
         ts: now,
         hidden: false,
-        error: !res.ok,
+        // 只有「失败且没产出内容」才标红（展示错误信息）；有正常回答就不标红——
+        // CLI 有时退出码非 0 但回答是好的（如跑了 open 打开浏览器），不该把整段染红。
+        error: !res.ok && res.text.trim().is_empty(),
         proposal: res.proposal.clone(),
     }
 }
@@ -379,8 +910,10 @@ async fn create_conversation(
     task_type: String,
     brain: String,
     model: String,
+    perm_mode: String,
     message: String,
     on_event: Channel<agent::TurnEvent>,
+    data_dir: PathBuf,
 ) -> Result<Conversation, String> {
     let conn = conns.get(&conn_id)?;
     let now = now_secs();
@@ -389,7 +922,12 @@ async fn create_conversation(
     } else {
         uuid::Uuid::new_v4().to_string()
     };
-    let sys = agent::system_prompt(&task_type, site_slug.trim(), &site_name);
+    let work_dir = resolve_work_dir(&conn, site_slug.trim())?;
+    let sys = if conn.kind == "cloudflare" {
+        agent::cf_system_prompt(&cf_project_slug(site_slug.trim()), &conn.account_id)
+    } else {
+        agent::system_prompt(&task_type, site_slug.trim(), &site_name)
+    };
     let conv = Conversation {
         id: conv_id.clone(),
         conn_id: conn.id.clone(),
@@ -399,6 +937,7 @@ async fn create_conversation(
         task_type,
         brain: brain.clone(),
         model: model.clone(),
+        perm_mode: perm_mode.clone(),
         session_ref: String::new(),
         title: title_from(&message),
         messages: vec![user_msg(message.trim().to_string(), now)],
@@ -409,7 +948,7 @@ async fn create_conversation(
     convos.upsert(conv)?;
 
     let res = agent::run_turn(
-        runs, conn, brain, model, session_seed, true, Some(sys),
+        runs, conn, work_dir, brain, model, perm_mode, data_dir.join("permit"), session_seed, true, Some(sys),
         message.trim().to_string(), conv_id.clone(), on_event,
     )
     .await;
@@ -437,6 +976,7 @@ async fn start_conversation(
     task_type: String,
     brain: String,
     model: String,
+    perm_mode: String,
     message: String,
     on_event: Channel<agent::TurnEvent>,
 ) -> Result<Conversation, String> {
@@ -451,7 +991,8 @@ async fn start_conversation(
     }
     create_conversation(
         state.conns.clone(), state.convos.clone(), state.runs.clone(),
-        conv_id, conn_id, site_slug, site_name, task_type, brain, model, message, on_event,
+        conv_id, conn_id, site_slug, site_name, task_type, brain, model, perm_mode, message, on_event,
+        state.data_dir.clone(),
     )
     .await
 }
@@ -482,12 +1023,16 @@ async fn send_message(
         convo::TurnStart::Started => {}
     }
     let conn = state.conns.get(&conv.conn_id)?;
+    let work_dir = resolve_work_dir(&conn, &conv.site_slug)?;
 
     let res = agent::run_turn(
         state.runs.clone(),
         conn,
+        work_dir,
         conv.brain.clone(),
         conv.model.clone(),
+        conv.perm_mode.clone(),
+        state.data_dir.join("permit"),
         conv.session_ref.clone(),
         false,
         None,
@@ -654,7 +1199,10 @@ fn setup_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
         .tooltip("GCMS Pilot")
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => show_main(app),
-            "quit" => app.exit(0),
+            "quit" => {
+                stop_preview(&app.state::<AppState>()); // 退出前杀掉本地预览进程
+                app.exit(0);
+            }
             _ => {}
         });
     if let Some(icon) = app.default_window_icon().cloned() {
@@ -688,6 +1236,8 @@ pub fn run() {
             let conns = pack::ConnStore::new(&data_dir).map_err(std::io::Error::other)?;
             let convos = convo::ConvStore::new(&data_dir);
             convos.mark_idle(now_secs());
+            // 清掉上次进程遗留的待批权限请求（幽灵批准卡）。
+            permit::sweep_all(&data_dir.join("permit").join("pending"));
             let task_store = tasks::TaskStore::new(&data_dir);
             app.manage(AppState {
                 conns,
@@ -695,6 +1245,8 @@ pub fn run() {
                 tasks: task_store,
                 runs: agent::RunRegistry::default(),
                 firing: Arc::new(Mutex::new(HashSet::new())),
+                data_dir: data_dir.clone(),
+                preview: Arc::new(Mutex::new(None)),
             });
             setup_tray(app.handle())?;
             spawn_scheduler(app.handle().clone());
@@ -711,6 +1263,9 @@ pub fn run() {
                 if window.label() == "main" {
                     api.prevent_close();
                     let _ = window.hide();
+                } else if window.label() == "preview" {
+                    // 关预览窗＝停掉 wrangler dev（否则进程 + 端口泄漏），但让窗口正常关。
+                    stop_preview(&window.app_handle().state::<AppState>());
                 }
             }
         })
@@ -720,6 +1275,20 @@ pub fn run() {
             remove_connection,
             discover_sites,
             detect_brains,
+            install_wrangler,
+            verify_cf_token,
+            connect_cloudflare,
+            save_attachment,
+            list_cf_projects,
+            cf_project_ready,
+            cf_preview_start,
+            cf_preview_stop,
+            cf_preview_template,
+            list_templates,
+            template_index_html,
+            save_as_template,
+            delete_template,
+            use_template,
             redetect_brains,
             list_scheduled,
             open_brain_login,
@@ -730,6 +1299,9 @@ pub fn run() {
             send_message,
             cancel_turn,
             set_conversation_model,
+            set_conversation_perm_mode,
+            list_pending_permits,
+            respond_permit,
             list_tasks,
             save_task,
             delete_task,

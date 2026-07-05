@@ -21,16 +21,35 @@ pub struct BrainStatus {
 pub struct BrainsInfo {
     pub claude: BrainStatus,
     pub codex: BrainStatus,
+    /// Cloudflare 部署工具（建站/预览/部署/D1 都靠它）；用 env token，无登录态。
+    pub wrangler: BrainStatus,
     pub path_env: String,
 }
 
 pub async fn detect() -> BrainsInfo {
-    let (claude, codex) = tokio::join!(detect_claude(), detect_codex());
+    let (claude, codex, wrangler) = tokio::join!(detect_claude(), detect_codex(), detect_wrangler());
     BrainsInfo {
         claude,
         codex,
+        wrangler,
         path_env: std::env::var("PATH").unwrap_or_default(),
     }
+}
+
+async fn detect_wrangler() -> BrainStatus {
+    let mut st = BrainStatus::default();
+    let Some(path) = which("wrangler") else {
+        st.detail = "PATH 中没有找到 wrangler（Cloudflare 部署需要，可 npm i -g wrangler）".into();
+        return st;
+    };
+    st.found = true;
+    st.path = path;
+    if let Some((_, ver)) = run_capture("wrangler", &["--version"], Duration::from_secs(10)).await {
+        // wrangler --version 可能多行，取首个非空行。
+        st.version = ver.lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim().to_string();
+    }
+    st.logged_in = None; // token 由 env 注入，不看登录态
+    st
 }
 
 async fn run_capture(program: &str, args: &[&str], timeout: Duration) -> Option<(bool, String)> {

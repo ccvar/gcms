@@ -10,8 +10,9 @@
     disabled = false,
     compact = false,
     searchable = false,
+    tone = '',
     onchange,
-  }: { value: string; options: Opt[]; placeholder?: string; disabled?: boolean; compact?: boolean; searchable?: boolean; onchange?: (value: string) => void } = $props();
+  }: { value: string; options: Opt[]; placeholder?: string; disabled?: boolean; compact?: boolean; searchable?: boolean; tone?: string; onchange?: (value: string) => void } = $props();
 
   let open = $state(false);
   let root: HTMLDivElement | undefined = $state();
@@ -78,7 +79,7 @@
 </script>
 
 <div class="dd" class:compact bind:this={root}>
-  <button type="button" class="dd-trigger" class:open class:compact onclick={toggle} {disabled}>
+  <button type="button" class="dd-trigger" class:open class:compact class:tone-warn={tone === 'warn'} class:tone-danger={tone === 'danger'} onclick={toggle} {disabled}>
     <span class="dd-label" class:placeholder={!current}>
       {#if current}{@render lead(current)}{/if}{current?.label ?? placeholder}
     </span>
@@ -131,6 +132,11 @@
   .dd-fav { width: 17px; height: 17px; border-radius: 5px; flex: none; object-fit: contain; background: #f0eee9; }
   .dd-fav.ph { display: inline-flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 600; color: var(--dim, #6f6b62); border: none; background: #e7e4dd; }
   .dd-label.placeholder { color: var(--faint, #a29d93); }
+  /* 权限档位等风险提示：把当前选中值文字染成警告/危险色（含 chevron） */
+  .dd-trigger.tone-warn { color: var(--warn, #b45309); }
+  .dd-trigger.tone-warn .dd-label, .dd-trigger.tone-warn .dd-chev { color: var(--warn, #b45309); }
+  .dd-trigger.tone-danger { color: var(--err, #dc2626); }
+  .dd-trigger.tone-danger .dd-label, .dd-trigger.tone-danger .dd-chev { color: var(--err, #dc2626); }
   .dd-chev { color: var(--faint, #a29d93); flex: none; transition: transform .15s; }
   .dd-chev.up { transform: rotate(180deg); }
 

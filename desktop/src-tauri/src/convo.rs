@@ -60,6 +60,9 @@ pub struct Conversation {
     pub task_type: String,
     pub brain: String,
     pub model: String,
+    /// 权限档位：plan | ask | auto | full。空串＝旧会话＝full（保持 0.1.10）。
+    #[serde(default)]
+    pub perm_mode: String,
     /// claude 的 session uuid 或 codex 的 thread_id；首轮后回填。
     pub session_ref: String,
     pub title: String,
