@@ -85,22 +85,21 @@ jobs:
             sig=$(cat "$(ls "$bundle"/macos/*.app.tar.gz.sig | head -1)")
             url="${base}/GCMS-Pilot_${ver}_aarch64.app.tar.gz"
           else
-            cp "$(ls "$bundle"/nsis/*-setup.exe | head -1)"     "$out/GCMS-Pilot_${ver}_x64-setup.exe"
-            cp "$(ls "$bundle"/nsis/*.nsis.zip | head -1)"      "$out/GCMS-Pilot_${ver}_x64-setup.nsis.zip"
-            sig=$(cat "$(ls "$bundle"/nsis/*.nsis.zip.sig | head -1)")
-            url="${base}/GCMS-Pilot_${ver}_x64-setup.nsis.zip"
+            # Tauri 2 的 Windows 更新产物就是 NSIS 安装器 -setup.exe 本身（附同名 .sig），没有 .nsis.zip。
+            ls -la "$bundle"/nsis/ || true
+            sigfile=$(ls "$bundle"/nsis/*.sig | head -1)   # 更新签名文件
+            signed="${sigfile%.sig}"                        # 它签的就是那个 -setup.exe
+            cp "$signed" "$out/GCMS-Pilot_${ver}_x64-setup.exe"
+            sig=$(cat "$sigfile")
+            url="${base}/GCMS-Pilot_${ver}_x64-setup.exe"
           fi
-          python3 - "$out/frag-${PLATFORM}.json" "$PLATFORM" "$url" "$sig" <<'PY'
-          import sys, json
-          dest, plat, url, sig = sys.argv[1:5]
-          json.dump({plat: {"signature": sig, "url": url}}, open(dest, "w"))
-          PY
+          node -e 'const fs=require("fs");const [dest,plat,url,sig]=process.argv.slice(1);fs.writeFileSync(dest,JSON.stringify({[plat]:{signature:sig,url}}))' "$out/frag-${PLATFORM}.json" "$PLATFORM" "$url" "$sig"
           ls -lh "$out"
 
       - uses: actions/upload-artifact@v4
         with:
           name: dist-${{ matrix.platform }}
-          path: desktop/dist/
+          path: dist/
           retention-days: 1
 
   publish:
