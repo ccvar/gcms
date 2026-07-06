@@ -5,8 +5,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
+
+	"cms.ccvar.com/internal/store"
 )
 
 // TestAPIExtTypeFieldsAndIntrospection 验证：(1) /types 自省返回已启用扩展类型的字段 schema；
@@ -64,5 +67,84 @@ func TestAPIExtTypeFieldsAndIntrospection(t *testing.T) {
 	p, _ := s.store.GetPostByID(created.Item.ID)
 	if p == nil || !strings.Contains(p.Extra, "299") || !strings.Contains(p.Extra, "/u/a.webp") {
 		t.Fatalf("extra not persisted: %v", p)
+	}
+}
+
+// TestAPIRelinkContent 验证"重连互译组"：把独立创建的 zh 文章并入 en 的组，
+// 并覆盖语种冲突 / 不存在的组 / 缺参数三种拒绝。
+func TestAPIRelinkContent(t *testing.T) {
+	s, token := newTestAutomationServer(t, "posts:read,posts:write,posts:publish")
+
+	create := func(lang, slug, group string) int64 {
+		body, _ := json.Marshal(map[string]any{"title": lang + " " + slug, "slug": slug, "lang": lang, "trans_group": group, "status": "published"})
+		r := httptest.NewRequest(http.MethodPost, "/api/admin/v1/posts", bytes.NewReader(body))
+		r.SetPathValue("collection", "posts")
+		r.Header.Set("Authorization", "Bearer "+token)
+		w := httptest.NewRecorder()
+		s.apiCreateContent(w, r)
+		if w.Code != http.StatusCreated {
+			t.Fatalf("create %s status=%d body=%s", lang, w.Code, w.Body.String())
+		}
+		var res struct {
+			Item apiContentItem `json:"item"`
+		}
+		_ = json.Unmarshal(w.Body.Bytes(), &res)
+		return res.Item.ID
+	}
+	relink := func(id int64, body map[string]any) *httptest.ResponseRecorder {
+		b, _ := json.Marshal(body)
+		ids := strconv.FormatInt(id, 10)
+		r := httptest.NewRequest(http.MethodPost, "/api/admin/v1/posts/"+ids+"/relink", bytes.NewReader(b))
+		r.SetPathValue("collection", "posts")
+		r.SetPathValue("id", ids)
+		r.Header.Set("Authorization", "Bearer "+token)
+		w := httptest.NewRecorder()
+		s.apiRelinkContent(w, r)
+		return w
+	}
+
+	enID := create("en", "about", "en:about")
+	zhID := create("zh", "guanyu", "zh:guanyu")
+
+	// happy path：zh 并入 en 的组
+	if w := relink(zhID, map[string]any{"link_to_id": enID}); w.Code != http.StatusOK {
+		t.Fatalf("relink expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if p, _ := s.store.GetPostByID(zhID); p == nil || p.TransGroup != "en:about" {
+		t.Fatalf("zh trans_group not relinked: %+v", p)
+	}
+	if trs, _ := s.store.TranslationsAll("en:about", 0); len(trs) != 2 {
+		t.Fatalf("group members = %d, want 2", len(trs))
+	}
+
+	zh2 := create("zh", "guanyu2", "zh:guanyu2")
+	if w := relink(zh2, map[string]any{"link_to_id": enID}); w.Code != http.StatusBadRequest {
+		t.Fatalf("lang collision expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	if w := relink(zh2, map[string]any{"trans_group": "nope:nope"}); w.Code != http.StatusBadRequest {
+		t.Fatalf("phantom group expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	if w := relink(zh2, map[string]any{}); w.Code != http.StatusBadRequest {
+		t.Fatalf("missing params expected 400, got %d", w.Code)
+	}
+}
+
+// TestAPIRelinkScope 无 write 权限的密钥不能重连。
+func TestAPIRelinkScope(t *testing.T) {
+	s, token := newTestAutomationServer(t, "posts:read")
+	id, err := s.store.CreatePost(&store.Post{Type: "post", Lang: "zh", Slug: "x", Title: "x", TransGroup: "zh:x"})
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	ids := strconv.FormatInt(id, 10)
+	b, _ := json.Marshal(map[string]any{"trans_group": "en:y"})
+	r := httptest.NewRequest(http.MethodPost, "/api/admin/v1/posts/"+ids+"/relink", bytes.NewReader(b))
+	r.SetPathValue("collection", "posts")
+	r.SetPathValue("id", ids)
+	r.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	s.apiRelinkContent(w, r)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("no write scope expected 403, got %d: %s", w.Code, w.Body.String())
 	}
 }

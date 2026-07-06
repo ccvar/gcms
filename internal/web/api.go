@@ -1161,6 +1161,106 @@ func (s *Server) apiUpdateContent(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"item": s.apiContentItem(updated, true)})
 }
 
+type apiRelinkInput struct {
+	TransGroup *string `json:"trans_group,omitempty"`
+	LinkToID   *int64  `json:"link_to_id,omitempty"`
+}
+
+// relinkPost 是"重连互译组"的唯一受控入口：校验后把 p.TransGroup 改成 group 并保存。
+// 返回错误信息（空＝成功）。API 与后台共用，规则一致。
+//   - 目标组非空、且已有成员（join 真实的组，防打错字造孤儿组）
+//   - 组内成员必须同 type（不混 post/page/link）
+//   - 组内不能已有同 lang 的另一篇（一个互译组每种语言仅一篇）
+func (s *Server) relinkPost(p *store.Post, group string) string {
+	group = strings.TrimSpace(group)
+	if group == "" {
+		return "目标互译组不能为空。"
+	}
+	if group == p.TransGroup {
+		return "" // 已在该组，无需变更
+	}
+	members, err := s.store.TranslationsAll(group, p.ID)
+	if err != nil {
+		return "读取目标组失败：" + err.Error()
+	}
+	if len(members) == 0 {
+		return "目标互译组不存在（组内没有其它内容）。请用 link_to_id 指向一篇已存在的兄弟内容，或确认 trans_group 是否填对。"
+	}
+	for _, m := range members {
+		if m.Type != p.Type {
+			return fmt.Sprintf("目标组里有不同类型的内容（%s #%d），不能和当前 %s 混到一组。", m.Type, m.ID, p.Type)
+		}
+		if m.Lang == p.Lang {
+			return fmt.Sprintf("目标组里已有一篇 %s 语种的内容（#%d），一个互译组每种语言只能有一篇。", m.Lang, m.ID)
+		}
+	}
+	p.TransGroup = group
+	if err := s.store.UpdatePost(p); err != nil {
+		return "保存失败：" + err.Error()
+	}
+	return ""
+}
+
+// apiRelinkContent 把一篇已存在的内容重连到某互译组（唯一能改 trans_group 的 API）。
+// body 二选一：{ "link_to_id": <兄弟内容 id> } 或 { "trans_group": "<组键>" }。
+func (s *Server) apiRelinkContent(w http.ResponseWriter, r *http.Request) {
+	collection := r.PathValue("collection")
+	kind, ok := s.apiContentKind(collection)
+	if !ok {
+		apiError(w, http.StatusNotFound, "not_found", "接口不存在。")
+		return
+	}
+	auth, ok := s.requireAutomationScope(w, r, apiScope(collection, "write"))
+	if !ok {
+		return
+	}
+	existing, ok := s.apiContentByID(w, r, kind)
+	if !ok {
+		return
+	}
+	var in apiRelinkInput
+	if !decodeAPIJSON(w, r, &in) {
+		return
+	}
+	// 重连已发布/定时内容会改线上 hreflang 与语言切换 → 和编辑已发布同款权限。
+	if existing.Status != "draft" && !automationScopeAllowed(auth.scopes, apiScope(collection, "publish")) {
+		apiError(w, http.StatusForbidden, "missing_scope", "重连已发布或定时内容需要该类内容的发布权限。")
+		return
+	}
+	group := ""
+	switch {
+	case in.LinkToID != nil:
+		target, err := s.store.GetPostByID(*in.LinkToID)
+		if err != nil || target == nil {
+			apiError(w, http.StatusBadRequest, "bad_request", "link_to_id 指向的内容不存在。")
+			return
+		}
+		if target.ID == existing.ID {
+			apiError(w, http.StatusBadRequest, "bad_request", "不能关联到自己。")
+			return
+		}
+		group = target.TransGroup
+	case in.TransGroup != nil:
+		group = strings.TrimSpace(*in.TransGroup)
+	default:
+		apiError(w, http.StatusBadRequest, "bad_request", "需要提供 link_to_id 或 trans_group。")
+		return
+	}
+	if msg := s.relinkPost(existing, group); msg != "" {
+		apiError(w, http.StatusBadRequest, "bad_request", msg)
+		return
+	}
+	updated, _ := s.store.GetPostByID(existing.ID)
+	members, _ := s.store.TranslationsAll(existing.TransGroup, 0) // exceptID=0 → 含自己，即整组
+	list := make([]map[string]any, 0, len(members))
+	for _, m := range members {
+		list = append(list, map[string]any{"id": m.ID, "lang": m.Lang, "title": m.Title, "status": m.Status, "type": m.Type})
+	}
+	s.recordAutomationLog(auth, "relink", kind, existing.ID, fmt.Sprintf("relink %s#%d → trans_group=%s", kind, existing.ID, existing.TransGroup))
+	s.clearGeneratedCaches()
+	writeJSON(w, http.StatusOK, map[string]any{"item": s.apiContentItem(updated, true), "trans_group": existing.TransGroup, "members": list})
+}
+
 func (s *Server) apiUpdatePostFeatured(w http.ResponseWriter, r *http.Request) {
 	r.SetPathValue("collection", "posts")
 	s.apiUpdateContentFeatured(w, r)

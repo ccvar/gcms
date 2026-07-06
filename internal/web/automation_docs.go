@@ -258,6 +258,9 @@ func automationOpenAPISpec(apiBase string) map[string]any {
 			"get":   automationGetOperation(col),
 			"patch": automationUpdateOperation(col),
 		}
+		paths["/"+col.path+"/{id}/relink"] = map[string]any{
+			"post": automationRelinkOperation(col),
+		}
 		if col.path == "posts" || col.path == "links" {
 			paths["/"+col.path+"/{id}/preview"] = map[string]any{
 				"get": automationPreviewOperation(col),
@@ -526,6 +529,18 @@ func automationFeaturedOperation(col automationCollection) map[string]any {
 		"tags":        []string{col.label},
 		"parameters":  []map[string]any{automationIDParam()},
 		"requestBody": automationJSONBody("FeaturedInput"),
+		"responses":   automationResponses("ContentItemResponse"),
+	}
+}
+
+func automationRelinkOperation(col automationCollection) map[string]any {
+	return map[string]any{
+		"summary":     "重连" + col.label + "互译组",
+		"description": "把这篇内容并入某个已存在的互译组（唯一能改 trans_group 的入口；普通 update 不改它）。body 二选一：link_to_id 指向兄弟内容（推荐）或 trans_group 组键。校验：目标组须已有成员、同 type、且该语种在组内唯一。改已发布内容需发布权限。",
+		"operationId": "relink" + automationOperationSuffix(col.path),
+		"tags":        []string{col.label},
+		"parameters":  []map[string]any{automationIDParam()},
+		"requestBody": automationJSONBody("RelinkInput"),
 		"responses":   automationResponses("ContentItemResponse"),
 	}
 }
@@ -957,6 +972,14 @@ func automationOpenAPISchemas() map[string]any {
 			"required": []string{"featured"},
 			"properties": map[string]any{
 				"featured": map[string]any{"type": "boolean", "description": "true 表示置顶，false 表示取消置顶。只适用于文章和链接。"},
+			},
+		},
+		"RelinkInput": map[string]any{
+			"type":        "object",
+			"description": "二选一：link_to_id（推荐，指向同组的兄弟内容）或 trans_group（组键）。",
+			"properties": map[string]any{
+				"link_to_id":  map[string]any{"type": "integer", "description": "要加入的兄弟内容 id（服务端取它的 trans_group）。"},
+				"trans_group": map[string]any{"type": "string", "description": "直接指定要加入的互译组键（该组须已有成员）。"},
 			},
 		},
 		"ContentItem": map[string]any{

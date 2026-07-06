@@ -2806,6 +2806,7 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("PATCH /api/admin/v1/links/featured/{id}", s.apiUpdateLinkFeatured)
 	mux.HandleFunc("GET /api/admin/v1/{collection}/{id}", s.apiGetContent)
 	mux.HandleFunc("PATCH /api/admin/v1/{collection}/{id}", s.apiUpdateContent)
+	mux.HandleFunc("POST /api/admin/v1/{collection}/{id}/relink", s.apiRelinkContent)
 	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/openapi.json", s.apiPlatformOpenAPI)
 	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/languages", s.apiLanguages)
 	mux.HandleFunc("POST /api/platform/v1/sites/{siteID}/languages", s.apiCreateLanguage)
@@ -2835,6 +2836,7 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("PATCH /api/platform/v1/sites/{siteID}/links/featured/{id}", s.apiUpdateLinkFeatured)
 	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/{collection}/{id}", s.apiGetContent)
 	mux.HandleFunc("PATCH /api/platform/v1/sites/{siteID}/{collection}/{id}", s.apiUpdateContent)
+	mux.HandleFunc("POST /api/platform/v1/sites/{siteID}/{collection}/{id}/relink", s.apiRelinkContent)
 
 	// 临时前台预览：由自动化 API 生成短期签名 URL，渲染真实前台模板但不索引、不缓存。
 	mux.HandleFunc("GET /preview/{collection}/{id}", s.frontendPreviewContent)
@@ -2958,6 +2960,7 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /admin/pages/{id}", s.requireAuth(s.adminPageSave))
 	mux.HandleFunc("POST /admin/pages/{id}/delete", s.requireAuth(s.adminPageDelete))
 	mux.HandleFunc("POST /admin/pages/{id}/translate", s.requireAuth(s.adminTranslate))
+	mux.HandleFunc("POST /admin/pages/{id}/relink", s.requireAuth(s.adminRelink))
 	mux.HandleFunc("GET /admin/posts/new", s.requireAuth(s.adminNew))
 	mux.HandleFunc("GET /admin/posts/{id}/preview", s.requireAuth(s.adminPostPreview))
 	mux.HandleFunc("GET /admin/posts/{id}/edit", s.requireAuth(s.adminEdit))
@@ -2967,6 +2970,7 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /admin/posts/{id}/pin", s.requireAuth(s.adminPin))
 	mux.HandleFunc("POST /admin/posts/{id}/status", s.requireAuth(s.adminPostStatus))
 	mux.HandleFunc("POST /admin/posts/{id}/translate", s.requireAuth(s.adminTranslate))
+	mux.HandleFunc("POST /admin/posts/{id}/relink", s.requireAuth(s.adminRelink))
 
 	// 链接（type=link）
 	mux.HandleFunc("GET /admin/links", s.requireAuth(s.adminLinks))
@@ -2979,6 +2983,7 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /admin/links/{id}/pin", s.requireAuth(s.adminLinkPin))
 	mux.HandleFunc("POST /admin/links/{id}/status", s.requireAuth(s.adminLinkStatus))
 	mux.HandleFunc("POST /admin/links/{id}/translate", s.requireAuth(s.adminTranslate))
+	mux.HandleFunc("POST /admin/links/{id}/relink", s.requireAuth(s.adminRelink))
 
 	// 「扩展」内容类型后台
 	mux.HandleFunc("GET /admin/extensions", s.requireAuth(s.adminExtHub))

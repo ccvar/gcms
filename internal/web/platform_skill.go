@@ -279,6 +279,7 @@ func platformSkillMarkdown(apiBase string) string {
 		"4. 设置内容分类只能用该站 `GET /posts/categories` / `GET /links/categories` 返回的真实分类 ID；all-entry 不是分类。",
 		"5. 需要封面或正文图片时，先把图片转成 WebP（.webp），再 `POST /media` 上传，拿返回 `url` 写入字段。",
 		"6. 处理多语种内容时，先 `GET /languages` 查启用语种；要更新同组内容，先读 `trans_group` 再逐条按 id 更新。",
+		"6b. `trans_group` 仅创建时可设、普通 update 不改它；要给已存在内容补/改互译关联，用 `POST /{collection}/{id}/relink`，body 传 `{\"link_to_id\": <兄弟内容 id>}`（推荐）或 `{\"trans_group\": \"<组键>\"}`（每种语言一组只能有一篇）。",
 		"7. 默认只创建或修改草稿。",
 		"8. 只有用户明确要求发布、且密钥有对应资源发布权限时，才把 `status` 设为 `published` 或 `scheduled`；发布前优先用 `GET /posts/{id}/preview` 或 `/links/{id}/preview` 复核。",
 		"9. 完成后告诉用户：改了哪个站、哪些内容、对应 id、语种、状态，以及建议人工复核的点。",

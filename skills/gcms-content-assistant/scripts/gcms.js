@@ -40,6 +40,7 @@ function usage(code = 2) {
   out("  gcms.js preview-url <posts|links> <id>");
   out("  gcms.js create <posts|pages|links> <json|@file>");
   out("  gcms.js update <posts|pages|links> <id> <json|@file>");
+  out("  gcms.js relink <posts|pages|links> <id> (--to-id <sibling-id> | --trans-group <group>)");
   out("  gcms.js audit <posts|pages|links> [--lang zh|all] [--limit 50] [--deep true]");
   process.exit(code);
 }
@@ -348,6 +349,20 @@ async function main() {
     const [id, body] = rest;
     if (!id || !body) usage();
     print(await request("PATCH", "/" + collection + "/" + encodeURIComponent(id), bodyFromArg(body)));
+    return;
+  }
+
+  // 重连互译组：把已存在的一篇并入某翻译组（唯一能改 trans_group 的入口）。
+  // 二选一：--to-id <兄弟内容 id>（推荐）或 --trans-group <组键>。
+  if (cmd === "relink") {
+    const [id, ...flags] = rest;
+    if (!id) usage();
+    const opt = parseOptions(flags);
+    const body = {};
+    if (opt["to-id"] != null) body.link_to_id = Number(opt["to-id"]);
+    else if (opt["trans-group"] != null) body.trans_group = opt["trans-group"];
+    else usage();
+    print(await request("POST", "/" + collection + "/" + encodeURIComponent(id) + "/relink", body));
     return;
   }
 

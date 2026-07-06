@@ -3601,6 +3601,41 @@ func (s *Server) showEdit(w http.ResponseWriter, r *http.Request, sess session, 
 	s.rnd.Admin(w, "edit", status, v)
 }
 
+// adminRelink 后台"重连互译组"：表单填目标文章 ID 或 trans_group，校验后改本文 trans_group，
+// 回到编辑页显示结果。复用 relinkPost 的同一套校验。
+func (s *Server) adminRelink(w http.ResponseWriter, r *http.Request) {
+	sess, ok := s.checkCSRF(w, r)
+	if !ok {
+		return
+	}
+	id := atoi64(r.PathValue("id"))
+	p, _ := s.store.GetPostByID(id)
+	if p == nil {
+		s.notFound(w, r)
+		return
+	}
+	target := strings.TrimSpace(r.FormValue("relink_target"))
+	group := target
+	if tid := atoi64(target); tid > 0 { // 填的是文章 ID → 取它所在的组
+		if tp, _ := s.store.GetPostByID(tid); tp != nil {
+			group = tp.TransGroup
+		}
+	}
+	flash := "已重连互译组。"
+	if target == "" {
+		flash = "重连失败：请填目标文章 ID 或 trans_group。"
+	} else if msg := s.relinkPost(p, group); msg != "" {
+		flash = "重连失败：" + msg
+	} else {
+		s.clearGeneratedCaches()
+	}
+	fresh, _ := s.store.GetPostByID(id)
+	if fresh == nil {
+		fresh = p
+	}
+	s.showEdit(w, r, sess, fresh, flash, "")
+}
+
 func (s *Server) adminCreate(w http.ResponseWriter, r *http.Request) {
 	sess, ok := s.checkCSRF(w, r)
 	if !ok {
