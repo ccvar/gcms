@@ -300,11 +300,26 @@
   let draft = $state('');
   // 并发对话：running = convId → connId（在跑的对话；带 connId 便于删连接时可靠判定）；lives = 每个对话的流式缓冲。
   let running = $state<Record<string, string>>({});
-  let lives = $state<Record<string, { text: string; tools: ToolCall[]; error: string }>>({});
+  let lives = $state<Record<string, { text: string; tools: ToolCall[]; error: string; failed: boolean; startedAt: number }>>({});
+  let autoRetried = $state<Record<string, boolean>>({}); // convId → 本轮已自动重试过（每个用户轮只自动重试一次）
+  let retryTimers: Record<string, ReturnType<typeof setTimeout>> = {}; // 待触发的自动重连定时器（新一轮开始时取消，防陈旧触发）
   let threadEl = $state<HTMLDivElement | null>(null);
 
   const viewBusy = $derived(!!running[activeConvId]); // 当前查看的对话是否在跑
   const liveView = $derived(lives[activeConvId]); // 当前对话的流式缓冲（可能 undefined）
+
+  // 加载中的"耗时"计时：仅在当前对话跑着时开一个轻量心跳刷新 nowMs，停了自动清掉。
+  let nowMs = $state(0);
+  $effect(() => {
+    if (!viewBusy) return;
+    nowMs = Date.now();
+    const t = setInterval(() => { nowMs = Date.now(); }, 500);
+    return () => clearInterval(t);
+  });
+  function elapsedLabel(ms: number): string {
+    const s = Math.max(0, Math.floor(ms / 1000));
+    return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s`;
+  }
 
   // 拖动窗口：忽略交互元素（按钮/输入等），否则点它们会误触发拖动。
   function startDrag(e: MouseEvent) {
@@ -681,7 +696,7 @@
     // 打开的对话可能属于别的连接（从搜索/任务链接进来）——切到它自己的连接，否则侧栏会把它过滤掉。
     if (c.conn_id !== activeConnId) activeConnId = c.conn_id;
     activeConv = c; activeConvId = id; threadModel = c.model; threadPerm = c.perm_mode || 'full'; view = 'thread';
-    attachments = []; // 换会话清掉未发送的附件
+    attachments = []; queued = null; // 换会话清掉未发送的附件 / 等待消息
     expandSite(c.site_slug);
     checkCfReady();
     scrollSoon(true);
@@ -700,7 +715,7 @@
       if (!buf) return; // 该对话已结束/被清（切走后仍可能收到尾包）
       if (ev.type === 'delta') { buf.text += ev.text; if (activeConvId === convId) scrollSoon(); }
       else if (ev.type === 'tool') { buf.tools = [...buf.tools, { label: ev.label, detail: ev.detail }]; if (activeConvId === convId) scrollSoon(); }
-      else if (ev.type === 'done') { if (!ev.ok) buf.error = ev.error; }
+      else if (ev.type === 'done') { if (!ev.ok) { buf.error = ev.error; buf.failed = true; } }
     };
     return ch;
   }
@@ -710,22 +725,32 @@
   // 乐观：立刻把用户消息塞进当前/合成会话，activeConvId 立即等于 convId，
   // 首轮也能流式渲染 + 停止（cancel 键对准真正的注册表 key）。
   function beginTurn(convId: string, optimistic: Conversation) {
-    lives[convId] = { text: '', tools: [], error: '' };
+    if (retryTimers[convId]) { clearTimeout(retryTimers[convId]); delete retryTimers[convId]; } // 任何新一轮开始都取消该会话待触发的自动重连
+    lives[convId] = { text: '', tools: [], error: '', failed: false, startedAt: Date.now() };
     running[convId] = optimistic.conn_id;
     activeConv = optimistic; activeConvId = convId; threadModel = optimistic.model; threadPerm = optimistic.perm_mode || 'full';
     cfReady = false; // 本轮跑完再重新判定是否已建出内容
     view = 'thread'; scrollSoon(true);
   }
   function endTurn(conv: Conversation | null, convId: string) {
+    const failed = lives[convId]?.failed ?? false; // 删缓冲前先取，供等待消息门控用
     // 仅当用户仍停留在这条会话时用权威结果覆盖，避免打断已切到别的会话的用户。
     if (conv && activeConvId === convId) { activeConv = conv; threadModel = conv.model; threadPerm = conv.perm_mode || 'full'; }
     delete running[convId];
     delete lives[convId];
     if (activeConvId === convId) checkCfReady(); // 这轮可能写了文件，重新判定预览/部署是否可用
+    // 等待消息：这轮**成功**结束、用户还在本会话，才把排队的那条发出去（失败/要重连时不发，避免连环失败）。
+    if (!failed && queued && queued.convId === convId && activeConvId === convId) {
+      const q = queued; queued = null;
+      draft = q.text; attachments = q.atts;
+      queueMicrotask(() => { void send(); });
+    }
   }
   async function failTurn(e: unknown, convId: string) {
     delete running[convId];
     delete lives[convId];
+    // 这轮失败：不自动发排队消息，把它放回输入框让用户决定。
+    if (queued && queued.convId === convId && activeConvId === convId) { draft = queued.text; attachments = queued.atts; queued = null; }
     // 仅当用户仍在看这条会话时才弹错误提示——后台会话的失败不打断前台（成功也不弹，见 endTurn），
     // 失败态已落库，切回该会话即可看到。
     if (activeConvId === convId) say(String(e), 'err');
@@ -751,6 +776,7 @@
     };
     // 立刻塞进侧栏，这样即便用户随后切走/新开对话，这条新会话也带着 running 圈可见，不必等这一轮跑完才出现。
     convos = [optimistic, ...convos];
+    delete autoRetried[id];
     beginTurn(id, optimistic);
     lDraft = '';
     try {
@@ -759,12 +785,30 @@
         taskType, brain: lBrain, model, permMode: lPerm,
         message: text, onEvent: makeChannel(id),
       });
-      await refreshConvos(); endTurn(conv, id);
+      await refreshConvos();
+      const failed = lives[id]?.failed ?? false; const errText = lives[id]?.error ?? '';
+      endTurn(conv, id);
+      maybeAutoRetry(id, failed, errText);
     } catch (e) { await failTurn(e, id); }
   }
 
   // ---------- 附件：粘贴/拖拽文件到输入框，存进项目目录供 AI 读取 ----------
   type Attach = { name: string; path: string; preview: string };
+  // 发消息时把这段追加到正文末尾让 AI 拿到路径；渲染时再从正文里拆出来单独做成附件卡（见 splitAttachments）。
+  const ATT_MARKER = '附件（已存在项目里，可直接读取使用）：';
+  // 从消息正文里拆出「真正的文字」和「附件路径列表」——AI 收到的是完整正文，气泡里只显示干净文字 + 附件卡。
+  function splitAttachments(text: string): { body: string; atts: string[] } {
+    let cut = text.indexOf('\n\n' + ATT_MARKER);
+    let sep = 2;
+    if (cut < 0) {
+      if (text.startsWith(ATT_MARKER)) { cut = 0; sep = 0; }
+      else return { body: text, atts: [] };
+    }
+    const body = text.slice(0, cut);
+    const atts = text.slice(cut + sep).split('\n').slice(1).map((l) => l.replace(/^-\s*/, '').trim()).filter(Boolean);
+    return { body, atts };
+  }
+  function isImgPath(p: string): boolean { return /\.(png|jpe?g|gif|webp|svg|bmp|avif)$/i.test(p); }
   let attachments = $state<Attach[]>([]);
   let attaching = $state(false);
   async function attachFile(f: File) {
@@ -783,6 +827,25 @@
     finally { attaching = false; }
   }
   function removeAttachment(i: number) { attachments = attachments.filter((_, idx) => idx !== i); }
+
+  // 等待消息：这轮还在跑时先把下一条排进队列，等回合结束自动发；发出前可编辑/清除。绑定 convId，切走即清。
+  let queued = $state<{ convId: string; text: string; atts: Attach[] } | null>(null);
+  function queueMessage() {
+    if (!activeConv) return;
+    if (!draft.trim() && !attachments.length) return;
+    if (!running[activeConv.id]) { void send(); return; } // 其实没在跑就直接发
+    const t = draft.trim();
+    // 已有排队则合并进同一条（不覆盖丢字）；否则新建。
+    queued = queued && queued.convId === activeConv.id
+      ? { convId: activeConv.id, text: [queued.text, t].filter(Boolean).join('\n'), atts: [...queued.atts, ...attachments] }
+      : { convId: activeConv.id, text: t, atts: attachments };
+    draft = ''; attachments = [];
+  }
+  function editQueued() {
+    if (!queued) return;
+    draft = queued.text; attachments = queued.atts; queued = null;
+  }
+  function clearQueued() { queued = null; }
   function onComposerPaste(e: ClipboardEvent) {
     const items = e.clipboardData?.items; if (!items) return;
     let handled = false;
@@ -795,20 +858,60 @@
   }
   function onComposerDragOver(e: DragEvent) { if (e.dataTransfer?.types?.includes('Files')) e.preventDefault(); }
 
+  // ---------- 重试 / 自动重连 ----------
+  // 错误文本像不像"瞬时问题"（网络/限流/过载/5xx）——只对这类做自动重试，避免对密钥错误/取消等硬错误反复重跑。
+  function isTransient(err: string): boolean {
+    if (!err || /已停止/.test(err)) return false;
+    return /(网络|连接|超时|无法访问|timed?\s*out|timeout|overload|rate.?limit|too many requests|\b429\b|\b5\d\d\b|ECONN| ENET|EAI_AGAIN|socket hang|connection (reset|refused|closed|error)|temporar|try again|network error|fetch failed)/i.test(err);
+  }
+  // 重试上一轮：去掉失败的助手消息、用最后一条用户消息 resume 再跑（不新增用户气泡）。manual=用户手点（重置自动预算）。
+  async function retry(convId: string, manual = false) {
+    if (running[convId]) return;
+    const base = activeConvId === convId ? activeConv : convos.find((c) => c.id === convId);
+    if (!base) return;
+    if (!base.session_ref?.trim()) { if (manual) say('这个会话首轮就没建起来，无法重试；请回启动页重新发起。', 'err'); return; }
+    if (manual) delete autoRetried[convId];
+    const msgs = base.messages.slice();
+    if (msgs.length && msgs[msgs.length - 1].role === 'assistant') msgs.pop(); // 去掉失败/部分的那条
+    beginTurn(convId, { ...base, messages: msgs, status: 'running' });
+    try {
+      const conv = await invoke<Conversation>('retry_turn', { convId, onEvent: makeChannel(convId) });
+      await refreshConvos();
+      const failed = lives[convId]?.failed ?? false; const errText = lives[convId]?.error ?? '';
+      endTurn(conv, convId);
+      maybeAutoRetry(convId, failed, errText);
+    } catch (e) { await failTurn(e, convId); }
+  }
+  // 这轮若因瞬时问题失败且本轮还没自动重试过，隔几秒自动重连一次；再不行就停手（留手动「重试」）。
+  function maybeAutoRetry(convId: string, failed: boolean, errText: string) {
+    if (!failed || autoRetried[convId] || !isTransient(errText)) return;
+    autoRetried[convId] = true;
+    if (activeConvId === convId) say('网络/接口异常，正在自动重连重试…', 'err');
+    // 存句柄，2.5s 后仅当没在跑且用户还停在本会话才自动重连（切走/又发新消息都不触发，避免抢焦点/陈旧重试）。
+    retryTimers[convId] = setTimeout(() => {
+      delete retryTimers[convId];
+      if (!running[convId] && activeConvId === convId) void retry(convId, false);
+    }, 2500);
+  }
+
   async function send() {
     if (!activeConv || running[activeConv.id]) return;
     const atts = attachments;
     if (!draft.trim() && !atts.length) return;
     let text = draft.trim();
     if (atts.length) {
-      text += (text ? '\n\n' : '') + '附件（已存在项目里，可直接读取使用）：\n' + atts.map((a) => `- ${a.path}`).join('\n');
+      text += (text ? '\n\n' : '') + ATT_MARKER + '\n' + atts.map((a) => `- ${a.path}`).join('\n');
     }
     draft = ''; attachments = [];
     const id = activeConv.id;
+    delete autoRetried[id]; // 新的用户轮：重置自动重试预算
     beginTurn(id, { ...activeConv, messages: [...activeConv.messages, optimisticUser(text)], status: 'running' });
     try {
       const conv = await invoke<Conversation>('send_message', { convId: id, message: text, onEvent: makeChannel(id) });
-      await refreshConvos(); endTurn(conv, id);
+      await refreshConvos();
+      const failed = lives[id]?.failed ?? false; const errText = lives[id]?.error ?? '';
+      endTurn(conv, id);
+      maybeAutoRetry(id, failed, errText);
     } catch (e) { await failTurn(e, id); }
   }
 
@@ -1369,7 +1472,7 @@
       <div class="thread" bind:this={threadEl}>
         <div class="thread-inner">
           {#each shownMessages as m, i (i)}
-            {@render bubble(m)}
+            {@render bubble(m, i === shownMessages.length - 1)}
           {/each}
           {#if viewBusy && liveView}
             <div class="msg assistant">
@@ -1377,7 +1480,15 @@
                 {#if liveView.tools.length}{@render cmds(liveView.tools)}{/if}
                 {#if liveView.text}<div class="text">{@render richText(liveView.text)}</div>{/if}
                 {#if liveView.error}<div class="err-note">{liveView.error}</div>
-                {:else}<div class="typing"><span></span><span></span><span></span></div>{/if}
+                {:else}
+                  <div class="working" aria-label="思考中">
+                    <svg class="wl" viewBox="0 0 64 64" width="17" height="17" aria-hidden="true">
+                      <path class="wl-trace" d="M44 24a14 14 0 1 0 0 16" fill="none" stroke="#a03c2b" stroke-width="7" stroke-linecap="round" pathLength="100" stroke-dasharray="100" />
+                      <circle class="wl-dot" cx="45.5" cy="42" r="4.6" fill="#a03c2b" />
+                    </svg>
+                    <span class="working-t">{elapsedLabel(nowMs - liveView.startedAt)}</span>
+                  </div>
+                {/if}
               </div>
             </div>
           {/if}
@@ -1406,6 +1517,14 @@
           </div>
         {/if}
         <div class="composer">
+          {#if queued && queued.convId === activeConvId}
+            <div class="queued-row">
+              <span class="queued-ic"><svg width="13" height="13" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.3" /><path d="M8 4.7V8l2.2 1.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" /></svg></span>
+              <span class="queued-t">等这轮结束后发送：{queued.text || '（仅附件）'}{#if queued.atts.length} · {queued.atts.length} 个文件{/if}</span>
+              <button class="queued-btn" onclick={editQueued}>编辑</button>
+              <button class="queued-x" aria-label="清除等待消息" onclick={clearQueued}>×</button>
+            </div>
+          {/if}
           {#if attachments.length}
             <div class="attach-row">
               {#each attachments as a, i (a.path)}
@@ -1418,10 +1537,10 @@
               {#if attaching}<span class="attach-loading">上传中…</span>{/if}
             </div>
           {/if}
-          <textarea bind:value={draft} rows="1" placeholder="继续说…（Enter 发送，Shift+Enter 换行，可粘贴/拖入文件）"
-            disabled={viewBusy} oncompositionstart={() => (composing = true)} oncompositionend={() => (composing = false)}
+          <textarea bind:value={draft} rows="1" placeholder={viewBusy ? '输入下一条，回车排队，等这轮结束自动发送' : '继续说…（Enter 发送，Shift+Enter 换行，可粘贴/拖入文件）'}
+            oncompositionstart={() => (composing = true)} oncompositionend={() => (composing = false)}
             onpaste={onComposerPaste} ondrop={onComposerDrop} ondragover={onComposerDragOver}
-            onkeydown={(e) => onComposerKey(e, send)}></textarea>
+            onkeydown={(e) => onComposerKey(e, viewBusy ? queueMessage : send)}></textarea>
           <div class="composer-bar">
             <div class="cb-left">
               {#if activeConvIsCf}
@@ -1435,6 +1554,9 @@
               <span class="cb-ro" title="会话的厂商已固定，不可更改">{@render brainTag(activeConv?.brain ?? 'claude', brainLabel(activeConv?.brain ?? ''))}</span>
               <Dropdown compact bind:value={threadModel} options={launcherModelOpts(activeConv?.brain ?? 'claude')} onchange={persistThreadModel} disabled={viewBusy} />
               {#if viewBusy}
+                {#if draft.trim() || attachments.length}
+                  <button class="send queue" onclick={queueMessage} title="排队：等这轮结束后自动发送">↑</button>
+                {/if}
                 <button class="send stop" onclick={stop} title="停止">■</button>
               {:else}
                 <button class="send" onclick={send} disabled={!draft.trim() && !attachments.length} title="发送（Enter）">↑</button>
@@ -1477,14 +1599,35 @@
 {/if}
 
 <!-- 消息气泡片段 -->
-{#snippet bubble(m: Message)}
+{#snippet bubble(m: Message, isLast: boolean)}
   {#if m.role === 'user'}
-    <div class="msg user"><div class="ubody">{@render richText(m.text)}</div></div>
+    {@const ua = splitAttachments(m.text)}
+    <div class="msg user"><div class="ubody">
+      {#if ua.body.trim()}<span class="ub-text">{@render richText(ua.body)}</span>{/if}
+      {#if ua.atts.length}
+        <div class="ub-atts" class:only={!ua.body.trim()}>
+          {#each ua.atts as p (p)}
+            <span class="ub-att">
+              <span class="ub-att-ic">
+                {#if isImgPath(p)}<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><rect x="2.2" y="2.8" width="11.6" height="10.4" rx="1.6" stroke="currentColor" stroke-width="1.2" /><circle cx="5.7" cy="6.2" r="1.1" fill="currentColor" /><path d="M3 12.4l3.3-3.1 2.1 1.9 2.4-2.6 2.2 2.3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" /></svg>
+                {:else}<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M9 1.8H4.5A1.3 1.3 0 0 0 3.2 3.1v9.8a1.3 1.3 0 0 0 1.3 1.3h7a1.3 1.3 0 0 0 1.3-1.3V5.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /><path d="M9 1.8v3.7h3.8" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /></svg>{/if}
+              </span>
+              <span class="ub-att-n" title={p}>{p.split('/').pop()}</span>
+            </span>
+          {/each}
+        </div>
+      {/if}
+    </div></div>
   {:else}
     <div class="msg assistant">
       <div class="body">
         {#if m.tools.length}{@render cmds(m.tools)}{/if}
         <div class="text {m.error ? 'is-err' : ''}">{@render richText(m.text)}</div>
+        {#if m.error && isLast && !viewBusy && activeConv?.session_ref}
+          <button class="retry-btn" onclick={() => retry(activeConvId, true)}>
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M13 8a5 5 0 1 1-1.5-3.6M13 2v3h-3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>重试
+          </button>
+        {/if}
         {#if m.proposal}
           <div class="proposal">
             <div class="proposal-head">⏰ AI 建议一个定时任务</div>
@@ -1941,7 +2084,6 @@
   .hero-mark { display: flex; justify-content: center; margin-bottom: 6px; }
   .hero-card h1 { font-size: 22px; margin: 12px 0 8px; }
   .hero-card p { color: var(--dim); margin: 0 0 18px; }
-  .hero-import { margin: 0 auto; }
   .cli-guide { margin-top: 22px; text-align: left; border-top: 1px solid var(--border); padding-top: 14px; }
   .cli-guide-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11px; letter-spacing: .03em; text-transform: uppercase; color: var(--faint); font-weight: 600; margin-bottom: 6px; }
   .cli-redetect { display: inline-flex; align-items: center; gap: 4px; flex: none; background: none; border: none; padding: 2px 6px; border-radius: 6px; cursor: pointer; color: var(--dim); font: inherit; font-size: 11px; font-weight: 500; letter-spacing: 0; text-transform: none; }
@@ -2025,10 +2167,14 @@
 
   .msg { display: flex; gap: 12px; }
   .msg.user { justify-content: flex-end; }
-  .ubody { background: var(--user-bg); border-radius: 16px 16px 5px 16px; padding: 10px 14px; max-width: 78%; white-space: pre-wrap; word-break: break-word; }
+  .ubody { background: var(--user-bg); border-radius: 16px 16px 5px 16px; padding: 10px 14px; max-width: 78%; word-break: break-word; }
+  .ub-text { white-space: pre-wrap; }
   .msg.assistant .body { flex: 1; min-width: 0; }
   .text { white-space: pre-wrap; word-break: break-word; }
   .text.is-err { color: var(--err); }
+  .retry-btn { display: inline-flex; align-items: center; gap: 5px; margin-top: 8px; padding: 4px 11px; background: #fff; border: 1px solid var(--border2); border-radius: 8px; color: var(--dim); font-size: 12px; cursor: pointer; }
+  .retry-btn:hover { color: var(--text); border-color: #cfccc2; background: var(--rail); }
+  .retry-btn svg { flex: none; }
   /* 命令列表：默认收起，点击展开 */
   .cmds { margin-bottom: 9px; }
   .cmds summary { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; list-style: none; width: fit-content;
@@ -2045,10 +2191,16 @@
   .tdetail { color: var(--dim); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .inlink { background: none; border: none; color: var(--accent); text-decoration: underline; cursor: pointer; padding: 0; font: inherit; word-break: break-all; }
   .err-note { color: var(--err); background: var(--err-soft); border: 1px solid var(--err-border); border-radius: 8px; padding: 8px 10px; font-size: 13px; }
-  .typing { display: flex; gap: 4px; padding: 4px 0; }
-  .typing span { width: 6px; height: 6px; border-radius: 50%; background: var(--faint); animation: bounce 1.2s infinite; }
-  .typing span:nth-child(2) { animation-delay: .15s; } .typing span:nth-child(3) { animation-delay: .3s; }
-  @keyframes bounce { 0%, 60%, 100% { opacity: .3; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-3px); } }
+  /* 加载：logo 的 C 一笔描出、圆点落定，循环；后面带本轮耗时。尊重"减弱动态"。 */
+  .working { display: flex; align-items: center; gap: 7px; padding: 3px 0; }
+  .working:not(:first-child) { margin-top: 12px; }
+  .wl { flex: none; }
+  .working-t { font-size: 12px; color: var(--faint); font-variant-numeric: tabular-nums; }
+  .wl-trace { animation: wldraw 1.5s ease-in-out infinite; }
+  @keyframes wldraw { 0% { stroke-dashoffset: 100; opacity: 1; } 55% { stroke-dashoffset: 0; opacity: 1; } 82% { stroke-dashoffset: 0; opacity: 1; } 100% { stroke-dashoffset: 0; opacity: 0; } }
+  .wl-dot { transform-box: fill-box; transform-origin: center; animation: wldot 1.5s ease-in-out infinite; }
+  @keyframes wldot { 0%, 45% { opacity: 0; transform: scale(.2); } 62% { opacity: 1; transform: scale(1); } 82% { opacity: 1; } 100% { opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) { .wl-trace, .wl-dot { animation: none; } .wl-trace { stroke-dashoffset: 0; } .wl-dot { opacity: 1; } }
   @keyframes pulse { 50% { opacity: .35; } }
 
   /* 排期视图 */
@@ -2167,12 +2319,27 @@
   /* 自定义悬停提示（不用系统 title） */
   .cb-prev[data-tip]:hover::after { content: attr(data-tip); position: absolute; bottom: calc(100% + 7px); left: 0; background: #26241f; color: #fff; font-size: 11px; font-weight: 400; line-height: 1.4; padding: 6px 9px; border-radius: 7px; width: max-content; max-width: 220px; white-space: normal; z-index: 40; pointer-events: none; box-shadow: 0 5px 16px rgba(0, 0, 0, .18); }
   .cf-bar { max-width: 760px; margin: 0 auto 6px; display: flex; align-items: center; gap: 2px; flex-wrap: wrap; }
+  /* 等待消息（排队）条：琥珀色调，区别于普通输入 */
+  .queued-row { display: flex; align-items: center; gap: 8px; margin: 10px 12px 0; padding: 6px 8px 6px 11px; background: #fbf6ea; border: 1px solid #f0e2c0; border-radius: 9px; font-size: 12.5px; }
+  .queued-ic { flex: none; color: #b45309; display: inline-flex; }
+  .queued-t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dim); }
+  .queued-btn { flex: none; border: none; background: none; color: var(--accent); font-size: 12px; cursor: pointer; padding: 2px 4px; }
+  .queued-btn:hover { text-decoration: underline; }
+  .queued-x { flex: none; border: none; background: none; color: var(--faint); font-size: 15px; line-height: 1; cursor: pointer; padding: 0 3px; }
+  .queued-x:hover { color: var(--err); }
+  .send.queue { background: var(--accent); color: #fff; }
   .attach-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 10px 14px 2px; }
   .attach-chip { display: inline-flex; align-items: center; gap: 6px; max-width: 190px; padding: 3px 4px 3px 6px; background: var(--panel); border: 1px solid var(--border2); border-radius: 8px; font-size: 12px; }
   .attach-img { width: 24px; height: 24px; object-fit: cover; border-radius: 4px; flex: none; }
   .attach-ic { color: var(--dim); flex: none; display: inline-flex; }
   .attach-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
   .attach-x { flex: none; border: none; background: none; color: var(--dim); cursor: pointer; font-size: 14px; line-height: 1; padding: 0 2px; }
+  /* 用户气泡里的附件卡（只读，白底衬在浅色气泡上） */
+  .ub-atts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .ub-atts.only { margin-top: 0; }
+  .ub-att { display: inline-flex; align-items: center; gap: 6px; max-width: 220px; padding: 4px 10px 4px 8px; background: #fff; border: 1px solid var(--border2); border-radius: 8px; font-size: 12px; }
+  .ub-att-ic { flex: none; display: inline-flex; color: var(--dim); }
+  .ub-att-n { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
   .attach-x:hover { color: var(--err); }
   .attach-loading { font-size: 11px; color: var(--dim); }
   /* 提示词库 */

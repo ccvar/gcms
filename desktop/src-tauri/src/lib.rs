@@ -1050,6 +1050,44 @@ async fn send_message(
     updated.ok_or_else(|| "会话丢失".into())
 }
 
+/// 重试上一轮：去掉失败/部分的助手消息，用最后一条用户消息 resume 再跑一轮（不新增用户消息）。
+#[tauri::command]
+async fn retry_turn(
+    state: tauri::State<'_, AppState>,
+    conv_id: String,
+    on_event: Channel<agent::TurnEvent>,
+) -> Result<Conversation, String> {
+    let now = now_secs();
+    let message = state.convos.begin_retry(&conv_id, now)?;
+    let conv = state.convos.get(&conv_id).ok_or("会话不存在")?;
+    let conn = state.conns.get(&conv.conn_id)?;
+    let work_dir = resolve_work_dir(&conn, &conv.site_slug)?;
+
+    let res = agent::run_turn(
+        state.runs.clone(),
+        conn,
+        work_dir,
+        conv.brain.clone(),
+        conv.model.clone(),
+        conv.perm_mode.clone(),
+        state.data_dir.join("permit"),
+        conv.session_ref.clone(),
+        false,
+        None,
+        message,
+        conv_id.clone(),
+        on_event,
+    )
+    .await;
+
+    let now2 = now_secs();
+    let updated = state.convos.mutate(&conv_id, now2, |c| {
+        c.status = "idle".into();
+        c.messages.push(assistant_msg(&res, now2));
+    })?;
+    updated.ok_or_else(|| "会话丢失".into())
+}
+
 fn title_from(message: &str) -> String {
     let t: String = message.trim().chars().take(30).collect();
     if t.is_empty() {
@@ -1297,6 +1335,7 @@ pub fn run() {
             delete_conversation,
             start_conversation,
             send_message,
+            retry_turn,
             cancel_turn,
             set_conversation_model,
             set_conversation_perm_mode,
