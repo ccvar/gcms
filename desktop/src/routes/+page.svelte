@@ -219,12 +219,16 @@
     finally { previewBusy = false; }
   }
   let wrInstalling = $state(false);
+  let wrElapsed = $state(0); // 安装 wrangler 已用时（毫秒），给个"在动"的实时反馈
+  let wrTimer: ReturnType<typeof setInterval> | undefined;
   async function installWrangler() {
     if (wrInstalling) return;
-    wrInstalling = true;
+    wrInstalling = true; wrElapsed = 0;
+    const t0 = Date.now();
+    wrTimer = setInterval(() => { wrElapsed = Date.now() - t0; }, 500);
     try { const m = await invoke<string>('install_wrangler'); say(m); await refreshBrainsManual(); }
     catch (e) { say(String(e), 'err'); }
-    finally { wrInstalling = false; }
+    finally { wrInstalling = false; if (wrTimer) { clearInterval(wrTimer); wrTimer = undefined; } }
   }
   function fillDeploy() {
     if (viewBusy) return;
@@ -243,6 +247,14 @@
   ];
   // 权限档位按风险给下拉文字上色：自动=警告色、全自动(全程不拦)=危险色，计划/询问保持中性。
   function permTone(v: string): string { return v === 'full' ? 'danger' : v === 'auto' ? 'warn' : ''; }
+  // Codex 没有逐命令确认（询问/自动的弹卡是 Claude 的 PreToolUse 钩子）——这两档对它无意义，
+  // 下拉里直接置灰，省掉那行说明。Codex 实际就两档能用：计划(只读) / 全自动(建站要联网，跑得动)。
+  function permOptsFor(brain: string) {
+    if (brain !== 'codex') return permOpts;
+    return permOpts.map((o) => (o.value === 'ask' || o.value === 'auto') ? { ...o, disabled: true, sub: 'Codex 不支持逐命令确认' } : o);
+  }
+  // 选中的档位若在 Codex 下不可用，落到「全自动」（保持已选值始终合法，不显示一个灰着的当前项）。
+  $effect(() => { if (lBrain === 'codex' && (lPerm === 'ask' || lPerm === 'auto')) lPerm = 'full'; });
   // 待批工具调用：询问/自动档下钩子把请求写在后端 pending 目录，UI 轮询渲染批准卡。
   type Permit = { id: string; conv: string; tool: string; cmd: string; dangerous: boolean; mode: string; ts: number };
   let pendingPermits = $state<Permit[]>([]);
@@ -984,7 +996,7 @@
   const siteOpts = $derived(sites.map((s) => ({ value: s.slug, label: s.name || s.slug, sub: s.url ? hostOf(s.url) : '未绑定域名', img: s.favicon || s.logo || faviconGuess(s.url) })));
   const brainOpts = $derived([
     { value: 'claude', label: 'Claude', icon: 'claude', disabled: !brainUsable('claude'), sub: brainUsable('claude') ? '' : brains?.claude.found ? '未登录' : '未安装' },
-    { value: 'codex', label: 'OpenAI Codex', icon: 'codex', disabled: !brainUsable('codex'), sub: brainUsable('codex') ? '' : brains?.codex.found ? '未登录' : '未安装' },
+    { value: 'codex', label: 'Codex', icon: 'codex', disabled: !brainUsable('codex'), sub: brainUsable('codex') ? '' : brains?.codex.found ? '未登录' : '未安装' },
   ]);
   // Claude 档位 = 别名（--model sonnet/opus/haiku），永远指向该档「当前最新」，
   // 厂商发新版自动跟随、无需更新客户端。sub 版本号仅「当前实际版本」提示，可能滞后。
@@ -1233,7 +1245,7 @@
           {#if brains}
             <div class="cli-guide" data-no-drag>
               <div class="cli-guide-h"><span>本地 CLI 准备（至少装好并登录一个）</span><button class="cli-redetect" onclick={refreshBrainsManual} disabled={brainsBusy} title="装好 / 登录完点这里重新检测（会重新读取 PATH）">{@render refreshIcon(brainsBusy)}<span>重新检测</span></button></div>
-              {#each [{ b: 'claude' as Brain, st: brains.claude, name: 'Claude Code', cmd: 'npm i -g @anthropic-ai/claude-code' }, { b: 'codex' as Brain, st: brains.codex, name: 'OpenAI Codex', cmd: 'npm i -g @openai/codex' }] as r (r.b)}
+              {#each [{ b: 'claude' as Brain, st: brains.claude, name: 'Claude Code', cmd: 'npm i -g @anthropic-ai/claude-code' }, { b: 'codex' as Brain, st: brains.codex, name: 'Codex', cmd: 'npm i -g @openai/codex' }] as r (r.b)}
                 <div class="cli-row">
                   <BrainIcon brain={r.b} size={16} />
                   <span class="cli-name">{r.name}</span>
@@ -1295,7 +1307,7 @@
                 {/if}
               </div>
               <div class="cb-right">
-                <Dropdown compact bind:value={lPerm} options={permOpts} tone={permTone(lPerm)} />
+                <Dropdown compact bind:value={lPerm} options={permOptsFor(lBrain)} tone={permTone(lPerm)} />
                 <Dropdown compact bind:value={lBrain} options={brainOpts} />
                 <Dropdown compact bind:value={lModel} options={launcherModelOpts(lBrain)} />
                 <button class="send" onclick={startChat} disabled={!lSite.trim() || !lDraft.trim() || !brainUsable(lBrain)} title="发送（Enter）">↑</button>
@@ -1304,7 +1316,6 @@
           </div>
           {#if !brainUsable(lBrain)}<p class="hint warn-text">所选厂商未就绪，点左下角设置里「去授权」。</p>{/if}
           {#if isCfConn && brains?.wrangler && !brains.wrangler.found}{@render wrNote()}{/if}
-          {#if isCfConn && lBrain === 'codex' && (lPerm === 'ask' || lPerm === 'auto')}<p class="hint">Codex 不支持逐命令确认——「询问 / 自动」的危险动作弹卡只对 Claude 生效；要精细控制建议用 Claude。</p>{/if}
         </div>
       </div>
 
@@ -1557,7 +1568,7 @@
               {/if}
             </div>
             <div class="cb-right">
-              <Dropdown compact bind:value={threadPerm} options={permOpts} tone={permTone(threadPerm)} onchange={persistThreadPerm} disabled={viewBusy} />
+              <Dropdown compact bind:value={threadPerm} options={permOptsFor(activeConv?.brain ?? 'claude')} tone={permTone(threadPerm)} onchange={persistThreadPerm} disabled={viewBusy} />
               <span class="cb-ro" title="会话的厂商已固定，不可更改">{@render brainTag(activeConv?.brain ?? 'claude', brainLabel(activeConv?.brain ?? ''))}</span>
               <Dropdown compact bind:value={threadModel} options={launcherModelOpts(activeConv?.brain ?? 'claude')} onchange={persistThreadModel} disabled={viewBusy} />
               {#if viewBusy}
@@ -1686,7 +1697,7 @@
 
 {#snippet gearIcon()}<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M2 5.3h3.5M9.3 5.3H14M2 10.7h5.1M10.9 10.7H14" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" /><circle cx="7.4" cy="5.3" r="1.6" stroke="currentColor" stroke-width="1.3" /><circle cx="9" cy="10.7" r="1.6" stroke="currentColor" stroke-width="1.3" /></svg>{/snippet}
 {#snippet cfMark(size: number)}<svg class="cf-mark" width={size} height={size} viewBox="0 0 128 128"><path fill="#fff" d="m115.679 69.288l-15.591-8.94l-2.689-1.163l-63.781.436v32.381h82.061z" /><path fill="#f38020" d="M87.295 89.022c.763-2.617.472-5.015-.8-6.796c-1.163-1.635-3.125-2.58-5.488-2.689l-44.737-.581c-.291 0-.545-.145-.691-.363s-.182-.509-.109-.8c.145-.436.581-.763 1.054-.8l45.137-.581c5.342-.254 11.157-4.579 13.192-9.885l2.58-6.723c.109-.291.145-.581.073-.872c-2.906-13.158-14.644-22.97-28.672-22.97c-12.938 0-23.913 8.359-27.838 19.952a13.35 13.35 0 0 0-9.267-2.58c-6.215.618-11.193 5.597-11.811 11.811c-.145 1.599-.036 3.162.327 4.615C10.104 70.051 2 78.337 2 88.549c0 .909.073 1.817.182 2.726a.895.895 0 0 0 .872.763h82.57c.472 0 .909-.327 1.054-.8z" /><path fill="#faae40" d="M101.542 60.275c-.4 0-.836 0-1.236.036c-.291 0-.545.218-.654.509l-1.744 6.069c-.763 2.617-.472 5.015.8 6.796c1.163 1.635 3.125 2.58 5.488 2.689l9.522.581c.291 0 .545.145.691.363s.182.545.109.8c-.145.436-.581.763-1.054.8l-9.924.582c-5.379.254-11.157 4.579-13.192 9.885l-.727 1.853c-.145.363.109.727.509.727h34.089c.4 0 .763-.254.872-.654c.581-2.108.909-4.325.909-6.614c0-13.447-10.975-24.422-24.458-24.422" /></svg>{/snippet}
-{#snippet wrNote()}<div class="wr-note"><svg class="wr-ic" width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.6" stroke="currentColor" stroke-width="1.3" /><path d="M8 4.8v4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" /><circle cx="8" cy="11.1" r="0.6" fill="currentColor" /></svg><span>还没装 wrangler，预览 / 部署要用</span><button class="wr-btn" onclick={installWrangler} disabled={wrInstalling}>{wrInstalling ? '安装中…' : '一键安装'}</button></div>{/snippet}
+{#snippet wrNote()}<div class="wr-note"><svg class="wr-ic" width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.6" stroke="currentColor" stroke-width="1.3" /><path d="M8 4.8v4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" /><circle cx="8" cy="11.1" r="0.6" fill="currentColor" /></svg><span>{wrInstalling ? '正在从 npm 装 wrangler，首次约 1–2 分钟，别关窗…' : '还没装 wrangler，预览 / 部署要用'}</span><button class="wr-btn" onclick={installWrangler} disabled={wrInstalling}>{#if wrInstalling}<span class="wr-spin"></span>安装中 {elapsedLabel(wrElapsed)}{:else}一键安装{/if}</button></div>{/snippet}
 
 {#snippet taskIcon(kind: string)}
   <span class="ts-ic">
@@ -1740,7 +1751,7 @@
       <div class="sec-head mt"><span>本地模型</span><button class="icon-btn" onclick={refreshBrainsManual} title="刷新">{@render refreshIcon(brainsBusy)}</button></div>
       {#if brains}
         <div class="brains-list">
-        {#each [{ b: 'claude' as Brain, st: brains.claude, name: 'Claude Code', cmd: 'npm i -g @anthropic-ai/claude-code' }, { b: 'codex' as Brain, st: brains.codex, name: 'OpenAI Codex', cmd: 'npm i -g @openai/codex' }] as r (r.b)}
+        {#each [{ b: 'claude' as Brain, st: brains.claude, name: 'Claude Code', cmd: 'npm i -g @anthropic-ai/claude-code' }, { b: 'codex' as Brain, st: brains.codex, name: 'Codex', cmd: 'npm i -g @openai/codex' }] as r (r.b)}
           <div class="brain-block">
           <div class="brain-row">
             <span class="brain-ic"><BrainIcon brain={r.b} size={18} /></span>
@@ -1993,7 +2004,7 @@
   .upd-spin { animation: upd-spin .7s linear infinite; transform-origin: center; }
   @keyframes upd-spin { to { transform: rotate(360deg); } }
   /* 更新进度小药丸：点更新后顶部居中显示 状态文字 + 进度条，直到重启。 */
-  .upd-toast { position: fixed; top: 5px; left: 50%; transform: translateX(-50%); z-index: 100; display: flex; align-items: center; gap: 8px; padding: 5px 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 999px; box-shadow: var(--shadow-lg); font-size: 12px; color: var(--text); -webkit-app-region: no-drag; }
+  .upd-toast { position: fixed; top: 38px; left: 50%; transform: translateX(-50%); z-index: 200; display: flex; align-items: center; gap: 8px; padding: 5px 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 999px; box-shadow: var(--shadow-lg); font-size: 12px; color: var(--text); -webkit-app-region: no-drag; }
   .upd-toast .upd-spin { color: var(--accent); flex: none; }
   .upd-toast-msg { white-space: nowrap; }
   .upd-toast-bar { width: 84px; height: 4px; border-radius: 2px; background: var(--border); overflow: hidden; flex: none; }
@@ -2334,7 +2345,8 @@
   .wr-note span { color: #8a5a08; }
   .wr-btn { flex: none; border: none; background: #d9a400; color: #fff; font-size: 11px; font-weight: 500; padding: 3px 9px; border-radius: 6px; cursor: pointer; }
   .wr-btn:hover { background: #c08f00; }
-  .wr-btn:disabled { opacity: .6; cursor: default; }
+  .wr-btn:disabled { opacity: .85; cursor: default; }
+  .wr-spin { display: inline-block; width: 10px; height: 10px; border: 1.6px solid #fff; border-right-color: transparent; border-radius: 50%; animation: rspin .7s linear infinite; margin-right: 5px; vertical-align: -1px; }
   .cf-perms-toggle { display: inline-flex; align-items: center; gap: 5px; background: none; border: none; padding: 0 0 8px; font-size: 12px; color: var(--dim); cursor: pointer; }
   .cf-perms-toggle:hover { color: var(--text); }
   .cf-chev { flex: none; transition: transform .12s; }
