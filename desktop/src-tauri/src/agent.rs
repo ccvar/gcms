@@ -43,6 +43,17 @@ pub struct TurnResult {
     pub session_ref: String,
     /// AI 在本轮提议的定时任务（PILOT_TASK 行解析而来），供前端弹确认卡。
     pub proposal: Option<TaskProposal>,
+    /// 本轮 token 用量（从 CLI 流里抽出）；用于「会话大小/累计用量」。拿不到则 None。
+    pub usage: Option<TurnUsage>,
+}
+
+/// 一轮的 token 用量。input+cache_read+cache_create ≈ 模型这轮读入的整段上下文（＝当前会话大小）。
+#[derive(Clone, Default)]
+pub struct TurnUsage {
+    pub input: u64,
+    pub output: u64,
+    pub cache_read: u64,
+    pub cache_create: u64,
 }
 
 // ---- 取消注册表（按 turn id）----
@@ -161,7 +172,7 @@ pub async fn run_turn(
         Ok(k) => k,
         Err(e) => {
             let _ = channel.send(TurnEvent::Done { ok: false, error: e.clone() });
-            return TurnResult { ok: false, text: String::new(), tools: vec![], error: e, session_ref, proposal: None };
+            return TurnResult { ok: false, text: String::new(), tools: vec![], error: e, session_ref, proposal: None, usage: None };
         }
     };
 
@@ -183,7 +194,7 @@ pub async fn run_turn(
         Ok(c) => c,
         Err(e) => {
             let _ = channel.send(TurnEvent::Done { ok: false, error: e.clone() });
-            return TurnResult { ok: false, text: String::new(), tools: vec![], error: e, session_ref, proposal: None };
+            return TurnResult { ok: false, text: String::new(), tools: vec![], error: e, session_ref, proposal: None, usage: None };
         }
     };
 
@@ -197,7 +208,7 @@ pub async fn run_turn(
         Err(e) => {
             let msg = format!("启动 {brain} 失败（确认已安装并登录）: {e}");
             let _ = channel.send(TurnEvent::Done { ok: false, error: msg.clone() });
-            return TurnResult { ok: false, text: String::new(), tools: vec![], error: msg, session_ref, proposal: None };
+            return TurnResult { ok: false, text: String::new(), tools: vec![], error: msg, session_ref, proposal: None, usage: None };
         }
     };
 
@@ -211,6 +222,7 @@ pub async fn run_turn(
         tools: Vec::new(),
         session_ref: session_ref.clone(),
         is_error: false,
+        usage: None,
     }));
     let is_codex = brain == "codex";
     let out_task = stdout.map(|s| {
@@ -271,6 +283,7 @@ pub async fn run_turn(
         error,
         session_ref: c.session_ref,
         proposal,
+        usage: c.usage,
     }
 }
 
@@ -305,6 +318,26 @@ struct Collect {
     tools: Vec<ToolCall>,
     session_ref: String,
     is_error: bool,
+    usage: Option<TurnUsage>,
+}
+
+/// 从 usage 对象抽 token 数。兼容 Anthropic（input_tokens/…）与 OpenAI 风格（prompt/completion_tokens）。缺失按 0。
+fn parse_usage(v: &serde_json::Value) -> Option<TurnUsage> {
+    if !v.is_object() {
+        return None;
+    }
+    let g = |keys: &[&str]| keys.iter().find_map(|k| v.get(*k).and_then(|x| x.as_u64())).unwrap_or(0);
+    let u = TurnUsage {
+        input: g(&["input_tokens", "prompt_tokens"]),
+        output: g(&["output_tokens", "completion_tokens"]),
+        cache_read: g(&["cache_read_input_tokens", "cached_input_tokens"]),
+        cache_create: g(&["cache_creation_input_tokens"]),
+    };
+    if u.input + u.output + u.cache_read + u.cache_create == 0 {
+        None
+    } else {
+        Some(u)
+    }
 }
 
 /// 按连接类型注入凭据 env + 设置 cwd：
@@ -472,6 +505,9 @@ fn parse_claude(ev: &serde_json::Value, ch: &Channel<TurnEvent>, collect: &Arc<M
             }
         }
         Some("assistant") => {
+            if let Some(u) = parse_usage(&ev["message"]["usage"]) {
+                collect.lock().unwrap().usage = Some(u); // 每条 assistant 消息刷新，最后一条＝本轮最终上下文
+            }
             if let Some(blocks) = ev["message"]["content"].as_array() {
                 for b in blocks {
                     if b.get("type").and_then(|t| t.as_str()) == Some("tool_use") {
@@ -485,6 +521,13 @@ fn parse_claude(ev: &serde_json::Value, ch: &Channel<TurnEvent>, collect: &Arc<M
         }
         Some("result") => {
             let mut c = collect.lock().unwrap();
+            // 优先用最后一条 assistant 消息的 usage（＝最终那次模型调用读入的整段上下文＝当前会话大小）；
+            // result.usage 在多步回合里可能是各步汇总，会高估上下文，故仅在没抓到 assistant usage 时兜底。
+            if c.usage.is_none() {
+                if let Some(u) = parse_usage(&ev["usage"]) {
+                    c.usage = Some(u);
+                }
+            }
             if ev.get("is_error").and_then(|b| b.as_bool()).unwrap_or(false) {
                 c.is_error = true;
             }
@@ -499,6 +542,13 @@ fn parse_claude(ev: &serde_json::Value, ch: &Channel<TurnEvent>, collect: &Arc<M
 }
 
 fn parse_codex(ev: &serde_json::Value, ch: &Channel<TurnEvent>, collect: &Arc<Mutex<Collect>>) {
+    // codex 某些版本在事件里带 token 统计，尽力抽一下（拿不到就 None，前端会隐藏上下文条）。
+    if let Some(u) = parse_usage(&ev["usage"])
+        .or_else(|| parse_usage(&ev["item"]["usage"]))
+        .or_else(|| parse_usage(&ev["info"]["usage"]))
+    {
+        collect.lock().unwrap().usage = Some(u);
+    }
     match ev.get("type").and_then(|t| t.as_str()) {
         Some("thread.started") => {
             if let Some(id) = ev.get("thread_id").and_then(|i| i.as_str()) {
@@ -583,7 +633,7 @@ mod tests {
 
     #[test]
     fn claude_text_delta_accumulates() {
-        let c = Arc::new(Mutex::new(Collect { text: String::new(), tools: vec![], session_ref: "s".into(), is_error: false }));
+        let c = Arc::new(Mutex::new(Collect { text: String::new(), tools: vec![], session_ref: "s".into(), is_error: false, usage: None }));
         let channel = ch();
         parse_claude(&json!({"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"你好"}}}), &channel, &c);
         parse_claude(&json!({"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"世界"}}}), &channel, &c);
@@ -592,7 +642,7 @@ mod tests {
 
     #[test]
     fn claude_tool_use_captured() {
-        let c = Arc::new(Mutex::new(Collect { text: String::new(), tools: vec![], session_ref: "s".into(), is_error: false }));
+        let c = Arc::new(Mutex::new(Collect { text: String::new(), tools: vec![], session_ref: "s".into(), is_error: false, usage: None }));
         parse_claude(&json!({"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"node scripts/gcms.js list posts"}}]}}), &ch(), &c);
         let g = c.lock().unwrap();
         assert_eq!(g.tools.len(), 1);
@@ -601,7 +651,7 @@ mod tests {
 
     #[test]
     fn codex_thread_and_message() {
-        let c = Arc::new(Mutex::new(Collect { text: String::new(), tools: vec![], session_ref: String::new(), is_error: false }));
+        let c = Arc::new(Mutex::new(Collect { text: String::new(), tools: vec![], session_ref: String::new(), is_error: false, usage: None }));
         parse_codex(&json!({"type":"thread.started","thread_id":"tid-123"}), &ch(), &c);
         parse_codex(&json!({"type":"item.completed","item":{"type":"agent_message","text":"明白"}}), &ch(), &c);
         let g = c.lock().unwrap();
@@ -611,7 +661,7 @@ mod tests {
 
     #[test]
     fn result_error_flag() {
-        let c = Arc::new(Mutex::new(Collect { text: String::new(), tools: vec![], session_ref: "s".into(), is_error: false }));
+        let c = Arc::new(Mutex::new(Collect { text: String::new(), tools: vec![], session_ref: "s".into(), is_error: false, usage: None }));
         parse_claude(&json!({"type":"result","is_error":true,"result":"boom"}), &ch(), &c);
         assert!(c.lock().unwrap().is_error);
     }

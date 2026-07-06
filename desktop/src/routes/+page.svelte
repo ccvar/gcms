@@ -320,6 +320,13 @@
     const s = Math.max(0, Math.floor(ms / 1000));
     return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s`;
   }
+  // 会话大小/用量：上下文按厂商上限估算（Claude ~200k、Codex 的 gpt-5.x ~272k，近似值）。
+  function ctxLimit(brain: string): number { return brain === 'codex' ? 272000 : 200000; }
+  function fmtTokens(n: number): string {
+    if (n >= 1_000_000) return (n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1).replace(/\.0$/, '') + 'M';
+    if (n >= 1000) return Math.round(n / 1000) + 'k';
+    return String(n);
+  }
 
   // 拖动窗口：忽略交互元素（按钮/输入等），否则点它们会误触发拖动。
   function startDrag(e: MouseEvent) {
@@ -1564,6 +1571,20 @@
             </div>
           </div>
         </div>
+        {#if activeConv && ((activeConv.ctx_tokens ?? 0) > 0 || (activeConv.total_tokens ?? 0) > 0)}
+          <div class="usage-line">
+            {#if (activeConv.ctx_tokens ?? 0) > 0}
+              {@const lim = ctxLimit(activeConv.brain)}
+              {@const pct = Math.min(100, Math.round(((activeConv.ctx_tokens ?? 0) / lim) * 100))}
+              <span class="usage-seg" title="当前会话上下文占用；接近上限时会变慢/变差，建议开个新对话">
+                <span class="usage-lbl">上下文</span>
+                <span class="usage-bar"><span class="usage-fill" class:warn={pct >= 70 && pct < 90} class:danger={pct >= 90} style="width:{Math.max(3, pct)}%"></span></span>
+                <span class="usage-num">{fmtTokens(activeConv.ctx_tokens ?? 0)}/{fmtTokens(lim)}</span>
+              </span>
+            {/if}
+            {#if (activeConv.total_tokens ?? 0) > 0}<span class="usage-cum">本会话累计 {fmtTokens(activeConv.total_tokens ?? 0)} tokens</span>{/if}
+          </div>
+        {/if}
       </div>
     {/if}
   </section>
@@ -2256,6 +2277,15 @@
   .tcheck input { width: auto; }
 
   .composer-wrap { flex: none; padding: 10px 24px 20px; }
+  /* 输入框下方：会话大小（上下文占用）+ 本会话累计 token */
+  .usage-line { display: flex; align-items: center; gap: 12px; margin: 7px 4px 0; font-size: 11px; color: var(--faint); }
+  .usage-seg { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+  .usage-lbl { color: var(--dim); }
+  .usage-bar { width: 78px; height: 4px; border-radius: 2px; background: var(--border); overflow: hidden; flex: none; }
+  .usage-fill { display: block; height: 100%; background: var(--accent); border-radius: 2px; }
+  .usage-fill.warn { background: var(--warn); }
+  .usage-fill.danger { background: var(--err); }
+  .usage-num { font-variant-numeric: tabular-nums; }
   .composer-wrap .composer { max-width: 760px; margin: 0 auto; }
 
   /* ---- 按钮 / 弹窗 ---- */

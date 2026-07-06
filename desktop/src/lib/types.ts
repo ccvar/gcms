@@ -95,6 +95,10 @@ export interface Conversation {
   status: 'idle' | 'running';
   created_at: number;
   updated_at: number;
+  /** 最近一轮上下文 token（≈当前会话大小），0＝无数据。 */
+  ctx_tokens?: number;
+  /** 本会话累计处理 token。 */
+  total_tokens?: number;
 }
 
 export type TurnEvent =

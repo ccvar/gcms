@@ -71,6 +71,12 @@ pub struct Conversation {
     pub status: String,
     pub created_at: u64,
     pub updated_at: u64,
+    /// 最近一轮的上下文 token（≈当前会话大小），用于「上下文 X/上限」。0＝没数据。
+    #[serde(default)]
+    pub ctx_tokens: u64,
+    /// 本会话累计处理的 token（每轮 input+cache+output 相加）。
+    #[serde(default)]
+    pub total_tokens: u64,
 }
 
 #[derive(Clone)]
@@ -246,7 +252,7 @@ mod tests {
         Conversation {
             id: id.into(), conn_id: "c".into(), conn_name: "".into(), site_slug: "s".into(), site_name: "".into(),
             task_type: "free".into(), brain: "claude".into(), model: "sonnet".into(), perm_mode: "full".into(),
-            session_ref: session.into(), title: "t".into(), messages: msgs, status: "idle".into(), created_at: 0, updated_at: 0,
+            session_ref: session.into(), title: "t".into(), messages: msgs, status: "idle".into(), created_at: 0, updated_at: 0, ctx_tokens: 0, total_tokens: 0,
         }
     }
 

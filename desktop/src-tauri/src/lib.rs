@@ -896,6 +896,15 @@ fn assistant_msg(res: &agent::TurnResult, now: u64) -> Message {
     }
 }
 
+/// 用本轮 usage 更新会话的「上下文大小 + 累计 token」。拿不到 usage 就不动（保留上一轮的值）。
+fn apply_usage(c: &mut Conversation, res: &agent::TurnResult) {
+    if let Some(u) = &res.usage {
+        let ctx = u.input + u.cache_read + u.cache_create; // 这轮读入的整段上下文 ≈ 当前会话大小
+        c.ctx_tokens = ctx;
+        c.total_tokens += ctx + u.output; // 累计（每轮全量计入，反映实际处理量）
+    }
+}
+
 /// 开新会话的共享实现（命令与定时任务调度器都用它）。stores 传入克隆，便于后台任务持有。
 /// conv_id 由调用方生成；session_ref 首轮先留空，跑完才回填（崩溃留空→续对话给「已失效」）。
 #[allow(clippy::too_many_arguments)]
@@ -944,6 +953,8 @@ async fn create_conversation(
         status: "running".into(),
         created_at: now,
         updated_at: now,
+        ctx_tokens: 0,
+        total_tokens: 0,
     };
     convos.upsert(conv)?;
 
@@ -960,6 +971,7 @@ async fn create_conversation(
         }
         c.status = "idle".into();
         c.messages.push(assistant_msg(&res, now2));
+        apply_usage(c, &res);
     })?;
     updated.ok_or_else(|| "会话丢失".into())
 }
@@ -1046,6 +1058,7 @@ async fn send_message(
     let updated = state.convos.mutate(&conv_id, now2, |c| {
         c.status = "idle".into();
         c.messages.push(assistant_msg(&res, now2));
+        apply_usage(c, &res);
     })?;
     updated.ok_or_else(|| "会话丢失".into())
 }
@@ -1084,6 +1097,7 @@ async fn retry_turn(
     let updated = state.convos.mutate(&conv_id, now2, |c| {
         c.status = "idle".into();
         c.messages.push(assistant_msg(&res, now2));
+        apply_usage(c, &res);
     })?;
     updated.ok_or_else(|| "会话丢失".into())
 }
