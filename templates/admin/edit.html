@@ -195,14 +195,14 @@
       </form>
       {{end}}{{end}}{{end}}
     </div>
-    <details class="relink-box" style="margin-top:.6rem">
-      <summary class="muted" style="cursor:pointer;font-size:.85rem">{{.Admin.T "admin.edit.relink_toggle" "重连互译组（把这篇并入某个已存在的翻译组）"}}</summary>
-      <form method="post" action="/admin/{{$.EditBase}}/{{$e.ID}}/relink" style="margin-top:.5rem;display:flex;gap:.5rem;flex-wrap:wrap;align-items:center">
+    <details class="relink-box">
+      <summary>{{.Admin.T "admin.edit.relink_toggle" "重连互译组（把这篇并入某个已存在的翻译组）"}}</summary>
+      <form method="post" action="/admin/{{$.EditBase}}/{{$e.ID}}/relink" class="relink-form">
         <input type="hidden" name="_csrf" value="{{$.CSRF}}">
-        <input type="text" name="relink_target" placeholder="{{.Admin.T "admin.edit.relink_ph" "目标文章 ID 或 trans_group"}}" style="flex:1;min-width:220px">
+        <input type="text" name="relink_target" class="relink-input" placeholder="{{.Admin.T "admin.edit.relink_ph" "目标文章 ID 或 trans_group"}}">
         <button type="submit" class="btn btn-soft">{{.Admin.T "admin.edit.relink_btn" "重连"}}</button>
       </form>
-      <p class="muted" style="font-size:.8rem;margin:.35rem 0 0">{{.Admin.T "admin.edit.relink_hint" "填另一语种版本的文章 ID（推荐）或它的 trans_group；每种语言一组只能有一篇。当前组："}}<code>{{$e.TransGroup}}</code></p>
+      <p class="relink-hint">{{.Admin.T "admin.edit.relink_hint" "填另一语种版本的文章 ID（推荐）或它的 trans_group；每种语言一组只能有一篇。当前组："}}<code>{{$e.TransGroup}}</code></p>
     </details>
   </section>
   {{end}}

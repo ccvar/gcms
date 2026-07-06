@@ -2462,6 +2462,20 @@ input[type=range] { accent-color: var(--accent); }
 .trans-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
 .trans-actions form { display: inline; margin: 0; }
 
+/* 重连互译组：折叠式，与编辑页表单同一套输入/按钮样式 */
+.relink-box { margin-top: .9rem; padding-top: .85rem; border-top: 1px dashed var(--line); }
+.relink-box > summary { list-style: none; cursor: pointer; font-size: .82rem; color: var(--muted); user-select: none; }
+.relink-box > summary::-webkit-details-marker { display: none; }
+.relink-box > summary::before { content: "▸"; display: inline-block; margin-right: .4rem; color: var(--faint); transition: transform var(--speed); }
+.relink-box[open] > summary::before { transform: rotate(90deg); }
+.relink-box > summary:hover { color: var(--accent); }
+.relink-form { display: flex; gap: .5rem; align-items: center; margin: .65rem 0 0; }
+.relink-input { flex: 1; min-width: 0; padding: .55rem .8rem; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); font-family: inherit; font-size: .92rem; line-height: 1.45; }
+.relink-input:focus { outline: none; border-color: var(--accent); }
+.relink-form .btn { white-space: nowrap; }
+.relink-hint { margin: .5rem 0 0; font-size: .78rem; color: var(--muted); line-height: 1.55; }
+.relink-hint code { font-family: var(--mono); font-size: .92em; background: var(--accent-wash); color: var(--accent); padding: .05rem .35rem; border-radius: 5px; }
+
 /* 语言设置表 */
 .lang-table th.center, .lang-table td.center { text-align: center; }
 .lang-catalog-cell { white-space: nowrap; }
