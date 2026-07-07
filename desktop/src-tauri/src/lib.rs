@@ -109,8 +109,8 @@ struct PackUpdateInfo {
 }
 
 /// 查询技能包是否有新版：GET {api_base}/skill-pack/version（密钥鉴权）。
-/// 旧连接（pack_version 为空）首次查到版本时静默落基线、不提示更新；
-/// 服务端太老没有该端点（404）或网络失败 → 静默视为无更新（不打扰用户）。
+/// 旧连接（pack_version 为空）：技能目录无 PACK_VERSION 标记 ⇒ 必是老包，首次就提示有更新；
+/// 有标记则读取落库后正常比较。服务端太老没有该端点（404）或网络失败 → 静默视为无更新（不打扰用户）。
 #[tauri::command]
 async fn check_pack_update(
     state: tauri::State<'_, AppState>,
@@ -143,9 +143,18 @@ async fn check_pack_update(
         return Ok(none);
     }
     if conn.pack_version.is_empty() {
-        // 首次核对：落基线不提示（老导入的包无从判断新旧，从下次服务端升级开始提示）。
-        let _ = state.conns.set_pack_version(&conn.id, &latest);
-        return Ok(PackUpdateInfo { current: latest.clone(), latest, has_update: false });
+        // 版本未落库。看技能目录里有没有 PACK_VERSION 标记：
+        // - 没有 ⇒ 一定是 v1.3.10 之前的老包 ⇒ 相对任何能答版本查询的服务端都算「有更新」，首次就提示；
+        // - 有 ⇒ 读标记落库后正常比较（导入/升级时会读，这里只是兜底）。
+        let marker = std::fs::read_to_string(std::path::Path::new(&conn.skill_dir).join("PACK_VERSION"))
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default();
+        if marker.is_empty() {
+            return Ok(PackUpdateInfo { current: String::new(), latest: latest.clone(), has_update: true });
+        }
+        let _ = state.conns.set_pack_version(&conn.id, &marker);
+        let has = latest != marker;
+        return Ok(PackUpdateInfo { current: marker, latest, has_update: has });
     }
     let has = latest != conn.pack_version;
     Ok(PackUpdateInfo { current: conn.pack_version, latest, has_update: has })

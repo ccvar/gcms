@@ -575,9 +575,9 @@
     const k = 'gcms.pilot.packCheck.' + connId;
     const last = Number(localStorage.getItem(k) || 0);
     if (Date.now() - last < 24 * 3600 * 1000) return;
-    localStorage.setItem(k, String(Date.now()));
     try {
       const r = await invoke<{ current: string; latest: string; has_update: boolean }>('check_pack_update', { connId });
+      localStorage.setItem(k, String(Date.now())); // 查成功才消耗 24h 窗口；失败（断网等）下次选中直接重试
       if (r.has_update) packUpdates[connId] = r.latest;
     } catch { /* 静默 */ }
   }

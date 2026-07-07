@@ -125,7 +125,25 @@ impl ConnStore {
             {
                 k.to_string()
             } else {
-                // 原始包且没给密钥：让 UI 弹输入框后带 key 重试。
+                // 原始包且没给密钥：后台常驻下载的都是无密钥包，而完整密钥只显示一次——
+                // 若恰有一个同地址的 gcms 连接，直接就地升级它（密钥用钥匙串里那把，无需重填）。
+                // 导入 zip 本就等于信任其中的脚本，按地址匹配不降低信任边界；多个同地址连接时无法消歧，仍走弹窗。
+                let same_base: Vec<Connection> = self
+                    .list()
+                    .into_iter()
+                    .filter(|c| c.kind == "gcms" && c.api_base == api_base)
+                    .collect();
+                if same_base.len() == 1 {
+                    let mut dup = same_base.into_iter().next().expect("len checked");
+                    overlay_skill_dir(&skill_dir, Path::new(&dup.skill_dir))?;
+                    let v = read_pack_version(Path::new(&dup.skill_dir));
+                    if !v.is_empty() && v != dup.pack_version {
+                        dup.pack_version = v;
+                        self.set_pack_version(&dup.id, &dup.pack_version)?;
+                    }
+                    return Ok(ImportOutcome::Upgraded { connection: dup });
+                }
+                // 没有可升级的目标：让 UI 弹输入框后带 key 重试。
                 return Ok(ImportOutcome::NeedsKey { api_base });
             };
             let key_kind = if api_key.starts_with("gcmsp_") {
@@ -458,6 +476,55 @@ mod tests {
         assert!(key_missing("gcms_xxx")); // 单站原始包占位
         assert!(!key_missing("gcmsp_livetoken123"));
         assert!(!key_missing("gcms_livetoken123"));
+    }
+
+    #[test]
+    fn import_raw_pack_upgrades_single_matching_connection_without_key() {
+        use std::io::Write as _;
+        let base = std::env::temp_dir().join(format!("pilot-upg-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&base).unwrap();
+        let store = ConnStore::new(&base).unwrap();
+        // 既有连接：同 api_base 的 gcms 连接，技能目录里有旧脚本 + Pilot 管理的 .env
+        let dest = base.join("skill-old");
+        fs::create_dir_all(dest.join("scripts")).unwrap();
+        fs::write(dest.join("scripts").join("gcms.js"), "OLD").unwrap();
+        fs::write(dest.join(".env"), "GCMS_API_BASE=https://x.example/api/platform/v1").unwrap();
+        let conn = Connection {
+            id: "c1".into(), name: "x".into(), kind: "gcms".into(),
+            api_base: "https://x.example/api/platform/v1".into(),
+            skill_dir: dest.to_string_lossy().into_owned(),
+            key_prefix: "gcmsp_ab".into(), key_kind: "gcmsp_".into(),
+            account_id: String::new(), pack_version: String::new(), created_at: "t".into(),
+        };
+        fs::write(base.join("connections.json"), serde_json::to_vec_pretty(&[conn]).unwrap()).unwrap();
+        // 新原始包 zip：无密钥（.env.example 占位）+ 新脚本 + PACK_VERSION
+        let zip_path = base.join("pack.zip");
+        {
+            let f = fs::File::create(&zip_path).unwrap();
+            let mut zw = zip::ZipWriter::new(f);
+            let o = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+            zw.start_file("kit/skill/scripts/gcms.js", o).unwrap();
+            zw.write_all(b"NEW with relink").unwrap();
+            zw.start_file("kit/skill/.env.example", o).unwrap();
+            zw.write_all(b"GCMS_API_BASE=https://x.example/api/platform/v1\nGCMS_API_KEY=gcmsp_xxx\n").unwrap();
+            zw.start_file("kit/skill/PACK_VERSION", o).unwrap();
+            zw.write_all(b"v9.9.9\n").unwrap();
+            zw.finish().unwrap();
+        }
+        // 不提供密钥导入 → 应命中唯一同地址连接，就地升级而非 NeedsKey
+        let out = store.import_zip(zip_path.to_str().unwrap(), None, None).unwrap();
+        match out {
+            ImportOutcome::Upgraded { connection } => {
+                assert_eq!(connection.id, "c1");
+                assert_eq!(connection.pack_version, "v9.9.9");
+            }
+            _ => panic!("expected Upgraded outcome"),
+        }
+        assert_eq!(fs::read_to_string(dest.join("scripts").join("gcms.js")).unwrap(), "NEW with relink");
+        // Pilot 管理的 .env 未被包内占位覆盖
+        assert!(fs::read_to_string(dest.join(".env")).unwrap().contains("x.example"));
+        assert_eq!(store.get("c1").unwrap().pack_version, "v9.9.9");
+        fs::remove_dir_all(&base).ok();
     }
 
     #[test]
