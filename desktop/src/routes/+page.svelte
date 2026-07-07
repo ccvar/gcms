@@ -17,6 +17,8 @@
   import { loadPrefs, savePrefs } from '$lib/defaults';
   import { PRESET_PROMPTS, loadUserPrompts, saveUserPrompts, newPromptId, type Prompt } from '$lib/prompts';
   import Dropdown from '$lib/Dropdown.svelte';
+  import { marked } from 'marked';
+  import DOMPurify from 'dompurify';
 
   // ---------- setup ----------
   let conns = $state<Connection[]>([]);
@@ -989,6 +991,21 @@
       maybeAutoRetry(convId, failed, errText);
     } catch (e) { await failTurn(e, convId); }
   }
+  // 重建会话续跑：底层会话状态损坏、重试无效时——换全新会话（带历史摘要）原地继续这条对话。
+  async function rebuildSession(convId: string) {
+    if (running[convId]) return;
+    const base = activeConvId === convId ? activeConv : convos.find((c) => c.id === convId);
+    if (!base) return;
+    delete autoRetried[convId];
+    const msgs = base.messages.slice();
+    if (msgs.length && msgs[msgs.length - 1].role === 'assistant') msgs.pop();
+    beginTurn(convId, { ...base, messages: msgs, status: 'running' });
+    try {
+      const conv = await invoke<Conversation>('rebuild_session', { convId, onEvent: makeChannel(convId) });
+      await refreshConvos();
+      endTurn(conv, convId); // 重建后不做自动重试，避免坏环境下打转
+    } catch (e) { await failTurn(e, convId); }
+  }
   // 这轮若因瞬时问题失败且本轮还没自动重试过，隔几秒自动重连一次；再不行就停手（留手动「重试」）。
   function maybeAutoRetry(convId: string, failed: boolean, errText: string) {
     if (!failed || autoRetried[convId] || !isTransient(errText)) return;
@@ -1038,7 +1055,74 @@
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !composing && e.keyCode !== 229) { e.preventDefault(); fn(); }
   }
 
-  // linkify + 段落
+  // ---------- 自定义右键菜单 ----------
+  // 替换 WKWebView 默认英文菜单（含 Inspect Element / AutoFill 等）：
+  // 输入框里给 剪切/复制/粘贴/全选；选中了消息文字给 复制；其它地方不出菜单。
+  type CtxTarget = HTMLInputElement | HTMLTextAreaElement;
+  let ctxMenu = $state<{ x: number; y: number; target: CtxTarget | null; canCopy: boolean } | null>(null);
+  function onCtxMenu(e: MouseEvent) {
+    e.preventDefault();
+    const t = e.target as HTMLElement;
+    const editable = t.closest('textarea, input[type="text"], input:not([type])') as CtxTarget | null;
+    const sel = window.getSelection()?.toString() ?? '';
+    if (!editable && !sel) { ctxMenu = null; return; }
+    const canCopy = editable ? editable.selectionStart !== editable.selectionEnd : sel.length > 0;
+    // 贴边收敛，别溢出窗口
+    const x = Math.min(e.clientX, window.innerWidth - 160);
+    const y = Math.min(e.clientY, window.innerHeight - 170);
+    ctxMenu = { x, y, target: editable, canCopy };
+  }
+  function closeCtx() { ctxMenu = null; }
+  function ctxCut() { const el = ctxMenu?.target; closeCtx(); if (el) { el.focus(); document.execCommand('cut'); } }
+  function ctxCopy() {
+    const m = ctxMenu; closeCtx();
+    if (m?.target) { m.target.focus(); document.execCommand('copy'); }
+    else { const s = window.getSelection()?.toString(); if (s) void navigator.clipboard.writeText(s); }
+  }
+  async function ctxPaste() {
+    const el = ctxMenu?.target; closeCtx(); if (!el) return;
+    el.focus();
+    try {
+      const txt = await navigator.clipboard.readText();
+      if (!txt) return;
+      const st = el.selectionStart ?? el.value.length;
+      const en = el.selectionEnd ?? st;
+      el.setRangeText(txt, st, en, 'end');
+      el.dispatchEvent(new Event('input', { bubbles: true })); // 让 bind:value 感知
+    } catch { say('无法读取剪贴板，请用 ⌘V 粘贴', 'err'); }
+  }
+  function ctxSelectAll() { const el = ctxMenu?.target; closeCtx(); if (el) { el.focus(); el.select(); } }
+  $effect(() => {
+    if (!ctxMenu) return;
+    const close = () => (ctxMenu = null);
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
+    const closeOutside = (e: MouseEvent) => { if (!(e.target as HTMLElement).closest('.ctx-menu')) close(); };
+    window.addEventListener('mousedown', closeOutside, true);
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    return () => {
+      window.removeEventListener('mousedown', closeOutside, true);
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+    };
+  });
+
+  // ---------- 助手消息 Markdown 渲染 ----------
+  // 模型输出的 **粗体**/列表/表格/代码块 之前是裸文本，读感远不如 Claude 客户端。
+  // marked(GFM+breaks) 渲染 → DOMPurify 消毒（模型会读网页/站点内容，注入面必须过滤）→ {@html}。
+  marked.setOptions({ gfm: true, breaks: true });
+  function mdRender(text: string): string {
+    return DOMPurify.sanitize(marked.parse(text, { async: false }) as string);
+  }
+  // Markdown 里 <a> 的点击代理：拦下 webview 内导航，改用系统浏览器打开。
+  function mdClick(e: MouseEvent) {
+    const a = (e.target as HTMLElement).closest('a');
+    if (a?.href) { e.preventDefault(); openUrl(a.href); }
+  }
+
+  // linkify + 段落（用户消息/错误消息仍走纯文本路径）
   const urlRe = /(https?:\/\/[^\s)"'`」』】>，。；：！？、（）《》]+)/g;
   function segs(text: string): { t: string; link: boolean }[] {
     const out: { t: string; link: boolean }[] = [];
@@ -1156,6 +1240,7 @@
   }
 </script>
 
+<svelte:window oncontextmenu={onCtxMenu} />
 <main class="app" class:win={isWindows}>
   <!-- 融合式标题栏：透明拖拽条铺满顶部，红绿灯与工具按钮浮在其上（macOS Overlay） -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -1323,6 +1408,21 @@
   <!-- 主区 -->
   <section class="main">
     {#if flash}<div class="flash {flashKind}">{flash}</div>{/if}
+
+    {#if ctxMenu}
+      {@const m = ctxMenu}
+      <div class="ctx-menu" style="left:{m.x}px; top:{m.y}px" role="menu">
+        {#if m.target}
+          <button class="ctx-item" disabled={!m.canCopy} onclick={ctxCut}>剪切<span class="ctx-kbd">{isWindows ? 'Ctrl+X' : '⌘X'}</span></button>
+          <button class="ctx-item" disabled={!m.canCopy} onclick={ctxCopy}>复制<span class="ctx-kbd">{isWindows ? 'Ctrl+C' : '⌘C'}</span></button>
+          <button class="ctx-item" onclick={ctxPaste}>粘贴<span class="ctx-kbd">{isWindows ? 'Ctrl+V' : '⌘V'}</span></button>
+          <div class="ctx-div"></div>
+          <button class="ctx-item" onclick={ctxSelectAll}>全选<span class="ctx-kbd">{isWindows ? 'Ctrl+A' : '⌘A'}</span></button>
+        {:else}
+          <button class="ctx-item" onclick={ctxCopy}>复制<span class="ctx-kbd">{isWindows ? 'Ctrl+C' : '⌘C'}</span></button>
+        {/if}
+      </div>
+    {/if}
 
     {#if !activeConn}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -1594,7 +1694,8 @@
             <div class="msg assistant">
               <div class="body">
                 {#if liveView.tools.length}{@render cmds(liveView.tools)}{/if}
-                {#if liveView.text}<div class="text">{@render richText(liveView.text)}</div>{/if}
+                <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
+                {#if liveView.text}<div class="text md" onclick={mdClick}>{@html mdRender(liveView.text)}</div>{/if}
                 {#if liveView.error}<div class="err-note">{liveView.error}</div>
                 {:else}
                   <div class="working" aria-label="思考中">
@@ -1752,7 +1853,12 @@
     <div class="msg assistant">
       <div class="body">
         {#if m.tools.length}{@render cmds(m.tools)}{/if}
-        <div class="text {m.error ? 'is-err' : ''}">{@render richText(m.text)}{#if m.error && isLast && !viewBusy && activeConv?.session_ref}<button class="retry-btn" onclick={() => retry(activeConvId, true)}><svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M13 8a5 5 0 1 1-1.5-3.6M13 2v3h-3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>重试</button>{/if}</div>
+        {#if m.error}
+          <div class="text is-err">{@render richText(m.text)}{#if isLast && !viewBusy}{#if activeConv?.session_ref}<button class="retry-btn" onclick={() => retry(activeConvId, true)}><svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M13 8a5 5 0 1 1-1.5-3.6M13 2v3h-3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>重试</button>{/if}<button class="retry-btn" title="换一个全新会话原地续跑（自动带上历史摘要）——用于会话状态损坏、重试无效时" onclick={() => rebuildSession(activeConvId)}><svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M2.6 8a5.4 5.4 0 0 1 9.3-3.7M13.4 8a5.4 5.4 0 0 1-9.3 3.7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /><path d="M11.6 1.6v2.9h2.9M4.4 14.4v-2.9H1.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>重建继续</button>{/if}</div>
+        {:else}
+          <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
+          <div class="text md" onclick={mdClick}>{@html mdRender(m.text)}</div>
+        {/if}
         {#if m.proposal}
           <div class="proposal">
             <div class="proposal-head">⏰ AI 建议一个定时任务</div>
@@ -2051,7 +2157,8 @@
     --bg: #ffffff; --rail: #faf9f7; --card: #ffffff;
     --border: #ecebe6; --border2: #e1dfd8;
     --text: #26241f; --dim: #6f6b62; --faint: #a29d93;
-    --accent: #4f46e5; --accent-h: #4338ca; --accent-soft: #eef0fe;
+    /* 强调色走暖黑/灰（Codex 式安静路线），不用蓝紫；风险色（红/琥珀）另有专用变量。 */
+    --accent: #33302a; --accent-h: #1d1b17; --accent-soft: #edece7;
     --user-bg: #f3f1ec;
     --ok: #12805c; --warn: #b45309; --err: #dc2626;
     --err-soft: #fef2f2; --err-border: #f4cccc;
@@ -2125,7 +2232,7 @@
   .railnav { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 10px; background: none;
     border: none; border-radius: 9px; font-size: 13px; color: var(--dim); cursor: pointer; text-align: left; margin-top: -4px; }
   .railnav:hover { background: #f1efe9; color: var(--text); }
-  .railnav.on { background: #eae7ff; color: var(--accent); font-weight: 550; }
+  .railnav.on { background: #e9e7e0; color: var(--text); font-weight: 550; }
   .railnav:disabled { opacity: .45; cursor: default; }
   .railnav svg { flex: none; }
 
@@ -2211,6 +2318,13 @@
   /* ---- 主区 ---- */
   .main { flex: 1; position: relative; display: flex; flex-direction: column; min-width: 0; padding-top: 0; }
   .flash { position: absolute; top: 40px; left: 50%; transform: translateX(-50%); z-index: 40; background: #14231a; color: #fff; padding: 9px 16px; border-radius: 10px; font-size: 13px; box-shadow: var(--shadow); max-width: 70%; }
+  /* 自定义右键菜单（替换 WKWebView 默认英文菜单） */
+  .ctx-menu { position: fixed; z-index: 120; min-width: 148px; background: #fff; border: 1px solid var(--border); border-radius: 11px; box-shadow: 0 12px 32px rgba(30,25,15,.16); padding: 5px; animation: pop .1s ease-out; }
+  .ctx-item { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 18px; background: none; border: none; border-radius: 7px; padding: 6px 10px; font: inherit; font-size: 13px; color: var(--text); cursor: pointer; text-align: left; }
+  .ctx-item:hover:not(:disabled) { background: #f1efe9; }
+  .ctx-item:disabled { color: var(--faint); cursor: default; }
+  .ctx-kbd { font-size: 11px; color: var(--faint); }
+  .ctx-div { height: 1px; background: var(--border); margin: 4px 6px; }
   .flash.err { background: var(--err); }
 
   /* safe center：内容比可视区高时退回顶对齐可滚动，避免居中把顶部裁掉。 */
@@ -2306,6 +2420,29 @@
   .ub-text { white-space: pre-wrap; }
   .msg.assistant .body { flex: 1; min-width: 0; }
   .text { white-space: pre-wrap; word-break: break-word; }
+  /* 助手消息的 Markdown 阅读版式（渲染出的 HTML 不在 Svelte 作用域内，须 :global） */
+  .text.md { white-space: normal; font-size: 14px; line-height: 1.7; }
+  .text.md :global(p) { margin: 0 0 10px; }
+  .text.md :global(p:last-child), .text.md :global(ul:last-child), .text.md :global(ol:last-child),
+  .text.md :global(pre:last-child), .text.md :global(table:last-child) { margin-bottom: 0; }
+  .text.md :global(strong) { font-weight: 650; }
+  .text.md :global(ul), .text.md :global(ol) { margin: 0 0 10px; padding-left: 22px; }
+  .text.md :global(li) { margin: 3px 0; }
+  .text.md :global(li::marker) { color: var(--faint); }
+  .text.md :global(h1), .text.md :global(h2) { font-size: 16px; font-weight: 650; margin: 16px 0 6px; }
+  .text.md :global(h3), .text.md :global(h4) { font-size: 14.5px; font-weight: 650; margin: 14px 0 5px; }
+  .text.md :global(h1:first-child), .text.md :global(h2:first-child),
+  .text.md :global(h3:first-child), .text.md :global(h4:first-child) { margin-top: 0; }
+  .text.md :global(code) { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .88em; background: #f1efe9; padding: 1px 5px; border-radius: 5px; }
+  .text.md :global(pre) { background: #f6f5f1; border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; overflow-x: auto; margin: 0 0 10px; }
+  .text.md :global(pre code) { background: none; padding: 0; font-size: 12.5px; line-height: 1.6; }
+  .text.md :global(a) { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+  .text.md :global(table) { border-collapse: collapse; margin: 0 0 10px; font-size: 13px; display: block; overflow-x: auto; max-width: 100%; }
+  .text.md :global(th), .text.md :global(td) { border: 1px solid var(--border2); padding: 5px 10px; text-align: left; }
+  .text.md :global(th) { background: #f6f5f1; font-weight: 600; }
+  .text.md :global(blockquote) { margin: 0 0 10px; padding: 2px 12px; border-left: 3px solid var(--border2); color: var(--dim); }
+  .text.md :global(hr) { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
+  .text.md :global(img) { max-width: 100%; border-radius: 8px; }
   .text.is-err { color: var(--err); }
   /* 重试：无边框，内联跟在红色错误文字后面 */
   .retry-btn { display: inline-flex; align-items: center; gap: 4px; margin-left: 10px; padding: 0; background: none; border: none; color: var(--accent); font: inherit; font-size: 12.5px; cursor: pointer; vertical-align: baseline; }
@@ -2359,7 +2496,7 @@
   .sched-empty p { margin: 0 auto; max-width: 380px; font-size: 13px; }
 
   /* AI 提议的定时任务卡 */
-  .proposal { margin-top: 10px; border: 1px solid #d9d5f0; background: #f6f5ff; border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 5px; align-items: flex-start; }
+  .proposal { margin-top: 10px; border: 1px solid #ddd9ce; background: #f7f6f2; border-radius: 12px; padding: 12px 14px; display: flex; flex-direction: column; gap: 5px; align-items: flex-start; }
   .proposal-head { font-size: 12px; color: var(--accent); font-weight: 600; }
   .proposal-title { font-size: 14px; }
   .proposal-meta { font-size: 12px; color: var(--dim); }
@@ -2493,7 +2630,7 @@
   .prompt-card { display: flex; flex-direction: column; background: var(--card); border: 1px solid var(--border2); border-radius: 12px; padding: 13px 14px 11px; }
   .prompt-top { display: flex; align-items: center; gap: 7px; margin-bottom: 6px; }
   .prompt-title { font-size: 13.5px; font-weight: 600; color: var(--text); flex: 1; min-width: 0; }
-  .prompt-tag { flex: none; font-size: 10px; font-weight: 600; color: var(--accent); background: #eae7ff; padding: 1px 6px; border-radius: 5px; }
+  .prompt-tag { flex: none; font-size: 10px; font-weight: 600; color: var(--dim); background: #e7e4dd; padding: 1px 6px; border-radius: 5px; }
   .prompt-body { margin: 0 0 11px; font-size: 12.5px; line-height: 1.5; color: var(--dim); display: -webkit-box; -webkit-line-clamp: 5; line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden; }
   .prompt-acts { display: flex; align-items: center; gap: 4px; margin-top: auto; }
   .prompt-act { position: relative; width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border: none; border-radius: 8px; background: none; color: var(--dim); cursor: pointer; }

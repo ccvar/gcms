@@ -1225,6 +1225,69 @@ async fn retry_turn(
     updated.ok_or_else(|| "会话丢失".into())
 }
 
+/// 重建会话续跑：底层 CLI 会话状态损坏、重试无效时，抛弃旧 session，
+/// 用**全新会话**（原系统提示 + 历史记录摘要）重跑最后一条用户请求。
+/// 对用户而言＝这条对话原地继续；成功后把新 session id 接回本会话。
+#[tauri::command]
+async fn rebuild_session(
+    state: tauri::State<'_, AppState>,
+    conv_id: String,
+    on_event: Channel<agent::TurnEvent>,
+) -> Result<Conversation, String> {
+    let now = now_secs();
+    let last_user = state.convos.begin_rebuild(&conv_id, now)?;
+    let conv = state.convos.get(&conv_id).ok_or("会话不存在")?;
+    let conn = state.conns.get(&conv.conn_id)?;
+    let work_dir = resolve_work_dir(&conn, &conv.site_slug)?;
+    let is_cf = conn.kind == "cloudflare";
+    let sys = if is_cf {
+        agent::cf_system_prompt(&cf_project_slug(&conv.site_slug), &conn.account_id)
+    } else {
+        agent::system_prompt(&conv.task_type, &conv.site_slug, &conv.site_name)
+    };
+    let shot = state.data_dir.join("tools").join("shot.js");
+    let sys = format!("{sys}\n\n{}", agent::shot_prompt(&shot.to_string_lossy(), is_cf));
+    // 历史摘要（不含将要重跑的最后一条用户消息）；发给模型的组合消息不落库，界面保持干净。
+    let recap = convo::recap(&conv.messages, 8000);
+    let message = if recap.is_empty() {
+        last_user
+    } else {
+        format!(
+            "【会话已重建】以下是此前对话的记录，供你衔接上下文；项目/站点里的实际文件与内容以当前现状为准，先查看再动手：\n\n{recap}\n\n——\n【继续执行用户的最新请求】\n{last_user}"
+        )
+    };
+    let session_seed = if conv.brain == "codex" { String::new() } else { uuid::Uuid::new_v4().to_string() };
+
+    let res = agent::run_turn(
+        state.runs.clone(),
+        conn,
+        work_dir,
+        conv.brain.clone(),
+        conv.model.clone(),
+        conv.perm_mode.clone(),
+        state.data_dir.join("permit"),
+        session_seed,
+        true,
+        Some(sys),
+        message,
+        conv_id.clone(),
+        on_event,
+    )
+    .await;
+
+    let now2 = now_secs();
+    let updated = state.convos.mutate(&conv_id, now2, |c| {
+        // 只有这轮成功才把新 session 接上；失败保留旧 ref（反正都坏，避免半截会话顶掉）。
+        if res.ok && !res.session_ref.is_empty() {
+            c.session_ref = res.session_ref.clone();
+        }
+        c.status = "idle".into();
+        c.messages.push(assistant_msg(&res, now2));
+        apply_usage(c, &res);
+    })?;
+    updated.ok_or_else(|| "会话丢失".into())
+}
+
 fn title_from(message: &str) -> String {
     let t: String = message.trim().chars().take(30).collect();
     if t.is_empty() {
@@ -1476,6 +1539,7 @@ pub fn run() {
             start_conversation,
             send_message,
             retry_turn,
+            rebuild_session,
             cancel_turn,
             set_conversation_model,
             set_conversation_perm_mode,

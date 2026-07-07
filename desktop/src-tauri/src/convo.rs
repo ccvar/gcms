@@ -187,6 +187,35 @@ impl ConvStore {
         Ok(text)
     }
 
+    /// 原子开始"重建会话"：同 begin_retry，但**不要求已有 session**——重建本来就是
+    /// 为了抛弃损坏/缺失的底层会话另起新的（含首轮就崩、session_ref 为空的情况）。
+    pub fn begin_rebuild(&self, id: &str, now: u64) -> Result<String, String> {
+        let _g = self.lock.lock().unwrap();
+        let mut list = self.read();
+        let Some(slot) = list.iter_mut().find(|c| c.id == id) else {
+            return Err("会话不存在".into());
+        };
+        if slot.status == "running" {
+            return Err("上一轮还在进行中，请稍候".into());
+        }
+        if slot.messages.last().map(|m| m.role == "assistant").unwrap_or(false) {
+            slot.messages.pop();
+        }
+        let Some(text) = slot
+            .messages
+            .iter()
+            .rev()
+            .find(|m| m.role == "user")
+            .map(|m| m.text.clone())
+        else {
+            return Err("没有可重跑的消息".into());
+        };
+        slot.status = "running".into();
+        slot.updated_at = now;
+        self.save(&list)?;
+        Ok(text)
+    }
+
     /// 在锁内对某会话做原子改动（读—改—写不被并发打断）。
     pub fn mutate<F>(&self, id: &str, now: u64, f: F) -> Result<Option<Conversation>, String>
     where
@@ -241,6 +270,45 @@ impl ConvStore {
     }
 }
 
+/// 把历史消息压成文本记录，供「重建会话」注入新会话衔接上下文。
+/// 排除：隐藏消息、错误消息、以及**结尾最后一条用户消息**（那是将要重跑的请求本身）。
+/// budget 为字符预算，超出时保留最近的并在开头标注省略；单条消息截前 2000 字符。
+pub fn recap(messages: &[Message], budget: usize) -> String {
+    let last_user = messages.iter().rposition(|m| m.role == "user");
+    let mut lines: Vec<String> = Vec::new();
+    for (i, m) in messages.iter().enumerate() {
+        if Some(i) == last_user || m.hidden || m.error || m.text.trim().is_empty() {
+            continue;
+        }
+        let who = if m.role == "user" { "用户" } else { "助手" };
+        let body: String = m.text.trim().chars().take(2000).collect();
+        lines.push(format!("{who}：{body}"));
+    }
+    let mut used = 0usize;
+    let mut kept: Vec<&String> = Vec::new();
+    for l in lines.iter().rev() {
+        let n = l.chars().count() + 2;
+        if used + n > budget && !kept.is_empty() {
+            break;
+        }
+        used += n;
+        kept.push(l);
+        if used >= budget {
+            break;
+        }
+    }
+    let truncated = kept.len() < lines.len();
+    let mut out = String::new();
+    if truncated {
+        out.push_str("（更早的历史已省略）\n");
+    }
+    for l in kept.iter().rev() {
+        out.push_str(l);
+        out.push_str("\n\n");
+    }
+    out.trim_end().to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -274,6 +342,41 @@ mod tests {
 
         // 正在跑时拒绝
         assert!(store.begin_retry("a", 11).is_err());
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn recap_excludes_last_user_hidden_and_error() {
+        let msgs = vec![
+            msg("user", "第一问"),
+            msg("assistant", "第一答"),
+            Message { role: "assistant".into(), text: "内部".into(), tools: vec![], ts: 0, hidden: true, error: false, proposal: None },
+            Message { role: "assistant".into(), text: "报错了".into(), tools: vec![], ts: 0, hidden: false, error: true, proposal: None },
+            msg("user", "最新请求"),
+        ];
+        let r = recap(&msgs, 8000);
+        assert!(r.contains("用户：第一问"));
+        assert!(r.contains("助手：第一答"));
+        assert!(!r.contains("最新请求")); // 将要重跑的请求本身不进 recap
+        assert!(!r.contains("内部")); // hidden 排除
+        assert!(!r.contains("报错了")); // error 排除
+        // 预算收紧 → 保留最近 + 省略标注
+        let tight = recap(&msgs, 12);
+        assert!(tight.contains("（更早的历史已省略）") || tight.contains("第一答"));
+    }
+
+    #[test]
+    fn begin_rebuild_works_without_session() {
+        let base = std::env::temp_dir().join(format!("convo-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&base).unwrap();
+        let store = ConvStore::new(&base);
+        // session_ref 为空（首轮就崩的会话）也能重建
+        store.upsert(conv("r1", "", vec![msg("user", "建个站"), msg("assistant", "")])).unwrap();
+        let text = store.begin_rebuild("r1", 5).unwrap();
+        assert_eq!(text, "建个站");
+        let c = store.get("r1").unwrap();
+        assert_eq!(c.status, "running");
+        assert_eq!(c.messages.len(), 1); // 失败助手已弹掉
         std::fs::remove_dir_all(&base).ok();
     }
 

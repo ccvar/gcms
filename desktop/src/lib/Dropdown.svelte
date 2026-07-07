@@ -159,7 +159,7 @@
   .dd-otext { display: flex; flex-direction: column; gap: 0; min-width: 0; flex: 1; }
   .dd-otext b { font-weight: 500; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .dd-otext small { color: var(--dim, #6f6b62); font-size: 11.5px; line-height: 1.3; }
-  .dd-check { color: var(--accent, #4f46e5); flex: none; font-size: 13px; margin-left: auto; }
+  .dd-check { color: var(--accent, #33302a); flex: none; font-size: 13px; margin-left: auto; }
   .dd-search { position: sticky; top: 0; z-index: 1; background: #fff; padding: 2px 2px 5px; margin-bottom: 2px; border-bottom: 1px solid var(--border, #ecebe6); }
   .dd-search input { width: 100%; border: none; outline: none; background: #f4f3ef; border-radius: 7px; padding: 6px 9px; font: inherit; font-size: 13px; color: var(--text, #26241f); }
   .dd-empty { padding: 14px 12px; text-align: center; color: var(--faint, #a29d93); font-size: 12.5px; }
