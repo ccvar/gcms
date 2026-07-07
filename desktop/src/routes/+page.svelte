@@ -1080,6 +1080,28 @@
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && !composing && e.keyCode !== 229) { e.preventDefault(); fn(); }
   }
 
+  // ---------- 全局自定义 tips（替换原生 title 系统提示） ----------
+  // 原生 title 出现慢、样式与应用割裂。首次悬停时把 title 搬进 data-tip（保留 aria-label
+  // 供无障碍），统一由一个 fixed 浮层显示——不受侧栏等滚动容器裁剪。
+  // disabled 按钮不触发鼠标事件 → 需要 tip 的禁用按钮外面包 .tipwrap 承载 data-tip。
+  let tip = $state<{ x: number; y: number; text: string; below: boolean } | null>(null);
+  function onTipHover(e: MouseEvent) {
+    const el = (e.target as HTMLElement).closest?.('[title], [data-tip]') as HTMLElement | null;
+    if (!el) { tip = null; return; }
+    const t = el.getAttribute('title');
+    if (t) {
+      el.removeAttribute('title');
+      el.setAttribute('data-tip', t);
+      if (!el.getAttribute('aria-label') && !el.textContent?.trim()) el.setAttribute('aria-label', t);
+    }
+    const text = el.getAttribute('data-tip') ?? '';
+    if (!text) { tip = null; return; }
+    const r = el.getBoundingClientRect();
+    const below = r.top < 64; // 贴近顶部时改为在元素下方显示
+    const x = Math.min(Math.max(r.left + r.width / 2, 120), window.innerWidth - 120);
+    tip = { x, y: below ? r.bottom + 7 : r.top - 7, text, below };
+  }
+
   // ---------- 自定义右键菜单 ----------
   // 替换 WKWebView 默认英文菜单（含 Inspect Element / AutoFill 等）：
   // 输入框里给 剪切/复制/粘贴/全选；选中了消息文字给 复制；其它地方不出菜单。
@@ -1265,7 +1287,7 @@
   }
 </script>
 
-<svelte:window oncontextmenu={onCtxMenu} />
+<svelte:window oncontextmenu={onCtxMenu} onmouseover={onTipHover} onscrollcapture={() => (tip = null)} onresize={() => (tip = null)} />
 <main class="app" class:win={isWindows}>
   <!-- 融合式标题栏：透明拖拽条铺满顶部，红绿灯与工具按钮浮在其上（macOS Overlay） -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -1447,6 +1469,10 @@
           <button class="ctx-item" onclick={ctxCopy}>复制<span class="ctx-kbd">{isWindows ? 'Ctrl+C' : '⌘C'}</span></button>
         {/if}
       </div>
+    {/if}
+
+    {#if tip}
+      <div class="tipbox" class:below={tip.below} style="left:{tip.x}px; top:{tip.y}px">{tip.text}</div>
     {/if}
 
     {#if !activeConn}
@@ -1689,7 +1715,7 @@
                 </div>
                 <p class="prompt-body">{p.body}</p>
                 <div class="prompt-acts">
-                  <button class="prompt-act primary" aria-label="用它建站" data-tip="用它建站" onclick={() => usePrompt(p)}><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 3.2v9.6M3.2 8h9.6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /></svg></button>
+                  <button class="prompt-act" aria-label="用它建站" data-tip="用它建站" onclick={() => usePrompt(p)}><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 3.2v9.6M3.2 8h9.6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /></svg></button>
                   <button class="prompt-act" aria-label="复制提示词" data-tip="复制" onclick={() => copyPrompt(p)}><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="5.5" y="5.5" width="7.6" height="8" rx="1.4" stroke="currentColor" stroke-width="1.2" /><path d="M10.6 5.5V4.2A1.4 1.4 0 0 0 9.2 2.8H4A1.4 1.4 0 0 0 2.6 4.2v5.2A1.4 1.4 0 0 0 4 10.8h1.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" /></svg></button>
                   {#if !p.builtin}
                     <button class="prompt-act" aria-label="编辑提示词" data-tip="编辑" onclick={() => openEditPrompt(p)}><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M10.8 2.9l2.3 2.3M11.4 2.3l2.3 2.3-8 8-3 .7.7-3 8-8z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /></svg></button>
@@ -1758,9 +1784,9 @@
       <div class="composer-wrap">
         {#if activeConvIsCf}
           <div class="cf-bar">
-            <button class="cb-prev" onclick={startPreview} disabled={previewBusy || !cfReady} data-tip={cfReady ? '在本机跑起来看效果（关预览窗即停）' : '先让 AI 建出页面再预览'}><svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M1.6 8s2.4-4.4 6.4-4.4S14.4 8 14.4 8s-2.4 4.4-6.4 4.4S1.6 8 1.6 8Z" stroke="currentColor" stroke-width="1.2" /><circle cx="8" cy="8" r="1.9" stroke="currentColor" stroke-width="1.2" /></svg>{previewBusy ? '启动中…' : '预览'}</button>
-            <button class="cb-prev" onclick={fillDeploy} disabled={viewBusy || !cfReady} data-tip={cfReady ? '发布到 Cloudflare 上线' : '先让 AI 建出页面再部署'}><svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M8 12.5V4M4.5 7 8 3.5 11.5 7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>部署</button>
-            <button class="cb-prev dim" onclick={openSaveTmpl} disabled={!cfReady} data-tip={cfReady ? '存成模板，以后一键复用' : '先让 AI 建出页面再存'}><svg width="12" height="12" viewBox="0 0 16 16" fill="none"><rect x="2.6" y="2.6" width="4.3" height="4.3" rx="1" stroke="currentColor" stroke-width="1.3" /><rect x="9.1" y="2.6" width="4.3" height="4.3" rx="1" stroke="currentColor" stroke-width="1.3" /><rect x="2.6" y="9.1" width="4.3" height="4.3" rx="1" stroke="currentColor" stroke-width="1.3" /><rect x="9.1" y="9.1" width="4.3" height="4.3" rx="1" stroke="currentColor" stroke-width="1.3" /></svg>存模板</button>
+            <span class="tipwrap" data-tip={cfReady ? '在本机跑起来看效果（关预览窗即停）' : '先让 AI 建出页面再预览'}><button class="cb-prev" onclick={startPreview} disabled={previewBusy || !cfReady}><svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M1.6 8s2.4-4.4 6.4-4.4S14.4 8 14.4 8s-2.4 4.4-6.4 4.4S1.6 8 1.6 8Z" stroke="currentColor" stroke-width="1.2" /><circle cx="8" cy="8" r="1.9" stroke="currentColor" stroke-width="1.2" /></svg>{previewBusy ? '启动中…' : '预览'}</button></span>
+            <span class="tipwrap" data-tip={cfReady ? '发布到 Cloudflare 上线' : '先让 AI 建出页面再部署'}><button class="cb-prev" onclick={fillDeploy} disabled={viewBusy || !cfReady}><svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M8 12.5V4M4.5 7 8 3.5 11.5 7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>部署</button></span>
+            <span class="tipwrap" data-tip={cfReady ? '存成模板，以后一键复用' : '先让 AI 建出页面再存'}><button class="cb-prev dim" onclick={openSaveTmpl} disabled={!cfReady}><svg width="12" height="12" viewBox="0 0 16 16" fill="none"><rect x="2.6" y="2.6" width="4.3" height="4.3" rx="1" stroke="currentColor" stroke-width="1.3" /><rect x="9.1" y="2.6" width="4.3" height="4.3" rx="1" stroke="currentColor" stroke-width="1.3" /><rect x="2.6" y="9.1" width="4.3" height="4.3" rx="1" stroke="currentColor" stroke-width="1.3" /><rect x="9.1" y="9.1" width="4.3" height="4.3" rx="1" stroke="currentColor" stroke-width="1.3" /></svg>存模板</button></span>
           </div>
         {/if}
         <div class="composer">
@@ -2355,6 +2381,11 @@
   .ctx-item:disabled { color: var(--faint); cursor: default; }
   .ctx-kbd { font-size: 11px; color: var(--faint); }
   .ctx-div { height: 1px; background: var(--border); margin: 4px 6px; }
+  /* 全局 tips 浮层（fixed，不受滚动容器裁剪） */
+  .tipbox { position: fixed; z-index: 130; transform: translate(-50%, -100%); background: #26241f; color: #fff; font-size: 11px; line-height: 1.45; padding: 5px 9px; border-radius: 7px; width: max-content; max-width: 240px; white-space: normal; pointer-events: none; box-shadow: 0 5px 16px rgba(0, 0, 0, .18); animation: tipin .12s ease-out .3s both; }
+  .tipbox.below { transform: translate(-50%, 0); }
+  @keyframes tipin { from { opacity: 0; } to { opacity: 1; } }
+  .tipwrap { display: inline-flex; }
   .flash.err { background: var(--err); }
 
   /* safe center：内容比可视区高时退回顶对齐可滚动，避免居中把顶部裁掉。 */
@@ -2633,7 +2664,6 @@
   .cb-prev.dim { color: var(--dim); font-weight: 400; }
   .cb-prev svg { flex: none; }
   /* 自定义悬停提示（不用系统 title） */
-  .cb-prev[data-tip]:hover::after { content: attr(data-tip); position: absolute; bottom: calc(100% + 7px); left: 0; background: #26241f; color: #fff; font-size: 11px; font-weight: 400; line-height: 1.4; padding: 6px 9px; border-radius: 7px; width: max-content; max-width: 220px; white-space: normal; z-index: 40; pointer-events: none; box-shadow: 0 5px 16px rgba(0, 0, 0, .18); }
   .cf-bar { max-width: 760px; margin: 0 auto 6px; display: flex; align-items: center; gap: 2px; flex-wrap: wrap; }
   /* 等待消息（排队）条：琥珀色调，区别于普通输入 */
   .queued-row { display: flex; align-items: center; gap: 8px; margin: 10px 12px 0; padding: 6px 8px 6px 11px; background: #fbf6ea; border: 1px solid #f0e2c0; border-radius: 9px; font-size: 12.5px; }
@@ -2668,10 +2698,7 @@
   .prompt-acts { display: flex; align-items: center; gap: 4px; margin-top: auto; }
   .prompt-act { position: relative; width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border: none; border-radius: 8px; background: none; color: var(--dim); cursor: pointer; }
   .prompt-act:hover { color: var(--text); background: var(--rail); }
-  .prompt-act.primary { background: var(--accent); color: #fff; }
-  .prompt-act.primary:hover { background: var(--accent-h); color: #fff; }
   .prompt-act svg { flex: none; }
-  .prompt-act[data-tip]:hover::after { content: attr(data-tip); position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%); background: #26241f; color: #fff; font-size: 10.5px; line-height: 1.35; padding: 4px 8px; border-radius: 6px; width: max-content; z-index: 40; pointer-events: none; box-shadow: 0 5px 16px rgba(0, 0, 0, .18); }
   .tmpl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
   .tmpl-card { display: flex; flex-direction: column; background: var(--card); border: 1px solid var(--border2); border-radius: 12px; overflow: hidden; }
   .tmpl-thumb { position: relative; height: 158px; overflow: hidden; background: #fff; display: flex; align-items: center; justify-content: center; border-bottom: 1px solid var(--border); }
@@ -2683,7 +2710,6 @@
   .tmpl-act.primary { background: var(--accent); color: #fff; }
   .tmpl-act:hover { transform: translateY(-1px); }
   .tmpl-act svg { flex: none; width: 13px; height: 13px; }
-  .tmpl-act[data-tip]:hover::after { content: attr(data-tip); position: absolute; bottom: calc(100% + 7px); left: 50%; transform: translateX(-50%); background: #26241f; color: #fff; font-size: 10.5px; line-height: 1.35; padding: 4px 8px; border-radius: 6px; width: max-content; z-index: 40; pointer-events: none; box-shadow: 0 5px 16px rgba(0, 0, 0, .18); }
   .tmpl-body { padding: 10px 12px 12px; flex: 1; }
   .tmpl-body b { font-size: 13px; }
   .tmpl-sub { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-top: 4px; }
