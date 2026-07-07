@@ -434,7 +434,13 @@
     }
     return custom || pages;
   }
-  const activeSiteUrl = $derived(activeConvIsCf && activeConv ? detectSiteUrl([activeConv]) : '');
+  // 当前会话站点的公开地址：CF 从项目文件探测；gcms 用 discovery 里站点自带的 url。
+  const activeSiteUrl = $derived.by(() => {
+    const c = activeConv;
+    if (!c) return '';
+    if (activeConvIsCf) return detectSiteUrl([c]);
+    return sites.find((s) => s.slug === c.site_slug)?.url ?? '';
+  });
   // 从当前发现结果里按 slug 找站点图标（favicon 优先，其次 logo）；找不到返回空由 SiteFav 用首字母兜底。
   // 站点公开地址猜标准 favicon 位置，作为 discovery favicon/logo 之外的兜底（SiteFav 加载失败再退首字母）。
   function faviconGuess(url?: string): string { const u = (url ?? '').trim(); return u ? u.replace(/\/+$/, '') + '/favicon.ico' : ''; }
@@ -1075,8 +1081,8 @@
       g.convs.push(c);
       if (c.updated_at > g.recent) g.recent = c.updated_at;
     }
-    const sites = [...bySite.values()].sort((a, b) => b.recent - a.recent);
-    return sites.map((s) => {
+    const groups = [...bySite.values()].sort((a, b) => b.recent - a.recent);
+    return groups.map((s) => {
       const subs: { type: string; label: string; items: Conversation[] }[] = [];
       for (const t of TASK_ORDER) {
         const items = s.convs.filter((c) => c.task_type === t).sort((a, b) => b.updated_at - a.updated_at);
@@ -1084,7 +1090,8 @@
       }
       const others = s.convs.filter((c) => !TASK_ORDER.includes(c.task_type)).sort((a, b) => b.updated_at - a.updated_at);
       if (others.length) subs.push({ type: 'other', label: '其它', items: others });
-      return { slug: s.slug, name: s.name, count: s.convs.length, subs, url: isCfConn ? detectSiteUrl(s.convs) : '' };
+      // 分组头的域名：CF 从项目文件探测；gcms 用 discovery 里站点自带的公开地址。
+      return { slug: s.slug, name: s.name, count: s.convs.length, subs, url: isCfConn ? detectSiteUrl(s.convs) : (sites.find((x) => x.slug === s.slug)?.url ?? '') };
     });
   });
   // CF 页脚：有域名（已部署）的项目算「站点」。
@@ -1252,7 +1259,9 @@
       {#if isCfConn}{@render cfMark(18)}{:else if activeConn && sites.length}<SiteFav src={siteFav(sites[0].slug)} label={sites[0].slug} size={18} />{:else}<AppIcon size={18} />{/if}
       <span class="foot-main">
         <b>{activeConn?.name ?? '未连接'}</b>
-        <small>{isCfConn ? `${cfProjects.length} 个项目${cfSiteCount ? ` · ${cfSiteCount} 个站点` : ''}` : activeConn ? `${sites.length} 个站点` : '点此导入技能包'}</small>
+        <small>{#if isCfConn}{cfProjects.length} 个项目{cfSiteCount ? ` · ${cfSiteCount} 个站点` : ''}{:else if activeConn}{sites.length} 个站点<span class="foot-rfz" role="button" tabindex="-1" title="刷新站点（技能包新增站点后点这里）"
+          onclick={(e) => { e.stopPropagation(); refreshSites(); }}
+          onkeydown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); refreshSites(); } }}>{@render refreshIcon(discoveryLoading)}</span>{:else}点此导入技能包{/if}</small>
       </span>
       {#if conns.length === 0}
         <svg class="foot-gear" width="16" height="16" viewBox="0 0 16 16" fill="none">
@@ -1349,7 +1358,6 @@
                   <input class="cf-proj-in" bind:value={lSite} placeholder="项目名，如 coffee-landing" spellcheck="false" autocapitalize="off" autocorrect="off" />
                 {:else}
                   <Dropdown compact searchable bind:value={lSite} options={siteOpts} placeholder="选择站点" />
-                  <button class="cb-rfz" title="刷新站点" onclick={refreshSites}>{@render refreshIcon(discoveryLoading)}</button>
                 {/if}
               </div>
               <div class="cb-right">
@@ -1529,8 +1537,11 @@
       <header class="thread-head" data-tauri-drag-region onmousedown={startDrag}>
         <div class="th-info">
           <b>{activeConv?.title}</b>
-          <small>{#if activeConvIsCf}{@render cfMark(13)}{:else}<SiteFav src={siteFav(activeConv?.site_slug ?? '')} label={activeConv?.site_slug ?? ''} size={13} />{/if} {activeConv?.site_name || activeConv?.site_slug} · {taskLabel(activeConv?.task_type ?? '')} · {@render brainTag(activeConv?.brain ?? 'claude', brainLabel(activeConv?.brain ?? '') + (activeConv?.brain === 'claude' && activeConv?.model ? ` ${activeConv.model}` : ''))}{#if activeSiteUrl} · <button class="th-site-link" onclick={() => openUrl(activeSiteUrl)} title={activeSiteUrl}>{hostOf(activeSiteUrl)} ↗</button>{/if}</small>
+          <small>{#if activeConvIsCf}{@render cfMark(13)}{:else}<SiteFav src={siteFav(activeConv?.site_slug ?? '')} label={activeConv?.site_slug ?? ''} size={13} />{/if} {activeConv?.site_name || activeConv?.site_slug} · {taskLabel(activeConv?.task_type ?? '')} · {@render brainTag(activeConv?.brain ?? 'claude', brainLabel(activeConv?.brain ?? '') + (activeConv?.brain === 'claude' && activeConv?.model ? ` ${activeConv.model}` : ''))}</small>
         </div>
+        {#if activeSiteUrl}
+          <button class="th-open" onclick={() => openUrl(activeSiteUrl)} title="打开 {activeSiteUrl}">{hostOf(activeSiteUrl)}<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M6 3.5h6.5V10M12.2 3.8 3.8 12.2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
+        {/if}
       </header>
 
       <div class="thread" bind:this={threadEl}>
@@ -2094,8 +2105,10 @@
   .site-grp-chev.collapsed { transform: rotate(-90deg); }
   .site-grp-name { flex: 0 1 auto; max-width: 58%; min-width: 0; font-size: 12.5px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .site-grp-host { flex: 0 1 auto; min-width: 0; font-size: 10.5px; color: var(--accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .th-site-link { background: none; border: none; padding: 0; margin: 0; color: var(--accent); cursor: pointer; font: inherit; }
-  .th-site-link:hover { text-decoration: underline; }
+  /* 线程头右上角：站点域名 + ↗，点开站点 */
+  .th-open { flex: none; display: inline-flex; align-items: center; gap: 4px; background: none; border: none; padding: 4px 6px; border-radius: 7px; color: var(--accent); font: inherit; font-size: 12.5px; cursor: pointer; }
+  .th-open:hover { background: #f1efe9; }
+  .th-open svg { flex: none; }
   /* 任务类型子组标签 */
   .subgrp { font-size: 10px; font-weight: 600; letter-spacing: .04em; color: var(--faint); padding: 1px 8px 1px 20px; }
   .convo { position: relative; display: flex; align-items: center; gap: 6px; border-radius: 8px; margin: 0 8px; padding: 1px 6px 1px 16px; cursor: pointer; }
@@ -2122,6 +2135,10 @@
   .foot-main { flex: 1; min-width: 0; }
   .foot-main b { display: block; font-size: 12.5px; line-height: 1.15; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .foot-main small { display: block; color: var(--dim); font-size: 10.5px; line-height: 1.1; }
+  /* 站点数后的小刷新：尺寸与文字一致（10.5px），点击不触发上层连接切换器 */
+  .foot-rfz { display: inline-flex; align-items: center; margin-left: 5px; vertical-align: -1.5px; color: var(--faint); cursor: pointer; }
+  .foot-rfz:hover { color: var(--accent); }
+  .foot-rfz .rfz { width: 10.5px; height: 10.5px; }
   .foot-gear { color: var(--faint); font-size: 14px; }
   .foot-chev { color: var(--faint); flex: none; transition: transform .15s; }
   .foot-chev.up { transform: rotate(180deg); }
@@ -2235,9 +2252,6 @@
   .cb-left { display: flex; align-items: center; gap: 1px; flex: 1; min-width: 0; }
   .cb-right { display: flex; align-items: center; gap: 3px; flex: none; }
   .composer-bar .send { position: static; width: 30px; height: 30px; margin-left: 3px; font-size: 15px; }
-  .cb-rfz { background: none; border: none; padding: 4px; cursor: pointer; color: var(--faint); display: inline-flex; border-radius: 6px; flex: none; }
-  .cb-rfz:hover { color: var(--accent); background: var(--accent-soft); }
-  .cb-rfz .rfz { width: 13px; height: 13px; }
   /* 会话页只读徽标（站点/厂商，不可改）。 */
   .cb-ro { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; color: var(--dim); font-size: 13px; opacity: .9; min-width: 0; }
   .cb-ro-t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
