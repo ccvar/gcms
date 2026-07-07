@@ -14,7 +14,10 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7.5" cy="14.5" r="3.5"/><path d="M10 12l8-8"/><path d="M15 7l2 2"/></svg>
         <span>{{.Admin.T "admin.platform_keys.title" "平台 AI 访问密钥（管理多个站点）"}}</span>
       </h3>
-      <a class="btn btn-primary" href="#platform-key-modal">{{.Admin.T "admin.platform_keys.create" "创建平台密钥"}}</a>
+      <div class="automation-toolbar-actions">
+        <a class="btn" href="{{.PlatformSkillURL}}" title="{{.Admin.T "admin.platform_keys.download_raw_tip" "原始包（不含密钥）：给 gcms Pilot 重新导入即可就地升级技能包，密钥保留在客户端钥匙串。"}}">{{.Admin.T "admin.platform_keys.download_raw" "下载薄技能包（无密钥）"}}</a>
+        <a class="btn btn-primary" href="#platform-key-modal">{{.Admin.T "admin.platform_keys.create" "创建平台密钥"}}</a>
+      </div>
     </div>
     <p class="muted automation-note">{{.Admin.T "admin.platform_keys.note" "一把平台密钥可管理多个站点：AI 先发现可管站点，再对每个站点用 --site 操作。泄露风险比单站密钥更大，只放本地 .env，不要贴进普通聊天窗口。"}}</p>
     <div class="key-warning">

@@ -1484,6 +1484,7 @@ a.overview-log-title { text-decoration: none; }
 .key-next { margin-top: 1.1rem; padding-top: 1rem; border-top: 1px solid var(--line-soft); }
 .automation-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: .9rem; }
 .automation-toolbar .group-head { margin: 0; }
+.automation-toolbar-actions { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
 .scope-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: .75rem; }
 .scope-tools { display: flex; justify-content: flex-start; margin: .15rem 0 .75rem; }
 .scope-all { display: inline-flex; align-items: center; gap: .45rem; color: var(--muted); font-size: .84rem; font-weight: 700; line-height: 1.35; cursor: pointer; user-select: none; }
