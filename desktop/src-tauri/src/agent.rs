@@ -150,6 +150,31 @@ Pilot 会让用户确认一次，你正常执行命令即可。\n\
     )
 }
 
+/// 网页截图能力的系统提示补充（shot.js 由 Pilot 生成在数据目录，见 tools.rs）。
+/// gcms 会话教「截图→确认→转 WebP→上传→插入文章」；CF 会话教「截本地预览自查 / 截参考站」。
+pub fn shot_prompt(shot_path: &str, is_cf: bool) -> String {
+    let common = format!(
+        "【网页截图】需要网页截图时用随附的无头截图工具（后台渲染、不弹窗）：\n\
+`node \"{shot_path}\" --url <URL> --out shots/名字.png [--width 1280] [--full-page] [--wait 3000]`\n\
+成功输出 JSON（含文件路径），失败会给出原因。截完**必须用 Read 打开图片确认**内容正确\
+——打不开的页面 Chrome 会把自己的错误页截下来，所以要看图排除：错误页 / 验证码 / 空白页 / Cookie 弹窗。\
+不对就加大 --wait 重截或换 URL；需要登录或反爬的页面截不了就直说，别硬试。"
+    );
+    if is_cf {
+        format!(
+            "{common}\n\
+用途：截 `http://127.0.0.1:<预览端口>` 检查你搭的页面实际效果（先确认本地预览在跑）；也可截参考网站找样式灵感。"
+        )
+    } else {
+        format!(
+            "{common}\n\
+用途：给文章配网页截图——确认无误后转 WebP（`cwebp 输入.png -o 输出.webp`，macOS 也可 \
+`sips -s format webp 输入.png --out 输出.webp`），用 `node scripts/gcms.js upload` 上传拿 url，\
+以 Markdown 图片插入文章。注意版权：优先截步骤 / 界面等事实性画面，不要整版搬运他人内容。"
+        )
+    }
+}
+
 // ---- 运行一轮 ----
 
 #[allow(clippy::too_many_arguments)]

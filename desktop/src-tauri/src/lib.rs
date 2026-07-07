@@ -10,6 +10,7 @@ mod path_env;
 mod permit;
 mod scheduled;
 mod tasks;
+mod tools;
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -932,11 +933,15 @@ async fn create_conversation(
         uuid::Uuid::new_v4().to_string()
     };
     let work_dir = resolve_work_dir(&conn, site_slug.trim())?;
-    let sys = if conn.kind == "cloudflare" {
+    let is_cf = conn.kind == "cloudflare";
+    let sys = if is_cf {
         agent::cf_system_prompt(&cf_project_slug(site_slug.trim()), &conn.account_id)
     } else {
         agent::system_prompt(&task_type, site_slug.trim(), &site_name)
     };
+    // 追加网页截图能力说明（shot.js 在启动时生成到 <data_dir>/tools/）。
+    let shot = data_dir.join("tools").join("shot.js");
+    let sys = format!("{sys}\n\n{}", agent::shot_prompt(&shot.to_string_lossy(), is_cf));
     let conv = Conversation {
         id: conv_id.clone(),
         conn_id: conn.id.clone(),
@@ -1290,6 +1295,7 @@ pub fn run() {
             convos.mark_idle(now_secs());
             // 清掉上次进程遗留的待批权限请求（幽灵批准卡）。
             permit::sweep_all(&data_dir.join("permit").join("pending"));
+            let _ = tools::ensure_shot(&data_dir); // 随附截图工具，覆写以随版本刷新
             let task_store = tasks::TaskStore::new(&data_dir);
             app.manage(AppState {
                 conns,

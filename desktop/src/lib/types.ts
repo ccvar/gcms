@@ -49,6 +49,8 @@ export interface BrainsInfo {
   codex: BrainStatus;
   /** Cloudflare 部署工具（wrangler）；用 env token，logged_in 恒为 null。 */
   wrangler: BrainStatus;
+  /** 无头截图用的浏览器（Chrome/Edge/Chromium，可选能力）。 */
+  browser: BrainStatus;
   path_env: string;
 }
 

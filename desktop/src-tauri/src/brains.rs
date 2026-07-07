@@ -23,6 +23,8 @@ pub struct BrainsInfo {
     pub codex: BrainStatus,
     /// Cloudflare 部署工具（建站/预览/部署/D1 都靠它）；用 env token，无登录态。
     pub wrangler: BrainStatus,
+    /// 无头截图用的浏览器（Chrome/Edge/Chromium/Brave，可选能力）。只查路径存在，不执行。
+    pub browser: BrainStatus,
     pub path_env: String,
 }
 
@@ -32,8 +34,50 @@ pub async fn detect() -> BrainsInfo {
         claude,
         codex,
         wrangler,
+        browser: detect_browser(),
         path_env: std::env::var("PATH").unwrap_or_default(),
     }
+}
+
+/// 探测可做无头截图的浏览器。路径清单与 tools.rs 生成的 shot.js 保持一致。
+fn detect_browser() -> BrainStatus {
+    let mut st = BrainStatus::default();
+    let cands: Vec<std::path::PathBuf> = if cfg!(target_os = "macos") {
+        [
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+            "/Applications/Chromium.app/Contents/MacOS/Chromium",
+            "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+        ]
+        .iter()
+        .map(std::path::PathBuf::from)
+        .collect()
+    } else if cfg!(windows) {
+        let mut v = Vec::new();
+        for base in ["ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"] {
+            if let Ok(b) = std::env::var(base) {
+                v.push(std::path::Path::new(&b).join("Google").join("Chrome").join("Application").join("chrome.exe"));
+                v.push(std::path::Path::new(&b).join("Microsoft").join("Edge").join("Application").join("msedge.exe"));
+            }
+        }
+        v
+    } else {
+        ["/usr/bin/google-chrome", "/usr/bin/google-chrome-stable", "/usr/bin/chromium", "/usr/bin/chromium-browser", "/usr/bin/microsoft-edge"]
+            .iter()
+            .map(std::path::PathBuf::from)
+            .collect()
+    };
+    for c in cands {
+        if c.exists() {
+            st.found = true;
+            st.path = c.to_string_lossy().into_owned();
+            break;
+        }
+    }
+    if !st.found {
+        st.detail = "未检测到 Chrome / Edge / Chromium（AI 网页截图配图需要，可选）".into();
+    }
+    st
 }
 
 async fn detect_wrangler() -> BrainStatus {
