@@ -1752,12 +1752,7 @@
     <div class="msg assistant">
       <div class="body">
         {#if m.tools.length}{@render cmds(m.tools)}{/if}
-        <div class="text {m.error ? 'is-err' : ''}">{@render richText(m.text)}</div>
-        {#if m.error && isLast && !viewBusy && activeConv?.session_ref}
-          <button class="retry-btn" onclick={() => retry(activeConvId, true)}>
-            <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M13 8a5 5 0 1 1-1.5-3.6M13 2v3h-3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>重试
-          </button>
-        {/if}
+        <div class="text {m.error ? 'is-err' : ''}">{@render richText(m.text)}{#if m.error && isLast && !viewBusy && activeConv?.session_ref}<button class="retry-btn" onclick={() => retry(activeConvId, true)}><svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M13 8a5 5 0 1 1-1.5-3.6M13 2v3h-3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>重试</button>{/if}</div>
         {#if m.proposal}
           <div class="proposal">
             <div class="proposal-head">⏰ AI 建议一个定时任务</div>
@@ -2312,8 +2307,9 @@
   .msg.assistant .body { flex: 1; min-width: 0; }
   .text { white-space: pre-wrap; word-break: break-word; }
   .text.is-err { color: var(--err); }
-  .retry-btn { display: inline-flex; align-items: center; gap: 5px; margin-top: 8px; padding: 4px 11px; background: #fff; border: 1px solid var(--border2); border-radius: 8px; color: var(--dim); font-size: 12px; cursor: pointer; }
-  .retry-btn:hover { color: var(--text); border-color: #cfccc2; background: var(--rail); }
+  /* 重试：无边框，内联跟在红色错误文字后面 */
+  .retry-btn { display: inline-flex; align-items: center; gap: 4px; margin-left: 10px; padding: 0; background: none; border: none; color: var(--accent); font: inherit; font-size: 12.5px; cursor: pointer; vertical-align: baseline; }
+  .retry-btn:hover { text-decoration: underline; }
   .retry-btn svg { flex: none; }
   /* 命令列表：默认收起，点击展开 */
   .cmds { margin-bottom: 9px; }

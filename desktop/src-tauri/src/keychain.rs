@@ -35,19 +35,36 @@ fn entry(conn_id: &str) -> Result<keyring_core::Entry, String> {
     keyring_core::Entry::new(SERVICE, conn_id).map_err(|e| format!("keychain entry: {e}"))
 }
 
+/// 进程内密钥缓存：每个连接每次启动最多读一次钥匙串。
+/// 没有它，ad-hoc 签名的构建（无 Apple 开发者证书，签名身份不稳定）会让 macOS
+/// 对**每条消息**都弹钥匙串授权框——缓存后最坏一次启动弹一次。
+/// 密钥本就随每轮注入子进程 env，进程内存持有不扩大信任面。
+fn cache() -> &'static std::sync::Mutex<std::collections::HashMap<String, String>> {
+    static C: OnceLock<std::sync::Mutex<std::collections::HashMap<String, String>>> = OnceLock::new();
+    C.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
 pub fn set_key(conn_id: &str, key: &str) -> Result<(), String> {
     entry(conn_id)?
         .set_password(key)
-        .map_err(|e| format!("keychain write: {e}"))
+        .map_err(|e| format!("keychain write: {e}"))?;
+    cache().lock().unwrap().insert(conn_id.to_string(), key.to_string());
+    Ok(())
 }
 
 pub fn get_key(conn_id: &str) -> Result<String, String> {
-    entry(conn_id)?
+    if let Some(k) = cache().lock().unwrap().get(conn_id) {
+        return Ok(k.clone());
+    }
+    let k = entry(conn_id)?
         .get_password()
-        .map_err(|e| format!("keychain read: {e}"))
+        .map_err(|e| format!("keychain read: {e}"))?;
+    cache().lock().unwrap().insert(conn_id.to_string(), k.clone());
+    Ok(k)
 }
 
 pub fn delete_key(conn_id: &str) -> Result<(), String> {
+    cache().lock().unwrap().remove(conn_id);
     match entry(conn_id)?.delete_credential() {
         Ok(()) => Ok(()),
         // 已经不存在视为删除成功（重复删除、手动清理过）。

@@ -264,6 +264,7 @@ pub async fn run_turn(
         session_ref: session_ref.clone(),
         is_error: false,
         usage: None,
+        raw_tail: String::new(),
     }));
     let is_codex = brain == "codex";
     let out_task = stdout.map(|s| {
@@ -306,8 +307,26 @@ pub async fn run_turn(
     let error = if canceled {
         "已停止".to_string()
     } else if !ok {
+        // 诊断优先级：stderr 最后一行 → stdout 里最后一条非 JSON 行（CLI 崩溃常打在这）→ 兜底（带退出码 + 自救指引）。
         last_nonempty(&err_text)
-            .or_else(|| if c.text.trim().is_empty() { Some("模型没有产生输出".into()) } else { None })
+            .or_else(|| {
+                let t = c.raw_tail.trim();
+                if t.is_empty() { None } else { Some(t.to_string()) }
+            })
+            .or_else(|| {
+                if c.text.trim().is_empty() {
+                    let code = status
+                        .and_then(|s| s.code())
+                        .map(|n| n.to_string())
+                        .unwrap_or_else(|| "未知/被信号终止".into());
+                    Some(format!(
+                        "模型没有产生输出（进程退出码：{code}）。若重试仍然如此，多半是这条会话的底层状态损坏——\
+新建一个对话继续即可（这条对话的内容仍可查看）。"
+                    ))
+                } else {
+                    None
+                }
+            })
             .unwrap_or_default()
     } else {
         String::new()
@@ -360,6 +379,9 @@ struct Collect {
     session_ref: String,
     is_error: bool,
     usage: Option<TurnUsage>,
+    /// stdout 里最后一条**非 JSON** 行：CLI 崩溃/报错时常直接打纯文本到 stdout，
+    /// 不留这个的话失败原因会被静默吞掉，只剩一句"模型没有产生输出"。
+    raw_tail: String,
 }
 
 /// 从 usage 对象抽 token 数。兼容 Anthropic（input_tokens/…）与 OpenAI 风格（prompt/completion_tokens）。缺失按 0。
@@ -519,7 +541,15 @@ fn parse_stream(
                 Ok(_) => {
                     let cow = String::from_utf8_lossy(&buf);
                     let line = cow.trim_end_matches(['\n', '\r']);
-                    let Ok(ev) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+                    let Ok(ev) = serde_json::from_str::<serde_json::Value>(line) else {
+                        // CLI 崩溃/报错常直接打纯文本到 stdout；留住最后一条非 JSON 行当诊断线索。
+                        let t = line.trim();
+                        if !t.is_empty() {
+                            let mut c = collect.lock().unwrap();
+                            c.raw_tail = t.chars().take(300).collect();
+                        }
+                        continue;
+                    };
                     if is_codex {
                         parse_codex(&ev, &ch, &collect);
                     } else {
@@ -674,7 +704,7 @@ mod tests {
 
     #[test]
     fn claude_text_delta_accumulates() {
-        let c = Arc::new(Mutex::new(Collect { text: String::new(), tools: vec![], session_ref: "s".into(), is_error: false, usage: None }));
+        let c = Arc::new(Mutex::new(Collect { text: String::new(), tools: vec![], session_ref: "s".into(), is_error: false, usage: None, raw_tail: String::new() }));
         let channel = ch();
         parse_claude(&json!({"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"你好"}}}), &channel, &c);
         parse_claude(&json!({"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"世界"}}}), &channel, &c);
@@ -683,7 +713,7 @@ mod tests {
 
     #[test]
     fn claude_tool_use_captured() {
-        let c = Arc::new(Mutex::new(Collect { text: String::new(), tools: vec![], session_ref: "s".into(), is_error: false, usage: None }));
+        let c = Arc::new(Mutex::new(Collect { text: String::new(), tools: vec![], session_ref: "s".into(), is_error: false, usage: None, raw_tail: String::new() }));
         parse_claude(&json!({"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"node scripts/gcms.js list posts"}}]}}), &ch(), &c);
         let g = c.lock().unwrap();
         assert_eq!(g.tools.len(), 1);
@@ -692,7 +722,7 @@ mod tests {
 
     #[test]
     fn codex_thread_and_message() {
-        let c = Arc::new(Mutex::new(Collect { text: String::new(), tools: vec![], session_ref: String::new(), is_error: false, usage: None }));
+        let c = Arc::new(Mutex::new(Collect { text: String::new(), tools: vec![], session_ref: String::new(), is_error: false, usage: None, raw_tail: String::new() }));
         parse_codex(&json!({"type":"thread.started","thread_id":"tid-123"}), &ch(), &c);
         parse_codex(&json!({"type":"item.completed","item":{"type":"agent_message","text":"明白"}}), &ch(), &c);
         let g = c.lock().unwrap();
@@ -702,7 +732,7 @@ mod tests {
 
     #[test]
     fn result_error_flag() {
-        let c = Arc::new(Mutex::new(Collect { text: String::new(), tools: vec![], session_ref: "s".into(), is_error: false, usage: None }));
+        let c = Arc::new(Mutex::new(Collect { text: String::new(), tools: vec![], session_ref: "s".into(), is_error: false, usage: None, raw_tail: String::new() }));
         parse_claude(&json!({"type":"result","is_error":true,"result":"boom"}), &ch(), &c);
         assert!(c.lock().unwrap().is_error);
     }
