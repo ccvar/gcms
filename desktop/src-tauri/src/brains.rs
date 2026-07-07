@@ -25,18 +25,37 @@ pub struct BrainsInfo {
     pub wrangler: BrainStatus,
     /// 无头截图用的浏览器（Chrome/Edge/Chromium/Brave，可选能力）。只查路径存在，不执行。
     pub browser: BrainStatus,
+    /// Node.js（npm 安装 Codex/wrangler 的前置；Claude Code 用原生安装器不需要它）。
+    pub node: BrainStatus,
     pub path_env: String,
 }
 
 pub async fn detect() -> BrainsInfo {
-    let (claude, codex, wrangler) = tokio::join!(detect_claude(), detect_codex(), detect_wrangler());
+    let (claude, codex, wrangler, node) =
+        tokio::join!(detect_claude(), detect_codex(), detect_wrangler(), detect_node());
     BrainsInfo {
         claude,
         codex,
         wrangler,
+        node,
         browser: detect_browser(),
         path_env: std::env::var("PATH").unwrap_or_default(),
     }
+}
+
+async fn detect_node() -> BrainStatus {
+    let mut st = BrainStatus::default();
+    let Some(path) = which("node") else {
+        st.detail = "PATH 中没有找到 Node.js".into();
+        return st;
+    };
+    st.found = true;
+    st.path = path;
+    if let Some((_, ver)) = run_capture("node", &["--version"], Duration::from_secs(8)).await {
+        st.version = ver.trim().to_string();
+    }
+    st.logged_in = None;
+    st
 }
 
 /// 探测可做无头截图的浏览器。路径清单与 tools.rs 生成的 shot.js 保持一致。

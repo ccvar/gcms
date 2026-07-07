@@ -670,6 +670,49 @@ async fn redetect_brains() -> Result<brains::BrainsInfo, String> {
     Ok(brains::detect().await)
 }
 
+/// 一键安装 Claude Code：跑官方原生安装脚本（独立二进制，**不需要 Node/npm**）。
+/// macOS/Linux: curl … install.sh | sh；Windows: PowerShell irm … install.ps1 | iex。
+/// 与用户手动复制命令执行完全等价，安装源为 Anthropic 官方。
+#[tauri::command]
+async fn install_claude() -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        #[cfg(target_os = "windows")]
+        let mut c = {
+            let mut c = std::process::Command::new("powershell");
+            c.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "irm https://claude.ai/install.ps1 | iex"]);
+            c
+        };
+        #[cfg(not(target_os = "windows"))]
+        let mut c = {
+            let mut c = std::process::Command::new("/bin/sh");
+            c.args(["-c", "curl -fsSL https://claude.ai/install.sh | sh"]);
+            c
+        };
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            c.creation_flags(0x0800_0000);
+        }
+        let out = c.output().map_err(|e| format!("启动安装失败: {e}"))?;
+        if out.status.success() {
+            Ok("Claude Code 安装完成，正在重新检测…".to_string())
+        } else {
+            let err = String::from_utf8_lossy(&out.stderr);
+            let tail: String = err
+                .lines()
+                .rev()
+                .find(|l| !l.trim().is_empty())
+                .unwrap_or("未知错误")
+                .chars()
+                .take(200)
+                .collect();
+            Err(format!("安装失败：{tail}"))
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// 一键安装 wrangler（npm i -g wrangler）。npm 走已修复的 PATH。可能耗时半分钟到一两分钟。
 #[tauri::command]
 async fn install_wrangler() -> Result<String, String> {
@@ -1517,6 +1560,7 @@ pub fn run() {
             discover_sites,
             detect_brains,
             install_wrangler,
+            install_claude,
             verify_cf_token,
             connect_cloudflare,
             save_attachment,

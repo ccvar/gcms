@@ -232,6 +232,23 @@
     catch (e) { say(String(e), 'err'); }
     finally { wrInstalling = false; if (wrTimer) { clearInterval(wrTimer); wrTimer = undefined; } }
   }
+  // Claude Code 用官方原生安装器（独立二进制，不需要 Node/npm）——npm 命令对新手是三重门槛。
+  // 注意：不能引用 isWindows（声明在后面，TDZ），这里自足判断。
+  const CLAUDE_INSTALL_CMD = typeof navigator !== 'undefined' && /Windows/i.test(navigator.userAgent)
+    ? 'irm https://claude.ai/install.ps1 | iex'
+    : 'curl -fsSL https://claude.ai/install.sh | sh';
+  let claudeInstalling = $state(false);
+  let claudeElapsed = $state(0);
+  let claudeTimer: ReturnType<typeof setInterval> | undefined;
+  async function installClaude() {
+    if (claudeInstalling) return;
+    claudeInstalling = true; claudeElapsed = 0;
+    const t0 = Date.now();
+    claudeTimer = setInterval(() => { claudeElapsed = Date.now() - t0; }, 500);
+    try { const m = await invoke<string>('install_claude'); say(m); await refreshBrainsManual(); }
+    catch (e) { say(String(e), 'err'); }
+    finally { claudeInstalling = false; if (claudeTimer) { clearInterval(claudeTimer); claudeTimer = undefined; } }
+  }
   function fillDeploy() {
     if (viewBusy) return;
     // 预填一条部署指令，用户可补上域名后发送；真正的 wrangler deploy 会经权限确认。
@@ -356,6 +373,8 @@
   let lives = $state<Record<string, { text: string; tools: ToolCall[]; error: string; failed: boolean; startedAt: number }>>({});
   let autoRetried = $state<Record<string, boolean>>({}); // convId → 本轮已自动重试过（每个用户轮只自动重试一次）
   let retryTimers: Record<string, ReturnType<typeof setTimeout>> = {}; // 待触发的自动重连定时器（新一轮开始时取消，防陈旧触发）
+  // 智能升级：手动重试后若以同样的错误再次失败，说明 resume 救不了 → 之后只显示「重建继续」。
+  let retryExhausted = $state<Record<string, boolean>>({});
   let threadEl = $state<HTMLDivElement | null>(null);
 
   const viewBusy = $derived(!!running[activeConvId]); // 当前查看的对话是否在跑
@@ -981,6 +1000,7 @@
     if (!base.session_ref?.trim()) { if (manual) say('这个会话首轮就没建起来，无法重试；请回启动页重新发起。', 'err'); return; }
     if (manual) delete autoRetried[convId];
     const msgs = base.messages.slice();
+    const prevErr = msgs.length && msgs[msgs.length - 1].role === 'assistant' && msgs[msgs.length - 1].error ? msgs[msgs.length - 1].text.trim() : '';
     if (msgs.length && msgs[msgs.length - 1].role === 'assistant') msgs.pop(); // 去掉失败/部分的那条
     beginTurn(convId, { ...base, messages: msgs, status: 'running' });
     try {
@@ -988,6 +1008,9 @@
       await refreshConvos();
       const failed = lives[convId]?.failed ?? false; const errText = lives[convId]?.error ?? '';
       endTurn(conv, convId);
+      // 手动重试后同错再败 → resume 无效，收起「重试」只留「重建继续」；成功则解除。
+      if (manual && failed && prevErr && errText.trim() === prevErr) retryExhausted[convId] = true;
+      if (!failed) delete retryExhausted[convId];
       maybeAutoRetry(convId, failed, errText);
     } catch (e) { await failTurn(e, convId); }
   }
@@ -997,6 +1020,7 @@
     const base = activeConvId === convId ? activeConv : convos.find((c) => c.id === convId);
     if (!base) return;
     delete autoRetried[convId];
+    delete retryExhausted[convId];
     const msgs = base.messages.slice();
     if (msgs.length && msgs[msgs.length - 1].role === 'assistant') msgs.pop();
     beginTurn(convId, { ...base, messages: msgs, status: 'running' });
@@ -1029,6 +1053,7 @@
     draft = ''; attachments = [];
     const id = activeConv.id;
     delete autoRetried[id]; // 新的用户轮：重置自动重试预算
+    delete retryExhausted[id];
     beginTurn(id, { ...activeConv, messages: [...activeConv.messages, optimisticUser(text)], status: 'running' });
     try {
       const conv = await invoke<Conversation>('send_message', { convId: id, message: text, onEvent: makeChannel(id) });
@@ -1438,12 +1463,17 @@
           {#if brains}
             <div class="cli-guide" data-no-drag>
               <div class="cli-guide-h"><span>本地 CLI 准备（至少装好并登录一个）</span><button class="cli-redetect" onclick={refreshBrainsManual} disabled={brainsBusy} title="装好 / 登录完点这里重新检测（会重新读取 PATH）">{@render refreshIcon(brainsBusy)}<span>重新检测</span></button></div>
-              {#each [{ b: 'claude' as Brain, st: brains.claude, name: 'Claude Code', cmd: 'npm i -g @anthropic-ai/claude-code' }, { b: 'codex' as Brain, st: brains.codex, name: 'Codex', cmd: 'npm i -g @openai/codex' }] as r (r.b)}
+              {#each [{ b: 'claude' as Brain, st: brains.claude, name: 'Claude Code', cmd: CLAUDE_INSTALL_CMD }, { b: 'codex' as Brain, st: brains.codex, name: 'Codex', cmd: 'npm i -g @openai/codex' }] as r (r.b)}
                 <div class="cli-row">
                   <BrainIcon brain={r.b} size={16} />
                   <span class="cli-name">{r.name}</span>
                   {#if !r.st.found}
                     <span class="cli-tag bad">未安装</span>
+                    {#if r.b === 'claude'}
+                      <button class="wr-btn" onclick={installClaude} disabled={claudeInstalling}>{#if claudeInstalling}<span class="wr-spin"></span>安装中 {elapsedLabel(claudeElapsed)}{:else}一键安装{/if}</button>
+                    {:else if brains && !brains.node.found}
+                      <button class="node-need" title="Codex 通过 npm 安装，需要先装 Node.js（含 npm）。点击打开官网下载。" onclick={() => openUrl('https://nodejs.org/')}>先装 Node.js ↗</button>
+                    {/if}
                     <code class="cli-cmd" title={r.cmd}>{r.cmd}</code>
                     <button class="cli-copy" title="复制命令" aria-label="复制安装命令" onclick={() => copyCmd(r.cmd)}>
                       {#if copiedCmd === r.cmd}
@@ -1854,7 +1884,7 @@
       <div class="body">
         {#if m.tools.length}{@render cmds(m.tools)}{/if}
         {#if m.error}
-          <div class="text is-err">{@render richText(m.text)}{#if isLast && !viewBusy}{#if activeConv?.session_ref}<button class="retry-btn" onclick={() => retry(activeConvId, true)}><svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M13 8a5 5 0 1 1-1.5-3.6M13 2v3h-3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>重试</button>{/if}<button class="retry-btn" title="换一个全新会话原地续跑（自动带上历史摘要）——用于会话状态损坏、重试无效时" onclick={() => rebuildSession(activeConvId)}><svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M2.6 8a5.4 5.4 0 0 1 9.3-3.7M13.4 8a5.4 5.4 0 0 1-9.3 3.7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /><path d="M11.6 1.6v2.9h2.9M4.4 14.4v-2.9H1.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>重建继续</button>{/if}</div>
+          <div class="text is-err">{@render richText(m.text)}{#if isLast && !viewBusy}{#if activeConv?.session_ref && !retryExhausted[activeConvId]}<button class="retry-btn" onclick={() => retry(activeConvId, true)}><svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M13 8a5 5 0 1 1-1.5-3.6M13 2v3h-3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>重试</button>{/if}<button class="retry-btn" title="换一个全新会话原地续跑（自动带上历史摘要）——用于会话状态损坏、重试无效时" onclick={() => rebuildSession(activeConvId)}><svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M2.6 8a5.4 5.4 0 0 1 9.3-3.7M13.4 8a5.4 5.4 0 0 1-9.3 3.7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /><path d="M11.6 1.6v2.9h2.9M4.4 14.4v-2.9H1.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>重建继续</button>{/if}</div>
         {:else}
           <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
           <div class="text md" onclick={mdClick}>{@html mdRender(m.text)}</div>
@@ -1954,7 +1984,7 @@
       <div class="sec-head mt"><span>本地模型</span><button class="icon-btn" onclick={refreshBrainsManual} title="刷新">{@render refreshIcon(brainsBusy)}</button></div>
       {#if brains}
         <div class="brains-list">
-        {#each [{ b: 'claude' as Brain, st: brains.claude, name: 'Claude Code', cmd: 'npm i -g @anthropic-ai/claude-code' }, { b: 'codex' as Brain, st: brains.codex, name: 'Codex', cmd: 'npm i -g @openai/codex' }] as r (r.b)}
+        {#each [{ b: 'claude' as Brain, st: brains.claude, name: 'Claude Code', cmd: CLAUDE_INSTALL_CMD }, { b: 'codex' as Brain, st: brains.codex, name: 'Codex', cmd: 'npm i -g @openai/codex' }] as r (r.b)}
           <div class="brain-block">
           <div class="brain-row">
             <span class="brain-ic"><BrainIcon brain={r.b} size={18} /></span>
@@ -2588,6 +2618,9 @@
   .wr-btn:hover { background: #c08f00; }
   .wr-btn:disabled { opacity: .85; cursor: default; }
   .wr-spin { display: inline-block; width: 10px; height: 10px; border: 1.6px solid #fff; border-right-color: transparent; border-radius: 50%; animation: rspin .7s linear infinite; margin-right: 5px; vertical-align: -1px; }
+  /* Codex 前置：没装 Node 时的引导小按钮（点开 nodejs.org） */
+  .node-need { flex: none; border: none; background: #faf1d8; color: #b45309; font-size: 11px; font-weight: 550; padding: 3px 9px; border-radius: 6px; cursor: pointer; }
+  .node-need:hover { background: #f5e7bd; }
   .cf-perms-toggle { display: inline-flex; align-items: center; gap: 5px; background: none; border: none; padding: 0 0 8px; font-size: 12px; color: var(--dim); cursor: pointer; }
   .cf-perms-toggle:hover { color: var(--text); }
   .cf-chev { flex: none; transition: transform .12s; }

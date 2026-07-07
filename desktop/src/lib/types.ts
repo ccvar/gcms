@@ -54,6 +54,8 @@ export interface BrainsInfo {
   wrangler: BrainStatus;
   /** 无头截图用的浏览器（Chrome/Edge/Chromium，可选能力）。 */
   browser: BrainStatus;
+  /** Node.js（npm 装 Codex/wrangler 的前置；Claude Code 原生安装不需要）。 */
+  node: BrainStatus;
   path_env: string;
 }
 
