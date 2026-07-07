@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"cms.ccvar.com/internal/i18n"
+	"cms.ccvar.com/internal/version"
 )
 
 type automationSkillFile struct {
@@ -128,6 +129,8 @@ func automationSkillFiles(opts automationSkillOptions) ([]automationSkillFile, e
 	}
 	files := []automationSkillFile{
 		{name: "README.md", body: automationKitReadme(opts)},
+		// 包版本标记（=服务端版本）：客户端（gcms Pilot）导入/升级时读它记录版本，用于「有更新」提示。
+		{name: "gcms-content-assistant/PACK_VERSION", body: version.Version + "\n"},
 		{name: "gcms-content-assistant/AI助手说明.md", body: automationAssistantBriefMarkdown(opts)},
 		{name: "gcms-content-assistant/SKILL.md", body: automationSkillMarkdown(opts.apiBase)},
 		{name: "gcms-content-assistant/agents/openai.yaml", body: automationSkillAgentYAML()},
@@ -2185,6 +2188,7 @@ function usage(code = 2) {
   out("  gcms.js pin <posts|links> <id> <on|off>");
   out("  gcms.js create <posts|pages|links> <json|@file>");
   out("  gcms.js update <posts|pages|links> <id> <json|@file>");
+  out("  gcms.js relink <posts|pages|links> <id> (--to-id <sibling-id> | --trans-group <group>)");
   out("  gcms.js audit <posts|pages|links> [--lang zh|all] [--limit 50] [--deep true]");
   process.exit(code);
 }
@@ -2607,6 +2611,20 @@ async function main() {
     const [id, body] = rest;
     if (!id || !body) usage();
     print(await request("PATCH", "/" + collection + "/" + encodeURIComponent(id), bodyFromArg(body)));
+    return;
+  }
+
+  // 重连互译组：把已存在的一篇并入某翻译组（唯一能改 trans_group 的入口）。
+  // 二选一：--to-id <兄弟内容 id>（推荐）或 --trans-group <组键>。
+  if (cmd === "relink") {
+    const [id, ...flags] = rest;
+    if (!id) usage();
+    const opt = parseOptions(flags);
+    const body = {};
+    if (opt["to-id"] != null) body.link_to_id = Number(opt["to-id"]);
+    else if (opt["trans-group"] != null) body.trans_group = opt["trans-group"];
+    else usage();
+    print(await request("POST", "/" + collection + "/" + encodeURIComponent(id) + "/relink", body));
     return;
   }
 

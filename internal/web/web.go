@@ -1414,6 +1414,11 @@ func (s *Server) servePlatformAPI(w http.ResponseWriter, r *http.Request, pool *
 		s.servePlatformDiscovery(w, r, pool)
 		return
 	}
+	// 平台薄包下载/版本（平台级端点，同样先于 siteID 解析拦截）。
+	if p := r.URL.Path; p == "/api/platform/v1/skill-pack" || p == "/api/platform/v1/skill-pack/version" {
+		s.servePlatformSkillPack(w, r)
+		return
+	}
 	siteID, ok := platformAPISiteID(r.URL.Path)
 	if !ok {
 		http.NotFound(w, r)
@@ -2804,6 +2809,8 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /api/admin/v1/{collection}/{id}/preview-url", s.apiCreatePreviewURL)
 	mux.HandleFunc("PATCH /api/admin/v1/posts/featured/{id}", s.apiUpdatePostFeatured)
 	mux.HandleFunc("PATCH /api/admin/v1/links/featured/{id}", s.apiUpdateLinkFeatured)
+	mux.HandleFunc("GET /api/admin/v1/skill-pack", s.apiDownloadSkillPack)
+	mux.HandleFunc("GET /api/admin/v1/skill-pack/version", s.apiSkillPackVersion)
 	mux.HandleFunc("GET /api/admin/v1/{collection}/{id}", s.apiGetContent)
 	mux.HandleFunc("PATCH /api/admin/v1/{collection}/{id}", s.apiUpdateContent)
 	mux.HandleFunc("POST /api/admin/v1/{collection}/{id}/relink", s.apiRelinkContent)
@@ -2834,6 +2841,8 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /api/platform/v1/sites/{siteID}/{collection}/{id}/preview-url", s.apiCreatePreviewURL)
 	mux.HandleFunc("PATCH /api/platform/v1/sites/{siteID}/posts/featured/{id}", s.apiUpdatePostFeatured)
 	mux.HandleFunc("PATCH /api/platform/v1/sites/{siteID}/links/featured/{id}", s.apiUpdateLinkFeatured)
+	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/skill-pack", s.apiDownloadSkillPack)
+	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/skill-pack/version", s.apiSkillPackVersion)
 	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/{collection}/{id}", s.apiGetContent)
 	mux.HandleFunc("PATCH /api/platform/v1/sites/{siteID}/{collection}/{id}", s.apiUpdateContent)
 	mux.HandleFunc("POST /api/platform/v1/sites/{siteID}/{collection}/{id}/relink", s.apiRelinkContent)
