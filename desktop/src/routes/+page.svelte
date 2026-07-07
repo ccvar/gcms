@@ -500,6 +500,7 @@
     const switching = id !== activeConnId;
     const conn = conns.find((c) => c.id === id);
     const seq = ++selSeq; activeConnId = id; discovery = null;
+    void maybeCheckPackUpdate(id); // 静默查技能包更新（24h 节流，不阻塞选择）
     if (switching) {
       // 换连接＝换工作区：关掉上个连接的对话/排期/定时任务视图，别串场。
       // 模板库 / 提示词库只在 CF 连接下有；切到 gcms 时也退回启动页。
@@ -541,7 +542,14 @@
     try {
       const o = await invoke<ImportOutcome>('import_pack', { zipPath: zip, name: null, key });
       if (o.status === 'needs_key') { keyZip = zip; keyBase = o.api_base; keyVal = ''; keyErr = ''; keyOpen = true; return; }
-      keyOpen = false; say(`已导入「${o.connection.name}」`); await refreshConns(); await selectConn(o.connection.id);
+      keyOpen = false;
+      if (o.status === 'upgraded') {
+        delete packUpdates[o.connection.id];
+        say(`「${o.connection.name}」技能包已就地升级，对话全部保留`);
+      } else {
+        say(`已导入「${o.connection.name}」`);
+      }
+      await refreshConns(); await selectConn(o.connection.id);
     } catch (e) { if (keyOpen) keyErr = String(e); else say(String(e), 'err'); }
     finally { importBusy = false; }
   }
@@ -549,6 +557,39 @@
     const k = keyVal.trim(); if (!k) return;
     if (!k.startsWith('gcmsp_') && !k.startsWith('gcms_')) { keyErr = '密钥前缀应为 gcmsp_ 或 gcms_'; return; }
     keyErr = ''; await doImport(keyZip, k);
+  }
+
+  // ---------- 技能包更新（徽标 + 一键升级） ----------
+  let packUpdates = $state<Record<string, string>>({}); // connId → 可升级到的版本
+  let packUpdating = $state<Record<string, boolean>>({});
+  // 选中 gcms 连接时静默查一次版本（每连接每 24h 最多一次；旧服务端/断网都静默跳过）。
+  async function maybeCheckPackUpdate(connId: string) {
+    const conn = conns.find((c) => c.id === connId);
+    if (!conn || conn.kind !== 'gcms') return;
+    const k = 'gcms.pilot.packCheck.' + connId;
+    const last = Number(localStorage.getItem(k) || 0);
+    if (Date.now() - last < 24 * 3600 * 1000) return;
+    localStorage.setItem(k, String(Date.now()));
+    try {
+      const r = await invoke<{ current: string; latest: string; has_update: boolean }>('check_pack_update', { connId });
+      if (r.has_update) packUpdates[connId] = r.latest;
+    } catch { /* 静默 */ }
+  }
+  async function upgradePack(connId: string) {
+    if (packUpdating[connId]) return;
+    // 有对话正在跑时不升级：换脚本会影响在途回合。
+    if (Object.values(running).includes(connId) || convos.some((c) => c.conn_id === connId && c.status === 'running')) {
+      say('该连接下有对话正在运行，请先点停止结束这一轮，再升级技能包。', 'err');
+      return;
+    }
+    packUpdating[connId] = true;
+    try {
+      const msg = await invoke<string>('update_pack', { connId });
+      delete packUpdates[connId];
+      say(msg);
+      await refreshConns();
+    } catch (e) { say(String(e), 'err'); }
+    finally { delete packUpdating[connId]; }
   }
 
   // ---------- 连接 Cloudflare ----------
@@ -1000,9 +1041,11 @@
   ]);
   // Claude 档位 = 别名（--model sonnet/opus/haiku），永远指向该档「当前最新」，
   // 厂商发新版自动跟随、无需更新客户端。sub 版本号仅「当前实际版本」提示，可能滞后。
+  // Fable 例外：claude 2.1.96 尚无 fable 别名（实测报错），只能用全 ID，出新版需更新这里。
   const CLAUDE_MODELS = [
     { value: 'sonnet', label: 'Sonnet', sub: '性价比 · 当前 Sonnet 5' },
     { value: 'opus', label: 'Opus', sub: '最强 · 当前 Opus 4.8' },
+    { value: 'claude-fable-5', label: 'Fable', sub: 'Claude 5 家族 · Fable 5' },
     { value: 'haiku', label: 'Haiku', sub: '最快 · 当前 Haiku 4.5' },
   ];
   // Codex 档位 = 具体模型 ID（-c model=）。首项「跟随 Codex 默认」= 不覆盖本地 codex 配置。
@@ -1195,7 +1238,7 @@
           {#each conns as c (c.id)}
             <button class="cs-item {activeConnId === c.id ? 'on' : ''}" onclick={() => { selectConn(c.id); switcherOpen = false; }}>
               {#if c.kind === 'cloudflare'}{@render cfMark(18)}{:else}<SiteMark size={18} />{/if}
-              <span class="cs-main"><b>{c.name}</b><small>{c.key_prefix} · {c.kind === 'cloudflare' ? 'Cloudflare' : c.key_kind === 'gcmsp_' ? '平台' : '单站'}</small></span>
+              <span class="cs-main"><b>{c.name}{#if packUpdates[c.id]}<span class="pack-dot" title="技能包有新版，去「连接与模型设置」一键升级"></span>{/if}</b><small>{c.key_prefix} · {c.kind === 'cloudflare' ? 'Cloudflare' : c.key_kind === 'gcmsp_' ? '平台' : '单站'}</small></span>
               {#if activeConnId === c.id}<span class="cs-check">✓</span>{/if}
             </button>
           {/each}
@@ -1743,6 +1786,10 @@
             {#if c.kind === 'cloudflare'}{@render cfMark(22)}{:else}<SiteMark size={22} />{/if}
             <span class="conn-main"><b>{c.name}</b>
               <small>{c.key_prefix} · {c.kind === 'cloudflare' ? 'Cloudflare' : c.key_kind === 'gcmsp_' ? '平台' : '单站'}{#if activeConnId === c.id && c.kind !== 'cloudflare'} · {sites.length} 站点{/if}</small></span>
+            {#if packUpdates[c.id]}
+              <button class="pack-upd" title="技能包有新版 {packUpdates[c.id]}——一键就地升级，连接与对话全部保留" disabled={!!packUpdating[c.id]}
+                onclick={(e) => { e.stopPropagation(); upgradePack(c.id); }}>{packUpdating[c.id] ? '升级中…' : `升级技能包 ${packUpdates[c.id]}`}</button>
+            {/if}
             {#if activeConnId === c.id && c.kind !== 'cloudflare'}
               <button class="icon-btn sm" title="刷新站点（技能包新增站点后点这里）" onclick={(e) => { e.stopPropagation(); refreshSites(); }}>{@render refreshIcon(discoveryLoading)}</button>
             {/if}
@@ -1974,9 +2021,12 @@
   :global(button:focus), :global(button:focus-visible), :global([role='button']:focus),
   :global([role='button']:focus-visible), :global(summary:focus), :global(a:focus) { outline: none; box-shadow: none; }
   .app { display: flex; height: 100vh; overflow: hidden; }
-  /* Windows：主内容左上角轻微圆角，跟原生标题栏之间更柔和（角落露出 rail 色）。macOS 无原生标题栏不需要。 */
+  /* Windows：主内容左上角轻微圆角，跟原生标题栏之间更柔和（角落露出 rail 色）。macOS 无原生标题栏不需要。
+     侧栏分隔线在 Windows 去掉——通高的 border-right 会在圆角上方留一截两侧同色的「悬空线头」；
+     边界靠 rail/main 底色对比 + 圆角呈现（Codex 客户端同款做法）。 */
   .app.win { background: var(--rail); }
   .app.win .main { background: var(--bg); border-top-left-radius: 12px; }
+  .app.win .rail { border-right: none; }
 
   /* 细滚动条（macOS overlay 风格）：细、圆角、透明轨道，thumb 用 padding-box 内缩显得更细。 */
   :global(::-webkit-scrollbar) { width: 10px; height: 10px; }
@@ -2444,6 +2494,11 @@
   .conn-row.on { border-color: #cfc9ec; background: #f7f6ff; }
   .conn-row :global(.sm) { border-radius: 6px; }
   .conn-main { flex: 1; min-width: 0; } .conn-main b { display: block; font-size: 13.5px; } .conn-main small { display: block; color: var(--dim); font-size: 11px; }
+  /* 技能包更新：设置行的一键升级按钮 + 切换器里的小圆点徽标 */
+  .pack-upd { flex: none; border: none; background: var(--accent); color: #fff; font-size: 11px; font-weight: 550; padding: 3px 10px; border-radius: 7px; cursor: pointer; }
+  .pack-upd:hover { background: var(--accent-h); }
+  .pack-upd:disabled { opacity: .6; cursor: default; }
+  .pack-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); margin-left: 6px; vertical-align: 1px; }
   .icon-btn.sm { padding: 4px; border-radius: 7px; }
   .brain-row { display: flex; align-items: center; gap: 11px; padding: 0; }
   /* 状态点放进与 .icon-btn 同宽(27px)的居中盒，右缘、图标中心都与本地模型区的刷新图标对齐。 */

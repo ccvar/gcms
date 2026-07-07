@@ -9,6 +9,8 @@ export interface Connection {
   key_kind: string;
   /** Cloudflare 账号 id（仅 kind=cloudflare）。 */
   account_id: string;
+  /** 技能包版本（=服务端版本）；空 = 未知。 */
+  pack_version?: string;
   created_at: string;
 }
 
@@ -31,6 +33,7 @@ export interface Discovery {
 
 export type ImportOutcome =
   | { status: 'imported'; connection: Connection }
+  | { status: 'upgraded'; connection: Connection }
   | { status: 'needs_key'; api_base: string };
 
 export type Brain = 'claude' | 'codex';

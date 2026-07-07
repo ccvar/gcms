@@ -101,6 +101,115 @@ async fn import_pack(
         .map_err(|e| e.to_string())?
 }
 
+#[derive(serde::Serialize)]
+struct PackUpdateInfo {
+    current: String,
+    latest: String,
+    has_update: bool,
+}
+
+/// 查询技能包是否有新版：GET {api_base}/skill-pack/version（密钥鉴权）。
+/// 旧连接（pack_version 为空）首次查到版本时静默落基线、不提示更新；
+/// 服务端太老没有该端点（404）或网络失败 → 静默视为无更新（不打扰用户）。
+#[tauri::command]
+async fn check_pack_update(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+) -> Result<PackUpdateInfo, String> {
+    let conn = state.conns.get(&conn_id)?;
+    if conn.kind != "gcms" {
+        return Ok(PackUpdateInfo { current: String::new(), latest: String::new(), has_update: false });
+    }
+    let key = keychain::get_key(&conn.id)?;
+    let url = format!("{}/skill-pack/version", conn.api_base.trim_end_matches('/'));
+    let none = PackUpdateInfo { current: conn.pack_version.clone(), latest: String::new(), has_update: false };
+    let resp = match reqwest::Client::new()
+        .get(&url)
+        .bearer_auth(&key)
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await
+    {
+        Ok(r) if r.status().is_success() => r,
+        _ => return Ok(none), // 404（旧服务端）/网络失败：静默无更新
+    };
+    let latest = resp
+        .json::<serde_json::Value>()
+        .await
+        .ok()
+        .and_then(|v| v.get("version").and_then(|x| x.as_str()).map(str::to_string))
+        .unwrap_or_default();
+    if latest.is_empty() {
+        return Ok(none);
+    }
+    if conn.pack_version.is_empty() {
+        // 首次核对：落基线不提示（老导入的包无从判断新旧，从下次服务端升级开始提示）。
+        let _ = state.conns.set_pack_version(&conn.id, &latest);
+        return Ok(PackUpdateInfo { current: latest.clone(), latest, has_update: false });
+    }
+    let has = latest != conn.pack_version;
+    Ok(PackUpdateInfo { current: conn.pack_version, latest, has_update: has })
+}
+
+/// 一键升级技能包：用钥匙串密钥从服务端下载最新原始包，就地覆盖技能目录。
+/// 连接 / 密钥 / 对话全保留。
+#[tauri::command]
+async fn update_pack(state: tauri::State<'_, AppState>, conn_id: String) -> Result<String, String> {
+    let conn = state.conns.get(&conn_id)?;
+    if conn.kind != "gcms" {
+        return Err("只有 gcms 技能包连接支持升级".into());
+    }
+    // 后端权威守卫：该连接下有正在跑的对话（含托盘定时任务在后台开的轮——前端快照看不到）
+    // 时拒绝升级，防止覆盖正在被 CLI 使用的脚本。前端的检查只是提示层，这里才是闸。
+    if state.convos.list().iter().any(|c| c.conn_id == conn_id && c.status == "running") {
+        return Err("该连接下有对话正在运行（可能是定时任务），请等它跑完再升级技能包。".into());
+    }
+    let key = keychain::get_key(&conn.id)?;
+    let url = format!("{}/skill-pack", conn.api_base.trim_end_matches('/'));
+    let resp = reqwest::Client::new()
+        .get(&url)
+        .bearer_auth(&key)
+        .timeout(std::time::Duration::from_secs(60))
+        .send()
+        .await
+        .map_err(|e| format!("下载技能包失败：{e}"))?;
+    if !resp.status().is_success() {
+        return Err(if resp.status().as_u16() == 404 {
+            "服务端版本太旧，还没有技能包下载接口（需 v1.3.10+）。请先升级 gcms 服务端。".into()
+        } else {
+            format!("下载技能包失败：HTTP {}", resp.status())
+        });
+    }
+    let version = resp
+        .headers()
+        .get("X-GCMS-Version")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    let bytes = resp.bytes().await.map_err(|e| format!("读取技能包失败：{e}"))?;
+    if bytes.len() < 200 {
+        return Err("下载的技能包内容异常（太小）".into());
+    }
+    let tmp_zip = state.data_dir.join(format!("pack-update-{}.zip", uuid::Uuid::new_v4()));
+    std::fs::write(&tmp_zip, &bytes).map_err(|e| format!("写临时文件失败：{e}"))?;
+    let store = state.conns.clone();
+    let cid = conn_id.clone();
+    let zp = tmp_zip.to_string_lossy().into_owned();
+    let result = tauri::async_runtime::spawn_blocking(move || store.upgrade_from_zip(&cid, &zp))
+        .await
+        .map_err(|e| e.to_string())?;
+    let _ = std::fs::remove_file(&tmp_zip);
+    result?;
+    if !version.is_empty() {
+        let _ = state.conns.set_pack_version(&conn_id, &version);
+    }
+    Ok(if version.is_empty() {
+        "技能包已升级，对话全部保留".into()
+    } else {
+        format!("技能包已升级到 {version}，对话全部保留")
+    })
+}
+
 #[tauri::command]
 async fn remove_connection(state: tauri::State<'_, AppState>, id: String) -> Result<(), String> {
     let store = state.conns.clone();
@@ -1330,6 +1439,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             list_connections,
             import_pack,
+            check_pack_update,
+            update_pack,
             remove_connection,
             discover_sites,
             detect_brains,
