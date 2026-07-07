@@ -245,6 +245,45 @@
     { value: 'auto', label: '自动', sub: '仅危险动作确认' },
     { value: 'full', label: '全自动', sub: '全程不拦' },
   ];
+  // CF 建站「视觉风格」预设：每档是一组具体 design tokens 指令，拼进首条消息，
+  // 把"语言欠定视觉"变成"点一下锁定方向"。空 = 让 AI 按内容自行判断。
+  const STYLE_OPTS = [
+    { value: '', label: '风格：让 AI 定', sub: '按站点内容自行判断' },
+    { value: 'minimal', label: '极简留白', sub: '黑白灰 · 大留白' },
+    { value: 'editorial', label: '杂志编辑', sub: '衬线标题 · 窄栏长文' },
+    { value: 'dark-tech', label: '深色科技', sub: '近黑底 · 霓虹点缀' },
+    { value: 'warm-craft', label: '暖色手作', sub: '奶油底 · 陶土强调' },
+    { value: 'saas', label: '企业 SaaS', sub: '浅底 · 卡片层次' },
+  ];
+  const STYLE_DIRECTIVES: Record<string, string> = {
+    minimal: '极简留白：纯白底、近黑文字，仅一个低饱和强调色；无衬线字体；区块间大留白、细分割线；圆角 8px；无花哨动效。',
+    editorial: '杂志编辑风：米白底；衬线大标题 + 无衬线正文；正文窄栏（约 720px）居中；标题字号大胆、段落节奏松；用细横线分节。',
+    'dark-tech': '深色科技：近黑背景（如 #0b0e14）、高对比浅色文字；一个霓虹强调色（青或紫）；数据/代码用等宽字体点缀；小圆角或直角；hover 微发光。',
+    'warm-craft': '暖色手作：奶油白/米色底、深棕文字、陶土或暖橙强调色；12px 圆润圆角；人文气质字体；阴影温和；整体温暖安静。',
+    saas: '企业 SaaS：浅灰白底、品牌蓝或紫强调；卡片 + 轻阴影分层；间距体系化、信息密度适中；CTA 按钮醒目；配 FAQ/价格等标准分区样式。',
+  };
+  let lStyle = $state('');
+
+  // 启动页「厂商+模型」合并为一个下拉：行带厂商图标，值编码为 "<brain>::<model>"。
+  // 厂商未就绪时整组置灰（原厂商下拉的禁用语义保留）。
+  const comboOpts = $derived.by(() => {
+    const out: { value: string; label: string; sub?: string; icon?: string; disabled?: boolean }[] = [];
+    for (const b of ['claude', 'codex'] as Brain[]) {
+      const usable = brainUsable(b);
+      const note = usable ? '' : brains?.[b].found ? '未登录' : '未安装';
+      for (const m of launcherModelOpts(b)) {
+        out.push({ value: `${b}::${m.value}`, label: m.label, sub: note || m.sub, icon: b, disabled: !usable });
+      }
+    }
+    return out;
+  });
+  function pickCombo(v: string) {
+    const i = v.indexOf('::');
+    if (i < 0) return;
+    lBrain = v.slice(0, i) as Brain;
+    lModel = v.slice(i + 2);
+  }
+
   // 权限档位按风险给下拉文字上色：自动=警告色、全自动(全程不拦)=危险色，计划/询问保持中性。
   function permTone(v: string): string { return v === 'full' ? 'danger' : v === 'auto' ? 'warn' : ''; }
   // Codex 没有逐命令确认（询问/自动的弹卡是 Claude 的 PreToolUse 钩子）——这两档对它无意义，
@@ -516,7 +555,7 @@
     if (conn?.kind === 'cloudflare') {
       // 只在真正换连接时清输入 + 拨默认档；同连接重选（如刷新）不动用户已填的项目名。
       if (switching) {
-        cfProjects = []; lSite = '';
+        cfProjects = []; lSite = ''; lStyle = '';
         if (lPerm === 'full') lPerm = 'auto'; // CF 默认「自动」——部署/改 DNS 弹确认，防手滑
       }
       try { const ps = await invoke<string[]>('list_cf_projects', { connId: id }); if (seq === selSeq) cfProjects = ps; }
@@ -832,7 +871,9 @@
     const taskType = isCfConn ? 'sitebuild' : lTask;
     prefs.brain = lBrain; prefs.model = lModel; prefs.taskType = lTask; prefs.perm = lPerm; savePrefs(prefs);
     const model = lModel;
-    const text = lDraft.trim();
+    // CF 建站：把所选视觉风格的 tokens 指令拼进首条消息（可见、可追溯）。
+    const styleDir = isCfConn && lStyle ? STYLE_DIRECTIVES[lStyle] : '';
+    const text = lDraft.trim() + (styleDir ? `\n\n【视觉风格】${styleDir}` : '');
     const id = crypto.randomUUID();
     const now = Math.floor(Date.now() / 1000);
     const optimistic: Conversation = {
@@ -1356,14 +1397,14 @@
               <div class="cb-left">
                 {#if isCfConn}
                   <input class="cf-proj-in" bind:value={lSite} placeholder="项目名，如 coffee-landing" spellcheck="false" autocapitalize="off" autocorrect="off" />
+                  <Dropdown compact bind:value={lStyle} options={STYLE_OPTS} />
                 {:else}
                   <Dropdown compact searchable bind:value={lSite} options={siteOpts} placeholder="选择站点" />
                 {/if}
               </div>
               <div class="cb-right">
                 <Dropdown compact bind:value={lPerm} options={permOptsFor(lBrain)} tone={permTone(lPerm)} />
-                <Dropdown compact bind:value={lBrain} options={brainOpts} />
-                <Dropdown compact bind:value={lModel} options={launcherModelOpts(lBrain)} />
+                <Dropdown compact value={`${lBrain}::${lModel}`} options={comboOpts} onchange={pickCombo} />
                 <button class="send" onclick={startChat} disabled={!lSite.trim() || !lDraft.trim() || !brainUsable(lBrain)} title="发送（Enter）">↑</button>
               </div>
             </div>
@@ -1626,8 +1667,8 @@
             </div>
             <div class="cb-right">
               <Dropdown compact bind:value={threadPerm} options={permOptsFor(activeConv?.brain ?? 'claude')} tone={permTone(threadPerm)} onchange={persistThreadPerm} disabled={viewBusy} />
-              <span class="cb-ro" title="会话的厂商已固定，不可更改">{@render brainTag(activeConv?.brain ?? 'claude', brainLabel(activeConv?.brain ?? ''))}</span>
-              <Dropdown compact bind:value={threadModel} options={launcherModelOpts(activeConv?.brain ?? 'claude')} onchange={persistThreadModel} disabled={viewBusy} />
+              <!-- 厂商随会话固定：并进模型下拉（图标标识厂商），只列本厂商的模型档 -->
+              <Dropdown compact bind:value={threadModel} options={launcherModelOpts(activeConv?.brain ?? 'claude').map((o) => ({ ...o, icon: activeConv?.brain ?? 'claude' }))} onchange={persistThreadModel} disabled={viewBusy} />
               {#if viewBusy}
                 {#if draft.trim() || attachments.length}
                   <button class="send queue" onclick={queueMessage} title="排队：等这轮结束后自动发送">↑</button>
