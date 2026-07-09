@@ -891,10 +891,19 @@
     delete lives[convId];
     if (activeConvId === convId) checkCfReady(); // 这轮可能写了文件，重新判定预览/部署是否可用
     // 等待消息：这轮**成功**结束、用户还在本会话，才把排队的那条发出去（失败/要重连时不发，避免连环失败）。
+    let sentQueued = false;
     if (!failed && queued && queued.convId === convId && activeConvId === convId) {
       const q = queued; queued = null;
       draft = q.text; attachments = q.atts;
       queueMicrotask(() => { void send(); });
+      sentQueued = true;
+    }
+    // 自动重建：claude 上下文 ≥90% 且本轮成功 → 直接换新会话续聊（带历史摘要，界面消息不丢）。
+    // codex 没有真实上下文读数不触发；发了排队消息这轮先跑它，下轮收尾再检查（阈值有余量）。
+    // 重建成功后 ctx 掉回摘要大小不会连环触发；重建失败走 failTurn 也不会循环。
+    if (!sentQueued && !failed && conv && conv.brain === 'claude' && (conv.ctx_tokens ?? 0) >= ctxLimit('claude') * 0.9) {
+      if (activeConvId === convId) say('上下文接近上限，已自动重建续聊');
+      queueMicrotask(() => { void rebuildSession(convId); });
     }
   }
   async function failTurn(e: unknown, convId: string) {
@@ -1961,7 +1970,7 @@
             {#if (activeConv.ctx_tokens ?? 0) > 0}
               {@const lim = ctxLimit(activeConv.brain)}
               {@const pct = Math.min(100, Math.round(((activeConv.ctx_tokens ?? 0) / lim) * 100))}
-              <span class="usage-seg" title="当前会话上下文占用；接近上限时会变慢/变差，建议开个新对话">
+              <span class="usage-seg" title="当前会话上下文占用">
                 <span class="usage-lbl">上下文</span>
                 <span class="usage-bar"><span class="usage-fill" class:warn={pct >= 70 && pct < 90} class:danger={pct >= 90} style="width:{Math.max(3, pct)}%"></span></span>
                 <span class="usage-num">{fmtTokens(activeConv.ctx_tokens ?? 0)}/{fmtTokens(lim)}</span>
@@ -2114,7 +2123,7 @@
   <div class="sheet">
     <header class="sheet-head"><b>连接与模型</b><button class="x" onclick={() => (setupOpen = false)}>×</button></header>
     <div class="sheet-body">
-      <div class="sec-head"><span>连接</span><span class="sec-acts"><button class="btn small ghost bare" onclick={openCfConnect}>{@render cfMark(13)} Cloudflare</button><button class="btn small ghost bare" onclick={importPack} disabled={importBusy}>{importBusy ? '导入中…' : '＋ 导入'}</button></span></div>
+      <div class="sec-head"><span>连接</span><span class="sec-acts"><button class="btn small ghost bare" onclick={openCfConnect}>{@render cfMark(13)} Cloudflare</button><button class="btn small ghost bare" onclick={importPack} disabled={importBusy}>{importBusy ? '导入中…' : '＋ 导入 gcms 技能包'}</button></span></div>
       {#if conns.length === 0}<p class="hint">还没有连接。导入 gcms 技能包，或连接 Cloudflare。</p>{/if}
       <div class="conn-list">
         {#each conns as c (c.id)}

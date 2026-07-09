@@ -767,16 +767,29 @@ async fn install_claude() -> Result<String, String> {
         if out.status.success() {
             Ok("Claude Code 安装完成，正在重新检测…".to_string())
         } else {
+            // PowerShell 错误记录的末行永远是没信息量的 "+ FullyQualifiedErrorId:…"，
+            // 有效描述在最前面——取前两条有效行；stderr 全空再退 stdout 末行。
             let err = String::from_utf8_lossy(&out.stderr);
-            let tail: String = err
+            let mut msg: String = err
                 .lines()
-                .rev()
-                .find(|l| !l.trim().is_empty())
-                .unwrap_or("未知错误")
-                .chars()
-                .take(200)
-                .collect();
-            Err(format!("安装失败：{tail}"))
+                .map(str::trim)
+                .filter(|l| {
+                    !l.is_empty()
+                        && !l.starts_with('+')
+                        && !l.starts_with('~')
+                        && !l.starts_with("At line")
+                        && !l.starts_with("CategoryInfo")
+                        && !l.starts_with("FullyQualifiedErrorId")
+                })
+                .take(2)
+                .collect::<Vec<_>>()
+                .join(" ");
+            if msg.is_empty() {
+                let sout = String::from_utf8_lossy(&out.stdout);
+                msg = sout.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("未知错误").trim().to_string();
+            }
+            let msg: String = msg.chars().take(200).collect();
+            Err(format!("安装失败：{msg}。多为网络问题（需能访问 claude.ai），可挂代理后重试，或复制右侧命令到终端手动执行看完整输出"))
         }
     })
     .await
@@ -1129,10 +1142,13 @@ fn assistant_msg(res: &agent::TurnResult, now: u64) -> Message {
 }
 
 /// 用本轮 usage 更新会话的「上下文大小 + 累计 token」。拿不到 usage 就不动（保留上一轮的值）。
+/// 口径差异：claude 用最后一条 assistant 消息的 usage＝最终那次调用读入的上下文，能当"会话大小"；
+/// codex（exec --json）只有 turn.completed 的整轮汇总——多步回合是各步之和，当上下文显示会离谱
+/// 膨胀（一轮几百步能加到几十 M），故 codex 不标上下文（置 0，前端隐藏该条），只记累计吞吐。
 fn apply_usage(c: &mut Conversation, res: &agent::TurnResult) {
     if let Some(u) = &res.usage {
-        let ctx = u.input + u.cache_read + u.cache_create; // 这轮读入的整段上下文 ≈ 当前会话大小
-        c.ctx_tokens = ctx;
+        let ctx = u.input + u.cache_read + u.cache_create;
+        c.ctx_tokens = if c.brain == "codex" { 0 } else { ctx };
         c.total_tokens += ctx + u.output; // 累计（每轮全量计入，反映实际处理量）
     }
 }
