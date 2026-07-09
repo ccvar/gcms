@@ -28,16 +28,20 @@
     else window.location.hash = "";
     window.scrollTo(x, y);
   };
-  // 拦截 Google 弹窗的打开（徽章）与关闭（背板 / ×）链接，改用保持滚动的 hash 切换。
+  // 拦截所有 :target 弹窗的开/关链接，改用保持滚动的 hash 切换——否则打开跳到弹窗锚点、
+  // 关闭（href="#"）跳回页顶。关闭切到不存在的 "#_"（而不是清空 hash）：hash 变更才会让
+  // :target 重新求值，replaceState 清 hash 在部分浏览器下弹窗不会关。
   document.addEventListener("click", function (e) {
     var a = e.target && e.target.closest ? e.target.closest("a[href]") : null;
     if (!a) return;
     var href = a.getAttribute("href") || "";
-    var isOpen = /^#site-google-(analytics|search)-modal-/.test(href);
-    var isClose = /^#site-card-/.test(href) && !!a.closest(".site-google-modal");
-    if (!isOpen && !isClose) return;
+    if (href.charAt(0) !== "#") return;
+    var target = href.length > 1 ? document.getElementById(href.slice(1)) : null;
+    var opensModal = !!(target && target.classList.contains("modal"));
+    var inModal = !!a.closest(".modal");
+    if (!opensModal && !inModal) return; // 与弹窗无关的普通页内锚点不拦
     e.preventDefault();
-    window.gcmsSetHashKeepScroll(href);
+    window.gcmsSetHashKeepScroll(opensModal ? href : (href === "#" ? "#_" : href));
   });
 
   function copyTextToClipboard(text) {
@@ -3683,7 +3687,9 @@
 
       switcher.classList.add("is-floating");
       menu.style.setProperty("--site-switcher-width", width + "px");
-      menu.style.setProperty("--site-switcher-max-height", Math.max(120, viewportHeight - margin * 2) + "px");
+      // scrollHeight＝内容自然高，与 max-height 无关——不需要先放大再量。
+      // （之前这里先把 max-height 临时放到近视口高再量：重定位若发生在用户拖菜单滚动条期间，
+      // 这一下会改写滚动几何，把拖拽位置顶回去，表现为"永远拖不到底"。）
       naturalHeight = menu.scrollHeight;
       opensUp = below < Math.min(naturalHeight, 220) && above > below;
       maxHeight = opensUp ? above : below;
@@ -3711,7 +3717,12 @@
       if (e.key === "Escape") switcher.open = false;
     });
     window.addEventListener("resize", schedulePosition);
-    window.addEventListener("scroll", schedulePosition, true);
+    // 捕获全局滚动以跟随页面重定位，但菜单自身的内部滚动除外——
+    // 内部滚动触发重定位会在拖动滚动条时反复强制布局，干扰拖拽本身。
+    window.addEventListener("scroll", function (e) {
+      if (menu && e.target && e.target !== window && e.target !== document && menu.contains(e.target)) return;
+      schedulePosition();
+    }, true);
   })();
 
   /* ---------- 通用复制按钮 ---------- */
