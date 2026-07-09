@@ -195,7 +195,13 @@ process.stdin.on('end', () => {
   try { fs.mkdirSync(PENDING, { recursive: true }); } catch (e) {}
   const reqFile = PENDING + '/' + id + '.req.json';
   const respFile = PENDING + '/' + id + '.resp.json';
-  const payload = { id, conv: CONV, tool, cmd, input, dangerous, mode: MODE, ts: Date.now() };
+  // desc＝模型自己写的「这条命令干什么」（Bash 的 description 字段）；arg＝非 Bash 工具的主对象（URL/文件路径），
+  // 给批准卡当人话标题用——命令本体默认收起。
+  const desc = typeof input.description === 'string' ? input.description : '';
+  const arg = typeof input.url === 'string' ? input.url
+    : (typeof input.file_path === 'string' ? input.file_path
+    : (typeof input.query === 'string' ? input.query : ''));
+  const payload = { id, conv: CONV, tool, cmd, input, dangerous, mode: MODE, ts: Date.now(), desc, arg };
   try { fs.writeFileSync(reqFile, JSON.stringify(payload)); } catch (e) { return out('deny', '无法写批准请求'); }
   const deadline = Date.now() + 15 * 60 * 1000; // 15 分钟没人点＝拒绝
   const timer = setInterval(() => {
@@ -225,6 +231,10 @@ pub struct PendingPermit {
     pub conv: String,
     pub tool: String,
     pub cmd: String,
+    /// 模型写的操作说明（Bash 的 description）；可能为空/英文。
+    pub desc: String,
+    /// 非 Bash 工具的主对象（URL / 文件路径），合成人话标题用。
+    pub arg: String,
     pub dangerous: bool,
     pub mode: String,
     pub ts: u64,
@@ -258,6 +268,8 @@ pub fn list_pending(pending_dir: &Path) -> Vec<PendingPermit> {
             conv: v.get("conv").and_then(|x| x.as_str()).unwrap_or_default().to_string(),
             tool: v.get("tool").and_then(|x| x.as_str()).unwrap_or_default().to_string(),
             cmd: v.get("cmd").and_then(|x| x.as_str()).unwrap_or_default().to_string(),
+            desc: v.get("desc").and_then(|x| x.as_str()).unwrap_or_default().to_string(),
+            arg: v.get("arg").and_then(|x| x.as_str()).unwrap_or_default().to_string(),
             dangerous: v.get("dangerous").and_then(|x| x.as_bool()).unwrap_or(false),
             mode: v.get("mode").and_then(|x| x.as_str()).unwrap_or_default().to_string(),
             ts: v.get("ts").and_then(|x| x.as_u64()).unwrap_or(0),

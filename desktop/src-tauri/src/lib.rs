@@ -70,17 +70,27 @@ fn sanitize_filename(name: &str) -> String {
     if cleaned.is_empty() { "file".into() } else { cleaned }
 }
 
+/// 计算本轮 cwd 但不建目录：CF 连接＝工作区下的项目目录；gcms＝空串（调用方回退技能包目录）。
+/// 读路径（如附件缩略图）用它，避免只读操作把用户删掉的项目目录悄悄复活成幽灵项目。
+fn work_dir_path(conn: &pack::Connection, site_slug: &str) -> String {
+    if conn.kind == "cloudflare" {
+        std::path::Path::new(&conn.skill_dir)
+            .join("projects")
+            .join(cf_project_slug(site_slug))
+            .to_string_lossy()
+            .into_owned()
+    } else {
+        String::new()
+    }
+}
+
 /// 本轮 cwd：CF 连接＝该连接工作区下的项目目录（按需创建）；gcms＝技能包目录（返回空由 run_turn 兜底）。
 fn resolve_work_dir(conn: &pack::Connection, site_slug: &str) -> Result<String, String> {
-    if conn.kind == "cloudflare" {
-        let dir = std::path::Path::new(&conn.skill_dir)
-            .join("projects")
-            .join(cf_project_slug(site_slug));
+    let dir = work_dir_path(conn, site_slug);
+    if !dir.is_empty() {
         std::fs::create_dir_all(&dir).map_err(|e| format!("建项目目录失败: {e}"))?;
-        Ok(dir.to_string_lossy().into_owned())
-    } else {
-        Ok(String::new())
     }
+    Ok(dir)
 }
 
 #[tauri::command]
@@ -310,6 +320,66 @@ fn save_attachment(
     std::fs::write(&target, &data).map_err(|e| format!("保存附件失败: {e}"))?;
     let name = target.file_name().and_then(|n| n.to_str()).unwrap_or(&safe).to_string();
     Ok(format!("uploads/{name}"))
+}
+
+/// 读会话附件图片为 data URI（消息里存的是相对工作目录的 uploads/ 路径，webview 读不了本地文件）。
+/// 只接受 uploads/<单个文件名> 且扩展名在图片白名单内；拒 ':'（Windows 下 C:x.png 这类盘符
+/// 相对路径会让 PathBuf::join 整体替换基路径，逃出 uploads；合法附件名经 sanitize 也不含它）。
+/// 前端打开会话会对全部图片附件批量调用：async + spawn_blocking，读盘/编码不占主线程；
+/// 超过 8MB 不生成缩略图（data URI 会膨胀 1/3 常驻前端内存），退回文件卡展示。
+#[tauri::command]
+async fn read_attachment_image(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    project: String,
+    path: String,
+) -> Result<String, String> {
+    let name = path
+        .strip_prefix("uploads/")
+        .filter(|n| {
+            !n.is_empty() && !n.contains('/') && !n.contains('\\') && !n.contains(':') && *n != "." && *n != ".."
+        })
+        .ok_or("不是附件路径")?
+        .to_string();
+    let ext = std::path::Path::new(&name)
+        .extension()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let mime = match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        "bmp" => "image/bmp",
+        "avif" => "image/avif",
+        _ => return Err("不是图片附件".into()),
+    };
+    let conn = state.conns.get(&conn_id)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        // 只读解析，不建目录：项目目录已被删时让 metadata 自然报错，前端降级成文件卡。
+        let dir = {
+            let w = work_dir_path(&conn, &project);
+            if w.is_empty() { conn.skill_dir.clone() } else { w }
+        };
+        if dir.is_empty() {
+            return Err("没有可用的工作目录".into());
+        }
+        let p = std::path::Path::new(&dir).join("uploads").join(&name);
+        let meta = std::fs::metadata(&p).map_err(|e| format!("读取附件失败: {e}"))?;
+        if !meta.is_file() {
+            return Err("不是文件".into());
+        }
+        if meta.len() > 8_000_000 {
+            return Err("图片较大（>8MB），不生成缩略图".into());
+        }
+        let data = std::fs::read(&p).map_err(|e| format!("读取附件失败: {e}"))?;
+        use base64::Engine as _;
+        Ok(format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(data)))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// 列出某 CF 连接工作区下已有的站点项目（<workspace>/projects/* 目录名）。
@@ -1564,6 +1634,7 @@ pub fn run() {
             verify_cf_token,
             connect_cloudflare,
             save_attachment,
+            read_attachment_image,
             list_cf_projects,
             cf_project_ready,
             cf_preview_start,

@@ -58,14 +58,16 @@
       if (u && activeConvId === u.id) activeConv = u;
     } catch (e) { say(String(e), 'err'); }
   }
-  // 进行中会话可切换权限档位；基座模式钉在会话创建时（改档要新对话才全生效），但钩子每轮重生成，
-  // 故「自动/询问」的拦截逻辑仍随时可调（见 permit.rs / lib.rs 说明）。
+  // 进行中会话可切换权限档位：claude 的钩子/参数和 codex 的 sandbox 都是每轮下发的，
+  // 改完从下一轮（含排队消息）生效；正在跑的那轮已带旧档位启动，改动拦不住它（想拦先停止）。
   let threadPerm = $state('');
   async function persistThreadPerm(p: string) {
     if (!activeConv || p === (activeConv.perm_mode || 'full')) return;
     try {
       const u = await invoke<Conversation | null>('set_conversation_perm_mode', { convId: activeConv.id, permMode: p });
-      if (u && activeConvId === u.id) activeConv = u;
+      // 回写 threadPerm：若这段 RPC 期间轮次刚好收尾，endTurn 可能已把下拉打回旧值，这里以落库值自愈。
+      if (u && activeConvId === u.id) { activeConv = u; threadPerm = u.perm_mode || 'full'; }
+      if (viewBusy) say('权限档位已切换，从下一轮开始生效（不影响正在跑的这轮）');
     } catch (e) { say(String(e), 'err'); }
   }
   let view = $state<'launcher' | 'thread' | 'schedule' | 'tasks' | 'templates' | 'prompts'>('launcher');
@@ -314,19 +316,35 @@
   // 选中的档位若在 Codex 下不可用，落到「全自动」（保持已选值始终合法，不显示一个灰着的当前项）。
   $effect(() => { if (lBrain === 'codex' && (lPerm === 'ask' || lPerm === 'auto')) lPerm = 'full'; });
   // 待批工具调用：询问/自动档下钩子把请求写在后端 pending 目录，UI 轮询渲染批准卡。
-  type Permit = { id: string; conv: string; tool: string; cmd: string; dangerous: boolean; mode: string; ts: number };
+  type Permit = { id: string; conv: string; tool: string; cmd: string; desc: string; arg: string; dangerous: boolean; mode: string; ts: number };
+  // 批准卡标题：优先用模型自己写的操作说明（Bash 的 description），没有就按工具合成一句人话。
+  function permitDesc(p: Permit): string {
+    if (p.desc) return p.desc;
+    if (p.tool === 'WebFetch') return p.arg ? `抓取网页：${p.arg}` : '抓取一个网页';
+    if (p.tool === 'WebSearch') return p.arg ? `联网搜索：${p.arg}` : '联网搜索';
+    if (p.tool === 'Write' || p.tool === 'Edit' || p.tool === 'NotebookEdit') return p.arg ? `写入文件：${p.arg}` : '写入文件';
+    if (p.tool === 'Bash') return '运行一条命令';
+    return `使用工具 ${p.tool}`;
+  }
+  // 命令一律默认收起（说明才是给人看的重点），点「查看具体命令」再展开。
+  let permitCmdOpen = $state(new Set<string>());
+  function togglePermitCmd(id: string) { const s = new Set(permitCmdOpen); if (!s.delete(id)) s.add(id); permitCmdOpen = s; }
+  // 已应答过的请求 id：应答后钩子最多要 300ms 才删掉 .req.json，而轮询每 600ms 重扫目录，
+  // 扫描落进窗口会让刚点掉的卡"复活"一次（看起来像连续弹两个）。id 不复用，永久过滤即可。
+  const respondedPermits = new Set<string>();
   let pendingPermits = $state<Permit[]>([]);
   const activePermits = $derived(pendingPermits.filter((p) => p.conv === activeConvId));
   const permConvs = $derived(new Set(pendingPermits.map((p) => p.conv))); // 哪些对话有待批（含后台的，侧栏标出来）
   $effect(() => { if (activePermits.length) scrollSoon(true); }); // 待批卡一出现就滚到它，不用手动翻
   async function respondPermit(id: string, allow: boolean) {
+    respondedPermits.add(id);
     pendingPermits = pendingPermits.filter((p) => p.id !== id); // 乐观移除
     try { await invoke('respond_permit', { id, allow }); } catch (e) { say(String(e), 'err'); }
   }
   $effect(() => {
     const t = setInterval(async () => {
       if (!Object.keys(running).length) { if (pendingPermits.length) pendingPermits = []; return; }
-      try { pendingPermits = await invoke<Permit[]>('list_pending_permits'); } catch { /* */ }
+      try { pendingPermits = (await invoke<Permit[]>('list_pending_permits')).filter((p) => !respondedPermits.has(p.id)); } catch { /* */ }
     }, 600);
     return () => clearInterval(t);
   });
@@ -861,7 +879,14 @@
   function endTurn(conv: Conversation | null, convId: string) {
     const failed = lives[convId]?.failed ?? false; // 删缓冲前先取，供等待消息门控用
     // 仅当用户仍停留在这条会话时用权威结果覆盖，避免打断已切到别的会话的用户。
-    if (conv && activeConvId === convId) { activeConv = conv; threadModel = conv.model; threadPerm = conv.perm_mode || 'full'; }
+    // 覆盖源按新鲜度择优：运行中改的档位/模型晚于轮末快照落库，刷新过的列表条目更全；
+    // 但 refreshConvos 失败时列表是旧值（甚至 startChat 的乐观条目），无脑取列表会把
+    // 刚跑完的整轮消息打回去——updated_at 更旧就回退用快照。
+    if (conv && activeConvId === convId) {
+      const inList = convos.find((x) => x.id === convId);
+      const fresh = inList && inList.updated_at >= conv.updated_at ? inList : conv;
+      activeConv = fresh; threadModel = fresh.model; threadPerm = fresh.perm_mode || 'full';
+    }
     delete running[convId];
     delete lives[convId];
     if (activeConvId === convId) checkCfReady(); // 这轮可能写了文件，重新判定预览/部署是否可用
@@ -937,6 +962,35 @@
     return { body, atts };
   }
   function isImgPath(p: string): boolean { return /\.(png|jpe?g|gif|webp|svg|bmp|avif)$/i.test(p); }
+  // 图片附件缩略图：消息里存的是相对工作目录的 uploads/ 路径，webview 读不了本地文件，
+  // 走后端按「连接+项目」解析后读成 data URI；缓存键带上二者，避免不同会话同名文件串图。
+  // data URI 可观（≤8MB 原图 → ~10MB 字符串），切会话时把其他会话的条目逐出，防止只增不减；
+  // 顺带让上次读失败（''）的条目在重进会话时有重试机会。
+  let thumbs = $state<Record<string, string>>({});
+  const thumbPending = new Set<string>();
+  function thumbKey(p: string): string { return (activeConv?.conn_id ?? '') + '|' + (activeConv?.site_slug ?? '') + '|' + p; }
+  function ensureThumb(connId: string, project: string, p: string) {
+    const k = connId + '|' + project + '|' + p;
+    if (thumbs[k] !== undefined || thumbPending.has(k)) return;
+    thumbPending.add(k);
+    invoke<string>('read_attachment_image', { connId, project, path: p })
+      .then((d) => { thumbs = { ...thumbs, [k]: d }; })
+      .catch(() => { thumbs = { ...thumbs, [k]: '' }; }) // 读失败＝空串：退回文件卡样式
+      .finally(() => thumbPending.delete(k));
+  }
+  $effect(() => {
+    const c = activeConv;
+    if (!c) return;
+    const prefix = c.conn_id + '|' + c.site_slug + '|';
+    const stale = Object.keys(thumbs).filter((k) => !k.startsWith(prefix));
+    if (stale.length) { const keep = { ...thumbs }; for (const k of stale) delete keep[k]; thumbs = keep; }
+    for (const m of c.messages) {
+      if (m.role !== 'user') continue;
+      for (const p of splitAttachments(m.text).atts) if (isImgPath(p)) ensureThumb(c.conn_id, c.site_slug, p);
+    }
+  });
+  // 点缩略图看大图（点任意处/Esc 关闭）
+  let lightbox = $state('');
   let attachments = $state<Attach[]>([]);
   let attaching = $state(false);
   async function attachFile(f: File) {
@@ -1085,8 +1139,27 @@
   // 供无障碍），统一由一个 fixed 浮层显示——不受侧栏等滚动容器裁剪。
   // disabled 按钮不触发鼠标事件 → 需要 tip 的禁用按钮外面包 .tipwrap 承载 data-tip。
   let tip = $state<{ x: number; y: number; text: string; below: boolean } | null>(null);
+  let imgTip = $state<{ x: number; y: number; url: string; below: boolean } | null>(null);
+  let imgTipReady = $state(false); // 图片 onload 之前浮层不可见，避免空白小块→大图的闪变
   function onTipHover(e: MouseEvent) {
-    const el = (e.target as HTMLElement).closest?.('[title], [data-tip]') as HTMLElement | null;
+    const tgt = e.target as HTMLElement;
+    // 助手消息里的行内代码图片路径 → 悬停缩略图浮层（点击浏览器打开，见 mdClick）
+    const code = tgt.closest?.('code') as HTMLElement | null;
+    if (code && !code.closest('pre') && code.closest('.text.md')) {
+      const u = codeImgUrl(code.textContent ?? '');
+      code.style.cursor = u ? 'zoom-in' : ''; // 负缓存命中/失效时把之前设过的手势复位
+      if (u) {
+        const r = code.getBoundingClientRect();
+        const below = r.top < 230; // 上方放不下缩略图就翻到下方
+        const x = Math.min(Math.max(r.left + r.width / 2, 150), window.innerWidth - 150);
+        if (!imgTip || imgTip.url !== u) imgTipReady = false;
+        imgTip = { x, y: below ? r.bottom + 8 : r.top - 8, url: u, below };
+        tip = null;
+        return;
+      }
+    }
+    imgTip = null;
+    const el = tgt.closest?.('[title], [data-tip]') as HTMLElement | null;
     if (!el) { tip = null; return; }
     const t = el.getAttribute('title');
     if (t) {
@@ -1164,9 +1237,38 @@
     return DOMPurify.sanitize(marked.parse(text, { async: false }) as string);
   }
   // Markdown 里 <a> 的点击代理：拦下 webview 内导航，改用系统浏览器打开。
+  // 行内代码若是图片路径（如 `/uploads/xx.svg`）：点击也用浏览器打开完整地址。
   function mdClick(e: MouseEvent) {
-    const a = (e.target as HTMLElement).closest('a');
-    if (a?.href) { e.preventDefault(); openUrl(a.href); }
+    const t = e.target as HTMLElement;
+    // 链接分支不看选区且永远 preventDefault——点链接是明确意图，而且 WebKit 里点 <a> 不清除
+    // 页面残留选区，若因选区早退会放任 webview 自导航（本函数存在的意义就是拦它）。
+    const a = t.closest('a');
+    if (a?.href) { e.preventDefault(); openUrl(a.href); return; }
+    const code = t.closest('code');
+    if (code && !code.closest('pre')) {
+      if (window.getSelection()?.toString()) return; // 用户在拖选复制路径文本：不劫持成打开动作
+      const u = codeImgUrl(code.textContent ?? '');
+      if (u) { e.preventDefault(); openUrl(u); return; }
+    }
+  }
+
+  // ---------- 行内代码图片预览 ----------
+  // 助手常回报「已上传 → /uploads/xx.svg」这类路径；把它变成可看的：悬停缩略图、点击打开。
+  // 只认站点约定的 /uploads/ 路径且要求已知站点公开地址（服务端对拼不出公开地址的站点刻意
+  // 返回空 url，前端不猜接口域名）；完整 http(s) 图片 URL 也认。其余（本地绝对路径、构建
+  // 产物路径）一律不当图片，避免拼出必 404 的链接。加载失败的 URL 进负缓存不再反复尝试。
+  const IMG_EXT_RE = /\.(png|jpe?g|gif|webp|svg|bmp|avif|ico)$/i;
+  const badImgUrls = new Set<string>();
+  function codeImgUrl(t: string): string {
+    const s = t.trim();
+    if (!s || /\s/.test(s) || !IMG_EXT_RE.test(s)) return '';
+    let u = '';
+    if (/^https?:\/\//i.test(s)) u = s;
+    else if (s.startsWith('/uploads/')) {
+      const base = (activeSiteUrl || '').replace(/\/+$/, '');
+      if (base) u = base + s;
+    }
+    return u && !badImgUrls.has(u) ? u : '';
   }
 
   // linkify + 段落（用户消息/错误消息仍走纯文本路径）
@@ -1287,7 +1389,7 @@
   }
 </script>
 
-<svelte:window oncontextmenu={onCtxMenu} onmouseover={onTipHover} onscrollcapture={() => (tip = null)} onresize={() => (tip = null)} />
+<svelte:window oncontextmenu={onCtxMenu} onmouseover={onTipHover} onscrollcapture={() => { tip = null; imgTip = null; }} onresize={() => { tip = null; imgTip = null; }} onkeydown={(e) => { if (e.key === 'Escape' && lightbox) lightbox = ''; }} />
 <main class="app" class:win={isWindows}>
   <!-- 融合式标题栏：透明拖拽条铺满顶部，红绿灯与工具按钮浮在其上（macOS Overlay） -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -1393,7 +1495,6 @@
         </button>
         {#if !collapsedSites.has(g.slug)}
           {#each g.subs as sub (sub.type)}
-            {#if !isCfConn}<div class="subgrp">{sub.label}</div>{/if}
             {#each sub.items as c (c.id)}
               <div class="convo {activeConvId === c.id ? 'on' : ''}" role="button" tabindex="0"
                 onclick={() => openConv(c.id)} onkeydown={(e) => e.key === 'Enter' && openConv(c.id)}>
@@ -1473,6 +1574,16 @@
 
     {#if tip}
       <div class="tipbox" class:below={tip.below} style="left:{tip.x}px; top:{tip.y}px">{tip.text}</div>
+    {/if}
+    {#if imgTip}
+      {@const iu = imgTip.url}
+      <div class="imgtip" class:ready={imgTipReady} class:below={imgTip.below} style="left:{imgTip.x}px; top:{imgTip.y}px">
+        <img src={iu} alt="" onload={() => { if (imgTip?.url === iu) imgTipReady = true; }} onerror={() => { badImgUrls.add(iu); if (imgTip?.url === iu) imgTip = null; }} />
+      </div>
+    {/if}
+    {#if lightbox}
+      <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
+      <div class="lightbox" onclick={() => (lightbox = '')}><img src={lightbox} alt="附件大图" /></div>
     {/if}
 
     {#if !activeConn}
@@ -1769,8 +1880,16 @@
             <div class="msg assistant">
               <div class="permit-card" class:danger={p.dangerous}>
                 <div class="permit-head"><span class="permit-dot"></span>需要你确认这个操作{#if p.dangerous}<span class="permit-tag">危险 · 对线上生效</span>{/if}</div>
+                <div class="permit-desc">{permitDesc(p)}</div>
                 <div class="permit-meta">{p.tool}{#if p.mode === 'ask'} · 询问档{/if}</div>
-                {#if p.cmd}<code class="permit-cmd">{p.cmd}</code>{/if}
+                {#if p.cmd}
+                  {#if permitCmdOpen.has(p.id)}
+                    <button class="permit-more" onclick={() => togglePermitCmd(p.id)}>收起命令 ▴</button>
+                    <code class="permit-cmd">{p.cmd}</code>
+                  {:else}
+                    <button class="permit-more" onclick={() => togglePermitCmd(p.id)}>查看具体命令 ▸</button>
+                  {/if}
+                {/if}
                 <div class="permit-act">
                   <button class="btn sm" onclick={() => respondPermit(p.id, false)}>拒绝</button>
                   <button class="btn sm primary" onclick={() => respondPermit(p.id, true)}>批准</button>
@@ -1823,7 +1942,7 @@
               {/if}
             </div>
             <div class="cb-right">
-              <Dropdown compact bind:value={threadPerm} options={permOptsFor(activeConv?.brain ?? 'claude')} tone={permTone(threadPerm)} onchange={persistThreadPerm} disabled={viewBusy} />
+              <Dropdown compact bind:value={threadPerm} options={permOptsFor(activeConv?.brain ?? 'claude')} tone={permTone(threadPerm)} onchange={persistThreadPerm} />
               <!-- 厂商随会话固定：并进模型下拉（图标标识厂商），只列本厂商的模型档 -->
               <Dropdown compact bind:value={threadModel} options={launcherModelOpts(activeConv?.brain ?? 'claude').map((o) => ({ ...o, icon: activeConv?.brain ?? 'claude' }))} onchange={persistThreadModel} disabled={viewBusy} />
               {#if viewBusy}
@@ -1894,13 +2013,22 @@
       {#if ua.atts.length}
         <div class="ub-atts" class:only={!ua.body.trim()}>
           {#each ua.atts as p (p)}
-            <span class="ub-att">
-              <span class="ub-att-ic">
-                {#if isImgPath(p)}<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><rect x="2.2" y="2.8" width="11.6" height="10.4" rx="1.6" stroke="currentColor" stroke-width="1.2" /><circle cx="5.7" cy="6.2" r="1.1" fill="currentColor" /><path d="M3 12.4l3.3-3.1 2.1 1.9 2.4-2.6 2.2 2.3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" /></svg>
-                {:else}<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M9 1.8H4.5A1.3 1.3 0 0 0 3.2 3.1v9.8a1.3 1.3 0 0 0 1.3 1.3h7a1.3 1.3 0 0 0 1.3-1.3V5.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /><path d="M9 1.8v3.7h3.8" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /></svg>{/if}
+            {#if isImgPath(p) && thumbs[thumbKey(p)] !== ''}
+              {#if thumbs[thumbKey(p)]}
+                <button class="ub-att-img" data-tip={p.split('/').pop()} onclick={() => (lightbox = thumbs[thumbKey(p)])}><img src={thumbs[thumbKey(p)]} alt={p.split('/').pop()} onerror={() => (thumbs = { ...thumbs, [thumbKey(p)]: '' })} /></button>
+              {:else}
+                <!-- 数据未到：同尺寸占位，图片就位零布局跳动 -->
+                <span class="ub-att-img ph" data-tip={p.split('/').pop()}></span>
+              {/if}
+            {:else}
+              <span class="ub-att">
+                <span class="ub-att-ic">
+                  {#if isImgPath(p)}<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><rect x="2.2" y="2.8" width="11.6" height="10.4" rx="1.6" stroke="currentColor" stroke-width="1.2" /><circle cx="5.7" cy="6.2" r="1.1" fill="currentColor" /><path d="M3 12.4l3.3-3.1 2.1 1.9 2.4-2.6 2.2 2.3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" /></svg>
+                  {:else}<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M9 1.8H4.5A1.3 1.3 0 0 0 3.2 3.1v9.8a1.3 1.3 0 0 0 1.3 1.3h7a1.3 1.3 0 0 0 1.3-1.3V5.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /><path d="M9 1.8v3.7h3.8" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /></svg>{/if}
+                </span>
+                <span class="ub-att-n" title={p}>{p.split('/').pop()}</span>
               </span>
-              <span class="ub-att-n" title={p}>{p.split('/').pop()}</span>
-            </span>
+            {/if}
           {/each}
         </div>
       {/if}
@@ -2309,7 +2437,6 @@
   .th-open:hover { background: #f1efe9; }
   .th-open svg { flex: none; }
   /* 任务类型子组标签 */
-  .subgrp { font-size: 10px; font-weight: 600; letter-spacing: .04em; color: var(--faint); padding: 1px 8px 1px 20px; }
   .convo { position: relative; display: flex; align-items: center; gap: 6px; border-radius: 8px; margin: 0 8px; padding: 1px 6px 1px 16px; cursor: pointer; }
   .convo:hover { background: #f1efe9; }
   .convo.on { background: #e9e7e0; }
@@ -2384,6 +2511,12 @@
   /* 全局 tips 浮层（fixed，不受滚动容器裁剪） */
   .tipbox { position: fixed; z-index: 130; transform: translate(-50%, -100%); background: #26241f; color: #fff; font-size: 11px; line-height: 1.45; padding: 5px 9px; border-radius: 7px; width: max-content; max-width: 240px; white-space: normal; pointer-events: none; box-shadow: 0 5px 16px rgba(0, 0, 0, .18); animation: tipin .12s ease-out .3s both; }
   .tipbox.below { transform: translate(-50%, 0); }
+  .imgtip { position: fixed; z-index: 130; transform: translate(-50%, -100%); padding: 5px; border-radius: 10px; background: #fff; border: 1px solid rgba(0, 0, 0, .1); box-shadow: 0 8px 24px rgba(0, 0, 0, .18); pointer-events: none; visibility: hidden; }
+  .imgtip.ready { visibility: visible; animation: tipin .12s ease-out both; }
+  .imgtip.below { transform: translate(-50%, 0); }
+  .imgtip img { display: block; max-width: 260px; max-height: 200px; border-radius: 6px; background: repeating-conic-gradient(#ececea 0 25%, #fff 0 50%) 0 0 / 14px 14px; }
+  .lightbox { position: fixed; inset: 0; z-index: 140; background: rgba(24, 22, 18, .72); display: flex; align-items: center; justify-content: center; cursor: zoom-out; }
+  .lightbox img { max-width: 86vw; max-height: 86vh; border-radius: 12px; background: repeating-conic-gradient(#ececea 0 25%, #fff 0 50%) 0 0 / 16px 16px; box-shadow: 0 24px 64px rgba(0, 0, 0, .4); }
   @keyframes tipin { from { opacity: 0; } to { opacity: 1; } }
   .tipwrap { display: inline-flex; }
   .flash.err { background: var(--err); }
@@ -2623,8 +2756,11 @@
   .permit-card.danger .permit-head { color: #8a5a08; background: #fdf6e6; border-bottom-color: #f0e3c4; }
   .permit-dot { width: 7px; height: 7px; border-radius: 50%; background: #b45309; flex: none; }
   .permit-tag { margin-left: auto; font-size: 10px; font-weight: 600; color: #b45309; background: #faf1d8; padding: 1px 7px; border-radius: 5px; }
-  .permit-meta { padding: 9px 12px 0; font-size: 11px; color: var(--dim); }
-  .permit-cmd { display: block; margin: 6px 12px 0; font-size: 12px; background: #17130f; color: #e8dcc8; padding: 8px 10px; border-radius: 7px; white-space: pre-wrap; word-break: break-all; }
+  .permit-desc { padding: 10px 12px 0; font-size: 13px; font-weight: 550; color: var(--text); line-height: 1.55; word-break: break-word; }
+  .permit-meta { padding: 3px 12px 0; font-size: 11px; color: var(--dim); }
+  .permit-more { display: block; margin: 7px 12px 0; padding: 0; border: 0; background: none; font-size: 11px; color: var(--dim); cursor: pointer; text-align: left; }
+  .permit-more:hover { color: var(--text); }
+  .permit-cmd { display: block; margin: 6px 12px 0; font-size: 12px; background: #17130f; color: #e8dcc8; padding: 8px 10px; border-radius: 7px; white-space: pre-wrap; word-break: break-all; max-height: 180px; overflow-y: auto; }
   .permit-act { display: flex; gap: 8px; padding: 10px 12px 12px; }
   .permit-act .btn { flex: 1; }
   .cf-mark { flex: none; display: inline-block; vertical-align: middle; }
@@ -2684,6 +2820,10 @@
   .ub-atts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
   .ub-atts.only { margin-top: 0; }
   .ub-att { display: inline-flex; align-items: center; gap: 6px; max-width: 220px; padding: 4px 10px 4px 8px; background: #fff; border: 1px solid var(--border2); border-radius: 8px; font-size: 12px; }
+  .ub-att-img { padding: 0; border: 1px solid var(--border2); border-radius: 10px; overflow: hidden; cursor: zoom-in; line-height: 0; background: repeating-conic-gradient(#ececea 0 25%, #fff 0 50%) 0 0 / 14px 14px; }
+  .ub-att-img img { display: block; width: 128px; height: 96px; object-fit: cover; }
+  .ub-att-img.ph { display: inline-block; width: 128px; height: 96px; cursor: default; animation: phpulse 1.2s ease-in-out infinite; }
+  @keyframes phpulse { 0%, 100% { opacity: .55; } 50% { opacity: .9; } }
   .ub-att-ic { flex: none; display: inline-flex; color: var(--dim); }
   .ub-att-n { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
   .attach-x:hover { color: var(--err); }
