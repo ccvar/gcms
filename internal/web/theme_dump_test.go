@@ -10,14 +10,25 @@ import (
 	"testing"
 )
 
-// TestDumpNewThemePreviews 把 20 套新皮肤的预览 HTML 落盘到 run/theme-previews/，
+// TestDumpNewThemePreviews 把近期新增皮肤的预览 HTML 落盘到 run/theme-previews/，
 // 供本地静态服务截图目检。仅在 GCMS_DUMP_THEMES=1 时执行（临时工具，不进 CI）。
 func TestDumpNewThemePreviews(t *testing.T) {
 	if os.Getenv("GCMS_DUMP_THEMES") != "1" {
 		t.Skip("set GCMS_DUMP_THEMES=1 to dump")
 	}
 	newIDs := []string{"masonry", "darkroom", "feed", "noir", "gazette", "tabloid",
-		"manual", "kernel", "almanac", "nightshift", "inbox", "midnight"}
+		"manual", "kernel", "almanac", "nightshift", "inbox", "midnight",
+		"catalog", "nightmarket", "broadcast", "airwave", "exhibit", "afterhours",
+		"paperwhite", "citrus", "bookshop", "canal", "confetti", "icebox",
+		"ledger", "signal", "gallery", "coast", "monument", "petal",
+		"market", "seaside", "daytrade", "mintwire", "sunrise", "horizon",
+		"workshop", "playbook", "chronicle", "gardenpath", "portfolio", "postcard",
+		"atelier", "festival", "daywatch", "clinic", "peach", "skyline",
+		"herbarium", "coralreef", "cloudos", "candyglass", "paperfilm", "azurefilm",
+		"cutpaper", "primary", "atlas", "mintmap", "pinboard", "spectrum",
+		"daybook", "civic", "broadsheet", "salmonpress", "fieldguide", "bluebook",
+		"sunclock", "seedcalendar", "postbox", "airmail", "apothecary", "toolroom",
+		"publicradio", "morningfm", "whitecube", "botanical"}
 	_, h, ps, _, blogSite := setupPlatformAutomation(t)
 	cookie := platformAdminSession(t, ps)
 	enter := httptest.NewRecorder()

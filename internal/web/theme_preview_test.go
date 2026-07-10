@@ -13,6 +13,17 @@ import (
 func TestThemePreviewRendersAllThemes(t *testing.T) {
 	_, h, ps, _, blogSite := setupPlatformAutomation(t)
 	cookie := platformAdminSession(t, ps)
+	layoutSkeletons := map[string]string{
+		"almanac": "al-wrap", "axis": "axis-wrap", "bands": "bands-band bands-hero",
+		"bento": "bento-wrap", "bloom": "bloom-wrap", "board": "board-wrap",
+		"broadcast": "bc-wrap", "catalog": "ct-wrap", "cinema": "cin-reel",
+		"collage": "col-wrap", "constellation": "cst", "deck": "deck-shell",
+		"desktop": "dsk-wrap", "exhibit": "ex-wrap", "feed": "fd-wrap",
+		"gazette": "gz-wrap", "inbox": "ib-wrap", "index": "index-wrap",
+		"liftoff": "lo-hero", "manual": "mn-wrap", "masonry": "ms-wrap",
+		"poster": "poster-scroll", "profile": "prof-wrap", "split": "split-hero",
+		"ticker": "tick-marquee", "timeline": "tl-wrap", "uptime": "up-wrap",
+	}
 
 	// 进入站点后台，让会话绑定一个站点（站点级路由需要 current site）。
 	enter := httptest.NewRecorder()
@@ -40,6 +51,9 @@ func TestThemePreviewRendersAllThemes(t *testing.T) {
 		if !strings.Contains(body, `data-theme-layout="`+wantLayout+`"`) {
 			t.Errorf("theme %q preview missing data-theme-layout=%q", th.ID, wantLayout)
 		}
+		if skeleton, ok := layoutSkeletons[wantLayout]; ok && !strings.Contains(body, `class="`+skeleton+`"`) {
+			t.Errorf("theme %q preview missing %s skeleton", th.ID, skeleton)
+		}
 	}
 
 	// 皮肤 CSS 必须真的存在于被服务的 public.css：防止只登记不写皮。
@@ -51,6 +65,44 @@ func TestThemePreviewRendersAllThemes(t *testing.T) {
 		}
 		if !publicCSSHasTheme(t, h, cookie, th.ID) {
 			t.Errorf("public.css missing [data-theme=%q] block", th.ID)
+		}
+	}
+}
+
+func TestLightThemePairsCoverEveryLayout(t *testing.T) {
+	pairs := map[string][2]string{
+		"topbar": {"paperwhite", "citrus"}, "sidebar": {"bookshop", "canal"},
+		"bento": {"confetti", "icebox"}, "index": {"ledger", "signal"},
+		"split": {"gallery", "coast"}, "axis": {"monument", "petal"},
+		"bands": {"market", "seaside"}, "ticker": {"daytrade", "mintwire"},
+		"liftoff": {"sunrise", "horizon"}, "board": {"workshop", "playbook"},
+		"timeline": {"chronicle", "gardenpath"}, "deck": {"portfolio", "postcard"},
+		"poster": {"atelier", "festival"}, "uptime": {"daywatch", "clinic"},
+		"profile": {"peach", "skyline"}, "bloom": {"herbarium", "coralreef"},
+		"desktop": {"cloudos", "candyglass"}, "cinema": {"paperfilm", "azurefilm"},
+		"collage": {"cutpaper", "primary"}, "constellation": {"atlas", "mintmap"},
+		"masonry": {"pinboard", "spectrum"}, "feed": {"daybook", "civic"},
+		"gazette": {"broadsheet", "salmonpress"}, "manual": {"fieldguide", "bluebook"},
+		"almanac": {"sunclock", "seedcalendar"}, "inbox": {"postbox", "airmail"},
+		"catalog": {"apothecary", "toolroom"}, "broadcast": {"publicradio", "morningfm"},
+		"exhibit": {"whitecube", "botanical"},
+	}
+	if len(pairs) != 29 {
+		t.Fatalf("light theme layout count = %d, want 29", len(pairs))
+	}
+
+	registered := make(map[string]bool, len(Themes))
+	for _, theme := range Themes {
+		registered[theme.ID] = true
+	}
+	for layout, ids := range pairs {
+		for _, id := range ids {
+			if !registered[id] {
+				t.Errorf("light theme %q is not registered", id)
+			}
+			if got := layoutForTheme(id); got != layout {
+				t.Errorf("light theme %q layout = %q, want %q", id, got, layout)
+			}
 		}
 	}
 }

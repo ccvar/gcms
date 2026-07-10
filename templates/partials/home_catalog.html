@@ -1,0 +1,90 @@
+{{define "home_catalog"}}
+  {{/* catalog — 资源货架：首页橱窗 + 分类部门条 + 商品式链接卡 + 文章导购 */}}
+  <div class="ct-wrap">
+    <header class="ct-hero">
+      <div class="ct-copy">
+        {{if .Site.HeroEyebrow}}<p class="ct-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+        <h1 class="ct-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+        {{if .Site.HeroDescription}}<p class="ct-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+        <div class="ct-actions">
+          <a class="btn btn-primary" href="{{.Tr.U "/links"}}">{{.Tr.T "home.cta_start"}} <span class="arrow" aria-hidden="true">→</span></a>
+          <a class="btn" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}}</a>
+        </div>
+      </div>
+
+      {{with .Featured}}
+      <a class="ct-window" href="{{$.Tr.U (contentURL .)}}">
+        <span class="ct-window-label">{{$.Site.HomeFeatured}}</span>
+        <span class="ct-window-media{{if not .CoverImage}} ct-window-gen{{end}}">
+          {{if .CoverImage}}<img src="{{.CoverImage}}" alt="{{.Title}}" decoding="async" fetchpriority="high"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}
+        </span>
+        <span class="ct-window-foot">
+          <span class="ct-window-title">{{.Title}}</span>
+          <span class="ct-window-go arrow" aria-hidden="true">↗</span>
+        </span>
+      </a>
+      {{else}}
+      <div class="ct-window ct-window-empty" aria-hidden="true">
+        <span class="ct-window-label">{{.Site.Name}}</span>
+        <span class="ct-window-media ct-window-gen"><b>{{initial .Site.Name}}</b></span>
+        <span class="ct-window-foot"><span class="ct-window-title">{{.Site.Tagline}}</span></span>
+      </div>
+      {{end}}
+    </header>
+
+    {{if .Categories}}
+    <nav class="ct-depts" aria-label="{{.Tr.T "nav.category"}}">
+      <span class="ct-depts-label">{{.Tr.T "nav.category"}}</span>
+      <a class="ct-dept is-all" href="{{.Tr.U .CategoryAll.Path}}">{{.CategoryAll.Label}}</a>
+      {{range .Categories}}
+      <a class="ct-dept" href="{{$.Tr.U (printf "/category/%s" .Slug)}}"><span>{{.Name}}</span><small>{{.Count}}</small></a>
+      {{end}}
+    </nav>
+    {{end}}
+
+    {{if .FeatLinks}}
+    <section class="ct-section">
+      <div class="ct-section-head">
+        <div><span class="ct-section-kicker">01</span><h2>{{.Site.HomeLinks}}</h2></div>
+        <a href="{{.Tr.U "/links"}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="ct-products">
+        {{range .FeatLinks}}
+        <a class="ct-product" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+          <span class="ct-product-media{{if not .CoverImage}} ct-product-gen{{end}}">
+            {{if .CoverImage}}<img src="{{.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}
+          </span>
+          <span class="ct-product-body">
+            {{with .Category}}<span class="ct-product-cat">{{.Name}}</span>{{end}}
+            <span class="ct-product-title">{{.Title}}</span>
+            {{if .Excerpt}}<span class="ct-product-ex">{{.Excerpt}}</span>{{end}}
+            <span class="ct-product-link">{{$.Tr.T "home.cta_more"}} <span class="arrow" aria-hidden="true">↗</span></span>
+          </span>
+        </a>
+        {{end}}
+      </div>
+    </section>
+    {{end}}
+
+    {{if .Posts}}
+    <section class="ct-section ct-guides">
+      <div class="ct-section-head">
+        <div><span class="ct-section-kicker">02</span><h2>{{.Site.HomeLatest}}</h2></div>
+        <a href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="ct-guide-list">
+        {{range .Posts}}
+        <a class="ct-guide" href="{{$.Tr.U (contentURL .)}}">
+          <span class="ct-guide-cover{{if not .CoverImage}} ct-product-gen{{end}}">{{if .CoverImage}}<img src="{{.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}</span>
+          <span class="ct-guide-main">
+            <span class="ct-guide-meta">{{with .Category}}{{.Name}}<span aria-hidden="true"> · </span>{{end}}<time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time></span>
+            <span class="ct-guide-title">{{.Title}}</span>
+          </span>
+          <span class="ct-guide-go arrow" aria-hidden="true">→</span>
+        </a>
+        {{end}}
+      </div>
+    </section>
+    {{end}}
+  </div>
+{{end}}

@@ -1,0 +1,66 @@
+{{define "home_broadcast"}}
+  {{/* broadcast — 声音杂志：首页主节目 + 频道刻度 + 编号节目单 */}}
+  <div class="bc-wrap">
+    <header class="bc-head">
+      <div class="bc-brandline">
+        <span class="bc-live"><i aria-hidden="true"></i>{{if .Site.HeroEyebrow}}{{.Site.HeroEyebrow}}{{else}}{{.Site.Name}}{{end}}</span>
+        <span class="bc-wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>
+        <span class="bc-channel">ON AIR</span>
+      </div>
+      <div class="bc-intro">
+        <h1 class="bc-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+        {{if .Site.HeroDescription}}<p class="bc-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+      </div>
+    </header>
+
+    {{with .Featured}}
+    <section class="bc-player">
+      <a class="bc-art{{if not .CoverImage}} bc-art-gen{{end}}" href="{{$.Tr.U (contentURL .)}}">
+        {{if .CoverImage}}<img src="{{.CoverImage}}" alt="{{.Title}}" decoding="async" fetchpriority="high"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}
+        <span class="bc-play" aria-hidden="true"><svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><path d="m8 5 11 7-11 7z"/></svg></span>
+      </a>
+      <div class="bc-player-copy">
+        <span class="bc-kicker">{{$.Site.HomeFeatured}}</span>
+        <h2><a href="{{$.Tr.U (contentURL .)}}">{{.Title}}</a></h2>
+        {{if .Excerpt}}<p>{{.Excerpt}}</p>{{end}}
+        <div class="bc-player-meta">{{with .Category}}<span>{{.Name}}</span>{{end}}<time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time><span>{{.ReadingTime}} {{$.Tr.T "common.min"}}</span></div>
+        <div class="bc-player-actions"><a class="btn btn-primary" href="{{$.Tr.U (contentURL .)}}">{{$.Tr.T "home.read_more"}} <span class="arrow" aria-hidden="true">→</span></a><a class="btn" href="{{$.Tr.U "/about"}}">{{$.Tr.T "home.cta_more"}}</a></div>
+      </div>
+    </section>
+    {{end}}
+
+    {{if .Categories}}
+    <nav class="bc-dial" aria-label="{{.Tr.T "nav.category"}}">
+      <span class="bc-dial-label">CHANNELS</span>
+      {{range .Categories}}<a href="{{$.Tr.U (printf "/category/%s" .Slug)}}"><span>{{.Name}}</span><small>{{.Count}}</small></a>{{end}}
+      <a class="bc-dial-all" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}}</a>
+    </nav>
+    {{end}}
+
+    {{if .Posts}}
+    <section class="bc-programs">
+      <div class="bc-section-head"><div><span>PROGRAM GUIDE</span><h2>{{.Site.HomeLatest}}</h2></div><a href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a></div>
+      <ol class="bc-episodes">
+        {{range .Posts}}
+        <li class="bc-episode">
+          <a href="{{$.Tr.U (contentURL .)}}">
+            <span class="bc-episode-no" aria-hidden="true"></span>
+            <span class="bc-episode-cover{{if not .CoverImage}} bc-art-gen{{end}}">{{if .CoverImage}}<img src="{{.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b>{{initial .Title}}</b>{{end}}</span>
+            <span class="bc-episode-main"><span class="bc-episode-meta">{{with .Category}}{{.Name}} · {{end}}{{$.Tr.Date .PublishedAt}}</span><span class="bc-episode-title">{{.Title}}</span>{{if .Excerpt}}<span class="bc-episode-ex">{{.Excerpt}}</span>{{end}}</span>
+            <span class="bc-episode-time">{{.ReadingTime}} MIN</span>
+            <span class="bc-episode-play" aria-hidden="true">▶</span>
+          </a>
+        </li>
+        {{end}}
+      </ol>
+    </section>
+    {{end}}
+
+    {{if .FeatLinks}}
+    <section class="bc-network">
+      <p class="bc-network-label">{{.Site.HomeLinks}}</p>
+      <div class="bc-network-list">{{range .FeatLinks}}<a href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}"><span class="bc-network-ic">{{if .CoverImage}}<img src="{{.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b>{{initial .Title}}</b>{{end}}</span><span>{{.Title}}</span><span class="arrow" aria-hidden="true">↗</span></a>{{end}}</div>
+    </section>
+    {{end}}
+  </div>
+{{end}}

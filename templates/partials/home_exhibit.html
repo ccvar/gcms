@@ -1,0 +1,49 @@
+{{define "home_exhibit"}}
+  {{/* exhibit — 策展首页：展签标题 + 非对称作品墙 + 展厅导览 */}}
+  <div class="ex-wrap">
+    <header class="ex-hero">
+      <div class="ex-index"><span>{{if .Site.HeroEyebrow}}{{.Site.HeroEyebrow}}{{else}}{{.Site.Name}}{{end}}</span><span aria-hidden="true">—</span><span>{{.Site.HomeLatest}}</span></div>
+      <div class="ex-title-row">
+        <h1 class="ex-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+        {{if .Site.HeroDescription}}<p class="ex-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+      </div>
+    </header>
+
+    {{if .Categories}}
+    <nav class="ex-rooms" aria-label="{{.Tr.T "nav.category"}}">
+      <span class="ex-rooms-label">{{.Tr.T "nav.category"}}</span>
+      {{range .Categories}}<a href="{{$.Tr.U (printf "/category/%s" .Slug)}}"><span>{{.Name}}</span><small>{{.Count}}</small></a>{{end}}
+      <a href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+    </nav>
+    {{end}}
+
+    {{if or .Featured .Posts}}
+    <section class="ex-show">
+      <div class="ex-show-head"><span>NOW SHOWING</span><span>{{.Site.HomeFeatured}}</span></div>
+      <div class="ex-wall">
+        {{with .Featured}}
+        <a class="ex-work ex-work-lead" href="{{$.Tr.U (contentURL .)}}">
+          <span class="ex-frame{{if not .CoverImage}} ex-frame-gen{{end}}">{{if .CoverImage}}<img src="{{.CoverImage}}" alt="{{.Title}}" decoding="async" fetchpriority="high"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}</span>
+          <span class="ex-caption"><span class="ex-caption-no">01</span><span><b>{{.Title}}</b>{{if .Excerpt}}<small>{{.Excerpt}}</small>{{end}}</span><span class="arrow" aria-hidden="true">↗</span></span>
+        </a>
+        {{end}}
+        {{range .Posts}}
+        <a class="ex-work" href="{{$.Tr.U (contentURL .)}}">
+          <span class="ex-frame{{if not .CoverImage}} ex-frame-gen{{end}}">{{if .CoverImage}}<img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}</span>
+          <span class="ex-caption"><span class="ex-caption-no"></span><span><b>{{.Title}}</b>{{with .Category}}<small>{{.Name}}</small>{{end}}</span><time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time></span>
+        </a>
+        {{end}}
+      </div>
+    </section>
+    {{end}}
+
+    {{if .FeatLinks}}
+    <section class="ex-guide">
+      <div class="ex-guide-copy"><span>VISITOR GUIDE</span><h2>{{.Site.HomeLinks}}</h2><p>{{.Site.Tagline}}</p></div>
+      <div class="ex-guide-list">
+        {{range .FeatLinks}}<a href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}"><span class="ex-guide-no"></span><span class="ex-guide-title">{{.Title}}</span>{{with .Category}}<span class="ex-guide-cat">{{.Name}}</span>{{end}}<span class="arrow" aria-hidden="true">↗</span></a>{{end}}
+      </div>
+    </section>
+    {{end}}
+  </div>
+{{end}}
