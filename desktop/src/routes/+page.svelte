@@ -9,6 +9,7 @@
   import BrainIcon from '$lib/BrainIcon.svelte';
   import SiteMark from '$lib/SiteMark.svelte';
   import SiteFav from '$lib/SiteFav.svelte';
+  import ModelFx from '$lib/ModelFx.svelte';
   import AppIcon from '$lib/AppIcon.svelte';
   import type {
     Connection, Discovery, Site, BrainsInfo, Brain, ImportOutcome,
@@ -61,6 +62,15 @@
   // 进行中会话可切换权限档位：claude 的钩子/参数和 codex 的 sandbox 都是每轮下发的，
   // 改完从下一轮（含排队消息）生效；正在跑的那轮已带旧档位启动，改动拦不住它（想拦先停止）。
   let threadPerm = $state('');
+  let threadEffort = $state('');
+  async function persistThreadEffort(v: string) {
+    if (!activeConv || v === (activeConv.effort || '')) return;
+    try {
+      const u = await invoke<Conversation | null>('set_conversation_effort', { convId: activeConv.id, effort: v });
+      if (u && activeConvId === u.id) { activeConv = u; threadEffort = u.effort || ''; }
+      if (viewBusy) say('推理强度已调整，从下一轮开始生效');
+    } catch (e) { say(String(e), 'err'); }
+  }
   async function persistThreadPerm(p: string) {
     if (!activeConv || p === (activeConv.perm_mode || 'full')) return;
     try {
@@ -260,6 +270,7 @@
   let lBrain = $state<Brain>(prefs.brain);
   let lModel = $state(prefs.model);
   let lPerm = $state<string>(prefs.perm ?? 'full');
+  let lEffort = $state<string>(prefs.effort ?? '');
   const permOpts = [
     { value: 'plan', label: '计划', sub: '只读 · 只给方案' },
     { value: 'ask', label: '询问', sub: '每步都要你批准' },
@@ -839,7 +850,7 @@
     if (!c) { await refreshConvos(); return; }
     // 打开的对话可能属于别的连接（从搜索/任务链接进来）——切到它自己的连接，否则侧栏会把它过滤掉。
     if (c.conn_id !== activeConnId) activeConnId = c.conn_id;
-    activeConv = c; activeConvId = id; threadModel = c.model; threadPerm = c.perm_mode || 'full'; view = 'thread';
+    activeConv = c; activeConvId = id; threadModel = c.model; threadPerm = c.perm_mode || 'full'; threadEffort = c.effort || ''; view = 'thread';
     attachments = []; queued = null; // 换会话清掉未发送的附件 / 等待消息
     expandSite(c.site_slug);
     checkCfReady();
@@ -872,7 +883,7 @@
     if (retryTimers[convId]) { clearTimeout(retryTimers[convId]); delete retryTimers[convId]; } // 任何新一轮开始都取消该会话待触发的自动重连
     lives[convId] = { text: '', tools: [], error: '', failed: false, startedAt: Date.now() };
     running[convId] = optimistic.conn_id;
-    activeConv = optimistic; activeConvId = convId; threadModel = optimistic.model; threadPerm = optimistic.perm_mode || 'full';
+    activeConv = optimistic; activeConvId = convId; threadModel = optimistic.model; threadPerm = optimistic.perm_mode || 'full'; threadEffort = optimistic.effort || '';
     cfReady = false; // 本轮跑完再重新判定是否已建出内容
     view = 'thread'; scrollSoon(true);
   }
@@ -885,7 +896,7 @@
     if (conv && activeConvId === convId) {
       const inList = convos.find((x) => x.id === convId);
       const fresh = inList && inList.updated_at >= conv.updated_at ? inList : conv;
-      activeConv = fresh; threadModel = fresh.model; threadPerm = fresh.perm_mode || 'full';
+      activeConv = fresh; threadModel = fresh.model; threadPerm = fresh.perm_mode || 'full'; threadEffort = fresh.effort || '';
     }
     delete running[convId];
     delete lives[convId];
@@ -924,7 +935,7 @@
     if (!lSite.trim() || !lDraft.trim() || !brainUsable(lBrain)) return;
     const site = sites.find((s) => s.slug === lSite);
     const taskType = isCfConn ? 'sitebuild' : lTask;
-    prefs.brain = lBrain; prefs.model = lModel; prefs.taskType = lTask; prefs.perm = lPerm; savePrefs(prefs);
+    prefs.brain = lBrain; prefs.model = lModel; prefs.taskType = lTask; prefs.perm = lPerm; prefs.effort = lEffort; savePrefs(prefs);
     const model = lModel;
     // CF 建站：把所选视觉风格的 tokens 指令拼进首条消息（可见、可追溯）。
     const styleDir = isCfConn && lStyle ? STYLE_DIRECTIVES[lStyle] : '';
@@ -933,7 +944,7 @@
     const now = Math.floor(Date.now() / 1000);
     const optimistic: Conversation = {
       id, conn_id: activeConnId, conn_name: activeConn?.name ?? '', site_slug: lSite, site_name: site?.name || lSite,
-      task_type: taskType, brain: lBrain, model, perm_mode: lPerm, session_ref: '',
+      task_type: taskType, brain: lBrain, model, perm_mode: lPerm, effort: lEffort, session_ref: '',
       title: text.slice(0, 30), messages: [optimisticUser(text)], status: 'running', created_at: now, updated_at: now,
     };
     // 立刻塞进侧栏，这样即便用户随后切走/新开对话，这条新会话也带着 running 圈可见，不必等这一轮跑完才出现。
@@ -944,7 +955,7 @@
     try {
       const conv = await invoke<Conversation>('start_conversation', {
         convId: id, connId: activeConnId, siteSlug: lSite, siteName: site?.name || lSite,
-        taskType, brain: lBrain, model, permMode: lPerm,
+        taskType, brain: lBrain, model, permMode: lPerm, effort: lEffort,
         message: text, onEvent: makeChannel(id),
       });
       await refreshConvos();
@@ -1765,7 +1776,7 @@
               </div>
               <div class="cb-right">
                 <Dropdown compact bind:value={lPerm} options={permOptsFor(lBrain)} tone={permTone(lPerm)} />
-                <Dropdown compact value={`${lBrain}::${lModel}`} options={comboOpts} onchange={pickCombo} />
+                <ModelFx options={comboOpts} value={`${lBrain}::${lModel}`} effort={lEffort} onpick={pickCombo} oneffort={(v: string) => { lEffort = v; prefs.effort = v; savePrefs(prefs); }} />
                 <button class="send" onclick={startChat} disabled={!lSite.trim() || !lDraft.trim() || !brainUsable(lBrain)} title="发送（Enter）">↑</button>
               </div>
             </div>
@@ -2038,7 +2049,7 @@
             <div class="cb-right">
               <Dropdown compact bind:value={threadPerm} options={permOptsFor(activeConv?.brain ?? 'claude')} tone={permTone(threadPerm)} onchange={persistThreadPerm} />
               <!-- 厂商随会话固定：并进模型下拉（图标标识厂商），只列本厂商的模型档 -->
-              <Dropdown compact bind:value={threadModel} options={launcherModelOpts(activeConv?.brain ?? 'claude').map((o) => ({ ...o, icon: activeConv?.brain ?? 'claude' }))} onchange={persistThreadModel} disabled={viewBusy} />
+              <ModelFx options={launcherModelOpts(activeConv?.brain ?? 'claude').map((o) => ({ ...o, icon: activeConv?.brain ?? 'claude' }))} value={threadModel} effort={threadEffort} lockModel={viewBusy} onpick={(v: string) => { threadModel = v; persistThreadModel(v); }} oneffort={persistThreadEffort} />
               {#if viewBusy}
                 {#if draft.trim() || attachments.length}
                   <button class="send queue" onclick={queueMessage} title="排队：等这轮结束后自动发送">↑</button>

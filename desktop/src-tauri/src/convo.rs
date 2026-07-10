@@ -63,6 +63,9 @@ pub struct Conversation {
     /// 权限档位：plan | ask | auto | full。空串＝旧会话＝full（保持 0.1.10）。
     #[serde(default)]
     pub perm_mode: String,
+    /// 思考等级（推理强度）：'' 默认 | low | medium | high。每轮下发，运行中可改。
+    #[serde(default)]
+    pub effort: String,
     /// claude 的 session uuid 或 codex 的 thread_id；首轮后回填。
     pub session_ref: String,
     pub title: String,
@@ -319,7 +322,7 @@ mod tests {
     fn conv(id: &str, session: &str, msgs: Vec<Message>) -> Conversation {
         Conversation {
             id: id.into(), conn_id: "c".into(), conn_name: "".into(), site_slug: "s".into(), site_name: "".into(),
-            task_type: "free".into(), brain: "claude".into(), model: "sonnet".into(), perm_mode: "full".into(),
+            task_type: "free".into(), brain: "claude".into(), model: "sonnet".into(), perm_mode: "full".into(), effort: String::new(),
             session_ref: session.into(), title: "t".into(), messages: msgs, status: "idle".into(), created_at: 0, updated_at: 0, ctx_tokens: 0, total_tokens: 0,
         }
     }

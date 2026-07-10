@@ -96,6 +96,8 @@ export interface Conversation {
   model: string;
   /** 权限档位：plan | ask | auto | full。空串＝旧会话＝full。 */
   perm_mode: string;
+  /** 思考等级（推理强度）：'' 默认 | low | medium | high。 */
+  effort?: string;
   session_ref: string;
   title: string;
   messages: Message[];

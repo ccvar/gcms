@@ -910,6 +910,17 @@ fn set_conversation_model(
 /// 注意 claude 把权限档位钉在会话创建时，改基座模式要新对话才全生效；但钩子每轮重生成，
 /// 故「自动/询问」的拦截逻辑仍随时可调（详见 permit.rs）。
 #[tauri::command]
+fn set_conversation_effort(
+    state: tauri::State<'_, AppState>,
+    conv_id: String,
+    effort: String,
+) -> Result<Option<convo::Conversation>, String> {
+    state
+        .convos
+        .mutate(&conv_id, now_secs(), move |c| c.effort = effort)
+}
+
+#[tauri::command]
 fn set_conversation_perm_mode(
     state: tauri::State<'_, AppState>,
     conv_id: String,
@@ -1076,7 +1087,7 @@ async fn fire_task(
         conns, convos, runs, conv_id,
         task.conn_id.clone(), task.site_slug.clone(), task.site_name.clone(),
         task.task_type.clone(), task.brain.clone(), task.model.clone(),
-        "full".into(), task.prompt.clone(), sink, data_dir,
+        "full".into(), String::new(), task.prompt.clone(), sink, data_dir,
     )
     .await;
 
@@ -1202,6 +1213,7 @@ async fn create_conversation(
     brain: String,
     model: String,
     perm_mode: String,
+    effort: String,
     message: String,
     on_event: Channel<agent::TurnEvent>,
     data_dir: PathBuf,
@@ -1233,6 +1245,7 @@ async fn create_conversation(
         brain: brain.clone(),
         model: model.clone(),
         perm_mode: perm_mode.clone(),
+        effort: effort.clone(),
         session_ref: String::new(),
         title: title_from(&message),
         messages: vec![user_msg(message.trim().to_string(), now)],
@@ -1245,7 +1258,7 @@ async fn create_conversation(
     convos.upsert(conv)?;
 
     let res = agent::run_turn(
-        runs, conn, work_dir, brain, model, perm_mode, data_dir.join("permit"), session_seed, true, Some(sys),
+        runs, conn, work_dir, brain, model, perm_mode, effort, data_dir.join("permit"), session_seed, true, Some(sys),
         message.trim().to_string(), conv_id.clone(), on_event,
     )
     .await;
@@ -1275,6 +1288,7 @@ async fn start_conversation(
     brain: String,
     model: String,
     perm_mode: String,
+    effort: String,
     message: String,
     on_event: Channel<agent::TurnEvent>,
 ) -> Result<Conversation, String> {
@@ -1289,7 +1303,7 @@ async fn start_conversation(
     }
     create_conversation(
         state.conns.clone(), state.convos.clone(), state.runs.clone(),
-        conv_id, conn_id, site_slug, site_name, task_type, brain, model, perm_mode, message, on_event,
+        conv_id, conn_id, site_slug, site_name, task_type, brain, model, perm_mode, effort, message, on_event,
         state.data_dir.clone(),
     )
     .await
@@ -1330,6 +1344,7 @@ async fn send_message(
         conv.brain.clone(),
         conv.model.clone(),
         conv.perm_mode.clone(),
+        conv.effort.clone(),
         state.data_dir.join("permit"),
         conv.session_ref.clone(),
         false,
@@ -1369,6 +1384,7 @@ async fn retry_turn(
         conv.brain.clone(),
         conv.model.clone(),
         conv.perm_mode.clone(),
+        conv.effort.clone(),
         state.data_dir.join("permit"),
         conv.session_ref.clone(),
         false,
@@ -1428,6 +1444,7 @@ async fn rebuild_session(
         conv.brain.clone(),
         conv.model.clone(),
         conv.perm_mode.clone(),
+        conv.effort.clone(),
         state.data_dir.join("permit"),
         session_seed,
         true,
@@ -1709,6 +1726,7 @@ pub fn run() {
             cancel_turn,
             set_conversation_model,
             set_conversation_perm_mode,
+            set_conversation_effort,
             list_pending_permits,
             respond_permit,
             list_tasks,

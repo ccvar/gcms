@@ -203,6 +203,7 @@ pub async fn run_turn(
     brain: String,
     model: String,
     perm_mode: String,
+    effort: String,
     permit_base: PathBuf,
     session_ref: String,
     is_first: bool,
@@ -229,9 +230,9 @@ pub async fn run_turn(
 
     let work_dir = if work_dir.trim().is_empty() { conn.skill_dir.clone() } else { work_dir };
     let build = if brain == "codex" {
-        build_codex(&conn, &model, &session_ref, is_first, system.as_deref(), &message, &api_key, &work_dir, mode)
+        build_codex(&conn, &model, &effort, &session_ref, is_first, system.as_deref(), &message, &api_key, &work_dir, mode)
     } else {
-        build_claude(&conn, &model, &session_ref, is_first, system.as_deref(), &message, &api_key, &work_dir, &perm)
+        build_claude(&conn, &model, &effort, &session_ref, is_first, system.as_deref(), &message, &api_key, &work_dir, &perm)
     };
     let mut cmd = match build {
         Ok(c) => c,
@@ -424,6 +425,7 @@ fn apply_env_cwd(cmd: &mut Command, conn: &Connection, work_dir: &str, api_key: 
 fn build_claude(
     conn: &Connection,
     model: &str,
+    effort: &str,
     session_ref: &str,
     is_first: bool,
     system: Option<&str>,
@@ -460,6 +462,16 @@ fn build_claude(
     // 权限档位 → claude 参数（plan/ask/auto/full）；ask/auto 会生成 PreToolUse 钩子 + settings。
     let perm_flags = permit::claude_flags(perm.mode, &perm.conv_id, &perm.gen_dir, &perm.pending_dir)?;
     cmd.args(&perm_flags);
+    // 思考等级 → MAX_THINKING_TOKENS（无头模式实测能开出 thinking 块）；空＝跟随模型默认。
+    let budget = match effort {
+        "low" => "4096",
+        "medium" => "16384",
+        "high" => "32000",
+        _ => "",
+    };
+    if !budget.is_empty() {
+        cmd.env("MAX_THINKING_TOKENS", budget);
+    }
     apply_env_cwd(&mut cmd, conn, work_dir, api_key);
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -471,6 +483,7 @@ fn build_claude(
 fn build_codex(
     conn: &Connection,
     model: &str,
+    effort: &str,
     session_ref: &str,
     is_first: bool,
     system: Option<&str>,
@@ -519,6 +532,10 @@ fn build_codex(
             return Err(format!("无效的模型标识: {model}"));
         }
         cmd.args(["-c", &format!("model={model}")]);
+    }
+    // 思考等级（实测 0.144：-c model_reasoning_effort=low|medium|high）；空＝跟随 codex 默认。
+    if matches!(effort, "low" | "medium" | "high") {
+        cmd.args(["-c", &format!("model_reasoning_effort={effort}")]);
     }
     cmd.arg(&prompt);
     apply_env_cwd(&mut cmd, conn, work_dir, api_key);
