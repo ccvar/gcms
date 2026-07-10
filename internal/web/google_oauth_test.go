@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -54,6 +55,54 @@ func TestGoogleSearchConsoleMatchingPrefersVerifiedProperties(t *testing.T) {
 	}
 	if got, ok := findGoogleSearchConsoleAnySite(sites, "https://example.com/"); !ok || got.URL != "https://example.com/" {
 		t.Fatalf("expected any-site lookup to include unverified exact URL, got %#v ok=%v", got, ok)
+	}
+}
+
+func TestGoogleAnalyticsPropertyStreamSummariesKeepPartialResults(t *testing.T) {
+	oldGoogleHTTPClient := googleHTTPClient
+	var failingCalls atomic.Int32
+	googleHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Path {
+		case "/v1beta/properties/123/dataStreams":
+			return jsonTestResponse(req, http.StatusOK, `{"dataStreams":[{"name":"properties/123/dataStreams/1","type":"WEB_DATA_STREAM","displayName":"Example","webStreamData":{"defaultUri":"https://example.com/","measurementId":"G-EXAMPLE1"}}]}`), nil
+		case "/v1beta/properties/456/dataStreams":
+			failingCalls.Add(1)
+			return jsonTestResponse(req, http.StatusBadGateway, `{"error":{"message":"temporary upstream failure"}}`), nil
+		default:
+			t.Fatalf("unexpected google api request: %s", req.URL.String())
+			return jsonTestResponse(req, http.StatusNotFound, `{}`), nil
+		}
+	})}
+	t.Cleanup(func() { googleHTTPClient = oldGoogleHTTPClient })
+
+	properties := []googleAnalyticsPropertyOption{{Name: "properties/123"}, {Name: "properties/456"}}
+	failed, attempted, err := applyGoogleAnalyticsPropertyStreamSummaries(t.Context(), "token", properties, "https://example.com")
+	if failed != 1 || attempted != 2 || err == nil {
+		t.Fatalf("failed/attempted/err = %d/%d/%v", failed, attempted, err)
+	}
+	if !properties[0].Matched || properties[0].MatchedMeasurementID != "G-EXAMPLE1" {
+		t.Fatalf("successful property summary was lost: %#v", properties[0])
+	}
+	if got := failingCalls.Load(); got != 3 {
+		t.Fatalf("temporary read attempts = %d, want 3", got)
+	}
+}
+
+func TestGoogleAnalyticsPropertiesCacheReusesSuccessfulResult(t *testing.T) {
+	cache := newGoogleAnalyticsPropertiesCache()
+	loadCalls := 0
+	loader := func() ([]googleAnalyticsAccountOption, []googleAnalyticsPropertyOption, string, error) {
+		loadCalls++
+		return []googleAnalyticsAccountOption{{Name: "accounts/1"}}, []googleAnalyticsPropertyOption{{Name: "properties/1"}}, "", nil
+	}
+	for i := 0; i < 2; i++ {
+		accounts, properties, warning, err := cache.load(t.Context(), "account|https://example.com", loader)
+		if err != nil || warning != "" || len(accounts) != 1 || len(properties) != 1 {
+			t.Fatalf("cache load %d = accounts:%v properties:%v warning:%q err:%v", i, accounts, properties, warning, err)
+		}
+	}
+	if loadCalls != 1 {
+		t.Fatalf("loader calls = %d, want 1", loadCalls)
 	}
 }
 
@@ -214,6 +263,8 @@ func TestGoogleOAuthConfigCanBeSavedFromPlatformSites(t *testing.T) {
 		t.Fatalf("upsert search console account: %v", err)
 	}
 	oldGoogleHTTPClient := googleHTTPClient
+	createdPropertyStreamGets := 0
+	createdPropertyStreamPosts := 0
 	googleHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		switch {
 		case req.Method == http.MethodGet && req.URL.Path == "/v1beta/accountSummaries":
@@ -225,8 +276,13 @@ func TestGoogleOAuthConfigCanBeSavedFromPlatformSites(t *testing.T) {
 		case req.Method == http.MethodPost && req.URL.Path == "/v1beta/properties":
 			return jsonTestResponse(req, http.StatusOK, `{"name":"properties/999","parent":"accounts/1","displayName":"gcms - Test Site"}`), nil
 		case req.Method == http.MethodGet && req.URL.Path == "/v1beta/properties/999/dataStreams":
+			createdPropertyStreamGets++
 			return jsonTestResponse(req, http.StatusOK, `{"dataStreams":[]}`), nil
 		case req.Method == http.MethodPost && req.URL.Path == "/v1beta/properties/999/dataStreams":
+			createdPropertyStreamPosts++
+			if createdPropertyStreamPosts == 1 {
+				return jsonTestResponse(req, http.StatusForbidden, `{"error":{"message":"The caller does not have permission"}}`), nil
+			}
 			return jsonTestResponse(req, http.StatusOK, `{"name":"properties/999/dataStreams/777","webStreamData":{"measurementId":"G-CREATE999"}}`), nil
 		case req.Method == http.MethodGet && req.URL.Path == "/webmasters/v3/sites":
 			return jsonTestResponse(req, http.StatusOK, `{"siteEntry":[{"siteUrl":"https://platform.test/","permissionLevel":"siteOwner"}]}`), nil
@@ -306,6 +362,12 @@ func TestGoogleOAuthConfigCanBeSavedFromPlatformSites(t *testing.T) {
 	}
 	if createdIntegration.MeasurementID != "G-CREATE999" || createdIntegration.Property != "properties/999" || createdIntegration.DataStream != "properties/999/dataStreams/777" || !createdIntegration.Enabled {
 		t.Fatalf("created site google integration mismatch: %#v", createdIntegration)
+	}
+	if createdPropertyStreamGets != 0 {
+		t.Fatalf("newly created property should not be listed before stream creation, got %d GET requests", createdPropertyStreamGets)
+	}
+	if createdPropertyStreamPosts != 2 {
+		t.Fatalf("newly created property stream POST requests = %d, want one retry", createdPropertyStreamPosts)
 	}
 	siteForm := url.Values{}
 	siteForm.Set("_csrf", loginSess.CSRF)
