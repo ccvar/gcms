@@ -263,7 +263,7 @@ function auditItems(collection, data, options = {}) {
     if (ext) {
       for (const f of options.requiredFields || []) {
         const v = item.fields ? item.fields[f] : undefined;
-        if (v === undefined || v === null || v === "") missing.push("fields." + f);
+        if (v === undefined || v === null || v === "" || (Array.isArray(v) && v.length === 0)) missing.push("fields." + f);
       }
     }
     if (!ext && !item.excerpt) missing.push("excerpt");

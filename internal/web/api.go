@@ -77,6 +77,9 @@ const (
 	apiScopeMediaWrite          = "media:write"
 	apiScopeSiteRead            = "site:read"
 	apiScopeSiteWrite           = "site:write"
+	apiScopeContentRead         = "content:read"    // 通配：任意集合（含扩展类型）读
+	apiScopeContentWrite        = "content:write"   // 通配：任意集合写 + 类型管理
+	apiScopeContentPublish      = "content:publish" // 通配：任意集合发布
 	apiScopeBrandAssetsWrite    = "brand:assets:write"
 	apiScopeNavigationRead      = "navigation:read"
 	apiScopeNavigationWrite     = "navigation:write"

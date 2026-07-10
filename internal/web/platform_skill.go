@@ -315,7 +315,7 @@ func platformSkillMarkdown(apiBase string) string {
 		"自定义字段放 `\"fields\": {\"字段key\": 值}`；层级类型的上级/排序放 `fields.parent`/`fields.order`。",
 		"",
 		"- `node scripts/gcms.js types --site blog --all`",
-		"- `node scripts/gcms.js type-enable product --site blog`",
+		"- `node scripts/gcms.js type-enable product --site blog`（type-disable 只下线前台归档与自省，API 读写不受影响）",
 		"- `node scripts/gcms.js create products --site blog '{\"title\":\"入门款\",\"status\":\"draft\",\"fields\":{\"price\":199}}'`",
 		"- `node scripts/gcms.js type-create --site blog '{\"key\":\"cases\",\"name\":\"案例\",\"fields\":[{\"key\":\"client\",\"label\":\"客户\",\"type\":\"text\",\"required\":true}]}'`",
 		"",

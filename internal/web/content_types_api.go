@@ -16,8 +16,8 @@ import (
 //   POST   /api/admin/v1/types              创建自定义类型（DB 驱动，等价后台设计器）
 //   PUT    /api/admin/v1/types/{key}        修改自定义类型（仅 DB 类型；内置扩展不可改）
 //   DELETE /api/admin/v1/types/{key}        删除自定义类型（有内容一律拒绝，无 force）
-// 权限：types:write（content:write 通配同样放行——沿用内容 scope 的既有通配语义，
-// 现存密钥零迁移即可用）。读取仍复用 GET /types 的任意有效密钥语义。
+// 权限：types:write（content:write 通配同样放行）。这两个 scope 随本批加入密钥表单的
+// 「扩展内容类型」权限组——旧密钥需在后台重新勾选后才能管理类型。读取仍是任意有效密钥。
 
 const apiScopeTypesWrite = "types:write"
 
@@ -28,16 +28,16 @@ const apiTypeMaxFields = 16
 // apiTypeMaxCustom 每站自定义类型数量上限（护栏：防 AI 失控刷类型）。
 const apiTypeMaxCustom = 30
 
-func (s *Server) apiTypesWriteGuard(w http.ResponseWriter, r *http.Request) bool {
+func (s *Server) apiTypesWriteGuard(w http.ResponseWriter, r *http.Request) (*automationAuth, bool) {
 	auth, ok := s.requireAutomationToken(w, r)
 	if !ok {
-		return false
+		return nil, false
 	}
 	if !automationScopeAllowed(auth.scopes, apiScopeTypesWrite) {
-		apiError(w, http.StatusForbidden, "missing_scope", "这条访问权限不能管理内容类型（需要 types:write 或 content:write）。")
-		return false
+		apiError(w, http.StatusForbidden, "missing_scope", "这条访问权限不能管理内容类型（需要 types:write 或 content:write，在密钥的「扩展内容类型」权限组勾选）。")
+		return nil, false
 	}
-	return true
+	return auth, true
 }
 
 // extTypeExists 返回 key 对应的扩展类型（代码注册表或 DB），内置 post/page/link 返回 nil。
@@ -65,7 +65,8 @@ func (s *Server) apiTypeDisable(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) apiTypeSetEnabled(w http.ResponseWriter, r *http.Request, enable bool) {
-	if !s.apiTypesWriteGuard(w, r) {
+	auth, ok := s.apiTypesWriteGuard(w, r)
+	if !ok {
 		return
 	}
 	key := strings.TrimSpace(r.PathValue("key"))
@@ -73,6 +74,8 @@ func (s *Server) apiTypeSetEnabled(w http.ResponseWriter, r *http.Request, enabl
 		apiError(w, http.StatusNotFound, "type_not_found", "没有这个扩展类型："+key+"（内置 posts/pages/links 不可启停）。")
 		return
 	}
+	s.typesMu.Lock()
+	defer s.typesMu.Unlock()
 	enabled := s.enabledTypeSet()
 	if enable {
 		enabled[key] = true
@@ -84,6 +87,11 @@ func (s *Server) apiTypeSetEnabled(w http.ResponseWriter, r *http.Request, enabl
 		return
 	}
 	s.clearGeneratedCaches()
+	action := "type_disable"
+	if enable {
+		action = "type_enable"
+	}
+	s.recordAutomationLog(auth, action, "content_type", 0, "内容类型 "+key)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "key": key, "enabled": enable})
 }
 
@@ -132,6 +140,17 @@ func apiTypeFieldsJSON(in []apiTypeFieldInput) (string, error) {
 	var fields []fieldJSON
 	seen := map[string]bool{}
 	for i, f := range in {
+		if len(f.Label) > 80 || len(f.LabelEn) > 80 || len(f.Help) > 300 {
+			return "", fmt.Errorf("字段 %d：label ≤80 字符、help ≤300 字符", i+1)
+		}
+		if len(f.Options) > 50 {
+			return "", fmt.Errorf("字段 %d：options 最多 50 项", i+1)
+		}
+		for _, o := range f.Options {
+			if len(o) > 80 {
+				return "", fmt.Errorf("字段 %d：单个 option ≤80 字符", i+1)
+			}
+		}
 		key := slugify(f.Key)
 		if key == "" {
 			key = slugify(f.LabelEn)
@@ -179,14 +198,16 @@ func apiTypeFieldsJSON(in []apiTypeFieldInput) (string, error) {
 }
 
 func (s *Server) apiTypeCreate(w http.ResponseWriter, r *http.Request) {
-	if !s.apiTypesWriteGuard(w, r) {
+	auth, ok := s.apiTypesWriteGuard(w, r)
+	if !ok {
 		return
 	}
 	var in apiTypeInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		apiError(w, http.StatusBadRequest, "bad_json", "请求体不是合法 JSON："+err.Error())
+	if !decodeAPIJSON(w, r, &in) {
 		return
 	}
+	s.typesMu.Lock()
+	defer s.typesMu.Unlock()
 	key := slugify(in.Key)
 	if key == "" {
 		key = slugify(in.NameEn)
@@ -195,12 +216,21 @@ func (s *Server) apiTypeCreate(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusBadRequest, "bad_key", "类型标识无效或已被占用（小写字母/数字/连字符，≤32 字符，不可用保留字或与既有类型/路由冲突）："+key)
 		return
 	}
-	if rows, err := s.store.ListContentTypes(); err == nil && len(rows) >= apiTypeMaxCustom {
+	rows, err := s.store.ListContentTypes()
+	if err != nil {
+		s.apiServerError(w, err) // fail-closed：查不了数量就不建
+		return
+	}
+	if len(rows) >= apiTypeMaxCustom {
 		apiError(w, http.StatusBadRequest, "too_many_types", fmt.Sprintf("本站自定义类型已达上限 %d 个，请先清理不用的类型。", apiTypeMaxCustom))
 		return
 	}
 	if strings.TrimSpace(in.Name) == "" && strings.TrimSpace(in.NameEn) == "" {
 		apiError(w, http.StatusBadRequest, "bad_name", "name / name_en 至少填一个。")
+		return
+	}
+	if len(in.Name) > 80 || len(in.NameEn) > 80 || len(in.Icon) > 64 {
+		apiError(w, http.StatusBadRequest, "bad_name", "name/name_en ≤80 字符，icon ≤64 字符。")
 		return
 	}
 	fieldsJSON, err := apiTypeFieldsJSON(in.Fields)
@@ -226,13 +256,17 @@ func (s *Server) apiTypeCreate(w http.ResponseWriter, r *http.Request) {
 	enabled[key] = true
 	_ = s.store.SetSetting(enabledContentTypesKey, joinEnabledTypes(enabled))
 	s.clearGeneratedCaches()
+	s.recordAutomationLog(auth, "type_create", "content_type", 0, "新建内容类型 "+key)
 	writeJSON(w, http.StatusCreated, map[string]any{"ok": true, "key": key, "collection": key, "enabled": true})
 }
 
 func (s *Server) apiTypeUpdate(w http.ResponseWriter, r *http.Request) {
-	if !s.apiTypesWriteGuard(w, r) {
+	auth, ok := s.apiTypesWriteGuard(w, r)
+	if !ok {
 		return
 	}
+	s.typesMu.Lock()
+	defer s.typesMu.Unlock()
 	key := strings.TrimSpace(r.PathValue("key"))
 	existing, _ := s.store.GetContentType(key)
 	if existing == nil {
@@ -244,8 +278,7 @@ func (s *Server) apiTypeUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in apiTypeInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		apiError(w, http.StatusBadRequest, "bad_json", "请求体不是合法 JSON："+err.Error())
+	if !decodeAPIJSON(w, r, &in) {
 		return
 	}
 	row := &store.ContentTypeRow{
@@ -286,13 +319,17 @@ func (s *Server) apiTypeUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.clearGeneratedCaches()
+	s.recordAutomationLog(auth, "type_update", "content_type", 0, "修改内容类型 "+key)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "key": key})
 }
 
 func (s *Server) apiTypeDelete(w http.ResponseWriter, r *http.Request) {
-	if !s.apiTypesWriteGuard(w, r) {
+	auth, ok := s.apiTypesWriteGuard(w, r)
+	if !ok {
 		return
 	}
+	s.typesMu.Lock()
+	defer s.typesMu.Unlock()
 	key := strings.TrimSpace(r.PathValue("key"))
 	existing, _ := s.store.GetContentType(key)
 	if existing == nil {
@@ -304,7 +341,13 @@ func (s *Server) apiTypeDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 护栏：有内容（任何语种、任何状态）一律拒绝——API 无 force；确要删除请先清空内容或走后台。
-	if n, err := s.store.CountByType(key); err == nil && n > 0 {
+	// fail-closed：计数查询出错同样拒绝（否则 DB 瞬时故障会绕过护栏直接删）。
+	n, err := s.store.CountByType(key)
+	if err != nil {
+		s.apiServerError(w, err)
+		return
+	}
+	if n > 0 {
 		apiError(w, http.StatusConflict, "type_has_content",
 			fmt.Sprintf("该类型下还有 %d 条内容，先删除内容再删类型（或到后台操作）。", n))
 		return
@@ -317,6 +360,7 @@ func (s *Server) apiTypeDelete(w http.ResponseWriter, r *http.Request) {
 	delete(enabled, key)
 	_ = s.store.SetSetting(enabledContentTypesKey, joinEnabledTypes(enabled))
 	s.clearGeneratedCaches()
+	s.recordAutomationLog(auth, "type_delete", "content_type", 0, "删除内容类型 "+key)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "key": key, "deleted": true})
 }
 

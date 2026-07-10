@@ -217,7 +217,7 @@ function auditItems(collection, data, options = {}) {
       // 扩展集合：按类型 schema 查必填自定义字段
       for (const f of options.requiredFields || []) {
         const v = item.fields ? item.fields[f] : undefined;
-        if (v === undefined || v === null || v === "") missing.push("fields." + f);
+        if (v === undefined || v === null || v === "" || (Array.isArray(v) && v.length === 0)) missing.push("fields." + f);
       }
     } else {
       if (!item.excerpt) missing.push("excerpt");

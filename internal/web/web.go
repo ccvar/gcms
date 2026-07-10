@@ -31,6 +31,9 @@ import (
 )
 
 type Server struct {
+	// typesMu 串行化内容类型的读改写（启停集合回写/创建计数/删除护栏都是非原子多步，
+	// 两把密钥并发操作会丢更新或越过上限——评审确认的竞态族）。单机 SQLite 下够用。
+	typesMu         sync.Mutex
 	store           *store.Store
 	platform        *platform.Store
 	rnd             *Renderer
@@ -50,6 +53,7 @@ type Server struct {
 	content         map[string]contentCacheEntry
 	endpoints       map[string]endpointCacheEntry
 	pages           map[string]pageCacheEntry
+	googleAnalytics *googleAnalyticsPropertiesCache
 
 	cloudflareMu         sync.Mutex
 	cloudflareTimer      *time.Timer
@@ -1034,6 +1038,7 @@ func NewWithPlatform(st *store.Store, ps *platform.Store, baseURL, uploadDir str
 		store: st, platform: ps, rnd: rnd, baseURL: baseURL, platformBaseURL: baseURL, uploadDir: uploadDir, assetsFS: assetsFS,
 		sess: newSessions(sessionStore), login: newLoginLimiter(), apiLimiter: newAPIRateLimiter(), i18n: i18n.New(), assetVer: assetVersion(assetsFS), imageSizes: imageSizes,
 		content: map[string]contentCacheEntry{}, endpoints: map[string]endpointCacheEntry{}, pages: map[string]pageCacheEntry{},
+		googleAnalytics:      newGoogleAnalyticsPropertiesCache(),
 		cloudflareStatusFile: cloudflareStatusPath(),
 	}
 	s.i18n.LoadCustom(st.Setting("custom_locales")) // 合并后台新增的自定义语种预设
@@ -1217,6 +1222,7 @@ func (s *Server) cloneForRuntime(rt *SiteRuntime) *Server {
 		content:              map[string]contentCacheEntry{},
 		endpoints:            map[string]endpointCacheEntry{},
 		pages:                map[string]pageCacheEntry{},
+		googleAnalytics:      s.googleAnalytics,
 		cloudflareStatusFile: cloudflareStatusPathForRuntime(rt),
 	}
 	clone.i18n.LoadCustom(rt.Store.Setting("custom_locales"))

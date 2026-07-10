@@ -603,6 +603,9 @@ const typeFieldSlots = 8
 var reservedTypePrefixes = []string{
 	"post", "page", "link", "posts", "pages", "links", "category", "about", "start",
 	"search", "admin", "api", "assets", "uploads", "sitemap", "robots", "rss", "favicon",
+	// API 字面路由段：类型 key＝集合名＝URL 段，撞上会被字面路由遮蔽或劫持（评审确认）。
+	"types", "media", "languages", "navigation", "site-profile", "sites", "skill-pack",
+	"openapi", "api-docs", "preview", "preview-url", "featured", "relink",
 }
 
 // TypeFormView 驱动类型设计器表单。
@@ -649,6 +652,15 @@ func (s *Server) adminTypeKeyValid(key string) bool {
 		}
 	}
 	if contentTypeByKey(key) != nil {
+		return false
+	}
+	// 与任何既有类型的 URL 前缀撞车也不行（如 products/docs/events 是内置类型的集合名，
+	// 注册后会被前缀解析抢占，内容永远进不到自定义类型——评审实测确认）。
+	if s.extTypeByPrefix(key) != nil {
+		return false
+	}
+	// 已启用语种码（zh/en/自定义码）当类型 key 会与语种路由互相吞并。
+	if s.langEnabled(key) {
 		return false
 	}
 	if row, _ := s.store.GetContentType(key); row != nil {

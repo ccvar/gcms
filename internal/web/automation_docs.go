@@ -252,12 +252,12 @@ func automationOpenAPISpec(apiBase string) map[string]any {
 		},
 		"/types/{key}": map[string]any{
 			"put": map[string]any{
-				"summary":     "修改自定义类型（仅 DB 自定义类型；内置扩展不可改）",
-				"responses":   map[string]any{"200": map[string]any{"description": "OK"}},
+				"summary":   "修改自定义类型（仅 DB 自定义类型；内置扩展不可改）",
+				"responses": map[string]any{"200": map[string]any{"description": "OK"}},
 			},
 			"delete": map[string]any{
-				"summary":     "删除自定义类型（该类型下有内容一律 409 拒绝）",
-				"responses":   map[string]any{"200": map[string]any{"description": "OK"}},
+				"summary":   "删除自定义类型（该类型下有内容一律 409 拒绝）",
+				"responses": map[string]any{"200": map[string]any{"description": "OK"}},
 			},
 		},
 		"/types/{key}/enable": map[string]any{
@@ -268,7 +268,7 @@ func automationOpenAPISpec(apiBase string) map[string]any {
 		},
 		"/types/{key}/disable": map[string]any{
 			"post": map[string]any{
-				"summary":   "停用扩展类型（本站）",
+				"summary":   "停用扩展类型（只下线前台归档与默认自省列表；API 内容读写不受影响）",
 				"responses": map[string]any{"200": map[string]any{"description": "OK"}},
 			},
 		},
@@ -2156,7 +2156,7 @@ func automationSkillMarkdown(apiBase string) string {
 		"层级类型的上级/排序放 `fields.parent`/`fields.order`）。",
 		"",
 		"- `node scripts/gcms.js types`（`--all` 连未启用的一起列）",
-		"- `node scripts/gcms.js type-enable product`（给站点开产品库；type-disable 停用）",
+		"- `node scripts/gcms.js type-enable product`（给站点开产品库；type-disable 停用——注意：停用只下线前台归档与自省列表，API 内容读写不受影响）",
 		"- `node scripts/gcms.js list products --lang zh`",
 		"- `node scripts/gcms.js create products '{\"title\":\"入门款\",\"status\":\"draft\",\"fields\":{\"price\":199}}'`",
 		"- `node scripts/gcms.js type-create '{\"key\":\"cases\",\"name\":\"案例\",\"fields\":[{\"key\":\"client\",\"label\":\"客户\",\"type\":\"text\",\"required\":true}]}'`",

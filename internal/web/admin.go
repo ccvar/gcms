@@ -4813,8 +4813,18 @@ func automationScopesFromFormWithDefault(r *http.Request, useDefault bool) []str
 
 func automationScopeValid(scope string) bool {
 	switch scope {
-	case apiScopeLanguagesRead, apiScopeLanguagesWrite, apiScopeLanguagesEnable, apiScopeLanguagesDefault, apiScopeLanguagesCatalog, apiScopeMediaWrite, apiScopeSiteRead, apiScopeSiteWrite, apiScopeBrandAssetsWrite, apiScopeNavigationRead, apiScopeNavigationWrite:
+	case apiScopeLanguagesRead, apiScopeLanguagesWrite, apiScopeLanguagesEnable, apiScopeLanguagesDefault, apiScopeLanguagesCatalog, apiScopeMediaWrite, apiScopeSiteRead, apiScopeSiteWrite, apiScopeBrandAssetsWrite, apiScopeNavigationRead, apiScopeNavigationWrite,
+		apiScopeTypesWrite, apiScopeContentRead, apiScopeContentWrite, apiScopeContentPublish:
 		return true
+	}
+	// 扩展集合 scope（如 products:write / cases:read）：集合名为合法 slug 即放行——
+	// 集合是否真实存在由运行时 apiContentKind 校验；这里只保证词法合法，
+	// 否则动态类型的集合权限永远无法通过表单签发。
+	if col, action, ok := strings.Cut(scope, ":"); ok && col != "" && slugify(col) == col {
+		switch action {
+		case "read", "write", "publish":
+			return true
+		}
 	}
 	for _, col := range automationCollections {
 		for _, action := range automationScopeActions(col.path) {

@@ -164,6 +164,14 @@
     <label><input type="checkbox" name="scopes" value="pages:publish"><span>{{.Admin.T "admin.settings.automation.publish" "发布"}}</span><small>{{.Admin.T "admin.settings.automation.pages_publish_desc" "发布、定时发布、修改已发布页面"}}</small></label>
   </div>
 </div>
+  <div class="scope-group scope-group-wide">
+    <strong>{{.Admin.T "admin.settings.automation.ext_types" "扩展内容类型"}}</strong>
+    <label><input type="checkbox" name="scopes" value="content:read"><span>{{.Admin.T "admin.settings.automation.content_read" "读全部集合"}}</span><small>{{.Admin.T "admin.settings.automation.content_read_desc" "通配：读取任意内容集合（含产品/文档/图库/自定义类型）"}}</small></label>
+    <label><input type="checkbox" name="scopes" value="content:write"><span>{{.Admin.T "admin.settings.automation.content_write" "写全部集合 + 管理类型"}}</span><small>{{.Admin.T "admin.settings.automation.content_write_desc" "通配：任意集合写草稿，并可启停/创建/修改扩展内容类型"}}</small></label>
+    <label><input type="checkbox" name="scopes" value="content:publish"><span>{{.Admin.T "admin.settings.automation.content_publish" "发布全部集合"}}</span><small>{{.Admin.T "admin.settings.automation.content_publish_desc" "通配：任意集合发布与修改已发布内容"}}</small></label>
+    <label><input type="checkbox" name="scopes" value="types:write"><span>{{.Admin.T "admin.settings.automation.types_write" "仅管理内容类型"}}</span><small>{{.Admin.T "admin.settings.automation.types_write_desc" "启停/创建/修改/删除扩展内容类型（不含内容读写）"}}</small></label>
+  </div>
+</div>
 {{end}}
 
 {{define "platform-membership-fields"}}

@@ -83,6 +83,20 @@ func dbTypeToContentType(row *store.ContentTypeRow) *ContentType {
 		Builtin:      false,
 		DefaultOn:    false,
 	}
+	// 层级类型必须有 parent/order 结构字段（公开渲染隐藏、树构建依赖）；
+	// 设计器/API 的字段输入都不含它们——在合并层统一注入，缺哪个补哪个。
+	if ct.Hierarchical {
+		has := map[string]bool{}
+		for _, f := range ct.Fields {
+			has[f.Key] = true
+		}
+		if !has["parent"] {
+			ct.Fields = append(ct.Fields, Field{Key: "parent", Labels: map[string]string{"zh": "上级", "en": "Parent"}, Type: FieldRelation, Structural: true})
+		}
+		if !has["order"] {
+			ct.Fields = append(ct.Fields, Field{Key: "order", Labels: map[string]string{"zh": "排序", "en": "Order"}, Type: FieldNumber, Structural: true})
+		}
+	}
 	return ct
 }
 

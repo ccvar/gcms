@@ -1615,10 +1615,10 @@ func (s *Store) ListRecentAdminContent(lang string, limit int) ([]*Post, error) 
 }
 
 func (s *Store) ListContentForAutomation(kind, lang, status, query, slug, transGroup string, offset, limit int) ([]*Post, error) {
-	switch kind {
-	case "post", "page", "link":
-	default:
-		return nil, fmt.Errorf("unsupported content type: %s", kind)
+	// kind 由调用方经 apiContentKind（注册表/DB 类型感知）校验后传入；扩展类型（product/
+	// 自定义等）与内置同构走同一查询。只拦空值防误用。
+	if strings.TrimSpace(kind) == "" {
+		return nil, fmt.Errorf("unsupported content type: (empty)")
 	}
 	if limit <= 0 || limit > 100 {
 		limit = 20
