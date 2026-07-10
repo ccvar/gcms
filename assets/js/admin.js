@@ -755,13 +755,18 @@
 	      submit.textContent = createMode ? labelCreate : (enabled ? labelUpdate : labelEnable);
 	    }
 
-	    function loadProperties(form) {
-	      var account = form.querySelector("[data-ga-account-select]");
-	      var property = form.querySelector("[data-ga-property-select]");
-	      var analyticsAccount = form.querySelector("[data-ga-analytics-account-select]");
-	      if (!account || !property) return;
-	      var accountID = account.value || "";
-	      property.disabled = true;
+		    function loadProperties(form, force) {
+		      var account = form.querySelector("[data-ga-account-select]");
+		      var property = form.querySelector("[data-ga-property-select]");
+		      var analyticsAccount = form.querySelector("[data-ga-analytics-account-select]");
+		      if (!account || !property) return;
+		      var accountID = account.value || "";
+		      var uri = form.querySelector("[data-ga-default-uri]");
+		      var defaultURI = uri ? (uri.value || "").trim() : "";
+		      var requestKey = accountID + "|" + defaultURI;
+		      if (!force && form.getAttribute("data-ga-properties-loaded") === requestKey) return;
+		      form.removeAttribute("data-ga-properties-loaded");
+		      property.disabled = true;
 	      if (analyticsAccount) {
 	        analyticsAccount.disabled = true;
 	        setOptions(analyticsAccount, [{ value: "", label: "自动选择 Analytics 账号" }]);
@@ -777,9 +782,7 @@
 	      setOptions(property, [{ value: "", label: "正在读取 GA4 属性..." }]);
 	      setPropertyLoading(form, true, "正在读取这个账号可访问的 GA4 属性...");
 	      updateSummary(form);
-	      var uri = form.querySelector("[data-ga-default-uri]");
-	      var defaultURI = uri ? (uri.value || "").trim() : "";
-	      setStatus(form, "", false);
+		      setStatus(form, "", false);
 	      fetch("/admin/google/analytics/properties?account=" + encodeURIComponent(accountID) + "&default_uri=" + encodeURIComponent(defaultURI), {
 	        credentials: "same-origin",
 	        headers: { "Accept": "application/json", "X-Requested-With": "XMLHttpRequest" }
@@ -788,8 +791,9 @@
           if (!res.ok || json.ok === false) throw new Error(json.message || ("读取 GA4 属性失败（HTTP " + res.status + (res.statusText ? " " + res.statusText : "") + "）"));
           return json;
         });
-	      }).then(function (json) {
-	        setPropertyLoading(form, false);
+		      }).then(function (json) {
+		        setPropertyLoading(form, false);
+		        form.setAttribute("data-ga-properties-loaded", requestKey);
 	        var list = Array.isArray(json.properties) ? json.properties : [];
 	        var accounts = Array.isArray(json.accounts) ? json.accounts : [];
 	        if (analyticsAccount) {
@@ -839,9 +843,15 @@
 	          setStatus(form, "将使用当前选择的 GA4 属性；若该属性下没有匹配数据流，会自动创建 Web 数据流。", false);
 	          closeRowPanels(form);
 	        }
-	        updateSummary(form);
-	      }).catch(function (err) {
-	        setPropertyLoading(form, false);
+		        if (json.warning) {
+		          var warningStatus = form.querySelector("[data-ga-stream-status]");
+		          var currentStatus = warningStatus ? (warningStatus.textContent || "").trim() : "";
+		          setStatus(form, (currentStatus ? currentStatus + " " : "") + json.warning, false);
+		        }
+		        updateSummary(form);
+		      }).catch(function (err) {
+		        setPropertyLoading(form, false);
+		        form.removeAttribute("data-ga-properties-loaded");
 	        setOptions(property, [{ value: "", label: "读取失败" }]);
 	        setStatus(form, err && err.message ? err.message : "读取 GA4 属性失败", true);
 	        // 失败时在错误信息后补一个「↻ 重试」按钮，点一下重新读取（不用刷新整页）。
@@ -853,14 +863,35 @@
 	          retryBtn.textContent = "↻ 重试";
 	          retryBtn.title = "重新读取 GA4 属性";
 	          retryBtn.setAttribute("aria-label", "重新读取 GA4 属性");
-	          retryBtn.addEventListener("click", function () { loadProperties(form); });
+		          retryBtn.addEventListener("click", function () { loadProperties(form, true); });
 	          retryStatus.appendChild(document.createTextNode("　"));
 	          retryStatus.appendChild(retryBtn);
 	        }
 	        updatePropertyMode(form);
 	        updateSummary(form);
-	      });
-	    }
+		      });
+		    }
+
+		    function rememberCreatedProperty(form, json) {
+		      if (!json || !json.property) return;
+		      var property = form.querySelector("[data-ga-property-select]");
+		      if (!property) return;
+		      var value = String(json.property);
+		      var exists = Array.prototype.some.call(property.options, function (opt) { return opt.value === value; });
+		      if (!exists) {
+		        var opt = document.createElement("option");
+		        opt.value = value;
+		        opt.textContent = "刚创建的 GA4 属性 · " + value;
+		        property.insertBefore(opt, property.options.length > 1 ? property.options[1] : null);
+		      }
+		      property.setAttribute("data-current-property", value);
+		      property.value = value;
+		      property.disabled = false;
+		      form.removeAttribute("data-ga-properties-loaded");
+		      if (window.adminRefreshDropdown) window.adminRefreshDropdown(property);
+		      updatePropertyMode(form);
+		      updateSummary(form);
+		    }
 
 	    // 启用/修改统计：AJAX 提交（不刷新整页）。成功就地更新弹窗与卡片徽章；
 	    // 返回非 JSON、网络异常等意外情况一律回退到原生提交（整页刷新），保证绝不弄坏既有流程。
@@ -874,8 +905,9 @@
 	        return res.json().then(function (j) { return { res: res, json: j }; }, function () { return { res: res, json: null }; });
 	      }).then(function (r) {
 	        if (!r.json) { form.submit(); return; }
-	        if (!r.res.ok || r.json.ok === false) {
-	          setStatus(form, r.json.message || "启用统计失败，请重试。", true);
+		        if (!r.res.ok || r.json.ok === false) {
+		          rememberCreatedProperty(form, r.json);
+		          setStatus(form, r.json.message || "启用统计失败，请重试。", true);
 	          if (submit) submit.removeAttribute("aria-busy");
 	          updateSubmit(form);
 	          return;
@@ -952,12 +984,11 @@
 	        });
 	      });
 	      if (account) {
-	        account.addEventListener("change", function () {
-	          if (property) property.setAttribute("data-current-property", "");
-	          loadProperties(form);
-	        });
-	        if (account.value) loadProperties(form);
-	        else updateSummary(form);
+		        account.addEventListener("change", function () {
+		          if (property) property.setAttribute("data-current-property", "");
+		          loadProperties(form, true);
+		        });
+		        updateSummary(form);
 	      }
 	      if (property) property.addEventListener("change", function () {
 	        updatePropertyMode(form);
@@ -1002,8 +1033,18 @@
 	        e.preventDefault();
 	        gaStreamAjaxSubmit(form, submit);
 	      });
-	    });
-	  })();
+		    });
+
+		    function loadOpenAnalyticsModal() {
+		      forms.forEach(function (form) {
+		        var modal = form.closest(".site-google-modal");
+		        if (!modal || location.hash !== "#" + modal.id) return;
+		        loadProperties(form, false);
+		      });
+		    }
+		    window.addEventListener("hashchange", loadOpenAnalyticsModal);
+		    setTimeout(loadOpenAnalyticsModal, 0);
+		  })();
 
   /* ---------- 站点管理：Google Search Console 站点属性 ---------- */
   (function () {

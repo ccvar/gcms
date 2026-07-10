@@ -11,6 +11,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"cms.ccvar.com/internal/platform"
@@ -37,10 +38,199 @@ const (
 
 var googleHTTPClient = &http.Client{Timeout: 10 * time.Second}
 
+const (
+	googleAnalyticsPropertiesCacheTTL        = 2 * time.Minute
+	googleAnalyticsPropertiesPartialCacheTTL = 20 * time.Second
+	googleAnalyticsStreamSummaryTimeout      = 12 * time.Second
+	googleAnalyticsStreamSummaryWorkers      = 6
+)
+
+type googleAPIError struct {
+	StatusCode int
+	Message    string
+}
+
+func (e *googleAPIError) Error() string {
+	if e == nil {
+		return ""
+	}
+	return e.Message
+}
+
+func newGoogleAPIError(status int, message string) error {
+	return &googleAPIError{StatusCode: status, Message: strings.TrimSpace(message)}
+}
+
+func isRetriableGoogleAPIError(err error, allowPermissionPropagation bool) bool {
+	var apiErr *googleAPIError
+	if errors.As(err, &apiErr) {
+		if apiErr.StatusCode == http.StatusTooManyRequests {
+			return true
+		}
+		if allowPermissionPropagation && apiErr.StatusCode == http.StatusForbidden {
+			message := strings.ToLower(apiErr.Message)
+			return strings.Contains(message, "permission") || strings.Contains(message, "权限")
+		}
+	}
+	return errors.Is(err, context.DeadlineExceeded)
+}
+
+func isRetriableGoogleReadError(err error) bool {
+	var apiErr *googleAPIError
+	if errors.As(err, &apiErr) {
+		return apiErr.StatusCode == http.StatusTooManyRequests || apiErr.StatusCode >= http.StatusInternalServerError
+	}
+	return errors.Is(err, context.DeadlineExceeded)
+}
+
+func googleRetryDelay(attempt int) time.Duration {
+	delays := []time.Duration{150 * time.Millisecond, 400 * time.Millisecond, 900 * time.Millisecond}
+	if attempt < 0 {
+		attempt = 0
+	}
+	if attempt >= len(delays) {
+		return delays[len(delays)-1]
+	}
+	return delays[attempt]
+}
+
+func waitGoogleRetry(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+type googleAnalyticsPropertiesCacheEntry struct {
+	accounts   []googleAnalyticsAccountOption
+	properties []googleAnalyticsPropertyOption
+	warning    string
+	expires    time.Time
+}
+
+type googleAnalyticsPropertiesCacheCall struct {
+	done       chan struct{}
+	accounts   []googleAnalyticsAccountOption
+	properties []googleAnalyticsPropertyOption
+	warning    string
+	err        error
+}
+
+type googleAnalyticsPropertiesCache struct {
+	mu       sync.Mutex
+	entries  map[string]googleAnalyticsPropertiesCacheEntry
+	inflight map[string]*googleAnalyticsPropertiesCacheCall
+}
+
+func newGoogleAnalyticsPropertiesCache() *googleAnalyticsPropertiesCache {
+	return &googleAnalyticsPropertiesCache{
+		entries:  map[string]googleAnalyticsPropertiesCacheEntry{},
+		inflight: map[string]*googleAnalyticsPropertiesCacheCall{},
+	}
+}
+
 type googleOAuthConfig struct {
 	ClientID     string
 	ClientSecret string
 	RedirectURL  string
+}
+
+func cloneGoogleAnalyticsAccounts(in []googleAnalyticsAccountOption) []googleAnalyticsAccountOption {
+	return append([]googleAnalyticsAccountOption(nil), in...)
+}
+
+func cloneGoogleAnalyticsProperties(in []googleAnalyticsPropertyOption) []googleAnalyticsPropertyOption {
+	return append([]googleAnalyticsPropertyOption(nil), in...)
+}
+
+func (c *googleAnalyticsPropertiesCache) load(
+	ctx context.Context,
+	key string,
+	loader func() ([]googleAnalyticsAccountOption, []googleAnalyticsPropertyOption, string, error),
+) ([]googleAnalyticsAccountOption, []googleAnalyticsPropertyOption, string, error) {
+	if c == nil {
+		return loader()
+	}
+	now := time.Now()
+	c.mu.Lock()
+	if entry, ok := c.entries[key]; ok && now.Before(entry.expires) {
+		c.mu.Unlock()
+		return cloneGoogleAnalyticsAccounts(entry.accounts), cloneGoogleAnalyticsProperties(entry.properties), entry.warning, nil
+	}
+	if call := c.inflight[key]; call != nil {
+		c.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return nil, nil, "", ctx.Err()
+		case <-call.done:
+			return cloneGoogleAnalyticsAccounts(call.accounts), cloneGoogleAnalyticsProperties(call.properties), call.warning, call.err
+		}
+	}
+	call := &googleAnalyticsPropertiesCacheCall{done: make(chan struct{})}
+	c.inflight[key] = call
+	c.mu.Unlock()
+
+	call.accounts, call.properties, call.warning, call.err = loader()
+
+	c.mu.Lock()
+	if call.err == nil {
+		ttl := googleAnalyticsPropertiesCacheTTL
+		if call.warning != "" {
+			ttl = googleAnalyticsPropertiesPartialCacheTTL
+		}
+		c.entries[key] = googleAnalyticsPropertiesCacheEntry{
+			accounts:   cloneGoogleAnalyticsAccounts(call.accounts),
+			properties: cloneGoogleAnalyticsProperties(call.properties),
+			warning:    call.warning,
+			expires:    time.Now().Add(ttl),
+		}
+	}
+	delete(c.inflight, key)
+	close(call.done)
+	c.mu.Unlock()
+
+	return cloneGoogleAnalyticsAccounts(call.accounts), cloneGoogleAnalyticsProperties(call.properties), call.warning, call.err
+}
+
+func (c *googleAnalyticsPropertiesCache) invalidateAccount(googleAccountID string) {
+	if c == nil {
+		return
+	}
+	prefix := strings.TrimSpace(googleAccountID) + "|"
+	c.mu.Lock()
+	for key := range c.entries {
+		if strings.HasPrefix(key, prefix) {
+			delete(c.entries, key)
+		}
+	}
+	c.mu.Unlock()
+}
+
+func (s *Server) googleAnalyticsPropertyOptions(ctx context.Context, googleAccountID, accessToken, defaultURI string) ([]googleAnalyticsAccountOption, []googleAnalyticsPropertyOption, string, error) {
+	defaultURI, _ = normalizeGoogleDefaultURI(defaultURI)
+	key := strings.TrimSpace(googleAccountID) + "|" + defaultURI
+	return s.googleAnalytics.load(ctx, key, func() ([]googleAnalyticsAccountOption, []googleAnalyticsPropertyOption, string, error) {
+		accounts, properties, err := googleAnalyticsAccountsAndProperties(ctx, accessToken)
+		if err != nil {
+			return nil, nil, "", err
+		}
+		if defaultURI == "" || len(properties) == 0 {
+			return accounts, properties, "", nil
+		}
+		failed, attempted, detailErr := applyGoogleAnalyticsPropertyStreamSummaries(ctx, accessToken, properties, defaultURI)
+		if failed == 0 {
+			return accounts, properties, "", nil
+		}
+		warning := fmt.Sprintf("GA4 属性列表已读取，但 %d/%d 个属性的数据流详情暂时无法读取。可先选择属性，或稍后重试。", failed, attempted)
+		if detailErr != nil && attempted == failed {
+			warning = "GA4 属性列表已读取，但数据流详情暂时无法读取：" + detailErr.Error()
+		}
+		return accounts, properties, warning, nil
+	})
 }
 
 func (s *Server) googleOAuthConfigured(r *http.Request) bool {
@@ -371,18 +561,16 @@ func (s *Server) adminGoogleAnalyticsProperties(w http.ResponseWriter, r *http.R
 		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": err.Error()})
 		return
 	}
-	accounts, properties, err := googleAnalyticsAccountsAndProperties(r.Context(), accessToken)
+	defaultURI := ""
+	if normalized, ok := normalizeGoogleDefaultURI(r.URL.Query().Get("default_uri")); ok {
+		defaultURI = normalized
+	}
+	accounts, properties, warning, err := s.googleAnalyticsPropertyOptions(r.Context(), googleAccountID, accessToken, defaultURI)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]any{"ok": false, "message": err.Error()})
 		return
 	}
-	if defaultURI, ok := normalizeGoogleDefaultURI(r.URL.Query().Get("default_uri")); ok {
-		if err := applyGoogleAnalyticsPropertyStreamSummaries(r.Context(), accessToken, properties, defaultURI); err != nil {
-			writeJSON(w, http.StatusBadGateway, map[string]any{"ok": false, "message": err.Error()})
-			return
-		}
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "accounts": accounts, "properties": properties})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "accounts": accounts, "properties": properties, "warning": warning})
 }
 
 func (s *Server) adminGoogleAnalyticsSummary(w http.ResponseWriter, r *http.Request) {
@@ -647,6 +835,14 @@ func (s *Server) adminCreateGoogleAnalyticsStream(w http.ResponseWriter, r *http
 		s.flashGoogleOAuth(r, msg)
 		s.redirectSiteGoogle(w, r, siteID)
 	}
+	failWithProperty := func(status int, msg, property string) {
+		if wantsJSON(r) {
+			writeJSON(w, status, map[string]any{"ok": false, "message": msg, "property": property, "property_created": true})
+			return
+		}
+		s.flashGoogleOAuth(r, msg)
+		s.redirectSiteGoogle(w, r, siteID)
+	}
 	googleAccountID := strings.TrimSpace(r.FormValue("google_account_id"))
 	propertyRaw := strings.TrimSpace(r.FormValue("property"))
 	property := normalizeGoogleAnalyticsPropertyName(propertyRaw)
@@ -769,18 +965,47 @@ func (s *Server) adminCreateGoogleAnalyticsStream(w http.ResponseWriter, r *http
 			return
 		}
 	}
-	stream, reused, err := findGoogleAnalyticsWebDataStream(r.Context(), accessToken, property, defaultURI)
-	if err != nil {
-		fail("检查已有 GA4 数据流失败：" + err.Error())
-		return
-	}
-	if stream == nil {
-		stream, err = createGoogleAnalyticsWebDataStream(r.Context(), accessToken, property, displayName, defaultURI)
-		if err != nil {
-			fail("创建 GA4 数据流失败：" + err.Error())
+	var stream *googleAnalyticsDataStream
+	reused := false
+	if createdProperty {
+		s.googleAnalytics.invalidateAccount(googleAccountID)
+		current, hasCurrent, currentErr := s.platform.SiteGoogleIntegration(siteID, platform.GoogleServiceAnalytics)
+		if currentErr != nil {
+			s.serverError(w, currentErr)
 			return
 		}
-		reused = false
+		if !hasCurrent || !current.Enabled {
+			pending := &platform.SiteGoogleIntegration{
+				SiteID:          siteID,
+				Service:         platform.GoogleServiceAnalytics,
+				GoogleAccountID: googleAccountID,
+				Property:        property,
+				Enabled:         false,
+			}
+			if err := s.platform.UpsertSiteGoogleIntegration(pending); err != nil {
+				s.serverError(w, err)
+				return
+			}
+		}
+		stream, err = createGoogleAnalyticsWebDataStreamWithRetry(r.Context(), accessToken, property, displayName, defaultURI, true)
+		if err != nil {
+			msg := "GA4 属性已创建并已保留，但 Google 尚未允许创建数据流。请稍候后重试；系统不会重复创建属性。详情：" + err.Error()
+			failWithProperty(http.StatusBadGateway, msg, property)
+			return
+		}
+	} else {
+		stream, reused, err = findGoogleAnalyticsWebDataStream(r.Context(), accessToken, property, defaultURI)
+		if err != nil {
+			fail("检查已有 GA4 数据流失败：" + err.Error())
+			return
+		}
+		if stream == nil {
+			stream, err = createGoogleAnalyticsWebDataStreamWithRetry(r.Context(), accessToken, property, displayName, defaultURI, false)
+			if err != nil {
+				fail("创建 GA4 数据流失败：" + err.Error())
+				return
+			}
+		}
 	}
 	if reused && strings.TrimSpace(stream.Name) == "" {
 		fail("Google 已找到匹配的数据流，但没有返回有效的数据流名称。")
@@ -804,6 +1029,7 @@ func (s *Server) adminCreateGoogleAnalyticsStream(w http.ResponseWriter, r *http
 		s.serverError(w, err)
 		return
 	}
+	s.googleAnalytics.invalidateAccount(googleAccountID)
 	msg := "已自动创建 GA4 数据流并启用统计代码：" + measurementID
 	if createdProperty {
 		msg = "已自动创建 GA4 属性和 Web 数据流并启用统计代码：" + measurementID
@@ -1495,6 +1721,25 @@ func googleAnalyticsMetricInt(values []googleAnalyticsMetricValue, index int) in
 }
 
 func googleAnalyticsAccountsAndProperties(ctx context.Context, accessToken string) ([]googleAnalyticsAccountOption, []googleAnalyticsPropertyOption, error) {
+	const attempts = 3
+	var lastErr error
+	for attempt := 0; attempt < attempts; attempt++ {
+		accounts, properties, err := googleAnalyticsAccountsAndPropertiesOnce(ctx, accessToken)
+		if err == nil {
+			return accounts, properties, nil
+		}
+		lastErr = err
+		if attempt == attempts-1 || !isRetriableGoogleReadError(err) {
+			break
+		}
+		if err := waitGoogleRetry(ctx, googleRetryDelay(attempt)); err != nil {
+			return nil, nil, err
+		}
+	}
+	return nil, nil, lastErr
+}
+
+func googleAnalyticsAccountsAndPropertiesOnce(ctx context.Context, accessToken string) ([]googleAnalyticsAccountOption, []googleAnalyticsPropertyOption, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, googleAnalyticsAdminURL+"/accountSummaries?pageSize=200", nil)
 	if err != nil {
 		return nil, nil, err
@@ -1528,7 +1773,7 @@ func googleAnalyticsAccountsAndProperties(ctx context.Context, accessToken strin
 		if msg == "" {
 			msg = "HTTP " + strconv.Itoa(resp.StatusCode)
 		}
-		return nil, nil, errors.New(googleAnalyticsAdminAPIErrorMessage(msg))
+		return nil, nil, newGoogleAPIError(resp.StatusCode, googleAnalyticsAdminAPIErrorMessage(msg))
 	}
 	var accounts []googleAnalyticsAccountOption
 	var properties []googleAnalyticsPropertyOption
@@ -1660,7 +1905,7 @@ func createGoogleAnalyticsProperty(ctx context.Context, accessToken, account, di
 		if msg == "" {
 			msg = "HTTP " + strconv.Itoa(resp.StatusCode)
 		}
-		return nil, errors.New(googleAnalyticsAdminAPIErrorMessage(msg))
+		return nil, newGoogleAPIError(resp.StatusCode, googleAnalyticsAdminAPIErrorMessage(msg))
 	}
 	name := normalizeGoogleAnalyticsPropertyName(out.Name)
 	if !validGoogleAnalyticsPropertyName(name) {
@@ -1698,20 +1943,65 @@ func findGoogleAnalyticsWebDataStreamAcrossProperties(ctx context.Context, acces
 	return "", nil, false, nil
 }
 
-func applyGoogleAnalyticsPropertyStreamSummaries(ctx context.Context, accessToken string, properties []googleAnalyticsPropertyOption, defaultURI string) error {
+func applyGoogleAnalyticsPropertyStreamSummaries(ctx context.Context, accessToken string, properties []googleAnalyticsPropertyOption, defaultURI string) (failed, attempted int, firstErr error) {
 	defaultURI, hasDefaultURI := normalizeGoogleDefaultURI(defaultURI)
+	type job struct {
+		index int
+		name  string
+	}
+	type result struct {
+		index   int
+		streams []*googleAnalyticsDataStream
+		err     error
+	}
+	jobs := make(chan job, len(properties))
+	results := make(chan result, len(properties))
 	for i := range properties {
 		name := normalizeGoogleAnalyticsPropertyName(properties[i].Name)
 		if !validGoogleAnalyticsPropertyName(name) {
 			continue
 		}
-		streams, err := googleAnalyticsWebDataStreams(ctx, accessToken, name)
-		if err != nil {
-			return err
+		jobs <- job{index: i, name: name}
+		attempted++
+	}
+	close(jobs)
+	if attempted == 0 {
+		return 0, 0, nil
+	}
+
+	workCtx, cancel := context.WithTimeout(ctx, googleAnalyticsStreamSummaryTimeout)
+	defer cancel()
+	workerCount := googleAnalyticsStreamSummaryWorkers
+	if attempted < workerCount {
+		workerCount = attempted
+	}
+	var wg sync.WaitGroup
+	wg.Add(workerCount)
+	for i := 0; i < workerCount; i++ {
+		go func() {
+			defer wg.Done()
+			for item := range jobs {
+				streams, err := googleAnalyticsWebDataStreams(workCtx, accessToken, item.name)
+				results <- result{index: item.index, streams: streams, err: err}
+			}
+		}()
+	}
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	for item := range results {
+		if item.err != nil {
+			failed++
+			if firstErr == nil {
+				firstErr = item.err
+			}
+			continue
 		}
 		var fallback *googleAnalyticsDataStream
 		var matched *googleAnalyticsDataStream
-		for _, stream := range streams {
+		for _, stream := range item.streams {
 			if stream == nil {
 				continue
 			}
@@ -1727,19 +2017,19 @@ func applyGoogleAnalyticsPropertyStreamSummaries(ctx context.Context, accessToke
 				break
 			}
 		}
-		if matched != nil {
-			setGoogleAnalyticsPropertyStreamSummary(&properties[i], matched)
-			properties[i].Matched = true
-			properties[i].MatchedDataStream = strings.TrimSpace(matched.Name)
-			properties[i].MatchedDataStreamID = googleAnalyticsDataStreamID(matched.Name)
-			properties[i].MatchedDataStreamDisplayName = strings.TrimSpace(matched.DisplayName)
-			properties[i].MatchedMeasurementID = normalizeGoogleMeasurementID(matched.MeasurementID)
-			properties[i].MatchedDefaultURI = strings.TrimSpace(matched.DefaultURI)
+		if matched == nil {
+			setGoogleAnalyticsPropertyStreamSummary(&properties[item.index], fallback)
 			continue
 		}
-		setGoogleAnalyticsPropertyStreamSummary(&properties[i], fallback)
+		setGoogleAnalyticsPropertyStreamSummary(&properties[item.index], matched)
+		properties[item.index].Matched = true
+		properties[item.index].MatchedDataStream = strings.TrimSpace(matched.Name)
+		properties[item.index].MatchedDataStreamID = googleAnalyticsDataStreamID(matched.Name)
+		properties[item.index].MatchedDataStreamDisplayName = strings.TrimSpace(matched.DisplayName)
+		properties[item.index].MatchedMeasurementID = normalizeGoogleMeasurementID(matched.MeasurementID)
+		properties[item.index].MatchedDefaultURI = strings.TrimSpace(matched.DefaultURI)
 	}
-	return nil
+	return failed, attempted, firstErr
 }
 
 func setGoogleAnalyticsPropertyStreamSummary(property *googleAnalyticsPropertyOption, stream *googleAnalyticsDataStream) {
@@ -1754,6 +2044,25 @@ func setGoogleAnalyticsPropertyStreamSummary(property *googleAnalyticsPropertyOp
 }
 
 func googleAnalyticsWebDataStreams(ctx context.Context, accessToken, property string) ([]*googleAnalyticsDataStream, error) {
+	const attempts = 3
+	var lastErr error
+	for attempt := 0; attempt < attempts; attempt++ {
+		streams, err := googleAnalyticsWebDataStreamsOnce(ctx, accessToken, property)
+		if err == nil {
+			return streams, nil
+		}
+		lastErr = err
+		if attempt == attempts-1 || !isRetriableGoogleReadError(err) {
+			break
+		}
+		if err := waitGoogleRetry(ctx, googleRetryDelay(attempt)); err != nil {
+			return nil, err
+		}
+	}
+	return nil, lastErr
+}
+
+func googleAnalyticsWebDataStreamsOnce(ctx context.Context, accessToken, property string) ([]*googleAnalyticsDataStream, error) {
 	property = normalizeGoogleAnalyticsPropertyName(property)
 	if !validGoogleAnalyticsPropertyName(property) {
 		return nil, errors.New("GA4 属性参数不正确")
@@ -1791,7 +2100,7 @@ func googleAnalyticsWebDataStreams(ctx context.Context, accessToken, property st
 		if msg == "" {
 			msg = "HTTP " + strconv.Itoa(resp.StatusCode)
 		}
-		return nil, errors.New(googleAnalyticsAdminAPIErrorMessage(msg))
+		return nil, newGoogleAPIError(resp.StatusCode, googleAnalyticsAdminAPIErrorMessage(msg))
 	}
 	var streams []*googleAnalyticsDataStream
 	for _, item := range out.DataStreams {
@@ -1881,7 +2190,7 @@ func createGoogleAnalyticsWebDataStream(ctx context.Context, accessToken, proper
 		if msg == "" {
 			msg = "HTTP " + strconv.Itoa(resp.StatusCode)
 		}
-		return nil, errors.New(googleAnalyticsAdminAPIErrorMessage(msg))
+		return nil, newGoogleAPIError(resp.StatusCode, googleAnalyticsAdminAPIErrorMessage(msg))
 	}
 	return &googleAnalyticsDataStream{
 		Name:          out.Name,
@@ -1889,6 +2198,25 @@ func createGoogleAnalyticsWebDataStream(ctx context.Context, accessToken, proper
 		DefaultURI:    defaultURI,
 		DisplayName:   strings.TrimSpace(displayName),
 	}, nil
+}
+
+func createGoogleAnalyticsWebDataStreamWithRetry(ctx context.Context, accessToken, property, displayName, defaultURI string, allowPermissionPropagation bool) (*googleAnalyticsDataStream, error) {
+	const attempts = 4
+	var lastErr error
+	for attempt := 0; attempt < attempts; attempt++ {
+		stream, err := createGoogleAnalyticsWebDataStream(ctx, accessToken, property, displayName, defaultURI)
+		if err == nil {
+			return stream, nil
+		}
+		lastErr = err
+		if attempt == attempts-1 || !isRetriableGoogleAPIError(err, allowPermissionPropagation) {
+			break
+		}
+		if err := waitGoogleRetry(ctx, googleRetryDelay(attempt)); err != nil {
+			return nil, err
+		}
+	}
+	return nil, lastErr
 }
 
 func googleSearchConsoleSites(ctx context.Context, accessToken string) ([]googleSearchConsoleSiteOption, error) {
