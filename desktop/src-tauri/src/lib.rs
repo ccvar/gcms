@@ -351,6 +351,8 @@ fn resolve_in_workdir(conn: &pack::Connection, project: &str, raw: &str) -> Resu
         };
         match exact {
             Ok(p) if p.starts_with(&root) => p,
+            // 智能体自己的产物目录也放行（codex 生图固定写 ~/.codex/generated_images）
+            Ok(p) if agent_output_roots().iter().any(|r| p.starts_with(r)) => p,
             Ok(_) => return Err("文件在工作目录之外".into()),
             // 精确解析不到（模型常把真实写在工作目录里的文件链接成想象中的前缀，
             // 如 /mnt/data/xx.webp、sandbox:…）：按文件名在工作目录内搜，唯一命中才用。
@@ -368,6 +370,21 @@ fn resolve_in_workdir(conn: &pack::Connection, project: &str, raw: &str) -> Resu
         }
     };
     Ok(p)
+}
+
+/// 智能体自己的产物目录（工作目录之外的只读预览白名单）：codex 生图工具固定写到
+/// ~/.codex/generated_images（CODEX_HOME 可改基目录）。只放行这一处，不放开家目录其他内容。
+fn agent_output_roots() -> Vec<std::path::PathBuf> {
+    std::env::var_os("CODEX_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+                .map(|h| std::path::Path::new(&h).join(".codex"))
+        })
+        .map(|b| b.join("generated_images"))
+        .and_then(|p| std::fs::canonicalize(p).ok())
+        .into_iter()
+        .collect()
 }
 
 /// 按文件名在工作目录内浅搜（深度≤4、扫描≤2000 项；跳过 .xx 隐藏目录和 node_modules）。
@@ -451,6 +468,26 @@ mod workdir_tests {
         // 真不存在仍报错
         assert!(resolve_in_workdir(&conn, "", "/mnt/data/nothing.webp").is_err(), "真不存在");
         std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// codex 生图产物目录（CODEX_HOME/generated_images）在工作目录之外也可预览；
+    /// 家目录其他位置仍拒绝（resolve_in_workdir_boundaries 里的 /etc/hosts 用例）。
+    #[test]
+    fn codex_generated_images_root_allowed() {
+        let ch = std::env::temp_dir().join(format!("gcms-pilot-codexhome-test-{}", std::process::id()));
+        std::fs::create_dir_all(ch.join("generated_images").join("sub")).unwrap();
+        let img = ch.join("generated_images").join("sub").join("gen.png");
+        std::fs::write(&img, "p").unwrap();
+        std::env::set_var("CODEX_HOME", &ch);
+
+        let wd = std::env::temp_dir().join(format!("gcms-pilot-workdir2-test-{}", std::process::id()));
+        std::fs::create_dir_all(&wd).unwrap();
+        let conn = test_conn(wd.to_str().unwrap());
+        assert!(resolve_in_workdir(&conn, "", img.to_str().unwrap()).is_ok(), "生图目录放行");
+
+        std::env::remove_var("CODEX_HOME");
+        std::fs::remove_dir_all(&ch).ok();
+        std::fs::remove_dir_all(&wd).ok();
     }
 
     /// 安装失败摘要：优先脚本 stdout 末行；stderr 异常首行剥掉 PowerShell 命令回显前缀。

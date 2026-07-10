@@ -969,18 +969,22 @@
   type Attach = { name: string; path: string; preview: string };
   // 发消息时把这段追加到正文末尾让 AI 拿到路径；渲染时再从正文里拆出来单独做成附件卡（见 splitAttachments）。
   const ATT_MARKER = '附件（已存在项目里，可直接读取使用）：';
-  // 从消息正文里拆出「真正的文字」和「附件路径列表」——AI 收到的是完整正文，气泡里只显示干净文字 + 附件卡。
-  function splitAttachments(text: string): { body: string; atts: string[] } {
-    let cut = text.indexOf('\n\n' + ATT_MARKER);
+  // 助手消息里由后端补的 codex 生图产物清单（agent.rs append_generated_images），渲染成缩略图。
+  const GEN_MARKER = '生成的图片：';
+  // 从消息正文里拆出「真正的文字」和「路径列表」——存储的是完整正文，气泡里显示干净文字 + 图卡。
+  function splitMarked(text: string, marker: string): { body: string; atts: string[] } {
+    let cut = text.indexOf('\n\n' + marker);
     let sep = 2;
     if (cut < 0) {
-      if (text.startsWith(ATT_MARKER)) { cut = 0; sep = 0; }
+      if (text.startsWith(marker)) { cut = 0; sep = 0; }
       else return { body: text, atts: [] };
     }
     const body = text.slice(0, cut);
     const atts = text.slice(cut + sep).split('\n').slice(1).map((l) => l.replace(/^-\s*/, '').trim()).filter(Boolean);
     return { body, atts };
   }
+  function splitAttachments(text: string) { return splitMarked(text, ATT_MARKER); }
+  function splitGenImages(text: string) { return splitMarked(text, GEN_MARKER); }
   function isImgPath(p: string): boolean { return /\.(png|jpe?g|gif|webp|svg|bmp|avif)$/i.test(p); }
   // 图片附件缩略图：消息里存的是相对工作目录的 uploads/ 路径，webview 读不了本地文件，
   // 走后端按「连接+项目」解析后读成 data URI；缓存键带上二者，避免不同会话同名文件串图。
@@ -1019,8 +1023,8 @@
     const stale = Object.keys(thumbs).filter((k) => !k.startsWith(prefix));
     if (stale.length) { const keep = { ...thumbs }; for (const k of stale) delete keep[k]; thumbs = keep; }
     for (const m of c.messages) {
-      if (m.role !== 'user') continue;
-      for (const p of splitAttachments(m.text).atts) if (isImgPath(p)) ensureThumb(c.conn_id, c.site_slug, p);
+      const atts = m.role === 'user' ? splitAttachments(m.text).atts : splitGenImages(m.text).atts;
+      for (const p of atts) if (isImgPath(p)) ensureThumb(c.conn_id, c.site_slug, p);
     }
   });
   // 点缩略图看大图（点任意处/Esc 关闭）
@@ -2175,8 +2179,28 @@
         {#if m.error}
           <div class="text is-err">{@render richText(m.text)}{#if isLast && !viewBusy}{#if activeConv?.session_ref && !retryExhausted[activeConvId]}<button class="retry-btn" onclick={() => retry(activeConvId, true)}><svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M13 8a5 5 0 1 1-1.5-3.6M13 2v3h-3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>重试</button>{/if}<button class="retry-btn" title="换一个全新会话原地续跑（自动带上历史摘要）——用于会话状态损坏、重试无效时" onclick={() => rebuildSession(activeConvId)}><svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M2.6 8a5.4 5.4 0 0 1 9.3-3.7M13.4 8a5.4 5.4 0 0 1-9.3 3.7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /><path d="M11.6 1.6v2.9h2.9M4.4 14.4v-2.9H1.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>重建继续</button>{/if}</div>
         {:else}
+          {@const ga = splitGenImages(m.text)}
           <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
-          <div class="text md" onclick={mdClick} onauxclick={mdClick}>{@html mdRender(m.text)}</div>
+          <div class="text md" onclick={mdClick} onauxclick={mdClick}>{@html mdRender(ga.body)}</div>
+          {#if ga.atts.length}
+            <!-- codex 生图产物：缩略图（点击放大）；读不到的退回文件名卡（点击访达定位） -->
+            <div class="ub-atts gen-imgs">
+              {#each ga.atts as p (p)}
+                {#if isImgPath(p) && thumbs[thumbKey(p)] !== ''}
+                  {#if thumbs[thumbKey(p)]}
+                    <button class="ub-att-img" data-tip={p.split(/[\\/]/).pop()} onclick={() => (lightbox = thumbs[thumbKey(p)])}><img src={thumbs[thumbKey(p)]} alt={p.split(/[\\/]/).pop()} onerror={() => (thumbs = { ...thumbs, [thumbKey(p)]: '' })} /></button>
+                  {:else}
+                    <span class="ub-att-img ph" data-tip={p.split(/[\\/]/).pop()}></span>
+                  {/if}
+                {:else}
+                  <button class="ub-att as-btn" title={p} onclick={() => void revealWorkdir(p)}>
+                    <span class="ub-att-ic"><svg width="13" height="13" viewBox="0 0 16 16" fill="none"><rect x="2.2" y="2.8" width="11.6" height="10.4" rx="1.6" stroke="currentColor" stroke-width="1.2" /><circle cx="5.7" cy="6.2" r="1.1" fill="currentColor" /><path d="M3 12.4l3.3-3.1 2.1 1.9 2.4-2.6 2.2 2.3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" /></svg></span>
+                    <span class="ub-att-n">{p.split(/[\\/]/).pop()}</span>
+                  </button>
+                {/if}
+              {/each}
+            </div>
+          {/if}
         {/if}
         {#if m.proposal}
           <div class="proposal">
@@ -2958,6 +2982,10 @@
   .ub-att-img { padding: 0; border: 1px solid var(--border2); border-radius: 10px; overflow: hidden; cursor: zoom-in; line-height: 0; background: repeating-conic-gradient(#ececea 0 25%, #fff 0 50%) 0 0 / 14px 14px; }
   .ub-att-img img { display: block; width: 128px; height: 96px; object-fit: cover; }
   .ub-att-img.ph { display: inline-block; width: 128px; height: 96px; cursor: default; animation: phpulse 1.2s ease-in-out infinite; }
+  /* 助手消息里的生图产物：与用户附件同款卡片，气泡外基底微调 */
+  .gen-imgs { margin-top: 6px; }
+  .ub-att.as-btn { cursor: pointer; font: inherit; font-size: 12px; color: inherit; }
+  .ub-att.as-btn:hover { border-color: var(--border3, var(--border2)); }
   @keyframes phpulse { 0%, 100% { opacity: .55; } 50% { opacity: .9; } }
   .ub-att-ic { flex: none; display: inline-flex; color: var(--dim); }
   .ub-att-n { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }

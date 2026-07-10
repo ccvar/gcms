@@ -274,6 +274,7 @@ pub async fn run_turn(
         is_error: false,
         usage: None,
         raw_tail: String::new(),
+        images: Vec::new(),
     }));
     let is_codex = brain == "codex";
     let out_task = stdout.map(|s| {
@@ -343,6 +344,18 @@ pub async fn run_turn(
 
     // 从助手文本里剥出 PILOT_TASK 提议（并把那行从展示文本移除）。
     let (clean_text, proposal) = extract_proposal(&c.text);
+    // 生图产物：只补真实存在的文件（模型可能提了没写出来的路径）。
+    let clean_text = if ok && !c.images.is_empty() {
+        let existing: Vec<String> = c
+            .images
+            .iter()
+            .filter(|p| std::path::Path::new(p.as_str()).is_file())
+            .cloned()
+            .collect();
+        append_generated_images(&clean_text, &existing)
+    } else {
+        clean_text
+    };
 
     let _ = channel.send(TurnEvent::Done { ok, error: error.clone() });
     TurnResult {
@@ -391,6 +404,60 @@ struct Collect {
     /// stdout 里最后一条**非 JSON** 行：CLI 崩溃/报错时常直接打纯文本到 stdout，
     /// 不留这个的话失败原因会被静默吞掉，只剩一句"模型没有产生输出"。
     raw_tail: String,
+    /// codex 生图工具的产物路径（事件流里带 generated_images 目录的图片路径）：
+    /// 工具结果不进对话正文，收集后在回合末尾补成「生成的图片」清单给前端渲染缩略图。
+    images: Vec<String>,
+}
+
+/// 递归扫事件 JSON 的字符串值，抽生图产物路径：含 generated_images 目录 + 图片扩展名
+/// 结尾的 token。只认生图目录，不把命令输出里的普通路径当图。
+fn extract_generated_images(v: &serde_json::Value, out: &mut Vec<String>) {
+    const IMG_EXTS: [&str; 8] = [".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".svg", ".avif"];
+    match v {
+        serde_json::Value::String(s) if s.contains("generated_images") => {
+            for tok in s.split(|ch: char| {
+                ch.is_whitespace() || matches!(ch, '"' | '\'' | '(' | ')' | '[' | ']' | '`' | ',' | ';' | '<' | '>')
+            }) {
+                let t = tok.trim_end_matches(['.', '。', '，', '：', ':']);
+                if t.contains("generated_images")
+                    && IMG_EXTS.iter().any(|e| t.to_ascii_lowercase().ends_with(e))
+                    && !out.iter().any(|x| x == t)
+                {
+                    out.push(t.to_string());
+                }
+            }
+        }
+        serde_json::Value::Array(a) => {
+            for x in a {
+                extract_generated_images(x, out);
+            }
+        }
+        serde_json::Value::Object(o) => {
+            for x in o.values() {
+                extract_generated_images(x, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// 把正文没提到的生图产物补成「生成的图片」清单（前端按此标记渲染缩略图）。
+/// images 需由调用方先过滤成真实存在的文件。
+fn append_generated_images(text: &str, images: &[String]) -> String {
+    let fresh: Vec<&String> = images.iter().filter(|p| !text.contains(p.as_str())).take(12).collect();
+    if fresh.is_empty() {
+        return text.to_string();
+    }
+    let mut out = text.trim_end().to_string();
+    if !out.is_empty() {
+        out.push_str("\n\n");
+    }
+    out.push_str("生成的图片：");
+    for p in fresh {
+        out.push_str("\n- ");
+        out.push_str(p);
+    }
+    out
 }
 
 /// 从 usage 对象抽 token 数。兼容 Anthropic（input_tokens/…）与 OpenAI 风格（prompt/completion_tokens）。缺失按 0。
@@ -640,6 +707,19 @@ fn parse_claude(ev: &serde_json::Value, ch: &Channel<TurnEvent>, collect: &Arc<M
 }
 
 fn parse_codex(ev: &serde_json::Value, ch: &Channel<TurnEvent>, collect: &Arc<Mutex<Collect>>) {
+    // 生图工具的产物只出现在工具结果事件里、不进对话正文——从所有事件里顺手收集。
+    {
+        let mut imgs = Vec::new();
+        extract_generated_images(ev, &mut imgs);
+        if !imgs.is_empty() {
+            let mut c = collect.lock().unwrap();
+            for i in imgs {
+                if !c.images.contains(&i) {
+                    c.images.push(i);
+                }
+            }
+        }
+    }
     // codex 某些版本在事件里带 token 统计，尽力抽一下（拿不到就 None，前端会隐藏上下文条）。
     if let Some(u) = parse_usage(&ev["usage"])
         .or_else(|| parse_usage(&ev["item"]["usage"]))
@@ -731,7 +811,7 @@ mod tests {
 
     #[test]
     fn claude_text_delta_accumulates() {
-        let c = Arc::new(Mutex::new(Collect { text: String::new(), tools: vec![], session_ref: "s".into(), is_error: false, usage: None, raw_tail: String::new() }));
+        let c = Arc::new(Mutex::new(Collect { text: String::new(), tools: vec![], session_ref: "s".into(), is_error: false, usage: None, raw_tail: String::new(), images: vec![] }));
         let channel = ch();
         parse_claude(&json!({"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"你好"}}}), &channel, &c);
         parse_claude(&json!({"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"世界"}}}), &channel, &c);
@@ -740,7 +820,7 @@ mod tests {
 
     #[test]
     fn claude_tool_use_captured() {
-        let c = Arc::new(Mutex::new(Collect { text: String::new(), tools: vec![], session_ref: "s".into(), is_error: false, usage: None, raw_tail: String::new() }));
+        let c = Arc::new(Mutex::new(Collect { text: String::new(), tools: vec![], session_ref: "s".into(), is_error: false, usage: None, raw_tail: String::new(), images: vec![] }));
         parse_claude(&json!({"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"node scripts/gcms.js list posts"}}]}}), &ch(), &c);
         let g = c.lock().unwrap();
         assert_eq!(g.tools.len(), 1);
@@ -749,7 +829,7 @@ mod tests {
 
     #[test]
     fn codex_thread_and_message() {
-        let c = Arc::new(Mutex::new(Collect { text: String::new(), tools: vec![], session_ref: String::new(), is_error: false, usage: None, raw_tail: String::new() }));
+        let c = Arc::new(Mutex::new(Collect { text: String::new(), tools: vec![], session_ref: String::new(), is_error: false, usage: None, raw_tail: String::new(), images: vec![] }));
         parse_codex(&json!({"type":"thread.started","thread_id":"tid-123"}), &ch(), &c);
         parse_codex(&json!({"type":"item.completed","item":{"type":"agent_message","text":"明白"}}), &ch(), &c);
         let g = c.lock().unwrap();
@@ -759,9 +839,33 @@ mod tests {
 
     #[test]
     fn result_error_flag() {
-        let c = Arc::new(Mutex::new(Collect { text: String::new(), tools: vec![], session_ref: "s".into(), is_error: false, usage: None, raw_tail: String::new() }));
+        let c = Arc::new(Mutex::new(Collect { text: String::new(), tools: vec![], session_ref: "s".into(), is_error: false, usage: None, raw_tail: String::new(), images: vec![] }));
         parse_claude(&json!({"type":"result","is_error":true,"result":"boom"}), &ch(), &c);
         assert!(c.lock().unwrap().is_error);
+    }
+
+    /// 生图产物收集：工具结果里的 generated_images 路径进 images（去重）；普通路径不收。
+    #[test]
+    fn codex_generated_images_collected() {
+        let c = Arc::new(Mutex::new(Collect { text: String::new(), tools: vec![], session_ref: "s".into(), is_error: false, usage: None, raw_tail: String::new(), images: vec![] }));
+        let p = "/Users/x/.codex/generated_images/019f/exec-abc.png";
+        parse_codex(&json!({"type":"item.completed","item":{"type":"tool_call","output":format!("saved to {p} done")}}), &ch(), &c);
+        parse_codex(&json!({"type":"item.completed","item":{"type":"tool_call","output":{"path": p}}}), &ch(), &c); // 重复不重收
+        parse_codex(&json!({"type":"item.completed","item":{"type":"command_execution","command":"cp a.png b.png"}}), &ch(), &c); // 普通路径不收
+        let g = c.lock().unwrap();
+        assert_eq!(g.images, vec![p.to_string()]);
+    }
+
+    /// 「生成的图片」清单：正文没提到的才补；提到过/为空不动原文。
+    #[test]
+    fn append_generated_images_dedups_against_text() {
+        let imgs = vec!["/a/generated_images/x.png".to_string(), "/a/generated_images/y.png".to_string()];
+        let out = append_generated_images("已生成 /a/generated_images/x.png", &imgs);
+        assert!(out.contains("生成的图片：\n- /a/generated_images/y.png"), "{out}");
+        assert_eq!(out.matches("x.png").count(), 1, "正文已有的不重复列");
+        assert_eq!(append_generated_images("正文", &[]), "正文");
+        let solo = append_generated_images("", &imgs[..1].to_vec());
+        assert!(solo.starts_with("生成的图片："), "{solo}");
     }
 
     #[test]
