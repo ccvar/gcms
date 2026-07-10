@@ -1,6 +1,7 @@
 <script lang="ts">
   // 模型 + 推理强度 合并面板：点开一个浮层，上半是模型列表、下半是可拖动的强度滑杆
   //（对标 ChatGPT/Claude 客户端的交互）。选择即回调，父组件负责真正落库/持久化。
+  import { invoke } from '@tauri-apps/api/core';
   import BrainIcon from './BrainIcon.svelte';
 
   type Opt = { value: string; label: string; sub?: string; icon?: string; disabled?: boolean };
@@ -44,7 +45,28 @@
     const left = Math.max(12, Math.min(r.left, window.innerWidth - width - 12));
     menuStyle = `bottom:${Math.round(window.innerHeight - r.top + 6)}px; left:${Math.round(left)}px; width:${width}px;`;
   }
-  function toggle() { open = !open; if (open) requestAnimationFrame(position); }
+  function toggle() { open = !open; if (open) { requestAnimationFrame(position); void loadUsage(); } }
+
+  // 本地用量参考（近 5 小时 / 今日，按 brain 汇总）：打开面板时拉一次。
+  // 官方订阅额度无查询接口，这只是本地体感计量，换算不了剩余百分比。
+  type UsageStats = { window_a: Record<string, number>; window_b: Record<string, number> };
+  let usage = $state<UsageStats | null>(null);
+  async function loadUsage() {
+    const midnight = new Date();
+    midnight.setHours(0, 0, 0, 0);
+    try {
+      usage = await invoke<UsageStats>('usage_stats', {
+        sinceA: Math.floor(Date.now() / 1000) - 5 * 3600,
+        sinceB: Math.floor(midnight.getTime() / 1000),
+      });
+    } catch { usage = null; }
+  }
+  function fmtTok(n: number | undefined): string {
+    const v = n ?? 0;
+    if (v >= 1e6) return (v / 1e6).toFixed(1) + 'M';
+    if (v >= 1e3) return Math.round(v / 1e3) + 'k';
+    return String(v);
+  }
   function pick(o: Opt) {
     if (o.disabled || lockModel) return;
     if (o.value !== value) onpick(o.value);
@@ -129,6 +151,14 @@
         </span>
         <span class="fx-thumb"></span>
       </div>
+      {#if usage}
+        <div class="fx-div"></div>
+        <div class="fx-usage">
+          <div class="fx-usage-title">本地用量<span>token · 仅供参考</span></div>
+          <div class="fx-usage-row"><span>近 5 小时</span><b>Claude {fmtTok(usage.window_a?.claude)} · Codex {fmtTok(usage.window_a?.codex)}</b></div>
+          <div class="fx-usage-row"><span>今日</span><b>Claude {fmtTok(usage.window_b?.claude)} · Codex {fmtTok(usage.window_b?.codex)}</b></div>
+        </div>
+      {/if}
     </div>
   {/if}
 </div>
@@ -154,6 +184,11 @@
   .fx-otext small { font-size: 10.5px; color: var(--faint, #9b968c); }
   .fx-check { margin-left: auto; font-size: 12px; color: var(--text, #26241f); }
   .fx-div { height: 1px; margin: 5px 4px; background: var(--border, #ecebe6); }
+  .fx-usage { padding: 2px 8px 4px; }
+  .fx-usage-title { display: flex; align-items: center; justify-content: space-between; font-size: 10.5px; font-weight: 600; letter-spacing: .04em; color: var(--faint, #9b968c); padding: 2px 0 4px; }
+  .fx-usage-title span { font-weight: 400; letter-spacing: 0; }
+  .fx-usage-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 11.5px; color: var(--dim, #6b675f); padding: 1.5px 0; }
+  .fx-usage-row b { font-weight: 500; color: var(--text, #26241f); white-space: nowrap; }
 
   .fx-ends { display: flex; justify-content: space-between; padding: 0 10px 4px; font-size: 10.5px; color: var(--faint, #9b968c); }
   /* 粗胶囊轨道：底为浅灰点阵（右侧渐显），填充为暖色渐变叠白色星点 */

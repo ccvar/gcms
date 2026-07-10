@@ -11,6 +11,7 @@ mod permit;
 mod scheduled;
 mod tasks;
 mod tools;
+mod usage;
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -1496,7 +1497,7 @@ fn spawn_scheduler(app: AppHandle) {
 }
 
 fn user_msg(text: String, now: u64) -> Message {
-    Message { role: "user".into(), text, tools: vec![], ts: now, hidden: false, error: false, proposal: None }
+    Message { role: "user".into(), text, tools: vec![], ts: now, hidden: false, error: false, proposal: None, limit_reset: None }
 }
 fn assistant_msg(res: &agent::TurnResult, now: u64) -> Message {
     Message {
@@ -1509,6 +1510,7 @@ fn assistant_msg(res: &agent::TurnResult, now: u64) -> Message {
         // CLI 有时退出码非 0 但回答是好的（如跑了 open 打开浏览器），不该把整段染红。
         error: !res.ok && res.text.trim().is_empty(),
         proposal: res.proposal.clone(),
+        limit_reset: res.limit_reset,
     }
 }
 
@@ -1516,12 +1518,27 @@ fn assistant_msg(res: &agent::TurnResult, now: u64) -> Message {
 /// 口径差异：claude 用最后一条 assistant 消息的 usage＝最终那次调用读入的上下文，能当"会话大小"；
 /// codex（exec --json）只有 turn.completed 的整轮汇总——多步回合是各步之和，当上下文显示会离谱
 /// 膨胀（一轮几百步能加到几十 M），故 codex 不标上下文（置 0，前端隐藏该条），只记累计吞吐。
-fn apply_usage(c: &mut Conversation, res: &agent::TurnResult) {
+fn apply_usage(c: &mut Conversation, res: &agent::TurnResult, data_dir: &std::path::Path) {
     if let Some(u) = &res.usage {
         let ctx = u.input + u.cache_read + u.cache_create;
         c.ctx_tokens = if c.brain == "codex" { 0 } else { ctx };
         c.total_tokens += ctx + u.output; // 累计（每轮全量计入，反映实际处理量）
+        usage::append(data_dir, &usage::UsageEntry {
+            ts: now_secs() as i64,
+            brain: c.brain.clone(),
+            model: c.model.clone(),
+            input: u.input,
+            output: u.output,
+            cache_read: u.cache_read,
+            cache_create: u.cache_create,
+        });
     }
+}
+
+/// 本地用量参考统计：两个起点（前端按本地时区算好，如近 5 小时 / 今日零点）各汇总一份。
+#[tauri::command]
+fn usage_stats(state: tauri::State<'_, AppState>, since_a: i64, since_b: i64) -> usage::UsageStats {
+    usage::stats(&state.data_dir, since_a, since_b)
 }
 
 /// 开新会话的共享实现（命令与定时任务调度器都用它）。stores 传入克隆，便于后台任务持有。
@@ -1596,7 +1613,7 @@ async fn create_conversation(
         }
         c.status = "idle".into();
         c.messages.push(assistant_msg(&res, now2));
-        apply_usage(c, &res);
+        apply_usage(c, &res, &data_dir);
     })?;
     updated.ok_or_else(|| "会话丢失".into())
 }
@@ -1685,7 +1702,7 @@ async fn send_message(
     let updated = state.convos.mutate(&conv_id, now2, |c| {
         c.status = "idle".into();
         c.messages.push(assistant_msg(&res, now2));
-        apply_usage(c, &res);
+        apply_usage(c, &res, &state.data_dir);
     })?;
     updated.ok_or_else(|| "会话丢失".into())
 }
@@ -1725,7 +1742,7 @@ async fn retry_turn(
     let updated = state.convos.mutate(&conv_id, now2, |c| {
         c.status = "idle".into();
         c.messages.push(assistant_msg(&res, now2));
-        apply_usage(c, &res);
+        apply_usage(c, &res, &state.data_dir);
     })?;
     updated.ok_or_else(|| "会话丢失".into())
 }
@@ -1789,7 +1806,7 @@ async fn rebuild_session(
         }
         c.status = "idle".into();
         c.messages.push(assistant_msg(&res, now2));
-        apply_usage(c, &res);
+        apply_usage(c, &res, &state.data_dir);
     })?;
     updated.ok_or_else(|| "会话丢失".into())
 }
@@ -2029,6 +2046,7 @@ pub fn run() {
             save_attachment,
             read_workdir_image,
             resolve_workdir_file,
+            usage_stats,
             list_cf_projects,
             cf_project_ready,
             cf_preview_start,

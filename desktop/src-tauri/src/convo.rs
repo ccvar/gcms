@@ -47,6 +47,10 @@ pub struct Message {
     /// AI 提议的定时任务（界面上渲染成确认卡）。
     #[serde(default)]
     pub proposal: Option<TaskProposal>,
+    /// 本轮因订阅额度/限流失败：恢复时间戳秒（0=拿不到时间）。None=非限额错误。
+    /// 前端据此渲染「额度已用完」卡片与到点自动续跑。
+    #[serde(default)]
+    pub limit_reset: Option<i64>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -317,7 +321,7 @@ mod tests {
     use super::*;
 
     fn msg(role: &str, text: &str) -> Message {
-        Message { role: role.into(), text: text.into(), tools: vec![], ts: 0, hidden: false, error: role == "assistant" && text.is_empty(), proposal: None }
+        Message { role: role.into(), text: text.into(), tools: vec![], ts: 0, hidden: false, error: role == "assistant" && text.is_empty(), proposal: None, limit_reset: None }
     }
     fn conv(id: &str, session: &str, msgs: Vec<Message>) -> Conversation {
         Conversation {
@@ -353,8 +357,8 @@ mod tests {
         let msgs = vec![
             msg("user", "第一问"),
             msg("assistant", "第一答"),
-            Message { role: "assistant".into(), text: "内部".into(), tools: vec![], ts: 0, hidden: true, error: false, proposal: None },
-            Message { role: "assistant".into(), text: "报错了".into(), tools: vec![], ts: 0, hidden: false, error: true, proposal: None },
+            Message { role: "assistant".into(), text: "内部".into(), tools: vec![], ts: 0, hidden: true, error: false, proposal: None, limit_reset: None },
+            Message { role: "assistant".into(), text: "报错了".into(), tools: vec![], ts: 0, hidden: false, error: true, proposal: None, limit_reset: None },
             msg("user", "最新请求"),
         ];
         let r = recap(&msgs, 8000);

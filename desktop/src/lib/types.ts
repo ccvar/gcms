@@ -83,6 +83,8 @@ export interface Message {
   hidden: boolean;
   error: boolean;
   proposal?: TaskProposal | null;
+  /** 本轮因订阅额度/限流失败：恢复时间戳秒（0=拿不到时间）。null/undefined=非限额错误。 */
+  limit_reset?: number | null;
 }
 
 export interface Conversation {

@@ -45,6 +45,41 @@ pub struct TurnResult {
     pub proposal: Option<TaskProposal>,
     /// 本轮 token 用量（从 CLI 流里抽出）；用于「会话大小/累计用量」。拿不到则 None。
     pub usage: Option<TurnUsage>,
+    /// 本轮因订阅额度/限流失败：Some(恢复时间戳秒)，拿不到恢复时间为 Some(0)；非限额错误 None。
+    pub limit_reset: Option<i64>,
+}
+
+/// 识别「订阅额度耗尽/限流」类报错。claude 触顶输出形如
+/// "Claude AI usage limit reached|1736600400"（重置时间戳可选）；codex/OpenAI 是
+/// 429 / usage limit / rate limit 一族措辞。只对失败回合的错误材料调用（正文里聊到
+/// "rate limit" 不会误判——ok 回合不进这里）。
+fn detect_usage_limit(material: &str) -> Option<i64> {
+    let low = material.to_ascii_lowercase();
+    let hit = ["usage limit", "rate limit", "limit reached", "too many requests", "insufficient_quota", "quota exceeded", "resets at"]
+        .iter()
+        .any(|p| low.contains(p))
+        || low.contains("(429")
+        || low.contains(" 429")
+        || low.contains("status 429")
+        || low.contains("429 ");
+    if !hit {
+        return None;
+    }
+    // claude 风格：…limit reached|<epoch秒>
+    if let Some(i) = low.find("limit reached|") {
+        let rest = &material[i + "limit reached|".len()..];
+        let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+        if let Ok(ts) = digits.parse::<i64>() {
+            // 秒级时间戳合理区间（2020–2100），毫秒级的除以 1000
+            if (1_577_836_800..4_102_444_800).contains(&ts) {
+                return Some(ts);
+            }
+            if (1_577_836_800_000..4_102_444_800_000).contains(&ts) {
+                return Some(ts / 1000);
+            }
+        }
+    }
+    Some(0)
 }
 
 /// 一轮的 token 用量。input+cache_read+cache_create ≈ 模型这轮读入的整段上下文（＝当前会话大小）。
@@ -222,7 +257,7 @@ pub async fn run_turn(
         Ok(k) => k,
         Err(e) => {
             let _ = channel.send(TurnEvent::Done { ok: false, error: e.clone() });
-            return TurnResult { ok: false, text: String::new(), tools: vec![], error: e, session_ref, proposal: None, usage: None };
+            return TurnResult { ok: false, text: String::new(), tools: vec![], error: e, session_ref, proposal: None, usage: None, limit_reset: None };
         }
     };
 
@@ -244,7 +279,7 @@ pub async fn run_turn(
         Ok(c) => c,
         Err(e) => {
             let _ = channel.send(TurnEvent::Done { ok: false, error: e.clone() });
-            return TurnResult { ok: false, text: String::new(), tools: vec![], error: e, session_ref, proposal: None, usage: None };
+            return TurnResult { ok: false, text: String::new(), tools: vec![], error: e, session_ref, proposal: None, usage: None, limit_reset: None };
         }
     };
 
@@ -258,7 +293,7 @@ pub async fn run_turn(
         Err(e) => {
             let msg = format!("启动 {brain} 失败（确认已安装并登录）: {e}");
             let _ = channel.send(TurnEvent::Done { ok: false, error: msg.clone() });
-            return TurnResult { ok: false, text: String::new(), tools: vec![], error: msg, session_ref, proposal: None, usage: None };
+            return TurnResult { ok: false, text: String::new(), tools: vec![], error: msg, session_ref, proposal: None, usage: None, limit_reset: None };
         }
     };
 
@@ -357,6 +392,13 @@ pub async fn run_turn(
         clean_text
     };
 
+    // 限额识别只看失败回合的错误材料（stderr + 结构化错误 + stdout 尾行）。
+    let limit_reset = if ok {
+        None
+    } else {
+        detect_usage_limit(&format!("{error}\n{err_text}\n{}", c.raw_tail))
+    };
+
     let _ = channel.send(TurnEvent::Done { ok, error: error.clone() });
     TurnResult {
         ok,
@@ -366,6 +408,7 @@ pub async fn run_turn(
         session_ref: c.session_ref,
         proposal,
         usage: c.usage,
+        limit_reset,
     }
 }
 
@@ -842,6 +885,18 @@ mod tests {
         let c = Arc::new(Mutex::new(Collect { text: String::new(), tools: vec![], session_ref: "s".into(), is_error: false, usage: None, raw_tail: String::new(), images: vec![] }));
         parse_claude(&json!({"type":"result","is_error":true,"result":"boom"}), &ch(), &c);
         assert!(c.lock().unwrap().is_error);
+    }
+
+    /// 限额识别：claude 带重置时间戳、codex/429 无时间戳给 0、普通错误 None。
+    #[test]
+    fn detect_usage_limit_variants() {
+        assert_eq!(detect_usage_limit("Claude AI usage limit reached|1736600400"), Some(1736600400));
+        assert_eq!(detect_usage_limit("blah limit reached|1736600400000 tail"), Some(1736600400)); // 毫秒级归一
+        assert_eq!(detect_usage_limit("HTTP 429 Too Many Requests"), Some(0));
+        assert_eq!(detect_usage_limit("You've hit your usage limit."), Some(0));
+        assert_eq!(detect_usage_limit("insufficient_quota: upgrade your plan"), Some(0));
+        assert_eq!(detect_usage_limit("没找到这个文件"), None);
+        assert_eq!(detect_usage_limit("connection reset by peer"), None); // reset≠限额
     }
 
     /// 生图产物收集：工具结果里的 generated_images 路径进 images（去重）；普通路径不收。

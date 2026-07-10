@@ -1085,6 +1085,46 @@
     return /(网络|连接|超时|无法访问|timed?\s*out|timeout|overload|rate.?limit|too many requests|\b429\b|\b5\d\d\b|ECONN| ENET|EAI_AGAIN|socket hang|connection (reset|refused|closed|error)|temporar|try again|network error|fetch failed)/i.test(err);
   }
   // 重试上一轮：去掉失败的助手消息、用最后一条用户消息 resume 再跑（不新增用户气泡）。manual=用户手点（重置自动预算）。
+  // ---------- 额度耗尽卡：倒计时 + 到点自动续跑 ----------
+  let limitAuto = $state<Record<string, number>>({}); // convId → 触发时刻 ms
+  let nowTick = $state(Date.now());
+  $effect(() => {
+    const t = setInterval(() => {
+      nowTick = Date.now();
+      for (const [id, at] of Object.entries(limitAuto)) {
+        if (nowTick >= at && !running[id]) {
+          const rest = { ...limitAuto };
+          delete rest[id];
+          limitAuto = rest;
+          void retry(id, false);
+        }
+      }
+    }, 1000);
+    return () => clearInterval(t);
+  });
+  function armLimitAuto(convId: string, resetSec: number) {
+    limitAuto = { ...limitAuto, [convId]: resetSec * 1000 + 90_000 }; // 官方重置后再缓 90 秒
+  }
+  function disarmLimitAuto(convId: string) {
+    const rest = { ...limitAuto };
+    delete rest[convId];
+    limitAuto = rest;
+  }
+  function fmtClock(sec: number): string {
+    const d = new Date(sec * 1000);
+    const hm = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+    return new Date().toDateString() === d.toDateString() ? hm : `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
+  }
+  function fmtRemain(ms: number): string {
+    const m = Math.ceil(ms / 60000);
+    if (m >= 60) return `${Math.floor(m / 60)} 小时 ${m % 60} 分`;
+    if (m > 1) return `${m} 分钟`;
+    return '不到 1 分钟';
+  }
+  function brainTitle(b?: string): string {
+    return b === 'codex' ? 'Codex' : b === 'claude' ? 'Claude' : '模型';
+  }
+
   async function retry(convId: string, manual = false) {
     if (running[convId]) return;
     const base = activeConvId === convId ? activeConv : convos.find((c) => c.id === convId);
@@ -2176,7 +2216,27 @@
     <div class="msg assistant">
       <div class="body">
         {#if m.tools.length}{@render cmds(m.tools)}{/if}
-        {#if m.error}
+        {#if m.error && m.limit_reset != null}
+          <div class="limit-card">
+            <div class="limit-head">⏳ {brainTitle(activeConv?.brain)} 额度已用完</div>
+            {#if (m.limit_reset ?? 0) > 0}
+              <div class="limit-sub">预计 {fmtClock(m.limit_reset ?? 0)} 恢复{#if (m.limit_reset ?? 0) * 1000 > nowTick} · 还有 {fmtRemain((m.limit_reset ?? 0) * 1000 - nowTick)}{/if}</div>
+            {:else}
+              <div class="limit-sub">订阅套餐的时间窗限额已触顶，稍后会自动恢复；也可以稍等片刻手动重试。</div>
+            {/if}
+            {#if isLast && !viewBusy}
+              <div class="limit-actions">
+                {#if limitAuto[activeConvId]}
+                  <button class="retry-btn is-armed" onclick={() => disarmLimitAuto(activeConvId)}>✓ 已排队，到点自动续跑 · 点击取消</button>
+                {:else if (m.limit_reset ?? 0) * 1000 > nowTick}
+                  <button class="retry-btn" onclick={() => armLimitAuto(activeConvId, m.limit_reset ?? 0)}><svg width="12" height="12" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="5.6" stroke="currentColor" stroke-width="1.4" /><path d="M8 5.2V8l2 1.4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /></svg>到点自动续跑</button>
+                {/if}
+                {#if activeConv?.session_ref}<button class="retry-btn" onclick={() => retry(activeConvId, true)}><svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M13 8a5 5 0 1 1-1.5-3.6M13 2v3h-3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>立即重试</button>{/if}
+              </div>
+              <div class="limit-hint">也可以在右下角把模型切到另一家继续。</div>
+            {/if}
+          </div>
+        {:else if m.error}
           <div class="text is-err">{@render richText(m.text)}{#if isLast && !viewBusy}{#if activeConv?.session_ref && !retryExhausted[activeConvId]}<button class="retry-btn" onclick={() => retry(activeConvId, true)}><svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M13 8a5 5 0 1 1-1.5-3.6M13 2v3h-3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>重试</button>{/if}<button class="retry-btn" title="换一个全新会话原地续跑（自动带上历史摘要）——用于会话状态损坏、重试无效时" onclick={() => rebuildSession(activeConvId)}><svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M2.6 8a5.4 5.4 0 0 1 9.3-3.7M13.4 8a5.4 5.4 0 0 1-9.3 3.7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /><path d="M11.6 1.6v2.9h2.9M4.4 14.4v-2.9H1.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>重建继续</button>{/if}</div>
         {:else}
           {@const ga = splitGenImages(m.text)}
@@ -2801,6 +2861,14 @@
   .retry-btn { display: inline-flex; align-items: center; gap: 4px; margin-left: 10px; padding: 0; background: none; border: none; color: var(--accent); font: inherit; font-size: 12.5px; cursor: pointer; vertical-align: baseline; }
   .retry-btn:hover { text-decoration: underline; }
   .retry-btn svg { flex: none; }
+  /* 额度耗尽卡：明确状态 + 倒计时 + 到点自动续跑 */
+  .limit-card { border: 1px solid var(--border2, #e2dfd7); border-left: 3px solid #c98d70; border-radius: 10px; padding: 10px 13px; background: #fbf9f5; max-width: 520px; }
+  .limit-head { font-size: 13.5px; font-weight: 600; color: var(--text, #26241f); }
+  .limit-sub { margin-top: 3px; font-size: 12.5px; color: var(--dim, #6b675f); }
+  .limit-actions { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 4px 8px; }
+  .limit-actions .retry-btn { margin-left: 0; }
+  .limit-actions .retry-btn.is-armed { color: #3e7a4e; }
+  .limit-hint { margin-top: 6px; font-size: 11.5px; color: var(--faint, #9b968c); }
   /* 命令列表：默认收起，点击展开 */
   .cmds { margin-bottom: 9px; }
   .cmds summary { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; list-style: none; width: fit-content;
