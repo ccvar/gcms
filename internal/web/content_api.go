@@ -75,13 +75,15 @@ type apiTypeFieldDef struct {
 }
 
 type apiTypeDef struct {
-	Key         string            `json:"key"`
-	Name        string            `json:"name"`
-	Collection  string            `json:"collection"`
-	URLPrefix   string            `json:"url_prefix"`
-	Searchable  bool              `json:"searchable"`
-	HasCategory bool              `json:"has_category"`
-	Fields      []apiTypeFieldDef `json:"fields"`
+	Key          string            `json:"key"`
+	Name         string            `json:"name"`
+	Collection   string            `json:"collection"`
+	URLPrefix    string            `json:"url_prefix"`
+	Searchable   bool              `json:"searchable"`
+	HasCategory  bool              `json:"has_category"`
+	Hierarchical bool              `json:"hierarchical"`
+	Enabled      bool              `json:"enabled"`
+	Fields       []apiTypeFieldDef `json:"fields"`
 }
 
 // apiContentTypes 是给 AI/自动化的内容类型自省接口：返回本站「已启用」的扩展内容类型
@@ -91,11 +93,19 @@ func (s *Server) apiContentTypes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	lang := s.defaultLang()
+	// 默认只列已启用（既有契约不变）；?all=1 列全部注册类型并带 enabled 标记，
+	// 供 AI 发现"可以启用什么"（配合 POST /types/{key}/enable）。
+	list := s.activeExtContentTypes()
+	enabledSet := s.enabledTypeSet()
+	if r.URL.Query().Get("all") == "1" {
+		list = s.allExtTypes()
+	}
 	out := make([]apiTypeDef, 0)
-	for _, ct := range s.activeExtContentTypes() {
+	for _, ct := range list {
 		def := apiTypeDef{
 			Key: ct.Key, Name: ct.Name(lang), Collection: ct.URLPrefix, URLPrefix: ct.URLPrefix,
-			Searchable: ct.Searchable, HasCategory: ct.HasCategory,
+			Searchable: ct.Searchable, HasCategory: ct.HasCategory, Hierarchical: ct.Hierarchical,
+			Enabled: enabledSet[ct.Key] || (ct.DefaultOn && !ct.Builtin),
 		}
 		for _, f := range ct.Fields {
 			fd := apiTypeFieldDef{

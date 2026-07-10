@@ -1385,6 +1385,13 @@ func (s *Store) ListAllByType(typ, lang string) ([]*Post, error) {
 	return s.queryPostSummaries(`WHERE p.type=? AND p.lang=? ORDER BY p.updated_at DESC`, typ, lang)
 }
 
+// CountByType 某类型全部内容条数（不分语种与状态）。删除类型前的护栏用。
+func (s *Store) CountByType(typ string) (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM posts WHERE type=?`, typ).Scan(&n)
+	return n, err
+}
+
 // AllPublishedByType 某语种、某类型全部已发布内容（供搜索索引与静态导出枚举）。
 func (s *Store) AllPublishedByType(typ, lang string) ([]*Post, error) {
 	return s.queryPostSummaries(`WHERE p.type=? AND p.status='published' AND p.lang=? ORDER BY p.published_at DESC`, typ, lang)
