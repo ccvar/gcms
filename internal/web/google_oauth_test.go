@@ -67,7 +67,7 @@ func TestGoogleAnalyticsPropertyStreamSummariesKeepPartialResults(t *testing.T) 
 			return jsonTestResponse(req, http.StatusOK, `{"dataStreams":[{"name":"properties/123/dataStreams/1","type":"WEB_DATA_STREAM","displayName":"Example","webStreamData":{"defaultUri":"https://example.com/","measurementId":"G-EXAMPLE1"}}]}`), nil
 		case "/v1beta/properties/456/dataStreams":
 			failingCalls.Add(1)
-			return jsonTestResponse(req, http.StatusBadGateway, `{"error":{"message":"temporary upstream failure"}}`), nil
+			return jsonTestResponse(req, http.StatusBadGateway, `upstream unavailable`), nil
 		default:
 			t.Fatalf("unexpected google api request: %s", req.URL.String())
 			return jsonTestResponse(req, http.StatusNotFound, `{}`), nil

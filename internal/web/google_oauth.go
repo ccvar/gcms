@@ -84,7 +84,7 @@ func isRetriableGoogleReadError(err error) bool {
 }
 
 func googleRetryDelay(attempt int) time.Duration {
-	delays := []time.Duration{150 * time.Millisecond, 400 * time.Millisecond, 900 * time.Millisecond}
+	delays := []time.Duration{200 * time.Millisecond, 500 * time.Millisecond, time.Second, 2 * time.Second}
 	if attempt < 0 {
 		attempt = 0
 	}
@@ -1765,15 +1765,16 @@ func googleAnalyticsAccountsAndPropertiesOnce(ctx context.Context, accessToken s
 			Message string `json:"message"`
 		} `json:"error"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, nil, err
-	}
+	decodeErr := json.NewDecoder(resp.Body).Decode(&out)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		msg := out.Error.Message
 		if msg == "" {
 			msg = "HTTP " + strconv.Itoa(resp.StatusCode)
 		}
 		return nil, nil, newGoogleAPIError(resp.StatusCode, googleAnalyticsAdminAPIErrorMessage(msg))
+	}
+	if decodeErr != nil {
+		return nil, nil, decodeErr
 	}
 	var accounts []googleAnalyticsAccountOption
 	var properties []googleAnalyticsPropertyOption
@@ -1897,15 +1898,16 @@ func createGoogleAnalyticsProperty(ctx context.Context, accessToken, account, di
 			Message string `json:"message"`
 		} `json:"error"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, err
-	}
+	decodeErr := json.NewDecoder(resp.Body).Decode(&out)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		msg := out.Error.Message
 		if msg == "" {
 			msg = "HTTP " + strconv.Itoa(resp.StatusCode)
 		}
 		return nil, newGoogleAPIError(resp.StatusCode, googleAnalyticsAdminAPIErrorMessage(msg))
+	}
+	if decodeErr != nil {
+		return nil, decodeErr
 	}
 	name := normalizeGoogleAnalyticsPropertyName(out.Name)
 	if !validGoogleAnalyticsPropertyName(name) {
@@ -2092,15 +2094,16 @@ func googleAnalyticsWebDataStreamsOnce(ctx context.Context, accessToken, propert
 			Message string `json:"message"`
 		} `json:"error"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, err
-	}
+	decodeErr := json.NewDecoder(resp.Body).Decode(&out)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		msg := out.Error.Message
 		if msg == "" {
 			msg = "HTTP " + strconv.Itoa(resp.StatusCode)
 		}
 		return nil, newGoogleAPIError(resp.StatusCode, googleAnalyticsAdminAPIErrorMessage(msg))
+	}
+	if decodeErr != nil {
+		return nil, decodeErr
 	}
 	var streams []*googleAnalyticsDataStream
 	for _, item := range out.DataStreams {
@@ -2182,15 +2185,16 @@ func createGoogleAnalyticsWebDataStream(ctx context.Context, accessToken, proper
 			Message string `json:"message"`
 		} `json:"error"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, err
-	}
+	decodeErr := json.NewDecoder(resp.Body).Decode(&out)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		msg := out.Error.Message
 		if msg == "" {
 			msg = "HTTP " + strconv.Itoa(resp.StatusCode)
 		}
 		return nil, newGoogleAPIError(resp.StatusCode, googleAnalyticsAdminAPIErrorMessage(msg))
+	}
+	if decodeErr != nil {
+		return nil, decodeErr
 	}
 	return &googleAnalyticsDataStream{
 		Name:          out.Name,
@@ -2201,7 +2205,7 @@ func createGoogleAnalyticsWebDataStream(ctx context.Context, accessToken, proper
 }
 
 func createGoogleAnalyticsWebDataStreamWithRetry(ctx context.Context, accessToken, property, displayName, defaultURI string, allowPermissionPropagation bool) (*googleAnalyticsDataStream, error) {
-	const attempts = 4
+	const attempts = 5
 	var lastErr error
 	for attempt := 0; attempt < attempts; attempt++ {
 		stream, err := createGoogleAnalyticsWebDataStream(ctx, accessToken, property, displayName, defaultURI)
