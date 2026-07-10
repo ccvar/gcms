@@ -344,27 +344,71 @@ fn resolve_in_workdir(conn: &pack::Connection, project: &str, raw: &str) -> Resu
         }
         // 本机不存在的「绝对路径」再按工作目录相对解析一次：助手常写站点口径的
         // /uploads/xx.svg，它真身就在 <工作目录>/uploads/ 下。
-        let p = match std::fs::canonicalize(raw) {
-            Ok(p) => p,
+        let exact = match std::fs::canonicalize(raw) {
+            Ok(p) => Ok(p),
             Err(e) => std::fs::canonicalize(root.join(raw.trim_start_matches(['/', '\\'])))
-                .map_err(|_| format!("读取失败: {e}"))?,
+                .map_err(|_| format!("读取失败: {e}")),
         };
-        if !p.starts_with(&root) {
-            return Err("文件在工作目录之外".into());
+        match exact {
+            Ok(p) if p.starts_with(&root) => p,
+            Ok(_) => return Err("文件在工作目录之外".into()),
+            // 精确解析不到（模型常把真实写在工作目录里的文件链接成想象中的前缀，
+            // 如 /mnt/data/xx.webp、sandbox:…）：按文件名在工作目录内搜，唯一命中才用。
+            Err(e) => find_by_basename(&root, raw).ok_or(e)?,
         }
-        p
     } else {
         let rel = raw.trim_start_matches("./");
         if rel.is_empty() || rel.len() > 512 || rel.contains(':') || rel.contains("..") {
             return Err("路径不合法".into());
         }
-        let p = std::fs::canonicalize(root.join(rel)).map_err(|e| format!("读取失败: {e}"))?;
-        if !p.starts_with(&root) {
-            return Err("路径不合法".into());
+        match std::fs::canonicalize(root.join(rel)) {
+            Ok(p) if p.starts_with(&root) => p,
+            Ok(_) => return Err("路径不合法".into()),
+            Err(e) => find_by_basename(&root, rel).ok_or_else(|| format!("读取失败: {e}"))?,
         }
-        p
     };
     Ok(p)
+}
+
+/// 按文件名在工作目录内浅搜（深度≤4、扫描≤2000 项；跳过 .xx 隐藏目录和 node_modules）。
+/// **恰好一个**同名文件才返回——两个以上宁可不猜；命中后仍 canonicalize + 界内校验
+/// （防目录内的符号链接指到外面）。
+fn find_by_basename(root: &std::path::Path, raw: &str) -> Option<std::path::PathBuf> {
+    let name = raw.trim().rsplit(['/', '\\']).next()?.trim();
+    if name.is_empty() || !name.contains('.') {
+        return None;
+    }
+    let mut found: Option<std::path::PathBuf> = None;
+    let mut stack = vec![(root.to_path_buf(), 0usize)];
+    let mut seen = 0usize;
+    while let Some((dir, depth)) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+        for e in rd.flatten() {
+            seen += 1;
+            if seen > 2000 {
+                return None; // 目录太大：放弃兜底，不做半截扫描的猜测
+            }
+            let p = e.path();
+            let fname = e.file_name();
+            let fname = fname.to_string_lossy();
+            if fname.starts_with('.') || fname == "node_modules" {
+                continue;
+            }
+            let Ok(ft) = e.file_type() else { continue };
+            if ft.is_dir() {
+                if depth < 4 {
+                    stack.push((p, depth + 1));
+                }
+            } else if fname == name {
+                if found.is_some() {
+                    return None; // 同名多处：有歧义，不猜
+                }
+                found = Some(p);
+            }
+        }
+    }
+    let p = std::fs::canonicalize(found?).ok()?;
+    p.starts_with(root).then_some(p)
 }
 
 #[cfg(test)]
@@ -395,6 +439,17 @@ mod workdir_tests {
         assert!(resolve_in_workdir(&conn, "", "/etc/hosts").is_err(), "工作目录之外的绝对路径");
         assert!(resolve_in_workdir(&conn, "", "../x").is_err(), "相对逃逸");
         assert!(resolve_in_workdir(&conn, "", "uploads/missing.svg").is_err(), "不存在的文件");
+
+        // 文件名兜底：模型把真实文件链接成想象中的前缀（/mnt/data/、sandbox: 剥壳后）
+        std::fs::create_dir_all(tmp.join("brand/out")).unwrap();
+        std::fs::write(tmp.join("brand/out/preview.webp"), "x").unwrap();
+        assert!(resolve_in_workdir(&conn, "", "/mnt/data/preview.webp").is_ok(), "想象前缀按文件名找回");
+        assert!(resolve_in_workdir(&conn, "", "outputs/preview.webp").is_ok(), "相对路径写错也找回");
+        // 多处同名 → 有歧义不猜
+        std::fs::write(tmp.join("uploads/preview.webp"), "y").unwrap();
+        assert!(resolve_in_workdir(&conn, "", "/mnt/data/preview.webp").is_err(), "同名多处不猜");
+        // 真不存在仍报错
+        assert!(resolve_in_workdir(&conn, "", "/mnt/data/nothing.webp").is_err(), "真不存在");
         std::fs::remove_dir_all(&tmp).ok();
     }
 
