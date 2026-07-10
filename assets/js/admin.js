@@ -4499,6 +4499,9 @@
     return el.querySelector("[data-ga-summary-text]") || el;
   }
   function isStale(el) {
+    // 错误快照不受新鲜度闸门保护：失败也会刷新 FetchedAt，若按 1 小时闸门算，
+    // 授权修复后 pill 还会继续展示旧错误整整一小时。报错的一律重试。
+    if (el.classList.contains("is-error")) return true;
     var raw = el.getAttribute("data-fetched-at") || "";
     if (!raw) return true;
     var d = new Date(raw);
@@ -4561,6 +4564,9 @@
     return el.querySelector("[data-gsc-summary-text]") || el;
   }
   function isStale(el) {
+    // 错误快照不受新鲜度闸门保护：失败也会刷新 FetchedAt，若按 1 小时闸门算，
+    // 授权修复后 pill 还会继续展示旧错误整整一小时。报错的一律重试。
+    if (el.classList.contains("is-error")) return true;
     var raw = el.getAttribute("data-fetched-at") || "";
     if (!raw) return true;
     var d = new Date(raw);
