@@ -1,7 +1,7 @@
 {{define "footer"}}  <footer class="site-footer">
     <div class="wrap">
       <div>
-        {{if .Site.Logo}}<img class="brand-logo" src="{{.Site.Logo}}" alt="{{.Site.Name}}" loading="lazy" decoding="async"{{imgAttrs .Site.Logo}} style="margin-bottom:.4rem"{{if .VisualEdit}} data-visual-edit="site.logo" data-visual-label="站点 Logo" data-visual-kind="image"{{end}}>{{end}}<div class="brand"{{if .VisualEdit}} data-visual-edit="site.name" data-visual-label="站点名称"{{end}}>{{.Site.Name}}</div>
+        {{if .Site.Logo}}<img class="brand-logo" src="{{.Site.Logo}}" alt="{{.Site.Name}}" loading="lazy" decoding="async"{{imgAttrs .Site.Logo}} style="margin-bottom:.4rem{{if .Site.LogoScale}};transform:scale({{.Site.LogoScale}});transform-origin:left center{{end}}"{{if .VisualEdit}} data-visual-edit="site.logo" data-visual-label="站点 Logo" data-visual-kind="image"{{end}}>{{end}}<div class="brand"{{if .VisualEdit}} data-visual-edit="site.name" data-visual-label="站点名称"{{end}}>{{.Site.Name}}</div>
         <p class="copy"><span{{if .VisualEdit}} data-visual-edit="site.footer_note" data-visual-label="页脚说明"{{end}}>{{.Site.FooterNote}}</span><br>© {{.Year}} {{.Site.Name}}. {{.Tr.T "footer.rights"}}</p>
       </div>
       <div class="f-cols">

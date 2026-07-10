@@ -22,6 +22,7 @@ type Site struct {
 	Theme            string   // 前台主题
 	Favicon          string   // 站点图标 URL（为空用默认）
 	Logo             string   // 站点 logo 图片 URL（为空用文字刊名）
+	LogoScale        string   // 前台 logo 缩放系数（transform:scale，如 "0.8"；空 = 原始大小）
 	ShareImage       string   // 默认分享图 / og:image（为空用内置默认）
 	Brand            string   // 页眉品牌显示：logo | both | text
 	HeroEyebrow      string   // 首页 hero 眉标

@@ -876,6 +876,8 @@
   "admin.settings.site.brand_links": "品牌与链接",
   "admin.settings.site.favicon": "站点图标 Favicon",
   "admin.settings.site.logo": "站点 Logo",
+  "admin.settings.site.logo_scale": "前台缩放",
+  "admin.settings.site.logo_scale_hint": "前台 Logo 显示大小：1 为原始，如 0.8 缩小。",
   "admin.settings.site.share_image": "分享图",
   "admin.settings.site.choose": "选择",
   "admin.settings.site.choose_image": "选择图片",

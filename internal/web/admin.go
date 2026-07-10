@@ -4384,7 +4384,7 @@ func (s *Server) showSettings(w http.ResponseWriter, r *http.Request, section, f
 	v.Settings = &SettingsForm{
 		Name: st.Name, Tagline: st.Tagline, Description: st.Description, Keywords: st.Keywords,
 		NameDef: st.Name, TaglineDef: st.Tagline, DescriptionDef: st.Description, KeywordsDef: st.Keywords,
-		Favicon: favicon, Logo: st.Logo, ShareImage: shareImage, Brand: st.Brand, Theme: st.Theme,
+		Favicon: favicon, Logo: st.Logo, LogoScale: nonEmpty(st.LogoScale, "1"), ShareImage: shareImage, Brand: st.Brand, Theme: st.Theme,
 		Custom: custom, Accent: accent, Radius: radius,
 		HeroEyebrow: st.HeroEyebrow, HeroTitle: st.HeroTitle, HeroDescription: st.HeroDescription, FooterNote: st.FooterNote,
 		HeroVisual: st.HeroVisual, HeroImage: st.HeroImage, HeroSVG: st.HeroSVG,
@@ -4881,6 +4881,7 @@ func (s *Server) adminSaveSite(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = s.store.SetSetting("site.favicon", favicon)
 	_ = s.store.SetSetting("site.logo", strings.TrimSpace(r.FormValue("site_logo")))
+	_ = s.store.SetSetting("site.logo_scale", normalizeLogoScale(r.FormValue("site_logo_scale")))
 	_ = s.store.SetSetting(s.copyKey("site.share_image", lang), shareImage)
 	brand := r.FormValue("site_brand")
 	if brand != "both" && brand != "text" {

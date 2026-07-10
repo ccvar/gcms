@@ -876,6 +876,8 @@
   "admin.settings.site.brand_links": "Brand & Links",
   "admin.settings.site.favicon": "Site Favicon",
   "admin.settings.site.logo": "Site Logo",
+  "admin.settings.site.logo_scale": "Display scale",
+  "admin.settings.site.logo_scale_hint": "Logo display size on the site: 1 = original, e.g. 0.8 smaller.",
   "admin.settings.site.share_image": "Share Image",
   "admin.settings.site.choose": "Choose",
   "admin.settings.site.choose_image": "Choose image",

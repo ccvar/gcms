@@ -195,10 +195,17 @@
             <label>{{.Admin.T "admin.settings.site.logo" "站点 Logo"}} <span class="scope-pill global">{{.Admin.T "admin.scope.global" "全站共用"}}</span></label>
             <div class="uploader uploader-sm" data-name="site_logo">
               <input type="hidden" name="site_logo" value="{{.Settings.Logo}}">
-              <div class="up-preview" tabindex="0" role="button" aria-label="{{.Admin.T "admin.settings.site.choose_image" "选择图片"}}">
-                <span class="up-hint">{{.Admin.T "admin.settings.site.choose" "选择"}}</span>
-                <button type="button" class="up-remove" data-confirm-title="{{.Admin.T "admin.settings.site.confirm_remove" "确认移除"}}" data-confirm-ok="{{.Admin.T "admin.action.remove" "移除"}}" data-confirm="{{.Admin.T "admin.settings.site.remove_logo_confirm" "移除当前站点 Logo？保存站点信息后生效。"}}" title="{{.Admin.T "admin.action.delete" "删除"}}" aria-label="{{.Admin.T "admin.action.delete" "删除"}}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
-                <input type="file" accept="image/*,.ico,.svg" hidden>
+              <div class="up-row">
+                <div class="up-preview" tabindex="0" role="button" aria-label="{{.Admin.T "admin.settings.site.choose_image" "选择图片"}}">
+                  <span class="up-hint">{{.Admin.T "admin.settings.site.choose" "选择"}}</span>
+                  <button type="button" class="up-remove" data-confirm-title="{{.Admin.T "admin.settings.site.confirm_remove" "确认移除"}}" data-confirm-ok="{{.Admin.T "admin.action.remove" "移除"}}" data-confirm="{{.Admin.T "admin.settings.site.remove_logo_confirm" "移除当前站点 Logo？保存站点信息后生效。"}}" title="{{.Admin.T "admin.action.delete" "删除"}}" aria-label="{{.Admin.T "admin.action.delete" "删除"}}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+                  <input type="file" accept="image/*,.ico,.svg" hidden>
+                </div>
+                <div class="logo-scale-box">
+                  <label for="site-logo-scale">{{.Admin.T "admin.settings.site.logo_scale" "前台缩放"}}</label>
+                  <input type="number" id="site-logo-scale" name="site_logo_scale" min="0.3" max="2" step="0.05" inputmode="decimal" value="{{.Settings.LogoScale}}">
+                  <p class="scale-hint">{{.Admin.T "admin.settings.site.logo_scale_hint" "前台 Logo 显示大小：1 为原始，如 0.8 缩小。"}}</p>
+                </div>
               </div>
               <input type="text" inputmode="url" class="up-url" placeholder="{{.Admin.T "admin.settings.site.url_placeholder" "或粘贴 URL"}}" value="{{.Settings.Logo}}">
               <div class="up-status"></div>

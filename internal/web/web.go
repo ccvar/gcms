@@ -554,6 +554,32 @@ func normalizeLayoutWidth(v string) string {
 	}
 }
 
+// normalizeLogoScale 归一前台 logo 缩放系数：非法值或等于 1 返回空（不缩放），
+// 有效范围钳到 0.3–2，并量化到 0.05 步进——与设置表单 step 一致，否则 API 写入的
+// 任意精度值回显后会被浏览器 step 校验卡住整个站点设置表单。
+func normalizeLogoScale(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return ""
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil || f != f {
+		return ""
+	}
+	if f < 0.3 {
+		f = 0.3
+	}
+	if f > 2 {
+		f = 2
+	}
+	f = float64(int(f*20+0.5)) / 20
+	out := strings.TrimRight(strings.TrimRight(strconv.FormatFloat(f, 'f', 2, 64), "0"), ".")
+	if out == "1" {
+		return ""
+	}
+	return out
+}
+
 // ThemeCard 是设置页每个主题卡片的状态（含该主题自己的微调值）。
 type ThemeCard struct {
 	ID, Name, Desc string
@@ -905,6 +931,7 @@ type SettingsForm struct {
 	LinkAuthorDef      string
 	Favicon            string
 	Logo               string
+	LogoScale          string // 前台 logo 缩放系数（表单显示值，默认 "1"）
 	ShareImage         string
 	Brand              string
 	Theme              string
@@ -2571,6 +2598,7 @@ func (s *Server) site(lang string) seo.Site {
 		Theme:            theme,
 		Favicon:          s.store.Setting("site.favicon"),
 		Logo:             logo,
+		LogoScale:        normalizeLogoScale(s.store.Setting("site.logo_scale")),
 		ShareImage:       getAsset("site.share_image"),
 		Brand:            brand,
 		HeroEyebrow:      get("site.hero_eyebrow", "Go · SQLite · SEO"),

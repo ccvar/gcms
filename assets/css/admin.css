@@ -2218,6 +2218,13 @@ a.overview-log-title { text-decoration: none; }
 .uploader-sm .up-remove { width: 22px; height: 22px; top: 3px; right: 3px; }
 .up-url { width: 100%; padding: .5rem .7rem; border: 1px solid var(--line); border-radius: 7px; font-size: .85rem; background: var(--bg); color: var(--ink); font-family: inherit; }
 .up-status { font-size: .8rem; color: var(--muted); margin-top: .4rem; min-height: 1em; }
+/* Logo 前台缩放：预览方块右侧的系数输入 */
+.up-row { display: flex; gap: .85rem; align-items: stretch; margin-bottom: .6rem; }
+.up-row .up-preview { width: 72px; flex: none; margin-bottom: 0; }
+.logo-scale-box { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: .3rem; }
+.logo-scale-box label { font-size: .76rem; font-weight: 500; color: var(--muted); margin: 0; }
+.logo-scale-box input { width: 100%; max-width: 108px; padding: .4rem .55rem; border: 1px solid var(--line); border-radius: 7px; font-size: .85rem; background: var(--bg); color: var(--ink); font-family: inherit; }
+.logo-scale-box .scale-hint { font-size: .72rem; color: var(--muted); line-height: 1.45; margin: 0; }
 
 .dropdown { position: relative; }
 .dd-toggle { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: .5rem; padding: .6rem .8rem; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); font: inherit; font-size: .95rem; line-height: 1.45; cursor: pointer; text-align: left; }
