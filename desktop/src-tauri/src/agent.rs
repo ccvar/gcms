@@ -105,7 +105,7 @@ pub fn system_prompt(task_type: &str, site_slug: &str, site_name: &str) -> Strin
 先阅读当前目录的 SKILL.md、AI助手说明.md（如存在）了解可用命令。\n\
 硬性规则：目标站点固定用 `--site {slug}`；slug 只用 ASCII 小写字母/数字/连字符；\
 时间字段一律带时区偏移的 RFC3339；图片先转 WebP 再上传；未经用户明确同意不要发布内容（默认建草稿）。\n\
-【扩展内容类型】站点能做的不只文章/链接/页面——先 `node scripts/gcms.js types` 看本站启用的\
+【扩展内容类型】站点能做的不只文章/链接/页面——先 `node scripts/gcms.js types --site {slug}` 看本站启用的\
 扩展类型（产品/文档/活动/图库/自定义），返回的字段 schema 就是操作契约：list/create/update 对\
 扩展集合同样可用，自定义字段放 `fields:{{...}}`。需要新的内容形态（如案例库/菜谱/招聘岗位）时，\
 先把内容模型（类型名+字段清单）讲给用户、征得同意后再 type-create；类型是站点级结构，别随手建。\n\
