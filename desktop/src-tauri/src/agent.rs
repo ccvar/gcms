@@ -442,7 +442,8 @@ fn build_claude(
     } else {
         model
     };
-    let mut cmd = Command::new("claude");
+    // 用检测同款的路径解析：Windows 上裸名找不到 .cmd/.exe 之外的安装形态。
+    let mut cmd = Command::new(crate::brains::resolve_bin("claude"));
     cmd.arg("-p").arg(message);
     if is_first {
         cmd.args(["--session-id", session_ref]);
@@ -494,7 +495,8 @@ fn build_codex(
     } else {
         message.to_string()
     };
-    let mut cmd = Command::new("codex");
+    // 同上：npm 装的 codex 在 Windows 上是 codex.cmd，必须用完整路径 spawn。
+    let mut cmd = Command::new(crate::brains::resolve_bin("codex"));
     cmd.arg("exec");
     if is_first {
         cmd.arg("--json")

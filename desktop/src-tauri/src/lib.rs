@@ -322,26 +322,46 @@ fn save_attachment(
     Ok(format!("uploads/{name}"))
 }
 
-/// 读会话附件图片为 data URI（消息里存的是相对工作目录的 uploads/ 路径，webview 读不了本地文件）。
-/// 只接受 uploads/<单个文件名> 且扩展名在图片白名单内；拒 ':'（Windows 下 C:x.png 这类盘符
-/// 相对路径会让 PathBuf::join 整体替换基路径，逃出 uploads；合法附件名经 sanitize 也不含它）。
-/// 前端打开会话会对全部图片附件批量调用：async + spawn_blocking，读盘/编码不占主线程；
-/// 超过 8MB 不生成缩略图（data URI 会膨胀 1/3 常驻前端内存），退回文件卡展示。
+/// 校验并解析「工作目录内的相对路径」为绝对路径（canonicalize 后必须仍在工作目录内）。
+/// 拒绝绝对路径 / 盘符 / `..`；只读解析不建目录（目录被删就自然报错，调用方降级）。
+fn resolve_in_workdir(conn: &pack::Connection, project: &str, rel: &str) -> Result<std::path::PathBuf, String> {
+    let rel = rel.trim().trim_start_matches("./");
+    if rel.is_empty()
+        || rel.len() > 512
+        || rel.contains(':')
+        || rel.contains("..")
+        || rel.starts_with('/')
+        || rel.starts_with('\\')
+    {
+        return Err("路径不合法".into());
+    }
+    let dir = {
+        let w = work_dir_path(conn, project);
+        if w.is_empty() { conn.skill_dir.clone() } else { w }
+    };
+    if dir.is_empty() {
+        return Err("没有可用的工作目录".into());
+    }
+    let root = std::fs::canonicalize(&dir).map_err(|e| format!("工作目录不可用: {e}"))?;
+    let p = std::fs::canonicalize(root.join(rel)).map_err(|e| format!("读取失败: {e}"))?;
+    if !p.starts_with(&root) {
+        return Err("路径不合法".into());
+    }
+    Ok(p)
+}
+
+/// 读工作目录内的图片为 data URI（webview 读不了本地文件）。附件缩略图（uploads/xx）和
+/// 助手消息里提到的项目内图片（如 brand/logo.svg）都走它。扩展名白名单；
+/// 前端打开会话会批量调用：async + spawn_blocking，读盘/编码不占主线程；
+/// 超过 8MB 不生成（data URI 会膨胀 1/3 常驻前端内存），退回文件卡展示。
 #[tauri::command]
-async fn read_attachment_image(
+async fn read_workdir_image(
     state: tauri::State<'_, AppState>,
     conn_id: String,
     project: String,
     path: String,
 ) -> Result<String, String> {
-    let name = path
-        .strip_prefix("uploads/")
-        .filter(|n| {
-            !n.is_empty() && !n.contains('/') && !n.contains('\\') && !n.contains(':') && *n != "." && *n != ".."
-        })
-        .ok_or("不是附件路径")?
-        .to_string();
-    let ext = std::path::Path::new(&name)
+    let ext = std::path::Path::new(&path)
         .extension()
         .and_then(|s| s.to_str())
         .unwrap_or("")
@@ -354,29 +374,41 @@ async fn read_attachment_image(
         "svg" => "image/svg+xml",
         "bmp" => "image/bmp",
         "avif" => "image/avif",
-        _ => return Err("不是图片附件".into()),
+        _ => return Err("不是图片文件".into()),
     };
     let conn = state.conns.get(&conn_id)?;
     tauri::async_runtime::spawn_blocking(move || {
-        // 只读解析，不建目录：项目目录已被删时让 metadata 自然报错，前端降级成文件卡。
-        let dir = {
-            let w = work_dir_path(&conn, &project);
-            if w.is_empty() { conn.skill_dir.clone() } else { w }
-        };
-        if dir.is_empty() {
-            return Err("没有可用的工作目录".into());
-        }
-        let p = std::path::Path::new(&dir).join("uploads").join(&name);
-        let meta = std::fs::metadata(&p).map_err(|e| format!("读取附件失败: {e}"))?;
+        let p = resolve_in_workdir(&conn, &project, &path)?;
+        let meta = std::fs::metadata(&p).map_err(|e| format!("读取失败: {e}"))?;
         if !meta.is_file() {
             return Err("不是文件".into());
         }
         if meta.len() > 8_000_000 {
             return Err("图片较大（>8MB），不生成缩略图".into());
         }
-        let data = std::fs::read(&p).map_err(|e| format!("读取附件失败: {e}"))?;
+        let data = std::fs::read(&p).map_err(|e| format!("读取失败: {e}"))?;
         use base64::Engine as _;
         Ok(format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(data)))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 把工作目录内的相对路径解析成绝对路径（给「在文件管理器中显示」用）。同样的合法性约束。
+#[tauri::command]
+async fn resolve_workdir_file(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    project: String,
+    path: String,
+) -> Result<String, String> {
+    let conn = state.conns.get(&conn_id)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let p = resolve_in_workdir(&conn, &project, &path)?;
+        if !p.is_file() {
+            return Err("文件不存在".into());
+        }
+        Ok(p.to_string_lossy().into_owned())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -749,7 +781,9 @@ async fn install_claude() -> Result<String, String> {
         #[cfg(target_os = "windows")]
         let mut c = {
             let mut c = std::process::Command::new("powershell");
-            c.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", "irm https://claude.ai/install.ps1 | iex"]);
+            // 老 Win10 的 PowerShell 5.1 默认不启用 TLS1.2，irm 会直接握手失败——先显式开启。
+            c.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
+                "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072; irm https://claude.ai/install.ps1 | iex"]);
             c
         };
         #[cfg(not(target_os = "windows"))]
@@ -1650,7 +1684,8 @@ pub fn run() {
             verify_cf_token,
             connect_cloudflare,
             save_attachment,
-            read_attachment_image,
+            read_workdir_image,
+            resolve_workdir_file,
             list_cf_projects,
             cf_project_ready,
             cf_preview_start,

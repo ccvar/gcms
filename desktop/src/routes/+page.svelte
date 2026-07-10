@@ -3,7 +3,7 @@
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { getVersion } from '@tauri-apps/api/app';
   import { open, confirm as confirmDialog } from '@tauri-apps/plugin-dialog';
-  import { openUrl } from '@tauri-apps/plugin-opener';
+  import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
   import { check as checkUpdate } from '@tauri-apps/plugin-updater';
   import { relaunch } from '@tauri-apps/plugin-process';
   import BrainIcon from '$lib/BrainIcon.svelte';
@@ -976,17 +976,31 @@
   // data URI 可观（≤8MB 原图 → ~10MB 字符串），切会话时把其他会话的条目逐出，防止只增不减；
   // 顺带让上次读失败（''）的条目在重进会话时有重试机会。
   let thumbs = $state<Record<string, string>>({});
-  const thumbPending = new Set<string>();
+  const thumbJobs = new Map<string, Promise<string>>();
   function thumbKey(p: string): string { return (activeConv?.conn_id ?? '') + '|' + (activeConv?.site_slug ?? '') + '|' + p; }
-  function ensureThumb(connId: string, project: string, p: string) {
+  // 读工作目录内图片 → data URI（并发去重；失败缓存空串＝退回文件卡样式）。
+  function loadWorkdirImg(connId: string, project: string, p: string): Promise<string> {
     const k = connId + '|' + project + '|' + p;
-    if (thumbs[k] !== undefined || thumbPending.has(k)) return;
-    thumbPending.add(k);
-    invoke<string>('read_attachment_image', { connId, project, path: p })
-      .then((d) => { thumbs = { ...thumbs, [k]: d }; })
-      .catch(() => { thumbs = { ...thumbs, [k]: '' }; }) // 读失败＝空串：退回文件卡样式
-      .finally(() => thumbPending.delete(k));
+    if (thumbs[k] !== undefined) return Promise.resolve(thumbs[k]);
+    let j = thumbJobs.get(k);
+    if (!j) {
+      j = invoke<string>('read_workdir_image', { connId, project, path: p })
+        .then((d) => { thumbs = pruneThumbs({ ...thumbs, [k]: d }); return d; })
+        .catch(() => { thumbs = { ...thumbs, [k]: '' }; return ''; })
+        .finally(() => { thumbJobs.delete(k); });
+      thumbJobs.set(k, j);
+    }
+    return j;
   }
+  // 悬停/放大会把任意工作目录图片读进缓存：软上限 80 条，超了丢最早的（对象键序＝插入序），
+  // 防止单会话里长期翻聊天记录把 data URI 越积越多。
+  function pruneThumbs(t: Record<string, string>): Record<string, string> {
+    const keys = Object.keys(t);
+    if (keys.length <= 80) return t;
+    for (const kk of keys.slice(0, keys.length - 80)) delete t[kk];
+    return t;
+  }
+  function ensureThumb(connId: string, project: string, p: string) { void loadWorkdirImg(connId, project, p); }
   $effect(() => {
     const c = activeConv;
     if (!c) return;
@@ -1150,23 +1164,53 @@
   let tip = $state<{ x: number; y: number; text: string; below: boolean } | null>(null);
   let imgTip = $state<{ x: number; y: number; url: string; below: boolean } | null>(null);
   let imgTipReady = $state(false); // 图片 onload 之前浮层不可见，避免空白小块→大图的闪变
+  let hoverWant = ''; // 正在等加载的悬停目标（工作目录图片异步读完时校验还悬停着才弹）
   function onTipHover(e: MouseEvent) {
     const tgt = e.target as HTMLElement;
-    // 助手消息里的行内代码图片路径 → 悬停缩略图浮层（点击浏览器打开，见 mdClick）
-    const code = tgt.closest?.('code') as HTMLElement | null;
-    if (code && !code.closest('pre') && code.closest('.text.md')) {
-      const u = codeImgUrl(code.textContent ?? '');
-      code.style.cursor = u ? 'zoom-in' : ''; // 负缓存命中/失效时把之前设过的手势复位
-      if (u) {
-        const r = code.getBoundingClientRect();
-        const below = r.top < 230; // 上方放不下缩略图就翻到下方
-        const x = Math.min(Math.max(r.left + r.width / 2, 150), window.innerWidth - 150);
-        if (!imgTip || imgTip.url !== u) imgTipReady = false;
-        imgTip = { x, y: below ? r.bottom + 8 : r.top - 8, url: u, below };
+    // 助手消息里的图片（行内代码路径或链接）→ 悬停缩略图浮层（点击见 mdClick）
+    const holder = tgt.closest?.('a, code') as HTMLElement | null;
+    if (holder && holder.closest('.text.md') && !holder.closest('pre')) {
+      const isLink = holder.tagName === 'A';
+      const s = isLink ? (holder.getAttribute('href') ?? '') : (holder.textContent ?? '').trim();
+      // 远程图片：完整 URL（链接/代码都认），或行内代码里的 /uploads/ 站点路径
+      let u = '';
+      if (/^https?:/i.test(s)) {
+        if (IMG_EXT_RE.test(s.replace(/[?#].*$/, '')) && !badImgUrls.has(s)) u = s;
+      } else if (!isLink) {
+        u = codeImgUrl(s);
+      }
+      // 工作目录内图片 → data URI（负缓存空串＝确认不是可预览图片，当普通元素处理）
+      let rel = '';
+      if (!u) { const r = relWorkPath(s); if (r && isImgPath(r)) rel = r; }
+      const k = rel ? thumbKey(rel) : '';
+      const known = rel ? thumbs[k] : undefined;
+      if (u || (rel && known !== '')) {
+        const r0 = holder.getBoundingClientRect();
+        const below = r0.top < 230; // 上方放不下缩略图就翻到下方
+        const x = Math.min(Math.max(r0.left + r0.width / 2, 150), window.innerWidth - 150);
+        const place = { x, y: below ? r0.bottom + 8 : r0.top - 8, below };
+        holder.style.cursor = 'zoom-in';
         tip = null;
+        if (u || known) {
+          hoverWant = ''; // 立即可显示：作废先前挂着的异步加载，防止旧图旧坐标顶掉当前浮层
+          const src = u || (known as string);
+          if (!imgTip || imgTip.url !== src) imgTipReady = false;
+          imgTip = { ...place, url: src };
+        } else {
+          const c = activeConv;
+          imgTip = null;
+          if (c) {
+            hoverWant = k;
+            loadWorkdirImg(c.conn_id, c.site_slug, rel).then((d) => {
+              if (d && hoverWant === k) { imgTipReady = false; imgTip = { ...place, url: d }; }
+            });
+          }
+        }
         return;
       }
+      holder.style.cursor = ''; // 负缓存命中/失效时把之前设过的手势复位
     }
+    hoverWant = '';
     imgTip = null;
     const el = tgt.closest?.('[title], [data-tip]') as HTMLElement | null;
     if (!el) { tip = null; return; }
@@ -1252,13 +1296,49 @@
     // 链接分支不看选区且永远 preventDefault——点链接是明确意图，而且 WebKit 里点 <a> 不清除
     // 页面残留选区，若因选区早退会放任 webview 自导航（本函数存在的意义就是拦它）。
     const a = t.closest('a');
-    if (a?.href) { e.preventDefault(); openUrl(a.href); return; }
+    if (a) {
+      e.preventDefault();
+      const raw = a.getAttribute('href') ?? '';
+      if (/^https?:/i.test(raw)) { openUrl(raw); return; }
+      if (/^(mailto|tel):/i.test(raw)) { openUrl(raw); return; } // gfm 会把裸邮箱自动变 mailto 链接
+      // 工作目录内的相对路径：图片→应用内放大；其他文件→文件管理器里定位
+      const rel = relWorkPath(raw);
+      if (rel && isImgPath(rel)) { openWorkdirLightbox(rel); return; }
+      if (rel) { void revealWorkdir(rel); }
+      return;
+    }
     const code = t.closest('code');
     if (code && !code.closest('pre')) {
       if (window.getSelection()?.toString()) return; // 用户在拖选复制路径文本：不劫持成打开动作
-      const u = codeImgUrl(code.textContent ?? '');
+      const s = (code.textContent ?? '').trim();
+      const u = codeImgUrl(s);
       if (u) { e.preventDefault(); openUrl(u); return; }
+      const rel = relWorkPath(s);
+      if (rel && isImgPath(rel)) { e.preventDefault(); openWorkdirLightbox(rel); return; }
+      // 非图片的行内代码：必须带路径分隔符才当文件处理（`package.json`、`v1.2.3` 这类
+      // 纯提及不劫持——否则点一下就弹「没找到文件」的噪音）。
+      if (rel && rel.includes('/') && /\.[a-z0-9]{1,8}$/i.test(rel)) { e.preventDefault(); void revealWorkdir(rel); }
     }
+  }
+
+  // 工作目录相对路径（消息里提到的项目内文件）：无协议、不以 / 开头、无空白、不出目录。
+  function relWorkPath(s: string): string {
+    const v = s.trim().replace(/^\.\//, '');
+    if (!v || /\s/.test(v) || /^[a-z][a-z0-9+.-]*:/i.test(v) || v.startsWith('/') || v.startsWith('#') || v.includes('..')) return '';
+    return v;
+  }
+  function openWorkdirLightbox(rel: string) {
+    const c = activeConv;
+    if (!c) return;
+    loadWorkdirImg(c.conn_id, c.site_slug, rel).then((d) => { if (d) lightbox = d; });
+  }
+  async function revealWorkdir(rel: string) {
+    const c = activeConv;
+    if (!c) return;
+    try {
+      const abs = await invoke<string>('resolve_workdir_file', { connId: c.conn_id, project: c.site_slug, path: rel });
+      await revealItemInDir(abs);
+    } catch { say('没找到这个文件（可能还没生成或已移动）', 'err'); }
   }
 
   // ---------- 行内代码图片预览 ----------
@@ -1341,9 +1421,14 @@
   // 型号取自本机 codex 模型清单，会随厂商更新；要用别的新模型走下方「自定义模型 ID」。
   const CODEX_MODELS = [
     { value: '', label: '跟随 Codex 默认', sub: '用本地 codex 配置' },
-    { value: 'gpt-5.5', label: 'GPT-5.5', sub: '前沿 · 复杂任务' },
-    { value: 'gpt-5.4', label: 'GPT-5.4', sub: '日常之选' },
-    { value: 'gpt-5.4-mini', label: 'GPT-5.4-Mini', sub: '最快最省' },
+    // GPT-5.6 三分档（2026-07 GA）：裸 "gpt-5.6" 在 ChatGPT 订阅通道会被拒，必须用分档 ID；
+    // 且要求 codex CLI ≥0.144（旧版报「requires a newer version of Codex」，升级 CLI 即可）。
+    { value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol', sub: '最强 · 细节打磨' },
+    { value: 'gpt-5.6-terra', label: 'GPT-5.6 Terra', sub: '日常主力' },
+    { value: 'gpt-5.6-luna', label: 'GPT-5.6 Luna', sub: '最快最省' },
+    { value: 'gpt-5.5', label: 'GPT-5.5', sub: '上一代' },
+    { value: 'gpt-5.4', label: 'GPT-5.4', sub: '上一代' },
+    { value: 'gpt-5.4-mini', label: 'GPT-5.4-Mini', sub: '上一代 · 最省' },
   ];
   function modelOptsFor(b: string) { return b === 'codex' ? CODEX_MODELS : CLAUDE_MODELS; }
   // launcher / 会话里可选：预设档位 + 该厂商的全局自定义模型 ID（定时任务表单仍只用预设 + 自己的 modelCustom）。
@@ -1398,7 +1483,7 @@
   }
 </script>
 
-<svelte:window oncontextmenu={onCtxMenu} onmouseover={onTipHover} onscrollcapture={() => { tip = null; imgTip = null; }} onresize={() => { tip = null; imgTip = null; }} onkeydown={(e) => { if (e.key === 'Escape' && lightbox) lightbox = ''; }} />
+<svelte:window oncontextmenu={onCtxMenu} onmouseover={onTipHover} onscrollcapture={() => { tip = null; imgTip = null; hoverWant = ''; }} onresize={() => { tip = null; imgTip = null; hoverWant = ''; }} onkeydown={(e) => { if (e.key === 'Escape' && lightbox) lightbox = ''; }} />
 <main class="app" class:win={isWindows}>
   <!-- 融合式标题栏：透明拖拽条铺满顶部，红绿灯与工具按钮浮在其上（macOS Overlay） -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->

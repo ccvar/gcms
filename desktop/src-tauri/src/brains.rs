@@ -31,6 +31,7 @@ pub struct BrainsInfo {
 }
 
 pub async fn detect() -> BrainsInfo {
+    augment_path_env(); // 每次检测都补一遍：刚装完的目录此刻才存在
     let (claude, codex, wrangler, node) =
         tokio::join!(detect_claude(), detect_codex(), detect_wrangler(), detect_node());
     BrainsInfo {
@@ -51,7 +52,7 @@ async fn detect_node() -> BrainStatus {
     };
     st.found = true;
     st.path = path;
-    if let Some((_, ver)) = run_capture("node", &["--version"], Duration::from_secs(8)).await {
+    if let Some((_, ver)) = run_capture(&st.path, &["--version"], Duration::from_secs(8)).await {
         st.version = ver.trim().to_string();
     }
     st.logged_in = None;
@@ -107,7 +108,7 @@ async fn detect_wrangler() -> BrainStatus {
     };
     st.found = true;
     st.path = path;
-    if let Some((_, ver)) = run_capture("wrangler", &["--version"], Duration::from_secs(10)).await {
+    if let Some((_, ver)) = run_capture(&st.path, &["--version"], Duration::from_secs(10)).await {
         // wrangler --version 可能多行，取首个非空行。
         st.version = ver.lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim().to_string();
     }
@@ -137,15 +138,71 @@ async fn run_capture(program: &str, args: &[&str], timeout: Duration) -> Option<
     }
 }
 
+/// 解析可执行的完整路径给 spawn 用：Windows 上 npm 装的是 codex.cmd/wrangler.cmd，
+/// 裸名 CreateProcess 只补 .exe 永远找不到；显式 .cmd 路径 std 会安全地经 cmd.exe 启动。
+/// 找不到就原样返回（保持旧行为，让系统再试一次并给出自然报错）。
+pub fn resolve_bin(bin: &str) -> String {
+    which(bin).unwrap_or_else(|| bin.to_string())
+}
+
 fn which(bin: &str) -> Option<String> {
     let path = std::env::var("PATH").ok()?;
-    for dir in path.split(':') {
-        let cand = std::path::Path::new(dir).join(bin);
-        if cand.is_file() {
-            return Some(cand.to_string_lossy().into_owned());
+    // Windows 的 PATH 分隔符是 ';'，且可执行文件带扩展名（node.exe / codex.cmd）——
+    // 之前按 ':' 裸名查找，Windows 上永远找不到任何 CLI。
+    let sep = if cfg!(windows) { ';' } else { ':' };
+    let exts: Vec<String> = if cfg!(windows) {
+        std::env::var("PATHEXT")
+            .unwrap_or_else(|_| ".EXE;.CMD;.BAT;.COM".into())
+            .split(';')
+            .filter(|e| !e.is_empty())
+            .map(|e| e.to_ascii_lowercase())
+            .collect()
+    } else {
+        vec![String::new()]
+    };
+    for dir in path.split(sep).filter(|d| !d.is_empty()) {
+        for ext in &exts {
+            let cand = std::path::Path::new(dir).join(format!("{bin}{ext}"));
+            if cand.is_file() {
+                return Some(cand.to_string_lossy().into_owned());
+            }
         }
     }
     None
+}
+
+/// Windows：GUI 进程的 PATH 在安装 Node/Claude 之后不会自动更新（系统 PATH 改了，
+/// 已运行的进程看不见，要重启应用才生效）。把常见安装目录补进本进程 PATH——
+/// 「重新检测」和后续 spawn（跑轮次、npm 安装）就都能立刻找到新装的 CLI。
+fn augment_path_env() {
+    if !cfg!(windows) {
+        return;
+    }
+    let mut extra: Vec<std::path::PathBuf> = Vec::new();
+    if let Ok(p) = std::env::var("ProgramFiles") {
+        extra.push(std::path::Path::new(&p).join("nodejs"));
+    }
+    if let Ok(p) = std::env::var("APPDATA") {
+        extra.push(std::path::Path::new(&p).join("npm")); // npm 全局（codex / wrangler）
+    }
+    if let Ok(p) = std::env::var("USERPROFILE") {
+        extra.push(std::path::Path::new(&p).join(".local").join("bin")); // Claude 原生安装器
+    }
+    if let Ok(p) = std::env::var("LOCALAPPDATA") {
+        extra.push(std::path::Path::new(&p).join("Programs").join("nodejs"));
+    }
+    let mut path = std::env::var("PATH").unwrap_or_default();
+    for d in extra {
+        if !d.is_dir() {
+            continue;
+        }
+        let ds = d.to_string_lossy().into_owned();
+        if !path.split(';').any(|p| p.eq_ignore_ascii_case(&ds)) {
+            path.push(';');
+            path.push_str(&ds);
+        }
+    }
+    std::env::set_var("PATH", path);
 }
 
 async fn detect_claude() -> BrainStatus {
@@ -156,12 +213,12 @@ async fn detect_claude() -> BrainStatus {
     };
     st.found = true;
     st.path = path;
-    if let Some((_, ver)) = run_capture("claude", &["--version"], Duration::from_secs(10)).await {
+    if let Some((_, ver)) = run_capture(&st.path, &["--version"], Duration::from_secs(10)).await {
         st.version = ver;
     }
     // 登出时退出码是 1，但 stdout 仍是 JSON —— 只解析 stdout。
     if let Some((_, out)) =
-        run_capture("claude", &["auth", "status", "--json"], Duration::from_secs(15)).await
+        run_capture(&st.path, &["auth", "status", "--json"], Duration::from_secs(15)).await
     {
         if let Some(json_part) = extract_json(&out) {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&json_part) {
@@ -193,10 +250,10 @@ async fn detect_codex() -> BrainStatus {
     };
     st.found = true;
     st.path = path;
-    if let Some((_, ver)) = run_capture("codex", &["--version"], Duration::from_secs(10)).await {
+    if let Some((_, ver)) = run_capture(&st.path, &["--version"], Duration::from_secs(10)).await {
         st.version = ver;
     }
-    if let Some((ok, out)) = run_capture("codex", &["login", "status"], Duration::from_secs(15)).await
+    if let Some((ok, out)) = run_capture(&st.path, &["login", "status"], Duration::from_secs(15)).await
     {
         // codex login status: 登录时 exit 0 且输出 "Logged in ..."。
         st.logged_in = Some(ok && out.to_lowercase().contains("logged in"));
