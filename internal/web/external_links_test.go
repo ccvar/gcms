@@ -11,8 +11,9 @@ func TestExternalLinkPolicyAttrs(t *testing.T) {
 		t.Fatalf("internal link attrs = %q, want empty", got)
 	}
 
+	// 出厂默认：四个 rel 全带（sponsored/nofollow/noopener/noreferrer）
 	got := string(policy.HTMLAttr("https://other.example/path"))
-	if got != ` target="_blank" rel="noopener noreferrer"` {
+	if got != ` target="_blank" rel="sponsored nofollow noopener noreferrer"` {
 		t.Fatalf("default external attrs = %q", got)
 	}
 

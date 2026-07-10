@@ -59,7 +59,7 @@ type externalLinkDecision struct {
 func defaultExternalLinkPolicy() ExternalLinkPolicy {
 	return ExternalLinkPolicy{
 		TargetBlank: true,
-		Rel:         []string{"noopener", "noreferrer"},
+		Rel:         []string{"sponsored", "nofollow", "noopener", "noreferrer"},
 	}
 }
 
