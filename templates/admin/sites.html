@@ -453,17 +453,23 @@
                   data-msg-checking="{{$.Admin.T "admin.sites.wizard_checking" "检测中…"}}"
                   data-msg-copied="{{$.Admin.T "admin.sites.wizard_copied" "已复制"}}"
                   data-msg-domain-required="{{$.Admin.T "admin.sites.wizard_domain_required" "请先填写主域名"}}"
-                  data-msg-verify-presave="{{$.Admin.T "admin.sites.wizard_verify_presave" "保存后 gcms 才会写入反向代理配置、域名才开始服务——现在打不开是正常的，直接点「保存绑定」即可。"}}">
+                  data-msg-verify-presave="{{$.Admin.T "admin.sites.wizard_verify_presave2" "还没保存绑定——先回上一步点「保存并应用」，再来验证。"}}">
               <input type="hidden" name="_csrf" value="{{$.CSRF}}">
               {{$form := index $.PlatformDomainForms .ID}}
               <nav class="dw-steps" data-wizard-steps data-active-step="1" aria-label="{{$.Admin.T "admin.sites.wizard_progress" "绑定进度"}}">
                 <button type="button" class="dw-step" data-goto-step="1" data-step-state="pending"><span class="dw-step-num">1</span><span class="dw-step-label">{{$.Admin.T "admin.sites.wizard_step_domain" "域名"}}</span><span class="dw-step-tick" aria-hidden="true"></span></button>
                 <button type="button" class="dw-step" data-goto-step="2" data-step-state="pending" data-locked><span class="dw-step-num">2</span><span class="dw-step-label">{{$.Admin.T "admin.sites.wizard_step_dns" "DNS"}}</span><span class="dw-step-tick" aria-hidden="true"></span></button>
-                <button type="button" class="dw-step" data-goto-step="3" data-step-state="pending" data-locked><span class="dw-step-num">3</span><span class="dw-step-label">{{$.Admin.T "admin.sites.wizard_step_proxy" "反向代理"}}</span><span class="dw-step-tick" aria-hidden="true"></span></button>
+                <button type="button" class="dw-step" data-goto-step="3" data-step-state="pending" data-locked><span class="dw-step-num">3</span><span class="dw-step-label">{{$.Admin.T "admin.sites.wizard_step_apply" "应用绑定"}}</span><span class="dw-step-tick" aria-hidden="true"></span></button>
                 <button type="button" class="dw-step" data-goto-step="4" data-step-state="pending" data-locked><span class="dw-step-num">4</span><span class="dw-step-label">{{$.Admin.T "admin.sites.wizard_step_verify" "验证"}}</span><span class="dw-step-tick" aria-hidden="true"></span></button>
               </nav>
 
               <section class="dw-panel is-active" data-step="1">
+                {{if $form.PrimaryHost}}
+                <div class="dw-bound">
+                  <span class="dw-bound-txt">{{$.Admin.T "admin.sites.bound_current" "当前已绑定"}}：<code>{{$form.PrimaryHost}}</code></span>
+                  <button type="button" class="btn dw-unbind" data-wizard-unbind data-confirm-msg="{{$.Admin.T "admin.sites.unbind_confirm" "解绑该站点的全部域名？站点将回到默认入口访问，反向代理配置同步移除。"}}">{{$.Admin.T "admin.sites.unbind_all" "解绑全部域名"}}</button>
+                </div>
+                {{end}}
                 <div class="field">
                   <label for="site-domain-host-{{.ID}}">{{$.Admin.T "admin.sites.domain_primary" "主域名"}}</label>
                   <input id="site-domain-host-{{.ID}}" name="primary_domain" value="{{$form.PrimaryHost}}" placeholder="www.example.com" data-wizard-host>
@@ -535,12 +541,18 @@
                     <p>{{$.Admin.T "admin.sites.wizard_proxy_other_desc" "推荐安装 Caddy（自动 HTTPS）：运行 cms.sh caddy-setup；或在你现有的反代里把该域名转发到 gcms 监听端口。"}}</p>
                   </div>
                 </div>
+                <div class="dw-apply">
+                  <button type="button" class="btn btn-primary" data-wizard-apply>{{$.Admin.T "admin.sites.wizard_apply" "保存并应用"}}</button>
+                  <p class="dw-apply-result" data-apply-result hidden></p>
+                </div>
               </section>
 
               <section class="dw-panel" data-step="4">
                 <div class="dw-verify" data-verify-box data-step-state="pending">
-                  <p class="field-hint">{{$.Admin.T "admin.sites.wizard_verify_intro" "保存绑定后 gcms 会写入反向代理配置并重载，域名随后才开始服务；已绑定的域名重新打开时会在这里自动复检。"}}</p>
+                  <p class="field-hint">{{$.Admin.T "admin.sites.wizard_verify_intro2" "对刚保存的域名做真实访问检测：DNS 是否解析到位、证书是否签发、能否打开本站。DNS 传播可能要几分钟，失败可稍后重验。"}}</p>
+                  <p class="dw-apply-result is-ok dw-apply-note" data-apply-note hidden></p>
                   <p class="dw-verify-result" data-verify-result hidden></p>
+                  <button type="button" class="btn dw-verify-again" data-verify-again>{{$.Admin.T "admin.sites.wizard_verify_again" "重新验证"}}</button>
                 </div>
               </section>
 
@@ -549,7 +561,7 @@
                 <span class="dw-nav-status" data-wizard-status aria-live="polite"></span>
                 <button type="button" class="btn" data-wizard-prev hidden>{{$.Admin.T "admin.sites.wizard_prev" "上一步"}}</button>
                 <button type="button" class="btn btn-primary" data-wizard-next>{{$.Admin.T "admin.sites.wizard_next" "下一步"}}</button>
-                <button class="btn btn-primary" type="submit" data-wizard-finish hidden>{{$.Admin.T "admin.sites.wizard_finish" "保存绑定"}}</button>
+                <button type="button" class="btn btn-primary" data-wizard-done hidden>{{$.Admin.T "admin.sites.wizard_done" "完成"}}</button>
               </div>
             </form>
           </div>

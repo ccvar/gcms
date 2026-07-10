@@ -1109,6 +1109,15 @@ a.overview-log-title { text-decoration: none; }
 .dw-copy { padding: .34rem .7rem; font-size: .78rem; }
 .dw-proxy-variant strong { display: block; margin-bottom: .3rem; color: var(--ink); font-size: .86rem; }
 .dw-proxy-variant p { margin: 0; color: var(--ink-soft); font-size: .82rem; line-height: 1.6; }
+.dw-bound { display: flex; align-items: center; justify-content: space-between; gap: .6rem; margin: 0 0 .85rem; padding: .55rem .7rem; border: 1px solid var(--line); border-radius: 8px; background: color-mix(in srgb, var(--line-soft) 55%, var(--surface)); font-size: .84rem; }
+.dw-bound code { font-weight: 700; }
+.dw-unbind { color: #b3261e; border-color: color-mix(in srgb, #b3261e 35%, var(--line)); flex: none; }
+.dw-unbind:hover { background: color-mix(in srgb, #b3261e 8%, var(--surface)); color: #b3261e; }
+.dw-apply { margin-top: .9rem; display: flex; flex-direction: column; gap: .5rem; align-items: flex-start; }
+.dw-apply-result { margin: 0; padding: .55rem .7rem; border-radius: 8px; font-size: .84rem; font-weight: 600; }
+.dw-apply-result.is-ok { background: color-mix(in srgb, #1a7f4b 12%, var(--surface)); color: #1a7f4b; }
+.dw-apply-result.is-error { background: color-mix(in srgb, #c0392b 10%, var(--surface)); color: #c0392b; }
+.dw-verify-again { margin-top: .6rem; }
 .dw-verify-result { margin: 0; padding: .6rem .7rem; border-radius: 8px; font-size: .84rem; font-weight: 600; }
 .dw-verify[data-step-state="done"] .dw-verify-result { background: color-mix(in srgb, #1a7f4b 12%, var(--surface)); color: #1a7f4b; }
 .dw-verify[data-step-state="failed"] .dw-verify-result { background: color-mix(in srgb, #c0392b 10%, var(--surface)); color: #c0392b; }

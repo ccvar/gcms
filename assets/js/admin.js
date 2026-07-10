@@ -4098,7 +4098,12 @@
     var stepBtns = steps.querySelectorAll(".dw-step");
     var prev = form.querySelector("[data-wizard-prev]");
     var next = form.querySelector("[data-wizard-next]");
-    var finish = form.querySelector("[data-wizard-finish]");
+    var doneBtn = form.querySelector("[data-wizard-done]");
+    var applyBtn = form.querySelector("[data-wizard-apply]");
+    var applyOut = form.querySelector("[data-apply-result]");
+    var applyNote = form.querySelector("[data-apply-note]");
+    var againBtn = form.querySelector("[data-verify-again]");
+    var unbindBtn = form.querySelector("[data-wizard-unbind]");
     var statusEl = form.querySelector("[data-wizard-status]");
     var csrf = (form.querySelector('input[name="_csrf"]') || {}).value || "";
     var msgChecking = form.getAttribute("data-msg-checking") || "检测中…";
@@ -4107,8 +4112,9 @@
     var msgVerifyPresave = form.getAttribute("data-msg-verify-presave") || "保存后才会写入反向代理配置、域名才开始服务——现在打不开是正常的，直接点「保存绑定」即可。";
     // 服务端预填了主域名 = 该站已有已保存的绑定（草稿恢复不算）。
     // 未保存的绑定在第 4 步不做注定失败的可达性检测（配置要保存后才写入——先有鸡还是先有蛋），只给中性引导。
-    var savedBinding = !!(hostInput.value || "").trim();
-    var cur = 1, proxyDone = false, dnsHost = "";
+    var serverBound = !!(hostInput.value || "").trim(); // 库里是否已有绑定
+    var savedBinding = serverBound;
+    var cur = 1, proxyDone = false, dnsHost = "", verifyBusy = false;
 
     // 未完成的绑定草稿（域名/别名/301勾选/所在步骤）存 localStorage：
     // 刷新页面重开向导可回填并跳回离开的那一步；保存成功即清除。
@@ -4123,15 +4129,21 @@
 
     function host() { return (hostInput.value || "").trim().replace(/^https?:\/\//i, "").replace(/\/.*$/, "").toLowerCase(); }
     function setState(n, st) { var b = stepBtns[n - 1]; if (b) b.setAttribute("data-step-state", st); }
-    function unlockAll() { stepBtns.forEach(function (b) { b.removeAttribute("data-locked"); }); }
+    function refreshLocks() {
+      stepBtns.forEach(function (b, i) {
+        var n = i + 1;
+        var locked = (n > 1 && !host()) || (n === 4 && !savedBinding);
+        if (locked) b.setAttribute("data-locked", ""); else b.removeAttribute("data-locked");
+      });
+    }
 
     function setStep(n) {
       cur = n;
       steps.setAttribute("data-active-step", String(n));
       panels.forEach(function (p) { p.classList.toggle("is-active", p.getAttribute("data-step") === String(n)); });
       if (prev) prev.hidden = n <= 1;
-      if (next) next.hidden = n >= 4;
-      if (finish) finish.hidden = n < 4;
+      if (next) next.hidden = n >= 3; // 第 3 步的推进动作是「保存并应用」，第 4 步是「完成」
+      if (doneBtn) doneBtn.hidden = n !== 4;
       if (n === 3 && !proxyDone) runProxy();
       if (n === 4) runVerify();
     }
@@ -4173,7 +4185,7 @@
     }
 
     function runVerify() {
-      var h = host(); if (!h) return;
+      var h = host(); if (!h || verifyBusy) return;
       var box = form.querySelector("[data-verify-box]"), out = form.querySelector("[data-verify-result]");
       if (!savedBinding) {
         // 尚未保存：不跑可达性检测（必然失败会误导用户），中性提示"先保存"。
@@ -4184,8 +4196,10 @@
         return;
       }
       if (box) box.setAttribute("data-step-state", "running");
+      verifyBusy = true;
       setState(4, "running"); if (out) out.hidden = true; if (statusEl) statusEl.textContent = msgChecking;
       jpost("/admin/sites/" + id + "/wizard/verify", { host: h, _csrf: csrf }).then(function (d) {
+        verifyBusy = false;
         if (statusEl) statusEl.textContent = "";
         if (out) out.hidden = false;
         if (d && d.ok) { if (box) box.setAttribute("data-step-state", "done"); setState(4, "done"); if (out) out.textContent = "验证通过：" + h + " 已可正常访问。"; }
@@ -4193,16 +4207,16 @@
       });
     }
     function verifyMsg(d, h) {
-      if (!d) return "验证失败：无法完成检测，可稍后再试或直接保存。";
-      if (d.reason === "unreachable") return "还无法访问 " + h + "（DNS 可能在传播、或证书还没签发）。可稍等重试，或直接保存。";
-      if (d.reason === "not_gcms") return h + " 能打开，但看起来不是本站在服务（可能是缓存 / 其它代理）。可直接保存。";
-      if (d.reason === "bad_status") return h + " 返回了 " + (d.status || "异常") + "。检查反代与证书后重试，或直接保存。";
-      return "验证未通过，可稍后重试或直接保存。";
+      if (!d) return "验证失败：无法完成检测，可稍后点「重新验证」。";
+      if (d.reason === "unreachable") return "还无法访问 " + h + "（DNS 可能在传播、或证书还没签发）。可稍等片刻点「重新验证」。";
+      if (d.reason === "not_gcms") return h + " 能打开，但看起来不是本站在服务（可能是缓存 / 其它代理）。确认无误可点「完成」。";
+      if (d.reason === "bad_status") return h + " 返回了 " + (d.status || "异常") + "。检查反代与证书后点「重新验证」。";
+      return "验证未通过，可稍后点「重新验证」。";
     }
 
     if (next) next.addEventListener("click", function () {
       if (cur === 1 && !host()) { setState(1, "failed"); if (statusEl) statusEl.textContent = msgDomainReq; hostInput.focus(); return; }
-      if (cur === 1) { setState(1, "done"); if (statusEl) statusEl.textContent = ""; unlockAll(); runDNS(); }
+      if (cur === 1) { setState(1, "done"); if (statusEl) statusEl.textContent = ""; refreshLocks(); runDNS(); }
       setStep(Math.min(4, cur + 1));
     });
     if (prev) prev.addEventListener("click", function () { setStep(Math.max(1, cur - 1)); });
@@ -4229,30 +4243,98 @@
     }
     window.addEventListener("hashchange", onOpen);
 
-    // 验证并保存：AJAX 提交，不跳页——校验失败就地红字、弹窗保持打开；成功才跳回站点页（带成功横幅）。
-    // 返回非 JSON / 网络异常一律回退原生提交，保证最坏情况等于旧行为。
-    var finishLabel = finish ? finish.textContent : "";
-    function submitFail(msg) {
-      if (statusEl) { statusEl.textContent = msg; statusEl.classList.add("is-error"); }
-      if (finish) { finish.disabled = false; delete finish.dataset.busy; finish.textContent = finishLabel; }
+    // 第 3 步「保存并应用」：AJAX 提交（落库＋写反代＋CF DNS 一步完成），错误就地红字；
+    // 成功后 CF/Caddy 结果消息进底部状态行，解锁并进入第 4 步做真实验证。
+    function showApplyErr(msg) {
+      if (applyOut) { applyOut.hidden = false; applyOut.classList.add("is-error"); applyOut.classList.remove("is-ok"); applyOut.textContent = msg; }
     }
-    form.addEventListener("submit", function (e) {
-      e.preventDefault();
-      if (statusEl) statusEl.classList.remove("is-error");
+    var applyLabel = applyBtn ? applyBtn.textContent : "";
+    function applyErrText(res) {
+      if (!res) return "网络异常，请重试。";
+      if (res.status === 401 || res.status === 403) return "登录状态已过期或页面太旧，请刷新页面后重试。";
+      if (res.status >= 500) return "服务器处理出错（域名可能已保存）——刷新页面查看实际状态。";
+      return "保存失败（" + res.status + "），请重试。";
+    }
+    function runApply() {
+      if (!host()) { setStep(1); setState(1, "failed"); if (statusEl) statusEl.textContent = msgDomainReq; hostInput.focus(); return; }
+      if (!applyBtn || applyBtn.dataset.busy) return;
+      applyBtn.dataset.busy = "1"; applyBtn.disabled = true; applyBtn.textContent = msgChecking;
+      if (applyOut) { applyOut.hidden = true; applyOut.classList.remove("is-ok", "is-error"); }
+      if (statusEl) { statusEl.textContent = ""; statusEl.classList.remove("is-error"); }
+      if (unbindBtn) unbindBtn.disabled = true; // 与解绑互斥：两者写同一个域名集
       fetch(form.getAttribute("action"), {
         method: "POST",
         credentials: "same-origin",
         headers: { "Accept": "application/json", "X-Requested-With": "XMLHttpRequest" },
         body: new FormData(form)
       }).then(function (res) {
-        return res.json().then(function (j) { return { res: res, json: j }; }, function () { return { res: res, json: null }; });
+        return res.json().catch(function () { return null; }).then(function (j) { return { res: res, j: j }; });
       }).then(function (r) {
-        if (!r.json) { form.submit(); return; }
-        if (r.json.ok === false) { submitFail(r.json.message || "保存失败，请重试。"); return; }
-        clearDraft(); // 绑定完成，草稿使命结束
-        window.location.assign(r.json.redirect || "/admin/sites");
-      }).catch(function () { form.submit(); });
+        applyBtn.disabled = false; delete applyBtn.dataset.busy; applyBtn.textContent = applyLabel;
+        if (unbindBtn) unbindBtn.disabled = false;
+        var j = r.j;
+        // 严格判定：401/403 也是合法 JSON 但没有 ok 字段，绝不能当成功（否则假打钩+草稿被清）。
+        if (!j || j.ok !== true) { showApplyErr((j && j.message) || applyErrText(r.res)); return; }
+        savedBinding = true; serverBound = true; baseline = snapshot(); clearDraft();
+        setState(3, "done"); refreshLocks();
+        // CF/Caddy 的结果消息（含"需手动跑 caddy-sync"这类待办）放进第 4 步的持久注记，
+        // 不能放 statusEl——setStep(4) 里 runVerify 会同步覆盖它。
+        if (applyNote) {
+          var msgs = (j.messages || []).join(" ");
+          applyNote.hidden = !msgs;
+          applyNote.textContent = msgs;
+        }
+        setStep(4); // 进入纯验证
+      }).catch(function () {
+        applyBtn.disabled = false; delete applyBtn.dataset.busy; applyBtn.textContent = applyLabel;
+        if (unbindBtn) unbindBtn.disabled = false;
+        showApplyErr("网络异常，请重试。");
+      });
+    }
+    if (applyBtn) applyBtn.addEventListener("click", runApply);
+    if (againBtn) againBtn.addEventListener("click", function () { runVerify(); });
+    // 「完成」：整页回到站点列表（去掉 hash），卡片上的域名状态随之刷新。
+    if (doneBtn) doneBtn.addEventListener("click", function () { window.location.replace("/admin/sites"); });
+    // 解绑：空表单提交＝清空该站全部域名（反代/路由同步移除），成功后回站点页看横幅。
+    if (unbindBtn) unbindBtn.addEventListener("click", function () {
+      if (applyBtn && applyBtn.dataset.busy) return; // 保存在途不解绑
+      if (!window.confirm(unbindBtn.getAttribute("data-confirm-msg") || "解绑该站点的全部域名？")) return;
+      unbindBtn.disabled = true;
+      if (applyBtn) applyBtn.disabled = true;
+      fetch(form.getAttribute("action"), {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8", "Accept": "application/json", "X-Requested-With": "XMLHttpRequest" },
+        body: new URLSearchParams({ _csrf: csrf, primary_domain: "", alias_domains: "" }).toString()
+      }).then(function (res) {
+        return res.json().catch(function () { return null; });
+      }).then(function (j) {
+        if (j && j.ok) { clearDraft(); window.location.replace(j.redirect || "/admin/sites"); return; }
+        unbindBtn.disabled = false; if (applyBtn) applyBtn.disabled = false;
+        if (statusEl) { statusEl.textContent = (j && j.message) || "解绑失败，请重试。"; statusEl.classList.add("is-error"); }
+      }).catch(function () {
+        unbindBtn.disabled = false; if (applyBtn) applyBtn.disabled = false;
+        if (statusEl) { statusEl.textContent = "网络异常，请重试。"; statusEl.classList.add("is-error"); }
+      });
     });
+    // 改了域名/别名/301 ＝ 与已应用内容有偏差：重新锁定验证步，需再次「保存并应用」；
+    // 改回原值则自动恢复（基线＝服务端已存值 / 最近一次成功应用的值）。
+    function snapshot() { return (hostInput.value || "") + "\u0001" + (aliasEl ? aliasEl.value : "") + "\u0001" + (redirEl && redirEl.checked ? "1" : "0"); }
+    var baseline = snapshot();
+    function markDirty() {
+      var want = serverBound && snapshot() === baseline;
+      if (want === savedBinding) return;
+      savedBinding = want;
+      setState(3, savedBinding ? "done" : "pending"); setState(4, "pending"); refreshLocks();
+    }
+    [hostInput, aliasEl, redirEl].forEach(function (el) {
+      if (!el) return;
+      el.addEventListener("input", markDirty);
+      el.addEventListener("change", markDirty);
+    });
+    // 表单已无 submit 按钮且有多个文本框，浏览器不会隐式提交——主域名框回车显式当「下一步」。
+    hostInput.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); if (next && !next.hidden) next.click(); } });
+    form.addEventListener("submit", function (e) { e.preventDefault(); }); // 兜底：任何提交都不放行
 
     // 输入与步骤变化即存草稿（next/prev/步骤点按在原监听之后绑定，此时 cur 已更新）。
     [hostInput, aliasEl, redirEl].forEach(function (el) {
@@ -4267,15 +4349,15 @@
     if (host()) {
       // 服务器已有已保存的绑定：以服务端为准，废弃本地草稿。
       clearDraft();
-      setState(1, "done"); unlockAll();
+      setState(1, "done"); refreshLocks();
     } else {
       var draft = loadDraft();
       if (draft && (draft.h || "").trim()) {
         hostInput.value = draft.h;
         if (aliasEl && draft.a) aliasEl.value = draft.a;
         if (redirEl) redirEl.checked = !!draft.r;
-        setState(1, "done"); unlockAll();
-        var ds = Math.min(Math.max(parseInt(draft.s, 10) || 1, 1), 4);
+        setState(1, "done"); refreshLocks();
+        var ds = Math.min(Math.max(parseInt(draft.s, 10) || 1, 1), 3); // 无已存绑定时第 4 步必锁
         if (ds > 1) setStep(ds); // 跳回离开时所在步骤（步骤内检测会重新实时跑）
       }
     }

@@ -2189,20 +2189,28 @@ func (s *Server) adminSaveSiteDomains(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, err)
 		return
 	}
-	var flashes []string
+	unbound := len(specs) == 0
+	flashes := []string{} // 保持非 nil：JSON 里恒为数组，前端/测试不用兼容 null
+	if unbound {
+		flashes = append(flashes, "已解绑全部域名，该站点回到默认入口访问。")
+	}
 	if msg := s.handleCloudflareDNSFromForm(r, specs); msg != "" {
 		flashes = append(flashes, msg)
 	}
 	if msg := s.applyCaddySites(); msg != "" {
 		flashes = append(flashes, msg)
 	}
+	if jsonReq {
+		// 向导「保存并应用」后停留在弹窗里继续做验证：CF/Caddy 的结果消息随 JSON 就地展示，
+		// 不塞 session flash（否则会在之后某次导航冒出陈旧横幅）；解绑要跳回站点页，flash 照设。
+		if unbound && len(flashes) > 0 {
+			s.sess.setSettingsFlash(sessionToken(r), settingsFlash{Flash: strings.Join(flashes, " ")})
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "redirect": "/admin/sites", "messages": flashes, "unbound": unbound})
+		return
+	}
 	if len(flashes) > 0 {
 		s.sess.setSettingsFlash(sessionToken(r), settingsFlash{Flash: strings.Join(flashes, " ")})
-	}
-	if jsonReq {
-		// 成功后前端跳回站点页（flash 已备好，落地即见横幅）。
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "redirect": "/admin/sites"})
-		return
 	}
 	http.Redirect(w, r, "/admin/sites", http.StatusSeeOther)
 }
