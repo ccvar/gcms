@@ -322,19 +322,10 @@ fn save_attachment(
     Ok(format!("uploads/{name}"))
 }
 
-/// 校验并解析「工作目录内的相对路径」为绝对路径（canonicalize 后必须仍在工作目录内）。
-/// 拒绝绝对路径 / 盘符 / `..`；只读解析不建目录（目录被删就自然报错，调用方降级）。
-fn resolve_in_workdir(conn: &pack::Connection, project: &str, rel: &str) -> Result<std::path::PathBuf, String> {
-    let rel = rel.trim().trim_start_matches("./");
-    if rel.is_empty()
-        || rel.len() > 512
-        || rel.contains(':')
-        || rel.contains("..")
-        || rel.starts_with('/')
-        || rel.starts_with('\\')
-    {
-        return Err("路径不合法".into());
-    }
+/// 校验并解析消息里提到的文件路径为绝对路径。相对路径按工作目录解析；绝对路径
+/// （AI 常直接给全路径）也接，但 canonicalize 后必须仍在工作目录内——边界与相对
+/// 路径完全一致，工作目录之外一律拒绝。只读解析不建目录（目录被删就自然报错，调用方降级）。
+fn resolve_in_workdir(conn: &pack::Connection, project: &str, raw: &str) -> Result<std::path::PathBuf, String> {
     let dir = {
         let w = work_dir_path(conn, project);
         if w.is_empty() { conn.skill_dir.clone() } else { w }
@@ -343,11 +334,85 @@ fn resolve_in_workdir(conn: &pack::Connection, project: &str, rel: &str) -> Resu
         return Err("没有可用的工作目录".into());
     }
     let root = std::fs::canonicalize(&dir).map_err(|e| format!("工作目录不可用: {e}"))?;
-    let p = std::fs::canonicalize(root.join(rel)).map_err(|e| format!("读取失败: {e}"))?;
-    if !p.starts_with(&root) {
-        return Err("路径不合法".into());
-    }
+    let raw = raw.trim();
+    let is_abs = raw.starts_with('/')
+        || raw.starts_with('\\')
+        || (raw.len() > 2 && raw.as_bytes()[1] == b':' && raw.as_bytes()[0].is_ascii_alphabetic());
+    let p = if is_abs {
+        if raw.len() > 1024 {
+            return Err("路径不合法".into());
+        }
+        // 本机不存在的「绝对路径」再按工作目录相对解析一次：助手常写站点口径的
+        // /uploads/xx.svg，它真身就在 <工作目录>/uploads/ 下。
+        let p = match std::fs::canonicalize(raw) {
+            Ok(p) => p,
+            Err(e) => std::fs::canonicalize(root.join(raw.trim_start_matches(['/', '\\'])))
+                .map_err(|_| format!("读取失败: {e}"))?,
+        };
+        if !p.starts_with(&root) {
+            return Err("文件在工作目录之外".into());
+        }
+        p
+    } else {
+        let rel = raw.trim_start_matches("./");
+        if rel.is_empty() || rel.len() > 512 || rel.contains(':') || rel.contains("..") {
+            return Err("路径不合法".into());
+        }
+        let p = std::fs::canonicalize(root.join(rel)).map_err(|e| format!("读取失败: {e}"))?;
+        if !p.starts_with(&root) {
+            return Err("路径不合法".into());
+        }
+        p
+    };
     Ok(p)
+}
+
+#[cfg(test)]
+mod workdir_tests {
+    use super::*;
+
+    fn test_conn(dir: &str) -> pack::Connection {
+        serde_json::from_value(serde_json::json!({
+            "id": "t", "name": "t", "api_base": "", "skill_dir": dir,
+            "key_prefix": "", "key_kind": "gcms_", "created_at": "",
+        }))
+        .expect("test connection")
+    }
+
+    /// 相对 / 绝对 / 站点口径绝对(/uploads/..) 路径都必须解析进工作目录；越界与逃逸一律拒绝。
+    #[test]
+    fn resolve_in_workdir_boundaries() {
+        let tmp = std::env::temp_dir().join(format!("gcms-pilot-workdir-test-{}", std::process::id()));
+        let up = tmp.join("uploads");
+        std::fs::create_dir_all(&up).unwrap();
+        std::fs::write(up.join("a.svg"), "<svg/>").unwrap();
+        let conn = test_conn(tmp.to_str().unwrap());
+
+        assert!(resolve_in_workdir(&conn, "", "uploads/a.svg").is_ok(), "相对路径");
+        let abs = tmp.join("uploads").join("a.svg");
+        assert!(resolve_in_workdir(&conn, "", abs.to_str().unwrap()).is_ok(), "工作目录内绝对路径");
+        assert!(resolve_in_workdir(&conn, "", "/uploads/a.svg").is_ok(), "站点口径绝对路径回退相对解析");
+        assert!(resolve_in_workdir(&conn, "", "/etc/hosts").is_err(), "工作目录之外的绝对路径");
+        assert!(resolve_in_workdir(&conn, "", "../x").is_err(), "相对逃逸");
+        assert!(resolve_in_workdir(&conn, "", "uploads/missing.svg").is_err(), "不存在的文件");
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// 安装失败摘要：优先脚本 stdout 末行；stderr 异常首行剥掉 PowerShell 命令回显前缀。
+    #[test]
+    fn install_err_brief_extracts_script_words() {
+        // 复刻用户实拍：脚本把真实原因写在 stdout，PS 异常首行是整条命令回显 + 通用消息
+        let stdout = "Downloading Claude Code...\nFailed to download from https://storage.googleapis.com/...: timeout\n".as_bytes();
+        let stderr = "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072; irm https://claude.ai/install.ps1 | iex : Installation failed (exit code 1)\nAt line:1 char:1\n+ FullyQualifiedErrorId : xxx\n".as_bytes();
+        let m = install_err_brief(stdout, stderr);
+        assert!(m.contains("Failed to download"), "应含脚本自述原因: {m}");
+        assert!(m.contains("Installation failed"), "应含异常消息: {m}");
+        assert!(!m.contains("SecurityProtocol"), "不应带命令回显: {m}");
+
+        // stdout 为空时退回 stderr；两者全空给未知错误
+        assert!(install_err_brief(b"", b"curl: (7) Failed to connect\n").contains("curl: (7)"));
+        assert_eq!(install_err_brief(b"", b""), "未知错误");
+    }
 }
 
 /// 读工作目录内的图片为 data URI（webview 读不了本地文件）。附件缩略图（uploads/xx）和
@@ -772,70 +837,239 @@ async fn redetect_brains() -> Result<brains::BrainsInfo, String> {
     Ok(brains::detect().await)
 }
 
-/// 一键安装 Claude Code：跑官方原生安装脚本（独立二进制，**不需要 Node/npm**）。
-/// macOS/Linux: curl … install.sh | sh；Windows: PowerShell irm … install.ps1 | iex。
-/// 与用户手动复制命令执行完全等价，安装源为 Anthropic 官方。
-#[tauri::command]
-async fn install_claude() -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(|| {
-        #[cfg(target_os = "windows")]
-        let mut c = {
-            let mut c = std::process::Command::new("powershell");
-            // 老 Win10 的 PowerShell 5.1 默认不启用 TLS1.2，irm 会直接握手失败——先显式开启。
-            c.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
-                "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072; irm https://claude.ai/install.ps1 | iex"]);
-            c
-        };
-        #[cfg(not(target_os = "windows"))]
-        let mut c = {
-            let mut c = std::process::Command::new("/bin/sh");
-            c.args(["-c", "curl -fsSL https://claude.ai/install.sh | sh"]);
-            c
-        };
-        #[cfg(windows)]
+/// GUI 进程没有终端里的 HTTP(S)_PROXY 环境变量；从系统代理配置补一份给安装子进程，
+/// 让脚本内部的 curl / node 下载步骤也走代理（VPN 用户「浏览器能开 claude.ai 但安装失败」
+/// 的主因之一）。用户环境已有代理变量时不覆盖；读不到系统代理就什么都不注入。
+fn system_proxy_env() -> Vec<(String, String)> {
+    for k in ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"] {
+        if std::env::var_os(k).is_some() {
+            return vec![];
+        }
+    }
+    let Some(mut u) = system_proxy_url() else { return vec![] };
+    if !u.contains("://") {
+        u = format!("http://{u}");
+    }
+    ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"]
+        .iter()
+        .map(|k| (k.to_string(), u.clone()))
+        .collect()
+}
+
+/// Windows：WinINET 用户级代理（ProxyEnable=1 时 ProxyServer 形如 "127.0.0.1:7890"，
+/// 或按协议分段 "http=…;https=…"）。
+#[cfg(target_os = "windows")]
+fn system_proxy_url() -> Option<String> {
+    let q = |name: &str| -> Option<String> {
+        let mut c = std::process::Command::new("reg");
+        c.args(["query", r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings", "/v", name]);
         {
             use std::os::windows::process::CommandExt;
             c.creation_flags(0x0800_0000);
         }
-        let out = c.output().map_err(|e| format!("启动安装失败: {e}"))?;
-        if out.status.success() {
-            Ok("Claude Code 安装完成，正在重新检测…".to_string())
-        } else {
-            // PowerShell 错误记录的末行永远是没信息量的 "+ FullyQualifiedErrorId:…"，
-            // 有效描述在最前面——取前两条有效行；stderr 全空再退 stdout 末行。
-            let err = String::from_utf8_lossy(&out.stderr);
-            let mut msg: String = err
-                .lines()
-                .map(str::trim)
-                .filter(|l| {
-                    !l.is_empty()
-                        && !l.starts_with('+')
-                        && !l.starts_with('~')
-                        && !l.starts_with("At line")
-                        && !l.starts_with("CategoryInfo")
-                        && !l.starts_with("FullyQualifiedErrorId")
-                })
-                .take(2)
-                .collect::<Vec<_>>()
-                .join(" ");
-            if msg.is_empty() {
-                let sout = String::from_utf8_lossy(&out.stdout);
-                msg = sout.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("未知错误").trim().to_string();
+        let out = c.output().ok()?;
+        let s = String::from_utf8_lossy(&out.stdout);
+        s.lines()
+            .find(|l| l.trim_start().starts_with(name))
+            .and_then(|l| l.split_whitespace().last().map(str::to_string))
+    };
+    let enabled = q("ProxyEnable")
+        .and_then(|v| u32::from_str_radix(v.trim_start_matches("0x"), 16).ok())
+        .unwrap_or(0)
+        != 0;
+    if !enabled {
+        return None;
+    }
+    let server = q("ProxyServer")?;
+    if server.is_empty() {
+        return None;
+    }
+    if server.contains('=') {
+        for want in ["https=", "http="] {
+            if let Some(seg) = server.split(';').find_map(|s| s.trim().strip_prefix(want)) {
+                if !seg.is_empty() {
+                    return Some(seg.to_string());
+                }
             }
-            let msg: String = msg.chars().take(200).collect();
-            Err(format!("安装失败：{msg}。多为网络问题（需能访问 claude.ai），可挂代理后重试，或复制右侧命令到终端手动执行看完整输出"))
+        }
+        return None; // 只配了 ftp=/socks= 等，不硬猜
+    }
+    Some(server)
+}
+
+/// macOS：scutil --proxy（HTTPSEnable/HTTPSProxy/HTTPSPort，HTTP 同构；curl 不认系统
+/// 代理只认环境变量，这里读出来转成环境变量）。
+#[cfg(target_os = "macos")]
+fn system_proxy_url() -> Option<String> {
+    let out = std::process::Command::new("scutil").arg("--proxy").output().ok()?;
+    let s = String::from_utf8_lossy(&out.stdout);
+    let get = |k: &str| -> Option<String> {
+        s.lines()
+            .find(|l| l.trim_start().starts_with(k))
+            .and_then(|l| l.splitn(2, ':').nth(1).map(|v| v.trim().to_string()))
+    };
+    for (e, h, p) in [
+        ("HTTPSEnable", "HTTPSProxy", "HTTPSPort"),
+        ("HTTPEnable", "HTTPProxy", "HTTPPort"),
+    ] {
+        if get(e).as_deref() == Some("1") {
+            if let (Some(host), Some(port)) = (get(h), get(p)) {
+                if !host.is_empty() && !port.is_empty() {
+                    return Some(format!("{host}:{port}"));
+                }
+            }
+        }
+    }
+    None
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+fn system_proxy_url() -> Option<String> {
+    None
+}
+
+/// 安装失败时抽「脚本自己说的话」：优先 stdout 末尾的有效行（官方脚本把失败原因写在
+/// 这里），stderr 只留异常首行并剥掉 PowerShell 的命令回显前缀（"… | iex : 消息"）。
+fn install_err_brief(stdout: &[u8], stderr: &[u8]) -> String {
+    let sout = String::from_utf8_lossy(stdout);
+    let mut parts: Vec<String> = vec![];
+    if let Some(l) = sout.lines().rev().map(str::trim).find(|l| !l.is_empty()) {
+        parts.push(l.to_string());
+    }
+    let serr = String::from_utf8_lossy(stderr);
+    if let Some(l) = serr.lines().map(str::trim).find(|l| {
+        !l.is_empty()
+            && !l.starts_with('+')
+            && !l.starts_with('~')
+            && !l.starts_with("At line")
+            && !l.starts_with("CategoryInfo")
+            && !l.starts_with("FullyQualifiedErrorId")
+    }) {
+        let l = l.rfind("| iex : ").map(|i| &l[i + 8..]).unwrap_or(l).trim();
+        if !l.is_empty() && !parts.iter().any(|p| p == l) {
+            parts.push(l.to_string());
+        }
+    }
+    if parts.is_empty() {
+        parts.push("未知错误".into());
+    }
+    parts.join("；").chars().take(220).collect()
+}
+
+/// 本机 node 主版本号；没有 node / 跑不起来返回 0。
+fn node_major() -> u32 {
+    let mut c = std::process::Command::new(brains::resolve_bin("node"));
+    c.arg("--version");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        c.creation_flags(0x0800_0000);
+    }
+    let Ok(out) = c.output() else { return 0 };
+    if !out.status.success() {
+        return 0;
+    }
+    String::from_utf8_lossy(&out.stdout)
+        .trim()
+        .trim_start_matches('v')
+        .split('.')
+        .next()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0)
+}
+
+/// npm 渠道装 Claude Code（@anthropic-ai/claude-code，要求 Node ≥18）。
+fn install_claude_npm(proxy: &[(String, String)]) -> Result<(), String> {
+    let mut c = std::process::Command::new(brains::resolve_bin("npm"));
+    c.args(["install", "-g", "@anthropic-ai/claude-code"]);
+    c.envs(proxy.iter().cloned());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        c.creation_flags(0x0800_0000);
+    }
+    let out = c.output().map_err(|e| format!("启动 npm 失败: {e}"))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(install_err_brief(&out.stdout, &out.stderr))
+    }
+}
+
+/// 官方原生安装脚本渠道（独立二进制，不需要 Node/npm）。
+/// macOS/Linux: curl … install.sh | sh；Windows: PowerShell irm … install.ps1 | iex。
+fn install_claude_native(proxy: &[(String, String)]) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    let mut c = {
+        let mut c = std::process::Command::new("powershell");
+        // 老 Win10 的 PowerShell 5.1 默认不启用 TLS1.2，irm 会直接握手失败——先显式开启。
+        c.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command",
+            "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072; irm https://claude.ai/install.ps1 | iex"]);
+        c
+    };
+    #[cfg(not(target_os = "windows"))]
+    let mut c = {
+        let mut c = std::process::Command::new("/bin/sh");
+        c.args(["-c", "curl -fsSL https://claude.ai/install.sh | sh"]);
+        c
+    };
+    c.envs(proxy.iter().cloned());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        c.creation_flags(0x0800_0000);
+    }
+    let out = c.output().map_err(|e| format!("启动安装失败: {e}"))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(install_err_brief(&out.stdout, &out.stderr))
+    }
+}
+
+/// 一键安装 Claude Code：本机有可用的 Node(≥18)/npm 就**优先走 npm 官方包渠道**——
+/// npm 源直连可达，规则代理用户（只代理 claude.ai、没代理脚本内部下载域名）成功率最高；
+/// npm 渠道失败或没有可用 Node 时再走官方原生脚本。两条渠道都注入系统代理。
+#[tauri::command]
+async fn install_claude() -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let proxy = system_proxy_env();
+        let npm_usable = node_major() >= 18;
+        let mut npm_err = String::new();
+        if npm_usable {
+            match install_claude_npm(&proxy) {
+                Ok(()) => return Ok("Claude Code 安装完成（npm 渠道），正在重新检测…".to_string()),
+                Err(e) => npm_err = e,
+            }
+        }
+        match install_claude_native(&proxy) {
+            Ok(()) => Ok("Claude Code 安装完成，正在重新检测…".to_string()),
+            Err(native_err) => {
+                let mut msg = if npm_err.is_empty() {
+                    format!("安装失败：{native_err}")
+                } else {
+                    format!("安装失败：npm 渠道：{npm_err}；官方脚本渠道：{native_err}")
+                };
+                if !npm_usable {
+                    msg.push_str("；本机没有可用的 Node(≥18)/npm——装上 Node 后重试还能多一条 npm 渠道");
+                }
+                msg.push_str("。多为网络问题——VPN/代理需覆盖 claude.ai 及其下载域名（规则模式请把 storage.googleapis.com 加进代理规则，或临时切全局），也可复制右侧命令到终端手动执行看完整输出");
+                Err(msg)
+            }
         }
     })
     .await
     .map_err(|e| e.to_string())?
 }
 
-/// 一键安装 wrangler（npm i -g wrangler）。npm 走已修复的 PATH。可能耗时半分钟到一两分钟。
+/// 一键安装 wrangler（npm i -g wrangler）。npm 走已修复的 PATH（Windows 上 .cmd 必须
+/// 完整路径才能 spawn）；同样注入系统代理。可能耗时半分钟到一两分钟。
 #[tauri::command]
 async fn install_wrangler() -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(|| {
-        let mut c = std::process::Command::new("npm");
+        let mut c = std::process::Command::new(brains::resolve_bin("npm"));
         c.args(["install", "-g", "wrangler"]);
+        c.envs(system_proxy_env());
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;

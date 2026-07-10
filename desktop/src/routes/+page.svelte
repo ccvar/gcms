@@ -1190,9 +1190,9 @@
       } else if (!isLink) {
         u = codeImgUrl(s);
       }
-      // 工作目录内图片 → data URI（负缓存空串＝确认不是可预览图片，当普通元素处理）
+      // 工作目录内图片（相对/绝对/file: 都认）→ data URI（负缓存空串＝确认不是可预览图片，当普通元素处理）
       let rel = '';
-      if (!u) { const r = relWorkPath(s); if (r && isImgPath(r)) rel = r; }
+      if (!u) { const r = relWorkPath(s) || workAbsPath(s); if (r && isImgPath(r)) rel = r; }
       const k = rel ? thumbKey(rel) : '';
       const known = rel ? thumbs[k] : undefined;
       if (u || (rel && known !== '')) {
@@ -1297,8 +1297,19 @@
   // 模型输出的 **粗体**/列表/表格/代码块 之前是裸文本，读感远不如 Claude 客户端。
   // marked(GFM+breaks) 渲染 → DOMPurify 消毒（模型会读网页/站点内容，注入面必须过滤）→ {@html}。
   marked.setOptions({ gfm: true, breaks: true });
+  // 在 DOMPurify 默认协议白名单上放行 file:/sandbox:（AI 常用它们链接本地产物；默认会把
+  // href 整个剥掉，链接看着能点实际是死的）。javascript: 等仍被拦。
+  const MD_URI_RE = /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|sms|cid|xmpp|file|sandbox):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i;
+  // file: 只为 <a> 放行（点击全被 mdClick 代理接管）；<img> src 收紧回 http(s)/data:image，
+  // 防 file: 子资源直连本地文件系统。
+  DOMPurify.addHook('afterSanitizeAttributes', (n) => {
+    if (n.tagName === 'IMG') {
+      const src = n.getAttribute('src') || '';
+      if (!/^(https?:|data:image\/)/i.test(src)) n.removeAttribute('src');
+    }
+  });
   function mdRender(text: string): string {
-    return DOMPurify.sanitize(marked.parse(text, { async: false }) as string);
+    return DOMPurify.sanitize(marked.parse(text, { async: false }) as string, { ALLOWED_URI_REGEXP: MD_URI_RE });
   }
   // Markdown 里 <a> 的点击代理：拦下 webview 内导航，改用系统浏览器打开。
   // 行内代码若是图片路径（如 `/uploads/xx.svg`）：点击也用浏览器打开完整地址。
@@ -1312,10 +1323,11 @@
       const raw = a.getAttribute('href') ?? '';
       if (/^https?:/i.test(raw)) { openUrl(raw); return; }
       if (/^(mailto|tel):/i.test(raw)) { openUrl(raw); return; } // gfm 会把裸邮箱自动变 mailto 链接
-      // 工作目录内的相对路径：图片→应用内放大；其他文件→文件管理器里定位
-      const rel = relWorkPath(raw);
-      if (rel && isImgPath(rel)) { openWorkdirLightbox(rel); return; }
-      if (rel) { void revealWorkdir(rel); }
+      // 工作目录内的路径（相对 / 绝对 / file:）：图片→应用内放大；其他文件→文件管理器里定位
+      const p = relWorkPath(raw) || workAbsPath(raw);
+      if (p && isImgPath(p)) { openWorkdirLightbox(p); return; }
+      if (p) { void revealWorkdir(p); return; }
+      if (raw && raw !== '#') say('这个链接打不开（不是网址，也不是工作目录里的文件）', 'err');
       return;
     }
     const code = t.closest('code');
@@ -1324,7 +1336,7 @@
       const s = (code.textContent ?? '').trim();
       const u = codeImgUrl(s);
       if (u) { e.preventDefault(); openUrl(u); return; }
-      const rel = relWorkPath(s);
+      const rel = relWorkPath(s) || workAbsPath(s);
       if (rel && isImgPath(rel)) { e.preventDefault(); openWorkdirLightbox(rel); return; }
       // 非图片的行内代码：必须带路径分隔符才当文件处理（`package.json`、`v1.2.3` 这类
       // 纯提及不劫持——否则点一下就弹「没找到文件」的噪音）。
@@ -1338,18 +1350,36 @@
     if (!v || /\s/.test(v) || /^[a-z][a-z0-9+.-]*:/i.test(v) || v.startsWith('/') || v.startsWith('#') || v.includes('..')) return '';
     return v;
   }
-  function openWorkdirLightbox(rel: string) {
+  // 本地绝对路径 / file: / sandbox: 链接 → 绝对路径字符串。只做形态识别；
+  // 「必须在工作目录内」的边界由后端 canonicalize 后强制，越界一律拒绝。
+  function workAbsPath(s: string): string {
+    let v = s.trim();
+    if (/^(file|sandbox):/i.test(v)) {
+      try { v = decodeURIComponent(v.replace(/^file:\/\/(localhost)?/i, '').replace(/^sandbox:(\/\/)?/i, '')); }
+      catch { return ''; }
+    }
+    if (!v || v.length > 1024) return '';
+    if (!(v.startsWith('/') || /^[a-zA-Z]:[\\/]/.test(v))) return '';
+    return v;
+  }
+  function openWorkdirLightbox(p: string) {
     const c = activeConv;
     if (!c) return;
-    loadWorkdirImg(c.conn_id, c.site_slug, rel).then((d) => { if (d) lightbox = d; });
+    // 点击是明确意图：之前失败过（负缓存空串）的条目给重试机会——文件可能刚被生成出来
+    const k = thumbKey(p);
+    if (thumbs[k] === '') { const t2 = { ...thumbs }; delete t2[k]; thumbs = t2; }
+    loadWorkdirImg(c.conn_id, c.site_slug, p).then((d) => {
+      if (d) lightbox = d;
+      else say('预览失败：文件不存在、超过 8MB，或在工作目录之外', 'err');
+    });
   }
-  async function revealWorkdir(rel: string) {
+  async function revealWorkdir(p: string) {
     const c = activeConv;
     if (!c) return;
     try {
-      const abs = await invoke<string>('resolve_workdir_file', { connId: c.conn_id, project: c.site_slug, path: rel });
+      const abs = await invoke<string>('resolve_workdir_file', { connId: c.conn_id, project: c.site_slug, path: p });
       await revealItemInDir(abs);
-    } catch { say('没找到这个文件（可能还没生成或已移动）', 'err'); }
+    } catch { say('打不开：文件不存在（可能还没生成或已移动），或在工作目录之外', 'err'); }
   }
 
   // ---------- 行内代码图片预览 ----------
@@ -1967,7 +1997,7 @@
               <div class="body">
                 {#if liveView.tools.length}{@render cmds(liveView.tools)}{/if}
                 <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
-                {#if liveView.text}<div class="text md" onclick={mdClick}>{@html mdRender(liveView.text)}</div>{/if}
+                {#if liveView.text}<div class="text md" onclick={mdClick} onauxclick={mdClick}>{@html mdRender(liveView.text)}</div>{/if}
                 {#if liveView.error}<div class="err-note">{liveView.error}</div>
                 {:else}
                   <div class="working" aria-label="思考中">
@@ -2146,7 +2176,7 @@
           <div class="text is-err">{@render richText(m.text)}{#if isLast && !viewBusy}{#if activeConv?.session_ref && !retryExhausted[activeConvId]}<button class="retry-btn" onclick={() => retry(activeConvId, true)}><svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M13 8a5 5 0 1 1-1.5-3.6M13 2v3h-3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>重试</button>{/if}<button class="retry-btn" title="换一个全新会话原地续跑（自动带上历史摘要）——用于会话状态损坏、重试无效时" onclick={() => rebuildSession(activeConvId)}><svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M2.6 8a5.4 5.4 0 0 1 9.3-3.7M13.4 8a5.4 5.4 0 0 1-9.3 3.7" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /><path d="M11.6 1.6v2.9h2.9M4.4 14.4v-2.9H1.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>重建继续</button>{/if}</div>
         {:else}
           <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
-          <div class="text md" onclick={mdClick}>{@html mdRender(m.text)}</div>
+          <div class="text md" onclick={mdClick} onauxclick={mdClick}>{@html mdRender(m.text)}</div>
         {/if}
         {#if m.proposal}
           <div class="proposal">
