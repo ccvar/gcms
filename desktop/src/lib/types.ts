@@ -129,6 +129,11 @@ export interface ScheduledItem {
   url: string;
 }
 
+/** 单个站点在某次触发中的结果。 */
+export interface TaskRunSite { slug: string; ok: boolean; conv_id?: string; error?: string; }
+/** 一次触发的运行记录（新到旧，最多 20 条）。 */
+export interface TaskRun { ts: number; ok: boolean; summary: string; sites?: TaskRunSite[]; }
+
 export interface ScheduledTask {
   id: string;
   conn_id: string;
@@ -153,6 +158,8 @@ export interface ScheduledTask {
   last_summary: string;
   last_conv_id: string;
   runs: number;
+  /** 运行记录（新到旧，最多 20 条）。 */
+  history?: TaskRun[];
   created_at: number;
   updated_at: number;
 }

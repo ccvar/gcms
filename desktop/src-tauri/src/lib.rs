@@ -1342,6 +1342,7 @@ fn save_task(
         last_summary: existing.as_ref().map(|e| e.last_summary.clone()).unwrap_or_default(),
         last_conv_id: existing.as_ref().map(|e| e.last_conv_id.clone()).unwrap_or_default(),
         runs: existing.as_ref().map(|e| e.runs).unwrap_or(0),
+        history: existing.as_ref().map(|e| e.history.clone()).unwrap_or_default(),
         created_at: existing.as_ref().map(|e| e.created_at).unwrap_or(now),
         updated_at: now,
     };
@@ -1415,32 +1416,54 @@ async fn fire_task(
 ) {
     let targets = task.targets();
     let multi = targets.len() > 1;
+    // 并发执行，信号量限流：CLI 进程以网络等待为主，但每个要吃几百 MB 内存，
+    // 上限按核数自动定（核数/2，钳 2–6）。同连接共享工作目录，写盘冲突概率低但非零，
+    // 不放开到全并发。
+    let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(task_concurrency()));
+    let mut handles = Vec::with_capacity(targets.len());
+    for (slug, name) in targets.clone() {
+        let sem = sem.clone();
+        let (conns, convos, runs, data_dir) = (conns.clone(), convos.clone(), runs.clone(), data_dir.clone());
+        let (conn_id, task_type, brain, model, effort, prompt) = (
+            task.conn_id.clone(), task.task_type.clone(), task.brain.clone(),
+            task.model.clone(), task.effort.clone(), task.prompt.clone(),
+        );
+        handles.push(tauri::async_runtime::spawn(async move {
+            let _permit = sem.acquire_owned().await;
+            let conv_id = uuid::Uuid::new_v4().to_string();
+            // 后台运行没有前端接收方，用一个丢弃事件的 Channel。
+            let sink: Channel<agent::TurnEvent> = Channel::new(|_| Ok(()));
+            // 定时任务无人值守：只能全自动（询问/自动档会卡在等批准，永远回不来）。
+            let res = create_conversation(
+                conns, convos, runs, conv_id,
+                conn_id, slug.clone(), name,
+                task_type, brain, model,
+                "full".into(), effort, prompt, sink, data_dir,
+            )
+            .await;
+            (slug, res)
+        }));
+    }
     let mut ok_count = 0usize;
     let mut first_err = String::new();
     let mut last_conv = String::new();
     let mut last_summary = String::new();
-    for (slug, name) in &targets {
-        let conv_id = uuid::Uuid::new_v4().to_string();
-        // 后台运行没有前端接收方，用一个丢弃事件的 Channel。
-        let sink: Channel<agent::TurnEvent> = Channel::new(|_| Ok(()));
-        // 定时任务无人值守：只能全自动（询问/自动档会卡在等批准，永远回不来）。
-        let res = create_conversation(
-            conns.clone(), convos.clone(), runs.clone(), conv_id,
-            task.conn_id.clone(), slug.clone(), name.clone(),
-            task.task_type.clone(), task.brain.clone(), task.model.clone(),
-            "full".into(), task.effort.clone(), task.prompt.clone(), sink, data_dir.clone(),
-        )
-        .await;
+    let mut run_sites: Vec<tasks::TaskRunSite> = Vec::with_capacity(targets.len());
+    for h in handles {
+        let Ok((slug, res)) = h.await else { continue };
         match &res {
             Ok(c) => {
                 ok_count += 1;
                 last_conv = c.id.clone();
                 last_summary = last_snippet(c);
+                run_sites.push(tasks::TaskRunSite { slug, ok: true, conv_id: c.id.clone(), error: String::new() });
             }
             Err(e) => {
+                let brief: String = e.chars().take(120).collect();
                 if first_err.is_empty() {
-                    first_err = format!("{slug}: {}", e.chars().take(120).collect::<String>());
+                    first_err = format!("{slug}: {brief}");
                 }
+                run_sites.push(tasks::TaskRunSite { slug, ok: false, conv_id: String::new(), error: brief });
             }
         }
     }
@@ -1467,6 +1490,8 @@ async fn fire_task(
         if !last_conv.is_empty() {
             x.last_conv_id = last_conv.clone();
         }
+        x.history.insert(0, tasks::TaskRun { ts: now, ok: all_ok, summary: summary.clone(), sites: run_sites.clone() });
+        x.history.truncate(20);
     });
     let body = if all_ok {
         if multi {
@@ -1483,6 +1508,13 @@ async fn fire_task(
         .title(if all_ok { "定时任务完成" } else { "定时任务失败" })
         .body(body)
         .show();
+}
+
+/// 多站任务的并发上限：按机器核数自动协调（核数/2，钳在 2–6）。
+/// CLI 进程网络等待为主，但每个常驻几百 MB 内存，全并发会把低配机器打爆。
+fn task_concurrency() -> usize {
+    let cores = std::thread::available_parallelism().map(|c| c.get()).unwrap_or(4);
+    (cores / 2).clamp(2, 6)
 }
 
 fn last_snippet(c: &Conversation) -> String {

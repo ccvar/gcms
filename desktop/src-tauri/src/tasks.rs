@@ -41,8 +41,32 @@ pub struct ScheduledTask {
     /// 上次触发生成的对话 id（点进去能看）
     pub last_conv_id: String,
     pub runs: u64,
+    /// 运行记录（新到旧，最多保留最近 20 次）：每次触发一条，含每站结果与会话链接。
+    #[serde(default)]
+    pub history: Vec<TaskRun>,
     pub created_at: u64,
     pub updated_at: u64,
+}
+
+/// 一次触发的运行记录。
+#[derive(Clone, Serialize, Deserialize)]
+pub struct TaskRun {
+    pub ts: u64,
+    pub ok: bool,
+    pub summary: String,
+    #[serde(default)]
+    pub sites: Vec<TaskRunSite>,
+}
+
+/// 单个站点在某次触发中的结果。
+#[derive(Clone, Serialize, Deserialize)]
+pub struct TaskRunSite {
+    pub slug: String,
+    pub ok: bool,
+    #[serde(default)]
+    pub conv_id: String,
+    #[serde(default)]
+    pub error: String,
 }
 
 impl ScheduledTask {

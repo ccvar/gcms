@@ -108,6 +108,8 @@
     title: string; prompt: string; period: string; firstRun: string; enabled: boolean;
   }
   let taskModalOpen = $state(false);
+  /** 正在查看运行记录的任务（null=关闭） */
+  let taskHistoryFor = $state<ScheduledTask | null>(null);
   let tf = $state<TaskForm>(freshTaskForm());
   // 已从对话提议卡成功创建过的定时任务（按内容 key，持久化）→ 卡片显示「已创建」防重复点。
   let createdProposals = $state(loadCreatedProposals());
@@ -1932,6 +1934,7 @@
                     <div class="task-last {t.last_status}">
                       上次 {fmt(t.last_run)} · {t.last_status === 'ok' ? '成功' : '失败'}{#if t.last_summary}：{t.last_summary}{/if}
                       {#if t.last_conv_id}<button class="link" onclick={() => openConv(t.last_conv_id)}>查看对话</button>{/if}
+                      {#if t.history?.length}<button class="link" onclick={() => (taskHistoryFor = t)}>运行记录</button>{/if}
                     </div>
                   {/if}
                 </div>
@@ -2564,6 +2567,31 @@
   </div>
 {/if}
 
+{#if taskHistoryFor}
+  <div class="mask" role="presentation" onclick={() => (taskHistoryFor = null)}></div>
+  <div class="modal wide">
+    <header class="sheet-head"><b>运行记录 · {taskHistoryFor.title}</b><button class="x" onclick={() => (taskHistoryFor = null)}>×</button></header>
+    <div class="sheet-body">
+      {#each taskHistoryFor.history ?? [] as r, i (`${r.ts}-${i}`)}
+        <div class="trun">
+          <div class="trun-head"><b>{fmt(r.ts)}</b><span class="trun-badge {r.ok ? 'ok' : 'err'}">{r.ok ? '成功' : '失败'}</span>{#if r.summary}<span class="trun-sum" title={r.summary}>{r.summary}</span>{/if}</div>
+          {#if r.sites?.length}
+            <div class="trun-sites">
+              {#each r.sites as s (s.slug)}
+                {#if s.ok && s.conv_id}
+                  <button class="trun-site" title="打开这次运行的对话" onclick={() => { taskHistoryFor = null; openConv(s.conv_id ?? ''); }}><SiteFav src={siteFav(s.slug)} label={s.slug} size={12} /><span>{s.slug}</span></button>
+                {:else}
+                  <span class="trun-site is-err" title={s.error || '失败'}><SiteFav src={siteFav(s.slug)} label={s.slug} size={12} /><span>{s.slug} ✕</span></span>
+                {/if}
+              {/each}
+            </div>
+          {/if}
+        </div>
+      {/each}
+    </div>
+  </div>
+{/if}
+
 <style>
   :global(:root) {
     --bg: #ffffff; --rail: #faf9f7; --card: #ffffff;
@@ -2956,6 +2984,17 @@
   .trow { display: flex; gap: 12px; }
   .tfield { display: flex; flex-direction: column; gap: 5px; flex: 1; min-width: 0; }
   .tfield > span { font-size: 12px; color: var(--dim); }
+  /* 任务运行记录 */
+  .trun { border: 1px solid var(--border); border-radius: 10px; padding: 9px 11px; }
+  .trun-head { display: flex; align-items: center; gap: 8px; font-size: 12.5px; min-width: 0; }
+  .trun-badge { flex: none; padding: 1px 7px; border-radius: 999px; font-size: 11px; }
+  .trun-badge.ok { background: #e7f0e8; color: #3e7a4e; }
+  .trun-badge.err { background: #f7e8e4; color: #a03c2b; }
+  .trun-sum { color: var(--dim); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+  .trun-sites { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
+  .trun-site { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border: 1px solid var(--border2); border-radius: 999px; font-size: 12px; background: var(--card); color: inherit; font-family: inherit; cursor: pointer; }
+  .trun-site:hover { border-color: var(--accent); color: var(--accent); }
+  .trun-site.is-err { cursor: help; color: #a03c2b; border-color: #ecd4cc; background: #fbf3f0; }
   /* 多站点胶囊 */
   .tsites { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 2px; }
   .tsite-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 6px 3px 8px; border: 1px solid var(--border2); border-radius: 999px; font-size: 12px; background: var(--card); }
