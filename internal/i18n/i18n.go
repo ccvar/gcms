@@ -402,6 +402,38 @@ func (m *Manager) Active(conf string) []Locale {
 	return out
 }
 
+// ActiveWith 与 Active 相同，但额外认 customJSON 里的自定义语种（某个站点自己的
+// custom_locales 设置）——平台实例统计**别的站点**的语种时必须用它：别站新增的
+// 自定义语种不在本实例的 m.custom 里，直接 Active 会被滤掉。
+func (m *Manager) ActiveWith(conf, customJSON string) []Locale {
+	extra := ParseCustom(customJSON)
+	var out []Locale
+	seen := map[string]bool{}
+	for _, c := range strings.Split(conf, ",") {
+		c = strings.TrimSpace(c)
+		if c == "" || seen[c] {
+			continue
+		}
+		if l, ok := m.meta(c); ok {
+			out = append(out, l)
+			seen[c] = true
+			continue
+		}
+		for _, e := range extra {
+			if e.Code == c {
+				out = append(out, e)
+				seen[c] = true
+				break
+			}
+		}
+	}
+	if len(out) == 0 {
+		l, _ := builtinMeta("zh")
+		out = []Locale{l}
+	}
+	return out
+}
+
 // Default 返回启用列表里的默认语种码（首个）。
 func (m *Manager) Default(conf string) string { return m.Active(conf)[0].Code }
 

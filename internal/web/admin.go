@@ -1233,7 +1233,9 @@ func (s *Server) setSiteCounts(v *View, siteID int64, st *store.Store) {
 	if v.PlatformContentUpdatedAt == nil {
 		v.PlatformContentUpdatedAt = map[int64]string{}
 	}
-	locs := s.i18n.Active(st.Setting("locales"))
+	// 必须带上目标站自己的 custom_locales：平台实例的 i18n 不认别站的自定义语种，
+	// 直接 Active 会把它们滤掉（卡片 1 语种、站内概览却有 2 个）。
+	locs := s.i18n.ActiveWith(st.Setting("locales"), st.Setting("custom_locales"))
 	v.PlatformLocaleCounts[siteID] = len(locs)
 	dl := "zh"
 	if len(locs) > 0 {
