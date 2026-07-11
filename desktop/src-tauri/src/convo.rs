@@ -70,6 +70,12 @@ pub struct Conversation {
     /// 思考等级（推理强度）：'' 默认 | low | medium | high。每轮下发，运行中可改。
     #[serde(default)]
     pub effort: String,
+    /// 多站会话：站点 slug 清单（>1 时为跨站会话，site_slug 存空、site_name 存展示名）。
+    #[serde(default)]
+    pub site_slugs: Vec<String>,
+    /// 与 site_slugs 对齐的站点名。
+    #[serde(default)]
+    pub site_names: Vec<String>,
     /// claude 的 session uuid 或 codex 的 thread_id；首轮后回填。
     pub session_ref: String,
     pub title: String,
@@ -327,7 +333,7 @@ mod tests {
         Conversation {
             id: id.into(), conn_id: "c".into(), conn_name: "".into(), site_slug: "s".into(), site_name: "".into(),
             task_type: "free".into(), brain: "claude".into(), model: "sonnet".into(), perm_mode: "full".into(), effort: String::new(),
-            session_ref: session.into(), title: "t".into(), messages: msgs, status: "idle".into(), created_at: 0, updated_at: 0, ctx_tokens: 0, total_tokens: 0,
+            site_slugs: vec![], site_names: vec![], session_ref: session.into(), title: "t".into(), messages: msgs, status: "idle".into(), created_at: 0, updated_at: 0, ctx_tokens: 0, total_tokens: 0,
         }
     }
 

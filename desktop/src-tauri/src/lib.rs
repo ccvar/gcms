@@ -1436,7 +1436,7 @@ async fn fire_task(
             // 定时任务无人值守：只能全自动（询问/自动档会卡在等批准，永远回不来）。
             let res = create_conversation(
                 conns, convos, runs, conv_id,
-                conn_id, slug.clone(), name,
+                conn_id, slug.clone(), name, vec![], vec![],
                 task_type, brain, model,
                 "full".into(), effort, prompt, sink, data_dir,
             )
@@ -1622,6 +1622,8 @@ async fn create_conversation(
     conn_id: String,
     site_slug: String,
     site_name: String,
+    site_slugs: Vec<String>,
+    site_names: Vec<String>,
     task_type: String,
     brain: String,
     model: String,
@@ -1640,8 +1642,11 @@ async fn create_conversation(
     };
     let work_dir = resolve_work_dir(&conn, site_slug.trim())?;
     let is_cf = conn.kind == "cloudflare";
+    let multi = !is_cf && site_slugs.len() > 1;
     let sys = if is_cf {
         agent::cf_system_prompt(&cf_project_slug(site_slug.trim()), &conn.account_id)
+    } else if multi {
+        agent::multi_site_system_prompt(&site_slugs, &site_names)
     } else {
         agent::system_prompt(&task_type, site_slug.trim(), &site_name)
     };
@@ -1654,6 +1659,8 @@ async fn create_conversation(
         conn_name: conn.name.clone(),
         site_slug: site_slug.trim().to_string(),
         site_name,
+        site_slugs: if multi { site_slugs.clone() } else { vec![] },
+        site_names: if multi { site_names.clone() } else { vec![] },
         task_type,
         brain: brain.clone(),
         model: model.clone(),
@@ -1697,6 +1704,8 @@ async fn start_conversation(
     conn_id: String,
     site_slug: String,
     site_name: String,
+    site_slugs: Vec<String>,
+    site_names: Vec<String>,
     task_type: String,
     brain: String,
     model: String,
@@ -1708,7 +1717,7 @@ async fn start_conversation(
     if conv_id.trim().is_empty() {
         return Err("会话 id 缺失".into());
     }
-    if site_slug.trim().is_empty() {
+    if site_slug.trim().is_empty() && site_slugs.len() < 2 {
         return Err("站点不能为空".into());
     }
     if message.trim().is_empty() {
@@ -1716,7 +1725,7 @@ async fn start_conversation(
     }
     create_conversation(
         state.conns.clone(), state.convos.clone(), state.runs.clone(),
-        conv_id, conn_id, site_slug, site_name, task_type, brain, model, perm_mode, effort, message, on_event,
+        conv_id, conn_id, site_slug, site_name, site_slugs, site_names, task_type, brain, model, perm_mode, effort, message, on_event,
         state.data_dir.clone(),
     )
     .await
@@ -1835,7 +1844,11 @@ async fn rebuild_session(
     let sys = if is_cf {
         agent::cf_system_prompt(&cf_project_slug(&conv.site_slug), &conn.account_id)
     } else {
-        agent::system_prompt(&conv.task_type, &conv.site_slug, &conv.site_name)
+        if conv.site_slugs.len() > 1 {
+            agent::multi_site_system_prompt(&conv.site_slugs, &conv.site_names)
+        } else {
+            agent::system_prompt(&conv.task_type, &conv.site_slug, &conv.site_name)
+        }
     };
     let shot = state.data_dir.join("tools").join("shot.js");
     let sys = format!("{sys}\n\n{}", agent::shot_prompt(&shot.to_string_lossy(), is_cf));

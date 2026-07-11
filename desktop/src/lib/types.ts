@@ -102,6 +102,9 @@ export interface Conversation {
   perm_mode: string;
   /** 思考等级（推理强度）：'' 默认 | low | medium | high。 */
   effort?: string;
+  /** 多站会话：站点 slug 清单（>1 时为跨站会话）。 */
+  site_slugs?: string[];
+  site_names?: string[];
   session_ref: string;
   title: string;
   messages: Message[];

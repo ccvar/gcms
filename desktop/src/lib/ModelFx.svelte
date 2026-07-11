@@ -43,13 +43,14 @@
     const r = btn.getBoundingClientRect();
     const width = 320;
     const left = Math.max(12, Math.min(r.left, window.innerWidth - width - 12));
-    // composer 里触发器贴底：向上开；任务弹窗等场景触发器在屏幕中上部、上方放不下：向下开。
-    const estH = 400;
-    if (r.top < estH + 16) {
-      const maxH = Math.max(200, window.innerHeight - r.bottom - 18);
-      menuStyle = `top:${Math.round(r.bottom + 6)}px; left:${Math.round(left)}px; width:${width}px; max-height:${Math.round(maxH)}px; overflow-y:auto;`;
+    // 哪边空间大开哪边；高度永远钳在所选侧的可用空间内（超出内部滚动），任何窗口尺寸都不会被裁。
+    const margin = 14;
+    const spaceAbove = r.top - margin;
+    const spaceBelow = window.innerHeight - r.bottom - margin;
+    if (spaceBelow > spaceAbove) {
+      menuStyle = `top:${Math.round(r.bottom + 6)}px; left:${Math.round(left)}px; width:${width}px; max-height:${Math.round(spaceBelow - 6)}px;`;
     } else {
-      menuStyle = `bottom:${Math.round(window.innerHeight - r.top + 6)}px; left:${Math.round(left)}px; width:${width}px;`;
+      menuStyle = `bottom:${Math.round(window.innerHeight - r.top + 6)}px; left:${Math.round(left)}px; width:${width}px; max-height:${Math.round(spaceAbove - 6)}px;`;
     }
   }
   function toggle() { open = !open; if (open) { requestAnimationFrame(position); void loadUsage(); } }
@@ -178,10 +179,12 @@
   .fx-eff { font-size: 10.5px; padding: 0 6px; border-radius: 999px; background: #edece7; color: var(--text, #26241f); }
   .fx-chev { opacity: .6; flex: none; }
 
-  .fx-menu { position: fixed; z-index: 95; background: #fff; border: 1px solid var(--border2, #e2dfd7); border-radius: 12px; box-shadow: 0 12px 32px rgba(30, 25, 15, .16); padding: 7px; }
+  .fx-menu { position: fixed; z-index: 95; display: flex; flex-direction: column; background: #fff; border: 1px solid var(--border2, #e2dfd7); border-radius: 12px; box-shadow: 0 12px 32px rgba(30, 25, 15, .16); padding: 7px; }
   .fx-sec { display: flex; align-items: center; justify-content: space-between; font-size: 10.5px; font-weight: 600; letter-spacing: .04em; color: var(--faint, #9b968c); padding: 4px 8px 5px; }
   .fx-sec-sub { font-weight: 500; letter-spacing: 0; color: var(--dim, #6b675f); }
-  .fx-opts { max-height: 250px; overflow-y: auto; overscroll-behavior: contain; }
+  /* 菜单整体限高（position() 注入 max-height），只有模型列表这一段伸缩滚动——
+     滑杆/用量常驻可见，也不会出现外层+列表的嵌套双滚动条。 */
+  .fx-opts { flex: 1 1 auto; min-height: 0; max-height: 250px; overflow-y: auto; overscroll-behavior: contain; }
   .fx-opt { width: 100%; display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: none; border-radius: 8px; background: transparent; text-align: left; cursor: pointer; font: inherit; }
   .fx-opt:hover:not(:disabled) { background: #f4f3ef; }
   .fx-opt.on { background: #efeee9; }

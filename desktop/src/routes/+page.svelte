@@ -133,7 +133,7 @@
     pendingProposalKey = proposalKey(p);
     const firstRunSecs = p.first_run && !isNaN(new Date(p.first_run).getTime()) ? Math.floor(new Date(p.first_run).getTime() / 1000) : 0;
     tf = {
-      id: null, connId: c.conn_id, connName: c.conn_name, siteSlugs: c.site_slug ? [c.site_slug] : [],
+      id: null, connId: c.conn_id, connName: c.conn_name, siteSlugs: c.site_slugs?.length ? [...c.site_slugs] : (c.site_slug ? [c.site_slug] : []),
       taskType: c.task_type === 'free' ? 'free' : 'article', brain: c.brain, model: c.model, effort: c.effort || '',
       title: p.title, prompt: p.prompt, period: String(p.every_minutes || 1440),
       firstRun: firstRunSecs ? toLocalInput(firstRunSecs) : '', enabled: true,
@@ -865,6 +865,10 @@
   async function deleteConv(id: string) {
     // 对话进行中不删：否则删掉会话行会孤儿掉后台在跑的 CLI 子进程 + 触发「会话丢失」。先停止再删。
     if (running[id]) { say('对话进行中，请先点停止再删除。', 'err'); return; }
+    const c = convos.find((x) => x.id === id);
+    const label = c?.title?.trim() ? `「${c.title.trim()}」` : '这条对话';
+    const yes = await confirmDialog(`删除对话${label}？聊天记录不可恢复。`, { title: '删除对话', kind: 'warning' });
+    if (!yes) return;
     try { await invoke('delete_conversation', { id }); if (activeConvId === id) { activeConvId = ''; activeConv = null; view = 'launcher'; } await refreshConvos(); } catch (e) { say(String(e), 'err'); }
   }
 
@@ -938,7 +942,8 @@
   }
 
   async function startChat() {
-    if (!lSite.trim() || !lDraft.trim() || !brainUsable(lBrain)) return;
+    const multi = lSites.length > 1;
+    if ((!multi && !lSite.trim()) || !lDraft.trim() || !brainUsable(lBrain)) return;
     const site = sites.find((s) => s.slug === lSite);
     const taskType = isCfConn ? 'sitebuild' : lTask;
     prefs.brain = lBrain; prefs.model = lModel; prefs.taskType = lTask; prefs.perm = lPerm; prefs.effort = lEffort; savePrefs(prefs);
@@ -948,8 +953,11 @@
     const text = lDraft.trim() + (styleDir ? `\n\n【视觉风格】${styleDir}` : '');
     const id = crypto.randomUUID();
     const now = Math.floor(Date.now() / 1000);
+    const mSlug = multi ? '' : lSite;
+    const mName = multi ? `多站 · ${lSites.length} 站` : (site?.name || lSite);
+    const mNames = multi ? lSites.map((sl) => sites.find((x) => x.slug === sl)?.name || sl) : [];
     const optimistic: Conversation = {
-      id, conn_id: activeConnId, conn_name: activeConn?.name ?? '', site_slug: lSite, site_name: site?.name || lSite,
+      id, conn_id: activeConnId, conn_name: activeConn?.name ?? '', site_slug: mSlug, site_name: mName, site_slugs: multi ? [...lSites] : [],
       task_type: taskType, brain: lBrain, model, perm_mode: lPerm, effort: lEffort, session_ref: '',
       title: text.slice(0, 30), messages: [optimisticUser(text)], status: 'running', created_at: now, updated_at: now,
     };
@@ -960,7 +968,8 @@
     lDraft = '';
     try {
       const conv = await invoke<Conversation>('start_conversation', {
-        convId: id, connId: activeConnId, siteSlug: lSite, siteName: site?.name || lSite,
+        convId: id, connId: activeConnId, siteSlug: mSlug, siteName: mName,
+        siteSlugs: multi ? lSites : [], siteNames: mNames,
         taskType, brain: lBrain, model, permMode: lPerm, effort: lEffort,
         message: text, onEvent: makeChannel(id),
       });
@@ -1495,6 +1504,51 @@
 
   // 下拉选项
   const siteOpts = $derived(sites.map((s) => ({ value: s.slug, label: s.name || s.slug, sub: s.url ? hostOf(s.url) : '未绑定域名', img: s.favicon || s.logo || faviconGuess(s.url) })));
+  // ---------- 多站会话（启动器）----------
+  // lSites 非空 = 多站模式；「全部站点」是当下站点集的快照（新增站点不自动混进旧会话）。
+  let lSites = $state<string[]>([]);
+  const launcherSiteOpts = $derived.by(() => {
+    const base = siteOpts.filter((o) => !lSites.includes(o.value));
+    if (isCfConn || sites.length < 2) return base;
+    const head = [{ value: '__all__', label: `全部站点 · ${sites.length} 个`, sub: '跨站会话：统计 / 巡检 / 批量' }];
+    if (lSites.length) head.unshift({ value: '__multi__', label: `多站 · ${lSites.length} 个站点`, sub: '继续选择可再添加' });
+    return [...head, ...base];
+  });
+  function onLauncherSitePick(v: string) {
+    if (v === '__all__') { lSites = sites.map((s) => s.slug); lSite = '__multi__'; return; }
+    if (v === '__multi__') return;
+    if (lSites.length) { if (!lSites.includes(v)) lSites = [...lSites, v]; lSite = '__multi__'; }
+  }
+  function removeLauncherSite(slug: string) {
+    lSites = lSites.filter((s) => s !== slug);
+    if (lSites.length === 1) { lSite = lSites[0]; lSites = []; }
+    else if (!lSites.length) { lSite = sites[0]?.slug ?? ''; }
+  }
+  // 单站模式下点「+多站」：把当前站作为第一个胶囊进入多站模式
+  function enterMultiMode() {
+    if (!lSites.length && lSite && lSite !== '__multi__') { lSites = [lSite]; lSite = '__multi__'; }
+  }
+  // 多站会话的站点清单 tooltip（名称 · 域名，每行一个）
+  function convSitesTip(c: Conversation | null): string {
+    if (!c || (c.site_slugs?.length ?? 0) < 2) return '';
+    return (c.site_slugs ?? []).map((sl, i) => {
+      const st = sites.find((x) => x.slug === sl);
+      return `${c.site_names?.[i] || sl} · ${st?.url ? hostOf(st.url) : sl}`;
+    }).join('\n');
+  }
+  // 侧栏「跨站会话」分组：当前连接所有多站会话的站点并集
+  const multiGroupInfo = $derived.by(() => {
+    const seen = new Map<string, string>();
+    for (const c of convos) {
+      if (c.conn_id !== activeConnId || (c.site_slugs?.length ?? 0) < 2) continue;
+      c.site_slugs!.forEach((sl, i) => { if (!seen.has(sl)) seen.set(sl, c.site_names?.[i] || sl); });
+    }
+    const tip = [...seen.entries()].map(([sl, n]) => {
+      const st = sites.find((x) => x.slug === sl);
+      return `${n} · ${st?.url ? hostOf(st.url) : sl}`;
+    }).join('\n');
+    return { count: seen.size, tip };
+  });
   const brainOpts = $derived([
     { value: 'claude', label: 'Claude', icon: 'claude', disabled: !brainUsable('claude'), sub: brainUsable('claude') ? '' : brains?.claude.found ? '未登录' : '未安装' },
     { value: 'codex', label: 'Codex', icon: 'codex', disabled: !brainUsable('codex'), sub: brainUsable('codex') ? '' : brains?.codex.found ? '未登录' : '未安装' },
@@ -1533,9 +1587,10 @@
     const bySite = new Map<string, { slug: string; name: string; recent: number; convs: Conversation[] }>();
     for (const c of convos) {
       if (c.conn_id !== activeConnId) continue; // 侧栏只显示当前连接的对话，别串场
-      const key = c.site_slug || '(未指定站点)';
+      const multi = (c.site_slugs?.length ?? 0) > 1;
+      const key = multi ? '__multi__' : (c.site_slug || '(未指定站点)');
       let g = bySite.get(key);
-      if (!g) { g = { slug: key, name: c.site_name || c.site_slug || key, recent: 0, convs: [] }; bySite.set(key, g); }
+      if (!g) { g = { slug: key, name: multi ? '跨站会话' : (c.site_name || c.site_slug || key), recent: 0, convs: [] }; bySite.set(key, g); }
       g.convs.push(c);
       if (c.updated_at > g.recent) g.recent = c.updated_at;
     }
@@ -1675,6 +1730,7 @@
           <svg class="site-grp-chev" class:collapsed={collapsedSites.has(g.slug)} width="10" height="10" viewBox="0 0 12 12" fill="none"><path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>
           {#if isCfConn}{#if g.url}<img class="site-grp-fav" src={faviconOf(g.url)} alt="" onerror={(e) => ((e.currentTarget as HTMLImageElement).style.display = 'none')} />{/if}{:else}<SiteFav src={siteFav(g.slug)} label={g.slug} size={14} />{/if}
           <span class="site-grp-name">{g.name}</span>
+          {#if g.slug === '__multi__' && multiGroupInfo.count}<span class="site-grp-host" data-tip={multiGroupInfo.tip}>{multiGroupInfo.count} 个站点</span>{/if}
           {#if g.url}<span class="site-grp-host" title={hostOf(g.url)}>{hostOf(g.url)}</span>{/if}
         </button>
         {#if !collapsedSites.has(g.slug)}
@@ -1850,16 +1906,24 @@
                   <input class="cf-proj-in" bind:value={lSite} placeholder="项目名，如 coffee-landing" spellcheck="false" autocapitalize="off" autocorrect="off" />
                   <Dropdown compact bind:value={lStyle} options={STYLE_OPTS} />
                 {:else}
-                  <Dropdown compact searchable bind:value={lSite} options={siteOpts} placeholder="选择站点" />
+                  <Dropdown compact searchable bind:value={lSite} options={launcherSiteOpts} placeholder="选择站点" onchange={onLauncherSitePick} />
+                  {#if !lSites.length && sites.length > 1}<button class="multi-add" title="多站会话：同时操作多个站点" onclick={enterMultiMode}>+多站</button>{/if}
                 {/if}
               </div>
               <div class="cb-right">
                 <Dropdown compact bind:value={lPerm} options={permOptsFor(lBrain)} tone={permTone(lPerm)} />
                 <ModelFx options={comboOpts} value={`${lBrain}::${lModel}`} effort={lEffort} onpick={pickCombo} oneffort={(v: string) => { lEffort = v; prefs.effort = v; savePrefs(prefs); }} />
-                <button class="send" onclick={startChat} disabled={!lSite.trim() || !lDraft.trim() || !brainUsable(lBrain)} title="发送（Enter）">↑</button>
+                <button class="send" onclick={startChat} disabled={(!lSite.trim() && lSites.length < 2) || !lDraft.trim() || !brainUsable(lBrain)} title="发送（Enter）">↑</button>
               </div>
             </div>
           </div>
+          {#if lSites.length}
+            <div class="tsites launcher-sites">
+              {#each lSites as sl (sl)}
+                <span class="tsite-chip"><SiteFav src={siteFav(sl)} label={sl} size={13} />{sites.find((x) => x.slug === sl)?.name || sl}<button type="button" aria-label="移除站点" onclick={() => removeLauncherSite(sl)}>×</button></span>
+              {/each}
+            </div>
+          {/if}
           {#if !brainUsable(lBrain)}<p class="hint warn-text">所选厂商未就绪，点左下角设置里「去授权」。</p>{/if}
           {#if isCfConn && brains?.wrangler && !brains.wrangler.found}{@render wrNote()}{/if}
         </div>
@@ -2030,7 +2094,7 @@
       <header class="thread-head" data-tauri-drag-region onmousedown={startDrag}>
         <div class="th-info">
           <b>{activeConv?.title}</b>
-          <small>{#if activeConvIsCf}{@render cfMark(13)}{:else}<SiteFav src={siteFav(activeConv?.site_slug ?? '')} label={activeConv?.site_slug ?? ''} size={13} />{/if} {activeConv?.site_name || activeConv?.site_slug} · {taskLabel(activeConv?.task_type ?? '')} · {@render brainTag(activeConv?.brain ?? 'claude', brainLabel(activeConv?.brain ?? '') + (activeConv?.brain === 'claude' && activeConv?.model ? ` ${activeConv.model}` : ''))}</small>
+          <small>{#if activeConvIsCf}{@render cfMark(13)}{:else}<SiteFav src={siteFav(activeConv?.site_slug ?? '')} label={activeConv?.site_slug ?? ''} size={13} />{/if} {#if (activeConv?.site_slugs?.length ?? 0) > 1}<span data-tip={convSitesTip(activeConv)}>{activeConv?.site_name}</span>{:else}{activeConv?.site_name || activeConv?.site_slug}{/if} · {taskLabel(activeConv?.task_type ?? '')} · {@render brainTag(activeConv?.brain ?? 'claude', brainLabel(activeConv?.brain ?? '') + (activeConv?.brain === 'claude' && activeConv?.model ? ` ${activeConv.model}` : ''))}</small>
         </div>
         {#if activeSiteUrl}
           <button class="th-open" onclick={() => openUrl(activeSiteUrl)} title="打开 {activeSiteUrl}">{hostOf(activeSiteUrl)}<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M6 3.5h6.5V10M12.2 3.8 3.8 12.2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
@@ -2123,7 +2187,7 @@
               {#if activeConvIsCf}
                 <span class="cb-ro" title="项目已固定"><span class="cb-ro-t">{activeConv?.site_slug}</span></span>
               {:else}
-                <span class="cb-ro" title="会话的站点已固定，不可更改"><SiteFav src={siteFav(activeConv?.site_slug ?? '')} label={activeConv?.site_slug ?? ''} size={15} /><span class="cb-ro-t">{activeConv?.site_name || activeConv?.site_slug}</span></span>
+                <span class="cb-ro" title={(activeConv?.site_slugs?.length ?? 0) > 1 ? convSitesTip(activeConv) : '会话的站点已固定，不可更改'}><SiteFav src={siteFav(activeConv?.site_slug ?? '')} label={activeConv?.site_slug ?? ''} size={15} /><span class="cb-ro-t">{activeConv?.site_name || activeConv?.site_slug}</span></span>
               {/if}
             </div>
             <div class="cb-right">
@@ -2180,7 +2244,7 @@
             {@const site = sites.find((s) => s.slug === c.site_slug)}
             <button class="search-item {activeConvId === c.id ? 'on' : ''}" onclick={() => pickSearch(c.id)}>
               <SiteFav src={siteFav(c.site_slug)} label={c.site_slug} size={15} />
-              <span class="si-main"><b>{c.title || '未命名会话'}</b><small>{c.site_name || c.site_slug}{#if site?.url} · {hostOf(site.url)}{/if}</small></span>
+              <span class="si-main"><b>{c.title || '未命名会话'}</b><small>{#if (c.site_slugs?.length ?? 0) > 1}<span data-tip={convSitesTip(c)}>{c.site_name}</span>{:else}{c.site_name || c.site_slug}{#if site?.url} · {hostOf(site.url)}{/if}{/if}</small></span>
               {@render brainTag(c.brain, brainLabel(c.brain))}
             </button>
           {/each}
@@ -2765,7 +2829,7 @@
   .ctx-kbd { font-size: 11px; color: var(--faint); }
   .ctx-div { height: 1px; background: var(--border); margin: 4px 6px; }
   /* 全局 tips 浮层（fixed，不受滚动容器裁剪） */
-  .tipbox { position: fixed; z-index: 130; transform: translate(-50%, -100%); background: #26241f; color: #fff; font-size: 11px; line-height: 1.45; padding: 5px 9px; border-radius: 7px; width: max-content; max-width: 240px; white-space: normal; pointer-events: none; box-shadow: 0 5px 16px rgba(0, 0, 0, .18); animation: tipin .12s ease-out .3s both; }
+  .tipbox { position: fixed; z-index: 130; transform: translate(-50%, -100%); background: #26241f; color: #fff; font-size: 11px; line-height: 1.45; padding: 5px 9px; border-radius: 7px; width: max-content; max-width: 280px; white-space: pre-line; pointer-events: none; text-align: left; box-shadow: 0 5px 16px rgba(0, 0, 0, .18); animation: tipin .12s ease-out .3s both; }
   .tipbox.below { transform: translate(-50%, 0); }
   .imgtip { position: fixed; z-index: 130; transform: translate(-50%, -100%); padding: 5px; border-radius: 10px; background: #fff; border: 1px solid rgba(0, 0, 0, .1); box-shadow: 0 8px 24px rgba(0, 0, 0, .18); pointer-events: none; visibility: hidden; }
   .imgtip.ready { visibility: visible; animation: tipin .12s ease-out both; }
@@ -3000,6 +3064,9 @@
   .tsite-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 6px 3px 8px; border: 1px solid var(--border2); border-radius: 999px; font-size: 12px; background: var(--card); }
   .tsite-chip button { border: none; background: none; padding: 0 2px; font-size: 13px; line-height: 1; color: var(--faint); cursor: pointer; }
   .tsite-chip button:hover { color: var(--accent); }
+  .launcher-sites { margin-top: 7px; }
+  .multi-add { flex: none; border: none; background: none; padding: 2px 4px; font-size: 11.5px; color: var(--faint); cursor: pointer; border-radius: 6px; }
+  .multi-add:hover { color: var(--accent); background: #f1efe9; }
   /* 任务弹窗里的 模型+强度（对话同款 ModelFx），套输入框外观 */
   .tfield-fx { border: 1px solid var(--border2); border-radius: 8px; padding: 4px 4px; background: var(--card); }
   .tfield-fx :global(.fx) { width: 100%; }
