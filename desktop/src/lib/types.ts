@@ -87,6 +87,8 @@ export interface Message {
   limit_reset?: number | null;
 }
 
+// （定时任务的多站点/强度字段见 ScheduledTask）
+
 export interface Conversation {
   id: string;
   conn_id: string;
@@ -133,9 +135,14 @@ export interface ScheduledTask {
   conn_name: string;
   site_slug: string;
   site_name: string;
+  /** 多站点任务：到点对每个站点各跑一轮；空/缺省 = 单站（site_slug）。 */
+  site_slugs?: string[];
+  site_names?: string[];
   task_type: TaskType;
   brain: Brain;
   model: string;
+  /** 思考等级：'' 默认 | low | medium | high */
+  effort?: string;
   title: string;
   prompt: string;
   interval_minutes: number;

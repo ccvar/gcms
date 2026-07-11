@@ -104,7 +104,7 @@
   async function loadTasks() { try { tasks = await invoke<ScheduledTask[]>('list_tasks'); } catch (e) { say(String(e), 'err'); } }
 
   interface TaskForm {
-    id: string | null; connId: string; connName: string; site: string; taskType: string; brain: string; model: string; modelCustom: string;
+    id: string | null; connId: string; connName: string; siteSlugs: string[]; taskType: string; brain: string; model: string; effort: string;
     title: string; prompt: string; period: string; firstRun: string; enabled: boolean;
   }
   let taskModalOpen = $state(false);
@@ -118,14 +118,10 @@
   function freshTaskForm(): TaskForm {
     const brain = brainUsable('claude') ? 'claude' : brainUsable('codex') ? 'codex' : 'claude';
     return {
-      id: null, connId: activeConnId, connName: activeConn?.name ?? '', site: sites[0]?.slug ?? '', taskType: 'article',
-      brain, model: defaultModelFor(brain), modelCustom: '',
+      id: null, connId: activeConnId, connName: activeConn?.name ?? '', siteSlugs: sites[0] ? [sites[0].slug] : [], taskType: 'article',
+      brain, model: defaultModelFor(brain), effort: '',
       title: '', prompt: '', period: '1440', firstRun: '', enabled: true,
     };
-  }
-  // 存的是「有效模型」单串。回填时据引擎还原：是该引擎预设档位 → 档位；否则 → 自定义 ID。
-  function splitModel(b: string, m: string): { model: string; modelCustom: string } {
-    return isPresetModel(b, m) ? { model: m, modelCustom: '' } : { model: defaultModelFor(b), modelCustom: m || '' };
   }
   function openNewTask() { pendingProposalKey = ''; tf = freshTaskForm(); taskModalOpen = true; }
   // AI 在对话里提议的定时任务 → 用当前会话的站点/模型预填，弹确认卡让用户确认/微调。
@@ -135,8 +131,8 @@
     pendingProposalKey = proposalKey(p);
     const firstRunSecs = p.first_run && !isNaN(new Date(p.first_run).getTime()) ? Math.floor(new Date(p.first_run).getTime() / 1000) : 0;
     tf = {
-      id: null, connId: c.conn_id, connName: c.conn_name, site: c.site_slug,
-      taskType: c.task_type === 'free' ? 'free' : 'article', brain: c.brain, ...splitModel(c.brain, c.model),
+      id: null, connId: c.conn_id, connName: c.conn_name, siteSlugs: c.site_slug ? [c.site_slug] : [],
+      taskType: c.task_type === 'free' ? 'free' : 'article', brain: c.brain, model: c.model, effort: c.effort || '',
       title: p.title, prompt: p.prompt, period: String(p.every_minutes || 1440),
       firstRun: firstRunSecs ? toLocalInput(firstRunSecs) : '', enabled: true,
     };
@@ -146,38 +142,49 @@
     pendingProposalKey = '';
     // 编辑保留任务原本所属的连接，绝不改绑到当前活动连接。
     tf = {
-      id: t.id, connId: t.conn_id, connName: t.conn_name, site: t.site_slug, taskType: t.task_type, brain: t.brain, ...splitModel(t.brain, t.model),
+      id: t.id, connId: t.conn_id, connName: t.conn_name, siteSlugs: t.site_slugs?.length ? [...t.site_slugs] : [t.site_slug],
+      taskType: t.task_type, brain: t.brain, model: t.model, effort: t.effort || '',
       title: t.title, prompt: t.prompt, period: String(t.interval_minutes),
       firstRun: t.next_run ? toLocalInput(t.next_run) : '', enabled: t.enabled,
     };
     taskModalOpen = true;
   }
-  // 站点选项：编辑跨连接任务时，活动连接的 discovery 里可能没有它的站点，
-  // 补一个当前值兜底，保证原站点不被下拉清空。
+  // 可添加的站点选项：编辑跨连接任务时，活动连接的 discovery 里可能没有它的站点，
+  // 已选中的站点从候选里去掉（用下方胶囊管理）。
   const taskSiteOpts = $derived.by(() => {
-    const opts = tf.connId === activeConnId ? siteOpts : [];
-    if (tf.site && !opts.some((o) => o.value === tf.site)) {
-      return [{ value: tf.site, label: tf.site, sub: '当前' }, ...opts];
-    }
-    return opts;
+    const base = tf.connId === activeConnId ? siteOpts : [];
+    const extras = tf.siteSlugs
+      .filter((s) => !base.some((o) => o.value === s))
+      .map((s) => ({ value: s, label: s, sub: '当前' }));
+    return [...extras, ...base].filter((o) => !tf.siteSlugs.includes(o.value));
   });
+  // 多选：下拉选一个就加进胶囊列表（value 始终回置空串）
+  let sitePick = $state('');
+  function addTaskSite(v: string) {
+    if (v && !tf.siteSlugs.includes(v)) tf.siteSlugs = [...tf.siteSlugs, v];
+    sitePick = '';
+  }
+  function removeTaskSite(v: string) {
+    tf.siteSlugs = tf.siteSlugs.filter((s) => s !== v);
+  }
+  function taskSiteName(slug: string): string {
+    return sites.find((s) => s.slug === slug)?.name || slug;
+  }
   function toLocalInput(secs: number): string {
     const d = new Date(secs * 1000); const p = (n: number) => String(n).padStart(2, '0');
     return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
   }
   async function saveTask() {
-    if (!tf.site || !tf.prompt.trim()) { say('请填写站点和指令', 'err'); return; }
+    if (!tf.siteSlugs.length || !tf.prompt.trim()) { say('请选择站点并填写指令', 'err'); return; }
     if (!brainUsable(tf.brain as Brain)) { say('所选模型未就绪，去设置里授权', 'err'); return; }
     // 新建用当前活动连接；编辑保留任务原连接。
     const connId = tf.connId || activeConnId;
-    const site = sites.find((s) => s.slug === tf.site);
-    const siteName = tf.connId === activeConnId ? (site?.name || tf.site) : (tf.site);
+    const siteNames = tf.siteSlugs.map((s) => (tf.connId === activeConnId ? taskSiteName(s) : s));
     const firstRun = tf.firstRun ? Math.floor(new Date(tf.firstRun).getTime() / 1000) : 0;
     try {
-      const model = tf.modelCustom.trim() || tf.model;
       await invoke('save_task', {
-        id: tf.id, connId, siteSlug: tf.site, siteName,
-        taskType: tf.taskType, brain: tf.brain, model,
+        id: tf.id, connId, siteSlugs: tf.siteSlugs, siteNames,
+        taskType: tf.taskType, brain: tf.brain, model: tf.model, effort: tf.effort,
         title: tf.title, prompt: tf.prompt, intervalMinutes: parseInt(tf.period) || 1440, firstRun, enabled: tf.enabled,
       });
       if (pendingProposalKey) { markProposalCreated(pendingProposalKey); pendingProposalKey = ''; }
@@ -382,7 +389,8 @@
   }
   // 切换引擎后，若当前档位不属于该引擎（launcher 含自定义），重置为该引擎默认档位（避免下拉空选/发错模型）。
   $effect(() => { if (!isLauncherModel(lBrain, lModel)) lModel = defaultModelFor(lBrain); });
-  $effect(() => { if (!isPresetModel(tf.brain, tf.model)) tf.model = defaultModelFor(tf.brain); });
+  // launcher 全集（含已保存的自定义 ID）都算合法——任务模型下拉与对话一致后不再有单独的自定义输入框
+  $effect(() => { if (!isLauncherModel(tf.brain, tf.model)) tf.model = defaultModelFor(tf.brain); });
   // 首次识别出本地 CLI 后：若默认厂商不可用（只装/登录了另一个），把 composer 默认厂商切到可用的那个；之后尊重手动选择。
   let brainAutoSet = false;
   $effect(() => {
@@ -391,10 +399,6 @@
     if (!brainUsable(lBrain)) lBrain = brainUsable('claude') ? 'claude' : brainUsable('codex') ? 'codex' : lBrain;
   });
   // 自定义模型输入框的占位示例，按当前引擎给不同提示。
-  function modelPlaceholder(b: string): string {
-    return b === 'codex' ? '如 gpt-5.3-codex-spark / o3（留空用上方模型）' : '如 claude-opus-4-8（留空用上方模型）';
-  }
-
   // ---------- composer / live turn ----------
   let draft = $state('');
   // 并发对话：running = convId → connId（在跑的对话；带 connId 便于删连接时可靠判定）；lives = 每个对话的流式缓冲。
@@ -1519,7 +1523,6 @@
   // launcher / 会话里可选：预设档位 + 该厂商的全局自定义模型 ID（定时任务表单仍只用预设 + 自己的 modelCustom）。
   function launcherModelOpts(b: string) { return [...modelOptsFor(b), ...customsOf(b).map((id) => ({ value: id, label: id, sub: '自定义' }))]; }
   function defaultModelFor(b: string): string { return b === 'codex' ? '' : 'sonnet'; }
-  function isPresetModel(b: string, m: string): boolean { return modelOptsFor(b).some((o) => o.value === m); }
   function isLauncherModel(b: string, m: string): boolean { return launcherModelOpts(b).some((o) => o.value === m); }
 
   // 会话按「站点 → 任务类型」两级分组：站点按最近活动倒序；任务类型固定顺序，只留有会话的。
@@ -1920,7 +1923,7 @@
                 <div class="task-body">
                   <b>{t.title}</b>
                   <div class="task-meta">
-                    <SiteFav src={siteFav(t.site_slug)} label={t.site_slug} size={13} /><span class="cmono">{t.site_slug}</span>
+                    <SiteFav src={siteFav(t.site_slug)} label={t.site_slug} size={13} /><span class="cmono">{t.site_slug}</span>{#if (t.site_slugs?.length ?? 0) > 1}<span class="cmono" title={t.site_slugs?.join('、')}> 等 {t.site_slugs?.length} 站</span>{/if}
                     <span class="cdot">·</span>{@render brainTag(t.brain, brainLabel(t.brain))}
                     <span class="cdot">·</span>{periodLabel(t.interval_minutes)}
                     {#if t.enabled}<span class="cdot">·</span>下次 {fmtSched(new Date(t.next_run * 1000).toISOString())}{/if}
@@ -2529,16 +2532,22 @@
       {#if tf.id && tf.connId !== activeConnId}
         <p class="hint">此任务属于连接「{tf.connName || tf.connId}」，编辑时保持不变。</p>
       {/if}
+      <div class="tfield"><span>站点（可多选，每站各跑一轮）</span>
+        <Dropdown bind:value={sitePick} options={taskSiteOpts} placeholder={tf.siteSlugs.length ? '继续添加站点…' : '选择站点'} onchange={addTaskSite} />
+        {#if tf.siteSlugs.length}
+          <div class="tsites">
+            {#each tf.siteSlugs as s (s)}
+              <span class="tsite-chip"><SiteFav src={siteFav(s)} label={s} size={13} />{taskSiteName(s)}<button type="button" aria-label="移除站点" onclick={() => removeTaskSite(s)}>×</button></span>
+            {/each}
+          </div>
+        {/if}
+      </div>
       <div class="trow">
-        <div class="tfield"><span>站点</span><Dropdown bind:value={tf.site} options={taskSiteOpts} placeholder="选择站点" /></div>
         <div class="tfield"><span>类型</span><Dropdown bind:value={tf.taskType} options={taskTypeOpts} /></div>
-      </div>
-      <div class="trow">
         <div class="tfield"><span>厂商</span><Dropdown bind:value={tf.brain} options={brainOpts} /></div>
-        <div class="tfield"><span>模型</span><Dropdown bind:value={tf.model} options={modelOptsFor(tf.brain)} /></div>
       </div>
-      <div class="tfield"><span>自定义模型 ID（可选，留空用上面模型）</span>
-        <input class="tin" bind:value={tf.modelCustom} placeholder={modelPlaceholder(tf.brain)} spellcheck="false" autocapitalize="off" autocorrect="off" /></div>
+      <div class="tfield"><span>模型与强度（与对话中一致）</span>
+        <div class="tfield-fx"><ModelFx options={launcherModelOpts(tf.brain).map((o) => ({ ...o, icon: tf.brain }))} value={tf.model} effort={tf.effort} onpick={(v: string) => (tf.model = v)} oneffort={(v: string) => (tf.effort = v)} /></div></div>
       <div class="tfield"><span>任务名称（可选）</span><input class="tin" bind:value={tf.title} placeholder="例如：每日热点速写" /></div>
       <div class="tfield"><span>指令（每次到点就把这句话发给模型）</span>
         <textarea bind:value={tf.prompt} rows="3" placeholder="例如：围绕本周科技热点写一篇 800 字左右的中文文章，存草稿，完成后给我预览链接"></textarea></div>
@@ -2549,7 +2558,7 @@
       <label class="tcheck"><input type="checkbox" bind:checked={tf.enabled} /><span>创建后立即启用</span></label>
       <div class="row-end">
         <button class="btn ghost" onclick={() => (taskModalOpen = false)}>取消</button>
-        <button class="btn primary" onclick={saveTask} disabled={!tf.site || !tf.prompt.trim()}>{tf.id ? '保存' : '创建'}</button>
+        <button class="btn primary" onclick={saveTask} disabled={!tf.siteSlugs.length || !tf.prompt.trim()}>{tf.id ? '保存' : '创建'}</button>
       </div>
     </div>
   </div>
@@ -2733,7 +2742,8 @@
   .imgtip { position: fixed; z-index: 130; transform: translate(-50%, -100%); padding: 5px; border-radius: 10px; background: #fff; border: 1px solid rgba(0, 0, 0, .1); box-shadow: 0 8px 24px rgba(0, 0, 0, .18); pointer-events: none; visibility: hidden; }
   .imgtip.ready { visibility: visible; animation: tipin .12s ease-out both; }
   .imgtip.below { transform: translate(-50%, 0); }
-  .imgtip img { display: block; max-width: 260px; max-height: 200px; border-radius: 6px; background: repeating-conic-gradient(#ececea 0 25%, #fff 0 50%) 0 0 / 14px 14px; }
+  /* min-* + contain：极端长宽比（整页截图/超宽横幅）装进保底盒子里，不再缩成一条细缝 */
+  .imgtip img { display: block; max-width: 320px; max-height: 240px; min-width: 140px; min-height: 90px; object-fit: contain; border-radius: 6px; background: repeating-conic-gradient(#ececea 0 25%, #fff 0 50%) 0 0 / 14px 14px; }
   .lightbox { position: fixed; inset: 0; z-index: 140; background: rgba(24, 22, 18, .72); display: flex; align-items: center; justify-content: center; cursor: zoom-out; }
   .lightbox img { max-width: 86vw; max-height: 86vh; border-radius: 12px; background: repeating-conic-gradient(#ececea 0 25%, #fff 0 50%) 0 0 / 16px 16px; box-shadow: 0 24px 64px rgba(0, 0, 0, .4); }
   @keyframes tipin { from { opacity: 0; } to { opacity: 1; } }
@@ -2946,6 +2956,16 @@
   .trow { display: flex; gap: 12px; }
   .tfield { display: flex; flex-direction: column; gap: 5px; flex: 1; min-width: 0; }
   .tfield > span { font-size: 12px; color: var(--dim); }
+  /* 多站点胶囊 */
+  .tsites { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 2px; }
+  .tsite-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 6px 3px 8px; border: 1px solid var(--border2); border-radius: 999px; font-size: 12px; background: var(--card); }
+  .tsite-chip button { border: none; background: none; padding: 0 2px; font-size: 13px; line-height: 1; color: var(--faint); cursor: pointer; }
+  .tsite-chip button:hover { color: var(--accent); }
+  /* 任务弹窗里的 模型+强度（对话同款 ModelFx），套输入框外观 */
+  .tfield-fx { border: 1px solid var(--border2); border-radius: 8px; padding: 4px 4px; background: var(--card); }
+  .tfield-fx :global(.fx) { width: 100%; }
+  .tfield-fx :global(.fx-trigger) { width: 100%; justify-content: flex-start; font-size: 13px; padding: 5px 8px; }
+  .tfield-fx :global(.fx-chev) { margin-left: auto; }
   .tcheck { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
   .tcheck input { width: auto; }
 
@@ -3103,7 +3123,9 @@
   .mask { position: fixed; inset: 0; background: rgba(25,20,10,.28); z-index: 50; }
   .sheet, .modal { position: fixed; z-index: 60; background: var(--bg); border: 1px solid var(--border); box-shadow: var(--shadow-lg); display: flex; flex-direction: column; }
   .sheet { top: 0; right: 0; bottom: 0; width: min(400px, 92vw); border-radius: 0; }
-  .modal { top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(440px, 92vw); border-radius: 14px; overflow: hidden; }
+  /* margin:auto 居中而非 transform——transform 会给内部 position:fixed 的下拉菜单
+     制造 containing block，菜单被钳进弹窗坐标系再被 overflow:hidden 裁掉（遮挡）。 */
+  .modal { inset: 0; margin: auto; height: fit-content; max-height: 88vh; width: min(440px, 92vw); border-radius: 14px; overflow: hidden; }
   .sheet-head { display: flex; justify-content: space-between; align-items: center; padding: 15px 18px; border-bottom: 1px solid var(--border); }
   .sheet-body { padding: 16px 18px; overflow-y: auto; display: flex; flex-direction: column; gap: 7px; }
   .sec-head { display: flex; justify-content: space-between; align-items: center; font-size: 11px; letter-spacing: .03em; text-transform: uppercase; color: var(--faint); font-weight: 600; margin-bottom: 1px; }

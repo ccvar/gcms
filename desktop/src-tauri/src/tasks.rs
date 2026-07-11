@@ -17,6 +17,16 @@ pub struct ScheduledTask {
     pub task_type: String,
     pub brain: String,
     pub model: String,
+    /// 思考等级（推理强度）：'' 默认 | low | medium | high。
+    #[serde(default)]
+    pub effort: String,
+    /// 多站点：非空时到点对每个站点各开一个会话跑同一指令（顺序执行）。
+    /// 空 = 旧单站任务。site_slug/site_name 始终存第一个站，供列表展示与旧版兼容。
+    #[serde(default)]
+    pub site_slugs: Vec<String>,
+    /// 与 site_slugs 对齐的站点名（缺位回落 slug）。
+    #[serde(default)]
+    pub site_names: Vec<String>,
     pub title: String,
     pub prompt: String,
     /// 周期（分钟）。1440=每天，60=每小时…
@@ -36,6 +46,26 @@ pub struct ScheduledTask {
 }
 
 impl ScheduledTask {
+    /// 本次要跑的站点清单 [(slug, name)]：多站任务用 site_slugs，旧单站回落 site_slug。
+    pub fn targets(&self) -> Vec<(String, String)> {
+        if self.site_slugs.is_empty() {
+            return vec![(self.site_slug.clone(), self.site_name.clone())];
+        }
+        self.site_slugs
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                let name = self
+                    .site_names
+                    .get(i)
+                    .filter(|n| !n.trim().is_empty())
+                    .cloned()
+                    .unwrap_or_else(|| s.clone());
+                (s.clone(), name)
+            })
+            .collect()
+    }
+
     /// 把 next_run 推进到严格大于 now 的下一个整周期点（补跑时跳过错过的窗口，避免紧循环）。
     pub fn advance_past(&mut self, now: u64) {
         let step = self.interval_minutes.max(1) * 60;

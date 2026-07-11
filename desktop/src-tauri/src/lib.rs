@@ -1287,19 +1287,21 @@ fn save_task(
     state: tauri::State<'_, AppState>,
     id: Option<String>,
     conn_id: String,
-    site_slug: String,
-    site_name: String,
+    site_slugs: Vec<String>,
+    site_names: Vec<String>,
     task_type: String,
     brain: String,
     model: String,
+    effort: String,
     title: String,
     prompt: String,
     interval_minutes: u64,
     first_run: i64,
     enabled: bool,
 ) -> Result<ScheduledTask, String> {
-    if site_slug.trim().is_empty() {
-        return Err("站点不能为空".into());
+    let site_slugs: Vec<String> = site_slugs.iter().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+    if site_slugs.is_empty() {
+        return Err("至少选择一个站点".into());
     }
     if prompt.trim().is_empty() {
         return Err("请填写要让它做的事".into());
@@ -1321,11 +1323,15 @@ fn save_task(
         id: tid,
         conn_id,
         conn_name,
-        site_slug: site_slug.trim().into(),
-        site_name,
+        // 首个站点写进旧字段：列表展示与旧版数据结构兼容
+        site_slug: site_slugs[0].clone(),
+        site_name: site_names.first().cloned().unwrap_or_else(|| site_slugs[0].clone()),
         task_type,
         brain,
         model,
+        effort,
+        site_slugs,
+        site_names,
         title: if title.trim().is_empty() { title_from(&prompt) } else { title.trim().into() },
         prompt: prompt.trim().into(),
         interval_minutes,
@@ -1396,7 +1402,8 @@ fn run_task_now(state: tauri::State<'_, AppState>, app: AppHandle, id: String) -
     Ok(())
 }
 
-/// 触发一次任务：开一个全新对话跑 task.prompt，回写任务的 last_* 并通知。
+/// 触发一次任务：对每个目标站点各开一个全新对话跑 task.prompt（顺序执行，互不阻断），
+/// 回写任务的 last_* 并通知。
 async fn fire_task(
     app: AppHandle,
     conns: pack::ConnStore,
@@ -1406,43 +1413,74 @@ async fn fire_task(
     task: ScheduledTask,
     data_dir: PathBuf,
 ) {
-    let conv_id = uuid::Uuid::new_v4().to_string();
-    // 后台运行没有前端接收方，用一个丢弃事件的 Channel。
-    let sink: Channel<agent::TurnEvent> = Channel::new(|_| Ok(()));
-    // 定时任务无人值守：只能全自动（询问/自动档会卡在等批准，永远回不来）。
-    let res = create_conversation(
-        conns, convos, runs, conv_id,
-        task.conn_id.clone(), task.site_slug.clone(), task.site_name.clone(),
-        task.task_type.clone(), task.brain.clone(), task.model.clone(),
-        "full".into(), String::new(), task.prompt.clone(), sink, data_dir,
-    )
-    .await;
+    let targets = task.targets();
+    let multi = targets.len() > 1;
+    let mut ok_count = 0usize;
+    let mut first_err = String::new();
+    let mut last_conv = String::new();
+    let mut last_summary = String::new();
+    for (slug, name) in &targets {
+        let conv_id = uuid::Uuid::new_v4().to_string();
+        // 后台运行没有前端接收方，用一个丢弃事件的 Channel。
+        let sink: Channel<agent::TurnEvent> = Channel::new(|_| Ok(()));
+        // 定时任务无人值守：只能全自动（询问/自动档会卡在等批准，永远回不来）。
+        let res = create_conversation(
+            conns.clone(), convos.clone(), runs.clone(), conv_id,
+            task.conn_id.clone(), slug.clone(), name.clone(),
+            task.task_type.clone(), task.brain.clone(), task.model.clone(),
+            "full".into(), task.effort.clone(), task.prompt.clone(), sink, data_dir.clone(),
+        )
+        .await;
+        match &res {
+            Ok(c) => {
+                ok_count += 1;
+                last_conv = c.id.clone();
+                last_summary = last_snippet(c);
+            }
+            Err(e) => {
+                if first_err.is_empty() {
+                    first_err = format!("{slug}: {}", e.chars().take(120).collect::<String>());
+                }
+            }
+        }
+    }
 
     let now = now_secs();
-    let ok = res.is_ok();
+    let all_ok = ok_count == targets.len();
+    let summary = if multi {
+        let mut s = format!("{ok_count}/{} 个站点成功", targets.len());
+        if !first_err.is_empty() {
+            s.push_str("；");
+            s.push_str(&first_err);
+        }
+        s.chars().take(160).collect()
+    } else if all_ok {
+        last_summary.clone()
+    } else {
+        first_err.chars().take(160).collect()
+    };
     let _ = tstore.mutate(&task.id, |x| {
         x.last_run = now;
         x.runs += 1;
-        match &res {
-            Ok(c) => {
-                x.last_status = "ok".into();
-                x.last_conv_id = c.id.clone();
-                x.last_summary = last_snippet(c);
-            }
-            Err(e) => {
-                x.last_status = "error".into();
-                x.last_summary = e.chars().take(160).collect();
-            }
+        x.last_status = if all_ok { "ok".into() } else { "error".into() };
+        x.last_summary = summary.clone();
+        if !last_conv.is_empty() {
+            x.last_conv_id = last_conv.clone();
         }
     });
-    let body = match &res {
-        Ok(_) => format!("{} · 已完成一次自动运行", task.title),
-        Err(e) => format!("{} · 失败：{}", task.title, e.chars().take(80).collect::<String>()),
+    let body = if all_ok {
+        if multi {
+            format!("{} · {} 个站点全部完成", task.title, targets.len())
+        } else {
+            format!("{} · 已完成一次自动运行", task.title)
+        }
+    } else {
+        format!("{} · {}", task.title, summary.chars().take(80).collect::<String>())
     };
     let _ = app
         .notification()
         .builder()
-        .title(if ok { "定时任务完成" } else { "定时任务失败" })
+        .title(if all_ok { "定时任务完成" } else { "定时任务失败" })
         .body(body)
         .show();
 }

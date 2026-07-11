@@ -43,7 +43,14 @@
     const r = btn.getBoundingClientRect();
     const width = 320;
     const left = Math.max(12, Math.min(r.left, window.innerWidth - width - 12));
-    menuStyle = `bottom:${Math.round(window.innerHeight - r.top + 6)}px; left:${Math.round(left)}px; width:${width}px;`;
+    // composer 里触发器贴底：向上开；任务弹窗等场景触发器在屏幕中上部、上方放不下：向下开。
+    const estH = 400;
+    if (r.top < estH + 16) {
+      const maxH = Math.max(200, window.innerHeight - r.bottom - 18);
+      menuStyle = `top:${Math.round(r.bottom + 6)}px; left:${Math.round(left)}px; width:${width}px; max-height:${Math.round(maxH)}px; overflow-y:auto;`;
+    } else {
+      menuStyle = `bottom:${Math.round(window.innerHeight - r.top + 6)}px; left:${Math.round(left)}px; width:${width}px;`;
+    }
   }
   function toggle() { open = !open; if (open) { requestAnimationFrame(position); void loadUsage(); } }
 
