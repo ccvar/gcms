@@ -3047,8 +3047,10 @@
   .ub-atts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
   .ub-atts.only { margin-top: 0; }
   .ub-att { display: inline-flex; align-items: center; gap: 6px; max-width: 220px; padding: 4px 10px 4px 8px; background: #fff; border: 1px solid var(--border2); border-radius: 8px; font-size: 12px; }
-  .ub-att-img { padding: 0; border: 1px solid var(--border2); border-radius: 10px; overflow: hidden; cursor: zoom-in; line-height: 0; background: repeating-conic-gradient(#ececea 0 25%, #fff 0 50%) 0 0 / 14px 14px; }
-  .ub-att-img img { display: block; width: 128px; height: 96px; object-fit: cover; }
+  .ub-att-img { padding: 0; border: 1px solid var(--border2); border-radius: 10px; overflow: hidden; cursor: zoom-in; line-height: 0; background: repeating-conic-gradient(#ececea 0 25%, #fff 0 50%) 0 0 / 14px 14px; display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 34px; }
+  /* 按图片原始比例呈现（纯像素上限、不裁切），宽 logo/竖图都能看到全貌；点击仍可放大。
+     注意不能用 max-width:min(…,100%)：容器 shrink-to-fit，百分比循环引用会让整条声明失效。 */
+  .ub-att-img img { display: block; max-width: 260px; max-height: 180px; width: auto; height: auto; }
   .ub-att-img.ph { display: inline-block; width: 128px; height: 96px; cursor: default; animation: phpulse 1.2s ease-in-out infinite; }
   /* 助手消息里的生图产物：与用户附件同款卡片，气泡外基底微调 */
   .gen-imgs { margin-top: 6px; }
