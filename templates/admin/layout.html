@@ -38,7 +38,13 @@
             </span>
           </a>
           {{range .PlatformSites}}
-          {{if ne .ID $.PlatformCurrentSiteID}}
+          {{if eq .ID $.PlatformCurrentSiteID}}
+          <div class="site-switcher-item is-current" aria-current="true">
+            {{with index $.PlatformSiteIcons .ID}}<img class="site-switcher-icon" src="{{.}}" alt="" decoding="async">{{else}}<span class="site-switcher-icon fallback">{{template "site-icon-empty"}}</span>{{end}}
+            <strong>{{.Name}} / {{.Slug}}</strong>
+            <span class="site-switcher-current">{{$.Admin.T "admin.sites.current_short" "当前"}}</span>
+          </div>
+          {{else}}
           <form method="post" action="/admin/sites/{{.ID}}/enter">
             <input type="hidden" name="_csrf" value="{{$.CSRF}}">
             <button type="submit"{{if eq .Status "enabled"}}{{else}} disabled{{end}}>

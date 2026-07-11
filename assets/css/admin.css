@@ -446,6 +446,10 @@ body.admin { background: var(--line-soft); }
 .site-switcher-menu a em,
 .site-switcher-menu button em { color: var(--faint); font-style: normal; font-family: var(--mono); font-size: .72rem; }
 .site-switcher-manage { margin-bottom: .25rem; color: var(--accent) !important; font-weight: 600 !important; }
+/* 当前站点：原位展示不可点，右侧「当前」徽标 */
+.site-switcher-item { width: 100%; display: flex; align-items: center; gap: .55rem; padding: .58rem .65rem; border-radius: 7px; background: var(--accent-wash); color: var(--ink); font-size: .86rem; cursor: default; }
+.site-switcher-item strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .9rem; }
+.site-switcher-current { flex: none; padding: .08rem .5rem; border-radius: 999px; background: var(--accent); color: #fff; font-size: .7rem; line-height: 1.5; }
 .admin-nav { display: flex; align-items: center; gap: .25rem; margin-left: auto; }
 .admin-nav a { display: inline-flex; align-items: center; gap: .32rem; color: var(--ink-soft); font-size: .9rem; padding: .4rem .7rem; border-radius: 7px; }
 .admin-nav a svg { width: 14px; height: 14px; flex: none; opacity: .7; }
