@@ -1155,6 +1155,32 @@ async fn install_claude() -> Result<String, String> {
     .map_err(|e| e.to_string())?
 }
 
+/// 一键安装 Codex（npm i -g @openai/codex，要求 Node 18+）。注入系统代理。
+#[tauri::command]
+async fn install_codex() -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(|| {
+        if node_major() < 18 {
+            return Err("需要先安装 Node.js 18+（Codex 走 npm 渠道），装好后点「重新检测」再试".to_string());
+        }
+        let mut c = std::process::Command::new(brains::resolve_bin("npm"));
+        c.args(["install", "-g", "@openai/codex"]);
+        c.envs(system_proxy_env());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            c.creation_flags(0x0800_0000);
+        }
+        let out = c.output().map_err(|e| format!("启动 npm 失败: {e}"))?;
+        if out.status.success() {
+            Ok("Codex 安装完成，正在重新检测…".to_string())
+        } else {
+            Err(format!("安装失败：{}", install_err_brief(&out.stdout, &out.stderr)))
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// 一键安装 wrangler（npm i -g wrangler）。npm 走已修复的 PATH（Windows 上 .cmd 必须
 /// 完整路径才能 spawn）；同样注入系统代理。可能耗时半分钟到一两分钟。
 #[tauri::command]
@@ -1985,7 +2011,11 @@ read -s -k 1 "?按任意键关闭这个窗口…"
              }}\r\n\
              Read-Host '按回车关闭这个窗口'\r\n"
         );
-        std::fs::write(&file, script).map_err(|e| e.to_string())?;
+        // 必须带 UTF-8 BOM：无 BOM 的 .ps1 会被 Windows PowerShell 5.1 按 ANSI 解析，
+        // 中文文本直接造成脚本解析失败——窗口闪一下就退，这就是「去授权闪退」的根因。
+        let mut bytes = vec![0xEF, 0xBB, 0xBF];
+        bytes.extend_from_slice(script.as_bytes());
+        std::fs::write(&file, bytes).map_err(|e| e.to_string())?;
         // 用 cmd start 拉起一个可见的 PowerShell 窗口跑这个临时脚本。
         std::process::Command::new("cmd")
             .args([
@@ -2130,6 +2160,7 @@ pub fn run() {
             read_workdir_image,
             resolve_workdir_file,
             usage_stats,
+            install_codex,
             list_cf_projects,
             cf_project_ready,
             cf_preview_start,

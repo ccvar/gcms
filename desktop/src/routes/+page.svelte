@@ -261,6 +261,18 @@
   let claudeInstalling = $state(false);
   let claudeElapsed = $state(0);
   let claudeTimer: ReturnType<typeof setInterval> | undefined;
+  let codexInstalling = $state(false);
+  let codexElapsed = $state(0);
+  let codexTimer: ReturnType<typeof setInterval> | undefined;
+  async function installCodex() {
+    if (codexInstalling) return;
+    codexInstalling = true; codexElapsed = 0;
+    const t0 = Date.now();
+    codexTimer = setInterval(() => { codexElapsed = Date.now() - t0; }, 500);
+    try { const m = await invoke<string>('install_codex'); say(m); await refreshBrainsManual(); }
+    catch (e) { say(String(e), 'err'); }
+    finally { codexInstalling = false; if (codexTimer) { clearInterval(codexTimer); codexTimer = undefined; } }
+  }
   async function installClaude() {
     if (claudeInstalling) return;
     claudeInstalling = true; claudeElapsed = 0;
@@ -1850,6 +1862,8 @@
                       <button class="wr-btn" onclick={installClaude} disabled={claudeInstalling}>{#if claudeInstalling}<span class="wr-spin"></span>安装中 {elapsedLabel(claudeElapsed)}{:else}一键安装{/if}</button>
                     {:else if brains && !brains.node.found}
                       <button class="node-need" title="Codex 通过 npm 安装，需要先装 Node.js（含 npm）。点击打开官网下载。" onclick={() => openUrl('https://nodejs.org/')}>先装 Node.js ↗</button>
+                    {:else if r.b === 'codex'}
+                      <button class="wr-btn" onclick={installCodex} disabled={codexInstalling}>{#if codexInstalling}<span class="wr-spin"></span>安装中 {elapsedLabel(codexElapsed)}{:else}一键安装{/if}</button>
                     {/if}
                     <code class="cli-cmd" title={r.cmd}>{r.cmd}</code>
                     <button class="cli-copy" title="复制命令" aria-label="复制安装命令" onclick={() => copyCmd(r.cmd)}>
