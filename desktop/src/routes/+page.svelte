@@ -1493,23 +1493,49 @@
     if (isNaN(d.getTime())) return iso;
     return d.toLocaleString('zh-CN', { weekday: 'short', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
   }
+  // 排期三层：站点筛选 chips + 月度密度条 + 按天分组
+  let schedSiteFilter = $state('');
+  const schedFiltered = $derived(schedSiteFilter ? sched.filter((x) => x.site_slug === schedSiteFilter) : sched);
+  const schedSites = $derived([...new Set(sched.map((x) => x.site_slug))]);
+  function dayKey(ms: number): string { const d = new Date(ms); return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`; }
+  function dayLabel(ms: number): string {
+    const t0 = new Date(); t0.setHours(0, 0, 0, 0); const day = t0.getTime();
+    if (ms < day + 864e5) return '今天';
+    if (ms < day + 2 * 864e5) return '明天';
+    return new Date(ms).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric', weekday: 'short' });
+  }
+  // 未来 6 周密度条：每天一格，count=当天条数
+  const schedDensity = $derived.by(() => {
+    const t0 = new Date(); t0.setHours(0, 0, 0, 0);
+    const counts = new Map<string, number>();
+    for (const it of schedFiltered) {
+      const ms = new Date(it.published_at).getTime();
+      if (!isNaN(ms)) counts.set(dayKey(ms), (counts.get(dayKey(ms)) ?? 0) + 1);
+    }
+    return Array.from({ length: 42 }, (_, i) => {
+      const ms = t0.getTime() + i * 864e5;
+      const d = new Date(ms);
+      return { key: dayKey(ms), count: counts.get(dayKey(ms)) ?? 0, tip: `${i === 0 ? '今天 ' : ''}${d.getMonth() + 1}/${d.getDate()} · ${counts.get(dayKey(ms)) ?? 0} 条`, today: i === 0 };
+    });
+  });
+  function jumpToDay(key: string) {
+    document.getElementById('sched-day-' + key)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
   const schedGroups = $derived.by(() => {
     const now = Date.now();
-    const t0 = new Date(); t0.setHours(0, 0, 0, 0); const day = t0.getTime();
-    const g: { label: string; items: ScheduledItem[] }[] = [
-      { label: '待发布', items: [] }, { label: '今天', items: [] }, { label: '明天', items: [] },
-      { label: '本周内', items: [] }, { label: '更晚', items: [] },
-    ];
-    for (const it of sched) {
+    const overdue: ScheduledItem[] = [];
+    const byDay = new Map<string, { key: string; label: string; items: ScheduledItem[] }>();
+    for (const it of schedFiltered) {
       const ms = new Date(it.published_at).getTime();
-      if (isNaN(ms)) { g[0].items.push(it); continue; }
-      if (ms < now) g[0].items.push(it);
-      else if (ms < day + 864e5) g[1].items.push(it);
-      else if (ms < day + 2 * 864e5) g[2].items.push(it);
-      else if (ms < day + 7 * 864e5) g[3].items.push(it);
-      else g[4].items.push(it);
+      if (isNaN(ms) || ms < now) { overdue.push(it); continue; }
+      const k = dayKey(ms);
+      let g = byDay.get(k);
+      if (!g) { g = { key: k, label: dayLabel(ms), items: [] }; byDay.set(k, g); }
+      g.items.push(it);
     }
-    return g.filter((x) => x.items.length);
+    const out = [...byDay.values()];
+    if (overdue.length) out.unshift({ key: 'overdue', label: '待发布', items: overdue });
+    return out;
   });
 
   const shownMessages = $derived((activeConv?.messages ?? []).filter((m) => !m.hidden));
@@ -1962,8 +1988,25 @@
               <p>在对话里让它「定时发布」（比如「这篇明天早上 9 点发」），排期就会出现在这里。</p>
             </div>
           {:else}
-            {#each schedGroups as g (g.label)}
-              <div class="grp sched-grp">{g.label}</div>
+            <div class="sched-sticky">
+            <div class="sched-density">
+              {#each schedDensity as d (d.key)}
+                <button class="sd-cell l{Math.min(d.count, 4)}" class:today={d.today} data-tip={d.tip} aria-label={d.tip} onclick={() => d.count && jumpToDay(d.key)}></button>
+              {/each}
+            </div>
+            {#if schedSites.length > 8}
+              <div class="sched-filter-dd"><Dropdown compact searchable bind:value={schedSiteFilter} options={[{ value: '', label: `全部站点 · ${schedSites.length}` }, ...schedSites.map((sl) => ({ value: sl, label: sites.find((x) => x.slug === sl)?.name || sl, sub: sl }))]} placeholder="全部站点" /></div>
+            {:else if schedSites.length > 1}
+              <div class="sched-filter">
+                <button class="sf-chip" class:on={!schedSiteFilter} onclick={() => (schedSiteFilter = '')}>全部</button>
+                {#each schedSites as sl (sl)}
+                  <button class="sf-chip" class:on={schedSiteFilter === sl} onclick={() => (schedSiteFilter = schedSiteFilter === sl ? '' : sl)}><SiteFav src={siteFav(sl)} label={sl} size={12} />{sl}</button>
+                {/each}
+              </div>
+            {/if}
+            </div>
+            {#each schedGroups as g (g.key)}
+              <div class="grp sched-grp" id="sched-day-{g.key}">{g.label}<span class="sched-grp-n">{g.items.length} 条</span></div>
               {#each g.items as it (it.site_slug + '-' + it.id)}
                 <div class="sched-item">
                   <div class="sched-time">{fmtSched(it.published_at)}</div>
@@ -1971,7 +2014,7 @@
                     <b>{it.title}</b>
                     <small><span class="cmono">{it.site_slug}</span> · {it.lang}</small>
                   </div>
-                  {#if it.url}<button class="link sched-open" onclick={() => openUrl(it.url)}>打开 ↗</button>{/if}
+                  <button class="link sched-open" onclick={async () => { try { const u = await invoke<string>('scheduled_preview_url', { connId: activeConnId, siteSlug: it.site_slug, id: it.id }); void openUrl(u); } catch (e) { say(String(e), 'err'); } }}>预览 ↗</button>
                 </div>
               {/each}
             {/each}
@@ -3015,6 +3058,25 @@
 
   /* 排期视图 */
   .sched-inner { max-width: 720px; margin: 0 auto; padding: 18px 24px 24px; }
+  /* 密度条 + 站点筛选钉在滚动区顶部 */
+  .sched-sticky { position: sticky; top: 0; z-index: 5; background: var(--bg); margin: -18px -4px 8px; padding: 14px 4px 2px; }
+  /* 排期密度条：未来 6 周每天一格，深浅=条数 */
+  .sched-density { display: grid; grid-template-columns: repeat(42, 1fr); gap: 3px; margin: 2px 0 12px; }
+  .sd-cell { aspect-ratio: 1; border: none; border-radius: 3px; background: #ecebe6; padding: 0; cursor: default; }
+  .sd-cell.l1 { background: #e4c7b4; cursor: pointer; }
+  .sd-cell.l2 { background: #d19a76; cursor: pointer; }
+  .sd-cell.l3 { background: #b96a44; cursor: pointer; }
+  .sd-cell.l4 { background: #a03c2b; cursor: pointer; }
+  .sd-cell.today { box-shadow: inset 0 0 0 1px #c98d70; background: #f3e7dd; }
+  .sd-cell.today.l1, .sd-cell.today.l2, .sd-cell.today.l3, .sd-cell.today.l4 { box-shadow: inset 0 0 0 1px rgba(255,255,255,.55); }
+  .sched-grp { scroll-margin-top: 96px; } /* 跳转落点让开顶部钉住的密度条 */
+  .sched-grp-n { margin-left: 8px; font-weight: 400; color: var(--faint); font-size: 11px; }
+  /* 排期站点筛选：安静的文字胶囊，选中才着色 */
+  .sched-filter { display: flex; flex-wrap: wrap; gap: 2px; margin: 4px 0 6px; }
+  .sf-chip { display: inline-flex; align-items: center; gap: 5px; border: none; background: none; padding: 3px 9px; border-radius: 999px; font: inherit; font-size: 12px; color: var(--dim, #6b675f); cursor: pointer; }
+  .sf-chip:hover { background: #f1efe9; color: var(--text, #26241f); }
+  .sf-chip.on { background: var(--accent-wash, #f7ece7); color: var(--accent); }
+  .sched-filter-dd { max-width: 240px; margin: 4px 0 6px; }
   .sched-grp { padding: 16px 2px 6px; }
   .sched-grp:first-child { padding-top: 4px; }
   .sched-item { display: flex; align-items: center; gap: 14px; padding: 11px 14px; background: var(--card);
@@ -3024,7 +3086,7 @@
   .sched-body { flex: 1; min-width: 0; }
   .sched-body b { display: block; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .sched-body small { color: var(--dim); font-size: 11.5px; }
-  .sched-open { flex: none; text-decoration: none; font-size: 12px; }
+  .sched-open { flex: none; border: none; background: none; padding: 0; font-size: 12px; color: var(--accent); cursor: pointer; }
   .sched-err { max-width: 720px; margin: 18px auto; }
   .center-hint { text-align: center; color: var(--dim); padding: 40px 0; }
   .sched-empty { text-align: center; color: var(--dim); padding: 12vh 24px; }

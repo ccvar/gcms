@@ -19,6 +19,54 @@ pub struct ScheduledItem {
     pub url: String,
 }
 
+/// 取某条排期内容的**前台预览链接**（短期有效、真前台模板渲染草稿）——
+/// 排期内容未发布，公开 URL 打不开，必须走 preview-url 接口。
+pub async fn preview_url(conn: &Connection, site_slug: &str, id: i64) -> Result<String, String> {
+    let key = keychain::get_key(&conn.id)?;
+    let disc = discovery::discover(conn).await?;
+    let sites = disc.get("items").and_then(|i| i.as_array()).cloned().unwrap_or_default();
+    let api_base = sites
+        .iter()
+        .find(|s| s.get("slug").and_then(|v| v.as_str()) == Some(site_slug))
+        .and_then(|s| s.get("api_base").and_then(|v| v.as_str()))
+        .unwrap_or("")
+        .to_string();
+    if api_base.is_empty() {
+        return Err("没有找到该站点的接口地址".into());
+    }
+    let url = format!("{}/posts/{}/preview-url", api_base.trim_end_matches('/'), id);
+    // 注意：preview-url 是 POST（生成短期链接），GET 会 404。
+    let resp = reqwest::Client::new()
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .body("{}")
+        .header("Authorization", format!("Bearer {key}"))
+        .timeout(Duration::from_secs(15))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        // 带上服务端错误信息（message 字段），否则只有裸 404 无从定位
+        let msg = serde_json::from_str::<serde_json::Value>(&text)
+            .ok()
+            .and_then(|v| v.get("message").and_then(|m| m.as_str()).map(String::from))
+            .unwrap_or_else(|| text.chars().take(120).collect());
+        return Err(format!("获取预览链接失败：{status} {msg}"));
+    }
+    let body: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    let u = body
+        .get("preview_url")
+        .or_else(|| body.get("frontend_preview_url"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if u.is_empty() {
+        return Err("该内容没有可用的前台预览链接".into());
+    }
+    Ok(u.to_string())
+}
+
 pub async fn list_scheduled(conn: &Connection) -> Result<Vec<ScheduledItem>, String> {
     let key = keychain::get_key(&conn.id)?;
     let disc = discovery::discover(conn).await?;

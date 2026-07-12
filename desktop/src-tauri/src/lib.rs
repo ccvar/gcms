@@ -1226,6 +1226,18 @@ async fn list_scheduled(
     scheduled::list_scheduled(&conn).await
 }
 
+/// 排期条目的前台预览链接（短期有效）。
+#[tauri::command]
+async fn scheduled_preview_url(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    site_slug: String,
+    id: i64,
+) -> Result<String, String> {
+    let conn = state.conns.get(&conn_id)?;
+    scheduled::preview_url(&conn, &site_slug, id).await
+}
+
 #[tauri::command]
 fn list_conversations(state: tauri::State<'_, AppState>) -> Vec<Conversation> {
     state.convos.list()
@@ -2161,6 +2173,7 @@ pub fn run() {
             resolve_workdir_file,
             usage_stats,
             install_codex,
+            scheduled_preview_url,
             list_cf_projects,
             cf_project_ready,
             cf_preview_start,
