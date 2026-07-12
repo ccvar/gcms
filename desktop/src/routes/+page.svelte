@@ -1998,7 +1998,7 @@
               <div class="sched-filter-dd"><Dropdown compact searchable bind:value={schedSiteFilter} options={[{ value: '', label: `全部站点 · ${schedSites.length}` }, ...schedSites.map((sl) => ({ value: sl, label: sites.find((x) => x.slug === sl)?.name || sl, sub: sl }))]} placeholder="全部站点" /></div>
             {:else if schedSites.length > 1}
               <div class="sched-filter">
-                <button class="sf-chip" class:on={!schedSiteFilter} onclick={() => (schedSiteFilter = '')}>全部</button>
+                <button class="sf-chip sf-all" class:on={!schedSiteFilter} onclick={() => (schedSiteFilter = '')}><svg width="12" height="12" viewBox="0 0 16 16" fill="none"><rect x="2" y="2" width="5" height="5" rx="1.2" stroke="currentColor" stroke-width="1.3"/><rect x="9" y="2" width="5" height="5" rx="1.2" stroke="currentColor" stroke-width="1.3"/><rect x="2" y="9" width="5" height="5" rx="1.2" stroke="currentColor" stroke-width="1.3"/><rect x="9" y="9" width="5" height="5" rx="1.2" stroke="currentColor" stroke-width="1.3"/></svg>全部</button>
                 {#each schedSites as sl (sl)}
                   <button class="sf-chip" class:on={schedSiteFilter === sl} onclick={() => (schedSiteFilter = schedSiteFilter === sl ? '' : sl)}><SiteFav src={siteFav(sl)} label={sl} size={12} />{sl}</button>
                 {/each}
@@ -2009,10 +2009,9 @@
               <div class="grp sched-grp" id="sched-day-{g.key}">{g.label}<span class="sched-grp-n">{g.items.length} 条</span></div>
               {#each g.items as it (it.site_slug + '-' + it.id)}
                 <div class="sched-item">
-                  <div class="sched-time">{fmtSched(it.published_at)}</div>
                   <div class="sched-body">
                     <b>{it.title}</b>
-                    <small><span class="cmono">{it.site_slug}</span> · {it.lang}</small>
+                    <small><SiteFav src={siteFav(it.site_slug)} label={it.site_slug} size={12} /><span class="cmono">{it.site_slug}</span> · {it.lang} · <span class="sched-t">{new Date(it.published_at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</span></small>
                   </div>
                   <button class="link sched-open" onclick={async () => { try { const u = await invoke<string>('scheduled_preview_url', { connId: activeConnId, siteSlug: it.site_slug, id: it.id }); void openUrl(u); } catch (e) { say(String(e), 'err'); } }}>预览 ↗</button>
                 </div>
@@ -3075,7 +3074,12 @@
   .sched-filter { display: flex; flex-wrap: wrap; gap: 2px; margin: 4px 0 6px; }
   .sf-chip { display: inline-flex; align-items: center; gap: 5px; border: none; background: none; padding: 3px 9px; border-radius: 999px; font: inherit; font-size: 12px; color: var(--dim, #6b675f); cursor: pointer; }
   .sf-chip:hover { background: #f1efe9; color: var(--text, #26241f); }
-  .sf-chip.on { background: var(--accent-wash, #f7ece7); color: var(--accent); }
+  /* 选中态：不上底色，一圈淡边（inset ring 不引起布局跳动） */
+  .sf-chip.on { background: none; box-shadow: inset 0 0 0 1px #e6cabb; color: var(--accent); }
+  .sf-chip.sf-all { background: none; padding-left: 0; }
+  .sf-chip.sf-all.on { background: none; box-shadow: none; color: var(--accent); font-weight: 600; }
+  .sched-body small { display: inline-flex; align-items: center; gap: 4px; }
+  .sched-t { color: var(--accent); font-weight: 500; }
   .sched-filter-dd { max-width: 240px; margin: 4px 0 6px; }
   .sched-grp { padding: 16px 2px 6px; }
   .sched-grp:first-child { padding-top: 4px; }
