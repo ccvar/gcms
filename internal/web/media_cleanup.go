@@ -215,7 +215,9 @@ func (s *Server) adminMediaCleanupPage(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, err)
 		return
 	}
-	// 主域名与站点管理页取法一致：SiteDomains 里 enabled 的 primary 域名。
+	// 域名回退链：自绑主域名（SiteDomains 里 enabled 的 primary）→ 站点管理卡片同源的
+	// 公开地址（platformAuthed 已经通过 populatePlatformSites 填好 PlatformOfficialHosts，
+	// 覆盖 Cloudflare 部署域名等）；都没有才在页面上显示「未绑定域名」。
 	primaryHosts := map[int64]string{}
 	if domains, err := s.platform.SiteDomains(); err == nil {
 		for _, d := range domains {
@@ -225,7 +227,11 @@ func (s *Server) adminMediaCleanupPage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	for _, t := range targets {
-		v.MediaCleanupSites = append(v.MediaCleanupSites, MediaCleanupSite{ID: t.ID, Name: t.Name, Slug: t.Slug, Domain: primaryHosts[t.ID]})
+		domain := primaryHosts[t.ID]
+		if domain == "" {
+			domain = v.PlatformOfficialHosts[t.ID]
+		}
+		v.MediaCleanupSites = append(v.MediaCleanupSites, MediaCleanupSite{ID: t.ID, Name: t.Name, Slug: t.Slug, Domain: domain})
 	}
 	s.rnd.Admin(w, "media_cleanup", http.StatusOK, v)
 }

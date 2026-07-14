@@ -24,7 +24,8 @@ func writeUploadFile(t *testing.T, dir, name, content string) {
 	}
 }
 
-// mediaCleanupFixture 两个站点的平台服务器：默认站与 blog 站各有被引用文件和孤儿文件。
+// mediaCleanupFixture 三个站点的平台服务器：默认站与 blog 站各有被引用文件和孤儿文件；
+// shop 站不自绑域名、走 Cloudflare 部署域名回退。
 type mediaCleanupFixture struct {
 	srv           *Server
 	h             http.Handler
@@ -34,6 +35,7 @@ type mediaCleanupFixture struct {
 	blogDir       string
 	blogSiteID    int64
 	defaultSiteID int64
+	shopSiteID    int64
 }
 
 func newMediaCleanupFixture(t *testing.T) *mediaCleanupFixture {
@@ -97,6 +99,32 @@ func newMediaCleanupFixture(t *testing.T) *mediaCleanupFixture {
 		t.Fatalf("close blog store: %v", err)
 	}
 
+	// shop 站：不自绑 SiteDomains 域名，但配置了已发布的 Cloudflare 部署域名，
+	// 存储清理页应回退显示该域名（与站点管理卡片同源）。
+	shopRoot := filepath.Join(dir, "shop")
+	shopDB := filepath.Join(shopRoot, "cms.db")
+	shopUploadDir := filepath.Join(shopRoot, "uploads")
+	if err := os.MkdirAll(shopUploadDir, 0o755); err != nil {
+		t.Fatalf("create shop upload dir: %v", err)
+	}
+	shopStore, err := store.Open(shopDB)
+	if err != nil {
+		t.Fatalf("open shop store: %v", err)
+	}
+	if err := shopStore.SetSetting(cloudflareDomainsKey, encodeCloudflareDomains([]CloudflareDomain{{Host: "shop.blockvar.com", Primary: true}})); err != nil {
+		t.Fatalf("set shop cloudflare domains: %v", err)
+	}
+	if err := shopStore.Close(); err != nil {
+		t.Fatalf("close shop store: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(shopRoot, "run"), 0o755); err != nil {
+		t.Fatalf("create shop run dir: %v", err)
+	}
+	// status=success 且带 last_deploy_at 即视为已发布（cloudflareStatusPublished）。
+	if err := os.WriteFile(filepath.Join(shopRoot, "run", "cloudflare-deploy.json"), []byte(`{"status":"success","message":"部署完成","last_deploy_at":"2026-07-10T00:00:00Z"}`), 0o644); err != nil {
+		t.Fatalf("write shop cloudflare status: %v", err)
+	}
+
 	ps, err := platform.Open(filepath.Join(dir, "system.db"))
 	if err != nil {
 		t.Fatalf("open platform store: %v", err)
@@ -128,6 +156,10 @@ func newMediaCleanupFixture(t *testing.T) *mediaCleanupFixture {
 	// blog 站绑定主域名，默认站不绑定（页面上应显示「未绑定域名」）。
 	if err := ps.AddSiteDomain(blogSite.ID, "https", "blog-primary.test", true, true); err != nil {
 		t.Fatalf("add blog domain: %v", err)
+	}
+	shopSite, err := ps.CreateSite("shop", "Shop Cleanup Site", shopDB, shopUploadDir, true)
+	if err != nil {
+		t.Fatalf("create shop site: %v", err)
 	}
 
 	srv, err := NewWithPlatform(defaultStore, ps, "https://platform.test", defaultUploadDir, os.DirFS("../.."), os.DirFS("../.."))
@@ -168,6 +200,7 @@ func newMediaCleanupFixture(t *testing.T) *mediaCleanupFixture {
 		blogDir:       blogUploadDir,
 		blogSiteID:    blogSite.ID,
 		defaultSiteID: defaultSite.ID,
+		shopSiteID:    shopSite.ID,
 	}
 }
 
@@ -223,6 +256,9 @@ func TestPlatformMediaCleanupScanAndClean(t *testing.T) {
 		"media-cleanup-site-icon",
 		"blog-primary.test",
 		"未绑定域名",
+		// 未自绑域名但已发布 Cloudflare 部署的站点：回退显示 CF 域名。
+		"Shop Cleanup Site",
+		"shop.blockvar.com",
 		// 行内清理换成图标按钮：icon-trash + title 保留完整文案。
 		`title="移入回收站（7 天后自动删除）"`,
 		`class="del act-ico"`,

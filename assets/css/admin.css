@@ -1246,7 +1246,7 @@ a.overview-log-title { text-decoration: none; }
 .media-cleanup-head { align-items: center; }
 .media-cleanup-head-copy { flex: 1 1 auto; min-width: 0; }
 .media-cleanup-actions { flex: none; display: flex; align-items: center; justify-content: flex-end; gap: .5rem; flex-wrap: wrap; }
-.media-cleanup-actions .btn { white-space: nowrap; }
+.media-cleanup-actions .btn { white-space: nowrap; padding: .42rem .85rem; font-size: .85rem; border-radius: 7px; } /* 与 .admin-head .btn（数据备份「立即备份」等）同款尺寸 */
 .media-cleanup-status { margin: .3rem 0 0; font-size: .78rem; }
 .media-cleanup-site { display: flex; align-items: center; gap: .62rem; min-width: 0; }
 .media-cleanup-site-icon { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 7px; object-fit: contain; background: color-mix(in srgb, var(--line-soft) 72%, var(--surface)); color: var(--muted); border: 1px solid var(--line-soft); }
