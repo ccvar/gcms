@@ -71,9 +71,12 @@ func statsGet(t *testing.T, s *Server, token, path string) (*httptest.ResponseRe
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	w := httptest.NewRecorder()
-	if strings.Contains(path, "/stats/traffic") {
+	switch {
+	case strings.Contains(path, "/stats/traffic"):
 		s.apiStatsTraffic(w, req)
-	} else {
+	case strings.Contains(path, "/stats/pages"):
+		s.apiStatsPages(w, req)
+	default:
 		s.apiStatsSearch(w, req)
 	}
 	var out map[string]any
@@ -104,7 +107,7 @@ func TestStatsScopeIssuable(t *testing.T) {
 
 func TestStatsEndpointsRequireScope(t *testing.T) {
 	s, token := newTestStatsServer(t, "posts:read,posts:write", true)
-	for _, path := range []string{"/api/admin/v1/stats/search", "/api/admin/v1/stats/traffic"} {
+	for _, path := range []string{"/api/admin/v1/stats/search", "/api/admin/v1/stats/traffic", "/api/admin/v1/stats/pages"} {
 		w, out := statsGet(t, s, token, path)
 		if w.Code != http.StatusForbidden {
 			t.Fatalf("%s without stats:read = %d, want 403; body = %s", path, w.Code, w.Body.String())
@@ -196,6 +199,133 @@ func TestStatsTrafficCacheAndDefaults(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("fetch calls = %d, want 1（应命中缓存）", calls)
+	}
+}
+
+// TestMergeStatsCompareRows 合并纯函数：按 query+page 附加前期数据，前期没有的行 prev_* 为 null；
+// 只存在于前期的行不进结果（基准是当前区间）。
+func TestMergeStatsCompareRows(t *testing.T) {
+	cur := []statsSearchRow{
+		{Query: "gcms 教程", Page: "https://e.com/a", Clicks: 12, Impressions: 340, Position: 9.4},
+		{Query: "新词", Page: "https://e.com/b", Clicks: 3, Impressions: 50, Position: 18.2},
+	}
+	prev := []statsSearchRow{
+		{Query: "gcms 教程", Page: "https://e.com/a", Clicks: 5, Impressions: 210, Position: 14.2},
+		{Query: "gcms 教程", Page: "https://e.com/other", Clicks: 9, Impressions: 100, Position: 6.0}, // 同 query 不同 page，不该串
+		{Query: "掉出的词", Page: "https://e.com/c", Clicks: 7, Impressions: 90, Position: 4.1},         // 仅前期，有意丢弃
+	}
+	rows := mergeStatsCompareRows(cur, prev)
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want 2", len(rows))
+	}
+	first := rows[0]
+	if first.PrevClicks == nil || *first.PrevClicks != 5 || first.PrevImpressions == nil || *first.PrevImpressions != 210 || first.PrevPosition == nil || *first.PrevPosition != 14.2 {
+		t.Fatalf("first prev = %+v", first)
+	}
+	if first.Clicks != 12 || first.Impressions != 340 || first.Position != 9.4 {
+		t.Fatalf("first current 被合并改写：%+v", first)
+	}
+	second := rows[1]
+	if second.PrevClicks != nil || second.PrevImpressions != nil || second.PrevPosition != nil {
+		t.Fatalf("前期无数据应置 null：%+v", second)
+	}
+}
+
+// TestStatsCompareWindows 紧前区间必须与当前区间等长且首尾相接。
+func TestStatsCompareWindows(t *testing.T) {
+	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
+	curStart, curEnd, prevStart, prevEnd := statsCompareWindows(now, 7)
+	if curEnd.Format("2006-01-02") != "2026-07-13" || curStart.Format("2006-01-02") != "2026-07-07" {
+		t.Fatalf("current window = %s..%s", curStart, curEnd)
+	}
+	if prevEnd.Format("2006-01-02") != "2026-07-06" || prevStart.Format("2006-01-02") != "2026-06-30" {
+		t.Fatalf("prev window = %s..%s", prevStart, prevEnd)
+	}
+}
+
+// TestStatsSearchCompare compare=1：服务端拉当前 + 紧前两份数据并合并；缓存键与非 compare 区分。
+func TestStatsSearchCompare(t *testing.T) {
+	s, token := newTestStatsServer(t, "stats:read", true)
+	var windows [][2]string
+	orig := statsSearchRangeFetch
+	statsSearchRangeFetch = func(ctx context.Context, accessToken, property string, start, end time.Time, limit int) ([]statsSearchRow, error) {
+		windows = append(windows, [2]string{start.Format("2006-01-02"), end.Format("2006-01-02")})
+		if len(windows) == 1 { // 当前区间
+			return []statsSearchRow{{Query: "gcms", Page: "https://e.com/a", Clicks: 10, Impressions: 200, Position: 9.0}}, nil
+		}
+		return []statsSearchRow{{Query: "gcms", Page: "https://e.com/a", Clicks: 4, Impressions: 90, Position: 15.5}}, nil
+	}
+	t.Cleanup(func() { statsSearchRangeFetch = orig })
+
+	w, out := statsGet(t, s, token, "/api/admin/v1/stats/search?days=7&compare=1")
+	if w.Code != http.StatusOK || out["ok"] != true || out["compare"] != true {
+		t.Fatalf("compare = %d %v", w.Code, out)
+	}
+	if len(windows) != 2 {
+		t.Fatalf("range fetch 次数 = %d, want 2（当前 + 紧前）", len(windows))
+	}
+	// 两个区间等长且首尾相接
+	curStart, _ := time.Parse("2006-01-02", windows[0][0])
+	prevEnd, _ := time.Parse("2006-01-02", windows[1][1])
+	if !prevEnd.AddDate(0, 0, 1).Equal(curStart) {
+		t.Fatalf("区间不相接：cur=%v prev=%v", windows[0], windows[1])
+	}
+	rows := out["rows"].([]any)
+	if len(rows) != 1 {
+		t.Fatalf("rows = %v", rows)
+	}
+	row := rows[0].(map[string]any)
+	if row["clicks"].(float64) != 10 || row["prev_clicks"].(float64) != 4 || row["prev_position"].(float64) != 15.5 {
+		t.Fatalf("merged row = %v", row)
+	}
+
+	// 命中缓存：不再调 Google
+	if w2, _ := statsGet(t, s, token, "/api/admin/v1/stats/search?days=7&compare=1"); w2.Code != http.StatusOK {
+		t.Fatalf("cached compare failed")
+	}
+	if len(windows) != 2 {
+		t.Fatalf("compare 缓存未命中：fetch 次数 = %d", len(windows))
+	}
+}
+
+// TestStatsPages page-stats：默认 days=7/limit=50，钳制与 1 小时缓存与其它 stats 端点一致。
+func TestStatsPages(t *testing.T) {
+	s, token := newTestStatsServer(t, "stats:read", true)
+	calls := 0
+	var gotDays, gotLimit int
+	orig := statsPagesFetch
+	statsPagesFetch = func(ctx context.Context, accessToken, property string, days, limit int) ([]statsPageRow, error) {
+		calls++
+		gotDays, gotLimit = days, limit
+		return []statsPageRow{{Path: "/zh/posts/guide/", ActiveUsers: 66, Sessions: 80}}, nil
+	}
+	t.Cleanup(func() { statsPagesFetch = orig })
+
+	w, out := statsGet(t, s, token, "/api/admin/v1/stats/pages")
+	if w.Code != http.StatusOK || out["ok"] != true {
+		t.Fatalf("pages = %d %v", w.Code, out)
+	}
+	if gotDays != 7 || gotLimit != 50 {
+		t.Fatalf("defaults days/limit = %d/%d, want 7/50", gotDays, gotLimit)
+	}
+	rows := out["rows"].([]any)
+	row := rows[0].(map[string]any)
+	if row["path"] != "/zh/posts/guide/" || row["active_users"].(float64) != 66 || row["sessions"].(float64) != 80 {
+		t.Fatalf("rows = %v", rows)
+	}
+	// 缓存命中
+	if w2, _ := statsGet(t, s, token, "/api/admin/v1/stats/pages"); w2.Code != http.StatusOK {
+		t.Fatalf("cached pages failed")
+	}
+	if calls != 1 {
+		t.Fatalf("fetch calls = %d, want 1（应命中缓存）", calls)
+	}
+	// 越界钳制
+	if w3, _ := statsGet(t, s, token, "/api/admin/v1/stats/pages?days=500&limit=9999"); w3.Code != http.StatusOK {
+		t.Fatalf("clamped pages failed")
+	}
+	if gotDays != 90 || gotLimit != 1000 {
+		t.Fatalf("clamped days/limit = %d/%d, want 90/1000", gotDays, gotLimit)
 	}
 }
 

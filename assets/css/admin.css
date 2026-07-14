@@ -1557,7 +1557,9 @@ a.overview-log-title { text-decoration: none; }
 .dev-details .api-base { margin: 0; border-width: 0 0 1px; border-radius: 0; }
 .api-key-modal:not(:target) { display: none; }
 .api-key-modal:target { display: grid; }
-.api-key-modal .modal-card, .api-edit-modal .modal-card { width: min(620px, 92vw); max-height: 90vh; overflow: auto; }
+.api-key-modal .modal-card, .api-edit-modal .modal-card { width: min(620px, 92vw); max-height: 90vh; overflow: auto; padding-bottom: 0; }
+/* 权限组多、卡片内滚动：操作按钮吸底常驻，避免被内容顶出视野（参考 site-domain-modal 做法）。 */
+.api-key-modal .modal-actions, .api-edit-modal .modal-actions { position: sticky; bottom: 0; z-index: 2; margin: 1rem -1.8rem 0; padding: .85rem 1.8rem 1rem; border-top: 1px solid var(--line-soft); background: color-mix(in srgb, var(--surface) 92%, var(--line-soft)); }
 .api-secret-modal[hidden] { display: none; }
 .api-secret-modal .secret-modal-card { width: min(820px, 92vw); max-height: 90vh; overflow: auto; }
 .secret-modal-note { margin: -.45rem 0 1rem; font-size: .86rem; line-height: 1.55; }

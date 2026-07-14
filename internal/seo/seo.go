@@ -138,6 +138,14 @@ type Meta struct {
 
 const defaultRobots = "index, follow, max-image-preview:large"
 
+// overrideOr 单篇 SEO 覆盖：内容行的 robots_override / canonical_override 非空时优先于默认值。
+func overrideOr(override, def string) string {
+	if v := strings.TrimSpace(override); v != "" {
+		return v
+	}
+	return def
+}
+
 type crumb struct{ Name, URL string }
 
 func (s Site) breadcrumb(items []crumb) map[string]any {
@@ -217,7 +225,7 @@ func (s Site) Home() Meta {
 
 // Article 文章详情：BlogPosting + BreadcrumbList。
 func (s Site) Article(p *store.Post) Meta {
-	canon := s.AbsDir("/posts/" + p.Slug)
+	canon := overrideOr(p.CanonicalOverride, s.AbsDir("/posts/"+p.Slug))
 	desc := p.MetaDesc
 	if desc == "" {
 		desc = p.Excerpt
@@ -263,7 +271,7 @@ func (s Site) Article(p *store.Post) Meta {
 		Description: desc,
 		Keywords:    p.Keywords,
 		Canonical:   canon,
-		Robots:      defaultRobots,
+		Robots:      overrideOr(p.RobotsOverride, defaultRobots),
 		OGType:      "article",
 		Image:       img,
 		Published:   p.PublishedAt.Format(time.RFC3339),
@@ -316,7 +324,7 @@ func (s Site) categoryMeta(c *store.Category, path, canon string) Meta {
 
 // Page 静态页（如关于）：AboutPage/WebPage + BreadcrumbList。
 func (s Site) Page(p *store.Post) Meta {
-	canon := s.AbsDir("/" + p.Slug)
+	canon := overrideOr(p.CanonicalOverride, s.AbsDir("/"+p.Slug))
 	desc := p.MetaDesc
 	if desc == "" {
 		desc = p.Excerpt
@@ -335,7 +343,7 @@ func (s Site) Page(p *store.Post) Meta {
 		Description: desc,
 		Keywords:    p.Keywords,
 		Canonical:   canon,
-		Robots:      defaultRobots,
+		Robots:      overrideOr(p.RobotsOverride, defaultRobots),
 		OGType:      "website",
 		Image:       s.defaultImage(),
 		JSONLD:      []any{page, crumbs},
@@ -383,7 +391,7 @@ func (s Site) Links(cat *store.Category) Meta {
 // Link 链接详情页：WebPage(指向外部资源) + BreadcrumbList。
 func (s Site) Link(p *store.Post) Meta {
 	label := s.linksLabel()
-	canon := s.AbsDir("/links/" + p.Slug)
+	canon := overrideOr(p.CanonicalOverride, s.AbsDir("/links/"+p.Slug))
 	desc := p.MetaDesc
 	if desc == "" {
 		desc = p.Excerpt
@@ -431,7 +439,7 @@ func (s Site) Link(p *store.Post) Meta {
 	}
 	return Meta{
 		Title: p.Title + " — " + s.Name, Description: desc, Keywords: p.Keywords, Canonical: canon,
-		Robots: defaultRobots, OGType: "website", Image: img, JSONLD: jsonld,
+		Robots: overrideOr(p.RobotsOverride, defaultRobots), OGType: "website", Image: img, JSONLD: jsonld,
 	}
 }
 

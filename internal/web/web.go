@@ -62,6 +62,8 @@ type Server struct {
 	statsMu    sync.Mutex                 // 统计端点的内存缓存（防 Google 配额）
 	statsCache map[string]statsCacheEntry // key: 端点|property|参数
 
+	indexNowMu sync.Mutex // IndexNow key 首次生成的互斥（防并发双写 settings）
+
 	runtimeMu sync.RWMutex
 	runtimes  *SiteRuntimePool
 }
@@ -2355,6 +2357,10 @@ func shiftPath(p string) (head, tail string) {
 // 无前缀的公开路径 302 跳到默认语种；保留路径原样透传。
 func (s *Server) withLocale(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// IndexNow key 校验文件：根路径 /{key}.txt 原样返回 key，不参与语种跳转。
+		if s.serveIndexNowKeyFile(w, r) {
+			return
+		}
 		def := s.defaultLang()
 		if isReservedPath(r.URL.Path) {
 			next.ServeHTTP(w, r.WithContext(withLang(r.Context(), def)))
@@ -2983,6 +2989,7 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("PATCH /api/admin/v1/links/categories/{id}", apiCollection("links", s.apiUpdateCategory))
 	mux.HandleFunc("GET /api/admin/v1/{collection}", s.apiListContent)
 	mux.HandleFunc("POST /api/admin/v1/{collection}", s.apiCreateContent)
+	mux.HandleFunc("GET /api/admin/v1/{collection}/similar", s.apiSimilarContent)
 	mux.HandleFunc("GET /api/admin/v1/{collection}/{id}/preview", s.apiPreviewContent)
 	mux.HandleFunc("POST /api/admin/v1/{collection}/{id}/preview-url", s.apiCreatePreviewURL)
 	mux.HandleFunc("PATCH /api/admin/v1/posts/featured/{id}", s.apiUpdatePostFeatured)
@@ -2997,6 +3004,7 @@ func (s *Server) routes(assetsFS fs.FS) {
 	// 统计数据（stats:read；字面路径先于 {collection} 通配匹配）
 	mux.HandleFunc("GET /api/admin/v1/stats/search", s.apiStatsSearch)
 	mux.HandleFunc("GET /api/admin/v1/stats/traffic", s.apiStatsTraffic)
+	mux.HandleFunc("GET /api/admin/v1/stats/pages", s.apiStatsPages)
 	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/openapi.json", s.apiPlatformOpenAPI)
 	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/languages", s.apiLanguages)
 	mux.HandleFunc("POST /api/platform/v1/sites/{siteID}/languages", s.apiCreateLanguage)
@@ -3027,6 +3035,7 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /api/platform/v1/sites/{siteID}/types/{key}/disable", s.apiTypeDisable)
 	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/{collection}", s.apiListContent)
 	mux.HandleFunc("POST /api/platform/v1/sites/{siteID}/{collection}", s.apiCreateContent)
+	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/{collection}/similar", s.apiSimilarContent)
 	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/{collection}/{id}/preview", s.apiPreviewContent)
 	mux.HandleFunc("POST /api/platform/v1/sites/{siteID}/{collection}/{id}/preview-url", s.apiCreatePreviewURL)
 	mux.HandleFunc("PATCH /api/platform/v1/sites/{siteID}/posts/featured/{id}", s.apiUpdatePostFeatured)
@@ -3041,6 +3050,7 @@ func (s *Server) routes(assetsFS fs.FS) {
 	// 统计数据镜像（同站点命名空间；字面 /stats 路径先于 {collection} 通配匹配）
 	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/stats/search", s.apiStatsSearch)
 	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/stats/traffic", s.apiStatsTraffic)
+	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/stats/pages", s.apiStatsPages)
 
 	// 临时前台预览：由自动化 API 生成短期签名 URL，渲染真实前台模板但不索引、不缓存。
 	mux.HandleFunc("GET /preview/{collection}/{id}", s.frontendPreviewContent)

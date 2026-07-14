@@ -178,6 +178,9 @@ type apiContentInput struct {
 	TransGroup  *string `json:"trans_group,omitempty"`
 	CategoryID  *int64  `json:"category_id,omitempty"`
 	PublishedAt *string `json:"published_at,omitempty"`
+	// 单篇 SEO 覆盖：robots meta / canonical URL（空串 = 清除覆盖，回到默认）。
+	RobotsOverride    *string `json:"robots_override,omitempty"`
+	CanonicalOverride *string `json:"canonical_override,omitempty"`
 	// Fields 是「扩展」内容类型的自定义字段值（按该类型 schema 的键）。
 	Fields map[string]any `json:"fields,omitempty"`
 }
@@ -320,29 +323,32 @@ type apiNavigationInput struct {
 }
 
 type apiContentItem struct {
-	ID          int64          `json:"id"`
-	Type        string         `json:"type"`
-	Lang        string         `json:"lang"`
-	Slug        string         `json:"slug"`
-	Title       string         `json:"title"`
-	Excerpt     string         `json:"excerpt"`
-	Content     string         `json:"content,omitempty"`
-	MetaDesc    string         `json:"meta_desc"`
-	Keywords    string         `json:"keywords"`
-	CoverImage  string         `json:"cover_image"`
-	Author      string         `json:"author"`
-	Status      string         `json:"status"`
-	Featured    bool           `json:"featured"`
-	EditorMode  string         `json:"editor_mode"`
-	LinkURL     string         `json:"link_url,omitempty"`
-	TransGroup  string         `json:"trans_group"`
-	CategoryID  *int64         `json:"category_id"`
-	Category    *apiCategory   `json:"category,omitempty"`
-	URL         string         `json:"url"`
-	PublishedAt string         `json:"published_at,omitempty"`
-	CreatedAt   string         `json:"created_at,omitempty"`
-	UpdatedAt   string         `json:"updated_at,omitempty"`
-	Fields      map[string]any `json:"fields,omitempty"`
+	ID          int64        `json:"id"`
+	Type        string       `json:"type"`
+	Lang        string       `json:"lang"`
+	Slug        string       `json:"slug"`
+	Title       string       `json:"title"`
+	Excerpt     string       `json:"excerpt"`
+	Content     string       `json:"content,omitempty"`
+	MetaDesc    string       `json:"meta_desc"`
+	Keywords    string       `json:"keywords"`
+	CoverImage  string       `json:"cover_image"`
+	Author      string       `json:"author"`
+	Status      string       `json:"status"`
+	Featured    bool         `json:"featured"`
+	EditorMode  string       `json:"editor_mode"`
+	LinkURL     string       `json:"link_url,omitempty"`
+	TransGroup  string       `json:"trans_group"`
+	CategoryID  *int64       `json:"category_id"`
+	Category    *apiCategory `json:"category,omitempty"`
+	URL         string       `json:"url"`
+	PublishedAt string       `json:"published_at,omitempty"`
+	CreatedAt   string       `json:"created_at,omitempty"`
+	UpdatedAt   string       `json:"updated_at,omitempty"`
+	// 单篇 SEO 覆盖（空 = 用默认）。
+	RobotsOverride    string         `json:"robots_override,omitempty"`
+	CanonicalOverride string         `json:"canonical_override,omitempty"`
+	Fields            map[string]any `json:"fields,omitempty"`
 }
 
 type apiContentPreview struct {
@@ -1092,10 +1098,21 @@ func (s *Server) apiCreateContent(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusBadRequest, "bad_request", errMsg)
 		return
 	}
+	if errMsg := validateCanonicalOverride(in.CanonicalOverride); errMsg != "" {
+		apiError(w, http.StatusUnprocessableEntity, "invalid_canonical", errMsg)
+		return
+	}
 	s.applyExtraFields(p, kind, in.Fields)
 	if publishNeeded && !automationScopeAllowed(auth.scopes, apiScope(collection, "publish")) {
 		apiError(w, http.StatusForbidden, "missing_scope", "这条访问权限不能发布该类内容。")
 		return
+	}
+	// 发布质量门：仅自动化 API 创建即发布的 posts（admin 后台人工发布不拦）。
+	if qualityGateApplies(kind, &in, p) {
+		if failures := qualityGateFailures(p); len(failures) > 0 {
+			apiQualityGateError(w, failures)
+			return
+		}
 	}
 	if errMsg := s.validateAPICategory(p); errMsg != "" {
 		apiError(w, http.StatusBadRequest, "bad_category", errMsg)
@@ -1112,6 +1129,7 @@ func (s *Server) apiCreateContent(w http.ResponseWriter, r *http.Request) {
 	created, _ := s.store.GetPostByID(id)
 	s.recordAutomationLog(auth, "create", kind, id, s.automationContentLogMessage("create", kind, created))
 	s.clearGeneratedCaches()
+	s.firePublishHooks(r, created)
 	writeJSON(w, http.StatusCreated, map[string]any{"item": s.apiContentItem(created, true)})
 }
 
@@ -1144,10 +1162,21 @@ func (s *Server) apiUpdateContent(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusBadRequest, "bad_request", errMsg)
 		return
 	}
+	if errMsg := validateCanonicalOverride(in.CanonicalOverride); errMsg != "" {
+		apiError(w, http.StatusUnprocessableEntity, "invalid_canonical", errMsg)
+		return
+	}
 	s.applyExtraFields(&next, kind, in.Fields)
 	if publishNeeded && !automationScopeAllowed(auth.scopes, apiScope(collection, "publish")) {
 		apiError(w, http.StatusForbidden, "missing_scope", "这条访问权限不能发布该类内容。")
 		return
+	}
+	// 发布质量门：仅自动化 API 把 status 置为 published 的更新（admin 后台人工发布不拦）。
+	if qualityGateApplies(kind, &in, &next) {
+		if failures := qualityGateFailures(&next); len(failures) > 0 {
+			apiQualityGateError(w, failures)
+			return
+		}
 	}
 	if errMsg := s.validateAPICategory(&next); errMsg != "" {
 		apiError(w, http.StatusBadRequest, "bad_category", errMsg)
@@ -1162,6 +1191,7 @@ func (s *Server) apiUpdateContent(w http.ResponseWriter, r *http.Request) {
 	updated, _ := s.store.GetPostByID(next.ID)
 	s.recordAutomationLog(auth, "update", kind, next.ID, s.automationContentLogMessage("update", kind, &next))
 	s.clearGeneratedCaches()
+	s.firePublishHooks(r, updated)
 	writeJSON(w, http.StatusOK, map[string]any{"item": s.apiContentItem(updated, true)})
 }
 
@@ -1730,6 +1760,8 @@ func previewRevision(p *store.Post) string {
 	write(p.EditorMode)
 	write(p.LinkURL)
 	write(p.TransGroup)
+	write(p.RobotsOverride)
+	write(p.CanonicalOverride)
 	if p.CategoryID.Valid {
 		write(strconv.FormatInt(p.CategoryID.Int64, 10))
 	}
@@ -1840,6 +1872,12 @@ func (s *Server) applyAPIContentInput(p *store.Post, in *apiContentInput, creati
 	if in.TransGroup != nil && creating {
 		p.TransGroup = strings.TrimSpace(*in.TransGroup)
 	}
+	if in.RobotsOverride != nil {
+		p.RobotsOverride = strings.TrimSpace(*in.RobotsOverride)
+	}
+	if in.CanonicalOverride != nil {
+		p.CanonicalOverride = strings.TrimSpace(*in.CanonicalOverride)
+	}
 	if in.Slug != nil {
 		p.Slug = slugify(strings.TrimSpace(*in.Slug))
 	}
@@ -1897,6 +1935,23 @@ func (s *Server) applyAPIContentInput(p *store.Post, in *apiContentInput, creati
 	return publishNeeded, ""
 }
 
+// validateCanonicalOverride 校验 canonical_override：允许空串（清除覆盖），
+// 否则必须是 http(s) 绝对 URL（带 host），不合法由调用方回 422。
+func validateCanonicalOverride(v *string) string {
+	if v == nil {
+		return ""
+	}
+	raw := strings.TrimSpace(*v)
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return "canonical_override 必须是以 http:// 或 https:// 开头的合法绝对 URL。"
+	}
+	return ""
+}
+
 func (s *Server) validateAPICategory(p *store.Post) string {
 	if !p.CategoryID.Valid {
 		return ""
@@ -1939,6 +1994,7 @@ func (s *Server) apiContentItem(p *store.Post, includeContent bool) apiContentIt
 		Status: p.Status, Featured: p.Featured, EditorMode: p.EditorMode, LinkURL: p.LinkURL,
 		TransGroup: p.TransGroup, CategoryID: categoryID, Category: cat, URL: s.apiContentURL(p),
 		PublishedAt: apiTime(p.PublishedAt), CreatedAt: apiTime(p.CreatedAt), UpdatedAt: apiTime(p.UpdatedAt),
+		RobotsOverride: p.RobotsOverride, CanonicalOverride: p.CanonicalOverride,
 	}
 	if includeContent {
 		item.Content = p.Content

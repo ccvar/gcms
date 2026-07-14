@@ -290,10 +290,11 @@ func (s *Server) adminExtUpdate(w http.ResponseWriter, r *http.Request) {
 	p, formErr := postFromForm(r, id, existing.Lang)
 	p.Type = ct.Key
 	p.Extra = extraFromForm(ct, r)
-	// 保留创建时间、置顶、互译分组（与 adminUpdate 一致）。
+	// 保留创建时间、置顶、互译分组（与 adminUpdate 一致）；扩展编辑表单没有 SEO 覆盖字段，同样保留。
 	p.CreatedAt = existing.CreatedAt
 	p.Featured = existing.Featured
 	p.TransGroup = existing.TransGroup
+	preserveSEOOverrides(r, p, existing)
 	if formErr != "" {
 		s.rnd.Admin(w, "ext_edit", http.StatusOK, s.adminExtEditView(r, sess, ct, p, "", formErr))
 		return

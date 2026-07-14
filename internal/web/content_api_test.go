@@ -76,7 +76,14 @@ func TestAPIRelinkContent(t *testing.T) {
 	s, token := newTestAutomationServer(t, "posts:read,posts:write,posts:publish")
 
 	create := func(lang, slug, group string) int64 {
-		body, _ := json.Marshal(map[string]any{"title": lang + " " + slug, "slug": slug, "lang": lang, "trans_group": group, "status": "published"})
+		// 发布质量门：API 创建即发布的 posts 需要达标的正文/摘要/描述/标题长度。
+		body, _ := json.Marshal(map[string]any{
+			"title": lang + " " + slug + " 互译组测试文章", "slug": slug, "lang": lang, "trans_group": group,
+			"status":    "published",
+			"excerpt":   "互译组重连测试用摘要。",
+			"meta_desc": "互译组重连测试用 SEO 描述。",
+			"content":   strings.Repeat("互译组重连测试正文。", 60),
+		})
 		r := httptest.NewRequest(http.MethodPost, "/api/admin/v1/posts", bytes.NewReader(body))
 		r.SetPathValue("collection", "posts")
 		r.Header.Set("Authorization", "Bearer "+token)

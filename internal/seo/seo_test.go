@@ -7,6 +7,34 @@ import (
 	"cms.ccvar.com/internal/store"
 )
 
+// TestSEOOverridesTakePrecedence 单篇 robots/canonical 覆盖：非空时优先于默认值（三种内容类型）。
+func TestSEOOverridesTakePrecedence(t *testing.T) {
+	site := Site{BaseURL: "https://example.test", Prefix: "/zh", Name: "GCMS"}
+	published := time.Date(2026, 6, 30, 8, 0, 0, 0, time.UTC)
+	base := store.Post{
+		Lang: "zh", Title: "Hello", Status: "published", PublishedAt: published,
+		RobotsOverride: "noindex, follow", CanonicalOverride: "https://origin.example.com/source-article/",
+	}
+	build := map[string]func(*store.Post) Meta{"post": site.Article, "page": site.Page, "link": site.Link}
+	for typ, fn := range build {
+		p := base
+		p.Type, p.Slug = typ, "hello"
+		meta := fn(&p)
+		if meta.Robots != "noindex, follow" {
+			t.Fatalf("%s robots = %q, want override", typ, meta.Robots)
+		}
+		if meta.Canonical != "https://origin.example.com/source-article/" {
+			t.Fatalf("%s canonical = %q, want override", typ, meta.Canonical)
+		}
+	}
+	// 空覆盖 → 默认值
+	plain := store.Post{Type: "post", Lang: "zh", Slug: "hello", Title: "Hello", Status: "published", PublishedAt: published}
+	meta := site.Article(&plain)
+	if meta.Robots != defaultRobots || meta.Canonical != "https://example.test/zh/posts/hello/" {
+		t.Fatalf("默认值被破坏：robots=%q canonical=%q", meta.Robots, meta.Canonical)
+	}
+}
+
 func TestContentCanonicalsUseTrailingSlash(t *testing.T) {
 	site := Site{BaseURL: "https://example.test", Prefix: "/zh", Name: "GCMS"}
 	published := time.Date(2026, 6, 30, 8, 0, 0, 0, time.UTC)

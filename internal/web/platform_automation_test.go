@@ -107,6 +107,35 @@ func platformAPIReq(t *testing.T, h http.Handler, method, path, token string, bo
 	return rec
 }
 
+// TestPlatformMirrorSimilarAndStatsPages 平台镜像路由：/{collection}/similar 与 /stats/pages
+// 必须命中各自处理器，不被 {collection}/{id} 通配吞掉（本仓库踩过的坑，钉住）。
+func TestPlatformMirrorSimilarAndStatsPages(t *testing.T) {
+	_, h, ps, _, blogSite := setupPlatformAutomation(t)
+	token := "gcmsp_mirror1234567890"
+	if _, err := ps.CreatePlatformKey("mirror", token, token[:13], platform.KeyMembershipAll,
+		"posts:read,stats:read", nil, time.Time{}); err != nil {
+		t.Fatalf("create key: %v", err)
+	}
+	prefix := "/api/platform/v1/sites/" + strconv.FormatInt(blogSite.ID, 10)
+
+	rec := platformAPIReq(t, h, http.MethodGet, prefix+"/posts/similar?title=%E5%86%85%E5%AE%B9%E7%AE%A1%E7%90%86", token, nil)
+	var out map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	// 命中查重处理器 → 200 {ok:true}；被 {id} 通配吞掉会是 400 bad_id。
+	if rec.Code != http.StatusOK || out["ok"] != true {
+		t.Fatalf("platform similar = %d %v, want 200 ok", rec.Code, out)
+	}
+
+	rec2 := platformAPIReq(t, h, http.MethodGet, prefix+"/stats/pages", token, nil)
+	var out2 map[string]any
+	_ = json.Unmarshal(rec2.Body.Bytes(), &out2)
+	// 站点未接 GA → 命中统计处理器返回 400 analytics_not_connected；
+	// 被 {collection} 通配接走会是 404 未知集合。
+	if rec2.Code != http.StatusBadRequest || out2["error"] != "analytics_not_connected" {
+		t.Fatalf("platform stats/pages = %d %v, want 400 analytics_not_connected", rec2.Code, out2)
+	}
+}
+
 func TestPlatformKeyDispatchMembership(t *testing.T) {
 	_, h, ps, defaultSite, blogSite := setupPlatformAutomation(t)
 

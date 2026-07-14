@@ -52,6 +52,10 @@ type Post struct {
 	LinkURL         string // 仅 type=link：指向的目标网址
 	Extra           string // 扩展内容类型的自定义字段值（JSON 对象）；内置 post/page/link 一般为空
 
+	// 单篇 SEO 覆盖（空 = 用默认）：非空时 seo 包构建 Meta 优先取这里的值。
+	RobotsOverride    string // 覆盖 robots meta，如 "noindex, follow"
+	CanonicalOverride string // 覆盖 canonical URL（须为合法绝对 URL）
+
 	PublishedAt time.Time
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
@@ -175,6 +179,8 @@ CREATE TABLE IF NOT EXISTS posts (
   trans_group  TEXT NOT NULL DEFAULT '',
   link_url     TEXT NOT NULL DEFAULT '',
   extra        TEXT NOT NULL DEFAULT '',
+  robots_override    TEXT NOT NULL DEFAULT '',
+  canonical_override TEXT NOT NULL DEFAULT '',
   category_id  INTEGER REFERENCES categories(id) ON DELETE SET NULL,
   published_at TEXT,
   created_at   TEXT NOT NULL,
@@ -261,6 +267,9 @@ func (s *Store) migrate() error {
 	s.addColumnIfMissing("posts", "link_url", "TEXT NOT NULL DEFAULT ''")
 	// 「扩展」内容类型的自定义字段值（JSON）。幂等补列，随 store.Open 自动铺到所有站点库（含未来新建站点）。
 	s.addColumnIfMissing("posts", "extra", "TEXT NOT NULL DEFAULT ''")
+	// 单篇 SEO 覆盖：robots / canonical（幂等补列）。
+	s.addColumnIfMissing("posts", "robots_override", "TEXT NOT NULL DEFAULT ''")
+	s.addColumnIfMissing("posts", "canonical_override", "TEXT NOT NULL DEFAULT ''")
 	s.addColumnIfMissing("categories", "kind", "TEXT NOT NULL DEFAULT 'post'")
 	// 索引在表结构（含 lang/trans_group）就绪后统一创建，兼容新旧库。
 	if err := s.createIndexes(); err != nil {
@@ -970,11 +979,11 @@ func (s *Store) ListAutomationLogs(limit int) ([]*AutomationLog, error) {
 // ---------- 查询：公开站点 ----------
 
 const postCols = `p.id,p.type,p.slug,p.title,p.excerpt,p.content,p.meta_desc,p.keywords,
-	p.cover_image,p.author,p.status,p.featured,p.editor_mode,p.comments_enabled,p.link_url,p.lang,p.trans_group,p.extra,p.category_id,p.published_at,p.created_at,p.updated_at,
+	p.cover_image,p.author,p.status,p.featured,p.editor_mode,p.comments_enabled,p.link_url,p.lang,p.trans_group,p.extra,p.robots_override,p.canonical_override,p.category_id,p.published_at,p.created_at,p.updated_at,
 	c.id,c.slug,c.name,c.description`
 
 const postSummaryCols = `p.id,p.type,p.slug,p.title,p.excerpt,'' AS content,p.meta_desc,p.keywords,
-	p.cover_image,p.author,p.status,p.featured,p.editor_mode,p.comments_enabled,p.link_url,p.lang,p.trans_group,p.extra,p.category_id,p.published_at,p.created_at,p.updated_at,
+	p.cover_image,p.author,p.status,p.featured,p.editor_mode,p.comments_enabled,p.link_url,p.lang,p.trans_group,p.extra,p.robots_override,p.canonical_override,p.category_id,p.published_at,p.created_at,p.updated_at,
 	c.id,c.slug,c.name,c.description,length(p.content)`
 
 func scanPost(sc interface{ Scan(...any) error }, hasContentLen bool) (*Post, error) {
@@ -987,6 +996,7 @@ func scanPost(sc interface{ Scan(...any) error }, hasContentLen bool) (*Post, er
 	var contentLen sql.NullInt64
 	dest := []any{&p.ID, &p.Type, &p.Slug, &p.Title, &p.Excerpt, &p.Content, &p.MetaDesc,
 		&p.Keywords, &p.CoverImage, &p.Author, &p.Status, &featured, &p.EditorMode, &commentsEnabled, &p.LinkURL, &p.Lang, &p.TransGroup, &p.Extra,
+		&p.RobotsOverride, &p.CanonicalOverride,
 		&p.CategoryID, &pub, &created, &updated,
 		&cID, &cSlug, &cName, &cDesc}
 	if hasContentLen {
@@ -1717,11 +1727,11 @@ func (s *Store) CreatePost(p *Post) (int64, error) {
 		p.TransGroup = p.Lang + ":" + p.Slug
 	}
 	res, err := s.db.Exec(`INSERT INTO posts
-		(type,slug,title,excerpt,content,meta_desc,keywords,cover_image,author,status,featured,editor_mode,comments_enabled,link_url,lang,trans_group,extra,category_id,published_at,created_at,updated_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		(type,slug,title,excerpt,content,meta_desc,keywords,cover_image,author,status,featured,editor_mode,comments_enabled,link_url,lang,trans_group,extra,robots_override,canonical_override,category_id,published_at,created_at,updated_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		nz(p.Type, "post"), p.Slug, p.Title, p.Excerpt, p.Content, p.MetaDesc, p.Keywords, p.CoverImage,
 		p.Author, p.Status, boolInt(p.Featured), nz(p.EditorMode, "markdown"), boolInt(p.CommentsEnabled), p.LinkURL, p.Lang, p.TransGroup,
-		p.Extra, p.CategoryID, nullTime(p.PublishedAt), fmtTime(p.CreatedAt), fmtTime(p.UpdatedAt))
+		p.Extra, p.RobotsOverride, p.CanonicalOverride, p.CategoryID, nullTime(p.PublishedAt), fmtTime(p.CreatedAt), fmtTime(p.UpdatedAt))
 	if err != nil {
 		return 0, err
 	}
@@ -1742,10 +1752,10 @@ func (s *Store) UpdatePostFrom(p *Post, source string) error {
 		p.PublishedAt = p.UpdatedAt
 	}
 	_, err := s.db.Exec(`UPDATE posts SET
-		slug=?,title=?,excerpt=?,content=?,meta_desc=?,keywords=?,cover_image=?,author=?,status=?,featured=?,editor_mode=?,comments_enabled=?,link_url=?,trans_group=?,extra=?,category_id=?,published_at=?,updated_at=?
+		slug=?,title=?,excerpt=?,content=?,meta_desc=?,keywords=?,cover_image=?,author=?,status=?,featured=?,editor_mode=?,comments_enabled=?,link_url=?,trans_group=?,extra=?,robots_override=?,canonical_override=?,category_id=?,published_at=?,updated_at=?
 		WHERE id=?`,
 		p.Slug, p.Title, p.Excerpt, p.Content, p.MetaDesc, p.Keywords, p.CoverImage, p.Author, p.Status,
-		boolInt(p.Featured), nz(p.EditorMode, "markdown"), boolInt(p.CommentsEnabled), p.LinkURL, p.TransGroup, p.Extra, p.CategoryID, nullTime(p.PublishedAt), fmtTime(p.UpdatedAt), p.ID)
+		boolInt(p.Featured), nz(p.EditorMode, "markdown"), boolInt(p.CommentsEnabled), p.LinkURL, p.TransGroup, p.Extra, p.RobotsOverride, p.CanonicalOverride, p.CategoryID, nullTime(p.PublishedAt), fmtTime(p.UpdatedAt), p.ID)
 	return err
 }
 

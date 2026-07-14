@@ -168,6 +168,14 @@
         <label for="keywords">{{.Admin.T "admin.edit.keywords" "关键词（逗号分隔，作为标签）"}}</label>
         <input id="keywords" name="keywords" value="{{$e.Keywords}}">
       </div>
+      <div class="field">
+        <label for="robots_override">{{.Admin.T "admin.edit.robots_override" "Robots 覆盖（留空用默认，如 noindex, follow）"}}</label>
+        <input id="robots_override" name="robots_override" value="{{$e.RobotsOverride}}" placeholder="noindex, follow">
+      </div>
+      <div class="field">
+        <label for="canonical_override">{{.Admin.T "admin.edit.canonical_override" "Canonical 覆盖（留空用默认；需为绝对 URL）"}}</label>
+        <input id="canonical_override" name="canonical_override" value="{{$e.CanonicalOverride}}" placeholder="https://example.com/original-article">
+      </div>
     </fieldset>
   </form>
 

@@ -3675,6 +3675,8 @@ func (s *Server) adminCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.clearGeneratedCaches()
+	p.ID = id
+	s.firePublishHooks(r, p)
 	http.Redirect(w, r, fmt.Sprintf("/admin/posts/%d/edit?saved=1", id), http.StatusSeeOther)
 }
 
@@ -3701,6 +3703,7 @@ func (s *Server) adminUpdate(w http.ResponseWriter, r *http.Request) {
 	if p.PublishedAt.IsZero() {        // 表单未指定发布时间则沿用原值
 		p.PublishedAt = existing.PublishedAt
 	}
+	preserveSEOOverrides(r, p, existing)
 	s.fillDefaultAuthor(p)
 	p.Slug = s.uniqueSlug(existing.Lang, p.Slug, id)
 	if err := s.store.UpdatePost(p); err != nil {
@@ -3708,6 +3711,7 @@ func (s *Server) adminUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.clearGeneratedCaches()
+	s.firePublishHooks(r, p)
 	http.Redirect(w, r, fmt.Sprintf("/admin/posts/%d/edit?saved=1", id), http.StatusSeeOther)
 }
 
@@ -3885,6 +3889,8 @@ func (s *Server) adminLinkCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.clearGeneratedCaches()
+	p.ID = id
+	s.firePublishHooks(r, p)
 	http.Redirect(w, r, fmt.Sprintf("/admin/links/%d/edit?saved=1", id), http.StatusSeeOther)
 }
 
@@ -3912,6 +3918,7 @@ func (s *Server) adminLinkUpdate(w http.ResponseWriter, r *http.Request) {
 	if p.PublishedAt.IsZero() {
 		p.PublishedAt = existing.PublishedAt
 	}
+	preserveSEOOverrides(r, p, existing)
 	s.fillDefaultAuthor(p)
 	p.Slug = s.uniqueSlug(existing.Lang, p.Slug, id)
 	if err := s.store.UpdatePost(p); err != nil {
@@ -3919,6 +3926,7 @@ func (s *Server) adminLinkUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.clearGeneratedCaches()
+	s.firePublishHooks(r, p)
 	http.Redirect(w, r, fmt.Sprintf("/admin/links/%d/edit?saved=1", id), http.StatusSeeOther)
 }
 
@@ -3987,6 +3995,7 @@ func (s *Server) adminContentStatus(w http.ResponseWriter, r *http.Request, kind
 		return
 	}
 	s.clearGeneratedCaches()
+	s.firePublishHooks(r, p)
 	http.Redirect(w, r, s.adminListRedirect(listPath, r), http.StatusSeeOther)
 }
 
@@ -5687,6 +5696,8 @@ func (s *Server) adminPageCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.clearGeneratedCaches()
+	p.ID = id
+	s.firePublishHooks(r, p)
 	http.Redirect(w, r, fmt.Sprintf("/admin/pages/%d/edit?saved=1", id), http.StatusSeeOther)
 }
 
@@ -5710,12 +5721,14 @@ func (s *Server) adminPageSave(w http.ResponseWriter, r *http.Request) {
 	updated.CreatedAt = p.CreatedAt
 	updated.TransGroup = p.TransGroup
 	updated.PublishedAt = p.PublishedAt
+	preserveSEOOverrides(r, updated, p)
 	updated.Slug = s.uniqueSlug(p.Lang, updated.Slug, id)
 	if err := s.store.UpdatePost(updated); err != nil {
 		s.serverError(w, err)
 		return
 	}
 	s.clearGeneratedCaches()
+	s.firePublishHooks(r, updated)
 	http.Redirect(w, r, fmt.Sprintf("/admin/pages/%d/edit?saved=1", id), http.StatusSeeOther)
 }
 
@@ -5744,18 +5757,20 @@ func (s *Server) adminPageDelete(w http.ResponseWriter, r *http.Request) {
 func pageFromForm(r *http.Request, id int64, lang string) (*store.Post, string) {
 	_ = r.ParseForm()
 	p := &store.Post{
-		ID:         id,
-		Type:       "page",
-		Lang:       lang,
-		Title:      strings.TrimSpace(r.FormValue("title")),
-		Excerpt:    strings.TrimSpace(r.FormValue("excerpt")),
-		Content:    r.FormValue("content"),
-		MetaDesc:   strings.TrimSpace(r.FormValue("meta_desc")),
-		Keywords:   strings.TrimSpace(r.FormValue("keywords")),
-		Author:     strings.TrimSpace(r.FormValue("author")),
-		Status:     "published",
-		EditorMode: "markdown",
-		TransGroup: strings.TrimSpace(r.FormValue("trans_group")),
+		ID:                id,
+		Type:              "page",
+		Lang:              lang,
+		Title:             strings.TrimSpace(r.FormValue("title")),
+		Excerpt:           strings.TrimSpace(r.FormValue("excerpt")),
+		Content:           r.FormValue("content"),
+		MetaDesc:          strings.TrimSpace(r.FormValue("meta_desc")),
+		Keywords:          strings.TrimSpace(r.FormValue("keywords")),
+		Author:            strings.TrimSpace(r.FormValue("author")),
+		Status:            "published",
+		EditorMode:        "markdown",
+		TransGroup:        strings.TrimSpace(r.FormValue("trans_group")),
+		RobotsOverride:    strings.TrimSpace(r.FormValue("robots_override")),
+		CanonicalOverride: strings.TrimSpace(r.FormValue("canonical_override")),
 	}
 	if r.FormValue("editor_mode") == "rich" {
 		p.EditorMode = "rich"
@@ -5778,18 +5793,20 @@ func pageFromForm(r *http.Request, id int64, lang string) (*store.Post, string) 
 func postFromForm(r *http.Request, id int64, lang string) (*store.Post, string) {
 	_ = r.ParseForm()
 	p := &store.Post{
-		ID:         id,
-		Type:       "post",
-		Lang:       lang,
-		Title:      strings.TrimSpace(r.FormValue("title")),
-		Excerpt:    strings.TrimSpace(r.FormValue("excerpt")),
-		Content:    r.FormValue("content"),
-		MetaDesc:   strings.TrimSpace(r.FormValue("meta_desc")),
-		Keywords:   strings.TrimSpace(r.FormValue("keywords")),
-		CoverImage: strings.TrimSpace(r.FormValue("cover_image")),
-		Author:     strings.TrimSpace(r.FormValue("author")),
-		TransGroup: strings.TrimSpace(r.FormValue("trans_group")),
-		LinkURL:    strings.TrimSpace(r.FormValue("link_url")),
+		ID:                id,
+		Type:              "post",
+		Lang:              lang,
+		Title:             strings.TrimSpace(r.FormValue("title")),
+		Excerpt:           strings.TrimSpace(r.FormValue("excerpt")),
+		Content:           r.FormValue("content"),
+		MetaDesc:          strings.TrimSpace(r.FormValue("meta_desc")),
+		Keywords:          strings.TrimSpace(r.FormValue("keywords")),
+		CoverImage:        strings.TrimSpace(r.FormValue("cover_image")),
+		Author:            strings.TrimSpace(r.FormValue("author")),
+		TransGroup:        strings.TrimSpace(r.FormValue("trans_group")),
+		LinkURL:           strings.TrimSpace(r.FormValue("link_url")),
+		RobotsOverride:    strings.TrimSpace(r.FormValue("robots_override")),
+		CanonicalOverride: strings.TrimSpace(r.FormValue("canonical_override")),
 	}
 	if r.FormValue("comments_enabled") == "1" {
 		p.CommentsEnabled = true
@@ -5827,6 +5844,17 @@ func postFromForm(r *http.Request, id int64, lang string) (*store.Post, string) 
 		return p, "标题不能为空"
 	}
 	return p, ""
+}
+
+// preserveSEOOverrides 表单里没有 SEO 覆盖字段时（如扩展类型编辑器等旧表单），保留库内原值，
+// 防止后台保存把自动化 API 写入的 robots/canonical 覆盖悄悄清空。
+func preserveSEOOverrides(r *http.Request, p, existing *store.Post) {
+	if _, ok := r.PostForm["robots_override"]; !ok {
+		p.RobotsOverride = existing.RobotsOverride
+	}
+	if _, ok := r.PostForm["canonical_override"]; !ok {
+		p.CanonicalOverride = existing.CanonicalOverride
+	}
 }
 
 // uniqueSlug 在某语种内 slug 冲突时追加数字后缀。

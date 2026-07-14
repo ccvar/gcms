@@ -67,15 +67,17 @@ function usage(code = 2) {
   out("  gcms.js update-category-entry --site <slug|id> <posts|links> <json|@file>");
   out("  gcms.js list --site <slug|id> <collection> [--lang zh|all] [--q text] [--slug slug] [--trans_group group] [--status draft] [--limit 20]");
   out("  gcms.js get --site <slug|id> <collection> <id>");
+  out("  gcms.js similar --site <slug|id> [<collection>] --title \"标题\" [--lang zh] [--limit 5]  # 发文前查重（近似匹配，含草稿；collection 缺省 posts）");
   out("  gcms.js preview --site <slug|id> <posts|links> <id>");
   out("  gcms.js preview-url --site <slug|id> <posts|links> <id>");
   out("  gcms.js pin --site <slug|id> <posts|links> <id> <on|off>");
   out("  gcms.js create --site <slug|id> <collection> <json|@file>  # 扩展集合自定义字段放 fields:{key:value}");
-  out("  gcms.js update --site <slug|id> <collection> <id> <json|@file>");
+  out("  gcms.js update --site <slug|id> <collection> <id> <json|@file> [--robots \"noindex, follow\"] [--canonical <url>]");
   out("  gcms.js relink --site <slug|id> <collection> <id> (--to-id <sibling-id> | --trans-group <group>)");
   out("  gcms.js audit --site <slug|id> <collection> [--lang zh|all] [--limit 50] [--deep true]");
-  out("  gcms.js search-stats --site <slug|id> [--days 28] [--limit 100]  # Search Console 搜索词表现（stats:read；找排名 8~20 的词优化旧文）");
+  out("  gcms.js search-stats --site <slug|id> [--days 28] [--limit 100] [--compare]  # Search Console 搜索词表现（stats:read；--compare 附带紧前等长区间对比）");
   out("  gcms.js traffic-stats --site <slug|id> [--days 7]         # GA 活跃用户/会话汇总（stats:read）");
+  out("  gcms.js page-stats --site <slug|id> [--days 7] [--limit 50]  # GA 页面路径 × 活跃用户/会话（stats:read）");
   out("  （collection = posts|pages|links 或该站 types 里的扩展集合，如 products/docs/自定义）");
   process.exit(code);
 }
@@ -563,14 +565,37 @@ async function main() {
     return;
   }
 
-  // 统计数据（stats:read）：Search Console 搜索词表现 / GA 流量汇总，服务端缓存 1 小时。
-  if (cmd === "search-stats" || cmd === "traffic-stats") {
-    const opt = parseOptions([collection, ...rest].filter((a) => a != null));
+  // 统计数据（stats:read）：Search Console 搜索词表现 / GA 流量与页面汇总，服务端缓存 1 小时。
+  // search-stats --compare 让服务端附带「紧前等长区间」同 key 数据（prev_clicks/prev_impressions/prev_position）。
+  if (cmd === "search-stats" || cmd === "traffic-stats" || cmd === "page-stats") {
+    const args = [collection, ...rest].filter((a) => a != null);
+    const compare = cmd === "search-stats" && args.includes("--compare");
+    const opt = parseOptions(args.filter((a) => a !== "--compare"));
     const qs = new URLSearchParams();
     if (opt.days != null) qs.set("days", opt.days);
-    if (cmd === "search-stats" && opt.limit != null) qs.set("limit", opt.limit);
-    const statsPath = cmd === "search-stats" ? "/stats/search" : "/stats/traffic";
+    if (cmd !== "traffic-stats" && opt.limit != null) qs.set("limit", opt.limit);
+    if (compare) qs.set("compare", "1");
+    const statsPath = cmd === "search-stats" ? "/stats/search" : cmd === "page-stats" ? "/stats/pages" : "/stats/traffic";
     print(await request("GET", P(statsPath + (qs.toString() ? "?" + qs.toString() : ""))));
+    return;
+  }
+
+  // 发文前查重：按标题做站内近似匹配（FTS5，含已发布 + 草稿），避免重复选题。collection 缺省 posts。
+  if (cmd === "similar") {
+    let col = collection;
+    let flags = rest;
+    if (!col || col.startsWith("--")) {
+      flags = [collection, ...rest].filter((a) => a != null);
+      col = "posts";
+    }
+    await assertCollection(P, col);
+    const opt = parseOptions(flags);
+    if (!opt.title) usage();
+    const qs = new URLSearchParams();
+    qs.set("title", opt.title);
+    if (opt.lang != null) qs.set("lang", opt.lang);
+    if (opt.limit != null) qs.set("limit", opt.limit);
+    print(await request("GET", P("/" + col + "/similar?" + qs.toString())));
     return;
   }
 
@@ -620,10 +645,19 @@ async function main() {
   }
 
   if (cmd === "update") {
-    const id = rest[0];
-    const body = rest[1];
-    if (!id || !body) usage();
-    print(await request("PATCH", P("/" + collection + "/" + encodeURIComponent(id)), bodyFromArg(body)));
+    // 用法：update --site <slug|id> <collection> <id> <json|@file> [--robots "..."] [--canonical <url>]
+    // --robots/--canonical 透传为 robots_override / canonical_override（单篇 SEO 覆盖）。
+    const [id, ...updateArgs] = rest;
+    if (!id) usage();
+    let body = {};
+    if (updateArgs.length && !String(updateArgs[0]).startsWith("--")) {
+      body = bodyFromArg(updateArgs.shift());
+    }
+    const opt = parseOptions(updateArgs);
+    if (opt.robots != null) body.robots_override = opt.robots;
+    if (opt.canonical != null) body.canonical_override = opt.canonical;
+    if (!Object.keys(body).length) usage();
+    print(await request("PATCH", P("/" + collection + "/" + encodeURIComponent(id)), body));
     return;
   }
 
