@@ -4826,6 +4826,19 @@ func automationScopesFromFormWithDefault(r *http.Request, useDefault bool) []str
 			}
 		}
 	}
+	// content:*/types:write 与扩展集合 scope（如 products:write）通过了 automationScopeValid，
+	// 但不属于上面枚举的内置 scope，不透传就会在签发时被静默丢弃（v1.3.16 同款教训）。
+	// 按表单提交顺序追加，emitted 兼做去重。
+	emitted := map[string]bool{}
+	for _, scope := range out {
+		emitted[scope] = true
+	}
+	for _, scope := range r.Form["scopes"] {
+		if want[scope] && !emitted[scope] {
+			emitted[scope] = true
+			out = append(out, scope)
+		}
+	}
 	if len(out) == 0 {
 		if useDefault {
 			out = append(out, defaultAutomationScopes()...)

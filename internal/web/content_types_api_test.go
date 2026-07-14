@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -179,8 +180,11 @@ func TestAPITypeCreateContentDelete(t *testing.T) {
 // TestTypeScopesIssuable 钉死评审高危：types:write / content:* / 扩展集合 scope 必须能通过
 // 密钥表单校验签发（此前 automationScopeValid 白名单静默过滤，类型管理五个写端点对一切
 // 真实签发的密钥恒 403——测试全绿只因直接写库绕过了表单）。
+// 端到端部分钉住组装环节：automationScopeValid 放行只是第一关，
+// automationScopesFromFormRequired 的输出组装若不透传这些 scope，签发结果照样丢权限。
 func TestTypeScopesIssuable(t *testing.T) {
-	for _, sc := range []string{"types:write", "content:read", "content:write", "content:publish", "cases:read", "cases:write", "products:publish"} {
+	issuable := []string{"types:write", "content:read", "content:write", "content:publish", "cases:read", "cases:write", "products:publish"}
+	for _, sc := range issuable {
 		if !automationScopeValid(sc) {
 			t.Fatalf("scope %s 应可通过表单签发", sc)
 		}
@@ -189,6 +193,26 @@ func TestTypeScopesIssuable(t *testing.T) {
 		if automationScopeValid(sc) {
 			t.Fatalf("scope %s 不应通过", sc)
 		}
+	}
+
+	form := url.Values{"scopes": append([]string{"posts:write"}, issuable...)}
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	got := automationScopesFromFormRequired(req)
+	have := map[string]bool{}
+	for _, sc := range got {
+		have[sc] = true
+	}
+	for _, sc := range issuable {
+		if !have[sc] {
+			t.Fatalf("签发结果应包含 %s，实际 %v", sc, got)
+		}
+	}
+	if !have["posts:write"] || !have["posts:read"] {
+		t.Fatalf("内置集合 scope 及隐含 read 不应受透传影响，实际 %v", got)
+	}
+	if have["media:write"] || have["languages:read"] {
+		t.Fatalf("未勾选的默认 scope 不应混入，实际 %v", got)
 	}
 }
 
