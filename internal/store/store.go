@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -55,6 +56,21 @@ type Post struct {
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }
+
+// PostRevision 内容修订快照：每次更新前把旧值整体序列化留底，供后台 / API 回滚。
+type PostRevision struct {
+	ID        int64
+	PostID    int64
+	Snapshot  string // Post 全字段 JSON
+	Source    string // admin | api：本次更新（即产生该快照）的来源
+	CreatedAt time.Time
+}
+
+const (
+	PostRevisionKeep        = 20 // 每篇内容保留的最近修订条数
+	PostRevisionSourceAdmin = "admin"
+	PostRevisionSourceAPI   = "api"
+)
 
 // ReadingTime 估算阅读时长（分钟）。中文按约 350 字/分钟。
 func (p *Post) ReadingTime() int {
@@ -165,6 +181,16 @@ CREATE TABLE IF NOT EXISTS posts (
   updated_at   TEXT NOT NULL,
   UNIQUE(lang, slug)
 );
+
+CREATE TABLE IF NOT EXISTS post_revisions (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  post_id    INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+  snapshot   TEXT NOT NULL,
+  source     TEXT NOT NULL DEFAULT 'admin',
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_post_revisions_post ON post_revisions(post_id, id);
 
 CREATE TABLE IF NOT EXISTS settings (
   key   TEXT PRIMARY KEY,
@@ -1702,7 +1728,15 @@ func (s *Store) CreatePost(p *Post) (int64, error) {
 	return res.LastInsertId()
 }
 
-func (s *Store) UpdatePost(p *Post) error {
+// UpdatePost 后台路径的内容更新：更新前自动快照旧值（source=admin）。
+func (s *Store) UpdatePost(p *Post) error { return s.UpdatePostFrom(p, PostRevisionSourceAdmin) }
+
+// UpdatePostFrom 内容更新的唯一入口：先把当前库内旧值快照进 post_revisions（带来源标记），
+// 再执行整字段更新；每篇只保留最近 PostRevisionKeep 条修订。
+func (s *Store) UpdatePostFrom(p *Post, source string) error {
+	if err := s.snapshotPostRevision(p.ID, source); err != nil {
+		return err
+	}
 	p.UpdatedAt = time.Now()
 	if p.Status == "published" && p.PublishedAt.IsZero() {
 		p.PublishedAt = p.UpdatedAt
@@ -1713,6 +1747,74 @@ func (s *Store) UpdatePost(p *Post) error {
 		p.Slug, p.Title, p.Excerpt, p.Content, p.MetaDesc, p.Keywords, p.CoverImage, p.Author, p.Status,
 		boolInt(p.Featured), nz(p.EditorMode, "markdown"), boolInt(p.CommentsEnabled), p.LinkURL, p.TransGroup, p.Extra, p.CategoryID, nullTime(p.PublishedAt), fmtTime(p.UpdatedAt), p.ID)
 	return err
+}
+
+// snapshotPostRevision 把某篇内容当前的库内状态整体序列化成一条修订快照，并裁剪历史。
+// 目标行不存在时静默跳过（让随后的 UPDATE 自己空转，不改变既有语义）。
+func (s *Store) snapshotPostRevision(postID int64, source string) error {
+	if postID <= 0 {
+		return nil
+	}
+	cur, err := s.GetPostByID(postID)
+	if err != nil {
+		return err
+	}
+	if cur == nil {
+		return nil
+	}
+	raw, err := json.Marshal(cur)
+	if err != nil {
+		return err
+	}
+	if source != PostRevisionSourceAPI {
+		source = PostRevisionSourceAdmin
+	}
+	if _, err := s.db.Exec(`INSERT INTO post_revisions(post_id, snapshot, source, created_at) VALUES(?,?,?,?)`,
+		postID, string(raw), source, fmtTime(time.Now())); err != nil {
+		return err
+	}
+	// 每篇只留最近 PostRevisionKeep 条，超出删最旧。
+	_, err = s.db.Exec(`DELETE FROM post_revisions WHERE post_id=? AND id NOT IN
+		(SELECT id FROM post_revisions WHERE post_id=? ORDER BY id DESC LIMIT ?)`,
+		postID, postID, PostRevisionKeep)
+	return err
+}
+
+// PostRevisions 返回某篇内容的修订快照（新到旧）。
+func (s *Store) PostRevisions(postID int64) ([]*PostRevision, error) {
+	rows, err := s.db.Query(`SELECT id, post_id, snapshot, source, created_at FROM post_revisions
+		WHERE post_id=? ORDER BY id DESC`, postID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*PostRevision
+	for rows.Next() {
+		var rev PostRevision
+		var created string
+		if err := rows.Scan(&rev.ID, &rev.PostID, &rev.Snapshot, &rev.Source, &created); err != nil {
+			return nil, err
+		}
+		rev.CreatedAt = parseTime(sql.NullString{String: created, Valid: true})
+		out = append(out, &rev)
+	}
+	return out, rows.Err()
+}
+
+// GetPostRevision 按修订 ID 读取一条快照。
+func (s *Store) GetPostRevision(id int64) (*PostRevision, bool, error) {
+	var rev PostRevision
+	var created string
+	err := s.db.QueryRow(`SELECT id, post_id, snapshot, source, created_at FROM post_revisions WHERE id=?`, id).
+		Scan(&rev.ID, &rev.PostID, &rev.Snapshot, &rev.Source, &created)
+	if err == sql.ErrNoRows {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	rev.CreatedAt = parseTime(sql.NullString{String: created, Valid: true})
+	return &rev, true, nil
 }
 
 // SetFeatured 单独切换置顶（不动其它字段）。

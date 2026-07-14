@@ -59,6 +59,9 @@ type Server struct {
 	cloudflareTimer      *time.Timer
 	cloudflareStatusFile string
 
+	statsMu    sync.Mutex                 // 统计端点的内存缓存（防 Google 配额）
+	statsCache map[string]statsCacheEntry // key: 端点|property|参数
+
 	runtimeMu sync.RWMutex
 	runtimes  *SiteRuntimePool
 }
@@ -725,9 +728,10 @@ type View struct {
 	Edit                         *store.Post
 	IsPage                       bool
 	IsLink                       bool
-	EditBase                     string // 编辑表单的后台路径基：posts | pages | links
-	EditListURL                  string // 返回列表的后台 URL
-	EditTypeLabel                string // 文章 | 页面 | 链接
+	EditBase                     string         // 编辑表单的后台路径基：posts | pages | links
+	EditListURL                  string         // 返回列表的后台 URL
+	EditTypeLabel                string         // 文章 | 页面 | 链接
+	Revisions                    []RevisionView // 编辑页「历史版本」抽屉的数据
 	Authed                       bool
 	PlatformMode                 bool // 当前实例启用了平台级多站点
 	PlatformAdminView            bool // 平台级管理页，不显示当前站点后台导航
@@ -2940,6 +2944,7 @@ func (s *Server) routes(assetsFS fs.FS) {
 	}
 	mux.HandleFunc("POST /admin/upload", s.requireAuth(s.adminUpload))
 	mux.HandleFunc("POST /admin/render", s.requireAuth(s.adminRender))
+	mux.HandleFunc("POST /admin/revisions/{rid}/restore", s.requireAuth(s.adminRestoreRevision))
 
 	apiCollection := func(collection string, h http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
@@ -2987,6 +2992,11 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("GET /api/admin/v1/{collection}/{id}", s.apiGetContent)
 	mux.HandleFunc("PATCH /api/admin/v1/{collection}/{id}", s.apiUpdateContent)
 	mux.HandleFunc("POST /api/admin/v1/{collection}/{id}/relink", s.apiRelinkContent)
+	mux.HandleFunc("GET /api/admin/v1/{collection}/{id}/revisions", s.apiListRevisions)
+	mux.HandleFunc("POST /api/admin/v1/{collection}/{id}/revisions/{rid}/restore", s.apiRestoreRevision)
+	// 统计数据（stats:read；字面路径先于 {collection} 通配匹配）
+	mux.HandleFunc("GET /api/admin/v1/stats/search", s.apiStatsSearch)
+	mux.HandleFunc("GET /api/admin/v1/stats/traffic", s.apiStatsTraffic)
 	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/openapi.json", s.apiPlatformOpenAPI)
 	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/languages", s.apiLanguages)
 	mux.HandleFunc("POST /api/platform/v1/sites/{siteID}/languages", s.apiCreateLanguage)
@@ -3026,6 +3036,11 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/{collection}/{id}", s.apiGetContent)
 	mux.HandleFunc("PATCH /api/platform/v1/sites/{siteID}/{collection}/{id}", s.apiUpdateContent)
 	mux.HandleFunc("POST /api/platform/v1/sites/{siteID}/{collection}/{id}/relink", s.apiRelinkContent)
+	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/{collection}/{id}/revisions", s.apiListRevisions)
+	mux.HandleFunc("POST /api/platform/v1/sites/{siteID}/{collection}/{id}/revisions/{rid}/restore", s.apiRestoreRevision)
+	// 统计数据镜像（同站点命名空间；字面 /stats 路径先于 {collection} 通配匹配）
+	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/stats/search", s.apiStatsSearch)
+	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/stats/traffic", s.apiStatsTraffic)
 
 	// 临时前台预览：由自动化 API 生成短期签名 URL，渲染真实前台模板但不索引、不缓存。
 	mux.HandleFunc("GET /preview/{collection}/{id}", s.frontendPreviewContent)

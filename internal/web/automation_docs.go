@@ -272,6 +272,20 @@ func automationOpenAPISpec(apiBase string) map[string]any {
 				"responses": map[string]any{"200": map[string]any{"description": "OK"}},
 			},
 		},
+		"/stats/search": map[string]any{
+			"get": map[string]any{
+				"summary":     "Search Console 搜索词表现（stats:read）",
+				"description": "查询参数：days=28（钳制 1..90）、limit=100（钳制 1..1000）。按 query+page 维度返回 {ok,days,property,rows:[{query,page,clicks,impressions,position}]}，结果缓存 1 小时。未接入 Search Console 时返回 400 search_console_not_connected。典型用法：找平均排名 8~20 的搜索词，优化对应旧文。",
+				"responses":   map[string]any{"200": map[string]any{"description": "OK"}},
+			},
+		},
+		"/stats/traffic": map[string]any{
+			"get": map[string]any{
+				"summary":     "GA 流量汇总（stats:read）",
+				"description": "查询参数：days=7（钳制 1..90）。返回 {ok,days,property,active_users,sessions}，结果缓存 1 小时。未接入 Google Analytics 时返回 400 analytics_not_connected。",
+				"responses":   map[string]any{"200": map[string]any{"description": "OK"}},
+			},
+		},
 	}
 	for _, col := range automationCollections {
 		if col.path == "posts" || col.path == "links" {
@@ -297,6 +311,20 @@ func automationOpenAPISpec(apiBase string) map[string]any {
 		}
 		paths["/"+col.path+"/{id}/relink"] = map[string]any{
 			"post": automationRelinkOperation(col),
+		}
+		paths["/"+col.path+"/{id}/revisions"] = map[string]any{
+			"get": map[string]any{
+				"summary":     "修订历史（" + col.label + "，" + col.path + ":read）",
+				"description": "每次更新前自动快照旧值（每篇保留最近 20 条）。返回 {items:[{id,created_at,source,title,status,content_preview}]}，content_preview 截断 200 字。",
+				"responses":   map[string]any{"200": map[string]any{"description": "OK"}},
+			},
+		}
+		paths["/"+col.path+"/{id}/revisions/{rid}/restore"] = map[string]any{
+			"post": map[string]any{
+				"summary":     "恢复到指定修订（" + col.label + "，" + col.path + ":write；涉及非草稿需发布权限）",
+				"description": "整字段回滚到修订 {rid}；恢复前会自动把当前状态再快照一条，可反悔。返回恢复后的 item。",
+				"responses":   map[string]any{"200": map[string]any{"description": "OK"}},
+			},
 		}
 		if col.path == "posts" || col.path == "links" {
 			paths["/"+col.path+"/{id}/preview"] = map[string]any{
@@ -1120,6 +1148,9 @@ func automationScopeBadges(scopes string) []string {
 		}
 		out = append(out, "导航菜单："+strings.Join(actions, "、"))
 	}
+	if m[apiScopeStatsRead] {
+		out = append(out, "统计数据：读取")
+	}
 	if labels := automationActionLabels(m, "content"); len(labels) > 0 {
 		out = append(out, "全部内容："+strings.Join(labels, "、"))
 	}
@@ -1219,6 +1250,9 @@ func automationScopeBadgesAdmin(scopes string, admin *i18n.AdminTr) []string {
 			labels = append(labels, adminUI(admin, "admin.settings.automation.write", "修改"))
 		}
 		out = append(out, adminUI(admin, "admin.settings.automation.navigation", "导航菜单")+colon+strings.Join(labels, sep))
+	}
+	if m[apiScopeStatsRead] {
+		out = append(out, adminUI(admin, "admin.settings.automation.stats", "统计数据")+colon+adminUI(admin, "admin.settings.automation.read", "读取"))
 	}
 	if labels := automationActionLabelsAdmin(m, "content", admin); len(labels) > 0 {
 		out = append(out, adminUI(admin, "admin.settings.automation.content", "全部内容")+colon+strings.Join(labels, sep))
@@ -2147,6 +2181,8 @@ func automationSkillMarkdown(apiBase string) string {
 		"- `node scripts/gcms.js update posts 123 '{\"title\":\"新标题\"}'`",
 		"- `node scripts/gcms.js audit posts --lang zh --limit 50`",
 		"- `node scripts/gcms.js audit pages --lang zh --limit 20 --deep true`",
+		"- `node scripts/gcms.js search-stats --days 28 --limit 100`",
+		"- `node scripts/gcms.js traffic-stats --days 7`",
 		"",
 		"## 扩展内容类型（产品/文档/活动/图库/自定义）",
 		"",
@@ -2163,6 +2199,18 @@ func automationSkillMarkdown(apiBase string) string {
 		"",
 		"**创建新类型前必须先把内容模型（类型名、字段清单）讲给用户并获得同意**——类型是站点级结构，",
 		"不是随手可扔的草稿。type-delete 只对没有内容的自定义类型有效；内置类型只能启停不能改删。",
+		"",
+		"## 统计数据（stats:read）",
+		"",
+		"密钥有 `stats:read` 权限、且站点在平台后台接入了 Google Search Console / GA 时，可读取真实统计：",
+		"",
+		"- `node scripts/gcms.js search-stats --days 28 --limit 100`：Search Console 搜索词 × 页面的点击、曝光与平均排名（`GET /stats/search`）。",
+		"- `node scripts/gcms.js traffic-stats --days 7`：GA 活跃用户与会话汇总（`GET /stats/traffic`）。",
+		"",
+		"典型用法：用 `search-stats` 找平均排名 8~20 的搜索词（卡在第一页末尾到第二页的机会词），",
+		"再用返回的 `page` 定位对应旧文（`list --q` / `--slug`），补充该词的相关内容、优化标题与 meta 描述。",
+		"days 钳制在 1..90；结果服务端缓存 1 小时，短时间重复调用拿到的是同一份数据。",
+		"未接入集成时会返回 `search_console_not_connected` / `analytics_not_connected`，此时告知用户先在平台后台完成 Google 接入。",
 		"",
 		"如果不能运行脚本，根据 `references/openapi.json` 直接发 HTTP 请求。",
 	}, "\n") + "\n"

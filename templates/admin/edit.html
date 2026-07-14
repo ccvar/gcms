@@ -206,6 +206,28 @@
     </details>
   </section>
   {{end}}
+
+  {{if and $e.ID .Revisions}}
+  <section class="trans-box revision-box">
+    <details>
+      <summary>{{.Admin.T "admin.edit.revisions_toggle" "历史版本"}}（{{len .Revisions}}）</summary>
+      <p class="muted" style="font-size:.85rem;margin:.5rem 0 .8rem">{{.Admin.T "admin.edit.revisions_desc" "每次保存前自动留底，最多保留最近 20 条。恢复前会先把当前状态存为一条新历史，可再恢复回来。"}}</p>
+      <div class="revision-list">
+        {{range .Revisions}}
+        <div class="revision-item">
+          <span class="revision-time muted">{{adminDateTime .CreatedAt}}</span>
+          <span class="badge {{if eq .Source "api"}}sched{{else}}draft{{end}}">{{if eq .Source "api"}}API{{else}}{{$.Admin.T "admin.edit.revision_source_admin" "后台"}}{{end}}</span>
+          <span class="revision-title">{{.Title}}</span>
+          <form method="post" action="/admin/revisions/{{.ID}}/restore" data-confirm-title="{{$.Admin.T "admin.edit.revision_restore_confirm_title" "确认恢复历史版本"}}" data-confirm-ok="{{$.Admin.T "admin.edit.revision_restore" "恢复此版本"}}" data-confirm="{{$.Admin.T "admin.edit.revision_restore_confirm" "把这篇内容整体还原到该历史版本？标题、正文、状态等全部字段都会被覆盖；当前状态会先自动存为一条新历史，可再恢复回来。"}}">
+            <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+            <button type="submit" class="btn btn-soft">{{$.Admin.T "admin.edit.revision_restore" "恢复此版本"}}</button>
+          </form>
+        </div>
+        {{end}}
+      </div>
+    </details>
+  </section>
+  {{end}}
   </div>
 
   <!-- 富文本气泡工具栏 -->

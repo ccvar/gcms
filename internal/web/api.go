@@ -83,6 +83,7 @@ const (
 	apiScopeBrandAssetsWrite    = "brand:assets:write"
 	apiScopeNavigationRead      = "navigation:read"
 	apiScopeNavigationWrite     = "navigation:write"
+	apiScopeStatsRead           = "stats:read" // 读取 Search Console / GA 统计数据
 	apiScopePostCategoriesWrite = "posts:categories:write"
 	apiScopeLinkCategoriesWrite = "links:categories:write"
 )
@@ -1154,7 +1155,7 @@ func (s *Server) apiUpdateContent(w http.ResponseWriter, r *http.Request) {
 	}
 	s.fillDefaultAuthor(&next)
 	next.Slug = s.uniqueSlug(next.Lang, next.Slug, next.ID)
-	if err := s.store.UpdatePost(&next); err != nil {
+	if err := s.store.UpdatePostFrom(&next, store.PostRevisionSourceAPI); err != nil {
 		apiError(w, http.StatusInternalServerError, "store_error", err.Error())
 		return
 	}
@@ -1174,7 +1175,7 @@ type apiRelinkInput struct {
 //   - 目标组非空、且已有成员（join 真实的组，防打错字造孤儿组）
 //   - 组内成员必须同 type（不混 post/page/link）
 //   - 组内不能已有同 lang 的另一篇（一个互译组每种语言仅一篇）
-func (s *Server) relinkPost(p *store.Post, group string) string {
+func (s *Server) relinkPost(p *store.Post, group, source string) string {
 	group = strings.TrimSpace(group)
 	if group == "" {
 		return "目标互译组不能为空。"
@@ -1198,7 +1199,7 @@ func (s *Server) relinkPost(p *store.Post, group string) string {
 		}
 	}
 	p.TransGroup = group
-	if err := s.store.UpdatePost(p); err != nil {
+	if err := s.store.UpdatePostFrom(p, source); err != nil {
 		return "保存失败：" + err.Error()
 	}
 	return ""
@@ -1249,7 +1250,7 @@ func (s *Server) apiRelinkContent(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusBadRequest, "bad_request", "需要提供 link_to_id 或 trans_group。")
 		return
 	}
-	if msg := s.relinkPost(existing, group); msg != "" {
+	if msg := s.relinkPost(existing, group, store.PostRevisionSourceAPI); msg != "" {
 		apiError(w, http.StatusBadRequest, "bad_request", msg)
 		return
 	}

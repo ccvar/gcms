@@ -3554,6 +3554,9 @@ func (s *Server) adminEdit(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("saved") == "1" {
 		flash = "文章已保存。"
 	}
+	if r.URL.Query().Get("restored") == "1" {
+		flash = "已恢复到所选历史版本。"
+	}
 	s.showEdit(w, r, sess, p, flash, "")
 }
 
@@ -3584,6 +3587,8 @@ func (s *Server) showEdit(w http.ResponseWriter, r *http.Request, sess session, 
 		flash = v.Admin.T("admin.edit.saved_page", "页面已保存。")
 	case "链接已保存。":
 		flash = v.Admin.T("admin.edit.saved_link", "链接已保存。")
+	case "已恢复到所选历史版本。":
+		flash = v.Admin.T("admin.edit.revision_restored", "已恢复到所选历史版本。")
 	}
 	if formErr == "标题不能为空。" {
 		formErr = v.Admin.T("admin.edit.title_required", "标题不能为空。")
@@ -3605,6 +3610,9 @@ func (s *Server) showEdit(w http.ResponseWriter, r *http.Request, sess session, 
 	v.Categories, _ = s.store.ListCategories(lang, catKind)
 	if e.TransGroup != "" {
 		v.Trans, _ = s.store.TranslationsAll(e.TransGroup, e.ID)
+	}
+	if e.ID != 0 {
+		v.Revisions = s.revisionViews(e.ID)
 	}
 	status := http.StatusOK
 	if formErr != "" {
@@ -3636,7 +3644,7 @@ func (s *Server) adminRelink(w http.ResponseWriter, r *http.Request) {
 	flash := "已重连互译组。"
 	if target == "" {
 		flash = "重连失败：请填目标文章 ID 或 trans_group。"
-	} else if msg := s.relinkPost(p, group); msg != "" {
+	} else if msg := s.relinkPost(p, group, store.PostRevisionSourceAdmin); msg != "" {
 		flash = "重连失败：" + msg
 	} else {
 		s.clearGeneratedCaches()
@@ -4794,7 +4802,9 @@ func automationScopesFromFormWithDefault(r *http.Request, useDefault bool) []str
 	if want[apiScopeMediaWrite] {
 		out = append(out, apiScopeMediaWrite)
 	}
-	for _, scope := range []string{apiScopeSiteRead, apiScopeSiteWrite, apiScopeBrandAssetsWrite, apiScopeNavigationRead, apiScopeNavigationWrite} {
+	// 注意（v1.3.16 教训）：这里是白名单式输出组装，仅通过 automationScopeValid 不够，
+	// 新 scope 必须同时加进这份列表，否则表单勾选后会被静默丢弃。
+	for _, scope := range []string{apiScopeSiteRead, apiScopeSiteWrite, apiScopeBrandAssetsWrite, apiScopeNavigationRead, apiScopeNavigationWrite, apiScopeStatsRead} {
 		if want[scope] {
 			out = append(out, scope)
 		}
@@ -4818,7 +4828,7 @@ func automationScopesFromFormWithDefault(r *http.Request, useDefault bool) []str
 func automationScopeValid(scope string) bool {
 	switch scope {
 	case apiScopeLanguagesRead, apiScopeLanguagesWrite, apiScopeLanguagesEnable, apiScopeLanguagesDefault, apiScopeLanguagesCatalog, apiScopeMediaWrite, apiScopeSiteRead, apiScopeSiteWrite, apiScopeBrandAssetsWrite, apiScopeNavigationRead, apiScopeNavigationWrite,
-		apiScopeTypesWrite, apiScopeContentRead, apiScopeContentWrite, apiScopeContentPublish:
+		apiScopeStatsRead, apiScopeTypesWrite, apiScopeContentRead, apiScopeContentWrite, apiScopeContentPublish:
 		return true
 	}
 	// 扩展集合 scope（如 products:write / cases:read）：集合名为合法 slug 即放行——

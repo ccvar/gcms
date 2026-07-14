@@ -307,6 +307,8 @@ func platformSkillMarkdown(apiBase string) string {
 		"- `node scripts/gcms.js create posts --site blog '{\"title\":\"标题\",\"content\":\"正文\",\"lang\":\"zh\",\"status\":\"draft\"}'`",
 		"- `node scripts/gcms.js update posts --site blog 123 '{\"title\":\"新标题\"}'`",
 		"- `node scripts/gcms.js audit posts --site blog --lang zh --limit 50`",
+		"- `node scripts/gcms.js search-stats --site blog --days 28 --limit 100`（stats:read：Search Console 搜索词表现，找排名 8~20 的词优化旧文）",
+		"- `node scripts/gcms.js traffic-stats --site blog --days 7`（stats:read：GA 活跃用户/会话汇总；结果缓存 1 小时，未接入返回明确错误码）",
 		"",
 		"## 扩展内容类型（产品/文档/活动/图库/自定义）",
 		"",

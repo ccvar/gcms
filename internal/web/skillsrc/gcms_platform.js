@@ -74,6 +74,8 @@ function usage(code = 2) {
   out("  gcms.js update --site <slug|id> <collection> <id> <json|@file>");
   out("  gcms.js relink --site <slug|id> <collection> <id> (--to-id <sibling-id> | --trans-group <group>)");
   out("  gcms.js audit --site <slug|id> <collection> [--lang zh|all] [--limit 50] [--deep true]");
+  out("  gcms.js search-stats --site <slug|id> [--days 28] [--limit 100]  # Search Console 搜索词表现（stats:read；找排名 8~20 的词优化旧文）");
+  out("  gcms.js traffic-stats --site <slug|id> [--days 7]         # GA 活跃用户/会话汇总（stats:read）");
   out("  （collection = posts|pages|links 或该站 types 里的扩展集合，如 products/docs/自定义）");
   process.exit(code);
 }
@@ -558,6 +560,17 @@ async function main() {
     const body = rest[0];
     if (!body) usage();
     print(await request("PATCH", P("/" + collection + "/categories/all-entry"), bodyFromArg(body)));
+    return;
+  }
+
+  // 统计数据（stats:read）：Search Console 搜索词表现 / GA 流量汇总，服务端缓存 1 小时。
+  if (cmd === "search-stats" || cmd === "traffic-stats") {
+    const opt = parseOptions([collection, ...rest].filter((a) => a != null));
+    const qs = new URLSearchParams();
+    if (opt.days != null) qs.set("days", opt.days);
+    if (cmd === "search-stats" && opt.limit != null) qs.set("limit", opt.limit);
+    const statsPath = cmd === "search-stats" ? "/stats/search" : "/stats/traffic";
+    print(await request("GET", P(statsPath + (qs.toString() ? "?" + qs.toString() : ""))));
     return;
   }
 

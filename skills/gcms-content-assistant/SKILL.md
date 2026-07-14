@@ -81,7 +81,15 @@ node scripts/gcms.js create posts '{"title":"Title","content":"Body","lang":"zh"
 node scripts/gcms.js update posts 123 '{"meta_desc":"Updated SEO description"}'
 node scripts/gcms.js audit posts --lang zh --limit 50
 node scripts/gcms.js audit pages --lang zh --limit 20 --deep true
+node scripts/gcms.js search-stats --days 28 --limit 100
+node scripts/gcms.js traffic-stats --days 7
 ```
+
+## Statistics (stats:read)
+
+- `search-stats` returns Search Console query x page performance (clicks, impressions, average position) for the last `--days` days (clamped 1..90, default 28; `--limit` clamped 1..1000, default 100). Typical use: find queries ranking 8-20 and improve the matching old post.
+- `traffic-stats` returns GA active users and sessions for the last `--days` days (default 7).
+- Responses are cached server-side for 1 hour; if the site has no Search Console / GA integration the API returns `search_console_not_connected` / `analytics_not_connected` — ask the user to connect Google in the platform admin first.
 
 ## Multilingual Rules
 
