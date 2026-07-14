@@ -418,6 +418,52 @@ pub fn days_since_enabled(enabled_at: u64, now: u64) -> u32 {
     (now.saturating_sub(enabled_at) / 86_400).min(u32::MAX as u64) as u32
 }
 
+/// 统计探测归类（预检用）：2xx→ok；否则先看响应体 error 字段（服务端 apiError 形状
+/// {"error":code,"message":…}），再拿 HTTP 码兜底——search_console_not_connected→not_connected；
+/// missing_scope 或 403→no_scope；其余（404 旧服务端没有该路由等）→unavailable。
+pub fn stats_probe_class(status: u16, body: &str) -> &'static str {
+    if (200..300).contains(&status) {
+        return "ok";
+    }
+    let code = serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| v.get("error").and_then(|e| e.as_str()).map(String::from))
+        .unwrap_or_default();
+    if code == "search_console_not_connected" {
+        return "not_connected";
+    }
+    if code == "missing_scope" || status == 403 {
+        return "no_scope";
+    }
+    "unavailable"
+}
+
+/// 托管开启前预检的软警示（不硬拦，只提醒）：存量 <15 篇 / GSC 未绑定 / 密钥缺 stats:read。
+/// stats=="unavailable"（旧服务端）不警示——prompt 自带降级条款；"ok" 自然也不警示。
+pub fn precheck_warnings(published_count: u32, stats: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    if published_count < 15 {
+        let head = if published_count == 0 {
+            "站点还没有已发布内容".to_string()
+        } else {
+            format!("站点存量内容较少（仅 {published_count} 篇已发布）")
+        };
+        out.push(format!(
+            "{head}：托管的查重、内链、数据驱动选题都需要存量支撑，100% AI 内容的新站也是搜索引擎批量内容判责的高危画像。建议先用对话模式打底：定位与内容支柱、15-20 篇种子内容，再回来开托管。"
+        ));
+    }
+    match stats {
+        "not_connected" => out.push(
+            "站点未绑定 Google Search Console：数据驱动选题与周报数据节将长期不可用，托管会盲打。建议先在 cms 后台完成绑定。".into(),
+        ),
+        "no_scope" => out.push(
+            "当前密钥缺 stats:read 权限：托管拿不到搜索数据。建议在 cms 后台给密钥勾上「统计数据」。".into(),
+        ),
+        _ => {}
+    }
+    out
+}
+
 /// 从审计会话最后一条 assistant 消息里提取 ```AUDIT-NOTES``` 块内容（不含围栏，取最后一个块）。
 /// 无块/空块返回 None；超过 10 行或 1000 字防御性截断（audit_prompt 已要求 ≤10 行）。
 pub fn extract_audit_notes(text: &str) -> Option<String> {
@@ -527,6 +573,54 @@ async fn get_posts(api_base: &str, key: &str, status: &str) -> Result<Vec<serde_
     }
     let body: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
     Ok(body.get("items").and_then(|i| i.as_array()).cloned().unwrap_or_default())
+}
+
+/// 托管开启前的机械预检结果（向导软警示用）。
+#[derive(Serialize)]
+pub struct PrecheckResult {
+    /// 已发布条数，≥16 封顶 16（UI 显示口径「≥16」；预检只关心够不够 15 篇）。
+    pub published_count: u32,
+    /// 统计可用性：ok | not_connected | no_scope | unavailable。
+    pub stats: String,
+    /// precheck_warnings 生成的人话警示（空＝没问题）。
+    pub warnings: Vec<String>,
+}
+
+/// 托管开启前预检：① 存量条数（published 前 16 条，lang=all 与 list 口径一致）；
+/// ② 统计可用性探测（GET /stats/search?days=1&limit=1，只看可用性不看数据）。
+/// 网络失败整体 Err——UI 静默降级（不警示也不拦，预检绝不能挡住向导）。
+pub async fn precheck(conn: &Connection, site_slug: &str) -> Result<PrecheckResult, String> {
+    let (api_base, key) = site_api(conn, site_slug).await?;
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(format!("{api_base}/posts?status=published&lang=all&limit=16"))
+        .header("Authorization", format!("Bearer {key}"))
+        .timeout(Duration::from_secs(15))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("读取内容列表失败：{}", resp.status()));
+    }
+    let body: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    let published_count = body
+        .get("items")
+        .and_then(|i| i.as_array())
+        .map(|a| a.len())
+        .unwrap_or(0)
+        .min(16) as u32;
+    let resp = client
+        .get(format!("{api_base}/stats/search?days=1&limit=1"))
+        .header("Authorization", format!("Bearer {key}"))
+        .timeout(Duration::from_secs(15))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    let status = resp.status().as_u16();
+    let text = resp.text().await.unwrap_or_default();
+    let stats = stats_probe_class(status, &text).to_string();
+    let warnings = precheck_warnings(published_count, &stats);
+    Ok(PrecheckResult { published_count, stats, warnings })
 }
 
 /// 待审队列：该站全部草稿（id/标题/语种/更新时间）。
@@ -928,6 +1022,47 @@ mod tests {
         // 老数据兜底：enabled_at=0 的旧站不受爬坡限制
         assert_eq!(days_since_enabled(0, 1_800_000_000), u32::MAX);
         assert_eq!(ramp_cap(days_since_enabled(0, 1_800_000_000)), 50, "老站视为已过爬坡期");
+    }
+
+    /// 预检软警示：0/14 篇警示（0 篇换开头）、15 篇/16 封顶不警示；stats 四态；组合两条齐出。
+    #[test]
+    fn precheck_warning_rules() {
+        // 存量档位
+        let w0 = precheck_warnings(0, "ok");
+        assert_eq!(w0.len(), 1);
+        assert!(w0[0].starts_with("站点还没有已发布内容"), "0 篇改开头");
+        assert!(w0[0].contains("批量内容判责的高危画像"));
+        assert!(w0[0].contains("15-20 篇种子内容"));
+        let w14 = precheck_warnings(14, "ok");
+        assert_eq!(w14.len(), 1);
+        assert!(w14[0].starts_with("站点存量内容较少（仅 14 篇已发布）"));
+        assert!(precheck_warnings(15, "ok").is_empty(), "15 篇达标不警示");
+        assert!(precheck_warnings(16, "ok").is_empty(), "16 封顶（实际≥16）不警示");
+        // stats 四态
+        let wn = precheck_warnings(20, "not_connected");
+        assert_eq!(wn.len(), 1);
+        assert!(wn[0].contains("未绑定 Google Search Console") && wn[0].contains("托管会盲打"));
+        let ws = precheck_warnings(20, "no_scope");
+        assert_eq!(ws.len(), 1);
+        assert!(ws[0].contains("缺 stats:read 权限") && ws[0].contains("统计数据"));
+        assert!(precheck_warnings(20, "unavailable").is_empty(), "旧服务端不警示（prompt 自带降级）");
+        assert!(precheck_warnings(20, "ok").is_empty());
+        // 组合：存量 + 统计各一条（存量在前）
+        let both = precheck_warnings(3, "not_connected");
+        assert_eq!(both.len(), 2);
+        assert!(both[0].contains("仅 3 篇已发布") && both[1].contains("Search Console"));
+    }
+
+    /// 统计探测归类：2xx→ok；响应体 error 字段优先于 HTTP 码；403 兜底 no_scope；其余 unavailable。
+    #[test]
+    fn stats_probe_classification() {
+        assert_eq!(stats_probe_class(200, r#"{"ok":true,"rows":[]}"#), "ok");
+        assert_eq!(stats_probe_class(400, r#"{"error":"search_console_not_connected","message":"未接入"}"#), "not_connected");
+        assert_eq!(stats_probe_class(403, r#"{"error":"missing_scope","message":"访问权限不足。"}"#), "no_scope");
+        assert_eq!(stats_probe_class(403, "forbidden"), "no_scope", "非 JSON 体按 HTTP 403 兜底");
+        assert_eq!(stats_probe_class(404, "404 page not found"), "unavailable", "旧服务端没有该路由");
+        assert_eq!(stats_probe_class(500, r#"{"error":"store_error"}"#), "unavailable");
+        assert_eq!(stats_probe_class(502, r#"{"error":"google_api_error"}"#), "unavailable");
     }
 
     /// 降级链：l3→l2、l2/l1→l0、l0 不降；未知等级不降。

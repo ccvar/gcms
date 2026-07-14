@@ -1936,6 +1936,18 @@ fn managed_plan_save(
     Ok(updated)
 }
 
+/// 托管开启前的机械预检（向导选站后调用）：存量条数 + 统计可用性 → 软警示列表。
+/// Err（网络等）由前端静默降级——不警示也不拦，预检绝不能挡住向导。
+#[tauri::command]
+async fn managed_precheck(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    site_slug: String,
+) -> Result<managed::PrecheckResult, String> {
+    let conn = state.conns.get(&conn_id)?;
+    managed::precheck(&conn, &site_slug).await
+}
+
 /// 待审队列：该站全部草稿。
 #[tauri::command]
 async fn managed_drafts(
@@ -2966,6 +2978,7 @@ pub fn run() {
             managed_disable,
             managed_record_reject,
             managed_plan_save,
+            managed_precheck,
             managed_drafts,
             managed_publish,
             managed_summary,

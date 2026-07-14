@@ -10,6 +10,7 @@
   import SiteMark from '$lib/SiteMark.svelte';
   import SiteFav from '$lib/SiteFav.svelte';
   import ModelFx from '$lib/ModelFx.svelte';
+  import UsageRing from '$lib/UsageRing.svelte';
   import AppIcon from '$lib/AppIcon.svelte';
   import type {
     Connection, Discovery, Site, BrainsInfo, Brain, ImportOutcome,
@@ -317,6 +318,19 @@
   let mwLevel = $state('l0');
   let mwBudget = $state(0);
   let mwEditLimit = $state(2);
+  // 选站后的机械预检（软警示，不硬拦）：存量条数 + 统计可用性 → 警示列表。
+  // 预检失败（网络/旧服务端等）静默降级：不警示也不拦——预检绝不能挡住向导。
+  let mwWarns = $state<string[]>([]);
+  let mwPrecheckSeq = 0; // 竞态防护：切换站点/重开向导只认最后一次结果
+  async function runMwPrecheck(slug: string) {
+    const seq = ++mwPrecheckSeq;
+    mwWarns = [];
+    try {
+      const r = await invoke<{ published_count: number; stats: string; warnings: string[] }>('managed_precheck', { connId: activeConnId, siteSlug: slug });
+      if (seq === mwPrecheckSeq) mwWarns = r.warnings;
+    } catch { /* 预检失败：静默降级 */ }
+  }
+  $effect(() => { if (mwOpen && mwSite) void runMwPrecheck(mwSite); else { mwPrecheckSeq++; mwWarns = []; } });
   function openManagedWizard() {
     mwOpen = true; mwStep = 1; mwPlan = ''; mwLimit = 3; mwGenBusy = false; mwBusy = false;
     mwSite = sites.find((s) => !managedOfConn.some((m) => m.site_slug === s.slug))?.slug ?? '';
@@ -751,15 +765,20 @@
     const s = Math.max(0, Math.floor(ms / 1000));
     return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s`;
   }
-  // 会话大小/用量：上下文按厂商上限估算（Claude ~200k、Codex 的 gpt-5.x ~272k，近似值）。
-  // 上下文上限：codex 272k；grok-4.5 500k（ACP initialize 的 totalContextTokens 实测值）；claude 200k。
-  function ctxLimit(brain: string): number { return brain === 'codex' ? 272000 : brain === 'grok' ? 500000 : 200000; }
-  function fmtTokens(n: number): string {
-    if (n >= 1_000_000) return (n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1).replace(/\.0$/, '') + 'M';
-    if (n >= 1000) return Math.round(n / 1000) + 'k';
-    return String(n);
+  // 会话大小/用量：上下文按「厂商 + 模型」估算——codex 272k；grok-4.5 500k（ACP initialize
+  // 的 totalContextTokens 实测值）；claude 按模型细分：fable ＝ Max 专属档、窗口 1M，
+  // sonnet/opus/haiku/自定义保持 200k 保守默认（Pro 档就是 200k，绝不虚报）。
+  function ctxLimit(brain: string, model = ''): number {
+    if (brain === 'codex') return 272000;
+    if (brain === 'grok') return 500000;
+    return model.toLowerCase().includes('fable') ? 1_000_000 : 200_000;
   }
-
+  // 实测自适应升档（证据驱动，只升不降）：实测 ctx 已超过假定上限的 95%，说明真实窗口更大
+  //（如 Max 订阅跑 Sonnet 实际 1M），按下一档 1M 计；展示百分比由调用方钳 100%。
+  function ctxLimitAdaptive(brain: string, model: string, ctx: number): number {
+    const base = ctxLimit(brain, model);
+    return base < 1_000_000 && ctx > base * 0.95 ? 1_000_000 : base;
+  }
   // 拖动窗口：忽略交互元素（按钮/输入等），否则点它们会误触发拖动。
   function startDrag(e: MouseEvent) {
     if (e.button !== 0) return;
@@ -1247,7 +1266,7 @@
     // 自动重建：claude 上下文 ≥90% 且本轮成功 → 直接换新会话续聊（带历史摘要，界面消息不丢）。
     // codex 没有真实上下文读数不触发；发了排队消息这轮先跑它，下轮收尾再检查（阈值有余量）。
     // 重建成功后 ctx 掉回摘要大小不会连环触发；重建失败走 failTurn 也不会循环。
-    if (!sentQueued && !failed && conv && conv.brain === 'claude' && (conv.ctx_tokens ?? 0) >= ctxLimit('claude') * 0.9) {
+    if (!sentQueued && !failed && conv && conv.brain === 'claude' && (conv.ctx_tokens ?? 0) >= ctxLimit('claude', conv.model ?? '') * 0.9) {
       if (activeConvId === convId) say('上下文接近上限，已自动重建续聊');
       queueMicrotask(() => { void rebuildSession(convId); });
     }
@@ -1900,12 +1919,6 @@
     }).join('\n');
     return { count: seen.size, tip };
   });
-  const brainOpts = $derived(
-    ALL_BRAINS.map((b) => ({
-      value: b, label: brainLabel(b), icon: b, disabled: !brainUsable(b),
-      sub: brainUsable(b) ? '' : brains?.[b].found ? '未登录' : '未安装',
-    })),
-  );
   // Claude 档位 = 别名（--model sonnet/opus/haiku），永远指向该档「当前最新」，
   // 厂商发新版自动跟随、无需更新客户端。sub 版本号仅「当前实际版本」提示，可能滞后。
   // Fable 例外：claude 2.1.96 尚无 fable 别名（实测报错），只能用全 ID，出新版需更新这里。
@@ -2060,11 +2073,7 @@
         定时任务
       </button>
       <button class="railnav {view === 'managed' ? 'on' : ''}" onclick={openManaged} disabled={!activeConn}>
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-          <circle cx="8" cy="8" r="5.6" stroke="currentColor" stroke-width="1.3" />
-          <circle cx="8" cy="8" r="1.7" stroke="currentColor" stroke-width="1.2" />
-          <path d="M2.4 8h3.9M9.7 8h3.9M8 9.7v3.9" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
-        </svg>
+        {@render botIcon(14)}
         托管
       </button>
       {/if}
@@ -2284,6 +2293,7 @@
               <div class="cb-right">
                 <Dropdown compact bind:value={lPerm} options={permOptsFor(lBrain)} tone={permTone(lPerm)} />
                 <ModelFx options={comboOpts} value={`${lBrain}::${lModel}`} effort={lEffort} onpick={pickCombo} oneffort={(v: string) => { lEffort = v; prefs.effort = v; savePrefs(prefs); }} />
+                <UsageRing />
                 <button class="send" onclick={startChat} disabled={(!lSite.trim() && lSites.length < 2) || !lDraft.trim() || !brainUsable(lBrain)} title="发送（Enter）">↑</button>
               </div>
             </div>
@@ -2417,7 +2427,7 @@
         <div class="sched-inner">
           {#if managedOfConn.length === 0}
             <div class="sched-empty">
-              <div class="cal-mark">🛞</div>
+              <div class="cal-mark">{@render botIcon(34)}</div>
               <b>还没有托管的站点</b>
               <p>把站点交给 AI 按周循环运营：每天按计划写稿存草稿、每周自查审计；你只在待审队列里批准发布或打回。</p>
               <button class="btn soft bare" onclick={openManagedWizard} style="margin-top:16px" disabled={!sites.length}>{@render plusIcon()}开启托管</button>
@@ -2691,6 +2701,7 @@
               <Dropdown compact bind:value={threadPerm} options={permOptsFor(activeConv?.brain ?? 'claude')} tone={permTone(threadPerm)} onchange={persistThreadPerm} />
               <!-- 模型下拉列全部厂商（图标区分）：同厂商下一轮生效；跨厂商确认后以历史摘要重建续跑 -->
               <ModelFx options={threadComboOpts} value={`${activeConv?.brain ?? 'claude'}::${threadModel}`} effort={threadEffort} lockModel={viewBusy} onpick={(v: string) => { void pickThreadCombo(v); }} oneffort={persistThreadEffort} />
+              <UsageRing ctx={activeConv?.ctx_tokens ?? 0} limit={ctxLimitAdaptive(activeConv?.brain ?? 'claude', activeConv?.model ?? '', activeConv?.ctx_tokens ?? 0)} total={activeConv?.total_tokens ?? 0} />
               {#if viewBusy}
                 {#if draft.trim() || attachments.length}
                   <button class="send queue" onclick={queueMessage} title="排队：等这轮结束后自动发送">↑</button>
@@ -2702,20 +2713,6 @@
             </div>
           </div>
         </div>
-        {#if activeConv && ((activeConv.ctx_tokens ?? 0) > 0 || (activeConv.total_tokens ?? 0) > 0)}
-          <div class="usage-line">
-            {#if (activeConv.ctx_tokens ?? 0) > 0}
-              {@const lim = ctxLimit(activeConv.brain)}
-              {@const pct = Math.min(100, Math.round(((activeConv.ctx_tokens ?? 0) / lim) * 100))}
-              <span class="usage-seg" title="当前会话上下文占用">
-                <span class="usage-lbl">上下文</span>
-                <span class="usage-bar"><span class="usage-fill" class:warn={pct >= 70 && pct < 90} class:danger={pct >= 90} style="width:{Math.max(3, pct)}%"></span></span>
-                <span class="usage-num">{fmtTokens(activeConv.ctx_tokens ?? 0)}/{fmtTokens(lim)}</span>
-              </span>
-            {/if}
-            {#if (activeConv.total_tokens ?? 0) > 0}<span class="usage-cum">本会话累计 {fmtTokens(activeConv.total_tokens ?? 0)} tokens</span>{/if}
-          </div>
-        {/if}
       </div>
     {/if}
   </section>
@@ -2863,6 +2860,8 @@
 {/snippet}
 
 {#snippet plusIcon()}<svg class="plus-ic" width="13" height="13" viewBox="0 0 14 14" fill="none"><path d="M7 2.4v9.2M2.4 7h9.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /></svg>{/snippet}
+<!-- 托管的机器人头图标（侧栏导航 + 空态复用，传 size）。viewBox 24 下 stroke 2 ≈ 侧栏 16 系图标的 1.3，视觉同粗。 -->
+{#snippet botIcon(size: number)}<svg width={size} height={size} viewBox="0 0 24 24" fill="none"><path d="M12 8V4H8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /><rect x="4" y="8" width="16" height="12" rx="2" stroke="currentColor" stroke-width="2" stroke-linejoin="round" /><path d="M2 14h2M20 14h2M9 13v2M15 13v2" stroke="currentColor" stroke-width="2" stroke-linecap="round" /></svg>{/snippet}
 
 {#snippet gearIcon()}<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M2 5.3h3.5M9.3 5.3H14M2 10.7h5.1M10.9 10.7H14" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" /><circle cx="7.4" cy="5.3" r="1.6" stroke="currentColor" stroke-width="1.3" /><circle cx="9" cy="10.7" r="1.6" stroke="currentColor" stroke-width="1.3" /></svg>{/snippet}
 {#snippet cfMark(size: number)}<svg class="cf-mark" width={size} height={size} viewBox="0 0 128 128"><path fill="#fff" d="m115.679 69.288l-15.591-8.94l-2.689-1.163l-63.781.436v32.381h82.061z" /><path fill="#f38020" d="M87.295 89.022c.763-2.617.472-5.015-.8-6.796c-1.163-1.635-3.125-2.58-5.488-2.689l-44.737-.581c-.291 0-.545-.145-.691-.363s-.182-.509-.109-.8c.145-.436.581-.763 1.054-.8l45.137-.581c5.342-.254 11.157-4.579 13.192-9.885l2.58-6.723c.109-.291.145-.581.073-.872c-2.906-13.158-14.644-22.97-28.672-22.97c-12.938 0-23.913 8.359-27.838 19.952a13.35 13.35 0 0 0-9.267-2.58c-6.215.618-11.193 5.597-11.811 11.811c-.145 1.599-.036 3.162.327 4.615C10.104 70.051 2 78.337 2 88.549c0 .909.073 1.817.182 2.726a.895.895 0 0 0 .872.763h82.57c.472 0 .909-.327 1.054-.8z" /><path fill="#faae40" d="M101.542 60.275c-.4 0-.836 0-1.236.036c-.291 0-.545.218-.654.509l-1.744 6.069c-.763 2.617-.472 5.015.8 6.796c1.163 1.635 3.125 2.58 5.488 2.689l9.522.581c.291 0 .545.145.691.363s.182.545.109.8c-.145.436-.581.763-1.054.8l-9.924.582c-5.379.254-11.157 4.579-13.192 9.885l-.727 1.853c-.145.363.109.727.509.727h34.089c.4 0 .763-.254.872-.654c.581-2.108.909-4.325.909-6.614c0-13.447-10.975-24.422-24.458-24.422" /></svg>{/snippet}
@@ -3108,11 +3107,10 @@
       </div>
       <div class="trow">
         <div class="tfield"><span>类型</span><Dropdown bind:value={tf.taskType} options={taskTypeOpts} /></div>
-        <div class="tfield"><span>厂商</span><Dropdown bind:value={tf.brain} options={brainOpts} /></div>
+        <div class="tfield"><span>任务名称（可选）</span><input class="tin" bind:value={tf.title} placeholder="例如：每日热点速写" /></div>
       </div>
-      <div class="tfield"><span>模型与强度（与对话中一致）</span>
-        <div class="tfield-fx"><ModelFx options={launcherModelOpts(tf.brain).map((o) => ({ ...o, icon: tf.brain }))} value={tf.model} effort={tf.effort} onpick={(v: string) => (tf.model = v)} oneffort={(v: string) => (tf.effort = v)} /></div></div>
-      <div class="tfield"><span>任务名称（可选）</span><input class="tin" bind:value={tf.title} placeholder="例如：每日热点速写" /></div>
+      <div class="tfield"><span>厂商与模型（与对话中一致）</span>
+        <div class="tfield-fx"><ModelFx options={comboOpts} value={`${tf.brain}::${tf.model}`} effort={tf.effort} onpick={(v: string) => { const i = v.indexOf('::'); if (i > 0) { tf.brain = v.slice(0, i); tf.model = v.slice(i + 2); } }} oneffort={(v: string) => (tf.effort = v)} /></div></div>
       <div class="tfield"><span>指令（每次到点就把这句话发给模型）</span>
         <textarea bind:value={tf.prompt} rows="3" placeholder="例如：围绕本周科技热点写一篇 800 字左右的中文文章，存草稿，完成后给我预览链接"></textarea></div>
       <div class="trow">
@@ -3153,6 +3151,16 @@
   </div>
 {/if}
 
+<!-- 托管预检软警示块（选站后机械预检：存量/GSC/密钥权限；只提醒不拦截，三步共用） -->
+{#snippet mwPrecheckBlock()}
+  {#if mwWarns.length}
+    <div class="md-precheck">
+      <b><svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M8 1.8 13 3.6v4.1c0 3.2-2.1 5.4-5 6.5-2.9-1.1-5-3.3-5-6.5V3.6L8 1.8Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /><path d="M8 5.4v3.2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" /><circle cx="8" cy="10.8" r="0.65" fill="currentColor" /></svg>开启前请注意（预检提醒，不拦截）</b>
+      <ul>{#each mwWarns as w, i (i)}<li>{w}</li>{/each}</ul>
+    </div>
+  {/if}
+{/snippet}
+
 <!-- 托管 · 开启向导（3 步：选站 → 90 天计划 → 上限与边界确认） -->
 {#if mwOpen}
   <div class="mask" role="presentation" onclick={() => !mwBusy && !mwGenBusy && (mwOpen = false)}></div>
@@ -3164,7 +3172,8 @@
           <Dropdown searchable bind:value={mwSite} options={mwSiteOpts} placeholder="选择站点" />
         </div>
         <p class="hint">开启后会替这个站自动创建三个定时任务：每日内容（按计划写稿存草稿）+ 每周审计（自查质量/查重/内链）+ 每周周报（汇总本周数据）。模型与强度在第 3 步选择。</p>
-        <div class="row-end"><button class="btn ghost" onclick={() => (mwOpen = false)}>取消</button><button class="btn primary" onclick={() => (mwStep = 2)} disabled={!mwSite}>下一步</button></div>
+        {@render mwPrecheckBlock()}
+        <div class="row-end">{#if mwWarns.length}<span class="md-pre-ack">已知悉风险，仍可继续</span>{/if}<button class="btn ghost" onclick={() => (mwOpen = false)}>取消</button><button class="btn primary" onclick={() => (mwStep = 2)} disabled={!mwSite}>下一步</button></div>
       {:else if mwStep === 2}
         <div class="tfield"><span>90 天运营计划（每日任务的方向依据，可编辑，也可跳过手写）</span>
           <textarea class="tin" rows="10" bind:value={mwPlan} placeholder="点下面「生成 90 天计划」让 AI 摸底站点后起草，或直接手写：定位/内容支柱/每周节奏/关键词方向/前 4 周选题…"></textarea>
@@ -3173,7 +3182,8 @@
           <button class="btn soft" onclick={mwGenPlan} disabled={mwGenBusy || !mwSite}>{#if mwGenBusy}<span class="wr-spin"></span>生成中（AI 正在摸底站点，约 1-3 分钟）…{:else}生成 90 天计划{/if}</button>
           <span class="hint">生成过程只读取站点数据，不会改动内容；对话会留在侧栏可追溯。</span>
         </div>
-        <div class="row-end"><button class="btn ghost" onclick={() => (mwStep = 1)}>上一步</button><button class="btn primary" onclick={() => (mwStep = 3)}>下一步{mwPlan.trim() ? '' : '（暂不填计划）'}</button></div>
+        {@render mwPrecheckBlock()}
+        <div class="row-end">{#if mwWarns.length}<span class="md-pre-ack">已知悉风险，仍可继续</span>{/if}<button class="btn ghost" onclick={() => (mwStep = 1)}>上一步</button><button class="btn primary" onclick={() => (mwStep = 3)}>下一步{mwPlan.trim() ? '' : '（暂不填计划）'}</button></div>
       {:else}
         <div class="tfield"><span>模型与强度（三个配套任务共用，与对话选择器一致）</span>
           <div class="tfield-fx"><ModelFx options={comboOpts} value={`${mwBrain}::${mwModel}`} effort={mwEffort} onpick={(v: string) => { const i = v.indexOf('::'); if (i > 0) { mwBrain = v.slice(0, i); mwModel = v.slice(i + 2); } }} oneffort={(v: string) => (mwEffort = v)} /></div></div>
@@ -3221,7 +3231,8 @@
             <li>建议为该连接使用<b>仅内容权限</b>的受限密钥（posts 读写＋发布即可，不给站点设置/导航/类型权限），从密钥层再兜一道底。</li>
           </ul>
         </div>
-        <div class="row-end"><button class="btn ghost" onclick={() => (mwStep = 2)}>上一步</button><button class="btn primary" onclick={mwEnable} disabled={mwBusy || !mwSite || !brainUsable(mwBrain as Brain)}>{mwBusy ? '开启中…' : '确认并开启托管'}</button></div>
+        {@render mwPrecheckBlock()}
+        <div class="row-end">{#if mwWarns.length}<span class="md-pre-ack">已知悉风险，仍可继续</span>{/if}<button class="btn ghost" onclick={() => (mwStep = 2)}>上一步</button><button class="btn primary" onclick={mwEnable} disabled={mwBusy || !mwSite || !brainUsable(mwBrain as Brain)}>{mwBusy ? '开启中…' : '确认并开启托管'}</button></div>
       {/if}
     </div>
   </div>
@@ -3257,6 +3268,11 @@
     --shadow-sm: 0 1px 2px rgba(30,25,15,.05);
     --shadow: 0 4px 16px rgba(30,25,15,.08);
     --shadow-lg: 0 16px 48px rgba(30,25,15,.16);
+    /* 单行表单控件统一高度 token：.tin(单行)/.dd-trigger/.tfield-fx 壳全部吃它，别再靠 padding 推算。 */
+    --ctl-h: 30px;
+    /* composer 底栏 chip 统一高度 token：站点/权限（Dropdown compact）、模型（ModelFx 触发器）、
+       用量圆环按钮全部定高——chip 内容各异（17px favicon/「低」徽章/纯文字），靠 padding 撑高必然参差。 */
+    --chip-h: 24px;
   }
   :global(html, body) { margin: 0; height: 100%; background: var(--bg); color: var(--text);
     font: 15px/1.65 -apple-system, 'PingFang SC', 'Segoe UI', 'Helvetica Neue', sans-serif; -webkit-font-smoothing: antialiased; }
@@ -3471,7 +3487,12 @@
   .task-seg b { font-size: 13.5px; }
   .task-seg small { color: var(--dim); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-  .tin, textarea { font-family: inherit; font-size: 14px; color: var(--text); background: #fff; border: 1.5px solid var(--border2); border-radius: 10px; padding: 9px 11px; }
+  /* 表单控件统一尺度（桌面紧凑密度）：13px 字 + 5px 10px 内边距 + 8px 圆角，单行高约 30px。
+     composer 聊天输入框不吃这套（下方 composer 专属规则钉回 14px 大字）。 */
+  .tin, textarea { font-family: inherit; font-size: 13px; color: var(--text); background: #fff; border: 1.5px solid var(--border2); border-radius: 8px; padding: 5px 10px; }
+  /* 单行输入（text/password/number/datetime-local）：显式统一高 --ctl-h，内容垂直居中；
+     去掉竖向 padding 防 macOS 原生步进器/日期控件把高度顶开。textarea 不定高，不吃这条。 */
+  input.tin { height: var(--ctl-h); box-sizing: border-box; padding-top: 0; padding-bottom: 0; line-height: normal; }
   .tin:focus, textarea:focus { outline: none; border-color: #b7b2a6; box-shadow: none; }
 
   /* 会话搜索（命令面板式；.mask 提供遮罩，box 居中于顶部） */
@@ -3491,7 +3512,7 @@
   /* 输入框（仿 Claude Code：整块圆角边框，聚焦时高亮，发送按钮嵌在框内） */
   .composer.big, .composer-wrap .composer { position: relative; background: #fff; border: 1px solid var(--border2); border-radius: 12px; box-shadow: none; transition: border-color .12s, box-shadow .12s; }
   .composer.big:focus-within, .composer-wrap .composer:focus-within { border-color: #b7b2a6; box-shadow: none; }
-  .composer.big textarea, .composer-wrap textarea { width: 100%; resize: none; border: none; background: none; box-shadow: none; padding: 14px 52px 14px 17px; line-height: 1.6; max-height: 200px; display: block; }
+  .composer.big textarea, .composer-wrap textarea { width: 100%; resize: none; border: none; background: none; box-shadow: none; padding: 14px 52px 14px 17px; font-size: 14px; line-height: 1.6; max-height: 200px; display: block; }
   .composer.big textarea:focus, .composer-wrap textarea:focus { outline: none; box-shadow: none; border: none; }
   .composer .send { position: absolute; right: 9px; bottom: 9px; width: 32px; height: 32px; border-radius: 50%; border: none; background: var(--accent); color: #fff; font-size: 16px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background .12s, transform .08s; }
   .composer .send:hover { background: var(--accent-h); }
@@ -3633,6 +3654,7 @@
   .center-hint { text-align: center; color: var(--dim); padding: 40px 0; }
   .sched-empty { text-align: center; color: var(--dim); padding: 12vh 24px; }
   .sched-empty .cal-mark { font-size: 34px; }
+  .sched-empty .cal-mark svg { display: block; margin: 0 auto; }
   .sched-empty b { display: block; margin: 12px 0 6px; color: var(--text); font-size: 16px; }
   .sched-empty p { margin: 0 auto; max-width: 380px; font-size: 13px; }
 
@@ -3685,33 +3707,24 @@
   .launcher-sites { margin-top: 7px; }
   .multi-add { flex: none; border: none; background: none; padding: 2px 4px; font-size: 11.5px; color: var(--faint); cursor: pointer; border-radius: 6px; }
   .multi-add:hover { color: var(--accent); background: #f1efe9; }
-  /* 任务弹窗里的 模型+强度（对话同款 ModelFx），套输入框外观 */
-  .tfield-fx { border: 1px solid var(--border2); border-radius: 8px; padding: 4px 4px; background: var(--card); }
+  /* 任务弹窗里的 模型+强度（对话同款 ModelFx），套输入框外观（--ctl-h 定高，内容 flex 垂直居中） */
+  .tfield-fx { border: 1px solid var(--border2); border-radius: 8px; padding: 0 3px; background: var(--card); height: var(--ctl-h); box-sizing: border-box; display: flex; align-items: center; }
   .tfield-fx :global(.fx) { width: 100%; }
-  .tfield-fx :global(.fx-trigger) { width: 100%; justify-content: flex-start; font-size: 13px; padding: 5px 8px; }
+  .tfield-fx :global(.fx-trigger) { width: 100%; justify-content: flex-start; font-size: 13px; padding: 4px 8px; }
   .tfield-fx :global(.fx-chev) { margin-left: auto; }
   .tcheck { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
   .tcheck input { width: auto; }
 
   .composer-wrap { flex: none; padding: 10px 24px 20px; }
-  /* 输入框下方：会话大小（上下文占用）+ 本会话累计 token */
-  .usage-line { display: flex; align-items: center; gap: 12px; margin: 7px 4px 0; font-size: 11px; color: var(--faint); }
-  .usage-seg { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
-  .usage-lbl { color: var(--dim); }
-  .usage-bar { width: 78px; height: 4px; border-radius: 2px; background: var(--border); overflow: hidden; flex: none; }
-  .usage-fill { display: block; height: 100%; background: var(--accent); border-radius: 2px; }
-  .usage-fill.warn { background: var(--warn); }
-  .usage-fill.danger { background: var(--err); }
-  .usage-num { font-variant-numeric: tabular-nums; }
   .composer-wrap .composer { max-width: 760px; margin: 0 auto; }
 
   /* ---- 按钮 / 弹窗 ---- */
-  .btn { background: #fff; color: var(--text); border: 1.5px solid var(--border2); border-radius: 9px; padding: 7px 14px; cursor: pointer; font-size: 13px; }
+  /* 动作按钮统一尺度：13px 字 + 6px 14px 内边距，高约 30px（与输入框/下拉同高，主次同高）。 */
+  .btn { background: #fff; color: var(--text); border: 1.5px solid var(--border2); border-radius: 8px; padding: 6px 14px; cursor: pointer; font-size: 13px; line-height: 1.25; }
   .btn:hover { background: #f6f5f1; } .btn:disabled { opacity: .5; cursor: default; }
   .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; } .btn.primary:hover { background: var(--accent-h); }
   .btn.ghost { border-color: var(--border); }
   .btn.small { padding: 4px 10px; font-size: 12px; }
-  .btn.lg { padding: 10px 22px; font-size: 15px; }
   .btn.sm { padding: 5px 12px; font-size: 12px; border-radius: 8px; }
   .btn.soft { display: inline-flex; align-items: center; gap: 6px; padding: 3px 12px; background: #fff; color: var(--text); border: 1px solid var(--border2); border-radius: 9px; font-weight: 500; }
   .btn.soft:hover { background: var(--rail); border-color: #cfccc2; }
@@ -3739,7 +3752,6 @@
   .sec-acts { display: inline-flex; gap: 6px; align-items: center; }
   .sec-acts .btn { display: inline-flex; align-items: center; gap: 5px; }
   .cf-modal { width: min(440px, 94vw); max-height: 88vh; }
-  .cf-modal .tin { padding: 6px 10px; font-size: 12.5px; }
   .cf-step { border-top: 0.5px solid var(--border); padding-top: 12px; margin-top: 6px; }
   .cf-step:first-child { border-top: none; padding-top: 0; margin-top: 0; }
   .cf-step-t { font-size: 13px; color: var(--text); margin: 0 0 7px; line-height: 1.5; }
@@ -3888,7 +3900,7 @@
   .cust-x { flex: none; background: none; border: none; color: var(--faint); font-size: 15px; line-height: 1; padding: 0 3px; border-radius: 5px; cursor: pointer; }
   .cust-x:hover { color: var(--err); background: #fff; }
   .cust-add { display: flex; gap: 6px; align-items: center; }
-  .cust-add .tin { flex: 1; min-width: 0; width: auto; font-size: 12px; line-height: 1.3; padding: 5px 10px; border-radius: 8px; }
+  .cust-add .tin { flex: 1; min-width: 0; width: auto; }
   .cust-add .btn { flex: none; }
   .hint { color: var(--dim); font-size: 12px; margin: 2px 0; line-height: 1.6; }
   .hint.mono { font-family: ui-monospace, monospace; font-size: 11px; color: var(--faint); background: #f6f5f1; padding: 5px 8px; border-radius: 6px; overflow-wrap: anywhere; }
@@ -3896,7 +3908,7 @@
   .warn-text { color: var(--warn); }
   .dim { color: var(--dim); }
   .tin { width: 100%; }
-  .row-end { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+  .row-end { display: flex; justify-content: flex-end; align-items: center; gap: 7px; margin-top: 2px; }
 
   /* 托管：卡片徽标 / 待审队列 / 计划编辑 / 向导边界说明 */
   .md-badge { margin-left: 8px; font-size: 10.5px; padding: 1px 7px; border-radius: 999px; background: #e8f0e4; color: #3c6b32; vertical-align: 1px; }
@@ -3939,4 +3951,9 @@
   .md-danger { border: 1px solid #e2b4a8; background: #fdf1ee; border-radius: 10px; padding: 10px 14px; font-size: 12.5px; margin: 8px 0; color: #7c2d1a; }
   .md-danger ul { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
   .md-li-danger { color: #a8402a; }
+  /* 托管预检软警示（warn 色系，对齐 md-foot-warn；只提醒不拦截） */
+  .md-precheck { border: 1px solid #ecd9a0; background: #fdf6e3; border-radius: 10px; padding: 10px 14px; font-size: 12.5px; line-height: 1.7; margin: 8px 0; color: #9a6b00; }
+  .md-precheck b { display: inline-flex; align-items: center; gap: 5px; }
+  .md-precheck ul { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+  .md-pre-ack { margin-right: auto; align-self: center; font-size: 11.5px; color: var(--dim); }
 </style>

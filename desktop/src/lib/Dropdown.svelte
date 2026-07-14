@@ -116,15 +116,18 @@
 <style>
   .dd { position: relative; width: 100%; }
   .dd.compact { width: auto; }
+  /* 表单控件统一尺度（与 .tin/.btn 同基准）：13px 字 + 8px 圆角 + 显式统一高 --ctl-h，
+     内容 flex 垂直居中；compact/bare 是行内 chip 形态，height 回落 auto。 */
   .dd-trigger {
-    width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px;
-    background: #fff; border: 1px solid var(--border2, #e1dfd8); border-radius: 10px;
-    padding: 7px 11px; font: inherit; font-size: 14px; color: var(--text, #26241f); cursor: pointer; text-align: left;
+    width: 100%; height: var(--ctl-h, 30px); box-sizing: border-box;
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    background: #fff; border: 1px solid var(--border2, #e1dfd8); border-radius: 8px;
+    padding: 0 10px; font: inherit; font-size: 13px; color: var(--text, #26241f); cursor: pointer; text-align: left;
   }
   .dd-trigger:hover { border-color: #cfccc2; }
   .dd-trigger.open { border-color: #b7b2a6; box-shadow: none; }
-  /* 紧凑 chip：无边框、透明底、自适应宽，用于输入框底栏。 */
-  .dd-trigger.compact { width: auto; gap: 5px; padding: 4px 8px; font-size: 13px; border-color: transparent; background: transparent; border-radius: 8px; max-width: 200px; }
+  /* 紧凑 chip：无边框、透明底、自适应宽，用于输入框底栏（--chip-h 定高对齐同栏其他 chip）。 */
+  .dd-trigger.compact { width: auto; height: var(--chip-h, 24px); box-sizing: border-box; gap: 5px; padding: 0 8px; font-size: 13px; border-color: transparent; background: transparent; border-radius: 8px; max-width: 200px; }
   .dd-trigger.compact:hover { background: #f1efe9; border-color: transparent; }
   .dd-trigger.compact.open { background: #ecebe6; border-color: transparent; }
   .dd-trigger:disabled { opacity: .55; cursor: default; }
@@ -137,7 +140,7 @@
   /* 权限档位等风险提示：把当前选中值文字染成警告/危险色（含 chevron） */
   /* bare：无边框无底色无内边距的安静文字触发器（排期筛选等场景，与周边文字同线） */
   .dd.bare { width: auto; }
-  .dd-trigger.bare { border: none; background: transparent; padding: 2px 4px 2px 0; width: auto; font-size: 12.5px; color: var(--dim, #6b675f); box-shadow: none; }
+  .dd-trigger.bare { border: none; background: transparent; padding: 2px 4px 2px 0; width: auto; height: auto; font-size: 12.5px; color: var(--dim, #6b675f); box-shadow: none; }
   .dd-trigger.bare:hover { background: transparent; color: var(--text, #26241f); }
   .dd-trigger.bare:focus, .dd-trigger.bare:focus-visible { outline: none; box-shadow: none; }
   .dd-trigger.bare.open { background: transparent; border-color: transparent; box-shadow: none; }
