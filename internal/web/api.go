@@ -1725,8 +1725,61 @@ func (s *Server) frontendPreviewURL(r *http.Request, collection string, p *store
 	if err != nil {
 		return "", time.Time{}, err
 	}
+	base, sitePrefixed := s.frontendPreviewBase(r)
 	path := fmt.Sprintf("/preview/%s/%d?token=%s", collection, p.ID, url.QueryEscape(token))
-	return s.absForRequest(r, path), expires, nil
+	if sitePrefixed {
+		path = fmt.Sprintf("/preview/sites/%d/%s/%d?token=%s", s.platformSiteID, collection, p.ID, url.QueryEscape(token))
+	}
+	return absWithBase(base, path), expires, nil
+}
+
+// frontendPreviewBase 决定前台预览链接落在哪个主机上。预览页必须由 Go 服务端动态渲染
+// （未发布内容在任何静态导出里都不存在），所以主机必须「能到达本服务、且能按 Host 路由到当前站点」：
+//   - 站点公开域名本来就由 Go 直接服务（单站部署，或平台域名表指向本站点）→ 维持现状；
+//   - 公开域名指向 Cloudflare 静态导出（那里没有 /preview 路由）、或压根路由不到本站点 →
+//     回退到本次 API 请求所到达的主机（请求能进来即证明可达）；
+//   - 回退主机也路由不到本站点时（平台子站经平台主机调用是常态），第二返回值为 true，
+//     调用方改用 /preview/sites/{siteID}/… 前缀，由平台入口按站点 ID 分发（serveSignedSitePreview）。
+//
+// 预览链接是短期签名链接，可达性优先于域名好看。
+func (s *Server) frontendPreviewBase(r *http.Request) (string, bool) {
+	base := s.publicBaseURL(r)
+	if s.frontendPreviewHostServesSite(baseURLHost(base)) {
+		return base, false
+	}
+	reqHost := requestHost(r)
+	if reqHost == "" {
+		// 拿不到请求主机（理论上不会发生）：保底用站点前缀形式，至少平台入口可达。
+		return base, s.platformRuntimePool() != nil
+	}
+	reqBase := requestScheme(r) + "://" + reqHost
+	if s.frontendPreviewHostServesSite(reqHost) {
+		return reqBase, false
+	}
+	if s.platformRuntimePool() != nil {
+		return reqBase, true
+	}
+	// 单站部署且请求主机也被 CF 占用：没有更好的候选，保持请求主机（尽力而为）。
+	return reqBase, false
+}
+
+// frontendPreviewHostServesSite 判断 host 是否由本 Go 服务直接服务且路由到当前站点：
+// Cloudflare 静态导出已发布时，其公开域名的 DNS 指向 CF 静态文件，视为不可达。
+func (s *Server) frontendPreviewHostServesSite(host string) bool {
+	host = normalizeRuntimeHost(host)
+	if host == "" {
+		return false
+	}
+	if s.cloudflareStaticServesHost(host) {
+		return false
+	}
+	pool := s.platformRuntimePool()
+	if pool == nil {
+		// 单站部署：所有到达 Go 的主机都由本站点应答。
+		return true
+	}
+	rt, ok := pool.runtimeByHost(host)
+	return ok && rt != nil && rt.Site != nil && rt.Site.ID == s.platformSiteID
 }
 
 func previewUpdatedUnix(p *store.Post) int64 {

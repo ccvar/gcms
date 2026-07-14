@@ -66,6 +66,10 @@ type Server struct {
 
 	runtimeMu sync.RWMutex
 	runtimes  *SiteRuntimePool
+
+	// rootServer 平台子站克隆指回平台根服务器（runtimeForSite/cloneForRuntime 里设置），
+	// 用于在子站请求处理中访问运行时池（runtimes 只挂在根服务器上）；根服务器/单站部署为 nil。
+	rootServer *Server
 }
 
 // SiteDomainForm pre-fills the domain-binding modal for one site.
@@ -1105,6 +1109,16 @@ func (s *Server) runtimePool() *SiteRuntimePool {
 	return s.runtimes
 }
 
+// platformRuntimePool 取平台运行时池：运行时池只挂在平台根服务器上，
+// 子站克隆经 rootServer 回溯；单站部署返回 nil。
+func (s *Server) platformRuntimePool() *SiteRuntimePool {
+	root := s
+	for root.rootServer != nil {
+		root = root.rootServer
+	}
+	return root.runtimePool()
+}
+
 func (s *Server) setRuntimePool(pool *SiteRuntimePool) {
 	s.runtimeMu.Lock()
 	s.runtimes = pool
@@ -1258,6 +1272,7 @@ func (s *Server) cloneForRuntime(rt *SiteRuntime) *Server {
 		pages:                map[string]pageCacheEntry{},
 		googleAnalytics:      s.googleAnalytics,
 		cloudflareStatusFile: cloudflareStatusPathForRuntime(rt),
+		rootServer:           s,
 	}
 	clone.i18n.LoadCustom(rt.Store.Setting("custom_locales"))
 	clone.i18n.LoadCatalogOverrides(rt.Store.Setting("locale_catalogs"))
@@ -1384,6 +1399,10 @@ func (s *Server) serveWithRuntime(w http.ResponseWriter, r *http.Request) {
 		s.serveSitePreview(w, r, pool)
 		return
 	}
+	if siteID, rest, ok := signedSitePreviewTarget(r.URL.Path); ok {
+		s.serveSignedSitePreview(w, r, pool, siteID, rest)
+		return
+	}
 	if siteID, target, ok := prefixedSiteAdminTarget(r.URL.Path); ok {
 		s.servePrefixedSiteAdmin(w, r, pool, siteID, target)
 		return
@@ -1450,6 +1469,9 @@ func (s *Server) uploadSiteIDFromAdminContext(r *http.Request) int64 {
 	if id, _, ok := sitePreviewTarget(u.Path); ok {
 		return id
 	}
+	if id, _, ok := signedSitePreviewTarget(u.Path); ok {
+		return id
+	}
 	if !strings.HasPrefix(u.Path, "/admin") {
 		return 0
 	}
@@ -1491,6 +1513,45 @@ func (s *Server) serveSitePreview(w http.ResponseWriter, r *http.Request, pool *
 	w.Header().Set("X-Robots-Tag", "noindex, nofollow")
 	w.Header().Set("Cache-Control", "no-store")
 	rt.server.siteHandler().ServeHTTP(w, req)
+}
+
+// serveSignedSitePreview 处理 /preview/sites/{siteID}/{collection}/{id}?token=…：
+// 为「公开域名不由本服务直接服务」的站点（如已发布 Cloudflare 静态导出、或根本没绑 Go 侧域名）
+// 提供一条按站点 ID 分发、不依赖 Host 路由的前台预览入口。刻意不要求登录态——
+// 链接本身带短期 HMAC 签名，改写路径后由目标站点的 frontendPreviewContent 用它自己的密钥校验。
+func (s *Server) serveSignedSitePreview(w http.ResponseWriter, r *http.Request, pool *SiteRuntimePool, siteID int64, rest string) {
+	rt, ok := pool.runtimeByID(siteID)
+	if !ok || rt == nil || rt.server == nil || rt.Site == nil {
+		http.NotFound(w, r)
+		return
+	}
+	if !rt.Site.IsDefault && rt.Site.Status != "enabled" {
+		http.NotFound(w, r)
+		return
+	}
+	nextURL := *r.URL
+	nextURL.Path = "/preview" + rest
+	req := r.Clone(r.Context())
+	req.URL = &nextURL
+	rt.server.siteHandler().ServeHTTP(w, req)
+}
+
+// signedSitePreviewTarget 解析 /preview/sites/{siteID}/{collection}/{id} 形式的路径，
+// 返回站点 ID 与去掉站点前缀后的剩余路径（"/{collection}/{id}"）。
+func signedSitePreviewTarget(path string) (int64, string, bool) {
+	const prefix = "/preview/sites/"
+	if !strings.HasPrefix(path, prefix) {
+		return 0, "", false
+	}
+	sitePart, rest, ok := strings.Cut(strings.TrimPrefix(path, prefix), "/")
+	if !ok || rest == "" {
+		return 0, "", false
+	}
+	id, err := strconv.ParseInt(sitePart, 10, 64)
+	if err != nil || id <= 0 {
+		return 0, "", false
+	}
+	return id, "/" + rest, true
 }
 
 func (s *Server) servePrefixedSiteAdmin(w http.ResponseWriter, r *http.Request, pool *SiteRuntimePool, siteID int64, target string) {
@@ -1951,6 +2012,28 @@ func (s *Server) cloudflarePublishedPrimaryHost() string {
 		return host
 	}
 	return s.cloudflareConfig().primaryHost()
+}
+
+// cloudflareStaticServesHost 判断 host 是否是本站点已发布 Cloudflare 静态导出所占用的公开域名。
+// 命中时该域名上的动态路由（如 /preview/…）由 CF 侧静态文件应答，视为 Go 服务端不可达。
+func (s *Server) cloudflareStaticServesHost(host string) bool {
+	host = normalizeCloudflareDomainHost(host)
+	if host == "" {
+		return false
+	}
+	st := s.readCloudflareStatus()
+	if !cloudflareStatusPublished(st) {
+		return false
+	}
+	if p := normalizeCloudflareDomainHost(st.PrimaryDomain); p != "" && sameCloudflareDNSName(host, p) {
+		return true
+	}
+	for _, d := range s.cloudflareConfig().publicDomains() {
+		if d.Host != "" && sameCloudflareDNSName(host, d.Host) {
+			return true
+		}
+	}
+	return false
 }
 
 func cloudflareCanonicalFrontendExemptPath(path string) bool {

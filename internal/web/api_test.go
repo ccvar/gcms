@@ -12,8 +12,10 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"cms.ccvar.com/internal/i18n"
+	"cms.ccvar.com/internal/platform"
 	"cms.ccvar.com/internal/store"
 )
 
@@ -1547,6 +1549,166 @@ func TestAPICreatePreviewURLRendersFrontendDraft(t *testing.T) {
 	s.Handler().ServeHTTP(stale, httptest.NewRequest(http.MethodGet, u.RequestURI(), nil))
 	if stale.Code != http.StatusGone {
 		t.Fatalf("stale preview status = %d, want 410", stale.Code)
+	}
+}
+
+// newPreviewURLPlatformFixture 起双站点平台（platform.test 平台主机 + blog.test 直连子站），
+// 在 blog 站建一篇草稿，发一把可读 posts 的平台密钥，返回生成预览链接所需的句柄。
+func newPreviewURLPlatformFixture(t *testing.T) (h http.Handler, blogRT *SiteRuntime, blogSiteID, postID int64, token string) {
+	t.Helper()
+	srv, handler, ps, _, blogSite := setupPlatformAutomation(t)
+	token = "gcmsp_preview1234567890"
+	if _, err := ps.CreatePlatformKey("preview", token, token[:13], platform.KeyMembershipAll, "posts:read", nil, time.Time{}); err != nil {
+		t.Fatalf("create platform key: %v", err)
+	}
+	rt, ok := srv.runtimePool().runtimeByID(blogSite.ID)
+	if !ok || rt == nil || rt.Store == nil || rt.server == nil {
+		t.Fatalf("blog runtime missing")
+	}
+	id, err := rt.Store.CreatePost(&store.Post{
+		Type:       "post",
+		Lang:       "zh",
+		Slug:       "cf-preview-draft",
+		Title:      "CF Preview Draft",
+		Content:    "Intro\n\n## CF Section\n\nBody",
+		Status:     "draft",
+		EditorMode: "markdown",
+	})
+	if err != nil {
+		t.Fatalf("create blog draft: %v", err)
+	}
+	return handler, rt, blogSite.ID, id, token
+}
+
+func createPreviewURL(t *testing.T, h http.Handler, siteID, postID int64, token string) apiPreviewURLResponse {
+	t.Helper()
+	path := "/api/platform/v1/sites/" + strconv.FormatInt(siteID, 10) + "/posts/" + strconv.FormatInt(postID, 10) + "/preview-url"
+	rec := platformAPIReq(t, h, http.MethodPost, path, token, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create preview URL status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var got apiPreviewURLResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode preview URL response: %v", err)
+	}
+	return got
+}
+
+// TestAPICreatePreviewURLDirectSiteKeepsOwnDomain 直连子站（域名由 Go 直接服务、未发 Cloudflare）：
+// 预览链接保持站点自己的公开域名，且按 Host 路由后能渲染草稿。
+func TestAPICreatePreviewURLDirectSiteKeepsOwnDomain(t *testing.T) {
+	h, _, blogSiteID, postID, token := newPreviewURLPlatformFixture(t)
+
+	got := createPreviewURL(t, h, blogSiteID, postID, token)
+	wantPrefix := "https://blog.test/preview/posts/" + strconv.FormatInt(postID, 10) + "?token="
+	if !strings.HasPrefix(got.PreviewURL, wantPrefix) {
+		t.Fatalf("preview_url = %q, want prefix %q", got.PreviewURL, wantPrefix)
+	}
+
+	page := httptest.NewRecorder()
+	h.ServeHTTP(page, httptest.NewRequest(http.MethodGet, got.PreviewURL, nil))
+	if page.Code != http.StatusOK {
+		t.Fatalf("frontend preview status = %d, body = %s", page.Code, page.Body.String())
+	}
+	if !strings.Contains(page.Body.String(), "CF Preview Draft") {
+		t.Fatalf("frontend preview body missing draft content")
+	}
+}
+
+// TestAPICreatePreviewURLCloudflareSiteFallsBackToPlatformHost Cloudflare 静态导出已发布的子站：
+// 公开域名指向 CF 的静态文件（没有 /preview 路由），预览链接必须回退到请求所到达的平台主机，
+// 并用 /preview/sites/{id} 前缀按站点 ID 分发；打开后由 Go 动态渲染草稿。
+func TestAPICreatePreviewURLCloudflareSiteFallsBackToPlatformHost(t *testing.T) {
+	h, blogRT, blogSiteID, postID, token := newPreviewURLPlatformFixture(t)
+	blogRT.server.writeCloudflareStatus(CloudflareStatus{
+		Status:        "success",
+		LastDeployAt:  time.Now().UTC().Format(time.RFC3339),
+		PrimaryDomain: "blog.test",
+	})
+
+	got := createPreviewURL(t, h, blogSiteID, postID, token)
+	wantPrefix := "https://platform.test/preview/sites/" + strconv.FormatInt(blogSiteID, 10) +
+		"/posts/" + strconv.FormatInt(postID, 10) + "?token="
+	if !strings.HasPrefix(got.PreviewURL, wantPrefix) {
+		t.Fatalf("preview_url = %q, want prefix %q", got.PreviewURL, wantPrefix)
+	}
+
+	page := httptest.NewRecorder()
+	h.ServeHTTP(page, httptest.NewRequest(http.MethodGet, got.PreviewURL, nil))
+	if page.Code != http.StatusOK {
+		t.Fatalf("frontend preview status = %d, body = %s", page.Code, page.Body.String())
+	}
+	if !strings.Contains(page.Body.String(), "CF Preview Draft") {
+		t.Fatalf("frontend preview body missing draft content")
+	}
+	if got := page.Header().Get("X-Robots-Tag"); got != "noindex, nofollow" {
+		t.Fatalf("x-robots-tag = %q", got)
+	}
+
+	// 钉住根因：同一 token 不带站点前缀直接打平台主机，会被路由到默认站点、无法通过校验（404）。
+	u, err := url.Parse(got.PreviewURL)
+	if err != nil {
+		t.Fatalf("parse preview URL: %v", err)
+	}
+	plain := httptest.NewRecorder()
+	plainURL := "https://platform.test/preview/posts/" + strconv.FormatInt(postID, 10) + "?token=" + u.Query().Get("token")
+	h.ServeHTTP(plain, httptest.NewRequest(http.MethodGet, plainURL, nil))
+	if plain.Code != http.StatusNotFound {
+		t.Fatalf("unprefixed preview on platform host status = %d, want 404", plain.Code)
+	}
+}
+
+// TestAPICreatePreviewURLSingleSiteCloudflareFallsBackToRequestHost 单站部署且已发布 Cloudflare
+// 静态导出（baseURL 指向 CF 占用的域名）：预览链接回退到本次请求所到达的主机（Go 可达），
+// 路径保持 /preview/{collection}/{id}。
+func TestAPICreatePreviewURLSingleSiteCloudflareFallsBackToRequestHost(t *testing.T) {
+	s := newTestPublicServer(t, "")
+	s.cloudflareStatusFile = filepath.Join(t.TempDir(), "cloudflare-deploy.json")
+	s.writeCloudflareStatus(CloudflareStatus{
+		Status:        "success",
+		LastDeployAt:  time.Now().UTC().Format(time.RFC3339),
+		PrimaryDomain: "example.test", // 与 newTestPublicServer 的 baseURL 主机一致
+	})
+	token, prefix := newAutomationToken()
+	if _, err := s.store.CreateAutomationKey("preview", token, prefix, "posts:read"); err != nil {
+		t.Fatalf("create automation key: %v", err)
+	}
+	id, err := s.store.CreatePost(&store.Post{
+		Type:       "post",
+		Lang:       "zh",
+		Slug:       "single-cf-preview-draft",
+		Title:      "Single CF Preview Draft",
+		Content:    "Body",
+		Status:     "draft",
+		EditorMode: "markdown",
+	})
+	if err != nil {
+		t.Fatalf("create post: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "https://origin.internal/api/admin/v1/posts/"+strconv.FormatInt(id, 10)+"/preview-url", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create preview URL status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var got apiPreviewURLResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode preview URL response: %v", err)
+	}
+	wantPrefix := "https://origin.internal/preview/posts/" + strconv.FormatInt(id, 10) + "?token="
+	if !strings.HasPrefix(got.PreviewURL, wantPrefix) {
+		t.Fatalf("preview_url = %q, want prefix %q", got.PreviewURL, wantPrefix)
+	}
+
+	page := httptest.NewRecorder()
+	s.Handler().ServeHTTP(page, httptest.NewRequest(http.MethodGet, got.PreviewURL, nil))
+	if page.Code != http.StatusOK {
+		t.Fatalf("frontend preview status = %d, body = %s", page.Code, page.Body.String())
+	}
+	if !strings.Contains(page.Body.String(), "Single CF Preview Draft") {
+		t.Fatalf("frontend preview body missing draft content")
 	}
 }
 
