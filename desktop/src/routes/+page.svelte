@@ -158,6 +158,7 @@
     task_ids: string[]; paused: boolean; review_notes: ManagedNote[];
     token_weekly_budget: number; fused_at: number;
     review_events: { ts: number; approved: boolean }[]; demote_note: string;
+    audit_notes: string; enabled_at: number;
     created_at: number; updated_at: number;
   };
   type ManagedDraft = { id: number; title: string; lang: string; updated_at: string };
@@ -260,7 +261,7 @@
     try { await invoke('managed_set_level', { id: m.id, level }); say('等级已调整，已同步每日任务'); await loadManaged(); }
     catch (e) { say(String(e), 'err'); await loadManaged(); }
   }
-  // L3 存量修改配额（软约束：写进 prompt 由 AI 自数，周报如实汇报）。
+  // L3 存量修改配额（prompt 声明 + Pilot 触发前实测硬闸：配额用完当天禁改存量）。
   async function saveEditLimit(m: ManagedSite) {
     const v = Math.min(20, Math.max(1, Math.round(Number(m.weekly_edit_limit) || 2)));
     try { await invoke('managed_set_edit_limit', { id: m.id, limit: v }); say('存量修改配额已更新，已同步每日任务'); await loadManaged(); }
@@ -338,7 +339,7 @@
   const MW_PLAN_PROMPT = `请为本站生成一份 90 天内容运营计划（纯文本，将作为后续每日内容任务的方向依据）。
 先读站点资料、导航与近期内容摸清定位，然后输出：
 1) 站点定位与目标读者（两三句）；2) 3-5 个内容支柱（每个配 2-3 个具体选题方向）；
-3) 每周更新节奏建议（频率/语种）；4) 8-12 个 SEO 关键词方向；5) 前 4 周的选题清单（标题级）。
+3) 每周更新节奏建议（频率/语种）；4) 8-12 个 SEO 关键词方向（每个方向注明目标搜索意图与判断依据——面向哪类读者、解决什么问题、为何判断本站有机会）；5) 前 4 周的选题清单（标题级）。
 只输出计划本身，不要创建或修改任何内容。`;
   // 生成计划＝后台开一个一次性对话跑摸底 prompt（auto 档：读站点数据自动放行；prompt 明令只读）。
   // 拿最后一条助手消息填进可编辑 textarea；对话会留在侧栏可追溯。
@@ -1987,7 +1988,7 @@
 </script>
 
 <svelte:window oncontextmenu={onCtxMenu} onmouseover={onTipHover} onscrollcapture={() => { tip = null; imgTip = null; hoverWant = ''; }} onresize={() => { tip = null; imgTip = null; hoverWant = ''; }} onkeydown={(e) => { if (e.key === 'Escape' && lightbox) lightbox = ''; }} />
-<main class="app" class:win={isWindows}>
+<main class="app" class:win={isWindows} class:fs={isFullscreen} class:rail-collapsed={railCollapsed}>
   <!-- 融合式标题栏：透明拖拽条铺满顶部，红绿灯与工具按钮浮在其上（macOS Overlay） -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="titlebar" data-tauri-drag-region aria-hidden="true" onmousedown={startDrag} style="width:{railCollapsed ? 140 : railWidth}px"></div>
@@ -2406,9 +2407,11 @@
     {:else if view === 'managed'}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <header class="thread-head" data-tauri-drag-region onmousedown={startDrag}>
-        <div class="th-info"><b>托管</b><small>AI 按周循环运营站点 · L0 试运行：只产草稿，发布永远由你批准</small></div>
-        <button class="icon-btn" onclick={loadManaged} disabled={managedLoading} title="刷新">{@render refreshIcon(managedLoading)}</button>
-        <button class="btn soft bare" onclick={openManagedWizard} disabled={!sites.length}>{@render plusIcon()}托管一个站点</button>
+        <div class="th-info"><b>托管</b><small>AI 按周循环运营站点 · 边界机制化：发布、预算与修改均受控</small></div>
+        <div class="th-actions">
+          <button class="icon-btn" onclick={loadManaged} disabled={managedLoading} title="刷新">{@render refreshIcon(managedLoading)}</button>
+          <button class="btn soft bare" onclick={openManagedWizard} disabled={!sites.length}>{@render plusIcon()}托管一个站点</button>
+        </div>
       </header>
       <div class="thread">
         <div class="sched-inner">
@@ -2496,8 +2499,8 @@
                   {/if}
                   {#if m.level === 'l3'}
                     <p class="md-foot-warn">⚠️ L3 存量维护：AI 可修改已发布内容、把低质旧文转草稿下线（每周 ≤
-                      <input class="md-editq" type="number" min="1" max="20" bind:value={m.weekly_edit_limit} onchange={() => saveEditLimit(m)} title="每周存量修改上限（软约束：AI 自数，周报如实汇报）" />
-                      篇，软约束）。改动均有修订历史、可在后台一键回滚；请每周查看周报「观察名单」跟踪数据回落。删除/导航/资料/类型仍绝对禁止。</p>
+                      <input class="md-editq" type="number" min="1" max="20" bind:value={m.weekly_edit_limit} onchange={() => saveEditLimit(m)} title="每周存量修改上限（Pilot 触发前实测计数，配额用完当天禁改存量）" />
+                      篇，Pilot 实测把关）。改动均有修订历史、可在后台一键回滚；请每周查看周报「观察名单」跟踪数据回落。删除/导航/资料/类型仍绝对禁止。</p>
                   {:else}
                     <p class="md-foot"><svg width="11" height="11" viewBox="0 0 16 16" fill="none"><path d="M8 1.8 13 3.6v4.1c0 3.2-2.1 5.4-5 6.5-2.9-1.1-5-3.3-5-6.5V3.6L8 1.8Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="m5.8 8 1.6 1.6 2.8-3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>{m.level === 'l0' ? '只产草稿、发布由你批准；绝不删除内容或改动站点结构。' : '常规文章可自动发布；绝不删除内容或改动站点结构，审计纪要等仍待你审。'}</span></p>
                   {/if}
@@ -3182,9 +3185,10 @@
         <div class="trow">
           <div class="tfield"><span>每周产出上限（发布＋新建草稿）</span>
             <input class="tin" type="number" min="1" max="50" bind:value={mwLimit} style="max-width:120px" />
+            {#if Number(mwLimit) > 7}<span class="hint">新站爬坡期：当前上限 7 篇/周，防止批量灌站被搜索引擎判责——超出部分会被自动钳到 7（开启满 30 天放宽到 14，60 天后 50）。</span>{/if}
           </div>
           {#if mwLevel === 'l3'}
-            <div class="tfield"><span>每周存量修改上限（L3 · 软约束）</span>
+            <div class="tfield"><span>每周存量修改上限（L3 · Pilot 实测把关）</span>
               <input class="tin" type="number" min="1" max="20" bind:value={mwEditLimit} style="max-width:120px" />
             </div>
           {/if}
@@ -3208,7 +3212,7 @@
               <li>{levelLabel(mwLevel)}：常规文章自检通过后<b>可直接发布</b>；审计纪要等仍存草稿待审{mwLevel === 'l2' ? '，且每周周报会附本周自动发布清单供你抽查' : ''}。打回率过高会<b>自动降级</b>{mwLevel === 'l3' ? '（L3→L2）' : '（→L0）'}。</li>
             {/if}
             {#if mwLevel === 'l3'}
-              <li class="md-li-danger">L3 允许 AI <b>修改已发布的存量内容</b>并把低质旧文<b>转草稿下线</b>（绝不删除）；每周最多改 {mwEditLimit} 篇（软约束，AI 自数并在周报如实汇报）。</li>
+              <li class="md-li-danger">L3 允许 AI <b>修改已发布的存量内容</b>并把低质旧文<b>转草稿下线</b>（绝不删除）；每周最多改 {mwEditLimit} 篇——Pilot 在任务触发前实测计数，配额用完当天禁改存量。</li>
             {/if}
             <li>每周产出（发布＋新建草稿）不超过 {mwLimit} 篇——Pilot 在任务触发前实测把关，达上限直接跳过。</li>
             <li><b>绝不</b>删除内容、修改导航/站点资料/语言设置、创建或启用内容类型。</li>
@@ -3507,6 +3511,12 @@
 
   /* ---- 线程 ---- */
   .thread-head { flex: none; padding: 13px 24px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  /* 侧栏收起：红绿灯 + 悬浮的折叠/搜索钮压在内容区左上，页头统一左让位（全部视图受益）。
+     mac 窗口态 140px（红绿灯≈70 + 两钮）；全屏/Windows 无红绿灯（钮在 left:12），100px 够。 */
+  .app.rail-collapsed .thread-head { padding-left: 140px; }
+  .app.rail-collapsed.fs .thread-head, .app.rail-collapsed.win .thread-head { padding-left: 100px; }
+  /* 页头右侧操作聚拢成组贴右（th-info 撑开剩余空间，组内间距统一） */
+  .th-actions { display: flex; align-items: center; gap: 8px; flex: none; }
   .th-info b { display: block; font-size: 15px; line-height: 1.35; }
   .th-info small { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; color: var(--dim); font-size: 12px; margin-top: 2px; }
   .btag { display: inline-flex; align-items: center; gap: 4px; }
@@ -3904,8 +3914,8 @@
   .md-lv-badge { display: inline-block; margin-left: 8px; vertical-align: 1px; }
   .md-lv-badge :global(.dd) { width: auto; }
   .md-lv-badge :global(.dd-trigger.bare) { font-size: 10.5px; padding: 1px 7px; border-radius: 999px; background: #e8f0e4; color: #3c6b32; }
-  .md-foot { display: flex; align-items: flex-start; gap: 5px; margin: 7px 0 0; font-size: 11px; color: var(--faint, #9b968c); }
-  .md-foot svg { flex: none; margin-top: 1.5px; }
+  .md-foot { display: flex; align-items: flex-start; gap: 5px; margin: 8px 0 0; font-size: 11px; color: var(--faint, #9b968c); }
+  .md-foot svg { flex: none; margin-top: 3px; }
   .md-queue { margin-top: 8px; border: 1px solid var(--line, #e6e2d8); border-radius: 10px; padding: 4px 10px; background: #fbfaf7; }
   .md-row { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px dashed var(--line, #e6e2d8); }
   .md-row:last-child { border-bottom: none; }
@@ -3914,7 +3924,6 @@
   .md-btns { flex: none; display: flex; gap: 6px; }
   .md-plan { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; }
   .md-plan textarea { font-size: 12.5px; line-height: 1.6; }
-  .md-foot { margin-top: 8px; color: var(--faint); }
   .md-genrow { display: flex; align-items: center; gap: 10px; margin: 6px 0 10px; }
   .md-bound { border: 1px solid #e5d9b8; background: #fdf9ec; border-radius: 10px; padding: 10px 14px; font-size: 12.5px; margin: 8px 0; }
   .md-bound ul { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }

@@ -535,6 +535,8 @@ mod workdir_tests {
         assert_eq!(m.token_weekly_budget, 500_000);
         assert_eq!(m.weekly_edit_limit, 3, "修改配额入记录");
         assert_eq!(m.task_ids.len(), 3, "每日/审计/周报三个配套任务");
+        assert!(m.enabled_at > 0, "开启时间落库（配额爬坡起点）");
+        assert_eq!(m.audit_notes, "", "开启时还没有审计要点");
 
         let daily = tstore.get(&m.task_ids[0]).expect("每日任务");
         assert!(daily.title.starts_with("托管 · 每日内容"));
@@ -551,12 +553,18 @@ mod workdir_tests {
         let report = tstore.get(&m.task_ids[2]).expect("周报任务");
         assert!(report.title.starts_with("托管 · 每周周报"));
         assert!(report.prompt.contains("本周实测数据"));
+        assert!(report.prompt.contains("计划关键词 vs 实际曝光词偏差"), "周报偏差对照节");
+        assert!(report.prompt.contains("定位：测试站"), "90 天计划随周报 prompt 下发");
         assert_eq!(report.model, "grok-4.5");
 
         // 同站重复开启被拒；非法等级回落 l0
         assert!(enable_managed(&conns, &tstore, &mstore, "t".into(), "blog".into(), String::new(), String::new(), 3, 2, "l0".into(), 0, String::new(), String::new(), String::new()).is_err());
         let m2 = enable_managed(&conns, &tstore, &mstore, "t".into(), "shop".into(), String::new(), String::new(), 3, 2, "bogus".into(), 0, "claude".into(), "sonnet".into(), String::new()).unwrap();
         assert_eq!(m2.level, "l0", "非法等级回落 L0（安全侧）");
+        // 配额爬坡：新开启（第 0 天）上界 7，传 30 被钳到 7
+        let m3 = enable_managed(&conns, &tstore, &mstore, "t".into(), "news".into(), String::new(), String::new(), 30, 2, "l0".into(), 0, "claude".into(), "sonnet".into(), String::new()).unwrap();
+        assert_eq!(m3.weekly_post_limit, 7, "新站爬坡期钳到 7 篇/周");
+        assert!(tstore.get(&m3.task_ids[0]).unwrap().prompt.contains("不得超过 7 篇"), "钳后的上限进每日 prompt");
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -1656,12 +1664,21 @@ fn notify_user(app: &AppHandle, title: &str, body: String) {
     let _ = app.notification().builder().title(title).body(body).show();
 }
 
-/// 重新组装并回写「每日内容」任务的 prompt——plan / 周上限 / 打回记录 / 等级任一变化后调用，
-/// 否则任务还带着旧边界跑。审计/周报任务 prompt 是静态的，不用同步。
-fn sync_daily_prompt(state: &AppState, m: &managed::ManagedSite) {
+/// 重新组装并回写「每日内容」与「每周周报」任务的 prompt——plan / 周上限 / 打回记录 / 等级 /
+/// 审计要点任一变化后调用，否则任务还带着旧边界跑。审计任务 prompt 是静态的，不用同步。
+/// 后台任务（fire_task）没有 AppState，签名收 TaskStore。
+fn sync_daily_prompt(tasks: &tasks::TaskStore, m: &managed::ManagedSite) {
     if let Some(tid) = m.task_ids.first() {
-        let p = managed::daily_prompt(&m.site_name, &m.plan, m.weekly_post_limit, &m.review_notes, &m.level, m.weekly_edit_limit);
-        let _ = state.tasks.mutate(tid, |t| {
+        let p = managed::daily_prompt(&m.site_name, &m.plan, m.weekly_post_limit, &m.review_notes, &m.level, m.weekly_edit_limit, &m.audit_notes);
+        let _ = tasks.mutate(tid, |t| {
+            t.prompt = p.clone();
+            t.updated_at = now_secs();
+        });
+    }
+    // 周报 prompt 带计划摘要（「计划关键词 vs 实际曝光词偏差」的对照基准），计划变了要跟着换。
+    if let Some(tid) = m.task_ids.get(2) {
+        let p = managed::report_prompt(&m.site_name, &m.plan);
+        let _ = tasks.mutate(tid, |t| {
             t.prompt = p.clone();
             t.updated_at = now_secs();
         });
@@ -1725,14 +1742,16 @@ fn enable_managed(
     }
     let level = if valid_level(&level) { level } else { "l0".to_string() };
     let site_name = if site_name.trim().is_empty() { site_slug.clone() } else { site_name.trim().to_string() };
-    let limit = weekly_post_limit.clamp(1, 50);
+    // 配额爬坡：刚开启（第 0 天）上界 7 篇/周（满 30 天 14、60 天后 50，managed::ramp_cap），
+    // 防新站短期批量灌内容被搜索引擎判责；UI 侧超过 7 会提示将被钳。
+    let limit = weekly_post_limit.clamp(1, managed::ramp_cap(0));
     let edit_limit = weekly_edit_limit.clamp(1, 20);
     let daily = upsert_task(
         conns, tasks, None, conn_id.clone(),
         vec![site_slug.clone()], vec![site_name.clone()],
         "article".into(), brain.clone(), model.clone(), effort.clone(),
         format!("托管 · 每日内容 · {site_name}"),
-        managed::daily_prompt(&site_name, &plan, limit, &[], &level, edit_limit),
+        managed::daily_prompt(&site_name, &plan, limit, &[], &level, edit_limit, ""),
         1440, 0, true,
     )?;
     let audit = upsert_task(
@@ -1748,7 +1767,7 @@ fn enable_managed(
         vec![site_slug.clone()], vec![site_name.clone()],
         "free".into(), brain.clone(), model.clone(), effort.clone(),
         format!("托管 · 每周周报 · {site_name}"),
-        managed::report_prompt(&site_name),
+        managed::report_prompt(&site_name, &plan),
         10080, 0, true,
     )?;
     let now = now_secs();
@@ -1771,6 +1790,8 @@ fn enable_managed(
         fused_at: 0,
         review_events: vec![],
         demote_note: String::new(),
+        audit_notes: String::new(),
+        enabled_at: now,
         created_at: now,
         updated_at: now,
     };
@@ -1793,13 +1814,14 @@ fn managed_set_level(
         m.demote_note = String::new();
     })?;
     if let Some(m) = &updated {
-        sync_daily_prompt(&state, m);
+        sync_daily_prompt(&state.tasks, m);
     }
     Ok(updated)
 }
 
-/// 调整 L3 的每周存量修改配额（1-20）。**软约束**：写进每日任务 prompt 由 AI 自数遵守，
-/// 周报如实汇报；Pilot 侧无法精确计数修改行为，硬闸留待 cms 侧提供修改计数接口后补。
+/// 调整 L3 的每周存量修改配额（1-20）。prompt 声明配额由 AI 自数、周报如实汇报；
+/// Pilot 侧另有硬闸：managed_prefire 按 week_stats 的 edited 口径实测本周已改篇数，
+/// 配额用完时往当天 prompt 注入「禁止修改存量」权威行（任务不整体跳过，常规创作照做）。
 #[tauri::command]
 fn managed_set_edit_limit(
     state: tauri::State<'_, AppState>,
@@ -1809,7 +1831,7 @@ fn managed_set_edit_limit(
     let limit = limit.clamp(1, 20);
     let updated = state.managed.mutate(&id, now_secs(), |m| m.weekly_edit_limit = limit)?;
     if let Some(m) = &updated {
-        sync_daily_prompt(&state, m);
+        sync_daily_prompt(&state.tasks, m);
     }
     Ok(updated)
 }
@@ -1895,7 +1917,7 @@ fn managed_record_reject(
         notify_user(&app, "托管已自动降级", format!("「{site_name}」{why}，已降到 {label}。"));
     }
     if let Some(m) = &updated {
-        sync_daily_prompt(&state, m);
+        sync_daily_prompt(&state.tasks, m);
     }
     Ok(updated)
 }
@@ -1909,7 +1931,7 @@ fn managed_plan_save(
 ) -> Result<Option<managed::ManagedSite>, String> {
     let updated = state.managed.mutate(&id, now_secs(), |m| m.plan = plan.trim().to_string())?;
     if let Some(m) = &updated {
-        sync_daily_prompt(&state, m);
+        sync_daily_prompt(&state.tasks, m);
     }
     Ok(updated)
 }
@@ -2055,7 +2077,7 @@ async fn managed_prefire(
         Ok(c) => c,
         Err(_) => return ManagedGate::Proceed(None),
     };
-    // 每日内容任务：周上限硬闸 + 权威计数注入
+    // 每日内容任务：周上限硬闸 + 权威计数注入（L3 再注入存量修改配额硬闸行）
     if m.task_ids.first() == Some(&task.id) {
         match managed::week_stats(&conn, &m.site_slug).await {
             Ok(stats) => {
@@ -2063,7 +2085,14 @@ async fn managed_prefire(
                 if let Some(reason) = managed::weekly_cap_skip(output, m.weekly_post_limit) {
                     return ManagedGate::Skip(reason);
                 }
-                return ManagedGate::Proceed(Some(managed::weekly_count_line(output, m.weekly_post_limit)));
+                let mut extra = managed::weekly_count_line(output, m.weekly_post_limit);
+                // L3 存量修改硬闸：edited 口径（updated_at≥周一 && published_at<周一）实测本周已改篇数。
+                // 配额用完**不 Skip 整个任务**——只注入「禁止修改存量」权威行，常规创作照做。
+                if m.level == "l3" {
+                    extra.push('\n');
+                    extra.push_str(&managed::edit_cap_line(stats.edited_count, m.weekly_edit_limit));
+                }
+                return ManagedGate::Proceed(Some(extra));
             }
             Err(_) => return ManagedGate::Proceed(None),
         }
@@ -2178,6 +2207,8 @@ async fn fire_task(
     let mut first_err = String::new();
     let mut last_conv = String::new();
     let mut last_summary = String::new();
+    // 最后一条 assistant 消息全文（审计任务提取 AUDIT-NOTES 块用；托管配套任务都是单站）。
+    let mut last_assistant_full = String::new();
     let mut run_sites: Vec<tasks::TaskRunSite> = Vec::with_capacity(targets.len());
     for h in handles {
         let Ok((slug, res)) = h.await else { continue };
@@ -2186,6 +2217,13 @@ async fn fire_task(
                 ok_count += 1;
                 last_conv = c.id.clone();
                 last_summary = last_snippet(c);
+                last_assistant_full = c
+                    .messages
+                    .iter()
+                    .rev()
+                    .find(|m| m.role == "assistant")
+                    .map(|m| m.text.clone())
+                    .unwrap_or_default();
                 run_sites.push(tasks::TaskRunSite { slug, ok: true, conv_id: c.id.clone(), error: String::new() });
             }
             Err(e) => {
@@ -2223,6 +2261,18 @@ async fn fire_task(
         x.history.insert(0, tasks::TaskRun { ts: now, ok: all_ok, summary: summary.clone(), sites: run_sites.clone() });
         x.history.truncate(20);
     });
+    // 审计要点回灌：本任务是某托管的「每周审计」（task_ids[1]）且成功跑完 → 从最后一条
+    // assistant 消息提取 AUDIT-NOTES 块存进托管记录，并同步每日任务 prompt——
+    // 下轮创作避开重复主题、落实内链建议。没有块（老 prompt 跑的旧会话等）就保留上次要点。
+    if all_ok && !last_assistant_full.is_empty() {
+        if let Some(m) = mstore.list().into_iter().find(|m| m.task_ids.get(1) == Some(&task.id)) {
+            if let Some(notes) = managed::extract_audit_notes(&last_assistant_full) {
+                if let Ok(Some(updated)) = mstore.mutate(&m.id, now, |x| x.audit_notes = notes.clone()) {
+                    sync_daily_prompt(&tstore, &updated);
+                }
+            }
+        }
+    }
     let body = if all_ok {
         if multi {
             format!("{} · {} 个站点全部完成", task.title, targets.len())
