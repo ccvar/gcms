@@ -11,8 +11,9 @@
     compact = false,
     searchable = false,
     tone = '',
+    bare = false,
     onchange,
-  }: { value: string; options: Opt[]; placeholder?: string; disabled?: boolean; compact?: boolean; searchable?: boolean; tone?: string; onchange?: (value: string) => void } = $props();
+  }: { value: string; options: Opt[]; placeholder?: string; disabled?: boolean; compact?: boolean; searchable?: boolean; tone?: string; bare?: boolean; onchange?: (value: string) => void } = $props();
 
   let open = $state(false);
   let root: HTMLDivElement | undefined = $state();
@@ -78,8 +79,8 @@
   });
 </script>
 
-<div class="dd" class:compact bind:this={root}>
-  <button type="button" class="dd-trigger" class:open class:compact class:tone-warn={tone === 'warn'} class:tone-danger={tone === 'danger'} onclick={toggle} {disabled}>
+<div class="dd" class:compact class:bare bind:this={root}>
+  <button type="button" class="dd-trigger" class:open class:compact class:bare class:tone-warn={tone === 'warn'} class:tone-danger={tone === 'danger'} onclick={toggle} {disabled}>
     <span class="dd-label" class:placeholder={!current}>
       {#if current}{@render lead(current)}{/if}{current?.label ?? placeholder}
     </span>
@@ -129,10 +130,17 @@
   .dd-trigger:disabled { opacity: .55; cursor: default; }
   .dd-label { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
   .dd-label :global(.bi) { flex: none; }
-  .dd-fav { width: 17px; height: 17px; border-radius: 5px; flex: none; object-fit: contain; background: #f0eee9; }
+  /* 有真实图标不垫底色；底色只留给字母占位（.ph） */
+  .dd-fav { width: 17px; height: 17px; border-radius: 5px; flex: none; object-fit: contain; background: transparent; }
   .dd-fav.ph { display: inline-flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 600; color: var(--dim, #6f6b62); border: none; background: #e7e4dd; }
   .dd-label.placeholder { color: var(--faint, #a29d93); }
   /* 权限档位等风险提示：把当前选中值文字染成警告/危险色（含 chevron） */
+  /* bare：无边框无底色无内边距的安静文字触发器（排期筛选等场景，与周边文字同线） */
+  .dd.bare { width: auto; }
+  .dd-trigger.bare { border: none; background: transparent; padding: 2px 4px 2px 0; width: auto; font-size: 12.5px; color: var(--dim, #6b675f); box-shadow: none; }
+  .dd-trigger.bare:hover { background: transparent; color: var(--text, #26241f); }
+  .dd-trigger.bare:focus, .dd-trigger.bare:focus-visible { outline: none; box-shadow: none; }
+  .dd-trigger.bare.open { background: transparent; border-color: transparent; box-shadow: none; }
   .dd-trigger.tone-warn { color: var(--warn, #b45309); }
   .dd-trigger.tone-warn .dd-label, .dd-trigger.tone-warn .dd-chev { color: var(--warn, #b45309); }
   .dd-trigger.tone-danger { color: var(--err, #dc2626); }

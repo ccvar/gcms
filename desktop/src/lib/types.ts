@@ -36,7 +36,7 @@ export type ImportOutcome =
   | { status: 'upgraded'; connection: Connection }
   | { status: 'needs_key'; api_base: string };
 
-export type Brain = 'claude' | 'codex';
+export type Brain = 'claude' | 'codex' | 'grok';
 
 export interface BrainStatus {
   found: boolean;
@@ -50,6 +50,8 @@ export interface BrainStatus {
 export interface BrainsInfo {
   claude: BrainStatus;
   codex: BrainStatus;
+  /** xAI Grok CLI（ACP 接入）；登录态看 ~/.grok/auth.json。 */
+  grok: BrainStatus;
   /** Cloudflare 部署工具（wrangler）；用 env token，logged_in 恒为 null。 */
   wrangler: BrainStatus;
   /** 无头截图用的浏览器（Chrome/Edge/Chromium，可选能力）。 */

@@ -46,17 +46,63 @@
   const activeConn = $derived(conns.find((c) => c.id === activeConnId) ?? null);
   const sites = $derived(discovery?.items ?? []);
 
+  /** 全部厂商（顺序即下拉展示顺序）。新增厂商在此登记，brainUsable/brainLabel/模型档随之生效。 */
+  const ALL_BRAINS: Brain[] = ['claude', 'codex', 'grok'];
+  /** 第一个可用（已装已登录）的厂商；全不可用时回退 claude（保持旧行为）。 */
+  function firstUsableBrain(): Brain { return ALL_BRAINS.find((b) => brainUsable(b)) ?? 'claude'; }
+
   // ---------- conversations ----------
   let convos = $state<Conversation[]>([]);
   let activeConvId = $state('');
   let activeConv = $state<Conversation | null>(null);
-  // 进行中会话可切换模型（同厂商档位）；threadModel 跟随活动会话、改动即持久化。
+  // 会话可切换模型；threadModel 跟随活动会话、改动即持久化。
   let threadModel = $state('');
   async function persistThreadModel(m: string) {
     if (!activeConv || m === activeConv.model) return;
     try {
       const u = await invoke<Conversation | null>('set_conversation_model', { convId: activeConv.id, model: m });
       if (u && activeConvId === u.id) activeConv = u;
+    } catch (e) { say(String(e), 'err'); }
+  }
+  // 会话内模型面板：三家厂商的模型都列出（值编码 "<brain>::<model>"，同启动器 comboOpts；行首图标区分）。
+  // 当前厂商永远可选（保持原行为）；其他厂商未就绪（未装/未登录）整组置灰。当前厂商排前面。
+  const threadComboOpts = $derived.by(() => {
+    const cur = (activeConv?.brain ?? 'claude') as Brain;
+    const order: Brain[] = [cur, ...ALL_BRAINS.filter((b) => b !== cur)];
+    const out: { value: string; label: string; sub?: string; icon?: string; disabled?: boolean }[] = [];
+    for (const b of order) {
+      const usable = b === cur || brainUsable(b);
+      const note = usable ? '' : brains?.[b].found ? '未登录' : '未安装';
+      for (const m of launcherModelOpts(b)) {
+        out.push({ value: `${b}::${m.value}`, label: m.label, sub: note || m.sub, icon: b, disabled: !usable });
+      }
+    }
+    // 会话当前模型不在清单里（比如自定义 ID 事后被删）：补一条，触发器别显示成裸编码值。
+    const curVal = `${cur}::${threadModel}`;
+    if (!out.some((o) => o.value === curVal)) out.unshift({ value: curVal, label: threadModel || '模型', sub: '当前会话', icon: cur });
+    return out;
+  });
+  // 会话内选模型：同厂商＝只改存储、下一轮生效（原行为不变）；跨厂商＝底层 session 换不了家，
+  // 确认后更新会话 brain/model（后端顺带清 session_ref、codex 下 ask/auto 落 full），
+  // 再走「重建继续」：全新底层会话 + 历史摘要，自动重跑最近一条用户请求。
+  async function pickThreadCombo(v: string) {
+    const conv = activeConv;
+    if (!conv || running[conv.id]) return;
+    const i = v.indexOf('::');
+    if (i < 0) return;
+    const brain = v.slice(0, i) as Brain;
+    const model = v.slice(i + 2);
+    if (brain === conv.brain) { threadModel = model; void persistThreadModel(model); return; }
+    const label = brainLabel(brain);
+    const yes = await confirmDialog(
+      `切到 ${label} 后，这条对话将以历史摘要重建一个全新底层会话继续（自动重跑最近一条请求）。项目文件不受影响；很长的对话会有一定上下文损耗。`,
+      { title: `切换到 ${label}`, kind: 'warning' },
+    );
+    if (!yes) return;
+    try {
+      const u = await invoke<Conversation | null>('set_conversation_brain_model', { convId: conv.id, brain, model });
+      if (u && activeConvId === u.id) { activeConv = u; threadModel = u.model; threadPerm = u.perm_mode || 'full'; threadEffort = u.effort || ''; }
+      void rebuildSession(conv.id);
     } catch (e) { say(String(e), 'err'); }
   }
   // 进行中会话可切换权限档位：claude 的钩子/参数和 codex 的 sandbox 都是每轮下发的，
@@ -118,7 +164,7 @@
   function loadCreatedProposals(): Set<string> { try { return new Set<string>(JSON.parse(localStorage.getItem('gcms.pilot.createdProposals') || '[]')); } catch { return new Set(); } }
   function markProposalCreated(key: string) { if (!key) return; const n = new Set(createdProposals); n.add(key); createdProposals = n; try { localStorage.setItem('gcms.pilot.createdProposals', JSON.stringify([...n])); } catch { /* */ } }
   function freshTaskForm(): TaskForm {
-    const brain = brainUsable('claude') ? 'claude' : brainUsable('codex') ? 'codex' : 'claude';
+    const brain = firstUsableBrain();
     return {
       id: null, connId: activeConnId, connName: activeConn?.name ?? '', siteSlugs: sites[0] ? [sites[0].slug] : [], taskType: 'article',
       brain, model: defaultModelFor(brain), effort: '',
@@ -258,6 +304,8 @@
   const CLAUDE_INSTALL_CMD = typeof navigator !== 'undefined' && /Windows/i.test(navigator.userAgent)
     ? 'irm https://claude.ai/install.ps1 | iex'
     : 'curl -fsSL https://claude.ai/install.sh | sh';
+  // Grok 官方脚本（独立二进制，不需要 Node）；Windows 官方要求 Git-Bash/MSYS2 跑同一条命令。
+  const GROK_INSTALL_CMD = 'curl -fsSL https://x.ai/cli/install.sh | bash';
   let claudeInstalling = $state(false);
   let claudeElapsed = $state(0);
   let claudeTimer: ReturnType<typeof setInterval> | undefined;
@@ -272,6 +320,18 @@
     try { const m = await invoke<string>('install_codex'); say(m); await refreshBrainsManual(); }
     catch (e) { say(String(e), 'err'); }
     finally { codexInstalling = false; if (codexTimer) { clearInterval(codexTimer); codexTimer = undefined; } }
+  }
+  let grokInstalling = $state(false);
+  let grokElapsed = $state(0);
+  let grokTimer: ReturnType<typeof setInterval> | undefined;
+  async function installGrok() {
+    if (grokInstalling) return;
+    grokInstalling = true; grokElapsed = 0;
+    const t0 = Date.now();
+    grokTimer = setInterval(() => { grokElapsed = Date.now() - t0; }, 500);
+    try { const m = await invoke<string>('install_grok'); say(m); await refreshBrainsManual(); }
+    catch (e) { say(String(e), 'err'); }
+    finally { grokInstalling = false; if (grokTimer) { clearInterval(grokTimer); grokTimer = undefined; } }
   }
   async function installClaude() {
     if (claudeInstalling) return;
@@ -321,7 +381,7 @@
   // 厂商未就绪时整组置灰（原厂商下拉的禁用语义保留）。
   const comboOpts = $derived.by(() => {
     const out: { value: string; label: string; sub?: string; icon?: string; disabled?: boolean }[] = [];
-    for (const b of ['claude', 'codex'] as Brain[]) {
+    for (const b of ALL_BRAINS) {
       const usable = brainUsable(b);
       const note = usable ? '' : brains?.[b].found ? '未登录' : '未安装';
       for (const m of launcherModelOpts(b)) {
@@ -382,9 +442,9 @@
   });
   let lDraft = $state('');
   // 全局自定义模型 ID（按厂商，可多个，在「连接与模型」里增删）；作为该厂商模型下拉的附加档位。
-  let customDraft = $state<Record<string, string>>({ claude: '', codex: '' });
-  let customOpen = $state<Record<string, boolean>>({ claude: false, codex: false });
-  function customsOf(b: string): string[] { return (b === 'codex' ? prefs.customCodexIds : prefs.customClaudeIds) ?? []; }
+  let customDraft = $state<Record<string, string>>({ claude: '', codex: '', grok: '' });
+  let customOpen = $state<Record<string, boolean>>({ claude: false, codex: false, grok: false });
+  function customsOf(b: string): string[] { return (b === 'codex' ? prefs.customCodexIds : b === 'grok' ? prefs.customGrokIds : prefs.customClaudeIds) ?? []; }
   function addCustom(b: string) {
     const v = (customDraft[b] ?? '').trim();
     if (!v) return;
@@ -410,9 +470,30 @@
   $effect(() => {
     if (!brains || brainAutoSet) return;
     brainAutoSet = true;
-    if (!brainUsable(lBrain)) lBrain = brainUsable('claude') ? 'claude' : brainUsable('codex') ? 'codex' : lBrain;
+    if (!brainUsable(lBrain)) lBrain = brains && ALL_BRAINS.some((b) => brainUsable(b)) ? firstUsableBrain() : lBrain;
   });
   // 自定义模型输入框的占位示例，按当前引擎给不同提示。
+  // ---------- composer 自动撑高 ----------
+  // 有内容随行数长高，到上限后固定内部滚动；清空/发送后回到初始高度（对标 Claude Code）。
+  function autogrow(node: HTMLTextAreaElement, max = 220) {
+    const min = node.offsetHeight; // 以挂载时的初始高度为下限（启动器 3 行、会话 1 行各自保形）
+    const resize = () => {
+      node.style.height = 'auto';
+      const h = Math.max(min, Math.min(node.scrollHeight, max));
+      node.style.height = h + 'px';
+      node.style.overflowY = node.scrollHeight > max ? 'auto' : 'hidden';
+    };
+    node.addEventListener('input', resize);
+    requestAnimationFrame(resize);
+    (node as unknown as { __autogrow?: () => void }).__autogrow = resize;
+    return { destroy: () => node.removeEventListener('input', resize) };
+  }
+  let draftEl = $state<HTMLTextAreaElement | undefined>();
+  let lDraftEl = $state<HTMLTextAreaElement | undefined>();
+  // 程序化清空（发送/排队/切会话）不触发 input 事件，这里补一脚
+  $effect(() => { void draft; const el = draftEl as unknown as { __autogrow?: () => void } | undefined; el?.__autogrow?.(); });
+  $effect(() => { void lDraft; const el = lDraftEl as unknown as { __autogrow?: () => void } | undefined; el?.__autogrow?.(); });
+
   // ---------- composer / live turn ----------
   let draft = $state('');
   // 并发对话：running = convId → connId（在跑的对话；带 connId 便于删连接时可靠判定）；lives = 每个对话的流式缓冲。
@@ -440,7 +521,8 @@
     return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s`;
   }
   // 会话大小/用量：上下文按厂商上限估算（Claude ~200k、Codex 的 gpt-5.x ~272k，近似值）。
-  function ctxLimit(brain: string): number { return brain === 'codex' ? 272000 : 200000; }
+  // 上下文上限：codex 272k；grok-4.5 500k（ACP initialize 的 totalContextTokens 实测值）；claude 200k。
+  function ctxLimit(brain: string): number { return brain === 'codex' ? 272000 : brain === 'grok' ? 500000 : 200000; }
   function fmtTokens(n: number): string {
     if (n >= 1_000_000) return (n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1).replace(/\.0$/, '') + 'M';
     if (n >= 1000) return Math.round(n / 1000) + 'k';
@@ -515,7 +597,7 @@
     return () => document.removeEventListener('keydown', onKey);
   });
   function say(m: string, k: 'ok' | 'err' = 'ok') { flash = m; flashKind = k; setTimeout(() => (flash = ''), k === 'err' ? 8000 : 4000); }
-  function brainUsable(b: Brain): boolean { const s = b === 'claude' ? brains?.claude : brains?.codex; return !!s && s.found && s.logged_in !== false; }
+  function brainUsable(b: Brain): boolean { const s = b === 'claude' ? brains?.claude : b === 'grok' ? brains?.grok : brains?.codex; return !!s && s.found && s.logged_in !== false; }
   function hostOf(u: string): string { try { return new URL(u).host; } catch { return u; } }
 
   // 从对话里认出这个项目已部署的线上地址（AI 部署完都会说「访问 https://xxx」）。
@@ -638,7 +720,7 @@
 
   $effect(() => { refreshConns(); refreshBrains(); refreshConvos(); });
   $effect(() => {
-    const need = !!brains && ((brains.claude.found && brains.claude.logged_in === false) || (brains.codex.found && brains.codex.logged_in === false));
+    const need = !!brains && ((brains.claude.found && brains.claude.logged_in === false) || (brains.codex.found && brains.codex.logged_in === false) || (brains.grok.found && brains.grok.logged_in === false));
     if (!need) return;
     const t = setInterval(() => { if (!document.hidden) refreshBrains(); }, 6000);
     return () => clearInterval(t);
@@ -861,7 +943,7 @@
   function newChat() {
     view = 'launcher'; activeConvId = ''; activeConv = null; lDraft = '';
     if (!lSite && sites.length) lSite = sites[0].slug;
-    if (!brainUsable(lBrain)) lBrain = brainUsable('claude') ? 'claude' : brainUsable('codex') ? 'codex' : 'claude';
+    if (!brainUsable(lBrain)) lBrain = firstUsableBrain();
   }
   async function openConv(id: string) {
     const c = await invoke<Conversation | null>('get_conversation', { id });
@@ -1149,7 +1231,7 @@
     return '不到 1 分钟';
   }
   function brainTitle(b?: string): string {
-    return b === 'codex' ? 'Codex' : b === 'claude' ? 'Claude' : '模型';
+    return b === 'codex' ? 'Codex' : b === 'grok' ? 'Grok' : b === 'claude' ? 'Claude' : '模型';
   }
 
   async function retry(convId: string, manual = false) {
@@ -1486,7 +1568,7 @@
   }
 
   function taskLabel(t: string): string { return t === 'sitebuild' ? '新站建设' : t === 'article' ? '内容创作' : '自由对话'; }
-  function brainLabel(b: string): string { return b === 'codex' ? 'Codex' : 'Claude'; }
+  function brainLabel(b: string): string { return b === 'codex' ? 'Codex' : b === 'grok' ? 'Grok' : 'Claude'; }
   function fmt(secs: number): string { return new Date(secs * 1000).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }); }
   function fmtSched(iso: string): string {
     const d = new Date(iso);
@@ -1587,10 +1669,12 @@
     }).join('\n');
     return { count: seen.size, tip };
   });
-  const brainOpts = $derived([
-    { value: 'claude', label: 'Claude', icon: 'claude', disabled: !brainUsable('claude'), sub: brainUsable('claude') ? '' : brains?.claude.found ? '未登录' : '未安装' },
-    { value: 'codex', label: 'Codex', icon: 'codex', disabled: !brainUsable('codex'), sub: brainUsable('codex') ? '' : brains?.codex.found ? '未登录' : '未安装' },
-  ]);
+  const brainOpts = $derived(
+    ALL_BRAINS.map((b) => ({
+      value: b, label: brainLabel(b), icon: b, disabled: !brainUsable(b),
+      sub: brainUsable(b) ? '' : brains?.[b].found ? '未登录' : '未安装',
+    })),
+  );
   // Claude 档位 = 别名（--model sonnet/opus/haiku），永远指向该档「当前最新」，
   // 厂商发新版自动跟随、无需更新客户端。sub 版本号仅「当前实际版本」提示，可能滞后。
   // Fable 例外：claude 2.1.96 尚无 fable 别名（实测报错），只能用全 ID，出新版需更新这里。
@@ -1613,10 +1697,16 @@
     { value: 'gpt-5.4', label: 'GPT-5.4', sub: '上一代' },
     { value: 'gpt-5.4-mini', label: 'GPT-5.4-Mini', sub: '上一代 · 最省' },
   ];
-  function modelOptsFor(b: string) { return b === 'codex' ? CODEX_MODELS : CLAUDE_MODELS; }
+  // Grok（订阅通道）目前只开放 grok-4.5 一档（登录后 `grok models` 实测清单）；
+  // 首项「跟随默认」= 不传 --model，厂商换默认自动跟随。其他新模型走「自定义模型 ID」。
+  const GROK_MODELS = [
+    { value: '', label: '跟随 Grok 默认', sub: '当前 Grok 4.5' },
+    { value: 'grok-4.5', label: 'Grok 4.5', sub: '500k 上下文' },
+  ];
+  function modelOptsFor(b: string) { return b === 'codex' ? CODEX_MODELS : b === 'grok' ? GROK_MODELS : CLAUDE_MODELS; }
   // launcher / 会话里可选：预设档位 + 该厂商的全局自定义模型 ID（定时任务表单仍只用预设 + 自己的 modelCustom）。
   function launcherModelOpts(b: string) { return [...modelOptsFor(b), ...customsOf(b).map((id) => ({ value: id, label: id, sub: '自定义' }))]; }
-  function defaultModelFor(b: string): string { return b === 'codex' ? '' : 'sonnet'; }
+  function defaultModelFor(b: string): string { return b === 'claude' ? 'sonnet' : ''; }
   function isLauncherModel(b: string, m: string): boolean { return launcherModelOpts(b).some((o) => o.value === m); }
 
   // 会话按「站点 → 任务类型」两级分组：站点按最近活动倒序；任务类型固定顺序，只留有会话的。
@@ -1870,7 +1960,7 @@
         <div class="hero-card">
           <div class="hero-mark"><AppIcon size={54} /></div>
           <h1>开始之前，先连接一个来源</h1>
-          <p>导入 gcms 技能包为你的站点做内容，或连接 Cloudflare 让本地 Claude / Codex 帮你建站并部署。</p>
+          <p>导入 gcms 技能包为你的站点做内容，或连接 Cloudflare 让本地 Claude / Codex / Grok 帮你建站并部署。</p>
           <div class="hero-btns">
             <button class="btn soft hero-import" onclick={importPack} disabled={importBusy}>{@render plusIcon()}{importBusy ? '导入中…' : '导入技能包'}</button>
             <button class="btn soft hero-import" onclick={openCfConnect}>{@render cfMark(15)}连接 Cloudflare</button>
@@ -1878,7 +1968,7 @@
           {#if brains}
             <div class="cli-guide" data-no-drag>
               <div class="cli-guide-h"><span>本地 CLI 准备（至少装好并登录一个）</span><button class="cli-redetect" onclick={refreshBrainsManual} disabled={brainsBusy} title="装好 / 登录完点这里重新检测（会重新读取 PATH）">{@render refreshIcon(brainsBusy)}<span>重新检测</span></button></div>
-              {#each [{ b: 'claude' as Brain, st: brains.claude, name: 'Claude Code', cmd: CLAUDE_INSTALL_CMD }, { b: 'codex' as Brain, st: brains.codex, name: 'Codex', cmd: 'npm i -g @openai/codex' }] as r (r.b)}
+              {#each [{ b: 'claude' as Brain, st: brains.claude, name: 'Claude Code', cmd: CLAUDE_INSTALL_CMD }, { b: 'codex' as Brain, st: brains.codex, name: 'Codex', cmd: 'npm i -g @openai/codex' }, { b: 'grok' as Brain, st: brains.grok, name: 'Grok', cmd: GROK_INSTALL_CMD }] as r (r.b)}
                 <div class="cli-row">
                   <BrainIcon brain={r.b} size={16} />
                   <span class="cli-name">{r.name}</span>
@@ -1886,6 +1976,8 @@
                     <span class="cli-tag bad">未安装</span>
                     {#if r.b === 'claude'}
                       <button class="wr-btn" onclick={installClaude} disabled={claudeInstalling}>{#if claudeInstalling}<span class="wr-spin"></span>安装中 {elapsedLabel(claudeElapsed)}{:else}一键安装{/if}</button>
+                    {:else if r.b === 'grok'}
+                      <button class="wr-btn" onclick={installGrok} disabled={grokInstalling}>{#if grokInstalling}<span class="wr-spin"></span>安装中 {elapsedLabel(grokElapsed)}{:else}一键安装{/if}</button>
                     {:else if brains && !brains.node.found}
                       <button class="node-need" title="Codex 通过 npm 安装，需要先装 Node.js（含 npm）。点击打开官网下载。" onclick={() => openUrl('https://nodejs.org/')}>先装 Node.js ↗</button>
                     {:else if r.b === 'codex'}
@@ -1936,7 +2028,7 @@
           {/if}
 
           <div class="composer big">
-            <textarea bind:value={lDraft} rows="3"
+            <textarea bind:value={lDraft} bind:this={lDraftEl} use:autogrow rows="3"
               placeholder={isCfConn ? '例如：做个卖手冲咖啡的落地页，深色调，留个邮箱订阅表单存到 D1，先给我方案' : lTask === 'sitebuild' ? '例如：帮我搭一个介绍露营装备的中文站，风格轻松，先给我一个方案' : '例如：帮我写一篇 2026 年 macOS 效率工具盘点，先列个提纲'}
               oncompositionstart={() => (composing = true)} oncompositionend={() => (composing = false)}
               onkeydown={(e) => onComposerKey(e, startChat)}></textarea>
@@ -1995,7 +2087,7 @@
               {/each}
             </div>
             {#if schedSites.length > 8}
-              <div class="sched-filter-dd"><Dropdown compact searchable bind:value={schedSiteFilter} options={[{ value: '', label: `全部站点 · ${schedSites.length}` }, ...schedSites.map((sl) => ({ value: sl, label: sites.find((x) => x.slug === sl)?.name || sl, sub: sl }))]} placeholder="全部站点" /></div>
+              <div class="sched-filter-dd"><Dropdown compact searchable bare bind:value={schedSiteFilter} options={[{ value: '', label: `全部站点 · ${schedSites.length}` }, ...schedSites.map((sl) => { const st = sites.find((x) => x.slug === sl); return { value: sl, label: st?.name || sl, sub: st?.url ? hostOf(st.url) : sl, img: st?.favicon || st?.logo || faviconGuess(st?.url) }; })]} placeholder="全部站点" /></div>
             {:else if schedSites.length > 1}
               <div class="sched-filter">
                 <button class="sf-chip sf-all" class:on={!schedSiteFilter} onclick={() => (schedSiteFilter = '')}><svg width="12" height="12" viewBox="0 0 16 16" fill="none"><rect x="2" y="2" width="5" height="5" rx="1.2" stroke="currentColor" stroke-width="1.3"/><rect x="9" y="2" width="5" height="5" rx="1.2" stroke="currentColor" stroke-width="1.3"/><rect x="2" y="9" width="5" height="5" rx="1.2" stroke="currentColor" stroke-width="1.3"/><rect x="9" y="9" width="5" height="5" rx="1.2" stroke="currentColor" stroke-width="1.3"/></svg>全部</button>
@@ -2234,7 +2326,7 @@
               {#if attaching}<span class="attach-loading">上传中…</span>{/if}
             </div>
           {/if}
-          <textarea bind:value={draft} rows="1" placeholder={viewBusy ? '输入下一条，回车排队，等这轮结束自动发送' : '继续说…（Enter 发送，Shift+Enter 换行，可粘贴/拖入文件）'}
+          <textarea bind:value={draft} bind:this={draftEl} use:autogrow rows="1" placeholder={viewBusy ? '输入下一条，回车排队，等这轮结束自动发送' : '继续说…（Enter 发送，Shift+Enter 换行，可粘贴/拖入文件）'}
             oncompositionstart={() => (composing = true)} oncompositionend={() => (composing = false)}
             onpaste={onComposerPaste} ondrop={onComposerDrop} ondragover={onComposerDragOver}
             onkeydown={(e) => onComposerKey(e, viewBusy ? queueMessage : send)}></textarea>
@@ -2248,8 +2340,8 @@
             </div>
             <div class="cb-right">
               <Dropdown compact bind:value={threadPerm} options={permOptsFor(activeConv?.brain ?? 'claude')} tone={permTone(threadPerm)} onchange={persistThreadPerm} />
-              <!-- 厂商随会话固定：并进模型下拉（图标标识厂商），只列本厂商的模型档 -->
-              <ModelFx options={launcherModelOpts(activeConv?.brain ?? 'claude').map((o) => ({ ...o, icon: activeConv?.brain ?? 'claude' }))} value={threadModel} effort={threadEffort} lockModel={viewBusy} onpick={(v: string) => { threadModel = v; persistThreadModel(v); }} oneffort={persistThreadEffort} />
+              <!-- 模型下拉列全部厂商（图标区分）：同厂商下一轮生效；跨厂商确认后以历史摘要重建续跑 -->
+              <ModelFx options={threadComboOpts} value={`${activeConv?.brain ?? 'claude'}::${threadModel}`} effort={threadEffort} lockModel={viewBusy} onpick={(v: string) => { void pickThreadCombo(v); }} oneffort={persistThreadEffort} />
               {#if viewBusy}
                 {#if draft.trim() || attachments.length}
                   <button class="send queue" onclick={queueMessage} title="排队：等这轮结束后自动发送">↑</button>
@@ -2483,7 +2575,7 @@
       <div class="sec-head mt"><span>本地模型</span><button class="icon-btn" onclick={refreshBrainsManual} title="刷新">{@render refreshIcon(brainsBusy)}</button></div>
       {#if brains}
         <div class="brains-list">
-        {#each [{ b: 'claude' as Brain, st: brains.claude, name: 'Claude Code', cmd: CLAUDE_INSTALL_CMD }, { b: 'codex' as Brain, st: brains.codex, name: 'Codex', cmd: 'npm i -g @openai/codex' }] as r (r.b)}
+        {#each [{ b: 'claude' as Brain, st: brains.claude, name: 'Claude Code', cmd: CLAUDE_INSTALL_CMD }, { b: 'codex' as Brain, st: brains.codex, name: 'Codex', cmd: 'npm i -g @openai/codex' }, { b: 'grok' as Brain, st: brains.grok, name: 'Grok', cmd: GROK_INSTALL_CMD }] as r (r.b)}
           <div class="brain-block">
           <div class="brain-row">
             <span class="brain-ic"><BrainIcon brain={r.b} size={18} /></span>
@@ -2505,7 +2597,7 @@
                     <div class="cust-chip"><span class="cust-id">{id}</span><button class="cust-x" title="删除" onclick={() => removeCustom(r.b, id)}>×</button></div>
                   {/each}
                   <div class="cust-add">
-                    <input class="tin" bind:value={customDraft[r.b]} placeholder={r.b === 'codex' ? '如 gpt-5.5 / o3' : '如 claude-opus-4-8'}
+                    <input class="tin" bind:value={customDraft[r.b]} placeholder={r.b === 'codex' ? '如 gpt-5.5 / o3' : r.b === 'grok' ? '如 grok-4.5' : '如 claude-opus-4-8'}
                       spellcheck="false" autocapitalize="off" autocorrect="off" onkeydown={(e) => e.key === 'Enter' && addCustom(r.b)} />
                     <button class="btn sm" onclick={() => addCustom(r.b)} disabled={!(customDraft[r.b] ?? '').trim()}>添加</button>
                   </div>
@@ -3080,7 +3172,7 @@
   .sf-chip.sf-all.on { background: none; box-shadow: none; color: var(--accent); font-weight: 600; }
   .sched-body small { display: inline-flex; align-items: center; gap: 4px; }
   .sched-t { color: var(--accent); font-weight: 500; }
-  .sched-filter-dd { max-width: 240px; margin: 4px 0 6px; }
+  .sched-filter-dd { display: inline-block; margin: 4px 0 6px; }
   .sched-grp { padding: 16px 2px 6px; }
   .sched-grp:first-child { padding-top: 4px; }
   .sched-item { display: flex; align-items: center; gap: 14px; padding: 11px 14px; background: var(--card);

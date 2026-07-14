@@ -21,6 +21,8 @@ pub struct BrainStatus {
 pub struct BrainsInfo {
     pub claude: BrainStatus,
     pub codex: BrainStatus,
+    /// xAI Grok CLI（ACP 接入）；登录态看 ~/.grok/auth.json（GROK_HOME 可改基目录）。
+    pub grok: BrainStatus,
     /// Cloudflare 部署工具（建站/预览/部署/D1 都靠它）；用 env token，无登录态。
     pub wrangler: BrainStatus,
     /// 无头截图用的浏览器（Chrome/Edge/Chromium/Brave，可选能力）。只查路径存在，不执行。
@@ -32,11 +34,12 @@ pub struct BrainsInfo {
 
 pub async fn detect() -> BrainsInfo {
     augment_path_env(); // 每次检测都补一遍：刚装完的目录此刻才存在
-    let (claude, codex, wrangler, node) =
-        tokio::join!(detect_claude(), detect_codex(), detect_wrangler(), detect_node());
+    let (claude, codex, grok, wrangler, node) =
+        tokio::join!(detect_claude(), detect_codex(), detect_grok(), detect_wrangler(), detect_node());
     BrainsInfo {
         claude,
         codex,
+        grok,
         wrangler,
         node,
         browser: detect_browser(),
@@ -258,6 +261,46 @@ async fn detect_codex() -> BrainStatus {
         // codex login status: 登录时 exit 0 且输出 "Logged in ..."。
         st.logged_in = Some(ok && out.to_lowercase().contains("logged in"));
         st.detail = out.chars().take(200).collect();
+    }
+    st
+}
+
+/// xAI Grok CLI。安装器默认放 ~/.grok/bin（并 symlink ~/.local/bin），PATH 缺失时兜底直查。
+/// 登录态**不跑网络命令**：官方安装脚本同款判据——~/.grok/auth.json 存在即已登录
+///（`grok login` 写入、`grok logout` 删除；文件内容是 token，不解析只看存在与体量）。
+async fn detect_grok() -> BrainStatus {
+    let mut st = BrainStatus::default();
+    let path = which("grok").or_else(|| {
+        let home = std::env::var(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).ok()?;
+        let cand = std::path::Path::new(&home)
+            .join(".grok")
+            .join("bin")
+            .join(if cfg!(windows) { "grok.exe" } else { "grok" });
+        cand.is_file().then(|| cand.to_string_lossy().into_owned())
+    });
+    let Some(path) = path else {
+        st.detail = "PATH 中没有找到 grok（可选）".into();
+        return st;
+    };
+    st.found = true;
+    st.path = path;
+    if let Some((_, ver)) = run_capture(&st.path, &["--version"], Duration::from_secs(10)).await {
+        st.version = ver.lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim().to_string();
+    }
+    let auth = std::env::var("GROK_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|_| {
+            std::env::var(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+                .map(|h| std::path::Path::new(&h).join(".grok"))
+        })
+        .map(|d| d.join("auth.json"));
+    st.logged_in = Some(
+        auth.as_ref()
+            .map(|p| std::fs::metadata(p).map(|m| m.len() > 10).unwrap_or(false))
+            .unwrap_or(false),
+    );
+    if st.logged_in == Some(false) {
+        st.detail = "未登录：终端运行 grok login 完成授权".into();
     }
     st
 }

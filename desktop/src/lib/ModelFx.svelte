@@ -163,8 +163,8 @@
         <div class="fx-div"></div>
         <div class="fx-usage">
           <div class="fx-usage-title">本地用量<span>token · 仅供参考</span></div>
-          <div class="fx-usage-row"><span>近 5 小时</span><b>Claude {fmtTok(usage.window_a?.claude)} · Codex {fmtTok(usage.window_a?.codex)}</b></div>
-          <div class="fx-usage-row"><span>今日</span><b>Claude {fmtTok(usage.window_b?.claude)} · Codex {fmtTok(usage.window_b?.codex)}</b></div>
+          <div class="fx-usage-row"><span>近 5 小时</span><b>Claude {fmtTok(usage.window_a?.claude)} · Codex {fmtTok(usage.window_a?.codex)} · Grok {fmtTok(usage.window_a?.grok)}</b></div>
+          <div class="fx-usage-row"><span>今日</span><b>Claude {fmtTok(usage.window_b?.claude)} · Codex {fmtTok(usage.window_b?.codex)} · Grok {fmtTok(usage.window_b?.grok)}</b></div>
         </div>
       {/if}
     </div>

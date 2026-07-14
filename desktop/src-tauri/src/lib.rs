@@ -1,3 +1,4 @@
+mod acp;
 mod agent;
 mod brains;
 mod cf;
@@ -506,6 +507,54 @@ mod workdir_tests {
         assert!(install_err_brief(b"", b"curl: (7) Failed to connect\n").contains("curl: (7)"));
         assert_eq!(install_err_brief(b"", b""), "未知错误");
     }
+
+    fn test_conv(brain: &str, model: &str, perm: &str) -> Conversation {
+        serde_json::from_value(serde_json::json!({
+            "id": "c1", "conn_id": "t", "conn_name": "", "site_slug": "s", "site_name": "",
+            "task_type": "free", "brain": brain, "model": model, "perm_mode": perm,
+            "session_ref": "sess-old", "title": "t", "messages": [], "status": "idle",
+            "created_at": 0, "updated_at": 0,
+        }))
+        .expect("test conversation")
+    }
+
+    /// 跨厂商切换：换 brain 清 session_ref（另一家 resume 不了旧会话）+ codex 下 ask/auto 落 full；
+    /// 同厂商只换 model，session/perm 原样保留。effort 字段两条路径都不碰。
+    #[test]
+    fn apply_brain_switch_rules() {
+        // claude → codex：清 session、auto 落 full
+        let mut c = test_conv("claude", "sonnet", "auto");
+        apply_brain_switch(&mut c, "codex", "gpt-5.6-terra");
+        assert_eq!(c.brain, "codex");
+        assert_eq!(c.model, "gpt-5.6-terra");
+        assert_eq!(c.session_ref, "", "跨厂商必须抛弃旧 session");
+        assert_eq!(c.perm_mode, "full", "codex 无逐命令确认，auto 落 full");
+
+        // claude → codex：plan 档保留（只读语义两家通用）
+        let mut c = test_conv("claude", "opus", "plan");
+        apply_brain_switch(&mut c, "codex", "");
+        assert_eq!(c.perm_mode, "plan");
+
+        // codex → claude：ask/auto 不存在被误改的方向，perm 原样
+        let mut c = test_conv("codex", "gpt-5.5", "full");
+        apply_brain_switch(&mut c, "claude", "sonnet");
+        assert_eq!(c.session_ref, "");
+        assert_eq!(c.perm_mode, "full");
+
+        // claude → grok：grok 有逐命令批准（ACP 权限桥），ask/auto 原样保留
+        let mut c = test_conv("claude", "sonnet", "ask");
+        apply_brain_switch(&mut c, "grok", "");
+        assert_eq!(c.brain, "grok");
+        assert_eq!(c.session_ref, "");
+        assert_eq!(c.perm_mode, "ask");
+
+        // 同厂商换档：session_ref 保留（还是同一条底层会话）
+        let mut c = test_conv("claude", "sonnet", "ask");
+        apply_brain_switch(&mut c, "claude", "opus");
+        assert_eq!(c.session_ref, "sess-old");
+        assert_eq!(c.perm_mode, "ask");
+        assert_eq!(c.model, "opus");
+    }
 }
 
 /// 读工作目录内的图片为 data URI（webview 读不了本地文件）。附件缩略图（uploads/xx）和
@@ -924,9 +973,12 @@ async fn use_template(
 /// 自动轮询仍用轻量的 detect_brains（不每 6s 起登录 shell）。
 #[tauri::command]
 async fn redetect_brains() -> Result<brains::BrainsInfo, String> {
-    tauri::async_runtime::spawn_blocking(path_env::fix)
-        .await
-        .map_err(|e| e.to_string())?;
+    tauri::async_runtime::spawn_blocking(|| {
+        path_env::fix();
+        apply_system_proxy_to_process();
+    })
+    .await
+    .map_err(|e| e.to_string())?;
     Ok(brains::detect().await)
 }
 
@@ -1155,6 +1207,15 @@ async fn install_claude() -> Result<String, String> {
     .map_err(|e| e.to_string())?
 }
 
+/// 把系统代理补进本进程环境（已有环境变量不覆盖）：Windows 代理软件通常只设注册表
+/// 系统代理、不设环境变量，而 claude/codex CLI 只认环境变量——不补的话 GUI 派生的
+/// 对话子进程全部直连（用户被迫开 TUN 模式）。之后 spawn 的所有子进程自动继承。
+fn apply_system_proxy_to_process() {
+    for (k, v) in system_proxy_env() {
+        std::env::set_var(k, v);
+    }
+}
+
 /// 一键安装 Codex（npm i -g @openai/codex，要求 Node 18+）。注入系统代理。
 #[tauri::command]
 async fn install_codex() -> Result<String, String> {
@@ -1179,6 +1240,32 @@ async fn install_codex() -> Result<String, String> {
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// 一键安装 Grok CLI（官方脚本 curl | bash，装到 ~/.grok/bin 并自动補 PATH）。
+/// Windows 官方只支持 Git-Bash/MSYS2 流程，不做一键，回错误引导手动装。
+#[tauri::command]
+async fn install_grok() -> Result<String, String> {
+    #[cfg(windows)]
+    {
+        return Err("Windows 请在 Git Bash 里运行：curl -fsSL https://x.ai/cli/install.sh | bash，装好后点「重新检测」".to_string());
+    }
+    #[cfg(not(windows))]
+    {
+        tauri::async_runtime::spawn_blocking(|| {
+            let mut c = std::process::Command::new("/bin/bash");
+            c.args(["-c", "curl -fsSL https://x.ai/cli/install.sh | bash"]);
+            c.envs(system_proxy_env());
+            let out = c.output().map_err(|e| format!("启动安装脚本失败: {e}"))?;
+            if out.status.success() {
+                Ok("Grok CLI 安装完成，正在重新检测…".to_string())
+            } else {
+                Err(format!("安装失败：{}", install_err_brief(&out.stdout, &out.stderr)))
+            }
+        })
+        .await
+        .map_err(|e| e.to_string())?
+    }
 }
 
 /// 一键安装 wrangler（npm i -g wrangler）。npm 走已修复的 PATH（Windows 上 .cmd 必须
@@ -1269,6 +1356,44 @@ fn set_conversation_model(
     state
         .convos
         .mutate(&conv_id, now_secs(), move |c| c.model = model)
+}
+
+/// 跨厂商切换的会话字段改写：brain+model 一起换。换厂商时清空 session_ref——
+/// 旧厂商的 session 另一家恢复不了，留着只会让失败路径拿旧 ref 去 resume 新厂商；
+/// 调用方随后必须走 rebuild_session 以历史摘要重建续跑（begin_rebuild 本就不要求已有 session）。
+/// effort 保留；codex 不支持逐命令确认，ask/auto 档按启动器同规则落到 full
+///（claude/grok 都有逐命令批准，互切时 perm 原样保留）。
+fn apply_brain_switch(c: &mut Conversation, brain: &str, model: &str) {
+    if c.brain != brain {
+        c.session_ref = String::new();
+        if brain == "codex" && (c.perm_mode == "ask" || c.perm_mode == "auto") {
+            c.perm_mode = "full".into();
+        }
+    }
+    c.brain = brain.into();
+    c.model = model.into();
+}
+
+/// 会话内跨厂商换模型（含同厂商，前端只在跨厂商时调它）。运行中拒绝：
+/// 本轮已带旧厂商启动，中途换 brain 会让收尾逻辑把新厂商会话和旧 session 缝在一起。
+#[tauri::command]
+fn set_conversation_brain_model(
+    state: tauri::State<'_, AppState>,
+    conv_id: String,
+    brain: String,
+    model: String,
+) -> Result<Option<Conversation>, String> {
+    if brain != "claude" && brain != "codex" && brain != "grok" {
+        return Err(format!("未知厂商：{brain}"));
+    }
+    if let Some(c) = state.convos.get(&conv_id) {
+        if c.status == "running" {
+            return Err("上一轮还在进行中，请稍候".into());
+        }
+    }
+    state
+        .convos
+        .mutate(&conv_id, now_secs(), move |c| apply_brain_switch(c, &brain, &model))
 }
 
 /// 会话进行中切换权限档位（plan/ask/auto/full）：仅改存储，下一轮 send_message 读到即用。
@@ -1624,6 +1749,7 @@ fn assistant_msg(res: &agent::TurnResult, now: u64) -> Message {
 
 /// 用本轮 usage 更新会话的「上下文大小 + 累计 token」。拿不到 usage 就不动（保留上一轮的值）。
 /// 口径差异：claude 用最后一条 assistant 消息的 usage＝最终那次调用读入的上下文，能当"会话大小"；
+/// grok（ACP prompt 结果 _meta 顶层）同样是最后一次调用的读数，口径一致可标上下文；
 /// codex（exec --json）只有 turn.completed 的整轮汇总——多步回合是各步之和，当上下文显示会离谱
 /// 膨胀（一轮几百步能加到几十 M），故 codex 不标上下文（置 0，前端隐藏该条），只记累计吞吐。
 fn apply_usage(c: &mut Conversation, res: &agent::TurnResult, data_dir: &std::path::Path) {
@@ -1673,10 +1799,11 @@ async fn create_conversation(
 ) -> Result<Conversation, String> {
     let conn = conns.get(&conn_id)?;
     let now = now_secs();
-    let session_seed = if brain == "codex" {
-        String::new()
-    } else {
+    // 会话种子：claude 由我们指定 uuid（--session-id）；codex/grok 由 CLI 自己生成、首轮结果回填。
+    let session_seed = if brain == "claude" {
         uuid::Uuid::new_v4().to_string()
+    } else {
+        String::new()
     };
     let work_dir = resolve_work_dir(&conn, site_slug.trim())?;
     let is_cf = conn.kind == "cloudflare";
@@ -1899,7 +2026,7 @@ async fn rebuild_session(
             "【会话已重建】以下是此前对话的记录，供你衔接上下文；项目/站点里的实际文件与内容以当前现状为准，先查看再动手：\n\n{recap}\n\n——\n【继续执行用户的最新请求】\n{last_user}"
         )
     };
-    let session_seed = if conv.brain == "codex" { String::new() } else { uuid::Uuid::new_v4().to_string() };
+    let session_seed = if conv.brain == "claude" { uuid::Uuid::new_v4().to_string() } else { String::new() };
 
     let res = agent::run_turn(
         state.runs.clone(),
@@ -1948,11 +2075,14 @@ fn open_brain_login(app: tauri::AppHandle, brain: String) -> Result<(), String> 
     let login_cmd = match brain.as_str() {
         "claude" => "claude auth login --claudeai",
         "codex" => "codex login",
+        "grok" => "grok login",
         other => return Err(format!("未知的执行引擎: {other}")),
     };
-    // 登录成功标记：claude 读 --json 的 loggedIn=true，codex 读输出里的 "logged in"。
+    // 登录成功标记：claude 读 --json 的 loggedIn=true，codex 读 "logged in"，
+    // grok models 已登录时打印 "You are logged in with …"（未登录是 "You are not authenticated."）。
     let (status_cmd, marker) = match brain.as_str() {
         "claude" => ("claude auth status --json", r#""loggedIn": true"#),
+        "grok" => ("grok models", "logged in with"),
         _ => ("codex login status", "logged in"),
     };
     let dir = app
@@ -2109,6 +2239,7 @@ fn show_main(app: &tauri::AppHandle) {
 pub fn run() {
     // GUI 进程的 PATH / 代理是裸的，必须最先修复，否则找不到 claude/node 且直连被墙。
     path_env::fix();
+    apply_system_proxy_to_process();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -2173,6 +2304,7 @@ pub fn run() {
             resolve_workdir_file,
             usage_stats,
             install_codex,
+            install_grok,
             scheduled_preview_url,
             list_cf_projects,
             cf_project_ready,
@@ -2196,6 +2328,7 @@ pub fn run() {
             rebuild_session,
             cancel_turn,
             set_conversation_model,
+            set_conversation_brain_model,
             set_conversation_perm_mode,
             set_conversation_effort,
             list_pending_permits,

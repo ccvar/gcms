@@ -51,11 +51,12 @@ pub struct TurnResult {
 
 /// 识别「订阅额度耗尽/限流」类报错。claude 触顶输出形如
 /// "Claude AI usage limit reached|1736600400"（重置时间戳可选）；codex/OpenAI 是
-/// 429 / usage limit / rate limit 一族措辞。只对失败回合的错误材料调用（正文里聊到
-/// "rate limit" 不会误判——ok 回合不进这里）。
-fn detect_usage_limit(material: &str) -> Option<i64> {
+/// 429 / usage limit / rate limit 一族措辞；grok 欠费/触顶是 402 Payment Required +
+/// "personal-team-blocked:spending-limit: You have run out …"（实测 0.2.101）。
+/// 只对失败回合的错误材料调用（正文里聊到 "rate limit" 不会误判——ok 回合不进这里）。
+pub(crate) fn detect_usage_limit(material: &str) -> Option<i64> {
     let low = material.to_ascii_lowercase();
-    let hit = ["usage limit", "rate limit", "limit reached", "too many requests", "insufficient_quota", "quota exceeded", "resets at"]
+    let hit = ["usage limit", "rate limit", "limit reached", "too many requests", "insufficient_quota", "quota exceeded", "resets at", "spending-limit", "payment required"]
         .iter()
         .any(|p| low.contains(p))
         || low.contains("(429")
@@ -99,7 +100,7 @@ pub struct RunRegistry {
 }
 
 impl RunRegistry {
-    fn register(&self, id: &str) -> (Arc<AtomicBool>, tokio::sync::oneshot::Receiver<()>) {
+    pub(crate) fn register(&self, id: &str) -> (Arc<AtomicBool>, tokio::sync::oneshot::Receiver<()>) {
         let canceled = Arc::new(AtomicBool::new(false));
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.inner
@@ -108,7 +109,7 @@ impl RunRegistry {
             .insert(id.to_string(), (canceled.clone(), Some(tx)));
         (canceled, rx)
     }
-    fn unregister(&self, id: &str) {
+    pub(crate) fn unregister(&self, id: &str) {
         self.inner.lock().unwrap().remove(id);
     }
     pub fn cancel(&self, id: &str) -> bool {
@@ -122,7 +123,7 @@ impl RunRegistry {
             false
         }
     }
-    fn is_canceled(&self, id: &str) -> bool {
+    pub(crate) fn is_canceled(&self, id: &str) -> bool {
         self.inner
             .lock()
             .unwrap()
@@ -261,6 +262,20 @@ pub fn shot_prompt(shot_path: &str, is_cf: bool) -> String {
 
 // ---- 运行一轮 ----
 
+/// 杀整棵进程树（进程组/子孙），别留下带着密钥继续写 CMS 的孙进程（node/bash 等）。
+/// spawn 前需已设 process_group(0)（unix）；Windows 用 taskkill /T。
+pub(crate) fn kill_tree(pid: Option<u32>) {
+    #[cfg(unix)]
+    if let Some(pid) = pid {
+        let _ = std::process::Command::new("kill").args(["-9", &format!("-{pid}")]).status();
+    }
+    #[cfg(windows)]
+    if let Some(pid) = pid {
+        use std::os::windows::process::CommandExt;
+        let _ = std::process::Command::new("taskkill").args(["/T", "/F", "/PID", &pid.to_string()]).creation_flags(0x0800_0000).status();
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn run_turn(
     registry: RunRegistry,
@@ -295,6 +310,14 @@ pub async fn run_turn(
     };
 
     let work_dir = if work_dir.trim().is_empty() { conn.skill_dir.clone() } else { work_dir };
+    // grok 走 ACP（JSON-RPC over stdio）——协议不同族，整轮交给 acp 模块（事件/结果契约一致）。
+    if brain == "grok" {
+        return crate::acp::run_turn(
+            registry, conn, work_dir, model, mode, effort, perm.pending_dir, session_ref,
+            is_first, system, message, turn_id, channel, api_key,
+        )
+        .await;
+    }
     let build = if brain == "codex" {
         build_codex(&conn, &model, &effort, &session_ref, is_first, system.as_deref(), &message, &api_key, &work_dir, mode)
     } else {
@@ -346,16 +369,7 @@ pub async fn run_turn(
     let status = tokio::select! {
         s = child.wait() => s.ok(),
         _ = &mut kill_rx => {
-            // 杀整棵进程树，别留下带着密钥继续写 CMS 的孙进程（node/bash 等）。
-            #[cfg(unix)]
-            if let Some(pid) = pid {
-                let _ = std::process::Command::new("kill").args(["-9", &format!("-{pid}")]).status();
-            }
-            #[cfg(windows)]
-            if let Some(pid) = pid {
-                use std::os::windows::process::CommandExt;
-                let _ = std::process::Command::new("taskkill").args(["/T", "/F", "/PID", &pid.to_string()]).creation_flags(0x0800_0000).status();
-            }
+            kill_tree(pid);
             let _ = child.kill().await;
             child.wait().await.ok()
         }
@@ -438,7 +452,7 @@ pub async fn run_turn(
 }
 
 /// 从文本里找 `PILOT_TASK: {json}` 行，解析成 TaskProposal 并把该行从展示文本移除。
-fn extract_proposal(text: &str) -> (String, Option<TaskProposal>) {
+pub(crate) fn extract_proposal(text: &str) -> (String, Option<TaskProposal>) {
     let mut found: Option<TaskProposal> = None;
     let mut kept: Vec<&str> = Vec::new();
     for line in text.lines() {
@@ -550,7 +564,7 @@ fn parse_usage(v: &serde_json::Value) -> Option<TurnUsage> {
 /// 按连接类型注入凭据 env + 设置 cwd：
 ///   cloudflare → CLOUDFLARE_API_TOKEN/ACCOUNT_ID，cwd=项目目录；
 ///   gcms       → GCMS_API_BASE/KEY，cwd=技能包目录。
-fn apply_env_cwd(cmd: &mut Command, conn: &Connection, work_dir: &str, api_key: &str) {
+pub(crate) fn apply_env_cwd(cmd: &mut Command, conn: &Connection, work_dir: &str, api_key: &str) {
     cmd.current_dir(work_dir);
     if conn.kind == "cloudflare" {
         cmd.env("CLOUDFLARE_API_TOKEN", api_key);
@@ -864,7 +878,7 @@ fn collect_lines(
     })
 }
 
-fn last_nonempty(s: &str) -> Option<String> {
+pub(crate) fn last_nonempty(s: &str) -> Option<String> {
     s.lines().rev().find(|l| !l.trim().is_empty()).map(|l| l.trim().chars().take(200).collect())
 }
 
