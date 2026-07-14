@@ -457,6 +457,8 @@ func adminTitleKey(title string) string {
 		return "admin.backups.title"
 	case "归档站点":
 		return "admin.archived_sites.title"
+	case "存储清理":
+		return "admin.media_cleanup.title"
 	case "可视化编辑":
 		return "admin.nav.visual"
 	case "安全":

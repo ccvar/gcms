@@ -4739,3 +4739,104 @@
   });
   serialize();
 })();
+
+/* ---------- 平台设置：存储清理（全站扫描未引用上传文件 → 移入回收站隔离） ---------- */
+(function () {
+  var root = document.querySelector("[data-media-cleanup]");
+  if (!root) return;
+  var scanBtn = root.querySelector("[data-media-scan-all]");
+  var cleanBtn = root.querySelector("[data-media-clean-all]");
+  var status = root.querySelector("[data-media-status]");
+  var scanURL = root.getAttribute("data-scan-url") || "/admin/media-cleanup/scan";
+  var cleanURL = root.getAttribute("data-clean-url") || "/admin/media-cleanup/clean";
+  function msg(name, count, size) {
+    var text = root.getAttribute("data-msg-" + name) || "";
+    return text.replace("{count}", String(count)).replace("{size}", size || "");
+  }
+  function fmtSize(bytes) {
+    var mb = (bytes || 0) / (1024 * 1024);
+    if (mb >= 1) return (Math.round(mb * 10) / 10) + " MB";
+    return Math.max(1, Math.round((bytes || 0) / 1024)) + " KB";
+  }
+  function showStatus(text) {
+    if (!status) return;
+    status.hidden = false;
+    status.textContent = text;
+  }
+  function rowCell(id) {
+    var row = root.querySelector('[data-media-site="' + id + '"]');
+    return row ? row.querySelector("[data-media-count]") : null;
+  }
+  function fillRows(sites, cleaned) {
+    (sites || []).forEach(function (site) {
+      var cell = rowCell(site.id);
+      if (!cell) return;
+      if (site.error) cell.textContent = site.error;
+      else if (cleaned) cell.textContent = msg("row-cleaned", site.count, fmtSize(site.bytes));
+      else if (!site.count) cell.textContent = msg("row-none", 0, "");
+      else cell.textContent = msg("row-found", site.count, fmtSize(site.bytes));
+    });
+  }
+  function post(url, params) {
+    var body = new URLSearchParams(params || {});
+    body.set("_csrf", root.getAttribute("data-csrf") || "");
+    return fetch(url, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: {
+        "Accept": "application/json",
+        "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+        "X-Requested-With": "XMLHttpRequest"
+      },
+      body: body.toString()
+    }).then(function (res) {
+      return res.json().catch(function () { return {}; }).then(function (json) {
+        if (!res.ok || json.ok !== true) throw new Error(json.message || "");
+        return json;
+      });
+    });
+  }
+  if (scanBtn) scanBtn.addEventListener("click", function () {
+    scanBtn.disabled = true;
+    if (cleanBtn) cleanBtn.hidden = true;
+    showStatus(msg("scanning", 0, ""));
+    post(scanURL).then(function (json) {
+      fillRows(json.sites, false);
+      if (!json.count) { showStatus(msg("none", 0, "")); return; }
+      showStatus(msg("found", json.count, fmtSize(json.bytes)));
+      if (cleanBtn) cleanBtn.hidden = false;
+    }).catch(function (err) {
+      showStatus(err && err.message ? err.message : msg("failed", 0, ""));
+    }).finally(function () {
+      scanBtn.disabled = false;
+    });
+  });
+  if (cleanBtn) cleanBtn.addEventListener("click", function () {
+    cleanBtn.disabled = true;
+    showStatus(msg("cleaning", 0, ""));
+    post(cleanURL).then(function (json) {
+      cleanBtn.hidden = true;
+      fillRows(json.sites, true);
+      showStatus(msg("done", json.moved, fmtSize(json.bytes)));
+    }).catch(function (err) {
+      showStatus(err && err.message ? err.message : msg("failed", 0, ""));
+    }).finally(function () {
+      cleanBtn.disabled = false;
+    });
+  });
+  root.querySelectorAll("[data-media-clean-site]").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var id = btn.getAttribute("data-media-clean-site");
+      var cell = rowCell(id);
+      btn.disabled = true;
+      if (cell) cell.textContent = msg("cleaning", 0, "");
+      post(cleanURL, { site: id }).then(function (json) {
+        fillRows(json.sites, true);
+      }).catch(function (err) {
+        if (cell) cell.textContent = err && err.message ? err.message : msg("failed", 0, "");
+      }).finally(function () {
+        btn.disabled = false;
+      });
+    });
+  });
+})();

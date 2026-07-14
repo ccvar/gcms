@@ -819,6 +819,7 @@ type View struct {
 	PlatformGoogleDefaultURIs    map[int64]string // 每站点自动创建 GA/匹配 Search Console 时优先使用的网站地址
 	ArchivedSites                []*platform.ArchivedSite
 	ArchivedSiteIcons            map[int64]string
+	MediaCleanupSites            []MediaCleanupSite // 平台存储清理页的站点列表
 	BackupConfig                 backup.Config
 	BackupRecords                []*backup.BackupRecord
 	BackupDir                    string
@@ -1840,6 +1841,8 @@ func platformOnlyPath(path string) bool {
 	case path == "/admin/backups" || strings.HasPrefix(path, "/admin/backups/"):
 		return true
 	case path == "/admin/archived-sites" || strings.HasPrefix(path, "/admin/archived-sites/"):
+		return true
+	case path == "/admin/media-cleanup" || strings.HasPrefix(path, "/admin/media-cleanup/"):
 		return true
 	case path == "/admin/updates" || strings.HasPrefix(path, "/admin/updates/"):
 		return true
@@ -3074,6 +3077,9 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("GET /admin/archived-sites", s.requireAuth(s.adminArchivedSites))
 	mux.HandleFunc("POST /admin/archived-sites/{id}/restore", s.requireAuth(s.adminRestoreArchivedSite))
 	mux.HandleFunc("POST /admin/archived-sites/{id}/delete", s.requireAuth(s.adminDeleteArchivedSite))
+	mux.HandleFunc("GET /admin/media-cleanup", s.requireAuth(s.adminMediaCleanupPage))
+	mux.HandleFunc("POST /admin/media-cleanup/scan", s.requireAuth(s.adminMediaCleanupScan))
+	mux.HandleFunc("POST /admin/media-cleanup/clean", s.requireAuth(s.adminMediaCleanupClean))
 	mux.HandleFunc("GET /admin/updates", s.requireAuth(s.adminUpdates))
 	mux.HandleFunc("GET /admin/updates/status", s.requireAuth(s.adminUpgradeStatus))
 	mux.HandleFunc("GET /admin/updates/check", s.requireAuth(s.adminUpdateCheck))

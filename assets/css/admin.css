@@ -1242,6 +1242,21 @@ a.overview-log-title { text-decoration: none; }
 .archived-site-actions .btn svg { flex: none; width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .archived-site-restore { border-color: color-mix(in srgb, var(--ok) 18%, var(--line)); background: color-mix(in srgb, var(--ok) 5%, var(--surface)); color: color-mix(in srgb, var(--ok) 86%, var(--ink-soft)); }
 .archived-site-restore:hover { border-color: color-mix(in srgb, var(--ok) 34%, var(--line)); background: color-mix(in srgb, var(--ok) 9%, var(--surface)); color: var(--ok); }
+.media-cleanup-panel { max-width: 1040px; }
+.media-cleanup-head { align-items: center; }
+.media-cleanup-head-copy { flex: 1 1 auto; min-width: 0; }
+.media-cleanup-actions { flex: none; display: flex; align-items: center; justify-content: flex-end; gap: .5rem; flex-wrap: wrap; }
+.media-cleanup-actions .btn { white-space: nowrap; }
+.media-cleanup-status { margin: .3rem 0 0; font-size: .78rem; }
+.media-cleanup-site { display: flex; align-items: center; gap: .62rem; min-width: 0; }
+.media-cleanup-site-icon { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 7px; object-fit: contain; background: color-mix(in srgb, var(--line-soft) 72%, var(--surface)); color: var(--muted); border: 1px solid var(--line-soft); }
+.media-cleanup-site-icon.fallback svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.85; stroke-linecap: round; stroke-linejoin: round; }
+.media-cleanup-site-copy { display: grid; gap: .12rem; min-width: 0; }
+.media-cleanup-site-name { display: flex; align-items: center; gap: .38rem; min-width: 0; }
+.media-cleanup-site-name strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); font-size: .9rem; line-height: 1.35; }
+.media-cleanup-site-name code { flex: none; color: var(--faint); background: transparent; font-family: var(--mono); font-size: .72rem; }
+.media-cleanup-domain { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: .76rem; line-height: 1.35; }
+.media-cleanup-domain.unbound { color: var(--faint); }
 .platform-i18n-panel { max-width: 960px; }
 .platform-i18n-form textarea { font-family: var(--mono); font-size: .82rem; line-height: 1.55; min-height: 320px; }
 .platform-i18n-details { margin-top: .4rem; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); overflow: hidden; }

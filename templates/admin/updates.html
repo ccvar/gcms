@@ -20,6 +20,7 @@
     <a class="active" href="/admin/updates" aria-current="page">{{template "platform-settings-icon-update"}}<span>{{.Admin.T "admin.settings.menu.updates" "系统更新"}}</span></a>
     <a href="/admin/backups">{{template "platform-settings-icon-backup"}}<span>{{.Admin.T "admin.backups.title" "数据备份"}}</span></a>
     <a href="/admin/archived-sites">{{template "platform-settings-icon-archive"}}<span>{{.Admin.T "admin.archived_sites.title" "归档站点"}}</span></a>
+    <a href="/admin/media-cleanup">{{template "platform-settings-icon-clean"}}<span>{{.Admin.T "admin.media_cleanup.title" "存储清理"}}</span></a>
   </nav>
 
   <section class="overview-panel platform-settings-panel">
@@ -228,3 +229,4 @@
 {{define "platform-settings-icon-update"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>{{end}}
 {{define "platform-settings-icon-backup"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v12H4z"/><path d="M8 10h8"/><path d="M8 14h5"/><path d="M7 6V4h10v2"/></svg>{{end}}
 {{define "platform-settings-icon-archive"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16"/><path d="M6 7v13h12V7"/><path d="M9 11h6"/><path d="M8 4h8l1 3H7z"/></svg>{{end}}
+{{define "platform-settings-icon-clean"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9.06 11.9 8.07-8.06a2.85 2.85 0 1 1 4.03 4.03l-8.06 8.08"/><path d="M7.07 14.94c-1.66 0-3 1.35-3 3.02 0 1.33-2.5 1.52-2 2.02 1.08 1.1 2.49 2.02 4 2.02 2.2 0 4-1.8 4-4.04a3.01 3.01 0 0 0-3-3.02z"/></svg>{{end}}

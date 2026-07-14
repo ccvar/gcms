@@ -1823,6 +1823,44 @@ func (s *Store) SetSetting(key, value string) error {
 	return err
 }
 
+// AllPostReferenceTexts 返回全部 posts 行的文本字段拼接（所有语种、所有类型、含草稿），
+// 供上传文件引用扫描使用：正文、摘要、封面、关键词、extra JSON 等都在其中。
+func (s *Store) AllPostReferenceTexts() ([]string, error) {
+	rows, err := s.db.Query(`SELECT title, excerpt, content, meta_desc, keywords, cover_image, link_url, extra FROM posts`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var title, excerpt, content, metaDesc, keywords, coverImage, linkURL, extra string
+		if err := rows.Scan(&title, &excerpt, &content, &metaDesc, &keywords, &coverImage, &linkURL, &extra); err != nil {
+			return nil, err
+		}
+		out = append(out, strings.Join([]string{title, excerpt, content, metaDesc, keywords, coverImage, linkURL, extra}, "\n"))
+	}
+	return out, rows.Err()
+}
+
+// AllSettingValues 返回 settings 表全部 value（Logo、favicon、分享图、hero、导航等都存在其中），
+// 供上传文件引用扫描使用。
+func (s *Store) AllSettingValues() ([]string, error) {
+	rows, err := s.db.Query(`SELECT value FROM settings`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var value string
+		if err := rows.Scan(&value); err != nil {
+			return nil, err
+		}
+		out = append(out, value)
+	}
+	return out, rows.Err()
+}
+
 // ClearDemoContent 清除首装产品官网演示数据。
 // 保留账号、密码、主题、语言、Logo/ico、上传文件与其他基础站点配置。
 func (s *Store) ClearDemoContent() error {
