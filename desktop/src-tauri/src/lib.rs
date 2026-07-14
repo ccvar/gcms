@@ -1,6 +1,7 @@
 mod acp;
 mod agent;
 mod brains;
+mod managed;
 mod cf;
 mod cf_templates;
 mod convo;
@@ -31,6 +32,7 @@ struct AppState {
     conns: pack::ConnStore,
     convos: convo::ConvStore,
     tasks: tasks::TaskStore,
+    managed: managed::ManagedStore,
     runs: agent::RunRegistry,
     /// 正在跑的定时任务 id（调度器与 run_task_now 共享，防止同一任务被重复触发）。
     firing: Arc<Mutex<HashSet<String>>>,
@@ -506,6 +508,56 @@ mod workdir_tests {
         // stdout 为空时退回 stderr；两者全空给未知错误
         assert!(install_err_brief(b"", b"curl: (7) Failed to connect\n").contains("curl: (7)"));
         assert_eq!(install_err_brief(b"", b""), "未知错误");
+    }
+
+    /// 开启托管：三个配套任务（每日/审计/周报）创建齐、厂商/模型/强度逐项透传、
+    /// 等级与上限进 prompt、记录字段完整、同站重复开启被拒。
+    #[test]
+    fn enable_managed_creates_tasks_and_passes_model() {
+        let dir = std::env::temp_dir().join(format!("gcms-pilot-managed-en-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let conn = test_conn(dir.to_str().unwrap()); // id = "t"
+        std::fs::write(dir.join("connections.json"), serde_json::to_vec_pretty(&[conn]).unwrap()).unwrap();
+        let conns = pack::ConnStore::new(&dir).unwrap();
+        let tstore = tasks::TaskStore::new(&dir);
+        let mstore = managed::ManagedStore::new(&dir);
+
+        let m = enable_managed(
+            &conns, &tstore, &mstore,
+            "t".into(), "blog".into(), "博客".into(), "定位：测试站".into(),
+            4, 3, "l1".into(), 500_000, "grok".into(), "grok-4.5".into(), "high".into(),
+        )
+        .expect("开启托管");
+        assert_eq!(m.brain, "grok");
+        assert_eq!(m.model, "grok-4.5");
+        assert_eq!(m.effort, "high");
+        assert_eq!(m.level, "l1");
+        assert_eq!(m.token_weekly_budget, 500_000);
+        assert_eq!(m.weekly_edit_limit, 3, "修改配额入记录");
+        assert_eq!(m.task_ids.len(), 3, "每日/审计/周报三个配套任务");
+
+        let daily = tstore.get(&m.task_ids[0]).expect("每日任务");
+        assert!(daily.title.starts_with("托管 · 每日内容"));
+        assert_eq!((daily.brain.as_str(), daily.model.as_str(), daily.effort.as_str()), ("grok", "grok-4.5", "high"), "模型透传");
+        assert_eq!(daily.interval_minutes, 1440);
+        assert!(daily.prompt.contains("不得超过 4 篇"));
+        assert!(daily.prompt.contains("可以直接发布"), "L1 的每日 prompt 放开常规发布");
+
+        let audit = tstore.get(&m.task_ids[1]).expect("审计任务");
+        assert!(audit.title.starts_with("托管 · 每周审计"));
+        assert_eq!(audit.interval_minutes, 10080);
+        assert_eq!(audit.brain, "grok");
+
+        let report = tstore.get(&m.task_ids[2]).expect("周报任务");
+        assert!(report.title.starts_with("托管 · 每周周报"));
+        assert!(report.prompt.contains("本周实测数据"));
+        assert_eq!(report.model, "grok-4.5");
+
+        // 同站重复开启被拒；非法等级回落 l0
+        assert!(enable_managed(&conns, &tstore, &mstore, "t".into(), "blog".into(), String::new(), String::new(), 3, 2, "l0".into(), 0, String::new(), String::new(), String::new()).is_err());
+        let m2 = enable_managed(&conns, &tstore, &mstore, "t".into(), "shop".into(), String::new(), String::new(), 3, 2, "bogus".into(), 0, "claude".into(), "sonnet".into(), String::new()).unwrap();
+        assert_eq!(m2.level, "l0", "非法等级回落 L0（安全侧）");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     fn test_conv(brain: &str, model: &str, perm: &str) -> Conversation {
@@ -1462,6 +1514,31 @@ fn save_task(
     first_run: i64,
     enabled: bool,
 ) -> Result<ScheduledTask, String> {
+    upsert_task(
+        &state.conns, &state.tasks, id, conn_id, site_slugs, site_names, task_type, brain, model,
+        effort, title, prompt, interval_minutes, first_run, enabled,
+    )
+}
+
+/// 构建 + 落库一个定时任务：save_task 命令与「托管」配套任务创建共用的核心逻辑。
+#[allow(clippy::too_many_arguments)]
+fn upsert_task(
+    conns: &pack::ConnStore,
+    tasks: &tasks::TaskStore,
+    id: Option<String>,
+    conn_id: String,
+    site_slugs: Vec<String>,
+    site_names: Vec<String>,
+    task_type: String,
+    brain: String,
+    model: String,
+    effort: String,
+    title: String,
+    prompt: String,
+    interval_minutes: u64,
+    first_run: i64,
+    enabled: bool,
+) -> Result<ScheduledTask, String> {
     let site_slugs: Vec<String> = site_slugs.iter().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
     if site_slugs.is_empty() {
         return Err("至少选择一个站点".into());
@@ -1473,9 +1550,9 @@ fn save_task(
         return Err("周期至少 1 分钟".into());
     }
     // 连接必须存在，否则这个任务每次运行都会失败——直接在保存时拦下。
-    let conn_name = state.conns.get(&conn_id).map_err(|_| "所选连接不存在".to_string())?.name;
+    let conn_name = conns.get(&conn_id).map_err(|_| "所选连接不存在".to_string())?.name;
     let now = now_secs();
-    let existing = id.as_ref().and_then(|i| state.tasks.get(i));
+    let existing = id.as_ref().and_then(|i| tasks.get(i));
     let tid = id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     let step = interval_minutes.max(1) * 60;
     let mut next = if first_run > 0 { first_run as u64 } else { now };
@@ -1509,7 +1586,7 @@ fn save_task(
         created_at: existing.as_ref().map(|e| e.created_at).unwrap_or(now),
         updated_at: now,
     };
-    state.tasks.upsert(task.clone())?;
+    tasks.upsert(task.clone())?;
     Ok(task)
 }
 
@@ -1557,26 +1634,516 @@ fn run_task_now(state: tauri::State<'_, AppState>, app: AppHandle, id: String) -
     let convos = state.convos.clone();
     let runs = state.runs.clone();
     let tstore = state.tasks.clone();
+    let mstore = state.managed.clone();
     let firing = state.firing.clone();
     let data_dir = state.data_dir.clone();
     tauri::async_runtime::spawn(async move {
-        fire_task(app, conns, convos, runs, tstore, task, data_dir).await;
+        fire_task(app, conns, convos, runs, tstore, mstore, task, data_dir).await;
         firing.lock().unwrap().remove(&id);
     });
     Ok(())
 }
 
+// ---- 托管站点（L0 试运行 / L1 自动发布 / L2 自动发布+抽检）----
+
+#[tauri::command]
+fn managed_list(state: tauri::State<'_, AppState>) -> Vec<managed::ManagedSite> {
+    state.managed.list()
+}
+
+/// 系统通知（托管熔断/降级等关键事件用；失败静默）。
+fn notify_user(app: &AppHandle, title: &str, body: String) {
+    let _ = app.notification().builder().title(title).body(body).show();
+}
+
+/// 重新组装并回写「每日内容」任务的 prompt——plan / 周上限 / 打回记录 / 等级任一变化后调用，
+/// 否则任务还带着旧边界跑。审计/周报任务 prompt 是静态的，不用同步。
+fn sync_daily_prompt(state: &AppState, m: &managed::ManagedSite) {
+    if let Some(tid) = m.task_ids.first() {
+        let p = managed::daily_prompt(&m.site_name, &m.plan, m.weekly_post_limit, &m.review_notes, &m.level, m.weekly_edit_limit);
+        let _ = state.tasks.mutate(tid, |t| {
+            t.prompt = p.clone();
+            t.updated_at = now_secs();
+        });
+    }
+}
+
+/// 开启托管：存记录 + 自动创建两个配套定时任务（每日内容 1440 分钟 / 每周审计 10080 分钟）。
+/// 任务标题带「托管 · 」前缀，在定时任务视图里也可见可管。
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+fn managed_enable(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    site_slug: String,
+    site_name: String,
+    plan: String,
+    weekly_post_limit: u32,
+    weekly_edit_limit: u32,
+    level: String,
+    token_weekly_budget: u64,
+    brain: String,
+    model: String,
+    effort: String,
+) -> Result<managed::ManagedSite, String> {
+    enable_managed(
+        &state.conns, &state.tasks, &state.managed,
+        conn_id, site_slug, site_name, plan, weekly_post_limit, weekly_edit_limit, level,
+        token_weekly_budget, brain, model, effort,
+    )
+}
+
+fn valid_level(level: &str) -> bool {
+    matches!(level, "l0" | "l1" | "l2" | "l3")
+}
+
+/// managed_enable 的核心（纯 store 版，可单测）：厂商/模型/强度既透传给三个配套任务
+///（每日内容/每周审计/每周周报），也存进托管记录（卡片展示 + 后续同步用）。
+#[allow(clippy::too_many_arguments)]
+fn enable_managed(
+    conns: &pack::ConnStore,
+    tasks: &tasks::TaskStore,
+    managed_store: &managed::ManagedStore,
+    conn_id: String,
+    site_slug: String,
+    site_name: String,
+    plan: String,
+    weekly_post_limit: u32,
+    weekly_edit_limit: u32,
+    level: String,
+    token_weekly_budget: u64,
+    brain: String,
+    model: String,
+    effort: String,
+) -> Result<managed::ManagedSite, String> {
+    let site_slug = site_slug.trim().to_string();
+    if site_slug.is_empty() {
+        return Err("请选择要托管的站点".into());
+    }
+    if managed_store.find_site(&conn_id, &site_slug).is_some() {
+        return Err("该站点已在托管中".into());
+    }
+    let level = if valid_level(&level) { level } else { "l0".to_string() };
+    let site_name = if site_name.trim().is_empty() { site_slug.clone() } else { site_name.trim().to_string() };
+    let limit = weekly_post_limit.clamp(1, 50);
+    let edit_limit = weekly_edit_limit.clamp(1, 20);
+    let daily = upsert_task(
+        conns, tasks, None, conn_id.clone(),
+        vec![site_slug.clone()], vec![site_name.clone()],
+        "article".into(), brain.clone(), model.clone(), effort.clone(),
+        format!("托管 · 每日内容 · {site_name}"),
+        managed::daily_prompt(&site_name, &plan, limit, &[], &level, edit_limit),
+        1440, 0, true,
+    )?;
+    let audit = upsert_task(
+        conns, tasks, None, conn_id.clone(),
+        vec![site_slug.clone()], vec![site_name.clone()],
+        "free".into(), brain.clone(), model.clone(), effort.clone(),
+        format!("托管 · 每周审计 · {site_name}"),
+        managed::audit_prompt(&site_name),
+        10080, 0, true,
+    )?;
+    let report = upsert_task(
+        conns, tasks, None, conn_id.clone(),
+        vec![site_slug.clone()], vec![site_name.clone()],
+        "free".into(), brain.clone(), model.clone(), effort.clone(),
+        format!("托管 · 每周周报 · {site_name}"),
+        managed::report_prompt(&site_name),
+        10080, 0, true,
+    )?;
+    let now = now_secs();
+    let m = managed::ManagedSite {
+        id: uuid::Uuid::new_v4().to_string(),
+        conn_id,
+        site_slug,
+        site_name,
+        level,
+        weekly_post_limit: limit,
+        weekly_edit_limit: edit_limit,
+        plan: plan.trim().to_string(),
+        brain,
+        model,
+        effort,
+        task_ids: vec![daily.id, audit.id, report.id],
+        paused: false,
+        review_notes: vec![],
+        token_weekly_budget,
+        fused_at: 0,
+        review_events: vec![],
+        demote_note: String::new(),
+        created_at: now,
+        updated_at: now,
+    };
+    managed_store.upsert(m.clone())?;
+    Ok(m)
+}
+
+/// 调整托管等级（l0/l1/l2）：手动调级清空自动降级说明，并同步每日任务 prompt。
+#[tauri::command]
+fn managed_set_level(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    level: String,
+) -> Result<Option<managed::ManagedSite>, String> {
+    if !valid_level(&level) {
+        return Err(format!("未知等级：{level}"));
+    }
+    let updated = state.managed.mutate(&id, now_secs(), |m| {
+        m.level = level.clone();
+        m.demote_note = String::new();
+    })?;
+    if let Some(m) = &updated {
+        sync_daily_prompt(&state, m);
+    }
+    Ok(updated)
+}
+
+/// 调整 L3 的每周存量修改配额（1-20）。**软约束**：写进每日任务 prompt 由 AI 自数遵守，
+/// 周报如实汇报；Pilot 侧无法精确计数修改行为，硬闸留待 cms 侧提供修改计数接口后补。
+#[tauri::command]
+fn managed_set_edit_limit(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    limit: u32,
+) -> Result<Option<managed::ManagedSite>, String> {
+    let limit = limit.clamp(1, 20);
+    let updated = state.managed.mutate(&id, now_secs(), |m| m.weekly_edit_limit = limit)?;
+    if let Some(m) = &updated {
+        sync_daily_prompt(&state, m);
+    }
+    Ok(updated)
+}
+
+/// 暂停/恢复托管＝启停全部配套任务（恢复时把 next_run 推进到未来，避免立刻补跑）。
+fn set_managed_paused(state: &AppState, id: &str, paused: bool) -> Result<Option<managed::ManagedSite>, String> {
+    let now = now_secs();
+    let updated = state.managed.mutate(id, now, |m| m.paused = paused)?;
+    if let Some(m) = &updated {
+        for tid in &m.task_ids {
+            let _ = state.tasks.mutate(tid, |t| {
+                t.enabled = !paused;
+                if !paused {
+                    t.advance_past(now);
+                }
+                t.updated_at = now;
+            });
+        }
+    }
+    Ok(updated)
+}
+
+#[tauri::command]
+fn managed_pause(state: tauri::State<'_, AppState>, id: String) -> Result<Option<managed::ManagedSite>, String> {
+    set_managed_paused(&state, &id, true)
+}
+
+/// 恢复托管：重启配套任务，并解除预算熔断标记（熔断恢复只能走这里=手动）。
+#[tauri::command]
+fn managed_resume(state: tauri::State<'_, AppState>, id: String) -> Result<Option<managed::ManagedSite>, String> {
+    let _ = state.managed.mutate(&id, now_secs(), |m| m.fused_at = 0)?;
+    set_managed_paused(&state, &id, false)
+}
+
+/// 关闭托管：删掉配套定时任务 + 托管记录。站点内容（含草稿）一概不动。
+#[tauri::command]
+fn managed_disable(state: tauri::State<'_, AppState>, id: String) -> Result<(), String> {
+    let Some(m) = state.managed.get(&id) else { return Ok(()) };
+    for tid in &m.task_ids {
+        let _ = state.tasks.remove(tid);
+    }
+    state.managed.remove(&id)
+}
+
+/// 记录一次「打回」：只记理由（草稿本身不动），并立刻把打回意见同步进每日任务的 prompt。
+/// 同时记审核事件并做**自动降级**判定：连续 3 次打回或最近 10 条打回占比≥50%（样本≥5）
+/// → L1/L2 自动降回 L0 + 系统通知 + 卡上黄字说明。
+#[tauri::command]
+fn managed_record_reject(
+    state: tauri::State<'_, AppState>,
+    app: AppHandle,
+    id: String,
+    post_id: i64,
+    title: String,
+    reason: String,
+) -> Result<Option<managed::ManagedSite>, String> {
+    if reason.trim().is_empty() {
+        return Err("请写一句打回理由（会注入后续任务让它规避）".into());
+    }
+    let now = now_secs();
+    let mut updated = state.managed.mutate(&id, now, |m| {
+        m.review_notes.insert(0, managed::ReviewNote {
+            ts: now,
+            post_id,
+            title: title.trim().to_string(),
+            reason: reason.trim().to_string(),
+        });
+        m.review_events.insert(0, managed::ReviewEvent { ts: now, approved: false });
+    })?;
+    // 自动降级判定（先取出要用的数据再改 updated，避免自引用）。
+    let demote = updated.as_ref().and_then(|m| {
+        let target = managed::demote_target(&m.level)?;
+        let why = managed::should_demote(&m.review_events)?;
+        Some((m.site_name.clone(), why, target))
+    });
+    if let Some((site_name, why, target)) = demote {
+        let date = chrono::Local::now().format("%m-%d %H:%M");
+        let label = managed::level_label(target);
+        updated = state.managed.mutate(&id, now, |x| {
+            x.level = target.into();
+            x.demote_note = format!("已自动降到 {label}：{why}（{date}）。整改后可手动调回。");
+        })?;
+        notify_user(&app, "托管已自动降级", format!("「{site_name}」{why}，已降到 {label}。"));
+    }
+    if let Some(m) = &updated {
+        sync_daily_prompt(&state, m);
+    }
+    Ok(updated)
+}
+
+/// 保存 90 天计划（向导里生成/手写，之后也可在托管卡里改），并同步每日任务 prompt。
+#[tauri::command]
+fn managed_plan_save(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    plan: String,
+) -> Result<Option<managed::ManagedSite>, String> {
+    let updated = state.managed.mutate(&id, now_secs(), |m| m.plan = plan.trim().to_string())?;
+    if let Some(m) = &updated {
+        sync_daily_prompt(&state, m);
+    }
+    Ok(updated)
+}
+
+/// 待审队列：该站全部草稿。
+#[tauri::command]
+async fn managed_drafts(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    site_slug: String,
+) -> Result<Vec<managed::DraftItem>, String> {
+    let conn = state.conns.get(&conn_id)?;
+    managed::list_drafts(&conn, &site_slug).await
+}
+
+/// 批准发布：只把 status 改为 published（部分更新，其他字段不动）。
+/// 成功后记一条「批准」审核事件（降级判定的分母）。
+#[tauri::command]
+async fn managed_publish(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    site_slug: String,
+    id: i64,
+) -> Result<(), String> {
+    let conn = state.conns.get(&conn_id)?;
+    managed::publish_post(&conn, &site_slug, id).await?;
+    if let Some(m) = state.managed.find_site(&conn_id, &site_slug) {
+        let now = now_secs();
+        let _ = state.managed.mutate(&m.id, now, |x| {
+            x.review_events.insert(0, managed::ReviewEvent { ts: now, approved: true });
+        });
+    }
+    Ok(())
+}
+
+/// 本周托管 token 用量：配套任务运行记录（ts≥周一）关联的会话 total_tokens 求和。
+/// 每次任务触发都开全新对话，所以单个会话的累计＝那次运行的用量，不会重复计。
+fn managed_week_tokens(
+    tstore: &tasks::TaskStore,
+    convos: &convo::ConvStore,
+    m: &managed::ManagedSite,
+    week_start: u64,
+) -> u64 {
+    let mut entries: Vec<(u64, u64)> = Vec::new();
+    for tid in &m.task_ids {
+        let Some(t) = tstore.get(tid) else { continue };
+        for r in &t.history {
+            for s in &r.sites {
+                if s.conv_id.is_empty() {
+                    continue;
+                }
+                if let Some(c) = convos.get(&s.conv_id) {
+                    entries.push((r.ts, c.total_tokens));
+                }
+            }
+        }
+    }
+    managed::sum_week_tokens(&entries, week_start)
+}
+
+/// 周报数字卡：本周发布数 / 草稿数 / token 用量 / 配套任务近况。
+#[tauri::command]
+async fn managed_summary(
+    state: tauri::State<'_, AppState>,
+    id: String,
+) -> Result<managed::ManagedSummary, String> {
+    let m = state.managed.get(&id).ok_or("托管记录不存在")?;
+    let conn = state.conns.get(&m.conn_id)?;
+    let briefs: Vec<managed::TaskBrief> = m
+        .task_ids
+        .iter()
+        .filter_map(|tid| state.tasks.get(tid))
+        .map(|t| managed::TaskBrief {
+            id: t.id,
+            title: t.title,
+            enabled: t.enabled,
+            last_status: t.last_status,
+            last_run: t.last_run,
+            next_run: t.next_run,
+            last_conv_id: t.last_conv_id,
+        })
+        .collect();
+    let stats = managed::week_stats(&conn, &m.site_slug).await?;
+    let week_tokens = managed_week_tokens(&state.tasks, &state.convos, &m, stats.week_start.max(0) as u64);
+    Ok(managed::ManagedSummary {
+        published_this_week: stats.published_this_week,
+        drafts: stats.drafts_total,
+        drafts_new: stats.drafts_new,
+        week_start: stats.week_start,
+        week_tokens,
+        tasks: briefs,
+    })
+}
+
+/// 托管任务的触发前裁决：跳过（周上限硬闸/预算熔断）或放行（可附带注入 prompt 的数据块）。
+enum ManagedGate {
+    Proceed(Option<String>),
+    Skip(String),
+}
+
+/// 只对「属于某条托管记录」的任务生效；普通任务直接放行。
+/// - 预算熔断：任何配套任务触发前先算本周 token；触顶→暂停全部配套任务+通知+记熔断，本次跳过。
+/// - 每日内容：week_stats 实测本周产出（发布+新增草稿）≥ 上限→跳过；未达→注入权威计数行。
+///   实测拉取失败（网络等）**放行**——prompt 里保留了 AI 自查的兜底条款，不能让瞬时故障停摆日更。
+/// - 每周周报：注入 Pilot 组装的【本周实测数据】块（拉取失败则注明数据不可用）。
+async fn managed_prefire(
+    app: &AppHandle,
+    conns: &pack::ConnStore,
+    convos: &convo::ConvStore,
+    tstore: &tasks::TaskStore,
+    mstore: &managed::ManagedStore,
+    task: &ScheduledTask,
+) -> ManagedGate {
+    let Some(m) = mstore.list().into_iter().find(|m| m.task_ids.contains(&task.id)) else {
+        return ManagedGate::Proceed(None);
+    };
+    let ws = managed::week_start_local().max(0) as u64;
+    // 预算熔断（对全部配套任务生效；恢复只能手动 resume）
+    if m.token_weekly_budget > 0 {
+        let used = managed_week_tokens(tstore, convos, &m, ws);
+        if managed::budget_exceeded(used, m.token_weekly_budget) {
+            if m.fused_at == 0 {
+                let now = now_secs();
+                let _ = mstore.mutate(&m.id, now, |x| {
+                    x.fused_at = now;
+                    x.paused = true;
+                });
+                for tid in &m.task_ids {
+                    let _ = tstore.mutate(tid, |t| {
+                        t.enabled = false;
+                        t.updated_at = now;
+                    });
+                }
+                notify_user(app, "托管预算已熔断", format!(
+                    "「{}」本周 token 用量 {used} 已达预算 {}，配套任务已全部暂停；恢复需在托管卡手动操作。",
+                    m.site_name, m.token_weekly_budget
+                ));
+            }
+            return ManagedGate::Skip(format!("预算已熔断（{used}/{}），恢复需手动", m.token_weekly_budget));
+        }
+    }
+    let conn = match conns.get(&m.conn_id) {
+        Ok(c) => c,
+        Err(_) => return ManagedGate::Proceed(None),
+    };
+    // 每日内容任务：周上限硬闸 + 权威计数注入
+    if m.task_ids.first() == Some(&task.id) {
+        match managed::week_stats(&conn, &m.site_slug).await {
+            Ok(stats) => {
+                let output = stats.published_this_week + stats.drafts_new;
+                if let Some(reason) = managed::weekly_cap_skip(output, m.weekly_post_limit) {
+                    return ManagedGate::Skip(reason);
+                }
+                return ManagedGate::Proceed(Some(managed::weekly_count_line(output, m.weekly_post_limit)));
+            }
+            Err(_) => return ManagedGate::Proceed(None),
+        }
+    }
+    // 每周周报任务：注入真实数据块
+    if m.task_ids.get(2) == Some(&task.id) {
+        let block = match managed::week_stats(&conn, &m.site_slug).await {
+            Ok(stats) => {
+                let task_lines: Vec<String> = m
+                    .task_ids
+                    .iter()
+                    .filter_map(|tid| tstore.get(tid))
+                    .map(|t| {
+                        let status = if t.last_run == 0 {
+                            "还没跑过".to_string()
+                        } else {
+                            format!("上次{}（共 {} 次）", if t.last_status == "ok" { "成功" } else { "失败" }, t.runs)
+                        };
+                        format!("{}：{status}", t.title)
+                    })
+                    .collect();
+                let facts = managed::WeekFacts {
+                    published: stats.published_this_week,
+                    drafts_total: stats.drafts_total,
+                    drafts_new: stats.drafts_new,
+                    weekly_limit: m.weekly_post_limit,
+                    week_tokens: managed_week_tokens(tstore, convos, &m, ws),
+                    budget: m.token_weekly_budget,
+                    task_lines,
+                    reject_reasons: m
+                        .review_notes
+                        .iter()
+                        .take(5)
+                        .map(|n| format!("《{}》：{}", n.title, n.reason))
+                        .collect(),
+                    published_titles: if m.level == "l2" || m.level == "l3" { stats.published_titles } else { vec![] },
+                    edit_limit: if m.level == "l3" { m.weekly_edit_limit } else { 0 },
+                    edited_titles: if m.level == "l3" { stats.edited_titles } else { vec![] },
+                };
+                managed::weekly_report_data(&facts)
+            }
+            Err(e) => format!("【本周实测数据】拉取失败（{e}）——请在周报开头注明本周数据不可用，只做定性总结。"),
+        };
+        return ManagedGate::Proceed(Some(block));
+    }
+    ManagedGate::Proceed(None)
+}
+
 /// 触发一次任务：对每个目标站点各开一个全新对话跑 task.prompt（顺序执行，互不阻断），
-/// 回写任务的 last_* 并通知。
+/// 回写任务的 last_* 并通知。托管配套任务先过 managed_prefire（硬闸/熔断/数据注入）。
 async fn fire_task(
     app: AppHandle,
     conns: pack::ConnStore,
     convos: convo::ConvStore,
     runs: agent::RunRegistry,
     tstore: tasks::TaskStore,
+    mstore: managed::ManagedStore,
     task: ScheduledTask,
     data_dir: PathBuf,
 ) {
+    let prompt_extra = match managed_prefire(&app, &conns, &convos, &tstore, &mstore, &task).await {
+        ManagedGate::Proceed(extra) => extra,
+        ManagedGate::Skip(reason) => {
+            // 跳过也是一次「运行」：写记录让用户在任务卡上看得到原因；next_run 已由调用方推进。
+            let now = now_secs();
+            let _ = tstore.mutate(&task.id, |x| {
+                x.last_run = now;
+                x.runs += 1;
+                x.last_status = "ok".into();
+                x.last_summary = reason.clone();
+                x.history.insert(0, tasks::TaskRun { ts: now, ok: true, summary: reason.clone(), sites: vec![] });
+                x.history.truncate(20);
+            });
+            return;
+        }
+    };
+    let effective_prompt = match &prompt_extra {
+        Some(extra) => format!("{}\n\n{extra}", task.prompt),
+        None => task.prompt.clone(),
+    };
     let targets = task.targets();
     let multi = targets.len() > 1;
     // 并发执行，信号量限流：CLI 进程以网络等待为主，但每个要吃几百 MB 内存，
@@ -1589,7 +2156,7 @@ async fn fire_task(
         let (conns, convos, runs, data_dir) = (conns.clone(), convos.clone(), runs.clone(), data_dir.clone());
         let (conn_id, task_type, brain, model, effort, prompt) = (
             task.conn_id.clone(), task.task_type.clone(), task.brain.clone(),
-            task.model.clone(), task.effort.clone(), task.prompt.clone(),
+            task.model.clone(), task.effort.clone(), effective_prompt.clone(),
         );
         handles.push(tauri::async_runtime::spawn(async move {
             let _permit = sem.acquire_owned().await;
@@ -1717,11 +2284,12 @@ fn spawn_scheduler(app: AppHandle) {
                 let convos = state.convos.clone();
                 let runs = state.runs.clone();
                 let tstore = state.tasks.clone();
+                let mstore = state.managed.clone();
                 let running2 = running.clone();
                 let tid = t.id.clone();
                 let data_dir = state.data_dir.clone();
                 tauri::async_runtime::spawn(async move {
-                    fire_task(app2, conns, convos, runs, tstore, t, data_dir).await;
+                    fire_task(app2, conns, convos, runs, tstore, mstore, t, data_dir).await;
                     running2.lock().unwrap().remove(&tid);
                 });
             }
@@ -2261,6 +2829,7 @@ pub fn run() {
                 conns,
                 convos,
                 tasks: task_store,
+                managed: managed::ManagedStore::new(&data_dir),
                 runs: agent::RunRegistry::default(),
                 firing: Arc::new(Mutex::new(HashSet::new())),
                 data_dir: data_dir.clone(),
@@ -2338,6 +2907,18 @@ pub fn run() {
             delete_task,
             set_task_enabled,
             run_task_now,
+            managed_list,
+            managed_enable,
+            managed_set_level,
+            managed_set_edit_limit,
+            managed_pause,
+            managed_resume,
+            managed_disable,
+            managed_record_reject,
+            managed_plan_save,
+            managed_drafts,
+            managed_publish,
+            managed_summary,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

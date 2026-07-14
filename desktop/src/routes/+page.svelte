@@ -126,7 +126,7 @@
       if (viewBusy) say('权限档位已切换，从下一轮开始生效（不影响正在跑的这轮）');
     } catch (e) { say(String(e), 'err'); }
   }
-  let view = $state<'launcher' | 'thread' | 'schedule' | 'tasks' | 'templates' | 'prompts'>('launcher');
+  let view = $state<'launcher' | 'thread' | 'schedule' | 'tasks' | 'managed' | 'templates' | 'prompts'>('launcher');
 
   // 排期视图
   let sched = $state<ScheduledItem[]>([]);
@@ -148,6 +148,236 @@
   let tasks = $state<ScheduledTask[]>([]);
   async function openTasks() { view = 'tasks'; activeConvId = ''; activeConv = null; await loadTasks(); }
   async function loadTasks() { try { tasks = await invoke<ScheduledTask[]>('list_tasks'); } catch (e) { say(String(e), 'err'); } }
+
+  // ---------- 托管（AI 全权运营站点 · P1/L0 试运行）----------
+  // 机制化边界：AI 只产草稿（配套任务 prompt 写死硬约束），发布/打回都在待审队列里由人完成。
+  type ManagedNote = { ts: number; post_id: number; title: string; reason: string };
+  type ManagedSite = {
+    id: string; conn_id: string; site_slug: string; site_name: string; level: string;
+    weekly_post_limit: number; weekly_edit_limit: number; plan: string; brain: string; model: string; effort: string;
+    task_ids: string[]; paused: boolean; review_notes: ManagedNote[];
+    token_weekly_budget: number; fused_at: number;
+    review_events: { ts: number; approved: boolean }[]; demote_note: string;
+    created_at: number; updated_at: number;
+  };
+  type ManagedDraft = { id: number; title: string; lang: string; updated_at: string };
+  type ManagedSummary = {
+    published_this_week: number; drafts: number; drafts_new: number; week_start: number; week_tokens: number;
+    tasks: { id: string; title: string; enabled: boolean; last_status: string; last_run: number; next_run: number; last_conv_id: string }[];
+  };
+  let managedList = $state<ManagedSite[]>([]);
+  let managedLoading = $state(false);
+  const managedOfConn = $derived(managedList.filter((m) => m.conn_id === activeConnId));
+  let mSummaries = $state<Record<string, ManagedSummary>>({});
+  let mDrafts = $state<Record<string, ManagedDraft[]>>({});
+  let mQueueOpen = $state<Record<string, boolean>>({});
+  let mPlanOpen = $state<Record<string, boolean>>({});
+  let mPlanDraft = $state<Record<string, string>>({});
+  async function openManaged() { view = 'managed'; activeConvId = ''; activeConv = null; await loadManaged(); }
+  async function loadManaged() {
+    managedLoading = true;
+    try { managedList = await invoke<ManagedSite[]>('managed_list'); } catch (e) { say(String(e), 'err'); }
+    finally { managedLoading = false; }
+    for (const m of managedList.filter((x) => x.conn_id === activeConnId)) void loadManagedDetail(m);
+  }
+  // 周报数字 + 待审草稿按卡拉取；单卡失败不打断其他卡（例如某站密钥缺 posts 权限）。
+  async function loadManagedDetail(m: ManagedSite) {
+    try { mSummaries[m.id] = await invoke<ManagedSummary>('managed_summary', { id: m.id }); } catch { /* 保留旧值 */ }
+    try { mDrafts[m.id] = await invoke<ManagedDraft[]>('managed_drafts', { connId: m.conn_id, siteSlug: m.site_slug }); } catch { /* 同上 */ }
+  }
+  async function toggleManaged(m: ManagedSite) {
+    try { await invoke(m.paused ? 'managed_resume' : 'managed_pause', { id: m.id }); await loadManaged(); }
+    catch (e) { say(String(e), 'err'); }
+  }
+  async function disableManaged(m: ManagedSite) {
+    const yes = await confirmDialog(`关闭「${m.site_name}」的托管？两个配套定时任务会被删除；站点内容与草稿一概不动。`, { title: '关闭托管', kind: 'warning' });
+    if (!yes) return;
+    try { await invoke('managed_disable', { id: m.id }); await loadManaged(); await loadTasks(); } catch (e) { say(String(e), 'err'); }
+  }
+  async function saveManagedPlan(m: ManagedSite) {
+    try {
+      await invoke('managed_plan_save', { id: m.id, plan: mPlanDraft[m.id] ?? '' });
+      say('计划已保存，并已同步进每日任务'); mPlanOpen[m.id] = false; await loadManaged();
+    } catch (e) { say(String(e), 'err'); }
+  }
+  async function managedPreview(m: ManagedSite, d: ManagedDraft) {
+    try { const u = await invoke<string>('scheduled_preview_url', { connId: m.conn_id, siteSlug: m.site_slug, id: d.id }); await openUrl(u); }
+    catch (e) { say(String(e), 'err'); }
+  }
+  async function approveDraft(m: ManagedSite, d: ManagedDraft) {
+    const yes = await confirmDialog(`发布《${d.title}》？发布后立即公开可见（只改状态，其余字段不动）。`, { title: '批准发布', kind: 'warning' });
+    if (!yes) return;
+    try { await invoke('managed_publish', { connId: m.conn_id, siteSlug: m.site_slug, id: d.id }); say('已发布'); void loadManagedDetail(m); }
+    catch (e) { say(String(e), 'err'); }
+  }
+  // 打回：只记理由（草稿不动），后端记审核事件 + 注入每日任务 prompt，并可能触发自动降级。
+  let rejectFor = $state<{ m: ManagedSite; d: ManagedDraft } | null>(null);
+  let rejectReason = $state('');
+  // rework=true：记录理由后立刻触发每日任务返工（run_task_now）。
+  async function submitReject(rework = false) {
+    if (!rejectFor || !rejectReason.trim()) return;
+    const { m, d } = rejectFor;
+    try {
+      await invoke('managed_record_reject', { id: m.id, postId: d.id, title: d.title, reason: rejectReason });
+      if (rework && m.task_ids[0]) {
+        try { await invoke('run_task_now', { id: m.task_ids[0] }); say('已记录打回，并已触发每日任务立即返工'); }
+        catch (e) { say(`已记录打回，但触发返工失败：${String(e)}`, 'err'); }
+      } else {
+        say('已记录打回意见，后续任务会规避同类问题');
+      }
+      rejectFor = null; rejectReason = ''; await loadManaged();
+    } catch (e) { say(String(e), 'err'); }
+  }
+  // 托管等级：展示名与选项（与后端 managed::level_label 同口径）。
+  function levelLabel(l: string): string { return l === 'l1' ? 'L1 自动发布' : l === 'l2' ? 'L2 自动发布+抽检' : l === 'l3' ? 'L3 存量维护' : 'L0 试运行'; }
+  const LEVEL_OPTS = [
+    { value: 'l0', label: 'L0 试运行', sub: '只产草稿 · 人审人发' },
+    { value: 'l1', label: 'L1 自动发布', sub: '常规文章可直接发布' },
+    { value: 'l2', label: 'L2 自动发布+抽检', sub: 'L1 + 周报附抽查清单' },
+    { value: 'l3', label: 'L3 存量维护', sub: '可改旧文/下线转草稿 · 慎用' },
+  ];
+  /** L3 强警示文案（调级弹窗与向导共用）。 */
+  const L3_WARN = `⚠️ L3 允许 AI 修改已发布的存量内容（标题/正文/meta/内链）并把低质旧文转草稿下线：
+① 修改存量可能损害既有搜索流量——排名波动风险自负；
+② 需要服务端 ≥ v1.3.23（含内容修订历史，可在后台一键回滚）且连接密钥含 stats:read——否则 AI 拿不到 GSC/GA 数据、只能凭感觉改，强烈不建议开启；
+③ 建议先在 L1/L2 稳定运行满 2 周、打回率低后再升 L3。
+改动均会留修订历史；每周查看周报的「观察名单」跟踪数据回落。`;
+  function modelDisp(brain: string, model: string): string { return launcherModelOpts(brain).find((o) => o.value === model)?.label ?? (model || '默认'); }
+  function effortDisp(e: string): string { return e === 'low' ? '低' : e === 'medium' ? '中' : e === 'high' ? '高' : ''; }
+  function mdTok(n: number): string { return n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'k' : String(n); }
+  // 调级（卡上 Dropdown 已 bind 改了 m.level）：确认弹窗写明含义；取消则 reload 还原。
+  async function changeLevel(m: ManagedSite, level: string) {
+    const desc = level === 'l0'
+      ? '回到只产草稿、人审人发。'
+      : level === 'l1'
+        ? 'AI 自检通过后可直接发布常规文章；删除/导航/站点结构仍全部禁止，审计纪要等仍走草稿待审。'
+        : level === 'l2'
+          ? '在 L1 基础上，每周周报会列出本周自动发布清单供你抽查。'
+          : L3_WARN;
+    // L3 用红色警示弹窗（error），其余等级黄色确认（warning）。
+    const yes = await confirmDialog(`把「${m.site_name}」调整为 ${levelLabel(level)}？\n${desc}`, { title: level === 'l3' ? '⚠️ 升到 L3 存量维护（高风险）' : '调整托管等级', kind: level === 'l3' ? 'error' : 'warning' });
+    if (!yes) { await loadManaged(); return; }
+    try { await invoke('managed_set_level', { id: m.id, level }); say('等级已调整，已同步每日任务'); await loadManaged(); }
+    catch (e) { say(String(e), 'err'); await loadManaged(); }
+  }
+  // L3 存量修改配额（软约束：写进 prompt 由 AI 自数，周报如实汇报）。
+  async function saveEditLimit(m: ManagedSite) {
+    const v = Math.min(20, Math.max(1, Math.round(Number(m.weekly_edit_limit) || 2)));
+    try { await invoke('managed_set_edit_limit', { id: m.id, limit: v }); say('存量修改配额已更新，已同步每日任务'); await loadManaged(); }
+    catch (e) { say(String(e), 'err'); await loadManaged(); }
+  }
+  // 周报：查看=打开周报任务上次运行的对话；立即生成=run_task_now。
+  async function genReportNow(taskId: string) {
+    try { await invoke('run_task_now', { id: taskId }); say('周报生成中——完成后点「查看周报」打开对话'); }
+    catch (e) { say(String(e), 'err'); }
+  }
+  // 「调整任务」：跳到定时任务视图并高亮该托管的配套任务（几秒后自动取消高亮）。
+  let hlTaskIds = $state<string[]>([]);
+  async function adjustTasks(m: ManagedSite) {
+    hlTaskIds = [...m.task_ids];
+    await openTasks();
+    setTimeout(() => (hlTaskIds = []), 6000);
+  }
+  // 待审队列按语种分组（保持组内原有排序：最近更新在前）。
+  function groupDrafts(ds: ManagedDraft[]): { lang: string; items: ManagedDraft[] }[] {
+    const map = new Map<string, ManagedDraft[]>();
+    for (const d of ds) {
+      const k = d.lang || '';
+      if (!map.has(k)) map.set(k, []);
+      map.get(k)!.push(d);
+    }
+    return [...map.entries()].map(([lang, items]) => ({ lang, items }));
+  }
+  // 批量批准：逐条确认合并为一次确认，逐篇发布，失败不阻断其余。
+  async function approveGroup(m: ManagedSite, items: ManagedDraft[]) {
+    const yes = await confirmDialog(`批量发布这 ${items.length} 篇草稿？发布后立即公开可见（只改状态，其余字段不动）。`, { title: '批量批准发布', kind: 'warning' });
+    if (!yes) return;
+    let ok = 0; let firstFail = '';
+    for (const d of items) {
+      try { await invoke('managed_publish', { connId: m.conn_id, siteSlug: m.site_slug, id: d.id }); ok++; }
+      catch (e) { if (!firstFail) firstFail = `《${d.title}》：${String(e)}`; }
+    }
+    if (firstFail) say(`已发布 ${ok}/${items.length} 篇；首个失败：${firstFail}`, 'err');
+    else say(`已发布 ${ok} 篇`);
+    void loadManagedDetail(m);
+  }
+  // 开启向导（3 步：选站 → 90 天计划 → 模型/等级/上限/预算与边界确认）
+  let mwOpen = $state(false);
+  let mwStep = $state(1);
+  let mwSite = $state('');
+  let mwPlan = $state('');
+  let mwLimit = $state(3);
+  let mwGenBusy = $state(false);
+  let mwBusy = $state(false);
+  // 配套任务的厂商/模型/强度（默认取启动器当前偏好）+ 等级 + 每周 token 预算（0=不限）。
+  let mwBrain = $state<string>('claude');
+  let mwModel = $state('sonnet');
+  let mwEffort = $state('');
+  let mwLevel = $state('l0');
+  let mwBudget = $state(0);
+  let mwEditLimit = $state(2);
+  function openManagedWizard() {
+    mwOpen = true; mwStep = 1; mwPlan = ''; mwLimit = 3; mwGenBusy = false; mwBusy = false;
+    mwSite = sites.find((s) => !managedOfConn.some((m) => m.site_slug === s.slug))?.slug ?? '';
+    mwBrain = brainUsable(prefs.brain) ? prefs.brain : firstUsableBrain();
+    mwModel = mwBrain === prefs.brain && isLauncherModel(mwBrain, prefs.model) ? prefs.model : defaultModelFor(mwBrain);
+    mwEffort = mwBrain === prefs.brain ? (prefs.effort ?? '') : '';
+    mwLevel = 'l0'; mwBudget = 0; mwEditLimit = 2;
+  }
+  // 向导里换厂商后，档位不属于该厂商时回落默认（与任务表单同规则）。
+  $effect(() => { if (mwOpen && !isLauncherModel(mwBrain, mwModel)) mwModel = defaultModelFor(mwBrain); });
+  const mwSiteOpts = $derived(sites.map((s) => {
+    const taken = managedOfConn.some((m) => m.site_slug === s.slug);
+    return {
+      value: s.slug, label: s.name || s.slug,
+      sub: taken ? '已在托管中' : (s.url ? hostOf(s.url) : '未绑定域名'),
+      img: s.favicon || s.logo || faviconGuess(s.url),
+      disabled: taken,
+    };
+  }));
+  const MW_PLAN_PROMPT = `请为本站生成一份 90 天内容运营计划（纯文本，将作为后续每日内容任务的方向依据）。
+先读站点资料、导航与近期内容摸清定位，然后输出：
+1) 站点定位与目标读者（两三句）；2) 3-5 个内容支柱（每个配 2-3 个具体选题方向）；
+3) 每周更新节奏建议（频率/语种）；4) 8-12 个 SEO 关键词方向；5) 前 4 周的选题清单（标题级）。
+只输出计划本身，不要创建或修改任何内容。`;
+  // 生成计划＝后台开一个一次性对话跑摸底 prompt（auto 档：读站点数据自动放行；prompt 明令只读）。
+  // 拿最后一条助手消息填进可编辑 textarea；对话会留在侧栏可追溯。
+  async function mwGenPlan() {
+    if (!mwSite || mwGenBusy) return;
+    if (!brainUsable(mwBrain as Brain)) { say('所选厂商未就绪，去设置里授权或换一个', 'err'); return; }
+    mwGenBusy = true;
+    const site = sites.find((s) => s.slug === mwSite);
+    const id = crypto.randomUUID();
+    try {
+      const conv = await invoke<Conversation>('start_conversation', {
+        convId: id, connId: activeConnId, siteSlug: mwSite, siteName: site?.name || mwSite,
+        siteSlugs: [], siteNames: [], taskType: 'free', brain: mwBrain, model: mwModel,
+        permMode: 'auto', effort: mwEffort, message: MW_PLAN_PROMPT, onEvent: makeChannel(id),
+      });
+      const last = [...conv.messages].reverse().find((x) => x.role === 'assistant' && !x.error && x.text.trim());
+      if (last) mwPlan = last.text.trim();
+      else say('没拿到计划文本——可在侧栏打开这条对话查看原因，或直接手写', 'err');
+      await refreshConvos();
+    } catch (e) { say(String(e), 'err'); }
+    finally { mwGenBusy = false; }
+  }
+  async function mwEnable() {
+    if (!mwSite || mwBusy) return;
+    if (!brainUsable(mwBrain as Brain)) { say('所选厂商未就绪，去设置里授权或换一个', 'err'); return; }
+    mwBusy = true;
+    const site = sites.find((s) => s.slug === mwSite);
+    try {
+      await invoke('managed_enable', {
+        connId: activeConnId, siteSlug: mwSite, siteName: site?.name || mwSite,
+        plan: mwPlan, weeklyPostLimit: mwLimit, weeklyEditLimit: Math.min(20, Math.max(1, Math.round(Number(mwEditLimit) || 2))), level: mwLevel,
+        tokenWeeklyBudget: Math.max(0, Math.round(Number(mwBudget) || 0)),
+        brain: mwBrain, model: mwModel, effort: mwEffort,
+      });
+      say('托管已开启：每日内容 + 每周审计 + 每周周报三个任务已创建');
+      mwOpen = false; await loadManaged(); await loadTasks();
+    } catch (e) { say(String(e), 'err'); }
+    finally { mwBusy = false; }
+  }
 
   interface TaskForm {
     id: string | null; connId: string; connName: string; siteSlugs: string[]; taskType: string; brain: string; model: string; effort: string;
@@ -700,7 +930,7 @@
       // 换连接＝换工作区：关掉上个连接的对话/排期/定时任务视图，别串场。
       // 模板库 / 提示词库只在 CF 连接下有；切到 gcms 时也退回启动页。
       activeConvId = ''; activeConv = null;
-      if (view === 'thread' || view === 'schedule' || view === 'tasks' || ((view === 'templates' || view === 'prompts') && conn?.kind !== 'cloudflare')) view = 'launcher';
+      if (view === 'thread' || view === 'schedule' || view === 'tasks' || view === 'managed' || ((view === 'templates' || view === 'prompts') && conn?.kind !== 'cloudflare')) view = 'launcher';
     }
     if (conn?.kind === 'cloudflare') {
       // 只在真正换连接时清输入 + 拨默认档；同连接重选（如刷新）不动用户已填的项目名。
@@ -1828,6 +2058,14 @@
         </svg>
         定时任务
       </button>
+      <button class="railnav {view === 'managed' ? 'on' : ''}" onclick={openManaged} disabled={!activeConn}>
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+          <circle cx="8" cy="8" r="5.6" stroke="currentColor" stroke-width="1.3" />
+          <circle cx="8" cy="8" r="1.7" stroke="currentColor" stroke-width="1.2" />
+          <path d="M2.4 8h3.9M9.7 8h3.9M8 9.7v3.9" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
+        </svg>
+        托管
+      </button>
       {/if}
       {#if isCfConn}
       <button class="railnav {view === 'templates' ? 'on' : ''}" onclick={openTemplates}>
@@ -2130,7 +2368,7 @@
             </div>
           {:else}
             {#each tasks as t (t.id)}
-              <div class="task-card {t.enabled ? '' : 'off'}">
+              <div class="task-card {t.enabled ? '' : 'off'} {hlTaskIds.includes(t.id) ? 'hl' : ''}">
                 <div class="task-toggle">
                   <button class="switch {t.enabled ? 'on' : ''}" title={t.enabled ? '已启用' : '已暂停'} onclick={() => toggleTask(t)}><span></span></button>
                 </div>
@@ -2158,6 +2396,114 @@
                     <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M11.5 2.5l2 2L6 12l-2.5.5L4 10l7.5-7.5z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" /></svg>
                   </button>
                   <button class="x sm" title="删除" onclick={() => deleteTask(t)}>×</button>
+                </div>
+              </div>
+            {/each}
+          {/if}
+        </div>
+      </div>
+
+    {:else if view === 'managed'}
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <header class="thread-head" data-tauri-drag-region onmousedown={startDrag}>
+        <div class="th-info"><b>托管</b><small>AI 按周循环运营站点 · L0 试运行：只产草稿，发布永远由你批准</small></div>
+        <button class="icon-btn" onclick={loadManaged} disabled={managedLoading} title="刷新">{@render refreshIcon(managedLoading)}</button>
+        <button class="btn soft bare" onclick={openManagedWizard} disabled={!sites.length}>{@render plusIcon()}托管一个站点</button>
+      </header>
+      <div class="thread">
+        <div class="sched-inner">
+          {#if managedOfConn.length === 0}
+            <div class="sched-empty">
+              <div class="cal-mark">🛞</div>
+              <b>还没有托管的站点</b>
+              <p>把站点交给 AI 按周循环运营：每天按计划写稿存草稿、每周自查审计；你只在待审队列里批准发布或打回。</p>
+              <button class="btn soft bare" onclick={openManagedWizard} style="margin-top:16px" disabled={!sites.length}>{@render plusIcon()}开启托管</button>
+            </div>
+          {:else}
+            {#each managedOfConn as m (m.id)}
+              {@const sum = mSummaries[m.id]}
+              {@const drafts = mDrafts[m.id] ?? []}
+              {@const reportTask = sum?.tasks.find((t) => t.title.includes('每周周报'))}
+              <div class="task-card {m.paused ? 'off' : ''}">
+                <div class="task-toggle">
+                  <button class="switch {m.paused ? '' : 'on'}" title={m.paused ? '已暂停（配套任务全部停跑）' : '托管中'} onclick={() => toggleManaged(m)}><span></span></button>
+                </div>
+                <div class="task-body">
+                  <b><SiteFav src={siteFav(m.site_slug)} label={m.site_slug} size={14} /> {m.site_name}<span class="md-lv-badge" title="点击调整托管等级"><Dropdown compact bare bind:value={m.level} options={LEVEL_OPTS} onchange={(v: string) => changeLevel(m, v)} /></span>{#if m.level === 'l3'}<span class="md-badge lv3">慎用</span>{/if}{#if m.paused}<span class="md-badge off">已暂停</span>{/if}</b>
+                  <div class="task-meta">
+                    本周发布 {sum ? sum.published_this_week : '…'} / 上限 {m.weekly_post_limit}
+                    <span class="cdot">·</span>待审草稿 {sum ? sum.drafts : drafts.length} 篇
+                    {#if sum && (m.token_weekly_budget || sum.week_tokens)}<span class="cdot">·</span>token {mdTok(sum.week_tokens)}{m.token_weekly_budget ? ` / ${mdTok(m.token_weekly_budget)}` : ''}{/if}
+                    {#if m.review_notes.length}<span class="cdot">·</span>累计打回 {m.review_notes.length} 次{/if}
+                  </div>
+                  {#if sum}
+                    <div class="task-meta">
+                      {#each sum.tasks as t (t.id)}
+                        <span class="md-task {t.enabled ? '' : 'off'}" title={t.title}>{t.title.includes('每日') ? '每日内容' : t.title.includes('周报') ? '每周周报' : '每周审计'}{t.last_run ? `：上次${t.last_status === 'ok' ? '成功' : '失败'}` : '：还没跑过'}</span>
+                      {/each}
+                      {#if m.brain}
+                        <span class="md-task" title="配套任务用的厂商/模型"><BrainIcon brain={m.brain} size={12} /> {modelDisp(m.brain, m.model)}{effortDisp(m.effort) ? ` · ${effortDisp(m.effort)}` : ''}</span>
+                      {/if}
+                    </div>
+                  {/if}
+                  {#if m.fused_at}
+                    <p class="md-err">预算已熔断（本周 {mdTok(sum?.week_tokens ?? 0)} / {mdTok(m.token_weekly_budget)} tokens）——确认无误后用左侧开关手动恢复。</p>
+                  {/if}
+                  {#if m.demote_note}
+                    <p class="md-warn">{m.demote_note}</p>
+                  {/if}
+                  <div class="md-actions">
+                    <button class="link md-primary" onclick={() => (mQueueOpen[m.id] = !mQueueOpen[m.id])}>待审队列{drafts.length ? `（${drafts.length}）` : ''}</button>
+                    <button class="link" onclick={() => { mPlanOpen[m.id] = !mPlanOpen[m.id]; if (mPlanDraft[m.id] === undefined) mPlanDraft[m.id] = m.plan; }}>运营计划</button>
+                    {#if reportTask}
+                      <button class="link" onclick={() => reportTask.last_conv_id ? openConv(reportTask.last_conv_id) : say('还没有周报——点「立即生成」跑一份')}>查看周报</button>
+                      <button class="link" onclick={() => genReportNow(reportTask.id)}>立即生成</button>
+                    {/if}
+                    <button class="link" onclick={() => adjustTasks(m)}>调整任务</button>
+                  </div>
+                  {#if mQueueOpen[m.id]}
+                    <div class="md-queue">
+                      {#if drafts.length === 0}
+                        <p class="hint">暂无待审草稿——等每日任务跑出第一篇，或点上面「刷新」。</p>
+                      {/if}
+                      {#each groupDrafts(drafts) as g (g.lang)}
+                        <div class="md-group">
+                          <span>{g.lang || '默认语种'} · {g.items.length} 篇</span>
+                          {#if g.items.length > 1}<button class="link" onclick={() => approveGroup(m, g.items)}>全部批准</button>{/if}
+                        </div>
+                        {#each g.items as d (d.id)}
+                          <div class="md-row">
+                            <span class="md-title" title={d.title}>{d.title}</span>
+                            <span class="md-sub">{d.updated_at ? fmtSched(d.updated_at) : ''}</span>
+                            <span class="md-btns">
+                              <button class="btn sm ghost" onclick={() => managedPreview(m, d)}>预览</button>
+                              <button class="btn sm" onclick={() => approveDraft(m, d)}>批准发布</button>
+                              <button class="btn sm ghost" onclick={() => { rejectFor = { m, d }; rejectReason = ''; }}>打回</button>
+                            </span>
+                          </div>
+                        {/each}
+                      {/each}
+                    </div>
+                  {/if}
+                  {#if mPlanOpen[m.id]}
+                    <div class="md-plan">
+                      <textarea class="tin" rows="8" bind:value={mPlanDraft[m.id]} placeholder="90 天运营计划（每日任务的方向依据）…"></textarea>
+                      <div class="row-end">
+                        <button class="btn sm ghost" onclick={() => (mPlanOpen[m.id] = false)}>收起</button>
+                        <button class="btn sm" onclick={() => saveManagedPlan(m)}>保存并同步任务</button>
+                      </div>
+                    </div>
+                  {/if}
+                  {#if m.level === 'l3'}
+                    <p class="md-foot-warn">⚠️ L3 存量维护：AI 可修改已发布内容、把低质旧文转草稿下线（每周 ≤
+                      <input class="md-editq" type="number" min="1" max="20" bind:value={m.weekly_edit_limit} onchange={() => saveEditLimit(m)} title="每周存量修改上限（软约束：AI 自数，周报如实汇报）" />
+                      篇，软约束）。改动均有修订历史、可在后台一键回滚；请每周查看周报「观察名单」跟踪数据回落。删除/导航/资料/类型仍绝对禁止。</p>
+                  {:else}
+                    <p class="md-foot"><svg width="11" height="11" viewBox="0 0 16 16" fill="none"><path d="M8 1.8 13 3.6v4.1c0 3.2-2.1 5.4-5 6.5-2.9-1.1-5-3.3-5-6.5V3.6L8 1.8Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="m5.8 8 1.6 1.6 2.8-3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>{m.level === 'l0' ? '只产草稿、发布由你批准；绝不删除内容或改动站点结构。' : '常规文章可自动发布；绝不删除内容或改动站点结构，审计纪要等仍待你审。'}</span></p>
+                  {/if}
+                </div>
+                <div class="task-actions">
+                  <button class="x sm" title="关闭托管（删配套任务，内容不动）" onclick={() => disableManaged(m)}>×</button>
                 </div>
               </div>
             {/each}
@@ -2800,6 +3146,96 @@
           {/if}
         </div>
       {/each}
+    </div>
+  </div>
+{/if}
+
+<!-- 托管 · 开启向导（3 步：选站 → 90 天计划 → 上限与边界确认） -->
+{#if mwOpen}
+  <div class="mask" role="presentation" onclick={() => !mwBusy && !mwGenBusy && (mwOpen = false)}></div>
+  <div class="modal wide">
+    <header class="sheet-head"><b>托管一个站点<small class="dim"> · 第 {mwStep}/3 步</small></b><button class="x" onclick={() => (mwOpen = false)} disabled={mwBusy}>×</button></header>
+    <div class="sheet-body">
+      {#if mwStep === 1}
+        <div class="tfield"><span>选择站点（一个站一条托管）</span>
+          <Dropdown searchable bind:value={mwSite} options={mwSiteOpts} placeholder="选择站点" />
+        </div>
+        <p class="hint">开启后会替这个站自动创建三个定时任务：每日内容（按计划写稿存草稿）+ 每周审计（自查质量/查重/内链）+ 每周周报（汇总本周数据）。模型与强度在第 3 步选择。</p>
+        <div class="row-end"><button class="btn ghost" onclick={() => (mwOpen = false)}>取消</button><button class="btn primary" onclick={() => (mwStep = 2)} disabled={!mwSite}>下一步</button></div>
+      {:else if mwStep === 2}
+        <div class="tfield"><span>90 天运营计划（每日任务的方向依据，可编辑，也可跳过手写）</span>
+          <textarea class="tin" rows="10" bind:value={mwPlan} placeholder="点下面「生成 90 天计划」让 AI 摸底站点后起草，或直接手写：定位/内容支柱/每周节奏/关键词方向/前 4 周选题…"></textarea>
+        </div>
+        <div class="md-genrow">
+          <button class="btn soft" onclick={mwGenPlan} disabled={mwGenBusy || !mwSite}>{#if mwGenBusy}<span class="wr-spin"></span>生成中（AI 正在摸底站点，约 1-3 分钟）…{:else}生成 90 天计划{/if}</button>
+          <span class="hint">生成过程只读取站点数据，不会改动内容；对话会留在侧栏可追溯。</span>
+        </div>
+        <div class="row-end"><button class="btn ghost" onclick={() => (mwStep = 1)}>上一步</button><button class="btn primary" onclick={() => (mwStep = 3)}>下一步{mwPlan.trim() ? '' : '（暂不填计划）'}</button></div>
+      {:else}
+        <div class="tfield"><span>模型与强度（三个配套任务共用，与对话选择器一致）</span>
+          <div class="tfield-fx"><ModelFx options={comboOpts} value={`${mwBrain}::${mwModel}`} effort={mwEffort} onpick={(v: string) => { const i = v.indexOf('::'); if (i > 0) { mwBrain = v.slice(0, i); mwModel = v.slice(i + 2); } }} oneffort={(v: string) => (mwEffort = v)} /></div></div>
+        <div class="trow">
+          <div class="tfield"><span>托管等级</span><Dropdown bind:value={mwLevel} options={LEVEL_OPTS} /></div>
+          <div class="tfield"><span>每周 token 预算（0＝不限，触顶自动熔断）</span>
+            <input class="tin" type="number" min="0" step="50000" bind:value={mwBudget} /></div>
+        </div>
+        <div class="trow">
+          <div class="tfield"><span>每周产出上限（发布＋新建草稿）</span>
+            <input class="tin" type="number" min="1" max="50" bind:value={mwLimit} style="max-width:120px" />
+          </div>
+          {#if mwLevel === 'l3'}
+            <div class="tfield"><span>每周存量修改上限（L3 · 软约束）</span>
+              <input class="tin" type="number" min="1" max="20" bind:value={mwEditLimit} style="max-width:120px" />
+            </div>
+          {/if}
+        </div>
+        {#if mwLevel === 'l3'}
+          <div class="md-danger">
+            <b>⚠️ L3 高风险提示</b>
+            <ul>
+              <li>修改存量内容<b>可能损害既有搜索流量</b>，排名波动需自行承担。</li>
+              <li>需要服务端 <b>≥ v1.3.23</b>（含内容修订历史，可在后台一键回滚）且密钥含 <b>stats:read</b>——否则 AI 拿不到 GSC/GA 数据、只能凭感觉改，<b>强烈不建议开启</b>（prompt 已写死：无数据禁改存量）。</li>
+              <li>建议先在 L1/L2 稳定运行满 <b>2 周</b>、打回率低后再升 L3。</li>
+            </ul>
+          </div>
+        {/if}
+        <div class="md-bound">
+          <b>边界说明（已机制化写入任务，请确认）</b>
+          <ul>
+            {#if mwLevel === 'l0'}
+              <li>AI 产出<b>只到草稿</b>，等你在「托管 → 待审队列」里预览后批准；<b>绝不自行发布或定时发布</b>。</li>
+            {:else}
+              <li>{levelLabel(mwLevel)}：常规文章自检通过后<b>可直接发布</b>；审计纪要等仍存草稿待审{mwLevel === 'l2' ? '，且每周周报会附本周自动发布清单供你抽查' : ''}。打回率过高会<b>自动降级</b>{mwLevel === 'l3' ? '（L3→L2）' : '（→L0）'}。</li>
+            {/if}
+            {#if mwLevel === 'l3'}
+              <li class="md-li-danger">L3 允许 AI <b>修改已发布的存量内容</b>并把低质旧文<b>转草稿下线</b>（绝不删除）；每周最多改 {mwEditLimit} 篇（软约束，AI 自数并在周报如实汇报）。</li>
+            {/if}
+            <li>每周产出（发布＋新建草稿）不超过 {mwLimit} 篇——Pilot 在任务触发前实测把关，达上限直接跳过。</li>
+            <li><b>绝不</b>删除内容、修改导航/站点资料/语言设置、创建或启用内容类型。</li>
+            {#if mwBudget > 0}<li>每周 token 预算 {mwBudget}：触顶自动暂停全部配套任务（熔断），恢复需手动。</li>{/if}
+            <li>建议密钥勾选 <b>stats:read</b>——AI 将按真实搜索数据选题（只读；缺失时自动退回按运营计划选题）。</li>
+            <li>建议为该连接使用<b>仅内容权限</b>的受限密钥（posts 读写＋发布即可，不给站点设置/导航/类型权限），从密钥层再兜一道底。</li>
+          </ul>
+        </div>
+        <div class="row-end"><button class="btn ghost" onclick={() => (mwStep = 2)}>上一步</button><button class="btn primary" onclick={mwEnable} disabled={mwBusy || !mwSite || !brainUsable(mwBrain as Brain)}>{mwBusy ? '开启中…' : '确认并开启托管'}</button></div>
+      {/if}
+    </div>
+  </div>
+{/if}
+
+<!-- 托管 · 打回理由 -->
+{#if rejectFor}
+  <div class="mask" role="presentation" onclick={() => (rejectFor = null)}></div>
+  <div class="modal">
+    <header class="sheet-head"><b>打回《{rejectFor.d.title}》</b><button class="x" onclick={() => (rejectFor = null)}>×</button></header>
+    <div class="sheet-body">
+      <p class="hint">草稿不会被删除；理由会注入后续每日任务，让它规避同类问题（保留最近 20 条）。打回率过高会自动降级（L3→L2，L1/L2→L0）。</p>
+      <textarea class="tin" rows="3" bind:value={rejectReason} placeholder="例如：标题太夸张 / 事实来源不足 / 和上周主题重复…"></textarea>
+      <div class="row-end">
+        <button class="btn ghost" onclick={() => (rejectFor = null)}>取消</button>
+        <button class="btn" title="记录理由后立即触发一次每日任务，让 AI 带着意见返工" onclick={() => submitReject(true)} disabled={!rejectReason.trim()}>打回并立即返工</button>
+        <button class="btn primary" onclick={() => submitReject(false)} disabled={!rejectReason.trim()}>记录打回</button>
+      </div>
     </div>
   </div>
 {/if}
@@ -3451,4 +3887,47 @@
   .dim { color: var(--dim); }
   .tin { width: 100%; }
   .row-end { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+
+  /* 托管：卡片徽标 / 待审队列 / 计划编辑 / 向导边界说明 */
+  .md-badge { margin-left: 8px; font-size: 10.5px; padding: 1px 7px; border-radius: 999px; background: #e8f0e4; color: #3c6b32; vertical-align: 1px; }
+  .md-badge.off { background: #eee9df; color: var(--dim); }
+  .md-task { font-size: 11.5px; padding: 1px 8px; border-radius: 999px; background: #f1efe9; color: var(--dim); margin-right: 6px; }
+  .md-task.off { opacity: 0.55; text-decoration: line-through; }
+  /* 通用文字链按钮（任务卡「查看对话/运行记录」、托管卡操作等）——此前从未定义,一直是系统默认灰凸样式 */
+  .link { border: none; background: none; padding: 0; font: inherit; font-size: 12.5px; color: var(--accent); cursor: pointer; white-space: nowrap; }
+  .link:hover { text-decoration: underline; }
+  .md-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 6px; margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--border, #ecebe6); }
+  .md-actions .link { padding: 3px 9px; border-radius: 999px; font-size: 12px; color: var(--dim, #6b675f); }
+  .md-actions .link:hover { background: #f1efe9; color: var(--text, #26241f); text-decoration: none; }
+  .md-actions .link.md-primary { color: var(--accent); box-shadow: inset 0 0 0 1px #e6cabb; }
+  /* 等级选择器伪装成头部徽标（bare 触发器 + 绿底胶囊） */
+  .md-lv-badge { display: inline-block; margin-left: 8px; vertical-align: 1px; }
+  .md-lv-badge :global(.dd) { width: auto; }
+  .md-lv-badge :global(.dd-trigger.bare) { font-size: 10.5px; padding: 1px 7px; border-radius: 999px; background: #e8f0e4; color: #3c6b32; }
+  .md-foot { display: flex; align-items: flex-start; gap: 5px; margin: 7px 0 0; font-size: 11px; color: var(--faint, #9b968c); }
+  .md-foot svg { flex: none; margin-top: 1.5px; }
+  .md-queue { margin-top: 8px; border: 1px solid var(--line, #e6e2d8); border-radius: 10px; padding: 4px 10px; background: #fbfaf7; }
+  .md-row { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px dashed var(--line, #e6e2d8); }
+  .md-row:last-child { border-bottom: none; }
+  .md-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+  .md-sub { flex: none; color: var(--faint); font-size: 11.5px; }
+  .md-btns { flex: none; display: flex; gap: 6px; }
+  .md-plan { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; }
+  .md-plan textarea { font-size: 12.5px; line-height: 1.6; }
+  .md-foot { margin-top: 8px; color: var(--faint); }
+  .md-genrow { display: flex; align-items: center; gap: 10px; margin: 6px 0 10px; }
+  .md-bound { border: 1px solid #e5d9b8; background: #fdf9ec; border-radius: 10px; padding: 10px 14px; font-size: 12.5px; margin: 8px 0; }
+  .md-bound ul { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+  .md-badge.lv { background: #e7ecf7; color: #3a5da8; }
+  .md-err { color: var(--err, #c0392b); font-size: 12px; margin: 4px 0 0; }
+  .md-warn { color: #9a6b00; font-size: 12px; margin: 4px 0 0; }
+  .md-group { display: flex; align-items: center; justify-content: space-between; padding: 6px 0 2px; font-size: 11.5px; color: var(--faint); }
+  .md-lv { margin-left: auto; }
+  .task-card.hl { outline: 2px solid #d9a441; outline-offset: 2px; border-radius: 12px; }
+  .md-badge.lv3 { background: #f7e5e0; color: #a8402a; }
+  .md-foot-warn { margin-top: 8px; font-size: 12px; line-height: 1.7; color: #9a6b00; background: #fdf6e3; border: 1px solid #ecd9a0; border-radius: 8px; padding: 6px 10px; }
+  .md-editq { width: 44px; padding: 0 4px; font-size: 12px; border: 1px solid #ecd9a0; border-radius: 5px; background: #fff; color: inherit; text-align: center; }
+  .md-danger { border: 1px solid #e2b4a8; background: #fdf1ee; border-radius: 10px; padding: 10px 14px; font-size: 12.5px; margin: 8px 0; color: #7c2d1a; }
+  .md-danger ul { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+  .md-li-danger { color: #a8402a; }
 </style>
