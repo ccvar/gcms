@@ -887,6 +887,8 @@
 
   // 侧栏折叠 + 可拖拽宽度（持久化）。
   let railCollapsed = $state(loadRailFlag());
+  /** 会话列表已滚动（不在顶部）——导航与列表之间显示分界线。 */
+  let convosScrolled = $state(false);
   let railWidth = $state(loadRailWidth());
   function loadRailFlag(): boolean { try { return localStorage.getItem('gcms.pilot.railCollapsed') === '1'; } catch { return false; } }
   function loadRailWidth(): number { try { const n = parseInt(localStorage.getItem('gcms.pilot.railWidth') || ''); return n >= 190 && n <= 460 ? n : 240; } catch { return 240; } }
@@ -2262,7 +2264,7 @@
       {/if}
     </div>
 
-    <div class="convos">
+    <div class="convos" class:scrolled={convosScrolled} onscroll={(e) => (convosScrolled = (e.currentTarget as HTMLElement).scrollTop > 2)}>
       {#if convos.length === 0}
         <p class="rail-empty">还没有对话。<br />选好站点和模型，直接说你想做什么。</p>
       {/if}
@@ -3074,9 +3076,9 @@
 {#snippet brainTag(brain: string, label: string)}<span class="btag"><BrainIcon {brain} size={12} />{label}</span>{/snippet}
 
 {#snippet refreshIcon(spinning: boolean)}
-  <svg class="rfz {spinning ? 'spin' : ''}" width="15" height="15" viewBox="0 0 16 16" fill="none">
-    <path d="M13.6 8a5.6 5.6 0 1 1-1.7-4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
-    <path d="M13.9 2.3V5.1H11.1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
+  <svg class="rfz {spinning ? 'spin' : ''}" width="15" height="15" viewBox="0 0 24 24" fill="none">
+    <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" />
+    <path d="M21 3v5h-5" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" />
   </svg>
 {/snippet}
 
@@ -3579,25 +3581,27 @@
   /* 右缘拖拽把手：改侧栏宽度。 */
   /* 只用 col-resize 光标提示，不画任何指示线（避免拖动时多出一条竖线）。 */
   .rail-resize { position: absolute; top: 30px; right: -3px; bottom: 0; width: 7px; cursor: col-resize; z-index: 5; }
-  .rail-head { padding: 8px 8px 8px; display: flex; flex-direction: column; gap: 2px; }
+  .rail-head { padding: 8px 8px 2px; display: flex; flex-direction: column; gap: 2px; }
   .newchat { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 10px;
     background: none; color: var(--text); border: none; border-radius: 9px; font-size: 13.5px; font-weight: 550; cursor: pointer; text-align: left; }
   .newchat:hover { background: #f1efe9; }
   .newchat:disabled { opacity: .5; cursor: default; }
   .newchat svg { flex: none; color: var(--accent); }
-  .railnav { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 10px; background: none;
+  .railnav { display: flex; align-items: center; gap: 8px; width: 100%; padding: 5px 10px; background: none;
     border: none; border-radius: 9px; font-size: 13px; color: var(--dim); cursor: pointer; text-align: left; margin-top: -4px; }
   .railnav:hover { background: #f1efe9; color: var(--text); }
   .railnav.on { background: #e9e7e0; color: var(--text); font-weight: 550; }
   .railnav:disabled { opacity: .45; cursor: default; }
   .railnav svg { flex: none; }
 
-  .convos { flex: 1; overflow-y: auto; padding: 4px 8px 8px; display: flex; flex-direction: column; gap: 1px; }
+  .convos { flex: 1; overflow-y: auto; padding: 2px 8px 8px; display: flex; flex-direction: column; gap: 1px; border-top: 1px solid transparent; transition: border-color .15s; }
+  .convos > button.site-grp:first-of-type { padding-top: 3px; margin-top: 0; }
+  .convos.scrolled { border-top-color: rgba(30, 25, 15, 0.07); }
   .rail-empty { color: var(--faint); font-size: 12px; padding: 10px 8px; line-height: 1.7; }
   .grp { font-size: 10.5px; font-weight: 600; letter-spacing: .04em; color: var(--faint); padding: 12px 10px 4px; text-transform: uppercase; }
   .grp:first-child { padding-top: 4px; }
   /* 站点分组头（可折叠） */
-  .site-grp { width: 100%; display: flex; align-items: center; gap: 6px; padding: 9px 8px 4px; margin-top: 2px; background: none; border: none; cursor: pointer; text-align: left; -webkit-appearance: none; appearance: none; }
+  .site-grp { width: 100%; display: flex; align-items: center; gap: 6px; padding: 9px 8px 4px 10px; margin-top: 2px; background: none; border: none; cursor: pointer; text-align: left; -webkit-appearance: none; appearance: none; }
   .site-grp:first-child { margin-top: 0; }
   .site-grp:hover .site-grp-name { color: var(--accent); }
   .site-grp-chev { color: var(--faint); flex: none; transition: transform .12s; }
@@ -3728,9 +3732,9 @@
   .task-seg { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 30px; }
   .task-seg button { text-align: left; background: var(--card); border: 1px solid var(--border2); border-radius: 12px; padding: 11px 13px; cursor: pointer; display: flex; align-items: center; gap: 10px; transition: border-color .12s, background .12s; }
   .task-seg button:hover { border-color: #cfccc2; }
-  .task-seg button.on { border-color: var(--accent); background: var(--accent-soft); }
+  .task-seg button.on { border-color: var(--accent); }
   .ts-ic { flex: none; width: 30px; height: 30px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; background: #edecef; color: var(--dim); transition: background .12s, color .12s; }
-  .task-seg button.on .ts-ic { background: #fff; color: var(--accent); }
+  .task-seg button.on .ts-ic { color: var(--accent); }
   .ts-txt { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
   .task-seg b { font-size: 13.5px; }
   .task-seg small { color: var(--dim); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
