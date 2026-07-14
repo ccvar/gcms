@@ -11,6 +11,7 @@
   import SiteFav from '$lib/SiteFav.svelte';
   import ModelFx from '$lib/ModelFx.svelte';
   import UsageRing from '$lib/UsageRing.svelte';
+  import { tip as tipAction } from '$lib/tip';
   import AppIcon from '$lib/AppIcon.svelte';
   import type {
     Connection, Discovery, Site, BrainsInfo, Brain, ImportOutcome,
@@ -160,8 +161,10 @@
     token_weekly_budget: number; fused_at: number;
     review_events: { ts: number; approved: boolean }[]; demote_note: string;
     audit_notes: string; enabled_at: number;
+    reports: { ts: number; content: string; metrics: ManagedReportMetrics }[];
     created_at: number; updated_at: number;
   };
+  type ManagedReportMetrics = { published: number | null; drafts_new: number | null; rejected: number | null; tokens: number | null; impressions: number | null; clicks: number | null };
   type ManagedDraft = { id: number; title: string; lang: string; updated_at: string };
   type ManagedSummary = {
     published_this_week: number; drafts: number; drafts_new: number; week_start: number; week_tokens: number;
@@ -268,6 +271,88 @@
     try { await invoke('managed_set_edit_limit', { id: m.id, limit: v }); say('存量修改配额已更新，已同步每日任务'); await loadManaged(); }
     catch (e) { say(String(e), 'err'); await loadManaged(); }
   }
+  // 周报归档：查看=打开历史列表（新到旧），点条目看渲染后的正文；无归档回落旧行为（打开上次对话）。
+  let reportListFor = $state<ManagedSite | null>(null);
+  let reportView = $state<{ ts: number; content: string; metrics: ManagedReportMetrics } | null>(null);
+  /** 归档条目的核心数字摘要（只列拿得到的项）。 */
+  function reportMetLine(mt: ManagedReportMetrics | undefined): string {
+    if (!mt) return '';
+    const parts: string[] = [];
+    if (mt.published != null) parts.push(`发布 ${mt.published}`);
+    if (mt.drafts_new != null) parts.push(`新草稿 ${mt.drafts_new}`);
+    if (mt.rejected != null) parts.push(`打回 ${mt.rejected}`);
+    if (mt.impressions != null) parts.push(`曝光 ${mt.impressions}`);
+    if (mt.clicks != null) parts.push(`点击 ${mt.clicks}`);
+    return parts.join(' · ');
+  }
+  /** 仪表盘趋势：归档周报某指标的时间序列（旧→新，最多 8 期；不足 2 期不画）。 */
+  function reportTrend(m: ManagedSite, key: 'published' | 'clicks'): number[] {
+    const vals = (m.reports ?? []).map((r) => r.metrics?.[key]).filter((v): v is number => typeof v === 'number');
+    return vals.slice(0, 8).reverse();
+  }
+  /** 12px 内联小柱高度（最矮 2px 保证可见）。 */
+  function trendBarPx(v: number, arr: number[]): number {
+    const max = Math.max(...arr, 1);
+    return Math.max(2, Math.round((v / max) * 12));
+  }
+  /** 仪表盘汇总（纯派生自 managed_list + mSummaries，不新造统计）。 */
+  const mdAgg = $derived.by(() => {
+    let run = 0, paused = 0, fused = 0, out = 0, cap = 0, drafts = 0, tokens = 0;
+    for (const m of managedOfConn) {
+      if (m.fused_at) fused++;
+      else if (m.paused) paused++;
+      else run++;
+      cap += m.weekly_post_limit;
+      const s = mSummaries[m.id];
+      if (s) { out += s.published_this_week + s.drafts_new; drafts += s.drafts; tokens += s.week_tokens; }
+    }
+    return { run, paused, fused, out, cap, drafts, tokens };
+  });
+  /** 例外站（只列需要关注的）：熔断 / 暂停 / 待审>0 / 预算已用 ≥80%（设了预算才算）。 */
+  const mdExceptions = $derived.by(() => {
+    const out: { m: ManagedSite; tags: { t: string; k: 'err' | 'warn' | 'off' }[] }[] = [];
+    for (const m of managedOfConn) {
+      const s = mSummaries[m.id];
+      const tags: { t: string; k: 'err' | 'warn' | 'off' }[] = [];
+      if (m.fused_at) tags.push({ t: '熔断', k: 'err' });
+      else if (m.paused) tags.push({ t: '暂停', k: 'off' });
+      if (s && s.drafts > 0) tags.push({ t: `待审 ${s.drafts}`, k: 'warn' });
+      if (m.token_weekly_budget > 0 && s && s.week_tokens >= m.token_weekly_budget * 0.8) {
+        tags.push({ t: `预算 ${Math.round((s.week_tokens / m.token_weekly_budget) * 100)}%`, k: 'warn' });
+      }
+      if (tags.length) out.push({ m, tags });
+    }
+    return out;
+  });
+  /** 定时任务概览（纯本地派生，按 history 汇总今日口径）。 */
+  const taskAgg = $derived.by(() => {
+    const midnight = new Date();
+    midnight.setHours(0, 0, 0, 0);
+    const t0 = Math.floor(midnight.getTime() / 1000);
+    let ran = 0, failed = 0, deferred = 0, enabled = 0;
+    let next: { ts: number; title: string } | null = null;
+    for (const t of tasks) {
+      if (t.enabled) {
+        enabled++;
+        if (t.next_run > 0 && (!next || t.next_run < next.ts)) next = { ts: t.next_run, title: t.title };
+      }
+      for (const r of t.history ?? []) {
+        if (r.ts < t0) continue;
+        if (r.deferred) deferred++;
+        else {
+          ran++;
+          if (!r.ok) failed++;
+        }
+      }
+    }
+    return { total: tasks.length, enabled, ran, failed, deferred, next };
+  });
+  const taskNextLabel = $derived.by(() => {
+    const n = taskAgg.next;
+    if (!n) return '无启用任务';
+    if (n.ts * 1000 - Date.now() < 60_000) return `即将（${n.title}）`;
+    return `${fmtSched(new Date(n.ts * 1000).toISOString())}（${n.title}）`;
+  });
   // 周报：查看=打开周报任务上次运行的对话；立即生成=run_task_now。
   async function genReportNow(taskId: string) {
     try { await invoke('run_task_now', { id: taskId }); say('周报生成中——完成后点「查看周报」打开对话'); }
@@ -820,11 +905,12 @@
     document.addEventListener('mouseup', onUp);
   }
 
-  // 会话搜索：按标题 / 站点名 / slug / 域名匹配。
+  // 全局搜索（分区）：视图导航 / 定时任务 / 托管站点 / 会话 / 排期查找动作项。
   let searchOpen = $state(false);
   let searchQ = $state('');
   let searchInput = $state<HTMLInputElement | null>(null);
-  function openSearch() { searchOpen = true; searchQ = ''; requestAnimationFrame(() => searchInput?.focus()); }
+  function openSearch() { searchOpen = true; searchQ = ''; searchIdx = 0; requestAnimationFrame(() => searchInput?.focus()); }
+  // 会话匹配（原有逻辑保留）：按标题 / 站点名 / slug / 域名。
   const searchResults = $derived.by(() => {
     const q = searchQ.trim().toLowerCase();
     const list = convos.filter((c) => {
@@ -839,10 +925,80 @@
     });
     return list.slice(0, 60);
   });
-  function pickSearch(id: string) { searchOpen = false; openConv(id); }
+  type SearchEntry =
+    | { kind: 'view'; view: 'schedule' | 'tasks' | 'managed'; label: string }
+    | { kind: 'task'; t: ScheduledTask }
+    | { kind: 'managed'; m: ManagedSite }
+    | { kind: 'conv'; c: Conversation }
+    | { kind: 'sched-find'; q: string };
+  const SEARCH_VIEWS: { view: 'schedule' | 'tasks' | 'managed'; label: string }[] = [
+    { view: 'schedule', label: '排期' },
+    { view: 'tasks', label: '定时任务' },
+    { view: 'managed', label: '托管' },
+  ];
+  /** 分区结果（按匹配数动态显隐）：空查询只给三个视图导航项。 */
+  const searchSections = $derived.by(() => {
+    const q = searchQ.trim().toLowerCase();
+    const out: { title: string; entries: SearchEntry[] }[] = [];
+    const views = SEARCH_VIEWS.filter((v) => !q || v.label.includes(q)).map((v) => ({ kind: 'view' as const, ...v }));
+    if (views.length) out.push({ title: '视图', entries: views });
+    if (q) {
+      // 定时任务：标题 / prompt / 站点名（slug 与展示名都算）
+      const taskHits = tasks
+        .filter((t) => t.conn_id === activeConnId)
+        .filter((t) => {
+          const names = [t.title, t.prompt, t.site_name, t.site_slug, ...(t.site_names ?? []), ...(t.site_slugs ?? [])].join('\n').toLowerCase();
+          return names.includes(q);
+        })
+        .slice(0, 10);
+      if (taskHits.length) out.push({ title: '定时任务', entries: taskHits.map((t) => ({ kind: 'task' as const, t })) });
+      // 托管站点：站点名 / slug
+      const mHits = managedOfConn.filter((m) => m.site_name.toLowerCase().includes(q) || m.site_slug.toLowerCase().includes(q)).slice(0, 8);
+      if (mHits.length) out.push({ title: '托管站点', entries: mHits.map((m) => ({ kind: 'managed' as const, m })) });
+      // 会话（原有匹配逻辑）
+      if (searchResults.length) out.push({ title: '会话', entries: searchResults.map((c) => ({ kind: 'conv' as const, c })) });
+      // 排期：远端数据不实时搜——固定一条动作项，选中去排期视图做标题过滤
+      out.push({ title: '排期', entries: [{ kind: 'sched-find', q: searchQ.trim() }] });
+    }
+    return out;
+  });
+  const searchFlat = $derived(searchSections.flatMap((s) => s.entries));
+  let searchIdx = $state(0);
+  $effect(() => { void searchQ; searchIdx = 0; }); // 换关键词回到第一项
+  function searchNudge(delta: number) {
+    if (!searchFlat.length) return;
+    searchIdx = Math.max(0, Math.min(searchFlat.length - 1, searchIdx + delta));
+    requestAnimationFrame(() => document.querySelector('.search-item.on')?.scrollIntoView({ block: 'nearest' }));
+  }
+  function pickEntry(it: SearchEntry) {
+    searchOpen = false;
+    if (it.kind === 'view') {
+      if (it.view === 'schedule') void openSchedule();
+      else if (it.view === 'tasks') void openTasks();
+      else void openManaged();
+    } else if (it.kind === 'conv') {
+      openConv(it.c.id);
+    } else if (it.kind === 'task') {
+      // 切到定时任务视图并直接打开该任务的编辑弹窗（openEditTask 自带回填）
+      void openTasks();
+      openEditTask(it.t);
+    } else if (it.kind === 'managed') {
+      void openManaged();
+      const id = `mc-${it.m.id}`;
+      setTimeout(() => document.getElementById(id)?.scrollIntoView({ block: 'start', behavior: 'smooth' }), 120);
+    } else {
+      schedTitleQ = it.q;
+      void openSchedule();
+    }
+  }
   $effect(() => {
     if (!searchOpen) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') searchOpen = false; };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') searchOpen = false;
+      else if (e.key === 'ArrowDown') { e.preventDefault(); searchNudge(1); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); searchNudge(-1); }
+      else if (e.key === 'Enter') { const it = searchFlat[searchIdx]; if (it) pickEntry(it); }
+    };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   });
@@ -1827,7 +1983,16 @@
   }
   // 排期三层：站点筛选 chips + 月度密度条 + 按天分组
   let schedSiteFilter = $state('');
-  const schedFiltered = $derived(schedSiteFilter ? sched.filter((x) => x.site_slug === schedSiteFilter) : sched);
+  /** 排期标题包含过滤（纯前端；只由全局搜索「在排期中查找」预填，视图内以小标签形式展示/清除）。 */
+  let schedTitleQ = $state('');
+  // 切出排期视图即清空标题过滤，避免下次进来还挂着旧过滤。
+  $effect(() => { if (view !== 'schedule') schedTitleQ = ''; });
+  const schedFiltered = $derived.by(() => {
+    let list = schedSiteFilter ? sched.filter((x) => x.site_slug === schedSiteFilter) : sched;
+    const tq = schedTitleQ.trim().toLowerCase();
+    if (tq) list = list.filter((x) => (x.title || '').toLowerCase().includes(tq));
+    return list;
+  });
   const schedSites = $derived([...new Set(sched.map((x) => x.site_slug))]);
   function dayKey(ms: number): string { const d = new Date(ms); return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`; }
   function dayLabel(ms: number): string {
@@ -2335,6 +2500,9 @@
                 <button class="sd-cell l{Math.min(d.count, 4)}" class:today={d.today} data-tip={d.tip} aria-label={d.tip} onclick={() => d.count && jumpToDay(d.key)}></button>
               {/each}
             </div>
+            {#if schedTitleQ.trim()}
+              <span class="sched-tq-chip">标题：{schedTitleQ.trim()}<button title="清除标题过滤，恢复全量" onclick={() => (schedTitleQ = '')}>×</button></span>
+            {/if}
             {#if schedSites.length > 8}
               <div class="sched-filter-dd"><Dropdown compact searchable bare bind:value={schedSiteFilter} options={[{ value: '', label: `全部站点 · ${schedSites.length}` }, ...schedSites.map((sl) => { const st = sites.find((x) => x.slug === sl); return { value: sl, label: st?.name || sl, sub: st?.url ? hostOf(st.url) : sl, img: st?.favicon || st?.logo || faviconGuess(st?.url) }; })]} placeholder="全部站点" /></div>
             {:else if schedSites.length > 1}
@@ -2378,6 +2546,17 @@
               <button class="btn soft bare" onclick={openNewTask} style="margin-top:16px">{@render plusIcon()}新建任务</button>
             </div>
           {:else}
+            <!-- 概览行（与托管仪表盘同款 stat-strip；今日口径按 history 本地汇总，0 值段省略） -->
+            <div class="md-board">
+              <div class="stat-strip">
+                <span class="ss-seg" use:tipAction={'定时任务总数'}><b class="ss-num">{taskAgg.total}</b><span class="ss-lbl">任务</span></span>
+                <span class="ss-seg" use:tipAction={'处于启用状态的任务数'}><i class="ss-dot ok"></i><b class="ss-num">{taskAgg.enabled}</b><span class="ss-lbl">启用</span></span>
+                <span class="ss-seg" use:tipAction={'今日零点起实际触发次数（不含顺延）'}><b class="ss-num">{taskAgg.ran}</b><span class="ss-lbl">今日已跑</span></span>
+                {#if taskAgg.failed}<span class="ss-seg" use:tipAction={'今日运行失败的次数'}><i class="ss-dot err"></i><b class="ss-num">{taskAgg.failed}</b><span class="ss-lbl">失败</span></span>{/if}
+                {#if taskAgg.deferred}<span class="ss-seg" use:tipAction={'撞订阅限额自动改期，不算失败'}><i class="ss-dot warn"></i><b class="ss-num">{taskAgg.deferred}</b><span class="ss-lbl">限额顺延</span></span>{/if}
+                <span class="ss-seg" use:tipAction={'启用任务中最近一次将触发的时间'}><span class="ss-lbl">下次</span><b class="ss-num">{taskNextLabel}</b></span>
+              </div>
+            </div>
             {#each tasks as t (t.id)}
               <div class="task-card {t.enabled ? '' : 'off'} {hlTaskIds.includes(t.id) ? 'hl' : ''}">
                 <div class="task-toggle">
@@ -2389,7 +2568,7 @@
                     <SiteFav src={siteFav(t.site_slug)} label={t.site_slug} size={13} /><span class="cmono">{t.site_slug}</span>{#if (t.site_slugs?.length ?? 0) > 1}<span class="cmono" title={t.site_slugs?.join('、')}> 等 {t.site_slugs?.length} 站</span>{/if}
                     <span class="cdot">·</span>{@render brainTag(t.brain, brainLabel(t.brain))}
                     <span class="cdot">·</span>{periodLabel(t.interval_minutes)}
-                    {#if t.enabled}<span class="cdot">·</span>下次 {fmtSched(new Date(t.next_run * 1000).toISOString())}{/if}
+                    {#if t.enabled}<span class="cdot">·</span>下次 {fmtSched(new Date(t.next_run * 1000).toISOString())}{#if t.history?.[0]?.deferred && t.next_run * 1000 > Date.now()}<span class="defer-tag" title="撞到订阅限额，已自动顺延到恢复后重试">限额顺延</span>{/if}{/if}
                   </div>
                   {#if t.last_run}
                     <div class="task-last {t.last_status}">
@@ -2433,11 +2612,31 @@
               <button class="btn soft bare" onclick={openManagedWizard} style="margin-top:16px" disabled={!sites.length}>{@render plusIcon()}开启托管</button>
             </div>
           {:else}
+            <!-- 仪表盘：汇总一行（0 值段省略）+ 例外行（熔断/暂停/待审/预算≥80%，点击定位卡片）；全正常时只剩汇总 -->
+            <div class="md-board">
+              <div class="stat-strip">
+                <span class="ss-seg" use:tipAction={'本连接下已开启托管的站点数'}><b class="ss-num">{managedOfConn.length}</b><span class="ss-lbl">托管站</span></span>
+                <span class="ss-seg" use:tipAction={'正常运行中的托管站数'}><i class="ss-dot ok"></i><b class="ss-num">{mdAgg.run}</b><span class="ss-lbl">运行</span></span>
+                {#if mdAgg.paused}<span class="ss-seg" use:tipAction={'已暂停的托管站数'}><i class="ss-dot off"></i><b class="ss-num">{mdAgg.paused}</b><span class="ss-lbl">暂停</span></span>{/if}
+                {#if mdAgg.fused}<span class="ss-seg" use:tipAction={'周预算触顶自动停的站数'}><i class="ss-dot err"></i><b class="ss-num">{mdAgg.fused}</b><span class="ss-lbl">熔断</span></span>{/if}
+                <span class="ss-seg" use:tipAction={'周一起发布＋新建草稿 / 各站周上限合计'}><b class="ss-num">{mdAgg.out}/{mdAgg.cap}</b><span class="ss-lbl">本周产出</span></span>
+                {#if mdAgg.drafts}<span class="ss-seg" use:tipAction={'各站待审草稿合计'}><i class="ss-dot warn"></i><b class="ss-num">{mdAgg.drafts}</b><span class="ss-lbl">待审</span></span>{/if}
+                <span class="ss-seg" use:tipAction={'本周托管任务累计用量，预算熔断同口径'}><b class="ss-num">{mdTok(mdAgg.tokens)}</b><span class="ss-lbl">token</span></span>
+              </div>
+              {#each mdExceptions as ex (ex.m.id)}
+                <button class="md-exc" title="点击定位到该站卡片" onclick={() => document.getElementById(`mc-${ex.m.id}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' })}>
+                  <SiteFav src={siteFav(ex.m.site_slug)} label={ex.m.site_slug} size={13} /><span class="md-exc-name">{ex.m.site_name}</span>
+                  {#each ex.tags as tg (tg.t)}<span class="md-exc-tag {tg.k}">{tg.t}</span>{/each}
+                </button>
+              {/each}
+            </div>
             {#each managedOfConn as m (m.id)}
               {@const sum = mSummaries[m.id]}
               {@const drafts = mDrafts[m.id] ?? []}
               {@const reportTask = sum?.tasks.find((t) => t.title.includes('每周周报'))}
-              <div class="task-card {m.paused ? 'off' : ''}">
+              {@const tP = reportTrend(m, 'published')}
+              {@const tC = reportTrend(m, 'clicks')}
+              <div class="task-card {m.paused ? 'off' : ''}" id={`mc-${m.id}`}>
                 <div class="task-toggle">
                   <button class="switch {m.paused ? '' : 'on'}" title={m.paused ? '已暂停（配套任务全部停跑）' : '托管中'} onclick={() => toggleManaged(m)}><span></span></button>
                 </div>
@@ -2448,6 +2647,8 @@
                     <span class="cdot">·</span>待审草稿 {sum ? sum.drafts : drafts.length} 篇
                     {#if sum && (m.token_weekly_budget || sum.week_tokens)}<span class="cdot">·</span>token {mdTok(sum.week_tokens)}{m.token_weekly_budget ? ` / ${mdTok(m.token_weekly_budget)}` : ''}{/if}
                     {#if m.review_notes.length}<span class="cdot">·</span>累计打回 {m.review_notes.length} 次{/if}
+                    {#if tP.length >= 2}<span class="cdot">·</span><span class="mb-trend" title="每周发布数趋势（旧→新，来自周报归档）">发布{#each tP as v, i (i)}<i style="height:{trendBarPx(v, tP)}px"></i>{/each}</span>{/if}
+                    {#if tC.length >= 2}<span class="mb-trend" title="每周点击数趋势（旧→新，来自周报归档）">点击{#each tC as v, i (i)}<i style="height:{trendBarPx(v, tC)}px"></i>{/each}</span>{/if}
                   </div>
                   {#if sum}
                     <div class="task-meta">
@@ -2469,7 +2670,7 @@
                     <button class="link md-primary" onclick={() => (mQueueOpen[m.id] = !mQueueOpen[m.id])}>待审队列{drafts.length ? `（${drafts.length}）` : ''}</button>
                     <button class="link" onclick={() => { mPlanOpen[m.id] = !mPlanOpen[m.id]; if (mPlanDraft[m.id] === undefined) mPlanDraft[m.id] = m.plan; }}>运营计划</button>
                     {#if reportTask}
-                      <button class="link" onclick={() => reportTask.last_conv_id ? openConv(reportTask.last_conv_id) : say('还没有周报——点「立即生成」跑一份')}>查看周报</button>
+                      <button class="link" onclick={() => m.reports?.length ? (reportListFor = m) : (reportTask.last_conv_id ? openConv(reportTask.last_conv_id) : say('还没有周报——点「立即生成」跑一份'))}>查看周报{m.reports?.length ? `（${m.reports.length}）` : ''}</button>
                       <button class="link" onclick={() => genReportNow(reportTask.id)}>立即生成</button>
                     {/if}
                     <button class="link" onclick={() => adjustTasks(m)}>调整任务</button>
@@ -2727,20 +2928,40 @@
           <circle cx="8" cy="8" r="5" stroke="currentColor" stroke-width="1.4" />
           <path d="M11.7 11.7L15 15" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
         </svg>
-        <input bind:this={searchInput} bind:value={searchQ} placeholder="按标题、站点名或域名搜索会话…" spellcheck="false" autocapitalize="off" autocorrect="off" />
+        <input bind:this={searchInput} bind:value={searchQ} placeholder="搜索会话、定时任务、托管站点，或直达视图…" spellcheck="false" autocapitalize="off" autocorrect="off" />
         <kbd>esc</kbd>
       </div>
       <div class="search-list">
-        {#if searchResults.length === 0}
-          <p class="search-empty">没有匹配的会话</p>
+        {#if searchFlat.length === 0}
+          <p class="search-empty">没有匹配结果</p>
         {:else}
-          {#each searchResults as c (c.id)}
-            {@const site = sites.find((s) => s.slug === c.site_slug)}
-            <button class="search-item {activeConvId === c.id ? 'on' : ''}" onclick={() => pickSearch(c.id)}>
-              <SiteFav src={siteFav(c.site_slug)} label={c.site_slug} size={15} />
-              <span class="si-main"><b>{c.title || '未命名会话'}</b><small>{#if (c.site_slugs?.length ?? 0) > 1}<span data-tip={convSitesTip(c)}>{c.site_name}</span>{:else}{c.site_name || c.site_slug}{#if site?.url} · {hostOf(site.url)}{/if}{/if}</small></span>
-              {@render brainTag(c.brain, brainLabel(c.brain))}
-            </button>
+          {#each searchSections as sec, si (sec.title)}
+            {@const base = searchSections.slice(0, si).reduce((n, s) => n + s.entries.length, 0)}
+            <div class="search-sec">{sec.title}</div>
+            {#each sec.entries as it, i (`${sec.title}-${i}`)}
+              <button class="search-item {base + i === searchIdx ? 'on' : ''}" onclick={() => pickEntry(it)} onmouseenter={() => (searchIdx = base + i)}>
+                {#if it.kind === 'view'}
+                  {#if it.view === 'schedule'}<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><rect x="2.5" y="3" width="11" height="10.5" rx="1.5" stroke="currentColor" stroke-width="1.3" /><path d="M2.5 6h11M5.5 2v2M10.5 2v2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" /></svg>
+                  {:else if it.view === 'tasks'}<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="5.5" stroke="currentColor" stroke-width="1.3" /><path d="M8 5v3l2 1.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" /></svg>
+                  {:else}{@render botIcon(15)}{/if}
+                  <span class="si-main"><b>{it.label}</b><small>切换到{it.label}视图</small></span>
+                {:else if it.kind === 'task'}
+                  <SiteFav src={siteFav(it.t.site_slug)} label={it.t.site_slug} size={15} />
+                  <span class="si-main"><b>{it.t.title || '未命名任务'}</b><small>{it.t.site_name || it.t.site_slug}{#if (it.t.site_slugs?.length ?? 0) > 1} 等 {it.t.site_slugs?.length} 站{/if} · {periodLabel(it.t.interval_minutes)}</small></span>
+                {:else if it.kind === 'managed'}
+                  <SiteFav src={siteFav(it.m.site_slug)} label={it.m.site_slug} size={15} />
+                  <span class="si-main"><b>{it.m.site_name}</b><small>{levelLabel(it.m.level)}{it.m.paused ? ' · 已暂停' : ''}</small></span>
+                {:else if it.kind === 'conv'}
+                  {@const site = sites.find((s) => s.slug === it.c.site_slug)}
+                  <SiteFav src={siteFav(it.c.site_slug)} label={it.c.site_slug} size={15} />
+                  <span class="si-main"><b>{it.c.title || '未命名会话'}</b><small>{#if (it.c.site_slugs?.length ?? 0) > 1}<span data-tip={convSitesTip(it.c)}>{it.c.site_name}</span>{:else}{it.c.site_name || it.c.site_slug}{#if site?.url} · {hostOf(site.url)}{/if}{/if}</small></span>
+                  {@render brainTag(it.c.brain, brainLabel(it.c.brain))}
+                {:else}
+                  <svg width="15" height="15" viewBox="0 0 18 18" fill="none"><circle cx="8" cy="8" r="5" stroke="currentColor" stroke-width="1.4" /><path d="M11.7 11.7L15 15" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /></svg>
+                  <span class="si-main"><b>在排期中查找「{it.q}」</b><small>切到排期视图并按标题过滤</small></span>
+                {/if}
+              </button>
+            {/each}
           {/each}
         {/if}
       </div>
@@ -3133,14 +3354,14 @@
     <div class="sheet-body">
       {#each taskHistoryFor.history ?? [] as r, i (`${r.ts}-${i}`)}
         <div class="trun">
-          <div class="trun-head"><b>{fmt(r.ts)}</b><span class="trun-badge {r.ok ? 'ok' : 'err'}">{r.ok ? '成功' : '失败'}</span>{#if r.summary}<span class="trun-sum" title={r.summary}>{r.summary}</span>{/if}</div>
+          <div class="trun-head"><b>{fmt(r.ts)}</b><span class="trun-badge {r.deferred ? 'defer' : r.ok ? 'ok' : 'err'}">{#if r.deferred}<svg width="10" height="10" viewBox="0 0 16 16" fill="none" style="vertical-align:-1px"><circle cx="8" cy="8" r="5.6" stroke="currentColor" stroke-width="1.4" /><path d="M8 5.2v3l2 1.3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg> 顺延{:else}{r.ok ? '成功' : '失败'}{/if}</span>{#if r.summary}<span class="trun-sum" title={r.summary}>{r.summary}</span>{/if}</div>
           {#if r.sites?.length}
             <div class="trun-sites">
               {#each r.sites as s (s.slug)}
                 {#if s.ok && s.conv_id}
                   <button class="trun-site" title="打开这次运行的对话" onclick={() => { taskHistoryFor = null; openConv(s.conv_id ?? ''); }}><SiteFav src={siteFav(s.slug)} label={s.slug} size={12} /><span>{s.slug}</span></button>
                 {:else}
-                  <span class="trun-site is-err" title={s.error || '失败'}><SiteFav src={siteFav(s.slug)} label={s.slug} size={12} /><span>{s.slug} ✕</span></span>
+                  <span class="trun-site {s.deferred ? 'is-defer' : 'is-err'}" title={s.error || (s.deferred ? '限额顺延' : '失败')}><SiteFav src={siteFav(s.slug)} label={s.slug} size={12} /><span>{s.slug} {s.deferred ? '顺延' : '✕'}</span></span>
                 {/if}
               {/each}
             </div>
@@ -3234,6 +3455,33 @@
         {@render mwPrecheckBlock()}
         <div class="row-end">{#if mwWarns.length}<span class="md-pre-ack">已知悉风险，仍可继续</span>{/if}<button class="btn ghost" onclick={() => (mwStep = 2)}>上一步</button><button class="btn primary" onclick={mwEnable} disabled={mwBusy || !mwSite || !brainUsable(mwBrain as Brain)}>{mwBusy ? '开启中…' : '确认并开启托管'}</button></div>
       {/if}
+    </div>
+  </div>
+{/if}
+
+<!-- 托管 · 周报归档：历史列表（新到旧，周次+核心数字），点条目看渲染后的正文 -->
+{#if reportListFor}
+  <div class="mask" role="presentation" onclick={() => (reportListFor = null)}></div>
+  <div class="modal wide">
+    <header class="sheet-head"><b>周报归档 · {reportListFor.site_name}<small class="dim"> · {reportListFor.reports.length} 份</small></b><button class="x" onclick={() => (reportListFor = null)}>×</button></header>
+    <div class="sheet-body">
+      {#each reportListFor.reports as r, i (r.ts)}
+        <button class="rp-item" onclick={() => (reportView = r)}>
+          <span class="rp-date">{fmt(r.ts)}{#if i === 0}<span class="md-badge">最新</span>{/if}</span>
+          <span class="rp-mets">{reportMetLine(r.metrics) || '（无指标块）'}</span>
+        </button>
+      {/each}
+    </div>
+  </div>
+{/if}
+{#if reportView}
+  <div class="mask" role="presentation" onclick={() => (reportView = null)}></div>
+  <div class="modal wide">
+    <header class="sheet-head"><b>周报 · {fmt(reportView.ts)}</b><button class="x" onclick={() => (reportView = null)}>×</button></header>
+    <div class="sheet-body">
+      {#if reportMetLine(reportView.metrics)}<p class="hint">{reportMetLine(reportView.metrics)}</p>{/if}
+      <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
+      <div class="text md rp-body" onclick={mdClick} onauxclick={mdClick}>{@html mdRender(reportView.content)}</div>
     </div>
   </div>
 {/if}
@@ -3502,6 +3750,11 @@
   .search-head input { flex: 1; min-width: 0; border: none; outline: none; background: none; font: inherit; font-size: 15px; color: var(--text); }
   .search-head kbd { font: inherit; font-size: 10.5px; color: var(--faint); border: 1px solid var(--border2); border-radius: 5px; padding: 1px 6px; background: var(--rail); flex: none; }
   .search-list { overflow-y: auto; padding: 6px; }
+  .search-sec { padding: 8px 10px 3px; font-size: 11px; font-weight: 600; letter-spacing: .04em; color: var(--faint); }
+  /* 排期标题过滤小标签（仅全局搜索「在排期中查找」跳转后出现；点 × 清空恢复全量） */
+  .sched-tq-chip { display: inline-flex; align-items: center; gap: 4px; width: fit-content; margin-top: 6px; padding: 2px 5px 2px 9px; border-radius: 999px; background: #fdf6e3; color: #9a6b00; font-size: 11.5px; }
+  .sched-tq-chip button { border: none; background: none; color: inherit; font-size: 13px; line-height: 1; padding: 0 3px; cursor: pointer; border-radius: 999px; }
+  .sched-tq-chip button:hover { background: #f4e8c8; }
   .search-empty { text-align: center; color: var(--faint); font-size: 13px; padding: 26px 12px; margin: 0; }
   .search-item { width: 100%; display: flex; align-items: center; gap: 10px; background: none; border: none; border-radius: 9px; padding: 9px 10px; cursor: pointer; text-align: left; color: var(--text); }
   .search-item:hover, .search-item.on { background: #f4f3ef; }
@@ -3694,6 +3947,10 @@
   .trun-badge { flex: none; padding: 1px 7px; border-radius: 999px; font-size: 11px; }
   .trun-badge.ok { background: #e7f0e8; color: #3e7a4e; }
   .trun-badge.err { background: #f7e8e4; color: #a03c2b; }
+  /* 订阅限额顺延（非失败语义）：琥珀 warn 色系 + 小时钟 */
+  .trun-badge.defer { background: #fdf6e3; color: #9a6b00; display: inline-flex; align-items: center; gap: 3px; }
+  .trun-site.is-defer { color: #9a6b00; }
+  .defer-tag { margin-left: 6px; padding: 0 6px; border-radius: 999px; background: #fdf6e3; color: #9a6b00; font-size: 10.5px; vertical-align: 1px; }
   .trun-sum { color: var(--dim); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
   .trun-sites { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
   .trun-site { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border: 1px solid var(--border2); border-radius: 999px; font-size: 12px; background: var(--card); color: inherit; font-family: inherit; cursor: pointer; }
@@ -3909,6 +4166,38 @@
   .dim { color: var(--dim); }
   .tin { width: 100%; }
   .row-end { display: flex; justify-content: flex-end; align-items: center; gap: 7px; margin-top: 2px; }
+
+  /* 概览条容器（托管仪表盘 / 定时任务顶部共用）：裸化的安静统计行——无底无框，
+     左缘与下方卡片列表对齐；例外行自身保留 hover 浅底（.md-exc）。趋势小柱在各站卡片数据行里 */
+  .md-board { display: flex; flex-direction: column; gap: 3px; margin: 0 0 12px; padding: 2px 0 4px; }
+  /* 数据条（可复用）：每段=数字(13px/600/正文色)+标签(11px faint)，段间 1px 细竖线，状态段带 6px 色点 */
+  .stat-strip { display: flex; align-items: center; flex-wrap: wrap; row-gap: 4px; }
+  .ss-seg { display: inline-flex; align-items: baseline; gap: 5px; min-width: 0; }
+  .ss-seg + .ss-seg { margin-left: 18px; }
+  .ss-num { font-size: 13px; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 320px; }
+  .ss-lbl { font-size: 11px; color: var(--faint); white-space: nowrap; }
+  .ss-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; align-self: center; }
+  .ss-dot.ok { background: #3e9463; }
+  .ss-dot.off { background: #b7b2a9; }
+  .ss-dot.err { background: #c94f37; }
+  .ss-dot.warn { background: #d9a400; }
+  /* 共享 hover 气泡（$lib/tip action 挂到 body 上）：深色小圆角、白字、单行、不挡交互 */
+  :global(.ui-tip) { position: fixed; z-index: 96; pointer-events: none; background: #26241f; color: #fff; font-size: 11px; line-height: 1.5; padding: 3px 9px; border-radius: 6px; white-space: nowrap; box-shadow: 0 4px 14px rgba(30, 25, 15, .22); }
+  .md-exc { display: flex; align-items: center; gap: 6px; width: fit-content; max-width: 100%; padding: 2px 6px; margin-left: -6px; border: none; background: none; border-radius: 7px; font-size: 12px; color: var(--dim); cursor: pointer; text-align: left; }
+  .md-exc:hover { background: #efede7; }
+  .md-exc-name { color: var(--text); font-weight: 500; }
+  .md-exc-tag { flex: none; padding: 0 7px; border-radius: 999px; font-size: 10.5px; }
+  .md-exc-tag.err { background: #f7e8e4; color: #a03c2b; }
+  .md-exc-tag.warn { background: #fdf6e3; color: #9a6b00; }
+  .md-exc-tag.off { background: #eee9df; color: var(--dim); }
+  .mb-trend { display: inline-flex; align-items: flex-end; gap: 2px; height: 12px; font-size: 10.5px; color: var(--faint); }
+  .mb-trend i { display: inline-block; width: 3px; background: var(--accent); border-radius: 1px; opacity: .7; }
+  /* 周报归档列表与正文 */
+  .rp-item { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 10px; border: none; background: none; border-radius: 8px; text-align: left; cursor: pointer; font: inherit; }
+  .rp-item:hover { background: #f4f3ef; }
+  .rp-date { flex: none; display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 500; color: var(--text); font-variant-numeric: tabular-nums; }
+  .rp-mets { min-width: 0; font-size: 12px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rp-body { font-size: 13px; }
 
   /* 托管：卡片徽标 / 待审队列 / 计划编辑 / 向导边界说明 */
   .md-badge { margin-left: 8px; font-size: 10.5px; padding: 1px 7px; border-radius: 999px; background: #e8f0e4; color: #3c6b32; vertical-align: 1px; }

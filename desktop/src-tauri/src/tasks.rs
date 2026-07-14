@@ -56,6 +56,9 @@ pub struct TaskRun {
     pub summary: String,
     #[serde(default)]
     pub sites: Vec<TaskRunSite>,
+    /// 订阅限额顺延（非失败语义）：本次没跑或中途撞限，next_run 已顺延到恢复点之后。
+    #[serde(default)]
+    pub deferred: bool,
 }
 
 /// 单个站点在某次触发中的结果。
@@ -67,6 +70,9 @@ pub struct TaskRunSite {
     pub conv_id: String,
     #[serde(default)]
     pub error: String,
+    /// 该站因订阅限额被顺延/中断（非失败语义）。
+    #[serde(default)]
+    pub deferred: bool,
 }
 
 impl ScheduledTask {

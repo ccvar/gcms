@@ -7,6 +7,7 @@ mod cf_templates;
 mod convo;
 mod discovery;
 mod keychain;
+mod limits;
 mod pack;
 mod path_env;
 mod permit;
@@ -1792,6 +1793,7 @@ fn enable_managed(
         demote_note: String::new(),
         audit_notes: String::new(),
         enabled_at: now,
+        reports: vec![],
         created_at: now,
         updated_at: now,
     };
@@ -2153,8 +2155,28 @@ async fn managed_prefire(
     ManagedGate::Proceed(None)
 }
 
+/// 本地时间的「月-日 时:分」（限额顺延提示用）。
+fn fmt_ts_local(ts: u64) -> String {
+    use chrono::TimeZone;
+    chrono::Local
+        .timestamp_opt(ts as i64, 0)
+        .single()
+        .map(|d| d.format("%m-%d %H:%M").to_string())
+        .unwrap_or_default()
+}
+
+/// 单站执行结果（多站任务撞限止损用）。
+enum SiteRun {
+    Done(Box<Conversation>),
+    Failed(String),
+    /// 同一轮里前面的站撞了限额：这站直接顺延，不再白跑。
+    LimitSkipped,
+}
+
 /// 触发一次任务：对每个目标站点各开一个全新对话跑 task.prompt（顺序执行，互不阻断），
 /// 回写任务的 last_* 并通知。托管配套任务先过 managed_prefire（硬闸/熔断/数据注入）。
+/// 订阅限额感知：触发前 brain 在限额期 → 整体顺延（非失败）；运行中撞限 → 剩余站止损、
+/// next_run 顺延到恢复点 + 抖动；系统通知每 brain 每限额窗口只发一次。
 async fn fire_task(
     app: AppHandle,
     conns: pack::ConnStore,
@@ -2165,6 +2187,33 @@ async fn fire_task(
     task: ScheduledTask,
     data_dir: PathBuf,
 ) {
+    // ① 触发前拦截：限额期内不跑、不记失败（runs 不加），next_run 顺延，历史记「顺延」条目。
+    // 托管配套任务同样先走这里（在 prefire 之前），Skip 语义不变、通知有节流不会双发。
+    let lstore = limits::LimitStore::new(&data_dir);
+    {
+        let now = now_secs();
+        if let Some(entry) = lstore.active(&task.brain, now) {
+            let next = limits::defer_next_run(entry.reset_ts, &task.id);
+            let msg = format!("订阅限额中，本次未运行——已顺延到 {} 后重试", fmt_ts_local(entry.reset_ts));
+            let _ = tstore.mutate(&task.id, |x| {
+                if next > x.next_run {
+                    x.next_run = next;
+                }
+                x.last_run = now;
+                x.last_status = "ok".into();
+                x.last_summary = msg.clone();
+                x.history.insert(0, tasks::TaskRun { ts: now, ok: true, summary: msg.clone(), sites: vec![], deferred: true });
+                x.history.truncate(20);
+            });
+            if lstore.claim_notify(&task.brain, now) {
+                notify_user(&app, "订阅限额，定时任务已顺延", format!(
+                    "{} 处于限额期（预计 {} 恢复），「{}」等定时任务将自动顺延继续。",
+                    task.brain, fmt_ts_local(entry.reset_ts), task.title
+                ));
+            }
+            return;
+        }
+    }
     let prompt_extra = match managed_prefire(&app, &conns, &convos, &tstore, &mstore, &task).await {
         ManagedGate::Proceed(extra) => extra,
         ManagedGate::Skip(reason) => {
@@ -2175,7 +2224,7 @@ async fn fire_task(
                 x.runs += 1;
                 x.last_status = "ok".into();
                 x.last_summary = reason.clone();
-                x.history.insert(0, tasks::TaskRun { ts: now, ok: true, summary: reason.clone(), sites: vec![] });
+                x.history.insert(0, tasks::TaskRun { ts: now, ok: true, summary: reason.clone(), sites: vec![], deferred: false });
                 x.history.truncate(20);
             });
             return;
@@ -2191,9 +2240,13 @@ async fn fire_task(
     // 上限按核数自动定（核数/2，钳 2–6）。同连接共享工作目录，写盘冲突概率低但非零，
     // 不放开到全并发。
     let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(task_concurrency()));
+    // ③ 多站中途撞限的止损旗：某站检测到限额（登记全局）后，同轮尚未开跑的站直接标「顺延」。
+    let limit_flag: Arc<Mutex<Option<u64>>> = Arc::new(Mutex::new(None));
     let mut handles = Vec::with_capacity(targets.len());
     for (slug, name) in targets.clone() {
         let sem = sem.clone();
+        let limit_flag = limit_flag.clone();
+        let lstore2 = lstore.clone();
         let (conns, convos, runs, data_dir) = (conns.clone(), convos.clone(), runs.clone(), data_dir.clone());
         let (conn_id, task_type, brain, model, effort, prompt) = (
             task.conn_id.clone(), task.task_type.clone(), task.brain.clone(),
@@ -2201,9 +2254,13 @@ async fn fire_task(
         );
         handles.push(tauri::async_runtime::spawn(async move {
             let _permit = sem.acquire_owned().await;
+            if limit_flag.lock().unwrap().is_some() {
+                return (slug, SiteRun::LimitSkipped);
+            }
             let conv_id = uuid::Uuid::new_v4().to_string();
             // 后台运行没有前端接收方，用一个丢弃事件的 Channel。
             let sink: Channel<agent::TurnEvent> = Channel::new(|_| Ok(()));
+            let brain_for_limit = brain.clone();
             // 定时任务无人值守：只能全自动（询问/自动档会卡在等批准，永远回不来）。
             let res = create_conversation(
                 conns, convos, runs, conv_id,
@@ -2212,45 +2269,67 @@ async fn fire_task(
                 "full".into(), effort, prompt, sink, data_dir,
             )
             .await;
-            (slug, res)
+            match res {
+                Ok(c) => {
+                    // 撞限检测：登记全局（create_conversation 里已登记，这里补拿生效 reset）并竖旗止损。
+                    if let Some(reset) = c.messages.iter().rev().find(|m| m.role == "assistant").and_then(|m| m.limit_reset) {
+                        let eff = lstore2.register(&brain_for_limit, reset, now_secs());
+                        *limit_flag.lock().unwrap() = Some(eff);
+                    }
+                    (slug, SiteRun::Done(Box::new(c)))
+                }
+                Err(e) => (slug, SiteRun::Failed(e)),
+            }
         }));
     }
     let mut ok_count = 0usize;
     let mut first_err = String::new();
     let mut last_conv = String::new();
     let mut last_summary = String::new();
-    // 最后一条 assistant 消息全文（审计任务提取 AUDIT-NOTES 块用；托管配套任务都是单站）。
+    // 最后一条 assistant 消息全文（审计/周报任务提取标记块用；托管配套任务都是单站）。
     let mut last_assistant_full = String::new();
     let mut run_sites: Vec<tasks::TaskRunSite> = Vec::with_capacity(targets.len());
     for h in handles {
-        let Ok((slug, res)) = h.await else { continue };
-        match &res {
-            Ok(c) => {
-                ok_count += 1;
-                last_conv = c.id.clone();
-                last_summary = last_snippet(c);
-                last_assistant_full = c
-                    .messages
-                    .iter()
-                    .rev()
-                    .find(|m| m.role == "assistant")
-                    .map(|m| m.text.clone())
-                    .unwrap_or_default();
-                run_sites.push(tasks::TaskRunSite { slug, ok: true, conv_id: c.id.clone(), error: String::new() });
+        let Ok((slug, outcome)) = h.await else { continue };
+        match outcome {
+            SiteRun::Done(c) => {
+                let limited = c.messages.iter().rev().find(|m| m.role == "assistant").and_then(|m| m.limit_reset).is_some();
+                if limited {
+                    run_sites.push(tasks::TaskRunSite { slug, ok: false, conv_id: c.id.clone(), error: "撞到订阅限额".into(), deferred: true });
+                } else {
+                    ok_count += 1;
+                    last_conv = c.id.clone();
+                    last_summary = last_snippet(&c);
+                    last_assistant_full = c
+                        .messages
+                        .iter()
+                        .rev()
+                        .find(|m| m.role == "assistant")
+                        .map(|m| m.text.clone())
+                        .unwrap_or_default();
+                    run_sites.push(tasks::TaskRunSite { slug, ok: true, conv_id: c.id.clone(), error: String::new(), deferred: false });
+                }
             }
-            Err(e) => {
+            SiteRun::Failed(e) => {
                 let brief: String = e.chars().take(120).collect();
                 if first_err.is_empty() {
                     first_err = format!("{slug}: {brief}");
                 }
-                run_sites.push(tasks::TaskRunSite { slug, ok: false, conv_id: String::new(), error: brief });
+                run_sites.push(tasks::TaskRunSite { slug, ok: false, conv_id: String::new(), error: brief, deferred: false });
+            }
+            SiteRun::LimitSkipped => {
+                run_sites.push(tasks::TaskRunSite { slug, ok: false, conv_id: String::new(), error: "限额顺延，本轮未运行".into(), deferred: true });
             }
         }
     }
+    let limit_hit: Option<u64> = *limit_flag.lock().unwrap();
 
     let now = now_secs();
     let all_ok = ok_count == targets.len();
-    let summary = if multi {
+    let deferred = limit_hit.is_some();
+    let summary = if let Some(reset) = limit_hit {
+        format!("撞到订阅限额：完成 {ok_count}/{} 站，其余顺延——已顺延到 {} 后重试", targets.len(), fmt_ts_local(reset))
+    } else if multi {
         let mut s = format!("{ok_count}/{} 个站点成功", targets.len());
         if !first_err.is_empty() {
             s.push_str("；");
@@ -2265,12 +2344,19 @@ async fn fire_task(
     let _ = tstore.mutate(&task.id, |x| {
         x.last_run = now;
         x.runs += 1;
-        x.last_status = if all_ok { "ok".into() } else { "error".into() };
+        // 顺延＝非失败语义：限额不算这个任务「坏了」。
+        x.last_status = if all_ok || deferred { "ok".into() } else { "error".into() };
         x.last_summary = summary.clone();
         if !last_conv.is_empty() {
             x.last_conv_id = last_conv.clone();
         }
-        x.history.insert(0, tasks::TaskRun { ts: now, ok: all_ok, summary: summary.clone(), sites: run_sites.clone() });
+        if let Some(reset) = limit_hit {
+            let next = limits::defer_next_run(reset, &x.id);
+            if next > x.next_run {
+                x.next_run = next;
+            }
+        }
+        x.history.insert(0, tasks::TaskRun { ts: now, ok: all_ok || deferred, summary: summary.clone(), sites: run_sites.clone(), deferred });
         x.history.truncate(20);
     });
     // 审计要点回灌：本任务是某托管的「每周审计」（task_ids[1]）且成功跑完 → 从最后一条
@@ -2284,6 +2370,27 @@ async fn fire_task(
                 }
             }
         }
+        // 周报归档：本任务是某托管的「每周周报」（task_ids[2]）→ 提取 REPORT-METRICS 块（剥掉不展示），
+        // 正文截断后连指标一起存进 reports（新到旧，store 封顶 26 条）。
+        if let Some(m) = mstore.list().into_iter().find(|m| m.task_ids.get(2) == Some(&task.id)) {
+            let (content, metrics) = managed::extract_report_metrics(&last_assistant_full);
+            if !content.trim().is_empty() {
+                let content: String = content.chars().take(managed::REPORT_MAX_CHARS).collect();
+                let _ = mstore.mutate(&m.id, now, |x| {
+                    x.reports.insert(0, managed::ReportEntry { ts: now, content: content.clone(), metrics: metrics.clone() });
+                });
+            }
+        }
+    }
+    // ② 撞限收尾：不发常规完成/失败通知——发一次性的「已顺延」通知（每 brain 每窗口一次）。
+    if let Some(reset) = limit_hit {
+        if lstore.claim_notify(&task.brain, now) {
+            notify_user(&app, "订阅限额，定时任务已顺延", format!(
+                "{} 处于限额期（预计 {} 恢复），「{}」将在恢复后自动重试。",
+                task.brain, fmt_ts_local(reset), task.title
+            ));
+        }
+        return;
     }
     let body = if all_ok {
         if multi {
@@ -2382,6 +2489,14 @@ fn assistant_msg(res: &agent::TurnResult, now: u64) -> Message {
 /// grok（ACP prompt 结果 _meta 顶层）同样是最后一次调用的读数，口径一致可标上下文；
 /// codex（exec --json）只有 turn.completed 的整轮汇总——多步回合是各步之和，当上下文显示会离谱
 /// 膨胀（一轮几百步能加到几十 M），故 codex 不标上下文（置 0，前端隐藏该条），只记累计吞吐。
+/// 全局限额登记：任何一轮对话检测到限额（limit_reset）都写进 per-brain 状态——
+/// 定时任务触发前据此顺延，不再到点白跑。reset=0（拿不到时间）由 store 按 now+30 分钟保守登记。
+fn note_limit(data_dir: &std::path::Path, brain: &str, res: &agent::TurnResult) {
+    if let Some(reset) = res.limit_reset {
+        limits::LimitStore::new(data_dir).register(brain, reset, now_secs());
+    }
+}
+
 fn apply_usage(c: &mut Conversation, res: &agent::TurnResult, data_dir: &std::path::Path) {
     if let Some(u) = &res.usage {
         let ctx = u.input + u.cache_read + u.cache_create;
@@ -2486,6 +2601,7 @@ async fn create_conversation(
         c.status = "idle".into();
         c.messages.push(assistant_msg(&res, now2));
         apply_usage(c, &res, &data_dir);
+        note_limit(&data_dir, &c.brain, &res);
     })?;
     updated.ok_or_else(|| "会话丢失".into())
 }
@@ -2577,6 +2693,7 @@ async fn send_message(
         c.status = "idle".into();
         c.messages.push(assistant_msg(&res, now2));
         apply_usage(c, &res, &state.data_dir);
+        note_limit(&state.data_dir, &c.brain, &res);
     })?;
     updated.ok_or_else(|| "会话丢失".into())
 }
@@ -2617,6 +2734,7 @@ async fn retry_turn(
         c.status = "idle".into();
         c.messages.push(assistant_msg(&res, now2));
         apply_usage(c, &res, &state.data_dir);
+        note_limit(&state.data_dir, &c.brain, &res);
     })?;
     updated.ok_or_else(|| "会话丢失".into())
 }
@@ -2685,6 +2803,7 @@ async fn rebuild_session(
         c.status = "idle".into();
         c.messages.push(assistant_msg(&res, now2));
         apply_usage(c, &res, &state.data_dir);
+        note_limit(&state.data_dir, &c.brain, &res);
     })?;
     updated.ok_or_else(|| "会话丢失".into())
 }

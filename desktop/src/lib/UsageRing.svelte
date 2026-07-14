@@ -3,6 +3,7 @@
   //（无会话时只有浅色底环），点开小卡片看「上下文窗口 + 本地用量」。
   // 本地用量取数从 ModelFx 面板整段搬家而来（usage_stats，近 5 小时 / 今日零点两个窗口）。
   import { invoke } from '@tauri-apps/api/core';
+  import { tip } from './tip';
 
   let {
     /** 当前会话上下文 token（0＝无会话/无读数，圆弧为 0） */
@@ -19,6 +20,14 @@
   let open = $state(false);
   let root = $state<HTMLElement>();
   let cardStyle = $state('');
+
+  // hover 气泡走共享 $lib/tip action（原生 title 贴窗口边会被系统裁切）；
+  // 弹卡打开时传空文案＝action 即刻隐藏且不再触发。
+  const tipText = $derived(
+    pct > 0
+      ? `上下文 ${pct}% · ${fmtTok(ctx)} / ${fmtTok(limit)}${total > 0 ? ` · 累计 ${fmtTok(total)}` : ''}`
+      : total > 0 ? `累计 ${fmtTok(total)} tokens` : '本地用量',
+  );
 
   // fixed 弹层定位（对齐 ModelFx.position() 的模式）：哪边空间大开哪边，左缘钳制防溢出。
   function position() {
@@ -85,10 +94,7 @@
 </script>
 
 <div class="ur" bind:this={root}>
-  <button type="button" class="ur-btn" class:open onclick={toggle}
-    title={pct > 0
-      ? `上下文占用 ${pct}%（${fmtTok(ctx)} / ${fmtTok(limit)}）${total > 0 ? ` · 本会话累计 ${fmtTok(total)}` : ''} · 点看本地用量`
-      : total > 0 ? `本会话累计 ${fmtTok(total)} tokens · 点看本地用量` : '本地用量（token · 仅供参考）'}>
+  <button type="button" class="ur-btn" class:open onclick={toggle} use:tip={open ? '' : tipText}>
     <svg width="13" height="13" viewBox="0 0 16 16">
       <circle cx="8" cy="8" r="6.5" fill="none" stroke="var(--border2, #e1dfd8)" stroke-width="2" />
       {#if pct > 0}

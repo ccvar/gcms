@@ -78,9 +78,37 @@ pub struct ManagedSite {
     /// 视为已过爬坡期（days_since_enabled 返回 MAX），别把老站掐死。
     #[serde(default)]
     pub enabled_at: u64,
+    /// 周报归档（新到旧，封顶 26 条≈半年；content 截断 REPORT_MAX_CHARS）。
+    #[serde(default)]
+    pub reports: Vec<ReportEntry>,
     pub created_at: u64,
     pub updated_at: u64,
 }
+
+/// 归档的一份周报。
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ReportEntry {
+    pub ts: u64,
+    /// 周报正文（REPORT-METRICS 块已剥掉；超长截断）。
+    pub content: String,
+    #[serde(default)]
+    pub metrics: ReportMetrics,
+}
+
+/// 周报核心指标（AI 按固定块汇报；None＝拿不到，AI 写 -）。仪表盘趋势小柱用。
+#[derive(Clone, Serialize, Deserialize, Default)]
+pub struct ReportMetrics {
+    pub published: Option<i64>,
+    pub drafts_new: Option<i64>,
+    pub rejected: Option<i64>,
+    pub tokens: Option<i64>,
+    pub impressions: Option<i64>,
+    pub clicks: Option<i64>,
+}
+
+/// 周报归档条数上限（≈半年）与正文截断长度。
+pub const MAX_REPORTS: usize = 26;
+pub const REPORT_MAX_CHARS: usize = 20_000;
 
 const MAX_NOTES: usize = 20;
 
@@ -159,6 +187,7 @@ impl ManagedStore {
         f(slot);
         slot.review_notes.truncate(MAX_NOTES);
         slot.review_events.truncate(MAX_NOTES);
+        slot.reports.truncate(MAX_REPORTS);
         slot.updated_at = now;
         let updated = slot.clone();
         self.save(&list)?;
@@ -310,9 +339,42 @@ pub fn report_prompt(site_name: &str, plan: &str) -> String {
 6. 预算与用量（有预算时）；7. 下周计划建议（结合运营计划与数据，给 3-5 条具体选题/动作）。\n\
 若数据块含「L3 存量维护」条目，额外单列两节：『本周修改清单』（哪篇改了什么、依据是什么）与\
 『观察名单』（改过的页面，提醒主人未来 1-2 周跟踪数据是否回落，可用后台修订历史一键回滚）。\n\
-【硬性边界】周报只在对话里输出正文——绝不创建、修改或发布任何站点内容，也不建草稿。",
+【硬性边界】周报只在对话里输出正文——绝不创建、修改或发布任何站点内容，也不建草稿。\n\
+周报写完后，在汇报最末尾额外输出一个固定标记块（Pilot 会提取归档；数字来自上方 Pilot 注入的\
+【本周实测数据】与你自跑的 search-stats，拿不到的项写 -，不要编造）：\n\
+```REPORT-METRICS\npublished: N\ndrafts_new: N\nrejected: N\ntokens: N\nimpressions: N|-\nclicks: N|-\n```",
         plan_snippet(plan, 1200),
     )
+}
+
+/// 从周报最后一条 assistant 消息提取 ```REPORT-METRICS``` 块：返回（剥掉块后的正文, 指标）。
+/// 无块/畸形块（缺闭合围栏）→ 正文原样、指标全空。行格式 `key: value`，value 为整数才计入，
+/// `-`/非数字＝拿不到（None）；未知 key 忽略。
+pub fn extract_report_metrics(text: &str) -> (String, ReportMetrics) {
+    const TAG: &str = "```REPORT-METRICS";
+    let mut metrics = ReportMetrics::default();
+    let Some(start) = text.rfind(TAG) else {
+        return (text.trim().to_string(), metrics);
+    };
+    let rest = &text[start + TAG.len()..];
+    let Some(end) = rest.find("```") else {
+        return (text.trim().to_string(), metrics); // 畸形块：不剥不解析
+    };
+    for line in rest[..end].lines() {
+        let Some((k, v)) = line.split_once(':') else { continue };
+        let val = v.trim().parse::<i64>().ok();
+        match k.trim() {
+            "published" => metrics.published = val,
+            "drafts_new" => metrics.drafts_new = val,
+            "rejected" => metrics.rejected = val,
+            "tokens" => metrics.tokens = val,
+            "impressions" => metrics.impressions = val,
+            "clicks" => metrics.clicks = val,
+            _ => {}
+        }
+    }
+    let stripped = format!("{}{}", &text[..start], &rest[end + 3..]);
+    (stripped.trim().to_string(), metrics)
 }
 
 /// 周报注入的数据事实（由 lib.rs 汇总真实数字后传入）。
@@ -771,7 +833,7 @@ mod tests {
             task_ids: vec!["t-daily".into(), "t-audit".into(), "t-report".into()], paused: false,
             review_notes: vec![], token_weekly_budget: 0, fused_at: 0,
             review_events: vec![], demote_note: String::new(),
-            audit_notes: String::new(), enabled_at: 1, created_at: 1, updated_at: 1,
+            audit_notes: String::new(), enabled_at: 1, reports: vec![], created_at: 1, updated_at: 1,
         }
     }
 
@@ -792,6 +854,46 @@ mod tests {
         assert_eq!(v[0].weekly_edit_limit, 2, "旧记录修改配额默认 2");
         assert_eq!(v[0].audit_notes, "", "旧记录没有审计要点");
         assert_eq!(v[0].enabled_at, 0, "旧记录 enabled_at=0（视为已过爬坡期）");
+        assert!(v[0].reports.is_empty(), "旧记录没有周报归档");
+    }
+
+    /// REPORT-METRICS 提取：有块（数字/-混合）、无块、畸形块、剥离验证、归档封顶。
+    #[test]
+    fn report_metrics_extraction() {
+        let msg = "# 周报正文\n一切正常。\n```REPORT-METRICS\npublished: 3\ndrafts_new: 2\nrejected: 0\ntokens: 120000\nimpressions: -\nclicks: -\n```\n";
+        let (content, m) = extract_report_metrics(msg);
+        assert_eq!(m.published, Some(3));
+        assert_eq!(m.drafts_new, Some(2));
+        assert_eq!(m.rejected, Some(0));
+        assert_eq!(m.tokens, Some(120000));
+        assert_eq!(m.impressions, None, "写 - 的项为 None");
+        assert_eq!(m.clicks, None);
+        assert!(content.contains("周报正文") && content.contains("一切正常"));
+        assert!(!content.contains("REPORT-METRICS") && !content.contains("published:"), "块从正文剥掉");
+        // 无块：正文原样、指标全空
+        let (c2, m2) = extract_report_metrics("普通周报，没有标记块");
+        assert_eq!(c2, "普通周报，没有标记块");
+        assert!(m2.published.is_none() && m2.clicks.is_none());
+        // 畸形块（缺闭合围栏）：不剥不解析
+        let (c3, m3) = extract_report_metrics("正文\n```REPORT-METRICS\npublished: 9");
+        assert!(c3.contains("published: 9"), "畸形块保留原样");
+        assert!(m3.published.is_none());
+        // 多块取最后一个；未知 key 忽略
+        let (c4, m4) = extract_report_metrics("```REPORT-METRICS\npublished: 1\n```\n中段\n```REPORT-METRICS\npublished: 7\nbogus: 5\n```");
+        assert_eq!(m4.published, Some(7));
+        assert!(c4.contains("中段"));
+        // 归档封顶：mutate 后 reports 只留 26 条
+        let dir = std::env::temp_dir().join(format!("managed-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let st = ManagedStore::new(&dir);
+        st.upsert(site("m1", "blog")).unwrap();
+        for i in 0..30u64 {
+            st.mutate("m1", i, |x| x.reports.insert(0, ReportEntry { ts: i, content: format!("r{i}"), metrics: ReportMetrics::default() })).unwrap();
+        }
+        let m = st.get("m1").unwrap();
+        assert_eq!(m.reports.len(), MAX_REPORTS, "周报归档封顶 26 条");
+        assert_eq!(m.reports[0].content, "r29", "最新在前");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
@@ -1200,5 +1302,8 @@ mod tests {
         assert!(p.contains("本周实测数据"));
         assert!(p.contains("不建草稿"));
         assert!(p.contains("绝不创建、修改或发布"));
+        // 末尾固定 REPORT-METRICS 块要求（Pilot 提取归档；拿不到写 -）
+        assert!(p.contains("```REPORT-METRICS\npublished: N\ndrafts_new: N\nrejected: N\ntokens: N\nimpressions: N|-\nclicks: N|-\n```"));
+        assert!(p.contains("拿不到的项写 -，不要编造"));
     }
 }

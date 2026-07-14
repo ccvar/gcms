@@ -135,9 +135,9 @@ export interface ScheduledItem {
 }
 
 /** 单个站点在某次触发中的结果。 */
-export interface TaskRunSite { slug: string; ok: boolean; conv_id?: string; error?: string; }
-/** 一次触发的运行记录（新到旧，最多 20 条）。 */
-export interface TaskRun { ts: number; ok: boolean; summary: string; sites?: TaskRunSite[]; }
+export interface TaskRunSite { slug: string; ok: boolean; conv_id?: string; error?: string; deferred?: boolean; }
+/** 一次触发的运行记录（新到旧，最多 20 条）。deferred＝订阅限额顺延（非失败语义）。 */
+export interface TaskRun { ts: number; ok: boolean; summary: string; sites?: TaskRunSite[]; deferred?: boolean; }
 
 export interface ScheduledTask {
   id: string;
