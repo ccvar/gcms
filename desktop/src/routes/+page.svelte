@@ -661,15 +661,20 @@
     const t0 = Date.now();
     grokTimer = setInterval(() => { grokElapsed = Date.now() - t0; }, 500);
     try { const m = await invoke<string>('install_grok'); say(m); await refreshBrainsManual(); }
-    catch (e) { say(String(e), 'err'); }
-    finally { grokInstalling = false; if (grokTimer) { clearInterval(grokTimer); grokTimer = undefined; } }
+    catch (e) { say(String(e), 'err', 20000); }
+    finally { grokInstalling = false; nodeBoot = ''; if (grokTimer) { clearInterval(grokTimer); grokTimer = undefined; } }
   }
   // 托管 Node 自举进度（后端 "node-boot" 事件）：一键安装按钮上分步显示。
   let nodeBoot = $state('');
   $effect(() => {
     const un = listen<{ phase: string; pct: number }>('node-boot', (e) => {
       const p = e.payload;
-      nodeBoot = p.phase === 'download' ? `下载 Node ${p.pct}%` : p.phase === 'extract' ? '解压 Node…' : p.phase === 'verify' ? '校验 Node…' : '安装 CLI…';
+      nodeBoot = p.phase === 'download' ? `下载 Node ${p.pct}%`
+        : p.phase === 'extract' ? '解压 Node…'
+        : p.phase === 'verify' ? '校验 Node…'
+        : p.phase === 'grok-download' ? `下载 Grok ${p.pct}%`
+        : p.phase === 'grok-verify' ? '校验 Grok…'
+        : '安装 CLI…';
     });
     return () => { void un.then((f) => f()); };
   });
@@ -884,6 +889,8 @@
 
   // Windows 无 macOS 红绿灯（窗口控件在右侧），顶部工具按钮改靠左对齐，别飘在中间。
   const isWindows = typeof navigator !== 'undefined' && /Windows/i.test(navigator.userAgent);
+  /** 密钥存储的平台名称（文案用）：mac=钥匙串，win=凭据管理器。 */
+  const keystoreName = isWindows ? 'Windows 凭据管理器' : 'macOS 钥匙串';
   // 全屏时无红绿灯，顶部工具按钮改与左栏菜单左对齐。
   let isFullscreen = $state(false);
   $effect(() => {
@@ -2424,7 +2431,7 @@
                     {#if r.b === 'claude'}
                       <button class="wr-btn" use:tipAction={'安装失败排障：VPN/代理需覆盖 claude.ai 与下载域名 storage.googleapis.com（规则模式加进规则或临时切全局）；也可复制右侧命令到终端手动执行看完整输出。'} onclick={installClaude} disabled={claudeInstalling}>{#if claudeInstalling}<span class="wr-spin"></span>{nodeBoot || `安装中 ${elapsedLabel(claudeElapsed)}`}{:else}一键安装{/if}</button>
                     {:else if r.b === 'grok'}
-                      <button class="wr-btn" onclick={installGrok} disabled={grokInstalling}>{#if grokInstalling}<span class="wr-spin"></span>安装中 {elapsedLabel(grokElapsed)}{:else}一键安装{/if}</button>
+                      <button class="wr-btn" onclick={installGrok} disabled={grokInstalling}>{#if grokInstalling}<span class="wr-spin"></span>{nodeBoot || `安装中 ${elapsedLabel(grokElapsed)}`}{:else}一键安装{/if}</button>
                     {:else if r.b === 'codex'}
                       <button class="wr-btn" onclick={installCodex} disabled={codexInstalling}>{#if codexInstalling}<span class="wr-spin"></span>{nodeBoot || `安装中 ${elapsedLabel(codexElapsed)}`}{:else}一键安装{/if}</button>
                     {/if}
@@ -2443,7 +2450,7 @@
                   {/if}
                 </div>
               {/each}
-              <p class="cli-note"><svg class="cli-note-ic" width="13" height="13" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.4" stroke="currentColor" stroke-width="1.3" /><path d="M8 7.3v3.4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /><circle cx="8" cy="4.8" r="0.95" fill="currentColor" /></svg><span>安装/登录后状态灯自动变绿；密钥只进 macOS 钥匙串，绝不落盘。</span></p>
+              <p class="cli-note"><svg class="cli-note-ic" width="13" height="13" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.4" stroke="currentColor" stroke-width="1.3" /><path d="M8 7.3v3.4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /><circle cx="8" cy="4.8" r="0.95" fill="currentColor" /></svg><span>安装/登录后状态灯自动变绿；密钥只进 {keystoreName}，绝不落盘。</span></p>
               <p class="cli-note"><svg class="cli-note-ic" width="13" height="13" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.4" stroke="currentColor" stroke-width="1.3" /><path d="M8 7.3v3.4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /><circle cx="8" cy="4.8" r="0.95" fill="currentColor" /></svg><span>没有 Node 的机器，一键安装会自动下载托管版 Node(v22 LTS) 到应用数据目录，并写入用户级 PATH（只追加、绝不覆盖或截断；写入失败会提示手动配置）。</span></p>
               {#if !brains.browser.found}
                 <p class="cli-note"><svg class="cli-note-ic" width="13" height="13" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.4" stroke="currentColor" stroke-width="1.3" /><path d="M1.9 8h12.2M8 1.6c-4.4 4.2-4.4 8.6 0 12.8 4.4-4.2 4.4-8.6 0-12.8Z" stroke="currentColor" stroke-width="1.1" /></svg><span>未检测到 Chrome / Edge——「AI 网页截图配图」不可用（可选功能，装个 Chrome 即启用）。</span></p>
@@ -3193,7 +3200,7 @@
               <button class="wr-btn" onclick={r.b === 'claude' ? installClaude : r.b === 'codex' ? installCodex : installGrok}
                 disabled={r.b === 'claude' ? claudeInstalling : r.b === 'codex' ? codexInstalling : grokInstalling}>
                 {#if (r.b === 'claude' && claudeInstalling) || (r.b === 'codex' && codexInstalling) || (r.b === 'grok' && grokInstalling)}
-                  <span class="wr-spin"></span>{r.b !== 'grok' && nodeBoot ? nodeBoot : `安装中 ${elapsedLabel(r.b === 'claude' ? claudeElapsed : r.b === 'codex' ? codexElapsed : grokElapsed)}`}
+                  <span class="wr-spin"></span>{nodeBoot || `安装中 ${elapsedLabel(r.b === 'claude' ? claudeElapsed : r.b === 'codex' ? codexElapsed : grokElapsed)}`}
                 {:else}一键安装{/if}
               </button>
               <button class="cli-copy" title={`手动安装命令：${r.cmd}（点击复制）`} aria-label="复制手动安装命令" onclick={() => copyCmd(r.cmd)}>
@@ -3229,7 +3236,7 @@
         {/each}
         </div>
       {/if}
-      <p class="hint tos">自定义模型 ID 会作为该厂商模型下拉里的附加档位（可加多个）；仅限本人订阅账户驱动本地官方 CLI，密钥存 macOS 钥匙串。</p>
+      <p class="hint tos">自定义模型 ID 会作为该厂商模型下拉里的附加档位（可加多个）；仅限本人订阅账户驱动本地官方 CLI，密钥存 {keystoreName}。</p>
 
       <div class="sec-head mt"><span>关于</span></div>
       <div class="brain-row">
@@ -3247,7 +3254,7 @@
   <div class="modal">
     <header class="sheet-head"><div><b>原始技能包 · 需要密钥</b><small class="dim">{keyBase}</small></div><button class="x" onclick={() => (keyOpen = false)} disabled={importBusy}>×</button></header>
     <div class="sheet-body">
-      <p class="hint">粘贴 gcms 后台生成的密钥（gcmsp_…），只会存入 macOS 钥匙串，不写进任何文件。</p>
+      <p class="hint">粘贴 gcms 后台生成的密钥（gcmsp_…），只会存入 {keystoreName}，不写进任何文件。</p>
       <input class="tin" bind:value={keyVal} type="password" placeholder="gcmsp_…" autocomplete="off" disabled={importBusy} onkeydown={(e) => e.key === 'Enter' && confirmKey()} />
       {#if keyErr}<div class="err-note">{keyErr}</div>{/if}
       <div class="row-end">

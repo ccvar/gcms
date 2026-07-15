@@ -103,24 +103,25 @@ pub fn verify_managed(bin_dir: &Path) -> bool {
     }
 }
 
-/// 把托管 node bin + npm 全局 bin 前置进本进程 PATH——探测（which 读 PATH）与之后
-/// spawn 的所有 CLI 子进程自动继承；幂等。启动时与自举成功后各调一次。
-pub fn prepend_process_path(data_dir: &Path) {
-    let Some(bin) = managed_bin_dir(data_dir) else { return };
-    if !bin.exists() {
-        return;
-    }
+/// 任意目录前置进本进程 PATH（幂等）——探测（which 读 PATH）与之后 spawn 的子进程自动继承。
+pub fn prepend_path_dirs(dirs: &[PathBuf]) {
     let sep = if cfg!(windows) { ';' } else { ':' };
     let cur = std::env::var("PATH").unwrap_or_default();
-    let mut add: Vec<String> = vec![
-        bin.to_string_lossy().to_string(),
-        npm_global_bin(data_dir).to_string_lossy().to_string(),
-    ];
+    let mut add: Vec<String> = dirs.iter().map(|p| p.to_string_lossy().to_string()).collect();
     add.retain(|p| !cur.split(sep).any(|x| x == p));
     if add.is_empty() {
         return;
     }
     std::env::set_var("PATH", format!("{}{sep}{cur}", add.join(&sep.to_string())));
+}
+
+/// 把托管 node bin + npm 全局 bin 前置进本进程 PATH；幂等。启动时与自举成功后各调一次。
+pub fn prepend_process_path(data_dir: &Path) {
+    let Some(bin) = managed_bin_dir(data_dir) else { return };
+    if !bin.exists() {
+        return;
+    }
+    prepend_path_dirs(&[bin, npm_global_bin(data_dir)]);
 }
 
 /// macOS ~/.zprofile 追加块（带守卫标记；导出为 PATH 前置）。
@@ -221,8 +222,61 @@ pub async fn ensure(data_dir: &Path, progress: impl Fn(&str, u32)) -> Result<Pat
     Ok(bin)
 }
 
+// ---- Grok CLI（Windows 直下官方原生 exe；URL 口径抄官方 install.sh）----
+// 侦查结论（2026-07 实测）：官方没有 npm 包（@xai/grok-cli 404）；install.sh 对
+// MINGW/MSYS/CYGWIN 输出 windows 平台并直下单文件 exe——Pilot 在 Windows 上跳过
+// bash 层直接用同一套 URL：版本指针 {base}/stable → 产物 {base}/grok-{ver}-windows-{arch}.exe，
+// 主源 x.ai/cli、回退 GCS 公共桶；官方安装布局 ~/.grok/bin/{grok.exe, agent.exe}。
+
+/// grok stable 版本指针地址（主源 → 回退）。
+pub fn grok_version_urls() -> [String; 2] {
+    [
+        "https://x.ai/cli/stable".into(),
+        "https://storage.googleapis.com/grok-build-public-artifacts/cli/stable".into(),
+    ]
+}
+
+/// grok Windows 单文件 exe 产物地址（主源 → 回退）。arch 传 std::env::consts::ARCH。
+pub fn grok_win_exe_urls(version: &str, arch: &str) -> [String; 2] {
+    let plat = if arch == "aarch64" { "windows-aarch64" } else { "windows-x86_64" };
+    [
+        format!("https://x.ai/cli/grok-{version}-{plat}.exe"),
+        format!("https://storage.googleapis.com/grok-build-public-artifacts/cli/grok-{version}-{plat}.exe"),
+    ]
+}
+
+/// 版本指针响应 → 版本号：X.Y.Z(-suffix) 形态才算（防把错误页/HTML 当版本）。
+pub fn parse_grok_version(body: &str) -> Option<String> {
+    let v = body.trim();
+    let mut parts = v.splitn(3, '.');
+    let (a, b, c) = (parts.next()?, parts.next()?, parts.next()?);
+    let num = |s: &str| !s.is_empty() && s.chars().all(|ch| ch.is_ascii_digit());
+    let tail_ok = c.split('-').next().map(num).unwrap_or(false)
+        && c.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '.' || ch == '-');
+    (num(a) && num(b) && tail_ok && !v.contains(char::is_whitespace)).then(|| v.to_string())
+}
+
+/// grok 官方安装目录（Windows：%USERPROFILE%\.grok\bin）。
+pub fn grok_win_bin_dir(home: &Path) -> PathBuf {
+    home.join(".grok").join("bin")
+}
+
+/// 拉一小段文本（版本指针等）。代理走进程环境变量。
+pub(crate) async fn fetch_text(url: &str) -> Result<String, String> {
+    let resp = reqwest::Client::new()
+        .get(url)
+        .timeout(std::time::Duration::from_secs(30))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        return Err(format!("HTTP {}", resp.status()));
+    }
+    resp.text().await.map_err(|e| e.to_string())
+}
+
 /// 分块下载（每 ≥2% 报一次进度；拿不到总长不报百分比）。代理走进程环境变量（reqwest 默认读取）。
-async fn download(url: &str, progress: &impl Fn(&str, u32)) -> Result<Vec<u8>, String> {
+pub(crate) async fn download(url: &str, progress: &impl Fn(&str, u32)) -> Result<Vec<u8>, String> {
     let mut resp = reqwest::Client::new()
         .get(url)
         .timeout(std::time::Duration::from_secs(600))
@@ -332,6 +386,27 @@ mod tests {
         } else {
             assert_eq!(nb, npm_prefix_dir(dd).join("bin"));
         }
+    }
+
+    /// grok Windows 直下通道的纯函数：URL 拼装（双源/双架构）、版本指针解析、安装目录。
+    #[test]
+    fn grok_win_urls_and_version() {
+        let [p, f] = grok_version_urls();
+        assert_eq!(p, "https://x.ai/cli/stable");
+        assert!(f.starts_with("https://storage.googleapis.com/grok-build-public-artifacts/cli"));
+        let [a, b] = grok_win_exe_urls("0.2.101", "x86_64");
+        assert_eq!(a, "https://x.ai/cli/grok-0.2.101-windows-x86_64.exe");
+        assert_eq!(b, "https://storage.googleapis.com/grok-build-public-artifacts/cli/grok-0.2.101-windows-x86_64.exe");
+        assert!(grok_win_exe_urls("0.2.101", "aarch64")[0].contains("windows-aarch64.exe"));
+        // 版本指针解析：正常/带后缀/换行 trim；HTML/空/多词拒绝
+        assert_eq!(parse_grok_version("0.2.101\n").as_deref(), Some("0.2.101"));
+        assert_eq!(parse_grok_version("1.2.3-beta.1").as_deref(), Some("1.2.3-beta.1"));
+        assert!(parse_grok_version("<html>404</html>").is_none());
+        assert!(parse_grok_version("").is_none());
+        assert!(parse_grok_version("error: not found").is_none());
+        assert!(parse_grok_version("0.2").is_none(), "两段不算版本");
+        // 安装目录（官方布局）
+        assert_eq!(grok_win_bin_dir(Path::new("C:/Users/u")), Path::new("C:/Users/u").join(".grok").join("bin"));
     }
 
     /// mac 真机自举 live 测试（下载 ~40MB，默认忽略）：cargo test --lib node_boot -- --ignored

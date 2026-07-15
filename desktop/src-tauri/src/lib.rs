@@ -1385,15 +1385,84 @@ async fn install_codex(app: AppHandle, state: tauri::State<'_, AppState>) -> Res
 }
 
 /// 一键安装 Grok CLI（官方脚本 curl | bash，装到 ~/.grok/bin 并自动補 PATH）。
-/// Windows 官方只支持 Git-Bash/MSYS2 流程，不做一键，回错误引导手动装。
-#[tauri::command]
-async fn install_grok() -> Result<String, String> {
+/// Windows 直下 grok 官方原生单文件 exe（URL 口径抄官方 install.sh，见 node_boot 注释）。
+/// 跨平台编译（mac 上可编译审读、纯函数有单测），仅 Windows 分支调用。
+#[cfg_attr(not(windows), allow(dead_code))]
+async fn install_grok_win_binary(app: &AppHandle, home: &std::path::Path) -> Result<String, String> {
+    let emit = |phase: &str, pct: u32| {
+        let _ = app.emit("node-boot", serde_json::json!({ "phase": phase, "pct": pct }));
+    };
+    // ① 最新 stable 版本号（主源 → GCS 回退）
+    let mut version: Option<String> = None;
+    let mut last_err = String::new();
+    for url in node_boot::grok_version_urls() {
+        match node_boot::fetch_text(&url).await {
+            Ok(body) => match node_boot::parse_grok_version(&body) {
+                Some(v) => {
+                    version = Some(v);
+                    break;
+                }
+                None => last_err = format!("{url}: 返回的不是版本号"),
+            },
+            Err(e) => last_err = format!("{url}: {e}"),
+        }
+    }
+    let Some(version) = version else {
+        return Err(format!("安装失败：获取 grok 版本号失败，多为网络问题（代理需覆盖 x.ai）\n——详情——\n{last_err}"));
+    };
+    // ② 下载单文件 exe（带真实进度）
+    let mut data: Option<Vec<u8>> = None;
+    for url in node_boot::grok_win_exe_urls(&version, std::env::consts::ARCH) {
+        match node_boot::download(&url, &|_, pct| emit("grok-download", pct)).await {
+            Ok(b) => {
+                data = Some(b);
+                break;
+            }
+            Err(e) => last_err = format!("{url}: {e}"),
+        }
+    }
+    let Some(data) = data else {
+        return Err(format!("安装失败：下载 grok 失败，多为网络问题（代理需覆盖 x.ai 与 storage.googleapis.com）\n——详情——\n{last_err}"));
+    };
+    // ③ 官方安装布局：~/.grok/bin/{grok.exe, agent.exe}
+    let bin_dir = node_boot::grok_win_bin_dir(home);
+    std::fs::create_dir_all(&bin_dir).map_err(|e| format!("创建 {}: {e}", bin_dir.display()))?;
+    for name in ["grok.exe", "agent.exe"] {
+        std::fs::write(bin_dir.join(name), &data).map_err(|e| format!("写入 {name} 失败（若在运行请先退出 grok）: {e}"))?;
+    }
+    // ④ 校验 + PATH：进程内前置立即可被探测/拉起；用户级持久 PATH 幂等追加（失败不致命）。
+    emit("grok-verify", 0);
+    node_boot::prepend_path_dirs(&[bin_dir.clone()]);
+    let mut c = std::process::Command::new(bin_dir.join("grok.exe"));
+    c.arg("--version");
     #[cfg(windows)]
     {
-        return Err("Windows 请在 Git Bash 里运行：curl -fsSL https://x.ai/cli/install.sh | bash，装好后点「重新检测」".to_string());
+        use std::os::windows::process::CommandExt;
+        c.creation_flags(0x0800_0000);
+    }
+    let ok = c.output().map(|o| o.status.success()).unwrap_or(false);
+    if !ok {
+        return Err("安装失败：下载的 grok 无法运行（--version 未通过），可能被安全软件拦截——请重试或手动安装".into());
+    }
+    let mut msg = format!("Grok CLI {version} 安装完成，正在重新检测…");
+    if let Err(e) = node_boot::register_user_path(&[bin_dir]) {
+        msg.push_str(&format!("（已装好但未能写入系统 PATH，终端里使用需手动加：{e}）"));
+    }
+    Ok(msg)
+}
+
+/// 一键安装 Grok CLI：mac/linux 走官方脚本（curl | bash）；Windows 直下官方原生 exe——
+/// 不再要求 Git Bash（侦查：官方无 npm 包，但 x.ai/cli 有 windows 单文件产物直链）。
+#[tauri::command]
+async fn install_grok(app: AppHandle) -> Result<String, String> {
+    #[cfg(windows)]
+    {
+        let home = std::env::var("USERPROFILE").map_err(|_| "拿不到用户目录（USERPROFILE）".to_string())?;
+        return install_grok_win_binary(&app, std::path::Path::new(&home)).await;
     }
     #[cfg(not(windows))]
     {
+        let _ = &app;
         tauri::async_runtime::spawn_blocking(|| {
             let mut c = std::process::Command::new("/bin/bash");
             c.args(["-c", "curl -fsSL https://x.ai/cli/install.sh | bash"]);
@@ -1402,7 +1471,10 @@ async fn install_grok() -> Result<String, String> {
             if out.status.success() {
                 Ok("Grok CLI 安装完成，正在重新检测…".to_string())
             } else {
-                Err(format!("安装失败：{}", install_err_brief(&out.stdout, &out.stderr)))
+                Err(format!(
+                    "安装失败：多为网络问题（代理需覆盖 x.ai）\n——详情（输出末尾）——\n{}",
+                    install_err_tail(&out.stdout, &out.stderr)
+                ))
             }
         })
         .await
