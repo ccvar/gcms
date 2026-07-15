@@ -48,8 +48,38 @@ pub struct SshProbe {
 pub struct SftpEntry {
     pub name: String,
     pub dir: bool,
+    /// 符号链接。注意 sftp 的 readdir 给的是 lstat 语义 → 指向目录的软链这里 dir=false，
+    /// 前端点开时再解析（省掉每次列目录都对每个软链多跑一次 stat）。
+    pub link: bool,
+    /// "rwxr-xr-x" 形式的权限（拿不到权限位时为空串）。
+    pub perms: String,
     pub size: u64,
     pub mtime: u64,
+}
+
+/// 权限位 → "rwxr-xr-x"。只取低 9 位；setuid/setgid/sticky 按 ls 的写法叠在执行位上。
+fn perm_str(mode: u32) -> String {
+    let mut s = String::with_capacity(9);
+    for (i, group) in [(mode >> 6) & 7, (mode >> 3) & 7, mode & 7].iter().enumerate() {
+        s.push(if group & 4 != 0 { 'r' } else { '-' });
+        s.push(if group & 2 != 0 { 'w' } else { '-' });
+        // setuid(04000)/setgid(02000)/sticky(01000) 各自改写对应组的执行位
+        let special = match i {
+            0 => mode & 0o4000 != 0,
+            1 => mode & 0o2000 != 0,
+            _ => mode & 0o1000 != 0,
+        };
+        let x = group & 1 != 0;
+        s.push(match (special, x, i) {
+            (true, true, 2) => 't',
+            (true, false, 2) => 'T',
+            (true, true, _) => 's',
+            (true, false, _) => 'S',
+            (false, true, _) => 'x',
+            (false, false, _) => '-',
+        });
+    }
+    s
 }
 
 /// 由「已存的连接 + 钥匙串」组装认证材料。凭据只在 Rust 侧流转，绝不出这个进程。
@@ -495,6 +525,8 @@ impl SshSessions {
                 SftpEntry {
                     name: e.file_name(),
                     dir: m.is_dir(),
+                    link: m.is_symlink(),
+                    perms: m.permissions.map(perm_str).unwrap_or_default(),
                     size: m.size.unwrap_or(0),
                     mtime: m.mtime.unwrap_or(0) as u64,
                 }
@@ -588,5 +620,29 @@ impl SshSessions {
         // copy 只 flush 不关句柄；SFTP 的 close 才让远端落定文件。
         dst.shutdown().await.map_err(|e| format!("上传收尾失败: {e}"))?;
         Ok(n)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn perm_str_matches_ls() {
+        assert_eq!(perm_str(0o755), "rwxr-xr-x");
+        assert_eq!(perm_str(0o644), "rw-r--r--");
+        assert_eq!(perm_str(0o700), "rwx------");
+        assert_eq!(perm_str(0o777), "rwxrwxrwx");
+        assert_eq!(perm_str(0o000), "---------");
+        // 文件类型位在高处（0o100644 = 普通文件 644），不能漏进来
+        assert_eq!(perm_str(0o100_644), "rw-r--r--");
+        assert_eq!(perm_str(0o040_755), "rwxr-xr-x");
+        // /tmp 的 sticky（1777）、setuid（4755）——按 ls 的写法叠在执行位上
+        assert_eq!(perm_str(0o1777), "rwxrwxrwt");
+        assert_eq!(perm_str(0o4755), "rwsr-xr-x");
+        assert_eq!(perm_str(0o2755), "rwxr-sr-x");
+        // 有 setuid 但没有执行位 → 大写
+        assert_eq!(perm_str(0o4644), "rwSr--r--");
+        assert_eq!(perm_str(0o1666), "rw-rw-rwT");
     }
 }

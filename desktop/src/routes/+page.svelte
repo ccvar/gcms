@@ -1151,6 +1151,7 @@
     }
     if (conn?.kind === 'ssh') {
       // SSH 连接没有站点/项目可发现。落在启动页（让 AI 干活是主路径），终端在侧栏一键可达。
+      void probeOs(id); // 系统版本：没探过才连，探到就存着，之后一直是本地读
       if (switching) {
         disposeTerm();
         view = 'launcher';
@@ -1247,22 +1248,65 @@
     finally { delete packUpdating[connId]; }
   }
 
-  // ---------- 新建远程连接（SSH） ----------
-  // 安全：密码/私钥口令只在这个表单的内存里过一下，随 connect_ssh 进钥匙串，绝不落盘。
-  // 主机指纹走 TOFU：必须先「测试连接」拿到指纹、由你确认后才能建连接（后端无指纹一律拒）。
+  // ---------- 新建 / 编辑远程连接（SSH） ----------
+  // 安全：密码/私钥口令只在这个表单的内存里过一下，随 connect_ssh/update_ssh 进钥匙串，绝不落盘。
+  // 主机指纹走 TOFU：必须先「测试连接」拿到指纹、由你确认后才能保存（后端无指纹一律拒）。
   let sshOpen = $state(false);
   let sshTesting = $state(false);
   let sshConnecting = $state(false);
   let sshErr = $state('');
   let sshFp = $state(''); // 试连拿到的主机指纹；非空 = 认证已通过、待你确认指纹
-  let sshF = $state({ name: '', host: '', port: 22, user: '', auth: 'password', password: '', keyPath: '', keyPass: '' });
+  let sshEditId = $state(''); // 非空 = 编辑已有连接
+  let sshOldFp = $state(''); // 编辑时：连接里存着的旧指纹，用来发现「机器的指纹变了」
+  const SSH_BLANK = { name: '', host: '', port: 22, user: '', auth: 'password', password: '', keyPath: '', keyPass: '' };
+  let sshF = $state({ ...SSH_BLANK });
+  let sshF0 = $state({ ...SSH_BLANK }); // 编辑时的初始值：用来判断「有没有动过连接相关的字段」
   const sshAuthOpts = [
     { value: 'password', label: '密码', sub: '用账号密码登录' },
     { value: 'key', label: '密钥', sub: '用私钥文件登录（更安全）' },
   ];
   function openSshConnect() {
-    sshOpen = true; sshErr = ''; sshFp = '';
-    sshF = { name: '', host: '', port: 22, user: '', auth: 'password', password: '', keyPath: '', keyPass: '' };
+    sshOpen = true; sshErr = ''; sshFp = ''; sshEditId = ''; sshOldFp = '';
+    sshF = { ...SSH_BLANK };
+    sshF0 = { ...SSH_BLANK };
+  }
+  function openSshEdit(c: Connection) {
+    sshOpen = true; sshErr = ''; sshFp = ''; sshEditId = c.id; sshOldFp = c.ssh_fingerprint || '';
+    // 密码/口令不回显（我们自己也读不到明文以外的用途）——留空即保持钥匙串里那条不变。
+    sshF = {
+      name: c.name, host: c.ssh_host ?? '', port: c.ssh_port || 22, user: c.ssh_user ?? '',
+      auth: c.ssh_auth || 'password', password: '', keyPath: c.ssh_key_path ?? '', keyPass: '',
+    };
+    sshF0 = { ...sshF };
+  }
+  // 改了连接相关的字段（地址/端口/用户/认证方式/密钥路径/新密码）→ 必须重新试连拿指纹再存。
+  // 只改名字则不必：那和「能不能连上」无关，别为了改个名逼用户去连一次机器。
+  const sshDirty = $derived(
+    sshF.host.trim() !== sshF0.host || Number(sshF.port) !== Number(sshF0.port) ||
+    sshF.user.trim() !== sshF0.user || sshF.auth !== sshF0.auth ||
+    sshF.keyPath.trim() !== sshF0.keyPath || !!sshF.password || !!sshF.keyPass
+  );
+  const sshRenameOnly = $derived(!!sshEditId && !sshDirty);
+  // 试连看到的指纹和存着的不一样 = 这台机器换了主机密钥（重装？也可能是中间人）——必须让人看见。
+  const sshFpChanged = $derived(!!sshEditId && !!sshFp && !!sshOldFp && sshFp !== sshOldFp);
+  async function saveSshEdit() {
+    if (sshConnecting) return;
+    sshConnecting = true; sshErr = '';
+    try {
+      const conn = await invoke<Connection>('update_ssh', {
+        connId: sshEditId,
+        name: sshF.name.trim(), host: sshF.host.trim(), port: Number(sshF.port) || 22,
+        user: sshF.user.trim(), auth: sshF.auth, keyPath: sshF.keyPath,
+        // 留空＝不动钥匙串（只改了名字/地址时不必重填密码）
+        secret: sshF.auth === 'key' ? sshF.keyPass : sshF.password,
+        // 只改名字时没试连，沿用原指纹
+        fingerprint: sshFp || sshOldFp,
+      });
+      sshOpen = false; say(`已更新「${conn.name}」`);
+      await refreshConns();
+      if (activeConnId === conn.id) { disposeTerm(); void probeOs(conn.id); }
+    } catch (e) { sshErr = String(e); }
+    finally { sshConnecting = false; }
   }
   async function pickSshKey() {
     try {
@@ -1270,9 +1314,10 @@
       if (typeof p === 'string') sshF.keyPath = p;
     } catch (e) { sshErr = String(e); }
   }
+  // 编辑时密码可以留空（＝沿用钥匙串里那条），新建时必须填。
   const sshCanTest = $derived(
     !!sshF.host.trim() && !!sshF.user.trim() &&
-    (sshF.auth === 'key' ? !!sshF.keyPath.trim() : !!sshF.password)
+    (sshF.auth === 'key' ? !!sshF.keyPath.trim() : (!!sshF.password || (!!sshEditId && sshF0.auth === 'password')))
   );
   async function testSsh() {
     if (sshTesting || !sshCanTest) return;
@@ -1281,6 +1326,8 @@
       const p = await invoke<{ fingerprint: string; auth_ok: boolean; error: string }>('verify_ssh', {
         host: sshF.host.trim(), port: Number(sshF.port) || 22, user: sshF.user.trim(), auth: sshF.auth,
         password: sshF.password, keyPath: sshF.keyPath, keyPass: sshF.keyPass, expectFingerprint: '',
+        // 编辑时密码/口令留空 = 用钥匙串里存着的那条来试（后端取，前端永远看不到明文）
+        connId: sshEditId,
       });
       sshFp = p.fingerprint;
     } catch (e) { sshErr = String(e); }
@@ -1301,6 +1348,39 @@
       view = 'remote';
     } catch (e) { sshErr = String(e); }
     finally { sshConnecting = false; }
+  }
+
+  // ---------- 远程连接：系统信息 ----------
+  // os-release 的 ID 归一化到我们画得出图标的那几家；认不出的返回 '' 走通用形。
+  function distroOf(c: Connection | undefined | null): string {
+    const id = (c?.ssh_os_id || '').toLowerCase();
+    if (['ubuntu', 'debian', 'alpine', 'fedora', 'arch', 'centos', 'rocky', 'almalinux', 'rhel'].includes(id)) return id;
+    if (id === 'raspbian' || id === 'linuxmint' || id === 'pop' || id === 'kali') return 'debian'; // 都是 debian 系
+    if (id === 'arch' || id === 'manjaro' || id === 'endeavouros') return 'arch';
+    if (id.startsWith('opensuse') || id === 'sles') return ''; // 没画 suse，走通用形
+    return '';
+  }
+  // 页脚/下拉的副标题：探到了就显示系统，没探到就显示 user@host（总得有东西）。
+  function sshSub(c: Connection | undefined | null): string {
+    if (!c) return '';
+    return c.ssh_os || `${c.ssh_user}@${c.ssh_host}${c.ssh_port && c.ssh_port !== 22 ? ':' + c.ssh_port : ''}`;
+  }
+  let osProbing = $state<Record<string, boolean>>({});
+  /** 探一次远端系统版本并存进连接。已探过就不再连（除非 force）。 */
+  async function probeOs(id: string, force = false) {
+    const c = conns.find((x) => x.id === id);
+    if (!c || c.kind !== 'ssh' || osProbing[id]) return;
+    if (c.ssh_os && !force) return;
+    osProbing = { ...osProbing, [id]: true };
+    try {
+      const u = await invoke<Connection>('ssh_os_probe', { connId: id });
+      conns = conns.map((x) => (x.id === u.id ? u : x));
+    } catch (e) {
+      // 机器关着/网络不通都很正常：静默（真要用连接时自然会报错），只在手动点刷新时说话。
+      if (force) say(String(e), 'err');
+    } finally {
+      osProbing = { ...osProbing, [id]: false };
+    }
   }
 
   // ---------- 远程终端（xterm + PTY 流） ----------
@@ -1376,12 +1456,18 @@
   }
 
   // ---------- 远程文件（SFTP，走终端同一条 SSH 会话） ----------
-  type SftpEntry = { name: string; dir: boolean; size: number; mtime: number };
+  // 视图＝可展开的树：sftpPath 是树根，每个目录的孩子按需加载后缓存在 sftpKids 里。
+  type SftpEntry = { name: string; dir: boolean; link: boolean; perms: string; size: number; mtime: number };
+  type SftpRow = SftpEntry & { path: string; depth: number };
   let remoteTab = $state<'term' | 'files'>('term');
   let sftpConnId = ''; // 已加载文件列表所属的连接；换连接才重置，切页签不重置
   let sftpPath = $state('');
   let sftpPathDraft = $state('');
-  let sftpEntries = $state<SftpEntry[]>([]);
+  let sftpKids = $state<Record<string, SftpEntry[]>>({}); // 目录路径 → 它的孩子
+  let sftpOpenDirs = $state(new Set<string>());
+  let sftpLoading = $state<Record<string, boolean>>({});
+  let sftpSel = $state('');
+  let sftpSort = $state<{ key: 'name' | 'size' | 'mtime'; asc: boolean }>({ key: 'name', asc: true });
   let sftpBusy = $state(false);
   let sftpErr = $state('');
   let sftpXfer = $state(''); // 上传/下载进行中的提示文案
@@ -1390,7 +1476,8 @@
     const id = activeConnId;
     if (view !== 'remote' || !isSshConn || remoteTab !== 'files' || !id) return;
     if (sftpConnId === id) return;
-    sftpConnId = id; sftpPath = ''; sftpPathDraft = ''; sftpEntries = []; sftpErr = '';
+    sftpConnId = id; sftpPath = ''; sftpPathDraft = ''; sftpErr = '';
+    sftpKids = {}; sftpOpenDirs = new Set(); sftpSel = '';
     void sftpGo('');
   });
   function backToTerm() {
@@ -1399,20 +1486,98 @@
     requestAnimationFrame(() => termFit?.fit());
   }
   function sftpJoin(dir: string, name: string): string { return dir === '/' ? '/' + name : dir + '/' + name; }
+  function parentOf(p: string): string { return p.replace(/\/[^/]+\/?$/, '') || '/'; }
+  function baseOf(p: string): string { return p.split('/').filter(Boolean).pop() || p; }
+  function sortRows(list: SftpEntry[]): SftpEntry[] {
+    const { key, asc } = sftpSort;
+    const sign = asc ? 1 : -1;
+    return [...list].sort((a, b) => {
+      if (key === 'size') return sign * (a.size - b.size);
+      if (key === 'mtime') return sign * (a.mtime - b.mtime);
+      return sign * a.name.localeCompare(b.name, 'zh-Hans-CN', { numeric: true });
+    });
+  }
+  function setSort(key: 'name' | 'size' | 'mtime') {
+    sftpSort = sftpSort.key === key ? { key, asc: !sftpSort.asc } : { key, asc: true };
+  }
+  // 树 → 扁平行（只把展开着的目录的孩子摊进来）。
+  const sftpRows = $derived.by(() => {
+    const out: SftpRow[] = [];
+    const walk = (dir: string, depth: number) => {
+      for (const e of sortRows(sftpKids[dir] ?? [])) {
+        const p = sftpJoin(dir, e.name);
+        out.push({ ...e, path: p, depth });
+        if (e.dir && !e.link && sftpOpenDirs.has(p)) walk(p, depth + 1);
+      }
+    };
+    if (sftpPath) walk(sftpPath, 0);
+    return out;
+  });
+  /** 读一个目录的孩子进缓存。force=true 时无视缓存重读（改动后刷新用）。 */
+  async function loadDir(path: string, force = false): Promise<boolean> {
+    const id = sftpConnId;
+    if (!force && sftpKids[path]) return true;
+    sftpLoading = { ...sftpLoading, [path]: true };
+    try {
+      const list = await invoke<SftpEntry[]>('sftp_list', { connId: id, path });
+      if (sftpConnId !== id) return false; // 加载途中换了连接，丢弃
+      sftpKids = { ...sftpKids, [path]: list };
+      return true;
+    } catch (e) {
+      if (path === sftpPath) sftpErr = String(e); else say(String(e), 'err');
+      return false;
+    } finally {
+      sftpLoading = { ...sftpLoading, [path]: false };
+    }
+  }
+  /** 换树根（path 为空＝去 home）。 */
   async function sftpGo(path: string) {
     const id = sftpConnId;
     sftpBusy = true; sftpErr = '';
     try {
       const p = path || await invoke<string>('sftp_home', { connId: id });
-      const list = await invoke<SftpEntry[]>('sftp_list', { connId: id, path: p });
-      if (sftpConnId !== id) return; // 加载途中换了连接，丢弃
-      sftpPath = p; sftpPathDraft = p; sftpEntries = list;
+      if (sftpConnId !== id) return;
+      sftpPath = p; sftpPathDraft = p; sftpSel = '';
+      sftpOpenDirs = new Set();
+      await loadDir(p, true);
     } catch (e) { sftpErr = String(e); }
     finally { sftpBusy = false; }
   }
   function sftpUp() {
     if (!sftpPath || sftpPath === '/') return;
-    void sftpGo(sftpPath.replace(/\/[^/]+\/?$/, '') || '/');
+    void sftpGo(parentOf(sftpPath));
+  }
+  /** 刷新：重读当前展开着的每一层，**保留展开状态**（sftpGo 是「换根」，会把整棵树收起来）。 */
+  async function sftpRefresh() {
+    if (!sftpPath || sftpBusy) return;
+    sftpBusy = true; sftpErr = '';
+    try {
+      const dirs = [sftpPath, ...sftpOpenDirs];
+      const ok = await Promise.all(dirs.map((d) => loadDir(d, true)));
+      // 远端已经不在了的目录：连同展开态一起丢掉，别在树里留幽灵行
+      const gone = dirs.filter((_, i) => !ok[i] && dirs[i] !== sftpPath);
+      if (gone.length) {
+        const n = new Set(sftpOpenDirs);
+        const kids = { ...sftpKids };
+        for (const d of gone) { n.delete(d); delete kids[d]; }
+        sftpOpenDirs = n; sftpKids = kids;
+      }
+    } finally { sftpBusy = false; }
+  }
+  async function toggleDir(r: SftpRow) {
+    const n = new Set(sftpOpenDirs);
+    if (n.has(r.path)) { n.delete(r.path); sftpOpenDirs = n; return; }
+    if (!(await loadDir(r.path))) return;
+    n.add(r.path); sftpOpenDirs = n;
+  }
+  /** 打开：目录＝展开；软链＝先当目录试（sftp 的 readdir 给的是 lstat，指向目录的软链这里 dir=false）；文件＝在线编辑。 */
+  async function sftpOpenRow(r: SftpRow) {
+    if (r.dir && !r.link) { await toggleDir(r); return; }
+    if (r.link) {
+      if (await loadDir(r.path)) { const n = new Set(sftpOpenDirs); n.add(r.path); sftpOpenDirs = n; return; }
+      sftpErr = ''; // 不是目录（或读不了）→ 按文件处理，别把错误留在条上
+    }
+    sftpEdit(r.path);
   }
   function fmtSize(n: number): string {
     if (n < 1024) return `${n} B`;
@@ -1420,53 +1585,89 @@
     while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
     return `${v >= 100 ? Math.round(v) : v.toFixed(1)} ${u[i]}`;
   }
-  // 新建文件夹 / 重命名共用一个「起名」弹窗
-  let fsAsk = $state<null | { mode: 'mkdir' | 'rename'; from: string; value: string; busy: boolean; err: string }>(null);
-  function openMkdir() { fsAsk = { mode: 'mkdir', from: '', value: '', busy: false, err: '' }; }
-  function openRename(name: string) { fsAsk = { mode: 'rename', from: name, value: name, busy: false, err: '' }; }
+  function fmtStamp(secs: number): string {
+    if (!secs) return '';
+    const d = new Date(secs * 1000);
+    const p = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  }
+  // ---- 右键菜单 ----
+  let fctxMenu = $state<null | { x: number; y: number; row: SftpRow | null }>(null);
+  function openFctx(e: MouseEvent, row: SftpRow | null) {
+    e.preventDefault();
+    if (row) sftpSel = row.path;
+    // 贴边时往回收，别让菜单跑出窗口
+    fctxMenu = { x: Math.min(e.clientX, window.innerWidth - 190), y: Math.min(e.clientY, window.innerHeight - 240), row };
+  }
+  $effect(() => {
+    if (!fctxMenu) return;
+    const close = () => (fctxMenu = null);
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') fctxMenu = null; };
+    // capture：菜单项自己的 onclick 先跑，再由这里收摊
+    window.addEventListener('click', close);
+    window.addEventListener('contextmenu', close);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('click', close);
+      window.removeEventListener('contextmenu', close);
+      window.removeEventListener('keydown', onKey);
+    };
+  });
+  async function copyPath(p: string) {
+    try { await navigator.clipboard.writeText(p); say('已复制路径'); }
+    catch { say('复制失败，请手动选择复制', 'err'); }
+  }
+  // 新建文件夹 / 重命名共用一个「起名」弹窗。dir＝在哪个目录里操作。
+  let fsAsk = $state<null | { mode: 'mkdir' | 'rename'; dir: string; from: string; value: string; busy: boolean; err: string }>(null);
+  function openMkdir(dir = sftpPath) { fsAsk = { mode: 'mkdir', dir, from: '', value: '', busy: false, err: '' }; }
+  function openRename(r: SftpRow) { fsAsk = { mode: 'rename', dir: parentOf(r.path), from: r.name, value: r.name, busy: false, err: '' }; }
   async function confirmFsAsk() {
     if (!fsAsk || fsAsk.busy) return;
     const v = fsAsk.value.trim();
     if (!v) return;
     if (v.includes('/')) { fsAsk.err = '名字里不能带 /'; return; }
     fsAsk.busy = true; fsAsk.err = '';
+    const dir = fsAsk.dir;
     try {
-      if (fsAsk.mode === 'mkdir') await invoke('sftp_mkdir', { connId: sftpConnId, path: sftpJoin(sftpPath, v) });
-      else await invoke('sftp_rename', { connId: sftpConnId, from: sftpJoin(sftpPath, fsAsk.from), to: sftpJoin(sftpPath, v) });
+      if (fsAsk.mode === 'mkdir') await invoke('sftp_mkdir', { connId: sftpConnId, path: sftpJoin(dir, v) });
+      else await invoke('sftp_rename', { connId: sftpConnId, from: sftpJoin(dir, fsAsk.from), to: sftpJoin(dir, v) });
       fsAsk = null;
-      await sftpGo(sftpPath);
+      await loadDir(dir, true);
     } catch (e) { if (fsAsk) { fsAsk.err = String(e); fsAsk.busy = false; } }
   }
-  async function sftpDelete(f: SftpEntry) {
+  async function sftpDelete(r: SftpRow) {
+    const isDir = r.dir && !r.link;
     const yes = await confirmDialog(
-      f.dir ? `删除文件夹「${f.name}」？只能删空文件夹。` : `删除文件「${f.name}」？此操作不可撤销。`,
+      isDir ? `删除文件夹「${r.name}」？只能删空文件夹。` : `删除「${r.name}」？此操作不可撤销。`,
       { title: '删除', kind: 'warning' },
     );
     if (!yes) return;
-    try { await invoke('sftp_remove', { connId: sftpConnId, path: sftpJoin(sftpPath, f.name), dir: f.dir }); await sftpGo(sftpPath); }
-    catch (e) { say(String(e), 'err'); }
+    try {
+      await invoke('sftp_remove', { connId: sftpConnId, path: r.path, dir: isDir });
+      await loadDir(parentOf(r.path), true);
+    } catch (e) { say(String(e), 'err'); }
   }
-  async function sftpDownload(f: SftpEntry) {
-    const local = await saveDialog({ defaultPath: f.name, title: `下载 ${f.name}` });
+  async function sftpDownload(r: SftpRow) {
+    const local = await saveDialog({ defaultPath: r.name, title: `下载 ${r.name}` });
     if (!local) return;
-    sftpXfer = `下载 ${f.name}…`;
-    try { await invoke('sftp_download', { connId: sftpConnId, remote: sftpJoin(sftpPath, f.name), local }); say(`已下载到 ${local}`); }
+    sftpXfer = `下载 ${r.name}…`;
+    try { await invoke('sftp_download', { connId: sftpConnId, remote: r.path, local }); say(`已下载到 ${local}`); }
     catch (e) { say(String(e), 'err'); }
     finally { sftpXfer = ''; }
   }
-  async function sftpUpload() {
+  async function sftpUpload(dir = sftpPath) {
     const picked = await open({ multiple: true, title: '选择要上传的文件' });
     if (!picked) return;
     const paths = Array.isArray(picked) ? picked : [picked];
     for (const p of paths) {
       const name = p.split(/[\\/]/).pop() || p;
       sftpXfer = `上传 ${name}…`;
-      try { await invoke('sftp_upload', { connId: sftpConnId, local: p, remote: sftpJoin(sftpPath, name) }); }
+      try { await invoke('sftp_upload', { connId: sftpConnId, local: p, remote: sftpJoin(dir, name) }); }
       catch (e) { say(String(e), 'err'); sftpXfer = ''; return; }
     }
     sftpXfer = '';
     say(paths.length > 1 ? `已上传 ${paths.length} 个文件` : '已上传');
-    await sftpGo(sftpPath);
+    await loadDir(dir, true);
   }
   // 在线编辑器
   let edOpen = $state(false);
@@ -1476,8 +1677,7 @@
   let edSaving = $state(false);
   let edErr = $state('');
   let edReadOnly = $state(false);
-  async function sftpEdit(name: string) {
-    const path = sftpJoin(sftpPath, name);
+  async function sftpEdit(path: string) {
     edOpen = true; edPath = path; edText = ''; edErr = ''; edReadOnly = false; edLoading = true;
     try {
       const b64 = await invoke<string>('sftp_read', { connId: sftpConnId, path });
@@ -1485,7 +1685,7 @@
       edText = new TextDecoder('utf-8', { fatal: true }).decode(b64ToBytes(b64));
     } catch (e) {
       edReadOnly = true;
-      edErr = e instanceof TypeError ? '这是二进制文件，不能在线编辑；可以用列表里的下载按钮取回本地。' : String(e);
+      edErr = e instanceof TypeError ? '这是二进制文件，不能在线编辑；右键「下载」可以取回本地。' : String(e);
     } finally { edLoading = false; }
   }
   async function saveEdit() {
@@ -1495,7 +1695,7 @@
       await invoke('sftp_write', { connId: sftpConnId, path: edPath, b64: strToB64(edText) });
       edOpen = false;
       say(`已保存 ${edPath}`);
-      await sftpGo(sftpPath);
+      await loadDir(parentOf(edPath), true); // 大小/时间变了，刷新它所在的那层
     } catch (e) { edErr = String(e); }
     finally { edSaving = false; }
   }
@@ -2636,8 +2836,13 @@
         <div class="conn-switch">
           {#each conns as c (c.id)}
             <button class="cs-item {activeConnId === c.id ? 'on' : ''}" onclick={() => { selectConn(c.id); switcherOpen = false; }}>
-              {#if c.kind === 'cloudflare'}{@render cfMark(18)}{:else}<SiteMark size={18} />{/if}
-              <span class="cs-main"><b>{c.name}{#if packUpdates[c.id]}<span class="pack-dot" title="技能包有新版，去「连接与模型设置」一键升级"></span>{/if}</b><small>{c.key_prefix} · {c.kind === 'cloudflare' ? 'Cloudflare' : c.key_kind === 'gcmsp_' ? '平台' : '单站'}</small></span>
+              {#if c.kind === 'cloudflare'}{@render cfMark(18)}{:else if c.kind === 'ssh'}{@render sshMark(18)}{:else}<SiteMark size={18} />{/if}
+              <span class="cs-main"><b>{c.name}{#if packUpdates[c.id]}<span class="pack-dot" title="技能包有新版，去「连接与模型设置」一键升级"></span>{/if}</b>
+                {#if c.kind === 'ssh'}
+                  <small class="cs-os">{@render distroMark(distroOf(c), 12)}{sshSub(c)}</small>
+                {:else}
+                  <small>{c.key_prefix} · {c.kind === 'cloudflare' ? 'Cloudflare' : c.key_kind === 'gcmsp_' ? '平台' : '单站'}</small>
+                {/if}</span>
               {#if activeConnId === c.id}<span class="cs-check">✓</span>{/if}
             </button>
           {/each}
@@ -2649,10 +2854,15 @@
         </div>
       {/if}
     <button class="rail-foot" class:open={switcherOpen} onclick={() => { if (conns.length === 0) { setupOpen = true; } else { switcherOpen = !switcherOpen; } }}>
-      {#if isCfConn}{@render cfMark(18)}{:else if activeConn && sites.length}<SiteFav src={siteFav(sites[0].slug)} label={sites[0].slug} size={18} />{:else}<AppIcon size={18} />{/if}
+      {#if isCfConn}{@render cfMark(18)}{:else if isSshConn}{@render sshMark(18)}{:else if activeConn && sites.length}<SiteFav src={siteFav(sites[0].slug)} label={sites[0].slug} size={18} />{:else}<AppIcon size={18} />{/if}
       <span class="foot-main">
         <b>{activeConn?.name ?? '未连接'}</b>
-        <small>{#if isCfConn}{cfProjects.length} 个项目{cfSiteCount ? ` · ${cfSiteCount} 个站点` : ''}{:else if activeConn}{sites.length} 个站点<span class="foot-rfz" role="button" tabindex="-1" title="刷新站点（技能包新增站点后点这里）"
+        <small>{#if isCfConn}{cfProjects.length} 个项目{cfSiteCount ? ` · ${cfSiteCount} 个站点` : ''}{:else if isSshConn}<!--
+          远程连接没有「站点」这回事：这里放远端系统版本（点一下重探，比如刚 do-release-upgrade 过）。
+        --><span class="foot-os" role="button" tabindex="-1" title="远端系统 · 点击重新检测"
+          onclick={(e) => { e.stopPropagation(); probeOs(activeConnId, true); }}
+          onkeydown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); probeOs(activeConnId, true); } }}
+          >{@render distroMark(distroOf(activeConn), 12)}{osProbing[activeConnId] ? '检测系统…' : sshSub(activeConn)}</span>{:else if activeConn}{sites.length} 个站点<span class="foot-rfz" role="button" tabindex="-1" title="刷新站点（技能包新增站点后点这里）"
           onclick={(e) => { e.stopPropagation(); refreshSites(); }}
           onkeydown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); refreshSites(); } }}>{@render refreshIcon(discoveryLoading)}</span>{:else}点此导入技能包{/if}</small>
       </span>
@@ -3117,15 +3327,15 @@
     {:else if view === 'remote'}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <header class="thread-head" data-tauri-drag-region onmousedown={startDrag}>
-        <div class="th-info"><b>远程连接</b><small>{activeConn?.ssh_user}@{activeConn?.ssh_host}:{activeConn?.ssh_port} · {termOn ? '已连接' : '未连接'}</small></div>
+        <div class="th-info"><b>远程连接</b><small>{activeConn?.ssh_user}@{activeConn?.ssh_host}:{activeConn?.ssh_port} · {termOn ? '已连接' : '未连接'}
+          {#if remoteTab === 'term'}
+            <button class="th-rfz" data-tip="重新连接" aria-label="重新连接" onclick={reconnectTerm}>{@render refreshIcon(false)}</button>
+          {/if}</small></div>
         <div class="rhead-acts">
           <div class="rseg" role="tablist">
             <button class="rseg-btn" class:on={remoteTab === 'term'} role="tab" aria-selected={remoteTab === 'term'} onclick={backToTerm}>终端</button>
             <button class="rseg-btn" class:on={remoteTab === 'files'} role="tab" aria-selected={remoteTab === 'files'} onclick={() => (remoteTab = 'files')}>文件</button>
           </div>
-          {#if remoteTab === 'term'}
-            <button class="btn soft bare" onclick={reconnectTerm}>{@render refreshIcon(false)}重新连接</button>
-          {/if}
         </div>
       </header>
       <!-- 终端自己管滚动：别套 .thread（它的 overflow-y:auto 会和 xterm 打架）。
@@ -3136,34 +3346,53 @@
           <div class="files-bar">
             <button class="fbtn" aria-label="上一级" data-tip="上一级" onclick={sftpUp} disabled={sftpBusy || !sftpPath || sftpPath === '/'}><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 12.5v-9M4.2 7.3 8 3.5l3.8 3.8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
             <input class="tin fpath" bind:value={sftpPathDraft} spellcheck="false" autocapitalize="off" autocorrect="off" placeholder="/" onkeydown={(e) => e.key === 'Enter' && sftpPathDraft.trim() && sftpGo(sftpPathDraft.trim())} />
-            <button class="fbtn" aria-label="刷新" data-tip="刷新" onclick={() => sftpGo(sftpPath)} disabled={sftpBusy}>{@render refreshIcon(sftpBusy)}</button>
-            <button class="fbtn" aria-label="新建文件夹" data-tip="新建文件夹" onclick={openMkdir} disabled={sftpBusy}><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M1.8 4.2A1.4 1.4 0 0 1 3.2 2.8h3l1.4 1.6h5.2a1.4 1.4 0 0 1 1.4 1.4v6a1.4 1.4 0 0 1-1.4 1.4H3.2a1.4 1.4 0 0 1-1.4-1.4v-7.6z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /><path d="M8 7.4v3.4M6.3 9.1h3.4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" /></svg></button>
-            <button class="fbtn" aria-label="上传文件" data-tip="上传文件" onclick={sftpUpload} disabled={sftpBusy || !!sftpXfer}><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 10.4V3.6M4.8 6.4 8 3.2l3.2 3.2M3 12.8h10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
+            <button class="fbtn" aria-label="刷新" data-tip="刷新" onclick={sftpRefresh} disabled={sftpBusy}>{@render refreshIcon(sftpBusy)}</button>
+            <button class="fbtn" aria-label="新建文件夹" data-tip="新建文件夹" onclick={() => openMkdir()} disabled={sftpBusy}><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M1.8 4.2A1.4 1.4 0 0 1 3.2 2.8h3l1.4 1.6h5.2a1.4 1.4 0 0 1 1.4 1.4v6a1.4 1.4 0 0 1-1.4 1.4H3.2a1.4 1.4 0 0 1-1.4-1.4v-7.6z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /><path d="M8 7.4v3.4M6.3 9.1h3.4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" /></svg></button>
+            <button class="fbtn" aria-label="上传文件" data-tip="上传到当前目录" onclick={() => sftpUpload()} disabled={sftpBusy || !!sftpXfer}><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 10.4V3.6M4.8 6.4 8 3.2l3.2 3.2M3 12.8h10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
           </div>
           {#if sftpXfer}<div class="files-note">{sftpXfer}</div>{/if}
           {#if sftpErr}<div class="err-note files-err">{sftpErr}</div>{/if}
-          <div class="files-list">
-            {#if sftpBusy && !sftpEntries.length}
+          <div class="fhead">
+            <button class="fh fh-name" onclick={() => setSort('name')}>名称{#if sftpSort.key === 'name'}<span class="fh-ar" class:desc={!sftpSort.asc}>^</span>{/if}</button>
+            <span class="fh fh-perm">权限</span>
+            <button class="fh fh-size" onclick={() => setSort('size')}>大小{#if sftpSort.key === 'size'}<span class="fh-ar" class:desc={!sftpSort.asc}>^</span>{/if}</button>
+            <button class="fh fh-date" onclick={() => setSort('mtime')}>日期{#if sftpSort.key === 'mtime'}<span class="fh-ar" class:desc={!sftpSort.asc}>^</span>{/if}</button>
+          </div>
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div class="files-list" oncontextmenu={(e) => openFctx(e, null)}>
+            {#if sftpBusy && !sftpRows.length}
               <div class="files-empty">读取中…</div>
-            {:else if !sftpEntries.length}
+            {:else if !sftpRows.length}
               <div class="files-empty">{sftpErr ? '' : '空目录'}</div>
             {:else}
-              {#each sftpEntries as f (f.name)}
-                <div class="frow">
-                  <button class="fname" onclick={() => (f.dir ? sftpGo(sftpJoin(sftpPath, f.name)) : sftpEdit(f.name))} title={f.dir ? '打开目录' : '在线编辑'}>
-                    {#if f.dir}<svg class="fic dir" width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M1.8 4.2A1.4 1.4 0 0 1 3.2 2.8h3l1.4 1.6h5.2a1.4 1.4 0 0 1 1.4 1.4v6a1.4 1.4 0 0 1-1.4 1.4H3.2a1.4 1.4 0 0 1-1.4-1.4v-7.6z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /></svg>
-                    {:else}<svg class="fic" width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M4 1.8h5.2L12.8 5.4v8.8H4V1.8z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /><path d="M9.2 1.8v3.6h3.6" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /></svg>{/if}
-                    <span class="fname-t">{f.name}</span>
-                  </button>
-                  <span class="fmeta">{f.dir ? '' : fmtSize(f.size)}</span>
-                  <span class="fmeta ftime">{f.mtime ? relTime(f.mtime) : ''}</span>
-                  <span class="facts">
-                    {#if !f.dir}
-                      <button class="fbtn sm" aria-label="下载" data-tip="下载" onclick={() => sftpDownload(f)} disabled={!!sftpXfer}><svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M8 3.2v6.8M4.8 7.2 8 10.4l3.2-3.2M3 12.8h10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
+              {#each sftpRows as r (r.path)}
+                <!-- svelte-ignore a11y_no_static_element_interactions -->
+                <div class="frow" class:on={sftpSel === r.path} role="row" tabindex="-1"
+                  onclick={() => (sftpSel = r.path)}
+                  ondblclick={() => sftpOpenRow(r)}
+                  oncontextmenu={(e) => { e.stopPropagation(); openFctx(e, r); }}
+                  onkeydown={(e) => { if (e.key === 'Enter') sftpOpenRow(r); }}>
+                  <span class="fname" style="padding-left:{r.depth * 15}px">
+                    {#if r.dir && !r.link}
+                      <button class="fchev" class:open={sftpOpenDirs.has(r.path)} aria-label="展开" onclick={(e) => { e.stopPropagation(); toggleDir(r); }}>
+                        {#if sftpLoading[r.path]}<span class="fspin"></span>{:else}<svg width="9" height="9" viewBox="0 0 12 12" fill="none"><path d="M4.5 2.5 8 6l-3.5 3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>{/if}
+                      </button>
+                    {:else}
+                      <span class="fchev-sp"></span>
                     {/if}
-                    <button class="fbtn sm" aria-label="重命名" data-tip="重命名" onclick={() => openRename(f.name)}><svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M10.8 2.9l2.3 2.3M11.4 2.3l2.3 2.3-8 8-3 .7.7-3 8-8z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /></svg></button>
-                    <button class="fbtn sm danger" aria-label="删除" data-tip="删除" onclick={() => sftpDelete(f)}><svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M3 4.6h10M6.4 4.6V3.3h3.2V4.6M4.6 4.6l.6 8.1h5.6l.6-8.1" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
+                    {#if r.link}
+                      <!-- 软链：sftp 的 readdir 是 lstat 语义，指向目录的软链也归这里（点开时才知道） -->
+                      <svg class="fic link" width="14" height="14" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.4" fill="currentColor" opacity=".14" /><path d="M5.6 10.4 10.4 5.6M6.6 5.6h3.8v3.8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>
+                    {:else if r.dir}
+                      <svg class="fic dir" width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M1.8 4.2A1.4 1.4 0 0 1 3.2 2.8h3l1.4 1.6h5.2a1.4 1.4 0 0 1 1.4 1.4v6a1.4 1.4 0 0 1-1.4 1.4H3.2a1.4 1.4 0 0 1-1.4-1.4v-7.6z" fill="currentColor" opacity=".16" /><path d="M1.8 4.2A1.4 1.4 0 0 1 3.2 2.8h3l1.4 1.6h5.2a1.4 1.4 0 0 1 1.4 1.4v6a1.4 1.4 0 0 1-1.4 1.4H3.2a1.4 1.4 0 0 1-1.4-1.4v-7.6z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /></svg>
+                    {:else}
+                      <svg class="fic" width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M4 1.8h5.2L12.8 5.4v8.8H4V1.8z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /><path d="M9.2 1.8v3.6h3.6" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /></svg>
+                    {/if}
+                    <span class="fname-t">{r.name}</span>
                   </span>
+                  <span class="fperm">{r.perms}</span>
+                  <span class="fsize">{r.dir && !r.link ? '·' : fmtSize(r.size)}</span>
+                  <span class="fdate">{fmtStamp(r.mtime)}</span>
                 </div>
               {/each}
             {/if}
@@ -3496,6 +3725,52 @@
 {#snippet cfMark(size: number)}<svg class="cf-mark" width={size} height={size} viewBox="0 0 128 128"><path fill="#fff" d="m115.679 69.288l-15.591-8.94l-2.689-1.163l-63.781.436v32.381h82.061z" /><path fill="#f38020" d="M87.295 89.022c.763-2.617.472-5.015-.8-6.796c-1.163-1.635-3.125-2.58-5.488-2.689l-44.737-.581c-.291 0-.545-.145-.691-.363s-.182-.509-.109-.8c.145-.436.581-.763 1.054-.8l45.137-.581c5.342-.254 11.157-4.579 13.192-9.885l2.58-6.723c.109-.291.145-.581.073-.872c-2.906-13.158-14.644-22.97-28.672-22.97c-12.938 0-23.913 8.359-27.838 19.952a13.35 13.35 0 0 0-9.267-2.58c-6.215.618-11.193 5.597-11.811 11.811c-.145 1.599-.036 3.162.327 4.615C10.104 70.051 2 78.337 2 88.549c0 .909.073 1.817.182 2.726a.895.895 0 0 0 .872.763h82.57c.472 0 .909-.327 1.054-.8z" /><path fill="#faae40" d="M101.542 60.275c-.4 0-.836 0-1.236.036c-.291 0-.545.218-.654.509l-1.744 6.069c-.763 2.617-.472 5.015.8 6.796c1.163 1.635 3.125 2.58 5.488 2.689l9.522.581c.291 0 .545.145.691.363s.182.545.109.8c-.145.436-.581.763-1.054.8l-9.924.582c-5.379.254-11.157 4.579-13.192 9.885l-.727 1.853c-.145.363.109.727.509.727h34.089c.4 0 .763-.254.872-.654c.581-2.108.909-4.325.909-6.614c0-13.447-10.975-24.422-24.458-24.422" /></svg>{/snippet}
 {#snippet sshMark(size: number)}<svg width={size} height={size} viewBox="0 0 16 16" fill="none"><rect x="1.6" y="2.6" width="12.8" height="10.8" rx="2" stroke="currentColor" stroke-width="1.3" /><path d="M4.4 6.2 6.6 8l-2.2 1.8M8.2 10.2h3.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" /></svg>{/snippet}
 
+<!-- 发行版图标：按 os-release 的 ID 选（distroOf 做归一化 + ID_LIKE 兜底）。
+     都是简化几何形，认得出即可；认不出的发行版走最后那个通用「服务器」形。 -->
+{#snippet distroMark(id: string, size: number)}
+  {#if id === 'ubuntu'}
+    <!-- Ubuntu：三点「朋友圈」 -->
+    <svg class="distro" width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <circle cx="8" cy="8" r="5.6" stroke="#E95420" stroke-width="1.5" />
+      <circle cx="8" cy="2.9" r="1.75" fill="#E95420" /><circle cx="3.6" cy="10.6" r="1.75" fill="#E95420" /><circle cx="12.4" cy="10.6" r="1.75" fill="#E95420" />
+    </svg>
+  {:else if id === 'debian'}
+    <!-- Debian：开口螺旋 -->
+    <svg class="distro" width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path d="M11.6 4.2A5.2 5.2 0 1 0 12 11" stroke="#A80030" stroke-width="1.5" stroke-linecap="round" />
+      <path d="M9.9 6.1a3 3 0 1 0 .5 3.6" stroke="#A80030" stroke-width="1.4" stroke-linecap="round" />
+    </svg>
+  {:else if id === 'alpine'}
+    <!-- Alpine：山 -->
+    <svg class="distro" width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <circle cx="8" cy="8" r="6.2" fill="#0D597F" />
+      <path d="M4 10.6 6.3 6.6l1.5 2.6M7.4 10.6l2.4-4.2 2.4 4.2z" stroke="#fff" stroke-width="1.1" stroke-linejoin="round" />
+    </svg>
+  {:else if id === 'fedora'}
+    <svg class="distro" width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <circle cx="8" cy="8" r="6.2" fill="#51A2DA" />
+      <path d="M9.9 4.6h-.8a1.9 1.9 0 0 0-1.9 1.9v4a1.5 1.5 0 1 1-1.5-1.5h3.4" stroke="#fff" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" />
+    </svg>
+  {:else if id === 'arch'}
+    <svg class="distro" width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path d="M8 1.8 14 13.6c-1.6-.9-3-1.5-3.6-1.7L8 7.2l-2.4 4.7c-.6.2-2 .8-3.6 1.7L8 1.8z" fill="#1793D1" />
+    </svg>
+  {:else if id === 'centos' || id === 'rhel' || id === 'rocky' || id === 'almalinux'}
+    <!-- RHEL 系：四色方块 -->
+    <svg class="distro" width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <rect x="1.8" y="1.8" width="5.4" height="5.4" rx="1" fill="#932279" /><rect x="8.8" y="1.8" width="5.4" height="5.4" rx="1" fill="#EFA724" />
+      <rect x="1.8" y="8.8" width="5.4" height="5.4" rx="1" fill="#79BCE8" /><rect x="8.8" y="8.8" width="5.4" height="5.4" rx="1" fill="#9CCD2A" />
+    </svg>
+  {:else}
+    <!-- 认不出的（含没探到系统信息时）：中性服务器形 -->
+    <svg class="distro" width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <rect x="2" y="2.6" width="12" height="4.6" rx="1.2" stroke="currentColor" stroke-width="1.2" />
+      <rect x="2" y="8.8" width="12" height="4.6" rx="1.2" stroke="currentColor" stroke-width="1.2" />
+      <circle cx="4.6" cy="4.9" r=".8" fill="currentColor" /><circle cx="4.6" cy="11.1" r=".8" fill="currentColor" />
+    </svg>
+  {/if}
+{/snippet}
+
 {#snippet wrNote()}<div class="wr-note"><svg class="wr-ic" width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.6" stroke="currentColor" stroke-width="1.3" /><path d="M8 4.8v4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" /><circle cx="8" cy="11.1" r="0.6" fill="currentColor" /></svg><span>{wrInstalling ? '正在从 npm 装 wrangler，首次约 1–2 分钟，别关窗…' : '还没装 wrangler，预览 / 部署要用'}</span><button class="wr-btn" onclick={installWrangler} disabled={wrInstalling}>{#if wrInstalling}<span class="wr-spin"></span>安装中 {elapsedLabel(wrElapsed)}{:else}一键安装{/if}</button></div>{/snippet}
 
 {#snippet taskIcon(kind: string)}
@@ -3536,14 +3811,23 @@
         {#each conns as c (c.id)}
           <div class="conn-row {activeConnId === c.id ? 'on' : ''}" role="button" tabindex="0"
             onclick={() => selectConn(c.id)} onkeydown={(e) => e.key === 'Enter' && selectConn(c.id)}>
-            {#if c.kind === 'cloudflare'}{@render cfMark(22)}{:else}<SiteMark size={22} />{/if}
+            {#if c.kind === 'cloudflare'}{@render cfMark(22)}{:else if c.kind === 'ssh'}{@render sshMark(22)}{:else}<SiteMark size={22} />{/if}
             <span class="conn-main"><b>{c.name}</b>
-              <small>{c.key_prefix} · {c.kind === 'cloudflare' ? 'Cloudflare' : c.key_kind === 'gcmsp_' ? '平台' : '单站'}{#if activeConnId === c.id && c.kind !== 'cloudflare'} · {sites.length} 站点{/if}</small></span>
+              {#if c.kind === 'ssh'}
+                <small class="cs-os">{@render distroMark(distroOf(c), 12)}{sshSub(c)}</small>
+              {:else}
+                <small>{c.key_prefix} · {c.kind === 'cloudflare' ? 'Cloudflare' : c.key_kind === 'gcmsp_' ? '平台' : '单站'}{#if activeConnId === c.id} · {sites.length} 站点{/if}</small>
+              {/if}</span>
+            {#if c.kind === 'ssh'}
+              <button class="icon-btn sm" title="编辑连接（地址 / 用户 / 密码或密钥 / 指纹）" onclick={(e) => { e.stopPropagation(); openSshEdit(c); }}>
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M10.8 2.9l2.3 2.3M11.4 2.3l2.3 2.3-8 8-3 .7.7-3 8-8z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /></svg>
+              </button>
+            {/if}
             {#if packUpdates[c.id]}
               <button class="pack-upd" title="技能包有新版 {packUpdates[c.id]}——一键就地升级，连接与对话全部保留" disabled={!!packUpdating[c.id]}
                 onclick={(e) => { e.stopPropagation(); upgradePack(c.id); }}>{packUpdating[c.id] ? '升级中…' : `升级技能包 ${packUpdates[c.id]}`}</button>
             {/if}
-            {#if activeConnId === c.id && c.kind !== 'cloudflare'}
+            {#if activeConnId === c.id && c.kind !== 'cloudflare' && c.kind !== 'ssh'}
               <button class="icon-btn sm" title="刷新站点（技能包新增站点后点这里）" onclick={(e) => { e.stopPropagation(); refreshSites(); }}>{@render refreshIcon(discoveryLoading)}</button>
             {/if}
             <button class="x sm" title="删除连接" onclick={(e) => { e.stopPropagation(); removeConn(c.id); }}>×</button>
@@ -3639,9 +3923,9 @@
 {#if sshOpen}
   <div class="mask" role="presentation" onclick={() => (sshOpen = false)}></div>
   <div class="modal wide">
-    <header class="sheet-head"><b>新建远程连接</b><button class="x" onclick={() => (sshOpen = false)}>×</button></header>
+    <header class="sheet-head"><b>{sshEditId ? '编辑远程连接' : '新建远程连接'}</b><button class="x" onclick={() => (sshOpen = false)}>×</button></header>
     <div class="sheet-body">
-      <p class="hint">SSH 到一台远程机器：能开终端、管文件。密码 / 私钥口令只进 {keystoreName}，绝不落盘。</p>
+      <p class="hint">{#if sshEditId}改完地址 / 用户 / 认证方式后要重新「测试连接」核对指纹再保存；只改名字可以直接保存。密码 / 私钥口令留空＝沿用 {keystoreName} 里已存的那条。{:else}SSH 到一台远程机器：能开终端、管文件、让 AI 帮你干活。密码 / 私钥口令只进 {keystoreName}，绝不落盘。{/if}</p>
       <div class="trow">
         <div class="tfield" style="flex:2"><span>主机</span><input class="tin" bind:value={sshF.host} placeholder="例如 1.2.3.4 或 server.example.com" spellcheck="false" autocapitalize="off" autocorrect="off" /></div>
         <div class="tfield" style="flex:1"><span>端口</span><input class="tin" type="number" bind:value={sshF.port} placeholder="22" /></div>
@@ -3651,7 +3935,7 @@
         <div class="tfield"><span>认证方式</span><Dropdown bind:value={sshF.auth} options={sshAuthOpts} /></div>
       </div>
       {#if sshF.auth === 'password'}
-        <div class="tfield"><span>密码</span><input class="tin" type="password" bind:value={sshF.password} autocomplete="off" /></div>
+        <div class="tfield"><span>密码{#if sshEditId && sshF0.auth === 'password'}（留空＝不改）{/if}</span><input class="tin" type="password" bind:value={sshF.password} autocomplete="off" placeholder={sshEditId && sshF0.auth === 'password' ? '不改就别填' : ''} /></div>
       {:else}
         <div class="tfield"><span>私钥文件（只记住路径，不会拷贝你的私钥）</span>
           <div class="ssh-key-row">
@@ -3659,30 +3943,74 @@
             <button class="btn sm" onclick={pickSshKey}>选择…</button>
           </div>
         </div>
-        <div class="tfield"><span>私钥口令（没有就留空）</span><input class="tin" type="password" bind:value={sshF.keyPass} autocomplete="off" /></div>
+        <div class="tfield"><span>私钥口令（没有就留空{#if sshEditId && sshF0.auth === 'key'}；不改也留空{/if}）</span><input class="tin" type="password" bind:value={sshF.keyPass} autocomplete="off" /></div>
       {/if}
       <div class="tfield"><span>名称（可选）</span><input class="tin" bind:value={sshF.name} placeholder={sshF.user && sshF.host ? `${sshF.user}@${sshF.host}` : '留空自动用 user@host'} /></div>
 
       {#if sshErr}<div class="err-note">{sshErr}</div>{/if}
 
       {#if sshFp}
-        <!-- TOFU：指纹必须由人确认过才建连接（后端无指纹直接拒）。 -->
-        <div class="ssh-fp">
-          <b>认证通过。请核对主机指纹：</b>
-          <code>{sshFp}</code>
-          <small>首次连接这台机器。请确认它和你在服务器上执行 <code>ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub</code> 看到的一致 —— 对不上可能是中间人。确认后此指纹会被记住，以后变了会直接拒连。</small>
+        <!-- TOFU：指纹必须由人确认过才保存（后端无指纹直接拒）。 -->
+        <div class="ssh-fp" class:alarm={sshFpChanged}>
+          {#if sshFpChanged}
+            <!-- 这台机器的主机密钥变了。可能是重装/换机，也可能是有人在中间——不能轻轻放过。 -->
+            <b class="fp-alarm">⚠ 这台机器的指纹变了！</b>
+            <small>之前记住的是：</small>
+            <code class="fp-old">{sshOldFp}</code>
+            <small>现在连上看到的是：</small>
+            <code>{sshFp}</code>
+            <small>服务器重装 / 换机器会这样，<b>被中间人劫持也会这样</b>。请到服务器上执行
+              <code>ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub</code> 亲自核对；对不上就别保存。</small>
+          {:else}
+            <b>认证通过。请核对主机指纹：</b>
+            <code>{sshFp}</code>
+            <small>请确认它和你在服务器上执行 <code>ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub</code> 看到的一致 —— 对不上可能是中间人。确认后此指纹会被记住，以后变了会直接拒连。</small>
+          {/if}
         </div>
       {/if}
 
       <div class="row-end">
         <button class="btn ghost" onclick={() => (sshOpen = false)}>取消</button>
-        {#if !sshFp}
+        {#if sshRenameOnly}
+          <!-- 只改了名字：和「能不能连上」无关，不必为此去连一次机器 -->
+          <button class="btn primary" onclick={saveSshEdit} disabled={sshConnecting}>{sshConnecting ? '保存中…' : '保存'}</button>
+        {:else if !sshFp}
           <button class="btn primary" onclick={testSsh} disabled={sshTesting || !sshCanTest}>{sshTesting ? '连接中…' : '测试连接'}</button>
+        {:else if sshEditId}
+          <button class="btn primary" class:danger={sshFpChanged} onclick={saveSshEdit} disabled={sshConnecting}>{sshConnecting ? '保存中…' : sshFpChanged ? '我已核对，接受新指纹' : '指纹无误，保存'}</button>
         {:else}
           <button class="btn primary" onclick={confirmSsh} disabled={sshConnecting}>{sshConnecting ? '添加中…' : '指纹无误，添加'}</button>
         {/if}
       </div>
     </div>
+  </div>
+{/if}
+
+{#if fctxMenu}
+  <!-- 远程文件右键菜单。挂最外层：列表自己是滚动容器，菜单放里面会被裁掉。 -->
+  <div class="ctx-menu fctx" style="left:{fctxMenu.x}px; top:{fctxMenu.y}px" role="menu" tabindex="-1">
+    {#if fctxMenu.row}
+      {@const r = fctxMenu.row}
+      <button class="ctx-item" role="menuitem" onclick={() => sftpOpenRow(r)}>{r.dir && !r.link ? '打开' : r.link ? '打开（跟随链接）' : '打开（编辑）'}</button>
+      {#if !r.dir || r.link}
+        <button class="ctx-item" role="menuitem" onclick={() => sftpDownload(r)} disabled={!!sftpXfer}>下载…</button>
+      {/if}
+      {#if r.dir && !r.link}
+        <button class="ctx-item" role="menuitem" onclick={() => sftpUpload(r.path)} disabled={!!sftpXfer}>上传到这里…</button>
+        <button class="ctx-item" role="menuitem" onclick={() => openMkdir(r.path)}>在这里新建文件夹</button>
+      {/if}
+      <div class="ctx-div"></div>
+      <button class="ctx-item" role="menuitem" onclick={() => copyPath(r.path)}>复制路径</button>
+      <button class="ctx-item" role="menuitem" onclick={() => openRename(r)}>重命名…</button>
+      <div class="ctx-div"></div>
+      <button class="ctx-item danger" role="menuitem" onclick={() => sftpDelete(r)}>删除…</button>
+    {:else}
+      <button class="ctx-item" role="menuitem" onclick={() => openMkdir()}>新建文件夹</button>
+      <button class="ctx-item" role="menuitem" onclick={() => sftpUpload()} disabled={!!sftpXfer}>上传文件…</button>
+      <div class="ctx-div"></div>
+      <button class="ctx-item" role="menuitem" onclick={() => copyPath(sftpPath)}>复制当前路径</button>
+      <button class="ctx-item" role="menuitem" onclick={sftpRefresh}>刷新</button>
+    {/if}
   </div>
 {/if}
 
@@ -4043,25 +4371,57 @@
   .fbtn.danger:hover:not(:disabled) { color: var(--err); background: var(--err-soft); }
   .files-note { flex: none; padding: 6px 16px; font-size: 12px; color: var(--dim); border-bottom: 1px solid var(--border); }
   .files-err { flex: none; margin: 10px 16px 0; }
-  .files-list { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 8px 14px; }
+  /* 列表＝四列表格（名称/权限/大小/日期），行内缩进出树形。列宽用同一套变量对齐表头与行。 */
+  .files-wrap { --fw-perm: 96px; --fw-size: 76px; --fw-date: 128px; }
+  .fhead { flex: none; display: flex; align-items: stretch; gap: 0; padding: 0 14px; border-bottom: 1px solid var(--border); background: var(--rail); }
+  .fh { display: flex; align-items: center; gap: 3px; border: 0; background: transparent; color: var(--dim); font-size: 11.5px; padding: 5px 6px; text-align: left; }
+  .fhead button.fh { cursor: pointer; }
+  .fhead button.fh:hover { color: var(--text); }
+  .fh + .fh { border-left: 1px solid var(--border); }
+  .fh-name { flex: 1; min-width: 0; }
+  .fh-perm { width: var(--fw-perm); flex: none; }
+  .fh-size { width: var(--fw-size); flex: none; justify-content: flex-end; }
+  .fh-date { width: var(--fw-date); flex: none; }
+  .fh-ar { font-size: 10px; line-height: 1; }
+  .fh-ar.desc { transform: rotate(180deg); }
+  .files-list { flex: 1; min-height: 0; overflow-y: auto; padding: 2px 6px 14px; }
   .files-empty { padding: 28px 0; text-align: center; color: var(--faint); font-size: 13px; }
-  .frow { display: flex; align-items: center; gap: 8px; padding: 2px 8px; border-radius: 8px; }
+  .frow { display: flex; align-items: center; padding: 0 8px; border-radius: 6px; cursor: default; user-select: none; }
   .frow:hover { background: var(--rail); }
-  .frow .facts { visibility: hidden; }
-  .frow:hover .facts, .frow:focus-within .facts { visibility: visible; }
-  .fname { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; border: 0; background: transparent; color: var(--text); font-size: 13px; padding: 6px 0; cursor: pointer; text-align: left; }
+  .frow.on { background: var(--accent-soft); }
+  .fname { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; color: var(--text); font-size: 13px; padding: 5px 0; }
   .fname-t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fchev, .fchev-sp { width: 14px; height: 14px; flex: none; }
+  .fchev { display: inline-flex; align-items: center; justify-content: center; border: 0; background: transparent; color: var(--faint); border-radius: 4px; cursor: pointer; padding: 0; transition: transform .12s; }
+  .fchev:hover { color: var(--text); }
+  .fchev.open { transform: rotate(90deg); }
+  .fspin { width: 8px; height: 8px; border: 1.4px solid var(--border2); border-top-color: var(--dim); border-radius: 50%; animation: spin .7s linear infinite; }
   .fic { flex: none; color: var(--faint); }
-  .fic.dir { color: #b58a3c; }
-  .fmeta { flex: none; width: 74px; text-align: right; color: var(--dim); font-size: 11.5px; font-variant-numeric: tabular-nums; }
-  .fmeta.ftime { width: 56px; }
-  .facts { flex: none; display: flex; gap: 2px; }
+  .fic.dir { color: #4a90d9; }
+  .fic.link { color: #d98a2b; }
+  .fperm { width: var(--fw-perm); flex: none; padding: 0 6px; color: var(--dim); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+  .fsize { width: var(--fw-size); flex: none; padding: 0 6px; text-align: right; color: var(--dim); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+  .fdate { width: var(--fw-date); flex: none; padding: 0 6px; color: var(--dim); font-size: 11.5px; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* 远程文件右键菜单：复用全局 .ctx-menu/.ctx-item 的样式，只补两处差异 */
+  .fctx { min-width: 172px; }
+  .fctx .ctx-item { justify-content: flex-start; }
+  .ctx-item.danger { color: var(--err); }
+  .ctx-item.danger:hover:not(:disabled) { background: var(--err-soft); }
   /* 在线编辑器 */
   .ed-modal { width: min(760px, 94vw); }
   .ed-path { margin-left: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; overflow-wrap: anywhere; }
   .ed-body { display: flex; flex-direction: column; gap: 10px; }
   .ed-ta { width: 100%; box-sizing: border-box; height: min(52vh, 480px); resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; line-height: 1.55; color: var(--text); background: var(--rail); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; outline: none; white-space: pre; overflow-wrap: normal; overflow-x: auto; }
   .ed-ta:focus { border-color: var(--border2); background: var(--bg); }
+  /* 远端系统信息（页脚可点＝重新检测；下拉/设置里只读） */
+  .foot-os, .cs-os { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
+  .foot-os { cursor: pointer; border-radius: 5px; padding: 0 3px; margin-left: -3px; }
+  .foot-os:hover { background: var(--accent-soft); color: var(--text); }
+  .cs-os { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  :global(svg.distro) { flex: none; }
+  /* 头部的「重新连接」：只留图标，紧跟在连接状态后面 */
+  .th-rfz { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border: 0; background: transparent; color: var(--faint); border-radius: 5px; cursor: pointer; padding: 0; -webkit-app-region: no-drag; }
+  .th-rfz:hover { color: var(--text); background: var(--accent-soft); }
   /* 启动页：远程连接的目标机器（占站点选择器的位子——那台机器就是本次对话的对象） */
   .ssh-target { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--rail); color: var(--dim); font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
   .ssh-target :global(svg) { color: var(--faint); flex: none; }

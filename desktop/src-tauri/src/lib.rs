@@ -317,6 +317,7 @@ fn ssh_auth_from(
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
 async fn verify_ssh(
+    state: tauri::State<'_, AppState>,
     host: String,
     port: u16,
     user: String,
@@ -325,8 +326,26 @@ async fn verify_ssh(
     key_path: String,
     key_pass: String,
     expect_fingerprint: String,
+    conn_id: Option<String>,
 ) -> Result<ssh::SshProbe, String> {
-    let a = ssh_auth_from(&auth, &user, &password, &key_path, &key_pass);
+    let mut a = ssh_auth_from(&auth, &user, &password, &key_path, &key_pass);
+    // 编辑已有连接时密码/口令允许留空 = 沿用钥匙串里存着的那条（UI 不回显密码，也不该逼用户重打一遍）。
+    // 只有在**认证方式没变**时才这么补：换了方式，旧条目存的是另一种东西（密码 vs 私钥口令）。
+    if password.is_empty() && key_pass.is_empty() {
+        if let Some(old) = conn_id
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .and_then(|id| state.conns.get(id).ok())
+            .filter(|c| c.kind == "ssh" && c.ssh_auth == auth)
+        {
+            let stored = ssh::auth_for(&old).ok();
+            match (auth.as_str(), stored) {
+                ("password", Some(s)) => a.password = s.password,
+                ("key", Some(s)) => a.key_pass = s.key_pass,
+                _ => {}
+            }
+        }
+    }
     let expect = (!expect_fingerprint.trim().is_empty()).then(|| expect_fingerprint.trim().to_string());
     ssh::probe(&host, if port == 0 { 22 } else { port }, &a, expect).await
 }
@@ -351,6 +370,82 @@ async fn connect_ssh(
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// 修改已有远程连接（指纹必须是 UI 里刚试连确认过的那个；secret 留空＝不动钥匙串里的密码/口令）。
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+async fn update_ssh(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    name: String,
+    host: String,
+    port: u16,
+    user: String,
+    auth: String,
+    key_path: String,
+    secret: String,
+    fingerprint: String,
+) -> Result<pack::Connection, String> {
+    // 改完地址/认证后，表里那条旧会话（连的还是旧机器、用的还是旧凭据）必须作废。
+    state.ssh.close(&conn_id).await;
+    let store = state.conns.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        store.update_ssh(&conn_id, &name, &host, port, &user, &auth, &key_path, &secret, &fingerprint)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 从 /etc/os-release 解析 (PRETTY_NAME, ID)。拿不到 PRETTY_NAME 就退回 NAME+VERSION_ID。
+fn parse_os_release(s: &str) -> (String, String) {
+    let val = |key: &str| -> String {
+        s.lines()
+            .find_map(|l| l.strip_prefix(key)?.strip_prefix('='))
+            .map(|v| v.trim().trim_matches('"').trim_matches('\'').to_string())
+            .unwrap_or_default()
+    };
+    let id = val("ID");
+    let pretty = val("PRETTY_NAME");
+    if !pretty.is_empty() {
+        return (pretty, id);
+    }
+    let name = val("NAME");
+    if !name.is_empty() {
+        let v = val("VERSION_ID");
+        return (if v.is_empty() { name } else { format!("{name} {v}") }, id);
+    }
+    // 不是 systemd 系（或压根没有 os-release）：调用方会把 uname 的输出丢进来兜底。
+    (s.trim().lines().next().unwrap_or_default().trim().to_string(), id)
+}
+
+/// 探远端系统版本并记进连接（UI 用它显示「Ubuntu 24.04」+ 发行版图标）。
+/// 只在还没探过时调（探到就存下来，之后不再连）。
+#[tauri::command]
+async fn ssh_os_probe(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+) -> Result<pack::Connection, String> {
+    let conn = state.conns.get(&conn_id)?;
+    if conn.kind != "ssh" {
+        return Err("这不是远程连接".into());
+    }
+    let auth = ssh::auth_for(&conn)?;
+    let expect = (!conn.ssh_fingerprint.is_empty()).then(|| conn.ssh_fingerprint.clone());
+    state
+        .ssh
+        .ensure(&conn_id, &conn.ssh_host, conn.ssh_port, &auth, expect)
+        .await?;
+    // 非 Linux（或精简镜像）没有 os-release → 退回 uname 也好过什么都不显示。
+    let out = state
+        .ssh
+        .exec(&conn_id, "cat /etc/os-release 2>/dev/null || uname -sr", 20)
+        .await?;
+    let (pretty, os_id) = parse_os_release(&out.stdout);
+    let store = state.conns.clone();
+    tauri::async_runtime::spawn_blocking(move || store.set_ssh_os(&conn_id, &pretty, &os_id))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 /// 打开交互式 PTY shell，输出流给前端 xterm。连接时带上已确认指纹，不匹配即拒。
@@ -658,6 +753,52 @@ fn find_by_basename(root: &std::path::Path, raw: &str) -> Option<std::path::Path
     }
     let p = std::fs::canonicalize(found?).ok()?;
     p.starts_with(root).then_some(p)
+}
+
+#[cfg(test)]
+mod os_release_tests {
+    use super::parse_os_release;
+
+    #[test]
+    fn reads_pretty_name_and_id() {
+        // Ubuntu（真机 24.04 的形状）
+        let (p, id) = parse_os_release(
+            "PRETTY_NAME=\"Ubuntu 24.04.1 LTS\"\nNAME=\"Ubuntu\"\nVERSION_ID=\"24.04\"\nID=ubuntu\nID_LIKE=debian\n",
+        );
+        assert_eq!(p, "Ubuntu 24.04.1 LTS");
+        assert_eq!(id, "ubuntu");
+        // Debian
+        let (p, id) = parse_os_release("PRETTY_NAME=\"Debian GNU/Linux 12 (bookworm)\"\nID=debian\n");
+        assert_eq!(p, "Debian GNU/Linux 12 (bookworm)");
+        assert_eq!(id, "debian");
+        // Alpine 没有 PRETTY_NAME → 退回 NAME + VERSION_ID
+        let (p, id) = parse_os_release("NAME=\"Alpine Linux\"\nID=alpine\nVERSION_ID=3.20.3\n");
+        assert_eq!(p, "Alpine Linux 3.20.3");
+        assert_eq!(id, "alpine");
+        // 单引号 + 无 VERSION_ID
+        let (p, _) = parse_os_release("NAME='Arch Linux'\nID=arch\n");
+        assert_eq!(p, "Arch Linux");
+    }
+
+    #[test]
+    fn falls_back_to_uname_output() {
+        // 没有 os-release 的机器：命令退回 `uname -sr`，第一行就是全部信息
+        let (p, id) = parse_os_release("Linux 6.8.0-45-generic\n");
+        assert_eq!(p, "Linux 6.8.0-45-generic");
+        assert_eq!(id, "");
+        // 什么都没拿到也别炸
+        assert_eq!(parse_os_release(""), (String::new(), String::new()));
+        assert_eq!(parse_os_release("   \n\n"), (String::new(), String::new()));
+    }
+
+    /// ID 是子串匹配的重灾区：别让 VERSION_ID / ID_LIKE 冒充 ID。
+    #[test]
+    fn does_not_confuse_similar_keys() {
+        let (_, id) = parse_os_release("VERSION_ID=\"22.04\"\nID_LIKE=debian\nID=ubuntu\n");
+        assert_eq!(id, "ubuntu");
+        let (_, id) = parse_os_release("ID_LIKE=\"rhel fedora\"\nVERSION_ID=9\n");
+        assert_eq!(id, "", "只有 ID_LIKE 时不该把它当成 ID");
+    }
 }
 
 #[cfg(test)]
@@ -3539,6 +3680,8 @@ pub fn run() {
             connect_cloudflare,
             verify_ssh,
             connect_ssh,
+            update_ssh,
+            ssh_os_probe,
             ssh_open_shell,
             ssh_input,
             ssh_resize,

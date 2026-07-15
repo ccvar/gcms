@@ -284,7 +284,7 @@ mod tests {
         let dir = base.join("lease");
         fs::create_dir_all(&dir).unwrap();
 
-        let mut child = std::process::Command::new("node")
+        let child = std::process::Command::new("node")
             .arg(&script)
             .arg("cat /var/log/big.log")
             .env("GCMS_SSH_DIR", &dir)

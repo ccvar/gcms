@@ -323,6 +323,8 @@ mod tests {
             ssh_auth: "password".into(),
             ssh_key_path: String::new(),
             ssh_fingerprint: "SHA256:x".into(),
+            ssh_os: String::new(),
+            ssh_os_id: String::new(),
             pack_version: String::new(),
             created_at: String::new(),
         }

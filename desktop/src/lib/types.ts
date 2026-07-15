@@ -19,6 +19,10 @@ export interface Connection {
   ssh_key_path?: string;
   /** 已确认的主机指纹（TOFU）；连接时必须匹配。 */
   ssh_fingerprint?: string;
+  /** 远端系统（os-release 的 PRETTY_NAME，如 "Ubuntu 24.04.1 LTS"）；空 = 还没探过。 */
+  ssh_os?: string;
+  /** 发行版 id（os-release 的 ID，如 ubuntu/debian）——UI 据此选发行版图标。 */
+  ssh_os_id?: string;
   /** 技能包版本（=服务端版本）；空 = 未知。 */
   pack_version?: string;
   created_at: string;
