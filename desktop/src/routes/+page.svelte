@@ -2437,7 +2437,7 @@
                       {/if}
                     </button>
                   {:else if r.st.logged_in === false}
-                    <span class="cli-tag warn">未登录</span><button class="authbtn" onclick={() => authorize(r.b)} disabled={authWaiting === r.b}>{#if authWaiting === r.b}<span class="wr-spin"></span>等待授权…{:else}一键授权{/if}</button>
+                    <span class="cli-tag warn">未登录</span><button class="authbtn" onclick={() => authorize(r.b)} disabled={authWaiting === r.b}>{#if authWaiting === r.b}<span class="wr-spin"></span>等待授权…{:else}去授权 ↗{/if}</button>
                   {:else}
                     <span class="cli-tag ok">✓ {r.st.version || '已就绪'}</span>
                   {/if}
@@ -3184,9 +3184,12 @@
             <span class="brain-main"><b>{r.name}</b>
               <small>{#if !r.st.found}未安装{:else if r.st.logged_in === false}未登录{:else}{r.st.version || '已就绪'}{/if}</small></span>
             <span class="brain-dot"><span class="dot {r.st.found && r.st.logged_in ? 'ok' : r.st.found ? 'warn' : 'off'}"></span></span>
-            {#if r.st.found && r.st.logged_in === false}<button class="authbtn" onclick={() => authorize(r.b)} disabled={authWaiting === r.b}>{#if authWaiting === r.b}<span class="wr-spin"></span>等待授权…{:else}一键授权{/if}</button>{/if}
-            {#if !r.st.found}
-              <!-- 与主界面同款一键安装（同 invoke/进度态/错误处理）；手动命令降级为复制小图标 -->
+            {#if r.st.found && r.st.logged_in === false}<button class="authbtn" onclick={() => authorize(r.b)} disabled={authWaiting === r.b}>{#if authWaiting === r.b}<span class="wr-spin"></span>等待授权…{:else}去授权 ↗{/if}</button>{/if}
+          </div>
+          {#if !r.st.found}
+            <!-- 与主界面同款一键安装（同 invoke/进度态/错误处理），放在「未安装」状态文字下方、小号靠左；
+                 手动命令降级为同行的复制小图标 -->
+            <div class="brain-install">
               <button class="wr-btn" onclick={r.b === 'claude' ? installClaude : r.b === 'codex' ? installCodex : installGrok}
                 disabled={r.b === 'claude' ? claudeInstalling : r.b === 'codex' ? codexInstalling : grokInstalling}>
                 {#if (r.b === 'claude' && claudeInstalling) || (r.b === 'codex' && codexInstalling) || (r.b === 'grok' && grokInstalling)}
@@ -3200,8 +3203,8 @@
                   <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><rect x="5.4" y="5.4" width="8.2" height="8.2" rx="1.6" stroke="currentColor" stroke-width="1.3" /><path d="M10.6 5.4V4.1A1.6 1.6 0 0 0 9 2.5H4.1A1.6 1.6 0 0 0 2.5 4.1V9a1.6 1.6 0 0 0 1.6 1.6h1.3" stroke="currentColor" stroke-width="1.3" /></svg>
                 {/if}
               </button>
-            {/if}
-          </div>
+            </div>
+          {/if}
           {#if r.st.found}
             <div class="cust">
               <button class="cust-head" type="button" onclick={() => (customOpen[r.b] = !customOpen[r.b])}>
@@ -4197,6 +4200,8 @@
   .brains-list { display: flex; flex-direction: column; gap: 14px; }
   /* 每个大脑（行 + 自定义模型）成一块，块内贴紧。 */
   .brain-block { display: flex; flex-direction: column; gap: 0; }
+  /* 未安装行：一键安装挪到状态文字下方（缩进对齐 brain-main），复制小图标同行在旁 */
+  .brain-install { display: flex; align-items: center; gap: 5px; margin: 3px 0 2px 33px; }
   .cust { margin: 0 0 0 33px; }
   .cust-head { display: inline-flex; align-items: center; gap: 5px; background: none; border: none; padding: 0; cursor: pointer; font: inherit; font-size: 11.5px; color: var(--dim); -webkit-appearance: none; appearance: none; }
   .cust-head:hover { color: var(--text); }
