@@ -332,7 +332,9 @@ pub fn report_prompt(site_name: &str, plan: &str) -> String {
 请基于数据写一份 markdown 周报，结构：\n\
 1. 本周概览（两三句人话总结）；\n\
 2. 本周数据表现：用 search-stats --compare 汇报本周新发文的曝光/点击与上期对比、上周改动页的位次变化；\
-用 page-stats 列出流量 top 页；结合 traffic-stats 说明整体流量变化；\n\
+用 page-stats 列出流量 top 页；结合 traffic-stats 说明整体流量变化；\
+若站点绑定了 Telegram 频道：跑 `node scripts/gcms.js tg-stats --site <本站slug>` 汇报当前订阅数\
+（与上周周报里的数字对比给环比）；命令报错或未配置时注明「TG 未配置/不可用」即可——这不算失败；\n\
 3. 计划关键词 vs 实际曝光词偏差：把上方 90 天计划里的关键词方向与 search-stats 实际曝光词对照，\
 指出「计划了但没曝光」与「没计划却有曝光」的词，给出下阶段的校准建议；\n\
 4. 产出与发布明细；5. 打回与整改要点（有打回时逐条回应改进方向）；\
@@ -1023,6 +1025,11 @@ mod tests {
         assert!(r.contains("关键词方向：A、B"), "90 天计划随 prompt 下发（偏差对照基准）");
         assert!(r.contains("数据不可用"));
         assert!(r.contains("这不算失败"), "新命令带降级条款（老服务端没有 --compare/page-stats）");
+        // Telegram 频道订阅数（cms 侧新命令 tg-stats，带降级：未配置/旧服务端不算失败）
+        assert!(r.contains("tg-stats --site"));
+        assert!(r.contains("汇报当前订阅数"));
+        assert!(r.contains("对比给环比"));
+        assert!(r.contains("TG 未配置/不可用"));
         // 注入数据（产出/预算）仍以 Pilot 为准
         assert!(r.contains("以它为准"));
     }
