@@ -512,6 +512,23 @@ mod workdir_tests {
         assert_eq!(install_err_brief(b"", b""), "未知错误");
     }
 
+    /// WinINET ProxyServer 解析：单一 host:port / 分协议优先 https / 仅 ftp、socks 不猜 / 空与畸形。
+    #[test]
+    fn win_proxy_server_parse() {
+        assert_eq!(parse_win_proxy_server("127.0.0.1:7890").as_deref(), Some("127.0.0.1:7890"));
+        assert_eq!(parse_win_proxy_server("  10.0.0.1:8080  ").as_deref(), Some("10.0.0.1:8080"), "裸值去空白");
+        assert_eq!(
+            parse_win_proxy_server("http=1.2.3.4:80;https=5.6.7.8:443;ftp=9.9.9.9:21").as_deref(),
+            Some("5.6.7.8:443"),
+            "分协议优先 https"
+        );
+        assert_eq!(parse_win_proxy_server("http=1.2.3.4:80").as_deref(), Some("1.2.3.4:80"), "只有 http 段用 http");
+        assert!(parse_win_proxy_server("ftp=1.2.3.4:21;socks=5.6.7.8:1080").is_none(), "只配 ftp/socks 不硬猜");
+        assert!(parse_win_proxy_server("").is_none());
+        assert!(parse_win_proxy_server("   ").is_none());
+        assert!(parse_win_proxy_server("https=").is_none(), "空段畸形不算命中");
+    }
+
     /// 安装详情取尾不取头：回显/进度剥掉、PS 异常首行只留 iex 后消息、超长保留末尾 600 字。
     #[test]
     fn install_err_tail_strips_echo_and_keeps_tail() {
@@ -1087,6 +1104,29 @@ fn system_proxy_env() -> Vec<(String, String)> {
         .collect()
 }
 
+/// 解析 WinINET ProxyServer 注册表值（纯函数，单测覆盖；mac 上也编译便于审读/测试）：
+/// 单一 "host:port" 直接用；按协议分段 "http=…;https=…;ftp=…" 时优先 https 再 http；
+/// 只配了 ftp=/socks= 等不硬猜；空/空白 → None。
+#[cfg_attr(not(windows), allow(dead_code))]
+fn parse_win_proxy_server(server: &str) -> Option<String> {
+    let server = server.trim();
+    if server.is_empty() {
+        return None;
+    }
+    if server.contains('=') {
+        for want in ["https=", "http="] {
+            if let Some(seg) = server.split(';').find_map(|s| s.trim().strip_prefix(want)) {
+                let seg = seg.trim();
+                if !seg.is_empty() {
+                    return Some(seg.to_string());
+                }
+            }
+        }
+        return None; // 只配了 ftp=/socks= 等，不硬猜
+    }
+    Some(server.to_string())
+}
+
 /// Windows：WinINET 用户级代理（ProxyEnable=1 时 ProxyServer 形如 "127.0.0.1:7890"，
 /// 或按协议分段 "http=…;https=…"）。
 #[cfg(target_os = "windows")]
@@ -1111,21 +1151,7 @@ fn system_proxy_url() -> Option<String> {
     if !enabled {
         return None;
     }
-    let server = q("ProxyServer")?;
-    if server.is_empty() {
-        return None;
-    }
-    if server.contains('=') {
-        for want in ["https=", "http="] {
-            if let Some(seg) = server.split(';').find_map(|s| s.trim().strip_prefix(want)) {
-                if !seg.is_empty() {
-                    return Some(seg.to_string());
-                }
-            }
-        }
-        return None; // 只配了 ftp=/socks= 等，不硬猜
-    }
-    Some(server)
+    parse_win_proxy_server(&q("ProxyServer")?)
 }
 
 /// macOS：scutil --proxy（HTTPSEnable/HTTPSProxy/HTTPSPort，HTTP 同构；curl 不认系统
@@ -2987,6 +3013,37 @@ fn open_brain_login(app: tauri::AppHandle, brain: String) -> Result<(), String> 
         "grok" => ("grok models", "logged in with"),
         _ => ("codex login status", "logged in"),
     };
+    // 系统代理注入：授权终端里的 CLI 只认环境变量（浏览器走系统代理没事，CLI 的登录/OIDC
+    // 发现请求会直连超时）。生成脚本时把检测到的代理写进开头并回显一行，便于用户自诊。
+    // system_proxy_env 在本进程已带代理环境变量时返回空——那正是启动时注入的系统代理，读回来用。
+    let proxy_url = system_proxy_env()
+        .iter()
+        .find(|(k, _)| k == "HTTPS_PROXY")
+        .map(|(_, v)| v.clone())
+        .or_else(|| std::env::var("HTTPS_PROXY").ok().filter(|v| !v.is_empty()))
+        .or_else(|| std::env::var("https_proxy").ok().filter(|v| !v.is_empty()));
+    // 失败提示里的厂商登录域（超时/连接错误时的规则代理引导）。
+    let login_domains = match brain.as_str() {
+        "claude" => "claude.ai",
+        "grok" => "auth.x.ai",
+        _ => "auth.openai.com 及 chatgpt.com",
+    };
+    #[cfg(target_os = "macos")]
+    let proxy_block = match &proxy_url {
+        Some(u) => format!(
+            "export HTTPS_PROXY=\"{u}\" HTTP_PROXY=\"{u}\" ALL_PROXY=\"{u}\"\nexport NO_PROXY=\"localhost,127.0.0.1,::1,.local\"\necho \"已注入代理: {u}\"\necho"
+        ),
+        None => "echo \"未检测到系统代理\"\necho".to_string(),
+    };
+    #[cfg(target_os = "windows")]
+    let proxy_block = match &proxy_url {
+        Some(u) => format!(
+            "$env:HTTPS_PROXY='{u}'; $env:HTTP_PROXY='{u}'; $env:ALL_PROXY='{u}'\r\nWrite-Host '已注入代理: {u}'\r\nWrite-Host ''\r\n"
+        ),
+        None => "Write-Host '未检测到系统代理'\r\nWrite-Host ''\r\n".to_string(),
+    };
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    let _ = (&proxy_url, login_domains);
     let dir = app
         .path()
         .app_data_dir()
@@ -3003,6 +3060,7 @@ clear
 echo "GCMS Pilot · {brain} 授权登录"
 echo "浏览器会自动打开，完成登录后【先回到这个窗口】等它打出结果，再关闭。"
 echo
+{proxy_block}
 if [ -z "$HTTPS_PROXY$https_proxy" ]; then
   _sys_proxy=$(scutil --proxy | awk '/HTTPSEnable : 1/{{e=1}} /HTTPSProxy/{{h=$3}} /HTTPSPort/{{p=$3}} END{{if(e&&h&&p) print h":"p}}')
   if [ -n "$_sys_proxy" ]; then
@@ -3020,6 +3078,7 @@ if {status_cmd} 2>/dev/null | grep -qi '{marker}'; then
   echo "✅ 登录成功！现在可以关闭这个窗口，GCMS Pilot 里的状态灯会自动变绿。"
 else
   echo "❌ 登录还没完成。请截图上面的输出，或重新在 Pilot 里点「去授权」再试一次。"
+  echo "   若上面是 timed out / connection 错误：代理/VPN 需覆盖 {login_domains}，规则模式请把该域加进规则或临时切全局。"
 fi
 echo
 read -s -k 1 "?按任意键关闭这个窗口…"
@@ -3039,19 +3098,21 @@ read -s -k 1 "?按任意键关闭这个窗口…"
 
     #[cfg(target_os = "windows")]
     {
-        // PowerShell：UTF-8 输出 + 跑登录命令 + 状态自查。系统代理由 CLI / 环境变量自行处理。
+        // PowerShell：UTF-8 输出 + 注入系统代理（CLI 只认环境变量）+ 跑登录命令 + 状态自查。
         let file = dir.join(format!("{brain}-login.ps1"));
         let script = format!(
             "$OutputEncoding = [Console]::OutputEncoding = [Text.Encoding]::UTF8\r\n\
              Write-Host 'GCMS Pilot · {brain} 授权登录'\r\n\
              Write-Host '浏览器会自动打开，完成登录后先回到这个窗口等它打出结果，再关闭。'\r\n\
              Write-Host ''\r\n\
+             {proxy_block}\
              {login_cmd}\r\n\
              Write-Host ''\r\n\
              if ({status_cmd} 2>$null | Select-String -SimpleMatch '{marker}') {{\r\n\
              Write-Host '[OK] 登录成功！现在可以关闭这个窗口，GCMS Pilot 里的状态灯会自动变绿。'\r\n\
              }} else {{\r\n\
              Write-Host '[X] 登录还没完成。请截图上面的输出，或重新在 Pilot 里点「去授权」再试一次。'\r\n\
+             Write-Host '    若上面是 timed out / connection 错误：代理/VPN 需覆盖 {login_domains}，规则模式请把该域加进规则或临时切全局。'\r\n\
              }}\r\n\
              Read-Host '按回车关闭这个窗口'\r\n"
         );
