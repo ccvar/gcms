@@ -15,6 +15,7 @@ use std::time::Duration;
 use russh::client;
 use russh::keys::{load_secret_key, PrivateKeyWithHashAlg};
 use russh::ChannelMsg;
+use russh_sftp::client::SftpSession;
 use serde::Serialize;
 use tauri::ipc::Channel;
 use tokio::sync::Mutex;
@@ -40,6 +41,15 @@ pub struct SshProbe {
     pub auth_ok: bool,
     /// 认证失败原因（auth_ok=true 时为空串）。
     pub error: String,
+}
+
+/// 远程目录里的一项。
+#[derive(Clone, Serialize)]
+pub struct SftpEntry {
+    pub name: String,
+    pub dir: bool,
+    pub size: u64,
+    pub mtime: u64,
 }
 
 /// 一次连接所需的认证材料。调用方从钥匙串取出后构造，用完即弃。
@@ -162,9 +172,16 @@ pub async fn probe(
     }
 }
 
-/// 一个活着的 PTY 会话：持有通道的**写半边**，供写入/改窗口大小/关闭。
-/// （读半边在 open_shell 里交给后台任务流给前端 —— russh 的 Channel 不能克隆，只能拆两半。）
+/// 一条活着的 SSH 连接：一个 handle + 其上的若干通道（PTY / SFTP）。
+///
+/// 为什么必须留着 `handle`：**开新通道只能通过它**（SFTP 要在同一条连接上再开一路，
+/// 否则每次文件操作都要重新握手认证）。
+/// 另：`ChannelWriteHalf` 内部持有 sender 的克隆，所以只要它活着，会话任务就不会退出
+/// （`Handle::drop` 不 abort，其 JoinHandle 被 drop 在 tokio 里是分离而非杀死）——
+/// 但那只保活，开不了新通道，所以 handle 还是得留。
 struct Live {
+    handle: client::Handle<Client>,
+    /// PTY 通道写半边（读半边在 open_shell 里交给后台任务流给前端；Channel 不能克隆，只能拆两半）。
     ch: russh::ChannelWriteHalf<client::Msg>,
 }
 
@@ -210,7 +227,7 @@ impl SshSessions {
         self.map
             .lock()
             .await
-            .insert(conn_id.to_string(), Live { ch: writer });
+            .insert(conn_id.to_string(), Live { handle: session, ch: writer });
 
         let map = self.map.clone();
         let id = conn_id.to_string();
@@ -266,5 +283,99 @@ impl SshSessions {
 
     pub async fn is_open(&self, conn_id: &str) -> bool {
         self.map.lock().await.contains_key(conn_id)
+    }
+
+    /// 在已建立的连接上开一路 SFTP。每次调用开一个新通道（通道很便宜，不用重新握手认证）；
+    /// 不做缓存是刻意的：SftpSession 不能克隆，缓存起来要么跨 await 持锁、要么得再包一层 Arc
+    /// 加生命周期管理，收益不抵复杂度。
+    async fn sftp(&self, conn_id: &str) -> Result<SftpSession, String> {
+        let ch = {
+            let g = self.map.lock().await;
+            let live = g.get(conn_id).ok_or("会话未打开：请先连接远程终端")?;
+            live.handle
+                .channel_open_session()
+                .await
+                .map_err(|e| format!("打开 SFTP 通道失败: {e}"))?
+        }; // 提前放锁：下面 await 不能持锁
+        ch.request_subsystem(true, "sftp")
+            .await
+            .map_err(|e| format!("请求 sftp 子系统失败（远端可能没开 sftp）: {e}"))?;
+        SftpSession::new(ch.into_stream())
+            .await
+            .map_err(|e| format!("建立 SFTP 会话失败: {e}"))
+    }
+
+    /// 列目录（目录在前、再按名排序）。
+    pub async fn list_dir(&self, conn_id: &str, path: &str) -> Result<Vec<SftpEntry>, String> {
+        let sftp = self.sftp(conn_id).await?;
+        let p = if path.trim().is_empty() { "." } else { path };
+        let mut out: Vec<SftpEntry> = sftp
+            .read_dir(p)
+            .await
+            .map_err(|e| format!("读取目录 {p} 失败: {e}"))?
+            .map(|e| {
+                let m = e.metadata();
+                SftpEntry {
+                    name: e.file_name(),
+                    dir: m.is_dir(),
+                    size: m.size.unwrap_or(0),
+                    mtime: m.mtime.unwrap_or(0) as u64,
+                }
+            })
+            .collect();
+        out.sort_by(|a, b| b.dir.cmp(&a.dir).then_with(|| a.name.cmp(&b.name)));
+        Ok(out)
+    }
+
+    /// 解析为绝对路径（用于把 "." 变成真实 home）。
+    pub async fn real_path(&self, conn_id: &str, path: &str) -> Result<String, String> {
+        let sftp = self.sftp(conn_id).await?;
+        sftp.canonicalize(if path.trim().is_empty() { "." } else { path })
+            .await
+            .map_err(|e| format!("解析路径失败: {e}"))
+    }
+
+    /// 读整个文件（在线编辑 / 下载用）。带大小闸门，别把几个 G 的东西吸进内存。
+    pub async fn read_file(&self, conn_id: &str, path: &str, max: u64) -> Result<Vec<u8>, String> {
+        let sftp = self.sftp(conn_id).await?;
+        if let Ok(m) = sftp.metadata(path).await {
+            if let Some(sz) = m.size {
+                if sz > max {
+                    return Err(format!("文件太大（{sz} 字节，上限 {max}）"));
+                }
+            }
+        }
+        sftp.read(path).await.map_err(|e| format!("读取 {path} 失败: {e}"))
+    }
+
+    /// 写整个文件（在线编辑保存 / 上传用）。
+    pub async fn write_file(&self, conn_id: &str, path: &str, data: &[u8]) -> Result<(), String> {
+        let sftp = self.sftp(conn_id).await?;
+        sftp.write(path, data)
+            .await
+            .map_err(|e| format!("写入 {path} 失败: {e}"))
+    }
+
+    pub async fn rename(&self, conn_id: &str, from: &str, to: &str) -> Result<(), String> {
+        let sftp = self.sftp(conn_id).await?;
+        sftp.rename(from, to)
+            .await
+            .map_err(|e| format!("重命名失败: {e}"))
+    }
+
+    pub async fn remove(&self, conn_id: &str, path: &str, dir: bool) -> Result<(), String> {
+        let sftp = self.sftp(conn_id).await?;
+        if dir {
+            sftp.remove_dir(path).await.map_err(|e| format!("删除目录失败（非空？）: {e}"))
+        } else {
+            sftp.remove_file(path).await.map_err(|e| format!("删除文件失败: {e}"))
+        }
+    }
+
+    pub async fn mkdir(&self, conn_id: &str, path: &str) -> Result<(), String> {
+        let sftp = self.sftp(conn_id).await?;
+        sftp.create_dir(path)
+            .await
+            .map_err(|e| format!("新建目录失败: {e}"))
     }
 }
