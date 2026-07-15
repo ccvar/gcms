@@ -607,7 +607,10 @@ mod tests {
             api_base: "https://x.example/api/platform/v1".into(),
             skill_dir: dest.to_string_lossy().into_owned(),
             key_prefix: "gcmsp_ab".into(), key_kind: "gcmsp_".into(),
-            account_id: String::new(), pack_version: String::new(), created_at: "t".into(),
+            account_id: String::new(),
+            ssh_host: String::new(), ssh_port: 0, ssh_user: String::new(),
+            ssh_auth: String::new(), ssh_key_path: String::new(), ssh_fingerprint: String::new(),
+            pack_version: String::new(), created_at: "t".into(),
         };
         fs::write(base.join("connections.json"), serde_json::to_vec_pretty(&[conn]).unwrap()).unwrap();
         // 新原始包 zip：无密钥（.env.example 占位）+ 新脚本 + PACK_VERSION
