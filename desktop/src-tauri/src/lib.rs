@@ -433,6 +433,101 @@ async fn ssh_close(state: tauri::State<'_, AppState>, conn_id: String) -> Result
     Ok(())
 }
 
+// ---- SSH 远程文件（SFTP，复用已打开的终端会话，不重新握手） ----
+
+/// 在线编辑的大小闸门：整文件进内存 + base64 过 IPC，2MB 之上就该用下载了。
+const SFTP_EDIT_MAX: u64 = 2 * 1024 * 1024;
+
+#[tauri::command]
+async fn sftp_list(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    path: String,
+) -> Result<Vec<ssh::SftpEntry>, String> {
+    state.ssh.list_dir(&conn_id, &path).await
+}
+
+/// 解析起始目录（"." → 真实 home 的绝对路径）。
+#[tauri::command]
+async fn sftp_home(state: tauri::State<'_, AppState>, conn_id: String) -> Result<String, String> {
+    state.ssh.real_path(&conn_id, ".").await
+}
+
+/// 读整个文件给在线编辑器。返回 base64：文本是否合法 UTF-8 由前端判定（TextDecoder fatal）。
+#[tauri::command]
+async fn sftp_read(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    path: String,
+) -> Result<String, String> {
+    use base64::Engine as _;
+    let bytes = state.ssh.read_file(&conn_id, &path, SFTP_EDIT_MAX).await?;
+    Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
+}
+
+#[tauri::command]
+async fn sftp_write(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    path: String,
+    b64: String,
+) -> Result<(), String> {
+    use base64::Engine as _;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(b64.as_bytes())
+        .map_err(|e| format!("内容解码失败: {e}"))?;
+    state.ssh.write_file(&conn_id, &path, &bytes).await
+}
+
+#[tauri::command]
+async fn sftp_rename(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    from: String,
+    to: String,
+) -> Result<(), String> {
+    state.ssh.rename(&conn_id, &from, &to).await
+}
+
+#[tauri::command]
+async fn sftp_remove(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    path: String,
+    dir: bool,
+) -> Result<(), String> {
+    state.ssh.remove(&conn_id, &path, dir).await
+}
+
+#[tauri::command]
+async fn sftp_mkdir(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    path: String,
+) -> Result<(), String> {
+    state.ssh.mkdir(&conn_id, &path).await
+}
+
+#[tauri::command]
+async fn sftp_download(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    remote: String,
+    local: String,
+) -> Result<u64, String> {
+    state.ssh.download(&conn_id, &remote, &local).await
+}
+
+#[tauri::command]
+async fn sftp_upload(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    local: String,
+    remote: String,
+) -> Result<u64, String> {
+    state.ssh.upload(&conn_id, &local, &remote).await
+}
+
 /// 把粘贴/拖拽的文件存进当前会话的工作目录 uploads/ 下，返回相对路径（AI 可直接读取）。
 /// CF 会话＝项目目录；gcms 会话＝技能包目录。
 #[tauri::command]
@@ -3424,6 +3519,15 @@ pub fn run() {
             ssh_input,
             ssh_resize,
             ssh_close,
+            sftp_list,
+            sftp_home,
+            sftp_read,
+            sftp_write,
+            sftp_rename,
+            sftp_remove,
+            sftp_mkdir,
+            sftp_download,
+            sftp_upload,
             save_attachment,
             read_workdir_image,
             resolve_workdir_file,

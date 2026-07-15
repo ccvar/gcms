@@ -378,4 +378,38 @@ impl SshSessions {
             .await
             .map_err(|e| format!("新建目录失败: {e}"))
     }
+
+    /// 下载：远程 → 本地，流式拷贝（大文件不整块进内存，不走 read_file 的闸门）。
+    pub async fn download(&self, conn_id: &str, remote: &str, local: &str) -> Result<u64, String> {
+        let sftp = self.sftp(conn_id).await?;
+        let mut src = sftp
+            .open(remote)
+            .await
+            .map_err(|e| format!("打开远程文件 {remote} 失败: {e}"))?;
+        let mut dst = tokio::fs::File::create(local)
+            .await
+            .map_err(|e| format!("创建本地文件 {local} 失败: {e}"))?;
+        tokio::io::copy(&mut src, &mut dst)
+            .await
+            .map_err(|e| format!("下载失败: {e}"))
+    }
+
+    /// 上传：本地 → 远程，流式拷贝。目标已存在则截断覆盖。
+    pub async fn upload(&self, conn_id: &str, local: &str, remote: &str) -> Result<u64, String> {
+        use tokio::io::AsyncWriteExt as _;
+        let sftp = self.sftp(conn_id).await?;
+        let mut src = tokio::fs::File::open(local)
+            .await
+            .map_err(|e| format!("打开本地文件 {local} 失败: {e}"))?;
+        let mut dst = sftp
+            .create(remote)
+            .await
+            .map_err(|e| format!("创建远程文件 {remote} 失败: {e}"))?;
+        let n = tokio::io::copy(&mut src, &mut dst)
+            .await
+            .map_err(|e| format!("上传失败: {e}"))?;
+        // copy 只 flush 不关句柄；SFTP 的 close 才让远端落定文件。
+        dst.shutdown().await.map_err(|e| format!("上传收尾失败: {e}"))?;
+        Ok(n)
+    }
 }

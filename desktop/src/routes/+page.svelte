@@ -5,7 +5,7 @@
   import '@xterm/xterm/css/xterm.css';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { getVersion } from '@tauri-apps/api/app';
-  import { open, confirm as confirmDialog } from '@tauri-apps/plugin-dialog';
+  import { open, save as saveDialog, confirm as confirmDialog } from '@tauri-apps/plugin-dialog';
   import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
   import { check as checkUpdate } from '@tauri-apps/plugin-updater';
   import { relaunch } from '@tauri-apps/plugin-process';
@@ -1347,6 +1347,131 @@
     if (!id || !el) return;
     await invoke('ssh_close', { connId: id }).catch(() => {});
     await startTerm(id, el);
+  }
+
+  // ---------- 远程文件（SFTP，走终端同一条 SSH 会话） ----------
+  type SftpEntry = { name: string; dir: boolean; size: number; mtime: number };
+  let remoteTab = $state<'term' | 'files'>('term');
+  let sftpConnId = ''; // 已加载文件列表所属的连接；换连接才重置，切页签不重置
+  let sftpPath = $state('');
+  let sftpPathDraft = $state('');
+  let sftpEntries = $state<SftpEntry[]>([]);
+  let sftpBusy = $state(false);
+  let sftpErr = $state('');
+  let sftpXfer = $state(''); // 上传/下载进行中的提示文案
+  // 首次进文件页签或换了连接 → 从 home 起步；仅切页签回来则保留原目录。
+  $effect(() => {
+    const id = activeConnId;
+    if (view !== 'remote' || !isSshConn || remoteTab !== 'files' || !id) return;
+    if (sftpConnId === id) return;
+    sftpConnId = id; sftpPath = ''; sftpPathDraft = ''; sftpEntries = []; sftpErr = '';
+    void sftpGo('');
+  });
+  function backToTerm() {
+    remoteTab = 'term';
+    // term-wrap 是 display:none 藏起来的，回来时容器尺寸可能变了 → 重排一次
+    requestAnimationFrame(() => termFit?.fit());
+  }
+  function sftpJoin(dir: string, name: string): string { return dir === '/' ? '/' + name : dir + '/' + name; }
+  async function sftpGo(path: string) {
+    const id = sftpConnId;
+    sftpBusy = true; sftpErr = '';
+    try {
+      const p = path || await invoke<string>('sftp_home', { connId: id });
+      const list = await invoke<SftpEntry[]>('sftp_list', { connId: id, path: p });
+      if (sftpConnId !== id) return; // 加载途中换了连接，丢弃
+      sftpPath = p; sftpPathDraft = p; sftpEntries = list;
+    } catch (e) { sftpErr = String(e); }
+    finally { sftpBusy = false; }
+  }
+  function sftpUp() {
+    if (!sftpPath || sftpPath === '/') return;
+    void sftpGo(sftpPath.replace(/\/[^/]+\/?$/, '') || '/');
+  }
+  function fmtSize(n: number): string {
+    if (n < 1024) return `${n} B`;
+    const u = ['KB', 'MB', 'GB', 'TB']; let v = n / 1024; let i = 0;
+    while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+    return `${v >= 100 ? Math.round(v) : v.toFixed(1)} ${u[i]}`;
+  }
+  // 新建文件夹 / 重命名共用一个「起名」弹窗
+  let fsAsk = $state<null | { mode: 'mkdir' | 'rename'; from: string; value: string; busy: boolean; err: string }>(null);
+  function openMkdir() { fsAsk = { mode: 'mkdir', from: '', value: '', busy: false, err: '' }; }
+  function openRename(name: string) { fsAsk = { mode: 'rename', from: name, value: name, busy: false, err: '' }; }
+  async function confirmFsAsk() {
+    if (!fsAsk || fsAsk.busy) return;
+    const v = fsAsk.value.trim();
+    if (!v) return;
+    if (v.includes('/')) { fsAsk.err = '名字里不能带 /'; return; }
+    fsAsk.busy = true; fsAsk.err = '';
+    try {
+      if (fsAsk.mode === 'mkdir') await invoke('sftp_mkdir', { connId: sftpConnId, path: sftpJoin(sftpPath, v) });
+      else await invoke('sftp_rename', { connId: sftpConnId, from: sftpJoin(sftpPath, fsAsk.from), to: sftpJoin(sftpPath, v) });
+      fsAsk = null;
+      await sftpGo(sftpPath);
+    } catch (e) { if (fsAsk) { fsAsk.err = String(e); fsAsk.busy = false; } }
+  }
+  async function sftpDelete(f: SftpEntry) {
+    const yes = await confirmDialog(
+      f.dir ? `删除文件夹「${f.name}」？只能删空文件夹。` : `删除文件「${f.name}」？此操作不可撤销。`,
+      { title: '删除', kind: 'warning' },
+    );
+    if (!yes) return;
+    try { await invoke('sftp_remove', { connId: sftpConnId, path: sftpJoin(sftpPath, f.name), dir: f.dir }); await sftpGo(sftpPath); }
+    catch (e) { say(String(e), 'err'); }
+  }
+  async function sftpDownload(f: SftpEntry) {
+    const local = await saveDialog({ defaultPath: f.name, title: `下载 ${f.name}` });
+    if (!local) return;
+    sftpXfer = `下载 ${f.name}…`;
+    try { await invoke('sftp_download', { connId: sftpConnId, remote: sftpJoin(sftpPath, f.name), local }); say(`已下载到 ${local}`); }
+    catch (e) { say(String(e), 'err'); }
+    finally { sftpXfer = ''; }
+  }
+  async function sftpUpload() {
+    const picked = await open({ multiple: true, title: '选择要上传的文件' });
+    if (!picked) return;
+    const paths = Array.isArray(picked) ? picked : [picked];
+    for (const p of paths) {
+      const name = p.split(/[\\/]/).pop() || p;
+      sftpXfer = `上传 ${name}…`;
+      try { await invoke('sftp_upload', { connId: sftpConnId, local: p, remote: sftpJoin(sftpPath, name) }); }
+      catch (e) { say(String(e), 'err'); sftpXfer = ''; return; }
+    }
+    sftpXfer = '';
+    say(paths.length > 1 ? `已上传 ${paths.length} 个文件` : '已上传');
+    await sftpGo(sftpPath);
+  }
+  // 在线编辑器
+  let edOpen = $state(false);
+  let edPath = $state('');
+  let edText = $state('');
+  let edLoading = $state(false);
+  let edSaving = $state(false);
+  let edErr = $state('');
+  let edReadOnly = $state(false);
+  async function sftpEdit(name: string) {
+    const path = sftpJoin(sftpPath, name);
+    edOpen = true; edPath = path; edText = ''; edErr = ''; edReadOnly = false; edLoading = true;
+    try {
+      const b64 = await invoke<string>('sftp_read', { connId: sftpConnId, path });
+      // fatal 模式：不是合法 UTF-8（二进制）直接抛 TypeError → 只给下载不给编辑
+      edText = new TextDecoder('utf-8', { fatal: true }).decode(b64ToBytes(b64));
+    } catch (e) {
+      edReadOnly = true;
+      edErr = e instanceof TypeError ? '这是二进制文件，不能在线编辑；可以用列表里的下载按钮取回本地。' : String(e);
+    } finally { edLoading = false; }
+  }
+  async function saveEdit() {
+    if (edSaving || edReadOnly) return;
+    edSaving = true; edErr = '';
+    try {
+      await invoke('sftp_write', { connId: sftpConnId, path: edPath, b64: strToB64(edText) });
+      edOpen = false;
+      say(`已保存 ${edPath}`);
+      await sftpGo(sftpPath);
+    } catch (e) { edErr = String(e); }
+    finally { edSaving = false; }
   }
 
   // ---------- 连接 Cloudflare ----------
@@ -2947,11 +3072,59 @@
     {:else if view === 'remote'}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <header class="thread-head" data-tauri-drag-region onmousedown={startDrag}>
-        <div class="th-info"><b>远程终端</b><small>{activeConn?.ssh_user}@{activeConn?.ssh_host}:{activeConn?.ssh_port} · {termOn ? '已连接' : '未连接'}</small></div>
-        <button class="btn soft bare" onclick={reconnectTerm}>{@render refreshIcon(false)}重新连接</button>
+        <div class="th-info"><b>远程连接</b><small>{activeConn?.ssh_user}@{activeConn?.ssh_host}:{activeConn?.ssh_port} · {termOn ? '已连接' : '未连接'}</small></div>
+        <div class="rhead-acts">
+          <div class="rseg" role="tablist">
+            <button class="rseg-btn" class:on={remoteTab === 'term'} role="tab" aria-selected={remoteTab === 'term'} onclick={backToTerm}>终端</button>
+            <button class="rseg-btn" class:on={remoteTab === 'files'} role="tab" aria-selected={remoteTab === 'files'} onclick={() => (remoteTab = 'files')}>文件</button>
+          </div>
+          {#if remoteTab === 'term'}
+            <button class="btn soft bare" onclick={reconnectTerm}>{@render refreshIcon(false)}重新连接</button>
+          {/if}
+        </div>
       </header>
-      <!-- 终端自己管滚动：别套 .thread（它的 overflow-y:auto 会和 xterm 打架）。 -->
-      <div class="term-wrap"><div class="term" bind:this={termEl}></div></div>
+      <!-- 终端自己管滚动：别套 .thread（它的 overflow-y:auto 会和 xterm 打架）。
+           切到文件页签时只藏不拆：拆了 xterm 的 DOM 就没了，回来还得重连。 -->
+      <div class="term-wrap" class:hid={remoteTab !== 'term'}><div class="term" bind:this={termEl}></div></div>
+      {#if remoteTab === 'files'}
+        <div class="files-wrap">
+          <div class="files-bar">
+            <button class="fbtn" aria-label="上一级" data-tip="上一级" onclick={sftpUp} disabled={sftpBusy || !sftpPath || sftpPath === '/'}><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 12.5v-9M4.2 7.3 8 3.5l3.8 3.8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
+            <input class="tin fpath" bind:value={sftpPathDraft} spellcheck="false" autocapitalize="off" autocorrect="off" placeholder="/" onkeydown={(e) => e.key === 'Enter' && sftpPathDraft.trim() && sftpGo(sftpPathDraft.trim())} />
+            <button class="fbtn" aria-label="刷新" data-tip="刷新" onclick={() => sftpGo(sftpPath)} disabled={sftpBusy}>{@render refreshIcon(sftpBusy)}</button>
+            <button class="fbtn" aria-label="新建文件夹" data-tip="新建文件夹" onclick={openMkdir} disabled={sftpBusy}><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M1.8 4.2A1.4 1.4 0 0 1 3.2 2.8h3l1.4 1.6h5.2a1.4 1.4 0 0 1 1.4 1.4v6a1.4 1.4 0 0 1-1.4 1.4H3.2a1.4 1.4 0 0 1-1.4-1.4v-7.6z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /><path d="M8 7.4v3.4M6.3 9.1h3.4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" /></svg></button>
+            <button class="fbtn" aria-label="上传文件" data-tip="上传文件" onclick={sftpUpload} disabled={sftpBusy || !!sftpXfer}><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 10.4V3.6M4.8 6.4 8 3.2l3.2 3.2M3 12.8h10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
+          </div>
+          {#if sftpXfer}<div class="files-note">{sftpXfer}</div>{/if}
+          {#if sftpErr}<div class="err-note files-err">{sftpErr}</div>{/if}
+          <div class="files-list">
+            {#if sftpBusy && !sftpEntries.length}
+              <div class="files-empty">读取中…</div>
+            {:else if !sftpEntries.length}
+              <div class="files-empty">{sftpErr ? '' : '空目录'}</div>
+            {:else}
+              {#each sftpEntries as f (f.name)}
+                <div class="frow">
+                  <button class="fname" onclick={() => (f.dir ? sftpGo(sftpJoin(sftpPath, f.name)) : sftpEdit(f.name))} title={f.dir ? '打开目录' : '在线编辑'}>
+                    {#if f.dir}<svg class="fic dir" width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M1.8 4.2A1.4 1.4 0 0 1 3.2 2.8h3l1.4 1.6h5.2a1.4 1.4 0 0 1 1.4 1.4v6a1.4 1.4 0 0 1-1.4 1.4H3.2a1.4 1.4 0 0 1-1.4-1.4v-7.6z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /></svg>
+                    {:else}<svg class="fic" width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M4 1.8h5.2L12.8 5.4v8.8H4V1.8z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /><path d="M9.2 1.8v3.6h3.6" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /></svg>{/if}
+                    <span class="fname-t">{f.name}</span>
+                  </button>
+                  <span class="fmeta">{f.dir ? '' : fmtSize(f.size)}</span>
+                  <span class="fmeta ftime">{f.mtime ? relTime(f.mtime) : ''}</span>
+                  <span class="facts">
+                    {#if !f.dir}
+                      <button class="fbtn sm" aria-label="下载" data-tip="下载" onclick={() => sftpDownload(f)} disabled={!!sftpXfer}><svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M8 3.2v6.8M4.8 7.2 8 10.4l3.2-3.2M3 12.8h10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
+                    {/if}
+                    <button class="fbtn sm" aria-label="重命名" data-tip="重命名" onclick={() => openRename(f.name)}><svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M10.8 2.9l2.3 2.3M11.4 2.3l2.3 2.3-8 8-3 .7.7-3 8-8z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /></svg></button>
+                    <button class="fbtn sm danger" aria-label="删除" data-tip="删除" onclick={() => sftpDelete(f)}><svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M3 4.6h10M6.4 4.6V3.3h3.2V4.6M4.6 4.6l.6 8.1h5.6l.6-8.1" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
+                  </span>
+                </div>
+              {/each}
+            {/if}
+          </div>
+        </div>
+      {/if}
 
     {:else if view === 'prompts'}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -3465,6 +3638,46 @@
   </div>
 {/if}
 
+{#if fsAsk}
+  <div class="mask" role="presentation" onclick={() => !fsAsk?.busy && (fsAsk = null)}></div>
+  <div class="modal">
+    <header class="sheet-head"><b>{fsAsk.mode === 'mkdir' ? '新建文件夹' : `重命名「${fsAsk.from}」`}</b><button class="x" onclick={() => (fsAsk = null)} disabled={fsAsk.busy}>×</button></header>
+    <div class="sheet-body">
+      <p class="hint">位置：<code>{sftpPath}</code></p>
+      <!-- svelte-ignore a11y_autofocus -->
+      <input class="tin" bind:value={fsAsk.value} placeholder={fsAsk.mode === 'mkdir' ? '文件夹名' : '新名字'} spellcheck="false" autocapitalize="off" autocorrect="off" autofocus disabled={fsAsk.busy} onkeydown={(e) => e.key === 'Enter' && confirmFsAsk()} />
+      {#if fsAsk.err}<div class="err-note">{fsAsk.err}</div>{/if}
+      <div class="row-end">
+        <button class="btn ghost" onclick={() => (fsAsk = null)} disabled={fsAsk.busy}>取消</button>
+        <button class="btn primary" onclick={confirmFsAsk} disabled={fsAsk.busy || !fsAsk.value.trim()}>{fsAsk.busy ? '处理中…' : '确定'}</button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+{#if edOpen}
+  <div class="mask" role="presentation" onclick={() => !edSaving && (edOpen = false)}></div>
+  <div class="modal ed-modal">
+    <header class="sheet-head"><div><b>编辑文件</b><small class="dim ed-path">{edPath}</small></div><button class="x" onclick={() => (edOpen = false)} disabled={edSaving}>×</button></header>
+    <div class="sheet-body ed-body">
+      {#if edLoading}
+        <div class="files-empty">读取中…</div>
+      {:else if edErr && edReadOnly}
+        <div class="err-note">{edErr}</div>
+      {:else}
+        <textarea class="ed-ta" bind:value={edText} spellcheck="false" autocapitalize="off" disabled={edSaving}></textarea>
+        {#if edErr}<div class="err-note">{edErr}</div>{/if}
+      {/if}
+      <div class="row-end">
+        <button class="btn ghost" onclick={() => (edOpen = false)} disabled={edSaving}>{edReadOnly ? '关闭' : '取消'}</button>
+        {#if !edReadOnly && !edLoading}
+          <button class="btn primary" onclick={saveEdit} disabled={edSaving}>{edSaving ? '保存中…' : '保存'}</button>
+        {/if}
+      </div>
+    </div>
+  </div>
+{/if}
+
 {#if cfOpen}
   <div class="mask" role="presentation" onclick={() => !cfConnecting && !cfVerifying && (cfOpen = false)}></div>
   <div class="modal cf-modal">
@@ -3763,7 +3976,44 @@
 <style>
   /* 远程终端：终端自己管滚动，容器不能给 overflow-y:auto（会和 xterm 打架）。 */
   .term-wrap { flex: 1; min-height: 0; overflow: hidden; background: #1c1917; padding: 8px 10px; }
+  .term-wrap.hid { display: none; }
   .term { width: 100%; height: 100%; }
+  /* 远程视图头部：终端/文件 页签 */
+  .rhead-acts { display: flex; align-items: center; gap: 10px; -webkit-app-region: no-drag; }
+  .rseg { display: flex; background: var(--accent-soft); border-radius: 8px; padding: 2px; }
+  .rseg-btn { border: 0; background: transparent; color: var(--dim); font-size: 12.5px; padding: 4px 14px; border-radius: 6px; cursor: pointer; }
+  .rseg-btn.on { background: var(--bg); color: var(--text); box-shadow: 0 1px 2px rgba(0, 0, 0, .08); }
+  /* 远程文件面板 */
+  .files-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .files-bar { flex: none; display: flex; align-items: center; gap: 6px; padding: 10px 16px; border-bottom: 1px solid var(--border); }
+  .fpath { flex: 1; min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  .fbtn { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; flex: none; border: 1px solid var(--border); background: var(--bg); color: var(--dim); border-radius: 7px; cursor: pointer; }
+  .fbtn:hover:not(:disabled) { color: var(--text); border-color: var(--border2); }
+  .fbtn:disabled { opacity: .45; cursor: default; }
+  .fbtn.sm { width: 24px; height: 24px; border: 0; border-radius: 6px; }
+  .fbtn.sm:hover:not(:disabled) { background: var(--accent-soft); }
+  .fbtn.danger:hover:not(:disabled) { color: var(--err); background: var(--err-soft); }
+  .files-note { flex: none; padding: 6px 16px; font-size: 12px; color: var(--dim); border-bottom: 1px solid var(--border); }
+  .files-err { flex: none; margin: 10px 16px 0; }
+  .files-list { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 8px 14px; }
+  .files-empty { padding: 28px 0; text-align: center; color: var(--faint); font-size: 13px; }
+  .frow { display: flex; align-items: center; gap: 8px; padding: 2px 8px; border-radius: 8px; }
+  .frow:hover { background: var(--rail); }
+  .frow .facts { visibility: hidden; }
+  .frow:hover .facts, .frow:focus-within .facts { visibility: visible; }
+  .fname { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; border: 0; background: transparent; color: var(--text); font-size: 13px; padding: 6px 0; cursor: pointer; text-align: left; }
+  .fname-t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fic { flex: none; color: var(--faint); }
+  .fic.dir { color: #b58a3c; }
+  .fmeta { flex: none; width: 74px; text-align: right; color: var(--dim); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+  .fmeta.ftime { width: 56px; }
+  .facts { flex: none; display: flex; gap: 2px; }
+  /* 在线编辑器 */
+  .ed-modal { width: min(760px, 94vw); }
+  .ed-path { margin-left: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; overflow-wrap: anywhere; }
+  .ed-body { display: flex; flex-direction: column; gap: 10px; }
+  .ed-ta { width: 100%; box-sizing: border-box; height: min(52vh, 480px); resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; line-height: 1.55; color: var(--text); background: var(--rail); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; outline: none; white-space: pre; overflow-wrap: normal; overflow-x: auto; }
+  .ed-ta:focus { border-color: var(--border2); background: var(--bg); }
   .ssh-key-row { display: flex; gap: 6px; align-items: center; }
   .ssh-key-row .tin { flex: 1; min-width: 0; }
   .ssh-fp { display: flex; flex-direction: column; gap: 5px; padding: 9px 11px; border: 1px solid #cfc9ec; background: #f7f6ff; border-radius: 10px; }
