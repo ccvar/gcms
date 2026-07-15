@@ -1200,6 +1200,48 @@ fn stop_preview(state: &AppState) {
     }
 }
 
+/// 在新窗口里打开一个连接（几台机器 / 几个站点并排看）。同一连接已有窗口就把它拎到前面。
+///
+/// 窗口之间只是各自一份前端：连接表、对话、SSH 会话、权限待批都在 Rust 侧的同一份 AppState 里，
+/// 所以两个窗口看到的是同一份数据，不会分叉。新窗口靠 `?conn=<id>` 知道自己该开在哪个连接上。
+#[tauri::command]
+async fn open_conn_window(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+) -> Result<(), String> {
+    let conn = state.conns.get(&conn_id)?;
+    // 标签只允许字母数字和 -/:_ —— uuid 正好合规。
+    let label = format!("conn-{conn_id}");
+    if let Some(w) = app.get_webview_window(&label) {
+        let _ = w.unminimize();
+        let _ = w.show();
+        let _ = w.set_focus();
+        return Ok(());
+    }
+    // mut 只有 macOS 分支用得上（下面那两个设置是 mac 专有）
+    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
+    let mut b = tauri::WebviewWindowBuilder::new(
+        &app,
+        &label,
+        tauri::WebviewUrl::App(format!("index.html?conn={conn_id}").into()),
+    )
+    .title(&conn.name)
+    .inner_size(1024.0, 700.0)
+    .min_inner_size(820.0, 560.0);
+    // 主窗口在 tauri.conf 里是 Overlay + 隐藏标题（前端自己画标题栏），新窗口得对齐，
+    // 否则同一套前端布局会和系统标题栏叠在一起。这两个设置只有 macOS 有。
+    #[cfg(target_os = "macos")]
+    {
+        b = b.title_bar_style(tauri::TitleBarStyle::Overlay).hidden_title(true);
+    }
+    let w = b.build().map_err(|e| format!("打开新窗口失败: {e}"))?;
+    #[cfg(target_os = "windows")]
+    style_titlebar_windows(&w);
+    let _ = w.set_focus();
+    Ok(())
+}
+
 fn open_preview_window(app: &AppHandle, url: &str) -> Result<(), String> {
     if let Some(w) = app.get_webview_window("preview") {
         let _ = w.eval(&format!("window.location.replace('{url}')"));
@@ -3672,6 +3714,7 @@ pub fn run() {
             check_pack_update,
             update_pack,
             remove_connection,
+            open_conn_window,
             discover_sites,
             detect_brains,
             install_wrangler,

@@ -36,6 +36,30 @@
   let importBusy = $state(false);
   let setupOpen = $state(false);
   let switcherOpen = $state(false);
+  // 连接切换器里每条连接的右键菜单（新窗口打开 / 编辑 / 删除）。
+  let connCtx = $state<null | { x: number; y: number; conn: Connection }>(null);
+  function openConnCtx(e: MouseEvent, c: Connection) {
+    e.preventDefault();
+    e.stopPropagation(); // 别让全局那个输入框右键菜单也跳出来
+    connCtx = { x: Math.min(e.clientX, window.innerWidth - 180), y: Math.min(e.clientY, window.innerHeight - 150), conn: c };
+  }
+  $effect(() => {
+    if (!connCtx) return;
+    const close = () => (connCtx = null);
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') connCtx = null; };
+    window.addEventListener('click', close);
+    window.addEventListener('contextmenu', close);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('click', close);
+      window.removeEventListener('contextmenu', close);
+      window.removeEventListener('keydown', onKey);
+    };
+  });
+  async function openConnWindow(id: string) {
+    try { await invoke('open_conn_window', { connId: id }); }
+    catch (e) { say(String(e), 'err'); }
+  }
   let footerEl = $state<HTMLElement | null>(null);
   $effect(() => {
     if (!switcherOpen) return;
@@ -1082,7 +1106,20 @@
   function faviconGuess(url?: string): string { const u = (url ?? '').trim(); return u ? u.replace(/\/+$/, '') + '/favicon.ico' : ''; }
   function siteFav(slug: string): string { const s = sites.find((x) => x.slug === slug); return s?.favicon || s?.logo || faviconGuess(s?.url); }
 
-  async function refreshConns() { try { conns = await invoke('list_connections'); if (!activeConnId && conns.length) selectConn(conns[0].id); } catch (e) { say(String(e), 'err'); } }
+  // 「新窗口打开」开出来的窗口带 ?conn=<id>：这一份前端就固定开在那个连接上。
+  // （连接/对话/SSH 会话都在 Rust 侧同一份 AppState 里，多个窗口看到的是同一份数据。）
+  function bootConnId(): string {
+    try { return new URLSearchParams(location.search).get('conn') ?? ''; } catch { return ''; }
+  }
+  async function refreshConns() {
+    try {
+      conns = await invoke('list_connections');
+      if (!activeConnId && conns.length) {
+        const want = bootConnId();
+        selectConn(conns.some((c) => c.id === want) ? want : conns[0].id);
+      }
+    } catch (e) { say(String(e), 'err'); }
+  }
   async function refreshBrains() { try { brains = await invoke('detect_brains'); } catch (e) { say(String(e), 'err'); } }
   let copiedCmd = $state('');
   async function copyCmd(cmd: string) {
@@ -2835,7 +2872,8 @@
       {#if switcherOpen}
         <div class="conn-switch">
           {#each conns as c (c.id)}
-            <button class="cs-item {activeConnId === c.id ? 'on' : ''}" onclick={() => { selectConn(c.id); switcherOpen = false; }}>
+            <button class="cs-item {activeConnId === c.id ? 'on' : ''}" onclick={() => { selectConn(c.id); switcherOpen = false; }}
+              oncontextmenu={(e) => openConnCtx(e, c)}>
               {#if c.kind === 'cloudflare'}{@render cfMark(18)}{:else if c.kind === 'ssh'}{@render sshMark(18)}{:else}<SiteMark size={18} />{/if}
               <span class="cs-main"><b>{c.name}{#if packUpdates[c.id]}<span class="pack-dot" title="技能包有新版，去「连接与模型设置」一键升级"></span>{/if}</b>
                 {#if c.kind === 'ssh'}
@@ -2847,7 +2885,7 @@
             </button>
           {/each}
           <div class="cs-div"></div>
-          <button class="cs-act" onclick={() => { switcherOpen = false; importPack(); }}>{@render plusIcon()}导入技能包</button>
+          <button class="cs-act" onclick={() => { switcherOpen = false; importPack(); }}>{@render plusIcon()}导入 gcms 技能包</button>
           <button class="cs-act" onclick={() => { switcherOpen = false; openCfConnect(); }}>{@render cfMark(15)}连接 Cloudflare</button>
           <button class="cs-act" onclick={() => { switcherOpen = false; openSshConnect(); }}>{@render sshMark(15)}新建远程连接</button>
           <button class="cs-act" onclick={() => { switcherOpen = false; setupOpen = true; }}>{@render gearIcon()}连接与模型设置…</button>
@@ -3810,7 +3848,8 @@
       <div class="conn-list">
         {#each conns as c (c.id)}
           <div class="conn-row {activeConnId === c.id ? 'on' : ''}" role="button" tabindex="0"
-            onclick={() => selectConn(c.id)} onkeydown={(e) => e.key === 'Enter' && selectConn(c.id)}>
+            onclick={() => selectConn(c.id)} onkeydown={(e) => e.key === 'Enter' && selectConn(c.id)}
+            oncontextmenu={(e) => openConnCtx(e, c)}>
             {#if c.kind === 'cloudflare'}{@render cfMark(22)}{:else if c.kind === 'ssh'}{@render sshMark(22)}{:else}<SiteMark size={22} />{/if}
             <span class="conn-main"><b>{c.name}</b>
               {#if c.kind === 'ssh'}
@@ -3983,6 +4022,27 @@
         {/if}
       </div>
     </div>
+  </div>
+{/if}
+
+{#if connCtx}
+  <!-- 连接切换器的右键菜单。菜单项按连接类型给：能做的才列，做不了的不摆在那儿灰着。 -->
+  {@const c = connCtx.conn}
+  <div class="ctx-menu fctx" style="left:{connCtx.x}px; top:{connCtx.y}px" role="menu" tabindex="-1">
+    <button class="ctx-item" role="menuitem" onclick={() => openConnWindow(c.id)}>新窗口打开</button>
+    {#if c.kind === 'ssh'}
+      <button class="ctx-item" role="menuitem" onclick={() => { switcherOpen = false; selectConn(c.id); openRemote(); }}>远程终端</button>
+      <div class="ctx-div"></div>
+      <button class="ctx-item" role="menuitem" onclick={() => { switcherOpen = false; openSshEdit(c); }}>编辑连接…</button>
+    {:else if c.kind === 'gcms'}
+      <div class="ctx-div"></div>
+      <button class="ctx-item" role="menuitem" onclick={() => { switcherOpen = false; selectConn(c.id); refreshSites(); }}>刷新站点</button>
+      {#if packUpdates[c.id]}
+        <button class="ctx-item" role="menuitem" onclick={() => upgradePack(c.id)} disabled={!!packUpdating[c.id]}>升级技能包 {packUpdates[c.id]}</button>
+      {/if}
+    {/if}
+    <div class="ctx-div"></div>
+    <button class="ctx-item danger" role="menuitem" onclick={() => { switcherOpen = false; removeConn(c.id); }}>删除连接…</button>
   </div>
 {/if}
 
