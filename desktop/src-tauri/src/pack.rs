@@ -12,7 +12,7 @@ use crate::keychain;
 pub struct Connection {
     pub id: String,
     pub name: String,
-    /// 连接类型：gcms（导入技能包）| cloudflare（CF token 建站）。旧连接缺省即 gcms。
+    /// 连接类型：gcms（导入技能包）| cloudflare（CF token 建站）| ssh（远程机器）。旧连接缺省即 gcms。
     #[serde(default = "default_kind")]
     pub kind: String,
     pub api_base: String,
@@ -25,6 +25,22 @@ pub struct Connection {
     /// Cloudflare 账号 id（仅 kind=cloudflare）；gcms 连接为空。
     #[serde(default)]
     pub account_id: String,
+    /// 以下均仅 kind=ssh。密码/私钥口令进钥匙串（account = conn_id，与其它 kind 同约定，
+    /// 因此 remove 无需特殊处理、不会留孤儿密钥）；私钥只存路径引用，不拷贝用户私钥。
+    #[serde(default)]
+    pub ssh_host: String,
+    #[serde(default)]
+    pub ssh_port: u16,
+    #[serde(default)]
+    pub ssh_user: String,
+    /// password | key
+    #[serde(default)]
+    pub ssh_auth: String,
+    #[serde(default)]
+    pub ssh_key_path: String,
+    /// 用户已确认的主机指纹（TOFU）：此后每次连接必须匹配，不匹配即拒（防中间人）。
+    #[serde(default)]
+    pub ssh_fingerprint: String,
     /// 技能包版本（= 下发它的服务端版本）。空 = 未知（旧导入 / 服务端太老没有版本端点）。
     #[serde(default)]
     pub pack_version: String,
@@ -188,6 +204,12 @@ impl ConnStore {
                 key_prefix: prefix,
                 key_kind: key_kind.to_string(),
                 account_id: String::new(),
+                ssh_host: String::new(),
+                ssh_port: 0,
+                ssh_user: String::new(),
+                ssh_auth: String::new(),
+                ssh_key_path: String::new(),
+                ssh_fingerprint: String::new(),
                 pack_version: read_pack_version(&skill_dir),
                 created_at: chrono_now(),
             };
@@ -238,6 +260,97 @@ impl ConnStore {
             key_prefix: prefix,
             key_kind: "cf_token".into(),
             account_id: account_id.trim().to_string(),
+            ssh_host: String::new(),
+            ssh_port: 0,
+            ssh_user: String::new(),
+            ssh_auth: String::new(),
+            ssh_key_path: String::new(),
+            ssh_fingerprint: String::new(),
+            pack_version: String::new(),
+            created_at: chrono_now(),
+        };
+        let mut conns = self.list();
+        conns.push(conn.clone());
+        if let Err(e) = self.save(&conns) {
+            let _ = keychain::delete_key(&conn_id);
+            let _ = fs::remove_dir_all(&dir);
+            return Err(e);
+        }
+        Ok(conn)
+    }
+
+    /// 新建 SSH 远程连接：密码/私钥口令进钥匙串，建工作区目录，写 connections.json。
+    /// 调用方必须已先 probe 过并由用户确认了主机指纹（TOFU）——没有指纹一律拒绝。
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_ssh(
+        &self,
+        name: &str,
+        host: &str,
+        port: u16,
+        user: &str,
+        auth: &str,
+        key_path: &str,
+        secret: &str,
+        fingerprint: &str,
+    ) -> Result<Connection, String> {
+        let (host, user, key_path, fingerprint) =
+            (host.trim(), user.trim(), key_path.trim(), fingerprint.trim());
+        if host.is_empty() {
+            return Err("主机不能为空".into());
+        }
+        if user.is_empty() {
+            return Err("用户名不能为空".into());
+        }
+        if fingerprint.is_empty() {
+            return Err("缺少主机指纹：请先「测试连接」并确认指纹".into());
+        }
+        match auth {
+            "password" if secret.is_empty() => return Err("密码不能为空".into()),
+            "key" if key_path.is_empty() => return Err("请选择私钥文件".into()),
+            "password" | "key" => {}
+            other => return Err(format!("未知认证方式: {other}")),
+        }
+        let port = if port == 0 { 22 } else { port };
+        // 去重：同一台机器的同一用户视为同一连接。
+        if let Some(dup) = self.list().iter().find(|c| {
+            c.kind == "ssh" && c.ssh_host == host && c.ssh_port == port && c.ssh_user == user
+        }) {
+            return Err(format!(
+                "已存在相同的远程连接「{}」（{user}@{host}:{port}）。",
+                dup.name
+            ));
+        }
+        let conn_id = uuid::Uuid::new_v4().to_string();
+        let dir = self.packs_dir.join(&conn_id);
+        fs::create_dir_all(&dir).map_err(|e| format!("create ssh workspace: {e}"))?;
+        // 无口令的私钥没有秘密可存 —— 不写钥匙串（读侧用 get_key(..).ok() 兜底）。
+        if !secret.is_empty() {
+            if let Err(e) = keychain::set_key(&conn_id, secret) {
+                let _ = fs::remove_dir_all(&dir);
+                return Err(e);
+            }
+        }
+        let conn = Connection {
+            id: conn_id.clone(),
+            name: if name.trim().is_empty() {
+                format!("{user}@{host}")
+            } else {
+                name.trim().into()
+            },
+            kind: "ssh".into(),
+            api_base: String::new(),
+            skill_dir: dir.to_string_lossy().into_owned(),
+            // 故意留空：key_prefix 会显示在连接列表里，SSH 这里的秘密是密码/口令，
+            // 照抄前缀等于把密码前 13 位印在 UI 上。副标题改显 user@host:port。
+            key_prefix: String::new(),
+            key_kind: if auth == "key" { "ssh_key".into() } else { "ssh_password".into() },
+            account_id: String::new(),
+            ssh_host: host.into(),
+            ssh_port: port,
+            ssh_user: user.into(),
+            ssh_auth: auth.into(),
+            ssh_key_path: key_path.into(),
+            ssh_fingerprint: fingerprint.into(),
             pack_version: String::new(),
             created_at: chrono_now(),
         };

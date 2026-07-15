@@ -13,6 +13,7 @@ mod pack;
 mod path_env;
 mod permit;
 mod scheduled;
+mod ssh;
 mod tasks;
 mod tools;
 mod usage;
@@ -42,6 +43,8 @@ struct AppState {
     data_dir: PathBuf,
     /// 当前运行的本地预览（wrangler dev）进程；一次只跑一个。
     preview: Arc<Mutex<Option<PreviewHandle>>>,
+    /// 活跃的 SSH PTY 会话（按 conn_id）。
+    ssh: ssh::SshSessions,
 }
 
 fn now_secs() -> u64 {
@@ -280,6 +283,154 @@ async fn connect_cloudflare(
     tauri::async_runtime::spawn_blocking(move || store.add_cloudflare(&name, &token, &account_id))
         .await
         .map_err(|e| e.to_string())?
+}
+
+// ---- SSH 远程连接 ----
+
+/// 由「表单原始输入」组装认证材料（试连时用，此时还没有连接记录/钥匙串条目）。
+fn ssh_auth_from(
+    auth: &str,
+    user: &str,
+    password: &str,
+    key_path: &str,
+    key_pass: &str,
+) -> ssh::SshAuth {
+    if auth == "key" {
+        ssh::SshAuth {
+            user: user.into(),
+            password: None,
+            key_path: Some(key_path.into()),
+            key_pass: (!key_pass.is_empty()).then(|| key_pass.into()),
+        }
+    } else {
+        ssh::SshAuth {
+            user: user.into(),
+            password: Some(password.into()),
+            key_path: None,
+            key_pass: None,
+        }
+    }
+}
+
+/// 由「已存的连接 + 钥匙串」组装认证材料。
+/// 无口令私钥不会有钥匙串条目 —— get_key 失败按「无口令」处理，不是错误。
+fn ssh_auth_for(conn: &pack::Connection) -> Result<ssh::SshAuth, String> {
+    let secret = keychain::get_key(&conn.id).ok();
+    Ok(if conn.ssh_auth == "key" {
+        ssh::SshAuth {
+            user: conn.ssh_user.clone(),
+            password: None,
+            key_path: Some(conn.ssh_key_path.clone()),
+            key_pass: secret.filter(|s| !s.is_empty()),
+        }
+    } else {
+        ssh::SshAuth {
+            user: conn.ssh_user.clone(),
+            password: Some(secret.ok_or("钥匙串里没有这个连接的密码，请删除后重新添加")?),
+            key_path: None,
+            key_pass: None,
+        }
+    })
+}
+
+/// 试连：拿主机指纹 + 验证认证。首次添加传空 expect（TOFU 探测，指纹交 UI 确认）。
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+async fn verify_ssh(
+    host: String,
+    port: u16,
+    user: String,
+    auth: String,
+    password: String,
+    key_path: String,
+    key_pass: String,
+    expect_fingerprint: String,
+) -> Result<ssh::SshProbe, String> {
+    let a = ssh_auth_from(&auth, &user, &password, &key_path, &key_pass);
+    let expect = (!expect_fingerprint.trim().is_empty()).then(|| expect_fingerprint.trim().to_string());
+    ssh::probe(&host, if port == 0 { 22 } else { port }, &a, expect).await
+}
+
+/// 新建 SSH 连接（指纹必须是 UI 里用户确认过的那个）。
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+async fn connect_ssh(
+    state: tauri::State<'_, AppState>,
+    name: String,
+    host: String,
+    port: u16,
+    user: String,
+    auth: String,
+    key_path: String,
+    secret: String,
+    fingerprint: String,
+) -> Result<pack::Connection, String> {
+    let store = state.conns.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        store.add_ssh(&name, &host, port, &user, &auth, &key_path, &secret, &fingerprint)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// 打开交互式 PTY shell，输出流给前端 xterm。连接时带上已确认指纹，不匹配即拒。
+#[tauri::command]
+async fn ssh_open_shell(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    cols: u32,
+    rows: u32,
+    on_event: Channel<ssh::SshEvent>,
+) -> Result<(), String> {
+    let conn = state.conns.get(&conn_id)?;
+    if conn.kind != "ssh" {
+        return Err("这不是远程连接".into());
+    }
+    let auth = ssh_auth_for(&conn)?;
+    let expect = (!conn.ssh_fingerprint.is_empty()).then(|| conn.ssh_fingerprint.clone());
+    state
+        .ssh
+        .open_shell(
+            &conn_id,
+            &conn.ssh_host,
+            conn.ssh_port,
+            &auth,
+            expect,
+            cols.max(1),
+            rows.max(1),
+            on_event,
+        )
+        .await
+}
+
+/// 键盘输入（base64：可能敲出控制字节/非 UTF-8 序列）。
+#[tauri::command]
+async fn ssh_input(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    b64: String,
+) -> Result<(), String> {
+    use base64::Engine as _;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(b64.as_bytes())
+        .map_err(|e| format!("输入解码失败: {e}"))?;
+    state.ssh.input(&conn_id, &bytes).await
+}
+
+#[tauri::command]
+async fn ssh_resize(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    cols: u32,
+    rows: u32,
+) -> Result<(), String> {
+    state.ssh.resize(&conn_id, cols.max(1), rows.max(1)).await
+}
+
+#[tauri::command]
+async fn ssh_close(state: tauri::State<'_, AppState>, conn_id: String) -> Result<(), String> {
+    state.ssh.close(&conn_id).await;
+    Ok(())
 }
 
 /// 把粘贴/拖拽的文件存进当前会话的工作目录 uploads/ 下，返回相对路径（AI 可直接读取）。
@@ -3232,6 +3383,7 @@ pub fn run() {
                 firing: Arc::new(Mutex::new(HashSet::new())),
                 data_dir: data_dir.clone(),
                 preview: Arc::new(Mutex::new(None)),
+                ssh: ssh::SshSessions::new(),
             });
             setup_tray(app.handle())?;
             spawn_scheduler(app.handle().clone());
@@ -3266,6 +3418,12 @@ pub fn run() {
             install_claude,
             verify_cf_token,
             connect_cloudflare,
+            verify_ssh,
+            connect_ssh,
+            ssh_open_shell,
+            ssh_input,
+            ssh_resize,
+            ssh_close,
             save_attachment,
             read_workdir_image,
             resolve_workdir_file,

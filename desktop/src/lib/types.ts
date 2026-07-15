@@ -1,14 +1,24 @@
 export interface Connection {
   id: string;
   name: string;
-  /** gcms（导入技能包）| cloudflare（CF token 建站）。旧连接缺省即 gcms。 */
+  /** gcms（导入技能包）| cloudflare（CF token 建站）| ssh（远程机器）。旧连接缺省即 gcms。 */
   kind: string;
   api_base: string;
   skill_dir: string;
+  /** SSH 连接此项恒为空：它的秘密是密码/口令，显示前缀等于把密码印在 UI 上。 */
   key_prefix: string;
   key_kind: string;
   /** Cloudflare 账号 id（仅 kind=cloudflare）。 */
   account_id: string;
+  /** 以下仅 kind=ssh。 */
+  ssh_host?: string;
+  ssh_port?: number;
+  ssh_user?: string;
+  /** password | key */
+  ssh_auth?: string;
+  ssh_key_path?: string;
+  /** 已确认的主机指纹（TOFU）；连接时必须匹配。 */
+  ssh_fingerprint?: string;
   /** 技能包版本（=服务端版本）；空 = 未知。 */
   pack_version?: string;
   created_at: string;

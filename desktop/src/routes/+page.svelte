@@ -1,5 +1,8 @@
 <script lang="ts">
   import { invoke, Channel } from '@tauri-apps/api/core';
+  // xterm 自带样式：必须从 JS 侧引入。写进组件样式块的 @import 会被 Svelte 作用域化，
+  // 而 xterm 的 DOM 是运行时建的、静态分析看不到 → 26 条 unused selector 警告。
+  import '@xterm/xterm/css/xterm.css';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { getVersion } from '@tauri-apps/api/app';
   import { open, confirm as confirmDialog } from '@tauri-apps/plugin-dialog';
@@ -129,7 +132,7 @@
       if (viewBusy) say('权限档位已切换，从下一轮开始生效（不影响正在跑的这轮）');
     } catch (e) { say(String(e), 'err'); }
   }
-  let view = $state<'launcher' | 'thread' | 'schedule' | 'tasks' | 'managed' | 'templates' | 'prompts'>('launcher');
+  let view = $state<'launcher' | 'thread' | 'schedule' | 'tasks' | 'managed' | 'templates' | 'prompts' | 'remote'>('launcher');
 
   // 排期视图
   let sched = $state<ScheduledItem[]>([]);
@@ -1125,7 +1128,13 @@
       // 换连接＝换工作区：关掉上个连接的对话/排期/定时任务视图，别串场。
       // 模板库 / 提示词库只在 CF 连接下有；切到 gcms 时也退回启动页。
       activeConvId = ''; activeConv = null;
-      if (view === 'thread' || view === 'schedule' || view === 'tasks' || view === 'managed' || ((view === 'templates' || view === 'prompts') && conn?.kind !== 'cloudflare')) view = 'launcher';
+      if (view === 'thread' || view === 'schedule' || view === 'tasks' || view === 'managed' || view === 'remote' || ((view === 'templates' || view === 'prompts') && conn?.kind !== 'cloudflare')) view = 'launcher';
+    }
+    if (conn?.kind === 'ssh') {
+      // SSH 连接没有站点/项目可发现；直接进远程终端（$effect 会起 xterm）。
+      disposeTerm();
+      view = 'remote';
+      return;
     }
     if (conn?.kind === 'cloudflare') {
       // 只在真正换连接时清输入 + 拨默认档；同连接重选（如刷新）不动用户已填的项目名。
@@ -1210,6 +1219,134 @@
       await refreshConns();
     } catch (e) { say(String(e), 'err'); }
     finally { delete packUpdating[connId]; }
+  }
+
+  // ---------- 新建远程连接（SSH） ----------
+  // 安全：密码/私钥口令只在这个表单的内存里过一下，随 connect_ssh 进钥匙串，绝不落盘。
+  // 主机指纹走 TOFU：必须先「测试连接」拿到指纹、由你确认后才能建连接（后端无指纹一律拒）。
+  let sshOpen = $state(false);
+  let sshTesting = $state(false);
+  let sshConnecting = $state(false);
+  let sshErr = $state('');
+  let sshFp = $state(''); // 试连拿到的主机指纹；非空 = 认证已通过、待你确认指纹
+  let sshF = $state({ name: '', host: '', port: 22, user: '', auth: 'password', password: '', keyPath: '', keyPass: '' });
+  const sshAuthOpts = [
+    { value: 'password', label: '密码', sub: '用账号密码登录' },
+    { value: 'key', label: '密钥', sub: '用私钥文件登录（更安全）' },
+  ];
+  function openSshConnect() {
+    sshOpen = true; sshErr = ''; sshFp = '';
+    sshF = { name: '', host: '', port: 22, user: '', auth: 'password', password: '', keyPath: '', keyPass: '' };
+  }
+  async function pickSshKey() {
+    try {
+      const p = await open({ multiple: false, title: '选择私钥文件（如 ~/.ssh/id_ed25519）' });
+      if (typeof p === 'string') sshF.keyPath = p;
+    } catch (e) { sshErr = String(e); }
+  }
+  const sshCanTest = $derived(
+    !!sshF.host.trim() && !!sshF.user.trim() &&
+    (sshF.auth === 'key' ? !!sshF.keyPath.trim() : !!sshF.password)
+  );
+  async function testSsh() {
+    if (sshTesting || !sshCanTest) return;
+    sshTesting = true; sshErr = ''; sshFp = '';
+    try {
+      const p = await invoke<{ fingerprint: string; auth_ok: boolean; error: string }>('verify_ssh', {
+        host: sshF.host.trim(), port: Number(sshF.port) || 22, user: sshF.user.trim(), auth: sshF.auth,
+        password: sshF.password, keyPath: sshF.keyPath, keyPass: sshF.keyPass, expectFingerprint: '',
+      });
+      sshFp = p.fingerprint;
+    } catch (e) { sshErr = String(e); }
+    finally { sshTesting = false; }
+  }
+  async function confirmSsh() {
+    if (sshConnecting || !sshFp) return;
+    sshConnecting = true; sshErr = '';
+    try {
+      const conn = await invoke<Connection>('connect_ssh', {
+        name: sshF.name.trim(), host: sshF.host.trim(), port: Number(sshF.port) || 22,
+        user: sshF.user.trim(), auth: sshF.auth, keyPath: sshF.keyPath,
+        secret: sshF.auth === 'key' ? sshF.keyPass : sshF.password,
+        fingerprint: sshFp,
+      });
+      sshOpen = false; say(`已连接「${conn.name}」`);
+      await refreshConns(); await selectConn(conn.id);
+      view = 'remote';
+    } catch (e) { sshErr = String(e); }
+    finally { sshConnecting = false; }
+  }
+
+  // ---------- 远程终端（xterm + PTY 流） ----------
+  const isSshConn = $derived(activeConn?.kind === 'ssh');
+  let termEl = $state<HTMLDivElement | null>(null);
+  let termOn = $state(false);
+  let term: import('@xterm/xterm').Terminal | null = null;
+  let termFit: import('@xterm/addon-fit').FitAddon | null = null;
+  let termConnId = '';
+  function openRemote() { view = 'remote'; activeConvId = ''; activeConv = null; }
+  function b64ToBytes(b64: string): Uint8Array {
+    const s = atob(b64); const a = new Uint8Array(s.length);
+    for (let i = 0; i < s.length; i++) a[i] = s.charCodeAt(i);
+    return a;
+  }
+  function strToB64(s: string): string {
+    let bin = '';
+    for (const b of new TextEncoder().encode(s)) bin += String.fromCharCode(b);
+    return btoa(bin);
+  }
+  function disposeTerm() {
+    if (term) { try { term.dispose(); } catch { /* */ } }
+    term = null; termFit = null; termOn = false; termConnId = '';
+  }
+  // 进 remote 视图且容器就位 → 起终端；切走/换连接由 $effect 的清理拆掉。
+  $effect(() => {
+    const id = activeConnId;
+    const el = termEl;
+    if (view !== 'remote' || !isSshConn || !el || !id) return;
+    if (termConnId === id && term) return; // 同一连接已在跑
+    void startTerm(id, el);
+  });
+  async function startTerm(id: string, el: HTMLDivElement) {
+    disposeTerm();
+    termConnId = id;
+    // xterm 要 DOM，动态 import（SSR 关着，但仍别在模块顶层拉进来）。
+    const [{ Terminal }, { FitAddon }] = await Promise.all([
+      import('@xterm/xterm'),
+      import('@xterm/addon-fit'),
+    ]);
+    const t = new Terminal({
+      fontSize: 12,
+      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+      cursorBlink: true,
+      theme: { background: '#1c1917', foreground: '#e8e4dc', cursor: '#e8e4dc' },
+    });
+    const f = new FitAddon();
+    t.loadAddon(f); t.open(el); f.fit();
+    term = t; termFit = f;
+    const ch = new Channel<{ type: string; b64?: string; error?: string }>();
+    ch.onmessage = (ev) => {
+      if (term !== t) return; // 已被拆掉/换连接，丢弃尾包
+      if (ev.type === 'data' && ev.b64) t.write(b64ToBytes(ev.b64));
+      else if (ev.type === 'closed') {
+        termOn = false;
+        t.write(`\r\n\x1b[90m—— 连接已关闭${ev.error ? '：' + ev.error : ''} ——\x1b[0m\r\n`);
+      }
+    };
+    t.onData((d) => { void invoke('ssh_input', { connId: id, b64: strToB64(d) }); });
+    t.onResize(({ cols, rows }) => { void invoke('ssh_resize', { connId: id, cols, rows }); });
+    try {
+      await invoke('ssh_open_shell', { connId: id, cols: t.cols, rows: t.rows, onEvent: ch });
+      termOn = true;
+    } catch (e) {
+      t.write(`\r\n\x1b[31m${String(e)}\x1b[0m\r\n`);
+    }
+  }
+  async function reconnectTerm() {
+    const id = activeConnId; const el = termEl;
+    if (!id || !el) return;
+    await invoke('ssh_close', { connId: id }).catch(() => {});
+    await startTerm(id, el);
   }
 
   // ---------- 连接 Cloudflare ----------
@@ -2348,6 +2485,7 @@
           <div class="cs-div"></div>
           <button class="cs-act" onclick={() => { switcherOpen = false; importPack(); }}>{@render plusIcon()}导入技能包</button>
           <button class="cs-act" onclick={() => { switcherOpen = false; openCfConnect(); }}>{@render cfMark(15)}连接 Cloudflare</button>
+          <button class="cs-act" onclick={() => { switcherOpen = false; openSshConnect(); }}>{@render sshMark(15)}新建远程连接</button>
           <button class="cs-act" onclick={() => { switcherOpen = false; setupOpen = true; }}>{@render gearIcon()}连接与模型设置…</button>
         </div>
       {/if}
@@ -2806,6 +2944,15 @@
         </div>
       </div>
 
+    {:else if view === 'remote'}
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <header class="thread-head" data-tauri-drag-region onmousedown={startDrag}>
+        <div class="th-info"><b>远程终端</b><small>{activeConn?.ssh_user}@{activeConn?.ssh_host}:{activeConn?.ssh_port} · {termOn ? '已连接' : '未连接'}</small></div>
+        <button class="btn soft bare" onclick={reconnectTerm}>{@render refreshIcon(false)}重新连接</button>
+      </header>
+      <!-- 终端自己管滚动：别套 .thread（它的 overflow-y:auto 会和 xterm 打架）。 -->
+      <div class="term-wrap"><div class="term" bind:this={termEl}></div></div>
+
     {:else if view === 'prompts'}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <header class="thread-head" data-tauri-drag-region onmousedown={startDrag}>
@@ -3126,6 +3273,8 @@
 
 {#snippet gearIcon()}<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M2 5.3h3.5M9.3 5.3H14M2 10.7h5.1M10.9 10.7H14" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" /><circle cx="7.4" cy="5.3" r="1.6" stroke="currentColor" stroke-width="1.3" /><circle cx="9" cy="10.7" r="1.6" stroke="currentColor" stroke-width="1.3" /></svg>{/snippet}
 {#snippet cfMark(size: number)}<svg class="cf-mark" width={size} height={size} viewBox="0 0 128 128"><path fill="#fff" d="m115.679 69.288l-15.591-8.94l-2.689-1.163l-63.781.436v32.381h82.061z" /><path fill="#f38020" d="M87.295 89.022c.763-2.617.472-5.015-.8-6.796c-1.163-1.635-3.125-2.58-5.488-2.689l-44.737-.581c-.291 0-.545-.145-.691-.363s-.182-.509-.109-.8c.145-.436.581-.763 1.054-.8l45.137-.581c5.342-.254 11.157-4.579 13.192-9.885l2.58-6.723c.109-.291.145-.581.073-.872c-2.906-13.158-14.644-22.97-28.672-22.97c-12.938 0-23.913 8.359-27.838 19.952a13.35 13.35 0 0 0-9.267-2.58c-6.215.618-11.193 5.597-11.811 11.811c-.145 1.599-.036 3.162.327 4.615C10.104 70.051 2 78.337 2 88.549c0 .909.073 1.817.182 2.726a.895.895 0 0 0 .872.763h82.57c.472 0 .909-.327 1.054-.8z" /><path fill="#faae40" d="M101.542 60.275c-.4 0-.836 0-1.236.036c-.291 0-.545.218-.654.509l-1.744 6.069c-.763 2.617-.472 5.015.8 6.796c1.163 1.635 3.125 2.58 5.488 2.689l9.522.581c.291 0 .545.145.691.363s.182.545.109.8c-.145.436-.581.763-1.054.8l-9.924.582c-5.379.254-11.157 4.579-13.192 9.885l-.727 1.853c-.145.363.109.727.509.727h34.089c.4 0 .763-.254.872-.654c.581-2.108.909-4.325.909-6.614c0-13.447-10.975-24.422-24.458-24.422" /></svg>{/snippet}
+{#snippet sshMark(size: number)}<svg width={size} height={size} viewBox="0 0 16 16" fill="none"><rect x="1.6" y="2.6" width="12.8" height="10.8" rx="2" stroke="currentColor" stroke-width="1.3" /><path d="M4.4 6.2 6.6 8l-2.2 1.8M8.2 10.2h3.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" /></svg>{/snippet}
+
 {#snippet wrNote()}<div class="wr-note"><svg class="wr-ic" width="15" height="15" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.6" stroke="currentColor" stroke-width="1.3" /><path d="M8 4.8v4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" /><circle cx="8" cy="11.1" r="0.6" fill="currentColor" /></svg><span>{wrInstalling ? '正在从 npm 装 wrangler，首次约 1–2 分钟，别关窗…' : '还没装 wrangler，预览 / 部署要用'}</span><button class="wr-btn" onclick={installWrangler} disabled={wrInstalling}>{#if wrInstalling}<span class="wr-spin"></span>安装中 {elapsedLabel(wrElapsed)}{:else}一键安装{/if}</button></div>{/snippet}
 
 {#snippet taskIcon(kind: string)}
@@ -3266,6 +3415,56 @@
 {/if}
 
 <!-- 连接 Cloudflare -->
+{#if sshOpen}
+  <div class="mask" role="presentation" onclick={() => (sshOpen = false)}></div>
+  <div class="modal wide">
+    <header class="sheet-head"><b>新建远程连接</b><button class="x" onclick={() => (sshOpen = false)}>×</button></header>
+    <div class="sheet-body">
+      <p class="hint">SSH 到一台远程机器：能开终端、管文件。密码 / 私钥口令只进 {keystoreName}，绝不落盘。</p>
+      <div class="trow">
+        <div class="tfield" style="flex:2"><span>主机</span><input class="tin" bind:value={sshF.host} placeholder="例如 1.2.3.4 或 server.example.com" spellcheck="false" autocapitalize="off" autocorrect="off" /></div>
+        <div class="tfield" style="flex:1"><span>端口</span><input class="tin" type="number" bind:value={sshF.port} placeholder="22" /></div>
+      </div>
+      <div class="trow">
+        <div class="tfield"><span>用户名</span><input class="tin" bind:value={sshF.user} placeholder="root" spellcheck="false" autocapitalize="off" autocorrect="off" /></div>
+        <div class="tfield"><span>认证方式</span><Dropdown bind:value={sshF.auth} options={sshAuthOpts} /></div>
+      </div>
+      {#if sshF.auth === 'password'}
+        <div class="tfield"><span>密码</span><input class="tin" type="password" bind:value={sshF.password} autocomplete="off" /></div>
+      {:else}
+        <div class="tfield"><span>私钥文件（只记住路径，不会拷贝你的私钥）</span>
+          <div class="ssh-key-row">
+            <input class="tin" bind:value={sshF.keyPath} placeholder="~/.ssh/id_ed25519" spellcheck="false" autocapitalize="off" autocorrect="off" />
+            <button class="btn sm" onclick={pickSshKey}>选择…</button>
+          </div>
+        </div>
+        <div class="tfield"><span>私钥口令（没有就留空）</span><input class="tin" type="password" bind:value={sshF.keyPass} autocomplete="off" /></div>
+      {/if}
+      <div class="tfield"><span>名称（可选）</span><input class="tin" bind:value={sshF.name} placeholder={sshF.user && sshF.host ? `${sshF.user}@${sshF.host}` : '留空自动用 user@host'} /></div>
+
+      {#if sshErr}<div class="err-note">{sshErr}</div>{/if}
+
+      {#if sshFp}
+        <!-- TOFU：指纹必须由人确认过才建连接（后端无指纹直接拒）。 -->
+        <div class="ssh-fp">
+          <b>认证通过。请核对主机指纹：</b>
+          <code>{sshFp}</code>
+          <small>首次连接这台机器。请确认它和你在服务器上执行 <code>ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub</code> 看到的一致 —— 对不上可能是中间人。确认后此指纹会被记住，以后变了会直接拒连。</small>
+        </div>
+      {/if}
+
+      <div class="row-end">
+        <button class="btn ghost" onclick={() => (sshOpen = false)}>取消</button>
+        {#if !sshFp}
+          <button class="btn primary" onclick={testSsh} disabled={sshTesting || !sshCanTest}>{sshTesting ? '连接中…' : '测试连接'}</button>
+        {:else}
+          <button class="btn primary" onclick={confirmSsh} disabled={sshConnecting}>{sshConnecting ? '添加中…' : '指纹无误，添加'}</button>
+        {/if}
+      </div>
+    </div>
+  </div>
+{/if}
+
 {#if cfOpen}
   <div class="mask" role="presentation" onclick={() => !cfConnecting && !cfVerifying && (cfOpen = false)}></div>
   <div class="modal cf-modal">
@@ -3562,6 +3761,16 @@
 {/if}
 
 <style>
+  /* 远程终端：终端自己管滚动，容器不能给 overflow-y:auto（会和 xterm 打架）。 */
+  .term-wrap { flex: 1; min-height: 0; overflow: hidden; background: #1c1917; padding: 8px 10px; }
+  .term { width: 100%; height: 100%; }
+  .ssh-key-row { display: flex; gap: 6px; align-items: center; }
+  .ssh-key-row .tin { flex: 1; min-width: 0; }
+  .ssh-fp { display: flex; flex-direction: column; gap: 5px; padding: 9px 11px; border: 1px solid #cfc9ec; background: #f7f6ff; border-radius: 10px; }
+  .ssh-fp b { font-size: 12.5px; }
+  .ssh-fp > code { font-family: ui-monospace, monospace; font-size: 11.5px; color: var(--text); background: #fff; border: 1px solid var(--border); border-radius: 6px; padding: 4px 7px; overflow-wrap: anywhere; user-select: text; }
+  .ssh-fp small { color: var(--dim); font-size: 11px; line-height: 1.5; }
+  .ssh-fp small code { font-family: ui-monospace, monospace; font-size: 10.5px; background: #fff; border-radius: 4px; padding: 1px 4px; user-select: text; }
   :global(:root) {
     --bg: #ffffff; --rail: #faf9f7; --card: #ffffff;
     /* 浮层实底（更新吐司/附件 chip 等用）：此前未定义导致 var(--panel) 落空、浮层透明。 */
