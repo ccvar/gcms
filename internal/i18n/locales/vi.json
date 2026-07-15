@@ -24,6 +24,7 @@
   "footer.follow": "Theo dõi",
   "footer.admin": "Quản trị",
   "footer.rights": "Đã đăng ký bản quyền.",
+  "footer.telegram": "Kênh Telegram",
 
   "home.featured": "Nổi bật",
   "home.view_all": "Xem tất cả",
@@ -70,5 +71,6 @@
 
   "nf.title": "Không tìm thấy trang",
   "nf.desc": "Rất tiếc, trang bạn tìm kiếm không tồn tại hoặc đã được di chuyển.",
-  "nf.back": "Về trang chủ"
+  "nf.back": "Về trang chủ",
+  "article.telegram_cta": "Bài viết mới được gửi ngay: "
 }

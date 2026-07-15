@@ -24,6 +24,7 @@
   "footer.follow": "Ikuti",
   "footer.admin": "Admin",
   "footer.rights": "Hak cipta dilindungi.",
+  "footer.telegram": "Saluran Telegram",
 
   "home.featured": "Pilihan",
   "home.view_all": "Lihat semua",
@@ -70,5 +71,6 @@
 
   "nf.title": "Halaman tidak ditemukan",
   "nf.desc": "Maaf, halaman yang Anda cari tidak ada atau telah dipindahkan.",
-  "nf.back": "Kembali ke beranda"
+  "nf.back": "Kembali ke beranda",
+  "article.telegram_cta": "Artikel baru langsung terkirim: "
 }

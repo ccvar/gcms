@@ -303,6 +303,9 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 2.5rem 0; }
 /* 文章底部：标签 + 分享 */
 .article-foot { margin-top: 3rem; padding-top: 2rem; border-top: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 1rem; justify-content: space-between; align-items: center; }
 .tag-row { display: flex; flex-wrap: wrap; gap: .5rem; }
+/* 文章末尾 Telegram 订阅 CTA（配置了频道链接才渲染；跟随主题变量，保持轻量） */
+.article-foot .tg-cta { margin: 0; font-size: .9rem; color: var(--faint); }
+.article-foot .tg-cta a { color: var(--accent); }
 
 /* 上一篇/下一篇 */
 .pager { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 2.5rem; }

@@ -44,6 +44,7 @@
               {{with $p.Category}}<a class="tag" href="{{$.Tr.U (printf "/category/%s" .Slug)}}">{{.Name}}</a>{{end}}
               {{range $p.KeywordList}}<a class="tag" href="{{$.Tr.U (printf "/search?q=%s" .)}}">{{.}}</a>{{end}}
             </div>
+            {{if .TelegramURL}}<p class="tg-cta">📣 {{.Tr.T "article.telegram_cta"}}<a href="{{.TelegramURL}}"{{.ExternalLinkAttrs .TelegramURL}}>{{.Tr.T "footer.telegram"}}</a></p>{{end}}
           </div>
 
           {{if or .Prev .Next}}

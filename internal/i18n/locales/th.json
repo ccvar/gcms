@@ -24,6 +24,7 @@
   "footer.follow": "ติดตาม",
   "footer.admin": "ผู้ดูแล",
   "footer.rights": "สงวนลิขสิทธิ์",
+  "footer.telegram": "ช่อง Telegram",
 
   "home.featured": "แนะนำ",
   "home.view_all": "ดูทั้งหมด",
@@ -70,5 +71,6 @@
 
   "nf.title": "ไม่พบหน้า",
   "nf.desc": "ขออภัย หน้าที่คุณกำลังค้นหาไม่มีอยู่หรือถูกย้ายแล้ว",
-  "nf.back": "กลับหน้าแรก"
+  "nf.back": "กลับหน้าแรก",
+  "article.telegram_cta": "บทความใหม่ส่งถึงทันที: "
 }

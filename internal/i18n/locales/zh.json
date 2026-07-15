@@ -24,6 +24,7 @@
   "footer.follow": "关注",
   "footer.admin": "后台",
   "footer.rights": "保留所有权利。",
+  "footer.telegram": "Telegram 频道",
 
   "home.featured": "精选",
   "home.view_all": "查看全部",
@@ -70,5 +71,6 @@
 
   "nf.title": "页面未找到",
   "nf.desc": "抱歉，你访问的页面不存在或已被移动。",
-  "nf.back": "返回首页"
+  "nf.back": "返回首页",
+  "article.telegram_cta": "新文章第一时间推送："
 }

@@ -24,6 +24,7 @@
   "footer.follow": "Follow",
   "footer.admin": "Admin",
   "footer.rights": "All rights reserved.",
+  "footer.telegram": "Telegram Channel",
 
   "home.featured": "Featured",
   "home.view_all": "View all",
@@ -70,5 +71,6 @@
 
   "nf.title": "Page not found",
   "nf.desc": "Sorry, the page you are looking for does not exist or has moved.",
-  "nf.back": "Back to home"
+  "nf.back": "Back to home",
+  "article.telegram_cta": "New posts, delivered instantly: "
 }

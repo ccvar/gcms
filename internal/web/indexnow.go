@@ -76,6 +76,8 @@ func (s *Server) firePublishHooks(r *http.Request, p *store.Post) {
 		return
 	}
 	s.invalidateSitemapCache()
+	// Telegram 频道自动推送（仅 posts；台账去重，异步发送，绝不阻塞发布）。
+	s.fireTelegramPush(r, p)
 	base := s.publicBaseURL(r)
 	if isLocalBaseURL(base) {
 		return

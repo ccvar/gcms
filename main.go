@@ -34,16 +34,6 @@ func main() {
 	}
 	defer st.Close()
 
-	// 定时把到点的「定时发布」文章翻为已发布（启动时先处理一次）
-	_, _ = st.PublishDue()
-	go func() {
-		t := time.NewTicker(time.Minute)
-		defer t.Stop()
-		for range t.C {
-			_, _ = st.PublishDue()
-		}
-	}()
-
 	baseURL := env("BASE_URL", "http://localhost:8080")
 	uploadDir := env("UPLOAD_DIR", filepath.Join(filepath.Dir(dbPath), "uploads"))
 	systemDBPath := env("SYSTEM_DB", filepath.Join(filepath.Dir(dbPath), "system.db"))
@@ -70,6 +60,17 @@ func main() {
 	if err != nil {
 		log.Fatalf("初始化 Web 失败: %v", err)
 	}
+
+	// 定时把到点的「定时发布」文章翻为已发布（启动时先处理一次）。
+	// 走 Server 方法而非裸 st.PublishDue()：翻发布同时触发发布钩子（sitemap 缓存失效、Telegram 推送）。
+	srv.RunScheduledPublish()
+	go func() {
+		t := time.NewTicker(time.Minute)
+		defer t.Stop()
+		for range t.C {
+			srv.RunScheduledPublish()
+		}
+	}()
 
 	addr := env("ADDR", ":8080")
 	httpSrv := &http.Server{

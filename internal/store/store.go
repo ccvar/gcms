@@ -248,6 +248,15 @@ CREATE TABLE IF NOT EXISTS content_types (
   created_at   TEXT NOT NULL,
   updated_at   TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS tg_pushed (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  content_type TEXT NOT NULL,
+  content_id   INTEGER NOT NULL,
+  message_id   INTEGER NOT NULL DEFAULT 0,
+  ts           TEXT NOT NULL,
+  UNIQUE(content_type, content_id)
+);
 `
 
 func (s *Store) migrate() error {
@@ -1852,13 +1861,51 @@ func (s *Store) DeletePost(id int64) error {
 	return err
 }
 
-// PublishDue 把到点的「定时发布」文章翻为「已发布」，返回处理条数。由后台定时器调用。
-func (s *Store) PublishDue() (int64, error) {
-	res, err := s.db.Exec(`UPDATE posts SET status='published' WHERE status='scheduled' AND published_at<=?`, fmtTime(time.Now()))
+// PublishDue 把到点的「定时发布」文章翻为「已发布」，返回被翻的文章（供上层触发
+// 发布钩子，如 Telegram 推送）。由后台定时器调用（web.Server.RunScheduledPublish）。
+func (s *Store) PublishDue() ([]*Post, error) {
+	now := fmtTime(time.Now())
+	due, err := s.queryPosts(`WHERE p.status='scheduled' AND p.published_at<=?`, now)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	return res.RowsAffected()
+	if len(due) == 0 {
+		return nil, nil
+	}
+	if _, err := s.db.Exec(`UPDATE posts SET status='published' WHERE status='scheduled' AND published_at<=?`, now); err != nil {
+		return nil, err
+	}
+	for _, p := range due {
+		p.Status = "published"
+	}
+	return due, nil
+}
+
+// ---------- Telegram 推送台账 ----------
+// 每站一张 tg_pushed 表，(content_type, content_id) 唯一索引保证同一篇内容永远只推一次。
+
+// ClaimTelegramPush 认领一次 Telegram 推送：INSERT 命中唯一索引即认领失败（已推过或
+// 正被并发推送）。拿到认领的一方发送失败时应调用 ReleaseTelegramPush 释放，允许下次发布事件重试。
+func (s *Store) ClaimTelegramPush(contentType string, contentID int64) (bool, error) {
+	res, err := s.db.Exec(`INSERT INTO tg_pushed(content_type, content_id, message_id, ts)
+		VALUES(?,?,0,?) ON CONFLICT(content_type, content_id) DO NOTHING`, contentType, contentID, fmtTime(time.Now()))
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+// SetTelegramPushMessageID 推送成功后回写 Bot API 返回的 message_id。
+func (s *Store) SetTelegramPushMessageID(contentType string, contentID, messageID int64) error {
+	_, err := s.db.Exec(`UPDATE tg_pushed SET message_id=? WHERE content_type=? AND content_id=?`, messageID, contentType, contentID)
+	return err
+}
+
+// ReleaseTelegramPush 释放失败的推送认领（只删 message_id=0 的未完成行；已成功的记录不动）。
+func (s *Store) ReleaseTelegramPush(contentType string, contentID int64) error {
+	_, err := s.db.Exec(`DELETE FROM tg_pushed WHERE content_type=? AND content_id=? AND message_id=0`, contentType, contentID)
+	return err
 }
 
 // SlugExists 校验某语种内 slug 是否被其它文章占用（exceptID 为 0 表示新建）。

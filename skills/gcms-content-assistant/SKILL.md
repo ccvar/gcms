@@ -87,6 +87,7 @@ node scripts/gcms.js search-stats --days 28 --limit 100
 node scripts/gcms.js search-stats --days 28 --compare
 node scripts/gcms.js traffic-stats --days 7
 node scripts/gcms.js page-stats --days 7 --limit 50
+node scripts/gcms.js tg-stats
 ```
 
 ## Duplicate Check Before Drafting (similar)
@@ -113,6 +114,7 @@ node scripts/gcms.js page-stats --days 7 --limit 50
 - `traffic-stats` returns GA active users and sessions for the last `--days` days (default 7).
 - `page-stats` returns GA per-page traffic rows `{path, active_users, sessions}` (default `--days 7`, `--limit 50`, sorted by active users desc). Combine with `search-stats` to pick which old page to improve.
 - Responses are cached server-side for 1 hour; if the site has no Search Console / GA integration the API returns `search_console_not_connected` / `analytics_not_connected` — ask the user to connect Google in the platform admin first.
+- `tg-stats` returns the Telegram channel subscriber count `{ok, members}` via `GET /stats/telegram` (also cached 1 hour). Use it to track reader-to-subscriber conversion. If the site has no Telegram channel configured the API returns `telegram_not_configured` — ask the user to configure it in the site admin (Settings → Telegram) first. On an older server without this command the request returns 404; that is not a failure, just skip it.
 
 ## Multilingual Rules
 

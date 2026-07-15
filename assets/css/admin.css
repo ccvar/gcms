@@ -875,6 +875,15 @@ a.overview-log-title { text-decoration: none; }
 .site-google-badge .google-connect-logo { width: 17px; height: 17px; }
 .site-google-badge.is-on { opacity: .95; filter: none; }
 .site-google-badge:hover { opacity: 1; filter: none; background: color-mix(in srgb, var(--accent) 8%, transparent); transform: translateY(-1px); }
+/* Telegram 频道状态徽标（站点卡片）：正常色=已绑定+自动推送开；半透明=已绑定推送关；灰=未绑定。 */
+.site-tg-badge { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 7px; color: var(--muted); text-decoration: none; opacity: .42; transition: opacity .15s, background .15s, transform .15s, color .15s; }
+.site-tg-badge .site-inline-icon { width: 15px; height: 15px; stroke-width: 1.8; opacity: 1; }
+.site-tg-badge.is-on { opacity: .95; color: color-mix(in srgb, var(--accent) 84%, var(--muted)); }
+.site-tg-badge.is-dim { opacity: .6; }
+.site-tg-badge.is-warn { opacity: .55; } /* 半灰：已填频道但站点/平台两级都没有可用 bot token */
+.site-tg-badge:hover { opacity: 1; background: color-mix(in srgb, var(--accent) 8%, transparent); transform: translateY(-1px); }
+/* 顶部平台共用 bot 入口：已配置绿色（对齐 OAuth 入口），未配置沿用 is-missing 灰。 */
+.telegram-connect.is-configured summary { color: var(--ok); opacity: .95; }
 .site-card-metrics { display: inline-flex; align-items: center; justify-content: flex-start; flex-wrap: wrap; gap: .2rem; max-width: 100%; min-width: 0; margin-left: 0; }
 .site-ga-summary,
 .site-gsc-summary { display: inline-flex; align-items: center; max-width: min(100%, 11rem); min-height: 18px; padding: .04rem .34rem; border-radius: 999px; background: color-mix(in srgb, var(--line-soft) 44%, transparent); color: var(--muted); font-size: .54rem; font-weight: 760; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: help; }
@@ -1028,6 +1037,16 @@ a.overview-log-title { text-decoration: none; }
 .site-domain-modal:not(:target) { display: none; }
 .site-domain-modal:target { display: grid; }
 .site-domain-modal .modal-card { width: min(520px, 92vw); }
+/* 站点卡片「Telegram 频道」就地配置弹窗（:target 式，同域名弹窗）。 */
+.site-telegram-modal:not(:target) { display: none; }
+.site-telegram-modal:target { display: grid; }
+.site-telegram-modal .modal-card { width: min(520px, 92vw); }
+.site-telegram-form { display: grid; gap: .8rem; margin-top: .35rem; }
+.site-telegram-token-override summary { cursor: pointer; font-size: .8rem; color: var(--muted); }
+.site-telegram-token-override[open] summary { color: var(--ink-soft); }
+.site-telegram-modal-actions { display: flex; align-items: center; gap: .6rem; }
+.site-telegram-full-link { margin-left: auto; font-size: .8rem; color: var(--muted); }
+.site-telegram-full-link:hover { color: var(--accent); }
 .site-starter-help-modal .modal-card { width: min(660px, 92vw); }
 .site-starter-help-card { max-height: min(86vh, 760px); overflow: auto; }
 /* 域名弹窗内容变长（含 Cloudflare 段）时：标题栏固定、表单区域内部滚动 */
@@ -1474,6 +1493,7 @@ a.overview-log-title { text-decoration: none; }
 .giscus-step .button-row { justify-content: flex-start; margin: 0; }
 .giscus-parse-message { margin: -.15rem 0 0; color: var(--success); font: 750 .82rem/1.5 var(--sans); }
 .giscus-parse-message.is-error { color: var(--danger); }
+.telegram-test-result.is-error { color: var(--danger); }
 .giscus-quick-status { display: grid; gap: .72rem; min-width: 0; padding: .9rem; border: 1px solid var(--line); border-radius: 8px; background: color-mix(in srgb, var(--surface) 86%, var(--line-soft)); }
 .giscus-quick-status.is-ready { border-color: color-mix(in srgb, var(--success) 26%, var(--line)); background: color-mix(in srgb, var(--success) 6%, var(--surface)); }
 .giscus-quick-status strong { color: var(--ink); font: 900 .92rem/1.35 var(--sans); }

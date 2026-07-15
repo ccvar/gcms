@@ -78,6 +78,7 @@ function usage(code = 2) {
   out("  gcms.js search-stats --site <slug|id> [--days 28] [--limit 100] [--compare]  # Search Console 搜索词表现（stats:read；--compare 附带紧前等长区间对比）");
   out("  gcms.js traffic-stats --site <slug|id> [--days 7]         # GA 活跃用户/会话汇总（stats:read）");
   out("  gcms.js page-stats --site <slug|id> [--days 7] [--limit 50]  # GA 页面路径 × 活跃用户/会话（stats:read）");
+  out("  gcms.js tg-stats --site <slug|id>           # Telegram 频道订阅数（stats:read；未配置返回 telegram_not_configured）");
   out("  （collection = posts|pages|links 或该站 types 里的扩展集合，如 products/docs/自定义）");
   process.exit(code);
 }
@@ -577,6 +578,13 @@ async function main() {
     if (compare) qs.set("compare", "1");
     const statsPath = cmd === "search-stats" ? "/stats/search" : cmd === "page-stats" ? "/stats/pages" : "/stats/traffic";
     print(await request("GET", P(statsPath + (qs.toString() ? "?" + qs.toString() : ""))));
+    return;
+  }
+
+  // Telegram 频道订阅数（stats:read）：GET /stats/telegram → {ok,members}，服务端缓存 1 小时。
+  // 服务端较旧没有此端点时会返回 404——说明该站 GCMS 版本还没有此能力，升级后再用。
+  if (cmd === "tg-stats") {
+    print(await request("GET", P("/stats/telegram")));
     return;
   }
 

@@ -313,6 +313,7 @@ func platformSkillMarkdown(apiBase string) string {
 		"- `node scripts/gcms.js search-stats --site blog --days 28 --compare`（附带紧前等长区间对比：每行追加 prev_clicks/prev_impressions/prev_position，前期无数据为 null）",
 		"- `node scripts/gcms.js traffic-stats --site blog --days 7`（stats:read：GA 活跃用户/会话汇总；结果缓存 1 小时，未接入返回明确错误码）",
 		"- `node scripts/gcms.js page-stats --site blog --days 7 --limit 50`（stats:read：GA 按页面路径的活跃用户/会话）",
+		"- `node scripts/gcms.js tg-stats --site blog`（stats:read：Telegram 频道订阅数 {ok,members}，缓存 1 小时；未配置返回 telegram_not_configured；服务端较旧没有此命令时返回 404，跳过即可）",
 		"",
 		"注意：通过自动化 API 把 posts 置为 published 会过「发布质量门」——正文有效长度 ≥400 字（去 Markdown 后，中文按字、英文按词）、",
 		"excerpt 与 meta_desc 非空、标题 8~120 字符；不达标返回 422 `{\"error\":\"quality_gate\",\"failures\":[...]}`，按 failures 补齐后重试（草稿不校验）。",

@@ -31,6 +31,10 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 14.5a4.5 4.5 0 0 1-4.5 4.5H8l-5 3V7.5A4.5 4.5 0 0 1 7.5 3h9A4.5 4.5 0 0 1 21 7.5z"/></svg>
         <span>{{.Admin.T "admin.settings.menu.comments" "评论"}}</span>
       </a>
+      <a href="/admin/settings/telegram"{{if eq .Section "telegram"}} class="active"{{end}}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 4.6 3 11.8c-1.1.4-1 1 .1 1.3l4.6 1.4 1.7 5.5c.3.9.8 1 1.5.4l2.5-2.4 4.8 3.5c.7.4 1.3.1 1.5-.8l3-14.1c.3-1.1-.4-1.6-1.2-1z"/></svg>
+        <span>{{.Admin.T "admin.settings.menu.telegram" "Telegram 频道"}}</span>
+      </a>
       <a href="/admin/settings/security"{{if eq .Section "security"}} class="active"{{end}}>
         {{if .PlatformMode}}
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
@@ -2797,6 +2801,83 @@
             });
           }
           refresh();
+        })();
+        </script>
+      </form>
+
+      {{else if eq .Section "telegram"}}
+      <form method="post" action="/admin/settings/telegram" class="admin-form" data-telegram-form data-test-url="/admin/settings/telegram/test">
+        <input type="hidden" name="_csrf" value="{{.CSRF}}">
+        <div class="field-group">
+          <h3 class="group-head with-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21.5 4.6 3 11.8c-1.1.4-1 1 .1 1.3l4.6 1.4 1.7 5.5c.3.9.8 1 1.5.4l2.5-2.4 4.8 3.5c.7.4 1.3.1 1.5-.8l3-14.1c.3-1.1-.4-1.6-1.2-1z"/></svg>
+            <span>{{.Admin.T "admin.settings.telegram.title" "Telegram 频道"}}</span>
+          </h3>
+          <p class="muted automation-note">{{.Admin.T "admin.settings.telegram.desc" "把站点读者转化为频道订阅者：配置后前台页脚与文章末尾出现订阅入口；开启自动推送后，文章首次发布会推送到频道（同一篇永远只推一次）。需要先用 @BotFather 创建 bot，并把它加为频道管理员。"}}</p>
+          {{if .Settings.TelegramLastError}}
+          <div class="form-err">{{.Admin.T "admin.settings.telegram.last_error" "最近一次推送错误："}}{{.Settings.TelegramLastError}}</div>
+          {{end}}
+          <div class="form-2col">
+            <div class="field">
+              <label for="telegram_bot_token">Bot Token</label>
+              <input id="telegram_bot_token" name="telegram_bot_token" type="password" value="" autocomplete="off" spellcheck="false" placeholder="{{if .Settings.TelegramTokenSet}}{{.Admin.T "admin.settings.telegram.token_saved" "已配置（留空保持不变）"}}{{else}}123456789:AA...{{end}}">
+              <span class="hint">{{.Admin.T "admin.settings.telegram.token_hint" "来自 @BotFather；仅存储在本站数据库，不会回显或写入日志。"}}{{if .PlatformMode}} {{.Admin.T "admin.settings.telegram.token_platform_hint" "留空则使用平台默认 bot（站点管理页顶部小飞机处配置）；本站只需填频道。"}}{{end}}</span>
+              {{if .Settings.TelegramTokenSet}}<label class="tweak-toggle" style="margin-top:.45rem"><input type="checkbox" name="telegram_bot_token_clear" value="1"><span>{{.Admin.T "admin.settings.telegram.token_clear" "清除已保存的 Bot Token"}}</span></label>{{end}}
+            </div>
+            <div class="field">
+              <label for="telegram_channel">{{.Admin.T "admin.settings.telegram.channel" "频道 ID"}}</label>
+              <input id="telegram_channel" name="telegram_channel" value="{{.Settings.TelegramChannel}}" autocomplete="off" spellcheck="false" placeholder="@yourchannel 或 -1001234567890">
+              <span class="hint">{{.Admin.T "admin.settings.telegram.channel_hint" "公开频道填 @频道名；私有频道填 -100 开头的数字 ID。"}}</span>
+            </div>
+            <div class="field">
+              <label for="telegram_channel_url">{{.Admin.T "admin.settings.telegram.channel_url" "公开订阅链接"}}</label>
+              <input id="telegram_channel_url" name="telegram_channel_url" value="{{.Settings.TelegramChannelURL}}" autocomplete="off" spellcheck="false" placeholder="https://t.me/yourchannel">
+              <span class="hint">{{.Admin.T "admin.settings.telegram.channel_url_hint" "前台订阅入口指向这里。@频道名留空可自动生成 t.me 链接；数字 ID 频道必须手动填写（如邀请链接）。留空则前台不显示入口。"}}</span>
+            </div>
+            <div class="field">
+              <label>{{.Admin.T "admin.settings.telegram.push" "发布推送"}}</label>
+              <label class="tweak-toggle"><input type="checkbox" name="telegram_auto_push" value="1"{{if .Settings.TelegramAutoPush}} checked{{end}}><span>{{.Admin.T "admin.settings.telegram.auto_push" "文章首次发布时自动推送到频道"}}</span></label>
+              <span class="hint">{{.Admin.T "admin.settings.telegram.auto_push_hint" "异步发送，不影响发布；失败只记录错误，同一篇不会重复推送。"}}</span>
+            </div>
+          </div>
+        </div>
+        <div class="button-row">
+          <button class="btn btn-primary" type="submit">{{.Admin.T "admin.settings.telegram.save" "保存 Telegram 设置"}}</button>
+          <button class="btn" type="button" data-telegram-test>{{.Admin.T "admin.settings.telegram.test" "发送测试消息"}}</button>
+        </div>
+        <p class="muted telegram-test-result" data-telegram-test-result hidden style="margin-top:.6rem"></p>
+        <script>
+        (function(){
+          var form = document.querySelector("[data-telegram-form]");
+          if (!form || !window.fetch) return;
+          var btn = form.querySelector("[data-telegram-test]");
+          var out = form.querySelector("[data-telegram-test-result]");
+          var txtSending = {{.Admin.T "admin.settings.telegram.testing" "发送中..."}};
+          var txtOK = {{.Admin.T "admin.settings.telegram.test_ok" "测试消息已发送，请到频道确认。"}};
+          var txtFail = {{.Admin.T "admin.settings.telegram.test_fail" "发送失败："}};
+          if (!btn || !out) return;
+          btn.addEventListener("click", function(){
+            btn.disabled = true;
+            out.hidden = false;
+            out.classList.remove("is-error");
+            out.textContent = txtSending;
+            fetch(form.dataset.testUrl, {
+              method: "POST",
+              body: new URLSearchParams(new FormData(form)),
+              credentials: "same-origin",
+              headers: {"Accept": "application/json", "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8", "X-Requested-With": "XMLHttpRequest"}
+            }).then(function(r){ return r.json().catch(function(){ return {}; }); }).then(function(j){
+              if (j && j.ok) {
+                out.textContent = txtOK;
+              } else {
+                out.classList.add("is-error");
+                out.textContent = txtFail + ((j && j.message) || "unknown error");
+              }
+            }).catch(function(err){
+              out.classList.add("is-error");
+              out.textContent = txtFail + err;
+            }).finally(function(){ btn.disabled = false; });
+          });
         })();
         </script>
       </form>

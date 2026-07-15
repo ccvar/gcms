@@ -293,6 +293,13 @@ func automationOpenAPISpec(apiBase string) map[string]any {
 				"responses":   map[string]any{"200": map[string]any{"description": "OK"}},
 			},
 		},
+		"/stats/telegram": map[string]any{
+			"get": map[string]any{
+				"summary":     "Telegram 频道订阅数（stats:read）",
+				"description": "Bot API getChatMemberCount 的频道成员数，返回 {ok,members}，结果缓存 1 小时。站点未配置 Telegram（缺 bot token 或频道 ID）时返回 400 telegram_not_configured。典型用法：跟踪「读者 → 频道订阅者」的转化，配合发布自动推送观察涨粉。",
+				"responses":   map[string]any{"200": map[string]any{"description": "OK"}},
+			},
+		},
 	}
 	for _, col := range automationCollections {
 		if col.path == "posts" || col.path == "links" {
@@ -2222,6 +2229,7 @@ func automationSkillMarkdown(apiBase string) string {
 		"- `node scripts/gcms.js search-stats --days 28 --compare`（附带紧前等长区间对比）",
 		"- `node scripts/gcms.js traffic-stats --days 7`",
 		"- `node scripts/gcms.js page-stats --days 7 --limit 50`",
+		"- `node scripts/gcms.js tg-stats`（Telegram 频道订阅数）",
 		"",
 		"## 发文前查重（similar）",
 		"",
@@ -2277,6 +2285,7 @@ func automationSkillMarkdown(apiBase string) string {
 		"- `node scripts/gcms.js search-stats --days 28 --compare`：同上，另拉「紧前等长区间」并按 query+page 合并，每行追加 `prev_clicks/prev_impressions/prev_position`（前期无该词为 null），用于观察优化后的涨跌。",
 		"- `node scripts/gcms.js traffic-stats --days 7`：GA 活跃用户与会话汇总（`GET /stats/traffic`）。",
 		"- `node scripts/gcms.js page-stats --days 7 --limit 50`：GA 按页面路径的活跃用户/会话（`GET /stats/pages`），活跃用户降序。",
+		"- `node scripts/gcms.js tg-stats`：Telegram 频道订阅数（`GET /stats/telegram`），返回 `{ok,members}`。",
 		"",
 		"compare 示例返回行：",
 		"",
@@ -2289,6 +2298,10 @@ func automationSkillMarkdown(apiBase string) string {
 		"隔周用 `search-stats --compare` 和 `page-stats` 复盘涨跌。",
 		"days 钳制在 1..90；结果服务端缓存 1 小时，短时间重复调用拿到的是同一份数据。",
 		"未接入集成时会返回 `search_console_not_connected` / `analytics_not_connected`，此时告知用户先在平台后台完成 Google 接入。",
+		"",
+		"站点配置了 Telegram 频道时，`node scripts/gcms.js tg-stats`（`GET /stats/telegram`）返回频道订阅数",
+		"`{ok,members}`（同样缓存 1 小时），用于跟踪「读者 → 频道订阅者」的转化。未配置返回 `telegram_not_configured`，",
+		"此时告知用户先在站点后台「设置 → Telegram 频道」完成配置；服务端较旧没有此命令时会返回 404，不算失败，跳过即可。",
 		"",
 		"如果不能运行脚本，根据 `references/openapi.json` 直接发 HTTP 请求。",
 	}, "\n") + "\n"

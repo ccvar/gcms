@@ -1083,6 +1083,7 @@ func (s *Server) showAdminSites(w http.ResponseWriter, r *http.Request, status i
 		if integrations, err := s.platform.SiteGoogleIntegrations(); err == nil {
 			v.SiteGoogleIntegrations = integrations
 		}
+		v.PlatformTelegramTokenSet = s.platformTelegramBotToken() != ""
 		if summaries, err := s.platform.SiteGoogleAnalyticsSummaries(); err == nil {
 			v.SiteGoogleAnalyticsSummaries = summaries
 		}
@@ -1115,6 +1116,7 @@ func (s *Server) showAdminSites(w http.ResponseWriter, r *http.Request, status i
 		v.SiteGoogleIntegrations = map[int64]map[string]*platform.SiteGoogleIntegration{
 			1: {},
 		}
+		v.SiteTelegramStatus = map[int64]SiteTelegramStatus{1: s.siteTelegramStatusFor(s.store)}
 		if href, host := s.platformOfficialSiteURL(1); href != "" && host != "" {
 			v.PlatformOfficialURLs[1] = href
 			v.PlatformOfficialHosts[1] = host
@@ -1177,12 +1179,14 @@ func (s *Server) showAdminSites(w http.ResponseWriter, r *http.Request, status i
 	}
 	v.PlatformCFDeployAt = map[int64]string{}
 	v.PlatformCFStatus = map[int64]string{}
+	v.SiteTelegramStatus = map[int64]SiteTelegramStatus{}
 	for _, site := range sites {
 		if site == nil {
 			continue
 		}
 		if rt, ok := s.runtimePool().runtimeByID(site.ID); ok && rt != nil {
 			s.setSiteCounts(v, site.ID, rt.Store)
+			v.SiteTelegramStatus[site.ID] = s.siteTelegramStatusFor(rt.Store)
 			// 已发布到 Cloudflare 的站点：读取其最近部署时间与部署状态（供卡片展示 + 轮询初值）。
 			if _, isCF := v.PlatformOfficialURLs[site.ID]; isCF {
 				if st := readCloudflareStatusFile(cloudflareStatusPathForRuntime(rt)); st != nil {
@@ -4001,7 +4005,7 @@ func (s *Server) adminContentStatus(w http.ResponseWriter, r *http.Request, kind
 
 // ---------- 站点设置（分区独立保存）----------
 
-var settingsSections = map[string]bool{"site": true, "appearance": true, "copy": true, "menu": true, "languages": true, "categories": true, "automation": true, "cloudflare": true, "comments": true, "updates": true, "security": true}
+var settingsSections = map[string]bool{"site": true, "appearance": true, "copy": true, "menu": true, "languages": true, "categories": true, "automation": true, "cloudflare": true, "comments": true, "telegram": true, "updates": true, "security": true}
 
 func themeName(id string) string {
 	for _, t := range Themes {
@@ -4544,6 +4548,13 @@ func (s *Server) showSettings(w http.ResponseWriter, r *http.Request, section, f
 		v.EditLang = lang
 		v.MenuTargets = s.menuTargetOptions(v.Admin)
 		v.MenuEdit = s.menuEditRows(v.Admin)
+	case "telegram":
+		// token 本身绝不回填页面（密文性质），只给「已配置」状态。
+		v.Settings.TelegramTokenSet = strings.TrimSpace(s.store.Setting(telegramBotTokenSetting)) != ""
+		v.Settings.TelegramChannel = s.store.Setting(telegramChannelSetting)
+		v.Settings.TelegramChannelURL = s.store.Setting(telegramChannelURLSetting)
+		v.Settings.TelegramAutoPush = s.store.Setting(telegramAutoPushSetting) == "1"
+		v.Settings.TelegramLastError = s.store.Setting(telegramLastErrorSetting)
 	case "automation":
 		v.AutomationKeys, _ = s.store.ListAutomationKeys()
 		v.AutomationLogs, _ = s.store.ListAutomationLogs(20)

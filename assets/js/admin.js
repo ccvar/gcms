@@ -4840,3 +4840,82 @@
     });
   });
 })();
+
+/* ---------- 通用：google-connect 系浮层点外关闭 + Esc（Google 授权 / Telegram Bot 共用） ---------- */
+(function () {
+  if (!document.querySelector("details.google-connect")) return;
+  function openConnects() {
+    return Array.prototype.slice.call(document.querySelectorAll("details.google-connect[open]"));
+  }
+  document.addEventListener("click", function (e) {
+    var inside = e.target.closest && e.target.closest("details.google-connect");
+    openConnects().forEach(function (d) {
+      if (d !== inside) d.open = false;
+    });
+  });
+  document.addEventListener("keydown", function (e) {
+    if (e.key !== "Escape") return;
+    openConnects().forEach(function (d) { d.open = false; });
+    // :target 式弹窗（站点卡片 GA / GSC / 域名 / Telegram）同样 Esc 关闭：等价点击关闭锚。
+    var modal = document.querySelector(".modal:target");
+    if (modal) {
+      var closer = modal.querySelector(".modal-x") || modal.querySelector(".modal-backdrop");
+      if (closer) closer.click();
+    }
+  });
+})();
+
+/* ---------- 站点卡片「Telegram 频道」弹窗：AJAX 保存（成功后回站点页刷新徽标）+ 测试发送 ---------- */
+(function () {
+  if (!document.querySelector("[data-telegram-card-form]")) return;
+  function result(form) { return form.querySelector("[data-telegram-card-result]"); }
+  function show(form, text, isError) {
+    var out = result(form);
+    if (!out) return;
+    out.hidden = false;
+    out.classList.toggle("is-error", !!isError);
+    out.textContent = text;
+  }
+  function postForm(url, form) {
+    return fetch(url, {
+      method: "POST",
+      body: new URLSearchParams(new FormData(form)),
+      credentials: "same-origin",
+      headers: { "Accept": "application/json", "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8", "X-Requested-With": "XMLHttpRequest" }
+    }).then(function (r) { return r.json().catch(function () { return {}; }); });
+  }
+  document.addEventListener("submit", function (e) {
+    var form = e.target.closest && e.target.closest("[data-telegram-card-form]");
+    if (!form || !window.fetch) return;
+    e.preventDefault();
+    show(form, form.dataset.msgSaving || "保存中...");
+    postForm(form.getAttribute("action"), form).then(function (j) {
+      if (j && j.ok) {
+        show(form, form.dataset.msgSaved || "已保存，正在刷新...");
+        // 整页回到站点页（去掉 #modal 锚，弹窗关闭、徽标状态就地刷新）。
+        window.location.replace(window.location.pathname);
+        return;
+      }
+      show(form, (form.dataset.msgSaveFail || "保存失败：") + ((j && j.message) || "unknown error"), true);
+    }).catch(function (err) {
+      show(form, (form.dataset.msgSaveFail || "保存失败：") + err, true);
+    });
+  });
+  document.addEventListener("click", function (e) {
+    var btn = e.target.closest && e.target.closest("[data-telegram-card-test]");
+    if (!btn || !window.fetch) return;
+    var form = btn.closest("[data-telegram-card-form]");
+    if (!form) return;
+    btn.disabled = true;
+    show(form, form.dataset.msgTesting || "发送中...");
+    postForm(form.dataset.testUrl, form).then(function (j) {
+      if (j && j.ok) {
+        show(form, form.dataset.msgTestOk || "测试消息已发送，请到频道确认。");
+      } else {
+        show(form, (form.dataset.msgTestFail || "发送失败：") + ((j && j.message) || "unknown error"), true);
+      }
+    }).catch(function (err) {
+      show(form, (form.dataset.msgTestFail || "发送失败：") + err, true);
+    }).finally(function () { btn.disabled = false; });
+  });
+})();

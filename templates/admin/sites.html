@@ -96,6 +96,71 @@
             </div>
           </div>
         </details>
+        <details class="google-connect telegram-connect{{if .PlatformTelegramTokenSet}} is-configured{{else}} is-missing{{end}}">
+          <summary data-tooltip="{{if .PlatformTelegramTokenSet}}{{.Admin.T "admin.sites.telegram_bot_tip_ready" "Telegram Bot：已配置平台共用 token，站点未填 token 时自动使用。"}}{{else}}{{.Admin.T "admin.sites.telegram_bot_tip_missing" "Telegram Bot：未配置。配置一次，全平台站点共用。"}}{{end}}" aria-label="{{.Admin.T "admin.sites.telegram_bot_title" "Telegram Bot（平台共用）"}}">{{template "site-icon-telegram"}}</summary>
+          <div class="google-connect-pop telegram-bot-pop">
+            <div class="google-connect-head">
+              <strong>{{.Admin.T "admin.sites.telegram_bot_title" "Telegram Bot（平台共用）"}}</strong>
+              <span>{{if .PlatformTelegramTokenSet}}{{.Admin.T "admin.sites.google_oauth_ready" "已配置"}}{{else}}{{.Admin.T "admin.sites.google_oauth_missing_badge" "未配置"}}{{end}}</span>
+            </div>
+            <p class="google-connect-empty">{{.Admin.T "admin.sites.telegram_bot_desc" "一次填好全平台共用的 bot token；站点未填 token 时自动回退这里，各站只需在站点设置里填频道 ID。"}}</p>
+            <div class="google-oauth-guide">
+              <strong>{{.Admin.T "admin.sites.telegram_bot_guide_title" "如何获取 bot token？"}}</strong>
+              <ol>
+                <li><a href="https://t.me/BotFather" target="_blank" rel="noopener">{{.Admin.T "admin.sites.telegram_bot_guide_open" "Telegram 里找 @BotFather"}}</a>{{.Admin.T "admin.sites.telegram_bot_guide_step1" "，发送 /newbot 按提示创建，得到形如 123456:ABC… 的 token。"}}</li>
+                <li>{{.Admin.T "admin.sites.telegram_bot_guide_step2" "把新 bot 添加为你频道的管理员（须有发消息权限）。"}}</li>
+                <li>{{.Admin.T "admin.sites.telegram_bot_guide_step3" "回到这里粘贴 token 并验证。"}}</li>
+              </ol>
+            </div>
+            <form class="google-oauth-form" method="post" action="/admin/sites/telegram-bot" data-telegram-bot-form data-test-url="/admin/sites/telegram-bot/test" data-no-dirty>
+              <input type="hidden" name="_csrf" value="{{.CSRF}}">
+              <label>
+                <span>Bot Token</span>
+                <input type="password" name="platform_telegram_bot_token" placeholder="{{if .PlatformTelegramTokenSet}}{{.Admin.T "admin.sites.telegram_bot_token_saved" "已配置（留空保持不变）"}}{{else}}123456789:AA...{{end}}" autocomplete="off" spellcheck="false">
+              </label>
+              {{if .PlatformTelegramTokenSet}}<label class="tweak-toggle"><input type="checkbox" name="platform_telegram_bot_token_clear" value="1"><span>{{.Admin.T "admin.sites.telegram_bot_clear" "清除已保存的 Bot Token"}}</span></label>{{end}}
+              <p class="google-oauth-status" data-telegram-bot-result hidden></p>
+              <div class="google-oauth-form-actions">
+                <button class="google-oauth-save" type="submit">{{.Admin.T "admin.sites.telegram_bot_save" "保存平台 Bot"}}</button>
+                <button class="google-oauth-cancel" type="button" data-telegram-bot-test>{{.Admin.T "admin.sites.telegram_bot_verify" "验证 Token（getMe）"}}</button>
+              </div>
+            </form>
+            <script>
+            (function(){
+              var form = document.querySelector("[data-telegram-bot-form]");
+              if (!form || !window.fetch) return;
+              var btn = form.querySelector("[data-telegram-bot-test]");
+              var out = form.querySelector("[data-telegram-bot-result]");
+              var txtVerifying = {{.Admin.T "admin.sites.telegram_bot_verifying" "验证中..."}};
+              var txtOK = {{.Admin.T "admin.sites.telegram_bot_verify_ok" "Token 可用，bot："}};
+              var txtFail = {{.Admin.T "admin.sites.telegram_bot_verify_fail" "验证失败："}};
+              if (!btn || !out) return;
+              btn.addEventListener("click", function(){
+                btn.disabled = true;
+                out.hidden = false;
+                out.classList.remove("is-error");
+                out.textContent = txtVerifying;
+                fetch(form.dataset.testUrl, {
+                  method: "POST",
+                  body: new URLSearchParams(new FormData(form)),
+                  credentials: "same-origin",
+                  headers: {"Accept": "application/json", "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8", "X-Requested-With": "XMLHttpRequest"}
+                }).then(function(r){ return r.json().catch(function(){ return {}; }); }).then(function(j){
+                  if (j && j.ok) {
+                    out.textContent = txtOK + (j.bot || "");
+                  } else {
+                    out.classList.add("is-error");
+                    out.textContent = txtFail + ((j && j.message) || "unknown error");
+                  }
+                }).catch(function(err){
+                  out.classList.add("is-error");
+                  out.textContent = txtFail + err;
+                }).finally(function(){ btn.disabled = false; });
+              });
+            })();
+            </script>
+          </div>
+        </details>
       </div>{{end}}
       <button class="btn btn-primary icon-text" type="button" data-site-create-open>{{template "site-icon-plus"}}<span>{{.Admin.T "admin.sites.create" "新建站点"}}</span></button>
     </div>
@@ -113,6 +178,7 @@
       {{$googleURI := index $.PlatformGoogleDefaultURIs .ID}}
       {{$gaSummary := index $.SiteGoogleAnalyticsSummaries .ID}}
       {{$gscSummary := index $.SiteGoogleSearchSummaries .ID}}
+      {{$tg := index $.SiteTelegramStatus .ID}}
       <article id="site-card-{{.ID}}" class="site-card{{if .IsDefault}} is-default{{end}}{{if eq .Status "disabled"}} is-disabled{{end}}">
         <div class="site-card-locked-area"{{if eq .Status "disabled"}} aria-disabled="true"{{end}}>
           <div class="site-card-main"{{if eq .Status "disabled"}} inert{{end}}>
@@ -135,6 +201,8 @@
                 <div class="site-badges">
                   <a class="site-google-badge{{if and $ga $ga.Enabled}} is-on{{else}} is-missing{{end}}" href="#site-google-analytics-modal-{{.ID}}" data-tooltip="{{if and $ga $ga.Enabled}}{{$.Admin.T "admin.sites.google_analytics_site_tip_ready" "Google Analytics：已接入，点击修改统计配置。"}}{{else}}{{$.Admin.T "admin.sites.google_analytics_site_tip_missing" "Google Analytics：未接入，点击配置统计。"}}{{end}}" aria-label="{{if and $ga $ga.Enabled}}{{$.Admin.T "admin.sites.google_analytics_site_tip_ready" "Google Analytics：已接入，点击修改统计配置。"}}{{else}}{{$.Admin.T "admin.sites.google_analytics_site_tip_missing" "Google Analytics：未接入，点击配置统计。"}}{{end}}">{{template "site-icon-google-analytics"}}</a>
                   <a class="site-google-badge{{if and $gsc $gsc.Enabled}} is-on{{else}} is-missing{{end}}" href="#site-google-search-modal-{{.ID}}" data-tooltip="{{if and $gsc $gsc.Enabled}}{{$.Admin.T "admin.sites.google_search_site_tip_ready" "Google Search Console：已接入，点击修改搜索配置。"}}{{else}}{{$.Admin.T "admin.sites.google_search_site_tip_missing" "Google Search Console：未接入，点击配置搜索数据。"}}{{end}}" aria-label="{{if and $gsc $gsc.Enabled}}{{$.Admin.T "admin.sites.google_search_site_tip_ready" "Google Search Console：已接入，点击修改搜索配置。"}}{{else}}{{$.Admin.T "admin.sites.google_search_site_tip_missing" "Google Search Console：未接入，点击配置搜索数据。"}}{{end}}">{{template "site-icon-google-search-console"}}</a>
+                  {{$tgTip := $.Admin.T "admin.sites.telegram_tip_missing" "未绑定 Telegram 频道，点击去配置"}}{{if and $tg.Bound $tg.AutoPush}}{{$tgTip = $.Admin.T "admin.sites.telegram_tip_on" "Telegram 频道 · 自动推送已开"}}{{else if $tg.Bound}}{{$tgTip = $.Admin.T "admin.sites.telegram_tip_off" "Telegram 频道 · 自动推送未开"}}{{else if $tg.Channel}}{{$tgTip = $.Admin.T "admin.sites.telegram_tip_no_token" "已填频道但无可用 bot token"}}{{end}}
+                  <a class="site-tg-badge{{if and $tg.Bound $tg.AutoPush}} is-on{{else if $tg.Bound}} is-dim{{else if $tg.Channel}} is-warn{{end}}" href="#site-telegram-modal-{{.ID}}" data-tooltip="{{$tgTip}}" aria-label="{{$tgTip}}">{{template "site-icon-telegram"}}</a>
                   {{if .ManagementAutomationEnabled}}<span class="badge sched is-api-icon" data-tooltip="{{$.Admin.T "admin.sites.platform_api_on_tip" "自动化接口：已开启。AI 和外部工具可通过平台入口调用该站点接口。"}}" aria-label="{{$.Admin.T "admin.sites.platform_api_on_tip" "自动化接口：已开启。AI 和外部工具可通过平台入口调用该站点接口。"}}">{{template "site-icon-plug"}}</span>{{else}}<span class="badge draft is-api-icon" data-tooltip="{{$.Admin.T "admin.sites.platform_api_off_tip" "自动化接口：已关闭。平台入口不会暴露该站点接口。"}}" aria-label="{{$.Admin.T "admin.sites.platform_api_off_tip" "自动化接口：已关闭。平台入口不会暴露该站点接口。"}}">{{template "site-icon-plug"}}</span>{{end}}
                 </div>
                 {{if or (and $ga $ga.Enabled) (and $gsc $gsc.Enabled)}}
@@ -438,6 +506,50 @@
             {{end}}
           </div>
         </details>
+        <div class="modal site-telegram-modal" id="site-telegram-modal-{{.ID}}" aria-hidden="true">
+          <a class="modal-backdrop" href="#site-card-{{.ID}}" aria-label="{{$.Admin.T "admin.close" "关闭"}}"></a>
+          <div class="modal-card site-telegram-modal-card" role="dialog" aria-modal="true" aria-labelledby="site-telegram-title-{{.ID}}">
+            <div class="site-modal-head">
+              <div>
+                <h3 id="site-telegram-title-{{.ID}}">{{$.Admin.T "admin.sites.telegram_modal_title" "Telegram 频道"}} · {{.Name}}</h3>
+                <p class="muted">{{$.Admin.T "admin.sites.telegram_modal_desc" "配置后前台出现订阅入口；开启自动推送后，文章首次发布会推送到频道（同一篇永远只推一次）。"}}</p>
+              </div>
+              <a class="modal-x" href="#site-card-{{.ID}}" aria-label="{{$.Admin.T "admin.close" "关闭"}}">×</a>
+            </div>
+            <form class="admin-form site-telegram-form" method="post" action="/admin/sites/{{.ID}}/telegram" data-telegram-card-form data-test-url="/admin/sites/{{.ID}}/telegram/test" data-no-dirty
+              data-msg-saving="{{$.Admin.T "admin.sites.telegram_modal_saving" "保存中..."}}" data-msg-saved="{{$.Admin.T "admin.sites.telegram_modal_saved" "已保存，正在刷新..."}}" data-msg-save-fail="{{$.Admin.T "admin.sites.telegram_modal_save_fail" "保存失败："}}"
+              data-msg-testing="{{$.Admin.T "admin.settings.telegram.testing" "发送中..."}}" data-msg-test-ok="{{$.Admin.T "admin.settings.telegram.test_ok" "测试消息已发送，请到频道确认。"}}" data-msg-test-fail="{{$.Admin.T "admin.settings.telegram.test_fail" "发送失败："}}">
+              <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+              <div class="field">
+                <label for="site-tg-channel-{{.ID}}">{{$.Admin.T "admin.settings.telegram.channel" "频道 ID"}}</label>
+                <input id="site-tg-channel-{{.ID}}" name="telegram_channel" value="{{$tg.ChannelValue}}" autocomplete="off" spellcheck="false" placeholder="@yourchannel 或 -1001234567890">
+                <span class="hint">{{$.Admin.T "admin.settings.telegram.channel_hint" "公开频道填 @频道名；私有频道填 -100 开头的数字 ID。"}}</span>
+              </div>
+              <div class="field">
+                <label for="site-tg-url-{{.ID}}">{{$.Admin.T "admin.settings.telegram.channel_url" "公开订阅链接"}}</label>
+                <input id="site-tg-url-{{.ID}}" name="telegram_channel_url" value="{{$tg.ChannelURL}}" autocomplete="off" spellcheck="false" placeholder="https://t.me/yourchannel">
+                <span class="hint">{{$.Admin.T "admin.sites.telegram_modal_url_hint" "留空自动按 @频道名派生 t.me 链接；数字 ID 频道须手填（如邀请链接）。"}}</span>
+              </div>
+              <div class="field">
+                <label class="tweak-toggle"><input type="checkbox" name="telegram_auto_push" value="1"{{if $tg.AutoPush}} checked{{end}}><span>{{$.Admin.T "admin.settings.telegram.auto_push" "文章首次发布时自动推送到频道"}}</span></label>
+              </div>
+              <details class="site-telegram-token-override"{{if $tg.SiteTokenSet}} open{{end}}>
+                <summary>{{$.Admin.T "admin.sites.telegram_modal_token_summary" "站点级 Bot Token 覆写（可选）"}}</summary>
+                <div class="field" style="margin-top:.5rem">
+                  <input name="telegram_bot_token" type="password" value="" autocomplete="off" spellcheck="false" placeholder="{{if $tg.SiteTokenSet}}{{$.Admin.T "admin.settings.telegram.token_saved" "已配置（留空保持不变）"}}{{else}}{{$.Admin.T "admin.sites.telegram_modal_token_placeholder" "留空则使用平台共用 bot"}}{{end}}">
+                  <span class="hint">{{$.Admin.T "admin.sites.telegram_modal_token_hint" "留空用平台 bot（顶部小飞机处配置）；只有想让本站用独立 bot 时才填。"}}</span>
+                  {{if $tg.SiteTokenSet}}<label class="tweak-toggle" style="margin-top:.4rem"><input type="checkbox" name="telegram_bot_token_clear" value="1"><span>{{$.Admin.T "admin.settings.telegram.token_clear" "清除已保存的 Bot Token"}}</span></label>{{end}}
+                </div>
+              </details>
+              <p class="google-oauth-status" data-telegram-card-result hidden></p>
+              <div class="modal-actions site-telegram-modal-actions">
+                <button class="btn btn-primary" type="submit">{{$.Admin.T "admin.sites.telegram_modal_save" "保存"}}</button>
+                <button class="btn" type="button" data-telegram-card-test>{{$.Admin.T "admin.settings.telegram.test" "发送测试消息"}}</button>
+                <a class="site-telegram-full-link" href="{{if $.PlatformMode}}/admin/sites/{{.ID}}/settings/telegram{{else}}/admin/settings/telegram{{end}}">{{$.Admin.T "admin.sites.telegram_modal_full" "完整设置 →"}}</a>
+              </div>
+            </form>
+          </div>
+        </div>
         {{if not .IsDefault}}
         <div class="modal site-domain-modal" id="site-domain-modal-{{.ID}}">
           <a class="modal-backdrop" href="#" aria-label="{{$.Admin.T "admin.action.cancel" "取消"}}"></a>
@@ -722,6 +834,7 @@
 
 {{define "site-icon-status"}}<svg class="site-inline-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>{{end}}
 {{define "site-icon-plug"}}<svg class="site-inline-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 2v5"/><path d="M16 2v5"/><path d="M7 7h10v5a5 5 0 0 1-10 0z"/><path d="M12 17v5"/></svg>{{end}}
+{{define "site-icon-telegram"}}<svg class="site-inline-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21.5 4.6 3 11.8c-1.1.4-1 1 .1 1.3l4.6 1.4 1.7 5.5c.3.9.8 1 1.5.4l2.5-2.4 4.8 3.5c.7.4 1.3.1 1.5-.8l3-14.1c.3-1.1-.4-1.6-1.2-1z"/><path d="m7.7 14.5 11-8.5"/></svg>{{end}}
 {{define "site-icon-enter"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><path d="M10 17l5-5-5-5"/><path d="M15 12H3"/></svg>{{end}}
 {{define "site-icon-plus"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg>{{end}}
 {{define "site-icon-check"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>{{end}}

@@ -689,6 +689,7 @@ type View struct {
 	Next            *store.Post
 	Related         []*store.Post
 	Giscus          *GiscusView
+	TelegramURL     string // Telegram 频道公开订阅链接（非空时前台 footer / 文章页渲染入口）
 
 	ContentHTML template.HTML
 	TOC         []Heading
@@ -824,6 +825,8 @@ type View struct {
 	GoogleAnalyticsAccounts      []*platform.GoogleAccount
 	GoogleSearchConsoleAccounts  []*platform.GoogleAccount
 	SiteGoogleIntegrations       map[int64]map[string]*platform.SiteGoogleIntegration
+	SiteTelegramStatus           map[int64]SiteTelegramStatus // 站点卡片 Telegram 频道徽标状态（settings 键，不打 Bot API）
+	PlatformTelegramTokenSet     bool                         // 平台级共用 bot token 是否已配置（顶部小飞机入口）
 	SiteGoogleAnalyticsSummaries map[int64]*platform.SiteGoogleAnalyticsSummary
 	SiteGoogleSearchSummaries    map[int64]*platform.SiteGoogleSearchConsoleSummary
 	PlatformGoogleDefaultURIs    map[int64]string // 每站点自动创建 GA/匹配 Search Console 时优先使用的网站地址
@@ -987,6 +990,12 @@ type SettingsForm struct {
 	GiscusReactions     bool
 	GiscusInputPosition string
 	GiscusTheme         string
+	// Telegram 频道（设置 - Telegram）。token 本身绝不回填页面，只暴露「是否已配置」。
+	TelegramTokenSet   bool
+	TelegramChannel    string
+	TelegramChannelURL string
+	TelegramAutoPush   bool
+	TelegramLastError  string
 	// 分类/链接列表的「全部」入口（设置 - 分类）。
 	AllTitle       string
 	AllLabel       string
@@ -3088,6 +3097,7 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("GET /api/admin/v1/stats/search", s.apiStatsSearch)
 	mux.HandleFunc("GET /api/admin/v1/stats/traffic", s.apiStatsTraffic)
 	mux.HandleFunc("GET /api/admin/v1/stats/pages", s.apiStatsPages)
+	mux.HandleFunc("GET /api/admin/v1/stats/telegram", s.apiStatsTelegram)
 	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/openapi.json", s.apiPlatformOpenAPI)
 	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/languages", s.apiLanguages)
 	mux.HandleFunc("POST /api/platform/v1/sites/{siteID}/languages", s.apiCreateLanguage)
@@ -3134,6 +3144,7 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/stats/search", s.apiStatsSearch)
 	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/stats/traffic", s.apiStatsTraffic)
 	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/stats/pages", s.apiStatsPages)
+	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/stats/telegram", s.apiStatsTelegram)
 
 	// 临时前台预览：由自动化 API 生成短期签名 URL，渲染真实前台模板但不索引、不缓存。
 	mux.HandleFunc("GET /preview/{collection}/{id}", s.frontendPreviewContent)
@@ -3155,6 +3166,10 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("GET /admin/google/analytics/properties", s.requireAuth(s.adminGoogleAnalyticsProperties))
 	mux.HandleFunc("GET /admin/google/search-console/sites", s.requireAuth(s.adminGoogleSearchConsoleSites))
 	mux.HandleFunc("POST /admin/sites", s.requireAuth(s.adminCreateSite))
+	mux.HandleFunc("POST /admin/sites/telegram-bot", s.requireAuth(s.adminSavePlatformTelegramBot))
+	mux.HandleFunc("POST /admin/sites/telegram-bot/test", s.requireAuth(s.adminPlatformTelegramBotTest))
+	mux.HandleFunc("POST /admin/sites/{id}/telegram", s.requireAuth(s.adminSiteTelegramSave))
+	mux.HandleFunc("POST /admin/sites/{id}/telegram/test", s.requireAuth(s.adminSiteTelegramTest))
 	mux.HandleFunc("POST /admin/sites/{id}/enter", s.requireAuth(s.adminEnterSite))
 	mux.HandleFunc("GET /admin/sites/{id}/automation/skill.zip", s.requireAuth(s.adminDownloadPlatformAutomationSkill))
 	mux.HandleFunc("GET /admin/sites/{id}/automation/starter.zip", s.requireAuth(s.adminDownloadPlatformAutomationStarter))
@@ -3213,6 +3228,8 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /admin/settings/site", s.requireAuth(s.adminSaveSite))
 	mux.HandleFunc("POST /admin/settings/appearance", s.requireAuth(s.adminSaveAppearance))
 	mux.HandleFunc("POST /admin/settings/comments", s.requireAuth(s.adminSaveComments))
+	mux.HandleFunc("POST /admin/settings/telegram", s.requireAuth(s.adminSaveTelegram))
+	mux.HandleFunc("POST /admin/settings/telegram/test", s.requireAuth(s.adminTelegramTest))
 	mux.HandleFunc("POST /admin/settings/updates/upgrade", s.requireAuth(s.adminStartUpgrade))
 	mux.HandleFunc("POST /admin/settings/cloudflare", s.requireAuth(s.adminSaveCloudflare))
 	mux.HandleFunc("POST /admin/settings/cloudflare/sync", s.requireAuth(s.adminSaveCloudflareSync))
@@ -3349,6 +3366,7 @@ func (s *Server) viewForLang(r *http.Request, lang, nav string) *View {
 	}
 	v.Langs = s.langSwitchForRequest(r, lang, nil, "/")
 	v.Social = parseSocialLinks(s.store.Setting("social_links"))
+	v.TelegramURL = strings.TrimSpace(s.store.Setting(telegramChannelURLSetting))
 	v.Menu = s.menuItems(r, lang, tr, nav)
 	if nav == "home" {
 		v.HomeSections, v.HomeHero = s.homeSectionConfig()
