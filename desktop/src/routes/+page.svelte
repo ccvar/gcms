@@ -1017,8 +1017,6 @@
   function say(m: string, k: 'ok' | 'err' = 'ok', ms = 0) { flash = m; flashKind = k; setTimeout(() => (flash = ''), ms || (k === 'err' ? 8000 : 4000)); }
   function brainUsable(b: Brain): boolean { const s = b === 'claude' ? brains?.claude : b === 'grok' ? brains?.grok : brains?.codex; return !!s && s.found && s.logged_in !== false; }
   function hostOf(u: string): string { try { return new URL(u).host; } catch { return u; } }
-  /** node --version（形如 v18.19.0）→ 主版本号；解析不了按 0（视为不可用）。 */
-  function nodeMajor(v: string): number { return parseInt(v.replace(/^v/, ''), 10) || 0; }
 
   // 从对话里认出这个项目已部署的线上地址（AI 部署完都会说「访问 https://xxx」）。
   // 优先自定义域名，其次 *.pages.dev；忽略 localhost / CDN / 文档等无关链接。
@@ -1357,7 +1355,29 @@
       await refreshConvos();
     } catch (e) { say(String(e), 'err'); }
   }
-  async function authorize(b: Brain) { try { await invoke('open_brain_login', { brain: b }); say('已打开终端，完成授权后自动刷新'); } catch (e) { say(String(e), 'err'); } }
+  // 一键授权：开系统终端跑官方 CLI 登录命令（浏览器 OAuth 在终端流程里完成，Pilot 绝不代输凭据），
+  // 随后进入「等待授权…」：每 4s 静默重检 brains，logged_in 翻 true 即复位绿灯；120s 超时自动复位。
+  let authWaiting = $state<Brain | ''>('');
+  let authTimer: ReturnType<typeof setInterval> | undefined;
+  function stopAuthWait() { authWaiting = ''; if (authTimer) { clearInterval(authTimer); authTimer = undefined; } }
+  async function authorize(b: Brain) {
+    try {
+      await invoke('open_brain_login', { brain: b });
+      say('已打开终端，请在终端里完成登录——完成后这里自动变绿');
+      authWaiting = b;
+      const deadline = Date.now() + 120_000;
+      if (authTimer) clearInterval(authTimer);
+      authTimer = setInterval(() => {
+        if (Date.now() > deadline) { stopAuthWait(); return; }
+        void refreshBrains();
+      }, 4000);
+    } catch (e) { say(String(e), 'err'); }
+  }
+  $effect(() => {
+    if (!authWaiting || !brains) return;
+    const st = authWaiting === 'claude' ? brains.claude : authWaiting === 'codex' ? brains.codex : brains.grok;
+    if (st.found && st.logged_in) { stopAuthWait(); say('授权完成，已就绪'); }
+  });
 
   // ---------- 对话导航 ----------
   function newChat() {
@@ -2403,16 +2423,10 @@
                     <span class="cli-tag bad">未安装</span>
                     {#if r.b === 'claude'}
                       <button class="wr-btn" use:tipAction={'安装失败排障：VPN/代理需覆盖 claude.ai 与下载域名 storage.googleapis.com（规则模式加进规则或临时切全局）；也可复制右侧命令到终端手动执行看完整输出。'} onclick={installClaude} disabled={claudeInstalling}>{#if claudeInstalling}<span class="wr-spin"></span>{nodeBoot || `安装中 ${elapsedLabel(claudeElapsed)}`}{:else}一键安装{/if}</button>
-                      {#if !brains.node.found || nodeMajor(brains.node.version) < 18}
-                        <button class="node-need" use:tipAction={'没有 Node 也能一键安装：会自动下载托管版 Node(v22 LTS) 再走 npm 通道；喜欢自管环境可先装 Node.js(≥18)，将优先使用系统版。'} onclick={() => openUrl('https://nodejs.org/')}>先装 Node.js ↗</button>
-                      {/if}
                     {:else if r.b === 'grok'}
                       <button class="wr-btn" onclick={installGrok} disabled={grokInstalling}>{#if grokInstalling}<span class="wr-spin"></span>安装中 {elapsedLabel(grokElapsed)}{:else}一键安装{/if}</button>
                     {:else if r.b === 'codex'}
                       <button class="wr-btn" onclick={installCodex} disabled={codexInstalling}>{#if codexInstalling}<span class="wr-spin"></span>{nodeBoot || `安装中 ${elapsedLabel(codexElapsed)}`}{:else}一键安装{/if}</button>
-                      {#if !brains.node.found || nodeMajor(brains.node.version) < 18}
-                        <button class="node-need" use:tipAction={'没有 Node 也能一键安装：会自动下载托管版 Node(v22 LTS) 再走 npm 通道；喜欢自管环境可先装 Node.js(≥18)，将优先使用系统版。'} onclick={() => openUrl('https://nodejs.org/')}>先装 Node.js ↗</button>
-                      {/if}
                     {/if}
                     <code class="cli-cmd" title={r.cmd}>{r.cmd}</code>
                     <button class="cli-copy" title="复制命令" aria-label="复制安装命令" onclick={() => copyCmd(r.cmd)}>
@@ -2423,7 +2437,7 @@
                       {/if}
                     </button>
                   {:else if r.st.logged_in === false}
-                    <span class="cli-tag warn">未登录</span><button class="authbtn" onclick={() => authorize(r.b)}>去授权 ↗</button>
+                    <span class="cli-tag warn">未登录</span><button class="authbtn" onclick={() => authorize(r.b)} disabled={authWaiting === r.b}>{#if authWaiting === r.b}<span class="wr-spin"></span>等待授权…{:else}一键授权{/if}</button>
                   {:else}
                     <span class="cli-tag ok">✓ {r.st.version || '已就绪'}</span>
                   {/if}
@@ -3170,9 +3184,24 @@
             <span class="brain-main"><b>{r.name}</b>
               <small>{#if !r.st.found}未安装{:else if r.st.logged_in === false}未登录{:else}{r.st.version || '已就绪'}{/if}</small></span>
             <span class="brain-dot"><span class="dot {r.st.found && r.st.logged_in ? 'ok' : r.st.found ? 'warn' : 'off'}"></span></span>
-            {#if r.st.found && r.st.logged_in === false}<button class="authbtn" onclick={() => authorize(r.b)}>去授权 ↗</button>{/if}
+            {#if r.st.found && r.st.logged_in === false}<button class="authbtn" onclick={() => authorize(r.b)} disabled={authWaiting === r.b}>{#if authWaiting === r.b}<span class="wr-spin"></span>等待授权…{:else}一键授权{/if}</button>{/if}
+            {#if !r.st.found}
+              <!-- 与主界面同款一键安装（同 invoke/进度态/错误处理）；手动命令降级为复制小图标 -->
+              <button class="wr-btn" onclick={r.b === 'claude' ? installClaude : r.b === 'codex' ? installCodex : installGrok}
+                disabled={r.b === 'claude' ? claudeInstalling : r.b === 'codex' ? codexInstalling : grokInstalling}>
+                {#if (r.b === 'claude' && claudeInstalling) || (r.b === 'codex' && codexInstalling) || (r.b === 'grok' && grokInstalling)}
+                  <span class="wr-spin"></span>{r.b !== 'grok' && nodeBoot ? nodeBoot : `安装中 ${elapsedLabel(r.b === 'claude' ? claudeElapsed : r.b === 'codex' ? codexElapsed : grokElapsed)}`}
+                {:else}一键安装{/if}
+              </button>
+              <button class="cli-copy" title={`手动安装命令：${r.cmd}（点击复制）`} aria-label="复制手动安装命令" onclick={() => copyCmd(r.cmd)}>
+                {#if copiedCmd === r.cmd}
+                  <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M3.5 8.5l3 3 6-7" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></svg>
+                {:else}
+                  <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><rect x="5.4" y="5.4" width="8.2" height="8.2" rx="1.6" stroke="currentColor" stroke-width="1.3" /><path d="M10.6 5.4V4.1A1.6 1.6 0 0 0 9 2.5H4.1A1.6 1.6 0 0 0 2.5 4.1V9a1.6 1.6 0 0 0 1.6 1.6h1.3" stroke="currentColor" stroke-width="1.3" /></svg>
+                {/if}
+              </button>
+            {/if}
           </div>
-          {#if !r.st.found}<p class="hint mono">安装：{r.cmd}</p>{/if}
           {#if r.st.found}
             <div class="cust">
               <button class="cust-head" type="button" onclick={() => (customOpen[r.b] = !customOpen[r.b])}>
@@ -3525,6 +3554,8 @@
 <style>
   :global(:root) {
     --bg: #ffffff; --rail: #faf9f7; --card: #ffffff;
+    /* 浮层实底（更新吐司/附件 chip 等用）：此前未定义导致 var(--panel) 落空、浮层透明。 */
+    --panel: #ffffff;
     --border: #ecebe6; --border2: #e1dfd8;
     --text: #26241f; --dim: #6f6b62; --faint: #a29d93;
     /* 强调色走暖黑/灰（Codex 式安静路线），不用蓝紫；风险色（红/琥珀）另有专用变量。 */
@@ -3589,8 +3620,9 @@
   .upd-toast { position: fixed; top: 38px; left: 50%; transform: translateX(-50%); z-index: 200; display: flex; align-items: center; gap: 8px; padding: 5px 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 999px; box-shadow: var(--shadow-lg); font-size: 12px; color: var(--text); -webkit-app-region: no-drag; }
   .upd-toast .upd-spin { color: var(--accent); flex: none; }
   .upd-toast-msg { white-space: nowrap; }
-  .upd-toast-bar { width: 84px; height: 4px; border-radius: 2px; background: var(--border); overflow: hidden; flex: none; }
-  .upd-toast-bar > span { display: block; height: 100%; background: var(--accent); border-radius: 2px; transition: width .2s ease; }
+  /* 下载进度条：实底浅灰轨道 + 主题色填充（容器 --panel 已实底，文字对比度由 --text/白底保证） */
+  .upd-toast-bar { width: 84px; height: 5px; border-radius: 3px; background: var(--border2); overflow: hidden; flex: none; }
+  .upd-toast-bar > span { display: block; height: 100%; background: var(--accent); border-radius: 3px; transition: width .2s ease; }
 
   /* ---- 左栏 ---- */
   .rail { position: relative; width: 240px; flex: none; display: flex; flex-direction: column; background: var(--rail); border-right: 1px solid var(--border); padding-top: 30px; }
@@ -4048,9 +4080,6 @@
   .wr-btn:hover { background: #c08f00; }
   .wr-btn:disabled { opacity: .85; cursor: default; }
   .wr-spin { display: inline-block; width: 10px; height: 10px; border: 1.6px solid #fff; border-right-color: transparent; border-radius: 50%; animation: rspin .7s linear infinite; margin-right: 5px; vertical-align: -1px; }
-  /* Codex 前置：没装 Node 时的引导小按钮（点开 nodejs.org） */
-  .node-need { flex: none; border: none; background: #faf1d8; color: #b45309; font-size: 11px; font-weight: 550; padding: 3px 9px; border-radius: 6px; cursor: pointer; }
-  .node-need:hover { background: #f5e7bd; }
   .cf-perms-toggle { display: inline-flex; align-items: center; gap: 5px; background: none; border: none; padding: 0 0 8px; font-size: 12px; color: var(--dim); cursor: pointer; }
   .cf-perms-toggle:hover { color: var(--text); }
   .cf-chev { flex: none; transition: transform .12s; }
