@@ -8,6 +8,7 @@ mod convo;
 mod discovery;
 mod keychain;
 mod limits;
+mod node_boot;
 mod pack;
 mod path_env;
 mod permit;
@@ -23,7 +24,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::ipc::Channel;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
-use tauri::{AppHandle, Manager, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, WindowEvent};
 use tauri_plugin_notification::NotificationExt;
 
 use convo::{Conversation, Message};
@@ -509,6 +510,30 @@ mod workdir_tests {
         // stdout 为空时退回 stderr；两者全空给未知错误
         assert!(install_err_brief(b"", b"curl: (7) Failed to connect\n").contains("curl: (7)"));
         assert_eq!(install_err_brief(b"", b""), "未知错误");
+    }
+
+    /// 安装详情取尾不取头：回显/进度剥掉、PS 异常首行只留 iex 后消息、超长保留末尾 600 字。
+    #[test]
+    fn install_err_tail_strips_echo_and_keeps_tail() {
+        // 多行实拍形态：进度行 + 真错误在 stdout 尾部；stderr 首行是整句命令回显
+        let stdout = "Installing Claude Code native build latest...\nDownloading...\nFailed to download from https://storage.googleapis.com/x: timeout\n".as_bytes();
+        let stderr = "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072; irm https://claude.ai/install.ps1 | iex : Installation failed (exit code 1)\nAt line:1 char:1\n+ FullyQualifiedErrorId : xxx\n".as_bytes();
+        let t = install_err_tail(stdout, stderr);
+        assert!(t.contains("Failed to download"), "真错误保留: {t}");
+        assert!(t.contains("Installation failed (exit code 1)"), "回显行只留 iex 后消息: {t}");
+        assert!(!t.contains("SecurityProtocol"), "命令回显剥掉");
+        assert!(!t.contains("Installing Claude Code"), "进度行剥掉");
+        assert!(t.contains("At line:1"), "PS 装饰行保留（取尾语义，不做白名单）");
+        // 超长取尾：真错误在末尾 600 字里，且带截断记号
+        let long = format!("{}\nREAL ERROR AT TAIL", "x".repeat(2000));
+        let t2 = install_err_tail(long.as_bytes(), b"");
+        assert!(t2.starts_with('…') && t2.ends_with("REAL ERROR AT TAIL"));
+        assert!(t2.chars().count() <= 601, "…+600 字上限: {}", t2.chars().count());
+        // 无回显的普通短输出原样、不截
+        assert_eq!(install_err_tail(b"boom", b""), "boom");
+        // 全空 / 剥完只剩回显 → 占位
+        assert_eq!(install_err_tail(b"", b""), "（无输出）");
+        assert_eq!(install_err_tail(b"Installing Claude Code native build latest...", b""), "（无输出）");
     }
 
     /// 开启托管：三个配套任务（每日/审计/周报）创建齐、厂商/模型/强度逐项透传、
@@ -1162,6 +1187,38 @@ fn install_err_brief(stdout: &[u8], stderr: &[u8]) -> String {
     parts.join("；").chars().take(220).collect()
 }
 
+/// 安装失败详情（取尾不取头，纯函数）：合并 stdout+stderr，剥掉我们自己的命令回显与进度行
+///（PowerShell 异常首行整句复读命令时只留 "| iex : " 之后的真实消息），保留末尾 ~600 字——
+/// PowerShell/npm 的真正异常都在输出末尾，取头只能看到回显、真错误被截掉。
+fn install_err_tail(stdout: &[u8], stderr: &[u8]) -> String {
+    const MAX: usize = 600;
+    let combined = format!("{}\n{}", String::from_utf8_lossy(stdout), String::from_utf8_lossy(stderr));
+    let kept: Vec<String> = combined
+        .lines()
+        .filter_map(|raw| {
+            let l = raw.trim();
+            if l.is_empty() || l.starts_with("Installing Claude Code") {
+                return None; // 我们/脚本的进度行
+            }
+            if l.contains("SecurityProtocol") || l.contains("install.ps1 | iex") {
+                // 命令回显（PS 异常首行会整句复读命令）：只留 "| iex : " 之后的真实消息
+                return l.rfind("| iex : ").map(|i| l[i + 8..].trim().to_string()).filter(|s| !s.is_empty());
+            }
+            Some(l.to_string())
+        })
+        .collect();
+    let joined = kept.join("\n");
+    if joined.trim().is_empty() {
+        return "（无输出）".into();
+    }
+    let chars: Vec<char> = joined.chars().collect();
+    if chars.len() > MAX {
+        format!("…{}", chars[chars.len() - MAX..].iter().collect::<String>())
+    } else {
+        joined
+    }
+}
+
 /// 本机 node 主版本号；没有 node / 跑不起来返回 0。
 fn node_major() -> u32 {
     let mut c = std::process::Command::new(brains::resolve_bin("node"));
@@ -1184,10 +1241,21 @@ fn node_major() -> u32 {
         .unwrap_or(0)
 }
 
-/// npm 渠道装 Claude Code（@anthropic-ai/claude-code，要求 Node ≥18）。
-fn install_claude_npm(proxy: &[(String, String)]) -> Result<(), String> {
-    let mut c = std::process::Command::new(brains::resolve_bin("npm"));
-    c.args(["install", "-g", "@anthropic-ai/claude-code"]);
+/// npm 全局装包：managed=Some((托管 node bin, data_dir)) 时用托管 npm——
+/// prefix 指到 <data_dir>/node/npm-global、子进程 PATH 前置托管 bin（npm 脚本自己也要找 node）。
+fn npm_install_global(pkg: &str, proxy: &[(String, String)], managed: Option<(&std::path::Path, &std::path::Path)>) -> Result<(), String> {
+    let mut c = match managed {
+        Some((bin, data_dir)) => {
+            let mut c = std::process::Command::new(node_boot::managed_npm_exe(bin));
+            let sep = if cfg!(windows) { ';' } else { ':' };
+            let cur = std::env::var("PATH").unwrap_or_default();
+            c.env("PATH", format!("{}{sep}{cur}", bin.to_string_lossy()));
+            c.env("npm_config_prefix", node_boot::npm_prefix_dir(data_dir));
+            c
+        }
+        None => std::process::Command::new(brains::resolve_bin("npm")),
+    };
+    c.args(["install", "-g", pkg]);
     c.envs(proxy.iter().cloned());
     #[cfg(windows)]
     {
@@ -1198,7 +1266,7 @@ fn install_claude_npm(proxy: &[(String, String)]) -> Result<(), String> {
     if out.status.success() {
         Ok(())
     } else {
-        Err(install_err_brief(&out.stdout, &out.stderr))
+        Err(install_err_tail(&out.stdout, &out.stderr))
     }
 }
 
@@ -1229,43 +1297,76 @@ fn install_claude_native(proxy: &[(String, String)]) -> Result<(), String> {
     if out.status.success() {
         Ok(())
     } else {
-        Err(install_err_brief(&out.stdout, &out.stderr))
+        // 取尾不取头：真正的异常在输出末尾（回显/进度行已剥），供 UI 详情区展示。
+        Err(install_err_tail(&out.stdout, &out.stderr))
     }
 }
 
-/// 一键安装 Claude Code：本机有可用的 Node(≥18)/npm 就**优先走 npm 官方包渠道**——
-/// npm 源直连可达，规则代理用户（只代理 claude.ai、没代理脚本内部下载域名）成功率最高；
-/// npm 渠道失败或没有可用 Node 时再走官方原生脚本。两条渠道都注入系统代理。
-#[tauri::command]
-async fn install_claude() -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(|| {
-        let proxy = system_proxy_env();
-        let npm_usable = node_major() >= 18;
-        let mut npm_err = String::new();
-        if npm_usable {
-            match install_claude_npm(&proxy) {
-                Ok(()) => return Ok("Claude Code 安装完成（npm 渠道），正在重新检测…".to_string()),
-                Err(e) => npm_err = e,
-            }
+/// npm 系 CLI 的统一安装（自举式托管 Node）：
+/// ① 系统 Node≥18 → 系统 npm，行为与从前零变化；② 无 → 自举托管 Node（ensure：复用/下载/解压/校验，
+/// 进度经 "node-boot" 事件推前端）再用托管 npm 装；③ 自举成功后进程 PATH 前置 + 用户级持久 PATH
+///（幂等；写入失败不致命，消息里提示手动）。native_fallback（仅 claude）：以上全失败回落官方脚本。
+async fn install_cli_via_node(app: AppHandle, data_dir: PathBuf, pkg: &'static str, cli_name: &'static str, native_fallback: bool) -> Result<String, String> {
+    let proxy = system_proxy_env();
+    let sys_node = tauri::async_runtime::spawn_blocking(node_major).await.map_err(|e| e.to_string())?;
+    let mut errs: Vec<String> = Vec::new();
+    if sys_node >= 18 {
+        // 系统 Node 可用：老路径，零变化。
+        let p2 = proxy.clone();
+        match tauri::async_runtime::spawn_blocking(move || npm_install_global(pkg, &p2, None)).await.map_err(|e| e.to_string())? {
+            Ok(()) => return Ok(format!("{cli_name} 安装完成（npm 渠道），正在重新检测…")),
+            Err(e) => errs.push(format!("npm 渠道：{e}")),
         }
-        match install_claude_native(&proxy) {
-            Ok(()) => Ok("Claude Code 安装完成，正在重新检测…".to_string()),
-            Err(native_err) => {
-                let mut msg = if npm_err.is_empty() {
-                    format!("安装失败：{native_err}")
-                } else {
-                    format!("安装失败：npm 渠道：{npm_err}；官方脚本渠道：{native_err}")
-                };
-                if !npm_usable {
-                    msg.push_str("；本机没有可用的 Node(≥18)/npm——装上 Node 后重试还能多一条 npm 渠道");
+    } else {
+        // 自举托管 Node：进度推给前端（下载 x% → 解压 → 校验 → 装 CLI）。
+        let app2 = app.clone();
+        let boot = node_boot::ensure(&data_dir, move |phase, pct| {
+            let _ = app2.emit("node-boot", serde_json::json!({ "phase": phase, "pct": pct }));
+        })
+        .await;
+        match boot {
+            Ok(bin) => {
+                let _ = app.emit("node-boot", serde_json::json!({ "phase": "npm", "pct": 0 }));
+                let (p2, bin2, dd2) = (proxy.clone(), bin.clone(), data_dir.clone());
+                let res = tauri::async_runtime::spawn_blocking(move || npm_install_global(pkg, &p2, Some((&bin2, &dd2))))
+                    .await
+                    .map_err(|e| e.to_string())?;
+                match res {
+                    Ok(()) => {
+                        // 立即生效：进程 PATH 前置（探测/CLI 子进程继承）；再写用户级持久 PATH。
+                        node_boot::prepend_process_path(&data_dir);
+                        let mut msg = format!("{cli_name} 安装完成（托管 Node 渠道），正在重新检测…");
+                        if let Err(e) = node_boot::register_user_path(&[bin, node_boot::npm_global_bin(&data_dir)]) {
+                            msg.push_str(&format!("（已装好但未能写入系统 PATH，终端里使用需手动加：{e}）"));
+                        }
+                        return Ok(msg);
+                    }
+                    Err(e) => errs.push(format!("托管 npm 渠道：{e}")),
                 }
-                msg.push_str("。多为网络问题——VPN/代理需覆盖 claude.ai 及其下载域名（规则模式请把 storage.googleapis.com 加进代理规则，或临时切全局），也可复制右侧命令到终端手动执行看完整输出");
-                Err(msg)
             }
+            Err(e) => errs.push(format!("托管 Node 自举：{e}")),
         }
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    }
+    if native_fallback {
+        let p2 = proxy.clone();
+        match tauri::async_runtime::spawn_blocking(move || install_claude_native(&p2)).await.map_err(|e| e.to_string())? {
+            Ok(()) => return Ok(format!("{cli_name} 安装完成，正在重新检测…")),
+            Err(e) => errs.push(format!("官方脚本渠道：{e}")),
+        }
+    }
+    let mut msg = String::from("安装失败：多为网络问题（VPN/代理没覆盖下载域名）");
+    if sys_node < 18 {
+        msg.push_str("。更稳的替代：先装 Node.js(≥18)，再点一键安装将自动走 npm 通道（npm 遵循系统代理）");
+    }
+    msg.push_str(&format!("\n——详情（输出末尾）——\n{}", errs.join("\n")));
+    Err(msg)
+}
+
+/// 一键安装 Claude Code：系统 Node≥18 优先 npm 官方包渠道；无 Node 自举托管 Node 走 npm；
+/// 仍失败回落官方原生脚本。全渠道注入系统代理。
+#[tauri::command]
+async fn install_claude(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<String, String> {
+    install_cli_via_node(app, state.data_dir.clone(), "@anthropic-ai/claude-code", "Claude Code", true).await
 }
 
 /// 把系统代理补进本进程环境（已有环境变量不覆盖）：Windows 代理软件通常只设注册表
@@ -1277,30 +1378,10 @@ fn apply_system_proxy_to_process() {
     }
 }
 
-/// 一键安装 Codex（npm i -g @openai/codex，要求 Node 18+）。注入系统代理。
+/// 一键安装 Codex：系统 Node≥18 走系统 npm；无 Node 自举托管 Node 再装（无原生脚本兜底）。
 #[tauri::command]
-async fn install_codex() -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(|| {
-        if node_major() < 18 {
-            return Err("需要先安装 Node.js 18+（Codex 走 npm 渠道），装好后点「重新检测」再试".to_string());
-        }
-        let mut c = std::process::Command::new(brains::resolve_bin("npm"));
-        c.args(["install", "-g", "@openai/codex"]);
-        c.envs(system_proxy_env());
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            c.creation_flags(0x0800_0000);
-        }
-        let out = c.output().map_err(|e| format!("启动 npm 失败: {e}"))?;
-        if out.status.success() {
-            Ok("Codex 安装完成，正在重新检测…".to_string())
-        } else {
-            Err(format!("安装失败：{}", install_err_brief(&out.stdout, &out.stderr)))
-        }
-    })
-    .await
-    .map_err(|e| e.to_string())?
+async fn install_codex(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<String, String> {
+    install_cli_via_node(app, state.data_dir.clone(), "@openai/codex", "Codex", false).await
 }
 
 /// 一键安装 Grok CLI（官方脚本 curl | bash，装到 ~/.grok/bin 并自动補 PATH）。
@@ -2999,6 +3080,9 @@ pub fn run() {
         .setup(|app| {
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
+            // 托管 Node（若已自举过）：bin + npm 全局 bin 前置进程 PATH——
+            // 探测（which 读 PATH）与之后 spawn 的全部 CLI 子进程自动继承。
+            node_boot::prepend_process_path(&data_dir);
             let conns = pack::ConnStore::new(&data_dir).map_err(std::io::Error::other)?;
             let convos = convo::ConvStore::new(&data_dir);
             convos.mark_idle(now_secs());

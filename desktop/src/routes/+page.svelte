@@ -12,6 +12,7 @@
   import ModelFx from '$lib/ModelFx.svelte';
   import UsageRing from '$lib/UsageRing.svelte';
   import { tip as tipAction } from '$lib/tip';
+  import { listen } from '@tauri-apps/api/event';
   import AppIcon from '$lib/AppIcon.svelte';
   import type {
     Connection, Discovery, Site, BrainsInfo, Brain, ImportOutcome,
@@ -648,8 +649,8 @@
     const t0 = Date.now();
     codexTimer = setInterval(() => { codexElapsed = Date.now() - t0; }, 500);
     try { const m = await invoke<string>('install_codex'); say(m); await refreshBrainsManual(); }
-    catch (e) { say(String(e), 'err'); }
-    finally { codexInstalling = false; if (codexTimer) { clearInterval(codexTimer); codexTimer = undefined; } }
+    catch (e) { say(String(e), 'err', 20000); }
+    finally { codexInstalling = false; nodeBoot = ''; if (codexTimer) { clearInterval(codexTimer); codexTimer = undefined; } }
   }
   let grokInstalling = $state(false);
   let grokElapsed = $state(0);
@@ -663,14 +664,23 @@
     catch (e) { say(String(e), 'err'); }
     finally { grokInstalling = false; if (grokTimer) { clearInterval(grokTimer); grokTimer = undefined; } }
   }
+  // 托管 Node 自举进度（后端 "node-boot" 事件）：一键安装按钮上分步显示。
+  let nodeBoot = $state('');
+  $effect(() => {
+    const un = listen<{ phase: string; pct: number }>('node-boot', (e) => {
+      const p = e.payload;
+      nodeBoot = p.phase === 'download' ? `下载 Node ${p.pct}%` : p.phase === 'extract' ? '解压 Node…' : p.phase === 'verify' ? '校验 Node…' : '安装 CLI…';
+    });
+    return () => { void un.then((f) => f()); };
+  });
   async function installClaude() {
     if (claudeInstalling) return;
     claudeInstalling = true; claudeElapsed = 0;
     const t0 = Date.now();
     claudeTimer = setInterval(() => { claudeElapsed = Date.now() - t0; }, 500);
     try { const m = await invoke<string>('install_claude'); say(m); await refreshBrainsManual(); }
-    catch (e) { say(String(e), 'err'); }
-    finally { claudeInstalling = false; if (claudeTimer) { clearInterval(claudeTimer); claudeTimer = undefined; } }
+    catch (e) { say(String(e), 'err', 20000); } // 详情含输出末尾，多留时间读/滚动
+    finally { claudeInstalling = false; nodeBoot = ''; if (claudeTimer) { clearInterval(claudeTimer); claudeTimer = undefined; } }
   }
   function fillDeploy() {
     if (viewBusy) return;
@@ -1004,9 +1014,11 @@
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
   });
-  function say(m: string, k: 'ok' | 'err' = 'ok') { flash = m; flashKind = k; setTimeout(() => (flash = ''), k === 'err' ? 8000 : 4000); }
+  function say(m: string, k: 'ok' | 'err' = 'ok', ms = 0) { flash = m; flashKind = k; setTimeout(() => (flash = ''), ms || (k === 'err' ? 8000 : 4000)); }
   function brainUsable(b: Brain): boolean { const s = b === 'claude' ? brains?.claude : b === 'grok' ? brains?.grok : brains?.codex; return !!s && s.found && s.logged_in !== false; }
   function hostOf(u: string): string { try { return new URL(u).host; } catch { return u; } }
+  /** node --version（形如 v18.19.0）→ 主版本号；解析不了按 0（视为不可用）。 */
+  function nodeMajor(v: string): number { return parseInt(v.replace(/^v/, ''), 10) || 0; }
 
   // 从对话里认出这个项目已部署的线上地址（AI 部署完都会说「访问 https://xxx」）。
   // 优先自定义域名，其次 *.pages.dev；忽略 localhost / CDN / 文档等无关链接。
@@ -2390,13 +2402,17 @@
                   {#if !r.st.found}
                     <span class="cli-tag bad">未安装</span>
                     {#if r.b === 'claude'}
-                      <button class="wr-btn" onclick={installClaude} disabled={claudeInstalling}>{#if claudeInstalling}<span class="wr-spin"></span>安装中 {elapsedLabel(claudeElapsed)}{:else}一键安装{/if}</button>
+                      <button class="wr-btn" use:tipAction={'安装失败排障：VPN/代理需覆盖 claude.ai 与下载域名 storage.googleapis.com（规则模式加进规则或临时切全局）；也可复制右侧命令到终端手动执行看完整输出。'} onclick={installClaude} disabled={claudeInstalling}>{#if claudeInstalling}<span class="wr-spin"></span>{nodeBoot || `安装中 ${elapsedLabel(claudeElapsed)}`}{:else}一键安装{/if}</button>
+                      {#if !brains.node.found || nodeMajor(brains.node.version) < 18}
+                        <button class="node-need" use:tipAction={'没有 Node 也能一键安装：会自动下载托管版 Node(v22 LTS) 再走 npm 通道；喜欢自管环境可先装 Node.js(≥18)，将优先使用系统版。'} onclick={() => openUrl('https://nodejs.org/')}>先装 Node.js ↗</button>
+                      {/if}
                     {:else if r.b === 'grok'}
                       <button class="wr-btn" onclick={installGrok} disabled={grokInstalling}>{#if grokInstalling}<span class="wr-spin"></span>安装中 {elapsedLabel(grokElapsed)}{:else}一键安装{/if}</button>
-                    {:else if brains && !brains.node.found}
-                      <button class="node-need" title="Codex 通过 npm 安装，需要先装 Node.js（含 npm）。点击打开官网下载。" onclick={() => openUrl('https://nodejs.org/')}>先装 Node.js ↗</button>
                     {:else if r.b === 'codex'}
-                      <button class="wr-btn" onclick={installCodex} disabled={codexInstalling}>{#if codexInstalling}<span class="wr-spin"></span>安装中 {elapsedLabel(codexElapsed)}{:else}一键安装{/if}</button>
+                      <button class="wr-btn" onclick={installCodex} disabled={codexInstalling}>{#if codexInstalling}<span class="wr-spin"></span>{nodeBoot || `安装中 ${elapsedLabel(codexElapsed)}`}{:else}一键安装{/if}</button>
+                      {#if !brains.node.found || nodeMajor(brains.node.version) < 18}
+                        <button class="node-need" use:tipAction={'没有 Node 也能一键安装：会自动下载托管版 Node(v22 LTS) 再走 npm 通道；喜欢自管环境可先装 Node.js(≥18)，将优先使用系统版。'} onclick={() => openUrl('https://nodejs.org/')}>先装 Node.js ↗</button>
+                      {/if}
                     {/if}
                     <code class="cli-cmd" title={r.cmd}>{r.cmd}</code>
                     <button class="cli-copy" title="复制命令" aria-label="复制安装命令" onclick={() => copyCmd(r.cmd)}>
@@ -2414,6 +2430,7 @@
                 </div>
               {/each}
               <p class="cli-note"><svg class="cli-note-ic" width="13" height="13" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.4" stroke="currentColor" stroke-width="1.3" /><path d="M8 7.3v3.4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /><circle cx="8" cy="4.8" r="0.95" fill="currentColor" /></svg><span>安装/登录后状态灯自动变绿；密钥只进 macOS 钥匙串，绝不落盘。</span></p>
+              <p class="cli-note"><svg class="cli-note-ic" width="13" height="13" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.4" stroke="currentColor" stroke-width="1.3" /><path d="M8 7.3v3.4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /><circle cx="8" cy="4.8" r="0.95" fill="currentColor" /></svg><span>没有 Node 的机器，一键安装会自动下载托管版 Node(v22 LTS) 到应用数据目录，并写入用户级 PATH（只追加、绝不覆盖或截断；写入失败会提示手动配置）。</span></p>
               {#if !brains.browser.found}
                 <p class="cli-note"><svg class="cli-note-ic" width="13" height="13" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.4" stroke="currentColor" stroke-width="1.3" /><path d="M1.9 8h12.2M8 1.6c-4.4 4.2-4.4 8.6 0 12.8 4.4-4.2 4.4-8.6 0-12.8Z" stroke="currentColor" stroke-width="1.1" /></svg><span>未检测到 Chrome / Edge——「AI 网页截图配图」不可用（可选功能，装个 Chrome 即启用）。</span></p>
               {/if}
@@ -3676,7 +3693,9 @@
 
   /* ---- 主区 ---- */
   .main { flex: 1; position: relative; display: flex; flex-direction: column; min-width: 0; padding-top: 0; }
-  .flash { position: absolute; top: 40px; left: 50%; transform: translateX(-50%); z-index: 40; background: #14231a; color: #fff; padding: 9px 16px; border-radius: 10px; font-size: 13px; box-shadow: var(--shadow); max-width: 70%; }
+  /* 吐司：pre-wrap 让「——详情——」多行错误可读；err 形态限高可滚动（安装失败输出末尾等） */
+  .flash { position: absolute; top: 40px; left: 50%; transform: translateX(-50%); z-index: 40; background: #14231a; color: #fff; padding: 9px 16px; border-radius: 10px; font-size: 13px; box-shadow: var(--shadow); max-width: 70%; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .flash.err { max-height: 42vh; overflow-y: auto; }
   /* 自定义右键菜单（替换 WKWebView 默认英文菜单） */
   .ctx-menu { position: fixed; z-index: 120; min-width: 148px; background: #fff; border: 1px solid var(--border); border-radius: 11px; box-shadow: 0 12px 32px rgba(30,25,15,.16); padding: 5px; animation: pop .1s ease-out; }
   .ctx-item { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 18px; background: none; border: none; border-radius: 7px; padding: 6px 10px; font: inherit; font-size: 13px; color: var(--text); cursor: pointer; text-align: left; }
@@ -4186,7 +4205,7 @@
   .ss-dot.err { background: #c94f37; }
   .ss-dot.warn { background: #d9a400; }
   /* 共享 hover 气泡（$lib/tip action 挂到 body 上）：深色小圆角、白字、单行、不挡交互 */
-  :global(.ui-tip) { position: fixed; z-index: 96; pointer-events: none; background: #26241f; color: #fff; font-size: 11px; line-height: 1.5; padding: 3px 9px; border-radius: 6px; white-space: nowrap; box-shadow: 0 4px 14px rgba(30, 25, 15, .22); }
+  :global(.ui-tip) { position: fixed; z-index: 96; pointer-events: none; background: #26241f; color: #fff; font-size: 11px; line-height: 1.5; padding: 3px 9px; border-radius: 6px; width: max-content; max-width: 340px; white-space: normal; box-shadow: 0 4px 14px rgba(30, 25, 15, .22); }
   .md-exc { display: flex; align-items: center; gap: 6px; width: fit-content; max-width: 100%; padding: 2px 6px; margin-left: -6px; border: none; background: none; border-radius: 7px; font-size: 12px; color: var(--dim); cursor: pointer; text-align: left; }
   .md-exc:hover { background: #efede7; }
   .md-exc-name { color: var(--text); font-weight: 500; }
