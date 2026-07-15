@@ -64,6 +64,8 @@ pub async fn run_turn(
     mode: PermMode,
     effort: String,
     pending_dir: PathBuf,
+    ssh_js: PathBuf,
+    lease: Option<&crate::bridge::Lease>,
     session_ref: String,
     is_first: bool,
     system: Option<String>,
@@ -96,7 +98,7 @@ pub async fn run_turn(
         cmd.arg("--always-approve");
     }
     cmd.arg("stdio");
-    agent::apply_env_cwd(&mut cmd, &conn, &work_dir, &api_key);
+    agent::apply_env_cwd(&mut cmd, &conn, &work_dir, &api_key, lease);
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -132,7 +134,7 @@ pub async fn run_turn(
         Some(out) => {
             let fut = drive(
                 &mut stdin, out, &st, &channel, is_first, &session_ref, system.as_deref(),
-                &message, &work_dir, mode, &pending_dir, &turn_id,
+                &message, &work_dir, mode, &pending_dir, &ssh_js, &turn_id,
             );
             tokio::select! {
                 r = fut => r,
@@ -219,6 +221,7 @@ async fn drive(
     work_dir: &str,
     mode: PermMode,
     pending_dir: &Path,
+    ssh_js: &Path,
     conv_id: &str,
 ) -> Result<Done, String> {
     let mut reader = BufReader::new(stdout);
@@ -233,7 +236,7 @@ async fn drive(
             "clientCapabilities": { "fs": { "readTextFile": false, "writeTextFile": false }, "terminal": false }
         }
     })).await?;
-    tokio::time::timeout(hs, pump(stdin, &mut reader, st, ch, 1, false, mode, pending_dir, conv_id))
+    tokio::time::timeout(hs, pump(stdin, &mut reader, st, ch, 1, false, mode, pending_dir, ssh_js, conv_id))
         .await
         .map_err(|_| "grok initialize 超时".to_string())??;
 
@@ -246,7 +249,7 @@ async fn drive(
         }
         let res = tokio::time::timeout(hs, async {
             send(stdin, &serde_json::json!({ "jsonrpc": "2.0", "id": 2, "method": "session/new", "params": params })).await?;
-            pump(stdin, &mut reader, st, ch, 2, false, mode, pending_dir, conv_id).await
+            pump(stdin, &mut reader, st, ch, 2, false, mode, pending_dir, ssh_js, conv_id).await
         })
         .await
         .map_err(|_| "grok 建会话超时".to_string())??;
@@ -261,7 +264,7 @@ async fn drive(
                 "jsonrpc": "2.0", "id": 2, "method": "session/load",
                 "params": { "sessionId": session_ref, "cwd": work_dir, "mcpServers": [] }
             })).await?;
-            pump(stdin, &mut reader, st, ch, 2, false, mode, pending_dir, conv_id).await
+            pump(stdin, &mut reader, st, ch, 2, false, mode, pending_dir, ssh_js, conv_id).await
         })
         .await
         .map_err(|_| "grok 载入会话超时".to_string())??;
@@ -274,7 +277,7 @@ async fn drive(
         "params": { "sessionId": sid, "prompt": [{ "type": "text", "text": message }] }
     })).await?;
     // prompt 阶段不设总超时：长任务合法，取消交给停止按钮（外层 select 杀进程）。
-    let res = pump(stdin, &mut reader, st, ch, 3, true, mode, pending_dir, conv_id).await?;
+    let res = pump(stdin, &mut reader, st, ch, 3, true, mode, pending_dir, ssh_js, conv_id).await?;
 
     let stop_reason = res.get("stopReason").and_then(|s| s.as_str()).unwrap_or("").to_string();
     let meta = &res["_meta"];
@@ -297,6 +300,7 @@ async fn pump(
     streaming: bool,
     mode: PermMode,
     pending_dir: &Path,
+    ssh_js: &Path,
     conv_id: &str,
 ) -> Result<serde_json::Value, String> {
     let mut buf = Vec::new();
@@ -322,7 +326,7 @@ async fn pump(
                 // agent → client 请求：目前只有权限一种要真正处理；其余一律「不支持」，
                 // 让 agent 走兜底（我们没有声明 fs/terminal 能力，正常不会有别的请求）。
                 if method == "session/request_permission" {
-                    let allow = decide_and_wait(&msg["params"], mode, pending_dir, conv_id).await;
+                    let allow = decide_and_wait(&msg["params"], mode, pending_dir, ssh_js, conv_id).await;
                     let out = permission_response(&msg["id"], &msg["params"]["options"], allow);
                     send(stdin, &out).await?;
                 } else {
@@ -473,8 +477,13 @@ pub(crate) enum Decision {
 /// 只读（read/search/think 或标 read_only）任何档位直接放行（claude 的钩子同样放行只读）；
 /// full 全放；plan 非只读一律拒；ask 非只读全弹卡；
 /// auto＝acceptEdits 语义：编辑放行、命令安全放行、危险命令/网络抓取/删除弹卡、未知弹卡（安全侧）。
-pub(crate) fn decide(mode: PermMode, kind: &str, read_only: bool, cmd: &str) -> Decision {
+pub(crate) fn decide(mode: PermMode, kind: &str, read_only: bool, cmd: &str, ssh_js: &str) -> Decision {
     if read_only || matches!(kind, "read" | "search" | "think") {
+        return Decision::Allow;
+    }
+    // AI 桥调用自带 Pilot 侧确认（bridge.rs，在 Rust 里）→ 这里放行，否则同一条远程命令弹两张卡。
+    // 与 claude 钩子里的 BRIDGE 正则同一判定（permit::is_bridge_cmd）。plan 档仍旧拒：不动手就是不动手。
+    if mode != PermMode::Plan && kind == "execute" && permit::is_bridge_cmd(cmd, ssh_js) {
         return Decision::Allow;
     }
     match mode {
@@ -537,9 +546,9 @@ pub(crate) fn permission_facts(params: &serde_json::Value) -> (String, bool, Str
 }
 
 /// 裁决 + 需要时弹卡等待。任何异常（写卡失败/超时/文件损坏）→ false（fail-closed）。
-async fn decide_and_wait(params: &serde_json::Value, mode: PermMode, pending_dir: &Path, conv_id: &str) -> bool {
+async fn decide_and_wait(params: &serde_json::Value, mode: PermMode, pending_dir: &Path, ssh_js: &Path, conv_id: &str) -> bool {
     let (kind, read_only, cmd, desc, arg, tool, call_id) = permission_facts(params);
-    match decide(mode, &kind, read_only, &cmd) {
+    match decide(mode, &kind, read_only, &cmd, &ssh_js.to_string_lossy()) {
         Decision::Allow => true,
         Decision::Deny => false,
         Decision::Card { dangerous } => {
@@ -681,26 +690,27 @@ mod tests {
     #[test]
     fn decide_matrix_matches_claude_semantics() {
         use Decision::*;
+        const JS: &str = "/d/tools/ssh.js";
         // 只读任何档位放行
         for m in [PermMode::Plan, PermMode::Ask, PermMode::Auto, PermMode::Full] {
-            assert_eq!(decide(m, "read", true, ""), Allow);
-            assert_eq!(decide(m, "search", false, ""), Allow);
+            assert_eq!(decide(m, "read", true, "", JS), Allow);
+            assert_eq!(decide(m, "search", false, "", JS), Allow);
         }
         // full 全放
-        assert_eq!(decide(PermMode::Full, "execute", false, "rm -rf /"), Allow);
+        assert_eq!(decide(PermMode::Full, "execute", false, "rm -rf /", JS), Allow);
         // plan 非只读一律拒（fail-closed 的只读模式）
-        assert_eq!(decide(PermMode::Plan, "execute", false, "ls"), Deny);
-        assert_eq!(decide(PermMode::Plan, "edit", false, ""), Deny);
+        assert_eq!(decide(PermMode::Plan, "execute", false, "ls", JS), Deny);
+        assert_eq!(decide(PermMode::Plan, "edit", false, "", JS), Deny);
         // ask 全弹卡；危险命令红色强调
-        assert_eq!(decide(PermMode::Ask, "execute", false, "npm install"), Card { dangerous: false });
-        assert_eq!(decide(PermMode::Ask, "execute", false, "wrangler pages deploy ./dist"), Card { dangerous: true });
+        assert_eq!(decide(PermMode::Ask, "execute", false, "npm install", JS), Card { dangerous: false });
+        assert_eq!(decide(PermMode::Ask, "execute", false, "wrangler pages deploy ./dist", JS), Card { dangerous: true });
         // auto＝acceptEdits：编辑放行、安全命令放行、危险命令/抓取/删除弹卡、未知弹卡
-        assert_eq!(decide(PermMode::Auto, "edit", false, ""), Allow);
-        assert_eq!(decide(PermMode::Auto, "execute", false, "npm run build"), Allow);
-        assert_eq!(decide(PermMode::Auto, "execute", false, "git push origin main"), Card { dangerous: true });
-        assert_eq!(decide(PermMode::Auto, "fetch", false, ""), Card { dangerous: true });
-        assert_eq!(decide(PermMode::Auto, "delete", false, ""), Card { dangerous: true });
-        assert_eq!(decide(PermMode::Auto, "other", false, ""), Card { dangerous: false });
+        assert_eq!(decide(PermMode::Auto, "edit", false, "", JS), Allow);
+        assert_eq!(decide(PermMode::Auto, "execute", false, "npm run build", JS), Allow);
+        assert_eq!(decide(PermMode::Auto, "execute", false, "git push origin main", JS), Card { dangerous: true });
+        assert_eq!(decide(PermMode::Auto, "fetch", false, "", JS), Card { dangerous: true });
+        assert_eq!(decide(PermMode::Auto, "delete", false, "", JS), Card { dangerous: true });
+        assert_eq!(decide(PermMode::Auto, "other", false, "", JS), Card { dangerous: false });
     }
 
     #[test]
@@ -752,7 +762,7 @@ mod tests {
         // 轮 1：全新会话 + 触发一次命令执行（full 档 → --always-approve，不弹卡）。
         let r1 = run_turn(
             RunRegistry::default(), conn.clone(), work_dir.clone(), String::new(), PermMode::Full,
-            String::new(), pend.clone(), String::new(), true,
+            String::new(), pend.clone(), std::path::PathBuf::from("/d/tools/ssh.js"), None, String::new(), true,
             Some("测试规则：所有回答的最后一行必须是单独的一个字「哞」。".into()),
             "运行 shell 命令 echo pilot-live 并告诉我输出".into(), "live-1".into(), ch(), String::new(),
         )
@@ -768,7 +778,7 @@ mod tests {
         // 轮 2：session/load 续跑（新进程），验证多轮记忆。
         let r2 = run_turn(
             RunRegistry::default(), conn, work_dir, String::new(), PermMode::Full,
-            String::new(), pend, r1.session_ref.clone(), false, None,
+            String::new(), pend, std::path::PathBuf::from("/d/tools/ssh.js"), None, r1.session_ref.clone(), false, None,
             "我刚才让你运行的命令原文是什么？只回答命令本身".into(), "live-2".into(), ch(), String::new(),
         )
         .await;

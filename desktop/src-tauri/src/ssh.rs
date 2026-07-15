@@ -52,6 +52,27 @@ pub struct SftpEntry {
     pub mtime: u64,
 }
 
+/// 由「已存的连接 + 钥匙串」组装认证材料。凭据只在 Rust 侧流转，绝不出这个进程。
+/// 无口令私钥不会有钥匙串条目 —— get_key 失败按「无口令」处理，不是错误。
+pub fn auth_for(conn: &crate::pack::Connection) -> Result<SshAuth, String> {
+    let secret = crate::keychain::get_key(&conn.id).ok();
+    Ok(if conn.ssh_auth == "key" {
+        SshAuth {
+            user: conn.ssh_user.clone(),
+            password: None,
+            key_path: Some(conn.ssh_key_path.clone()),
+            key_pass: secret.filter(|s| !s.is_empty()),
+        }
+    } else {
+        SshAuth {
+            user: conn.ssh_user.clone(),
+            password: Some(secret.ok_or("钥匙串里没有这个连接的密码，请删除后重新添加")?),
+            key_path: None,
+            key_pass: None,
+        }
+    })
+}
+
 /// 一次连接所需的认证材料。调用方从钥匙串取出后构造，用完即弃。
 #[derive(Clone)]
 pub struct SshAuth {
@@ -172,23 +193,60 @@ pub async fn probe(
     }
 }
 
-/// 一条活着的 SSH 连接：一个 handle + 其上的若干通道（PTY / SFTP）。
+/// 一条活着的 SSH 连接：一个 handle + 其上的若干通道（PTY / SFTP / exec）。
 ///
 /// 为什么必须留着 `handle`：**开新通道只能通过它**（SFTP 要在同一条连接上再开一路，
-/// 否则每次文件操作都要重新握手认证）。
-/// 另：`ChannelWriteHalf` 内部持有 sender 的克隆，所以只要它活着，会话任务就不会退出
-/// （`Handle::drop` 不 abort，其 JoinHandle 被 drop 在 tokio 里是分离而非杀死）——
-/// 但那只保活，开不了新通道，所以 handle 还是得留。
+/// 否则每次文件操作都要重新握手认证）。它本身也持有 sender，只要它在表里活着，
+/// 会话任务就不退出（`Handle::drop` 不 abort，其 JoinHandle 被 drop 在 tokio 里是分离而非杀死）
+/// —— 所以**没有 PTY 也能维持连接**，AI 桥/SFTP 不必先开终端。
 struct Live {
-    handle: client::Handle<Client>,
+    /// Arc 是刻意的：开通道要 await 服务端确认（机器失联时能挂满 TCP 超时），
+    /// 所以必须**在锁里克隆、出了锁再 await** —— 否则一条连接卡住会连坐整张会话表
+    /// （连能救场的「关闭/重连」都拿不到锁）。
+    handle: Arc<client::Handle<Client>>,
     /// PTY 通道写半边（读半边在 open_shell 里交给后台任务流给前端；Channel 不能克隆，只能拆两半）。
-    ch: russh::ChannelWriteHalf<client::Msg>,
+    /// None = 这条连接上还没开终端（AI 桥或 SFTP 建的）。
+    ch: Option<russh::ChannelWriteHalf<client::Msg>>,
+    /// 当前 PTY 的世代号。PTY 读任务退出时只有「自己仍是当前世代」才动表 ——
+    /// 否则重连时旧任务的收尾会把刚建好的新会话删掉（旧代码有这个竞态，靠 connect 的网络延时侥幸不中）。
+    pty_gen: u64,
+}
+
+/// 一次性命令的执行结果（AI 桥用）。
+#[derive(Clone, Serialize, Debug)]
+pub struct ExecOut {
+    pub stdout: String,
+    pub stderr: String,
+    /// 远端退出码；拿不到（通道异常关闭）时为 -1。
+    pub code: i32,
+    /// 输出是否因超过上限被截断。
+    pub truncated: bool,
+}
+
+/// 单次 exec 收集的输出上限：`cat 大日志` 之类不能把内存吸爆，AI 也读不完。
+const EXEC_OUT_MAX: usize = 256 * 1024;
+
+/// 往缓冲追加、到上限就停（并标记截断）。stdout/stderr 各自独立计上限。
+fn push_capped(buf: &mut Vec<u8>, data: &[u8], truncated: &mut bool) {
+    if buf.len() >= EXEC_OUT_MAX {
+        *truncated = true;
+        return;
+    }
+    let room = EXEC_OUT_MAX - buf.len();
+    if data.len() > room {
+        buf.extend_from_slice(&data[..room]);
+        *truncated = true;
+    } else {
+        buf.extend_from_slice(data);
+    }
 }
 
 /// 按 conn_id 索引的活跃 SSH 会话表。
 #[derive(Clone, Default)]
 pub struct SshSessions {
     map: Arc<Mutex<HashMap<String, Live>>>,
+    /// PTY 世代号发号器：见 Live.pty_gen。
+    gen: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl SshSessions {
@@ -196,7 +254,40 @@ impl SshSessions {
         Self::default()
     }
 
-    /// 开一个交互式 PTY shell，把输出流给前端；同一 conn_id 已有会话时先关掉旧的。
+    /// 确保这条连接有一条已认证的会话（没有就建，**不开 PTY**）。
+    /// 给 AI 桥/SFTP 用：用户没开过终端也能跑命令、管文件。
+    pub async fn ensure(
+        &self,
+        conn_id: &str,
+        host: &str,
+        port: u16,
+        auth: &SshAuth,
+        expect: Option<String>,
+    ) -> Result<(), String> {
+        {
+            let g = self.map.lock().await;
+            // 已在表里但连接其实已断（网线拔了/服务端重启）→ 当作没有，下面重建。
+            if let Some(live) = g.get(conn_id) {
+                if !live.handle.is_closed() {
+                    return Ok(());
+                }
+            }
+        } // 先放锁：connect_auth 要 await 很久（网络 + 认证）
+        let (session, _fp) = connect_auth(host, port, auth, expect).await?;
+        let mut g = self.map.lock().await;
+        // 建连期间别人可能已经建好了（两个 exec 同时进来）——那就用它的，扔掉自己这条。
+        match g.get(conn_id) {
+            Some(live) if !live.handle.is_closed() => {}
+            _ => {
+                g.insert(conn_id.to_string(), Live { handle: Arc::new(session), ch: None, pty_gen: 0 });
+            }
+        }
+        Ok(())
+    }
+
+    /// 开一个交互式 PTY shell，把输出流给前端；同一 conn_id 已有终端时先关掉旧的。
+    /// 已有无终端会话（AI 桥/SFTP 建的）时**复用**它，不重新握手。
+    #[allow(clippy::too_many_arguments)]
     pub async fn open_shell(
         &self,
         conn_id: &str,
@@ -208,9 +299,15 @@ impl SshSessions {
         rows: u32,
         on_event: Channel<SshEvent>,
     ) -> Result<(), String> {
-        self.close(conn_id).await;
-        let (session, _fp) = connect_auth(host, port, auth, expect).await?;
-        let ch = session
+        // 关掉可能存在的旧 PTY（保留连接本身），再确保连接可用。
+        self.close_pty(conn_id).await;
+        self.ensure(conn_id, host, port, auth, expect).await?;
+        // 锁里只做克隆，开通道在锁外 await（见 Live.handle 的注释）。
+        let handle = {
+            let g = self.map.lock().await;
+            g.get(conn_id).ok_or("会话未打开")?.handle.clone()
+        };
+        let ch = handle
             .channel_open_session()
             .await
             .map_err(|e| format!("打开会话通道失败: {e}"))?;
@@ -224,16 +321,20 @@ impl SshSessions {
         // 读端交给后台任务；写端（Live.ch）留在表里给 input/resize 用。
         // russh 的 Channel 不能克隆，这里把它拆成 reader/writer 两半。
         let (mut reader, writer) = ch.split();
-        self.map
-            .lock()
-            .await
-            .insert(conn_id.to_string(), Live { handle: session, ch: writer });
+        let my_gen = self.gen.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        match self.map.lock().await.get_mut(conn_id) {
+            Some(live) => {
+                live.ch = Some(writer);
+                live.pty_gen = my_gen;
+            }
+            // 刚 ensure 完就没了（用户同时点了关闭）：让调用方重来，别把半个会话塞回表里。
+            None => return Err("会话已关闭，请重试".into()),
+        }
 
         let map = self.map.clone();
         let id = conn_id.to_string();
         tokio::spawn(async move {
             let b64 = base64::engine::general_purpose::STANDARD;
-            let mut err = String::new();
             loop {
                 match reader.wait().await {
                     Some(ChannelMsg::Data { data }) => {
@@ -248,10 +349,35 @@ impl SshSessions {
                     None => break, // 通道关闭
                 }
             }
-            map.lock().await.remove(&id);
-            let _ = on_event.send(SshEvent::Closed { error: std::mem::take(&mut err) });
+            // 终端结束（用户敲了 exit / 网络断）＝这条连接的使命结束，整条撤掉；
+            // AI 桥下次 exec 会自己 ensure 重连。**只有自己还是当前世代才动表**（见 Live.pty_gen）。
+            {
+                let mut g = map.lock().await;
+                if g.get(&id).is_some_and(|l| l.pty_gen == my_gen) {
+                    g.remove(&id);
+                }
+            }
+            let _ = on_event.send(SshEvent::Closed { error: String::new() });
         });
         Ok(())
+    }
+
+    /// 只关掉 PTY 通道，保留连接本身（重开终端时用；AI 桥/SFTP 不受影响）。
+    async fn close_pty(&self, conn_id: &str) {
+        let ch = {
+            let mut g = self.map.lock().await;
+            match g.get_mut(conn_id) {
+                Some(live) => {
+                    // 换代：旧读任务醒来时发现自己不是当前世代，就不会去删表。
+                    live.pty_gen = self.gen.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                    live.ch.take()
+                }
+                None => None,
+            }
+        };
+        if let Some(ch) = ch {
+            let _ = ch.close().await;
+        }
     }
 
     /// 把键盘输入写进 PTY。
@@ -259,6 +385,8 @@ impl SshSessions {
         let g = self.map.lock().await;
         let live = g.get(conn_id).ok_or("会话未打开")?;
         live.ch
+            .as_ref()
+            .ok_or("终端未打开")?
             .data(data)
             .await
             .map_err(|e| format!("写入失败: {e}"))
@@ -269,34 +397,83 @@ impl SshSessions {
         let g = self.map.lock().await;
         let live = g.get(conn_id).ok_or("会话未打开")?;
         live.ch
+            .as_ref()
+            .ok_or("终端未打开")?
             .window_change(cols, rows, 0, 0)
             .await
             .map_err(|e| format!("改窗口大小失败: {e}"))
     }
 
-    /// 关闭会话（幂等）。
+    /// 关闭整条连接（幂等）。
     pub async fn close(&self, conn_id: &str) {
         if let Some(live) = self.map.lock().await.remove(conn_id) {
-            let _ = live.ch.close().await;
+            if let Some(ch) = live.ch {
+                let _ = ch.close().await;
+            }
         }
     }
 
+    #[allow(dead_code)]
     pub async fn is_open(&self, conn_id: &str) -> bool {
         self.map.lock().await.contains_key(conn_id)
+    }
+
+    /// 跑一条一次性命令（AI 桥用）。每次开一路新通道 → **每条命令是独立的一次性 shell**
+    /// （无 PTY，`cd` 不跨命令保留，交互式提示符也没法应答）。
+    pub async fn exec(&self, conn_id: &str, cmd: &str, timeout_secs: u64) -> Result<ExecOut, String> {
+        let handle = {
+            let g = self.map.lock().await;
+            g.get(conn_id).ok_or("会话未打开：请先连接远程终端")?.handle.clone()
+        }; // 出锁再开通道：同上，别让一台失联的机器把整张会话表锁死
+        let ch = handle
+            .channel_open_session()
+            .await
+            .map_err(|e| format!("打开命令通道失败: {e}"))?;
+        ch.exec(true, cmd)
+            .await
+            .map_err(|e| format!("下发命令失败: {e}"))?;
+
+        let (mut reader, _writer) = ch.split();
+        let collect = async {
+            let mut out = ExecOut { stdout: String::new(), stderr: String::new(), code: -1, truncated: false };
+            let (mut so, mut se): (Vec<u8>, Vec<u8>) = (Vec::new(), Vec::new());
+            loop {
+                match reader.wait().await {
+                    Some(ChannelMsg::Data { data }) => push_capped(&mut so, &data, &mut out.truncated),
+                    // ext=1 是 stderr（SSH_EXTENDED_DATA_STDERR），别的扩展流忽略。
+                    Some(ChannelMsg::ExtendedData { data, ext }) if ext == 1 => {
+                        push_capped(&mut se, &data, &mut out.truncated)
+                    }
+                    Some(ChannelMsg::ExitStatus { exit_status }) => out.code = exit_status as i32,
+                    Some(_) => {}
+                    None => break,
+                }
+            }
+            // 远端输出不保证是合法 UTF-8（二进制/半个多字节字符）→ 有损转换，别让整条命令失败。
+            out.stdout = String::from_utf8_lossy(&so).into_owned();
+            out.stderr = String::from_utf8_lossy(&se).into_owned();
+            out
+        };
+        match tokio::time::timeout(Duration::from_secs(timeout_secs), collect).await {
+            Ok(out) => Ok(out),
+            Err(_) => Err(format!(
+                "命令超时（{timeout_secs} 秒未结束）。远端可能仍在跑：长任务请用 nohup/systemd 放后台再轮询查看。"
+            )),
+        }
     }
 
     /// 在已建立的连接上开一路 SFTP。每次调用开一个新通道（通道很便宜，不用重新握手认证）；
     /// 不做缓存是刻意的：SftpSession 不能克隆，缓存起来要么跨 await 持锁、要么得再包一层 Arc
     /// 加生命周期管理，收益不抵复杂度。
     async fn sftp(&self, conn_id: &str) -> Result<SftpSession, String> {
-        let ch = {
+        let handle = {
             let g = self.map.lock().await;
-            let live = g.get(conn_id).ok_or("会话未打开：请先连接远程终端")?;
-            live.handle
-                .channel_open_session()
-                .await
-                .map_err(|e| format!("打开 SFTP 通道失败: {e}"))?
-        }; // 提前放锁：下面 await 不能持锁
+            g.get(conn_id).ok_or("会话未打开：请先连接远程终端")?.handle.clone()
+        }; // 出锁再开通道：开通道要等服务端确认，持锁 await 会连坐整张表
+        let ch = handle
+            .channel_open_session()
+            .await
+            .map_err(|e| format!("打开 SFTP 通道失败: {e}"))?;
         ch.request_subsystem(true, "sftp")
             .await
             .map_err(|e| format!("请求 sftp 子系统失败（远端可能没开 sftp）: {e}"))?;

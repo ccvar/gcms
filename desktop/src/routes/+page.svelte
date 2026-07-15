@@ -77,8 +77,11 @@
     const order: Brain[] = [cur, ...ALL_BRAINS.filter((b) => b !== cur)];
     const out: { value: string; label: string; sub?: string; icon?: string; disabled?: boolean }[] = [];
     for (const b of order) {
-      const usable = b === cur || brainUsable(b);
-      const note = usable ? '' : brains?.[b].found ? '未登录' : '未安装';
+      // 当前厂商永远可选，但「远程连接不给 Codex」是安全底线，连当前厂商也不例外
+      // （否则在会话里切到 Codex 会把这条对话推进无人确认的全自动，见 apply_brain_switch）。
+      const ok = brainOkForConn(b, isSshConn);
+      const usable = ok && (b === cur || brainUsable(b));
+      const note = !ok ? CODEX_SSH_NOTE : usable ? '' : brains?.[b].found ? '未登录' : '未安装';
       for (const m of launcherModelOpts(b)) {
         out.push({ value: `${b}::${m.value}`, label: m.label, sub: note || m.sub, icon: b, disabled: !usable });
       }
@@ -730,14 +733,19 @@
   const comboOpts = $derived.by(() => {
     const out: { value: string; label: string; sub?: string; icon?: string; disabled?: boolean }[] = [];
     for (const b of ALL_BRAINS) {
-      const usable = brainUsable(b);
-      const note = usable ? '' : brains?.[b].found ? '未登录' : '未安装';
+      const usable = brainUsable(b) && brainOkForConn(b, isSshConn);
+      const note = !brainOkForConn(b, isSshConn) ? CODEX_SSH_NOTE : usable ? '' : brains?.[b].found ? '未登录' : '未安装';
       for (const m of launcherModelOpts(b)) {
         out.push({ value: `${b}::${m.value}`, label: m.label, sub: note || m.sub, icon: b, disabled: !usable });
       }
     }
     return out;
   });
+  // ★ 远程连接不给用 Codex：它无头下没有逐命令闸（claude 有 PreToolUse 钩子、grok 有 ACP 权限回调），
+  // 所以拦不住它绕开 AI 桥、直接用系统 ssh + 用户自己的 ~/.ssh 密钥打你的服务器——那条路一张卡都不会弹。
+  // 后端 agent::run_turn 同样会拒（UI 只是别让人走到那一步）。
+  const CODEX_SSH_NOTE = '远程连接不支持 Codex（它拦不住逐条命令）';
+  function brainOkForConn(b: string, ssh: boolean): boolean { return !(ssh && b === 'codex'); }
   function pickCombo(v: string) {
     const i = v.indexOf('::');
     if (i < 0) return;
@@ -749,12 +757,22 @@
   function permTone(v: string): string { return v === 'full' ? 'danger' : v === 'auto' ? 'warn' : ''; }
   // Codex 没有逐命令确认（询问/自动的弹卡是 Claude 的 PreToolUse 钩子）——这两档对它无意义，
   // 下拉里直接置灰，省掉那行说明。Codex 实际就两档能用：计划(只读) / 全自动(建站要联网，跑得动)。
-  function permOptsFor(brain: string) {
+  // **远程连接例外**：那里的命令闸在 Pilot 里（AI 桥，见 bridge.rs），不依赖厂商的钩子能力，
+  // 所以 codex 一样能逐条确认远程命令 —— 这两档对它有意义，不置灰。
+  function permOptsFor(brain: string, ssh = false) {
+    if (ssh) {
+      return permOpts.map((o) =>
+        o.value === 'auto' ? { ...o, sub: '本地放行 · 每条远程命令都确认' }
+        : o.value === 'full' ? { ...o, sub: '连远程命令也不拦' }
+        : o
+      );
+    }
     if (brain !== 'codex') return permOpts;
     return permOpts.map((o) => (o.value === 'ask' || o.value === 'auto') ? { ...o, disabled: true, sub: 'Codex 不支持逐命令确认' } : o);
   }
   // 选中的档位若在 Codex 下不可用，落到「全自动」（保持已选值始终合法，不显示一个灰着的当前项）。
-  $effect(() => { if (lBrain === 'codex' && (lPerm === 'ask' || lPerm === 'auto')) lPerm = 'full'; });
+  // 远程连接不做这个降级：见上，那里 codex 的询问/自动是真能用的（降级会把真机推进无人确认的全自动）。
+  $effect(() => { if (lBrain === 'codex' && !isSshConn && (lPerm === 'ask' || lPerm === 'auto')) lPerm = 'full'; });
   // 待批工具调用：询问/自动档下钩子把请求写在后端 pending 目录，UI 轮询渲染批准卡。
   type Permit = { id: string; conv: string; tool: string; cmd: string; desc: string; arg: string; dangerous: boolean; mode: string; ts: number };
   // 批准卡标题：优先用模型自己写的操作说明（Bash 的 description），没有就按工具合成一句人话。
@@ -763,6 +781,7 @@
     if (p.tool === 'WebFetch') return p.arg ? `抓取网页：${p.arg}` : '抓取一个网页';
     if (p.tool === 'WebSearch') return p.arg ? `联网搜索：${p.arg}` : '联网搜索';
     if (p.tool === 'Write' || p.tool === 'Edit' || p.tool === 'NotebookEdit') return p.arg ? `写入文件：${p.arg}` : '写入文件';
+    if (p.tool === 'SSH') return p.arg ? `在 ${p.arg} 上执行命令` : '在远程服务器上执行命令';
     if (p.tool === 'Bash') return '运行一条命令';
     return `使用工具 ${p.tool}`;
   }
@@ -1131,9 +1150,16 @@
       if (view === 'thread' || view === 'schedule' || view === 'tasks' || view === 'managed' || view === 'remote' || ((view === 'templates' || view === 'prompts') && conn?.kind !== 'cloudflare')) view = 'launcher';
     }
     if (conn?.kind === 'ssh') {
-      // SSH 连接没有站点/项目可发现；直接进远程终端（$effect 会起 xterm）。
-      disposeTerm();
-      view = 'remote';
+      // SSH 连接没有站点/项目可发现。落在启动页（让 AI 干活是主路径），终端在侧栏一键可达。
+      if (switching) {
+        disposeTerm();
+        view = 'launcher';
+        // 远程连接绝不默认「全自动」：那是别人的真机，默认得让每条命令都过一次你的眼。
+        if (lPerm === 'full') lPerm = 'auto';
+        // Codex 在这里用不了（见 brainOkForConn）——从别的连接带过来的选择要换掉，
+        // 否则下拉的当前项是个灰的、发送键还一直亮着。
+        if (lBrain === 'codex') lBrain = ALL_BRAINS.find((b) => b !== 'codex' && brainUsable(b)) ?? 'claude';
+      }
       return;
     }
     if (conn?.kind === 'cloudflare') {
@@ -1745,10 +1771,10 @@
   }
 
   async function startChat() {
-    const multi = lSites.length > 1;
-    if ((!multi && !lSite.trim()) || !lDraft.trim() || !brainUsable(lBrain)) return;
+    const multi = !isSshConn && lSites.length > 1;
+    if ((!isSshConn && !multi && !lSite.trim()) || !lDraft.trim() || !brainUsable(lBrain) || !brainOkForConn(lBrain, isSshConn)) return;
     const site = sites.find((s) => s.slug === lSite);
-    const taskType = isCfConn ? 'sitebuild' : lTask;
+    const taskType = isSshConn ? 'remote' : isCfConn ? 'sitebuild' : lTask;
     prefs.brain = lBrain; prefs.model = lModel; prefs.taskType = lTask; prefs.perm = lPerm; prefs.effort = lEffort; savePrefs(prefs);
     const model = lModel;
     // CF 建站：把所选视觉风格的 tokens 指令拼进首条消息（可见、可追溯）。
@@ -1756,8 +1782,9 @@
     const text = lDraft.trim() + (styleDir ? `\n\n【视觉风格】${styleDir}` : '');
     const id = crypto.randomUUID();
     const now = Math.floor(Date.now() / 1000);
-    const mSlug = multi ? '' : lSite;
-    const mName = multi ? `多站 · ${lSites.length} 站` : (site?.name || lSite);
+    // 远程连接没有站点：slug 留空，侧栏分组名用 user@host（那就是这台机器的身份）。
+    const mSlug = multi || isSshConn ? '' : lSite;
+    const mName = isSshConn ? `${activeConn?.ssh_user}@${activeConn?.ssh_host}` : multi ? `多站 · ${lSites.length} 站` : (site?.name || lSite);
     const mNames = multi ? lSites.map((sl) => sites.find((x) => x.slug === sl)?.name || sl) : [];
     const optimistic: Conversation = {
       id, conn_id: activeConnId, conn_name: activeConn?.name ?? '', site_slug: mSlug, site_name: mName, site_slugs: multi ? [...lSites] : [],
@@ -2276,7 +2303,7 @@
     return out;
   }
 
-  function taskLabel(t: string): string { return t === 'sitebuild' ? '新站建设' : t === 'article' ? '内容创作' : '自由对话'; }
+  function taskLabel(t: string): string { return t === 'sitebuild' ? '新站建设' : t === 'article' ? '内容创作' : t === 'remote' ? '远程运维' : '自由对话'; }
   function brainLabel(b: string): string { return b === 'codex' ? 'Codex' : b === 'grok' ? 'Grok' : 'Claude'; }
   function fmt(secs: number): string { return new Date(secs * 1000).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }); }
   function fmtSched(iso: string): string {
@@ -2422,7 +2449,7 @@
   function isLauncherModel(b: string, m: string): boolean { return launcherModelOpts(b).some((o) => o.value === m); }
 
   // 会话按「站点 → 任务类型」两级分组：站点按最近活动倒序；任务类型固定顺序，只留有会话的。
-  const TASK_ORDER = ['article', 'sitebuild', 'free'];
+  const TASK_ORDER = ['article', 'sitebuild', 'free', 'remote'];
   const grouped = $derived.by(() => {
     const bySite = new Map<string, { slug: string; name: string; recent: number; convs: Conversation[] }>();
     for (const c of convos) {
@@ -2525,7 +2552,14 @@
         </svg>
         新对话
       </button>
-      {#if !isCfConn}
+      {#if isSshConn}
+      <!-- 远程连接：排期/定时任务/托管都无从谈起（没有站点，且定时任务＝无人值守动真机，后端已禁）。 -->
+      <button class="railnav {view === 'remote' ? 'on' : ''}" onclick={openRemote}>
+        {@render sshMark(14)}
+        远程终端
+      </button>
+      {/if}
+      {#if !isCfConn && !isSshConn}
       <button class="railnav {view === 'schedule' ? 'on' : ''}" onclick={openSchedule} disabled={!activeConn}>
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
           <rect x="2.5" y="3" width="11" height="10.5" rx="1.5" stroke="currentColor" stroke-width="1.3" />
@@ -2572,7 +2606,7 @@
       {#each grouped as g (g.slug)}
         <button class="site-grp" onclick={() => toggleSite(g.slug)} title={g.name}>
           <svg class="site-grp-chev" class:collapsed={collapsedSites.has(g.slug)} width="10" height="10" viewBox="0 0 12 12" fill="none"><path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>
-          {#if isCfConn}{#if g.url}<img class="site-grp-fav" src={faviconOf(g.url)} alt="" onerror={(e) => ((e.currentTarget as HTMLImageElement).style.display = 'none')} />{/if}{:else}<SiteFav src={siteFav(g.slug)} label={g.slug} size={14} />{/if}
+          {#if isSshConn}{@render sshMark(13)}{:else if isCfConn}{#if g.url}<img class="site-grp-fav" src={faviconOf(g.url)} alt="" onerror={(e) => ((e.currentTarget as HTMLImageElement).style.display = 'none')} />{/if}{:else}<SiteFav src={siteFav(g.slug)} label={g.slug} size={14} />{/if}
           <span class="site-grp-name">{g.name}</span>
           {#if g.slug === '__multi__' && multiGroupInfo.count}<span class="site-grp-host" data-tip={multiGroupInfo.tip}>{multiGroupInfo.count} 个站点</span>{/if}
           {#if g.url}<span class="site-grp-host" title={hostOf(g.url)}>{hostOf(g.url)}</span>{/if}
@@ -2727,7 +2761,10 @@
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div class="center launch-center" data-tauri-drag-region onmousedown={startDrag}>
         <div class="launcher">
-          {#if isCfConn}
+          {#if isSshConn}
+            <h1>让 AI 帮你管这台机器</h1>
+            <p class="sub">装软件、配服务、排障、加固——它每要在 <code class="ssh-host">{activeConn?.ssh_user}@{activeConn?.ssh_host}</code> 上跑一条命令，都会先给你看、等你点头。</p>
+          {:else if isCfConn}
             <h1>让 AI 帮你建个站</h1>
             <p class="sub">给项目起个名，描述你想要的网站——边聊边建，随时本地预览，满意了再部署到 Cloudflare。</p>
           {:else}
@@ -2745,12 +2782,15 @@
 
           <div class="composer big">
             <textarea bind:value={lDraft} bind:this={lDraftEl} use:autogrow rows="3"
-              placeholder={isCfConn ? '例如：做个卖手冲咖啡的落地页，深色调，留个邮箱订阅表单存到 D1，先给我方案' : lTask === 'sitebuild' ? '例如：帮我搭一个介绍露营装备的中文站，风格轻松，先给我一个方案' : '例如：帮我写一篇 2026 年 macOS 效率工具盘点，先列个提纲'}
+              placeholder={isSshConn ? '例如：看看这台机器的配置和已装的东西，然后帮我装上 Docker' : isCfConn ? '例如：做个卖手冲咖啡的落地页，深色调，留个邮箱订阅表单存到 D1，先给我方案' : lTask === 'sitebuild' ? '例如：帮我搭一个介绍露营装备的中文站，风格轻松，先给我一个方案' : '例如：帮我写一篇 2026 年 macOS 效率工具盘点，先列个提纲'}
               oncompositionstart={() => (composing = true)} oncompositionend={() => (composing = false)}
               onkeydown={(e) => onComposerKey(e, startChat)}></textarea>
             <div class="composer-bar">
               <div class="cb-left">
-                {#if isCfConn}
+                {#if isSshConn}
+                  <!-- 远程连接没有站点/项目可选：对象就是那台机器 -->
+                  <span class="ssh-target">{@render sshMark(13)}{activeConn?.ssh_user}@{activeConn?.ssh_host}:{activeConn?.ssh_port}</span>
+                {:else if isCfConn}
                   <input class="cf-proj-in" bind:value={lSite} placeholder="项目名，如 coffee-landing" spellcheck="false" autocapitalize="off" autocorrect="off" />
                   <Dropdown compact bind:value={lStyle} options={STYLE_OPTS} />
                 {:else}
@@ -2759,13 +2799,16 @@
                 {/if}
               </div>
               <div class="cb-right">
-                <Dropdown compact bind:value={lPerm} options={permOptsFor(lBrain)} tone={permTone(lPerm)} />
+                <Dropdown compact bind:value={lPerm} options={permOptsFor(lBrain, isSshConn)} tone={permTone(lPerm)} />
                 <ModelFx options={comboOpts} value={`${lBrain}::${lModel}`} effort={lEffort} onpick={pickCombo} oneffort={(v: string) => { lEffort = v; prefs.effort = v; savePrefs(prefs); }} />
                 <UsageRing />
-                <button class="send" onclick={startChat} disabled={(!lSite.trim() && lSites.length < 2) || !lDraft.trim() || !brainUsable(lBrain)} title="发送（Enter）">↑</button>
+                <button class="send" onclick={startChat} disabled={(!isSshConn && !lSite.trim() && lSites.length < 2) || !lDraft.trim() || !brainUsable(lBrain) || !brainOkForConn(lBrain, isSshConn)} title="发送（Enter）">↑</button>
               </div>
             </div>
           </div>
+          {#if isSshConn && lPerm === 'full'}
+            <p class="hint warn-text">「全自动」档下，AI 在这台机器上跑命令<b>不会问你</b>——包括删数据、改配置、重启。除非你清楚要这样，否则用「自动」。</p>
+          {/if}
           {#if lSites.length}
             <div class="tsites launcher-sites">
               {#each lSites as sl (sl)}
@@ -2773,7 +2816,9 @@
               {/each}
             </div>
           {/if}
-          {#if !brainUsable(lBrain)}<p class="hint warn-text">所选厂商未就绪，点左下角设置里「去授权」。</p>{/if}
+          {#if isSshConn && !brainOkForConn(lBrain, isSshConn)}
+            <p class="hint warn-text">{CODEX_SSH_NOTE}。请换 Claude 或 Grok——它们能在每条远程命令前停下来等你确认。</p>
+          {:else if !brainUsable(lBrain)}<p class="hint warn-text">所选厂商未就绪，点左下角设置里「去授权」。</p>{/if}
           {#if isCfConn && brains?.wrangler && !brains.wrangler.found}{@render wrNote()}{/if}
         </div>
       </div>
@@ -3198,9 +3243,12 @@
               <div class="permit-card" class:danger={p.dangerous}>
                 <div class="permit-head"><span class="permit-dot"></span>需要你确认这个操作{#if p.dangerous}<span class="permit-tag">危险 · 对线上生效</span>{/if}</div>
                 <div class="permit-desc">{permitDesc(p)}</div>
-                <div class="permit-meta">{p.tool}{#if p.mode === 'ask'} · 询问档{/if}</div>
+                <div class="permit-meta">{p.tool === 'SSH' ? '远程命令' : p.tool}{#if p.tool === 'SSH' && p.arg} · {p.arg}{/if}{#if p.mode === 'ask'} · 询问档{/if}</div>
                 {#if p.cmd}
-                  {#if permitCmdOpen.has(p.id)}
+                  {#if p.tool === 'SSH'}
+                    <!-- 远程命令不给收起：它要在用户的真机上跑，不看着它就没法做决定。 -->
+                    <code class="permit-cmd">{p.cmd}</code>
+                  {:else if permitCmdOpen.has(p.id)}
                     <button class="permit-more" onclick={() => togglePermitCmd(p.id)}>收起命令 ▴</button>
                     <code class="permit-cmd">{p.cmd}</code>
                   {:else}
@@ -3259,7 +3307,7 @@
               {/if}
             </div>
             <div class="cb-right">
-              <Dropdown compact bind:value={threadPerm} options={permOptsFor(activeConv?.brain ?? 'claude')} tone={permTone(threadPerm)} onchange={persistThreadPerm} />
+              <Dropdown compact bind:value={threadPerm} options={permOptsFor(activeConv?.brain ?? 'claude', isSshConn)} tone={permTone(threadPerm)} onchange={persistThreadPerm} />
               <!-- 模型下拉列全部厂商（图标区分）：同厂商下一轮生效；跨厂商确认后以历史摘要重建续跑 -->
               <ModelFx options={threadComboOpts} value={`${activeConv?.brain ?? 'claude'}::${threadModel}`} effort={threadEffort} lockModel={viewBusy} onpick={(v: string) => { void pickThreadCombo(v); }} oneffort={persistThreadEffort} />
               <UsageRing ctx={activeConv?.ctx_tokens ?? 0} limit={ctxLimitAdaptive(activeConv?.brain ?? 'claude', activeConv?.model ?? '', activeConv?.ctx_tokens ?? 0)} total={activeConv?.total_tokens ?? 0} />
@@ -4014,6 +4062,10 @@
   .ed-body { display: flex; flex-direction: column; gap: 10px; }
   .ed-ta { width: 100%; box-sizing: border-box; height: min(52vh, 480px); resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; line-height: 1.55; color: var(--text); background: var(--rail); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; outline: none; white-space: pre; overflow-wrap: normal; overflow-x: auto; }
   .ed-ta:focus { border-color: var(--border2); background: var(--bg); }
+  /* 启动页：远程连接的目标机器（占站点选择器的位子——那台机器就是本次对话的对象） */
+  .ssh-target { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--rail); color: var(--dim); font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .ssh-target :global(svg) { color: var(--faint); flex: none; }
+  .ssh-host { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92em; background: var(--accent-soft); border-radius: 5px; padding: 1px 5px; }
   .ssh-key-row { display: flex; gap: 6px; align-items: center; }
   .ssh-key-row .tin { flex: 1; min-width: 0; }
   .ssh-fp { display: flex; flex-direction: column; gap: 5px; padding: 9px 11px; border: 1px solid #cfc9ec; background: #f7f6ff; border-radius: 10px; }

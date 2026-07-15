@@ -1,6 +1,7 @@
 mod acp;
 mod agent;
 mod brains;
+mod bridge;
 mod managed;
 mod cf;
 mod cf_templates;
@@ -312,27 +313,6 @@ fn ssh_auth_from(
     }
 }
 
-/// 由「已存的连接 + 钥匙串」组装认证材料。
-/// 无口令私钥不会有钥匙串条目 —— get_key 失败按「无口令」处理，不是错误。
-fn ssh_auth_for(conn: &pack::Connection) -> Result<ssh::SshAuth, String> {
-    let secret = keychain::get_key(&conn.id).ok();
-    Ok(if conn.ssh_auth == "key" {
-        ssh::SshAuth {
-            user: conn.ssh_user.clone(),
-            password: None,
-            key_path: Some(conn.ssh_key_path.clone()),
-            key_pass: secret.filter(|s| !s.is_empty()),
-        }
-    } else {
-        ssh::SshAuth {
-            user: conn.ssh_user.clone(),
-            password: Some(secret.ok_or("钥匙串里没有这个连接的密码，请删除后重新添加")?),
-            key_path: None,
-            key_pass: None,
-        }
-    })
-}
-
 /// 试连：拿主机指纹 + 验证认证。首次添加传空 expect（TOFU 探测，指纹交 UI 确认）。
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
@@ -386,7 +366,7 @@ async fn ssh_open_shell(
     if conn.kind != "ssh" {
         return Err("这不是远程连接".into());
     }
-    let auth = ssh_auth_for(&conn)?;
+    let auth = ssh::auth_for(&conn)?;
     let expect = (!conn.ssh_fingerprint.is_empty()).then(|| conn.ssh_fingerprint.clone());
     state
         .ssh
@@ -1876,6 +1856,13 @@ fn set_conversation_brain_model(
         if c.status == "running" {
             return Err("上一轮还在进行中，请稍候".into());
         }
+        // ★ 远程连接不给切到 Codex（规则本体见 agent::brain_ok_for_conn）。
+        // 这条路径尤其要堵死：apply_brain_switch 会把 codex 的 ask/auto 强推成 full，
+        // 而前端切完厂商立刻 rebuild_session 自动重跑 —— 一次「换个模型」的点击
+        // 就能让 AI 在真机上无确认地跑起来。
+        if let Ok(conn) = state.conns.get(&c.conn_id) {
+            agent::brain_ok_for_conn(&conn.kind, &brain)?;
+        }
     }
     state
         .convos
@@ -1984,7 +1971,13 @@ fn upsert_task(
         return Err("周期至少 1 分钟".into());
     }
     // 连接必须存在，否则这个任务每次运行都会失败——直接在保存时拦下。
-    let conn_name = conns.get(&conn_id).map_err(|_| "所选连接不存在".to_string())?.name;
+    let conn = conns.get(&conn_id).map_err(|_| "所选连接不存在".to_string())?;
+    // ★ 远程连接不许挂定时任务：定时任务**无人值守、强制 full 档**（见 fire_task），
+    // 那等于把一台真机的 root shell 交给没人看着的 AI 定期折腾。这个组合不提供。
+    if conn.kind == "ssh" {
+        return Err("远程连接不支持定时任务：无人值守的自动执行会直接改动你的服务器，风险太大。".into());
+    }
+    let conn_name = conn.name;
     let now = now_secs();
     let existing = id.as_ref().and_then(|i| tasks.get(i));
     let tid = id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
@@ -2071,8 +2064,9 @@ fn run_task_now(state: tauri::State<'_, AppState>, app: AppHandle, id: String) -
     let mstore = state.managed.clone();
     let firing = state.firing.clone();
     let data_dir = state.data_dir.clone();
+    let ssh = state.ssh.clone();
     tauri::async_runtime::spawn(async move {
-        fire_task(app, conns, convos, runs, tstore, mstore, task, data_dir).await;
+        fire_task(app, conns, convos, runs, tstore, mstore, task, data_dir, ssh).await;
         firing.lock().unwrap().remove(&id);
     });
     Ok(())
@@ -2602,6 +2596,7 @@ enum SiteRun {
 /// 回写任务的 last_* 并通知。托管配套任务先过 managed_prefire（硬闸/熔断/数据注入）。
 /// 订阅限额感知：触发前 brain 在限额期 → 整体顺延（非失败）；运行中撞限 → 剩余站止损、
 /// next_run 顺延到恢复点 + 抖动；系统通知每 brain 每限额窗口只发一次。
+#[allow(clippy::too_many_arguments)]
 async fn fire_task(
     app: AppHandle,
     conns: pack::ConnStore,
@@ -2611,6 +2606,7 @@ async fn fire_task(
     mstore: managed::ManagedStore,
     task: ScheduledTask,
     data_dir: PathBuf,
+    ssh: ssh::SshSessions,
 ) {
     // ① 触发前拦截：限额期内不跑、不记失败（runs 不加），next_run 顺延，历史记「顺延」条目。
     // 托管配套任务同样先走这里（在 prefire 之前），Skip 语义不变、通知有节流不会双发。
@@ -2672,7 +2668,7 @@ async fn fire_task(
         let sem = sem.clone();
         let limit_flag = limit_flag.clone();
         let lstore2 = lstore.clone();
-        let (conns, convos, runs, data_dir) = (conns.clone(), convos.clone(), runs.clone(), data_dir.clone());
+        let (conns, convos, runs, data_dir, ssh) = (conns.clone(), convos.clone(), runs.clone(), data_dir.clone(), ssh.clone());
         let (conn_id, task_type, brain, model, effort, prompt) = (
             task.conn_id.clone(), task.task_type.clone(), task.brain.clone(),
             task.model.clone(), task.effort.clone(), effective_prompt.clone(),
@@ -2691,7 +2687,7 @@ async fn fire_task(
                 conns, convos, runs, conv_id,
                 conn_id, slug.clone(), name, vec![], vec![],
                 task_type, brain, model,
-                "full".into(), effort, prompt, sink, data_dir,
+                "full".into(), effort, prompt, sink, data_dir, ssh,
             )
             .await;
             match res {
@@ -2882,8 +2878,9 @@ fn spawn_scheduler(app: AppHandle) {
                 let running2 = running.clone();
                 let tid = t.id.clone();
                 let data_dir = state.data_dir.clone();
+                let ssh = state.ssh.clone();
                 tauri::async_runtime::spawn(async move {
-                    fire_task(app2, conns, convos, runs, tstore, mstore, t, data_dir).await;
+                    fire_task(app2, conns, convos, runs, tstore, mstore, t, data_dir, ssh).await;
                     running2.lock().unwrap().remove(&tid);
                 });
             }
@@ -2966,6 +2963,7 @@ async fn create_conversation(
     message: String,
     on_event: Channel<agent::TurnEvent>,
     data_dir: PathBuf,
+    ssh: ssh::SshSessions,
 ) -> Result<Conversation, String> {
     let conn = conns.get(&conn_id)?;
     let now = now_secs();
@@ -2977,8 +2975,14 @@ async fn create_conversation(
     };
     let work_dir = resolve_work_dir(&conn, site_slug.trim())?;
     let is_cf = conn.kind == "cloudflare";
-    let multi = !is_cf && site_slugs.len() > 1;
-    let sys = if is_cf {
+    let is_ssh = conn.kind == "ssh";
+    let multi = !is_cf && !is_ssh && site_slugs.len() > 1;
+    let sys = if is_ssh {
+        agent::ssh_system_prompt(
+            &conn.ssh_user, &conn.ssh_host, conn.ssh_port,
+            &tools::ssh_js_path(&data_dir).to_string_lossy(),
+        )
+    } else if is_cf {
         agent::cf_system_prompt(&cf_project_slug(site_slug.trim()), &conn.account_id)
     } else if multi {
         agent::multi_site_system_prompt(&site_slugs, &site_names)
@@ -2986,8 +2990,13 @@ async fn create_conversation(
         agent::system_prompt(&task_type, site_slug.trim(), &site_name)
     };
     // 追加网页截图能力说明（shot.js 在启动时生成到 <data_dir>/tools/）。
-    let shot = data_dir.join("tools").join("shot.js");
-    let sys = format!("{sys}\n\n{}", agent::shot_prompt(&shot.to_string_lossy(), is_cf));
+    // ssh 会话不给：那是运维场景，截图帮不上忙，只是白占提示词。
+    let sys = if is_ssh {
+        sys
+    } else {
+        let shot = data_dir.join("tools").join("shot.js");
+        format!("{sys}\n\n{}", agent::shot_prompt(&shot.to_string_lossy(), is_cf))
+    };
     let conv = Conversation {
         id: conv_id.clone(),
         conn_id: conn.id.clone(),
@@ -3013,7 +3022,7 @@ async fn create_conversation(
     convos.upsert(conv)?;
 
     let res = agent::run_turn(
-        runs, conn, work_dir, brain, model, perm_mode, effort, data_dir.join("permit"), session_seed, true, Some(sys),
+        runs, conn, work_dir, brain, model, perm_mode, effort, data_dir.clone(), ssh, session_seed, true, Some(sys),
         message.trim().to_string(), conv_id.clone(), on_event,
     )
     .await;
@@ -3053,7 +3062,9 @@ async fn start_conversation(
     if conv_id.trim().is_empty() {
         return Err("会话 id 缺失".into());
     }
-    if site_slug.trim().is_empty() && site_slugs.len() < 2 {
+    // ssh 连接没有「站点」这回事（对象就是那台机器）；其余 kind 仍必须指定站点/项目。
+    let is_ssh = state.conns.get(&conn_id).map(|c| c.kind == "ssh").unwrap_or(false);
+    if !is_ssh && site_slug.trim().is_empty() && site_slugs.len() < 2 {
         return Err("站点不能为空".into());
     }
     if message.trim().is_empty() {
@@ -3062,7 +3073,7 @@ async fn start_conversation(
     create_conversation(
         state.conns.clone(), state.convos.clone(), state.runs.clone(),
         conv_id, conn_id, site_slug, site_name, site_slugs, site_names, task_type, brain, model, perm_mode, effort, message, on_event,
-        state.data_dir.clone(),
+        state.data_dir.clone(), state.ssh.clone(),
     )
     .await
 }
@@ -3103,7 +3114,8 @@ async fn send_message(
         conv.model.clone(),
         conv.perm_mode.clone(),
         conv.effort.clone(),
-        state.data_dir.join("permit"),
+        state.data_dir.clone(),
+        state.ssh.clone(),
         conv.session_ref.clone(),
         false,
         None,
@@ -3144,7 +3156,8 @@ async fn retry_turn(
         conv.model.clone(),
         conv.perm_mode.clone(),
         conv.effort.clone(),
-        state.data_dir.join("permit"),
+        state.data_dir.clone(),
+        state.ssh.clone(),
         conv.session_ref.clone(),
         false,
         None,
@@ -3179,17 +3192,26 @@ async fn rebuild_session(
     let conn = state.conns.get(&conv.conn_id)?;
     let work_dir = resolve_work_dir(&conn, &conv.site_slug)?;
     let is_cf = conn.kind == "cloudflare";
-    let sys = if is_cf {
+    let is_ssh = conn.kind == "ssh";
+    // 与 create_conversation 的首轮系统提示保持同款（重建＝换个 session 从头讲一遍规矩）。
+    let sys = if is_ssh {
+        agent::ssh_system_prompt(
+            &conn.ssh_user, &conn.ssh_host, conn.ssh_port,
+            &tools::ssh_js_path(&state.data_dir).to_string_lossy(),
+        )
+    } else if is_cf {
         agent::cf_system_prompt(&cf_project_slug(&conv.site_slug), &conn.account_id)
+    } else if conv.site_slugs.len() > 1 {
+        agent::multi_site_system_prompt(&conv.site_slugs, &conv.site_names)
     } else {
-        if conv.site_slugs.len() > 1 {
-            agent::multi_site_system_prompt(&conv.site_slugs, &conv.site_names)
-        } else {
-            agent::system_prompt(&conv.task_type, &conv.site_slug, &conv.site_name)
-        }
+        agent::system_prompt(&conv.task_type, &conv.site_slug, &conv.site_name)
     };
-    let shot = state.data_dir.join("tools").join("shot.js");
-    let sys = format!("{sys}\n\n{}", agent::shot_prompt(&shot.to_string_lossy(), is_cf));
+    let sys = if is_ssh {
+        sys
+    } else {
+        let shot = state.data_dir.join("tools").join("shot.js");
+        format!("{sys}\n\n{}", agent::shot_prompt(&shot.to_string_lossy(), is_cf))
+    };
     // 历史摘要（不含将要重跑的最后一条用户消息）；发给模型的组合消息不落库，界面保持干净。
     let recap = convo::recap(&conv.messages, 8000);
     let message = if recap.is_empty() {
@@ -3209,7 +3231,8 @@ async fn rebuild_session(
         conv.model.clone(),
         conv.perm_mode.clone(),
         conv.effort.clone(),
-        state.data_dir.join("permit"),
+        state.data_dir.clone(),
+        state.ssh.clone(),
         session_seed,
         true,
         Some(sys),
@@ -3468,6 +3491,7 @@ pub fn run() {
             // 清掉上次进程遗留的待批权限请求（幽灵批准卡）。
             permit::sweep_all(&data_dir.join("permit").join("pending"));
             let _ = tools::ensure_shot(&data_dir); // 随附截图工具，覆写以随版本刷新
+            let _ = tools::ensure_ssh(&data_dir); // 随附远程执行工具（AI 桥的 AI 侧）
             let task_store = tasks::TaskStore::new(&data_dir);
             app.manage(AppState {
                 conns,

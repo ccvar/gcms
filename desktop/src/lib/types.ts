@@ -73,7 +73,8 @@ export interface BrainsInfo {
 
 // ---- 对话 ----
 
-export type TaskType = 'article' | 'sitebuild' | 'free';
+/** remote = 远程连接（SSH）的运维对话：没有站点，对象是那台机器。 */
+export type TaskType = 'article' | 'sitebuild' | 'free' | 'remote';
 
 export interface ToolCall {
   label: string;

@@ -25,6 +25,8 @@ struct PermSpec {
     conv_id: String,
     gen_dir: PathBuf,
     pending_dir: PathBuf,
+    /// AI 桥脚本路径：钩子要靠它认出「桥命令」并放行（桥自己会弹卡），见 permit::is_bridge_cmd。
+    ssh_js: PathBuf,
 }
 
 #[derive(Clone, Serialize)]
@@ -235,6 +237,51 @@ Pilot 会让用户确认一次，你正常执行命令即可。\n\
     )
 }
 
+/// 这个厂商能不能跑这种连接。
+///
+/// ★ 远程连接不给 Codex：它无头下**没有逐命令闸**（claude 靠 PreToolUse 钩子、grok 靠 ACP 权限回调，
+/// codex 只有粗粒度 sandbox，`codex exec` 无法把工具调用回传给 UI 批准）。AI 桥能确认走桥的命令，
+/// 却拦不住 codex 干脆**绕开桥**：直接调系统 ssh/scp + 用户自己的 ~/.ssh 密钥打同一台服务器 ——
+/// 那条路（claude 靠 DANGER 清单弹卡、grok 靠 acp::decide）对 codex 一张卡都不会弹。
+/// 与其给一个假的「每条命令都确认」，不如不提供这个组合。
+pub(crate) fn brain_ok_for_conn(kind: &str, brain: &str) -> Result<(), String> {
+    if kind == "ssh" && brain == "codex" {
+        return Err("远程连接不支持 Codex：它无法逐条确认命令。请用 Claude 或 Grok。".into());
+    }
+    Ok(())
+}
+
+/// 远程机器助手的系统提示（kind=ssh 的对话）。
+///
+/// 契约要和三处对齐，改这里必须同步看：`tools.rs::SSH_JS`（脚本参数）、
+/// `bridge.rs`（执行/确认）、`permit.rs::is_bridge_cmd`（钩子放行的形状——**多一个尾巴就会多弹一张卡**）。
+pub fn ssh_system_prompt(user: &str, host: &str, port: u16, ssh_js: &str) -> String {
+    format!(
+        "你是用户这台远程服务器（{user}@{host}:{port}）的运维助手：帮 TA 装软件、配服务、排障、做加固。\n\
+【怎么在服务器上执行命令】用随附工具（**只有这一条路**）：\n\
+`node \"{ssh_js}\" '<命令>'`，需要更长时限时 `node \"{ssh_js}\" --timeout <秒> '<命令>'`（默认 240 秒，最大 900）。\n\
+- 命令**必须**用一对引号整个包起来，且引号后不许再挂任何东西（`; cmd`、`&& cmd`、`> file`、管道都不行）——\
+多步请写成一条：`node \"{ssh_js}\" 'cd /etc/nginx && ls'`。\n\
+- 输出是 JSON：`{{\"ok\":true,\"code\":<远端退出码>,\"stdout\":\"…\",\"stderr\":\"…\"}}`；\
+`ok:false` 时 `error` 是原因（比如用户拒绝了这条命令）。**看 code 判断成败**，别只看有没有报错。\n\
+- 凭据在 Pilot 手里，你拿不到也不需要——别去找密码/私钥，别读 ~/.ssh，别自己调系统的 ssh/scp/rsync：\
+那些用的是用户自己的密钥、绕开了确认闸，会被拦下来。\n\
+【这条通道的脾气】\n\
+- **每条命令是独立的一次性 shell**：`cd` 不会留到下一条，环境变量也不会；要连续动作就用 `&&` 串在同一条里。\n\
+- **没有 PTY**：交互式提示符没法应答。装包加 `DEBIAN_FRONTEND=noninteractive` 和 `-y`；\
+`sudo` 必须免密（`sudo -n`），要输密码的一律会挂住直到超时。\n\
+- 长任务（大编译、大下载）别占着通道：用 `nohup … > /tmp/x.log 2>&1 &` 或 systemd 放后台，再分次看日志。\n\
+- 每条命令**用户都要点一次确认**（除非 TA 选了全自动）。所以：把相关步骤合并成一条，别拆成几十条来回；\
+但也别把「装依赖」和「改配置删数据」混在一条里——用户要看得懂自己在批准什么。\n\
+【干活的规矩】这是**用户的真机**，不是沙箱：\n\
+- 先看后改：动配置前先 `cat` 出来看、先备份（`cp x x.bak.$(date +%s)`）；改完验证（`nginx -t`、`systemctl status`）。\n\
+- 破坏性动作（删数据、`rm -rf`、改防火墙规则、重启机器、动 sshd 配置）**先说清楚后果、征得同意再做**；\
+尤其小心把自己关在门外：改 sshd/防火墙前先确认新规则不会切断当前连接。\n\
+- 装东西前先探明环境（`cat /etc/os-release`、`uname -m`、有没有 docker/systemd、磁盘和内存够不够），别猜。\n\
+- 报告用中文，先说结论（成了/没成、影响是什么），再给关键输出；命令失败就把 stderr 原文给用户看，别自己编原因。"
+    )
+}
+
 /// 网页截图能力的系统提示补充（shot.js 由 Pilot 生成在数据目录，见 tools.rs）。
 /// gcms 会话教「截图→确认→转 WebP→上传→插入文章」；CF 会话教「截本地预览自查 / 截参考站」。
 pub fn shot_prompt(shot_path: &str, is_cf: bool) -> String {
@@ -285,7 +332,8 @@ pub async fn run_turn(
     model: String,
     perm_mode: String,
     effort: String,
-    permit_base: PathBuf,
+    data_dir: PathBuf,
+    ssh: crate::ssh::SshSessions,
     session_ref: String,
     is_first: bool,
     system: Option<String>,
@@ -293,35 +341,53 @@ pub async fn run_turn(
     turn_id: String,
     channel: Channel<TurnEvent>,
 ) -> TurnResult {
-    let api_key = match keychain::get_key(&conn.id) {
-        Ok(k) => k,
-        Err(e) => {
-            let _ = channel.send(TurnEvent::Done { ok: false, error: e.clone() });
-            return TurnResult { ok: false, text: String::new(), tools: vec![], error: e, session_ref, proposal: None, usage: None, limit_reset: None };
+    // 前端已经不让选 codex 跑远程连接，这里是真闸（UI 不是安全边界）。
+    if let Err(e) = brain_ok_for_conn(&conn.kind, &brain) {
+        let _ = channel.send(TurnEvent::Done { ok: false, error: e.clone() });
+        return TurnResult { ok: false, text: String::new(), tools: vec![], error: e, session_ref, proposal: None, usage: None, limit_reset: None };
+    }
+    // ssh 连接没有 API key（密码/口令是给 Pilot 连机器用的，绝不进子进程），
+    // 且无口令私钥根本没有钥匙串条目 —— 这里拿不到不算错。
+    let api_key = if conn.kind == "ssh" {
+        String::new()
+    } else {
+        match keychain::get_key(&conn.id) {
+            Ok(k) => k,
+            Err(e) => {
+                let _ = channel.send(TurnEvent::Done { ok: false, error: e.clone() });
+                return TurnResult { ok: false, text: String::new(), tools: vec![], error: e, session_ref, proposal: None, usage: None, limit_reset: None };
+            }
         }
     };
 
+    let permit_base = data_dir.join("permit");
     let mode = PermMode::parse(&perm_mode);
     let perm = PermSpec {
         mode,
         conv_id: turn_id.clone(),
         gen_dir: permit_base.join("hooks").join(&turn_id),
         pending_dir: permit_base.join("pending"),
+        ssh_js: crate::tools::ssh_js_path(&data_dir),
     };
 
     let work_dir = if work_dir.trim().is_empty() { conn.skill_dir.clone() } else { work_dir };
+    // AI 桥租约：只有 ssh 连接才有。Drop（本函数任何出口）即撤销令牌 + 删目录 → 回合一结束，
+    // 残留的 AI 进程也再没法在服务器上跑任何东西。
+    let lease = crate::bridge::Lease::start(
+        &conn, &work_dir, &turn_id, mode, perm.pending_dir.clone(), ssh.clone(),
+    );
     // grok 走 ACP（JSON-RPC over stdio）——协议不同族，整轮交给 acp 模块（事件/结果契约一致）。
     if brain == "grok" {
         return crate::acp::run_turn(
-            registry, conn, work_dir, model, mode, effort, perm.pending_dir, session_ref,
-            is_first, system, message, turn_id, channel, api_key,
+            registry, conn, work_dir, model, mode, effort, perm.pending_dir.clone(), perm.ssh_js.clone(),
+            lease.as_ref(), session_ref, is_first, system, message, turn_id, channel, api_key,
         )
         .await;
     }
     let build = if brain == "codex" {
-        build_codex(&conn, &model, &effort, &session_ref, is_first, system.as_deref(), &message, &api_key, &work_dir, mode)
+        build_codex(&conn, &model, &effort, &session_ref, is_first, system.as_deref(), &message, &api_key, &work_dir, mode, lease.as_ref())
     } else {
-        build_claude(&conn, &model, &effort, &session_ref, is_first, system.as_deref(), &message, &api_key, &work_dir, &perm)
+        build_claude(&conn, &model, &effort, &session_ref, is_first, system.as_deref(), &message, &api_key, &work_dir, &perm, lease.as_ref())
     };
     let mut cmd = match build {
         Ok(c) => c,
@@ -563,9 +629,25 @@ fn parse_usage(v: &serde_json::Value) -> Option<TurnUsage> {
 
 /// 按连接类型注入凭据 env + 设置 cwd：
 ///   cloudflare → CLOUDFLARE_API_TOKEN/ACCOUNT_ID，cwd=项目目录；
-///   gcms       → GCMS_API_BASE/KEY，cwd=技能包目录。
-pub(crate) fn apply_env_cwd(cmd: &mut Command, conn: &Connection, work_dir: &str, api_key: &str) {
+///   gcms       → GCMS_API_BASE/KEY，cwd=技能包目录；
+///   ssh        → **不注入任何凭据**（那是一台机器的 root shell，不是一个 API key），
+///                只给本轮租约的目录+令牌，让 ssh.js 能把命令递给 Pilot 代跑。见 bridge.rs。
+pub(crate) fn apply_env_cwd(
+    cmd: &mut Command,
+    conn: &Connection,
+    work_dir: &str,
+    api_key: &str,
+    lease: Option<&crate::bridge::Lease>,
+) {
     cmd.current_dir(work_dir);
+    if conn.kind == "ssh" {
+        if let Some(l) = lease {
+            for (k, v) in l.env() {
+                cmd.env(k, v);
+            }
+        }
+        return;
+    }
     if conn.kind == "cloudflare" {
         cmd.env("CLOUDFLARE_API_TOKEN", api_key);
         if !conn.account_id.is_empty() {
@@ -577,6 +659,7 @@ pub(crate) fn apply_env_cwd(cmd: &mut Command, conn: &Connection, work_dir: &str
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_claude(
     conn: &Connection,
     model: &str,
@@ -588,6 +671,7 @@ fn build_claude(
     api_key: &str,
     work_dir: &str,
     perm: &PermSpec,
+    lease: Option<&crate::bridge::Lease>,
 ) -> Result<Command, String> {
     // 空 → 默认档位；别名（sonnet/opus/haiku）或完整模型 ID（如 claude-opus-4-8）都放行，
     // 只挡形似参数/含空白的非法值。claude --model 同时接受别名与完整 ID。
@@ -615,7 +699,8 @@ fn build_claude(
         .arg("--include-partial-messages")
         .args(["--model", model]);
     // 权限档位 → claude 参数（plan/ask/auto/full）；ask/auto 会生成 PreToolUse 钩子 + settings。
-    let perm_flags = permit::claude_flags(perm.mode, &perm.conv_id, &perm.gen_dir, &perm.pending_dir)?;
+    let perm_flags =
+        permit::claude_flags(perm.mode, &perm.conv_id, &perm.gen_dir, &perm.pending_dir, &perm.ssh_js)?;
     cmd.args(&perm_flags);
     // 思考等级 → MAX_THINKING_TOKENS（无头模式实测能开出 thinking 块）；空＝跟随模型默认。
     let budget = match effort {
@@ -627,7 +712,7 @@ fn build_claude(
     if !budget.is_empty() {
         cmd.env("MAX_THINKING_TOKENS", budget);
     }
-    apply_env_cwd(&mut cmd, conn, work_dir, api_key);
+    apply_env_cwd(&mut cmd, conn, work_dir, api_key, lease);
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -635,6 +720,7 @@ fn build_claude(
     Ok(cmd)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_codex(
     conn: &Connection,
     model: &str,
@@ -646,6 +732,7 @@ fn build_codex(
     api_key: &str,
     work_dir: &str,
     perm: PermMode,
+    lease: Option<&crate::bridge::Lease>,
 ) -> Result<Command, String> {
     // codex 无头没有逐工具回传 UI 的能力，权限档位只能落到 sandbox 粗粒度（精细批准以 claude 为主）。
     // plan＝只读；full＝完全放开；ask/auto＝可写工作区（无法逐命令确认）。
@@ -693,7 +780,7 @@ fn build_codex(
         cmd.args(["-c", &format!("model_reasoning_effort={effort}")]);
     }
     cmd.arg(&prompt);
-    apply_env_cwd(&mut cmd, conn, work_dir, api_key);
+    apply_env_cwd(&mut cmd, conn, work_dir, api_key, lease);
     cmd.stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -886,6 +973,18 @@ pub(crate) fn last_nonempty(s: &str) -> Option<String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn brain_conn_rules() {
+        // ★ 远程连接 × Codex ＝ 假的「逐条确认」：codex 能绕开 AI 桥直接调系统 ssh，一张卡都不弹。
+        assert!(brain_ok_for_conn("ssh", "codex").is_err());
+        // claude（PreToolUse 钩子）/ grok（ACP 权限桥）都有逐命令闸，可以
+        assert!(brain_ok_for_conn("ssh", "claude").is_ok());
+        assert!(brain_ok_for_conn("ssh", "grok").is_ok());
+        // 别的连接类型不受影响：codex 在 gcms/CF 下照常（那里没有远程真机可打）
+        assert!(brain_ok_for_conn("gcms", "codex").is_ok());
+        assert!(brain_ok_for_conn("cloudflare", "codex").is_ok());
+    }
 
     fn ch() -> Channel<TurnEvent> {
         Channel::new(|_| Ok(()))
