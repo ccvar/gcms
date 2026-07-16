@@ -1584,6 +1584,28 @@
     if (!sftpPath || sftpPath === '/') return;
     void sftpGo(parentOf(sftpPath));
   }
+  // ---- 路径栏：面包屑（可点逐级跳）／点空白处切成输入框直接敲路径 ----
+  const sftpCrumbs = $derived.by(() => {
+    const out = [{ name: '/', path: '/' }];
+    let acc = '';
+    for (const p of sftpPath.split('/').filter(Boolean)) { acc += '/' + p; out.push({ name: p, path: acc }); }
+    return out;
+  });
+  let sftpPathEdit = $state(false);
+  let sftpPathEl = $state<HTMLInputElement | null>(null);
+  let crumbEl = $state<HTMLElement | null>(null);
+  function startPathEdit() { sftpPathDraft = sftpPath; sftpPathEdit = true; }
+  $effect(() => { if (sftpPathEdit && sftpPathEl) { sftpPathEl.focus(); sftpPathEl.select(); } });
+  // 路径深了就把尾巴（当前目录）滚进视野——面包屑是从左往右长的。
+  $effect(() => {
+    void sftpCrumbs;
+    if (crumbEl) crumbEl.scrollLeft = crumbEl.scrollWidth;
+  });
+  function commitPath() {
+    const p = sftpPathDraft.trim();
+    sftpPathEdit = false;
+    if (p && p !== sftpPath) void sftpGo(p);
+  }
   /** 刷新：重读当前展开着的每一层，**保留展开状态**（sftpGo 是「换根」，会把整棵树收起来）。 */
   async function sftpRefresh() {
     if (!sftpPath || sftpBusy) return;
@@ -1607,13 +1629,16 @@
     if (!(await loadDir(r.path))) return;
     n.add(r.path); sftpOpenDirs = n;
   }
-  /** 打开：目录＝展开；软链＝先当目录试（sftp 的 readdir 给的是 lstat，指向目录的软链这里 dir=false）；文件＝在线编辑。 */
+  /** 试着把它当目录读一下。不是目录就 false —— 调用方退回按文件处理，不报错。 */
+  async function isRemoteDir(path: string): Promise<boolean> {
+    try { await invoke<SftpEntry[]>('sftp_list', { connId: sftpConnId, path }); return true; }
+    catch { return false; }
+  }
+  /** 打开（双击 / 回车 / 右键「打开」）：目录＝**进到里面去**（换根，不是就地展开——展开是前面那个小箭头干的事）；
+   *  软链＝先当目录试（sftp 的 readdir 给的是 lstat，指向目录的软链这里 dir=false）；文件＝在线编辑。 */
   async function sftpOpenRow(r: SftpRow) {
-    if (r.dir && !r.link) { await toggleDir(r); return; }
-    if (r.link) {
-      if (await loadDir(r.path)) { const n = new Set(sftpOpenDirs); n.add(r.path); sftpOpenDirs = n; return; }
-      sftpErr = ''; // 不是目录（或读不了）→ 按文件处理，别把错误留在条上
-    }
+    if (r.dir && !r.link) { await sftpGo(r.path); return; }
+    if (r.link && await isRemoteDir(r.path)) { await sftpGo(r.path); return; }
     sftpEdit(r.path);
   }
   function fmtSize(n: number): string {
@@ -3383,7 +3408,21 @@
         <div class="files-wrap">
           <div class="files-bar">
             <button class="fbtn" aria-label="上一级" data-tip="上一级" onclick={sftpUp} disabled={sftpBusy || !sftpPath || sftpPath === '/'}><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 12.5v-9M4.2 7.3 8 3.5l3.8 3.8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
-            <input class="tin fpath" bind:value={sftpPathDraft} spellcheck="false" autocapitalize="off" autocorrect="off" placeholder="/" onkeydown={(e) => e.key === 'Enter' && sftpPathDraft.trim() && sftpGo(sftpPathDraft.trim())} />
+            {#if sftpPathEdit}
+              <input class="tin fpath" bind:this={sftpPathEl} bind:value={sftpPathDraft} spellcheck="false" autocapitalize="off" autocorrect="off" placeholder="/"
+                onblur={() => (sftpPathEdit = false)}
+                onkeydown={(e) => { if (e.key === 'Enter') commitPath(); else if (e.key === 'Escape') sftpPathEdit = false; }} />
+            {:else}
+              <!-- 面包屑：点哪一段跳哪一层。尾巴上那块空白本身是个按钮 ——
+                   点它＝切成输入框直接敲路径（资源管理器那套），键盘也 Tab 得到。 -->
+              <div class="fcrumbs tin" bind:this={crumbEl}>
+                {#each sftpCrumbs as c, i (c.path)}
+                  {#if i > 0}<span class="fcrumb-sep">›</span>{/if}
+                  <button class="fcrumb" class:cur={c.path === sftpPath} disabled={sftpBusy} onclick={() => sftpGo(c.path)}>{c.name}</button>
+                {/each}
+                <button class="fcrumb-blank" aria-label="直接输入路径" data-tip="点这里可直接输入路径" onclick={startPathEdit}></button>
+              </div>
+            {/if}
             <button class="fbtn" aria-label="刷新" data-tip="刷新" onclick={sftpRefresh} disabled={sftpBusy}>{@render refreshIcon(sftpBusy)}</button>
             <button class="fbtn" aria-label="新建文件夹" data-tip="新建文件夹" onclick={() => openMkdir()} disabled={sftpBusy}><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M1.8 4.2A1.4 1.4 0 0 1 3.2 2.8h3l1.4 1.6h5.2a1.4 1.4 0 0 1 1.4 1.4v6a1.4 1.4 0 0 1-1.4 1.4H3.2a1.4 1.4 0 0 1-1.4-1.4v-7.6z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /><path d="M8 7.4v3.4M6.3 9.1h3.4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" /></svg></button>
             <button class="fbtn" aria-label="上传文件" data-tip="上传到当前目录" onclick={() => sftpUpload()} disabled={sftpBusy || !!sftpXfer}><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 10.4V3.6M4.8 6.4 8 3.2l3.2 3.2M3 12.8h10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
@@ -4423,6 +4462,16 @@
   .files-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
   .files-bar { flex: none; display: flex; align-items: center; gap: 6px; padding: 10px 16px; border-bottom: 1px solid var(--border); }
   .fpath { flex: 1; min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  /* 面包屑：撑满路径栏（空白处可点＝改成输入框），路径深了横向滚动 */
+  .fcrumbs { flex: 1; min-width: 0; display: flex; align-items: center; gap: 1px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; cursor: text; padding: 3px 6px; }
+  .fcrumbs::-webkit-scrollbar { display: none; }
+  .fcrumb { flex: none; border: 0; background: transparent; color: var(--dim); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; padding: 2px 5px; border-radius: 5px; cursor: pointer; white-space: nowrap; }
+  .fcrumb:hover:not(:disabled) { background: var(--accent-soft); color: var(--text); }
+  .fcrumb.cur { color: var(--text); font-weight: 500; }
+  .fcrumb-sep { flex: none; color: var(--faint); font-size: 11px; user-select: none; }
+  /* 面包屑尾巴的空白＝一个撑满剩余宽度的按钮（点它进输入模式）。min-width 保证路径很长时也还点得着。 */
+  .fcrumb-blank { flex: 1; min-width: 28px; align-self: stretch; border: 0; background: transparent; cursor: text; border-radius: 5px; }
+  .fcrumb-blank:focus-visible { outline: 2px solid var(--accent-soft); outline-offset: -2px; }
   .fbtn { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; flex: none; border: 1px solid var(--border); background: var(--bg); color: var(--dim); border-radius: 7px; cursor: pointer; }
   .fbtn:hover:not(:disabled) { color: var(--text); border-color: var(--border2); }
   .fbtn:disabled { opacity: .45; cursor: default; }
