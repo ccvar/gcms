@@ -1464,21 +1464,35 @@
   /** 存盘：顺手按「现存对话」清一遍，免得删了对话还留一堆孤儿键把 localStorage 撑大。 */
   function saveWbByConv() {
     try {
-      const live = new Set(convos.map((c) => c.id));
-      const keep: Record<string, WbFlags> = {};
-      for (const [k, v] of Object.entries(wbByConv)) {
-        if (k.startsWith('new:') || live.has(k)) keep[k] = v;
+      // ★ convos 还没加载完（开机那会儿是空的）时**绝不能清**：那会把所有对话的布局
+      //   一把全删光 —— 看起来就是「配置没保住」。空表说明「还不知道有哪些对话」，
+      //   不是「一条都没有」。
+      if (convos.length) {
+        const live = new Set(convos.map((c) => c.id));
+        const keep: Record<string, WbFlags> = {};
+        for (const [k, v] of Object.entries(wbByConv)) {
+          if (k.startsWith('new:') || live.has(k)) keep[k] = v;
+        }
+        wbByConv = keep;
       }
-      wbByConv = keep;
-      localStorage.setItem(WB_BY_CONV, JSON.stringify(keep));
+      localStorage.setItem(WB_BY_CONV, JSON.stringify(wbByConv));
     } catch { /* 配额满/隐私模式：布局丢了就丢了，不值得打断用户 */ }
   }
-  // 切对话/切连接 → 存起当前这份，取回目标那份（没碰过的用固定默认，**不继承别的对话**）。
+  // 切对话/切连接 → 取回目标那份（没碰过的用固定默认，**不继承别的对话**）。
+  // 不必在这里存：setWbFlags 每次拨动就已经存过了。
   $effect(() => {
     const key = wbKeyOf();
     if (key === wbKeyCur) return;
+    const prev = wbKeyCur;
     wbKeyCur = key;
-    const f = wbByConv[key] ?? WB_FLAGS_DEF;
+    let f = wbByConv[key];
+    // ★ 起点 → 新对话：在起点输入框里拨好的布局要跟过去。这条对话**就是**那个起点变的，
+    //   不是「继承别的对话」。漏了它就会：你在起点拨好面板，一发消息全弹回默认。
+    if (!f && key && !key.startsWith('new:') && prev.startsWith('new:')) {
+      f = wbByConv[prev];
+      if (f) { wbByConv[key] = { ...f }; saveWbByConv(); }
+    }
+    f = f ?? WB_FLAGS_DEF;
     wb = { ...wb, term: f.term, chat: f.chat, files: f.files };
   });
   function saveWbSize(k: 'chatH' | 'filesW', v: number) { try { localStorage.setItem('gcms.pilot.wb.' + k, String(v)); } catch { /* */ } }
