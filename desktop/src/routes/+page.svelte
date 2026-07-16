@@ -1582,7 +1582,19 @@
       fontSize: 12,
       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
       cursorBlink: true,
-      theme: { background: '#1c1917', foreground: '#e8e4dc', cursor: '#e8e4dc' },
+      // ★ 滚动条宽度只能从这儿改：xterm 6 不再用 viewport 的原生滚动条，改成了自绘的
+      // （.xterm-scrollable-element > .scrollbar，从 VS Code 移植），宽度在 JS 里取
+      // `overviewRuler?.width || 14` —— CSS 的 ::-webkit-scrollbar 对它完全无效。
+      overviewRuler: { width: 7 },
+      theme: {
+        background: '#1c1917',
+        foreground: '#e8e4dc',
+        cursor: '#e8e4dc',
+        // 自绘滚动条的三档颜色（xterm 6 的 theme 项）：平时很淡，摸上去才明显。
+        scrollbarSliderBackground: '#4b464033',
+        scrollbarSliderHoverBackground: '#4b4640aa',
+        scrollbarSliderActiveBackground: '#635d55cc',
+      },
     });
     const f = new FitAddon();
     t.loadAddon(f); t.open(el); f.fit();
@@ -2110,7 +2122,6 @@
     viewAfterConvGone();
     if (isSshConn) {
       if (!wbChat) { wbChat = true; saveWb('chat', '1'); }
-      wbTerm = loadWbFlag('term', true); // 还原你自己的偏好（翻旧对话时是临时收起的，见 openConv）
       requestAnimationFrame(() => wbStartEl?.focus());
     }
     if (!lSite && sites.length) lSite = sites[0].slug;
@@ -2123,13 +2134,10 @@
     if (c.conn_id !== activeConnId) activeConnId = c.conn_id;
     activeConv = c; activeConvId = id; threadModel = c.model; threadPerm = c.perm_mode || 'full'; threadEffort = c.effort || '';
     // 远程连接的对话在工作台里开，不跳去独立对话页。
-    // 翻旧对话是来「读」的：收起命令行让对话占满 —— 一条 260px 的缝里读不了聊天记录。
-    // ★ 这里**故意不写偏好**：这只是「看这条记录时」的临时布局。写进去的话，你之后点「新对话」
-    //   命令行也不回来了。偏好只由你手动点图标决定（见 toggleWbTerm），新对话时按偏好还原。
+    // 命令行开着就让它开着 —— 面板开关是用户自己拨的，翻个旧对话不该替他改布局。
     if (conns.find((x) => x.id === c.conn_id)?.kind === 'ssh') {
       view = 'remote';
       if (!wbChat) { wbChat = true; saveWb('chat', '1'); }
-      wbTerm = false;
     } else view = 'thread';
     attachments = []; queued = null; // 换会话清掉未发送的附件 / 等待消息
     expandSite(c.site_slug);
@@ -2178,7 +2186,6 @@
     if (conns.find((c) => c.id === optimistic.conn_id)?.kind === 'ssh') {
       view = 'remote';
       if (!wbChat) { wbChat = true; saveWb('chat', '1'); }
-      wbTerm = loadWbFlag('term', true); // 开跑＝要看着它干活：按偏好把命令行还原（旧对话那次是临时收的）
     } else {
       view = 'thread';
     }
@@ -4761,24 +4768,15 @@
   /* 关掉命令行＝只藏不拆：DOM 留着，xterm 和 SSH 会话都不掉，开回来立刻还在。 */
   .term-wrap.hid { display: none; }
   .term { width: 100%; height: 100%; }
-  /* xterm 的滚动条：它给 viewport 钉了 overflow-y:scroll + background:#000（xterm.css 原话是
-     「On OS X this is required in order for the scroll bar to appear fully opaque」），
-     于是 WKWebView 画出一条又宽又黑的经典滚动条。viewport 是铺满的滚动层、只在滚动条那一条露出来，
-     所以把它的底色改成终端底色就能让滚动条融进去。
-     两点注意：① xterm 的 DOM 是运行时建的，选择器躲不过 Svelte 作用域 → 必须 :global；
-     ② 多带一级 `.xterm` 是**故意的** —— 与 xterm.css 的 `.xterm .xterm-viewport` 同分时谁赢取决于
-     样式注入顺序，多一级选择器才是稳赢，不必动用 !important。 */
-  /* ★ 只用 ::-webkit-scrollbar，**别碰** scrollbar-width / scrollbar-color：
-     一旦出现标准属性，浏览器就整个无视 webkit 伪元素、改用自己那套。实测（本机 WKWebView 同源引擎）：
-     原样 10px｜只写 scrollbar-width:thin → 11px（更宽）｜只写 ::-webkit-scrollbar → 7px ✓
-     ｜两个都写 → 11px（webkit 那条被废掉）｜webkit+scrollbar-color → 15px。 */
-  :global(.term-wrap .xterm .xterm-viewport) {
-    background-color: #1c1917; /* = Terminal theme.background，见 startTerm */
-  }
-  :global(.term-wrap .xterm .xterm-viewport::-webkit-scrollbar) { width: 7px; }
-  :global(.term-wrap .xterm .xterm-viewport::-webkit-scrollbar-track) { background: transparent; }
-  :global(.term-wrap .xterm .xterm-viewport::-webkit-scrollbar-thumb) { background: #4b4640; border-radius: 4px; }
-  :global(.term-wrap .xterm .xterm-viewport::-webkit-scrollbar-thumb:hover) { background: #635d55; }
+  /* xterm 6 的滚动条是**自绘**的（.xterm-scrollable-element > .scrollbar，从 VS Code 移植），
+     宽度和颜色都只能从 Terminal 选项走 —— 见 startTerm 的 overviewRuler.width / theme.scrollbarSlider*。
+     ::-webkit-scrollbar 那套对它完全无效（xterm 5 的 viewport 原生滚动条才吃那一套，别再写回来了）。
+     这里只需要把 viewport 的底色抹成终端底色：xterm.css 给它钉了 background:#000
+     （原话「On OS X this is required in order for the scroll bar to appear fully opaque」），
+     不盖掉的话滚动条那一条会是黑的、和终端底色差一截。
+     多带一级 .xterm 是故意的：与 xterm.css 的 `.xterm .xterm-viewport` 同分时靠后取胜，
+     多一级才稳赢，不必动用 !important。 */
+  :global(.term-wrap .xterm .xterm-viewport) { background-color: #1c1917; }
   /* 远程视图头部：终端/文件 页签 */
   .rhead-acts { display: flex; align-items: center; gap: 10px; -webkit-app-region: no-drag; }
   .rseg { display: flex; background: var(--accent-soft); border-radius: 8px; padding: 2px; }
@@ -4877,7 +4875,9 @@
      ★ 做得很紧（不画迷你条）是有原因的：应用最小窗口 820px、侧栏 240 → 头部只剩 532px，
      地址+刷新(215) + 三枚开关(84) + 间距(20) 已占 319，留给负载的只有 213px。
      带条的版本要 290px —— 于是在最小窗口下永远塞不下。 */
-  .hstats { display: flex; align-items: center; gap: 9px; margin-left: 5px; padding-left: 9px; border-left: 1px solid var(--border); }
+  /* 分隔线用伪元素画：直接给容器 border-left 会顶满整行高，太抢眼；这里只画 11px 的一小截。 */
+  .hstats { position: relative; display: flex; align-items: center; gap: 9px; margin-left: 5px; padding-left: 10px; }
+  .hstats::before { content: ''; position: absolute; left: 0; top: 50%; transform: translateY(-50%); width: 1px; height: 11px; background: var(--border2); }
   .hstat { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; color: var(--dim); white-space: nowrap; cursor: default; }
   .hstat-l { color: var(--faint); }
   .hstat-v { font-variant-numeric: tabular-nums; }
