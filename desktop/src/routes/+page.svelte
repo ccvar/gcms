@@ -3183,7 +3183,7 @@
               <div class="convo {activeConvId === c.id ? 'on' : ''}" role="button" tabindex="0"
                 onclick={() => openConv(c.id)} onkeydown={(e) => e.key === 'Enter' && openConv(c.id)}>
                 <div class="convo-body">
-                  <span class="convo-bi" title={brainLabel(c.brain)}><BrainIcon brain={c.brain} size={12} /></span>
+                  <span class="convo-bi" title={brainLabel(c.brain)}><BrainIcon brain={c.brain} size={11} /></span>
                   <span class="convo-title">{c.title}</span>
                   {#if c.status === 'running' || running[c.id]}<span class="mini-run"></span>{/if}
                   {#if permConvs.has(c.id)}<span class="mini-permit" title="有操作等你批准">待批</span>{/if}
@@ -5156,7 +5156,8 @@
   .convo.on { background: #e9e7e0; }
   .convo-body { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; }
   .convo-bi { flex: none; display: inline-flex; align-items: center; }
-  .convo-title { flex: 1; min-width: 0; font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* 对话标题：比分组头（.site-grp-name 12.5px/var(--text)）小半号、淡一档——让站点头当主、对话当项 */
+  .convo-title { flex: 1; min-width: 0; font-size: 12px; font-weight: 500; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .convo-when { flex: none; font-size: 11px; color: var(--dim); }
   .cmono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; }
   .cdot { color: var(--faint); }
