@@ -1543,6 +1543,52 @@
   function setSort(key: 'name' | 'size' | 'mtime') {
     sftpSort = sftpSort.key === key ? { key, asc: !sftpSort.asc } : { key, asc: true };
   }
+  // ---- 列宽可拖（名称是弹性列，吃掉剩下的宽度）----
+  // 手柄在每个定宽列的**左边缘**上：拖它就是拖这一列的左边，往右拖＝这列变窄，名称随之变宽。
+  // 这样手柄始终跟着鼠标走，三根手柄的行为也一致。
+  type ColKey = 'perm' | 'size' | 'date';
+  const COL_MIN: Record<ColKey, number> = { perm: 62, size: 48, date: 92 };
+  const COL_MAX: Record<ColKey, number> = { perm: 200, size: 160, date: 240 };
+  const COL_DEF: Record<ColKey, number> = { perm: 96, size: 76, date: 128 };
+  let colW = $state(loadColW());
+  function loadColW(): Record<ColKey, number> {
+    try {
+      const raw = JSON.parse(localStorage.getItem('gcms.pilot.sftpCols') || '{}');
+      const pick = (k: ColKey) => {
+        const n = Number(raw[k]);
+        return Number.isFinite(n) && n >= COL_MIN[k] && n <= COL_MAX[k] ? n : COL_DEF[k];
+      };
+      return { perm: pick('perm'), size: pick('size'), date: pick('date') };
+    } catch { return { ...COL_DEF }; }
+  }
+  function saveColW() { try { localStorage.setItem('gcms.pilot.sftpCols', JSON.stringify(colW)); } catch { /* */ } }
+  function setColW(k: ColKey, w: number) {
+    colW = { ...colW, [k]: Math.min(COL_MAX[k], Math.max(COL_MIN[k], Math.round(w))) };
+  }
+  function startColDrag(e: MouseEvent, k: ColKey) {
+    e.preventDefault();
+    e.stopPropagation(); // 别让这一下变成「点了列头去排序」
+    const x0 = e.clientX;
+    const w0 = colW[k];
+    const onMove = (ev: MouseEvent) => setColW(k, w0 - (ev.clientX - x0));
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      saveColW();
+    };
+    document.body.style.cursor = 'col-resize';
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }
+  // 键盘也能调（手柄是个 button，Tab 得到）
+  function onColKey(e: KeyboardEvent, k: ColKey) {
+    const d = e.key === 'ArrowLeft' ? 8 : e.key === 'ArrowRight' ? -8 : 0;
+    if (!d) return;
+    e.preventDefault();
+    setColW(k, colW[k] + d);
+    saveColW();
+  }
   // 树 → 扁平行（只把展开着的目录的孩子摊进来）。
   const sftpRows = $derived.by(() => {
     const out: SftpRow[] = [];
@@ -3411,7 +3457,7 @@
            切到文件页签时只藏不拆：拆了 xterm 的 DOM 就没了，回来还得重连。 -->
       <div class="term-wrap" class:hid={remoteTab !== 'term'}><div class="term" bind:this={termEl}></div></div>
       {#if remoteTab === 'files'}
-        <div class="files-wrap">
+        <div class="files-wrap" style="--fw-perm:{colW.perm}px; --fw-size:{colW.size}px; --fw-date:{colW.date}px">
           <div class="files-bar">
             <button class="fbtn" aria-label="上一级" data-tip="上一级" onclick={sftpUp} disabled={sftpBusy || !sftpPath || sftpPath === '/'}><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 12.5v-9M4.2 7.3 8 3.5l3.8 3.8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
             {#if sftpPathEdit}
@@ -3437,9 +3483,9 @@
           {#if sftpErr}<div class="err-note files-err">{sftpErr}</div>{/if}
           <div class="fhead">
             <button class="fh fh-name" onclick={() => setSort('name')}>名称{#if sftpSort.key === 'name'}<span class="fh-ar" class:desc={!sftpSort.asc}>^</span>{/if}</button>
-            <span class="fh fh-perm">权限</span>
-            <button class="fh fh-size" onclick={() => setSort('size')}>大小{#if sftpSort.key === 'size'}<span class="fh-ar" class:desc={!sftpSort.asc}>^</span>{/if}</button>
-            <button class="fh fh-date" onclick={() => setSort('mtime')}>日期{#if sftpSort.key === 'mtime'}<span class="fh-ar" class:desc={!sftpSort.asc}>^</span>{/if}</button>
+            <span class="fh fh-perm">{@render colGrip('perm')}权限</span>
+            <button class="fh fh-size" onclick={() => setSort('size')}>{@render colGrip('size')}大小{#if sftpSort.key === 'size'}<span class="fh-ar" class:desc={!sftpSort.asc}>^</span>{/if}</button>
+            <button class="fh fh-date" onclick={() => setSort('mtime')}>{@render colGrip('date')}日期{#if sftpSort.key === 'mtime'}<span class="fh-ar" class:desc={!sftpSort.asc}>^</span>{/if}</button>
           </div>
           <!-- svelte-ignore a11y_no_static_element_interactions -->
           <div class="files-list" oncontextmenu={(e) => openFctx(e, null)}>
@@ -3806,6 +3852,15 @@
 
 {#snippet gearIcon()}<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M2 5.3h3.5M9.3 5.3H14M2 10.7h5.1M10.9 10.7H14" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" /><circle cx="7.4" cy="5.3" r="1.6" stroke="currentColor" stroke-width="1.3" /><circle cx="9" cy="10.7" r="1.6" stroke="currentColor" stroke-width="1.3" /></svg>{/snippet}
 {#snippet cfMark(size: number)}<svg class="cf-mark" width={size} height={size} viewBox="0 0 128 128"><path fill="#fff" d="m115.679 69.288l-15.591-8.94l-2.689-1.163l-63.781.436v32.381h82.061z" /><path fill="#f38020" d="M87.295 89.022c.763-2.617.472-5.015-.8-6.796c-1.163-1.635-3.125-2.58-5.488-2.689l-44.737-.581c-.291 0-.545-.145-.691-.363s-.182-.509-.109-.8c.145-.436.581-.763 1.054-.8l45.137-.581c5.342-.254 11.157-4.579 13.192-9.885l2.58-6.723c.109-.291.145-.581.073-.872c-2.906-13.158-14.644-22.97-28.672-22.97c-12.938 0-23.913 8.359-27.838 19.952a13.35 13.35 0 0 0-9.267-2.58c-6.215.618-11.193 5.597-11.811 11.811c-.145 1.599-.036 3.162.327 4.615C10.104 70.051 2 78.337 2 88.549c0 .909.073 1.817.182 2.726a.895.895 0 0 0 .872.763h82.57c.472 0 .909-.327 1.054-.8z" /><path fill="#faae40" d="M101.542 60.275c-.4 0-.836 0-1.236.036c-.291 0-.545.218-.654.509l-1.744 6.069c-.763 2.617-.472 5.015.8 6.796c1.163 1.635 3.125 2.58 5.488 2.689l9.522.581c.291 0 .545.145.691.363s.182.545.109.8c-.145.436-.581.763-1.054.8l-9.924.582c-5.379.254-11.157 4.579-13.192 9.885l-.727 1.853c-.145.363.109.727.509.727h34.089c.4 0 .763-.254.872-.654c.581-2.108.909-4.325.909-6.614c0-13.447-10.975-24.422-24.458-24.422" /></svg>{/snippet}
+<!-- 列宽手柄：坐在定宽列的左边缘上（就是列头之间那根分隔线）。做成 button 是为了键盘也够得着
+     （←/→ 微调），顺带免掉给 div 挂事件的一堆 a11y 警告。 -->
+{#snippet colGrip(k: 'perm' | 'size' | 'date')}
+  <button class="fh-grip" aria-label="调整列宽（左右方向键微调）" data-tip="拖动调整列宽"
+    onmousedown={(e) => startColDrag(e, k)}
+    onclick={(e) => e.stopPropagation()}
+    onkeydown={(e) => onColKey(e, k)}></button>
+{/snippet}
+
 {#snippet sshMark(size: number)}<svg width={size} height={size} viewBox="0 0 16 16" fill="none"><rect x="1.6" y="2.6" width="12.8" height="10.8" rx="2" stroke="currentColor" stroke-width="1.3" /><path d="M4.4 6.2 6.6 8l-2.2 1.8M8.2 10.2h3.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" /></svg>{/snippet}
 
 <!-- 发行版图标：按 os-release 的 ID 选（distroOf 做归一化 + ID_LIKE 兜底）。
@@ -4459,6 +4514,24 @@
   .term-wrap { flex: 1; min-height: 0; overflow: hidden; background: #1c1917; padding: 8px 10px; }
   .term-wrap.hid { display: none; }
   .term { width: 100%; height: 100%; }
+  /* xterm 的滚动条：它给 viewport 钉了 overflow-y:scroll + background:#000（xterm.css 原话是
+     「On OS X this is required in order for the scroll bar to appear fully opaque」），
+     于是 WKWebView 画出一条又宽又黑的经典滚动条。viewport 是铺满的滚动层、只在滚动条那一条露出来，
+     所以把它的底色改成终端底色就能让滚动条融进去。
+     两点注意：① xterm 的 DOM 是运行时建的，选择器躲不过 Svelte 作用域 → 必须 :global；
+     ② 多带一级 `.xterm` 是**故意的** —— 与 xterm.css 的 `.xterm .xterm-viewport` 同分时谁赢取决于
+     样式注入顺序，多一级选择器才是稳赢，不必动用 !important。 */
+  /* ★ 只用 ::-webkit-scrollbar，**别碰** scrollbar-width / scrollbar-color：
+     一旦出现标准属性，浏览器就整个无视 webkit 伪元素、改用自己那套。实测（本机 WKWebView 同源引擎）：
+     原样 10px｜只写 scrollbar-width:thin → 11px（更宽）｜只写 ::-webkit-scrollbar → 7px ✓
+     ｜两个都写 → 11px（webkit 那条被废掉）｜webkit+scrollbar-color → 15px。 */
+  :global(.term-wrap .xterm .xterm-viewport) {
+    background-color: #1c1917; /* = Terminal theme.background，见 startTerm */
+  }
+  :global(.term-wrap .xterm .xterm-viewport::-webkit-scrollbar) { width: 7px; }
+  :global(.term-wrap .xterm .xterm-viewport::-webkit-scrollbar-track) { background: transparent; }
+  :global(.term-wrap .xterm .xterm-viewport::-webkit-scrollbar-thumb) { background: #4b4640; border-radius: 4px; }
+  :global(.term-wrap .xterm .xterm-viewport::-webkit-scrollbar-thumb:hover) { background: #635d55; }
   /* 远程视图头部：终端/文件 页签 */
   .rhead-acts { display: flex; align-items: center; gap: 10px; -webkit-app-region: no-drag; }
   .rseg { display: flex; background: var(--accent-soft); border-radius: 8px; padding: 2px; }
@@ -4479,10 +4552,11 @@
   /* 面包屑尾巴的空白＝一个撑满剩余宽度的按钮（点它进输入模式）。min-width 保证路径很长时也还点得着。 */
   .fcrumb-blank { flex: 1; min-width: 28px; align-self: stretch; border: 0; background: transparent; cursor: text; border-radius: 5px; }
   .fcrumb-blank:focus-visible { outline: 2px solid var(--accent-soft); outline-offset: -2px; }
-  .fbtn { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; flex: none; border: 1px solid var(--border); background: var(--bg); color: var(--dim); border-radius: 7px; cursor: pointer; }
+  .fbtn { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; flex: none; border: 1px solid var(--border); background: var(--bg); color: var(--dim); border-radius: 6px; cursor: pointer; }
+  .fbtn :global(svg) { width: 13px; height: 13px; }
   .fbtn:hover:not(:disabled) { color: var(--text); border-color: var(--border2); }
   .fbtn:disabled { opacity: .45; cursor: default; }
-  .fbtn.sm { width: 24px; height: 24px; border: 0; border-radius: 6px; }
+  .fbtn.sm { width: 22px; height: 22px; border: 0; border-radius: 5px; }
   .fbtn.sm:hover:not(:disabled) { background: var(--accent-soft); }
   .fbtn.danger:hover:not(:disabled) { color: var(--err); background: var(--err-soft); }
   .files-note { flex: none; padding: 6px 16px; font-size: 12px; color: var(--dim); border-bottom: 1px solid var(--border); }
@@ -4490,10 +4564,14 @@
   /* 列表＝四列表格（名称/权限/大小/日期），行内缩进出树形。列宽用同一套变量对齐表头与行。 */
   .files-wrap { --fw-perm: 96px; --fw-size: 76px; --fw-date: 128px; }
   .fhead { flex: none; display: flex; align-items: stretch; gap: 0; padding: 0 14px; border-bottom: 1px solid var(--border); background: var(--rail); }
-  .fh { display: flex; align-items: center; gap: 3px; border: 0; background: transparent; color: var(--dim); font-size: 11.5px; padding: 5px 6px; text-align: left; }
+  .fh { position: relative; display: flex; align-items: center; gap: 3px; border: 0; background: transparent; color: var(--dim); font-size: 11.5px; padding: 5px 6px; text-align: left; }
   .fhead button.fh { cursor: pointer; }
   .fhead button.fh:hover { color: var(--text); }
   .fh + .fh { border-left: 1px solid var(--border); }
+  /* 列宽手柄：骑在列头分隔线上，比线宽一点好抓 */
+  .fh-grip { position: absolute; left: -4px; top: 0; bottom: 0; width: 8px; padding: 0; border: 0; background: transparent; cursor: col-resize; z-index: 1; }
+  .fh-grip:hover { background: linear-gradient(to right, transparent 2px, var(--border2) 2px, var(--border2) 6px, transparent 6px); }
+  .fh-grip:focus-visible { outline: 2px solid var(--accent-soft); outline-offset: -2px; }
   .fh-name { flex: 1; min-width: 0; }
   .fh-perm { width: var(--fw-perm); flex: none; }
   .fh-size { width: var(--fw-size); flex: none; justify-content: flex-end; }
