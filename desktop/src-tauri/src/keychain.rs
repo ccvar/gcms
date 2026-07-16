@@ -53,13 +53,18 @@ pub fn set_key(conn_id: &str, key: &str) -> Result<(), String> {
 }
 
 pub fn get_key(conn_id: &str) -> Result<String, String> {
-    if let Some(k) = cache().lock().unwrap().get(conn_id) {
+    // ★ 锁必须攥到读完为止（别「查完就放、再去读」）：读钥匙串会弹授权框，一弹就是好几秒。
+    // 放掉锁的话，同一瞬间进来的第二个调用同样查不到缓存，于是**两个框一起弹**。
+    // 真踩过：选中一个 ssh 连接会同时触发「探系统版本」和「开终端」，两边各要一次凭据 → 弹两次。
+    // 攥着锁 = 后来者堵在门口，等第一个填完缓存直接命中，一次都不用再问。
+    let mut g = cache().lock().unwrap();
+    if let Some(k) = g.get(conn_id) {
         return Ok(k.clone());
     }
     let k = entry(conn_id)?
         .get_password()
         .map_err(|e| format!("keychain read: {e}"))?;
-    cache().lock().unwrap().insert(conn_id.to_string(), k.clone());
+    g.insert(conn_id.to_string(), k.clone());
     Ok(k)
 }
 

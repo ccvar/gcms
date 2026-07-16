@@ -1429,12 +1429,33 @@
 
   // ---------- 远程工作台：终端为主区，底部对话 / 右侧文件按需开（VS Code 那套） ----------
   // 两个面板可以同时开，各自可拖改大小；开关与尺寸都记住。
-  let wbTerm = $state(loadWbFlag('term', true));
-  let wbChat = $state(loadWbFlag('chat', true));
+  // 面板布局**按对话独立**：同一台机器上不同对话的干活姿势不一样 ——
+  // 一条在装东西要盯着终端，另一条只是问问题、想让对话占满。全局一份的话，
+  // 在这条里关掉命令行，切过去那条也没了。
+  // 存储只留一份「默认」：新对话（和还没碰过的旧对话）用它开局，你一拨就成为新的默认。
+  // 各对话的当前布局只放内存 —— 否则 localStorage 会随对话数无限长，删了对话还留一堆孤儿键。
+  type WbLayout = { term: boolean; chat: boolean; files: boolean; chatH: number; filesW: number };
   let wbStartEl = $state<HTMLTextAreaElement | null>(null); // 起点输入框（新对话后把光标送进去）
-  let wbFiles = $state(loadWbFlag('files', false));
-  let wbChatH = $state(loadWbSize('chatH', 260, 140, 900));
-  let wbFilesW = $state(loadWbSize('filesW', 380, 240, 900));
+  function wbDefault(): WbLayout {
+    return {
+      term: loadWbFlag('term', true),
+      chat: loadWbFlag('chat', true),
+      files: loadWbFlag('files', false),
+      chatH: loadWbSize('chatH', 260, 140, 900),
+      filesW: loadWbSize('filesW', 380, 240, 900),
+    };
+  }
+  let wb = $state<WbLayout>(wbDefault());
+  let wbByConv: Record<string, WbLayout> = {};  // 对话 id → 它的布局；'' = 该连接还没有对话时的起点
+  let wbKeyCur = '';
+  // 切对话/切连接 → 存起当前这份，取回目标那份（没碰过就用默认开局）。
+  $effect(() => {
+    const key = activeConvId || (isSshConn ? 'new:' + activeConnId : '');
+    if (key === wbKeyCur) return;
+    if (wbKeyCur) wbByConv[wbKeyCur] = { ...wb };
+    wbKeyCur = key;
+    wb = { ...(wbByConv[key] ?? wbDefault()) };
+  });
   function loadWbFlag(k: string, def: boolean): boolean {
     try { const v = localStorage.getItem('gcms.pilot.wb.' + k); return v === null ? def : v === '1'; } catch { return def; }
   }
@@ -1442,30 +1463,32 @@
     try { const n = parseInt(localStorage.getItem('gcms.pilot.wb.' + k) || ''); return n >= lo && n <= hi ? n : def; } catch { return def; }
   }
   function saveWb(k: string, v: string) { try { localStorage.setItem('gcms.pilot.wb.' + k, v); } catch { /* */ } }
+  /** 拨一下：改当前对话的布局，并把它记成「默认」（下一条新对话就照这个开局）。 */
+  function setWb(patch: Partial<WbLayout>) {
+    wb = { ...wb, ...patch };
+    if (wbKeyCur) wbByConv[wbKeyCur] = { ...wb };
+    for (const [k, v] of Object.entries(patch)) {
+      saveWb(k, typeof v === 'boolean' ? (v ? '1' : '0') : String(v));
+    }
+  }
   /** 终端与对话不能同时关掉：那样主区就是一块空白（右侧文件栏不占主区）。关一个就把另一个开上。 */
-  function toggleWbTerm() {
-    wbTerm = !wbTerm; saveWb('term', wbTerm ? '1' : '0');
-    if (!wbTerm && !wbChat) { wbChat = true; saveWb('chat', '1'); }
-  }
-  function toggleWbChat() {
-    wbChat = !wbChat; saveWb('chat', wbChat ? '1' : '0');
-    if (!wbChat && !wbTerm) { wbTerm = true; saveWb('term', '1'); }
-  }
-  function toggleWbFiles() { wbFiles = !wbFiles; saveWb('files', wbFiles ? '1' : '0'); }
+  function toggleWbTerm() { setWb(wb.term ? { term: false, chat: true } : { term: true }); }
+  function toggleWbChat() { setWb(wb.chat ? { chat: false, term: true } : { chat: true }); }
+  function toggleWbFiles() { setWb({ files: !wb.files }); }
   /** 面板拖拽。dir=h：拖对话面板的上沿（往上拖＝更高）；dir=v：拖文件面板的左沿（往左拖＝更宽）。 */
   function startWbResize(e: MouseEvent, dir: 'h' | 'v') {
     e.preventDefault();
     const x0 = e.clientX, y0 = e.clientY;
-    const h0 = wbChatH, w0 = wbFilesW;
+    const h0 = wb.chatH, w0 = wb.filesW;
     const onMove = (ev: MouseEvent) => {
-      if (dir === 'h') wbChatH = Math.min(900, Math.max(140, Math.round(h0 - (ev.clientY - y0))));
-      else wbFilesW = Math.min(900, Math.max(240, Math.round(w0 - (ev.clientX - x0))));
+      if (dir === 'h') wb = { ...wb, chatH: Math.min(900, Math.max(140, Math.round(h0 - (ev.clientY - y0)))) };
+      else wb = { ...wb, filesW: Math.min(900, Math.max(240, Math.round(w0 - (ev.clientX - x0)))) };
     };
     const onUp = () => {
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
       document.body.style.cursor = '';
-      saveWb(dir === 'h' ? 'chatH' : 'filesW', String(dir === 'h' ? wbChatH : wbFilesW));
+      setWb(dir === 'h' ? { chatH: wb.chatH } : { filesW: wb.filesW }); // 落定时才记默认
     };
     document.body.style.cursor = dir === 'h' ? 'row-resize' : 'col-resize';
     document.addEventListener('mousemove', onMove);
@@ -1603,6 +1626,15 @@
     const f = new FitAddon();
     t.loadAddon(f); t.open(el); f.fit();
     term = t; termFit = f;
+    // GPU 渲染：默认的 DOM 渲染器在 Retina 上敲字会发涩（每个字符都是 DOM 活儿）。
+    // 必须 open() 之后再挂，且要能回退 —— WebView 里 WebGL 不一定可用，
+    // 上下文丢失（切显卡/系统回收）也要退回 DOM，否则整个终端会变黑。
+    try {
+      const { WebglAddon } = await import('@xterm/addon-webgl');
+      const gl = new WebglAddon();
+      gl.onContextLoss(() => { try { gl.dispose(); } catch { /* 退回 DOM 渲染 */ } });
+      t.loadAddon(gl);
+    } catch { /* 没 WebGL 就用默认的 DOM 渲染器，功能不受影响 */ }
     const ch = new Channel<{ type: string; b64?: string; error?: string }>();
     ch.onmessage = (ev) => {
       if (term !== t) return; // 已被拆掉/换连接，丢弃尾包
@@ -1652,7 +1684,7 @@
   // 首次开文件面板或换了连接 → 从 home 起步；关了再开则保留原目录。
   $effect(() => {
     const id = activeConnId;
-    if (view !== 'remote' || !isSshConn || !wbFiles || !id) return;
+    if (view !== 'remote' || !isSshConn || !wb.files || !id) return;
     if (sftpConnId === id) return;
     sftpConnId = id; sftpPath = ''; sftpPathDraft = ''; sftpErr = '';
     sftpKids = {}; sftpOpenDirs = new Set(); sftpSel = '';
@@ -2125,7 +2157,7 @@
     // 它不换「页面」，所以必须给点看得见的反馈：把面板打开并把光标放进输入框。
     viewAfterConvGone();
     if (isSshConn) {
-      if (!wbChat) { wbChat = true; saveWb('chat', '1'); }
+      if (!wb.chat) setWb({ chat: true });
       requestAnimationFrame(() => wbStartEl?.focus());
     }
     if (!lSite && sites.length) lSite = sites[0].slug;
@@ -2141,7 +2173,7 @@
     // 命令行开着就让它开着 —— 面板开关是用户自己拨的，翻个旧对话不该替他改布局。
     if (conns.find((x) => x.id === c.conn_id)?.kind === 'ssh') {
       view = 'remote';
-      if (!wbChat) { wbChat = true; saveWb('chat', '1'); }
+      if (!wb.chat) setWb({ chat: true });
     } else view = 'thread';
     attachments = []; queued = null; // 换会话清掉未发送的附件 / 等待消息
     expandSite(c.site_slug);
@@ -2189,7 +2221,7 @@
     // （openConv/newChat/selectConn 同理，见各自注释。这条是「发消息新建对话」这一路。）
     if (conns.find((c) => c.id === optimistic.conn_id)?.kind === 'ssh') {
       view = 'remote';
-      if (!wbChat) { wbChat = true; saveWb('chat', '1'); }
+      if (!wb.chat) setWb({ chat: true });
     } else {
       view = 'thread';
     }
@@ -3599,13 +3631,13 @@
           {/if}</small></div>
         <div class="rhead-acts">
           <!-- 三个面板开关（VS Code 那套）：命令行 / 底部对话 / 右侧文件，各自可开可关、可同时开。 -->
-          <button class="wb-tg" class:on={wbTerm} aria-pressed={wbTerm} data-tip="命令行窗口" aria-label="命令行窗口" onclick={toggleWbTerm}>
+          <button class="wb-tg" class:on={wb.term} aria-pressed={wb.term} data-tip="命令行窗口" aria-label="命令行窗口" onclick={toggleWbTerm}>
             {@render sshMark(15)}
           </button>
-          <button class="wb-tg" class:on={wbChat} aria-pressed={wbChat} data-tip="底部对话框" aria-label="底部对话框" onclick={toggleWbChat}>
+          <button class="wb-tg" class:on={wb.chat} aria-pressed={wb.chat} data-tip="底部对话框" aria-label="底部对话框" onclick={toggleWbChat}>
             <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><rect x="1.8" y="2.6" width="12.4" height="10.8" rx="2" stroke="currentColor" stroke-width="1.3" /><path d="M1.8 9.8h12.4" stroke="currentColor" stroke-width="1.3" /><rect x="1.8" y="9.8" width="12.4" height="3.6" fill="currentColor" opacity=".9" /></svg>
           </button>
-          <button class="wb-tg" class:on={wbFiles} aria-pressed={wbFiles} data-tip="右侧文件" aria-label="右侧文件" onclick={toggleWbFiles}>
+          <button class="wb-tg" class:on={wb.files} aria-pressed={wb.files} data-tip="右侧文件" aria-label="右侧文件" onclick={toggleWbFiles}>
             <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><rect x="1.8" y="2.6" width="12.4" height="10.8" rx="2" stroke="currentColor" stroke-width="1.3" /><path d="M9.6 2.6v10.8" stroke="currentColor" stroke-width="1.3" /><path d="M9.6 2.6h2.6a2 2 0 0 1 2 2v6.8a2 2 0 0 1-2 2H9.6z" fill="currentColor" opacity=".9" /></svg>
           </button>
         </div>
@@ -3617,14 +3649,14 @@
           <!-- 终端自己管滚动：别套 .thread（它的 overflow-y:auto 会和 xterm 打架）。
                ★ 关掉命令行只是 display:none **藏起来**，绝不拆 DOM —— 拆了 xterm 就没了，
                回来还得重连一次（连接是真的，掉一次要重登服务器）。 -->
-          <div class="term-wrap" class:hid={!wbTerm}><div class="term" bind:this={termEl}></div></div>
-          {#if wbChat}
-            {#if wbTerm}
+          <div class="term-wrap" class:hid={!wb.term}><div class="term" bind:this={termEl}></div></div>
+          {#if wb.chat}
+            {#if wb.term}
               <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
               <div class="wb-split h" title="拖动调整高度" role="separator" aria-orientation="horizontal" onmousedown={(e) => startWbResize(e, 'h')}></div>
             {/if}
             <!-- 命令行关着时对话吃满整个主区（固定高度只在两者共存时才有意义） -->
-            <div class="wb-chat" class:solo={!wbTerm} style={wbTerm ? `height:${wbChatH}px` : ''}>
+            <div class="wb-chat" class:solo={!wb.term} style={wb.term ? `height:${wb.chatH}px` : ''}>
               {#if activeConv && activeConv.conn_id === activeConnId}
                 {@render convPane()}
               {:else}
@@ -3657,10 +3689,10 @@
             </div>
           {/if}
         </div>
-        {#if wbFiles}
+        {#if wb.files}
           <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
           <div class="wb-split v" title="拖动调整宽度" role="separator" aria-orientation="vertical" onmousedown={(e) => startWbResize(e, 'v')}></div>
-          <aside class="files-wrap" style="width:{wbFilesW}px; --fw-perm:{colW.perm}px; --fw-size:{colW.size}px; --fw-date:{colW.date}px">
+          <aside class="files-wrap" style="width:{wb.filesW}px; --fw-perm:{colW.perm}px; --fw-size:{colW.size}px; --fw-date:{colW.date}px">
           <div class="files-bar">
             <button class="fbtn" aria-label="上一级" data-tip="上一级" onclick={sftpUp} disabled={sftpBusy || !sftpPath || sftpPath === '/'}><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 12.5v-9M4.2 7.3 8 3.5l3.8 3.8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
             {#if sftpPathEdit}
@@ -4790,7 +4822,7 @@
   .rseg { display: flex; background: var(--accent-soft); border-radius: 8px; padding: 2px; }
   .rseg-btn { border: 0; background: transparent; color: var(--dim); font-size: 12.5px; padding: 4px 14px; border-radius: 6px; cursor: pointer; }
   .rseg-btn.on { background: var(--bg); color: var(--text); box-shadow: 0 1px 2px rgba(0, 0, 0, .08); }
-  /* 远程文件面板（工作台右栏；宽度由 wbFilesW 内联给） */
+  /* 远程文件面板（工作台右栏；宽度由 wb.filesW 内联给） */
   .files-wrap { flex: none; min-height: 0; display: flex; flex-direction: column; border-left: 1px solid var(--border); background: var(--bg); }
   .files-bar { flex: none; display: flex; align-items: center; gap: 6px; padding: 10px 16px; border-bottom: 1px solid var(--border); }
   .fpath { flex: 1; min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
