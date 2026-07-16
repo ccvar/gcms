@@ -1538,10 +1538,15 @@
       saveWbByConv();
     }
   }
-  /** 终端与对话不能同时关掉：那样主区就是一块空白（右侧文件栏不占主区）。关一个就把另一个开上。 */
-  function toggleWbTerm() { setWbFlags(wb.term ? { term: false, chat: true } : { term: true }); }
-  function toggleWbChat() { setWbFlags(wb.chat ? { chat: false, term: true } : { chat: true }); }
-  function toggleWbFiles() { setWbFlags({ files: !wb.files }); }
+  /** 三个面板至少留一个开着：全关＝主区一整块空白。
+   *  以前更严——终端/对话必须留一个（那会儿文件栏只是右侧窄条、不占主区，关掉这俩主区就空了）。
+   *  现在放开：文件栏单开时让它吃满整宽（见 wbFilesSolo + .wb-main.collapsed），
+   *  所以「只留文件」是合法布局。每个开关只在「关掉后一块都不剩」时才顶个默认（终端）上来。 */
+  function toggleWbTerm() { setWbFlags(!wb.term ? { term: true } : wb.chat || wb.files ? { term: false } : { term: false, chat: true }); }
+  function toggleWbChat() { setWbFlags(!wb.chat ? { chat: true } : wb.term || wb.files ? { chat: false } : { chat: false, term: true }); }
+  function toggleWbFiles() { setWbFlags(!wb.files ? { files: true } : wb.term || wb.chat ? { files: false } : { files: false, term: true }); }
+  // 文件栏单开：终端和对话都关了，只剩文件 —— 这时让它撑满主区（.wb-main 空了就收起来）。
+  const wbFilesSolo = $derived(wb.files && !wb.term && !wb.chat);
   /** 面板拖拽。dir=h：拖对话面板的上沿（往上拖＝更高）；dir=v：拖文件面板的左沿（往左拖＝更宽）。 */
   function startWbResize(e: MouseEvent, dir: 'h' | 'v') {
     e.preventDefault();
@@ -3709,7 +3714,8 @@
       <!-- 工作台：终端占主区，底部对话 / 右侧文件按需开，两条分隔线可拖。
            终端的尺寸变化交给 ResizeObserver 自动 fit（见 startTerm 上面那个 $effect）。 -->
       <div class="wb">
-        <div class="wb-main">
+        <!-- 文件栏单开时把主区收起来（display:none）：终端就在里头，只藏不拆，xterm 和 SSH 会话都不掉。 -->
+        <div class="wb-main" class:collapsed={wbFilesSolo}>
           <!-- 终端自己管滚动：别套 .thread（它的 overflow-y:auto 会和 xterm 打架）。
                ★ 关掉命令行只是 display:none **藏起来**，绝不拆 DOM —— 拆了 xterm 就没了，
                回来还得重连一次（连接是真的，掉一次要重登服务器）。 -->
@@ -3757,9 +3763,12 @@
           {/if}
         </div>
         {#if wb.files}
-          <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-          <div class="wb-split v" title="拖动调整宽度" role="separator" aria-orientation="vertical" onmousedown={(e) => startWbResize(e, 'v')}></div>
-          <aside class="files-wrap" style="width:{wb.filesW}px; --fw-perm:{colW.perm}px; --fw-size:{colW.size}px; --fw-date:{colW.date}px">
+          <!-- 文件栏单开时没有可拖的对象（主区已收起），分隔线也就不出 -->
+          {#if !wbFilesSolo}
+            <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+            <div class="wb-split v" title="拖动调整宽度" role="separator" aria-orientation="vertical" onmousedown={(e) => startWbResize(e, 'v')}></div>
+          {/if}
+          <aside class="files-wrap" class:solo={wbFilesSolo} style="{wbFilesSolo ? '' : `width:${wb.filesW}px;`} --fw-perm:{colW.perm}px; --fw-size:{colW.size}px; --fw-date:{colW.date}px">
           <div class="files-bar">
             <button class="fbtn" aria-label="上一级" data-tip="上一级" onclick={sftpUp} disabled={sftpBusy || !sftpPath || sftpPath === '/'}><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 12.5v-9M4.2 7.3 8 3.5l3.8 3.8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
             {#if sftpPathEdit}
@@ -4837,6 +4846,8 @@
      每层都 min-*:0 —— flex 子项默认 min-size:auto，不清零的话终端撑着不缩、面板挤不出来。 */
   .wb { flex: 1; min-height: 0; display: flex; }
   .wb-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+  /* 文件栏单开：主区收起（终端只藏不拆，DOM 还在），让文件栏独占整宽。 */
+  .wb-main.collapsed { display: none; }
   .wb-chat { flex: none; min-height: 0; display: flex; flex-direction: column; border-top: 1px solid var(--border); background: var(--bg); }
   .wb-chat.solo { flex: 1; border-top: 0; }
   /* 起点输入框：贴着面板底（justify-content:flex-end），面板矮时也不顶头。
@@ -4895,6 +4906,8 @@
   .rseg-btn.on { background: var(--bg); color: var(--text); box-shadow: 0 1px 2px rgba(0, 0, 0, .08); }
   /* 远程文件面板（工作台右栏；宽度由 wb.filesW 内联给） */
   .files-wrap { flex: none; min-height: 0; display: flex; flex-direction: column; border-left: 1px solid var(--border); background: var(--bg); }
+  /* 单开时吃满整宽（撤掉固定宽 flex:none）；左边没东西了，左边框也去掉。 */
+  .files-wrap.solo { flex: 1; min-width: 0; border-left: 0; }
   .files-bar { flex: none; display: flex; align-items: center; gap: 6px; padding: 10px 16px; border-bottom: 1px solid var(--border); }
   .fpath { flex: 1; min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
   /* 面包屑：不画框（它是一行路径，不是输入框——要输入点空白处会切成真的 input），
