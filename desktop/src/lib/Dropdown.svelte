@@ -1,6 +1,10 @@
 <script lang="ts">
   import BrainIcon from './BrainIcon.svelte';
-  interface Opt { value: string; label: string; sub?: string; disabled?: boolean; icon?: string; img?: string; }
+  // tip：选项的长说明，挂 data-tip 交给全局那个 fixed 浮层（+page.svelte 的 onTipHover 用
+  // closest('[title],[data-tip]') 代理，.tipbox 是 z-index:130 > 菜单的 90，且 white-space:pre-line
+  // 认 \n）—— 比塞进 sub 强：菜单 compact 时才 240px 宽，长文案会把那一行撑成七八行。
+  // tone：给 sub 上风险色（'danger'/'warn'）。组件原有的 tone 只染触发器，够不到菜单里的选项行。
+  interface Opt { value: string; label: string; sub?: string; disabled?: boolean; icon?: string; img?: string; tip?: string; tone?: string; }
   // 站点图标：有 logo 用 logo，否则用 slug 首字母做圆形占位。
 
   let {
@@ -12,8 +16,9 @@
     searchable = false,
     tone = '',
     bare = false,
+    tip = '',
     onchange,
-  }: { value: string; options: Opt[]; placeholder?: string; disabled?: boolean; compact?: boolean; searchable?: boolean; tone?: string; bare?: boolean; onchange?: (value: string) => void } = $props();
+  }: { value: string; options: Opt[]; placeholder?: string; disabled?: boolean; compact?: boolean; searchable?: boolean; tone?: string; bare?: boolean; tip?: string; onchange?: (value: string) => void } = $props();
 
   let open = $state(false);
   let root: HTMLDivElement | undefined = $state();
@@ -51,10 +56,20 @@
       : `top:${Math.round(r.bottom + 6)}px`;
     menuStyle = `${vert}; left:${Math.round(left)}px; width:${Math.round(width)}px; max-height:${Math.round(maxH)}px;`;
   }
-  function toggle() { if (disabled) return; open = !open; if (open) { query = ''; requestAnimationFrame(() => { position(); if (showSearch) searchEl?.focus(); }); } }
-  function pick(o: Opt) { if (o.disabled) return; const changed = o.value !== value; value = o.value; open = false; if (changed) onchange?.(o.value); }
+  // 开菜单时把触发器那个气泡收掉。光「把 data-tip 摘了」不够 —— 气泡是**悬停那一刻**就弹出来的，
+  // 全局那套（+page.svelte 的 svelte:window onmouseover）只在**下一次 mouseover**才重算，
+  // 没有 mouseleave 兜底；鼠标停在触发器上不动，气泡就一直挂着，正好盖住菜单最下面那条
+  // （实测盖的就是「全自动」）。往 body 补一次 mouseover 走同一条代理路径，把它清掉。
+  function hideTipBubble() {
+    document.body.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+  }
+  function toggle() { if (disabled) return; open = !open; if (open) { query = ''; hideTipBubble(); requestAnimationFrame(() => { position(); if (showSearch) searchEl?.focus(); }); } }
+  // pick / Escape 关菜单时也得收气泡：选项自己带 data-tip，悬停它会弹气泡；点中/按 Esc 后
+  // 菜单卸载、光标却没动 → 不会有新的 mouseover 来清它，气泡就飘在原地。onDoc（点外面）和
+  // onScroll 本身带移动/滚动，会自己清，不用管。
+  function pick(o: Opt) { if (o.disabled) return; const changed = o.value !== value; value = o.value; open = false; hideTipBubble(); if (changed) onchange?.(o.value); }
   function onDoc(e: MouseEvent) { if (root && !root.contains(e.target as Node)) open = false; }
-  function onKey(e: KeyboardEvent) { if (e.key === 'Escape') open = false; }
+  function onKey(e: KeyboardEvent) { if (e.key === 'Escape') { open = false; hideTipBubble(); } }
   // 只在「菜单之外」的滚动才收起；菜单自身内部滚动（选项多时）不关闭。
   function onScroll(e: Event) {
     const menu = root?.querySelector('.dd-menu');
@@ -80,7 +95,12 @@
 </script>
 
 <div class="dd" class:compact class:bare bind:this={root}>
-  <button type="button" class="dd-trigger" class:open class:compact class:bare class:tone-warn={tone === 'warn'} class:tone-danger={tone === 'danger'} onclick={toggle} {disabled}>
+  <!-- data-tip 挂触发器本体：.dd-menu 是它的**兄弟**不是后代，所以菜单里的选项 closest 不会
+       误捞到这条。
+       ★ 菜单开着时必须把它摘掉：气泡是 z-index:130、菜单才 90，两个又都往上弹 —— 不摘的话
+       气泡正好盖住菜单最下面那条（实测盖的就是「全自动」，即最要紧的那条）。
+       同款做法见 UsageRing.svelte 的 `use:tip={open ? '' : tipText}`。 -->
+  <button type="button" class="dd-trigger" class:open class:compact class:bare class:tone-warn={tone === 'warn'} class:tone-danger={tone === 'danger'} onclick={toggle} {disabled} data-tip={open ? null : tip || null}>
     <span class="dd-label" class:placeholder={!current}>
       {#if current}{@render lead(current)}{/if}{current?.label ?? placeholder}
     </span>
@@ -96,9 +116,9 @@
         </div>
       {/if}
       {#each filtered as o (o.value)}
-        <button type="button" class="dd-opt" class:sel={o.value === value} class:disabled={o.disabled} onclick={() => pick(o)}>
+        <button type="button" class="dd-opt" class:sel={o.value === value} class:disabled={o.disabled} onclick={() => pick(o)} data-tip={o.tip || null}>
           {@render lead(o)}
-          <span class="dd-otext"><b>{o.label}</b>{#if o.sub}<small>{o.sub}</small>{/if}</span>
+          <span class="dd-otext"><b>{o.label}</b>{#if o.sub}<small class:danger={o.tone === 'danger'} class:warn={o.tone === 'warn'}>{o.sub}</small>{/if}</span>
           {#if o.value === value}<span class="dd-check">✓</span>{/if}
         </button>
       {/each}
@@ -170,6 +190,9 @@
   .dd-otext { display: flex; flex-direction: column; gap: 0; min-width: 0; flex: 1; }
   .dd-otext b { font-weight: 500; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .dd-otext small { color: var(--dim, #6f6b62); font-size: 11.5px; line-height: 1.3; }
+  /* 风险档位的副标题上色（组件顶上那个 tone 只染触发器，够不到菜单里的选项行） */
+  .dd-otext small.danger { color: var(--err, #dc2626); }
+  .dd-otext small.warn { color: var(--warn, #b45309); }
   .dd-check { color: var(--accent, #33302a); flex: none; font-size: 13px; margin-left: auto; }
   .dd-search { position: sticky; top: 0; z-index: 1; background: #fff; padding: 2px 2px 5px; margin-bottom: 2px; border-bottom: 1px solid var(--border, #ecebe6); }
   .dd-search input { width: 100%; border: none; outline: none; background: #f4f3ef; border-radius: 7px; padding: 6px 9px; font: inherit; font-size: 13px; color: var(--text, #26241f); }
