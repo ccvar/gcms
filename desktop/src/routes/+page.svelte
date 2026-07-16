@@ -5138,7 +5138,10 @@
   .th-open:hover { background: #f1efe9; }
   .th-open svg { flex: none; }
   /* 任务类型子组标签 */
-  .convo { position: relative; display: flex; align-items: center; gap: 6px; border-radius: 8px; margin: 0 8px; padding: 1px 6px 1px 16px; cursor: pointer; }
+  /* padding-left 19：让对话行的厂商图标中心对齐分组头里的站点图标中心
+     （分组头：10 左内边距 + 10 chevron + 6 gap，14px 图标中心落在 33px；
+      对话行：8 外边距 + 19 左内边距，12px 图标中心也落在 33px）。顺带标题也更贴近站点名。 */
+  .convo { position: relative; display: flex; align-items: center; gap: 6px; border-radius: 8px; margin: 0 8px; padding: 1px 6px 1px 19px; cursor: pointer; }
   .convo:hover { background: #f1efe9; }
   .convo.on { background: #e9e7e0; }
   .convo-body { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; }
@@ -5178,20 +5181,23 @@
   }
   .cs-item {
     width: 100%; display: flex; align-items: center; gap: 9px;
-    background: none; border: none; border-radius: 8px; padding: 7px 9px; cursor: pointer; text-align: left; font: inherit;
+    background: none; border: none; border-radius: 8px; padding: 5.5px 9px; cursor: pointer; text-align: left; font: inherit;
     color: var(--text);
   }
   .cs-item:hover { background: #f4f3ef; }
   .cs-item.on { background: #efeee9; }
   .cs-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
   .cs-main b { font-weight: 500; font-size: 13px; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .cs-main small { color: var(--dim); font-size: 11px; line-height: 1.25; }
+  /* 连接副标题（gcmsp_… · 平台 / Ubuntu … LTS 之类）：更小更淡，让连接名更突出 */
+  .cs-main small { color: var(--faint); font-size: 10px; line-height: 1.25; }
   .cs-check { color: var(--accent); flex: none; font-size: 13px; }
-  .cs-div { height: 1px; background: var(--border); margin: 5px 4px; }
+  .cs-div { height: 1px; background: var(--border); margin: 3.5px 4px; }
+  /* 动作行是单行：比原来(7px)收，但别收到发挤——padding 5.5px + line-height 1.3 落在约 28px，
+     比原来 37px 紧一截、又留了呼吸感（23px 太挤，实测反馈）。连接行是两行，另按 .cs-item 定高。 */
   .cs-act {
     width: 100%; display: flex; align-items: center; gap: 8px;
-    background: none; border: none; border-radius: 8px; padding: 7px 9px; cursor: pointer; text-align: left;
-    font: inherit; font-size: 12.5px; color: var(--dim);
+    background: none; border: none; border-radius: 8px; padding: 5.5px 9px; cursor: pointer; text-align: left;
+    font: inherit; font-size: 12.5px; line-height: 1.3; color: var(--dim);
   }
   .cs-act:hover { background: #f4f3ef; color: var(--text); }
   .cs-act :global(svg) { color: var(--faint); flex: none; }
