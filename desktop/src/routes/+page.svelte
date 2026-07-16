@@ -4062,7 +4062,6 @@
   <span class="hstat" class:warn={pct !== null && pct >= 75} class:hot={pct !== null && pct >= 90} data-tip={tip}>
     <span class="hstat-l">{label}</span>
     <span class="hstat-v">{pct === null ? '—' : pct + '%'}</span>
-    <span class="hstat-bar"><i style="width:{pct ?? 0}%"></i></span>
   </span>
 {/snippet}
 
@@ -4753,7 +4752,7 @@
   /* 高度对齐左上角那排工具图标：`.win-tools` 是 fixed/top:0/height:30px，中心在 15px。
      这里最高的子元素是 24px 的面板开关 → 上下各留 3px 正好 30px，中心也落在 15px，
      于是「地址行 / 刷新键 / 三枚开关 / 折叠侧栏 / 搜索」全在同一条水平线上。 */
-  .thread-head.slim { padding-top: 3px; padding-bottom: 3px; }
+  .thread-head.slim { padding-top: 3px; padding-bottom: 3px; container-type: inline-size; }
   /* 选择器要带上 .th-info small，否则压不过 `.th-info small` 那条（它带元素选择器，分更高）——
      实测：只写 .rhead-line 的话 margin-top 仍是 2px，文字比图标低 1px。 */
   .th-info small.rhead-line { display: flex; align-items: center; gap: 5px; margin-top: 0; }
@@ -4874,19 +4873,20 @@
   .th-rfz { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; border: 0; background: transparent; color: var(--faint); cursor: pointer; padding: 0; -webkit-app-region: no-drag; }
   .th-rfz :global(svg) { width: 12px; height: 12px; }
   .th-rfz:disabled { cursor: default; color: var(--dim); }
-  /* 顶栏的远端负载：三个小读数，挤不下就整体收起（地址和面板开关才是主角） */
-  .hstats { display: flex; align-items: center; gap: 10px; margin-left: 6px; padding-left: 10px; border-left: 1px solid var(--border); }
-  .hstat { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--dim); white-space: nowrap; cursor: default; }
+  /* 顶栏的远端负载：三个小读数。
+     ★ 做得很紧（不画迷你条）是有原因的：应用最小窗口 820px、侧栏 240 → 头部只剩 532px，
+     地址+刷新(215) + 三枚开关(84) + 间距(20) 已占 319，留给负载的只有 213px。
+     带条的版本要 290px —— 于是在最小窗口下永远塞不下。 */
+  .hstats { display: flex; align-items: center; gap: 9px; margin-left: 5px; padding-left: 9px; border-left: 1px solid var(--border); }
+  .hstat { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; color: var(--dim); white-space: nowrap; cursor: default; }
   .hstat-l { color: var(--faint); }
-  .hstat-v { font-variant-numeric: tabular-nums; min-width: 30px; }
-  .hstat-bar { width: 26px; height: 3px; border-radius: 2px; background: var(--border2); overflow: hidden; }
-  .hstat-bar i { display: block; height: 100%; background: var(--dim); border-radius: 2px; transition: width .4s ease; }
-  .hstat.warn { color: var(--warn); }
-  .hstat.warn .hstat-bar i { background: currentColor; }
-  .hstat.hot { color: var(--err); }
-  .hstat.hot .hstat-bar i { background: currentColor; }
-  /* 窄窗口下让位：地址 + 三枚开关是主角，负载是锦上添花 */
-  @media (max-width: 900px) { .hstats { display: none; } }
+  .hstat-v { font-variant-numeric: tabular-nums; }
+  .hstat.warn { color: var(--warn); font-weight: 500; }
+  .hstat.hot { color: var(--err); font-weight: 500; }
+  /* 真挤不下了才收起（比如侧栏被拖到很宽）。看的是**头部自己的宽度**，不是窗口宽 ——
+     侧栏可拖 190~460，窗口宽说明不了头部还剩多少。
+     ★ 必须写在 .hstats 之后：@container 不加优先级，同分靠后取胜（上次在文件列表踩过）。 */
+  @container (max-width: 470px) { .hstats { display: none; } }
   .th-rfz:hover { color: var(--text); }
   /* 启动页：远程连接的目标机器（占站点选择器的位子——那台机器就是本次对话的对象） */
   .ssh-target { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--rail); color: var(--dim); font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }

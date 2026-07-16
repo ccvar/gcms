@@ -552,18 +552,12 @@ impl SshSessions {
     }
 
     /// 前端终端的事件通道（克隆一份出来用，别攥着表锁）。没开终端就是 None。
+    ///
+    /// **回显只能走它**：exec 一开始按 echo 参数取一次，之后所有往终端写字的地方都用那份
+    /// （包括收尾的「▸ 完成」）。别再写「用 conn_id 现查通道」的辅助函数 —— 那会绕过 echo 开关，
+    /// 后台探测就会每 5 秒往终端吐一行（真出过这个 bug）。
     async fn sink(&self, conn_id: &str) -> Option<Channel<SshEvent>> {
         self.map.lock().await.get(conn_id).and_then(|l| l.on_event.clone())
-    }
-
-    /// 往终端里写一段**只给人看**的文字（AI 桥的回显）。
-    ///
-    /// 注意这不是发给远端 shell 的：远端并不知道屏幕上多了这些字。所以 AI 干活时你要是
-    /// 正好在敲命令，提示符可能错位——敲个回车就恢复。回显只在开着终端时发生。
-    async fn echo(&self, conn_id: &str, text: &str) {
-        if let Some(s) = self.sink(conn_id).await {
-            let _ = s.send(SshEvent::Data { b64: base64::engine::general_purpose::STANDARD.encode(text) });
-        }
     }
 
     /// 跑一条一次性命令（AI 桥用）。每次开一路新通道 → **每条命令是独立的一次性 shell**
@@ -608,6 +602,7 @@ impl SshSessions {
             .map_err(|e| format!("下发命令失败: {e}"))?;
 
         let (mut reader, _writer) = ch.split();
+        let sink2 = sink.clone(); // collect 闭包要借走 sink，收尾那几行得另留一份
         let collect = async {
             let mut out = ExecOut { stdout: String::new(), stderr: String::new(), code: -1, truncated: false };
             let (mut so, mut se): (Vec<u8>, Vec<u8>) = (Vec::new(), Vec::new());
@@ -643,28 +638,35 @@ impl SshSessions {
             out
         };
         let res = tokio::time::timeout(Duration::from_secs(timeout_secs), collect).await;
+        // ★ 收尾这几行**必须也走 sink**：sink 才是 echo 开关（echo=false → None）。
+        //   之前这里用的是 self.echo(...)——它自己去表里找通道，把开关整个绕过去了，
+        //   于是每 5 秒一次的后台负载探测都会往终端里吐一行「▸ 完成」。
+        let say = |text: String| {
+            if let Some(s) = &sink2 {
+                let _ = s.send(SshEvent::Data {
+                    b64: base64::engine::general_purpose::STANDARD.encode(text),
+                });
+            }
+        };
         match res {
             Ok(out) => {
-                self.echo_result(conn_id, out.code, out.truncated).await;
+                say(if out.code == 0 {
+                    format!(
+                        "\x1b[38;5;108m▸ 完成\x1b[0m{}\r\n",
+                        if out.truncated { "\x1b[90m（输出过长已截断）\x1b[0m" } else { "" }
+                    )
+                } else {
+                    format!("\x1b[31m▸ 退出码 {}\x1b[0m\r\n", out.code)
+                });
                 Ok(out)
             }
             Err(_) => {
-                self.echo(conn_id, &format!("\r\n\x1b[31m▸ AI 命令超时（{timeout_secs}s）\x1b[0m\r\n")).await;
+                say(format!("\r\n\x1b[31m▸ AI 命令超时（{timeout_secs}s）\x1b[0m\r\n"));
                 Err(format!(
                     "命令超时（{timeout_secs} 秒未结束）。远端可能仍在跑：长任务请用 nohup/systemd 放后台再轮询查看。"
                 ))
             }
         }
-    }
-
-    /// 命令跑完在终端里补一行结果（只在开着终端、且这次是回显模式时才有意义）。
-    async fn echo_result(&self, conn_id: &str, code: i32, truncated: bool) {
-        let tail = if code == 0 {
-            format!("\x1b[38;5;108m▸ 完成\x1b[0m{}\r\n", if truncated { "\x1b[90m（输出过长已截断）\x1b[0m" } else { "" })
-        } else {
-            format!("\x1b[31m▸ 退出码 {code}\x1b[0m\r\n")
-        };
-        self.echo(conn_id, &tail).await;
     }
 
     /// 在已建立的连接上开一路 SFTP。每次调用开一个新通道（通道很便宜，不用重新握手认证）；
@@ -801,6 +803,32 @@ impl SshSessions {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ★ 回归：**回显必须只经 sink 这一个出口**。
+    /// 出过的 bug：收尾那行「▸ 完成」用的是「按 conn_id 现查通道」的辅助函数，绕过了 echo 开关，
+    /// 于是每 5 秒一次的后台负载探测都会往用户终端里吐一行「▸ 完成」（用户截图里刷了一屏）。
+    /// 那个辅助函数已删；这里守住「源码里不该再出现这种绕过写法」。
+    #[test]
+    fn no_echo_helper_that_bypasses_the_sink() {
+        // 只看 #[cfg(test)] 之前的**代码行**（跳过注释）—— 否则会命中讲这个坑的注释本身。
+        let src = include_str!("ssh.rs");
+        let code = src.split("#[cfg(test)]").next().unwrap();
+        let bypass = format!("self.{}(", "echo");
+        let hit: Vec<&str> = code
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("//"))
+            .filter(|l| l.contains(&bypass))
+            .collect();
+        assert!(
+            hit.is_empty(),
+            "回显又出现了绕过 sink 的写法 —— echo=false 的后台探测会污染终端: {hit:?}"
+        );
+        // exec 的两个调用点：桥要回显、系统探测不要（改签名时别把这俩弄反）
+        assert!(
+            src.contains("self.exec(conn_id, STATS_CMD, 15, false)"),
+            "负载探测必须 echo=false"
+        );
+    }
 
     /// 负载解析：夹具照 Ubuntu 22.04 真机的输出格式写（用户那台就是）。
     #[test]
