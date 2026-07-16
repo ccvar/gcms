@@ -543,8 +543,10 @@ impl SshSessions {
     }
 
     #[allow(dead_code)]
+    /// 会话在表里**且**底层连接还活着（网线拔了/服务端重启后 handle 会 is_closed 但仍留在表里）。
+    /// ensure_ssh 用它做快速路径：活着就跳过重连、也不去读钥匙串；死了或没有就交给 ensure 重建。
     pub async fn is_open(&self, conn_id: &str) -> bool {
-        self.map.lock().await.contains_key(conn_id)
+        self.map.lock().await.get(conn_id).map(|l| !l.handle.is_closed()).unwrap_or(false)
     }
 
     /// 取一次远端负载。**故意不 ensure**：没有现成会话就直接失败，不为了顶栏那三个数

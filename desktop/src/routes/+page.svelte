@@ -3791,7 +3791,8 @@
             <button class="fbtn" aria-label="上传文件" data-tip="上传到当前目录" onclick={() => sftpUpload()} disabled={sftpBusy || !!sftpXfer}><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 10.4V3.6M4.8 6.4 8 3.2l3.2 3.2M3 12.8h10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
           </div>
           {#if sftpXfer}<div class="files-note">{sftpXfer}</div>{/if}
-          {#if sftpErr}<div class="err-note files-err">{sftpErr}</div>{/if}
+          <!-- 出错就地给个重试：首次加载失败时 sftpPath 还是空的，刷新键（要有当前目录）帮不上忙 -->
+          {#if sftpErr}<button type="button" class="err-note files-err" onclick={() => sftpGo(sftpPath)} title="点击重试">{sftpErr} · 点此重试</button>{/if}
           <div class="fhead">
             <button class="fh fh-name" onclick={() => setSort('name')}>名称{#if sftpSort.key === 'name'}<span class="fh-ar" class:desc={!sftpSort.asc}>^</span>{/if}</button>
             <span class="fh fh-perm">{@render colGrip('perm')}权限</span>
@@ -4929,7 +4930,9 @@
   .fbtn.sm:hover:not(:disabled) { background: var(--accent-soft); }
   .fbtn.danger:hover:not(:disabled) { color: var(--err); background: var(--err-soft); }
   .files-note { flex: none; padding: 6px 16px; font-size: 12px; color: var(--dim); border-bottom: 1px solid var(--border); }
-  .files-err { flex: none; margin: 10px 16px 0; }
+  /* 现在是个重试按钮：清掉按钮默认样式，只留 err-note 的红底红字 + 左对齐 + 手型 */
+  .files-err { flex: none; margin: 10px 16px 0; display: block; width: calc(100% - 32px); text-align: left; font: inherit; font-size: 13px; cursor: pointer; }
+  .files-err:hover { background: var(--err-border); }
   /* 列表＝四列表格（名称/权限/大小/日期），行内缩进出树形。列宽用同一套变量对齐表头与行。
      ★ 窄面板里按容器宽度砍列：右栏默认才 380px，四列定宽合计就 300px，名称会被挤成 0
      （文件名全没了，只剩权限/大小/日期——那就本末倒置了）。名称永远优先。

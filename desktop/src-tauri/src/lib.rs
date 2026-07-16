@@ -520,18 +520,42 @@ async fn ssh_close(state: tauri::State<'_, AppState>, conn_id: String) -> Result
 /// 在线编辑的大小闸门：整文件进内存 + base64 过 IPC，2MB 之上就该用下载了。
 const SFTP_EDIT_MAX: u64 = 2 * 1024 * 1024;
 
+/// SFTP 命令的会话保障：过去 SFTP 只 `g.get(conn_id)`，要**靠终端先把会话建起来** ——
+/// 于是「文件面板抢在终端连上之前加载」就卡死在「会话未打开：请先连接远程终端」，
+/// 而且前端那个 $effect 加载失败不重试，终端后来连上了文件面板也不会自己回来（真踩过）。
+/// 这里让每条 SFTP 命令**自己 ensure**：会话已在就是一次 map 查询直接返回（ensure 内部对活着的
+/// 会话早退，不重连、不读凭据）；没在就按连接的凭据+指纹连上（和 open_shell 同一套）。
+/// 文件浏览是用户的直接动作，该连就连——不像 stats 那样为了三个数字克制着不登录。
+async fn ensure_ssh(state: &AppState, conn_id: &str) -> Result<(), String> {
+    if state.ssh.is_open(conn_id).await {
+        return Ok(());
+    }
+    let conn = state.conns.get(conn_id)?;
+    if conn.kind != "ssh" {
+        return Err("这不是远程连接".into());
+    }
+    let auth = ssh::auth_for(&conn)?;
+    let expect = (!conn.ssh_fingerprint.is_empty()).then(|| conn.ssh_fingerprint.clone());
+    state
+        .ssh
+        .ensure(conn_id, &conn.ssh_host, conn.ssh_port, &auth, expect)
+        .await
+}
+
 #[tauri::command]
 async fn sftp_list(
     state: tauri::State<'_, AppState>,
     conn_id: String,
     path: String,
 ) -> Result<Vec<ssh::SftpEntry>, String> {
+    ensure_ssh(&state, &conn_id).await?;
     state.ssh.list_dir(&conn_id, &path).await
 }
 
 /// 解析起始目录（"." → 真实 home 的绝对路径）。
 #[tauri::command]
 async fn sftp_home(state: tauri::State<'_, AppState>, conn_id: String) -> Result<String, String> {
+    ensure_ssh(&state, &conn_id).await?;
     state.ssh.real_path(&conn_id, ".").await
 }
 
@@ -543,6 +567,7 @@ async fn sftp_read(
     path: String,
 ) -> Result<String, String> {
     use base64::Engine as _;
+    ensure_ssh(&state, &conn_id).await?;
     let bytes = state.ssh.read_file(&conn_id, &path, SFTP_EDIT_MAX).await?;
     Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
 }
@@ -558,6 +583,7 @@ async fn sftp_write(
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(b64.as_bytes())
         .map_err(|e| format!("内容解码失败: {e}"))?;
+    ensure_ssh(&state, &conn_id).await?;
     state.ssh.write_file(&conn_id, &path, &bytes).await
 }
 
@@ -568,6 +594,7 @@ async fn sftp_rename(
     from: String,
     to: String,
 ) -> Result<(), String> {
+    ensure_ssh(&state, &conn_id).await?;
     state.ssh.rename(&conn_id, &from, &to).await
 }
 
@@ -578,6 +605,7 @@ async fn sftp_remove(
     path: String,
     dir: bool,
 ) -> Result<(), String> {
+    ensure_ssh(&state, &conn_id).await?;
     state.ssh.remove(&conn_id, &path, dir).await
 }
 
@@ -587,6 +615,7 @@ async fn sftp_mkdir(
     conn_id: String,
     path: String,
 ) -> Result<(), String> {
+    ensure_ssh(&state, &conn_id).await?;
     state.ssh.mkdir(&conn_id, &path).await
 }
 
@@ -597,6 +626,7 @@ async fn sftp_download(
     remote: String,
     local: String,
 ) -> Result<u64, String> {
+    ensure_ssh(&state, &conn_id).await?;
     state.ssh.download(&conn_id, &remote, &local).await
 }
 
@@ -607,6 +637,7 @@ async fn sftp_upload(
     local: String,
     remote: String,
 ) -> Result<u64, String> {
+    ensure_ssh(&state, &conn_id).await?;
     state.ssh.upload(&conn_id, &local, &remote).await
 }
 
