@@ -3488,9 +3488,10 @@
 
     {:else if view === 'remote'}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <header class="thread-head" data-tauri-drag-region onmousedown={startDrag}>
-        <div class="th-info"><b>远程连接</b><small>{activeConn?.ssh_user}@{activeConn?.ssh_host}:{activeConn?.ssh_port} · {termOn ? '已连接' : '未连接'}
-          <button class="th-rfz" data-tip="重新连接" aria-label="重新连接" onclick={reconnectTerm}>{@render refreshIcon(false)}</button></small></div>
+      <!-- 工作台头部只留一行（机器地址 + 状态）：标题「远程连接」是废话——侧栏已经写着你在哪台机器上。 -->
+      <header class="thread-head slim" data-tauri-drag-region onmousedown={startDrag}>
+        <div class="th-info"><small class="rhead-line">{activeConn?.ssh_user}@{activeConn?.ssh_host}:{activeConn?.ssh_port} · {termOn ? '已连接' : '未连接'}
+          <button class="th-rfz" data-tip="重新连接" aria-label="重新连接" onclick={reconnectTerm}><svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M13.4 8a5.4 5.4 0 1 1-1.6-3.8M13.6 2.6v3.2h-3.2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg></button></small></div>
         <div class="rhead-acts">
           <!-- 两个面板开关（VS Code 那套）：终端始终是主区，这俩按需开、可同时开。 -->
           <button class="wb-tg" class:on={wbChat} aria-pressed={wbChat} data-tip="底部对话框" aria-label="底部对话框" onclick={toggleWbChat}>
@@ -3514,8 +3515,10 @@
               {#if activeConv && activeConv.conn_id === activeConnId}
                 {@render convPane()}
               {:else}
-                <!-- 还没有对话：这里就是起点（发出去就新建一条，走 startChat 那套） -->
-                <div class="wb-start">
+                <!-- 还没有对话：这里就是起点（发出去就新建一条，走 startChat 那套）。
+                     外层必须是 .composer-wrap —— 输入框的样式挂在 `.composer.big, .composer-wrap .composer` 上，
+                     裸 .composer 一条都套不上（就是那次「样式缺失」）。 -->
+                <div class="wb-start composer-wrap">
                   <div class="composer">
                     <textarea bind:value={lDraft} use:autogrow rows="2" placeholder="让 AI 在这台机器上做点什么…例如：看看装了什么，帮我装上 Docker"
                       oncompositionstart={() => (composing = true)} oncompositionend={() => (composing = false)}
@@ -4610,17 +4613,26 @@
   .wb { flex: 1; min-height: 0; display: flex; }
   .wb-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
   .wb-chat { flex: none; min-height: 0; display: flex; flex-direction: column; border-top: 1px solid var(--border); background: var(--bg); }
-  .wb-start { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; justify-content: flex-end; gap: 6px; padding: 12px 16px; }
-  .wb-start .composer { margin: 0; }
+  /* 起点输入框：贴着面板底（justify-content:flex-end），面板矮时也不顶头。
+     ★ .composer 必须显式 width:100% —— 它自带 `margin:0 auto`，而这里是 flex 列容器，
+     交叉轴上的 auto margin 会**压制 stretch**，不给宽度它就缩成 textarea 的默认宽（~192px）。
+     对话页那边的 .composer-wrap 是普通块容器，没这问题。 */
+  .wb-start { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; justify-content: flex-end; gap: 6px; }
+  .wb-start .composer { width: 100%; }
+  .wb-start .hint { width: 100%; max-width: 760px; margin: 0 auto; }
   /* 分隔线：命中区比看到的粗，好抓 */
   .wb-split { flex: none; background: transparent; z-index: 2; }
   .wb-split.h { height: 5px; margin-bottom: -5px; cursor: row-resize; }
   .wb-split.v { width: 5px; margin-right: -5px; cursor: col-resize; }
   .wb-split:hover { background: var(--accent-soft); }
-  /* 面板开关（头部两枚 VS Code 式图标） */
-  .wb-tg { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 26px; border: 1px solid transparent; background: transparent; color: var(--faint); border-radius: 7px; cursor: pointer; -webkit-app-region: no-drag; }
-  .wb-tg:hover { color: var(--dim); background: var(--rail); }
-  .wb-tg.on { color: var(--text); background: var(--accent-soft); }
+  /* 面板开关（头部两枚 VS Code 式图标）：不给底，开关状态只用图标本身的深浅表示 */
+  .wb-tg { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; border: 0; background: transparent; color: var(--faint); cursor: pointer; -webkit-app-region: no-drag; }
+  .wb-tg:hover { color: var(--dim); }
+  .wb-tg.on { color: var(--text); }
+  .wb-tg.on:hover { color: var(--accent-h); }
+  /* 工作台头部：单行，比常规 thread-head 矮一截 */
+  .thread-head.slim { padding-top: 8px; padding-bottom: 8px; }
+  .rhead-line { display: flex; align-items: center; gap: 5px; }
   /* 终端：自己管滚动，容器不能给 overflow-y:auto（会和 xterm 打架）。 */
   .term-wrap { flex: 1; min-height: 0; overflow: hidden; background: #1c1917; padding: 8px 10px; }
   .term { width: 100%; height: 100%; }
@@ -4724,8 +4736,8 @@
   .cs-os { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   :global(svg.distro) { flex: none; }
   /* 头部的「重新连接」：只留图标，紧跟在连接状态后面 */
-  .th-rfz { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border: 0; background: transparent; color: var(--faint); border-radius: 5px; cursor: pointer; padding: 0; -webkit-app-region: no-drag; }
-  .th-rfz:hover { color: var(--text); background: var(--accent-soft); }
+  .th-rfz { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; border: 0; background: transparent; color: var(--faint); cursor: pointer; padding: 0; -webkit-app-region: no-drag; }
+  .th-rfz:hover { color: var(--text); }
   /* 启动页：远程连接的目标机器（占站点选择器的位子——那台机器就是本次对话的对象） */
   .ssh-target { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--rail); color: var(--dim); font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
   .ssh-target :global(svg) { color: var(--faint); flex: none; }
