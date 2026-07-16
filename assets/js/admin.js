@@ -19,30 +19,73 @@
     setTimeout(function () { if (el && el.parentNode) el.parentNode.removeChild(el); }, 6000);
   };
 
-  // 切换 URL hash 但保持滚动位置（同一帧内先设 hash 再还原滚动，浏览器来不及绘制跳动）。
-  // 用于 :target 弹窗的开/关：否则打开会跳到弹窗锚点、关闭会跳回卡片锚点，视觉上"闪一下"。
-  window.gcmsSetHashKeepScroll = function (hash) {
-    var x = window.pageXOffset, y = window.pageYOffset;
-    if (hash && hash !== "#") window.location.hash = hash;
-    else if (window.history && window.history.replaceState) window.history.replaceState(null, document.title, window.location.pathname + window.location.search);
-    else window.location.hash = "";
-    window.scrollTo(x, y);
-  };
-  // 拦截所有 :target 弹窗的开/关链接，改用保持滚动的 hash 切换——否则打开跳到弹窗锚点、
-  // 关闭（href="#"）跳回页顶。关闭切到不存在的 "#_"（而不是清空 hash）：hash 变更才会让
-  // :target 重新求值，replaceState 清 hash 在部分浏览器下弹窗不会关。
+  /* ---------- 弹窗开关：class 接管，URL 一律不动 ----------
+     这些弹窗的 HTML 是 :target 式（<a href="#xxx-modal"> 开、<a href="#"> 关），浏览器会把锚点
+     滚进视口——开跳到弹窗锚点、关跳回页顶/卡片锚点。历史补丁试过"设 hash 再同帧还原滚动"，
+     仍会闪一下且污染 URL 与历史记录。现在 JS 全接管：开 = 给 .modal 加 .is-open，关 = 移除，
+     全程不写 location.hash / pushState，滚动位置纹丝不动。
+     CSS 保留 :target 规则（.modal:target, .modal.is-open）作无 JS 兜底。 */
+  // 标记「JS 已接管弹窗」：CSS 据此让 :target 分支只在无 JS 时生效（见 admin.css 的
+  // `:root.js-modals .modal:target:not(.is-open)`）。否则 hash 清掉后 :target 仍会残留匹配
+  // （replaceState 不会让 :target 重新求值），移除 .is-open 也关不掉弹窗。
+  document.documentElement.classList.add("js-modals");
+
+  function gcmsOpenModal(modal) {
+    if (!modal) return;
+    modal.classList.add("is-open");
+    modal.removeAttribute("aria-hidden");
+    // 弹窗内的懒加载（GA 属性列表 / 域名向导探测）原先挂 hashchange，改由本事件驱动。
+    modal.dispatchEvent(new CustomEvent("gcms:modalopen", { bubbles: true }));
+  }
+  function gcmsCloseModal(modal) {
+    if (!modal) return;
+    modal.classList.remove("is-open");
+  }
+  function gcmsOpenModals() {
+    return Array.prototype.slice.call(document.querySelectorAll(".modal.is-open"));
+  }
+  // 导出给文件后段的顶层 IIFE 用（Esc 关闭、站点卡片弹窗 AJAX 等不在本闭包内）。
+  window.gcmsOpenModal = gcmsOpenModal;
+  window.gcmsCloseModal = gcmsCloseModal;
+  window.gcmsOpenModals = gcmsOpenModals;
+
+  // 开/关委托：全站后台通用（sites / settings / platform_automation 的 :target 弹窗都吃这套）。
   document.addEventListener("click", function (e) {
     var a = e.target && e.target.closest ? e.target.closest("a[href]") : null;
     if (!a) return;
     var href = a.getAttribute("href") || "";
     if (href.charAt(0) !== "#") return;
     var target = href.length > 1 ? document.getElementById(href.slice(1)) : null;
-    var opensModal = !!(target && target.classList.contains("modal"));
-    var inModal = !!a.closest(".modal");
-    if (!opensModal && !inModal) return; // 与弹窗无关的普通页内锚点不拦
-    e.preventDefault();
-    window.gcmsSetHashKeepScroll(opensModal ? href : (href === "#" ? "#_" : href));
+    // 1) 指向某个 .modal 的锚点 = 打开它。
+    if (target && target.classList.contains("modal")) {
+      e.preventDefault();
+      gcmsOpenModal(target);
+      return;
+    }
+    // 2) 弹窗内部的 hash 链接（modal-x / modal-backdrop / 取消按钮，href="#" 或 "#site-card-x"）= 关闭它。
+    var inModal = a.closest(".modal");
+    if (inModal) {
+      e.preventDefault();
+      gcmsCloseModal(inModal);
+    }
+    // 其余页内锚点（如设置页的普通跳转）不拦。
   });
+
+  // 深链兜底：URL 带 #xxx-modal 时（Google OAuth 回调 303 回 /admin/sites#site-google-search-modal-3，
+  // 或用户手输 / 前进后退）→ 接管成 .is-open 并立刻清掉 hash。必须清：hash 留着的话 :target 兜底规则
+  // 会一直显示该弹窗，而关闭走的是移除 class，两者打架会关不掉。
+  function gcmsAdoptHashModal() {
+    var hash = window.location.hash;
+    if (!hash || hash.length < 2) return;
+    var target = document.getElementById(hash.slice(1));
+    if (!target || !target.classList.contains("modal")) return;
+    if (window.history && window.history.replaceState) {
+      window.history.replaceState(null, document.title, window.location.pathname + window.location.search);
+    }
+    gcmsOpenModal(target);
+  }
+  gcmsAdoptHashModal();
+  window.addEventListener("hashchange", gcmsAdoptHashModal);
 
   function copyTextToClipboard(text) {
     text = String(text || "");
@@ -965,8 +1008,8 @@
 	          if (window.gcmsGaSummaryRefresh) window.gcmsGaSummaryRefresh(span);
 	        }
 	      }
-	      // 成功后关闭弹窗（回到卡片；toast 固定悬浮仍可见）。
-	      if (siteId) { try { window.gcmsSetHashKeepScroll("#site-card-" + siteId); } catch (e) {} }
+	      // 成功后关闭弹窗（toast 固定悬浮仍可见）。
+	      try { window.gcmsCloseModal(form.closest(".modal")); } catch (e) {}
 	    }
 	    forms.forEach(function (form) {
 	      var account = form.querySelector("[data-ga-account-select]");
@@ -1038,11 +1081,13 @@
 		    function loadOpenAnalyticsModal() {
 		      forms.forEach(function (form) {
 		        var modal = form.closest(".site-google-modal");
-		        if (!modal || location.hash !== "#" + modal.id) return;
+		        if (!modal || !modal.classList.contains("is-open")) return;
 		        loadProperties(form, false);
 		      });
 		    }
-		    window.addEventListener("hashchange", loadOpenAnalyticsModal);
+		    // 弹窗改由 class 开关驱动（URL 不再变），懒加载挂 gcms:modalopen；
+		    // setTimeout 兜住"载入时深链已打开"的情况。
+		    document.addEventListener("gcms:modalopen", loadOpenAnalyticsModal);
 		    setTimeout(loadOpenAnalyticsModal, 0);
 		  })();
 
@@ -1409,7 +1454,7 @@
           if (window.gcmsGscSummaryRefresh) window.gcmsGscSummaryRefresh(span);
         }
       }
-      if (siteId) { try { window.gcmsSetHashKeepScroll("#site-card-" + siteId); } catch (e) {} }
+      try { window.gcmsCloseModal(form.closest(".modal")); } catch (e) {}
     }
     forms.forEach(function (form) {
       var account = form.querySelector("[data-gsc-account-select]");
@@ -4278,11 +4323,11 @@
 
     var modal = form.closest(".site-domain-modal");
     function onOpen() {
-      if (!modal || location.hash !== "#" + modal.id) return;
+      if (!modal || !modal.classList.contains("is-open")) return;
       if (!proxyDone) runProxy();
       if (host()) runDNS();
     }
-    window.addEventListener("hashchange", onOpen);
+    document.addEventListener("gcms:modalopen", onOpen);
 
     // 第 3 步「保存并应用」：AJAX 提交（落库＋写反代＋CF DNS 一步完成），错误就地红字；
     // 成功后 CF/Caddy 结果消息进底部状态行，解锁并进入第 4 步做真实验证。
@@ -4856,12 +4901,9 @@
   document.addEventListener("keydown", function (e) {
     if (e.key !== "Escape") return;
     openConnects().forEach(function (d) { d.open = false; });
-    // :target 式弹窗（站点卡片 GA / GSC / 域名 / Telegram）同样 Esc 关闭：等价点击关闭锚。
-    var modal = document.querySelector(".modal:target");
-    if (modal) {
-      var closer = modal.querySelector(".modal-x") || modal.querySelector(".modal-backdrop");
-      if (closer) closer.click();
-    }
+    // 弹窗（站点卡片 GA / GSC / 域名 / Telegram、设置页密钥/字典等）Esc 关最上层的一个。
+    var open = window.gcmsOpenModals ? window.gcmsOpenModals() : [];
+    if (open.length) window.gcmsCloseModal(open[open.length - 1]);
   });
 })();
 

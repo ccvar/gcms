@@ -930,8 +930,8 @@ a.overview-log-title { text-decoration: none; }
 .site-google-actions .btn { min-height: 31px; padding: .36rem .62rem; border-radius: 7px; font-size: .74rem; font-weight: 800; }
 .site-google-actions .linkbtn { font-size: .72rem; }
 .site-google-actions .linkbtn.danger { color: #b3261e; }
-.site-google-modal:not(:target) { display: none; }
-.site-google-modal:target { display: grid; }
+.site-google-modal:not(:target):not(.is-open) { display: none; }
+.site-google-modal:target, .site-google-modal.is-open { display: grid; }
 .site-google-modal .modal-card { width: min(720px, 92vw); }
 .site-google-modal-card { display: grid; grid-template-rows: auto auto minmax(0, 1fr); max-height: min(88vh, 780px); padding: 0; overflow: hidden; }
 .site-google-modal-card .site-modal-head { margin: 0; padding: 1.15rem 1.35rem .85rem; border-bottom: 1px solid var(--line-soft); }
@@ -1031,17 +1031,22 @@ a.overview-log-title { text-decoration: none; }
 .site-tool-link:hover { color: var(--accent); }
 .site-tool-help { margin-left: 0; color: color-mix(in srgb, var(--accent) 72%, var(--muted)); }
 .site-domain-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .55rem; align-items: center; }
-.site-domain-form input { width: 100%; padding: .5rem .65rem; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); font-family: inherit; font-size: .88rem; line-height: 1.4; }
-.site-domain-form input:focus { outline: none; border-color: var(--accent); }
+.site-domain-form input, .site-telegram-form input { width: 100%; padding: .5rem .65rem; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); font-family: inherit; font-size: .88rem; line-height: 1.4; }
+.site-domain-form input:focus, .site-telegram-form input:focus { outline: none; border-color: var(--accent); }
 .site-domain-form .btn { padding: .45rem .75rem; font-size: .82rem; white-space: nowrap; }
-.site-domain-modal:not(:target) { display: none; }
-.site-domain-modal:target { display: grid; }
+.site-domain-modal:not(:target):not(.is-open) { display: none; }
+.site-domain-modal:target, .site-domain-modal.is-open { display: grid; }
 .site-domain-modal .modal-card { width: min(520px, 92vw); }
-/* 站点卡片「Telegram 频道」就地配置弹窗（:target 式，同域名弹窗）。 */
-.site-telegram-modal:not(:target) { display: none; }
-.site-telegram-modal:target { display: grid; }
+/* 站点卡片「Telegram 频道」就地配置弹窗（同域名弹窗：.is-open 驱动 + :target 无 JS 兜底）。
+   控件尺寸对齐同页既有弹窗：输入框吃 .site-domain-form input 同一条规则（见上），
+   字段间距学域名弹窗（.field 归零、由 gap 控制），按钮对齐新建站点弹窗的紧凑档。 */
+.site-telegram-modal:not(:target):not(.is-open) { display: none; }
+.site-telegram-modal:target, .site-telegram-modal.is-open { display: grid; }
 .site-telegram-modal .modal-card { width: min(520px, 92vw); }
-.site-telegram-form { display: grid; gap: .8rem; margin-top: .35rem; }
+.site-telegram-form { display: grid; gap: .9rem; margin-top: .35rem; }
+.site-telegram-form .field { margin: 0; }
+.site-telegram-form .field label { margin-bottom: .34rem; font-size: .78rem; }
+.site-telegram-modal-actions .btn { min-height: 40px; padding: .54rem .95rem; }
 .site-telegram-token-override summary { cursor: pointer; font-size: .8rem; color: var(--muted); }
 .site-telegram-token-override[open] summary { color: var(--ink-soft); }
 .site-telegram-modal-actions { display: flex; align-items: center; gap: .6rem; }
@@ -1575,8 +1580,8 @@ a.overview-log-title { text-decoration: none; }
 .key-actions.actions form:first-child { margin-left: 0; }
 .api-endpoints th { width: 6rem; min-width: 6rem; white-space: nowrap; word-break: keep-all; }
 .dev-details .api-base { margin: 0; border-width: 0 0 1px; border-radius: 0; }
-.api-key-modal:not(:target) { display: none; }
-.api-key-modal:target { display: grid; }
+.api-key-modal:not(:target):not(.is-open) { display: none; }
+.api-key-modal:target, .api-key-modal.is-open { display: grid; }
 .api-key-modal .modal-card, .api-edit-modal .modal-card { width: min(620px, 92vw); max-height: 90vh; overflow: auto; padding-bottom: 0; }
 /* 权限组多、卡片内滚动：操作按钮吸底常驻，避免被内容顶出视野（参考 site-domain-modal 做法）。 */
 .api-key-modal .modal-actions, .api-edit-modal .modal-actions { position: sticky; bottom: 0; z-index: 2; margin: 1rem -1.8rem 0; padding: .85rem 1.8rem 1rem; border-top: 1px solid var(--line-soft); background: color-mix(in srgb, var(--surface) 92%, var(--line-soft)); }
@@ -2393,6 +2398,11 @@ body.blk-dragging-active { user-select: none; }
 .cat-lang-label { font-size: .82rem; font-weight: 600; color: var(--muted); flex: none; }
 .modal[hidden] { display: none; }
 .modal { position: fixed; inset: 0; z-index: 200; display: grid; place-items: center; }
+/* :target 式弹窗（站点 GA/GSC/域名/Telegram、设置页密钥与语种字典、平台密钥）：
+   JS 在时由 .is-open 全权驱动（admin.js 给 <html> 加 .js-modals，URL 全程不动、开关都不跳页）；
+   这条把 :target 分支在 JS 环境下关掉——hash 被 replaceState 清掉后 :target 仍会残留匹配，
+   不关掉的话移除 .is-open 也关不上弹窗。无 JS 时本规则不生效，:target 继续兜底。 */
+:root.js-modals .modal:target:not(.is-open) { display: none; }
 .modal-backdrop { position: absolute; inset: 0; background: rgba(20,20,20,.45); -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px); border: 0; padding: 0; }
 .modal-card { position: relative; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 24px 64px rgba(0,0,0,.28); padding: 1.6rem 1.8rem; width: min(480px, 92vw); animation: modalIn .16s ease; }
 .modal-card h3 { margin: 0 0 1.1rem; font-size: 1.2rem; }
@@ -2549,8 +2559,8 @@ input[type=range] { accent-color: var(--accent); }
 /* 语言设置表 */
 .lang-table th.center, .lang-table td.center { text-align: center; }
 .lang-catalog-cell { white-space: nowrap; }
-.locale-catalog-modal:not(:target) { display: none; }
-.locale-catalog-modal:target { display: grid; }
+.locale-catalog-modal:not(:target):not(.is-open) { display: none; }
+.locale-catalog-modal:target, .locale-catalog-modal.is-open { display: grid; }
 .locale-catalog-card { width: min(860px, 92vw); max-height: min(90vh, 780px); overflow: auto; }
 .locale-catalog-card .muted { margin: -.4rem 0 1rem; font-size: .85rem; line-height: 1.55; }
 .locale-catalog-json { min-height: 420px; font-family: var(--mono); font-size: .82rem; line-height: 1.55; resize: vertical; }
