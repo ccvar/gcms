@@ -2036,8 +2036,8 @@
   function newChat() {
     activeConvId = ''; activeConv = null; lDraft = '';
     // 远程连接没有启动页：新对话＝把底部对话面板腾空（工作台留在原地，终端不断）。
-    if (isSshConn) { view = 'remote'; wbChat = true; saveWb('chat', '1'); }
-    else view = 'launcher';
+    viewAfterConvGone();
+    if (isSshConn && !wbChat) { wbChat = true; saveWb('chat', '1'); }
     if (!lSite && sites.length) lSite = sites[0].slug;
     if (!brainUsable(lBrain)) lBrain = firstUsableBrain();
   }
@@ -2062,7 +2062,7 @@
     const label = c?.title?.trim() ? `「${c.title.trim()}」` : '这条对话';
     const yes = await confirmDialog(`删除对话${label}？聊天记录不可恢复。`, { title: '删除对话', kind: 'warning' });
     if (!yes) return;
-    try { await invoke('delete_conversation', { id }); if (activeConvId === id) { activeConvId = ''; activeConv = null; view = 'launcher'; } await refreshConvos(); } catch (e) { say(String(e), 'err'); }
+    try { await invoke('delete_conversation', { id }); if (activeConvId === id) { activeConvId = ''; activeConv = null; viewAfterConvGone(); } await refreshConvos(); } catch (e) { say(String(e), 'err'); }
   }
 
   // ---------- 运行一轮 ----------
@@ -2081,6 +2081,10 @@
     return { role: 'user', text, tools: [], ts: Math.floor(Date.now() / 1000), hidden: false, error: false };
   }
   // 乐观：立刻把用户消息塞进当前/合成会话，activeConvId 立即等于 convId，
+  /** 当前对话没了（删掉/丢失/新建）之后该落到哪儿。
+   *  ★ 远程连接永远留在工作台（底部面板自己退回起点输入框）——**别在各处硬写 view='launcher'**，
+   *  那会把人踢出工作台、终端从眼前消失。ssh 连接压根没有启动页。 */
+  function viewAfterConvGone() { view = isSshConn ? 'remote' : 'launcher'; }
   // 首轮也能流式渲染 + 停止（cancel 键对准真正的注册表 key）。
   function beginTurn(convId: string, optimistic: Conversation) {
     if (retryTimers[convId]) { clearTimeout(retryTimers[convId]); delete retryTimers[convId]; } // 任何新一轮开始都取消该会话待触发的自动重连
@@ -2088,7 +2092,15 @@
     running[convId] = optimistic.conn_id;
     activeConv = optimistic; activeConvId = convId; threadModel = optimistic.model; threadPerm = optimistic.perm_mode || 'full'; threadEffort = optimistic.effort || '';
     cfReady = false; // 本轮跑完再重新判定是否已建出内容
-    view = 'thread'; scrollSoon(true);
+    // 远程连接：对话就在工作台底部面板里跑，别跳去独立对话页——那样终端就从眼前消失了。
+    // （openConv/newChat/selectConn 同理，见各自注释。这条是「发消息新建对话」这一路。）
+    if (conns.find((c) => c.id === optimistic.conn_id)?.kind === 'ssh') {
+      view = 'remote';
+      if (!wbChat) { wbChat = true; saveWb('chat', '1'); }
+    } else {
+      view = 'thread';
+    }
+    scrollSoon(true);
   }
   function endTurn(conv: Conversation | null, convId: string) {
     const failed = lives[convId]?.failed ?? false; // 删缓冲前先取，供等待消息门控用
@@ -2131,7 +2143,7 @@
     await refreshConvos();
     const reloaded = await invoke<Conversation | null>('get_conversation', { id: convId });
     if (reloaded) { if (activeConvId === convId) activeConv = reloaded; }
-    else if (activeConvId === convId) { activeConv = null; view = 'launcher'; }
+    else if (activeConvId === convId) { activeConv = null; viewAfterConvGone(); }
   }
 
   async function startChat() {
