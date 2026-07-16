@@ -3719,7 +3719,7 @@
           <!-- 终端自己管滚动：别套 .thread（它的 overflow-y:auto 会和 xterm 打架）。
                ★ 关掉命令行只是 display:none **藏起来**，绝不拆 DOM —— 拆了 xterm 就没了，
                回来还得重连一次（连接是真的，掉一次要重登服务器）。 -->
-          <div class="term-wrap" class:hid={!wb.term}>
+          <div class="term-wrap" class:hid={!wb.term} class:with-chat={wb.chat}>
             <div class="term" bind:this={termEl}></div>
             {#if termBusy}
               <!-- 建连要走网络+认证，一两秒是常事，别让黑框干愣着。浮层而非写进终端：见 startTerm。 -->
@@ -4849,8 +4849,9 @@
   .wb-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
   /* 文件栏单开：主区收起（终端只藏不拆，DOM 还在），让文件栏独占整宽。 */
   .wb-main.collapsed { display: none; }
-  .wb-chat { flex: none; min-height: 0; display: flex; flex-direction: column; border-top: 1px solid var(--border); background: var(--bg); }
-  .wb-chat.solo { flex: 1; border-top: 0; }
+  /* 终端与对话的接缝不再用 border-top 那条黑白硬边，改由上面 .term-wrap.with-chat 的圆底+柔和阴影收口 */
+  .wb-chat { flex: none; min-height: 0; display: flex; flex-direction: column; background: var(--bg); }
+  .wb-chat.solo { flex: 1; }
   /* 起点输入框：贴着面板底（justify-content:flex-end），面板矮时也不顶头。
      ★ .composer 必须显式 width:100% —— 它自带 `margin:0 auto`，而这里是 flex 列容器，
      交叉轴上的 auto margin 会**压制 stretch**，不给宽度它就缩成 textarea 的默认宽（~192px）。
@@ -4884,6 +4885,11 @@
   .term-wrap.hid { display: none; }
   /* 「正在连接」浮层：盖在终端上，连上即消失，不进终端缓冲（所以不会留下擦不掉的一行）。 */
   .term-wrap { position: relative; }
+  /* 终端**在对话框上方**时（with-chat）把接缝做软：一道朝下的柔和阴影落在对话面板上，
+     替掉原来黑白直接相撞的硬边（不收圆角——直角保持齐整）。阴影几乎只朝下（负 spread 收掉左右溢出，
+     正 offset 让顶边不糊）。z-index 让阴影压在对话面板之上（对话是后面的兄弟，默认会盖住它）。
+     终端独占/无对话时不加，保持齐边。 */
+  .term-wrap.with-chat { z-index: 1; box-shadow: 0 6px 12px -6px rgba(20, 16, 13, .4); }
   .term-connecting { position: absolute; left: 14px; top: 12px; display: flex; align-items: center; gap: 7px; color: #8b857c; font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; pointer-events: none; }
   .tc-spin { width: 9px; height: 9px; border: 1.5px solid #4b4640; border-top-color: #8b857c; border-radius: 50%; animation: spin .7s linear infinite; }
   .term { width: 100%; height: 100%; }
