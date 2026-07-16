@@ -1430,6 +1430,7 @@
   // ---------- 远程工作台：终端为主区，底部对话 / 右侧文件按需开（VS Code 那套） ----------
   // 两个面板可以同时开，各自可拖改大小；开关与尺寸都记住。
   let wbChat = $state(loadWbFlag('chat', true));
+  let wbStartEl = $state<HTMLTextAreaElement | null>(null); // 起点输入框（新对话后把光标送进去）
   let wbFiles = $state(loadWbFlag('files', false));
   let wbChatH = $state(loadWbSize('chatH', 260, 140, 900));
   let wbFilesW = $state(loadWbSize('filesW', 380, 240, 900));
@@ -1469,7 +1470,9 @@
   let term: import('@xterm/xterm').Terminal | null = null;
   let termFit: import('@xterm/addon-fit').FitAddon | null = null;
   let termConnId = '';
-  function openRemote() { view = 'remote'; activeConvId = ''; activeConv = null; }
+  // 注意：**不清 activeConv** —— 工作台里终端一直在，没有「切到终端」这回事；
+  // 清掉对话只会把用户正在聊的东西关了（那正是侧栏「远程终端」入口被删掉的原因）。
+  function openRemote() { view = 'remote'; }
   function b64ToBytes(b64: string): Uint8Array {
     const s = atob(b64); const a = new Uint8Array(s.length);
     for (let i = 0; i < s.length; i++) a[i] = s.charCodeAt(i);
@@ -2036,8 +2039,12 @@
   function newChat() {
     activeConvId = ''; activeConv = null; lDraft = '';
     // 远程连接没有启动页：新对话＝把底部对话面板腾空（工作台留在原地，终端不断）。
+    // 它不换「页面」，所以必须给点看得见的反馈：把面板打开并把光标放进输入框。
     viewAfterConvGone();
-    if (isSshConn && !wbChat) { wbChat = true; saveWb('chat', '1'); }
+    if (isSshConn) {
+      if (!wbChat) { wbChat = true; saveWb('chat', '1'); }
+      requestAnimationFrame(() => wbStartEl?.focus());
+    }
     if (!lSite && sites.length) lSite = sites[0].slug;
     if (!brainUsable(lBrain)) lBrain = firstUsableBrain();
   }
@@ -2928,13 +2935,6 @@
         </svg>
         新对话
       </button>
-      {#if isSshConn}
-      <!-- 远程连接：排期/定时任务/托管都无从谈起（没有站点，且定时任务＝无人值守动真机，后端已禁）。 -->
-      <button class="railnav {view === 'remote' ? 'on' : ''}" onclick={openRemote}>
-        {@render sshMark(14)}
-        远程终端
-      </button>
-      {/if}
       {#if !isCfConn && !isSshConn}
       <button class="railnav {view === 'schedule' ? 'on' : ''}" onclick={openSchedule} disabled={!activeConn}>
         <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
@@ -3532,7 +3532,7 @@
                      裸 .composer 一条都套不上（就是那次「样式缺失」）。 -->
                 <div class="wb-start composer-wrap">
                   <div class="composer">
-                    <textarea bind:value={lDraft} use:autogrow rows="2" placeholder="让 AI 在这台机器上做点什么…例如：看看装了什么，帮我装上 Docker"
+                    <textarea bind:this={wbStartEl} bind:value={lDraft} use:autogrow rows="2" placeholder="让 AI 在这台机器上做点什么…例如：看看装了什么，帮我装上 Docker"
                       oncompositionstart={() => (composing = true)} oncompositionend={() => (composing = false)}
                       onkeydown={(e) => onComposerKey(e, startChat)}></textarea>
                     <div class="composer-bar">
@@ -4695,8 +4695,11 @@
   .fbtn.danger:hover:not(:disabled) { color: var(--err); background: var(--err-soft); }
   .files-note { flex: none; padding: 6px 16px; font-size: 12px; color: var(--dim); border-bottom: 1px solid var(--border); }
   .files-err { flex: none; margin: 10px 16px 0; }
-  /* 列表＝四列表格（名称/权限/大小/日期），行内缩进出树形。列宽用同一套变量对齐表头与行。 */
-  .files-wrap { --fw-perm: 96px; --fw-size: 76px; --fw-date: 128px; }
+  /* 列表＝四列表格（名称/权限/大小/日期），行内缩进出树形。列宽用同一套变量对齐表头与行。
+     ★ 窄面板里按容器宽度砍列：右栏默认才 380px，四列定宽合计就 300px，名称会被挤成 0
+     （文件名全没了，只剩权限/大小/日期——那就本末倒置了）。名称永远优先。
+     用容器查询而不是媒体查询：这里要看的是**面板自己的宽度**，不是窗口宽度（面板还能拖）。 */
+  .files-wrap { --fw-perm: 96px; --fw-size: 76px; --fw-date: 128px; container-type: inline-size; }
   .fhead { flex: none; display: flex; align-items: stretch; gap: 0; padding: 0 14px; border-bottom: 1px solid var(--border); background: var(--rail); }
   .fh { position: relative; display: flex; align-items: center; gap: 3px; border: 0; background: transparent; color: var(--dim); font-size: 11.5px; padding: 5px 6px; text-align: left; }
   .fhead button.fh { cursor: pointer; }
@@ -4730,6 +4733,12 @@
   .fperm { width: var(--fw-perm); flex: none; padding: 0 6px; color: var(--dim); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
   .fsize { width: var(--fw-size); flex: none; padding: 0 6px; text-align: right; color: var(--dim); font-size: 11.5px; font-variant-numeric: tabular-nums; }
   .fdate { width: var(--fw-date); flex: none; padding: 0 6px; color: var(--dim); font-size: 11.5px; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* ★ 砍列规则必须放在列样式**之后**：@container 不加优先级，和 `.fh{display:flex}` 同分，
+     写在前面会被它盖掉（实测过：380px 下权限列照样 96px）。 */
+  @container (max-width: 560px) { .fh-perm, .fperm { display: none; } }
+  @container (max-width: 400px) { .fh-date, .fdate { display: none; } }
+  @container (max-width: 300px) { .fh-size, .fsize { display: none; } }
   /* 远程文件右键菜单：复用全局 .ctx-menu/.ctx-item 的样式，只补两处差异 */
   .fctx { min-width: 172px; }
   .fctx .ctx-item { justify-content: flex-start; }
