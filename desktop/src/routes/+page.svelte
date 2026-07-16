@@ -3213,38 +3213,34 @@
               {#if activeConnId === c.id}<span class="cs-check">✓</span>{/if}
             </button>
           {/each}
-          <div class="cs-div"></div>
+          <!-- 没连接时上面是空的，别拿一条分隔线开头 -->
+          {#if conns.length}<div class="cs-div"></div>{/if}
           <button class="cs-act" onclick={() => { switcherOpen = false; importPack(); }}>{@render plusIcon()}导入 gcms 技能包</button>
           <button class="cs-act" onclick={() => { switcherOpen = false; openCfConnect(); }}>{@render cfMark(15)}连接 Cloudflare</button>
           <button class="cs-act" onclick={() => { switcherOpen = false; openSshConnect(); }}>{@render sshMark(15)}新建远程连接</button>
           <button class="cs-act" onclick={() => { switcherOpen = false; setupOpen = true; }}>{@render gearIcon()}连接与模型设置…</button>
         </div>
       {/if}
-    <button class="rail-foot" class:open={switcherOpen} onclick={() => { if (conns.length === 0) { setupOpen = true; } else { switcherOpen = !switcherOpen; } }}>
+    <!-- 空态也走切换器（不再直跳设置）：菜单里三条连接路径 + 设置一次性摆出，和有连接时同一套交互。 -->
+    <button class="rail-foot" class:open={switcherOpen} onclick={() => { switcherOpen = !switcherOpen; }}>
       {#if isCfConn}{@render cfMark(18)}{:else if isSshConn}{@render sshMark(18)}{:else if activeConn && sites.length}<SiteFav src={siteFav(sites[0].slug)} label={sites[0].slug} size={18} />{:else}<AppIcon size={18} />{/if}
       <span class="foot-main">
         <b>{activeConn?.name ?? '未连接'}</b>
-        <small>{#if isCfConn}{cfProjects.length} 个项目{cfSiteCount ? ` · ${cfSiteCount} 个站点` : ''}{:else if isSshConn}<!--
+        <!-- 未连接时不出副文案：中间大区域已有导入/连接引导，这里越安静越好（原来那句「点此导入技能包」
+             既和点击行为对不上，又只提了三种连接方式里的一种，已去掉）。 -->
+        {#if activeConn}<small>{#if isCfConn}{cfProjects.length} 个项目{cfSiteCount ? ` · ${cfSiteCount} 个站点` : ''}{:else if isSshConn}<!--
           远程连接没有「站点」这回事：这里放远端系统版本（点一下重探，比如刚 do-release-upgrade 过）。
         --><span class="foot-os" role="button" tabindex="-1" title="远端系统 · 点击重新检测"
           onclick={(e) => { e.stopPropagation(); probeOs(activeConnId, true); }}
           onkeydown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); probeOs(activeConnId, true); } }}
-          >{@render distroMark(distroOf(activeConn), 12)}{osProbing[activeConnId] ? '检测系统…' : sshSub(activeConn)}</span>{:else if activeConn}{sites.length} 个站点<span class="foot-rfz" role="button" tabindex="-1" title="刷新站点（技能包新增站点后点这里）"
+          >{@render distroMark(distroOf(activeConn), 12)}{osProbing[activeConnId] ? '检测系统…' : sshSub(activeConn)}</span>{:else}{sites.length} 个站点<span class="foot-rfz" role="button" tabindex="-1" title="刷新站点（技能包新增站点后点这里）"
           onclick={(e) => { e.stopPropagation(); refreshSites(); }}
-          onkeydown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); refreshSites(); } }}>{@render refreshIcon(discoveryLoading)}</span>{:else}点此导入技能包{/if}</small>
+          onkeydown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); refreshSites(); } }}>{@render refreshIcon(discoveryLoading)}</span>{/if}</small>{/if}
       </span>
-      {#if conns.length === 0}
-        <svg class="foot-gear" width="16" height="16" viewBox="0 0 16 16" fill="none">
-          <path d="M2 5h5.2M10.8 5H14" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
-          <path d="M2 11h2.8M8.4 11H14" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
-          <circle cx="9" cy="5" r="1.7" stroke="currentColor" stroke-width="1.3" />
-          <circle cx="6.6" cy="11" r="1.7" stroke="currentColor" stroke-width="1.3" />
-        </svg>
-      {:else}
-        <svg class="foot-chev" class:up={switcherOpen} width="13" height="13" viewBox="0 0 12 12" fill="none">
-          <path d="M2.75 7.5L6 4.25L9.25 7.5" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" stroke-linejoin="round" />
-        </svg>
-      {/if}
+      <!-- 永远是展开箭头（空态也一样）：这是个切换器，不是设置快捷键。 -->
+      <svg class="foot-chev" class:up={switcherOpen} width="13" height="13" viewBox="0 0 12 12" fill="none">
+        <path d="M2.75 7.5L6 4.25L9.25 7.5" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" stroke-linejoin="round" />
+      </svg>
     </button>
     </div>
   </aside>
@@ -5170,7 +5166,6 @@
   .foot-rfz { display: inline-flex; align-items: center; margin-left: 5px; vertical-align: -1.5px; color: var(--faint); cursor: pointer; }
   .foot-rfz:hover { color: var(--accent); }
   .foot-rfz .rfz { width: 10.5px; height: 10.5px; }
-  .foot-gear { color: var(--faint); font-size: 14px; }
   .foot-chev { color: var(--faint); flex: none; transition: transform .15s; }
   .foot-chev.up { transform: rotate(180deg); }
 
