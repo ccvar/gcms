@@ -146,6 +146,11 @@ fn cfg() -> Arc<client::Config> {
         // 交互式 shell 会长时间没流量（比如你盯着 top 看），别让库把连接掐了。
         inactivity_timeout: None,
         keepalive_interval: Some(Duration::from_secs(30)),
+        // ★ 关掉 Nagle。russh 默认是**开着**的（它自己的注释：「disabled by default (i.e.
+        // Nagle's algorithm is active)」）——那对交互式终端是灾难：每次敲键就几个字节，
+        // Nagle 会把小包攒起来等上一个包的 ACK 回来才发，于是每键都可能多压最多 40ms。
+        // 所有 ssh 客户端在交互式会话下都开 TCP_NODELAY，这不是可选项。
+        nodelay: true,
         ..Default::default()
     })
 }
@@ -236,7 +241,9 @@ struct Live {
     handle: Arc<client::Handle<Client>>,
     /// PTY 通道写半边（读半边在 open_shell 里交给后台任务流给前端；Channel 不能克隆，只能拆两半）。
     /// None = 这条连接上还没开终端（AI 桥或 SFTP 建的）。
-    ch: Option<russh::ChannelWriteHalf<client::Msg>>,
+    /// Arc 同 handle 的理由：写一次要 await，**每敲一个键都攥着整张会话表**太蠢 ——
+    /// 锁里克隆、出了锁再 await。
+    ch: Option<Arc<russh::ChannelWriteHalf<client::Msg>>>,
     /// 前端终端的事件通道。留一份克隆，AI 桥就能把「AI 正在跑什么」推到同一个终端里给人看见
     /// （复用 PTY 那条现成的通道，不必另起一套事件系统）。None = 没开终端，AI 干活就不显示。
     on_event: Option<Channel<SshEvent>>,
@@ -447,7 +454,7 @@ impl SshSessions {
         let my_gen = self.gen.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
         match self.map.lock().await.get_mut(conn_id) {
             Some(live) => {
-                live.ch = Some(writer);
+                live.ch = Some(Arc::new(writer));
                 live.on_event = Some(on_event.clone()); // 留一份给 AI 桥回显（见 Live.on_event）
                 live.pty_gen = my_gen;
             }
@@ -507,24 +514,21 @@ impl SshSessions {
 
     /// 把键盘输入写进 PTY。
     pub async fn input(&self, conn_id: &str, data: &[u8]) -> Result<(), String> {
+        let ch = self.pty(conn_id).await?;
+        ch.data(data).await.map_err(|e| format!("写入失败: {e}"))
+    }
+
+    /// PTY 写半边（锁里克隆，锁外用）。见 Live.ch。
+    async fn pty(&self, conn_id: &str) -> Result<Arc<russh::ChannelWriteHalf<client::Msg>>, String> {
         let g = self.map.lock().await;
         let live = g.get(conn_id).ok_or("会话未打开")?;
-        live.ch
-            .as_ref()
-            .ok_or("终端未打开")?
-            .data(data)
-            .await
-            .map_err(|e| format!("写入失败: {e}"))
+        live.ch.clone().ok_or_else(|| "终端未打开".to_string())
     }
 
     /// 终端尺寸变化 → 通知远端重排（vim/top 才不会花屏）。
     pub async fn resize(&self, conn_id: &str, cols: u32, rows: u32) -> Result<(), String> {
-        let g = self.map.lock().await;
-        let live = g.get(conn_id).ok_or("会话未打开")?;
-        live.ch
-            .as_ref()
-            .ok_or("终端未打开")?
-            .window_change(cols, rows, 0, 0)
+        let ch = self.pty(conn_id).await?;
+        ch.window_change(cols, rows, 0, 0)
             .await
             .map_err(|e| format!("改窗口大小失败: {e}"))
     }

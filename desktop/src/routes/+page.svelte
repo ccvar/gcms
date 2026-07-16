@@ -1585,6 +1585,10 @@
       // ★ 滚动条宽度只能从这儿改：xterm 6 不再用 viewport 的原生滚动条，改成了自绘的
       // （.xterm-scrollable-element > .scrollbar，从 VS Code 移植），宽度在 JS 里取
       // `overviewRuler?.width || 14` —— CSS 的 ::-webkit-scrollbar 对它完全无效。
+      // 副作用：这个选项**身兼两职**，一设就同时把「装饰栏」渲染出来（文档原话：this must be
+      // set in order to see the overview ruler），它会在自己左沿画一条贯穿全高的 1px 竖线
+      // （_renderRulerOutline，用 theme.overviewRulerBorder，默认深色）——就是那条碍眼的线。
+      // 我们压根不用 decoration，那个 canvas 纯属负担 → CSS 里直接 display:none（见 .term-wrap 那段）。
       overviewRuler: { width: 7 },
       theme: {
         background: '#1c1917',
@@ -4777,6 +4781,10 @@
      多带一级 .xterm 是故意的：与 xterm.css 的 `.xterm .xterm-viewport` 同分时靠后取胜，
      多一级才稳赢，不必动用 !important。 */
   :global(.term-wrap .xterm .xterm-viewport) { background-color: #1c1917; }
+  /* 装饰栏：只是设 overviewRuler.width 改滚动条宽度时被顺带打开的（那个选项身兼两职）。
+     它和滚动条**完全重叠**（实测两者都在同一 7px 上），却会在左沿画一条贯穿全高的 1px 竖线。
+     我们从不用 decoration → 整个关掉。滚动条宽度来自 JS 选项，不受这条影响。 */
+  :global(.term-wrap .xterm-decoration-overview-ruler) { display: none; }
   /* 远程视图头部：终端/文件 页签 */
   .rhead-acts { display: flex; align-items: center; gap: 10px; -webkit-app-region: no-drag; }
   .rseg { display: flex; background: var(--accent-soft); border-radius: 8px; padding: 2px; }
