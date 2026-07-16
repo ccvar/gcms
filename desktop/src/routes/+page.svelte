@@ -1434,47 +1434,67 @@
   // 在这条里关掉命令行，切过去那条也没了。
   // 存储只留一份「默认」：新对话（和还没碰过的旧对话）用它开局，你一拨就成为新的默认。
   // 各对话的当前布局只放内存 —— 否则 localStorage 会随对话数无限长，删了对话还留一堆孤儿键。
-  type WbLayout = { term: boolean; chat: boolean; files: boolean; chatH: number; filesW: number };
+  // 面板布局**按对话独立**：会话1 只留对话框、会话2 只留命令行 —— 各是各的，互不影响。
+  //
+  // ★ 上一版错在「拨一下顺便记成全局默认」：于是在会话1关掉命令行就改写了默认，
+  //   会话2（还没碰过）一开局就继承成会话1的样子 —— 看起来就是「共享」。**开关不许写全局**。
+  //
+  // 开关（term/chat/files）：每条对话一份，按对话 id 存盘；新对话用固定默认（命令行+对话框）。
+  // 尺寸（chatH/filesW）：全局偏好 —— 「面板多高」是手感，不是某条对话的属性，
+  //   每开一条新对话就要重新拖一遍才叫烦人。
+  type WbFlags = { term: boolean; chat: boolean; files: boolean };
+  type WbLayout = WbFlags & { chatH: number; filesW: number };
+  const WB_FLAGS_DEF: WbFlags = { term: true, chat: true, files: false };
+  const WB_BY_CONV = 'gcms.pilot.wb.byConv';
   let wbStartEl = $state<HTMLTextAreaElement | null>(null); // 起点输入框（新对话后把光标送进去）
-  function wbDefault(): WbLayout {
-    return {
-      term: loadWbFlag('term', true),
-      chat: loadWbFlag('chat', true),
-      files: loadWbFlag('files', false),
-      chatH: loadWbSize('chatH', 260, 140, 900),
-      filesW: loadWbSize('filesW', 380, 240, 900),
-    };
-  }
-  let wb = $state<WbLayout>(wbDefault());
-  let wbByConv: Record<string, WbLayout> = {};  // 对话 id → 它的布局；'' = 该连接还没有对话时的起点
-  let wbKeyCur = '';
-  // 切对话/切连接 → 存起当前这份，取回目标那份（没碰过就用默认开局）。
-  $effect(() => {
-    const key = activeConvId || (isSshConn ? 'new:' + activeConnId : '');
-    if (key === wbKeyCur) return;
-    if (wbKeyCur) wbByConv[wbKeyCur] = { ...wb };
-    wbKeyCur = key;
-    wb = { ...(wbByConv[key] ?? wbDefault()) };
-  });
-  function loadWbFlag(k: string, def: boolean): boolean {
-    try { const v = localStorage.getItem('gcms.pilot.wb.' + k); return v === null ? def : v === '1'; } catch { return def; }
-  }
   function loadWbSize(k: string, def: number, lo: number, hi: number): number {
     try { const n = parseInt(localStorage.getItem('gcms.pilot.wb.' + k) || ''); return n >= lo && n <= hi ? n : def; } catch { return def; }
   }
-  function saveWb(k: string, v: string) { try { localStorage.setItem('gcms.pilot.wb.' + k, v); } catch { /* */ } }
-  /** 拨一下：改当前对话的布局，并把它记成「默认」（下一条新对话就照这个开局）。 */
-  function setWb(patch: Partial<WbLayout>) {
+  function loadWbByConv(): Record<string, WbFlags> {
+    try { const o = JSON.parse(localStorage.getItem(WB_BY_CONV) || '{}'); return o && typeof o === 'object' ? o : {}; } catch { return {}; }
+  }
+  let wbByConv: Record<string, WbFlags> = loadWbByConv(); // 对话 id → 开关；'new:<连接>' = 该连接还没有对话时的起点
+  let wb = $state<WbLayout>({
+    ...WB_FLAGS_DEF,
+    chatH: loadWbSize('chatH', 260, 140, 900),
+    filesW: loadWbSize('filesW', 380, 240, 900),
+  });
+  let wbKeyCur = '';
+  function wbKeyOf(): string { return activeConvId || (isSshConn ? 'new:' + activeConnId : ''); }
+  /** 存盘：顺手按「现存对话」清一遍，免得删了对话还留一堆孤儿键把 localStorage 撑大。 */
+  function saveWbByConv() {
+    try {
+      const live = new Set(convos.map((c) => c.id));
+      const keep: Record<string, WbFlags> = {};
+      for (const [k, v] of Object.entries(wbByConv)) {
+        if (k.startsWith('new:') || live.has(k)) keep[k] = v;
+      }
+      wbByConv = keep;
+      localStorage.setItem(WB_BY_CONV, JSON.stringify(keep));
+    } catch { /* 配额满/隐私模式：布局丢了就丢了，不值得打断用户 */ }
+  }
+  // 切对话/切连接 → 存起当前这份，取回目标那份（没碰过的用固定默认，**不继承别的对话**）。
+  $effect(() => {
+    const key = wbKeyOf();
+    if (key === wbKeyCur) return;
+    wbKeyCur = key;
+    const f = wbByConv[key] ?? WB_FLAGS_DEF;
+    wb = { ...wb, term: f.term, chat: f.chat, files: f.files };
+  });
+  function saveWbSize(k: 'chatH' | 'filesW', v: number) { try { localStorage.setItem('gcms.pilot.wb.' + k, String(v)); } catch { /* */ } }
+  /** 拨一下：只改**当前这条对话**的开关，绝不碰别的对话、也不写全局默认。 */
+  function setWbFlags(patch: Partial<WbFlags>) {
     wb = { ...wb, ...patch };
-    if (wbKeyCur) wbByConv[wbKeyCur] = { ...wb };
-    for (const [k, v] of Object.entries(patch)) {
-      saveWb(k, typeof v === 'boolean' ? (v ? '1' : '0') : String(v));
+    const key = wbKeyCur || wbKeyOf();
+    if (key) {
+      wbByConv[key] = { term: wb.term, chat: wb.chat, files: wb.files };
+      saveWbByConv();
     }
   }
   /** 终端与对话不能同时关掉：那样主区就是一块空白（右侧文件栏不占主区）。关一个就把另一个开上。 */
-  function toggleWbTerm() { setWb(wb.term ? { term: false, chat: true } : { term: true }); }
-  function toggleWbChat() { setWb(wb.chat ? { chat: false, term: true } : { chat: true }); }
-  function toggleWbFiles() { setWb({ files: !wb.files }); }
+  function toggleWbTerm() { setWbFlags(wb.term ? { term: false, chat: true } : { term: true }); }
+  function toggleWbChat() { setWbFlags(wb.chat ? { chat: false, term: true } : { chat: true }); }
+  function toggleWbFiles() { setWbFlags({ files: !wb.files }); }
   /** 面板拖拽。dir=h：拖对话面板的上沿（往上拖＝更高）；dir=v：拖文件面板的左沿（往左拖＝更宽）。 */
   function startWbResize(e: MouseEvent, dir: 'h' | 'v') {
     e.preventDefault();
@@ -1488,7 +1508,7 @@
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
       document.body.style.cursor = '';
-      setWb(dir === 'h' ? { chatH: wb.chatH } : { filesW: wb.filesW }); // 落定时才记默认
+      saveWbSize(dir === 'h' ? 'chatH' : 'filesW', dir === 'h' ? wb.chatH : wb.filesW); // 落定才存
     };
     document.body.style.cursor = dir === 'h' ? 'row-resize' : 'col-resize';
     document.addEventListener('mousemove', onMove);
@@ -1646,9 +1666,9 @@
     };
     t.onData((d) => { void invoke('ssh_input', { connId: id, b64: strToB64(d) }); });
     t.onResize(({ cols, rows }) => { void invoke('ssh_resize', { connId: id, cols, rows }); });
-    // 先说一声正在连：建连要走网络+认证，一两秒是常事。不写这行的话就是「黑框愣着，
-    // 然后字突然蹦出来」——看着像卡死了。
-    t.write(`\x1b[90m正在连接 ${activeConn?.ssh_user ?? ''}@${activeConn?.ssh_host ?? ''}…\x1b[0m\r\n`);
+    // 「正在连接」用浮层（见 .term-connecting），**不往终端里写**：
+    // 写进去就是终端缓冲的一部分，连上之后擦不干净（服务器的 banner 可能已经跟着来了，
+    // 光标位置不由我们说了算）—— 那行字就会一直赖在最上面。浮层随 termBusy 自动收。
     try {
       await invoke('ssh_open_shell', { connId: id, cols: t.cols, rows: t.rows, onEvent: ch });
       termOn = true;
@@ -2157,7 +2177,7 @@
     // 它不换「页面」，所以必须给点看得见的反馈：把面板打开并把光标放进输入框。
     viewAfterConvGone();
     if (isSshConn) {
-      if (!wb.chat) setWb({ chat: true });
+      if (!wb.chat) setWbFlags({ chat: true });
       requestAnimationFrame(() => wbStartEl?.focus());
     }
     if (!lSite && sites.length) lSite = sites[0].slug;
@@ -2173,7 +2193,7 @@
     // 命令行开着就让它开着 —— 面板开关是用户自己拨的，翻个旧对话不该替他改布局。
     if (conns.find((x) => x.id === c.conn_id)?.kind === 'ssh') {
       view = 'remote';
-      if (!wb.chat) setWb({ chat: true });
+      if (!wb.chat) setWbFlags({ chat: true });
     } else view = 'thread';
     attachments = []; queued = null; // 换会话清掉未发送的附件 / 等待消息
     expandSite(c.site_slug);
@@ -2221,7 +2241,7 @@
     // （openConv/newChat/selectConn 同理，见各自注释。这条是「发消息新建对话」这一路。）
     if (conns.find((c) => c.id === optimistic.conn_id)?.kind === 'ssh') {
       view = 'remote';
-      if (!wb.chat) setWb({ chat: true });
+      if (!wb.chat) setWbFlags({ chat: true });
     } else {
       view = 'thread';
     }
@@ -3649,7 +3669,13 @@
           <!-- 终端自己管滚动：别套 .thread（它的 overflow-y:auto 会和 xterm 打架）。
                ★ 关掉命令行只是 display:none **藏起来**，绝不拆 DOM —— 拆了 xterm 就没了，
                回来还得重连一次（连接是真的，掉一次要重登服务器）。 -->
-          <div class="term-wrap" class:hid={!wb.term}><div class="term" bind:this={termEl}></div></div>
+          <div class="term-wrap" class:hid={!wb.term}>
+            <div class="term" bind:this={termEl}></div>
+            {#if termBusy}
+              <!-- 建连要走网络+认证，一两秒是常事，别让黑框干愣着。浮层而非写进终端：见 startTerm。 -->
+              <div class="term-connecting"><span class="tc-spin"></span>正在连接 {activeConn?.ssh_user}@{activeConn?.ssh_host}…</div>
+            {/if}
+          </div>
           {#if wb.chat}
             {#if wb.term}
               <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
@@ -4803,6 +4829,10 @@
   .term-wrap { flex: 1; min-height: 0; overflow: hidden; background: #1c1917; padding: 8px 10px; }
   /* 关掉命令行＝只藏不拆：DOM 留着，xterm 和 SSH 会话都不掉，开回来立刻还在。 */
   .term-wrap.hid { display: none; }
+  /* 「正在连接」浮层：盖在终端上，连上即消失，不进终端缓冲（所以不会留下擦不掉的一行）。 */
+  .term-wrap { position: relative; }
+  .term-connecting { position: absolute; left: 14px; top: 12px; display: flex; align-items: center; gap: 7px; color: #8b857c; font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; pointer-events: none; }
+  .tc-spin { width: 9px; height: 9px; border: 1.5px solid #4b4640; border-top-color: #8b857c; border-radius: 50%; animation: spin .7s linear infinite; }
   .term { width: 100%; height: 100%; }
   /* xterm 6 的滚动条是**自绘**的（.xterm-scrollable-element > .scrollbar，从 VS Code 移植），
      宽度和颜色都只能从 Terminal 选项走 —— 见 startTerm 的 overviewRuler.width / theme.scrollbarSlider*。
