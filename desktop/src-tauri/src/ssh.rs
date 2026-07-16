@@ -259,6 +259,26 @@ pub struct ExecOut {
 /// 单次 exec 收集的输出上限：`cat 大日志` 之类不能把内存吸爆，AI 也读不完。
 const EXEC_OUT_MAX: usize = 256 * 1024;
 
+/// 裸 `\n` → `\r\n`（只给终端回显用；喂给 AI 的输出保持原样）。
+///
+/// **为什么必须做**：exec 开的是不带 PTY 的通道，输出里的换行就是裸 `\n`。
+/// 交互式 shell 那条路之所以正常，是因为 PTY 的行规程（ONLCR）替它把 `\n` 补成了 `\r\n`。
+/// 不补就是「阶梯状」：`\n` 只下移一行、不回到行首，于是每行都从上一行的结尾处开始。
+///
+/// `last_cr` 跨块保持：`\r\n` 有可能正好被拆在两块数据里（`\r` 在这块尾、`\n` 在下块头），
+/// 只看本块会把它当成裸 `\n` 而多补一个 `\r`。
+fn to_crlf(data: &[u8], last_cr: &mut bool) -> Vec<u8> {
+    let mut out = Vec::with_capacity(data.len() + 16);
+    for &b in data {
+        if b == b'\n' && !*last_cr {
+            out.push(b'\r');
+        }
+        out.push(b);
+        *last_cr = b == b'\r';
+    }
+    out
+}
+
 /// 往缓冲追加、到上限就停（并标记截断）。stdout/stderr 各自独立计上限。
 fn push_capped(buf: &mut Vec<u8>, data: &[u8], truncated: &mut bool) {
     if buf.len() >= EXEC_OUT_MAX {
@@ -516,9 +536,11 @@ impl SshSessions {
             let b64 = base64::engine::general_purpose::STANDARD;
             // 收到一块就往终端推一块 —— 这样 apt 装东西的进度是**滚出来**的，
             // 而不是憋到最后一次性倒出来（那就不叫「看执行过程」了）。
+            // 回显要补 \r（见 to_crlf）；喂给 AI 的 stdout/stderr 保持原样，别动它的数据。
+            let mut last_cr = false;
             let mut tee = |data: &[u8]| {
                 if let Some(s) = &sink {
-                    let _ = s.send(SshEvent::Data { b64: b64.encode(data) });
+                    let _ = s.send(SshEvent::Data { b64: b64.encode(to_crlf(data, &mut last_cr)) });
                 }
             };
             loop {
@@ -701,6 +723,36 @@ impl SshSessions {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// exec 没有 PTY → 输出是裸 \n，直接写进终端会「阶梯状」（每行从上一行结尾处开始）。
+    #[test]
+    fn crlf_fixes_bare_newlines() {
+        let mut cr = false;
+        assert_eq!(to_crlf(b"a\nb\n", &mut cr), b"a\r\nb\r\n");
+
+        // 已经是 \r\n 的别再补（否则变成 \r\r\n，多空一行）
+        let mut cr = false;
+        assert_eq!(to_crlf(b"a\r\nb\r\n", &mut cr), b"a\r\nb\r\n");
+
+        // ★ 跨块：\r 在这块末尾、\n 在下块开头 —— 只看本块会误判成裸 \n
+        let mut cr = false;
+        assert_eq!(to_crlf(b"a\r", &mut cr), b"a\r");
+        assert!(cr, "块尾是 \\r，状态要带到下一块");
+        assert_eq!(to_crlf(b"\nb", &mut cr), b"\nb", "下块开头的 \\n 属于上块的 \\r，不该补");
+
+        // 跨块的裸 \n（上块不是以 \r 结尾）照样要补
+        let mut cr = false;
+        assert_eq!(to_crlf(b"a", &mut cr), b"a");
+        assert_eq!(to_crlf(b"\nb", &mut cr), b"\r\nb");
+
+        // 没有换行就原样；空块不炸
+        let mut cr = false;
+        assert_eq!(to_crlf(b"plain", &mut cr), b"plain");
+        assert_eq!(to_crlf(b"", &mut cr), b"");
+        // 二进制/ANSI 转义原样穿过（终端要靠它上色、清屏）
+        let mut cr = false;
+        assert_eq!(to_crlf(b"\x1b[31mred\x1b[0m\n", &mut cr), b"\x1b[31mred\x1b[0m\r\n");
+    }
 
     #[test]
     fn perm_str_matches_ls() {

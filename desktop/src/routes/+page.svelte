@@ -3569,7 +3569,7 @@
                       oncompositionstart={() => (composing = true)} oncompositionend={() => (composing = false)}
                       onkeydown={(e) => onComposerKey(e, startChat)}></textarea>
                     <div class="composer-bar">
-                      <div class="cb-left"><span class="ssh-target">{@render sshMark(13)}{activeConn?.ssh_user}@{activeConn?.ssh_host}</span></div>
+                      <div class="cb-left"><span class="ssh-target" title={activeConn?.ssh_os || '远端系统未知'}>{@render distroMark(distroOf(activeConn), 13)}{activeConn?.ssh_user}@{activeConn?.ssh_host}</span></div>
                       <div class="cb-right">
                         <Dropdown compact bind:value={lPerm} options={permOptsFor(lBrain, true)} tone={permTone(lPerm)} />
                         <ModelFx options={comboOpts} value={`${lBrain}::${lModel}`} effort={lEffort} onpick={pickCombo} oneffort={(v: string) => { lEffort = v; prefs.effort = v; savePrefs(prefs); }} />
@@ -3972,6 +3972,10 @@
         <div class="cb-left">
           {#if activeConvIsCf}
             <span class="cb-ro" title="项目已固定"><span class="cb-ro-t">{activeConv?.site_slug}</span></span>
+          {:else if isSshConn}
+            <!-- 远程对话没有站点：这里放远端系统的图标 + 机器地址。
+                 （不能走下面那支：SiteFav 拿到空 slug 会画出一个「?」占位符。） -->
+            <span class="cb-ro" title={activeConn?.ssh_os || '远端系统未知'}>{@render distroMark(distroOf(activeConn), 15)}<span class="cb-ro-t">{activeConv?.site_name}</span></span>
           {:else}
             <span class="cb-ro" title={(activeConv?.site_slugs?.length ?? 0) > 1 ? convSitesTip(activeConv) : '会话的站点已固定，不可更改'}><SiteFav src={siteFav(activeConv?.site_slug ?? '')} label={activeConv?.site_slug ?? ''} size={15} /><span class="cb-ro-t">{activeConv?.site_name || activeConv?.site_slug}</span></span>
           {/if}
