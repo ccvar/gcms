@@ -211,7 +211,8 @@ async fn run_one(ctx: &Ctx, id: &str, busy: &Path) -> Result<crate::ssh::ExecOut
     //（TCP 连不上没有超时上限），这期间 AI 早放弃了、或者用户按了停止。
     // 「查完就下发」中间不能再插任何 await，否则窗口又开回来。
     still_wanted(ctx, &alive)?;
-    ctx.ssh.exec(&ctx.conn.id, &cmd, timeout).await
+    // echo=true：把命令和输出实时推进用户的终端窗口 —— AI 在这台机器上干的每一件事都看得见。
+    ctx.ssh.exec(&ctx.conn.id, &cmd, timeout, true).await
 }
 
 /// 这条命令现在还有人要吗：回合没结束、脚本还在跳。任一为否 = 不执行（fail-closed）。

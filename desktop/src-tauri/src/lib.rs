@@ -439,7 +439,7 @@ async fn ssh_os_probe(
     // 非 Linux（或精简镜像）没有 os-release → 退回 uname 也好过什么都不显示。
     let out = state
         .ssh
-        .exec(&conn_id, "cat /etc/os-release 2>/dev/null || uname -sr", 20)
+        .exec(&conn_id, "cat /etc/os-release 2>/dev/null || uname -sr", 20, false) // 后台探测，别拿噪音污染终端
         .await?;
     let (pretty, os_id) = parse_os_release(&out.stdout);
     let store = state.conns.clone();

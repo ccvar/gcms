@@ -1476,6 +1476,7 @@
   const isSshConn = $derived(activeConn?.kind === 'ssh');
   let termEl = $state<HTMLDivElement | null>(null);
   let termOn = $state(false);
+  let termBusy = $state(false); // 建连中：刷新键转起来 + 禁重复点
   let term: import('@xterm/xterm').Terminal | null = null;
   let termFit: import('@xterm/addon-fit').FitAddon | null = null;
   let termConnId = '';
@@ -1494,7 +1495,7 @@
   }
   function disposeTerm() {
     if (term) { try { term.dispose(); } catch { /* */ } }
-    term = null; termFit = null; termOn = false; termConnId = '';
+    term = null; termFit = null; termOn = false; termBusy = false; termConnId = '';
   }
   // 终端容器一变大小就重排：开关面板、拖面板边、拉窗口——一个 ResizeObserver 全包了，
   // 不用在每个改布局的地方各记一次 fit()（漏一个就是花屏）。
@@ -1521,6 +1522,7 @@
   async function startTerm(id: string, el: HTMLDivElement) {
     disposeTerm();
     termConnId = id;
+    termBusy = true;
     // xterm 要 DOM，动态 import（SSR 关着，但仍别在模块顶层拉进来）。
     const [{ Terminal }, { FitAddon }] = await Promise.all([
       import('@xterm/xterm'),
@@ -1546,17 +1548,23 @@
     };
     t.onData((d) => { void invoke('ssh_input', { connId: id, b64: strToB64(d) }); });
     t.onResize(({ cols, rows }) => { void invoke('ssh_resize', { connId: id, cols, rows }); });
+    // 先说一声正在连：建连要走网络+认证，一两秒是常事。不写这行的话就是「黑框愣着，
+    // 然后字突然蹦出来」——看着像卡死了。
+    t.write(`\x1b[90m正在连接 ${activeConn?.ssh_user ?? ''}@${activeConn?.ssh_host ?? ''}…\x1b[0m\r\n`);
     try {
       await invoke('ssh_open_shell', { connId: id, cols: t.cols, rows: t.rows, onEvent: ch });
       termOn = true;
     } catch (e) {
       t.write(`\r\n\x1b[31m${String(e)}\x1b[0m\r\n`);
+    } finally {
+      if (term === t) termBusy = false; // 已被换掉的旧终端别去动当前状态
     }
   }
   async function reconnectTerm() {
     const id = activeConnId; const el = termEl;
-    if (!id || !el) return;
-    await invoke('ssh_close', { connId: id }).catch(() => {});
+    if (!id || !el || termBusy) return;
+    termBusy = true; // 立刻转起来：ssh_close 也要等一下，别让这段时间看着像没反应
+    try { await invoke('ssh_close', { connId: id }); } catch { /* 本来就没连上，照样重来 */ }
     await startTerm(id, el);
   }
 
@@ -3520,7 +3528,7 @@
       <!-- 工作台头部只留一行（机器地址 + 状态）：标题「远程连接」是废话——侧栏已经写着你在哪台机器上。 -->
       <header class="thread-head slim" data-tauri-drag-region onmousedown={startDrag}>
         <div class="th-info"><small class="rhead-line">{activeConn?.ssh_user}@{activeConn?.ssh_host}:{activeConn?.ssh_port} · {termOn ? '已连接' : '未连接'}
-          <button class="th-rfz" data-tip="重新连接" aria-label="重新连接" onclick={reconnectTerm}><svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M13.4 8a5.4 5.4 0 1 1-1.6-3.8M13.6 2.6v3.2h-3.2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg></button></small></div>
+          <button class="th-rfz" data-tip={termBusy ? '连接中…' : '重新连接'} aria-label="重新连接" disabled={termBusy} onclick={reconnectTerm}>{@render refreshIcon(termBusy)}</button></small></div>
         <div class="rhead-acts">
           <!-- 三个面板开关（VS Code 那套）：命令行 / 底部对话 / 右侧文件，各自可开可关、可同时开。 -->
           <button class="wb-tg" class:on={wbTerm} aria-pressed={wbTerm} data-tip="命令行窗口" aria-label="命令行窗口" onclick={toggleWbTerm}>
@@ -4671,7 +4679,10 @@
   /* 工作台头部：单行，比常规 thread-head 矮一截。
      ★ margin-top:0 是必须的 —— `.th-info small` 那 2px 是给它上面那行标题留的空隙，
      而这里标题已经去掉了，留着就是净偏移，文字会比右边的图标低 2px（对不上一条水平线）。 */
-  .thread-head.slim { padding-top: 8px; padding-bottom: 8px; }
+  /* 高度对齐左上角那排工具图标：`.win-tools` 是 fixed/top:0/height:30px，中心在 15px。
+     这里最高的子元素是 24px 的面板开关 → 上下各留 3px 正好 30px，中心也落在 15px，
+     于是「地址行 / 刷新键 / 三枚开关 / 折叠侧栏 / 搜索」全在同一条水平线上。 */
+  .thread-head.slim { padding-top: 3px; padding-bottom: 3px; }
   /* 选择器要带上 .th-info small，否则压不过 `.th-info small` 那条（它带元素选择器，分更高）——
      实测：只写 .rhead-line 的话 margin-top 仍是 2px，文字比图标低 1px。 */
   .th-info small.rhead-line { display: flex; align-items: center; gap: 5px; margin-top: 0; }
@@ -4790,6 +4801,8 @@
   :global(svg.distro) { flex: none; }
   /* 头部的「重新连接」：只留图标，紧跟在连接状态后面 */
   .th-rfz { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; border: 0; background: transparent; color: var(--faint); cursor: pointer; padding: 0; -webkit-app-region: no-drag; }
+  .th-rfz :global(svg) { width: 12px; height: 12px; }
+  .th-rfz:disabled { cursor: default; color: var(--dim); }
   .th-rfz:hover { color: var(--text); }
   /* 启动页：远程连接的目标机器（占站点选择器的位子——那台机器就是本次对话的对象） */
   .ssh-target { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--rail); color: var(--dim); font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }

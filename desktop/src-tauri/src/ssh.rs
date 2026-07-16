@@ -237,6 +237,9 @@ struct Live {
     /// PTY 通道写半边（读半边在 open_shell 里交给后台任务流给前端；Channel 不能克隆，只能拆两半）。
     /// None = 这条连接上还没开终端（AI 桥或 SFTP 建的）。
     ch: Option<russh::ChannelWriteHalf<client::Msg>>,
+    /// 前端终端的事件通道。留一份克隆，AI 桥就能把「AI 正在跑什么」推到同一个终端里给人看见
+    /// （复用 PTY 那条现成的通道，不必另起一套事件系统）。None = 没开终端，AI 干活就不显示。
+    on_event: Option<Channel<SshEvent>>,
     /// 当前 PTY 的世代号。PTY 读任务退出时只有「自己仍是当前世代」才动表 ——
     /// 否则重连时旧任务的收尾会把刚建好的新会话删掉（旧代码有这个竞态，靠 connect 的网络延时侥幸不中）。
     pty_gen: u64,
@@ -309,7 +312,7 @@ impl SshSessions {
         match g.get(conn_id) {
             Some(live) if !live.handle.is_closed() => {}
             _ => {
-                g.insert(conn_id.to_string(), Live { handle: Arc::new(session), ch: None, pty_gen: 0 });
+                g.insert(conn_id.to_string(), Live { handle: Arc::new(session), ch: None, on_event: None, pty_gen: 0 });
             }
         }
         Ok(())
@@ -355,6 +358,7 @@ impl SshSessions {
         match self.map.lock().await.get_mut(conn_id) {
             Some(live) => {
                 live.ch = Some(writer);
+                live.on_event = Some(on_event.clone()); // 留一份给 AI 桥回显（见 Live.on_event）
                 live.pty_gen = my_gen;
             }
             // 刚 ensure 完就没了（用户同时点了关闭）：让调用方重来，别把半个会话塞回表里。
@@ -400,6 +404,7 @@ impl SshSessions {
                 Some(live) => {
                     // 换代：旧读任务醒来时发现自己不是当前世代，就不会去删表。
                     live.pty_gen = self.gen.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                    live.on_event = None; // 终端要关了，AI 回显没地方去
                     live.ch.take()
                 }
                 None => None,
@@ -448,9 +453,50 @@ impl SshSessions {
         self.map.lock().await.contains_key(conn_id)
     }
 
+    /// 前端终端的事件通道（克隆一份出来用，别攥着表锁）。没开终端就是 None。
+    async fn sink(&self, conn_id: &str) -> Option<Channel<SshEvent>> {
+        self.map.lock().await.get(conn_id).and_then(|l| l.on_event.clone())
+    }
+
+    /// 往终端里写一段**只给人看**的文字（AI 桥的回显）。
+    ///
+    /// 注意这不是发给远端 shell 的：远端并不知道屏幕上多了这些字。所以 AI 干活时你要是
+    /// 正好在敲命令，提示符可能错位——敲个回车就恢复。回显只在开着终端时发生。
+    async fn echo(&self, conn_id: &str, text: &str) {
+        if let Some(s) = self.sink(conn_id).await {
+            let _ = s.send(SshEvent::Data { b64: base64::engine::general_purpose::STANDARD.encode(text) });
+        }
+    }
+
     /// 跑一条一次性命令（AI 桥用）。每次开一路新通道 → **每条命令是独立的一次性 shell**
     /// （无 PTY，`cd` 不跨命令保留，交互式提示符也没法应答）。
-    pub async fn exec(&self, conn_id: &str, cmd: &str, timeout_secs: u64) -> Result<ExecOut, String> {
+    ///
+    /// `echo_to_term`＝把命令和输出实时回显进用户的终端窗口，让人看得见 AI 在干什么。
+    /// 系统探测那种后台调用传 false（别拿噪音污染终端）。
+    pub async fn exec(
+        &self,
+        conn_id: &str,
+        cmd: &str,
+        timeout_secs: u64,
+        echo_to_term: bool,
+    ) -> Result<ExecOut, String> {
+        // 通道在循环外取一次：每来一块数据都去抢表锁就太蠢了。
+        let sink = if echo_to_term { self.sink(conn_id).await } else { None };
+        if let Some(s) = &sink {
+            // 醒目但克制：一行提示 + 命令原文，让人一眼看出这行不是自己敲的。
+            let head = format!("\r\n\x1b[38;5;110m▸ AI\x1b[0m \x1b[1m{cmd}\x1b[0m\r\n");
+            let _ = s.send(SshEvent::Data { b64: base64::engine::general_purpose::STANDARD.encode(&head) });
+        }
+        self.exec_inner(conn_id, cmd, timeout_secs, sink).await
+    }
+
+    async fn exec_inner(
+        &self,
+        conn_id: &str,
+        cmd: &str,
+        timeout_secs: u64,
+        sink: Option<Channel<SshEvent>>,
+    ) -> Result<ExecOut, String> {
         let handle = {
             let g = self.map.lock().await;
             g.get(conn_id).ok_or("会话未打开：请先连接远程终端")?.handle.clone()
@@ -467,11 +513,23 @@ impl SshSessions {
         let collect = async {
             let mut out = ExecOut { stdout: String::new(), stderr: String::new(), code: -1, truncated: false };
             let (mut so, mut se): (Vec<u8>, Vec<u8>) = (Vec::new(), Vec::new());
+            let b64 = base64::engine::general_purpose::STANDARD;
+            // 收到一块就往终端推一块 —— 这样 apt 装东西的进度是**滚出来**的，
+            // 而不是憋到最后一次性倒出来（那就不叫「看执行过程」了）。
+            let mut tee = |data: &[u8]| {
+                if let Some(s) = &sink {
+                    let _ = s.send(SshEvent::Data { b64: b64.encode(data) });
+                }
+            };
             loop {
                 match reader.wait().await {
-                    Some(ChannelMsg::Data { data }) => push_capped(&mut so, &data, &mut out.truncated),
+                    Some(ChannelMsg::Data { data }) => {
+                        tee(&data);
+                        push_capped(&mut so, &data, &mut out.truncated)
+                    }
                     // ext=1 是 stderr（SSH_EXTENDED_DATA_STDERR），别的扩展流忽略。
                     Some(ChannelMsg::ExtendedData { data, ext }) if ext == 1 => {
+                        tee(&data);
                         push_capped(&mut se, &data, &mut out.truncated)
                     }
                     Some(ChannelMsg::ExitStatus { exit_status }) => out.code = exit_status as i32,
@@ -484,12 +542,29 @@ impl SshSessions {
             out.stderr = String::from_utf8_lossy(&se).into_owned();
             out
         };
-        match tokio::time::timeout(Duration::from_secs(timeout_secs), collect).await {
-            Ok(out) => Ok(out),
-            Err(_) => Err(format!(
-                "命令超时（{timeout_secs} 秒未结束）。远端可能仍在跑：长任务请用 nohup/systemd 放后台再轮询查看。"
-            )),
+        let res = tokio::time::timeout(Duration::from_secs(timeout_secs), collect).await;
+        match res {
+            Ok(out) => {
+                self.echo_result(conn_id, out.code, out.truncated).await;
+                Ok(out)
+            }
+            Err(_) => {
+                self.echo(conn_id, &format!("\r\n\x1b[31m▸ AI 命令超时（{timeout_secs}s）\x1b[0m\r\n")).await;
+                Err(format!(
+                    "命令超时（{timeout_secs} 秒未结束）。远端可能仍在跑：长任务请用 nohup/systemd 放后台再轮询查看。"
+                ))
+            }
         }
+    }
+
+    /// 命令跑完在终端里补一行结果（只在开着终端、且这次是回显模式时才有意义）。
+    async fn echo_result(&self, conn_id: &str, code: i32, truncated: bool) {
+        let tail = if code == 0 {
+            format!("\x1b[38;5;108m▸ 完成\x1b[0m{}\r\n", if truncated { "\x1b[90m（输出过长已截断）\x1b[0m" } else { "" })
+        } else {
+            format!("\x1b[31m▸ 退出码 {code}\x1b[0m\r\n")
+        };
+        self.echo(conn_id, &tail).await;
     }
 
     /// 在已建立的连接上开一路 SFTP。每次调用开一个新通道（通道很便宜，不用重新握手认证）；
