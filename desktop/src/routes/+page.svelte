@@ -3527,7 +3527,8 @@
               <button class="btn soft bare" onclick={openManagedWizard} style="margin-top:16px" disabled={!sites.length}>{@render plusIcon()}开启托管</button>
             </div>
           {:else}
-            <!-- 仪表盘：汇总一行（0 值段省略）+ 例外行（熔断/暂停/待审/预算≥80%，点击定位卡片）；全正常时只剩汇总 -->
+            <!-- 仪表盘：就一行汇总（0 值段省略）。各站例外（熔断/暂停/待审/预算≥80%）不再常驻一行，
+                 收进「待审」段的 hover 弹层里（点条目定位到卡片，见 .ss-pop-menu）。 -->
             <div class="md-board">
               <div class="stat-strip">
                 <span class="ss-seg" use:tipAction={'本连接下已开启托管的站点数'}><b class="ss-num">{managedOfConn.length}</b><span class="ss-lbl">托管站</span></span>
@@ -3535,15 +3536,24 @@
                 {#if mdAgg.paused}<span class="ss-seg" use:tipAction={'已暂停的托管站数'}><i class="ss-dot off"></i><b class="ss-num">{mdAgg.paused}</b><span class="ss-lbl">暂停</span></span>{/if}
                 {#if mdAgg.fused}<span class="ss-seg" use:tipAction={'周预算触顶自动停的站数'}><i class="ss-dot err"></i><b class="ss-num">{mdAgg.fused}</b><span class="ss-lbl">熔断</span></span>{/if}
                 <span class="ss-seg" use:tipAction={'周一起发布＋新建草稿 / 各站周上限合计'}><b class="ss-num">{mdAgg.out}/{mdAgg.cap}</b><span class="ss-lbl">本周产出</span></span>
-                {#if mdAgg.drafts}<span class="ss-seg" use:tipAction={'各站待审草稿合计'}><i class="ss-dot warn"></i><b class="ss-num">{mdAgg.drafts}</b><span class="ss-lbl">待审</span></span>{/if}
+                <!-- 待审：各站例外（熔断/暂停/待审/预算）收进这里，鼠标移上去才展开，不再常驻一行占地方 -->
+                {#if mdAgg.drafts}
+                  <span class="ss-seg ss-pop">
+                    <i class="ss-dot warn"></i><b class="ss-num">{mdAgg.drafts}</b><span class="ss-lbl">待审</span>
+                    {#if mdExceptions.length}
+                      <div class="ss-pop-menu">
+                        {#each mdExceptions as ex (ex.m.id)}
+                          <button class="md-exc" title="点击定位到该站卡片" onclick={() => document.getElementById(`mc-${ex.m.id}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' })}>
+                            <SiteFav src={siteFav(ex.m.site_slug)} label={ex.m.site_slug} size={13} /><span class="md-exc-name">{ex.m.site_name}</span>
+                            {#each ex.tags as tg (tg.t)}<span class="md-exc-tag {tg.k}">{tg.t}</span>{/each}
+                          </button>
+                        {/each}
+                      </div>
+                    {/if}
+                  </span>
+                {/if}
                 <span class="ss-seg" use:tipAction={'本周托管任务累计用量，预算熔断同口径'}><b class="ss-num">{mdTok(mdAgg.tokens)}</b><span class="ss-lbl">token</span></span>
               </div>
-              {#each mdExceptions as ex (ex.m.id)}
-                <button class="md-exc" title="点击定位到该站卡片" onclick={() => document.getElementById(`mc-${ex.m.id}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' })}>
-                  <SiteFav src={siteFav(ex.m.site_slug)} label={ex.m.site_slug} size={13} /><span class="md-exc-name">{ex.m.site_name}</span>
-                  {#each ex.tags as tg (tg.t)}<span class="md-exc-tag {tg.k}">{tg.t}</span>{/each}
-                </button>
-              {/each}
             </div>
             {#each managedOfConn as m (m.id)}
               {@const sum = mSummaries[m.id]}
@@ -3605,7 +3615,7 @@
                             <span class="md-title" title={d.title}>{d.title}</span>
                             <span class="md-sub">{d.updated_at ? fmtSched(d.updated_at) : ''}</span>
                             <span class="md-btns">
-                              <button class="btn sm ghost" onclick={() => managedPreview(m, d)}>预览</button>
+                              <button class="link md-prev" onclick={() => managedPreview(m, d)}>预览 ↗</button>
                               <button class="btn sm" onclick={() => approveDraft(m, d)}>批准发布</button>
                               <button class="btn sm ghost" onclick={() => { rejectFor = { m, d }; rejectReason = ''; }}>打回</button>
                             </span>
@@ -5703,7 +5713,7 @@
   .row-end { display: flex; justify-content: flex-end; align-items: center; gap: 7px; margin-top: 2px; }
 
   /* 概览条容器（托管仪表盘 / 定时任务顶部共用）：裸化的安静统计行——无底无框，
-     左缘与下方卡片列表对齐；例外行自身保留 hover 浅底（.md-exc）。趋势小柱在各站卡片数据行里 */
+     左缘与下方卡片列表对齐；各站例外收进「待审」的 hover 弹层（.ss-pop-menu）。趋势小柱在各站卡片数据行里 */
   .md-board { display: flex; flex-direction: column; gap: 3px; margin: 0 0 12px; padding: 2px 0 4px; }
   /* 数据条（可复用）：每段=数字(13px/600/正文色)+标签(11px faint)，段间 1px 细竖线，状态段带 6px 色点 */
   .stat-strip { display: flex; align-items: center; flex-wrap: wrap; row-gap: 4px; }
@@ -5725,6 +5735,18 @@
   .md-exc-tag.err { background: #f7e8e4; color: #a03c2b; }
   .md-exc-tag.warn { background: #fdf6e3; color: #9a6b00; }
   .md-exc-tag.off { background: #eee9df; color: var(--dim); }
+  /* 「待审」悬停弹层：各站例外从常驻一行收进这里，移到「待审」上才展开。 */
+  .ss-seg.ss-pop { position: relative; cursor: default; }
+  .ss-seg.ss-pop:hover .ss-lbl { color: var(--dim); }
+  .ss-pop-menu {
+    display: none; position: absolute; top: calc(100% + 5px); left: -8px; z-index: 60;
+    min-width: 170px; flex-direction: column; gap: 1px; padding: 4px;
+    background: #fff; border: 1px solid var(--border2); border-radius: 10px; box-shadow: 0 8px 26px rgba(30, 25, 15, .16);
+  }
+  /* 透明桥：填掉触发器与弹层之间那 5px 间隙，鼠标移过去不会中断 hover（弹层是 .ss-pop 的后代） */
+  .ss-pop-menu::before { content: ''; position: absolute; left: 0; right: 0; top: -5px; height: 5px; }
+  .ss-seg.ss-pop:hover .ss-pop-menu { display: flex; }
+  .ss-pop-menu .md-exc { width: 100%; margin-left: 0; }
   .mb-trend { display: inline-flex; align-items: flex-end; gap: 2px; height: 12px; font-size: 10.5px; color: var(--faint); }
   .mb-trend i { display: inline-block; width: 3px; background: var(--accent); border-radius: 1px; opacity: .7; }
   /* 周报归档列表与正文 */
@@ -5757,7 +5779,10 @@
   .md-row:last-child { border-bottom: none; }
   .md-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
   .md-sub { flex: none; color: var(--faint); font-size: 11.5px; }
-  .md-btns { flex: none; display: flex; gap: 6px; }
+  .md-btns { flex: none; display: flex; align-items: center; gap: 6px; }
+  /* 预览：无边框无底的文字链（带 ↗），跟旁边两个实心按钮并排——次要动作退成链接 */
+  .md-prev { flex: none; color: var(--dim); }
+  .md-prev:hover { color: var(--accent); }
   .md-plan { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; }
   .md-plan textarea { font-size: 12.5px; line-height: 1.6; }
   .md-genrow { display: flex; align-items: center; gap: 10px; margin: 6px 0 10px; }
