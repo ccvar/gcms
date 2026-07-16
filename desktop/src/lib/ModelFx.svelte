@@ -155,18 +155,19 @@
   .fx-menu { position: fixed; z-index: 95; display: flex; flex-direction: column; background: #fff; border: 1px solid var(--border2, #e2dfd7); border-radius: 12px; box-shadow: 0 12px 32px rgba(30, 25, 15, .16); padding: 7px; }
   /* 菜单是列向 flex ＋ max-height 钳制（position() 注入）：除模型列表外一律 flex:none，
      否则空间不足时 flex-shrink 连滑杆/小节一起压扁（强度滑块被压扁的根因）。 */
-  .fx-sec { flex: none; display: flex; align-items: center; justify-content: space-between; font-size: 10.5px; font-weight: 600; letter-spacing: .04em; color: var(--faint, #9b968c); padding: 4px 8px 5px; }
+  .fx-sec { flex: none; display: flex; align-items: center; justify-content: space-between; font-size: 10.5px; font-weight: 600; letter-spacing: .04em; color: var(--faint, #9b968c); padding: 2px 8px 3px; }
   .fx-sec-sub { font-weight: 500; letter-spacing: 0; color: var(--dim, #6b675f); }
   /* 菜单整体限高（position() 注入 max-height），只有模型列表这一段伸缩滚动——
      滑杆/用量常驻可见，也不会出现外层+列表的嵌套双滚动条。 */
   .fx-opts { flex: 1 1 auto; min-height: 0; max-height: 250px; overflow-y: auto; overscroll-behavior: contain; }
-  .fx-opt { width: 100%; display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: none; border-radius: 8px; background: transparent; text-align: left; cursor: pointer; font: inherit; }
+  /* 行内边距收窄（上下 6→3.5px）+ 文字行高压紧：整块模型列表更紧凑，一屏能多看几款 */
+  .fx-opt { width: 100%; display: flex; align-items: center; gap: 8px; padding: 3.5px 8px; border: none; border-radius: 8px; background: transparent; text-align: left; cursor: pointer; font: inherit; }
   .fx-opt:hover:not(:disabled) { background: #f4f3ef; }
   .fx-opt.on { background: #efeee9; }
   .fx-opt:disabled { opacity: .45; cursor: not-allowed; }
   .fx-otext { display: flex; flex-direction: column; min-width: 0; }
-  .fx-otext b { font-weight: 550; font-size: 12.5px; color: var(--text, #26241f); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .fx-otext small { font-size: 10.5px; color: var(--faint, #9b968c); }
+  .fx-otext b { font-weight: 550; font-size: 12.5px; line-height: 1.3; color: var(--text, #26241f); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .fx-otext small { font-size: 10.5px; line-height: 1.25; color: var(--faint, #9b968c); }
   .fx-check { margin-left: auto; font-size: 12px; color: var(--text, #26241f); }
   .fx-div { flex: none; height: 1px; margin: 5px 4px; background: var(--border, #ecebe6); }
 
