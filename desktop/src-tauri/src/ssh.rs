@@ -245,6 +245,76 @@ struct Live {
     pty_gen: u64,
 }
 
+/// 远端负载快照（顶栏那三个数）。
+///
+/// CPU 给的是 **/proc/stat 的累计计数**、不是百分比 —— 那玩意儿是开机以来的累计时间片，
+/// 单次读没有意义，必须两次采样求差。差值在前端算（它本来就按连接持有上一次的样本，
+/// 后端不必再维护一张「上次读数」的表）。
+#[derive(Clone, Serialize, Debug, PartialEq)]
+pub struct SshStats {
+    /// 所有 CPU 时间片之和（user+nice+system+idle+iowait+…）
+    pub cpu_total: u64,
+    /// 空闲时间片（idle + iowait）
+    pub cpu_idle: u64,
+    pub mem_total_kb: u64,
+    pub mem_avail_kb: u64,
+    pub disk_total_kb: u64,
+    pub disk_used_kb: u64,
+}
+
+/// 一条命令拿齐三个数。`df -Pk /` 里 -P 是 POSIX 输出（别让长设备名把行折断）、
+/// -k 固定 1K 块（有些系统默认 512）。
+const STATS_CMD: &str = "head -1 /proc/stat; grep -E '^(MemTotal|MemAvailable|MemFree):' /proc/meminfo; df -Pk / | tail -1";
+
+/// 解析 STATS_CMD 的输出。非 Linux（没有 /proc）会缺行 → Err，UI 就不显示这三个数。
+fn parse_stats(s: &str) -> Result<SshStats, String> {
+    let mut cpu_total = 0u64;
+    let mut cpu_idle = 0u64;
+    let (mut mem_total, mut mem_avail, mut mem_free) = (0u64, 0u64, 0u64);
+    let (mut disk_total, mut disk_used) = (0u64, 0u64);
+    let mut seen_cpu = false;
+    let mut seen_df = false;
+
+    for line in s.lines() {
+        let f: Vec<&str> = line.split_whitespace().collect();
+        if f.first() == Some(&"cpu") && !seen_cpu {
+            // cpu user nice system idle iowait irq softirq steal guest guest_nice
+            let n: Vec<u64> = f[1..].iter().filter_map(|x| x.parse().ok()).collect();
+            if n.len() < 5 {
+                continue;
+            }
+            cpu_total = n.iter().sum();
+            cpu_idle = n[3] + n[4]; // idle + iowait
+            seen_cpu = true;
+        } else if let Some(v) = line.strip_prefix("MemTotal:") {
+            mem_total = v.split_whitespace().next().and_then(|x| x.parse().ok()).unwrap_or(0);
+        } else if let Some(v) = line.strip_prefix("MemAvailable:") {
+            mem_avail = v.split_whitespace().next().and_then(|x| x.parse().ok()).unwrap_or(0);
+        } else if let Some(v) = line.strip_prefix("MemFree:") {
+            mem_free = v.split_whitespace().next().and_then(|x| x.parse().ok()).unwrap_or(0);
+        } else if f.len() >= 6 && !seen_df {
+            // df: 文件系统 1K块 已用 可用 容量 挂载点 —— 认「最后一列是 /」这一行
+            if f[f.len() - 1] == "/" {
+                disk_total = f[f.len() - 5].parse().unwrap_or(0);
+                disk_used = f[f.len() - 4].parse().unwrap_or(0);
+                seen_df = true;
+            }
+        }
+    }
+    if !seen_cpu || mem_total == 0 || !seen_df {
+        return Err("读不到远端负载（这台机器可能不是 Linux，或没有 /proc）".into());
+    }
+    Ok(SshStats {
+        cpu_total,
+        cpu_idle,
+        mem_total_kb: mem_total,
+        // 老内核（<3.14）没有 MemAvailable，退回 MemFree —— 偏保守但总比没有强。
+        mem_avail_kb: if mem_avail > 0 { mem_avail } else { mem_free },
+        disk_total_kb: disk_total,
+        disk_used_kb: disk_used,
+    })
+}
+
 /// 一次性命令的执行结果（AI 桥用）。
 #[derive(Clone, Serialize, Debug)]
 pub struct ExecOut {
@@ -471,6 +541,14 @@ impl SshSessions {
     #[allow(dead_code)]
     pub async fn is_open(&self, conn_id: &str) -> bool {
         self.map.lock().await.contains_key(conn_id)
+    }
+
+    /// 取一次远端负载。**故意不 ensure**：没有现成会话就直接失败，不为了顶栏那三个数
+    /// 偷偷去登一次服务器（多一条登录记录、还可能把用户刚关掉的连接又拉起来）。
+    /// echo=false：这是后台探测，不能拿它污染终端。
+    pub async fn stats(&self, conn_id: &str) -> Result<SshStats, String> {
+        let out = self.exec(conn_id, STATS_CMD, 15, false).await?;
+        parse_stats(&out.stdout)
     }
 
     /// 前端终端的事件通道（克隆一份出来用，别攥着表锁）。没开终端就是 None。
@@ -723,6 +801,46 @@ impl SshSessions {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 负载解析：夹具照 Ubuntu 22.04 真机的输出格式写（用户那台就是）。
+    #[test]
+    fn parse_stats_reads_cpu_mem_disk() {
+        let out = "cpu  1234567 8901 234567 45678901 12345 0 6789 0 0 0\n\
+MemTotal:        4009884 kB\n\
+MemFree:          645956 kB\n\
+MemAvailable:    3455572 kB\n\
+/dev/vda1       20511312 5350956  14096816  28% /\n";
+        let s = parse_stats(out).unwrap();
+        assert_eq!(s.cpu_total, 1234567 + 8901 + 234567 + 45678901 + 12345 + 0 + 6789);
+        assert_eq!(s.cpu_idle, 45678901 + 12345, "idle 要含 iowait（等 IO 也不是在干活）");
+        assert_eq!(s.mem_total_kb, 4009884);
+        assert_eq!(s.mem_avail_kb, 3455572, "有 MemAvailable 就别用 MemFree —— 缓存是可回收的");
+        assert_eq!(s.disk_total_kb, 20511312);
+        assert_eq!(s.disk_used_kb, 5350956);
+    }
+
+    #[test]
+    fn parse_stats_edge_cases() {
+        // 老内核没有 MemAvailable → 退回 MemFree
+        let s = parse_stats("cpu 1 2 3 4 5\nMemTotal: 100 kB\nMemFree: 40 kB\n/dev/sda1 10 4 6 40% /\n").unwrap();
+        assert_eq!(s.mem_avail_kb, 40);
+        // 只认挂载点是 / 的那行（df 可能带别的行/表头）
+        let s = parse_stats(
+            "cpu 1 2 3 4 5\nMemTotal: 100 kB\nMemAvailable: 50 kB\n\
+Filesystem 1024-blocks Used Available Capacity Mounted on\n\
+/dev/sda2 999 999 0 100% /boot\n/dev/sda1 20 8 12 40% /\n",
+        )
+        .unwrap();
+        assert_eq!(s.disk_total_kb, 20, "别把 /boot 那行当成根分区");
+        assert_eq!(s.disk_used_kb, 8);
+        // cpu 那行还有 per-core 的 cpu0/cpu1，只取汇总那行（我们只 head -1，但防一手）
+        let s = parse_stats("cpu 10 0 10 80 0\ncpu0 5 0 5 40 0\nMemTotal: 100 kB\nMemAvailable: 50 kB\n/ 10 4 6 40% /\n").unwrap();
+        assert_eq!(s.cpu_total, 100);
+        // 不是 Linux / 缺行 → 报错，UI 就不显示（别编数）
+        assert!(parse_stats("").is_err());
+        assert!(parse_stats("cpu 1 2 3 4 5\n").is_err(), "缺内存和磁盘不能算成功");
+        assert!(parse_stats("MemTotal: 100 kB\nMemAvailable: 50 kB\n/dev/sda1 20 8 12 40% /\n").is_err(), "缺 cpu 行");
+    }
 
     /// exec 没有 PTY → 输出是裸 \n，直接写进终端会「阶梯状」（每行从上一行结尾处开始）。
     #[test]

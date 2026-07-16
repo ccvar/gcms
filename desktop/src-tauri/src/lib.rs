@@ -448,6 +448,13 @@ async fn ssh_os_probe(
         .map_err(|e| e.to_string())?
 }
 
+/// 取一次远端负载（CPU 累计计数 + 内存 + 根分区）。顶栏那三个数用它。
+/// 没有现成会话就直接失败 —— 前端静默忽略，不为了三个数去偷偷登服务器。
+#[tauri::command]
+async fn ssh_stats(state: tauri::State<'_, AppState>, conn_id: String) -> Result<ssh::SshStats, String> {
+    state.ssh.stats(&conn_id).await
+}
+
 /// 打开交互式 PTY shell，输出流给前端 xterm。连接时带上已确认指纹，不匹配即拒。
 #[tauri::command]
 async fn ssh_open_shell(
@@ -3731,6 +3738,7 @@ pub fn run() {
             connect_ssh,
             update_ssh,
             ssh_os_probe,
+            ssh_stats,
             ssh_open_shell,
             ssh_input,
             ssh_resize,

@@ -1472,6 +1472,56 @@
     document.addEventListener('mouseup', onUp);
   }
 
+  // ---------- 远端负载（顶栏的 CPU / 内存 / 磁盘） ----------
+  // CPU 那两个字段是 /proc/stat 的**累计计数**，不是百分比：单次读没意义，得跟上一次求差。
+  // 所以这里按连接留一份上次的样本；第一次只能显示「—」，第二次（5 秒后）才有 CPU%。
+  type SshStats = { cpu_total: number; cpu_idle: number; mem_total_kb: number; mem_avail_kb: number; disk_total_kb: number; disk_used_kb: number };
+  const STAT_EVERY_MS = 5000;
+  let statPrev: Record<string, SshStats> = {};
+  let stat = $state<null | { cpu: number | null; memPct: number; memText: string; diskPct: number; diskText: string }>(null);
+  function fmtKb(kb: number): string {
+    const u = ['KB', 'MB', 'GB', 'TB'];
+    let v = kb, i = 0;
+    while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+    return `${v >= 100 ? Math.round(v) : v.toFixed(1)} ${u[i]}`;
+  }
+  async function pollStats(id: string) {
+    try {
+      const s = await invoke<SshStats>('ssh_stats', { connId: id });
+      const p = statPrev[id];
+      statPrev[id] = s;
+      // 两次采样之间的差：分母是这段时间里所有时间片的增量，分子是其中非空闲的部分。
+      let cpu: number | null = null;
+      if (p) {
+        const dt = s.cpu_total - p.cpu_total;
+        const di = s.cpu_idle - p.cpu_idle;
+        // 机器重启过（计数器归零）→ dt<=0，这一轮跳过，下一轮就正常了
+        if (dt > 0) cpu = Math.min(100, Math.max(0, Math.round((1 - di / dt) * 100)));
+      }
+      const memUsed = s.mem_total_kb - s.mem_avail_kb;
+      stat = {
+        cpu,
+        memPct: s.mem_total_kb ? Math.round((memUsed / s.mem_total_kb) * 100) : 0,
+        memText: `${fmtKb(memUsed)} / ${fmtKb(s.mem_total_kb)}`,
+        diskPct: s.disk_total_kb ? Math.round((s.disk_used_kb / s.disk_total_kb) * 100) : 0,
+        diskText: `${fmtKb(s.disk_used_kb)} / ${fmtKb(s.disk_total_kb)}`,
+      };
+    } catch {
+      // 没连上 / 不是 Linux / 命令被拒 —— 都不吭声，顶栏空着就是了（这不是用户要办的事）
+      stat = null;
+    }
+  }
+  // 只在看得见工作台时才轮询；换连接清掉上一台的数（否则会拿别的机器的样本算差）。
+  $effect(() => {
+    const id = activeConnId;
+    if (view !== 'remote' || !isSshConn || !id) { stat = null; return; }
+    stat = null;
+    delete statPrev[id];
+    void pollStats(id);
+    const t = setInterval(() => { if (!document.hidden) void pollStats(id); }, STAT_EVERY_MS);
+    return () => clearInterval(t);
+  });
+
   // ---------- 远程终端（xterm + PTY 流） ----------
   const isSshConn = $derived(activeConn?.kind === 'ssh');
   let termEl = $state<HTMLDivElement | null>(null);
@@ -3528,7 +3578,14 @@
       <!-- 工作台头部只留一行（机器地址 + 状态）：标题「远程连接」是废话——侧栏已经写着你在哪台机器上。 -->
       <header class="thread-head slim" data-tauri-drag-region onmousedown={startDrag}>
         <div class="th-info"><small class="rhead-line">{activeConn?.ssh_user}@{activeConn?.ssh_host}:{activeConn?.ssh_port} · {termOn ? '已连接' : '未连接'}
-          <button class="th-rfz" data-tip={termBusy ? '连接中…' : '重新连接'} aria-label="重新连接" disabled={termBusy} onclick={reconnectTerm}>{@render refreshIcon(termBusy)}</button></small></div>
+          <button class="th-rfz" data-tip={termBusy ? '连接中…' : '重新连接'} aria-label="重新连接" disabled={termBusy} onclick={reconnectTerm}>{@render refreshIcon(termBusy)}</button>
+          {#if stat}
+            <span class="hstats">
+              {@render loadStat('CPU', stat.cpu, stat.cpu === null ? '正在取样…（要两次采样才算得出占用）' : `CPU 占用 ${stat.cpu}%`)}
+              {@render loadStat('内存', stat.memPct, `内存 ${stat.memText}`)}
+              {@render loadStat('磁盘', stat.diskPct, `根分区 ${stat.diskText}`)}
+            </span>
+          {/if}</small></div>
         <div class="rhead-acts">
           <!-- 三个面板开关（VS Code 那套）：命令行 / 底部对话 / 右侧文件，各自可开可关、可同时开。 -->
           <button class="wb-tg" class:on={wbTerm} aria-pressed={wbTerm} data-tip="命令行窗口" aria-label="命令行窗口" onclick={toggleWbTerm}>
@@ -3997,6 +4054,16 @@
       </div>
     </div>
   </div>
+{/snippet}
+
+<!-- 顶栏的一个负载读数：标签 + 百分比 + 一条细底纹。
+     pct=null＝还没算出来（CPU 要两次采样求差，见 pollStats）。 -->
+{#snippet loadStat(label: string, pct: number | null, tip: string)}
+  <span class="hstat" class:warn={pct !== null && pct >= 75} class:hot={pct !== null && pct >= 90} data-tip={tip}>
+    <span class="hstat-l">{label}</span>
+    <span class="hstat-v">{pct === null ? '—' : pct + '%'}</span>
+    <span class="hstat-bar"><i style="width:{pct ?? 0}%"></i></span>
+  </span>
 {/snippet}
 
 <!-- 列宽手柄：坐在定宽列的左边缘上（就是列头之间那根分隔线）。做成 button 是为了键盘也够得着
@@ -4807,6 +4874,19 @@
   .th-rfz { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; border: 0; background: transparent; color: var(--faint); cursor: pointer; padding: 0; -webkit-app-region: no-drag; }
   .th-rfz :global(svg) { width: 12px; height: 12px; }
   .th-rfz:disabled { cursor: default; color: var(--dim); }
+  /* 顶栏的远端负载：三个小读数，挤不下就整体收起（地址和面板开关才是主角） */
+  .hstats { display: flex; align-items: center; gap: 10px; margin-left: 6px; padding-left: 10px; border-left: 1px solid var(--border); }
+  .hstat { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--dim); white-space: nowrap; cursor: default; }
+  .hstat-l { color: var(--faint); }
+  .hstat-v { font-variant-numeric: tabular-nums; min-width: 30px; }
+  .hstat-bar { width: 26px; height: 3px; border-radius: 2px; background: var(--border2); overflow: hidden; }
+  .hstat-bar i { display: block; height: 100%; background: var(--dim); border-radius: 2px; transition: width .4s ease; }
+  .hstat.warn { color: var(--warn); }
+  .hstat.warn .hstat-bar i { background: currentColor; }
+  .hstat.hot { color: var(--err); }
+  .hstat.hot .hstat-bar i { background: currentColor; }
+  /* 窄窗口下让位：地址 + 三枚开关是主角，负载是锦上添花 */
+  @media (max-width: 900px) { .hstats { display: none; } }
   .th-rfz:hover { color: var(--text); }
   /* 启动页：远程连接的目标机器（占站点选择器的位子——那台机器就是本次对话的对象） */
   .ssh-target { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--rail); color: var(--dim); font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
