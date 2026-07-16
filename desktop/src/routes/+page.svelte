@@ -101,11 +101,10 @@
     const order: Brain[] = [cur, ...ALL_BRAINS.filter((b) => b !== cur)];
     const out: { value: string; label: string; sub?: string; icon?: string; disabled?: boolean }[] = [];
     for (const b of order) {
-      // 当前厂商永远可选，但「远程连接不给 Codex」是安全底线，连当前厂商也不例外
-      // （否则在会话里切到 Codex 会把这条对话推进无人确认的全自动，见 apply_brain_switch）。
-      const ok = brainOkForConn(b, isSshConn);
-      const usable = ok && (b === cur || brainUsable(b));
-      const note = !ok ? CODEX_SSH_NOTE : usable ? '' : brains?.[b].found ? '未登录' : '未安装';
+      // 当前厂商永远可选（会话已经在用它了，灰掉只会让触发器显示成一个选不中的项）。
+      // 远程连接下的 codex 不置灰、只挂警告：它能用，只是那道闸是打折的（见 codexSshRisk）。
+      const usable = b === cur || brainUsable(b);
+      const note = isCodexSsh(b, isSshConn) ? CODEX_SSH_NOTE : usable ? '' : brains?.[b].found ? '未登录' : '未安装';
       for (const m of launcherModelOpts(b)) {
         out.push({ value: `${b}::${m.value}`, label: m.label, sub: note || m.sub, icon: b, disabled: !usable });
       }
@@ -116,7 +115,8 @@
     return out;
   });
   // 会话内选模型：同厂商＝只改存储、下一轮生效（原行为不变）；跨厂商＝底层 session 换不了家，
-  // 确认后更新会话 brain/model（后端顺带清 session_ref、codex 下 ask/auto 落 full），
+  // 确认后更新会话 brain/model（后端顺带清 session_ref；非 ssh 的 codex 下 ask/auto 落 full，
+  // ssh 下**保持原档**——桥那道卡是 codex 仅剩的闸，见 lib.rs::apply_brain_switch），
   // 再走「重建继续」：全新底层会话 + 历史摘要，自动重跑最近一条用户请求。
   async function pickThreadCombo(v: string) {
     const conv = activeConv;
@@ -127,8 +127,13 @@
     const model = v.slice(i + 2);
     if (brain === conv.brain) { threadModel = model; void persistThreadModel(model); return; }
     const label = brainLabel(brain);
+    // ★ 这个框就是「在真机上自动重跑」的同意点：切完立刻 rebuildSession 重跑最近一条请求。
+    // 切到 codex 的风险必须**当场**说，不能只靠下拉里那句「见下方警告」——用户点完就跑了。
+    const risk = isCodexSsh(brain, isSshConn)
+      ? `\n\n注意：Codex 无头模式没有逐命令闸。经 Pilot 跑的远程命令仍会弹卡${threadPerm === 'full' ? '（但「全自动」档下这些卡也全关了）' : ''}，但它可以绕开 Pilot、直接用你本机的 ssh 和 ~/.ssh 密钥连这台机器——那条路一张卡都不弹。`
+      : '';
     const yes = await confirmDialog(
-      `切到 ${label} 后，这条对话将以历史摘要重建一个全新底层会话继续（自动重跑最近一条请求）。项目文件不受影响；很长的对话会有一定上下文损耗。`,
+      `切到 ${label} 后，这条对话将以历史摘要重建一个全新底层会话继续（自动重跑最近一条请求）。项目文件不受影响；很长的对话会有一定上下文损耗。${risk}`,
       { title: `切换到 ${label}`, kind: 'warning' },
     );
     if (!yes) return;
@@ -757,19 +762,20 @@
   const comboOpts = $derived.by(() => {
     const out: { value: string; label: string; sub?: string; icon?: string; disabled?: boolean }[] = [];
     for (const b of ALL_BRAINS) {
-      const usable = brainUsable(b) && brainOkForConn(b, isSshConn);
-      const note = !brainOkForConn(b, isSshConn) ? CODEX_SSH_NOTE : usable ? '' : brains?.[b].found ? '未登录' : '未安装';
+      const usable = brainUsable(b);
+      const note = isCodexSsh(b, isSshConn) ? CODEX_SSH_NOTE : usable ? '' : brains?.[b].found ? '未登录' : '未安装';
       for (const m of launcherModelOpts(b)) {
         out.push({ value: `${b}::${m.value}`, label: m.label, sub: note || m.sub, icon: b, disabled: !usable });
       }
     }
     return out;
   });
-  // ★ 远程连接不给用 Codex：它无头下没有逐命令闸（claude 有 PreToolUse 钩子、grok 有 ACP 权限回调），
-  // 所以拦不住它绕开 AI 桥、直接用系统 ssh + 用户自己的 ~/.ssh 密钥打你的服务器——那条路一张卡都不会弹。
-  // 后端 agent::run_turn 同样会拒（UI 只是别让人走到那一步）。
-  const CODEX_SSH_NOTE = '远程连接不支持 Codex（它拦不住逐条命令）';
-  function brainOkForConn(b: string, ssh: boolean): boolean { return !(ssh && b === 'codex'); }
+  // Codex + 远程连接（用户拍板放开）：能用，但闸是**打折**的 —— 走 AI 桥的远程命令照样逐条弹卡
+  // （闸在 bridge.rs，与厂商无关），可它无头下没有逐工具闸（claude 有 PreToolUse 钩子、grok 有 ACP
+  // 权限回调），拦不住它绕开桥、直接用系统 ssh + 用户自己的 ~/.ssh 密钥打同一台机器。
+  // 所以这里不置灰、只挂警告 —— 完整说法见 codexSshRisk。
+  const CODEX_SSH_NOTE = '拦不住它绕开确认卡（见下方警告）';
+  function isCodexSsh(b: string, ssh: boolean): boolean { return ssh && b === 'codex'; }
   function pickCombo(v: string) {
     const i = v.indexOf('::');
     if (i < 0) return;
@@ -785,8 +791,13 @@
   // 所以 codex 一样能逐条确认远程命令 —— 这两档对它有意义，不置灰。
   function permOptsFor(brain: string, ssh = false) {
     if (ssh) {
+      // 远程连接下「询问/自动」对三家**都有意义**：远程命令的闸在 Pilot 的 AI 桥里（bridge.rs），
+      // 与厂商无关 —— 所以这里不像下面那样把 codex 的这两档灰掉。
+      // 但对 codex 要说实话：它能绕开桥（见 codexSshRisk），所以副标题不能许「每条都确认」。
+      const codex = brain === 'codex';
       return permOpts.map((o) =>
-        o.value === 'auto' ? { ...o, sub: '本地放行 · 每条远程命令都确认' }
+        o.value === 'auto' ? { ...o, sub: codex ? '经 Pilot 的远程命令要确认' : '本地放行 · 每条远程命令都确认' }
+        : o.value === 'ask' ? { ...o, sub: codex ? '经 Pilot 的远程命令要确认' : o.sub }
         : o.value === 'full' ? { ...o, sub: '连远程命令也不拦' }
         : o
       );
@@ -1201,9 +1212,6 @@
         disposeTerm();
         // 远程连接绝不默认「全自动」：那是别人的真机，默认得让每条命令都过一次你的眼。
         if (lPerm === 'full') lPerm = 'auto';
-        // Codex 在这里用不了（见 brainOkForConn）——从别的连接带过来的选择要换掉，
-        // 否则下拉的当前项是个灰的、发送键还一直亮着。
-        if (lBrain === 'codex') lBrain = ALL_BRAINS.find((b) => b !== 'codex' && brainUsable(b)) ?? 'claude';
       }
       return;
     }
@@ -2307,7 +2315,7 @@
 
   async function startChat() {
     const multi = !isSshConn && lSites.length > 1;
-    if ((!isSshConn && !multi && !lSite.trim()) || !lDraft.trim() || !brainUsable(lBrain) || !brainOkForConn(lBrain, isSshConn)) return;
+    if ((!isSshConn && !multi && !lSite.trim()) || !lDraft.trim() || !brainUsable(lBrain)) return;
     const site = sites.find((s) => s.slug === lSite);
     const taskType = isSshConn ? 'remote' : isCfConn ? 'sitebuild' : lTask;
     prefs.brain = lBrain; prefs.model = lModel; prefs.taskType = lTask; prefs.perm = lPerm; prefs.effort = lEffort; savePrefs(prefs);
@@ -3338,11 +3346,12 @@
                 <Dropdown compact bind:value={lPerm} options={permOptsFor(lBrain, isSshConn)} tone={permTone(lPerm)} />
                 <ModelFx options={comboOpts} value={`${lBrain}::${lModel}`} effort={lEffort} onpick={pickCombo} oneffort={(v: string) => { lEffort = v; prefs.effort = v; savePrefs(prefs); }} />
                 <UsageRing />
-                <button class="send" onclick={startChat} disabled={(!isSshConn && !lSite.trim() && lSites.length < 2) || !lDraft.trim() || !brainUsable(lBrain) || !brainOkForConn(lBrain, isSshConn)} title="发送（Enter）">↑</button>
+                <button class="send" onclick={startChat} disabled={(!isSshConn && !lSite.trim() && lSites.length < 2) || !lDraft.trim() || !brainUsable(lBrain)} title="发送（Enter）">↑</button>
               </div>
             </div>
           </div>
-          {#if isSshConn && lPerm === 'full'}
+          <!-- codex+full 时不重复：codexSshRisk 的 full 变体已经把这句话说全了（还更狠）。 -->
+          {#if isSshConn && lPerm === 'full' && !isCodexSsh(lBrain, isSshConn)}
             <p class="hint warn-text">「全自动」档下，AI 在这台机器上跑命令<b>不会问你</b>——包括删数据、改配置、重启。除非你清楚要这样，否则用「自动」。</p>
           {/if}
           {#if lSites.length}
@@ -3352,9 +3361,8 @@
               {/each}
             </div>
           {/if}
-          {#if isSshConn && !brainOkForConn(lBrain, isSshConn)}
-            <p class="hint warn-text">{CODEX_SSH_NOTE}。请换 Claude 或 Grok——它们能在每条远程命令前停下来等你确认。</p>
-          {:else if !brainUsable(lBrain)}<p class="hint warn-text">所选厂商未就绪，点左下角设置里「去授权」。</p>{/if}
+          {#if !brainUsable(lBrain)}<p class="hint warn-text">所选厂商未就绪，点左下角设置里「去授权」。</p>{/if}
+          {#if isCodexSsh(lBrain, isSshConn)}{@render codexSshRisk(lPerm)}{/if}
           {#if isCfConn && brains?.wrangler && !brains.wrangler.found}{@render wrNote()}{/if}
         </div>
       </div>
@@ -3713,16 +3721,20 @@
                       <div class="cb-right">
                         <Dropdown compact bind:value={lPerm} options={permOptsFor(lBrain, true)} tone={permTone(lPerm)} />
                         <ModelFx options={comboOpts} value={`${lBrain}::${lModel}`} effort={lEffort} onpick={pickCombo} oneffort={(v: string) => { lEffort = v; prefs.effort = v; savePrefs(prefs); }} />
-                        <button class="send" onclick={startChat} disabled={!lDraft.trim() || !brainUsable(lBrain) || !brainOkForConn(lBrain, true)} title="发送（Enter）">↑</button>
+                        <button class="send" onclick={startChat} disabled={!lDraft.trim() || !brainUsable(lBrain)} title="发送（Enter）">↑</button>
                       </div>
                     </div>
                   </div>
-                  {#if !brainOkForConn(lBrain, true)}
-                    <p class="hint warn-text">{CODEX_SSH_NOTE}。请换 Claude 或 Grok——它们能在每条远程命令前停下来等你确认。</p>
-                  {:else if !brainUsable(lBrain)}
+                  <!-- ★ 三条各管各的，别串成 else-if：codex 的风险框一旦排在链首，就会把
+                       「未就绪」和「全自动不会问你」**吞掉** —— 而 codex+全自动 恰恰是唯一
+                       一道闸都没有的组合，最需要那句「不会问你」。 -->
+                  {#if !brainUsable(lBrain)}
                     <p class="hint warn-text">所选厂商未就绪，点左下角设置里「去授权」。</p>
-                  {:else if lPerm === 'full'}
+                  {:else if lPerm === 'full' && !isCodexSsh(lBrain, true)}
                     <p class="hint warn-text">「全自动」档下，AI 在这台机器上跑命令<b>不会问你</b>——包括删数据、改配置、重启。</p>
+                  {/if}
+                  {#if isCodexSsh(lBrain, true)}
+                    {@render codexSshRisk(lPerm)}
                   {/if}
                 </div>
               {/if}
@@ -4136,7 +4148,34 @@
         </div>
       </div>
     </div>
+    <!-- ★ 会话里也得挂：模型下拉的 codex 行写着「见下方警告」，而这个视图（有对话之后
+         convPane 就顶掉了启动器）原来一条都不渲染 —— 那句「见下方」指向空气。
+         而且在会话里切到 codex 会立刻 rebuild 重跑，正是最需要看见它的时刻。 -->
+    {#if isCodexSsh(activeConv?.brain ?? 'claude', isSshConn)}
+      {@render codexSshRisk(threadPerm)}
+    {/if}
   </div>
+{/snippet}
+
+<!-- Codex + 远程连接的风险提示。措辞要**准**：说过头（「Codex 完全不受控」）会让人以为
+     确认卡失效了；说轻了（「注意安全」）等于没说。真实边界只有一条 —— 桥拦得住走桥的命令，
+     拦不住它绕开桥自己去连。
+     ★ 必须吃 perm：full 档下 bridge.rs 的 gate() 直接 `PermMode::Full => Ok(())`，一张卡都不弹
+     （见 bridge.rs 的 full_mode_allows_without_card）。这时候再说「每条仍会弹卡」就是**反着骗人**，
+     而且骗在唯一一个一道闸都没有的档位上。 -->
+{#snippet codexSshRisk(perm: string)}
+  <p class="codex-risk">
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 2.2 14.6 13.4H1.4L8 2.2z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" /><path d="M8 6.4v3.1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /><circle cx="8" cy="11.5" r=".8" fill="currentColor" /></svg>
+    {#if perm === 'full'}
+      <span><b>Codex ＋「全自动」＝ 没有任何确认。</b>「全自动」档下 Pilot 的确认卡本来就全关了，
+        而 Codex 无头模式自己也没有逐命令闸——<b>它在这台机器上删数据、改配置、重启都不会问你</b>，
+        还能绕开 Pilot 直接用你本机的 ssh 和 ~/.ssh 密钥连上来。除非你非常清楚要这样，否则退回「自动」。</span>
+    {:else}
+      <span><b>Codex 的确认卡是打折的。</b>它经 Pilot 跑的每条远程命令仍会弹卡等你确认；
+        但 Codex 无头模式没有逐命令闸，<b>它可以绕开 Pilot、直接用你本机的 ssh 和 ~/.ssh 密钥连这台机器</b>——
+        那条路一张卡都不弹。要每条命令都真正过你的眼，用 Claude 或 Grok。</span>
+    {/if}
+  </p>
 {/snippet}
 
 <!-- 顶栏的一个负载读数：标签 + 百分比 + 一条细底纹。
@@ -4972,6 +5011,9 @@
      ★ 必须写在 .hstats 之后：@container 不加优先级，同分靠后取胜（上次在文件列表踩过）。 */
   @container (max-width: 470px) { .hstats { display: none; } }
   .th-rfz:hover { color: var(--text); }
+  /* Codex + 远程连接的风险提示：红底红字，跟旁边的普通 hint 明确区分开 */
+  .codex-risk { display: flex; align-items: flex-start; gap: 6px; margin: 0; width: 100%; max-width: 760px; margin-inline: auto; padding: 7px 10px; border: 1px solid var(--err-border); background: var(--err-soft); border-radius: 9px; color: var(--err); font-size: 11.5px; line-height: 1.55; }
+  .codex-risk svg { flex: none; margin-top: 2px; }
   /* 启动页：远程连接的目标机器（占站点选择器的位子——那台机器就是本次对话的对象） */
   .ssh-target { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--rail); color: var(--dim); font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
   .ssh-target :global(svg) { color: var(--faint); flex: none; }

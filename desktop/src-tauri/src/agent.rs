@@ -237,19 +237,14 @@ Pilot 会让用户确认一次，你正常执行命令即可。\n\
     )
 }
 
-/// 这个厂商能不能跑这种连接。
-///
-/// ★ 远程连接不给 Codex：它无头下**没有逐命令闸**（claude 靠 PreToolUse 钩子、grok 靠 ACP 权限回调，
-/// codex 只有粗粒度 sandbox，`codex exec` 无法把工具调用回传给 UI 批准）。AI 桥能确认走桥的命令，
-/// 却拦不住 codex 干脆**绕开桥**：直接调系统 ssh/scp + 用户自己的 ~/.ssh 密钥打同一台服务器 ——
-/// 那条路（claude 靠 DANGER 清单弹卡、grok 靠 acp::decide）对 codex 一张卡都不会弹。
-/// 与其给一个假的「每条命令都确认」，不如不提供这个组合。
-pub(crate) fn brain_ok_for_conn(kind: &str, brain: &str) -> Result<(), String> {
-    if kind == "ssh" && brain == "codex" {
-        return Err("远程连接不支持 Codex：它无法逐条确认命令。请用 Claude 或 Grok。".into());
-    }
-    Ok(())
-}
+// 远程连接 × Codex 的**真实边界**（用户拍板放开，UI 上有醒目警告）：
+// - 走 AI 桥的命令**照样逐条弹卡**（闸在 bridge.rs，与厂商无关）—— 这条对 codex 一样有效；
+// - 但 codex 无头下没有逐工具闸（claude 靠 PreToolUse 钩子、grok 靠 ACP 权限回调，
+//   codex 只有粗粒度 sandbox），所以**拦不住它绕开桥**：直接调系统 ssh/scp + 用户自己的
+//   ~/.ssh 密钥打同一台机器 —— 那条路（claude 靠 DANGER 清单弹卡）对 codex 一张卡都不弹。
+// 所以这个组合能用，但「每条命令都确认」对它是打折的，UI 必须把这句话摆在用户眼前。
+// ★ 配套硬性要求见 lib.rs::apply_brain_switch：**绝不能把 ssh 对话的 ask/auto 静默改写成 full** ——
+//   桥那道卡是 codex 仅剩的闸，把它也拿掉就是彻底的无人确认。
 
 /// 远程机器助手的系统提示（kind=ssh 的对话）。
 ///
@@ -341,11 +336,6 @@ pub async fn run_turn(
     turn_id: String,
     channel: Channel<TurnEvent>,
 ) -> TurnResult {
-    // 前端已经不让选 codex 跑远程连接，这里是真闸（UI 不是安全边界）。
-    if let Err(e) = brain_ok_for_conn(&conn.kind, &brain) {
-        let _ = channel.send(TurnEvent::Done { ok: false, error: e.clone() });
-        return TurnResult { ok: false, text: String::new(), tools: vec![], error: e, session_ref, proposal: None, usage: None, limit_reset: None };
-    }
     // ssh 连接没有 API key（密码/口令是给 Pilot 连机器用的，绝不进子进程），
     // 且无口令私钥根本没有钥匙串条目 —— 这里拿不到不算错。
     let api_key = if conn.kind == "ssh" {
@@ -973,18 +963,6 @@ pub(crate) fn last_nonempty(s: &str) -> Option<String> {
 mod tests {
     use super::*;
     use serde_json::json;
-
-    #[test]
-    fn brain_conn_rules() {
-        // ★ 远程连接 × Codex ＝ 假的「逐条确认」：codex 能绕开 AI 桥直接调系统 ssh，一张卡都不弹。
-        assert!(brain_ok_for_conn("ssh", "codex").is_err());
-        // claude（PreToolUse 钩子）/ grok（ACP 权限桥）都有逐命令闸，可以
-        assert!(brain_ok_for_conn("ssh", "claude").is_ok());
-        assert!(brain_ok_for_conn("ssh", "grok").is_ok());
-        // 别的连接类型不受影响：codex 在 gcms/CF 下照常（那里没有远程真机可打）
-        assert!(brain_ok_for_conn("gcms", "codex").is_ok());
-        assert!(brain_ok_for_conn("cloudflare", "codex").is_ok());
-    }
 
     fn ch() -> Channel<TurnEvent> {
         Channel::new(|_| Ok(()))

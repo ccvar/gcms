@@ -995,13 +995,31 @@ mod workdir_tests {
         .expect("test conversation")
     }
 
+    /// ★ 放开 codex 跑远程连接之后，**AI 桥那道确认卡是它仅剩的闸**（闸在 bridge.rs，与厂商无关）。
+    /// 所以「codex 的 ask/auto 落 full」这条规则**绝不能**落到 ssh 对话上：
+    /// 前端切完厂商会立刻 rebuild_session 自动重跑，静默升档 = 一次「换个模型」的点击
+    /// 就在真机上无人确认地跑起来了。这是评审里的 critical，别改回去。
+    #[test]
+    fn ssh_conv_keeps_ask_auto_when_switching_to_codex() {
+        for m in ["ask", "auto"] {
+            let mut c = test_conv("claude", "sonnet", m);
+            apply_brain_switch(&mut c, "codex", "gpt-5.6", true); // is_ssh
+            assert_eq!(c.perm_mode, m, "ssh 对话切 codex 必须保住 {m}（桥还要靠它弹卡）");
+            assert_eq!(c.session_ref, "", "跨厂商仍要抛弃旧 session");
+        }
+        // 非 ssh 照旧落 full：那里 codex 真的没有任何逐命令闸，ask/auto 名不副实（原行为不变）
+        let mut c = test_conv("claude", "sonnet", "auto");
+        apply_brain_switch(&mut c, "codex", "gpt-5.6", false);
+        assert_eq!(c.perm_mode, "full");
+    }
+
     /// 跨厂商切换：换 brain 清 session_ref（另一家 resume 不了旧会话）+ codex 下 ask/auto 落 full；
     /// 同厂商只换 model，session/perm 原样保留。effort 字段两条路径都不碰。
     #[test]
     fn apply_brain_switch_rules() {
         // claude → codex：清 session、auto 落 full
         let mut c = test_conv("claude", "sonnet", "auto");
-        apply_brain_switch(&mut c, "codex", "gpt-5.6-terra");
+        apply_brain_switch(&mut c, "codex", "gpt-5.6-terra", false);
         assert_eq!(c.brain, "codex");
         assert_eq!(c.model, "gpt-5.6-terra");
         assert_eq!(c.session_ref, "", "跨厂商必须抛弃旧 session");
@@ -1009,25 +1027,25 @@ mod workdir_tests {
 
         // claude → codex：plan 档保留（只读语义两家通用）
         let mut c = test_conv("claude", "opus", "plan");
-        apply_brain_switch(&mut c, "codex", "");
+        apply_brain_switch(&mut c, "codex", "", false);
         assert_eq!(c.perm_mode, "plan");
 
         // codex → claude：ask/auto 不存在被误改的方向，perm 原样
         let mut c = test_conv("codex", "gpt-5.5", "full");
-        apply_brain_switch(&mut c, "claude", "sonnet");
+        apply_brain_switch(&mut c, "claude", "sonnet", false);
         assert_eq!(c.session_ref, "");
         assert_eq!(c.perm_mode, "full");
 
         // claude → grok：grok 有逐命令批准（ACP 权限桥），ask/auto 原样保留
         let mut c = test_conv("claude", "sonnet", "ask");
-        apply_brain_switch(&mut c, "grok", "");
+        apply_brain_switch(&mut c, "grok", "", false);
         assert_eq!(c.brain, "grok");
         assert_eq!(c.session_ref, "");
         assert_eq!(c.perm_mode, "ask");
 
         // 同厂商换档：session_ref 保留（还是同一条底层会话）
         let mut c = test_conv("claude", "sonnet", "ask");
-        apply_brain_switch(&mut c, "claude", "opus");
+        apply_brain_switch(&mut c, "claude", "opus", false);
         assert_eq!(c.session_ref, "sess-old");
         assert_eq!(c.perm_mode, "ask");
         assert_eq!(c.model, "opus");
@@ -2025,10 +2043,14 @@ fn set_conversation_model(
 /// 调用方随后必须走 rebuild_session 以历史摘要重建续跑（begin_rebuild 本就不要求已有 session）。
 /// effort 保留；codex 不支持逐命令确认，ask/auto 档按启动器同规则落到 full
 ///（claude/grok 都有逐命令批准，互切时 perm 原样保留）。
-fn apply_brain_switch(c: &mut Conversation, brain: &str, model: &str) {
+///
+/// ★ `is_ssh` 例外：远程连接下**绝不能**把 ask/auto 改写成 full。那里 codex 虽然仍没有本地逐命令闸，
+/// 但走 AI 桥的远程命令**照样逐条弹卡**（闸在 bridge.rs，与厂商无关）——那是 codex 仅剩的一道闸。
+/// 把它也拿掉，用户就会「明明选了自动，却在无人确认地动真机」。这是评审里的 critical，别改回去。
+fn apply_brain_switch(c: &mut Conversation, brain: &str, model: &str, is_ssh: bool) {
     if c.brain != brain {
         c.session_ref = String::new();
-        if brain == "codex" && (c.perm_mode == "ask" || c.perm_mode == "auto") {
+        if brain == "codex" && !is_ssh && (c.perm_mode == "ask" || c.perm_mode == "auto") {
             c.perm_mode = "full".into();
         }
     }
@@ -2052,17 +2074,18 @@ fn set_conversation_brain_model(
         if c.status == "running" {
             return Err("上一轮还在进行中，请稍候".into());
         }
-        // ★ 远程连接不给切到 Codex（规则本体见 agent::brain_ok_for_conn）。
-        // 这条路径尤其要堵死：apply_brain_switch 会把 codex 的 ask/auto 强推成 full，
-        // 而前端切完厂商立刻 rebuild_session 自动重跑 —— 一次「换个模型」的点击
-        // 就能让 AI 在真机上无确认地跑起来。
-        if let Ok(conn) = state.conns.get(&c.conn_id) {
-            agent::brain_ok_for_conn(&conn.kind, &brain)?;
-        }
     }
+    // ssh 对话切厂商时不许把 ask/auto 改写成 full（见 apply_brain_switch）——
+    // 前端切完会立刻 rebuild_session 自动重跑，静默升档等于一次点击就无确认地动了真机。
+    let is_ssh = state
+        .convos
+        .get(&conv_id)
+        .and_then(|c| state.conns.get(&c.conn_id).ok())
+        .map(|x| x.kind == "ssh")
+        .unwrap_or(false);
     state
         .convos
-        .mutate(&conv_id, now_secs(), move |c| apply_brain_switch(c, &brain, &model))
+        .mutate(&conv_id, now_secs(), move |c| apply_brain_switch(c, &brain, &model, is_ssh))
 }
 
 /// 会话进行中切换权限档位（plan/ask/auto/full）：仅改存储，下一轮 send_message 读到即用。
