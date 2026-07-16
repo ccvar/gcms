@@ -1203,7 +1203,12 @@ fn stop_preview(state: &AppState) {
 /// 在新窗口里打开一个连接（几台机器 / 几个站点并排看）。同一连接已有窗口就把它拎到前面。
 ///
 /// 窗口之间只是各自一份前端：连接表、对话、SSH 会话、权限待批都在 Rust 侧的同一份 AppState 里，
-/// 所以两个窗口看到的是同一份数据，不会分叉。新窗口靠 `?conn=<id>` 知道自己该开在哪个连接上。
+/// 所以两个窗口看到的是同一份数据，不会分叉。
+///
+/// **连接 id 走窗口 label（`conn-<id>`），不走 URL**：`WebviewUrl::App` 只有在路径**恰好**是
+/// "index.html" 时才直接用根 URL，带上 `?conn=…` 就会 join 成 `/index.html?conn=…` ——
+/// 而 SvelteKit 的 dev server 只认 `/`、不认 `/index.html`，那样开出来是一片白。
+/// label 本来就是现成的（上面判重就用它），前端读 `getCurrentWindow().label` 即可。
 #[tauri::command]
 async fn open_conn_window(
     app: AppHandle,
@@ -1224,7 +1229,8 @@ async fn open_conn_window(
     let mut b = tauri::WebviewWindowBuilder::new(
         &app,
         &label,
-        tauri::WebviewUrl::App(format!("index.html?conn={conn_id}").into()),
+        // 必须原样是 "index.html"：这条路径和主窗口走的是同一个分支（直接用根 URL）。
+        tauri::WebviewUrl::App("index.html".into()),
     )
     .title(&conn.name)
     .inner_size(1024.0, 700.0)

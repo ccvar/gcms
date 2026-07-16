@@ -1106,10 +1106,16 @@
   function faviconGuess(url?: string): string { const u = (url ?? '').trim(); return u ? u.replace(/\/+$/, '') + '/favicon.ico' : ''; }
   function siteFav(slug: string): string { const s = sites.find((x) => x.slug === slug); return s?.favicon || s?.logo || faviconGuess(s?.url); }
 
-  // 「新窗口打开」开出来的窗口带 ?conn=<id>：这一份前端就固定开在那个连接上。
+  // 「新窗口打开」开出来的窗口，label 是 `conn-<id>`：这一份前端就固定开在那个连接上。
   // （连接/对话/SSH 会话都在 Rust 侧同一份 AppState 里，多个窗口看到的是同一份数据。）
+  // 用 label 而不是 URL 参数：带 query 的 WebviewUrl::App 在 dev 下会指到 /index.html，
+  // 而 SvelteKit 只认 /，开出来是白屏。详见 lib.rs::open_conn_window。
+  const CONN_WIN_PREFIX = 'conn-';
   function bootConnId(): string {
-    try { return new URLSearchParams(location.search).get('conn') ?? ''; } catch { return ''; }
+    try {
+      const l = getCurrentWindow().label;
+      return l.startsWith(CONN_WIN_PREFIX) ? l.slice(CONN_WIN_PREFIX.length) : '';
+    } catch { return ''; }
   }
   async function refreshConns() {
     try {
@@ -3415,7 +3421,7 @@
             {:else}
               <!-- 面包屑：点哪一段跳哪一层。尾巴上那块空白本身是个按钮 ——
                    点它＝切成输入框直接敲路径（资源管理器那套），键盘也 Tab 得到。 -->
-              <div class="fcrumbs tin" bind:this={crumbEl}>
+              <div class="fcrumbs" bind:this={crumbEl}>
                 {#each sftpCrumbs as c, i (c.path)}
                   {#if i > 0}<span class="fcrumb-sep">›</span>{/if}
                   <button class="fcrumb" class:cur={c.path === sftpPath} disabled={sftpBusy} onclick={() => sftpGo(c.path)}>{c.name}</button>
@@ -4462,8 +4468,9 @@
   .files-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
   .files-bar { flex: none; display: flex; align-items: center; gap: 6px; padding: 10px 16px; border-bottom: 1px solid var(--border); }
   .fpath { flex: 1; min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
-  /* 面包屑：撑满路径栏（空白处可点＝改成输入框），路径深了横向滚动 */
-  .fcrumbs { flex: 1; min-width: 0; display: flex; align-items: center; gap: 1px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; cursor: text; padding: 3px 6px; }
+  /* 面包屑：不画框（它是一行路径，不是输入框——要输入点空白处会切成真的 input），
+     撑满路径栏，路径深了横向滚动 */
+  .fcrumbs { flex: 1; min-width: 0; display: flex; align-items: center; gap: 1px; overflow-x: auto; overflow-y: hidden; scrollbar-width: none; cursor: text; padding: 4px 2px; }
   .fcrumbs::-webkit-scrollbar { display: none; }
   .fcrumb { flex: none; border: 0; background: transparent; color: var(--dim); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; padding: 2px 5px; border-radius: 5px; cursor: pointer; white-space: nowrap; }
   .fcrumb:hover:not(:disabled) { background: var(--accent-soft); color: var(--text); }
