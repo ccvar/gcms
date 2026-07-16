@@ -1193,11 +1193,12 @@
       if (view === 'thread' || view === 'schedule' || view === 'tasks' || view === 'managed' || view === 'remote' || ((view === 'templates' || view === 'prompts') && conn?.kind !== 'cloudflare')) view = 'launcher';
     }
     if (conn?.kind === 'ssh') {
-      // SSH 连接没有站点/项目可发现。落在启动页（让 AI 干活是主路径），终端在侧栏一键可达。
+      // SSH 连接没有站点/项目可发现，也没有独立的启动页/对话页——**一切都在远程工作台里**
+      //（终端为主，底部对话、右侧文件按需开）。
       void probeOs(id); // 系统版本：没探过才连，探到就存着，之后一直是本地读
+      view = 'remote';
       if (switching) {
         disposeTerm();
-        view = 'launcher';
         // 远程连接绝不默认「全自动」：那是别人的真机，默认得让每条命令都过一次你的眼。
         if (lPerm === 'full') lPerm = 'auto';
         // Codex 在这里用不了（见 brainOkForConn）——从别的连接带过来的选择要换掉，
@@ -1426,6 +1427,41 @@
     }
   }
 
+  // ---------- 远程工作台：终端为主区，底部对话 / 右侧文件按需开（VS Code 那套） ----------
+  // 两个面板可以同时开，各自可拖改大小；开关与尺寸都记住。
+  let wbChat = $state(loadWbFlag('chat', true));
+  let wbFiles = $state(loadWbFlag('files', false));
+  let wbChatH = $state(loadWbSize('chatH', 260, 140, 900));
+  let wbFilesW = $state(loadWbSize('filesW', 380, 240, 900));
+  function loadWbFlag(k: string, def: boolean): boolean {
+    try { const v = localStorage.getItem('gcms.pilot.wb.' + k); return v === null ? def : v === '1'; } catch { return def; }
+  }
+  function loadWbSize(k: string, def: number, lo: number, hi: number): number {
+    try { const n = parseInt(localStorage.getItem('gcms.pilot.wb.' + k) || ''); return n >= lo && n <= hi ? n : def; } catch { return def; }
+  }
+  function saveWb(k: string, v: string) { try { localStorage.setItem('gcms.pilot.wb.' + k, v); } catch { /* */ } }
+  function toggleWbChat() { wbChat = !wbChat; saveWb('chat', wbChat ? '1' : '0'); }
+  function toggleWbFiles() { wbFiles = !wbFiles; saveWb('files', wbFiles ? '1' : '0'); }
+  /** 面板拖拽。dir=h：拖对话面板的上沿（往上拖＝更高）；dir=v：拖文件面板的左沿（往左拖＝更宽）。 */
+  function startWbResize(e: MouseEvent, dir: 'h' | 'v') {
+    e.preventDefault();
+    const x0 = e.clientX, y0 = e.clientY;
+    const h0 = wbChatH, w0 = wbFilesW;
+    const onMove = (ev: MouseEvent) => {
+      if (dir === 'h') wbChatH = Math.min(900, Math.max(140, Math.round(h0 - (ev.clientY - y0))));
+      else wbFilesW = Math.min(900, Math.max(240, Math.round(w0 - (ev.clientX - x0))));
+    };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      saveWb(dir === 'h' ? 'chatH' : 'filesW', String(dir === 'h' ? wbChatH : wbFilesW));
+    };
+    document.body.style.cursor = dir === 'h' ? 'row-resize' : 'col-resize';
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }
+
   // ---------- 远程终端（xterm + PTY 流） ----------
   const isSshConn = $derived(activeConn?.kind === 'ssh');
   let termEl = $state<HTMLDivElement | null>(null);
@@ -1448,6 +1484,20 @@
     if (term) { try { term.dispose(); } catch { /* */ } }
     term = null; termFit = null; termOn = false; termConnId = '';
   }
+  // 终端容器一变大小就重排：开关面板、拖面板边、拉窗口——一个 ResizeObserver 全包了，
+  // 不用在每个改布局的地方各记一次 fit()（漏一个就是花屏）。
+  $effect(() => {
+    const el = termEl;
+    if (!el) return;
+    let raf = 0;
+    const ro = new ResizeObserver(() => {
+      // 合并同一帧里的连续变化（拖拽时每像素都会触发）
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => { try { termFit?.fit(); } catch { /* 终端已拆 */ } });
+    });
+    ro.observe(el);
+    return () => { cancelAnimationFrame(raf); ro.disconnect(); };
+  });
   // 进 remote 视图且容器就位 → 起终端；切走/换连接由 $effect 的清理拆掉。
   $effect(() => {
     const id = activeConnId;
@@ -1502,7 +1552,6 @@
   // 视图＝可展开的树：sftpPath 是树根，每个目录的孩子按需加载后缓存在 sftpKids 里。
   type SftpEntry = { name: string; dir: boolean; link: boolean; perms: string; size: number; mtime: number };
   type SftpRow = SftpEntry & { path: string; depth: number };
-  let remoteTab = $state<'term' | 'files'>('term');
   let sftpConnId = ''; // 已加载文件列表所属的连接；换连接才重置，切页签不重置
   let sftpPath = $state('');
   let sftpPathDraft = $state('');
@@ -1514,20 +1563,15 @@
   let sftpBusy = $state(false);
   let sftpErr = $state('');
   let sftpXfer = $state(''); // 上传/下载进行中的提示文案
-  // 首次进文件页签或换了连接 → 从 home 起步；仅切页签回来则保留原目录。
+  // 首次开文件面板或换了连接 → 从 home 起步；关了再开则保留原目录。
   $effect(() => {
     const id = activeConnId;
-    if (view !== 'remote' || !isSshConn || remoteTab !== 'files' || !id) return;
+    if (view !== 'remote' || !isSshConn || !wbFiles || !id) return;
     if (sftpConnId === id) return;
     sftpConnId = id; sftpPath = ''; sftpPathDraft = ''; sftpErr = '';
     sftpKids = {}; sftpOpenDirs = new Set(); sftpSel = '';
     void sftpGo('');
   });
-  function backToTerm() {
-    remoteTab = 'term';
-    // term-wrap 是 display:none 藏起来的，回来时容器尺寸可能变了 → 重排一次
-    requestAnimationFrame(() => termFit?.fit());
-  }
   function sftpJoin(dir: string, name: string): string { return dir === '/' ? '/' + name : dir + '/' + name; }
   function parentOf(p: string): string { return p.replace(/\/[^/]+\/?$/, '') || '/'; }
   function baseOf(p: string): string { return p.split('/').filter(Boolean).pop() || p; }
@@ -1990,7 +2034,10 @@
 
   // ---------- 对话导航 ----------
   function newChat() {
-    view = 'launcher'; activeConvId = ''; activeConv = null; lDraft = '';
+    activeConvId = ''; activeConv = null; lDraft = '';
+    // 远程连接没有启动页：新对话＝把底部对话面板腾空（工作台留在原地，终端不断）。
+    if (isSshConn) { view = 'remote'; wbChat = true; saveWb('chat', '1'); }
+    else view = 'launcher';
     if (!lSite && sites.length) lSite = sites[0].slug;
     if (!brainUsable(lBrain)) lBrain = firstUsableBrain();
   }
@@ -1999,7 +2046,10 @@
     if (!c) { await refreshConvos(); return; }
     // 打开的对话可能属于别的连接（从搜索/任务链接进来）——切到它自己的连接，否则侧栏会把它过滤掉。
     if (c.conn_id !== activeConnId) activeConnId = c.conn_id;
-    activeConv = c; activeConvId = id; threadModel = c.model; threadPerm = c.perm_mode || 'full'; threadEffort = c.effort || ''; view = 'thread';
+    activeConv = c; activeConvId = id; threadModel = c.model; threadPerm = c.perm_mode || 'full'; threadEffort = c.effort || '';
+    // 远程连接的对话在工作台底部面板里开，不跳去独立对话页（那台机器的终端/文件得留在眼前）。
+    if (conns.find((x) => x.id === c.conn_id)?.kind === 'ssh') { view = 'remote'; wbChat = true; saveWb('chat', '1'); }
+    else view = 'thread';
     attachments = []; queued = null; // 换会话清掉未发送的附件 / 等待消息
     expandSite(c.site_slug);
     checkCfReady();
@@ -3086,10 +3136,7 @@
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div class="center launch-center" data-tauri-drag-region onmousedown={startDrag}>
         <div class="launcher">
-          {#if isSshConn}
-            <h1>让 AI 帮你管这台机器</h1>
-            <p class="sub">装软件、配服务、排障、加固——它每要在 <code class="ssh-host">{activeConn?.ssh_user}@{activeConn?.ssh_host}</code> 上跑一条命令，都会先给你看、等你点头。</p>
-          {:else if isCfConn}
+          {#if isCfConn}
             <h1>让 AI 帮你建个站</h1>
             <p class="sub">给项目起个名，描述你想要的网站——边聊边建，随时本地预览，满意了再部署到 Cloudflare。</p>
           {:else}
@@ -3443,21 +3490,61 @@
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <header class="thread-head" data-tauri-drag-region onmousedown={startDrag}>
         <div class="th-info"><b>远程连接</b><small>{activeConn?.ssh_user}@{activeConn?.ssh_host}:{activeConn?.ssh_port} · {termOn ? '已连接' : '未连接'}
-          {#if remoteTab === 'term'}
-            <button class="th-rfz" data-tip="重新连接" aria-label="重新连接" onclick={reconnectTerm}>{@render refreshIcon(false)}</button>
-          {/if}</small></div>
+          <button class="th-rfz" data-tip="重新连接" aria-label="重新连接" onclick={reconnectTerm}>{@render refreshIcon(false)}</button></small></div>
         <div class="rhead-acts">
-          <div class="rseg" role="tablist">
-            <button class="rseg-btn" class:on={remoteTab === 'term'} role="tab" aria-selected={remoteTab === 'term'} onclick={backToTerm}>终端</button>
-            <button class="rseg-btn" class:on={remoteTab === 'files'} role="tab" aria-selected={remoteTab === 'files'} onclick={() => (remoteTab = 'files')}>文件</button>
-          </div>
+          <!-- 两个面板开关（VS Code 那套）：终端始终是主区，这俩按需开、可同时开。 -->
+          <button class="wb-tg" class:on={wbChat} aria-pressed={wbChat} data-tip="底部对话框" aria-label="底部对话框" onclick={toggleWbChat}>
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><rect x="1.8" y="2.6" width="12.4" height="10.8" rx="2" stroke="currentColor" stroke-width="1.3" /><path d="M1.8 9.8h12.4" stroke="currentColor" stroke-width="1.3" /><rect x="1.8" y="9.8" width="12.4" height="3.6" fill="currentColor" opacity=".9" /></svg>
+          </button>
+          <button class="wb-tg" class:on={wbFiles} aria-pressed={wbFiles} data-tip="右侧文件" aria-label="右侧文件" onclick={toggleWbFiles}>
+            <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><rect x="1.8" y="2.6" width="12.4" height="10.8" rx="2" stroke="currentColor" stroke-width="1.3" /><path d="M9.6 2.6v10.8" stroke="currentColor" stroke-width="1.3" /><path d="M9.6 2.6h2.6a2 2 0 0 1 2 2v6.8a2 2 0 0 1-2 2H9.6z" fill="currentColor" opacity=".9" /></svg>
+          </button>
         </div>
       </header>
-      <!-- 终端自己管滚动：别套 .thread（它的 overflow-y:auto 会和 xterm 打架）。
-           切到文件页签时只藏不拆：拆了 xterm 的 DOM 就没了，回来还得重连。 -->
-      <div class="term-wrap" class:hid={remoteTab !== 'term'}><div class="term" bind:this={termEl}></div></div>
-      {#if remoteTab === 'files'}
-        <div class="files-wrap" style="--fw-perm:{colW.perm}px; --fw-size:{colW.size}px; --fw-date:{colW.date}px">
+      <!-- 工作台：终端占主区，底部对话 / 右侧文件按需开，两条分隔线可拖。
+           终端的尺寸变化交给 ResizeObserver 自动 fit（见 startTerm 上面那个 $effect）。 -->
+      <div class="wb">
+        <div class="wb-main">
+          <!-- 终端自己管滚动：别套 .thread（它的 overflow-y:auto 会和 xterm 打架）。 -->
+          <div class="term-wrap"><div class="term" bind:this={termEl}></div></div>
+          {#if wbChat}
+            <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+            <div class="wb-split h" title="拖动调整高度" role="separator" aria-orientation="horizontal" onmousedown={(e) => startWbResize(e, 'h')}></div>
+            <div class="wb-chat" style="height:{wbChatH}px">
+              {#if activeConv && activeConv.conn_id === activeConnId}
+                {@render convPane()}
+              {:else}
+                <!-- 还没有对话：这里就是起点（发出去就新建一条，走 startChat 那套） -->
+                <div class="wb-start">
+                  <div class="composer">
+                    <textarea bind:value={lDraft} use:autogrow rows="2" placeholder="让 AI 在这台机器上做点什么…例如：看看装了什么，帮我装上 Docker"
+                      oncompositionstart={() => (composing = true)} oncompositionend={() => (composing = false)}
+                      onkeydown={(e) => onComposerKey(e, startChat)}></textarea>
+                    <div class="composer-bar">
+                      <div class="cb-left"><span class="ssh-target">{@render sshMark(13)}{activeConn?.ssh_user}@{activeConn?.ssh_host}</span></div>
+                      <div class="cb-right">
+                        <Dropdown compact bind:value={lPerm} options={permOptsFor(lBrain, true)} tone={permTone(lPerm)} />
+                        <ModelFx options={comboOpts} value={`${lBrain}::${lModel}`} effort={lEffort} onpick={pickCombo} oneffort={(v: string) => { lEffort = v; prefs.effort = v; savePrefs(prefs); }} />
+                        <button class="send" onclick={startChat} disabled={!lDraft.trim() || !brainUsable(lBrain) || !brainOkForConn(lBrain, true)} title="发送（Enter）">↑</button>
+                      </div>
+                    </div>
+                  </div>
+                  {#if !brainOkForConn(lBrain, true)}
+                    <p class="hint warn-text">{CODEX_SSH_NOTE}。请换 Claude 或 Grok——它们能在每条远程命令前停下来等你确认。</p>
+                  {:else if !brainUsable(lBrain)}
+                    <p class="hint warn-text">所选厂商未就绪，点左下角设置里「去授权」。</p>
+                  {:else if lPerm === 'full'}
+                    <p class="hint warn-text">「全自动」档下，AI 在这台机器上跑命令<b>不会问你</b>——包括删数据、改配置、重启。</p>
+                  {/if}
+                </div>
+              {/if}
+            </div>
+          {/if}
+        </div>
+        {#if wbFiles}
+          <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+          <div class="wb-split v" title="拖动调整宽度" role="separator" aria-orientation="vertical" onmousedown={(e) => startWbResize(e, 'v')}></div>
+          <aside class="files-wrap" style="width:{wbFilesW}px; --fw-perm:{colW.perm}px; --fw-size:{colW.size}px; --fw-date:{colW.date}px">
           <div class="files-bar">
             <button class="fbtn" aria-label="上一级" data-tip="上一级" onclick={sftpUp} disabled={sftpBusy || !sftpPath || sftpPath === '/'}><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M8 12.5v-9M4.2 7.3 8 3.5l3.8 3.8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
             {#if sftpPathEdit}
@@ -3526,8 +3613,9 @@
               {/each}
             {/if}
           </div>
-        </div>
-      {/if}
+        </aside>
+        {/if}
+      </div>
 
     {:else if view === 'prompts'}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -3572,115 +3660,7 @@
         {/if}
       </header>
 
-      <div class="thread" bind:this={threadEl}>
-        <div class="thread-inner">
-          {#each shownMessages as m, i (i)}
-            {@render bubble(m, i === shownMessages.length - 1)}
-          {/each}
-          {#if viewBusy && liveView}
-            <div class="msg assistant">
-              <div class="body">
-                {#if liveView.tools.length}{@render cmds(liveView.tools)}{/if}
-                <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
-                {#if liveView.text}<div class="text md" onclick={mdClick} onauxclick={mdClick}>{@html mdRender(liveView.text)}</div>{/if}
-                {#if liveView.error}<div class="err-note">{liveView.error}</div>
-                {:else}
-                  <div class="working" aria-label="思考中">
-                    <svg class="wl" viewBox="0 0 64 64" width="17" height="17" aria-hidden="true">
-                      <path class="wl-trace" d="M44 24a14 14 0 1 0 0 16" fill="none" stroke="#a03c2b" stroke-width="7" stroke-linecap="round" pathLength="100" stroke-dasharray="100" />
-                      <circle class="wl-dot" cx="45.5" cy="42" r="4.6" fill="#a03c2b" />
-                    </svg>
-                    <span class="working-t">{elapsedLabel(nowMs - liveView.startedAt)}</span>
-                  </div>
-                {/if}
-              </div>
-            </div>
-          {/if}
-          {#each activePermits as p (p.id)}
-            <div class="msg assistant">
-              <div class="permit-card" class:danger={p.dangerous}>
-                <div class="permit-head"><span class="permit-dot"></span>需要你确认这个操作{#if p.dangerous}<span class="permit-tag">危险 · 对线上生效</span>{/if}</div>
-                <div class="permit-desc">{permitDesc(p)}</div>
-                <div class="permit-meta">{p.tool === 'SSH' ? '远程命令' : p.tool}{#if p.tool === 'SSH' && p.arg} · {p.arg}{/if}{#if p.mode === 'ask'} · 询问档{/if}</div>
-                {#if p.cmd}
-                  {#if p.tool === 'SSH'}
-                    <!-- 远程命令不给收起：它要在用户的真机上跑，不看着它就没法做决定。 -->
-                    <code class="permit-cmd">{p.cmd}</code>
-                  {:else if permitCmdOpen.has(p.id)}
-                    <button class="permit-more" onclick={() => togglePermitCmd(p.id)}>收起命令 ▴</button>
-                    <code class="permit-cmd">{p.cmd}</code>
-                  {:else}
-                    <button class="permit-more" onclick={() => togglePermitCmd(p.id)}>查看具体命令 ▸</button>
-                  {/if}
-                {/if}
-                <div class="permit-act">
-                  <button class="btn sm" onclick={() => respondPermit(p.id, false)}>拒绝</button>
-                  <button class="btn sm primary" onclick={() => respondPermit(p.id, true)}>批准</button>
-                </div>
-              </div>
-            </div>
-          {/each}
-        </div>
-      </div>
-
-      <div class="composer-wrap">
-        {#if activeConvIsCf}
-          <div class="cf-bar">
-            <span class="tipwrap" data-tip={cfReady ? '在本机跑起来看效果（关预览窗即停）' : '先让 AI 建出页面再预览'}><button class="cb-prev" onclick={startPreview} disabled={previewBusy || !cfReady}><svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M1.6 8s2.4-4.4 6.4-4.4S14.4 8 14.4 8s-2.4 4.4-6.4 4.4S1.6 8 1.6 8Z" stroke="currentColor" stroke-width="1.2" /><circle cx="8" cy="8" r="1.9" stroke="currentColor" stroke-width="1.2" /></svg>{previewBusy ? '启动中…' : '预览'}</button></span>
-            <span class="tipwrap" data-tip={cfReady ? '发布到 Cloudflare 上线' : '先让 AI 建出页面再部署'}><button class="cb-prev" onclick={fillDeploy} disabled={viewBusy || !cfReady}><svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M8 12.5V4M4.5 7 8 3.5 11.5 7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>部署</button></span>
-            <span class="tipwrap" data-tip={cfReady ? '存成模板，以后一键复用' : '先让 AI 建出页面再存'}><button class="cb-prev dim" onclick={openSaveTmpl} disabled={!cfReady}><svg width="12" height="12" viewBox="0 0 16 16" fill="none"><rect x="2.6" y="2.6" width="4.3" height="4.3" rx="1" stroke="currentColor" stroke-width="1.3" /><rect x="9.1" y="2.6" width="4.3" height="4.3" rx="1" stroke="currentColor" stroke-width="1.3" /><rect x="2.6" y="9.1" width="4.3" height="4.3" rx="1" stroke="currentColor" stroke-width="1.3" /><rect x="9.1" y="9.1" width="4.3" height="4.3" rx="1" stroke="currentColor" stroke-width="1.3" /></svg>存模板</button></span>
-          </div>
-        {/if}
-        <div class="composer">
-          {#if queued && queued.convId === activeConvId}
-            <div class="queued-row">
-              <span class="queued-ic"><svg width="13" height="13" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.3" /><path d="M8 4.7V8l2.2 1.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" /></svg></span>
-              <span class="queued-t">等这轮结束后发送：{queued.text || '（仅附件）'}{#if queued.atts.length} · {queued.atts.length} 个文件{/if}</span>
-              <button class="queued-btn" onclick={editQueued}>编辑</button>
-              <button class="queued-x" aria-label="清除等待消息" onclick={clearQueued}>×</button>
-            </div>
-          {/if}
-          {#if attachments.length}
-            <div class="attach-row">
-              {#each attachments as a, i (a.path)}
-                <div class="attach-chip">
-                  {#if a.preview}<img class="attach-img" src={a.preview} alt="" />{:else}<span class="attach-ic"><svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M9 1.8H4.5A1.3 1.3 0 0 0 3.2 3.1v9.8a1.3 1.3 0 0 0 1.3 1.3h7a1.3 1.3 0 0 0 1.3-1.3V5.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /><path d="M9 1.8v3.7h3.8" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /></svg></span>{/if}
-                  <span class="attach-name" title={a.name}>{a.name}</span>
-                  <button class="attach-x" aria-label="移除附件" onclick={() => removeAttachment(i)}>×</button>
-                </div>
-              {/each}
-              {#if attaching}<span class="attach-loading">上传中…</span>{/if}
-            </div>
-          {/if}
-          <textarea bind:value={draft} bind:this={draftEl} use:autogrow rows="1" placeholder={viewBusy ? '输入下一条，回车排队，等这轮结束自动发送' : '继续说…（Enter 发送，Shift+Enter 换行，可粘贴/拖入文件）'}
-            oncompositionstart={() => (composing = true)} oncompositionend={() => (composing = false)}
-            onpaste={onComposerPaste} ondrop={onComposerDrop} ondragover={onComposerDragOver}
-            onkeydown={(e) => onComposerKey(e, viewBusy ? queueMessage : send)}></textarea>
-          <div class="composer-bar">
-            <div class="cb-left">
-              {#if activeConvIsCf}
-                <span class="cb-ro" title="项目已固定"><span class="cb-ro-t">{activeConv?.site_slug}</span></span>
-              {:else}
-                <span class="cb-ro" title={(activeConv?.site_slugs?.length ?? 0) > 1 ? convSitesTip(activeConv) : '会话的站点已固定，不可更改'}><SiteFav src={siteFav(activeConv?.site_slug ?? '')} label={activeConv?.site_slug ?? ''} size={15} /><span class="cb-ro-t">{activeConv?.site_name || activeConv?.site_slug}</span></span>
-              {/if}
-            </div>
-            <div class="cb-right">
-              <Dropdown compact bind:value={threadPerm} options={permOptsFor(activeConv?.brain ?? 'claude', isSshConn)} tone={permTone(threadPerm)} onchange={persistThreadPerm} />
-              <!-- 模型下拉列全部厂商（图标区分）：同厂商下一轮生效；跨厂商确认后以历史摘要重建续跑 -->
-              <ModelFx options={threadComboOpts} value={`${activeConv?.brain ?? 'claude'}::${threadModel}`} effort={threadEffort} lockModel={viewBusy} onpick={(v: string) => { void pickThreadCombo(v); }} oneffort={persistThreadEffort} />
-              <UsageRing ctx={activeConv?.ctx_tokens ?? 0} limit={ctxLimitAdaptive(activeConv?.brain ?? 'claude', activeConv?.model ?? '', activeConv?.ctx_tokens ?? 0)} total={activeConv?.total_tokens ?? 0} />
-              {#if viewBusy}
-                {#if draft.trim() || attachments.length}
-                  <button class="send queue" onclick={queueMessage} title="排队：等这轮结束后自动发送">↑</button>
-                {/if}
-                <button class="send stop" onclick={stop} title="停止">■</button>
-              {:else}
-                <button class="send" onclick={send} disabled={!draft.trim() && !attachments.length} title="发送（Enter）">↑</button>
-              {/if}
-            </div>
-          </div>
-        </div>
-      </div>
+      {@render convPane()}
     {/if}
   </section>
 </main>
@@ -3852,6 +3832,121 @@
 
 {#snippet gearIcon()}<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M2 5.3h3.5M9.3 5.3H14M2 10.7h5.1M10.9 10.7H14" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" /><circle cx="7.4" cy="5.3" r="1.6" stroke="currentColor" stroke-width="1.3" /><circle cx="9" cy="10.7" r="1.6" stroke="currentColor" stroke-width="1.3" /></svg>{/snippet}
 {#snippet cfMark(size: number)}<svg class="cf-mark" width={size} height={size} viewBox="0 0 128 128"><path fill="#fff" d="m115.679 69.288l-15.591-8.94l-2.689-1.163l-63.781.436v32.381h82.061z" /><path fill="#f38020" d="M87.295 89.022c.763-2.617.472-5.015-.8-6.796c-1.163-1.635-3.125-2.58-5.488-2.689l-44.737-.581c-.291 0-.545-.145-.691-.363s-.182-.509-.109-.8c.145-.436.581-.763 1.054-.8l45.137-.581c5.342-.254 11.157-4.579 13.192-9.885l2.58-6.723c.109-.291.145-.581.073-.872c-2.906-13.158-14.644-22.97-28.672-22.97c-12.938 0-23.913 8.359-27.838 19.952a13.35 13.35 0 0 0-9.267-2.58c-6.215.618-11.193 5.597-11.811 11.811c-.145 1.599-.036 3.162.327 4.615C10.104 70.051 2 78.337 2 88.549c0 .909.073 1.817.182 2.726a.895.895 0 0 0 .872.763h82.57c.472 0 .909-.327 1.054-.8z" /><path fill="#faae40" d="M101.542 60.275c-.4 0-.836 0-1.236.036c-.291 0-.545.218-.654.509l-1.744 6.069c-.763 2.617-.472 5.015.8 6.796c1.163 1.635 3.125 2.58 5.488 2.689l9.522.581c.291 0 .545.145.691.363s.182.545.109.8c-.145.436-.581.763-1.054.8l-9.924.582c-5.379.254-11.157 4.579-13.192 9.885l-.727 1.853c-.145.363.109.727.509.727h34.089c.4 0 .763-.254.872-.654c.581-2.108.909-4.325.909-6.614c0-13.447-10.975-24.422-24.458-24.422" /></svg>{/snippet}
+<!-- 对话主体（消息 + 输入框）。抽成 snippet 是为了两处共用同一份：
+     独立的对话页，和远程工作台底部的对话面板。所有状态都是模块级的，直接用即可。
+     注意 bind:this={threadEl} —— 同一时刻只会渲染一处（对话页与远程视图互斥），不会打架。 -->
+{#snippet convPane()}
+  <div class="thread" bind:this={threadEl}>
+    <div class="thread-inner">
+      {#each shownMessages as m, i (i)}
+        {@render bubble(m, i === shownMessages.length - 1)}
+      {/each}
+      {#if viewBusy && liveView}
+        <div class="msg assistant">
+          <div class="body">
+            {#if liveView.tools.length}{@render cmds(liveView.tools)}{/if}
+            <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
+            {#if liveView.text}<div class="text md" onclick={mdClick} onauxclick={mdClick}>{@html mdRender(liveView.text)}</div>{/if}
+            {#if liveView.error}<div class="err-note">{liveView.error}</div>
+            {:else}
+              <div class="working" aria-label="思考中">
+                <svg class="wl" viewBox="0 0 64 64" width="17" height="17" aria-hidden="true">
+                  <path class="wl-trace" d="M44 24a14 14 0 1 0 0 16" fill="none" stroke="#a03c2b" stroke-width="7" stroke-linecap="round" pathLength="100" stroke-dasharray="100" />
+                  <circle class="wl-dot" cx="45.5" cy="42" r="4.6" fill="#a03c2b" />
+                </svg>
+                <span class="working-t">{elapsedLabel(nowMs - liveView.startedAt)}</span>
+              </div>
+            {/if}
+          </div>
+        </div>
+      {/if}
+      {#each activePermits as p (p.id)}
+        <div class="msg assistant">
+          <div class="permit-card" class:danger={p.dangerous}>
+            <div class="permit-head"><span class="permit-dot"></span>需要你确认这个操作{#if p.dangerous}<span class="permit-tag">危险 · 对线上生效</span>{/if}</div>
+            <div class="permit-desc">{permitDesc(p)}</div>
+            <div class="permit-meta">{p.tool === 'SSH' ? '远程命令' : p.tool}{#if p.tool === 'SSH' && p.arg} · {p.arg}{/if}{#if p.mode === 'ask'} · 询问档{/if}</div>
+            {#if p.cmd}
+              {#if p.tool === 'SSH'}
+                <!-- 远程命令不给收起：它要在用户的真机上跑，不看着它就没法做决定。 -->
+                <code class="permit-cmd">{p.cmd}</code>
+              {:else if permitCmdOpen.has(p.id)}
+                <button class="permit-more" onclick={() => togglePermitCmd(p.id)}>收起命令 ▴</button>
+                <code class="permit-cmd">{p.cmd}</code>
+              {:else}
+                <button class="permit-more" onclick={() => togglePermitCmd(p.id)}>查看具体命令 ▸</button>
+              {/if}
+            {/if}
+            <div class="permit-act">
+              <button class="btn sm" onclick={() => respondPermit(p.id, false)}>拒绝</button>
+              <button class="btn sm primary" onclick={() => respondPermit(p.id, true)}>批准</button>
+            </div>
+          </div>
+        </div>
+      {/each}
+    </div>
+  </div>
+
+  <div class="composer-wrap">
+    {#if activeConvIsCf}
+      <div class="cf-bar">
+        <span class="tipwrap" data-tip={cfReady ? '在本机跑起来看效果（关预览窗即停）' : '先让 AI 建出页面再预览'}><button class="cb-prev" onclick={startPreview} disabled={previewBusy || !cfReady}><svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M1.6 8s2.4-4.4 6.4-4.4S14.4 8 14.4 8s-2.4 4.4-6.4 4.4S1.6 8 1.6 8Z" stroke="currentColor" stroke-width="1.2" /><circle cx="8" cy="8" r="1.9" stroke="currentColor" stroke-width="1.2" /></svg>{previewBusy ? '启动中…' : '预览'}</button></span>
+        <span class="tipwrap" data-tip={cfReady ? '发布到 Cloudflare 上线' : '先让 AI 建出页面再部署'}><button class="cb-prev" onclick={fillDeploy} disabled={viewBusy || !cfReady}><svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M8 12.5V4M4.5 7 8 3.5 11.5 7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>部署</button></span>
+        <span class="tipwrap" data-tip={cfReady ? '存成模板，以后一键复用' : '先让 AI 建出页面再存'}><button class="cb-prev dim" onclick={openSaveTmpl} disabled={!cfReady}><svg width="12" height="12" viewBox="0 0 16 16" fill="none"><rect x="2.6" y="2.6" width="4.3" height="4.3" rx="1" stroke="currentColor" stroke-width="1.3" /><rect x="9.1" y="2.6" width="4.3" height="4.3" rx="1" stroke="currentColor" stroke-width="1.3" /><rect x="2.6" y="9.1" width="4.3" height="4.3" rx="1" stroke="currentColor" stroke-width="1.3" /><rect x="9.1" y="9.1" width="4.3" height="4.3" rx="1" stroke="currentColor" stroke-width="1.3" /></svg>存模板</button></span>
+      </div>
+    {/if}
+    <div class="composer">
+      {#if queued && queued.convId === activeConvId}
+        <div class="queued-row">
+          <span class="queued-ic"><svg width="13" height="13" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="currentColor" stroke-width="1.3" /><path d="M8 4.7V8l2.2 1.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" /></svg></span>
+          <span class="queued-t">等这轮结束后发送：{queued.text || '（仅附件）'}{#if queued.atts.length} · {queued.atts.length} 个文件{/if}</span>
+          <button class="queued-btn" onclick={editQueued}>编辑</button>
+          <button class="queued-x" aria-label="清除等待消息" onclick={clearQueued}>×</button>
+        </div>
+      {/if}
+      {#if attachments.length}
+        <div class="attach-row">
+          {#each attachments as a, i (a.path)}
+            <div class="attach-chip">
+              {#if a.preview}<img class="attach-img" src={a.preview} alt="" />{:else}<span class="attach-ic"><svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M9 1.8H4.5A1.3 1.3 0 0 0 3.2 3.1v9.8a1.3 1.3 0 0 0 1.3 1.3h7a1.3 1.3 0 0 0 1.3-1.3V5.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /><path d="M9 1.8v3.7h3.8" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /></svg></span>{/if}
+              <span class="attach-name" title={a.name}>{a.name}</span>
+              <button class="attach-x" aria-label="移除附件" onclick={() => removeAttachment(i)}>×</button>
+            </div>
+          {/each}
+          {#if attaching}<span class="attach-loading">上传中…</span>{/if}
+        </div>
+      {/if}
+      <textarea bind:value={draft} bind:this={draftEl} use:autogrow rows="1" placeholder={viewBusy ? '输入下一条，回车排队，等这轮结束自动发送' : '继续说…（Enter 发送，Shift+Enter 换行，可粘贴/拖入文件）'}
+        oncompositionstart={() => (composing = true)} oncompositionend={() => (composing = false)}
+        onpaste={onComposerPaste} ondrop={onComposerDrop} ondragover={onComposerDragOver}
+        onkeydown={(e) => onComposerKey(e, viewBusy ? queueMessage : send)}></textarea>
+      <div class="composer-bar">
+        <div class="cb-left">
+          {#if activeConvIsCf}
+            <span class="cb-ro" title="项目已固定"><span class="cb-ro-t">{activeConv?.site_slug}</span></span>
+          {:else}
+            <span class="cb-ro" title={(activeConv?.site_slugs?.length ?? 0) > 1 ? convSitesTip(activeConv) : '会话的站点已固定，不可更改'}><SiteFav src={siteFav(activeConv?.site_slug ?? '')} label={activeConv?.site_slug ?? ''} size={15} /><span class="cb-ro-t">{activeConv?.site_name || activeConv?.site_slug}</span></span>
+          {/if}
+        </div>
+        <div class="cb-right">
+          <Dropdown compact bind:value={threadPerm} options={permOptsFor(activeConv?.brain ?? 'claude', isSshConn)} tone={permTone(threadPerm)} onchange={persistThreadPerm} />
+          <!-- 模型下拉列全部厂商（图标区分）：同厂商下一轮生效；跨厂商确认后以历史摘要重建续跑 -->
+          <ModelFx options={threadComboOpts} value={`${activeConv?.brain ?? 'claude'}::${threadModel}`} effort={threadEffort} lockModel={viewBusy} onpick={(v: string) => { void pickThreadCombo(v); }} oneffort={persistThreadEffort} />
+          <UsageRing ctx={activeConv?.ctx_tokens ?? 0} limit={ctxLimitAdaptive(activeConv?.brain ?? 'claude', activeConv?.model ?? '', activeConv?.ctx_tokens ?? 0)} total={activeConv?.total_tokens ?? 0} />
+          {#if viewBusy}
+            {#if draft.trim() || attachments.length}
+              <button class="send queue" onclick={queueMessage} title="排队：等这轮结束后自动发送">↑</button>
+            {/if}
+            <button class="send stop" onclick={stop} title="停止">■</button>
+          {:else}
+            <button class="send" onclick={send} disabled={!draft.trim() && !attachments.length} title="发送（Enter）">↑</button>
+          {/if}
+        </div>
+      </div>
+    </div>
+  </div>
+{/snippet}
+
 <!-- 列宽手柄：坐在定宽列的左边缘上（就是列头之间那根分隔线）。做成 button 是为了键盘也够得着
      （←/→ 微调），顺带免掉给 div 挂事件的一堆 a11y 警告。 -->
 {#snippet colGrip(k: 'perm' | 'size' | 'date')}
@@ -4510,9 +4605,24 @@
 {/if}
 
 <style>
-  /* 远程终端：终端自己管滚动，容器不能给 overflow-y:auto（会和 xterm 打架）。 */
+  /* 远程工作台：终端主区 + 底部对话 + 右侧文件（VS Code 那套）。
+     每层都 min-*:0 —— flex 子项默认 min-size:auto，不清零的话终端撑着不缩、面板挤不出来。 */
+  .wb { flex: 1; min-height: 0; display: flex; }
+  .wb-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+  .wb-chat { flex: none; min-height: 0; display: flex; flex-direction: column; border-top: 1px solid var(--border); background: var(--bg); }
+  .wb-start { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; justify-content: flex-end; gap: 6px; padding: 12px 16px; }
+  .wb-start .composer { margin: 0; }
+  /* 分隔线：命中区比看到的粗，好抓 */
+  .wb-split { flex: none; background: transparent; z-index: 2; }
+  .wb-split.h { height: 5px; margin-bottom: -5px; cursor: row-resize; }
+  .wb-split.v { width: 5px; margin-right: -5px; cursor: col-resize; }
+  .wb-split:hover { background: var(--accent-soft); }
+  /* 面板开关（头部两枚 VS Code 式图标） */
+  .wb-tg { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 26px; border: 1px solid transparent; background: transparent; color: var(--faint); border-radius: 7px; cursor: pointer; -webkit-app-region: no-drag; }
+  .wb-tg:hover { color: var(--dim); background: var(--rail); }
+  .wb-tg.on { color: var(--text); background: var(--accent-soft); }
+  /* 终端：自己管滚动，容器不能给 overflow-y:auto（会和 xterm 打架）。 */
   .term-wrap { flex: 1; min-height: 0; overflow: hidden; background: #1c1917; padding: 8px 10px; }
-  .term-wrap.hid { display: none; }
   .term { width: 100%; height: 100%; }
   /* xterm 的滚动条：它给 viewport 钉了 overflow-y:scroll + background:#000（xterm.css 原话是
      「On OS X this is required in order for the scroll bar to appear fully opaque」），
@@ -4537,8 +4647,8 @@
   .rseg { display: flex; background: var(--accent-soft); border-radius: 8px; padding: 2px; }
   .rseg-btn { border: 0; background: transparent; color: var(--dim); font-size: 12.5px; padding: 4px 14px; border-radius: 6px; cursor: pointer; }
   .rseg-btn.on { background: var(--bg); color: var(--text); box-shadow: 0 1px 2px rgba(0, 0, 0, .08); }
-  /* 远程文件面板 */
-  .files-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  /* 远程文件面板（工作台右栏；宽度由 wbFilesW 内联给） */
+  .files-wrap { flex: none; min-height: 0; display: flex; flex-direction: column; border-left: 1px solid var(--border); background: var(--bg); }
   .files-bar { flex: none; display: flex; align-items: center; gap: 6px; padding: 10px 16px; border-bottom: 1px solid var(--border); }
   .fpath { flex: 1; min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
   /* 面包屑：不画框（它是一行路径，不是输入框——要输入点空白处会切成真的 input），
