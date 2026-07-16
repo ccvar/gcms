@@ -1429,6 +1429,7 @@
 
   // ---------- 远程工作台：终端为主区，底部对话 / 右侧文件按需开（VS Code 那套） ----------
   // 两个面板可以同时开，各自可拖改大小；开关与尺寸都记住。
+  let wbTerm = $state(loadWbFlag('term', true));
   let wbChat = $state(loadWbFlag('chat', true));
   let wbStartEl = $state<HTMLTextAreaElement | null>(null); // 起点输入框（新对话后把光标送进去）
   let wbFiles = $state(loadWbFlag('files', false));
@@ -1441,7 +1442,15 @@
     try { const n = parseInt(localStorage.getItem('gcms.pilot.wb.' + k) || ''); return n >= lo && n <= hi ? n : def; } catch { return def; }
   }
   function saveWb(k: string, v: string) { try { localStorage.setItem('gcms.pilot.wb.' + k, v); } catch { /* */ } }
-  function toggleWbChat() { wbChat = !wbChat; saveWb('chat', wbChat ? '1' : '0'); }
+  /** 终端与对话不能同时关掉：那样主区就是一块空白（右侧文件栏不占主区）。关一个就把另一个开上。 */
+  function toggleWbTerm() {
+    wbTerm = !wbTerm; saveWb('term', wbTerm ? '1' : '0');
+    if (!wbTerm && !wbChat) { wbChat = true; saveWb('chat', '1'); }
+  }
+  function toggleWbChat() {
+    wbChat = !wbChat; saveWb('chat', wbChat ? '1' : '0');
+    if (!wbChat && !wbTerm) { wbTerm = true; saveWb('term', '1'); }
+  }
   function toggleWbFiles() { wbFiles = !wbFiles; saveWb('files', wbFiles ? '1' : '0'); }
   /** 面板拖拽。dir=h：拖对话面板的上沿（往上拖＝更高）；dir=v：拖文件面板的左沿（往左拖＝更宽）。 */
   function startWbResize(e: MouseEvent, dir: 'h' | 'v') {
@@ -2043,6 +2052,7 @@
     viewAfterConvGone();
     if (isSshConn) {
       if (!wbChat) { wbChat = true; saveWb('chat', '1'); }
+      wbTerm = loadWbFlag('term', true); // 还原你自己的偏好（翻旧对话时是临时收起的，见 openConv）
       requestAnimationFrame(() => wbStartEl?.focus());
     }
     if (!lSite && sites.length) lSite = sites[0].slug;
@@ -2054,9 +2064,15 @@
     // 打开的对话可能属于别的连接（从搜索/任务链接进来）——切到它自己的连接，否则侧栏会把它过滤掉。
     if (c.conn_id !== activeConnId) activeConnId = c.conn_id;
     activeConv = c; activeConvId = id; threadModel = c.model; threadPerm = c.perm_mode || 'full'; threadEffort = c.effort || '';
-    // 远程连接的对话在工作台底部面板里开，不跳去独立对话页（那台机器的终端/文件得留在眼前）。
-    if (conns.find((x) => x.id === c.conn_id)?.kind === 'ssh') { view = 'remote'; wbChat = true; saveWb('chat', '1'); }
-    else view = 'thread';
+    // 远程连接的对话在工作台里开，不跳去独立对话页。
+    // 翻旧对话是来「读」的：收起命令行让对话占满 —— 一条 260px 的缝里读不了聊天记录。
+    // ★ 这里**故意不写偏好**：这只是「看这条记录时」的临时布局。写进去的话，你之后点「新对话」
+    //   命令行也不回来了。偏好只由你手动点图标决定（见 toggleWbTerm），新对话时按偏好还原。
+    if (conns.find((x) => x.id === c.conn_id)?.kind === 'ssh') {
+      view = 'remote';
+      if (!wbChat) { wbChat = true; saveWb('chat', '1'); }
+      wbTerm = false;
+    } else view = 'thread';
     attachments = []; queued = null; // 换会话清掉未发送的附件 / 等待消息
     expandSite(c.site_slug);
     checkCfReady();
@@ -2104,6 +2120,7 @@
     if (conns.find((c) => c.id === optimistic.conn_id)?.kind === 'ssh') {
       view = 'remote';
       if (!wbChat) { wbChat = true; saveWb('chat', '1'); }
+      wbTerm = loadWbFlag('term', true); // 开跑＝要看着它干活：按偏好把命令行还原（旧对话那次是临时收的）
     } else {
       view = 'thread';
     }
@@ -3505,7 +3522,10 @@
         <div class="th-info"><small class="rhead-line">{activeConn?.ssh_user}@{activeConn?.ssh_host}:{activeConn?.ssh_port} · {termOn ? '已连接' : '未连接'}
           <button class="th-rfz" data-tip="重新连接" aria-label="重新连接" onclick={reconnectTerm}><svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M13.4 8a5.4 5.4 0 1 1-1.6-3.8M13.6 2.6v3.2h-3.2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg></button></small></div>
         <div class="rhead-acts">
-          <!-- 两个面板开关（VS Code 那套）：终端始终是主区，这俩按需开、可同时开。 -->
+          <!-- 三个面板开关（VS Code 那套）：命令行 / 底部对话 / 右侧文件，各自可开可关、可同时开。 -->
+          <button class="wb-tg" class:on={wbTerm} aria-pressed={wbTerm} data-tip="命令行窗口" aria-label="命令行窗口" onclick={toggleWbTerm}>
+            {@render sshMark(15)}
+          </button>
           <button class="wb-tg" class:on={wbChat} aria-pressed={wbChat} data-tip="底部对话框" aria-label="底部对话框" onclick={toggleWbChat}>
             <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><rect x="1.8" y="2.6" width="12.4" height="10.8" rx="2" stroke="currentColor" stroke-width="1.3" /><path d="M1.8 9.8h12.4" stroke="currentColor" stroke-width="1.3" /><rect x="1.8" y="9.8" width="12.4" height="3.6" fill="currentColor" opacity=".9" /></svg>
           </button>
@@ -3518,12 +3538,17 @@
            终端的尺寸变化交给 ResizeObserver 自动 fit（见 startTerm 上面那个 $effect）。 -->
       <div class="wb">
         <div class="wb-main">
-          <!-- 终端自己管滚动：别套 .thread（它的 overflow-y:auto 会和 xterm 打架）。 -->
-          <div class="term-wrap"><div class="term" bind:this={termEl}></div></div>
+          <!-- 终端自己管滚动：别套 .thread（它的 overflow-y:auto 会和 xterm 打架）。
+               ★ 关掉命令行只是 display:none **藏起来**，绝不拆 DOM —— 拆了 xterm 就没了，
+               回来还得重连一次（连接是真的，掉一次要重登服务器）。 -->
+          <div class="term-wrap" class:hid={!wbTerm}><div class="term" bind:this={termEl}></div></div>
           {#if wbChat}
-            <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-            <div class="wb-split h" title="拖动调整高度" role="separator" aria-orientation="horizontal" onmousedown={(e) => startWbResize(e, 'h')}></div>
-            <div class="wb-chat" style="height:{wbChatH}px">
+            {#if wbTerm}
+              <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+              <div class="wb-split h" title="拖动调整高度" role="separator" aria-orientation="horizontal" onmousedown={(e) => startWbResize(e, 'h')}></div>
+            {/if}
+            <!-- 命令行关着时对话吃满整个主区（固定高度只在两者共存时才有意义） -->
+            <div class="wb-chat" class:solo={!wbTerm} style={wbTerm ? `height:${wbChatH}px` : ''}>
               {#if activeConv && activeConv.conn_id === activeConnId}
                 {@render convPane()}
               {:else}
@@ -4625,6 +4650,7 @@
   .wb { flex: 1; min-height: 0; display: flex; }
   .wb-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
   .wb-chat { flex: none; min-height: 0; display: flex; flex-direction: column; border-top: 1px solid var(--border); background: var(--bg); }
+  .wb-chat.solo { flex: 1; border-top: 0; }
   /* 起点输入框：贴着面板底（justify-content:flex-end），面板矮时也不顶头。
      ★ .composer 必须显式 width:100% —— 它自带 `margin:0 auto`，而这里是 flex 列容器，
      交叉轴上的 auto margin 会**压制 stretch**，不给宽度它就缩成 textarea 的默认宽（~192px）。
@@ -4642,11 +4668,17 @@
   .wb-tg:hover { color: var(--dim); }
   .wb-tg.on { color: var(--text); }
   .wb-tg.on:hover { color: var(--accent-h); }
-  /* 工作台头部：单行，比常规 thread-head 矮一截 */
+  /* 工作台头部：单行，比常规 thread-head 矮一截。
+     ★ margin-top:0 是必须的 —— `.th-info small` 那 2px 是给它上面那行标题留的空隙，
+     而这里标题已经去掉了，留着就是净偏移，文字会比右边的图标低 2px（对不上一条水平线）。 */
   .thread-head.slim { padding-top: 8px; padding-bottom: 8px; }
-  .rhead-line { display: flex; align-items: center; gap: 5px; }
+  /* 选择器要带上 .th-info small，否则压不过 `.th-info small` 那条（它带元素选择器，分更高）——
+     实测：只写 .rhead-line 的话 margin-top 仍是 2px，文字比图标低 1px。 */
+  .th-info small.rhead-line { display: flex; align-items: center; gap: 5px; margin-top: 0; }
   /* 终端：自己管滚动，容器不能给 overflow-y:auto（会和 xterm 打架）。 */
   .term-wrap { flex: 1; min-height: 0; overflow: hidden; background: #1c1917; padding: 8px 10px; }
+  /* 关掉命令行＝只藏不拆：DOM 留着，xterm 和 SSH 会话都不掉，开回来立刻还在。 */
+  .term-wrap.hid { display: none; }
   .term { width: 100%; height: 100%; }
   /* xterm 的滚动条：它给 viewport 钉了 overflow-y:scroll + background:#000（xterm.css 原话是
      「On OS X this is required in order for the scroll bar to appear fully opaque」），
