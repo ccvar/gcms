@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>RL-C420 Aluminium Folding Camp Chair &mdash; OEM Specs, MOQ &amp; FOB Pricing | Ridgeline Outdoor</title>
 <meta name="description" content="RL-C420 aluminium folding camp chair for OEM and private label: 6061-T6 frame, 600D seat, 150 kg static load, MOQ 500 pcs, FOB Ningbo USD 12.20-14.80, 35-day lead time, full carton and container loading data.">
-<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Crect%20width='32'%20height='32'%20rx='4'%20fill='%230F5D3C'/%3E%3Cpath%20d='M4%2023l7-9%204.5%205.5L19%2015l9%208z'%20fill='none'%20stroke='%23ffffff'%20stroke-width='2.2'%20stroke-linejoin='round'%20stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Crect%20width='32'%20height='32'%20rx='4'%20fill='%230F5D3C'/%3E%3Cpath%20d='M5%2023L12%209l4.5%208.5L21.5%2012.5%2027%2023z'%20fill='%23ffffff'/%3E%3Crect%20x='5'%20y='25'%20width='22'%20height='2'%20rx='1'%20fill='%23ffffff'%20fill-opacity='.5'/%3E%3C/svg%3E">
 <style>
   /* ═══════════════════════════════════════════════════════════
      RIDGELINE OUTDOOR · 外贸工厂（OEM/ODM 出口制造商）起始模板
@@ -51,7 +51,7 @@
 
     /* ——— 字号阶梯 14/16/20/28/40 ——— */
     --t-xs:14px; --t-sm:16px; --t-md:20px; --t-lg:28px; --t-xl:40px;
-    --t-2xs:11px;          /* 例外档：只给 logo 锁定块的副名用，别拿它排正文 */
+    --t-2xs:11px;          /* 例外档：只给角标/图纸标注这类**标签**用，别拿它排正文 */
 
     --container:1120px;
     --measure:660px;       /* 长文阅读宽度上限 */
@@ -75,6 +75,11 @@
   h1,h2,h3,h4{margin:0;line-height:1.25;font-weight:700;letter-spacing:-.01em;}
   p{margin:0;}
   ul,ol{margin:0;padding:0;list-style:none;}
+  /* ★ dl/dd 也得归零：reset 只清了 p/ul/ol，<dl> 还留着 UA 的 margin:1em 0、
+     <dd> 还留着 margin-inline-start:40px。这不是洁癖 —— hero 图纸的标题栏是 <dl>，
+     那 16px 的 UA 上下边距会在标题栏上下**各裂一条缝**，把图纸网格(::before)漏出来。
+     各处自己写了 margin 的（.pspec/.buy-key…）特指度更高，照旧生效。 */
+  dl,dd{margin:0;}
   a{color:inherit;text-decoration:none;}
   svg{display:block;max-width:100%;}
   table{border-collapse:collapse;width:100%;}
@@ -119,6 +124,25 @@
     margin:0 0 var(--s3);
   }
   .ink .eyebrow{color:var(--accent-lift);}
+  /* .eyebrow 的「带前导规」变体：hero 和内页页头共用，给页面开头一个硬起手 */
+  .kick{
+    display:inline-flex;align-items:center;gap:var(--s3);
+    font-family:var(--mono);font-size:var(--t-xs);
+    letter-spacing:.14em;text-transform:uppercase;color:var(--accent);
+  }
+  .kick::before{content:"";width:28px;height:2px;background:var(--accent);flex:none;}
+  .ink .kick{color:var(--accent-lift);}
+  .ink .kick::before{background:var(--accent-lift);}
+  /* ★ 图纸抬头：小标靠左、「示例内容」徽标靠右，一条细线收口。
+     四页开头都用它 —— 首页 hero 和内页页头同一个节奏，站才像一个站。
+     必须占满 .wrap 的整宽：这俩都是等宽字，加起来 ~670px，塞进 490px 的左栏必然换行。 */
+  .sheet-top{
+    position:relative;
+    display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;
+    gap:var(--s3) var(--s5);
+    padding-bottom:var(--s5);margin-bottom:var(--s5);
+    border-bottom:1px solid var(--line);
+  }
   .h2{font-size:var(--t-lg);}
   .h3{font-size:var(--t-md);}
   .lede{font-size:var(--t-md);line-height:1.7;color:var(--muted);max-width:var(--measure);}
@@ -204,16 +228,24 @@
     border-bottom:1px solid var(--line);
   }
   .nav-in{display:flex;align-items:center;gap:var(--s5);min-height:64px;}
+  /* ★ 品牌锁定：**单行**。上一版是「圆角方块图标 ＋ 粗体名 ＋ <br> ＋ 等宽加字距副名」，
+     两行硬塞进 64px 的头里 —— 副名和主名光学重量打架，被点名说「太拉胯」。这版三件事：
+     ① 图标换**实心山脊剪影**，不套方块（corp 是「圆角方块 + 白描边字形」，一眼分得开）；
+     ② 字标单行双色：Ridgeline 700 墨色 ／ Outdoor 400 次要色 —— 一行读完，重量自然分层；
+     ③ 副名 "Outdoor Mfg." 删掉：头里它只是噪音，全称在页脚 .foot-brand p 里写全了。
+     white-space:nowrap 是硬要求：字标断行就等于回到上一版的两行挤。 */
   .brand{display:flex;align-items:center;gap:var(--s3);flex:none;}
-  .brand-mark{width:32px;height:32px;flex:none;}
-  .brand-name{font-weight:700;font-size:var(--t-md);letter-spacing:-.02em;}
-  .brand-sub{
-    font-family:var(--mono);font-size:var(--t-2xs);letter-spacing:.16em;
-    color:var(--muted);text-transform:uppercase;line-height:1;
+  .brand-mark{width:30px;height:30px;flex:none;color:var(--accent);}
+  .brand-name{
+    font-size:var(--t-md);font-weight:400;letter-spacing:-.01em;
+    color:var(--muted);white-space:nowrap;line-height:1.2;
   }
-  /* --muted 是给浅底调的，落到深色带上只有 2.6:1 —— 深色带一律换 --ink-muted */
-  .ink .brand-sub{color:var(--ink-muted);}
-  .brand:hover .brand-name{color:var(--accent);}
+  .brand-name b{font-weight:700;color:var(--text);letter-spacing:-.03em;}
+  .brand:hover .brand-name b{color:var(--accent);}
+  /* --accent/--muted/--text 都是给浅底调的，落到深色带上最低只有 2.3:1 —— 深色带一律换 */
+  .ink .brand-mark{color:var(--accent-lift);}
+  .ink .brand-name{color:var(--ink-muted);}
+  .ink .brand-name b{color:var(--surface);}
   .nav-links{display:flex;align-items:center;gap:var(--s5);margin-left:auto;}
   .nav-links a{
     font-size:var(--t-xs);color:var(--muted);font-weight:500;
@@ -226,9 +258,12 @@
   }
   .nav-links a:hover{color:var(--text);}
   .nav-links a:hover::after{transform:scaleX(1);}
-  /* 当前页：留色 + 加粗 + 常驻下划线，不只靠颜色区分 */
-  .nav-links a[aria-current="page"]{color:var(--text);font-weight:700;}
-  .nav-links a[aria-current="page"]::after{transform:scaleX(1);}
+  /* 当前位置：留色 + 加粗 + 常驻下划线，不只靠颜色区分。
+     选择器用 [aria-current] 而不是 [aria-current="page"]，是为了同时罩住 ="true"：
+     product.html 是产品详情页，它**不是** products.html —— 给 Products 挂 ="page" 是在撒谎。
+     详情页的 ="page" 归面包屑里那个真实当前项；导航里的父级只标 ="true"（集合中的当前项）。 */
+  .nav-links a[aria-current]{color:var(--text);font-weight:700;}
+  .nav-links a[aria-current]::after{transform:scaleX(1);}
   .nav-cta{flex:none;}
 
   /* ——————————————— 面包屑 ——————————————— */
@@ -237,14 +272,19 @@
     font-size:var(--t-xs);color:var(--muted);
     padding:var(--s5) 0 0;
   }
+  /* 面包屑收进 .sheet-top 时，上边距交给抬头本身，别叠两份 */
+  .sheet-top > nav .crumb{padding-top:0;}
   .crumb a:hover{color:var(--accent);text-decoration:underline;text-underline-offset:3px;}
   .crumb li{display:flex;align-items:center;gap:var(--s2);}
   .crumb li+li::before{content:"/";color:var(--line-strong);}
   .crumb [aria-current="page"]{color:var(--text);font-weight:600;}
 
   /* ——————————————— 页头（内页） ——————————————— */
-  .phead{padding:var(--s6) 0 var(--s7);border-bottom:1px solid var(--line);}
-  .phead h1{font-size:var(--t-xl);letter-spacing:-.03em;margin:var(--s4) 0 var(--s4);}
+  /* 抬头交给共用的 .sheet-top；这里只管 h1 —— 字距/行高和首页 hero 的 h1 逐字一致 */
+  /* 下边距从 s7 收到 s5：后面 .section 自己还带 s7 的上边距，原本两者相加是 128px 空白，
+     在 728px 高的预览窗里等于把页面真正的主角（目录 / RFQ 表单）整个推出首屏。 */
+  .phead{padding:var(--s6) 0 var(--s5);border-bottom:1px solid var(--line);}
+  .phead h1{font-size:var(--t-xl);letter-spacing:-.035em;line-height:1.1;margin:0 0 var(--s4);}
 
   /* ——————————————— 产品卡（首页主打 / 目录 / 相关产品共用） ——————————————— */
   .pgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--s5);}
@@ -302,7 +342,6 @@
     display:grid;grid-template-columns:1.5fr repeat(3,1fr);
     gap:var(--s6);padding-bottom:var(--s6);border-bottom:1px solid var(--ink-line);
   }
-  .foot-brand .brand-name{color:var(--surface);}
   /* 限宽用 em 不用 ch：ch 按「0」字形宽算，拿它限宽会让层级倒挂 */
   .foot-brand p{margin-top:var(--s4);font-size:var(--t-xs);color:var(--ink-muted);max-width:34em;line-height:1.8;}
   .foot h4{
@@ -380,7 +419,11 @@
   .buy-top{display:flex;flex-wrap:wrap;align-items:center;gap:var(--s3);}
   .buy-lede{color:var(--muted);font-size:var(--t-sm);line-height:1.8;}
   .buy-key{
-    display:grid;grid-template-columns:repeat(3,1fr);gap:var(--s4);
+    display:grid;
+    /* 三格不能等宽：中间那格装的是价格区间「$12.20-14.80」，20px 等宽要 ~144px，
+       等分到 1024 的右栏只剩 ~132px → 大数字从中间断行。中间加宽、两边收窄；
+       两边是小字说明，折成两行无所谓，价格断行不行。 */
+    grid-template-columns:.8fr 1.45fr .8fr;gap:var(--s4);
     margin:var(--s5) 0;padding:var(--s5) 0;
     border-top:1px solid var(--line);border-bottom:1px solid var(--line);
   }
@@ -483,7 +526,7 @@
   }
   .inq-side li svg{width:16px;height:16px;color:var(--accent);flex:none;margin-top:4px;}
 
-  @media (max-width:1024px){
+  @media (max-width:900px){
     .pdp{grid-template-columns:1fr;gap:var(--s6);}
     .two-col{grid-template-columns:1fr;gap:var(--s6);}
     .pack-layout{grid-template-columns:1fr;gap:var(--s6);}
@@ -491,7 +534,7 @@
     .gal-view svg{max-height:240px;}
   }
   @media (max-width:560px){
-    .buy-key{grid-template-columns:1fr;gap:var(--s3);}
+    .buy-key{grid-template-columns:1fr;gap:var(--s3);}  /* 单列后不再有宽度之争 */
     .buy-actions .btn{width:100%;}
     .opt{grid-template-columns:1fr;gap:var(--s3);}
     .opt p,.buy-lede,.inq-side li{font-size:var(--t-sm);}
@@ -564,8 +607,11 @@
     .checks{grid-template-columns:1fr;}
   }
 
-  /* ═══════════════ 响应式：1024 / 860 / 560（共用部分） ═══════════════ */
-  @media (max-width:1024px){
+  /* ═══════════════ 响应式：900 / 860 / 560（共用部分） ═══════════════ */
+  /* ★ 断点绝不许落在 1024：预览窗正好 1024×728（lib.rs .inner_size），
+     max-width:1024px 在那儿是闭区间**必中** —— 用户唯一看得到的宽度
+     会永远是塌掉的那一版。1024 现在走完整的桌面版式。 */
+  @media (max-width:900px){
     .pgrid{grid-template-columns:repeat(2,1fr);}
     .foot-grid{grid-template-columns:1fr 1fr;gap:var(--s6) var(--s5);}
   }
@@ -603,14 +649,17 @@
 <a class="skip" href="#main">Skip to main content</a>
 <header class="nav">
 <div class="wrap nav-in">
-<a class="brand" href="index.html" aria-label="Ridgeline Outdoor — home"><svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="4" fill="var(--accent)"/><path d="M4 23l7-9 4.5 5.5L19 15l9 8z" fill="none" stroke="var(--surface)" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/></svg><span><span class="brand-name">Ridgeline</span><br><span class="brand-sub">Outdoor Mfg.</span></span></a>
-<nav class="nav-links" aria-label="Main"><a href="index.html">Home</a><a href="index.html#why">Why Us</a><a href="products.html">Products</a><a href="index.html#process">Process</a><a href="index.html#certs">Certifications</a><a href="contact.html">Contact</a></nav>
+<a class="brand" href="index.html" aria-label="Ridgeline Outdoor — home"><svg class="brand-mark" viewBox="0 0 30 30" aria-hidden="true"><path d="M1.5 22L9.5 5.5l5.5 10L21 11l7.5 11z" fill="currentColor"/><rect x="1.5" y="24.5" width="27" height="2.5" rx="1.25" fill="currentColor" opacity=".38"/></svg><span class="brand-name"><b>Ridgeline</b> Outdoor</span></a>
+<nav class="nav-links" aria-label="Main"><a href="index.html">Home</a><a href="index.html#why">Why Us</a><a href="products.html" aria-current="true">Products</a><a href="index.html#process">Process</a><a href="index.html#certs">Certifications</a><a href="contact.html">Contact</a></nav>
 <a class="btn btn-primary btn-sm nav-cta" href="contact.html">Get a Quote</a>
 </div>
 </header>
 <main id="main">
 <div class="wrap">
+<div class="sheet-top">
 <nav aria-label="Breadcrumb"><ol class="crumb"><li><a href="index.html">Home</a></li><li><a href="products.html">Products</a></li><li><a href="products.html#catalog">Camp furniture</a></li><li><span aria-current="page">RL-C420</span></li></ol></nav>
+<p class="demo-badge">Sample content &middot; replace before launch</p>
+</div>
 <div class="pdp">
 <div class="gal">
 <input class="gal-in" type="radio" name="gal" id="g1" checked aria-label="Full view, open">
@@ -703,7 +752,7 @@
 </div>
 </div>
 <div class="buy">
-<div class="buy-top"><span class="tag">RL-C420</span><span class="demo-badge">Sample content &middot; replace before launch</span></div>
+<div class="buy-top"><span class="tag">RL-C420</span></div>
 <h1>Aluminium Folding Camp Chair</h1>
 <p class="buy-lede">Our highest-volume model: a 6061-T6 frame with a 600D PVC-coated seat, tested to 150 kg static load and 100,000 fold cycles. 640,000 pcs shipped in 2025 across 14 private-label brands.</p>
 <dl class="buy-key">
@@ -899,7 +948,7 @@
 <div class="wrap foot-in">
 <div class="foot-grid">
 <div class="foot-brand">
-<span class="brand"><svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="4" fill="var(--accent-lift)"/><path d="M4 23l7-9 4.5 5.5L19 15l9 8z" fill="none" stroke="var(--ink)" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/></svg><span><span class="brand-name">Ridgeline</span><br><span class="brand-sub">Outdoor Mfg.</span></span></span>
+<span class="brand"><svg class="brand-mark" viewBox="0 0 30 30" aria-hidden="true"><path d="M1.5 22L9.5 5.5l5.5 10L21 11l7.5 11z" fill="currentColor"/><rect x="1.5" y="24.5" width="27" height="2.5" rx="1.25" fill="currentColor" opacity=".38"/></svg><span class="brand-name"><b>Ridgeline</b> Outdoor</span></span>
 <p>Ningbo Ridgeline Outdoor Products Co., Ltd. (sample company). OEM &amp; ODM manufacturer of camp furniture, coolers, shelters and packs since 2006. In-house tooling, 6 assembly lines, BSCI-audited plant.</p>
 </div>
 <div><h4>Products</h4><ul><li><a href="products.html#catalog">Camp furniture</a></li><li><a href="products.html#catalog">Coolers &amp; insulated</a></li><li><a href="products.html#catalog">Tents &amp; sleep</a></li><li><a href="products.html#catalog">Packs &amp; bags</a></li></ul></div>

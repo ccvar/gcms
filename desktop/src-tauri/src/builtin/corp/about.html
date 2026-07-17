@@ -174,7 +174,12 @@
   .nav-in{display:flex;align-items:center;gap:var(--s5);min-height:64px;}
   .brand{display:flex;align-items:center;gap:var(--s3);flex:none;}
   .brand-mark{width:32px;height:32px;flex:none;}
-  .brand-name{font-weight:700;font-size:var(--t-md);letter-spacing:-.02em;}
+  /* 中英两行的锁定块：**行距必须自己说了算**，别交给继承。
+     原来是 <br> 换行 + 各自不设行高 → 中文名吃 body 的 1.7（20px 的字撑出 34px 行盒，白多 14px），
+     第二行还要被外层 span 的 strut（16px×1.7=27.2px）再撑一次 —— 两行硬生生隔开 15px，
+     整块 61px 高，logo 才 32px。改成 flex 列 + 定量 gap，两行贴合，整块和 logo 齐高。 */
+  .brand>span{display:flex;flex-direction:column;gap:2px;}
+  .brand-name{font-weight:700;font-size:var(--t-md);letter-spacing:-.02em;line-height:1.1;}
   .brand-sub{
     font-family:var(--mono);font-size:var(--t-2xs);letter-spacing:.16em;
     color:var(--muted);text-transform:uppercase;line-height:1;
@@ -404,8 +409,10 @@
   }
   .foot-legal{display:flex;flex-wrap:wrap;gap:var(--s2) var(--s4);align-items:center;}
 
-  /* ═══════════════ 响应式：1024 / 860 / 560 ═══════════════ */
-  @media (max-width:1024px){
+  /* ═══════════════ 响应式：900 / 860 / 560 ═══════════════ */
+  /* 别把这档挪回 1024：预览窗正好 1024 宽，max-width:1024px 是闭区间会命中，
+     首屏直接塌成单列、右半边全空。断点要避开 1024 这个「真的会被看到」的宽度。 */
+  @media (max-width:900px){
     .intro-layout{grid-template-columns:1fr;gap:var(--s6);}
     .qms{grid-template-columns:repeat(3,1fr);gap:var(--s6) var(--s5);}
     .cta-in{grid-template-columns:1fr;gap:var(--s5);}
@@ -462,7 +469,7 @@
               stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
       </svg>
       <span>
-        <span class="brand-name">恒测传感</span><br>
+        <span class="brand-name">恒测传感</span>
         <span class="brand-sub">Hengce Sensing</span>
       </span>
     </a>
@@ -896,7 +903,7 @@
                   stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
           <span>
-            <span class="brand-name">恒测传感</span><br>
+            <span class="brand-name">恒测传感</span>
             <span class="brand-sub">Hengce Sensing</span>
           </span>
         </span>
