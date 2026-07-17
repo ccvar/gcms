@@ -864,12 +864,15 @@ mod workdir_tests {
     use super::*;
 
     /// 预览端口被别人占着时的行为——这正是「预览打开的不是对应页面」那个 bug。
+    ///
+    /// ★ 占位用**通配地址** `0.0.0.0`（真实现场就是这样：别的 app 绑 `*:8788`）。
+    /// 这一条是刻意的：第一版用 bind 探端口，在通配占位下会被 SO_REUSEADDR 骗过去说「空闲」，
+    /// 于是挑中一个有人在听的端口。用 127.0.0.1 占位的测试**发现不了**这个 bug。
     #[test]
     fn preview_port_dodges_a_taken_port() {
-        // 占住一个端口，模拟「机器上别的程序正听着预览端口」
-        let squatter = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let squatter = std::net::TcpListener::bind(("0.0.0.0", 0)).unwrap();
         let taken = squatter.local_addr().unwrap().port();
-        assert!(port_taken(taken));
+        assert!(port_taken(taken), "通配占位下必须判定为「被占」（bind 探测在这里会说谎）");
 
         // 默认 wrangler 路径：必须自动让开，绝不能还用那个被占的端口
         let (cmd, port) = preview_cmd(None, "", taken).unwrap();
@@ -1253,20 +1256,28 @@ struct PreviewHandle {
 
 const PREVIEW_DEFAULT_PORT: u16 = 8788;
 
-/// 从 want 起往上找一个本机没被占用的端口。
+/// 端口上是否真有服务在听。
 ///
-/// ★ 为什么必须找而不是写死 8788：**机器上任何别的东西占着 8788，预览就会开出别人的页面**。
-/// 真撞到过：用户另一个 app 正听着 8788 → `wrangler --port 8788` 绑不上（spawn 本身还是「成功」的，
-/// 失败发生在 wrangler 进程内部），而 Pilot 照样按 8788 开窗 —— 窗里是那个 app 的页面，
-/// 看起来就是「预览打开的不是对应的页面」，且毫无线索。内置模板没有 pilot.json，永远吃默认端口，
-/// 所以这条必踩。
-fn free_port(want: u16) -> Option<u16> {
-    (want..want.saturating_add(64)).find(|p| std::net::TcpListener::bind(("127.0.0.1", *p)).is_ok())
+/// ★★ **必须用 connect 探，不能用 bind 探**（第一版就栽在这，实测过）：
+/// macOS/BSD 上 `SO_REUSEADDR`（Rust 的 `TcpListener::bind` **默认就设**）允许在别人已经绑了
+/// **通配** `*:8788` 的情况下，照样绑上**具体**的 `127.0.0.1:8788` —— 于是 bind 高高兴兴说「空闲」，
+/// 而那个端口上真有服务在听。实测：别的 app 占着 `*:8788` 时 `bind(127.0.0.1:8788)` 返回成功、
+/// 同时 `connect(127.0.0.1:8788)` 也成功。用 bind 探 = 挑中一个「看着空、其实有人」的端口，
+/// 浏览器过去就是别人的页面 —— 正是要修的那个 bug 换了个姿势复发。
+///
+/// connect 才是对的判据：连得通＝真有人听＝浏览器过去看到的就是他 —— 这正是我们要防的那件事。
+/// （没人听时 macOS 立刻 ECONNREFUSED，扫端口不会卡。）
+fn port_taken(port: u16) -> bool {
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(150)).is_ok()
 }
 
-/// 端口已被别的进程占着？（自定义 dev 命令把端口写死在命令里，我们改不了，只能先探明。）
-fn port_taken(port: u16) -> bool {
-    std::net::TcpListener::bind(("127.0.0.1", port)).is_err()
+/// 从 want 起往上找一个没人在听的端口。
+///
+/// 为什么必须找而不是写死 8788：机器上任何别的东西占着它，预览就会开出**别人的页面**
+/// （用户真机上另一个 app 一直听着 8788）。内置模板没有 pilot.json、永远吃默认端口，所以必踩。
+fn free_port(want: u16) -> Option<u16> {
+    (want..want.saturating_add(64)).find(|p| !port_taken(*p))
 }
 
 /// 等预览服务真的能连上。替掉写死的 2.5s：机器慢就白屏、起不来也照样开窗，两头不讨好。
