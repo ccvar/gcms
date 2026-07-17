@@ -1775,10 +1775,18 @@
       if (ev.type === 'data' && ev.b64) t.write(b64ToBytes(ev.b64));
       else if (ev.type === 'closed') {
         termOn = false;
-        t.write(`\r\n\x1b[90m—— 连接已关闭${ev.error ? '：' + ev.error : ''} ——\x1b[0m\r\n`);
+        t.write(`\r\n\x1b[90m—— 连接已关闭${ev.error ? '：' + ev.error : ''}，按回车重新连接 ——\x1b[0m\r\n`);
       }
     };
-    t.onData((d) => { void invoke('ssh_input', { connId: id, b64: strToB64(d) }); });
+    t.onData((d) => {
+      // 关闭态：回车＝就地重连（iTerm/VS Code 的肌肉记忆），其余按键不再灌进死管道；
+      // 连接中（termBusy）也别触发，免得连点回车叠一队重连。
+      if (!termOn) {
+        if (d.includes('\r') && !termBusy) void reconnectTerm();
+        return;
+      }
+      void invoke('ssh_input', { connId: id, b64: strToB64(d) });
+    });
     t.onResize(({ cols, rows }) => { void invoke('ssh_resize', { connId: id, cols, rows }); });
     // 「正在连接」用浮层（见 .term-connecting），**不往终端里写**：
     // 写进去就是终端缓冲的一部分，连上之后擦不干净（服务器的 banner 可能已经跟着来了，
@@ -5225,17 +5233,12 @@
      侧栏分隔线在 Windows 去掉——通高的 border-right 会在圆角上方留一截两侧同色的「悬空线头」；
      边界靠 rail/main 底色对比 + 圆角呈现（Codex 客户端同款做法）。 */
   .app.win { background: var(--rail); }
-  /* 圆角去掉：以前页头没底色，.main 的白直接顶到窗沿，这个 12px 圆角是「白面板嵌在 rail 色窗框里」
-     的收边，看着自然。现在页头有了暖底（rgb 249,248,244）——**和 DWM 刷的标题栏 --rail 几乎同色**
-     （见 style_titlebar_windows），页头于是糊进窗框，这个圆角就单独露出来成了一道台阶。
-     方角到底更干净。 */
-  .app.win .main { background: var(--bg); }
+  /* 圆角回归：当初去掉它是因为页头有暖底、和 DWM 窗框几乎同色，圆角单独露成一道台阶；
+     暖底已拿掉（0.2.22），.main 的白又直接顶到窗沿——12px 圆角恢复「白面板嵌在 rail 色
+     窗框里」的收边（用户实测：背景拿掉后这里正常了）。
+     顶栏左缘那条竖线也随之取消：白/rail 色差已经把边界撑起来了，再画线反而多余。 */
+  .app.win .main { background: var(--bg); border-top-left-radius: 12px; }
   .app.win .rail { border-right: none; }
-  /* Windows 页头「孤立」的根子：rail 去掉了通高分隔线，边界全靠 rail/main 底色差——可页头自己的
-     暖底和 rail 几乎同色，到了顶栏这一段边界就彻底消失，标题像悬在窗框里。给顶栏左缘补一条只有
-     页头高的竖线，把 rail 边界在这一段接回来（正文段仍靠色差，不回悬空线头的老坑）；
-     侧栏折叠后左边没有 rail，不画。 */
-  .app.win:not(.rail-collapsed) .thread-head { border-left: 1px solid var(--border); }
 
   /* 细滚动条（macOS overlay 风格）：细、圆角、透明轨道，thumb 用 padding-box 内缩显得更细。 */
   :global(::-webkit-scrollbar) { width: 10px; height: 10px; }
