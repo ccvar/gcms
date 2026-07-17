@@ -967,6 +967,30 @@
     return base < 1_000_000 && ctx > base * 0.95 ? 1_000_000 : base;
   }
   // 拖动窗口：忽略交互元素（按钮/输入等），否则点它们会误触发拖动。
+  /** 页头「抬升」：内容真滑到它底下时才淡入阴影、把那条线淡掉（见 .thread-head 的注释）。
+   *
+   *  ★ 一处监听管全部视图：scroll 事件**不冒泡、但会捕获**，所以在 document 上抓一次就能收到
+   *  任意视图里 .thread 的滚动 —— 不必逐视图挂钩子（7 个页头 / 6 个 .thread 分散在同一条
+   *  {#if} 链里，同一时刻只挂一个）。判定靠**结构约定**（.thread 的前一个兄弟是 .thread-head），
+   *  所以新增视图照现有写法写就自动继承，不用记得注册。
+   *  写歪了（比如把 .thread 包了一层）→ 取不到页头 → 直接 no-op，退回今天的样子：
+   *  是「没变好」，不是「坏了」—— 这个退化方向是选它而不选纯 CSS 方案的关键。
+   *
+   *  迟滞（4 上 / 1 下）不是洁癖：惯性滚动和触控板会在 0~1px 抖，用 >0 判定会让阴影反复
+   *  淡入淡出，看着就是闪。 */
+  $effect(() => {
+    const onScroll = (e: Event) => {
+      const el = e.target as HTMLElement | null;
+      if (!el?.classList?.contains('thread')) return;
+      const head = el.previousElementSibling; // 注释节点不算元素，convPane 那种 {@render} 锚点跳得过去
+      if (!head?.classList.contains('thread-head')) return;
+      const up = head.classList.contains('elevated');
+      head.classList.toggle('elevated', el.scrollTop > (up ? 1 : 4));
+    };
+    document.addEventListener('scroll', onScroll, true); // capture：scroll 不冒泡
+    return () => document.removeEventListener('scroll', onScroll, true);
+  });
+
   function startDrag(e: MouseEvent) {
     if (e.button !== 0) return;
     const t = e.target as HTMLElement;
@@ -5443,7 +5467,18 @@
      不然上下就不对称（原来 5/13，下面明显空一截）。头因此比以前矮 8px，这是这条对齐的代价。
      ★ align-items 必须 flex-start，不能用 center：th-info 比右侧按钮（28px）矮时
      （例如只有标题、没有副标题的头），center 会让 th-info 跟着按钮居中，标题又掉到 26.8。 */
-  .thread-head { flex: none; padding: 5px 24px; border-bottom: 1px solid var(--border); display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  /* ★ 和内容区之间那条缝：原来是一条 1px 实线直接把两块切开，太硬。**两个状态分开治**：
+     ① 静止态（治「硬」）：给页头一层极淡的暖底。有了色阶差，分隔就不再需要一条实线，
+        border 随之降到几乎看不见。**刻意不上 backdrop-filter**：实测它只会把卡片的红字
+        糊成粉影漂在标题背后（是噪点不是层次），还要赔上脱流 + ResizeObserver +
+        三处 scrollIntoView 的静默回归 —— 而静止态的收益 100% 来自这层暖色，模糊一点没参与。
+     ② 滚动态（治「切」）：见 .elevated —— 内容真滑到底下时才淡入柔和阴影、把线淡掉。
+        滚到顶时页头底下是**空的**，那时打阴影＝给不存在的遮挡关系编故事
+        （同 .term-wrap.with-chat 那条「独占/无对话时不加，保持齐边」的分寸）。
+     z-index：阴影得压在 .thread 之上 —— .thread 是后面的兄弟，默认会盖住它。 */
+  .thread-head { flex: none; padding: 5px 24px; background: rgba(248, 246, 242, .82); border-bottom: 1px solid rgba(30, 25, 15, .05); position: relative; z-index: 1; transition: box-shadow .18s ease, border-bottom-color .18s ease; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  /* 只在内容真滑到页头底下时才抬升。border 只改 color 不改宽度 —— 改宽度会让下面整块跳 1px。 */
+  .thread-head.elevated { border-bottom-color: transparent; box-shadow: 0 6px 12px -6px rgba(20, 16, 13, .22); }
   /* 侧栏收起：红绿灯 + 悬浮的折叠/搜索钮压在内容区左上，页头统一左让位（全部视图受益）。
      mac 窗口态 140px（红绿灯≈70 + 两钮）；全屏/Windows 无红绿灯（钮在 left:12），100px 够。 */
   .app.rail-collapsed .thread-head { padding-left: 140px; }
