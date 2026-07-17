@@ -863,6 +863,31 @@ mod os_release_tests {
 mod workdir_tests {
     use super::*;
 
+    /// 预览端口被别人占着时的行为——这正是「预览打开的不是对应页面」那个 bug。
+    #[test]
+    fn preview_port_dodges_a_taken_port() {
+        // 占住一个端口，模拟「机器上别的程序正听着预览端口」
+        let squatter = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let taken = squatter.local_addr().unwrap().port();
+        assert!(port_taken(taken));
+
+        // 默认 wrangler 路径：必须自动让开，绝不能还用那个被占的端口
+        let (cmd, port) = preview_cmd(None, "", taken).unwrap();
+        assert_ne!(port, taken, "端口被占还硬用 → 预览窗里就是别人的页面");
+        assert!(cmd.contains(&format!("--port {port}")), "命令里的端口要跟返回的一致: {cmd}");
+        assert!(cmd.contains("wrangler pages dev ."));
+
+        // 自定义 dev 命令：端口写死在命令里，改不了 → 必须报错而不是开个窗给别人的页面
+        let e = preview_cmd(Some("npm run dev".into()), "", taken).unwrap_err();
+        assert!(e.contains("已被别的程序占用"), "得说清是端口被占: {e}");
+
+        // 端口没被占时：原样使用，产物目录也带上
+        drop(squatter);
+        let (cmd, port) = preview_cmd(None, "dist", taken).unwrap();
+        assert_eq!(port, taken);
+        assert!(cmd.contains("wrangler pages dev dist"));
+    }
+
     fn test_conn(dir: &str) -> pack::Connection {
         serde_json::from_value(serde_json::json!({
             "id": "t", "name": "t", "api_base": "", "skill_dir": dir,
@@ -1228,6 +1253,59 @@ struct PreviewHandle {
 
 const PREVIEW_DEFAULT_PORT: u16 = 8788;
 
+/// 从 want 起往上找一个本机没被占用的端口。
+///
+/// ★ 为什么必须找而不是写死 8788：**机器上任何别的东西占着 8788，预览就会开出别人的页面**。
+/// 真撞到过：用户另一个 app 正听着 8788 → `wrangler --port 8788` 绑不上（spawn 本身还是「成功」的，
+/// 失败发生在 wrangler 进程内部），而 Pilot 照样按 8788 开窗 —— 窗里是那个 app 的页面，
+/// 看起来就是「预览打开的不是对应的页面」，且毫无线索。内置模板没有 pilot.json，永远吃默认端口，
+/// 所以这条必踩。
+fn free_port(want: u16) -> Option<u16> {
+    (want..want.saturating_add(64)).find(|p| std::net::TcpListener::bind(("127.0.0.1", *p)).is_ok())
+}
+
+/// 端口已被别的进程占着？（自定义 dev 命令把端口写死在命令里，我们改不了，只能先探明。）
+fn port_taken(port: u16) -> bool {
+    std::net::TcpListener::bind(("127.0.0.1", port)).is_err()
+}
+
+/// 等预览服务真的能连上。替掉写死的 2.5s：机器慢就白屏、起不来也照样开窗，两头不讨好。
+/// 起得快就早开（常见情况比 2.5s 还快），起不来就明说。
+async fn wait_preview(port: u16, secs: u64) -> bool {
+    let deadline = std::time::Instant::now() + Duration::from_secs(secs);
+    while std::time::Instant::now() < deadline {
+        if tokio::net::TcpStream::connect(("127.0.0.1", port)).await.is_ok() {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(150)).await;
+    }
+    false
+}
+
+/// 预览端口决策 + 命令拼装（两个预览入口共用）。
+/// - 默认 wrangler：端口由我们挑（挑空的），所以永远不会撞别人。
+/// - 自定义 dev 命令：端口写死在命令里，只能用 pilot.json 声明的那个；被占就直说，
+///   绝不开个窗让用户对着别人的页面猜。
+fn preview_cmd(dev_cmd: Option<String>, out: &str, port: u16) -> Result<(String, u16), String> {
+    match dev_cmd {
+        Some(d) => {
+            if port_taken(port) {
+                return Err(format!(
+                    "预览端口 {port} 已被别的程序占用。项目 pilot.json 里的 dev 命令写死了这个端口，\
+Pilot 改不了 —— 先关掉占用它的程序，或在 pilot.json 里换一个 \"port\"（并同步改 dev 命令）。"
+                ));
+            }
+            Ok((d, port))
+        }
+        None => {
+            let p = free_port(port)
+                .ok_or_else(|| format!("找不到空闲的预览端口（{port} 往上 64 个都被占着）。"))?;
+            let target = if out.is_empty() { "." } else { out };
+            Ok((format!("wrangler pages dev {target} --ip 127.0.0.1 --port {p}"), p))
+        }
+    }
+}
+
 /// pilot.json → (dev 命令, 产物目录, 预览端口)。缺省 dev=None、out=""、port=8788。
 /// 自定义 dev 命令监听的端口必须在 pilot.json 的 "port" 里写对，否则预览窗打不开。
 fn read_pilot_json(dir: &std::path::Path) -> (Option<String>, String, u16) {
@@ -1355,15 +1433,8 @@ async fn cf_preview_start(
     let token = keychain::get_key(&conn.id)?;
     let dir = resolve_work_dir(&conn, &project)?;
     let (dev_cmd, out, port) = read_pilot_json(std::path::Path::new(&dir));
-    stop_preview(&state); // 一次只跑一个预览
-    let shell_cmd = match dev_cmd {
-        Some(d) => d,
-        None => format!(
-            "wrangler pages dev {} --ip 127.0.0.1 --port {}",
-            if out.is_empty() { ".".to_string() } else { out },
-            port
-        ),
-    };
+    stop_preview(&state); // 一次只跑一个预览（先停，端口才腾得出来）
+    let (shell_cmd, port) = preview_cmd(dev_cmd, &out, port)?;
     #[cfg(windows)]
     let mut c = {
         let mut c = std::process::Command::new("cmd");
@@ -1397,8 +1468,14 @@ async fn cf_preview_start(
         url: url.clone(),
         project,
     });
-    // dev server 起来要一两秒，稍等再开窗（起不来窗里刷新即可）。
-    tokio::time::sleep(Duration::from_millis(2500)).await;
+    // 等它真起来再开窗：起得快就早开，起不来就明说（别开个空窗让用户猜）。
+    if !wait_preview(port, 25).await {
+        stop_preview(&state);
+        return Err(format!(
+            "预览没能在 25 秒内起来（端口 {port}）。确认 wrangler 装好了；\
+若项目 pilot.json 自定义了 dev 命令，看看它是不是真监听这个端口。"
+        ));
+    }
     open_preview_window(&app, &url)?;
     Ok(url)
 }
@@ -1436,14 +1513,7 @@ async fn cf_preview_template(
         .and_then(|c| keychain::get_key(&c.id).ok())
         .unwrap_or_default();
     stop_preview(&state);
-    let shell_cmd = match dev_cmd {
-        Some(d) => d,
-        None => format!(
-            "wrangler pages dev {} --ip 127.0.0.1 --port {}",
-            if out.is_empty() { ".".to_string() } else { out },
-            port
-        ),
-    };
+    let (shell_cmd, port) = preview_cmd(dev_cmd, &out, port)?;
     #[cfg(windows)]
     let mut c = {
         let mut c = std::process::Command::new("cmd");
@@ -1477,7 +1547,10 @@ async fn cf_preview_template(
         url: url.clone(),
         project: format!("template:{slug}"),
     });
-    tokio::time::sleep(Duration::from_millis(2500)).await;
+    if !wait_preview(port, 25).await {
+        stop_preview(&state);
+        return Err(format!("模板预览没能在 25 秒内起来（端口 {port}）。确认 wrangler 装好了。"));
+    }
     open_preview_window(&app, &url)?;
     Ok(url)
 }

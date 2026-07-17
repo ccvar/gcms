@@ -643,13 +643,18 @@
     try { cfReady = await invoke<boolean>('cf_project_ready', { connId: activeConv.conn_id, project: activeConv.site_slug }); }
     catch { cfReady = false; }
   }
+  /** 从预览 URL 里取 ":端口" 给提示用（端口是后端挑的，不再恒等于 8788）。 */
+  function portOf(url: string): string {
+    try { return ':' + new URL(url).port; } catch { return url; }
+  }
   async function startPreview() {
     if (!activeConv || previewBusy) return;
     previewBusy = true;
-    say('正在启动本地预览…（约 2 秒后打开预览窗）');
+    say('正在启动本地预览…（起来就开窗）');
     try {
-      await invoke('cf_preview_start', { connId: activeConv.conn_id, project: activeConv.site_slug });
-      say('本地预览已打开（:8788）·关掉预览窗即停止');
+      // 端口是后端挑的空端口（8788 被别的程序占着时会自动往上让），所以别写死——用它返回的真 URL。
+      const u = await invoke<string>('cf_preview_start', { connId: activeConv.conn_id, project: activeConv.site_slug });
+      say(`本地预览已打开（${portOf(u)}）·关掉预览窗即停止`);
     } catch (e) { say(String(e), 'err'); }
     finally { previewBusy = false; }
   }
@@ -2109,7 +2114,7 @@
   }
   async function previewTemplate(t: Template) {
     say('正在启动模板预览…（约 2 秒后打开预览窗）');
-    try { await invoke('cf_preview_template', { slug: t.slug }); say('模板预览已打开（:8788）·关掉预览窗即停'); } catch (e) { say(String(e), 'err'); }
+    try { const u = await invoke<string>('cf_preview_template', { slug: t.slug }); say(`模板预览已打开（${portOf(u)}）·关掉预览窗即停`); } catch (e) { say(String(e), 'err'); }
   }
   // 存为模板（从 CF 会话）
   let saveTmplOpen = $state(false); let saveTmplName = $state(''); let saveTmplDesc = $state(''); let saveTmplBusy = $state(false); let saveTmplErr = $state('');
