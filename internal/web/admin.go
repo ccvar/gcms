@@ -1279,6 +1279,9 @@ func (s *Server) setSiteCounts(v *View, siteID int64, st *store.Store) {
 	if v.PlatformContentCounts == nil {
 		v.PlatformContentCounts = map[int64]int{}
 	}
+	if v.PlatformScheduledCounts == nil {
+		v.PlatformScheduledCounts = map[int64]int{}
+	}
 	if v.PlatformContentUpdatedAt == nil {
 		v.PlatformContentUpdatedAt = map[int64]string{}
 	}
@@ -1292,6 +1295,9 @@ func (s *Server) setSiteCounts(v *View, siteID int64, st *store.Store) {
 	}
 	if n, err := st.CountContent(dl); err == nil {
 		v.PlatformContentCounts[siteID] = n
+	}
+	if n, err := st.CountScheduled(); err == nil {
+		v.PlatformScheduledCounts[siteID] = n
 	}
 	// 对外内容上次更新时间（服务器托管站卡片展示"服务器 · X 前"）。
 	if t, ok, err := st.LastPublicUpdate(); err == nil && ok {

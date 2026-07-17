@@ -1018,6 +1018,7 @@ type View struct {
 	PlatformDeployChips          map[int64]*DeployChip // 每站点：卡片左下角「待部署 / 运行 N 天 · 更新 M」芯片（见 site_deploy_chip.go）
 	PlatformLocaleCounts         map[int64]int         // 每站点：启用语种数
 	PlatformContentCounts        map[int64]int         // 每站点：主语种内容条数（含草稿）
+	PlatformScheduledCounts      map[int64]int         // 每站点：定时发布中的内容条数（全语种全类型，卡片「n条待发」）
 	PlatformContentUpdatedAt     map[int64]string      // 每站点：对外内容最近更新（RFC3339，空=无已发布内容），芯片「更新 M」的原料
 	PlatformCurrentSiteID        int64                 // 平台会话中当前选择的站点
 	GoogleOAuthConfigured        bool                  // 平台级 Google OAuth 客户端已配置

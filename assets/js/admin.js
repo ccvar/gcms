@@ -4526,6 +4526,7 @@
     var suf = el.querySelector("[data-server-suffix]");
     var lbl = function (k) { return el.getAttribute("data-s-" + k) || ""; };
     var timeText = suf ? (suf.getAttribute("data-steady") || "") : "";
+    var timeHTML = suf ? (suf.getAttribute("data-steady-html") || "") : "";
     if (!quiet) { // 静默复检不闪"检测中…"，避免待生效轮询时文字来回跳
       el.setAttribute("data-stage", "checking");
       if (suf && lbl("checking")) suf.textContent = lbl("checking");
@@ -4541,10 +4542,10 @@
           // 已生效/未知：回到中性的"内容上次对外更新时间"（成功态不需要再念"已生效"，
           // 只有进行中的阶段——检测中/待生效/DNS 待配置——才值得占显示位）。
           el.removeAttribute("data-stage");
-          if (suf) suf.textContent = timeText;
+          if (suf) { if (timeHTML) { suf.innerHTML = timeHTML; } else { suf.textContent = timeText; } }
         }
       })
-      .catch(function () { el.removeAttribute("data-stage"); if (suf) suf.textContent = timeText; });
+      .catch(function () { el.removeAttribute("data-stage"); if (suf) { if (timeHTML) { suf.innerHTML = timeHTML; } else { suf.textContent = timeText; } } });
   }
   // 待生效/DNS 待配置时自动轮询到翻绿为止（约 10 分钟上限），页面无需手动刷新；
   // 后台标签页只挂起计时不打接口，复检走静默模式（不闪"检测中…"）。
@@ -4711,7 +4712,9 @@
   function showSteady(box) {
     box.classList.remove("is-running");
     box.classList.remove("is-failed");
-    box.textContent = box.getAttribute("data-steady") || "";
+    // 稳态是「标签淡数值实」的 span 结构（服务端转义后放进 data-steady-html），纯文本 data-steady 兜底。
+    var html = box.getAttribute("data-steady-html");
+    if (html) { box.innerHTML = html; } else { box.textContent = box.getAttribute("data-steady") || ""; }
     box.title = box.getAttribute("data-steady-title") || "";
   }
   function showRunning(box) {

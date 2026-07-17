@@ -102,6 +102,8 @@ type CloudflareStatus struct {
 	Domains          string                    `json:"domains,omitempty"`
 	UpdatedAt        string                    `json:"updated_at"`
 	LastDeployAt     string                    `json:"last_deploy_at,omitempty"`
+	FirstDeployAt    string                    `json:"first_deploy_at,omitempty"`
+	FirstDeployEst   bool                      `json:"first_deploy_estimated,omitempty"`
 	LastPurgeAt      string                    `json:"last_purge_at,omitempty"`
 	DNSStatus        string                    `json:"dns_status,omitempty"`
 	DNSMessage       string                    `json:"dns_message,omitempty"`
@@ -992,11 +994,70 @@ func writeCloudflareStatusFile(path string, st CloudflareStatus) {
 	if path == "" {
 		path = cloudflareStatusPath()
 	}
-	if st.History == nil {
+	var prev *CloudflareStatus
+	if st.History == nil || strings.TrimSpace(st.FirstDeployAt) == "" {
 		if data, err := os.ReadFile(path); err == nil && len(data) > 0 {
-			var prev CloudflareStatus
-			if err := json.Unmarshal(data, &prev); err == nil {
-				st.History = cloudflareStatusHistory(&prev)
+			var p CloudflareStatus
+			if err := json.Unmarshal(data, &p); err == nil {
+				prev = &p
+			}
+		}
+	}
+	if st.History == nil && prev != nil {
+		st.History = cloudflareStatusHistory(prev)
+	}
+	// first_deploy_at 只进不退：部署历史是 8 条环形，首发记录早晚会被挤掉，所以首发
+	// 时间必须单独落档。写档一律带上旧档的值；旧档没有（升级前的老档）就地回填，站点卡
+	// 「运行 N 天」的悬停口径按 estimated 标记措辞（精确首发 / 只是下界）。
+	if strings.TrimSpace(st.FirstDeployAt) == "" && prev != nil {
+		st.FirstDeployAt = strings.TrimSpace(prev.FirstDeployAt)
+		st.FirstDeployEst = prev.FirstDeployEst
+	}
+	if strings.TrimSpace(st.FirstDeployAt) == "" {
+		// 锚点取最早：旧档**未旋转**历史里最旧的成功部署（本次写档 append 可能刚把它
+		// 挤出环形，必须在旋转前的 prev 里找）、本次历史里最旧的成功部署、以及新旧
+		// last_deploy_at（History 字段比 last_deploy_at 晚一天引入，存在只有后者的老档）。
+		type fdCand struct {
+			at      time.Time
+			raw     string
+			success bool
+		}
+		var best *fdCand
+		consider := func(raw string, success bool) {
+			raw = strings.TrimSpace(raw)
+			if raw == "" {
+				return
+			}
+			ts, err := time.Parse(time.RFC3339, raw)
+			if err != nil {
+				return
+			}
+			if best == nil || ts.Before(best.at) {
+				best = &fdCand{at: ts, raw: raw, success: success}
+			}
+		}
+		var prevHist []CloudflareStatusHistory
+		prevLast := ""
+		if prev != nil {
+			prevHist = cloudflareStatusHistory(prev)
+			prevLast = strings.TrimSpace(prev.LastDeployAt)
+		}
+		consider(oldestCloudflareDeploySuccess(prevHist), true)
+		consider(oldestCloudflareDeploySuccess(st.History), true)
+		consider(prevLast, false)
+		consider(st.LastDeployAt, false)
+		if best != nil {
+			st.FirstDeployAt = best.raw
+			if !best.success {
+				// 只有 last_deploy_at 一类痕迹：只能证明「至少从那时起」，是下界。
+				st.FirstDeployEst = true
+			} else {
+				// 锚点是成功历史条目：只有当旧档历史已滚满**且**此前确实成功发布过
+				// （旋转可能吃掉过更早的成功记录）才是下界；旧档历史未滚满、或此前
+				// 从未成功发布（连 last_deploy_at 都没有）时，这就是真首发。
+				prevFull := len(prevHist) >= cloudflareHistoryLimit
+				prevEverDeployed := prevLast != "" || oldestCloudflareDeploySuccess(prevHist) != ""
+				st.FirstDeployEst = prevFull && prevEverDeployed
 			}
 		}
 	}
@@ -1006,6 +1067,20 @@ func writeCloudflareStatusFile(path string, st CloudflareStatus) {
 	if data, err := json.MarshalIndent(st, "", "  "); err == nil {
 		_ = os.WriteFile(path, append(data, '\n'), 0o644)
 	}
+}
+
+// oldestCloudflareDeploySuccess 现存历史（新的在前）里最旧一条成功部署的时间戳；没有返回 ""。
+func oldestCloudflareDeploySuccess(history []CloudflareStatusHistory) string {
+	for i := len(history) - 1; i >= 0; i-- {
+		h := history[i]
+		if h.Action != "deploy" || h.Status != "success" {
+			continue
+		}
+		if at := strings.TrimSpace(h.At); at != "" {
+			return at
+		}
+	}
+	return ""
 }
 
 func (s *Server) cloudflareView() *CloudflareView {

@@ -1,3 +1,6 @@
+{{- /* 芯片正文：标签淡（chip-t）、数值实（chip-n）；老结构（无 Parts）回落纯文本。
+     JS 轮询覆写 textContent 后用 data-steady-html 恢复同样的标记。 */ -}}
+{{define "deploy-chip-body"}}{{if .Parts}}{{range $i, $p := .Parts}}{{if $i}}<i class="chip-dot" aria-hidden="true">·</i>{{end}}<span class="chip-t">{{$p.Label}}</span><b class="chip-n">{{$p.Value}}</b>{{end}}{{else}}{{.Text}}{{end}}{{end}}
 {{define "body"}}
   <div class="admin-head sites-head">
     <div>
@@ -179,7 +182,7 @@
       {{$gaSummary := index $.SiteGoogleAnalyticsSummaries .ID}}
       {{$gscSummary := index $.SiteGoogleSearchSummaries .ID}}
       {{$tg := index $.SiteTelegramStatus .ID}}
-      <article id="site-card-{{.ID}}" class="site-card{{if .IsDefault}} is-default{{end}}{{if eq .Status "disabled"}} is-disabled{{end}}">
+      <article id="site-card-{{.ID}}" class="site-card{{if .IsDefault}} is-default{{end}}{{if eq .Status "disabled"}} is-disabled{{end}}{{if eq .ID $.PlatformCurrentSiteID}} is-current{{end}}">
         <div class="site-card-locked-area"{{if eq .Status "disabled"}} aria-disabled="true"{{end}}>
           <div class="site-card-main"{{if eq .Status "disabled"}} inert{{end}}>
             <div class="site-title-row">
@@ -188,11 +191,11 @@
                   {{with index $.PlatformSiteIcons .ID}}<img class="site-card-icon" src="{{.}}" alt="" decoding="async">{{else}}<span class="site-card-icon fallback">{{template "site-icon-empty"}}</span>{{end}}
                   <div>
                     <h3>{{.Name}}</h3>
+                    {{- /* slug 与「当前后台」文字已拿掉：当前后台改由卡片 is-current 边框标识。 */ -}}
                     <p class="site-meta">
-                      <span>{{.Slug}}</span>
                       {{$lc := index $.PlatformLocaleCounts .ID}}{{if gt $lc 0}}<span>{{printf ($.Admin.T "admin.sites.locale_count" "%d语种") $lc}}</span><span>{{printf ($.Admin.T "admin.sites.content_count" "%d条内容") (index $.PlatformContentCounts .ID)}}</span>{{end}}
+                      {{$sc := index $.PlatformScheduledCounts .ID}}{{if gt $sc 0}}<span>{{printf ($.Admin.T "admin.sites.scheduled_count" "%d条待发") $sc}}</span>{{end}}
                       {{if .IsDefault}}<span>{{$.Admin.T "admin.sites.default" "默认站点"}}</span>{{end}}
-                      {{if eq .ID $.PlatformCurrentSiteID}}<span>{{$.Admin.T "admin.sites.current_badge" "当前后台"}}</span>{{end}}
                     </p>
                   </div>
                 </div>
@@ -260,7 +263,7 @@
           <summary>
             <span class="site-details-left">
               {{- /* 托管/时间芯片：待部署 | 运行 N 天 · 更新 M（服务端预计算，见 site_deploy_chip.go）。CF 形态额外保留「部署中/失败」轮询，完成后由 JS 用 data-steady 恢复稳态文字。 */ -}}
-              {{$chip := index $.PlatformDeployChips .ID}}{{if index $.PlatformOfficialURLs .ID}}<span class="site-details-title is-cf">{{template "site-icon-cloudflare"}}<span>Cloudflare</span>{{$cfSt := index $.PlatformCFStatus .ID}}{{if $chip}}<span class="site-cf-status{{if eq $cfSt "running"}} is-running{{end}}{{if eq $cfSt "failed"}} is-failed{{end}}" data-cf-poll data-status-url="/admin/sites/{{.ID}}/cloudflare/status" data-cf-status="{{$cfSt}}" data-steady="{{$chip.Text}}" data-steady-title="{{$chip.Title}}" data-running="{{$.Admin.T "admin.settings.cloudflare.running" "部署中"}}" data-failed="{{$.Admin.T "admin.settings.cloudflare.failed" "失败"}}"{{if $chip.Title}} title="{{$chip.Title}}"{{end}}>{{if eq $cfSt "running"}}{{$.Admin.T "admin.settings.cloudflare.running" "部署中"}}{{else if eq $cfSt "failed"}}{{$.Admin.T "admin.settings.cloudflare.failed" "失败"}}{{else}}{{$chip.Text}}{{end}}</span>{{end}}</span>{{else}}<span class="site-details-title"{{if index $.PlatformDomains .ID}} data-domain-status data-status-url="/admin/sites/{{.ID}}/wizard/status" data-s-checking="{{$.Admin.T "admin.sites.status_checking" "检测中…"}}" data-s-pending="{{$.Admin.T "admin.sites.status_pending" "待生效"}}" data-s-dns="{{$.Admin.T "admin.sites.status_dns" "DNS 待配置"}}"{{end}}>{{template "site-icon-server"}}<span>{{$.Admin.T "admin.sites.deploy_server" "服务器"}}</span>{{if $chip}}{{if $chip.Pending}}<span class="site-cf-status is-pending"{{if $chip.Title}} title="{{$chip.Title}}"{{end}}>{{$.Admin.T "admin.sites.chip_pending" "待部署"}}</span>{{else if $chip.Text}}<span class="site-cf-status" data-server-suffix data-steady="{{$chip.Text}}"{{if $chip.Title}} title="{{$chip.Title}}"{{end}}>{{$chip.Text}}</span>{{end}}{{end}}</span>{{end}}
+              {{$chip := index $.PlatformDeployChips .ID}}{{if index $.PlatformOfficialURLs .ID}}<span class="site-details-title is-cf">{{template "site-icon-cloudflare"}}<span>Cloudflare</span>{{$cfSt := index $.PlatformCFStatus .ID}}{{if $chip}}<span class="site-cf-status{{if eq $cfSt "running"}} is-running{{end}}{{if eq $cfSt "failed"}} is-failed{{end}}" data-cf-poll data-status-url="/admin/sites/{{.ID}}/cloudflare/status" data-cf-status="{{$cfSt}}" data-steady="{{$chip.Text}}" data-steady-html="{{$chip.SteadyHTML}}" data-steady-title="{{$chip.Title}}" data-running="{{$.Admin.T "admin.settings.cloudflare.running" "部署中"}}" data-failed="{{$.Admin.T "admin.settings.cloudflare.failed" "失败"}}"{{if $chip.Title}} title="{{$chip.Title}}"{{end}}>{{if eq $cfSt "running"}}{{$.Admin.T "admin.settings.cloudflare.running" "部署中"}}{{else if eq $cfSt "failed"}}{{$.Admin.T "admin.settings.cloudflare.failed" "失败"}}{{else}}{{template "deploy-chip-body" $chip}}{{end}}</span>{{end}}</span>{{else}}<span class="site-details-title"{{if index $.PlatformDomains .ID}} data-domain-status data-status-url="/admin/sites/{{.ID}}/wizard/status" data-s-checking="{{$.Admin.T "admin.sites.status_checking" "检测中…"}}" data-s-pending="{{$.Admin.T "admin.sites.status_pending" "待生效"}}" data-s-dns="{{$.Admin.T "admin.sites.status_dns" "DNS 待配置"}}"{{end}}>{{template "site-icon-server"}}<span>{{$.Admin.T "admin.sites.deploy_server" "服务器"}}</span>{{if $chip}}{{if $chip.Pending}}<span class="site-cf-status is-pending"{{if $chip.Title}} title="{{$chip.Title}}"{{end}}>{{$.Admin.T "admin.sites.chip_pending" "待部署"}}</span>{{else if $chip.Text}}<span class="site-cf-status" data-server-suffix data-steady="{{$chip.Text}}" data-steady-html="{{$chip.SteadyHTML}}"{{if $chip.Title}} title="{{$chip.Title}}"{{end}}>{{template "deploy-chip-body" $chip}}</span>{{end}}{{end}}</span>{{end}}
             </span>
             <small>{{if .IsDefault}}{{$.Admin.T "admin.sites.default_domain_note" "使用当前默认入口"}}{{else}}{{$.Admin.T "admin.sites.details_hint" "域名、接口和文件路径"}}{{end}}</small>
           </summary>

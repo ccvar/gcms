@@ -862,6 +862,7 @@ a.overview-log-title { text-decoration: none; }
 .site-card.is-default { border-color: var(--line-soft); background: var(--surface); box-shadow: inset 3px 0 0 color-mix(in srgb, var(--accent) 72%, transparent); }
 .site-card.is-disabled { border-color: color-mix(in srgb, var(--line) 92%, var(--muted)); background: color-mix(in srgb, var(--surface) 96%, var(--line-soft)); }
 .site-card:hover { border-color: color-mix(in srgb, var(--accent) 20%, var(--line)); }
+.site-card.is-current { border-color: color-mix(in srgb, var(--accent) 20%, var(--line)); } /* 当前后台：常驻悬停边框色标识，取代原来的「当前后台」文字 */
 .site-card.is-disabled:hover { border-color: color-mix(in srgb, var(--line) 92%, var(--muted)); }
 .site-card-locked-area { position: relative; display: grid; gap: .78rem; min-width: 0; border-radius: 8px; }
 .site-card.is-disabled .site-card-main,
@@ -2768,8 +2769,16 @@ input[type=range] { accent-color: var(--accent); }
 .ui-tooltip[hidden] { display: none !important; }
 
 /* ---------- 站点卡片：Cloudflare 最近部署 + 发布最新内容 ---------- */
-.site-cf-status { margin-left: .45rem; font-family: var(--mono); font-size: .72rem; font-weight: 500; color: var(--muted); letter-spacing: .01em; }
-.site-details-title[data-stage] .site-cf-status { color: inherit; } /* 域名阶段激活时（已生效绿/待生效琥珀/DNS红）后缀跟随阶段色 */
+.site-cf-status { margin-left: .42rem; font-family: var(--mono); font-size: .72rem; font-weight: 500; color: var(--muted); letter-spacing: .01em; }
+/* 稳态（运行 N 天 · 更新 M）缩小一档并去字距；部署中/失败/待部署等状态态不缩，警示不降权。
+   :where() 把 :not 的特异度归零，让下面 data-stage（待生效/DNS 检测文字）的 .72rem 能赢回来 */
+.site-cf-status:where(:not(.is-pending):not(.is-running):not(.is-failed)) { font-size: .66rem; letter-spacing: 0; }
+/* 芯片正文拆「标签淡、数值实」：运行/更新是修饰词退后一层——标签保持 --muted 本色（白底 4.8:1 仍可读，
+   淡是相对数值而言），数值抬到近墨色 + 600，层次靠拉高数值而不是把标签淡到读不清 */
+.site-cf-status .chip-t { margin-right: .2em; }
+.site-cf-status .chip-n { font-weight: 600; font-style: normal; color: var(--ink-soft); }
+.site-cf-status .chip-dot { font-style: normal; color: var(--faint); margin: 0 .3em; }
+.site-details-title[data-stage] .site-cf-status { color: inherit; font-size: .72rem; letter-spacing: .01em; } /* 域名阶段激活时（已生效绿/待生效琥珀/DNS红）后缀跟随阶段色，字号回状态档 */
 .site-cf-status.is-pending { padding: .1rem .46rem; border: 1px solid var(--line); border-radius: 999px; background: color-mix(in srgb, var(--muted) 8%, transparent); font-family: var(--sans); } /* 待部署：中性灰小胶囊，与问题态（琥珀/红）明确区分 */
 .site-cf-status.is-running { display: inline-flex; align-items: center; gap: .34rem; color: #b45309; font-weight: 700; }
 .site-cf-status.is-running::before { content: ""; width: .5rem; height: .5rem; border-radius: 999px; background: #f38020; animation: cf-pulse 1.4s ease-out infinite; }

@@ -4,7 +4,9 @@
         <nav class="breadcrumb" style="padding:0 0 1rem" aria-label="{{.Tr.T "common.breadcrumb"}}">
           <a href="{{.Tr.U "/"}}">{{.Tr.T "nav.home"}}</a><span class="sep">/</span><span aria-current="page">{{if .Category}}{{.Category.Name}}{{else if .ArchiveTitle}}{{.ArchiveTitle}}{{else if .CT}}{{.CT.Name .Lang}}{{end}}</span>
         </nav>
-        {{if .CT}}<p class="eyebrow">{{.CT.Name .Lang}}</p>{{end}}
+        {{- /* 眉标只在能提供额外信息时出现（分类/归档页标注所属类型）；类型根列表页
+             大标题就是类型名，再放一个同名眉标纯属重复（面包屑里还有第三个）。 */ -}}
+        {{if and .CT (or .Category .ArchiveTitle)}}<p class="eyebrow">{{.CT.Name .Lang}}</p>{{end}}
         <h1>{{if .Category}}{{.Category.Name}}{{else if .ArchiveTitle}}{{.ArchiveTitle}}{{else if .CT}}{{.CT.Name .Lang}}{{end}}</h1>
         {{if .ArchiveIntro}}<p class="hero-sub">{{.ArchiveIntro}}</p>{{end}}
         {{with .Category}}{{if .Description}}<p class="hero-sub">{{.Description}}</p>{{end}}{{end}}

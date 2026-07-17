@@ -1575,6 +1575,14 @@ func (s *Store) CountContent(lang string) (int, error) {
 	return n, err
 }
 
+// CountScheduled 定时发布中的内容总数（站点卡「n条待发」）：不筛语种和类型——
+// 排着队待发的就是待发，多语种排期各算一条。
+func (s *Store) CountScheduled() (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM posts WHERE status='scheduled'`).Scan(&n)
+	return n, err
+}
+
 // LastPublicUpdate 返回「对外可见内容」上次变化的时间：已发布且已到发布时间的内容里
 // max(published_at, updated_at) 的最大值——定时内容到点生效那一刻，前台可感知的变化时间是
 // published_at 而非更早的 updated_at。posts 表不筛 type，post/link/page 与扩展类型一并计入。
