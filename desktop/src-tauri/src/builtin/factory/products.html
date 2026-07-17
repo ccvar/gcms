@@ -1,0 +1,667 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Product Catalogue &mdash; Camp Furniture, Coolers, Tents &amp; Packs | Ridgeline Outdoor</title>
+<meta name="description" content="OEM and ODM outdoor product catalogue from Ningbo Ridgeline: camp chairs and tables, rotomoulded and soft coolers, tents, shelters, sleeping pads, packs and duffels. MOQ, lead time and customisation on every model.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Crect%20width='32'%20height='32'%20rx='4'%20fill='%230F5D3C'/%3E%3Cpath%20d='M4%2023l7-9%204.5%205.5L19%2015l9%208z'%20fill='none'%20stroke='%23ffffff'%20stroke-width='2.2'%20stroke-linejoin='round'%20stroke-linecap='round'/%3E%3C/svg%3E">
+<style>
+  /* ═══════════════════════════════════════════════════════════
+     RIDGELINE OUTDOOR · 外贸工厂（OEM/ODM 出口制造商）起始模板
+     受众是海外采购商 → **正文一律英文**；注释给接手的人/AI 看，用中文。
+     气质：绿味纸灰底 + 唯一深松绿强调色；细线分隔、小圆角、数字等宽。
+     主心骨是「Why Choose Us（优势）」和「产品目录」——不是普通企业官网。
+     改色板 = 只改下面 :root，别全站搜替换。
+     ═══════════════════════════════════════════════════════════ */
+  :root{
+    /* ——— 核心契约变量：**四页逐字一致**，不一致＝四套设计系统 ——— */
+    --bg:#F1F4F1;          /* 页面底：带绿味的冷纸灰 */
+    --surface:#FFFFFF;     /* 卡片/区块底 */
+    --text:#101A14;        /* 正文墨色      16.1:1 on --bg */
+    --muted:#4C5C52;       /* 次要文字       6.4:1 on --bg */
+    --accent:#0F5D3C;      /* 唯一强调色·深松绿 hue 155 · 7.2:1 on --bg · 其上白字 7.9:1 */
+    --radius:4px;          /* 克制的小圆角＝工业感 */
+
+    /* ——— 强调色的同色相派生（全站只有这一个色相 155°）——— */
+    --accent-deep:#0A4429; /* hover 加深 */
+    --accent-soft:#E3EDE7; /* 极浅底 */
+    --accent-line:#BFD6C9; /* 浅底上的强调描边 */
+    --accent-lift:#5BD094; /* ★ 深色带专用：--accent 落到 --ink 上只有 2.3:1，深底一律换它（9.4:1） */
+
+    /* ——— 深色带（数据条 / 生产流程 / 页脚）——— */
+    --ink:#0C1912;         /* 深松墨底 */
+    --ink-2:#15271D;       /* 深底上的抬升面 */
+    --ink-text:#D6E3DB;    /* 深底正文      13.6:1 */
+    --ink-muted:#9BB2A4;   /* 深底次要文字   8.0:1 */
+    --ink-line:#263E31;
+
+    /* ——— 中性描边 ——— */
+    --line:#DCE3DE;
+    --line-strong:#C3CEC7;
+
+    /* 遮罩用的不透明色标——不是配色，改色板时别动它 */
+    --mask-ink:#000;
+
+    --shadow-sm:0 1px 2px rgba(16,26,20,.05);
+    --shadow-md:0 1px 2px rgba(16,26,20,.05), 0 10px 28px rgba(16,26,20,.08);
+
+    /* ——— 间距刻度 4/8/12/16/24/40/64，别写 13px 这种随手数 ——— */
+    --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px; --s6:40px; --s7:64px;
+
+    /* ——— 字号阶梯 14/16/20/28/40 ——— */
+    --t-xs:14px; --t-sm:16px; --t-md:20px; --t-lg:28px; --t-xl:40px;
+    --t-2xs:11px;          /* 例外档：只给 logo 锁定块的副名用，别拿它排正文 */
+
+    --container:1120px;
+    --measure:660px;       /* 长文阅读宽度上限 */
+
+    --font:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+  }
+
+  /* ——————————————— 基础 ——————————————— */
+  *,*::before,*::after{box-sizing:border-box;}
+  html{-webkit-text-size-adjust:100%;scroll-behavior:smooth;}
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--text);
+    font-family:var(--font);
+    font-size:var(--t-sm);
+    line-height:1.7;
+    -webkit-font-smoothing:antialiased;
+  }
+  h1,h2,h3,h4{margin:0;line-height:1.25;font-weight:700;letter-spacing:-.01em;}
+  p{margin:0;}
+  ul,ol{margin:0;padding:0;list-style:none;}
+  a{color:inherit;text-decoration:none;}
+  svg{display:block;max-width:100%;}
+  table{border-collapse:collapse;width:100%;}
+  ::selection{background:var(--accent);color:var(--surface);}
+
+  /* 键盘可达性：全站统一焦点环，绝不 outline:none 了事 */
+  a:focus-visible,button:focus-visible,input:focus-visible,
+  textarea:focus-visible,select:focus-visible,summary:focus-visible,
+  label:focus-visible{
+    outline:2px solid var(--accent);
+    outline-offset:3px;
+    border-radius:var(--radius);
+  }
+  .ink a:focus-visible,.ink button:focus-visible{outline-color:var(--accent-lift);}
+
+  .wrap{
+    width:100%;
+    max-width:var(--container);
+    margin:0 auto;
+    padding-left:var(--s5);
+    padding-right:var(--s5);
+  }
+  .section{padding:var(--s7) 0;}
+  .skip{
+    position:absolute;left:-9999px;top:var(--s2);
+    background:var(--accent);color:var(--surface);
+    padding:var(--s2) var(--s4);border-radius:var(--radius);z-index:60;
+  }
+  .skip:focus{left:var(--s5);}
+  .sr-only{
+    position:absolute;width:1px;height:1px;padding:0;margin:-1px;
+    overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0;
+  }
+
+  /* ——————————————— 排版原子 ——————————————— */
+  .eyebrow{                       /* 工业味小标签：等宽 + 字距 */
+    font-family:var(--mono);
+    font-size:var(--t-xs);
+    letter-spacing:.14em;
+    text-transform:uppercase;
+    color:var(--accent);
+    margin:0 0 var(--s3);
+  }
+  .ink .eyebrow{color:var(--accent-lift);}
+  .h2{font-size:var(--t-lg);}
+  .h3{font-size:var(--t-md);}
+  .lede{font-size:var(--t-md);line-height:1.7;color:var(--muted);max-width:var(--measure);}
+  .ink .lede{color:var(--ink-muted);}
+  .muted{color:var(--muted);}
+  .ink .muted{color:var(--ink-muted);}
+  /* 数字一律等宽 + tabular：报价/箱规/参数对齐了才像工厂资料 */
+  .num{font-family:var(--mono);font-variant-numeric:tabular-nums;letter-spacing:-.02em;}
+
+  .sec-head{margin-bottom:var(--s6);max-width:var(--measure);}
+  .sec-head p{color:var(--muted);margin-top:var(--s3);}
+  .ink .sec-head p{color:var(--ink-muted);}
+
+  /* 「示例内容」徽标——提醒接手的人这是占位稿 */
+  .demo-badge{
+    display:inline-flex;align-items:center;gap:var(--s2);
+    font-family:var(--mono);font-size:var(--t-xs);
+    color:var(--muted);
+    border:1px dashed var(--line-strong);
+    border-radius:var(--radius);
+    padding:var(--s1) var(--s2);
+  }
+  .demo-badge::before{
+    content:"";width:6px;height:6px;border-radius:50%;
+    background:var(--accent);flex:none;
+  }
+  .ink .demo-badge{color:var(--ink-muted);border-color:var(--ink-line);}
+  .ink .demo-badge::before{background:var(--accent-lift);}
+  /* 区块级占位说明：告诉接手的人这块要换掉 */
+  .placeholder-note{
+    margin-top:var(--s5);font-size:var(--t-xs);color:var(--muted);
+    border-left:2px solid var(--line-strong);padding-left:var(--s3);
+    max-width:var(--measure);
+  }
+  .ink .placeholder-note{color:var(--ink-muted);border-left-color:var(--ink-line);}
+
+  /* ——————————————— 按钮 ——————————————— */
+  .btn{
+    display:inline-flex;align-items:center;justify-content:center;gap:var(--s2);
+    min-height:44px;                       /* 手机点击区 */
+    padding:var(--s3) var(--s5);
+    border-radius:var(--radius);
+    border:1px solid transparent;
+    font:inherit;font-size:var(--t-sm);font-weight:600;
+    cursor:pointer;
+    transition:background-color .16s ease,border-color .16s ease,color .16s ease,transform .16s ease;
+  }
+  .btn:active{transform:translateY(1px);}
+  .btn-primary{background:var(--accent);color:var(--surface);}
+  .btn-primary:hover{background:var(--accent-deep);}
+  .btn-ghost{border-color:var(--line-strong);color:var(--text);background:transparent;}
+  .btn-ghost:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-soft);}
+  /* 深色带上的次要按钮：color 和 background 一起改——只改 color 会把浅底糊进深块 */
+  .ink .btn-ghost{border-color:var(--ink-line);color:var(--ink-text);background:transparent;}
+  .ink .btn-ghost:hover{border-color:var(--accent-lift);color:var(--accent-lift);background:var(--ink-2);}
+  .btn-sm{min-height:36px;padding:var(--s2) var(--s4);font-size:var(--t-xs);}
+
+  .link{                                    /* 文字链＋箭头 */
+    display:inline-flex;align-items:center;gap:var(--s2);
+    color:var(--accent);font-weight:600;font-size:var(--t-xs);
+  }
+  .link svg{width:14px;height:14px;transition:transform .16s ease;}
+  .link:hover{color:var(--accent-deep);}
+  .link:hover svg{transform:translateX(3px);}
+  /* --accent 落到深色带上只有 2.3:1 —— 深色带里的文字链一律抬到 --accent-lift */
+  .ink .link{color:var(--accent-lift);}
+  .ink .link:hover{color:var(--surface);}
+
+  /* 参数/规格用的小标签 */
+  .tag{
+    font-family:var(--mono);font-size:var(--t-xs);
+    color:var(--accent);background:var(--accent-soft);
+    padding:var(--s1) var(--s2);border-radius:var(--radius);
+    letter-spacing:.06em;
+  }
+  /* (0,2,0) 压得住 (0,1,0)，且 color/background 一起给——不清 background 就会浅底糊深块 */
+  .ink .tag{color:var(--accent-lift);background:var(--ink-2);}
+
+  /* ——————————————— 导航（四页共用） ——————————————— */
+  .nav{
+    position:sticky;top:0;z-index:30;
+    background:var(--surface);
+    border-bottom:1px solid var(--line);
+  }
+  .nav-in{display:flex;align-items:center;gap:var(--s5);min-height:64px;}
+  .brand{display:flex;align-items:center;gap:var(--s3);flex:none;}
+  .brand-mark{width:32px;height:32px;flex:none;}
+  .brand-name{font-weight:700;font-size:var(--t-md);letter-spacing:-.02em;}
+  .brand-sub{
+    font-family:var(--mono);font-size:var(--t-2xs);letter-spacing:.16em;
+    color:var(--muted);text-transform:uppercase;line-height:1;
+  }
+  /* --muted 是给浅底调的，落到深色带上只有 2.6:1 —— 深色带一律换 --ink-muted */
+  .ink .brand-sub{color:var(--ink-muted);}
+  .brand:hover .brand-name{color:var(--accent);}
+  .nav-links{display:flex;align-items:center;gap:var(--s5);margin-left:auto;}
+  .nav-links a{
+    font-size:var(--t-xs);color:var(--muted);font-weight:500;
+    padding:var(--s2) 0;position:relative;
+  }
+  .nav-links a::after{                       /* 下划线滑出 */
+    content:"";position:absolute;left:0;right:0;bottom:0;height:2px;
+    background:var(--accent);transform:scaleX(0);transform-origin:left;
+    transition:transform .16s ease;
+  }
+  .nav-links a:hover{color:var(--text);}
+  .nav-links a:hover::after{transform:scaleX(1);}
+  /* 当前页：留色 + 加粗 + 常驻下划线，不只靠颜色区分 */
+  .nav-links a[aria-current="page"]{color:var(--text);font-weight:700;}
+  .nav-links a[aria-current="page"]::after{transform:scaleX(1);}
+  .nav-cta{flex:none;}
+
+  /* ——————————————— 面包屑 ——————————————— */
+  .crumb{
+    display:flex;flex-wrap:wrap;align-items:center;gap:var(--s2);
+    font-size:var(--t-xs);color:var(--muted);
+    padding:var(--s5) 0 0;
+  }
+  .crumb a:hover{color:var(--accent);text-decoration:underline;text-underline-offset:3px;}
+  .crumb li{display:flex;align-items:center;gap:var(--s2);}
+  .crumb li+li::before{content:"/";color:var(--line-strong);}
+  .crumb [aria-current="page"]{color:var(--text);font-weight:600;}
+
+  /* ——————————————— 页头（内页） ——————————————— */
+  .phead{padding:var(--s6) 0 var(--s7);border-bottom:1px solid var(--line);}
+  .phead h1{font-size:var(--t-xl);letter-spacing:-.03em;margin:var(--s4) 0 var(--s4);}
+
+  /* ——————————————— 产品卡（首页主打 / 目录 / 相关产品共用） ——————————————— */
+  .pgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--s5);}
+  .pcard{
+    display:flex;flex-direction:column;
+    background:var(--surface);
+    border:1px solid var(--line);
+    border-radius:calc(var(--radius) * 2);
+    overflow:hidden;
+    transition:border-color .16s ease,box-shadow .16s ease,transform .16s ease;
+  }
+  .pcard:hover{border-color:var(--accent-line);box-shadow:var(--shadow-md);transform:translateY(-2px);}
+  .pcard-art{
+    height:168px;
+    background:var(--accent-soft);
+    border-bottom:1px solid var(--line);
+    display:flex;align-items:center;justify-content:center;
+    color:var(--accent);
+    position:relative;
+  }
+  .pcard-art svg{width:auto;height:130px;}
+  .pcard-cat{
+    position:absolute;top:var(--s3);left:var(--s3);
+    font-family:var(--mono);font-size:var(--t-2xs);letter-spacing:.1em;
+    text-transform:uppercase;
+    background:var(--surface);color:var(--muted);
+    border:1px solid var(--line);border-radius:var(--radius);
+    padding:2px var(--s2);
+  }
+  .pcard-body{padding:var(--s5);display:flex;flex-direction:column;flex:1;}
+  .pcard-top{display:flex;align-items:center;justify-content:space-between;gap:var(--s3);margin-bottom:var(--s3);}
+  .pcard h3{font-size:var(--t-md);margin-bottom:var(--s3);}
+  .pcard h3 a:hover{color:var(--accent);}
+  .pcard-desc{font-size:var(--t-xs);color:var(--muted);line-height:1.8;}
+  /* 采购商真正要看的四行：材质 / MOQ / 交期 / 定制 */
+  .pspec{
+    display:grid;grid-template-columns:auto 1fr;gap:var(--s2) var(--s4);
+    margin:var(--s5) 0;padding:var(--s4) 0;
+    border-top:1px solid var(--line);border-bottom:1px solid var(--line);
+    font-size:var(--t-xs);
+  }
+  .pspec dt{color:var(--muted);}
+  .pspec dd{
+    margin:0;font-family:var(--mono);font-variant-numeric:tabular-nums;
+    color:var(--text);font-weight:600;
+  }
+  .pspec dd.wrapping{font-family:var(--font);font-weight:500;}
+  .pcard .link{margin-top:auto;align-self:flex-start;}
+
+  /* ——————————————— 页脚（四页共用） ——————————————— */
+  .ink{background:var(--ink);color:var(--ink-text);}
+  .foot{color:var(--ink-muted);}
+  .foot-in{padding:var(--s7) 0 var(--s6);}
+  .foot-grid{
+    display:grid;grid-template-columns:1.5fr repeat(3,1fr);
+    gap:var(--s6);padding-bottom:var(--s6);border-bottom:1px solid var(--ink-line);
+  }
+  .foot-brand .brand-name{color:var(--surface);}
+  /* 限宽用 em 不用 ch：ch 按「0」字形宽算，拿它限宽会让层级倒挂 */
+  .foot-brand p{margin-top:var(--s4);font-size:var(--t-xs);color:var(--ink-muted);max-width:34em;line-height:1.8;}
+  .foot h4{
+    font-family:var(--mono);font-size:var(--t-xs);letter-spacing:.12em;
+    text-transform:uppercase;color:var(--ink-text);margin-bottom:var(--s4);font-weight:600;
+  }
+  .foot li{margin-bottom:var(--s3);}
+  .foot li a{font-size:var(--t-xs);color:var(--ink-muted);}
+  .foot li a:hover{color:var(--accent-lift);}
+  .foot-bottom{
+    display:flex;flex-wrap:wrap;gap:var(--s3) var(--s5);
+    align-items:center;justify-content:space-between;
+    padding-top:var(--s5);font-size:var(--t-xs);
+  }
+  .foot-legal{display:flex;flex-wrap:wrap;gap:var(--s2) var(--s4);align-items:center;}
+
+  /* ——————————————— 目录页头 ——————————————— */
+  .phead .lede{margin-top:var(--s4);}
+  .phead-facts{
+    display:grid;grid-template-columns:repeat(4,1fr);gap:var(--s5);
+    margin-top:var(--s6);padding-top:var(--s5);border-top:1px solid var(--line);
+  }
+  .phead-facts dt{font-size:var(--t-xs);color:var(--muted);}
+  .phead-facts dd{
+    margin:var(--s1) 0 0;font-family:var(--mono);font-variant-numeric:tabular-nums;
+    font-size:var(--t-sm);font-weight:700;color:var(--text);
+  }
+
+  /* ——————————————— 分类筛选：真 radio + CSS，零 JS ——————————————— */
+  /* radio 视觉上藏起来但**仍可聚焦**（不能 display:none，那会连键盘一起弄没） */
+  .filter-in{
+    position:absolute;width:1px;height:1px;opacity:0;
+    pointer-events:none;margin:0;
+  }
+  .filter-bar{
+    display:flex;flex-wrap:wrap;align-items:center;gap:var(--s3);
+    margin-bottom:var(--s6);
+  }
+  .filter-label{
+    font-family:var(--mono);font-size:var(--t-xs);letter-spacing:.1em;
+    text-transform:uppercase;color:var(--muted);margin-right:var(--s2);
+  }
+  .chip{
+    display:inline-flex;align-items:center;gap:var(--s2);
+    min-height:44px;padding:var(--s2) var(--s4);
+    border:1px solid var(--line-strong);border-radius:999px;
+    background:var(--surface);color:var(--text);
+    font-size:var(--t-xs);font-weight:600;cursor:pointer;
+    transition:border-color .16s ease,background-color .16s ease,color .16s ease;
+  }
+  .chip:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-soft);}
+  .chip b{font-family:var(--mono);font-weight:600;color:var(--muted);font-variant-numeric:tabular-nums;}
+  .chip:hover b{color:var(--accent);}
+  /* 选中态：实心 + 字重，不只靠颜色 */
+  #f-all:checked       ~ .filter-bar label[for="f-all"],
+  #f-furniture:checked ~ .filter-bar label[for="f-furniture"],
+  #f-coolers:checked   ~ .filter-bar label[for="f-coolers"],
+  #f-sleep:checked     ~ .filter-bar label[for="f-sleep"],
+  #f-packs:checked     ~ .filter-bar label[for="f-packs"]{
+    background:var(--accent);border-color:var(--accent);color:var(--surface);font-weight:700;
+  }
+  #f-all:checked       ~ .filter-bar label[for="f-all"] b,
+  #f-furniture:checked ~ .filter-bar label[for="f-furniture"] b,
+  #f-coolers:checked   ~ .filter-bar label[for="f-coolers"] b,
+  #f-sleep:checked     ~ .filter-bar label[for="f-sleep"] b,
+  #f-packs:checked     ~ .filter-bar label[for="f-packs"] b{color:var(--surface);}
+  /* 键盘焦点环要落在**看得见的 label** 上，而不是藏起来的 radio 上 */
+  #f-all:focus-visible       ~ .filter-bar label[for="f-all"],
+  #f-furniture:focus-visible ~ .filter-bar label[for="f-furniture"],
+  #f-coolers:focus-visible   ~ .filter-bar label[for="f-coolers"],
+  #f-sleep:focus-visible     ~ .filter-bar label[for="f-sleep"],
+  #f-packs:focus-visible     ~ .filter-bar label[for="f-packs"]{
+    outline:2px solid var(--accent);outline-offset:3px;
+  }
+  /* 筛选本体：先全隐，再把选中分类显回来 */
+  #f-furniture:checked ~ .catalog .pcard,
+  #f-coolers:checked   ~ .catalog .pcard,
+  #f-sleep:checked     ~ .catalog .pcard,
+  #f-packs:checked     ~ .catalog .pcard{display:none;}
+  #f-furniture:checked ~ .catalog .pcard[data-cat="furniture"],
+  #f-coolers:checked   ~ .catalog .pcard[data-cat="coolers"],
+  #f-sleep:checked     ~ .catalog .pcard[data-cat="sleep"],
+  #f-packs:checked     ~ .catalog .pcard[data-cat="packs"]{display:flex;}
+
+  /* 采购须知条 */
+  .terms{
+    display:grid;grid-template-columns:repeat(3,1fr);gap:var(--s5);
+    margin-top:var(--s7);padding:var(--s5);
+    background:var(--accent-soft);border:1px solid var(--accent-line);
+    border-radius:calc(var(--radius) * 2);
+  }
+  .terms h3{font-size:var(--t-sm);margin-bottom:var(--s2);}
+  .terms p{font-size:var(--t-xs);color:var(--muted);line-height:1.8;}
+
+  @media (max-width:1024px){
+    .phead-facts{grid-template-columns:repeat(2,1fr);gap:var(--s5) var(--s4);}
+    .terms{grid-template-columns:1fr;gap:var(--s4);}
+  }
+  @media (max-width:560px){
+    .phead{padding-bottom:var(--s6);}
+    .phead-facts{grid-template-columns:1fr;}
+    .filter-label{width:100%;margin-right:0;}
+    .terms p{font-size:var(--t-sm);}
+  }
+
+  /* ═══════════════ 响应式：1024 / 860 / 560（共用部分） ═══════════════ */
+  @media (max-width:1024px){
+    .pgrid{grid-template-columns:repeat(2,1fr);}
+    .foot-grid{grid-template-columns:1fr 1fr;gap:var(--s6) var(--s5);}
+  }
+  @media (max-width:860px){
+    /* 两行的导航再吸顶就吃掉近 1/5 屏，手机端让它跟着滚走 */
+    .nav{position:static;}
+    .nav-in{flex-wrap:wrap;padding-top:var(--s3);padding-bottom:var(--s3);gap:var(--s3);}
+    .nav-links{
+      order:3;width:100%;margin-left:0;
+      flex-wrap:wrap;gap:var(--s3) var(--s5);
+      padding-top:var(--s3);border-top:1px solid var(--line);
+    }
+    /* 手机上导航 CTA 是 .btn-sm（36px min-height + padding ≈ 42px），差 2px 够不到 44 点击区 */
+    .nav-cta{margin-left:auto;min-height:44px;}
+  }
+  @media (max-width:560px){
+    :root{--t-xl:32px;--t-lg:24px;}
+    .wrap{padding-left:var(--s4);padding-right:var(--s4);}
+    .nav-links{gap:var(--s2) var(--s3);}
+    .nav-links a{padding:var(--s3) 0;}          /* 点击区垫到 44px */
+    .section{padding:var(--s6) 0;}
+    .pgrid{grid-template-columns:1fr;}
+    /* 手机上 14px 读成段描述费劲：描述抬到 16px，参数/标签维持 14px */
+    .pcard-desc,.foot-brand p,.sec-head p{font-size:var(--t-sm);}
+    .foot-grid{grid-template-columns:1fr;gap:var(--s6);}
+    .foot-bottom{flex-direction:column;align-items:flex-start;}
+  }
+  @media (prefers-reduced-motion:reduce){
+    html{scroll-behavior:auto;}
+    *{transition:none !important;animation:none !important;}
+  }
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to main content</a>
+<header class="nav">
+<div class="wrap nav-in">
+<a class="brand" href="index.html" aria-label="Ridgeline Outdoor — home"><svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="4" fill="var(--accent)"/><path d="M4 23l7-9 4.5 5.5L19 15l9 8z" fill="none" stroke="var(--surface)" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/></svg><span><span class="brand-name">Ridgeline</span><br><span class="brand-sub">Outdoor Mfg.</span></span></a>
+<nav class="nav-links" aria-label="Main"><a href="index.html">Home</a><a href="index.html#why">Why Us</a><a href="products.html" aria-current="page">Products</a><a href="index.html#process">Process</a><a href="index.html#certs">Certifications</a><a href="contact.html">Contact</a></nav>
+<a class="btn btn-primary btn-sm nav-cta" href="contact.html">Get a Quote</a>
+</div>
+</header>
+<main id="main">
+<section class="phead">
+<div class="wrap">
+<p class="demo-badge">Sample content &middot; replace before launch</p>
+<h1>Product catalogue</h1>
+<p class="lede">Ten tooled models across four families, all in production today. MOQ, lead time and customisation options are on every card &mdash; no &ldquo;contact us for details&rdquo; games.</p>
+<dl class="phead-facts">
+<div><dt>Models in production</dt><dd>10</dd></div>
+<div><dt>MOQ from</dt><dd>200 pcs</dd></div>
+<div><dt>Samples in</dt><dd>12 days</dd></div>
+<div><dt>Default terms</dt><dd>FOB Ningbo</dd></div>
+</dl>
+</div>
+</section>
+<section class="section" id="catalog">
+<div class="wrap">
+<h2 class="sr-only">Filter the catalogue by product family</h2>
+<input class="filter-in" type="radio" name="cat" id="f-all" checked>
+<input class="filter-in" type="radio" name="cat" id="f-furniture">
+<input class="filter-in" type="radio" name="cat" id="f-coolers">
+<input class="filter-in" type="radio" name="cat" id="f-sleep">
+<input class="filter-in" type="radio" name="cat" id="f-packs">
+<div class="filter-bar" role="group" aria-label="Filter by product family">
+<span class="filter-label" aria-hidden="true">Filter</span><label class="chip" for="f-all">All products <b>10</b></label><label class="chip" for="f-furniture">Camp furniture <b>3</b></label><label class="chip" for="f-coolers">Coolers &amp; insulated <b>2</b></label><label class="chip" for="f-sleep">Tents &amp; sleep <b>3</b></label><label class="chip" for="f-packs">Packs &amp; bags <b>2</b></label>
+</div>
+<div class="pgrid catalog">
+<article class="pcard" data-cat="furniture">
+<div class="pcard-art"><span class="pcard-cat">Camp furniture</span><svg viewBox="0 0 140 130" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M28 118L46 46M112 118L94 46"/><path d="M44 118l24-64M96 118L72 54"/>
+      <path d="M40 46h60" stroke-width="2.4"/><path d="M46 46l26 8 22-8"/>
+      <path d="M50 62h40l-6 26H56z"/><path d="M44 46V22a6 6 0 0 1 6-6h40a6 6 0 0 1 6 6v24"/>
+      <path d="M52 24h36M52 32h36" stroke-dasharray="3 4"/>
+      <circle cx="104" cy="70" r="7"/><path d="M104 63v14M97 70h14"/>
+    </svg></div>
+<div class="pcard-body">
+<div class="pcard-top"><span class="tag">RL-C420</span></div>
+<h3><a href="product.html">Aluminium Folding Camp Chair</a></h3>
+<p class="pcard-desc">6061-T6 frame with a 600D PVC-coated seat, tested to 150 kg static load and 100,000 fold cycles. Our highest-volume model &mdash; 640,000 pcs shipped in 2025.</p>
+<dl class="pspec"><dt>Material</dt><dd>6061-T6 alu / 600D</dd><dt>MOQ</dt><dd>500 pcs</dd><dt>Lead time</dt><dd>35 days</dd><dt>Custom</dt><dd class="wrapping">Colour &middot; Logo &middot; Size &middot; Packaging</dd></dl>
+<a class="link" href="product.html">Specs, MOQ &amp; pricing <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4"/></svg></a>
+</div>
+</article>
+<article class="pcard" data-cat="furniture">
+<div class="pcard-art"><span class="pcard-cat">Camp furniture</span><svg viewBox="0 0 140 130" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M18 52h104" stroke-width="2.4"/>
+      <path d="M22 44h96M22 36h96" stroke-dasharray="4 5"/>
+      <path d="M26 52v58M114 52v58M26 52l88 58M114 52L26 110" stroke-opacity=".55"/>
+      <path d="M30 52l14-14h52l14 14"/><path d="M44 38v14M96 38v14"/>
+      <path d="M40 110h60" stroke-dasharray="3 4"/>
+    </svg></div>
+<div class="pcard-body">
+<div class="pcard-top"><span class="tag">RL-T260</span></div>
+<h3><a href="product.html">Roll-Top Camp Table</a></h3>
+<p class="pcard-desc">Anodised aluminium roll-top slats, 30 kg load rating, packs to 620 &times; 120 mm with the carry bag included. Legs adjust in two positions.</p>
+<dl class="pspec"><dt>Material</dt><dd>Anodised alu 6063</dd><dt>MOQ</dt><dd>300 pcs</dd><dt>Lead time</dt><dd>35 days</dd><dt>Custom</dt><dd class="wrapping">Size &middot; Logo &middot; Packaging</dd></dl>
+<a class="link" href="product.html">Specs, MOQ &amp; pricing <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4"/></svg></a>
+</div>
+</article>
+<article class="pcard" data-cat="furniture">
+<div class="pcard-art"><span class="pcard-cat">Camp furniture</span><svg viewBox="0 0 140 130" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M26 46h88l-10 46H36z"/><path d="M40 46v46M70 46v46M100 46v46" stroke-dasharray="3 5"/>
+      <circle cx="48" cy="106" r="10"/><circle cx="96" cy="106" r="10"/>
+      <path d="M36 92h72"/><path d="M26 46L14 26M14 26h-6" stroke-width="2.2"/>
+      <path d="M8 22v8" stroke-width="2.4"/>
+    </svg></div>
+<div class="pcard-body">
+<div class="pcard-top"><span class="tag">RL-W900</span></div>
+<h3><a href="product.html">Folding Utility Wagon 110 L</a></h3>
+<p class="pcard-desc">Powder-coated steel frame, 600D fabric tub, 100 kg load rating. All-terrain 180 mm wheels; folds to 200 mm deep for retail shelving.</p>
+<dl class="pspec"><dt>Material</dt><dd>Steel / 600D fabric</dd><dt>MOQ</dt><dd>300 pcs</dd><dt>Lead time</dt><dd>40 days</dd><dt>Custom</dt><dd class="wrapping">Colour &middot; Logo &middot; Wheels &middot; Packaging</dd></dl>
+<a class="link" href="product.html">Specs, MOQ &amp; pricing <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4"/></svg></a>
+</div>
+</article>
+<article class="pcard" data-cat="coolers">
+<div class="pcard-art"><span class="pcard-cat">Coolers &amp; insulated</span><svg viewBox="0 0 140 130" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M24 46h92l-8 62H32z"/><path d="M20 34h100v12H20z"/>
+      <path d="M46 34V26h48v8"/><path d="M56 46v8h28v-8"/>
+      <path d="M36 62h68M38 78h64M40 94h60" stroke-dasharray="3 5" stroke-opacity=".6"/>
+      <rect x="60" y="52" width="20" height="12" rx="3"/>
+      <path d="M28 60l-8 6 8 6M112 60l8 6-8 6"/>
+    </svg></div>
+<div class="pcard-body">
+<div class="pcard-top"><span class="tag">RL-K045</span></div>
+<h3><a href="product.html">Rotomoulded Hard Cooler 45 QT</a></h3>
+<p class="pcard-desc">Single-piece LLDPE shell with 55 mm PU foam, holds ice 5 days at 32 &deg;C ambient in our test chamber. Bear-resistant latch available.</p>
+<dl class="pspec"><dt>Material</dt><dd>LLDPE / PU foam</dd><dt>MOQ</dt><dd>200 pcs</dd><dt>Lead time</dt><dd>45 days</dd><dt>Custom</dt><dd class="wrapping">Colour &middot; Logo &middot; Latch &middot; Packaging</dd></dl>
+<a class="link" href="product.html">Specs, MOQ &amp; pricing <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4"/></svg></a>
+</div>
+</article>
+<article class="pcard" data-cat="coolers">
+<div class="pcard-art"><span class="pcard-cat">Coolers &amp; insulated</span><svg viewBox="0 0 140 130" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M28 50h84v56a6 6 0 0 1-6 6H34a6 6 0 0 1-6-6z"/>
+      <path d="M24 38h92v12H24z"/><path d="M40 38V30a8 8 0 0 1 8-8h44a8 8 0 0 1 8 8v8"/>
+      <path d="M44 22l-12-8M96 22l12-8" stroke-dasharray="3 4"/>
+      <rect x="52" y="66" width="36" height="24" rx="3"/><path d="M52 78h36" stroke-dasharray="2 4"/>
+    </svg></div>
+<div class="pcard-body">
+<div class="pcard-top"><span class="tag">RL-S020</span></div>
+<h3><a href="product.html">Insulated Soft Cooler 20 L</a></h3>
+<p class="pcard-desc">840D TPU-laminated shell, welded leak-proof liner, 8 mm EPE foam. Holds ice 36 h; flattens for freight at 40 mm.</p>
+<dl class="pspec"><dt>Material</dt><dd>840D TPU / EPE</dd><dt>MOQ</dt><dd>500 pcs</dd><dt>Lead time</dt><dd>30 days</dd><dt>Custom</dt><dd class="wrapping">Colour &middot; Print &middot; Strap</dd></dl>
+<a class="link" href="product.html">Specs, MOQ &amp; pricing <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4"/></svg></a>
+</div>
+</article>
+<article class="pcard" data-cat="sleep">
+<div class="pcard-art"><span class="pcard-cat">Tents &amp; sleep</span><svg viewBox="0 0 140 130" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M14 106h112" stroke-width="2.4"/>
+      <path d="M22 106c0-42 22-68 48-68s48 26 48 68"/>
+      <path d="M70 38v68"/><path d="M52 106c0-30 8-48 18-56M88 106c0-30-8-48-18-56"/>
+      <path d="M22 106l-8 10M118 106l8 10" stroke-dasharray="3 4"/>
+      <path d="M36 86h20M84 86h20" stroke-dasharray="2 4" stroke-opacity=".6"/>
+    </svg></div>
+<div class="pcard-body">
+<div class="pcard-top"><span class="tag">RL-D300</span></div>
+<h3><a href="product.html">3-Person Dome Tent</a></h3>
+<p class="pcard-desc">210T PU3000 polyester fly, 8.5 mm fibreglass poles, factory-taped seams. Pitches in under 4 minutes; fire retardancy to BS 5852 on request.</p>
+<dl class="pspec"><dt>Material</dt><dd>210T PU3000</dd><dt>MOQ</dt><dd>300 sets</dd><dt>Lead time</dt><dd>40 days</dd><dt>Custom</dt><dd class="wrapping">Colour &middot; Print &middot; Packaging</dd></dl>
+<a class="link" href="product.html">Specs, MOQ &amp; pricing <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4"/></svg></a>
+</div>
+</article>
+<article class="pcard" data-cat="sleep">
+<div class="pcard-art"><span class="pcard-cat">Tents &amp; sleep</span><svg viewBox="0 0 140 130" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M14 104h112" stroke-width="2.4"/>
+      <path d="M20 104V60l50-28 50 28v44"/><path d="M20 60h100" stroke-dasharray="4 5"/>
+      <path d="M70 32v72"/><path d="M44 104V74h52v30"/>
+      <path d="M32 104l-8 8M108 104l8 8" stroke-dasharray="3 4"/>
+    </svg></div>
+<div class="pcard-body">
+<div class="pcard-top"><span class="tag">RL-P340</span></div>
+<h3><a href="product.html">Pop-Up Sun Shelter UPF 50+</a></h3>
+<p class="pcard-desc">190T silver-coated polyester on a spring-steel hoop frame. Opens in one motion, packs to a 620 mm disc. UPF 50+ verified per AS/NZS 4399.</p>
+<dl class="pspec"><dt>Material</dt><dd>190T silver-coated</dd><dt>MOQ</dt><dd>500 pcs</dd><dt>Lead time</dt><dd>35 days</dd><dt>Custom</dt><dd class="wrapping">Colour &middot; Print &middot; Carry bag</dd></dl>
+<a class="link" href="product.html">Specs, MOQ &amp; pricing <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4"/></svg></a>
+</div>
+</article>
+<article class="pcard" data-cat="sleep">
+<div class="pcard-art"><span class="pcard-cat">Tents &amp; sleep</span><svg viewBox="0 0 140 130" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <rect x="18" y="52" width="104" height="34" rx="16"/>
+      <path d="M34 52v34M50 52v34M66 52v34M82 52v34M98 52v34" stroke-dasharray="3 4" stroke-opacity=".6"/>
+      <path d="M122 62c8 0 8 14 0 14"/><circle cx="128" cy="69" r="4"/>
+      <path d="M18 100h104" stroke-dasharray="4 5" stroke-opacity=".5"/>
+      <path d="M18 96v8M122 96v8" stroke-opacity=".5"/>
+    </svg></div>
+<div class="pcard-body">
+<div class="pcard-top"><span class="tag">RL-M200</span></div>
+<h3><a href="product.html">Self-Inflating Sleeping Pad 5 cm</a></h3>
+<p class="pcard-desc">75D polyester shell bonded to open-cell PU foam, brass twist valve. R-value 4.2; inflates unassisted in about 6 minutes.</p>
+<dl class="pspec"><dt>Material</dt><dd>75D / open-cell PU</dd><dt>MOQ</dt><dd>500 pcs</dd><dt>Lead time</dt><dd>35 days</dd><dt>Custom</dt><dd class="wrapping">Size &middot; Colour &middot; Valve</dd></dl>
+<a class="link" href="product.html">Specs, MOQ &amp; pricing <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4"/></svg></a>
+</div>
+</article>
+<article class="pcard" data-cat="packs">
+<div class="pcard-art"><span class="pcard-cat">Packs &amp; bags</span><svg viewBox="0 0 140 130" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M40 40h60v70a8 8 0 0 1-8 8H48a8 8 0 0 1-8-8z"/>
+      <path d="M40 56c-8 4-12 12-12 22v24M100 56c8 4 12 12 12 22v24"/>
+      <path d="M54 40V26a16 16 0 0 1 32 0v14"/>
+      <rect x="52" y="72" width="36" height="26" rx="3"/><path d="M52 84h36" stroke-dasharray="2 4"/>
+      <path d="M60 40v12h20V40" stroke-dasharray="3 4"/>
+    </svg></div>
+<div class="pcard-body">
+<div class="pcard-top"><span class="tag">RL-B030</span></div>
+<h3><a href="product.html">Trekking Daypack 30 L</a></h3>
+<p class="pcard-desc">420D ripstop nylon, ventilated EVA back panel, hydration sleeve. Load-tested to 20 kg over 50,000 shake cycles on our rig.</p>
+<dl class="pspec"><dt>Material</dt><dd>420D ripstop nylon</dd><dt>MOQ</dt><dd>500 pcs</dd><dt>Lead time</dt><dd>30 days</dd><dt>Custom</dt><dd class="wrapping">Colour &middot; Logo &middot; Harness</dd></dl>
+<a class="link" href="product.html">Specs, MOQ &amp; pricing <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4"/></svg></a>
+</div>
+</article>
+<article class="pcard" data-cat="packs">
+<div class="pcard-art"><span class="pcard-cat">Packs &amp; bags</span><svg viewBox="0 0 140 130" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <rect x="14" y="48" width="112" height="46" rx="20"/>
+      <path d="M34 48V38a4 4 0 0 1 4-4h64a4 4 0 0 1 4 4v10"/>
+      <path d="M50 34v-6h40v6"/><path d="M56 60h28" stroke-width="2.2"/>
+      <path d="M52 94v8M88 94v8" stroke-dasharray="3 4"/>
+      <path d="M14 71h112" stroke-dasharray="2 5" stroke-opacity=".5"/>
+      <circle cx="106" cy="71" r="4"/>
+    </svg></div>
+<div class="pcard-body">
+<div class="pcard-top"><span class="tag">RL-B075</span></div>
+<h3><a href="product.html">Waterproof Roll-Top Duffel 75 L</a></h3>
+<p class="pcard-desc">500D PVC tarpaulin, RF-welded seams, IPX6 rated. Removable backpack harness; prints direct to the tarpaulin without a patch.</p>
+<dl class="pspec"><dt>Material</dt><dd>500D PVC tarpaulin</dd><dt>MOQ</dt><dd>300 pcs</dd><dt>Lead time</dt><dd>35 days</dd><dt>Custom</dt><dd class="wrapping">Colour &middot; Direct print &middot; Harness</dd></dl>
+<a class="link" href="product.html">Specs, MOQ &amp; pricing <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4"/></svg></a>
+</div>
+</article>
+</div>
+<div class="terms">
+<div><h3>MOQ is per model, per colour</h3><p>The MOQ on each card is per model. A second colourway starts its own 500 pcs count for fabric goods (dye lots), or 200 pcs for rotomoulded goods. Below MOQ we quote from stock colours at a 12&ndash;18% surcharge.</p></div>
+<div><h3>Lead time starts at two events</h3><p>Deposit received <em>and</em> artwork approved &mdash; whichever is later. Add 10 days in peak season (September&ndash;February). New tooling adds 25 days and is quoted separately.</p></div>
+<div><h3>Prices are FOB Ningbo</h3><p>Quoted in USD, valid 30 days, based on current aluminium and resin indices. EXW, CIF and DDP door available on request. Tiered pricing appears on each product page.</p></div>
+</div>
+<p style="margin-top:var(--s6);"><a class="btn btn-primary" href="contact.html#rfq">Request a quote on any model</a></p>
+</div>
+</section>
+</main>
+<footer class="ink foot">
+<div class="wrap foot-in">
+<div class="foot-grid">
+<div class="foot-brand">
+<span class="brand"><svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="4" fill="var(--accent-lift)"/><path d="M4 23l7-9 4.5 5.5L19 15l9 8z" fill="none" stroke="var(--ink)" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/></svg><span><span class="brand-name">Ridgeline</span><br><span class="brand-sub">Outdoor Mfg.</span></span></span>
+<p>Ningbo Ridgeline Outdoor Products Co., Ltd. (sample company). OEM &amp; ODM manufacturer of camp furniture, coolers, shelters and packs since 2006. In-house tooling, 6 assembly lines, BSCI-audited plant.</p>
+</div>
+<div><h4>Products</h4><ul><li><a href="products.html#catalog">Camp furniture</a></li><li><a href="products.html#catalog">Coolers &amp; insulated</a></li><li><a href="products.html#catalog">Tents &amp; sleep</a></li><li><a href="products.html#catalog">Packs &amp; bags</a></li></ul></div>
+<div><h4>Capability</h4><ul><li><a href="index.html#why">Why choose us</a></li><li><a href="index.html#process">Production process</a></li><li><a href="index.html#certs">Certifications</a></li><li><a href="product.html#packing">Packing &amp; loading</a></li></ul></div>
+<div><h4>Contact</h4><ul><li><a href="contact.html#rfq">Request a quote</a></li><li><a href="contact.html#departments">Departments</a></li><li><a href="contact.html#visit">Factory address</a></li><li><a href="contact.html#faq">Trade FAQ</a></li></ul></div>
+</div>
+<div class="foot-bottom">
+<span>&copy; 2006&ndash;2026 Ningbo Ridgeline Outdoor Products Co., Ltd. &middot; Sample content</span>
+<span class="foot-legal"><span>Sample content &middot; replace before launch</span><span>Business licence 000000000000000 (placeholder)</span></span>
+</div>
+</div>
+</footer>
+</body>
+</html>

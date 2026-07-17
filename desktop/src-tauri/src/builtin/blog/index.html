@@ -646,11 +646,10 @@
           置顶文章
         </span>
         <h3 class="featured__t">用 Go 写了个 300 行的静态博客生成器，然后我把它删了</h3>
-        <p class="featured__x">
-          花了三个周末，从模板引擎写到增量构建，最后发现我真正需要的只是一个把 Markdown 转成
-          HTML 的函数。这篇聊聊「造轮子」的收益到底在哪里——不在轮子，在造的过程里你终于搞懂了
-          那些一直没看懂的东西。
-        </p>
+        <!-- 摘要不折行：这段要和 article.html 的 .head__dek 逐字相同。源码里换行会在
+             textContent 里留下一个空格（渲染时 Chrome 按 CJK 规则吃掉、比对时却不会），
+             那种「看着一样、比对不过」的差异最难查。 -->
+        <p class="featured__x">花了三个周末，从模板引擎写到增量构建，最后发现我真正需要的只是一个把 Markdown 转成 HTML 的函数。这篇聊聊「造轮子」的收益到底在哪里——不在轮子，在造的过程里你终于搞懂了那些一直没看懂的东西。</p>
         <div class="meta">
           <time datetime="2026-07-14">2026-07-14</time>
           <span class="meta__dot" aria-hidden="true"></span>

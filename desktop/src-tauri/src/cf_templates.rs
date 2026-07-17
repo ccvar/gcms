@@ -76,6 +76,11 @@ pub const BUILTIN: &[Builtin] = &[
         pages: &[page!("corp", "index.html"), page!("corp", "about.html"), page!("corp", "contact.html")] },
     Builtin { slug: "event", name: "活动报名", desc: "时间地点 · 日程表 · 讲者与票档", category: "活动",
         pages: &[page!("event", "index.html")] },
+    // 外贸工厂：**正文英文**——受众是海外采购商，不是国内客户。这是它和「企业官网」那档的分水岭。
+    // 主心骨是「优势」和「产品目录」，不是普通企业官网的公司简介。
+    Builtin { slug: "factory", name: "外贸工厂", desc: "深松绿 · 英文站 · 优势/产品/询盘 · OEM 出口制造商", category: "外贸",
+        pages: &[page!("factory", "index.html"), page!("factory", "products.html"),
+                 page!("factory", "product.html"), page!("factory", "contact.html")] },
 ];
 
 pub fn is_builtin(slug: &str) -> bool {

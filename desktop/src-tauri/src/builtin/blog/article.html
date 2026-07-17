@@ -282,8 +282,8 @@
   .byline__text { flex: 1; min-width: 0; font-size: var(--fs-sm); color: var(--muted); line-height: 1.5; }
   .byline__name { color: var(--text); font-weight: 600; font-size: var(--fs-base); }
   /* 分隔点只留间距，颜色跟着 .byline__text 继承 --muted。
-     别拿 --line 去「调淡」它：--line 是画线用的（#DFE1E5 在白纸上只有 1.3:1），
-     当文字用就等于没有——实测过，不是目测。 */
+     别拿 --line 去「调淡」它：--line 是画线用的，当文字放在白纸上只有 1.3:1，
+     等于没有——实测出来的，不是目测。 */
   .byline__sep { margin-inline: var(--s2); }
 
   /* ——— 图片占位（内联 SVG + 图注） ——— */

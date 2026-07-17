@@ -292,17 +292,15 @@
     top: calc(64px + var(--s5));
   }
   .filters { display: grid; gap: var(--s5); }
-  /* fieldset 自带 border/padding/margin，先清干净再画自己的分隔线 */
+  /* 用 div[role=group] + h2 而不是 fieldset/legend：
+     legend 会在 fieldset 的 border-top 上开个豁口，标题看起来像被划了一道 */
   .filter-group {
     min-width: 0;
-    margin: 0;
-    padding: var(--s3) 0 0;
-    border: 0;
+    padding-top: var(--s3);
     border-top: 1px solid var(--line);
   }
   .filter-group:first-child { border-top: 0; padding-top: 0; }
   .filter-h {
-    padding: 0;
     font-size: var(--fs-sm);
     letter-spacing: .1em;
     text-transform: uppercase;
@@ -790,8 +788,8 @@
       <!-- 筛选（真 radio + :has() 真筛，无 JS） -->
       <aside class="sidebar">
         <form class="filters">
-          <fieldset class="filter-group">
-            <legend class="filter-h">分类</legend>
+          <div class="filter-group" role="group" aria-labelledby="cat-h">
+            <h2 class="filter-h" id="cat-h">分类</h2>
             <input class="vh" type="radio" name="cat" id="cat-all" checked>
             <label class="opt" for="cat-all"><span class="opt-t">全部</span><span class="opt-n">9</span></label>
             <input class="vh" type="radio" name="cat" id="cat-brew">
@@ -802,10 +800,10 @@
             <label class="opt" for="cat-cup"><span class="opt-t">杯具</span><span class="opt-n">2</span></label>
             <input class="vh" type="radio" name="cat" id="cat-acc">
             <label class="opt" for="cat-acc"><span class="opt-t">配件</span><span class="opt-n">2</span></label>
-          </fieldset>
+          </div>
 
-          <fieldset class="filter-group">
-            <legend class="filter-h">价格</legend>
+          <div class="filter-group" role="group" aria-labelledby="price-h">
+            <h2 class="filter-h" id="price-h">价格</h2>
             <input class="vh" type="radio" name="price" id="price-all" checked>
             <label class="opt" for="price-all"><span class="opt-t">不限</span><span class="opt-n">9</span></label>
             <input class="vh" type="radio" name="price" id="price-low">
@@ -814,7 +812,7 @@
             <label class="opt" for="price-mid"><span class="opt-t">¥150 – 300</span><span class="opt-n">3</span></label>
             <input class="vh" type="radio" name="price" id="price-high">
             <label class="opt" for="price-high"><span class="opt-t">¥300 以上</span><span class="opt-n">2</span></label>
-          </fieldset>
+          </div>
         </form>
       </aside>
 
@@ -1152,7 +1150,7 @@
 <footer class="site-footer">
   <div class="wrap">
     <div class="foot-grid">
-      <div class="foot-about">
+      <div class="foot-about" id="about">
         <a class="brand" href="index.html">
           <svg class="mark" width="26" height="26" viewBox="0 0 32 32" fill="none" aria-hidden="true">
             <rect width="32" height="32" rx="4" fill="var(--accent)"/>
@@ -1188,13 +1186,14 @@
         <ul>
           <li><a href="#about">品牌故事</a></li>
           <li><a href="product.html#detail">冲煮指南</a></li>
-          <li><a href="#store">线下门店</a></li>
+          <!-- 「暂无」占位：这些页面还不存在，接好后把 href 换成真实地址 -->
+          <li><a href="#">线下门店</a></li>
           <li><a href="#contact">批发合作</a></li>
         </ul>
       </div>
     </div>
 
-    <div class="foot-bottom">
+    <div class="foot-bottom" id="contact">
       <span>© 2024 溪野器物 · 示例站点，内容均为占位文案</span>
       <span>客服微信 siye-coffee · 工作日 10:00–18:00</span>
     </div>
