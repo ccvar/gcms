@@ -5231,6 +5231,11 @@
      方角到底更干净。 */
   .app.win .main { background: var(--bg); }
   .app.win .rail { border-right: none; }
+  /* Windows 页头「孤立」的根子：rail 去掉了通高分隔线，边界全靠 rail/main 底色差——可页头自己的
+     暖底和 rail 几乎同色，到了顶栏这一段边界就彻底消失，标题像悬在窗框里。给顶栏左缘补一条只有
+     页头高的竖线，把 rail 边界在这一段接回来（正文段仍靠色差，不回悬空线头的老坑）；
+     侧栏折叠后左边没有 rail，不画。 */
+  .app.win:not(.rail-collapsed) .thread-head { border-left: 1px solid var(--border); }
 
   /* 细滚动条（macOS overlay 风格）：细、圆角、透明轨道，thumb 用 padding-box 内缩显得更细。 */
   :global(::-webkit-scrollbar) { width: 10px; height: 10px; }
@@ -5498,15 +5503,15 @@
      ★ align-items 必须 flex-start，不能用 center：th-info 比右侧按钮（28px）矮时
      （例如只有标题、没有副标题的头），center 会让 th-info 跟着按钮居中，标题又掉到 26.8。 */
   /* ★ 和内容区之间那条缝：原来是一条 1px 实线直接把两块切开，太硬。**两个状态分开治**：
-     ① 静止态（治「硬」）：给页头一层极淡的暖底。有了色阶差，分隔就不再需要一条实线，
-        border 随之降到几乎看不见。**刻意不上 backdrop-filter**：实测它只会把卡片的红字
-        糊成粉影漂在标题背后（是噪点不是层次），还要赔上脱流 + ResizeObserver +
-        三处 scrollIntoView 的静默回归 —— 而静止态的收益 100% 来自这层暖色，模糊一点没参与。
+     ① 静止态（治「硬」）：页头与内容**同底不加色**——曾试过一层极淡暖底做色阶差，
+        但那条色带在页面顶上像贴了块补丁（用户点名拿掉）；现在静止态只留几乎看不见的
+        底线。**刻意不上 backdrop-filter**：实测它只会把卡片的红字糊成粉影漂在标题背后
+        （是噪点不是层次），还要赔上脱流 + ResizeObserver + 三处 scrollIntoView 的静默回归。
      ② 滚动态（治「切」）：见 .elevated —— 内容真滑到底下时才淡入柔和阴影、把线淡掉。
         滚到顶时页头底下是**空的**，那时打阴影＝给不存在的遮挡关系编故事
         （同 .term-wrap.with-chat 那条「独占/无对话时不加，保持齐边」的分寸）。
      z-index：阴影得压在 .thread 之上 —— .thread 是后面的兄弟，默认会盖住它。 */
-  .thread-head { flex: none; padding: 5px 24px; background: rgba(248, 246, 242, .82); border-bottom: 1px solid rgba(30, 25, 15, .05); position: relative; z-index: 1; transition: border-bottom-color .18s ease; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  .thread-head { flex: none; padding: 5px 24px; border-bottom: 1px solid rgba(30, 25, 15, .05); position: relative; z-index: 1; transition: border-bottom-color .18s ease; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
   /* ★ 阴影用伪元素而不是 box-shadow：box-shadow 天然四周都有 —— `0 6px 12px -6px` 水平方向是
      「收缩 6 再模糊 6」，**正好到边**，于是左右两端各留一段 6px 渐弱，看着就是两个圆头戳在窗沿上。
      负 spread 再加也没用：加到不露头，朝下的阴影也就没了。
@@ -5893,6 +5898,10 @@
   .conn-row.on { border-color: #cfc9ec; background: #f7f6ff; }
   .conn-row :global(.sm) { border-radius: 6px; }
   .conn-main { flex: 1; min-width: 0; } .conn-main b { display: block; font-size: 13.5px; } .conn-main small { display: block; color: var(--dim); font-size: 11px; }
+  /* ★ 上面这条 display:block（0,1,1）会压过 .cs-os 的 inline-flex（0,1,0）：设置弹窗的连接行里
+     发行版图标于是退回**行内基线对齐**——12px 的图标坐在 11px 文字的基线上，整个上蹿一截。
+     这里把 flex 垂直居中赢回来（用 flex 而非 inline-flex：副标题本来就独占一行）。 */
+  .conn-main small.cs-os { display: flex; align-items: center; }
   /* 技能包更新：设置行的一键升级按钮 + 切换器里的小圆点徽标 */
   .pack-upd { flex: none; border: none; background: var(--accent); color: #fff; font-size: 11px; font-weight: 550; padding: 3px 10px; border-radius: 7px; cursor: pointer; }
   .pack-upd:hover { background: var(--accent-h); }
