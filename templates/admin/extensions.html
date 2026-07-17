@@ -8,6 +8,12 @@
 </div>
 {{if .Flash}}<div class="ext-flash">{{.Flash}}</div>{{end}}
 
+{{/* 已启用且 Primary 的类型已整体迁出 hub（内容入口在左侧一级菜单，类型管理在其列表页的设置菜单）；全部迁出时给合理空态 */}}
+{{if not .ExtTypes}}
+<div class="ext-hub-empty">
+  <p>{{.Admin.T "admin.ext.hub_all_promoted" "所有内容类型都已上浮为左侧一级菜单，在各自页面的设置菜单里管理；新建的类型或停用后的类型会重新出现在这里。"}}</p>
+</div>
+{{else}}
 <div class="ext-grid">
   {{range .ExtTypes}}
   <div class="ext-card{{if .Enabled}} on{{else}} off{{end}}">
@@ -48,6 +54,7 @@
   </div>
   {{end}}
 </div>
+{{end}}
 
 {{range $row := .ExtTypes}}
 <div class="ext-modal" data-archive-modal="{{$row.Key}}" hidden>
@@ -87,6 +94,8 @@
   .ext-hub-head { align-items: flex-start; }
   .ext-hub-head h1 { margin: 0 0 .45rem; }
   .ext-flash { background: var(--accent-wash); color: var(--accent); border-radius: 8px; padding: .7rem 1rem; margin-bottom: 1.4rem; font-size: .9rem; }
+  .ext-hub-empty { text-align: center; padding: 3.2rem 1.5rem; border: 1px dashed var(--line); border-radius: var(--radius); color: var(--muted); }
+  .ext-hub-empty p { margin: 0; font-size: .95rem; max-width: 34em; margin-inline: auto; }
   .ext-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 1.1rem; align-items: start; }
   .ext-card { display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 1.3rem 1.35rem 1.1rem; transition: border-color var(--speed), box-shadow var(--speed), transform var(--speed); }
   .ext-card:hover { border-color: color-mix(in srgb, var(--accent) 42%, var(--line)); box-shadow: var(--shadow); transform: translateY(-2px); }

@@ -1,0 +1,94 @@
+{{define "home_factory_onepage"}}
+  {{/* factory-onepage — 工厂单页：整站一页滚到底——hero → 主打产品（3–6 大卡）→ 实力数字
+       → 合作流程 → FAQ → CTA/联系。页头导航在首页态换成页内锚点（见 partials/header.html），
+       转化路径最短；商品/文章内页仍走常规路由与菜单。
+       数据全部由 fillFactoryHome 装载；区块复用工厂族共享 define 与配置槽，零新增数据概念。
+       气质=直给：居中大字 hero + 胶带警示条、区块标题居中、每屏一件事。 */}}
+  {{/* hero 槽三态：image+配了图才取图（不回落图集，免得已配 gallery 的老站换主题后首屏悄悄变样）；
+       default/anim* 渲染右侧图纸机械动画卡（复用 fo-hero-media 边框卡）；svg 模式维持纹理现状。 */}}
+  {{$hero := ""}}{{if and (eq .Site.HeroVisual "image") .Site.HeroImage}}{{$hero = .Site.HeroImage}}{{end}}
+  {{$heroAnim := and (not $hero) (ne .Site.HeroVisual "image") (ne .Site.HeroVisual "svg")}}
+  <div class="fo-wrap">
+    <section class="fo-hero{{if $hero}} has-img{{else if $heroAnim}} has-anim{{end}}">
+      <div class="fo-hero-inner">
+        <div class="fo-hero-copy">
+          {{if .Site.HeroEyebrow}}<p class="fo-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+          <h1 class="fo-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+          {{if .Site.HeroDescription}}<p class="fo-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+          <div class="fo-cta">
+            {{if .Contact.Any}}<a class="btn btn-primary" href="#factory-contact">{{.Tr.T "contact.float_label"}} <span class="arrow" aria-hidden="true">→</span></a>
+            {{else}}<a class="btn btn-primary" href="#fo-products">{{.Tr.T "factory.products"}} <span class="arrow" aria-hidden="true">→</span></a>{{end}}
+            <a class="btn" href="#fo-products">{{.Tr.T "home.cta_more"}}</a>
+          </div>
+        </div>
+        {{if $hero}}<figure class="fo-hero-media"><img src="{{$hero}}" alt="{{if .Site.HeroAlt}}{{.Site.HeroAlt}}{{else}}{{.Site.Name}}{{end}}" decoding="async" fetchpriority="high"{{imgAttrs $hero}}></figure>
+        {{else if $heroAnim}}<div class="fo-hero-media f-heroanim" aria-hidden="true">{{template "factory_hero_anim" .}}</div>{{end}}
+      </div>
+    </section>
+
+    <section class="fo-section fo-products-sec" id="fo-products">
+      <div class="fo-section-head">
+        <p class="f-eyebrow">Products</p>
+        <h2>{{.Tr.T "factory.products"}}</h2>
+      </div>
+      <div class="fo-grid">
+        {{range .FactoryProducts}}
+        <a class="fo-card" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+          <span class="fo-card-media{{if not .CoverImage}} fo-card-gen{{end}}">
+            {{if .CoverImage}}<img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}
+          </span>
+          <span class="fo-card-body">
+            {{with .Category}}<span class="fo-card-cat">{{.Name}}</span>{{end}}
+            <span class="fo-card-title">{{.Title}}</span>
+            {{if .Excerpt}}<span class="fo-card-ex">{{.Excerpt}}</span>{{end}}
+            {{with productChips .}}<span class="f-chips">{{range .}}<span class="f-chip"><b>{{.K}}</b><i>{{.V}}</i></span>{{end}}</span>{{end}}
+          </span>
+        </a>
+        {{else}}
+        <p class="fo-empty muted">{{.Tr.T "factory.no_products"}}</p>
+        {{end}}
+      </div>
+      <div class="fo-more">
+        <a class="btn" href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+    </section>
+
+    <section class="fo-section fo-strength" id="fo-strength">
+      <div class="fo-section-head">
+        <p class="f-eyebrow">Factory Strength</p>
+        <h2>{{.Tr.T "factory.strength"}}</h2>
+      </div>
+      {{if .FactoryStats}}
+      <dl class="f-stats fo-stats">
+        {{range .FactoryStats}}
+        <div class="f-stat"><dt>{{.Num}}</dt><dd>{{.Label}}</dd></div>
+        {{end}}
+      </dl>
+      {{else}}
+      {{template "factory_about" .}}
+      {{end}}
+    </section>
+
+    {{if .FactoryProcessOn}}
+    <section class="fo-section fo-process" id="fo-process">
+      <div class="fo-section-head">
+        <p class="f-eyebrow">Workflow</p>
+        <h2>{{.Tr.T "factory.process"}}</h2>
+      </div>
+      {{template "factory_process_steps" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryQAs}}
+    <section class="fo-section fo-faq-sec" id="fo-faq">
+      <div class="fo-section-head">
+        <p class="f-eyebrow">FAQ</p>
+        <h2>{{.Tr.T "factory.faq"}}</h2>
+      </div>
+      {{template "factory_faq" .}}
+    </section>
+    {{end}}
+  </div>
+
+  {{template "factory_cta" .}}
+{{end}}

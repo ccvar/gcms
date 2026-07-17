@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 960" role="img" aria-label="LED high bay light placeholder">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#eef1f4"/>
+      <stop offset="1" stop-color="#e4e9ee"/>
+    </linearGradient>
+    <pattern id="grid" width="64" height="64" patternUnits="userSpaceOnUse">
+      <path d="M64 0H0v64" fill="none" stroke="#d3dbe2" stroke-width="2"/>
+    </pattern>
+    <linearGradient id="beam" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f4d98c" stop-opacity=".85"/>
+      <stop offset="1" stop-color="#f4d98c" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <rect width="1280" height="960" fill="url(#bg)"/>
+  <rect width="1280" height="960" fill="url(#grid)"/>
+  <!-- 吊杆 + 散热鳍片灯体 + 灯罩 -->
+  <g>
+    <rect x="628" y="80" width="24" height="90" fill="#56718a"/>
+    <rect x="600" y="170" width="80" height="46" rx="8" fill="#33414e"/>
+    <g fill="#56718a">
+      <rect x="560" y="216" width="24" height="120" rx="6"/>
+      <rect x="604" y="216" width="24" height="132" rx="6"/>
+      <rect x="648" y="216" width="24" height="132" rx="6"/>
+      <rect x="692" y="216" width="24" height="120" rx="6"/>
+    </g>
+    <path d="M500 348 h280 l70 120 h-420 z" fill="#33414e"/>
+    <ellipse cx="640" cy="470" rx="210" ry="34" fill="#8fa2b2"/>
+    <ellipse cx="640" cy="470" rx="150" ry="22" fill="#f4d98c"/>
+    <path d="M470 486 L330 850 h620 L810 486 z" fill="url(#beam)"/>
+  </g>
+  <!-- 工程标注 -->
+  <g stroke="#3e6d94" stroke-width="3" fill="none">
+    <path d="M430 348 h-80 M430 468 h-80 M350 348 v120" />
+    <path d="M920 470 h80 M970 440 v60" stroke-dasharray="8 8"/>
+  </g>
+  <g fill="#3e6d94" font-family="ui-monospace,Menlo,monospace" font-size="30" letter-spacing="4">
+    <text x="250" y="425" transform="rotate(-90 250 425)">120°</text>
+  </g>
+</svg>

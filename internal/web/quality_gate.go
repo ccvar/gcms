@@ -1,11 +1,14 @@
 package web
 
-// quality_gate.go 发布质量门（托管防判责）：仅在自动化 API 把 posts 的 status 显式置为
+// quality_gate.go 发布质量门（托管防判责）：仅在自动化 API 把内容的 status 显式置为
 // published 的两条路径（创建即发布、更新改状态）上做硬校验；admin 后台人工发布不拦。
+// 规则集按类型分发：posts 走文章规则（正文 ≥400 词），product 走商品规则（正文阈值降到
+// 100 词，但要求封面/图集至少 1 张、规格 ≥3 行）；其它类型不设门。
 // 不达标返回 422：{"error":"quality_gate","failures":["body_too_short (380/400)",...]}，
 // 让 AI 按提示补齐后重试。
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -15,26 +18,55 @@ import (
 )
 
 const (
-	qualityGateMinBodyWords = 400 // 正文有效长度下限（CJK 每字符记 1、拉丁按空格分词记 1）
-	qualityGateTitleMin     = 8   // 标题最短字符数
-	qualityGateTitleMax     = 120 // 标题最长字符数
+	qualityGateMinBodyWords        = 400 // 文章正文有效长度下限（CJK 每字符记 1、拉丁按空格分词记 1）
+	qualityGateProductMinBodyWords = 100 // 商品正文下限（商品靠规格/图集说话，正文只要求基本说明）
+	qualityGateProductMinSpecs     = 3   // 商品规格（specs repeater）最少行数
+	qualityGateTitleMin            = 8   // 标题最短字符数
+	qualityGateTitleMax            = 120 // 标题最长字符数
 )
 
-// qualityGateApplies 判定本次自动化请求是否命中发布质量门：仅 posts、且本次请求显式把
+// qualityGateRules 是某内容类型的发布门规则集。
+type qualityGateRules struct {
+	minBodyWords int
+	requireImage bool // 封面图或图集至少 1 张
+	minSpecs     int  // 规格（extra.specs repeater）最少行数；0 = 不校验
+}
+
+// qualityGateRulesFor 按类型分发规则集；返回 nil 表示该类型不过发布门。
+func qualityGateRulesFor(kind string) *qualityGateRules {
+	switch kind {
+	case "post":
+		return &qualityGateRules{minBodyWords: qualityGateMinBodyWords}
+	case "product":
+		return &qualityGateRules{
+			minBodyWords: qualityGateProductMinBodyWords,
+			requireImage: true,
+			minSpecs:     qualityGateProductMinSpecs,
+		}
+	}
+	return nil
+}
+
+// qualityGateApplies 判定本次自动化请求是否命中发布质量门：类型有规则集、且本次请求显式把
 // status 置为 published（创建即发布 / 更新改状态）。草稿、定时与其它集合不拦。
 func qualityGateApplies(kind string, in *apiContentInput, p *store.Post) bool {
-	if kind != "post" || p == nil || p.Status != "published" {
+	if qualityGateRulesFor(kind) == nil || p == nil || p.Status != "published" {
 		return false
 	}
 	return in != nil && in.Status != nil && strings.TrimSpace(*in.Status) == "published"
 }
 
-// qualityGateFailures 纯函数：返回不达标项列表（空 = 通过）。
-func qualityGateFailures(p *store.Post) []string {
+// qualityGateFailures 纯函数：按类型规则集返回不达标项列表（空 = 通过）。
+// failures 项自带缺口数值（如 body_too_short (80/100)、specs_too_few (1/3)），AI 可按项补齐。
+func qualityGateFailures(kind string, p *store.Post) []string {
+	rules := qualityGateRulesFor(kind)
+	if rules == nil {
+		return nil
+	}
 	var failures []string
 	words := effectiveWordCount(stripMarkdown(p.Content))
-	if words < qualityGateMinBodyWords {
-		failures = append(failures, fmt.Sprintf("body_too_short (%d/%d)", words, qualityGateMinBodyWords))
+	if words < rules.minBodyWords {
+		failures = append(failures, fmt.Sprintf("body_too_short (%d/%d)", words, rules.minBodyWords))
 	}
 	if strings.TrimSpace(p.Excerpt) == "" {
 		failures = append(failures, "excerpt_missing")
@@ -48,7 +80,27 @@ func qualityGateFailures(p *store.Post) []string {
 	} else if titleLen > qualityGateTitleMax {
 		failures = append(failures, fmt.Sprintf("title_too_long (%d/%d)", titleLen, qualityGateTitleMax))
 	}
+	if rules.requireImage || rules.minSpecs > 0 {
+		extra := parseExtraMap(p.Extra)
+		if rules.requireImage && strings.TrimSpace(p.CoverImage) == "" && len(toStringList(extra["gallery"])) == 0 {
+			failures = append(failures, "cover_or_gallery_missing (需要封面图或图集至少 1 张)")
+		}
+		if rules.minSpecs > 0 {
+			if n := len(pairsToList(extra["specs"])); n < rules.minSpecs {
+				failures = append(failures, fmt.Sprintf("specs_too_few (%d/%d)", n, rules.minSpecs))
+			}
+		}
+	}
 	return failures
+}
+
+// parseExtraMap 把 posts.extra JSON 解析为 map（空/损坏返回空 map，绝不 panic）。
+func parseExtraMap(extra string) map[string]any {
+	m := map[string]any{}
+	if t := strings.TrimSpace(extra); t != "" {
+		_ = json.Unmarshal([]byte(t), &m)
+	}
+	return m
 }
 
 // apiQualityGateError 422 结构化错误：error 固定 quality_gate，failures 逐项给出缺口。

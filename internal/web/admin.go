@@ -484,21 +484,22 @@ func (s *Server) adminView(r *http.Request, title string) *View {
 		adminReturn = r.URL.RequestURI()
 	}
 	return &View{
-		Site:         site,
-		SEO:          seo.Meta{Title: titleText + " — " + site.Name + " " + suffix, Robots: "noindex, nofollow"},
-		Year:         time.Now().Year(),
-		Tr:           s.i18n.Tr(def, def),
-		Lang:         def,
-		Admin:        admin,
-		AdminLang:    adminLang,
-		AdminLangs:   s.i18n.AdminLocales(),
-		AdminReturn:  adminReturn,
-		EditLang:     def,
-		Locales:      s.locales(),
-		AllLocales:   s.i18n.All(),
-		AssetVer:     s.assetVer,
-		PlatformMode: s.platform != nil,
-		AdminSiteURL: "/" + def + "/",
+		Site:          site,
+		SEO:           seo.Meta{Title: titleText + " — " + site.Name + " " + suffix, Robots: "noindex, nofollow"},
+		Year:          time.Now().Year(),
+		Tr:            s.i18n.Tr(def, def),
+		Lang:          def,
+		Admin:         admin,
+		AdminLang:     adminLang,
+		AdminLangs:    s.i18n.AdminLocales(),
+		AdminReturn:   adminReturn,
+		EditLang:      def,
+		Locales:       s.locales(),
+		AllLocales:    s.i18n.All(),
+		AssetVer:      s.assetVer,
+		PlatformMode:  s.platform != nil,
+		AdminSiteURL:  "/" + def + "/",
+		PrimaryExtNav: s.primaryExtNav(adminLang), // 已启用且 Primary 的扩展类型（如商品）上浮为一级菜单
 	}
 }
 
@@ -825,10 +826,23 @@ func imageFileDataURL(path string) string {
 	return "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(data)
 }
 
-// catKind 取分类管理当前的类型（post|link，来自 ?kind= 或表单）。
-func catKind(r *http.Request) string {
-	if r.URL.Query().Get("kind") == "link" || r.FormValue("kind") == "link" {
-		return "link"
+// catKind 取分类管理当前的类型（来自 ?kind= 或表单）：post|link，
+// 或「已启用且支持分类」的扩展类型 key（如 product）——与后台一级菜单的
+// Primary 泛化思路一致：不硬编码具体类型，跟着引擎的启用状态走。
+// 未知/未启用的 kind 一律回落 post。
+func (s *Server) catKind(r *http.Request) string {
+	raw := strings.TrimSpace(r.URL.Query().Get("kind"))
+	if raw == "" {
+		raw = strings.TrimSpace(r.FormValue("kind"))
+	}
+	switch raw {
+	case "post", "link":
+		return raw
+	}
+	for _, ct := range s.activeExtContentTypes() {
+		if ct.HasCategory && ct.Key == raw {
+			return raw
+		}
 	}
 	return "post"
 }
@@ -945,7 +959,7 @@ const adminListPageSize = 20
 
 func adminStatusFilter(r *http.Request) string {
 	switch strings.TrimSpace(r.URL.Query().Get("status")) {
-	case "draft", "published", "scheduled":
+	case "draft", "published", "scheduled", "discarded": // discarded = AI 报废申请「待清理」档
 		return strings.TrimSpace(r.URL.Query().Get("status"))
 	default:
 		return ""
@@ -962,11 +976,14 @@ func (s *Server) adminListRedirect(base string, r *http.Request) string {
 		parts = append(parts, "lang="+lang)
 	}
 	switch status := strings.TrimSpace(r.FormValue("status")); status {
-	case "draft", "published", "scheduled":
+	case "draft", "published", "scheduled", "discarded":
 		parts = append(parts, "status="+status)
 	}
 	if cat := strings.Trim(strings.TrimSpace(r.FormValue("cat")), "/"); cat != "" {
 		parts = append(parts, "cat="+cat)
+	}
+	if q := strings.TrimSpace(r.FormValue("q")); q != "" { // 扩展列表的标题搜索词，操作后保住筛选现场
+		parts = append(parts, "q="+url.QueryEscape(q))
 	}
 	if page, err := strconv.Atoi(strings.TrimSpace(r.FormValue("page"))); err == nil && page > 1 {
 		parts = append(parts, "page="+strconv.Itoa(page))
@@ -1122,6 +1139,21 @@ func (s *Server) showAdminSites(w http.ResponseWriter, r *http.Request, status i
 			v.PlatformOfficialHosts[1] = host
 		}
 		s.setSiteCounts(v, 1, s.store)
+		// 左下角芯片：单站模式没有平台 sites 表（合成站点无创建时间、不能绑域名），
+		// 口径与平台模式一致，缺来源时优雅降级（详见 buildDeployChip）。
+		cfStatus := s.readCloudflareStatus()
+		_, isCF := v.PlatformOfficialURLs[1]
+		if isCF && cfStatus != nil {
+			v.PlatformCFStatus = map[int64]string{1: strings.TrimSpace(cfStatus.Status)}
+		}
+		contentAt, hasContent := parseChipTime(v.PlatformContentUpdatedAt[1])
+		v.PlatformDeployChips = map[int64]*DeployChip{1: buildDeployChip(v.Admin, deployChipInput{
+			Site:        v.PlatformSites[0],
+			CFPublished: isCF,
+			CFStatus:    cfStatus,
+			ContentAt:   contentAt,
+			HasContent:  hasContent,
+		}, time.Now())}
 		s.rnd.Admin(w, "sites", status, v)
 		return
 	}
@@ -1177,24 +1209,35 @@ func (s *Server) showAdminSites(w http.ResponseWriter, r *http.Request, status i
 			v.PlatformGoogleDefaultURIs[site.ID] = s.defaultGoogleAnalyticsURI(r, site)
 		}
 	}
-	v.PlatformCFDeployAt = map[int64]string{}
 	v.PlatformCFStatus = map[int64]string{}
+	v.PlatformDeployChips = map[int64]*DeployChip{}
 	v.SiteTelegramStatus = map[int64]SiteTelegramStatus{}
+	now := time.Now()
 	for _, site := range sites {
 		if site == nil {
 			continue
 		}
+		var cfStatus *CloudflareStatus
 		if rt, ok := s.runtimePool().runtimeByID(site.ID); ok && rt != nil {
 			s.setSiteCounts(v, site.ID, rt.Store)
 			v.SiteTelegramStatus[site.ID] = s.siteTelegramStatusFor(rt.Store)
-			// 已发布到 Cloudflare 的站点：读取其最近部署时间与部署状态（供卡片展示 + 轮询初值）。
-			if _, isCF := v.PlatformOfficialURLs[site.ID]; isCF {
-				if st := readCloudflareStatusFile(cloudflareStatusPathForRuntime(rt)); st != nil {
-					v.PlatformCFDeployAt[site.ID] = strings.TrimSpace(st.LastDeployAt)
-					v.PlatformCFStatus[site.ID] = strings.TrimSpace(st.Status)
-				}
-			}
+			// 每站的 Cloudflare 部署状态文件：CF 形态卡片要「部署中/失败」轮询初值，
+			// 「待部署」判定还要看是否成功发布过——所以不分形态都读一次（本地一小文件，量级不变）。
+			cfStatus = readCloudflareStatusFile(cloudflareStatusPathForRuntime(rt))
 		}
+		_, isCF := v.PlatformOfficialURLs[site.ID]
+		if isCF && cfStatus != nil {
+			v.PlatformCFStatus[site.ID] = strings.TrimSpace(cfStatus.Status)
+		}
+		contentAt, hasContent := parseChipTime(v.PlatformContentUpdatedAt[site.ID])
+		v.PlatformDeployChips[site.ID] = buildDeployChip(v.Admin, deployChipInput{
+			Site:        site,
+			Domains:     v.PlatformDomains[site.ID],
+			CFPublished: isCF,
+			CFStatus:    cfStatus,
+			ContentAt:   contentAt,
+			HasContent:  hasContent,
+		}, now)
 	}
 	s.rnd.Admin(w, "sites", status, v)
 }
@@ -1327,6 +1370,13 @@ func (s *Server) adminCreateSite(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// 站型预设：记录 site.kind；工厂站额外启用 product 类型、把「商品」挂进导航，
+	// 且在「带演示数据」时写入演示商品（一次性，不做持续约束）。
+	if err := applySiteKindPreset(st, s.i18n, r.FormValue("site_kind"), r.FormValue("seed_mode") != "empty"); err != nil {
+		_ = st.Close()
+		s.serverError(w, err)
+		return
+	}
 	if err := st.Close(); err != nil {
 		s.serverError(w, err)
 		return
@@ -1359,6 +1409,7 @@ func siteCreateFormVals(r *http.Request) map[string]string {
 		"name":      strings.TrimSpace(r.FormValue("name")),
 		"domain":    strings.TrimSpace(r.FormValue("domain")),
 		"seed_mode": strings.TrimSpace(r.FormValue("seed_mode")),
+		"site_kind": normalizeSiteKind(r.FormValue("site_kind")),
 	}
 	if vals["seed_mode"] == "" {
 		vals["seed_mode"] = "demo"
@@ -2547,6 +2598,13 @@ func (s *Server) adminPosts(w http.ResponseWriter, r *http.Request) {
 	v.CategoryFilterName = categoryName
 	v.AdminListPath = "/admin/posts"
 	v.EditLang = lang
+	// AI 报废申请「待清理」：条数驱动清空按钮与筛选档；purged 回跳展示清理结果。
+	v.DiscardTotal, _ = s.store.CountDiscardedDrafts("post", lang)
+	if n := strings.TrimSpace(r.URL.Query().Get("purged")); n != "" {
+		if cnt, err := strconv.Atoi(n); err == nil && cnt >= 0 {
+			v.Flash = fmt.Sprintf(v.Admin.T("admin.discard.purged", "已清理 %d 篇 AI 弃用草稿。"), cnt)
+		}
+	}
 	setPagination(v, page, totalPages, "/admin/posts")
 	s.rnd.Admin(w, "posts", http.StatusOK, v)
 }
@@ -3982,11 +4040,8 @@ func (s *Server) adminContentStatus(w http.ResponseWriter, r *http.Request, kind
 		p.Status = "draft"
 	case "scheduled":
 		if p.PublishedAt.IsZero() || !p.PublishedAt.After(now) {
-			editKind := "posts"
-			if kind == "link" {
-				editKind = "links"
-			}
-			http.Redirect(w, r, fmt.Sprintf("/admin/%s/%d/edit", editKind, id), http.StatusSeeOther)
+			// 没有未来的发布时间：跳编辑页让用户先设 publish_at（按类型回跳，扩展类型走 /admin/ext/…）。
+			http.Redirect(w, r, adminEditURLForPost(p), http.StatusSeeOther)
 			return
 		}
 		p.Status = "scheduled"
@@ -4005,7 +4060,7 @@ func (s *Server) adminContentStatus(w http.ResponseWriter, r *http.Request, kind
 
 // ---------- 站点设置（分区独立保存）----------
 
-var settingsSections = map[string]bool{"site": true, "appearance": true, "copy": true, "menu": true, "languages": true, "categories": true, "automation": true, "cloudflare": true, "comments": true, "telegram": true, "updates": true, "security": true}
+var settingsSections = map[string]bool{"site": true, "appearance": true, "copy": true, "menu": true, "languages": true, "categories": true, "automation": true, "cloudflare": true, "comments": true, "telegram": true, "contact": true, "updates": true, "security": true}
 
 func themeName(id string) string {
 	for _, t := range Themes {
@@ -4132,6 +4187,20 @@ var themeDescEN = map[string]string{
 	"morningfm":    "Sky-blue broadcast desk with deep teal and sunlight yellow — warm morning programs",
 	"whitecube":    "Pure-white gallery walls with graphite type and label red — minimal art and case studies",
 	"botanical":    "Sage gallery walls with forest green and cobalt labels — nature-led exhibitions",
+	// 外贸独立站主题族（dtc）
+	"cream":     "Cream-white paper with warm near-black and hairlines — flagship brand-store homepage for general DTC brands",
+	"amberglow": "Warm amber paper with honey-orange accents and serif headings — cozy lifestyle skin for home fragrance and craft brands",
+	"inknavy":   "Deep ink-navy with champagne-gold accents and serif display type — premium night-mode skin for accessible luxury brands",
+	"oliveleaf": "Rice-paper base with olive-green accents and soft rounded cards — natural skin for personal care and outdoor-living brands",
+	"dawnfair":  "Pure white with system sans-serif light-weight display type, hairline dividers, outlined buttons that invert on hover and frameless product cards — Shopify-Dawn default-store feel for general DTC brands",
+	"solowhite": "Pure white with an indigo conversion button and oversized type — single-product long-scroll funnel for one-hero-product brands",
+	"charcoal":  "Charcoal dark base with amber-gold CTAs and type over imagery — launch-night skin for electronics and fitness gear",
+	"coralpop":  "Milk-white base with lively coral accents and large radii — energetic skin for beauty and trend gadgets",
+	"limewash":  "Pale green-gray base with moss-green accents and bold serif titles — fresh natural skin for wellness and plant-based products",
+	"galleria":  "Gallery white with near-black fine type and zero radius — visual-first lookbook wall for fashion and designer brands",
+	"blackbox":  "Near-black exhibition hall with warm gold wall labels — after-dark lookbook for high fashion and limited collections",
+	"flaxen":    "Flaxen linen paper with flax-brown accents and small serif labels — textile skin for home linen and slow-living brands",
+	"fogblue":   "Fog gray-blue base with harbor-blue accents — cool still-life skin for ceramics, stationery and minimal lifestyle brands",
 }
 
 func themeOptionForAdmin(t ThemeOption, lang string) ThemeOption {
@@ -4146,7 +4215,7 @@ func themeOptionForAdmin(t ThemeOption, lang string) ThemeOption {
 	if desc == "" {
 		desc = t.Desc
 	}
-	return ThemeOption{ID: t.ID, Name: name, Desc: desc}
+	return ThemeOption{ID: t.ID, Name: name, Desc: desc, Category: t.Category}
 }
 
 func (s *Server) adminSettings(w http.ResponseWriter, r *http.Request) {
@@ -4366,8 +4435,13 @@ func (s *Server) settingsRedirectURL(r *http.Request, section string) string {
 	switch section {
 	case "site", "copy":
 		q.Set("lang", s.editLang(r))
+	case "appearance":
+		// 主题 options 槽按语种编辑：非默认语种保存后停留在该语种；默认语种维持无参 URL（现状）。
+		if lang := s.editLang(r); lang != s.defaultLang() {
+			q.Set("lang", lang)
+		}
 	case "categories":
-		q.Set("kind", catKind(r))
+		q.Set("kind", s.catKind(r))
 		q.Set("lang", s.editLang(r))
 	}
 	target := "/admin/settings/" + section
@@ -4398,12 +4472,12 @@ func (s *Server) showSettings(w http.ResponseWriter, r *http.Request, section, f
 	for _, t := range Themes {
 		display := themeOptionForAdmin(t, adminLang)
 		c, a, rd := s.themeTweak(t.ID)
-		cards = append(cards, ThemeCard{ID: t.ID, Name: display.Name, Desc: display.Desc, Accent: a, Radius: rd, Custom: c})
+		cards = append(cards, ThemeCard{ID: t.ID, Name: display.Name, Desc: display.Desc, Category: t.Category, Accent: a, Radius: rd, Bg: themeBg(t.ID), Custom: c})
 	}
 	v := s.adminView(r, "设置")
 	s.authed(v, sess)
 	v.Section = section
-	v.CatKind = catKind(r)
+	v.CatKind = s.catKind(r)
 	favicon := nonEmpty(st.Favicon, defaultFaviconPath)
 	shareImage := nonEmpty(st.ShareImage, defaultShareImageURL)
 	v.Settings = &SettingsForm{
@@ -4433,6 +4507,8 @@ func (s *Server) showSettings(w http.ResponseWriter, r *http.Request, section, f
 		v.Themes = append(v.Themes, themeOptionForAdmin(t, v.AdminLang))
 	}
 	v.Cards = cards
+	v.FamilyCards = themeFamilyCards(cards, st.Theme, adminLang)
+	v.ThemeCategories = themeCategoriesPresent()
 	v.Settings.HomeSections, v.Settings.HomeHero = s.homeSectionConfig()
 	v.Flash = flash
 	v.FormErr = formErr
@@ -4461,9 +4537,20 @@ func (s *Server) showSettings(w http.ResponseWriter, r *http.Request, section, f
 	}
 
 	switch section {
+	case "appearance":
+		// 主题 options schema：按当前主题声明的槽渲染动态表单（工厂族槽 + 全主题 hero 槽），
+		// 承载在「主题配置」弹窗里；首页版块设置只对标准/默认布局生效，
+		// 策划/工厂/dtc 骨架（固定结构）下该节整体不渲染——控件不提交，
+		// 后端靠 home_sections_present 登记字段区分「没渲染」与「清空」，数据不丢。
+		lang := s.editLang(r)
+		v.EditLang = lang
+		v.ThemeOptions = s.themeOptionViews(st.Theme, lang)
+		v.ThemeOptsLocalized = themeOptionsLocalized(st.Theme)
+		v.HomeSectionsApply = layoutForTheme(st.Theme) == "topbar"
 	case "site":
 		lang := s.editLang(r)
 		v.EditLang = lang
+		v.Settings.SiteKind = siteKindOf(s.store)
 		def := s.site(s.defaultLang())
 		v.Settings.NameDef = def.Name
 		v.Settings.TaglineDef = def.Tagline
@@ -4524,15 +4611,31 @@ func (s *Server) showSettings(w http.ResponseWriter, r *http.Request, section, f
 		v.Settings.HomeLatestDef = tr.T("home.latest")
 	case "categories":
 		lang := s.editLang(r)
-		kind := catKind(r)
+		kind := s.catKind(r)
 		v.EditLang = lang
 		v.CatKind = kind
-		all := s.archiveConfig(lang, kind)
-		v.Settings.AllTitle = all.Title
-		v.Settings.AllLabel = all.Label
-		v.Settings.AllSlug = all.Slug
-		v.Settings.AllPath = all.Path
-		v.Settings.AllDescription = all.Description
+		v.CatKindTabs = s.extCategoryKinds(v.AdminLang) // 已启用且支持分类的扩展类型页签（如商品）
+		switch kind {
+		case "post":
+			v.CatSlugBase = "/category/"
+		case "link":
+			v.CatSlugBase = "/links/cat/"
+		default:
+			// 扩展类型分类：无「全部入口」行（归档页标题/简介在扩展 hub 的「归档页文案」维护，
+			// 同一份 ext_archive_meta 数据），这里只做分类 CRUD。
+			v.CatKindExt = true
+			if ct := s.lookupType(kind); ct != nil {
+				v.CatSlugBase = "/" + strings.Trim(ct.URLPrefix, "/") + "/cat/"
+			}
+		}
+		if !v.CatKindExt {
+			all := s.archiveConfig(lang, kind)
+			v.Settings.AllTitle = all.Title
+			v.Settings.AllLabel = all.Label
+			v.Settings.AllSlug = all.Slug
+			v.Settings.AllPath = all.Path
+			v.Settings.AllDescription = all.Description
+		}
 		v.Categories, _ = s.store.ListCategories(lang, kind)
 		if eid := r.URL.Query().Get("edit"); eid != "" {
 			v.EditCat, _ = s.store.GetCategoryByID(atoi64(eid))
@@ -4555,6 +4658,12 @@ func (s *Server) showSettings(w http.ResponseWriter, r *http.Request, section, f
 		v.Settings.TelegramChannelURL = s.store.Setting(telegramChannelURLSetting)
 		v.Settings.TelegramAutoPush = s.store.Setting(telegramAutoPushSetting) == "1"
 		v.Settings.TelegramLastError = s.store.Setting(telegramLastErrorSetting)
+	case "contact":
+		v.Settings.ContactWhatsApp = s.store.Setting(contactWhatsAppSetting)
+		v.Settings.ContactEmail = s.store.Setting(contactEmailSetting)
+		v.Settings.ContactPhone = s.store.Setting(contactPhoneSetting)
+		v.Settings.ContactWeChatQR = s.store.Setting(contactWeChatQRSetting)
+		v.Settings.ContactFloat = s.store.Setting(contactFloatSetting) != "0" // 默认开
 	case "automation":
 		v.AutomationKeys, _ = s.store.ListAutomationKeys()
 		v.AutomationLogs, _ = s.store.ListAutomationLogs(20)
@@ -4948,11 +5057,18 @@ func (s *Server) adminSaveSite(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) adminSaveAppearance(w http.ResponseWriter, r *http.Request) {
+	// 外观保存支持 AJAX（admin.js fetch 提交，成功就地 flash + 弹窗关，不整页刷新）；
+	// 无 JS 时照旧走 PRG。两条路径共用同一套解析与落库逻辑。
+	jsonReq := wantsJSON(r)
 	if _, ok := s.checkCSRF(w, r); !ok {
 		return
 	}
 	theme := r.FormValue("theme")
 	if !validTheme(theme) {
+		if jsonReq {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "未知的主题。"})
+			return
+		}
 		s.showSettings(w, r, "appearance", "", "未知的主题。")
 		return
 	}
@@ -4972,24 +5088,41 @@ func (s *Server) adminSaveAppearance(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 首页 Hero 右侧视觉（默认动画 / 图片或 SVG 文件 / 内联 SVG 代码）——全局
+	// 首页 Hero 视觉（默认动画 / 动画1 / 图片或 SVG 文件 / 内联 SVG 代码）——全局
+	// （主题 options schema 的 hero 槽：控件由 schema 循环渲染，存储键维持不变。）
+	// anim1 必须显式放行：下拉里有「动画1」选项，早前一律归一成 "" 导致该选择保存后回落默认动画。
 	hv := r.FormValue("hero_visual")
-	if hv != "image" && hv != "svg" {
+	if hv != "image" && hv != "svg" && hv != "anim1" {
 		hv = ""
 	}
 	_ = s.store.SetSetting("hero.visual", hv)
 	_ = s.store.SetSetting("hero.image", strings.TrimSpace(r.FormValue("hero_image")))
 	_ = s.store.SetSetting("hero.svg", strings.TrimSpace(r.FormValue("hero_svg")))
 
-	// 首页版块：Hero 开关 + 版块顺序/显示（仅默认布局）——与「选主题」同处一屏保存
-	homeHero := "1"
-	if r.FormValue("home_hero") != "1" {
-		homeHero = "0"
+	// 主题 options（工厂族三槽）：只有表单实际渲染了这些控件（带槽标记）才写，
+	// 防止在内容主题下保存外观时误清工厂数据；按编辑语种落 键 / 键::lang。
+	if r.FormValue(themeOptsFormMarker) == "factory" {
+		s.saveThemeOptionsFromForm(r, s.editLang(r))
 	}
-	_ = s.store.SetSetting(homeHeroKey, homeHero)
-	_ = s.store.SetSetting(homeSectionsKey, sanitizeHomeSectionsJSON(r.FormValue("home_sections")))
+
+	// 首页版块：Hero 开关 + 版块顺序/显示（仅默认布局）——与「选主题」同处一屏保存。
+	// 固定结构骨架（策划/工厂/dtc）下该节整体不渲染 → 控件不提交；只有表单带
+	// 登记字段（home_sections_present，随该节一起渲染）才写这两个键——
+	// 缺字段 ≠ 清空，换回标准主题时已有配置原样保留（同 theme_opt_slot 的思路）。
+	if r.FormValue("home_sections_present") == "1" {
+		homeHero := "1"
+		if r.FormValue("home_hero") != "1" {
+			homeHero = "0"
+		}
+		_ = s.store.SetSetting(homeHeroKey, homeHero)
+		_ = s.store.SetSetting(homeSectionsKey, sanitizeHomeSectionsJSON(r.FormValue("home_sections")))
+	}
 
 	s.clearGeneratedCaches()
+	if jsonReq {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "message": "外观设置已保存。", "theme": theme})
+		return
+	}
 	s.redirectSettings(w, r, "appearance", "外观设置已保存。")
 }
 
@@ -5502,7 +5635,12 @@ func (s *Server) adminSaveCategoryAll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	lang := s.editLang(r)
-	kind := catKind(r)
+	kind := s.catKind(r)
+	// 「全部入口」只属于文章/链接归档；扩展类型的归档文案走扩展 hub（ext_archive_meta）。
+	if kind != "post" && kind != "link" {
+		s.notFound(w, r)
+		return
+	}
 	title := r.FormValue("title")
 	label := r.FormValue("label")
 	desc := r.FormValue("description")
@@ -5614,7 +5752,7 @@ func (s *Server) adminSaveCategory(w http.ResponseWriter, r *http.Request) {
 		slug = base + "-" + strconv.Itoa(n)
 		n++
 	}
-	c := &store.Category{ID: id, Slug: slug, Name: name, Description: strings.TrimSpace(r.FormValue("description")), Lang: lang, Kind: catKind(r)}
+	c := &store.Category{ID: id, Slug: slug, Name: name, Description: strings.TrimSpace(r.FormValue("description")), Lang: lang, Kind: s.catKind(r)}
 	if id == 0 {
 		if _, err := s.store.CreateCategory(c); err != nil {
 			s.serverError(w, err)

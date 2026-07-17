@@ -136,6 +136,34 @@ func TestPlatformMirrorSimilarAndStatsPages(t *testing.T) {
 	}
 }
 
+// TestPlatformMirrorThemeOptions 平台镜像：/sites/{id}/theme-options 命中主题配置槽处理器
+// （scope 与 site-profile 读口径一致 = site:read），不被 {collection} 通配吞掉。
+func TestPlatformMirrorThemeOptions(t *testing.T) {
+	_, h, ps, _, blogSite := setupPlatformAutomation(t)
+	token := "gcmsp_themeopts123456"
+	if _, err := ps.CreatePlatformKey("opts", token, token[:13], platform.KeyMembershipAll,
+		"site:read", nil, time.Time{}); err != nil {
+		t.Fatalf("create key: %v", err)
+	}
+	rec := platformAPIReq(t, h, http.MethodGet, "/api/platform/v1/sites/"+strconv.FormatInt(blogSite.ID, 10)+"/theme-options", token, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("platform theme-options = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Theme  string `json:"theme"`
+		Layout string `json:"layout"`
+		Slots  []struct {
+			Key string `json:"key"`
+		} `json:"slots"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if out.Theme == "" || out.Layout == "" || len(out.Slots) == 0 || out.Slots[0].Key != "hero.visual" {
+		t.Fatalf("platform theme-options body 契约不符：%s", rec.Body.String())
+	}
+}
+
 func TestPlatformKeyDispatchMembership(t *testing.T) {
 	_, h, ps, defaultSite, blogSite := setupPlatformAutomation(t)
 

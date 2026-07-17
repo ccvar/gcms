@@ -1,0 +1,112 @@
+{{define "home_factory_sidebar"}}
+  {{/* factory-sidebar — 侧栏目录：左侧常驻竖栏（品牌 + 菜单 + 分类树 + 联系按钮，见
+       partials/header.html 分支），右侧密集目录流——紧凑导语条（标题 + 数字行）
+       + 商品行式清单（缩略图 | 标题+chips | 分类 | 箭头，数据库感）+ 流程 + 行业
+       + 图集 + FAQ + 动态行 + CTA 通栏；页脚一行极简（partials/footer.html 分支）。
+       数据全部由 fillFactoryHome 装载；≤920px 竖栏折叠为顶部抽屉（JS class）。 */}}
+  {{/* hero 槽三态（内容区顶部横幅位，竖栏不动）：image+配了图才取图（不回落图集）；
+       default/anim* 渲染图纸机械动画横幅（复用 fb-hero-banner 边框卡）；svg 模式维持现状。 */}}
+  {{$hero := ""}}{{if and (eq .Site.HeroVisual "image") .Site.HeroImage}}{{$hero = .Site.HeroImage}}{{end}}
+  {{$heroAnim := and (not $hero) (ne .Site.HeroVisual "image") (ne .Site.HeroVisual "svg")}}
+  <div class="fb-wrap">
+    {{/* 文字左、媒体右双栏(有图/动画时);窄屏媒体落到文字下——顶部横幅位太突兀,用户否掉。 */}}
+    <div class="fb-hero{{if or $hero $heroAnim}} has-media{{end}}">
+    <section class="fb-intro">
+      {{if .Site.HeroEyebrow}}<p class="fb-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+      <h1 class="fb-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+      {{if .Site.HeroDescription}}<p class="fb-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+      {{if .FactoryStats}}
+      <dl class="fb-statline">
+        {{range .FactoryStats}}
+        <div class="fb-stat"><dt>{{.Num}}</dt><dd>{{.Label}}</dd></div>
+        {{end}}
+      </dl>
+      {{else}}
+      {{template "factory_about" .}}
+      {{end}}
+    </section>
+    {{if $hero}}<figure class="fb-hero-banner"><img src="{{$hero}}" alt="{{if .Site.HeroAlt}}{{.Site.HeroAlt}}{{else}}{{.Site.Name}}{{end}}" decoding="async" fetchpriority="high"{{imgAttrs $hero}}></figure>
+    {{else if $heroAnim}}<div class="fb-hero-banner f-heroanim" aria-hidden="true">{{template "factory_hero_anim" .}}</div>{{end}}
+    </div>
+
+    <section class="fb-section fb-products-sec">
+      <div class="fb-section-head">
+        <h2>{{.Tr.T "factory.products"}}</h2>
+        <a href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="fb-rows">
+        {{range .FactoryProducts}}
+        <a class="fb-row" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+          <span class="fb-row-media{{if not .CoverImage}} fb-row-gen{{end}}">
+            {{if .CoverImage}}<img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}
+          </span>
+          <span class="fb-row-main">
+            <span class="fb-row-title">{{.Title}}</span>
+            {{with productChips .}}<span class="f-chips">{{range .}}<span class="f-chip"><b>{{.K}}</b><i>{{.V}}</i></span>{{end}}</span>{{end}}
+          </span>
+          {{with .Category}}<span class="fb-row-cat">{{.Name}}</span>{{end}}
+          <span class="arrow" aria-hidden="true">→</span>
+        </a>
+        {{else}}
+        <p class="fb-empty muted">{{.Tr.T "factory.no_products"}}</p>
+        {{end}}
+      </div>
+    </section>
+
+    {{if .FactoryProcessOn}}
+    <section class="fb-section">
+      <div class="fb-section-head">
+        <h2>{{.Tr.T "factory.process"}}</h2>
+      </div>
+      {{template "factory_process_steps" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryIndustries}}
+    <section class="fb-section">
+      <div class="fb-section-head">
+        <h2>{{.Tr.T "factory.industries"}}</h2>
+      </div>
+      {{template "factory_industries" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryGallery}}
+    <section class="fb-section">
+      <div class="fb-section-head">
+        <h2>{{.Tr.T "factory.gallery"}}</h2>
+      </div>
+      {{template "factory_gallery" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryQAs}}
+    <section class="fb-section">
+      <div class="fb-section-head">
+        <h2>{{.Tr.T "factory.faq"}}</h2>
+      </div>
+      {{template "factory_faq" .}}
+    </section>
+    {{end}}
+
+    {{if .Posts}}
+    <section class="fb-section fb-news">
+      <div class="fb-section-head">
+        <h2>{{.Tr.T "factory.news"}}</h2>
+        <a href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="fb-news-list">
+        {{range $i, $p := .Posts}}{{if lt $i 4}}
+        <a class="fb-news-item" href="{{$.Tr.U (contentURL $p)}}">
+          <time datetime="{{$.Tr.ISODate $p.PublishedAt}}">{{$.Tr.Date $p.PublishedAt}}</time>
+          <span class="fb-news-title">{{$p.Title}}</span>
+          <span class="arrow" aria-hidden="true">→</span>
+        </a>
+        {{end}}{{end}}
+      </div>
+    </section>
+    {{end}}
+  </div>
+
+  {{template "factory_cta" .}}
+{{end}}

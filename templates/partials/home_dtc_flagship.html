@@ -1,0 +1,207 @@
+{{define "home_dtc_flagship"}}
+  {{/* dtc-flagship — 品牌旗舰：生活方式大图 hero → 系列入口（商品分类升格为大卡）
+       → 畅销品栅格 → 品牌故事条（factory.stats 复用为「品牌数字」，空回落站点简介）
+       → 品牌图集（factory.gallery，未配置不渲染）→ 用户评价（dtc.testimonials，
+       未配置不渲染、绝不放假评价）→ FAQ → 页脚前联系 CTA。数据由 fillDTCHome 装载。
+       气质=零售感、大图、故事性——与工厂族的工业感彻底区分。 */}}
+  {{/* hero 槽三态：image+配图=全幅生活方式底图（scrim 压字）；svg=右侧内嵌；
+       default/anim*=右侧 DTC 风轻动画（渐变光斑 + 浮动产品卡，不用工厂齿轮）。 */}}
+  {{$heroImg := ""}}{{if and (eq .Site.HeroVisual "image") .Site.HeroImage}}{{$heroImg = .Site.HeroImage}}{{end}}
+  {{$heroSVG := and (eq .Site.HeroVisual "svg") (ne .Site.HeroSVG "")}}
+  {{$heroAnim := and (not $heroImg) (not $heroSVG)}}
+  <div class="df-wrap">
+    <section class="df-hero{{if $heroImg}} has-img{{else if $heroAnim}} has-anim{{end}}">
+      {{if $heroImg}}<img class="df-hero-img" src="{{$heroImg}}" alt="{{.Site.HeroAlt}}" decoding="async" fetchpriority="high"{{imgAttrs $heroImg}}>{{end}}
+      <div class="df-hero-inner">
+        <div class="df-hero-copy">
+          {{if .Site.HeroEyebrow}}<p class="dt-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+          <h1 class="df-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+          {{if .Site.HeroDescription}}<p class="df-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+          <div class="df-cta">
+            <a class="btn btn-primary" href="{{.Tr.U "/products"}}">{{.Tr.T "dtc.shop_now"}} <span class="arrow" aria-hidden="true">→</span></a>
+            {{if .Contact.Any}}<a class="btn dt-btn-ghost" href="#dtc-contact">{{.Tr.T "contact.float_label"}}</a>{{end}}
+          </div>
+        </div>
+        {{if $heroSVG}}<div class="df-hero-side dt-embed" aria-hidden="true">{{safeHTML .Site.HeroSVG}}</div>
+        {{else if $heroAnim}}<div class="df-hero-side dt-heroanim" aria-hidden="true">{{template "dtc_hero_anim" .}}</div>{{end}}
+      </div>
+    </section>
+
+    {{if .FactoryCats}}
+    <section class="df-section df-series">
+      <div class="dt-head">
+        <div>
+          <p class="dt-eyebrow">Collections</p>
+          <h2>{{.Tr.T "dtc.series"}}</h2>
+        </div>
+      </div>
+      <div class="df-series-grid">
+        {{range .FactoryCats}}
+        <a class="df-series-card" href="{{$.Tr.U .URL}}">
+          <span class="df-series-media{{if not .Cover}} dt-gen{{end}}">
+            {{if .Cover}}<img src="{{.Cover}}" alt="{{.Name}}" loading="lazy" decoding="async"{{imgAttrs .Cover}}>{{else}}<b aria-hidden="true">{{initial .Name}}</b>{{end}}
+          </span>
+          <span class="df-series-body">
+            <span class="df-series-name">{{.Name}}</span>
+            <span class="df-series-count">{{printf ($.Tr.T "factory.categories_count") .Count}}</span>
+          </span>
+          <span class="arrow" aria-hidden="true">→</span>
+        </a>
+        {{end}}
+      </div>
+    </section>
+    {{end}}
+
+    <section class="df-section df-best">
+      <div class="dt-head">
+        <div>
+          <p class="dt-eyebrow">Bestsellers</p>
+          <h2>{{.Tr.T "dtc.bestsellers"}}</h2>
+        </div>
+        <a href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="df-grid">
+        {{range .FactoryProducts}}
+        <a class="df-card" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+          <span class="df-card-media{{if not .CoverImage}} dt-gen{{end}}">
+            {{if .CoverImage}}<img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}
+          </span>
+          <span class="df-card-body">
+            {{with .Category}}<span class="df-card-cat">{{.Name}}</span>{{end}}
+            <span class="df-card-title">{{.Title}}</span>
+            {{if .Excerpt}}<span class="df-card-ex">{{.Excerpt}}</span>{{end}}
+          </span>
+        </a>
+        {{else}}
+        <p class="dt-empty muted">{{.Tr.T "factory.no_products"}}</p>
+        {{end}}
+      </div>
+    </section>
+
+    <section class="df-section df-story">
+      <div class="dt-head">
+        <div>
+          <p class="dt-eyebrow">Our Story</p>
+          <h2>{{.Tr.T "dtc.story"}}</h2>
+        </div>
+      </div>
+      {{if .FactoryStats}}
+      <dl class="dt-stats">
+        {{range .FactoryStats}}
+        <div class="dt-stat"><dt>{{.Num}}</dt><dd>{{.Label}}</dd></div>
+        {{end}}
+      </dl>
+      {{else}}
+      <p class="df-about">{{.Site.Description}}</p>
+      {{end}}
+    </section>
+
+    {{if .FactoryGallery}}
+    <section class="df-section df-gallery-sec">
+      <div class="dt-head">
+        <div>
+          <p class="dt-eyebrow">Lifestyle</p>
+          <h2>{{.Tr.T "dtc.scenes"}}</h2>
+        </div>
+      </div>
+      {{template "factory_gallery" .}}
+    </section>
+    {{end}}
+
+    {{if .DTCTestimonials}}
+    <section class="df-section df-reviews">
+      <div class="dt-head">
+        <div>
+          <p class="dt-eyebrow">Reviews</p>
+          <h2>{{.Tr.T "dtc.reviews"}}</h2>
+        </div>
+      </div>
+      {{template "dtc_testimonials" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryQAs}}
+    <section class="df-section df-faq-sec">
+      <div class="dt-head">
+        <div>
+          <p class="dt-eyebrow">FAQ</p>
+          <h2>{{.Tr.T "factory.faq"}}</h2>
+        </div>
+      </div>
+      {{template "factory_faq" .}}
+    </section>
+    {{end}}
+  </div>
+
+  {{template "dtc_cta" .}}
+{{end}}
+
+{{define "dtc_testimonials"}}
+  {{/* 用户评价卡：姓名 + 地区 + 一句话（settings dtc.testimonials，按语种）。
+       未配置整个区块不渲染（上层把关）——评价只能是真实用户说过的话，绝不编造占位。 */}}
+  <div class="dt-testis">
+    {{range .DTCTestimonials}}
+    <figure class="dt-testi">
+      <blockquote class="dt-testi-quote"><span class="dt-testi-mark" aria-hidden="true">“</span>{{.Quote}}</blockquote>
+      <figcaption class="dt-testi-by">
+        <b class="dt-testi-ini" aria-hidden="true">{{initial .Name}}</b>
+        <span class="dt-testi-name">{{.Name}}</span>
+        {{if .Region}}<span class="dt-testi-region">{{.Region}}</span>{{end}}
+      </figcaption>
+    </figure>
+    {{end}}
+  </div>
+{{end}}
+
+{{define "dtc_hero_anim"}}
+  {{/* hero「默认动画」的 DTC 风变体（hero.visual=default/anim* 时由独立站骨架的视觉位渲染）：
+       工厂齿轮动画是图纸机械风，与品牌店气质不合——这套是柔和渐变光斑漂移 + 浮动产品卡，
+       克制零 JS，配色全吃主题变量；prefers-reduced-motion 时静止（见 public.css）。 */}}
+  <svg class="dt-animsvg" viewBox="0 0 480 420" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
+    <!-- 渐变光斑（CSS transform 漂移；reduced-motion 静止） -->
+    <g class="da-blobs">
+      <circle class="da-blob da-blob-a" cx="150" cy="150" r="120"/>
+      <circle class="da-blob da-blob-b" cx="340" cy="250" r="140"/>
+      <circle class="da-blob da-blob-c" cx="260" cy="90" r="80"/>
+    </g>
+    <!-- 浮动产品卡（缓慢上下浮动） -->
+    <g class="da-card">
+      <rect class="da-card-bg" x="140" y="110" width="200" height="230" rx="18"/>
+      <rect class="da-card-img" x="158" y="128" width="164" height="132" rx="12"/>
+      <circle class="da-card-dot" cx="240" cy="194" r="26"/>
+      <rect class="da-line a" x="158" y="276" width="110" height="11" rx="5.5"/>
+      <rect class="da-line" x="158" y="296" width="150" height="7" rx="3.5"/>
+      <rect class="da-pill" x="158" y="313" width="64" height="16" rx="8"/>
+    </g>
+    <!-- 小浮标：胶囊标签 + 圆点（次级浮动，错拍） -->
+    <g class="da-chip">
+      <rect class="da-chip-bg" x="318" y="140" width="84" height="30" rx="15"/>
+      <circle class="da-chip-dot" cx="336" cy="155" r="5"/>
+      <rect class="da-chip-line" x="348" y="151" width="40" height="8" rx="4"/>
+    </g>
+    <circle class="da-spark" cx="118" cy="300" r="6"/>
+  </svg>
+{{end}}
+
+{{define "dtc_cta"}}
+  {{/* 页脚前联系 CTA：柔和整卡（非工厂的反色斜纹通栏）。文案 settings factory.cta
+       按语种覆盖，空字段回落 dtc.cta / dtc.cta_note（联系我们口径）。
+       配置了联系方式给直达按钮；没配置回落商品入口（零配置照常渲染）。
+       id=dtc-contact——hero 的联系按钮锚到这里（纯锚点滚动，绝不 :target）。 */}}
+  <section class="dt-cta" id="dtc-contact" aria-label="{{.FactoryCTA.Title}}">
+    <div class="dt-cta-inner">
+      <h2>{{.FactoryCTA.Title}}</h2>
+      <p class="dt-cta-note">{{.FactoryCTA.Note}}</p>
+      <div class="inquiry-actions dt-cta-actions">
+        {{if .Contact.Any}}
+        {{if .Contact.WaMe}}{{$wa := printf "https://wa.me/%s" .Contact.WaMe}}<a class="inquiry-btn inquiry-wa" href="{{$wa}}"{{.ExternalLinkAttrs $wa}}><svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2zm5.2 14.1c-.2.6-1.2 1.2-1.7 1.2-.4.1-1 .1-1.6-.1-.4-.1-.9-.3-1.5-.5-2.6-1.1-4.3-3.8-4.4-4-.1-.2-1.1-1.4-1.1-2.7 0-1.3.7-1.9.9-2.2.2-.3.5-.3.7-.3h.5c.2 0 .4 0 .6.4.2.5.7 1.8.8 1.9.1.1.1.3 0 .4-.1.2-.1.3-.3.5l-.4.5c-.1.1-.3.3-.1.6.2.3.7 1.2 1.6 1.9 1.1.9 2 1.2 2.3 1.4.3.1.5.1.6-.1.2-.2.7-.8.9-1.1.2-.3.4-.2.6-.1.3.1 1.7.8 1.9.9.3.1.5.2.5.3.1.1.1.7-.1 1.2z"/></svg><span>WhatsApp</span></a>{{end}}
+        {{if .Contact.Email}}<a class="inquiry-btn" href="mailto:{{.Contact.Email}}"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg><span>{{.Tr.T "contact.email"}}</span></a>{{end}}
+        {{if .Contact.TelURL}}<a class="inquiry-btn" href="{{.Contact.TelURL}}"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 16.5v3a1.5 1.5 0 0 1-1.6 1.5A17.5 17.5 0 0 1 3 4.6 1.5 1.5 0 0 1 4.5 3h3A1.5 1.5 0 0 1 9 4.3c.1.9.3 1.8.6 2.6a1.5 1.5 0 0 1-.3 1.6L8 9.8a15.5 15.5 0 0 0 6.2 6.2l1.3-1.3a1.5 1.5 0 0 1 1.6-.3c.8.3 1.7.5 2.6.6a1.5 1.5 0 0 1 1.3 1.5z"/></svg><span>{{.Tr.T "contact.phone"}}{{if .Contact.Phone}} · {{.Contact.Phone}}{{end}}</span></a>{{end}}
+        {{if .Contact.WeChatQR}}<button class="inquiry-btn" type="button" data-wechat-open><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3h-3zM18.5 18.5H21V21h-2.5z"/></svg><span>{{.Tr.T "contact.wechat"}}</span></button>{{end}}
+        {{else}}
+        <a class="inquiry-btn" href="{{.Tr.U "/products"}}"><span>{{.Tr.T "dtc.shop_now"}}</span> <span class="arrow" aria-hidden="true">→</span></a>
+        {{end}}
+      </div>
+    </div>
+  </section>
+{{end}}

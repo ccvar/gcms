@@ -136,17 +136,57 @@ type Meta struct {
 	JSONLD []any
 }
 
-const defaultRobots = "index, follow, max-image-preview:large"
+// DefaultRobots 是内容页默认的 robots meta（导出供 web 层扩展类型渲染复用，
+// 避免扩展详情输出空 robots 丢掉 max-image-preview:large）。
+const DefaultRobots = "index, follow, max-image-preview:large"
 
-// overrideOr 单篇 SEO 覆盖：内容行的 robots_override / canonical_override 非空时优先于默认值。
-func overrideOr(override, def string) string {
+// OverrideOr 单篇 SEO 覆盖：内容行的 robots_override / canonical_override 非空时优先于默认值。
+// 导出供 web 层扩展类型渲染对齐内置类型行为。
+func OverrideOr(override, def string) string {
 	if v := strings.TrimSpace(override); v != "" {
 		return v
 	}
 	return def
 }
 
+// ContentImage 内容页分享图（og:image / twitter:image / JSON-LD image）：
+// 为空回落站点默认分享图，相对路径用站点根绝对化——分享抓取器（WhatsApp/FB/TG）
+// 不解析相对路径。导出供 web 层扩展类型渲染与内置类型对齐。
+func (s Site) ContentImage(img string) string {
+	img = strings.TrimSpace(img)
+	if img == "" {
+		return s.defaultImage()
+	}
+	return s.rootImage(img)
+}
+
 type crumb struct{ Name, URL string }
+
+// Crumb 是面包屑的一级（导出供 web 层为扩展类型构建 BreadcrumbList）。URL 为空表示当前页。
+type Crumb struct{ Name, URL string }
+
+// BreadcrumbList 由「首页 → items」构建 BreadcrumbList 结构化数据（扩展类型详情/列表用）。
+func (s Site) BreadcrumbList(items ...Crumb) map[string]any {
+	list := make([]crumb, 0, len(items)+1)
+	list = append(list, crumb{s.homeLabel(), s.Abs("/")})
+	for _, it := range items {
+		list = append(list, crumb{it.Name, it.URL})
+	}
+	return s.breadcrumb(list)
+}
+
+// CollectionPage 归档/列表页的 CollectionPage 结构化数据（扩展类型列表用，
+// 与分类页/链接页的内置输出同构）。
+func (s Site) CollectionPage(name, canon string) map[string]any {
+	return map[string]any{
+		"@context":   "https://schema.org",
+		"@type":      "CollectionPage",
+		"name":       name,
+		"url":        canon,
+		"inLanguage": s.langTag(),
+		"isPartOf":   map[string]any{"@type": "WebSite", "name": s.Name, "url": s.Abs("/")},
+	}
+}
 
 func (s Site) breadcrumb(items []crumb) map[string]any {
 	list := make([]any, 0, len(items))
@@ -215,7 +255,7 @@ func (s Site) Home() Meta {
 		Description: s.Description,
 		Keywords:    s.Keywords,
 		Canonical:   s.Abs("/"),
-		Robots:      defaultRobots,
+		Robots:      DefaultRobots,
 		OGType:      "website",
 		Image:       s.defaultImage(),
 		Author:      s.Author,
@@ -225,18 +265,12 @@ func (s Site) Home() Meta {
 
 // Article 文章详情：BlogPosting + BreadcrumbList。
 func (s Site) Article(p *store.Post) Meta {
-	canon := overrideOr(p.CanonicalOverride, s.AbsDir("/posts/"+p.Slug))
+	canon := OverrideOr(p.CanonicalOverride, s.AbsDir("/posts/"+p.Slug))
 	desc := p.MetaDesc
 	if desc == "" {
 		desc = p.Excerpt
 	}
-	img := p.CoverImage
-	switch {
-	case img == "":
-		img = s.defaultImage()
-	case !strings.HasPrefix(img, "http"):
-		img = s.Root(img)
-	}
+	img := s.ContentImage(p.CoverImage)
 	section, catURL := "", s.Abs("/")
 	if p.Category != nil {
 		section = p.Category.Name
@@ -271,7 +305,7 @@ func (s Site) Article(p *store.Post) Meta {
 		Description: desc,
 		Keywords:    p.Keywords,
 		Canonical:   canon,
-		Robots:      overrideOr(p.RobotsOverride, defaultRobots),
+		Robots:      OverrideOr(p.RobotsOverride, DefaultRobots),
 		OGType:      "article",
 		Image:       img,
 		Published:   p.PublishedAt.Format(time.RFC3339),
@@ -315,7 +349,7 @@ func (s Site) categoryMeta(c *store.Category, path, canon string) Meta {
 		Description: desc,
 		Keywords:    c.Name,
 		Canonical:   canon,
-		Robots:      defaultRobots,
+		Robots:      DefaultRobots,
 		OGType:      "website",
 		Image:       s.defaultImage(),
 		JSONLD:      []any{coll, crumbs},
@@ -324,7 +358,7 @@ func (s Site) categoryMeta(c *store.Category, path, canon string) Meta {
 
 // Page 静态页（如关于）：AboutPage/WebPage + BreadcrumbList。
 func (s Site) Page(p *store.Post) Meta {
-	canon := overrideOr(p.CanonicalOverride, s.AbsDir("/"+p.Slug))
+	canon := OverrideOr(p.CanonicalOverride, s.AbsDir("/"+p.Slug))
 	desc := p.MetaDesc
 	if desc == "" {
 		desc = p.Excerpt
@@ -343,7 +377,7 @@ func (s Site) Page(p *store.Post) Meta {
 		Description: desc,
 		Keywords:    p.Keywords,
 		Canonical:   canon,
-		Robots:      overrideOr(p.RobotsOverride, defaultRobots),
+		Robots:      OverrideOr(p.RobotsOverride, DefaultRobots),
 		OGType:      "website",
 		Image:       s.defaultImage(),
 		JSONLD:      []any{page, crumbs},
@@ -384,25 +418,19 @@ func (s Site) Links(cat *store.Category) Meta {
 	}
 	return Meta{
 		Title: title, Description: desc, Keywords: label, Canonical: canon,
-		Robots: defaultRobots, OGType: "website", Image: s.defaultImage(), JSONLD: []any{coll, crumbs},
+		Robots: DefaultRobots, OGType: "website", Image: s.defaultImage(), JSONLD: []any{coll, crumbs},
 	}
 }
 
 // Link 链接详情页：WebPage(指向外部资源) + BreadcrumbList。
 func (s Site) Link(p *store.Post) Meta {
 	label := s.linksLabel()
-	canon := overrideOr(p.CanonicalOverride, s.AbsDir("/links/"+p.Slug))
+	canon := OverrideOr(p.CanonicalOverride, s.AbsDir("/links/"+p.Slug))
 	desc := p.MetaDesc
 	if desc == "" {
 		desc = p.Excerpt
 	}
-	img := p.CoverImage
-	switch {
-	case img == "":
-		img = s.defaultImage()
-	case !strings.HasPrefix(img, "http"):
-		img = s.Root(img)
-	}
+	img := s.ContentImage(p.CoverImage)
 	page := map[string]any{
 		"@context": "https://schema.org", "@type": "WebPage",
 		"name": p.Title, "description": desc, "url": canon,
@@ -439,8 +467,55 @@ func (s Site) Link(p *store.Post) Meta {
 	}
 	return Meta{
 		Title: p.Title + " — " + s.Name, Description: desc, Keywords: p.Keywords, Canonical: canon,
-		Robots: overrideOr(p.RobotsOverride, defaultRobots), OGType: "website", Image: img, JSONLD: jsonld,
+		Robots: OverrideOr(p.RobotsOverride, DefaultRobots), OGType: "website", Image: img, JSONLD: jsonld,
 	}
+}
+
+// Product 商品详情页（扩展类型 product，工厂/外贸站）的 Product 结构化数据。
+// 与链接页 Link() 内嵌的 Product 节点相互独立：这里描述的是站点自己的实体商品，
+// brand 恒为站点名，sku 从规格里嗅探（没有就不输出）。
+// gallery 是图集补充图（相对路径会被绝对化）：多图时 image 输出数组（商品富结果建议多图），
+// 单图维持字符串。刻意不输出 offers/price——工厂站不做线上交易，绝不编造报价。
+func (s Site) Product(p *store.Post, canon, desc, sku string, gallery []string) map[string]any {
+	imgs := []string{s.ContentImage(p.CoverImage)}
+	seen := map[string]bool{imgs[0]: true}
+	for _, g := range gallery {
+		if g = strings.TrimSpace(g); g == "" {
+			continue
+		}
+		abs := s.rootImage(g)
+		if !seen[abs] {
+			seen[abs] = true
+			imgs = append(imgs, abs)
+		}
+	}
+	var image any = imgs[0]
+	if len(imgs) > 1 {
+		image = imgs
+	}
+	product := map[string]any{
+		"@context":   "https://schema.org",
+		"@type":      "Product",
+		"@id":        canon + "#product",
+		"name":       p.Title,
+		"url":        canon,
+		"image":      image,
+		"inLanguage": s.langTag(),
+		"brand":      map[string]any{"@type": "Brand", "name": s.Name},
+	}
+	if desc != "" {
+		product["description"] = desc
+	}
+	if sku != "" {
+		product["sku"] = sku
+	}
+	if p.Category != nil && p.Category.Name != "" {
+		product["category"] = p.Category.Name
+	}
+	if p.Keywords != "" {
+		product["keywords"] = p.Keywords
+	}
+	return product
 }
 
 type faqPair struct {

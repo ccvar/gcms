@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 960" role="img" aria-label="Folded towels placeholder">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#eef1f4"/>
+      <stop offset="1" stop-color="#e4e9ee"/>
+    </linearGradient>
+    <pattern id="grid" width="64" height="64" patternUnits="userSpaceOnUse">
+      <path d="M64 0H0v64" fill="none" stroke="#d3dbe2" stroke-width="2"/>
+    </pattern>
+    <pattern id="waffle" width="30" height="30" patternUnits="userSpaceOnUse">
+      <circle cx="15" cy="15" r="4" fill="#ffffff" opacity=".35"/>
+    </pattern>
+  </defs>
+  <rect width="1280" height="960" fill="url(#bg)"/>
+  <rect width="1280" height="960" fill="url(#grid)"/>
+  <!-- 叠放毛巾 × 3（华夫格点纹） -->
+  <g>
+    <rect x="340" y="560" width="600" height="150" rx="34" fill="#56718a"/>
+    <rect x="340" y="560" width="600" height="150" rx="34" fill="url(#waffle)"/>
+    <rect x="340" y="560" width="70" height="150" rx="30" fill="#43596d"/>
+    <rect x="370" y="410" width="540" height="140" rx="32" fill="#8fa2b2"/>
+    <rect x="370" y="410" width="540" height="140" rx="32" fill="url(#waffle)"/>
+    <rect x="370" y="410" width="64" height="140" rx="28" fill="#7c93a6"/>
+    <rect x="400" y="266" width="480" height="132" rx="30" fill="#a9bac8"/>
+    <rect x="400" y="266" width="480" height="132" rx="30" fill="url(#waffle)"/>
+    <rect x="400" y="266" width="58" height="132" rx="26" fill="#93a8b9"/>
+    <!-- 标签 -->
+    <rect x="820" y="320" width="34" height="52" rx="6" fill="#3e6d94"/>
+  </g>
+  <!-- 台面线 + 标注 -->
+  <g stroke="#3e6d94" stroke-width="3" fill="none">
+    <path d="M220 760 h840"/>
+    <path d="M980 266 h56 M1008 238 v56" stroke-dasharray="8 8"/>
+    <path d="M340 800 v36 M940 800 v36 M340 818 h600"/>
+  </g>
+  <g fill="#3e6d94" font-family="ui-monospace,Menlo,monospace" font-size="30" letter-spacing="4">
+    <text x="555" y="880">100% CTN</text>
+  </g>
+</svg>

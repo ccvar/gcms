@@ -2895,6 +2895,65 @@
     });
   });
 
+  /* ---------- 族卡色卡排：点色卡=切换该配色族的激活皮肤 ----------
+     卡片=配色族、色卡=族内皮肤（独立皮族没有色卡排）：radio 值是皮肤 id（存储零变化），
+     预览 iframe 即时换皮肤、小字换皮肤名、放大/真实预览按钮跟着换目标；
+     微调控件经既有 change 事件同步。 */
+  function activateThemeSkin(btn, check) {
+    var card = btn.closest(".theme-card");
+    if (!card) return;
+    var rb = card.querySelector('input[type="radio"][name="theme"]');
+    var id = btn.getAttribute("data-skin-id");
+    if (!rb || !id) return;
+    card.querySelectorAll(".tc-skin").forEach(function (b) {
+      var on = b === btn;
+      b.classList.toggle("is-active", on);
+      b.setAttribute("aria-pressed", on ? "true" : "false");
+    });
+    rb.value = id;
+    rb.dataset.accent = btn.getAttribute("data-accent") || "";
+    rb.dataset.radius = btn.getAttribute("data-radius") || "";
+    rb.dataset.custom = btn.getAttribute("data-custom") || "";
+    rb.dataset.themeName = btn.getAttribute("data-skin-name") || id;
+    var label = card.querySelector("[data-skin-label]");
+    if (label) label.textContent = rb.dataset.themeName;
+    var zoom = card.querySelector("[data-tp-open]");
+    if (zoom) { zoom.setAttribute("data-tp-id", id); zoom.setAttribute("data-tp-name", rb.dataset.themeName); }
+    var browse = card.querySelector(".tc-browse");
+    if (browse) browse.href = "/admin/theme-browse/" + encodeURIComponent(id) + "/";
+    // 预览 iframe 即时换皮肤：已加载的走加载态重挂，还没进视口的只改懒加载地址
+    var box = card.querySelector("[data-theme-preview]");
+    var frame = box && box.querySelector("iframe");
+    if (frame) {
+      var url = "/admin/theme-preview/" + encodeURIComponent(id);
+      if (box.dataset.loaded === "1") {
+        box.classList.remove("is-loaded", "is-error");
+        box.classList.add("is-loading");
+        frame.addEventListener("load", function () {
+          box.classList.remove("is-loading");
+          box.classList.add("is-loaded");
+        }, { once: true });
+        frame.src = url;
+      } else {
+        frame.dataset.src = url;
+      }
+    }
+    if (check !== false) {
+      rb.checked = true;
+      rb.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+  }
+  (function () {
+    var picker = document.querySelector(".theme-picker");
+    if (!picker) return;
+    picker.addEventListener("click", function (e) {
+      var btn = e.target.closest && e.target.closest(".tc-skin");
+      if (!btn || !picker.contains(btn)) return;
+      e.preventDefault();
+      activateThemeSkin(btn);
+    });
+  })();
+
   /* 主题真实缩略图：进入视口附近再加载，加载前显示骨架态 */
   (function () {
     var previews = Array.prototype.slice.call(document.querySelectorAll("[data-theme-preview]"));
@@ -2979,8 +3038,13 @@
     modal.querySelectorAll("[data-tp-close]").forEach(function (c) { c.addEventListener("click", close); });
     if (selectBtn) selectBtn.addEventListener("click", function () {
       if (curId) {
-        var r = document.querySelector('.theme-picker input[type=radio][value="' + curId + '"]');
-        if (r) { r.checked = true; r.dispatchEvent(new Event("change", { bubbles: true })); }
+        // 骨架卡结构：优先按皮肤色卡选中（顺带同步 radio 值/预览/小字）；兜底直选 radio。
+        var sw = document.querySelector('.theme-picker .tc-skin[data-skin-id="' + curId + '"]');
+        if (sw) { activateThemeSkin(sw); }
+        else {
+          var r = document.querySelector('.theme-picker input[type=radio][value="' + curId + '"]');
+          if (r) { r.checked = true; r.dispatchEvent(new Event("change", { bubbles: true })); }
+        }
       }
       close();
     });
@@ -4451,36 +4515,17 @@
   });
 })();
 
-/* ---------- 站点卡片：服务器托管站"服务器 · 内容上次对外更新"，并异步检测自定义域名绑定状态 ---------- */
+/* ---------- 站点卡片：服务器托管站芯片（运行 N 天 · 更新 M，服务端渲染），并异步检测自定义域名绑定状态 ---------- */
 (function () {
-  // 相对时间（与 Cloudflare 卡片同格式）：读取 data-ago(ISO) + data-just/min/hour/day。
-  function agoText(el) {
-    var v = el.getAttribute("data-ago");
-    var d = v ? new Date(v) : null;
-    if (!v || !d || isNaN(d.getTime())) return "";
-    var s = Math.max(0, Math.floor((Date.now() - d.getTime()) / 1000));
-    if (s < 60) return el.getAttribute("data-just") || "刚刚";
-    if (s < 3600) return (el.getAttribute("data-min") || "%d 分钟前").replace("%d", Math.floor(s / 60));
-    if (s < 86400) return (el.getAttribute("data-hour") || "%d 小时前").replace("%d", Math.floor(s / 3600));
-    if (s < 2592000) return (el.getAttribute("data-day") || "%d 天前").replace("%d", Math.floor(s / 86400));
-    return d.toLocaleString();
-  }
-  // 首屏渲染所有 [data-ago]（服务器动态托管，内容一保存即对外生效，无需轮询；刷新即更新）。
-  document.querySelectorAll("[data-ago]").forEach(function (el) {
-    el.textContent = agoText(el);
-    var v = el.getAttribute("data-ago");
-    if (v) { var d = new Date(v); if (!isNaN(d.getTime())) el.title = d.toLocaleString(); }
-  });
-
   // 绑定了自定义域名的站点：异步检测 DNS/可达性。未生效时用后缀提示（待生效 / DNS 待配置），
-  // 已生效或用默认入口时回到"内容上次对外更新"时间——稳态与 CF 卡片一样是中性色，仅问题态着色。
+  // 已生效或用默认入口时回到服务端渲染的稳态芯片文字（data-steady 保存原文，检测中会覆写 textContent）。
   var els = document.querySelectorAll("[data-domain-status]");
   if (!els.length) return;
   function check(el, quiet) {
     var url = el.getAttribute("data-status-url");
     var suf = el.querySelector("[data-server-suffix]");
     var lbl = function (k) { return el.getAttribute("data-s-" + k) || ""; };
-    var timeText = suf ? agoText(suf) : "";
+    var timeText = suf ? (suf.getAttribute("data-steady") || "") : "";
     if (!quiet) { // 静默复检不闪"检测中…"，避免待生效轮询时文字来回跳
       el.setAttribute("data-stage", "checking");
       if (suf && lbl("checking")) suf.textContent = lbl("checking");
@@ -4660,24 +4705,14 @@
   });
 })();
 
-/* ---------- 站点卡片：Cloudflare 部署状态（部署中 → 完成后显示最近部署时间）+ 一键发布 ---------- */
+/* ---------- 站点卡片：Cloudflare 部署状态（部署中/失败 → 完成后恢复稳态芯片文字）+ 一键发布 ---------- */
 (function () {
-  function rel(box, v) {
-    var d = v ? new Date(v) : null;
-    if (!v || !d || isNaN(d.getTime())) return "";
-    var s = Math.max(0, Math.floor((Date.now() - d.getTime()) / 1000));
-    if (s < 60) return box.getAttribute("data-just") || "刚刚";
-    if (s < 3600) return (box.getAttribute("data-min") || "%d 分钟前").replace("%d", Math.floor(s / 60));
-    if (s < 86400) return (box.getAttribute("data-hour") || "%d 小时前").replace("%d", Math.floor(s / 3600));
-    if (s < 2592000) return (box.getAttribute("data-day") || "%d 天前").replace("%d", Math.floor(s / 86400));
-    return d.toLocaleString();
-  }
-  function showTime(box, v) {
+  // 稳态芯片（运行 N 天 · 更新 M）由服务端渲染进 data-steady/-title；轮询结束时恢复，刷新页面才重算。
+  function showSteady(box) {
     box.classList.remove("is-running");
     box.classList.remove("is-failed");
-    box.setAttribute("data-deploy-at", v || "");
-    if (v) { box.textContent = rel(box, v); box.title = new Date(v).toLocaleString(); }
-    else { box.textContent = ""; box.title = ""; }
+    box.textContent = box.getAttribute("data-steady") || "";
+    box.title = box.getAttribute("data-steady-title") || "";
   }
   function showRunning(box) {
     box.classList.remove("is-failed");
@@ -4709,7 +4744,7 @@
           clearInterval(box._cfTimer); box._cfTimer = 0;
           box.setAttribute("data-cf-status", d.status || "");
           if (d.status === "failed") showFailed(box);
-          else showTime(box, d.lastDeployAt || box.getAttribute("data-deploy-at") || "");
+          else showSteady(box);
           reenable(box);
         })
         .catch(function () {});
@@ -4721,7 +4756,7 @@
     var st0 = box.getAttribute("data-cf-status");
     if (st0 === "running") { showRunning(box); poll(box); }
     else if (st0 === "failed") showFailed(box);
-    else showTime(box, box.getAttribute("data-deploy-at"));
+    // 其余状态：保持服务端渲染的稳态芯片文字，不在前端重算。
   }
   // 「发布最新内容」：确认弹层通过后，AJAX 提交并立即把徽标切到「部署中」+ 轮询，完成后显示时间。
   document.addEventListener("submit", function (e) {
@@ -4783,6 +4818,52 @@
     if (e.target && e.target.classList && e.target.classList.contains("hs-on")) serialize();
   });
   serialize();
+})();
+
+/* ---------- 设置：外观保存走 AJAX ----------
+   「保存外观设置」与主题配置弹窗内的「保存」同属一个表单：fetch 提交，成功就地
+   flash「外观设置已保存」+ 弹窗自动关（不整页刷新——「当前主题」文字与选中卡/色卡态
+   在点选时已由既有 change 逻辑同步）；失败红字 flash 回显服务器错误。
+   无 JS 照旧原生提交（PRG 不变）；fetch 挂了 / 响应不是 JSON（如会话过期被重定向到
+   登录页）也回落原生提交。弹窗里的语种切换是 <a> 整页跳转，不经这里。 */
+(function () {
+  var form = document.querySelector('form.admin-form[action="/admin/settings/appearance"]');
+  if (!form || !window.fetch || !window.URLSearchParams) return;
+  var busy = false;
+  form.addEventListener("submit", function (e) {
+    e.preventDefault();
+    if (busy) return;
+    var body = new URLSearchParams();
+    new FormData(form).forEach(function (v, k) { body.append(k, v); });
+    busy = true;
+    var submits = Array.prototype.slice.call(form.querySelectorAll('button[type="submit"]'));
+    submits.forEach(function (b) { b.disabled = true; b.setAttribute("aria-busy", "true"); });
+    function done() {
+      busy = false;
+      submits.forEach(function (b) { b.disabled = false; b.removeAttribute("aria-busy"); });
+    }
+    fetch(form.action, {
+      method: "POST",
+      body: body,
+      headers: { "Accept": "application/json", "X-Requested-With": "XMLHttpRequest", "Content-Type": "application/x-www-form-urlencoded" },
+      credentials: "same-origin"
+    }).then(function (r) {
+      return r.json().then(function (json) { return { ok: r.ok, json: json || {} }; });
+    }).then(function (res) {
+      done();
+      if (res.ok && res.json.ok) {
+        if (window.adminShowFlash) window.adminShowFlash(res.json.message || "外观设置已保存。", false);
+        if (window.gcmsOpenModals && window.gcmsCloseModal) {
+          window.gcmsOpenModals().forEach(function (m) { window.gcmsCloseModal(m); });
+        }
+      } else if (window.adminShowFlash) {
+        window.adminShowFlash(res.json.message || res.json.error || "保存失败，请重试。", true);
+      }
+    }).catch(function () {
+      done();
+      form.submit(); // 原生提交绕过本 submit 监听，走服务器端 PRG 兜底
+    });
+  });
 })();
 
 /* ---------- 平台设置：存储清理（全站扫描未引用上传文件 → 移入回收站隔离） ---------- */
@@ -4886,22 +4967,26 @@
   });
 })();
 
-/* ---------- 通用：google-connect 系浮层点外关闭 + Esc（Google 授权 / Telegram Bot 共用） ---------- */
+/* ---------- 通用：google-connect 系浮层点外关闭 + Esc（Google 授权 / Telegram Bot 共用）；
+   Esc 关 .modal.is-open 不受 google-connect 存在与否限制——原先整个 IIFE 在页面没有
+   google-connect 时直接 return，导致设置页（外观「主题配置」、语种字典等）的 class 弹窗
+   按 Esc 关不掉。 ---------- */
 (function () {
-  if (!document.querySelector("details.google-connect")) return;
   function openConnects() {
     return Array.prototype.slice.call(document.querySelectorAll("details.google-connect[open]"));
   }
-  document.addEventListener("click", function (e) {
-    var inside = e.target.closest && e.target.closest("details.google-connect");
-    openConnects().forEach(function (d) {
-      if (d !== inside) d.open = false;
+  if (document.querySelector("details.google-connect")) {
+    document.addEventListener("click", function (e) {
+      var inside = e.target.closest && e.target.closest("details.google-connect");
+      openConnects().forEach(function (d) {
+        if (d !== inside) d.open = false;
+      });
     });
-  });
+  }
   document.addEventListener("keydown", function (e) {
     if (e.key !== "Escape") return;
     openConnects().forEach(function (d) { d.open = false; });
-    // 弹窗（站点卡片 GA / GSC / 域名 / Telegram、设置页密钥/字典等）Esc 关最上层的一个。
+    // 弹窗（站点卡片 GA / GSC / 域名 / Telegram、设置页密钥/字典/主题配置等）Esc 关最上层的一个。
     var open = window.gcmsOpenModals ? window.gcmsOpenModals() : [];
     if (open.length) window.gcmsCloseModal(open[open.length - 1]);
   });
@@ -4960,4 +5045,46 @@
       show(form, (form.dataset.msgTestFail || "发送失败：") + err, true);
     }).finally(function () { btn.disabled = false; });
   });
+})();
+
+// ---------- 主题轻分类筛选 chips（外观设置页，纯前端过滤） ----------
+// 族卡 data-category 是该配色族下皮肤分类的集合（空格分隔）：
+// 含该分类皮肤的卡保留，卡内不属于该分类的色卡藏起来（当前激活色卡除外，保住选中态）。
+(function () {
+  var bar = document.querySelector("[data-theme-filter]");
+  if (!bar) return;
+  var cards = document.querySelectorAll(".theme-card[data-category]");
+  // 选中分类持久化到 ?cat=(replaceState,不跳转不滚动),刷新后恢复——绝不用 hash(:target 跳动坑)。
+  function applyCat(cat, chip) {
+    bar.querySelectorAll(".theme-chip").forEach(function (c) {
+      c.classList.toggle("is-active", chip ? c === chip : (c.getAttribute("data-theme-cat") || "") === cat);
+    });
+    cards.forEach(function (card) {
+      var cats = (card.getAttribute("data-category") || "").split(" ");
+      if (!cat || cats.indexOf(cat) !== -1) {
+        card.removeAttribute("data-theme-hidden");
+      } else {
+        card.setAttribute("data-theme-hidden", "");
+      }
+      card.querySelectorAll(".tc-skin").forEach(function (b) {
+        var show = !cat || b.getAttribute("data-category") === cat || b.classList.contains("is-active");
+        if (show) b.removeAttribute("hidden"); else b.setAttribute("hidden", "");
+      });
+    });
+    try {
+      var u = new URL(window.location.href);
+      if (cat) u.searchParams.set("cat", cat); else u.searchParams.delete("cat");
+      history.replaceState(null, "", u.pathname + u.search + u.hash);
+    } catch (_) { /* URL 不可用时静默降级为会话内过滤 */ }
+  }
+  bar.addEventListener("click", function (e) {
+    var chip = e.target.closest && e.target.closest("[data-theme-cat]");
+    if (!chip) return;
+    applyCat(chip.getAttribute("data-theme-cat") || "", chip);
+  });
+  // 载入恢复:?cat= 命中现存 chip 才应用(未知值忽略,保持「全部」)。
+  try {
+    var initial = new URL(window.location.href).searchParams.get("cat");
+    if (initial && bar.querySelector('[data-theme-cat="' + initial + '"]')) applyCat(initial, null);
+  } catch (_) {}
 })();

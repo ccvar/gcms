@@ -18,7 +18,7 @@
           <div class="num">{{printf "%02d" (add $i 1)}}</div>
           <div>
             <div class="meta">
-              {{if eq $p.Type "post"}}{{with $p.Category}}<a class="tag" href="{{$.Tr.U (printf "/category/%s" .Slug)}}">{{.Name}}</a><span class="sep">·</span>{{end}}{{end}}
+              {{if eq $p.Type "post"}}{{with $p.Category}}<a class="tag" href="{{$.Tr.U (printf "/category/%s" .Slug)}}">{{.Name}}</a><span class="sep">·</span>{{end}}{{else}}{{/* 扩展类型结果（商品等）：类型徽标 + 分类链接，访客能分清命中的是什么 */}}{{with typeName $p.Type $.Lang}}<span class="tag">{{.}}</span><span class="sep">·</span>{{end}}{{with $p.Category}}<a class="tag" href="{{$.Tr.U (printf "/%s/cat/%s" (typePrefix $p.Type) .Slug)}}">{{.Name}}</a><span class="sep">·</span>{{end}}{{end}}
               <time datetime="{{$.Tr.ISODate $p.PublishedAt}}">{{$.Tr.Date $p.PublishedAt}}</time>
             </div>
             <h3><a href="{{$.Tr.U (contentURL $p)}}">{{$p.Title}}</a></h3>

@@ -48,7 +48,7 @@ type Field struct {
 	Type       FieldType
 	Required   bool
 	Options    []FieldOption     // 仅 select
-	Localized  bool              // true=按语种各填；false=跨语种同步（价格/图集/时间等）
+	Localized  bool              // true=按语种各填；false=语义上各语种共用（价格/图集/时间等）——注意：非持续同步，仅在「翻译为 X」创建译文时复制一份初始值，之后各语种独立维护
 	InList     bool              // 是否在后台列表/归档卡片作为一列展示
 	Structural bool              // 结构性字段（如层级父级/排序），不在前台作为内容字段展示
 	Help       map[string]string // 帮助文本（各语种）
@@ -72,6 +72,12 @@ type ContentType struct {
 	DetailTemplate string            // 详情模板名；空则回退 generic_detail
 	Builtin        bool              // 内置类型：仅枚举元数据，不可禁用，不走通用机制
 	DefaultOn      bool              // 新建站点是否默认启用（扩展类型默认 false）
+	Custom         bool              // 数据库自定义类型（可在设计器中编辑/删除）；代码注册类型恒为 false
+
+	// Primary：站点启用该类型后，它在后台左侧上浮为一级菜单（与文章/页面平级），
+	// 而不是只藏在「扩展」hub 里。机制是通用的（任何标记 Primary 的启用类型都会上浮），
+	// P1 只给 product 打标；未来可放开为按站点配置（如 settings 里存 primary 类型集合）。
+	Primary bool
 }
 
 // Name 返回类型在指定语种下的名称（回退 zh → en → key）。
@@ -131,8 +137,15 @@ var contentTypes = []*ContentType{
 		Key: "product", Names: map[string]string{"zh": "商品", "en": "Products"},
 		Icon: "ti-shopping-bag", URLPrefix: "products",
 		HasCategory: true, Multilingual: true, Searchable: true,
+		Primary: true, // 工厂/外贸站方向：商品与文章平级，启用后上浮为后台一级菜单
 		Fields: []Field{
-			{Key: "price", Labels: map[string]string{"zh": "价格", "en": "Price"}, Type: FieldNumber, InList: true},
+			// 价格是自由文本：外贸报价离不开币种/单位/「面议」（US$12.5/pc、Negotiable…），
+			// 裸数字反而误导。留空 = 前台不显示价格行。历史 number 数据经 scalarString 原样渲染，兼容。
+			{Key: "price", Labels: map[string]string{"zh": "价格", "en": "Price"}, Type: FieldText, InList: true,
+				Help: map[string]string{
+					"zh": "自由文本，如「US$ 12.5/pc」「面议」；留空则前台不显示价格。",
+					"en": "Free text, e.g. \"US$ 12.5/pc\" or \"Negotiable\"; leave empty to hide.",
+				}},
 			{Key: "gallery", Labels: map[string]string{"zh": "图集", "en": "Gallery"}, Type: FieldGallery},
 			{Key: "specs", Labels: map[string]string{"zh": "规格参数", "en": "Specs"}, Type: FieldRepeater, Localized: true},
 		},
@@ -256,6 +269,7 @@ type ExtTypeRow struct {
 	Icon         string
 	URLPrefix    string
 	Enabled      bool
+	Primary      bool // 标记 Primary 的类型：启用后已上浮为一级菜单，整卡迁出 hub（见 hubExtTypeRows）
 	Count        int
 	Custom       bool              // 数据库自定义类型（可编辑/删除）
 	ArchiveTitle map[string]string // 归档页自定义标题（按语种），供 hub 弹窗回填
@@ -275,8 +289,8 @@ func (s *Server) extTypeRows(lang string) []ExtTypeRow {
 		}
 		row := ExtTypeRow{
 			Key: ct.Key, Name: ct.Name(lang), Icon: ct.Icon,
-			URLPrefix: ct.URLPrefix, Enabled: enabled[ct.Key], Count: n,
-			Custom:       contentTypeByKey(ct.Key) == nil,
+			URLPrefix: ct.URLPrefix, Enabled: enabled[ct.Key], Primary: ct.Primary, Count: n,
+			Custom:       ct.Custom,
 			ArchiveTitle: map[string]string{},
 			ArchiveIntro: map[string]string{},
 		}
@@ -291,6 +305,51 @@ func (s *Server) extTypeRows(lang string) []ExtTypeRow {
 		rows = append(rows, row)
 	}
 	return rows
+}
+
+// hubExtTypeRows 返回扩展 hub 实际展示的行。已启用且标记 Primary 的类型已整体迁出
+// hub：内容入口在左侧一级菜单，类型管理（归档页文案/停用/编辑类型）在其列表页的
+// 设置菜单——hub 里不再出现任何卡；停用后（或非 Primary）照旧显示。机制泛化，不硬编码类型。
+func (s *Server) hubExtTypeRows(lang string) []ExtTypeRow {
+	all := s.extTypeRows(lang)
+	out := make([]ExtTypeRow, 0, len(all))
+	for _, row := range all {
+		if row.Enabled && row.Primary {
+			continue
+		}
+		out = append(out, row)
+	}
+	return out
+}
+
+// ExtNavItem 是后台左侧一级菜单里一个上浮的扩展类型入口（如「商品」）。
+type ExtNavItem struct {
+	Key  string
+	Name string
+}
+
+// primaryExtNav 返回当前站点「已启用且标记 Primary」的扩展类型，按注册顺序，
+// 供后台布局把它们渲染成与文章/页面平级的一级菜单。
+func (s *Server) primaryExtNav(adminLang string) []ExtNavItem {
+	var out []ExtNavItem
+	for _, ct := range s.activeExtContentTypes() {
+		if ct.Primary {
+			out = append(out, ExtNavItem{Key: ct.Key, Name: ct.Name(adminLang)})
+		}
+	}
+	return out
+}
+
+// extCategoryKinds 返回「已启用且支持分类」的扩展类型（含数据库自定义类型），
+// 供分类设置页在文章/链接之外泛化出各自的分类管理小节（如「商品分类」）。
+func (s *Server) extCategoryKinds(adminLang string) []ExtNavItem {
+	var out []ExtNavItem
+	for _, ct := range s.activeExtContentTypes() {
+		if ct.HasCategory {
+			out = append(out, ExtNavItem{Key: ct.Key, Name: ct.Name(adminLang)})
+		}
+	}
+	return out
 }
 
 // joinEnabledTypes 把启用集合拼成稳定的逗号串（保留全部已启用键，含数据库自定义类型）。

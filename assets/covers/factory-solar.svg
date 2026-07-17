@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 960" role="img" aria-label="Solar street light placeholder">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#eef1f4"/>
+      <stop offset="1" stop-color="#e4e9ee"/>
+    </linearGradient>
+    <pattern id="grid" width="64" height="64" patternUnits="userSpaceOnUse">
+      <path d="M64 0H0v64" fill="none" stroke="#d3dbe2" stroke-width="2"/>
+    </pattern>
+  </defs>
+  <rect width="1280" height="960" fill="url(#bg)"/>
+  <rect width="1280" height="960" fill="url(#grid)"/>
+  <!-- 太阳 -->
+  <circle cx="1000" cy="210" r="70" fill="none" stroke="#e8b64c" stroke-width="8"/>
+  <g stroke="#e8b64c" stroke-width="8" stroke-linecap="round">
+    <path d="M1000 100 v-30 M1000 320 v30 M890 210 h-30 M1110 210 h30 M925 135 l-22 -22 M1075 285 l22 22 M925 285 l-22 22 M1075 135 l22 -22"/>
+  </g>
+  <!-- 灯杆 + 一体化灯体（光伏板格栅 + 灯头） -->
+  <g>
+    <rect x="330" y="240" width="26" height="580" fill="#56718a"/>
+    <path d="M330 820 h26 l40 60 h-106 z" fill="#33414e"/>
+    <g transform="rotate(-18 356 300)">
+      <rect x="356" y="270" width="470" height="80" rx="14" fill="#33414e"/>
+      <g fill="#3e6d94">
+        <rect x="380" y="286" width="86" height="48" rx="6"/>
+        <rect x="478" y="286" width="86" height="48" rx="6"/>
+        <rect x="576" y="286" width="86" height="48" rx="6"/>
+        <rect x="674" y="286" width="86" height="48" rx="6"/>
+      </g>
+      <rect x="770" y="350" width="70" height="26" rx="8" fill="#8fa2b2"/>
+      <ellipse cx="805" cy="384" rx="46" ry="12" fill="#f4d98c"/>
+    </g>
+  </g>
+  <!-- 路面基准线 + 标注 -->
+  <g stroke="#3e6d94" stroke-width="3" fill="none">
+    <path d="M160 880 h960"/>
+    <path d="M180 300 h60 M210 270 v60" stroke-dasharray="8 8"/>
+    <path d="M430 880 v-60 M430 850 h140" stroke-dasharray="10 10"/>
+  </g>
+  <g fill="#3e6d94" font-family="ui-monospace,Menlo,monospace" font-size="30" letter-spacing="4">
+    <text x="590" y="862">IP65</text>
+  </g>
+</svg>

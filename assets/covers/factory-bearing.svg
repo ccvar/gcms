@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 960" role="img" aria-label="Ball bearing placeholder">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#eef1f4"/>
+      <stop offset="1" stop-color="#e4e9ee"/>
+    </linearGradient>
+    <pattern id="grid" width="64" height="64" patternUnits="userSpaceOnUse">
+      <path d="M64 0H0v64" fill="none" stroke="#d3dbe2" stroke-width="2"/>
+    </pattern>
+  </defs>
+  <rect width="1280" height="960" fill="url(#bg)"/>
+  <rect width="1280" height="960" fill="url(#grid)"/>
+  <!-- 深沟球轴承：外圈 / 滚珠 / 内圈 -->
+  <g>
+    <circle cx="640" cy="470" r="250" fill="#33414e"/>
+    <circle cx="640" cy="470" r="212" fill="#8fa2b2"/>
+    <circle cx="640" cy="470" r="150" fill="#33414e"/>
+    <circle cx="640" cy="470" r="112" fill="#a9bac8"/>
+    <circle cx="640" cy="470" r="64" fill="#eef1f4"/>
+    <g fill="#e7ebef">
+      <circle cx="640" cy="289" r="26"/><circle cx="640" cy="651" r="26"/>
+      <circle cx="459" cy="470" r="26"/><circle cx="821" cy="470" r="26"/>
+      <circle cx="512" cy="342" r="26"/><circle cx="768" cy="342" r="26"/>
+      <circle cx="512" cy="598" r="26"/><circle cx="768" cy="598" r="26"/>
+    </g>
+  </g>
+  <!-- 工程标注：中心线 + 外径标注 -->
+  <g stroke="#3e6d94" stroke-width="3" fill="none">
+    <path d="M640 150 v-40 M640 790 v40 M320 470 h-40 M960 470 h40" stroke-dasharray="10 10"/>
+    <path d="M910 240 l60 -60 h90"/>
+  </g>
+  <g fill="#3e6d94" font-family="ui-monospace,Menlo,monospace" font-size="30" letter-spacing="4">
+    <text x="1065" y="190">O.D.</text>
+  </g>
+</svg>

@@ -1,0 +1,61 @@
+{{define "home_dtc_lookbook"}}
+  {{/* dtc-lookbook — 系列画册：视觉主导、极少文字。小刊头 → 通栏大图墙
+       （factory.gallery 为主角；未配置回落商品封面墙）→ 系列（分类）为单位的
+       商品陈列（悬停出品名）→ 极简联系 CTA。数据由 fillDTCHome 装载
+       （DTCLookGroups：有商品的分类各一组，无分类回落「全部商品」一组）。 */}}
+  <div class="dl-wrap">
+    <header class="dl-masthead">
+      {{if .Site.HeroEyebrow}}<p class="dt-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+      <h1 class="dl-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+      {{if .Site.HeroDescription}}<p class="dl-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+    </header>
+
+    {{if .FactoryGallery}}
+    <section class="dl-wall" aria-label="{{.Tr.T "dtc.scenes"}}">
+      {{range $i, $src := .FactoryGallery}}
+      <figure class="dl-wall-item">
+        <img src="{{$src}}" alt="{{$.Site.Name}} {{add $i 1}}" loading="{{if lt $i 3}}eager{{else}}lazy{{end}}" decoding="async"{{imgAttrs $src}}>
+      </figure>
+      {{end}}
+    </section>
+    {{else if .DTCLookGroups}}
+    {{/* 图集未配置：首屏回落第一组商品的封面墙（悬停出品名），画册气质不塌 */}}
+    {{with index .DTCLookGroups 0}}
+    <section class="dl-wall dl-wall-products" aria-label="{{.Name}}">
+      {{range .Items}}
+      <a class="dl-tile dl-wall-item" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+        {{if .CoverImage}}<img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b class="dl-tile-gen" aria-hidden="true">{{initial .Title}}</b>{{end}}
+        <span class="dl-tile-name">{{.Title}}</span>
+      </a>
+      {{end}}
+    </section>
+    {{end}}
+    {{end}}
+
+    {{range $gi, $g := .DTCLookGroups}}
+    {{/* 图集缺席时第一组已经当过首屏封面墙，别重复陈列 */}}
+    {{if or $.FactoryGallery (gt $gi 0)}}
+    <section class="dl-series">
+      <div class="dl-series-head">
+        <h2>{{$g.Name}}</h2>
+        <a href="{{$.Tr.U $g.URL}}">{{$.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="dl-grid">
+        {{range $g.Items}}
+        <a class="dl-tile" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+          {{if .CoverImage}}<img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b class="dl-tile-gen" aria-hidden="true">{{initial .Title}}</b>{{end}}
+          <span class="dl-tile-name">{{.Title}}</span>
+        </a>
+        {{end}}
+      </div>
+    </section>
+    {{end}}
+    {{else}}
+    {{if not .FactoryGallery}}
+    <p class="dt-empty muted dl-empty">{{.Tr.T "factory.no_products"}}</p>
+    {{end}}
+    {{end}}
+  </div>
+
+  {{template "dtc_cta" .}}
+{{end}}

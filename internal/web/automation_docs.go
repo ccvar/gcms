@@ -231,6 +231,9 @@ func automationOpenAPISpec(apiBase string) map[string]any {
 			"get":   automationSiteProfileGetOperation(),
 			"patch": automationSiteProfileUpdateOperation(),
 		},
+		"/theme-options": map[string]any{
+			"get": automationThemeOptionsGetOperation(),
+		},
 		"/navigation": map[string]any{
 			"get":   automationNavigationGetOperation(),
 			"patch": automationNavigationUpdateOperation(),
@@ -301,6 +304,41 @@ func automationOpenAPISpec(apiBase string) map[string]any {
 			},
 		},
 	}
+	// 扩展类型分类（通用 {collection} 版）：支持分类的扩展类型（如 products）与 posts/links 同形。
+	// scope 口径（评审定）：不新增 categories scope 种类——读走 {collection}:read、写走
+	// {collection}:write，与该集合内容本身同权（posts/links 维持既有 categories 专属 scope）。
+	extCatDesc := "扩展类型分类：collection 为 /types 返回的集合名（类型需支持分类，如 products）。读需要 {collection}:read，写需要 {collection}:write。"
+	paths["/{collection}/categories"] = map[string]any{
+		"get": map[string]any{
+			"summary":     "扩展类型分类列表（{collection}:read）",
+			"description": extCatDesc + "返回可写入 category_id 的真实分类；lang=all 返回全部语种。",
+			"responses":   map[string]any{"200": map[string]any{"description": "OK"}},
+		},
+		"post": map[string]any{
+			"summary":     "创建扩展类型分类（{collection}:write）",
+			"description": extCatDesc + "请求体与 posts/links 分类同形：{name,lang,slug?,description?,trans_group?}。",
+			"responses":   map[string]any{"201": map[string]any{"description": "Created"}},
+		},
+	}
+	paths["/{collection}/categories/all-entry"] = map[string]any{
+		"get": map[string]any{
+			"summary":     "扩展类型归档入口（{collection}:read）",
+			"description": extCatDesc + "映射后台「扩展 → 归档页文案」：只有 title/description 可写；路径由类型定义固定，slug/label 不适用（传了会 400）。",
+			"responses":   map[string]any{"200": map[string]any{"description": "OK"}},
+		},
+		"patch": map[string]any{
+			"summary":     "更新扩展类型归档入口（{collection}:write）",
+			"description": "按语种更新该类型列表页标题与简介（title/description）；与后台「归档页文案」同一份数据。",
+			"responses":   map[string]any{"200": map[string]any{"description": "OK"}},
+		},
+	}
+	paths["/{collection}/categories/{id}"] = map[string]any{
+		"patch": map[string]any{
+			"summary":     "更新扩展类型分类（{collection}:write）",
+			"description": extCatDesc + "请求体与 posts/links 分类同形。",
+			"responses":   map[string]any{"200": map[string]any{"description": "OK"}},
+		},
+	}
 	for _, col := range automationCollections {
 		if col.path == "posts" || col.path == "links" {
 			paths["/"+col.path+"/categories"] = map[string]any{
@@ -325,6 +363,10 @@ func automationOpenAPISpec(apiBase string) map[string]any {
 		}
 		paths["/"+col.path+"/{id}/relink"] = map[string]any{
 			"post": automationRelinkOperation(col),
+		}
+		paths["/"+col.path+"/{id}/discard"] = map[string]any{
+			"post":   automationDiscardOperation(col),
+			"delete": automationUndiscardOperation(col),
 		}
 		paths["/"+col.path+"/similar"] = map[string]any{
 			"get": automationSimilarOperation(col),
@@ -448,10 +490,23 @@ func automationSiteProfileGetOperation() map[string]any {
 	}
 }
 
+func automationThemeOptionsGetOperation() map[string]any {
+	return map[string]any{
+		"summary":     "读取当前主题声明消费的配置槽与现值（site:read）",
+		"description": "返回当前主题、骨架（layout）、主题族别（family），以及该主题（骨架）实际消费的数据槽子集 slots：每槽含 key/type/label/localized/enabled_key、当前开关态 enabled、是否已配置 configured 与按语种现值 value（?lang=xx，缺省默认语种；gallery 为 URL 数组，value 只回覆盖值不含内置默认）。改工厂文案前先调这里看契约，再用 PATCH /site-profile 写对应 factory_* 字段——不消费的槽写了也不会在该主题首页渲染（数据保留）。绝不编造工厂数字：实力数字、认证等必须来自用户提供的真实资料。",
+		"operationId": "getThemeOptions",
+		"tags":        []string{"站点初始化"},
+		"parameters": []map[string]any{
+			{"name": "lang", "in": "query", "required": false, "schema": map[string]any{"type": "string"}, "description": "语种（缺省默认语种）；文本槽的 configured/value 按该语种取。"},
+		},
+		"responses": automationResponses("ThemeOptionsResponse"),
+	}
+}
+
 func automationSiteProfileUpdateOperation() map[string]any {
 	return map[string]any{
 		"summary":     "更新站点文案",
-		"description": "按语种更新站点基础文案和首页文案。拥有品牌资产权限时，也可以更新 Logo、分享图和 Hero 右侧视觉。可传单个语种对象，也可传 items 数组批量更新。默认语种的站点名称不能为空。",
+		"description": "按语种更新站点基础文案和首页文案。拥有品牌资产权限时，也可以更新 Logo、分享图和 Hero 右侧视觉。主题配置数据槽（工厂主题族的 factory_stats / factory_process / factory_cta / factory_categories / factory_industries / factory_gallery / factory_faq，独立站主题族另有 dtc_testimonials——只能录入真实用户评价，绝不编造）也走这里，随 lang 分语种、传空清除回落默认。可传单个语种对象，也可传 items 数组批量更新。默认语种的站点名称不能为空。",
 		"operationId": "updateSiteProfile",
 		"tags":        []string{"站点初始化"},
 		"requestBody": automationJSONBody("SiteProfilePatch"),
@@ -623,6 +678,29 @@ func automationRelinkOperation(col automationCollection) map[string]any {
 		"tags":        []string{col.label},
 		"parameters":  []map[string]any{automationIDParam()},
 		"requestBody": automationJSONBody("RelinkInput"),
+		"responses":   automationResponses("ContentItemResponse"),
+	}
+}
+
+func automationDiscardOperation(col automationCollection) map[string]any {
+	return map[string]any{
+		"summary":     "报废申请：给" + col.label + "草稿打建议弃用标记（" + col.path + ":write）",
+		"description": "AI 没有删除权：发现废稿（重复选题、质量不可救、用户否决）时只能打「建议弃用」标记 + 理由（必填，≤200 字），删除永远由管理员在后台执行。只能标记草稿——已发布/定时内容返回 409 {\"error\":\"not_draft\"}。重复标记＝更新理由（幂等）；标记零破坏，可用 DELETE 撤销；任何发布动作（后台发布、API 置 published、定时翻发布）会自动清除标记。已标记条目不再计入 /similar 查重结果。",
+		"operationId": "discard" + automationOperationSuffix(col.path),
+		"tags":        []string{col.label},
+		"parameters":  []map[string]any{automationIDParam()},
+		"requestBody": automationJSONBody("DiscardInput"),
+		"responses":   automationResponses("ContentItemResponse"),
+	}
+}
+
+func automationUndiscardOperation(col automationCollection) map[string]any {
+	return map[string]any{
+		"summary":     "撤销" + col.label + "报废申请（" + col.path + ":write）",
+		"description": "清除「建议弃用」标记与理由，内容原样恢复（幂等：未标记时也返回 200）。",
+		"operationId": "undiscard" + automationOperationSuffix(col.path),
+		"tags":        []string{col.label},
+		"parameters":  []map[string]any{automationIDParam()},
 		"responses":   automationResponses("ContentItemResponse"),
 	}
 }
@@ -899,6 +977,30 @@ func automationOpenAPISchemas() map[string]any {
 				"items":   map[string]any{"type": "array", "items": map[string]any{"$ref": "#/components/schemas/SiteProfileItem"}},
 			},
 		},
+		"ThemeOptionsResponse": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"theme":  map[string]any{"type": "string", "description": "当前主题 id。"},
+				"layout": map[string]any{"type": "string", "description": "主题骨架（如 factory-engineering）。"},
+				"family": map[string]any{"type": "string", "description": "主题族别：content / factory / dtc / general。"},
+				"lang":   map[string]any{"type": "string", "description": "本次取值语种。"},
+				"slots":  map[string]any{"type": "array", "items": map[string]any{"$ref": "#/components/schemas/ThemeOptionSlot"}},
+			},
+		},
+		"ThemeOptionSlot": map[string]any{
+			"type":        "object",
+			"description": "当前主题声明消费的一个数据槽。key 去掉 .enabled 后缀、点换下划线即 PATCH /site-profile 的字段名（如 factory.stats → factory_stats、factory.categories.enabled → factory_categories）。",
+			"properties": map[string]any{
+				"key":         map[string]any{"type": "string", "description": "settings 语义键（如 factory.stats；hero 槽为 hero.visual）。"},
+				"type":        map[string]any{"type": "string", "description": "槽类型：hero/stats/steps/textpair/toggle/pairs/qalist/gallery/testimonials。"},
+				"label":       map[string]any{"type": "string"},
+				"localized":   map[string]any{"type": "boolean", "description": "文本按语种覆盖（PATCH 时随 lang 分语种）。"},
+				"enabled_key": map[string]any{"type": "string", "description": "带整条开关的槽的开关键（全局，不分语种）。"},
+				"enabled":     map[string]any{"type": "boolean", "description": "带开关的槽的当前开关态；false 时该区块不在首页渲染。"},
+				"configured":  map[string]any{"type": "boolean", "description": "该语种是否存在覆盖值；false = 前台走内置默认。"},
+				"value":       map[string]any{"description": "按语种现值（只回覆盖值）：stats/steps/pairs/qalist 为对象数组、textpair 为 {title,note}、gallery 为 URL 数组、hero 为 {visual,image}；未配置时省略。"},
+			},
+		},
 		"SiteProfileItem": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -921,6 +1023,14 @@ func automationOpenAPISchemas() map[string]any {
 				"share_image":         map[string]any{"type": "string", "description": "默认分享图 URL。更新需要 brand:assets:write。"},
 				"hero_visual":         map[string]any{"type": "string", "description": "首页 Hero 右侧视觉类型。AI 上传动画或图片时通常使用 image；空值表示恢复主题默认。更新需要 brand:assets:write。"},
 				"hero_image":          map[string]any{"type": "string", "description": "首页 Hero 右侧图片或动画 URL，可写入 /media 返回的 WebP 文件路径；已有 SVG 文件也可作为图片路径使用。AI 生成的动画必须上传 WebP。更新需要 brand:assets:write。"},
+				"factory_stats":       automationFactoryStatsSchema(),
+				"factory_process":     automationFactoryProcessSchema(),
+				"factory_cta":         automationFactoryCTASchema(),
+				"factory_categories":  automationFactoryCategoriesSchema(),
+				"factory_industries":  automationFactoryIndustriesSchema(),
+				"factory_gallery":     automationFactoryGallerySchema(),
+				"factory_faq":         automationFactoryFAQSchema(),
+				"dtc_testimonials":    automationDTCTestimonialsSchema(),
 			},
 		},
 		"SiteProfilePatch": map[string]any{
@@ -950,6 +1060,14 @@ func automationOpenAPISchemas() map[string]any {
 				"share_image":         map[string]any{"type": "string", "description": "默认分享图 URL。更新需要 brand:assets:write。"},
 				"hero_visual":         map[string]any{"type": "string", "description": "首页 Hero 右侧视觉类型。上传动画/图片后设为 image；传空字符串恢复主题默认。更新需要 brand:assets:write。"},
 				"hero_image":          map[string]any{"type": "string", "description": "首页 Hero 右侧图片或动画 URL。先用 POST /media 上传 WebP，再把返回 url 写入这里；未同时传 hero_visual 时会自动切为 image。AI 生成的动画必须上传 WebP。更新需要 brand:assets:write。"},
+				"factory_stats":       automationFactoryStatsSchema(),
+				"factory_process":     automationFactoryProcessSchema(),
+				"factory_cta":         automationFactoryCTASchema(),
+				"factory_categories":  automationFactoryCategoriesSchema(),
+				"factory_industries":  automationFactoryIndustriesSchema(),
+				"factory_gallery":     automationFactoryGallerySchema(),
+				"factory_faq":         automationFactoryFAQSchema(),
+				"dtc_testimonials":    automationDTCTestimonialsSchema(),
 			},
 		},
 		"NavigationResponse": map[string]any{
@@ -1087,6 +1205,13 @@ func automationOpenAPISchemas() map[string]any {
 				"trans_group": map[string]any{"type": "string", "description": "直接指定要加入的互译组键（该组须已有成员）。"},
 			},
 		},
+		"DiscardInput": map[string]any{
+			"type":     "object",
+			"required": []string{"reason"},
+			"properties": map[string]any{
+				"reason": map[string]any{"type": "string", "maxLength": 200, "description": "为何建议弃用这篇草稿（必填，≤200 字）——管理员据此决定删除或恢复。"},
+			},
+		},
 		"ContentItem": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -1114,6 +1239,9 @@ func automationOpenAPISchemas() map[string]any {
 				"updated_at":         map[string]any{"type": "string", "format": "date-time"},
 				"robots_override":    map[string]any{"type": "string", "description": "单篇 robots 覆盖（空 = 用默认）。"},
 				"canonical_override": map[string]any{"type": "string", "description": "单篇 canonical 覆盖（空 = 用默认）。"},
+				"discarded":          map[string]any{"type": "boolean", "description": "AI 报废申请标记：true 表示已被标记「建议弃用」，等待管理员清理。"},
+				"discard_reason":     map[string]any{"type": "string", "description": "报废理由（未标记时为空串）。"},
+				"discarded_at":       map[string]any{"type": "string", "format": "date-time", "description": "标记时间（未标记时省略）。"},
 			},
 		},
 		"APIError": map[string]any{
@@ -2018,6 +2146,7 @@ func automationKitReadme(opts automationSkillOptions) string {
 		"- 设置默认语种：`PATCH /languages/{code}`，请求体为 `{\"default\":true}`，需要 `languages:default` 权限；设置默认会自动启用该语种。",
 		"- 读取/修改语种前台字典：`GET/PATCH /languages/{code}/catalog`。字典只管模板系统文案，例如 `home.cta_start`、`footer.about`、搜索空状态和页脚链接；需要 `languages:catalog` 权限。",
 		"- 读取/更新站点文案、首页 Hero、品牌资产和分享图：`GET/PATCH /site-profile`。",
+		"- 读取当前主题声明消费的配置槽与现值：`GET /theme-options`（工厂/独立站主题族先看这里再写 `factory_*` / `dtc_*` 字段；旧服务端 404 时跳过）。",
 		"- 读取/更新导航菜单：`GET/PATCH /navigation`。",
 		"- 上传媒体：`POST /media`。所有图片资源必须先转成 WebP（`.webp`）再上传；动画也优先用 animated WebP。",
 		"- 读取/创建/修改文章、链接、页面：`GET/POST /posts|links|pages`、`GET/PATCH /posts|links|pages/{id}`。",
@@ -2154,6 +2283,7 @@ func automationSkillMarkdown(apiBase string) string {
 		"- `media`：先把用户提供的图片转成 WebP（.webp），再上传文件，把返回 URL 用于封面、正文图片或已确认的 Hero 右侧视觉。",
 		"- `language-settings`：在用户明确要求且权限允许时，启用/禁用语种或设置默认语种；先读取所有语种状态。",
 		"- `hero-visual`：用户明确要求且权限允许时，为首页 Hero 右侧生成或替换轻量动画；上传 animated WebP，再用 `PATCH /site-profile` 写 `hero_image` 与 `hero_visual:image`。",
+		"- `theme-options`：主题配置数据槽（工厂主题族的实力数字/流程/FAQ/行业/图集/CTA；独立站主题族另有用户评价 `dtc_testimonials`——只能录入真实用户评价，绝不编造）。先跑 `node scripts/gcms.js theme-options [--lang xx]`（`GET /theme-options`，site:read）看当前主题实际消费哪些槽与现值，再经 `PATCH /site-profile` 的 `factory_*` / `dtc_*` 字段写入；旧服务端该端点 404 时跳过本项。字段约定见「主题配置」小节。",
 		"- `multilingual`：先查语种和 `trans_group`，逐条处理各语种版本。",
 		"- `publish-review`：发布前复核；只有用户明确要求且权限允许才发布。",
 		"- `preview`：发布前读取文章或链接预览，检查渲染后的正文 HTML、目录和正式 URL。",
@@ -2188,6 +2318,7 @@ func automationSkillMarkdown(apiBase string) string {
 		"- 页面 `pages`：关于、功能、价格、FAQ、联系等固定页面；没有分类，也没有置顶。",
 		"- 真实分类：`/posts/categories`、`/links/categories`，返回的 `id` 才能写入内容。",
 		"- 全部入口：`/posts/categories/all-entry`、`/links/categories/all-entry`，只控制总列表页文案、路径和筛选按钮。",
+		"- 扩展类型分类：支持分类的扩展集合（如 `products`）有同形的 `/{collection}/categories`、`/{collection}/categories/{id}` 与 `/{collection}/categories/all-entry`；权限直接复用该集合的 `read`/`write`（不需要单独的 categories 权限）。扩展类型的 all-entry 映射后台「归档页文案」，只有 `title`/`description` 可写，`slug`/`label` 不适用。旧版本服务端没有这些通用路由（会返回 404/400 bad_id），报错时提示用户升级 gcms。",
 		"",
 		"## 推荐脚本",
 		"",
@@ -2209,8 +2340,10 @@ func automationSkillMarkdown(apiBase string) string {
 		"- `node scripts/gcms.js upload ./cover.webp`",
 		"- `node scripts/gcms.js categories posts --lang zh`",
 		"- `node scripts/gcms.js categories links --lang zh`",
+		"- `node scripts/gcms.js categories products --lang zh`（支持分类的扩展集合同形可用）",
 		"- `node scripts/gcms.js category-entry posts --lang all`",
 		"- `node scripts/gcms.js update-category-entry posts '{\"lang\":\"zh\",\"title\":\"教程\",\"label\":\"全部\"}'`",
+		"- `node scripts/gcms.js update-category-entry products '{\"lang\":\"zh\",\"title\":\"产品中心\",\"description\":\"外贸产品目录\"}'`（扩展集合只支持 title/description）",
 		"- `node scripts/gcms.js list posts --lang zh --q 关键词`",
 		"- `node scripts/gcms.js list posts --lang all --trans_group 分组值`",
 		"- `node scripts/gcms.js get posts 123`",
@@ -2223,6 +2356,8 @@ func automationSkillMarkdown(apiBase string) string {
 		"- `node scripts/gcms.js create posts '{\"title\":\"标题\",\"content\":\"正文\",\"lang\":\"zh\",\"status\":\"draft\"}'`",
 		"- `node scripts/gcms.js update posts 123 '{\"title\":\"新标题\"}'`",
 		"- `node scripts/gcms.js update posts 123 '{}' --robots \"noindex, follow\" --canonical https://example.com/original`（单篇 SEO 覆盖）",
+		"- `node scripts/gcms.js discard posts 123 --reason \"与 #42 重复选题\"`（报废申请：只给草稿打标记，删除由管理员执行）",
+		"- `node scripts/gcms.js undiscard posts 123`（撤销报废标记）",
 		"- `node scripts/gcms.js audit posts --lang zh --limit 50`",
 		"- `node scripts/gcms.js audit pages --lang zh --limit 20 --deep true`",
 		"- `node scripts/gcms.js search-stats --days 28 --limit 100`",
@@ -2242,6 +2377,21 @@ func automationSkillMarkdown(apiBase string) string {
 		"```",
 		"",
 		"score 较高（如 ≥0.6）说明站内已有雷同主题：优先更新那篇旧文，不要再写一篇新的。",
+		"",
+		"## 报废申请（discard）——AI 不能删除内容",
+		"",
+		"你没有删除权：删除永远由管理员在后台执行。发现废稿（重复选题、质量不可救、用户否决方向）时，",
+		"用报废申请给「草稿」打建议弃用标记：`node scripts/gcms.js discard <collection> <id> --reason \"为何弃用\"`",
+		"（`POST /{collection}/{id}/discard`，reason 必填 ≤200 字）。规则：",
+		"",
+		"- **只能标记草稿**：已发布/定时内容返回 409 `not_draft`——不要重试，交由用户/管理员处理。",
+		"- 重复标记＝更新理由（幂等）；`undiscard <collection> <id>` 可随时撤销，标记零破坏。",
+		"- 任何发布动作（后台发布、API 置 published、定时翻发布）会自动清除标记——人的动作优先于 AI 申请。",
+		"- 已标记条目不再计入 `similar` 查重结果（不会把自己报废的稿当「站内已有同题」）。",
+		"- 列表/详情返回里以 `discarded`（bool）与 `discard_reason` 呈现；管理员在后台「待清理」档统一恢复或删除。",
+		"",
+		"**旧服务端降级**：服务端版本较旧时该端点返回 404——此时不要造别的删除手段，改为把草稿正文开头",
+		"加一行「【建议弃用：理由】」文字标注（`update` 改正文即可），并在汇报里提醒管理员升级 gcms 后再统一清理。",
 		"",
 		"## 发布质量门（posts 专属）",
 		"",
@@ -2272,10 +2422,16 @@ func automationSkillMarkdown(apiBase string) string {
 		"- `node scripts/gcms.js type-enable product`（给站点开产品库；type-disable 停用——注意：停用只下线前台归档与自省列表，API 内容读写不受影响）",
 		"- `node scripts/gcms.js list products --lang zh`",
 		"- `node scripts/gcms.js create products '{\"title\":\"入门款\",\"status\":\"draft\",\"fields\":{\"price\":199}}'`",
+		"- `node scripts/gcms.js categories products --lang zh`（支持分类的扩展类型：分类三命令同形可用，权限即该集合的 read/write）",
 		"- `node scripts/gcms.js type-create '{\"key\":\"cases\",\"name\":\"案例\",\"fields\":[{\"key\":\"client\",\"label\":\"客户\",\"type\":\"text\",\"required\":true}]}'`",
+		"",
+		"扩展集合的分类端点需要较新的 gcms 服务端：旧版本没有通用 `/{collection}/categories` 路由，",
+		"会返回 404 或 400 `bad_id`（被内容详情路由接走）——遇到时不要重试改造请求，直接提示用户升级 gcms。",
 		"",
 		"**创建新类型前必须先把内容模型（类型名、字段清单）讲给用户并获得同意**——类型是站点级结构，",
 		"不是随手可扔的草稿。type-delete 只对没有内容的自定义类型有效；内置类型只能启停不能改删。",
+		"",
+		automationThemeOptionsDocString(),
 		"",
 		"## 统计数据（stats:read）",
 		"",
@@ -2305,6 +2461,188 @@ func automationSkillMarkdown(apiBase string) string {
 		"",
 		"如果不能运行脚本，根据 `references/openapi.json` 直接发 HTTP 请求。",
 	}, "\n") + "\n"
+}
+
+// ---------- 主题 options schema → 文档（与 theme_options.go 注册表同源，改注册表这里自动跟着变） ----------
+
+// automationFactorySpec 按 settings 键名查工厂槽的 spec（注册表是文档的唯一事实源）。
+func automationFactorySpec(key string) ThemeOptionSpec {
+	for _, spec := range factoryThemeOptions {
+		if spec.Key == key {
+			return spec
+		}
+	}
+	return ThemeOptionSpec{}
+}
+
+func automationFactoryStatsSchema() map[string]any {
+	spec := automationFactorySpec(factoryStatsSettingKey)
+	return map[string]any{
+		"type": "array", "items": map[string]any{"type": "object", "properties": map[string]any{
+			"num": map[string]any{"type": "string"}, "label": map[string]any{"type": "string"},
+		}},
+		"description": spec.Label + "（工厂主题族）：" + spec.Desc + " 按语种保存；传 [] 清除该语种覆盖。示例：" + spec.Example + "。需要 site:write。",
+	}
+}
+
+func automationFactoryProcessSchema() map[string]any {
+	spec := automationFactorySpec(factoryProcessSettingKey)
+	return map[string]any{
+		"type": "object", "properties": map[string]any{
+			"enabled": map[string]any{"type": "boolean", "description": "整条开关（全局，不分语种）；false 时首页不渲染流程条。"},
+			"steps": map[string]any{"type": "array", "items": map[string]any{"type": "object", "properties": map[string]any{
+				"title": map[string]any{"type": "string"}, "note": map[string]any{"type": "string"},
+			}}, "description": "四步按位对应（询盘/打样/量产/出货），空字段回落内置默认；按语种保存，传 [] 清除覆盖。"},
+		},
+		"description": spec.Label + "（工厂主题族）：" + spec.Desc + " steps 示例：" + spec.Example + "。需要 site:write。",
+	}
+}
+
+func automationFactoryCTASchema() map[string]any {
+	spec := automationFactorySpec(factoryCTASettingKey)
+	return map[string]any{
+		"type": "object", "properties": map[string]any{
+			"title": map[string]any{"type": "string"}, "note": map[string]any{"type": "string"},
+		},
+		"description": spec.Label + "（工厂主题族）：" + spec.Desc + " 按语种保存；两个字段都传空即清除覆盖。示例：" + spec.Example + "。需要 site:write。",
+	}
+}
+
+func automationFactoryCategoriesSchema() map[string]any {
+	spec := automationFactorySpec(factoryCategoriesEnabledKey)
+	return map[string]any{
+		"type": "object", "properties": map[string]any{
+			"enabled": map[string]any{"type": "boolean"},
+		},
+		"description": spec.Label + "（工厂主题族）：" + spec.Desc + " 只有开关（全局）。需要 site:write。",
+	}
+}
+
+func automationFactoryIndustriesSchema() map[string]any {
+	spec := automationFactorySpec(factoryIndustriesSettingKey)
+	return map[string]any{
+		"type": "object", "properties": map[string]any{
+			"enabled": map[string]any{"type": "boolean", "description": "整条开关（全局）。"},
+			"items": map[string]any{"type": "array", "items": map[string]any{"type": "object", "properties": map[string]any{
+				"name": map[string]any{"type": "string"}, "note": map[string]any{"type": "string"},
+			}}, "description": "按语种保存；传 [] 清除覆盖回落内置四项。"},
+		},
+		"description": spec.Label + "（工厂主题族）：" + spec.Desc + " items 示例：" + spec.Example + "。需要 site:write。",
+	}
+}
+
+func automationFactoryGallerySchema() map[string]any {
+	spec := automationFactorySpec(factoryGallerySettingKey)
+	return map[string]any{
+		"type": "array", "items": map[string]any{"type": "string"},
+		"description": spec.Label + "（工厂主题族）：" + spec.Desc + " 全局保存（不分语种）；传 [] 清除。示例：" + spec.Example + "。需要 site:write。",
+	}
+}
+
+func automationFactoryFAQSchema() map[string]any {
+	spec := automationFactorySpec(factoryFAQSettingKey)
+	return map[string]any{
+		"type": "object", "properties": map[string]any{
+			"enabled": map[string]any{"type": "boolean", "description": "整条开关（全局）。"},
+			"items": map[string]any{"type": "array", "items": map[string]any{"type": "object", "properties": map[string]any{
+				"q": map[string]any{"type": "string"}, "a": map[string]any{"type": "string"},
+			}}, "description": "按语种保存；传 [] 清除覆盖回落内置四条。"},
+		},
+		"description": spec.Label + "（工厂主题族）：" + spec.Desc + " items 示例：" + spec.Example + "。需要 site:write。",
+	}
+}
+
+// automationDTCTestimonialsSchema 独立站用户评价槽（dtc.testimonials）的 site-profile 字段 schema。
+// 红线随 schema 走进 OpenAPI / SKILL：只能录入真实用户评价，绝不编造。
+func automationDTCTestimonialsSchema() map[string]any {
+	spec := automationDTCSpec(dtcTestimonialsSettingKey)
+	return map[string]any{
+		"type": "array", "items": map[string]any{"type": "object", "properties": map[string]any{
+			"name": map[string]any{"type": "string"}, "region": map[string]any{"type": "string"}, "quote": map[string]any{"type": "string"},
+		}},
+		"description": spec.Label + "（独立站主题族）：" + spec.Desc + " 按语种保存；传 [] 清除该语种数据。示例：" + spec.Example + "。红线：只能录入用户提供的真实评价（订单/邮件/社媒等真实反馈），绝不编造；宁可不配置。需要 site:write。",
+	}
+}
+
+// automationDTCSpec 按 settings 键名查独立站槽的 spec（同 automationFactorySpec 的读法）。
+func automationDTCSpec(key string) ThemeOptionSpec {
+	for _, spec := range dtcThemeOptions {
+		if spec.Key == key {
+			return spec
+		}
+	}
+	return ThemeOptionSpec{}
+}
+
+// automationThemeOptionsDocString 供 SKILL.md 内嵌的整段「主题配置」小节。
+func automationThemeOptionsDocString() string {
+	return strings.Join(automationThemeOptionsDoc(), "\n")
+}
+
+// automationThemeOptionsDoc 生成 SKILL.md「主题配置」小节：从 Themes 注册表归族出
+// 工厂/独立站主题清单，再按 factoryThemeOptions / dtcThemeOptions 注册表列出每个槽的
+// 字段名、格式示例与语种规则。
+func automationThemeOptionsDoc() []string {
+	var ids, dtcIDs []string
+	for _, t := range Themes {
+		switch layout := layoutForTheme(t.ID); {
+		case isFactoryLayout(layout):
+			ids = append(ids, t.ID)
+		case isDTCLayout(layout):
+			dtcIDs = append(dtcIDs, t.ID)
+		}
+	}
+	lines := []string{
+		"## 主题配置（外观数据槽）",
+		"",
+		"主题声明自己消费哪些「数据槽」，数据存在站点 settings 上——换主题不丢、同族主题共享。",
+		"**先看契约再动手**：`node scripts/gcms.js theme-options [--lang xx]`（`GET /theme-options`，site:read）",
+		"返回当前主题、骨架与它实际消费的槽子集及现值——不是每个骨架都消费全部槽",
+		"（如技术骨架 factory-engineering 只吃实力数字/分类入口/CTA），不消费的槽写了也不会在首页渲染（数据保留）。",
+		"旧服务端没有该端点会返回 404：跳过本项、按下方字段约定操作即可，并提醒管理员升级 gcms。",
+		"写入经 `PATCH /site-profile`（需要 site:write，任务模式见「任务模式」的 `theme-options` 条目）：",
+		"文本槽跟随请求体的 `lang` 分语种，留空 / 传 `[]` 即清除该语种覆盖、回落内置默认（前台五语种齐备）。",
+		"**绝不编造工厂数字**：实力数字、认证、行业案例等必须来自用户提供的真实资料，宁可留空回落默认。",
+		"所有主题都有既有 Hero 槽（`hero_visual` / `hero_image`，需要 brand:assets:write）。",
+		"工厂主题族（" + strings.Join(ids, " / ") + "）另有以下槽：",
+		"",
+	}
+	slotLine := func(spec ThemeOptionSpec) string {
+		field := strings.ReplaceAll(strings.TrimSuffix(spec.Key, ".enabled"), ".", "_")
+		var example string
+		switch spec.Type {
+		case themeOptSteps:
+			example = "`{\"enabled\":true,\"steps\":" + spec.Example + "}`"
+		case themeOptPairs, themeOptQAList:
+			example = "`{\"enabled\":true,\"items\":" + spec.Example + "}`"
+		default:
+			example = "`" + spec.Example + "`"
+		}
+		scope := "按语种"
+		if !spec.Localized {
+			scope = "全局（不分语种）"
+		}
+		return "- `" + field + "` — " + spec.Label + "（" + scope + "）：" + example
+	}
+	for _, spec := range factoryThemeOptions {
+		lines = append(lines, slotLine(spec))
+	}
+	lines = append(lines,
+		"",
+		"外贸独立站主题族（"+strings.Join(dtcIDs, " / ")+"）复用上面的 `factory_stats`（品牌数字）/ `factory_categories`（系列入口）",
+		"/ `factory_gallery`（品牌图集）/ `factory_faq` / `factory_cta`（同一存储键，换主题数据不丢），另有独立站专属槽：",
+		"",
+		slotLine(automationDTCSpec(dtcTestimonialsSettingKey)),
+		"",
+		"**用户评价红线**：`dtc_testimonials` 只能录入用户提供的真实评价（订单、邮件、社媒等真实反馈），**绝不编造**；",
+		"没有真实评价就不要配置——未配置时评价区不渲染，这是刻意设计，绝不放假评价占位。",
+		"",
+		"带 `enabled` 的槽可单独传 `{\"enabled\":false}` 把整个区块从首页隐藏；`factory_gallery` / `dtc_testimonials` 未配置时区块不渲染。",
+		"修改前先 `theme-options` 看槽子集与现值（旧服务端 404 则退回 `GET /site-profile` 查现值）；",
+		"这些字段对任何主题都可写（数据挂在站点上），只在消费它们的工厂/独立站骨架首页渲染。",
+		"`theme-options` 返回的槽 `key` 去掉 `.enabled` 后缀、点换下划线即上面的字段名（如 `factory.stats` → `factory_stats`、`dtc.testimonials` → `dtc_testimonials`）。",
+	)
+	return lines
 }
 
 func automationSkillAgentYAML() string {

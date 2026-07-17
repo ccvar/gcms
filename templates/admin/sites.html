@@ -259,7 +259,8 @@
         <details class="site-card-details">
           <summary>
             <span class="site-details-left">
-              {{if index $.PlatformOfficialURLs .ID}}<span class="site-details-title is-cf">{{template "site-icon-cloudflare"}}<span>Cloudflare</span>{{$cfSt := index $.PlatformCFStatus .ID}}{{$cfAt := index $.PlatformCFDeployAt .ID}}{{if or (eq $cfSt "running") $cfAt}}<span class="site-cf-status{{if eq $cfSt "running"}} is-running{{end}}" data-cf-poll data-status-url="/admin/sites/{{.ID}}/cloudflare/status" data-cf-status="{{$cfSt}}" data-deploy-at="{{$cfAt}}" data-running="{{$.Admin.T "admin.settings.cloudflare.running" "部署中"}}" data-failed="{{$.Admin.T "admin.settings.cloudflare.failed" "失败"}}" data-just="{{$.Admin.T "admin.settings.cloudflare.just_now" "刚刚"}}" data-min="{{$.Admin.T "admin.settings.cloudflare.minutes_ago" "%d 分钟前"}}" data-hour="{{$.Admin.T "admin.settings.cloudflare.hours_ago" "%d 小时前"}}" data-day="{{$.Admin.T "admin.settings.cloudflare.days_ago" "%d 天前"}}">{{if eq $cfSt "running"}}{{$.Admin.T "admin.settings.cloudflare.running" "部署中"}}{{else}}{{$cfAt}}{{end}}</span>{{end}}</span>{{else}}{{$upd := index $.PlatformContentUpdatedAt .ID}}<span class="site-details-title"{{if index $.PlatformDomains .ID}} data-domain-status data-status-url="/admin/sites/{{.ID}}/wizard/status" data-s-checking="{{$.Admin.T "admin.sites.status_checking" "检测中…"}}" data-s-pending="{{$.Admin.T "admin.sites.status_pending" "待生效"}}" data-s-dns="{{$.Admin.T "admin.sites.status_dns" "DNS 待配置"}}"{{end}}>{{template "site-icon-server"}}<span>{{$.Admin.T "admin.sites.deploy_server" "服务器"}}</span>{{if or (index $.PlatformDomains .ID) $upd}}<span class="site-cf-status" data-server-suffix data-ago="{{$upd}}" data-just="{{$.Admin.T "admin.settings.cloudflare.just_now" "刚刚"}}" data-min="{{$.Admin.T "admin.settings.cloudflare.minutes_ago" "%d 分钟前"}}" data-hour="{{$.Admin.T "admin.settings.cloudflare.hours_ago" "%d 小时前"}}" data-day="{{$.Admin.T "admin.settings.cloudflare.days_ago" "%d 天前"}}"></span>{{end}}</span>{{end}}
+              {{- /* 托管/时间芯片：待部署 | 运行 N 天 · 更新 M（服务端预计算，见 site_deploy_chip.go）。CF 形态额外保留「部署中/失败」轮询，完成后由 JS 用 data-steady 恢复稳态文字。 */ -}}
+              {{$chip := index $.PlatformDeployChips .ID}}{{if index $.PlatformOfficialURLs .ID}}<span class="site-details-title is-cf">{{template "site-icon-cloudflare"}}<span>Cloudflare</span>{{$cfSt := index $.PlatformCFStatus .ID}}{{if $chip}}<span class="site-cf-status{{if eq $cfSt "running"}} is-running{{end}}{{if eq $cfSt "failed"}} is-failed{{end}}" data-cf-poll data-status-url="/admin/sites/{{.ID}}/cloudflare/status" data-cf-status="{{$cfSt}}" data-steady="{{$chip.Text}}" data-steady-title="{{$chip.Title}}" data-running="{{$.Admin.T "admin.settings.cloudflare.running" "部署中"}}" data-failed="{{$.Admin.T "admin.settings.cloudflare.failed" "失败"}}"{{if $chip.Title}} title="{{$chip.Title}}"{{end}}>{{if eq $cfSt "running"}}{{$.Admin.T "admin.settings.cloudflare.running" "部署中"}}{{else if eq $cfSt "failed"}}{{$.Admin.T "admin.settings.cloudflare.failed" "失败"}}{{else}}{{$chip.Text}}{{end}}</span>{{end}}</span>{{else}}<span class="site-details-title"{{if index $.PlatformDomains .ID}} data-domain-status data-status-url="/admin/sites/{{.ID}}/wizard/status" data-s-checking="{{$.Admin.T "admin.sites.status_checking" "检测中…"}}" data-s-pending="{{$.Admin.T "admin.sites.status_pending" "待生效"}}" data-s-dns="{{$.Admin.T "admin.sites.status_dns" "DNS 待配置"}}"{{end}}>{{template "site-icon-server"}}<span>{{$.Admin.T "admin.sites.deploy_server" "服务器"}}</span>{{if $chip}}{{if $chip.Pending}}<span class="site-cf-status is-pending"{{if $chip.Title}} title="{{$chip.Title}}"{{end}}>{{$.Admin.T "admin.sites.chip_pending" "待部署"}}</span>{{else if $chip.Text}}<span class="site-cf-status" data-server-suffix data-steady="{{$chip.Text}}"{{if $chip.Title}} title="{{$chip.Title}}"{{end}}>{{$chip.Text}}</span>{{end}}{{end}}</span>{{end}}
             </span>
             <small>{{if .IsDefault}}{{$.Admin.T "admin.sites.default_domain_note" "使用当前默认入口"}}{{else}}{{$.Admin.T "admin.sites.details_hint" "域名、接口和文件路径"}}{{end}}</small>
           </summary>
@@ -745,6 +746,32 @@
           <div class="field">
             <label for="site-name">{{.Admin.T "admin.sites.display_name" "站点名称"}}</label>
             <input id="site-name" name="name" value="{{index .FormVals "name"}}" placeholder="{{.Admin.T "admin.sites.display_name_placeholder" "品牌官网 / 文档中心"}}">
+          </div>
+          <div class="field">
+            <label>{{.Admin.T "admin.sites.kind" "站点类型"}}</label>
+            <div class="site-seed-options">
+              <label class="site-seed-option">
+                <input type="radio" name="site_kind" value="content"{{if and (ne (index .FormVals "site_kind") "factory") (ne (index .FormVals "site_kind") "dtc")}} checked{{end}}>
+                <span>
+                  <strong>{{.Admin.T "admin.sites.kind_content" "内容站"}}</strong>
+                  <em>{{.Admin.T "admin.sites.kind_content_desc" "博客 / 资讯 / 文档等内容形态，行为与现状一致。"}}</em>
+                </span>
+              </label>
+              <label class="site-seed-option">
+                <input type="radio" name="site_kind" value="factory"{{if eq (index .FormVals "site_kind") "factory"}} checked{{end}}>
+                <span>
+                  <strong>{{.Admin.T "admin.sites.kind_factory" "工厂站"}}</strong>
+                  <em>{{.Admin.T "admin.sites.kind_factory_desc" "面向外贸工厂：自动启用商品内容类型，并在导航挂上「商品」入口。"}}</em>
+                </span>
+              </label>
+              <label class="site-seed-option">
+                <input type="radio" name="site_kind" value="dtc"{{if eq (index .FormVals "site_kind") "dtc"}} checked{{end}}>
+                <span>
+                  <strong>{{.Admin.T "admin.sites.kind_dtc" "外贸独立站"}}</strong>
+                  <em>{{.Admin.T "admin.sites.kind_dtc_desc" "跨境卖家自有品牌官网（DTC）：自动启用商品内容类型，并在导航挂上「商品」入口。"}}</em>
+                </span>
+              </label>
+            </div>
           </div>
           <div class="field">
             <label>{{.Admin.T "admin.sites.seed_mode" "初始化内容"}}</label>

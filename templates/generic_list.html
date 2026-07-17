@@ -32,7 +32,8 @@
           </div>
         </a>
         {{else}}
-        <p class="muted">{{.Tr.T "links.empty"}}</p>
+        {{/* 空态按类型给话：商品用带询盘引导的文案，其余扩展类型用中性空态（此前误用「还没有链接。」） */}}
+        <p class="muted">{{if and .CT (eq .CT.Key "product")}}{{.Tr.T "factory.no_products"}}{{else}}{{.Tr.T "archive.empty"}}{{end}}</p>
         {{end}}
       </div>
 

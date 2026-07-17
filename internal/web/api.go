@@ -284,6 +284,17 @@ type apiSiteProfileItem struct {
 	ShareImage        string `json:"share_image,omitempty"`
 	HeroVisual        string `json:"hero_visual,omitempty"`
 	HeroImage         string `json:"hero_image,omitempty"`
+
+	// 主题 options（工厂主题族数据槽）：返回该语种生效的 settings 覆盖值（含 ::lang 回落裸键，
+	// 不含 i18n 内置默认）；没有配置时省略（带 enabled 的槽在被显式关闭时也会返回）。
+	FactoryStats      []FactoryStat             `json:"factory_stats,omitempty"`
+	FactoryProcess    *apiFactoryProcessItem    `json:"factory_process,omitempty"`
+	FactoryCTA        *FactoryTextPair          `json:"factory_cta,omitempty"`
+	FactoryCategories *apiFactoryToggleInput    `json:"factory_categories,omitempty"`
+	FactoryIndustries *apiFactoryIndustriesItem `json:"factory_industries,omitempty"`
+	FactoryGallery    []string                  `json:"factory_gallery,omitempty"`
+	FactoryFAQ        *apiFactoryFAQItem        `json:"factory_faq,omitempty"`
+	DTCTestimonials   []DTCTestimonial          `json:"dtc_testimonials,omitempty"` // 独立站用户评价（按语种；只录真实评价）
 }
 
 type apiSiteProfileInput struct {
@@ -306,11 +317,71 @@ type apiSiteProfileInput struct {
 	ShareImage        *string `json:"share_image,omitempty"`
 	HeroVisual        *string `json:"hero_visual,omitempty"`
 	HeroImage         *string `json:"hero_image,omitempty"`
+
+	// 主题 options（工厂主题族数据槽，见 theme_options.go）：写 settings 语义键，
+	// 按 lang 落 键/键::lang（各 enabled 开关与 factory_gallery 是全局例外，不分语种）。
+	// 传 []/null（或 items/steps:[]、全空 cta）= 清除该语种覆盖、回落默认；字段缺省 = 不动。
+	FactoryStats      json.RawMessage         `json:"factory_stats,omitempty"`
+	FactoryProcess    *apiFactoryProcessInput `json:"factory_process,omitempty"`
+	FactoryCTA        *FactoryTextPair        `json:"factory_cta,omitempty"`
+	FactoryCategories *apiFactoryToggleInput  `json:"factory_categories,omitempty"`
+	FactoryIndustries *apiFactoryListInput    `json:"factory_industries,omitempty"`
+	FactoryGallery    json.RawMessage         `json:"factory_gallery,omitempty"` // ["url",...]（全局）
+	FactoryFAQ        *apiFactoryListInput    `json:"factory_faq,omitempty"`
+	DTCTestimonials   json.RawMessage         `json:"dtc_testimonials,omitempty"` // [{name,region,quote}]（按语种；[]/null 清除；只录真实评价）
+}
+
+// apiFactoryProcessInput 「合作流程」写入：enabled 缺省不动；steps 缺省不动、[]/null 清除。
+type apiFactoryProcessInput struct {
+	Enabled *bool           `json:"enabled,omitempty"`
+	Steps   json.RawMessage `json:"steps,omitempty"`
+}
+
+// apiFactoryToggleInput 纯开关区块（分类入口卡区）写入。
+type apiFactoryToggleInput struct {
+	Enabled *bool `json:"enabled,omitempty"`
+}
+
+// apiFactoryListInput 组类槽（FAQ / 应用行业）写入：enabled 缺省不动；items 缺省不动、[]/null 清除。
+type apiFactoryListInput struct {
+	Enabled *bool           `json:"enabled,omitempty"`
+	Items   json.RawMessage `json:"items,omitempty"`
+}
+
+// apiFactoryProcessItem GET /site-profile 的「合作流程」读出（enabled 全局 + 该语种覆盖步骤）。
+type apiFactoryProcessItem struct {
+	Enabled bool          `json:"enabled"`
+	Steps   []FactoryStep `json:"steps,omitempty"`
+}
+
+// apiFactoryFAQItem / apiFactoryIndustriesItem 组类槽读出（enabled 全局 + 该语种覆盖条目）。
+type apiFactoryFAQItem struct {
+	Enabled bool        `json:"enabled"`
+	Items   []FactoryQA `json:"items,omitempty"`
+}
+
+type apiFactoryIndustriesItem struct {
+	Enabled bool              `json:"enabled"`
+	Items   []FactoryIndustry `json:"items,omitempty"`
 }
 
 type apiSiteProfilePatch struct {
 	apiSiteProfileInput
 	Items []apiSiteProfileInput `json:"items,omitempty"`
+}
+
+// apiThemeOptionSlot GET /theme-options 的一个数据槽：spec 注册表（键/类型/文案/语种规则）
+// + settings 现值（configured/value 按请求语种；带开关的槽附当前开关态）。
+// value 只回覆盖值（不含 i18n 内置默认）——configured=false 即「未配置、前台走默认」。
+type apiThemeOptionSlot struct {
+	Key        string `json:"key"`
+	Type       string `json:"type"`
+	Label      string `json:"label"`
+	Localized  bool   `json:"localized"`
+	EnabledKey string `json:"enabled_key,omitempty"`
+	Enabled    *bool  `json:"enabled,omitempty"` // 带整条开关的槽（steps/toggle/pairs/qalist）的当前开关态
+	Configured bool   `json:"configured"`
+	Value      any    `json:"value,omitempty"` // 按语种现值；gallery 为 URL 数组；hero 为 {visual,image}
 }
 
 type apiNavigationItem struct {
@@ -349,6 +420,10 @@ type apiContentItem struct {
 	RobotsOverride    string         `json:"robots_override,omitempty"`
 	CanonicalOverride string         `json:"canonical_override,omitempty"`
 	Fields            map[string]any `json:"fields,omitempty"`
+	// AI 报废申请（冻结契约：Pilot 侧解析这两个字段，恒输出不省略）。
+	Discarded     bool   `json:"discarded"`
+	DiscardReason string `json:"discard_reason"`
+	DiscardedAt   string `json:"discarded_at,omitempty"`
 }
 
 type apiContentPreview struct {
@@ -587,6 +662,102 @@ func (s *Server) apiGetSiteProfile(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.apiSiteProfileResponse())
 }
 
+// apiThemeOptions GET /theme-options（admin v1 + 平台 /sites/{id} 镜像；scope 与
+// GET /site-profile 的读口径对齐 = site:read）：返回当前主题、骨架、族别与
+// 「该主题声明消费的槽子集」+ settings 现值（?lang=xx 按语种，缺省默认语种）。
+// 数据全部由 spec 注册表（theme_options.go）+ settings 现值组装——AI 先看这份契约
+// 再决定 PATCH /site-profile 写哪些 factory_* 字段；不消费的槽写了也不会在首页渲染。
+func (s *Server) apiThemeOptions(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireAutomationScope(w, r, apiScopeSiteRead); !ok {
+		return
+	}
+	lang := strings.TrimSpace(r.URL.Query().Get("lang"))
+	if lang == "" {
+		lang = s.defaultLang()
+	}
+	if !s.langEnabled(lang) {
+		apiError(w, http.StatusBadRequest, "bad_lang", "语种未启用。")
+		return
+	}
+	writeJSON(w, http.StatusOK, s.apiThemeOptionsResponse(lang))
+}
+
+// apiThemeOptionsResponse 组装 /theme-options 响应：主题/骨架/族别 + 槽子集与现值。
+func (s *Server) apiThemeOptionsResponse(lang string) map[string]any {
+	theme := s.store.Setting("theme")
+	if !validTheme(theme) {
+		theme = "editorial"
+	}
+	family := ThemeCategoryContent
+	for _, t := range Themes {
+		if t.ID == theme {
+			family = t.Category
+			break
+		}
+	}
+	slots := make([]apiThemeOptionSlot, 0, len(factoryThemeOptions)+1)
+	for _, spec := range themeOptionSpecs(theme) {
+		slot := apiThemeOptionSlot{
+			Key:        spec.Key,
+			Type:       spec.Type,
+			Label:      spec.Label,
+			Localized:  spec.Localized,
+			EnabledKey: spec.EnabledKey,
+		}
+		if spec.EnabledKey != "" {
+			on := s.factorySectionEnabled(spec.EnabledKey)
+			slot.Enabled = &on
+		}
+		switch spec.Type {
+		case themeOptHero:
+			// hero 槽（全局）：visual 模式 + 图片 URL；配了任一即视为已配置。
+			hv := strings.TrimSpace(s.store.Setting("hero.visual"))
+			hi := strings.TrimSpace(s.store.Setting("hero.image"))
+			slot.Configured = hv != "" || hi != ""
+			slot.Value = map[string]string{"visual": hv, "image": hi}
+		case themeOptStats:
+			if v := parseFactoryStats(s.localizedSetting(spec.Key, lang, "")); len(v) > 0 {
+				slot.Configured, slot.Value = true, v
+			}
+		case themeOptSteps:
+			if v := parseFactorySteps(s.localizedSetting(spec.Key, lang, "")); len(v) > 0 {
+				slot.Configured, slot.Value = true, v
+			}
+		case themeOptTextPair:
+			if v := parseFactoryTextPair(s.localizedSetting(spec.Key, lang, "")); v.Title != "" || v.Note != "" {
+				slot.Configured, slot.Value = true, v
+			}
+		case themeOptToggle:
+			// 纯开关槽（内容零配置）：状态全在 enabled 上，configured 恒 false。
+		case themeOptPairs:
+			if v := parseFactoryIndustries(s.localizedSetting(spec.Key, lang, "")); len(v) > 0 {
+				slot.Configured, slot.Value = true, v
+			}
+		case themeOptQAList:
+			if v := parseFactoryQAs(s.localizedSetting(spec.Key, lang, "")); len(v) > 0 {
+				slot.Configured, slot.Value = true, v
+			}
+		case themeOptTestimonials:
+			if v := parseDTCTestimonials(s.localizedSetting(spec.Key, lang, "")); len(v) > 0 {
+				slot.Configured, slot.Value = true, v
+			}
+		case themeOptGallery:
+			// 图集全局（不分语种）：读裸键，value 为 URL 数组。
+			if v := parseFactoryGallery(s.store.Setting(spec.Key)); len(v) > 0 {
+				slot.Configured, slot.Value = true, v
+			}
+		}
+		slots = append(slots, slot)
+	}
+	return map[string]any{
+		"theme":  theme,
+		"layout": layoutForTheme(theme),
+		"family": family,
+		"lang":   lang,
+		"slots":  slots,
+	}
+}
+
 func (s *Server) apiUpdateSiteProfile(w http.ResponseWriter, r *http.Request) {
 	auth, ok := s.requireAutomationAnyScope(w, r, apiScopeSiteWrite, apiScopeBrandAssetsWrite)
 	if !ok {
@@ -675,7 +846,7 @@ func (s *Server) apiUpdateNavigation(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) apiListCategories(w http.ResponseWriter, r *http.Request) {
 	collection := r.PathValue("collection")
-	kind, scope, ok := apiCategoryReadTarget(collection)
+	kind, scope, ok := s.apiCategoryReadTarget(collection)
 	if !ok {
 		apiError(w, http.StatusNotFound, "not_found", "接口不存在。")
 		return
@@ -713,7 +884,7 @@ func (s *Server) apiListCategories(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) apiGetCategoryAllEntry(w http.ResponseWriter, r *http.Request) {
 	collection := r.PathValue("collection")
-	kind, scope, ok := apiCategoryReadTarget(collection)
+	kind, scope, ok := s.apiCategoryReadTarget(collection)
 	if !ok {
 		apiError(w, http.StatusNotFound, "not_found", "接口不存在。")
 		return
@@ -735,7 +906,7 @@ func (s *Server) apiGetCategoryAllEntry(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) apiUpdateCategoryAllEntry(w http.ResponseWriter, r *http.Request) {
 	collection := r.PathValue("collection")
-	kind, scope, ok := apiCategoryWriteTarget(collection)
+	kind, scope, ok := s.apiCategoryWriteTarget(collection)
 	if !ok {
 		apiError(w, http.StatusNotFound, "not_found", "接口不存在。")
 		return
@@ -777,7 +948,7 @@ func (s *Server) apiUpdateCategoryAllEntry(w http.ResponseWriter, r *http.Reques
 		}
 		out = append(out, entry)
 	}
-	s.recordAutomationLog(auth, "update", kind+"-category-all-entry", 0, "更新"+apiKindName(kind)+"分类总入口")
+	s.recordAutomationLog(auth, "update", kind+"-category-all-entry", 0, "更新"+s.apiKindLabel(kind)+"分类总入口")
 	responseLang := "all"
 	if len(out) == 1 {
 		responseLang = out[0].Lang
@@ -787,7 +958,7 @@ func (s *Server) apiUpdateCategoryAllEntry(w http.ResponseWriter, r *http.Reques
 
 func (s *Server) apiCreateCategory(w http.ResponseWriter, r *http.Request) {
 	collection := r.PathValue("collection")
-	kind, scope, ok := apiCategoryWriteTarget(collection)
+	kind, scope, ok := s.apiCategoryWriteTarget(collection)
 	if !ok {
 		apiError(w, http.StatusNotFound, "not_found", "接口不存在。")
 		return
@@ -842,14 +1013,14 @@ func (s *Server) apiCreateCategory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cat, _ = s.store.GetCategoryByID(id)
-	s.recordAutomationLog(auth, "create", kind+"-category", id, "创建"+apiKindName(kind)+"分类："+name)
+	s.recordAutomationLog(auth, "create", kind+"-category", id, "创建"+s.apiKindLabel(kind)+"分类："+name)
 	s.clearGeneratedCaches()
 	writeJSON(w, http.StatusCreated, map[string]any{"item": apiCategoryItem(cat)})
 }
 
 func (s *Server) apiUpdateCategory(w http.ResponseWriter, r *http.Request) {
 	collection := r.PathValue("collection")
-	kind, scope, ok := apiCategoryWriteTarget(collection)
+	kind, scope, ok := s.apiCategoryWriteTarget(collection)
 	if !ok {
 		apiError(w, http.StatusNotFound, "not_found", "接口不存在。")
 		return
@@ -908,7 +1079,7 @@ func (s *Server) apiUpdateCategory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	updated, _ := s.store.GetCategoryByID(next.ID)
-	s.recordAutomationLog(auth, "update", kind+"-category", next.ID, "更新"+apiKindName(kind)+"分类："+next.Name)
+	s.recordAutomationLog(auth, "update", kind+"-category", next.ID, "更新"+s.apiKindLabel(kind)+"分类："+next.Name)
 	s.clearGeneratedCaches()
 	writeJSON(w, http.StatusOK, map[string]any{"item": apiCategoryItem(updated)})
 }
@@ -1107,9 +1278,9 @@ func (s *Server) apiCreateContent(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusForbidden, "missing_scope", "这条访问权限不能发布该类内容。")
 		return
 	}
-	// 发布质量门：仅自动化 API 创建即发布的 posts（admin 后台人工发布不拦）。
+	// 发布质量门：仅自动化 API 创建即发布、且类型有规则集（posts/product；admin 后台人工发布不拦）。
 	if qualityGateApplies(kind, &in, p) {
-		if failures := qualityGateFailures(p); len(failures) > 0 {
+		if failures := qualityGateFailures(kind, p); len(failures) > 0 {
 			apiQualityGateError(w, failures)
 			return
 		}
@@ -1171,9 +1342,9 @@ func (s *Server) apiUpdateContent(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusForbidden, "missing_scope", "这条访问权限不能发布该类内容。")
 		return
 	}
-	// 发布质量门：仅自动化 API 把 status 置为 published 的更新（admin 后台人工发布不拦）。
+	// 发布质量门：仅自动化 API 把 status 置为 published 的更新、且类型有规则集（admin 后台人工发布不拦）。
 	if qualityGateApplies(kind, &in, &next) {
-		if failures := qualityGateFailures(&next); len(failures) > 0 {
+		if failures := qualityGateFailures(kind, &next); len(failures) > 0 {
 			apiQualityGateError(w, failures)
 			return
 		}
@@ -1307,16 +1478,23 @@ func (s *Server) apiUpdateLinkFeatured(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) apiUpdateContentFeatured(w http.ResponseWriter, r *http.Request) {
 	collection := r.PathValue("collection")
-	if collection != "posts" && collection != "links" {
-		apiError(w, http.StatusNotFound, "not_found", "接口不存在。")
-		return
-	}
 	kind, ok := s.apiContentKind(collection)
 	if !ok {
 		apiError(w, http.StatusNotFound, "not_found", "接口不存在。")
 		return
 	}
-	auth, ok := s.requireAutomationScope(w, r, apiScope(collection, "pin"))
+	// posts/links 用专属 pin scope；扩展集合（商品等，无 pin scope 枚举）与内容写同权。
+	// pages 没有置顶语义，维持 404。
+	scope := apiScope(collection, "pin")
+	switch kind {
+	case "post", "link":
+	case "page":
+		apiError(w, http.StatusNotFound, "not_found", "接口不存在。")
+		return
+	default:
+		scope = apiScope(collection, "write")
+	}
+	auth, ok := s.requireAutomationScope(w, r, scope)
 	if !ok {
 		return
 	}
@@ -1466,7 +1644,10 @@ func (in apiSiteProfileInput) hasTextFields() bool {
 	return in.Name != nil || in.Tagline != nil || in.Description != nil || in.Keywords != nil ||
 		in.HeroEyebrow != nil || in.HeroTitle != nil || in.HeroDescription != nil || in.FooterNote != nil ||
 		in.HomeFeaturedTitle != nil || in.HomeLinksTitle != nil || in.HomeLatestTitle != nil ||
-		in.DefaultPostAuthor != nil || in.DefaultLinkAuthor != nil
+		in.DefaultPostAuthor != nil || in.DefaultLinkAuthor != nil ||
+		in.FactoryStats != nil || in.FactoryProcess != nil || in.FactoryCTA != nil || // 主题 options 槽按站点文案权限（site:write）
+		in.FactoryCategories != nil || in.FactoryIndustries != nil || in.FactoryGallery != nil || in.FactoryFAQ != nil ||
+		in.DTCTestimonials != nil
 }
 
 func (in apiSiteProfileInput) hasBrandAssetFields() bool {
@@ -1493,7 +1674,7 @@ func (s *Server) apiSiteProfileResponse() map[string]any {
 
 func (s *Server) apiSiteProfileItem(lang string) apiSiteProfileItem {
 	st := s.site(lang)
-	return apiSiteProfileItem{
+	item := apiSiteProfileItem{
 		Lang:              lang,
 		Name:              st.Name,
 		Tagline:           st.Tagline,
@@ -1514,6 +1695,162 @@ func (s *Server) apiSiteProfileItem(lang string) apiSiteProfileItem {
 		HeroVisual:        st.HeroVisual,
 		HeroImage:         st.HeroImage,
 	}
+	// 主题 options（工厂族数据槽）：返回该语种生效的 settings 覆盖（不含 i18n 内置默认）。
+	item.FactoryStats = parseFactoryStats(s.localizedSetting(factoryStatsSettingKey, lang, ""))
+	if steps := parseFactorySteps(s.localizedSetting(factoryProcessSettingKey, lang, "")); len(steps) > 0 || !s.factoryProcessEnabled() {
+		item.FactoryProcess = &apiFactoryProcessItem{Enabled: s.factoryProcessEnabled(), Steps: steps}
+	}
+	if cta := parseFactoryTextPair(s.localizedSetting(factoryCTASettingKey, lang, "")); cta.Title != "" || cta.Note != "" {
+		item.FactoryCTA = &cta
+	}
+	if !s.factorySectionEnabled(factoryCategoriesEnabledKey) {
+		off := false
+		item.FactoryCategories = &apiFactoryToggleInput{Enabled: &off}
+	}
+	if items := parseFactoryIndustries(s.localizedSetting(factoryIndustriesSettingKey, lang, "")); len(items) > 0 || !s.factorySectionEnabled(factoryIndustriesEnabledKey) {
+		item.FactoryIndustries = &apiFactoryIndustriesItem{Enabled: s.factorySectionEnabled(factoryIndustriesEnabledKey), Items: items}
+	}
+	item.FactoryGallery = parseFactoryGallery(s.store.Setting(factoryGallerySettingKey))
+	if items := parseFactoryQAs(s.localizedSetting(factoryFAQSettingKey, lang, "")); len(items) > 0 || !s.factorySectionEnabled(factoryFAQEnabledKey) {
+		item.FactoryFAQ = &apiFactoryFAQItem{Enabled: s.factorySectionEnabled(factoryFAQEnabledKey), Items: items}
+	}
+	item.DTCTestimonials = parseDTCTestimonials(s.localizedSetting(dtcTestimonialsSettingKey, lang, ""))
+	return item
+}
+
+// applyAPIFactoryOptions 主题 options（工厂族三槽）的 API 写入：
+// 校验格式后按语种落 settings 语义键（存规范化 JSON；[]/null/全空 = 清除覆盖回落默认）。
+func (s *Server) applyAPIFactoryOptions(in *apiSiteProfileInput, lang string) string {
+	if in.FactoryStats != nil {
+		var rows []map[string]any
+		if err := json.Unmarshal(in.FactoryStats, &rows); err != nil && strings.TrimSpace(string(in.FactoryStats)) != "null" {
+			return "factory_stats 需要 [{num,label}] 数组。"
+		}
+		stats := parseFactoryStats(string(in.FactoryStats))
+		if len(rows) > 0 && len(stats) == 0 {
+			return "factory_stats 每组需要非空的 num 与 label（最多 " + strconv.Itoa(maxFactoryStats) + " 组）。"
+		}
+		if err := s.store.SetSetting(s.copyKey(factoryStatsSettingKey, lang), marshalThemeOptionJSON(stats, len(stats) == 0)); err != nil {
+			return err.Error()
+		}
+	}
+	if in.FactoryProcess != nil {
+		if in.FactoryProcess.Enabled != nil {
+			flag := "" // 开（缺省语义）
+			if !*in.FactoryProcess.Enabled {
+				flag = factoryProcessDisabledFlag
+			}
+			if err := s.store.SetSetting(factoryProcessEnabledKey, flag); err != nil { // 全局开关，不分语种
+				return err.Error()
+			}
+		}
+		if in.FactoryProcess.Steps != nil {
+			var rows []map[string]any
+			if err := json.Unmarshal(in.FactoryProcess.Steps, &rows); err != nil && strings.TrimSpace(string(in.FactoryProcess.Steps)) != "null" {
+				return "factory_process.steps 需要 [{title,note}] 数组（按位对应四步，空字段回落默认）。"
+			}
+			steps := parseFactorySteps(string(in.FactoryProcess.Steps))
+			empty := true
+			for _, st := range steps {
+				if strings.TrimSpace(st.Title) != "" || strings.TrimSpace(st.Note) != "" {
+					empty = false
+					break
+				}
+			}
+			if err := s.store.SetSetting(s.copyKey(factoryProcessSettingKey, lang), marshalThemeOptionJSON(steps, empty)); err != nil {
+				return err.Error()
+			}
+		}
+	}
+	if in.FactoryCTA != nil {
+		cta := FactoryTextPair{Title: strings.TrimSpace(in.FactoryCTA.Title), Note: strings.TrimSpace(in.FactoryCTA.Note)}
+		if err := s.store.SetSetting(s.copyKey(factoryCTASettingKey, lang), marshalThemeOptionJSON(cta, cta.Title == "" && cta.Note == "")); err != nil {
+			return err.Error()
+		}
+	}
+	if in.FactoryCategories != nil && in.FactoryCategories.Enabled != nil {
+		if err := s.store.SetSetting(factoryCategoriesEnabledKey, apiToggleFlag(*in.FactoryCategories.Enabled)); err != nil {
+			return err.Error()
+		}
+	}
+	if in.FactoryIndustries != nil {
+		if in.FactoryIndustries.Enabled != nil {
+			if err := s.store.SetSetting(factoryIndustriesEnabledKey, apiToggleFlag(*in.FactoryIndustries.Enabled)); err != nil {
+				return err.Error()
+			}
+		}
+		if in.FactoryIndustries.Items != nil {
+			var rows []map[string]any
+			if err := json.Unmarshal(in.FactoryIndustries.Items, &rows); err != nil && strings.TrimSpace(string(in.FactoryIndustries.Items)) != "null" {
+				return "factory_industries.items 需要 [{name,note}] 数组。"
+			}
+			items := parseFactoryIndustries(string(in.FactoryIndustries.Items))
+			if len(rows) > 0 && len(items) == 0 {
+				return "factory_industries.items 每项需要非空的 name（note 可空，最多 " + strconv.Itoa(maxFactoryIndustries) + " 项）。"
+			}
+			if err := s.store.SetSetting(s.copyKey(factoryIndustriesSettingKey, lang), marshalThemeOptionJSON(items, len(items) == 0)); err != nil {
+				return err.Error()
+			}
+		}
+	}
+	if in.FactoryGallery != nil {
+		var rows []any
+		if err := json.Unmarshal(in.FactoryGallery, &rows); err != nil && strings.TrimSpace(string(in.FactoryGallery)) != "null" {
+			return "factory_gallery 需要图片 URL 字符串数组。"
+		}
+		items := parseFactoryGallery(string(in.FactoryGallery))
+		if len(rows) > 0 && len(items) == 0 {
+			return "factory_gallery 每项需要非空的图片 URL（最多 " + strconv.Itoa(maxFactoryGallery) + " 张）。"
+		}
+		// 图集全局（不分语种）：写裸键。
+		if err := s.store.SetSetting(factoryGallerySettingKey, marshalThemeOptionJSON(items, len(items) == 0)); err != nil {
+			return err.Error()
+		}
+	}
+	if in.FactoryFAQ != nil {
+		if in.FactoryFAQ.Enabled != nil {
+			if err := s.store.SetSetting(factoryFAQEnabledKey, apiToggleFlag(*in.FactoryFAQ.Enabled)); err != nil {
+				return err.Error()
+			}
+		}
+		if in.FactoryFAQ.Items != nil {
+			var rows []map[string]any
+			if err := json.Unmarshal(in.FactoryFAQ.Items, &rows); err != nil && strings.TrimSpace(string(in.FactoryFAQ.Items)) != "null" {
+				return "factory_faq.items 需要 [{q,a}] 数组。"
+			}
+			items := parseFactoryQAs(string(in.FactoryFAQ.Items))
+			if len(rows) > 0 && len(items) == 0 {
+				return "factory_faq.items 每条需要非空的 q 与 a（最多 " + strconv.Itoa(maxFactoryQA) + " 条）。"
+			}
+			if err := s.store.SetSetting(s.copyKey(factoryFAQSettingKey, lang), marshalThemeOptionJSON(items, len(items) == 0)); err != nil {
+				return err.Error()
+			}
+		}
+	}
+	if in.DTCTestimonials != nil {
+		// 独立站用户评价（红线：只能录入真实用户评价，绝不编造；格式校验管不了真实性，
+		// 真实性约束写死在 SKILL / 自动化文档里）。
+		var rows []map[string]any
+		if err := json.Unmarshal(in.DTCTestimonials, &rows); err != nil && strings.TrimSpace(string(in.DTCTestimonials)) != "null" {
+			return "dtc_testimonials 需要 [{name,region,quote}] 数组。"
+		}
+		items := parseDTCTestimonials(string(in.DTCTestimonials))
+		if len(rows) > 0 && len(items) == 0 {
+			return "dtc_testimonials 每条需要非空的 name 与 quote（region 可空，最多 " + strconv.Itoa(maxDTCTestimonials) + " 条），且只能录入真实用户评价。"
+		}
+		if err := s.store.SetSetting(s.copyKey(dtcTestimonialsSettingKey, lang), marshalThemeOptionJSON(items, len(items) == 0)); err != nil {
+			return err.Error()
+		}
+	}
+	return ""
+}
+
+// apiToggleFlag 区块开关 API 值 → settings 值（开=存空保持缺省语义，关=存 "0"）。
+func apiToggleFlag(enabled bool) string {
+	if enabled {
+		return ""
+	}
+	return factoryProcessDisabledFlag
 }
 
 func (s *Server) applyAPISiteProfileInput(in *apiSiteProfileInput) string {
@@ -1596,6 +1933,10 @@ func (s *Server) applyAPISiteProfileInput(in *apiSiteProfileInput) string {
 			return err.Error()
 		}
 	}
+	// 主题 options（工厂族三槽）：与其它站点文案同一写路径、同一语种规则。
+	if errMsg := s.applyAPIFactoryOptions(in, lang); errMsg != "" {
+		return errMsg
+	}
 	return ""
 }
 
@@ -1620,26 +1961,129 @@ func (in apiCategoryAllEntryPatch) hasFields() bool {
 	return in.Lang != nil || in.Title != nil || in.Description != nil || in.Label != nil || in.Slug != nil
 }
 
-func apiCategoryReadTarget(collection string) (kind, scope string, ok bool) {
+// apiExtCategoryRouter 在 mux 之前拦截「扩展类型分类」与「扩展集合置顶」的 API 路径并
+// 分发到对应处理器（admin v1 与平台镜像两个命名空间；platform 路径经 servePlatformAPI
+// 鉴权后同样流经 siteHandler，所以一个包装器两边都覆盖）。posts/links 不在此拦截，仍走
+// mux 字面路由。用包装器而非 {collection} 通配路由：PATCH /{collection}/categories/{id}、
+// PATCH /{collection}/featured/{id} 与 /languages/{code}/catalog 这类「前段字面+后段通配」
+// 模式在 ServeMux 里互不更具体，注册即 panic——与公开路由的 contentTypeRouter 同一处理思路
+// （本仓库路由老坑）。
+func (s *Server) apiExtCategoryRouter(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 扩展集合置顶：PATCH /{collection}/featured/{id}（商品等；posts/links 走 mux 字面路由）。
+		if collection, id, ok := apiExtFeaturedPath(r.URL.Path); ok &&
+			collection != "posts" && collection != "links" && r.Method == http.MethodPatch {
+			r.SetPathValue("collection", collection)
+			r.SetPathValue("id", id)
+			s.apiUpdateContentFeatured(w, r)
+			return
+		}
+		collection, rest, ok := apiExtCategoryPath(r.URL.Path)
+		if !ok || collection == "posts" || collection == "links" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		r.SetPathValue("collection", collection)
+		switch {
+		case rest == "" && r.Method == http.MethodGet:
+			s.apiListCategories(w, r)
+		case rest == "" && r.Method == http.MethodPost:
+			s.apiCreateCategory(w, r)
+		case rest == "all-entry" && r.Method == http.MethodGet:
+			s.apiGetCategoryAllEntry(w, r)
+		case rest == "all-entry" && r.Method == http.MethodPatch:
+			s.apiUpdateCategoryAllEntry(w, r)
+		case rest != "" && rest != "all-entry" && r.Method == http.MethodPatch:
+			r.SetPathValue("id", rest)
+			s.apiUpdateCategory(w, r)
+		default:
+			next.ServeHTTP(w, r) // 方法不符合分类端点 → 交回 mux（404/405 语义不变）
+		}
+	})
+}
+
+// apiExtCategoryPath 解析 /api/admin/v1/{collection}/categories[/{rest}] 与
+// /api/platform/v1/sites/{siteID}/{collection}/categories[/{rest}]，返回集合名与尾段。
+func apiExtCategoryPath(p string) (collection, rest string, ok bool) {
+	tail := ""
+	switch {
+	case strings.HasPrefix(p, "/api/admin/v1/"):
+		tail = strings.TrimPrefix(p, "/api/admin/v1/")
+	case strings.HasPrefix(p, "/api/platform/v1/sites/"):
+		tail = strings.TrimPrefix(p, "/api/platform/v1/sites/")
+		i := strings.IndexByte(tail, '/')
+		if i < 0 {
+			return "", "", false
+		}
+		tail = tail[i+1:] // 去掉 {siteID} 段
+	default:
+		return "", "", false
+	}
+	segs := strings.Split(strings.Trim(tail, "/"), "/")
+	if len(segs) < 2 || len(segs) > 3 || segs[0] == "" || segs[1] != "categories" {
+		return "", "", false
+	}
+	if len(segs) == 3 {
+		if segs[2] == "" {
+			return "", "", false
+		}
+		return segs[0], segs[2], true
+	}
+	return segs[0], "", true
+}
+
+// apiExtFeaturedPath 解析 /api/admin/v1/{collection}/featured/{id} 与
+// /api/platform/v1/sites/{siteID}/{collection}/featured/{id}，返回集合名与内容 ID 段。
+func apiExtFeaturedPath(p string) (collection, id string, ok bool) {
+	tail := ""
+	switch {
+	case strings.HasPrefix(p, "/api/admin/v1/"):
+		tail = strings.TrimPrefix(p, "/api/admin/v1/")
+	case strings.HasPrefix(p, "/api/platform/v1/sites/"):
+		tail = strings.TrimPrefix(p, "/api/platform/v1/sites/")
+		i := strings.IndexByte(tail, '/')
+		if i < 0 {
+			return "", "", false
+		}
+		tail = tail[i+1:] // 去掉 {siteID} 段
+	default:
+		return "", "", false
+	}
+	segs := strings.Split(strings.Trim(tail, "/"), "/")
+	if len(segs) != 3 || segs[0] == "" || segs[1] != "featured" || segs[2] == "" {
+		return "", "", false
+	}
+	return segs[0], segs[2], true
+}
+
+// apiCategoryReadTarget 解析分类端点的集合：posts/links 沿用专属 categories scope；
+// 「支持分类」的扩展类型（含数据库自定义类型）复用该集合的 read scope。
+// scope 口径（评审定）：扩展类型不新增 categories scope 种类（签发面不变）——
+// 读走 {collection}:read、写走 {collection}:write，与该类型内容本身同权。
+func (s *Server) apiCategoryReadTarget(collection string) (kind, scope string, ok bool) {
 	switch collection {
 	case "posts":
 		return "post", apiScope(collection, "categories"), true
 	case "links":
 		return "link", apiScope(collection, "categories"), true
-	default:
-		return "", "", false
 	}
+	if ct := s.extTypeByPrefix(collection); ct != nil && ct.HasCategory {
+		return ct.Key, apiScope(collection, "read"), true
+	}
+	return "", "", false
 }
 
-func apiCategoryWriteTarget(collection string) (kind, scope string, ok bool) {
+func (s *Server) apiCategoryWriteTarget(collection string) (kind, scope string, ok bool) {
 	switch collection {
 	case "posts":
 		return "post", apiScopePostCategoriesWrite, true
 	case "links":
 		return "link", apiScopeLinkCategoriesWrite, true
-	default:
-		return "", "", false
 	}
+	if ct := s.extTypeByPrefix(collection); ct != nil && ct.HasCategory {
+		return ct.Key, apiScope(collection, "write"), true
+	}
+	return "", "", false
 }
 
 func (s *Server) apiCategoryAllEntryItems(kind, lang string) ([]apiCategoryAllEntry, string) {
@@ -1658,6 +2102,9 @@ func (s *Server) apiCategoryAllEntryItems(kind, lang string) ([]apiCategoryAllEn
 }
 
 func (s *Server) apiCategoryAllEntryItem(kind, lang string) apiCategoryAllEntry {
+	if kind != "post" && kind != "link" {
+		return s.apiExtCategoryAllEntryItem(kind, lang)
+	}
 	cfg := s.archiveConfig(lang, kind)
 	return apiCategoryAllEntry{
 		Kind:        kind,
@@ -1672,6 +2119,30 @@ func (s *Server) apiCategoryAllEntryItem(kind, lang string) apiCategoryAllEntry 
 	}
 }
 
+// apiExtCategoryAllEntryItem 扩展类型的归档入口：映射到 ext_archive_meta（后台
+// 「扩展 → 归档页文案」同一份数据）；路径由类型定义固定，无自定义 slug / label。
+func (s *Server) apiExtCategoryAllEntryItem(kind, lang string) apiCategoryAllEntry {
+	name, prefix := kind, kind
+	if ct := s.lookupType(kind); ct != nil {
+		name = ct.Name(lang)
+		prefix = strings.Trim(ct.URLPrefix, "/")
+	}
+	title, intro := s.extArchiveText(kind, lang)
+	if title == "" {
+		title = name
+	}
+	return apiCategoryAllEntry{
+		Kind:        kind,
+		Lang:        lang,
+		Title:       title,
+		Description: intro,
+		Slug:        prefix,
+		Path:        "/" + prefix,
+		Purpose:     "扩展类型归档入口，控制该类型列表页的标题与简介（对应后台「扩展 → 归档页文案」）；路径由类型定义固定，不支持自定义 slug 或“全部”按钮文字，也不是可写入 category_id 的真实分类。",
+		Selectable:  false,
+	}
+}
+
 func categoryAllEntryPurpose(kind string) string {
 	if kind == "link" {
 		return "链接总入口，控制全部链接列表页的标题、描述、路径和“全部”筛选按钮；它不是可写入 category_id 的真实链接分类。"
@@ -1680,6 +2151,9 @@ func categoryAllEntryPurpose(kind string) string {
 }
 
 func (s *Server) applyAPICategoryAllEntryInput(kind, lang string, in *apiCategoryAllEntryInput) (apiCategoryAllEntry, string, error) {
+	if kind != "post" && kind != "link" {
+		return s.applyExtCategoryAllEntryInput(kind, lang, in)
+	}
 	current := s.archiveConfig(lang, kind)
 	title := current.Title
 	if in.Title != nil {
@@ -1700,6 +2174,51 @@ func (s *Server) applyAPICategoryAllEntryInput(kind, lang string, in *apiCategor
 	if _, errMsg, err := s.saveCategoryAllEntry(kind, lang, title, label, desc, slug); err != nil || errMsg != "" {
 		return apiCategoryAllEntry{}, errMsg, err
 	}
+	return s.apiCategoryAllEntryItem(kind, lang), "", nil
+}
+
+// applyExtCategoryAllEntryInput 扩展类型归档入口的写路径：title/description 写进
+// ext_archive_meta（与后台弹窗同一存储，两处操作同一数据）；slug/label 不适用——
+// 显式给了就 400 报清楚，而不是默默丢弃。
+func (s *Server) applyExtCategoryAllEntryInput(kind, lang string, in *apiCategoryAllEntryInput) (apiCategoryAllEntry, string, error) {
+	if in.Slug != nil || in.Label != nil {
+		return apiCategoryAllEntry{}, "扩展类型归档入口不支持自定义 slug 或 label（路径由类型定义固定）。", nil
+	}
+	all := s.extArchiveMetaAll()
+	entry, ok := all[kind]
+	if !ok || entry.Title == nil {
+		entry.Title = map[string]string{}
+	}
+	if entry.Intro == nil {
+		entry.Intro = map[string]string{}
+	}
+	if in.Title != nil {
+		if t := strings.TrimSpace(*in.Title); t != "" {
+			entry.Title[lang] = t
+		} else {
+			delete(entry.Title, lang)
+		}
+	}
+	if in.Description != nil {
+		if d := strings.TrimSpace(*in.Description); d != "" {
+			entry.Intro[lang] = d
+		} else {
+			delete(entry.Intro, lang)
+		}
+	}
+	if len(entry.Title) == 0 && len(entry.Intro) == 0 {
+		delete(all, kind)
+	} else {
+		all[kind] = entry
+	}
+	b, err := json.Marshal(all)
+	if err != nil {
+		return apiCategoryAllEntry{}, "", err
+	}
+	if err := s.store.SetSetting(extArchiveMetaKey, string(b)); err != nil {
+		return apiCategoryAllEntry{}, "", err
+	}
+	s.clearGeneratedCaches()
 	return s.apiCategoryAllEntryItem(kind, lang), "", nil
 }
 
@@ -2048,6 +2567,7 @@ func (s *Server) apiContentItem(p *store.Post, includeContent bool) apiContentIt
 		TransGroup: p.TransGroup, CategoryID: categoryID, Category: cat, URL: s.apiContentURL(p),
 		PublishedAt: apiTime(p.PublishedAt), CreatedAt: apiTime(p.CreatedAt), UpdatedAt: apiTime(p.UpdatedAt),
 		RobotsOverride: p.RobotsOverride, CanonicalOverride: p.CanonicalOverride,
+		Discarded: p.Discarded(), DiscardReason: p.DiscardReason, DiscardedAt: apiTime(p.DiscardedAt),
 	}
 	if includeContent {
 		item.Content = p.Content
@@ -2117,6 +2637,18 @@ func apiKindName(kind string) string {
 	default:
 		return "文章"
 	}
+}
+
+// apiKindLabel 审计日志里的类型名：内置三种沿用 apiKindName，扩展类型用注册表名称。
+func (s *Server) apiKindLabel(kind string) string {
+	switch kind {
+	case "post", "page", "link":
+		return apiKindName(kind)
+	}
+	if ct := s.lookupType(kind); ct != nil {
+		return ct.Name("zh")
+	}
+	return kind
 }
 
 func apiScopeMap(scopes string) map[string]bool {

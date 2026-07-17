@@ -101,13 +101,18 @@
 
         <div class="field">
           <label id="status-label">{{.Admin.T "admin.edit.status" "状态"}}</label>
-          <div class="dropdown" data-name="status">
-            <button type="button" class="dd-toggle" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="status-label"><span class="dd-label">{{if eq $p.Status "published"}}{{.Admin.T "admin.status.published" "已发布"}}{{else}}{{.Admin.T "admin.status.draft" "草稿"}}{{end}}</span><svg class="dd-caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
-            <input type="hidden" name="status" value="{{if eq $p.Status "published"}}published{{else}}draft{{end}}">
+          <div class="dropdown" data-name="status" data-status>
+            <button type="button" class="dd-toggle" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="status-label"><span class="dd-label">{{if eq $p.Status "scheduled"}}{{.Admin.T "admin.edit.status_schedule" "定时发布"}}{{else if eq $p.Status "published"}}{{.Admin.T "admin.status.published" "已发布"}}{{else}}{{.Admin.T "admin.status.draft" "草稿"}}{{end}}</span><svg class="dd-caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg></button>
+            <input type="hidden" name="status" value="{{if eq $p.Status "scheduled"}}scheduled{{else if eq $p.Status "published"}}published{{else}}draft{{end}}">
             <ul class="dd-menu" role="listbox">
-              <li role="option" data-value="draft" aria-selected="{{if ne $p.Status "published"}}true{{else}}false{{end}}">{{.Admin.T "admin.status.draft" "草稿"}}</li>
-              <li role="option" data-value="published" aria-selected="{{if eq $p.Status "published"}}true{{else}}false{{end}}">{{.Admin.T "admin.status.published" "已发布"}}</li>
+              <li role="option" data-value="draft" aria-selected="{{if eq $p.Status "draft"}}true{{else}}false{{end}}">{{.Admin.T "admin.status.draft" "草稿"}}</li>
+              <li role="option" data-value="published" aria-selected="{{if eq $p.Status "published"}}true{{else}}false{{end}}">{{.Admin.T "admin.edit.status_publish_now" "立即发布"}}</li>
+              <li role="option" data-value="scheduled" aria-selected="{{if eq $p.Status "scheduled"}}true{{else}}false{{end}}">{{.Admin.T "admin.edit.status_schedule" "定时发布"}}</li>
             </ul>
+          </div>
+          <div class="schedule-field"{{if ne $p.Status "scheduled"}} hidden{{end}}>
+            <label for="publish_at">{{.Admin.T "admin.edit.publish_at" "发布时间"}}</label>
+            <input type="datetime-local" id="publish_at" name="publish_at" value="{{dtlocal $p.PublishedAt}}">
           </div>
         </div>
 
@@ -191,6 +196,28 @@
       </form>
       {{end}}{{end}}{{end}}
     </div>
+  </section>
+  {{end}}
+
+  {{if and $p.ID .Revisions}}
+  <section class="trans-box revision-box">
+    <details>
+      <summary>{{.Admin.T "admin.edit.revisions_toggle" "历史版本"}}（{{len .Revisions}}）</summary>
+      <p class="muted" style="font-size:.85rem;margin:.5rem 0 .8rem">{{.Admin.T "admin.edit.revisions_desc" "每次保存前自动留底，最多保留最近 20 条。恢复前会先把当前状态存为一条新历史，可再恢复回来。"}}</p>
+      <div class="revision-list">
+        {{range .Revisions}}
+        <div class="revision-item">
+          <span class="revision-time muted">{{adminDateTime .CreatedAt}}</span>
+          <span class="badge {{if eq .Source "api"}}sched{{else}}draft{{end}}">{{if eq .Source "api"}}API{{else}}{{$.Admin.T "admin.edit.revision_source_admin" "后台"}}{{end}}</span>
+          <span class="revision-title">{{.Title}}</span>
+          <form method="post" action="/admin/revisions/{{.ID}}/restore" data-confirm-title="{{$.Admin.T "admin.edit.revision_restore_confirm_title" "确认恢复历史版本"}}" data-confirm-ok="{{$.Admin.T "admin.edit.revision_restore" "恢复此版本"}}" data-confirm="{{$.Admin.T "admin.edit.revision_restore_confirm" "把这篇内容整体还原到该历史版本？标题、正文、状态等全部字段都会被覆盖；当前状态会先自动存为一条新历史，可再恢复回来。"}}">
+            <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+            <button type="submit" class="btn btn-soft">{{$.Admin.T "admin.edit.revision_restore" "恢复此版本"}}</button>
+          </form>
+        </div>
+        {{end}}
+      </div>
+    </details>
   </section>
   {{end}}
   </div>

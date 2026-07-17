@@ -1,0 +1,150 @@
+{{define "home_factory_engineering"}}
+  {{/* factory-engineering — 工厂技术：精密制造、面向工程师采购，首页克制如数据手册。
+       核心产品规格对比表（.FactoryCompare：取前 3–4 个带 specs 的商品对共有键求交集，
+       装载逻辑见 factory.go factorySpecCompare；带规格商品 <2 或无共有键时为 nil，回落普通商品栅格）
+       + 产品索引表（型号列用 productSKU 嗅探）→ 认证证书墙 → 技术参数分类入口 → 实力数字 → CTA。
+       数据全部由 fillFactoryHome 装载，零新增数据概念。
+       气质=数据手册：等宽字体重、发丝线表格、密度高、双细线分隔。 */}}
+  {{/* hero 槽三态：image+配了图才取图（不回落图集）；default/anim* 渲染右侧图纸机械动画卡
+       （复用 fe-hero-media 边框卡，随其 ≤640px 隐藏——技术骨架克制，绝不压文字）；
+       svg 模式维持现状。 */}}
+  {{$hero := ""}}{{if and (eq .Site.HeroVisual "image") .Site.HeroImage}}{{$hero = .Site.HeroImage}}{{end}}
+  {{$heroAnim := and (not $hero) (ne .Site.HeroVisual "image") (ne .Site.HeroVisual "svg")}}
+  <div class="fe-wrap">
+    <section class="fe-hero{{if $hero}} has-img{{else if $heroAnim}} has-anim{{end}}">
+      <div class="fe-hero-copy">
+        {{if .Site.HeroEyebrow}}<p class="fe-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+        <h1 class="fe-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+        {{if .Site.HeroDescription}}<p class="fe-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+        <div class="fe-cta">
+          {{if .Contact.Any}}<a class="btn btn-primary" href="#factory-contact">{{.Tr.T "contact.float_label"}} <span class="arrow" aria-hidden="true">→</span></a>
+          {{else}}<a class="btn btn-primary" href="{{.Tr.U "/products"}}">{{.Tr.T "factory.products"}} <span class="arrow" aria-hidden="true">→</span></a>{{end}}
+          <a class="btn" href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}}</a>
+        </div>
+      </div>
+      {{if $hero}}<figure class="fe-hero-media"><img src="{{$hero}}" alt="{{if .Site.HeroAlt}}{{.Site.HeroAlt}}{{else}}{{.Site.Name}}{{end}}" decoding="async" fetchpriority="high"{{imgAttrs $hero}}></figure>
+      {{else if $heroAnim}}<div class="fe-hero-media f-heroanim" aria-hidden="true">{{template "factory_hero_anim" .}}</div>{{end}}
+    </section>
+
+    <section class="fe-section fe-compare-sec">
+      <div class="fe-section-head">
+        <div class="f-head-copy">
+          <p class="f-eyebrow">Spec Comparison</p>
+          <h2>{{.Tr.T "factory.products"}}</h2>
+        </div>
+        <a href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      {{if .FactoryCompare}}
+      <div class="fe-tablewrap">
+        <table class="fe-compare">
+          <thead>
+            <tr>
+              <th scope="col" class="fe-compare-corner" aria-hidden="true">SPEC</th>
+              {{range .FactoryCompare.Items}}
+              <th scope="col" class="fe-compare-item">
+                <a href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+                  <span class="fe-compare-media{{if not .CoverImage}} fe-compare-gen{{end}}">{{if .CoverImage}}<img src="{{.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}</span>
+                  <span class="fe-compare-title">{{.Title}}</span>
+                </a>
+              </th>
+              {{end}}
+            </tr>
+          </thead>
+          <tbody>
+            {{range .FactoryCompare.Rows}}
+            <tr>
+              <th scope="row">{{.Key}}</th>
+              {{range .Vals}}<td>{{.}}</td>{{end}}
+            </tr>
+            {{end}}
+          </tbody>
+        </table>
+      </div>
+      {{if .FactoryProducts}}
+      <div class="fe-tablewrap fe-index-wrap">
+        <table class="fe-index">
+          <tbody>
+            {{range .FactoryProducts}}
+            <tr>
+              <td class="fe-index-sku">{{with productSKU .}}{{.}}{{else}}—{{end}}</td>
+              <td class="fe-index-title"><a href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">{{.Title}}</a></td>
+              <td class="fe-index-cat">{{with .Category}}{{.Name}}{{end}}</td>
+              <td class="fe-index-go" aria-hidden="true"><span class="arrow">→</span></td>
+            </tr>
+            {{end}}
+          </tbody>
+        </table>
+      </div>
+      {{end}}
+      {{else}}
+      {{/* 回落：带规格的商品不足 2 个或没有共有键 → 普通商品栅格 */}}
+      <div class="fe-grid">
+        {{range .FactoryProducts}}
+        <a class="fe-card" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+          <span class="fe-card-media{{if not .CoverImage}} fe-card-gen{{end}}">
+            {{if .CoverImage}}<img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}
+          </span>
+          <span class="fe-card-body">
+            {{with productSKU .}}<span class="fe-card-sku">{{.}}</span>{{end}}
+            <span class="fe-card-title">{{.Title}}</span>
+            {{with productChips .}}<span class="f-chips">{{range .}}<span class="f-chip"><b>{{.K}}</b><i>{{.V}}</i></span>{{end}}</span>{{end}}
+          </span>
+        </a>
+        {{else}}
+        <p class="fe-empty muted">{{.Tr.T "factory.no_products"}}</p>
+        {{end}}
+      </div>
+      {{end}}
+    </section>
+
+    <section class="fe-section fe-certs-sec">
+      <div class="fe-section-head">
+        <div class="f-head-copy">
+          <p class="f-eyebrow">Certifications</p>
+          <h2>{{.Tr.T "factory.certs"}}</h2>
+        </div>
+      </div>
+      {{/* 认证证书墙：与展台骨架同一图章语言，技术骨架铺成规则网格（CSS 去掉错位角度） */}}
+      <div class="f-certs fe-certs" aria-label="{{.Tr.T "factory.certs"}}">
+        <span class="f-cert"><b>CE</b><i>Certified</i></span>
+        <span class="f-cert"><b>ISO 9001</b><i>Certified</i></span>
+        <span class="f-cert"><b>RoHS</b><i>Compliant</i></span>
+        <span class="f-cert"><b>REACH</b><i>Compliant</i></span>
+        <span class="f-cert"><b>SGS</b><i>Audited</i></span>
+        <span class="f-cert"><b>UL</b><i>Listed</i></span>
+      </div>
+    </section>
+
+    {{if .FactoryCats}}
+    <section class="fe-section fe-cats-sec">
+      <div class="fe-section-head">
+        <div class="f-head-copy">
+          <p class="f-eyebrow">Parameters by Category</p>
+          <h2>{{.Tr.T "factory.categories"}}</h2>
+        </div>
+      </div>
+      {{template "factory_categories" .}}
+    </section>
+    {{end}}
+
+    <section class="fe-section fe-strength">
+      <div class="fe-section-head">
+        <div class="f-head-copy">
+          <p class="f-eyebrow">Factory Strength</p>
+          <h2>{{.Tr.T "factory.strength"}}</h2>
+        </div>
+      </div>
+      {{if .FactoryStats}}
+      <dl class="f-stats fe-stats">
+        {{range .FactoryStats}}
+        <div class="f-stat"><dt>{{.Num}}</dt><dd>{{.Label}}</dd></div>
+        {{end}}
+      </dl>
+      {{else}}
+      {{template "factory_about" .}}
+      {{end}}
+    </section>
+  </div>
+
+  {{template "factory_cta" .}}
+{{end}}

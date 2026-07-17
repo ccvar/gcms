@@ -1,0 +1,167 @@
+{{define "home_factory_herofold"}}
+  {{/* factory-herofold — 门楣：首屏是一块含导航的一体容器（四周留边距 + 大圆角，导航行
+       压在 hero 视觉上——site.js 对 [data-fnav-hero] 渐进增强，把页头改成容器内透明悬浮，
+       滚动离开首屏后剥离吸顶变实底；无 JS 时页头恒实底、hero 照常渲染）。
+       hero 视觉=hero 槽图（其次 factory.gallery 首图）；两者皆无且 hero.visual=default/未配置时，
+       文案右侧渲染图纸机械动画 factory_hero_anim 填掉右侧留白（底仍是主题渐变 + 网格纹理，
+       暗皮配色随主题变量）。
+       首屏以下的内容与页脚走常规工厂式：精选商品 + 分类 + 实力/认证 + 流程 + 行业
+       + 图集 + FAQ + 动态 + CTA 通栏，全部复用共享 define 与配置槽。 */}}
+  {{$hero := ""}}
+  {{if and (eq .Site.HeroVisual "image") .Site.HeroImage}}{{$hero = .Site.HeroImage}}{{else if .FactoryGallery}}{{$hero = index .FactoryGallery 0}}{{end}}
+  {{$heroAnim := and (not $hero) (ne .Site.HeroVisual "image") (ne .Site.HeroVisual "svg")}}
+  <div class="fh-wrap">
+    <section class="fh-hero{{if $hero}} has-img{{else if $heroAnim}} has-anim{{end}}" data-fnav-hero="fold">
+      {{if $hero}}<img class="fh-hero-img" src="{{$hero}}" alt="{{if .Site.HeroAlt}}{{.Site.HeroAlt}}{{else}}{{.Site.Name}}{{end}}" decoding="async" fetchpriority="high"{{imgAttrs $hero}}>{{end}}
+      <div class="fh-hero-veil" aria-hidden="true"></div>
+      <div class="fh-hero-inner">
+        <div class="fh-hero-copy">
+          {{if .Site.HeroEyebrow}}<p class="fh-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+          <h1 class="fh-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+          {{if .Site.HeroDescription}}<p class="fh-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+          <div class="fh-cta">
+            {{if .Contact.Any}}<a class="btn btn-primary" href="#factory-contact">{{.Tr.T "contact.float_label"}} <span class="arrow" aria-hidden="true">→</span></a>
+            {{else}}<a class="btn btn-primary" href="{{.Tr.U "/products"}}">{{.Tr.T "factory.products"}} <span class="arrow" aria-hidden="true">→</span></a>{{end}}
+            <a class="btn fh-btn-ghost" href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}}</a>
+          </div>
+        </div>
+        {{if $heroAnim}}<div class="f-heroanim f-heroanim-plain fh-hero-anim" aria-hidden="true">{{template "factory_hero_anim" .}}</div>{{end}}
+      </div>
+    </section>
+
+    <section class="fh-section fh-featured">
+      <div class="fh-section-head">
+        <div class="f-head-copy">
+          <p class="f-eyebrow">Featured</p>
+          <h2>{{.Tr.T "factory.featured"}}</h2>
+        </div>
+        <a href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="fh-grid">
+        {{range .FactoryProducts}}
+        <a class="fh-card" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+          <span class="fh-card-media{{if not .CoverImage}} fh-card-gen{{end}}">
+            {{if .CoverImage}}<img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}
+          </span>
+          <span class="fh-card-body">
+            {{with .Category}}<span class="fh-card-cat">{{.Name}}</span>{{end}}
+            <span class="fh-card-title">{{.Title}}</span>
+            {{if .Excerpt}}<span class="fh-card-ex">{{.Excerpt}}</span>{{end}}
+            {{with productChips .}}<span class="f-chips">{{range .}}<span class="f-chip"><b>{{.K}}</b><i>{{.V}}</i></span>{{end}}</span>{{end}}
+          </span>
+        </a>
+        {{else}}
+        <p class="fh-empty muted">{{.Tr.T "factory.no_products"}}</p>
+        {{end}}
+      </div>
+    </section>
+
+    {{if .FactoryCats}}
+    <section class="fh-section">
+      <div class="fh-section-head">
+        <div class="f-head-copy">
+          <p class="f-eyebrow">Categories</p>
+          <h2>{{.Tr.T "factory.categories"}}</h2>
+        </div>
+      </div>
+      {{template "factory_categories" .}}
+    </section>
+    {{end}}
+
+    <section class="fh-section fh-strength">
+      {{if .FactoryStats}}
+      <div class="fh-section-head">
+        <div class="f-head-copy">
+          <p class="f-eyebrow">Factory Strength</p>
+          <h2>{{.Tr.T "factory.strength"}}</h2>
+        </div>
+      </div>
+      <dl class="f-stats fh-stats">
+        {{range .FactoryStats}}
+        <div class="f-stat"><dt>{{.Num}}</dt><dd>{{.Label}}</dd></div>
+        {{end}}
+      </dl>
+      {{else}}
+      {{template "factory_about" .}}
+      {{end}}
+      <div class="f-certs fh-certs" aria-label="{{.Tr.T "factory.certs"}}">
+        <span class="f-certs-label">{{.Tr.T "factory.certs"}}</span>
+        <span class="f-cert"><b>CE</b><i>Certified</i></span>
+        <span class="f-cert"><b>ISO 9001</b><i>Certified</i></span>
+        <span class="f-cert"><b>RoHS</b><i>Compliant</i></span>
+        <span class="f-cert"><b>SGS</b><i>Audited</i></span>
+      </div>
+    </section>
+
+    {{if .FactoryProcessOn}}
+    <section class="fh-section">
+      <div class="fh-section-head">
+        <div class="f-head-copy">
+          <p class="f-eyebrow">Workflow</p>
+          <h2>{{.Tr.T "factory.process"}}</h2>
+        </div>
+      </div>
+      {{template "factory_process_steps" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryIndustries}}
+    <section class="fh-section">
+      <div class="fh-section-head">
+        <div class="f-head-copy">
+          <p class="f-eyebrow">Industries</p>
+          <h2>{{.Tr.T "factory.industries"}}</h2>
+        </div>
+      </div>
+      {{template "factory_industries" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryGallery}}
+    <section class="fh-section">
+      <div class="fh-section-head">
+        <div class="f-head-copy">
+          <p class="f-eyebrow">Facility</p>
+          <h2>{{.Tr.T "factory.gallery"}}</h2>
+        </div>
+      </div>
+      {{template "factory_gallery" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryQAs}}
+    <section class="fh-section">
+      <div class="fh-section-head">
+        <div class="f-head-copy">
+          <p class="f-eyebrow">FAQ</p>
+          <h2>{{.Tr.T "factory.faq"}}</h2>
+        </div>
+      </div>
+      {{template "factory_faq" .}}
+    </section>
+    {{end}}
+
+    {{if .Posts}}
+    <section class="fh-section fh-news">
+      <div class="fh-section-head">
+        <div class="f-head-copy">
+          <p class="f-eyebrow">News</p>
+          <h2>{{.Tr.T "factory.news"}}</h2>
+        </div>
+        <a href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="fh-news-row">
+        {{range $i, $p := .Posts}}{{if lt $i 3}}
+        <a class="fh-news-card" href="{{$.Tr.U (contentURL $p)}}">
+          <time datetime="{{$.Tr.ISODate $p.PublishedAt}}">{{$.Tr.Date $p.PublishedAt}}</time>
+          <span class="fh-news-title">{{$p.Title}}</span>
+          {{if $p.Excerpt}}<span class="fh-news-ex">{{$p.Excerpt}}</span>{{end}}
+        </a>
+        {{end}}{{end}}
+      </div>
+    </section>
+    {{end}}
+  </div>
+
+  {{template "factory_cta" .}}
+{{end}}

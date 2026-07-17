@@ -1,20 +1,58 @@
 {{define "body"}}
 <div class="admin-head ext-list-head">
   <div>
-    <p class="ext-back"><a href="/admin/extensions">← {{.Admin.T "admin.ext.title" "扩展"}}</a></p>
-    <h1>{{.ExtType.Name .EditLang}} <code class="ext-prefix">/{{.ExtType.URLPrefix}}</code></h1>
+    {{/* Primary 类型已上浮为一级板块（与文章页一致），不再显示回扩展 hub 的返回链；非 Primary 类型仍从 hub 进入，保留 */}}
+    {{if not .ExtType.Primary}}<p class="ext-back"><a href="/admin/extensions">← {{.Admin.T "admin.ext.title" "扩展"}}</a></p>{{end}}
+    <h1>{{.ExtType.Name .EditLang}} <code class="ext-prefix">/{{.ExtType.URLPrefix}}</code>{{if not .ExtType.Hierarchical}} <span class="admin-title-count">{{printf (.Admin.T "admin.ext.count" "共 %d 条") .ListTotal}}</span>{{end}}</h1>
   </div>
   <div class="ext-list-actions">
-    <a class="btn" href="/admin/ext/{{.ExtType.Key}}/archive">{{.Admin.T "admin.ext.archive_title" "归档页文案"}}</a>
+    {{if gt .DiscardTotal 0}}
+    <form method="post" action="/admin/ext/{{.ExtType.Key}}/discard-purge" data-confirm-title="{{.Admin.T "admin.discard.purge_confirm_title" "确认清空待清理"}}" data-confirm-ok="{{.Admin.T "admin.discard.purge_ok" "清空"}}" data-confirm="{{printf (.Admin.T "admin.discard.purge_confirm" "将删除 %d 篇 AI 标记弃用的草稿（只删草稿，已发布/定时内容不受影响）。此操作不可撤销，确定继续？") .DiscardTotal}}">
+      <input type="hidden" name="_csrf" value="{{.CSRF}}">
+      <input type="hidden" name="lang" value="{{.EditLang}}">
+      <input type="hidden" name="status" value="{{.StatusFilter}}">
+      <input type="hidden" name="q" value="{{.Query}}">
+      <button type="submit" class="btn btn-discard-purge">{{printf (.Admin.T "admin.discard.purge" "清空待清理（%d 篇）") .DiscardTotal}}</button>
+    </form>
+    {{end}}
     <a class="btn btn-primary" href="/admin/ext/{{.ExtType.Key}}/new"><span class="plus">+</span> {{.Admin.T "admin.ext.new" "新建"}}</a>
+    {{/* 类型设置菜单：归档页文案 / 自定义类型的编辑入口 / 停用（语义与 hub 停用一致：内容保留、菜单消失、hub 重新出现该卡） */}}
+    <details class="ext-menu ext-list-menu">
+      <summary class="ext-menu-btn" title="{{.Admin.T "admin.ext.type_settings" "类型设置"}}" aria-label="{{.Admin.T "admin.ext.type_settings" "类型设置"}}">{{template "icon-gear"}}</summary>
+      <div class="ext-menu-pop">
+        <a class="ext-menu-item" href="/admin/ext/{{.ExtType.Key}}/archive">{{template "ic-archive"}}{{.Admin.T "admin.ext.archive_title" "归档页文案"}}</a>
+        {{if .ExtType.Custom}}<a class="ext-menu-item" href="/admin/extensions/types/{{.ExtType.Key}}/edit">{{template "ic-edit"}}{{.Admin.T "admin.ext.type_edit" "编辑类型"}}</a>{{end}}
+        <div class="ext-menu-sep"></div>
+        <form method="post" action="/admin/extensions/toggle" data-confirm-title="{{.Admin.T "admin.ext.disable_confirm_title" "确认停用"}}" data-confirm-ok="{{.Admin.T "admin.ext.disable" "停用"}}" data-confirm="{{printf (.Admin.T "admin.ext.disable_confirm" "停用「%s」？前台将不再显示该类型，已有内容会保留。") (.ExtType.Name .EditLang)}}"><input type="hidden" name="_csrf" value="{{.CSRF}}"><input type="hidden" name="type" value="{{.ExtType.Key}}"><input type="hidden" name="on" value="0"><button class="ext-menu-item danger" type="submit">{{template "ic-ban"}}{{.Admin.T "admin.ext.type_disable" "停用类型"}}</button></form>
+      </div>
+    </details>
   </div>
 </div>
 {{if .Flash}}<div class="ext-flash">{{.Flash}}</div>{{end}}
+
+{{if not .ExtType.Hierarchical}}
+<div class="list-toolbar">
+  <div class="status-tabs" role="tablist" aria-label="{{.Admin.T "admin.list.status_filter" "状态筛选"}}">
+    <a href="/admin/ext/{{.ExtType.Key}}?lang={{.EditLang}}{{if .Query}}&q={{.Query}}{{end}}"{{if not .StatusFilter}} class="active" aria-current="true"{{end}}>{{.Admin.T "admin.list.all_status" "全部"}}</a>
+    <a href="/admin/ext/{{.ExtType.Key}}?lang={{.EditLang}}&status=published{{if .Query}}&q={{.Query}}{{end}}"{{if eq .StatusFilter "published"}} class="active" aria-current="true"{{end}}>{{.Admin.T "admin.status.published" "已发布"}}</a>
+    <a href="/admin/ext/{{.ExtType.Key}}?lang={{.EditLang}}&status=draft{{if .Query}}&q={{.Query}}{{end}}"{{if eq .StatusFilter "draft"}} class="active" aria-current="true"{{end}}>{{.Admin.T "admin.status.draft" "草稿"}}</a>
+    <a href="/admin/ext/{{.ExtType.Key}}?lang={{.EditLang}}&status=scheduled{{if .Query}}&q={{.Query}}{{end}}"{{if eq .StatusFilter "scheduled"}} class="active" aria-current="true"{{end}}>{{.Admin.T "admin.status.scheduled" "定时"}}</a>
+    {{if or (gt .DiscardTotal 0) (eq .StatusFilter "discarded")}}<a class="discard-tab{{if eq .StatusFilter "discarded"}} active{{end}}" href="/admin/ext/{{.ExtType.Key}}?lang={{.EditLang}}&status=discarded{{if .Query}}&q={{.Query}}{{end}}"{{if eq .StatusFilter "discarded"}} aria-current="true"{{end}}>{{.Admin.T "admin.list.discarded" "待清理"}}</a>{{end}}
+  </div>
+  <form method="get" action="/admin/ext/{{.ExtType.Key}}" class="ext-search">
+    <input type="hidden" name="lang" value="{{.EditLang}}">
+    {{if .StatusFilter}}<input type="hidden" name="status" value="{{.StatusFilter}}">{{end}}
+    <input type="search" name="q" value="{{.Query}}" placeholder="{{.Admin.T "admin.list.search_title" "搜索标题…"}}" aria-label="{{.Admin.T "admin.list.search_title" "搜索标题…"}}">
+    <button type="submit" class="btn">{{.Admin.T "admin.list.search" "搜索"}}</button>
+  </form>
+</div>
+{{end}}
 
 {{if .ExtPosts}}
 <table class="admin-table content-table ext-table"{{if .ExtDepth}} data-reorder-url="/admin/ext/{{.ExtType.Key}}/reorder"{{end}}>
   <thead><tr>
     <th class="content-col-title">{{.Admin.T "admin.col.title" "标题"}}</th>
+    {{if .ExtPrice}}<th class="content-col-price nowrap">{{.Admin.T "admin.col.price" "价格"}}</th>{{end}}
     <th class="content-col-status nowrap">{{.Admin.T "admin.col.status" "状态"}}</th>
     <th class="content-col-actions right nowrap">{{.Admin.T "admin.common.actions" "操作"}}</th>
   </tr></thead>
@@ -23,14 +61,77 @@
     <tr{{if $.ExtDepth}} data-doc-depth="{{$d}}" data-doc-id="{{.ID}}" data-doc-parent="{{index $.ExtParent .ID}}"{{end}}>
       <td class="title-cell content-col-title{{if gt $d 0}} ext-doc-child{{end}}"{{if gt $d 0}} style="padding-left: calc(.9rem + {{$d}} * 1.5rem)"{{end}}>
         {{if $.ExtDepth}}<span class="doc-drag" title="{{$.Admin.T "admin.ext.drag" "拖动排序"}}" aria-hidden="true">⠿</span>{{end}}
-        <a class="t" href="/admin/ext/{{$.ExtType.Key}}/{{.ID}}/edit">{{if gt $d 0}}<span class="ext-twig" aria-hidden="true">↳</span> {{end}}{{.Title}}</a>
-        <div class="slug">/{{$.ExtType.URLPrefix}}/{{.Slug}}</div>
+        <div class="title-cell-inner">
+          {{if not $.ExtType.Hierarchical}}
+          <form method="post" action="/admin/ext/{{$.ExtType.Key}}/{{.ID}}/pin" class="pin-form">
+            <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+            <input type="hidden" name="on" value="{{if .Featured}}0{{else}}1{{end}}">
+            <input type="hidden" name="lang" value="{{.Lang}}">
+            <input type="hidden" name="status" value="{{$.StatusFilter}}">
+            <input type="hidden" name="q" value="{{$.Query}}">
+            <input type="hidden" name="page" value="{{$.PageNum}}">
+            <button type="submit" class="pin{{if .Featured}} on{{end}}" title="{{if .Featured}}{{$.Admin.T "admin.action.unpin" "取消置顶"}}{{else}}{{$.Admin.T "admin.action.pin" "置顶"}}{{end}}" aria-label="{{$.Admin.T "admin.action.pin" "置顶"}}">
+              <svg width="16" height="16" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M12 17.3 5.8 21l1.6-7-5.4-4.7 7.2-.6L12 2l2.8 6.7 7.2.6-5.4 4.7 1.6 7z"/></svg>
+            </button>
+          </form>
+          {{end}}
+          <div class="title-main">
+            <a class="t" href="/admin/ext/{{$.ExtType.Key}}/{{.ID}}/edit">{{if gt $d 0}}<span class="ext-twig" aria-hidden="true">↳</span> {{end}}{{.Title}}</a>
+            <div class="slug">/{{$.ExtType.URLPrefix}}/{{.Slug}}</div>
+          </div>
+        </div>
       </td>
-      <td class="nowrap content-col-status">{{if eq .Status "published"}}<span class="badge pub">{{$.Admin.T "admin.status.published" "已发布"}}</span>{{else}}<span class="badge draft">{{$.Admin.T "admin.status.draft" "草稿"}}</span>{{end}}</td>
+      {{if $.ExtPrice}}<td class="nowrap content-col-price">{{with index $.ExtPrice .ID}}{{.}}{{else}}<span class="muted">{{$.Admin.T "admin.common.empty_dash" "—"}}</span>{{end}}</td>{{end}}
+      <td class="nowrap content-col-status">
+        <details class="status-menu">
+          <summary aria-label="{{$.Admin.T "admin.status.change_label" "调整发布状态"}}">{{if eq .Status "scheduled"}}<span class="badge sched">{{$.Admin.T "admin.status.scheduled" "定时"}} · {{isodate .PublishedAt}}</span>{{else if eq .Status "published"}}<span class="badge pub">{{$.Admin.T "admin.status.published" "已发布"}}</span>{{else}}<span class="badge draft">{{$.Admin.T "admin.status.draft" "草稿"}}</span>{{end}}</summary>
+          <div class="status-menu-pop">
+            <form method="post" action="/admin/ext/{{$.ExtType.Key}}/{{.ID}}/status">
+              <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+              <input type="hidden" name="target_status" value="published">
+              <input type="hidden" name="lang" value="{{.Lang}}">
+              <input type="hidden" name="status" value="{{$.StatusFilter}}">
+              <input type="hidden" name="q" value="{{$.Query}}">
+              <input type="hidden" name="page" value="{{$.PageNum}}">
+              <button type="submit" class="status-menu-item pub"{{if eq .Status "published"}} disabled aria-current="true"{{end}}>{{$.Admin.T "admin.status.published" "已发布"}}</button>
+            </form>
+            <form method="post" action="/admin/ext/{{$.ExtType.Key}}/{{.ID}}/status"{{if eq .Status "published"}} data-confirm-title="{{$.Admin.T "admin.status.confirm_draft_title" "确认转为草稿"}}" data-confirm-ok="{{$.Admin.T "admin.status.to_draft" "转为草稿"}}" data-confirm="{{printf ($.Admin.T "admin.status.confirm_draft" "将「%s」转为草稿后，前台将不再显示。确定继续？") .Title}}"{{end}}>
+              <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+              <input type="hidden" name="target_status" value="draft">
+              <input type="hidden" name="lang" value="{{.Lang}}">
+              <input type="hidden" name="status" value="{{$.StatusFilter}}">
+              <input type="hidden" name="q" value="{{$.Query}}">
+              <input type="hidden" name="page" value="{{$.PageNum}}">
+              <button type="submit" class="status-menu-item draft"{{if eq .Status "draft"}} disabled aria-current="true"{{end}}>{{$.Admin.T "admin.status.draft" "草稿"}}</button>
+            </form>
+            <form method="post" action="/admin/ext/{{$.ExtType.Key}}/{{.ID}}/status">
+              <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+              <input type="hidden" name="target_status" value="scheduled">
+              <input type="hidden" name="lang" value="{{.Lang}}">
+              <input type="hidden" name="status" value="{{$.StatusFilter}}">
+              <input type="hidden" name="q" value="{{$.Query}}">
+              <input type="hidden" name="page" value="{{$.PageNum}}">
+              <button type="submit" class="status-menu-item sched"{{if eq .Status "scheduled"}} disabled aria-current="true"{{end}}>{{$.Admin.T "admin.status.to_scheduled" "定时发布"}}</button>
+            </form>
+          </div>
+        </details>
+        {{if .Discarded}}<span class="discard-badge" tabindex="0"><span class="badge discard">{{$.Admin.T "admin.discard.badge" "AI 弃用"}}</span><span class="discard-pop" role="tooltip"><b>{{$.Admin.T "admin.discard.reason" "报废理由"}}</b>{{.DiscardReason}}<i>{{adminDateTime .DiscardedAt}}</i></span></span>{{end}}
+      </td>
       <td class="right actions content-col-actions">
         <div class="action-icons">
           {{if eq .Status "published"}}<a class="act-ico" href="/{{$.ExtType.URLPrefix}}/{{.Slug}}" target="_blank" title="{{$.Admin.T "admin.action.view" "查看"}}" aria-label="{{$.Admin.T "admin.action.view" "查看"}}">{{template "icon-extlink"}}</a>{{else}}<a class="act-ico" href="/admin/ext/{{$.ExtType.Key}}/{{.ID}}/preview" target="_blank" title="{{$.Admin.T "admin.action.preview" "预览"}}" aria-label="{{$.Admin.T "admin.action.preview" "预览"}}">{{template "icon-extlink"}}</a>{{end}}
           <a class="act-ico" href="/admin/ext/{{$.ExtType.Key}}/{{.ID}}/edit" title="{{$.Admin.T "admin.action.edit" "编辑"}}" aria-label="{{$.Admin.T "admin.action.edit" "编辑"}}">{{template "icon-edit"}}</a>
+          {{if .Discarded}}
+          <form method="post" action="/admin/ext/{{$.ExtType.Key}}/{{.ID}}/undiscard">
+            <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+            <input type="hidden" name="lang" value="{{.Lang}}">
+            <input type="hidden" name="status" value="{{$.StatusFilter}}">
+            <input type="hidden" name="q" value="{{$.Query}}">
+            <input type="hidden" name="page" value="{{$.PageNum}}">
+            <button class="act-ico" type="submit" title="{{$.Admin.T "admin.discard.restore" "恢复（撤销 AI 弃用标记）"}}" aria-label="{{$.Admin.T "admin.discard.restore" "恢复（撤销 AI 弃用标记）"}}">{{template "icon-restore"}}</button>
+          </form>
+          {{end}}
+          <form method="post" action="/admin/ext/{{$.ExtType.Key}}/{{.ID}}/duplicate"><input type="hidden" name="_csrf" value="{{$.CSRF}}"><button class="act-ico" type="submit" title="{{$.Admin.T "admin.action.duplicate" "复制"}}" aria-label="{{$.Admin.T "admin.action.duplicate" "复制"}}"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></form>
           <form method="post" action="/admin/ext/{{$.ExtType.Key}}/{{.ID}}/delete" data-confirm="{{$.Admin.T "admin.ext.del_confirm" "确认删除这条内容？"}}"><input type="hidden" name="_csrf" value="{{$.CSRF}}"><button class="del act-ico" type="submit" title="{{$.Admin.T "admin.action.delete" "删除"}}" aria-label="{{$.Admin.T "admin.action.delete" "删除"}}">{{template "icon-trash"}}</button></form>
         </div>
       </td>
@@ -38,18 +139,43 @@
     {{end}}
   </tbody>
 </table>
+{{if gt .TotalPages 1}}
+<nav class="pagination admin-pagination" aria-label="{{.Admin.T "admin.common.pagination" "分页"}}">
+  {{if .HasPrev}}<a href="/admin/ext/{{.ExtType.Key}}?lang={{.EditLang}}{{if .StatusFilter}}&status={{.StatusFilter}}{{end}}{{if .Query}}&q={{.Query}}{{end}}&page={{.PrevPage}}" aria-label="{{.Admin.T "admin.common.prev_page" "上一页"}}">←</a>{{end}}
+  {{range $n := pages .TotalPages}}
+    {{if eq $n $.PageNum}}<span class="cur" aria-current="page">{{$n}}</span>{{else}}<a href="/admin/ext/{{$.ExtType.Key}}?lang={{$.EditLang}}{{if $.StatusFilter}}&status={{$.StatusFilter}}{{end}}{{if $.Query}}&q={{$.Query}}{{end}}&page={{$n}}">{{$n}}</a>{{end}}
+  {{end}}
+  {{if .HasNext}}<a href="/admin/ext/{{.ExtType.Key}}?lang={{.EditLang}}{{if .StatusFilter}}&status={{.StatusFilter}}{{end}}{{if .Query}}&q={{.Query}}{{end}}&page={{.NextPage}}" aria-label="{{.Admin.T "admin.common.next_page" "下一页"}}">→</a>{{end}}
+</nav>
+{{end}}
 {{else}}
 <div class="ext-empty">
-  <p>{{.Admin.T "admin.ext.empty" "还没有内容。"}}</p>
-  <a class="btn btn-primary" href="/admin/ext/{{.ExtType.Key}}/new"><span class="plus">+</span> {{.Admin.T "admin.ext.new" "新建"}}</a>
+  <p>{{if or .Query .StatusFilter}}{{.Admin.T "admin.list.empty_filtered" "没有符合筛选条件的内容。"}}{{else}}{{.Admin.T "admin.ext.empty" "还没有内容。"}}{{end}}</p>
+  {{if not (or .Query .StatusFilter)}}<a class="btn btn-primary" href="/admin/ext/{{.ExtType.Key}}/new"><span class="plus">+</span> {{.Admin.T "admin.ext.new" "新建"}}</a>{{end}}
 </div>
 {{end}}
 
 <style>
   .ext-list-head { align-items: flex-start; }
   .ext-list-actions { display: flex; gap: .55rem; align-items: center; flex-wrap: wrap; }
+  /* 类型设置菜单（齿轮）：交互与扩展 hub 卡片一致（admin.js 统一处理 details.ext-menu 的外点/Esc 收起） */
+  .ext-menu { position: relative; }
+  .ext-menu-btn { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; border: 1px solid var(--line); border-radius: 9px; color: var(--muted); cursor: pointer; list-style: none; transition: background var(--speed), color var(--speed), border-color var(--speed); }
+  .ext-menu-btn::-webkit-details-marker { display: none; }
+  .ext-menu-btn:hover, .ext-menu[open] .ext-menu-btn { background: var(--line-soft); color: var(--ink); }
+  .ext-list-menu .ext-menu-pop { position: absolute; right: 0; top: calc(100% + .4rem); min-width: 168px; background: var(--surface); border: 1px solid var(--line); border-radius: 11px; box-shadow: var(--shadow); padding: .35rem; z-index: 30; display: flex; flex-direction: column; gap: .1rem; }
+  .ext-menu-pop form { margin: 0; }
+  .ext-menu-item { display: flex; width: 100%; align-items: center; gap: .55rem; padding: .5rem .65rem; border: 0; background: none; color: var(--ink-soft); font: inherit; font-size: .88rem; text-align: left; text-decoration: none; border-radius: 7px; cursor: pointer; transition: background var(--speed), color var(--speed); }
+  .ext-menu-item svg { flex: none; opacity: .85; }
+  .ext-menu-item:hover { background: var(--line-soft); color: var(--ink); }
+  .ext-menu-item.danger { color: var(--danger); }
+  .ext-menu-item.danger:hover { background: color-mix(in srgb, var(--danger) 12%, transparent); }
+  .ext-menu-sep { height: 1px; background: var(--line-soft); margin: .25rem .3rem; }
   .ext-doc-child .t { font-weight: 400; color: var(--ink-soft); }
   .ext-twig { color: var(--faint); margin-right: .1rem; }
+  .ext-search { display: flex; gap: .45rem; align-items: center; }
+  .ext-search input[type="search"] { width: 200px; max-width: 46vw; padding: .42rem .65rem; border: 1px solid var(--line); border-radius: 8px; background: var(--paper, transparent); color: inherit; font-size: .88rem; }
+  .ext-search input[type="search"]:focus { outline: none; border-color: var(--accent); }
   .doc-collapse { float: left; display: inline-flex; align-items: center; gap: .22rem; margin: .1rem .5rem 0 0; padding: .12rem .4rem; border: 0; background: var(--line-soft); color: var(--muted); border-radius: 6px; cursor: pointer; font-size: .72rem; line-height: 1; transition: background var(--speed), color var(--speed); }
   .doc-collapse:hover { background: var(--line); color: var(--ink); }
   .doc-collapse svg { transition: transform var(--speed); }
@@ -71,3 +197,8 @@
   .ext-empty p { margin: 0 0 1.1rem; font-size: .95rem; }
 </style>
 {{end}}
+
+{{define "icon-gear"}}<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>{{end}}
+{{define "ic-archive"}}<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7z"/><path d="M14 2v6h6"/><path d="M9 13h6M9 17h4"/></svg>{{end}}
+{{define "ic-edit"}}<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>{{end}}
+{{define "ic-ban"}}<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m5.6 5.6 12.8 12.8"/></svg>{{end}}

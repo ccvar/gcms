@@ -24,6 +24,7 @@ type seedCat struct {
 
 type seedPost struct {
 	Type, Slug, Title, Excerpt, Content, MetaDesc, Keywords, Author, Cat, Date, Lang, Group, LinkURL, Cover string
+	Extra                                                                                                   string // 扩展类型自定义字段（posts.extra JSON，如商品价格/规格）
 	Featured                                                                                                bool
 }
 
@@ -590,9 +591,9 @@ func (s *Store) insertSeed(sp seedPost, catID map[string]int64) error {
 		featured = 1
 	}
 	_, err := s.db.Exec(`INSERT INTO posts
-		(type,slug,title,excerpt,content,meta_desc,keywords,cover_image,author,status,featured,link_url,lang,trans_group,category_id,published_at,created_at,updated_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		(type,slug,title,excerpt,content,meta_desc,keywords,cover_image,author,status,featured,link_url,extra,lang,trans_group,category_id,published_at,created_at,updated_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		typ, sp.Slug, sp.Title, sp.Excerpt, sp.Content, sp.MetaDesc, sp.Keywords, sp.Cover, sp.Author,
-		"published", featured, sp.LinkURL, lang, group, cat, when, when, when)
+		"published", featured, sp.LinkURL, sp.Extra, lang, group, cat, when, when, when)
 	return err
 }

@@ -1,17 +1,17 @@
-{{define "header"}}  <header class="site-header">
-    <div class="wrap">
+{{define "header"}}{{if eq .Layout "factory-trade"}}{{template "header_factory_trade" .}}{{else if eq .Layout "factory-sidebar"}}{{template "header_factory_sidebar" .}}{{else}}{{template "header_topbar" .}}{{end}}{{end}}
+
+{{define "header_brand"}}{{/* 品牌（logo/文字/两者），三种页头共用；跟随站点 brand 设置 */}}
       {{if and .Site.Logo (ne .Site.Brand "text")}}<a class="brand has-logo{{if eq .Site.Brand "both"}} with-name{{end}}" href="{{.Tr.U "/"}}"><img class="brand-logo" src="{{.Site.Logo}}" alt="{{.Site.Name}}" decoding="async"{{imgAttrs .Site.Logo}}{{if .Site.LogoScale}} style="transform:scale({{.Site.LogoScale}})"{{end}}{{if .VisualEdit}} data-visual-edit="site.logo" data-visual-label="站点 Logo" data-visual-kind="image"{{end}}>{{if eq .Site.Brand "both"}}<span class="brand-name"{{if .VisualEdit}} data-visual-edit="site.name" data-visual-label="站点名称"{{end}}>{{.Site.Name}}</span>{{end}}</a>{{else}}<a class="brand" href="{{.Tr.U "/"}}"{{if .VisualEdit}} data-visual-edit="site.name" data-visual-label="站点名称"{{end}}>{{.Site.Name}}</a>{{end}}
-      {{if .Site.Tagline}}<p class="brand-tagline"{{if .VisualEdit}} data-visual-edit="site.tagline" data-visual-label="站点标语"{{end}}>{{.Site.Tagline}}</p>{{end}}
-      <button type="button" class="menu-toggle" aria-label="{{.Tr.T "common.main_nav"}}" aria-expanded="false" aria-controls="site-nav">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
-      </button>
-      <nav class="nav" id="site-nav" aria-label="{{.Tr.T "common.main_nav"}}">
-        {{range .Menu}}<a href="{{.Href}}"{{$.ExternalLinkAttrs .Href}}{{if .Active}} aria-current="page"{{end}}{{if $.VisualEdit}} data-visual-edit="nav.{{.Index}}" data-visual-label="{{.Label}}"{{end}}>{{.Label}}</a>
-        {{end}}
+{{end}}
+
+{{define "header_search"}}{{/* 搜索入口，三种页头共用 */}}
         <a class="search-ico" href="{{.Tr.U "/search"}}"{{if eq .Nav "search"}} aria-current="page"{{end}} aria-label="{{.Tr.T "nav.search"}}">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
           <span class="search-label">{{.Tr.T "nav.search"}}</span>
         </a>
+{{end}}
+
+{{define "header_lang"}}{{/* 语言切换（details 弹层，site.js 管互斥），多语种才渲染 */}}
         {{if gt (len .Langs) 1}}
         <details class="lang-switch">
           <summary aria-label="{{.Tr.T "lang.switch"}}" title="{{.Tr.T "lang.switch"}}">
@@ -24,6 +24,100 @@
           </ul>
         </details>
         {{end}}
+{{end}}
+
+{{define "header_topbar"}}{{/* 基础页头（topbar 及绝大多数骨架；vision/herofold 也用它——
+     两者的「透明悬浮/嵌入门楣」由 CSS + site.js 的 html.js-fnav 类实现，无 JS 时恒实底可用） */}}  <header class="site-header">
+    <div class="wrap">
+      {{template "header_brand" .}}
+      {{if .Site.Tagline}}<p class="brand-tagline"{{if .VisualEdit}} data-visual-edit="site.tagline" data-visual-label="站点标语"{{end}}>{{.Site.Tagline}}</p>{{end}}
+      <button type="button" class="menu-toggle" aria-label="{{.Tr.T "common.main_nav"}}" aria-expanded="false" aria-controls="site-nav">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+      </button>
+      <nav class="nav" id="site-nav" aria-label="{{.Tr.T "common.main_nav"}}">
+        {{if and (eq .Layout "factory-onepage") (eq .Nav "home")}}
+        {{/* 工厂单页骨架首页态：导航换成页内锚点（转化路径最短）；锚点条目跟随区块开关。
+             商品/文章等内页仍渲染常规菜单（下方 else 分支），站点既有路由零变化。 */}}
+        <a href="#fo-products">{{.Tr.T "factory.products"}}</a>
+        <a href="#fo-strength">{{.Tr.T "factory.strength"}}</a>
+        {{if .FactoryProcessOn}}<a href="#fo-process">{{.Tr.T "factory.process"}}</a>{{end}}
+        {{if .FactoryQAs}}<a href="#fo-faq">{{.Tr.T "factory.faq"}}</a>{{end}}
+        <a class="fo-nav-cta" href="#factory-contact">{{.Tr.T "contact.float_label"}}</a>
+        {{else}}{{range .Menu}}<a href="{{.Href}}"{{$.ExternalLinkAttrs .Href}}{{if .Active}} aria-current="page"{{end}}{{if $.VisualEdit}} data-visual-edit="nav.{{.Index}}" data-visual-label="{{.Label}}"{{end}}>{{.Label}}</a>
+        {{end}}{{end}}
+        {{template "header_search" .}}
+        {{template "header_lang" .}}
+      </nav>
+    </div>
+  </header>
+{{end}}
+
+{{define "header_factory_trade"}}{{/* factory-trade 经典外贸：双层页头——
+     上层 utility 细条（电话/邮箱/WhatsApp + 语言切换；读 ContactView，未配置项不显示，
+     一项都没有且单语种时整条不渲染），下层 logo + 主导航。 */}}  <header class="site-header ft-header">
+    {{if or .Contact.Any (gt (len .Langs) 1)}}
+    <div class="ft-utility">
+      <div class="ft-utility-in">
+        <div class="ft-utility-contact">
+          {{if .Contact}}
+          {{if .Contact.TelURL}}<a class="ft-u-item" href="{{.Contact.TelURL}}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 16.5v3a1.5 1.5 0 0 1-1.6 1.5A17.5 17.5 0 0 1 3 4.6 1.5 1.5 0 0 1 4.5 3h3A1.5 1.5 0 0 1 9 4.3c.1.9.3 1.8.6 2.6a1.5 1.5 0 0 1-.3 1.6L8 9.8a15.5 15.5 0 0 0 6.2 6.2l1.3-1.3a1.5 1.5 0 0 1 1.6-.3c.8.3 1.7.5 2.6.6a1.5 1.5 0 0 1 1.3 1.5z"/></svg><span>{{.Contact.Phone}}</span></a>{{end}}
+          {{if .Contact.Email}}<a class="ft-u-item" href="mailto:{{.Contact.Email}}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg><span>{{.Contact.Email}}</span></a>{{end}}
+          {{if .Contact.WaMe}}{{$wa := printf "https://wa.me/%s" .Contact.WaMe}}<a class="ft-u-item" href="{{$wa}}"{{.ExternalLinkAttrs $wa}}><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2zm5.2 14.1c-.2.6-1.2 1.2-1.7 1.2-.4.1-1 .1-1.6-.1-.4-.1-.9-.3-1.5-.5-2.6-1.1-4.3-3.8-4.4-4-.1-.2-1.1-1.4-1.1-2.7 0-1.3.7-1.9.9-2.2.2-.3.5-.3.7-.3h.5c.2 0 .4 0 .6.4.2.5.7 1.8.8 1.9.1.1.1.3 0 .4-.1.2-.1.3-.3.5l-.4.5c-.1.1-.3.3-.1.6.2.3.7 1.2 1.6 1.9 1.1.9 2 1.2 2.3 1.4.3.1.5.1.6-.1.2-.2.7-.8.9-1.1.2-.3.4-.2.6-.1.3.1 1.7.8 1.9.9.3.1.5.2.5.3.1.1.1.7-.1 1.2z"/></svg><span>WhatsApp</span></a>{{end}}
+          {{end}}
+        </div>
+        <div class="ft-utility-tools">
+          {{template "header_lang" .}}
+        </div>
+      </div>
+    </div>
+    {{end}}
+    <div class="wrap">
+      {{template "header_brand" .}}
+      {{if .Site.Tagline}}<p class="brand-tagline"{{if .VisualEdit}} data-visual-edit="site.tagline" data-visual-label="站点标语"{{end}}>{{.Site.Tagline}}</p>{{end}}
+      <button type="button" class="menu-toggle" aria-label="{{.Tr.T "common.main_nav"}}" aria-expanded="false" aria-controls="site-nav">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+      </button>
+      <nav class="nav" id="site-nav" aria-label="{{.Tr.T "common.main_nav"}}">
+        {{range .Menu}}<a href="{{.Href}}"{{$.ExternalLinkAttrs .Href}}{{if .Active}} aria-current="page"{{end}}{{if $.VisualEdit}} data-visual-edit="nav.{{.Index}}" data-visual-label="{{.Label}}"{{end}}>{{.Label}}</a>
+        {{end}}{{template "header_search" .}}
+      </nav>
+    </div>
+  </header>
+{{end}}
+
+{{define "header_factory_sidebar"}}{{/* factory-sidebar 侧栏目录：左侧常驻竖栏——品牌 + 主菜单
+     + 商品分类树（FactoryCats，viewForLang 每页装载）+ 文章入口 + 底部「联系我们」按钮
+    （首选 WhatsApp→邮箱→电话，没配联系方式回落商品入口）。
+     ≤920px 竖栏折叠为顶部抽屉：沿用 menu-toggle + .nav-open（JS class，绝不 :target）。 */}}  <header class="site-header fb-header">
+    <div class="wrap">
+      {{template "header_brand" .}}
+      {{if .Site.Tagline}}<p class="brand-tagline"{{if .VisualEdit}} data-visual-edit="site.tagline" data-visual-label="站点标语"{{end}}>{{.Site.Tagline}}</p>{{end}}
+      <button type="button" class="menu-toggle" aria-label="{{.Tr.T "common.main_nav"}}" aria-expanded="false" aria-controls="site-nav">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+      </button>
+      <nav class="nav" id="site-nav" aria-label="{{.Tr.T "common.main_nav"}}">
+        {{range .Menu}}<a href="{{.Href}}"{{$.ExternalLinkAttrs .Href}}{{if .Active}} aria-current="page"{{end}}{{if $.VisualEdit}} data-visual-edit="nav.{{.Index}}" data-visual-label="{{.Label}}"{{end}}>{{.Label}}</a>
+        {{end}}{{template "header_search" .}}
+        {{if .FactoryCats}}
+        <div class="fb-rail-group">
+          <p class="fb-rail-title">{{.Tr.T "factory.categories"}}</p>
+          {{range .FactoryCats}}<a class="fb-rail-cat" href="{{$.Tr.U .URL}}"><span>{{.Name}}</span><small>{{.Count}}</small></a>
+          {{end}}
+        </div>
+        {{end}}
+        <div class="fb-rail-group">
+          <p class="fb-rail-title">{{.Tr.T "factory.news"}}</p>
+          <a class="fb-rail-news" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "footer.all_categories"}} <span class="arrow" aria-hidden="true">→</span></a>
+        </div>
+        {{template "header_lang" .}}
+        <div class="fb-rail-cta">
+          {{if .Contact.Any}}
+          {{if .Contact.WaMe}}{{$wa := printf "https://wa.me/%s" .Contact.WaMe}}<a class="btn btn-primary" href="{{$wa}}"{{.ExternalLinkAttrs $wa}}>{{.Tr.T "contact.float_label"}}</a>
+          {{else if .Contact.Email}}<a class="btn btn-primary" href="mailto:{{.Contact.Email}}">{{.Tr.T "contact.float_label"}}</a>
+          {{else if .Contact.TelURL}}<a class="btn btn-primary" href="{{.Contact.TelURL}}">{{.Tr.T "contact.float_label"}}</a>
+          {{else}}<a class="btn btn-primary" href="#factory-contact">{{.Tr.T "contact.float_label"}}</a>{{end}}
+          {{else}}<a class="btn btn-primary" href="{{.Tr.U "/products"}}">{{.Tr.T "factory.products"}}</a>{{end}}
+        </div>
       </nav>
     </div>
   </header>

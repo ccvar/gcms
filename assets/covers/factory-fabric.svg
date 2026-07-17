@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 960" role="img" aria-label="Fabric roll placeholder">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#eef1f4"/>
+      <stop offset="1" stop-color="#e4e9ee"/>
+    </linearGradient>
+    <pattern id="grid" width="64" height="64" patternUnits="userSpaceOnUse">
+      <path d="M64 0H0v64" fill="none" stroke="#d3dbe2" stroke-width="2"/>
+    </pattern>
+    <pattern id="weave" width="34" height="34" patternUnits="userSpaceOnUse">
+      <path d="M0 17 h34" stroke="#6b839a" stroke-width="3"/>
+      <path d="M17 0 v34" stroke="#6b839a" stroke-width="3"/>
+    </pattern>
+  </defs>
+  <rect width="1280" height="960" fill="url(#bg)"/>
+  <rect width="1280" height="960" fill="url(#grid)"/>
+  <!-- 布卷 + 铺开的布面（织纹） -->
+  <g>
+    <path d="M300 430 q340 -60 680 0 v330 q-340 60 -680 0 z" fill="#7c93a6"/>
+    <path d="M300 430 q340 -60 680 0 v330 q-340 60 -680 0 z" fill="url(#weave)" opacity=".5"/>
+    <path d="M300 430 q340 -60 680 0 q-340 52 -680 0 z" fill="#a9bac8"/>
+    <ellipse cx="640" cy="320" rx="360" ry="96" fill="#33414e"/>
+    <ellipse cx="640" cy="320" rx="360" ry="96" fill="none" stroke="#4a5c6c" stroke-width="4"/>
+    <ellipse cx="640" cy="320" rx="252" ry="66" fill="#56718a"/>
+    <ellipse cx="640" cy="320" rx="140" ry="38" fill="#33414e"/>
+    <ellipse cx="640" cy="320" rx="56" ry="16" fill="#eef1f4"/>
+  </g>
+  <!-- 幅宽标注 -->
+  <g stroke="#3e6d94" stroke-width="3" fill="none">
+    <path d="M300 830 v40 M980 830 v40 M300 850 h680"/>
+    <path d="M1090 320 h60 M1120 290 v60" stroke-dasharray="8 8"/>
+  </g>
+  <g fill="#3e6d94" font-family="ui-monospace,Menlo,monospace" font-size="30" letter-spacing="4">
+    <text x="565" y="910">150cm</text>
+  </g>
+</svg>

@@ -17,20 +17,14 @@
     new ResizeObserver(setHeaderH).observe(header);
   }
 
-  // 2) 阅读进度条 + 回到顶部
+  // 2) 阅读进度条（「回到顶部」已挪到 site.js 全站生效——商品/文档等
+  //    不加载 toc.js 的详情页也渲染 .to-top，逻辑放这里会导致按钮永不出现）
   var bar = document.querySelector(".read-progress > i");
-  var toTop = document.querySelector(".to-top");
   function onScroll() {
     var st = window.scrollY || document.documentElement.scrollTop || 0;
     var max = document.documentElement.scrollHeight - window.innerHeight;
     var p = max > 0 ? st / max : 0;
     if (bar) bar.style.transform = "scaleX(" + p.toFixed(4) + ")";
-    if (toTop) toTop.classList.toggle("show", st > 600);
-  }
-  if (toTop) {
-    toTop.addEventListener("click", function () {
-      window.scrollTo({ top: 0, behavior: "smooth" });
-    });
   }
   window.addEventListener("scroll", onScroll, { passive: true });
   onScroll();

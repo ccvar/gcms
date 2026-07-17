@@ -1,0 +1,138 @@
+{{define "home_factory_vision"}}
+  {{/* factory-vision — 沉浸展示：全屏大图页头（hero 槽图优先，其次 factory.gallery 首图——
+       绝不放占位假照片；两者皆无且 hero.visual=default/未配置时，文案右侧渲染图纸机械动画
+       factory_hero_anim 填掉右侧留白，底仍是主题渐变 + 网格纹理，暗皮配色随主题变量）
+       + 大留白视觉流——精选商品大卡
+       + 发丝线数字带 + 分类导览 + 流程 + 行业 + 全宽图集带 + FAQ + 动态。
+       导航透明悬浮、滚动加实底：site.js 对 [data-fnav-hero] 渐进增强（html.js-fnav/.fnav-solid），
+       无 JS 时页头恒实底可用。页脚=获取报价 CTA 通栏（partials/footer.html 分支），
+       所以本模板不再渲染 factory_cta；hero 的联系 CTA 锚点照常指向页脚的 #factory-contact。 */}}
+  {{$hero := ""}}
+  {{if and (eq .Site.HeroVisual "image") .Site.HeroImage}}{{$hero = .Site.HeroImage}}{{else if .FactoryGallery}}{{$hero = index .FactoryGallery 0}}{{end}}
+  {{$heroAnim := and (not $hero) (ne .Site.HeroVisual "image") (ne .Site.HeroVisual "svg")}}
+  <div class="fv-wrap">
+    <section class="fv-hero{{if $hero}} has-img{{else if $heroAnim}} has-anim{{end}}" data-fnav-hero="vision">
+      {{if $hero}}<img class="fv-hero-img" src="{{$hero}}" alt="{{if .Site.HeroAlt}}{{.Site.HeroAlt}}{{else}}{{.Site.Name}}{{end}}" decoding="async" fetchpriority="high"{{imgAttrs $hero}}>{{end}}
+      <div class="fv-hero-veil" aria-hidden="true"></div>
+      <div class="fv-hero-inner">
+        <div class="fv-hero-copy">
+          {{if .Site.HeroEyebrow}}<p class="fv-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+          <h1 class="fv-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+          {{if .Site.HeroDescription}}<p class="fv-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+          <div class="fv-cta">
+            {{if .Contact.Any}}<a class="btn btn-primary" href="#factory-contact">{{.Tr.T "contact.float_label"}} <span class="arrow" aria-hidden="true">→</span></a>
+            {{else}}<a class="btn btn-primary" href="{{.Tr.U "/products"}}">{{.Tr.T "factory.products"}} <span class="arrow" aria-hidden="true">→</span></a>{{end}}
+            <a class="btn fv-btn-ghost" href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}}</a>
+          </div>
+        </div>
+        {{if $heroAnim}}<div class="f-heroanim f-heroanim-plain fv-hero-anim" aria-hidden="true">{{template "factory_hero_anim" .}}</div>{{end}}
+      </div>
+      <span class="fv-scroll-cue" aria-hidden="true"></span>
+    </section>
+
+    <section class="fv-section fv-featured">
+      <div class="fv-section-head">
+        <p class="f-eyebrow">Featured</p>
+        <h2>{{.Tr.T "factory.featured"}}</h2>
+        <a class="fv-head-link" href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="fv-grid">
+        {{range .FactoryProducts}}
+        <a class="fv-card" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+          <span class="fv-card-media{{if not .CoverImage}} fv-card-gen{{end}}">
+            {{if .CoverImage}}<img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}
+          </span>
+          <span class="fv-card-body">
+            {{with .Category}}<span class="fv-card-cat">{{.Name}}</span>{{end}}
+            <span class="fv-card-title">{{.Title}}</span>
+            {{if .Excerpt}}<span class="fv-card-ex">{{.Excerpt}}</span>{{end}}
+          </span>
+        </a>
+        {{else}}
+        <p class="fv-empty muted">{{.Tr.T "factory.no_products"}}</p>
+        {{end}}
+      </div>
+    </section>
+
+    <section class="fv-section fv-strength">
+      {{if .FactoryStats}}
+      <dl class="fv-stats">
+        {{range .FactoryStats}}
+        <div class="fv-stat"><dt>{{.Num}}</dt><dd>{{.Label}}</dd></div>
+        {{end}}
+      </dl>
+      {{else}}
+      {{template "factory_about" .}}
+      {{end}}
+    </section>
+
+    {{if .FactoryCats}}
+    <section class="fv-section">
+      <div class="fv-section-head">
+        <p class="f-eyebrow">Categories</p>
+        <h2>{{.Tr.T "factory.categories"}}</h2>
+      </div>
+      {{template "factory_categories" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryProcessOn}}
+    <section class="fv-section">
+      <div class="fv-section-head">
+        <p class="f-eyebrow">Workflow</p>
+        <h2>{{.Tr.T "factory.process"}}</h2>
+      </div>
+      {{template "factory_process_steps" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryIndustries}}
+    <section class="fv-section">
+      <div class="fv-section-head">
+        <p class="f-eyebrow">Industries</p>
+        <h2>{{.Tr.T "factory.industries"}}</h2>
+      </div>
+      {{template "factory_industries" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryGallery}}
+    <section class="fv-section fv-gallery-sec">
+      <div class="fv-section-head">
+        <p class="f-eyebrow">Facility</p>
+        <h2>{{.Tr.T "factory.gallery"}}</h2>
+      </div>
+      {{template "factory_gallery" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryQAs}}
+    <section class="fv-section">
+      <div class="fv-section-head">
+        <p class="f-eyebrow">FAQ</p>
+        <h2>{{.Tr.T "factory.faq"}}</h2>
+      </div>
+      {{template "factory_faq" .}}
+    </section>
+    {{end}}
+
+    {{if .Posts}}
+    <section class="fv-section fv-news">
+      <div class="fv-section-head">
+        <p class="f-eyebrow">News</p>
+        <h2>{{.Tr.T "factory.news"}}</h2>
+        <a class="fv-head-link" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="fv-news-list">
+        {{range $i, $p := .Posts}}{{if lt $i 3}}
+        <a class="fv-news-item" href="{{$.Tr.U (contentURL $p)}}">
+          <time datetime="{{$.Tr.ISODate $p.PublishedAt}}">{{$.Tr.Date $p.PublishedAt}}</time>
+          <span class="fv-news-title">{{$p.Title}}</span>
+          <span class="arrow" aria-hidden="true">→</span>
+        </a>
+        {{end}}{{end}}
+      </div>
+    </section>
+    {{end}}
+  </div>
+{{end}}

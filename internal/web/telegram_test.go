@@ -171,8 +171,8 @@ func TestTelegramDeliver(t *testing.T) {
 	fake := newFakeBotAPI(t)
 	const token = "123456:SECRET-TOKEN"
 
-	s.telegramDeliver(token, "@gcms_news", 1, "<b>标题</b>\n\nhttps://example.com/zh/posts/a?utm_source=telegram&utm_medium=social")
-	s.telegramDeliver(token, "@gcms_news", 1, "再来一次不该发出") // 台账去重
+	s.telegramDeliver(token, "@gcms_news", "post", 1, "<b>标题</b>\n\nhttps://example.com/zh/posts/a?utm_source=telegram&utm_medium=social")
+	s.telegramDeliver(token, "@gcms_news", "post", 1, "再来一次不该发出") // 台账去重
 	if fake.count() != 1 {
 		t.Fatalf("Bot API 收到 %d 次请求, want 1（台账去重）", fake.count())
 	}
@@ -192,7 +192,7 @@ func TestTelegramDeliver(t *testing.T) {
 
 	// 失败：写最近错误键（原样 description、绝不含 token），释放认领允许下次重试。
 	fake.setRespond(`{"ok":false,"description":"Bad Request: chat not found"}`)
-	s.telegramDeliver(token, "@gcms_news", 2, "x")
+	s.telegramDeliver(token, "@gcms_news", "post", 2, "x")
 	lastErr := s.store.Setting(telegramLastErrorSetting)
 	if !strings.Contains(lastErr, "Bad Request: chat not found") {
 		t.Fatalf("最近错误键未记录 Bot API 错误：%q", lastErr)
@@ -201,7 +201,7 @@ func TestTelegramDeliver(t *testing.T) {
 		t.Fatalf("最近错误键泄露了 token：%q", lastErr)
 	}
 	fake.setRespond("")
-	s.telegramDeliver(token, "@gcms_news", 2, "x")
+	s.telegramDeliver(token, "@gcms_news", "post", 2, "x")
 	if fake.count() != 3 {
 		t.Fatalf("失败释放认领后应可重试, got %d 次请求", fake.count())
 	}
@@ -232,12 +232,25 @@ func TestTelegramPushPlan(t *testing.T) {
 		t.Fatalf("text 缺文章 URL + UTM：%q", text)
 	}
 
-	// 草稿 / 非 post 类型 / 开关关闭都不推。
+	// 草稿 / page / 未启用扩展类型 / 开关关闭都不推。
 	if _, _, _, ok := s.telegramPushPlan(nil, &store.Post{Type: "post", Status: "draft", Lang: "zh", Slug: "d"}); ok {
 		t.Fatalf("草稿不该推")
 	}
 	if _, _, _, ok := s.telegramPushPlan(nil, &store.Post{Type: "page", Status: "published", Lang: "zh", Slug: "p"}); ok {
 		t.Fatalf("page 不该推")
+	}
+	product := &store.Post{ID: 9, Type: "product", Status: "published", Lang: "zh", Slug: "widget", Title: "新品", Excerpt: "上架"}
+	if _, _, _, ok := s.telegramPushPlan(nil, product); ok {
+		t.Fatalf("未启用 product 时不该推")
+	}
+	// 启用 product 后：商品推送生效，消息同构（标题 + 摘要 + 商品 URL + UTM）。
+	_ = s.store.SetSetting(enabledContentTypesKey, "product")
+	_, _, text, ok = s.telegramPushPlan(nil, product)
+	if !ok {
+		t.Fatalf("已启用 product 应推")
+	}
+	if !strings.Contains(text, "<b>新品</b>") || !strings.Contains(text, "https://example.com/zh/products/widget/?utm_source=telegram&utm_medium=social") {
+		t.Fatalf("商品推送消息不对：%q", text)
 	}
 	_ = s.store.SetSetting(telegramAutoPushSetting, "0")
 	if _, _, _, ok := s.telegramPushPlan(nil, post); ok {

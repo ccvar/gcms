@@ -1,7 +1,10 @@
-{{define "footer"}}  <footer class="site-footer">
+{{define "footer"}}{{if eq .Layout "factory-trade"}}{{template "footer_factory_trade" .}}{{else if eq .Layout "factory-sidebar"}}{{template "footer_factory_sidebar" .}}{{else if eq .Layout "factory-vision"}}{{template "footer_factory_vision" .}}{{else}}{{template "footer_default" .}}{{end}}{{template "footer_contact_overlays" .}}{{end}}
+
+{{define "footer_default"}}  <footer class="site-footer">
     <div class="wrap">
       <div>
-        {{if .Site.Logo}}<img class="brand-logo" src="{{.Site.Logo}}" alt="{{.Site.Name}}" loading="lazy" decoding="async"{{imgAttrs .Site.Logo}} style="margin-bottom:.4rem{{if .Site.LogoScale}};transform:scale({{.Site.LogoScale}});transform-origin:left center{{end}}"{{if .VisualEdit}} data-visual-edit="site.logo" data-visual-label="站点 Logo" data-visual-kind="image"{{end}}>{{end}}<div class="brand"{{if .VisualEdit}} data-visual-edit="site.name" data-visual-label="站点名称"{{end}}>{{.Site.Name}}</div>
+        {{/* 品牌选了「文字」时页脚也不放 logo（与页头一致；工厂站预设 brand=text，避免默认演示 logo 在暗色皮上隐形） */}}
+        {{if and .Site.Logo (ne .Site.Brand "text")}}<img class="brand-logo" src="{{.Site.Logo}}" alt="{{.Site.Name}}" loading="lazy" decoding="async"{{imgAttrs .Site.Logo}} style="margin-bottom:.4rem{{if .Site.LogoScale}};transform:scale({{.Site.LogoScale}});transform-origin:left center{{end}}"{{if .VisualEdit}} data-visual-edit="site.logo" data-visual-label="站点 Logo" data-visual-kind="image"{{end}}>{{end}}<div class="brand"{{if .VisualEdit}} data-visual-edit="site.name" data-visual-label="站点名称"{{end}}>{{.Site.Name}}</div>
         <p class="copy"><span{{if .VisualEdit}} data-visual-edit="site.footer_note" data-visual-label="页脚说明"{{end}}>{{.Site.FooterNote}}</span><br>© {{.Year}} {{.Site.Name}}. {{.Tr.T "footer.rights"}}</p>
       </div>
       <div class="f-cols">
@@ -11,4 +14,103 @@
       </div>
     </div>
   </footer>
+{{end}}
+
+{{define "footer_factory_trade"}}{{/* factory-trade 经典外贸：四栏大页脚——商品分类（现成分类数据）/
+     快速链接（导航菜单）/联系方式（ContactView，未配置项不显示）/认证徽章（纯 CSS 文字章），
+     底部版权条。不新增数据概念，全部吃既有装载。 */}}  <footer class="site-footer ft-footer">
+    <div class="wrap ft-foot-grid">
+      <div class="f-col ft-foot-brand">
+        <div class="brand"{{if .VisualEdit}} data-visual-edit="site.name" data-visual-label="站点名称"{{end}}>{{.Site.Name}}</div>
+        <p class="copy"{{if .VisualEdit}} data-visual-edit="site.footer_note" data-visual-label="页脚说明"{{end}}>{{.Site.FooterNote}}</p>
+        {{if .TelegramURL}}<a class="soc" href="{{.TelegramURL}}"{{.ExternalLinkAttrs .TelegramURL}}><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M9.78 18.65l.28-4.23 7.68-6.92c.34-.31-.07-.46-.52-.19L7.74 13.3 3.64 12c-.88-.25-.89-.86.2-1.3l15.97-6.16c.73-.33 1.43.18 1.15 1.3l-2.72 12.81c-.19.91-.74 1.13-1.5.71L12.6 16.3l-1.99 1.93c-.23.23-.42.42-.83.42z"/></svg><span>{{.Tr.T "footer.telegram"}}</span></a>{{end}}
+      </div>
+      <div class="f-col">
+        <h4>{{.Tr.T "factory.categories"}}</h4>
+        {{if .FactoryCats}}{{range .FactoryCats}}<a href="{{$.Tr.U .URL}}">{{.Name}}</a>{{end}}{{else}}<a href="{{.Tr.U "/products"}}">{{.Tr.T "factory.products"}}</a>{{end}}
+      </div>
+      <div class="f-col">
+        <h4>{{.Tr.T "footer.quick_links"}}</h4>
+        {{range .Menu}}<a href="{{.Href}}"{{$.ExternalLinkAttrs .Href}}>{{.Label}}</a>{{end}}<a href="{{.SitemapURL}}">{{.Tr.T "footer.sitemap"}}</a><a href="{{.Tr.U "/rss.xml"}}">{{.Tr.T "footer.rss"}}</a>
+      </div>
+      <div class="f-col ft-foot-contact">
+        <h4>{{.Tr.T "contact.float_label"}}</h4>
+        {{if .Contact.Any}}
+        {{if .Contact.Phone}}<a href="{{.Contact.TelURL}}"><b>{{.Tr.T "contact.phone"}}</b>{{.Contact.Phone}}</a>{{end}}
+        {{if .Contact.Email}}<a href="mailto:{{.Contact.Email}}"><b>{{.Tr.T "contact.email"}}</b>{{.Contact.Email}}</a>{{end}}
+        {{if .Contact.WaMe}}{{$wa := printf "https://wa.me/%s" .Contact.WaMe}}<a href="{{$wa}}"{{.ExternalLinkAttrs $wa}}><b>WhatsApp</b>{{.Contact.WhatsApp}}</a>{{end}}
+        {{if .Contact.WeChatQR}}<button type="button" class="ft-foot-wechat" data-wechat-open><b>{{.Tr.T "contact.wechat"}}</b>{{.Tr.T "contact.wechat_scan"}}</button>{{end}}
+        {{else}}<p class="copy">{{.Tr.T "factory.contact_note"}}</p>{{end}}
+        <div class="f-certs ft-foot-certs" aria-label="{{.Tr.T "factory.certs"}}">
+          <span class="f-cert"><b>CE</b><i>Certified</i></span>
+          <span class="f-cert"><b>ISO 9001</b><i>Certified</i></span>
+          <span class="f-cert"><b>SGS</b><i>Audited</i></span>
+        </div>
+      </div>
+    </div>
+    <div class="ft-foot-bar">
+      <div class="wrap">© {{.Year}} {{.Site.Name}}. {{.Tr.T "footer.rights"}}</div>
+    </div>
+  </footer>
+{{end}}
+
+{{define "footer_factory_sidebar"}}{{/* factory-sidebar 侧栏目录：一行极简页脚——版权 + TG/联系链接。 */}}  <footer class="site-footer fb-footer">
+    <div class="wrap fb-foot-in">
+      <p class="copy">© {{.Year}} {{.Site.Name}}.{{if .Site.FooterNote}} <span{{if .VisualEdit}} data-visual-edit="site.footer_note" data-visual-label="页脚说明"{{end}}>{{.Site.FooterNote}}</span>{{end}} {{.Tr.T "footer.rights"}}</p>
+      <div class="fb-foot-links">
+        {{if .TelegramURL}}<a href="{{.TelegramURL}}"{{.ExternalLinkAttrs .TelegramURL}}>{{.Tr.T "footer.telegram"}}</a>{{end}}
+        {{if .Contact}}{{if .Contact.Email}}<a href="mailto:{{.Contact.Email}}">{{.Tr.T "contact.email"}}</a>{{end}}
+        {{if .Contact.WaMe}}{{$wa := printf "https://wa.me/%s" .Contact.WaMe}}<a href="{{$wa}}"{{.ExternalLinkAttrs $wa}}>WhatsApp</a>{{end}}{{end}}
+        <a href="{{.Tr.U "/rss.xml"}}">{{.Tr.T "footer.rss"}}</a>
+        <a href="{{.SitemapURL}}">{{.Tr.T "footer.sitemap"}}</a>
+      </div>
+    </div>
+  </footer>
+{{end}}
+
+{{define "footer_factory_vision"}}{{/* factory-vision 沉浸展示：页脚=大 CTA 区——「获取报价」通栏与联系矩阵
+     合体（直接复用 factory_cta define；FactoryCTA 由 viewForLang 每页装载，内页锚点照常可用），
+     下缀一条极简版权栏，替代常规页脚。 */}}  <footer class="fv-footer">
+    {{template "factory_cta" .}}
+    <div class="fv-foot-bar">
+      <div class="wrap fv-foot-in">
+        <p class="copy">© {{.Year}} {{.Site.Name}}.{{if .Site.FooterNote}} <span{{if .VisualEdit}} data-visual-edit="site.footer_note" data-visual-label="页脚说明"{{end}}>{{.Site.FooterNote}}</span>{{end}} {{.Tr.T "footer.rights"}}</p>
+        <div class="fv-foot-links">
+          {{if .TelegramURL}}<a href="{{.TelegramURL}}"{{.ExternalLinkAttrs .TelegramURL}}>{{.Tr.T "footer.telegram"}}</a>{{end}}
+          <a href="{{.Tr.U "/rss.xml"}}">{{.Tr.T "footer.rss"}}</a>
+          <a href="{{.SitemapURL}}">{{.Tr.T "footer.sitemap"}}</a>
+        </div>
+      </div>
+    </div>
+  </footer>
+{{end}}
+
+{{define "footer_contact_overlays"}}  {{/* 联系方式（工厂/外贸站）：右下角浮动联系按钮 + 微信二维码弹层（JS class 开关，不用 :target）。
+       四种页脚共用——vision 的 CTA 微信按钮也依赖这里的弹层。 */}}
+  {{if .Contact}}
+  {{if and .Contact.Float .Contact.Any}}
+  <div class="contact-float" data-contact-float>
+    <div class="contact-float-panel" id="contact-float-panel" role="menu" aria-label="{{.Tr.T "contact.float_label"}}">
+      {{if .Contact.WaMe}}{{$wa := printf "https://wa.me/%s" .Contact.WaMe}}<a class="cf-item" role="menuitem" href="{{$wa}}"{{.ExternalLinkAttrs $wa}}><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2zm5.2 14.1c-.2.6-1.2 1.2-1.7 1.2-.4.1-1 .1-1.6-.1-.4-.1-.9-.3-1.5-.5-2.6-1.1-4.3-3.8-4.4-4-.1-.2-1.1-1.4-1.1-2.7 0-1.3.7-1.9.9-2.2.2-.3.5-.3.7-.3h.5c.2 0 .4 0 .6.4.2.5.7 1.8.8 1.9.1.1.1.3 0 .4-.1.2-.1.3-.3.5l-.4.5c-.1.1-.3.3-.1.6.2.3.7 1.2 1.6 1.9 1.1.9 2 1.2 2.3 1.4.3.1.5.1.6-.1.2-.2.7-.8.9-1.1.2-.3.4-.2.6-.1.3.1 1.7.8 1.9.9.3.1.5.2.5.3.1.1.1.7-.1 1.2z"/></svg><span>{{.Tr.T "contact.whatsapp"}}</span><em>{{.Contact.WhatsApp}}</em></a>{{end}}
+      {{if .Contact.Email}}<a class="cf-item" role="menuitem" href="mailto:{{.Contact.Email}}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg><span>{{.Tr.T "contact.email"}}</span><em>{{.Contact.Email}}</em></a>{{end}}
+      {{if .Contact.TelURL}}<a class="cf-item" role="menuitem" href="{{.Contact.TelURL}}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 16.5v3a1.5 1.5 0 0 1-1.6 1.5A17.5 17.5 0 0 1 3 4.6 1.5 1.5 0 0 1 4.5 3h3A1.5 1.5 0 0 1 9 4.3c.1.9.3 1.8.6 2.6a1.5 1.5 0 0 1-.3 1.6L8 9.8a15.5 15.5 0 0 0 6.2 6.2l1.3-1.3a1.5 1.5 0 0 1 1.6-.3c.8.3 1.7.5 2.6.6a1.5 1.5 0 0 1 1.3 1.5z"/></svg><span>{{.Tr.T "contact.phone"}}</span><em>{{.Contact.Phone}}</em></a>{{end}}
+      {{if .Contact.WeChatQR}}<button class="cf-item" role="menuitem" type="button" data-wechat-open><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3h-3zM18.5 18.5H21V21h-2.5z"/></svg><span>{{.Tr.T "contact.wechat"}}</span></button>{{end}}
+    </div>
+    <button class="contact-float-btn" type="button" data-contact-toggle aria-expanded="false" aria-controls="contact-float-panel" aria-label="{{.Tr.T "contact.float_label"}}" title="{{.Tr.T "contact.float_label"}}">
+      <svg class="cf-ico-open" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 14.5a4.5 4.5 0 0 1-4.5 4.5H8l-5 3V7.5A4.5 4.5 0 0 1 7.5 3h9A4.5 4.5 0 0 1 21 7.5z"/><path d="M8 10h8"/><path d="M8 13.5h5"/></svg>
+      <svg class="cf-ico-close" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+    </button>
+  </div>
+  {{end}}
+  {{if .Contact.WeChatQR}}
+  <div class="wechat-modal" data-wechat-modal hidden>
+    <button class="wechat-backdrop" type="button" data-wechat-close aria-label="{{.Tr.T "common.close"}}"></button>
+    <div class="wechat-card" role="dialog" aria-modal="true" aria-label="{{.Tr.T "contact.wechat"}}">
+      <button class="wechat-x" type="button" data-wechat-close aria-label="{{.Tr.T "common.close"}}">×</button>
+      <img src="{{.Contact.WeChatQR}}" alt="{{.Tr.T "contact.wechat_scan"}}" loading="lazy" decoding="async">
+      <p>{{.Tr.T "contact.wechat_scan"}}</p>
+    </div>
+  </div>
+  {{end}}
+  {{end}}
 {{end}}

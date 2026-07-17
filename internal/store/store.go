@@ -52,6 +52,11 @@ type Post struct {
 	LinkURL         string // 仅 type=link：指向的目标网址
 	Extra           string // 扩展内容类型的自定义字段值（JSON 对象）；内置 post/page/link 一般为空
 
+	// AI 报废申请（标记删除）：AI 无删除权，只能给「草稿」打建议弃用标记 + 理由，
+	// 删除永远由管理员执行。标记零破坏可撤销；任何发布动作自动清除标记。
+	DiscardReason string    // 报废理由（≤200 字；仅标记时非空）
+	DiscardedAt   time.Time // 标记时间；零值 = 未标记
+
 	// 单篇 SEO 覆盖（空 = 用默认）：非空时 seo 包构建 Meta 优先取这里的值。
 	RobotsOverride    string // 覆盖 robots meta，如 "noindex, follow"
 	CanonicalOverride string // 覆盖 canonical URL（须为合法绝对 URL）
@@ -60,6 +65,9 @@ type Post struct {
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }
+
+// Discarded 是否已被 AI 标记「建议弃用」（模板与 API 共用判定）。
+func (p *Post) Discarded() bool { return p != nil && !p.DiscardedAt.IsZero() }
 
 // PostRevision 内容修订快照：每次更新前把旧值整体序列化留底，供后台 / API 回滚。
 type PostRevision struct {
@@ -181,6 +189,8 @@ CREATE TABLE IF NOT EXISTS posts (
   extra        TEXT NOT NULL DEFAULT '',
   robots_override    TEXT NOT NULL DEFAULT '',
   canonical_override TEXT NOT NULL DEFAULT '',
+  discard_reason TEXT NOT NULL DEFAULT '',
+  discarded_at   TEXT,
   category_id  INTEGER REFERENCES categories(id) ON DELETE SET NULL,
   published_at TEXT,
   created_at   TEXT NOT NULL,
@@ -279,6 +289,9 @@ func (s *Store) migrate() error {
 	// 单篇 SEO 覆盖：robots / canonical（幂等补列）。
 	s.addColumnIfMissing("posts", "robots_override", "TEXT NOT NULL DEFAULT ''")
 	s.addColumnIfMissing("posts", "canonical_override", "TEXT NOT NULL DEFAULT ''")
+	// AI 报废申请（标记删除）：理由 + 标记时间（幂等补列，全内容类型共用）。
+	s.addColumnIfMissing("posts", "discard_reason", "TEXT NOT NULL DEFAULT ''")
+	s.addColumnIfMissing("posts", "discarded_at", "TEXT")
 	s.addColumnIfMissing("categories", "kind", "TEXT NOT NULL DEFAULT 'post'")
 	// 索引在表结构（含 lang/trans_group）就绪后统一创建，兼容新旧库。
 	if err := s.createIndexes(); err != nil {
@@ -988,16 +1001,16 @@ func (s *Store) ListAutomationLogs(limit int) ([]*AutomationLog, error) {
 // ---------- 查询：公开站点 ----------
 
 const postCols = `p.id,p.type,p.slug,p.title,p.excerpt,p.content,p.meta_desc,p.keywords,
-	p.cover_image,p.author,p.status,p.featured,p.editor_mode,p.comments_enabled,p.link_url,p.lang,p.trans_group,p.extra,p.robots_override,p.canonical_override,p.category_id,p.published_at,p.created_at,p.updated_at,
+	p.cover_image,p.author,p.status,p.featured,p.editor_mode,p.comments_enabled,p.link_url,p.lang,p.trans_group,p.extra,p.robots_override,p.canonical_override,p.discard_reason,p.discarded_at,p.category_id,p.published_at,p.created_at,p.updated_at,
 	c.id,c.slug,c.name,c.description`
 
 const postSummaryCols = `p.id,p.type,p.slug,p.title,p.excerpt,'' AS content,p.meta_desc,p.keywords,
-	p.cover_image,p.author,p.status,p.featured,p.editor_mode,p.comments_enabled,p.link_url,p.lang,p.trans_group,p.extra,p.robots_override,p.canonical_override,p.category_id,p.published_at,p.created_at,p.updated_at,
+	p.cover_image,p.author,p.status,p.featured,p.editor_mode,p.comments_enabled,p.link_url,p.lang,p.trans_group,p.extra,p.robots_override,p.canonical_override,p.discard_reason,p.discarded_at,p.category_id,p.published_at,p.created_at,p.updated_at,
 	c.id,c.slug,c.name,c.description,length(p.content)`
 
 func scanPost(sc interface{ Scan(...any) error }, hasContentLen bool) (*Post, error) {
 	var p Post
-	var pub, created, updated sql.NullString
+	var pub, created, updated, discarded sql.NullString
 	var cID sql.NullInt64
 	var cSlug, cName, cDesc sql.NullString
 	var featured int
@@ -1005,7 +1018,7 @@ func scanPost(sc interface{ Scan(...any) error }, hasContentLen bool) (*Post, er
 	var contentLen sql.NullInt64
 	dest := []any{&p.ID, &p.Type, &p.Slug, &p.Title, &p.Excerpt, &p.Content, &p.MetaDesc,
 		&p.Keywords, &p.CoverImage, &p.Author, &p.Status, &featured, &p.EditorMode, &commentsEnabled, &p.LinkURL, &p.Lang, &p.TransGroup, &p.Extra,
-		&p.RobotsOverride, &p.CanonicalOverride,
+		&p.RobotsOverride, &p.CanonicalOverride, &p.DiscardReason, &discarded,
 		&p.CategoryID, &pub, &created, &updated,
 		&cID, &cSlug, &cName, &cDesc}
 	if hasContentLen {
@@ -1025,6 +1038,7 @@ func scanPost(sc interface{ Scan(...any) error }, hasContentLen bool) (*Post, er
 	p.PublishedAt = parseTime(pub)
 	p.CreatedAt = parseTime(created)
 	p.UpdatedAt = parseTime(updated)
+	p.DiscardedAt = parseTime(discarded)
 	if cID.Valid {
 		p.Category = &Category{ID: cID.Int64, Slug: cSlug.String, Name: cName.String, Description: cDesc.String}
 	}
@@ -1471,11 +1485,11 @@ type AdminContentIssues struct {
 	MissingMetaDesc int
 }
 
-func adminContentWhere(kind, lang, status, categorySlug string) (string, []any, error) {
-	switch kind {
-	case "post", "link", "page":
-	default:
-		return "", nil, fmt.Errorf("unsupported content type: %s", kind)
+func adminContentWhere(kind, lang, status, categorySlug, q string) (string, []any, error) {
+	// kind 可以是内置 post/link/page，也可以是扩展内容类型键（如 product）——
+	// 一律作为绑定参数进 SQL，任意值安全；空值是编程错误。
+	if strings.TrimSpace(kind) == "" {
+		return "", nil, fmt.Errorf("content type required")
 	}
 	where := `WHERE p.type=? AND p.lang=?`
 	args := []any{kind, lang}
@@ -1484,6 +1498,9 @@ func adminContentWhere(kind, lang, status, categorySlug string) (string, []any, 
 	case "draft", "published", "scheduled":
 		where += ` AND p.status=?`
 		args = append(args, strings.TrimSpace(status))
+	case "discarded":
+		// 「待清理」档：AI 报废申请中的内容（批量清空只动其中仍是草稿的部分）。
+		where += ` AND p.discarded_at IS NOT NULL`
 	default:
 		return "", nil, fmt.Errorf("unsupported status: %s", status)
 	}
@@ -1493,6 +1510,12 @@ func adminContentWhere(kind, lang, status, categorySlug string) (string, []any, 
 		}
 		where += ` AND p.category_id=(SELECT cx.id FROM categories cx WHERE cx.lang=? AND cx.kind=? AND cx.slug=? LIMIT 1)`
 		args = append(args, lang, kind, categorySlug)
+	}
+	if q = strings.TrimSpace(q); q != "" {
+		// 标题关键字（LIKE 子串匹配；转义 % _ \ 防通配符注入）。
+		esc := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(q)
+		where += ` AND p.title LIKE ? ESCAPE '\'`
+		args = append(args, "%"+esc+"%")
 	}
 	return where, args, nil
 }
@@ -1504,13 +1527,19 @@ func (s *Store) ListAdminContent(kind, lang, status string, offset, limit int) (
 
 // ListAdminContentFiltered 后台：某语种文章、链接或页面列表（含草稿，可按状态和分类过滤，分页）。
 func (s *Store) ListAdminContentFiltered(kind, lang, status, categorySlug string, offset, limit int) ([]*Post, error) {
+	return s.ListAdminContentSearch(kind, lang, status, categorySlug, "", offset, limit)
+}
+
+// ListAdminContentSearch 后台：在 ListAdminContentFiltered 之上再按标题关键字过滤
+// （扩展类型商品列表的搜索框用；kind 亦可为扩展类型键）。
+func (s *Store) ListAdminContentSearch(kind, lang, status, categorySlug, q string, offset, limit int) ([]*Post, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 20
 	}
 	if offset < 0 {
 		offset = 0
 	}
-	where, args, err := adminContentWhere(kind, lang, status, categorySlug)
+	where, args, err := adminContentWhere(kind, lang, status, categorySlug, q)
 	if err != nil {
 		return nil, err
 	}
@@ -1525,7 +1554,12 @@ func (s *Store) CountAdminContent(kind, lang, status string) (int, error) {
 
 // CountAdminContentFiltered 后台：统计某语种文章、链接或页面数量（含草稿，可按状态和分类过滤）。
 func (s *Store) CountAdminContentFiltered(kind, lang, status, categorySlug string) (int, error) {
-	where, args, err := adminContentWhere(kind, lang, status, categorySlug)
+	return s.CountAdminContentSearch(kind, lang, status, categorySlug, "")
+}
+
+// CountAdminContentSearch 后台：CountAdminContentFiltered 的标题关键字版（与 ListAdminContentSearch 配对）。
+func (s *Store) CountAdminContentSearch(kind, lang, status, categorySlug, q string) (int, error) {
+	where, args, err := adminContentWhere(kind, lang, status, categorySlug, q)
 	if err != nil {
 		return 0, err
 	}
@@ -1541,12 +1575,14 @@ func (s *Store) CountContent(lang string) (int, error) {
 	return n, err
 }
 
-// LastPublicUpdate 返回「对外可见内容」上次变化的时间：已发布且已到发布时间的内容里 updated_at 的最大值。
-// 服务器动态托管——任何已发布内容一保存即对外生效，因此这个时间就是公开站点上次真正变化的时刻。
+// LastPublicUpdate 返回「对外可见内容」上次变化的时间：已发布且已到发布时间的内容里
+// max(published_at, updated_at) 的最大值——定时内容到点生效那一刻，前台可感知的变化时间是
+// published_at 而非更早的 updated_at。posts 表不筛 type，post/link/page 与扩展类型一并计入。
 // 草稿和未到时间的定时内容都不计入（尚未对外）。没有任何已发布内容时返回 ok=false。
+// 时间列统一由 fmtTime 写成 UTC RFC3339，字符串比较即时间序。
 func (s *Store) LastPublicUpdate() (time.Time, bool, error) {
 	var v sql.NullString
-	err := s.db.QueryRow(`SELECT MAX(updated_at) FROM posts
+	err := s.db.QueryRow(`SELECT MAX(CASE WHEN published_at IS NOT NULL AND published_at>updated_at THEN published_at ELSE updated_at END) FROM posts
 		WHERE status='published' AND (published_at IS NULL OR published_at<=?)`, fmtTime(time.Now())).Scan(&v)
 	if err != nil {
 		return time.Time{}, false, err
@@ -1760,11 +1796,18 @@ func (s *Store) UpdatePostFrom(p *Post, source string) error {
 	if p.Status == "published" && p.PublishedAt.IsZero() {
 		p.PublishedAt = p.UpdatedAt
 	}
+	// 人的发布动作覆盖 AI 报废申请：状态置为 published 时在同一条 UPDATE 里清除标记
+	// （CASE 以绑定的新状态判定，与状态写入原子生效）；其它状态保留既有标记（零破坏）。
 	_, err := s.db.Exec(`UPDATE posts SET
-		slug=?,title=?,excerpt=?,content=?,meta_desc=?,keywords=?,cover_image=?,author=?,status=?,featured=?,editor_mode=?,comments_enabled=?,link_url=?,trans_group=?,extra=?,robots_override=?,canonical_override=?,category_id=?,published_at=?,updated_at=?
+		slug=?,title=?,excerpt=?,content=?,meta_desc=?,keywords=?,cover_image=?,author=?,status=?,featured=?,editor_mode=?,comments_enabled=?,link_url=?,trans_group=?,extra=?,robots_override=?,canonical_override=?,category_id=?,published_at=?,updated_at=?,
+		discard_reason=CASE WHEN ?='published' THEN '' ELSE discard_reason END,
+		discarded_at=CASE WHEN ?='published' THEN NULL ELSE discarded_at END
 		WHERE id=?`,
 		p.Slug, p.Title, p.Excerpt, p.Content, p.MetaDesc, p.Keywords, p.CoverImage, p.Author, p.Status,
-		boolInt(p.Featured), nz(p.EditorMode, "markdown"), boolInt(p.CommentsEnabled), p.LinkURL, p.TransGroup, p.Extra, p.RobotsOverride, p.CanonicalOverride, p.CategoryID, nullTime(p.PublishedAt), fmtTime(p.UpdatedAt), p.ID)
+		boolInt(p.Featured), nz(p.EditorMode, "markdown"), boolInt(p.CommentsEnabled), p.LinkURL, p.TransGroup, p.Extra, p.RobotsOverride, p.CanonicalOverride, p.CategoryID, nullTime(p.PublishedAt), fmtTime(p.UpdatedAt), p.Status, p.Status, p.ID)
+	if err == nil && p.Status == "published" {
+		p.DiscardReason, p.DiscardedAt = "", time.Time{}
+	}
 	return err
 }
 
@@ -1872,11 +1915,13 @@ func (s *Store) PublishDue() ([]*Post, error) {
 	if len(due) == 0 {
 		return nil, nil
 	}
-	if _, err := s.db.Exec(`UPDATE posts SET status='published' WHERE status='scheduled' AND published_at<=?`, now); err != nil {
+	// 定时翻发布同属「发布路径」：一并清除 AI 报废标记（人为定时的意图优先于 AI 申请）。
+	if _, err := s.db.Exec(`UPDATE posts SET status='published', discard_reason='', discarded_at=NULL WHERE status='scheduled' AND published_at<=?`, now); err != nil {
 		return nil, err
 	}
 	for _, p := range due {
 		p.Status = "published"
+		p.DiscardReason, p.DiscardedAt = "", time.Time{}
 	}
 	return due, nil
 }

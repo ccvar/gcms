@@ -3,8 +3,9 @@ package web
 // telegram.go 「Telegram 频道」迷你版：把站点读者转化为频道订阅者、新文章自动推送。
 //  - 站点设置（settings 表，站点级）：bot token（密文性质，绝不写日志/回显页面）、频道 ID、
 //    公开订阅链接（@频道名可自动派生 t.me/…）、自动推送开关、最近一次推送错误。
-//  - 发布自动推送：posts 首次置 published 时（firePublishHooks 同层，admin / 自动化 API /
-//    定时翻发布三路都过）异步调 Bot API sendMessage；tg_pushed 台账唯一索引保证同一篇永远只推一次。
+//  - 发布自动推送：posts 与已启用扩展类型（如商品）首次置 published 时（firePublishHooks 同层，
+//    admin / 自动化 API / 定时翻发布三路都过）异步调 Bot API sendMessage；
+//    tg_pushed 台账唯一索引（content_type + content_id）保证同一篇内容永远只推一次。
 //  - 订阅数观测：GET /stats/telegram（stats:read，1h 缓存）→ getChatMemberCount。
 // Bot API 基址可注入（telegramAPIBase），测试用 httptest 假服务。
 
@@ -35,8 +36,17 @@ const (
 	platformTelegramBotTokenKey = "telegram.bot_token"
 
 	telegramExcerptMaxRunes = 300 // 推送消息里摘要的最大长度（超出截断加 …）
-	telegramPushContentType = "post"
 )
+
+// telegramPushableType 判断该类型是否参与发布自动推送：posts + 本站已启用的扩展类型
+// （工厂站「新品上架」正是频道留存定位下最自然的推送素材）。page/link 不推（页面偏静态、
+// 链接指向外站）。台账 tg_pushed 以 (content_type, content_id) 去重，天然支持多类型。
+func (s *Server) telegramPushableType(kind string) bool {
+	if kind == "post" {
+		return true
+	}
+	return s.contentTypeActive(kind)
+}
 
 // platformTelegramBotToken 平台级共用 token（单站部署无平台层，返回空）。
 func (s *Server) platformTelegramBotToken() string {
@@ -248,14 +258,15 @@ func (s *Server) siteTelegramStatusFor(st *store.Store) SiteTelegramStatus {
 
 // ---------- 发布自动推送 ----------
 
-// fireTelegramPush 发布钩子的 Telegram 分支：仅 posts；开关开启、token / 频道齐备才推。
+// fireTelegramPush 发布钩子的 Telegram 分支：posts + 已启用扩展类型（如商品）；
+// 开关开启、token / 频道齐备才推。商品推送消息与文章同构：「标题 + 摘要 + UTM 链接」。
 // 网络发送在 goroutine 内进行，失败仅记日志 + 写最近错误键，绝不阻塞发布。
 func (s *Server) fireTelegramPush(r *http.Request, p *store.Post) {
 	token, channel, text, ok := s.telegramPushPlan(r, p)
 	if !ok {
 		return
 	}
-	go s.telegramDeliver(token, channel, p.ID, text)
+	go s.telegramDeliver(token, channel, p.Type, p.ID, text)
 }
 
 // telegramPushPlan 同步的推送前置判定与消息组装（可测的确定性部分）。
@@ -263,7 +274,7 @@ func (s *Server) fireTelegramPush(r *http.Request, p *store.Post) {
 // 无请求上下文时回退站点域名配置（子站 baseURL 由 siteBaseURL 按主域名链派生，参考 media_cleanup
 // 的 Domain 回退）；派生不出公开地址（本地 baseURL）就跳过并记日志。
 func (s *Server) telegramPushPlan(r *http.Request, p *store.Post) (token, channel, text string, ok bool) {
-	if p == nil || p.Type != telegramPushContentType || p.Status != "published" {
+	if p == nil || p.Status != "published" || !s.telegramPushableType(p.Type) {
 		return "", "", "", false
 	}
 	if s.store.Setting(telegramAutoPushSetting) != "1" {
@@ -283,12 +294,13 @@ func (s *Server) telegramPushPlan(r *http.Request, p *store.Post) (token, channe
 	return token, channel, text, true
 }
 
-// telegramDeliver 实际推送（goroutine 内执行）：先经台账认领去重（同一篇永远只推一次），
-// 成功回写 message_id 并清空最近错误键；失败记日志 + 写最近错误键并释放认领（下次发布事件可重试）。
-func (s *Server) telegramDeliver(token, channel string, postID int64, text string) {
-	claimed, err := s.store.ClaimTelegramPush(telegramPushContentType, postID)
+// telegramDeliver 实际推送（goroutine 内执行）：先经台账认领去重（同一篇永远只推一次，
+// 台账键 = 内容类型 + ID，post 与商品等扩展类型共用一张表），成功回写 message_id 并清空
+// 最近错误键；失败记日志 + 写最近错误键并释放认领（下次发布事件可重试）。
+func (s *Server) telegramDeliver(token, channel, contentType string, postID int64, text string) {
+	claimed, err := s.store.ClaimTelegramPush(contentType, postID)
 	if err != nil {
-		log.Printf("telegram: 推送台账写入失败（post %d）: %v", postID, err)
+		log.Printf("telegram: 推送台账写入失败（%s %d）: %v", contentType, postID, err)
 		return
 	}
 	if !claimed {
@@ -296,12 +308,12 @@ func (s *Server) telegramDeliver(token, channel string, postID int64, text strin
 	}
 	msgID, err := telegramSendMessage(telegramAPIBase, token, channel, text)
 	if err != nil {
-		log.Printf("telegram: 推送 post %d 失败: %v", postID, err)
-		_ = s.store.ReleaseTelegramPush(telegramPushContentType, postID)
+		log.Printf("telegram: 推送 %s %d 失败: %v", contentType, postID, err)
+		_ = s.store.ReleaseTelegramPush(contentType, postID)
 		_ = s.store.SetSetting(telegramLastErrorSetting, time.Now().Format("2006-01-02 15:04:05")+" "+err.Error())
 		return
 	}
-	_ = s.store.SetTelegramPushMessageID(telegramPushContentType, postID, msgID)
+	_ = s.store.SetTelegramPushMessageID(contentType, postID, msgID)
 	_ = s.store.SetSetting(telegramLastErrorSetting, "")
 }
 

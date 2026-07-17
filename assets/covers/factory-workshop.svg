@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 960" role="img" aria-label="Machining workshop illustration">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#eef1f4"/>
+      <stop offset="1" stop-color="#e4e9ee"/>
+    </linearGradient>
+    <pattern id="grid" width="64" height="64" patternUnits="userSpaceOnUse">
+      <path d="M64 0H0v64" fill="none" stroke="#d3dbe2" stroke-width="2"/>
+    </pattern>
+  </defs>
+  <rect width="1280" height="960" fill="url(#bg)"/>
+  <rect width="1280" height="960" fill="url(#grid)"/>
+  <!-- 车间地坪线 -->
+  <path d="M120 720 h1040" stroke="#b9c5cf" stroke-width="4"/>
+  <!-- CNC 加工中心 ×2（机身 + 视窗 + 控制柜） -->
+  <g>
+    <rect x="200" y="400" width="300" height="320" rx="8" fill="#8fa2b2"/>
+    <rect x="224" y="440" width="200" height="180" rx="6" fill="#33414e"/>
+    <rect x="240" y="456" width="168" height="120" rx="4" fill="#56718a"/>
+    <rect x="448" y="440" width="36" height="180" rx="4" fill="#7c93a6"/>
+    <circle cx="466" cy="470" r="8" fill="#eef1f4"/>
+    <rect x="240" y="640" width="220" height="16" rx="4" fill="#33414e"/>
+  </g>
+  <g>
+    <rect x="600" y="430" width="280" height="290" rx="8" fill="#a9bac8"/>
+    <rect x="624" y="466" width="180" height="160" rx="6" fill="#33414e"/>
+    <rect x="640" y="482" width="148" height="104" rx="4" fill="#56718a"/>
+    <rect x="820" y="466" width="36" height="160" rx="4" fill="#8fa2b2"/>
+    <circle cx="838" cy="494" r="8" fill="#eef1f4"/>
+  </g>
+  <!-- 天车轨道 + 吊钩 -->
+  <g stroke="#3e6d94" stroke-width="6" fill="none">
+    <path d="M160 260 h960"/>
+    <path d="M980 260 v90"/>
+  </g>
+  <path d="M962 350 h36 l-18 34 z" fill="#3e6d94"/>
+  <!-- 工程标注 -->
+  <g stroke="#3e6d94" stroke-width="3" fill="none">
+    <path d="M200 780 v24 M880 780 v24 M200 792 h680"/>
+    <path d="M1000 430 h60 M1030 400 v60" stroke-dasharray="8 8"/>
+  </g>
+  <g fill="#3e6d94" font-family="ui-monospace,Menlo,monospace" font-size="30" letter-spacing="4">
+    <text x="472" y="838">BAY-01</text>
+  </g>
+</svg>

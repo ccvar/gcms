@@ -1,0 +1,297 @@
+{{define "home_factory_catalog"}}
+  {{/* factory-catalog — 工厂目录：hero 条（大标题 + 数字卡/关于我们）+ 分类入口 + 商品栅格
+       + 合作流程 + 应用行业 + 工厂图集 + FAQ + 弱化文章区 + CTA 通栏。
+       适合 SKU 多的工厂；数据全部由 fillFactoryHome 装载（product 类型未启用时容错留空）。
+       区块编号取 .FactorySectionNum（跳过未渲染区块，编号连续）。
+       气质=专业密集：区块编号 eyebrow、2px 重分隔线、紧凑栅格。 */}}
+  <div class="fc-wrap">
+    <section class="fc-hero">
+      <div class="fc-hero-copy">
+        {{if .Site.HeroEyebrow}}<p class="fc-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+        <h1 class="fc-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+        {{if .Site.HeroDescription}}<p class="fc-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+        <div class="fc-cta">
+          {{if .Contact.Any}}<a class="btn btn-primary" href="#factory-contact">{{.Tr.T "contact.float_label"}} <span class="arrow" aria-hidden="true">→</span></a>
+          {{else}}<a class="btn btn-primary" href="{{.Tr.U "/products"}}">{{.Tr.T "factory.products"}} <span class="arrow" aria-hidden="true">→</span></a>{{end}}
+          <a class="btn" href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}}</a>
+        </div>
+      </div>
+      <div class="fc-hero-side">
+        {{if .FactoryStats}}
+        <dl class="f-stats fc-stats">
+          {{range .FactoryStats}}
+          <div class="f-stat"><dt>{{.Num}}</dt><dd>{{.Label}}</dd></div>
+          {{end}}
+        </dl>
+        {{else}}
+        {{template "factory_about" .}}
+        {{end}}
+      </div>
+    </section>
+
+    {{if .FactoryCats}}
+    <section class="fc-section fc-cats-sec">
+      <div class="fc-section-head">
+        <div class="f-head-copy">
+          <p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "categories"}}</span>Categories</p>
+          <h2>{{.Tr.T "factory.categories"}}</h2>
+        </div>
+      </div>
+      {{template "factory_categories" .}}
+    </section>
+    {{end}}
+
+    <section class="fc-section fc-products-sec">
+      <div class="fc-section-head">
+        <div class="f-head-copy">
+          <p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "products"}}</span>Products</p>
+          <h2>{{.Tr.T "factory.products"}}</h2>
+        </div>
+        <a href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="fc-grid">
+        {{range .FactoryProducts}}
+        <a class="fc-card" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+          <span class="fc-card-media{{if not .CoverImage}} fc-card-gen{{end}}">
+            {{if .CoverImage}}<img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}
+          </span>
+          <span class="fc-card-body">
+            {{with .Category}}<span class="fc-card-cat">{{.Name}}</span>{{end}}
+            <span class="fc-card-title">{{.Title}}</span>
+            {{if .Excerpt}}<span class="fc-card-ex">{{.Excerpt}}</span>{{end}}
+            {{with productChips .}}<span class="f-chips">{{range .}}<span class="f-chip"><b>{{.K}}</b><i>{{.V}}</i></span>{{end}}</span>{{end}}
+          </span>
+        </a>
+        {{else}}
+        <p class="fc-empty muted">{{.Tr.T "factory.no_products"}}</p>
+        {{end}}
+      </div>
+    </section>
+
+    {{if .FactoryProcessOn}}
+    <section class="fc-section fc-process">
+      <div class="fc-section-head">
+        <div class="f-head-copy">
+          <p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "process"}}</span>Workflow</p>
+          <h2>{{.Tr.T "factory.process"}}</h2>
+        </div>
+      </div>
+      {{template "factory_process_steps" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryIndustries}}
+    <section class="fc-section fc-industries-sec">
+      <div class="fc-section-head">
+        <div class="f-head-copy">
+          <p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "industries"}}</span>Industries</p>
+          <h2>{{.Tr.T "factory.industries"}}</h2>
+        </div>
+      </div>
+      {{template "factory_industries" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryGallery}}
+    <section class="fc-section fc-gallery-sec">
+      <div class="fc-section-head">
+        <div class="f-head-copy">
+          <p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "gallery"}}</span>Facility</p>
+          <h2>{{.Tr.T "factory.gallery"}}</h2>
+        </div>
+      </div>
+      {{template "factory_gallery" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryQAs}}
+    <section class="fc-section fc-faq-sec">
+      <div class="fc-section-head">
+        <div class="f-head-copy">
+          <p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "faq"}}</span>FAQ</p>
+          <h2>{{.Tr.T "factory.faq"}}</h2>
+        </div>
+      </div>
+      {{template "factory_faq" .}}
+    </section>
+    {{end}}
+
+    {{if .Posts}}
+    <section class="fc-section fc-news">
+      <div class="fc-section-head fc-news-head">
+        <div class="f-head-copy">
+          <p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "news"}}</span>News</p>
+          <h2>{{.Tr.T "factory.news"}}</h2>
+        </div>
+        <a href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="fc-news-list">
+        {{range $i, $p := .Posts}}{{if lt $i 3}}
+        <a class="fc-news-item" href="{{$.Tr.U (contentURL $p)}}">
+          <time datetime="{{$.Tr.ISODate $p.PublishedAt}}">{{$.Tr.Date $p.PublishedAt}}</time>
+          <span class="fc-news-title">{{$p.Title}}</span>
+          <span class="arrow" aria-hidden="true">→</span>
+        </a>
+        {{end}}{{end}}
+      </div>
+    </section>
+    {{end}}
+  </div>
+
+  {{template "factory_cta" .}}
+{{end}}
+
+{{define "factory_about"}}
+  {{/* 「工厂实力」兜底：没配 factory.stats 时，把站点简介渲染成「关于我们」拆分块——
+       左侧装饰线 + 竖排大标题，右侧限宽文案，底衬淡图纸网格纹（CSS），绝不裸段落。 */}}
+  <div class="f-about">
+    <span class="f-about-rail"><strong class="f-about-title">{{.Tr.T "factory.about"}}</strong></span>
+    <p class="f-about-copy">{{.Site.Description}}</p>
+  </div>
+{{end}}
+
+{{define "factory_categories"}}
+  {{/* 分类入口卡区（零配置）：分类名 + 商品数 + 该分类首个商品封面；没有封面渲染首字生成块。
+       数据由 fillFactoryHome 装载（只含有已发布商品的分类）；点击进 /products/cat/{slug}。 */}}
+  <div class="f-cats">
+    {{range .FactoryCats}}
+    <a class="f-cat-card" href="{{$.Tr.U .URL}}">
+      <span class="f-cat-media{{if not .Cover}} f-cat-gen{{end}}">
+        {{if .Cover}}<img src="{{.Cover}}" alt="{{.Name}}" loading="lazy" decoding="async"{{imgAttrs .Cover}}>{{else}}<b aria-hidden="true">{{initial .Name}}</b>{{end}}
+      </span>
+      <span class="f-cat-body">
+        <span class="f-cat-name">{{.Name}}</span>
+        <span class="f-cat-count">{{printf ($.Tr.T "factory.categories_count") .Count}}</span>
+      </span>
+      <span class="arrow" aria-hidden="true">→</span>
+    </a>
+    {{end}}
+  </div>
+{{end}}
+
+{{define "factory_industries"}}
+  {{/* 应用行业条：行业名 + 一句话的小卡（settings factory.industries 覆盖，空回落 i18n 四项）。 */}}
+  <ul class="f-industries">
+    {{range .FactoryIndustries}}
+    <li class="f-industry">
+      <strong class="f-industry-name">{{.Name}}</strong>
+      {{if .Note}}<span class="f-industry-note">{{.Note}}</span>{{end}}
+    </li>
+    {{end}}
+  </ul>
+{{end}}
+
+{{define "factory_gallery"}}
+  {{/* 工厂图集「车间与设备」：横向滚动图带（scroll-snap）。未配置整个区块不渲染（上层把关），
+       绝不放占位假照片。 */}}
+  <div class="f-gallery" tabindex="0" aria-label="{{.Tr.T "factory.gallery"}}">
+    {{range $i, $src := .FactoryGallery}}
+    <figure class="f-gallery-item">
+      <img src="{{$src}}" alt="{{$.Tr.T "factory.gallery"}} {{add $i 1}}" loading="lazy" decoding="async"{{imgAttrs $src}}>
+    </figure>
+    {{end}}
+  </div>
+{{end}}
+
+{{define "factory_faq"}}
+  {{/* FAQ 手风琴：原生 details/summary（零 JS 可用；site.js 渐进增强为「开一个收其余」）。
+       绝不用 :target。数据 settings factory.faq 覆盖，空回落 i18n 四条外贸标配。 */}}
+  <div class="f-faq" data-factory-faq>
+    {{range .FactoryQAs}}
+    <details class="f-faq-item">
+      <summary class="f-faq-q"><span class="f-faq-marker" aria-hidden="true">Q</span>{{.Q}}<span class="f-faq-caret" aria-hidden="true"></span></summary>
+      <p class="f-faq-a">{{.A}}</p>
+    </details>
+    {{end}}
+  </div>
+{{end}}
+
+{{define "factory_process_steps"}}
+  {{/* 合作流程条：默认询盘→打样→量产→出货，编号大字 + 连接线。
+       文案由 fillFactoryHome 装载（settings factory.process 按语种覆盖，空字段逐项回落 i18n），
+       零配置照常渲染；整条开关关闭时上层不进入本模板。 */}}
+  <ol class="f-process">
+    {{range .FactoryProcess}}
+    <li class="f-step">
+      <span class="f-step-num" aria-hidden="true">{{.Num}}</span>
+      <strong class="f-step-title">{{.Title}}</strong>
+      <span class="f-step-note">{{.Note}}</span>
+    </li>
+    {{end}}
+  </ol>
+{{end}}
+
+{{define "factory_hero_anim"}}
+  {{/* hero「默认动画」的工厂风变体（hero.visual=default/anim* 时由各骨架的 hero 视觉位渲染）：
+       内容主题的 hv2 科技感动画讲的是「数据库→芯片→页面」，放工厂站气质违和，
+       所以做了这套图纸机械动画——运转齿轮 + 流水线传送带 + 尺寸标注线。
+       图纸网格底由外层容器 .f-heroanim 的 CSS 绘制（本 define 只出 <svg>，
+       这样同一动画能适配边卡 / 横幅 / 裸贴纹理三种容器形态）；
+       纯 CSS 动画零 JS、配色全吃主题变量，prefers-reduced-motion 时静止（见 public.css）。 */}}
+  <svg class="f-animsvg" viewBox="0 0 480 360" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
+    <defs><clipPath id="faBeltClip"><rect x="70" y="196" width="340" height="72"/></clipPath></defs>
+    <!-- 图纸十字定位标 -->
+    <g class="fa-cross"><path d="M52 52h14M59 45v14"/><path d="M420 76h14M427 69v14"/><path d="M56 226h14M63 219v14"/></g>
+    <!-- 大齿轮（顺时针）：齿圈用粗描边虚线圆拟合齿形 -->
+    <g class="fa-gear fa-gear-big">
+      <circle class="fa-body" cx="170" cy="150" r="50"/>
+      <circle class="fa-teeth" cx="170" cy="150" r="64"/>
+      <circle class="fa-ring" cx="170" cy="150" r="20"/>
+      <g class="fa-spokes">
+        <line x1="190" y1="150" x2="220" y2="150"/><line x1="180" y1="167.3" x2="195" y2="193.3"/><line x1="160" y1="167.3" x2="145" y2="193.3"/>
+        <line x1="150" y1="150" x2="120" y2="150"/><line x1="160" y1="132.7" x2="145" y2="106.7"/><line x1="180" y1="132.7" x2="195" y2="106.7"/>
+      </g>
+      <circle class="fa-hub" cx="170" cy="150" r="8"/>
+    </g>
+    <!-- 小齿轮（逆时针，啮合在大齿轮右上） -->
+    <g class="fa-gear fa-gear-small">
+      <circle class="fa-body" cx="268" cy="102" r="25"/>
+      <circle class="fa-teeth" cx="268" cy="102" r="34"/>
+      <circle class="fa-hub" cx="268" cy="102" r="6"/>
+    </g>
+    <!-- 流水线：货箱贴裁切区平移（左进右出），传送带虚线沿外沿循环=履带转动 -->
+    <g clip-path="url(#faBeltClip)">
+      <g class="fa-box">
+        <rect x="90" y="236" width="40" height="30" rx="2"/>
+        <line x1="110" y1="236" x2="110" y2="266"/>
+      </g>
+      <g class="fa-box b2">
+        <rect x="95" y="242" width="30" height="24" rx="2"/>
+        <line x1="110" y1="242" x2="110" y2="266"/>
+      </g>
+    </g>
+    <rect class="fa-belt" x="70" y="268" width="340" height="30" rx="15"/>
+    <rect class="fa-belt-line" x="70" y="268" width="340" height="30" rx="15"/>
+    <circle class="fa-roller" cx="85" cy="283" r="8"/>
+    <circle class="fa-roller" cx="395" cy="283" r="8"/>
+    <circle class="fa-dot" cx="162" cy="283" r="4"/><circle class="fa-dot" cx="240" cy="283" r="4"/><circle class="fa-dot" cx="318" cy="283" r="4"/>
+    <!-- 尺寸标注线（图纸感，静止） -->
+    <g class="fa-dim"><line x1="70" y1="330" x2="410" y2="330"/><line x1="70" y1="324" x2="70" y2="336"/><line x1="410" y1="324" x2="410" y2="336"/></g>
+  </svg>
+{{end}}
+
+{{define "factory_cta"}}
+  {{/* 页脚前 CTA 通栏：「获取报价」大字 + 联系按钮（反色 ink 底 + 斜纹肌理）。
+       文案由 fillFactoryHome 装载（settings factory.cta 按语种覆盖，空字段回落 i18n）。
+       配置了联系方式给直达按钮；没配置回落商品入口，通栏照常渲染（零配置）。
+       id 维持 factory-contact —— hero 的联系 CTA 锚到这里（纯锚点滚动，绝不用 :target）。 */}}
+  <section class="f-cta" id="factory-contact" aria-label="{{.FactoryCTA.Title}}">
+    <div class="f-cta-inner">
+      <div class="f-cta-copy">
+        <p class="f-eyebrow">Work With Us</p>
+        <h2>{{.FactoryCTA.Title}}</h2>
+        <p class="f-cta-note">{{.FactoryCTA.Note}}</p>
+      </div>
+      <div class="inquiry-actions f-cta-actions">
+        {{if .Contact.Any}}
+        {{if .Contact.WaMe}}{{$wa := printf "https://wa.me/%s" .Contact.WaMe}}<a class="inquiry-btn inquiry-wa" href="{{$wa}}"{{.ExternalLinkAttrs $wa}}><svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2zm5.2 14.1c-.2.6-1.2 1.2-1.7 1.2-.4.1-1 .1-1.6-.1-.4-.1-.9-.3-1.5-.5-2.6-1.1-4.3-3.8-4.4-4-.1-.2-1.1-1.4-1.1-2.7 0-1.3.7-1.9.9-2.2.2-.3.5-.3.7-.3h.5c.2 0 .4 0 .6.4.2.5.7 1.8.8 1.9.1.1.1.3 0 .4-.1.2-.1.3-.3.5l-.4.5c-.1.1-.3.3-.1.6.2.3.7 1.2 1.6 1.9 1.1.9 2 1.2 2.3 1.4.3.1.5.1.6-.1.2-.2.7-.8.9-1.1.2-.3.4-.2.6-.1.3.1 1.7.8 1.9.9.3.1.5.2.5.3.1.1.1.7-.1 1.2z"/></svg><span>WhatsApp</span></a>{{end}}
+        {{if .Contact.Email}}<a class="inquiry-btn" href="mailto:{{.Contact.Email}}"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg><span>{{.Tr.T "contact.email"}}</span></a>{{end}}
+        {{if .Contact.TelURL}}<a class="inquiry-btn" href="{{.Contact.TelURL}}"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 16.5v3a1.5 1.5 0 0 1-1.6 1.5A17.5 17.5 0 0 1 3 4.6 1.5 1.5 0 0 1 4.5 3h3A1.5 1.5 0 0 1 9 4.3c.1.9.3 1.8.6 2.6a1.5 1.5 0 0 1-.3 1.6L8 9.8a15.5 15.5 0 0 0 6.2 6.2l1.3-1.3a1.5 1.5 0 0 1 1.6-.3c.8.3 1.7.5 2.6.6a1.5 1.5 0 0 1 1.3 1.5z"/></svg><span>{{.Tr.T "contact.phone"}}{{if .Contact.Phone}} · {{.Contact.Phone}}{{end}}</span></a>{{end}}
+        {{if .Contact.WeChatQR}}<button class="inquiry-btn" type="button" data-wechat-open><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3h-3zM18.5 18.5H21V21h-2.5z"/></svg><span>{{.Tr.T "contact.wechat"}}</span></button>{{end}}
+        {{else}}
+        <a class="inquiry-btn" href="{{.Tr.U "/products"}}"><span>{{.Tr.T "factory.products"}}</span> <span class="arrow" aria-hidden="true">→</span></a>
+        {{end}}
+      </div>
+    </div>
+  </section>
+{{end}}

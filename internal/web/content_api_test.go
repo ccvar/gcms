@@ -33,11 +33,19 @@ func TestAPIExtTypeFieldsAndIntrospection(t *testing.T) {
 		t.Fatalf("types introspection missing product schema: %s", tb)
 	}
 
-	// 创建带自定义字段的商品
+	// 创建带自定义字段的商品。发布质量门（product 规则集）：标题 ≥8 字、摘要/描述必填、
+	// 正文 ≥100 词、封面或图集 ≥1（gallery 已带）、specs ≥3 行。
 	body, _ := json.Marshal(map[string]any{
-		"title":  "API 商品",
-		"status": "published",
-		"fields": map[string]any{"price": 299, "gallery": []string{"/u/a.webp", "/u/b.webp"}},
+		"title":     "API 商品字段自省测试",
+		"status":    "published",
+		"excerpt":   "字段自省测试摘要。",
+		"meta_desc": "字段自省测试描述。",
+		"content":   strings.Repeat("字段自省测试正文。", 15),
+		"fields": map[string]any{
+			"price":   299,
+			"gallery": []string{"/u/a.webp", "/u/b.webp"},
+			"specs":   []map[string]string{{"k": "型号", "v": "A"}, {"k": "材质", "v": "B"}, {"k": "认证", "v": "C"}},
+		},
 	})
 	rc := httptest.NewRequest(http.MethodPost, "/api/admin/v1/products", bytes.NewReader(body))
 	rc.SetPathValue("collection", "products")

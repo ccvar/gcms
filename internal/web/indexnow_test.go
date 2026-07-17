@@ -86,7 +86,8 @@ func TestServeIndexNowKeyFile(t *testing.T) {
 }
 
 // TestFirePublishHooksInvalidatesSitemap 发布钩子必须立即失效 sitemap 端点缓存；
-// 草稿与非 post/page/link 类型不触发。本地 baseURL 下不做 IndexNow 网络提交（测试不打真网）。
+// 草稿与「未启用的扩展类型」不触发，已启用的扩展类型（商品）触发。
+// 本地 baseURL 下不做 IndexNow 网络提交（测试不打真网）。
 func TestFirePublishHooksInvalidatesSitemap(t *testing.T) {
 	s, _ := newTestAutomationServer(t, "posts:read")
 	s.endpoints = map[string]endpointCacheEntry{}
@@ -111,6 +112,15 @@ func TestFirePublishHooksInvalidatesSitemap(t *testing.T) {
 	}
 	s.firePublishHooks(nil, &store.Post{Type: "product", Status: "published", Lang: "zh", Slug: "a"})
 	if _, _, ok := s.cachedEndpoint("sitemap:http://localhost:8080"); !ok {
-		t.Fatalf("非 post/page/link 不该触发发布钩子")
+		t.Fatalf("未启用的扩展类型不该触发发布钩子")
+	}
+
+	// 启用 product 后：商品发布同样失效 sitemap 缓存（IndexNow/Telegram 同一闸门）。
+	if err := s.store.SetSetting(enabledContentTypesKey, "product"); err != nil {
+		t.Fatalf("enable product: %v", err)
+	}
+	s.firePublishHooks(nil, &store.Post{Type: "product", Status: "published", Lang: "zh", Slug: "a"})
+	if _, _, ok := s.cachedEndpoint("sitemap:http://localhost:8080"); ok {
+		t.Fatalf("已启用扩展类型发布后 sitemap 缓存仍在")
 	}
 }

@@ -79,7 +79,8 @@ func isCJKRune(r rune) bool {
 		unicode.Is(unicode.Katakana, r) || unicode.Is(unicode.Hangul, r)
 }
 
-// SimilarByTitle 返回与 title 近似的同类型内容（lang 为空 = 全语种；含已发布 + 草稿）。
+// SimilarByTitle 返回与 title 近似的同类型内容（lang 为空 = 全语种；含已发布 + 草稿，
+// 但排除 AI 已标记报废的条目——报废中的稿不算「站内已有同题」）。
 func (s *Store) SimilarByTitle(kind, lang, title string, limit int) ([]SimilarRow, error) {
 	tokens := similarTokens(title)
 	if len(tokens) == 0 || limit <= 0 {
@@ -117,7 +118,9 @@ func (s *Store) similarFTS(kind, lang string, tokens []string, limit int) ([]Sim
 		quoted = append(quoted, `"`+strings.ReplaceAll(tok, `"`, `""`)+`"`)
 	}
 	match := `title : (` + strings.Join(quoted, " OR ") + `)`
-	where := `post_search MATCH ? AND type=?`
+	// 排除 AI 已标记报废的条目（在子查询内过滤，避免 LIMIT 被排除项占坑）：
+	// 别让 AI 把自己报废的稿当「站内已有同题」。
+	where := `post_search MATCH ? AND type=? AND rowid NOT IN (SELECT id FROM posts WHERE discarded_at IS NOT NULL)`
 	args := []any{match, kind}
 	if lang != "" {
 		where += ` AND lang=?`
@@ -169,7 +172,8 @@ func similarScore(rank, best float64) float64 {
 
 // similarLike 回退路径：LIKE 捞候选行，按「命中词元数 / 词元总数」计分排序。
 func (s *Store) similarLike(kind, lang string, tokens []string, limit int) ([]SimilarRow, error) {
-	where := `p.type=?`
+	// 与 FTS 路径同口径：排除 AI 已标记报废的条目。
+	where := `p.type=? AND p.discarded_at IS NULL`
 	args := []any{kind}
 	if lang != "" {
 		where += ` AND p.lang=?`

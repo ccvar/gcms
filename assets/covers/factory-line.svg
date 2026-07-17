@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 960" role="img" aria-label="Assembly line illustration">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#eef1f4"/>
+      <stop offset="1" stop-color="#e4e9ee"/>
+    </linearGradient>
+    <pattern id="grid" width="64" height="64" patternUnits="userSpaceOnUse">
+      <path d="M64 0H0v64" fill="none" stroke="#d3dbe2" stroke-width="2"/>
+    </pattern>
+  </defs>
+  <rect width="1280" height="960" fill="url(#bg)"/>
+  <rect width="1280" height="960" fill="url(#grid)"/>
+  <!-- 输送带（滚筒线） -->
+  <g>
+    <rect x="160" y="560" width="960" height="46" rx="10" fill="#8fa2b2"/>
+    <g fill="#eef1f4">
+      <circle cx="220" cy="583" r="12"/><circle cx="320" cy="583" r="12"/><circle cx="420" cy="583" r="12"/>
+      <circle cx="520" cy="583" r="12"/><circle cx="620" cy="583" r="12"/><circle cx="720" cy="583" r="12"/>
+      <circle cx="820" cy="583" r="12"/><circle cx="920" cy="583" r="12"/><circle cx="1020" cy="583" r="12"/>
+    </g>
+    <rect x="220" y="606" width="20" height="120" fill="#7c93a6"/>
+    <rect x="1040" y="606" width="20" height="120" fill="#7c93a6"/>
+  </g>
+  <!-- 传送中的工件箱 -->
+  <g>
+    <rect x="300" y="500" width="110" height="60" rx="6" fill="#33414e"/>
+    <rect x="560" y="500" width="110" height="60" rx="6" fill="#56718a"/>
+    <rect x="820" y="500" width="110" height="60" rx="6" fill="#33414e"/>
+  </g>
+  <!-- 机械臂：底座-大臂-小臂-夹爪 -->
+  <g>
+    <rect x="560" y="300" width="130" height="34" rx="8" fill="#7c93a6" transform="rotate(38 560 300)"/>
+    <rect x="480" y="360" width="150" height="40" rx="10" fill="#8fa2b2" transform="rotate(-24 480 360)"/>
+    <rect x="440" y="380" width="70" height="90" rx="10" fill="#33414e"/>
+    <rect x="410" y="460" width="130" height="26" rx="6" fill="#33414e"/>
+    <circle cx="475" cy="392" r="14" fill="#eef1f4"/>
+    <path d="M652 356 l30 34 M700 322 l-18 46" stroke="#33414e" stroke-width="14" stroke-linecap="round"/>
+  </g>
+  <!-- 工程标注 -->
+  <g stroke="#3e6d94" stroke-width="3" fill="none">
+    <path d="M160 660 v24 M1120 660 v24 M160 672 h960"/>
+    <path d="M960 300 h60 M990 270 v60" stroke-dasharray="8 8"/>
+    <circle cx="475" cy="392" r="30"/>
+  </g>
+  <g fill="#3e6d94" font-family="ui-monospace,Menlo,monospace" font-size="30" letter-spacing="4">
+    <text x="560" y="742">LINE-02</text>
+  </g>
+</svg>

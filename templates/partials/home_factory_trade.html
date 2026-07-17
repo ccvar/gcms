@@ -1,0 +1,140 @@
+{{define "home_factory_trade"}}
+  {{/* factory-trade — 经典外贸门户：横幅 hero（藏青色带 + 实力数字/关于我们）
+       + 门户主区（左分类栏 + 联系卡 / 右商品栅格 + 动态列表）+ 流程 + 行业 + 图集 + FAQ + CTA 通栏。
+       双层页头与四栏大页脚在 partials/header.html / footer.html 分支（本骨架的结构记忆点）。
+       数据全部由 fillFactoryHome 装载；区块复用工厂族共享 define 与配置槽，零新增数据概念。
+       气质=传统 B2B 门户：色带横幅、分栏主区、信息密度均匀。 */}}
+  <div class="ft-wrap">
+    <section class="ft-hero">
+      <div class="ft-hero-in">
+        <div class="ft-hero-copy">
+          {{if .Site.HeroEyebrow}}<p class="ft-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+          <h1 class="ft-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+          {{if .Site.HeroDescription}}<p class="ft-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+          <div class="ft-cta">
+            {{if .Contact.Any}}<a class="btn btn-primary" href="#factory-contact">{{.Tr.T "contact.float_label"}} <span class="arrow" aria-hidden="true">→</span></a>
+            {{else}}<a class="btn btn-primary" href="{{.Tr.U "/products"}}">{{.Tr.T "factory.products"}} <span class="arrow" aria-hidden="true">→</span></a>{{end}}
+            <a class="btn ft-btn-ghost" href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}}</a>
+          </div>
+        </div>
+        <div class="ft-hero-side">
+          {{if .FactoryStats}}
+          <dl class="f-stats ft-stats">
+            {{range .FactoryStats}}
+            <div class="f-stat"><dt>{{.Num}}</dt><dd>{{.Label}}</dd></div>
+            {{end}}
+          </dl>
+          {{else}}
+          {{template "factory_about" .}}
+          {{end}}
+        </div>
+      </div>
+    </section>
+
+    <div class="ft-main">
+      <aside class="ft-side">
+        {{if .FactoryCats}}
+        <div class="ft-panel ft-cats-panel">
+          <p class="ft-panel-title">{{.Tr.T "factory.categories"}}</p>
+          <nav class="ft-cat-list" aria-label="{{.Tr.T "factory.categories"}}">
+            {{range .FactoryCats}}
+            <a href="{{$.Tr.U .URL}}"><span>{{.Name}}</span><small>{{.Count}}</small></a>
+            {{end}}
+            <a class="ft-cat-all" href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+          </nav>
+        </div>
+        {{end}}
+        {{if .Contact.Any}}
+        <div class="ft-panel ft-contact-panel">
+          <p class="ft-panel-title">{{.Tr.T "contact.float_label"}}</p>
+          {{if .Contact.Phone}}<a class="ft-contact-row" href="{{.Contact.TelURL}}"><b>{{.Tr.T "contact.phone"}}</b><span>{{.Contact.Phone}}</span></a>{{end}}
+          {{if .Contact.Email}}<a class="ft-contact-row" href="mailto:{{.Contact.Email}}"><b>{{.Tr.T "contact.email"}}</b><span>{{.Contact.Email}}</span></a>{{end}}
+          {{if .Contact.WaMe}}{{$wa := printf "https://wa.me/%s" .Contact.WaMe}}<a class="ft-contact-row" href="{{$wa}}"{{.ExternalLinkAttrs $wa}}><b>WhatsApp</b><span>{{.Contact.WhatsApp}}</span></a>{{end}}
+          <a class="btn btn-primary ft-contact-btn" href="#factory-contact">{{.FactoryCTA.Title}}</a>
+        </div>
+        {{end}}
+      </aside>
+
+      <div class="ft-body">
+        <section class="ft-section ft-products-sec">
+          <div class="ft-section-head">
+            <h2>{{.Tr.T "factory.products"}}</h2>
+            <a href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+          </div>
+          <div class="ft-grid">
+            {{range .FactoryProducts}}
+            <a class="ft-card" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+              <span class="ft-card-media{{if not .CoverImage}} ft-card-gen{{end}}">
+                {{if .CoverImage}}<img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}
+              </span>
+              <span class="ft-card-body">
+                {{with .Category}}<span class="ft-card-cat">{{.Name}}</span>{{end}}
+                <span class="ft-card-title">{{.Title}}</span>
+                {{with productChips .}}<span class="f-chips">{{range .}}<span class="f-chip"><b>{{.K}}</b><i>{{.V}}</i></span>{{end}}</span>{{end}}
+              </span>
+            </a>
+            {{else}}
+            <p class="ft-empty muted">{{.Tr.T "factory.no_products"}}</p>
+            {{end}}
+          </div>
+        </section>
+
+        {{if .Posts}}
+        <section class="ft-section ft-news">
+          <div class="ft-section-head">
+            <h2>{{.Tr.T "factory.news"}}</h2>
+            <a href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+          </div>
+          <div class="ft-news-list">
+            {{range $i, $p := .Posts}}{{if lt $i 4}}
+            <a class="ft-news-item" href="{{$.Tr.U (contentURL $p)}}">
+              <time datetime="{{$.Tr.ISODate $p.PublishedAt}}">{{$.Tr.Date $p.PublishedAt}}</time>
+              <span class="ft-news-title">{{$p.Title}}</span>
+              <span class="arrow" aria-hidden="true">→</span>
+            </a>
+            {{end}}{{end}}
+          </div>
+        </section>
+        {{end}}
+      </div>
+    </div>
+
+    {{if .FactoryProcessOn}}
+    <section class="ft-section ft-full">
+      <div class="ft-section-head">
+        <h2>{{.Tr.T "factory.process"}}</h2>
+      </div>
+      {{template "factory_process_steps" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryIndustries}}
+    <section class="ft-section ft-full">
+      <div class="ft-section-head">
+        <h2>{{.Tr.T "factory.industries"}}</h2>
+      </div>
+      {{template "factory_industries" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryGallery}}
+    <section class="ft-section ft-full">
+      <div class="ft-section-head">
+        <h2>{{.Tr.T "factory.gallery"}}</h2>
+      </div>
+      {{template "factory_gallery" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryQAs}}
+    <section class="ft-section ft-full">
+      <div class="ft-section-head">
+        <h2>{{.Tr.T "factory.faq"}}</h2>
+      </div>
+      {{template "factory_faq" .}}
+    </section>
+    {{end}}
+  </div>
+
+  {{template "factory_cta" .}}
+{{end}}

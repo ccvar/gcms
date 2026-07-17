@@ -16,12 +16,13 @@ import (
 
 // ---------- hub：启用/停用 ----------
 
-// adminExtHub 渲染「扩展」hub：列出全部扩展类型及其启用状态。
+// adminExtHub 渲染「扩展」hub：列出扩展类型及其启用状态。
+// 已启用且 Primary 的类型不在此列（整体迁出，见 hubExtTypeRows）。
 func (s *Server) adminExtHub(w http.ResponseWriter, r *http.Request) {
 	sess, _ := s.currentSession(r)
 	v := s.adminView(r, "扩展")
 	s.authed(v, sess)
-	v.ExtTypes = s.extTypeRows(s.editLang(r))
+	v.ExtTypes = s.hubExtTypeRows(s.editLang(r))
 	if r.URL.Query().Get("saved") == "1" {
 		v.Flash = "已更新。"
 	}
@@ -72,24 +73,72 @@ func (s *Server) adminExtList(w http.ResponseWriter, r *http.Request) {
 	}
 	sess, _ := s.currentSession(r)
 	lang := s.editLang(r)
-	posts, err := s.store.ListAllByType(ct.Key, lang)
-	if err != nil {
-		s.serverError(w, err)
-		return
-	}
 	v := s.adminView(r, ct.Name(s.adminLang(r)))
 	s.authed(v, sess)
 	v.ExtType = ct
+	v.EditLang = lang
 	if ct.Hierarchical {
 		// 层级类型：按「分类 → 章节」排好序并标注缩进层级，让后台一眼看清结构、支持同级拖动排序。
+		// 树形结构与分页/搜索天然冲突，维持全量展示。
+		posts, err := s.store.ListAllByType(ct.Key, lang)
+		if err != nil {
+			s.serverError(w, err)
+			return
+		}
 		posts, v.ExtDepth, v.ExtParent = adminDocOrder(posts)
+		v.ExtPosts = posts
+	} else {
+		// 平铺类型（商品等）：状态筛选 + 标题搜索 + 分页，机制与文章列表一致。
+		status := adminStatusFilter(r)
+		q := strings.TrimSpace(r.URL.Query().Get("q"))
+		page := pageParam(r)
+		total, err := s.store.CountAdminContentSearch(ct.Key, lang, status, "", q)
+		if err != nil {
+			s.serverError(w, err)
+			return
+		}
+		totalPages := ceilDiv(total, adminListPageSize)
+		if totalPages > 0 && page > totalPages {
+			page = totalPages
+		}
+		posts, err := s.store.ListAdminContentSearch(ct.Key, lang, status, "", q, (page-1)*adminListPageSize, adminListPageSize)
+		if err != nil {
+			s.serverError(w, err)
+			return
+		}
+		v.ExtPosts = posts
+		v.ListTotal = total
+		v.StatusFilter = status
+		v.Query = q
+		v.ExtPrice = extPriceColumn(ct, posts)
+		setPagination(v, page, totalPages, "/admin/ext/"+ct.Key)
 	}
-	v.ExtPosts = posts
-	v.EditLang = lang
+	// AI 报废申请「待清理」：条数驱动清空按钮与筛选档；purged 回跳展示清理结果。
+	v.DiscardTotal, _ = s.store.CountDiscardedDrafts(ct.Key, lang)
 	if r.URL.Query().Get("deleted") == "1" {
 		v.Flash = "已删除。"
 	}
+	if n := strings.TrimSpace(r.URL.Query().Get("purged")); n != "" {
+		if cnt, err := strconv.Atoi(n); err == nil && cnt >= 0 {
+			v.Flash = fmt.Sprintf(v.Admin.T("admin.discard.purged", "已清理 %d 篇 AI 弃用草稿。"), cnt)
+		}
+	}
 	s.rnd.Admin(w, "ext_list", http.StatusOK, v)
+}
+
+// extPriceColumn 商品列表的价格列：类型带 price 字段时，取各条 extra.price 的展示文本。
+// 无值的条目不进 map（前台「有值才显示」）；类型没有 price 字段返回 nil（不渲染整列）。
+func extPriceColumn(ct *ContentType, posts []*store.Post) map[int64]string {
+	if ct.FieldByKey("price") == nil {
+		return nil
+	}
+	out := map[int64]string{}
+	for _, p := range posts {
+		if v := scalarString(parseExtraMap(p.Extra)["price"]); v != "" {
+			out[p.ID] = v
+		}
+	}
+	return out
 }
 
 func (s *Server) adminExtNew(w http.ResponseWriter, r *http.Request) {
@@ -118,6 +167,12 @@ func (s *Server) adminExtEdit(w http.ResponseWriter, r *http.Request) {
 	flash := ""
 	if r.URL.Query().Get("saved") == "1" {
 		flash = "已保存。"
+	}
+	if r.URL.Query().Get("restored") == "1" {
+		flash = "已恢复到所选历史版本。"
+	}
+	if r.URL.Query().Get("duplicated") == "1" {
+		flash = "已复制为草稿，可在此基础上修改。"
 	}
 	s.rnd.Admin(w, "ext_edit", http.StatusOK, s.adminExtEditView(r, sess, ct, p, flash, ""))
 }
@@ -203,6 +258,83 @@ func (s *Server) adminExtTranslate(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, editPath(id), http.StatusSeeOther)
 }
 
+// duplicateTitle 复制品标题：按内容语种加「副本」后缀（非中文内容用英文 copy）。
+func duplicateTitle(title, lang string) string {
+	if strings.HasPrefix(lang, "zh") {
+		return title + "（副本）"
+	}
+	return title + " (copy)"
+}
+
+// adminExtDuplicate 复制一条扩展内容为草稿（工厂系列品改型号的高频操作）：
+// 整条复制（标题/正文/摘要/SEO/封面/Extra 含图集与规格/分类），标题加「副本」，
+// slug 走 uniqueSlug 去重，trans_group 留空由 CreatePost 生成新组（副本是独立内容，
+// 不进原互译组——同组同语种只能有一篇），落到新草稿的编辑页。
+func (s *Server) adminExtDuplicate(w http.ResponseWriter, r *http.Request) {
+	ct := s.adminExtType(r)
+	if ct == nil {
+		s.notFound(w, r)
+		return
+	}
+	if _, ok := s.checkCSRF(w, r); !ok {
+		return
+	}
+	src, _ := s.store.GetPostByID(atoi64(r.PathValue("id")))
+	if src == nil || src.Type != ct.Key {
+		s.notFound(w, r)
+		return
+	}
+	np := &store.Post{
+		Type: src.Type, Title: duplicateTitle(src.Title, src.Lang), Excerpt: src.Excerpt, Content: src.Content,
+		MetaDesc: src.MetaDesc, Keywords: src.Keywords, CoverImage: src.CoverImage, Author: src.Author,
+		Status: "draft", EditorMode: src.EditorMode, Lang: src.Lang, LinkURL: src.LinkURL,
+		RobotsOverride: src.RobotsOverride, CanonicalOverride: src.CanonicalOverride,
+		CategoryID: src.CategoryID,
+		Extra:      src.Extra, // 自定义字段整套带走（价格/图集/规格）
+	}
+	np.Slug = s.uniqueSlug(src.Lang, src.Slug, 0)
+	id, err := s.store.CreatePost(np)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	s.clearGeneratedCaches()
+	http.Redirect(w, r, fmt.Sprintf("/admin/ext/%s/%d/edit?duplicated=1", ct.Key, id), http.StatusSeeOther)
+}
+
+// adminExtPin 扩展内容置顶开关（与文章/链接的 adminPin 同构）：featured 参与
+// ListPublishedByType 的 featured DESC 排序，工厂首页「精选商品」由此名实相符。
+func (s *Server) adminExtPin(w http.ResponseWriter, r *http.Request) {
+	ct := s.adminExtType(r)
+	if ct == nil {
+		s.notFound(w, r)
+		return
+	}
+	if _, ok := s.checkCSRF(w, r); !ok {
+		return
+	}
+	id := atoi64(r.PathValue("id"))
+	existing, _ := s.store.GetPostByID(id)
+	if existing == nil || existing.Type != ct.Key {
+		s.notFound(w, r)
+		return
+	}
+	_ = s.store.SetFeatured(id, r.FormValue("on") == "1")
+	s.clearGeneratedCaches()
+	http.Redirect(w, r, s.adminListRedirect("/admin/ext/"+ct.Key, r), http.StatusSeeOther)
+}
+
+// adminExtStatus 扩展内容列表的快捷状态切换（adminContentStatus 泛化到扩展类型；
+// 置 published 时经 firePublishHooks 触发 IndexNow/Telegram/sitemap 失效）。
+func (s *Server) adminExtStatus(w http.ResponseWriter, r *http.Request) {
+	ct := s.adminExtType(r)
+	if ct == nil {
+		s.notFound(w, r)
+		return
+	}
+	s.adminContentStatus(w, r, ct.Key, "/admin/ext/"+ct.Key)
+}
+
 func (s *Server) adminExtEditView(r *http.Request, sess session, ct *ContentType, p *store.Post, flash, formErr string) *View {
 	v := s.adminView(r, ct.Name(s.adminLang(r)))
 	s.authed(v, sess)
@@ -228,6 +360,11 @@ func (s *Server) adminExtEditView(r *http.Request, sess session, ct *ContentType
 	}
 	if p.ID != 0 && p.TransGroup != "" {
 		v.Trans, _ = s.store.TranslationsAll(p.TransGroup, p.ID)
+	}
+	if p.ID != 0 {
+		// 「历史版本」抽屉：数据由 store.UpdatePostFrom 自动快照，与文章编辑页同一套端点
+		// （POST /admin/revisions/{rid}/restore 恢复后按类型回跳 ext 编辑页）。
+		v.Revisions = s.revisionViews(p.ID)
 	}
 	return v
 }
@@ -268,6 +405,8 @@ func (s *Server) adminExtCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.clearGeneratedCaches()
+	p.ID = id
+	s.firePublishHooks(r, p) // 发布钩子（与 adminCreate 一致）：IndexNow / Telegram / sitemap 失效
 	http.Redirect(w, r, fmt.Sprintf("/admin/ext/%s/%d/edit?saved=1", ct.Key, id), http.StatusSeeOther)
 }
 
@@ -294,6 +433,9 @@ func (s *Server) adminExtUpdate(w http.ResponseWriter, r *http.Request) {
 	p.CreatedAt = existing.CreatedAt
 	p.Featured = existing.Featured
 	p.TransGroup = existing.TransGroup
+	if p.PublishedAt.IsZero() { // 表单未指定发布时间则沿用原值（定时发布用 publish_at 指定）
+		p.PublishedAt = existing.PublishedAt
+	}
 	preserveSEOOverrides(r, p, existing)
 	if formErr != "" {
 		s.rnd.Admin(w, "ext_edit", http.StatusOK, s.adminExtEditView(r, sess, ct, p, "", formErr))
@@ -306,6 +448,7 @@ func (s *Server) adminExtUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.clearGeneratedCaches()
+	s.firePublishHooks(r, p) // 发布钩子（与 adminUpdate 一致）
 	http.Redirect(w, r, fmt.Sprintf("/admin/ext/%s/%d/edit?saved=1", ct.Key, id), http.StatusSeeOther)
 }
 
@@ -605,8 +748,9 @@ var reservedTypePrefixes = []string{
 	"post", "page", "link", "posts", "pages", "links", "category", "about", "start",
 	"search", "admin", "api", "assets", "uploads", "sitemap", "robots", "rss", "favicon",
 	// API 字面路由段：类型 key＝集合名＝URL 段，撞上会被字面路由遮蔽或劫持（评审确认）。
-	"types", "media", "languages", "navigation", "site-profile", "sites", "skill-pack",
+	"types", "media", "languages", "navigation", "site-profile", "theme-options", "sites", "skill-pack",
 	"openapi", "api-docs", "preview", "preview-url", "featured", "relink",
+	"discard", "undiscard", "discard-purge", // AI 报废申请（标记删除）相关路由段
 }
 
 // TypeFormView 驱动类型设计器表单。

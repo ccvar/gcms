@@ -242,6 +242,15 @@ func TestPlatformCLILiveEndToEnd(t *testing.T) {
 		t.Fatalf("site-profile did not reflect the update: %s", out)
 	}
 
+	// theme-options: 主题配置槽契约（site:read）——CLI 实跑，覆盖 --site 前缀与端点契约。
+	out, errOut, err = run("theme-options", "--site", "blog")
+	if err != nil {
+		t.Fatalf("theme-options failed: %v\nstdout: %s\nstderr: %s", err, out, errOut)
+	}
+	if !strings.Contains(out, `"slots"`) || !strings.Contains(out, `"hero.visual"`) || !strings.Contains(out, `"layout"`) {
+		t.Fatalf("theme-options output unexpected: %s", out)
+	}
+
 	// navigation read must work under navigation:read.
 	out, errOut, err = run("navigation", "--site", "blog")
 	if err != nil {

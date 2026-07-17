@@ -35,6 +35,10 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 4.6 3 11.8c-1.1.4-1 1 .1 1.3l4.6 1.4 1.7 5.5c.3.9.8 1 1.5.4l2.5-2.4 4.8 3.5c.7.4 1.3.1 1.5-.8l3-14.1c.3-1.1-.4-1.6-1.2-1z"/></svg>
         <span>{{.Admin.T "admin.settings.menu.telegram" "Telegram 频道"}}</span>
       </a>
+      <a href="/admin/settings/contact"{{if eq .Section "contact"}} class="active"{{end}}>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16.5v3a1.5 1.5 0 0 1-1.6 1.5A17.5 17.5 0 0 1 3 4.6 1.5 1.5 0 0 1 4.5 3h3A1.5 1.5 0 0 1 9 4.3c.1.9.3 1.8.6 2.6a1.5 1.5 0 0 1-.3 1.6L8 9.8a15.5 15.5 0 0 0 6.2 6.2l1.3-1.3a1.5 1.5 0 0 1 1.6-.3c.8.3 1.7.5 2.6.6a1.5 1.5 0 0 1 1.3 1.5z"/></svg>
+        <span>{{.Admin.T "admin.settings.menu.contact" "联系方式"}}</span>
+      </a>
       <a href="/admin/settings/security"{{if eq .Section "security"}} class="active"{{end}}>
         {{if .PlatformMode}}
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
@@ -139,6 +143,12 @@
             <button class="btn btn-primary" type="submit">{{.Admin.T "admin.settings.site.save" "保存基础信息"}}</button>
           </div>
         </div>
+        {{/* 站点类型：创建时的一次性预设，仅记录用，这里只读展示（不提供切换流程） */}}
+        <p class="muted" style="margin:.2rem 0 .9rem;font-size:.85rem">
+          <span class="scope-pill global">{{.Admin.T "admin.settings.site.kind" "站点类型"}}</span>
+          <strong style="margin:0 .35rem">{{if eq .Settings.SiteKind "factory"}}{{.Admin.T "admin.sites.kind_factory" "工厂站"}}{{else if eq .Settings.SiteKind "dtc"}}{{.Admin.T "admin.sites.kind_dtc" "外贸独立站"}}{{else}}{{.Admin.T "admin.sites.kind_content" "内容站"}}{{end}}</strong>
+          <span>{{.Admin.T "admin.settings.site.kind_note" "创建站点时选择的类型，只影响创建时的预设（如启用商品、导航挂商品入口），之后可自由调整各项配置。"}}</span>
+        </p>
         <div class="field-group">
           <h3 class="group-head with-icon">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01"/><path d="M11 12h1v5h1"/></svg>
@@ -388,7 +398,14 @@
           <h3 class="group-head">{{.Admin.T "admin.settings.appearance.current_theme" "当前主题与微调"}}</h3>
           <div class="current-theme-row">
             <p class="current-theme"><span class="muted">{{.Admin.T "admin.settings.appearance.current" "当前主题："}}</span><strong data-cur-theme>{{range .Cards}}{{if eq .ID $.Settings.Theme}}{{.Name}}{{end}}{{end}}</strong></p>
-            <button class="btn btn-primary" type="submit">{{.Admin.T "admin.settings.appearance.save" "保存外观设置"}}</button>
+            <div class="current-theme-actions">
+              {{/* 主题配置入口：弹窗承载 options 动态表单（锚指向 .modal，admin.js 通用委托接管，绝不 :target） */}}
+              <a class="btn theme-config-btn" href="#theme-options-modal">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.09a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.09a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.55 1z"/></svg>
+                <span>{{.Admin.T "admin.settings.appearance.theme_options" "主题配置"}}</span>
+              </a>
+              <button class="btn btn-primary" type="submit">{{.Admin.T "admin.settings.appearance.save" "保存外观设置"}}</button>
+            </div>
           </div>
           <div class="tweak">
             <label class="tweak-toggle">
@@ -411,73 +428,232 @@
           </div>
         </div>
 
+        {{/* ---- 主题配置弹窗：主题 options schema（当前主题声明的槽 → 动态表单）+ 首页版块 ----
+             入口 = 顶栏「主题配置」按钮；弹窗走 JS class 规约（admin.js gcmsOpenModal 委托，
+             绝不 :target）。hero 槽 = 既有「首页 Hero 右侧视觉」控件（归并进同一机制，
+             存储键不变）；工厂骨架族追加工厂槽；数据存在站点 settings 上：换主题不丢、
+             同族主题共享；留空回落默认。字段仍属外观主表单（弹窗嵌在 <form> 内），
+             底部「保存」= 提交整个外观表单（与顶部保存同端点，PRG 不变，保存后弹窗自然关闭）。
+             语种切换 = 带 #theme-options-modal 的整页跳转，落地由 gcmsAdoptHashModal 重开弹窗并清 hash。 */}}
+        <div class="modal theme-options-modal" id="theme-options-modal">
+          <a class="modal-backdrop" href="#" aria-label="{{.Admin.T "admin.action.close" "关闭"}}"></a>
+          <div class="modal-card theme-options-card" role="dialog" aria-modal="true" aria-labelledby="theme-options-title">
+            <div class="theme-options-head">
+              <h3 id="theme-options-title">{{.Admin.T "admin.settings.appearance.theme_options" "主题配置"}}</h3>
+              <p class="muted">{{.Admin.T "admin.settings.appearance.theme_options_desc" "当前主题声明的可配置数据槽。数据保存在站点上：换主题不丢、同族主题共享；留空的字段回落内置默认。"}}</p>
+              {{if .ThemeOptsLocalized}}
+              {{if gt (len .Locales) 1}}
+              <div class="lang-tabs compact" role="tablist" aria-label="{{.Admin.T "admin.settings.current_edit_lang" "当前编辑语种"}}">
+                {{range .Locales}}<a href="/admin/settings/appearance?lang={{.Code}}#theme-options-modal"{{if eq .Code $.EditLang}} class="active" aria-current="true"{{end}}>{{.Name}}{{if eq .Code $.Lang}}<small>{{$.Admin.T "admin.scope.default" "默认"}}</small>{{end}}</a>{{end}}
+              </div>
+              <p class="muted lang-note">{{.Admin.T "admin.settings.appearance.theme_options_lang_note" "文本按语种保存：正在编辑上方选中语种；未填写时回落默认语种，再回落内置默认。"}}</p>
+              {{end}}
+              <input type="hidden" name="theme_opts" value="factory">
+              <input type="hidden" name="lang" value="{{.EditLang}}">
+              {{/* 槽登记：只登记本次实际渲染的工厂槽——保存只写登记过的槽，
+                   骨架按子集渲染时没渲染的槽不出现 ≠ 数据被清（换主题数据保留）。 */}}
+              {{range .ThemeOptions}}{{if ne .Type "hero"}}<input type="hidden" name="theme_opt_slot" value="{{.Key}}">{{end}}{{end}}
+              {{end}}
+            </div>
+            <div class="theme-options-body">
+        {{range .ThemeOptions}}
+        {{if eq .Type "hero"}}
         <div class="field-group hero-visual-set">
-          <h3 class="group-head">{{.Admin.T "admin.settings.appearance.hero_visual" "首页 Hero 右侧视觉"}}</h3>
-          <p class="muted" style="margin:-.2rem 0 .9rem;font-size:.85rem">{{.Admin.T "admin.settings.appearance.hero_visual_desc" "默认是科技感动画，可替换为图片、SVG 文件或直接粘贴 SVG 代码。"}}</p>
+          <h3 class="group-head">{{$.Admin.T .LabelKey .Label}}</h3>
+          <p class="muted opt-desc">{{$.Admin.T .DescKey .Desc}}</p>
           <div class="field">
-            <label id="hero-visual-label">{{.Admin.T "admin.settings.appearance.display" "显示方式"}}</label>
+            <label id="hero-visual-label">{{$.Admin.T "admin.settings.appearance.display" "显示方式"}}</label>
             <div class="dropdown" data-name="hero_visual" data-hero-type>
               <button type="button" class="dd-toggle" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="hero-visual-label">
-                <span class="dd-label">{{if eq .Settings.HeroVisual "image"}}{{.Admin.T "admin.settings.appearance.image_file" "图片 / SVG 文件"}}{{else if eq .Settings.HeroVisual "svg"}}{{.Admin.T "admin.settings.appearance.svg_code" "SVG 代码"}}{{else if eq .Settings.HeroVisual "anim1"}}{{.Admin.T "admin.settings.appearance.animation_1" "动画1"}}{{else}}{{.Admin.T "admin.settings.appearance.default_animation" "默认动画"}}{{end}}</span>
+                <span class="dd-label">{{if eq $.Settings.HeroVisual "image"}}{{$.Admin.T "admin.settings.appearance.image_file" "图片 / SVG 文件"}}{{else if eq $.Settings.HeroVisual "svg"}}{{$.Admin.T "admin.settings.appearance.svg_code" "SVG 代码"}}{{else if eq $.Settings.HeroVisual "anim1"}}{{$.Admin.T "admin.settings.appearance.animation_1" "动画1"}}{{else}}{{$.Admin.T "admin.settings.appearance.default_animation" "默认动画"}}{{end}}</span>
                 <svg class="dd-caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
               </button>
-              <input type="hidden" name="hero_visual" value="{{.Settings.HeroVisual}}">
+              <input type="hidden" name="hero_visual" value="{{$.Settings.HeroVisual}}">
               <ul class="dd-menu" role="listbox">
-                <li role="option" data-value="" aria-selected="{{if not .Settings.HeroVisual}}true{{else}}false{{end}}">{{.Admin.T "admin.settings.appearance.default_animation" "默认动画"}}</li>
-                <li role="option" data-value="anim1" aria-selected="{{if eq .Settings.HeroVisual "anim1"}}true{{else}}false{{end}}">{{.Admin.T "admin.settings.appearance.animation_1" "动画1"}}</li>
-                <li role="option" data-value="image" aria-selected="{{if eq .Settings.HeroVisual "image"}}true{{else}}false{{end}}">{{.Admin.T "admin.settings.appearance.image_file" "图片 / SVG 文件"}}</li>
-                <li role="option" data-value="svg" aria-selected="{{if eq .Settings.HeroVisual "svg"}}true{{else}}false{{end}}">{{.Admin.T "admin.settings.appearance.svg_code" "SVG 代码"}}</li>
+                <li role="option" data-value="" aria-selected="{{if not $.Settings.HeroVisual}}true{{else}}false{{end}}">{{$.Admin.T "admin.settings.appearance.default_animation" "默认动画"}}</li>
+                <li role="option" data-value="anim1" aria-selected="{{if eq $.Settings.HeroVisual "anim1"}}true{{else}}false{{end}}">{{$.Admin.T "admin.settings.appearance.animation_1" "动画1"}}</li>
+                <li role="option" data-value="image" aria-selected="{{if eq $.Settings.HeroVisual "image"}}true{{else}}false{{end}}">{{$.Admin.T "admin.settings.appearance.image_file" "图片 / SVG 文件"}}</li>
+                <li role="option" data-value="svg" aria-selected="{{if eq $.Settings.HeroVisual "svg"}}true{{else}}false{{end}}">{{$.Admin.T "admin.settings.appearance.svg_code" "SVG 代码"}}</li>
               </ul>
             </div>
           </div>
-          <div class="field" data-hero-when="image"{{if ne .Settings.HeroVisual "image"}} hidden{{end}}>
-            <label>{{.Admin.T "admin.settings.appearance.image_or_svg" "图片或 SVG 文件"}}</label>
+          <div class="field" data-hero-when="image"{{if ne $.Settings.HeroVisual "image"}} hidden{{end}}>
+            <label>{{$.Admin.T "admin.settings.appearance.image_or_svg" "图片或 SVG 文件"}}</label>
             <div class="uploader" data-name="hero_image">
-              <input type="hidden" name="hero_image" value="{{.Settings.HeroImage}}">
-              <div class="up-preview" tabindex="0" role="button" aria-label="{{.Admin.T "admin.settings.site.choose_image" "选择图片"}}">
-                <span class="up-hint">{{.Admin.T "admin.settings.appearance.choose_image_svg" "点击选择图片 / SVG"}}</span>
-                <button type="button" class="up-remove" data-confirm-title="{{.Admin.T "admin.settings.site.confirm_remove" "确认移除"}}" data-confirm-ok="{{.Admin.T "admin.action.remove" "移除"}}" data-confirm="{{.Admin.T "admin.settings.appearance.remove_hero_confirm" "移除当前首页视觉图片？保存外观后生效。"}}" title="{{.Admin.T "admin.action.delete" "删除"}}" aria-label="{{.Admin.T "admin.action.delete" "删除"}}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+              <input type="hidden" name="hero_image" value="{{$.Settings.HeroImage}}">
+              <div class="up-preview" tabindex="0" role="button" aria-label="{{$.Admin.T "admin.settings.site.choose_image" "选择图片"}}">
+                <span class="up-hint">{{$.Admin.T "admin.settings.appearance.choose_image_svg" "点击选择图片 / SVG"}}</span>
+                <button type="button" class="up-remove" data-confirm-title="{{$.Admin.T "admin.settings.site.confirm_remove" "确认移除"}}" data-confirm-ok="{{$.Admin.T "admin.action.remove" "移除"}}" data-confirm="{{$.Admin.T "admin.settings.appearance.remove_hero_confirm" "移除当前首页视觉图片？保存外观后生效。"}}" title="{{$.Admin.T "admin.action.delete" "删除"}}" aria-label="{{$.Admin.T "admin.action.delete" "删除"}}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
                 <input type="file" accept="image/*,.svg" hidden>
               </div>
-              <input type="text" inputmode="url" class="up-url" placeholder="{{.Admin.T "admin.settings.site.image_url_placeholder" "或粘贴图片 URL"}}" value="{{.Settings.HeroImage}}">
+              <input type="text" inputmode="url" class="up-url" placeholder="{{$.Admin.T "admin.settings.site.image_url_placeholder" "或粘贴图片 URL"}}" value="{{$.Settings.HeroImage}}">
               <div class="up-status"></div>
             </div>
           </div>
-          <div class="field" data-hero-when="svg"{{if ne .Settings.HeroVisual "svg"}} hidden{{end}}>
-            <label for="hero_svg">{{.Admin.T "admin.settings.appearance.paste_svg_code" "SVG 代码（粘贴整段 <svg>…</svg>）"}}</label>
-            <textarea id="hero_svg" name="hero_svg" rows="6" spellcheck="false" placeholder="{{.Admin.T "admin.settings.appearance.svg_placeholder" "<svg viewBox=\"0 0 480 440\">…</svg>"}}">{{.Settings.HeroSVG}}</textarea>
+          <div class="field" data-hero-when="svg"{{if ne $.Settings.HeroVisual "svg"}} hidden{{end}}>
+            <label for="hero_svg">{{$.Admin.T "admin.settings.appearance.paste_svg_code" "SVG 代码（粘贴整段 <svg>…</svg>）"}}</label>
+            <textarea id="hero_svg" name="hero_svg" rows="6" spellcheck="false" placeholder="{{$.Admin.T "admin.settings.appearance.svg_placeholder" "<svg viewBox=\"0 0 480 440\">…</svg>"}}">{{$.Settings.HeroSVG}}</textarea>
+          </div>
+        </div>
+        {{else if eq .Type "stats"}}
+        <div class="field-group theme-opt-stats">
+          <h3 class="group-head">{{$.Admin.T .LabelKey .Label}} <span class="scope-pill">{{$.Admin.T "admin.scope.current_lang" "当前语种"}}</span></h3>
+          <p class="muted opt-desc">{{$.Admin.T .DescKey .Desc}}</p>
+          {{range $i, $st := .Stats}}
+          <div class="theme-opt-row">
+            <input name="factory_stat_num_{{$i}}" value="{{$st.Num}}" placeholder="{{$.Admin.T "admin.settings.appearance.factory_stat_num_ph" "数字（如 2008 / 45+）"}}" aria-label="{{$.Admin.T "admin.settings.appearance.factory_stat_num_ph" "数字（如 2008 / 45+）"}}">
+            <input name="factory_stat_label_{{$i}}" value="{{$st.Label}}" placeholder="{{$.Admin.T "admin.settings.appearance.factory_stat_label_ph" "标签（如 工厂成立）"}}" aria-label="{{$.Admin.T "admin.settings.appearance.factory_stat_label_ph" "标签（如 工厂成立）"}}">
+          </div>
+          {{end}}
+        </div>
+        {{else if eq .Type "steps"}}
+        <div class="field-group theme-opt-steps">
+          <h3 class="group-head">{{$.Admin.T .LabelKey .Label}} <span class="scope-pill">{{$.Admin.T "admin.scope.current_lang" "当前语种"}}</span></h3>
+          <p class="muted opt-desc">{{$.Admin.T .DescKey .Desc}}</p>
+          <label class="inline-check theme-opt-switch"><input type="checkbox" name="factory_process_on" value="1"{{if .Enabled}} checked{{end}}> {{$.Admin.T "admin.settings.appearance.factory_process_show" "在首页显示流程条（全站开关，不分语种）"}}</label>
+          {{range $i, $step := .Steps}}
+          <div class="theme-opt-row theme-opt-step">
+            <span class="theme-opt-step-num" aria-hidden="true">{{printf "%02d" (add $i 1)}}</span>
+            <input name="factory_step_title_{{$i}}" value="{{$step.Title}}" placeholder="{{$step.TitleDef}}" aria-label="{{$.Admin.T "admin.settings.appearance.factory_step_title_ph" "步骤标题"}}">
+            <input name="factory_step_note_{{$i}}" value="{{$step.Note}}" placeholder="{{$step.NoteDef}}" aria-label="{{$.Admin.T "admin.settings.appearance.factory_step_note_ph" "一句话说明"}}">
+          </div>
+          {{end}}
+        </div>
+        {{else if eq .Type "textpair"}}
+        <div class="field-group theme-opt-cta">
+          <h3 class="group-head">{{$.Admin.T .LabelKey .Label}} <span class="scope-pill">{{$.Admin.T "admin.scope.current_lang" "当前语种"}}</span></h3>
+          <p class="muted opt-desc">{{$.Admin.T .DescKey .Desc}}</p>
+          <div class="field">
+            <label for="factory_cta_title">{{$.Admin.T "admin.settings.appearance.factory_cta_title" "大标题"}}</label>
+            <input id="factory_cta_title" name="factory_cta_title" value="{{.Title}}" placeholder="{{.TitleDef}}">
+          </div>
+          <div class="field">
+            <label for="factory_cta_note">{{$.Admin.T "admin.settings.appearance.factory_cta_note" "副文案"}}</label>
+            <input id="factory_cta_note" name="factory_cta_note" value="{{.Note}}" placeholder="{{.NoteDef}}">
+          </div>
+        </div>
+        {{else if eq .Type "toggle"}}
+        <div class="field-group theme-opt-toggle">
+          <h3 class="group-head">{{$.Admin.T .LabelKey .Label}}</h3>
+          <p class="muted opt-desc">{{$.Admin.T .DescKey .Desc}}</p>
+          <label class="inline-check theme-opt-switch"><input type="checkbox" name="factory_categories_on" value="1"{{if .Enabled}} checked{{end}}> {{$.Admin.T "admin.settings.appearance.factory_section_show" "在首页显示该区块（全站开关，不分语种）"}}</label>
+        </div>
+        {{else if eq .Type "pairs"}}
+        <div class="field-group theme-opt-pairs">
+          <h3 class="group-head">{{$.Admin.T .LabelKey .Label}} <span class="scope-pill">{{$.Admin.T "admin.scope.current_lang" "当前语种"}}</span></h3>
+          <p class="muted opt-desc">{{$.Admin.T .DescKey .Desc}}</p>
+          <label class="inline-check theme-opt-switch"><input type="checkbox" name="factory_industries_on" value="1"{{if .Enabled}} checked{{end}}> {{$.Admin.T "admin.settings.appearance.factory_section_show" "在首页显示该区块（全站开关，不分语种）"}}</label>
+          {{range $i, $p := .Pairs}}
+          <div class="theme-opt-row">
+            <input name="factory_industry_name_{{$i}}" value="{{$p.Name}}" placeholder="{{$p.NameDef}}" aria-label="{{$.Admin.T "admin.settings.appearance.factory_industry_name_ph" "行业名"}}">
+            <input name="factory_industry_note_{{$i}}" value="{{$p.Note}}" placeholder="{{$p.NoteDef}}" aria-label="{{$.Admin.T "admin.settings.appearance.factory_industry_note_ph" "一句话说明"}}">
+          </div>
+          {{end}}
+        </div>
+        {{else if eq .Type "gallery"}}
+        <div class="field-group theme-opt-gallery">
+          <h3 class="group-head">{{$.Admin.T .LabelKey .Label}} <span class="scope-pill">{{$.Admin.T "admin.scope.global" "全站共用"}}</span></h3>
+          <p class="muted opt-desc">{{$.Admin.T .DescKey .Desc}}</p>
+          <textarea name="factory_gallery" rows="4" spellcheck="false" placeholder="/uploads/workshop-1.webp&#10;/uploads/workshop-2.webp">{{.GalleryText}}</textarea>
+        </div>
+        {{else if eq .Type "qalist"}}
+        <div class="field-group theme-opt-faq">
+          <h3 class="group-head">{{$.Admin.T .LabelKey .Label}} <span class="scope-pill">{{$.Admin.T "admin.scope.current_lang" "当前语种"}}</span></h3>
+          <p class="muted opt-desc">{{$.Admin.T .DescKey .Desc}}</p>
+          <label class="inline-check theme-opt-switch"><input type="checkbox" name="factory_faq_on" value="1"{{if .Enabled}} checked{{end}}> {{$.Admin.T "admin.settings.appearance.factory_section_show" "在首页显示该区块（全站开关，不分语种）"}}</label>
+          {{range $i, $qa := .QAs}}
+          <div class="theme-opt-qa">
+            <input name="factory_faq_q_{{$i}}" value="{{$qa.Q}}" placeholder="{{$qa.QDef}}" aria-label="{{$.Admin.T "admin.settings.appearance.factory_faq_q_ph" "问题"}}">
+            <textarea name="factory_faq_a_{{$i}}" rows="2" placeholder="{{$qa.ADef}}" aria-label="{{$.Admin.T "admin.settings.appearance.factory_faq_a_ph" "回答"}}">{{$qa.A}}</textarea>
+          </div>
+          {{end}}
+        </div>
+        {{else if eq .Type "testimonials"}}
+        {{/* 用户评价（独立站族）：没有默认占位，红线=只录真实评价、绝不编造；
+             未配置时首页评价区不渲染。 */}}
+        <div class="field-group theme-opt-testis">
+          <h3 class="group-head">{{$.Admin.T .LabelKey .Label}} <span class="scope-pill">{{$.Admin.T "admin.scope.current_lang" "当前语种"}}</span></h3>
+          <p class="muted opt-desc">{{$.Admin.T .DescKey .Desc}}</p>
+          {{range $i, $t := .Testimonials}}
+          <div class="theme-opt-qa theme-opt-testi">
+            <div class="theme-opt-row">
+              <input name="dtc_testi_name_{{$i}}" value="{{$t.Name}}" placeholder="{{$.Admin.T "admin.settings.appearance.dtc_testi_name_ph" "姓名（如 Sarah M.）"}}" aria-label="{{$.Admin.T "admin.settings.appearance.dtc_testi_name_ph" "姓名（如 Sarah M.）"}}">
+              <input name="dtc_testi_region_{{$i}}" value="{{$t.Region}}" placeholder="{{$.Admin.T "admin.settings.appearance.dtc_testi_region_ph" "地区（可空，如 US）"}}" aria-label="{{$.Admin.T "admin.settings.appearance.dtc_testi_region_ph" "地区（可空，如 US）"}}">
+            </div>
+            <textarea name="dtc_testi_quote_{{$i}}" rows="2" placeholder="{{$.Admin.T "admin.settings.appearance.dtc_testi_quote_ph" "一句话评价（只录真实用户原话）"}}" aria-label="{{$.Admin.T "admin.settings.appearance.dtc_testi_quote_ph" "一句话评价（只录真实用户原话）"}}">{{$t.Quote}}</textarea>
+          </div>
+          {{end}}
+        </div>
+        {{end}}
+        {{end}}
+
+              {{/* 首页版块：仅作用于「标准/默认」首页布局。策划/工厂/dtc 骨架为固定结构，
+                   本节整体不渲染（控件不渲染=不提交；后端只在带 home_sections_present
+                   登记字段时才写 home.hero / home.sections——缺字段 ≠ 清空，
+                   换回标准主题时已有配置原样保留，同 theme_opt_slot 的思路）。 */}}
+              {{if .HomeSectionsApply}}
+              <div class="field-group theme-opt-home-sections">
+                <h3 class="group-head">{{.Admin.T "admin.settings.appearance.home_sections" "首页版块"}}</h3>
+                <p class="muted opt-desc">{{.Admin.T "admin.settings.appearance.home_sections_note" "仅作用于「标准/默认」首页布局：拖拽调整版块顺序、勾选显示或隐藏。策划主题（如 Bands / Ticker）保持各自固定结构。"}}</p>
+                <input type="hidden" name="home_sections_present" value="1">
+                <div class="theme-opt-home-body">
+                  <label class="inline-check theme-opt-switch"><input type="checkbox" name="home_hero" value="1"{{if .Settings.HomeHero}} checked{{end}}> {{.Admin.T "admin.settings.appearance.home_hero" "显示首页 Hero（大标题横幅）"}}</label>
+                  <ul class="home-sections" data-home-sections>
+                    {{range .Settings.HomeSections}}
+                    <li class="home-section-row" data-key="{{.Key}}" draggable="true">
+                      <span class="hs-handle" aria-hidden="true">⠿</span>
+                      <span class="hs-label">{{if eq .Key "featured"}}{{$.Admin.T "admin.settings.appearance.section_featured" "精选"}}{{else if eq .Key "links"}}{{$.Admin.T "admin.settings.appearance.section_links" "精选链接"}}{{else if eq .Key "categories"}}{{$.Admin.T "admin.settings.appearance.section_categories" "分类"}}{{else if eq .Key "latest"}}{{$.Admin.T "admin.settings.appearance.section_latest" "最新"}}{{else}}{{.Key}}{{end}}</span>
+                      <label class="hs-toggle inline-check"><input type="checkbox" class="hs-on"{{if .On}} checked{{end}}> {{$.Admin.T "admin.settings.appearance.section_show" "显示"}}</label>
+                    </li>
+                    {{end}}
+                  </ul>
+                  <input type="hidden" name="home_sections" data-home-sections-input value="">
+                </div>
+              </div>
+              {{end}}
+            </div>
+            <div class="modal-actions theme-options-foot">
+              <a class="btn" href="#">{{.Admin.T "admin.action.cancel" "取消"}}</a>
+              <button class="btn btn-primary" type="submit">{{.Admin.T "admin.action.save" "保存"}}</button>
+            </div>
           </div>
         </div>
 
-        <details class="field-group home-sections-group">
-          <summary class="group-head with-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="4" rx="1"/><rect x="3" y="10" width="18" height="4" rx="1"/><rect x="3" y="16" width="18" height="4" rx="1"/></svg>
-            <span>{{.Admin.T "admin.settings.appearance.home_sections" "首页版块"}}</span>
-          </summary>
-          <p class="muted" style="margin:-.2rem 0 .9rem;font-size:.85rem">{{.Admin.T "admin.settings.appearance.home_sections_note" "仅作用于「标准/默认」首页布局：拖拽调整版块顺序、勾选显示或隐藏。策划主题（如 Bands / Ticker）保持各自固定结构。"}}</p>
-          <label class="inline-check" style="margin-bottom:.7rem"><input type="checkbox" name="home_hero" value="1"{{if .Settings.HomeHero}} checked{{end}}> {{.Admin.T "admin.settings.appearance.home_hero" "显示首页 Hero（大标题横幅）"}}</label>
-          <ul class="home-sections" data-home-sections>
-            {{range .Settings.HomeSections}}
-            <li class="home-section-row" data-key="{{.Key}}" draggable="true">
-              <span class="hs-handle" aria-hidden="true">⠿</span>
-              <span class="hs-label">{{if eq .Key "featured"}}{{$.Admin.T "admin.settings.appearance.section_featured" "精选"}}{{else if eq .Key "links"}}{{$.Admin.T "admin.settings.appearance.section_links" "精选链接"}}{{else if eq .Key "categories"}}{{$.Admin.T "admin.settings.appearance.section_categories" "分类"}}{{else if eq .Key "latest"}}{{$.Admin.T "admin.settings.appearance.section_latest" "最新"}}{{else}}{{.Key}}{{end}}</span>
-              <label class="hs-toggle inline-check"><input type="checkbox" class="hs-on"{{if .On}} checked{{end}}> {{$.Admin.T "admin.settings.appearance.section_show" "显示"}}</label>
-            </li>
-            {{end}}
-          </ul>
-          <input type="hidden" name="home_sections" data-home-sections-input value="">
-        </details>
-
         <div class="field-group">
           <h3 class="group-head">{{.Admin.T "admin.settings.appearance.themes" "可选主题"}}</h3>
-          <p class="muted" style="margin:-.2rem 0 .9rem;font-size:.85rem">{{.Admin.T "admin.settings.appearance.themes_desc" "多套主题布局结构各异（页眉、首页列表、卡片样式），点选即切换、上方保存即生效。"}}</p>
+          <p class="muted" style="margin:-.2rem 0 .9rem;font-size:.85rem">{{.Admin.T "admin.settings.appearance.themes_desc" "每张卡是一套独立设计；同一设计的配色变体共享一张卡，点卡底色卡切换配色并即时预览，上方保存即生效。"}}</p>
+          {{/* 主题轻分类筛选（纯前端过滤）；注册表里不存在的分类不出 chip（如 factory 在 P2 前）。 */}}
+          {{if gt (len .ThemeCategories) 1}}
+          <div class="theme-filter" data-theme-filter role="group" aria-label="{{.Admin.T "admin.settings.appearance.themes" "可选主题"}}">
+            <button type="button" class="theme-chip is-active" data-theme-cat="">{{.Admin.T "admin.settings.appearance.filter_all" "全部"}}</button>
+            {{range .ThemeCategories}}
+            <button type="button" class="theme-chip" data-theme-cat="{{.}}">{{if eq . "content"}}{{$.Admin.T "admin.settings.appearance.filter_content" "内容"}}{{else if eq . "factory"}}{{$.Admin.T "admin.settings.appearance.filter_factory" "工厂"}}{{else if eq . "dtc"}}{{$.Admin.T "admin.settings.appearance.filter_dtc" "外贸独立站"}}{{else}}{{$.Admin.T "admin.settings.appearance.filter_general" "通用"}}{{end}}</button>
+            {{end}}
+          </div>
+          <style>
+            .theme-filter { display: flex; flex-wrap: wrap; gap: .45rem; margin: 0 0 .9rem; }
+            .theme-chip { border: 1px solid var(--line); background: var(--surface); color: var(--muted); border-radius: 999px; padding: .3rem .85rem; font-size: .82rem; cursor: pointer; transition: color .15s, border-color .15s, background .15s; }
+            .theme-chip:hover { color: var(--ink); border-color: var(--ink); }
+            .theme-chip.is-active { background: var(--ink); border-color: var(--ink); color: var(--surface); }
+            .theme-card[data-theme-hidden] { display: none; }
+          </style>
+          {{end}}
+          {{/* 卡片=配色族（同一设计的纯配色变体共享一张卡），卡底色卡排=族内皮肤：
+               预览 iframe 每族一个，radio 值仍是皮肤 id（存储零变化），
+               点色卡由 admin.js 同步 radio/预览/小字；独立皮族不渲染色卡排。 */}}
           <div class="theme-picker">
-            {{range .Cards}}
-            <label class="theme-card{{if eq .ID $.Settings.Theme}} sel{{end}}">
-              <input type="radio" name="theme" value="{{.ID}}" data-accent="{{.Accent}}" data-radius="{{.Radius}}" data-custom="{{if .Custom}}1{{end}}" data-theme-name="{{.Name}}"{{if eq .ID $.Settings.Theme}} checked{{end}}>
-              <span class="tc-prev tc-live tc-{{.ID}}" aria-hidden="true" data-theme-preview><iframe data-src="/admin/theme-preview/{{.ID}}" title="{{.Name}} {{$.Admin.T "admin.settings.theme.preview_title_suffix" "主题预览"}}" loading="lazy" tabindex="-1"></iframe><button type="button" class="tc-zoom" data-tp-open data-tp-id="{{.ID}}" data-tp-name="{{.Name}}" title="{{$.Admin.T "admin.settings.theme.preview_full" "放大预览"}}" aria-label="{{$.Admin.T "admin.settings.theme.preview_full" "放大预览"}}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg></button><a class="tc-zoom tc-browse" href="/admin/theme-browse/{{.ID}}/" target="_blank" rel="noopener" title="{{$.Admin.T "admin.settings.theme.browse_real" "真实预览（站点数据，可翻页）"}}" aria-label="{{$.Admin.T "admin.settings.theme.browse_real" "真实预览（站点数据，可翻页）"}}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3.6 9h16.8M3.6 15h16.8"/><path d="M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18"/></svg></a></span>
-              <span class="tc-name">{{.Name}}</span>
-              <span class="tc-desc">{{.Desc}}</span>
+            {{range $card := .FamilyCards}}
+            <label class="theme-card{{if $card.Selected}} sel{{end}}" data-category="{{$card.Categories}}" data-family="{{$card.Family}}">
+              <input type="radio" name="theme" value="{{$card.Active.ID}}" data-accent="{{$card.Active.Accent}}" data-radius="{{$card.Active.Radius}}" data-custom="{{if $card.Active.Custom}}1{{end}}" data-theme-name="{{$card.Active.Name}}"{{if $card.Selected}} checked{{end}}>
+              <span class="tc-prev tc-live" aria-hidden="true" data-theme-preview><iframe data-src="/admin/theme-preview/{{$card.Active.ID}}" title="{{$card.Name}} {{$.Admin.T "admin.settings.theme.preview_title_suffix" "主题预览"}}" loading="lazy" tabindex="-1"></iframe><button type="button" class="tc-zoom" data-tp-open data-tp-id="{{$card.Active.ID}}" data-tp-name="{{$card.Active.Name}}" title="{{$.Admin.T "admin.settings.theme.preview_full" "放大预览"}}" aria-label="{{$.Admin.T "admin.settings.theme.preview_full" "放大预览"}}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg></button><a class="tc-zoom tc-browse" href="/admin/theme-browse/{{$card.Active.ID}}/" target="_blank" rel="noopener" title="{{$.Admin.T "admin.settings.theme.browse_real" "真实预览（站点数据，可翻页）"}}" aria-label="{{$.Admin.T "admin.settings.theme.browse_real" "真实预览（站点数据，可翻页）"}}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3.6 9h16.8M3.6 15h16.8"/><path d="M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18"/></svg></a></span>
+              <span class="tc-name">{{$card.Name}}</span>
+              <span class="tc-desc">{{$card.Desc}}</span>
+              {{/* 独立皮族（单皮）不渲染色卡排：卡片本身即该设计的唯一入口 */}}
+              {{if gt (len $card.Skins) 1}}
+              <span class="tc-skins" role="group" aria-label="{{$.Admin.T "admin.settings.theme.skins" "皮肤配色"}}">
+                {{range $card.Skins}}<button type="button" class="tc-skin{{if eq .ID $card.Active.ID}} is-active{{end}}" data-skin-id="{{.ID}}" data-skin-name="{{.Name}}" data-accent="{{.Accent}}" data-radius="{{.Radius}}" data-custom="{{if .Custom}}1{{end}}" data-category="{{.Category}}" style="--sw-bg:{{.Bg}};--sw-accent:{{.Accent}}" title="{{.Name}}" aria-label="{{.Name}}" aria-pressed="{{if eq .ID $card.Active.ID}}true{{else}}false{{end}}"></button>{{end}}
+              </span>
+              {{end}}
             </label>
             {{end}}
           </div>
@@ -789,15 +965,21 @@
       {{else if eq .Section "categories"}}
       <div class="cat-toolbar">
         <div class="lang-tabs" role="tablist" aria-label="{{.Admin.T "admin.settings.categories.type_label" "分类类型"}}">
-          <a href="/admin/settings/categories?kind=post&lang={{.EditLang}}"{{if ne .CatKind "link"}} class="active" aria-current="true"{{end}}>{{.Admin.T "admin.settings.categories.post" "文章分类"}}</a>
+          <a href="/admin/settings/categories?kind=post&lang={{.EditLang}}"{{if eq .CatKind "post"}} class="active" aria-current="true"{{end}}>{{.Admin.T "admin.settings.categories.post" "文章分类"}}</a>
           <a href="/admin/settings/categories?kind=link&lang={{.EditLang}}"{{if eq .CatKind "link"}} class="active" aria-current="true"{{end}}>{{.Admin.T "admin.settings.categories.link" "链接分类"}}</a>
+          {{/* 已启用且支持分类的扩展类型（如商品）各出一个页签——泛化，不硬编码具体类型 */}}
+          {{range .CatKindTabs}}
+          <a href="/admin/settings/categories?kind={{.Key}}&lang={{$.EditLang}}"{{if eq $.CatKind .Key}} class="active" aria-current="true"{{end}}>{{printf ($.Admin.T "admin.settings.categories.ext_tab" "%s分类") .Name}}</a>
+          {{end}}
         </div>
         <button type="button" class="btn btn-primary" data-cat-add>＋ {{.Admin.T "admin.settings.categories.new" "新增分类"}}</button>
       </div>
-      <p class="muted" style="margin:.2rem 0 0;font-size:.9rem">{{if eq .CatKind "link"}}{{.Admin.T "admin.settings.categories.desc_link" "第一行是全部链接入口，用来设置列表页标题、描述和“全部”筛选按钮；下面才是链接可选择的真实分类。拖动分类行可调整前台分类导航顺序。"}}{{else}}{{.Admin.T "admin.settings.categories.desc_post" "第一行是全部文章入口，用来设置列表页标题、描述和“全部”筛选按钮；下面才是文章可选择的真实分类。拖动分类行可调整前台分类导航顺序。"}}{{end}}</p>
+      <p class="muted" style="margin:.2rem 0 0;font-size:.9rem">{{if .CatKindExt}}{{.Admin.T "admin.settings.categories.desc_ext" "管理该类型内容可选择的分类，前台归档页会按分类提供筛选；拖动分类行可调整顺序。归档页标题与简介在该类型列表页的设置菜单「归档页文案」中设置。"}}{{else if eq .CatKind "link"}}{{.Admin.T "admin.settings.categories.desc_link" "第一行是全部链接入口，用来设置列表页标题、描述和“全部”筛选按钮；下面才是链接可选择的真实分类。拖动分类行可调整前台分类导航顺序。"}}{{else}}{{.Admin.T "admin.settings.categories.desc_post" "第一行是全部文章入口，用来设置列表页标题、描述和“全部”筛选按钮；下面才是文章可选择的真实分类。拖动分类行可调整前台分类导航顺序。"}}{{end}}</p>
       <table class="admin-table category-table" style="margin-top:.6rem">
         <thead><tr><th style="width:28px"></th><th>{{.Admin.T "admin.common.name" "名称"}}</th><th>{{.Admin.T "admin.common.link" "链接"}}</th><th>{{.Admin.T "admin.common.count" "数量"}}</th><th class="right">{{.Admin.T "admin.common.actions" "操作"}}</th></tr></thead>
         <tbody id="cat-sortable">
+          {{/* 「全部入口」只属于文章/链接归档；扩展类型的归档文案在扩展 hub 维护，此处不出该行 */}}
+          {{if not .CatKindExt}}
           <tr class="cat-row-all">
             <td><span class="cat-all-dot" aria-hidden="true"></span></td>
             <td>
@@ -814,11 +996,12 @@
               </span>
             </td>
           </tr>
+          {{end}}
           {{range .Categories}}
           <tr class="cat-row" draggable="true" data-id="{{.ID}}">
             <td class="drag-handle" aria-hidden="true">⠿</td>
             <td><strong>{{.Name}}</strong>{{if .Description}}<div class="muted" style="font-size:.8rem;margin-top:.2rem">{{.Description}}</div>{{end}}</td>
-            <td class="slug">{{if eq $.CatKind "link"}}/links/cat/{{.Slug}}{{else}}/category/{{.Slug}}{{end}}</td>
+            <td class="slug">{{$.CatSlugBase}}{{.Slug}}</td>
             <td class="muted">{{.Count}}</td>
             <td class="right actions">
               <span class="action-icons">
@@ -837,7 +1020,8 @@
         </tbody>
       </table>
 
-      <!-- “全部”入口编辑模态框 -->
+      <!-- “全部”入口编辑模态框（扩展类型无此入口） -->
+      {{if not .CatKindExt}}
       <div class="modal" id="cat-all-modal" hidden>
         <div class="modal-backdrop" data-cat-all-close></div>
         <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="cat-all-modal-title">
@@ -858,6 +1042,7 @@
           </form>
         </div>
       </div>
+      {{end}}
 
       <!-- 分类新增/编辑模态框 -->
       <div class="modal" id="cat-modal" hidden>
@@ -2880,6 +3065,57 @@
           });
         })();
         </script>
+      </form>
+
+      {{else if eq .Section "contact"}}
+      <form method="post" action="/admin/settings/contact" class="admin-form">
+        <input type="hidden" name="_csrf" value="{{.CSRF}}">
+        <div class="field-group">
+          <h3 class="group-head with-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 16.5v3a1.5 1.5 0 0 1-1.6 1.5A17.5 17.5 0 0 1 3 4.6 1.5 1.5 0 0 1 4.5 3h3A1.5 1.5 0 0 1 9 4.3c.1.9.3 1.8.6 2.6a1.5 1.5 0 0 1-.3 1.6L8 9.8a15.5 15.5 0 0 0 6.2 6.2l1.3-1.3a1.5 1.5 0 0 1 1.6-.3c.8.3 1.7.5 2.6.6a1.5 1.5 0 0 1 1.3 1.5z"/></svg>
+            <span>{{.Admin.T "admin.settings.contact.title" "联系方式"}}</span>
+          </h3>
+          <p class="muted automation-note">{{.Admin.T "admin.settings.contact.desc" "面向询盘转化的联系入口：配置后商品详情页出现「询盘」区块，全站右下角可显示浮动联系按钮。只填写你实际使用的渠道，未配置的项不会在前台出现。"}}</p>
+          <div class="form-stack">
+            <div class="field">
+              <label for="contact_whatsapp">{{.Admin.T "admin.settings.contact.whatsapp" "WhatsApp 号码"}}</label>
+              <input id="contact_whatsapp" name="contact_whatsapp" value="{{.Settings.ContactWhatsApp}}" autocomplete="off" spellcheck="false" inputmode="tel" placeholder="+86 138 0013 8000">
+              <span class="hint">{{.Admin.T "admin.settings.contact.whatsapp_hint" "国际格式（含国家码），例如 +86 138 0013 8000；前台生成 wa.me 链接。"}}</span>
+            </div>
+            <div class="field">
+              <label for="contact_email">{{.Admin.T "admin.settings.contact.email" "联系邮箱"}}</label>
+              <input id="contact_email" name="contact_email" value="{{.Settings.ContactEmail}}" autocomplete="off" spellcheck="false" inputmode="email" placeholder="sales@example.com">
+              <span class="hint">{{.Admin.T "admin.settings.contact.email_hint" "前台生成 mailto 链接；询盘按钮会自动带上产品名作为主题。"}}</span>
+            </div>
+            <div class="field">
+              <label for="contact_phone">{{.Admin.T "admin.settings.contact.phone" "联系电话"}}</label>
+              <input id="contact_phone" name="contact_phone" value="{{.Settings.ContactPhone}}" autocomplete="off" spellcheck="false" inputmode="tel" placeholder="+86 138 0013 8000">
+              <span class="hint">{{.Admin.T "admin.settings.contact.phone_hint" "前台生成 tel: 链接，手机端可直接拨打。"}}</span>
+            </div>
+            <div class="field">
+              <label>{{.Admin.T "admin.settings.contact.wechat_qr" "微信二维码"}}</label>
+              <div class="uploader uploader-sm" data-name="contact_wechat_qr">
+                <input type="hidden" name="contact_wechat_qr" value="{{.Settings.ContactWeChatQR}}">
+                <div class="up-preview" tabindex="0" role="button" aria-label="{{.Admin.T "admin.settings.contact.choose_qr" "选择二维码图片"}}">
+                  <span class="up-hint">{{.Admin.T "admin.settings.site.choose" "选择"}}</span>
+                  <button type="button" class="up-remove" data-confirm-title="{{.Admin.T "admin.settings.site.confirm_remove" "确认移除"}}" data-confirm-ok="{{.Admin.T "admin.action.remove" "移除"}}" data-confirm="{{.Admin.T "admin.settings.contact.remove_qr_confirm" "移除当前微信二维码？保存联系方式后生效。"}}" title="{{.Admin.T "admin.action.delete" "删除"}}" aria-label="{{.Admin.T "admin.action.delete" "删除"}}"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+                  <input type="file" accept="image/*" hidden>
+                </div>
+                <input type="text" inputmode="url" class="up-url" placeholder="{{.Admin.T "admin.settings.site.url_placeholder" "或粘贴 URL"}}" value="{{.Settings.ContactWeChatQR}}">
+                <div class="up-status"></div>
+              </div>
+              <span class="hint">{{.Admin.T "admin.settings.contact.wechat_qr_hint" "上传微信名片二维码图片；配置后前台出现「微信」按钮，点击弹出二维码。"}}</span>
+            </div>
+            <div class="field">
+              <label>{{.Admin.T "admin.settings.contact.float" "浮动联系按钮"}}</label>
+              <label class="tweak-toggle"><input type="checkbox" name="contact_float" value="1"{{if .Settings.ContactFloat}} checked{{end}}><span>{{.Admin.T "admin.settings.contact.float_on" "在全站右下角显示浮动联系按钮"}}</span></label>
+              <span class="hint">{{.Admin.T "admin.settings.contact.float_hint" "配置了任一联系方式且开关打开时才渲染；点击展开小面板列出各联系方式。"}}</span>
+            </div>
+          </div>
+        </div>
+        <div class="button-row">
+          <button class="btn btn-primary" type="submit">{{.Admin.T "admin.settings.contact.save" "保存联系方式"}}</button>
+        </div>
       </form>
 
       {{else if eq .Section "updates"}}

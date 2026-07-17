@@ -278,6 +278,26 @@ func funcMap(imageSizes map[string]ImageSize) template.FuncMap {
 		"safeHTML": func(s string) template.HTML { return template.HTML(s) },
 		// contentURL 按内容类型返回其公开路径（搜索结果链接用）。
 		"contentURL": func(p *store.Post) string { return publicContentPath(p.Type, p.Slug) },
+		// typeName 扩展类型的语种名（搜索结果徽标用）：内置 post/page/link 与
+		// 未注册的数据库自定义类型返回空（模板容错不显示徽标）。
+		"typeName": func(typ, lang string) string {
+			if ct := contentTypeByKey(typ); ct != nil && !ct.Builtin {
+				return ct.Name(lang)
+			}
+			return ""
+		},
+		// typePrefix 内容类型的公开 URL 前缀（搜索结果的分类链接用）；
+		// 数据库自定义类型前缀恒等于 key。
+		"typePrefix": func(typ string) string {
+			if ct := contentTypeByKey(typ); ct != nil {
+				return ct.URLPrefix
+			}
+			return typ
+		},
+		// productChips 商品卡「卖点规格」chip（工厂骨架首页：材质/起订量，最多 2 个）。
+		"productChips": productChips,
+		// productSKU 从规格 repeater 嗅探型号/SKU（技术骨架首页的产品索引表「型号」列）。
+		"productSKU": productSKU,
 		"json": func(v any) string {
 			b, _ := json.Marshal(v)
 			return string(b)
@@ -414,9 +434,9 @@ func NewRenderer(tplFS fs.FS, imageSizes map[string]ImageSize) (*Renderer, error
 		return nil, err
 	}
 	r := &Renderer{sets: map[string]*template.Template{}}
-	partials := []string{"layout.html", "partials/head.html", "partials/header.html", "partials/footer.html", "partials/home_bento.html", "partials/home_index.html", "partials/home_split.html", "partials/home_axis.html", "partials/home_bands.html", "partials/home_ticker.html", "partials/home_board.html", "partials/home_timeline.html", "partials/home_liftoff.html", "partials/home_deck.html", "partials/home_poster.html", "partials/home_uptime.html", "partials/home_profile.html", "partials/home_bloom.html", "partials/home_desktop.html", "partials/home_cinema.html", "partials/home_collage.html", "partials/home_constellation.html", "partials/home_masonry.html", "partials/home_feed.html", "partials/home_gazette.html", "partials/home_manual.html", "partials/home_almanac.html", "partials/home_inbox.html", "partials/home_catalog.html", "partials/home_broadcast.html", "partials/home_exhibit.html"}
+	partials := []string{"layout.html", "partials/head.html", "partials/header.html", "partials/footer.html", "partials/home_bento.html", "partials/home_index.html", "partials/home_split.html", "partials/home_axis.html", "partials/home_bands.html", "partials/home_ticker.html", "partials/home_board.html", "partials/home_timeline.html", "partials/home_liftoff.html", "partials/home_deck.html", "partials/home_poster.html", "partials/home_uptime.html", "partials/home_profile.html", "partials/home_bloom.html", "partials/home_desktop.html", "partials/home_cinema.html", "partials/home_collage.html", "partials/home_constellation.html", "partials/home_masonry.html", "partials/home_feed.html", "partials/home_gazette.html", "partials/home_manual.html", "partials/home_almanac.html", "partials/home_inbox.html", "partials/home_catalog.html", "partials/home_broadcast.html", "partials/home_exhibit.html", "partials/home_factory_catalog.html", "partials/home_factory_showcase.html", "partials/home_factory_onepage.html", "partials/home_factory_solutions.html", "partials/home_factory_engineering.html", "partials/home_factory_trade.html", "partials/home_factory_sidebar.html", "partials/home_factory_vision.html", "partials/home_factory_herofold.html", "partials/home_dtc_flagship.html", "partials/home_dtc_solo.html", "partials/home_dtc_lookbook.html"}
 
-	for _, name := range []string{"home", "article", "category", "links", "link", "page", "search", "api_docs", "404", "generic_list", "generic_detail", "doc_list", "doc_detail"} {
+	for _, name := range []string{"home", "article", "category", "links", "link", "page", "search", "api_docs", "404", "generic_list", "generic_detail", "doc_list", "doc_detail", "product_detail"} {
 		files := append([]string{}, partials...)
 		files = append(files, name+".html")
 		t, err := template.New(name).Funcs(funcMap(imageSizes)).ParseFS(sub, files...)
@@ -426,7 +446,7 @@ func NewRenderer(tplFS fs.FS, imageSizes map[string]ImageSize) (*Renderer, error
 		r.sets[name] = t
 	}
 
-	tp, err := template.New("theme_preview").Funcs(funcMap(imageSizes)).ParseFS(sub, "theme_preview.html", "partials/home_bento.html", "partials/home_index.html", "partials/home_split.html", "partials/home_axis.html", "partials/home_bands.html", "partials/home_ticker.html", "partials/home_board.html", "partials/home_timeline.html", "partials/home_liftoff.html", "partials/home_deck.html", "partials/home_poster.html", "partials/home_uptime.html", "partials/home_profile.html", "partials/home_bloom.html", "partials/home_desktop.html", "partials/home_cinema.html", "partials/home_collage.html", "partials/home_constellation.html", "partials/home_masonry.html", "partials/home_feed.html", "partials/home_gazette.html", "partials/home_manual.html", "partials/home_almanac.html", "partials/home_inbox.html", "partials/home_catalog.html", "partials/home_broadcast.html", "partials/home_exhibit.html")
+	tp, err := template.New("theme_preview").Funcs(funcMap(imageSizes)).ParseFS(sub, "theme_preview.html", "partials/home_bento.html", "partials/home_index.html", "partials/home_split.html", "partials/home_axis.html", "partials/home_bands.html", "partials/home_ticker.html", "partials/home_board.html", "partials/home_timeline.html", "partials/home_liftoff.html", "partials/home_deck.html", "partials/home_poster.html", "partials/home_uptime.html", "partials/home_profile.html", "partials/home_bloom.html", "partials/home_desktop.html", "partials/home_cinema.html", "partials/home_collage.html", "partials/home_constellation.html", "partials/home_masonry.html", "partials/home_feed.html", "partials/home_gazette.html", "partials/home_manual.html", "partials/home_almanac.html", "partials/home_inbox.html", "partials/home_catalog.html", "partials/home_broadcast.html", "partials/home_exhibit.html", "partials/home_factory_catalog.html", "partials/home_factory_showcase.html", "partials/home_factory_onepage.html", "partials/home_factory_solutions.html", "partials/home_factory_engineering.html", "partials/home_factory_trade.html", "partials/home_factory_sidebar.html", "partials/home_factory_vision.html", "partials/home_factory_herofold.html", "partials/home_dtc_flagship.html", "partials/home_dtc_solo.html", "partials/home_dtc_lookbook.html")
 	if err != nil {
 		return nil, err
 	}

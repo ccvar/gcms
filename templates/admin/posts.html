@@ -3,8 +3,21 @@
       <h1>{{.Admin.T "admin.posts.title" "文章"}}</h1>
       <span class="admin-title-count">{{printf (.Admin.T "admin.posts.count" "共 %d 篇") .ListTotal}}</span>
     </div>
-    <a class="btn btn-primary" href="/admin/posts/new?lang={{.EditLang}}">＋ {{.Admin.T "admin.posts.new" "新建文章"}}</a>
+    <div class="admin-head-actions">
+      {{if gt .DiscardTotal 0}}
+      <form method="post" action="/admin/posts/discard-purge" data-confirm-title="{{.Admin.T "admin.discard.purge_confirm_title" "确认清空待清理"}}" data-confirm-ok="{{.Admin.T "admin.discard.purge_ok" "清空"}}" data-confirm="{{printf (.Admin.T "admin.discard.purge_confirm" "将删除 %d 篇 AI 标记弃用的草稿（只删草稿，已发布/定时内容不受影响）。此操作不可撤销，确定继续？") .DiscardTotal}}">
+        <input type="hidden" name="_csrf" value="{{.CSRF}}">
+        <input type="hidden" name="lang" value="{{.EditLang}}">
+        <input type="hidden" name="status" value="{{.StatusFilter}}">
+        <input type="hidden" name="cat" value="{{.CategoryFilter}}">
+        <button type="submit" class="btn btn-discard-purge">{{printf (.Admin.T "admin.discard.purge" "清空待清理（%d 篇）") .DiscardTotal}}</button>
+      </form>
+      {{end}}
+      <a class="btn btn-primary" href="/admin/posts/new?lang={{.EditLang}}">＋ {{.Admin.T "admin.posts.new" "新建文章"}}</a>
+    </div>
   </div>
+
+  {{if .Flash}}<div class="admin-flash">{{.Flash}}</div>{{end}}
 
   {{if gt (len .Locales) 1}}
   <div class="lang-tabs" role="tablist" aria-label="{{.Admin.T "admin.common.content_language" "内容语种"}}">
@@ -18,6 +31,7 @@
       <a href="/admin/posts?lang={{.EditLang}}&status=published{{if .CategoryFilter}}&cat={{.CategoryFilter}}{{end}}"{{if eq .StatusFilter "published"}} class="active" aria-current="true"{{end}}>{{.Admin.T "admin.status.published" "已发布"}}</a>
       <a href="/admin/posts?lang={{.EditLang}}&status=draft{{if .CategoryFilter}}&cat={{.CategoryFilter}}{{end}}"{{if eq .StatusFilter "draft"}} class="active" aria-current="true"{{end}}>{{.Admin.T "admin.status.draft" "草稿"}}</a>
       <a href="/admin/posts?lang={{.EditLang}}&status=scheduled{{if .CategoryFilter}}&cat={{.CategoryFilter}}{{end}}"{{if eq .StatusFilter "scheduled"}} class="active" aria-current="true"{{end}}>{{.Admin.T "admin.status.scheduled" "定时"}}</a>
+      {{if or (gt .DiscardTotal 0) (eq .StatusFilter "discarded")}}<a class="discard-tab{{if eq .StatusFilter "discarded"}} active{{end}}" href="/admin/posts?lang={{.EditLang}}&status=discarded{{if .CategoryFilter}}&cat={{.CategoryFilter}}{{end}}"{{if eq .StatusFilter "discarded"}} aria-current="true"{{end}}>{{.Admin.T "admin.list.discarded" "待清理"}}</a>{{end}}
     </div>
     <div class="dropdown list-category-filter">
       <button type="button" class="dd-toggle" aria-haspopup="listbox" aria-expanded="false">
@@ -93,12 +107,23 @@
               </form>
             </div>
           </details>
+          {{if .Discarded}}<span class="discard-badge" tabindex="0"><span class="badge discard">{{$.Admin.T "admin.discard.badge" "AI 弃用"}}</span><span class="discard-pop" role="tooltip"><b>{{$.Admin.T "admin.discard.reason" "报废理由"}}</b>{{.DiscardReason}}<i>{{adminDateTime .DiscardedAt}}</i></span></span>{{end}}
         </td>
         <td class="muted nowrap content-col-date">{{adminDateTime .UpdatedAt}}</td>
         <td class="right actions content-col-actions">
           <span class="action-icons">
             {{if .IsPublished}}<a class="act-ico" href="{{adminPublicContentPath $.AdminPreviewPrefix .Lang "post" .Slug}}" target="_blank" title="{{$.Admin.T "admin.action.view" "查看"}}" aria-label="{{$.Admin.T "admin.action.view" "查看"}}">{{template "icon-extlink"}}</a>{{else}}<a class="act-ico" href="/admin/posts/{{.ID}}/preview" target="_blank" title="{{$.Admin.T "admin.action.preview" "预览"}}" aria-label="{{$.Admin.T "admin.action.preview" "预览"}}">{{template "icon-extlink"}}</a>{{end}}
             <a class="act-ico" href="/admin/posts/{{.ID}}/edit" title="{{$.Admin.T "admin.action.edit" "编辑"}}" aria-label="{{$.Admin.T "admin.action.edit" "编辑"}}">{{template "icon-edit"}}</a>
+            {{if .Discarded}}
+            <form method="post" action="/admin/posts/{{.ID}}/undiscard">
+              <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+              <input type="hidden" name="lang" value="{{.Lang}}">
+              <input type="hidden" name="status" value="{{$.StatusFilter}}">
+              <input type="hidden" name="cat" value="{{$.CategoryFilter}}">
+              <input type="hidden" name="page" value="{{$.PageNum}}">
+              <button class="act-ico" type="submit" title="{{$.Admin.T "admin.discard.restore" "恢复（撤销 AI 弃用标记）"}}" aria-label="{{$.Admin.T "admin.discard.restore" "恢复（撤销 AI 弃用标记）"}}">{{template "icon-restore"}}</button>
+            </form>
+            {{end}}
             <form method="post" action="/admin/posts/{{.ID}}/delete" data-confirm="{{printf ($.Admin.T "admin.posts.delete_confirm" "确定删除「%s」？此操作不可撤销。") .Title}}">
               <input type="hidden" name="_csrf" value="{{$.CSRF}}">
               <input type="hidden" name="lang" value="{{.Lang}}">

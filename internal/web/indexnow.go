@@ -64,7 +64,9 @@ func buildIndexNowURL(endpoint, pageURL, key string) string {
 }
 
 // firePublishHooks 发布钩子入口：内容发布或已发布内容更新后调用（admin 与自动化 API 共用）。
-// 只处理 posts/pages/links 且 status=published；本地/未配置域名的站点跳过 IndexNow 提交
+// 类型白名单 = post/page/link + 本站已启用的扩展类型（如商品）——工厂站发布商品同样要
+// 失效 sitemap 缓存、提交 IndexNow、触发 Telegram 推送；未启用类型不触发（防脏数据）。
+// 仅处理 status=published；本地/未配置域名的站点跳过 IndexNow 提交
 // （URL 对搜索引擎无意义，也保证测试不打真网）。
 func (s *Server) firePublishHooks(r *http.Request, p *store.Post) {
 	if p == nil || p.Status != "published" {
@@ -73,10 +75,12 @@ func (s *Server) firePublishHooks(r *http.Request, p *store.Post) {
 	switch p.Type {
 	case "post", "page", "link":
 	default:
-		return
+		if !s.contentTypeActive(p.Type) {
+			return
+		}
 	}
 	s.invalidateSitemapCache()
-	// Telegram 频道自动推送（仅 posts；台账去重，异步发送，绝不阻塞发布）。
+	// Telegram 频道自动推送（posts + 已启用扩展类型；台账去重，异步发送，绝不阻塞发布）。
 	s.fireTelegramPush(r, p)
 	base := s.publicBaseURL(r)
 	if isLocalBaseURL(base) {

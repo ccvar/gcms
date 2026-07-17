@@ -82,6 +82,7 @@ func dbTypeToContentType(row *store.ContentTypeRow) *ContentType {
 		Hierarchical: row.Hierarchical,
 		Builtin:      false,
 		DefaultOn:    false,
+		Custom:       true, // 数据库自定义类型：列表页设置菜单据此提供「编辑类型」入口
 	}
 	// 层级类型必须有 parent/order 结构字段（公开渲染隐藏、树构建依赖）；
 	// 设计器/API 的字段输入都不含它们——在合并层统一注入，缺哪个补哪个。

@@ -1,0 +1,119 @@
+{{define "body"}}{{$p := .Post}}{{$imgs := ""}}{{range .Fields}}{{if and (eq .Key "gallery") .List}}{{$imgs = .List}}{{end}}{{end}}{{$main := $p.CoverImage}}{{if not $main}}{{range $imgs}}{{if not $main}}{{$main = .}}{{end}}{{end}}{{end}}
+  {{/* 工厂骨架专属商品详情：图集（JS class 灯箱，不用 :target）+ 规格表 + 首屏询盘 + 相关商品。
+       非工厂骨架的 product 详情仍走 generic_detail（见 renderExtDetail）。 */}}
+  <main class="wrap pd-main">
+    <nav class="breadcrumb pd-bc" aria-label="{{.Tr.T "common.breadcrumb"}}">
+      <a href="{{.Tr.U "/"}}">{{.Tr.T "nav.home"}}</a><span class="sep">/</span>
+      {{if .CT}}<a href="{{.Tr.U (printf "/%s" .CT.URLPrefix)}}">{{.CT.Name .Lang}}</a><span class="sep">/</span>{{end}}
+      {{with $p.Category}}<a href="{{$.Tr.U (printf "/%s/cat/%s" $.CT.URLPrefix .Slug)}}">{{.Name}}</a><span class="sep">/</span>{{end}}
+      <span aria-current="page">{{$p.Title}}</span>
+    </nav>
+
+    <div class="pd-top">
+      <div class="pd-gallery">
+        {{if $main}}
+        <a class="pd-media" href="{{$main}}" data-lightbox target="_blank" rel="noopener">
+          <img data-pd-main src="{{$main}}" alt="{{$p.Title}}" decoding="async" fetchpriority="high"{{imgAttrs $main}}>
+        </a>
+        {{else}}
+        <div class="pd-media pd-media-gen" aria-hidden="true"><b>{{initial $p.Title}}</b></div>
+        {{end}}
+        {{if $imgs}}
+        <div class="pd-thumbs" role="list">
+          {{if $p.CoverImage}}<button class="pd-thumb is-active" type="button" data-pd-thumb="{{$p.CoverImage}}" aria-label="{{$p.Title}}"><img src="{{$p.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs $p.CoverImage}}></button>{{end}}
+          {{range $imgs}}{{if ne . $p.CoverImage}}<button class="pd-thumb{{if not $p.CoverImage}}{{if eq . $main}} is-active{{end}}{{end}}" type="button" data-pd-thumb="{{.}}" aria-label="{{$p.Title}}"><img src="{{.}}" alt="" loading="lazy" decoding="async"{{imgAttrs .}}></button>{{end}}{{end}}
+        </div>
+        {{end}}
+      </div>
+
+      <div class="pd-info">
+        {{with $p.Category}}<p class="pd-kicker"><a href="{{$.Tr.U (printf "/%s/cat/%s" $.CT.URLPrefix .Slug)}}">{{.Name}}</a></p>{{end}}
+        <h1 class="pd-title">{{$p.Title}}</h1>
+        {{if $p.Excerpt}}<p class="pd-lead">{{$p.Excerpt}}</p>{{end}}
+
+        {{$rows := ""}}{{range .Fields}}{{if and .Text (not .Pairs) (not .List)}}{{$rows = "1"}}{{end}}{{end}}
+        {{if $rows}}
+        <dl class="pd-meta">
+          {{range .Fields}}
+          {{if and .Text (not .Pairs) (not .List)}}
+          <div class="pd-meta-row"><dt>{{.Label}}</dt><dd>{{if eq .Type "url"}}<a href="{{.Text}}"{{$.ExternalLinkAttrs .Text}}>{{.Text}} <span class="arrow">↗</span></a>{{else}}{{.Text}}{{end}}</dd></div>
+          {{end}}
+          {{end}}
+        </dl>
+        {{end}}
+
+        {{/* 询盘区块（P1 InquiryView）：提到首屏可见位置 */}}
+        {{if .Inquiry}}
+        <section class="inquiry pd-inquiry" aria-label="{{.Tr.T "contact.inquiry"}}">
+          <h2 class="inquiry-title">{{.Tr.T "contact.inquiry"}}</h2>
+          <p class="inquiry-note">{{.Tr.T "contact.inquiry_note"}}</p>
+          <div class="inquiry-actions">
+            {{if .Inquiry.WhatsAppURL}}<a class="inquiry-btn inquiry-wa" href="{{.Inquiry.WhatsAppURL}}"{{.ExternalLinkAttrs .Inquiry.WhatsAppURL}}><svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2zm5.2 14.1c-.2.6-1.2 1.2-1.7 1.2-.4.1-1 .1-1.6-.1-.4-.1-.9-.3-1.5-.5-2.6-1.1-4.3-3.8-4.4-4-.1-.2-1.1-1.4-1.1-2.7 0-1.3.7-1.9.9-2.2.2-.3.5-.3.7-.3h.5c.2 0 .4 0 .6.4.2.5.7 1.8.8 1.9.1.1.1.3 0 .4-.1.2-.1.3-.3.5l-.4.5c-.1.1-.3.3-.1.6.2.3.7 1.2 1.6 1.9 1.1.9 2 1.2 2.3 1.4.3.1.5.1.6-.1.2-.2.7-.8.9-1.1.2-.3.4-.2.6-.1.3.1 1.7.8 1.9.9.3.1.5.2.5.3.1.1.1.7-.1 1.2z"/></svg><span>WhatsApp</span></a>{{end}}
+            {{if .Inquiry.MailtoURL}}<a class="inquiry-btn" href="{{.Inquiry.MailtoURL}}"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg><span>{{.Tr.T "contact.email"}}</span></a>{{end}}
+            {{if .Inquiry.TelURL}}<a class="inquiry-btn" href="{{.Inquiry.TelURL}}"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 16.5v3a1.5 1.5 0 0 1-1.6 1.5A17.5 17.5 0 0 1 3 4.6 1.5 1.5 0 0 1 4.5 3h3A1.5 1.5 0 0 1 9 4.3c.1.9.3 1.8.6 2.6a1.5 1.5 0 0 1-.3 1.6L8 9.8a15.5 15.5 0 0 0 6.2 6.2l1.3-1.3a1.5 1.5 0 0 1 1.6-.3c.8.3 1.7.5 2.6.6a1.5 1.5 0 0 1 1.3 1.5z"/></svg><span>{{.Tr.T "contact.phone"}}{{if .Inquiry.Phone}} · {{.Inquiry.Phone}}{{end}}</span></a>{{end}}
+            {{if .Inquiry.WeChatQR}}<button class="inquiry-btn" type="button" data-wechat-open><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3h-3zM18.5 18.5H21V21h-2.5z"/></svg><span>{{.Tr.T "contact.wechat"}}</span></button>{{end}}
+          </div>
+        </section>
+        {{end}}
+      </div>
+    </div>
+
+    {{/* 规格参数：repeater 数据表格化 */}}
+    {{range .Fields}}
+    {{if .Pairs}}
+    <section class="pd-specs">
+      <h2 class="pd-sec-title">{{.Label}}</h2>
+      <div class="pd-specs-tablewrap">
+        <table class="pd-specs-table">
+          <tbody>
+            {{range .Pairs}}<tr><th scope="row">{{.K}}</th><td>{{.V}}</td></tr>
+            {{end}}
+          </tbody>
+        </table>
+      </div>
+    </section>
+    {{end}}
+    {{end}}
+
+    {{if .ContentHTML}}
+    <section class="pd-desc">
+      <div class="prose">
+        {{.ContentHTML}}
+      </div>
+    </section>
+    {{end}}
+
+    {{/* 相关商品：同分类最多 4 个 */}}
+    {{if .Related}}
+    <section class="pd-related">
+      <div class="pd-related-head">
+        <h2 class="pd-sec-title">{{.Tr.T "factory.related"}}</h2>
+        <a href="{{.Tr.U (printf "/%s" .CT.URLPrefix)}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="pd-rel-grid">
+        {{range .Related}}
+        <a class="pd-rel-card" href="{{$.Tr.U (contentURL .)}}">
+          <span class="pd-rel-media{{if not .CoverImage}} pd-rel-gen{{end}}">
+            {{if .CoverImage}}<img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}
+          </span>
+          <span class="pd-rel-title">{{.Title}}</span>
+        </a>
+        {{end}}
+      </div>
+    </section>
+    {{end}}
+  </main>
+
+  {{/* 灯箱：JS class/hidden 开关（site.js data-lightbox），绝不用 :target */}}
+  <div class="pd-lightbox" data-lightbox-modal hidden>
+    <button class="pd-lightbox-backdrop" type="button" data-lightbox-close aria-label="{{.Tr.T "common.close"}}"></button>
+    <figure class="pd-lightbox-figure" role="dialog" aria-modal="true" aria-label="{{$p.Title}}">
+      <button class="pd-lightbox-x" type="button" data-lightbox-close aria-label="{{.Tr.T "common.close"}}">×</button>
+      <img data-lightbox-img src="" alt="{{$p.Title}}" decoding="async">
+    </figure>
+  </div>
+
+  <button class="to-top" aria-label="{{.Tr.T "common.back_top"}}" title="{{.Tr.T "common.back_top"}}">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+  </button>
+{{end}}

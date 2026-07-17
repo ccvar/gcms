@@ -147,155 +147,238 @@ func assetVersion(fsys fs.FS) string {
 	return strconv.FormatUint(h.Sum64(), 36)
 }
 
+// 主题轻分类（工厂/外贸站 P1）：只做筛选展示用，不参与渲染。
+//   - content：博客/资讯/文档等「内容消费」形态
+//   - factory：工厂/外贸站主题族（P2 出主题，当前没有条目）
+//   - dtc：外贸独立站主题族（跨境卖家自有品牌官网，DTC 零售感）
+//   - general：官网/落地页/作品集等通用感强的形态
+const (
+	ThemeCategoryContent = "content"
+	ThemeCategoryFactory = "factory"
+	ThemeCategoryDTC     = "dtc"
+	ThemeCategoryGeneral = "general"
+)
+
 // ThemeOption 用于后台设置页的主题下拉。
-type ThemeOption struct{ ID, Name, Desc string }
+type ThemeOption struct{ ID, Name, Desc, Category string }
 
 // Themes 是可选的前台主题（布局风格各不相同）。
 var Themes = []ThemeOption{
-	{"editorial", "编辑 · Editorial", "暖色衬线、单列大字号列表（默认）"},
-	{"magazine", "杂志 · Magazine", "无衬线、居中刊头、三列卡片网格"},
-	{"terminal", "极客 · Terminal", "等宽字体、深色、终端清单式布局"},
-	{"brutalist", "粗野 · Brutalist", "黑白高对比、粗黑边框、硬阴影、无圆角"},
-	{"notebook", "手账 · Notebook", "米黄纸张、衬线、横格背景、暖橙强调"},
-	{"swiss", "瑞士 · Swiss", "国际主义网格、红黑配色、巨号编号"},
-	{"pastel", "柔彩 · Pastel", "浅彩渐变、大圆角卡片、友好柔和"},
-	{"newspaper", "报纸 · Newspaper", "多栏排版、衬线、首字下沉、黑白"},
-	{"darkpro", "暗夜 · Dark Pro", "现代暗色、靛蓝霓虹、卡片网格"},
-	{"landing", "官网 · Landing", "产品/项目官网风：大 hero + CTA 按钮 + 特性卡片"},
-	{"product", "产品 · Product", "开源项目/互联网产品官网、文档入口、更新日志"},
-	{"prism", "光谱 · Prism", "深色海报感、多色信号线、错层内容卡"},
-	{"exchange", "交易所 · Exchange", "Web3 增长页、行情仪表盘、强转化按钮"},
-	{"academy", "智课 · Academy", "AI 教材科普、课程目录、阅读友好卡片"},
-	{"garment", "制衣 · Garment", "外贸服装工厂、样衣目录、B2B 展示感"},
-	{"institution", "机构 · Institution", "专业服务/咨询/律所/协会官网、可信背书"},
-	{"studio", "作品 · Studio", "设计/摄影/建筑/品牌工作室、图像主导作品集"},
-	{"lifestyle", "生活 · Lifestyle", "咖啡/民宿/餐厅/买手店、小品牌温度感官网"},
-	{"knowledge", "知识库 · Knowledge Hub", "搜索优先、分类导航、推荐阅读和更新时间线"},
-	{"sidebar", "侧栏 · Sidebar", "左侧常驻竖栏（品牌+导航）+ 右侧阅读流，个人站 / 文档站气质"},
-	{"bento", "拼贴 · Bento", "错落卡片网格首页（顶栏照旧），靛蓝强调、大圆角，作品集 / 个人主页气质"},
-	{"nocturne", "夜栏 · Nocturne", "深色左栏 + 阅读流，薄荷青强调、等宽点缀，开发者夜间博客 / 暗色文档"},
-	{"terra", "暖砂 · Terra", "暖砂拼贴网格 + 衬线标题，陶土橙强调，创作者作品集 / 个人主页"},
-	{"porcelain", "月白 · Porcelain", "极简留白顶栏 + 文学衬线，青瓷绿强调，写作 / 品牌 / 期刊式站点"},
-	{"index", "索引 · Index", "首页是一张排版化内容索引表：等宽编号 + 发丝线 + 大留白，克制精密的科技感"},
-	{"split", "分屏 · Split", "满屏左右分栏：左侧巨型标题 + 右侧整块精选，黑白克制、大气留白"},
-	{"axis", "中线 · Axis", "全居中宣言式：巨型居中标题 + 中线分隔的居中列表，极致对称留白"},
-	{"journal", "文选 · Journal", "学刊小开本：窄栏衬线、文本优先、克制留白，学术 / 文学气质"},
-	{"blueprint", "蓝图 · Blueprint", "工程制图：方格纸底纹 + 墨线 + 等宽技术标注 + 角落标题栏"},
-	{"riso", "孔版 · Risograph", "独立孔版印刷：双专色叠印、网点质感、套印偏移、硬阴影"},
-	{"quiet", "和敬 · Quiet", "和风留白：极阔间距、竖向节奏、发丝线、一点朱印强调"},
-	{"lucid", "明快 · Lucid", "亮白极简 + 暖橙强调：现代无衬线、扁平圆角卡片、胶囊按钮、宽松留白——科普 / 金融式的清晰亲和"},
-	{"aurora", "霓白 · Aurora", "浅色玻璃拟态：柔和渐变网格底 + 磨砂半透卡片 + 渐变标题，靛紫强调——Web3 发布页 / L2·DeFi 的高级科技感"},
-	{"bands", "光带 · Bands", "全宽交替色带分区：一屏一段的纵向叙事带，电光蓝强调、超大无衬线——现代营销 / Web3 推广落地页"},
-	{"ticker", "流光 · Ticker", "顶部滚动行情/生态跑马灯 + 下方实时信息流：等宽数字、翠绿涨色强调——Web3 实时感信息站"},
-	{"liftoff", "起飞 · Liftoff", "单一 CTA 的 MINT/DROP 发射页：巨型标题 + 供给进度条 + 主按钮，右侧大方形艺术框——NFT 铸造 / 代币发售落地页"},
-	{"board", "看板 · Board", "多列看板/路线图：全宽横幅精选 + 横向泳道列（分类分组）与紧凑迷你卡片，靛蓝强调——产品工具 / 产品路线图"},
-	{"timeline", "时间线 · Timeline", "居中竖脊时间线：单发丝线主轴 + 圆点节点 + 等宽日期，衬线标题、暖纸墨色——档案编年 / 更新日志 / 路线图"},
-	{"deck", "横卷 · Deck", "横向滚动影卷：整屏卡片 scroll-snap 侧滑 + 锚点翻页，作品集 / 时装 lookbook / 案例集（纯 CSS 横向）"},
-	{"poster", "封幕 · Poster", "整屏封面图 + 压图大字 + 纵向 scroll-snap 分屏折叠：杂志封面 / 品牌发布会 / mint 落地页"},
-	{"uptime", "健康 · Uptime", "状态页：总状态横幅 + 组件在线率格条 + 事件时间线，RPC / 节点 / 协议状态页"},
-	{"profile", "名帖 · Profile", "无导航个人页：头像 + 可点大按钮链接栈，Linktree 式创作者 / 项目 bio 页"},
-	{"bloom", "草木 · Bloom", "有机曲面：blob 裁剪 hero + 藤蔓脊左右交错叶卡 + 波浪分隔，养生 / 有机 / 手作品牌"},
-	{"desktop", "千禧 · Desktop", "仿千禧 OS 桌面：窗口容器 + 文件夹散布 + 任务栏，frutiger-aero 光泽玩味"},
-	{"cinema", "夜幕 · Cinema", "宽荧幕影格：2.39:1 黑边 + 灰度整屏场景 + 时间码，影像 / 摄影 / 电影质感"},
-	{"collage", "喧哗 · Collage", "反网格拼贴：叠错旋转卡片 + 便签胶带 + 涂鸦箭头，音乐节 / 潮牌 / zine"},
-	{"constellation", "星图 · Constellation", "可筛选生态名录：分类芯片 + 实时搜索过滤项目卡片网格（渐进增强，需前端 JS），Web3 生态 / 项目墙 / dApp 目录"},
-	{"gilded", "鎏金 · Gilded", "浓咖黑底 + 鎏金强调、轻字重衬线大标题，威士忌 / 珠宝 / 精品工作室的暗夜奢华官网"},
-	{"grove", "松涧 · Grove", "奶油纸底 + 深松绿侧栏、蜜色高亮，衬线标题，茶园 / 花艺 / 自然生活博客"},
-	{"obsidian", "曜石 · Obsidian", "石墨黑拼贴卡片 + 荧光青柠强调、等宽数字，开发者夜间主页 / 科技作品集"},
-	{"codex", "典藏 · Codex", "缃色纸底 + 牛血红强调、衬线条目与双细线表头，文博收藏 / 人文档案的目录页"},
-	{"gilt", "乌金 · Gilt", "满屏分屏换上乌木鎏金深色皮：衬线巨题 + 黄铜金强调，画廊 / 高端品牌 / 收藏站的夜场气质"},
-	{"zenith", "苍穹 · Zenith", "全居中宣言浸入星夜深蓝：衬线巨题、星光淡蓝强调、极致对称留白，宣言 / 诗集 / 概念项目的静谧夜航感"},
-	{"fir", "杉野 · Fir", "全宽色带换成米纸松绿：衬线大标题 + 胶囊按钮、自然系配色，有机食品 / 手作 / 户外品牌落地页"},
-	{"ember", "琥珀 · Ember", "行情跑马灯切入夜盘：石墨深底 + 琥珀信号色、等宽时间戳微光，加密行情 / 数据面板 / 夜间信息站的终端质感"},
-	{"ignition", "点火 · Ignition", "深空发射控制台：暗夜蓝黑底 + 琥珀→火焰渐变进度与 CTA，遥测仪表气质——夜间 mint / 代币发售 / 硬核项目发射页"},
-	{"cork", "软木 · Cork", "软木告示板：牛皮纸暖底 + 蜡印红图钉、衬线标题的泳道看板——编辑部选题板 / 社区公告栏 / 个人项目路线图"},
-	{"orbit", "星轨 · Orbit", "深空观测夜志：蓝黑夜幕 + 星点辉光节点、冰蓝等宽刻度——太空/天文主题编年、黑客松 build log、暗色版本路线图"},
-	{"runway", "秀场 · Runway", "午夜秀场影卷：黑幕整屏横滑 + 绯红舞台光、紧排无衬线大字——时装 lookbook / 暗调摄影集 / 品牌大片发布"},
-	{"velvet", "丝绒 · Velvet", "整屏封面折叠改走深夜高定：丝绒暗底、香槟金衬线大字——时装屋 / 香氛美妆 / 画廊发布会"},
-	{"pulse", "脉冲 · Pulse", "状态页换深色指挥台：冰青读数、等宽标题、暗夜机房气质——节点监控 / 基础设施 / API 状态页"},
-	{"onyx", "玄玉 · Onyx", "链接栈 bio 页换黑曜暗卡：荧光青柠强调、等宽名字——开发者 / 极客创作者 / 工具作者主页"},
-	{"lotus", "青荷 · Lotus", "草木曲面转冷调水岸：青雾纸底、荷粉 + 湖水青点缀、圆润无衬线——SPA / 花艺 / 疗愈生活品牌"},
-	{"vapor", "幻夜 · Vapor", "千禧桌面开进午夜：暗紫夜幕 + 霓粉窗格、荧光绿高光，蒸汽波气质的电玩 / 复古社区 / 玩乐个人站"},
-	{"matinee", "日场 · Matinee", "宽荧幕影格翻成日场画册：暖纸白 + 酒红字幕卡、衬线大标题、银盐灰阶影像，摄影集 / 展览画册 / 品牌影像站"},
-	{"rave", "夜电 · Rave", "反网格拼贴开进深夜：黑纸白墨硬阴影、只留荧光黄绿一击、等宽打字机标题，地下演出 / 电子厂牌 / 夜行 zine"},
-	{"astrolabe", "浑天 · Astrolabe", "星图名录换上真正的夜空：墨蓝底 + 星辉琥珀、衬线标题、细星点底纹，天文馆气质的生态目录 / 项目墙 / 收藏索引"},
-	{"masonry", "瀑布 · Masonry", "Pinterest 式多列瀑布流：居中题签 + 分类胶囊 + 宽幅精选卡，变高卡片沿 2–4 列自然下落，亮白画廊大留白——图库 / 灵感墙 / 设计收藏"},
-	{"darkroom", "暗房 · Darkroom", "瀑布流坠入暗房夜场：近黑展墙 + 安全灯红强调，灰阶封面悬停显色、首字母红印生成块——摄影作品集 / 夜间画廊 / 视觉档案"},
-	{"feed", "动态 · Feed", "社交微博式动态流：左侧常驻名片栏 + 居中单列帖子卡（置顶精选、头像缩略），天蓝清爽——个人动态 / build-in-public / 短内容"},
-	{"noir", "夜航 · Noir", "动态流熄灯开夜航：纯黑 AMOLED 底 + 霓虹紫强调、等宽时间戳的暗夜卡片流——深夜开发者动态 / 暗色个人微博"},
-	{"gazette", "头版 · Gazette", "对开报纸头版：巨型衬线报头 + 粗细双线 + 分栏线多栏正文与双线简报框，象牙纸底、牛血红眉题——新闻 / 评论 / 编辑部站点"},
-	{"tabloid", "街报 · Tabloid", "头版骨架换上街头小报皮：黑底大写无衬线巨题 + 猩红色块眉题、高反差白墨双线——潮流资讯 / 音乐现场 / 争议话题评论"},
-	{"manual", "手册 · Manual", "三栏手册页：左侧章节目录 + 中间编号小节 + 右侧速览卡，青灰蓝冷静克制——文档站 / 产品手册 / API 参考"},
-	{"kernel", "内核 · Kernel", "手册三栏换上石墨夜色工程皮：等宽标题 + 钢蓝强调、man page 气质——开发者文档 / 运维手册 / API 参考"},
-	{"almanac", "月历 · Almanac", "月历首页：双线刊头 + 七列月格把文章钉成日子 + 点线议程清单，暖手帐纸配朱红图钉——活动日程 / 更新日志 / 期刊连载"},
-	{"nightshift", "夜班 · Nightshift", "月历骨架值夜班：墨蓝夜底、霓虹紫发光图钉与等宽日号，月格与议程改走排程台质感——夜场演出 / 电竞赛程 / 链上活动日历"},
-	{"inbox", "收件箱 · Inbox", "邮件客户端三栏：左侧文件夹栏（分类+标签）+ 中间邮件列表（未读点/发件人/摘要）+ 右侧精选阅读窗格，经典浅色邮件质感——通讯归档 / 新闻简报 / 站内公告"},
-	{"midnight", "午夜 · Midnight", "三栏邮件客户端熄灯夜读：墨蓝夜幕 + 冰蓝强调、未读点辉光、星标鎏金——开发者简报 / 夜间通讯 / 更新公告"},
-	{"catalog", "货架 · Catalog", "资源目录首页：左侧品牌导语 + 右侧精选橱窗、分类货架与紧凑商品卡——工具导航 / 产品目录 / 课程资源库"},
-	{"nightmarket", "夜市 · Night Market", "货架骨架切入深色夜市：墨黑展台 + 荧光青价格签式标签、发光封面——Web3 工具库 / 数字产品目录 / 夜间资源导航"},
-	{"broadcast", "播客 · Broadcast", "广播节目首页：大幅主节目播放器 + 频道刻度 + 编号节目单，声音杂志式留白——播客 / 访谈 / 视频栏目 / 连载内容"},
-	{"airwave", "电波 · Airwave", "广播骨架进入午夜频段：深蓝控制台 + 电波紫信号灯、等宽时间码——科技播客 / 电子音乐 / 夜间访谈栏目"},
-	{"exhibit", "展厅 · Exhibit", "策展式首页：展签标题 + 非对称作品墙 + 展厅分类导览，完整展示封面——摄影 / 建筑 / 案例研究 / 艺术档案"},
-	{"afterhours", "闭馆 · After Hours", "展厅闭馆后的暗场版本：炭黑墙面 + 安全灯红展签、克制聚光——夜间画廊 / 影像档案 / 高端创意工作室"},
+	{"editorial", "编辑 · Editorial", "暖色衬线、单列大字号列表（默认）", "content"},
+	{"magazine", "杂志 · Magazine", "无衬线、居中刊头、三列卡片网格", "content"},
+	{"terminal", "极客 · Terminal", "等宽字体、深色、终端清单式布局", "content"},
+	{"brutalist", "粗野 · Brutalist", "黑白高对比、粗黑边框、硬阴影、无圆角", "content"},
+	{"notebook", "手账 · Notebook", "米黄纸张、衬线、横格背景、暖橙强调", "content"},
+	{"swiss", "瑞士 · Swiss", "国际主义网格、红黑配色、巨号编号", "content"},
+	{"pastel", "柔彩 · Pastel", "浅彩渐变、大圆角卡片、友好柔和", "content"},
+	{"newspaper", "报纸 · Newspaper", "多栏排版、衬线、首字下沉、黑白", "content"},
+	{"darkpro", "暗夜 · Dark Pro", "现代暗色、靛蓝霓虹、卡片网格", "content"},
+	{"landing", "官网 · Landing", "产品/项目官网风：大 hero + CTA 按钮 + 特性卡片", "general"},
+	{"product", "产品 · Product", "开源项目/互联网产品官网、文档入口、更新日志", "general"},
+	{"prism", "光谱 · Prism", "深色海报感、多色信号线、错层内容卡", "general"},
+	{"exchange", "交易所 · Exchange", "Web3 增长页、行情仪表盘、强转化按钮", "general"},
+	{"academy", "智课 · Academy", "AI 教材科普、课程目录、阅读友好卡片", "general"},
+	{"garment", "制衣 · Garment", "外贸服装工厂、样衣目录、B2B 展示感", "general"},
+	{"institution", "机构 · Institution", "专业服务/咨询/律所/协会官网、可信背书", "general"},
+	{"studio", "作品 · Studio", "设计/摄影/建筑/品牌工作室、图像主导作品集", "general"},
+	{"lifestyle", "生活 · Lifestyle", "咖啡/民宿/餐厅/买手店、小品牌温度感官网", "general"},
+	{"knowledge", "知识库 · Knowledge Hub", "搜索优先、分类导航、推荐阅读和更新时间线", "content"},
+	{"sidebar", "侧栏 · Sidebar", "左侧常驻竖栏（品牌+导航）+ 右侧阅读流，个人站 / 文档站气质", "content"},
+	{"bento", "拼贴 · Bento", "错落卡片网格首页（顶栏照旧），靛蓝强调、大圆角，作品集 / 个人主页气质", "general"},
+	{"nocturne", "夜栏 · Nocturne", "深色左栏 + 阅读流，薄荷青强调、等宽点缀，开发者夜间博客 / 暗色文档", "content"},
+	{"terra", "暖砂 · Terra", "暖砂拼贴网格 + 衬线标题，陶土橙强调，创作者作品集 / 个人主页", "general"},
+	{"porcelain", "月白 · Porcelain", "极简留白顶栏 + 文学衬线，青瓷绿强调，写作 / 品牌 / 期刊式站点", "content"},
+	{"index", "索引 · Index", "首页是一张排版化内容索引表：等宽编号 + 发丝线 + 大留白，克制精密的科技感", "content"},
+	{"split", "分屏 · Split", "满屏左右分栏：左侧巨型标题 + 右侧整块精选，黑白克制、大气留白", "general"},
+	{"axis", "中线 · Axis", "全居中宣言式：巨型居中标题 + 中线分隔的居中列表，极致对称留白", "general"},
+	{"journal", "文选 · Journal", "学刊小开本：窄栏衬线、文本优先、克制留白，学术 / 文学气质", "content"},
+	{"blueprint", "蓝图 · Blueprint", "工程制图：方格纸底纹 + 墨线 + 等宽技术标注 + 角落标题栏", "general"},
+	{"riso", "孔版 · Risograph", "独立孔版印刷：双专色叠印、网点质感、套印偏移、硬阴影", "content"},
+	{"quiet", "和敬 · Quiet", "和风留白：极阔间距、竖向节奏、发丝线、一点朱印强调", "content"},
+	{"lucid", "明快 · Lucid", "亮白极简 + 暖橙强调：现代无衬线、扁平圆角卡片、胶囊按钮、宽松留白——科普 / 金融式的清晰亲和", "general"},
+	{"aurora", "霓白 · Aurora", "浅色玻璃拟态：柔和渐变网格底 + 磨砂半透卡片 + 渐变标题，靛紫强调——Web3 发布页 / L2·DeFi 的高级科技感", "general"},
+	{"bands", "光带 · Bands", "全宽交替色带分区：一屏一段的纵向叙事带，电光蓝强调、超大无衬线——现代营销 / Web3 推广落地页", "general"},
+	{"ticker", "流光 · Ticker", "顶部滚动行情/生态跑马灯 + 下方实时信息流：等宽数字、翠绿涨色强调——Web3 实时感信息站", "general"},
+	{"liftoff", "起飞 · Liftoff", "单一 CTA 的 MINT/DROP 发射页：巨型标题 + 供给进度条 + 主按钮，右侧大方形艺术框——NFT 铸造 / 代币发售落地页", "general"},
+	{"board", "看板 · Board", "多列看板/路线图：全宽横幅精选 + 横向泳道列（分类分组）与紧凑迷你卡片，靛蓝强调——产品工具 / 产品路线图", "general"},
+	{"timeline", "时间线 · Timeline", "居中竖脊时间线：单发丝线主轴 + 圆点节点 + 等宽日期，衬线标题、暖纸墨色——档案编年 / 更新日志 / 路线图", "content"},
+	{"deck", "横卷 · Deck", "横向滚动影卷：整屏卡片 scroll-snap 侧滑 + 锚点翻页，作品集 / 时装 lookbook / 案例集（纯 CSS 横向）", "general"},
+	{"poster", "封幕 · Poster", "整屏封面图 + 压图大字 + 纵向 scroll-snap 分屏折叠：杂志封面 / 品牌发布会 / mint 落地页", "general"},
+	{"uptime", "健康 · Uptime", "状态页：总状态横幅 + 组件在线率格条 + 事件时间线，RPC / 节点 / 协议状态页", "general"},
+	{"profile", "名帖 · Profile", "无导航个人页：头像 + 可点大按钮链接栈，Linktree 式创作者 / 项目 bio 页", "general"},
+	{"bloom", "草木 · Bloom", "有机曲面：blob 裁剪 hero + 藤蔓脊左右交错叶卡 + 波浪分隔，养生 / 有机 / 手作品牌", "general"},
+	{"desktop", "千禧 · Desktop", "仿千禧 OS 桌面：窗口容器 + 文件夹散布 + 任务栏，frutiger-aero 光泽玩味", "general"},
+	{"cinema", "夜幕 · Cinema", "宽荧幕影格：2.39:1 黑边 + 灰度整屏场景 + 时间码，影像 / 摄影 / 电影质感", "general"},
+	{"collage", "喧哗 · Collage", "反网格拼贴：叠错旋转卡片 + 便签胶带 + 涂鸦箭头，音乐节 / 潮牌 / zine", "general"},
+	{"constellation", "星图 · Constellation", "可筛选生态名录：分类芯片 + 实时搜索过滤项目卡片网格（渐进增强，需前端 JS），Web3 生态 / 项目墙 / dApp 目录", "general"},
+	{"gilded", "鎏金 · Gilded", "浓咖黑底 + 鎏金强调、轻字重衬线大标题，威士忌 / 珠宝 / 精品工作室的暗夜奢华官网", "general"},
+	{"grove", "松涧 · Grove", "奶油纸底 + 深松绿侧栏、蜜色高亮，衬线标题，茶园 / 花艺 / 自然生活博客", "content"},
+	{"obsidian", "曜石 · Obsidian", "石墨黑拼贴卡片 + 荧光青柠强调、等宽数字，开发者夜间主页 / 科技作品集", "general"},
+	{"codex", "典藏 · Codex", "缃色纸底 + 牛血红强调、衬线条目与双细线表头，文博收藏 / 人文档案的目录页", "content"},
+	{"gilt", "乌金 · Gilt", "满屏分屏换上乌木鎏金深色皮：衬线巨题 + 黄铜金强调，画廊 / 高端品牌 / 收藏站的夜场气质", "general"},
+	{"zenith", "苍穹 · Zenith", "全居中宣言浸入星夜深蓝：衬线巨题、星光淡蓝强调、极致对称留白，宣言 / 诗集 / 概念项目的静谧夜航感", "general"},
+	{"fir", "杉野 · Fir", "全宽色带换成米纸松绿：衬线大标题 + 胶囊按钮、自然系配色，有机食品 / 手作 / 户外品牌落地页", "general"},
+	{"ember", "琥珀 · Ember", "行情跑马灯切入夜盘：石墨深底 + 琥珀信号色、等宽时间戳微光，加密行情 / 数据面板 / 夜间信息站的终端质感", "general"},
+	{"ignition", "点火 · Ignition", "深空发射控制台：暗夜蓝黑底 + 琥珀→火焰渐变进度与 CTA，遥测仪表气质——夜间 mint / 代币发售 / 硬核项目发射页", "general"},
+	{"cork", "软木 · Cork", "软木告示板：牛皮纸暖底 + 蜡印红图钉、衬线标题的泳道看板——编辑部选题板 / 社区公告栏 / 个人项目路线图", "general"},
+	{"orbit", "星轨 · Orbit", "深空观测夜志：蓝黑夜幕 + 星点辉光节点、冰蓝等宽刻度——太空/天文主题编年、黑客松 build log、暗色版本路线图", "content"},
+	{"runway", "秀场 · Runway", "午夜秀场影卷：黑幕整屏横滑 + 绯红舞台光、紧排无衬线大字——时装 lookbook / 暗调摄影集 / 品牌大片发布", "general"},
+	{"velvet", "丝绒 · Velvet", "整屏封面折叠改走深夜高定：丝绒暗底、香槟金衬线大字——时装屋 / 香氛美妆 / 画廊发布会", "general"},
+	{"pulse", "脉冲 · Pulse", "状态页换深色指挥台：冰青读数、等宽标题、暗夜机房气质——节点监控 / 基础设施 / API 状态页", "general"},
+	{"onyx", "玄玉 · Onyx", "链接栈 bio 页换黑曜暗卡：荧光青柠强调、等宽名字——开发者 / 极客创作者 / 工具作者主页", "general"},
+	{"lotus", "青荷 · Lotus", "草木曲面转冷调水岸：青雾纸底、荷粉 + 湖水青点缀、圆润无衬线——SPA / 花艺 / 疗愈生活品牌", "general"},
+	{"vapor", "幻夜 · Vapor", "千禧桌面开进午夜：暗紫夜幕 + 霓粉窗格、荧光绿高光，蒸汽波气质的电玩 / 复古社区 / 玩乐个人站", "general"},
+	{"matinee", "日场 · Matinee", "宽荧幕影格翻成日场画册：暖纸白 + 酒红字幕卡、衬线大标题、银盐灰阶影像，摄影集 / 展览画册 / 品牌影像站", "general"},
+	{"rave", "夜电 · Rave", "反网格拼贴开进深夜：黑纸白墨硬阴影、只留荧光黄绿一击、等宽打字机标题，地下演出 / 电子厂牌 / 夜行 zine", "general"},
+	{"astrolabe", "浑天 · Astrolabe", "星图名录换上真正的夜空：墨蓝底 + 星辉琥珀、衬线标题、细星点底纹，天文馆气质的生态目录 / 项目墙 / 收藏索引", "general"},
+	{"masonry", "瀑布 · Masonry", "Pinterest 式多列瀑布流：居中题签 + 分类胶囊 + 宽幅精选卡，变高卡片沿 2–4 列自然下落，亮白画廊大留白——图库 / 灵感墙 / 设计收藏", "general"},
+	{"darkroom", "暗房 · Darkroom", "瀑布流坠入暗房夜场：近黑展墙 + 安全灯红强调，灰阶封面悬停显色、首字母红印生成块——摄影作品集 / 夜间画廊 / 视觉档案", "general"},
+	{"feed", "动态 · Feed", "社交微博式动态流：左侧常驻名片栏 + 居中单列帖子卡（置顶精选、头像缩略），天蓝清爽——个人动态 / build-in-public / 短内容", "content"},
+	{"noir", "夜航 · Noir", "动态流熄灯开夜航：纯黑 AMOLED 底 + 霓虹紫强调、等宽时间戳的暗夜卡片流——深夜开发者动态 / 暗色个人微博", "content"},
+	{"gazette", "头版 · Gazette", "对开报纸头版：巨型衬线报头 + 粗细双线 + 分栏线多栏正文与双线简报框，象牙纸底、牛血红眉题——新闻 / 评论 / 编辑部站点", "content"},
+	{"tabloid", "街报 · Tabloid", "头版骨架换上街头小报皮：黑底大写无衬线巨题 + 猩红色块眉题、高反差白墨双线——潮流资讯 / 音乐现场 / 争议话题评论", "content"},
+	{"manual", "手册 · Manual", "三栏手册页：左侧章节目录 + 中间编号小节 + 右侧速览卡，青灰蓝冷静克制——文档站 / 产品手册 / API 参考", "content"},
+	{"kernel", "内核 · Kernel", "手册三栏换上石墨夜色工程皮：等宽标题 + 钢蓝强调、man page 气质——开发者文档 / 运维手册 / API 参考", "content"},
+	{"almanac", "月历 · Almanac", "月历首页：双线刊头 + 七列月格把文章钉成日子 + 点线议程清单，暖手帐纸配朱红图钉——活动日程 / 更新日志 / 期刊连载", "content"},
+	{"nightshift", "夜班 · Nightshift", "月历骨架值夜班：墨蓝夜底、霓虹紫发光图钉与等宽日号，月格与议程改走排程台质感——夜场演出 / 电竞赛程 / 链上活动日历", "content"},
+	{"inbox", "收件箱 · Inbox", "邮件客户端三栏：左侧文件夹栏（分类+标签）+ 中间邮件列表（未读点/发件人/摘要）+ 右侧精选阅读窗格，经典浅色邮件质感——通讯归档 / 新闻简报 / 站内公告", "content"},
+	{"midnight", "午夜 · Midnight", "三栏邮件客户端熄灯夜读：墨蓝夜幕 + 冰蓝强调、未读点辉光、星标鎏金——开发者简报 / 夜间通讯 / 更新公告", "content"},
+	{"catalog", "货架 · Catalog", "资源目录首页：左侧品牌导语 + 右侧精选橱窗、分类货架与紧凑商品卡——工具导航 / 产品目录 / 课程资源库", "general"},
+	{"nightmarket", "夜市 · Night Market", "货架骨架切入深色夜市：墨黑展台 + 荧光青价格签式标签、发光封面——Web3 工具库 / 数字产品目录 / 夜间资源导航", "general"},
+	{"broadcast", "播客 · Broadcast", "广播节目首页：大幅主节目播放器 + 频道刻度 + 编号节目单，声音杂志式留白——播客 / 访谈 / 视频栏目 / 连载内容", "content"},
+	{"airwave", "电波 · Airwave", "广播骨架进入午夜频段：深蓝控制台 + 电波紫信号灯、等宽时间码——科技播客 / 电子音乐 / 夜间访谈栏目", "content"},
+	{"exhibit", "展厅 · Exhibit", "策展式首页：展签标题 + 非对称作品墙 + 展厅分类导览，完整展示封面——摄影 / 建筑 / 案例研究 / 艺术档案", "general"},
+	{"afterhours", "闭馆 · After Hours", "展厅闭馆后的暗场版本：炭黑墙面 + 安全灯红展签、克制聚光——夜间画廊 / 影像档案 / 高端创意工作室", "general"},
+	// 工厂主题族（工厂/外贸站 P2）：目录骨架 factory-catalog（SKU 多）× 4 皮 + 展台骨架 factory-showcase（精品少 SKU）× 4 皮。
+	{"industrial", "工业蓝 · Industrial", "钢青蓝 + 冷白车间底、直角硬边卡片：目录式首页（hero 条 + 商品栅格 + 弱化文章区），SKU 多的机械 / 零部件工厂", "factory"},
+	{"machinist", "机械灰 · Machinist", "石墨灰 + 安全橙信号、等宽货号点缀：目录骨架的车间质感皮，五金 / 模具 / 加工厂", "factory"},
+	{"tradewind", "外贸绿 · Tradewind", "米白纸底 + 深松绿与黄铜点缀：目录骨架的出海外贸皮，轻工 / 家居 / 日用品供应商", "factory"},
+	{"foundry", "铸坊 · Foundry", "近黑展墙 + 熔铸琥珀高光：目录骨架的深色展厅皮，铸造 / 金属制品 / 高端 OEM", "factory"},
+	{"showroom", "展销 · Showroom", "亮白展厅 + 工业蓝强调、大图 hero：展台式首页（精选商品横排 + 工厂实力 + 最新动态），精品少 SKU 的展示型工厂", "factory"},
+	{"assembly", "装配 · Assembly", "浅钢灰 + 安全橙拉手色：展台骨架的产线质感皮，设备 / 仪器 / 定制装配厂", "factory"},
+	{"harbor", "海贸 · Harbor", "雾蓝纸底 + 深海青与珊瑚点缀：展台骨架的港口外贸皮，出口贸易 / 船务 / 集散供应链", "factory"},
+	{"gunmetal", "枪灰 · Gunmetal", "枪灰黑底 + 金属银蓝辉光：展台骨架的深色发布厅皮，精密制造 / 军工级质感 / 旗舰产品发布", "factory"},
+	// 工厂主题族追加三骨架 ×4 皮：单页 factory-onepage（小微工厂 / 单一产品线）
+	// + 方案 factory-solutions（OEM/ODM 定制厂）+ 技术 factory-engineering（精密制造 / 工程师采购）。
+	{"packline", "胶带黄 · Packline", "暖纸仓储底 + 打包胶带黄黑警示条：单页式首页（主打产品→实力→流程→FAQ→询盘一滚到底），小微工厂 / 单一产品线", "factory"},
+	{"carbon", "深炭 · Carbon", "深炭黑底 + 安全黄信号：单页骨架的暗色车间皮，五金工具 / 夜班产线 / 硬核单品工厂", "factory"},
+	{"linen", "亚麻 · Linen", "亚麻本白纸底 + 胡桃棕点缀：单页骨架的素色手作皮，纺织 / 家居 / 日用品小厂", "factory"},
+	{"redline", "信号红 · Redline", "冷白底 + 信号红一击：单页骨架的高转化皮，促销季外贸单品 / 快速询盘落地页", "factory"},
+	{"drafting", "图纸青 · Drafting", "浅青图纸底 + 制图青强调：方案式首页（应用行业大卡一级入口 + 定制流程 + 商品作为案例产出），OEM/ODM 定制厂", "factory"},
+	{"flagship", "深海军 · Flagship", "深海军蓝底 + 浅钢蓝辉光：方案骨架的暗色旗舰皮，高端代工 / 出口方案商 / 大客户定制", "factory"},
+	{"concrete", "混凝土 · Concrete", "混凝土灰底 + 钢青蓝强调：方案骨架的工程质感皮，建材 / 结构件 / 工程项目供应", "factory"},
+	{"amberpress", "琥珀 · Amberpress", "暖琥珀纸底 + 衬线大标题：方案骨架的老牌工坊皮，皮具 / 木作 / 传统工艺代工厂", "factory"},
+	{"phosphor", "示波绿 · Phosphor", "示波器暗底 + 磷光绿读数：技术式首页（核心产品规格对比表 + 认证墙 + 参数分类入口），电子 / 仪器 / 精密制造", "factory"},
+	{"schematic", "制图蓝 · Schematic", "制图白底 + 工程蓝墨线：技术骨架的图纸皮，机加工 / 自动化部件 / 面向工程师的元件目录", "factory"},
+	{"titanium", "钛灰 · Titanium", "钛灰冷底 + 青灰蓝强调：技术骨架的金属皮，航空件 / 医疗器械 / 高精度加工", "factory"},
+	{"hazard", "警示橙 · Hazard", "浅灰纸底 + 警示橙信号：技术骨架的安全规格皮，防护装备 / 特种设备 / 工业耗材", "factory"},
+	// 工厂主题族再追加四骨架 ×4 皮（结构差异在页头/页脚/内容骨骼）：
+	//   经典外贸 factory-trade（双层页头 + 四栏大页脚）+ 侧栏目录 factory-sidebar（左侧常驻竖栏 + 一行页脚）
+	//   + 沉浸展示 factory-vision（全屏大图页头 + 页脚=CTA 通栏）+ 门楣 factory-herofold（导航嵌入 hero 一体化）。
+	{"navigator", "商务藏青 · Navigator", "冷白纸底 + 商务藏青双层页头（顶部联系条 + 主导航）：经典外贸门户式首页（横幅 + 左分类栏右商品列表）+ 四栏大页脚，成熟出口工厂", "factory"},
+	{"cargo", "货栈红棕 · Cargo", "暖纸底 + 货栈红棕点缀：经典外贸骨架的木箱货栈皮，家居 / 建材 / 传统轻工出口商", "factory"},
+	{"mistblue", "晨灰蓝 · Mistblue", "晨雾灰蓝底 + 港雾蓝强调：经典外贸骨架的清晨港区皮，海运物流沿线 / 通用外贸供应商", "factory"},
+	{"malachite", "墨绿金 · Malachite", "墨绿石暗底 + 黄铜金高光：经典外贸骨架的深色贵宾厅皮，高端定制 / 老牌出口商号", "factory"},
+	{"steelrack", "钢库灰 · Steelrack", "钢架冷灰底 + 钢蓝强调、左侧常驻竖栏（品牌 + 分类树 + 联系按钮）：数据库感的密集目录首页 + 一行极简页脚，SKU 密集的仓储型工厂", "factory"},
+	{"depot", "仓储黄 · Depot", "暖纸库房底 + 叉车黄信号：侧栏目录骨架的库区皮，五金耗材 / 包装物料 / 批发仓配", "factory"},
+	{"nightbay", "深库 · Nightbay", "深库房暗底 + 琥珀拣货灯：侧栏目录骨架的夜仓皮，24 小时发货仓 / 暗色目录站", "factory"},
+	{"plateblue", "图册蓝 · Plateblue", "图册白底 + 制版蓝强调：侧栏目录骨架的产品图册皮，元件目录 / 样本册式选型站", "factory"},
+	{"eclipse", "曜黑 · Eclipse", "曜石纯黑底 + 香槟金点睛、全屏大图页头（导航透明悬浮，滚动加实底）：大留白视觉流 + 页脚即获取报价通栏，旗舰产品 / 高端制造形象站", "factory"},
+	{"haze", "晨雾白 · Haze", "晨雾暖白底 + 雾港蓝灰强调：沉浸展示骨架的日光展馆皮，设计感家居 / 建筑材料 / 品牌工厂", "factory"},
+	{"copperglow", "铜辉 · Copperglow", "焙铜暗底 + 铜辉橙高光：沉浸展示骨架的铸铜工坊皮，金属制品 / 灯具 / 手作精工", "factory"},
+	{"indigo", "靛蓝 · Indigo", "靛青纸底 + 靛蓝强调：沉浸展示骨架的靛染皮，纺织印染 / 面料工厂 / 蓝染品牌", "factory"},
+	{"glaze", "釉白 · Glaze", "釉面亮白底 + 青瓷绿点缀、导航嵌入 hero 一体化门楣（四周留边 + 大圆角，滚动后剥离吸顶）：陶瓷卫浴 / 精品日用工厂", "factory"},
+	{"carbonblue", "碳蓝 · Carbonblue", "冷白底 + 碳纤深蓝强调：门楣骨架的碳纤维皮，运动器材 / 改装件 / 高性能制造", "factory"},
+	{"warmsand", "暖砂 · Warmsand", "暖砂纸底 + 陶土橙点缀：门楣骨架的窑砂皮，陶艺 / 石材 / 户外家具工厂", "factory"},
+	{"nightfall", "夜阑 · Nightfall", "夜阑蓝黑底 + 薰蓝辉光：门楣骨架的夜场发布皮，电子消费品 / 新品发布型工厂", "factory"},
+	// 净白系 ×9：工厂族 9 骨架各配一款纯白皮。同一设计语言——纯白底 + 近黑文字 +
+	// 发丝线分隔 + 全系同一石墨蓝点睛，无纹理无装饰、留白大方；逐骨架适配见 public.css 文末。
+	{"purewhite", "净白 · Purewhite", "净白系：纯白底 + 发丝线 + 石墨蓝点睛，无纹理无装饰的极简目录首页，通用品类工厂", "factory"},
+	{"gallerywhite", "素展 · Gallerywhite", "净白系：纯白展厅 + 发丝线卡片、大留白精选横排，设计感消费品 / 品牌工厂", "factory"},
+	{"pagewhite", "页白 · Pagewhite", "净白系：纯白单页 + 细线分隔、居中大字直给转化，小型工厂 / 单品工作室", "factory"},
+	{"planwhite", "案白 · Planwhite", "净白系：纯白方案书 + 发丝线编号大卡，OEM/ODM 定制厂的极简提案风", "factory"},
+	{"specwhite", "规白 · Specwhite", "净白系：纯白数据手册 + 发丝线表格，精密制造 / 面向工程师的元件目录", "factory"},
+	{"portwhite", "港白 · Portwhite", "净白系：纯白商务门户 + 细线分栏、石墨蓝横幅，成熟出口工厂的清爽经典版", "factory"},
+	{"rackwhite", "架白 · Rackwhite", "净白系：纯白竖栏目录 + 细分隔行式清单，SKU 密集的极简选型站", "factory"},
+	{"whitehall", "白厅 · Whitehall", "净白系：纯白沉浸展馆 + 全屏大图、细线数字带，旗舰产品 / 高端制造形象站", "factory"},
+	{"archwhite", "门白 · Archwhite", "净白系：纯白门楣容器 + 发丝线描边、滚动剥离吸顶，精品日用 / 品牌工厂", "factory"},
+	// 外贸独立站主题族（Category=dtc）：跨境卖家自有品牌官网——零售感、大图、故事性，
+	// 与工厂族的工业感彻底区分；转化仍是询盘/WhatsApp（不做在线交易）。
+	// 三骨架：品牌旗舰 dtc-flagship（系列入口 + 畅销栅格 + 品牌故事 + 评价）
+	//   + 单品爆款 dtc-solo（整站长转化流：痛点 hero→卖点分解→规格→评价→大 CTA）
+	//   + 系列画册 dtc-lookbook（通栏大图墙 + 分类系列陈列，极少文字），各 ×4 皮。
+	{"cream", "奶油白 · Cream", "奶油白纸底 + 暖近黑与细发丝线（净白系语言）：品牌旗舰式首页（生活方式 hero + 系列大卡 + 畅销栅格 + 品牌故事 + 用户评价），通用品类品牌店", "dtc"},
+	{"amberglow", "琥珀暖调 · Amberglow", "暖琥珀纸底 + 蜜糖橙点缀、衬线大标题：旗舰骨架的暖调生活皮，家居香氛 / 手作食器 / 温感品牌", "dtc"},
+	{"inknavy", "墨蓝 · Ink Navy", "墨蓝深底 + 香槟金点睛、衬线巨题：旗舰骨架的高级感夜场皮，轻奢配饰 / 男士护理 / 精品品牌", "dtc"},
+	{"oliveleaf", "橄榄绿 · Oliveleaf", "米纸底 + 橄榄绿强调、圆角大卡：旗舰骨架的自然系皮，个护 / 环保材质 / 户外生活品牌", "dtc"},
+	{"dawnfair", "晨白 · Dawnfair", "纯白底 + 系统无衬线细字重大标题、发丝线分隔、细描边按钮（悬停反转）、商品卡无框无阴影：旗舰骨架的 Shopify 默认店（Dawn）气质皮，通用品类品牌店", "dtc"},
+	{"solowhite", "纯白 · Solo White", "纯白底 + 靛蓝转化按钮、超大标题：单品爆款长页（痛点 hero→卖点分解→规格→使用场景→评价→大 CTA），单一爆品品牌站", "dtc"},
+	{"charcoal", "炭黑 · Charcoal", "炭黑暗底 + 琥珀金 CTA、大图压字：单品骨架的暗色发布皮，电子配件 / 健身器材 / 酷感单品", "dtc"},
+	{"coralpop", "珊瑚 · Coral Pop", "奶白底 + 珊瑚橙活力强调、大圆角：单品骨架的元气皮，美妆个护 / 潮流小家电 / 年轻客群爆品", "dtc"},
+	{"limewash", "石灰绿 · Limewash", "浅灰绿底 + 苔绿强调、粗衬线标题：单品骨架的自然清爽皮，健康食品 / 植物基 / 环保日用单品", "dtc"},
+	{"galleria", "画廊白 · Galleria", "画廊纯白 + 近黑细字、零圆角：系列画册式首页（通栏大图墙 + 分类系列陈列 + 悬停出品名，极少文字），服饰 / 首饰 / 设计师品牌", "dtc"},
+	{"blackbox", "暗厅 · Blackbox", "暗厅近黑底 + 暖金展签：画册骨架的夜场展陈皮，高端时装 / 摄影感产品 / 限量系列", "dtc"},
+	{"flaxen", "亚麻米 · Flaxen", "亚麻米纸底 + 亚麻棕点缀、衬线小标：画册骨架的素色织物皮，家纺 / 亚麻服饰 / 慢生活品牌", "dtc"},
+	{"fogblue", "雾灰蓝 · Fogblue", "雾灰蓝底 + 港雾蓝强调：画册骨架的冷调静物皮，陶瓷器物 / 文具 / 极简生活方式品牌", "dtc"},
 	// 每种骨架补充两套浅色皮肤：结构复用既有 layout，仅改变视觉语言。
-	{"paperwhite", "纸白 · Paperwhite", "冷白纸面 + 群青与朱红信号，清晰克制的通用编辑官网"},
-	{"citrus", "柑光 · Citrus", "淡柠檬底 + 叶绿与珊瑚橙，明快亲和的品牌内容站"},
-	{"bookshop", "书店 · Bookshop", "亮白书页 + 钴蓝侧栏与红色书签，适合出版与知识博客"},
-	{"canal", "水巷 · Canal", "水青纸面 + 深青侧栏与橙色点缀，安静清爽的文档阅读站"},
-	{"confetti", "彩屑 · Confetti", "白底原色点缀 + 轻巧拼贴卡片，活泼但有秩序的个人主页"},
-	{"icebox", "冰格 · Icebox", "冰蓝底 + 钴蓝和青绿强调，冷静通透的科技拼贴首页"},
-	{"ledger", "账册 · Ledger", "白纸墨绿 + 精密索引线，适合数据目录、研究与专业档案"},
-	{"signal", "信标 · Signal", "浅灰纸面 + 黑墨与信号橙，醒目的产品索引与发布目录"},
-	{"gallery", "白廊 · Gallery", "白墙分屏 + 海军蓝与展签红，克制的作品与品牌展示"},
-	{"coast", "海岸 · Coast", "浅海蓝分屏 + 深青与珊瑚色，轻盈开放的旅行与生活品牌"},
-	{"monument", "纪碑 · Monument", "石白中轴 + 钴蓝刻度，庄重清晰的宣言与机构首页"},
-	{"petal", "花笺 · Petal", "淡粉纸面 + 酒红与叶绿，柔和对称的文化与生活内容站"},
-	{"market", "市集 · Market", "天蓝、暖黄与朱红交替色带，热闹清晰的活动与商业落地页"},
-	{"seaside", "晴湾 · Seaside", "浅青色带 + 深蓝与珊瑚强调，轻快的度假与户外品牌页"},
-	{"daytrade", "日盘 · Daytrade", "白底石墨行情带 + 翠绿信号，日间数据与资讯面板"},
-	{"mintwire", "薄荷线 · Mintwire", "薄荷底 + 深青与紫色信号，清新的实时资讯与项目动态"},
-	{"sunrise", "晨发 · Sunrise", "晨橙纸面 + 珊瑚与钴蓝 CTA，明亮有冲劲的发售页面"},
-	{"horizon", "地平线 · Horizon", "晴空蓝底 + 群青和日光黄，科技产品与项目启动页"},
-	{"workshop", "工坊 · Workshop", "白纸蓝图 + 红色图钉，轻量实用的团队任务看板"},
-	{"playbook", "战术板 · Playbook", "冷白底 + 深绿与海军蓝，清晰严谨的路线图与项目板"},
-	{"chronicle", "纪事 · Chronicle", "亮白纸面 + 靛蓝主轴与朱红日期，现代出版式时间线"},
-	{"gardenpath", "花径 · Garden Path", "淡绿纸面 + 森林绿与花粉色节点，自然柔和的品牌历程"},
-	{"portfolio", "画册 · Portfolio", "纯白横卷 + 黑墨和展签红，极简作品集与案例画册"},
-	{"postcard", "明信片 · Postcard", "浅天蓝横卷 + 橙色与群青，旅行、活动与生活影集"},
-	{"atelier", "工坊海报 · Atelier", "白纸现代主义海报 + 红蓝信号，设计与文化发布页"},
-	{"festival", "晴日节 · Festival", "淡黄底 + 粉红和青绿海报块，活动、音乐与创意品牌"},
-	{"daywatch", "日巡 · Daywatch", "冷白监控面板 + 蓝绿状态色，清楚可信的服务状态页"},
-	{"clinic", "诊室 · Clinic", "淡水青底 + 医疗青与珊瑚警示，友好的健康与系统状态页"},
-	{"peach", "桃汽 · Peach", "桃粉底 + 珊瑚与青绿按钮，亲和的创作者链接主页"},
-	{"skyline", "晴空 · Skyline", "亮白与天空蓝 + 日光黄点缀，清爽的个人与项目名片"},
-	{"herbarium", "植物志 · Herbarium", "鼠尾草纸面 + 森林绿与朱红标本签，有机品牌与手作内容"},
-	{"coralreef", "珊瑚湾 · Coral Reef", "浅水蓝曲面 + 珊瑚橙与群青，活泼的疗愈与生活品牌"},
-	{"cloudos", "云窗 · Cloud OS", "云蓝桌面 + 钴蓝窗口与清透白面板，轻盈的数字工作台"},
-	{"candyglass", "糖玻 · Candy Glass", "淡粉玻璃桌面 + 青绿与橙色控件，玩味明亮的千禧界面"},
-	{"paperfilm", "纸片 · Paper Film", "白纸银幕 + 黑墨与字幕红，编辑感摄影与影像画册"},
-	{"azurefilm", "蓝幕 · Azure Film", "淡蓝银幕 + 深海蓝与日光黄，清爽现代的品牌影像站"},
-	{"cutpaper", "剪纸 · Cut Paper", "白纸拼贴 + 钴蓝、朱红与暖黄，清脆有趣的文化与活动页"},
-	{"primary", "原色 · Primary", "浅灰底 + 原色块与硬朗黑线，直接大胆的潮流拼贴站"},
-	{"atlas", "图谱 · Atlas", "亮白图谱 + 海军蓝与天蓝节点，专业的生态目录与项目索引"},
-	{"mintmap", "薄荷地图 · Mint Map", "薄荷底 + 深青与珊瑚节点，友好的工具库与资源地图"},
-	{"pinboard", "灵感板 · Pinboard", "白墙瀑布流 + 珊瑚与蓝色标签，轻快的图片收藏与灵感墙"},
-	{"spectrum", "色谱 · Spectrum", "浅灰画廊 + 紫、绿、橙多色分类，丰富但克制的作品瀑布流"},
-	{"daybook", "日记 · Daybook", "亮白动态流 + 钴蓝与浅绿，清爽的个人更新与短内容"},
-	{"civic", "市民 · Civic", "浅灰信息流 + 海军蓝与公共红，适合社区公告与组织动态"},
-	{"broadsheet", "晨报 · Broadsheet", "纯白大报 + 海军蓝正文与朱红眉题，清晰现代的新闻头版"},
-	{"salmonpress", "鲑红报 · Salmon Press", "淡鲑色纸面 + 炭黑与深绿，温暖醒目的文化小报"},
-	{"fieldguide", "野外手册 · Field Guide", "白纸手册 + 森林绿与橙色标注，户外、自然与产品指南"},
-	{"bluebook", "蓝册 · Bluebook", "浅蓝纸面 + 海军蓝与朱红编号，严谨清楚的技术参考手册"},
-	{"sunclock", "日晷 · Sunclock", "淡日光黄月历 + 海军蓝与朱红日期，明快的活动与编辑日程"},
-	{"seedcalendar", "种子历 · Seed Calendar", "浅鼠尾草月历 + 深绿与珊瑚图钉，季节、园艺与生活计划"},
-	{"postbox", "邮局 · Postbox", "亮白邮件界面 + 邮政红与海军蓝，清楚经典的通讯归档"},
-	{"airmail", "航空信 · Airmail", "浅天蓝邮件界面 + 深蓝与珊瑚标记，轻盈的简报与公告中心"},
-	{"apothecary", "药房 · Apothecary", "薄荷货架 + 森林绿与珊瑚标签，友好的工具与资源目录"},
-	{"toolroom", "工具间 · Toolroom", "冷灰货架 + 钴蓝与安全橙标识，高效实用的产品目录"},
-	{"publicradio", "公共广播 · Public Radio", "白底广播台 + 海军蓝与信号红，克制专业的访谈与播客"},
-	{"morningfm", "晨间 FM · Morning FM", "浅天蓝广播台 + 深青与日光黄，轻快温暖的早间节目"},
-	{"whitecube", "白盒 · White Cube", "纯白展墙 + 石墨字与展签红，极简清晰的艺术与案例展厅"},
-	{"botanical", "植物展 · Botanical", "浅鼠尾草展墙 + 森林绿与群青标签，自然主题的策展首页"},
+	{"paperwhite", "纸白 · Paperwhite", "冷白纸面 + 群青与朱红信号，清晰克制的通用编辑官网", "content"},
+	{"citrus", "柑光 · Citrus", "淡柠檬底 + 叶绿与珊瑚橙，明快亲和的品牌内容站", "content"},
+	{"bookshop", "书店 · Bookshop", "亮白书页 + 钴蓝侧栏与红色书签，适合出版与知识博客", "content"},
+	{"canal", "水巷 · Canal", "水青纸面 + 深青侧栏与橙色点缀，安静清爽的文档阅读站", "content"},
+	{"confetti", "彩屑 · Confetti", "白底原色点缀 + 轻巧拼贴卡片，活泼但有秩序的个人主页", "general"},
+	{"icebox", "冰格 · Icebox", "冰蓝底 + 钴蓝和青绿强调，冷静通透的科技拼贴首页", "general"},
+	{"ledger", "账册 · Ledger", "白纸墨绿 + 精密索引线，适合数据目录、研究与专业档案", "content"},
+	{"signal", "信标 · Signal", "浅灰纸面 + 黑墨与信号橙，醒目的产品索引与发布目录", "content"},
+	{"gallery", "白廊 · Gallery", "白墙分屏 + 海军蓝与展签红，克制的作品与品牌展示", "general"},
+	{"coast", "海岸 · Coast", "浅海蓝分屏 + 深青与珊瑚色，轻盈开放的旅行与生活品牌", "general"},
+	{"monument", "纪碑 · Monument", "石白中轴 + 钴蓝刻度，庄重清晰的宣言与机构首页", "general"},
+	{"petal", "花笺 · Petal", "淡粉纸面 + 酒红与叶绿，柔和对称的文化与生活内容站", "general"},
+	{"market", "市集 · Market", "天蓝、暖黄与朱红交替色带，热闹清晰的活动与商业落地页", "general"},
+	{"seaside", "晴湾 · Seaside", "浅青色带 + 深蓝与珊瑚强调，轻快的度假与户外品牌页", "general"},
+	{"daytrade", "日盘 · Daytrade", "白底石墨行情带 + 翠绿信号，日间数据与资讯面板", "general"},
+	{"mintwire", "薄荷线 · Mintwire", "薄荷底 + 深青与紫色信号，清新的实时资讯与项目动态", "general"},
+	{"sunrise", "晨发 · Sunrise", "晨橙纸面 + 珊瑚与钴蓝 CTA，明亮有冲劲的发售页面", "general"},
+	{"horizon", "地平线 · Horizon", "晴空蓝底 + 群青和日光黄，科技产品与项目启动页", "general"},
+	{"workshop", "工坊 · Workshop", "白纸蓝图 + 红色图钉，轻量实用的团队任务看板", "general"},
+	{"playbook", "战术板 · Playbook", "冷白底 + 深绿与海军蓝，清晰严谨的路线图与项目板", "general"},
+	{"chronicle", "纪事 · Chronicle", "亮白纸面 + 靛蓝主轴与朱红日期，现代出版式时间线", "content"},
+	{"gardenpath", "花径 · Garden Path", "淡绿纸面 + 森林绿与花粉色节点，自然柔和的品牌历程", "content"},
+	{"portfolio", "画册 · Portfolio", "纯白横卷 + 黑墨和展签红，极简作品集与案例画册", "general"},
+	{"postcard", "明信片 · Postcard", "浅天蓝横卷 + 橙色与群青，旅行、活动与生活影集", "general"},
+	{"atelier", "工坊海报 · Atelier", "白纸现代主义海报 + 红蓝信号，设计与文化发布页", "general"},
+	{"festival", "晴日节 · Festival", "淡黄底 + 粉红和青绿海报块，活动、音乐与创意品牌", "general"},
+	{"daywatch", "日巡 · Daywatch", "冷白监控面板 + 蓝绿状态色，清楚可信的服务状态页", "general"},
+	{"clinic", "诊室 · Clinic", "淡水青底 + 医疗青与珊瑚警示，友好的健康与系统状态页", "general"},
+	{"peach", "桃汽 · Peach", "桃粉底 + 珊瑚与青绿按钮，亲和的创作者链接主页", "general"},
+	{"skyline", "晴空 · Skyline", "亮白与天空蓝 + 日光黄点缀，清爽的个人与项目名片", "general"},
+	{"herbarium", "植物志 · Herbarium", "鼠尾草纸面 + 森林绿与朱红标本签，有机品牌与手作内容", "general"},
+	{"coralreef", "珊瑚湾 · Coral Reef", "浅水蓝曲面 + 珊瑚橙与群青，活泼的疗愈与生活品牌", "general"},
+	{"cloudos", "云窗 · Cloud OS", "云蓝桌面 + 钴蓝窗口与清透白面板，轻盈的数字工作台", "general"},
+	{"candyglass", "糖玻 · Candy Glass", "淡粉玻璃桌面 + 青绿与橙色控件，玩味明亮的千禧界面", "general"},
+	{"paperfilm", "纸片 · Paper Film", "白纸银幕 + 黑墨与字幕红，编辑感摄影与影像画册", "general"},
+	{"azurefilm", "蓝幕 · Azure Film", "淡蓝银幕 + 深海蓝与日光黄，清爽现代的品牌影像站", "general"},
+	{"cutpaper", "剪纸 · Cut Paper", "白纸拼贴 + 钴蓝、朱红与暖黄，清脆有趣的文化与活动页", "general"},
+	{"primary", "原色 · Primary", "浅灰底 + 原色块与硬朗黑线，直接大胆的潮流拼贴站", "general"},
+	{"atlas", "图谱 · Atlas", "亮白图谱 + 海军蓝与天蓝节点，专业的生态目录与项目索引", "general"},
+	{"mintmap", "薄荷地图 · Mint Map", "薄荷底 + 深青与珊瑚节点，友好的工具库与资源地图", "general"},
+	{"pinboard", "灵感板 · Pinboard", "白墙瀑布流 + 珊瑚与蓝色标签，轻快的图片收藏与灵感墙", "general"},
+	{"spectrum", "色谱 · Spectrum", "浅灰画廊 + 紫、绿、橙多色分类，丰富但克制的作品瀑布流", "general"},
+	{"daybook", "日记 · Daybook", "亮白动态流 + 钴蓝与浅绿，清爽的个人更新与短内容", "content"},
+	{"civic", "市民 · Civic", "浅灰信息流 + 海军蓝与公共红，适合社区公告与组织动态", "content"},
+	{"broadsheet", "晨报 · Broadsheet", "纯白大报 + 海军蓝正文与朱红眉题，清晰现代的新闻头版", "content"},
+	{"salmonpress", "鲑红报 · Salmon Press", "淡鲑色纸面 + 炭黑与深绿，温暖醒目的文化小报", "content"},
+	{"fieldguide", "野外手册 · Field Guide", "白纸手册 + 森林绿与橙色标注，户外、自然与产品指南", "content"},
+	{"bluebook", "蓝册 · Bluebook", "浅蓝纸面 + 海军蓝与朱红编号，严谨清楚的技术参考手册", "content"},
+	{"sunclock", "日晷 · Sunclock", "淡日光黄月历 + 海军蓝与朱红日期，明快的活动与编辑日程", "content"},
+	{"seedcalendar", "种子历 · Seed Calendar", "浅鼠尾草月历 + 深绿与珊瑚图钉，季节、园艺与生活计划", "content"},
+	{"postbox", "邮局 · Postbox", "亮白邮件界面 + 邮政红与海军蓝，清楚经典的通讯归档", "content"},
+	{"airmail", "航空信 · Airmail", "浅天蓝邮件界面 + 深蓝与珊瑚标记，轻盈的简报与公告中心", "content"},
+	{"apothecary", "药房 · Apothecary", "薄荷货架 + 森林绿与珊瑚标签，友好的工具与资源目录", "general"},
+	{"toolroom", "工具间 · Toolroom", "冷灰货架 + 钴蓝与安全橙标识，高效实用的产品目录", "general"},
+	{"publicradio", "公共广播 · Public Radio", "白底广播台 + 海军蓝与信号红，克制专业的访谈与播客", "content"},
+	{"morningfm", "晨间 FM · Morning FM", "浅天蓝广播台 + 深青与日光黄，轻快温暖的早间节目", "content"},
+	{"whitecube", "白盒 · White Cube", "纯白展墙 + 石墨字与展签红，极简清晰的艺术与案例展厅", "general"},
+	{"botanical", "植物展 · Botanical", "浅鼠尾草展墙 + 森林绿与群青标签，自然主题的策展首页", "general"},
 }
 
 // themeLayouts 登记“非默认骨架”的主题；未登记者一律 "topbar"（= 现有基础骨架）。
@@ -382,6 +465,41 @@ var themeLayouts = map[string]string{
 	"apothecary": "catalog", "toolroom": "catalog",
 	"publicradio": "broadcast", "morningfm": "broadcast",
 	"whitecube": "exhibit", "botanical": "exhibit",
+	// 工厂主题族（工厂/外贸站 P2）：目录骨架 ×4 皮 + 展台骨架 ×4 皮
+	"industrial": "factory-catalog", "machinist": "factory-catalog",
+	"tradewind": "factory-catalog", "foundry": "factory-catalog",
+	"showroom": "factory-showcase", "assembly": "factory-showcase",
+	"harbor": "factory-showcase", "gunmetal": "factory-showcase",
+	// 工厂主题族追加：单页 / 方案 / 技术三骨架，各 ×4 皮
+	"packline": "factory-onepage", "carbon": "factory-onepage",
+	"linen": "factory-onepage", "redline": "factory-onepage",
+	"drafting": "factory-solutions", "flagship": "factory-solutions",
+	"concrete": "factory-solutions", "amberpress": "factory-solutions",
+	"phosphor": "factory-engineering", "schematic": "factory-engineering",
+	"titanium": "factory-engineering", "hazard": "factory-engineering",
+	// 工厂主题族再追加：经典外贸 / 侧栏目录 / 沉浸展示 / 门楣四骨架，各 ×4 皮
+	"navigator": "factory-trade", "cargo": "factory-trade",
+	"mistblue": "factory-trade", "malachite": "factory-trade",
+	"steelrack": "factory-sidebar", "depot": "factory-sidebar",
+	"nightbay": "factory-sidebar", "plateblue": "factory-sidebar",
+	"eclipse": "factory-vision", "haze": "factory-vision",
+	"copperglow": "factory-vision", "indigo": "factory-vision",
+	"glaze": "factory-herofold", "carbonblue": "factory-herofold",
+	"warmsand": "factory-herofold", "nightfall": "factory-herofold",
+	// 净白系：9 骨架各一款纯白皮
+	"purewhite": "factory-catalog", "gallerywhite": "factory-showcase",
+	"pagewhite": "factory-onepage", "planwhite": "factory-solutions",
+	"specwhite": "factory-engineering", "portwhite": "factory-trade",
+	"rackwhite": "factory-sidebar", "whitehall": "factory-vision",
+	"archwhite": "factory-herofold",
+	// 外贸独立站主题族：旗舰 / 单品 / 画册三骨架，各 ×4 皮
+	"cream": "dtc-flagship", "amberglow": "dtc-flagship",
+	"inknavy": "dtc-flagship", "oliveleaf": "dtc-flagship",
+	"dawnfair":  "dtc-flagship",
+	"solowhite": "dtc-solo", "charcoal": "dtc-solo",
+	"coralpop": "dtc-solo", "limewash": "dtc-solo",
+	"galleria": "dtc-lookbook", "blackbox": "dtc-lookbook",
+	"flaxen": "dtc-lookbook", "fogblue": "dtc-lookbook",
 }
 
 // layoutForTheme 返回主题对应的布局骨架，缺省 "topbar"。
@@ -399,6 +517,22 @@ func validTheme(id string) bool {
 		}
 	}
 	return false
+}
+
+// themeCategoriesPresent 返回注册表中实际出现过的主题分类（固定顺序 content → factory → dtc → general）。
+// 后台筛选 chips 据此渲染：没有条目的分类不显示（如 factory 在 P2 出主题前不出现）。
+func themeCategoriesPresent() []string {
+	seen := map[string]bool{}
+	for _, t := range Themes {
+		seen[t.Category] = true
+	}
+	var out []string
+	for _, c := range []string{ThemeCategoryContent, ThemeCategoryFactory, ThemeCategoryDTC, ThemeCategoryGeneral} {
+		if seen[c] {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // 各主题的默认主色 / 圆角（用于微调控件的初值与未自定义时的展示）。
@@ -435,6 +569,24 @@ var themeAccentDefault = map[string]string{
 	"herbarium": "#496f45", "coralreef": "#e65f55", "cloudos": "#347bd4", "candyglass": "#d45d8d",
 	"paperfilm": "#9f2f2d", "azurefilm": "#2e5fbb", "cutpaper": "#2657c9", "primary": "#ef3e33",
 	"atlas": "#315ec8", "mintmap": "#128270", "pinboard": "#dc4d68", "spectrum": "#7457c9",
+	"industrial": "#1f5e8f", "machinist": "#e0611f", "tradewind": "#2f6b4f", "foundry": "#e8983d",
+	"showroom": "#2563b0", "assembly": "#e35f22", "harbor": "#136a72", "gunmetal": "#8fb6d9",
+	"packline": "#8f6a02", "carbon": "#f5c81d", "linen": "#7c5c38", "redline": "#cf3527",
+	"drafting": "#0f7286", "flagship": "#7db1e8", "concrete": "#3e5c76", "amberpress": "#9c6520",
+	"phosphor": "#43d17c", "schematic": "#1d5fbd", "titanium": "#47637a", "hazard": "#b9430e",
+	"navigator": "#1f4e79", "cargo": "#9a4527", "mistblue": "#3f6b96", "malachite": "#d8b04a",
+	"steelrack": "#3d6280", "depot": "#96700a", "nightbay": "#e8aa3d", "plateblue": "#2b62c4",
+	"eclipse": "#d8ae62", "haze": "#54718c", "copperglow": "#e08d55", "indigo": "#3f4cc0",
+	"glaze": "#2e6f68", "carbonblue": "#23445e", "warmsand": "#a85a28", "nightfall": "#939ffb",
+	// 净白系：全系同一石墨蓝（系列识别点）
+	"purewhite": "#3f5b76", "gallerywhite": "#3f5b76", "pagewhite": "#3f5b76",
+	"planwhite": "#3f5b76", "specwhite": "#3f5b76", "portwhite": "#3f5b76",
+	"rackwhite": "#3f5b76", "whitehall": "#3f5b76", "archwhite": "#3f5b76",
+	// 外贸独立站主题族（accent 全部按各自 --bg 过 WCAG 4.5:1 小字对比，见 public.css 文末）
+	"cream": "#4a3f35", "amberglow": "#9a5a14", "inknavy": "#d3b078", "oliveleaf": "#556740",
+	"dawnfair":  "#121212",
+	"solowhite": "#2f56d9", "charcoal": "#e8b64c", "coralpop": "#c73a22", "limewash": "#4c7136",
+	"galleria": "#2b2b2b", "blackbox": "#cbb27e", "flaxen": "#7a5f3d", "fogblue": "#48657c",
 	"daybook": "#2676d2", "civic": "#b33236", "broadsheet": "#a12d2d", "salmonpress": "#a43d43",
 	"fieldguide": "#3f7248", "bluebook": "#2b58ad", "sunclock": "#c84a2f", "seedcalendar": "#4e7848",
 	"postbox": "#c53835", "airmail": "#3067b4", "apothecary": "#30765b", "toolroom": "#2d61b5",
@@ -472,6 +624,24 @@ var themeRadiusDefault = map[string]string{
 	"herbarium": "20", "coralreef": "24", "cloudos": "12", "candyglass": "18",
 	"paperfilm": "0", "azurefilm": "4", "cutpaper": "4", "primary": "2",
 	"atlas": "10", "mintmap": "16", "pinboard": "12", "spectrum": "14",
+	"industrial": "2", "machinist": "2", "tradewind": "6", "foundry": "2",
+	"showroom": "6", "assembly": "4", "harbor": "10", "gunmetal": "4",
+	"packline": "4", "carbon": "4", "linen": "8", "redline": "2",
+	"drafting": "4", "flagship": "6", "concrete": "2", "amberpress": "6",
+	"phosphor": "4", "schematic": "2", "titanium": "2", "hazard": "0",
+	"navigator": "4", "cargo": "4", "mistblue": "6", "malachite": "4",
+	"steelrack": "2", "depot": "2", "nightbay": "2", "plateblue": "4",
+	"eclipse": "12", "haze": "12", "copperglow": "12", "indigo": "12",
+	"glaze": "22", "carbonblue": "18", "warmsand": "20", "nightfall": "18",
+	// 净白系：圆角跟各自骨架族气质走（与 public.css :root 变量块同步）
+	"purewhite": "4", "gallerywhite": "6", "pagewhite": "6",
+	"planwhite": "6", "specwhite": "2", "portwhite": "4",
+	"rackwhite": "2", "whitehall": "10", "archwhite": "16",
+	// 外贸独立站主题族：旗舰/单品偏圆润零售感，画册走极简小圆角；dawnfair（Dawn 气质）全局几乎无圆角
+	"cream": "14", "amberglow": "16", "inknavy": "12", "oliveleaf": "18",
+	"dawnfair":  "0",
+	"solowhite": "12", "charcoal": "12", "coralpop": "18", "limewash": "14",
+	"galleria": "0", "blackbox": "0", "flaxen": "4", "fogblue": "6",
 	"daybook": "16", "civic": "8", "broadsheet": "0", "salmonpress": "2",
 	"fieldguide": "6", "bluebook": "4", "sunclock": "10", "seedcalendar": "12",
 	"postbox": "8", "airmail": "12", "apothecary": "12", "toolroom": "6",
@@ -589,10 +759,12 @@ func normalizeLogoScale(v string) string {
 	return out
 }
 
-// ThemeCard 是设置页每个主题卡片的状态（含该主题自己的微调值）。
+// ThemeCard 是设置页每个主题（皮肤）的状态（含该主题自己的微调值）。
 type ThemeCard struct {
 	ID, Name, Desc string
+	Category       string // 主题轻分类（content|factory|general），后台筛选 chips 用
 	Accent, Radius string
+	Bg             string // 皮肤底色（色卡双色呈现：主色 + 底色），见 themeBgDefault
 	Custom         bool
 }
 
@@ -689,7 +861,31 @@ type View struct {
 	Next            *store.Post
 	Related         []*store.Post
 	Giscus          *GiscusView
-	TelegramURL     string // Telegram 频道公开订阅链接（非空时前台 footer / 文章页渲染入口）
+	TelegramURL     string       // Telegram 频道公开订阅链接（非空时前台 footer / 文章页渲染入口）
+	Contact         *ContactView // 联系方式（非 nil 时按 Float 渲染全站浮动联系按钮）
+	Inquiry         *InquiryView // product 详情页「询盘」区块（非 nil 时渲染）
+
+	// 工厂主题族（factory-* 五骨架首页；见 factory.go 包注释）
+	FactoryProducts   []*store.Post     // 首页商品：目录型栅格 / 展台型精选横排
+	FactoryCats       []FactoryCatCard  // 分类入口卡区（零配置：分类+数量+首个商品封面；空不渲染）
+	FactoryStats      []FactoryStat     // 「工厂实力」（settings factory.stats；空则模板回落站点简介）
+	FactoryProcessOn  bool              // 「合作流程」整条开关（settings factory.process.enabled != "0"）
+	FactoryProcess    []FactoryStep     // 四步流程（settings factory.process 覆盖，逐项回落 i18n）
+	FactoryIndustries []FactoryIndustry // 应用行业条（settings factory.industries 覆盖，空回落 i18n；关=nil）
+	FactoryGallery    []string          // 工厂图集图片 URL（settings factory.gallery；未配置不渲染）
+	FactoryQAs        []FactoryQA       // FAQ（settings factory.faq 覆盖，空回落 i18n 四条；关=nil）
+	FactoryCTA        FactoryTextPair   // CTA 通栏文案（settings factory.cta 覆盖，回落 i18n）
+	FactorySectionNum map[string]string // 目录骨架区块编号（跳过未渲染区块，编号连续）
+	FactoryCompare    *FactoryCompare   // 技术骨架规格对比表（specs 共有键求交集；带规格商品 <2 或无共有键为 nil → 模板回落商品栅格）
+
+	// 外贸独立站主题族（dtc-* 三骨架首页；见 dtc.go 包注释）。商品/分类/数字/图集/FAQ/CTA
+	// 复用上面的 Factory* 字段（同一存储键），以下是独立站专属的派生数据。
+	DTCTestimonials []DTCTestimonial // 用户评价（settings dtc.testimonials；未配置不渲染，绝不编造）
+	DTCMain         *store.Post      // 单品骨架主打商品（置顶优先，无置顶取最新；nil = 商品区占位文案）
+	DTCMainSpecs    []FieldPair      // 主打商品全部规格对（规格表区块；空不渲染）
+	DTCSelling      []DTCSelling     // 单品骨架「卖点分解」（gallery 逐图 × specs 逐对；空不渲染）
+	DTCScenes       []string         // 单品骨架「使用场景」余图（卖点分解没吃完的 gallery）
+	DTCLookGroups   []DTCLookGroup   // 画册骨架系列组（分类 → 商品封面墙；无分类回落全部商品一组）
 
 	ContentHTML template.HTML
 	TOC         []Heading
@@ -702,8 +898,9 @@ type View struct {
 	ExtTypes      []ExtTypeRow
 	ExtType       *ContentType
 	ExtPosts      []*store.Post
-	ExtDepth      map[int64]int   // 层级类型列表：每条的缩进层级（按 parent 排好序）
-	ExtParent     map[int64]int64 // 层级类型列表：每条的上级 ID（用于同级拖动排序）
+	ExtDepth      map[int64]int    // 层级类型列表：每条的缩进层级（按 parent 排好序）
+	ExtParent     map[int64]int64  // 层级类型列表：每条的上级 ID（用于同级拖动排序）
+	ExtPrice      map[int64]string // 商品列表价格列：ID → 展示文本（有值才显示；空 map 不渲染整列）
 	ExtEdit       *store.Post
 	ExtValues     map[string]string
 	ExtRelOptions []*store.Post // 关联字段（如文档上级）的候选项
@@ -728,6 +925,7 @@ type View struct {
 	AllPosts                     []*store.Post
 	ListTotal                    int
 	StatusFilter                 string
+	DiscardTotal                 int // AI 报废申请「待清理」条数（当前类型 + 语种下已标记的草稿；>0 时列表出现清空按钮与筛选档）
 	CategoryFilter               string
 	CategoryFilterName           string
 	AdminListPath                string
@@ -749,8 +947,17 @@ type View struct {
 	Settings                     *SettingsForm
 	Themes                       []ThemeOption
 	Cards                        []ThemeCard
+	FamilyCards                  []ThemeFamilyCard // 外观页主题选择器：按配色族聚合的卡片（多皮族卡底色卡排=皮肤）
+	ThemeCategories              []string          // 注册表中实际存在的主题分类（筛选 chips；空分类不出现）
+	ThemeOptions                 []ThemeOptionView // 当前主题声明的 options schema（外观页动态表单）
+	ThemeOptsLocalized           bool              // 当前主题声明了按语种的槽（主题配置弹窗显示语种切换条）
+	HomeSectionsApply            bool              // 首页版块设置对当前主题生效（仅标准/默认 topbar 布局；策划/工厂骨架固定结构）
+	PrimaryExtNav                []ExtNavItem      // 后台一级菜单上浮的扩展类型（已启用且 Primary，如商品）
 	Section                      string
-	CatKind                      string // 分类管理当前类型：post | link
+	CatKind                      string       // 分类管理当前类型：post | link | 已启用且支持分类的扩展类型 key
+	CatKindTabs                  []ExtNavItem // 分类设置页的扩展类型页签（已启用且 HasCategory，如商品）
+	CatKindExt                   bool         // 当前 kind 是扩展类型：无「全部入口」行（归档文案在扩展 hub 维护）
+	CatSlugBase                  string       // 当前 kind 分类的前台路径前缀（/category/、/links/cat/、/{prefix}/cat/）
 	EditCat                      *store.Category
 	FormVals                     map[string]string // 表单回填（分类新增/编辑出错时）
 	Update                       *UpdateInfo       // 系统更新检查
@@ -804,23 +1011,23 @@ type View struct {
 	PlatformDomains              map[int64][]*platform.SiteDomain
 	PlatformDomainForms          map[int64]SiteDomainForm // 每站点：绑定域名弹窗的预填数据
 	PlatformSiteIcons            map[int64]string
-	PlatformPreviewURLs          map[int64]string // 平台站点页：按各站点默认语种生成的预览入口
-	PlatformOfficialURLs         map[int64]string // 已发布到 Cloudflare 的正式站点入口
-	PlatformOfficialHosts        map[int64]string // 正式站点入口展示域名
-	PlatformCFDeployAt           map[int64]string // 每站点：Cloudflare 最近部署时间（RFC3339，空=未记录）
-	PlatformCFStatus             map[int64]string // 每站点：Cloudflare 部署状态（running/success/failed/空）
-	PlatformLocaleCounts         map[int64]int    // 每站点：启用语种数
-	PlatformContentCounts        map[int64]int    // 每站点：主语种内容条数（含草稿）
-	PlatformContentUpdatedAt     map[int64]string // 每站点：对外可见内容上次更新时间（RFC3339，空=无已发布内容）；服务器托管站展示"服务器 · X 前"
-	PlatformCurrentSiteID        int64            // 平台会话中当前选择的站点
-	GoogleOAuthConfigured        bool             // 平台级 Google OAuth 客户端已配置
-	GoogleOAuthClientID          string           // 平台级 Google OAuth Client ID（后台表单回填）
-	GoogleOAuthRedirectURL       string           // 平台级 Google OAuth 回调地址（后台表单回填）
-	GoogleOAuthSecretSet         bool             // 平台级 Google OAuth Client Secret 已配置
-	GoogleOAuthProjectID         string           // 从 OAuth Client ID 推断出的 Google Cloud 项目号（展示/跳转用）
-	GoogleAnalyticsAdminAPIURL   string           // Analytics Admin API 启用入口
-	GoogleAnalyticsDataAPIURL    string           // Analytics Data API 启用入口
-	GoogleSearchConsoleAPIURL    string           // Search Console API 启用入口
+	PlatformPreviewURLs          map[int64]string      // 平台站点页：按各站点默认语种生成的预览入口
+	PlatformOfficialURLs         map[int64]string      // 已发布到 Cloudflare 的正式站点入口
+	PlatformOfficialHosts        map[int64]string      // 正式站点入口展示域名
+	PlatformCFStatus             map[int64]string      // 每站点：Cloudflare 部署状态（running/success/failed/空），卡片轮询初值
+	PlatformDeployChips          map[int64]*DeployChip // 每站点：卡片左下角「待部署 / 运行 N 天 · 更新 M」芯片（见 site_deploy_chip.go）
+	PlatformLocaleCounts         map[int64]int         // 每站点：启用语种数
+	PlatformContentCounts        map[int64]int         // 每站点：主语种内容条数（含草稿）
+	PlatformContentUpdatedAt     map[int64]string      // 每站点：对外内容最近更新（RFC3339，空=无已发布内容），芯片「更新 M」的原料
+	PlatformCurrentSiteID        int64                 // 平台会话中当前选择的站点
+	GoogleOAuthConfigured        bool                  // 平台级 Google OAuth 客户端已配置
+	GoogleOAuthClientID          string                // 平台级 Google OAuth Client ID（后台表单回填）
+	GoogleOAuthRedirectURL       string                // 平台级 Google OAuth 回调地址（后台表单回填）
+	GoogleOAuthSecretSet         bool                  // 平台级 Google OAuth Client Secret 已配置
+	GoogleOAuthProjectID         string                // 从 OAuth Client ID 推断出的 Google Cloud 项目号（展示/跳转用）
+	GoogleAnalyticsAdminAPIURL   string                // Analytics Admin API 启用入口
+	GoogleAnalyticsDataAPIURL    string                // Analytics Data API 启用入口
+	GoogleSearchConsoleAPIURL    string                // Search Console API 启用入口
 	GoogleAccounts               []*platform.GoogleAccount
 	GoogleAnalyticsAccounts      []*platform.GoogleAccount
 	GoogleSearchConsoleAccounts  []*platform.GoogleAccount
@@ -996,6 +1203,14 @@ type SettingsForm struct {
 	TelegramChannelURL string
 	TelegramAutoPush   bool
 	TelegramLastError  string
+	// 站点类型（创建时的一次性预设，settings.site.kind 仅记录用；此处只读展示）
+	SiteKind string
+	// 联系方式与询盘按钮（设置 - 联系方式）
+	ContactWhatsApp string
+	ContactEmail    string
+	ContactPhone    string
+	ContactWeChatQR string
+	ContactFloat    bool
 	// 分类/链接列表的「全部」入口（设置 - 分类）。
 	AllTitle       string
 	AllLabel       string
@@ -1109,7 +1324,7 @@ func (s *Server) Handler() http.Handler {
 }
 
 func (s *Server) siteHandler() http.Handler {
-	return s.securityHeaders(s.withCloudflareCanonicalFrontend(s.withLocale(s.publicPageCache(s.contentTypeRouter(s.mux)))))
+	return s.securityHeaders(s.withCloudflareCanonicalFrontend(s.withLocale(s.publicPageCache(s.contentTypeRouter(s.apiExtCategoryRouter(s.mux))))))
 }
 
 func (s *Server) runtimePool() *SiteRuntimePool {
@@ -3066,9 +3281,14 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /api/admin/v1/types/{key}/disable", s.apiTypeDisable)
 	mux.HandleFunc("GET /api/admin/v1/site-profile", s.apiGetSiteProfile)
 	mux.HandleFunc("PATCH /api/admin/v1/site-profile", s.apiUpdateSiteProfile)
+	mux.HandleFunc("GET /api/admin/v1/theme-options", s.apiThemeOptions)
 	mux.HandleFunc("GET /api/admin/v1/navigation", s.apiGetNavigation)
 	mux.HandleFunc("PATCH /api/admin/v1/navigation", s.apiUpdateNavigation)
 	mux.HandleFunc("POST /api/admin/v1/media", s.apiUploadMedia)
+	// posts/links 分类（字面路由）。扩展类型分类不能走 {collection} 通配模式：
+	// PATCH /{collection}/categories/{id} 与 /languages/{code}/catalog 这类
+	// 「前段字面+后段通配」模式在 ServeMux 里互不更具体，注册即 panic——
+	// 改用 apiExtCategoryRouter 包装器在 mux 之前拦截（见 siteHandler，路由老坑的新变体）。
 	mux.HandleFunc("GET /api/admin/v1/posts/categories", apiCollection("posts", s.apiListCategories))
 	mux.HandleFunc("POST /api/admin/v1/posts/categories", apiCollection("posts", s.apiCreateCategory))
 	mux.HandleFunc("GET /api/admin/v1/posts/categories/all-entry", apiCollection("posts", s.apiGetCategoryAllEntry))
@@ -3086,11 +3306,17 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /api/admin/v1/{collection}/{id}/preview-url", s.apiCreatePreviewURL)
 	mux.HandleFunc("PATCH /api/admin/v1/posts/featured/{id}", s.apiUpdatePostFeatured)
 	mux.HandleFunc("PATCH /api/admin/v1/links/featured/{id}", s.apiUpdateLinkFeatured)
+	// 扩展集合置顶（商品等）不能走 {collection} 通配：PATCH /{collection}/featured/{id} 与
+	// /languages/{code}/catalog 在 ServeMux 里互不更具体，注册即 panic（分类那单撞过同款坑）——
+	// 由 apiExtCategoryRouter 包装器在 mux 之前拦截（admin v1 与平台镜像同一处理）。
 	mux.HandleFunc("GET /api/admin/v1/skill-pack", s.apiDownloadSkillPack)
 	mux.HandleFunc("GET /api/admin/v1/skill-pack/version", s.apiSkillPackVersion)
 	mux.HandleFunc("GET /api/admin/v1/{collection}/{id}", s.apiGetContent)
 	mux.HandleFunc("PATCH /api/admin/v1/{collection}/{id}", s.apiUpdateContent)
 	mux.HandleFunc("POST /api/admin/v1/{collection}/{id}/relink", s.apiRelinkContent)
+	// AI 报废申请（标记删除）：只能标记草稿 + 写理由，删除由管理员执行（见 discard.go）。
+	mux.HandleFunc("POST /api/admin/v1/{collection}/{id}/discard", s.apiDiscardContent)
+	mux.HandleFunc("DELETE /api/admin/v1/{collection}/{id}/discard", s.apiUndiscardContent)
 	mux.HandleFunc("GET /api/admin/v1/{collection}/{id}/revisions", s.apiListRevisions)
 	mux.HandleFunc("POST /api/admin/v1/{collection}/{id}/revisions/{rid}/restore", s.apiRestoreRevision)
 	// 统计数据（stats:read；字面路径先于 {collection} 通配匹配）
@@ -3106,9 +3332,11 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("PATCH /api/platform/v1/sites/{siteID}/languages/{code}/catalog", s.apiUpdateLanguageCatalog)
 	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/site-profile", s.apiGetSiteProfile)
 	mux.HandleFunc("PATCH /api/platform/v1/sites/{siteID}/site-profile", s.apiUpdateSiteProfile)
+	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/theme-options", s.apiThemeOptions)
 	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/navigation", s.apiGetNavigation)
 	mux.HandleFunc("PATCH /api/platform/v1/sites/{siteID}/navigation", s.apiUpdateNavigation)
 	mux.HandleFunc("POST /api/platform/v1/sites/{siteID}/media", s.apiUploadMedia)
+	// posts/links 分类平台镜像（字面路由；扩展类型分类同样由 apiExtCategoryRouter 拦截）。
 	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/posts/categories", apiCollection("posts", s.apiListCategories))
 	mux.HandleFunc("POST /api/platform/v1/sites/{siteID}/posts/categories", apiCollection("posts", s.apiCreateCategory))
 	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/posts/categories/all-entry", apiCollection("posts", s.apiGetCategoryAllEntry))
@@ -3133,11 +3361,14 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /api/platform/v1/sites/{siteID}/{collection}/{id}/preview-url", s.apiCreatePreviewURL)
 	mux.HandleFunc("PATCH /api/platform/v1/sites/{siteID}/posts/featured/{id}", s.apiUpdatePostFeatured)
 	mux.HandleFunc("PATCH /api/platform/v1/sites/{siteID}/links/featured/{id}", s.apiUpdateLinkFeatured)
+	// 扩展集合置顶的平台镜像同样由 apiExtCategoryRouter 拦截（通配注册会 panic，见 admin v1 处注释）。
 	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/skill-pack", s.apiDownloadSkillPack)
 	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/skill-pack/version", s.apiSkillPackVersion)
 	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/{collection}/{id}", s.apiGetContent)
 	mux.HandleFunc("PATCH /api/platform/v1/sites/{siteID}/{collection}/{id}", s.apiUpdateContent)
 	mux.HandleFunc("POST /api/platform/v1/sites/{siteID}/{collection}/{id}/relink", s.apiRelinkContent)
+	mux.HandleFunc("POST /api/platform/v1/sites/{siteID}/{collection}/{id}/discard", s.apiDiscardContent)
+	mux.HandleFunc("DELETE /api/platform/v1/sites/{siteID}/{collection}/{id}/discard", s.apiUndiscardContent)
 	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/{collection}/{id}/revisions", s.apiListRevisions)
 	mux.HandleFunc("POST /api/platform/v1/sites/{siteID}/{collection}/{id}/revisions/{rid}/restore", s.apiRestoreRevision)
 	// 统计数据镜像（同站点命名空间；字面 /stats 路径先于 {collection} 通配匹配）
@@ -3229,6 +3460,7 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /admin/settings/appearance", s.requireAuth(s.adminSaveAppearance))
 	mux.HandleFunc("POST /admin/settings/comments", s.requireAuth(s.adminSaveComments))
 	mux.HandleFunc("POST /admin/settings/telegram", s.requireAuth(s.adminSaveTelegram))
+	mux.HandleFunc("POST /admin/settings/contact", s.requireAuth(s.adminSaveContact))
 	mux.HandleFunc("POST /admin/settings/telegram/test", s.requireAuth(s.adminTelegramTest))
 	mux.HandleFunc("POST /admin/settings/updates/upgrade", s.requireAuth(s.adminStartUpgrade))
 	mux.HandleFunc("POST /admin/settings/cloudflare", s.requireAuth(s.adminSaveCloudflare))
@@ -3288,6 +3520,9 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /admin/posts/{id}/status", s.requireAuth(s.adminPostStatus))
 	mux.HandleFunc("POST /admin/posts/{id}/translate", s.requireAuth(s.adminTranslate))
 	mux.HandleFunc("POST /admin/posts/{id}/relink", s.requireAuth(s.adminRelink))
+	// AI 报废申请的后台动作：行内恢复（撤标记）+ 批量清空待清理（只删标记中的草稿）。
+	mux.HandleFunc("POST /admin/posts/{id}/undiscard", s.requireAuth(s.adminPostUndiscard))
+	mux.HandleFunc("POST /admin/posts/discard-purge", s.requireAuth(s.adminPostDiscardPurge))
 
 	// 链接（type=link）
 	mux.HandleFunc("GET /admin/links", s.requireAuth(s.adminLinks))
@@ -3321,6 +3556,11 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /admin/ext/{type}/{id}", s.requireAuth(s.adminExtUpdate))
 	mux.HandleFunc("POST /admin/ext/{type}/{id}/delete", s.requireAuth(s.adminExtDelete))
 	mux.HandleFunc("POST /admin/ext/{type}/{id}/translate", s.requireAuth(s.adminExtTranslate))
+	mux.HandleFunc("POST /admin/ext/{type}/{id}/duplicate", s.requireAuth(s.adminExtDuplicate))
+	mux.HandleFunc("POST /admin/ext/{type}/{id}/pin", s.requireAuth(s.adminExtPin))
+	mux.HandleFunc("POST /admin/ext/{type}/{id}/status", s.requireAuth(s.adminExtStatus))
+	mux.HandleFunc("POST /admin/ext/{type}/{id}/undiscard", s.requireAuth(s.adminExtUndiscard))
+	mux.HandleFunc("POST /admin/ext/{type}/discard-purge", s.requireAuth(s.adminExtDiscardPurge))
 
 	// 兜底 404
 	mux.HandleFunc("GET /", s.notFound)
@@ -3367,7 +3607,18 @@ func (s *Server) viewForLang(r *http.Request, lang, nav string) *View {
 	v.Langs = s.langSwitchForRequest(r, lang, nil, "/")
 	v.Social = parseSocialLinks(s.store.Setting("social_links"))
 	v.TelegramURL = strings.TrimSpace(s.store.Setting(telegramChannelURLSetting))
+	v.Contact = s.contactView()
 	v.Menu = s.menuItems(r, lang, tr, nav)
+	// 工厂新骨架的页头/页脚是「带数据的结构」，内页也要渲染：
+	//   - trade 四栏页脚的分类栏 / sidebar 左侧竖栏的分类树 → FactoryCats（复用零配置装载）；
+	//   - vision 页脚即 CTA 通栏 → FactoryCTA。
+	// 首页的 fillFactoryHome 会再装一次同源数据（幂等覆盖，读法一致）。
+	switch v.Layout {
+	case "factory-trade", "factory-sidebar":
+		v.FactoryCats = s.factoryCategoryCards(lang)
+	case "factory-vision":
+		v.FactoryCTA = s.factoryCTAText(lang)
+	}
 	if nav == "home" {
 		v.HomeSections, v.HomeHero = s.homeSectionConfig()
 	}
@@ -3868,6 +4119,63 @@ func (s *Server) adminThemePreview(w http.ResponseWriter, r *http.Request) {
 			{Title: "生态", Excerpt: "自动化接口与内容助手接入。"},
 		}
 	}
+	// 工厂骨架预览：站点没有商品时补几条商品样例，让缩略图能表达骨架结构。
+	if isFactoryLayout(v.Layout) {
+		s.fillFactoryHome(v, lang)
+		if len(v.FactoryProducts) == 0 {
+			// 样例带 specs：技术骨架（factory-engineering）的规格对比表在预览里也能出。
+			v.FactoryProducts = []*store.Post{
+				{Title: "深沟球轴承 6204-2RS", Excerpt: "低噪音高转速，适配电机与传动设备。", Extra: `{"specs":[{"k":"型号","v":"6204-2RS"},{"k":"材质","v":"轴承钢 GCr15"},{"k":"起订量","v":"2000 套"}]}`},
+				{Title: "不锈钢法兰 DN50", Excerpt: "304 材质，耐腐蚀，按图纸定制。", Extra: `{"specs":[{"k":"型号","v":"FLG-DN50"},{"k":"材质","v":"304 不锈钢"},{"k":"起订量","v":"500 件"}]}`},
+				{Title: "铝合金外壳 CNC 加工件", Excerpt: "阳极氧化表面，公差 ±0.02mm。", Extra: `{"specs":[{"k":"型号","v":"GC-CNC-6061"},{"k":"材质","v":"6061-T6 铝合金"},{"k":"起订量","v":"500 件"}]}`},
+				{Title: "工业级同步带轮", Excerpt: "标准 HTD 齿形，现货批量供应。", Extra: `{"specs":[{"k":"型号","v":"HTD-5M-30"},{"k":"材质","v":"45# 钢发黑"},{"k":"起订量","v":"1000 件"}]}`},
+				{Title: "精密弹簧组件", Excerpt: "多规格模压成型，支持来样开模。"},
+				{Title: "尼龙输送链板", Excerpt: "食品级材质，耐磨耐高温。"},
+			}
+			if v.Layout == "factory-engineering" {
+				v.FactoryCompare = factorySpecCompare(v.FactoryProducts)
+			}
+		}
+		if len(v.FactoryStats) == 0 {
+			v.FactoryStats = []FactoryStat{
+				{Num: "2008", Label: "工厂成立"},
+				{Num: "12,000㎡", Label: "自有厂房"},
+				{Num: "45+", Label: "出口国家"},
+				{Num: "200+", Label: "产线员工"},
+			}
+		}
+	}
+	// 独立站骨架预览：站点没有商品时补品牌感样品（带 specs，单品骨架的规格表能出）。
+	// 用户评价刻意不补样例——评价红线是「绝不编造」，预览里也不放假评价。
+	if isDTCLayout(v.Layout) {
+		s.fillDTCHome(v, lang)
+		if len(v.FactoryProducts) == 0 {
+			v.FactoryProducts = []*store.Post{
+				{Title: "手工陶瓷马克杯 350ml", Excerpt: "釉下彩手绘，微波炉与洗碗机适用。", Extra: `{"specs":[{"k":"容量","v":"350ml"},{"k":"材质","v":"高温白瓷"},{"k":"产地","v":"景德镇"}]}`},
+				{Title: "有机棉华夫格浴巾", Excerpt: "GOTS 认证有机棉，蓬松速干。", Extra: `{"specs":[{"k":"尺寸","v":"70×140cm"},{"k":"材质","v":"100% 有机棉"}]}`},
+				{Title: "胡桃木手机支架", Excerpt: "整木 CNC 成型，手工打磨上蜡。", Extra: `{"specs":[{"k":"材质","v":"北美黑胡桃"},{"k":"重量","v":"120g"}]}`},
+				{Title: "便携香薰蜡烛礼盒", Excerpt: "大豆蜡 + 精油调香，三种木质香型。", Extra: `{"specs":[{"k":"净含量","v":"3×60g"},{"k":"燃烧时长","v":"约 36 小时"}]}`},
+				{Title: "再生帆布托特包", Excerpt: "回收棉帆布，承重 15kg。"},
+				{Title: "不锈钢保温随行杯", Excerpt: "6 小时保温，一键开合防漏。"},
+			}
+			switch v.Layout {
+			case "dtc-solo":
+				v.DTCMain = v.FactoryProducts[0]
+				v.DTCMainSpecs = productSpecPairs(v.DTCMain)
+				v.DTCSelling, v.DTCScenes = dtcSoloSelling(v.FactoryGallery, v.DTCMainSpecs)
+			case "dtc-lookbook":
+				v.DTCLookGroups = []DTCLookGroup{{Name: "全部商品", URL: "/products", Items: v.FactoryProducts}}
+			}
+		}
+		if len(v.FactoryStats) == 0 && v.Layout != "dtc-lookbook" {
+			v.FactoryStats = []FactoryStat{
+				{Num: "2018", Label: "品牌创立"},
+				{Num: "30+", Label: "发货国家与地区"},
+				{Num: "72h", Label: "工厂直发"},
+				{Num: "12 个月", Label: "质保承诺"},
+			}
+		}
+	}
 	s.rnd.ThemePreview(w, http.StatusOK, v)
 }
 
@@ -3915,6 +4223,10 @@ func (s *Server) renderHome(w http.ResponseWriter, r *http.Request) {
 	if v.Theme == "knowledge" {
 		v.FeatLinks = s.knowledgeHeroLinks(lang)
 	}
+	// 工厂骨架首页：商品 + 「工厂实力」（主题试穿预览同样生效——v.Layout 已反映候选主题）。
+	s.fillFactoryHome(v, lang)
+	// 独立站骨架首页：商品 + 品牌数字/图集/评价（按骨架消费的槽子集装载）。
+	s.fillDTCHome(v, lang)
 	// 首页在每个语种都存在 → 全语种 hreflang
 	ph := map[string]string{}
 	for _, l := range s.locales() {
@@ -4277,11 +4589,23 @@ func (s *Server) sitemap(w http.ResponseWriter, r *http.Request) {
 	def := s.defaultLang()
 	var b strings.Builder
 	b.WriteString(xml.Header)
-	b.WriteString(`<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml">` + "\n")
+	b.WriteString(`<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:xhtml="http://www.w3.org/1999/xhtml" xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">` + "\n")
+
+	// 图片地址：相对路径用站点根绝对化（不带语种前缀），绝对 URL 原样。
+	imgAbs := func(img string) string {
+		if strings.HasPrefix(img, "http://") || strings.HasPrefix(img, "https://") {
+			return img
+		}
+		if !strings.HasPrefix(img, "/") {
+			img = "/" + img
+		}
+		return abs(img)
+	}
 
 	type sitemapURL struct {
 		Path    string
 		LastMod time.Time
+		Images  []string // 该条目的 image:image（商品封面+图集）
 	}
 	writeGroup := func(byLang map[string]sitemapURL, freq, prio string) {
 		for _, l := range locales {
@@ -4308,6 +4632,9 @@ func (s *Server) sitemap(w http.ResponseWriter, r *http.Request) {
 			if dp, ok := byLang[def]; ok && dp.Path != "" {
 				b.WriteString(`    <xhtml:link rel="alternate" hreflang="x-default" href="` + xmlEsc(abs("/"+def+dp.Path)) + `"/>` + "\n")
 			}
+			for _, img := range item.Images {
+				b.WriteString("    <image:image><image:loc>" + xmlEsc(imgAbs(img)) + "</image:loc></image:image>\n")
+			}
 			b.WriteString("  </url>\n")
 		}
 	}
@@ -4332,15 +4659,15 @@ func (s *Server) sitemap(w http.ResponseWriter, r *http.Request) {
 	}
 	writeGroup(categoryAll, "weekly", "0.7")
 
-	groupBy := func(items func(add func(group, lang, path string, lastMod time.Time))) []map[string]sitemapURL {
+	groupBy := func(items func(add func(group, lang, path string, lastMod time.Time, images ...string))) []map[string]sitemapURL {
 		gm := map[string]map[string]sitemapURL{}
 		var order []string
-		items(func(group, lang, path string, lastMod time.Time) {
+		items(func(group, lang, path string, lastMod time.Time, images ...string) {
 			if gm[group] == nil {
 				gm[group] = map[string]sitemapURL{}
 				order = append(order, group)
 			}
-			gm[group][lang] = sitemapURL{Path: path, LastMod: lastMod}
+			gm[group][lang] = sitemapURL{Path: path, LastMod: lastMod, Images: images}
 		})
 		out := make([]map[string]sitemapURL, 0, len(order))
 		for _, g := range order {
@@ -4350,7 +4677,7 @@ func (s *Server) sitemap(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if cats, err := s.store.AllCategories("post"); err == nil {
-		for _, g := range groupBy(func(add func(group, lang, path string, lastMod time.Time)) {
+		for _, g := range groupBy(func(add func(group, lang, path string, lastMod time.Time, images ...string)) {
 			for _, c := range cats {
 				add(c.TransGroup, c.Lang, "/category/"+c.Slug, time.Time{})
 			}
@@ -4359,7 +4686,7 @@ func (s *Server) sitemap(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if posts, err := s.store.AllPublishedAllLangs(); err == nil {
-		for _, g := range groupBy(func(add func(group, lang, path string, lastMod time.Time)) {
+		for _, g := range groupBy(func(add func(group, lang, path string, lastMod time.Time, images ...string)) {
 			for _, p := range posts {
 				add(p.TransGroup, p.Lang, publicContentPath(p.Type, p.Slug), contentLastMod(p))
 			}
@@ -4368,7 +4695,7 @@ func (s *Server) sitemap(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if pages, err := s.store.AllPagesAllLangs(); err == nil {
-		for _, g := range groupBy(func(add func(group, lang, path string, lastMod time.Time)) {
+		for _, g := range groupBy(func(add func(group, lang, path string, lastMod time.Time, images ...string)) {
 			for _, p := range pages {
 				add(p.TransGroup, p.Lang, publicContentPath(p.Type, p.Slug), contentLastMod(p))
 			}
@@ -4377,12 +4704,63 @@ func (s *Server) sitemap(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if links, err := s.store.AllLinksAllLangs(); err == nil {
-		for _, g := range groupBy(func(add func(group, lang, path string, lastMod time.Time)) {
+		for _, g := range groupBy(func(add func(group, lang, path string, lastMod time.Time, images ...string)) {
 			for _, p := range links {
 				add(p.TransGroup, p.Lang, publicContentPath(p.Type, p.Slug), contentLastMod(p))
 			}
 		}) {
 			writeGroup(g, "monthly", "0.7")
+		}
+	}
+
+	// 扩展内容类型（工厂站商品等）：本站已启用的每种类型写入
+	// /{prefix} 归档（全语种）、分类页与详情页；商品这类核心内容此前完全缺席。
+	// 详情条目附 image:image（封面+图集），静态导出复用本函数自动受益。
+	for _, ct := range s.activeExtContentTypes() {
+		pref := strings.Trim(ct.URLPrefix, "/")
+		if pref == "" {
+			continue
+		}
+		archive := map[string]sitemapURL{}
+		for _, l := range locales {
+			archive[l.Code] = sitemapURL{Path: "/" + pref}
+		}
+		writeGroup(archive, "weekly", "0.6")
+		if ct.HasCategory {
+			if cats, err := s.store.AllCategories(ct.Key); err == nil {
+				for _, g := range groupBy(func(add func(group, lang, path string, lastMod time.Time, images ...string)) {
+					for _, c := range cats {
+						add(c.TransGroup, c.Lang, "/"+pref+"/cat/"+c.Slug, time.Time{})
+					}
+				}) {
+					writeGroup(g, "weekly", "0.7")
+				}
+			}
+		}
+		for _, g := range groupBy(func(add func(group, lang, path string, lastMod time.Time, images ...string)) {
+			for _, l := range locales {
+				items, err := s.store.AllPublishedByType(ct.Key, l.Code)
+				if err != nil {
+					continue
+				}
+				for _, p := range items {
+					imgs := make([]string, 0, 4)
+					seen := map[string]bool{}
+					if c := strings.TrimSpace(p.CoverImage); c != "" {
+						imgs = append(imgs, c)
+						seen[c] = true
+					}
+					for _, gimg := range extGalleryImages(ct, p) {
+						if gimg = strings.TrimSpace(gimg); gimg != "" && !seen[gimg] {
+							seen[gimg] = true
+							imgs = append(imgs, gimg)
+						}
+					}
+					add(p.TransGroup, p.Lang, publicContentPath(ct.Key, p.Slug), contentLastMod(p), imgs...)
+				}
+			}
+		}) {
+			writeGroup(g, "monthly", "0.8")
 		}
 	}
 
@@ -4455,21 +4833,35 @@ func (s *Server) rss(w http.ResponseWriter, r *http.Request) {
 		Description: site.Description,
 		Language:    site.LangTag,
 	}}
-	if posts, err := s.store.RecentPublished(lang, 20); err == nil {
-		for _, p := range posts {
-			cat := ""
-			if p.Category != nil {
-				cat = p.Category.Name
-			}
-			feed.Channel.Items = append(feed.Channel.Items, rssItem{
-				Title:       p.Title,
-				Link:        site.Abs(publicContentPath(p.Type, p.Slug)),
-				GUID:        site.Abs(publicContentPath(p.Type, p.Slug)),
-				Description: p.Excerpt,
-				Category:    cat,
-				PubDate:     p.PublishedAt.Format(time.RFC1123Z),
-			})
+	// 文章 + 本站已启用且可搜索的扩展类型（商品/文档等）合流，按发布时间倒序取前 20：
+	// 工厂站的更新主体是上新商品，此前 feed 只有 posts，订阅/聚合通道完全看不到商品。
+	const rssLimit = 20
+	items, _ := s.store.RecentPublished(lang, rssLimit)
+	for _, ct := range s.activeExtContentTypes() {
+		if !ct.Searchable {
+			continue
 		}
+		if list, err := s.store.AllPublishedByType(ct.Key, lang); err == nil {
+			items = append(items, list...)
+		}
+	}
+	sort.SliceStable(items, func(i, j int) bool { return items[i].PublishedAt.After(items[j].PublishedAt) })
+	if len(items) > rssLimit {
+		items = items[:rssLimit]
+	}
+	for _, p := range items {
+		cat := ""
+		if p.Category != nil {
+			cat = p.Category.Name
+		}
+		feed.Channel.Items = append(feed.Channel.Items, rssItem{
+			Title:       p.Title,
+			Link:        site.Abs(publicContentPath(p.Type, p.Slug)),
+			GUID:        site.Abs(publicContentPath(p.Type, p.Slug)),
+			Description: p.Excerpt,
+			Category:    cat,
+			PubDate:     p.PublishedAt.Format(time.RFC1123Z),
+		})
 	}
 	var b bytes.Buffer
 	_, _ = b.WriteString(xml.Header)

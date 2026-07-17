@@ -28,12 +28,19 @@ func (s *Server) registerContentTypeRoutes(mux *http.ServeMux) {
 		mux.HandleFunc("GET /"+pref+"/{$}", func(w http.ResponseWriter, r *http.Request) { s.extList(w, r, ct) })
 		mux.HandleFunc("GET /"+pref+"/page/{pageNum}", func(w http.ResponseWriter, r *http.Request) { s.extList(w, r, ct) })
 		mux.HandleFunc("GET /"+pref+"/page/{pageNum}/{$}", func(w http.ResponseWriter, r *http.Request) { s.extList(w, r, ct) })
+		if ct.HasCategory {
+			// 分类筛选（静态友好，与 /links/cat/{slug} 同构）：/{prefix}/cat/{slug}[/page/N]
+			mux.HandleFunc("GET /"+pref+"/cat/{cat}", func(w http.ResponseWriter, r *http.Request) { s.extList(w, r, ct) })
+			mux.HandleFunc("GET /"+pref+"/cat/{cat}/{$}", func(w http.ResponseWriter, r *http.Request) { s.extList(w, r, ct) })
+			mux.HandleFunc("GET /"+pref+"/cat/{cat}/page/{pageNum}", func(w http.ResponseWriter, r *http.Request) { s.extList(w, r, ct) })
+			mux.HandleFunc("GET /"+pref+"/cat/{cat}/page/{pageNum}/{$}", func(w http.ResponseWriter, r *http.Request) { s.extList(w, r, ct) })
+		}
 		mux.HandleFunc("GET /"+pref+"/{slug}", func(w http.ResponseWriter, r *http.Request) { s.extDetail(w, r, ct) })
 		mux.HandleFunc("GET /"+pref+"/{slug}/{$}", func(w http.ResponseWriter, r *http.Request) { s.extDetail(w, r, ct) })
 	}
 }
 
-// extList 渲染扩展类型的归档列表（/{prefix}）。
+// extList 渲染扩展类型的归档列表（/{prefix}，可带 /cat/{slug} 分类筛选）。
 func (s *Server) extList(w http.ResponseWriter, r *http.Request, ct *ContentType) {
 	// 未对本站启用：回退为「按 slug 找页面」，与 /{slug} 完全一致——
 	// 保证未用该类型的站点上，名为该前缀的页面仍可访问（零回归）。
@@ -44,29 +51,87 @@ func (s *Server) extList(w http.ResponseWriter, r *http.Request, ct *ContentType
 	lang := langFrom(r)
 	const size = 12
 	page := pageParam(r)
-	total, _ := s.store.CountPublishedByType(ct.Key, lang, 0)
-	posts, _ := s.store.ListPublishedByType(ct.Key, lang, 0, (page-1)*size, size)
+	// 分类筛选（引擎分类：kind=类型 key 的分类树）。
+	var cat *store.Category
+	var catID int64
+	if cs := strings.TrimSpace(r.PathValue("cat")); cs != "" && ct.HasCategory {
+		c, _ := s.store.GetCategoryBySlug(lang, cs)
+		if c == nil || c.Kind != ct.Key {
+			s.notFound(w, r)
+			return
+		}
+		cat = c
+		catID = c.ID
+	}
+	total, _ := s.store.CountPublishedByType(ct.Key, lang, catID)
+	// 越界页码返回 404：分页 canonical 自指后，无限量的空「深页」会变成各自
+	// canonical 的软 404，这里直接掐掉（第 1 页即便为空仍渲染空态）。
+	totalPages := ceilDiv(total, size)
+	if page > 1 && page > totalPages {
+		s.notFound(w, r)
+		return
+	}
+	posts, _ := s.store.ListPublishedByType(ct.Key, lang, catID, (page-1)*size, size)
 	v := s.view(r, ct.Key)
 	v.CT = ct
 	v.Posts = posts
+	v.Category = cat
+	if ct.HasCategory {
+		v.Categories, _ = s.store.ListCategories(lang, ct.Key)
+	}
 	v.ArchiveTitle, v.ArchiveIntro = s.extArchiveText(ct.Key, lang)
 	base := "/" + ct.URLPrefix
-	seoTitle := ct.Name(lang)
+	label := ct.Name(lang)
 	if v.ArchiveTitle != "" {
-		seoTitle = v.ArchiveTitle
+		label = v.ArchiveTitle
 	}
+	seoTitle := label
 	seoDesc := v.Site.Description
 	if v.ArchiveIntro != "" {
 		seoDesc = v.ArchiveIntro
 	}
+	crumbs := []seo.Crumb{{Name: label}}
+	if cat != nil {
+		base += "/cat/" + cat.Slug
+		seoTitle = cat.Name + " — " + seoTitle
+		if cat.Description != "" {
+			seoDesc = cat.Description
+		}
+		crumbs = []seo.Crumb{{Name: label, URL: v.Site.Abs("/" + ct.URLPrefix)}, {Name: cat.Name}}
+	}
+	// 分页页 canonical 自指（/…/page/N/），不再全部归并到第 1 页。
+	canonPath := base
+	if page > 1 {
+		canonPath = paginationPath(base, page)
+	}
+	canon := v.Site.Abs(canonPath)
 	v.SEO = seo.Meta{
 		Title:       seoTitle + " — " + v.Site.Name,
 		Description: seoDesc,
-		Canonical:   v.Site.Abs(base),
+		Canonical:   canon,
+		Robots:      seo.DefaultRobots,
 		OGType:      "website",
+		JSONLD:      []any{v.Site.CollectionPage(seoTitle, canon), v.Site.BreadcrumbList(crumbs...)},
 	}
-	setPagination(v, page, ceilDiv(total, size), base)
-	v.Langs = s.langSwitchForRequest(r, lang, nil, base)
+	setPagination(v, page, totalPages, base)
+	if cat != nil {
+		// 分类页的语言切换指向各语种互译分类；无互译版本的语种回落类型总页。
+		ph := map[string]string{cat.Lang: base}
+		if trs, _ := s.store.CategoryTranslations(cat.TransGroup); trs != nil {
+			for _, t := range trs {
+				ph[t.Lang] = "/" + ct.URLPrefix + "/cat/" + t.Slug
+			}
+		}
+		v.Langs, v.SEO.Alternates = s.i18nLinksForRequest(r, v.Site.BaseURL, lang, ph)
+	} else {
+		// 无分类分支同样输出 hreflang：归档路径各语种同构（/{lang}/{prefix}），
+		// 此前只填语言切换器不填 Alternates，是全站归档页里唯一的缺口。
+		ph := map[string]string{}
+		for _, l := range s.locales() {
+			ph[l.Code] = base
+		}
+		v.Langs, v.SEO.Alternates = s.i18nLinksForRequest(r, v.Site.BaseURL, lang, ph)
+	}
 	if ct.Hierarchical {
 		v.DocTree = s.buildDocNav(ct, lang, 0)
 	}
@@ -114,18 +179,58 @@ func (s *Server) renderExtDetail(w http.ResponseWriter, r *http.Request, ct *Con
 		v.ContentHTML = stripRedundantHeading(v.ContentHTML, p.Title)
 	}
 	canon := publicContentPath(ct.Key, p.Slug)
+	pageURL := v.Site.Abs(canon) // 页面真实 URL：询盘预填用它，canonical 可被单篇覆盖
 	author := strings.TrimSpace(p.Author)
 	if author == "" {
 		author = v.Site.Author
 	}
+	// 分享图与页面主图一致：封面缺席时回落图集第一张，再兜底站点默认分享图；
+	// 相对路径绝对化（分享抓取器不解析相对 og:image）。
+	gallery := extGalleryImages(ct, p)
+	mainImg := p.CoverImage
+	if mainImg == "" && len(gallery) > 0 {
+		mainImg = gallery[0]
+	}
+	ogType := "article"
+	if ct.Key == "product" {
+		ogType = "product"
+	}
 	v.SEO = seo.Meta{
 		Title:       p.Title + " — " + v.Site.Name,
 		Description: metaDescOf(p),
-		Canonical:   v.Site.Abs(canon),
-		OGType:      "article",
-		Image:       p.CoverImage,
+		Canonical:   seo.OverrideOr(p.CanonicalOverride, pageURL),
+		Robots:      seo.OverrideOr(p.RobotsOverride, seo.DefaultRobots),
+		OGType:      ogType,
+		Image:       v.Site.ContentImage(mainImg),
 		Author:      author,
 	}
+	// 询盘区块（工厂/外贸站 P1）：product 详情页 + 已配置联系方式才渲染。
+	// P1 硬编码 product；若未来更多类型需要询盘，可在 ContentType 上加开关替换这里的判断。
+	if ct.Key == "product" && v.Contact.Any() {
+		prefill := v.Tr.Tf("contact.inquiry_text", p.Title, pageURL)
+		v.Inquiry = inquiryView(v.Contact, prefill, p.Title)
+	}
+	tplName := detailTemplate(ct)
+	if ct.Key == "product" {
+		// Product 结构化数据（工厂/外贸站 P2）：brand=站点名、sku 从规格嗅探、
+		// image=封面+图集多图；不输出 offers/price——口径：price 字段是自由文本且可不填
+		// （「US$ 12.5/pc」「面议」…），无法承诺 schema.org offers 要求的结构化币种/数值，
+		// 且本 CMS 不做交易，绝不编造报价。价格仅作为普通规格行在页面可见文本中呈现。
+		v.SEO.JSONLD = append(v.SEO.JSONLD, v.Site.Product(p, v.SEO.Canonical, v.SEO.Description, productSKU(p), gallery))
+		if isFactoryLayout(v.Layout) || isDTCLayout(v.Layout) {
+			// 工厂/独立站骨架：商品详情走专属模板（图集 + 规格表 + 首屏询盘 + 相关商品）。
+			tplName = "product_detail"
+			v.Related = s.relatedProducts(ct, p, lang)
+		}
+	}
+	// BreadcrumbList：与页面可见面包屑同构（首页 → 类型归档 → 分类 → 本条），
+	// 内置文章/链接页早已输出，扩展详情此前缺席。
+	crumbs := []seo.Crumb{{Name: ct.Name(lang), URL: v.Site.Abs("/" + ct.URLPrefix)}}
+	if p.Category != nil {
+		crumbs = append(crumbs, seo.Crumb{Name: p.Category.Name, URL: v.Site.Abs("/" + ct.URLPrefix + "/cat/" + p.Category.Slug)})
+	}
+	crumbs = append(crumbs, seo.Crumb{Name: p.Title})
+	v.SEO.JSONLD = append(v.SEO.JSONLD, v.Site.BreadcrumbList(crumbs...))
 	if preview {
 		v.SEO.Robots = "noindex, nofollow"
 		v.SEO.Alternates = nil
@@ -140,7 +245,7 @@ func (s *Server) renderExtDetail(w http.ResponseWriter, r *http.Request, ct *Con
 		}
 		v.Langs, v.SEO.Alternates = s.i18nLinksForRequest(r, v.Site.BaseURL, lang, ph)
 	}
-	s.rnd.Public(w, detailTemplate(ct), http.StatusOK, v)
+	s.rnd.Public(w, tplName, http.StatusOK, v)
 }
 
 func listTemplate(ct *ContentType) string {
@@ -175,6 +280,15 @@ func (s *Server) contentTypeRouter(next http.Handler) http.Handler {
 			if ct := s.activeExtTypeByPrefix(segs[0]); ct != nil && contentTypeByKey(ct.Key) == nil {
 				switch {
 				case len(segs) == 1:
+					s.extList(w, r, ct)
+					return
+				case len(segs) == 3 && segs[1] == "cat":
+					r.SetPathValue("cat", segs[2])
+					s.extList(w, r, ct)
+					return
+				case len(segs) == 5 && segs[1] == "cat" && segs[3] == "page":
+					r.SetPathValue("cat", segs[2])
+					r.SetPathValue("pageNum", segs[4])
 					s.extList(w, r, ct)
 					return
 				case len(segs) == 2:
@@ -254,6 +368,30 @@ func renderFieldValues(ct *ContentType, p *store.Post, lang string) []FieldValue
 			continue
 		}
 		out = append(out, fv)
+	}
+	return out
+}
+
+// extGalleryImages 收集一条扩展内容全部 gallery 字段的图片 URL（按字段定义顺序，去空）。
+// 供详情页分享图回退、Product JSON-LD 多图与 sitemap 的 image:image 使用。
+func extGalleryImages(ct *ContentType, p *store.Post) []string {
+	if ct == nil || len(ct.Fields) == 0 {
+		return nil
+	}
+	raw := strings.TrimSpace(p.Extra)
+	if raw == "" || raw == "{}" {
+		return nil
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(raw), &m); err != nil {
+		return nil
+	}
+	var out []string
+	for _, f := range ct.Fields {
+		if f.Type != FieldGallery {
+			continue
+		}
+		out = append(out, toStringList(m[f.Key])...)
 	}
 	return out
 }

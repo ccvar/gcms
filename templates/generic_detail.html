@@ -55,6 +55,20 @@
             {{.ContentHTML}}
           </div>
 
+          {{/* 询盘区块（工厂/外贸站）：product 详情且配置了联系方式时由处理器填充 .Inquiry */}}
+          {{if .Inquiry}}
+          <section class="inquiry" aria-label="{{.Tr.T "contact.inquiry"}}">
+            <h2 class="inquiry-title">{{.Tr.T "contact.inquiry"}}</h2>
+            <p class="inquiry-note">{{.Tr.T "contact.inquiry_note"}}</p>
+            <div class="inquiry-actions">
+              {{if .Inquiry.WhatsAppURL}}<a class="inquiry-btn inquiry-wa" href="{{.Inquiry.WhatsAppURL}}"{{.ExternalLinkAttrs .Inquiry.WhatsAppURL}}><svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2zm5.2 14.1c-.2.6-1.2 1.2-1.7 1.2-.4.1-1 .1-1.6-.1-.4-.1-.9-.3-1.5-.5-2.6-1.1-4.3-3.8-4.4-4-.1-.2-1.1-1.4-1.1-2.7 0-1.3.7-1.9.9-2.2.2-.3.5-.3.7-.3h.5c.2 0 .4 0 .6.4.2.5.7 1.8.8 1.9.1.1.1.3 0 .4-.1.2-.1.3-.3.5l-.4.5c-.1.1-.3.3-.1.6.2.3.7 1.2 1.6 1.9 1.1.9 2 1.2 2.3 1.4.3.1.5.1.6-.1.2-.2.7-.8.9-1.1.2-.3.4-.2.6-.1.3.1 1.7.8 1.9.9.3.1.5.2.5.3.1.1.1.7-.1 1.2z"/></svg><span>WhatsApp</span></a>{{end}}
+              {{if .Inquiry.MailtoURL}}<a class="inquiry-btn" href="{{.Inquiry.MailtoURL}}"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg><span>{{.Tr.T "contact.email"}}</span></a>{{end}}
+              {{if .Inquiry.TelURL}}<a class="inquiry-btn" href="{{.Inquiry.TelURL}}"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 16.5v3a1.5 1.5 0 0 1-1.6 1.5A17.5 17.5 0 0 1 3 4.6 1.5 1.5 0 0 1 4.5 3h3A1.5 1.5 0 0 1 9 4.3c.1.9.3 1.8.6 2.6a1.5 1.5 0 0 1-.3 1.6L8 9.8a15.5 15.5 0 0 0 6.2 6.2l1.3-1.3a1.5 1.5 0 0 1 1.6-.3c.8.3 1.7.5 2.6.6a1.5 1.5 0 0 1 1.3 1.5z"/></svg><span>{{.Tr.T "contact.phone"}}{{if .Inquiry.Phone}} · {{.Inquiry.Phone}}{{end}}</span></a>{{end}}
+              {{if .Inquiry.WeChatQR}}<button class="inquiry-btn" type="button" data-wechat-open><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3h-3zM18.5 18.5H21V21h-2.5z"/></svg><span>{{.Tr.T "contact.wechat"}}</span></button>{{end}}
+            </div>
+          </section>
+          {{end}}
+
           <div class="article-foot">
             <div class="tag-row">
               {{with $p.Category}}<a class="tag" href="{{$.Tr.U (printf "/%s/cat/%s" $.CT.URLPrefix .Slug)}}">{{.Name}}</a>{{end}}

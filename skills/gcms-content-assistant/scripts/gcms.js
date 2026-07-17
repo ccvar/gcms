@@ -52,6 +52,7 @@ function usage(code = 2) {
   out("  gcms.js language-catalog-update <code> <json|@file>");
   out("  gcms.js site-profile");
   out("  gcms.js site-profile-update <json|@file>");
+  out("  gcms.js theme-options [--lang xx]           # 当前主题声明的配置槽与现值（site:read；写入走 site-profile-update 的 factory_*/dtc_* 字段）");
   out("  gcms.js navigation");
   out("  gcms.js navigation-update <json|@file>");
   out("  gcms.js upload <file>");
@@ -60,9 +61,9 @@ function usage(code = 2) {
   out("  gcms.js type-create <json|@file>           # 新建自定义类型（先与用户确认内容模型再动手）");
   out("  gcms.js type-update <key> <json|@file>");
   out("  gcms.js type-delete <key>                  # 仅限没有内容的自定义类型");
-  out("  gcms.js categories <posts|links> [--lang zh|all]");
-  out("  gcms.js category-entry <posts|links> [--lang zh|all]");
-  out("  gcms.js update-category-entry <posts|links> <json|@file>");
+  out("  gcms.js categories <collection> [--lang zh|all]         (posts/links 及支持分类的扩展集合，如 products)");
+  out("  gcms.js category-entry <collection> [--lang zh|all]");
+  out("  gcms.js update-category-entry <collection> <json|@file>");
   out("  gcms.js list <collection> [--lang zh|all] [--q text] [--slug slug] [--trans_group group] [--status draft] [--limit 20]");
   out("  gcms.js get <collection> <id>");
   out("  gcms.js similar [<collection>] --title \"标题\" [--lang zh] [--limit 5]  # 发文前查重（近似匹配，含草稿；collection 缺省 posts）");
@@ -72,6 +73,8 @@ function usage(code = 2) {
   out("  gcms.js create <collection> <json|@file>   # 扩展集合的自定义字段放 fields:{key:value}");
   out("  gcms.js update <collection> <id> <json|@file> [--robots \"noindex, follow\"] [--canonical <url>]");
   out("  gcms.js relink <collection> <id> (--to-id <sibling-id> | --trans-group <group>)");
+  out('  gcms.js discard <collection> <id> --reason "为何建议弃用"   # 报废申请：只给草稿打标记，删除由管理员执行');
+  out("  gcms.js undiscard <collection> <id>        # 撤销报废标记");
   out("  gcms.js audit <collection> [--lang zh|all] [--limit 50] [--deep true]");
   out("  gcms.js search-stats [--days 28] [--limit 100] [--compare]   # Search Console 搜索词表现（stats:read；--compare 附带紧前等长区间对比）");
   out("  gcms.js traffic-stats [--days 7]           # GA 活跃用户/会话汇总（stats:read）");
@@ -425,6 +428,27 @@ async function main() {
     return;
   }
 
+  // 主题配置槽（site:read）：当前主题（骨架）声明消费哪些数据槽 + 各槽现值。
+  // 改工厂/独立站文案前先跑这条看契约，再用 site-profile-update 写对应 factory_*/dtc_* 字段；
+  // 服务端较旧没有此端点时返回 404——按提示跳过本项，不要重试。
+  if (cmd === "theme-options") {
+    const opt = parseOptions([collection, ...rest].filter((a) => a != null));
+    const qs = new URLSearchParams();
+    if (opt.lang != null) qs.set("lang", opt.lang);
+    const res = await rawRequest("GET", "/theme-options" + (qs.toString() ? "?" + qs.toString() : ""));
+    if (res.status === 404) {
+      console.error(JSON.stringify(res.data, null, 2));
+      console.error("服务端较旧（没有 theme-options 端点）：跳过本项，直接按 SKILL.md「主题配置」小节的字段约定操作，并在汇报里提醒管理员升级 gcms。");
+      process.exit(1);
+    }
+    if (!res.ok) {
+      console.error(JSON.stringify(res.data, null, 2));
+      process.exit(1);
+    }
+    print(res.data);
+    return;
+  }
+
   if (cmd === "navigation") {
     print(await request("GET", "/navigation"));
     return;
@@ -618,6 +642,35 @@ async function main() {
     else if (opt["trans-group"] != null) body.trans_group = opt["trans-group"];
     else usage();
     print(await request("POST", "/" + collection + "/" + encodeURIComponent(id) + "/relink", body));
+    return;
+  }
+
+  // 报废申请（标记删除）：AI 没有删除权——发现废稿（重复选题/质量不可救/用户否决）时，
+  // 只能给「草稿」打建议弃用标记 + 理由（≤200 字），删除永远由管理员在后台执行。
+  // 标记非草稿会返回 409 not_draft；重复标记＝更新理由（幂等）；undiscard 可随时撤销。
+  if (cmd === "discard") {
+    const [id, ...flags] = rest;
+    if (!id) usage();
+    const opt = parseOptions(flags);
+    if (!opt.reason) usage();
+    const res = await rawRequest("POST", "/" + collection + "/" + encodeURIComponent(id) + "/discard", { reason: opt.reason });
+    if (res.status === 404) {
+      console.error(JSON.stringify(res.data, null, 2));
+      console.error("服务端版本较旧（没有 discard 端点）：请改为把草稿开头加上「【建议弃用：理由】」文字标注，并在汇报里提醒管理员升级 gcms。");
+      process.exit(1);
+    }
+    if (!res.ok) {
+      console.error(JSON.stringify(res.data, null, 2));
+      process.exit(1);
+    }
+    print(res.data);
+    return;
+  }
+
+  if (cmd === "undiscard") {
+    const [id] = rest;
+    if (!id) usage();
+    print(await request("DELETE", "/" + collection + "/" + encodeURIComponent(id) + "/discard"));
     return;
   }
 
