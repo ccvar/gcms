@@ -12,6 +12,9 @@ pub struct Template {
     pub slug: String,
     pub name: String,
     pub desc: String,
+    /// 用途分类（落地页/内容/作品集/…），前端按它做筛选。只有随附模板有：用户存模板时不问分类，
+    /// 前端把没分类的一律归到「自建」。
+    pub category: String,
     pub created_at: u64,
     /// 随附的起始模板：不可删除，前端也据此挂「内置」标。
     pub builtin: bool,
@@ -28,12 +31,21 @@ pub struct Template {
 //    <link>/<img> 会解析到 app 的 origin → 404 → 缩略图全白；内联才有真图。
 // 2) SKIP 会滤掉 node_modules/dist/build，带构建的模板存下来 = 拷回去跑不起来；单文件完美往返。
 // 3) 离线可用（不依赖 CDN/Google Fonts）。
-pub const BUILTIN: &[(&str, &str, &str, &str)] = &[
-    ("minimal", "极简留白", "纯白底 · 大留白 · 一个低饱和强调色", include_str!("builtin/minimal.html")),
-    ("editorial", "杂志编辑", "米白底 · 衬线大标题 · 窄栏长文", include_str!("builtin/editorial.html")),
-    ("dark-tech", "深色科技", "近黑底 · 霓虹点缀 · 等宽字点缀", include_str!("builtin/dark-tech.html")),
-    ("warm-craft", "暖色手作", "奶油底 · 陶土强调 · 圆润温暖", include_str!("builtin/warm-craft.html")),
-    ("saas", "企业 SaaS", "浅底 · 卡片层次 · 标准价格分区", include_str!("builtin/saas.html")),
+//
+// 分类是**用途**不是风格：前五档是同一种页（落地页）的五种长相，风格已经写在 desc 里了；
+// 真正找不到的是「我要做的是博客/作品集/商品页」——所以后加的这批按页型铺开。
+pub const BUILTIN: &[(&str, &str, &str, &str, &str)] = &[
+    ("minimal", "极简留白", "纯白底 · 大留白 · 一个低饱和强调色", "落地页", include_str!("builtin/minimal.html")),
+    ("editorial", "杂志编辑", "米白底 · 衬线大标题 · 窄栏长文", "落地页", include_str!("builtin/editorial.html")),
+    ("dark-tech", "深色科技", "近黑底 · 霓虹点缀 · 等宽字点缀", "落地页", include_str!("builtin/dark-tech.html")),
+    ("warm-craft", "暖色手作", "奶油底 · 陶土强调 · 圆润温暖", "落地页", include_str!("builtin/warm-craft.html")),
+    ("saas", "企业 SaaS", "浅底 · 卡片层次 · 标准价格分区", "落地页", include_str!("builtin/saas.html")),
+    ("blog-index", "博客首页", "置顶大卡 · 细线分隔的文章列表 · 标签归档", "内容", include_str!("builtin/blog-index.html")),
+    ("article", "文章长文", "窄栏正文 · 引用与代码块 · 作者卡与上下篇", "内容", include_str!("builtin/article.html")),
+    ("portfolio", "作品集", "大留白 · 作品网格 · 克制的 hover", "作品集", include_str!("builtin/portfolio.html")),
+    ("shop", "商品详情", "图集 + 规格选择 · 加购 · 相关商品", "电商", include_str!("builtin/shop.html")),
+    ("corp", "企业官网", "价值主张 · 数据条 · 资质与联系表单", "企业", include_str!("builtin/corp.html")),
+    ("event", "活动报名", "时间地点 · 日程表 · 讲者与票档", "活动", include_str!("builtin/event.html")),
 ];
 
 pub fn is_builtin(slug: &str) -> bool {
@@ -44,12 +56,13 @@ pub fn is_builtin(slug: &str) -> bool {
 /// created_at 固定 0 → 排在用户自己沉淀的模板后面。
 pub fn ensure_builtin(data_dir: &Path) -> std::io::Result<()> {
     let dir = data_dir.join("templates");
-    for (slug, name, desc, html) in BUILTIN {
+    for (slug, name, desc, category, html) in BUILTIN {
         let d = dir.join(slug);
         fs::create_dir_all(&d)?;
         fs::write(d.join("index.html"), html)?;
-        let manifest =
-            serde_json::json!({ "name": name, "desc": desc, "created_at": 0, "builtin": true });
+        let manifest = serde_json::json!({
+            "name": name, "desc": desc, "category": category, "created_at": 0, "builtin": true
+        });
         let bytes = serde_json::to_vec_pretty(&manifest)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
         fs::write(d.join("pilot-template.json"), bytes)?;
@@ -157,6 +170,7 @@ pub fn save(templates_dir: &Path, name: &str, desc: &str, src: &Path) -> Result<
         slug,
         name: name.trim().into(),
         desc: desc.trim().into(),
+        category: String::new(), // 存模板时不问分类；前端把空分类归到「自建」
         created_at: created,
         builtin: false, // 用户自己存的，永远不是随附模板（重名在上面就挡掉了）
     })
@@ -172,22 +186,33 @@ pub fn list(templates_dir: &Path) -> Vec<Template> {
             let mf = fs::read(e.path().join("pilot-template.json"))
                 .ok()
                 .and_then(|r| serde_json::from_slice::<serde_json::Value>(&r).ok());
-            let (name, desc, created) = mf
+            let (name, desc, category, created) = mf
                 .map(|j| {
                     (
                         j.get("name").and_then(|x| x.as_str()).unwrap_or(&slug).to_string(),
                         j.get("desc").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                        j.get("category").and_then(|x| x.as_str()).unwrap_or("").to_string(),
                         j.get("created_at").and_then(|x| x.as_u64()).unwrap_or(0),
                     )
                 })
-                .unwrap_or((slug.clone(), String::new(), 0));
+                .unwrap_or((slug.clone(), String::new(), String::new(), 0));
             let builtin = is_builtin(&slug);
-            Template { slug, name, desc, created_at: created, builtin }
+            Template { slug, name, desc, category, created_at: created, builtin }
         })
         .collect();
     // 用户自己沉淀的在前（created_at 新→旧），随附模板 created_at=0 自然沉底。
     v.sort_by(|a, b| b.created_at.cmp(&a.created_at));
     v
+}
+
+/// 模板的显示名（预览窗标题用）。读不到就退回 slug —— 标题差一点无所谓，别为它让预览失败。
+pub fn display_name(templates_dir: &Path, slug: &str) -> String {
+    fs::read(templates_dir.join(slug).join("pilot-template.json"))
+        .ok()
+        .and_then(|r| serde_json::from_slice::<serde_json::Value>(&r).ok())
+        .and_then(|j| j.get("name").and_then(|x| x.as_str()).map(str::to_string))
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| slug.to_string())
 }
 
 pub fn delete(templates_dir: &Path, slug: &str) -> Result<(), String> {
@@ -269,8 +294,15 @@ mod tests {
         let tdir = base.join("templates");
 
         let ls = list(&tdir);
-        assert_eq!(ls.len(), BUILTIN.len(), "五档风格都该种进去");
+        assert_eq!(ls.len(), BUILTIN.len(), "每一档都该种进去");
         assert!(ls.iter().all(|t| t.builtin), "随附模板必须标 builtin，前端据此挂标/藏删除键");
+        // 分类是前端筛选的唯一依据：漏一个，它就掉进「其他」那档里，看着像 bug
+        assert!(ls.iter().all(|t| !t.category.is_empty()), "随附模板都得有分类: {ls:?}");
+        // 光有风格档（全是落地页）等于没分类可筛
+        assert!(
+            ls.iter().map(|t| t.category.as_str()).collect::<std::collections::HashSet<_>>().len() >= 3,
+            "分类要真的铺开页型，不然筛选没意义"
+        );
 
         // 每个都得是能直接渲染的单文件（缩略图靠读 index.html 原文）
         for (slug, ..) in BUILTIN {
@@ -278,7 +310,18 @@ mod tests {
             let html = fs::read_to_string(&idx).unwrap_or_default();
             assert!(html.contains("<style"), "{slug}: 必须内联 CSS，否则缩略图是白的");
             assert!(html.contains("--accent"), "{slug}: 必须有设计变量");
+            // 外链资源 = 缩略图 404 + 离线打不开。srcdoc 里相对路径会解析到 app 的 origin。
+            assert!(
+                !html.contains("<link rel=\"stylesheet\"") && !html.contains("<script src="),
+                "{slug}: 不许外链 CSS/JS"
+            );
+            assert!(!html.contains("//fonts.googleapis.com"), "{slug}: 不许外链字体");
+            assert!(!html.contains("<img src=\"http"), "{slug}: 不许外链图片");
         }
+
+        // 预览窗标题用的是显示名，不是 slug
+        assert_eq!(display_name(&tdir, "saas"), "企业 SaaS");
+        assert_eq!(display_name(&tdir, "不存在"), "不存在", "读不到就退回 slug，别让标题弄挂预览");
 
         // 删不掉
         assert!(delete(&tdir, "minimal").is_err(), "随附模板不该能删");

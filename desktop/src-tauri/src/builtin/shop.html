@@ -1,0 +1,1232 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>溪野 · 双层玻璃手冲分享壶 — 溪野器物</title>
+<meta name="description" content="溪野双层玻璃手冲分享壶，硼硅玻璃一体成型，双层隔热，300 / 500 / 700ml 三档容量。现货 48 小时内发出。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='4' fill='%230F6B45'/%3E%3Cpath d='M9 9h14l-4.2 7.4V24h-5.6v-7.6z' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linejoin='round'/%3E%3C/svg%3E">
+<style>
+  :root {
+    /* ——— 设计令牌（改色板只改这里）——— */
+    --bg:      #EEF0EC;   /* 冷调石灰底 */
+    --surface: #FFFFFF;   /* 卡片 / 商品区底 */
+    --text:    #131714;   /* 正文 15.8:1 on --bg */
+    --muted:   #56605A;   /* 次要文字 5.7:1 on --bg */
+    --accent:  #0F6B45;   /* 唯一强调色 5.7:1 on --bg */
+    --radius:  4px;
+
+    /* 中性描边与强调色的浅色调（同一色相） */
+    --line:        #DCDFDA;
+    --line-strong: #C6CBC4;
+    --accent-soft: #E3EDE7;
+    --accent-deep: #0A4F33;
+
+    /* 间距刻度 */
+    --s1: 4px;
+    --s2: 8px;
+    --s3: 12px;
+    --s4: 16px;
+    --s5: 24px;
+    --s6: 40px;
+    --s7: 64px;
+
+    /* 字号刻度 */
+    --fs-xs:   12px;  /* 仅用于角标 / 计数气泡 */
+    --fs-sm:   14px;
+    --fs-base: 16px;
+    --fs-md:   20px;
+    --fs-lg:   28px;
+    --fs-xl:   40px;
+
+    --font: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+            "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+            "Noto Sans SC", "Source Han Sans SC", Roboto, Arial, sans-serif;
+
+    --container: 1100px;
+    color-scheme: light;
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: var(--fs-base);
+    line-height: 1.7;
+    letter-spacing: .01em;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1, h2, h3 { margin: 0; font-weight: 600; line-height: 1.25; letter-spacing: -.01em; }
+  p  { margin: 0; }
+  ul { margin: 0; padding: 0; list-style: none; }
+  img, svg { max-width: 100%; }
+
+  a {
+    color: var(--accent);
+    text-decoration: none;
+    transition: color .15s ease, opacity .15s ease;
+  }
+  a:hover { color: var(--accent-deep); }
+
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: var(--radius);
+  }
+
+  .wrap {
+    width: 100%;
+    max-width: var(--container);
+    margin: 0 auto;
+    padding: 0 var(--s5);
+  }
+
+  .vh {
+    position: absolute;
+    width: 1px; height: 1px;
+    margin: -1px; padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  /* ——— 顶栏 ——— */
+  .topbar {
+    background: var(--text);
+    color: var(--bg);
+    font-size: var(--fs-sm);
+  }
+  .topbar .wrap {
+    display: flex;
+    justify-content: center;
+    gap: var(--s2);
+    padding-top: var(--s2);
+    padding-bottom: var(--s2);
+  }
+  .topbar svg { flex: none; }
+
+  .site-header {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    background: var(--surface);
+    border-bottom: 1px solid var(--line);
+  }
+  .site-header .wrap {
+    display: flex;
+    align-items: center;
+    gap: var(--s5);
+    height: 64px;
+  }
+
+  .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s2);
+    color: var(--text);
+    font-weight: 600;
+    font-size: var(--fs-md);
+    letter-spacing: .02em;
+    flex: none;
+  }
+  .brand:hover { color: var(--accent); }
+  .brand .mark { flex: none; }
+
+  .nav {
+    display: flex;
+    gap: var(--s5);
+    margin-left: var(--s3);
+    font-size: var(--fs-sm);
+  }
+  .nav a {
+    color: var(--muted);
+    padding: var(--s2) 0;
+    border-bottom: 2px solid transparent;
+  }
+  .nav a:hover,
+  .nav a[aria-current="page"] {
+    color: var(--text);
+    border-bottom-color: var(--accent);
+  }
+
+  .header-actions {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+  }
+  .icon-btn {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px; height: 44px;
+    border: 0;
+    border-radius: var(--radius);
+    background: transparent;
+    color: var(--text);
+    cursor: pointer;
+    transition: background .15s ease, color .15s ease;
+  }
+  .icon-btn:hover { background: var(--bg); color: var(--accent); }
+  .cart-count {
+    position: absolute;
+    top: 5px; right: 4px;
+    min-width: 17px; height: 17px;
+    padding: 0 4px;
+    border-radius: 9px;
+    background: var(--accent);
+    color: var(--surface);
+    font-size: var(--fs-xs);
+    line-height: 17px;
+    font-weight: 600;
+    text-align: center;
+  }
+
+  /* ——— 面包屑 ——— */
+  .crumb-row {
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+    flex-wrap: wrap;
+    padding: var(--s5) 0;
+    font-size: var(--fs-sm);
+    color: var(--muted);
+  }
+  .crumbs { display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; }
+  .crumbs a { color: var(--muted); }
+  .crumbs a:hover { color: var(--accent); }
+  .crumbs .sep { color: var(--muted); }
+  .crumbs [aria-current="page"] { color: var(--text); }
+
+  .demo-badge {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s1);
+    padding: var(--s1) var(--s2);
+    border: 1px dashed var(--line-strong);
+    border-radius: var(--radius);
+    background: var(--surface);
+    color: var(--muted);
+    font-size: var(--fs-xs);
+    line-height: 1.5;
+    letter-spacing: .06em;
+  }
+
+  /* ——— 商品主区 ——— */
+  .product {
+    display: grid;
+    grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+    gap: var(--s7);
+    align-items: start;
+    padding-bottom: var(--s7);
+  }
+
+  /* 图片区 */
+  .gallery { display: grid; gap: var(--s3); }
+  .stage {
+    position: relative;
+    /* 底色画在容器上，SVG 保持透明 —— 容器比例怎么变都不会露白边 */
+    background: linear-gradient(180deg, var(--surface), var(--bg));
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    aspect-ratio: 1 / 1;
+    overflow: hidden;
+  }
+  .stage svg { display: block; width: 100%; height: 100%; }
+  .stage-tag {
+    position: absolute;
+    top: var(--s3); left: var(--s3);
+    padding: var(--s1) var(--s2);
+    border-radius: var(--radius);
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: var(--fs-xs);
+    font-weight: 600;
+    letter-spacing: .06em;
+  }
+
+  .thumbs {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: var(--s3);
+  }
+  .thumb {
+    display: block;
+    padding: 0;
+    aspect-ratio: 1 / 1;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    color: var(--muted);
+    cursor: pointer;
+    transition: border-color .15s ease, color .15s ease;
+  }
+  .thumb svg { display: block; width: 100%; height: 100%; }
+  .thumb:hover { border-color: var(--line-strong); color: var(--text); }
+  .thumb[aria-current="true"] {
+    border-color: var(--accent);
+    box-shadow: inset 0 0 0 1px var(--accent);
+    color: var(--text);
+  }
+
+  /* 信息区 */
+  .info > * + * { margin-top: var(--s4); }
+
+  .eyebrow {
+    font-size: var(--fs-sm);
+    color: var(--muted);
+    letter-spacing: .1em;
+    text-transform: uppercase;
+  }
+  .title { font-size: var(--fs-lg); }
+
+  .rating {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    font-size: var(--fs-sm);
+    color: var(--muted);
+  }
+  .stars { display: block; width: 92px; height: 18px; flex: none; }
+  .rating b { color: var(--text); font-weight: 600; }
+  .rating .dot { color: var(--muted); }
+
+  .price-row {
+    display: flex;
+    align-items: baseline;
+    gap: var(--s3);
+    flex-wrap: wrap;
+  }
+  .price {
+    font-size: var(--fs-xl);
+    font-weight: 600;
+    letter-spacing: -.02em;
+    line-height: 1.1;
+    font-variant-numeric: tabular-nums;
+  }
+  .price small { font-size: var(--fs-md); font-weight: 600; }
+  .price-was {
+    font-size: var(--fs-base);
+    color: var(--muted);
+    text-decoration: line-through;
+  }
+  .save-tag {
+    padding: var(--s1) var(--s2);
+    border-radius: var(--radius);
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: var(--fs-sm);
+    font-weight: 600;
+  }
+
+  .rule { height: 1px; background: var(--line); border: 0; margin: var(--s5) 0; }
+
+  /* 规格选择 */
+  .field-label {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--s3);
+    margin-bottom: var(--s3);
+    font-size: var(--fs-sm);
+    font-weight: 600;
+  }
+  .field-label .hint { font-weight: 400; color: var(--muted); }
+
+  .chips { display: flex; flex-wrap: wrap; gap: var(--s2); }
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 44px;
+    padding: 0 var(--s4);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius);
+    background: var(--surface);
+    color: var(--text);
+    font-size: var(--fs-sm);
+    cursor: pointer;
+    transition: border-color .15s ease, color .15s ease, background .15s ease;
+  }
+  .chip:hover { border-color: var(--text); }
+  .vh:checked + .chip {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .vh:disabled + .chip {
+    border-color: var(--line);
+    color: var(--muted);
+    background: var(--bg);
+    opacity: .55;
+    cursor: not-allowed;
+    text-decoration: line-through;
+  }
+  .vh:disabled + .chip:hover { border-color: var(--line); }
+  .vh:focus-visible + .chip {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  /* 数量 + 购买 */
+  .buy-row { display: flex; gap: var(--s3); flex-wrap: wrap; }
+
+  .stepper {
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius);
+    background: var(--surface);
+    flex: none;
+  }
+  .step-btn {
+    width: 44px; height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 0;
+    background: transparent;
+    color: var(--text);
+    cursor: pointer;
+    border-radius: var(--radius);
+    transition: background .15s ease, color .15s ease;
+  }
+  .step-btn:hover { background: var(--accent-soft); color: var(--accent); }
+  .qty {
+    width: 40px;
+    height: 44px;
+    border: 0;
+    border-left: 1px solid var(--line);
+    border-right: 1px solid var(--line);
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    font-size: var(--fs-sm);
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--s2);
+    min-height: 44px;
+    padding: 0 var(--s5);
+    border: 1px solid transparent;
+    border-radius: var(--radius);
+    font: inherit;
+    font-size: var(--fs-sm);
+    font-weight: 600;
+    cursor: pointer;
+    transition: background .15s ease, border-color .15s ease, color .15s ease;
+  }
+  .btn-primary {
+    flex: 1 1 200px;
+    background: var(--accent);
+    color: var(--surface);
+  }
+  .btn-primary:hover { background: var(--accent-deep); }
+  .btn-ghost {
+    flex: none;
+    background: var(--surface);
+    border-color: var(--line-strong);
+    color: var(--text);
+  }
+  .btn-ghost:hover { border-color: var(--text); }
+
+  /* 现货 / 物流 */
+  .stock {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    font-size: var(--fs-sm);
+    color: var(--muted);
+  }
+  .stock .dot-live {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--accent);
+    flex: none;
+  }
+  .stock b { color: var(--text); font-weight: 600; }
+
+  /* 折叠说明 */
+  .accordion { border-top: 1px solid var(--line); }
+  details { border-bottom: 1px solid var(--line); }
+  summary {
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+    padding: var(--s4) 0;
+    font-size: var(--fs-sm);
+    font-weight: 600;
+    cursor: pointer;
+    list-style: none;
+    transition: color .15s ease;
+  }
+  summary::-webkit-details-marker { display: none; }
+  summary:hover { color: var(--accent); }
+  summary .chev {
+    margin-left: auto;
+    flex: none;
+    color: var(--muted);
+    transition: transform .2s ease;
+  }
+  details[open] summary .chev { transform: rotate(180deg); }
+  .acc-body {
+    padding-bottom: var(--s4);
+    font-size: var(--fs-sm);
+    color: var(--muted);
+    line-height: 1.8;
+  }
+  .acc-body > * + * { margin-top: var(--s2); }
+
+  /* ——— 商品详情 ——— */
+  .section { padding: var(--s7) 0; border-top: 1px solid var(--line); }
+  .section-head { margin-bottom: var(--s6); }
+  .section-head h2 { font-size: var(--fs-lg); }
+  .section-head p {
+    margin-top: var(--s2);
+    color: var(--muted);
+    font-size: var(--fs-sm);
+  }
+
+  .detail-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 380px);
+    gap: var(--s7);
+    align-items: start;
+  }
+  .prose { max-width: 62ch; }
+  .prose h3 { font-size: var(--fs-md); margin-bottom: var(--s3); }
+  .prose p { color: var(--muted); }
+  .prose p + h3 { margin-top: var(--s6); }
+  .prose p + p { margin-top: var(--s4); }
+
+  .feature-list { margin-top: var(--s4); display: grid; gap: var(--s3); }
+  .feature-list li {
+    display: flex;
+    gap: var(--s3);
+    font-size: var(--fs-sm);
+    color: var(--muted);
+    line-height: 1.7;
+  }
+  .feature-list svg { flex: none; margin-top: 4px; color: var(--accent); }
+  .feature-list b { color: var(--text); font-weight: 600; }
+
+  .spec {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: var(--s5);
+  }
+  .spec h3 {
+    font-size: var(--fs-sm);
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 600;
+    margin-bottom: var(--s3);
+  }
+  .spec dl { margin: 0; }
+  .spec .row {
+    display: grid;
+    grid-template-columns: 5.5em minmax(0, 1fr);
+    gap: var(--s3);
+    padding: var(--s3) 0;
+    border-top: 1px solid var(--line);
+    font-size: var(--fs-sm);
+  }
+  .spec dt { color: var(--muted); }
+  .spec dd { margin: 0; }
+
+  /* ——— 相关商品 ——— */
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: var(--s5);
+  }
+  .card {
+    display: flex;
+    flex-direction: column;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    overflow: hidden;
+    transition: border-color .15s ease, transform .15s ease;
+  }
+  .card:hover { border-color: var(--line-strong); transform: translateY(-2px); }
+  .card:focus-within { border-color: var(--accent); }
+  .card-media {
+    aspect-ratio: 4 / 3;
+    border-bottom: 1px solid var(--line);
+    background: var(--bg);
+    color: var(--muted);
+  }
+  .card-media svg { display: block; width: 100%; height: 100%; }
+  .card-body {
+    padding: var(--s4);
+    display: flex;
+    flex-direction: column;
+    gap: var(--s2);
+    flex: 1;
+  }
+  .card-cat {
+    font-size: var(--fs-xs);
+    color: var(--muted);
+    letter-spacing: .08em;
+    text-transform: uppercase;
+  }
+  .card-name { font-size: var(--fs-base); font-weight: 600; }
+  .card-name a { color: var(--text); }
+  .card-name a::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+  }
+  .card-name a:hover { color: var(--accent); }
+  .card { position: relative; }
+  .card-meta {
+    margin-top: auto;
+    padding-top: var(--s2);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s2);
+  }
+  .card-price {
+    font-size: var(--fs-base);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .card-rate {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s1);
+    font-size: var(--fs-sm);
+    color: var(--muted);
+  }
+  .star-mini { width: 13px; height: 13px; color: var(--accent); flex: none; }
+
+  /* ——— 页脚 ——— */
+  .site-footer {
+    background: var(--surface);
+    border-top: 1px solid var(--line);
+    padding: var(--s7) 0 var(--s6);
+    margin-top: var(--s7);
+  }
+  .foot-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.6fr) repeat(3, minmax(0, 1fr));
+    gap: var(--s6);
+  }
+  .foot-about p {
+    margin-top: var(--s3);
+    color: var(--muted);
+    font-size: var(--fs-sm);
+    max-width: 34ch;
+  }
+  .foot-col h3 {
+    font-size: var(--fs-sm);
+    margin-bottom: var(--s3);
+    font-weight: 600;
+  }
+  .foot-col li + li { margin-top: var(--s2); }
+  .foot-col a { color: var(--muted); font-size: var(--fs-sm); }
+  .foot-col a:hover { color: var(--accent); }
+
+  .foot-bottom {
+    margin-top: var(--s6);
+    padding-top: var(--s5);
+    border-top: 1px solid var(--line);
+    display: flex;
+    justify-content: space-between;
+    gap: var(--s3);
+    flex-wrap: wrap;
+    font-size: var(--fs-sm);
+    color: var(--muted);
+  }
+
+  /* ——— 响应式 ——— */
+  @media (max-width: 900px) {
+    .product { grid-template-columns: 1fr; gap: var(--s6); }
+    .detail-grid { grid-template-columns: 1fr; gap: var(--s6); }
+    .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .foot-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s5); }
+    .foot-about { grid-column: 1 / -1; }
+    .nav { display: none; }
+  }
+
+  @media (max-width: 560px) {
+    :root { --fs-lg: 24px; --fs-xl: 32px; }
+    .wrap { padding: 0 var(--s4); }
+    .section { padding: var(--s6) 0; }
+    .section-head { margin-bottom: var(--s5); }
+    /* 手机端：相关商品塌成单列，卡片改横排列表，插画不会被拉到整屏宽 */
+    .cards { grid-template-columns: 1fr; gap: var(--s3); }
+    .card { flex-direction: row; align-items: stretch; }
+    .card:hover { transform: none; }
+    .card-media {
+      flex: 0 0 116px;
+      aspect-ratio: auto;
+      border-bottom: 0;
+      border-right: 1px solid var(--line);
+    }
+    .card-body { padding: var(--s3) var(--s4); justify-content: center; }
+    .stage { aspect-ratio: 4 / 5; }
+    /* 手机端：数量 + 收藏 同排，主 CTA 独占整行 */
+    .btn-ghost  { order: 1; flex: 1; }
+    .btn-primary { order: 2; flex-basis: 100%; }
+    .demo-badge { margin-left: 0; }
+    .site-footer { padding-top: var(--s6); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+    .card:hover { transform: none; }
+  }
+</style>
+</head>
+<body>
+
+<!-- 共用 SVG 定义：星形 + 器物插画渐变 -->
+<svg width="0" height="0" aria-hidden="true" focusable="false" style="position:absolute">
+  <defs>
+    <path id="star" d="M10 1.6l2.55 5.17 5.7.83-4.13 4.02.98 5.68L10 14.62l-5.1 2.68.97-5.68L1.75 7.6l5.7-.83z"/>
+    <clipPath id="rate-clip"><rect x="0" y="0" width="88" height="20"/></clipPath>
+    <linearGradient id="glass" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="var(--accent)" stop-opacity=".05"/>
+      <stop offset=".45" stop-color="var(--accent)" stop-opacity=".01"/>
+      <stop offset="1" stop-color="var(--accent)" stop-opacity=".07"/>
+    </linearGradient>
+    <linearGradient id="brew" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="var(--accent)" stop-opacity=".55"/>
+      <stop offset="1" stop-color="var(--accent)" stop-opacity=".85"/>
+    </linearGradient>
+  </defs>
+</svg>
+
+<!-- 顶部通栏 -->
+<div class="topbar">
+  <div class="wrap">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M1 3h15v13H1z"/><path d="M16 8h4l3 3v5h-7z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/>
+    </svg>
+    <span>单笔满 ¥199 顺丰包邮 · 工作日 15:00 前付款当日发出</span>
+  </div>
+</div>
+
+<!-- 站点头 -->
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="#">
+      <svg class="mark" width="26" height="26" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+        <rect width="32" height="32" rx="4" fill="var(--accent)"/>
+        <path d="M9 9h14l-4.2 7.4V24h-5.6v-7.6z" fill="none" stroke="var(--surface)" stroke-width="2" stroke-linejoin="round"/>
+      </svg>
+      溪野器物
+    </a>
+
+    <nav class="nav" aria-label="主导航">
+      <a href="#" aria-current="page">手冲器具</a>
+      <a href="#">咖啡豆</a>
+      <a href="#">杯具</a>
+      <a href="#">冲煮指南</a>
+      <a href="#">关于溪野</a>
+    </nav>
+
+    <div class="header-actions">
+      <button class="icon-btn" type="button" aria-label="搜索商品">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+          <circle cx="11" cy="11" r="7"/><path d="M20 20l-3.6-3.6"/>
+        </svg>
+      </button>
+      <button class="icon-btn" type="button" aria-label="账户">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+          <circle cx="12" cy="8" r="4"/><path d="M4.5 20c1.2-3.7 4-5.5 7.5-5.5s6.3 1.8 7.5 5.5"/>
+        </svg>
+      </button>
+      <button class="icon-btn" type="button" aria-label="购物车，2 件商品">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M4 5h2.2l2 10.5h9.4L20 8H7"/><circle cx="9" cy="19.5" r="1.6"/><circle cx="17" cy="19.5" r="1.6"/>
+        </svg>
+        <span class="cart-count" aria-hidden="true">2</span>
+      </button>
+    </div>
+  </div>
+</header>
+
+<main>
+  <div class="wrap">
+
+    <!-- 面包屑 -->
+    <div class="crumb-row">
+      <nav class="crumbs" aria-label="面包屑">
+        <a href="#">首页</a>
+        <span class="sep" aria-hidden="true">/</span>
+        <a href="#">手冲器具</a>
+        <span class="sep" aria-hidden="true">/</span>
+        <a href="#">分享壶</a>
+        <span class="sep" aria-hidden="true">/</span>
+        <span aria-current="page">双层玻璃手冲分享壶</span>
+      </nav>
+      <span class="demo-badge">示例内容 · 请替换</span>
+    </div>
+
+    <!-- 商品主区 -->
+    <article class="product">
+
+      <!-- 图片 -->
+      <div class="gallery">
+        <div class="stage">
+          <span class="stage-tag">新品</span>
+          <svg viewBox="0 0 400 400" role="img" aria-label="双层玻璃手冲分享壶与滤杯组合示意图">
+            <!-- 热气 -->
+            <g stroke="var(--muted)" stroke-width="2.5" stroke-linecap="round" fill="none" opacity=".38">
+              <path d="M186 78c-6-10 8-16 2-28"/>
+              <path d="M200 74c-6-10 8-16 2-28"/>
+              <path d="M214 78c-6-10 8-16 2-28"/>
+            </g>
+
+            <!-- 滤杯 -->
+            <g fill="none" stroke="var(--text)" stroke-width="2.5" stroke-linejoin="round">
+              <path d="M138 114 L180 194 L220 194 L262 114" fill="url(#glass)"/>
+              <ellipse cx="200" cy="114" rx="62" ry="12" fill="var(--surface)"/>
+              <path d="M158 114 L192 194" stroke="var(--line-strong)" stroke-width="1.5"/>
+              <path d="M242 114 L208 194" stroke="var(--line-strong)" stroke-width="1.5"/>
+              <path d="M200 116 L200 194" stroke="var(--line-strong)" stroke-width="1.5"/>
+            </g>
+
+            <!-- 木环 -->
+            <rect x="176" y="196" width="48" height="16" rx="4" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/>
+
+            <!-- 壶身 -->
+            <clipPath id="body-clip">
+              <path d="M182 214 L182 234 C182 252 134 260 132 294 C130 324 162 342 200 342 C238 342 270 324 268 294 C266 260 218 252 218 234 L218 214 Z"/>
+            </clipPath>
+            <g clip-path="url(#body-clip)">
+              <rect x="120" y="200" width="160" height="160" fill="url(#glass)"/>
+              <!-- 咖啡液 -->
+              <rect x="120" y="292" width="160" height="60" fill="url(#brew)"/>
+              <ellipse cx="200" cy="292" rx="70" ry="7" fill="var(--accent)" opacity=".35"/>
+            </g>
+            <path d="M182 214 L182 234 C182 252 134 260 132 294 C130 324 162 342 200 342 C238 342 270 324 268 294 C266 260 218 252 218 234 L218 214"
+                  fill="none" stroke="var(--text)" stroke-width="2.5" stroke-linejoin="round"/>
+
+            <!-- 把手 -->
+            <path d="M268 264 C300 264 310 284 308 298 C306 316 288 324 266 324"
+                  fill="none" stroke="var(--text)" stroke-width="6" stroke-linecap="round"/>
+
+            <!-- 刻度 -->
+            <g stroke="var(--muted)" stroke-width="2" stroke-linecap="round" opacity=".55">
+              <path d="M148 268h14"/>
+              <path d="M148 280h8"/>
+            </g>
+
+            <!-- 台面投影 -->
+            <ellipse cx="200" cy="352" rx="86" ry="7" fill="var(--text)" opacity=".07"/>
+          </svg>
+        </div>
+
+        <div class="thumbs">
+          <button class="thumb" type="button" aria-current="true" aria-label="查看图片 1：整套组合">
+            <svg viewBox="0 0 64 64" fill="none" aria-hidden="true">
+              <path d="M21 18 L29 35 H35 L43 18" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+              <ellipse cx="32" cy="18" rx="11" ry="2.8" stroke="currentColor" stroke-width="2"/>
+              <!-- 木环：把滤杯和壶身断开，不然整体像个沙漏 -->
+              <rect x="27" y="36" width="10" height="4" rx="1.5" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.6"/>
+              <path d="M29 41v2c0 4-8 6-8 11 0 4 5 6 11 6s11-2 11-6c0-5-8-7-8-11v-2"
+                    stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+            </svg>
+          </button>
+          <button class="thumb" type="button" aria-label="查看图片 2：壶身细节">
+            <svg viewBox="0 0 64 64" fill="none" aria-hidden="true">
+              <path d="M26 16v6c0 5-10 8-10 17 0 7 7 11 16 11s16-4 16-11c0-9-10-12-10-17v-6"
+                    stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+              <path d="M26 16h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              <path d="M48 30c6 0 8 4 8 7s-3 6-8 6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+          </button>
+          <button class="thumb" type="button" aria-label="查看图片 3：滤杯俯视">
+            <svg viewBox="0 0 64 64" fill="none" aria-hidden="true">
+              <circle cx="32" cy="32" r="17" stroke="currentColor" stroke-width="2"/>
+              <circle cx="32" cy="32" r="8" stroke="currentColor" stroke-width="2"/>
+              <g stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+                <path d="M32 15v6"/><path d="M32 43v6"/><path d="M15 32h6"/><path d="M43 32h6"/>
+                <path d="M20 20l4 4"/><path d="M40 40l4 4"/><path d="M44 20l-4 4"/><path d="M24 40l-4 4"/>
+              </g>
+            </svg>
+          </button>
+          <button class="thumb" type="button" aria-label="查看图片 4：礼盒包装">
+            <svg viewBox="0 0 64 64" fill="none" aria-hidden="true">
+              <rect x="14" y="20" width="36" height="28" rx="3" stroke="currentColor" stroke-width="2"/>
+              <path d="M14 30h36" stroke="currentColor" stroke-width="2"/>
+              <path d="M32 20v10" stroke="currentColor" stroke-width="2"/>
+              <circle cx="32" cy="39" r="4" stroke="currentColor" stroke-width="2"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- 信息 -->
+      <div class="info">
+        <p class="eyebrow">溪野 SIYE · 手冲系列</p>
+        <h1 class="title">双层玻璃手冲分享壶</h1>
+
+        <div class="rating">
+          <svg class="stars" viewBox="0 0 100 20" aria-hidden="true">
+            <g fill="var(--line-strong)">
+              <use href="#star"/><use href="#star" x="20"/><use href="#star" x="40"/><use href="#star" x="60"/><use href="#star" x="80"/>
+            </g>
+            <g fill="var(--accent)" clip-path="url(#rate-clip)">
+              <use href="#star"/><use href="#star" x="20"/><use href="#star" x="40"/><use href="#star" x="60"/><use href="#star" x="80"/>
+            </g>
+          </svg>
+          <span><b>4.8</b> / 5</span>
+          <span class="dot" aria-hidden="true">·</span>
+          <a href="#reviews">128 条评价</a>
+          <span class="dot" aria-hidden="true">·</span>
+          <span>已售 1,240</span>
+        </div>
+
+        <div class="price-row">
+          <p class="price"><small>¥</small>268</p>
+          <span class="price-was">¥328</span>
+          <span class="save-tag">立省 ¥60</span>
+        </div>
+
+        <p class="stock">
+          <span class="dot-live" aria-hidden="true"></span>
+          <b>现货</b>·  下单后 48 小时内发出 · 顺丰包邮
+        </p>
+
+        <hr class="rule">
+
+        <form>
+          <!-- 容量 -->
+          <div>
+            <div class="field-label">
+              <span id="cap-label">容量</span>
+              <a class="hint" href="#spec">看规格参数</a>
+            </div>
+            <div class="chips" role="group" aria-labelledby="cap-label">
+              <input class="vh" type="radio" name="cap" id="cap-300"><label class="chip" for="cap-300">300 ml</label>
+              <input class="vh" type="radio" name="cap" id="cap-500" checked><label class="chip" for="cap-500">500 ml</label>
+              <input class="vh" type="radio" name="cap" id="cap-700"><label class="chip" for="cap-700">700 ml</label>
+              <input class="vh" type="radio" name="cap" id="cap-1000" disabled><label class="chip" for="cap-1000">1000 ml</label>
+            </div>
+          </div>
+
+          <div style="height: var(--s5)"></div>
+
+          <!-- 手柄 -->
+          <div>
+            <div class="field-label">
+              <span id="grip-label">手柄</span>
+              <span class="hint">已选：原木</span>
+            </div>
+            <div class="chips" role="group" aria-labelledby="grip-label">
+              <input class="vh" type="radio" name="grip" id="grip-oak" checked><label class="chip" for="grip-oak">原木</label>
+              <input class="vh" type="radio" name="grip" id="grip-walnut"><label class="chip" for="grip-walnut">胡桃</label>
+              <input class="vh" type="radio" name="grip" id="grip-black"><label class="chip" for="grip-black">哑黑</label>
+            </div>
+          </div>
+
+          <div style="height: var(--s5)"></div>
+
+          <!-- 数量 + CTA -->
+          <div class="buy-row">
+            <div class="stepper">
+              <button class="step-btn" type="button" aria-label="减少数量">
+                <svg width="16" height="16" viewBox="0 0 16 16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M3 8h10"/></svg>
+              </button>
+              <input class="qty" type="text" inputmode="numeric" value="1" aria-label="数量">
+              <button class="step-btn" type="button" aria-label="增加数量">
+                <svg width="16" height="16" viewBox="0 0 16 16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>
+              </button>
+            </div>
+
+            <button class="btn btn-primary" type="submit">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M4 5h2.2l2 10.5h9.4L20 8H7"/><circle cx="9" cy="19.5" r="1.6"/><circle cx="17" cy="19.5" r="1.6"/>
+              </svg>
+              加入购物车
+            </button>
+
+            <button class="btn btn-ghost" type="button">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M12 20.5C6 16.5 3 13.4 3 9.8 3 7 5.1 5 7.7 5c1.7 0 3.3.9 4.3 2.3C13 5.9 14.6 5 16.3 5 18.9 5 21 7 21 9.8c0 3.6-3 6.7-9 10.7z"/>
+              </svg>
+              收藏
+            </button>
+          </div>
+        </form>
+
+        <hr class="rule">
+
+        <!-- 配送与退换 -->
+        <div class="accordion">
+          <details open>
+            <summary>
+              配送说明
+              <svg class="chev" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6l5 5 5-5"/></svg>
+            </summary>
+            <div class="acc-body">
+              <p>单笔满 ¥199 免运费，未满收取 ¥12 基础运费。工作日 15:00 前完成付款当日发出，之后顺延至下一工作日。</p>
+              <p>玻璃件默认使用蜂窝纸 + 气柱袋双层包装。新疆、西藏、内蒙古部分地区暂不支持顺丰陆运，下单前请先咨询客服。</p>
+            </div>
+          </details>
+          <details>
+            <summary>
+              退换政策
+              <svg class="chev" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6l5 5 5-5"/></svg>
+            </summary>
+            <div class="acc-body">
+              <p>签收后 7 天内，商品未使用且包装配件齐全，支持无理由退换，往返运费由买家承担。</p>
+              <p>运输破损请在签收后 24 小时内提供开箱视频，我们承担全部损失并优先补发。</p>
+            </div>
+          </details>
+          <details>
+            <summary>
+              日常保养
+              <svg class="chev" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6l5 5 5-5"/></svg>
+            </summary>
+            <div class="acc-body">
+              <p>壶身可洗碗机上层清洗；木环需手洗后自然阴干，避免长时间浸泡。每月用小苏打温水浸泡一次可去除咖啡渍。</p>
+            </div>
+          </details>
+        </div>
+      </div>
+    </article>
+
+    <!-- 商品详情 -->
+    <section class="section" id="detail">
+      <div class="section-head">
+        <h2>商品详情</h2>
+        <p>示例文案，正式上线前请替换为真实的产品描述与参数。</p>
+      </div>
+
+      <div class="detail-grid">
+        <div class="prose">
+          <h3>看得见萃取，也握得住温度</h3>
+          <p>这只分享壶的双层结构不只是为了隔热。内外壁之间的空气层让壶身在注水时保持稳定的温度曲线，咖啡液落下后不会因为壶体吸热而骤降，尾段风味因此更完整。外壁常温可握，直接上桌也不用另找杯垫。</p>
+          <p>壶身由硼硅玻璃一体吹制成型，没有接缝与胶水。壶口做了收窄处理，倒出时水流收得干净，不会顺着壁面回流。中段的木环取自 FSC 认证白橡，手工打磨后上木蜡油，用久了会留下一层温润的包浆。</p>
+
+          <h3>关于容量的选择</h3>
+          <p>日常一人两杯选 500ml 最稳妥；只喝一杯选 300ml，注水后壶壁挂杯更少；家里常有客人来，或习惯一次冲两人份，700ml 会更从容。1000ml 规格补货中，可在客服处登记到货提醒。</p>
+
+          <ul class="feature-list">
+            <li>
+              <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 5"/></svg>
+              <span><b>双层硼硅玻璃</b>　耐温差 150℃，可直接注入 96℃ 热水，不会炸裂。</span>
+            </li>
+            <li>
+              <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 5"/></svg>
+              <span><b>通用壶口</b>　适配 V60 01/02、Kalita 蛋糕杯及大多数 Chemex 滤杯。</span>
+            </li>
+            <li>
+              <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 5"/></svg>
+              <span><b>侧壁刻度</b>　300 / 500ml 双刻度，注水量一眼可见，不必盯着秤。</span>
+            </li>
+            <li>
+              <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 5"/></svg>
+              <span><b>整壶可拆</b>　木环旋下即可分离，壶身进洗碗机上层无压力。</span>
+            </li>
+          </ul>
+        </div>
+
+        <aside class="spec" id="spec">
+          <h3>规格参数</h3>
+          <dl>
+            <div class="row"><dt>型号</dt><dd>SY-CP500</dd></div>
+            <div class="row"><dt>容量</dt><dd>500 ml（刻度 300 / 500）</dd></div>
+            <div class="row"><dt>材质</dt><dd>硼硅玻璃 3.3 / 白橡木环</dd></div>
+            <div class="row"><dt>耐温</dt><dd>-20℃ ～ 150℃</dd></div>
+            <div class="row"><dt>净重</dt><dd>385 g</dd></div>
+            <div class="row"><dt>尺寸</dt><dd>直径 118 × 高 145 mm</dd></div>
+            <div class="row"><dt>产地</dt><dd>山东 淄博</dd></div>
+            <div class="row"><dt>包装</dt><dd>牛皮纸礼盒 + 绒布袋</dd></div>
+            <div class="row"><dt>保修</dt><dd>非人为损坏 1 年内换新</dd></div>
+          </dl>
+        </aside>
+      </div>
+    </section>
+
+    <!-- 相关商品 -->
+    <section class="section" id="related">
+      <div class="section-head">
+        <h2>搭配这只壶</h2>
+        <p>凑齐一套手冲，出品会稳定很多。</p>
+      </div>
+
+      <ul class="cards">
+        <li class="card">
+          <div class="card-media">
+            <svg viewBox="0 0 200 140" fill="none" aria-hidden="true">
+              <rect x="62" y="58" width="86" height="56" rx="10" stroke="var(--text)" stroke-width="2.5"/>
+              <path d="M66 74C46 70 34 58 32 38" stroke="var(--text)" stroke-width="4" stroke-linecap="round"/>
+              <path d="M150 68c20 0 24 20 2 30" stroke="var(--text)" stroke-width="4" stroke-linecap="round"/>
+              <rect x="88" y="48" width="34" height="10" rx="3" stroke="var(--text)" stroke-width="2.5"/>
+              <circle cx="105" cy="42" r="4" fill="var(--accent)"/>
+              <ellipse cx="105" cy="120" rx="46" ry="4" fill="var(--text)" opacity=".07"/>
+            </svg>
+          </div>
+          <div class="card-body">
+            <p class="card-cat">手冲壶</p>
+            <h3 class="card-name"><a href="#">溪野 细口温控手冲壶 600ml</a></h3>
+            <div class="card-meta">
+              <span class="card-price">¥398</span>
+              <span class="card-rate">
+                <svg class="star-mini" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><use href="#star"/></svg>
+                4.9
+              </span>
+            </div>
+          </div>
+        </li>
+
+        <li class="card">
+          <div class="card-media">
+            <svg viewBox="0 0 200 140" fill="none" aria-hidden="true">
+              <path d="M64 44 L94 100 H106 L136 44" stroke="var(--text)" stroke-width="2.5" stroke-linejoin="round"/>
+              <ellipse cx="100" cy="44" rx="36" ry="8" stroke="var(--text)" stroke-width="2.5"/>
+              <path d="M78 46 L96 100" stroke="var(--line-strong)" stroke-width="1.5"/>
+              <path d="M122 46 L104 100" stroke="var(--line-strong)" stroke-width="1.5"/>
+              <path d="M100 46 v54" stroke="var(--line-strong)" stroke-width="1.5"/>
+              <rect x="86" y="100" width="28" height="10" rx="3" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/>
+              <ellipse cx="100" cy="118" rx="40" ry="4" fill="var(--text)" opacity=".07"/>
+            </svg>
+          </div>
+          <div class="card-body">
+            <p class="card-cat">滤杯</p>
+            <h3 class="card-name"><a href="#">陶瓷锥形滤杯 02 号</a></h3>
+            <div class="card-meta">
+              <span class="card-price">¥128</span>
+              <span class="card-rate">
+                <svg class="star-mini" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><use href="#star"/></svg>
+                4.7
+              </span>
+            </div>
+          </div>
+        </li>
+
+        <li class="card">
+          <div class="card-media">
+            <svg viewBox="0 0 200 140" fill="none" aria-hidden="true">
+              <!-- 机身：上宽下窄 -->
+              <path d="M76 54 L84 114 H116 L124 54" stroke="var(--text)" stroke-width="2.5" stroke-linejoin="round"/>
+              <ellipse cx="100" cy="54" rx="24" ry="6" stroke="var(--text)" stroke-width="2.5"/>
+              <!-- 豆仓 / 粉仓分隔 -->
+              <path d="M79 80h42" stroke="var(--line-strong)" stroke-width="1.5"/>
+              <!-- 摇柄：立轴 + 曲臂 + 握球（整体抬高，别和盖子的椭圆糊在一起） -->
+              <path d="M100 50 V30" stroke="var(--text)" stroke-width="3" stroke-linecap="round"/>
+              <path d="M100 30 H124 V38" stroke="var(--text)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+              <circle cx="124" cy="43" r="4.5" fill="var(--accent)"/>
+              <ellipse cx="100" cy="120" rx="30" ry="4" fill="var(--text)" opacity=".07"/>
+            </svg>
+          </div>
+          <div class="card-body">
+            <p class="card-cat">磨豆机</p>
+            <h3 class="card-name"><a href="#">手摇磨豆机 S2C 六星刀盘</a></h3>
+            <div class="card-meta">
+              <span class="card-price">¥468</span>
+              <span class="card-rate">
+                <svg class="star-mini" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><use href="#star"/></svg>
+                4.8
+              </span>
+            </div>
+          </div>
+        </li>
+
+        <li class="card">
+          <div class="card-media">
+            <svg viewBox="0 0 200 140" fill="none" aria-hidden="true">
+              <rect x="52" y="66" width="96" height="40" rx="6" stroke="var(--text)" stroke-width="2.5"/>
+              <rect x="64" y="76" width="34" height="14" rx="2" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/>
+              <circle cx="128" cy="83" r="6" stroke="var(--text)" stroke-width="2.5"/>
+              <path d="M70 66V54h60v12" stroke="var(--text)" stroke-width="2.5" stroke-linejoin="round"/>
+              <ellipse cx="100" cy="112" rx="46" ry="4" fill="var(--text)" opacity=".07"/>
+            </svg>
+          </div>
+          <div class="card-body">
+            <p class="card-cat">配件</p>
+            <h3 class="card-name"><a href="#">手冲专用电子秤（含计时）</a></h3>
+            <div class="card-meta">
+              <span class="card-price">¥238</span>
+              <span class="card-rate">
+                <svg class="star-mini" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><use href="#star"/></svg>
+                4.6
+              </span>
+            </div>
+          </div>
+        </li>
+      </ul>
+    </section>
+
+  </div>
+</main>
+
+<!-- 页脚 -->
+<footer class="site-footer">
+  <div class="wrap">
+    <div class="foot-grid">
+      <div class="foot-about">
+        <a class="brand" href="#">
+          <svg class="mark" width="26" height="26" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+            <rect width="32" height="32" rx="4" fill="var(--accent)"/>
+            <path d="M9 9h14l-4.2 7.4V24h-5.6v-7.6z" fill="none" stroke="var(--surface)" stroke-width="2" stroke-linejoin="round"/>
+          </svg>
+          溪野器物
+        </a>
+        <p>一间做手冲器具的小店。2018 年从淄博的一个玻璃作坊开始，只做自己每天在用的东西。</p>
+      </div>
+
+      <div class="foot-col">
+        <h3>购物</h3>
+        <ul>
+          <li><a href="#">全部商品</a></li>
+          <li><a href="#">新品上架</a></li>
+          <li><a href="#">套装优惠</a></li>
+          <li><a href="#">礼品卡</a></li>
+        </ul>
+      </div>
+
+      <div class="foot-col">
+        <h3>客户服务</h3>
+        <ul>
+          <li><a href="#">配送与运费</a></li>
+          <li><a href="#">退换货</a></li>
+          <li><a href="#">订单查询</a></li>
+          <li><a href="#">联系客服</a></li>
+        </ul>
+      </div>
+
+      <div class="foot-col">
+        <h3>关于</h3>
+        <ul>
+          <li><a href="#">品牌故事</a></li>
+          <li><a href="#">冲煮指南</a></li>
+          <li><a href="#">线下门店</a></li>
+          <li><a href="#">批发合作</a></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="foot-bottom">
+      <span>© 2024 溪野器物 · 示例站点，内容均为占位文案</span>
+      <span>客服微信 siye-coffee · 工作日 10:00–18:00</span>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

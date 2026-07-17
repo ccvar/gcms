@@ -1,0 +1,1275 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>野线 2026 · 独立设计沙龙 — 10 月 17–18 日 · 杭州</title>
+<meta name="description" content="野线 2026 独立设计沙龙：两天、14 场分享、120 个座位。2026 年 10 月 17–18 日在杭州举办。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23221A26'/%3E%3Cpath d='M8 23L24 9' stroke='%23F2799F' stroke-width='2.5' stroke-linecap='round'/%3E%3Ccircle cx='10.5' cy='10.5' r='2.5' fill='%23F2799F'/%3E%3C/svg%3E">
+<style>
+  /* ============================================================
+     野线 2026 · 独立设计沙龙 —— 活动 / 报名页起始模板
+     改色板 = 只改下面 :root 的变量，别全站搜替换。
+     ============================================================ */
+  :root {
+    /* ——— 设计令牌（唯一颜色来源） ——— */
+    --bg:      #F1F0EE;   /* 页面底：冷调石灰纸 */
+    --surface: #FFFFFF;   /* 卡片/表单底 */
+    --text:    #1C1A1F;   /* 正文 15.1:1 on --bg */
+    --muted:   #5F5964;   /* 次要文字 5.9:1 on --bg */
+    --accent:  #B01E56;   /* 唯一强调色（覆盆子）5.8:1 on --bg */
+    --radius:  10px;
+
+    /* ——— 同色相的深/浅变体 + 中性件（不是第二个强调色） ——— */
+    --ink:        #221A26; /* 深色带（导航 + hero）底 */
+    --on-ink:     #F2EEF1; /* 深色带正文 14.7:1 */
+    --ink-muted:  #B3A7B8; /* 深色带次要文字 7.4:1 */
+    --ink-line:   #3C3141; /* 深色带分隔线 */
+    --accent-ink: #F2799F; /* 强调色浅调，只用在深色带上 6.4:1 */
+    --accent-soft:#FBE7EE; /* 强调色淡底（早鸟标、荐票种） */
+    --line:       #DFDDD9; /* 浅底分隔线 */
+
+    /* ——— 间距刻度：只准用这些值 ——— */
+    --s1: 4px;
+    --s2: 8px;
+    --s3: 12px;
+    --s4: 16px;
+    --s5: 24px;
+    --s6: 40px;
+    --s7: 64px;
+
+    /* ——— 字号刻度 ——— */
+    --fs-sm:   14px;
+    --fs-base: 16px;
+    --fs-md:   20px;
+    --fs-lg:   28px;
+    --fs-xl:   40px;
+
+    --font: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+            "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+            "Noto Sans SC", "Source Han Sans SC", Roboto, Arial, sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+
+    --container: 1040px;
+    --measure: 680px;   /* 长文/问答的阅读宽度上限 */
+    color-scheme: light;
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    * { transition: none !important; }
+  }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: var(--fs-base);
+    line-height: 1.7;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1, h2, h3, h4 { margin: 0; line-height: 1.25; font-weight: 700; letter-spacing: -0.01em; }
+  p { margin: 0; }
+  ul, ol { margin: 0; padding: 0; list-style: none; }
+  img, svg { max-width: 100%; }
+
+  a { color: var(--accent); text-decoration: none; transition: opacity .15s ease, color .15s ease; }
+  a:hover { opacity: .7; }
+
+  /* 键盘可达性：全局统一，别用 outline:none 一删了事 */
+  a:focus-visible,
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible,
+  summary:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: var(--s1);
+  }
+  .band a:focus-visible,
+  .band button:focus-visible { outline-color: var(--accent-ink); }
+
+  .wrap {
+    width: 100%;
+    max-width: var(--container);
+    margin: 0 auto;
+    padding-inline: var(--s5);
+  }
+
+  /* ===== 通用小件 ===== */
+  .eyebrow {
+    font-size: var(--fs-sm);
+    font-weight: 600;
+    letter-spacing: .14em;
+    color: var(--muted);
+    text-transform: uppercase;
+  }
+
+  .tag {
+    display: inline-block;
+    padding: var(--s1) var(--s2);
+    border-radius: var(--s1);
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: var(--fs-sm);
+    font-weight: 700;
+    line-height: 1.4;
+    letter-spacing: .02em;
+  }
+
+  .demo-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s1);
+    padding: var(--s1) var(--s2);
+    border: 1px dashed var(--ink-line);
+    border-radius: 999px;
+    color: var(--ink-muted);
+    font-size: var(--fs-sm);
+    line-height: 1.4;
+    white-space: nowrap;
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--s2);
+    min-height: 44px;
+    padding: var(--s3) var(--s5);
+    border: 1px solid transparent;
+    border-radius: var(--radius);
+    font: inherit;
+    font-weight: 600;
+    line-height: 1.4;
+    cursor: pointer;
+    text-align: center;
+    transition: transform .12s ease, opacity .15s ease, background-color .15s ease, border-color .15s ease;
+  }
+  .btn:hover { opacity: 1; transform: translateY(-1px); }
+  .btn:active { transform: translateY(0); }
+
+  .btn-primary { background: var(--accent); color: var(--surface); }
+  .btn-primary:hover { background: var(--text); }
+
+  .btn-ghost { background: transparent; color: var(--on-ink); border-color: var(--ink-line); }
+  .btn-ghost:hover { border-color: var(--on-ink); background: var(--ink-line); }
+
+  .btn-quiet { background: var(--surface); color: var(--text); border-color: var(--line); }
+  .btn-quiet:hover { border-color: var(--text); }
+
+  .link-arrow { font-weight: 600; }
+  .link-arrow svg { vertical-align: -2px; margin-left: var(--s1); }
+
+  /* ===== 深色带（导航 + hero 连成一块） ===== */
+  .band { background: var(--ink); color: var(--on-ink); }
+
+  /* 导航 */
+  .nav {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: var(--ink);
+    border-bottom: 1px solid var(--ink-line);
+  }
+  .nav-inner {
+    display: flex;
+    align-items: center;
+    gap: var(--s5);
+    min-height: 64px;
+  }
+  .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s2);
+    padding-block: var(--s2);
+    color: var(--on-ink);
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    white-space: nowrap;
+  }
+  .brand:hover { opacity: .75; }
+  .brand-mark { display: block; color: var(--accent-ink); }
+  .brand-sub { color: var(--ink-muted); font-weight: 400; font-size: var(--fs-sm); }
+
+  .nav-links {
+    display: flex;
+    gap: var(--s5);
+    margin-left: auto;
+    font-size: var(--fs-sm);
+  }
+  .nav-links a {
+    color: var(--ink-muted);
+    padding-block: var(--s2);
+    border-bottom: 2px solid transparent;
+  }
+  .nav-links a:hover { color: var(--on-ink); border-bottom-color: var(--accent-ink); opacity: 1; }
+  .nav-cta { margin-left: auto; }
+  .nav-links + .nav-cta { margin-left: 0; }
+  .nav .btn { padding: var(--s2) var(--s4); }
+
+  /* Hero */
+  .hero {
+    position: relative;
+    overflow: hidden;
+    padding-block: var(--s7) var(--s7);
+  }
+  /* 一点点热度：强调色同色相的柔光，不是第二个颜色 */
+  .hero::before {
+    content: "";
+    position: absolute;
+    inset: -40% 40% 30% -20%;
+    background: radial-gradient(closest-side, var(--accent), transparent 72%);
+    opacity: .22;
+    pointer-events: none;
+  }
+  .hero-inner { position: relative; max-width: 780px; }
+  .hero-top {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s3);
+    margin-bottom: var(--s5);
+  }
+  .hero-kicker {
+    font-size: var(--fs-sm);
+    font-weight: 600;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--accent-ink);
+  }
+  .hero h1 {
+    font-size: clamp(var(--fs-lg), 6.5vw, var(--fs-xl));
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+    text-wrap: balance;
+  }
+  .hero-lede {
+    margin-top: var(--s4);
+    max-width: var(--measure);
+    font-size: var(--fs-md);
+    line-height: 1.7;
+    color: var(--ink-muted);
+  }
+
+  /* 时间地点 */
+  .facts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s3) var(--s5);
+    margin-top: var(--s5);
+    padding-top: var(--s5);
+    border-top: 1px solid var(--ink-line);
+  }
+  .fact {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--s2);
+    font-size: var(--fs-base);
+  }
+  .fact svg { flex: none; margin-top: 5px; color: var(--accent-ink); }
+  .fact b { display: block; font-weight: 600; line-height: 1.5; }
+  .fact span { display: block; color: var(--ink-muted); font-size: var(--fs-sm); font-weight: 400; }
+
+  .hero-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s3);
+    margin-top: var(--s6);
+  }
+  .seats-left { color: var(--ink-muted); font-size: var(--fs-sm); }
+
+  /* 倒计时占位 */
+  .countdown {
+    margin-top: var(--s6);
+    padding-top: var(--s5);
+    border-top: 1px solid var(--ink-line);
+  }
+  .countdown-label {
+    font-size: var(--fs-sm);
+    color: var(--ink-muted);
+    margin-bottom: var(--s3);
+  }
+  .clock { display: flex; gap: var(--s2); flex-wrap: wrap; }
+  .clock li {
+    min-width: 76px;
+    padding: var(--s3) var(--s4);
+    border: 1px solid var(--ink-line);
+    border-radius: var(--radius);
+    text-align: center;
+  }
+  .clock b {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: var(--fs-lg);
+    font-weight: 700;
+    line-height: 1.2;
+    font-variant-numeric: tabular-nums;
+  }
+  .clock span { font-size: var(--fs-sm); color: var(--ink-muted); }
+
+  /* ===== 区块骨架 ===== */
+  .section { padding-block: var(--s7); }
+  .section + .section { border-top: 1px solid var(--line); }
+  .section-head { max-width: var(--measure); margin-bottom: var(--s6); }
+  .section-head h2 {
+    margin-top: var(--s2);
+    font-size: var(--fs-lg);
+    letter-spacing: -0.02em;
+  }
+  .section-head p { margin-top: var(--s3); color: var(--muted); }
+
+  /* ===== 亮点 ===== */
+  .highlights {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: var(--s5);
+  }
+  .highlight h3 { font-size: var(--fs-md); margin-bottom: var(--s2); }
+  .highlight p { color: var(--muted); font-size: var(--fs-sm); line-height: 1.75; }
+  .highlight-icon { color: var(--accent); margin-bottom: var(--s3); display: block; }
+
+  /* ===== 日程 ===== */
+  .day + .day { margin-top: var(--s7); }
+  .day-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: var(--s3);
+    padding-bottom: var(--s3);
+    border-bottom: 2px solid var(--text);
+  }
+  .day-head h3 { font-size: var(--fs-md); }
+  .day-head span { color: var(--muted); font-size: var(--fs-sm); }
+
+  .agenda li {
+    display: grid;
+    grid-template-columns: 132px 1fr;
+    gap: var(--s5);
+    padding-block: var(--s4);
+    border-bottom: 1px solid var(--line);
+  }
+  .agenda time {
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    padding-top: 3px;
+  }
+  .agenda h4 { font-size: var(--fs-base); font-weight: 600; }
+  .agenda .who {
+    margin-top: var(--s1);
+    font-size: var(--fs-sm);
+    color: var(--muted);
+  }
+  .agenda .who b { color: var(--text); font-weight: 600; }
+  .agenda .break h4 { font-weight: 400; color: var(--muted); }
+  .agenda .keynote h4 { font-size: var(--fs-md); }
+
+  /* ===== 讲者 ===== */
+  .speakers {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--s5);
+  }
+  .speaker {
+    background: var(--surface);
+    border-radius: var(--radius);
+    padding: var(--s5);
+  }
+  .avatar {
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    background: var(--accent-soft);
+    color: var(--accent);
+    display: grid;
+    place-items: center;
+    margin-bottom: var(--s4);
+  }
+  .speaker h3 { font-size: var(--fs-md); }
+  /* 讲者身份用字重拉层级，不再染强调色——一页里累计五处就太吵了 */
+  .speaker .role { color: var(--text); font-size: var(--fs-sm); font-weight: 600; margin-top: var(--s1); }
+  .speaker .bio { color: var(--muted); font-size: var(--fs-sm); line-height: 1.75; margin-top: var(--s3); }
+
+  /* ===== 票种 ===== */
+  .tickets {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--s5);
+    align-items: start;
+  }
+  .ticket {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: var(--s5);
+    display: flex;
+    flex-direction: column;
+    gap: var(--s3);
+    height: 100%;
+  }
+  .ticket-featured { border-color: var(--accent); border-width: 2px; }
+  .ticket-head {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    flex-wrap: wrap;
+    min-height: 28px;
+  }
+  .ticket h3 { font-size: var(--fs-md); }
+  .price {
+    font-size: var(--fs-xl);
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    line-height: 1.1;
+  }
+  .price small { font-size: var(--fs-sm); font-weight: 400; color: var(--muted); letter-spacing: 0; }
+  .price s { color: var(--muted); font-size: var(--fs-md); font-weight: 400; margin-left: var(--s2); }
+  .ticket-note { color: var(--muted); font-size: var(--fs-sm); }
+  .includes { display: grid; gap: var(--s2); font-size: var(--fs-sm); }
+  .includes li { display: flex; gap: var(--s2); align-items: flex-start; }
+  .includes svg { flex: none; margin-top: 5px; color: var(--accent); }
+  .ticket .btn { margin-top: auto; }
+
+  /* ===== 场地 ===== */
+  .venue {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--s6);
+    align-items: center;
+  }
+  .map {
+    background: var(--surface);
+    border-radius: var(--radius);
+    overflow: hidden;
+    aspect-ratio: 4 / 3;
+  }
+  .map svg { display: block; width: 100%; height: 100%; }
+  .venue h3 { font-size: var(--fs-md); margin-bottom: var(--s3); }
+  .venue-addr { color: var(--muted); margin-bottom: var(--s5); }
+  .routes { display: grid; gap: var(--s4); }
+  .route { display: flex; gap: var(--s3); align-items: flex-start; }
+  .route svg { flex: none; margin-top: 4px; color: var(--accent); }
+  .route b { display: block; font-weight: 600; font-size: var(--fs-sm); }
+  .route p { color: var(--muted); font-size: var(--fs-sm); }
+
+  /* ===== 问答 ===== */
+  .faq { max-width: var(--measure); }
+  .faq details { border-bottom: 1px solid var(--line); }
+  .faq summary {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--s4);
+    padding-block: var(--s4);
+    min-height: 44px;
+    font-weight: 600;
+    cursor: pointer;
+    list-style: none;
+    transition: color .15s ease;
+  }
+  .faq summary::-webkit-details-marker { display: none; }
+  .faq summary:hover { color: var(--accent); }
+  .faq summary svg { flex: none; color: var(--muted); transition: transform .18s ease; }
+  .faq details[open] summary svg { transform: rotate(45deg); color: var(--accent); }
+  .faq p { padding-bottom: var(--s4); color: var(--muted); }
+
+  /* ===== 报名表单 ===== */
+  .signup { background: var(--surface); }
+  .signup .section-head { margin-bottom: var(--s5); }
+  .form { max-width: var(--measure); margin-top: var(--s5); }
+  .field { margin-bottom: var(--s5); }
+  .field > label,
+  .fieldset-label {
+    display: block;
+    font-size: var(--fs-sm);
+    font-weight: 600;
+    margin-bottom: var(--s2);
+  }
+  .req { color: var(--accent); }
+  .hint { font-size: var(--fs-sm); color: var(--muted); font-weight: 400; margin-top: var(--s1); }
+  .input {
+    width: 100%;
+    min-height: 44px;
+    padding: var(--s3) var(--s4);
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    color: var(--text);
+    font: inherit;
+    transition: border-color .15s ease;
+  }
+  .input::placeholder { color: var(--muted); opacity: .8; }
+  .input:hover { border-color: var(--muted); }
+  .input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  textarea.input { min-height: 96px; resize: vertical; line-height: 1.7; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s4); }
+  fieldset { border: 0; padding: 0; margin: 0 0 var(--s5); }
+  .choices { display: grid; gap: var(--s2); }
+  .choice {
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+    min-height: 44px;
+    padding: var(--s3) var(--s4);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    cursor: pointer;
+    font-size: var(--fs-sm);
+    transition: border-color .15s ease, background-color .15s ease;
+  }
+  .choice:hover { border-color: var(--muted); }
+  .choice input { accent-color: var(--accent); width: 18px; height: 18px; flex: none; }
+  .choice input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .choice .c-price { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .consent {
+    display: flex;
+    gap: var(--s3);
+    align-items: flex-start;
+    font-size: var(--fs-sm);
+    color: var(--muted);
+    margin-bottom: var(--s5);
+  }
+  .consent input { accent-color: var(--accent); width: 18px; height: 18px; flex: none; margin-top: 3px; }
+  .form-foot { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s4); }
+  .form-foot .hint { margin-top: 0; }
+  .form-note {
+    margin-top: var(--s5);
+    padding: var(--s3) var(--s4);
+    border-left: 2px solid var(--accent);
+    background: var(--accent-soft);
+    border-radius: 0 var(--s1) var(--s1) 0;
+    font-size: var(--fs-sm);
+    color: var(--muted);
+  }
+
+  /* ===== 页脚 ===== */
+  .footer {
+    background: var(--ink);
+    color: var(--ink-muted);
+    padding-block: var(--s6);
+    font-size: var(--fs-sm);
+  }
+  .footer-inner {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s5);
+    justify-content: space-between;
+    align-items: flex-start;
+  }
+  .footer a { color: var(--on-ink); }
+  .footer a:hover { color: var(--accent-ink); opacity: 1; }
+  .footer-when { margin-top: var(--s2); }
+  .footer-links { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s4); }
+  .footer-links a { display: inline-flex; align-items: center; min-height: 44px; }
+  .footer-legal { margin-top: var(--s5); padding-top: var(--s5); border-top: 1px solid var(--ink-line); }
+
+  /* ===== 响应式 ===== */
+  @media (max-width: 1024px) {
+    .highlights { grid-template-columns: repeat(2, 1fr); gap: var(--s6) var(--s5); }
+    .speakers { grid-template-columns: repeat(2, 1fr); }
+  }
+
+  @media (max-width: 860px) {
+    .nav-links { display: none; }
+    .tickets { grid-template-columns: 1fr; }
+    .venue { grid-template-columns: 1fr; gap: var(--s5); }
+    .map { aspect-ratio: 16 / 9; }
+  }
+
+  @media (max-width: 640px) {
+    :root { --s7: 48px; }
+    .wrap { padding-inline: var(--s4); }
+    .hero { padding-block: var(--s6); }
+    .hero::before { inset: -30% -10% 50% -30%; }
+    .facts { flex-direction: column; gap: var(--s4); }
+    .hero-actions .btn { flex: 1 1 100%; }
+    .clock li { flex: 1 1 0; min-width: 0; padding: var(--s3) var(--s2); }
+    .highlights { grid-template-columns: 1fr; gap: var(--s6); }
+    .speakers { grid-template-columns: 1fr; }
+    .agenda li { grid-template-columns: 1fr; gap: var(--s1); }
+    .agenda time { padding-top: 0; }
+    .row { grid-template-columns: 1fr; }
+    .form-foot .btn { width: 100%; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ============ 导航 + Hero：连成一整块深色带 ============ -->
+<div class="band">
+  <header class="nav">
+    <div class="wrap nav-inner">
+      <a class="brand" href="#top">
+        <svg class="brand-mark" width="28" height="28" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+          <path d="M8 23L24 9" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+          <circle cx="10.5" cy="10.5" r="2.5" fill="currentColor"/>
+        </svg>
+        野线 <span class="brand-sub">2026</span>
+      </a>
+
+      <nav class="nav-links" aria-label="页面导航">
+        <a href="#highlights">亮点</a>
+        <a href="#agenda">日程</a>
+        <a href="#speakers">讲者</a>
+        <a href="#tickets">票种</a>
+        <a href="#venue">场地</a>
+        <a href="#faq">问答</a>
+      </nav>
+
+      <div class="nav-cta">
+        <a class="btn btn-primary" href="#signup">报名</a>
+      </div>
+    </div>
+  </header>
+
+  <section class="hero" id="top">
+    <div class="wrap hero-inner">
+      <div class="hero-top">
+        <p class="hero-kicker">第四届 · 两天</p>
+        <span class="demo-badge">
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+            <circle cx="8" cy="8" r="7" fill="none" stroke="currentColor" stroke-width="1.5"/>
+            <path d="M8 4.5v4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            <circle cx="8" cy="11.5" r=".9"/>
+          </svg>
+          示例内容 · 请整页替换为真实活动信息
+        </span>
+      </div>
+
+      <h1>野线 2026 独立设计沙龙<br>接活、报价、交付，和活下去</h1>
+
+      <p class="hero-lede">
+        给一个人干活的设计师办的两天沙龙。14 场分享不讲软件快捷键，
+        只讲那些没人写在教程里的判断：这单接不接、这价怎么报、这稿改到第几版该停。
+      </p>
+
+      <div class="facts">
+        <p class="fact">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <rect x="1.75" y="3.25" width="12.5" height="11" rx="2" stroke="currentColor" stroke-width="1.5"/>
+            <path d="M1.75 6.5h12.5M5.5 1.75v3M10.5 1.75v3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+          <b>2026 年 10 月 17–18 日<span>周六至周日 · 09:30 入场</span></b>
+        </p>
+        <p class="fact">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M8 14.5s5-4.06 5-8a5 5 0 0 0-10 0c0 3.94 5 8 5 8Z" stroke="currentColor" stroke-width="1.5"/>
+            <circle cx="8" cy="6.5" r="1.9" stroke="currentColor" stroke-width="1.5"/>
+          </svg>
+          <b>杭州 · 运河边 8 号仓<span>拱墅区 光明路 8 号 B1 报告厅</span></b>
+        </p>
+        <p class="fact">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <circle cx="6" cy="5" r="2.5" stroke="currentColor" stroke-width="1.5"/>
+            <path d="M1.75 13.25c0-2.35 1.9-4.25 4.25-4.25s4.25 1.9 4.25 4.25" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            <path d="M11 3.1a2.5 2.5 0 0 1 0 4.8M12.4 9.4a4.25 4.25 0 0 1 1.85 3.85" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+          <b>限 120 座<span>小场地，提问轮得到你</span></b>
+        </p>
+      </div>
+
+      <div class="hero-actions">
+        <a class="btn btn-primary" href="#signup">报名 · 早鸟 ¥480</a>
+        <a class="btn btn-ghost" href="#agenda">先看两天日程</a>
+        <p class="seats-left">早鸟余 12 张（示例数字）</p>
+      </div>
+
+      <div class="countdown">
+        <p class="countdown-label">距开场 —— 占位数字，接真实倒计时后替换</p>
+        <ul class="clock">
+          <li><b>92</b><span>天</span></li>
+          <li><b>07</b><span>时</span></li>
+          <li><b>41</b><span>分</span></li>
+          <li><b>18</b><span>秒</span></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+</div>
+
+<main>
+  <!-- ============ 亮点 ============ -->
+  <section class="section" id="highlights">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="eyebrow">为什么来</p>
+        <h2>两天里会发生什么</h2>
+      </div>
+
+      <div class="highlights">
+        <article class="highlight">
+          <svg class="highlight-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M4 19V7.5A2.5 2.5 0 0 1 6.5 5H19a1 1 0 0 1 1 1v11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+            <path d="M4 19a2.5 2.5 0 0 1 2.5-2.5H20M8 9h8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+          </svg>
+          <h3>14 场分享，不讲工具</h3>
+          <p>没有「Figma 十个技巧」。讲的是判断与取舍：怎么选客户、怎么砍需求、怎么把一稿定下来。</p>
+        </article>
+
+        <article class="highlight">
+          <svg class="highlight-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M12 20.5c4.7 0 8.5-3.36 8.5-7.5S16.7 5.5 12 5.5 3.5 8.86 3.5 13c0 1.9.8 3.63 2.12 4.95L5 21l3.4-1.28c1.1.5 2.32.78 3.6.78Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+            <path d="M9 12.5h6M9 15.5h3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+          </svg>
+          <h3>提问一定轮得到</h3>
+          <p>只放 120 个座位。每场留 10 分钟问答，讲者两天都在场，茶歇继续聊。</p>
+        </article>
+
+        <article class="highlight">
+          <svg class="highlight-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M4.5 6.5h15v13h-15z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+            <path d="M4.5 10.5h15M9 3.5v4M15 3.5v4M8.5 14.5l2.2 2.2 4.3-4.3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <h3>第二天下午是工作坊</h3>
+          <p>带电脑来，带成品走。三小时重做自己的自我介绍页，讲者一桌一桌过。</p>
+        </article>
+
+        <article class="highlight">
+          <svg class="highlight-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <rect x="3" y="6" width="18" height="12" rx="2" stroke="currentColor" stroke-width="1.6"/>
+            <path d="m10.5 9.8 4.3 2.2-4.3 2.2z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+          </svg>
+          <h3>票含午餐与回看</h3>
+          <p>两天午餐场地供应；全程录像，会后两周内发回看链接，不限时观看。</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 日程 ============ -->
+  <section class="section" id="agenda">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="eyebrow">日程</p>
+        <h2>两天，从接活讲到交付</h2>
+        <p>以下为示例日程，最终以现场手册为准。单场若有调整会提前三天邮件通知。</p>
+      </div>
+
+      <div class="day">
+        <div class="day-head">
+          <h3>第一天 · 10 月 17 日</h3>
+          <span>周六 · 主题：怎么把活接对</span>
+        </div>
+        <ol class="agenda">
+          <li class="break">
+            <time datetime="2026-10-17T09:30">09:30–10:00</time>
+            <div><h4>签到 · 领物料 · 喝杯咖啡</h4></div>
+          </li>
+          <li class="keynote">
+            <time datetime="2026-10-17T10:00">10:00–10:45</time>
+            <div>
+              <h4>开场：独立做设计的这十年，什么变了</h4>
+              <p class="who"><b>陈禾</b> · 野线主理人</p>
+            </div>
+          </li>
+          <li>
+            <time datetime="2026-10-17T10:45">10:45–11:30</time>
+            <div>
+              <h4>一个人怎么接品牌项目：从询价到签合同</h4>
+              <p class="who"><b>林砚</b> · 自由品牌设计师</p>
+            </div>
+          </li>
+          <li class="break">
+            <time datetime="2026-10-17T11:30">11:30–13:00</time>
+            <div><h4>午休 · 场地供餐（B1 中庭）</h4></div>
+          </li>
+          <li>
+            <time datetime="2026-10-17T13:00">13:00–13:45</time>
+            <div>
+              <h4>报价这件事：把设计费谈明白，不靠猜</h4>
+              <p class="who"><b>苏昀</b> · 十四工作室合伙人</p>
+            </div>
+          </li>
+          <li>
+            <time datetime="2026-10-17T13:45">13:45–14:30</time>
+            <div>
+              <h4>字体授权避坑实录：我踩过的六个雷</h4>
+              <p class="who"><b>何见山</b> · 字体设计师</p>
+            </div>
+          </li>
+          <li class="break">
+            <time datetime="2026-10-17T14:30">14:30–15:00</time>
+            <div><h4>茶歇</h4></div>
+          </li>
+          <li>
+            <time datetime="2026-10-17T15:00">15:00–15:45</time>
+            <div>
+              <h4>网页排版的下限，靠纪律不靠灵感</h4>
+              <p class="who"><b>周迟</b> · 独立开发者</p>
+            </div>
+          </li>
+          <li>
+            <time datetime="2026-10-17T15:45">15:45–16:45</time>
+            <div>
+              <h4>圆桌：这单活，你接不接？</h4>
+              <p class="who"><b>全体讲者</b> · 现场投票 + 争论</p>
+            </div>
+          </li>
+        </ol>
+      </div>
+
+      <div class="day">
+        <div class="day-head">
+          <h3>第二天 · 10 月 18 日</h3>
+          <span>周日 · 主题：怎么把活干完、把钱收到</span>
+        </div>
+        <ol class="agenda">
+          <li>
+            <time datetime="2026-10-18T10:00">10:00–10:45</time>
+            <div>
+              <h4>从接单到做产品：我关掉工作室的那一年</h4>
+              <p class="who"><b>罗宜</b> · 产品设计师 / 前工作室主理人</p>
+            </div>
+          </li>
+          <li>
+            <time datetime="2026-10-18T10:45">10:45–11:30</time>
+            <div>
+              <h4>改到第七版还没定？谈谈修改边界</h4>
+              <p class="who"><b>林砚</b> · 自由品牌设计师</p>
+            </div>
+          </li>
+          <li class="break">
+            <time datetime="2026-10-18T11:30">11:30–13:00</time>
+            <div><h4>午休 · 场地供餐（B1 中庭）</h4></div>
+          </li>
+          <li>
+            <time datetime="2026-10-18T13:00">13:00–13:45</time>
+            <div>
+              <h4>尾款、合同与发票：不体面但要紧的事</h4>
+              <p class="who"><b>苏昀</b> · 十四工作室合伙人</p>
+            </div>
+          </li>
+          <li class="keynote">
+            <time datetime="2026-10-18T14:00">14:00–17:00</time>
+            <div>
+              <h4>工作坊：三小时重做你的自我介绍页</h4>
+              <p class="who"><b>周迟 · 何见山 · 陈禾</b> · 需自带电脑，一桌一桌过</p>
+            </div>
+          </li>
+          <li class="break">
+            <time datetime="2026-10-18T17:00">17:00–17:30</time>
+            <div><h4>闭幕 · 合影 · 顺便加个微信</h4></div>
+          </li>
+        </ol>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 讲者 ============ -->
+  <section class="section" id="speakers">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="eyebrow">讲者</p>
+        <h2>五位一直在一线接活的人</h2>
+        <p>头像为占位图形，换成真人照片时保持 1:1 裁切即可。</p>
+      </div>
+
+      <div class="speakers">
+        <article class="speaker">
+          <div class="avatar" aria-hidden="true">
+            <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+              <circle cx="16" cy="12" r="5.5" stroke="currentColor" stroke-width="2"/>
+              <path d="M5.5 27.5c0-5.8 4.7-10.5 10.5-10.5s10.5 4.7 10.5 10.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <h3>陈禾</h3>
+          <p class="role">野线主理人</p>
+          <p class="bio">做了十年品牌设计，前六年在广告公司，后四年一个人干。办这个沙龙是因为当年没人告诉他这些。</p>
+        </article>
+
+        <article class="speaker">
+          <div class="avatar" aria-hidden="true">
+            <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+              <rect x="10" y="6" width="12" height="12" rx="6" stroke="currentColor" stroke-width="2"/>
+              <path d="M6 27c0-4.4 4.5-8 10-8s10 3.6 10 8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              <path d="M13 24.5h6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <h3>林砚</h3>
+          <p class="role">自由品牌设计师</p>
+          <p class="bio">五年接了 60 多个品牌项目，最贵的一单顶过去半年。也搞砸过三个，会一起讲。</p>
+        </article>
+
+        <article class="speaker">
+          <div class="avatar" aria-hidden="true">
+            <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+              <path d="M16 6.5 20 12h-8l4-5.5Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+              <circle cx="16" cy="15.5" r="3.5" stroke="currentColor" stroke-width="2"/>
+              <path d="M6.5 27c0-4.7 4.3-8.5 9.5-8.5s9.5 3.8 9.5 8.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <h3>苏昀</h3>
+          <p class="role">十四工作室合伙人</p>
+          <p class="bio">从两个人做到八个人，管钱也管人。手里有一份用了四年的报价表，会在现场发。</p>
+        </article>
+
+        <article class="speaker">
+          <div class="avatar" aria-hidden="true">
+            <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+              <circle cx="16" cy="11.5" r="5" stroke="currentColor" stroke-width="2"/>
+              <path d="M16 6.5v10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              <path d="M6.5 27c0-4.7 4.3-8.5 9.5-8.5s9.5 3.8 9.5 8.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <h3>周迟</h3>
+          <p class="role">独立开发者</p>
+          <p class="bio">设计转开发，一个人做完设计到上线。信奉「不确定怎么好看时：减色、减框、加留白」。</p>
+        </article>
+
+        <article class="speaker">
+          <div class="avatar" aria-hidden="true">
+            <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+              <circle cx="16" cy="11.5" r="5" stroke="currentColor" stroke-width="2"/>
+              <path d="M11.5 8.5h9" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              <path d="M6.5 27c0-4.7 4.3-8.5 9.5-8.5s9.5 3.8 9.5 8.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <h3>何见山</h3>
+          <p class="role">字体设计师</p>
+          <p class="bio">给三家厂做过中文字库。被授权问题坑过，也帮别人赔过钱，讲的都是实事。</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 票种 ============ -->
+  <section class="section" id="tickets">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="eyebrow">票种</p>
+        <h2>三档票，内容完全一样</h2>
+        <p>差别只在价格与人数。示例价格，请按实际情况改。</p>
+      </div>
+
+      <div class="tickets">
+        <article class="ticket ticket-featured">
+          <div class="ticket-head">
+            <h3>早鸟票</h3>
+            <span class="tag">早鸟 · 余 12 张</span>
+          </div>
+          <p class="price">¥480 <s>¥680</s></p>
+          <p class="ticket-note">限前 40 张，8 月 31 日截止，售完不补。</p>
+          <ul class="includes">
+            <li>
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              两天全场入场 + 工作坊
+            </li>
+            <li>
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              午餐 ×2 + 茶歇
+            </li>
+            <li>
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              物料包 + 报价表模板
+            </li>
+            <li>
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              全程录像回看
+            </li>
+          </ul>
+          <a class="btn btn-primary" href="#signup">选早鸟票</a>
+        </article>
+
+        <article class="ticket">
+          <div class="ticket-head">
+            <h3>标准票</h3>
+          </div>
+          <p class="price">¥680</p>
+          <p class="ticket-note">早鸟售完后开售，直到满座为止。</p>
+          <ul class="includes">
+            <li>
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              与早鸟票内容完全相同
+            </li>
+            <li>
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              午餐 ×2 + 茶歇
+            </li>
+            <li>
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              全程录像回看
+            </li>
+          </ul>
+          <a class="btn btn-quiet" href="#signup">选标准票</a>
+        </article>
+
+        <article class="ticket">
+          <div class="ticket-head">
+            <h3>双人同行</h3>
+          </div>
+          <p class="price">¥1,180 <small>/ 2 人</small></p>
+          <p class="ticket-note">均摊每人 ¥590。报名表里填两位的信息即可。</p>
+          <ul class="includes">
+            <li>
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              两张全票，座位相邻
+            </li>
+            <li>
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              午餐 ×4 + 茶歇
+            </li>
+            <li>
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              全程录像回看 ×2
+            </li>
+          </ul>
+          <a class="btn btn-quiet" href="#signup">选双人票</a>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 场地 + 交通 ============ -->
+  <section class="section" id="venue">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="eyebrow">场地</p>
+        <h2>运河边 8 号仓 · B1 报告厅</h2>
+      </div>
+
+      <div class="venue">
+        <div class="map">
+          <!-- 抽象地图占位：换成真地图截图或嵌入地图时整块替换 -->
+          <svg viewBox="0 0 400 300" role="img" aria-label="场地位置示意图（占位）">
+            <rect width="400" height="300" fill="var(--surface)"/>
+            <path d="M0 96h400M0 212h400M118 0v300M286 0v300" stroke="var(--bg)" stroke-width="14"/>
+            <path d="M-20 250C60 250 90 170 190 170S330 60 420 60" stroke="var(--accent)" stroke-width="8" fill="none" opacity=".16" stroke-linecap="round"/>
+            <rect x="128" y="106" width="148" height="96" rx="6" fill="var(--accent-soft)"/>
+            <rect x="128" y="106" width="148" height="96" rx="6" fill="none" stroke="var(--accent)" stroke-width="2" stroke-dasharray="5 5" opacity=".5"/>
+            <g transform="translate(202 152)">
+              <path d="M0 26s14-11.4 14-22.4A14 14 0 1 0-14 3.6C-14 14.6 0 26 0 26Z" fill="var(--accent)"/>
+              <circle cx="0" cy="3" r="5" fill="var(--surface)"/>
+            </g>
+            <text x="202" y="128" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" font-weight="700" fill="var(--text)">8 号仓</text>
+            <text x="60" y="236" font-family="system-ui, sans-serif" font-size="11" fill="var(--muted)">光明路</text>
+            <text x="300" y="88" font-family="system-ui, sans-serif" font-size="11" fill="var(--muted)">运河</text>
+          </svg>
+        </div>
+
+        <div>
+          <h3>杭州市拱墅区光明路 8 号</h3>
+          <p class="venue-addr">
+            旧粮仓改的园区，B1 报告厅在中庭西侧，跟着指示牌走两分钟就到。<br>
+            当天 09:00 开门，签到处在门厅。（示例地址，请替换）
+          </p>
+
+          <div class="routes">
+            <div class="route">
+              <svg width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                <rect x="4.25" y="2.25" width="11.5" height="12.5" rx="3" stroke="currentColor" stroke-width="1.6"/>
+                <path d="M4.25 10.5h11.5M7 17.75l1.75-3M13 17.75l-1.75-3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+                <circle cx="7.5" cy="12.6" r=".9" fill="currentColor"/>
+                <circle cx="12.5" cy="12.6" r=".9" fill="currentColor"/>
+              </svg>
+              <div>
+                <b>地铁</b>
+                <p>5 号线「大运河」站 B 口出，沿光明路向北步行 600 米，约 8 分钟。</p>
+              </div>
+            </div>
+
+            <div class="route">
+              <svg width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                <path d="M2.5 12.5h15M4 12.5l1.8-5.2A2 2 0 0 1 7.7 6h4.6a2 2 0 0 1 1.9 1.3l1.8 5.2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                <rect x="2.5" y="12.5" width="15" height="4" rx="1.5" stroke="currentColor" stroke-width="1.6"/>
+              </svg>
+              <div>
+                <b>自驾</b>
+                <p>园区 P2 停车场，凭票当天 8 折。周末车位紧张，建议 09:15 前到。</p>
+              </div>
+            </div>
+
+            <div class="route">
+              <svg width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                <path d="M10 17.5s6-4.9 6-9.6a6 6 0 0 0-12 0c0 4.7 6 9.6 6 9.6Z" stroke="currentColor" stroke-width="1.6"/>
+                <circle cx="10" cy="7.8" r="2.2" stroke="currentColor" stroke-width="1.6"/>
+              </svg>
+              <div>
+                <b>住宿</b>
+                <p>园区步行 10 分钟内有三家连锁酒店，报名后会随确认邮件发一份清单。</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 问答 ============ -->
+  <section class="section" id="faq">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="eyebrow">问答</p>
+        <h2>常见问题</h2>
+      </div>
+
+      <div class="faq">
+        <details open>
+          <summary>
+            买了票临时来不了怎么办？
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          </summary>
+          <p>10 月 10 日前邮件申请可全额退款，之后不再退款，但可以免费转让给任何一位朋友——把新参会人的姓名和手机发给我们就行，改到开场前一天都来得及。</p>
+        </details>
+
+        <details>
+          <summary>
+            有学生票吗？
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          </summary>
+          <p>有，¥280，共 20 张。报名表备注里写「学生」并留学校名称，现场凭学生证核验。核验不通过需补差价。</p>
+        </details>
+
+        <details>
+          <summary>
+            不是设计师，能来吗？
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          </summary>
+          <p>能。往届有三成是开发、运营和自己开店的人。只要你一个人对着客户报过价，这两天讲的东西你都用得上。</p>
+        </details>
+
+        <details>
+          <summary>
+            提供发票吗？
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          </summary>
+          <p>提供电子普票，报名表备注里填抬头和税号，会后五个工作日内发到你的邮箱。需要专票请提前邮件联系。</p>
+        </details>
+
+        <details>
+          <summary>
+            工作坊一定要带电脑吗？
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          </summary>
+          <p>强烈建议带。工作坊是三小时动手改自己的页面，只看不做收获会少一半。现场有电源和 Wi-Fi，不带电脑也可以旁听。</p>
+        </details>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 报名表单 ============ -->
+  <section class="section signup" id="signup">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="eyebrow">报名</p>
+        <h2>占个座</h2>
+        <p>填完会收到一封确认邮件，里面有付款方式。付款到账后座位才算锁定。</p>
+      </div>
+
+      <form class="form" action="#" method="post" novalidate>
+        <div class="row">
+          <div class="field">
+            <label for="name">姓名 <span class="req" aria-hidden="true">*</span></label>
+            <input class="input" id="name" name="name" type="text" placeholder="张三" autocomplete="name" required>
+          </div>
+          <div class="field">
+            <label for="phone">手机 <span class="req" aria-hidden="true">*</span></label>
+            <input class="input" id="phone" name="phone" type="tel" placeholder="138 0000 0000" autocomplete="tel" required>
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="email">邮箱 <span class="req" aria-hidden="true">*</span></label>
+          <input class="input" id="email" name="email" type="email" placeholder="you@example.com" autocomplete="email" required>
+          <p class="hint">确认邮件和回看链接都发这里，填常用的那个。</p>
+        </div>
+
+        <fieldset>
+          <legend class="fieldset-label">票种 <span class="req" aria-hidden="true">*</span></legend>
+          <div class="choices">
+            <label class="choice">
+              <input type="radio" name="ticket" value="early" checked>
+              早鸟票 · 余 12 张
+              <span class="c-price">¥480</span>
+            </label>
+            <label class="choice">
+              <input type="radio" name="ticket" value="standard">
+              标准票
+              <span class="c-price">¥680</span>
+            </label>
+            <label class="choice">
+              <input type="radio" name="ticket" value="duo">
+              双人同行（两张）
+              <span class="c-price">¥1,180</span>
+            </label>
+          </div>
+        </fieldset>
+
+        <div class="field">
+          <label for="role">你现在主要在做</label>
+          <select class="input" id="role" name="role">
+            <option value="">请选择（可不填）</option>
+            <option value="freelance">自由设计师 / 一个人干</option>
+            <option value="studio">小工作室主理人</option>
+            <option value="inhouse">公司内部设计</option>
+            <option value="dev">开发 / 独立开发者</option>
+            <option value="student">学生</option>
+            <option value="other">其他</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="note">备注</label>
+          <textarea class="input" id="note" name="note" placeholder="发票抬头、忌口、同行者姓名，或者你最想在现场问的一个问题"></textarea>
+        </div>
+
+        <label class="consent">
+          <input type="checkbox" name="consent" required>
+          <span>我已阅读并同意<a href="#faq">退改规则</a>，也同意主办方用上述信息与我联系（不会用于其他用途）。</span>
+        </label>
+
+        <div class="form-foot">
+          <button class="btn btn-primary" type="submit">提交报名</button>
+          <p class="hint">通常 1 个工作日内回复。也可以直接邮件 <a href="mailto:hi@example.com">hi@example.com</a>。</p>
+        </div>
+
+        <p class="form-note">
+          示例表单：当前 <code>action="#"</code>，提交不会发送到任何地方。接后端或表单服务后，记得补上成功态与错误态提示。
+        </p>
+      </form>
+    </div>
+  </section>
+</main>
+
+<!-- ============ 页脚 ============ -->
+<footer class="footer">
+  <div class="wrap">
+    <div class="footer-inner">
+      <div>
+        <a class="brand" href="#top">
+          <svg class="brand-mark" width="24" height="24" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+            <path d="M8 23L24 9" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+            <circle cx="10.5" cy="10.5" r="2.5" fill="currentColor"/>
+          </svg>
+          野线 <span class="brand-sub">2026</span>
+        </a>
+        <p class="footer-when">2026 年 10 月 17–18 日 · 杭州 · 运河边 8 号仓</p>
+      </div>
+
+      <nav class="footer-links" aria-label="页脚导航">
+        <a href="#agenda">日程</a>
+        <a href="#speakers">讲者</a>
+        <a href="#tickets">票种</a>
+        <a href="#venue">场地</a>
+        <a href="#faq">问答</a>
+        <a href="mailto:hi@example.com">联系主办</a>
+      </nav>
+    </div>
+
+    <p class="footer-legal">
+      示例内容 —— 页面里的活动名、日期、地址、讲者、价格全是占位，正式发布前请逐项替换。<br>
+      © 2026 野线沙龙（示例主体）
+    </p>
+  </div>
+</footer>
+
+</body>
+</html>

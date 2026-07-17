@@ -1513,19 +1513,45 @@ async fn open_conn_window(
     Ok(())
 }
 
-fn open_preview_window(app: &AppHandle, url: &str) -> Result<(), String> {
+/// 预览窗的标题：带上正在预览的是谁（一次只跑一个预览，窗会被复用 → 标题必须跟着换，
+/// 否则复用后还挂着上一个的名字，比不写还糟）。
+fn preview_title(name: &str) -> String {
+    match name.trim() {
+        "" => "本地预览".into(),
+        n => format!("{n} · 本地预览"),
+    }
+}
+
+fn open_preview_window(app: &AppHandle, url: &str, name: &str) -> Result<(), String> {
+    let title = preview_title(name);
     if let Some(w) = app.get_webview_window("preview") {
+        let _ = w.set_title(&title);
         let _ = w.eval(&format!("window.location.replace('{url}')"));
         let _ = w.show();
         let _ = w.set_focus();
         return Ok(());
     }
     let parsed = url.parse().map_err(|e| format!("预览地址解析失败: {e}"))?;
-    tauri::WebviewWindowBuilder::new(app, "preview", tauri::WebviewUrl::External(parsed))
-        .title("本地预览")
-        .inner_size(1024.0, 728.0)
-        .build()
-        .map_err(|e| format!("打开预览窗口失败: {e}"))?;
+    // mut 只有 macOS 分支用得上
+    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
+    let mut b = tauri::WebviewWindowBuilder::new(app, "preview", tauri::WebviewUrl::External(parsed))
+        .title(&title)
+        .inner_size(1024.0, 728.0);
+    #[cfg(target_os = "macos")]
+    {
+        // 这里**故意不用主窗口那套 Overlay**。Overlay = titlebarTransparent + fullSizeContentView，
+        // 内容会顶到标题栏底下——主窗口无所谓（前端自己画标题栏、给红绿灯留了位），可预览窗装的是
+        // **别人的页面**：站点自己的导航会被红绿灯压住，预览就不再是站点真实的样子了。
+        // Transparent = titlebarTransparent + fullSizeContentView(false)：栏透明（透出下面设的窗底色）、
+        // 内容仍从栏下开始、标题文字还在（模块名要显示）。
+        // 透明栏透出的是 NSWindow.backgroundColor，所以必须显式给白 —— 不给就是系统灰，
+        // 也就是现在这条突兀的灰带；白底能和绝大多数页面接上（深色页会留一条白，是这条路的代价：
+        // 想让栏跟着页面变色，就得从外部页面取色回传，而外部 origin 默认没有 IPC）。
+        b = b
+            .title_bar_style(tauri::TitleBarStyle::Transparent)
+            .background_color(tauri::window::Color(255, 255, 255, 255));
+    }
+    b.build().map_err(|e| format!("打开预览窗口失败: {e}"))?;
     Ok(())
 }
 
@@ -1545,7 +1571,7 @@ async fn cf_preview_start(
     let dir = resolve_work_dir(&conn, &project)?;
     // 同一个项目、预览还活着、窗还在 → 直接聚焦，不重启（dev server 本来就热更新）。
     if let Some(u) = reusable_preview(&app, &state, &project) {
-        open_preview_window(&app, &u)?;
+        open_preview_window(&app, &u, &project)?;
         return Ok(u);
     }
     let (dev_cmd, out, port) = read_pilot_json(std::path::Path::new(&dir));
@@ -1585,6 +1611,7 @@ async fn cf_preview_start(
     }
     let child = c.spawn().map_err(|e| format!("启动预览失败（确认已装 wrangler）: {e}"))?;
     let url = format!("http://127.0.0.1:{port}");
+    let title_name = project.clone(); // project 下一行就被搬进 handle 了，标题要用得先留一份
     *state.preview.lock().unwrap() = Some(PreviewHandle {
         child,
         url: url.clone(),
@@ -1598,7 +1625,7 @@ async fn cf_preview_start(
 若项目 pilot.json 自定义了 dev 命令，看看它是不是真监听这个端口。"
         ));
     }
-    open_preview_window(&app, &url)?;
+    open_preview_window(&app, &url, &title_name)?;
     Ok(url)
 }
 
@@ -1625,10 +1652,12 @@ async fn cf_preview_template(
     if !dir.is_dir() {
         return Err("模板不存在".into());
     }
+    // 标题给人看的是模板名（「企业 SaaS」），不是 slug（「saas」）。
+    let title_name = cf_templates::display_name(&state.data_dir.join("templates"), &slug);
     // 同一个模板、预览还活着、窗还在 → 直接聚焦，不重启。
     let label = format!("template:{slug}");
     if let Some(u) = reusable_preview(&app, &state, &label) {
-        open_preview_window(&app, &u)?;
+        open_preview_window(&app, &u, &title_name)?;
         return Ok(u);
     }
     let (dev_cmd, out, port) = read_pilot_json(&dir);
@@ -1683,7 +1712,7 @@ async fn cf_preview_template(
         stop_preview(&state);
         return Err(format!("模板预览没能在 25 秒内起来（端口 {port}）。确认 wrangler 装好了。"));
     }
-    open_preview_window(&app, &url)?;
+    open_preview_window(&app, &url, &title_name)?;
     Ok(url)
 }
 

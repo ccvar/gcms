@@ -2090,10 +2090,38 @@
 
   // ---------- 模板库 ----------
   // builtin＝Pilot 随附的起始模板：删不掉（后端也拒），created_at 恒 0（列表里自然沉底）。
-  type Template = { slug: string; name: string; desc: string; created_at: number; builtin: boolean };
+  type Template = { slug: string; name: string; desc: string; category: string; created_at: number; builtin: boolean };
   let templates = $state<Template[]>([]);
   let templatesLoading = $state(false);
   let tmplHtml = $state<Record<string, string>>({}); // 每个模板的入口 HTML，做真实缩略图
+  // 分类检索。随附模板的 category 由后端给；用户自己沉淀的没有分类（存模板时不问）——
+  // 归到「自建」而不是硬塞进某一档，这既是实话，也正好是他们最想单独看的一组。
+  const CAT_MINE = '自建';
+  // 固定顺序：按出现顺序排的话，删一个模板就可能让整排筹码跳位。
+  const CAT_ORDER = ['落地页', '内容', '作品集', '电商', '企业', '活动'];
+  let tmplCat = $state('全部');
+  let tmplQ = $state('');
+  const catOf = (t: Template) => (t.builtin ? t.category || '其他' : CAT_MINE);
+  const tmplCats = $derived.by(() => {
+    const has = new Set(templates.map(catOf));
+    const out = CAT_ORDER.filter((c) => has.has(c));
+    // 后端将来加了新分类，前端不用跟着改也不会把它漏掉
+    for (const c of has) if (c !== CAT_MINE && !out.includes(c)) out.push(c);
+    if (has.has(CAT_MINE)) out.push(CAT_MINE);
+    return out;
+  });
+  const tmplShown = $derived.by(() => {
+    const q = tmplQ.trim().toLowerCase();
+    return templates.filter(
+      (t) =>
+        (tmplCat === '全部' || catOf(t) === tmplCat) &&
+        (!q || `${t.name} ${t.desc} ${t.slug} ${catOf(t)}`.toLowerCase().includes(q)),
+    );
+  });
+  // 选中的分类可能整个消失（删掉最后一个自建模板）→ 那会停在一个永远空的筛选上，像坏了。
+  $effect(() => {
+    if (tmplCat !== '全部' && !tmplCats.includes(tmplCat)) tmplCat = '全部';
+  });
   async function loadTemplates() {
     templatesLoading = true;
     try {
@@ -3664,7 +3692,7 @@
         <button class="icon-btn" onclick={loadTemplates} disabled={templatesLoading} title="刷新">{@render refreshIcon(templatesLoading)}</button>
       </header>
       <div class="thread">
-        <div class="sched-inner">
+        <div class="tmpl-inner">
           {#if templates.length === 0}
             <div class="sched-empty">
               <div class="cal-mark">🧩</div>
@@ -3672,8 +3700,27 @@
               <p>在一个 Cloudflare 站点项目对话里点「存模板」，做得好的站就能沉淀下来复用。</p>
             </div>
           {:else}
+            <div class="tmpl-filter">
+              <div class="tmpl-chips">
+                <button class="tmpl-chip {tmplCat === '全部' ? 'on' : ''}" onclick={() => (tmplCat = '全部')}>全部<span class="tc-n">{templates.length}</span></button>
+                {#each tmplCats as c (c)}
+                  <button class="tmpl-chip {tmplCat === c ? 'on' : ''}" onclick={() => (tmplCat = c)}>{c}<span class="tc-n">{templates.filter((t) => catOf(t) === c).length}</span></button>
+                {/each}
+              </div>
+              <label class="tmpl-search">
+                <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><circle cx="7" cy="7" r="4.4" stroke="currentColor" stroke-width="1.3" /><path d="m10.4 10.4 3 3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" /></svg>
+                <input type="search" placeholder="搜模板" bind:value={tmplQ} spellcheck="false" />
+              </label>
+            </div>
+            {#if tmplShown.length === 0}
+              <div class="sched-empty">
+                <div class="cal-mark">🔍</div>
+                <b>没有匹配的模板</b>
+                <p>换个关键词，或点「全部」看看所有 {templates.length} 个。</p>
+              </div>
+            {/if}
             <div class="tmpl-grid">
-              {#each templates as t (t.slug)}
+              {#each tmplShown as t (t.slug)}
                 <div class="tmpl-card">
                   <div class="tmpl-thumb">
                     {#if tmplHtml[t.slug]}
@@ -5640,7 +5687,24 @@
   .prompt-act { position: relative; width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border: none; border-radius: 8px; background: none; color: var(--dim); cursor: pointer; }
   .prompt-act:hover { color: var(--text); background: var(--rail); }
   .prompt-act svg { flex: none; }
-  .tmpl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+  /* 模板库单独一个更宽的容器：grid 本来就是 auto-fill（会自己长列），真正卡住它的是
+     .sched-inner 的 720px —— 三列要 3*272+2*12+48 = 876px，720 差得远，所以窗口再宽也只有两列。
+     日程页还得用窄栏（那是读列表的），所以不改 .sched-inner，另起一个。 */
+  .tmpl-inner { max-width: 1180px; margin: 0 auto; padding: 18px 24px 24px; }
+  .tmpl-filter { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+  .tmpl-chips { display: flex; flex-wrap: wrap; gap: 6px; flex: 1; min-width: 0; }
+  .tmpl-chip { display: inline-flex; align-items: center; gap: 5px; padding: 4px 9px; border: 1px solid var(--border2); border-radius: 999px; background: transparent; color: var(--dim); font-size: 12px; cursor: pointer; }
+  .tmpl-chip:hover { border-color: var(--border); color: var(--fg); }
+  .tmpl-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .tmpl-chip.on { background: var(--fg); border-color: var(--fg); color: var(--bg); }
+  .tc-n { font-size: 10px; opacity: 0.55; font-variant-numeric: tabular-nums; }
+  .tmpl-search { display: inline-flex; align-items: center; gap: 5px; padding: 4px 9px; border: 1px solid var(--border2); border-radius: 999px; color: var(--faint); flex: 0 0 auto; }
+  .tmpl-search:focus-within { border-color: var(--border); color: var(--dim); }
+  .tmpl-search input { border: 0; background: transparent; color: var(--fg); font-size: 12px; width: 96px; outline: none; }
+  .tmpl-search input::placeholder { color: var(--faint); }
+  .tmpl-search input::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
+  /* 272 ≈ 缩略图实宽（1280 * 0.23 = 294），比这窄就开始裁掉站点导航的右半边 */
+  .tmpl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(272px, 1fr)); gap: 12px; }
   .tmpl-card { display: flex; flex-direction: column; background: var(--card); border: 1px solid var(--border2); border-radius: 12px; overflow: hidden; }
   .tmpl-thumb { position: relative; height: 158px; overflow: hidden; background: #fff; display: flex; align-items: center; justify-content: center; border-bottom: 1px solid var(--border); }
   .tmpl-frame { position: absolute; top: 0; left: 0; width: 1280px; height: 860px; border: 0; transform: scale(0.23); transform-origin: top left; pointer-events: none; background: #fff; }
