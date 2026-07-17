@@ -874,21 +874,55 @@ mod workdir_tests {
         let taken = squatter.local_addr().unwrap().port();
         assert!(port_taken(taken), "通配占位下必须判定为「被占」（bind 探测在这里会说谎）");
 
+        let d = std::env::temp_dir().join(format!("pv-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&d).unwrap();
+
         // 默认 wrangler 路径：必须自动让开，绝不能还用那个被占的端口
-        let (cmd, port) = preview_cmd(None, "", taken).unwrap();
+        let (cmd, port) = preview_cmd(&d, None, "", taken).unwrap();
         assert_ne!(port, taken, "端口被占还硬用 → 预览窗里就是别人的页面");
         assert!(cmd.contains(&format!("--port {port}")), "命令里的端口要跟返回的一致: {cmd}");
         assert!(cmd.contains("wrangler pages dev ."));
 
         // 自定义 dev 命令：端口写死在命令里，改不了 → 必须报错而不是开个窗给别人的页面
-        let e = preview_cmd(Some("npm run dev".into()), "", taken).unwrap_err();
+        let e = preview_cmd(&d, Some("npm run dev".into()), "", taken).unwrap_err();
         assert!(e.contains("已被别的程序占用"), "得说清是端口被占: {e}");
 
         // 端口没被占时：原样使用，产物目录也带上
         drop(squatter);
-        let (cmd, port) = preview_cmd(None, "dist", taken).unwrap();
+        let (cmd, port) = preview_cmd(&d, None, "dist", taken).unwrap();
         assert_eq!(port, taken);
         assert!(cmd.contains("wrangler pages dev dist"));
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    /// compat date：项目没声明就兜一个（不兜＝wrangler 默认用「今天」→ workerd 不支持 → **白屏**）；
+    /// 项目自己声明了就别插手（CLI 参数会盖过 wrangler.toml，硬给等于把人家降级）。
+    #[test]
+    fn preview_compat_date_only_when_project_declares_none() {
+        let d = std::env::temp_dir().join(format!("pvc-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&d).unwrap();
+
+        // 没声明 → 必须兜底，否则预览白屏
+        let (cmd, _) = preview_cmd(&d, None, "", 8788).unwrap();
+        assert!(
+            cmd.contains(&format!("--compatibility-date={FALLBACK_COMPAT_DATE}")),
+            "没声明 compat date 就得兜底，否则 wrangler 默认今天→workerd 起不来→白屏: {cmd}"
+        );
+
+        // 项目声明了 → 绝不能再传（传了会盖掉人家的）
+        std::fs::write(d.join("wrangler.toml"), "compatibility_date = \"2026-01-01\"\n").unwrap();
+        assert!(declares_compat_date(&d));
+        let (cmd, _) = preview_cmd(&d, None, "", 8788).unwrap();
+        assert!(!cmd.contains("--compatibility-date"), "项目声明了就别插手: {cmd}");
+
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn url_port_parses() {
+        assert_eq!(url_port("http://127.0.0.1:8789"), Some(8789));
+        assert_eq!(url_port("http://127.0.0.1:8789/"), Some(8789));
+        assert_eq!(url_port("nonsense"), None);
     }
 
     fn test_conn(dir: &str) -> pack::Connection {
@@ -1293,11 +1327,36 @@ async fn wait_preview(port: u16, secs: u64) -> bool {
     false
 }
 
+/// `wrangler pages dev` 不给 compatibility_date 时会**默认成「今天」**，而它随附的 workerd 只支持到
+/// 某个更早的日期 → Workers runtime 直接起不来 → **预览窗一片空白**（实测：wrangler 4.107 的 workerd
+/// 上限是 2026-07-08，默认的 today=2026-07-17 就炸，日志里写着 "The Workers runtime failed to start"）。
+/// 项目自己没声明时给个保守日期兜底：静态站根本用不到新运行时特性，而「给太新」的失败是**静默白屏**、
+/// 「给太旧」顶多少几个新 API —— 所以宁可偏旧。实测 2024-01-01 正常返回 200。
+const FALLBACK_COMPAT_DATE: &str = "2024-01-01";
+
+/// 项目自己声明了 compatibility_date？（wrangler.toml / .json / .jsonc）
+/// ★ 只在没声明时才给 `--compatibility-date`：**CLI 参数会盖过配置文件**，硬给会把人家项目
+/// 声明的日期顶掉，Functions/D1 那些依赖新运行时的站会被我们悄悄降级。
+fn declares_compat_date(dir: &std::path::Path) -> bool {
+    ["wrangler.toml", "wrangler.json", "wrangler.jsonc"]
+        .iter()
+        .any(|f| {
+            std::fs::read_to_string(dir.join(f))
+                .map(|s| s.contains("compatibility_date"))
+                .unwrap_or(false)
+        })
+}
+
 /// 预览端口决策 + 命令拼装（两个预览入口共用）。
-/// - 默认 wrangler：端口由我们挑（挑空的），所以永远不会撞别人。
+/// - 默认 wrangler：端口由我们挑（挑空的），所以永远不会撞别人；顺带兜住 compat date（见上）。
 /// - 自定义 dev 命令：端口写死在命令里，只能用 pilot.json 声明的那个；被占就直说，
 ///   绝不开个窗让用户对着别人的页面猜。
-fn preview_cmd(dev_cmd: Option<String>, out: &str, port: u16) -> Result<(String, u16), String> {
+fn preview_cmd(
+    dir: &std::path::Path,
+    dev_cmd: Option<String>,
+    out: &str,
+    port: u16,
+) -> Result<(String, u16), String> {
     match dev_cmd {
         Some(d) => {
             if port_taken(port) {
@@ -1312,9 +1371,50 @@ Pilot 改不了 —— 先关掉占用它的程序，或在 pilot.json 里换一
             let p = free_port(port)
                 .ok_or_else(|| format!("找不到空闲的预览端口（{port} 往上 64 个都被占着）。"))?;
             let target = if out.is_empty() { "." } else { out };
-            Ok((format!("wrangler pages dev {target} --ip 127.0.0.1 --port {p}"), p))
+            let compat = if declares_compat_date(dir) {
+                String::new()
+            } else {
+                format!(" --compatibility-date={FALLBACK_COMPAT_DATE}")
+            };
+            Ok((format!("wrangler pages dev {target} --ip 127.0.0.1 --port {p}{compat}"), p))
         }
     }
+}
+
+/// 从预览 URL 里取端口。
+fn url_port(url: &str) -> Option<u16> {
+    url.rsplit(':').next()?.trim_end_matches('/').parse().ok()
+}
+
+/// 杀完等端口真的松手。
+///
+/// 为什么必须等：真正绑端口的是 wrangler 派生的 **workerd**，而 `stop_preview` 杀完进程组只
+/// `wait()` 了直接子进程（sh/wrangler）—— workerd 关 socket 是异步的。不等的话，紧接着的探测会把
+/// 这个「正在退场」的端口判成「被占」→ 让到下一个 → 端口一路上爬（8789→8790→8791…）。
+async fn wait_port_released(port: u16, ms: u64) {
+    let deadline = std::time::Instant::now() + Duration::from_millis(ms);
+    while std::time::Instant::now() < deadline {
+        if !port_taken(port) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(80)).await;
+    }
+}
+
+/// 同一个东西、预览还活着、窗还在 → 别重启，直接复用（调用方负责 show+focus）。
+/// `wrangler pages dev` 本来就盯着文件变化，重启纯属让用户白等一次启动。
+fn reusable_preview(app: &AppHandle, state: &AppState, project: &str) -> Option<String> {
+    let g = state.preview.lock().unwrap();
+    let h = g.as_ref()?;
+    if h.project != project {
+        return None;
+    }
+    let port = url_port(&h.url)?;
+    if !port_taken(port) {
+        return None; // 进程已经死了 → 老老实实重起
+    }
+    app.get_webview_window("preview")?; // 窗关了（关窗会 stop_preview）→ 重起
+    Some(h.url.clone())
 }
 
 /// pilot.json → (dev 命令, 产物目录, 预览端口)。缺省 dev=None、out=""、port=8788。
@@ -1443,9 +1543,20 @@ async fn cf_preview_start(
     }
     let token = keychain::get_key(&conn.id)?;
     let dir = resolve_work_dir(&conn, &project)?;
+    // 同一个项目、预览还活着、窗还在 → 直接聚焦，不重启（dev server 本来就热更新）。
+    if let Some(u) = reusable_preview(&app, &state, &project) {
+        open_preview_window(&app, &u)?;
+        return Ok(u);
+    }
     let (dev_cmd, out, port) = read_pilot_json(std::path::Path::new(&dir));
-    stop_preview(&state); // 一次只跑一个预览（先停，端口才腾得出来）
-    let (shell_cmd, port) = preview_cmd(dev_cmd, &out, port)?;
+    // 一次只跑一个预览。先记下旧端口：停完要等它**真的**松手，否则紧接着的探测会把「正在退场」的
+    // 端口当成「被占」，端口就一路往上爬。
+    let old_port = state.preview.lock().unwrap().as_ref().and_then(|h| url_port(&h.url));
+    stop_preview(&state);
+    if let Some(p) = old_port {
+        wait_port_released(p, 2500).await;
+    }
+    let (shell_cmd, port) = preview_cmd(std::path::Path::new(&dir), dev_cmd, &out, port)?;
     #[cfg(windows)]
     let mut c = {
         let mut c = std::process::Command::new("cmd");
@@ -1514,6 +1625,12 @@ async fn cf_preview_template(
     if !dir.is_dir() {
         return Err("模板不存在".into());
     }
+    // 同一个模板、预览还活着、窗还在 → 直接聚焦，不重启。
+    let label = format!("template:{slug}");
+    if let Some(u) = reusable_preview(&app, &state, &label) {
+        open_preview_window(&app, &u)?;
+        return Ok(u);
+    }
     let (dev_cmd, out, port) = read_pilot_json(&dir);
     // 静态预览不一定需要 token；有 CF 连接就顺手带上（模板含绑定时用得到）。
     let token = state
@@ -1523,8 +1640,12 @@ async fn cf_preview_template(
         .find(|c| c.kind == "cloudflare")
         .and_then(|c| keychain::get_key(&c.id).ok())
         .unwrap_or_default();
+    let old_port = state.preview.lock().unwrap().as_ref().and_then(|h| url_port(&h.url));
     stop_preview(&state);
-    let (shell_cmd, port) = preview_cmd(dev_cmd, &out, port)?;
+    if let Some(p) = old_port {
+        wait_port_released(p, 2500).await; // 见 wait_port_released：不等就会端口上爬
+    }
+    let (shell_cmd, port) = preview_cmd(&dir, dev_cmd, &out, port)?;
     #[cfg(windows)]
     let mut c = {
         let mut c = std::process::Command::new("cmd");
@@ -1556,7 +1677,7 @@ async fn cf_preview_template(
     *state.preview.lock().unwrap() = Some(PreviewHandle {
         child,
         url: url.clone(),
-        project: format!("template:{slug}"),
+        project: label, // 与上面 reusable_preview 查的是同一个标签，别让它俩各写各的
     });
     if !wait_preview(port, 25).await {
         stop_preview(&state);
