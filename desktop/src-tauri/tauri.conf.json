@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "GCMS Pilot",
-  "version": "0.2.23",
+  "version": "0.2.24",
   "identifier": "com.ccvar.gcms.pilot",
   "build": {
     "beforeDevCommand": "npm run dev",

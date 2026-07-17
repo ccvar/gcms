@@ -2427,9 +2427,12 @@ async fn scheduled_preview_url(
     conn_id: String,
     site_slug: String,
     id: i64,
+    collection: Option<String>,
 ) -> Result<String, String> {
     let conn = state.conns.get(&conn_id)?;
-    scheduled::preview_url(&conn, &site_slug, id).await
+    // 老调用方（对话里的排期提案）只有文章语境，不传集合 → posts。
+    let coll = collection.unwrap_or_default();
+    scheduled::preview_url(&conn, &site_slug, if coll.is_empty() { "posts" } else { &coll }, id).await
 }
 
 #[tauri::command]

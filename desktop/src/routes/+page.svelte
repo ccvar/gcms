@@ -3030,9 +3030,19 @@
     const live = schedLiveUrl(it);
     if (live) { void openUrl(live); return; }
     try {
-      const u = await invoke<string>('scheduled_preview_url', { connId: activeConnId, siteSlug: it.site_slug, id: it.id });
+      const u = await invoke<string>('scheduled_preview_url', { connId: activeConnId, siteSlug: it.site_slug, id: it.id, collection: it.collection || 'posts' });
       void openUrl(u);
     } catch (e) { say(String(e), 'err'); }
+  }
+  /** 非文章条目的型标（文章是大头，不打标；链接/页面/商品等标出来防同名混淆）。 */
+  function schedKindLabel(it: ScheduledItem): string {
+    switch (it.collection) {
+      case 'posts': case '': case undefined: return '';
+      case 'links': return '链接';
+      case 'pages': return '页面';
+      case 'products': return '商品';
+      default: return it.collection;
+    }
   }
   /** 待发布的时间要带日期 —— 只写「09:30」时，滚到第三屏就完全不知道是哪天的了。
    *  当天的省掉日期（分组标题已经写着「今天」，再重复一遍是噪音）。 */
@@ -3555,7 +3565,7 @@
                 <div class="sched-item">
                   <div class="sched-body">
                     <b>{it.title}</b>
-                    <small><SiteFav src={siteFav(it.site_slug)} label={it.site_slug} size={12} /><span class="cmono">{it.site_slug}</span> · {it.lang} · <span class="sched-t">{schedWhen(it)}</span>{#if it.status === 'published'}<span class="sched-done">已发布</span>{/if}</small>
+                    <small><SiteFav src={siteFav(it.site_slug)} label={it.site_slug} size={12} /><span class="cmono">{it.site_slug}</span> · {it.lang} · <span class="sched-t">{schedWhen(it)}</span>{#if schedKindLabel(it)}<span class="sched-kind">{schedKindLabel(it)}</span>{/if}{#if it.status === 'published'}<span class="sched-done">已发布</span>{/if}</small>
                   </div>
                   <!-- 已发布 → 开真实访问链接；待发布 → 短期草稿链接。文案跟着变，别让人以为点开的是同一种东西 -->
                   <button class="link sched-open" onclick={() => openSchedItem(it)}>{it.status === 'published' ? '访问' : '预览'} ↗</button>
@@ -5521,7 +5531,7 @@
      伪元素 left:0/right:0 精确铺满、只朝下，左右**零溢出、零圆头**。 */
   .thread-head::after {
     content: ''; position: absolute; left: 0; right: 0; top: 100%; height: 6px;
-    background: linear-gradient(rgba(20, 16, 13, .13), rgba(20, 16, 13, 0));
+    background: linear-gradient(rgba(20, 16, 13, .03), rgba(20, 16, 13, 0)); /* 原 .13 → .05 → .03：用户连续点名太重，压到将将可感；再嫌重就整个去掉 */
     opacity: 0; transition: opacity .18s ease; pointer-events: none;
   }
   /* 只在内容真滑到页头底下时才抬升。border 只改 color 不改宽度 —— 改宽度会让下面整块跳 1px。 */
@@ -5616,8 +5626,11 @@
   /* 排期密度条：未来 6 周每天一格，深浅=条数 */
   /* 列数跟着格子数走（auto-fit），别再写死 42 —— 加了「过去一周」之后写死的列数会把格子挤扁。
      从 SCHED_PAST_DAYS 推的话又得让 JS 和 CSS 两头对同一个数，迟早对不上。 */
-  .sched-density { display: grid; grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); grid-auto-flow: column; gap: 3px; margin: 2px 0 12px; }
-  .sd-cell { aspect-ratio: 1; border: none; border-radius: 3px; background: #ecebe6; padding: 0; cursor: default; }
+  .sched-density { display: grid; grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); grid-auto-flow: column; gap: 3px; margin: 2px 0 12px; } /* 缝别加宽：总宽固定，缝变宽就是从格子身上扣（试过 4px，全部格子肉眼可见变小） */
+  .sd-cell { position: relative; aspect-ratio: 1; border: none; border-radius: 3px; background: #ecebe6; padding: 0; cursor: default; }
+  /* 「今天」左侧的分界线：过去｜今天/未来 的界碑，画在 3px 缝正中（两侧各 1px 空隙）、
+     比格子矮一圈（上下各缩 1px）——不占格（等宽网格塞真元素会多出一列），扫一眼定位今天。 */
+  .sd-cell.today::before { content: ''; position: absolute; left: -2px; top: 1px; bottom: 1px; width: 1px; background: rgba(160, 60, 43, .65); }
   .sd-cell.l1 { background: #e4c7b4; cursor: pointer; }
   .sd-cell.l2 { background: #d19a76; cursor: pointer; }
   .sd-cell.l3 { background: #b96a44; cursor: pointer; }
@@ -5639,6 +5652,8 @@
   .sched-body small { display: inline-flex; align-items: center; gap: 4px; }
   .sched-t { color: var(--accent); font-weight: 500; }
   .sched-done { margin-left: 6px; color: var(--ok); font-size: 10px; border: 1px solid currentColor; border-radius: 3px; padding: 0 3px; line-height: 13px; }
+  /* 非文章条目的型标（链接/页面/商品…）：中性灰，和绿色「已发布」拉开语义层级 */
+  .sched-kind { margin-left: 6px; color: var(--faint); font-size: 10px; border: 1px solid currentColor; border-radius: 3px; padding: 0 3px; line-height: 13px; }
   .sched-filter-dd { display: inline-block; margin: 4px 0 6px; }
   .sched-grp { padding: 16px 2px 6px; }
   .sched-grp:first-child { padding-top: 4px; }

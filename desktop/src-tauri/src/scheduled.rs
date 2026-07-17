@@ -23,6 +23,9 @@ pub struct ScheduledItem {
     /// 前端据此决定「预览」开哪种链接：待发布的公开 URL 打不开、只能走短期草稿链接；
     /// 已发布的就该直接开真实访问链接。
     pub status: String,
+    /// 所属集合（接口路径段）：`posts` / `links` / `pages` / 扩展类型前缀（`products` 等）。
+    /// 预览链接要按它拼 `/{collection}/{id}/preview-url`；前端也据此给非文章条目打型标。
+    pub collection: String,
 }
 
 /// 已发布的往回看几天。接口**没有日期过滤**（只能按 updated_at DESC 取最近的），
@@ -31,7 +34,7 @@ const PUBLISHED_LOOKBACK_DAYS: i64 = 7;
 
 /// 取某条排期内容的**前台预览链接**（短期有效、真前台模板渲染草稿）——
 /// 排期内容未发布，公开 URL 打不开，必须走 preview-url 接口。
-pub async fn preview_url(conn: &Connection, site_slug: &str, id: i64) -> Result<String, String> {
+pub async fn preview_url(conn: &Connection, site_slug: &str, collection: &str, id: i64) -> Result<String, String> {
     let key = keychain::get_key(&conn.id)?;
     let disc = discovery::discover(conn).await?;
     let sites = disc.get("items").and_then(|i| i.as_array()).cloned().unwrap_or_default();
@@ -44,7 +47,15 @@ pub async fn preview_url(conn: &Connection, site_slug: &str, id: i64) -> Result<
     if api_base.is_empty() {
         return Err("没有找到该站点的接口地址".into());
     }
-    let url = format!("{}/posts/{}/preview-url", api_base.trim_end_matches('/'), id);
+    // preview-url 是 /{collection}/{id}/preview-url 的泛化路由：链接/页面/扩展类型同构。
+    // collection 只放行路径段安全字符，异常值回退 posts（老调用方没传集合）。
+    let coll = collection.trim();
+    let coll = if !coll.is_empty() && coll.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        coll
+    } else {
+        "posts"
+    };
+    let url = format!("{}/{}/{}/preview-url", api_base.trim_end_matches('/'), coll, id);
     // 注意：preview-url 是 POST（生成短期链接），GET 会 404。
     let resp = reqwest::Client::new()
         .post(&url)
@@ -101,8 +112,25 @@ pub async fn list_scheduled(conn: &Connection) -> Result<Vec<ScheduledItem>, Str
         let name = s.get("name").and_then(|v| v.as_str()).unwrap_or(&slug).to_string();
         let (c, k) = (client.clone(), key.clone());
         tasks.push(tokio::spawn(async move {
-            let mut v = fetch_site(&c, &api_base, &k, &slug, &name, "scheduled").await.unwrap_or_default();
-            v.extend(fetch_site(&c, &api_base, &k, &slug, &name, "published").await.unwrap_or_default());
+            // ★ 排期不只有文章：链接/页面/扩展类型（商品等）一样能定时发布——先探 /types
+            // 拿本站启用的集合清单，再逐集合拉「待发布 + 最近已发布」，全部并发。
+            let colls = site_collections(&c, &api_base, &k).await;
+            let mut subs = Vec::new();
+            for coll in colls {
+                for status in ["scheduled", "published"] {
+                    let (c2, k2, a2, s2, n2, co2) =
+                        (c.clone(), k.clone(), api_base.clone(), slug.clone(), name.clone(), coll.clone());
+                    subs.push(tokio::spawn(async move {
+                        fetch_site(&c2, &a2, &k2, &s2, &n2, &co2, status).await.unwrap_or_default()
+                    }));
+                }
+            }
+            let mut v = Vec::new();
+            for s in subs {
+                if let Ok(x) = s.await {
+                    v.extend(x);
+                }
+            }
             v
         }));
     }
@@ -128,16 +156,54 @@ pub async fn list_scheduled(conn: &Connection) -> Result<Vec<ScheduledItem>, Str
 /// 任何一个站排超过 20 条，多的就无声无息地不在排期视图里。要 100 就得写 100。
 const API_MAX_LIMIT: u32 = 100;
 
+/// 站点启用的内容集合：内置三件套 + `/types` 报告的扩展类型（collection=url_prefix）。
+/// `/types` 拿不到（老服务端 / Key 无该权限）就退回内置集合——links/pages 接口早于扩展
+/// 机制存在，对任何服务端都安全；单个集合无权限时那次列表请求自己失败、被上层跳过。
+async fn site_collections(client: &reqwest::Client, api_base: &str, key: &str) -> Vec<String> {
+    let mut out = vec!["posts".to_string(), "links".to_string(), "pages".to_string()];
+    let url = format!("{}/types", api_base.trim_end_matches('/'));
+    let resp = client
+        .get(&url)
+        .header("Authorization", format!("Bearer {key}"))
+        .timeout(Duration::from_secs(10))
+        .send()
+        .await;
+    if let Ok(r) = resp {
+        if r.status().is_success() {
+            if let Ok(v) = r.json::<serde_json::Value>().await {
+                for t in v.get("types").and_then(|x| x.as_array()).cloned().unwrap_or_default() {
+                    // 默认只列已启用；带 enabled=false 的（?all=1 才会出现）防御性跳过。
+                    if t.get("enabled").and_then(|e| e.as_bool()) == Some(false) {
+                        continue;
+                    }
+                    let c = t
+                        .get("collection")
+                        .or_else(|| t.get("url_prefix"))
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("")
+                        .trim()
+                        .to_string();
+                    if !c.is_empty() && !out.contains(&c) {
+                        out.push(c);
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
 async fn fetch_site(
     client: &reqwest::Client,
     api_base: &str,
     key: &str,
     slug: &str,
     name: &str,
+    collection: &str,
     status: &str,
 ) -> Result<Vec<ScheduledItem>, String> {
     let url = format!(
-        "{}/posts?status={status}&lang=all&limit={API_MAX_LIMIT}",
+        "{}/{collection}?status={status}&lang=all&limit={API_MAX_LIMIT}",
         api_base.trim_end_matches('/')
     );
     let resp = client
@@ -170,6 +236,7 @@ async fn fetch_site(
                 .and_then(|v| v.as_str())
                 .unwrap_or(status)
                 .to_string(),
+            collection: collection.to_string(),
         });
     }
     Ok(out)

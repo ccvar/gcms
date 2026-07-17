@@ -150,6 +150,8 @@ export interface ScheduledItem {
   url: string;
   /** `scheduled`（待发布）| `published`（已发布，最近一周）。 */
   status: string;
+  /** 所属集合：`posts` / `links` / `pages` / 扩展类型前缀（`products` 等）。 */
+  collection: string;
 }
 
 /** 单个站点在某次触发中的结果。 */
