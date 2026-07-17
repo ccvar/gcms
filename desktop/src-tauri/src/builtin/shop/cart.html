@@ -1,0 +1,945 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>购物车 — 溪野器物</title>
+<meta name="description" content="溪野器物购物车：确认商品与数量、使用优惠码、查看运费与合计，然后去结算。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='4' fill='%237E5D08'/%3E%3Cpath d='M9 9h14l-4.2 7.4V24h-5.6v-7.6z' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linejoin='round'/%3E%3C/svg%3E">
+<style>
+  :root {
+    /* ——— 设计令牌（改色板只改这里）——— */
+    --bg:      #F2F0EA;   /* 略暖中性石灰底 */
+    --surface: #FFFFFF;   /* 卡片 / 商品区底 */
+    --text:    #171512;   /* 正文 16.0:1 on --bg */
+    --muted:   #5F5A50;   /* 次要文字 6.0:1 on --bg */
+    --accent:  #7E5D08;   /* 唯一强调色 深金/琥珀 hue 43 · 5.3:1 on --bg · 其上白字 6.1:1 */
+    --radius:  4px;
+
+    /* 中性描边与强调色的浅色调（同一色相） */
+    --line:        #E2DFD8;
+    --line-strong: #CBC7BE;
+    --accent-soft: #F3E9CE;   /* --accent 于其上 5.0:1 */
+    --accent-deep: #5C4405;   /* 8.1:1 on --bg · 其上白字 9.2:1 */
+
+    /* 间距刻度 */
+    --s1: 4px;
+    --s2: 8px;
+    --s3: 12px;
+    --s4: 16px;
+    --s5: 24px;
+    --s6: 40px;
+    --s7: 64px;
+
+    /* 字号刻度 */
+    --fs-xs:   12px;  /* 仅用于角标 / 计数气泡 */
+    --fs-sm:   14px;
+    --fs-base: 16px;
+    --fs-md:   20px;
+    --fs-lg:   28px;
+    --fs-xl:   40px;
+
+    --font: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+            "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+            "Noto Sans SC", "Source Han Sans SC", Roboto, Arial, sans-serif;
+
+    --container: 1100px;
+    color-scheme: light;
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: var(--fs-base);
+    line-height: 1.7;
+    letter-spacing: .01em;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1, h2, h3 { margin: 0; font-weight: 600; line-height: 1.25; letter-spacing: -.01em; }
+  p  { margin: 0; }
+  ul { margin: 0; padding: 0; list-style: none; }
+  img, svg { max-width: 100%; }
+
+  a {
+    color: var(--accent);
+    text-decoration: none;
+    transition: color .15s ease, opacity .15s ease;
+  }
+  a:hover { color: var(--accent-deep); }
+
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: var(--radius);
+  }
+
+  .wrap {
+    width: 100%;
+    max-width: var(--container);
+    margin: 0 auto;
+    padding: 0 var(--s5);
+  }
+
+  .vh {
+    position: absolute;
+    width: 1px; height: 1px;
+    margin: -1px; padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  /* ——— 顶栏 ——— */
+  .topbar {
+    background: var(--text);
+    color: var(--bg);
+    font-size: var(--fs-sm);
+  }
+  .topbar .wrap {
+    display: flex;
+    justify-content: center;
+    gap: var(--s2);
+    padding-top: var(--s2);
+    padding-bottom: var(--s2);
+  }
+  .topbar svg { flex: none; }
+
+  .site-header {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    background: var(--surface);
+    border-bottom: 1px solid var(--line);
+  }
+  .site-header .wrap {
+    display: flex;
+    align-items: center;
+    gap: var(--s5);
+    height: 64px;
+  }
+
+  .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s2);
+    color: var(--text);
+    font-weight: 600;
+    font-size: var(--fs-md);
+    letter-spacing: .02em;
+    flex: none;
+  }
+  .brand:hover { color: var(--accent); }
+  .brand .mark { flex: none; }
+
+  .nav {
+    display: flex;
+    gap: var(--s5);
+    margin-left: var(--s3);
+    font-size: var(--fs-sm);
+  }
+  .nav a {
+    color: var(--muted);
+    padding: var(--s2) 0;
+    border-bottom: 2px solid transparent;
+  }
+  /* [aria-current] 同时命中 "page"（就是本页）与 "true"（本页属于该分类） */
+  .nav a:hover,
+  .nav a[aria-current] {
+    color: var(--text);
+    border-bottom-color: var(--accent);
+  }
+
+  .header-actions {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+  }
+  /* 用 .header-actions 前缀把特异度抬到 (0,2,x)：购物车图标是 <a>，
+     否则 a:hover 与 .icon-btn:hover 同为 (0,1,1)，只能靠源码顺序压 —— 那是个坑 */
+  .header-actions .icon-btn {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px; height: 44px;
+    border: 0;
+    border-radius: var(--radius);
+    background: transparent;
+    color: var(--text);
+    cursor: pointer;
+    transition: background .15s ease, color .15s ease;
+  }
+  .header-actions .icon-btn:hover,
+  .header-actions .icon-btn:focus-visible { background: var(--bg); color: var(--accent); }
+  .header-actions .icon-btn[aria-current="page"] { background: var(--bg); color: var(--accent); }
+  .cart-count {
+    position: absolute;
+    top: 5px; right: 4px;
+    min-width: 17px; height: 17px;
+    padding: 0 4px;
+    border-radius: 9px;
+    background: var(--accent);
+    color: var(--surface);
+    font-size: var(--fs-xs);
+    line-height: 17px;
+    font-weight: 600;
+    text-align: center;
+  }
+
+  /* ——— 面包屑 ——— */
+  .crumb-row {
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+    flex-wrap: wrap;
+    padding: var(--s5) 0;
+    font-size: var(--fs-sm);
+    color: var(--muted);
+  }
+  .crumbs { display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; }
+  .crumbs a { color: var(--muted); }
+  .crumbs a:hover { color: var(--accent); }
+  .crumbs .sep { color: var(--muted); }
+  .crumbs [aria-current="page"] { color: var(--text); }
+
+  .demo-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s1);
+    padding: var(--s1) var(--s2);
+    border: 1px dashed var(--line-strong);
+    border-radius: var(--radius);
+    background: var(--surface);
+    color: var(--muted);
+    font-size: var(--fs-xs);
+    line-height: 1.5;
+    letter-spacing: .06em;
+    flex: none;
+  }
+  .crumb-row .demo-badge { margin-left: auto; }
+
+  /* ——— 按钮 ——— */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--s2);
+    min-height: 44px;
+    padding: 0 var(--s5);
+    border: 1px solid transparent;
+    border-radius: var(--radius);
+    font: inherit;
+    font-size: var(--fs-sm);
+    font-weight: 600;
+    cursor: pointer;
+    transition: background .15s ease, border-color .15s ease, color .15s ease;
+  }
+  .btn-primary { background: var(--accent); color: var(--surface); }
+  .btn-primary:hover { background: var(--accent-deep); color: var(--surface); }
+  .btn-ghost {
+    background: var(--surface);
+    border-color: var(--line-strong);
+    color: var(--text);
+  }
+  .btn-ghost:hover { border-color: var(--text); color: var(--text); }
+  .btn-block { width: 100%; }
+
+  /* ——— 页头 ——— */
+  .page-head {
+    display: flex;
+    align-items: baseline;
+    gap: var(--s3);
+    flex-wrap: wrap;
+    margin-bottom: var(--s5);
+  }
+  .page-head h1 { font-size: var(--fs-lg); }
+  .page-head .n { color: var(--muted); font-size: var(--fs-sm); }
+
+  /* ——— 购物车骨架 ——— */
+  .cart {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 340px);
+    gap: var(--s6);
+    align-items: start;
+    padding-bottom: var(--s7);
+  }
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: var(--s5);
+  }
+
+  /* 表头 + 购物车行共用同一套列，列才对得齐 */
+  .line-head,
+  .line {
+    display: grid;
+    grid-template-columns: 88px minmax(0, 1fr) 132px 88px 28px;
+    gap: var(--s4);
+    align-items: center;
+  }
+  .line-head {
+    padding-bottom: var(--s3);
+    border-bottom: 1px solid var(--line);
+    font-size: var(--fs-sm);
+    color: var(--muted);
+  }
+  .line-head .lh-item { grid-column: 1 / 3; }
+  .line-head .lh-sub { text-align: right; }
+
+  .line { padding: var(--s5) 0; border-bottom: 1px solid var(--line); }
+  .line:last-child { border-bottom: 0; padding-bottom: var(--s2); }
+
+  .line-media {
+    display: block;
+    aspect-ratio: 4 / 3;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--bg);
+    color: var(--muted);
+    overflow: hidden;
+    transition: border-color .15s ease;
+  }
+  .line-media:hover { border-color: var(--line-strong); }
+  .line-media svg { display: block; width: 100%; height: 100%; }
+
+  .line-name { font-size: var(--fs-base); line-height: 1.4; }
+  .line-name a { color: var(--text); }
+  .line-name a:hover { color: var(--accent); }
+  .line-spec { font-size: var(--fs-sm); color: var(--muted); margin-top: var(--s1); }
+  .line-unit { font-size: var(--fs-sm); color: var(--muted); font-variant-numeric: tabular-nums; }
+
+  .stepper {
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius);
+    background: var(--surface);
+    flex: none;
+  }
+  .step-btn {
+    width: 44px; height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 0;
+    background: transparent;
+    color: var(--text);
+    cursor: pointer;
+    border-radius: var(--radius);
+    transition: background .15s ease, color .15s ease;
+  }
+  .step-btn:hover { background: var(--accent-soft); color: var(--accent); }
+  .qty {
+    width: 40px;
+    height: 44px;
+    border: 0;
+    border-left: 1px solid var(--line);
+    border-right: 1px solid var(--line);
+    background: transparent;
+    color: var(--text);
+    font: inherit;
+    font-size: var(--fs-sm);
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+  }
+
+  .line-sub {
+    text-align: right;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .line-x {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px; height: 28px;
+    border: 0;
+    border-radius: var(--radius);
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    transition: background .15s ease, color .15s ease;
+  }
+  .line-x:hover { background: var(--bg); color: var(--text); }
+
+  /* ——— 优惠码 ——— */
+  .promo {
+    margin-top: var(--s5);
+    padding-top: var(--s5);
+    border-top: 1px solid var(--line);
+  }
+  .promo-label {
+    display: block;
+    font-size: var(--fs-sm);
+    font-weight: 600;
+    margin-bottom: var(--s3);
+  }
+  .promo-row { display: flex; gap: var(--s2); flex-wrap: wrap; }
+  .input {
+    flex: 1 1 200px;
+    min-width: 0;
+    min-height: 44px;
+    padding: 0 var(--s3);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius);
+    background: var(--surface);
+    color: var(--text);
+    font: inherit;
+    font-size: var(--fs-sm);
+    transition: border-color .15s ease;
+  }
+  .input::placeholder { color: var(--muted); opacity: 1; }
+  .input:hover { border-color: var(--text); }
+
+  .promo-applied {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    flex-wrap: wrap;
+    margin-top: var(--s3);
+    font-size: var(--fs-sm);
+    color: var(--muted);
+  }
+  .promo-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s1);
+    padding: var(--s1) var(--s1) var(--s1) var(--s2);
+    border: 1px solid var(--accent);
+    border-radius: var(--radius);
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .chip-x {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px; height: 20px;
+    border: 0;
+    border-radius: var(--radius);
+    background: transparent;
+    color: var(--accent);
+    cursor: pointer;
+    transition: background .15s ease;
+  }
+  .chip-x:hover { background: var(--surface); }
+
+  /* ——— 订单摘要 ——— */
+  .summary {
+    position: sticky;
+    top: calc(64px + var(--s5));
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: var(--s5);
+  }
+  .summary-h {
+    font-size: var(--fs-sm);
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 600;
+    margin-bottom: var(--s3);
+  }
+  .sum-rows { margin: 0; }
+  .sum-row {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--s3);
+    padding: var(--s3) 0;
+    border-top: 1px solid var(--line);
+    font-size: var(--fs-sm);
+  }
+  .sum-row dt { color: var(--muted); }
+  .sum-row dd { margin: 0; font-variant-numeric: tabular-nums; }
+  .sum-row .free { color: var(--accent); font-weight: 600; }
+
+  .sum-total {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--s3);
+    margin: var(--s3) 0 var(--s5);
+    padding-top: var(--s4);
+    border-top: 1px solid var(--line-strong);
+    font-weight: 600;
+  }
+  .total-n {
+    font-size: var(--fs-lg);
+    letter-spacing: -.02em;
+    font-variant-numeric: tabular-nums;
+  }
+  .total-n small { font-size: var(--fs-base); }
+
+  .keep-shopping {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s2);
+    margin-top: var(--s4);
+    font-size: var(--fs-sm);
+    font-weight: 600;
+  }
+  .sum-note {
+    margin-top: var(--s4);
+    padding-top: var(--s4);
+    border-top: 1px solid var(--line);
+    font-size: var(--fs-sm);
+    color: var(--muted);
+    line-height: 1.7;
+  }
+
+  /* ——— 空态演示 ——— */
+  .section { padding: var(--s7) 0; border-top: 1px solid var(--line); }
+  .demo-strip {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--s3);
+    margin-bottom: var(--s5);
+  }
+  .demo-strip p { color: var(--muted); font-size: var(--fs-sm); max-width: 42em; }
+  .demo-strip b { color: var(--text); font-weight: 600; }
+  .demo-strip code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 1em;
+    padding: 0 var(--s1);
+    border-radius: var(--radius);
+    background: var(--bg);
+    color: var(--text);
+  }
+
+  .empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--s4);
+    padding: var(--s7) var(--s5);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    text-align: center;
+  }
+  .empty-art { color: var(--muted); }
+  .empty h2 { font-size: var(--fs-md); }
+  .empty p { color: var(--muted); font-size: var(--fs-sm); max-width: 24em; }
+  .empty-actions { display: flex; gap: var(--s3); flex-wrap: wrap; justify-content: center; }
+
+  /* ——— 页脚 ——— */
+  .site-footer {
+    background: var(--surface);
+    border-top: 1px solid var(--line);
+    padding: var(--s7) 0 var(--s6);
+  }
+  .foot-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.6fr) repeat(3, minmax(0, 1fr));
+    gap: var(--s6);
+  }
+  .foot-about p {
+    margin-top: var(--s3);
+    color: var(--muted);
+    font-size: var(--fs-sm);
+    max-width: 22em;
+  }
+  .foot-col h3 {
+    font-size: var(--fs-sm);
+    margin-bottom: var(--s3);
+    font-weight: 600;
+  }
+  .foot-col li + li { margin-top: var(--s2); }
+  .foot-col a { color: var(--muted); font-size: var(--fs-sm); }
+  .foot-col a:hover { color: var(--accent); }
+
+  .foot-bottom {
+    margin-top: var(--s6);
+    padding-top: var(--s5);
+    border-top: 1px solid var(--line);
+    display: flex;
+    justify-content: space-between;
+    gap: var(--s3);
+    flex-wrap: wrap;
+    font-size: var(--fs-sm);
+    color: var(--muted);
+  }
+
+  /* ——— 响应式 ——— */
+  @media (max-width: 1000px) {
+    .cart { grid-template-columns: 1fr; gap: var(--s5); }
+    .summary { position: static; }
+    .nav { display: none; }
+  }
+
+  @media (max-width: 700px) {
+    /* 手机端：图占左边两行，右边上信息下（数量 + 小计） */
+    .line-head { display: none; }
+    .line {
+      grid-template-columns: 72px minmax(0, 1fr) auto;
+      grid-template-areas:
+        "media info x"
+        "media qty  sub";
+      row-gap: var(--s3);
+      align-items: center;
+    }
+    .line-media { grid-area: media; align-self: start; }
+    .line-info  { grid-area: info; }
+    .line .stepper { grid-area: qty; justify-self: start; }
+    .line-sub   { grid-area: sub; }
+    .line-x     { grid-area: x; align-self: start; }
+    .foot-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s5); }
+    .foot-about { grid-column: 1 / -1; }
+  }
+
+  @media (max-width: 560px) {
+    :root { --fs-lg: 24px; --fs-xl: 32px; }
+    .wrap { padding: 0 var(--s4); }
+    .panel { padding: var(--s4); }
+    .section { padding: var(--s6) 0; }
+    .crumb-row .demo-badge { margin-left: 0; }
+    .demo-strip { flex-direction: column; gap: var(--s2); }
+    .empty { padding: var(--s6) var(--s4); }
+    .empty-actions .btn { flex: 1 1 100%; }
+    .site-footer { padding-top: var(--s6); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<!-- 共用 SVG 定义：器物插画渐变 -->
+<svg width="0" height="0" aria-hidden="true" focusable="false" style="position:absolute">
+  <defs>
+    <linearGradient id="glass" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="var(--accent)" stop-opacity=".05"/>
+      <stop offset=".45" stop-color="var(--accent)" stop-opacity=".01"/>
+      <stop offset="1" stop-color="var(--accent)" stop-opacity=".07"/>
+    </linearGradient>
+  </defs>
+</svg>
+
+<!-- 顶部通栏 -->
+<div class="topbar">
+  <div class="wrap">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M1 3h15v13H1z"/><path d="M16 8h4l3 3v5h-7z"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/>
+    </svg>
+    <span>单笔满 ¥199 顺丰包邮 · 工作日 15:00 前付款当日发出</span>
+  </div>
+</div>
+
+<!-- 站点头 -->
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="index.html">
+      <svg class="mark" width="26" height="26" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+        <rect width="32" height="32" rx="4" fill="var(--accent)"/>
+        <path d="M9 9h14l-4.2 7.4V24h-5.6v-7.6z" fill="none" stroke="var(--surface)" stroke-width="2" stroke-linejoin="round"/>
+      </svg>
+      溪野器物
+    </a>
+
+    <nav class="nav" aria-label="主导航">
+      <a href="index.html">全部商品</a>
+      <a href="index.html#grid">手冲器具</a>
+      <a href="index.html#grid">咖啡豆</a>
+      <a href="index.html#grid">杯具</a>
+      <a href="index.html#grid">配件</a>
+    </nav>
+
+    <div class="header-actions">
+      <button class="icon-btn" type="button" aria-label="搜索商品">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+          <circle cx="11" cy="11" r="7"/><path d="M20 20l-3.6-3.6"/>
+        </svg>
+      </button>
+      <button class="icon-btn" type="button" aria-label="账户">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+          <circle cx="12" cy="8" r="4"/><path d="M4.5 20c1.2-3.7 4-5.5 7.5-5.5s6.3 1.8 7.5 5.5"/>
+        </svg>
+      </button>
+      <a class="icon-btn" href="cart.html" aria-current="page" aria-label="购物车，4 件商品">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M4 5h2.2l2 10.5h9.4L20 8H7"/><circle cx="9" cy="19.5" r="1.6"/><circle cx="17" cy="19.5" r="1.6"/>
+        </svg>
+        <span class="cart-count" aria-hidden="true">4</span>
+      </a>
+    </div>
+  </div>
+</header>
+
+<main>
+  <div class="wrap">
+
+    <!-- 面包屑 -->
+    <div class="crumb-row">
+      <nav class="crumbs" aria-label="面包屑">
+        <a href="index.html">首页</a>
+        <span class="sep" aria-hidden="true">/</span>
+        <span aria-current="page">购物车</span>
+      </nav>
+      <span class="demo-badge">示例内容 · 请替换</span>
+    </div>
+
+    <div class="page-head">
+      <h1>购物车</h1>
+      <p class="n">共 4 件商品</p>
+    </div>
+
+    <!-- 结算表单：「去结算」是提交动作，不是链接 —— 所以是 <button>，不会留死链 -->
+    <form class="cart">
+
+      <!-- 购物车行 -->
+      <section class="panel" aria-label="购物车商品">
+        <div class="line-head">
+          <span class="lh-item">商品</span>
+          <span class="lh-qty">数量</span>
+          <span class="lh-sub">小计</span>
+          <span></span>
+        </div>
+
+        <ul>
+          <!-- 行 1 -->
+          <li class="line">
+            <a class="line-media" href="product.html" tabindex="-1" aria-hidden="true">
+              <svg viewBox="0 0 200 140" fill="none">
+                <rect x="84" y="30" width="32" height="11" rx="3" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/>
+                <path d="M88 42v8c0 11-22 16-22 34 0 13 15 22 34 22s34-9 34-22c0-18-22-23-22-34v-8"
+                      stroke="var(--text)" stroke-width="2.5" stroke-linejoin="round"/>
+                <path d="M134 78c14 0 18 8 17 15-1 8-8 12-18 12" stroke="var(--text)" stroke-width="4" stroke-linecap="round"/>
+                <ellipse cx="100" cy="110" rx="40" ry="4" fill="var(--text)" opacity=".07"/>
+              </svg>
+            </a>
+            <div class="line-info">
+              <h2 class="line-name"><a href="product.html">双层玻璃手冲分享壶</a></h2>
+              <p class="line-spec">500 ml · 原木手柄</p>
+              <p class="line-unit">单价 ¥268</p>
+            </div>
+            <div class="stepper">
+              <button class="step-btn" type="button" aria-label="减少 双层玻璃手冲分享壶 的数量">
+                <svg width="16" height="16" viewBox="0 0 16 16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M3 8h10"/></svg>
+              </button>
+              <input class="qty" type="text" inputmode="numeric" value="1" aria-label="双层玻璃手冲分享壶 的数量">
+              <button class="step-btn" type="button" aria-label="增加 双层玻璃手冲分享壶 的数量">
+                <svg width="16" height="16" viewBox="0 0 16 16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>
+              </button>
+            </div>
+            <p class="line-sub">¥268</p>
+            <button class="line-x" type="button" aria-label="移除 双层玻璃手冲分享壶">
+              <svg width="14" height="14" viewBox="0 0 16 16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>
+            </button>
+          </li>
+
+          <!-- 行 2 -->
+          <li class="line">
+            <a class="line-media" href="product.html" tabindex="-1" aria-hidden="true">
+              <svg viewBox="0 0 200 140" fill="none">
+                <path d="M64 44 L94 100 H106 L136 44" stroke="var(--text)" stroke-width="2.5" stroke-linejoin="round"/>
+                <ellipse cx="100" cy="44" rx="36" ry="8" stroke="var(--text)" stroke-width="2.5"/>
+                <g stroke="var(--line-strong)" stroke-width="1.5">
+                  <path d="M78 46 L96 100"/>
+                  <path d="M122 46 L104 100"/>
+                  <path d="M100 46 v54"/>
+                </g>
+                <rect x="86" y="100" width="28" height="10" rx="3" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/>
+                <ellipse cx="100" cy="118" rx="40" ry="4" fill="var(--text)" opacity=".07"/>
+              </svg>
+            </a>
+            <div class="line-info">
+              <h2 class="line-name"><a href="product.html">陶瓷锥形滤杯 02 号</a></h2>
+              <p class="line-spec">白釉 · 1–4 杯份</p>
+              <p class="line-unit">单价 ¥128</p>
+            </div>
+            <div class="stepper">
+              <button class="step-btn" type="button" aria-label="减少 陶瓷锥形滤杯 02 号 的数量">
+                <svg width="16" height="16" viewBox="0 0 16 16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M3 8h10"/></svg>
+              </button>
+              <input class="qty" type="text" inputmode="numeric" value="1" aria-label="陶瓷锥形滤杯 02 号 的数量">
+              <button class="step-btn" type="button" aria-label="增加 陶瓷锥形滤杯 02 号 的数量">
+                <svg width="16" height="16" viewBox="0 0 16 16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>
+              </button>
+            </div>
+            <p class="line-sub">¥128</p>
+            <button class="line-x" type="button" aria-label="移除 陶瓷锥形滤杯 02 号">
+              <svg width="14" height="14" viewBox="0 0 16 16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>
+            </button>
+          </li>
+
+          <!-- 行 3 -->
+          <li class="line">
+            <a class="line-media" href="product.html" tabindex="-1" aria-hidden="true">
+              <svg viewBox="0 0 200 140" fill="none">
+                <path d="M68 44 L64 110 a5 5 0 0 0 5 5 h62 a5 5 0 0 0 5-5 L132 44 Z" stroke="var(--text)" stroke-width="2.5" stroke-linejoin="round"/>
+                <path d="M66 34 h68 v10 h-68 z" stroke="var(--text)" stroke-width="2.5" stroke-linejoin="round"/>
+                <rect x="80" y="58" width="40" height="22" rx="2" fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="2"/>
+                <g stroke="var(--line-strong)" stroke-width="1.5" stroke-linecap="round">
+                  <path d="M78 92h44"/><path d="M78 100h30"/>
+                </g>
+                <ellipse cx="100" cy="120" rx="38" ry="4" fill="var(--text)" opacity=".07"/>
+              </svg>
+            </a>
+            <div class="line-info">
+              <h2 class="line-name"><a href="product.html">云南保山 日晒 · 中浅烘</a></h2>
+              <p class="line-spec">250 g · 整豆</p>
+              <p class="line-unit">单价 ¥98</p>
+            </div>
+            <div class="stepper">
+              <button class="step-btn" type="button" aria-label="减少 云南保山 日晒 中浅烘 的数量">
+                <svg width="16" height="16" viewBox="0 0 16 16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M3 8h10"/></svg>
+              </button>
+              <input class="qty" type="text" inputmode="numeric" value="2" aria-label="云南保山 日晒 中浅烘 的数量">
+              <button class="step-btn" type="button" aria-label="增加 云南保山 日晒 中浅烘 的数量">
+                <svg width="16" height="16" viewBox="0 0 16 16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>
+              </button>
+            </div>
+            <p class="line-sub">¥196</p>
+            <button class="line-x" type="button" aria-label="移除 云南保山 日晒 中浅烘">
+              <svg width="14" height="14" viewBox="0 0 16 16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>
+            </button>
+          </li>
+        </ul>
+
+        <!-- 优惠码 -->
+        <div class="promo">
+          <label class="promo-label" for="promo">优惠码</label>
+          <div class="promo-row">
+            <input class="input" id="promo" name="promo" type="text" placeholder="例如 SIYE20" autocomplete="off">
+            <button class="btn btn-ghost" type="button">应用</button>
+          </div>
+          <p class="promo-applied">
+            <span class="promo-chip">
+              SIYE20
+              <button class="chip-x" type="button" aria-label="取消优惠码 SIYE20">
+                <svg width="11" height="11" viewBox="0 0 16 16" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>
+              </button>
+            </span>
+            <span>新客立减 ¥20，已抵扣。</span>
+          </p>
+        </div>
+      </section>
+
+      <!-- 订单摘要 -->
+      <aside class="summary" aria-label="订单摘要">
+        <h2 class="summary-h">订单摘要</h2>
+        <dl class="sum-rows">
+          <div class="sum-row"><dt>商品小计（4 件）</dt><dd>¥592</dd></div>
+          <div class="sum-row"><dt>优惠码 SIYE20</dt><dd>−¥20</dd></div>
+          <div class="sum-row"><dt>运费</dt><dd class="free">免运费</dd></div>
+        </dl>
+
+        <p class="sum-total">
+          <span>合计</span>
+          <span class="total-n"><small>¥</small>572</span>
+        </p>
+
+        <button class="btn btn-primary btn-block" type="submit">
+          去结算
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 8h10M9 4l4 4-4 4"/>
+          </svg>
+        </button>
+
+        <a class="keep-shopping" href="index.html">
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M13 8H3M7 4L3 8l4 4"/>
+          </svg>
+          继续购物
+        </a>
+
+        <p class="sum-note">已满 ¥199，本单顺丰包邮。下一步填写收货地址与支付方式，提交前还能再改。示例站点不会真的产生订单。</p>
+      </aside>
+    </form>
+
+    <!-- ————————————————————————————————————————————————
+         空购物车态（示例展示区）
+         要切成空态：删掉上面整个 <form class="cart"> 与 .page-head 的件数，
+         把下面 .empty 这一块移上来即可；本 <section class="section"> 是演示外壳，上线请删。
+         ———————————————————————————————————————————————— -->
+    <section class="section" aria-label="空购物车态示例">
+      <div class="demo-strip">
+        <span class="demo-badge">示例内容 · 空态</span>
+        <p>购物车为空时应该长这样。<b>切换方法：</b>删掉上面的 <code>form.cart</code>，把下面这块 <code>.empty</code> 移到面包屑下面；本演示外壳（含这行说明）上线前请一并删除。</p>
+      </div>
+
+      <div class="empty">
+        <svg class="empty-art" width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M4 5h2.2l2 10.5h9.4L20 8H7"/><circle cx="9" cy="19.5" r="1.6"/><circle cx="17" cy="19.5" r="1.6"/>
+        </svg>
+        <h2>购物车还是空的</h2>
+        <p>还没挑到合适的？先从一只分享壶开始，配一个滤杯就能出品了。</p>
+        <div class="empty-actions">
+          <a class="btn btn-primary" href="index.html">去逛全部商品</a>
+          <a class="btn btn-ghost" href="product.html">看主打分享壶</a>
+        </div>
+      </div>
+    </section>
+
+  </div>
+</main>
+
+<!-- 页脚 -->
+<footer class="site-footer">
+  <div class="wrap">
+    <div class="foot-grid">
+      <div class="foot-about">
+        <a class="brand" href="index.html">
+          <svg class="mark" width="26" height="26" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+            <rect width="32" height="32" rx="4" fill="var(--accent)"/>
+            <path d="M9 9h14l-4.2 7.4V24h-5.6v-7.6z" fill="none" stroke="var(--surface)" stroke-width="2" stroke-linejoin="round"/>
+          </svg>
+          溪野器物
+        </a>
+        <p>一间做手冲器具的小店。2018 年从淄博的一个玻璃作坊开始，只做自己每天在用的东西。</p>
+      </div>
+
+      <div class="foot-col">
+        <h3>购物</h3>
+        <ul>
+          <li><a href="index.html">全部商品</a></li>
+          <li><a href="index.html#grid">新品上架</a></li>
+          <li><a href="index.html#grid">套装优惠</a></li>
+          <li><a href="cart.html">我的购物车</a></li>
+        </ul>
+      </div>
+
+      <div class="foot-col">
+        <h3>客户服务</h3>
+        <ul>
+          <li><a href="product.html#ship">配送与运费</a></li>
+          <li><a href="product.html#ship">退换货</a></li>
+          <li><a href="cart.html">订单查询</a></li>
+          <li><a href="#contact">联系客服</a></li>
+        </ul>
+      </div>
+
+      <div class="foot-col">
+        <h3>关于</h3>
+        <ul>
+          <li><a href="#about">品牌故事</a></li>
+          <li><a href="product.html#detail">冲煮指南</a></li>
+          <li><a href="#store">线下门店</a></li>
+          <li><a href="#contact">批发合作</a></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="foot-bottom">
+      <span>© 2024 溪野器物 · 示例站点，内容均为占位文案</span>
+      <span>客服微信 siye-coffee · 工作日 10:00–18:00</span>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

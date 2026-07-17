@@ -1,0 +1,915 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>用 Go 写了个 300 行的静态博客生成器，然后我把它删了 — 溪岸笔记</title>
+<meta name="description" content="花了三个周末，从模板引擎写到增量构建，最后发现我真正需要的只是一个把 Markdown 转成 HTML 的函数。这篇聊聊「造轮子」的收益到底在哪里。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%237A3E78'/%3E%3Cpath d='M8 21.5c2.6 0 2.6-3 5.3-3s2.7 3 5.3 3 2.7-3 5.4-3' stroke='%23fff' stroke-width='2' stroke-linecap='round' fill='none'/%3E%3Cpath d='M8 13.5c2.6 0 2.6-3 5.3-3s2.7 3 5.3 3 2.7-3 5.4-3' stroke='%23fff' stroke-width='2' stroke-linecap='round' fill='none' opacity='.55'/%3E%3C/svg%3E">
+<style>
+  /* ═══════════════════════════════════════════════════════════════
+     溪岸笔记 — 文章详情页 / 长文排版起始模板
+     同一个站的第二个页面：顶栏、页脚、品牌、令牌都与 index.html 相同。
+     单文件：CSS 全部内联在这里，不许抽公共样式表（缩略图是把本文件原文
+     塞进 iframe srcdoc 渲染的，相对路径的 <link> 会 404）。
+     ═══════════════════════════════════════════════════════════════ */
+
+  /* ══════════════════════════════════════════════════════════════════
+     设计令牌 —— 这一整块在本站每一页里逐字相同
+     改配色 / 改字号 = 整块替换，别在下面的规则里写死颜色。
+     :root 之外零硬编码 hex；<head> 的 favicon data-URI 是唯一例外
+     （data: 里用不了 var()，但那抹紫必须和 --accent 保持一致）。
+     两页同源，所以各页都会剩几个用不到的令牌（列表页用不到 --code-* /
+     --sheet，正文页用不到 --aside）—— 保留，方便整块复制到新页面。
+     ══════════════════════════════════════════════════════════════════ */
+  :root {
+    /* ——— 主色（契约名，别改名） ——— */
+    --bg:      #F1F2F4;   /* 冷调纸感底 */
+    --surface: #FFFFFF;   /* 置顶卡 / 侧栏块 / 正文纸张 */
+    --text:    #1A1C20;   /* 正文墨色  15.2:1 on --bg，15.9:1 on --surface */
+    --muted:   #5E626B;   /* 次要信息   5.5:1 on --bg，6.1:1 on --surface */
+    --accent:  #7A3E78;   /* 唯一强调色·梅子紫 6.7:1 on --bg，7.5:1 on --surface */
+    --radius:  10px;
+
+    /* ——— 派生：中性线 + 强调色深浅（同色相，不算第二个颜色） ——— */
+    --line:        #DFE1E5;                /* 细分割线 */
+    --line-soft:   #E8EAED;                /* 更弱的线 */
+    --tint:        #F0E7F0;                /* 强调色极淡底：标签 / 徽章 / 行内代码 */
+    --tint-0:      rgba(240, 231, 240, 0); /* --tint 的全透明版，给渐变收尾用 */
+    --accent-ink:  #5C2E5B;                /* 强调色加深：hover / 行内代码字 8.7:1 on --tint */
+    --accent-mid:  #B98FB8;                /* 强调色淡化：正文链接下划线这类细线（非文字） */
+    --shadow:      rgba(26, 28, 32, .07);  /* --text 的极淡投影 */
+
+    /* ——— 深色代码块（正文页用）：把正文墨色翻过来当底 ——— */
+    --code-bg:     #1A1C20;  /* 和 --text 同值，深浅对调 */
+    --code-fg:     #DDE0E6;  /* 12.9:1 on --code-bg */
+    --code-muted:  #8E93A0;  /* 5.6:1  on --code-bg —— 注释也要够看 */
+    --code-line:   #2C2F36;  /* 代码块内的分隔线 */
+    --accent-lite: #C79BC6;  /* 深色块里的强调色 7.3:1 on --code-bg */
+
+    /* ——— 间距刻度：只用这些值 ——— */
+    --s1: 4px;
+    --s2: 8px;
+    --s3: 12px;
+    --s4: 16px;
+    --s5: 24px;
+    --s6: 40px;
+    --s7: 64px;
+
+    /* ——— 字号刻度 ——— */
+    --fs-xs:    12px;  /* 等宽小标：日期 / 标签 / 计数 */
+    --fs-sm:    14px;
+    --fs-base:  16px;
+    --fs-prose: 18px;  /* 长文正文比 base 大一档 */
+    --fs-md:    20px;
+    --fs-lg:    28px;
+    --fs-xl:    40px;
+
+    /* ——— 字体：正文无衬线 + 日期/标签/代码等宽（本模板的签名质感）
+           等宽栈里补了中文，代码块和标签里的汉字才不塌 ——— */
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+            "Hiragino Sans GB", "Microsoft YaHei", "Source Han Sans SC",
+            "Noto Sans CJK SC", "WenQuanYi Micro Hei", Roboto, "Helvetica Neue",
+            Arial, sans-serif;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+            "Liberation Mono", "PingFang SC", "Microsoft YaHei", monospace;
+
+    /* ——— 版心 ——— */
+    --container: 1080px;  /* 顶栏 / 页脚 / 列表页 */
+    --aside:     260px;   /* 列表页侧栏 */
+    --sheet:     800px;   /* 正文页纸张宽；减去左右各 40 = 720 的正文测量宽 */
+    color-scheme: light;
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: var(--fs-base);
+    line-height: 1.75;
+    letter-spacing: 0.01em;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    line-break: strict;   /* 中文避头尾：不让「、」「。」这类标点跑到行首 */
+  }
+
+  h1, h2, h3 { margin: 0; line-height: 1.25; font-weight: 600; letter-spacing: -0.01em; }
+  p { margin: 0; }
+  ul { margin: 0; padding: 0; list-style: none; }
+  img, svg { max-width: 100%; }
+  ::selection { background: var(--tint); color: var(--text); }
+
+  a {
+    color: var(--accent);
+    text-decoration: none;
+    transition: color .15s ease;
+  }
+  a:hover { color: var(--accent-ink); }
+
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: var(--s1);
+  }
+
+  /* 版心：顶栏 / 页脚跟列表页同宽（1080），这样两页之间来回点，品牌不会左右跳 */
+  .wrap {
+    max-width: var(--container);
+    margin: 0 auto;
+    padding-inline: var(--s5);
+  }
+  /* 正文纸张单独收窄到 800 */
+  .wrap--sheet { max-width: calc(var(--sheet) + var(--s5) * 2); }
+
+  /* 跳到正文（键盘可达） */
+  .skip {
+    position: absolute;
+    left: -9999px;
+    top: var(--s2);
+    padding: var(--s2) var(--s4);
+    background: var(--surface);
+    border-radius: var(--radius);
+    font-size: var(--fs-sm);
+    z-index: 20;
+  }
+  .skip:focus { left: var(--s5); }
+
+  /* ——— 顶栏（与 index.html 同一份） ——— */
+  .site-head {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: var(--bg);
+    border-bottom: 1px solid var(--line);
+  }
+  .site-head__in {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s5);
+    min-height: 64px;
+  }
+  .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s3);
+    color: var(--text);
+    font-weight: 600;
+    letter-spacing: 0.02em;
+  }
+  .brand:hover { color: var(--accent); }
+  .brand__mark {
+    width: 28px;
+    height: 28px;
+    flex: none;
+    border-radius: var(--s2);
+    background: var(--accent);
+    color: var(--surface);
+    display: grid;
+    place-items: center;
+  }
+  .brand__mark svg { display: block; }
+
+  .nav { display: flex; align-items: center; gap: var(--s1); }
+  .nav a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    padding: 0 var(--s3);
+    border-radius: var(--s2);
+    color: var(--muted);
+    font-size: var(--fs-sm);
+  }
+  .nav a:hover { color: var(--text); background: var(--line-soft); }
+  .nav a[aria-current="page"] { color: var(--text); font-weight: 600; }
+  .nav__rss { gap: var(--s2); }
+  .nav__rss svg { flex: none; }
+
+  /* ——— 阅读纸张 ——— */
+  .sheet {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: var(--s7) var(--s6);
+    margin-block: var(--s6) var(--s7);
+  }
+
+  /* ——— 文章头 ——— */
+  .head__top {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s3);
+    margin-bottom: var(--s5);
+  }
+  .kicker {
+    font-family: var(--mono);
+    font-size: var(--fs-xs);
+    color: var(--muted);
+    letter-spacing: 0.12em;
+  }
+  /* 与列表页 .intro__badge 同一个组件：两页的「示例内容」章长得一模一样 */
+  .badge {
+    margin-left: auto;
+    padding: var(--s1) var(--s3);
+    border: 1px dashed var(--accent);
+    border-radius: 999px;
+    color: var(--accent);
+    font-family: var(--mono);
+    font-size: var(--fs-xs);
+    line-height: 1.8;
+    letter-spacing: 0.06em;
+  }
+
+  /* 标签：与列表页 .tag 同一个组件，值也必须和列表里那条对得上 */
+  .tags { display: flex; flex-wrap: wrap; gap: var(--s2); }
+  .tag {
+    display: inline-block;
+    padding: 2px var(--s2);
+    border-radius: var(--s1);
+    background: var(--tint);
+    color: var(--accent);
+    font-family: var(--mono);
+    font-size: var(--fs-xs);
+    line-height: 1.6;
+    white-space: nowrap;
+  }
+
+  /* 手机 32px → 桌面 40px。别把下限设成 28px：那样手机上 h1 会和 h2 一样大，层级就塌了 */
+  .head h1 {
+    font-size: clamp(32px, 4.6vw, var(--fs-xl));
+    line-height: 1.22;
+    letter-spacing: -0.02em;
+    text-wrap: balance;
+    margin-bottom: var(--s5);
+  }
+  /* 中文本来就允许在任意字之间断行，别用 white-space:nowrap 去「保护」词组：
+     标题一长就会顶破窄栏，横向滚动条就是这么来的。 */
+  .head__dek {
+    max-width: 32em;   /* 中文按 em 量行宽：1em≈1 个字。别用 ch —— ch 按「0」的字形宽算 */
+    margin-bottom: var(--s6);
+    color: var(--muted);
+    font-size: var(--fs-md);
+    line-height: 1.75;
+  }
+  .byline {
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+    padding-top: var(--s5);
+    border-top: 1px solid var(--line-soft);
+  }
+  /* 头像沿用列表页侧栏的渐变圆：全站唯一的「人」的标记 */
+  .avatar {
+    flex: none;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    background: linear-gradient(140deg, var(--accent), var(--accent-ink));
+    color: var(--surface);
+    font-weight: 600;
+    line-height: 1;
+    letter-spacing: 0.02em;
+    width: var(--s6);
+    height: var(--s6);
+    font-size: var(--fs-sm);
+  }
+  /* flex:1 + min-width:0 —— 少了这两条，手机上这段文字会整体换行，把头像孤零零甩在上一行 */
+  .byline__text { flex: 1; min-width: 0; font-size: var(--fs-sm); color: var(--muted); line-height: 1.5; }
+  .byline__name { color: var(--text); font-weight: 600; font-size: var(--fs-base); }
+  /* 分隔点只留间距，颜色跟着 .byline__text 继承 --muted。
+     别拿 --line 去「调淡」它：--line 是画线用的（#DFE1E5 在白纸上只有 1.3:1），
+     当文字用就等于没有——实测过，不是目测。 */
+  .byline__sep { margin-inline: var(--s2); }
+
+  /* ——— 图片占位（内联 SVG + 图注） ——— */
+  .figure { margin: var(--s6) 0; }
+  .figure__art {
+    background: linear-gradient(150deg, var(--tint) 0%, var(--bg) 62%, var(--surface) 100%);
+    border: 1px solid var(--line-soft);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+  .figure__art svg { display: block; width: 100%; height: auto; }
+  /* 图注 = 一条强调色竖线 + 一段文字。
+     注意：flex 容器里每一段裸文字都会各自变成独立的 flex item，
+     所以文字必须整个裹进 <span>，否则 <strong> 会被拆成另一列。 */
+  .figure figcaption {
+    display: flex;
+    gap: var(--s3);
+    margin-top: var(--s3);
+    font-size: var(--fs-sm);
+    line-height: 1.6;
+    color: var(--muted);
+  }
+  .figure figcaption::before {
+    content: "";
+    flex: none;
+    width: 2px;
+    align-self: stretch;
+    background: var(--accent);
+    border-radius: 1px;
+  }
+  .figure figcaption strong { color: var(--text); font-weight: 600; }
+  /* 示意图配色：整张图只有「墨色线 + 强调色块 + 中性辅助线」 */
+  .art-ink  { fill: none; stroke: var(--text); stroke-width: 3; stroke-linejoin: round; stroke-linecap: round; }
+  .art-fill { fill: var(--accent); }
+  .art-ring { fill: none; stroke: var(--accent); stroke-width: 2.5; }
+  .art-grid { fill: none; stroke: var(--line); stroke-width: 1.5; }
+  .art-axis { fill: none; stroke: var(--muted); stroke-width: 2; stroke-linecap: round; }
+  .art-line { fill: none; stroke: var(--accent); stroke-width: 3; stroke-linejoin: round; stroke-linecap: round; }
+  .art-area { fill: var(--accent); opacity: .13; }
+  .art-dot  { fill: var(--accent); stroke: var(--surface); stroke-width: 3; }
+  .art-flat { fill: none; stroke: var(--muted); stroke-width: 2.5; stroke-dasharray: 7 7; stroke-linecap: round; }
+  .art-mark { fill: none; stroke: var(--muted); stroke-width: 1.5; stroke-dasharray: 4 5; opacity: .7; }
+
+  /* ——— 正文排版 —— 这个模板的重点 ——— */
+  .prose { font-size: var(--fs-prose); line-height: 1.8; }
+  .prose > p { margin-block: 0 var(--s5); text-wrap: pretty; }
+  .prose > p:last-child { margin-bottom: 0; }
+
+  /* 首段稍大，做一个软性的「引子」 */
+  .prose__lead { font-size: var(--fs-md); line-height: 1.8; }
+
+  .prose h2 {
+    /* 手机 24 → 桌面 28，保住 h1 32 > h2 24 > h3 20 > 正文 18 的层级 */
+    font-size: clamp(24px, 3.4vw, var(--fs-lg));
+    margin-block: var(--s7) var(--s5);
+    scroll-margin-top: calc(var(--s7) + var(--s5)); /* 顶栏 64 + 呼吸 24，别写死 88 */
+  }
+  .prose h3 {
+    font-size: var(--fs-md);
+    font-weight: 600;
+    margin-block: var(--s6) var(--s4);
+  }
+  /* 章节号：等宽 + 强调色，全篇唯一的「编号系统」，与有序列表的 01/02 呼应 */
+  .sec-num {
+    display: block;
+    font-family: var(--mono);
+    font-size: var(--fs-xs);
+    font-weight: 700;
+    color: var(--accent);
+    letter-spacing: 0.18em;
+    margin-bottom: var(--s2);
+  }
+
+  .prose a {
+    color: var(--accent);
+    text-decoration: underline;
+    text-decoration-color: var(--accent-mid);
+    text-decoration-thickness: 1px;
+    text-underline-offset: 3px;
+    transition: color .15s ease, text-decoration-color .15s ease;
+  }
+  .prose a:hover { color: var(--accent-ink); text-decoration-color: var(--accent-ink); }
+  .prose strong { font-weight: 700; }
+
+  /* 行内代码 */
+  .prose code {
+    font-family: var(--mono);
+    font-size: .86em;
+    background: var(--tint);
+    color: var(--accent-ink);
+    padding: 2px var(--s1);
+    border-radius: 4px;
+    white-space: nowrap;
+  }
+
+  /* 引用块：一条强调色细线，不加引号图标、不加底色 */
+  .prose blockquote {
+    margin: var(--s6) 0;
+    padding-left: var(--s5);
+    border-left: 2px solid var(--accent);
+  }
+  .prose blockquote p {
+    margin: 0;
+    font-size: var(--fs-md);
+    line-height: 1.75;
+    color: var(--text);
+  }
+  .prose blockquote cite {
+    display: block;
+    margin-top: var(--s3);
+    font-style: normal;
+    font-size: var(--fs-sm);
+    color: var(--muted);
+  }
+
+  /* 列表：自绘 marker，不依赖 ::marker 的浏览器差异 */
+  .prose ul, .prose ol { margin: var(--s5) 0; padding: 0; list-style: none; }
+  .prose li { margin-bottom: var(--s3); }
+  .prose li:last-child { margin-bottom: 0; }
+  .prose ul li { position: relative; padding-left: var(--s5); }
+  .prose ul li::before {
+    content: "";
+    position: absolute;
+    left: 2px;
+    top: .72em;
+    width: 6px;
+    height: 6px;
+    border-radius: 2px;
+    background: var(--accent);
+  }
+  .prose ol { counter-reset: li; }
+  .prose ol li { position: relative; padding-left: var(--s6); counter-increment: li; }
+  .prose ol li::before {
+    content: counter(li, decimal-leading-zero);
+    position: absolute;
+    left: 0;
+    top: 0;
+    font-family: var(--mono);
+    font-size: var(--fs-sm);
+    font-weight: 700;
+    line-height: 1.95;
+    color: var(--accent);
+  }
+
+  /* 代码块：深色断点 + 文件名栏 */
+  .code {
+    margin: var(--s5) 0;
+    background: var(--code-bg);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+  .code__bar {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    padding: var(--s3) var(--s4);
+    border-bottom: 1px solid var(--code-line);
+    font-family: var(--mono);
+    font-size: var(--fs-sm);
+    color: var(--code-muted);
+  }
+  .code__dot { flex: none; width: 6px; height: 6px; border-radius: 2px; background: var(--accent-lite); }
+  .code pre {
+    margin: 0;
+    padding: var(--s4);
+    overflow-x: auto;                /* 长行自己横向滚，不许把页面撑破 */
+    -webkit-overflow-scrolling: touch;
+  }
+  .code code {
+    display: block;
+    font-family: var(--mono);
+    font-size: var(--fs-sm);
+    line-height: 1.85;
+    color: var(--code-fg);
+    /* 代码块在 .prose 里，所以上面那条「行内代码」的 .prose code 也命中这里 —— 两条特异度
+       同为 (0,1,1)，只有靠源码顺序压住。color 压掉了，background/padding/radius 没有：
+       浅底(--tint)就会糊在深色块里，配着为深底调的字色 = 浅字浅底，整块读不了。
+       必须逐条清干净，别只改 color。 */
+    background: none;
+    padding: 0;
+    border-radius: 0;
+    white-space: pre;                /* 表格要对齐，不能折行 */
+  }
+  .code .c { color: var(--code-muted); }  /* 注释 */
+  .code .k { color: var(--accent-lite); } /* 强调 */
+
+  /* 分隔线 */
+  .rule { border: 0; border-top: 1px solid var(--line); margin: var(--s7) 0; }
+
+  /* ——— 文末作者卡 ——— */
+  .author {
+    display: flex;
+    gap: var(--s4);
+    background: var(--bg);
+    border-radius: var(--radius);
+    padding: var(--s5);
+  }
+  .author .avatar {
+    width: var(--s7);
+    height: var(--s7);
+    font-size: var(--fs-md);
+  }
+  .author__name { font-size: var(--fs-md); font-weight: 600; line-height: 1.3; }
+  .author__role { margin-top: var(--s1); font-size: var(--fs-sm); color: var(--muted); }
+  .author__bio { margin-top: var(--s3); font-size: var(--fs-base); line-height: 1.8; color: var(--muted); }
+
+  .link {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s2);
+    margin-top: var(--s4);
+    font-size: var(--fs-sm);
+    font-weight: 600;
+    color: var(--accent);
+    border-bottom: 1px solid var(--accent-mid);
+    padding-bottom: 2px;
+    transition: color .15s ease, border-color .15s ease;
+  }
+  .link:hover { color: var(--accent-ink); border-bottom-color: var(--accent-ink); }
+  .link svg { flex: none; transition: transform .15s ease; }
+  .link:hover svg { transform: translateX(3px); }
+
+  /* ——— 上 / 下一篇 ——— */
+  .pager {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--s5);
+    margin-top: var(--s7);
+    padding-top: var(--s5);
+    border-top: 1px solid var(--line);
+  }
+  .pager__item {
+    display: block;
+    color: var(--text);
+    padding: var(--s4);
+    margin: calc(var(--s4) * -1);
+    border-radius: var(--radius);
+    transition: background .15s ease;
+  }
+  a.pager__item:hover { background: var(--bg); }
+  .pager__item--next { text-align: right; }
+  .pager__label {
+    display: block;
+    font-family: var(--mono);
+    font-size: var(--fs-xs);
+    color: var(--muted);
+    letter-spacing: 0.1em;
+    margin-bottom: var(--s2);
+    transition: color .15s ease;
+  }
+  a.pager__item:hover .pager__label { color: var(--accent); }
+  .pager__title { font-size: var(--fs-base); font-weight: 600; line-height: 1.55; }
+  /* 「暂无」态：这是最新的一篇，下一篇没有东西可指——就不做成链接 */
+  .pager__item--none { color: var(--muted); }
+  .pager__item--none .pager__title { font-weight: 400; color: var(--muted); }
+
+  /* ——— 页脚（与 index.html 同一份） ——— */
+  .site-foot {
+    margin-top: var(--s7);
+    border-top: 1px solid var(--line);
+    padding: var(--s6) 0;
+  }
+  .site-foot__in {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s4);
+    color: var(--muted);
+    font-size: var(--fs-sm);
+  }
+  .site-foot__links { display: flex; flex-wrap: wrap; gap: var(--s5); }
+  .site-foot__links a { color: var(--muted); }
+  .site-foot__links a:hover { color: var(--accent); }
+  .site-foot__c { font-family: var(--mono); font-size: var(--fs-xs); }
+  .site-foot__note { width: 100%; color: var(--muted); font-size: var(--fs-sm); }
+
+  /* ——— 响应式 ——— */
+  @media (max-width: 640px) {
+    .wrap { padding-inline: var(--s4); }
+    /* 手机上纸张通铺：省下来的边距还给正文，一行才能有 ~19 个汉字 */
+    .wrap--sheet { padding-inline: 0; }
+    .sheet {
+      border-radius: 0;
+      border-inline: 0;
+      padding: var(--s6) var(--s5);
+      margin-block: 0 var(--s6);
+    }
+    .site-head__in { min-height: 56px; }
+    .nav a { padding: 0 var(--s2); }
+    .head__dek { font-size: var(--fs-base); max-width: none; }
+    .badge { margin-left: 0; }
+    .prose__lead { font-size: var(--fs-prose); }
+    .author { flex-direction: column; gap: var(--s3); }
+    .pager { grid-template-columns: 1fr; gap: 0; }
+    .pager__item { margin: 0; padding: var(--s4) 0; }
+    .pager__item--next { text-align: left; border-top: 1px solid var(--line-soft); }
+    a.pager__item:hover { background: transparent; }
+    a.pager__item:hover .pager__title { color: var(--accent); }
+  }
+
+  @media (max-width: 420px) {
+    .nav__label { position: absolute; left: -9999px; }
+    .nav__rss { padding: 0 var(--s3); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; scroll-behavior: auto; }
+  }
+</style>
+</head>
+<body>
+
+<a class="skip" href="#main">跳到正文</a>
+
+<!-- ═══════════ 顶栏：与 index.html 逐字相同，只是 aria-current 落在「文章」上 ═══════════ -->
+<header class="site-head">
+  <div class="wrap site-head__in">
+    <a class="brand" href="index.html">
+      <span class="brand__mark" aria-hidden="true">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <path d="M3 16c2.5 0 2.5-3 5-3s2.5 3 5 3 2.5-3 5-3 2.5 3 3 3"/>
+          <path d="M3 9c2.5 0 2.5-3 5-3s2.5 3 5 3 2.5-3 5-3 2.5 3 3 3" opacity=".5"/>
+        </svg>
+      </span>
+      溪岸笔记
+    </a>
+    <nav class="nav" aria-label="主导航">
+      <a href="index.html" aria-current="page">文章</a>
+      <a href="index.html#archive">归档</a>
+      <a href="index.html#about">关于</a>
+      <a class="nav__rss" href="index.html#subscribe">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true">
+          <path d="M4 11a9 9 0 0 1 9 9"/>
+          <path d="M4 4a16 16 0 0 1 16 16"/>
+          <circle cx="5" cy="19" r="1.4" fill="currentColor" stroke="none"/>
+        </svg>
+        <span class="nav__label">RSS</span>
+      </a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <div class="wrap wrap--sheet">
+    <article class="sheet">
+
+      <!-- ═══════════ 文章头 —— 标题 / 日期 / 作者 / 标签 / 摘要
+           必须和 index.html 里那条「置顶文章」逐字对得上 ═══════════ -->
+      <header class="head">
+        <div class="head__top">
+          <span class="kicker">技术随笔 / No.068</span>
+          <span class="tags">
+            <span class="tag">Go</span><span class="tag">技术随笔</span><span class="tag">造轮子</span>
+          </span>
+          <span class="badge">示例内容</span>
+        </div>
+
+        <h1>用 Go 写了个 300 行的静态博客生成器，然后我把它删了</h1>
+
+        <p class="head__dek">花了三个周末，从模板引擎写到增量构建，最后发现我真正需要的只是一个把 Markdown 转成 HTML 的函数。这篇聊聊「造轮子」的收益到底在哪里——不在轮子，在造的过程里你终于搞懂了那些一直没看懂的东西。</p>
+
+        <div class="byline">
+          <span class="avatar" aria-hidden="true">林</span>
+          <p class="byline__text">
+            <span class="byline__name">林知远</span><br>
+            <time datetime="2026-07-14">2026 年 7 月 14 日</time>
+            <span class="byline__sep">·</span>约 12 分钟阅读
+            <span class="byline__sep">·</span>更新于 2026 年 7 月 16 日
+          </p>
+        </div>
+      </header>
+
+      <!-- ═══════════ 头图占位 ═══════════ -->
+      <figure class="figure">
+        <div class="figure__art">
+          <svg viewBox="0 0 800 420" role="img" aria-labelledby="fig1-title" preserveAspectRatio="xMidYMid meet">
+            <title id="fig1-title">静态博客生成器的三段流水线示意：Markdown 源文件、300 行的生成器、输出的 HTML 页面</title>
+
+            <!-- 左：content/ 里的 Markdown 源文件（三张叠起来） -->
+            <rect class="art-grid" x="76" y="118" width="112" height="148" rx="6"/>
+            <rect class="art-grid" x="68" y="128" width="112" height="148" rx="6"/>
+            <rect class="art-ink"  x="60" y="138" width="112" height="148" rx="6"/>
+            <!-- front matter 那几行标成强调色 -->
+            <rect class="art-fill" x="76" y="154" width="36" height="6" rx="3"/>
+            <rect class="art-fill" x="76" y="168" width="52" height="6" rx="3" opacity=".55"/>
+            <path class="art-axis" d="M76 194 H150 M76 212 H136 M76 230 H156 M76 248 H128" opacity=".45"/>
+
+            <!-- 箭头 1 -->
+            <path class="art-axis" d="M186 212 H250"/>
+            <path class="art-axis" d="M240 204 L252 212 L240 220"/>
+
+            <!-- 中：300 行的生成器（一个「代码窗口」） -->
+            <rect class="art-ink" x="268" y="112" width="264" height="200" rx="10"/>
+            <path class="art-grid" d="M268 150 H532"/>
+            <circle class="art-fill" cx="290" cy="131" r="5"/>
+            <circle class="art-fill" cx="306" cy="131" r="5" opacity=".5"/>
+            <circle class="art-fill" cx="322" cy="131" r="5" opacity=".25"/>
+            <!-- 代码行 -->
+            <path class="art-axis" d="M292 178 H420 M292 200 H468" opacity=".45"/>
+            <!-- 高亮：后来被删掉的 90 行增量构建 -->
+            <rect class="art-fill" x="284" y="216" width="232" height="36" rx="5" opacity=".16"/>
+            <path class="art-line" d="M292 228 H452" stroke-width="2.5"/>
+            <path class="art-line" d="M312 244 H396" stroke-width="2.5" opacity=".6"/>
+            <path class="art-axis" d="M292 270 H444 M292 292 H408" opacity=".45"/>
+
+            <!-- 箭头 2 -->
+            <path class="art-axis" d="M548 212 H612"/>
+            <path class="art-axis" d="M602 204 L614 212 L602 220"/>
+
+            <!-- 右：public/ 里生成出来的 HTML 页面 -->
+            <rect class="art-grid" x="644" y="118" width="112" height="148" rx="6"/>
+            <rect class="art-grid" x="636" y="128" width="112" height="148" rx="6"/>
+            <rect class="art-ink"  x="628" y="138" width="112" height="148" rx="6"/>
+            <rect class="art-fill" x="644" y="156" width="58" height="8" rx="4"/>
+            <path class="art-axis" d="M644 186 H724 M644 204 H708 M644 222 H726 M644 240 H700" opacity=".45"/>
+
+            <!-- 右侧「发出去了」的弧线（纯装饰） -->
+            <path class="art-ring" d="M772 180 q16 32 0 64" opacity=".35"/>
+            <path class="art-ring" d="M790 162 q22 50 0 100" opacity=".2"/>
+          </svg>
+        </div>
+        <figcaption><span>300 行的全部：走一遍 <strong>content/</strong>、套模板、写到 <strong>public/</strong>。中间那段高亮就是后来被删掉的 90 行增量构建。<strong>示例图片</strong>——正式上线时请换成你自己的架构图或截图。</span></figcaption>
+      </figure>
+
+      <!-- ═══════════ 正文 ═══════════ -->
+      <div class="prose">
+
+        <p class="prose__lead">
+          2025 年 12 月的三个周末，我用 Go 写完了一个静态博客生成器。300 行，从 Markdown 解析到增量构建，跑一次 0.5 秒。它工作得很好，我用了七个月——然后上个月的一个周二下午，我把整个仓库删了。
+        </p>
+
+        <p>
+          这不是一篇「我造了个轮子快来用」的文章。恰恰相反。我想说清楚的是另一件事：造轮子的收益到底结算在哪个账户上——如果你记错了账，同样三个周末，可以是血赚，也可以是血亏。
+        </p>
+
+        <h2 id="why"><span class="sec-num">01</span>一开始只是想少装一个东西</h2>
+
+        <p>
+          起因很无聊。博客原本用的是一个成熟的生成器，一切正常，直到某天我想改一下标签页的排序方式。翻了四十分钟文档，最后在一个 2019 年的 issue 里找到答案：不支持，而且不打算支持。
+        </p>
+
+        <p>
+          那天晚上我算了一笔账。我的需求只有三条：把 <code>content/</code> 里的 Markdown 转成 HTML、套一个模板、写到 <code>public/</code>。就这三条。为了它们，我的机器上装着一个 60 MB 的二进制，和一整套我这辈子都不会用到的 taxonomy 系统。
+        </p>
+
+        <blockquote>
+          <p>工具的复杂度不会消失，它只会从你的代码里搬到你的文档里。</p>
+          <cite>—— 组里的老陈，在一次没人记得起因的争论里</cite>
+        </blockquote>
+
+        <h2 id="lines"><span class="sec-num">02</span>300 行都花在哪了</h2>
+
+        <h3>第一个能跑的版本只有 96 行</h3>
+
+        <p>
+          那天晚上 11 点跑通的时候我是真的开心。<code>filepath.WalkDir</code> 走一遍目录，<code>html/template</code> 套模板，<code>os.WriteFile</code> 写出去——标准库把这三件事都做完了，我只是把它们连起来。
+        </p>
+
+        <p>
+          真正让它从 96 行涨到 300 行的，是后面那些「顺手加一下」：front matter、标签页、RSS，还有那个后来要了我命的增量构建。删之前最后一版的行数结算长这样：
+        </p>
+
+        <div class="code">
+          <div class="code__bar">
+            <span class="code__dot" aria-hidden="true"></span>
+            <span>行数结算.txt</span>
+          </div>
+          <pre><code><span class="c"># gen.go —— 300 行的全部，删掉之前的最后一版</span>
+<span class="c"># go run . -in content/ -out public/</span>
+
+阶段        行数    做的事
+<span class="k">解析</span>        68 行   走一遍 content/，读 front matter
+<span class="k">渲染</span>        94 行   html/template + 一个 Markdown 函数
+<span class="k">增量</span>        90 行   比 mtime，决定跳过谁      ← 上个月删的就是这段
+<span class="k">写盘</span>        31 行   os.MkdirAll + os.WriteFile
+<span class="k">其它</span>        17 行   flag、log、main
+
+<span class="c"># 68 篇文章：全量 0.5s / 增量 0.1s —— 30% 的代码，省下 0.4 秒</span></code></pre>
+        </div>
+
+        <p>
+          你先记住最后那一行注释。整篇文章的关键都在那 <code>0.4</code> 秒里。
+        </p>
+
+        <h2 id="incr"><span class="sec-num">03</span>我为一个不存在的问题写了 90 行</h2>
+
+        <p>
+          90 行，占了整个程序的 30%，用来做一件事：跳过没改过的文章。它做得很漂亮，全量 0.5 秒，增量 0.1 秒。我给自己省下了 0.4 秒。
+        </p>
+
+        <p>
+          0.4 秒。写这 90 行花掉我一个周末，按每天构建 20 次算，这笔投资要跑将近 <strong>20 年</strong>才能回本——前提还是这 20 年里它一个 bug 都不出。
+        </p>
+
+        <p>
+          而它出了 bug。
+        </p>
+
+        <h3>mtime 是个骗子</h3>
+
+        <p>
+          <code>git clone</code> 之后，所有文件的 mtime 都是 clone 那一刻；<code>git checkout</code> 切分支，会把一批文件的 mtime 改成现在。而我在 CI 里两件事都干了。结果就是缓存永远不命中——增量构建在 CI 上从来没有生效过，一次都没有，而我为它维护了七个月。
+        </p>
+
+        <p>
+          我是在给下面这张图收集数据的时候才发现的。
+        </p>
+
+        <figure class="figure">
+          <div class="figure__art">
+            <svg viewBox="0 0 800 340" role="img" aria-labelledby="fig2-title" preserveAspectRatio="xMidYMid meet">
+              <title id="fig2-title">构建耗时随文章数变化：全量构建线性上升，增量构建近乎持平，两条线在 68 篇处尚未分开</title>
+              <!-- 网格 -->
+              <path class="art-grid" d="M40 80 H760 M40 160 H760 M40 240 H760"/>
+              <!-- 坐标轴：横轴=文章数，纵轴=构建耗时 -->
+              <path class="art-axis" d="M40 280 H760 M40 40 V280"/>
+              <!-- 全量构建：面积 + 曲线 -->
+              <path class="art-area" d="M40 272 L148 258 L256 238 L400 200 L544 146 L760 60 L760 280 L40 280 Z"/>
+              <path class="art-line" d="M40 272 L148 258 L256 238 L400 200 L544 146 L760 60"/>
+              <!-- 增量构建：几乎是一条平线 -->
+              <path class="art-flat" d="M40 274 L760 266"/>
+              <!-- 我真实所在的位置：68 篇 -->
+              <path class="art-mark" d="M96 40 V280"/>
+              <circle class="art-dot" cx="96" cy="265" r="6"/>
+              <circle class="art-dot" cx="400" cy="200" r="7"/>
+              <circle class="art-dot" cx="760" cy="60" r="7"/>
+            </svg>
+          </div>
+          <figcaption><span>横轴是文章数（0 → 5000 篇），纵轴是构建耗时。实线是全量构建，虚线是增量构建；那条竖线是我真实的文章数——<strong>68 篇</strong>，两条线在那里还没分开。<strong>示例数据</strong>——请换成你自己的 benchmark。</span></figcaption>
+        </figure>
+
+        <p>
+          两条线要到几千篇才真的分得开。而我这辈子大概写不到那个数。
+        </p>
+
+        <h2 id="delete"><span class="sec-num">04</span>删掉它的那天</h2>
+
+        <p>
+          上个月的一个周二下午，我在改一个 bug：某篇文章的标签里有个中文逗号，生成出来的 URL 是坏的。改到第二个小时，我停下来问了自己一个问题——我到底在维护什么？
+        </p>
+
+        <ol>
+          <li><strong>它没有用户。</strong>除了我，全世界没有第二个人跑过这个程序。</li>
+          <li><strong>它没有测试。</strong>300 行里一行测试都没有。我一直觉得「这么小的东西不用测」。</li>
+          <li><strong>它没有文档。</strong>七个月之后，我自己都要先读一遍代码才敢动它。</li>
+        </ol>
+
+        <p>
+          一个没有用户、没有测试、没有文档，只服务于一个人、每天省下 8 秒的程序。它不是基础设施，它是一只宠物。那天下午我把 <code>content/</code> 拷了出来，删掉了仓库。
+        </p>
+
+        <h2 id="worth"><span class="sec-num">05</span>那三个周末，我到底赚到了什么</h2>
+
+        <p>
+          如果这笔账记在「我有一个生成器」上，那是血亏——七个月之后它就归零了。但它不该记在那里。真正留下来的是这些：
+        </p>
+
+        <ul>
+          <li><strong>我终于搞懂了 html/template 的自动转义。</strong>用了六年，一直只知道「它会转义」。自己写一遍才明白 <code>template.HTML</code> 为什么必须是显式类型转换——那是一道你必须亲手拆掉的保险。</li>
+          <li><strong>我第一次真正读懂了 mtime。</strong>不是文档里那句「最后修改时间」，而是它在 clone、在 checkout、在 Docker 层里到底会变成什么。这个知识后来救过我们线上一次。</li>
+          <li><strong>我知道了那 60 MB 里装的是什么。</strong>我以为是臃肿，其实大部分是我这三个周末踩过的坑——一个一个，被别人先踩完了。</li>
+        </ul>
+
+        <p>
+          所以轮子该不该造？该造。但请把它记成一次<strong>学习</strong>的开销，而不是一次<strong>基础设施</strong>的投资：前者三个周末很值，后者三个周末远远不够。
+        </p>
+
+        <p>
+          造完之后，允许自己删掉它。留在你脑子里的那部分不会 rot。有问题欢迎<a href="index.html#subscribe">写信给我</a>，我基本每封都回。
+        </p>
+
+      </div>
+
+      <hr class="rule">
+
+      <!-- ═══════════ 作者卡（与列表页侧栏「关于」同一个人、同一段介绍） ═══════════ -->
+      <aside class="author" aria-label="关于作者">
+        <span class="avatar" aria-hidden="true">林</span>
+        <div>
+          <p class="author__name">林知远</p>
+          <p class="author__role">后端工程师 · 杭州</p>
+          <p class="author__bio">
+            写了九年服务端。相信简单的东西活得更久，也相信大部分问题在写第一行代码之前就该解决。
+          </p>
+          <a class="link" href="index.html">
+            查看全部 68 篇文章
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+              <path d="M2 7h10M8 3l4 4-4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </a>
+        </div>
+      </aside>
+
+      <!-- ═══════════ 上 / 下一篇
+           示例站只有这一篇正文页，「上一篇」先指回列表（那条文章就在列表里）；
+           AI 生成第二篇正文后，把 href 换成对应的文件名即可。
+           这一篇是全站最新，所以「下一篇」是「暂无」态——不做成链接，别拿 href="#" 顶。 ═══════════ -->
+      <nav class="pager" aria-label="文章导航">
+        <a class="pager__item pager__item--prev" href="index.html">
+          <span class="pager__label">← 上一篇</span>
+          <span class="pager__title">把闲置的旧笔记本改成了 homelab，一年电费 87 块</span>
+        </a>
+        <div class="pager__item pager__item--next pager__item--none">
+          <span class="pager__label">下一篇 →</span>
+          <span class="pager__title">这已经是最新的一篇了</span>
+        </div>
+      </nav>
+
+    </article>
+  </div>
+</main>
+
+<!-- ═══════════ 页脚：与 index.html 同一份 ═══════════ -->
+<footer class="site-foot">
+  <div class="wrap site-foot__in">
+    <span class="site-foot__c">© 2026 溪岸笔记 · 示例站点</span>
+    <nav class="site-foot__links" aria-label="页脚导航">
+      <a href="index.html">文章</a>
+      <a href="index.html#archive">归档</a>
+      <a href="index.html#about">关于</a>
+      <a href="index.html#subscribe">订阅</a>
+    </nav>
+    <span class="site-foot__note">本站为示例内容：人物、数据、文章与订阅表单均为占位，上线前请全部替换。</span>
+  </div>
+</footer>
+
+</body>
+</html>

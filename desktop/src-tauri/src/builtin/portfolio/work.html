@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>云溪茶室 — 林知远 / 空间摄影</title>
+<meta name="description" content="示例作品页：云溪茶室，2025 年空间摄影委托，12 张成片，全部自然光。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23E9E8E4'/%3E%3Crect x='6.5' y='8.5' width='19' height='15' rx='1.5' fill='none' stroke='%23425620' stroke-width='2'/%3E%3Ccircle cx='16' cy='16' r='3.6' fill='%23425620'/%3E%3C/svg%3E">
+<style>
+  /* ⚠️ 本页 CSS 必须整段内联：模板缩略图是把 HTML 原文塞进 iframe srcdoc 渲染的，
+     外链样式表会解析到 app 的 origin → 404 → 缩略图整块白。各页 <style> 有重复是刻意的。 */
+  :root {
+    /* ——— 设计令牌（与 index.html 逐字一致，改色板只改这里，且两页要一起改）——— */
+    --bg: #E9E8E4;        /* 画廊墙：温调中性灰 */
+    --surface: #F6F5F2;   /* 作品/卡片底，比墙更亮 —— 像被打了光 */
+    --text: #1B1A18;      /* 正文 14.2:1 */
+    --muted: #63615B;     /* 次要文字 5.1:1 */
+    --accent: #425620;    /* 唯一强调色（苔橄榄） 6.6:1 */
+    --radius: 4px;
+
+    /* 中性辅助（非强调色）：分割线与缩略图的石灰阶 */
+    --line: #D8D7D2;
+    --stone-1: #DEDDD8;
+    --stone-2: #C4C3BD;
+    --stone-3: #9C9B95;
+    --stone-4: #74736E;
+    /* 强调色的淡染，同一色相（badge：--accent 落在其上 7.0:1） */
+    --accent-soft: #ECEFE6;
+
+    /* 间距刻度：只用这些值 */
+    --s1: 4px;
+    --s2: 8px;
+    --s3: 12px;
+    --s4: 16px;
+    --s5: 24px;
+    --s6: 40px;
+    --s7: 64px;
+    --s8: 96px;   /* 画廊留白：区块之间 */
+
+    /* 字号刻度 */
+    --fs-sm: 14px;
+    --fs-base: 16px;
+    --fs-md: 20px;
+    --fs-lg: 28px;
+    --fs-xl: 40px;
+
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+            "Hiragino Sans GB", "Microsoft YaHei", "Source Han Sans SC",
+            "Noto Sans CJK SC", "WenQuanYi Micro Hei", Roboto, "Helvetica Neue",
+            Arial, sans-serif;
+
+    --container: 1080px;
+    color-scheme: light;
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: var(--fs-base);
+    line-height: 1.75;
+    letter-spacing: .01em;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1, h2, h3 { margin: 0; font-weight: 500; line-height: 1.25; letter-spacing: -.02em; }
+  p { margin: 0; }
+  ul { margin: 0; padding: 0; list-style: none; }
+  dl, dd { margin: 0; }
+  figure { margin: 0; }
+  img, svg { display: block; max-width: 100%; }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+    transition: color .2s ease, opacity .2s ease, border-color .2s ease;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 4px;
+    border-radius: var(--radius);
+  }
+
+  .wrap {
+    max-width: var(--container);
+    margin: 0 auto;
+    padding-left: var(--s5);
+    padding-right: var(--s5);
+  }
+
+  /* 通栏小标签：画廊铭牌式的字距 */
+  .eyebrow {
+    margin: 0;
+    font-size: var(--fs-sm);
+    line-height: 1.6;
+    color: var(--muted);
+    letter-spacing: .14em;
+    text-transform: uppercase;
+  }
+
+  /* ═══ 导航（与 index.html 同构；本页在站内，链接指回 index.html）═══ */
+  .nav {
+    border-bottom: 1px solid var(--line);
+    background: var(--bg);
+  }
+  .nav__in {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--s5);
+    padding-top: var(--s5);
+    padding-bottom: var(--s5);
+  }
+  .brand {
+    font-size: var(--fs-md);
+    font-weight: 500;
+    letter-spacing: .04em;
+  }
+  .brand:hover { color: var(--accent); }
+  .nav__links {
+    display: flex;
+    align-items: baseline;
+    gap: var(--s5);
+    font-size: var(--fs-sm);
+    color: var(--muted);
+  }
+  .nav__links a {
+    padding: var(--s2) 0;
+    border-bottom: 1px solid transparent;
+  }
+  .nav__links a:hover { color: var(--text); border-bottom-color: var(--accent); }
+  .nav__links a[aria-current="page"] { color: var(--text); border-bottom-color: var(--accent); }
+
+  /* ═══ 返回 ═══ */
+  .crumb { padding-top: var(--s5); }
+  .crumb a {
+    font-size: var(--fs-sm);
+    color: var(--muted);
+    border-bottom: 1px solid transparent;
+  }
+  .crumb a:hover { color: var(--accent); border-bottom-color: var(--accent); }
+
+  /* ═══ 作品头：标题 + 元信息 ═══ */
+  .head { padding-top: var(--s6); padding-bottom: var(--s7); }
+  .head h1 {
+    margin-top: var(--s3);
+    font-size: var(--fs-xl);
+    font-weight: 400;
+    max-width: 12em;   /* 中文宽度用 em；ch 按「0」字形算(≈.55em)，会让层级倒挂 */
+  }
+  .head__sub {
+    max-width: 30em;
+    margin-top: var(--s5);
+    color: var(--muted);
+    font-size: var(--fs-md);
+    line-height: 1.7;
+  }
+
+  .facts {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: var(--s5);
+    margin-top: var(--s6);
+    padding-top: var(--s5);
+    border-top: 1px solid var(--line);
+  }
+  .facts dt {
+    font-size: var(--fs-sm);
+    color: var(--muted);
+    letter-spacing: .1em;
+    text-transform: uppercase;
+  }
+  .facts dd { margin-top: var(--s1); font-size: var(--fs-base); }
+
+  /* ═══ 图组：节奏 满幅 → 并排 → 带图注 → 满幅 ═══ */
+  .gal {
+    display: grid;
+    gap: var(--s7);
+    padding-bottom: var(--s8);
+  }
+
+  /* 缩略图的调色：全部走 class，不在 SVG 属性里写 var()
+     （老 WebKit 不认 presentation attribute 里的自定义属性，图会整块糊掉） */
+  .f-s { fill: var(--surface); }
+  .f-1 { fill: var(--stone-1); }
+  .f-2 { fill: var(--stone-2); }
+  .f-3 { fill: var(--stone-3); }
+  .f-4 { fill: var(--stone-4); }
+  .f-a { fill: var(--accent); }
+  .k-3 { fill: none; stroke: var(--stone-3); }
+  .k-4 { fill: none; stroke: var(--stone-4); }
+  .g-s { stop-color: var(--surface); }
+  .g-1 { stop-color: var(--stone-1); }
+  .g-2 { stop-color: var(--stone-2); }
+
+  .shot__frame {
+    overflow: hidden;
+    border-radius: var(--radius);
+    background: var(--surface);
+  }
+  .shot__frame svg { width: 100%; height: 100%; }
+
+  .shot--hero .shot__frame { aspect-ratio: 3 / 2; }
+  .shot--pano .shot__frame { aspect-ratio: 21 / 9; }
+
+  .duo { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s5); }
+  .duo .shot__frame { aspect-ratio: 4 / 5; }
+
+  .shot--single { max-width: 760px; }
+  .shot--single .shot__frame { aspect-ratio: 4 / 3; }
+
+  /* 图注：block，不用 flex —— flex 会把裸文字和 <strong> 各自变成独立 item，图注会碎成几列 */
+  .cap {
+    display: block;
+    margin-top: var(--s3);
+    max-width: 34em;
+    font-size: var(--fs-sm);
+    color: var(--muted);
+  }
+  .cap b { color: var(--text); font-weight: 500; }
+
+  /* ═══ 项目自述 ═══ */
+  .say { max-width: 34em; }
+  .say p { font-size: var(--fs-md); line-height: 1.8; }
+  .say p + p { margin-top: var(--s4); }
+
+  /* ═══ 拍摄说明 ═══ */
+  .note {
+    display: grid;
+    grid-template-columns: 1fr 2fr;
+    gap: var(--s5) var(--s7);
+    padding-top: var(--s5);
+    border-top: 1px solid var(--line);
+  }
+  .note h2 {
+    font-size: var(--fs-sm);
+    font-weight: 400;
+    color: var(--muted);
+    letter-spacing: .14em;
+    text-transform: uppercase;
+  }
+  .note li {
+    padding: var(--s3) 0;
+    border-bottom: 1px solid var(--line);
+    font-size: var(--fs-sm);
+    color: var(--muted);
+  }
+  .note li:first-child { padding-top: 0; }
+  .note b { color: var(--text); font-weight: 500; }
+
+  /* ═══ 上一个 / 下一个 ═══ */
+  .pager {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--s5);
+    padding-top: var(--s5);
+    padding-bottom: var(--s8);
+    border-top: 1px solid var(--line);
+  }
+  .pager__item { display: block; padding-top: var(--s4); padding-bottom: var(--s4); }
+  .pager__item--next { text-align: right; }
+  .pager__dir {
+    display: block;
+    font-size: var(--fs-sm);
+    color: var(--muted);
+    letter-spacing: .1em;
+    text-transform: uppercase;
+  }
+  .pager__name {
+    display: inline-block;
+    margin-top: var(--s2);
+    font-size: var(--fs-md);
+    font-weight: 500;
+    border-bottom: 1px solid transparent;
+    transition: border-color .2s ease;
+  }
+  .pager__item:hover .pager__name,
+  .pager__item:focus-visible .pager__name { border-bottom-color: var(--accent); }
+
+  /* ═══ 页脚 ═══ */
+  .foot {
+    padding-top: var(--s7);
+    padding-bottom: var(--s7);
+    border-top: 1px solid var(--line);
+  }
+  .foot h2 { font-size: var(--fs-lg); max-width: 20em; }
+  .foot__mail {
+    display: inline-block;
+    margin-top: var(--s5);
+    font-size: var(--fs-md);
+    color: var(--accent);
+    border-bottom: 1px solid var(--line);
+    padding-bottom: var(--s1);
+  }
+  .foot__mail:hover { border-bottom-color: var(--accent); }
+  .foot__back {
+    display: inline-block;
+    margin-top: var(--s6);
+    font-size: var(--fs-sm);
+    color: var(--muted);
+    border-bottom: 1px solid var(--line);
+    padding-bottom: var(--s1);
+  }
+  .foot__back:hover { color: var(--accent); border-bottom-color: var(--accent); }
+  .foot__base {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: var(--s3);
+    margin-top: var(--s8);
+    padding-top: var(--s5);
+    border-top: 1px solid var(--line);
+    font-size: var(--fs-sm);
+    color: var(--muted);
+  }
+
+  /* ═══ 响应式 ═══ */
+  @media (max-width: 880px) {
+    .facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .note { grid-template-columns: 1fr; gap: var(--s4); }
+  }
+  @media (max-width: 640px) {
+    :root { --fs-xl: 28px; --fs-lg: 20px; }
+    .wrap { padding-left: var(--s4); padding-right: var(--s4); }
+    .nav__in { flex-wrap: wrap; gap: var(--s3); }
+    .nav__links { gap: var(--s4); }
+    .head { padding-top: var(--s5); padding-bottom: var(--s6); }
+    .head h1 { max-width: none; }
+    .head__sub { font-size: var(--fs-base); }
+    .facts { grid-template-columns: 1fr; gap: var(--s4); }
+    .gal { gap: var(--s6); padding-bottom: var(--s7); }
+    .duo { grid-template-columns: 1fr; gap: var(--s4); }
+    .say p { font-size: var(--fs-base); }
+    .shot--pano .shot__frame { aspect-ratio: 3 / 2; }
+    .pager { grid-template-columns: 1fr; gap: var(--s3); padding-bottom: var(--s7); }
+    .pager__item--next { text-align: left; }
+    .foot__base { margin-top: var(--s6); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ═══ 导航 ═══ -->
+<header class="nav">
+  <nav class="wrap nav__in" aria-label="主导航">
+    <a class="brand" href="index.html">林知远</a>
+    <div class="nav__links">
+      <a href="index.html#work" aria-current="page">作品</a>
+      <a href="index.html#about">关于</a>
+      <a href="index.html#contact">联系</a>
+    </div>
+  </nav>
+</header>
+
+<main>
+
+  <div class="wrap crumb">
+    <a href="index.html#work">← 作品集</a>
+  </div>
+
+  <!-- ═══ 作品头 ═══ -->
+  <header class="wrap head">
+    <p class="eyebrow">空间摄影 · 示例内容，请替换</p>
+    <h1>云溪茶室</h1>
+    <p class="head__sub">
+      浣花溪边的一栋老房子，改造时只留下三面墙。业主想要的不是「网红店」那种照片，
+      是它没有客人时候的样子。
+    </p>
+
+    <dl class="facts">
+      <div>
+        <dt>年份</dt>
+        <dd>2025</dd>
+      </div>
+      <div>
+        <dt>客户</dt>
+        <dd>云溪茶室 · 成都浣花溪</dd>
+      </div>
+      <div>
+        <dt>角色</dt>
+        <dd>摄影 / 后期</dd>
+      </div>
+      <div>
+        <dt>交付</dt>
+        <dd>12 张成片 · 全部自然光</dd>
+      </div>
+    </dl>
+  </header>
+
+  <!-- ═══ 图组 ═══ -->
+  <div class="wrap gal">
+
+    <!-- 满幅：一张定调的全景 -->
+    <figure class="shot shot--hero">
+      <div class="shot__frame" role="img" aria-label="示例作品图：茶室长窗，午后的光斜落在地面与长凳上">
+        <svg viewBox="0 0 900 600" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+          <defs>
+            <linearGradient id="w1" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" class="g-s"/>
+              <stop offset="1" class="g-1"/>
+            </linearGradient>
+          </defs>
+          <rect width="900" height="600" fill="url(#w1)"/>
+          <!-- 地面 -->
+          <rect y="470" width="900" height="130" class="f-2" opacity=".5"/>
+          <!-- 长窗：三格 -->
+          <rect x="86" y="70" width="300" height="400" class="f-2" opacity=".75"/>
+          <rect x="86" y="70" width="300" height="400" class="k-4" stroke-width="3" opacity=".5"/>
+          <path d="M186 70v400M286 70v400M86 236h300M86 336h300" class="k-4" stroke-width="1.6" opacity=".38"/>
+          <!-- 落在地上的光 -->
+          <path d="M300 470 L560 120 L690 120 L470 470 Z" class="f-s" opacity=".92"/>
+          <!-- 长凳 -->
+          <rect x="520" y="424" width="300" height="16" rx="3" class="f-4" opacity=".8"/>
+          <path d="M552 440v46M788 440v46" class="k-4" stroke-width="7" opacity=".8"/>
+          <!-- 吊灯 -->
+          <path d="M700 0v96" class="k-3" stroke-width="2" opacity=".6"/>
+          <path d="M664 96h72l-14 44h-44z" class="f-4" opacity=".7"/>
+          <!-- 台面上的一只壶：全页仅有的几点强调色之一 -->
+          <circle cx="640" cy="404" r="18" class="f-a" opacity=".28"/>
+        </svg>
+      </div>
+    </figure>
+
+    <!-- 项目自述：整页唯一一段完整的话 -->
+    <div class="say">
+      <p>
+        第一次去是三月的阴天，什么也没拍，坐了一下午看光怎么走。
+        老板说下午两点到四点是店里最好看的时候，我复核了三天，其实是十点四十——
+        那时光刚过窗棂，长凳上会有一条完整的影子。
+      </p>
+      <p>
+        十二张成片里有九张拍在那两个小时。剩下三张是雨天补的，
+        因为这间店下雨时也确实好看，只是好看得不一样。
+      </p>
+    </div>
+
+    <!-- 并排两张：器物与帘影，一实一虚 -->
+    <div class="duo">
+      <figure class="shot">
+        <div class="shot__frame" role="img" aria-label="示例作品图：茶壶与茶杯的静物特写">
+          <svg viewBox="0 0 400 500" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+            <rect width="400" height="500" class="f-1"/>
+            <rect y="360" width="400" height="140" class="f-s"/>
+            <!-- 壶身 -->
+            <path d="M150 360c-26-46-20-96 20-116h60c40 20 46 70 20 116z" class="f-4" opacity=".85"/>
+            <!-- 壶嘴与把手 -->
+            <path d="M230 268c26-6 44 8 50 30" class="k-4" stroke-width="7" stroke-linecap="round" opacity=".85"/>
+            <path d="M148 266c-24 4-30 26-14 40" class="k-4" stroke-width="7" stroke-linecap="round" opacity=".85"/>
+            <!-- 盖钮 -->
+            <circle cx="200" cy="236" r="9" class="f-3"/>
+            <ellipse cx="200" cy="360" rx="52" ry="8" class="f-2" opacity=".7"/>
+            <!-- 杯 -->
+            <path d="M286 360c-8-16-8-32 0-40h34c8 8 8 24 0 40z" class="f-a" opacity=".3"/>
+            <ellipse cx="303" cy="320" rx="17" ry="4" class="f-3" opacity=".6"/>
+          </svg>
+        </div>
+      </figure>
+
+      <figure class="shot">
+        <div class="shot__frame" role="img" aria-label="示例作品图：竖帘与斜落的光带">
+          <svg viewBox="0 0 400 500" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+            <defs>
+              <linearGradient id="w3" x1="0" y1="0" x2="1" y2="0">
+                <stop offset="0" class="g-s"/>
+                <stop offset="1" class="g-2"/>
+              </linearGradient>
+            </defs>
+            <rect width="400" height="500" fill="url(#w3)"/>
+            <!-- 竖帘 -->
+            <g class="k-4" stroke-width="10" opacity=".26">
+              <path d="M40 0v500M84 0v500M128 0v500M172 0v500M216 0v500M260 0v500"/>
+            </g>
+            <!-- 斜落的光带 -->
+            <path d="M0 300 L400 60 L400 150 L0 390 Z" class="f-s" opacity=".55"/>
+            <!-- 地面与器物的影 -->
+            <rect y="430" width="400" height="70" class="f-2" opacity=".6"/>
+            <ellipse cx="300" cy="452" rx="60" ry="10" class="f-4" opacity=".35"/>
+          </svg>
+        </div>
+      </figure>
+    </div>
+
+    <!-- 带图注的单张 -->
+    <figure class="shot shot--single">
+      <div class="shot__frame" role="img" aria-label="示例作品图：圆桌俯拍，两只杯子与一道光斑">
+        <svg viewBox="0 0 800 600" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+          <defs>
+            <clipPath id="w4c"><circle cx="400" cy="300" r="230"/></clipPath>
+          </defs>
+          <rect width="800" height="600" class="f-2" opacity=".45"/>
+          <circle cx="400" cy="300" r="230" class="f-1"/>
+          <g clip-path="url(#w4c)">
+            <path d="M120 600 L420 0 L620 0 L320 600 Z" class="f-s" opacity=".85"/>
+          </g>
+          <circle cx="400" cy="300" r="230" class="k-3" stroke-width="2" opacity=".5"/>
+          <!-- 杯与盘 -->
+          <circle cx="330" cy="270" r="46" class="f-3" opacity=".5"/>
+          <circle cx="330" cy="270" r="26" class="f-4" opacity=".8"/>
+          <circle cx="330" cy="270" r="16" class="f-a" opacity=".35"/>
+          <circle cx="470" cy="360" r="34" class="f-3" opacity=".45"/>
+          <circle cx="470" cy="360" r="19" class="f-4" opacity=".7"/>
+          <!-- 茶匙 -->
+          <path d="M520 250 l70 -34" class="k-4" stroke-width="6" stroke-linecap="round" opacity=".6"/>
+          <ellipse cx="516" cy="252" rx="13" ry="9" class="f-4" opacity=".6"/>
+        </svg>
+      </div>
+      <figcaption class="cap">
+        <b>07 / 10:41</b> 光刚过窗棂的那一分钟。这张没有布光，也没挪过任何一只杯子——
+        它们本来就在那儿。
+      </figcaption>
+    </figure>
+
+    <!-- 拍摄说明：字少，靠边站 -->
+    <section class="note">
+      <h2>拍摄说明</h2>
+      <ul>
+        <li><b>器材</b>　Leica Q3 · 定焦 35mm · 无三脚架（示例）</li>
+        <li><b>光线</b>　全程自然光，未补灯；阴天那三张开到 ISO 800</li>
+        <li><b>时间</b>　三次到场，共 11 小时；有效拍摄约 2 小时</li>
+        <li><b>后期</b>　只调曝光与白平衡，不修结构；交付 JPG + 原始文件</li>
+      </ul>
+    </section>
+
+    <!-- 满幅收尾：一张长横幅 -->
+    <figure class="shot shot--pano">
+      <div class="shot__frame" role="img" aria-label="示例作品图：茶室廊道全景，柱列与尽头的门">
+        <svg viewBox="0 0 1050 450" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+          <defs>
+            <linearGradient id="w5" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" class="g-s"/>
+              <stop offset="1" class="g-1"/>
+            </linearGradient>
+          </defs>
+          <rect width="1050" height="450" fill="url(#w5)"/>
+          <rect y="330" width="1050" height="120" class="f-2" opacity=".55"/>
+          <!-- 柱列：近大远小 -->
+          <g class="f-4" opacity=".75">
+            <rect x="60" y="40" width="34" height="290"/>
+            <rect x="250" y="70" width="28" height="260"/>
+            <rect x="430" y="95" width="22" height="235"/>
+            <rect x="600" y="115" width="18" height="215"/>
+            <rect x="746" y="132" width="14" height="198"/>
+          </g>
+          <!-- 柱间漏下来的光 -->
+          <g class="f-s" opacity=".7">
+            <path d="M94 330 L150 40 L250 40 L190 330 Z"/>
+            <path d="M278 330 L322 70 L430 70 L370 330 Z" opacity=".8"/>
+          </g>
+          <!-- 尽头的门 -->
+          <rect x="860" y="150" width="120" height="180" class="f-a" opacity=".18"/>
+          <rect x="860" y="150" width="120" height="180" class="k-3" stroke-width="1.5" opacity=".5"/>
+        </svg>
+      </div>
+    </figure>
+
+    <!-- 上一个 / 下一个
+         示例站只有这一个作品页，两个链接都先指回本页。
+         真做站时：每个作品建一个页（work-street-9am.html 等），把 href 换成对应文件。 -->
+    <nav class="pager" aria-label="作品间导航">
+      <a class="pager__item pager__item--prev" href="work.html">
+        <span class="pager__dir">← 上一个</span>
+        <span class="pager__name">木见家具 · 春季目录</span>
+      </a>
+      <a class="pager__item pager__item--next" href="work.html">
+        <span class="pager__dir">下一个 →</span>
+        <span class="pager__name">「街角九点」</span>
+      </a>
+    </nav>
+
+  </div>
+
+</main>
+
+<!-- ═══ 页脚 ═══ -->
+<footer class="foot wrap">
+  <h2>手上有想拍的东西？说说看。</h2>
+  <a class="foot__mail" href="mailto:hi@example.com">hi@example.com</a>
+  <br>
+  <a class="foot__back" href="index.html#work">← 回到作品集</a>
+
+  <div class="foot__base">
+    <p>© 2026 林知远摄影 · 示例站点</p>
+    <p>本页文字与图片均为占位示例，请替换为真实内容</p>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -149,8 +149,9 @@
     padding: var(--s2) 0;
     border-bottom: 2px solid transparent;
   }
+  /* [aria-current] 同时命中 "page"（就是本页）与 "true"（本页属于该分类） */
   .nav a:hover,
-  .nav a[aria-current="page"] {
+  .nav a[aria-current] {
     color: var(--text);
     border-bottom-color: var(--accent);
   }
@@ -161,7 +162,9 @@
     align-items: center;
     gap: var(--s2);
   }
-  .icon-btn {
+  /* 用 .header-actions 前缀把特异度抬到 (0,2,x)：购物车图标是 <a>，
+     否则 a:hover 与 .icon-btn:hover 同为 (0,1,1)，只能靠源码顺序压 —— 那是个坑 */
+  .header-actions .icon-btn {
     position: relative;
     display: inline-flex;
     align-items: center;
@@ -174,7 +177,8 @@
     cursor: pointer;
     transition: background .15s ease, color .15s ease;
   }
-  .icon-btn:hover { background: var(--bg); color: var(--accent); }
+  .header-actions .icon-btn:hover,
+  .header-actions .icon-btn:focus-visible { background: var(--bg); color: var(--accent); }
   .cart-count {
     position: absolute;
     top: 5px; right: 4px;
@@ -634,7 +638,7 @@
     margin-top: var(--s3);
     color: var(--muted);
     font-size: var(--fs-sm);
-    max-width: 34ch;
+    max-width: 22em;   /* 中文限宽用 em：ch 按「0」字形算（≈0.55em），拿它量中文会算错行长 */
   }
   .foot-col h3 {
     font-size: var(--fs-sm);
@@ -729,7 +733,7 @@
 <!-- 站点头 -->
 <header class="site-header">
   <div class="wrap">
-    <a class="brand" href="#">
+    <a class="brand" href="index.html">
       <svg class="mark" width="26" height="26" viewBox="0 0 32 32" fill="none" aria-hidden="true">
         <rect width="32" height="32" rx="4" fill="var(--accent)"/>
         <path d="M9 9h14l-4.2 7.4V24h-5.6v-7.6z" fill="none" stroke="var(--surface)" stroke-width="2" stroke-linejoin="round"/>
@@ -738,11 +742,13 @@
     </a>
 
     <nav class="nav" aria-label="主导航">
-      <a href="#" aria-current="page">手冲器具</a>
-      <a href="#">咖啡豆</a>
-      <a href="#">杯具</a>
-      <a href="#">冲煮指南</a>
-      <a href="#">关于溪野</a>
+      <a href="index.html">全部商品</a>
+      <!-- 本页是「手冲器具」下的一件商品，不是分类页本身 → aria-current="true"（组内当前项），
+           "page" 留给面包屑最后一节 -->
+      <a href="index.html#grid" aria-current="true">手冲器具</a>
+      <a href="index.html#grid">咖啡豆</a>
+      <a href="index.html#grid">杯具</a>
+      <a href="index.html#grid">配件</a>
     </nav>
 
     <div class="header-actions">
@@ -756,12 +762,12 @@
           <circle cx="12" cy="8" r="4"/><path d="M4.5 20c1.2-3.7 4-5.5 7.5-5.5s6.3 1.8 7.5 5.5"/>
         </svg>
       </button>
-      <button class="icon-btn" type="button" aria-label="购物车，2 件商品">
+      <a class="icon-btn" href="cart.html" aria-label="购物车，4 件商品">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M4 5h2.2l2 10.5h9.4L20 8H7"/><circle cx="9" cy="19.5" r="1.6"/><circle cx="17" cy="19.5" r="1.6"/>
         </svg>
-        <span class="cart-count" aria-hidden="true">2</span>
-      </button>
+        <span class="cart-count" aria-hidden="true">4</span>
+      </a>
     </div>
   </div>
 </header>
@@ -772,11 +778,11 @@
     <!-- 面包屑 -->
     <div class="crumb-row">
       <nav class="crumbs" aria-label="面包屑">
-        <a href="#">首页</a>
+        <a href="index.html">首页</a>
         <span class="sep" aria-hidden="true">/</span>
-        <a href="#">手冲器具</a>
+        <a href="index.html#grid">手冲器具</a>
         <span class="sep" aria-hidden="true">/</span>
-        <a href="#">分享壶</a>
+        <a href="index.html#grid">分享壶</a>
         <span class="sep" aria-hidden="true">/</span>
         <span aria-current="page">双层玻璃手冲分享壶</span>
       </nav>
@@ -912,7 +918,8 @@
 
         <hr class="rule">
 
-        <form>
+        <!-- 加购 = 提交到 cart.html（GET）：按钮保持 button 语义，又真的走得到购物车 -->
+        <form action="cart.html" method="get">
           <!-- 容量 -->
           <div>
             <div class="field-label">
@@ -920,10 +927,10 @@
               <a class="hint" href="#spec">看规格参数</a>
             </div>
             <div class="chips" role="group" aria-labelledby="cap-label">
-              <input class="vh" type="radio" name="cap" id="cap-300"><label class="chip" for="cap-300">300 ml</label>
-              <input class="vh" type="radio" name="cap" id="cap-500" checked><label class="chip" for="cap-500">500 ml</label>
-              <input class="vh" type="radio" name="cap" id="cap-700"><label class="chip" for="cap-700">700 ml</label>
-              <input class="vh" type="radio" name="cap" id="cap-1000" disabled><label class="chip" for="cap-1000">1000 ml</label>
+              <input class="vh" type="radio" name="cap" id="cap-300" value="300"><label class="chip" for="cap-300">300 ml</label>
+              <input class="vh" type="radio" name="cap" id="cap-500" value="500" checked><label class="chip" for="cap-500">500 ml</label>
+              <input class="vh" type="radio" name="cap" id="cap-700" value="700"><label class="chip" for="cap-700">700 ml</label>
+              <input class="vh" type="radio" name="cap" id="cap-1000" value="1000" disabled><label class="chip" for="cap-1000">1000 ml</label>
             </div>
           </div>
 
@@ -936,9 +943,9 @@
               <span class="hint">已选：原木</span>
             </div>
             <div class="chips" role="group" aria-labelledby="grip-label">
-              <input class="vh" type="radio" name="grip" id="grip-oak" checked><label class="chip" for="grip-oak">原木</label>
-              <input class="vh" type="radio" name="grip" id="grip-walnut"><label class="chip" for="grip-walnut">胡桃</label>
-              <input class="vh" type="radio" name="grip" id="grip-black"><label class="chip" for="grip-black">哑黑</label>
+              <input class="vh" type="radio" name="grip" id="grip-oak" value="oak" checked><label class="chip" for="grip-oak">原木</label>
+              <input class="vh" type="radio" name="grip" id="grip-walnut" value="walnut"><label class="chip" for="grip-walnut">胡桃</label>
+              <input class="vh" type="radio" name="grip" id="grip-black" value="black"><label class="chip" for="grip-black">哑黑</label>
             </div>
           </div>
 
@@ -950,7 +957,7 @@
               <button class="step-btn" type="button" aria-label="减少数量">
                 <svg width="16" height="16" viewBox="0 0 16 16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M3 8h10"/></svg>
               </button>
-              <input class="qty" type="text" inputmode="numeric" value="1" aria-label="数量">
+              <input class="qty" type="text" inputmode="numeric" name="qty" value="1" aria-label="数量">
               <button class="step-btn" type="button" aria-label="增加数量">
                 <svg width="16" height="16" viewBox="0 0 16 16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>
               </button>
@@ -976,7 +983,7 @@
 
         <!-- 配送与退换 -->
         <div class="accordion">
-          <details open>
+          <details open id="ship">
             <summary>
               配送说明
               <svg class="chev" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6l5 5 5-5"/></svg>
@@ -1083,7 +1090,7 @@
           </div>
           <div class="card-body">
             <p class="card-cat">手冲壶</p>
-            <h3 class="card-name"><a href="#">溪野 细口温控手冲壶 600ml</a></h3>
+            <h3 class="card-name"><a href="product.html">溪野 细口温控手冲壶 600ml</a></h3>
             <div class="card-meta">
               <span class="card-price">¥398</span>
               <span class="card-rate">
@@ -1108,7 +1115,7 @@
           </div>
           <div class="card-body">
             <p class="card-cat">滤杯</p>
-            <h3 class="card-name"><a href="#">陶瓷锥形滤杯 02 号</a></h3>
+            <h3 class="card-name"><a href="product.html">陶瓷锥形滤杯 02 号</a></h3>
             <div class="card-meta">
               <span class="card-price">¥128</span>
               <span class="card-rate">
@@ -1136,7 +1143,7 @@
           </div>
           <div class="card-body">
             <p class="card-cat">磨豆机</p>
-            <h3 class="card-name"><a href="#">手摇磨豆机 S2C 六星刀盘</a></h3>
+            <h3 class="card-name"><a href="product.html">手摇磨豆机 S2C 六星刀盘</a></h3>
             <div class="card-meta">
               <span class="card-price">¥468</span>
               <span class="card-rate">
@@ -1159,7 +1166,7 @@
           </div>
           <div class="card-body">
             <p class="card-cat">配件</p>
-            <h3 class="card-name"><a href="#">手冲专用电子秤（含计时）</a></h3>
+            <h3 class="card-name"><a href="product.html">手冲专用电子秤（含计时）</a></h3>
             <div class="card-meta">
               <span class="card-price">¥238</span>
               <span class="card-rate">
@@ -1180,7 +1187,7 @@
   <div class="wrap">
     <div class="foot-grid">
       <div class="foot-about">
-        <a class="brand" href="#">
+        <a class="brand" href="index.html">
           <svg class="mark" width="26" height="26" viewBox="0 0 32 32" fill="none" aria-hidden="true">
             <rect width="32" height="32" rx="4" fill="var(--accent)"/>
             <path d="M9 9h14l-4.2 7.4V24h-5.6v-7.6z" fill="none" stroke="var(--surface)" stroke-width="2" stroke-linejoin="round"/>
@@ -1193,30 +1200,30 @@
       <div class="foot-col">
         <h3>购物</h3>
         <ul>
-          <li><a href="#">全部商品</a></li>
-          <li><a href="#">新品上架</a></li>
-          <li><a href="#">套装优惠</a></li>
-          <li><a href="#">礼品卡</a></li>
+          <li><a href="index.html">全部商品</a></li>
+          <li><a href="index.html#grid">新品上架</a></li>
+          <li><a href="index.html#grid">套装优惠</a></li>
+          <li><a href="cart.html">我的购物车</a></li>
         </ul>
       </div>
 
       <div class="foot-col">
         <h3>客户服务</h3>
         <ul>
-          <li><a href="#">配送与运费</a></li>
-          <li><a href="#">退换货</a></li>
-          <li><a href="#">订单查询</a></li>
-          <li><a href="#">联系客服</a></li>
+          <li><a href="#ship">配送与运费</a></li>
+          <li><a href="#ship">退换货</a></li>
+          <li><a href="cart.html">订单查询</a></li>
+          <li><a href="#contact">联系客服</a></li>
         </ul>
       </div>
 
       <div class="foot-col">
         <h3>关于</h3>
         <ul>
-          <li><a href="#">品牌故事</a></li>
-          <li><a href="#">冲煮指南</a></li>
-          <li><a href="#">线下门店</a></li>
-          <li><a href="#">批发合作</a></li>
+          <li><a href="#about">品牌故事</a></li>
+          <li><a href="#detail">冲煮指南</a></li>
+          <li><a href="#store">线下门店</a></li>
+          <li><a href="#contact">批发合作</a></li>
         </ul>
       </div>
     </div>

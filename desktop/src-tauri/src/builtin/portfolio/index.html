@@ -130,6 +130,7 @@
     border-bottom: 1px solid transparent;
   }
   .nav__links a:hover { color: var(--text); border-bottom-color: var(--accent); }
+  .nav__links a[aria-current="page"] { color: var(--text); border-bottom-color: var(--accent); }
 
   /* ═══ 头部自述 ═══ */
   .hero { padding-top: var(--s8); padding-bottom: var(--s8); }
@@ -368,7 +369,7 @@
   <nav class="wrap nav__in" aria-label="主导航">
     <a class="brand" href="#top">林知远</a>
     <div class="nav__links">
-      <a href="#work">作品</a>
+      <a href="#work" aria-current="page">作品</a>
       <a href="#about">关于</a>
       <a href="#contact">联系</a>
     </div>
@@ -402,7 +403,7 @@
     <div class="grid">
 
       <!-- 作品 1：茶室长窗 -->
-      <a class="work" href="#work">
+      <a class="work" href="work.html">
         <div class="work__frame" role="img" aria-label="示例缩略图：茶室长窗与光斑">
           <svg viewBox="0 0 400 300" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
             <defs>
@@ -433,7 +434,7 @@
       </a>
 
       <!-- 作品 2：家具目录 -->
-      <a class="work" href="#work">
+      <a class="work" href="work.html">
         <div class="work__frame" role="img" aria-label="示例缩略图：椅子的侧影与投影">
           <svg viewBox="0 0 400 300" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
             <defs>
@@ -469,7 +470,7 @@
       </a>
 
       <!-- 作品 3：个人项目 街角九点 -->
-      <a class="work" href="#work">
+      <a class="work" href="work.html">
         <div class="work__frame" role="img" aria-label="示例缩略图：清晨街道的斜切光影">
           <svg viewBox="0 0 400 300" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
             <defs>
@@ -503,7 +504,7 @@
       </a>
 
       <!-- 作品 4：咖啡品牌 -->
-      <a class="work" href="#work">
+      <a class="work" href="work.html">
         <div class="work__frame" role="img" aria-label="示例缩略图：吧台前的人物剪影">
           <svg viewBox="0 0 400 300" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
             <defs>
@@ -530,7 +531,7 @@
       </a>
 
       <!-- 作品 5：花艺静物 -->
-      <a class="work" href="#work">
+      <a class="work" href="work.html">
         <div class="work__frame" role="img" aria-label="示例缩略图：瓶花静物">
           <svg viewBox="0 0 400 300" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
             <rect width="400" height="300" class="f-1"/>
@@ -555,7 +556,7 @@
       </a>
 
       <!-- 作品 6：民宿 -->
-      <a class="work" href="#work">
+      <a class="work" href="work.html">
         <div class="work__frame" role="img" aria-label="示例缩略图：远山与院墙">
           <svg viewBox="0 0 400 300" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
             <defs>
@@ -584,7 +585,7 @@
       </a>
 
       <!-- 作品 7：书店纪实 -->
-      <a class="work" href="#work">
+      <a class="work" href="work.html">
         <div class="work__frame" role="img" aria-label="示例缩略图：书架与读者">
           <svg viewBox="0 0 400 300" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
             <rect width="400" height="300" class="f-s"/>
@@ -621,7 +622,7 @@
       </a>
 
       <!-- 作品 8：个人项目 潮汐 -->
-      <a class="work" href="#work">
+      <a class="work" href="work.html">
         <div class="work__frame" role="img" aria-label="示例缩略图：海面与地平线">
           <svg viewBox="0 0 400 300" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
             <defs>

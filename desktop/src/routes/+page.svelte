@@ -2107,7 +2107,7 @@
 
   // ---------- 模板库 ----------
   // builtin＝Pilot 随附的起始模板：删不掉（后端也拒），created_at 恒 0（列表里自然沉底）。
-  type Template = { slug: string; name: string; desc: string; category: string; created_at: number; builtin: boolean };
+  type Template = { slug: string; name: string; desc: string; category: string; pages: number; created_at: number; builtin: boolean };
   let templates = $state<Template[]>([]);
   let templatesLoading = $state(false);
   let tmplHtml = $state<Record<string, string>>({}); // 每个模板的入口 HTML，做真实缩略图
@@ -2120,10 +2120,12 @@
   const catOf = (t: Template) => (t.builtin ? t.category || '其他' : CAT_MINE);
   const tmplCats = $derived.by(() => {
     const has = new Set(templates.map(catOf));
-    const out = CAT_ORDER.filter((c) => has.has(c));
+    // 「自建」紧跟「全部」：它俩是「看什么范围」，后面那些才是「按页型筛」——
+    // 同一类的摆一起，别让自建漂在页型清单的尾巴上。
+    const out = has.has(CAT_MINE) ? [CAT_MINE] : [];
+    out.push(...CAT_ORDER.filter((c) => has.has(c)));
     // 后端将来加了新分类，前端不用跟着改也不会把它漏掉
     for (const c of has) if (c !== CAT_MINE && !out.includes(c)) out.push(c);
-    if (has.has(CAT_MINE)) out.push(CAT_MINE);
     return out;
   });
   // 视图里只按分类筛。**按关键词找模板走全局搜索**（那里能一处搜到会话/任务/托管/模板，
@@ -3726,9 +3728,9 @@
           <div class="th-line"><b>模板库</b><small class="tmpl-hint">把做好的站点存成模板，之后引用它快速起新项目</small></div>
           {#if templates.length}
             <div class="tmpl-chips">
-              <button class="tmpl-chip {tmplCat === '全部' ? 'on' : ''}" onclick={() => (tmplCat = '全部')}>全部<span class="tc-n">{templates.length}</span></button>
+              <button class="tmpl-chip {tmplCat === '全部' ? 'on' : ''}" onclick={() => (tmplCat = '全部')}>{@render catIcon('全部')}全部<span class="tc-n">{templates.length}</span></button>
               {#each tmplCats as c (c)}
-                <button class="tmpl-chip {tmplCat === c ? 'on' : ''}" onclick={() => (tmplCat = c)}>{c}<span class="tc-n">{templates.filter((t) => catOf(t) === c).length}</span></button>
+                <button class="tmpl-chip {tmplCat === c ? 'on' : ''}" onclick={() => (tmplCat = c)}>{@render catIcon(c)}{c}<span class="tc-n">{templates.filter((t) => catOf(t) === c).length}</span></button>
               {/each}
             </div>
           {/if}
@@ -3765,7 +3767,8 @@
                   <div class="tmpl-body">
                     <b>{t.name}</b>
                     <!-- 随附模板 created_at 恒 0，relTime 会渲染成 1970 的「1/1」——改显「内置」 -->
-                    <div class="tmpl-sub"><span class="tmpl-desc">{t.desc || ''}</span><span class="tmpl-meta">{t.builtin ? '内置' : relTime(t.created_at)}</span></div>
+                    <!-- 「N 页」只在多页时挂：模板的单位是「一个站」，几页是**引用前就该知道**的事 -->
+                    <div class="tmpl-sub"><span class="tmpl-desc">{t.desc || ''}</span><span class="tmpl-meta">{#if t.pages > 1}<span class="tmpl-pg">{t.pages} 页</span>{/if}{t.builtin ? '内置' : relTime(t.created_at)}</span></div>
                   </div>
                 </div>
               {/each}
@@ -4138,6 +4141,15 @@
 
 {#snippet brainTag(brain: string, label: string)}<span class="btag"><BrainIcon {brain} size={12} />{label}</span>{/snippet}
 
+<!-- 只有「全部」「自建」带图标：这两个是**看什么范围**，后面那排是**按页型筛**。
+     给每个都配图标反而把这层区别抹平了。 -->
+{#snippet catIcon(c: string)}
+  {#if c === '全部'}
+    <svg class="tc-ic" width="11" height="11" viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="1.5" width="5.6" height="5.6" rx="1.3" fill="currentColor" /><rect x="8.9" y="1.5" width="5.6" height="5.6" rx="1.3" fill="currentColor" /><rect x="1.5" y="8.9" width="5.6" height="5.6" rx="1.3" fill="currentColor" /><rect x="8.9" y="8.9" width="5.6" height="5.6" rx="1.3" fill="currentColor" /></svg>
+  {:else if c === CAT_MINE}
+    <svg class="tc-ic" width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="8" cy="5" r="2.7" stroke="currentColor" stroke-width="1.5" /><path d="M2.9 14c0-2.7 2.3-4.4 5.1-4.4s5.1 1.7 5.1 4.4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" /></svg>
+  {/if}
+{/snippet}
 {#snippet refreshIcon(spinning: boolean)}
   <svg class="rfz {spinning ? 'spin' : ''}" width="15" height="15" viewBox="0 0 24 24" fill="none">
     <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" />
@@ -5728,12 +5740,16 @@
   /* 提示挪到标题**同一行**了。`.th-info small` 那 2px 上间距是给「标题下面那行」准备的，
      这里得清掉；选择器带上 .tmpl-hint 才压得过它（它带元素选择器，分更高）。 */
   .th-info small.tmpl-hint { margin-top: 0; color: var(--faint); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .tmpl-chips { display: flex; flex-wrap: wrap; gap: 2px; margin-top: 5px; }
-  /* 无外框：选中靠实底药丸，不靠描边 */
-  .tmpl-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border: 0; border-radius: 999px; background: transparent; color: var(--dim); font-size: 12px; cursor: pointer; }
-  .tmpl-chip:hover { color: var(--text); background: var(--border); }
+  /* margin-left 抵掉第一枚筹码的左内边距（那 8px 是点击热区，不该算进视觉边）——
+     不抵的话整排会比上面的「模板库」缩进 8px，看着就是没对齐。 */
+  .tmpl-chips { display: flex; flex-wrap: wrap; gap: 2px; margin-top: 5px; margin-left: -8px; }
+  /* 无外框、无底：选中只靠**颜色加重**（--dim → --text）。
+     ★ 故意不动 font-weight：字重一变宽度就变，点一下整排筹码会跟着挪位。 */
+  .tmpl-chip { display: inline-flex; align-items: center; gap: 3px; padding: 3px 8px; border: 0; border-radius: 999px; background: transparent; color: var(--dim); font-size: 12px; cursor: pointer; }
+  .tmpl-chip:hover { color: var(--text); }
   .tmpl-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-  .tmpl-chip.on { background: var(--text); color: var(--bg); }
+  .tmpl-chip.on { color: var(--text); }
+  .tc-ic { flex: none; margin-right: 1px; opacity: 0.7; }
   .tc-n { font-size: 10px; opacity: 0.55; font-variant-numeric: tabular-nums; }
   /* ★ 240 是**默认窗口能放下两列**倒推出来的，别再往上调：
      默认 820 宽、左栏 240 → 内容 580，减 48 内边距 = 532。两列 = 2*240+12 = 492 ✓。
@@ -5757,7 +5773,8 @@
   .tmpl-body b { font-size: 13px; }
   .tmpl-sub { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-top: 4px; }
   .tmpl-desc { flex: 1; min-width: 0; font-size: 12px; color: var(--dim); line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .tmpl-meta { flex: none; font-size: 11px; color: #b3ada2; }
+  .tmpl-meta { flex: none; display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: #b3ada2; }
+  .tmpl-pg { color: var(--dim); background: var(--border); border-radius: 4px; padding: 0 4px; line-height: 15px; }
   .site-grp-fav { width: 14px; height: 14px; border-radius: 3px; flex: none; object-fit: cover; }
   .plus-ic { flex: none; }
   .icon-btn { background: none; border: none; cursor: pointer; padding: 6px; border-radius: 8px; color: var(--dim); display: inline-flex; align-items: center; justify-content: center; }

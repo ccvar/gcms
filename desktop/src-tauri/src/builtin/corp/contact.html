@@ -1,0 +1,966 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>联系我们 · 恒测传感（示例模板）</title>
+<meta name="description" content="恒测传感询盘通道：留下工况即可获取选型建议。销售、技术支持与售后各部门联系方式、工厂地址、工作时间与常见问题。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Crect%20width='32'%20height='32'%20rx='4'%20fill='%230b5c8a'/%3E%3Cpath%20d='M5%2019h4l3-8%204%2013%203-7h8'%20fill='none'%20stroke='%23ffffff'%20stroke-width='2.4'%20stroke-linecap='round'%20stroke-linejoin='round'/%3E%3C/svg%3E">
+<style>
+  /* ═══════════════════════════════════════════════════════════
+     恒测传感 · 联系我们
+     设计系统以 index.html 为准：:root 与 index.html 逐字一致，别单独改这里。
+     CSS 刻意内联且与其他页有重复——每页必须能单文件独立渲染（缩略图走 srcdoc）。
+     ═══════════════════════════════════════════════════════════ */
+  :root{
+    /* ——— 核心契约变量 ——— */
+    --bg:#f1f4f8;          /* 页面底：冷调钢灰 */
+    --surface:#ffffff;     /* 卡片/区块底 */
+    --text:#101720;        /* 正文墨色      16.3:1 on --bg */
+    --muted:#545f70;       /* 次要文字       5.9:1 on --bg */
+    --accent:#0b5c8a;      /* 唯一强调色     6.5:1 on --bg */
+    --radius:4px;          /* 克制的小圆角＝工业感 */
+
+    /* ——— 强调色同色相派生 ——— */
+    --accent-deep:#084664; /* hover 加深 */
+    --accent-soft:#e6eff5; /* 极浅底 */
+    --accent-lift:#5cc0f0; /* 深色带上的强调色  8.6:1 on --ink */
+
+    /* ——— 深色带（hero / footer）——— */
+    --ink:#0e1a26;         /* 深钢底 */
+    --ink-2:#16283a;       /* 深底上的抬升面 */
+    --ink-text:#d3dde8;    /* 深底正文       12.8:1 */
+    --ink-muted:#9db0c4;   /* 深底次要文字    7.9:1 */
+    --ink-line:#27384b;
+
+    /* ——— 中性描边 ——— */
+    --line:#dde3ec;
+    --line-strong:#c6cfdd;
+
+    /* 遮罩用的不透明色标——不是配色，改色板时别动它 */
+    --mask-ink:#000;
+
+    --shadow-sm:0 1px 2px rgba(16,23,32,.04);
+    --shadow-md:0 1px 2px rgba(16,23,32,.04), 0 10px 28px rgba(16,23,32,.07);
+
+    /* ——— 间距刻度 4/8/12/16/24/40/64，别写 13px 这种随手数 ——— */
+    --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px; --s6:40px; --s7:64px;
+
+    /* ——— 字号阶梯 14/16/20/28/40 ——— */
+    --t-xs:14px; --t-sm:16px; --t-md:20px; --t-lg:28px; --t-xl:40px;
+    --t-2xs:11px;          /* 例外档：只给 logo 锁定块的英文副名用，别拿它排正文 */
+
+    --container:1100px;
+    --measure:680px;       /* 长文阅读宽度上限 */
+
+    --font:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",
+           "Hiragino Sans GB","Microsoft YaHei","Noto Sans SC",sans-serif;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+  }
+
+  /* ——————————————— 基础 ——————————————— */
+  *,*::before,*::after{box-sizing:border-box;}
+  html{-webkit-text-size-adjust:100%;scroll-behavior:smooth;}
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--text);
+    font-family:var(--font);
+    font-size:var(--t-sm);
+    line-height:1.7;
+    -webkit-font-smoothing:antialiased;
+  }
+  h1,h2,h3,h4{margin:0;line-height:1.25;font-weight:700;letter-spacing:-.01em;}
+  p{margin:0;}
+  ul,ol{margin:0;padding:0;list-style:none;}
+  a{color:inherit;text-decoration:none;}
+  svg{display:block;max-width:100%;}
+  ::selection{background:var(--accent);color:var(--surface);}
+
+  /* 键盘可达性：全站统一焦点环，绝不 outline:none 了事 */
+  a:focus-visible,button:focus-visible,input:focus-visible,
+  textarea:focus-visible,select:focus-visible,summary:focus-visible{
+    outline:2px solid var(--accent);
+    outline-offset:3px;
+    border-radius:var(--radius);
+  }
+  .ink a:focus-visible,.ink button:focus-visible{outline-color:var(--accent-lift);}
+
+  .wrap{
+    width:100%;
+    max-width:var(--container);
+    margin:0 auto;
+    padding-left:var(--s5);
+    padding-right:var(--s5);
+  }
+  .section{padding:var(--s7) 0;}
+  .skip{
+    position:absolute;left:-9999px;top:var(--s2);
+    background:var(--accent);color:var(--surface);
+    padding:var(--s2) var(--s4);border-radius:var(--radius);z-index:60;
+  }
+  .skip:focus{left:var(--s5);}
+
+  /* ——————————————— 排版原子 ——————————————— */
+  .eyebrow{                       /* 技术味小标签：等宽 + 字距 */
+    font-family:var(--mono);
+    font-size:var(--t-xs);
+    letter-spacing:.14em;
+    text-transform:uppercase;
+    color:var(--accent);
+    margin:0 0 var(--s3);
+  }
+  .ink .eyebrow{color:var(--accent-lift);}
+  .h2{font-size:var(--t-lg);}
+  .h3{font-size:var(--t-md);}
+  .lede{font-size:var(--t-md);line-height:1.7;color:var(--muted);max-width:var(--measure);}
+  .muted{color:var(--muted);}
+  .num{font-family:var(--mono);font-variant-numeric:tabular-nums;letter-spacing:-.02em;}
+
+  .sec-head{margin-bottom:var(--s6);}
+  .sec-head p{max-width:var(--measure);color:var(--muted);margin-top:var(--s3);}
+
+  /* 「示例内容」徽标——提醒这是占位稿 */
+  .demo-badge{
+    display:inline-flex;align-items:center;gap:var(--s2);
+    font-family:var(--mono);font-size:var(--t-xs);
+    color:var(--ink-muted);
+    border:1px dashed var(--ink-line);
+    border-radius:var(--radius);
+    padding:var(--s1) var(--s2);
+  }
+  .demo-badge::before{
+    content:"";width:6px;height:6px;border-radius:50%;
+    background:var(--accent-lift);flex:none;
+  }
+
+  /* ——————————————— 按钮 ——————————————— */
+  .btn{
+    display:inline-flex;align-items:center;justify-content:center;gap:var(--s2);
+    min-height:44px;                       /* 手机点击区 */
+    padding:var(--s3) var(--s5);
+    border-radius:var(--radius);
+    border:1px solid transparent;
+    font:inherit;font-size:var(--t-sm);font-weight:600;
+    cursor:pointer;
+    transition:background-color .16s ease,border-color .16s ease,color .16s ease,transform .16s ease;
+  }
+  .btn:active{transform:translateY(1px);}
+  .btn-primary{background:var(--accent);color:var(--surface);}
+  .btn-primary:hover{background:var(--accent-deep);}
+  .btn-ghost{border-color:var(--line-strong);color:var(--text);background:transparent;}
+  .btn-ghost:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-soft);}
+  .ink .btn-ghost{border-color:var(--ink-line);color:var(--ink-text);}
+  .ink .btn-ghost:hover{border-color:var(--accent-lift);color:var(--accent-lift);background:var(--ink-2);}
+  .btn-sm{min-height:36px;padding:var(--s2) var(--s4);font-size:var(--t-xs);}
+
+  .link{                                    /* 文字链＋箭头 */
+    display:inline-flex;align-items:center;gap:var(--s2);
+    color:var(--accent);font-weight:600;font-size:var(--t-xs);
+  }
+  .link svg{width:14px;height:14px;transition:transform .16s ease;}
+  .link:hover{color:var(--accent-deep);}
+  .link:hover svg{transform:translateX(3px);}
+  /* --accent 落到深色带上只有 2.4:1 —— 深色带里的文字链一律抬到 --accent-lift */
+  .ink .link{color:var(--accent-lift);}
+  .ink .link:hover{color:var(--surface);}
+
+  /* ——————————————— 导航 ——————————————— */
+  .nav{
+    position:sticky;top:0;z-index:30;
+    background:var(--surface);
+    border-bottom:1px solid var(--line);
+  }
+  .nav-in{display:flex;align-items:center;gap:var(--s5);min-height:64px;}
+  .brand{display:flex;align-items:center;gap:var(--s3);flex:none;}
+  .brand-mark{width:32px;height:32px;flex:none;}
+  .brand-name{font-weight:700;font-size:var(--t-md);letter-spacing:-.02em;}
+  .brand-sub{
+    font-family:var(--mono);font-size:var(--t-2xs);letter-spacing:.16em;
+    color:var(--muted);text-transform:uppercase;line-height:1;
+  }
+  /* --muted 是给浅底调的，落到深色带上只有 2.7:1 —— 深色带一律换 --ink-muted */
+  .ink .brand-sub{color:var(--ink-muted);}
+  .brand:hover .brand-name{color:var(--accent);}
+  .nav-links{display:flex;align-items:center;gap:var(--s5);margin-left:auto;}
+  .nav-links a{
+    font-size:var(--t-xs);color:var(--muted);font-weight:500;
+    padding:var(--s2) 0;position:relative;
+  }
+  .nav-links a::after{                       /* 下划线滑出 */
+    content:"";position:absolute;left:0;right:0;bottom:0;height:2px;
+    background:var(--accent);transform:scaleX(0);transform-origin:left;
+    transition:transform .16s ease;
+  }
+  .nav-links a:hover{color:var(--text);}
+  .nav-links a:hover::after{transform:scaleX(1);}
+  /* 当前页：留色 + 加粗 + 常驻下划线，不只靠颜色区分 */
+  .nav-links a[aria-current="page"]{color:var(--text);font-weight:700;}
+  .nav-links a[aria-current="page"]::after{transform:scaleX(1);}
+  .nav-cta{flex:none;}
+
+  /* ——————————————— 深色带 ——————————————— */
+  .ink{background:var(--ink);color:var(--ink-text);}
+
+  /* ——————————————— 页头（各内页共用） ——————————————— */
+  .page-head{position:relative;overflow:hidden;padding:var(--s7) 0 var(--s6);}
+  .page-head::before{                        /* 与首页 hero 同一张工程网格 */
+    content:"";position:absolute;inset:0;
+    background-image:
+      linear-gradient(to right,var(--ink-line) 1px,transparent 1px),
+      linear-gradient(to bottom,var(--ink-line) 1px,transparent 1px);
+    background-size:64px 64px;
+    -webkit-mask-image:radial-gradient(ellipse 90% 70% at 25% 0%,var(--mask-ink) 0%,transparent 75%);
+    mask-image:radial-gradient(ellipse 90% 70% at 25% 0%,var(--mask-ink) 0%,transparent 75%);
+    opacity:.7;pointer-events:none;
+  }
+  .page-head .wrap{position:relative;}
+  .page-head .demo-badge{margin-bottom:var(--s5);}
+  .page-head h1{
+    font-size:var(--t-xl);letter-spacing:-.03em;line-height:1.18;
+    margin:0 0 var(--s5);color:var(--surface);
+  }
+  .page-head .lede{color:var(--ink-muted);}
+  /* 面包屑：站内位置，不是装饰 */
+  .crumb{display:flex;flex-wrap:wrap;align-items:center;gap:var(--s2);
+         font-size:var(--t-xs);color:var(--ink-muted);margin-bottom:var(--s4);}
+  .crumb a{color:var(--ink-muted);}
+  .crumb a:hover{color:var(--accent-lift);}
+  .crumb svg{width:12px;height:12px;flex:none;opacity:.7;}
+  .crumb [aria-current="page"]{color:var(--ink-text);}
+
+  /* ——————————————— 询盘区（深色带，与首页同款组件） ——————————————— */
+  .contact-layout{display:grid;grid-template-columns:1fr 1.1fr;gap:var(--s7);align-items:start;}
+  .contact h2{color:var(--surface);}
+  .contact .lede{color:var(--ink-muted);margin-top:var(--s4);}
+  .contact-facts{margin-top:var(--s6);display:grid;gap:var(--s5);}
+  .fact{display:flex;gap:var(--s4);align-items:flex-start;}
+  .fact svg{width:18px;height:18px;flex:none;color:var(--accent-lift);margin-top:var(--s1);}
+  .fact dt{font-size:var(--t-xs);color:var(--ink-muted);}
+  .fact dd{margin:var(--s1) 0 0;font-size:var(--t-sm);color:var(--ink-text);}
+  .fact dd.num{font-size:var(--t-md);}
+
+  .form{
+    background:var(--ink-2);
+    border:1px solid var(--ink-line);
+    border-radius:calc(var(--radius) * 2);
+    padding:var(--s6);
+  }
+  .form-row{display:grid;grid-template-columns:repeat(2,1fr);gap:var(--s4);}
+  .field{display:flex;flex-direction:column;gap:var(--s2);margin-bottom:var(--s4);}
+  .field label{font-size:var(--t-xs);color:var(--ink-text);font-weight:600;}
+  .field label .req{color:var(--accent-lift);margin-left:var(--s1);}
+  .field input,.field textarea,.field select{
+    font:inherit;font-size:var(--t-sm);
+    color:var(--ink-text);
+    background:var(--ink);
+    border:1px solid var(--ink-line);
+    border-radius:var(--radius);
+    padding:var(--s3) var(--s4);
+    min-height:44px;
+    width:100%;
+    transition:border-color .16s ease,background-color .16s ease;
+  }
+  .field textarea{min-height:104px;resize:vertical;line-height:1.7;}
+  .field input::placeholder,.field textarea::placeholder{color:var(--ink-muted);opacity:1;}
+  .field input:hover,.field textarea:hover,.field select:hover{border-color:var(--muted);}
+  .field input:focus,.field textarea:focus,.field select:focus{
+    border-color:var(--accent-lift);outline:none;background:var(--ink-2);
+  }
+  .field-hint{font-size:var(--t-xs);color:var(--ink-muted);}
+  /* 错误态：给文字，不只是变红 */
+  .field-error input,.field-error textarea{border-color:var(--accent-lift);}
+  .field-error .field-hint{color:var(--accent-lift);}
+  .form .btn-primary{width:100%;margin-top:var(--s2);}
+  .form-note{margin-top:var(--s4);font-size:var(--t-xs);color:var(--ink-muted);text-align:center;}
+  .form-note a{color:var(--accent-lift);text-decoration:underline;text-underline-offset:2px;}
+  .form-note a:hover{color:var(--surface);}
+  /* 表单头：必填规则说明放在表单里，别让人靠猜 */
+  .form-head{
+    padding-bottom:var(--s4);margin-bottom:var(--s5);
+    border-bottom:1px solid var(--ink-line);
+  }
+  .form-head h2{font-size:var(--t-md);color:var(--surface);margin-bottom:var(--s2);}
+  .form-head p{font-size:var(--t-xs);color:var(--ink-muted);}
+  .form-head .req{color:var(--accent-lift);}
+  /* 复选：同意条款 */
+  .check{display:flex;gap:var(--s3);align-items:flex-start;margin-bottom:var(--s4);}
+  .check input{
+    width:18px;height:18px;min-height:0;flex:none;margin-top:var(--s1);
+    accent-color:var(--accent-lift);
+  }
+  .check label{font-size:var(--t-xs);color:var(--ink-muted);font-weight:400;line-height:1.7;}
+  .check label a{color:var(--accent-lift);text-decoration:underline;text-underline-offset:2px;}
+  .check label a:hover{color:var(--surface);}
+
+  /* ——————————————— 各部门 ——————————————— */
+  .dept-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--s5);}
+  .card{
+    display:flex;flex-direction:column;
+    background:var(--surface);
+    border:1px solid var(--line);
+    border-radius:calc(var(--radius) * 2);
+    padding:var(--s5);
+    transition:border-color .16s ease,box-shadow .16s ease,transform .16s ease;
+  }
+  .card:hover{border-color:var(--line-strong);box-shadow:var(--shadow-md);transform:translateY(-2px);}
+  .card-top{display:flex;align-items:center;justify-content:space-between;gap:var(--s4);margin-bottom:var(--s4);}
+  .tag{
+    font-family:var(--mono);font-size:var(--t-xs);
+    color:var(--accent);background:var(--accent-soft);
+    padding:var(--s1) var(--s2);border-radius:var(--radius);
+    letter-spacing:.06em;
+  }
+  .card h3{font-size:var(--t-md);margin-bottom:var(--s3);}
+  .card > p{font-size:var(--t-xs);color:var(--muted);line-height:1.8;}
+  .dept-ico{width:24px;height:24px;color:var(--accent);}
+  .dept-dl{
+    display:grid;gap:var(--s3);
+    margin:var(--s5) 0 0;padding:var(--s4) 0 0;
+    border-top:1px solid var(--line);
+  }
+  .dept-dl > div{display:grid;grid-template-columns:4.5em 1fr;gap:var(--s3);align-items:baseline;}
+  .dept-dl dt{font-size:var(--t-xs);color:var(--muted);}
+  .dept-dl dd{margin:0;font-size:var(--t-xs);color:var(--text);font-weight:600;word-break:break-word;}
+  .dept-dl dd.num{font-family:var(--mono);font-variant-numeric:tabular-nums;letter-spacing:-.02em;}
+  .dept-dl dd a:hover{color:var(--accent);text-decoration:underline;text-underline-offset:2px;}
+
+  /* ——————————————— 地址 / 地图 / 工作时间 ——————————————— */
+  .visit-band{background:var(--surface);border-top:1px solid var(--line);border-bottom:1px solid var(--line);}
+  .visit-layout{display:grid;grid-template-columns:1.15fr .85fr;gap:var(--s6);align-items:start;}
+  .map{
+    border:1px solid var(--line);
+    border-radius:calc(var(--radius) * 2);
+    background:var(--bg);
+    overflow:hidden;
+  }
+  .map svg{width:100%;height:auto;display:block;}
+  .map-note{
+    padding:var(--s3) var(--s4);
+    border-top:1px solid var(--line);
+    font-size:var(--t-xs);color:var(--muted);
+    background:var(--surface);
+  }
+  .addr-block{margin-bottom:var(--s6);}
+  .addr-block h3{font-size:var(--t-md);margin-bottom:var(--s3);}
+  .addr-block p{font-size:var(--t-xs);color:var(--muted);line-height:1.8;}
+  .addr-block .addr-line{font-size:var(--t-sm);color:var(--text);font-weight:600;margin-bottom:var(--s2);}
+  .route{display:grid;gap:var(--s3);margin-top:var(--s4);}
+  .route li{display:flex;gap:var(--s3);align-items:flex-start;font-size:var(--t-xs);color:var(--muted);line-height:1.8;}
+  .route svg{width:16px;height:16px;flex:none;color:var(--accent);margin-top:var(--s1);}
+  .hours{border-top:1px solid var(--line);}
+  .hours > div{
+    display:grid;grid-template-columns:1fr auto;gap:var(--s4);
+    padding:var(--s3) 0;border-bottom:1px solid var(--line);align-items:baseline;
+  }
+  .hours dt{font-size:var(--t-xs);color:var(--muted);}
+  .hours dd{margin:0;font-family:var(--mono);font-size:var(--t-xs);color:var(--text);font-weight:600;
+            font-variant-numeric:tabular-nums;letter-spacing:-.02em;}
+  .hours dd.off{color:var(--muted);font-weight:400;}
+  .hours-note{margin-top:var(--s4);font-size:var(--t-xs);color:var(--muted);line-height:1.8;}
+
+  /* ——————————————— 常见问题 ——————————————— */
+  .faq{border-top:1px solid var(--line);}
+  .faq details{border-bottom:1px solid var(--line);}
+  .faq summary{
+    display:flex;align-items:flex-start;justify-content:space-between;gap:var(--s4);
+    padding:var(--s5) 0;cursor:pointer;list-style:none;
+    font-size:var(--t-sm);font-weight:600;
+    transition:color .16s ease;
+  }
+  .faq summary::-webkit-details-marker{display:none;}
+  .faq summary::marker{content:"";}
+  .faq summary:hover{color:var(--accent);}
+  .faq summary .chev{width:16px;height:16px;flex:none;color:var(--muted);margin-top:var(--s1);
+                     transition:transform .16s ease,color .16s ease;}
+  .faq details[open] summary .chev{transform:rotate(180deg);color:var(--accent);}
+  .faq-a{padding:0 0 var(--s5);font-size:var(--t-xs);color:var(--muted);line-height:1.8;max-width:var(--measure);}
+  .faq-a p{margin-bottom:var(--s3);}
+  .faq-a p:last-child{margin-bottom:0;}
+  .faq-a strong{color:var(--text);}
+
+  /* ——————————————— 隐私说明 ——————————————— */
+  .privacy{
+    display:flex;gap:var(--s4);align-items:flex-start;
+    margin-top:var(--s6);padding:var(--s5);
+    background:var(--accent-soft);border-radius:calc(var(--radius) * 2);
+  }
+  .privacy svg{width:20px;height:20px;flex:none;color:var(--accent);margin-top:var(--s1);}
+  .privacy h3{font-size:var(--t-sm);margin-bottom:var(--s2);}
+  .privacy p{font-size:var(--t-xs);color:var(--text);line-height:1.8;max-width:var(--measure);}
+  .privacy strong{color:var(--accent);}
+
+  /* ——————————————— 页脚 ——————————————— */
+  .foot{color:var(--ink-muted);border-top:1px solid var(--ink-line);}
+  .foot-in{padding:var(--s7) 0 var(--s6);}
+  .foot-grid{
+    display:grid;grid-template-columns:1.4fr repeat(3,1fr);
+    gap:var(--s6);padding-bottom:var(--s6);border-bottom:1px solid var(--ink-line);
+  }
+  .foot-brand .brand-name{color:var(--surface);}
+  .foot-brand p{margin-top:var(--s4);font-size:var(--t-xs);color:var(--ink-muted);max-width:32em;line-height:1.8;}
+  .foot h4{
+    font-family:var(--mono);font-size:var(--t-xs);letter-spacing:.12em;
+    text-transform:uppercase;color:var(--ink-text);margin-bottom:var(--s4);font-weight:600;
+  }
+  .foot li{margin-bottom:var(--s3);}
+  .foot li a{font-size:var(--t-xs);color:var(--ink-muted);}
+  .foot li a:hover{color:var(--accent-lift);}
+  .foot-bottom{
+    display:flex;flex-wrap:wrap;gap:var(--s3) var(--s5);
+    align-items:center;justify-content:space-between;
+    padding-top:var(--s5);font-size:var(--t-xs);
+  }
+  .foot-legal{display:flex;flex-wrap:wrap;gap:var(--s2) var(--s4);align-items:center;}
+
+  /* ═══════════════ 响应式：1024 / 860 / 560 ═══════════════ */
+  @media (max-width:1024px){
+    .contact-layout{grid-template-columns:1fr;gap:var(--s6);}
+    .visit-layout{grid-template-columns:1fr;gap:var(--s6);}
+    .dept-grid{grid-template-columns:1fr;}
+  }
+  @media (max-width:860px){
+    /* 两行的导航再吸顶就吃掉近 1/5 屏，手机端让它跟着滚走 */
+    .nav{position:static;}
+    .nav-in{flex-wrap:wrap;padding-top:var(--s3);padding-bottom:var(--s3);gap:var(--s3);}
+    .nav-links{
+      order:3;width:100%;margin-left:0;
+      flex-wrap:wrap;gap:var(--s3) var(--s5);
+      padding-top:var(--s3);border-top:1px solid var(--line);
+    }
+    .nav-cta{margin-left:auto;}
+    .foot-grid{grid-template-columns:repeat(2,1fr);gap:var(--s6) var(--s5);}
+  }
+  @media (max-width:560px){
+    :root{--t-xl:32px;--t-lg:24px;}
+    .wrap{padding-left:var(--s4);padding-right:var(--s4);}
+    /* 收窄列间距让栏目尽量排满一行；顺带把点击区垫到 44px */
+    .nav-links{gap:var(--s2) var(--s3);}
+    .nav-links a{padding:var(--s3) 0;}
+    /* 手机上 14px 中文读着费劲：成段的描述抬到 16px，标签/参数维持 14px */
+    .card > p,.faq-a,.privacy p,.addr-block p,.route li,.hours-note,.foot-brand p{font-size:var(--t-sm);}
+    .section{padding:var(--s6) 0;}
+    .page-head{padding:var(--s6) 0;}
+    .form{padding:var(--s5) var(--s4);}
+    .form-row{grid-template-columns:1fr;gap:0;}
+    .dept-dl > div{grid-template-columns:1fr;gap:var(--s1);}
+    .foot-grid{grid-template-columns:1fr;gap:var(--s6);}
+    .foot-bottom{flex-direction:column;align-items:flex-start;}
+  }
+  @media (prefers-reduced-motion:reduce){
+    html{scroll-behavior:auto;}
+    *{transition:none !important;animation:none !important;}
+  }
+</style>
+</head>
+<body>
+<a class="skip" href="#main">跳到主内容</a>
+
+<!-- ═══════════════ 导航（三页一致，只有 aria-current 不同） ═══════════════ -->
+<header class="nav">
+  <div class="wrap nav-in">
+    <a class="brand" href="index.html" aria-label="恒测传感 首页">
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+        <rect width="32" height="32" rx="4" fill="var(--accent)"/>
+        <path d="M5 19h4l3-8 4 13 3-7h8" fill="none" stroke="var(--surface)"
+              stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <span>
+        <span class="brand-name">恒测传感</span><br>
+        <span class="brand-sub">Hengce Sensing</span>
+      </span>
+    </a>
+    <nav class="nav-links" aria-label="主导航">
+      <a href="index.html">首页</a>
+      <a href="index.html#products">产品中心</a>
+      <a href="index.html#solutions">解决方案</a>
+      <a href="index.html#certs">资质认证</a>
+      <a href="index.html#news">新闻动态</a>
+      <a href="about.html">关于我们</a>
+    </nav>
+    <a class="btn btn-primary btn-sm nav-cta" href="contact.html" aria-current="page">联系我们</a>
+  </div>
+</header>
+
+<main id="main">
+<!-- ═══════════════ 页头 ═══════════════ -->
+<section class="ink page-head">
+  <div class="wrap">
+    <nav class="crumb" aria-label="面包屑">
+      <a href="index.html">首页</a>
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M6 3l5 5-5 5"/>
+      </svg>
+      <span aria-current="page">联系我们</span>
+    </nav>
+    <span class="demo-badge">示例内容 · 请替换为真实信息</span>
+    <p class="eyebrow">Contact</p>
+    <h1>说说你的工况，<br>我们给选型建议。</h1>
+    <p class="lede">介质、量程、温度、接口和安装空间——信息越具体，方案越准。工作日 24 小时内回复，复杂工况会安排工程师电话沟通，必要时到现场看一趟。</p>
+  </div>
+</section>
+
+<!-- ═══════════════ 完整询盘表单 ═══════════════ -->
+<section class="ink contact section" id="inquiry" style="padding-top:var(--s6);">
+  <div class="wrap contact-layout">
+    <div>
+      <p class="eyebrow">Inquiry</p>
+      <h2 class="h2">发一份询盘</h2>
+      <p class="lede">这是完整版询盘表单。只想快速留个电话的话，首页底部有精简版。</p>
+      <dl class="contact-facts">
+        <div class="fact">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/>
+          </svg>
+          <div><dt>响应时间</dt><dd>工作日 24 小时内首次回复</dd></div>
+        </div>
+        <div class="fact">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <path d="M14 2v6h6"/><path d="M9 14h6M9 18h4"/>
+          </svg>
+          <div><dt>随选型建议附上</dt><dd>同型号标定报告样例 + 选型参数表</dd></div>
+        </div>
+        <div class="fact">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5l-8-3z"/>
+            <path d="m9 12 2 2 4-4"/>
+          </svg>
+          <div><dt>样品政策（占位）</dt><dd>常规型号可寄样试用，运费到付</dd></div>
+        </div>
+        <div class="fact">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8.1 9.9a16 16 0 0 0 6 6l1.3-1.2a2 2 0 0 1 2.1-.5c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2z"/>
+          </svg>
+          <div><dt>急单请直接来电（占位）</dt><dd class="num">0510-8888 0000</dd></div>
+        </div>
+      </dl>
+      <p style="margin-top:var(--s6);">
+        <a class="link" href="#depts">找具体部门？看各部门联系方式
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 8h10M9 4l4 4-4 4"/>
+          </svg>
+        </a>
+      </p>
+    </div>
+
+    <form class="form" action="#inquiry" method="post" novalidate>
+      <div class="form-head">
+        <h2>询盘表单（示例，未接后端）</h2>
+        <p>标 <span class="req" aria-hidden="true">*</span> 的为必填项。此表单仅为占位，上线前请接入真实的表单服务或邮件网关。</p>
+      </div>
+
+      <div class="form-row">
+        <div class="field">
+          <label for="f-name">姓名<span class="req" aria-hidden="true">*</span></label>
+          <input id="f-name" name="name" type="text" autocomplete="name" placeholder="张工" required>
+        </div>
+        <div class="field">
+          <label for="f-company">公司名称<span class="req" aria-hidden="true">*</span></label>
+          <input id="f-company" name="company" type="text" autocomplete="organization" placeholder="某某装备有限公司" required>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="field">
+          <label for="f-phone">联系电话<span class="req" aria-hidden="true">*</span></label>
+          <input id="f-phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="138 0000 0000" required>
+        </div>
+        <div class="field">
+          <label for="f-mail">邮箱<span class="req" aria-hidden="true">*</span></label>
+          <input id="f-mail" name="email" type="email" autocomplete="email" placeholder="you@example.com" required>
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="field">
+          <label for="f-kind">需求类型<span class="req" aria-hidden="true">*</span></label>
+          <select id="f-kind" name="kind" required>
+            <option>选型咨询</option>
+            <option>批量报价</option>
+            <option>定制 / OEM 开发</option>
+            <option>售后与标定服务</option>
+            <option>样品申请</option>
+            <option>渠道与代理合作</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="f-qty">预计年用量</label>
+          <input id="f-qty" name="qty" type="text" inputmode="numeric" placeholder="约 500 支">
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="f-msg">工况描述<span class="req" aria-hidden="true">*</span></label>
+        <textarea id="f-msg" name="message" placeholder="例：液压站测压，介质为 46 号抗磨液压油，量程 0–25 MPa，环境 −10–60 ℃，M20×1.5 螺纹，需 4–20 mA 输出，年用量约 500 支。" required></textarea>
+        <span class="field-hint">已填 0 / 500 字 · 请至少说明介质、量程与安装接口</span>
+      </div>
+
+      <div class="check">
+        <input id="f-agree" name="agree" type="checkbox" required>
+        <label for="f-agree">我已阅读并同意按 <a href="#privacy">隐私说明</a> 处理我提交的联系方式，仅用于本次业务沟通。<span class="req" aria-hidden="true">*</span></label>
+      </div>
+
+      <button class="btn btn-primary" type="submit">提交询盘</button>
+      <p class="form-note">提交后你会收到一封确认邮件（示例文案）。我们不会把你的信息用于任何形式的营销推送。</p>
+    </form>
+  </div>
+</section>
+
+<!-- ═══════════════ 各部门联系方式 ═══════════════ -->
+<section class="section" id="depts">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">Departments</p>
+      <h2 class="h2">各部门联系方式</h2>
+      <p>以下电话、邮箱与分机号均为占位示例，上线前务必换成真实且有人接听的号码——留一个没人接的电话，比不留更伤。</p>
+    </div>
+    <div class="dept-grid">
+
+      <article class="card">
+        <div class="card-top">
+          <span class="tag">SALES</span>
+          <svg class="dept-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 3h2l2.4 12.4a2 2 0 0 0 2 1.6h8.7a2 2 0 0 0 2-1.5L21.5 8H6"/>
+            <circle cx="9.5" cy="20.5" r="1.5"/><circle cx="18" cy="20.5" r="1.5"/>
+          </svg>
+        </div>
+        <h3>销售与选型</h3>
+        <p>新项目询价、选型咨询、批量报价与样品申请。工况复杂的单子会拉应用工程师一起跟。</p>
+        <dl class="dept-dl">
+          <div><dt>电话</dt><dd class="num"><a href="tel:+8651088880000">0510-8888 0000</a> 转 1</dd></div>
+          <div><dt>邮箱</dt><dd><a href="mailto:sales@example.com">sales@example.com</a></dd></div>
+          <div><dt>时段</dt><dd class="num">工作日 08:30–17:30</dd></div>
+        </dl>
+      </article>
+
+      <article class="card">
+        <div class="card-top">
+          <span class="tag">SUPPORT</span>
+          <svg class="dept-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M14.7 6.3a4 4 0 0 0 5 5l-8.6 8.6a2.8 2.8 0 0 1-4-4z"/>
+            <path d="m17.5 3.5 3 3M6 18l-.01.01"/>
+          </svg>
+        </div>
+        <h3>技术支持</h3>
+        <p>安装接线、参数配置、信号异常排查与协议对接。装机遇到问题先找这里，多数能在电话里解决。</p>
+        <dl class="dept-dl">
+          <div><dt>电话</dt><dd class="num"><a href="tel:+8651088880000">0510-8888 0000</a> 转 2</dd></div>
+          <div><dt>邮箱</dt><dd><a href="mailto:support@example.com">support@example.com</a></dd></div>
+          <div><dt>时段</dt><dd class="num">工作日 08:00–20:00</dd></div>
+        </dl>
+      </article>
+
+      <article class="card">
+        <div class="card-top">
+          <span class="tag">SERVICE</span>
+          <svg class="dept-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 12a9 9 0 0 1 15.5-6.2M21 12a9 9 0 0 1-15.5 6.2"/>
+            <path d="M18.5 3.5v4h-4M5.5 20.5v-4h4"/>
+          </svg>
+        </div>
+        <h3>售后与标定服务</h3>
+        <p>返修、质保内换新、周期标定与校准证书补发。寄修前先来电取 RMA 号，别直接寄。</p>
+        <dl class="dept-dl">
+          <div><dt>电话</dt><dd class="num"><a href="tel:+8651088880000">0510-8888 0000</a> 转 3</dd></div>
+          <div><dt>邮箱</dt><dd><a href="mailto:service@example.com">service@example.com</a></dd></div>
+          <div><dt>时段</dt><dd class="num">工作日 08:30–17:30</dd></div>
+        </dl>
+      </article>
+
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════ 地址 / 地图 / 工作时间 ═══════════════ -->
+<section class="visit-band section" id="visit">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">Visit</p>
+      <h2 class="h2">来厂里看看</h2>
+      <p>欢迎实地考察车间与标定实验室。来访请提前一个工作日预约，我们好安排对口的工程师陪同。</p>
+    </div>
+    <div class="visit-layout">
+
+      <div class="map">
+        <svg viewBox="0 0 640 400" role="img"
+             aria-label="示意地图：厂区位于新吴区某某路与某某大道交口东侧，北临高速出口，南侧为地铁 2 号线某某站，图中标记为厂区位置">
+          <!-- 街区：白块 + 灰底的缝＝道路 -->
+          <g fill="var(--surface)" stroke="var(--line)" stroke-width="1">
+            <rect x="16" y="16" width="150" height="104" rx="3"/>
+            <rect x="182" y="16" width="196" height="104" rx="3"/>
+            <rect x="394" y="16" width="230" height="104" rx="3"/>
+            <rect x="16" y="136" width="150" height="118" rx="3"/>
+            <rect x="182" y="136" width="196" height="118" rx="3"/>
+            <rect x="16" y="270" width="150" height="114" rx="3"/>
+            <rect x="182" y="270" width="196" height="114" rx="3"/>
+            <rect x="394" y="270" width="230" height="114" rx="3"/>
+          </g>
+          <!-- 厂区所在街区：强调底 -->
+          <rect x="394" y="136" width="230" height="118" rx="3"
+                fill="var(--accent-soft)" stroke="var(--accent)" stroke-width="1.5" stroke-dasharray="5 4"/>
+          <!-- 河道 / 绿带：斜穿 -->
+          <path d="M-10 340 C 120 320, 180 250, 320 246 S 520 268, 660 214"
+                fill="none" stroke="var(--accent-soft)" stroke-width="26" stroke-linecap="round" opacity=".85"/>
+          <path d="M-10 340 C 120 320, 180 250, 320 246 S 520 268, 660 214"
+                fill="none" stroke="var(--accent)" stroke-width="1" opacity=".35" stroke-dasharray="3 6"/>
+          <!-- 主干道中线 -->
+          <g stroke="var(--line-strong)" stroke-width="1.5" stroke-dasharray="10 8" opacity=".8">
+            <path d="M174 0v400"/>
+            <path d="M386 0v400"/>
+            <path d="M0 128h640"/>
+            <path d="M0 262h640"/>
+          </g>
+          <!-- 高速出口匝道 -->
+          <path d="M624 40 C 560 40, 540 92, 470 96 L 394 96"
+                fill="none" stroke="var(--line-strong)" stroke-width="6" stroke-linecap="round"/>
+          <!-- 路名 -->
+          <g font-family="var(--font)" font-size="11" fill="var(--muted)">
+            <text x="192" y="124">某某大道（示例）</text>
+            <text x="192" y="258">某某路（示例）</text>
+            <text x="446" y="36">G42 高速出口（示例）</text>
+          </g>
+          <text x="180" y="60" font-family="var(--font)" font-size="11" fill="var(--muted)"
+                transform="rotate(90 180 60)">环科路（示例）</text>
+          <!-- 地铁站 -->
+          <g transform="translate(258 296)">
+            <circle cx="0" cy="0" r="9" fill="var(--surface)" stroke="var(--muted)" stroke-width="2"/>
+            <path d="M-4 3 L0 -4 L4 3" fill="none" stroke="var(--muted)" stroke-width="1.6"
+                  stroke-linecap="round" stroke-linejoin="round"/>
+            <text x="14" y="4" font-family="var(--font)" font-size="11" fill="var(--muted)">地铁 2 号线 · 某某站</text>
+          </g>
+          <!-- 厂区标记 -->
+          <g transform="translate(492 190)">
+            <circle cx="0" cy="0" r="26" fill="var(--accent)" opacity=".12"/>
+            <circle cx="0" cy="0" r="17" fill="none" stroke="var(--accent)" stroke-width="1" opacity=".45"/>
+            <path d="M0 10 C 0 10, -9 0, -9 -6 A 9 9 0 1 1 9 -6 C 9 0, 0 10, 0 10 Z"
+                  fill="var(--accent)"/>
+            <circle cx="0" cy="-6" r="3.2" fill="var(--surface)"/>
+          </g>
+          <g transform="translate(492 190)">
+            <rect x="18" y="-14" width="118" height="28" rx="4" fill="var(--surface)"
+                  stroke="var(--accent)" stroke-width="1"/>
+            <text x="28" y="4" font-family="var(--font)" font-size="12" font-weight="700" fill="var(--accent)">恒测传感（示例）</text>
+          </g>
+          <!-- 指北针 -->
+          <g transform="translate(600 366)">
+            <path d="M0 -14 L5 6 L0 1 L-5 6 Z" fill="var(--muted)"/>
+            <text x="-4" y="18" font-family="var(--font)" font-size="10" font-weight="700" fill="var(--muted)">N</text>
+          </g>
+        </svg>
+        <p class="map-note">示意图，非真实位置。上线前可换成地图服务的静态图或截图——注意别引入外部脚本，本模板要求离线可渲染。</p>
+      </div>
+
+      <div>
+        <div class="addr-block">
+          <h3>工厂与总部（占位）</h3>
+          <p class="addr-line">江苏省无锡市新吴区某某路 88 号 A 栋</p>
+          <p>邮编 214028 · 前台在 A 栋一层，访客请在门岗登记后由对接人接入厂区。厂区内禁止拍照，实验室区域需换鞋并穿静电服。</p>
+          <ul class="route">
+            <li>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                   stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M5 17h14M6.5 17v-6l2-5h7l2 5v6"/><circle cx="8.5" cy="20" r="1.5"/><circle cx="15.5" cy="20" r="1.5"/>
+                <path d="M8.5 11h7"/>
+              </svg>
+              自驾：G42 高速某某出口下，沿某某大道向东约 4 km，厂区门口有访客车位 12 个。
+            </li>
+            <li>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                   stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <rect x="5" y="3" width="14" height="13" rx="3"/><path d="M5 10h14"/>
+                <circle cx="8.5" cy="13" r="1"/><circle cx="15.5" cy="13" r="1"/>
+                <path d="M7 16l-2 5M17 16l2 5"/>
+              </svg>
+              地铁：2 号线某某站 3 号口出，步行约 900 m；或站外换乘 K12 路到「某某路某某桥」下。
+            </li>
+            <li>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                   stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M2 15h20M6 15V9l4-4h4l4 4v6"/><path d="M12 5v10"/>
+                <path d="M5 19h14"/>
+              </svg>
+              机场：无锡硕放机场约 12 km，车程 20 分钟；提前告知航班可安排接送。
+            </li>
+          </ul>
+        </div>
+
+        <h3 class="h3" style="margin-bottom:var(--s4);">工作时间</h3>
+        <dl class="hours">
+          <div><dt>周一至周五</dt><dd>08:30 – 17:30</dd></div>
+          <div><dt>周六（仅技术支持值班）</dt><dd>09:00 – 16:00</dd></div>
+          <div><dt>周日</dt><dd class="off">休息</dd></div>
+          <div><dt>法定节假日</dt><dd class="off">按国务院公告执行</dd></div>
+          <div><dt>技术支持热线</dt><dd>工作日 08:00 – 20:00</dd></div>
+        </dl>
+        <p class="hours-note">时间为示例，请按实际排班替换。产线停机这类紧急情况，售后值班手机 24 小时开机（号码随合同一起提供）。</p>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════ 常见问题 ═══════════════ -->
+<section class="section" id="faq">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">FAQ</p>
+      <h2 class="h2">常见问题</h2>
+      <p>以下回答均为示例文案，请按贵司真实政策替换——尤其是质保期、起订量与交期，写错了是要认的。</p>
+    </div>
+
+    <div class="faq">
+      <details open>
+        <summary>
+          <span>最小起订量是多少？能先寄样吗？</span>
+          <svg class="chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6l5 5 5-5"/></svg>
+        </summary>
+        <div class="faq-a">
+          <p>常规型号（HC-3000 / HT-220 / LC-40）<strong>无最小起订量</strong>，单支也发。定制与 OEM 开发的最小起订量为 <strong>200 支</strong>，样品周期约 3 周。</p>
+          <p>常规型号可申请寄样试用，运费到付；试用满意后下单可抵扣样品费。样品申请走上面的询盘表单，需求类型选「样品申请」。</p>
+        </div>
+      </details>
+
+      <details>
+        <summary>
+          <span>交期一般多久？</span>
+          <svg class="chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6l5 5 5-5"/></svg>
+        </summary>
+        <div class="faq-a">
+          <p>常规型号常备库存，确认订单后 <strong>3–5 个工作日</strong>发货。非标量程或特殊接口需重新标定，约 <strong>10–15 个工作日</strong>。</p>
+          <p>老化试验和出厂逐支复核这两步不压缩——这也是我们不接「48 小时急单」的原因。确实赶工期的项目，请在询盘里写明节点，我们排产时会优先。</p>
+        </div>
+      </details>
+
+      <details>
+        <summary>
+          <span>质保期多长？返修怎么走？</span>
+          <svg class="chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6l5 5 5-5"/></svg>
+        </summary>
+        <div class="faq-a">
+          <p>整机质保 <strong>24 个月</strong>（自出厂日起算，以出厂序列号为准）。非人为损坏在质保期内免费换新，不做降级处理。</p>
+          <p>返修前请先致电售后取 <strong>RMA 号</strong>，别直接寄——没有 RMA 号的包裹我们无法定位批次，只会拖长处理时间。收到后 5 个工作日内出具失效分析结论。</p>
+        </div>
+      </details>
+
+      <details>
+        <summary>
+          <span>随货的校准证书能查验吗？</span>
+          <svg class="chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6l5 5 5-5"/></svg>
+        </summary>
+        <div class="faq-a">
+          <p>可以。每支产品随货附校准证书，量值可追溯至国家计量基准。报出厂序列号给售后，即可回查该支产品的标定原始数据、标准器编号与操作工位，记录保存 <strong>10 年</strong>。</p>
+          <p>需要 CNAS 认可证书的场景请在下单时说明，由二期实验室出具（会略微延长交期）。</p>
+        </div>
+      </details>
+
+      <details>
+        <summary>
+          <span>支持哪些输出与通讯协议？能对接我们现有的系统吗？</span>
+          <svg class="chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6l5 5 5-5"/></svg>
+        </summary>
+        <div class="faq-a">
+          <p>常见输出为 4–20 mA、0–10 V、RS485 / Modbus RTU 与 IO-Link。GW-100 网关上行支持 MQTT 与 OPC UA，可直接对接既有 MES / SCADA。</p>
+          <p>私有协议或特殊寄存器映射可以定制，把协议文档发给技术支持，一般 3 个工作日内给可行性答复。</p>
+        </div>
+      </details>
+
+      <details>
+        <summary>
+          <span>能不能贴牌（OEM）？接受渠道代理吗？</span>
+          <svg class="chev" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6l5 5 5-5"/></svg>
+        </summary>
+        <div class="faq-a">
+          <p>接受。我们已为 60 余家装备厂做贴牌集成，可定制外壳丝印、包装与说明书。结构与接口的定制开发同样支持，最小起订 200 支。</p>
+          <p>区域代理与行业渠道合作请走询盘表单，需求类型选「渠道与代理合作」，销售会在 3 个工作日内联系。</p>
+        </div>
+      </details>
+    </div>
+
+    <div class="privacy" id="privacy">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>
+        <path d="M12 15v2"/>
+      </svg>
+      <div>
+        <h3>隐私说明（占位，须替换）</h3>
+        <p>通过本页表单提交的姓名、公司、电话与邮箱，<strong>仅用于本次业务沟通</strong>，不会用于营销推送，也不会提供给第三方。你可以随时来函要求我们删除这些记录。<strong>这段是占位文案，上线前必须替换为经法务确认的隐私政策，并按属地法规（如《个人信息保护法》）核对告知与同意的写法。</strong></p>
+      </div>
+    </div>
+  </div>
+</section>
+</main>
+
+<!-- ═══════════════ 页脚（三页一致） ═══════════════ -->
+<footer class="ink foot">
+  <div class="wrap foot-in">
+    <div class="foot-grid">
+      <div class="foot-brand">
+        <span class="brand">
+          <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+            <rect width="32" height="32" rx="4" fill="var(--accent-lift)"/>
+            <path d="M5 19h4l3-8 4 13 3-7h8" fill="none" stroke="var(--ink)"
+                  stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span>
+            <span class="brand-name">恒测传感</span><br>
+            <span class="brand-sub">Hengce Sensing</span>
+          </span>
+        </span>
+        <p>无锡恒测传感科技有限公司（示例）。1998 年创立，专注工业测量的敏感元件与整机方案，自有芯体设计与标定能力。</p>
+      </div>
+      <div>
+        <h4>产品</h4>
+        <ul>
+          <li><a href="index.html#products">压力变送器</a></li>
+          <li><a href="index.html#products">温湿度探头</a></li>
+          <li><a href="index.html#products">称重传感器</a></li>
+          <li><a href="index.html#products">采集网关</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>支持</h4>
+        <ul>
+          <li><a href="index.html#products">选型样本下载</a></li>
+          <li><a href="about.html#quality">标定与校准服务</a></li>
+          <li><a href="contact.html#faq">质保与退换政策</a></li>
+          <li><a href="contact.html#depts">技术支持</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>关于</h4>
+        <ul>
+          <li><a href="about.html">公司简介</a></li>
+          <li><a href="about.html#history">发展历程</a></li>
+          <li><a href="index.html#certs">资质与认证</a></li>
+          <li><a href="index.html#news">新闻动态</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="foot-bottom">
+      <span>© 1998–2024 无锡恒测传感科技有限公司（示例内容）</span>
+      <span class="foot-legal">
+        <span>苏 ICP 备 00000000 号-1（占位）</span>
+        <span>苏公网安备 00000000000000 号（占位）</span>
+      </span>
+    </div>
+  </div>
+</footer>
+</body>
+</html>

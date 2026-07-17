@@ -7,24 +7,47 @@
 <meta name="description" content="溪岸笔记是林知远的个人博客，记录后端开发、自建服务的折腾过程，以及一些跟代码无关的日常。">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%237A3E78'/%3E%3Cpath d='M8 21.5c2.6 0 2.6-3 5.3-3s2.7 3 5.3 3 2.7-3 5.4-3' stroke='%23fff' stroke-width='2' stroke-linecap='round' fill='none'/%3E%3Cpath d='M8 13.5c2.6 0 2.6-3 5.3-3s2.7 3 5.3 3 2.7-3 5.4-3' stroke='%23fff' stroke-width='2' stroke-linecap='round' fill='none' opacity='.55'/%3E%3C/svg%3E">
 <style>
+  /* ═══════════════════════════════════════════════════════════════
+     溪岸笔记 — 文章列表页 / 博客首页起始模板
+     同一个站的第一个页面：article.html 是它的正文页，两页共用下面这块令牌。
+     单文件：CSS 全部内联在这里，不许抽公共样式表（库的缩略图是把本文件原文
+     塞进 iframe srcdoc 渲染的，相对路径的 <link> 会 404 → 缩略图整块白）。
+     ═══════════════════════════════════════════════════════════════ */
+
+  /* ══════════════════════════════════════════════════════════════════
+     设计令牌 —— 这一整块在本站每一页里逐字相同
+     改配色 / 改字号 = 整块替换，别在下面的规则里写死颜色。
+     :root 之外零硬编码 hex；<head> 的 favicon data-URI 是唯一例外
+     （data: 里用不了 var()，但那抹紫必须和 --accent 保持一致）。
+     两页同源，所以各页都会剩几个用不到的令牌（列表页用不到 --code-* /
+     --sheet，正文页用不到 --aside）—— 保留，方便整块复制到新页面。
+     ══════════════════════════════════════════════════════════════════ */
   :root {
-    /* ——— 设计令牌（改配色只改这里） ——— */
+    /* ——— 主色（契约名，别改名） ——— */
     --bg:      #F1F2F4;   /* 冷调纸感底 */
-    --surface: #FFFFFF;   /* 置顶卡 / 侧栏块 / 订阅块 */
-    --text:    #1A1C20;   /* 正文墨色  15.2:1 on --bg */
-    --muted:   #5E626B;   /* 次要信息   5.5:1 on --bg */
-    --accent:  #7A3E78;   /* 唯一强调色 6.7:1 on --bg */
+    --surface: #FFFFFF;   /* 置顶卡 / 侧栏块 / 正文纸张 */
+    --text:    #1A1C20;   /* 正文墨色  15.2:1 on --bg，15.9:1 on --surface */
+    --muted:   #5E626B;   /* 次要信息   5.5:1 on --bg，6.1:1 on --surface */
+    --accent:  #7A3E78;   /* 唯一强调色·梅子紫 6.7:1 on --bg，7.5:1 on --surface */
     --radius:  10px;
 
-    /* 派生中性 / 强调色的深浅（同一色相，不算第二个颜色） */
-    --line:       #DFE1E5;  /* 细分割线 */
-    --line-soft:  #E8EAED;  /* 更弱的线 */
-    --tint:       #F0E7F0;  /* 强调色极淡底（标签） */
-    --tint-0:     rgba(240, 231, 240, 0); /* --tint 的全透明版，给渐变收尾用 */
-    --accent-ink: #5C2E5B;  /* 强调色加深（hover） 9.4:1 on --bg */
-    --shadow:     rgba(26, 28, 32, .07);  /* --text 的极淡投影 */
+    /* ——— 派生：中性线 + 强调色深浅（同色相，不算第二个颜色） ——— */
+    --line:        #DFE1E5;                /* 细分割线 */
+    --line-soft:   #E8EAED;                /* 更弱的线 */
+    --tint:        #F0E7F0;                /* 强调色极淡底：标签 / 徽章 / 行内代码 */
+    --tint-0:      rgba(240, 231, 240, 0); /* --tint 的全透明版，给渐变收尾用 */
+    --accent-ink:  #5C2E5B;                /* 强调色加深：hover / 行内代码字 8.7:1 on --tint */
+    --accent-mid:  #B98FB8;                /* 强调色淡化：正文链接下划线这类细线（非文字） */
+    --shadow:      rgba(26, 28, 32, .07);  /* --text 的极淡投影 */
 
-    /* 间距刻度：只用这些值 */
+    /* ——— 深色代码块（正文页用）：把正文墨色翻过来当底 ——— */
+    --code-bg:     #1A1C20;  /* 和 --text 同值，深浅对调 */
+    --code-fg:     #DDE0E6;  /* 12.9:1 on --code-bg */
+    --code-muted:  #8E93A0;  /* 5.6:1  on --code-bg —— 注释也要够看 */
+    --code-line:   #2C2F36;  /* 代码块内的分隔线 */
+    --accent-lite: #C79BC6;  /* 深色块里的强调色 7.3:1 on --code-bg */
+
+    /* ——— 间距刻度：只用这些值 ——— */
     --s1: 4px;
     --s2: 8px;
     --s3: 12px;
@@ -33,23 +56,28 @@
     --s6: 40px;
     --s7: 64px;
 
-    /* 字号刻度 */
-    --fs-sm:   14px;
-    --fs-base: 16px;
-    --fs-md:   20px;
-    --fs-lg:   28px;
-    --fs-xl:   40px;
+    /* ——— 字号刻度 ——— */
+    --fs-xs:    12px;  /* 等宽小标：日期 / 标签 / 计数 */
+    --fs-sm:    14px;
+    --fs-base:  16px;
+    --fs-prose: 18px;  /* 长文正文比 base 大一档 */
+    --fs-md:    20px;
+    --fs-lg:    28px;
+    --fs-xl:    40px;
 
-    /* 字体：正文无衬线 + 日期/标签等宽（本模板的签名质感） */
+    /* ——— 字体：正文无衬线 + 日期/标签/代码等宽（本模板的签名质感）
+           等宽栈里补了中文，代码块和标签里的汉字才不塌 ——— */
     --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
             "Hiragino Sans GB", "Microsoft YaHei", "Source Han Sans SC",
             "Noto Sans CJK SC", "WenQuanYi Micro Hei", Roboto, "Helvetica Neue",
             Arial, sans-serif;
     --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
-            "Liberation Mono", monospace;
+            "Liberation Mono", "PingFang SC", "Microsoft YaHei", monospace;
 
-    --container: 1080px;
-    --aside: 260px;
+    /* ——— 版心 ——— */
+    --container: 1080px;  /* 顶栏 / 页脚 / 列表页 */
+    --aside:     260px;   /* 列表页侧栏 */
+    --sheet:     800px;   /* 正文页纸张宽；减去左右各 40 = 720 的正文测量宽 */
     color-scheme: light;
   }
 
@@ -66,12 +94,14 @@
     letter-spacing: 0.01em;
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
+    line-break: strict;   /* 中文避头尾：不让「、」「。」这类标点跑到行首 */
   }
 
   h1, h2, h3 { margin: 0; line-height: 1.25; font-weight: 600; letter-spacing: -0.01em; }
   p { margin: 0; }
   ul { margin: 0; padding: 0; list-style: none; }
   img, svg { max-width: 100%; }
+  ::selection { background: var(--tint); color: var(--text); }
 
   a {
     color: var(--accent);
@@ -166,7 +196,7 @@
     border-radius: 999px;
     color: var(--accent);
     font-family: var(--mono);
-    font-size: 12px;
+    font-size: var(--fs-xs);
     line-height: 1.8;
     letter-spacing: 0.06em;
   }
@@ -202,13 +232,13 @@
   }
   .sec-head__t {
     font-family: var(--mono);
-    font-size: 12px;
+    font-size: var(--fs-xs);
     font-weight: 600;
     letter-spacing: 0.14em;
     text-transform: uppercase;
     color: var(--muted);
   }
-  .sec-head__c { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .sec-head__c { font-family: var(--mono); font-size: var(--fs-xs); color: var(--muted); }
 
   /* ——— 置顶文章（全页唯一的“卡片”） ——— */
   .featured {
@@ -253,7 +283,7 @@
     gap: var(--s2);
     color: var(--accent);
     font-family: var(--mono);
-    font-size: 12px;
+    font-size: var(--fs-xs);
     font-weight: 600;
     letter-spacing: 0.12em;
     text-transform: uppercase;
@@ -279,7 +309,7 @@
     flex-wrap: wrap;
     gap: var(--s3);
     font-family: var(--mono);
-    font-size: 12px;
+    font-size: var(--fs-xs);
     color: var(--muted);
     letter-spacing: 0.02em;
   }
@@ -295,7 +325,7 @@
     background: var(--tint);
     color: var(--accent);
     font-family: var(--mono);
-    font-size: 12px;
+    font-size: var(--fs-xs);
     line-height: 1.6;
     white-space: nowrap;
   }
@@ -366,7 +396,7 @@
   .panel__t {
     margin-bottom: var(--s4);
     font-family: var(--mono);
-    font-size: 12px;
+    font-size: var(--fs-xs);
     font-weight: 600;
     letter-spacing: 0.14em;
     text-transform: uppercase;
@@ -415,7 +445,7 @@
     font-size: var(--fs-sm);
   }
   .archive a:hover { background: var(--surface); color: var(--accent); }
-  .archive__n { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .archive__n { font-family: var(--mono); font-size: var(--fs-xs); color: var(--muted); }
 
   /* ——— 订阅 CTA ——— */
   .cta {
@@ -495,7 +525,7 @@
     margin-top: var(--s4);
     color: var(--muted);
     font-family: var(--mono);
-    font-size: 12px;
+    font-size: var(--fs-xs);
   }
 
   /* ——— 页脚 ——— */
@@ -516,7 +546,8 @@
   .site-foot__links { display: flex; flex-wrap: wrap; gap: var(--s5); }
   .site-foot__links a { color: var(--muted); }
   .site-foot__links a:hover { color: var(--accent); }
-  .site-foot__c { font-family: var(--mono); font-size: 12px; }
+  .site-foot__c { font-family: var(--mono); font-size: var(--fs-xs); }
+  .site-foot__note { width: 100%; color: var(--muted); font-size: var(--fs-sm); }
 
   /* ——— 响应式 ——— */
   @media (max-width: 900px) {
@@ -563,7 +594,7 @@
 
 <header class="site-head">
   <div class="wrap site-head__in">
-    <a class="brand" href="#">
+    <a class="brand" href="index.html">
       <span class="brand__mark" aria-hidden="true">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
           <path d="M3 16c2.5 0 2.5-3 5-3s2.5 3 5 3 2.5-3 5-3 2.5 3 3 3"/>
@@ -573,7 +604,7 @@
       溪岸笔记
     </a>
     <nav class="nav" aria-label="主导航">
-      <a href="#main" aria-current="page">文章</a>
+      <a href="index.html" aria-current="page">文章</a>
       <a href="#archive">归档</a>
       <a href="#about">关于</a>
       <a class="nav__rss" href="#subscribe">
@@ -606,7 +637,7 @@
         <h2 class="sec-head__t" id="pinned-t">置顶</h2>
       </div>
 
-      <a class="featured" href="#">
+      <a class="featured" href="article.html">
         <span class="pin">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M12 17v5"/>
@@ -638,7 +669,7 @@
 
       <ul class="posts__list">
         <li>
-          <a class="post" href="#">
+          <a class="post" href="article.html">
             <h3 class="post__t">把闲置的旧笔记本改成了 homelab，一年电费 87 块</h3>
             <p class="post__x">2015 年的 ThinkPad，8G 内存，装了 Debian 跑五个容器。记一下功耗实测、散热改造，以及为什么我不建议你买 NAS。</p>
             <div class="meta">
@@ -651,7 +682,7 @@
           </a>
         </li>
         <li>
-          <a class="post" href="#">
+          <a class="post" href="article.html">
             <h3 class="post__t">SQLite 真的够用吗？我把日活 3 万的服务从 Postgres 搬了回去</h3>
             <p class="post__x">WAL 模式、连接池、备份策略，还有那个所有人都会踩的「database is locked」。附三个月的真实 P99 曲线。</p>
             <div class="meta">
@@ -664,7 +695,7 @@
           </a>
         </li>
         <li>
-          <a class="post" href="#">
+          <a class="post" href="article.html">
             <h3 class="post__t">一次线上事故复盘：一个 defer 写错了位置，赔了四个小时</h3>
             <p class="post__x">锁没释放，goroutine 堆到十万。从告警到定位用了 3 小时 40 分，这篇写清楚每一步我们想错了什么。</p>
             <div class="meta">
@@ -677,7 +708,7 @@
           </a>
         </li>
         <li>
-          <a class="post" href="#">
+          <a class="post" href="article.html">
             <h3 class="post__t">关于每天早起写 500 字这件事，我坚持了 213 天</h3>
             <p class="post__x">不是为了产出，是为了在一天开始前先想明白点什么。也聊聊断掉的那 19 天是怎么回来的。</p>
             <div class="meta">
@@ -690,7 +721,7 @@
           </a>
         </li>
         <li>
-          <a class="post" href="#">
+          <a class="post" href="article.html">
             <h3 class="post__t">我为什么放弃了 tmux + vim，又在半年后搬了回来</h3>
             <p class="post__x">在 VS Code 待了六个月，用得挺好。但有些东西你只有离开一次才知道自己要的是什么。</p>
             <div class="meta">
@@ -703,7 +734,7 @@
           </a>
         </li>
         <li>
-          <a class="post" href="#">
+          <a class="post" href="article.html">
             <h3 class="post__t">手冲咖啡的水温曲线，我用温度计记了 40 杯</h3>
             <p class="post__x">92℃ 和 88℃ 到底差在哪。做了张表，结论是：影响最大的根本不是水温，是我前一天几点睡的。</p>
             <div class="meta">
@@ -716,7 +747,7 @@
           </a>
         </li>
         <li>
-          <a class="post" href="#">
+          <a class="post" href="article.html">
             <h3 class="post__t">用 Rust 重写了一遍，快了 6 倍，然后呢？</h3>
             <p class="post__x">一个每天跑一次、原本要 90 秒的批处理，现在 15 秒跑完。省下的 75 秒，和我搭进去的两个月。</p>
             <div class="meta">
@@ -729,7 +760,7 @@
           </a>
         </li>
         <li>
-          <a class="post" href="#">
+          <a class="post" href="article.html">
             <h3 class="post__t">读《程序员修炼之道》：二十年前的书，今天读还是新的</h3>
             <p class="post__x">重读的第三遍。这次划下来的句子，和五年前那次几乎没有重合——变的不是书。</p>
             <div class="meta">
@@ -742,7 +773,7 @@
           </a>
         </li>
         <li>
-          <a class="post" href="#">
+          <a class="post" href="article.html">
             <h3 class="post__t">骑车通勤第 100 天：城市的另一种分辨率</h3>
             <p class="post__x">单程 11 公里，比地铁慢 8 分钟。但这 8 分钟里我看见了这座城市在早上七点半的样子。</p>
             <div class="meta">
@@ -755,7 +786,7 @@
           </a>
         </li>
         <li>
-          <a class="post" href="#">
+          <a class="post" href="article.html">
             <h3 class="post__t">给自己写的工具，为什么不该开源</h3>
             <p class="post__x">开源之后它就不再只是「给自己写的」了。三个 issue 之后我意识到我给自己找了份没工资的班。</p>
             <div class="meta">
@@ -770,7 +801,7 @@
       </ul>
 
       <div class="more">
-        <a class="btn-ghost" href="#">
+        <a class="btn-ghost" href="#archive">
           更早的文章
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M5 12h14M13 6l6 6-6 6"/>
@@ -801,32 +832,32 @@
     <section class="panel" aria-labelledby="tags-t">
       <h2 class="panel__t" id="tags-t">标签</h2>
       <div class="tags">
-        <a class="tag" href="#">技术随笔 12</a>
-        <a class="tag" href="#">生活 9</a>
-        <a class="tag" href="#">Go 8</a>
-        <a class="tag" href="#">后端 7</a>
-        <a class="tag" href="#">工具 6</a>
-        <a class="tag" href="#">自建 5</a>
-        <a class="tag" href="#">读书 4</a>
-        <a class="tag" href="#">复盘 4</a>
-        <a class="tag" href="#">SQLite 3</a>
-        <a class="tag" href="#">homelab 3</a>
-        <a class="tag" href="#">咖啡 3</a>
-        <a class="tag" href="#">Rust 2</a>
-        <a class="tag" href="#">骑行 2</a>
+        <a class="tag" href="index.html">技术随笔 12</a>
+        <a class="tag" href="index.html">生活 9</a>
+        <a class="tag" href="index.html">Go 8</a>
+        <a class="tag" href="index.html">后端 7</a>
+        <a class="tag" href="index.html">工具 6</a>
+        <a class="tag" href="index.html">自建 5</a>
+        <a class="tag" href="index.html">读书 4</a>
+        <a class="tag" href="index.html">复盘 4</a>
+        <a class="tag" href="index.html">SQLite 3</a>
+        <a class="tag" href="index.html">homelab 3</a>
+        <a class="tag" href="index.html">咖啡 3</a>
+        <a class="tag" href="index.html">Rust 2</a>
+        <a class="tag" href="index.html">骑行 2</a>
       </div>
     </section>
 
     <section class="panel" id="archive" aria-labelledby="archive-t">
       <h2 class="panel__t" id="archive-t">归档</h2>
       <ul class="archive">
-        <li><a href="#">2026 年 7 月 <span class="archive__n">3</span></a></li>
-        <li><a href="#">2026 年 6 月 <span class="archive__n">5</span></a></li>
-        <li><a href="#">2026 年 5 月 <span class="archive__n">4</span></a></li>
-        <li><a href="#">2026 年 4 月 <span class="archive__n">6</span></a></li>
-        <li><a href="#">2026 年 3 月 <span class="archive__n">4</span></a></li>
-        <li><a href="#">2025 年 <span class="archive__n">31</span></a></li>
-        <li><a href="#">2024 年 <span class="archive__n">15</span></a></li>
+        <li><a href="index.html">2026 年 7 月 <span class="archive__n">3</span></a></li>
+        <li><a href="index.html">2026 年 6 月 <span class="archive__n">5</span></a></li>
+        <li><a href="index.html">2026 年 5 月 <span class="archive__n">4</span></a></li>
+        <li><a href="index.html">2026 年 4 月 <span class="archive__n">6</span></a></li>
+        <li><a href="index.html">2026 年 3 月 <span class="archive__n">4</span></a></li>
+        <li><a href="index.html">2025 年 <span class="archive__n">31</span></a></li>
+        <li><a href="index.html">2024 年 <span class="archive__n">15</span></a></li>
       </ul>
     </section>
 
@@ -854,12 +885,12 @@
   <div class="wrap site-foot__in">
     <span class="site-foot__c">© 2026 溪岸笔记 · 示例站点</span>
     <nav class="site-foot__links" aria-label="页脚导航">
-      <a href="#main">文章</a>
+      <a href="index.html">文章</a>
       <a href="#archive">归档</a>
       <a href="#about">关于</a>
-      <a href="#subscribe">RSS</a>
-      <a href="#">邮件</a>
+      <a href="#subscribe">订阅</a>
     </nav>
+    <span class="site-foot__note">本站为示例内容：人物、数据、文章与订阅表单均为占位，上线前请全部替换。</span>
   </div>
 </footer>
 

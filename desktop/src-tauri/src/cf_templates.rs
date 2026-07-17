@@ -15,9 +15,21 @@ pub struct Template {
     /// 用途分类（落地页/内容/作品集/…），前端按它做筛选。只有随附模板有：用户存模板时不问分类，
     /// 前端把没分类的一律归到「自建」。
     pub category: String,
+    /// 站里有几个页面（.html 个数）。模板的单位是「一个站」不是「一个页」，前端据此挂「N 页」标。
+    pub pages: usize,
     pub created_at: u64,
     /// 随附的起始模板：不可删除，前端也据此挂「内置」标。
     pub builtin: bool,
+}
+
+/// 一档随附模板。
+pub struct Builtin {
+    pub slug: &'static str,
+    pub name: &'static str,
+    pub desc: &'static str,
+    pub category: &'static str,
+    /// (文件名, 内容)。**第一个必须是 index.html** —— 缩略图和站点入口都认它。
+    pub pages: &'static [(&'static str, &'static str)],
 }
 
 // ---- 随附起始模板 ----
@@ -34,40 +46,91 @@ pub struct Template {
 //
 // 分类是**用途**不是风格：前五档是同一种页（落地页）的五种长相，风格已经写在 desc 里了；
 // 真正找不到的是「我要做的是博客/作品集/商品页」——所以后加的这批按页型铺开。
-pub const BUILTIN: &[(&str, &str, &str, &str, &str)] = &[
-    ("minimal", "极简留白", "纯白底 · 大留白 · 一个低饱和强调色", "落地页", include_str!("builtin/minimal.html")),
-    ("editorial", "杂志编辑", "米白底 · 衬线大标题 · 窄栏长文", "落地页", include_str!("builtin/editorial.html")),
-    ("dark-tech", "深色科技", "近黑底 · 霓虹点缀 · 等宽字点缀", "落地页", include_str!("builtin/dark-tech.html")),
-    ("warm-craft", "暖色手作", "奶油底 · 陶土强调 · 圆润温暖", "落地页", include_str!("builtin/warm-craft.html")),
-    ("saas", "企业 SaaS", "浅底 · 卡片层次 · 标准价格分区", "落地页", include_str!("builtin/saas.html")),
-    ("blog-index", "博客首页", "置顶大卡 · 细线分隔的文章列表 · 标签归档", "内容", include_str!("builtin/blog-index.html")),
-    ("article", "文章长文", "窄栏正文 · 引用与代码块 · 作者卡与上下篇", "内容", include_str!("builtin/article.html")),
-    ("portfolio", "作品集", "大留白 · 作品网格 · 克制的 hover", "作品集", include_str!("builtin/portfolio.html")),
-    ("shop", "商品详情", "图集 + 规格选择 · 加购 · 相关商品", "电商", include_str!("builtin/shop.html")),
-    ("corp", "企业官网", "价值主张 · 数据条 · 资质与联系表单", "企业", include_str!("builtin/corp.html")),
-    ("event", "活动报名", "时间地点 · 日程表 · 讲者与票档", "活动", include_str!("builtin/event.html")),
+//
+// **模板的单位是「一个站」，不是「一个页」**：站型本来就多页的（博客=列表+文章、电商=列表+详情+
+// 购物车、作品集=网格+详情、企业=首页+关于+联系），就得把页配齐——只给一个页的作品集，格子点进去
+// 没有落点，那不是起点，是半成品。落地页/活动报名**本来就是一页式**，配多页反而是错的。
+macro_rules! page {
+    ($slug:literal, $file:literal) => {
+        ($file, include_str!(concat!("builtin/", $slug, "/", $file)))
+    };
+}
+pub const BUILTIN: &[Builtin] = &[
+    Builtin { slug: "minimal", name: "极简留白", desc: "纯白底 · 大留白 · 一个低饱和强调色", category: "落地页",
+        pages: &[page!("minimal", "index.html")] },
+    Builtin { slug: "editorial", name: "杂志编辑", desc: "米白底 · 衬线大标题 · 窄栏长文", category: "落地页",
+        pages: &[page!("editorial", "index.html")] },
+    Builtin { slug: "dark-tech", name: "深色科技", desc: "近黑底 · 霓虹点缀 · 等宽字点缀", category: "落地页",
+        pages: &[page!("dark-tech", "index.html")] },
+    Builtin { slug: "warm-craft", name: "暖色手作", desc: "奶油底 · 陶土强调 · 圆润温暖", category: "落地页",
+        pages: &[page!("warm-craft", "index.html")] },
+    Builtin { slug: "saas", name: "企业 SaaS", desc: "浅底 · 卡片层次 · 标准价格分区", category: "落地页",
+        pages: &[page!("saas", "index.html")] },
+    Builtin { slug: "blog", name: "博客", desc: "冷灰纸底 · 梅子紫 · 文章列表 + 长文排版", category: "内容",
+        pages: &[page!("blog", "index.html"), page!("blog", "article.html")] },
+    Builtin { slug: "portfolio", name: "作品集", desc: "画廊灰墙 · 苔橄榄 · 作品网格 + 作品详情", category: "作品集",
+        pages: &[page!("portfolio", "index.html"), page!("portfolio", "work.html")] },
+    Builtin { slug: "shop", name: "电商店铺", desc: "琥珀金 · 商品列表 / 详情 / 购物车", category: "电商",
+        pages: &[page!("shop", "index.html"), page!("shop", "product.html"), page!("shop", "cart.html")] },
+    Builtin { slug: "corp", name: "企业官网", desc: "冷钢灰 · 石油蓝 · 首页 / 关于 / 联系", category: "企业",
+        pages: &[page!("corp", "index.html"), page!("corp", "about.html"), page!("corp", "contact.html")] },
+    Builtin { slug: "event", name: "活动报名", desc: "时间地点 · 日程表 · 讲者与票档", category: "活动",
+        pages: &[page!("event", "index.html")] },
 ];
 
 pub fn is_builtin(slug: &str) -> bool {
-    BUILTIN.iter().any(|(s, ..)| *s == slug)
+    BUILTIN.iter().any(|b| b.slug == slug)
 }
 
 /// 把随附模板写进 <data_dir>/templates/<slug>/（覆写以随版本刷新）。
 /// created_at 固定 0 → 排在用户自己沉淀的模板后面。
 pub fn ensure_builtin(data_dir: &Path) -> std::io::Result<()> {
     let dir = data_dir.join("templates");
-    for (slug, name, desc, category, html) in BUILTIN {
-        let d = dir.join(slug);
+    prune_stale_builtin(&dir);
+    for b in BUILTIN {
+        let d = dir.join(b.slug);
         fs::create_dir_all(&d)?;
-        fs::write(d.join("index.html"), html)?;
+        for (file, html) in b.pages {
+            fs::write(d.join(file), html)?;
+        }
         let manifest = serde_json::json!({
-            "name": name, "desc": desc, "category": category, "created_at": 0, "builtin": true
+            "name": b.name, "desc": b.desc, "category": b.category, "created_at": 0, "builtin": true
         });
         let bytes = serde_json::to_vec_pretty(&manifest)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
         fs::write(d.join("pilot-template.json"), bytes)?;
     }
     Ok(())
+}
+
+/// 清掉「**曾经**是随附模板、现在已经不在 BUILTIN 里」的目录。
+///
+/// 为什么非有不可：blog-index 和 article 合并成 blog 之后，老目录还躺在已装用户的数据目录里，
+/// 而 `is_builtin()` 已经不认它们了 —— 它们会**冒充成用户自建的模板**留在库里（还带着删除键、
+/// 落进「自建」筛选），像见了鬼。ensure_builtin 只写不删，这个洞得自己堵。
+///
+/// 安全边界：**只删清单里写着 `builtin: true` 的**。`save()` 从来不写这个键，所以用户自己
+/// 沉淀的模板一个都碰不到。
+fn prune_stale_builtin(templates_dir: &Path) {
+    let Ok(rd) = fs::read_dir(templates_dir) else { return };
+    for e in rd.flatten() {
+        let p = e.path();
+        if !p.is_dir() {
+            continue;
+        }
+        let slug = e.file_name().to_string_lossy().into_owned();
+        if is_builtin(&slug) {
+            continue; // 还在册，留着
+        }
+        let was_builtin = fs::read(p.join("pilot-template.json"))
+            .ok()
+            .and_then(|r| serde_json::from_slice::<serde_json::Value>(&r).ok())
+            .and_then(|j| j.get("builtin").and_then(|x| x.as_bool()))
+            .unwrap_or(false);
+        if was_builtin {
+            let _ = fs::remove_dir_all(&p);
+        }
+    }
 }
 
 /// 拷贝时跳过的目录/文件：依赖、构建产物、版本控制、任何 .env*。
@@ -166,14 +229,28 @@ pub fn save(templates_dir: &Path, name: &str, desc: &str, src: &Path) -> Result<
         serde_json::to_vec_pretty(&manifest).map_err(|e| e.to_string())?,
     )
     .map_err(|e| format!("写模板清单失败: {e}"))?;
+    let pages = count_pages(&dst);
     Ok(Template {
         slug,
         name: name.trim().into(),
         desc: desc.trim().into(),
         category: String::new(), // 存模板时不问分类；前端把空分类归到「自建」
+        pages,
         created_at: created,
         builtin: false, // 用户自己存的，永远不是随附模板（重名在上面就挡掉了）
     })
+}
+
+/// 站里有几个页面。只数顶层的 .html —— 用户存的模板可能有 assets/ 之类的子目录，
+/// 递归去数会把一堆无关的东西也算成「页」。
+fn count_pages(dir: &Path) -> usize {
+    fs::read_dir(dir)
+        .map(|rd| {
+            rd.flatten()
+                .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("html"))
+                .count()
+        })
+        .unwrap_or(0)
 }
 
 pub fn list(templates_dir: &Path) -> Vec<Template> {
@@ -197,7 +274,8 @@ pub fn list(templates_dir: &Path) -> Vec<Template> {
                 })
                 .unwrap_or((slug.clone(), String::new(), String::new(), 0));
             let builtin = is_builtin(&slug);
-            Template { slug, name, desc, category, created_at: created, builtin }
+            let pages = count_pages(&e.path());
+            Template { slug, name, desc, category, pages, created_at: created, builtin }
         })
         .collect();
     // 用户自己沉淀的在前（created_at 新→旧），随附模板 created_at=0 自然沉底。
@@ -292,6 +370,43 @@ mod tests {
         0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b) < 0.25
     }
 
+    /// 下架的随附模板要**自动清掉**，但**绝不能碰用户自己存的**。
+    ///
+    /// 真实场景：blog-index / article 合并成 blog 之后，老目录还躺在已装用户的数据目录里。
+    /// ensure_builtin 只写不删 → 老目录留着，而 is_builtin() 已经不认它们了 →
+    /// 它们会**冒充成用户自建模板**（带删除键、落进「自建」筛选）。
+    /// 这条测试同时钉死另一头：删除只认清单里的 `builtin: true`，用户的模板碰都不许碰。
+    #[test]
+    fn stale_builtin_pruned_user_templates_untouched() {
+        let base = std::env::temp_dir().join(format!("tmplp-{}", uuid::Uuid::new_v4()));
+        let tdir = base.join("templates");
+        fs::create_dir_all(&tdir).unwrap();
+
+        // 上个版本种下的随附模板，这版下架了
+        let old = tdir.join("blog-index");
+        fs::create_dir_all(&old).unwrap();
+        fs::write(old.join("index.html"), "<h1>老的随附模板</h1>").unwrap();
+        // r#""# 而不是 br#""#：字节串字面量里不许有非 ASCII（中文会直接编译不过）
+        fs::write(old.join("pilot-template.json"), r#"{"name":"博客首页","builtin":true}"#).unwrap();
+
+        // 用户自己沉淀的（save() 从不写 builtin 键）—— 名字同样不在 BUILTIN 里
+        let mine = tdir.join("my-shop");
+        fs::create_dir_all(&mine).unwrap();
+        fs::write(mine.join("index.html"), "<h1>我自己的站</h1>").unwrap();
+        fs::write(mine.join("pilot-template.json"), r#"{"name":"我的店","created_at":123}"#).unwrap();
+
+        ensure_builtin(&base).unwrap();
+
+        assert!(!old.exists(), "下架的随附模板该被清掉，否则会冒充成用户模板赖在库里");
+        assert!(mine.join("index.html").exists(), "★ 用户自己存的模板一个字节都不许碰");
+        let ls = list(&tdir);
+        assert!(ls.iter().any(|t| t.slug == "my-shop" && !t.builtin), "用户模板还得在，且不是 builtin");
+        assert!(!ls.iter().any(|t| t.slug == "blog-index"), "老档不该还在列表里");
+        assert!(ls.iter().any(|t| t.slug == "blog" && t.pages == 2), "新的合并档该在，且是两页");
+
+        fs::remove_dir_all(&base).ok();
+    }
+
     /// ★ 配色的机器裁判：随附模板之间强调色不许撞色相。
     ///
     /// 为什么要这条：这批模板是多个 agent **各写各的**，谁也看不见别人选了什么色 —— 结果
@@ -310,10 +425,11 @@ mod tests {
 
         let v: Vec<_> = BUILTIN
             .iter()
-            .map(|(slug, .., html)| {
+            .map(|b| {
+                let html = b.pages[0].1; // 以 index.html 为准（同站各页令牌值必须一致）
                 let (h, s) = hue_sat(html, "--accent")
-                    .unwrap_or_else(|| panic!("{slug}: :root 里读不到 --accent"));
-                (*slug, h, s, bg_is_dark(html))
+                    .unwrap_or_else(|| panic!("{}: :root 里读不到 --accent", b.slug));
+                (b.slug, h, s, bg_is_dark(html))
             })
             .collect();
 
@@ -393,19 +509,51 @@ mod tests {
             "分类要真的铺开页型，不然筛选没意义"
         );
 
-        // 每个都得是能直接渲染的单文件（缩略图靠读 index.html 原文）
-        for (slug, ..) in BUILTIN {
-            let idx = tdir.join(slug).join("index.html");
-            let html = fs::read_to_string(&idx).unwrap_or_default();
-            assert!(html.contains("<style"), "{slug}: 必须内联 CSS，否则缩略图是白的");
-            assert!(html.contains("--accent"), "{slug}: 必须有设计变量");
-            // 外链资源 = 缩略图 404 + 离线打不开。srcdoc 里相对路径会解析到 app 的 origin。
-            assert!(
-                !html.contains("<link rel=\"stylesheet\"") && !html.contains("<script src="),
-                "{slug}: 不许外链 CSS/JS"
-            );
-            assert!(!html.contains("//fonts.googleapis.com"), "{slug}: 不许外链字体");
-            assert!(!html.contains("<img src=\"http"), "{slug}: 不许外链图片");
+        // **每一页**都得是能直接渲染的自包含单文件（缩略图靠读 index.html 原文塞 srcdoc）
+        for b in BUILTIN {
+            assert_eq!(b.pages[0].0, "index.html", "{}: 第一页必须是 index.html（缩略图与站点入口都认它）", b.slug);
+            for (file, _) in b.pages {
+                let html = fs::read_to_string(tdir.join(b.slug).join(file)).unwrap_or_default();
+                let at = format!("{}/{file}", b.slug);
+                assert!(html.contains("<style"), "{at}: CSS 必须内联，否则缩略图是白的");
+                assert!(html.contains("--accent"), "{at}: 必须有设计变量");
+                // 外链资源 = 缩略图 404 + 离线打不开。srcdoc 里相对路径会解析到 app 的 origin。
+                assert!(
+                    !html.contains("<link rel=\"stylesheet\"") && !html.contains("<script src="),
+                    "{at}: 不许外链 CSS/JS"
+                );
+                assert!(!html.contains("//fonts.googleapis.com"), "{at}: 不许外链字体");
+                assert!(!html.contains("<img src=\"http"), "{at}: 不许外链图片");
+            }
+        }
+
+        // 页数：站型该有几页就几页（模板的单位是「一个站」不是「一个页」）
+        let by = |s: &str| ls.iter().find(|t| t.slug == s).unwrap();
+        assert_eq!(by("blog").pages, 2, "博客 = 列表 + 文章");
+        assert_eq!(by("shop").pages, 3, "电商 = 列表 + 详情 + 购物车");
+        assert_eq!(by("corp").pages, 3, "企业 = 首页 + 关于 + 联系");
+        assert_eq!(by("minimal").pages, 1, "落地页本来就是一页式");
+
+        // 多页模板的页间跳转必须是真的：主导航指向的文件得**真的在磁盘上**
+        for b in BUILTIN.iter().filter(|b| b.pages.len() > 1) {
+            for (file, html) in b.pages {
+                let links: Vec<&str> = html
+                    .match_indices("href=\"")
+                    .filter_map(|(i, _)| {
+                        let rest = &html[i + 6..];
+                        rest.find('"').map(|e| &rest[..e])
+                    })
+                    .filter(|h| h.ends_with(".html"))
+                    .collect();
+                for l in &links {
+                    let target = l.split('#').next().unwrap_or(l);
+                    assert!(
+                        b.pages.iter().any(|(f, _)| f == &target),
+                        "{}/{file} 链到了 `{l}`，但这个站里没有这个页 —— 死链",
+                        b.slug
+                    );
+                }
+            }
         }
 
         // 预览窗标题用的是显示名，不是 slug

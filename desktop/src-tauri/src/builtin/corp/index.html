@@ -161,6 +161,9 @@
   .link svg{width:14px;height:14px;transition:transform .16s ease;}
   .link:hover{color:var(--accent-deep);}
   .link:hover svg{transform:translateX(3px);}
+  /* --accent 落到深色带上只有 2.4:1 —— 深色带里的文字链一律抬到 --accent-lift */
+  .ink .link{color:var(--accent-lift);}
+  .ink .link:hover{color:var(--surface);}
 
   /* ——————————————— 导航 ——————————————— */
   .nav{
@@ -191,6 +194,9 @@
   }
   .nav-links a:hover{color:var(--text);}
   .nav-links a:hover::after{transform:scaleX(1);}
+  /* 当前页：留色 + 加粗 + 常驻下划线，不只靠颜色区分 */
+  .nav-links a[aria-current="page"]{color:var(--text);font-weight:700;}
+  .nav-links a[aria-current="page"]::after{transform:scaleX(1);}
   .nav-cta{flex:none;}
 
   /* ——————————————— Hero ——————————————— */
@@ -386,6 +392,7 @@
   .contact h2{color:var(--surface);}
   .contact .lede{color:var(--ink-muted);}
   .contact-facts{margin-top:var(--s6);display:grid;gap:var(--s5);}
+  .contact-more{margin-top:var(--s5);}
   .fact{display:flex;gap:var(--s4);align-items:flex-start;}
   .fact svg{width:18px;height:18px;flex:none;color:var(--accent-lift);margin-top:var(--s1);}
   .fact dt{font-size:var(--t-xs);color:var(--ink-muted);}
@@ -436,7 +443,8 @@
     gap:var(--s6);padding-bottom:var(--s6);border-bottom:1px solid var(--ink-line);
   }
   .foot-brand .brand-name{color:var(--surface);}
-  .foot-brand p{margin-top:var(--s4);font-size:var(--t-xs);color:var(--ink-muted);max-width:34ch;line-height:1.8;}
+  /* 中文宽度用 em——ch 按「0」字形算（≈.55em），拿它限中文会让栏宽莫名其妙地窄一半 */
+  .foot-brand p{margin-top:var(--s4);font-size:var(--t-xs);color:var(--ink-muted);max-width:32em;line-height:1.8;}
   .foot h4{
     font-family:var(--mono);font-size:var(--t-xs);letter-spacing:.12em;
     text-transform:uppercase;color:var(--ink-text);margin-bottom:var(--s4);font-weight:600;
@@ -449,7 +457,6 @@
     align-items:center;justify-content:space-between;
     padding-top:var(--s5);font-size:var(--t-xs);
   }
-  .foot-bottom a:hover{color:var(--accent-lift);}
   .foot-legal{display:flex;flex-wrap:wrap;gap:var(--s2) var(--s4);align-items:center;}
 
   /* ═══════════════ 响应式：1024 / 768 / 560 ═══════════════ */
@@ -514,7 +521,7 @@
 <!-- ═══════════════ 导航 ═══════════════ -->
 <header class="nav">
   <div class="wrap nav-in">
-    <a class="brand" href="#top" aria-label="恒测传感 首页">
+    <a class="brand" href="index.html" aria-label="恒测传感 首页">
       <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
         <rect width="32" height="32" rx="4" fill="var(--accent)"/>
         <path d="M5 19h4l3-8 4 13 3-7h8" fill="none" stroke="var(--surface)"
@@ -525,14 +532,16 @@
         <span class="brand-sub">Hengce Sensing</span>
       </span>
     </a>
+    <!-- 三页共用同一份导航；本页内的区块走锚点，跨页走相对路径 -->
     <nav class="nav-links" aria-label="主导航">
+      <a href="index.html" aria-current="page">首页</a>
       <a href="#products">产品中心</a>
       <a href="#solutions">解决方案</a>
       <a href="#certs">资质认证</a>
       <a href="#news">新闻动态</a>
-      <a href="#about">关于我们</a>
+      <a href="about.html">关于我们</a>
     </nav>
-    <a class="btn btn-primary btn-sm nav-cta" href="#contact">联系我们</a>
+    <a class="btn btn-primary btn-sm nav-cta" href="contact.html">联系我们</a>
   </div>
 </header>
 
@@ -980,9 +989,18 @@
           <div><dt>工厂地址（占位）</dt><dd>江苏省无锡市新吴区某某路 88 号 A 栋</dd></div>
         </div>
       </dl>
+      <p class="contact-more">
+        <a class="link" href="contact.html">查看全部联系方式
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 8h10M9 4l4 4-4 4"/>
+          </svg>
+        </a>
+      </p>
     </div>
 
-    <form class="form" action="#" method="post" novalidate>
+    <!-- 首页只放精简版询盘：4 个字段问到底。完整表单（需求类型/年用量/隐私同意）在 contact.html -->
+    <form class="form" action="contact.html#inquiry" method="post" novalidate>
       <div class="form-row">
         <div class="field">
           <label for="f-name">姓名<span class="req" aria-hidden="true">*</span></label>
@@ -1004,28 +1022,20 @@
         </div>
       </div>
       <div class="field">
-        <label for="f-kind">需求类型</label>
-        <select id="f-kind" name="kind">
-          <option>选型咨询</option>
-          <option>批量报价</option>
-          <option>定制 / OEM 开发</option>
-          <option>售后与标定服务</option>
-        </select>
-      </div>
-      <div class="field">
         <label for="f-msg">工况描述<span class="req" aria-hidden="true">*</span></label>
         <textarea id="f-msg" name="message" placeholder="例：液压站测压，介质为 46 号抗磨液压油，量程 0–25 MPa，环境 −10–60 ℃，M20×1.5 螺纹，需 4–20 mA 输出，年用量约 500 支。" required></textarea>
         <span class="field-hint">已填 0 / 500 字 · 请至少说明介质、量程与安装接口</span>
       </div>
       <button class="btn btn-primary" type="submit">提交需求</button>
-      <p class="form-note">提交即表示同意我们按 <a href="#contact">隐私政策（占位）</a> 处理你的联系方式，仅用于本次业务沟通。</p>
+      <p class="form-note">提交即表示同意我们按 <a href="contact.html#privacy">隐私说明（占位）</a> 处理你的联系方式，仅用于本次业务沟通。<br>需要选需求类型、填年用量？用 <a href="contact.html#inquiry">完整询盘表单</a>。</p>
     </form>
   </div>
 </section>
 </main>
 
 <!-- ═══════════════ 页脚 ═══════════════ -->
-<footer class="ink foot" id="about">
+<!-- 「关于我们」已独立成页（about.html），页脚不再兼任 #about 锚点 -->
+<footer class="ink foot">
   <div class="wrap foot-in">
     <div class="foot-grid">
       <div class="foot-brand">
@@ -1054,27 +1064,28 @@
       <div>
         <h4>支持</h4>
         <ul>
-          <li><a href="#certs">选型样本下载</a></li>
-          <li><a href="#certs">标定与校准服务</a></li>
-          <li><a href="#certs">质保与退换政策</a></li>
-          <li><a href="#contact">技术支持</a></li>
+          <li><a href="#products">选型样本下载</a></li>
+          <li><a href="about.html#quality">标定与校准服务</a></li>
+          <li><a href="contact.html#faq">质保与退换政策</a></li>
+          <li><a href="contact.html#depts">技术支持</a></li>
         </ul>
       </div>
       <div>
         <h4>关于</h4>
         <ul>
-          <li><a href="#about">公司简介</a></li>
+          <li><a href="about.html">公司简介</a></li>
+          <li><a href="about.html#history">发展历程</a></li>
           <li><a href="#certs">资质与认证</a></li>
           <li><a href="#news">新闻动态</a></li>
-          <li><a href="#contact">加入我们</a></li>
         </ul>
       </div>
     </div>
     <div class="foot-bottom">
       <span>© 1998–2024 无锡恒测传感科技有限公司（示例内容）</span>
+      <!-- 备案号是文字不是链接：真备案号才链到工信部，占位期别留死链 -->
       <span class="foot-legal">
-        <a href="#about">苏 ICP 备 00000000 号-1（占位）</a>
-        <a href="#about">苏公网安备 00000000000000 号（占位）</a>
+        <span>苏 ICP 备 00000000 号-1（占位）</span>
+        <span>苏公网安备 00000000000000 号（占位）</span>
       </span>
     </div>
   </div>
