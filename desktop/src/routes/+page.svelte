@@ -1061,6 +1061,7 @@
     | { kind: 'managed'; m: ManagedSite }
     | { kind: 'conv'; c: Conversation }
     | { kind: 'template'; t: Template }
+    | { kind: 'conn'; c: Connection }
     | { kind: 'sched-find'; q: string };
   const SEARCH_VIEWS: { view: 'schedule' | 'tasks' | 'managed' | 'templates'; label: string }[] = [
     { view: 'schedule', label: '排期' },
@@ -1079,6 +1080,14 @@
       .map((v) => ({ kind: 'view' as const, ...v }));
     if (views.length) out.push({ title: '视图', entries: views });
     if (q) {
+      // 远程连接：名称 / IP / user@host / 端口 / 系统。
+      // ★ 这一段**不按 activeConnId 过滤** —— 别的分区搜的是「当前连接内部的东西」，
+      //   而连接本身是**跨连接**的：机器一多，全局搜索就是最快的切换方式（记不住哪台是哪个 IP）。
+      const connHits = conns
+        .filter((c) => c.kind === 'ssh')
+        .filter((c) => connHay(c).includes(q))
+        .slice(0, 8);
+      if (connHits.length) out.push({ title: '远程连接', entries: connHits.map((c) => ({ kind: 'conn' as const, c })) });
       // 定时任务：标题 / prompt / 站点名（slug 与展示名都算）
       const taskHits = tasks
         .filter((t) => t.conn_id === activeConnId)
@@ -1123,6 +1132,9 @@
       tmplCat = '全部';
       openTemplates();
       void focusTemplate(it.t.slug);
+    } else if (it.kind === 'conn') {
+      // 走和切换器同一条路：连接切换牵着视图守卫、SSH 探系统、终端重建，别在这儿另起一套
+      void selectConn(it.c.id);
     } else if (it.kind === 'conv') {
       openConv(it.c.id);
     } else if (it.kind === 'task') {
@@ -1484,6 +1496,10 @@
     return '';
   }
   // 页脚/下拉的副标题：探到了就显示系统，没探到就显示 user@host（总得有东西）。
+  /** 远程连接的搜索索引：名称 / IP / user@host / 端口 / 系统都能命中。
+   *  机器一多就记不住「哪台是哪个 IP」——所以 IP 必须能搜，这正是用户要它的原因。 */
+  const connHay = (c: Connection) =>
+    `${c.name} ${c.ssh_user ?? ''}@${c.ssh_host ?? ''} ${c.ssh_host ?? ''}:${c.ssh_port ?? ''} ${c.ssh_os ?? ''} ${c.ssh_os_id ?? ''}`.toLowerCase();
   function sshSub(c: Connection | undefined | null): string {
     if (!c) return '';
     return c.ssh_os || `${c.ssh_user}@${c.ssh_host}${c.ssh_port && c.ssh_port !== 22 ? ':' + c.ssh_port : ''}`;
@@ -4015,7 +4031,7 @@
           <circle cx="8" cy="8" r="5" stroke="currentColor" stroke-width="1.4" />
           <path d="M11.7 11.7L15 15" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
         </svg>
-        <input bind:this={searchInput} bind:value={searchQ} placeholder="搜索会话、定时任务、托管站点、模板，或直达视图…" spellcheck="false" autocapitalize="off" autocorrect="off" />
+        <input bind:this={searchInput} bind:value={searchQ} placeholder="搜索会话、远程连接（名称/IP）、定时任务、托管站点、模板…" spellcheck="false" autocapitalize="off" autocorrect="off" />
         <kbd>esc</kbd>
       </div>
       <div class="search-list">
@@ -4048,6 +4064,11 @@
                   <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><rect x="2.5" y="2.5" width="4.5" height="4.5" rx="1" stroke="currentColor" stroke-width="1.3" /><rect x="9" y="2.5" width="4.5" height="4.5" rx="1" stroke="currentColor" stroke-width="1.3" /><rect x="2.5" y="9" width="4.5" height="4.5" rx="1" stroke="currentColor" stroke-width="1.3" /><rect x="9" y="9" width="4.5" height="4.5" rx="1" stroke="currentColor" stroke-width="1.3" /></svg>
                   <span class="si-main"><b>{it.t.name}</b><small>{catOf(it.t)}{it.t.desc ? ` · ${it.t.desc}` : ''}</small></span>
                   {#if it.t.builtin}<span class="si-tag">内置</span>{/if}
+                {:else if it.kind === 'conn'}
+                  <!-- 与连接切换器同一个终端标 -->
+                  {@render sshMark(15)}
+                  <span class="si-main"><b>{it.c.name}</b><small>{it.c.ssh_user}@{it.c.ssh_host}{it.c.ssh_port && it.c.ssh_port !== 22 ? ':' + it.c.ssh_port : ''}{it.c.ssh_os ? ` · ${it.c.ssh_os}` : ''}</small></span>
+                  {#if activeConnId === it.c.id}<span class="si-tag">当前</span>{/if}
                 {:else}
                   <svg width="15" height="15" viewBox="0 0 18 18" fill="none"><circle cx="8" cy="8" r="5" stroke="currentColor" stroke-width="1.4" /><path d="M11.7 11.7L15 15" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /></svg>
                   <span class="si-main"><b>在排期中查找「{it.q}」</b><small>切到排期视图并按标题过滤</small></span>
@@ -5132,7 +5153,10 @@
   .foot-os { cursor: pointer; border-radius: 5px; padding: 0 3px; margin-left: -3px; }
   .foot-os:hover { background: var(--accent-soft); color: var(--text); }
   .cs-os { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  :global(svg.distro) { flex: none; }
+  /* ★ 上移 1px 不是玄学：align-items:center 对齐的是**盒子**，而文字行盒底下有一截没人用的
+     降部空间（Ubuntu/22.04 这类没有 g/p/y），于是「看得见的字」整体偏上、图标按盒居中就显得低。
+     发行版图标是纯圆/纯环，没有基线可言，只能按视觉中线手动补这 1px。 */
+  :global(svg.distro) { flex: none; transform: translateY(-1px); }
   /* 头部的「重新连接」：只留图标，紧跟在连接状态后面 */
   .th-rfz { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; border: 0; background: transparent; color: var(--faint); cursor: pointer; padding: 0; -webkit-app-region: no-drag; }
   .th-rfz :global(svg) { width: 12px; height: 12px; }
