@@ -510,8 +510,40 @@ func (s *Server) authed(v *View, sess session) {
 	v.ShowPwWarn = s.passwordWarningVisible(sess, false)
 	v.PlatformCurrentSiteID = sess.currentSiteID
 	v.AdminPreviewPrefix = s.adminSitePreviewPrefix(sess.currentSiteID)
+	// 「查看」已发布内容：站点绑了正式域名（或 CF 已发布）就开真实地址——预览通道只是
+	// 没有正式入口时的替身；单站部署前缀为空，相对路径本来就是真实地址。
+	v.AdminViewPrefix = v.AdminPreviewPrefix
+	if base := s.adminSitePublicBaseURL(sess.currentSiteID); base != "" {
+		v.AdminViewPrefix = base
+	}
 	v.AdminSiteURL = s.adminSiteURL(sess.currentSiteID, v.EditLang)
 	s.populatePlatformSites(v)
+}
+
+// adminSitePublicBaseURL 站点的正式对外入口（不带末尾斜杠）：Cloudflare 已发布取官方域名，
+// 否则取已启用域名里的主域名（SiteDomains 排序主域名在前）。没有正式入口返回 ""。
+func (s *Server) adminSitePublicBaseURL(siteID int64) string {
+	if href, host := s.platformOfficialSiteURL(siteID); href != "" && host != "" {
+		return strings.TrimRight(href, "/")
+	}
+	if s.platform == nil || siteID <= 0 {
+		return ""
+	}
+	doms, err := s.platform.SiteDomains()
+	if err != nil {
+		return ""
+	}
+	for _, d := range doms {
+		if d == nil || d.SiteID != siteID || !d.Enabled || strings.TrimSpace(d.Host) == "" {
+			continue
+		}
+		scheme := strings.TrimSpace(d.Scheme)
+		if scheme == "" {
+			scheme = "https"
+		}
+		return scheme + "://" + strings.TrimSpace(d.Host)
+	}
+	return ""
 }
 
 func (s *Server) platformAuthed(v *View, sess session) {

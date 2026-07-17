@@ -950,10 +950,12 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 		editPath  string
 		editTitle string
 	}{
+		// 已发布内容的「查看」：站点绑了正式域名（blog.test）就开真实地址——
+		// 预览通道只在没有正式入口时兜底（草稿预览仍走 /admin/.../preview，见上）。
 		{
 			name:      "posts",
 			path:      "/admin/posts?lang=zh&status=published",
-			wantHref:  previewPrefix + "/zh/posts/preview-internal-link/",
+			wantHref:  "https://blog.test/zh/posts/preview-internal-link/",
 			rootHref:  "/zh/posts/preview-internal-link/",
 			editPath:  "/admin/posts/" + strconv.FormatInt(otherPostID, 10) + "/edit",
 			editTitle: "Preview Internal Link",
@@ -961,7 +963,7 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 		{
 			name:      "links",
 			path:      "/admin/links?lang=zh&status=published",
-			wantHref:  previewPrefix + "/zh/links/preview-resource-link/",
+			wantHref:  "https://blog.test/zh/links/preview-resource-link/",
 			rootHref:  "/zh/links/preview-resource-link/",
 			editPath:  "/admin/links/" + strconv.FormatInt(otherLinkID, 10) + "/edit",
 			editTitle: "Preview Resource Link",
@@ -969,7 +971,7 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 		{
 			name:      "pages",
 			path:      "/admin/pages?lang=zh",
-			wantHref:  previewPrefix + "/zh/preview-about/",
+			wantHref:  "https://blog.test/zh/preview-about/",
 			rootHref:  "/zh/preview-about/",
 			editPath:  "/admin/pages/" + strconv.FormatInt(otherPageID, 10) + "/edit",
 			editTitle: "Preview About Page",

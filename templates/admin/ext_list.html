@@ -119,7 +119,7 @@
       </td>
       <td class="right actions content-col-actions">
         <div class="action-icons">
-          {{if eq .Status "published"}}<a class="act-ico" href="/{{$.ExtType.URLPrefix}}/{{.Slug}}" target="_blank" title="{{$.Admin.T "admin.action.view" "查看"}}" aria-label="{{$.Admin.T "admin.action.view" "查看"}}">{{template "icon-extlink"}}</a>{{else}}<a class="act-ico" href="/admin/ext/{{$.ExtType.Key}}/{{.ID}}/preview" target="_blank" title="{{$.Admin.T "admin.action.preview" "预览"}}" aria-label="{{$.Admin.T "admin.action.preview" "预览"}}">{{template "icon-extlink"}}</a>{{end}}
+          {{if eq .Status "published"}}<a class="act-ico" href="{{adminPublicContentPath $.AdminViewPrefix .Lang $.ExtType.Key .Slug}}" target="_blank" title="{{$.Admin.T "admin.action.view" "查看"}}" aria-label="{{$.Admin.T "admin.action.view" "查看"}}">{{template "icon-extlink"}}</a>{{else}}<a class="act-ico" href="/admin/ext/{{$.ExtType.Key}}/{{.ID}}/preview" target="_blank" title="{{$.Admin.T "admin.action.preview" "预览"}}" aria-label="{{$.Admin.T "admin.action.preview" "预览"}}">{{template "icon-extlink"}}</a>{{end}}
           <a class="act-ico" href="/admin/ext/{{$.ExtType.Key}}/{{.ID}}/edit" title="{{$.Admin.T "admin.action.edit" "编辑"}}" aria-label="{{$.Admin.T "admin.action.edit" "编辑"}}">{{template "icon-edit"}}</a>
           {{if .Discarded}}
           <form method="post" action="/admin/ext/{{$.ExtType.Key}}/{{.ID}}/undiscard">

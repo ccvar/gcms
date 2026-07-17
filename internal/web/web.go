@@ -990,6 +990,7 @@ type View struct {
 	VisualPreviewURL             string                                 // 后台可视化编辑 iframe 地址
 	AdminSiteURL                 string                                 // 后台顶部“查看站点”入口
 	AdminPreviewPrefix           string                                 // 平台多站点下当前站点的前台预览前缀
+	AdminViewPrefix              string                                 // 「查看已发布内容」的前缀：站点有正式入口（CF 官方域名/绑定域名）时是绝对地址，否则回落预览前缀
 	VisualFields                 []VisualField                          // 可视化编辑侧栏字段
 	VisualGroups                 []VisualGroup                          // 可视化编辑侧栏字段分组
 	VisualHistory                []VisualLog                            // 可视化编辑最近修改
