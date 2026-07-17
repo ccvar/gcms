@@ -3723,7 +3723,7 @@
 
     {:else if view === 'templates'}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <header class="thread-head tmpl-head" data-tauri-drag-region onmousedown={startDrag}>
+      <header class="thread-head" data-tauri-drag-region onmousedown={startDrag}>
         <div class="th-info">
           <div class="th-line"><b>模板库</b><small class="tmpl-hint">把做好的站点存成模板，之后引用它快速起新项目</small></div>
           {#if templates.length}
@@ -4981,7 +4981,10 @@
   /* 高度对齐左上角那排工具图标：`.win-tools` 是 fixed/top:0/height:30px，中心在 15px。
      这里最高的子元素是 24px 的面板开关 → 上下各留 3px 正好 30px，中心也落在 15px，
      于是「地址行 / 刷新键 / 三枚开关 / 折叠侧栏 / 搜索」全在同一条水平线上。 */
-  .thread-head.slim { padding-top: 3px; padding-bottom: 3px; container-type: inline-size; }
+  /* 这条**必须自己写回 align-items:center**：上面 .thread-head 改成了 flex-start（为了让标题行
+     对齐 15px 的图标带），而 slim 是靠 center 把「地址行 / 刷新键 / 三枚开关」这些不等高的子元素
+     一起压到 15px 那条线上的 —— 被 flex-start 带走就全顶到 3px 去了。 */
+  .thread-head.slim { padding-top: 3px; padding-bottom: 3px; align-items: center; container-type: inline-size; }
   /* 选择器要带上 .th-info small，否则压不过 `.th-info small` 那条（它带元素选择器，分更高）——
      实测：只写 .rhead-line 的话 margin-top 仍是 2px，文字比图标低 1px。 */
   .th-info small.rhead-line { display: flex; align-items: center; gap: 5px; margin-top: 0; }
@@ -5432,7 +5435,14 @@
   .cb-ro-t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
   /* ---- 线程 ---- */
-  .thread-head { flex: none; padding: 13px 24px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  /* ★ 标题要和左上角那排工具图标在同一条水平线上。
+     `.win-tools` 是 fixed / top:0 / height:30px + align-items:center → **图标中心恒在 15px**
+     （和 .thread-head.slim 那条注释是同一个基准）。标题行高 20.3 → 上内边距取 5px，
+     标题中心落在 15.15，对上。原来 13px 时中心在 23.1 —— **每个页面都低 8px**。
+     上下不对称是**故意的**：上边距由「对齐一个 fixed 覆盖层」决定，不由视觉呼吸决定。
+     ★ align-items 必须 flex-start，不能用 center：th-info 比右侧按钮（28px）矮时
+     （例如只有标题、没有副标题的头），center 会让 th-info 跟着按钮居中，标题又掉到 26.8。 */
+  .thread-head { flex: none; padding: 5px 24px 13px; border-bottom: 1px solid var(--border); display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
   /* 侧栏收起：红绿灯 + 悬浮的折叠/搜索钮压在内容区左上，页头统一左让位（全部视图受益）。
      mac 窗口态 140px（红绿灯≈70 + 两钮）；全屏/Windows 无红绿灯（钮在 left:12），100px 够。 */
   .app.rail-collapsed .thread-head { padding-left: 140px; }
@@ -5734,8 +5744,6 @@
      .sched-inner 的 720px —— 三列要 3*272+2*12+48 = 876px，720 差得远，所以窗口再宽也只有两列。
      日程页还得用窄栏（那是读列表的），所以不改 .sched-inner，另起一个。 */
   .tmpl-inner { max-width: 1180px; margin: 0 auto; padding: 18px 24px 24px; }
-  /* 筛选进了标题栏 → 头变成两行；刷新键别再跟着垂直居中跑到中间去 */
-  .thread-head.tmpl-head { align-items: flex-start; }
   .th-line { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
   /* 提示挪到标题**同一行**了。`.th-info small` 那 2px 上间距是给「标题下面那行」准备的，
      这里得清掉；选择器带上 .tmpl-hint 才压得过它（它带元素选择器，分更高）。 */
