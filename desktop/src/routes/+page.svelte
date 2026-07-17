@@ -1015,7 +1015,7 @@
   let searchOpen = $state(false);
   let searchQ = $state('');
   let searchInput = $state<HTMLInputElement | null>(null);
-  function openSearch() { searchOpen = true; searchQ = ''; searchIdx = 0; requestAnimationFrame(() => searchInput?.focus()); }
+  function openSearch() { searchOpen = true; searchQ = ''; searchIdx = 0; void ensureTemplateMeta(); requestAnimationFrame(() => searchInput?.focus()); }
   // 会话匹配（原有逻辑保留）：按标题 / 站点名 / slug / 域名。
   const searchResults = $derived.by(() => {
     const q = searchQ.trim().toLowerCase();
@@ -1032,21 +1032,27 @@
     return list.slice(0, 60);
   });
   type SearchEntry =
-    | { kind: 'view'; view: 'schedule' | 'tasks' | 'managed'; label: string }
+    | { kind: 'view'; view: 'schedule' | 'tasks' | 'managed' | 'templates'; label: string }
     | { kind: 'task'; t: ScheduledTask }
     | { kind: 'managed'; m: ManagedSite }
     | { kind: 'conv'; c: Conversation }
+    | { kind: 'template'; t: Template }
     | { kind: 'sched-find'; q: string };
-  const SEARCH_VIEWS: { view: 'schedule' | 'tasks' | 'managed'; label: string }[] = [
+  const SEARCH_VIEWS: { view: 'schedule' | 'tasks' | 'managed' | 'templates'; label: string }[] = [
     { view: 'schedule', label: '排期' },
     { view: 'tasks', label: '定时任务' },
     { view: 'managed', label: '托管' },
+    { view: 'templates', label: '模板库' },
   ];
   /** 分区结果（按匹配数动态显隐）：空查询只给三个视图导航项。 */
   const searchSections = $derived.by(() => {
     const q = searchQ.trim().toLowerCase();
     const out: { title: string; entries: SearchEntry[] }[] = [];
-    const views = SEARCH_VIEWS.filter((v) => !q || v.label.includes(q)).map((v) => ({ kind: 'view' as const, ...v }));
+    const views = SEARCH_VIEWS
+      // 模板库只有 Cloudflare 连接有；别的连接下选中它只会被弹回启动页（见上面的视图守卫）
+      .filter((v) => v.view !== 'templates' || activeConn?.kind === 'cloudflare')
+      .filter((v) => !q || v.label.includes(q))
+      .map((v) => ({ kind: 'view' as const, ...v }));
     if (views.length) out.push({ title: '视图', entries: views });
     if (q) {
       // 定时任务：标题 / prompt / 站点名（slug 与展示名都算）
@@ -1061,6 +1067,11 @@
       // 托管站点：站点名 / slug
       const mHits = managedOfConn.filter((m) => m.site_name.toLowerCase().includes(q) || m.site_slug.toLowerCase().includes(q)).slice(0, 8);
       if (mHits.length) out.push({ title: '托管站点', entries: mHits.map((m) => ({ kind: 'managed' as const, m })) });
+      // 模板：名称 / 描述 / slug / 分类（模板库视图里因此不再摆搜索框）
+      if (activeConn?.kind === 'cloudflare') {
+        const tplHits = templates.filter((t) => tmplHay(t).includes(q)).slice(0, 8);
+        if (tplHits.length) out.push({ title: '模板', entries: tplHits.map((t) => ({ kind: 'template' as const, t })) });
+      }
       // 会话（原有匹配逻辑）
       if (searchResults.length) out.push({ title: '会话', entries: searchResults.map((c) => ({ kind: 'conv' as const, c })) });
       // 排期：远端数据不实时搜——固定一条动作项，选中去排期视图做标题过滤
@@ -1081,7 +1092,13 @@
     if (it.kind === 'view') {
       if (it.view === 'schedule') void openSchedule();
       else if (it.view === 'tasks') void openTasks();
+      else if (it.view === 'templates') openTemplates();
       else void openManaged();
+    } else if (it.kind === 'template') {
+      // 分类筛选可能正好把它挡在外面——搜到了、跳过去却看不见，比搜不到还让人懵
+      tmplCat = '全部';
+      openTemplates();
+      void focusTemplate(it.t.slug);
     } else if (it.kind === 'conv') {
       openConv(it.c.id);
     } else if (it.kind === 'task') {
@@ -2100,7 +2117,6 @@
   // 固定顺序：按出现顺序排的话，删一个模板就可能让整排筹码跳位。
   const CAT_ORDER = ['落地页', '内容', '作品集', '电商', '企业', '活动'];
   let tmplCat = $state('全部');
-  let tmplQ = $state('');
   const catOf = (t: Template) => (t.builtin ? t.category || '其他' : CAT_MINE);
   const tmplCats = $derived.by(() => {
     const has = new Set(templates.map(catOf));
@@ -2110,14 +2126,11 @@
     if (has.has(CAT_MINE)) out.push(CAT_MINE);
     return out;
   });
-  const tmplShown = $derived.by(() => {
-    const q = tmplQ.trim().toLowerCase();
-    return templates.filter(
-      (t) =>
-        (tmplCat === '全部' || catOf(t) === tmplCat) &&
-        (!q || `${t.name} ${t.desc} ${t.slug} ${catOf(t)}`.toLowerCase().includes(q)),
-    );
-  });
+  // 视图里只按分类筛。**按关键词找模板走全局搜索**（那里能一处搜到会话/任务/托管/模板，
+  // 而不是每个视图各摆一个搜索框）。
+  const tmplShown = $derived(templates.filter((t) => tmplCat === '全部' || catOf(t) === tmplCat));
+  /** 模板文本索引：全局搜索按它匹配（名称 / 描述 / slug / 分类）。 */
+  const tmplHay = (t: Template) => `${t.name} ${t.desc} ${t.slug} ${catOf(t)}`.toLowerCase();
   // 选中的分类可能整个消失（删掉最后一个自建模板）→ 那会停在一个永远空的筛选上，像坏了。
   $effect(() => {
     if (tmplCat !== '全部' && !tmplCats.includes(tmplCat)) tmplCat = '全部';
@@ -2135,6 +2148,27 @@
     finally { templatesLoading = false; }
   }
   function openTemplates() { view = 'templates'; activeConvId = ''; activeConv = null; loadTemplates(); }
+  /** 全局搜索要搜模板，可 templates 本来只在模板库视图里才加载。这里**只补元数据**：
+      loadTemplates 还会把 12 个模板的入口 HTML 全拉一遍（12 次 IPC × 几十 KB，用来做缩略图），
+      为了搜索付这个代价不值当——缩略图等真进视图再说。 */
+  async function ensureTemplateMeta() {
+    if (activeConn?.kind !== 'cloudflare' || templates.length) return;
+    try { templates = await invoke<Template[]>('list_templates'); } catch { /* 搜不到模板而已，别让它把搜索也带崩 */ }
+  }
+  /** 从全局搜索跳到某个模板卡：等它渲染出来再滚过去。
+      openTemplates 里的 loadTemplates 是异步的，写死延时就是在赌它已经回来了——列表一慢就滚了个空。 */
+  async function focusTemplate(slug: string) {
+    for (let i = 0; i < 40; i++) { // 最多等 ~2s
+      const el = document.getElementById(`tmpl-${slug}`);
+      if (el) {
+        el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        el.classList.add('tmpl-flash');
+        setTimeout(() => el.classList.remove('tmpl-flash'), 1400);
+        return;
+      }
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  }
   async function delTemplate(t: Template) {
     const yes = await confirmDialog(`删除模板「${t.name}」？`, { title: '删除模板', kind: 'warning' });
     if (!yes) return;
@@ -3687,8 +3721,18 @@
 
     {:else if view === 'templates'}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <header class="thread-head" data-tauri-drag-region onmousedown={startDrag}>
-        <div class="th-info"><b>模板库</b><small>把做好的站点存成模板，之后引用它快速起新项目</small></div>
+      <header class="thread-head tmpl-head" data-tauri-drag-region onmousedown={startDrag}>
+        <div class="th-info">
+          <div class="th-line"><b>模板库</b><small class="tmpl-hint">把做好的站点存成模板，之后引用它快速起新项目</small></div>
+          {#if templates.length}
+            <div class="tmpl-chips">
+              <button class="tmpl-chip {tmplCat === '全部' ? 'on' : ''}" onclick={() => (tmplCat = '全部')}>全部<span class="tc-n">{templates.length}</span></button>
+              {#each tmplCats as c (c)}
+                <button class="tmpl-chip {tmplCat === c ? 'on' : ''}" onclick={() => (tmplCat = c)}>{c}<span class="tc-n">{templates.filter((t) => catOf(t) === c).length}</span></button>
+              {/each}
+            </div>
+          {/if}
+        </div>
         <button class="icon-btn" onclick={loadTemplates} disabled={templatesLoading} title="刷新">{@render refreshIcon(templatesLoading)}</button>
       </header>
       <div class="thread">
@@ -3700,28 +3744,9 @@
               <p>在一个 Cloudflare 站点项目对话里点「存模板」，做得好的站就能沉淀下来复用。</p>
             </div>
           {:else}
-            <div class="tmpl-filter">
-              <div class="tmpl-chips">
-                <button class="tmpl-chip {tmplCat === '全部' ? 'on' : ''}" onclick={() => (tmplCat = '全部')}>全部<span class="tc-n">{templates.length}</span></button>
-                {#each tmplCats as c (c)}
-                  <button class="tmpl-chip {tmplCat === c ? 'on' : ''}" onclick={() => (tmplCat = c)}>{c}<span class="tc-n">{templates.filter((t) => catOf(t) === c).length}</span></button>
-                {/each}
-              </div>
-              <label class="tmpl-search">
-                <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><circle cx="7" cy="7" r="4.4" stroke="currentColor" stroke-width="1.3" /><path d="m10.4 10.4 3 3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" /></svg>
-                <input type="search" placeholder="搜模板" bind:value={tmplQ} spellcheck="false" />
-              </label>
-            </div>
-            {#if tmplShown.length === 0}
-              <div class="sched-empty">
-                <div class="cal-mark">🔍</div>
-                <b>没有匹配的模板</b>
-                <p>换个关键词，或点「全部」看看所有 {templates.length} 个。</p>
-              </div>
-            {/if}
             <div class="tmpl-grid">
               {#each tmplShown as t (t.slug)}
-                <div class="tmpl-card">
+                <div class="tmpl-card" id="tmpl-{t.slug}">
                   <div class="tmpl-thumb">
                     {#if tmplHtml[t.slug]}
                       <iframe class="tmpl-frame" srcdoc={tmplHtml[t.slug]} sandbox="allow-scripts" title={t.name} tabindex="-1" scrolling="no"></iframe>
@@ -3963,7 +3988,7 @@
           <circle cx="8" cy="8" r="5" stroke="currentColor" stroke-width="1.4" />
           <path d="M11.7 11.7L15 15" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
         </svg>
-        <input bind:this={searchInput} bind:value={searchQ} placeholder="搜索会话、定时任务、托管站点，或直达视图…" spellcheck="false" autocapitalize="off" autocorrect="off" />
+        <input bind:this={searchInput} bind:value={searchQ} placeholder="搜索会话、定时任务、托管站点、模板，或直达视图…" spellcheck="false" autocapitalize="off" autocorrect="off" />
         <kbd>esc</kbd>
       </div>
       <div class="search-list">
@@ -3991,6 +4016,11 @@
                   <SiteFav src={siteFav(it.c.site_slug)} label={it.c.site_slug} size={15} />
                   <span class="si-main"><b>{it.c.title || '未命名会话'}</b><small>{#if (it.c.site_slugs?.length ?? 0) > 1}<span data-tip={convSitesTip(it.c)}>{it.c.site_name}</span>{:else}{it.c.site_name || it.c.site_slug}{#if site?.url} · {hostOf(site.url)}{/if}{/if}</small></span>
                   {@render brainTag(it.c.brain, brainLabel(it.c.brain))}
+                {:else if it.kind === 'template'}
+                  <!-- 与左栏「模板库」同一个图标：搜到的东西该看得出是同一样东西 -->
+                  <svg width="15" height="15" viewBox="0 0 16 16" fill="none"><rect x="2.5" y="2.5" width="4.5" height="4.5" rx="1" stroke="currentColor" stroke-width="1.3" /><rect x="9" y="2.5" width="4.5" height="4.5" rx="1" stroke="currentColor" stroke-width="1.3" /><rect x="2.5" y="9" width="4.5" height="4.5" rx="1" stroke="currentColor" stroke-width="1.3" /><rect x="9" y="9" width="4.5" height="4.5" rx="1" stroke="currentColor" stroke-width="1.3" /></svg>
+                  <span class="si-main"><b>{it.t.name}</b><small>{catOf(it.t)}{it.t.desc ? ` · ${it.t.desc}` : ''}</small></span>
+                  {#if it.t.builtin}<span class="si-tag">内置</span>{/if}
                 {:else}
                   <svg width="15" height="15" viewBox="0 0 18 18" fill="none"><circle cx="8" cy="8" r="5" stroke="currentColor" stroke-width="1.4" /><path d="M11.7 11.7L15 15" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /></svg>
                   <span class="si-main"><b>在排期中查找「{it.q}」</b><small>切到排期视图并按标题过滤</small></span>
@@ -5366,6 +5396,7 @@
   .si-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
   .si-main b { font-weight: 500; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .si-main small { color: var(--dim); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .si-tag { flex: none; font-size: 10px; color: var(--faint); border: 1px solid var(--border2); border-radius: 4px; padding: 0 4px; line-height: 15px; }
 
   /* 输入框（仿 Claude Code：整块圆角边框，聚焦时高亮，发送按钮嵌在框内） */
   .composer.big, .composer-wrap .composer { position: relative; background: #fff; border: 1px solid var(--border2); border-radius: 12px; box-shadow: none; transition: border-color .12s, box-shadow .12s; }
@@ -5691,20 +5722,27 @@
      .sched-inner 的 720px —— 三列要 3*272+2*12+48 = 876px，720 差得远，所以窗口再宽也只有两列。
      日程页还得用窄栏（那是读列表的），所以不改 .sched-inner，另起一个。 */
   .tmpl-inner { max-width: 1180px; margin: 0 auto; padding: 18px 24px 24px; }
-  .tmpl-filter { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
-  .tmpl-chips { display: flex; flex-wrap: wrap; gap: 6px; flex: 1; min-width: 0; }
-  .tmpl-chip { display: inline-flex; align-items: center; gap: 5px; padding: 4px 9px; border: 1px solid var(--border2); border-radius: 999px; background: transparent; color: var(--dim); font-size: 12px; cursor: pointer; }
-  .tmpl-chip:hover { border-color: var(--border); color: var(--fg); }
+  /* 筛选进了标题栏 → 头变成两行；刷新键别再跟着垂直居中跑到中间去 */
+  .thread-head.tmpl-head { align-items: flex-start; }
+  .th-line { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+  /* 提示挪到标题**同一行**了。`.th-info small` 那 2px 上间距是给「标题下面那行」准备的，
+     这里得清掉；选择器带上 .tmpl-hint 才压得过它（它带元素选择器，分更高）。 */
+  .th-info small.tmpl-hint { margin-top: 0; color: var(--faint); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tmpl-chips { display: flex; flex-wrap: wrap; gap: 2px; margin-top: 5px; }
+  /* 无外框：选中靠实底药丸，不靠描边 */
+  .tmpl-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border: 0; border-radius: 999px; background: transparent; color: var(--dim); font-size: 12px; cursor: pointer; }
+  .tmpl-chip:hover { color: var(--text); background: var(--border); }
   .tmpl-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-  .tmpl-chip.on { background: var(--fg); border-color: var(--fg); color: var(--bg); }
+  .tmpl-chip.on { background: var(--text); color: var(--bg); }
   .tc-n { font-size: 10px; opacity: 0.55; font-variant-numeric: tabular-nums; }
-  .tmpl-search { display: inline-flex; align-items: center; gap: 5px; padding: 4px 9px; border: 1px solid var(--border2); border-radius: 999px; color: var(--faint); flex: 0 0 auto; }
-  .tmpl-search:focus-within { border-color: var(--border); color: var(--dim); }
-  .tmpl-search input { border: 0; background: transparent; color: var(--fg); font-size: 12px; width: 96px; outline: none; }
-  .tmpl-search input::placeholder { color: var(--faint); }
-  .tmpl-search input::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; }
-  /* 272 ≈ 缩略图实宽（1280 * 0.23 = 294），比这窄就开始裁掉站点导航的右半边 */
-  .tmpl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(272px, 1fr)); gap: 12px; }
+  /* ★ 240 是**默认窗口能放下两列**倒推出来的，别再往上调：
+     默认 820 宽、左栏 240 → 内容 580，减 48 内边距 = 532。两列 = 2*240+12 = 492 ✓。
+     上一版写 272 要 556 > 532，就差这一点，默认窗口直接掉成**一列**。
+     再宽才 3 列（≈1050）、4 列（≈1300，到 1180 封顶就不再加）。 */
+  .tmpl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; }
+  /* 从全局搜索跳过来时闪一下：一屏十几张卡，跳到了也认不出是哪张 */
+  @keyframes tmplFlash { from { box-shadow: 0 0 0 2px var(--accent); } to { box-shadow: 0 0 0 2px transparent; } }
+  .tmpl-card.tmpl-flash { animation: tmplFlash 1.4s ease-out; }
   .tmpl-card { display: flex; flex-direction: column; background: var(--card); border: 1px solid var(--border2); border-radius: 12px; overflow: hidden; }
   .tmpl-thumb { position: relative; height: 158px; overflow: hidden; background: #fff; display: flex; align-items: center; justify-content: center; border-bottom: 1px solid var(--border); }
   .tmpl-frame { position: absolute; top: 0; left: 0; width: 1280px; height: 860px; border: 0; transform: scale(0.23); transform-origin: top left; pointer-events: none; background: #fff; }

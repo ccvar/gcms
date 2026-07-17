@@ -67,6 +67,7 @@
     line-height:1.7;
     -webkit-font-smoothing:antialiased;
     text-rendering:optimizeLegibility;
+    line-break:strict;   /* 中文避头尾：不让「、」「。」这类标点跑到行首 */
   }
   img,svg{max-width:100%;display:block}
   h1,h2,h3{margin:0;font-weight:700;line-height:1.25;letter-spacing:-.01em}
@@ -146,18 +147,21 @@
     color:var(--accent);background:var(--accent-soft);
     padding:var(--s2) var(--s3);border-radius:999px;letter-spacing:.06em;
   }
+  /* 手机 32px → 桌面 40px。别把下限设成 28px：那样手机上 h1 会和 h2 一样大，层级就塌了 */
   .head h1{
-    font-size:clamp(28px,4.6vw,var(--fs-xl));
+    font-size:clamp(32px,4.6vw,var(--fs-xl));
     line-height:1.22;letter-spacing:-.02em;
     text-wrap:balance;
     margin-bottom:var(--s5);
   }
+  /* 中文本来就允许在任意字之间断行，别用 white-space:nowrap 去“保护”词组：
+     标题一长就会顶破窄栏，横向滚动条就是这么来的。 */
   .head__dek{
     font-size:var(--fs-md);line-height:1.75;color:var(--muted);
     max-width:32em;margin-bottom:var(--s6);
   }
   .byline{
-    display:flex;align-items:center;gap:var(--s3);flex-wrap:wrap;
+    display:flex;align-items:center;gap:var(--s3);
     padding-top:var(--s5);border-top:1px solid var(--line-soft);
   }
   .avatar{
@@ -166,7 +170,8 @@
     font-weight:700;line-height:1;
     width:var(--s6);height:var(--s6);font-size:var(--fs-sm);
   }
-  .byline__text{font-size:var(--fs-xs);color:var(--muted);line-height:1.5}
+  /* flex:1 + min-width:0 —— 少了这两条，手机上这段文字会整体换行，把头像孤零零甩在上一行 */
+  .byline__text{flex:1;min-width:0;font-size:var(--fs-xs);color:var(--muted);line-height:1.5}
   .byline__name{color:var(--text);font-weight:600;font-size:var(--fs-sm)}
   .byline__sep{color:var(--line);margin-inline:var(--s2)}
 
@@ -179,6 +184,9 @@
     overflow:hidden;
   }
   .figure__art svg{width:100%;height:auto}
+  /* 图注 = 一条强调色竖线 + 一段文字。
+     注意：flex 容器里每一段裸文字都会变成独立的 flex item，
+     所以文字必须整个裹进 <span>，否则 <strong> 会被拆成另一列。 */
   .figure figcaption{
     display:flex;gap:var(--s3);
     margin-top:var(--s3);
@@ -188,6 +196,7 @@
     content:"";flex:none;width:2px;align-self:stretch;
     background:var(--accent);border-radius:1px;
   }
+  .figure figcaption strong{color:var(--text);font-weight:600}
   /* 示意图配色：整张图只有「墨色线 + 强调色块」两种 */
   .art-ink{fill:none;stroke:var(--text);stroke-width:3;stroke-linejoin:round;stroke-linecap:round}
   .art-fill{fill:var(--accent)}
@@ -325,7 +334,12 @@
     border-radius:var(--radius);
     padding:var(--s5);
   }
-  .author .avatar{width:var(--s7);height:var(--s7);font-size:var(--fs-md)}
+  /* 作者卡坐在 --bg 上，头像若还用 --accent-soft 就几乎看不见（两者亮度只差一点点）。
+     这里换成实心强调色：全文结尾唯一一处“重色”，正好收尾。 */
+  .author .avatar{
+    width:var(--s7);height:var(--s7);font-size:var(--fs-md);
+    background:var(--accent);color:var(--on-accent);
+  }
   .author__name{font-size:var(--fs-md);font-weight:700;line-height:1.3}
   .author__role{margin-top:var(--s1);font-size:var(--fs-xs);color:var(--muted)}
   .author__bio{margin-top:var(--s3);font-size:var(--fs-sm);line-height:1.7;color:var(--muted)}
@@ -394,7 +408,9 @@
     .nav__links{gap:var(--s4)}
     .brand__sub{display:none}
     .head__dek{font-size:var(--fs-sm)}
-    .prose h2{margin-top:var(--s6)}
+    /* 手机上整体降一档，保住 h1 32 > h2 24 > h3 20 > 正文 18 的层级 */
+    .prose h2{font-size:24px;margin-top:var(--s6)}
+    .prose__lead{font-size:var(--fs-prose)}
     .author{flex-direction:column;gap:var(--s3)}
     .pager{grid-template-columns:1fr;gap:0}
     .pager__item{margin:0;padding:var(--s4) 0}
@@ -442,10 +458,7 @@
 
         <h1>把一杯手冲拆开：研磨度、水温与注水节奏</h1>
 
-        <p class="head__dek">
-          同样的豆子、同样的滤杯，两个人能冲出完全不同的味道。差别几乎都落在这三个变量上——
-          这篇把我在店里记了两年的数据，整理成一套你今天就能复现的流程。
-        </p>
+        <p class="head__dek">同样的豆子、同样的滤杯，两个人能冲出完全不同的味道。差别几乎都落在这三个变量上——这篇把我在店里记了两年的数据，整理成一套你今天就能复现的流程。</p>
 
         <div class="byline">
           <span class="avatar" aria-hidden="true">林</span>
@@ -479,16 +492,14 @@
             <!-- 下壶 -->
             <path class="art-ink" d="M352 320 L448 320 L448 372 Q448 392 428 392 L372 392 Q352 392 352 372 Z"/>
             <path class="art-fill" d="M356 354 L444 354 L444 372 Q444 388 428 388 L372 388 Q356 388 356 372 Z" opacity=".85"/>
-            <!-- 左侧标注引线（技术制图感，纯几何、不放文字） -->
-            <path class="art-axis" d="M212 222 H318 M212 275 H358 M212 216 v66" opacity=".45"/>
+            <!-- 粉层厚度标注（纯几何，不放文字：SVG 里的字会随 viewBox 缩到手机上看不清） -->
+            <path class="art-axis" d="M300 222 V275 M294 222 H331 M294 275 H367" opacity=".5"/>
             <!-- 右侧热气 -->
             <path class="art-ring" d="M556 214 q14 -18 0 -36 q-14 -18 0 -36" opacity=".35"/>
             <path class="art-ring" d="M592 200 q14 -16 0 -32 q-14 -16 0 -32" opacity=".22"/>
           </svg>
         </div>
-        <figcaption>
-          V60-02 与 15 g 粉层的剖面示意（左侧标注为粉层厚度区间）。<strong>示例图片</strong>——正式上线时请替换为实拍照片。
-        </figcaption>
+        <figcaption><span>V60-02 与 15 g 粉层的剖面示意，左侧标注为粉层厚度区间。<strong>示例图片</strong>——正式上线时请替换为实拍照片。</span></figcaption>
       </figure>
 
       <!-- ═══════════ 正文 ═══════════ -->
@@ -573,9 +584,7 @@
               <circle class="art-dot" cx="496" cy="40" r="7"/>
             </svg>
           </div>
-          <figcaption>
-            三段式注水的累计水量曲线：0:00 – 2:30 内由 30 g 分三段推到 240 g，中间两段平台是等待滤杯下水。<strong>示例数据</strong>——请替换为你自己的冲煮记录。
-          </figcaption>
+          <figcaption><span>三段式注水的累计水量曲线：0:00 – 2:30 内由 30 g 分三段推到 240 g，中间两段平台是在等滤杯下水。<strong>示例数据</strong>——请替换为你自己的冲煮记录。</span></figcaption>
         </figure>
 
         <h2 id="pour"><span class="sec-num">04</span>注水节奏：三段式</h2>
@@ -590,16 +599,16 @@
             <span>三段式.txt</span>
           </div>
           <pre><code><span class="c"># 15 g 粉 / 240 g 水 / 1:16 / 92°C / V60-02</span>
-<span class="c"># 研磨：中细（EK43 @ 8.5）  滤纸：Hario 白  预热：滤杯 + 下壶</span>
+<span class="c"># 研磨 EK43 @ 8.5  滤纸 Hario 白  滤杯与下壶先预热</span>
 
 时间     累计水量   动作
-<span class="k">00:00</span>     30 g      中心小水柱，让粉层完全浸润，不要冲穿
-<span class="k">00:35</span>     —         闷蒸结束，粉层开始塌陷（这是信号，不是计时器）
-<span class="k">00:40</span>     130 g     由内向外画圈，约 20 秒注完，别碰到滤纸
-<span class="k">01:20</span>     240 g     第三段，水位始终保持在滤杯 2/3 以下
-<span class="k">02:30</span>     —         滴干，移开滤杯；粉床应该是平的
+<span class="k">00:00</span>     30 g      中心小水柱，粉层完全浸润
+<span class="k">00:35</span>     —         闷蒸结束，粉层开始塌陷
+<span class="k">00:40</span>     130 g     由内向外画圈，20 秒注完
+<span class="k">01:20</span>     240 g     第三段，水位不超过滤杯 2/3
+<span class="k">02:30</span>     —         滴干，移开；粉床应该是平的
 
-<span class="c"># 粉床有坑 → 注水太猛     粉床挂壁 → 画圈画到了滤纸</span></code></pre>
+<span class="c"># 粉床有坑 → 注水太猛；挂壁 → 画圈碰到滤纸</span></code></pre>
         </div>
 
         <p>

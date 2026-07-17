@@ -249,6 +249,95 @@ pub fn instantiate(templates_dir: &Path, slug: &str, dest_project_dir: &Path) ->
 mod tests {
     use super::*;
 
+    /// 从模板 HTML 的 `:root` 里抠出某个颜色令牌。
+    /// （`--accent:` 带冒号，所以不会误命中 `--accent-soft:`。）
+    fn token_rgb(html: &str, var: &str) -> Option<(f64, f64, f64)> {
+        let key = format!("{var}:");
+        let i = html.find(&key)? + key.len();
+        // 模板里全是中文注释：**不能**按字节数硬切（`&html[i..i+40]` 会切进汉字中间直接 panic）。
+        // find/get 给的都是合法边界，越界也只是 None。
+        let rest = html.get(i..)?;
+        let h = rest.find('#')?;
+        if h > 40 {
+            return None; // 离令牌太远，那个 # 不是它的值
+        }
+        let hex = rest.get(h + 1..h + 7)?;
+        let c = |a, b| u8::from_str_radix(hex.get(a..b)?, 16).ok().map(|v| v as f64 / 255.0);
+        Some((c(0, 2)?, c(2, 4)?, c(4, 6)?))
+    }
+
+    /// HSL 的色相（0-360）与饱和度（0-100）。
+    fn hue_sat(html: &str, var: &str) -> Option<(f64, f64)> {
+        let (r, g, b) = token_rgb(html, var)?;
+        let (max, min) = (r.max(g).max(b), r.min(g).min(b));
+        let (l, d) = ((max + min) / 2.0, max - min);
+        if d < 1e-9 {
+            return Some((0.0, 0.0)); // 纯灰：不占色相
+        }
+        let s = if l > 0.5 { d / (2.0 - max - min) } else { d / (max + min) };
+        let h = if max == r {
+            ((g - b) / d).rem_euclid(6.0)
+        } else if max == g {
+            (b - r) / d + 2.0
+        } else {
+            (r - g) / d + 4.0
+        };
+        Some(((h * 60.0).rem_euclid(360.0), s * 100.0))
+    }
+
+    /// 底色是深的吗（WCAG 相对亮度 < 0.25）。深底与浅底的模板天然不会看混。
+    fn bg_is_dark(html: &str) -> bool {
+        let Some((r, g, b)) = token_rgb(html, "--bg") else { return false };
+        let f = |v: f64| if v <= 0.03928 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) };
+        0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b) < 0.25
+    }
+
+    /// ★ 配色的机器裁判：随附模板之间强调色不许撞色相。
+    ///
+    /// 为什么要这条：这批模板是多个 agent **各写各的**，谁也看不见别人选了什么色 —— 结果
+    /// article/shop 撞到 **0.1°**、portfolio/event 撞到 3.7°，两次都是**事后人眼**才发现的。
+    /// 模板库的价值就是缩略图一眼能分辨，撞色相直接砍掉这个价值。有了这条，下次加第 12 档
+    /// 撞了就直接红，不用等谁盯着看。
+    #[test]
+    fn builtin_accents_dont_collide() {
+        const MIN_GAP: f64 = 25.0;
+        /// 饱和度低于此即「近乎中性灰」，不主张色相（minimal 的 #4C6663 s15 正是）。
+        const GREY_SAT: f64 = 25.0;
+        /// 已知遗留，**最早那 5 档就带着的**：editorial 与 warm-craft 同为浅底暖红，只差 5.3°。
+        /// 没顺手改，是因为 warm-craft 的介绍里明写「陶土强调」——改色就得连文案一起改；
+        /// 且两者版式差得远（衬线杂志长文 vs 圆润手作），缩略图不至于认错。真要动，动 editorial。
+        const GRANDFATHERED: &[(&str, &str)] = &[("editorial", "warm-craft")];
+
+        let v: Vec<_> = BUILTIN
+            .iter()
+            .map(|(slug, .., html)| {
+                let (h, s) = hue_sat(html, "--accent")
+                    .unwrap_or_else(|| panic!("{slug}: :root 里读不到 --accent"));
+                (*slug, h, s, bg_is_dark(html))
+            })
+            .collect();
+
+        for (i, &(a, ha, sa, da)) in v.iter().enumerate() {
+            for &(b, hb, sb, db) in &v[i + 1..] {
+                if sa < GREY_SAT || sb < GREY_SAT {
+                    continue; // 近灰不占色相
+                }
+                if da != db {
+                    continue; // 一深底一浅底，本来就不会看混
+                }
+                if GRANDFATHERED.contains(&(a, b)) || GRANDFATHERED.contains(&(b, a)) {
+                    continue;
+                }
+                let d = (ha - hb).abs().min(360.0 - (ha - hb).abs());
+                assert!(
+                    d >= MIN_GAP,
+                    "「{a}」和「{b}」强调色撞车：色相只差 {d:.1}°（{ha:.0}° vs {hb:.0}°）。\
+                     模板库靠缩略图一眼分辨，撞色相就等于少了一档 —— 挑个空的色相带。"
+                );
+            }
+        }
+    }
+
     #[test]
     fn save_list_use_delete_roundtrip() {
         let base = std::env::temp_dir().join(format!("tmpl-{}", uuid::Uuid::new_v4()));
