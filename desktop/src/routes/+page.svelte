@@ -5439,10 +5439,11 @@
      `.win-tools` 是 fixed / top:0 / height:30px + align-items:center → **图标中心恒在 15px**
      （和 .thread-head.slim 那条注释是同一个基准）。标题行高 20.3 → 上内边距取 5px，
      标题中心落在 15.15，对上。原来 13px 时中心在 23.1 —— **每个页面都低 8px**。
-     上下不对称是**故意的**：上边距由「对齐一个 fixed 覆盖层」决定，不由视觉呼吸决定。
+     ★ 上边距被「对齐那条 fixed 图标带」锁死＝5px，所以**下边距只能跟着收成 5px**，
+     不然上下就不对称（原来 5/13，下面明显空一截）。头因此比以前矮 8px，这是这条对齐的代价。
      ★ align-items 必须 flex-start，不能用 center：th-info 比右侧按钮（28px）矮时
      （例如只有标题、没有副标题的头），center 会让 th-info 跟着按钮居中，标题又掉到 26.8。 */
-  .thread-head { flex: none; padding: 5px 24px 13px; border-bottom: 1px solid var(--border); display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  .thread-head { flex: none; padding: 5px 24px; border-bottom: 1px solid var(--border); display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
   /* 侧栏收起：红绿灯 + 悬浮的折叠/搜索钮压在内容区左上，页头统一左让位（全部视图受益）。
      mac 窗口态 140px（红绿灯≈70 + 两钮）；全屏/Windows 无红绿灯（钮在 left:12），100px 够。 */
   .app.rail-collapsed .thread-head { padding-left: 140px; }
@@ -5748,9 +5749,10 @@
   /* 提示挪到标题**同一行**了。`.th-info small` 那 2px 上间距是给「标题下面那行」准备的，
      这里得清掉；选择器带上 .tmpl-hint 才压得过它（它带元素选择器，分更高）。 */
   .th-info small.tmpl-hint { margin-top: 0; color: var(--faint); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  /* margin-left 抵掉第一枚筹码的左内边距（那 8px 是点击热区，不该算进视觉边）——
-     不抵的话整排会比上面的「模板库」缩进 8px，看着就是没对齐。 */
-  .tmpl-chips { display: flex; flex-wrap: wrap; gap: 2px; margin-top: 5px; margin-left: -8px; }
+  /* 负边距抵掉筹码自己的内边距 —— 那 8px/3px 是**点击热区**，不该算进视觉间距：
+     - 左：不抵的话整排比上面的「模板库」缩进 8px，看着就是没对齐。
+     - 下：不抵的话筹码文字离底边比标题离顶边多出 3px 的死空（上 6 / 下 10.5），上下就不一致。 */
+  .tmpl-chips { display: flex; flex-wrap: wrap; gap: 2px; margin-top: 5px; margin-left: -8px; margin-bottom: -3px; }
   /* 无外框、无底：选中只靠**颜色加重**（--dim → --text）。
      ★ 故意不动 font-weight：字重一变宽度就变，点一下整排筹码会跟着挪位。 */
   .tmpl-chip { display: inline-flex; align-items: center; gap: 3px; padding: 3px 8px; border: 0; border-radius: 999px; background: transparent; color: var(--dim); font-size: 12px; cursor: pointer; }
