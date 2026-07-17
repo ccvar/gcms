@@ -146,7 +146,10 @@ export interface ScheduledItem {
   title: string;
   lang: string;
   published_at: string;
+  /** **相对路径**（`/zh/posts/xxx`），不是完整链接——要配 discovery 里那个站的域名才能开。 */
   url: string;
+  /** `scheduled`（待发布）| `published`（已发布，最近一周）。 */
+  status: string;
 }
 
 /** 单个站点在某次触发中的结果。 */

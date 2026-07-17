@@ -2811,59 +2811,24 @@
     tip = { x, y: below ? r.bottom + 7 : r.top - 7, text, below };
   }
 
-  // ---------- 自定义右键菜单 ----------
-  // 替换 WKWebView 默认英文菜单（含 Inspect Element / AutoFill 等）：
-  // 输入框里给 剪切/复制/粘贴/全选；选中了消息文字给 复制；其它地方不出菜单。
-  type CtxTarget = HTMLInputElement | HTMLTextAreaElement;
-  let ctxMenu = $state<{ x: number; y: number; target: CtxTarget | null; canCopy: boolean } | null>(null);
+  // ---------- 右键菜单（原生） ----------
+  // 替换 WKWebView 默认英文菜单（含 Inspect Element / AutoFill 等）。
+  //
+  // ★ 这里**必须交给原生菜单**，不能前端自己画：自己画就得用 navigator.clipboard.readText()
+  // 去粘贴，而 macOS 14 起「程序读剪贴板」会弹一个系统「Paste」确认按钮 —— 用户点完我们的
+  // 「粘贴」还得再点一次系统的，看着就像坏了，而且 JS 绕不过去（系统只看到有人要读剪贴板，
+  // 看不到用户刚点过菜单，那正是它要防的）。见 lib.rs::show_edit_menu。
+  // 启用态（没选中就灰掉复制等）也由系统自己管，不用我们猜。
   function onCtxMenu(e: MouseEvent) {
     e.preventDefault();
     const t = e.target as HTMLElement;
-    const editable = t.closest('textarea, input[type="text"], input:not([type])') as CtxTarget | null;
+    const editable = t.closest('textarea, input[type="text"], input:not([type])') as HTMLElement | null;
     const sel = window.getSelection()?.toString() ?? '';
-    if (!editable && !sel) { ctxMenu = null; return; }
-    const canCopy = editable ? editable.selectionStart !== editable.selectionEnd : sel.length > 0;
-    // 贴边收敛，别溢出窗口
-    const x = Math.min(e.clientX, window.innerWidth - 160);
-    const y = Math.min(e.clientY, window.innerHeight - 170);
-    ctxMenu = { x, y, target: editable, canCopy };
+    if (!editable && !sel) return; // 空白处不出菜单
+    // 先聚焦：原生「剪切/复制/粘贴」作用在**当前第一响应者**上，不聚焦就打空
+    if (editable) editable.focus();
+    void invoke('show_edit_menu', { editable: !!editable }).catch(() => {});
   }
-  function closeCtx() { ctxMenu = null; }
-  function ctxCut() { const el = ctxMenu?.target; closeCtx(); if (el) { el.focus(); document.execCommand('cut'); } }
-  function ctxCopy() {
-    const m = ctxMenu; closeCtx();
-    if (m?.target) { m.target.focus(); document.execCommand('copy'); }
-    else { const s = window.getSelection()?.toString(); if (s) void navigator.clipboard.writeText(s); }
-  }
-  async function ctxPaste() {
-    const el = ctxMenu?.target; closeCtx(); if (!el) return;
-    el.focus();
-    try {
-      const txt = await navigator.clipboard.readText();
-      if (!txt) return;
-      const st = el.selectionStart ?? el.value.length;
-      const en = el.selectionEnd ?? st;
-      el.setRangeText(txt, st, en, 'end');
-      el.dispatchEvent(new Event('input', { bubbles: true })); // 让 bind:value 感知
-    } catch { say('无法读取剪贴板，请用 ⌘V 粘贴', 'err'); }
-  }
-  function ctxSelectAll() { const el = ctxMenu?.target; closeCtx(); if (el) { el.focus(); el.select(); } }
-  $effect(() => {
-    if (!ctxMenu) return;
-    const close = () => (ctxMenu = null);
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') close(); };
-    const closeOutside = (e: MouseEvent) => { if (!(e.target as HTMLElement).closest('.ctx-menu')) close(); };
-    window.addEventListener('mousedown', closeOutside, true);
-    window.addEventListener('keydown', onKey);
-    window.addEventListener('scroll', close, true);
-    window.addEventListener('resize', close);
-    return () => {
-      window.removeEventListener('mousedown', closeOutside, true);
-      window.removeEventListener('keydown', onKey);
-      window.removeEventListener('scroll', close, true);
-      window.removeEventListener('resize', close);
-    };
-  });
 
   // ---------- 助手消息 Markdown 渲染 ----------
   // 模型输出的 **粗体**/列表/表格/代码块 之前是裸文本，读感远不如 Claude 客户端。
@@ -3010,11 +2975,16 @@
   function dayKey(ms: number): string { const d = new Date(ms); return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`; }
   function dayLabel(ms: number): string {
     const t0 = new Date(); t0.setHours(0, 0, 0, 0); const day = t0.getTime();
+    if (ms < day - 864e5) return new Date(ms).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric', weekday: 'short' });
+    if (ms < day) return '昨天';
     if (ms < day + 864e5) return '今天';
     if (ms < day + 2 * 864e5) return '明天';
     return new Date(ms).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric', weekday: 'short' });
   }
-  // 未来 6 周密度条：每天一格，count=当天条数
+  /** 密度条往回看几天。后端只带回最近一周的已发布（PUBLISHED_LOOKBACK_DAYS），
+   *  这里跟它对齐——多画的格子只会永远是空的。 */
+  const SCHED_PAST_DAYS = 7;
+  // 密度条：过去一周（已发布）+ 未来 6 周（待发布），每天一格
   const schedDensity = $derived.by(() => {
     const t0 = new Date(); t0.setHours(0, 0, 0, 0);
     const counts = new Map<string, number>();
@@ -3022,14 +2992,49 @@
       const ms = new Date(it.published_at).getTime();
       if (!isNaN(ms)) counts.set(dayKey(ms), (counts.get(dayKey(ms)) ?? 0) + 1);
     }
-    return Array.from({ length: 42 }, (_, i) => {
-      const ms = t0.getTime() + i * 864e5;
+    return Array.from({ length: SCHED_PAST_DAYS + 42 }, (_, i) => {
+      const ms = t0.getTime() + (i - SCHED_PAST_DAYS) * 864e5;
       const d = new Date(ms);
-      return { key: dayKey(ms), count: counts.get(dayKey(ms)) ?? 0, tip: `${i === 0 ? '今天 ' : ''}${d.getMonth() + 1}/${d.getDate()} · ${counts.get(dayKey(ms)) ?? 0} 条`, today: i === 0 };
+      const n = counts.get(dayKey(ms)) ?? 0;
+      const rel = i - SCHED_PAST_DAYS;
+      const when = rel === 0 ? '今天 ' : rel === -1 ? '昨天 ' : '';
+      return {
+        key: dayKey(ms), count: n,
+        tip: `${when}${d.getMonth() + 1}/${d.getDate()} · ${n} 条${rel < 0 ? '（已发布）' : ''}`,
+        today: rel === 0, past: rel < 0,
+      };
     });
   });
   function jumpToDay(key: string) {
     document.getElementById('sched-day-' + key)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+  /** 排期条目的真实访问链接 —— **只有已发布的才有**。
+   *  `it.url` 是相对路径（`/zh/posts/xxx`，见 api.go::apiContentURL），得配 discovery 里那个站的
+   *  域名才成完整地址；站点没绑域名（site.url 空）就拼不出来，回 null 让调用方退回草稿预览。 */
+  function schedLiveUrl(it: ScheduledItem): string | null {
+    if (it.status !== 'published' || !it.url) return null;
+    const base = sites.find((s) => s.slug === it.site_slug)?.url;
+    if (!base) return null;
+    try { return new URL(it.url, base).toString(); } catch { return null; }
+  }
+  /** 「预览」点下去开什么：已发布 → 真实访问链接；待发布 → 短期草稿链接（公开 URL 还打不开）。 */
+  async function openSchedItem(it: ScheduledItem) {
+    const live = schedLiveUrl(it);
+    if (live) { void openUrl(live); return; }
+    try {
+      const u = await invoke<string>('scheduled_preview_url', { connId: activeConnId, siteSlug: it.site_slug, id: it.id });
+      void openUrl(u);
+    } catch (e) { say(String(e), 'err'); }
+  }
+  /** 待发布的时间要带日期 —— 只写「09:30」时，滚到第三屏就完全不知道是哪天的了。
+   *  当天的省掉日期（分组标题已经写着「今天」，再重复一遍是噪音）。 */
+  function schedWhen(it: ScheduledItem): string {
+    const d = new Date(it.published_at);
+    if (isNaN(d.getTime())) return '';
+    const hm = d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+    const t0 = new Date(); t0.setHours(0, 0, 0, 0);
+    const sameDay = d >= t0 && d.getTime() < t0.getTime() + 864e5;
+    return sameDay ? hm : `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
   }
   const schedGroups = $derived.by(() => {
     const now = Date.now();
@@ -3037,14 +3042,26 @@
     const byDay = new Map<string, { key: string; label: string; items: ScheduledItem[] }>();
     for (const it of schedFiltered) {
       const ms = new Date(it.published_at).getTime();
+      // ★ 已发布的时间必然在过去 —— 不先认状态就会被下面那条「过期」规则整批扫走，
+      //   于是「昨天已发布」全挤进「已过期」，等于白拉。
+      if (it.status === 'published') {
+        const k = dayKey(ms);
+        let g = byDay.get(k);
+        if (!g) { g = { key: k, label: dayLabel(ms), items: [] }; byDay.set(k, g); }
+        g.items.push(it);
+        continue;
+      }
+      // 待发布却已经过了点 = 服务端没发出去，单独拎出来
       if (isNaN(ms) || ms < now) { overdue.push(it); continue; }
       const k = dayKey(ms);
       let g = byDay.get(k);
       if (!g) { g = { key: k, label: dayLabel(ms), items: [] }; byDay.set(k, g); }
       g.items.push(it);
     }
-    const out = [...byDay.values()];
-    if (overdue.length) out.unshift({ key: 'overdue', label: '待发布', items: overdue });
+    // 按天升序：昨天的在今天前面（Map 的插入序不可靠——数据是按 published_at 排的，
+    // 但已发布/待发布两条分支会把顺序打乱）
+    const out = [...byDay.values()].sort((a, b) => Date.parse(a.items[0].published_at) - Date.parse(b.items[0].published_at));
+    if (overdue.length) out.unshift({ key: 'overdue', label: '待发布 · 已过点未发出', items: overdue });
     return out;
   });
 
@@ -3359,21 +3376,6 @@
   <section class="main">
     {#if flash}<div class="flash {flashKind}">{flash}</div>{/if}
 
-    {#if ctxMenu}
-      {@const m = ctxMenu}
-      <div class="ctx-menu" style="left:{m.x}px; top:{m.y}px" role="menu">
-        {#if m.target}
-          <button class="ctx-item" disabled={!m.canCopy} onclick={ctxCut}>剪切<span class="ctx-kbd">{isWindows ? 'Ctrl+X' : '⌘X'}</span></button>
-          <button class="ctx-item" disabled={!m.canCopy} onclick={ctxCopy}>复制<span class="ctx-kbd">{isWindows ? 'Ctrl+C' : '⌘C'}</span></button>
-          <button class="ctx-item" onclick={ctxPaste}>粘贴<span class="ctx-kbd">{isWindows ? 'Ctrl+V' : '⌘V'}</span></button>
-          <div class="ctx-div"></div>
-          <button class="ctx-item" onclick={ctxSelectAll}>全选<span class="ctx-kbd">{isWindows ? 'Ctrl+A' : '⌘A'}</span></button>
-        {:else}
-          <button class="ctx-item" onclick={ctxCopy}>复制<span class="ctx-kbd">{isWindows ? 'Ctrl+C' : '⌘C'}</span></button>
-        {/if}
-      </div>
-    {/if}
-
     {#if tip}
       <div class="tipbox" class:below={tip.below} style="left:{tip.x}px; top:{tip.y}px">{tip.text}</div>
     {/if}
@@ -3522,7 +3524,7 @@
             <div class="sched-sticky">
             <div class="sched-density">
               {#each schedDensity as d (d.key)}
-                <button class="sd-cell l{Math.min(d.count, 4)}" class:today={d.today} data-tip={d.tip} aria-label={d.tip} onclick={() => d.count && jumpToDay(d.key)}></button>
+                <button class="sd-cell l{Math.min(d.count, 4)}" class:today={d.today} class:past={d.past} data-tip={d.tip} aria-label={d.tip} onclick={() => d.count && jumpToDay(d.key)}></button>
               {/each}
             </div>
             {#if schedTitleQ.trim()}
@@ -3545,9 +3547,10 @@
                 <div class="sched-item">
                   <div class="sched-body">
                     <b>{it.title}</b>
-                    <small><SiteFav src={siteFav(it.site_slug)} label={it.site_slug} size={12} /><span class="cmono">{it.site_slug}</span> · {it.lang} · <span class="sched-t">{new Date(it.published_at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</span></small>
+                    <small><SiteFav src={siteFav(it.site_slug)} label={it.site_slug} size={12} /><span class="cmono">{it.site_slug}</span> · {it.lang} · <span class="sched-t">{schedWhen(it)}</span>{#if it.status === 'published'}<span class="sched-done">已发布</span>{/if}</small>
                   </div>
-                  <button class="link sched-open" onclick={async () => { try { const u = await invoke<string>('scheduled_preview_url', { connId: activeConnId, siteSlug: it.site_slug, id: it.id }); void openUrl(u); } catch (e) { say(String(e), 'err'); } }}>预览 ↗</button>
+                  <!-- 已发布 → 开真实访问链接；待发布 → 短期草稿链接。文案跟着变，别让人以为点开的是同一种东西 -->
+                  <button class="link sched-open" onclick={() => openSchedItem(it)}>{it.status === 'published' ? '访问' : '预览'} ↗</button>
                 </div>
               {/each}
             {/each}
@@ -5380,7 +5383,6 @@
   .ctx-item { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 18px; background: none; border: none; border-radius: 7px; padding: 6px 10px; font: inherit; font-size: 13px; color: var(--text); cursor: pointer; text-align: left; }
   .ctx-item:hover:not(:disabled) { background: #f1efe9; }
   .ctx-item:disabled { color: var(--faint); cursor: default; }
-  .ctx-kbd { font-size: 11px; color: var(--faint); }
   .ctx-div { height: 1px; background: var(--border); margin: 4px 6px; }
   /* 全局 tips 浮层（fixed，不受滚动容器裁剪） */
   .tipbox { position: fixed; z-index: 130; transform: translate(-50%, -100%); background: #26241f; color: #fff; font-size: 11px; line-height: 1.45; padding: 5px 9px; border-radius: 7px; width: max-content; max-width: 280px; white-space: pre-line; pointer-events: none; text-align: left; box-shadow: 0 5px 16px rgba(0, 0, 0, .18); animation: tipin .12s ease-out .3s both; }
@@ -5604,12 +5606,16 @@
   /* 密度条 + 站点筛选钉在滚动区顶部 */
   .sched-sticky { position: sticky; top: 0; z-index: 5; background: var(--bg); margin: -18px -4px 8px; padding: 14px 4px 2px; }
   /* 排期密度条：未来 6 周每天一格，深浅=条数 */
-  .sched-density { display: grid; grid-template-columns: repeat(42, 1fr); gap: 3px; margin: 2px 0 12px; }
+  /* 列数跟着格子数走（auto-fit），别再写死 42 —— 加了「过去一周」之后写死的列数会把格子挤扁。
+     从 SCHED_PAST_DAYS 推的话又得让 JS 和 CSS 两头对同一个数，迟早对不上。 */
+  .sched-density { display: grid; grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); grid-auto-flow: column; gap: 3px; margin: 2px 0 12px; }
   .sd-cell { aspect-ratio: 1; border: none; border-radius: 3px; background: #ecebe6; padding: 0; cursor: default; }
   .sd-cell.l1 { background: #e4c7b4; cursor: pointer; }
   .sd-cell.l2 { background: #d19a76; cursor: pointer; }
   .sd-cell.l3 { background: #b96a44; cursor: pointer; }
   .sd-cell.l4 { background: #a03c2b; cursor: pointer; }
+  /* 过去的日子调淡：它们是「已经发生的」，不该和未来的排期抢注意力 */
+  .sd-cell.past { opacity: .55; }
   .sd-cell.today { box-shadow: inset 0 0 0 1px #c98d70; background: #f3e7dd; }
   .sd-cell.today.l1, .sd-cell.today.l2, .sd-cell.today.l3, .sd-cell.today.l4 { box-shadow: inset 0 0 0 1px rgba(255,255,255,.55); }
   .sched-grp { scroll-margin-top: 96px; } /* 跳转落点让开顶部钉住的密度条 */
@@ -5624,6 +5630,7 @@
   .sf-chip.sf-all.on { background: none; box-shadow: none; color: var(--accent); font-weight: 600; }
   .sched-body small { display: inline-flex; align-items: center; gap: 4px; }
   .sched-t { color: var(--accent); font-weight: 500; }
+  .sched-done { margin-left: 6px; color: var(--ok); font-size: 10px; border: 1px solid currentColor; border-radius: 3px; padding: 0 3px; line-height: 13px; }
   .sched-filter-dd { display: inline-block; margin: 4px 0 6px; }
   .sched-grp { padding: 16px 2px 6px; }
   .sched-grp:first-child { padding-top: 4px; }

@@ -16,8 +16,18 @@ pub struct ScheduledItem {
     pub title: String,
     pub lang: String,
     pub published_at: String,
+    /// 接口给的是**相对路径**（`/zh/posts/xxx`，见 api.go::apiContentURL），不是完整链接 ——
+    /// 前端要配 discovery 里那个站的域名才能拼出真实访问地址。
     pub url: String,
+    /// `scheduled`（待发布）| `published`（已发布）。
+    /// 前端据此决定「预览」开哪种链接：待发布的公开 URL 打不开、只能走短期草稿链接；
+    /// 已发布的就该直接开真实访问链接。
+    pub status: String,
 }
+
+/// 已发布的往回看几天。接口**没有日期过滤**（只能按 updated_at DESC 取最近的），
+/// 所以这里是拉回来之后自己截断的：往回一周，够看「昨天发了什么」，也不至于把几年的历史都拽回来。
+const PUBLISHED_LOOKBACK_DAYS: i64 = 7;
 
 /// 取某条排期内容的**前台预览链接**（短期有效、真前台模板渲染草稿）——
 /// 排期内容未发布，公开 URL 打不开，必须走 preview-url 接口。
@@ -77,23 +87,46 @@ pub async fn list_scheduled(conn: &Connection) -> Result<Vec<ScheduledItem>, Str
         .unwrap_or_default();
 
     let client = reqwest::Client::new();
-    let mut out: Vec<ScheduledItem> = Vec::new();
-    // 站点通常个位数，顺序拉取即可；单站失败（无 posts:read 等）跳过不影响其它站。
+    // 每个站要拉两次（待发布 + 最近已发布）。
+    // ★ 改成并发：原注释写「站点通常个位数，顺序拉取即可」——这个假设过期了，实测用户有 21 个站，
+    //   顺序 42 个请求（每个超时 15s）会把排期视图拖到肉眼可见地卡。
+    //   单站失败（没有 posts:read 等）照旧跳过，不影响其它站。
+    let mut tasks = Vec::new();
     for s in &sites {
-        let api_base = s.get("api_base").and_then(|v| v.as_str()).unwrap_or("");
+        let api_base = s.get("api_base").and_then(|v| v.as_str()).unwrap_or("").to_string();
         if api_base.is_empty() {
             continue;
         }
         let slug = s.get("slug").and_then(|v| v.as_str()).unwrap_or("").to_string();
         let name = s.get("name").and_then(|v| v.as_str()).unwrap_or(&slug).to_string();
-        if let Ok(items) = fetch_site(&client, api_base, &key, &slug, &name).await {
-            out.extend(items);
+        let (c, k) = (client.clone(), key.clone());
+        tasks.push(tokio::spawn(async move {
+            let mut v = fetch_site(&c, &api_base, &k, &slug, &name, "scheduled").await.unwrap_or_default();
+            v.extend(fetch_site(&c, &api_base, &k, &slug, &name, "published").await.unwrap_or_default());
+            v
+        }));
+    }
+    let mut out: Vec<ScheduledItem> = Vec::new();
+    for t in tasks {
+        if let Ok(v) = t.await {
+            out.extend(v);
         }
     }
-    // 按发布时间升序（最近要发的在前）。
+    // 已发布的只留最近一周。apiTime 恒为 UTC RFC3339（api.go::apiTime → `t.UTC().Format(RFC3339)`），
+    // 同格式同时区 → 直接比字符串是安全的，不用解析。
+    let cutoff = (chrono::Utc::now() - chrono::Duration::days(PUBLISHED_LOOKBACK_DAYS))
+        .format("%Y-%m-%dT%H:%M:%SZ")
+        .to_string();
+    out.retain(|i| i.status != "published" || i.published_at >= cutoff);
+    // 按发布时间升序（最近要发的在前；已发布的排在更前面，因为时间更早）。
     out.sort_by(|a, b| a.published_at.cmp(&b.published_at));
     Ok(out)
 }
+
+/// 服务端的硬上限。**`limit > 100` 会被静默改成 20**（store.go::ListContentForAutomation：
+/// `if limit <= 0 || limit > 100 { limit = 20 }`）—— 这里原来写 200，于是每站**实际只拿到 20 条**，
+/// 任何一个站排超过 20 条，多的就无声无息地不在排期视图里。要 100 就得写 100。
+const API_MAX_LIMIT: u32 = 100;
 
 async fn fetch_site(
     client: &reqwest::Client,
@@ -101,8 +134,12 @@ async fn fetch_site(
     key: &str,
     slug: &str,
     name: &str,
+    status: &str,
 ) -> Result<Vec<ScheduledItem>, String> {
-    let url = format!("{}/posts?status=scheduled&lang=all&limit=200", api_base.trim_end_matches('/'));
+    let url = format!(
+        "{}/posts?status={status}&lang=all&limit={API_MAX_LIMIT}",
+        api_base.trim_end_matches('/')
+    );
     let resp = client
         .get(&url)
         .header("Authorization", format!("Bearer {key}"))
@@ -126,6 +163,13 @@ async fn fetch_site(
             lang: it.get("lang").and_then(|v| v.as_str()).unwrap_or("").to_string(),
             published_at,
             url: it.get("url").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            // 以接口回的 status 为准，而不是我们请求的那个：万一服务端把口径改了，
+            // 照抄请求参数就会把「其实已发布」的标成待发布，前端跟着开错链接。
+            status: it
+                .get("status")
+                .and_then(|v| v.as_str())
+                .unwrap_or(status)
+                .to_string(),
         });
     }
     Ok(out)

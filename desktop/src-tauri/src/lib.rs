@@ -1543,6 +1543,38 @@ fn stop_preview(state: &AppState) {
     }
 }
 
+/// 输入框/选中文字的右键菜单。**必须是原生菜单，不能前端自己画。**
+///
+/// 病根：macOS 14 起，程序**读**剪贴板（`navigator.clipboard.readText`）会弹一个系统「Paste」
+/// 确认按钮 —— 用户点完我们的「粘贴」还得再点一次系统的 Paste，看着就像坏了。
+/// 而且这个提示**用 JS 绕不过去**：系统只看到「某程序要读剪贴板」，看不到用户刚点过菜单，
+/// 那正是它要防的事。（剪切/复制是**写**，所以一直没事——只有粘贴犯规。）
+///
+/// 原生 `PredefinedMenuItem::paste` 由系统自己执行，两个平台都不弹：
+/// - macOS：走 responder chain 的 `paste:`，webview 自己粘贴。
+/// - Windows：muda 模拟一次真实的 Ctrl+V 按键，WebView2 当普通按键处理。
+///
+/// 白送的好处：启用态由系统按当前选区/剪贴板自动管（macOS 的 `validateMenuItem:`）——
+/// 没选中就自动灰掉「剪切/复制」，剪贴板空就灰掉「粘贴」，不用我们在前端猜。
+#[tauri::command]
+fn show_edit_menu(app: AppHandle, window: tauri::Window, editable: bool) -> Result<(), String> {
+    use tauri::menu::{ContextMenu, MenuBuilder, PredefinedMenuItem};
+    let mut b = MenuBuilder::new(&app);
+    if editable {
+        let cut = PredefinedMenuItem::cut(&app, Some("剪切")).map_err(|e| e.to_string())?;
+        let copy = PredefinedMenuItem::copy(&app, Some("复制")).map_err(|e| e.to_string())?;
+        let paste = PredefinedMenuItem::paste(&app, Some("粘贴")).map_err(|e| e.to_string())?;
+        let all = PredefinedMenuItem::select_all(&app, Some("全选")).map_err(|e| e.to_string())?;
+        b = b.item(&cut).item(&copy).item(&paste).separator().item(&all);
+        b.build().map_err(|e| e.to_string())?.popup(window).map_err(|e| e.to_string())
+    } else {
+        // 非输入框：只给「复制」（选中的消息文字）
+        let copy = PredefinedMenuItem::copy(&app, Some("复制")).map_err(|e| e.to_string())?;
+        b = b.item(&copy);
+        b.build().map_err(|e| e.to_string())?.popup(window).map_err(|e| e.to_string())
+    }
+}
+
 /// 在新窗口里打开一个连接（几台机器 / 几个站点并排看）。同一连接已有窗口就把它拎到前面。
 ///
 /// 窗口之间只是各自一份前端：连接表、对话、SSH 会话、权限待批都在 Rust 侧的同一份 AppState 里，
@@ -4160,6 +4192,7 @@ pub fn run() {
             update_pack,
             remove_connection,
             open_conn_window,
+            show_edit_menu,
             discover_sites,
             detect_brains,
             install_wrangler,
