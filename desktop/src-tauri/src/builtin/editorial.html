@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>浅焙 Light Roast — 一本关于咖啡的独立刊物</title>
+<meta name="description" content="浅焙是一本双月出版的独立咖啡刊物：产地直访、器物与手法、城市咖啡地图。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23F7F4EE'/%3E%3Cpath d='M16 5c5 0 8 3.6 8 8.4 0 5.6-3.7 9-8 13.6-4.3-4.6-8-8-8-13.6C8 8.6 11 5 16 5z' fill='%23A03A22'/%3E%3Cpath d='M16 9v11' stroke='%23F7F4EE' stroke-width='1.6' stroke-linecap='round'/%3E%3C/svg%3E">
+<style>
+  :root{
+    /* ——— 设计令牌（改主题只改这里） ——— */
+    --bg:#F7F4EE;          /* 米白纸感底 */
+    --surface:#FFFDF9;     /* 卡片/浮层 */
+    --text:#1F1C19;        /* 正文墨色 15.4:1 */
+    --muted:#6B635A;       /* 次要信息 5.4:1 */
+    --accent:#A03A22;      /* 唯一强调色 6.1:1 */
+    --radius:3px;
+
+    /* 由令牌派生（保持“一个强调色”） */
+    --accent-ink:#7A2B18;  /* accent 的按下/悬停深色 */
+    --on-accent:#FFFDF9;   /* 强调色上的文字 */
+    --rule:#DCD5C8;        /* 细分节线 */
+    --rule-soft:#E9E3D8;
+
+    /* ——— 间距刻度 ——— */
+    --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s6:24px; --s10:40px; --s16:64px;
+
+    /* ——— 版心 ——— */
+    --measure:720px;       /* 正文窄栏——所有内容段落都用它，左边缘才对得齐 */
+    --wide:960px;          /* 只给页眉/页脚这类“页面框架”用 */
+
+    /* ——— 字族：拉丁走衬线/无衬线，中文自动落到宋体/苹方 ——— */
+    --font-display:Georgia,"Times New Roman","Songti SC",STSong,"SimSun","Noto Serif SC",serif;
+    --font-body:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans SC",sans-serif;
+  }
+
+  *,*::before,*::after{box-sizing:border-box}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--text);
+    font-family:var(--font-body);
+    font-size:16px;
+    line-height:1.75;
+    -webkit-font-smoothing:antialiased;
+  }
+  img,svg{max-width:100%;display:block}
+  a{color:var(--accent);text-decoration:none}
+  a:hover{color:var(--accent-ink)}
+
+  .wrap{width:100%;max-width:var(--measure);margin-inline:auto;padding-inline:var(--s6)}
+  .wrap--wide{max-width:var(--wide)}
+
+  /* 细横线分节 */
+  .rule{border:0;border-top:1px solid var(--rule);margin:0}
+
+  h1,h2,h3{font-family:var(--font-display);font-weight:700;line-height:1.18;letter-spacing:-.01em;margin:0}
+  p{margin:0}
+
+  .eyebrow{
+    font-size:14px;line-height:1.4;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--muted);margin:0;
+  }
+
+  /* ——————— 导航 ——————— */
+  .nav{
+    position:sticky;top:0;z-index:10;
+    background:color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter:saturate(180%) blur(10px);
+    border-bottom:1px solid var(--rule);
+  }
+  .nav__in{display:flex;align-items:center;gap:var(--s6);height:64px}
+  .brand{
+    font-family:var(--font-display);font-size:20px;font-weight:700;color:var(--text);
+    letter-spacing:.02em;margin-right:auto;white-space:nowrap;
+  }
+  .brand:hover{color:var(--accent)}
+  .brand small{font-family:var(--font-body);font-size:14px;font-weight:400;color:var(--muted);letter-spacing:.14em;margin-left:var(--s2)}
+  .nav__links{display:flex;gap:var(--s6);align-items:center}
+  /* :not(.btn) 很关键——否则会盖掉 .btn 的内边距与文字色 */
+  .nav__links a:not(.btn){
+    font-size:14px;color:var(--muted);padding-block:var(--s1);
+    border-bottom:1px solid transparent;transition:color .18s,border-color .18s;
+  }
+  .nav__links a:not(.btn):hover{color:var(--text);border-bottom-color:var(--accent)}
+
+  .btn{
+    display:inline-block;font-size:14px;line-height:1;font-weight:600;
+    padding:var(--s3) var(--s4);border-radius:var(--radius);
+    border:1px solid var(--accent);background:var(--accent);color:var(--on-accent);
+    cursor:pointer;transition:background .18s,border-color .18s,transform .18s;
+    white-space:nowrap;
+  }
+  .btn:hover{background:var(--accent-ink);border-color:var(--accent-ink);color:var(--on-accent);transform:translateY(-1px)}
+  .btn--lg{font-size:16px;padding:var(--s4) var(--s6)}
+  .btn--ghost{background:transparent;color:var(--accent);border-color:var(--rule)}
+  .btn--ghost:hover{background:transparent;color:var(--accent-ink);border-color:var(--accent)}
+
+  /* 文字链（带下划线动效） */
+  .link{
+    font-size:16px;color:var(--text);border-bottom:1px solid var(--rule);
+    padding-bottom:2px;transition:color .18s,border-color .18s;
+  }
+  .link:hover{color:var(--accent);border-bottom-color:var(--accent)}
+  .link .arrow{display:inline-block;transition:transform .18s}
+  .link:hover .arrow{transform:translateX(3px)}
+
+  /* ——————— 头图 ——————— */
+  .hero{padding-block:var(--s16) var(--s10)}
+  .hero__meta{display:flex;flex-wrap:wrap;gap:var(--s3);align-items:center;margin-bottom:var(--s6)}
+  .hero__meta .dot{width:3px;height:3px;border-radius:50%;background:var(--rule)}
+  .hero h1{font-size:clamp(28px,5vw,52px);margin-bottom:var(--s6)}
+  /* 中文不用合成斜体（会歪得难看），只用强调色提亮 */
+  .hero h1 em{font-style:normal;color:var(--accent)}
+  .hero__sub{font-size:20px;line-height:1.7;color:var(--muted);max-width:34em;margin-bottom:var(--s10)}
+  .hero__cta{display:flex;flex-wrap:wrap;align-items:center;gap:var(--s6)}
+
+  .figure{margin:var(--s16) 0 0}
+  .figure__art{
+    height:300px;border-radius:var(--radius);border:1px solid var(--rule-soft);
+    background:
+      radial-gradient(120% 90% at 22% 18%, color-mix(in srgb, var(--accent) 26%, transparent) 0%, transparent 58%),
+      radial-gradient(90% 80% at 88% 82%, color-mix(in srgb, var(--text) 18%, transparent) 0%, transparent 62%),
+      linear-gradient(160deg, var(--surface) 0%, color-mix(in srgb, var(--bg) 70%, var(--text) 6%) 100%);
+    position:relative;overflow:hidden;
+  }
+  .figure__art svg{position:absolute;inset:0;width:100%;height:100%}
+  .figure figcaption{font-size:14px;color:var(--muted);margin-top:var(--s3)}
+
+  /* ——————— 三栏价值 ——————— */
+  .section{padding-block:var(--s16)}
+  .section__head{margin-bottom:var(--s10)}
+  .section__head h2{font-size:28px;margin-top:var(--s3)}
+
+  /* 三栏窄列——杂志感就来自这种窄栏，不要撑宽 */
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--s6)}
+  .card__num{
+    font-family:var(--font-display);font-size:14px;color:var(--accent);
+    letter-spacing:.1em;padding-bottom:var(--s3);margin-bottom:var(--s3);
+    border-bottom:1px solid var(--rule);
+  }
+  .card h3{font-size:20px;margin-bottom:var(--s2)}
+  .card p{font-size:16px;color:var(--muted)}
+
+  /* ——————— 本期目录 ——————— */
+  .toc{list-style:none;margin:0;padding:0;border-top:1px solid var(--rule)}
+  .toc li{border-bottom:1px solid var(--rule)}
+  .toc a{
+    display:flex;gap:var(--s6);align-items:baseline;
+    padding-block:var(--s6);color:var(--text);transition:padding-left .2s,color .18s;
+  }
+  .toc a:hover{padding-left:var(--s3);color:var(--accent)}
+  .toc__no{font-family:var(--font-display);font-size:14px;color:var(--muted);min-width:2.4em}
+  .toc a:hover .toc__no{color:var(--accent)}
+  .toc__title{font-family:var(--font-display);font-size:20px;font-weight:700;line-height:1.4;flex:1}
+  .toc__by{font-size:14px;color:var(--muted);white-space:nowrap}
+
+  /* ——————— 引文 ——————— */
+  .quote{padding-block:var(--s16);text-align:center}
+  .quote blockquote{
+    margin:0;font-family:var(--font-display);
+    font-size:28px;line-height:1.6;text-wrap:balance;
+  }
+  .quote figcaption{margin-top:var(--s6);font-size:14px;color:var(--muted);letter-spacing:.06em}
+
+  /* ——————— 订阅方案 ——————— */
+  .plans{display:grid;grid-template-columns:1fr 1fr;gap:var(--s6)}
+  .plan{
+    background:var(--surface);border:1px solid var(--rule);border-radius:var(--radius);
+    padding:var(--s10);display:flex;flex-direction:column;gap:var(--s4);
+    transition:border-color .2s,transform .2s;
+  }
+  .plan:hover{border-color:var(--accent);transform:translateY(-2px)}
+  .plan__name{font-family:var(--font-display);font-size:20px;font-weight:700}
+  .plan__price{font-family:var(--font-display);font-size:40px;line-height:1;font-weight:700}
+  .plan__price span{font-family:var(--font-body);font-size:14px;font-weight:400;color:var(--muted);margin-left:var(--s2)}
+  .plan ul{list-style:none;margin:0;padding:0;font-size:16px;color:var(--muted)}
+  .plan li{padding-block:var(--s2);border-bottom:1px solid var(--rule-soft)}
+  .plan li:last-child{border-bottom:0}
+  .plan .btn{text-align:center;margin-top:auto}
+  .plan--pick{border-color:var(--text)}
+  .plan__tag{
+    font-size:14px;color:var(--accent);letter-spacing:.14em;text-transform:uppercase;
+  }
+
+  /* ——————— 结尾行动条 ——————— */
+  .band{
+    border-top:1px solid var(--rule);border-bottom:1px solid var(--rule);
+    padding-block:var(--s16);text-align:center;
+    background:linear-gradient(180deg, color-mix(in srgb, var(--surface) 70%, transparent), transparent);
+  }
+  .band h2{font-size:clamp(28px,5vw,40px);margin-bottom:var(--s4)}
+  .band p{color:var(--muted);margin-bottom:var(--s10);font-size:16px}
+  .band form{display:flex;gap:var(--s2);max-width:420px;margin-inline:auto}
+  .band input{
+    flex:1;min-width:0;font-family:var(--font-body);font-size:16px;color:var(--text);
+    background:var(--surface);border:1px solid var(--rule);border-radius:var(--radius);
+    padding:var(--s3) var(--s4);transition:border-color .18s;
+  }
+  .band input::placeholder{color:var(--muted)}
+  .band input:hover{border-color:var(--muted)}
+  .band input:focus{outline:none;border-color:var(--accent)}
+  .band small{display:block;margin-top:var(--s3);font-size:14px;color:var(--muted)}
+
+  /* ——————— 页脚 ——————— */
+  .foot{padding-block:var(--s16)}
+  .foot__in{display:flex;gap:var(--s16);align-items:flex-start;flex-wrap:wrap}
+  .foot__brand{flex:1;min-width:220px}
+  .foot__brand p{font-size:14px;color:var(--muted);margin-top:var(--s3);max-width:28em}
+  .foot__col h4{
+    font-family:var(--font-body);font-size:14px;font-weight:600;margin:0 0 var(--s3);
+    letter-spacing:.1em;text-transform:uppercase;color:var(--muted);
+  }
+  .foot__col ul{list-style:none;margin:0;padding:0;display:grid;gap:var(--s2)}
+  .foot__col a{font-size:16px;color:var(--text)}
+  .foot__col a:hover{color:var(--accent)}
+  .foot__base{
+    margin-top:var(--s16);padding-top:var(--s6);border-top:1px solid var(--rule);
+    display:flex;justify-content:space-between;gap:var(--s4);flex-wrap:wrap;
+    font-size:14px;color:var(--muted);
+  }
+
+  /* ——————— 窄屏 ——————— */
+  @media (max-width:860px){
+    .grid3{grid-template-columns:1fr;gap:var(--s10)}
+    .plans{grid-template-columns:1fr}
+    .foot__in{gap:var(--s10)}
+  }
+  @media (max-width:640px){
+    body{line-height:1.7}
+    .wrap{padding-inline:var(--s6)}
+    .nav__in{height:56px;gap:var(--s4)}
+    .nav__links{gap:var(--s4)}
+    .nav__links a:not(.btn){display:none}
+    .brand small{display:none}
+    .hero{padding-block:var(--s10) var(--s6)}
+    .hero__sub{font-size:16px;margin-bottom:var(--s6)}
+    .hero__cta{gap:var(--s4)}
+    .hero__cta .btn{width:100%;text-align:center}
+    .section,.quote,.band,.foot{padding-block:var(--s10)}
+    .figure{margin-top:var(--s10)}
+    .figure__art{height:200px}
+    .quote blockquote{font-size:20px}
+    .toc a{flex-wrap:wrap;gap:var(--s2) var(--s4);padding-block:var(--s4)}
+    .toc__title{flex-basis:100%;font-size:16px;order:2}
+    .toc__by{order:3}
+    .plan{padding:var(--s6)}
+    .band form{flex-direction:column}
+    .foot__base{margin-top:var(--s10)}
+  }
+  @media (prefers-reduced-motion:reduce){
+    *{transition:none!important}
+  }
+</style>
+</head>
+<body>
+
+<!-- ═══ 导航 ═══ -->
+<header class="nav">
+  <nav class="wrap wrap--wide nav__in" aria-label="主导航">
+    <a class="brand" href="#top">浅焙<small>LIGHT ROAST</small></a>
+    <div class="nav__links">
+      <a href="#issue">本期</a>
+      <a href="#columns">专栏</a>
+      <a href="#plans">订阅</a>
+      <a class="btn" href="#subscribe">订阅第 12 期</a>
+    </div>
+  </nav>
+</header>
+
+<main id="top">
+
+  <!-- ═══ 头图 ═══ -->
+  <section class="hero wrap">
+    <div class="hero__meta">
+      <p class="eyebrow">第 12 期</p>
+      <span class="dot" aria-hidden="true"></span>
+      <p class="eyebrow">2026 春</p>
+      <span class="dot" aria-hidden="true"></span>
+      <p class="eyebrow">双月刊</p>
+    </div>
+
+    <h1>咖啡是一门<em>日常的手艺</em>，<br>值得被认真写下来。</h1>
+
+    <p class="hero__sub">
+      我们每两个月出版一期，只做三件事：走一趟产地、拆一套器物、画一张城市咖啡地图。
+      不谈风口，不写软文，一百二十页，纸质与电子同步。
+    </p>
+
+    <div class="hero__cta">
+      <a class="btn btn--lg" href="#subscribe">订阅本期 ¥68</a>
+      <a class="link" href="#issue">先读第 12 期目录 <span class="arrow" aria-hidden="true">→</span></a>
+    </div>
+
+    <figure class="figure">
+      <div class="figure__art" role="img" aria-label="示意图：手冲滤杯与水流的抽象剖面">
+        <svg viewBox="0 0 960 300" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+          <g fill="none" stroke="currentColor" stroke-opacity=".28" stroke-width="1">
+            <path d="M0 210h960M0 250h960M0 170h960"/>
+          </g>
+          <g transform="translate(480 150)">
+            <path d="M-92 -66 L92 -66 L26 62 L-26 62 Z" fill="none" stroke="currentColor" stroke-opacity=".5" stroke-width="1.5"/>
+            <path d="M-64 -22 L64 -22" stroke="currentColor" stroke-opacity=".35" stroke-width="1"/>
+            <path d="M0 -104 L0 -66" stroke="currentColor" stroke-opacity=".55" stroke-width="2" stroke-linecap="round"/>
+            <circle cx="0" cy="-96" r="4" fill="currentColor" fill-opacity=".5"/>
+            <ellipse cx="0" cy="62" rx="26" ry="7" fill="currentColor" fill-opacity=".18"/>
+          </g>
+        </svg>
+      </div>
+      <figcaption>封面故事 · 云南保山，海拔 1,650 米的第三个采收季（占位图，替换为实拍）</figcaption>
+    </figure>
+  </section>
+
+  <hr class="rule">
+
+  <!-- ═══ 三栏价值 ═══ -->
+  <section class="section wrap" id="columns">
+    <header class="section__head">
+      <p class="eyebrow">固定专栏</p>
+      <h2>每期都有的三条线索</h2>
+    </header>
+
+    <div class="grid3">
+      <article class="card">
+        <p class="card__num">01</p>
+        <h3>产地直访</h3>
+        <p>编辑部自费买机票，蹲在处理厂里记录一支豆子从鲜果到熟豆的四十天，包括那些失败的批次。</p>
+      </article>
+      <article class="card">
+        <p class="card__num">02</p>
+        <h3>器物与手法</h3>
+        <p>把磨豆机拆到最后一颗螺丝，用同一支豆做二十杯对照，只写我们真的测过的结论。</p>
+      </article>
+      <article class="card">
+        <p class="card__num">03</p>
+        <h3>城市咖啡地图</h3>
+        <p>每期一座城，走访三十家小馆，附一张可以撕下来带走的折页地图。本期：成都。</p>
+      </article>
+    </div>
+  </section>
+
+  <hr class="rule">
+
+  <!-- ═══ 本期目录 ═══ -->
+  <section class="section wrap" id="issue">
+    <header class="section__head">
+      <p class="eyebrow">第 12 期 · 目录</p>
+      <h2>把一杯咖啡拆开看</h2>
+    </header>
+
+    <ol class="toc">
+      <li><a href="#issue"><span class="toc__no">P.08</span><span class="toc__title">海拔 1,650 米：保山的第三个采收季</span><span class="toc__by">文 / 陈晚舟</span></a></li>
+      <li><a href="#issue"><span class="toc__no">P.24</span><span class="toc__title">水的变量：同一支豆，二十杯对照实验</span><span class="toc__by">文 / 编辑部</span></a></li>
+      <li><a href="#issue"><span class="toc__no">P.46</span><span class="toc__title">磨豆机拆解手记：刀盘之外的事</span><span class="toc__by">文 / 林岸</span></a></li>
+      <li><a href="#issue"><span class="toc__no">P.63</span><span class="toc__title">成都咖啡地图：三十家小馆与它们的街道</span><span class="toc__by">摄影 / 周未</span></a></li>
+      <li><a href="#issue"><span class="toc__no">P.94</span><span class="toc__title">对谈：一家开了十一年的社区咖啡馆</span><span class="toc__by">文 / 陈晚舟</span></a></li>
+    </ol>
+  </section>
+
+  <hr class="rule">
+
+  <!-- ═══ 引文 ═══ -->
+  <figure class="quote wrap">
+    <blockquote>「我们不评分，也不排名。我们只是把杯子放回它被端起来的那张桌子上。」</blockquote>
+    <figcaption>—— 发刊词，第 1 期，2024 年 3 月</figcaption>
+  </figure>
+
+  <hr class="rule">
+
+  <!-- ═══ 订阅方案 ═══ -->
+  <section class="section wrap" id="plans">
+    <header class="section__head">
+      <p class="eyebrow">订阅</p>
+      <h2>两种读法</h2>
+    </header>
+
+    <div class="plans">
+      <article class="plan">
+        <p class="plan__name">单期</p>
+        <p class="plan__price">¥68<span>/ 期</span></p>
+        <ul>
+          <li>纸质本期一册，包邮</li>
+          <li>同步电子版（PDF / EPUB）</li>
+          <li>本期折页地图</li>
+        </ul>
+        <a class="btn btn--ghost" href="#subscribe">购买第 12 期</a>
+      </article>
+
+      <article class="plan plan--pick">
+        <p class="plan__tag">推荐</p>
+        <p class="plan__name">年度（6 期）</p>
+        <p class="plan__price">¥348<span>/ 年 · 省 ¥60</span></p>
+        <ul>
+          <li>全年 6 期，出刊即寄</li>
+          <li>全部往期电子版</li>
+          <li>读者信箱：每月一封编辑手记</li>
+          <li>线下品鉴场次优先报名</li>
+        </ul>
+        <a class="btn" href="#subscribe">成为年度读者</a>
+      </article>
+    </div>
+  </section>
+
+  <!-- ═══ 结尾行动条 ═══ -->
+  <section class="band" id="subscribe">
+    <div class="wrap">
+      <h2>下期出刊前，先收一封信</h2>
+      <p>每月一封编辑手记：我们在读什么、在喝什么、下期打算去哪。随时退订。</p>
+      <form onsubmit="return false;">
+        <input id="email" type="email" placeholder="you@example.com" autocomplete="email" aria-label="邮箱地址">
+        <button class="btn" type="submit">订阅手记</button>
+      </form>
+      <small>已有 4,200 位读者在信箱里等下一期（占位数据）</small>
+    </div>
+  </section>
+
+</main>
+
+<!-- ═══ 页脚 ═══ -->
+<footer class="foot">
+  <div class="wrap wrap--wide">
+    <div class="foot__in">
+      <div class="foot__brand">
+        <a class="brand" href="#top">浅焙<small>LIGHT ROAST</small></a>
+        <p>一本关于咖啡的独立刊物。双月出版，无广告，靠读者订阅活着。编辑部在上海与成都。</p>
+      </div>
+
+      <div class="foot__col">
+        <h4>刊物</h4>
+        <ul>
+          <li><a href="#issue">本期目录</a></li>
+          <li><a href="#columns">固定专栏</a></li>
+          <li><a href="#plans">往期回顾</a></li>
+        </ul>
+      </div>
+
+      <div class="foot__col">
+        <h4>联系</h4>
+        <ul>
+          <li><a href="#top">投稿与合作</a></li>
+          <li><a href="#top">经销与书店</a></li>
+          <li><a href="#top">订阅问题</a></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="foot__base">
+      <p>© 2026 浅焙 Light Roast · 版权归各作者所有</p>
+      <p>沪ICP备 0000000 号（占位）</p>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

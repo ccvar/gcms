@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>窑与麦 · 手作陶器与小批量面包</title>
+<meta name="description" content="窑与麦是一间巷子深处的小工坊：上午拉坯，下午烤面包。陶器与面包都只做一小批。">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23FBF7F0'/><path d='M6 13.5h20a10 10 0 0 1-20 0z' fill='%23B0532F'/><path d='M16 4.5c1.8 1.6 1.8 4.4 0 6-1.8-1.6-1.8-4.4 0-6z' fill='%23B0532F'/></svg>">
+<style>
+  :root{
+    /* ——— 调色板：奶油底 / 深棕字 / 单一陶土强调色 ——— */
+    --bg:#FBF7F0;
+    --surface:#FFFCF7;
+    --text:#332419;
+    --muted:#6F5B4C;
+    --accent:#B0532F;
+    --radius:12px;
+
+    /* 辅助中性色（均由上面三色派生，不引入第二个彩色） */
+    --line:#E7DDCD;
+    --line-soft:#F0E8DB;
+    --accent-wash:#F6EAE2;
+    /* 同一陶土色的深色档，用于压在 --accent-wash 上的小字（保证 4.5:1） */
+    --accent-ink:#93401F;
+    --on-accent:#FFFCF7;
+    --shadow-soft:0 1px 2px rgba(51,36,25,.04), 0 8px 24px rgba(51,36,25,.06);
+    --shadow-lift:0 2px 6px rgba(51,36,25,.06), 0 18px 40px rgba(51,36,25,.10);
+
+    /* ——— 间距刻度 ——— */
+    --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px; --s6:40px; --s7:64px;
+
+    /* ——— 字号刻度 ——— */
+    --fs-sm:14px; --fs-base:16px; --fs-md:20px; --fs-lg:28px; --fs-xl:40px;
+
+    /* ——— 字体：衬线标题 + 无衬线正文（经典搭配，CJK 安全） ——— */
+    --font-body:-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+      "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+    --font-head:Georgia, "Songti SC", "Source Han Serif SC", "Noto Serif CJK SC",
+      "SimSun", serif;
+
+    --container:1080px;
+    --prose:680px;
+    --ease:cubic-bezier(.2,.7,.3,1);
+  }
+
+  *,*::before,*::after{box-sizing:border-box;}
+  html{-webkit-text-size-adjust:100%;}
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--text);
+    font-family:var(--font-body);
+    font-size:var(--fs-base);
+    line-height:1.75;
+    letter-spacing:.01em;
+    -webkit-font-smoothing:antialiased;
+  }
+  img,svg{max-width:100%;display:block;}
+  h1,h2,h3{font-family:var(--font-head);font-weight:600;line-height:1.3;margin:0;letter-spacing:.01em;}
+  p{margin:0;}
+  a{color:var(--accent);text-decoration:none;transition:opacity .2s var(--ease),color .2s var(--ease);}
+  a:hover{opacity:.7;}
+  ul,ol{margin:0;padding:0;list-style:none;}
+  /* 锚点跳转时不被吸顶导航盖住 */
+  section[id]{scroll-margin-top:88px;}
+
+  .wrap{width:100%;max-width:var(--container);margin-inline:auto;padding:0 var(--s5);}
+  .prose{max-width:var(--prose);}
+
+  /* ——— 通用小部件 ——— */
+  .eyebrow{
+    font-size:var(--fs-sm);letter-spacing:.14em;text-transform:uppercase;
+    color:var(--accent);margin:0 0 var(--s3);font-weight:600;
+  }
+  .lede{font-size:var(--fs-md);line-height:1.7;color:var(--muted);}
+
+  .btn{
+    display:inline-flex;align-items:center;gap:var(--s2);
+    font-family:var(--font-body);font-size:var(--fs-base);font-weight:600;
+    padding:var(--s3) var(--s5);border-radius:var(--radius);
+    border:1px solid transparent;cursor:pointer;
+    transition:transform .2s var(--ease),box-shadow .2s var(--ease),background .2s var(--ease),border-color .2s var(--ease),color .2s var(--ease);
+  }
+  .btn--primary{background:var(--accent);color:var(--on-accent);box-shadow:var(--shadow-soft);}
+  .btn--primary:hover{opacity:1;transform:translateY(-2px);box-shadow:var(--shadow-lift);}
+  .btn--ghost{background:transparent;color:var(--text);border-color:var(--line);}
+  .btn--ghost:hover{opacity:1;border-color:var(--accent);color:var(--accent);background:var(--accent-wash);}
+  .btn--quiet{
+    background:transparent;color:var(--muted);padding:var(--s3) var(--s2);
+    border-bottom:1px solid var(--line);border-radius:0;
+  }
+  .btn--quiet:hover{opacity:1;color:var(--accent);border-bottom-color:var(--accent);}
+
+  /* ——— 导航 ——— */
+  .nav{
+    position:sticky;top:0;z-index:20;
+    background:rgba(251,247,240,.86);
+    backdrop-filter:saturate(140%) blur(10px);
+    border-bottom:1px solid var(--line-soft);
+  }
+  .nav__in{display:flex;align-items:center;gap:var(--s5);height:72px;}
+  .brand{display:flex;align-items:center;gap:var(--s3);color:var(--text);font-weight:600;}
+  .brand:hover{opacity:1;color:var(--accent);}
+  .brand__mark{width:28px;height:28px;flex:none;}
+  .brand__name{font-family:var(--font-head);font-size:var(--fs-md);letter-spacing:.04em;}
+  .nav__links{display:flex;gap:var(--s5);margin-left:auto;}
+  .nav__links a{color:var(--muted);font-size:var(--fs-sm);font-weight:500;position:relative;padding:var(--s1) 0;}
+  .nav__links a::after{
+    content:"";position:absolute;left:0;right:0;bottom:-2px;height:1px;
+    background:var(--accent);transform:scaleX(0);transform-origin:left;
+    transition:transform .25s var(--ease);
+  }
+  .nav__links a:hover{opacity:1;color:var(--accent);}
+  .nav__links a:hover::after{transform:scaleX(1);}
+  .nav .btn{padding:var(--s2) var(--s4);font-size:var(--fs-sm);}
+
+  /* ——— Hero ——— */
+  .hero{padding:var(--s7) 0;overflow:hidden;}
+  .hero__in{display:grid;grid-template-columns:1.05fr .95fr;gap:var(--s7);align-items:center;}
+  .hero h1{font-size:clamp(30px,4.6vw,44px);margin-bottom:var(--s5);letter-spacing:.02em;}
+  .hero .lede{margin-bottom:var(--s6);max-width:44ch;}
+  .hero__cta{display:flex;align-items:center;gap:var(--s5);flex-wrap:wrap;}
+  .hero__note{
+    margin-top:var(--s6);padding-top:var(--s5);border-top:1px solid var(--line);
+    color:var(--muted);font-size:var(--fs-sm);max-width:40ch;
+  }
+  .hero__art{
+    position:relative;border-radius:calc(var(--radius) * 2);
+    background:
+      radial-gradient(120% 90% at 78% 12%, var(--accent-wash) 0%, rgba(246,234,226,0) 62%),
+      linear-gradient(168deg, var(--surface) 0%, var(--bg) 100%);
+    border:1px solid var(--line-soft);
+    box-shadow:var(--shadow-soft);
+    padding:var(--s6);
+  }
+
+  /* ——— 区块 ——— */
+  .section{padding:var(--s7) 0;}
+  .section--tint{background:var(--surface);border-block:1px solid var(--line-soft);}
+  .section__head{margin-bottom:var(--s7);}
+  .section__head h2{font-size:var(--fs-lg);margin-bottom:var(--s4);}
+
+  .grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--s6);}
+
+  .feature__icon{
+    width:44px;height:44px;margin-bottom:var(--s5);
+    color:var(--accent);
+  }
+  .feature h3{font-size:var(--fs-md);margin-bottom:var(--s3);}
+  .feature p{color:var(--muted);}
+
+  /* ——— 工序 ——— */
+  .steps{display:grid;grid-template-columns:repeat(4,1fr);gap:var(--s4);counter-reset:step;}
+  .step{
+    background:var(--bg);border:1px solid var(--line);border-radius:var(--radius);
+    padding:var(--s5);transition:transform .25s var(--ease),box-shadow .25s var(--ease),border-color .25s var(--ease);
+  }
+  .step:hover{transform:translateY(-4px);box-shadow:var(--shadow-lift);border-color:var(--accent-wash);}
+  .step__n{
+    display:inline-flex;align-items:center;justify-content:center;
+    width:32px;height:32px;border-radius:50%;
+    background:var(--accent-wash);color:var(--accent-ink);
+    font-family:var(--font-head);font-size:var(--fs-sm);font-weight:700;
+    margin-bottom:var(--s4);
+  }
+  .step h3{font-size:var(--fs-base);margin-bottom:var(--s2);}
+  .step p{font-size:var(--fs-sm);color:var(--muted);line-height:1.7;}
+
+  .quote{
+    margin:var(--s7) auto 0;max-width:var(--prose);text-align:center;
+    padding-top:var(--s6);border-top:1px solid var(--line);
+  }
+  .quote blockquote{
+    margin:0 0 var(--s4);font-family:var(--font-head);font-size:var(--fs-md);
+    line-height:1.7;color:var(--text);
+  }
+  .quote figcaption{font-size:var(--fs-sm);color:var(--muted);}
+
+  /* ——— 价格 ——— */
+  .plan{
+    display:flex;flex-direction:column;
+    background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+    padding:var(--s6) var(--s5);
+    transition:transform .25s var(--ease),box-shadow .25s var(--ease),border-color .25s var(--ease);
+  }
+  .plan:hover{transform:translateY(-4px);box-shadow:var(--shadow-lift);border-color:var(--accent-wash);}
+  .plan--featured{border-color:var(--accent);box-shadow:var(--shadow-soft);}
+  .plan__tag{
+    align-self:flex-start;font-size:var(--fs-sm);font-weight:600;color:var(--accent-ink);
+    background:var(--accent-wash);border-radius:99px;padding:var(--s1) var(--s3);
+    margin-bottom:var(--s4);
+  }
+  .plan h3{font-size:var(--fs-md);margin-bottom:var(--s2);}
+  .plan__desc{font-size:var(--fs-sm);color:var(--muted);margin-bottom:var(--s5);}
+  .plan__price{font-family:var(--font-head);font-size:var(--fs-lg);margin-bottom:var(--s5);}
+  .plan__price span{font-family:var(--font-body);font-size:var(--fs-sm);color:var(--muted);font-weight:400;}
+  .plan__list{display:flex;flex-direction:column;gap:var(--s3);margin-bottom:var(--s6);}
+  .plan__list li{display:flex;gap:var(--s3);font-size:var(--fs-sm);color:var(--muted);line-height:1.6;}
+  .plan__list svg{width:16px;height:16px;flex:none;margin-top:5px;color:var(--accent);}
+  .plan .btn{margin-top:auto;justify-content:center;}
+
+  /* ——— 结尾 CTA ——— */
+  .band{padding:var(--s7) 0;}
+  .band__in{
+    background:
+      radial-gradient(90% 140% at 8% 0%, var(--accent-wash) 0%, rgba(246,234,226,0) 70%),
+      var(--surface);
+    border:1px solid var(--line);border-radius:calc(var(--radius) * 2);
+    padding:var(--s7) var(--s6);text-align:center;
+    box-shadow:var(--shadow-soft);
+  }
+  .band h2{font-size:var(--fs-lg);margin-bottom:var(--s4);}
+  .band p{color:var(--muted);max-width:46ch;margin:0 auto var(--s6);}
+  .band__cta{display:flex;gap:var(--s5);justify-content:center;align-items:center;flex-wrap:wrap;}
+
+  /* ——— 页脚 ——— */
+  .foot{border-top:1px solid var(--line);padding:var(--s7) 0 var(--s6);}
+  .foot__in{display:grid;grid-template-columns:1.4fr 1fr 1fr 1fr;gap:var(--s6);}
+  .foot__blurb{color:var(--muted);font-size:var(--fs-sm);margin-top:var(--s4);max-width:32ch;}
+  .foot h4{
+    font-size:var(--fs-sm);font-weight:600;color:var(--text);
+    margin:0 0 var(--s4);letter-spacing:.06em;
+  }
+  .foot li + li{margin-top:var(--s3);}
+  .foot li a{color:var(--muted);font-size:var(--fs-sm);}
+  .foot li a:hover{opacity:1;color:var(--accent);}
+  .foot__base{
+    margin-top:var(--s7);padding-top:var(--s5);border-top:1px solid var(--line-soft);
+    display:flex;justify-content:space-between;gap:var(--s4);flex-wrap:wrap;
+    font-size:var(--fs-sm);color:var(--muted);
+  }
+
+  /* ——— 响应式 ——— */
+  @media (max-width:900px){
+    .hero__in{grid-template-columns:1fr;gap:var(--s6);}
+    .hero__art{order:-1;padding:var(--s5);}
+    .grid-3{gap:var(--s5);}
+    .steps{grid-template-columns:repeat(2,1fr);}
+    .foot__in{grid-template-columns:1fr 1fr;gap:var(--s6) var(--s5);}
+  }
+  @media (max-width:640px){
+    :root{--s7:48px;}
+    .wrap{padding:0 var(--s4);}
+    .nav__in{height:64px;gap:var(--s4);}
+    .nav__links{display:none;}
+    .grid-3{grid-template-columns:1fr;}
+    .steps{grid-template-columns:1fr;}
+    .foot__in{grid-template-columns:1fr;}
+    .band__in{padding:var(--s6) var(--s5);}
+    .btn{width:100%;justify-content:center;}
+    .nav .btn{width:auto;}
+    .btn--quiet{width:auto;}
+    .hero__cta,.band__cta{gap:var(--s4);}
+  }
+  @media (prefers-reduced-motion:reduce){
+    *{transition:none !important;}
+  }
+</style>
+</head>
+<body>
+
+<!-- ══ 导航 ══ -->
+<header class="nav">
+  <div class="wrap nav__in">
+    <a class="brand" href="#top">
+      <svg class="brand__mark" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+        <path d="M4 14h24a12 12 0 0 1-24 0z" fill="currentColor" opacity=".16"/>
+        <path d="M4 14h24a12 12 0 0 1-24 0z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+        <path d="M16 3c2.2 2 2.2 5.4 0 7.4-2.2-2-2.2-5.4 0-7.4z" fill="currentColor"/>
+      </svg>
+      <span class="brand__name">窑与麦</span>
+    </a>
+    <nav class="nav__links" aria-label="主导航">
+      <a href="#craft">关于工坊</a>
+      <a href="#process">制作工序</a>
+      <a href="#class">课程价格</a>
+    </nav>
+    <a class="btn btn--primary" href="#book">预约体验课</a>
+  </div>
+</header>
+
+<main id="top">
+
+  <!-- ══ Hero ══ -->
+  <section class="hero">
+    <div class="wrap hero__in">
+      <div>
+        <p class="eyebrow">巷子深处 · 第 6 年</p>
+        <h1>慢一点，<br>手会替你记住。</h1>
+        <p class="lede">上午拉坯，下午烤面包。窑与麦是一间只有两个人的小工坊——每一批陶器不超过 40 件，每一炉酸种面包不超过 18 只，卖完就关门。</p>
+        <div class="hero__cta">
+          <a class="btn btn--primary" href="#book">预约周末体验课</a>
+          <a class="btn btn--quiet" href="#process">看看这周在烧什么 →</a>
+        </div>
+        <p class="hero__note">工坊地址：安平路 27 号后院（导航搜「窑与麦」即可）。周三至周日 10:00–18:00，周一周二闭窑休息。</p>
+      </div>
+
+      <div class="hero__art">
+        <svg viewBox="0 0 420 360" role="img" aria-label="工坊插画：一只手作陶碗、一只陶杯与一只酸种面包">
+          <defs>
+            <linearGradient id="clay" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="var(--accent)" stop-opacity=".26"/>
+              <stop offset="1" stop-color="var(--accent)" stop-opacity=".62"/>
+            </linearGradient>
+            <linearGradient id="crust" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="var(--accent)" stop-opacity=".42"/>
+              <stop offset="1" stop-color="var(--accent)" stop-opacity=".22"/>
+            </linearGradient>
+          </defs>
+
+          <!-- 台面 -->
+          <ellipse cx="210" cy="300" rx="168" ry="16" fill="var(--accent)" opacity=".07"/>
+
+          <!-- 面包 -->
+          <path d="M70 296c-26 0-44-20-44-44 0-30 26-52 58-52s58 22 58 52c0 24-18 44-44 44z" fill="url(#crust)"/>
+          <path d="M60 216c14 10 30 14 46 10M74 240c16 8 34 10 50 4" stroke="var(--surface)" stroke-width="4" stroke-linecap="round" opacity=".85" fill="none"/>
+
+          <!-- 大碗 -->
+          <path d="M158 176h140c0 62-31 106-70 106s-70-44-70-106z" fill="url(#clay)"/>
+          <path d="M158 176h140c0 62-31 106-70 106s-70-44-70-106z" stroke="var(--accent)" stroke-width="2.5" stroke-linejoin="round" fill="none" opacity=".6"/>
+          <ellipse cx="228" cy="176" rx="70" ry="15" fill="var(--surface)"/>
+          <ellipse cx="228" cy="176" rx="70" ry="15" fill="none" stroke="var(--accent)" stroke-width="2.5" opacity=".6"/>
+          <path d="M176 206c26 10 74 12 104 0" stroke="var(--accent)" stroke-width="2" opacity=".3" fill="none"/>
+
+          <!-- 陶杯 -->
+          <path d="M318 208h62v46c0 16-14 28-31 28s-31-12-31-28z" fill="url(#clay)"/>
+          <path d="M318 208h62v46c0 16-14 28-31 28s-31-12-31-28z" stroke="var(--accent)" stroke-width="2.5" stroke-linejoin="round" fill="none" opacity=".6"/>
+          <ellipse cx="349" cy="208" rx="31" ry="8" fill="var(--surface)"/>
+          <ellipse cx="349" cy="208" rx="31" ry="8" fill="none" stroke="var(--accent)" stroke-width="2.5" opacity=".6"/>
+
+          <!-- 麦穗 -->
+          <path d="M210 128c0 18-8 30-8 30s-8-12-8-30 8-30 8-30 8 12 8 30z" fill="var(--accent)" opacity=".5"/>
+          <path d="M202 158V96" stroke="var(--accent)" stroke-width="2" opacity=".55"/>
+          <circle cx="272" cy="112" r="5" fill="var(--accent)" opacity=".35"/>
+          <circle cx="138" cy="140" r="3.5" fill="var(--accent)" opacity=".3"/>
+        </svg>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ 三点主张 ══ -->
+  <section class="section section--tint" id="craft">
+    <div class="wrap">
+      <div class="section__head prose">
+        <p class="eyebrow">我们坚持的三件事</p>
+        <h2>没有捷径的部分，我们就不走捷径。</h2>
+        <p class="lede">机器能做得更快，但做不出那点不均匀的、只属于手的痕迹。</p>
+      </div>
+
+      <div class="grid-3">
+        <article class="feature">
+          <svg class="feature__icon" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+            <path d="M4 20h24" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            <path d="M9 20c0-8 3-13 7-13s7 5 7 13" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+            <path d="M6 24h20l-2 4H8z" fill="currentColor" opacity=".18"/>
+            <path d="M6 24h20l-2 4H8z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+          </svg>
+          <h3>一双手，一台辘轳</h3>
+          <p>不用模具翻制。每只碗的弧度都靠手指压出来，所以同一批里也找不到两只完全一样的——这是缺点，也是我们喜欢它的原因。</p>
+        </article>
+
+        <article class="feature">
+          <svg class="feature__icon" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+            <rect x="5" y="11" width="22" height="17" rx="3" fill="currentColor" opacity=".14"/>
+            <rect x="5" y="11" width="22" height="17" rx="3" stroke="currentColor" stroke-width="2"/>
+            <path d="M11 19h10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            <path d="M12 7c0 2-2 2-2 4M20 5c0 2-2 2-2 4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+          <h3>柴窑烧 36 小时</h3>
+          <p>每月开窑两次，松木明火慢慢升到 1280°C。落灰自然结成釉，出窑前谁都猜不到颜色——十件里总有两三件要留给自己用。</p>
+        </article>
+
+        <article class="feature">
+          <svg class="feature__icon" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+            <circle cx="16" cy="18" r="10" fill="currentColor" opacity=".14"/>
+            <circle cx="16" cy="18" r="10" stroke="currentColor" stroke-width="2"/>
+            <path d="M16 8c0-3 2-5 5-6-1 4-2 6-5 6z" fill="currentColor"/>
+            <path d="M11 17c3 2 7 2 10 0" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+          <h3>只养一缸老酵种</h3>
+          <p>2019 年从一把本地小麦养起，现在每天喂两次，叫「老陈」。不加商业酵母、不加改良剂，慢发酵 18 小时，凉了也不发硬。</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ 工序 ══ -->
+  <section class="section" id="process">
+    <div class="wrap">
+      <div class="section__head prose">
+        <p class="eyebrow">从一团土到一只碗</p>
+        <h2>四道工序，最快也要三周。</h2>
+        <p class="lede">体验课里你会完整走一遍前两步，剩下的交给我们和窑——大约三周后寄到你手上。</p>
+      </div>
+
+      <ol class="steps">
+        <li class="step">
+          <span class="step__n">01</span>
+          <h3>练土</h3>
+          <p>把本地紫砂土反复揉压排气。气泡留在土里，进窑就会炸开，这一步偷不得懒。</p>
+        </li>
+        <li class="step">
+          <span class="step__n">02</span>
+          <h3>拉坯</h3>
+          <p>辘轳转起来，双手向上提。第一只碗大多会塌，没关系，土还可以再揉一次。</p>
+        </li>
+        <li class="step">
+          <span class="step__n">03</span>
+          <h3>素烧上釉</h3>
+          <p>阴干七天后先烧一次定形，再浸釉。米白、栗棕、柿子红——三选一，或者交给落灰。</p>
+        </li>
+        <li class="step">
+          <span class="step__n">04</span>
+          <h3>入柴窑</h3>
+          <p>装窑、封门、连续投柴 36 小时。冷却两天开窑，成品率大概七成。</p>
+        </li>
+      </ol>
+
+      <figure class="quote">
+        <blockquote>「第一次来是想找个周末打发时间，后来变成每个月都要回来一趟。我用自己烧坏的那只歪碗吃了三年早饭，比买的任何一只都顺手。」</blockquote>
+        <figcaption>—— 阿舟，2021 年春季班学员，现在偶尔来帮忙看窑</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- ══ 课程与价格 ══ -->
+  <section class="section section--tint" id="class">
+    <div class="wrap">
+      <div class="section__head prose">
+        <p class="eyebrow">课程与价格</p>
+        <h2>先来坐一下午，再决定要不要留下。</h2>
+        <p class="lede">所有课程都含土料、釉料、烧制与一次快递。人多不好看顾，每场最多六个人。</p>
+      </div>
+
+      <div class="grid-3">
+        <article class="plan">
+          <h3>周末体验课</h3>
+          <p class="plan__desc">适合第一次碰泥巴的人</p>
+          <p class="plan__price">¥ 280 <span>/ 每人每场</span></p>
+          <ul class="plan__list">
+            <li><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 4.8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>三小时，练土 + 拉坯全程</li>
+            <li><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 4.8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>带走两件作品（约三周后寄出）</li>
+            <li><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 4.8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>现烤面包与一杯手冲</li>
+          </ul>
+          <a class="btn btn--ghost" href="#book">选个周末</a>
+        </article>
+
+        <article class="plan plan--featured">
+          <span class="plan__tag">最多人选</span>
+          <h3>四周基础班</h3>
+          <p class="plan__desc">想认真做出一套餐具</p>
+          <p class="plan__price">¥ 1,280 <span>/ 四次课</span></p>
+          <ul class="plan__list">
+            <li><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 4.8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>每周一次，每次三小时</li>
+            <li><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 4.8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>碗、杯、盘、壶各做一件</li>
+            <li><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 4.8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>课后可免费借用辘轳两小时</li>
+            <li><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 4.8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>开窑日可以来现场看</li>
+          </ul>
+          <a class="btn btn--primary" href="#book">报名下一期</a>
+        </article>
+
+        <article class="plan">
+          <h3>驻场月卡</h3>
+          <p class="plan__desc">给已经上过手的老朋友</p>
+          <p class="plan__price">¥ 2,400 <span>/ 每月</span></p>
+          <ul class="plan__list">
+            <li><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 4.8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>营业时间内随时来，不限时长</li>
+            <li><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 4.8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>独立工位与一格作品架</li>
+            <li><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 4.8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>土料按用量另算，釉料不限</li>
+          </ul>
+          <a class="btn btn--ghost" href="#book">先聊聊看</a>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ 结尾 CTA ══ -->
+  <section class="band" id="book">
+    <div class="wrap">
+      <div class="band__in">
+        <p class="eyebrow">下一场：本周六 14:00</p>
+        <h2>还剩三个位子。</h2>
+        <p>不用带任何东西，穿件不心疼的衣服就行。走的时候会有一袋刚出炉的面包等你。</p>
+        <div class="band__cta">
+          <a class="btn btn--primary" href="#book">预约体验课</a>
+          <a class="btn btn--quiet" href="#craft">先加微信问问 →</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<!-- ══ 页脚 ══ -->
+<footer class="foot">
+  <div class="wrap">
+    <div class="foot__in">
+      <div>
+        <a class="brand" href="#top">
+          <svg class="brand__mark" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+            <path d="M4 14h24a12 12 0 0 1-24 0z" fill="currentColor" opacity=".16"/>
+            <path d="M4 14h24a12 12 0 0 1-24 0z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>
+            <path d="M16 3c2.2 2 2.2 5.4 0 7.4-2.2-2-2.2-5.4 0-7.4z" fill="currentColor"/>
+          </svg>
+          <span class="brand__name">窑与麦</span>
+        </a>
+        <p class="foot__blurb">手作陶器与小批量面包。安平路 27 号后院，周三至周日 10:00–18:00。</p>
+      </div>
+
+      <div>
+        <h4>工坊</h4>
+        <ul>
+          <li><a href="#craft">关于我们</a></li>
+          <li><a href="#process">制作工序</a></li>
+          <li><a href="#class">课程价格</a></li>
+        </ul>
+      </div>
+
+      <div>
+        <h4>逛逛</h4>
+        <ul>
+          <li><a href="#top">本月开窑</a></li>
+          <li><a href="#top">面包日历</a></li>
+          <li><a href="#top">寄送与养护</a></li>
+        </ul>
+      </div>
+
+      <div>
+        <h4>联系</h4>
+        <ul>
+          <li><a href="#book">微信预约</a></li>
+          <li><a href="#book">hello@yaoyumai.example</a></li>
+          <li><a href="#book">0571-8888 0000</a></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="foot__base">
+      <span>© 2024 窑与麦手作工坊</span>
+      <span>慢工出细活，也常出废品。</span>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

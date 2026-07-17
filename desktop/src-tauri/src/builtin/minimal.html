@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>叁川设计工作室 — 品牌识别 / 网站 / 物料</title>
+<meta name="description" content="叁川是一间三个人的设计工作室，为小而好的品牌做品牌识别、网站与印刷物料。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23ffffff'/%3E%3Ccircle cx='16' cy='16' r='9.5' fill='none' stroke='%234C6663' stroke-width='2'/%3E%3Cpath d='M16 6.5v19' stroke='%234C6663' stroke-width='2'/%3E%3C/svg%3E">
+<style>
+  :root {
+    /* ——— 设计令牌 ——— */
+    --bg: #FFFFFF;
+    --surface: #FAFAFA;
+    --text: #16161A;
+    --muted: #6E6E76;
+    --accent: #4C6663;
+    --radius: 8px;
+
+    /* 细分割线（中性，非强调色） */
+    --line: #E7E7E9;
+
+    /* 间距刻度 */
+    --sp-4: 4px;
+    --sp-8: 8px;
+    --sp-12: 12px;
+    --sp-16: 16px;
+    --sp-24: 24px;
+    --sp-40: 40px;
+    --sp-64: 64px;
+
+    /* 字号刻度 */
+    --fs-sm: 14px;
+    --fs-base: 16px;
+    --fs-md: 20px;
+    --fs-lg: 28px;
+    --fs-xl: 40px;
+
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+            "Hiragino Sans GB", "Microsoft YaHei", "Source Han Sans SC",
+            "Noto Sans CJK SC", "WenQuanYi Micro Hei", Roboto, "Helvetica Neue",
+            Arial, sans-serif;
+
+    --container: 1040px;
+    color-scheme: light;
+  }
+
+  * { box-sizing: border-box; }
+
+  html { -webkit-text-size-adjust: 100%; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: var(--fs-base);
+    line-height: 1.75;
+    font-weight: 400;
+    letter-spacing: 0.01em;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1, h2, h3 { margin: 0; font-weight: 600; letter-spacing: -0.01em; }
+  p { margin: 0; }
+  ul { margin: 0; padding: 0; list-style: none; }
+
+  a {
+    color: var(--accent);
+    text-decoration: none;
+    transition: opacity .15s ease, color .15s ease, border-color .15s ease;
+  }
+  a:hover { opacity: .62; }
+
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: var(--radius);
+  }
+
+  .wrap {
+    max-width: var(--container);
+    margin: 0 auto;
+    padding-left: var(--sp-24);
+    padding-right: var(--sp-24);
+  }
+
+  .eyebrow {
+    font-size: var(--fs-sm);
+    line-height: 1.6;
+    color: var(--muted);
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    margin: 0 0 var(--sp-16);
+  }
+
+  /* ——— 按钮 ——— */
+  .btn {
+    display: inline-block;
+    font-size: var(--fs-sm);
+    line-height: 1.6;
+    font-weight: 500;
+    padding: var(--sp-12) var(--sp-24);
+    border-radius: var(--radius);
+    border: 1px solid var(--accent);
+    background: var(--accent);
+    color: var(--bg);
+    transition: background-color .15s ease, color .15s ease, border-color .15s ease;
+  }
+  .btn:hover { background: var(--text); border-color: var(--text); color: var(--bg); opacity: 1; }
+
+  .btn-ghost {
+    background: transparent;
+    color: var(--text);
+    border-color: var(--line);
+  }
+  .btn-ghost:hover { background: transparent; border-color: var(--text); color: var(--text); opacity: 1; }
+
+  .link-arrow {
+    font-size: var(--fs-sm);
+    color: var(--text);
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 2px;
+  }
+  .link-arrow:hover { border-color: var(--text); opacity: 1; }
+  .link-arrow span { color: var(--muted); }
+
+  /* ——— 导航 ——— */
+  .nav {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: var(--bg);
+    border-bottom: 1px solid var(--line);
+  }
+  .nav-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--sp-24);
+    height: 72px;
+  }
+  .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--sp-8);
+    color: var(--text);
+    font-weight: 600;
+    font-size: var(--fs-base);
+    letter-spacing: .02em;
+  }
+  .brand:hover { opacity: .62; }
+  .brand svg { display: block; }
+
+  .nav-links {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-24);
+    margin-left: auto;
+  }
+  .nav-links a:not(.btn) {
+    font-size: var(--fs-sm);
+    color: var(--muted);
+  }
+  .nav-links a:not(.btn):hover { color: var(--text); opacity: 1; }
+
+  /* ——— 通用区块 ——— */
+  section { border-top: 1px solid var(--line); }
+  section:first-of-type { border-top: 0; }
+
+  .sec {
+    padding-top: var(--sp-64);
+    padding-bottom: var(--sp-64);
+  }
+
+  .sec-head { max-width: 680px; margin-bottom: var(--sp-40); }
+  .sec-head h2 {
+    font-size: var(--fs-lg);
+    line-height: 1.35;
+    margin-bottom: var(--sp-12);
+  }
+  .sec-head p { color: var(--muted); }
+
+  /* ——— 首屏 ——— */
+  .hero { padding-top: 96px; padding-bottom: 96px; }
+  .hero-inner { max-width: 780px; }
+  .hero h1 {
+    font-size: clamp(var(--fs-lg), 5.2vw, var(--fs-xl));
+    line-height: 1.25;
+    letter-spacing: -0.02em;
+    margin-bottom: var(--sp-24);
+  }
+  .hero p {
+    font-size: var(--fs-md);
+    line-height: 1.7;
+    color: var(--muted);
+    max-width: 620px;
+    margin-bottom: var(--sp-40);
+  }
+  .hero-cta {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-24);
+    flex-wrap: wrap;
+  }
+  .hero-meta {
+    margin-top: var(--sp-64);
+    padding-top: var(--sp-24);
+    border-top: 1px solid var(--line);
+    display: flex;
+    gap: var(--sp-40);
+    flex-wrap: wrap;
+    font-size: var(--fs-sm);
+    color: var(--muted);
+  }
+  .hero-meta b { color: var(--text); font-weight: 600; }
+
+  /* ——— 三项服务 ——— */
+  .grid-3 {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--sp-40);
+  }
+  .item h3 {
+    font-size: var(--fs-md);
+    line-height: 1.5;
+    margin-bottom: var(--sp-12);
+  }
+  .item p { color: var(--muted); font-size: var(--fs-base); }
+  .item-mark {
+    width: 28px;
+    height: 28px;
+    margin-bottom: var(--sp-24);
+    color: var(--accent);
+  }
+  .item-mark svg { display: block; width: 100%; height: 100%; }
+
+  /* ——— 合作流程 ——— */
+  .steps { border-bottom: 1px solid var(--line); }
+  .step {
+    display: grid;
+    grid-template-columns: 72px 1fr 1.15fr;
+    gap: var(--sp-24);
+    align-items: baseline;
+    padding: var(--sp-24) 0;
+    border-top: 1px solid var(--line);
+  }
+  .step-no {
+    font-size: var(--fs-sm);
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: .1em;
+  }
+  .step h3 { font-size: var(--fs-md); line-height: 1.6; }
+  .step p { color: var(--muted); }
+
+  /* ——— 方案 ——— */
+  .plans {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    border-top: 1px solid var(--line);
+  }
+  .plan {
+    padding: var(--sp-40) var(--sp-24);
+    border-left: 1px solid var(--line);
+  }
+  .plan:first-child { border-left: 0; padding-left: 0; }
+  .plan:last-child { padding-right: 0; }
+  .plan h3 { font-size: var(--fs-md); margin-bottom: var(--sp-8); }
+  .plan .price {
+    font-size: var(--fs-lg);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    display: block;
+    margin-bottom: var(--sp-4);
+  }
+  .plan .price small {
+    font-size: var(--fs-sm);
+    font-weight: 400;
+    color: var(--muted);
+    letter-spacing: 0;
+  }
+  .plan .note {
+    font-size: var(--fs-sm);
+    color: var(--muted);
+    margin-bottom: var(--sp-24);
+  }
+  .plan ul { margin-bottom: var(--sp-24); }
+  .plan li {
+    font-size: var(--fs-sm);
+    line-height: 1.7;
+    color: var(--muted);
+    padding: var(--sp-8) 0;
+    border-top: 1px solid var(--line);
+  }
+  .plan li:first-child { border-top: 0; }
+  .plan .btn { width: 100%; text-align: center; }
+
+  /* ——— 引述 ——— */
+  .quote { background: var(--surface); }
+  .quote blockquote {
+    margin: 0;
+    max-width: 780px;
+    font-size: var(--fs-md);
+    line-height: 1.8;
+  }
+  .quote figcaption {
+    margin-top: var(--sp-24);
+    font-size: var(--fs-sm);
+    color: var(--muted);
+  }
+  .quote figure { margin: 0; }
+
+  /* ——— 结尾行动条 ——— */
+  .cta-band { background: var(--surface); }
+  .cta-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--sp-40);
+    flex-wrap: wrap;
+  }
+  .cta-inner h2 {
+    font-size: var(--fs-lg);
+    line-height: 1.4;
+    max-width: 600px;
+  }
+  .cta-inner p {
+    color: var(--muted);
+    font-size: var(--fs-sm);
+    margin-top: var(--sp-8);
+  }
+
+  /* ——— 页脚 ——— */
+  footer {
+    border-top: 1px solid var(--line);
+    padding-top: var(--sp-40);
+    padding-bottom: var(--sp-40);
+  }
+  .foot {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--sp-40);
+    flex-wrap: wrap;
+  }
+  .foot-brand { max-width: 300px; }
+  .foot-brand p {
+    margin-top: var(--sp-12);
+    font-size: var(--fs-sm);
+    color: var(--muted);
+  }
+  .foot-cols {
+    display: flex;
+    gap: var(--sp-64);
+    flex-wrap: wrap;
+  }
+  .foot-cols h3 {
+    font-size: var(--fs-sm);
+    font-weight: 600;
+    margin-bottom: var(--sp-12);
+  }
+  .foot-cols li { padding: var(--sp-4) 0; }
+  .foot-cols a { font-size: var(--fs-sm); color: var(--muted); }
+  .foot-cols a:hover { color: var(--text); opacity: 1; }
+  .copyright {
+    margin-top: var(--sp-40);
+    padding-top: var(--sp-24);
+    border-top: 1px solid var(--line);
+    font-size: var(--fs-sm);
+    color: var(--muted);
+  }
+
+  /* ——— 响应式 ——— */
+  @media (max-width: 900px) {
+    .grid-3 { grid-template-columns: 1fr 1fr; gap: var(--sp-40) var(--sp-24); }
+    .plans { grid-template-columns: 1fr; border-top: 0; }
+    .plan { border-left: 0; border-top: 1px solid var(--line); padding: var(--sp-40) 0; }
+    .step { grid-template-columns: 48px 1fr; }
+    .step p { grid-column: 2; }
+  }
+
+  @media (max-width: 640px) {
+    :root { --container: 100%; }
+    .wrap { padding-left: var(--sp-16); padding-right: var(--sp-16); }
+    .sec { padding-top: var(--sp-40); padding-bottom: var(--sp-40); }
+    .hero { padding-top: var(--sp-40); padding-bottom: var(--sp-40); }
+    .hero-meta { margin-top: var(--sp-40); gap: var(--sp-12) var(--sp-24); }
+    .grid-3 { grid-template-columns: 1fr; gap: var(--sp-40); }
+    .nav-links { gap: var(--sp-16); }
+    .nav-links .nav-hide { display: none; }
+    .hero-cta { gap: var(--sp-16); }
+    .foot-cols { gap: var(--sp-40); }
+  }
+</style>
+</head>
+<body>
+
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="brand" href="#top">
+      <svg width="20" height="20" viewBox="0 0 32 32" aria-hidden="true">
+        <circle cx="16" cy="16" r="14" fill="none" stroke="currentColor" stroke-width="2"></circle>
+        <path d="M16 2v28" stroke="currentColor" stroke-width="2"></path>
+      </svg>
+      叁川设计
+    </a>
+    <nav class="nav-links" aria-label="主导航">
+      <a class="nav-hide" href="#works">作品</a>
+      <a href="#services">服务</a>
+      <a class="nav-hide" href="#process">流程</a>
+      <a class="btn" href="#contact">聊聊项目</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+
+  <section class="wrap hero">
+    <div class="hero-inner">
+      <p class="eyebrow">Sanchuan Studio · 杭州</p>
+      <h1>为小而好的品牌，做经得起放大的设计。</h1>
+      <p>我们是三个人的设计工作室，只接能做深的项目：品牌识别、网站与线下物料，从策略到落地一条线走完。</p>
+      <div class="hero-cta">
+        <a class="btn" href="#contact">预约 30 分钟通话</a>
+        <a class="link-arrow" href="#works">看看我们做过什么 <span>→</span></a>
+      </div>
+      <div class="hero-meta">
+        <div><b>8 年</b> · 独立运营</div>
+        <div><b>60+</b> · 完整品牌项目</div>
+        <div><b>4–8 周</b> · 常见交付周期</div>
+      </div>
+    </div>
+  </section>
+
+  <section id="services" class="wrap sec">
+    <div class="sec-head">
+      <p class="eyebrow">我们做什么</p>
+      <h2>三件事，做透就够了</h2>
+      <p>不做大而全的清单。每个项目由主创全程跟进，不转包、不换人。</p>
+    </div>
+    <div class="grid-3">
+      <article class="item">
+        <div class="item-mark">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+            <circle cx="12" cy="12" r="9"></circle>
+            <path d="M12 3v18"></path>
+          </svg>
+        </div>
+        <h3>品牌识别</h3>
+        <p>标志、字体系统、色彩与应用规范。交付一套能让实习生也用不坏的品牌手册。</p>
+      </article>
+      <article class="item">
+        <div class="item-mark">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+            <rect x="3" y="4" width="18" height="16" rx="2"></rect>
+            <path d="M3 9h18"></path>
+          </svg>
+        </div>
+        <h3>网站设计</h3>
+        <p>从信息结构到页面落地，含移动端。设计稿与前端同步推进，上线即定稿。</p>
+      </article>
+      <article class="item">
+        <div class="item-mark">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+            <path d="M5 3h14v18l-7-4-7 4z"></path>
+          </svg>
+        </div>
+        <h3>包装与物料</h3>
+        <p>包装结构、印刷工艺、展会与门店物料。跟厂、盯样、看色，我们到场。</p>
+      </article>
+    </div>
+  </section>
+
+  <section id="process" class="wrap sec">
+    <div class="sec-head">
+      <p class="eyebrow">合作流程</p>
+      <h2>四步，全程可见</h2>
+      <p>没有黑箱阶段。每周一次同步，进度、决策与未解问题都写在同一份文档里。</p>
+    </div>
+    <div class="steps">
+      <div class="step">
+        <div class="step-no">01</div>
+        <h3>对齐与调研</h3>
+        <p>一次深聊 + 竞品与用户走查，输出一页纸的设计目标。不谈"感觉"，只谈判断依据。</p>
+      </div>
+      <div class="step">
+        <div class="step-no">02</div>
+        <h3>方向提案</h3>
+        <p>两个方向，各自完整。我们会说明推荐哪一个、为什么，以及另一个的代价在哪里。</p>
+      </div>
+      <div class="step">
+        <div class="step-no">03</div>
+        <h3>深化与延展</h3>
+        <p>选定方向后铺开全部应用场景，两轮修改包含在内，边界写进合同不含糊。</p>
+      </div>
+      <div class="step">
+        <div class="step-no">04</div>
+        <h3>交付与陪跑</h3>
+        <p>源文件、规范与素材库一次交清，上线后一个月内的小调整不另计费。</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="works" class="quote">
+    <div class="wrap sec">
+      <figure>
+        <blockquote>"我们换过三家设计公司，只有叁川会先把我们的生意问题问清楚，再动笔。新包装上架三个月，复购涨了 22%——他们连贴标机的误差都替我们算过。"</blockquote>
+        <figcaption>示例客户 · 林见山，「近山茶事」创始人</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section class="wrap sec">
+    <div class="sec-head">
+      <p class="eyebrow">合作方案</p>
+      <h2>报价透明，先算清楚再开工</h2>
+      <p>以下为常见项目区间，最终以需求范围为准。签约前你会拿到逐项拆解的报价单。</p>
+    </div>
+    <div class="plans">
+      <article class="plan">
+        <h3>轻装启动</h3>
+        <span class="price">¥28,000 <small>起</small></span>
+        <p class="note">适合刚起步、需要一套能用的基础识别。</p>
+        <ul>
+          <li>标志与基础规范</li>
+          <li>色彩与字体系统</li>
+          <li>名片 / 社媒模板</li>
+          <li>周期约 4 周</li>
+        </ul>
+        <a class="btn btn-ghost" href="#contact">咨询这个方案</a>
+      </article>
+      <article class="plan">
+        <h3>完整品牌</h3>
+        <span class="price">¥68,000 <small>起</small></span>
+        <p class="note">最常被选择：识别 + 网站，一次落到位。</p>
+        <ul>
+          <li>包含「轻装启动」全部</li>
+          <li>品牌网站设计与落地</li>
+          <li>包装或物料一组</li>
+          <li>周期约 8 周</li>
+        </ul>
+        <a class="btn" href="#contact">咨询这个方案</a>
+      </article>
+      <article class="plan">
+        <h3>长期陪跑</h3>
+        <span class="price">¥12,000 <small>/ 月</small></span>
+        <p class="note">已有品牌资产，需要稳定的设计产能。</p>
+        <ul>
+          <li>每月固定工时</li>
+          <li>优先排期</li>
+          <li>季度品牌体检</li>
+          <li>三个月起签</li>
+        </ul>
+        <a class="btn btn-ghost" href="#contact">咨询这个方案</a>
+      </article>
+    </div>
+  </section>
+
+  <section id="contact" class="cta-band">
+    <div class="wrap sec cta-inner">
+      <div>
+        <h2>手上有项目？先聊 30 分钟，不收费也不推销。</h2>
+        <p>每月只开放 2 个新项目档期，当前可约：2025 年 11 月起。</p>
+      </div>
+      <a class="btn" href="mailto:hello@sanchuan.example">写封邮件给我们</a>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="foot">
+      <div class="foot-brand">
+        <a class="brand" href="#top">
+          <svg width="20" height="20" viewBox="0 0 32 32" aria-hidden="true">
+            <circle cx="16" cy="16" r="14" fill="none" stroke="currentColor" stroke-width="2"></circle>
+            <path d="M16 2v28" stroke="currentColor" stroke-width="2"></path>
+          </svg>
+          叁川设计
+        </a>
+        <p>杭州市拱墅区示例路 18 号 3 幢 201<br>hello@sanchuan.example</p>
+      </div>
+      <div class="foot-cols">
+        <div>
+          <h3>工作室</h3>
+          <ul>
+            <li><a href="#works">作品</a></li>
+            <li><a href="#services">服务</a></li>
+            <li><a href="#process">流程</a></li>
+          </ul>
+        </div>
+        <div>
+          <h3>联系</h3>
+          <ul>
+            <li><a href="mailto:hello@sanchuan.example">邮件咨询</a></li>
+            <li><a href="#contact">预约通话</a></li>
+            <li><a href="#contact">加入我们</a></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+    <p class="copyright">© 2025 叁川设计工作室（示例内容，请替换）· 浙ICP备00000000号</p>
+  </div>
+</footer>
+
+</body>
+</html>

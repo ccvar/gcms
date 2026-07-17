@@ -73,6 +73,7 @@ pub async fn run_turn(
     turn_id: String,
     channel: Channel<TurnEvent>,
     api_key: String,
+    plugin_dir: Option<PathBuf>,
 ) -> TurnResult {
     let fail = |e: String, session_ref: String| {
         let _ = channel.send(TurnEvent::Done { ok: false, error: e.clone() });
@@ -86,6 +87,11 @@ pub async fn run_turn(
 
     let mut cmd = Command::new(crate::brains::resolve_bin("grok"));
     cmd.arg("agent");
+    // 随附的建站设计技能：grok 认 claude 那套 plugin 目录格式（实测 `grok plugin validate` 直接过），
+    // 所以一个目录喂两家。每轮都带 —— 技能的价值就在任意一轮能重新拉取。
+    if let Some(p) = plugin_dir.as_deref() {
+        cmd.args(["--plugin-dir", &p.to_string_lossy()]);
+    }
     if !model.is_empty() {
         cmd.args(["--model", &model]);
     }
@@ -764,7 +770,7 @@ mod tests {
             RunRegistry::default(), conn.clone(), work_dir.clone(), String::new(), PermMode::Full,
             String::new(), pend.clone(), std::path::PathBuf::from("/d/tools/ssh.js"), None, String::new(), true,
             Some("测试规则：所有回答的最后一行必须是单独的一个字「哞」。".into()),
-            "运行 shell 命令 echo pilot-live 并告诉我输出".into(), "live-1".into(), ch(), String::new(),
+            "运行 shell 命令 echo pilot-live 并告诉我输出".into(), "live-1".into(), ch(), String::new(), None,
         )
         .await;
         eprintln!("turn1 ok={} err={} session={} tools={:?} text={}", r1.ok, r1.error, r1.session_ref, r1.tools.iter().map(|t| format!("{}:{}", t.label, t.detail)).collect::<Vec<_>>(), r1.text);
@@ -779,7 +785,7 @@ mod tests {
         let r2 = run_turn(
             RunRegistry::default(), conn, work_dir, String::new(), PermMode::Full,
             String::new(), pend, std::path::PathBuf::from("/d/tools/ssh.js"), None, r1.session_ref.clone(), false, None,
-            "我刚才让你运行的命令原文是什么？只回答命令本身".into(), "live-2".into(), ch(), String::new(),
+            "我刚才让你运行的命令原文是什么？只回答命令本身".into(), "live-2".into(), ch(), String::new(), None,
         )
         .await;
         eprintln!("turn2 ok={} err={} text={}", r2.ok, r2.error, r2.text);

@@ -94,6 +94,26 @@ fn work_dir_path(conn: &pack::Connection, site_slug: &str) -> String {
     }
 }
 
+/// 项目目录里有没有东西（忽略隐藏文件）。CF 会话据此告诉模型「已有起点，先读再改」——
+/// 引用了起始模板、或上一轮已经建过，都算。空目录才是真·从白纸开始。
+fn dir_has_content(dir: &std::path::Path) -> bool {
+    std::fs::read_dir(dir)
+        .map(|rd| {
+            rd.flatten().any(|e| !e.file_name().to_string_lossy().starts_with('.'))
+        })
+        .unwrap_or(false)
+}
+
+/// codex 吃不到 `--plugin-dir`（只有会写 ~/.codex/config.toml 的全局 marketplace，与「一轮一进程」相抵触），
+/// 给它在提示词里补一行设计规范的绝对路径兜底。claude/grok 走 plugin 注册，不需要这段。
+fn design_fallback(sys: String, is_cf: bool, brain: &str, data_dir: &std::path::Path) -> String {
+    if !is_cf || brain != "codex" {
+        return sys;
+    }
+    let p = tools::design_skill_path(data_dir);
+    format!("{sys}\n\n{}", agent::design_prompt(&p.to_string_lossy()))
+}
+
 /// 本轮 cwd：CF 连接＝该连接工作区下的项目目录（按需创建）；gcms＝技能包目录（返回空由 run_turn 兜底）。
 fn resolve_work_dir(conn: &pack::Connection, site_slug: &str) -> Result<String, String> {
     let dir = work_dir_path(conn, site_slug);
@@ -2703,6 +2723,7 @@ async fn managed_summary(
         published_this_week: stats.published_this_week,
         drafts: stats.drafts_total,
         drafts_new: stats.drafts_new,
+        drafts_discarded: stats.drafts_discarded,
         week_start: stats.week_start,
         week_tokens,
         tasks: briefs,
@@ -3233,7 +3254,11 @@ async fn create_conversation(
             &tools::ssh_js_path(&data_dir).to_string_lossy(),
         )
     } else if is_cf {
-        agent::cf_system_prompt(&cf_project_slug(site_slug.trim()), &conn.account_id)
+        agent::cf_system_prompt(
+            &cf_project_slug(site_slug.trim()),
+            &conn.account_id,
+            dir_has_content(std::path::Path::new(&work_dir)),
+        )
     } else if multi {
         agent::multi_site_system_prompt(&site_slugs, &site_names)
     } else {
@@ -3247,6 +3272,7 @@ async fn create_conversation(
         let shot = data_dir.join("tools").join("shot.js");
         format!("{sys}\n\n{}", agent::shot_prompt(&shot.to_string_lossy(), is_cf))
     };
+    let sys = design_fallback(sys, is_cf, &brain, &data_dir);
     let conv = Conversation {
         id: conv_id.clone(),
         conn_id: conn.id.clone(),
@@ -3450,7 +3476,12 @@ async fn rebuild_session(
             &tools::ssh_js_path(&state.data_dir).to_string_lossy(),
         )
     } else if is_cf {
-        agent::cf_system_prompt(&cf_project_slug(&conv.site_slug), &conn.account_id)
+        // 重建时项目目录几乎必然非空（上一轮已经建过），照样要让模型先读现有文件再改。
+        agent::cf_system_prompt(
+            &cf_project_slug(&conv.site_slug),
+            &conn.account_id,
+            dir_has_content(std::path::Path::new(&work_dir)),
+        )
     } else if conv.site_slugs.len() > 1 {
         agent::multi_site_system_prompt(&conv.site_slugs, &conv.site_names)
     } else {
@@ -3462,6 +3493,7 @@ async fn rebuild_session(
         let shot = state.data_dir.join("tools").join("shot.js");
         format!("{sys}\n\n{}", agent::shot_prompt(&shot.to_string_lossy(), is_cf))
     };
+    let sys = design_fallback(sys, is_cf, &conv.brain, &state.data_dir);
     // 历史摘要（不含将要重跑的最后一条用户消息）；发给模型的组合消息不落库，界面保持干净。
     let recap = convo::recap(&conv.messages, 8000);
     let message = if recap.is_empty() {
@@ -3742,6 +3774,8 @@ pub fn run() {
             permit::sweep_all(&data_dir.join("permit").join("pending"));
             let _ = tools::ensure_shot(&data_dir); // 随附截图工具，覆写以随版本刷新
             let _ = tools::ensure_ssh(&data_dir); // 随附远程执行工具（AI 桥的 AI 侧）
+            let _ = tools::ensure_design_plugin(&data_dir); // 随附建站设计技能（claude/grok 走 --plugin-dir）
+            let _ = cf_templates::ensure_builtin(&data_dir); // 随附起始模板，覆写以随版本刷新
             let task_store = tasks::TaskStore::new(&data_dir);
             app.manage(AppState {
                 conns,

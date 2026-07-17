@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>合拍 · 团队排期与协作 SaaS（示例模板）</title>
+<meta name="description" content="合拍把日程、任务和人力放在同一张看板上，让团队的一周排得明明白白。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%234f46e5'/%3E%3Crect x='7' y='9' width='18' height='3.5' rx='1.75' fill='%23ffffff'/%3E%3Crect x='7' y='15' width='11' height='3.5' rx='1.75' fill='%23c7d2fe'/%3E%3Crect x='7' y='21' width='15' height='3.5' rx='1.75' fill='%23ffffff'/%3E%3C/svg%3E">
+<style>
+  :root{
+    /* ——— 核心色板：中性灰白 + 唯一强调色（品牌靛紫） ——— */
+    --bg:#f4f5f7;
+    --surface:#ffffff;
+    --text:#15181e;
+    --muted:#5b6270;
+    --accent:#4f46e5;
+    --radius:14px;
+
+    /* 强调色的深浅派生（同一色相，用于 hover / 浅底） */
+    --accent-deep:#3d35c4;
+    --accent-soft:#eeeffe;
+    --accent-ink:#ffffff;
+
+    /* 中性描边与阴影 */
+    --line:#e6e8ec;
+    --line-strong:#d9dce3;
+    --shadow-sm:0 1px 2px rgba(21,24,30,.05), 0 1px 3px rgba(21,24,30,.04);
+    --shadow-md:0 2px 4px rgba(21,24,30,.04), 0 8px 24px rgba(21,24,30,.07);
+    --shadow-lg:0 4px 8px rgba(21,24,30,.05), 0 18px 48px rgba(21,24,30,.12);
+    --shadow-accent:0 8px 24px rgba(79,70,229,.28);
+
+    /* ——— 间距体系 4 / 8 / 12 / 16 / 24 / 40 / 64 ——— */
+    --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px; --s6:40px; --s7:64px;
+
+    /* ——— 字号阶梯 14 / 16 / 20 / 28 / 40 ——— */
+    --t-xs:14px; --t-sm:16px; --t-md:20px; --t-lg:28px; --t-xl:40px;
+
+    --container:1100px;
+    --font:"PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC",
+           -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  }
+
+  *,*::before,*::after{box-sizing:border-box;}
+  html{-webkit-text-size-adjust:100%;}
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--text);
+    font-family:var(--font);
+    font-size:var(--t-sm);
+    line-height:1.7;
+    -webkit-font-smoothing:antialiased;
+  }
+  h1,h2,h3{margin:0;line-height:1.25;letter-spacing:-.02em;font-weight:700;}
+  p{margin:0;}
+  ul{margin:0;padding:0;list-style:none;}
+  a{color:inherit;text-decoration:none;}
+  img,svg{max-width:100%;}
+
+  .wrap{
+    width:100%;
+    max-width:var(--container);
+    margin:0 auto;
+    padding-left:var(--s5);
+    padding-right:var(--s5);
+  }
+  .narrow{max-width:760px;}
+
+  /* ——————————————— 导航 ——————————————— */
+  .nav{
+    position:sticky; top:0; z-index:20;
+    background:var(--surface); /* 旧内核回退 */
+    background:color-mix(in srgb, var(--surface) 82%, transparent);
+    backdrop-filter:saturate(180%) blur(12px);
+    border-bottom:1px solid var(--line);
+  }
+  .nav-in{
+    display:flex; align-items:center; gap:var(--s5);
+    height:64px;
+  }
+  .brand{
+    display:inline-flex; align-items:center; gap:var(--s2);
+    font-weight:700; font-size:var(--t-md); letter-spacing:-.02em;
+    margin-right:auto;
+  }
+  .brand .mark{
+    width:28px; height:28px; border-radius:8px;
+    background:var(--accent); color:var(--accent-ink);
+    display:grid; place-items:center; flex:none;
+  }
+  .brand .mark svg{width:16px;height:16px;display:block;}
+  .brand:hover{color:var(--accent);}
+  .nav-links{display:flex; align-items:center; gap:var(--s5);}
+  .nav-links a{
+    font-size:var(--t-xs); color:var(--muted);
+    padding:var(--s2) 0;
+    border-bottom:2px solid transparent;
+    transition:color .15s ease, border-color .15s ease;
+  }
+  .nav-links a:hover{color:var(--text); border-bottom-color:var(--accent);}
+
+  /* ——————————————— 按钮 ——————————————— */
+  .btn{
+    display:inline-flex; align-items:center; justify-content:center; gap:var(--s2);
+    font:inherit; font-size:var(--t-xs); font-weight:600;
+    padding:var(--s3) var(--s5);
+    border-radius:calc(var(--radius) - 4px);
+    border:1px solid transparent;
+    cursor:pointer; white-space:nowrap;
+    transition:background-color .15s ease, border-color .15s ease, transform .15s ease, box-shadow .15s ease, color .15s ease;
+  }
+  .btn-primary{
+    background:var(--accent); color:var(--accent-ink);
+    box-shadow:var(--shadow-sm);
+  }
+  .btn-primary:hover{background:var(--accent-deep); box-shadow:var(--shadow-accent); transform:translateY(-1px);}
+  .btn-ghost{
+    background:var(--surface); color:var(--text);
+    border-color:var(--line-strong); box-shadow:var(--shadow-sm);
+  }
+  .btn-ghost:hover{border-color:var(--accent); color:var(--accent); transform:translateY(-1px);}
+  .btn-invert{background:var(--surface); color:var(--accent);}
+  .btn-invert:hover{background:var(--accent-soft); transform:translateY(-1px);}
+  .btn-lg{font-size:var(--t-sm); padding:var(--s4) var(--s6);}
+  .link-arrow{
+    display:inline-flex; align-items:center; gap:var(--s2);
+    font-size:var(--t-xs); font-weight:600; color:var(--accent);
+  }
+  .link-arrow svg{width:14px;height:14px;transition:transform .15s ease;}
+  .link-arrow:hover{color:var(--accent-deep);}
+  .link-arrow:hover svg{transform:translateX(3px);}
+
+  .eyebrow{
+    display:inline-block;
+    font-size:var(--t-xs); font-weight:600; letter-spacing:.08em;
+    color:var(--accent);
+    background:var(--accent-soft);
+    padding:var(--s1) var(--s3);
+    border-radius:999px;
+  }
+
+  /* ——————————————— 区块骨架 ——————————————— */
+  section{padding:var(--s7) 0;}
+  .sec-head{max-width:640px; margin:0 auto var(--s6); text-align:center;}
+  .sec-head h2{font-size:var(--t-lg); margin-bottom:var(--s3);}
+  .sec-head p{color:var(--muted); font-size:var(--t-sm);}
+
+  .card{
+    background:var(--surface);
+    border:1px solid var(--line);
+    border-radius:var(--radius);
+    box-shadow:var(--shadow-sm);
+  }
+
+  /* ——————————————— Hero ——————————————— */
+  .hero{padding-top:var(--s7); padding-bottom:var(--s7); overflow:hidden;}
+  .hero-grid{
+    display:grid; grid-template-columns:1.05fr .95fr;
+    gap:var(--s7); align-items:center;
+  }
+  .hero h1{font-size:var(--t-xl); margin:var(--s4) 0 var(--s5);}
+  .hero .sub{color:var(--muted); font-size:var(--t-md); line-height:1.6; max-width:34em;}
+  .hero-cta{display:flex; align-items:center; gap:var(--s4); margin-top:var(--s6); flex-wrap:wrap;}
+  .hero .note{margin-top:var(--s4); font-size:var(--t-xs); color:var(--muted);}
+
+  /* Hero 视觉：纯 CSS 的排期看板示意 */
+  .board{
+    padding:var(--s5);
+    box-shadow:var(--shadow-lg);
+    background:var(--surface);
+    border:1px solid var(--line);
+    border-radius:var(--radius);
+  }
+  .board-top{
+    display:flex; align-items:center; justify-content:space-between;
+    padding-bottom:var(--s4); margin-bottom:var(--s4);
+    border-bottom:1px solid var(--line);
+  }
+  .board-top strong{font-size:var(--t-xs);}
+  .dots{display:flex; gap:var(--s1);}
+  .dots i{width:8px;height:8px;border-radius:50%;background:var(--line-strong);display:block;}
+  .dots i:first-child{background:var(--accent);}
+  .board-days{
+    display:grid; grid-template-columns:repeat(5,1fr); gap:var(--s2);
+    font-size:12px; color:var(--muted); margin-bottom:var(--s3);
+  }
+  .board-days span{text-align:center;}
+  .row{
+    display:grid; grid-template-columns:64px 1fr; gap:var(--s3);
+    align-items:center; margin-bottom:var(--s3);
+  }
+  .row .who{font-size:12px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  .track{
+    display:grid; grid-template-columns:repeat(5,1fr); gap:var(--s2);
+    height:26px;
+  }
+  .track i{border-radius:6px; background:var(--bg); display:block;}
+  .track i.on{background:var(--accent-soft);}
+  .track i.hot{background:var(--accent);}
+  .board-foot{
+    display:flex; align-items:center; justify-content:space-between;
+    margin-top:var(--s4); padding-top:var(--s4);
+    border-top:1px solid var(--line);
+    font-size:12px; color:var(--muted);
+  }
+  .board-foot b{color:var(--accent); font-weight:600;}
+
+  /* ——————————————— 三项价值 ——————————————— */
+  .grid-3{display:grid; grid-template-columns:repeat(3,1fr); gap:var(--s5);}
+  .feature{padding:var(--s5); transition:box-shadow .18s ease, transform .18s ease, border-color .18s ease;}
+  .feature:hover{box-shadow:var(--shadow-md); transform:translateY(-2px); border-color:var(--line-strong);}
+  .feature .ico{
+    width:40px; height:40px; border-radius:10px;
+    background:var(--accent-soft); color:var(--accent);
+    display:grid; place-items:center; margin-bottom:var(--s4);
+  }
+  .feature .ico svg{width:20px;height:20px;display:block;}
+  .feature h3{font-size:var(--t-md); margin-bottom:var(--s2);}
+  .feature p{color:var(--muted); font-size:var(--t-xs); line-height:1.75;}
+
+  /* ——————————————— 三步 + 引用 ——————————————— */
+  .steps{display:grid; grid-template-columns:repeat(3,1fr); gap:var(--s5); counter-reset:step;}
+  .step{padding:var(--s5); position:relative;}
+  .step .n{
+    counter-increment:step;
+    display:grid; place-items:center;
+    width:28px; height:28px; border-radius:50%;
+    background:var(--accent); color:var(--accent-ink);
+    font-size:var(--t-xs); font-weight:700;
+    margin-bottom:var(--s4);
+  }
+  .step .n::before{content:counter(step);}
+  .step h3{font-size:var(--t-sm); margin-bottom:var(--s2);}
+  .step p{color:var(--muted); font-size:var(--t-xs);}
+
+  .quote{
+    margin-top:var(--s6);
+    padding:var(--s6);
+    text-align:center;
+    background:var(--surface);
+    border:1px solid var(--line);
+    border-radius:var(--radius);
+    box-shadow:var(--shadow-sm);
+  }
+  .quote blockquote{margin:0; font-size:var(--t-md); line-height:1.6; letter-spacing:-.01em;}
+  .quote figcaption{margin-top:var(--s4); font-size:var(--t-xs); color:var(--muted);}
+  .quote figcaption b{color:var(--text); font-weight:600;}
+
+  /* ——————————————— 价格 ——————————————— */
+  .plans{display:grid; grid-template-columns:repeat(3,1fr); gap:var(--s5); align-items:start;}
+  .plan{padding:var(--s5); display:flex; flex-direction:column; transition:box-shadow .18s ease, transform .18s ease;}
+  .plan:hover{box-shadow:var(--shadow-md); transform:translateY(-2px);}
+  .plan .tier{font-size:var(--t-sm); font-weight:700;}
+  .plan .blurb{color:var(--muted); font-size:var(--t-xs); margin-top:var(--s1);}
+  .price{display:flex; align-items:baseline; gap:var(--s1); margin:var(--s5) 0 var(--s5);}
+  .price .num{font-size:var(--t-lg); font-weight:700; letter-spacing:-.03em;}
+  .price .per{font-size:var(--t-xs); color:var(--muted);}
+  .plan ul{display:grid; gap:var(--s3); margin-bottom:var(--s5); font-size:var(--t-xs); color:var(--muted);}
+  .plan li{display:flex; gap:var(--s2); align-items:flex-start; line-height:1.6;}
+  .plan li svg{width:16px; height:16px; flex:none; margin-top:4px; color:var(--accent);}
+  .plan .btn{width:100%; margin-top:auto;}
+  .plan-featured{
+    border-color:var(--accent);
+    box-shadow:var(--shadow-md);
+    position:relative;
+  }
+  .plan-featured:hover{box-shadow:var(--shadow-lg);}
+  .tag{
+    position:absolute; top:calc(-1 * var(--s3)); left:var(--s5);
+    background:var(--accent); color:var(--accent-ink);
+    font-size:12px; font-weight:600; letter-spacing:.04em;
+    padding:2px var(--s3); border-radius:999px;
+  }
+  .plans-note{text-align:center; color:var(--muted); font-size:var(--t-xs); margin-top:var(--s5);}
+
+  /* ——————————————— FAQ ——————————————— */
+  .faq{display:grid; gap:var(--s3);}
+  .faq details{
+    background:var(--surface);
+    border:1px solid var(--line);
+    border-radius:calc(var(--radius) - 2px);
+    transition:border-color .15s ease, box-shadow .15s ease;
+  }
+  .faq details:hover{border-color:var(--line-strong); box-shadow:var(--shadow-sm);}
+  .faq details[open]{border-color:var(--accent);}
+  .faq summary{
+    cursor:pointer; list-style:none;
+    padding:var(--s4) var(--s5);
+    font-size:var(--t-sm); font-weight:600;
+    display:flex; align-items:center; justify-content:space-between; gap:var(--s4);
+    transition:color .15s ease;
+  }
+  .faq summary::-webkit-details-marker{display:none;}
+  .faq summary:hover{color:var(--accent);}
+  .faq summary::after{
+    content:""; flex:none;
+    width:9px; height:9px; margin-right:var(--s1);
+    border-right:2px solid var(--muted); border-bottom:2px solid var(--muted);
+    transform:rotate(45deg) translateY(-2px);
+    transition:transform .18s ease, border-color .18s ease;
+  }
+  .faq summary:hover::after{border-color:var(--accent);}
+  .faq details[open] summary::after{transform:rotate(-135deg) translateY(-2px);}
+  .faq .a{padding:0 var(--s5) var(--s5); color:var(--muted); font-size:var(--t-xs); line-height:1.8;}
+
+  /* ——————————————— 结尾 CTA ——————————————— */
+  .cta-band{
+    background:var(--accent);
+    color:var(--accent-ink);
+    border-radius:var(--radius);
+    padding:var(--s7) var(--s6);
+    text-align:center;
+    box-shadow:var(--shadow-accent);
+  }
+  .cta-band h2{font-size:var(--t-lg); margin-bottom:var(--s3);}
+  .cta-band p{
+    color:var(--accent-soft);
+    font-size:var(--t-sm);
+    max-width:36em; margin:0 auto var(--s6);
+  }
+  .cta-band .btn-row{display:flex; gap:var(--s4); justify-content:center; flex-wrap:wrap;}
+  .cta-band .btn-line{
+    background:transparent; color:var(--accent-ink);
+    border-color:var(--accent-soft); /* 旧内核回退 */
+    border-color:color-mix(in srgb, var(--accent-ink) 45%, transparent);
+  }
+  .cta-band .btn-line:hover{background:var(--accent-deep); border-color:var(--accent-ink);}
+
+  /* ——————————————— 页脚 ——————————————— */
+  .foot{border-top:1px solid var(--line); margin-top:var(--s7); background:var(--surface);}
+  .foot-in{display:grid; grid-template-columns:1.4fr repeat(3,1fr); gap:var(--s6); padding:var(--s7) var(--s5) var(--s6);}
+  .foot .about{color:var(--muted); font-size:var(--t-xs); margin-top:var(--s4); max-width:30em;}
+  .foot h4{margin:0 0 var(--s4); font-size:var(--t-xs); font-weight:600;}
+  .foot ul{display:grid; gap:var(--s3);}
+  .foot ul a{font-size:var(--t-xs); color:var(--muted); transition:color .15s ease;}
+  .foot ul a:hover{color:var(--accent);}
+  .copy{
+    border-top:1px solid var(--line);
+    padding:var(--s5) 0;
+    font-size:var(--t-xs); color:var(--muted);
+    display:flex; justify-content:space-between; gap:var(--s4); flex-wrap:wrap;
+  }
+
+  /* ——————————————— 响应式 ——————————————— */
+  @media (max-width:900px){
+    :root{--t-xl:32px; --t-lg:24px;}
+    .hero-grid{grid-template-columns:1fr; gap:var(--s6);}
+    .grid-3,.steps,.plans{grid-template-columns:1fr;}
+    .foot-in{grid-template-columns:1fr 1fr; gap:var(--s5);}
+    .foot-in .brand-col{grid-column:1 / -1;}
+  }
+  @media (max-width:520px){
+    :root{--t-xl:28px; --t-lg:22px; --t-md:18px;}
+    .wrap{padding-left:var(--s4); padding-right:var(--s4);}
+    section{padding:var(--s6) 0;}
+    .nav-links{gap:var(--s4);}
+    .nav-links .hide-sm{display:none;}
+    .hero-cta .btn{width:100%;}
+    .hero-cta{gap:var(--s3);}
+    .board{padding:var(--s4);}
+    .row{grid-template-columns:48px 1fr;}
+    .cta-band{padding:var(--s6) var(--s4);}
+    .cta-band .btn-row .btn{width:100%;}
+    .quote{padding:var(--s5) var(--s4);}
+    .foot-in{grid-template-columns:1fr; padding-top:var(--s6);}
+  }
+
+  @media (prefers-reduced-motion:reduce){
+    *{transition:none !important;}
+  }
+</style>
+</head>
+<body>
+
+<!-- ——————————————— 导航 ——————————————— -->
+<header class="nav">
+  <div class="wrap nav-in">
+    <a class="brand" href="#top">
+      <span class="mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
+          <path d="M4 7h16M4 12h10M4 17h13"/>
+        </svg>
+      </span>
+      合拍
+    </a>
+    <nav class="nav-links" aria-label="主导航">
+      <a href="#features">功能</a>
+      <a href="#how" class="hide-sm">怎么用</a>
+      <a href="#pricing">价格</a>
+      <a href="#faq" class="hide-sm">常见问题</a>
+    </nav>
+    <a class="btn btn-primary" href="#cta">免费试用</a>
+  </div>
+</header>
+
+<main id="top">
+
+  <!-- ——————————————— Hero ——————————————— -->
+  <section class="hero">
+    <div class="wrap hero-grid">
+      <div>
+        <span class="eyebrow">示例文案 · 待替换</span>
+        <h1>把团队的一周<br>排得明明白白</h1>
+        <p class="sub">合拍把日程、任务和人力放进同一张看板：谁在忙、谁有空、什么时候交付，滚动一次就看完，不用再开会对齐。</p>
+        <div class="hero-cta">
+          <a class="btn btn-primary btn-lg" href="#cta">免费试用 14 天</a>
+          <a class="link-arrow" href="#how">
+            看 2 分钟演示
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+          </a>
+        </div>
+        <p class="note">无需信用卡 · 5 人以下团队永久免费 · 3 分钟完成导入</p>
+      </div>
+
+      <div class="board" aria-hidden="true">
+        <div class="board-top">
+          <strong>本周排期 · 设计组</strong>
+          <span class="dots"><i></i><i></i><i></i></span>
+        </div>
+        <div class="board-days"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span></div>
+        <div class="row">
+          <span class="who">林知遥</span>
+          <span class="track"><i class="hot"></i><i class="hot"></i><i class="on"></i><i></i><i class="on"></i></span>
+        </div>
+        <div class="row">
+          <span class="who">周予安</span>
+          <span class="track"><i class="on"></i><i></i><i class="hot"></i><i class="hot"></i><i class="hot"></i></span>
+        </div>
+        <div class="row">
+          <span class="who">徐明川</span>
+          <span class="track"><i></i><i class="on"></i><i class="on"></i><i></i><i></i></span>
+        </div>
+        <div class="row">
+          <span class="who">何 蓁</span>
+          <span class="track"><i class="hot"></i><i class="on"></i><i></i><i class="on"></i><i class="hot"></i></span>
+        </div>
+        <div class="board-foot">
+          <span>4 人 · 本周 12 项任务</span>
+          <span><b>周四下午</b> 全员有空</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ——————————————— 三项价值 ——————————————— -->
+  <section id="features">
+    <div class="wrap">
+      <div class="sec-head">
+        <h2>少开会，靠的是同一张表</h2>
+        <p>排期、负载、日历三件事放在一起，团队才不用靠追问同步进度。</p>
+      </div>
+      <div class="grid-3">
+        <article class="card feature">
+          <span class="ico" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="5" width="18" height="16" rx="3"/><path d="M8 3v4M16 3v4M3 11h18"/>
+            </svg>
+          </span>
+          <h3>共享排期看板</h3>
+          <p>拖一下就改期，相关同事同步收到提醒。改动留痕，谁在什么时候把交付日推后了，随时可查。</p>
+        </article>
+        <article class="card feature">
+          <span class="ico" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 19V10M10 19V5M16 19v-6M22 19H2"/>
+            </svg>
+          </span>
+          <h3>人力负载一眼看</h3>
+          <p>每个人本周排了多少工时、哪天已经超载，颜色直接标出来。派活之前先看一眼，不用再问「你忙得过来吗」。</p>
+        </article>
+        <article class="card feature">
+          <span class="ico" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3.5V8h-4.5"/>
+              <path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 20.5V16h4.5"/>
+            </svg>
+          </span>
+          <h3>日历双向同步</h3>
+          <p>与常用日历双向同步，排期变了日历跟着变。请假、出差自动回填到看板，空窗期算得准。</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ——————————————— 三步 + 客户引用 ——————————————— -->
+  <section id="how">
+    <div class="wrap">
+      <div class="sec-head">
+        <h2>三步就能开始，当天见效</h2>
+        <p>不用培训、不用迁移历史数据，先把这周排明白再说。</p>
+      </div>
+      <div class="steps">
+        <article class="card step">
+          <span class="n" aria-hidden="true"></span>
+          <h3>导入成员</h3>
+          <p>粘贴一份名单，或用企业邮箱一键拉齐团队，角色权限有默认值。</p>
+        </article>
+        <article class="card step">
+          <span class="n" aria-hidden="true"></span>
+          <h3>建第一个项目</h3>
+          <p>挑一个模板（设计、内容、开发迭代），把这周的活拖进去。</p>
+        </article>
+        <article class="card step">
+          <span class="n" aria-hidden="true"></span>
+          <h3>把看板给团队</h3>
+          <p>分享只读链接，客户和老板自己看进度，周报少写一半。</p>
+        </article>
+      </div>
+
+      <figure class="quote">
+        <blockquote>「上线两周，我们的周会从 90 分钟压到 25 分钟。现在开会只聊卡住的那两件事，剩下的看板上都写着。」</blockquote>
+        <figcaption><b>陈嘉宁</b> · 栖迟设计 主理人 · 12 人团队（示例证言，请替换）</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- ——————————————— 价格 ——————————————— -->
+  <section id="pricing">
+    <div class="wrap">
+      <div class="sec-head">
+        <h2>按人计费，随时可停</h2>
+        <p>年付立减两个月。示例价格，请按实际方案替换。</p>
+      </div>
+      <div class="plans">
+
+        <article class="card plan">
+          <span class="tier">入门</span>
+          <span class="blurb">刚起步的小团队</span>
+          <p class="price"><span class="num">¥0</span><span class="per">/ 人 / 月</span></p>
+          <ul>
+            <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>最多 5 名成员</li>
+            <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>2 个进行中的项目</li>
+            <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>排期看板与基础提醒</li>
+            <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>邮件工单支持</li>
+          </ul>
+          <a class="btn btn-ghost" href="#cta">免费开始</a>
+        </article>
+
+        <article class="card plan plan-featured">
+          <span class="tag">最受欢迎</span>
+          <span class="tier">团队</span>
+          <span class="blurb">需要看清负载的协作团队</span>
+          <p class="price"><span class="num">¥39</span><span class="per">/ 人 / 月</span></p>
+          <ul>
+            <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>成员数不限</li>
+            <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>项目数不限 + 负载视图</li>
+            <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>日历双向同步、只读分享链接</li>
+            <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>工时报表导出</li>
+            <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>工作日内 4 小时响应</li>
+          </ul>
+          <a class="btn btn-primary" href="#cta">试用 14 天</a>
+        </article>
+
+        <article class="card plan">
+          <span class="tier">企业</span>
+          <span class="blurb">多部门、有合规要求</span>
+          <p class="price"><span class="num">¥99</span><span class="per">/ 人 / 月</span></p>
+          <ul>
+            <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>团队版全部功能</li>
+            <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>单点登录与细粒度权限</li>
+            <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>审计日志与数据留存策略</li>
+            <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>专属顾问与上线陪跑</li>
+          </ul>
+          <a class="btn btn-ghost" href="#cta">联系我们</a>
+        </article>
+
+      </div>
+      <p class="plans-note">所有方案含 14 天全功能试用，到期不自动扣费。</p>
+    </div>
+  </section>
+
+  <!-- ——————————————— FAQ ——————————————— -->
+  <section id="faq">
+    <div class="wrap narrow">
+      <div class="sec-head">
+        <h2>常见问题</h2>
+        <p>还有别的想问？写信到 hello@hepai.example，通常一个工作日内回复。</p>
+      </div>
+      <div class="faq">
+        <details open>
+          <summary>试用需要绑定支付方式吗？</summary>
+          <p class="a">不需要。注册即开始 14 天全功能试用，到期后自动降级到免费版，数据完整保留，不会产生任何扣费。</p>
+        </details>
+        <details>
+          <summary>能从现有的表格或看板迁移吗？</summary>
+          <p class="a">支持导入 CSV 与常见看板工具的导出文件，字段可映射。50 人以上的团队我们提供一次免费的迁移协助。</p>
+        </details>
+        <details>
+          <summary>成员数中途增减怎么算钱？</summary>
+          <p class="a">按自然日折算，加人当天起算、减人次日停算，差额自动结转到下个账期，不用手动申请。</p>
+        </details>
+        <details>
+          <summary>数据存在哪里？可以导出吗？</summary>
+          <p class="a">数据存放于境内机房，每日增量备份。任何时候都可以导出全部项目与工时数据为 CSV，不做锁定。</p>
+        </details>
+      </div>
+    </div>
+  </section>
+
+  <!-- ——————————————— 结尾 CTA ——————————————— -->
+  <section id="cta">
+    <div class="wrap">
+      <div class="cta-band">
+        <h2>这周的排期，今天就理清</h2>
+        <p>3 分钟导入团队，先跑一周看看。不合适随时导出数据走人，我们不设门槛。</p>
+        <div class="btn-row">
+          <a class="btn btn-invert btn-lg" href="#top">免费试用 14 天</a>
+          <a class="btn btn-line btn-lg" href="#how">预约 20 分钟演示</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<!-- ——————————————— 页脚 ——————————————— -->
+<footer class="foot">
+  <div class="wrap">
+    <div class="foot-in">
+      <div class="brand-col">
+        <a class="brand" href="#top">
+          <span class="mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
+              <path d="M4 7h16M4 12h10M4 17h13"/>
+            </svg>
+          </span>
+          合拍
+        </a>
+        <p class="about">给 5–50 人团队用的排期与协作工具。示例站点文案，正式上线前请整体替换。</p>
+      </div>
+      <div>
+        <h4>产品</h4>
+        <ul>
+          <li><a href="#features">功能一览</a></li>
+          <li><a href="#pricing">价格方案</a></li>
+          <li><a href="#how">快速上手</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>资源</h4>
+        <ul>
+          <li><a href="#faq">常见问题</a></li>
+          <li><a href="#how">使用手册</a></li>
+          <li><a href="#cta">预约演示</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>公司</h4>
+        <ul>
+          <li><a href="#top">关于我们</a></li>
+          <li><a href="#top">服务条款</a></li>
+          <li><a href="#top">隐私政策</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="copy">
+      <span>© 2026 合拍科技（示例）· 保留所有权利</span>
+      <span>hello@hepai.example · 沪ICP备00000000号</span>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

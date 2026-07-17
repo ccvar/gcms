@@ -1,0 +1,827 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>脉冲观测台 Pulsedeck — 让每一次 API 调用都有迹可循</title>
+<meta name="description" content="面向开发者的 API 可观测性平台：全链路追踪、实时告警、秒级查询。三行代码接入。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230b0e14'/%3E%3Cpath d='M4 18h5l3-8 4 14 3.5-9 2.5 3h6' fill='none' stroke='%2322d3ee' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<style>
+  /* ============================================================
+     设计令牌 —— 所有颜色只在这里定义，其它地方一律用 var()
+     ============================================================ */
+  :root {
+    /* 核心令牌 */
+    --bg:      #0b0e14;
+    --surface: #12161f;
+    --text:    #e6edf7;
+    --muted:   #8b95a8;
+    --accent:  #22d3ee;
+    --radius:  6px;
+
+    /* 派生中性色 */
+    --surface-2:   #171c27;
+    --line:        #1e2532;
+    --line-strong: #2b3547;
+    --text-invert: #06080c;
+
+    /* 强调色的透明变体（霓虹辉光用） */
+    --accent-a08: rgba(34, 211, 238, .08);
+    --accent-a14: rgba(34, 211, 238, .14);
+    --accent-a24: rgba(34, 211, 238, .24);
+    --accent-a40: rgba(34, 211, 238, .40);
+    --shadow:     rgba(0, 0, 0, .45);
+    --mask-solid: rgba(0, 0, 0, 1); /* 仅用于遮罩的 alpha 通道，非可见颜色 */
+
+    /* 间距刻度 */
+    --s1:  4px;
+    --s2:  8px;
+    --s3:  12px;
+    --s4:  16px;
+    --s6:  24px;
+    --s10: 40px;
+    --s16: 64px;
+
+    /* 字体 */
+    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+                 "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+                 "Liberation Mono", "PingFang SC", monospace;
+
+    /* 版心 */
+    --container: 1080px;
+  }
+
+  * { box-sizing: border-box; }
+
+  html { -webkit-text-size-adjust: 100%; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: 16px;
+    line-height: 1.7;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+
+  /* 背景：极淡的网格 + 顶部一抹青色辉光 */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    background:
+      radial-gradient(900px 420px at 50% -140px, var(--accent-a08), transparent 70%),
+      linear-gradient(var(--line) 1px, transparent 1px) 0 0 / 64px 64px,
+      linear-gradient(90deg, var(--line) 1px, transparent 1px) 0 0 / 64px 64px;
+    -webkit-mask-image: radial-gradient(1200px 700px at 50% 0, var(--mask-solid), transparent 78%);
+    mask-image: radial-gradient(1200px 700px at 50% 0, var(--mask-solid), transparent 78%);
+    opacity: .5;
+  }
+
+  .container {
+    width: 100%;
+    max-width: var(--container);
+    margin: 0 auto;
+    padding: 0 var(--s6);
+    position: relative;
+    z-index: 1;
+  }
+
+  h1, h2, h3 { margin: 0; font-weight: 650; line-height: 1.25; letter-spacing: -.01em; }
+  h1 { font-size: 40px; }
+  h2 { font-size: 28px; }
+  h3 { font-size: 20px; }
+  p  { margin: 0; }
+  a  { color: var(--accent); text-decoration: none; }
+
+  .mono { font-family: var(--font-mono); font-variant-ligatures: none; }
+
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 14px;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+
+  .lede { color: var(--muted); font-size: 16px; line-height: 1.75; }
+
+  /* ---------- 按钮 ---------- */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s2);
+    padding: var(--s3) var(--s6);
+    border-radius: var(--radius);
+    font-size: 16px;
+    font-weight: 600;
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: background .18s ease, box-shadow .18s ease,
+                border-color .18s ease, transform .18s ease, color .18s ease;
+  }
+  .btn-primary {
+    background: var(--accent);
+    color: var(--text-invert);
+    box-shadow: 0 0 0 0 var(--accent-a40);
+  }
+  .btn-primary:hover {
+    box-shadow: 0 0 24px var(--accent-a40);
+    transform: translateY(-1px);
+  }
+  .btn-ghost {
+    background: transparent;
+    color: var(--text);
+    border-color: var(--line-strong);
+  }
+  .btn-ghost:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+    box-shadow: 0 0 18px var(--accent-a14);
+  }
+  .btn-sm { padding: var(--s2) var(--s4); font-size: 14px; }
+
+  .link-arrow {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s2);
+    font-weight: 600;
+    font-size: 16px;
+  }
+  .link-arrow span { transition: transform .18s ease; }
+  .link-arrow:hover span { transform: translateX(4px); }
+
+  /* ---------- 导航 ---------- */
+  .nav {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    background: color-mix(in srgb, var(--bg) 82%, transparent);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--line);
+  }
+  .nav-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s6);
+    height: var(--s16);
+  }
+  .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s3);
+    color: var(--text);
+    font-weight: 650;
+    font-size: 16px;
+    letter-spacing: -.01em;
+  }
+  .brand svg { display: block; }
+  .brand:hover { color: var(--accent); }
+  .brand:hover svg { filter: drop-shadow(0 0 6px var(--accent-a40)); }
+
+  .nav-links { display: flex; align-items: center; gap: var(--s6); }
+  /* :not(.btn) —— 否则会盖掉 .btn-primary 的文字色（选择器权重更高） */
+  .nav-links a:not(.btn) {
+    color: var(--muted);
+    font-size: 14px;
+    font-weight: 500;
+    transition: color .18s ease;
+  }
+  .nav-links a:not(.btn):hover { color: var(--text); }
+
+  /* ---------- 通用区块 ---------- */
+  section { position: relative; z-index: 1; }
+  .section { padding: var(--s16) 0; }
+  .section-head { max-width: 620px; margin-bottom: var(--s10); }
+  .section-head .eyebrow { display: block; margin-bottom: var(--s3); }
+  .section-head p { margin-top: var(--s3); }
+
+  /* ---------- Hero ---------- */
+  .hero { padding: var(--s16) 0 var(--s10); }
+  .hero-inner { max-width: 720px; }
+  .hero h1 { margin: var(--s4) 0 var(--s6); }
+  .hero .lede { font-size: 20px; line-height: 1.65; max-width: 580px; }
+  .hero-cta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s6);
+    margin-top: var(--s10);
+  }
+  .hero-note {
+    margin-top: var(--s6);
+    font-family: var(--font-mono);
+    font-size: 14px;
+    color: var(--muted);
+  }
+
+  /* ---------- 代码卡片 ---------- */
+  .code-card {
+    margin-top: var(--s16);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    overflow: hidden;
+    box-shadow: 0 24px 64px -24px var(--shadow);
+  }
+  .code-bar {
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+    padding: var(--s3) var(--s4);
+    border-bottom: 1px solid var(--line);
+    background: var(--surface-2);
+    font-family: var(--font-mono);
+    font-size: 14px;
+    color: var(--muted);
+  }
+  .dot {
+    width: var(--s2);
+    height: var(--s2);
+    border-radius: 50%;
+    background: var(--line-strong);
+    flex: none;
+  }
+  .dot-live { background: var(--accent); box-shadow: 0 0 8px var(--accent-a40); }
+  .code-body {
+    margin: 0;
+    padding: var(--s6);
+    overflow-x: auto;
+    font-family: var(--font-mono);
+    font-size: 14px;
+    line-height: 1.8;
+    color: var(--text);
+    -webkit-overflow-scrolling: touch;
+  }
+  .code-body .c { color: var(--muted); }
+  .code-body .k { color: var(--accent); }
+
+  /* ---------- 指标条 ---------- */
+  .metrics {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    border-top: 1px solid var(--line);
+  }
+  .metric { padding: var(--s6); border-left: 1px solid var(--line); }
+  .metric:first-child { border-left: 0; }
+  .metric-v {
+    font-family: var(--font-mono);
+    font-size: 28px;
+    font-weight: 600;
+    color: var(--accent);
+    line-height: 1.2;
+  }
+  .metric-k {
+    margin-top: var(--s1);
+    font-size: 14px;
+    color: var(--muted);
+  }
+
+  /* ---------- 三卡 ---------- */
+  .grid-3 {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--s6);
+  }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: var(--s10) var(--s6) var(--s6);
+    transition: border-color .2s ease, box-shadow .2s ease, transform .2s ease;
+  }
+  .card:hover {
+    border-color: var(--accent-a40);
+    box-shadow: 0 0 32px -8px var(--accent-a24);
+    transform: translateY(-2px);
+  }
+  .card-ico {
+    width: var(--s10);
+    height: var(--s10);
+    display: grid;
+    place-items: center;
+    border-radius: var(--radius);
+    background: var(--accent-a08);
+    border: 1px solid var(--accent-a24);
+    margin-bottom: var(--s6);
+  }
+  .card h3 { margin-bottom: var(--s3); }
+  .card p { color: var(--muted); font-size: 16px; }
+  .card-meta {
+    margin-top: var(--s6);
+    padding-top: var(--s4);
+    border-top: 1px solid var(--line);
+    font-family: var(--font-mono);
+    font-size: 14px;
+    color: var(--muted);
+  }
+  .card-meta b { color: var(--accent); font-weight: 600; }
+
+  /* ---------- 接入步骤 ---------- */
+  .steps { display: grid; grid-template-columns: 380px 1fr; gap: var(--s16); align-items: start; }
+  .step-list { list-style: none; margin: 0; padding: 0; }
+  .step {
+    display: grid;
+    grid-template-columns: var(--s10) 1fr;
+    gap: var(--s4);
+    padding: var(--s6) 0;
+    border-top: 1px solid var(--line);
+  }
+  .step:first-child { border-top: 0; padding-top: 0; }
+  .step-n {
+    width: var(--s10);
+    height: var(--s10);
+    display: grid;
+    place-items: center;
+    border-radius: var(--radius);
+    border: 1px solid var(--line-strong);
+    font-family: var(--font-mono);
+    font-size: 14px;
+    color: var(--accent);
+    transition: border-color .2s ease, box-shadow .2s ease;
+  }
+  .step:hover .step-n { border-color: var(--accent); box-shadow: 0 0 14px var(--accent-a24); }
+  .step h3 { font-size: 16px; margin-bottom: var(--s1); }
+  .step p { color: var(--muted); font-size: 14px; line-height: 1.7; }
+
+  /* ---------- 定价 ---------- */
+  .plan {
+    display: flex;
+    flex-direction: column;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: var(--s6);
+    transition: border-color .2s ease, box-shadow .2s ease, transform .2s ease;
+  }
+  .plan:hover {
+    border-color: var(--accent-a40);
+    box-shadow: 0 0 32px -8px var(--accent-a24);
+    transform: translateY(-2px);
+  }
+  .plan-featured { border-color: var(--accent-a40); box-shadow: 0 0 40px -12px var(--accent-a24); }
+  .plan-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s3);
+    margin-bottom: var(--s4);
+  }
+  .plan-name { font-size: 16px; font-weight: 650; }
+  .tag {
+    font-family: var(--font-mono);
+    font-size: 14px;
+    color: var(--accent);
+    background: var(--accent-a14);
+    border: 1px solid var(--accent-a24);
+    border-radius: var(--radius);
+    padding: 0 var(--s2);
+    line-height: 1.6;
+  }
+  .price { font-family: var(--font-mono); font-size: 40px; font-weight: 600; line-height: 1.1; }
+  .price small { font-size: 14px; font-weight: 400; color: var(--muted); font-family: var(--font-sans); }
+  .plan-desc { color: var(--muted); font-size: 14px; margin-top: var(--s3); }
+  .plan ul {
+    list-style: none;
+    margin: var(--s6) 0 var(--s6);
+    padding: var(--s6) 0 0;
+    border-top: 1px solid var(--line);
+    display: grid;
+    gap: var(--s3);
+    flex: 1;
+  }
+  .plan li {
+    display: grid;
+    grid-template-columns: var(--s4) 1fr;
+    gap: var(--s3);
+    font-size: 14px;
+    color: var(--muted);
+    line-height: 1.6;
+  }
+  .plan li svg { margin-top: 5px; }
+  .plan li b { color: var(--text); font-weight: 600; font-family: var(--font-mono); }
+  .plan .btn { justify-content: center; width: 100%; }
+
+  /* ---------- 结尾 CTA ---------- */
+  .cta-band {
+    text-align: center;
+    background: var(--surface);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius);
+    padding: var(--s16) var(--s6);
+    position: relative;
+    overflow: hidden;
+  }
+  .cta-band::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(560px 200px at 50% 0, var(--accent-a14), transparent 70%);
+    pointer-events: none;
+  }
+  .cta-band > * { position: relative; }
+  .cta-band h2 { margin-bottom: var(--s4); }
+  .cta-band .lede { margin: 0 auto; max-width: 480px; }
+  .cta-band .hero-cta { justify-content: center; }
+
+  /* ---------- 页脚 ---------- */
+  .footer {
+    margin-top: var(--s16);
+    border-top: 1px solid var(--line);
+    padding: var(--s16) 0 var(--s10);
+  }
+  .footer-grid {
+    display: grid;
+    grid-template-columns: 2fr 1fr 1fr 1fr;
+    gap: var(--s10);
+  }
+  .footer-about p {
+    margin-top: var(--s4);
+    color: var(--muted);
+    font-size: 14px;
+    max-width: 280px;
+  }
+  .footer h3 {
+    font-size: 14px;
+    font-family: var(--font-mono);
+    color: var(--muted);
+    font-weight: 500;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    margin-bottom: var(--s4);
+  }
+  .footer ul { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s3); }
+  .footer ul a { color: var(--text); font-size: 14px; transition: color .18s ease; }
+  .footer ul a:hover { color: var(--accent); }
+  .footer-base {
+    margin-top: var(--s16);
+    padding-top: var(--s6);
+    border-top: 1px solid var(--line);
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s4);
+    justify-content: space-between;
+    font-family: var(--font-mono);
+    font-size: 14px;
+    color: var(--muted);
+  }
+  .status { display: inline-flex; align-items: center; gap: var(--s2); }
+  .status:hover { color: var(--accent); }
+
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius); }
+
+  /* ============================================================
+     响应式
+     ============================================================ */
+  @media (max-width: 900px) {
+    .steps { grid-template-columns: 1fr; gap: var(--s10); }
+    .grid-3 { grid-template-columns: 1fr; }
+    .footer-grid { grid-template-columns: 1fr 1fr; gap: var(--s10) var(--s6); }
+    .footer-about { grid-column: 1 / -1; }
+  }
+
+  @media (max-width: 640px) {
+    body { font-size: 16px; }
+    h1 { font-size: 28px; }
+    h2 { font-size: 20px; }
+    .hero .lede { font-size: 16px; }
+    .container { padding: 0 var(--s4); }
+    .section { padding: var(--s10) 0; }
+    .hero { padding: var(--s10) 0 var(--s6); }
+    .nav-inner { height: 56px; gap: var(--s3); }
+    .nav-links { gap: var(--s4); }
+    .nav-links .nav-hide { display: none; }
+    .code-card { margin-top: var(--s10); }
+    .code-body { padding: var(--s4); }
+    .metrics { grid-template-columns: 1fr; }
+    .metric { border-left: 0; border-top: 1px solid var(--line); padding: var(--s4) var(--s6); }
+    .metric:first-child { border-top: 0; }
+    .hero-cta { gap: var(--s4); margin-top: var(--s6); }
+    .hero-cta .btn { flex: 1 1 100%; justify-content: center; }
+    .cta-band { padding: var(--s10) var(--s4); }
+    .footer { padding: var(--s10) 0 var(--s6); }
+    .footer-base { margin-top: var(--s10); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ============ 导航 ============ -->
+<header class="nav">
+  <div class="container nav-inner">
+    <a class="brand" href="#top">
+      <svg width="26" height="26" viewBox="0 0 32 32" aria-hidden="true">
+        <rect width="32" height="32" rx="6" fill="var(--surface-2)" stroke="var(--line-strong)"></rect>
+        <path d="M4.5 18h4.2l3-8 4 14 3.5-9 2.3 3h6" fill="none" stroke="var(--accent)"
+              stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
+      </svg>
+      脉冲观测台
+    </a>
+    <nav class="nav-links">
+      <a href="#features">产品能力</a>
+      <a href="#start" class="nav-hide">接入指南</a>
+      <a href="#pricing">定价</a>
+      <a class="btn btn-primary btn-sm" href="#cta">免费开始</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+
+  <!-- ============ Hero ============ -->
+  <section class="hero">
+    <div class="container hero-inner">
+      <span class="eyebrow">API Observability · v3.2</span>
+      <h1>让每一次 API 调用<br>都有迹可循</h1>
+      <p class="lede">
+        三行代码接入，实时追踪延迟、错误率与完整调用链路。
+        从一条 500 报错定位到具体那行代码，平均只要 40 秒。
+      </p>
+      <div class="hero-cta">
+        <a class="btn btn-primary" href="#cta">免费接入</a>
+        <a class="link-arrow" href="#start">查看接入文档 <span>→</span></a>
+      </div>
+      <p class="hero-note">// 无需信用卡 · 14 天全量数据保留 · 支持私有化部署</p>
+
+      <!-- 代码卡片 + 指标 -->
+      <div class="code-card">
+        <div class="code-bar">
+          <span class="dot dot-live" aria-hidden="true"></span>
+          <span>pulsedeck-agent · api-gateway-prod · 实时</span>
+        </div>
+        <pre class="code-body"><code><span class="c"># 1. 安装探针</span>
+$ npm install <span class="k">@pulsedeck/agent</span>
+
+<span class="c"># 2. 写入密钥并启动，剩下的交给我们</span>
+$ export PULSEDECK_KEY=<span class="k">pd_live_8f2a...c31d</span>
+$ node -r <span class="k">@pulsedeck/agent</span> server.js
+
+<span class="c">✓ 探针已连接 · 正在上报 span · 面板 3 秒后就绪</span></code></pre>
+        <div class="metrics">
+          <div class="metric">
+            <div class="metric-v">218<small class="lede mono">ms</small></div>
+            <div class="metric-k">P99 查询响应</div>
+          </div>
+          <div class="metric">
+            <div class="metric-v">21.4<small class="lede mono">亿</small></div>
+            <div class="metric-k">日均处理 span</div>
+          </div>
+          <div class="metric">
+            <div class="metric-v">99.98<small class="lede mono">%</small></div>
+            <div class="metric-k">近 90 天可用性</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 三项能力 ============ -->
+  <section class="section" id="features">
+    <div class="container">
+      <div class="section-head">
+        <span class="eyebrow">Core</span>
+        <h2>不用再靠翻日志猜问题</h2>
+        <p class="lede">采集、告警、排查在同一个面板里闭环。所有数据基于 OpenTelemetry 标准，随时可以带走。</p>
+      </div>
+
+      <div class="grid-3">
+        <article class="card">
+          <div class="card-ico" aria-hidden="true">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent)"
+                 stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="5" cy="6" r="2"></circle><circle cx="19" cy="12" r="2"></circle>
+              <circle cx="8" cy="18" r="2"></circle>
+              <path d="M7 6h6a3 3 0 0 1 3 3v1M17 14v1a3 3 0 0 1-3 3h-4"></path>
+            </svg>
+          </div>
+          <h3>全链路追踪</h3>
+          <p>一次请求跨了 7 个服务、3 次数据库查询，火焰图上一眼看清哪一段最慢。慢查询自动标红。</p>
+          <div class="card-meta">支持 <b>Node · Go · Python · Java</b></div>
+        </article>
+
+        <article class="card">
+          <div class="card-ico" aria-hidden="true">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent)"
+                 stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"></path>
+              <path d="M13.7 21a2 2 0 0 1-3.4 0"></path>
+            </svg>
+          </div>
+          <h3>智能告警</h3>
+          <p>基于历史基线自动识别异常，不用手动设死阈值。凌晨的误报，我们比你更讨厌。</p>
+          <div class="card-meta">告警准确率 <b>94.2%</b> · 误报下降 <b>6×</b></div>
+        </article>
+
+        <article class="card">
+          <div class="card-ico" aria-hidden="true">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent)"
+                 stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M13 2 4.5 13.5H11l-1 8.5 8.5-11.5H12z"></path>
+            </svg>
+          </div>
+          <h3>秒级查询</h3>
+          <p>列式存储 + 自研索引，30 天窗口内任意维度下钻，200ms 内出结果。不采样，不丢数据。</p>
+          <div class="card-meta">冷热分层 · 保留期最长 <b>13 个月</b></div>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 接入步骤 ============ -->
+  <section class="section" id="start">
+    <div class="container steps">
+      <div>
+        <div class="section-head" style="margin-bottom: var(--s10)">
+          <span class="eyebrow">Quick start</span>
+          <h2>三步接入，五分钟出图</h2>
+          <p class="lede">不改业务代码，不重构架构。探针以旁路方式运行，对主链路零侵入。</p>
+        </div>
+        <ol class="step-list">
+          <li class="step">
+            <span class="step-n">01</span>
+            <div>
+              <h3>安装探针</h3>
+              <p>一条命令装好 SDK，支持 npm / go get / pip，也提供 Docker Sidecar 和 K8s Operator。</p>
+            </div>
+          </li>
+          <li class="step">
+            <span class="step-n">02</span>
+            <div>
+              <h3>配置密钥</h3>
+              <p>把项目密钥写进环境变量即可。密钥按环境隔离，支持只读 Key 与自动轮换。</p>
+            </div>
+          </li>
+          <li class="step">
+            <span class="step-n">03</span>
+            <div>
+              <h3>打开面板</h3>
+              <p>服务拓扑、接口列表、错误分布自动生成。想要什么图，直接改查询语句。</p>
+            </div>
+          </li>
+        </ol>
+      </div>
+
+      <div class="code-card" style="margin-top: 0">
+        <div class="code-bar">
+          <span class="dot" aria-hidden="true"></span>
+          <span class="dot" aria-hidden="true"></span>
+          <span class="dot" aria-hidden="true"></span>
+          <span style="margin-left: var(--s2)">query.pql · 找出最慢的 5 个接口</span>
+        </div>
+        <pre class="code-body"><code><span class="c">// 过去 1 小时，按 P95 延迟排序</span>
+<span class="k">from</span> spans
+<span class="k">where</span> service = <span class="k">"api-gateway"</span>
+  <span class="k">and</span> timestamp &gt; now() - <span class="k">1h</span>
+  <span class="k">and</span> status_code &gt;= <span class="k">400</span>
+<span class="k">group by</span> route
+<span class="k">select</span> p95(duration), count(), rate(error)
+<span class="k">order by</span> p95 <span class="k">desc</span>
+<span class="k">limit</span> <span class="k">5</span>
+
+<span class="c">→ 命中 1,284,391 条 · 耗时 187ms</span>
+
+  POST /v2/orders        <span class="k">1,842ms</span>   12,904   3.1%
+  GET  /v2/users/:id       <span class="k">944ms</span>   88,120   0.4%
+  POST /v2/pay/callback    <span class="k">712ms</span>    4,067   8.8%
+  GET  /v2/search          <span class="k">508ms</span>   31,455   0.2%
+  PUT  /v2/cart            <span class="k">302ms</span>   19,338   0.1%</code></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 定价 ============ -->
+  <section class="section" id="pricing">
+    <div class="container">
+      <div class="section-head">
+        <span class="eyebrow">Pricing</span>
+        <h2>按实际用量计费</h2>
+        <p class="lede">只为写入的 span 付费，查询与用户席位不额外收钱。超量自动降级采样，不会给你惊喜账单。</p>
+      </div>
+
+      <div class="grid-3">
+        <article class="plan">
+          <div class="plan-top"><span class="plan-name">开发者</span></div>
+          <div class="price">¥0<small> / 月</small></div>
+          <p class="plan-desc">个人项目和小型服务够用了。</p>
+          <ul>
+            <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"></path></svg><span>每月 <b>500 万</b> span 写入</span></li>
+            <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"></path></svg><span>数据保留 <b>7 天</b></span></li>
+            <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"></path></svg><span>3 个用户席位</span></li>
+            <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"></path></svg><span>社区支持</span></li>
+          </ul>
+          <a class="btn btn-ghost" href="#cta">直接开始</a>
+        </article>
+
+        <article class="plan plan-featured">
+          <div class="plan-top"><span class="plan-name">团队</span><span class="tag">最常选</span></div>
+          <div class="price">¥399<small> / 月起</small></div>
+          <p class="plan-desc">生产环境的默认选择，按量叠加。</p>
+          <ul>
+            <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"></path></svg><span>每月 <b>2 亿</b> span，超出 <b>¥1.2/百万</b></span></li>
+            <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"></path></svg><span>数据保留 <b>30 天</b></span></li>
+            <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"></path></svg><span>席位不限 · 智能告警 · 值班排班</span></li>
+            <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"></path></svg><span>工单响应 <b>4 小时</b></span></li>
+          </ul>
+          <a class="btn btn-primary" href="#cta">开始 14 天试用</a>
+        </article>
+
+        <article class="plan">
+          <div class="plan-top"><span class="plan-name">企业</span></div>
+          <div class="price">定制<small> / 年签</small></div>
+          <p class="plan-desc">合规、私有化与大规模集群。</p>
+          <ul>
+            <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"></path></svg><span>写入量不限 · 保留期 <b>13 个月</b></span></li>
+            <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"></path></svg><span>私有化部署 · SSO · 审计日志</span></li>
+            <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"></path></svg><span><b>99.99%</b> SLA 赔付条款</span></li>
+            <li><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"></path></svg><span>专属技术顾问</span></li>
+          </ul>
+          <a class="btn btn-ghost" href="#cta">联系我们</a>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 结尾 CTA ============ -->
+  <section class="section" id="cta">
+    <div class="container">
+      <div class="cta-band">
+        <span class="eyebrow">Get started</span>
+        <h2 style="margin-top: var(--s3)">今晚的报警，明天早上再看也不迟</h2>
+        <p class="lede">注册即用，不用排期不用对接。装上探针，先看看你的服务到底慢在哪。</p>
+        <div class="hero-cta">
+          <a class="btn btn-primary" href="#top">免费接入</a>
+          <a class="btn btn-ghost" href="#pricing">预约 20 分钟演示</a>
+        </div>
+        <p class="hero-note">// 已有 2,400+ 工程团队在用 · 平均接入耗时 6 分钟</p>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<!-- ============ 页脚 ============ -->
+<footer class="footer">
+  <div class="container">
+    <div class="footer-grid">
+      <div class="footer-about">
+        <a class="brand" href="#top">
+          <svg width="26" height="26" viewBox="0 0 32 32" aria-hidden="true">
+            <rect width="32" height="32" rx="6" fill="var(--surface-2)" stroke="var(--line-strong)"></rect>
+            <path d="M4.5 18h4.2l3-8 4 14 3.5-9 2.3 3h6" fill="none" stroke="var(--accent)"
+                  stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
+          </svg>
+          脉冲观测台
+        </a>
+        <p>面向开发者的 API 可观测性平台。基于 OpenTelemetry 标准，数据随时可以带走。</p>
+      </div>
+
+      <div>
+        <h3>产品</h3>
+        <ul>
+          <li><a href="#features">全链路追踪</a></li>
+          <li><a href="#features">智能告警</a></li>
+          <li><a href="#pricing">定价方案</a></li>
+        </ul>
+      </div>
+
+      <div>
+        <h3>开发者</h3>
+        <ul>
+          <li><a href="#start">接入文档</a></li>
+          <li><a href="#start">PQL 查询语法</a></li>
+          <li><a href="#start">SDK 与开源仓库</a></li>
+        </ul>
+      </div>
+
+      <div>
+        <h3>公司</h3>
+        <ul>
+          <li><a href="#top">关于我们</a></li>
+          <li><a href="#cta">联系销售</a></li>
+          <li><a href="#top">更新日志</a></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="footer-base">
+      <span>© 2025 脉冲观测台 Pulsedeck · 示例站点内容</span>
+      <a class="status" href="#top">
+        <span class="dot dot-live" aria-hidden="true"></span>
+        所有系统运行正常
+      </a>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

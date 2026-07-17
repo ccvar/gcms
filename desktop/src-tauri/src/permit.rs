@@ -258,7 +258,9 @@ process.stdin.on('end', () => {
     process.exit(0);
   };
   // 只读工具永远放行（default 档它们本不弹权限，这里兜底）。
-  if (['Read', 'Grep', 'Glob', 'LS', 'NotebookRead'].includes(tool)) return out('allow', 'read');
+  // Skill＝加载随附的设计规范（只是读一份说明书，不碰任何东西）。不放行的话，「询问」档下
+  // 用户会为「AI 想读设计规范」平白弹一张卡 —— 纯噪音。
+  if (['Read', 'Grep', 'Glob', 'LS', 'NotebookRead', 'Skill'].includes(tool)) return out('allow', 'read');
   const cmd = tool === 'Bash' ? (input.command || '') : '';
   // AI 桥（node "<ssh.js>" '<命令>'）自带 Pilot 侧确认——那道闸在 Rust 里，本脚本改不了它，
   // 且它显示的是真正要在服务器上跑的命令。这里放行，免得同一条命令连弹两张卡。

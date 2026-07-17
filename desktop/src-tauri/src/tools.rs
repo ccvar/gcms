@@ -207,9 +207,75 @@ pub fn ensure_ssh(data_dir: &Path) -> std::io::Result<PathBuf> {
     Ok(p)
 }
 
+// ---- 建站设计规范（随附技能包） ----
+//
+// 为什么做成技能而不是继续堆在系统提示词里：**系统提示词只在首轮下发**（claude 之后走
+// --resume、codex 只有首轮拼进消息、grok 只有首轮塞 _meta.rules）。聊到第 20 轮正在磨版式时，
+// 设计规范早就漂出上下文了 —— 这正是「建站最不可控的是设计」的根因。技能是**渐进披露**的：
+// 常驻的只有 name+description 两行，正文由模型在**任意一轮**按需重新拉取（「要改样式 → 先读它」）。
+// 顺带也就装得下一份真正详尽的规范（成品自检清单、常见翻车点），那些塞进首轮提示词太贵。
+//
+// 交付方式：claude 和 grok **吃同一个 plugin 目录格式**（实测：claude 2.1.96 `--plugin-dir` 在无头
+// `-p` 下能从空 cwd 加载到技能；`grok plugin validate` 直接认这个目录）。codex 没有 `--plugin-dir`
+// （只有会写 ~/.codex/config.toml 的全局 marketplace，与「一轮一进程、无常驻状态」相抵触），
+// 所以给它在系统提示词里留一行绝对路径兜底（见 agent::design_prompt）。
+pub const DESIGN_SKILL_MD: &str = include_str!("builtin/SKILL.md");
+pub const DESIGN_PLUGIN_JSON: &str = include_str!("builtin/plugin.json");
+
+/// 技能包根目录（`--plugin-dir` 指向它）。
+pub fn design_plugin_dir(data_dir: &Path) -> PathBuf {
+    data_dir.join("plugins").join("pilot-design")
+}
+
+/// SKILL.md 绝对路径（codex 兜底要在提示词里点名它）。
+pub fn design_skill_path(data_dir: &Path) -> PathBuf {
+    design_plugin_dir(data_dir).join("skills").join("web-design").join("SKILL.md")
+}
+
+/// 把设计技能包写到 <data_dir>/plugins/pilot-design/（覆写以随版本刷新），返回根目录。
+pub fn ensure_design_plugin(data_dir: &Path) -> std::io::Result<PathBuf> {
+    let root = design_plugin_dir(data_dir);
+    let manifest = root.join(".claude-plugin");
+    fs::create_dir_all(&manifest)?;
+    fs::write(manifest.join("plugin.json"), DESIGN_PLUGIN_JSON)?;
+    let skill = root.join("skills").join("web-design");
+    fs::create_dir_all(&skill)?;
+    fs::write(skill.join("SKILL.md"), DESIGN_SKILL_MD)?;
+    Ok(root)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 设计技能包的目录形状必须**正好**是 claude/grok 认的那套，否则 --plugin-dir 静默不生效
+    /// （实测：claude 2.1.96 无头 -p 能从空 cwd 加载；`grok plugin validate` 认同一个目录）。
+    #[test]
+    fn ensure_design_plugin_writes_claude_grok_layout() {
+        let base = std::env::temp_dir().join(format!("tools-{}", uuid::Uuid::new_v4()));
+        let root = ensure_design_plugin(&base).unwrap();
+        assert_eq!(root, design_plugin_dir(&base));
+
+        // 清单：两家都读 .claude-plugin/plugin.json
+        let mf = fs::read_to_string(root.join(".claude-plugin").join("plugin.json")).unwrap();
+        let j: serde_json::Value = serde_json::from_str(&mf).expect("plugin.json 必须是合法 JSON");
+        assert_eq!(j["name"], "pilot-design", "plugin 名变了就等于换了技能命名空间");
+
+        // 技能正文：必须在 skills/<name>/SKILL.md，且 frontmatter 的 name 与目录同名
+        let skill = design_skill_path(&base);
+        assert_eq!(skill, root.join("skills").join("web-design").join("SKILL.md"));
+        let s = fs::read_to_string(&skill).unwrap();
+        assert!(s.starts_with("---\n"), "缺 frontmatter，引擎不会把它当技能");
+        assert!(s.contains("name: web-design"), "frontmatter name 必须与目录名一致");
+        assert!(s.contains("description:"), "没有 description 就没法被按需触发");
+        // 规范本身的骨架（别哪天被删空了还没人发现）
+        assert!(s.contains("--accent"));
+        assert!(s.contains("4.5:1"));
+
+        // 覆写幂等（升级刷新场景）
+        ensure_design_plugin(&base).unwrap();
+        fs::remove_dir_all(&base).ok();
+    }
 
     #[test]
     fn ensure_shot_writes_script() {

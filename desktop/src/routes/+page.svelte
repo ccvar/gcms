@@ -200,10 +200,10 @@
     reports: { ts: number; content: string; metrics: ManagedReportMetrics }[];
     created_at: number; updated_at: number;
   };
-  type ManagedReportMetrics = { published: number | null; drafts_new: number | null; rejected: number | null; tokens: number | null; impressions: number | null; clicks: number | null };
+  type ManagedReportMetrics = { published: number | null; drafts_new: number | null; rejected: number | null; discarded: number | null; tokens: number | null; impressions: number | null; clicks: number | null };
   type ManagedDraft = { id: number; title: string; lang: string; updated_at: string };
   type ManagedSummary = {
-    published_this_week: number; drafts: number; drafts_new: number; week_start: number; week_tokens: number;
+    published_this_week: number; drafts: number; drafts_new: number; drafts_discarded: number; week_start: number; week_tokens: number;
     tasks: { id: string; title: string; enabled: boolean; last_status: string; last_run: number; next_run: number; last_conv_id: string }[];
   };
   let managedList = $state<ManagedSite[]>([]);
@@ -2084,7 +2084,8 @@
   }
 
   // ---------- 模板库 ----------
-  type Template = { slug: string; name: string; desc: string; created_at: number };
+  // builtin＝Pilot 随附的起始模板：删不掉（后端也拒），created_at 恒 0（列表里自然沉底）。
+  type Template = { slug: string; name: string; desc: string; created_at: number; builtin: boolean };
   let templates = $state<Template[]>([]);
   let templatesLoading = $state(false);
   let tmplHtml = $state<Record<string, string>>({}); // 每个模板的入口 HTML，做真实缩略图
@@ -3570,6 +3571,7 @@
                   <div class="task-meta">
                     本周发布 {sum ? sum.published_this_week : '…'} / 上限 {m.weekly_post_limit}
                     <span class="cdot">·</span>待审草稿 {sum ? sum.drafts : drafts.length} 篇
+                    {#if sum?.drafts_discarded}<span class="cdot">·</span><span title="AI 标记报废、等你确认删除的草稿（不占待审队列）">待清理 {sum.drafts_discarded} 篇</span>{/if}
                     {#if sum && (m.token_weekly_budget || sum.week_tokens)}<span class="cdot">·</span>token {mdTok(sum.week_tokens)}{m.token_weekly_budget ? ` / ${mdTok(m.token_weekly_budget)}` : ''}{/if}
                     {#if m.review_notes.length}<span class="cdot">·</span>累计打回 {m.review_notes.length} 次{/if}
                     {#if tP.length >= 2}<span class="cdot">·</span><span class="mb-trend" title="每周发布数趋势（旧→新，来自周报归档）">发布{#each tP as v, i (i)}<i style="height:{trendBarPx(v, tP)}px"></i>{/each}</span>{/if}
@@ -3677,12 +3679,16 @@
                     <div class="tmpl-hover">
                       <button class="tmpl-act" aria-label="预览真实页面" onclick={() => previewTemplate(t)} data-tip="预览真实页面"><svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M1.6 8s2.4-4.4 6.4-4.4S14.4 8 14.4 8s-2.4 4.4-6.4 4.4S1.6 8 1.6 8Z" stroke="currentColor" stroke-width="1.2" /><circle cx="8" cy="8" r="1.9" stroke="currentColor" stroke-width="1.2" /></svg></button>
                       <button class="tmpl-act primary" aria-label="用它建新站" onclick={() => openUseTmpl(t)} data-tip="用它建新站"><svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M8 3.2v9.6M3.2 8h9.6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /></svg></button>
-                      <button class="tmpl-act" aria-label="删除模板" onclick={() => delTemplate(t)} data-tip="删除模板"><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M3 4.6h10M6.4 4.6V3.3h3.2V4.6M4.6 4.6l.6 8.1h5.6l.6-8.1" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
+                      <!-- 随附模板不给删（后端也拒）：按钮摆着只会让人点了吃一个错 -->
+                      {#if !t.builtin}
+                        <button class="tmpl-act" aria-label="删除模板" onclick={() => delTemplate(t)} data-tip="删除模板"><svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M3 4.6h10M6.4 4.6V3.3h3.2V4.6M4.6 4.6l.6 8.1h5.6l.6-8.1" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
+                      {/if}
                     </div>
                   </div>
                   <div class="tmpl-body">
                     <b>{t.name}</b>
-                    <div class="tmpl-sub"><span class="tmpl-desc">{t.desc || ''}</span><span class="tmpl-meta">{relTime(t.created_at)}</span></div>
+                    <!-- 随附模板 created_at 恒 0，relTime 会渲染成 1970 的「1/1」——改显「内置」 -->
+                    <div class="tmpl-sub"><span class="tmpl-desc">{t.desc || ''}</span><span class="tmpl-meta">{t.builtin ? '内置' : relTime(t.created_at)}</span></div>
                   </div>
                 </div>
               {/each}
