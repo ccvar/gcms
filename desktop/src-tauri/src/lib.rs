@@ -15,6 +15,7 @@ mod path_env;
 mod permit;
 mod scheduled;
 mod ssh;
+mod static_server;
 mod tasks;
 mod tools;
 mod usage;
@@ -874,36 +875,81 @@ mod workdir_tests {
         let taken = squatter.local_addr().unwrap().port();
         assert!(port_taken(taken), "通配占位下必须判定为「被占」（bind 探测在这里会说谎）");
 
+        // 用一个**真需要 wrangler** 的目录来验让端口（纯静态站走内建服务器，是另一条路，见下面那条测试）
         let d = std::env::temp_dir().join(format!("pv-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&d).unwrap();
+        std::fs::create_dir_all(d.join("functions")).unwrap();
 
-        // 默认 wrangler 路径：必须自动让开，绝不能还用那个被占的端口
-        let (cmd, port) = preview_cmd(&d, None, "", taken).unwrap();
+        // wrangler 路径：必须自动让开，绝不能还用那个被占的端口
+        let (cmd, port) = plan_cmd(&d, None, "", taken);
         assert_ne!(port, taken, "端口被占还硬用 → 预览窗里就是别人的页面");
         assert!(cmd.contains(&format!("--port {port}")), "命令里的端口要跟返回的一致: {cmd}");
         assert!(cmd.contains("wrangler pages dev ."));
 
         // 自定义 dev 命令：端口写死在命令里，改不了 → 必须报错而不是开个窗给别人的页面
-        let e = preview_cmd(&d, Some("npm run dev".into()), "", taken).unwrap_err();
+        let e = preview_plan(&d, Some("npm run dev".into()), "", taken).err().unwrap();
         assert!(e.contains("已被别的程序占用"), "得说清是端口被占: {e}");
 
         // 端口没被占时：原样使用，产物目录也带上
         drop(squatter);
-        let (cmd, port) = preview_cmd(&d, None, "dist", taken).unwrap();
+        let (cmd, port) = plan_cmd(&d, None, "dist", taken);
         assert_eq!(port, taken);
         assert!(cmd.contains("wrangler pages dev dist"));
         std::fs::remove_dir_all(&d).ok();
     }
 
+    /// 取 Cmd 计划；不是 Cmd 就炸（测试里用，省得每处 match）。
+    fn plan_cmd(d: &std::path::Path, dev: Option<String>, out: &str, port: u16) -> (String, u16) {
+        match preview_plan(d, dev, out, port).unwrap() {
+            PreviewPlan::Cmd(c, p) => (c, p),
+            PreviewPlan::Static(..) => panic!("这个目录该走 wrangler，却被判成了静态"),
+        }
+    }
+
+    /// ★ 静态站**不该逼人装 wrangler**（用户原话：「一定要安装 wrangler 吗」——Windows 上没 Node
+    /// 就直接卡死在「25 秒没起来」）。反过来，真用到 Workers/Pages 特性的**不许降级**：
+    /// 静态服务器不认 functions/_headers/_redirects，硬服务会给出「能打开但和线上不一样」的假象。
+    #[test]
+    fn static_sites_never_need_wrangler_but_workers_features_still_do() {
+        let base = std::env::temp_dir().join(format!("pvs-{}", uuid::Uuid::new_v4()));
+
+        // 内置模板长这样：单文件静态 HTML
+        let plain = base.join("plain");
+        std::fs::create_dir_all(&plain).unwrap();
+        std::fs::write(plain.join("index.html"), "<h1>hi</h1>").unwrap();
+        match preview_plan(&plain, None, "", 8788).unwrap() {
+            PreviewPlan::Static(dir, _) => assert_eq!(dir, plain, "静态站该由内建服务器伺候"),
+            PreviewPlan::Cmd(c, _) => panic!("纯静态站不该拉 wrangler: {c}"),
+        }
+
+        // 有 Workers/Pages 特性 → 必须仍然交给 wrangler
+        for f in ["_worker.js", "_headers", "_redirects", "wrangler.toml"] {
+            let d = base.join(format!("w-{}", f.replace('.', "-")));
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::write(d.join("index.html"), "x").unwrap();
+            std::fs::write(d.join(f), "x").unwrap();
+            let (cmd, _) = plan_cmd(&d, None, "", 8788);
+            assert!(cmd.contains("wrangler pages dev"), "{f} 必须走 wrangler: {cmd}");
+        }
+
+        // pilot.json 自定义了 dev → 永远听用户的，别自作主张换成内建服务器。
+        // 端口得现找一个空闲的：8788 在开发机上往往正被真预览占着，写死会让测试看机器脸色。
+        let free = free_port(9700).expect("找不到空闲端口跑这条测试");
+        let (cmd, _) = plan_cmd(&plain, Some("npm run dev".into()), "", free);
+        assert_eq!(cmd, "npm run dev", "自定义 dev 命令优先级最高");
+
+        std::fs::remove_dir_all(&base).ok();
+    }
+
     /// compat date：项目没声明就兜一个（不兜＝wrangler 默认用「今天」→ workerd 不支持 → **白屏**）；
     /// 项目自己声明了就别插手（CLI 参数会盖过 wrangler.toml，硬给等于把人家降级）。
+    /// 注意：只有**走 wrangler 的**才有这个问题，所以这里的目录必须是需要 wrangler 的。
     #[test]
     fn preview_compat_date_only_when_project_declares_none() {
         let d = std::env::temp_dir().join(format!("pvc-{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&d).unwrap();
+        std::fs::create_dir_all(d.join("functions")).unwrap(); // 逼它走 wrangler
 
         // 没声明 → 必须兜底，否则预览白屏
-        let (cmd, _) = preview_cmd(&d, None, "", 8788).unwrap();
+        let (cmd, _) = plan_cmd(&d, None, "", 8788);
         assert!(
             cmd.contains(&format!("--compatibility-date={FALLBACK_COMPAT_DATE}")),
             "没声明 compat date 就得兜底，否则 wrangler 默认今天→workerd 起不来→白屏: {cmd}"
@@ -912,7 +958,7 @@ mod workdir_tests {
         // 项目声明了 → 绝不能再传（传了会盖掉人家的）
         std::fs::write(d.join("wrangler.toml"), "compatibility_date = \"2026-01-01\"\n").unwrap();
         assert!(declares_compat_date(&d));
-        let (cmd, _) = preview_cmd(&d, None, "", 8788).unwrap();
+        let (cmd, _) = plan_cmd(&d, None, "", 8788);
         assert!(!cmd.contains("--compatibility-date"), "项目声明了就别插手: {cmd}");
 
         std::fs::remove_dir_all(&d).ok();
@@ -1280,8 +1326,20 @@ fn cf_project_ready(state: tauri::State<'_, AppState>, conn_id: String, project:
 
 // ---- 本地预览（wrangler pages dev + 预览窗口）----
 
+/// 预览跑在什么上面。
+///
+/// 静态站**不该逼人装 wrangler**（Windows 上尤其：没 Node 就直接卡死在「25 秒没起来」）——
+/// 内置模板本来就是单文件零外链的静态 HTML，内建服务器伺候它是零失真、且瞬间就起。
+/// 只有真用到 Workers 运行时/Pages 特性的项目才走 wrangler，见 static_server::needs_wrangler。
+enum PreviewProc {
+    /// 外部进程：wrangler，或 pilot.json 里自定义的 dev 命令。停的时候整组杀。
+    Child(std::process::Child),
+    /// 内建静态服务器：是个 task 不是进程，abort 掉即可（listener 随之 drop，端口立刻松手）。
+    Builtin(tauri::async_runtime::JoinHandle<()>),
+}
+
 struct PreviewHandle {
-    child: std::process::Child,
+    proc: PreviewProc,
     #[allow(dead_code)]
     url: String,
     #[allow(dead_code)]
@@ -1347,38 +1405,54 @@ fn declares_compat_date(dir: &std::path::Path) -> bool {
         })
 }
 
-/// 预览端口决策 + 命令拼装（两个预览入口共用）。
-/// - 默认 wrangler：端口由我们挑（挑空的），所以永远不会撞别人；顺带兜住 compat date（见上）。
-/// - 自定义 dev 命令：端口写死在命令里，只能用 pilot.json 声明的那个；被占就直说，
-///   绝不开个窗让用户对着别人的页面猜。
-fn preview_cmd(
+/// 预览怎么跑。
+enum PreviewPlan {
+    /// 跑外部命令：wrangler，或 pilot.json 里自定义的 dev。
+    Cmd(String, u16),
+    /// 内建静态服务器直接伺候这个目录 —— **不需要 wrangler、不需要 Node**。
+    Static(std::path::PathBuf, u16),
+}
+
+/// 预览方案决策（两个预览入口共用）。三条路，优先级从高到低：
+///
+/// - **自定义 dev 命令**（pilot.json 声明）：永远听用户的。端口写死在命令里、只能用它声明的那个；
+///   被占就直说，绝不开个窗让用户对着别人的页面猜。
+/// - **静态站**：内建服务器伺候，端口由我们挑（挑空的），不需要 wrangler/Node，也没有冷启。
+/// - **用到 Workers/Pages 特性**：只能 wrangler。端口同样我们挑；顺带兜住 compat date（见上）。
+fn preview_plan(
     dir: &std::path::Path,
     dev_cmd: Option<String>,
     out: &str,
     port: u16,
-) -> Result<(String, u16), String> {
-    match dev_cmd {
-        Some(d) => {
-            if port_taken(port) {
-                return Err(format!(
-                    "预览端口 {port} 已被别的程序占用。项目 pilot.json 里的 dev 命令写死了这个端口，\
+) -> Result<PreviewPlan, String> {
+    if let Some(d) = dev_cmd {
+        if port_taken(port) {
+            return Err(format!(
+                "预览端口 {port} 已被别的程序占用。项目 pilot.json 里的 dev 命令写死了这个端口，\
 Pilot 改不了 —— 先关掉占用它的程序，或在 pilot.json 里换一个 \"port\"（并同步改 dev 命令）。"
-                ));
-            }
-            Ok((d, port))
+            ));
         }
-        None => {
-            let p = free_port(port)
-                .ok_or_else(|| format!("找不到空闲的预览端口（{port} 往上 64 个都被占着）。"))?;
-            let target = if out.is_empty() { "." } else { out };
-            let compat = if declares_compat_date(dir) {
-                String::new()
-            } else {
-                format!(" --compatibility-date={FALLBACK_COMPAT_DATE}")
-            };
-            Ok((format!("wrangler pages dev {target} --ip 127.0.0.1 --port {p}{compat}"), p))
-        }
+        return Ok(PreviewPlan::Cmd(d, port));
     }
+    let p = free_port(port)
+        .ok_or_else(|| format!("找不到空闲的预览端口（{port} 往上 64 个都被占着）。"))?;
+    let serve_dir = if out.is_empty() { dir.to_path_buf() } else { dir.join(out) };
+    // ★ 静态站不该逼人装 wrangler。内置模板全是单文件零外链的静态 HTML，内建服务器伺候它
+    //   零失真、且瞬间就起；而 wrangler 要 Node、要一大包，Windows 上没装就直接卡死在
+    //   「25 秒没起来」（用户原话：「一定要安装 wrangler 吗」）。
+    //   反过来，真用到 Workers 运行时/Pages 特性的**故意不降级**——静态服务器给不出正确结果，
+    //   给个「能打开但和线上不一样」的假象比明说要装 wrangler 更坏。
+    //   项目根和实际服务目录都要看：functions/ 与 wrangler.* 在根，_headers/_redirects 可能在产物里。
+    if !static_server::needs_wrangler(dir) && !static_server::needs_wrangler(&serve_dir) {
+        return Ok(PreviewPlan::Static(serve_dir, p));
+    }
+    let target = if out.is_empty() { "." } else { out };
+    let compat = if declares_compat_date(dir) {
+        String::new()
+    } else {
+        format!(" --compatibility-date={FALLBACK_COMPAT_DATE}")
+    };
+    Ok(PreviewPlan::Cmd(format!("wrangler pages dev {target} --ip 127.0.0.1 --port {p}{compat}"), p))
 }
 
 /// 从预览 URL 里取端口。
@@ -1442,26 +1516,30 @@ fn read_pilot_json(dir: &std::path::Path) -> (Option<String>, String, u16) {
     (dev, out, port)
 }
 
-/// 杀掉当前预览进程树并回收（避免僵尸）。
+/// 停掉当前预览。外部进程要整树杀并回收（避免僵尸）；内建服务器 abort 掉即可。
 fn stop_preview(state: &AppState) {
-    if let Some(mut h) = state.preview.lock().unwrap().take() {
-        let pid = h.child.id();
-        #[cfg(unix)]
-        {
-            let _ = std::process::Command::new("kill")
-                .args(["-9", &format!("-{pid}")])
-                .status();
+    let Some(h) = state.preview.lock().unwrap().take() else { return };
+    match h.proc {
+        PreviewProc::Builtin(task) => task.abort(), // listener 随之 drop，端口立刻松手
+        PreviewProc::Child(mut child) => {
+            let pid = child.id();
+            #[cfg(unix)]
+            {
+                let _ = std::process::Command::new("kill")
+                    .args(["-9", &format!("-{pid}")])
+                    .status();
+            }
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                let _ = std::process::Command::new("taskkill")
+                    .args(["/T", "/F", "/PID", &pid.to_string()])
+                    .creation_flags(0x0800_0000)
+                    .status();
+            }
+            let _ = child.kill();
+            let _ = child.wait();
         }
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            let _ = std::process::Command::new("taskkill")
-                .args(["/T", "/F", "/PID", &pid.to_string()])
-                .creation_flags(0x0800_0000)
-                .status();
-        }
-        let _ = h.child.kill();
-        let _ = h.child.wait();
     }
 }
 
@@ -1555,7 +1633,18 @@ fn open_preview_window(app: &AppHandle, url: &str, name: &str) -> Result<(), Str
     Ok(())
 }
 
-/// 启动本地预览：在项目目录里跑 dev（pilot.json 的 dev，或 `wrangler pages dev`），开预览窗。
+/// 起内建静态服务器。**先 bind 再返回**：端口到底拿没拿到，必须在开预览窗之前就知道 ——
+/// 而不是像外部进程那条路，起不来要等 25 秒超时才发现。
+async fn start_builtin(dir: std::path::PathBuf, port: u16) -> Result<PreviewProc, String> {
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .map_err(|e| format!("预览端口 {port} 绑不上: {e}"))?;
+    Ok(PreviewProc::Builtin(tauri::async_runtime::spawn(static_server::serve(dir, listener))))
+}
+
+/// 启动本地预览：静态站用内建服务器（不需要 wrangler），有 Workers/Pages 特性的才跑 wrangler；
+/// pilot.json 自定义了 dev 就跑它。然后开预览窗。
 #[tauri::command]
 async fn cf_preview_start(
     app: AppHandle,
@@ -1582,51 +1671,63 @@ async fn cf_preview_start(
     if let Some(p) = old_port {
         wait_port_released(p, 2500).await;
     }
-    let (shell_cmd, port) = preview_cmd(std::path::Path::new(&dir), dev_cmd, &out, port)?;
-    #[cfg(windows)]
-    let mut c = {
-        let mut c = std::process::Command::new("cmd");
-        c.arg("/C").arg(&shell_cmd);
-        c
+    let plan = preview_plan(std::path::Path::new(&dir), dev_cmd, &out, port)?;
+    let (proc, port, external) = match plan {
+        PreviewPlan::Static(sd, p) => (start_builtin(sd, p).await?, p, false),
+        PreviewPlan::Cmd(shell_cmd, p) => {
+            #[cfg(windows)]
+            let mut c = {
+                let mut c = std::process::Command::new("cmd");
+                c.arg("/C").arg(&shell_cmd);
+                c
+            };
+            #[cfg(not(windows))]
+            let mut c = {
+                let mut c = std::process::Command::new("sh");
+                c.arg("-c").arg(&shell_cmd);
+                c
+            };
+            c.current_dir(&dir).env("CLOUDFLARE_API_TOKEN", &token);
+            if !conn.account_id.is_empty() {
+                c.env("CLOUDFLARE_ACCOUNT_ID", &conn.account_id);
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::process::CommandExt;
+                c.process_group(0); // 整组，停预览时连 node 子进程一起杀
+            }
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                c.creation_flags(0x0800_0000);
+            }
+            let child = c.spawn().map_err(|e| format!("启动预览失败: {e}\n{}", wrangler_hint()))?;
+            (PreviewProc::Child(child), p, true)
+        }
     };
-    #[cfg(not(windows))]
-    let mut c = {
-        let mut c = std::process::Command::new("sh");
-        c.arg("-c").arg(&shell_cmd);
-        c
-    };
-    c.current_dir(&dir).env("CLOUDFLARE_API_TOKEN", &token);
-    if !conn.account_id.is_empty() {
-        c.env("CLOUDFLARE_ACCOUNT_ID", &conn.account_id);
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        c.process_group(0); // 整组，停预览时连 node 子进程一起杀
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        c.creation_flags(0x0800_0000);
-    }
-    let child = c.spawn().map_err(|e| format!("启动预览失败（确认已装 wrangler）: {e}"))?;
     let url = format!("http://127.0.0.1:{port}");
     let title_name = project.clone(); // project 下一行就被搬进 handle 了，标题要用得先留一份
-    *state.preview.lock().unwrap() = Some(PreviewHandle {
-        child,
-        url: url.clone(),
-        project,
-    });
-    // 等它真起来再开窗：起得快就早开，起不来就明说（别开个空窗让用户猜）。
-    if !wait_preview(port, 25).await {
+    *state.preview.lock().unwrap() = Some(PreviewHandle { proc, url: url.clone(), project });
+    // 外部进程才需要等（内建服务器在 bind 成功那刻就已经在听了）。
+    if external && !wait_preview(port, 25).await {
         stop_preview(&state);
         return Err(format!(
-            "预览没能在 25 秒内起来（端口 {port}）。确认 wrangler 装好了；\
-若项目 pilot.json 自定义了 dev 命令，看看它是不是真监听这个端口。"
+            "预览没能在 25 秒内起来（端口 {port}）。\n{}",
+            wrangler_hint()
         ));
     }
     open_preview_window(&app, &url, &title_name)?;
     Ok(url)
+}
+
+/// wrangler 起不来时的提示。**只在真需要 wrangler 时才会走到这里**（静态站根本不碰它），
+/// 所以这里要说清「为什么这个项目躲不掉」，而不是笼统甩一句「装 wrangler」。
+fn wrangler_hint() -> String {
+    "这个项目用到了 Workers/Pages 特性（functions/、_worker.js、_headers、_redirects 或 wrangler 配置），\
+只有 wrangler 能正确预览它 —— 纯静态站 Pilot 会用内建服务器，不需要装任何东西。\n\
+装法：先装 Node.js（nodejs.org），再执行 npm i -g wrangler。\n\
+若项目 pilot.json 自定义了 dev 命令，也看看它是不是真监听这个端口。"
+        .to_string()
 }
 
 #[tauri::command]
@@ -1674,43 +1775,52 @@ async fn cf_preview_template(
     if let Some(p) = old_port {
         wait_port_released(p, 2500).await; // 见 wait_port_released：不等就会端口上爬
     }
-    let (shell_cmd, port) = preview_cmd(&dir, dev_cmd, &out, port)?;
-    #[cfg(windows)]
-    let mut c = {
-        let mut c = std::process::Command::new("cmd");
-        c.arg("/C").arg(&shell_cmd);
-        c
+    // 随附模板全是「单文件、内联 CSS、零外部资源」的静态 HTML（这是库自己的硬契约，有测试钉着），
+    // 所以这里几乎总是走内建服务器：**不需要 wrangler、不需要 Node，也没有 25 秒冷启**。
+    // （用户存的模板可能带 functions/ 之类，那种才落回 wrangler —— preview_plan 会认出来。）
+    let plan = preview_plan(&dir, dev_cmd, &out, port)?;
+    let (proc, port, external) = match plan {
+        PreviewPlan::Static(sd, p) => (start_builtin(sd, p).await?, p, false),
+        PreviewPlan::Cmd(shell_cmd, p) => {
+            #[cfg(windows)]
+            let mut c = {
+                let mut c = std::process::Command::new("cmd");
+                c.arg("/C").arg(&shell_cmd);
+                c
+            };
+            #[cfg(not(windows))]
+            let mut c = {
+                let mut c = std::process::Command::new("sh");
+                c.arg("-c").arg(&shell_cmd);
+                c
+            };
+            c.current_dir(&dir);
+            if !token.is_empty() {
+                c.env("CLOUDFLARE_API_TOKEN", &token);
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::process::CommandExt;
+                c.process_group(0);
+            }
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                c.creation_flags(0x0800_0000);
+            }
+            let child = c.spawn().map_err(|e| format!("启动预览失败: {e}\n{}", wrangler_hint()))?;
+            (PreviewProc::Child(child), p, true)
+        }
     };
-    #[cfg(not(windows))]
-    let mut c = {
-        let mut c = std::process::Command::new("sh");
-        c.arg("-c").arg(&shell_cmd);
-        c
-    };
-    c.current_dir(&dir);
-    if !token.is_empty() {
-        c.env("CLOUDFLARE_API_TOKEN", &token);
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        c.process_group(0);
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        c.creation_flags(0x0800_0000);
-    }
-    let child = c.spawn().map_err(|e| format!("启动预览失败（确认已装 wrangler）: {e}"))?;
     let url = format!("http://127.0.0.1:{port}");
     *state.preview.lock().unwrap() = Some(PreviewHandle {
-        child,
+        proc,
         url: url.clone(),
         project: label, // 与上面 reusable_preview 查的是同一个标签，别让它俩各写各的
     });
-    if !wait_preview(port, 25).await {
+    if external && !wait_preview(port, 25).await {
         stop_preview(&state);
-        return Err(format!("模板预览没能在 25 秒内起来（端口 {port}）。确认 wrangler 装好了。"));
+        return Err(format!("模板预览没能在 25 秒内起来（端口 {port}）。\n{}", wrangler_hint()));
     }
     open_preview_window(&app, &url, &title_name)?;
     Ok(url)
