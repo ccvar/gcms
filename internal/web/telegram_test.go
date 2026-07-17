@@ -704,3 +704,52 @@ func TestPlatformTelegramBotHandlers(t *testing.T) {
 		t.Fatalf("显式清除失败：%q", ps.Setting(platformTelegramBotTokenKey))
 	}
 }
+
+// TestRunScheduledPublishCoversEverySite 定时发布必须覆盖**每一个站**，不只是默认站。
+//
+// 病根：平台是一个进程按域名伺候所有站，每个非默认站有自己的库（runtimeForSite 里
+// store.Open(site.DBPath)）；而 main.go 的分钟定时器调的是 srv.RunScheduledPublish()，
+// 它只做 s.store.PublishDue() —— s.store 是**默认站**那一个库。
+// 于是非默认站的定时文章到点了也永远翻不成已发布（用户实测：排到 2026-07-15 的文章，
+// 07-17 了还挂着「定时」）。
+func TestRunScheduledPublishCoversEverySite(t *testing.T) {
+	s, _ := newTestAutomationServer(t, "posts:read")
+
+	// 再开一个「非默认站」的库，挂进运行时池——复刻 runtimeForSite 干的事
+	other, err := store.Open(filepath.Join(t.TempDir(), "other.db"))
+	if err != nil {
+		t.Fatalf("open other store: %v", err)
+	}
+	t.Cleanup(func() { _ = other.Close() })
+
+	past := time.Now().Add(-48 * time.Hour)
+	mk := func(st *store.Store, slug string) int64 {
+		id, err := st.CreatePost(&store.Post{Type: "post", Lang: "zh", Slug: slug, Title: slug, Status: "scheduled", PublishedAt: past})
+		if err != nil {
+			t.Fatalf("create %s: %v", slug, err)
+		}
+		return id
+	}
+	defID := mk(s.store, "on-default")
+	otherID := mk(other, "on-other-site")
+
+	otherSrv := &Server{store: other, rootServer: s}
+	s.setRuntimePool(&SiteRuntimePool{byID: map[int64]*SiteRuntime{
+		1: {Site: &platform.Site{ID: 1, Slug: "default", IsDefault: true}, Store: s.store, server: s},
+		2: {Site: &platform.Site{ID: 2, Slug: "other"}, Store: other, server: otherSrv},
+	}})
+
+	s.RunScheduledPublish()
+
+	if p, err := s.store.GetPostByID(defID); err != nil || p.Status != "published" {
+		t.Fatalf("默认站该被翻成已发布，得到 %v (err=%v)", p.Status, err)
+	}
+	p, err := other.GetPostByID(otherID)
+	if err != nil {
+		t.Fatalf("other GetPostByID: %v", err)
+	}
+	if p.Status != "published" {
+		t.Fatalf("★ 非默认站到点了也没发出去（status=%q）—— 定时器只覆盖了默认站，"+
+			"平台上其余每个站的定时发布都是死的", p.Status)
+	}
+}

@@ -320,7 +320,31 @@ func (s *Server) telegramDeliver(token, channel, contentType string, postID int6
 // RunScheduledPublish 由 main 的分钟定时器调用：把到点的「定时发布」翻为已发布，
 // 失效 sitemap 端点缓存并触发 Telegram 推送。维持既有决策：该路径不提交 IndexNow
 // （见 indexnow.go；定时翻发布与修订恢复两路均不提交）。
+//
+// ★ 必须遍历**每一个站**。平台是「一个进程按域名伺候所有站」，每个非默认站有自己的库
+// （runtimeForSite → store.Open(site.DBPath)）；而 s.store 只是**默认站**那一个。
+// 原来直接 s.store.PublishDue()，于是除默认站外**所有站的定时发布都是死的**——
+// 文章到点了也永远挂着「定时」（实测：排到 07-15 的文章，07-17 还是定时）。
+// 每个站必须走**自己那个 Server 克隆**（rt.server）：发布钩子要用本站的 sitemap 缓存
+// 与 Telegram 配置，拿平台根服务器去推等于推错站。
 func (s *Server) RunScheduledPublish() {
+	pool := s.platformRuntimePool()
+	if pool == nil || len(pool.byID) == 0 {
+		s.publishDueForSite() // 单站部署：没有运行时池，自己就是那个站
+		return
+	}
+	// byID 只在建池时写入、之后整池替换（web.go::reloadRuntimePool），遍历是安全的。
+	for _, rt := range pool.byID {
+		if rt == nil || rt.server == nil {
+			continue
+		}
+		rt.server.publishDueForSite() // 默认站的 rt.server 就是 s，一并覆盖
+	}
+}
+
+// publishDueForSite 只处理**当前 Server 对应的那一个站**（s.store）。
+// 单站失败只记日志、不打断其它站：一个站的库出问题不该让整个平台的定时发布停摆。
+func (s *Server) publishDueForSite() {
 	posts, err := s.store.PublishDue()
 	if err != nil {
 		log.Printf("定时发布: 翻发布失败: %v", err)
