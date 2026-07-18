@@ -1102,6 +1102,7 @@ mod workdir_tests {
             &conns, &tstore, &mstore,
             "t".into(), "blog".into(), "博客".into(), "定位：测试站".into(),
             4, 3, "l1".into(), 500_000, "grok".into(), "grok-4.5".into(), "high".into(),
+            String::new(), String::new(), String::new(),
         )
         .expect("开启托管");
         assert_eq!(m.brain, "grok");
@@ -1134,11 +1135,11 @@ mod workdir_tests {
         assert_eq!(report.model, "grok-4.5");
 
         // 同站重复开启被拒；非法等级回落 l0
-        assert!(enable_managed(&conns, &tstore, &mstore, "t".into(), "blog".into(), String::new(), String::new(), 3, 2, "l0".into(), 0, String::new(), String::new(), String::new()).is_err());
-        let m2 = enable_managed(&conns, &tstore, &mstore, "t".into(), "shop".into(), String::new(), String::new(), 3, 2, "bogus".into(), 0, "claude".into(), "sonnet".into(), String::new()).unwrap();
+        assert!(enable_managed(&conns, &tstore, &mstore, "t".into(), "blog".into(), String::new(), String::new(), 3, 2, "l0".into(), 0, String::new(), String::new(), String::new(), String::new(), String::new(), String::new()).is_err());
+        let m2 = enable_managed(&conns, &tstore, &mstore, "t".into(), "shop".into(), String::new(), String::new(), 3, 2, "bogus".into(), 0, "claude".into(), "sonnet".into(), String::new(), String::new(), String::new(), String::new()).unwrap();
         assert_eq!(m2.level, "l0", "非法等级回落 L0（安全侧）");
         // 配额爬坡：新开启（第 0 天）上界 7，传 30 被钳到 7
-        let m3 = enable_managed(&conns, &tstore, &mstore, "t".into(), "news".into(), String::new(), String::new(), 30, 2, "l0".into(), 0, "claude".into(), "sonnet".into(), String::new()).unwrap();
+        let m3 = enable_managed(&conns, &tstore, &mstore, "t".into(), "news".into(), String::new(), String::new(), 30, 2, "l0".into(), 0, "claude".into(), "sonnet".into(), String::new(), String::new(), String::new(), String::new()).unwrap();
         assert_eq!(m3.weekly_post_limit, 7, "新站爬坡期钳到 7 篇/周");
         assert!(tstore.get(&m3.task_ids[0]).unwrap().prompt.contains("不得超过 7 篇"), "钳后的上限进每日 prompt");
         std::fs::remove_dir_all(&dir).ok();
@@ -2738,7 +2739,20 @@ fn notify_user(app: &AppHandle, title: &str, body: String) {
 /// 后台任务（fire_task）没有 AppState，签名收 TaskStore。
 fn sync_daily_prompt(tasks: &tasks::TaskStore, m: &managed::ManagedSite) {
     if let Some(tid) = m.task_ids.first() {
-        let p = managed::daily_prompt(&m.site_name, &m.plan, m.weekly_post_limit, &m.review_notes, &m.level, m.weekly_edit_limit, &m.audit_notes);
+        let p = managed::apply_custom_prompt(
+            &m.custom_daily_prompt,
+            managed::daily_prompt(&m.site_name, &m.plan, m.weekly_post_limit, &m.review_notes, &m.level, m.weekly_edit_limit, &m.audit_notes),
+        );
+        let _ = tasks.mutate(tid, |t| {
+            t.prompt = p.clone();
+            t.updated_at = now_secs();
+        });
+    }
+    if let Some(tid) = m.task_ids.get(1) {
+        let p = managed::apply_custom_prompt(
+            &m.custom_audit_prompt,
+            managed::audit_prompt(&m.site_name),
+        );
         let _ = tasks.mutate(tid, |t| {
             t.prompt = p.clone();
             t.updated_at = now_secs();
@@ -2746,11 +2760,44 @@ fn sync_daily_prompt(tasks: &tasks::TaskStore, m: &managed::ManagedSite) {
     }
     // 周报 prompt 带计划摘要（「计划关键词 vs 实际曝光词偏差」的对照基准），计划变了要跟着换。
     if let Some(tid) = m.task_ids.get(2) {
-        let p = managed::report_prompt(&m.site_name, &m.plan);
+        let p = managed::apply_custom_prompt(
+            &m.custom_report_prompt,
+            managed::report_prompt(&m.site_name, &m.plan),
+        );
         let _ = tasks.mutate(tid, |t| {
             t.prompt = p.clone();
             t.updated_at = now_secs();
         });
+    }
+}
+
+#[derive(serde::Serialize)]
+struct ManagedPromptPreview {
+    daily: String,
+    audit: String,
+    report: String,
+}
+
+#[tauri::command]
+fn managed_prompt_preview(
+    site_name: String,
+    plan: String,
+    weekly_post_limit: u32,
+    weekly_edit_limit: u32,
+    level: String,
+) -> ManagedPromptPreview {
+    ManagedPromptPreview {
+        daily: managed::daily_prompt(
+            site_name.trim(),
+            plan.trim(),
+            weekly_post_limit.clamp(1, 50),
+            &[],
+            &level,
+            weekly_edit_limit.clamp(1, 20),
+            "",
+        ),
+        audit: managed::audit_prompt(site_name.trim()),
+        report: managed::report_prompt(site_name.trim(), plan.trim()),
     }
 }
 
@@ -2771,11 +2818,15 @@ fn managed_enable(
     brain: String,
     model: String,
     effort: String,
+    custom_daily_prompt: String,
+    custom_audit_prompt: String,
+    custom_report_prompt: String,
 ) -> Result<managed::ManagedSite, String> {
     enable_managed(
         &state.conns, &state.tasks, &state.managed,
         conn_id, site_slug, site_name, plan, weekly_post_limit, weekly_edit_limit, level,
-        token_weekly_budget, brain, model, effort,
+        token_weekly_budget, brain, model, effort, custom_daily_prompt,
+        custom_audit_prompt, custom_report_prompt,
     )
 }
 
@@ -2801,6 +2852,9 @@ fn enable_managed(
     brain: String,
     model: String,
     effort: String,
+    custom_daily_prompt: String,
+    custom_audit_prompt: String,
+    custom_report_prompt: String,
 ) -> Result<managed::ManagedSite, String> {
     let site_slug = site_slug.trim().to_string();
     if site_slug.is_empty() {
@@ -2820,7 +2874,10 @@ fn enable_managed(
         vec![site_slug.clone()], vec![site_name.clone()],
         "article".into(), brain.clone(), model.clone(), effort.clone(),
         format!("托管 · 每日内容 · {site_name}"),
-        managed::daily_prompt(&site_name, &plan, limit, &[], &level, edit_limit, ""),
+        managed::apply_custom_prompt(
+            &custom_daily_prompt,
+            managed::daily_prompt(&site_name, &plan, limit, &[], &level, edit_limit, ""),
+        ),
         1440, 0, true,
     )?;
     let audit = upsert_task(
@@ -2828,7 +2885,7 @@ fn enable_managed(
         vec![site_slug.clone()], vec![site_name.clone()],
         "free".into(), brain.clone(), model.clone(), effort.clone(),
         format!("托管 · 每周审计 · {site_name}"),
-        managed::audit_prompt(&site_name),
+        managed::apply_custom_prompt(&custom_audit_prompt, managed::audit_prompt(&site_name)),
         10080, 0, true,
     )?;
     let report = upsert_task(
@@ -2836,7 +2893,10 @@ fn enable_managed(
         vec![site_slug.clone()], vec![site_name.clone()],
         "free".into(), brain.clone(), model.clone(), effort.clone(),
         format!("托管 · 每周周报 · {site_name}"),
-        managed::report_prompt(&site_name, &plan),
+        managed::apply_custom_prompt(
+            &custom_report_prompt,
+            managed::report_prompt(&site_name, &plan),
+        ),
         10080, 0, true,
     )?;
     let now = now_secs();
@@ -2849,6 +2909,9 @@ fn enable_managed(
         weekly_post_limit: limit,
         weekly_edit_limit: edit_limit,
         plan: plan.trim().to_string(),
+        custom_daily_prompt: custom_daily_prompt.trim().to_string(),
+        custom_audit_prompt: custom_audit_prompt.trim().to_string(),
+        custom_report_prompt: custom_report_prompt.trim().to_string(),
         brain,
         model,
         effort,
@@ -4260,6 +4323,7 @@ pub fn run() {
             set_task_enabled,
             run_task_now,
             managed_list,
+            managed_prompt_preview,
             managed_enable,
             managed_set_level,
             managed_set_edit_limit,

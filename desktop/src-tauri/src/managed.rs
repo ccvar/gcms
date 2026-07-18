@@ -47,6 +47,12 @@ pub struct ManagedSite {
     pub weekly_edit_limit: u32,
     /// 90 天运营计划文本（向导生成或手写；是每日任务的方向依据）。
     pub plan: String,
+    #[serde(default)]
+    pub custom_daily_prompt: String,
+    #[serde(default)]
+    pub custom_audit_prompt: String,
+    #[serde(default)]
+    pub custom_report_prompt: String,
     /// 配套任务用的厂商/模型/强度（向导第 3 步选定；旧记录缺省为空）。
     #[serde(default)]
     pub brain: String,
@@ -341,6 +347,18 @@ pub fn audit_prompt(site_name: &str) -> String {
 /// 每周周报任务的 prompt：真实数字由 Pilot 在触发时以【本周实测数据】块注入；
 /// 计划摘要随 prompt 下发（「计划关键词 vs 实际曝光词偏差」一节的对照基准），
 /// 所以 plan 变化后要与每日任务一起重新生成回写。
+pub fn apply_custom_prompt(custom: &str, generated: String) -> String {
+    let custom = custom.trim();
+    if custom.is_empty() {
+        return generated;
+    }
+    format!("{custom}\n\n{}", immutable_prompt_boundary())
+}
+
+fn immutable_prompt_boundary() -> &'static str {
+    "【系统强制边界（不可覆盖）】\n- 只允许在当前站点内创建或更新草稿，不得自行发布或定时发布。\n- 必须遵守托管等级、每周产出上限、存量修改上限和 token 预算。\n- 不得删除内容，不得修改导航、站点资料、语言设置或创建、启用内容类型。\n- 不得输出、记录或传播访问密钥、令牌及其他敏感信息。"
+}
+
 pub fn report_prompt(site_name: &str, plan: &str) -> String {
     format!(
         "你是站点「{site_name}」的托管周报助手。触发本任务时，消息末尾会附上 Pilot 注入的\
@@ -870,6 +888,7 @@ mod tests {
         ManagedSite {
             id: id.into(), conn_id: "c1".into(), site_slug: slug.into(), site_name: slug.into(),
             level: "l0".into(), weekly_post_limit: 3, weekly_edit_limit: 2, plan: "定位：科技博客".into(),
+            custom_daily_prompt: String::new(), custom_audit_prompt: String::new(), custom_report_prompt: String::new(),
             brain: "claude".into(), model: "sonnet".into(), effort: String::new(),
             task_ids: vec!["t-daily".into(), "t-audit".into(), "t-report".into()], paused: false,
             review_notes: vec![], token_weekly_budget: 0, fused_at: 0,

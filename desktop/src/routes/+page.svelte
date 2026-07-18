@@ -35,6 +35,8 @@
   let brains = $state<BrainsInfo | null>(null);
   let importBusy = $state(false);
   let setupOpen = $state(false);
+  let setupAddOpen = $state(false);
+  let setupAddEl = $state<HTMLElement | null>(null);
   let switcherOpen = $state(false);
   // 连接切换器里每条连接的右键菜单（新窗口打开 / 编辑 / 删除）。
   let connCtx = $state<null | { x: number; y: number; conn: Connection }>(null);
@@ -61,6 +63,19 @@
     catch (e) { say(String(e), 'err'); }
   }
   let footerEl = $state<HTMLElement | null>(null);
+  $effect(() => {
+    if (!setupAddOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      if (setupAddEl && !setupAddEl.contains(e.target as Node)) setupAddOpen = false;
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setupAddOpen = false; };
+    document.addEventListener('mousedown', onDoc, true);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDoc, true);
+      document.removeEventListener('keydown', onKey);
+    };
+  });
   $effect(() => {
     if (!switcherOpen) return;
     const onDoc = (e: MouseEvent) => { if (footerEl && !footerEl.contains(e.target as Node)) switcherOpen = false; };
@@ -215,16 +230,33 @@
   let mPlanOpen = $state<Record<string, boolean>>({});
   let mPlanDraft = $state<Record<string, string>>({});
   async function openManaged() { view = 'managed'; activeConvId = ''; activeConv = null; await loadManaged(); }
-  async function loadManaged() {
+  async function loadManaged(feedback = false) {
+    if (managedLoading) return;
     managedLoading = true;
-    try { managedList = await invoke<ManagedSite[]>('managed_list'); } catch (e) { say(String(e), 'err'); }
-    finally { managedLoading = false; }
-    for (const m of managedList.filter((x) => x.conn_id === activeConnId)) void loadManagedDetail(m);
+    try {
+      managedList = await invoke<ManagedSite[]>('managed_list');
+      const current = managedList.filter((x) => x.conn_id === activeConnId);
+      const results = await Promise.all(current.map(loadManagedDetail));
+      const failed = results.filter((ok) => !ok).length;
+      if (feedback) {
+        if (failed) say(`已刷新基础数据，${failed} 个站点的远程详情暂时获取失败`, 'err');
+        else say(current.length ? `已刷新 ${current.length} 个托管站点` : '托管数据已刷新');
+      }
+    } catch (e) {
+      say(`刷新托管数据失败：${String(e)}`, 'err');
+    } finally {
+      managedLoading = false;
+    }
   }
   // 周报数字 + 待审草稿按卡拉取；单卡失败不打断其他卡（例如某站密钥缺 posts 权限）。
-  async function loadManagedDetail(m: ManagedSite) {
-    try { mSummaries[m.id] = await invoke<ManagedSummary>('managed_summary', { id: m.id }); } catch { /* 保留旧值 */ }
-    try { mDrafts[m.id] = await invoke<ManagedDraft[]>('managed_drafts', { connId: m.conn_id, siteSlug: m.site_slug }); } catch { /* 同上 */ }
+  async function loadManagedDetail(m: ManagedSite): Promise<boolean> {
+    const [summary, drafts] = await Promise.allSettled([
+      invoke<ManagedSummary>('managed_summary', { id: m.id }),
+      invoke<ManagedDraft[]>('managed_drafts', { connId: m.conn_id, siteSlug: m.site_slug }),
+    ]);
+    if (summary.status === 'fulfilled') mSummaries[m.id] = summary.value;
+    if (drafts.status === 'fulfilled') mDrafts[m.id] = drafts.value;
+    return summary.status === 'fulfilled' && drafts.status === 'fulfilled';
   }
   async function toggleManaged(m: ManagedSite) {
     try { await invoke(m.paused ? 'managed_resume' : 'managed_pause', { id: m.id }); await loadManaged(); }
@@ -439,6 +471,19 @@
   let mwLevel = $state('l0');
   let mwBudget = $state(0);
   let mwEditLimit = $state(2);
+  type ManagedPromptKey = 'daily' | 'audit' | 'report';
+  type ManagedPromptSet = Record<ManagedPromptKey, string>;
+  const blankManagedPrompts = (): ManagedPromptSet => ({ daily: '', audit: '', report: '' });
+  const MANAGED_PROMPT_TABS: { key: ManagedPromptKey; label: string }[] = [
+    { key: 'daily', label: '日常内容' }, { key: 'audit', label: '周度审计' }, { key: 'report', label: '周报' },
+  ];
+  let mwPromptOpen = $state(false);
+  let mwPromptTab = $state<ManagedPromptKey>('daily');
+  let mwPromptBusy = $state(false);
+  let mwPromptError = $state('');
+  let mwPrompts = $state<ManagedPromptSet>(blankManagedPrompts());
+  let mwPromptDefaults = $state<ManagedPromptSet>(blankManagedPrompts());
+  let mwPromptEdited = $state<Record<ManagedPromptKey, boolean>>({ daily: false, audit: false, report: false });
   // 选站后的机械预检（软警示，不硬拦）：存量条数 + 统计可用性 → 警示列表。
   // 预检失败（网络/旧服务端等）静默降级：不警示也不拦——预检绝不能挡住向导。
   let mwWarns = $state<string[]>([]);
@@ -459,6 +504,9 @@
     mwModel = mwBrain === prefs.brain && isLauncherModel(mwBrain, prefs.model) ? prefs.model : defaultModelFor(mwBrain);
     mwEffort = mwBrain === prefs.brain ? (prefs.effort ?? '') : '';
     mwLevel = 'l0'; mwBudget = 0; mwEditLimit = 2;
+    mwPromptOpen = false; mwPromptTab = 'daily'; mwPromptBusy = false; mwPromptError = '';
+    mwPrompts = blankManagedPrompts(); mwPromptDefaults = blankManagedPrompts();
+    mwPromptEdited = { daily: false, audit: false, report: false };
   }
   // 向导里换厂商后，档位不属于该厂商时回落默认（与任务表单同规则）。
   $effect(() => { if (mwOpen && !isLauncherModel(mwBrain, mwModel)) mwModel = defaultModelFor(mwBrain); });
@@ -497,6 +545,37 @@
     } catch (e) { say(String(e), 'err'); }
     finally { mwGenBusy = false; }
   }
+  async function mwRefreshPromptDefaults() {
+    mwPromptBusy = true; mwPromptError = '';
+    const site = sites.find((s) => s.slug === mwSite);
+    try {
+      const preview = await invoke<ManagedPromptSet>('managed_prompt_preview', {
+        siteName: site?.name || mwSite, plan: mwPlan,
+        weeklyPostLimit: Math.min(50, Math.max(1, Math.round(Number(mwLimit) || 3))),
+        weeklyEditLimit: Math.min(20, Math.max(1, Math.round(Number(mwEditLimit) || 2))),
+        level: mwLevel,
+      });
+      mwPromptDefaults = preview;
+      const next = { ...mwPrompts };
+      for (const key of ['daily', 'audit', 'report'] as ManagedPromptKey[]) {
+        if (!mwPromptEdited[key]) next[key] = preview[key];
+      }
+      mwPrompts = next;
+    } catch (e) { mwPromptError = String(e); }
+    finally { mwPromptBusy = false; }
+  }
+  async function mwEnterStep3() {
+    mwStep = 3;
+    await mwRefreshPromptDefaults();
+  }
+  function mwPromptInput(value: string) {
+    mwPrompts = { ...mwPrompts, [mwPromptTab]: value };
+    mwPromptEdited = { ...mwPromptEdited, [mwPromptTab]: value.trim() !== mwPromptDefaults[mwPromptTab].trim() };
+  }
+  function mwRestorePrompt() {
+    mwPrompts = { ...mwPrompts, [mwPromptTab]: mwPromptDefaults[mwPromptTab] };
+    mwPromptEdited = { ...mwPromptEdited, [mwPromptTab]: false };
+  }
   async function mwEnable() {
     if (!mwSite || mwBusy) return;
     if (!brainUsable(mwBrain as Brain)) { say('所选厂商未就绪，去设置里授权或换一个', 'err'); return; }
@@ -508,6 +587,9 @@
         plan: mwPlan, weeklyPostLimit: mwLimit, weeklyEditLimit: Math.min(20, Math.max(1, Math.round(Number(mwEditLimit) || 2))), level: mwLevel,
         tokenWeeklyBudget: Math.max(0, Math.round(Number(mwBudget) || 0)),
         brain: mwBrain, model: mwModel, effort: mwEffort,
+        customDailyPrompt: mwPromptEdited.daily ? mwPrompts.daily : '',
+        customAuditPrompt: mwPromptEdited.audit ? mwPrompts.audit : '',
+        customReportPrompt: mwPromptEdited.report ? mwPrompts.report : '',
       });
       say('托管已开启：每日内容 + 每周审计 + 每周周报三个任务已创建');
       mwOpen = false; await loadManaged(); await loadTasks();
@@ -3272,17 +3354,11 @@
       </button>
       {#if !isCfConn && !isSshConn}
       <button class="railnav {view === 'schedule' ? 'on' : ''}" onclick={openSchedule} disabled={!activeConn}>
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-          <rect x="2.5" y="3" width="11" height="10.5" rx="1.5" stroke="currentColor" stroke-width="1.3" />
-          <path d="M2.5 6h11M5.5 2v2M10.5 2v2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
-        </svg>
+        {@render scheduleIcon(14)}
         排期
       </button>
       <button class="railnav {view === 'tasks' ? 'on' : ''}" onclick={openTasks} disabled={!activeConn}>
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-          <circle cx="8" cy="8" r="5.5" stroke="currentColor" stroke-width="1.3" />
-          <path d="M8 5v3l2 1.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" />
-        </svg>
+        {@render clockIcon(14)}
         定时任务
       </button>
       <button class="railnav {view === 'managed' ? 'on' : ''}" onclick={openManaged} disabled={!activeConn}>
@@ -3292,19 +3368,11 @@
       {/if}
       {#if isCfConn}
       <button class="railnav {view === 'templates' ? 'on' : ''}" onclick={openTemplates}>
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-          <rect x="2.5" y="2.5" width="4.5" height="4.5" rx="1" stroke="currentColor" stroke-width="1.3" />
-          <rect x="9" y="2.5" width="4.5" height="4.5" rx="1" stroke="currentColor" stroke-width="1.3" />
-          <rect x="2.5" y="9" width="4.5" height="4.5" rx="1" stroke="currentColor" stroke-width="1.3" />
-          <rect x="9" y="9" width="4.5" height="4.5" rx="1" stroke="currentColor" stroke-width="1.3" />
-        </svg>
+        {@render templateIcon(14)}
         模板库
       </button>
       <button class="railnav {view === 'prompts' ? 'on' : ''}" onclick={openPrompts}>
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-          <path d="M3 3h10a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H6.5L4 13.2V11H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" />
-          <path d="M5.2 6.2h5.6M5.2 8.4h3.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
-        </svg>
+        {@render promptIcon(14)}
         提示词
       </button>
       {/if}
@@ -3351,7 +3419,7 @@
               {#if c.kind === 'cloudflare'}{@render cfMark(18)}{:else if c.kind === 'ssh'}{@render sshMark(18)}{:else}<SiteMark size={18} />{/if}
               <span class="cs-main"><b>{c.name}{#if packUpdates[c.id]}<span class="pack-dot" title="技能包有新版，去「连接与模型设置」一键升级"></span>{/if}</b>
                 {#if c.kind === 'ssh'}
-                  <small class="cs-os">{@render distroMark(distroOf(c), 12)}{sshSub(c)}</small>
+                  <small class="cs-os">{@render distroMark(distroOf(c), 12)}<span class="cs-os-label">{sshSub(c)}</span></small>
                 {:else}
                   <small>{c.key_prefix} · {c.kind === 'cloudflare' ? 'Cloudflare' : c.key_kind === 'gcmsp_' ? '平台' : '单站'}</small>
                 {/if}</span>
@@ -3523,7 +3591,7 @@
     {:else if view === 'schedule'}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <header class="thread-head" data-tauri-drag-region onmousedown={startDrag}>
-        <div class="th-info"><b>排期</b><small>各站点待定时发布的内容 · 由 gcms 服务端到点自动发布</small></div>
+        <div class="th-info"><b class="th-title">{@render scheduleIcon(16)}<span>排期</span></b><small>各站点待定时发布的内容 · 由 gcms 服务端到点自动发布</small></div>
         <button class="icon-btn" onclick={loadScheduled} disabled={schedLoading} title="刷新">{@render refreshIcon(schedLoading)}</button>
       </header>
       <div class="thread">
@@ -3579,7 +3647,7 @@
     {:else if view === 'tasks'}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <header class="thread-head" data-tauri-drag-region onmousedown={startDrag}>
-        <div class="th-info"><b>定时任务</b><small>到点自动开一个新对话执行 · 需保持 Pilot 在后台（托盘）运行</small></div>
+        <div class="th-info"><b class="th-title">{@render clockIcon(16)}<span>定时任务</span></b><small>到点自动开一个新对话执行 · 需保持 Pilot 在后台（托盘）运行</small></div>
         <button class="btn soft bare" onclick={openNewTask}>{@render plusIcon()}新建任务</button>
       </header>
       <div class="thread">
@@ -3641,10 +3709,16 @@
 
     {:else if view === 'managed'}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <header class="thread-head" data-tauri-drag-region onmousedown={startDrag}>
-        <div class="th-info"><b>托管</b><small>AI 按周循环运营站点 · 边界机制化：发布、预算与修改均受控</small></div>
+      <header class="thread-head managed-head" data-tauri-drag-region onmousedown={startDrag}>
+        <div class="th-info"><b class="th-title">{@render botIcon(16)}<span>托管</span></b><small>AI 按周循环运营站点 · 边界机制化：发布、预算与修改均受控</small></div>
         <div class="th-actions">
-          <button class="icon-btn" onclick={loadManaged} disabled={managedLoading} title="刷新">{@render refreshIcon(managedLoading)}</button>
+          <button
+            class="icon-btn"
+            onclick={() => loadManaged(true)}
+            disabled={managedLoading}
+            aria-label={managedLoading ? '正在刷新托管数据' : '刷新托管数据'}
+            data-tip={managedLoading ? '正在刷新托管数据…' : '刷新托管数据'}
+          >{@render refreshIcon(managedLoading)}</button>
           <button class="btn soft bare" onclick={openManagedWizard} disabled={!sites.length}>{@render plusIcon()}托管一个站点</button>
         </div>
       </header>
@@ -3786,7 +3860,7 @@
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <header class="thread-head" data-tauri-drag-region onmousedown={startDrag}>
         <div class="th-info">
-          <div class="th-line"><b>模板库</b><small class="tmpl-hint">把做好的站点存成模板，之后引用它快速起新项目</small></div>
+          <div class="th-line"><b class="th-title">{@render templateIcon(16)}<span>模板库</span></b><small class="tmpl-hint">把做好的站点存成模板，之后引用它快速起新项目</small></div>
           {#if templates.length}
             <div class="tmpl-chips">
               <button class="tmpl-chip {tmplCat === '全部' ? 'on' : ''}" onclick={() => (tmplCat = '全部')}>{@render catIcon('全部')}全部<span class="tc-n">{templates.length}</span></button>
@@ -3998,7 +4072,7 @@
     {:else if view === 'prompts'}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <header class="thread-head" data-tauri-drag-region onmousedown={startDrag}>
-        <div class="th-info"><b>提示词库</b><small>常用建站需求，点「用它建站」填进对话框就能开始；也能存自己的。</small></div>
+        <div class="th-info"><b class="th-title">{@render promptIcon(16)}<span>提示词库</span></b><small>常用建站需求，点「用它建站」填进对话框就能开始；也能存自己的。</small></div>
         <button class="btn soft bare" onclick={openNewPrompt}>{@render plusIcon()}新增提示词</button>
       </header>
       <div class="thread">
@@ -4224,6 +4298,10 @@
 {/snippet}
 
 {#snippet plusIcon()}<svg class="plus-ic" width="13" height="13" viewBox="0 0 14 14" fill="none"><path d="M7 2.4v9.2M2.4 7h9.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /></svg>{/snippet}
+{#snippet scheduleIcon(size: number)}<svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="2.5" y="3" width="11" height="10.5" rx="1.5" stroke="currentColor" stroke-width="1.3" /><path d="M2.5 6h11M5.5 2v2M10.5 2v2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" /></svg>{/snippet}
+{#snippet clockIcon(size: number)}<svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="8" cy="8" r="5.5" stroke="currentColor" stroke-width="1.3" /><path d="M8 5v3l2 1.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" /></svg>{/snippet}
+{#snippet templateIcon(size: number)}<svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="2.5" y="2.5" width="4.5" height="4.5" rx="1" stroke="currentColor" stroke-width="1.3" /><rect x="9" y="2.5" width="4.5" height="4.5" rx="1" stroke="currentColor" stroke-width="1.3" /><rect x="2.5" y="9" width="4.5" height="4.5" rx="1" stroke="currentColor" stroke-width="1.3" /><rect x="9" y="9" width="4.5" height="4.5" rx="1" stroke="currentColor" stroke-width="1.3" /></svg>{/snippet}
+{#snippet promptIcon(size: number)}<svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 3h10a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H6.5L4 13.2V11H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" /><path d="M5.2 6.2h5.6M5.2 8.4h3.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" /></svg>{/snippet}
 <!-- 托管的机器人头图标（侧栏导航 + 空态复用，传 size）。viewBox 24 下 stroke 2 ≈ 侧栏 16 系图标的 1.3，视觉同粗。 -->
 {#snippet botIcon(size: number)}<svg width={size} height={size} viewBox="0 0 24 24" fill="none"><path d="M12 8V4H8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /><rect x="4" y="8" width="16" height="12" rx="2" stroke="currentColor" stroke-width="2" stroke-linejoin="round" /><path d="M2 14h2M20 14h2M9 13v2M15 13v2" stroke="currentColor" stroke-width="2" stroke-linecap="round" /></svg>{/snippet}
 
@@ -4444,11 +4522,38 @@
 
 <!-- 设置弹窗 -->
 {#if setupOpen}
-  <div class="mask" role="presentation" onclick={() => (setupOpen = false)}></div>
+  <div class="mask" role="presentation" onclick={() => { setupAddOpen = false; setupOpen = false; }}></div>
   <div class="sheet">
-    <header class="sheet-head"><b>连接与模型</b><button class="x" onclick={() => (setupOpen = false)}>×</button></header>
+    <header class="sheet-head"><b>连接与模型</b><button class="x" onclick={() => { setupAddOpen = false; setupOpen = false; }}>×</button></header>
     <div class="sheet-body">
-      <div class="sec-head"><span>连接</span><span class="sec-acts"><button class="btn small ghost bare" onclick={openCfConnect}>{@render cfMark(13)} Cloudflare</button><button class="btn small ghost bare" onclick={importPack} disabled={importBusy}>{importBusy ? '导入中…' : '＋ 导入 gcms 技能包'}</button></span></div>
+      <div class="sec-head">
+        <span>连接</span>
+        <div class="setup-add" bind:this={setupAddEl}>
+          <button
+            class="icon-btn setup-add-trigger"
+            class:open={setupAddOpen}
+            aria-label="添加连接"
+            aria-haspopup="menu"
+            aria-expanded={setupAddOpen}
+            data-tip={setupAddOpen ? undefined : '添加连接'}
+            onclick={() => (setupAddOpen = !setupAddOpen)}
+          >{@render plusIcon()}</button>
+          {#if setupAddOpen}
+            <div class="setup-add-menu" role="menu">
+              <button role="menuitem" onclick={() => { setupAddOpen = false; openCfConnect(); }}>
+                {@render cfMark(15)}<span>连接 Cloudflare</span>
+              </button>
+              <button role="menuitem" onclick={() => { setupAddOpen = false; importPack(); }} disabled={importBusy}>
+                <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m2.5 5 5.5-3 5.5 3v6L8 14l-5.5-3V5Z" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round" /><path d="M2.8 5 8 8l5.2-3M8 8v6" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round" /></svg>
+                <span>{importBusy ? '导入中…' : '导入 gcms 技能包'}</span>
+              </button>
+              <button role="menuitem" onclick={() => { setupAddOpen = false; openSshConnect(); }}>
+                {@render sshMark(15)}<span>新建远程连接</span>
+              </button>
+            </div>
+          {/if}
+        </div>
+      </div>
       {#if conns.length === 0}<p class="hint">还没有连接。导入 gcms 技能包，或连接 Cloudflare。</p>{/if}
       <div class="conn-list">
         {#each conns as c (c.id)}
@@ -4458,7 +4563,7 @@
             {#if c.kind === 'cloudflare'}{@render cfMark(22)}{:else if c.kind === 'ssh'}{@render sshMark(22)}{:else}<SiteMark size={22} />{/if}
             <span class="conn-main"><b>{c.name}</b>
               {#if c.kind === 'ssh'}
-                <small class="cs-os">{@render distroMark(distroOf(c), 12)}{sshSub(c)}</small>
+                <small class="cs-os">{@render distroMark(distroOf(c), 12)}<span class="cs-os-label">{sshSub(c)}</span></small>
               {:else}
                 <small>{c.key_prefix} · {c.kind === 'cloudflare' ? 'Cloudflare' : c.key_kind === 'gcmsp_' ? '平台' : '单站'}{#if activeConnId === c.id} · {sites.length} 站点{/if}</small>
               {/if}</span>
@@ -4915,7 +5020,7 @@
           <span class="hint">生成过程只读取站点数据，不会改动内容；对话会留在侧栏可追溯。</span>
         </div>
         {@render mwPrecheckBlock()}
-        <div class="row-end">{#if mwWarns.length}<span class="md-pre-ack">已知悉风险，仍可继续</span>{/if}<button class="btn ghost" onclick={() => (mwStep = 1)}>上一步</button><button class="btn primary" onclick={() => (mwStep = 3)}>下一步{mwPlan.trim() ? '' : '（暂不填计划）'}</button></div>
+        <div class="row-end">{#if mwWarns.length}<span class="md-pre-ack">已知悉风险，仍可继续</span>{/if}<button class="btn ghost" onclick={() => (mwStep = 1)}>上一步</button><button class="btn primary" onclick={() => void mwEnterStep3()}>下一步{mwPlan.trim() ? '' : '（暂不填计划）'}</button></div>
       {:else}
         <div class="tfield"><span>模型与强度（三个配套任务共用，与对话选择器一致）</span>
           <div class="tfield-fx"><ModelFx options={comboOpts} value={`${mwBrain}::${mwModel}`} effort={mwEffort} onpick={(v: string) => { const i = v.indexOf('::'); if (i > 0) { mwBrain = v.slice(0, i); mwModel = v.slice(i + 2); } }} oneffort={(v: string) => (mwEffort = v)} /></div></div>
@@ -4945,6 +5050,31 @@
             </ul>
           </div>
         {/if}
+        <details class="md-prompts" bind:open={mwPromptOpen}>
+          <summary>
+            <span><strong>最终任务指令</strong><small>根据站点资料与运营目标生成，展开后可检查和修改。</small></span>
+            {#if Object.values(mwPromptEdited).some(Boolean)}<em>已手动修改</em>{/if}
+          </summary>
+          <div class="md-prompts-body">
+            <div class="seg md-prompt-tabs" role="tablist" aria-label="任务指令">
+              {#each MANAGED_PROMPT_TABS as tab}
+                <button type="button" class:active={mwPromptTab === tab.key} onclick={() => (mwPromptTab = tab.key)}>{tab.label}{mwPromptEdited[tab.key] ? ' · 已修改' : ''}</button>
+              {/each}
+            </div>
+            {#if mwPromptBusy}
+              <div class="md-prompt-state">正在生成任务指令…</div>
+            {:else if mwPromptError}
+              <div class="md-prompt-error">{mwPromptError}<button type="button" class="btn ghost small" onclick={() => void mwRefreshPromptDefaults()}>重试</button></div>
+            {:else}
+              <textarea class="md-prompt-text" aria-label={`${MANAGED_PROMPT_TABS.find((item) => item.key === mwPromptTab)?.label ?? ''}任务指令`} value={mwPrompts[mwPromptTab]} oninput={(event: Event) => mwPromptInput((event.currentTarget as HTMLTextAreaElement).value)}></textarea>
+              <div class="md-prompt-actions">
+                <span>不会包含访问密钥；系统强制边界始终生效。</span>
+                <button type="button" class="btn ghost small" onclick={() => void mwRefreshPromptDefaults()}>更新自动生成内容</button>
+                <button type="button" class="btn ghost small" disabled={!mwPromptEdited[mwPromptTab]} onclick={mwRestorePrompt}>恢复自动生成</button>
+              </div>
+            {/if}
+          </div>
+        </details>
         <div class="md-bound">
           <b>边界说明（已机制化写入任务，请确认）</b>
           <ul>
@@ -5173,6 +5303,7 @@
   .foot-os, .cs-os { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
   .foot-os { cursor: pointer; border-radius: 5px; padding: 0 3px; margin-left: -3px; }
   .foot-os:hover { background: var(--accent-soft); color: var(--text); }
+  .foot-os :global(svg.distro) { transform: translateY(1px); }
   .cs-os { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   /* ★ 上移 1px 不是玄学：align-items:center 对齐的是**盒子**，而文字行盒底下有一截没人用的
      降部空间（Ubuntu/22.04 这类没有 g/p/y），于是「看得见的字」整体偏上、图标按盒居中就显得低。
@@ -5202,6 +5333,7 @@
   /* 启动页：远程连接的目标机器（占站点选择器的位子——那台机器就是本次对话的对象） */
   .ssh-target { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--rail); color: var(--dim); font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
   .ssh-target :global(svg) { color: var(--faint); flex: none; }
+  .ssh-target :global(svg.distro) { transform: translateY(1px); }
   .ssh-host { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92em; background: var(--accent-soft); border-radius: 5px; padding: 1px 5px; }
   .ssh-key-row { display: flex; gap: 6px; align-items: center; }
   .ssh-key-row .tin { flex: 1; min-width: 0; }
@@ -5376,7 +5508,30 @@
   .cs-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
   .cs-main b { font-weight: 500; font-size: 13px; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   /* 连接副标题（gcmsp_… · 平台 / Ubuntu … LTS 之类）：更小更淡，让连接名更突出 */
-  .cs-main small { color: var(--faint); font-size: 10px; line-height: 1.25; }
+  .cs-main small {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    color: var(--faint);
+    font-size: 10px;
+    line-height: 1.25;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .cs-main small.cs-os {
+    display: flex;
+    align-items: center;
+  }
+  .cs-main small.cs-os :global(svg.distro) {
+    transform: translateY(1px);
+  }
+  .cs-os-label {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   .cs-check { color: var(--accent); flex: none; font-size: 13px; }
   .cs-div { height: 1px; background: var(--border); margin: 3.5px 4px; }
   /* 动作行是单行：比原来(7px)收，但别收到发挤——padding 5.5px + line-height 1.3 落在约 28px，
@@ -5537,6 +5692,18 @@
   /* 只在内容真滑到页头底下时才抬升。border 只改 color 不改宽度 —— 改宽度会让下面整块跳 1px。 */
   .thread-head.elevated { border-bottom-color: transparent; }
   .thread-head.elevated::after { opacity: 1; }
+  /* 托管页头使用独立 hairline：透明 border 继续占位，避免内容上下跳动；实际细线只画一次，
+     并在滚动阴影出现时淡出，杜绝两层边界叠在一起。 */
+  .thread-head.managed-head { border-bottom-color: transparent; }
+  .thread-head.managed-head::before {
+    content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 1px;
+    background: rgba(30, 25, 15, .045); transform-origin: bottom;
+    opacity: 1; transition: opacity .18s ease; pointer-events: none;
+  }
+  .thread-head.managed-head.elevated::before { opacity: 0; }
+  @media (min-resolution: 2dppx) {
+    .thread-head.managed-head::before { transform: scaleY(.5); }
+  }
   /* 侧栏收起：红绿灯 + 悬浮的折叠/搜索钮压在内容区左上，页头统一左让位（全部视图受益）。
      mac 窗口态 140px（红绿灯≈70 + 两钮）；全屏/Windows 无红绿灯（钮在 left:12），100px 够。 */
   .app.rail-collapsed .thread-head { padding-left: 140px; }
@@ -5544,6 +5711,8 @@
   /* 页头右侧操作聚拢成组贴右（th-info 撑开剩余空间，组内间距统一） */
   .th-actions { display: flex; align-items: center; gap: 8px; flex: none; }
   .th-info b { display: block; font-size: 15px; line-height: 1.35; }
+  .th-info b.th-title { display: inline-flex; align-items: center; gap: 7px; }
+  .th-title :global(svg) { flex: none; color: var(--dim); }
   .th-info small { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; color: var(--dim); font-size: 12px; margin-top: 2px; }
   .btag { display: inline-flex; align-items: center; gap: 4px; }
   .thread { flex: 1; overflow-y: auto; }
@@ -5768,8 +5937,22 @@
   .permit-act .btn { flex: 1; }
   .cf-mark { flex: none; display: inline-block; vertical-align: middle; }
   .hero-btns { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
-  .sec-acts { display: inline-flex; gap: 6px; align-items: center; }
-  .sec-acts .btn { display: inline-flex; align-items: center; gap: 5px; }
+  .setup-add { position: relative; display: inline-flex; }
+  .setup-add-trigger { width: 27px; height: 27px; padding: 0; }
+  .setup-add-trigger.open { color: var(--text); background: #f1efe9; }
+  .setup-add-menu {
+    position: absolute; z-index: 8; top: calc(100% + 5px); right: 0; width: 216px; padding: 5px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    box-shadow: 0 10px 28px rgba(30, 25, 15, .15); animation: pop .1s ease-out;
+  }
+  .setup-add-menu button {
+    width: 100%; min-height: 34px; padding: 7px 9px; border: 0; border-radius: 7px; background: none;
+    display: flex; align-items: center; gap: 9px; color: var(--text); cursor: pointer; text-align: left;
+    font: inherit; font-size: 12.5px; font-weight: 500; letter-spacing: 0; text-transform: none;
+  }
+  .setup-add-menu button:hover { background: #f4f3ef; }
+  .setup-add-menu button:disabled { opacity: .5; cursor: default; }
+  .setup-add-menu button :global(svg) { flex: none; color: var(--dim); }
   .cf-modal { width: min(440px, 94vw); max-height: 88vh; }
   .cf-step { border-top: 0.5px solid var(--border); padding-top: 12px; margin-top: 6px; }
   .cf-step:first-child { border-top: none; padding-top: 0; margin-top: 0; }
@@ -5791,7 +5974,12 @@
   .cf-perms-toggle:hover { color: var(--text); }
   .cf-chev { flex: none; transition: transform .12s; }
   .cf-chev.open { transform: rotate(180deg); }
-  .cf-proj-in { border: none; background: none; font-size: 13px; color: var(--text); padding: 3px 6px; min-width: 150px; outline: none; }
+  /* 启动页底栏空间不足时先收项目名，避免它把后面的风格/权限控件挤到一起。 */
+  .cf-proj-in {
+    flex: 0 1 190px; width: 190px; min-width: 72px; max-width: 190px;
+    border: none; background: none; font-size: 13px; color: var(--text); padding: 3px 6px; outline: none;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
   .cf-proj-in::placeholder { color: #b3ada2; }
   .cb-prev { position: relative; display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; font-size: 12px; padding: 3px 8px; border: none; background: none; color: var(--accent); cursor: pointer; font-weight: 500; border-radius: 6px; }
   .cb-prev:hover:not(:disabled) { background: var(--rail); }
@@ -5987,13 +6175,19 @@
   .ss-seg.ss-pop { position: relative; cursor: default; }
   .ss-seg.ss-pop:hover .ss-lbl { color: var(--dim); }
   .ss-pop-menu {
-    display: none; position: absolute; top: calc(100% + 5px); left: -8px; z-index: 60;
+    display: flex; position: absolute; top: calc(100% + 5px); left: -8px; z-index: 60;
     min-width: 170px; flex-direction: column; gap: 1px; padding: 4px;
     background: #fff; border: 1px solid var(--border2); border-radius: 10px; box-shadow: 0 8px 26px rgba(30, 25, 15, .16);
+    opacity: 0; visibility: hidden; transform: translateY(-2px); pointer-events: auto;
+    transition: opacity .08s ease .12s, transform .08s ease .12s, visibility 0s linear .2s;
   }
-  /* 透明桥：填掉触发器与弹层之间那 5px 间隙，鼠标移过去不会中断 hover（弹层是 .ss-pop 的后代） */
-  .ss-pop-menu::before { content: ''; position: absolute; left: 0; right: 0; top: -5px; height: 5px; }
-  .ss-seg.ss-pop:hover .ss-pop-menu { display: flex; }
+  /* 扩大透明通道，并延迟收起；斜着移入菜单时也不会因短暂离开触发文字而消失。 */
+  .ss-pop-menu::before { content: ''; position: absolute; left: -8px; right: -8px; top: -10px; height: 12px; }
+  .ss-seg.ss-pop:hover .ss-pop-menu,
+  .ss-seg.ss-pop:focus-within .ss-pop-menu {
+    opacity: 1; visibility: visible; transform: translateY(0);
+    transition-delay: 0s;
+  }
   .ss-pop-menu .md-exc { width: 100%; margin-left: 0; }
   .mb-trend { display: inline-flex; align-items: flex-end; gap: 2px; height: 12px; font-size: 10.5px; color: var(--faint); }
   .mb-trend i { display: inline-block; width: 3px; background: var(--accent); border-radius: 1px; opacity: .7; }
@@ -6034,6 +6228,19 @@
   .md-plan { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; }
   .md-plan textarea { font-size: 12.5px; line-height: 1.6; }
   .md-genrow { display: flex; align-items: center; gap: 10px; margin: 6px 0 10px; }
+  .md-prompts { border: 1px solid var(--line); border-radius: 10px; background: #fff; margin: 8px 0; }
+  .md-prompts > summary { list-style: none; cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 14px; }
+  .md-prompts > summary::-webkit-details-marker { display: none; }
+  .md-prompts summary span { display: grid; gap: 3px; }
+  .md-prompts summary small { color: var(--dim); font-weight: 400; }
+  .md-prompts summary em { color: var(--accent); font-style: normal; font-size: 12px; white-space: nowrap; }
+  .md-prompts-body { border-top: 1px solid var(--line); padding: 12px 14px 14px; display: grid; gap: 10px; }
+  .md-prompt-tabs { width: max-content; }
+  .md-prompt-text { width: 100%; min-height: 260px; resize: vertical; font: 12.5px/1.65 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .md-prompt-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .md-prompt-actions > span { margin-right: auto; color: var(--dim); font-size: 12px; }
+  .md-prompt-state, .md-prompt-error { padding: 20px 0; color: var(--dim); }
+  .md-prompt-error { color: var(--err); display: flex; align-items: center; gap: 8px; }
   .md-bound { border: 1px solid #e5d9b8; background: #fdf9ec; border-radius: 10px; padding: 10px 14px; font-size: 12.5px; margin: 8px 0; }
   .md-bound ul { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
   .md-badge.lv { background: #e7ecf7; color: #3a5da8; }
