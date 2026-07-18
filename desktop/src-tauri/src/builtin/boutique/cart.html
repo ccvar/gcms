@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>购物袋 · 2 件 — 玄金漆作</title>
+<meta name="description" content="玄金漆作购物袋：袋中器物保留 48 小时。顺丰保价寄送，木箱装裱，未刻字可七天退换。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23141210'/%3E%3Ccircle cx='16' cy='14.5' r='7.5' fill='none' stroke='%23C8A566' stroke-width='2'/%3E%3Cpath d='M8 25h16' stroke='%23C8A566' stroke-width='1.5'/%3E%3C/svg%3E">
+<style>
+  :root {
+    /* ——— 设计令牌（与 index.html 同一套，改色板只改这里）——— */
+    --bg:      #141210;   /* 墨黑 */
+    --surface: #1C1915;   /* 卡片底 */
+    --text:    #EDE5D4;   /* 象牙白正文 14.9:1 on --bg */
+    --muted:   #A89C86;   /* 次要文字 6.9:1 on --bg · 6.5:1 on --surface */
+    --accent:  #C8A566;   /* 唯一强调色 香槟金 8.0:1 on --bg */
+    --radius:  2px;
+
+    --accent-bright: #D9BC82;   /* hover 10.2:1 on --bg */
+    --gold-soft:     #262013;   /* 金染底：--accent 落其上 7.0:1 */
+    --on-accent:     #171410;   /* 金底墨字 7.9:1 */
+
+    --line:        #2B261E;
+    --line-strong: #453C2C;
+    --lac-1: #221E18;
+    --lac-2: #2B261E;
+    --lac-3: #3A332A;
+    --lac-4: #4E4536;
+
+    --s1: 4px;  --s2: 8px;  --s3: 12px; --s4: 16px;
+    --s5: 24px; --s6: 40px; --s7: 64px; --s8: 96px;
+
+    --fs-xs: 12px; --fs-sm: 14px; --fs-base: 16px;
+    --fs-md: 20px; --fs-lg: 28px; --fs-xl: 40px;
+
+    --font-display: Georgia, "Songti SC", "STSong", "SimSun", "Noto Serif SC", serif;
+    --font-body: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+                 "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+                 "Noto Sans SC", "Source Han Sans SC", Roboto, Arial, sans-serif;
+
+    --container: 1040px;
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-body);
+    font-size: var(--fs-base);
+    line-height: 1.75;
+    letter-spacing: .02em;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1, h2, h3 {
+    margin: 0;
+    font-family: var(--font-display);
+    font-weight: 400;
+    line-height: 1.25;
+    letter-spacing: .04em;
+  }
+  p { margin: 0; }
+  ul { margin: 0; padding: 0; list-style: none; }
+  img, svg { display: block; max-width: 100%; }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+    transition: color .2s ease, border-color .2s ease, background .2s ease;
+  }
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: var(--radius);
+  }
+
+  .wrap {
+    width: 100%;
+    max-width: var(--container);
+    margin: 0 auto;
+    padding-left: var(--s5);
+    padding-right: var(--s5);
+  }
+
+  .vh {
+    position: absolute;
+    width: 1px; height: 1px;
+    margin: -1px; padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .eyebrow {
+    font-size: var(--fs-sm);
+    color: var(--accent);
+    letter-spacing: .22em;
+    text-transform: uppercase;
+  }
+
+  /* ═══ 顶部 + 门头（同 index）═══ */
+  .topline {
+    border-bottom: 1px solid var(--line);
+    font-size: var(--fs-xs);
+    color: var(--muted);
+    letter-spacing: .14em;
+  }
+  .topline .wrap {
+    display: flex;
+    justify-content: center;
+    padding-top: var(--s2);
+    padding-bottom: var(--s2);
+    text-align: center;
+  }
+  .masthead { border-bottom: 1px solid var(--line); padding-top: var(--s6); }
+  .brand {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--s3);
+    width: fit-content;
+    margin: 0 auto;
+  }
+  .brand:hover .brand-name { color: var(--accent-bright); }
+  .brand-name {
+    font-family: var(--font-display);
+    font-size: var(--fs-lg);
+    letter-spacing: .5em;
+    text-indent: .5em;
+    color: var(--text);
+    transition: color .2s ease;
+  }
+  .brand-sub {
+    font-size: var(--fs-xs);
+    color: var(--muted);
+    letter-spacing: .34em;
+    text-indent: .34em;
+    text-transform: uppercase;
+  }
+  .nav {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--s5) var(--s6);
+    margin-top: var(--s5);
+    padding-bottom: var(--s4);
+    font-size: var(--fs-sm);
+  }
+  .nav a {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s2);
+    min-height: 44px;
+    color: var(--muted);
+    letter-spacing: .12em;
+    border-bottom: 1px solid transparent;
+  }
+  .nav a:hover { color: var(--text); border-bottom-color: var(--accent); }
+  .nav a[aria-current="page"] { color: var(--text); border-bottom-color: var(--accent); }
+  .nav .bag-link { color: var(--accent); }
+  .nav .bag-link:hover { color: var(--accent-bright); border-bottom-color: var(--accent-bright); }
+  .bag-n {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    border: 1px solid var(--accent);
+    border-radius: 50%;
+    font-size: var(--fs-xs);
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--s2);
+    min-height: 48px;
+    padding: 0 var(--s6);
+    border: 1px solid transparent;
+    border-radius: var(--radius);
+    font-family: var(--font-body);
+    font-size: var(--fs-sm);
+    font-weight: 600;
+    letter-spacing: .12em;
+    cursor: pointer;
+    transition: background .2s ease, border-color .2s ease, color .2s ease;
+  }
+  .btn-gold { background: var(--accent); color: var(--on-accent); }
+  .btn-gold:hover { background: var(--accent-bright); color: var(--on-accent); }
+  .btn-ghost { border-color: var(--line-strong); color: var(--text); }
+  .btn-ghost:hover { border-color: var(--accent); color: var(--accent-bright); }
+  .btn-block { width: 100%; }
+
+  .demo-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s2);
+    padding: var(--s1) var(--s3);
+    border: 1px dashed var(--line-strong);
+    border-radius: var(--radius);
+    color: var(--muted);
+    font-size: var(--fs-xs);
+    letter-spacing: .1em;
+  }
+
+  /* 插画调色（class 制，同 index） */
+  .fg  { fill: var(--accent); }
+  .fgb { fill: var(--accent-bright); }
+  .fmu { fill: var(--muted); }
+  .f1  { fill: var(--lac-1); }
+  .f2  { fill: var(--lac-2); }
+  .f3  { fill: var(--lac-3); }
+  .f4  { fill: var(--lac-4); }
+  .kg  { fill: none; stroke: var(--accent); }
+  .kgb { fill: none; stroke: var(--accent-bright); }
+  .kmu { fill: none; stroke: var(--muted); }
+  .k3  { fill: none; stroke: var(--lac-3); }
+  .k4  { fill: none; stroke: var(--lac-4); }
+
+  /* ═══ 袋头 ═══ */
+  .bag-head {
+    padding-top: var(--s7);
+    padding-bottom: var(--s6);
+    text-align: center;
+  }
+  .bag-head h1 { margin-top: var(--s3); font-size: var(--fs-xl); letter-spacing: .12em; }
+  .bag-head p { margin-top: var(--s4); color: var(--muted); font-size: var(--fs-sm); }
+  .bag-head .demo-badge { margin-top: var(--s4); }
+
+  /* ═══ 袋体 ═══ */
+  .bag-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+    gap: var(--s7);
+    align-items: start;
+    padding-bottom: var(--s8);
+  }
+
+  /* 条目 */
+  .items { border-top: 1px solid var(--line-strong); }
+  .item {
+    display: grid;
+    grid-template-columns: 108px minmax(0, 1fr) auto;
+    gap: var(--s5);
+    align-items: center;
+    padding: var(--s5) 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .item-thumb {
+    border: 1px solid var(--line);
+    background: var(--surface);
+  }
+  .item-thumb svg { width: 100%; height: auto; }
+  .item-no {
+    font-size: var(--fs-xs);
+    color: var(--muted);
+    letter-spacing: .2em;
+  }
+  .item-name {
+    margin-top: var(--s1);
+    font-size: var(--fs-md);
+    letter-spacing: .08em;
+  }
+  .item-name a { border-bottom: 1px solid transparent; }
+  .item-name a:hover { color: var(--accent-bright); border-bottom-color: var(--accent); }
+  .item-spec {
+    margin-top: var(--s2);
+    font-size: var(--fs-sm);
+    color: var(--muted);
+  }
+  .item-one {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s2);
+    margin-top: var(--s3);
+    font-size: var(--fs-xs);
+    color: var(--accent);
+    letter-spacing: .1em;
+  }
+  .item-one svg { flex: none; }
+  .item-side {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: var(--s3);
+  }
+  .item-price {
+    font-family: var(--font-display);
+    font-size: var(--fs-md);
+    letter-spacing: .04em;
+    font-variant-numeric: tabular-nums;
+  }
+  /* 移除 = 隐藏 checkbox + label，纯 CSS */
+  .item-rm {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s1);
+    min-height: 44px;
+    font-size: var(--fs-sm);
+    color: var(--muted);
+    cursor: pointer;
+    border-bottom: 1px solid transparent;
+    transition: color .2s ease, border-color .2s ease;
+  }
+  .item-rm:hover { color: var(--text); border-bottom-color: var(--line-strong); }
+  .vh:focus-visible ~ .bag-grid .item-rm,
+  .item-rm:has(:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .keep-note {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--s3);
+    margin-top: var(--s5);
+    font-size: var(--fs-sm);
+    color: var(--muted);
+  }
+  .keep-note svg { flex: none; margin-top: 5px; }
+
+  /* ═══ 结算卡 ═══ */
+  .summary {
+    position: sticky;
+    top: var(--s5);
+    border: 1px solid var(--line-strong);
+    background: var(--surface);
+    padding: var(--s5);
+  }
+  .summary h2 {
+    font-size: var(--fs-md);
+    letter-spacing: .14em;
+    padding-bottom: var(--s4);
+    border-bottom: 1px solid var(--line);
+  }
+  .sum-rows { padding-top: var(--s4); }
+  .sum-row {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--s4);
+    padding: var(--s2) 0;
+    font-size: var(--fs-sm);
+    color: var(--muted);
+  }
+  .sum-row b { color: var(--text); font-weight: 400; font-variant-numeric: tabular-nums; }
+  .sum-row .free { color: var(--accent); letter-spacing: .08em; }
+  .sum-total {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: var(--s4);
+    margin-top: var(--s3);
+    padding-top: var(--s4);
+    border-top: 1px solid var(--line);
+  }
+  .sum-total span { font-size: var(--fs-sm); color: var(--muted); letter-spacing: .1em; }
+  .sum-total b {
+    font-family: var(--font-display);
+    font-weight: 400;
+    font-size: var(--fs-lg);
+    letter-spacing: .04em;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .gift { margin-top: var(--s5); }
+  .gift label {
+    display: block;
+    font-size: var(--fs-xs);
+    font-weight: 600;
+    color: var(--muted);
+    letter-spacing: .22em;
+    text-transform: uppercase;
+    margin-bottom: var(--s2);
+  }
+  .gift textarea {
+    width: 100%;
+    min-height: 72px;
+    padding: var(--s3) var(--s4);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--radius);
+    background: var(--bg);
+    color: var(--text);
+    font: inherit;
+    font-size: var(--fs-sm);
+    line-height: 1.7;
+    resize: vertical;
+    transition: border-color .2s ease;
+  }
+  .gift textarea::placeholder { color: var(--muted); opacity: 1; }
+  .gift textarea:hover { border-color: var(--accent); }
+  .gift textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .gift p { margin-top: var(--s2); font-size: var(--fs-xs); color: var(--muted); }
+
+  .summary .btn-gold { margin-top: var(--s5); }
+  .sum-foot {
+    margin-top: var(--s4);
+    text-align: center;
+    font-size: var(--fs-xs);
+    color: var(--muted);
+    letter-spacing: .08em;
+  }
+  .sum-foot a { color: var(--accent); border-bottom: 1px solid transparent; }
+  .sum-foot a:hover { color: var(--accent-bright); border-bottom-color: var(--accent-bright); }
+
+  /* ═══ 纯 CSS「移除」———
+       两件条目各配一个隐藏 checkbox（在 .bag 顶部），:has() 命中后：
+       - 隐藏对应条目
+       - 切换四种结算状态（两件 / 只剩其一 / 空袋）
+       刷新页面即可恢复示例商品。 ═══ */
+  .sum-a, .sum-b, .bag-empty { display: none; }
+
+  .bag:has(#rm-a:checked) .item-a { display: none; }
+  .bag:has(#rm-b:checked) .item-b { display: none; }
+
+  .bag:has(#rm-a:checked):not(:has(#rm-b:checked)) .sum-ab { display: none; }
+  .bag:has(#rm-a:checked):not(:has(#rm-b:checked)) .sum-b  { display: block; }
+  .bag:has(#rm-b:checked):not(:has(#rm-a:checked)) .sum-ab { display: none; }
+  .bag:has(#rm-b:checked):not(:has(#rm-a:checked)) .sum-a  { display: block; }
+
+  .bag:has(#rm-a:checked):has(#rm-b:checked) .bag-grid  { display: none; }
+  .bag:has(#rm-a:checked):has(#rm-b:checked) .bag-empty { display: flex; }
+
+  /* 空袋态 */
+  .bag-empty {
+    flex-direction: column;
+    align-items: center;
+    gap: var(--s4);
+    padding: var(--s8) var(--s5);
+    margin-bottom: var(--s8);
+    border: 1px dashed var(--line-strong);
+    text-align: center;
+  }
+  .bag-empty h2 { font-size: var(--fs-lg); letter-spacing: .1em; }
+  .bag-empty p { color: var(--muted); font-size: var(--fs-sm); max-width: 26em; }
+  .bag-empty .btn { margin-top: var(--s3); }
+
+  /* ═══ 细则 ═══ */
+  .terms { border-top: 1px solid var(--line); background: var(--surface); }
+  .terms-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--s6);
+    padding-top: var(--s7);
+    padding-bottom: var(--s7);
+  }
+  .term { display: flex; gap: var(--s4); align-items: flex-start; }
+  .term svg { flex: none; margin-top: 4px; }
+  .term h3 { font-size: var(--fs-base); letter-spacing: .08em; }
+  .term p { margin-top: var(--s2); font-size: var(--fs-sm); color: var(--muted); }
+
+  /* ═══ 页脚 ═══ */
+  .footer { border-top: 1px solid var(--line); }
+  .footer-base {
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--s3);
+    padding-top: var(--s5);
+    padding-bottom: var(--s6);
+    font-size: var(--fs-xs);
+    color: var(--muted);
+    letter-spacing: .08em;
+  }
+  .footer-base a { color: var(--muted); border-bottom: 1px solid transparent; }
+  .footer-base a:hover { color: var(--accent-bright); border-bottom-color: var(--accent); }
+
+  /* ═══ 响应式 ═══ */
+  @media (max-width: 960px) {
+    .bag-grid { grid-template-columns: 1fr; gap: var(--s6); }
+    .summary { position: static; }
+    .terms-grid { grid-template-columns: 1fr; gap: var(--s5); }
+  }
+  @media (max-width: 560px) {
+    :root { --fs-xl: 30px; --fs-lg: 24px; }
+    .wrap { padding-left: var(--s4); padding-right: var(--s4); }
+    .masthead { padding-top: var(--s5); }
+    .brand-name { letter-spacing: .3em; text-indent: .3em; }
+    .nav { gap: var(--s2) var(--s4); }
+    .bag-head { padding-top: var(--s6); padding-bottom: var(--s5); }
+    .bag-grid { padding-bottom: var(--s7); }
+    .item { grid-template-columns: 80px minmax(0, 1fr); gap: var(--s4); }
+    .item-side {
+      grid-column: 2;
+      flex-direction: row;
+      justify-content: space-between;
+      align-items: center;
+      width: 100%;
+    }
+    .summary { padding: var(--s4); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ═══ 顶部一句 ═══ -->
+<div class="topline">
+  <div class="wrap">每件由一位漆人从头做到尾 · 顺丰保价寄送 · 工作室每周五六可预约到访</div>
+</div>
+
+<!-- ═══ 门头 ═══ -->
+<header class="masthead">
+  <div class="wrap">
+    <a class="brand" href="index.html">
+      <svg width="40" height="40" viewBox="0 0 40 40" aria-hidden="true">
+        <rect x="1.5" y="1.5" width="37" height="37" class="kg" stroke-width="1.5"/>
+        <rect x="6.5" y="6.5" width="27" height="27" class="kg" stroke-width="1" opacity=".45"/>
+        <circle cx="20" cy="18" r="7" class="kg" stroke-width="1.5"/>
+        <path d="M11 30h18" class="kg" stroke-width="1.5"/>
+      </svg>
+      <span class="brand-name">玄金漆作</span>
+      <span class="brand-sub">Xuanjin Lacquer Atelier</span>
+    </a>
+
+    <nav class="nav" aria-label="主导航">
+      <a href="index.html">本季在售</a>
+      <a href="product.html">主打「望月」</a>
+      <a href="index.html#journal">漆人手记</a>
+      <a href="index.html#visit">预约到访</a>
+      <a class="bag-link" href="cart.html" aria-current="page" aria-label="购物袋，2 件，当前页">购物袋 <span class="bag-n" aria-hidden="true">2</span></a>
+    </nav>
+  </div>
+</header>
+
+<main class="bag">
+
+  <!-- 「移除」的开关：checkbox 藏在最外层，供 :has() 使用 -->
+  <input class="vh" type="checkbox" id="rm-a" aria-label="移除：望月首饰盒">
+  <input class="vh" type="checkbox" id="rm-b" aria-label="移除：云雷纹茶则">
+
+  <!-- ═══ 袋头 ═══ -->
+  <header class="wrap bag-head">
+    <p class="eyebrow">Shopping Bag</p>
+    <h1>购物袋</h1>
+    <p>孤品与小批次器物，袋中为你保留 48 小时，逾时释出。</p>
+    <p class="demo-badge">示例内容 · 请替换（「移除」为纯 CSS 演示，刷新即恢复）</p>
+  </header>
+
+  <div class="wrap bag-grid">
+
+    <!-- 条目 -->
+    <section aria-label="袋中器物">
+      <ul class="items">
+
+        <!-- A · 望月首饰盒 -->
+        <li class="item item-a">
+          <a class="item-thumb" href="product.html" aria-label="查看：望月首饰盒">
+            <svg viewBox="0 0 108 108" role="img" aria-label="示例缩略图：望月首饰盒">
+              <rect width="108" height="108" class="f1"/>
+              <rect x="24" y="34" width="60" height="48" rx="4" class="f3"/>
+              <rect x="24" y="34" width="60" height="48" rx="4" class="k4" stroke-width="1.2"/>
+              <path d="M24 48h60" class="k4" stroke-width="1"/>
+              <circle cx="54" cy="62" r="11" class="kg" stroke-width="1.4"/>
+              <path d="M36 74c6-2 12-2 18 0s12 2 18 0" class="kg" stroke-width=".9" opacity=".7"/>
+              <ellipse cx="54" cy="90" rx="32" ry="3.5" class="f2" opacity=".8"/>
+            </svg>
+          </a>
+          <div>
+            <p class="item-no">No.07 · 〇七之三</p>
+            <h2 class="item-name"><a href="product.html">「望月」首饰盒</a></h2>
+            <p class="item-spec">内里：本色苎麻 · 刻字：无</p>
+            <p class="item-one">
+              <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.3" class="kg" stroke-width="1.5"/><path d="M8 4.6V8l2.3 1.6" class="kg" stroke-width="1.5" stroke-linecap="round"/></svg>
+              孤品仅此一件 · 已为你保留
+            </p>
+          </div>
+          <div class="item-side">
+            <p class="item-price">¥ 3,680</p>
+            <label class="item-rm" for="rm-a">移除</label>
+          </div>
+        </li>
+
+        <!-- B · 云雷纹茶则 -->
+        <li class="item item-b">
+          <a class="item-thumb" href="product.html" aria-label="查看：云雷纹茶则">
+            <svg viewBox="0 0 108 108" role="img" aria-label="示例缩略图：云雷纹茶则">
+              <rect width="108" height="108" class="f1"/>
+              <g transform="rotate(-58 54 52)">
+                <path d="M54 16c9 0 13 9 13 24 0 20-3.5 41-6 53-1.8 8-12.2 8-14 0-2.5-12-6-33-6-53 0-15 4-24 13-24z" class="f3"/>
+                <path d="M54 16c9 0 13 9 13 24 0 20-3.5 41-6 53-1.8 8-12.2 8-14 0-2.5-12-6-33-6-53 0-15 4-24 13-24z" class="k4" stroke-width="1"/>
+                <path d="M49 78h10M49 78v4h7v-2h-4" class="kg" stroke-width=".9" fill="none"/>
+              </g>
+              <ellipse cx="54" cy="88" rx="30" ry="3.5" class="f2" opacity=".8"/>
+            </svg>
+          </a>
+          <div>
+            <p class="item-no">No.08 · 〇八之一</p>
+            <h2 class="item-name"><a href="product.html">云雷纹茶则</a></h2>
+            <p class="item-spec">竹胎裱麻 · 柄部描金雷纹</p>
+          </div>
+          <div class="item-side">
+            <p class="item-price">¥ 980</p>
+            <label class="item-rm" for="rm-b">移除</label>
+          </div>
+        </li>
+
+      </ul>
+
+      <p class="keep-note">
+        <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M8 1.8l6 2.4v3.6c0 3.6-2.5 6.4-6 7.4-3.5-1-6-3.8-6-7.4V4.2z" class="kg" stroke-width="1.4" stroke-linejoin="round"/>
+          <path d="M5.6 8.1l1.8 1.8 3.2-3.6" class="kg" stroke-width="1.4" stroke-linecap="round"/>
+        </svg>
+        每件器物皆为孤品或小批次，无法调整数量。移除后若被他人带走，恕不另行保留。
+      </p>
+    </section>
+
+    <!-- 结算 -->
+    <aside class="summary" aria-label="结算">
+      <h2>结算</h2>
+
+      <!-- 两件都在 -->
+      <div class="sum-ab">
+        <div class="sum-rows">
+          <p class="sum-row"><span>器物合计 · 2 件</span><b>¥ 4,660</b></p>
+          <p class="sum-row"><span>顺丰保价寄送</span><b class="free">免费</b></p>
+          <p class="sum-row"><span>桐木装裱箱</span><b class="free">随器附赠</b></p>
+        </div>
+        <p class="sum-total"><span>应付</span><b>¥ 4,660</b></p>
+      </div>
+
+      <!-- 只剩 A -->
+      <div class="sum-a">
+        <div class="sum-rows">
+          <p class="sum-row"><span>器物合计 · 1 件</span><b>¥ 3,680</b></p>
+          <p class="sum-row"><span>顺丰保价寄送</span><b class="free">免费</b></p>
+          <p class="sum-row"><span>桐木装裱箱</span><b class="free">随器附赠</b></p>
+        </div>
+        <p class="sum-total"><span>应付</span><b>¥ 3,680</b></p>
+      </div>
+
+      <!-- 只剩 B -->
+      <div class="sum-b">
+        <div class="sum-rows">
+          <p class="sum-row"><span>器物合计 · 1 件</span><b>¥ 980</b></p>
+          <p class="sum-row"><span>顺丰保价寄送</span><b class="free">免费</b></p>
+          <p class="sum-row"><span>桐木装裱箱</span><b class="free">随器附赠</b></p>
+        </div>
+        <p class="sum-total"><span>应付</span><b>¥ 980</b></p>
+      </div>
+
+      <div class="gift">
+        <label for="gift-note">随箱贺卡（可留空）</label>
+        <textarea id="gift-note" placeholder="手写誊抄进卡片，例：给母亲，六十岁生辰快乐。"></textarea>
+        <p>贺卡由工作室代为手写，不加收费用。</p>
+      </div>
+
+      <!-- 示例站点：接入支付后把 button 换成真实结算入口 -->
+      <button class="btn btn-gold btn-block" type="button">去结算 · 顺丰保价寄出</button>
+      <p class="sum-foot">还想再看看？<a href="index.html#pieces">回本季在售</a></p>
+    </aside>
+  </div>
+
+  <!-- 空袋态：两件都移除时出现 -->
+  <div class="wrap">
+    <div class="bag-empty">
+      <svg width="44" height="44" viewBox="0 0 44 44" aria-hidden="true">
+        <path d="M12 16h20l-2 22H14z" class="k4" stroke-width="2" stroke-linejoin="round"/>
+        <path d="M17 16v-3a5 5 0 0 1 10 0v3" class="kg" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+      <h2>袋子空了</h2>
+      <p>本季六件，卖完即止。移除的器物不会保留——喜欢的东西，别想太久。</p>
+      <a class="btn btn-ghost" href="index.html#pieces">回去看看这六件</a>
+      <p class="demo-badge">示例交互 · 刷新页面即恢复袋中商品</p>
+    </div>
+  </div>
+
+  <!-- ═══ 细则 ═══ -->
+  <section class="terms" id="terms" aria-label="寄送与退换">
+    <div class="wrap terms-grid">
+      <div class="term">
+        <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="3" y="7" width="18" height="13" class="kg" stroke-width="1.6"/>
+          <path d="M3 11h18M12 7V4M8 4h8" class="kg" stroke-width="1.6" stroke-linecap="round"/>
+        </svg>
+        <div>
+          <h3>顺丰保价 · 全额投保</h3>
+          <p>器物按售价投保，木箱内衬羊毛毡。运输破损凭开箱视频照价重制或全退。</p>
+        </div>
+      </div>
+      <div class="term">
+        <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 3l8 3.2v5c0 5-3.4 8.8-8 10-4.6-1.2-8-5-8-10v-5z" class="kg" stroke-width="1.6" stroke-linejoin="round"/>
+          <path d="M8.6 12l2.4 2.4 4.4-4.8" class="kg" stroke-width="1.6" stroke-linecap="round"/>
+        </svg>
+        <div>
+          <h3>七天可退 · 刻字除外</h3>
+          <p>未刻字器物签收七日内可退，请保留桐木箱与编号卡。刻字属定制，恕不退换。</p>
+        </div>
+      </div>
+      <div class="term">
+        <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="9" class="kg" stroke-width="1.6"/>
+          <path d="M12 7.5V12l3 2" class="kg" stroke-width="1.6" stroke-linecap="round"/>
+        </svg>
+        <div>
+          <h3>付款后三日内寄出</h3>
+          <p>每件寄出前要做最后一道检漆与拍照存档。着急送礼可写邮件加急，我们尽力。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<!-- ═══ 页脚 ═══ -->
+<footer class="footer">
+  <div class="wrap footer-base">
+    <span>© 2026 玄金漆作 · 示例站点，文字与器物均为占位示例</span>
+    <span><a href="index.html">回本季在售</a> · <a href="product.html">主打「望月」</a> · <a href="index.html#visit">预约到访</a></span>
+  </div>
+</footer>
+
+</body>
+</html>

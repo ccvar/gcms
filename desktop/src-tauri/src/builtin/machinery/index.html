@@ -1,0 +1,867 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Centrapak Machinery &mdash; Packaging Machinery Manufacturer &amp; Exporter | Wuxi, China</title>
+<meta name="description" content="Wuxi Centrapak Packaging Machinery Co., Ltd. — flow wrappers, VFFS baggers, pouch packers and end-of-line cells. 8 standard models with published specs and FOB price bands. Filmed FAT before balance, 72 h spare-parts dispatch.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Crect%20width='32'%20height='32'%20fill='%234F6475'/%3E%3Crect%20x='8'%20y='8'%20width='16'%20height='16'%20fill='none'%20stroke='%23ffffff'%20stroke-width='2'/%3E%3Cpath%20d='M16%202v6M16%2024v6M2%2016h6M24%2016h6'%20stroke='%23ffffff'%20stroke-width='2'/%3E%3Ccircle%20cx='16'%20cy='16'%20r='2.5'%20fill='%23ffffff'/%3E%3C/svg%3E">
+<style>
+  /* ═══════════════════════════════════════════════════════════
+     CENTRAPAK MACHINERY · 外贸重工（包装机械出口商）起始模板
+     受众是海外采购商 → **正文一律英文**；注释给接手的人/AI 看，用中文。
+     气质：冷白底 + 唯一钢蓝灰强调色；工程网格纸、图纸标题栏、尺寸标注线。
+     主心骨是**参数表与型号对比** —— 采购商拿 Excel 比参数，这个站直接把表给他。
+     反双胞胎：factory 是绿味纸灰 + 图纸面板 + Why 卡；这里是冷白 + 满幅网格纸
+     + 对比大表 + 四页贯穿的「图纸标题栏」条（SHEET n/4）。剪影一眼分得开。
+     改色板 = 只改下面 :root，别全站搜替换。
+     ═══════════════════════════════════════════════════════════ */
+  :root{
+    /* ——— 核心契约变量：**四页逐字一致**，不一致＝四套设计系统 ——— */
+    --bg:#F4F7FB;          /* 页面底：带蓝味的冷白 */
+    --surface:#FFFFFF;     /* 卡片/表格底 */
+    --text:#101B26;        /* 正文墨色     16.2:1 on --bg */
+    --muted:#43556A;       /* 次要文字      7.1:1 on --bg · 7.7:1 on --surface */
+    --accent:#4F6475;      /* 唯一强调色·钢蓝灰 hue 217 · 6.7:1 on --bg · 其上白字 7.2:1 */
+    --radius:2px;          /* 近直角＝机加工感；圆角越小越像图纸 */
+
+    /* ——— 强调色的同色相派生（全站只有这一个色相）——— */
+    --accent-deep:#344554; /* hover 加深 9.4:1 on --bg */
+    --accent-soft:#E7EDF1; /* 极浅底（--accent 落其上 6.1:1）*/
+    --accent-line:#B8C5CE; /* 浅底上的强调描边 */
+    --accent-lift:#9CB2C2; /* ★ 深色带专用：--accent 掉进 --ink 里只有 1.9:1，深底一律换它（6.8:1）*/
+
+    /* ——— 深色带（数据带 / FAT 流程 / 页脚）：蓝图夜蓝，不是黑 ——— */
+    --ink:#0A1E3C;         /* 蓝图底 */
+    --ink-2:#12294D;       /* 深底上的抬升面 */
+    --ink-text:#D6E2F2;    /* 深底正文     12.7:1 */
+    --ink-muted:#8FA9CD;   /* 深底次要文字  6.9:1 */
+    --ink-line:#22406E;
+
+    /* ——— 中性描边 + 网格纸（网格线是装饰，不参与文字对比）——— */
+    --line:#DBE4EF;
+    --line-strong:#C2D0E2;
+    --grid:#E4EBF4;        /* 网格纸细线 */
+    --grid-strong:#CEDCEC; /* 网格纸主线（每 5 格一条）*/
+
+    --shadow-sm:0 1px 2px rgba(16,27,38,.06);
+    --shadow-md:0 1px 2px rgba(16,27,38,.06), 0 10px 26px rgba(16,27,38,.09);
+
+    /* ——— 间距刻度 4/8/12/16/24/40/64，别写 13px 这种随手数 ——— */
+    --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px; --s6:40px; --s7:64px;
+
+    /* ——— 字号阶梯 14/16/20/28/40 ——— */
+    --t-xs:14px; --t-sm:16px; --t-md:20px; --t-lg:28px; --t-xl:40px;
+    --t-2xs:11px;          /* 例外档：只给图纸标注/角标这类**标签**用，别拿它排正文 */
+
+    --container:1140px;
+    --measure:660px;       /* 长文阅读宽度上限 */
+
+    --font:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+  }
+
+  /* ——————————————— 基础 ——————————————— */
+  *,*::before,*::after{box-sizing:border-box;}
+  html{-webkit-text-size-adjust:100%;scroll-behavior:smooth;}
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--text);
+    font-family:var(--font);
+    font-size:var(--t-sm);
+    line-height:1.7;
+    -webkit-font-smoothing:antialiased;
+  }
+  h1,h2,h3,h4{margin:0;line-height:1.25;font-weight:700;letter-spacing:-.01em;}
+  p{margin:0;}
+  ul,ol{margin:0;padding:0;list-style:none;}
+  dl,dd{margin:0;}          /* UA 的 dl margin / dd 缩进会把标题栏和参数行撑裂 */
+  a{color:inherit;text-decoration:none;}
+  svg{display:block;max-width:100%;}
+  table{border-collapse:collapse;width:100%;}
+  ::selection{background:var(--accent);color:var(--surface);}
+
+  /* 键盘可达性：全站统一焦点环，绝不 outline:none 了事 */
+  a:focus-visible,button:focus-visible,input:focus-visible,
+  textarea:focus-visible,select:focus-visible,summary:focus-visible{
+    outline:2px solid var(--accent);
+    outline-offset:3px;
+    border-radius:var(--radius);
+  }
+  .ink a:focus-visible,.ink button:focus-visible{outline-color:var(--accent-lift);}
+
+  .wrap{
+    width:100%;
+    max-width:var(--container);
+    margin:0 auto;
+    padding-left:var(--s5);
+    padding-right:var(--s5);
+  }
+  .section{padding:var(--s7) 0;}
+  .skip{
+    position:absolute;left:-9999px;top:var(--s2);
+    background:var(--accent);color:var(--surface);
+    padding:var(--s2) var(--s4);border-radius:var(--radius);z-index:60;
+  }
+  .skip:focus{left:var(--s5);}
+  .sr-only{
+    position:absolute;width:1px;height:1px;padding:0;margin:-1px;
+    overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0;
+  }
+
+  /* ——————————————— 排版原子 ——————————————— */
+  /* 区块小标：等宽 + 图幅区号（HTML 里写成 "SEC 03 / CAPABILITY" 的格式）*/
+  .eyebrow{
+    font-family:var(--mono);font-size:var(--t-xs);
+    letter-spacing:.14em;text-transform:uppercase;
+    color:var(--accent);margin:0 0 var(--s3);
+  }
+  .ink .eyebrow{color:var(--accent-lift);}
+  /* 页面开头的图纸区号标签：小方块 + 边框盒，与 factory 的「横线起手」拉开 */
+  .kick{
+    display:inline-flex;align-items:center;gap:var(--s2);
+    font-family:var(--mono);font-size:var(--t-2xs);
+    letter-spacing:.14em;text-transform:uppercase;color:var(--accent);
+    border:1px solid var(--accent-line);background:var(--surface);
+    padding:var(--s1) var(--s3);border-radius:var(--radius);
+  }
+  .kick::before{content:"";width:8px;height:8px;background:var(--accent);flex:none;}
+  .h2{font-size:var(--t-lg);letter-spacing:-.02em;}
+  .h3{font-size:var(--t-md);}
+  .lede{font-size:var(--t-md);line-height:1.7;color:var(--muted);max-width:var(--measure);}
+  .ink .lede{color:var(--ink-muted);}
+  .muted{color:var(--muted);}
+  .ink .muted{color:var(--ink-muted);}
+  /* 数字一律等宽 + tabular：参数不对齐＝白做 */
+  .num{font-family:var(--mono);font-variant-numeric:tabular-nums;letter-spacing:-.02em;}
+
+  .sec-head{margin-bottom:var(--s6);max-width:var(--measure);}
+  .sec-head p{color:var(--muted);margin-top:var(--s3);}
+  .ink .sec-head p{color:var(--ink-muted);}
+
+  /* 「示例内容」徽标——提醒接手的人这是占位稿 */
+  .demo-badge{
+    display:inline-flex;align-items:center;gap:var(--s2);
+    font-family:var(--mono);font-size:var(--t-2xs);letter-spacing:.04em;
+    color:var(--muted);
+    border:1px dashed var(--line-strong);
+    border-radius:var(--radius);
+    padding:var(--s1) var(--s2);
+    background:var(--surface);
+  }
+  .demo-badge::before{
+    content:"";width:6px;height:6px;border-radius:50%;
+    background:var(--accent);flex:none;
+  }
+  .ink .demo-badge{color:var(--ink-muted);border-color:var(--ink-line);background:transparent;}
+  .ink .demo-badge::before{background:var(--accent-lift);}
+  /* 区块级占位说明 */
+  .placeholder-note{
+    margin-top:var(--s5);font-size:var(--t-xs);color:var(--muted);
+    border-left:2px solid var(--line-strong);padding-left:var(--s3);
+    max-width:var(--measure);line-height:1.8;
+  }
+  .ink .placeholder-note{color:var(--ink-muted);border-left-color:var(--ink-line);}
+
+  /* 尺寸标注线：|——— 文字 ———| 用在能力块和图注下面，是这个站的签名细节 */
+  .dim{
+    display:flex;align-items:center;gap:var(--s3);
+    font-family:var(--mono);font-size:var(--t-2xs);
+    letter-spacing:.08em;text-transform:uppercase;color:var(--accent);
+    margin-top:var(--s4);
+  }
+  .dim::before,.dim::after{content:"";height:1px;background:var(--accent-line);flex:1;min-width:16px;}
+  .ink .dim{color:var(--accent-lift);}
+  .ink .dim::before,.ink .dim::after{background:var(--ink-line);}
+
+  /* ——————————————— 按钮 ——————————————— */
+  .btn{
+    display:inline-flex;align-items:center;justify-content:center;gap:var(--s2);
+    min-height:44px;
+    padding:var(--s3) var(--s5);
+    border-radius:var(--radius);
+    border:1px solid transparent;
+    font:inherit;font-size:var(--t-sm);font-weight:600;
+    cursor:pointer;
+    transition:background-color .16s ease,border-color .16s ease,color .16s ease,transform .16s ease;
+  }
+  .btn:active{transform:translateY(1px);}
+  .btn-primary{background:var(--accent);color:var(--surface);}
+  .btn-primary:hover{background:var(--accent-deep);}
+  .btn-ghost{border-color:var(--line-strong);color:var(--text);background:var(--surface);}
+  .btn-ghost:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-soft);}
+  .ink .btn-ghost{border-color:var(--ink-line);color:var(--ink-text);background:transparent;}
+  .ink .btn-ghost:hover{border-color:var(--accent-lift);color:var(--accent-lift);background:var(--ink-2);}
+  .btn-sm{min-height:36px;padding:var(--s2) var(--s4);font-size:var(--t-xs);}
+
+  .link{
+    display:inline-flex;align-items:center;gap:var(--s2);
+    color:var(--accent);font-weight:600;font-size:var(--t-xs);
+  }
+  .link svg{width:14px;height:14px;transition:transform .16s ease;}
+  .link:hover{color:var(--accent-deep);}
+  .link:hover svg{transform:translateX(3px);}
+  .ink .link{color:var(--accent-lift);}
+  .ink .link:hover{color:var(--surface);}
+
+  /* 型号编码小标签 */
+  .tag{
+    font-family:var(--mono);font-size:var(--t-xs);font-weight:600;
+    color:var(--accent);background:var(--accent-soft);
+    padding:var(--s1) var(--s2);border-radius:var(--radius);
+    letter-spacing:.06em;
+  }
+  .ink .tag{color:var(--accent-lift);background:var(--ink-2);}
+
+  /* ——————————————— 顶条 + 导航（四页共用） ——————————————— */
+  /* 机械外贸站的行规：最上面一条深底微条，放时区/邮箱/响应时效 —— 采购商第一眼找联系方式 */
+  .microbar{background:var(--ink);color:var(--ink-muted);}
+  .microbar-in{
+    display:flex;flex-wrap:wrap;align-items:center;gap:var(--s2) var(--s5);
+    min-height:32px;padding-top:var(--s1);padding-bottom:var(--s1);
+    font-family:var(--mono);font-size:var(--t-2xs);letter-spacing:.06em;
+  }
+  .microbar b{color:var(--ink-text);font-weight:600;}
+  .microbar .mb-right{margin-left:auto;color:var(--accent-lift);}
+  .nav{
+    position:sticky;top:0;z-index:30;
+    background:var(--surface);
+    border-bottom:1px solid var(--line);
+    box-shadow:var(--shadow-sm);
+  }
+  .nav-in{display:flex;align-items:center;gap:var(--s5);min-height:64px;}
+  /* 品牌锁定：定位十字靶标（图纸对位标）+ 单行双色字标。白底方块+山形是 factory 的，别撞 */
+  .brand{display:flex;align-items:center;gap:var(--s3);flex:none;}
+  .brand-mark{width:30px;height:30px;flex:none;color:var(--accent);}
+  .brand-name{
+    font-size:var(--t-md);font-weight:400;letter-spacing:-.01em;
+    color:var(--muted);white-space:nowrap;line-height:1.2;
+  }
+  .brand-name b{font-weight:700;color:var(--text);letter-spacing:-.03em;}
+  .brand:hover .brand-name b{color:var(--accent);}
+  .ink .brand-mark{color:var(--accent-lift);}
+  .ink .brand-name{color:var(--ink-muted);}
+  .ink .brand-name b{color:var(--surface);}
+  .nav-links{display:flex;align-items:center;gap:var(--s4);margin-left:auto;}
+  .nav-links a{
+    font-size:var(--t-xs);color:var(--muted);font-weight:500;
+    padding:var(--s2) var(--s2);border-bottom:2px solid transparent;
+  }
+  .nav-links a:hover{color:var(--accent);background:var(--accent-soft);border-radius:var(--radius);}
+  /* 当前位置：色 + 粗 + 常驻下边线，不只靠颜色。products/product 两页共用 ="true"（集合当前项），
+     ="page" 只给真正的本页 —— 详情页别给 Products 撒谎标 page */
+  .nav-links a[aria-current]{color:var(--accent);font-weight:700;border-bottom-color:var(--accent);}
+  .nav-cta{flex:none;}
+
+  /* ——————————————— 面包屑 ——————————————— */
+  .crumb{
+    display:flex;flex-wrap:wrap;align-items:center;gap:var(--s2);
+    font-family:var(--mono);font-size:var(--t-2xs);letter-spacing:.04em;
+    color:var(--muted);text-transform:uppercase;
+  }
+  .crumb a:hover{color:var(--accent);text-decoration:underline;text-underline-offset:3px;}
+  .crumb li{display:flex;align-items:center;gap:var(--s2);}
+  .crumb li+li::before{content:"/";color:var(--line-strong);}
+  .crumb [aria-current="page"]{color:var(--text);font-weight:600;}
+
+  /* ——————————————— 内页页头 ——————————————— */
+  .phead{padding:var(--s6) 0 0;}
+  .phead h1{font-size:var(--t-xl);letter-spacing:-.035em;line-height:1.1;margin:var(--s4) 0;}
+  .phead .lede{margin-bottom:var(--s5);}
+
+  /* ——————————————— 图纸标题栏条（四页贯穿的签名件） ——————————————— */
+  /* 真图纸右下角的标题栏搬上来做页眉收口：DOC / SHEET n/4 / REV / UNITS / STATUS */
+  .tblock{
+    display:flex;flex-wrap:wrap;
+    border:1px solid var(--line-strong);border-radius:var(--radius);
+    background:var(--surface);overflow:hidden;
+  }
+  .tblock > div{
+    flex:1 1 auto;
+    padding:var(--s2) var(--s4);
+    border-left:1px solid var(--line);
+  }
+  .tblock > div:first-child{border-left:0;}
+  .tblock dt{
+    font-family:var(--mono);font-size:var(--t-2xs);letter-spacing:.12em;
+    text-transform:uppercase;color:var(--muted);
+  }
+  .tblock dd{
+    margin:2px 0 0;font-family:var(--mono);font-size:var(--t-xs);
+    font-weight:700;letter-spacing:.03em;color:var(--text);
+    font-variant-numeric:tabular-nums;white-space:nowrap;
+  }
+  .tblock dd.td-accent{color:var(--accent);}
+
+  /* ——————————————— 网格纸 ——————————————— */
+  /* 工程方格纸：细线 24px 一格，主线每 5 格。装饰层，pointer-events 无关紧要（是背景） */
+  .graph{
+    background-image:
+      repeating-linear-gradient(to right,var(--grid-strong) 0 1px,transparent 1px 120px),
+      repeating-linear-gradient(to bottom,var(--grid-strong) 0 1px,transparent 1px 120px),
+      repeating-linear-gradient(to right,var(--grid) 0 1px,transparent 1px 24px),
+      repeating-linear-gradient(to bottom,var(--grid) 0 1px,transparent 1px 24px);
+  }
+
+  /* ——————————————— 表格（这个站的主心骨） ——————————————— */
+  /* 手机上大表**必须**横滚，不许把页面挤爆 —— ≤720 单列不横溢是底线 */
+  .tscroll{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+  .tscroll > table{min-width:720px;}
+  table.spec{
+    background:var(--surface);
+    border:1px solid var(--line-strong);
+    font-size:var(--t-xs);
+  }
+  .spec caption{
+    text-align:left;padding-bottom:var(--s3);
+    font-family:var(--mono);font-size:var(--t-2xs);letter-spacing:.12em;
+    text-transform:uppercase;color:var(--muted);
+  }
+  .spec th,.spec td{
+    padding:var(--s3) var(--s4);
+    border:1px solid var(--line);
+    text-align:left;vertical-align:top;line-height:1.6;
+  }
+  .spec thead th{
+    background:var(--ink);color:var(--surface);
+    font-family:var(--mono);font-size:var(--t-2xs);
+    letter-spacing:.1em;text-transform:uppercase;
+    border-color:var(--ink-line);white-space:nowrap;
+  }
+  .spec tbody th[scope="row"]{
+    font-weight:600;color:var(--muted);background:var(--bg);
+    white-space:nowrap;font-size:var(--t-xs);
+  }
+  .spec td{font-family:var(--mono);font-variant-numeric:tabular-nums;color:var(--text);}
+  .spec td.txt{font-family:var(--font);}       /* 说明性文字格：回到正文字体 */
+  .spec tr.grp th{
+    background:var(--accent-soft);color:var(--accent);
+    font-family:var(--mono);font-size:var(--t-2xs);
+    letter-spacing:.12em;text-transform:uppercase;
+  }
+  .spec tbody tr:hover td{background:var(--bg);}
+  .spec .ok{color:var(--accent);font-weight:700;}
+  .spec .no{color:var(--muted);}
+
+  /* ——————————————— 型号卡（目录/相关型号共用） ——————————————— */
+  .mgrid{display:grid;grid-template-columns:repeat(2,1fr);gap:var(--s5);}
+  .mcard{
+    display:flex;flex-direction:column;
+    background:var(--surface);
+    border:1px solid var(--line);
+    border-radius:var(--radius);
+    overflow:hidden;
+    transition:border-color .16s ease,box-shadow .16s ease,transform .16s ease;
+  }
+  .mcard:hover{border-color:var(--accent-line);box-shadow:var(--shadow-md);transform:translateY(-2px);}
+  .mcard-art{
+    height:172px;
+    border-bottom:1px solid var(--line);
+    display:flex;align-items:center;justify-content:center;
+    color:var(--accent);
+    position:relative;
+    background-color:var(--surface);
+    background-image:
+      repeating-linear-gradient(to right,var(--grid) 0 1px,transparent 1px 24px),
+      repeating-linear-gradient(to bottom,var(--grid) 0 1px,transparent 1px 24px);
+  }
+  .mcard-art svg{height:136px;width:auto;}
+  .mcard-fam{
+    position:absolute;top:var(--s3);left:var(--s3);
+    font-family:var(--mono);font-size:var(--t-2xs);letter-spacing:.1em;
+    text-transform:uppercase;
+    background:var(--surface);color:var(--muted);
+    border:1px solid var(--line);border-radius:var(--radius);
+    padding:2px var(--s2);
+  }
+  .mcard-body{padding:var(--s5);display:flex;flex-direction:column;flex:1;}
+  .mcard-top{display:flex;align-items:center;gap:var(--s3);margin-bottom:var(--s3);}
+  .mcard h3{font-size:var(--t-md);}
+  .mcard h3 a:hover{color:var(--accent);}
+  .mcard-desc{font-size:var(--t-xs);color:var(--muted);line-height:1.8;margin-top:var(--s3);}
+  /* 采购商扫一眼要的四行：速度 / 幅面 / 功率 / 交期 —— 全等宽对齐 */
+  .mspec{
+    display:grid;grid-template-columns:auto 1fr;gap:var(--s2) var(--s4);
+    margin:var(--s4) 0 var(--s5);padding:var(--s4) 0;
+    border-top:1px solid var(--line);border-bottom:1px solid var(--line);
+    font-size:var(--t-xs);
+  }
+  .mspec dt{color:var(--muted);}
+  .mspec dd{
+    font-family:var(--mono);font-variant-numeric:tabular-nums;
+    color:var(--text);font-weight:600;
+  }
+  .mcard .link{margin-top:auto;align-self:flex-start;}
+
+  /* ——————————————— 数据带（深色蓝图带） ——————————————— */
+  .ink{background:var(--ink);color:var(--ink-text);}
+  /* 深底上的蓝图网格：白线极低透明度，像晒图纸 */
+  .ink-graph{
+    background-image:
+      repeating-linear-gradient(to right,rgba(214,226,242,.05) 0 1px,transparent 1px 24px),
+      repeating-linear-gradient(to bottom,rgba(214,226,242,.05) 0 1px,transparent 1px 24px);
+  }
+  .stats-grid{display:grid;grid-template-columns:repeat(4,1fr);}
+  .stat{padding:var(--s6) var(--s5);border-left:1px solid var(--ink-line);}
+  .stat:first-child{border-left:0;padding-left:0;}
+  .stat b{
+    display:block;font-family:var(--mono);font-variant-numeric:tabular-nums;
+    font-size:var(--t-lg);font-weight:700;letter-spacing:-.03em;color:var(--surface);
+  }
+  .stat b i{font-style:normal;color:var(--accent-lift);}
+  .stat span{display:block;margin-top:var(--s2);font-size:var(--t-xs);color:var(--ink-muted);}
+
+  /* ——————————————— 询盘 CTA 带 ——————————————— */
+  .cta{background:var(--accent-soft);border-top:1px solid var(--accent-line);}
+  .cta-in{
+    display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;
+    gap:var(--s5);padding:var(--s7) 0;
+  }
+  .cta h2{font-size:var(--t-lg);letter-spacing:-.02em;}
+  .cta p{margin-top:var(--s3);color:var(--muted);font-size:var(--t-sm);max-width:38em;}
+  .cta-actions{display:flex;flex-wrap:wrap;gap:var(--s3);flex:none;}
+
+  /* ——————————————— 页脚（四页共用） ——————————————— */
+  .foot{color:var(--ink-muted);}
+  .foot-in{padding:var(--s7) 0 var(--s6);}
+  .foot-grid{
+    display:grid;grid-template-columns:1.5fr repeat(3,1fr);
+    gap:var(--s6);padding-bottom:var(--s6);border-bottom:1px solid var(--ink-line);
+  }
+  .foot-brand p{margin-top:var(--s4);font-size:var(--t-xs);color:var(--ink-muted);max-width:34em;line-height:1.8;}
+  .foot h4{
+    font-family:var(--mono);font-size:var(--t-xs);letter-spacing:.12em;
+    text-transform:uppercase;color:var(--ink-text);margin-bottom:var(--s4);font-weight:600;
+  }
+  .foot li{margin-bottom:var(--s3);}
+  .foot li a{font-size:var(--t-xs);color:var(--ink-muted);}
+  .foot li a:hover{color:var(--accent-lift);}
+  .foot-bottom{
+    display:flex;flex-wrap:wrap;gap:var(--s3) var(--s5);
+    align-items:center;justify-content:space-between;
+    padding-top:var(--s5);font-size:var(--t-xs);
+  }
+  .foot-legal{display:flex;flex-wrap:wrap;gap:var(--s2) var(--s4);align-items:center;}
+
+  /* ═══════════════ 首页专属 ═══════════════ */
+  /* Hero：满幅网格纸。左=主张+CTA，右=**直接画在纸上的**尺寸标注图（不装卡片框——
+     factory 的 hero 是「白图纸面板浮在灰底上」，这里反着来：整页就是那张纸）。
+     ★ 按 1024×728 预览窗设计：两栏在 1024 必须都满，塌单列的临界点压在 900。 */
+  .hero{
+    position:relative;
+    border-bottom:1px solid var(--line-strong);
+    padding:var(--s6) 0 var(--s7);
+  }
+  .hero-top{
+    display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;
+    gap:var(--s3) var(--s5);margin-bottom:var(--s6);
+  }
+  .hero-in{
+    display:grid;grid-template-columns:1.02fr .98fr;
+    gap:var(--s6);align-items:center;
+  }
+  .hero h1{
+    font-size:var(--t-xl);letter-spacing:-.035em;line-height:1.12;
+    margin:0 0 var(--s5);
+  }
+  .hero h1 em{font-style:normal;color:var(--accent);}
+  .hero-actions{display:flex;flex-wrap:wrap;gap:var(--s3);margin-top:var(--s5);}
+  .hero-note{
+    display:flex;align-items:flex-start;gap:var(--s2);
+    margin-top:var(--s5);font-size:var(--t-xs);color:var(--muted);
+  }
+  .hero-note svg{width:16px;height:16px;flex:none;color:var(--accent);margin-top:3px;}
+  .hero-note span{text-wrap:pretty;}
+  .hero-fig{position:relative;}
+  .hero-fig > svg{width:100%;height:auto;color:var(--accent);}
+  .hero-cap{
+    display:flex;align-items:center;justify-content:space-between;gap:var(--s4);
+    margin-top:var(--s3);
+    font-family:var(--mono);font-size:var(--t-2xs);letter-spacing:.1em;
+    text-transform:uppercase;color:var(--muted);
+  }
+  .hero-cap b{color:var(--accent);font-weight:600;}
+  .hero .tblock{margin-top:var(--s6);}
+
+  /* 能力块：裸区块 + 左侧编号竖线，不套卡片（factory 的 Why 是顶线卡，别撞） */
+  .cap-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:var(--s6) var(--s7);}
+  .cap{
+    position:relative;
+    padding-left:var(--s5);
+    border-left:2px solid var(--line-strong);
+    transition:border-color .16s ease;
+  }
+  .cap:hover{border-left-color:var(--accent);}
+  .cap-no{
+    font-family:var(--mono);font-size:var(--t-2xs);letter-spacing:.12em;
+    color:var(--muted);text-transform:uppercase;
+  }
+  .cap-head{display:flex;align-items:center;gap:var(--s3);margin:var(--s2) 0 var(--s3);}
+  .cap-head svg{width:24px;height:24px;color:var(--accent);flex:none;}
+  .cap h3{font-size:var(--t-md);}
+  .cap > p{font-size:var(--t-xs);color:var(--muted);line-height:1.8;max-width:52ch;}
+
+  /* FAT 流程（深色蓝图带） */
+  .fat{display:grid;grid-template-columns:repeat(4,1fr);gap:var(--s5);margin-top:var(--s6);}
+  .fat-step{
+    background:var(--ink-2);
+    border:1px solid var(--ink-line);border-radius:var(--radius);
+    padding:var(--s5);
+  }
+  .fat-no{
+    font-family:var(--mono);font-size:var(--t-2xs);letter-spacing:.12em;
+    color:var(--accent-lift);
+  }
+  .fat-step h3{font-size:var(--t-sm);color:var(--surface);margin:var(--s2) 0 var(--s2);}
+  .fat-time{
+    display:inline-block;margin-bottom:var(--s3);
+    font-family:var(--mono);font-variant-numeric:tabular-nums;
+    font-size:var(--t-xs);font-weight:700;color:var(--accent-lift);
+  }
+  .fat-step p{font-size:var(--t-xs);color:var(--ink-muted);line-height:1.8;}
+  .fat-note{
+    margin-top:var(--s6);padding-top:var(--s5);border-top:1px solid var(--ink-line);
+    display:flex;flex-wrap:wrap;align-items:center;gap:var(--s3) var(--s5);
+    font-size:var(--t-xs);color:var(--ink-muted);
+  }
+  .fat-note b{color:var(--ink-text);}
+  .fat-note .num{color:var(--accent-lift);}
+
+  /* 对比表里的型号表头单元 */
+  .cmp-model{min-width:150px;}
+  .cmp-model .tag{display:inline-block;margin-bottom:var(--s1);}
+  .cmp-model small{
+    display:block;font-family:var(--font);font-weight:400;
+    font-size:var(--t-2xs);letter-spacing:0;text-transform:none;color:var(--ink-muted);
+  }
+  table.spec thead th.cmp-model small{color:var(--ink-muted);}
+
+  /* ═══════════════ 响应式：900 / 720 / 560 ═══════════════ */
+  /* ★ 断点绝不许落在 1024：预览窗正好 1024×728，闭区间必中，
+     用户唯一看得到的宽度会永远是塌掉的那版。1024 走完整桌面版式。 */
+  @media (max-width:900px){
+    .hero-in{grid-template-columns:1fr;gap:var(--s6);}
+    .hero-fig{max-width:560px;}
+    .cap-grid{gap:var(--s6);}
+    .stats-grid{grid-template-columns:repeat(2,1fr);}
+    .stat{padding:var(--s5) var(--s4);}
+    .stat:first-child{padding-left:var(--s4);}
+    .stat:nth-child(3){border-left:0;}
+    .stat:nth-child(n+3){border-top:1px solid var(--ink-line);}
+    .fat{grid-template-columns:repeat(2,1fr);}
+    .foot-grid{grid-template-columns:1fr 1fr;gap:var(--s6) var(--s5);}
+  }
+  @media (max-width:720px){
+    .nav{position:static;}       /* 两行导航再吸顶就吃掉 1/5 屏 */
+    .nav-in{flex-wrap:wrap;padding-top:var(--s3);padding-bottom:var(--s3);gap:var(--s3);}
+    .nav-links{
+      order:3;width:100%;margin-left:0;
+      flex-wrap:wrap;gap:var(--s2) var(--s3);
+      padding-top:var(--s3);border-top:1px solid var(--line);
+    }
+    .nav-cta{margin-left:auto;min-height:44px;}
+    .microbar .mb-hide{display:none;}
+    .cap-grid{grid-template-columns:1fr;}
+    .mgrid{grid-template-columns:1fr;}
+    .tblock{flex-direction:column;}
+    .tblock > div{border-left:0;border-top:1px solid var(--line);}
+    .tblock > div:first-child{border-top:0;}
+  }
+  @media (max-width:560px){
+    :root{--t-xl:32px;--t-lg:24px;}
+    .wrap{padding-left:var(--s4);padding-right:var(--s4);}
+    .nav-links a{padding:var(--s3) var(--s2);}   /* 点击区垫到 44px */
+    .section{padding:var(--s6) 0;}
+    .hero{padding:var(--s6) 0;}
+    .hero-actions .btn{width:100%;}
+    .stats-grid{grid-template-columns:1fr;}
+    .stat{border-left:0;padding-left:0;padding-right:0;}
+    .stat:nth-child(n+2){border-top:1px solid var(--ink-line);}
+    .fat{grid-template-columns:1fr;}
+    /* 手机上 14px 读成段描述费劲：描述抬到 16px，参数/标签维持 14px */
+    .cap > p,.fat-step p,.mcard-desc,.foot-brand p,.sec-head p{font-size:var(--t-sm);}
+    .foot-grid{grid-template-columns:1fr;gap:var(--s6);}
+    .foot-bottom{flex-direction:column;align-items:flex-start;}
+    .cta-actions{width:100%;}
+    .cta-actions .btn{width:100%;}
+  }
+  @media (prefers-reduced-motion:reduce){
+    html{scroll-behavior:auto;}
+    *{transition:none !important;animation:none !important;}
+  }
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to main content</a>
+
+<!-- ═══ 顶条：采购商第一眼找的三样——时区、邮箱、响应时效 ═══ -->
+<div class="microbar">
+<div class="wrap microbar-in">
+<span>Wuxi, China &middot; <b>GMT+8</b></span>
+<span class="mb-hide">sales@centrapak.example <b>(sample)</b></span>
+<span class="mb-right">RFQ answered in &lt; 24 h</span>
+</div>
+</div>
+
+<header class="nav">
+<div class="wrap nav-in">
+<a class="brand" href="index.html" aria-label="Centrapak Machinery — home"><svg class="brand-mark" viewBox="0 0 30 30" aria-hidden="true"><rect x="7" y="7" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4"/><path d="M15 1v6M15 23v6M1 15h6M23 15h6" stroke="currentColor" stroke-width="2.4"/><circle cx="15" cy="15" r="2.6" fill="currentColor"/></svg><span class="brand-name"><b>Centrapak</b> Machinery</span></a>
+<nav class="nav-links" aria-label="Main"><a href="index.html" aria-current="page">Home</a><a href="products.html">Models</a><a href="index.html#cap">Capability</a><a href="index.html#fat">FAT &amp; Shipping</a><a href="index.html#certs">Certifications</a><a href="contact.html">RFQ</a></nav>
+<a class="btn btn-primary btn-sm nav-cta" href="contact.html#rfq">Get a Quote</a>
+</div>
+</header>
+
+<main id="main">
+
+<!-- ═══ Hero：整页是一张方格纸，右栏的机器直接画在纸上、带尺寸标注 ═══ -->
+<section class="hero graph">
+<div class="wrap">
+<div class="hero-top">
+<p class="kick">Packaging machinery &middot; built in Wuxi &middot; sold by the numbers</p>
+<p class="demo-badge">Sample content &middot; replace before launch</p>
+</div>
+<div class="hero-in">
+<div>
+<!-- 主张就是这个站的方法论：参数即卖点。别写 "trusted partner" 这种到处通用的空话 -->
+<h1>The spec table <em>is</em> the brochure</h1>
+<p class="lede">Flow wrappers, VFFS baggers, pouch packers and end-of-line cells. Eight standard models &mdash; speed, footprint, power draw and FOB price band published for every one. Compare us in a spreadsheet before you ever write an email.</p>
+<div class="hero-actions">
+<a class="btn btn-primary" href="products.html">Compare the 8 models</a>
+<a class="btn btn-ghost" href="contact.html#rfq">Get a quote</a>
+</div>
+<p class="hero-note"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg><span>CE technical file with every machine &middot; filmed FAT before the balance is due &middot; 72 h spare-parts dispatch</span></p>
+</div>
+
+<!-- 右栏：CP-V420 正视图，画在网格纸上，带尺寸线。图注是采购商真会抄进邮件的三个数 -->
+<figure class="hero-fig">
+<svg viewBox="0 0 460 372" role="img" aria-label="Dimensioned front elevation of the CP-V420 vertical bagger: film reel, forming tube, sealing jaws and discharge, with overall dimensions 1280 by 1520 millimetres">
+  <g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <!-- 机身柜体 -->
+    <rect x="128" y="58" width="182" height="240" rx="2"/>
+    <path d="M128 96h182"/>
+    <!-- 触摸屏悬臂 -->
+    <path d="M128 118H84v-38h34"/>
+    <rect x="66" y="66" width="46" height="34" rx="2"/>
+    <path d="M74 76h30M74 84h22" stroke-width="1"/>
+    <!-- 膜卷（背后）与走膜路径 -->
+    <circle cx="352" cy="96" r="34"/>
+    <circle cx="352" cy="96" r="6"/>
+    <path d="M352 130v34l-42 22" stroke-dasharray="4 4"/>
+    <!-- 成型筒 -->
+    <path d="M198 96l-16 34v58h74v-58l-16-34"/>
+    <path d="M182 130h74"/>
+    <!-- 纵封 + 横封钳口 -->
+    <rect x="196" y="200" width="46" height="12" rx="2"/>
+    <rect x="196" y="228" width="46" height="12" rx="2"/>
+    <path d="M188 206h-18M188 234h-18" stroke-width="1"/>
+    <!-- 出袋斜槽与成品袋 -->
+    <path d="M219 240v20l40 24"/>
+    <path d="M262 284l30 2 4 26-30 4z"/>
+    <path d="M266 289l26 2" stroke-width="1"/>
+    <!-- 机脚 -->
+    <path d="M140 298v16M298 298v16M132 314h24M290 314h24"/>
+    <!-- 尺寸线：宽 1280 -->
+    <path d="M128 336v10M310 336v10M128 341h182" stroke-width="1"/>
+    <path d="M128 341l7-3v6zM310 341l-7-3v6z" fill="currentColor" stroke="none"/>
+    <!-- 尺寸线：高 1520 -->
+    <path d="M330 58h10M330 298h10M335 58v240" stroke-width="1"/>
+    <path d="M335 58l-3 7h6zM335 298l-3-7h6z" fill="currentColor" stroke="none"/>
+  </g>
+  <g font-family="ui-monospace,Menlo,monospace" font-size="11" fill="currentColor">
+    <text x="200" y="360">1280</text>
+    <text x="344" y="182">1520</text>
+    <text x="30" y="42" letter-spacing="1.5">FIG. 01 &mdash; CP-V420</text>
+    <text x="30" y="56" letter-spacing="1" opacity=".7">SCALE 1:20 &middot; UNITS MM</text>
+  </g>
+</svg>
+<figcaption class="hero-cap"><span>Vertical bagger &middot; <b>80 bags/min</b></span><span>Film &le; <b>420 mm</b></span><span>FOB <b>US$ 16.5&ndash;21k</b></span></figcaption>
+</figure>
+</div>
+
+<!-- 图纸标题栏：四页贯穿的签名件，SHEET n/4 对应四个页面 -->
+<dl class="tblock">
+<div><dt>Doc</dt><dd>Company index</dd></div>
+<div><dt>Sheet</dt><dd class="td-accent">1 / 4</dd></div>
+<div><dt>Rev</dt><dd>B &middot; 2026-07</dd></div>
+<div><dt>Units</dt><dd>mm &middot; bags/min</dd></div>
+<div><dt>Status</dt><dd>Sample content</dd></div>
+</dl>
+</div>
+</section>
+
+<!-- ═══ 数据带（蓝图带）═══ -->
+<section class="ink ink-graph" aria-label="Company at a glance">
+<div class="wrap">
+<dl class="stats-grid">
+<div class="stat"><b>2004</b><span>Founded &middot; packaging machinery only, nothing else since</span></div>
+<div class="stat"><b>3,400<i>+</i></b><span>Machines installed and running in 62 countries</span></div>
+<div class="stat"><b>98.2<i>%</i></b><span>First-pass FAT rate over the last 24 months</span></div>
+<div class="stat"><b>72<i> h</i></b><span>Spare-parts dispatch by courier, 10-year parts guarantee</span></div>
+</dl>
+</div>
+</section>
+
+<!-- ═══ 能力：为什么这些参数敢写死 ═══ -->
+<section class="section" id="cap">
+<div class="wrap">
+<div class="sec-head">
+<p class="eyebrow">SEC 02 / CAPABILITY</p>
+<h2 class="h2">Why the numbers on our tables hold</h2>
+<p>A spec table is only worth what the workshop behind it can repeat. These four things are done in-house, in our 26,000 m&sup2; plant in Xinwu District &mdash; they are the reason the same model ships with the same numbers, order after order.</p>
+</div>
+<div class="cap-grid">
+<article class="cap">
+<span class="cap-no">2.1</span>
+<div class="cap-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h16"/><path d="M6 20V9h12v11"/><path d="M12 9V4"/><path d="M9 4h6"/><path d="M12 12v3"/><path d="M9 20v-3h6v3"/></svg><h3>Frames machined here, not bought in</h3></div>
+<p>Six vertical machining centres and two fibre lasers cut every frame and jaw carrier in this building. Mating faces are held to &plusmn;0.05 mm &mdash; which is where cheap machines start to rattle after six months.</p>
+<p class="dim">6 VMC &middot; 2 fibre lasers &middot; &plusmn;0.05 mm</p>
+</article>
+<article class="cap">
+<span class="cap-no">2.2</span>
+<div class="cap-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="1"/><path d="M8 7h3M8 11h3M8 15h3"/><circle cx="16" cy="7" r="1.2"/><circle cx="16" cy="11" r="1.2"/><path d="M15 15h2v3h-2z"/></svg><h3>Panels built to your grid, not ours</h3></div>
+<p>110 / 220 / 380 / 415 V, 50 or 60 Hz &mdash; the cabinet is wired for your country before FAT, with a Siemens or Schneider parts list on request. Wiring diagrams ship in the crate, on paper and PDF.</p>
+<p class="dim">110&ndash;415 V &middot; 50/60 Hz &middot; UL 508A option</p>
+</article>
+<article class="cap">
+<span class="cap-no">2.3</span>
+<div class="cap-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3v6l-5 9a2 2 0 0 0 1.8 3h10.4A2 2 0 0 0 19 18l-5-9V3"/><path d="M8 3h8"/><path d="M8.5 15h7"/></svg><h3>Your film, on the actual machine, on camera</h3></div>
+<p>Send two reels of your film and 5 kg of product. We run them on the machine you would buy, film the run, and send the footage with the quotation &mdash; before you have paid anything.</p>
+<p class="dim">2 reels + 5 kg &middot; test filmed &middot; free</p>
+</article>
+<article class="cap">
+<span class="cap-no">2.4</span>
+<div class="cap-head"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8l9-5 9 5v8l-9 5-9-5V8z"/><path d="m3 8 9 5 9-5M12 13v8"/><circle cx="12" cy="8" r="1.6"/></svg><h3>Spares on the shelf for 10 years</h3></div>
+<p>A wear-parts kit rides in every crate: sealing jaws, belts, heaters, sensors. After that, stocked parts leave our warehouse within 72 hours by courier &mdash; and we guarantee availability for 10 years per model.</p>
+<p class="dim">Kit in crate &middot; 72 h dispatch &middot; 10-yr guarantee</p>
+</article>
+</div>
+</div>
+</section>
+
+<!-- ═══ 热门型号对比表：首页的主心骨 ═══ -->
+<section class="section" id="hot" style="padding-top:0;">
+<div class="wrap">
+<div class="sec-head">
+<p class="eyebrow">SEC 03 / MOST-QUOTED MODELS</p>
+<h2 class="h2">Four machines side by side, nothing hidden</h2>
+<p>The four models buyers ask about most, in one table &mdash; the same numbers we put in the proforma invoice. The <a class="link" href="products.html" style="font-size:inherit;">full catalogue<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4"/></svg></a> lists all eight.</p>
+</div>
+<div class="tscroll">
+<table class="spec">
+<caption>Comparison &mdash; most-quoted models, FOB Shanghai</caption>
+<thead>
+<tr>
+<th scope="col"><span class="sr-only">Parameter</span></th>
+<th scope="col" class="cmp-model"><span class="tag">CP-F250</span><small>Servo flow wrapper</small></th>
+<th scope="col" class="cmp-model"><span class="tag">CP-V420</span><small>Vertical bagger</small></th>
+<th scope="col" class="cmp-model"><span class="tag">CP-P210</span><small>Rotary pouch packer</small></th>
+<th scope="col" class="cmp-model"><span class="tag">CP-C25</span><small>Case erector-sealer</small></th>
+</tr>
+</thead>
+<tbody>
+<tr><th scope="row">Best for</th><td class="txt">Bars, biscuits, trayed bakery</td><td class="txt">Snacks, grains, IQF, hardware</td><td class="txt">Premade &amp; zipper pouches</td><td class="txt">End of any of the above</td></tr>
+<tr><th scope="row">Rated speed</th><td>&le; 250 packs/min</td><td>30&ndash;80 bags/min</td><td>&le; 60 pouches/min</td><td>&le; 25 cases/min</td></tr>
+<tr><th scope="row">Max format</th><td>W 240 &times; H 90 mm</td><td>Film 420 mm &middot; bag 200 &times; 350</td><td>Pouch 210 &times; 350 mm</td><td>Case 500 &times; 400 &times; 400</td></tr>
+<tr><th scope="row">Power</th><td>3.8 kW</td><td>3.5 kW</td><td>4.2 kW</td><td>2.0 kW + air</td></tr>
+<tr><th scope="row">Footprint (L&times;W)</th><td>4260 &times; 880 mm</td><td>1450 &times; 1280 mm</td><td>2350 &times; 2180 mm</td><td>2050 &times; 1980 mm</td></tr>
+<tr><th scope="row">Lead time</th><td>45 working days</td><td>45 working days</td><td>55 working days</td><td>40 working days</td></tr>
+<tr><th scope="row">FOB reference</th><td>US$ 19,800&ndash;24,500</td><td>US$ 16,500&ndash;21,000</td><td>US$ 33,000&ndash;41,000</td><td>US$ 14,200&ndash;17,800</td></tr>
+<tr><th scope="row"><span class="sr-only">Details</span></th>
+<td class="txt"><a class="link" href="product.html">Full specs<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4"/></svg></a></td>
+<td class="txt"><a class="link" href="product.html">Full specs<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4"/></svg></a></td>
+<td class="txt"><a class="link" href="product.html">Full specs<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4"/></svg></a></td>
+<td class="txt"><a class="link" href="product.html">Full specs<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4"/></svg></a></td></tr>
+</tbody>
+</table>
+</div>
+<p class="placeholder-note"><strong>Price bands are illustrative.</strong> They exist so the template shows <em>where</em> pricing lives, not what to charge. Replace every band with your own current FOB numbers &mdash; or delete the row if you quote per enquiry only.</p>
+</div>
+</section>
+
+<!-- ═══ FAT 流程（深色蓝图带）═══ -->
+<section class="ink ink-graph section" id="fat">
+<div class="wrap">
+<div class="sec-head">
+<p class="eyebrow">SEC 04 / FAT &amp; SHIPPING</p>
+<h2 class="h2">No machine leaves without a filmed acceptance test</h2>
+<p>Every unit runs a full factory acceptance test with your product and your film. You watch it live or on video, you sign the report &mdash; and only then is the balance due.</p>
+</div>
+<ol class="fat">
+<li class="fat-step"><span class="fat-no">FAT-01</span><h3>Dry run</h3><span class="fat-time num">24 h continuous</span><p>Full-speed empty run, logged by the PLC. Bearings, jaws and film servos are checked against the log before your product goes anywhere near the machine.</p></li>
+<li class="fat-step"><span class="fat-no">FAT-02</span><h3>Your product run</h3><span class="fat-time num">2 h at rated speed</span><p>Your film, your product, the exact machine in your order. Seal integrity, weight scatter and reject rate are recorded on the FAT report form.</p></li>
+<li class="fat-step"><span class="fat-no">FAT-03</span><h3>Live video acceptance</h3><span class="fat-time num">60&ndash;90 min call</span><p>A video call at your hour, camera on the machine. You direct the test, we run it. The signed FAT report &mdash; not our say-so &mdash; releases the balance payment.</p></li>
+<li class="fat-step"><span class="fat-no">FAT-04</span><h3>Crate &amp; documents</h3><span class="fat-time num">Seaworthy export crate</span><p>Vacuum-sealed, desiccant-packed plywood crate. Inside: CE file, wiring diagrams, wear-parts kit, and the same FAT report you signed.</p></li>
+</ol>
+<div class="fat-note">
+<span><b>Payment that follows the test:</b> 30% deposit &middot; <span class="num">70%</span> after the signed FAT report, before shipment.</span>
+<a class="link" href="contact.html#rfq">Book a film test first<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h10M9 4l4 4-4 4"/></svg></a>
+</div>
+</div>
+</section>
+
+<!-- ═══ 认证登记表：不做徽章墙，做**登记册** —— 这个站连认证都是表 ═══ -->
+<section class="section" id="certs">
+<div class="wrap">
+<div class="sec-head">
+<p class="eyebrow">SEC 05 / CERTIFICATIONS</p>
+<h2 class="h2">The certificate register</h2>
+<p>Machinery buyers do not want badges, they want scope and dates. Current scans go out with every quotation &mdash; tell us your market and you get the in-date versions that apply.</p>
+</div>
+<div class="tscroll">
+<table class="spec">
+<caption>Register &mdash; standards &amp; audits (sample entries)</caption>
+<thead>
+<tr><th scope="col">Standard</th><th scope="col">Scope</th><th scope="col">Applies to</th><th scope="col">Status</th></tr>
+</thead>
+<tbody>
+<tr><th scope="row">CE &middot; 2006/42/EC</th><td class="txt">Machinery Directive: technical file, risk assessment, EN ISO 12100</td><td class="txt">Every machine shipped to the EU/UK</td><td>Per machine &middot; placeholder</td></tr>
+<tr><th scope="row">EN 415-3</th><td class="txt">Safety of packaging machines &mdash; form-fill-seal specifics: guarding, interlocks</td><td class="txt">CP-F and CP-V series</td><td>Type-tested &middot; placeholder</td></tr>
+<tr><th scope="row">ISO 9001:2015</th><td class="txt">Quality management across design, machining, assembly and after-sales</td><td class="txt">Whole plant</td><td>Renewed 2025 &middot; placeholder</td></tr>
+<tr><th scope="row">UL 508A</th><td class="txt">Industrial control panel build for the US &amp; Canada grid</td><td class="txt">Optional, per order</td><td>On request &middot; placeholder</td></tr>
+<tr><th scope="row">EAC</th><td class="txt">Customs-union conformity for RU / BY / KZ shipments</td><td class="txt">Optional, per order</td><td>On request &middot; placeholder</td></tr>
+<tr><th scope="row">EC 1935/2004</th><td class="txt">Food-contact declaration: 304/316 stainless product paths</td><td class="txt">All food-line models</td><td>Per lot &middot; placeholder</td></tr>
+</tbody>
+</table>
+</div>
+<p class="placeholder-note"><strong>Placeholder register.</strong> Certificate numbers, issuing bodies and expiry dates are deliberately absent &mdash; fill in your own before launch, and never display a certifying body&rsquo;s mark until you actually hold the certificate.</p>
+</div>
+</section>
+
+<!-- ═══ 询盘 CTA ═══ -->
+<section class="cta">
+<div class="wrap cta-in">
+<div>
+<h2>Send a film sample, a bag size, or just a target speed</h2>
+<p>A sales engineer &mdash; not a chatbot &mdash; answers within one working day, with numbers. We are 12&ndash;15 hours ahead of the Americas: an RFQ sent tonight is usually a quotation by your morning.</p>
+</div>
+<div class="cta-actions">
+<a class="btn btn-primary" href="contact.html#rfq">Request a quote</a>
+<a class="btn btn-ghost" href="product.html#faq">Read the buyer FAQ</a>
+</div>
+</div>
+</section>
+
+</main>
+
+<!-- ═══ 页脚 ═══ -->
+<footer class="ink foot">
+<div class="wrap foot-in">
+<div class="foot-grid">
+<div class="foot-brand">
+<span class="brand"><svg class="brand-mark" viewBox="0 0 30 30" aria-hidden="true"><rect x="7" y="7" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.4"/><path d="M15 1v6M15 23v6M1 15h6M23 15h6" stroke="currentColor" stroke-width="2.4"/><circle cx="15" cy="15" r="2.6" fill="currentColor"/></svg><span class="brand-name"><b>Centrapak</b> Machinery</span></span>
+<p>Wuxi Centrapak Packaging Machinery Co., Ltd. (sample company). Flow wrappers, VFFS baggers, pouch packers and end-of-line equipment since 2004. Frames machined in-house, filmed FAT on every unit, 10-year spare-parts guarantee.</p>
+</div>
+<div><h4>Machines</h4><ul><li><a href="products.html#flow">Flow wrappers</a></li><li><a href="products.html#vffs">VFFS baggers</a></li><li><a href="products.html#pouch">Pouch &amp; filling</a></li><li><a href="products.html#eol">End of line</a></li></ul></div>
+<div><h4>Company</h4><ul><li><a href="index.html#cap">Capability</a></li><li><a href="index.html#fat">FAT &amp; shipping</a></li><li><a href="index.html#certs">Certificate register</a></li><li><a href="contact.html#visit">Visit the plant</a></li></ul></div>
+<div><h4>Buyers</h4><ul><li><a href="contact.html#rfq">Request a quote</a></li><li><a href="contact.html#sla">Response commitment</a></li><li><a href="product.html#faq">Buyer FAQ</a></li><li><a href="contact.html#departments">Spare parts desk</a></li></ul></div>
+</div>
+<div class="foot-bottom">
+<span>&copy; 2004&ndash;2026 Wuxi Centrapak Packaging Machinery Co., Ltd. &middot; Sample content</span>
+<span class="foot-legal"><span>Sample content &middot; replace before launch</span><span>Business licence 000000000000000 (placeholder)</span></span>
+</div>
+</div>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,861 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>暖沙事务所 · 品牌与沟通的人文咨询（示例模板）</title>
+<meta name="description" content="暖沙事务所，杭州的品牌与沟通咨询团队。替认真做事的组织把话说清楚：品牌策略、视觉识别与内容叙事。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23F1EADC'/%3E%3Cpath d='M8 26v-9a8 8 0 0 1 16 0v9z' fill='%23386D32'/%3E%3Ccircle cx='16' cy='9' r='3' fill='%23271D10'/%3E%3C/svg%3E">
+<style>
+  /* ═══════════════════════════════════════════════════════════
+     暖沙事务所 · 企业官网首页起始模板
+     气质：暖沙米底 + 唯一深赭强调色 + 大号衬线标题。
+     人文咨询/设计事务所——留白宽、线条细、按钮圆、不堆卡片。
+     改色板 = 只改下面 :root，别全站搜替换。
+     ═══════════════════════════════════════════════════════════ */
+  :root{
+    /* ——— 核心契约变量 ——— */
+    --bg:#F1EADC;          /* 页面底：暖沙米 */
+    --surface:#FAF5EB;     /* 卡片/浮层底：亚麻白 */
+    --text:#271D10;        /* 正文墨褐      13.8:1 on --bg */
+    --muted:#6D5F4B;       /* 次要文字       5.2:1 on --bg */
+    --accent:#386D32;      /* 唯一强调色：苔绿  5.7:1 on --bg */
+    --radius:2px;          /* 锐角＝出版物气质；圆只给按钮 */
+
+    /* ——— 强调色同色相派生 ——— */
+    --accent-deep:#6F3305; /* hover 加深     8.2:1 on --bg */
+    --accent-soft:#F0E2CE; /* 极浅赭底（--accent 落其上 5.4:1） */
+    --on-accent:#FAF5EB;   /* 强调色钮上的字  6.3:1 on --accent */
+
+    /* ——— 深色带（CTA / 页脚）：烘焙深棕，不是黑 ——— */
+    --ink:#2B2115;         /* 深棕底 */
+    --ink-2:#382C1D;       /* 深底上的抬升面 */
+    --ink-text:#EDE4D3;    /* 深底正文      12.5:1 on --ink */
+    --ink-muted:#BFB09A;   /* 深底次要文字    7.4:1 on --ink */
+    --ink-line:#4A3B28;    /* 深底分隔线（装饰） */
+    --accent-lift:#E39A5F; /* 深底上的强调色  6.8:1 on --ink */
+
+    /* ——— 中性描边 ——— */
+    --line:#DDD2BE;
+    --line-strong:#C9BCA3;
+
+    /* ——— 插画沙阶（装饰用中性，非强调色）——— */
+    --sand-1:#E6DBC6;
+    --sand-2:#D6C6A8;
+    --sand-3:#B9A585;
+    --sand-4:#93805F;
+
+    /* ——— 间距刻度 4/8/12/16/24/40/64/96，别写 13px 这种随手数 ——— */
+    --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px; --s6:40px; --s7:64px;
+    --s8:96px;             /* 事务所式大留白：区块之间 */
+
+    /* ——— 字号阶梯 14/16/20/28/40/56（56 只给主张式大标题）——— */
+    --t-xs:14px; --t-sm:16px; --t-md:20px; --t-lg:28px; --t-xl:40px; --t-2xl:56px;
+
+    --container:1060px;
+    --measure:680px;       /* 长文阅读宽度上限 */
+    --radius-pill:999px;   /* 按钮专用药丸圆角 */
+
+    --serif:Georgia,"Songti SC",STSong,"SimSun","Noto Serif SC","Source Han Serif SC",serif;
+    --sans:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",
+           "Hiragino Sans GB","Microsoft YaHei","Noto Sans SC",sans-serif;
+  }
+
+  /* ——————————————— 基础 ——————————————— */
+  *,*::before,*::after{box-sizing:border-box;}
+  html{-webkit-text-size-adjust:100%;scroll-behavior:smooth;}
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--text);
+    font-family:var(--sans);
+    font-size:var(--t-sm);
+    line-height:1.75;
+    letter-spacing:.01em;
+    -webkit-font-smoothing:antialiased;
+  }
+  h1,h2,h3,h4{
+    margin:0;
+    font-family:var(--serif);
+    font-weight:600;
+    line-height:1.3;
+    letter-spacing:.02em;   /* 衬线中文标题微松更透气，别用负字距 */
+  }
+  p{margin:0;}
+  ul,ol{margin:0;padding:0;list-style:none;}
+  a{color:inherit;text-decoration:none;}
+  svg{display:block;max-width:100%;}
+  ::selection{background:var(--accent);color:var(--on-accent);}
+
+  /* 键盘可达性：全站统一焦点环，绝不 outline:none 了事 */
+  a:focus-visible,button:focus-visible,input:focus-visible,
+  textarea:focus-visible,select:focus-visible,summary:focus-visible{
+    outline:2px solid var(--accent);
+    outline-offset:3px;
+    border-radius:var(--radius);
+  }
+  .ink a:focus-visible,.ink button:focus-visible{outline-color:var(--accent-lift);}
+
+  .wrap{
+    width:100%;
+    max-width:var(--container);
+    margin:0 auto;
+    padding-left:var(--s5);
+    padding-right:var(--s5);
+  }
+  .section{padding:var(--s8) 0;}
+  .skip{
+    position:absolute;left:-9999px;top:var(--s2);
+    background:var(--accent);color:var(--on-accent);
+    padding:var(--s2) var(--s4);border-radius:var(--radius);z-index:60;
+  }
+  .skip:focus{left:var(--s5);}
+
+  /* ——————————————— 排版原子 ——————————————— */
+  .eyebrow{                        /* 章节小题：短赭线 + 疏排小字（有意区别于 corp 的等宽风） */
+    display:flex;align-items:center;gap:var(--s3);
+    font-size:var(--t-xs);
+    letter-spacing:.22em;
+    color:var(--accent);
+    margin:0 0 var(--s4);
+  }
+  .eyebrow::before{
+    content:"";width:28px;height:2px;flex:none;
+    background:var(--accent);
+  }
+  .ink .eyebrow{color:var(--accent-lift);}
+  .ink .eyebrow::before{background:var(--accent-lift);}
+
+  .h-xl{font-size:var(--t-xl);}
+  .h-lg{font-size:var(--t-lg);}
+  .lede{font-size:var(--t-md);line-height:1.8;color:var(--muted);max-width:var(--measure);}
+  .muted{color:var(--muted);}
+
+  .sec-head{margin-bottom:var(--s7);}
+  .sec-head p{max-width:var(--measure);color:var(--muted);margin-top:var(--s4);}
+
+  /* 「示例内容」徽标——提醒这是占位稿 */
+  .demo-badge{
+    display:inline-flex;align-items:center;gap:var(--s2);
+    font-size:var(--t-xs);
+    color:var(--muted);
+    border:1px dashed var(--line-strong);
+    border-radius:var(--radius-pill);
+    padding:var(--s1) var(--s4);
+  }
+  .demo-badge::before{
+    content:"";width:6px;height:6px;border-radius:50%;
+    background:var(--accent);flex:none;
+  }
+
+  /* ——————————————— 按钮 ——————————————— */
+  .btn{
+    display:inline-flex;align-items:center;justify-content:center;gap:var(--s2);
+    min-height:48px;                       /* 手机点击区 ≥44px */
+    padding:var(--s3) var(--s6);
+    border-radius:var(--radius-pill);
+    border:1px solid transparent;
+    font:inherit;font-size:var(--t-sm);font-weight:600;
+    cursor:pointer;
+    transition:background-color .18s ease,border-color .18s ease,color .18s ease,transform .18s ease;
+  }
+  .btn:active{transform:translateY(1px);}
+  .btn-primary{background:var(--accent);color:var(--on-accent);}
+  .btn-primary:hover{background:var(--accent-deep);}
+  .btn-ghost{border-color:var(--line-strong);color:var(--text);background:transparent;}
+  .btn-ghost:hover{border-color:var(--accent);color:var(--accent);}
+  .ink .btn-ghost{border-color:var(--ink-line);color:var(--ink-text);}
+  .ink .btn-ghost:hover{border-color:var(--accent-lift);color:var(--accent-lift);}
+
+  .link{                                   /* 文字链：赭色 + 下划线（衬线站的链接就该像链接） */
+    color:var(--accent);font-weight:600;
+    text-decoration:underline;
+    text-underline-offset:4px;
+    text-decoration-thickness:1px;
+    transition:color .18s ease;
+  }
+  .link:hover{color:var(--accent-deep);}
+  /* --accent 落到深棕底上只有 2.9:1 —— 深色带里的文字链一律抬到 --accent-lift */
+  .ink .link{color:var(--accent-lift);}
+  .ink .link:hover{color:var(--ink-text);}
+
+  /* ——————————————— 导航 ——————————————— */
+  .nav{border-bottom:1px solid var(--line);}
+  .nav-in{display:flex;align-items:center;gap:var(--s6);min-height:80px;}
+  .brand{display:flex;align-items:center;gap:var(--s3);flex:none;}
+  .brand-mark{width:36px;height:36px;flex:none;}
+  .brand-name{
+    font-family:var(--serif);font-weight:600;
+    font-size:var(--t-md);letter-spacing:.06em;
+  }
+  .brand:hover .brand-name{color:var(--accent);}
+  .nav-links{display:flex;align-items:center;gap:var(--s6);margin-left:auto;}
+  .nav-links a{
+    font-size:var(--t-sm);color:var(--muted);
+    padding:var(--s2) 0;
+    border-bottom:2px solid transparent;
+    transition:color .18s ease,border-color .18s ease;
+  }
+  .nav-links a:hover{color:var(--text);border-bottom-color:var(--line-strong);}
+  /* 当前页：留色 + 常驻赭线，不只靠颜色区分 */
+  .nav-links a[aria-current="page"]{color:var(--text);font-weight:600;border-bottom-color:var(--accent);}
+  .nav-cta{flex:none;min-height:44px;padding:var(--s2) var(--s5);}
+
+  /* ——————————————— Hero：主张式 ——————————————— */
+  .hero{padding:var(--s8) 0;}
+  .hero-in{
+    display:grid;grid-template-columns:1.1fr .9fr;
+    gap:var(--s7);align-items:center;
+  }
+  .hero h1{
+    font-size:var(--t-2xl);
+    line-height:1.28;
+    margin:var(--s5) 0;
+    max-width:15em;
+  }
+  .hero h1 em{
+    font-style:normal;
+    color:var(--accent);
+  }
+  .hero .lede{max-width:32em;}
+  .hero-actions{display:flex;flex-wrap:wrap;align-items:center;gap:var(--s4);margin-top:var(--s6);}
+  .hero-facts{
+    display:flex;flex-wrap:wrap;gap:var(--s2) var(--s5);
+    margin-top:var(--s6);padding-top:var(--s5);
+    border-top:1px solid var(--line);
+    font-size:var(--t-xs);color:var(--muted);
+  }
+  .hero-facts b{color:var(--text);font-weight:600;}
+
+  /* 右侧拱窗插画：纯内联 SVG，无外链图 */
+  .hero-art{margin:0 auto;max-width:400px;width:100%;}
+  .hero-art svg{width:100%;height:auto;}
+  .hero-art figcaption{
+    margin-top:var(--s3);
+    font-size:var(--t-xs);color:var(--muted);
+    text-align:center;letter-spacing:.08em;
+  }
+
+  /* 插画调色全走 class，不在 SVG 属性里写 var()
+     （老 WebKit 不认 presentation attribute 里的自定义属性，图会整块糊掉） */
+  .f-s{fill:var(--surface);}
+  .f-1{fill:var(--sand-1);}
+  .f-2{fill:var(--sand-2);}
+  .f-3{fill:var(--sand-3);}
+  .f-4{fill:var(--sand-4);}
+  .f-a{fill:var(--accent);}
+  .f-ad{fill:var(--accent-deep);}
+  .f-as{fill:var(--accent-soft);}
+  .f-t{fill:var(--text);}
+  .k-3{fill:none;stroke:var(--sand-3);}
+  .k-4{fill:none;stroke:var(--sand-4);}
+  .k-a{fill:none;stroke:var(--accent);}
+  .k-t{fill:none;stroke:var(--text);}
+
+  /* ——————————————— 合作过（一行字标）——————————————— */
+  .clients{
+    border-top:1px solid var(--line);
+    border-bottom:1px solid var(--line);
+    padding:var(--s5) 0;
+  }
+  .clients-in{
+    display:flex;flex-wrap:wrap;align-items:baseline;
+    gap:var(--s3) var(--s6);
+    font-size:var(--t-xs);color:var(--muted);
+  }
+  .clients-in .clients-label{letter-spacing:.22em;flex:none;}
+  .clients-in b{
+    font-family:var(--serif);font-weight:600;
+    font-size:var(--t-sm);color:var(--text);letter-spacing:.06em;
+  }
+
+  /* ——————————————— 服务三栏 ——————————————— */
+  .svc-grid{
+    display:grid;grid-template-columns:repeat(3,1fr);
+    gap:var(--s7) var(--s6);
+  }
+  .svc{                            /* 裸区块：序号 + 顶线分层，不套卡片 */
+    border-top:2px solid var(--text);
+    padding-top:var(--s5);
+  }
+  .svc-no{
+    font-family:var(--serif);
+    font-size:var(--t-lg);
+    color:var(--accent);
+    letter-spacing:.04em;
+    display:block;margin-bottom:var(--s4);
+  }
+  .svc h3{font-size:var(--t-md);margin-bottom:var(--s3);}
+  .svc > p{font-size:var(--t-xs);color:var(--muted);line-height:1.8;}
+  .svc ul{margin-top:var(--s4);}
+  .svc li{
+    display:flex;gap:var(--s3);align-items:baseline;
+    padding:var(--s2) 0;
+    font-size:var(--t-xs);color:var(--muted);
+    border-top:1px solid var(--line);
+  }
+  .svc li::before{
+    content:"";width:5px;height:5px;border-radius:50%;
+    background:var(--accent);flex:none;
+    position:relative;top:-2px;
+  }
+
+  /* ——————————————— 案例两则 ——————————————— */
+  .case{
+    display:grid;grid-template-columns:.9fr 1.1fr;
+    gap:var(--s7);align-items:center;
+  }
+  .case + .case{margin-top:var(--s8);padding-top:var(--s8);border-top:1px solid var(--line);}
+  .case--flip .case-art{order:2;}
+  .case-art{
+    background:var(--surface);
+    border:1px solid var(--line);
+    border-radius:var(--radius);
+    overflow:hidden;
+  }
+  .case-art svg{width:100%;height:auto;transition:transform .5s cubic-bezier(.2,.7,.3,1);}
+  .case:hover .case-art svg{transform:scale(1.02);}
+  .case-meta{
+    display:flex;flex-wrap:wrap;gap:var(--s2) var(--s4);
+    font-size:var(--t-xs);color:var(--muted);
+    letter-spacing:.12em;
+    margin-bottom:var(--s4);
+  }
+  .case h3{font-size:var(--t-lg);margin-bottom:var(--s4);}
+  .case-body p{max-width:34em;color:var(--muted);}
+  .case-nums{
+    display:flex;flex-wrap:wrap;gap:var(--s5) var(--s7);
+    margin:var(--s6) 0;
+    padding:var(--s5) 0;
+    border-top:1px solid var(--line);
+    border-bottom:1px solid var(--line);
+  }
+  .case-nums b{
+    display:block;
+    font-family:var(--serif);font-weight:600;
+    font-size:var(--t-lg);color:var(--accent);
+    font-variant-numeric:tabular-nums;
+  }
+  .case-nums span{display:block;margin-top:var(--s1);font-size:var(--t-xs);color:var(--muted);}
+  .case-quote{
+    border-left:2px solid var(--accent);
+    padding-left:var(--s4);
+    font-family:var(--serif);
+    font-size:var(--t-sm);
+    color:var(--text);
+    max-width:32em;
+  }
+  .case-quote footer{
+    margin-top:var(--s2);
+    font-family:var(--sans);
+    font-size:var(--t-xs);color:var(--muted);
+  }
+
+  /* ——————————————— 团队一排 ——————————————— */
+  .team-grid{
+    display:grid;grid-template-columns:repeat(4,1fr);
+    gap:var(--s6) var(--s5);
+  }
+  .member-face{
+    border-radius:var(--radius);
+    overflow:hidden;
+    border:1px solid var(--line);
+    margin-bottom:var(--s4);
+  }
+  .member-face svg{width:100%;height:auto;}
+  .member h3{font-size:var(--t-md);}
+  .member-role{
+    margin-top:var(--s1);
+    font-size:var(--t-xs);color:var(--accent);
+    letter-spacing:.08em;
+  }
+  .member-line{margin-top:var(--s2);font-size:var(--t-xs);color:var(--muted);line-height:1.8;}
+
+  /* ——————————————— CTA 深色带 ——————————————— */
+  .ink{background:var(--ink);color:var(--ink-text);}
+  .cta{text-align:center;}
+  .cta h2{
+    font-size:var(--t-xl);
+    color:var(--ink-text);
+    max-width:20em;margin:0 auto;
+  }
+  .cta p{
+    max-width:34em;margin:var(--s4) auto 0;
+    color:var(--ink-muted);
+  }
+  .cta .btn{margin-top:var(--s6);}
+  .cta-note{margin-top:var(--s4);font-size:var(--t-xs);color:var(--ink-muted);}
+
+  /* ——————————————— 页脚 ——————————————— */
+  .foot{border-top:1px solid var(--ink-line);}
+  .foot-in{padding:var(--s7) 0 var(--s6);}
+  .foot-grid{
+    display:grid;grid-template-columns:1.4fr 1fr 1fr;
+    gap:var(--s6);
+    padding-bottom:var(--s6);border-bottom:1px solid var(--ink-line);
+  }
+  .foot-brand .brand-name{color:var(--ink-text);}
+  /* 中文宽度用 em——ch 按「0」字形算，拿它限中文会让栏宽莫名其妙地窄一半 */
+  .foot-brand p{margin-top:var(--s4);font-size:var(--t-xs);color:var(--ink-muted);max-width:24em;line-height:1.9;}
+  .foot h4{
+    font-family:var(--sans);
+    font-size:var(--t-xs);font-weight:600;
+    letter-spacing:.22em;
+    color:var(--ink-text);margin-bottom:var(--s4);
+  }
+  .foot li{margin-bottom:var(--s3);}
+  .foot li a,.foot address{font-size:var(--t-xs);color:var(--ink-muted);font-style:normal;}
+  .foot li a:hover{color:var(--accent-lift);}
+  .foot-bottom{
+    display:flex;flex-wrap:wrap;gap:var(--s3) var(--s5);
+    align-items:center;justify-content:space-between;
+    padding-top:var(--s5);
+    font-size:var(--t-xs);color:var(--ink-muted);
+  }
+
+  /* ═══════════════ 响应式：900 / 720 / 560 ═══════════════ */
+  /* 断点避开 1024 这个「预览窗真的会命中」的宽度 */
+  @media (max-width:900px){
+    .hero-in{grid-template-columns:1fr;gap:var(--s6);}
+    .hero-art{max-width:340px;margin:0;}
+    .svc-grid{grid-template-columns:1fr;gap:var(--s6);}
+    .case,.case--flip{grid-template-columns:1fr;gap:var(--s6);}
+    .case--flip .case-art{order:0;}
+    .team-grid{grid-template-columns:repeat(2,1fr);}
+    .foot-grid{grid-template-columns:1fr 1fr;}
+  }
+  @media (max-width:720px){
+    .section{padding:var(--s7) 0;}
+    .hero{padding:var(--s7) 0;}
+    .nav-in{flex-wrap:wrap;padding-top:var(--s4);padding-bottom:var(--s4);min-height:0;gap:var(--s3) var(--s4);}
+    .nav-links{
+      order:3;width:100%;margin-left:0;
+      gap:var(--s5);
+      padding-top:var(--s3);border-top:1px solid var(--line);
+    }
+    .nav-links a{padding:var(--s3) 0;}   /* 点击区垫到 44px */
+    .nav-cta{margin-left:auto;}
+  }
+  @media (max-width:560px){
+    :root{--t-2xl:32px;--t-xl:28px;--t-lg:24px;}
+    .wrap{padding-left:var(--s4);padding-right:var(--s4);}
+    .hero-actions .btn{width:100%;}
+    /* 手机上 14px 中文读着费劲：成段的描述抬到 16px，标签维持 14px */
+    .svc > p,.member-line,.case-body p,.foot-brand p{font-size:var(--t-sm);}
+    .case + .case{margin-top:var(--s7);padding-top:var(--s7);}
+    .case-nums{gap:var(--s4) var(--s6);}
+    .team-grid{grid-template-columns:1fr;}
+    .foot-grid{grid-template-columns:1fr;}
+    .foot-bottom{flex-direction:column;align-items:flex-start;}
+  }
+  @media (prefers-reduced-motion:reduce){
+    html{scroll-behavior:auto;}
+    *{transition:none !important;animation:none !important;}
+  }
+</style>
+</head>
+<body>
+<a class="skip" href="#main">跳到主内容</a>
+
+<!-- ═══════════════ 导航 ═══════════════ -->
+<header class="nav">
+  <div class="wrap nav-in">
+    <a class="brand" href="index.html" aria-label="暖沙事务所 首页">
+      <svg class="brand-mark" viewBox="0 0 36 36" aria-hidden="true">
+        <path d="M6 31v-12a12 12 0 0 1 24 0v12z" class="f-a"/>
+        <circle cx="18" cy="9" r="3.5" class="f-t"/>
+      </svg>
+      <span class="brand-name">暖沙事务所</span>
+    </a>
+    <nav class="nav-links" aria-label="主导航">
+      <a href="index.html" aria-current="page">首页</a>
+      <a href="about.html">理念与历程</a>
+      <a href="contact.html">联系</a>
+    </nav>
+    <a class="btn btn-primary nav-cta" href="contact.html">谈一个项目</a>
+  </div>
+</header>
+
+<main id="main">
+
+<!-- ═══════════════ 主张式 Hero ═══════════════ -->
+<section class="hero">
+  <div class="wrap hero-in">
+    <div>
+      <span class="demo-badge">示例内容 · 请替换为你的资料</span>
+      <h1>替认真做事的组织，<br>把话<em>说清楚</em>。</h1>
+      <p class="lede">
+        暖沙是一家十一个人的品牌与沟通事务所。不追热点、不做提案表演，
+        每年只接八个项目——从想明白，到说出来，到被记住。
+      </p>
+      <div class="hero-actions">
+        <a class="btn btn-primary" href="contact.html">谈一个项目</a>
+        <a class="link" href="#cases">先看两个案例</a>
+      </div>
+      <ul class="hero-facts">
+        <li><b>杭州</b> · 运河仓库</li>
+        <li><b>2016</b> 年起</li>
+        <li>2026 年 <b>秋季</b>档期开放中</li>
+      </ul>
+    </div>
+
+    <!-- 拱窗与日：事务所的「窗景」插画，纯内联 SVG -->
+    <figure class="hero-art">
+      <svg viewBox="0 0 400 480" role="img" aria-label="示例插画：拱窗里的暖阳与沙丘">
+        <rect width="400" height="480" class="f-s"/>
+        <rect x="1" y="1" width="398" height="478" class="k-3" stroke-width="2"/>
+        <!-- 拱窗 -->
+        <path d="M76 428v-232a124 124 0 0 1 248 0v232z" class="f-1"/>
+        <path d="M76 428v-232a124 124 0 0 1 248 0v232z" class="k-4" stroke-width="2"/>
+        <!-- 窗里的天光与日 -->
+        <path d="M84 420v-224a116 116 0 0 1 232 0v224z" class="f-as"/>
+        <circle cx="200" cy="176" r="44" class="f-a"/>
+        <circle cx="200" cy="176" r="58" class="k-a" stroke-width="1.5" opacity=".35"/>
+        <!-- 沙丘三重 -->
+        <path d="M84 420v-96c40-22 74 10 116 2s76-30 116-8v102z" class="f-2"/>
+        <path d="M84 420v-58c52-18 92 16 148 6s60-20 84-12v64z" class="f-3"/>
+        <path d="M84 420v-26c64-12 120 12 168 6s48-8 64-4v24z" class="f-4"/>
+        <!-- 远处一株细树 -->
+        <g class="k-t" stroke-width="2.5" stroke-linecap="round">
+          <path d="M126 322v-52"/>
+          <path d="M126 290c-12-6-18-16-17-30"/>
+          <path d="M126 300c12-8 16-18 15-32"/>
+        </g>
+        <circle cx="109" cy="256" r="7" class="f-ad"/>
+        <circle cx="141" cy="264" r="5.5" class="f-a"/>
+        <!-- 窗台 -->
+        <rect x="60" y="428" width="280" height="10" class="f-4"/>
+        <rect x="48" y="438" width="304" height="6" class="f-3"/>
+      </svg>
+      <figcaption>杭州 · 事务所的南窗，下午三点</figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- ═══════════════ 合作过 ═══════════════ -->
+<section class="clients" aria-label="合作过的品牌">
+  <div class="wrap clients-in">
+    <span class="clients-label">合作过</span>
+    <b>山茶食品</b><span>·</span>
+    <b>未名书馆</b><span>·</span>
+    <b>南麓民宿</b><span>·</span>
+    <b>知合律所</b><span>·</span>
+    <b>拾穗农场</b><span>·</span>
+    <b>白杨教育</b>
+  </div>
+</section>
+
+<!-- ═══════════════ 服务三栏 ═══════════════ -->
+<section class="section" id="services">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">我们做的事</p>
+      <h2 class="h-xl">三件事，做了十年</h2>
+      <p>
+        品牌的病灶多半不在视觉，在没想清楚。所以我们坚持从策略做起，
+        视觉和内容是把想清楚的事，落到看得见的地方。
+      </p>
+    </div>
+    <div class="svc-grid">
+      <article class="svc">
+        <span class="svc-no">壹</span>
+        <h3>品牌策略与命名</h3>
+        <p>
+          回答三个问题：你是谁、凭什么、对谁说。产出不是一沓 PPT，
+          是一页能贴在墙上的主张，和一套经得起十年用的名字与话语。
+        </p>
+        <ul>
+          <li>品牌定位与主张</li>
+          <li>命名与话语体系</li>
+          <li>产品线梳理与取舍</li>
+        </ul>
+      </article>
+      <article class="svc">
+        <span class="svc-no">贰</span>
+        <h3>视觉识别与出版物</h3>
+        <p>
+          标志只是开始。我们更在意字体、纸张、包装与陈列这些日常触点——
+          品牌是在一次次被看见里长出来的，不是发布会上宣布出来的。
+        </p>
+        <ul>
+          <li>标志与基础识别系统</li>
+          <li>包装、书册与年报设计</li>
+          <li>店面与展陈的视觉延展</li>
+        </ul>
+      </article>
+      <article class="svc">
+        <span class="svc-no">叁</span>
+        <h3>内容与组织沟通</h3>
+        <p>
+          替品牌写字，也教品牌自己写。从官网文案到创始人年度信，
+          从对外发声到对内共识——把「怎么说」变成组织自己的能力。
+        </p>
+        <ul>
+          <li>官网与核心物料文案</li>
+          <li>年度信、品牌手册撰写</li>
+          <li>内容团队陪跑（季度制）</li>
+        </ul>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════ 案例两则 ═══════════════ -->
+<section class="section" id="cases" style="padding-top:0;">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">案例</p>
+      <h2 class="h-xl">两个说得清楚的项目</h2>
+      <p>案例不贪多。每个项目我们只讲三件事：接手时的困局、做了什么、留下了什么数。</p>
+    </div>
+
+    <!-- 案例一：山茶食品 -->
+    <article class="case">
+      <div class="case-art">
+        <svg viewBox="0 0 480 360" role="img" aria-label="示例配图：点心礼盒与茶花印章">
+          <rect width="480" height="360" class="f-as"/>
+          <!-- 桌面 -->
+          <rect y="268" width="480" height="92" class="f-2"/>
+          <!-- 礼盒 -->
+          <rect x="96" y="176" width="200" height="92" rx="3" class="f-a"/>
+          <rect x="96" y="176" width="200" height="26" rx="3" class="f-ad"/>
+          <rect x="176" y="150" width="40" height="118" class="f-s" opacity=".9"/>
+          <!-- 盒上茶花印章 -->
+          <circle cx="196" cy="228" r="22" class="f-s"/>
+          <g class="k-a" stroke-width="2" stroke-linecap="round">
+            <circle cx="196" cy="228" r="6"/>
+            <path d="M196 214v6M196 236v6M182 228h6M204 228h6"/>
+            <path d="M186 218l4 4M206 218l-4 4M186 238l4-4M206 238l-4-4"/>
+          </g>
+          <!-- 三枚点心 -->
+          <ellipse cx="360" cy="262" rx="44" ry="12" class="f-3" opacity=".6"/>
+          <circle cx="344" cy="238" r="22" class="f-1"/>
+          <circle cx="344" cy="238" r="22" class="k-4" stroke-width="1.5"/>
+          <circle cx="382" cy="248" r="17" class="f-s"/>
+          <circle cx="382" cy="248" r="17" class="k-4" stroke-width="1.5"/>
+          <circle cx="344" cy="238" r="7" class="f-a" opacity=".8"/>
+          <circle cx="382" cy="248" r="5" class="f-ad" opacity=".7"/>
+          <!-- 一枝茶花 -->
+          <g class="k-t" stroke-width="2" stroke-linecap="round">
+            <path d="M404 176c-14 22-18 46-14 70"/>
+            <path d="M398 210c-12-2-20-8-24-18"/>
+          </g>
+          <circle cx="408" cy="170" r="12" class="f-a"/>
+          <circle cx="408" cy="170" r="4.5" class="f-ad"/>
+          <ellipse cx="372" cy="196" rx="8" ry="4.5" class="f-4" transform="rotate(-24 372 196)"/>
+        </svg>
+      </div>
+      <div class="case-body">
+        <p class="case-meta"><span>山茶食品</span><span>2024</span><span>品牌焕新 · 包装 · 话语</span></p>
+        <h3>七十年的点心铺，讲回自己的话</h3>
+        <p>
+          三代人的老字号，被商场专柜的「新中式」浪潮挤得没了脸。我们没有替它变年轻，
+          而是替它把「只用当季山茶油」这句祖训从车间墙上搬到了包装正面——
+          一套印章体系、六款应季礼盒、一册给店员的《怎么介绍我们》。
+        </p>
+        <div class="case-nums">
+          <div><b>+38%</b><span>礼盒季复购率（同比）</span></div>
+          <div><b>57 家</b><span>门店完成陈列换新</span></div>
+          <div><b>11 个月</b><span>策略到上架的全程</span></div>
+        </div>
+        <blockquote class="case-quote">
+          「他们第一次开会没聊设计，聊了两个小时我爷爷怎么熬油。」
+          <footer>—— 沈其南 · 山茶食品第三代经营者（示例引言）</footer>
+        </blockquote>
+      </div>
+    </article>
+
+    <!-- 案例二：未名书馆 -->
+    <article class="case case--flip">
+      <div class="case-art">
+        <svg viewBox="0 0 480 360" role="img" aria-label="示例配图：书店拱门与读者">
+          <rect width="480" height="360" class="f-1"/>
+          <!-- 拱门书墙 -->
+          <path d="M120 360V184a120 120 0 0 1 240 0v176z" class="f-4"/>
+          <path d="M132 360V188a108 108 0 0 1 216 0v172z" class="f-as"/>
+          <!-- 门里书架横板 -->
+          <g class="f-3">
+            <rect x="150" y="200" width="180" height="4"/>
+            <rect x="144" y="248" width="192" height="4"/>
+            <rect x="140" y="296" width="200" height="4"/>
+          </g>
+          <!-- 书脊 -->
+          <g class="f-4" opacity=".8">
+            <rect x="160" y="170" width="9" height="30"/><rect x="173" y="176" width="7" height="24"/>
+            <rect x="184" y="166" width="10" height="34"/><rect x="286" y="172" width="8" height="28"/>
+            <rect x="298" y="164" width="10" height="36"/><rect x="312" y="174" width="7" height="26"/>
+            <rect x="154" y="220" width="8" height="28"/><rect x="166" y="214" width="10" height="34"/>
+            <rect x="304" y="218" width="9" height="30"/><rect x="317" y="224" width="7" height="24"/>
+          </g>
+          <g class="f-a" opacity=".85">
+            <rect x="198" y="172" width="8" height="28"/>
+            <rect x="290" y="226" width="10" height="22"/>
+            <rect x="180" y="222" width="7" height="26"/>
+          </g>
+          <!-- 读者 -->
+          <circle cx="240" cy="272" r="17" class="f-t"/>
+          <path d="M212 360c0-34 12-54 28-54s28 20 28 54z" class="f-t"/>
+          <rect x="226" y="292" width="28" height="20" rx="2" class="f-s"/>
+          <path d="M240 292v20" class="k-4" stroke-width="1.5"/>
+          <!-- 悬灯 -->
+          <path d="M240 64v34" class="k-t" stroke-width="2"/>
+          <path d="M226 112a14 14 0 0 1 28 0z" class="f-a"/>
+          <!-- 地面 -->
+          <rect y="352" width="480" height="8" class="f-2"/>
+        </svg>
+      </div>
+      <div class="case-body">
+        <p class="case-meta"><span>未名书馆</span><span>2023</span><span>空间叙事 · 会员体系 · 内容</span></p>
+        <h3>让一家书店，被当成城市的客厅</h3>
+        <p>
+          三家分店、三种装修、三套会员卡——扩张两年，反而没人说得清未名是什么。
+          我们先替它立了一句馆训「读半小时再走」，再据此重排了动线、灯光与选书逻辑，
+          会员体系从折扣卡改成了「座位与讲座的优先权」。
+        </p>
+        <div class="case-nums">
+          <div><b>×2.3</b><span>年度会员数（改制后一年）</span></div>
+          <div><b>41 分钟</b><span>顾客平均停留时长</span></div>
+          <div><b>19 篇</b><span>媒体自发报道</span></div>
+        </div>
+        <blockquote class="case-quote">
+          「改完之后，店员终于能用一句话回答『你们和别家有什么不一样』。」
+          <footer>—— 顾湘 · 未名书馆主理人（示例引言）</footer>
+        </blockquote>
+      </div>
+    </article>
+  </div>
+</section>
+
+<!-- ═══════════════ 团队一排 ═══════════════ -->
+<section class="section" id="team" style="padding-top:0;">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">团队</p>
+      <h2 class="h-xl">十一个人里的四个</h2>
+      <p>小团队的好处：给你写主张的人，就是坐在会议桌对面听你讲完三小时的人。</p>
+    </div>
+    <div class="team-grid">
+      <article class="member">
+        <div class="member-face">
+          <svg viewBox="0 0 240 300" role="img" aria-label="示例头像占位：沈知微">
+            <rect width="240" height="300" class="f-as"/>
+            <circle cx="120" cy="118" r="52" class="f-2"/>
+            <path d="M68 122c-4-44 26-70 52-70s56 26 52 70c-8-30-26-40-52-40s-44 10-52 40z" class="f-t"/>
+            <path d="M56 300c0-62 28-98 64-98s64 36 64 98z" class="f-a"/>
+            <path d="M104 210h32l-8 26h-16z" class="f-s"/>
+          </svg>
+        </div>
+        <h3>沈知微</h3>
+        <p class="member-role">创始人 · 策略</p>
+        <p class="member-line">前财经记者。坚信一个品牌只值得说一句话，其余都是注脚。</p>
+      </article>
+      <article class="member">
+        <div class="member-face">
+          <svg viewBox="0 0 240 300" role="img" aria-label="示例头像占位：程野">
+            <rect width="240" height="300" class="f-1"/>
+            <circle cx="120" cy="120" r="52" class="f-2"/>
+            <path d="M70 96c14-26 86-26 100 0v22c-30-14-70-14-100 0z" class="f-t"/>
+            <rect x="88" y="130" width="26" height="18" rx="9" class="k-t" stroke-width="2.5"/>
+            <rect x="126" y="130" width="26" height="18" rx="9" class="k-t" stroke-width="2.5"/>
+            <path d="M114 138h12" class="k-t" stroke-width="2.5"/>
+            <path d="M56 300c0-62 28-98 64-98s64 36 64 98z" class="f-4"/>
+          </svg>
+        </div>
+        <h3>程野</h3>
+        <p class="member-role">设计总监</p>
+        <p class="member-line">做过八年书籍装帧。对纸张的执念大于对屏幕的。</p>
+      </article>
+      <article class="member">
+        <div class="member-face">
+          <svg viewBox="0 0 240 300" role="img" aria-label="示例头像占位：韩晓昀">
+            <rect width="240" height="300" class="f-2"/>
+            <circle cx="120" cy="118" r="52" class="f-1"/>
+            <path d="M66 130c-6-52 30-80 54-80s60 28 54 80c-4 10-12 12-12 0v-26c-26-12-58-12-84 0v26c0 12-8 10-12 0z" class="f-t"/>
+            <path d="M56 300c0-62 28-98 64-98s64 36 64 98z" class="f-s"/>
+            <circle cx="120" cy="236" r="7" class="f-a"/>
+          </svg>
+        </div>
+        <h3>韩晓昀</h3>
+        <p class="member-role">内容主笔</p>
+        <p class="member-line">替六个品牌写过年度信。最常说的话：这句删掉，没人在乎。</p>
+      </article>
+      <article class="member">
+        <div class="member-face">
+          <svg viewBox="0 0 240 300" role="img" aria-label="示例头像占位：陆之遥">
+            <rect width="240" height="300" class="f-s"/>
+            <circle cx="120" cy="120" r="52" class="f-2"/>
+            <path d="M72 104c10-30 86-30 96 0l-6 18c-24-16-60-16-84 0z" class="f-t"/>
+            <path d="M56 300c0-62 28-98 64-98s64 36 64 98z" class="f-3"/>
+            <path d="M92 214l28 34 28-34" class="k-t" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <h3>陆之遥</h3>
+        <p class="member-role">项目管理</p>
+        <p class="member-line">八个项目同时在跑还能记得每个客户的忌口。时间表由她说了算。</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════════ CTA 深色带 ═══════════════ -->
+<section class="ink section cta">
+  <div class="wrap">
+    <p class="eyebrow" style="justify-content:center;">下一个项目</p>
+    <h2>手上有件事，一直没说清楚？</h2>
+    <p>
+      写三百字讲讲你的处境，比约一场提案会更快让我们判断能不能帮上忙。
+      两个工作日内，回信的会是合伙人本人。
+    </p>
+    <a class="btn btn-primary" href="contact.html">写给我们</a>
+    <p class="cta-note">2026 年秋季档期尚余两席（示例信息）</p>
+  </div>
+</section>
+
+</main>
+
+<!-- ═══════════════ 页脚 ═══════════════ -->
+<footer class="ink foot">
+  <div class="wrap foot-in">
+    <div class="foot-grid">
+      <div class="foot-brand">
+        <a class="brand" href="index.html" aria-label="暖沙事务所 首页">
+          <svg class="brand-mark" viewBox="0 0 36 36" aria-hidden="true">
+            <path d="M6 31v-12a12 12 0 0 1 24 0v12z" fill="var(--accent-lift)"/>
+            <circle cx="18" cy="9" r="3.5" fill="var(--ink-text)"/>
+          </svg>
+          <span class="brand-name">暖沙事务所</span>
+        </a>
+        <p>
+          杭州暖沙品牌咨询有限公司（示例）。2016 年起，
+          替认真做事的组织做品牌策略、视觉识别与内容叙事。
+        </p>
+      </div>
+      <div>
+        <h4>页面</h4>
+        <ul>
+          <li><a href="index.html#services">我们做的事</a></li>
+          <li><a href="index.html#cases">案例两则</a></li>
+          <li><a href="index.html#team">团队</a></li>
+          <li><a href="about.html">理念与历程</a></li>
+          <li><a href="about.html#timeline">十年时间线</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>联系</h4>
+        <ul>
+          <li><a href="mailto:hello@example.com">hello@example.com</a></li>
+          <li><a href="contact.html#visit">到访与地址</a></li>
+          <li><a href="contact.html#form">项目询问表</a></li>
+          <li><address>杭州市拱墅区丽水路 128 号<br>运河仓库 3 号楼 2 层（示例）</address></li>
+        </ul>
+      </div>
+    </div>
+    <div class="foot-bottom">
+      <span>© 2016–2026 暖沙事务所 · 示例站点，文字与数据均为虚构占位</span>
+      <!-- 备案号是文字不是链接：真备案号才链到工信部，占位期别留死链 -->
+      <span>浙 ICP 备 00000000 号-1（占位）</span>
+    </div>
+  </div>
+</footer>
+</body>
+</html>

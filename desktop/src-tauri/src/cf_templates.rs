@@ -81,6 +81,21 @@ pub const BUILTIN: &[Builtin] = &[
     Builtin { slug: "factory", name: "外贸工厂", desc: "深松绿 · 英文站 · 优势/产品/询盘 · OEM 出口制造商", category: "外贸",
         pages: &[page!("factory", "index.html"), page!("factory", "products.html"),
                  page!("factory", "product.html"), page!("factory", "contact.html")] },
+    Builtin { slug: "boutique", name: "东方精品店", desc: "墨黑朱漆 · 商品详情 / 购物袋 · 东方器物精品店", category: "电商",
+        pages: &[page!("boutique", "index.html"), page!("boutique", "product.html"),
+                 page!("boutique", "cart.html")] },
+    Builtin { slug: "darkroom", name: "暗房摄影", desc: "近黑底 · 胶片作品网格 + 暗房影集", category: "作品集",
+        pages: &[page!("darkroom", "index.html"), page!("darkroom", "work.html")] },
+    Builtin { slug: "fest", name: "音乐节现场", desc: "高饱和撞色 · 阵容 / 日程 / 票档 · 单页活动站", category: "活动",
+        pages: &[page!("fest", "index.html")] },
+    Builtin { slug: "ink", name: "手帖随笔", desc: "纸张留白 · 随笔列表 + 长文阅读", category: "内容",
+        pages: &[page!("ink", "index.html"), page!("ink", "article.html")] },
+    Builtin { slug: "machinery", name: "工业机械", desc: "钢蓝灰 · 英文产品目录 / 参数详情 / RFQ · 出口设备站", category: "外贸",
+        pages: &[page!("machinery", "index.html"), page!("machinery", "products.html"),
+                 page!("machinery", "product.html"), page!("machinery", "contact.html")] },
+    Builtin { slug: "warm-corp", name: "暖色企业", desc: "暖沙底 · 品牌服务 / 关于 / 联系 · 人文咨询公司", category: "企业",
+        pages: &[page!("warm-corp", "index.html"), page!("warm-corp", "about.html"),
+                 page!("warm-corp", "contact.html")] },
 ];
 
 pub fn is_builtin(slug: &str) -> bool {
@@ -538,6 +553,23 @@ mod tests {
         assert_eq!(by("shop").pages, 3, "电商 = 列表 + 详情 + 购物车");
         assert_eq!(by("corp").pages, 3, "企业 = 首页 + 关于 + 联系");
         assert_eq!(by("minimal").pages, 1, "落地页本来就是一页式");
+        assert_eq!(by("boutique").pages, 3, "东方精品店 = 首页 + 商品 + 购物袋");
+        assert_eq!(by("darkroom").pages, 2, "暗房摄影 = 首页 + 作品详情");
+        assert_eq!(by("fest").pages, 1, "音乐节现场 = 单页活动站");
+        assert_eq!(by("ink").pages, 2, "手帖随笔 = 首页 + 长文");
+        assert_eq!(by("machinery").pages, 4, "工业机械 = 首页 + 目录 + 产品 + 询盘");
+        assert_eq!(by("warm-corp").pages, 3, "暖色企业 = 首页 + 关于 + 联系");
+
+        for (slug, category) in [
+            ("boutique", "电商"),
+            ("darkroom", "作品集"),
+            ("fest", "活动"),
+            ("ink", "内容"),
+            ("machinery", "外贸"),
+            ("warm-corp", "企业"),
+        ] {
+            assert_eq!(by(slug).category, category, "{slug} 分类映射不正确");
+        }
 
         // 多页模板的页间跳转必须是真的：主导航指向的文件得**真的在磁盘上**
         for b in BUILTIN.iter().filter(|b| b.pages.len() > 1) {
@@ -575,6 +607,25 @@ mod tests {
         fs::write(src.join("index.html"), "<h1>x</h1>").unwrap();
         let e = save(&tdir, "minimal", "", &src).unwrap_err();
         assert!(e.contains("换个名字"), "重名提示要说人话: {e}");
+
+        // 新模板必须真的能创建项目，而不是只出现在模板列表里。
+        let created = base.join("created");
+        for slug in [
+            "boutique",
+            "darkroom",
+            "fest",
+            "ink",
+            "machinery",
+            "warm-corp",
+        ] {
+            let dest = created.join(slug);
+            instantiate(&tdir, slug, &dest).unwrap_or_else(|e| panic!("{slug} 创建失败: {e}"));
+            let builtin = BUILTIN.iter().find(|b| b.slug == slug).unwrap();
+            for (file, _) in builtin.pages {
+                assert!(dest.join(file).is_file(), "{slug} 创建后缺少 {file}");
+            }
+            assert!(!dest.join("_probe.html").exists(), "{slug} 不应夹带探针文件");
+        }
 
         // 覆写幂等：再种一次不炸、数量不变
         ensure_builtin(&base).unwrap();

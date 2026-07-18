@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>旧书摊的黄昏 — 墨白手帖</title>
+<meta name="description" content="墨白手帖·随笔样张：记城南旧书摊的老陈、一册一九八二年的《草木小记》，和扉页上两行淡去的铅笔字。窄栏长文排版，含题记、小节与尾注。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='5' fill='%236D3F8C'/%3E%3Crect x='3' y='3' width='26' height='26' rx='3' fill='none' stroke='%23F4EEE1' stroke-width='1.4' opacity='.65'/%3E%3Ctext x='16' y='23' font-size='17' text-anchor='middle' fill='%23F4EEE1' font-family='Georgia,serif'%3E%E5%A2%A8%3C/text%3E%3C/svg%3E">
+<style>
+  /* ═══════════════════════════════════════════════════════════════
+     墨白手帖 — 长文页（随笔正文）起始模板
+     同一个站的第二个页面：index.html 是它的目次页，两页共用下面这块令牌。
+     单文件：CSS 全部内联在这里，不许抽公共样式表（库的缩略图是把本文件原文
+     塞进 iframe srcdoc 渲染的，相对路径的 <link> 会 404 → 缩略图整块白）。
+     排版原则：窄栏（680px 测量宽）、首行缩进二字、小节用藤紫数目字分隔，
+     引文走楷体，注释走尾注——通篇像一页排好的书版，而不是网页贴文。
+     ═══════════════════════════════════════════════════════════════ */
+
+  /* ══════════════════════════════════════════════════════════════════
+     设计令牌 —— 这一整块在本站每一页里逐字相同
+     改配色 / 改字号 = 整块替换，别在下面的规则里写死颜色。
+     :root 之外零硬编码 hex；<head> 的 favicon data-URI 是唯一例外
+     （data: 里用不了 var()，但那方朱印必须和 --accent 保持一致）。
+     两页同源，各页会剩几个用不到的令牌（列表页用不到 --ink-3/--ink-4，
+     正文页用不到牌记相关）—— 保留，方便整块复制到新页面。
+     ══════════════════════════════════════════════════════════════════ */
+  :root {
+    /* ——— 主色（契约名，别改名） ——— */
+    --bg:      #F4EEE1;   /* 暖米纸底：日晒过的宣纸色 */
+    --surface: #FBF7EE;   /* 更亮一度的纸：输入框 / 题记底 */
+    --text:    #221E1A;   /* 墨黑（暖调） 14.3:1 on --bg，15.5:1 on --surface */
+    --muted:   #6B6257;   /* 淡墨：次要文字 5.2:1 on --bg，5.6:1 on --surface */
+    --accent:  #6D3F8C;   /* 唯一强调色·藤紫 6.0:1 on --bg，6.5:1 on --surface */
+    --radius:  2px;       /* 纸上物件，圆角几乎收干——这是「印」不是「按钮」 */
+
+    /* ——— 派生：墨的浓淡 + 藤紫的深浅（同色相深浅，不算第二个颜色） ——— */
+    --line:        #DFD5C2;  /* 细界线：淡墨扫过一笔（装饰线，非文字） */
+    --line-soft:   #E9E1D1;  /* 更弱的线 */
+    --ink-3:       #8A8172;  /* 山影淡墨：装饰 SVG 专用，不做文字色 */
+    --ink-4:       #4C443A;  /* 山影浓墨：装饰 SVG 专用，不做文字色 */
+    --accent-deep: #512E6B;  /* 藤紫加深：hover 8.4:1 on --bg */
+    --seal-tint:   #E9DDF0;  /* 印色淡染：徽标底（--accent 落其上保持清晰） */
+
+    /* ——— 间距刻度：只用这些值 ——— */
+    --s1: 4px;
+    --s2: 8px;
+    --s3: 12px;
+    --s4: 16px;
+    --s5: 24px;
+    --s6: 40px;
+    --s7: 64px;
+    --s8: 96px;   /* 手帖的大留白：刊头上下、区块之间 */
+
+    /* ——— 字号刻度 ——— */
+    --fs-sm:    14px;  /* 眉标 / 日期 / 注文 */
+    --fs-base:  16px;
+    --fs-prose: 18px;  /* 长文正文比 base 大一档（正文页用） */
+    --fs-md:    20px;  /* 条目标题 */
+    --fs-lg:    28px;  /* 卷首标题 / 区块题 */
+    --fs-xl:    40px;  /* 刊头 */
+
+    /* ——— 字体：通篇衬线（宋体系）+ 楷体做引文与日期 ———
+           这是本模板的签名质感：正文也走衬线，纸感才立得住 */
+    --font-serif: Georgia, "Songti SC", "STSong", "SimSun",
+                  "Noto Serif SC", "Source Han Serif SC", serif;
+    --font-kai:   "Kaiti SC", "STKaiti", "KaiTi",
+                  "Songti SC", "Noto Serif SC", serif;
+
+    /* ——— 版心：手帖开本，比常规博客窄 ——— */
+    --container: 860px;   /* 列表页版心 */
+    --measure:   680px;   /* 长文窄栏（正文页用） */
+    color-scheme: light;
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+
+  body {
+    margin: 0;
+    /* 页顶一道印色线：老式期刊的「口红」，全站唯一的大面积藤紫 */
+    border-top: 4px solid var(--accent);
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-serif);
+    font-size: var(--fs-base);
+    line-height: 1.9;
+    letter-spacing: 0.02em;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    line-break: strict;   /* 中文避头尾：「、」「。」不落行首 */
+  }
+
+  h1, h2, h3 { margin: 0; line-height: 1.3; font-weight: 600; }
+  p { margin: 0; }
+  ul, ol { margin: 0; padding: 0; list-style: none; }
+  img, svg { max-width: 100%; }
+  ::selection { background: var(--seal-tint); color: var(--text); }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+    transition: color .15s ease, border-color .15s ease, background .15s ease;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: var(--radius);
+  }
+
+  /* 长文窄栏：45–75 字符的测量宽，读长文不费眼 */
+  .wrap {
+    max-width: var(--measure);
+    margin: 0 auto;
+    padding-inline: var(--s5);
+  }
+
+  /* 跳到正文（键盘可达） */
+  .skip {
+    position: absolute;
+    left: -9999px;
+    top: var(--s2);
+    padding: var(--s2) var(--s4);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    font-size: var(--fs-sm);
+    z-index: 20;
+  }
+  .skip:focus { left: var(--s5); }
+
+  /* ——— 文武线：传统书版的粗细双线 ——— */
+  .rule-wu {
+    border: 0;
+    margin: 0 auto;   /* 别写 margin:0——会盖掉 .wrap 的水平居中 */
+    height: 0;
+    border-top: 3px solid var(--text);
+    position: relative;
+  }
+  .rule-wu::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: var(--s1);
+    height: 1px;
+    background: var(--text);
+  }
+  .rule-wu--flip { border-top-width: 1px; }
+  .rule-wu--flip::after { height: 3px; }
+
+  /* ═══ 顶栏：静置不吸顶——纸不追着人跑 ═══ */
+  .site-head { border-bottom: 1px solid var(--line); }
+  .site-head__in {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--s5);
+    min-height: 60px;
+  }
+  .brand {
+    font-size: var(--fs-base);
+    font-weight: 600;
+    letter-spacing: 0.2em;
+  }
+  .brand:hover { color: var(--accent); }
+  .nav { display: flex; align-items: center; }
+  .nav a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;              /* 点击区 ≥44 */
+    padding: 0 var(--s3);
+    color: var(--muted);
+    font-size: var(--fs-sm);
+    letter-spacing: 0.1em;
+    border-bottom: 1px solid transparent;
+  }
+  .nav a:hover { color: var(--accent); }
+
+  /* ═══ 文头：居中书题 ═══ */
+  .head {
+    padding: var(--s8) 0 var(--s6);
+    text-align: center;
+  }
+  .badge {
+    display: inline-block;
+    margin-bottom: var(--s6);
+    padding: var(--s1) var(--s3);
+    background: var(--seal-tint);
+    border-radius: var(--radius);
+    color: var(--accent);              /* 5.3:1 on --seal-tint */
+    font-size: var(--fs-sm);
+    line-height: 1.8;
+    letter-spacing: 0.12em;
+  }
+  .head__eyebrow {
+    color: var(--accent);
+    font-size: var(--fs-sm);
+    letter-spacing: 0.35em;
+    text-indent: 0.35em;
+  }
+  .head__t {
+    margin-top: var(--s4);
+    font-size: var(--fs-xl);
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-indent: 0.12em;
+  }
+  .head__dek {
+    max-width: 26em;
+    margin: var(--s4) auto 0;
+    color: var(--muted);
+    font-family: var(--font-kai);
+    font-size: var(--fs-md);
+    line-height: 1.8;
+  }
+  .head__meta {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: center;
+    gap: var(--s3) var(--s4);
+    margin-top: var(--s5);
+    color: var(--muted);
+    font-family: var(--font-kai);
+    font-size: var(--fs-sm);
+  }
+  .head__meta .dot {
+    width: 3px;
+    height: 3px;
+    border-radius: 50%;
+    background: var(--line);
+    flex: none;
+  }
+
+  /* ═══ 题记：楷体小段，亮纸底衬一层 ═══ */
+  .epigraph {
+    margin-top: var(--s6);
+    padding: var(--s5) var(--s6);
+    background: var(--surface);
+    border-radius: var(--radius);
+    text-align: center;
+  }
+  .epigraph__x {
+    font-family: var(--font-kai);
+    font-size: var(--fs-base);
+    line-height: 2;
+    color: var(--text);
+  }
+  .epigraph__by {
+    margin-top: var(--s3);
+    color: var(--muted);
+    font-size: var(--fs-sm);
+  }
+
+  /* ═══ 正文：书版式排法 ═══ */
+  .prose {
+    padding: var(--s6) 0 0;
+    font-size: var(--fs-prose);
+    line-height: 2;
+  }
+  .prose p {
+    margin-top: var(--s4);
+    text-indent: 2em;        /* 首行缩进二字：每一段都缩，书版规矩 */
+    text-align: justify;
+  }
+  /* 小节数目字：一 / 二 / 三——藤紫居中，两侧淡墨短线 */
+  .sec-no {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--s4);
+    margin: var(--s7) 0 var(--s3);
+    color: var(--accent);
+    font-size: var(--fs-md);
+    font-weight: 600;
+    letter-spacing: 0.5em;
+    text-indent: 0.5em;
+  }
+  .sec-no::before,
+  .sec-no::after {
+    content: "";
+    width: var(--s6);
+    height: 1px;
+    background: var(--line);
+  }
+  .prose .sec-no + p { margin-top: var(--s4); }
+
+  /* 引文：楷体退格，左缘一道朱线——全文只这一处大面积强调 */
+  blockquote {
+    margin: var(--s5) 0 var(--s5) var(--s6);
+    padding-left: var(--s4);
+    border-left: 2px solid var(--accent);
+  }
+  blockquote p {
+    margin: 0;
+    text-indent: 0;
+    text-align: left;
+    font-family: var(--font-kai);
+    font-size: var(--fs-prose);
+    line-height: 2;
+  }
+
+  /* 尾注引用角标 */
+  .fn {
+    font-size: var(--fs-sm);
+    line-height: 1;
+    vertical-align: super;
+  }
+  .fn a {
+    color: var(--accent);
+    letter-spacing: 0.05em;
+  }
+  .fn a:hover { color: var(--accent-deep); text-decoration: underline; }
+
+  /* ═══ 收尾：远山淡墨 + 一方「完」印 ═══ */
+  .fin {
+    padding: var(--s7) 0 var(--s6);
+    text-align: center;
+  }
+  /* 山影配色全走 class（老 WebKit 不认 presentation attribute 里的 var()） */
+  .m-3 { fill: var(--ink-3); }
+  .m-4 { fill: var(--ink-4); }
+  .m-a { fill: var(--accent); }
+  .fin__hills { width: 220px; margin: 0 auto; display: block; }
+  .fin__seal {
+    display: inline-grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    margin-top: var(--s5);
+    background: var(--accent);
+    border-radius: var(--radius);
+    color: var(--bg);                /* 5.9:1 on --accent */
+    font-size: var(--fs-md);
+    font-weight: 600;
+  }
+
+  /* ═══ 尾注 ═══ */
+  .notes {
+    border-top: 1px solid var(--line);
+    padding-top: var(--s5);
+  }
+  .notes h2 {
+    font-size: var(--fs-sm);
+    font-weight: 600;
+    letter-spacing: 0.35em;
+    color: var(--muted);
+  }
+  .notes ol {
+    margin-top: var(--s4);
+    padding-left: var(--s5);
+    list-style: cjk-decimal;    /* 一、二、三——不支持时回退 decimal，也成立 */
+  }
+  .notes li {
+    margin-top: var(--s3);
+    color: var(--muted);
+    font-size: var(--fs-sm);
+    line-height: 2;
+  }
+  .notes li::marker { color: var(--accent); }
+  .notes a {
+    color: var(--accent);
+    border-bottom: 1px solid var(--line);
+  }
+  .notes a:hover { color: var(--accent-deep); border-bottom-color: var(--accent); }
+
+  /* ═══ 前后篇 ═══ */
+  .pager {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--s5);
+    margin-top: var(--s7);
+    border-top: 1px solid var(--line);
+    padding-top: var(--s5);
+  }
+  .pager a { display: block; }
+  .pager__k {
+    display: block;
+    color: var(--muted);
+    font-family: var(--font-kai);
+    font-size: var(--fs-sm);
+    letter-spacing: 0.2em;
+  }
+  .pager__t {
+    display: block;
+    margin-top: var(--s2);
+    font-size: var(--fs-md);
+    font-weight: 600;
+    transition: color .15s ease;
+  }
+  .pager a:hover .pager__t { color: var(--accent); }
+  .pager__next { text-align: right; }
+
+  /* ═══ 页脚 ═══ */
+  .site-foot { padding: var(--s6) 0 var(--s7); text-align: center; }
+  .site-foot__brand {
+    font-family: var(--font-kai);
+    font-size: var(--fs-sm);
+    color: var(--muted);
+    letter-spacing: 0.3em;
+    text-indent: 0.3em;
+    margin-top: var(--s5);
+  }
+  .site-foot__links {
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: var(--s2) var(--s5);
+    margin-top: var(--s3);
+    font-size: var(--fs-sm);
+  }
+  .site-foot__links a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    color: var(--muted);
+  }
+  .site-foot__links a:hover { color: var(--accent); }
+  .site-foot__note {
+    margin-top: var(--s2);
+    color: var(--muted);
+    font-size: var(--fs-sm);
+  }
+
+  /* ═══ 响应式 ═══ */
+  @media (max-width: 640px) {
+    :root { --fs-xl: 28px; --fs-lg: 20px; }
+    .wrap { padding-inline: var(--s4); }
+    .head { padding: var(--s7) 0 var(--s5); }
+    .head__dek { font-size: var(--fs-base); }
+    .epigraph { padding: var(--s5) var(--s4); }
+    /* 手机上正文回到 16px 档，行长合适；引文退格收窄 */
+    .prose { font-size: var(--fs-base); }
+    blockquote { margin-left: var(--s4); }
+    .pager { grid-template-columns: 1fr; }
+    .pager__next { text-align: left; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    * { transition: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<a class="skip" href="#main">跳到正文</a>
+
+<!-- ═══ 顶栏 ═══ -->
+<header class="site-head">
+  <div class="wrap site-head__in">
+    <a class="brand" href="index.html">墨白手帖</a>
+    <nav class="nav" aria-label="主导航">
+      <a href="index.html">目次</a>
+      <a href="index.html#about">又记</a>
+      <a href="index.html#subscribe">来函</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <article>
+
+    <!-- ═══ 文头 ═══ -->
+    <header class="wrap head">
+      <p class="badge">示例内容 · 请替换为你的资料</p>
+      <p class="head__eyebrow">市井辑 · 随笔</p>
+      <h1 class="head__t">旧书摊的黄昏</h1>
+      <p class="head__dek">记城南的老陈、一册一九八二年的《草木小记》，和两行淡去的铅笔字。</p>
+      <p class="head__meta">
+        <span>沈砚秋</span>
+        <span class="dot" aria-hidden="true"></span>
+        <time datetime="2026-07-14">丙午年七月十四</time>
+        <span class="dot" aria-hidden="true"></span>
+        <span>约两千字</span>
+      </p>
+
+      <!-- 题记：古人的句子是公版，替换成你自己的即可 -->
+      <div class="epigraph">
+        <p class="epigraph__x">「雾凇沆砀，天与云与山与水，上下一白。」</p>
+        <p class="epigraph__by">—— 张岱《陶庵梦忆 · 湖心亭看雪》</p>
+      </div>
+    </header>
+
+    <div class="wrap">
+      <hr class="rule-wu" aria-hidden="true">
+    </div>
+
+    <!-- ═══ 正文 ═══ -->
+    <div class="wrap prose">
+
+      <p class="sec-no" aria-hidden="true">一</p>
+
+      <p>
+        黄昏五点半，城南旧货市场<sup class="fn" id="ref-1"><a href="#fn-1" aria-label="尾注一">〔一〕</a></sup>的灯次第亮了起来。卖搪瓷缸的、卖旧军大衣的都开始收拾，只有最西头的书摊不着急——老陈的摊子，三张折叠桌拼成一个「凹」字，一盏夹在遮阳伞骨上的灯，照着大约六百本旧书。
+      </p>
+      <p>
+        我总挑收摊前的半小时去。这半小时是旧书摊最诚实的时候：白天的过客都散尽了，还蹲在摊前不走的人，是真的想带一本书回家。老陈也诚实，到了这个点他不再讲价，只说：「你说个数，合适就拿走。」
+      </p>
+      <p>
+        他的书不按文史哲分，按他自己的道理：看得进的放外圈，看不进的堆里圈。问他标准，他把手里的搪瓷缸放下，想了想说：「翻三页还想翻的，就是看得进。」我后来把这句话抄在笔记本上，觉得比许多书评都中肯。
+      </p>
+
+      <p class="sec-no" aria-hidden="true">二</p>
+
+      <p>
+        那天带回家的是一册《草木小记》<sup class="fn" id="ref-2"><a href="#fn-2" aria-label="尾注二">〔二〕</a></sup>，一九八二年印，定价七角五分，老陈收了我五块，附赠一句「这书干净」。他说的干净不是没灰，是没有霉斑和虫眼——灰是可以擦的，霉是治不好的。
+      </p>
+      <p>
+        书拿回来在灯下细看，才发现并不「干净」，或者说，比干净更好：书口下端有一行蝇头小字，写着书名和一个「上」字。查了才知道，旧时线装书平放插架，在书口下端题写书名卷次，抽检时一望即知，这行字叫「书根」<sup class="fn" id="ref-3"><a href="#fn-3" aria-label="尾注三">〔三〕</a></sup>。写字的人笔画很稳，像是常做这件事的手。
+      </p>
+      <p>
+        扉页上另有两行铅笔字，淡得快要退回纸里去：
+      </p>
+
+      <blockquote>
+        <p>三月廿一，雨。购于文德桥侧。书比伞贵，淋了半件衣裳。</p>
+      </blockquote>
+
+      <p>
+        没有落款，没有年份。只知道那一天下雨，这个人把伞钱省下来买了书，淋着半边肩膀回家，回到家还有心情把这件事记在扉页上。
+      </p>
+
+      <p class="sec-no" aria-hidden="true">三</p>
+
+      <p>
+        一本旧书至少印着两层字。一层是排印上去的，人人拿到的都相同；一层是写上去的，只此一份。正文是作者的，页边是读者的。这册《草木小记》的页边零零星星有些铅笔记号——第三十七页「茉莉」一节旁画了条竖线，第五十二页折过角，后来又被小心地抚平了，折痕像一道浅浅的疤。
+      </p>
+      <p>
+        我于是读得很慢。读到画线处会停下来想：他为什么在这里画线？读到折角那页，就把整页多读一遍，想找出值得折角的那一句。找不找得到另说，这个找的过程，让我同时在读两个人：一个是写书的作者，一个是那位不知名的、三月里淋过雨的前主人。
+      </p>
+      <p>
+        新书是没有这一层的。新书像刚交付的毛坯房，旧书是住过人的老宅子：家具的摆法、墙上的钉眼，都在告诉你从前的日子是怎么过的。时间落在书上，不是磨损，是包浆。
+      </p>
+
+      <p class="sec-no" aria-hidden="true">四</p>
+
+      <p>
+        上个周末又去，到得晚了，老陈正在收摊。他收书有一套次序：先大后小，先硬皮后软皮，码进纸箱像砌墙。我蹲在旁边看完了全过程，那天一本书也没买，他也不以为意，扬扬手说下周还出。
+      </p>
+      <p>
+        回来的路上想，旧书摊之于一座城市，大概就像页边的铅笔字之于一本书——都不在正文里，可拿掉它们，正文就单薄了。
+      </p>
+      <p>
+        黄昏时候路过城南，不妨拐进去看看。翻三页还想翻的，就带它回家。
+      </p>
+    </div>
+
+    <!-- ═══ 收尾：远山 + 完印 ═══ -->
+    <div class="wrap fin" aria-hidden="true">
+      <svg class="fin__hills" viewBox="0 0 220 56">
+        <path d="M0 52 L44 22 L86 52 Z" class="m-3" opacity=".35"/>
+        <path d="M52 52 L108 10 L170 52 Z" class="m-4" opacity=".55"/>
+        <path d="M130 52 L172 26 L214 52 Z" class="m-3" opacity=".45"/>
+        <circle cx="196" cy="14" r="6" class="m-a" opacity=".7"/>
+      </svg>
+      <span class="fin__seal">完</span>
+    </div>
+
+    <!-- ═══ 尾注 ═══ -->
+    <footer class="wrap notes" aria-labelledby="notes-t">
+      <h2 id="notes-t">尾注</h2>
+      <ol>
+        <li id="fn-1">
+          城南旧货市场：虚构地名，每逢周末开市。本文人物、店摊与货品皆为示例占位。
+          <a href="#ref-1" aria-label="返回正文一">回文 ↩</a>
+        </li>
+        <li id="fn-2">
+          《草木小记》：虚构书名，版次与定价亦为杜撰，如有雷同，纯属巧合。
+          <a href="#ref-2" aria-label="返回正文二">回文 ↩</a>
+        </li>
+        <li id="fn-3">
+          书根：旧时线装书平放插架，在书口下端题写书名与卷次，取书时不必抽出翻检，一望即知。
+          <a href="#ref-3" aria-label="返回正文三">回文 ↩</a>
+        </li>
+      </ol>
+
+      <!-- 前后篇：样张里各篇共用本页占位，接入真实数据后替换 href 与篇名 -->
+      <nav class="pager" aria-label="前后篇">
+        <a href="article.html">
+          <span class="pager__k">上一篇</span>
+          <span class="pager__t">晚风记</span>
+        </a>
+        <a class="pager__next" href="index.html">
+          <span class="pager__k">回到</span>
+          <span class="pager__t">目次</span>
+        </a>
+      </nav>
+    </footer>
+
+  </article>
+</main>
+
+<div class="wrap">
+  <hr class="rule-wu rule-wu--flip" aria-hidden="true">
+</div>
+
+<!-- ═══ 页脚 ═══ -->
+<footer class="wrap site-foot">
+  <p class="site-foot__brand">墨白手帖 · 丙午年夏辑</p>
+  <nav class="site-foot__links" aria-label="页脚导航">
+    <a href="index.html">目次</a>
+    <a href="index.html#about">又记</a>
+    <a href="index.html#subscribe">来函</a>
+  </nav>
+  <p class="site-foot__note">© 2026 · 示例站点：人物、书名、数目与文字皆为虚构占位，上线前请全部替换。</p>
+</footer>
+
+</body>
+</html>

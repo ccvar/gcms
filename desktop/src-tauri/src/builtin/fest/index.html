@@ -1,0 +1,1206 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>越浪 OVERWAVE 2026 · 11 月 7 日 · 厦门旧船厂 3 号坞</title>
+<meta name="description" content="越浪 OVERWAVE 2026 电子现场：12 组演出、2 个舞台、8 小时。2026 年 11 月 7 日 18:00 起，厦门旧船厂 3 号坞。">
+<meta name="theme-color" content="#0A0F0B">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%230A0F0B'/%3E%3Cpath d='M4 21c4-9 7-9 10 0s7 9 10 0' fill='none' stroke='%23C8FF4A' stroke-width='3' stroke-linecap='round'/%3E%3Cpath d='M22 6h6M25 3v6' stroke='%23C8FF4A' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E">
+<style>
+  /* ============================================================
+     越浪 OVERWAVE 2026 —— 音乐节 / 夜场活动单页起始模板
+     「荧光现场」：夜幕深底 + 酸性绿唯一强调 + 中性亮白海报字。
+     改色板 = 只改下面 :root 的变量，别全站搜替换。
+     ============================================================ */
+  :root {
+    /* ——— 设计令牌（唯一颜色来源） ———
+       对比度实测（WCAG 相对亮度公式算过，非目测）：
+       --text   on --bg 17.6:1 · on --surface 16.1:1
+       --muted  on --bg  6.4:1 · on --surface  5.8:1（次要文字 ≥4.5 达标）
+       --accent on --bg 16.4:1 · on --surface 15.1:1
+                ↑ 荧光绿只用于：标题描边/编号/时间/CTA，正文永远不用荧光色
+       --on-accent(深墨) on --accent 16.4:1（主按钮文字） */
+    --bg:      #0A0F0B;   /* 夜幕：绿黑 */
+    --surface: #121A13;   /* 卡片/仓库墙面，比夜幕亮半档 */
+    --text:    #F2F5EF;   /* 正文：中性亮白（微偏绿的白） */
+    --muted:   #8B978C;   /* 次要文字：灰绿 */
+    --accent:  #C8FF4A;   /* 唯一强调色：酸性绿（荧光） */
+    --radius:  2px;       /* 海报是利角的 */
+
+    /* ——— 派生件（不是第二个强调色） ——— */
+    --on-accent: #0A0F0B;             /* 落在荧光绿上的深墨 */
+    --line:      #26301F;             /* 深底分隔线（装饰，无文字对比要求） */
+    --glow:      rgba(200, 255, 74, .13);  /* 荧光在夜里的光晕 */
+    --grid:      rgba(242, 245, 239, .05); /* 极淡的工业网格线 */
+
+    /* ——— 间距刻度：只准用这些值 ——— */
+    --s1: 4px;
+    --s2: 8px;
+    --s3: 12px;
+    --s4: 16px;
+    --s5: 24px;
+    --s6: 40px;
+    --s7: 64px;
+    --s8: 96px;   /* 海报留白：大区块之间 */
+
+    /* ——— 字号刻度（正文档）——— */
+    --fs-sm:   14px;
+    --fs-base: 16px;
+    --fs-md:   20px;
+    --fs-lg:   28px;
+    --fs-xl:   40px;
+    /* ——— 海报档（超大字，随视口缩放）——— */
+    --fs-poster: clamp(64px, 13vw, 152px);  /* 主标题 */
+    --fs-big:    clamp(34px, 6.5vw, 76px);  /* 日期/CTA 大字 */
+    --fs-name:   clamp(26px, 4.6vw, 52px);  /* 阵容名 */
+
+    --font: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+            "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+            "Noto Sans SC", "Source Han Sans SC", Roboto, Arial, sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+
+    --container: 1120px;
+    --measure: 640px;    /* 长文/问答阅读宽度上限 */
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: var(--fs-base);
+    line-height: 1.7;
+    -webkit-font-smoothing: antialiased;
+    /* 斜切跑马灯/描边大字的边角兜底，正常内容不会碰到这条 */
+    overflow-x: clip;
+  }
+
+  h1, h2, h3, h4 { margin: 0; line-height: 1.15; font-weight: 800; letter-spacing: -0.01em; }
+  p { margin: 0; }
+  ul, ol { margin: 0; padding: 0; list-style: none; }
+  img, svg { max-width: 100%; }
+
+  a { color: var(--text); text-decoration: none; transition: color .15s ease, opacity .15s ease, border-color .15s ease; }
+
+  /* 键盘可达性：全局统一，别 outline:none 一删了事 */
+  a:focus-visible,
+  button:focus-visible,
+  summary:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: var(--radius);
+  }
+
+  .wrap {
+    width: 100%;
+    max-width: var(--container);
+    margin: 0 auto;
+    padding-inline: var(--s5);
+  }
+
+  /* ===== 通用小件 ===== */
+
+  /* 眉标：荧光 mono，前置斜杠是身份符号 */
+  .kicker {
+    display: inline-flex;
+    align-items: baseline;
+    gap: var(--s2);
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+    font-weight: 700;
+    letter-spacing: .18em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+  .kicker::before { content: "//"; letter-spacing: 0; }
+
+  .demo-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s2);
+    padding: var(--s1) var(--s3);
+    border: 1px dashed var(--line);
+    border-radius: 999px;
+    color: var(--muted);
+    font-size: var(--fs-sm);
+    line-height: 1.5;
+    white-space: nowrap;
+  }
+  .demo-badge svg { flex: none; }
+
+  /* 描边大字：荧光轮廓。老引擎不认 text-stroke 就退成实心荧光 */
+  .stroke { color: var(--accent); }
+  @supports ((-webkit-text-stroke: 1px black) or (text-stroke: 1px black)) {
+    .stroke {
+      color: transparent;
+      -webkit-text-stroke: 2px var(--accent);
+    }
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--s2);
+    min-height: 48px;
+    padding: var(--s3) var(--s5);
+    border: 2px solid transparent;
+    border-radius: var(--radius);
+    font: inherit;
+    font-weight: 800;
+    line-height: 1.3;
+    letter-spacing: .02em;
+    cursor: pointer;
+    text-align: center;
+    transition: transform .12s ease, background-color .15s ease, border-color .15s ease, color .15s ease, box-shadow .15s ease;
+  }
+  .btn:hover { transform: translateY(-2px); }
+  .btn:active { transform: translateY(0); }
+
+  /* 主 CTA：荧光块 + 深墨字（16.4:1） */
+  .btn-acid { background: var(--accent); color: var(--on-accent); }
+  .btn-acid:hover { box-shadow: 0 0 0 4px var(--glow), 0 0 32px var(--glow); }
+
+  /* 次按钮：夜里的空心框 */
+  .btn-ghost { background: transparent; color: var(--text); border-color: var(--line); }
+  .btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
+
+  .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+  /* ===== 跑马灯（纯 CSS，装饰性，内容在正文里都有） ===== */
+  .ticker {
+    overflow: hidden;
+    background: var(--accent);
+    color: var(--on-accent);
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+    font-weight: 700;
+    letter-spacing: .08em;
+    white-space: nowrap;
+    user-select: none;
+  }
+  .ticker-track {
+    display: inline-flex;
+    animation: ticker-slide 28s linear infinite;
+  }
+  .ticker-half {
+    display: inline-flex;
+    align-items: center;
+    padding-block: var(--s2);
+  }
+  .ticker-half span { padding-inline: var(--s5); }
+  .ticker-half span::after { content: "//"; margin-left: var(--s6); opacity: .55; }
+  @keyframes ticker-slide { to { transform: translateX(-50%); } }
+
+  /* 页中斜切的一道：外层裁切，内层加宽再旋转，避免露出缺角 */
+  .tilt-wrap { overflow: hidden; padding-block: var(--s6); }
+  .tilt-wrap .ticker {
+    width: 106%;
+    margin-left: -3%;
+    transform: rotate(-1.6deg);
+  }
+  .tilt-wrap .ticker--up { transform: rotate(1.6deg); }
+
+  /* ===== 导航 ===== */
+  .nav {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    background: var(--bg);
+    border-bottom: 1px solid var(--line);
+  }
+  .nav-inner {
+    display: flex;
+    align-items: center;
+    gap: var(--s5);
+    min-height: 64px;
+  }
+  .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--s2);
+    font-weight: 800;
+    letter-spacing: .02em;
+    white-space: nowrap;
+  }
+  .brand svg { display: block; color: var(--accent); }
+  .brand:hover { color: var(--accent); }
+  .brand-year { font-family: var(--font-mono); color: var(--muted); font-weight: 400; font-size: var(--fs-sm); }
+
+  .nav-links {
+    display: flex;
+    gap: var(--s5);
+    margin-left: auto;
+    font-size: var(--fs-sm);
+  }
+  .nav-links a {
+    color: var(--muted);
+    padding-block: var(--s2);
+    border-bottom: 2px solid transparent;
+  }
+  .nav-links a:hover { color: var(--text); border-bottom-color: var(--accent); }
+  .nav .btn { min-height: 40px; padding: var(--s2) var(--s4); }
+
+  /* ===== Hero：海报面 ===== */
+  .hero {
+    position: relative;
+    overflow: hidden;
+    padding-block: var(--s8) var(--s7);
+    /* 工业网格 + 舞台侧漏的荧光光晕，都来自令牌 */
+    background-image:
+      radial-gradient(closest-side at 82% 12%, var(--glow), transparent 70%),
+      linear-gradient(var(--grid) 1px, transparent 1px),
+      linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+    background-size: auto, 64px 64px, 64px 64px;
+  }
+  .hero-inner { position: relative; }
+
+  /* 背景里的巨大描边残影：纯装饰 */
+  .hero-ghost {
+    position: absolute;
+    right: -4%;
+    bottom: 6%;
+    font-size: var(--fs-poster);
+    font-weight: 800;
+    letter-spacing: .02em;
+    opacity: .12;
+    pointer-events: none;
+    user-select: none;
+  }
+
+  .hero-top {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s3) var(--s4);
+    margin-bottom: var(--s6);
+  }
+
+  .hero-title {
+    font-size: var(--fs-poster);
+    line-height: .96;
+    letter-spacing: -0.03em;
+    text-transform: uppercase;
+  }
+  .hero-title .t-solid { display: block; }
+  .hero-title .t-stroke { display: block; }
+
+  /* 日期铭牌：斜切的荧光块，海报里的「主视觉日期」 */
+  .hero-date {
+    display: inline-block;
+    margin-top: var(--s6);
+    padding: var(--s2) var(--s5);
+    background: var(--accent);
+    color: var(--on-accent);
+    font-family: var(--font-mono);
+    font-size: var(--fs-big);
+    font-weight: 800;
+    line-height: 1.1;
+    letter-spacing: -0.02em;
+    transform: skewX(-8deg);
+  }
+  .hero-date b { display: inline-block; transform: skewX(8deg); }
+
+  .hero-place {
+    margin-top: var(--s5);
+    font-size: var(--fs-md);
+    font-weight: 700;
+    letter-spacing: .04em;
+  }
+  .hero-place .mono { color: var(--muted); font-weight: 400; font-size: var(--fs-base); }
+
+  .hero-lede {
+    margin-top: var(--s5);
+    max-width: var(--measure);
+    color: var(--muted);
+    font-size: var(--fs-md);
+    line-height: 1.7;
+  }
+
+  .hero-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--s3);
+    margin-top: var(--s6);
+  }
+  .hero-note { font-size: var(--fs-sm); color: var(--muted); }
+
+  /* ===== 数据条 ===== */
+  .stats { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+  .stats-inner {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+  }
+  .stat {
+    padding: var(--s5) var(--s5) var(--s5) 0;
+    border-left: 1px solid var(--line);
+    padding-left: var(--s5);
+  }
+  .stat:first-child { border-left: 0; padding-left: 0; }
+  .stat b {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: var(--fs-xl);
+    font-weight: 800;
+    line-height: 1.1;
+    letter-spacing: -0.02em;
+  }
+  .stat b sup { font-size: var(--fs-md); color: var(--accent); margin-left: var(--s1); }
+  .stat span { display: block; margin-top: var(--s1); color: var(--muted); font-size: var(--fs-sm); }
+
+  /* ===== 区块骨架 ===== */
+  .section { padding-block: var(--s8); }
+  .section-head { margin-bottom: var(--s6); }
+  .section-head h2 {
+    margin-top: var(--s3);
+    font-size: var(--fs-big);
+    line-height: 1.05;
+    letter-spacing: -0.02em;
+    text-transform: uppercase;
+  }
+  .section-head .lead { margin-top: var(--s4); max-width: var(--measure); color: var(--muted); }
+
+  /* ===== 阵容：海报排字，一行一个名字 ===== */
+  .lineup { border-top: 1px solid var(--line); }
+  .act {
+    display: flex;
+    align-items: baseline;
+    gap: var(--s4) var(--s5);
+    padding-block: var(--s4);
+    border-bottom: 1px solid var(--line);
+  }
+  .act-idx {
+    flex: none;
+    width: 2.4em;
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+    font-weight: 700;
+    color: var(--accent);
+    transform: skewX(-8deg);
+  }
+  .act-name {
+    font-size: var(--fs-name);
+    font-weight: 800;
+    line-height: 1.05;
+    letter-spacing: -0.02em;
+    text-transform: uppercase;
+    transition: color .15s ease;
+  }
+  .act-name small {
+    display: inline-block;
+    margin-left: var(--s3);
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+    font-weight: 400;
+    letter-spacing: .12em;
+    color: var(--muted);
+  }
+  .act:hover .act-name { color: var(--accent); }
+  .act-meta {
+    margin-left: auto;
+    flex: none;
+    text-align: right;
+    font-size: var(--fs-sm);
+    color: var(--muted);
+  }
+  .act-meta .mono { display: block; color: var(--text); font-weight: 700; }
+  /* 压轴：字再大一号 + 荧光尾标 */
+  .act--headline .act-name { font-size: var(--fs-big); }
+  .act-flag {
+    display: inline-block;
+    margin-left: var(--s3);
+    padding: 0 var(--s2);
+    background: var(--accent);
+    color: var(--on-accent);
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+    font-weight: 700;
+    letter-spacing: .08em;
+    vertical-align: middle;
+    transform: skewX(-8deg);
+  }
+  .lineup-note { margin-top: var(--s5); font-size: var(--fs-sm); color: var(--muted); }
+
+  /* ===== 时间轴：两个舞台两条通道 ===== */
+  .stages {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--s7);
+    align-items: start;
+  }
+  .stage-head {
+    display: flex;
+    align-items: baseline;
+    gap: var(--s3);
+    padding-bottom: var(--s3);
+    border-bottom: 2px solid var(--text);
+    margin-bottom: var(--s5);
+  }
+  .stage-head h3 { font-size: var(--fs-md); text-transform: uppercase; letter-spacing: .02em; }
+  .stage-head span { margin-left: auto; font-family: var(--font-mono); font-size: var(--fs-sm); color: var(--muted); }
+
+  .tl { position: relative; padding-left: var(--s5); }
+  .tl::before {
+    content: "";
+    position: absolute;
+    left: 3px;
+    top: var(--s2);
+    bottom: var(--s2);
+    width: 1px;
+    background: var(--line);
+  }
+  .tl li { position: relative; padding-bottom: var(--s5); }
+  .tl li:last-child { padding-bottom: 0; }
+  /* 荧光节点：夜里的一粒光 */
+  .tl li::before {
+    content: "";
+    position: absolute;
+    left: calc(-1 * var(--s5) + 0px);
+    top: 9px;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 0 4px var(--glow);
+  }
+  .tl time {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+    font-weight: 700;
+    letter-spacing: .06em;
+    color: var(--accent);
+  }
+  .tl h4 { margin-top: var(--s1); font-size: var(--fs-md); font-weight: 700; }
+  .tl p { margin-top: var(--s1); font-size: var(--fs-sm); color: var(--muted); }
+  /* 过场项（开门/散场）：压低存在感 */
+  .tl .pass h4 { font-weight: 400; color: var(--muted); font-size: var(--fs-base); }
+
+  /* ===== 票档 ===== */
+  .tickets {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--s5);
+    align-items: stretch;
+  }
+  .ticket {
+    display: flex;
+    flex-direction: column;
+    gap: var(--s4);
+    padding: var(--s5);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+  }
+  .ticket--hot { border-color: var(--accent); border-width: 2px; }
+  .ticket-tier {
+    display: flex;
+    align-items: center;
+    gap: var(--s3);
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+    font-weight: 700;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .ticket--hot .ticket-tier { color: var(--accent); }
+  .ticket h3 { font-size: var(--fs-md); }
+  .ticket-price {
+    font-family: var(--font-mono);
+    font-size: var(--fs-xl);
+    font-weight: 800;
+    line-height: 1;
+    letter-spacing: -0.03em;
+  }
+  .ticket-price s { font-size: var(--fs-md); font-weight: 400; color: var(--muted); margin-left: var(--s2); }
+  .ticket-price small { font-size: var(--fs-sm); font-weight: 400; color: var(--muted); letter-spacing: 0; }
+  .ticket-note { font-size: var(--fs-sm); color: var(--muted); }
+  .ticket ul { display: grid; gap: var(--s2); font-size: var(--fs-sm); }
+  .ticket li { display: flex; gap: var(--s2); align-items: flex-start; }
+  .ticket li svg { flex: none; margin-top: 5px; color: var(--accent); }
+  .ticket .btn { margin-top: auto; }
+
+  /* ===== 场地 + 交通 ===== */
+  .venue {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--s7);
+    align-items: center;
+  }
+  .map {
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    overflow: hidden;
+    aspect-ratio: 4 / 3;
+    background: var(--surface);
+  }
+  .map svg { display: block; width: 100%; height: 100%; }
+  /* 地图配色走 class（老 WebKit 不认 SVG 属性里的 var()） */
+  .m-bg   { fill: var(--surface); }
+  .m-road { stroke: var(--bg); }
+  .m-water{ fill: var(--bg); }
+  .m-dock { fill: var(--glow); }
+  .m-dash { fill: none; stroke: var(--accent); }
+  .m-pin  { fill: var(--accent); }
+  .m-pin-c{ fill: var(--bg); }
+  .m-txt  { fill: var(--text); }
+  .m-sub  { fill: var(--muted); }
+
+  .venue h3 { font-size: var(--fs-md); margin-bottom: var(--s3); }
+  .venue-addr { color: var(--muted); margin-bottom: var(--s5); max-width: var(--measure); }
+  .routes { display: grid; gap: var(--s4); }
+  .route { display: flex; gap: var(--s3); align-items: flex-start; }
+  .route svg { flex: none; margin-top: 4px; color: var(--accent); }
+  .route b { display: block; font-weight: 700; font-size: var(--fs-sm); letter-spacing: .04em; }
+  .route p { color: var(--muted); font-size: var(--fs-sm); }
+
+  /* ===== 问答 ===== */
+  .faq { max-width: var(--measure); }
+  .faq details { border-bottom: 1px solid var(--line); }
+  .faq summary {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--s4);
+    padding-block: var(--s4);
+    min-height: 44px;
+    font-weight: 700;
+    cursor: pointer;
+    list-style: none;
+    transition: color .15s ease;
+  }
+  .faq summary::-webkit-details-marker { display: none; }
+  .faq summary:hover { color: var(--accent); }
+  .faq summary svg { flex: none; color: var(--muted); transition: transform .18s ease; }
+  .faq details[open] summary svg { transform: rotate(45deg); color: var(--accent); }
+  .faq p { padding-bottom: var(--s4); color: var(--muted); }
+
+  /* ===== 报名 CTA ===== */
+  .cta {
+    position: relative;
+    overflow: hidden;
+    text-align: center;
+    padding-block: var(--s8);
+    border-top: 1px solid var(--line);
+    background-image: radial-gradient(closest-side at 50% 120%, var(--glow), transparent 75%);
+  }
+  .cta-title {
+    font-size: var(--fs-big);
+    line-height: 1.05;
+    letter-spacing: -0.02em;
+    text-transform: uppercase;
+  }
+  .cta-title .t-stroke { display: block; font-size: var(--fs-poster); line-height: .96; letter-spacing: -0.03em; }
+  .cta-lede { margin: var(--s5) auto 0; max-width: var(--measure); color: var(--muted); }
+  .cta-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: center;
+    gap: var(--s3);
+    margin-top: var(--s6);
+  }
+  .cta-alt { margin-top: var(--s5); font-size: var(--fs-sm); color: var(--muted); }
+  .cta-alt a { color: var(--text); border-bottom: 1px solid var(--line); }
+  .cta-alt a:hover { color: var(--accent); border-bottom-color: var(--accent); }
+
+  /* ===== 页脚 ===== */
+  .footer {
+    border-top: 1px solid var(--line);
+    padding-block: var(--s6);
+    font-size: var(--fs-sm);
+    color: var(--muted);
+  }
+  .footer-inner {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s5);
+    justify-content: space-between;
+    align-items: flex-start;
+  }
+  .footer a { color: var(--text); }
+  .footer a:hover { color: var(--accent); }
+  .footer-links { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s4); }
+  .footer-links a { display: inline-flex; align-items: center; min-height: 44px; }
+  .footer-legal { margin-top: var(--s5); padding-top: var(--s5); border-top: 1px solid var(--line); }
+
+  /* ===== 响应式 ===== */
+  @media (max-width: 960px) {
+    .stages { gap: var(--s6); }
+    .hero-ghost { display: none; }
+  }
+
+  @media (max-width: 860px) {
+    .nav-links { display: none; }
+    .stages { grid-template-columns: 1fr; }
+    .venue { grid-template-columns: 1fr; gap: var(--s5); }
+    .map { aspect-ratio: 16 / 10; }
+    .tickets { grid-template-columns: 1fr; }
+  }
+
+  @media (max-width: 720px) {
+    :root { --s8: 64px; }
+    .wrap { padding-inline: var(--s4); }
+    .hero { padding-block: var(--s7); }
+    .stats-inner { grid-template-columns: 1fr 1fr; }
+    .stat { padding-block: var(--s4); }
+    .stat:nth-child(odd) { border-left: 0; padding-left: 0; }
+    .stat:nth-child(even) { padding-left: var(--s5); }
+    .stat:nth-child(n+3) { border-top: 1px solid var(--line); }
+    .act { flex-wrap: wrap; row-gap: var(--s1); }
+    .act-meta { margin-left: 0; flex-basis: 100%; text-align: left; padding-left: calc(2.4em + var(--s5)); }
+    .act-meta .mono { display: inline; margin-right: var(--s3); }
+    .hero-actions .btn, .cta-actions .btn { flex: 1 1 100%; }
+  }
+
+  @media (max-width: 560px) {
+    :root {
+      --fs-big: clamp(28px, 8vw, 40px);
+      --fs-name: clamp(22px, 6.4vw, 30px);
+    }
+    .hero-date { font-size: var(--fs-lg); }
+    .act-meta { padding-left: 0; }
+    .act-idx { width: 2em; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    * { transition: none !important; animation: none !important; }
+    .ticker-track { animation: none; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ============ 顶部跑马灯（装饰，信息正文里都有） ============ -->
+<div class="ticker" aria-hidden="true">
+  <div class="ticker-track">
+    <div class="ticker-half">
+      <span>OVERWAVE 越浪 2026</span>
+      <span>11.07 SAT 18:00 → 02:00</span>
+      <span>厦门 · 旧船厂 3 号坞</span>
+      <span>12 组演出 · 2 个舞台</span>
+      <span>早鸟 ¥199 限 300 张</span>
+    </div>
+    <div class="ticker-half">
+      <span>OVERWAVE 越浪 2026</span>
+      <span>11.07 SAT 18:00 → 02:00</span>
+      <span>厦门 · 旧船厂 3 号坞</span>
+      <span>12 组演出 · 2 个舞台</span>
+      <span>早鸟 ¥199 限 300 张</span>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 导航 ============ -->
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="brand" href="#top">
+      <svg width="26" height="26" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+        <path d="M4 21c4-9 7-9 10 0s7 9 10 0" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+        <path d="M22 6h6M25 3v6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+      越浪 <span class="brand-year">OVERWAVE 2026</span>
+    </a>
+
+    <nav class="nav-links" aria-label="页面导航">
+      <a href="#lineup">阵容</a>
+      <a href="#timeline">时间轴</a>
+      <a href="#tickets">票档</a>
+      <a href="#venue">场地</a>
+      <a href="#faq">问答</a>
+    </nav>
+
+    <a class="btn btn-acid" href="#cta">拿票</a>
+  </div>
+</header>
+
+<main id="top">
+
+  <!-- ============ Hero：海报面 ============ -->
+  <section class="hero">
+    <div class="wrap hero-inner">
+      <p class="hero-ghost stroke" aria-hidden="true">越浪</p>
+
+      <div class="hero-top">
+        <p class="kicker">Overwave Festival · 第三回</p>
+        <span class="demo-badge">
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <circle cx="8" cy="8" r="7" stroke="currentColor" stroke-width="1.5"/>
+            <path d="M8 4.5V9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            <circle cx="8" cy="11.5" r=".9" fill="currentColor"/>
+          </svg>
+          示例内容 · 请替换为你的资料
+        </span>
+      </div>
+
+      <h1 class="hero-title">
+        <span class="t-solid">越浪电子现场</span>
+        <span class="t-stroke stroke" aria-hidden="true">OVERWAVE</span>
+      </h1>
+
+      <p class="hero-date"><b>2026.11.07 SAT</b></p>
+
+      <p class="hero-place">
+        厦门 · 旧船厂 3 号坞
+        <span class="mono">18:00 — 次日 02:00 · 雨天照常（坞内有顶）</span>
+      </p>
+
+      <p class="hero-lede">
+        一年一夜。把废弃船坞点亮八个小时：主舞台五组 Live 从黄昏推到压轴，
+        仓库舞台三位 DJ 接管午夜。没有赞助商致辞，没有大屏广告，
+        开门即开演，散场即天亮前。
+      </p>
+
+      <div class="hero-actions">
+        <a class="btn btn-acid" href="#tickets">早鸟 ¥199 · 拿票</a>
+        <a class="btn btn-ghost" href="#lineup">先看阵容</a>
+        <p class="hero-note">早鸟余 87 张（示例数字）· 18 岁以下谢绝入场</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 数据条 ============ -->
+  <section class="stats" aria-label="活动数据">
+    <div class="wrap stats-inner">
+      <p class="stat"><b>12<sup>组</sup></b><span>Live 与 DJ，全无空场</span></p>
+      <p class="stat"><b>2<sup>舞台</sup></b><span>船坞主台 + 仓库暗场</span></p>
+      <p class="stat"><b>8<sup>小时</sup></b><span>18:00 开门 → 02:00 散场</span></p>
+      <p class="stat"><b>1500<sup>只</sup></b><span>手环售完即止，不加场</span></p>
+    </div>
+  </section>
+
+  <!-- ============ 阵容：海报排字 ============ -->
+  <section class="section" id="lineup">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="kicker">Lineup</p>
+        <h2>今夜出场</h2>
+        <p class="lead">按出场先后排序。名字都是编的——换成你的阵容时，压轴用大号那行。</p>
+      </div>
+
+      <ol class="lineup">
+        <li class="act">
+          <span class="act-idx" aria-hidden="true">01</span>
+          <h3 class="act-name">白日虚线 <small>DAYDASH</small></h3>
+          <p class="act-meta"><span class="mono">18:30</span>独立电子 Live · 主舞台</p>
+        </li>
+        <li class="act">
+          <span class="act-idx" aria-hidden="true">02</span>
+          <h3 class="act-name">蒸汽航线 <small>STEAM ROUTE</small></h3>
+          <p class="act-meta"><span class="mono">19:45</span>合成器浪潮 Live · 主舞台</p>
+        </li>
+        <li class="act">
+          <span class="act-idx" aria-hidden="true">03</span>
+          <h3 class="act-name">慢驶 <small>SLOWDRIVE</small></h3>
+          <p class="act-meta"><span class="mono">20:00</span>House DJ · 仓库舞台</p>
+        </li>
+        <li class="act">
+          <span class="act-idx" aria-hidden="true">04</span>
+          <h3 class="act-name">岛屿录音 <small>ISLE TAPES</small></h3>
+          <p class="act-meta"><span class="mono">21:00</span>环境器乐 Live · 主舞台</p>
+        </li>
+        <li class="act">
+          <span class="act-idx" aria-hidden="true">05</span>
+          <h3 class="act-name">苔原 <small>TUNDRA</small></h3>
+          <p class="act-meta"><span class="mono">22:00</span>极简 Techno DJ · 仓库舞台</p>
+        </li>
+        <li class="act">
+          <span class="act-idx" aria-hidden="true">06</span>
+          <h3 class="act-name">阈值 <small>THRESHOLD</small></h3>
+          <p class="act-meta"><span class="mono">22:15</span>工业节拍 Live · 主舞台</p>
+        </li>
+        <li class="act act--headline">
+          <span class="act-idx" aria-hidden="true">07</span>
+          <h3 class="act-name">盲光 <small>BLINDLIGHT</small><span class="act-flag">压轴</span></h3>
+          <p class="act-meta"><span class="mono">23:30</span>Live 电子 · 主舞台 · 90 分钟全长版</p>
+        </li>
+        <li class="act">
+          <span class="act-idx" aria-hidden="true">08</span>
+          <h3 class="act-name">夜航员 <small>NIGHTPILOT</small></h3>
+          <p class="act-meta"><span class="mono">00:00</span>Breakbeat DJ · 仓库舞台 · 收场</p>
+        </li>
+      </ol>
+      <p class="lineup-note">另有 4 组开场时段的本地单位，开演前两周在现场手册公布。</p>
+    </div>
+  </section>
+
+  <!-- ============ 页中斜切跑马灯 ============ -->
+  <div class="tilt-wrap" aria-hidden="true">
+    <div class="ticker">
+      <div class="ticker-track">
+        <div class="ticker-half">
+          <span>压轴 盲光 BLINDLIGHT 23:30</span>
+          <span>仓库舞台 通宵接管</span>
+          <span>耳塞免费领</span>
+          <span>手环全夜可再入场</span>
+        </div>
+        <div class="ticker-half">
+          <span>压轴 盲光 BLINDLIGHT 23:30</span>
+          <span>仓库舞台 通宵接管</span>
+          <span>耳塞免费领</span>
+          <span>手环全夜可再入场</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 时间轴 ============ -->
+  <section class="section" id="timeline">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="kicker">Timeline</p>
+        <h2>这一夜怎么走</h2>
+        <p class="lead">两条通道各自推进，中间随便串场——两个舞台步行 90 秒。时间为示例，最终以现场手册为准。</p>
+      </div>
+
+      <div class="stages">
+        <div class="stage">
+          <div class="stage-head">
+            <h3>主舞台</h3>
+            <span>船坞 · 露天有顶</span>
+          </div>
+          <ol class="tl">
+            <li class="pass">
+              <time datetime="2026-11-07T18:00">18:00</time>
+              <h4>开门 · 安检 · 换手环</h4>
+              <p>提前到的先去东侧酒水长廊，首杯特调凭早鸟手环免费。</p>
+            </li>
+            <li>
+              <time datetime="2026-11-07T18:30">18:30</time>
+              <h4>白日虚线 DAYDASH</h4>
+              <p>黄昏场。落日正好在坞口那侧，别错过。</p>
+            </li>
+            <li>
+              <time datetime="2026-11-07T19:45">19:45</time>
+              <h4>蒸汽航线 STEAM ROUTE</h4>
+              <p>合成器浪潮，天全黑之前最后一组「亮着灯」的演出。</p>
+            </li>
+            <li>
+              <time datetime="2026-11-07T21:00">21:00</time>
+              <h4>岛屿录音 ISLE TAPES</h4>
+              <p>环境器乐，全场唯一一段坐得下来的时刻。</p>
+            </li>
+            <li>
+              <time datetime="2026-11-07T22:15">22:15</time>
+              <h4>阈值 THRESHOLD</h4>
+              <p>工业节拍。低频很重，入口处记得领耳塞。</p>
+            </li>
+            <li>
+              <time datetime="2026-11-07T23:30">23:30</time>
+              <h4>盲光 BLINDLIGHT · 压轴</h4>
+              <p>90 分钟全长版 + 灯光装置《潮位线》首次落地。</p>
+            </li>
+          </ol>
+        </div>
+
+        <div class="stage">
+          <div class="stage-head">
+            <h3>仓库舞台</h3>
+            <span>3 号仓 · 室内暗场</span>
+          </div>
+          <ol class="tl">
+            <li>
+              <time datetime="2026-11-07T20:00">20:00</time>
+              <h4>慢驶 SLOWDRIVE</h4>
+              <p>House 起步，暖到你愿意留在暗场为止。</p>
+            </li>
+            <li>
+              <time datetime="2026-11-07T22:00">22:00</time>
+              <h4>苔原 TUNDRA</h4>
+              <p>极简 Techno，两小时不留缝。</p>
+            </li>
+            <li>
+              <time datetime="2026-11-08T00:00">00:00</time>
+              <h4>夜航员 NIGHTPILOT</h4>
+              <p>Breakbeat 收场。主舞台散了以后，全场都会挤进这里。</p>
+            </li>
+            <li class="pass">
+              <time datetime="2026-11-08T02:00">02:00</time>
+              <h4>散场 · 北门集散区</h4>
+              <p>网约车统一在北门上车，志愿者会举灯牌引导。</p>
+            </li>
+          </ol>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 票档 ============ -->
+  <section class="section" id="tickets">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="kicker">Tickets</p>
+        <h2>三种手环</h2>
+        <p class="lead">全场站席，不分区。价格是示例，按你的实际票务改。</p>
+      </div>
+
+      <div class="tickets">
+        <article class="ticket ticket--hot">
+          <p class="ticket-tier">Early Bird</p>
+          <h3>早鸟手环</h3>
+          <p class="ticket-price">¥199 <s>¥280</s></p>
+          <p class="ticket-note">限 300 只，10 月 10 日或售完即止。</p>
+          <ul>
+            <li>
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2 6h6M6 3l3 3-3 3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              全夜两舞台通行，可再入场
+            </li>
+            <li>
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2 6h6M6 3l3 3-3 3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              首杯特调免费
+            </li>
+            <li>
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2 6h6M6 3l3 3-3 3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              纪念场刊 + 贴纸包
+            </li>
+          </ul>
+          <a class="btn btn-acid" href="#cta">锁早鸟</a>
+        </article>
+
+        <article class="ticket">
+          <p class="ticket-tier">Regular</p>
+          <h3>全价手环</h3>
+          <p class="ticket-price">¥280</p>
+          <p class="ticket-note">早鸟售完后线上开售，当日门口若有余票同价。</p>
+          <ul>
+            <li>
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2 6h6M6 3l3 3-3 3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              全夜两舞台通行，可再入场
+            </li>
+            <li>
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2 6h6M6 3l3 3-3 3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              纪念场刊
+            </li>
+          </ul>
+          <a class="btn btn-ghost" href="#cta">选全价</a>
+        </article>
+
+        <article class="ticket">
+          <p class="ticket-tier">After Midnight</p>
+          <h3>午夜后场</h3>
+          <p class="ticket-price">¥120 <small>00:00 后入场</small></p>
+          <p class="ticket-note">只为仓库舞台而来的人：赶完末班地铁再进场也来得及。</p>
+          <ul>
+            <li>
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2 6h6M6 3l3 3-3 3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              00:00 起两舞台通行
+            </li>
+            <li>
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2 6h6M6 3l3 3-3 3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              数量不限，现场扫码购
+            </li>
+          </ul>
+          <a class="btn btn-ghost" href="#cta">选后场</a>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 场地 + 交通 ============ -->
+  <section class="section" id="venue">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="kicker">Venue</p>
+        <h2>旧船厂 3 号坞</h2>
+      </div>
+
+      <div class="venue">
+        <div class="map">
+          <!-- 抽象位置示意（占位）：接真地图时整块替换 -->
+          <svg viewBox="0 0 400 300" role="img" aria-label="场地位置示意图（占位）：旧船厂 3 号坞，北侧临海翼路，东侧是码头水域">
+            <rect width="400" height="300" class="m-bg"/>
+            <!-- 水域 -->
+            <path d="M300 0h100v300H268c14-52 10-104-4-150 22-48 30-100 36-150Z" class="m-water"/>
+            <path d="M316 40c-8 46-14 88-28 128M322 190c-10 36-16 66-18 96" class="m-dash" stroke-width="1.5" stroke-dasharray="2 6" opacity=".4"/>
+            <!-- 路网 -->
+            <path d="M0 84h288M0 216h276M96 0v300M208 0v216" class="m-road" stroke-width="14"/>
+            <!-- 船坞地块 -->
+            <rect x="118" y="106" width="132" height="88" class="m-dock"/>
+            <rect x="118" y="106" width="132" height="88" class="m-dash" stroke-width="2" stroke-dasharray="6 5" opacity=".7"/>
+            <!-- 定位钉 -->
+            <g transform="translate(184 132)">
+              <path d="M0 30s16-13 16-25.4A16 16 0 1 0-16 4.6C-16 17 0 30 0 30Z" class="m-pin"/>
+              <circle cx="0" cy="4" r="5.5" class="m-pin-c"/>
+            </g>
+            <text x="184" y="182" text-anchor="middle" font-family="system-ui, sans-serif" font-size="13" font-weight="700" class="m-txt">3 号坞</text>
+            <text x="30" y="72" font-family="system-ui, sans-serif" font-size="11" class="m-sub">海翼路</text>
+            <text x="336" y="150" font-family="system-ui, sans-serif" font-size="11" class="m-sub">码头水域</text>
+            <text x="104" y="266" font-family="system-ui, sans-serif" font-size="11" class="m-sub">船坞西路</text>
+          </svg>
+        </div>
+
+        <div>
+          <h3>厦门市湖里区海翼路 12 号（示例地址）</h3>
+          <p class="venue-addr">
+            上世纪的修船坞，顶棚完整、四面通风，雨天照常。入场走北门，
+            安检后换手环；场内不收现金，酒水餐车全部扫码。
+          </p>
+
+          <div class="routes">
+            <div class="route">
+              <svg width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                <rect x="4.25" y="2.25" width="11.5" height="12.5" rx="3" stroke="currentColor" stroke-width="1.6"/>
+                <path d="M4.25 10.5h11.5M7 17.75l1.75-3M13 17.75l-1.75-3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+                <circle cx="7.5" cy="12.6" r=".9" fill="currentColor"/>
+                <circle cx="12.5" cy="12.6" r=".9" fill="currentColor"/>
+              </svg>
+              <div>
+                <b>地铁来</b>
+                <p>2 号线「码头东」站 A 口出，沿海翼路向东 900 米，约 12 分钟。末班车 23:30——买午夜后场票的正好赶得上。</p>
+              </div>
+            </div>
+
+            <div class="route">
+              <svg width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                <path d="M2.5 12.5h15M4 12.5l1.8-5.2A2 2 0 0 1 7.7 6h4.6a2 2 0 0 1 1.9 1.3l1.8 5.2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                <rect x="2.5" y="12.5" width="15" height="4" rx="1.5" stroke="currentColor" stroke-width="1.6"/>
+              </svg>
+              <div>
+                <b>网约车来</b>
+                <p>定位「旧船厂北门」，落客点离入口 200 米。场内不设停车位，开车来只能停园区外的市政车场，建议别开。</p>
+              </div>
+            </div>
+
+            <div class="route">
+              <svg width="18" height="18" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                <circle cx="10" cy="10" r="7.5" stroke="currentColor" stroke-width="1.6"/>
+                <path d="M10 5.5V10l3 2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              <div>
+                <b>凌晨回</b>
+                <p>02:00 散场后北门有网约车集散区与夜班公交 N7（往火车站方向，末班 02:40），志愿者举灯牌引导，别乱穿园区。</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 问答 ============ -->
+  <section class="section" id="faq">
+    <div class="wrap">
+      <div class="section-head">
+        <p class="kicker">FAQ</p>
+        <h2>进场前想问的</h2>
+      </div>
+
+      <div class="faq">
+        <details open>
+          <summary>
+            有年龄限制吗？
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          </summary>
+          <p>有。全场供酒、音压偏大，18 岁以下谢绝入场，入口查证件。带证件的成年人不限龄——去年最年长的观众 71 岁，待到了散场。</p>
+        </details>
+
+        <details>
+          <summary>
+            中途出去还能再进来吗？
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          </summary>
+          <p>能。手环当夜有效，出入不限次数。北门外有便利店和安静的堤岸，耳朵累了出去缓一缓很正常。</p>
+        </details>
+
+        <details>
+          <summary>
+            音量大吗？有耳塞吗？
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          </summary>
+          <p>主舞台前排实测约 102dB，仓库舞台更闷更重。入口安检台免费领海绵耳塞，不限量；自带降噪耳塞更好。</p>
+        </details>
+
+        <details>
+          <summary>
+            下雨怎么办？
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          </summary>
+          <p>照常。船坞有完整顶棚，仓库舞台本来就在室内。只有台风红色预警才会延期，延期方案会在开演前 48 小时邮件通知，票自动顺延或全退。</p>
+        </details>
+
+        <details>
+          <summary>
+            能退票吗？
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          </summary>
+          <p>开演 48 小时前可无理由全退，之后不退但可转让：把新观众的姓名和手机号发给我们，改到当天 18:00 前都来得及。</p>
+        </details>
+
+        <details>
+          <summary>
+            大件行李和相机呢？
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          </summary>
+          <p>北门有寄存处，大件 ¥10 一夜。手机随便拍；可换镜头相机需在报名时备注申请媒体腕带，三脚架和无人机一律不让进。</p>
+        </details>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 报名 CTA ============ -->
+  <section class="cta" id="cta">
+    <div class="wrap">
+      <p class="kicker">Now or Never</p>
+      <h2 class="cta-title">
+        <span class="t-stroke stroke" aria-hidden="true">11.07</span>
+        11 月 7 日，码头见。
+      </h2>
+      <p class="cta-lede">
+        报名先到先得：发邮件写「姓名 + 手机 + 票档 + 数量」，
+        一个工作日内回你付款码，付款到账手环才算锁定。
+      </p>
+      <div class="cta-actions">
+        <a class="btn btn-acid" href="mailto:tickets@example.com?subject=%E8%B6%8A%E6%B5%AA2026%E6%8B%BF%E7%A5%A8">邮件锁票 tickets@example.com</a>
+        <a class="btn btn-ghost" href="#tickets">再看一眼票档</a>
+      </div>
+      <p class="cta-alt">
+        或加微信 <b>overwave2026</b>（示例）拉你进购票群 ·
+        售完会在<a href="#top">本页</a>置顶公告，不放站票
+      </p>
+    </div>
+  </section>
+
+</main>
+
+<!-- ============ 页脚 ============ -->
+<footer class="footer">
+  <div class="wrap">
+    <div class="footer-inner">
+      <div>
+        <a class="brand" href="#top">
+          <svg width="22" height="22" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+            <path d="M4 21c4-9 7-9 10 0s7 9 10 0" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+            <path d="M22 6h6M25 3v6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+          越浪 <span class="brand-year">OVERWAVE 2026</span>
+        </a>
+        <p>2026 年 11 月 7 日 18:00 — 次日 02:00 · 厦门 · 旧船厂 3 号坞</p>
+      </div>
+
+      <nav class="footer-links" aria-label="页脚导航">
+        <a href="#lineup">阵容</a>
+        <a href="#timeline">时间轴</a>
+        <a href="#tickets">票档</a>
+        <a href="#venue">场地</a>
+        <a href="#faq">问答</a>
+        <a href="mailto:tickets@example.com">联系主办</a>
+      </nav>
+    </div>
+
+    <p class="footer-legal">
+      示例内容 —— 页面里的活动名、日期、地址、阵容、价格全是占位虚构，正式发布前请逐项替换。<br>
+      © 2026 越浪现场（示例主体）
+    </p>
+  </div>
+</footer>
+
+</body>
+</html>
