@@ -96,6 +96,9 @@ pub const BUILTIN: &[Builtin] = &[
     Builtin { slug: "warm-corp", name: "暖色企业", desc: "暖沙底 · 品牌服务 / 关于 / 联系 · 人文咨询公司", category: "企业",
         pages: &[page!("warm-corp", "index.html"), page!("warm-corp", "about.html"),
                  page!("warm-corp", "contact.html")] },
+    Builtin { slug: "pilot-launch-lab", name: "Pilot Launch Lab", desc: "石墨黑 · AI 建站与内容运营产品官网 · 工作流 / 能力 / 案例 / 托管", category: "落地页",
+        pages: &[page!("pilot-launch-lab", "index.html"), page!("pilot-launch-lab", "capabilities.html"),
+                 page!("pilot-launch-lab", "stories.html"), page!("pilot-launch-lab", "journal.html")] },
 ];
 
 pub fn is_builtin(slug: &str) -> bool {

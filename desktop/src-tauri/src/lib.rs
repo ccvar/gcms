@@ -1873,6 +1873,8 @@ async fn cf_preview_template(
 
 #[tauri::command]
 fn list_templates(state: tauri::State<'_, AppState>) -> Vec<cf_templates::Template> {
+    // 不只在启动时种内置模板：升级后用户点击模板库刷新，也应立即看到新增模板。
+    let _ = cf_templates::ensure_builtin(&state.data_dir);
     cf_templates::list(&state.data_dir.join("templates"))
 }
 

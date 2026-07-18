@@ -5,7 +5,7 @@
   import '@xterm/xterm/css/xterm.css';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { getVersion } from '@tauri-apps/api/app';
-  import { open, save as saveDialog, confirm as confirmDialog } from '@tauri-apps/plugin-dialog';
+  import { open, save as saveDialog } from '@tauri-apps/plugin-dialog';
   import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
   import { check as checkUpdate } from '@tauri-apps/plugin-updater';
   import { relaunch } from '@tauri-apps/plugin-process';
@@ -24,6 +24,7 @@
   import { loadPrefs, savePrefs } from '$lib/defaults';
   import { PRESET_PROMPTS, loadUserPrompts, saveUserPrompts, newPromptId, type Prompt } from '$lib/prompts';
   import Dropdown from '$lib/Dropdown.svelte';
+  import ConfirmDialog from '$lib/ConfirmDialog.svelte';
   import { marked } from 'marked';
   import DOMPurify from 'dompurify';
 
@@ -87,6 +88,31 @@
   });
   let flash = $state('');
   let flashKind = $state<'ok' | 'err'>('ok');
+
+  type ConfirmKind = 'warning' | 'danger' | 'info';
+  let confirmState = $state<null | { message: string; title: string; kind: ConfirmKind; confirmText: string; cancelText: string }>(null);
+  let confirmResolve: ((value: boolean) => void) | null = null;
+
+  function confirmDialog(message: string, options: { title?: string; kind?: ConfirmKind; confirmText?: string; cancelText?: string } = {}) {
+    if (confirmResolve) confirmResolve(false);
+    return new Promise<boolean>((resolve) => {
+      confirmResolve = resolve;
+      confirmState = {
+        message,
+        title: options.title || '请确认操作',
+        kind: options.kind || 'warning',
+        confirmText: options.confirmText || '确认',
+        cancelText: options.cancelText || '取消',
+      };
+    });
+  }
+
+  function finishConfirm(value: boolean) {
+    const resolve = confirmResolve;
+    confirmResolve = null;
+    confirmState = null;
+    resolve?.(value);
+  }
 
   const activeConn = $derived(conns.find((c) => c.id === activeConnId) ?? null);
   const sites = $derived(discovery?.items ?? []);
@@ -360,8 +386,8 @@
         : level === 'l2'
           ? '在 L1 基础上，每周周报会列出本周自动发布清单供你抽查。'
           : L3_WARN;
-    // L3 用红色警示弹窗（error），其余等级黄色确认（warning）。
-    const yes = await confirmDialog(`把「${m.site_name}」调整为 ${levelLabel(level)}？\n${desc}`, { title: level === 'l3' ? '⚠️ 升到 L3 存量维护（高风险）' : '调整托管等级', kind: level === 'l3' ? 'error' : 'warning' });
+    // L3 用红色警示弹窗（danger），其余等级黄色确认（warning）。
+    const yes = await confirmDialog(`把「${m.site_name}」调整为 ${levelLabel(level)}？\n${desc}`, { title: level === 'l3' ? '⚠️ 升到 L3 存量维护（高风险）' : '调整托管等级', kind: level === 'l3' ? 'danger' : 'warning' });
     if (!yes) { await loadManaged(); return; }
     try { await invoke('managed_set_level', { id: m.id, level }); say('等级已调整，已同步每日任务'); await loadManaged(); }
     catch (e) { say(String(e), 'err'); await loadManaged(); }
@@ -751,7 +777,7 @@
   }
   async function toggleTask(t: ScheduledTask) { try { await invoke('set_task_enabled', { id: t.id, enabled: !t.enabled }); await loadTasks(); } catch (e) { say(String(e), 'err'); } }
   async function deleteTask(t: ScheduledTask) {
-    const yes = await confirmDialog(`删除定时任务「${t.title}」？`, { title: '删除任务', kind: 'warning' });
+    const yes = await confirmDialog(`删除定时任务「${t.title}」？`, { title: '删除任务', kind: 'danger' });
     if (!yes) return;
     try { await invoke('delete_task', { id: t.id }); await loadTasks(); } catch (e) { say(String(e), 'err'); }
   }
@@ -2201,7 +2227,7 @@
     const isDir = r.dir && !r.link;
     const yes = await confirmDialog(
       isDir ? `删除文件夹「${r.name}」？只能删空文件夹。` : `删除「${r.name}」？此操作不可撤销。`,
-      { title: '删除', kind: 'warning' },
+      { title: '删除', kind: 'danger' },
     );
     if (!yes) return;
     try {
@@ -2364,7 +2390,7 @@
     }
   }
   async function delTemplate(t: Template) {
-    const yes = await confirmDialog(`删除模板「${t.name}」？`, { title: '删除模板', kind: 'warning' });
+    const yes = await confirmDialog(`删除模板「${t.name}」？`, { title: '删除模板', kind: 'danger' });
     if (!yes) return;
     try { await invoke('delete_template', { slug: t.slug }); await loadTemplates(); } catch (e) { say(String(e), 'err'); }
   }
@@ -2437,7 +2463,7 @@
     promptEditOpen = false;
   }
   async function deletePrompt(p: Prompt) {
-    const yes = await confirmDialog(`删除提示词「${p.title}」？`, { title: '删除提示词', kind: 'warning' });
+    const yes = await confirmDialog(`删除提示词「${p.title}」？`, { title: '删除提示词', kind: 'danger' });
     if (!yes) return;
     userPrompts = userPrompts.filter((x) => x.id !== p.id);
     if (!saveUserPrompts(userPrompts)) say('删除已生效，但本地存储写入异常，重启后可能恢复', 'err');
@@ -2450,7 +2476,7 @@
       say('该连接下有对话正在运行，请先点停止结束这一轮，再删除连接。', 'err');
       return;
     }
-    const yes = await confirmDialog('删除这个连接？技能包目录、钥匙串密钥，以及该连接下的所有对话都会一并删除。', { title: '删除连接', kind: 'warning' });
+    const yes = await confirmDialog('删除这个连接？技能包目录、钥匙串密钥，以及该连接下的所有对话都会一并删除。', { title: '删除连接', kind: 'danger' });
     if (!yes) return;
     try {
       await invoke('remove_connection', { id });
@@ -2519,7 +2545,7 @@
     if (running[id]) { say('对话进行中，请先点停止再删除。', 'err'); return; }
     const c = convos.find((x) => x.id === id);
     const label = c?.title?.trim() ? `「${c.title.trim()}」` : '这条对话';
-    const yes = await confirmDialog(`删除对话${label}？聊天记录不可恢复。`, { title: '删除对话', kind: 'warning' });
+    const yes = await confirmDialog(`删除对话${label}？聊天记录不可恢复。`, { title: '删除对话', kind: 'danger' });
     if (!yes) return;
     try { await invoke('delete_conversation', { id }); if (activeConvId === id) { activeConvId = ''; activeConv = null; viewAfterConvGone(); } await refreshConvos(); } catch (e) { say(String(e), 'err'); }
   }
@@ -5247,6 +5273,18 @@
       </div>
     </div>
   </div>
+{/if}
+
+{#if confirmState}
+  <ConfirmDialog
+    title={confirmState.title}
+    message={confirmState.message}
+    kind={confirmState.kind}
+    confirmText={confirmState.confirmText}
+    cancelText={confirmState.cancelText}
+    onConfirm={() => finishConfirm(true)}
+    onCancel={() => finishConfirm(false)}
+  />
 {/if}
 
 <style>
