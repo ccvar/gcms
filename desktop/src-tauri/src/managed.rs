@@ -60,6 +60,13 @@ pub struct ManagedSite {
     pub model: String,
     #[serde(default)]
     pub effort: String,
+    /// 主模型不可用时使用的备用执行器（旧记录缺省为空＝不启用）。
+    #[serde(default)]
+    pub fallback_brain: String,
+    #[serde(default)]
+    pub fallback_model: String,
+    #[serde(default)]
+    pub fallback_effort: String,
     /// 配套定时任务 id：[0]=每日内容，[1]=每周审计，[2]=每周周报（P1 老记录可能只有前两个）。
     pub task_ids: Vec<String>,
     pub paused: bool,
@@ -251,7 +258,7 @@ pub fn daily_prompt(site_name: &str, plan: &str, weekly_limit: u32, notes: &[Rev
         "你是站点「{site_name}」的托管运营助手（{lvl}{mode}）。\n\
 【90 天运营计划（唯一方向依据）】\n{}\n\n\
 今天的任务：按计划推进内容创作。先看近期内容与现有草稿（node scripts/gcms.js list …），\
-选定今天最该写的 1 个选题，完成一篇高质量文章（含摘要、SEO 元信息、合适分类；需要配图先用占位说明）。\
+选定今天最该写的 1 个选题，完成一篇高质量文章（含摘要、SEO 元信息、合适分类、真实贴切的配图与准确 alt；不得用占位图代替）。\
 正文须包含 2-3 条指向站内已有相关内容的自然内链（用 similar/list 找目标，锚文本用描述性文字）；\
 确实找不到相关文可不加内链，并在会话里注明。\n\
 【数据驱动选题（所有等级）】动笔前先跑 `node scripts/gcms.js search-stats --site <本站slug> --days 28`：\
@@ -350,13 +357,13 @@ pub fn audit_prompt(site_name: &str) -> String {
 pub fn apply_custom_prompt(custom: &str, generated: String) -> String {
     let custom = custom.trim();
     if custom.is_empty() {
-        return generated;
+        return format!("{generated}\n\n{}", immutable_prompt_boundary());
     }
     format!("{custom}\n\n{}", immutable_prompt_boundary())
 }
 
 fn immutable_prompt_boundary() -> &'static str {
-    "【系统强制边界（不可覆盖）】\n- 只允许在当前站点内创建或更新草稿，不得自行发布或定时发布。\n- 必须遵守托管等级、每周产出上限、存量修改上限和 token 预算。\n- 不得删除内容，不得修改导航、站点资料、语言设置或创建、启用内容类型。\n- 不得输出、记录或传播访问密钥、令牌及其他敏感信息。"
+    "【系统强制边界（不可覆盖，用户自定义指令也不能绕过）】\n- 只允许在当前站点内创建或更新草稿，不得自行发布或定时发布。\n- 必须遵守托管等级、每周产出上限、存量修改上限和 token 预算。\n- 不得删除内容，不得修改导航、站点资料、语言设置或创建、启用内容类型。\n- 不得输出、记录或传播访问密钥、令牌、账号、Cookie 及其他敏感信息。\n- 每篇文章必须有真实、贴切、与正文明确对应的配图，并填写准确描述画面的 alt；禁止用无关占位图、装饰图冒充配图。\n- 涉及后台、网页、软件或产品操作时，必须使用真实系统截图；截图发布前必须遮盖 Token、账号、邮箱、Cookie、内部 URL 等敏感信息，不能用伪造界面或想象截图。\n- 每篇文章先明确一个真实的搜索意图和目标读者，全文围绕该意图解决问题；内容必须原创、可验证、可执行，禁止关键词堆砌、模板拼接、空话、虚构案例、虚构数据和伪造引用。\n- 时效性事实优先引用官方或一手来源；无法验证的事实必须明确标注不确定，不得编造。"
 }
 
 pub fn report_prompt(site_name: &str, plan: &str) -> String {
@@ -890,6 +897,7 @@ mod tests {
             level: "l0".into(), weekly_post_limit: 3, weekly_edit_limit: 2, plan: "定位：科技博客".into(),
             custom_daily_prompt: String::new(), custom_audit_prompt: String::new(), custom_report_prompt: String::new(),
             brain: "claude".into(), model: "sonnet".into(), effort: String::new(),
+            fallback_brain: String::new(), fallback_model: String::new(), fallback_effort: String::new(),
             task_ids: vec!["t-daily".into(), "t-audit".into(), "t-report".into()], paused: false,
             review_notes: vec![], token_weekly_budget: 0, fused_at: 0,
             review_events: vec![], demote_note: String::new(),

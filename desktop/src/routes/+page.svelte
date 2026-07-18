@@ -208,6 +208,7 @@
   type ManagedSite = {
     id: string; conn_id: string; site_slug: string; site_name: string; level: string;
     weekly_post_limit: number; weekly_edit_limit: number; plan: string; brain: string; model: string; effort: string;
+    fallback_brain?: string; fallback_model?: string; fallback_effort?: string;
     task_ids: string[]; paused: boolean; review_notes: ManagedNote[];
     token_weekly_budget: number; fused_at: number;
     review_events: { ts: number; approved: boolean }[]; demote_note: string;
@@ -303,6 +304,19 @@
   }
   // 托管等级：展示名与选项（与后端 managed::level_label 同口径）。
   function levelLabel(l: string): string { return l === 'l1' ? 'L1 自动发布' : l === 'l2' ? 'L2 自动发布+抽检' : l === 'l3' ? 'L3 存量维护' : 'L0 试运行'; }
+  function mwBoundaryTip(): string {
+    const lines = [
+      mwLevel === 'l0'
+        ? 'AI 只产出草稿，需在待审队列中预览后由你批准发布。'
+        : `${levelLabel(mwLevel)}：常规文章自检通过后可直接发布；审计纪要等仍存草稿待审。${mwLevel === 'l2' ? '周报会附自动发布清单供抽查。' : ''}`,
+      mwLevel === 'l3' ? `L3 可修改已发布存量内容或转草稿下线（绝不删除），每周最多 ${mwEditLimit} 篇。` : '',
+      `每周产出（发布＋新建草稿）不超过 ${mwLimit} 篇。`,
+      '绝不删除内容、修改导航/站点资料/语言设置、创建或启用内容类型。',
+      mwBudget > 0 ? `每周 token 预算 ${mwBudget}，触顶自动暂停全部配套任务，恢复需手动。` : '',
+      '建议使用 stats:read，让 AI 按真实搜索数据选题；建议连接使用仅内容权限的受限密钥。',
+    ];
+    return `边界说明\n${lines.filter(Boolean).map((line) => `• ${line}`).join('\n')}`;
+  }
   const LEVEL_OPTS = [
     { value: 'l0', label: 'L0 试运行', sub: '只产草稿 · 人审人发' },
     { value: 'l1', label: 'L1 自动发布', sub: '常规文章可直接发布' },
@@ -318,6 +332,25 @@
   function modelDisp(brain: string, model: string): string { return launcherModelOpts(brain).find((o) => o.value === model)?.label ?? (model || '默认'); }
   function effortDisp(e: string): string { return e === 'low' ? '低' : e === 'medium' ? '中' : e === 'high' ? '高' : ''; }
   function mdTok(n: number): string { return n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'k' : String(n); }
+  async function changeManagedModels(m: ManagedSite, value?: string, effort?: string) {
+    let brain = m.brain;
+    let model = m.model;
+    if (value) {
+      const i = value.indexOf('::');
+      if (i > 0) { brain = value.slice(0, i); model = value.slice(i + 2); }
+    }
+    const nextEffort = effort ?? m.effort ?? '';
+    if (!brainUsable(brain as Brain)) { say('所选厂商未就绪，无法修改托管模型', 'err'); return; }
+    try {
+      await invoke('managed_set_models', {
+        id: m.id, brain, model, effort: nextEffort,
+        fallbackBrain: m.fallback_brain ?? '', fallbackModel: m.fallback_model ?? '', fallbackEffort: m.fallback_effort ?? '',
+      });
+      say('托管模型已更新，三个配套任务已同步');
+      await loadManaged();
+      await loadTasks();
+    } catch (e) { say(String(e), 'err'); await loadManaged(); }
+  }
   // 调级（卡上 Dropdown 已 bind 改了 m.level）：确认弹窗写明含义；取消则 reload 还原。
   async function changeLevel(m: ManagedSite, level: string) {
     const desc = level === 'l0'
@@ -468,6 +501,10 @@
   let mwBrain = $state<string>('claude');
   let mwModel = $state('sonnet');
   let mwEffort = $state('');
+  let mwFallbackEnabled = $state(false);
+  let mwFallbackBrain = $state<string>('codex');
+  let mwFallbackModel = $state('');
+  let mwFallbackEffort = $state('');
   let mwLevel = $state('l0');
   let mwBudget = $state(0);
   let mwEditLimit = $state(2);
@@ -481,9 +518,23 @@
   let mwPromptTab = $state<ManagedPromptKey>('daily');
   let mwPromptBusy = $state(false);
   let mwPromptError = $state('');
+  let mwPromptTextarea = $state<HTMLTextAreaElement | null>(null);
   let mwPrompts = $state<ManagedPromptSet>(blankManagedPrompts());
   let mwPromptDefaults = $state<ManagedPromptSet>(blankManagedPrompts());
   let mwPromptEdited = $state<Record<ManagedPromptKey, boolean>>({ daily: false, audit: false, report: false });
+  function resizeMwPrompt() {
+    const textarea = mwPromptTextarea;
+    if (!textarea || !mwPromptOpen || mwPromptBusy) return;
+    textarea.style.height = 'auto';
+    textarea.style.height = `${Math.max(textarea.scrollHeight, 260)}px`;
+  }
+  $effect(() => {
+    // 指令内容是异步生成且可切换 tab，统一在 DOM 更新后按实际文本高度展开。
+    if (!mwOpen || mwStep !== 3 || !mwPromptOpen || mwPromptBusy) return;
+    mwPromptTab;
+    mwPrompts[mwPromptTab];
+    requestAnimationFrame(resizeMwPrompt);
+  });
   // 选站后的机械预检（软警示，不硬拦）：存量条数 + 统计可用性 → 警示列表。
   // 预检失败（网络/旧服务端等）静默降级：不警示也不拦——预检绝不能挡住向导。
   let mwWarns = $state<string[]>([]);
@@ -503,6 +554,8 @@
     mwBrain = brainUsable(prefs.brain) ? prefs.brain : firstUsableBrain();
     mwModel = mwBrain === prefs.brain && isLauncherModel(mwBrain, prefs.model) ? prefs.model : defaultModelFor(mwBrain);
     mwEffort = mwBrain === prefs.brain ? (prefs.effort ?? '') : '';
+    const fallback = ALL_BRAINS.find((brain) => brain !== mwBrain && brainUsable(brain)) ?? firstUsableBrain();
+    mwFallbackEnabled = false; mwFallbackBrain = fallback; mwFallbackModel = defaultModelFor(fallback); mwFallbackEffort = '';
     mwLevel = 'l0'; mwBudget = 0; mwEditLimit = 2;
     mwPromptOpen = false; mwPromptTab = 'daily'; mwPromptBusy = false; mwPromptError = '';
     mwPrompts = blankManagedPrompts(); mwPromptDefaults = blankManagedPrompts();
@@ -510,6 +563,11 @@
   }
   // 向导里换厂商后，档位不属于该厂商时回落默认（与任务表单同规则）。
   $effect(() => { if (mwOpen && !isLauncherModel(mwBrain, mwModel)) mwModel = defaultModelFor(mwBrain); });
+  $effect(() => { if (mwOpen && mwFallbackEnabled && !isLauncherModel(mwFallbackBrain, mwFallbackModel)) mwFallbackModel = defaultModelFor(mwFallbackBrain); });
+  const mwFallbackValid = $derived(!mwFallbackEnabled || (
+    brainUsable(mwFallbackBrain as Brain) &&
+    (mwFallbackBrain !== mwBrain || mwFallbackModel !== mwModel || mwFallbackEffort !== mwEffort)
+  ));
   const mwSiteOpts = $derived(sites.map((s) => {
     const taken = managedOfConn.some((m) => m.site_slug === s.slug);
     return {
@@ -579,6 +637,7 @@
   async function mwEnable() {
     if (!mwSite || mwBusy) return;
     if (!brainUsable(mwBrain as Brain)) { say('所选厂商未就绪，去设置里授权或换一个', 'err'); return; }
+    if (!mwFallbackValid) { say('备用模型必须可用，并且不能与主模型完全相同', 'err'); return; }
     mwBusy = true;
     const site = sites.find((s) => s.slug === mwSite);
     try {
@@ -587,6 +646,9 @@
         plan: mwPlan, weeklyPostLimit: mwLimit, weeklyEditLimit: Math.min(20, Math.max(1, Math.round(Number(mwEditLimit) || 2))), level: mwLevel,
         tokenWeeklyBudget: Math.max(0, Math.round(Number(mwBudget) || 0)),
         brain: mwBrain, model: mwModel, effort: mwEffort,
+        fallbackBrain: mwFallbackEnabled ? mwFallbackBrain : '',
+        fallbackModel: mwFallbackEnabled ? mwFallbackModel : '',
+        fallbackEffort: mwFallbackEnabled ? mwFallbackEffort : '',
         customDailyPrompt: mwPromptEdited.daily ? mwPrompts.daily : '',
         customAuditPrompt: mwPromptEdited.audit ? mwPrompts.audit : '',
         customReportPrompt: mwPromptEdited.report ? mwPrompts.report : '',
@@ -3771,7 +3833,17 @@
                   <button class="switch {m.paused ? '' : 'on'}" title={m.paused ? '已暂停（配套任务全部停跑）' : '托管中'} onclick={() => toggleManaged(m)}><span></span></button>
                 </div>
                 <div class="task-body">
-                  <b><SiteFav src={siteFav(m.site_slug)} label={m.site_slug} size={14} /> {m.site_name}<span class="md-lv-badge" title="点击调整托管等级"><Dropdown compact bare bind:value={m.level} options={LEVEL_OPTS} onchange={(v: string) => changeLevel(m, v)} /></span>{#if m.level === 'l3'}<span class="md-badge lv3">慎用</span>{/if}{#if m.paused}<span class="md-badge off">已暂停</span>{/if}</b>
+                  <div class="md-title-row">
+                    <b><SiteFav src={siteFav(m.site_slug)} label={m.site_slug} size={14} /> {m.site_name}</b>
+                    <span class="md-lv-badge" title="点击调整托管等级"><Dropdown compact bare bind:value={m.level} options={LEVEL_OPTS} onchange={(v: string) => changeLevel(m, v)} /></span>
+                    {#if m.level === 'l3'}<span class="md-badge lv3">慎用</span>{/if}
+                    {#if m.paused}<span class="md-badge off">已暂停</span>{/if}
+                    {#if m.brain}
+                      <span class="md-model-badge" title="点击修改托管主模型">
+                        <ModelFx options={comboOpts} value={`${m.brain}::${m.model}`} effort={m.effort} onpick={(v: string) => void changeManagedModels(m, v)} oneffort={(v: string) => void changeManagedModels(m, undefined, v)} />
+                      </span>
+                    {/if}
+                  </div>
                   <div class="task-meta">
                     本周发布 {sum ? sum.published_this_week : '…'} / 上限 {m.weekly_post_limit}
                     <span class="cdot">·</span>待审草稿 {sum ? sum.drafts : drafts.length} 篇
@@ -3786,9 +3858,7 @@
                       {#each sum.tasks as t (t.id)}
                         <span class="md-task {t.enabled ? '' : 'off'}" title={t.title}>{t.title.includes('每日') ? '每日内容' : t.title.includes('周报') ? '每周周报' : '每周审计'}{t.last_run ? `：上次${t.last_status === 'ok' ? '成功' : '失败'}` : '：还没跑过'}</span>
                       {/each}
-                      {#if m.brain}
-                        <span class="md-task" title="配套任务用的厂商/模型"><BrainIcon brain={m.brain} size={12} /> {modelDisp(m.brain, m.model)}{effortDisp(m.effort) ? ` · ${effortDisp(m.effort)}` : ''}</span>
-                      {/if}
+                      {#if m.fallback_brain}<span class="md-task" title="主模型受限时接管一次">备用：<BrainIcon brain={m.fallback_brain} size={12} /> {modelDisp(m.fallback_brain, m.fallback_model ?? '')}</span>{/if}
                     </div>
                   {/if}
                   {#if m.fused_at}
@@ -4975,9 +5045,9 @@
             <div class="trun-sites">
               {#each r.sites as s (s.slug)}
                 {#if s.ok && s.conv_id}
-                  <button class="trun-site" title="打开这次运行的对话" onclick={() => { taskHistoryFor = null; openConv(s.conv_id ?? ''); }}><SiteFav src={siteFav(s.slug)} label={s.slug} size={12} /><span>{s.slug}</span></button>
+                  <button class="trun-site" title="打开这次运行的对话" onclick={() => { taskHistoryFor = null; openConv(s.conv_id ?? ''); }}><SiteFav src={siteFav(s.slug)} label={s.slug} size={12} /><span>{s.slug}</span>{#if s.fallback_used}<small class="trun-fallback">备用 · {s.executor}</small>{/if}</button>
                 {:else}
-                  <span class="trun-site {s.deferred ? 'is-defer' : 'is-err'}" title={s.error || (s.deferred ? '限额顺延' : '失败')}><SiteFav src={siteFav(s.slug)} label={s.slug} size={12} /><span>{s.slug} {s.deferred ? '顺延' : '✕'}</span></span>
+                  <span class="trun-site {s.deferred ? 'is-defer' : 'is-err'}" title={s.error || (s.deferred ? '限额顺延' : '失败')}><SiteFav src={siteFav(s.slug)} label={s.slug} size={12} /><span>{s.slug} {s.deferred ? '顺延' : '✕'}</span>{#if s.fallback_used}<small class="trun-fallback">备用 · {s.executor}</small>{/if}</span>
                 {/if}
               {/each}
             </div>
@@ -5001,7 +5071,7 @@
 <!-- 托管 · 开启向导（3 步：选站 → 90 天计划 → 上限与边界确认） -->
 {#if mwOpen}
   <div class="mask" role="presentation" onclick={() => !mwBusy && !mwGenBusy && (mwOpen = false)}></div>
-  <div class="modal wide">
+  <div class="modal wide md-managed-wizard">
     <header class="sheet-head"><b>托管一个站点<small class="dim"> · 第 {mwStep}/3 步</small></b><button class="x" onclick={() => (mwOpen = false)} disabled={mwBusy}>×</button></header>
     <div class="sheet-body">
       {#if mwStep === 1}
@@ -5010,7 +5080,6 @@
         </div>
         <p class="hint">开启后会替这个站自动创建三个定时任务：每日内容（按计划写稿存草稿）+ 每周审计（自查质量/查重/内链）+ 每周周报（汇总本周数据）。模型与强度在第 3 步选择。</p>
         {@render mwPrecheckBlock()}
-        <div class="row-end">{#if mwWarns.length}<span class="md-pre-ack">已知悉风险，仍可继续</span>{/if}<button class="btn ghost" onclick={() => (mwOpen = false)}>取消</button><button class="btn primary" onclick={() => (mwStep = 2)} disabled={!mwSite}>下一步</button></div>
       {:else if mwStep === 2}
         <div class="tfield"><span>90 天运营计划（每日任务的方向依据，可编辑，也可跳过手写）</span>
           <textarea class="tin" rows="10" bind:value={mwPlan} placeholder="点下面「生成 90 天计划」让 AI 摸底站点后起草，或直接手写：定位/内容支柱/每周节奏/关键词方向/前 4 周选题…"></textarea>
@@ -5020,17 +5089,49 @@
           <span class="hint">生成过程只读取站点数据，不会改动内容；对话会留在侧栏可追溯。</span>
         </div>
         {@render mwPrecheckBlock()}
-        <div class="row-end">{#if mwWarns.length}<span class="md-pre-ack">已知悉风险，仍可继续</span>{/if}<button class="btn ghost" onclick={() => (mwStep = 1)}>上一步</button><button class="btn primary" onclick={() => void mwEnterStep3()}>下一步{mwPlan.trim() ? '' : '（暂不填计划）'}</button></div>
       {:else}
-        <div class="tfield"><span>模型与强度（三个配套任务共用，与对话选择器一致）</span>
-          <div class="tfield-fx"><ModelFx options={comboOpts} value={`${mwBrain}::${mwModel}`} effort={mwEffort} onpick={(v: string) => { const i = v.indexOf('::'); if (i > 0) { mwBrain = v.slice(0, i); mwModel = v.slice(i + 2); } }} oneffort={(v: string) => (mwEffort = v)} /></div></div>
+        <div class="md-model-grid">
+          <div class="tfield md-model-card md-model-primary">
+            <div class="md-model-head">
+              <strong>主模型</strong>
+              <small>三个配套任务共用，与对话选择器一致</small>
+            </div>
+            <div class="tfield-fx"><ModelFx options={comboOpts} value={`${mwBrain}::${mwModel}`} effort={mwEffort} onpick={(v: string) => { const i = v.indexOf('::'); if (i > 0) { mwBrain = v.slice(0, i); mwModel = v.slice(i + 2); } }} oneffort={(v: string) => (mwEffort = v)} /></div>
+          </div>
+          <div class="tfield md-model-card md-model-fallback">
+            <div class="md-model-head md-model-head-fallback">
+              <span>
+                <strong>备用模型</strong>
+                <small>主模型受限时自动接管一次</small>
+              </span>
+              <button
+                type="button"
+                class="md-fallback-switch"
+                class:active={mwFallbackEnabled}
+                role="switch"
+                aria-checked={mwFallbackEnabled}
+                aria-label={mwFallbackEnabled ? '停用备用模型' : '启用备用模型'}
+                onclick={() => (mwFallbackEnabled = !mwFallbackEnabled)}
+              ><span></span></button>
+            </div>
+            {#if mwFallbackEnabled}
+              <div class="tfield-fx"><ModelFx options={comboOpts} value={`${mwFallbackBrain}::${mwFallbackModel}`} effort={mwFallbackEffort} onpick={(v: string) => { const i = v.indexOf('::'); if (i > 0) { mwFallbackBrain = v.slice(0, i); mwFallbackModel = v.slice(i + 2); } }} oneffort={(v: string) => (mwFallbackEffort = v)} /></div>
+              <small class="md-fallback-note">仅在额度、限流或模型不可用，且尚未执行写操作时切换；不会反复重试。</small>
+            {:else}
+              <button type="button" class="md-fallback-empty" onclick={() => (mwFallbackEnabled = true)}>
+                <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" /></svg>
+                <span>添加备用模型</span>
+              </button>
+            {/if}
+          </div>
+        </div>
         <div class="trow">
-          <div class="tfield"><span>托管等级</span><Dropdown bind:value={mwLevel} options={LEVEL_OPTS} /></div>
-          <div class="tfield"><span>每周 token 预算（0＝不限，触顶自动熔断）</span>
+          <div class="tfield"><span class="md-field-label"><b>托管等级</b><small>决定发布与存量修改边界</small></span><Dropdown bind:value={mwLevel} options={LEVEL_OPTS} /></div>
+          <div class="tfield"><span class="md-field-label"><b>每周 token 预算</b><small>0＝不限，触顶自动熔断</small></span>
             <input class="tin" type="number" min="0" step="50000" bind:value={mwBudget} /></div>
         </div>
         <div class="trow">
-          <div class="tfield"><span>每周产出上限（发布＋新建草稿）</span>
+          <div class="tfield"><span class="md-field-label"><b>每周产出上限</b><small>发布＋新建草稿</small></span>
             <input class="tin" type="number" min="1" max="50" bind:value={mwLimit} style="max-width:120px" />
             {#if Number(mwLimit) > 7}<span class="hint">新站爬坡期：当前上限 7 篇/周，防止批量灌站被搜索引擎判责——超出部分会被自动钳到 7（开启满 30 天放宽到 14，60 天后 50）。</span>{/if}
           </div>
@@ -5052,11 +5153,20 @@
         {/if}
         <details class="md-prompts" bind:open={mwPromptOpen}>
           <summary>
-            <span><strong>最终任务指令</strong><small>根据站点资料与运营目标生成，展开后可检查和修改。</small></span>
-            {#if Object.values(mwPromptEdited).some(Boolean)}<em>已手动修改</em>{/if}
+            <span class="md-prompt-icon" aria-hidden="true">
+              <svg width="17" height="17" viewBox="0 0 20 20" fill="none">
+                <path d="M5.5 2.75h6.25l2.75 2.75v11.75h-9V2.75Z" stroke="currentColor" stroke-width="1.45" stroke-linejoin="round" />
+                <path d="M11.75 2.75V5.5h2.75M7.75 9h4.5M7.75 12h4.5" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </span>
+            <span class="md-prompt-copy"><strong>最终任务指令</strong><small>根据站点资料与运营目标生成，展开后可检查和修改。</small></span>
+            <span class="md-prompt-meta">
+              {#if Object.values(mwPromptEdited).some(Boolean)}<em>已手动修改</em>{/if}
+              <svg class="md-prompt-chevron" width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m4 6 4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
+            </span>
           </summary>
           <div class="md-prompts-body">
-            <div class="seg md-prompt-tabs" role="tablist" aria-label="任务指令">
+            <div class="md-prompt-tabs" role="tablist" aria-label="任务指令">
               {#each MANAGED_PROMPT_TABS as tab}
                 <button type="button" class:active={mwPromptTab === tab.key} onclick={() => (mwPromptTab = tab.key)}>{tab.label}{mwPromptEdited[tab.key] ? ' · 已修改' : ''}</button>
               {/each}
@@ -5066,7 +5176,7 @@
             {:else if mwPromptError}
               <div class="md-prompt-error">{mwPromptError}<button type="button" class="btn ghost small" onclick={() => void mwRefreshPromptDefaults()}>重试</button></div>
             {:else}
-              <textarea class="md-prompt-text" aria-label={`${MANAGED_PROMPT_TABS.find((item) => item.key === mwPromptTab)?.label ?? ''}任务指令`} value={mwPrompts[mwPromptTab]} oninput={(event: Event) => mwPromptInput((event.currentTarget as HTMLTextAreaElement).value)}></textarea>
+              <textarea bind:this={mwPromptTextarea} class="md-prompt-text" aria-label={`${MANAGED_PROMPT_TABS.find((item) => item.key === mwPromptTab)?.label ?? ''}任务指令`} value={mwPrompts[mwPromptTab]} oninput={(event: Event) => { mwPromptInput((event.currentTarget as HTMLTextAreaElement).value); resizeMwPrompt(); }}></textarea>
               <div class="md-prompt-actions">
                 <span>不会包含访问密钥；系统强制边界始终生效。</span>
                 <button type="button" class="btn ghost small" onclick={() => void mwRefreshPromptDefaults()}>更新自动生成内容</button>
@@ -5075,28 +5185,23 @@
             {/if}
           </div>
         </details>
-        <div class="md-bound">
-          <b>边界说明（已机制化写入任务，请确认）</b>
-          <ul>
-            {#if mwLevel === 'l0'}
-              <li>AI 产出<b>只到草稿</b>，等你在「托管 → 待审队列」里预览后批准；<b>绝不自行发布或定时发布</b>。</li>
-            {:else}
-              <li>{levelLabel(mwLevel)}：常规文章自检通过后<b>可直接发布</b>；审计纪要等仍存草稿待审{mwLevel === 'l2' ? '，且每周周报会附本周自动发布清单供你抽查' : ''}。打回率过高会<b>自动降级</b>{mwLevel === 'l3' ? '（L3→L2）' : '（→L0）'}。</li>
-            {/if}
-            {#if mwLevel === 'l3'}
-              <li class="md-li-danger">L3 允许 AI <b>修改已发布的存量内容</b>并把低质旧文<b>转草稿下线</b>（绝不删除）；每周最多改 {mwEditLimit} 篇——Pilot 在任务触发前实测计数，配额用完当天禁改存量。</li>
-            {/if}
-            <li>每周产出（发布＋新建草稿）不超过 {mwLimit} 篇——Pilot 在任务触发前实测把关，达上限直接跳过。</li>
-            <li><b>绝不</b>删除内容、修改导航/站点资料/语言设置、创建或启用内容类型。</li>
-            {#if mwBudget > 0}<li>每周 token 预算 {mwBudget}：触顶自动暂停全部配套任务（熔断），恢复需手动。</li>{/if}
-            <li>建议密钥勾选 <b>stats:read</b>——AI 将按真实搜索数据选题（只读；缺失时自动退回按运营计划选题）。</li>
-            <li>建议为该连接使用<b>仅内容权限</b>的受限密钥（posts 读写＋发布即可，不给站点设置/导航/类型权限），从密钥层再兜一道底。</li>
-          </ul>
-        </div>
         {@render mwPrecheckBlock()}
-        <div class="row-end">{#if mwWarns.length}<span class="md-pre-ack">已知悉风险，仍可继续</span>{/if}<button class="btn ghost" onclick={() => (mwStep = 2)}>上一步</button><button class="btn primary" onclick={mwEnable} disabled={mwBusy || !mwSite || !brainUsable(mwBrain as Brain)}>{mwBusy ? '开启中…' : '确认并开启托管'}</button></div>
       {/if}
     </div>
+    <footer class="md-wizard-footer">
+      {#if mwStep === 3}<span class="md-bound-tip" data-tip={mwBoundaryTip()} aria-label="边界说明"><span class="md-bound-icon">!</span><span>边界说明</span></span>{/if}
+      {#if mwWarns.length}<span class="md-pre-ack">已知悉风险，仍可继续</span>{/if}
+      {#if mwStep === 1}
+        <button class="btn ghost" onclick={() => (mwOpen = false)}>取消</button>
+        <button class="btn primary" onclick={() => (mwStep = 2)} disabled={!mwSite}>下一步</button>
+      {:else if mwStep === 2}
+        <button class="btn ghost" onclick={() => (mwStep = 1)}>上一步</button>
+        <button class="btn primary" onclick={() => void mwEnterStep3()}>下一步{mwPlan.trim() ? '' : '（暂不填计划）'}</button>
+      {:else}
+        <button class="btn ghost" onclick={() => (mwStep = 2)}>上一步</button>
+        <button class="btn primary" onclick={mwEnable} disabled={mwBusy || !mwSite || !brainUsable(mwBrain as Brain) || !mwFallbackValid}>{mwBusy ? '开启中…' : '确认并开启托管'}</button>
+      {/if}
+    </footer>
   </div>
 {/if}
 
@@ -5887,6 +5992,7 @@
   .trun-site { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border: 1px solid var(--border2); border-radius: 999px; font-size: 12px; background: var(--card); color: inherit; font-family: inherit; cursor: pointer; }
   .trun-site:hover { border-color: var(--accent); color: var(--accent); }
   .trun-site.is-err { cursor: help; color: #a03c2b; border-color: #ecd4cc; background: #fbf3f0; }
+  .trun-fallback { padding-left: 6px; border-left: 1px solid var(--border2); color: #7a6440; font-size: 10px; white-space: nowrap; }
   /* 多站点胶囊 */
   .tsites { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 2px; }
   .tsite-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 6px 3px 8px; border: 1px solid var(--border2); border-radius: 999px; font-size: 12px; background: var(--card); }
@@ -6200,6 +6306,12 @@
 
   /* 托管：卡片徽标 / 待审队列 / 计划编辑 / 向导边界说明 */
   .md-badge { margin-left: 8px; font-size: 10.5px; padding: 1px 7px; border-radius: 999px; background: #e8f0e4; color: #3c6b32; vertical-align: 1px; }
+  .md-title-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0; }
+  .md-title-row > b { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
+  .md-title-row > b :global(.site-fav) { flex: none; }
+  .md-model-badge { display: inline-flex; align-items: center; margin-left: 1px; }
+  .md-model-badge :global(.fx-trigger) { height: 22px; border: 1px solid var(--border2); border-radius: 999px; background: #f7f4ee; padding: 0 8px; font-size: 10.5px; }
+  .md-model-badge :global(.fx-trigger:hover), .md-model-badge :global(.fx-trigger.open) { border-color: var(--accent); color: var(--accent); background: #fff; }
   .md-badge.off { background: #eee9df; color: var(--dim); }
   .md-task { font-size: 11.5px; padding: 1px 8px; border-radius: 999px; background: #f1efe9; color: var(--dim); margin-right: 6px; }
   .md-task.off { opacity: 0.55; text-decoration: line-through; }
@@ -6228,21 +6340,68 @@
   .md-plan { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; }
   .md-plan textarea { font-size: 12.5px; line-height: 1.6; }
   .md-genrow { display: flex; align-items: center; gap: 10px; margin: 6px 0 10px; }
-  .md-prompts { border: 1px solid var(--line); border-radius: 10px; background: #fff; margin: 8px 0; }
-  .md-prompts > summary { list-style: none; cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 14px; }
+  /* 向导按当前步骤内容自适应；只有第 3 步内容超过视口时才让正文滚动。 */
+  .md-managed-wizard { height: fit-content; max-height: 88vh; overflow: hidden; }
+  .md-managed-wizard .sheet-body { flex: 1 1 auto; min-height: 0; padding-bottom: 16px; }
+  .md-managed-wizard .sheet-body > * { flex-shrink: 0; }
+  .md-wizard-footer {
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 7px;
+    padding: 12px 18px;
+    border-top: 1px solid var(--border);
+    background: var(--bg);
+    box-shadow: 0 -8px 18px rgb(35 29 20 / 4%);
+  }
+  .md-managed-wizard .trow { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+  .md-model-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; margin-bottom: 14px; }
+  .md-model-card { min-width: 0; display: grid; align-content: start; gap: 8px; padding: 0; }
+  .md-model-head { min-width: 0; min-height: 38px; display: flex; flex-direction: column; justify-content: center; gap: 2px; color: var(--text); }
+  .md-model-head strong { font-size: 13px; line-height: 1.25; font-weight: 650; }
+  .md-model-primary .md-model-head strong { font-size: 15px; font-weight: 700; }
+  .md-model-head small { color: var(--faint); font-size: 10.5px; line-height: 1.35; font-weight: 400; }
+  .md-model-head-fallback { flex-direction: row; align-items: center; justify-content: space-between; gap: 10px; }
+  .md-model-head-fallback > span { min-width: 0; display: grid; gap: 2px; }
+  .md-fallback-switch { flex: none; position: relative; width: 30px; height: 18px; padding: 0; border: 1px solid var(--line); border-radius: 999px; background: #e9e7e1; cursor: pointer; transition: background 140ms ease, border-color 140ms ease; }
+  .md-fallback-switch > span { position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgb(35 29 20 / 18%); transition: transform 140ms ease; }
+  .md-fallback-switch.active { border-color: var(--accent); background: var(--accent); }
+  .md-fallback-switch.active > span { transform: translateX(12px); }
+  .md-field-label { display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap; color: var(--dim); line-height: 1.3; }
+  .md-field-label b { font-size: 12px; font-weight: 600; }
+  .md-field-label small { color: var(--faint); font-size: 10.5px; font-weight: 400; }
+  .md-fallback-note { display: block; margin-top: -1px; color: var(--faint); font-size: 10.5px; line-height: 1.45; }
+  .md-fallback-empty { width: 100%; height: var(--ctl-h); min-height: var(--ctl-h); margin: 0; padding: 0 10px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px dashed var(--line); border-radius: 8px; background: #faf9f6; color: var(--dim); font: inherit; font-size: 12px; cursor: pointer; }
+  .md-fallback-empty:hover { color: var(--accent); border-color: #d7b2a6; background: #fff; }
+  .md-prompts { flex: none; border: 1px solid var(--border2); border-radius: 10px; background: #fbfaf7; margin: 16px 0 12px; overflow: hidden; transition: border-color 140ms ease, background 140ms ease; }
+  .md-prompts:hover { border-color: #d7cfc2; background: #fff; }
+  .md-prompts[open] { background: #fff; }
+  .md-prompts > summary { box-sizing: border-box; min-height: 58px; list-style: none; cursor: pointer; display: flex; align-items: center; gap: 11px; padding: 11px 14px; outline: none; }
+  .md-prompts > summary:focus-visible { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent); }
   .md-prompts > summary::-webkit-details-marker { display: none; }
-  .md-prompts summary span { display: grid; gap: 3px; }
-  .md-prompts summary small { color: var(--dim); font-weight: 400; }
-  .md-prompts summary em { color: var(--accent); font-style: normal; font-size: 12px; white-space: nowrap; }
+  .md-prompt-icon { flex: none; width: 30px; height: 30px; display: inline-grid; place-items: center; border-radius: 7px; background: #f0ede6; color: var(--dim); transition: color 140ms ease, background 140ms ease; }
+  .md-prompts > summary:hover .md-prompt-icon { color: var(--accent); background: #f7ece8; }
+  .md-prompt-copy { min-width: 0; display: grid; gap: 3px; }
+  .md-prompt-copy strong { font-size: 13px; line-height: 1.3; }
+  .md-prompt-copy small { color: var(--faint); font-size: 11.5px; font-weight: 400; }
+  .md-prompt-meta { flex: none; margin-left: auto; display: inline-flex; align-items: center; gap: 9px; color: var(--faint); }
+  .md-prompt-meta em { color: var(--accent); font-style: normal; font-size: 12px; white-space: nowrap; }
+  .md-prompt-chevron { transition: transform 140ms ease; }
+  .md-prompts[open] .md-prompt-chevron { transform: rotate(180deg); }
   .md-prompts-body { border-top: 1px solid var(--line); padding: 12px 14px 14px; display: grid; gap: 10px; }
-  .md-prompt-tabs { width: max-content; }
-  .md-prompt-text { width: 100%; min-height: 260px; resize: vertical; font: 12.5px/1.65 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .md-prompt-tabs { display: inline-flex; align-items: center; width: max-content; max-width: 100%; gap: 3px; padding: 3px; border-radius: 8px; background: #f1efe9; }
+  .md-prompt-tabs button { appearance: none; border: 0; border-radius: 6px; background: transparent; color: var(--dim); padding: 6px 11px; font: inherit; font-size: 12px; white-space: nowrap; cursor: pointer; }
+  .md-prompt-tabs button:hover { color: var(--text); }
+  .md-prompt-tabs button.active { background: #fff; color: var(--accent); box-shadow: 0 1px 3px rgb(35 29 20 / 10%); }
+  .md-prompt-text { display: block; box-sizing: border-box; width: 100%; min-height: 260px; height: 260px; overflow-y: hidden; resize: none; font: 12.5px/1.65 ui-monospace, SFMono-Regular, Menlo, monospace; }
   .md-prompt-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .md-prompt-actions > span { margin-right: auto; color: var(--dim); font-size: 12px; }
   .md-prompt-state, .md-prompt-error { padding: 20px 0; color: var(--dim); }
   .md-prompt-error { color: var(--err); display: flex; align-items: center; gap: 8px; }
-  .md-bound { border: 1px solid #e5d9b8; background: #fdf9ec; border-radius: 10px; padding: 10px 14px; font-size: 12.5px; margin: 8px 0; }
-  .md-bound ul { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+  .md-bound-icon { display: inline-grid; place-items: center; flex: none; width: 18px; height: 18px; border: 1px solid #c69e43; border-radius: 50%; color: #9a6b00; font-size: 11px; font-weight: 700; }
+  .md-bound-tip { display: inline-flex; align-items: center; gap: 6px; margin-right: auto; padding: 4px 8px 4px 5px; border-radius: 999px; color: #876b2c; font-size: 11.5px; cursor: help; }
+  .md-bound-tip:hover { background: #fdf6e3; }
   .md-badge.lv { background: #e7ecf7; color: #3a5da8; }
   .md-err { color: var(--err, #c0392b); font-size: 12px; margin: 4px 0 0; }
   .md-warn { color: #9a6b00; font-size: 12px; margin: 4px 0 0; }
@@ -6260,4 +6419,11 @@
   .md-precheck b { display: inline-flex; align-items: center; gap: 5px; }
   .md-precheck ul { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
   .md-pre-ack { margin-right: auto; align-self: center; font-size: 11.5px; color: var(--dim); }
+  @media (max-width: 760px) {
+    .md-model-grid, .md-managed-wizard .trow { grid-template-columns: 1fr; }
+    .md-wizard-footer { padding: 10px 14px; }
+    .md-wizard-footer .md-pre-ack { display: none; }
+    .md-prompt-tabs { width: 100%; overflow-x: auto; }
+    .md-prompt-tabs button { flex: 1 0 auto; }
+  }
 </style>

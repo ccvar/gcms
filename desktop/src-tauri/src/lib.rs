@@ -1103,6 +1103,7 @@ mod workdir_tests {
             "t".into(), "blog".into(), "博客".into(), "定位：测试站".into(),
             4, 3, "l1".into(), 500_000, "grok".into(), "grok-4.5".into(), "high".into(),
             String::new(), String::new(), String::new(),
+            String::new(), String::new(), String::new(),
         )
         .expect("开启托管");
         assert_eq!(m.brain, "grok");
@@ -1135,11 +1136,11 @@ mod workdir_tests {
         assert_eq!(report.model, "grok-4.5");
 
         // 同站重复开启被拒；非法等级回落 l0
-        assert!(enable_managed(&conns, &tstore, &mstore, "t".into(), "blog".into(), String::new(), String::new(), 3, 2, "l0".into(), 0, String::new(), String::new(), String::new(), String::new(), String::new(), String::new()).is_err());
-        let m2 = enable_managed(&conns, &tstore, &mstore, "t".into(), "shop".into(), String::new(), String::new(), 3, 2, "bogus".into(), 0, "claude".into(), "sonnet".into(), String::new(), String::new(), String::new(), String::new()).unwrap();
+        assert!(enable_managed(&conns, &tstore, &mstore, "t".into(), "blog".into(), String::new(), String::new(), 3, 2, "l0".into(), 0, String::new(), String::new(), String::new(), String::new(), String::new(), String::new(), String::new(), String::new(), String::new()).is_err());
+        let m2 = enable_managed(&conns, &tstore, &mstore, "t".into(), "shop".into(), String::new(), String::new(), 3, 2, "bogus".into(), 0, "claude".into(), "sonnet".into(), String::new(), String::new(), String::new(), String::new(), String::new(), String::new(), String::new()).unwrap();
         assert_eq!(m2.level, "l0", "非法等级回落 L0（安全侧）");
         // 配额爬坡：新开启（第 0 天）上界 7，传 30 被钳到 7
-        let m3 = enable_managed(&conns, &tstore, &mstore, "t".into(), "news".into(), String::new(), String::new(), 30, 2, "l0".into(), 0, "claude".into(), "sonnet".into(), String::new(), String::new(), String::new(), String::new()).unwrap();
+        let m3 = enable_managed(&conns, &tstore, &mstore, "t".into(), "news".into(), String::new(), String::new(), 30, 2, "l0".into(), 0, "claude".into(), "sonnet".into(), String::new(), String::new(), String::new(), String::new(), String::new(), String::new(), String::new()).unwrap();
         assert_eq!(m3.weekly_post_limit, 7, "新站爬坡期钳到 7 篇/周");
         assert!(tstore.get(&m3.task_ids[0]).unwrap().prompt.contains("不得超过 7 篇"), "钳后的上限进每日 prompt");
         std::fs::remove_dir_all(&dir).ok();
@@ -1209,6 +1210,15 @@ mod workdir_tests {
         assert_eq!(c.session_ref, "sess-old");
         assert_eq!(c.perm_mode, "ask");
         assert_eq!(c.model, "opus");
+    }
+
+    #[test]
+    fn managed_fallback_recognizes_limits_without_retrying_generic_failures() {
+        assert!(retryable_executor_error("insufficient_quota: upgrade your plan"));
+        assert!(retryable_executor_error("HTTP 429 Too Many Requests"));
+        assert!(retryable_executor_error("model_unavailable: try again later"));
+        assert!(!retryable_executor_error("connection reset by peer"));
+        assert!(!retryable_executor_error("permission denied"));
     }
 }
 
@@ -2587,7 +2597,8 @@ fn save_task(
 ) -> Result<ScheduledTask, String> {
     upsert_task(
         &state.conns, &state.tasks, id, conn_id, site_slugs, site_names, task_type, brain, model,
-        effort, title, prompt, interval_minutes, first_run, enabled,
+        effort, String::new(), String::new(), String::new(), title, prompt, interval_minutes,
+        first_run, enabled,
     )
 }
 
@@ -2604,6 +2615,9 @@ fn upsert_task(
     brain: String,
     model: String,
     effort: String,
+    fallback_brain: String,
+    fallback_model: String,
+    fallback_effort: String,
     title: String,
     prompt: String,
     interval_minutes: u64,
@@ -2647,6 +2661,9 @@ fn upsert_task(
         brain,
         model,
         effort,
+        fallback_brain,
+        fallback_model,
+        fallback_effort,
         site_slugs,
         site_names,
         title: if title.trim().is_empty() { title_from(&prompt) } else { title.trim().into() },
@@ -2771,6 +2788,60 @@ fn sync_daily_prompt(tasks: &tasks::TaskStore, m: &managed::ManagedSite) {
     }
 }
 
+/// 修改托管站点的执行器，并把主/备用模型同步到每日内容、每周审计、每周周报三个任务。
+/// prompt 不在这里重建，避免用户已经编辑过的任务指令被覆盖。
+#[tauri::command]
+fn managed_set_models(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    brain: String,
+    model: String,
+    effort: String,
+    fallback_brain: String,
+    fallback_model: String,
+    fallback_effort: String,
+) -> Result<Option<managed::ManagedSite>, String> {
+    if brain.trim().is_empty() || model.trim().is_empty() {
+        return Err("主模型不能为空".into());
+    }
+    let fallback_enabled = !fallback_brain.trim().is_empty() && !fallback_model.trim().is_empty();
+    if fallback_enabled
+        && fallback_brain.trim() == brain.trim()
+        && fallback_model.trim() == model.trim()
+        && fallback_effort.trim() == effort.trim()
+    {
+        return Err("备用模型不能与主模型完全相同".into());
+    }
+    let fallback_brain = if fallback_enabled { fallback_brain.trim().to_string() } else { String::new() };
+    let fallback_model = if fallback_enabled { fallback_model.trim().to_string() } else { String::new() };
+    let fallback_effort = if fallback_enabled { fallback_effort.trim().to_string() } else { String::new() };
+    let brain = brain.trim().to_string();
+    let model = model.trim().to_string();
+    let effort = effort.trim().to_string();
+    let updated = state.managed.mutate(&id, now_secs(), |m| {
+        m.brain = brain.clone();
+        m.model = model.clone();
+        m.effort = effort.clone();
+        m.fallback_brain = fallback_brain.clone();
+        m.fallback_model = fallback_model.clone();
+        m.fallback_effort = fallback_effort.clone();
+    })?;
+    if let Some(m) = &updated {
+        for tid in &m.task_ids {
+            let _ = state.tasks.mutate(tid, |t| {
+                t.brain = brain.clone();
+                t.model = model.clone();
+                t.effort = effort.clone();
+                t.fallback_brain = fallback_brain.clone();
+                t.fallback_model = fallback_model.clone();
+                t.fallback_effort = fallback_effort.clone();
+                t.updated_at = now_secs();
+            });
+        }
+    }
+    Ok(updated)
+}
+
 #[derive(serde::Serialize)]
 struct ManagedPromptPreview {
     daily: String,
@@ -2818,6 +2889,9 @@ fn managed_enable(
     brain: String,
     model: String,
     effort: String,
+    fallback_brain: String,
+    fallback_model: String,
+    fallback_effort: String,
     custom_daily_prompt: String,
     custom_audit_prompt: String,
     custom_report_prompt: String,
@@ -2825,8 +2899,8 @@ fn managed_enable(
     enable_managed(
         &state.conns, &state.tasks, &state.managed,
         conn_id, site_slug, site_name, plan, weekly_post_limit, weekly_edit_limit, level,
-        token_weekly_budget, brain, model, effort, custom_daily_prompt,
-        custom_audit_prompt, custom_report_prompt,
+        token_weekly_budget, brain, model, effort, fallback_brain, fallback_model,
+        fallback_effort, custom_daily_prompt, custom_audit_prompt, custom_report_prompt,
     )
 }
 
@@ -2852,6 +2926,9 @@ fn enable_managed(
     brain: String,
     model: String,
     effort: String,
+    fallback_brain: String,
+    fallback_model: String,
+    fallback_effort: String,
     custom_daily_prompt: String,
     custom_audit_prompt: String,
     custom_report_prompt: String,
@@ -2873,6 +2950,7 @@ fn enable_managed(
         conns, tasks, None, conn_id.clone(),
         vec![site_slug.clone()], vec![site_name.clone()],
         "article".into(), brain.clone(), model.clone(), effort.clone(),
+        fallback_brain.clone(), fallback_model.clone(), fallback_effort.clone(),
         format!("托管 · 每日内容 · {site_name}"),
         managed::apply_custom_prompt(
             &custom_daily_prompt,
@@ -2884,6 +2962,7 @@ fn enable_managed(
         conns, tasks, None, conn_id.clone(),
         vec![site_slug.clone()], vec![site_name.clone()],
         "free".into(), brain.clone(), model.clone(), effort.clone(),
+        fallback_brain.clone(), fallback_model.clone(), fallback_effort.clone(),
         format!("托管 · 每周审计 · {site_name}"),
         managed::apply_custom_prompt(&custom_audit_prompt, managed::audit_prompt(&site_name)),
         10080, 0, true,
@@ -2892,6 +2971,7 @@ fn enable_managed(
         conns, tasks, None, conn_id.clone(),
         vec![site_slug.clone()], vec![site_name.clone()],
         "free".into(), brain.clone(), model.clone(), effort.clone(),
+        fallback_brain.clone(), fallback_model.clone(), fallback_effort.clone(),
         format!("托管 · 每周周报 · {site_name}"),
         managed::apply_custom_prompt(
             &custom_report_prompt,
@@ -2915,6 +2995,9 @@ fn enable_managed(
         brain,
         model,
         effort,
+        fallback_brain,
+        fallback_model,
+        fallback_effort,
         task_ids: vec![daily.id, audit.id, report.id],
         paused: false,
         review_notes: vec![],
@@ -3297,10 +3380,58 @@ fn fmt_ts_local(ts: u64) -> String {
         .unwrap_or_default()
 }
 
+fn task_fallback(task: &ScheduledTask) -> Option<(String, String, String)> {
+    let brain = task.fallback_brain.trim();
+    if brain.is_empty()
+        || (brain == task.brain
+            && task.fallback_model == task.model
+            && task.fallback_effort == task.effort)
+    {
+        return None;
+    }
+    Some((brain.to_string(), task.fallback_model.clone(), task.fallback_effort.clone()))
+}
+
+fn retryable_executor_error(text: &str) -> bool {
+    if agent::detect_usage_limit(text).is_some() {
+        return true;
+    }
+    let lower = text.to_ascii_lowercase();
+    [
+        "rate_limit", "overloaded", "capacity", "model unavailable",
+        "model_unavailable", "temporarily unavailable", "model not found",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+        || ["额度不足", "额度已用完", "达到限额", "限流", "配额", "模型不可用", "服务繁忙"]
+            .iter()
+            .any(|needle| text.contains(needle))
+}
+
+fn conversation_can_fallback(conv: &Conversation) -> bool {
+    // 已经执行过任何工具时不再换模型，避免同一个任务被重复写入。
+    if conv.messages.iter().any(|message| !message.tools.is_empty()) {
+        return false;
+    }
+    conv.messages
+        .iter()
+        .rev()
+        .find(|message| message.role == "assistant")
+        .map(|message| {
+            message.limit_reset.is_some()
+                || (message.error && retryable_executor_error(&message.text))
+        })
+        .unwrap_or(false)
+}
+
+fn executor_label(brain: &str, model: &str) -> String {
+    if model.trim().is_empty() { brain.to_string() } else { format!("{brain} / {model}") }
+}
+
 /// 单站执行结果（多站任务撞限止损用）。
 enum SiteRun {
-    Done(Box<Conversation>),
-    Failed(String),
+    Done(Box<Conversation>, String, bool),
+    Failed(String, String, bool),
     /// 同一轮里前面的站撞了限额：这站直接顺延，不再白跑。
     LimitSkipped,
 }
@@ -3324,28 +3455,40 @@ async fn fire_task(
     // ① 触发前拦截：限额期内不跑、不记失败（runs 不加），next_run 顺延，历史记「顺延」条目。
     // 托管配套任务同样先走这里（在 prefire 之前），Skip 语义不变、通知有节流不会双发。
     let lstore = limits::LimitStore::new(&data_dir);
+    let fallback = task_fallback(&task);
+    let mut initial_executor = (
+        task.brain.clone(), task.model.clone(), task.effort.clone(), false,
+    );
     {
         let now = now_secs();
         if let Some(entry) = lstore.active(&task.brain, now) {
-            let next = limits::defer_next_run(entry.reset_ts, &task.id);
-            let msg = format!("订阅限额中，本次未运行——已顺延到 {} 后重试", fmt_ts_local(entry.reset_ts));
-            let _ = tstore.mutate(&task.id, |x| {
-                if next > x.next_run {
-                    x.next_run = next;
+            // 同一厂商的额度窗口通常共用，只有不同厂商的备用执行器才能直接接管。
+            if let Some((brain, model, effort)) = fallback
+                .as_ref()
+                .filter(|(brain, _, _)| brain != &task.brain && lstore.active(brain, now).is_none())
+            {
+                initial_executor = (brain.clone(), model.clone(), effort.clone(), true);
+            } else {
+                let next = limits::defer_next_run(entry.reset_ts, &task.id);
+                let msg = format!("订阅限额中，本次未运行——已顺延到 {} 后重试", fmt_ts_local(entry.reset_ts));
+                let _ = tstore.mutate(&task.id, |x| {
+                    if next > x.next_run {
+                        x.next_run = next;
+                    }
+                    x.last_run = now;
+                    x.last_status = "ok".into();
+                    x.last_summary = msg.clone();
+                    x.history.insert(0, tasks::TaskRun { ts: now, ok: true, summary: msg.clone(), sites: vec![], deferred: true });
+                    x.history.truncate(20);
+                });
+                if lstore.claim_notify(&task.brain, now) {
+                    notify_user(&app, "订阅限额，定时任务已顺延", format!(
+                        "{} 处于限额期（预计 {} 恢复），「{}」等定时任务将自动顺延继续。",
+                        task.brain, fmt_ts_local(entry.reset_ts), task.title
+                    ));
                 }
-                x.last_run = now;
-                x.last_status = "ok".into();
-                x.last_summary = msg.clone();
-                x.history.insert(0, tasks::TaskRun { ts: now, ok: true, summary: msg.clone(), sites: vec![], deferred: true });
-                x.history.truncate(20);
-            });
-            if lstore.claim_notify(&task.brain, now) {
-                notify_user(&app, "订阅限额，定时任务已顺延", format!(
-                    "{} 处于限额期（预计 {} 恢复），「{}」等定时任务将自动顺延继续。",
-                    task.brain, fmt_ts_local(entry.reset_ts), task.title
-                ));
+                return;
             }
-            return;
         }
     }
     let prompt_extra = match managed_prefire(&app, &conns, &convos, &tstore, &mstore, &task).await {
@@ -3382,37 +3525,96 @@ async fn fire_task(
         let limit_flag = limit_flag.clone();
         let lstore2 = lstore.clone();
         let (conns, convos, runs, data_dir, ssh) = (conns.clone(), convos.clone(), runs.clone(), data_dir.clone(), ssh.clone());
-        let (conn_id, task_type, brain, model, effort, prompt) = (
-            task.conn_id.clone(), task.task_type.clone(), task.brain.clone(),
-            task.model.clone(), task.effort.clone(), effective_prompt.clone(),
-        );
+        let (conn_id, task_type, prompt) = (task.conn_id.clone(), task.task_type.clone(), effective_prompt.clone());
+        let fallback = fallback.clone();
+        let (mut brain, mut model, mut effort, mut fallback_used) = initial_executor.clone();
         handles.push(tauri::async_runtime::spawn(async move {
             let _permit = sem.acquire_owned().await;
             if limit_flag.lock().unwrap().is_some() {
                 return (slug, SiteRun::LimitSkipped);
             }
+
+            // 同轮前一个站刚登记主执行器限额时，后续站直接走不同厂商的备用执行器。
+            if !fallback_used && lstore2.active(&brain, now_secs()).is_some() {
+                if let Some((next_brain, next_model, next_effort)) = fallback
+                    .as_ref()
+                    .filter(|(next_brain, _, _)| next_brain != &brain && lstore2.active(next_brain, now_secs()).is_none())
+                {
+                    brain = next_brain.clone();
+                    model = next_model.clone();
+                    effort = next_effort.clone();
+                    fallback_used = true;
+                }
+            }
+
             let conv_id = uuid::Uuid::new_v4().to_string();
             // 后台运行没有前端接收方，用一个丢弃事件的 Channel。
             let sink: Channel<agent::TurnEvent> = Channel::new(|_| Ok(()));
-            let brain_for_limit = brain.clone();
+            let executor = executor_label(&brain, &model);
             // 定时任务无人值守：只能全自动（询问/自动档会卡在等批准，永远回不来）。
             let res = create_conversation(
-                conns, convos, runs, conv_id,
-                conn_id, slug.clone(), name, vec![], vec![],
-                task_type, brain, model,
-                "full".into(), effort, prompt, sink, data_dir, ssh,
+                conns.clone(), convos.clone(), runs.clone(), conv_id,
+                conn_id.clone(), slug.clone(), name.clone(), vec![], vec![],
+                task_type.clone(), brain.clone(), model.clone(),
+                "full".into(), effort.clone(), prompt.clone(), sink, data_dir.clone(), ssh.clone(),
             )
             .await;
+
+            let should_fallback = !fallback_used && match &res {
+                Ok(conv) => conversation_can_fallback(conv),
+                Err(error) => retryable_executor_error(error),
+            };
+            if should_fallback {
+                if let Some((next_brain, next_model, next_effort)) = fallback
+                    .as_ref()
+                    .filter(|(next_brain, _, _)| lstore2.active(next_brain, now_secs()).is_none())
+                {
+                    // 主执行器的限额仍需登记，但备用可接管时不阻断本轮其他站点。
+                    if let Ok(conv) = &res {
+                        if let Some(reset) = conv.messages.iter().rev()
+                            .find(|message| message.role == "assistant")
+                            .and_then(|message| message.limit_reset)
+                        {
+                            lstore2.register(&brain, reset, now_secs());
+                        }
+                    }
+                    let fallback_sink: Channel<agent::TurnEvent> = Channel::new(|_| Ok(()));
+                    let fallback_res = create_conversation(
+                        conns, convos, runs, uuid::Uuid::new_v4().to_string(),
+                        conn_id, slug.clone(), name, vec![], vec![], task_type,
+                        next_brain.clone(), next_model.clone(), "full".into(),
+                        next_effort.clone(), prompt, fallback_sink, data_dir, ssh,
+                    ).await;
+                    let fallback_executor = executor_label(next_brain, next_model);
+                    return match fallback_res {
+                        Ok(conv) => {
+                            if let Some(reset) = conv.messages.iter().rev()
+                                .find(|message| message.role == "assistant")
+                                .and_then(|message| message.limit_reset)
+                            {
+                                let effective = lstore2.register(next_brain, reset, now_secs());
+                                *limit_flag.lock().unwrap() = Some(effective);
+                            }
+                            (slug, SiteRun::Done(Box::new(conv), fallback_executor, true))
+                        }
+                        Err(error) => (slug, SiteRun::Failed(
+                            format!("主模型不可用，备用模型执行失败：{error}"),
+                            fallback_executor, true,
+                        )),
+                    };
+                }
+            }
+
             match res {
                 Ok(c) => {
                     // 撞限检测：登记全局（create_conversation 里已登记，这里补拿生效 reset）并竖旗止损。
                     if let Some(reset) = c.messages.iter().rev().find(|m| m.role == "assistant").and_then(|m| m.limit_reset) {
-                        let eff = lstore2.register(&brain_for_limit, reset, now_secs());
+                        let eff = lstore2.register(&brain, reset, now_secs());
                         *limit_flag.lock().unwrap() = Some(eff);
                     }
-                    (slug, SiteRun::Done(Box::new(c)))
+                    (slug, SiteRun::Done(Box::new(c), executor, fallback_used))
                 }
-                Err(e) => (slug, SiteRun::Failed(e)),
+                Err(e) => (slug, SiteRun::Failed(e, executor, fallback_used)),
             }
         }));
     }
@@ -3423,13 +3625,17 @@ async fn fire_task(
     // 最后一条 assistant 消息全文（审计/周报任务提取标记块用；托管配套任务都是单站）。
     let mut last_assistant_full = String::new();
     let mut run_sites: Vec<tasks::TaskRunSite> = Vec::with_capacity(targets.len());
+    let mut fallback_count = 0usize;
     for h in handles {
         let Ok((slug, outcome)) = h.await else { continue };
         match outcome {
-            SiteRun::Done(c) => {
+            SiteRun::Done(c, executor, fallback_used) => {
+                if fallback_used {
+                    fallback_count += 1;
+                }
                 let limited = c.messages.iter().rev().find(|m| m.role == "assistant").and_then(|m| m.limit_reset).is_some();
                 if limited {
-                    run_sites.push(tasks::TaskRunSite { slug, ok: false, conv_id: c.id.clone(), error: "撞到订阅限额".into(), deferred: true });
+                    run_sites.push(tasks::TaskRunSite { slug, ok: false, conv_id: c.id.clone(), error: "撞到订阅限额".into(), deferred: true, executor, fallback_used });
                 } else {
                     ok_count += 1;
                     last_conv = c.id.clone();
@@ -3441,18 +3647,21 @@ async fn fire_task(
                         .find(|m| m.role == "assistant")
                         .map(|m| m.text.clone())
                         .unwrap_or_default();
-                    run_sites.push(tasks::TaskRunSite { slug, ok: true, conv_id: c.id.clone(), error: String::new(), deferred: false });
+                    run_sites.push(tasks::TaskRunSite { slug, ok: true, conv_id: c.id.clone(), error: String::new(), deferred: false, executor, fallback_used });
                 }
             }
-            SiteRun::Failed(e) => {
+            SiteRun::Failed(e, executor, fallback_used) => {
+                if fallback_used {
+                    fallback_count += 1;
+                }
                 let brief: String = e.chars().take(120).collect();
                 if first_err.is_empty() {
                     first_err = format!("{slug}: {brief}");
                 }
-                run_sites.push(tasks::TaskRunSite { slug, ok: false, conv_id: String::new(), error: brief, deferred: false });
+                run_sites.push(tasks::TaskRunSite { slug, ok: false, conv_id: String::new(), error: brief, deferred: false, executor, fallback_used });
             }
             SiteRun::LimitSkipped => {
-                run_sites.push(tasks::TaskRunSite { slug, ok: false, conv_id: String::new(), error: "限额顺延，本轮未运行".into(), deferred: true });
+                run_sites.push(tasks::TaskRunSite { slug, ok: false, conv_id: String::new(), error: "限额顺延，本轮未运行".into(), deferred: true, executor: String::new(), fallback_used: false });
             }
         }
     }
@@ -3461,7 +3670,7 @@ async fn fire_task(
     let now = now_secs();
     let all_ok = ok_count == targets.len();
     let deferred = limit_hit.is_some();
-    let summary = if let Some(reset) = limit_hit {
+    let mut summary = if let Some(reset) = limit_hit {
         format!("撞到订阅限额：完成 {ok_count}/{} 站，其余顺延——已顺延到 {} 后重试", targets.len(), fmt_ts_local(reset))
     } else if multi {
         let mut s = format!("{ok_count}/{} 个站点成功", targets.len());
@@ -3475,6 +3684,9 @@ async fn fire_task(
     } else {
         first_err.chars().take(160).collect()
     };
+    if fallback_count > 0 {
+        summary.push_str(&format!("；备用模型接管 {fallback_count} 站"));
+    }
     let _ = tstore.mutate(&task.id, |x| {
         x.last_run = now;
         x.runs += 1;
@@ -4327,6 +4539,7 @@ pub fn run() {
             managed_enable,
             managed_set_level,
             managed_set_edit_limit,
+            managed_set_models,
             managed_pause,
             managed_resume,
             managed_disable,

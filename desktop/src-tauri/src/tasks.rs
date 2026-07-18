@@ -20,6 +20,13 @@ pub struct ScheduledTask {
     /// 思考等级（推理强度）：'' 默认 | low | medium | high。
     #[serde(default)]
     pub effort: String,
+    /// 主模型额度/限流/不可用且尚未产生写操作时，最多自动接管一次。
+    #[serde(default)]
+    pub fallback_brain: String,
+    #[serde(default)]
+    pub fallback_model: String,
+    #[serde(default)]
+    pub fallback_effort: String,
     /// 多站点：非空时到点对每个站点各开一个会话跑同一指令（顺序执行）。
     /// 空 = 旧单站任务。site_slug/site_name 始终存第一个站，供列表展示与旧版兼容。
     #[serde(default)]
@@ -73,6 +80,11 @@ pub struct TaskRunSite {
     /// 该站因订阅限额被顺延/中断（非失败语义）。
     #[serde(default)]
     pub deferred: bool,
+    /// 实际完成该站点任务的执行器（用于运行记录追踪）。
+    #[serde(default)]
+    pub executor: String,
+    #[serde(default)]
+    pub fallback_used: bool,
 }
 
 impl ScheduledTask {

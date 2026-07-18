@@ -155,7 +155,7 @@ export interface ScheduledItem {
 }
 
 /** 单个站点在某次触发中的结果。 */
-export interface TaskRunSite { slug: string; ok: boolean; conv_id?: string; error?: string; deferred?: boolean; }
+export interface TaskRunSite { slug: string; ok: boolean; conv_id?: string; error?: string; deferred?: boolean; executor?: string; fallback_used?: boolean; }
 /** 一次触发的运行记录（新到旧，最多 20 条）。deferred＝订阅限额顺延（非失败语义）。 */
 export interface TaskRun { ts: number; ok: boolean; summary: string; sites?: TaskRunSite[]; deferred?: boolean; }
 
@@ -173,6 +173,10 @@ export interface ScheduledTask {
   model: string;
   /** 思考等级：'' 默认 | low | medium | high */
   effort?: string;
+  /** 主模型因额度、限流或不可用而且尚未写入时，最多自动接管一次。 */
+  fallback_brain?: Brain | '';
+  fallback_model?: string;
+  fallback_effort?: string;
   title: string;
   prompt: string;
   interval_minutes: number;
