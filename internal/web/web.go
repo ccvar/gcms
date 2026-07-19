@@ -2134,7 +2134,7 @@ func platformOnlyPath(path string) bool {
 		return true
 	case path == "/admin/server-health":
 		return true
-	case strings.HasPrefix(path, "/admin/google/oauth/") || strings.HasPrefix(path, "/admin/google/accounts/") || strings.HasPrefix(path, "/admin/google/analytics/") || strings.HasPrefix(path, "/admin/google/search-console/"):
+	case strings.HasPrefix(path, "/admin/google/"):
 		return true
 	case path == "/admin/backups" || strings.HasPrefix(path, "/admin/backups/"):
 		return true

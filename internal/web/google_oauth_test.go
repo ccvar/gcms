@@ -227,6 +227,20 @@ func TestGoogleOAuthConfigCanBeSavedFromPlatformSites(t *testing.T) {
 	if got := ps.Setting(googleOAuthClientSecretKey); got != "test-secret" {
 		t.Fatalf("json save should preserve client secret, got %q", got)
 	}
+	rangeForm := url.Values{"_csrf": {loginSess.CSRF}, "mode": {"days"}, "days": {"15"}}
+	rangeRec := httptest.NewRecorder()
+	rangeReq := httptest.NewRequest(http.MethodPost, "https://platform.test/admin/google/data-range", strings.NewReader(rangeForm.Encode()))
+	rangeReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rangeReq.Header.Set("Accept", "application/json")
+	rangeReq.Header.Set("X-Requested-With", "XMLHttpRequest")
+	rangeReq.AddCookie(loginCookie)
+	h.ServeHTTP(rangeRec, rangeReq)
+	if rangeRec.Code != http.StatusOK || !strings.Contains(rangeRec.Body.String(), `"ok":true`) {
+		t.Fatalf("data range status/location/body = %d %q %q", rangeRec.Code, rangeRec.Header().Get("Location"), rangeRec.Body.String())
+	}
+	if got := ps.Setting(googleDataRangeKey); !strings.Contains(got, `"days":15`) {
+		t.Fatalf("data range setting = %q", got)
+	}
 
 	after := httptest.NewRecorder()
 	afterReq := httptest.NewRequest(http.MethodGet, "https://platform.test/admin/sites", nil)
