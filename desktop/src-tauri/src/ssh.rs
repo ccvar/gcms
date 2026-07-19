@@ -690,9 +690,13 @@ impl SshSessions {
         ch.request_subsystem(true, "sftp")
             .await
             .map_err(|e| format!("请求 sftp 子系统失败（远端可能没开 sftp）: {e}"))?;
-        SftpSession::new(ch.into_stream())
+        let sftp = SftpSession::new(ch.into_stream())
             .await
-            .map_err(|e| format!("建立 SFTP 会话失败: {e}"))
+            .map_err(|e| format!("建立 SFTP 会话失败: {e}"))?;
+        // 文件操作是直接交互，不能无限卡住按钮。超时只作用于这一条 SFTP 通道，
+        // 不影响同一 SSH 连接上的终端 PTY。
+        sftp.set_timeout(30);
+        Ok(sftp)
     }
 
     /// 列目录（目录在前、再按名排序）。
@@ -742,10 +746,20 @@ impl SshSessions {
 
     /// 写整个文件（在线编辑保存 / 上传用）。
     pub async fn write_file(&self, conn_id: &str, path: &str, data: &[u8]) -> Result<(), String> {
+        use tokio::io::AsyncWriteExt as _;
         let sftp = self.sftp(conn_id).await?;
-        sftp.write(path, data)
+        // Session::write 只用 WRITE 打开：不会截断旧内容，而且 write_all 返回后也没有等待
+        // 远端 ACK/close。编辑后内容变短会残留旧尾部，网络稍慢时还可能看起来「保存没生效」。
+        let mut dst = sftp
+            .create(path)
             .await
-            .map_err(|e| format!("写入 {path} 失败: {e}"))
+            .map_err(|e| format!("打开 {path} 写入失败: {e}"))?;
+        dst.write_all(data)
+            .await
+            .map_err(|e| format!("写入 {path} 失败: {e}"))?;
+        dst.shutdown()
+            .await
+            .map_err(|e| format!("保存 {path} 收尾失败: {e}"))
     }
 
     pub async fn rename(&self, conn_id: &str, from: &str, to: &str) -> Result<(), String> {

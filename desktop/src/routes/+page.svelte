@@ -1170,6 +1170,7 @@
 
   // Windows 无 macOS 红绿灯（窗口控件在右侧），顶部工具按钮改靠左对齐，别飘在中间。
   const isWindows = typeof navigator !== 'undefined' && /Windows/i.test(navigator.userAgent);
+  const isMac = typeof navigator !== 'undefined' && /Macintosh|Mac OS X/i.test(navigator.userAgent);
   /** 密钥存储的平台名称（文案用）：mac=钥匙串，win=凭据管理器。 */
   const keystoreName = isWindows ? 'Windows 凭据管理器' : 'macOS 钥匙串';
   // 全屏时无红绿灯，顶部工具按钮改与左栏菜单左对齐。
@@ -1857,6 +1858,55 @@
   let term: import('@xterm/xterm').Terminal | null = null;
   let termFit: import('@xterm/addon-fit').FitAddon | null = null;
   let termConnId = '';
+  async function copyTermSelection(t: import('@xterm/xterm').Terminal) {
+    const text = t.getSelection();
+    if (!text) return;
+    try { await navigator.clipboard.writeText(text); }
+    catch { say('复制失败，请检查系统剪贴板权限', 'err'); }
+  }
+  async function pasteIntoTerm(t: import('@xterm/xterm').Terminal) {
+    try {
+      const text = await navigator.clipboard.readText();
+      // 读剪贴板是异步的；期间用户可能已经切换连接/拆掉旧终端。
+      if (term === t && text) t.paste(text);
+    } catch {
+      say('读取剪贴板失败，可在终端中右键选择“粘贴”', 'err');
+    }
+  }
+  function handleTermKey(t: import('@xterm/xterm').Terminal, e: KeyboardEvent): boolean {
+    if (e.type !== 'keydown') return true;
+    const key = e.key.toLowerCase();
+    // Windows 兼容两套习惯：有选区时 Ctrl+C 复制，无选区时仍把 ^C 发给远端；
+    // Ctrl+Shift+C 始终按终端快捷键处理。macOS 则保持 Cmd+C，Linux 用 Ctrl+Shift+C。
+    const copy = (isMac && e.metaKey && key === 'c')
+      || (!isMac && e.ctrlKey && e.shiftKey && key === 'c')
+      || (isWindows && e.ctrlKey && key === 'c' && t.hasSelection());
+    if (copy) {
+      e.preventDefault(); e.stopPropagation();
+      void copyTermSelection(t);
+      return false;
+    }
+
+    // macOS 的 Cmd+V 交还给系统/WKWebView，避免 navigator.clipboard.readText 触发
+    // 系统二次 Paste 授权；Windows 显式读取，绕开 WebView2 偶发不派发 paste 事件的问题。
+    const paste = (isWindows && e.ctrlKey && key === 'v')
+      || (!isMac && !isWindows && e.ctrlKey && e.shiftKey && key === 'v')
+      || (!isMac && e.shiftKey && e.key === 'Insert');
+    if (paste) {
+      e.preventDefault(); e.stopPropagation();
+      void pasteIntoTerm(t);
+      return false;
+    }
+
+    // WebView2 会把 Escape 留给宿主 WebView，xterm 收不到时 vi 就无法退出插入模式。
+    // 这里直接走 xterm 的用户输入通道，macOS 也统一经过同一路径，且不会发送两次。
+    if (e.key === 'Escape') {
+      e.preventDefault(); e.stopPropagation();
+      t.input('\x1b', true);
+      return false;
+    }
+    return true;
+  }
   // 注意：**不清 activeConv** —— 工作台里终端一直在，没有「切到终端」这回事；
   // 清掉对话只会把用户正在聊的东西关了（那正是侧栏「远程终端」入口被删掉的原因）。
   function openRemote() { view = 'remote'; }
@@ -1930,6 +1980,7 @@
     const f = new FitAddon();
     t.loadAddon(f); t.open(el); f.fit();
     term = t; termFit = f;
+    t.attachCustomKeyEventHandler((e) => handleTermKey(t, e));
     // GPU 渲染：默认的 DOM 渲染器在 Retina 上敲字会发涩（每个字符都是 DOM 活儿）。
     // 必须 open() 之后再挂，且要能回退 —— WebView 里 WebGL 不一定可用，
     // 上下文丢失（切显卡/系统回收）也要退回 DOM，否则整个终端会变黑。
@@ -2286,6 +2337,12 @@
       await loadDir(parentOf(edPath), true); // 大小/时间变了，刷新它所在的那层
     } catch (e) { edErr = String(e); }
     finally { edSaving = false; }
+  }
+  function onEditKey(e: KeyboardEvent) {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+      e.preventDefault();
+      void saveEdit();
+    }
   }
 
   // ---------- 连接 Cloudflare ----------
@@ -3000,6 +3057,18 @@
   function onCtxMenu(e: MouseEvent) {
     e.preventDefault();
     const t = e.target as HTMLElement;
+    const xterm = t.closest('.xterm');
+    if (xterm && term) {
+      // xterm 的选区画在 canvas 上，不属于 window.getSelection()：有选区时右键直接复制；
+      // 无选区时把隐藏 textarea 设为第一响应者，再交给原生菜单完成安全粘贴。
+      if (term.hasSelection()) {
+        void copyTermSelection(term);
+      } else {
+        (xterm.querySelector('textarea') as HTMLTextAreaElement | null)?.focus();
+        void invoke('show_edit_menu', { editable: true }).catch(() => {});
+      }
+      return;
+    }
     const editable = t.closest('textarea, input[type="text"], input:not([type])') as HTMLElement | null;
     const sel = window.getSelection()?.toString() ?? '';
     if (!editable && !sel) return; // 空白处不出菜单
@@ -4899,7 +4968,7 @@
 
 {#if edOpen}
   <div class="mask" role="presentation" onclick={() => !edSaving && (edOpen = false)}></div>
-  <div class="modal ed-modal">
+  <div class="modal ed-modal" role="dialog" aria-modal="true" aria-label={`编辑文件 ${edPath}`} aria-busy={edSaving}>
     <header class="sheet-head"><div><b>编辑文件</b><small class="dim ed-path">{edPath}</small></div><button class="x" onclick={() => (edOpen = false)} disabled={edSaving}>×</button></header>
     <div class="sheet-body ed-body">
       {#if edLoading}
@@ -4907,15 +4976,15 @@
       {:else if edErr && edReadOnly}
         <div class="err-note">{edErr}</div>
       {:else}
-        <textarea class="ed-ta" bind:value={edText} spellcheck="false" autocapitalize="off" disabled={edSaving}></textarea>
+        <textarea class="ed-ta" bind:value={edText} spellcheck="false" autocapitalize="off" disabled={edSaving} onkeydown={onEditKey}></textarea>
         {#if edErr}<div class="err-note">{edErr}</div>{/if}
       {/if}
-      <div class="row-end">
-        <button class="btn ghost" onclick={() => (edOpen = false)} disabled={edSaving}>{edReadOnly ? '关闭' : '取消'}</button>
-        {#if !edReadOnly && !edLoading}
-          <button class="btn primary" onclick={saveEdit} disabled={edSaving}>{edSaving ? '保存中…' : '保存'}</button>
-        {/if}
-      </div>
+    </div>
+    <div class="ed-footer">
+      <button type="button" class="btn ghost" onclick={() => (edOpen = false)} disabled={edSaving}>{edReadOnly ? '关闭' : '取消'}</button>
+      {#if !edReadOnly && !edLoading}
+        <button type="button" class="btn primary" onclick={saveEdit} disabled={edSaving}>{edSaving ? '保存中…' : '保存'}</button>
+      {/if}
     </div>
   </div>
 {/if}
@@ -5437,11 +5506,12 @@
   .ctx-item.danger { color: var(--err); }
   .ctx-item.danger:hover:not(:disabled) { background: var(--err-soft); }
   /* 在线编辑器 */
-  .ed-modal { width: min(760px, 94vw); }
+  .ed-modal { width: min(760px, 94vw); height: min(620px, 88vh); }
   .ed-path { margin-left: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; overflow-wrap: anywhere; }
-  .ed-body { display: flex; flex-direction: column; gap: 10px; }
-  .ed-ta { width: 100%; box-sizing: border-box; height: min(52vh, 480px); resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; line-height: 1.55; color: var(--text); background: var(--rail); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; outline: none; white-space: pre; overflow-wrap: normal; overflow-x: auto; }
+  .ed-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 10px; overflow: hidden; }
+  .ed-ta { flex: 1 1 auto; min-height: 0; width: 100%; box-sizing: border-box; resize: none; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; line-height: 1.55; color: var(--text); background: var(--rail); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; outline: none; white-space: pre; overflow-wrap: normal; overflow: auto; }
   .ed-ta:focus { border-color: var(--border2); background: var(--bg); }
+  .ed-footer { position: relative; z-index: 1; flex: none; display: flex; justify-content: flex-end; align-items: center; gap: 7px; padding: 10px 18px 14px; border-top: 1px solid var(--border); background: var(--bg); }
   /* 远端系统信息（页脚可点＝重新检测；下拉/设置里只读） */
   .foot-os, .cs-os { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
   .foot-os { cursor: pointer; border-radius: 5px; padding: 0 3px; margin-left: -3px; }
