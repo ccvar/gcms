@@ -11,7 +11,7 @@ use std::process::Stdio;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::ipc::Channel;
-use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 
 use crate::convo::{TaskProposal, ToolCall};
@@ -406,12 +406,14 @@ pub async fn run_turn(
         )
         .await;
     }
-    let build = if brain == "codex" {
+    let build: Result<(Command, Option<String>), String> = if brain == "codex" {
         build_codex(&conn, &model, &effort, &session_ref, is_first, system.as_deref(), &message, &api_key, &work_dir, mode, lease.as_ref())
+            .map(|(cmd, prompt)| (cmd, Some(prompt)))
     } else {
         build_claude(&conn, &model, &effort, &session_ref, is_first, system.as_deref(), &message, &api_key, &work_dir, &perm, lease.as_ref(), plugin_dir.as_deref())
+            .map(|cmd| (cmd, None))
     };
-    let mut cmd = match build {
+    let (mut cmd, stdin_payload) = match build {
         Ok(c) => c,
         Err(e) => {
             let _ = channel.send(TurnEvent::Done { ok: false, error: e.clone() });
@@ -431,6 +433,27 @@ pub async fn run_turn(
             let _ = channel.send(TurnEvent::Done { ok: false, error: msg.clone() });
             return TurnResult { ok: false, text: String::new(), tools: vec![], error: msg, session_ref, proposal: None, usage: None, limit_reset: None };
         }
+    };
+
+    // Windows npm 全局安装的 Codex 入口是 codex.cmd。Rust 为防 cmd.exe 注入会拒绝
+    // 给 .cmd/.bat 传递含 CR/LF 的普通参数（报 "batch file arguments are invalid"）。
+    // Codex 官方支持用末尾 `-` 从 stdin 读取提示词，因此在所有平台统一走管道，既保留
+    // 完整多行系统提示，也避开 Windows 批处理参数限制。
+    let stdin_task = if let Some(payload) = stdin_payload {
+        let Some(mut stdin) = child.stdin.take() else {
+            let pid = child.id();
+            kill_tree(pid);
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            let msg = format!("启动 {brain} 失败：stdin 不可用");
+            let _ = channel.send(TurnEvent::Done { ok: false, error: msg.clone() });
+            return TurnResult { ok: false, text: String::new(), tools: vec![], error: msg, session_ref, proposal: None, usage: None, limit_reset: None };
+        };
+        Some(tauri::async_runtime::spawn(async move {
+            stdin.write_all(payload.as_bytes()).await
+        }))
+    } else {
+        None
     };
 
     let stdout = child.stdout.take();
@@ -463,6 +486,14 @@ pub async fn run_turn(
         }
     };
     let _ = pid;
+    let stdin_error = match stdin_task {
+        Some(task) => match task.await {
+            Ok(Ok(())) => None,
+            Ok(Err(e)) => Some(format!("向 {brain} 发送提示词失败: {e}")),
+            Err(e) => Some(format!("向 {brain} 发送提示词任务失败: {e}")),
+        },
+        None => None,
+    };
     if let Some(t) = out_task { let _ = t.await; }
     if let Some(t) = err_task { let _ = t.await; }
     // 必须在 unregister 之前读取取消标记——移除句柄后 is_canceled 恒为 false。
@@ -474,7 +505,7 @@ pub async fn run_turn(
     let c = collect.lock().unwrap().clone();
     let err_text = err_buf.lock().unwrap().clone();
     let proc_ok = status.map(|s| s.success()).unwrap_or(false);
-    let ok = proc_ok && !c.is_error && !canceled;
+    let ok = proc_ok && !c.is_error && !canceled && stdin_error.is_none();
 
     let error = if canceled {
         "已停止".to_string()
@@ -485,6 +516,7 @@ pub async fn run_turn(
                 let t = c.raw_tail.trim();
                 if t.is_empty() { None } else { Some(t.to_string()) }
             })
+            .or(stdin_error)
             .or_else(|| {
                 if c.text.trim().is_empty() {
                     let code = status
@@ -761,7 +793,7 @@ fn build_codex(
     work_dir: &str,
     perm: PermMode,
     lease: Option<&crate::bridge::Lease>,
-) -> Result<Command, String> {
+) -> Result<(Command, String), String> {
     // codex 无头没有逐工具回传 UI 的能力，权限档位只能落到 sandbox 粗粒度（精细批准以 claude 为主）。
     // plan＝只读；full＝完全放开；ask/auto＝可写工作区（无法逐命令确认）。
     let sandbox = match perm {
@@ -807,13 +839,15 @@ fn build_codex(
     if matches!(effort, "low" | "medium" | "high") {
         cmd.args(["-c", &format!("model_reasoning_effort={effort}")]);
     }
-    cmd.arg(&prompt);
+    // `-` 让 Codex 从 stdin 读完整提示词。不要把 prompt 直接作为参数：Windows 的
+    // codex.cmd 无法接收含换行的参数，首轮系统提示必然会触发该限制。
+    cmd.arg("-");
     apply_env_cwd(&mut cmd, conn, work_dir, api_key, lease);
-    cmd.stdin(Stdio::null())
+    cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
-    Ok(cmd)
+    Ok((cmd, prompt))
 }
 
 fn parse_stream(
@@ -1042,6 +1076,68 @@ mod tests {
         let p = design_prompt("/data/plugins/pilot-design/skills/web-design/SKILL.md");
         assert!(p.contains("/data/plugins/pilot-design/skills/web-design/SKILL.md"));
         assert!(p.contains("Read"), "得让它用 Read 打开");
+    }
+
+    /// Windows 的 npm shim 是 codex.cmd，Rust 会拒绝给批处理文件传含换行的参数。
+    /// 首轮和续轮都必须只把 `-` 放进 argv，并把原始多行提示词留给 stdin。
+    #[test]
+    fn codex_multiline_prompt_uses_stdin() {
+        let conn: Connection = serde_json::from_value(json!({
+            "id": "test", "name": "test", "kind": "ssh", "api_base": "", "skill_dir": ".",
+            "key_prefix": "", "key_kind": "", "created_at": ""
+        }))
+        .unwrap();
+
+        let (first, first_stdin) = build_codex(
+            &conn,
+            "",
+            "",
+            "",
+            true,
+            Some("系统规则第一行\n系统规则第二行"),
+            "用户第一行\n用户第二行",
+            "",
+            ".",
+            PermMode::Auto,
+            None,
+        )
+        .unwrap();
+        let first_args: Vec<String> = first
+            .as_std()
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(first_args.last().map(String::as_str), Some("-"));
+        assert!(first_args
+            .iter()
+            .all(|arg| !arg.contains('\r') && !arg.contains('\n')));
+        assert!(first_stdin.contains("系统规则第二行\n\n——\n用户：用户第一行"));
+
+        let (resume, resume_stdin) = build_codex(
+            &conn,
+            "",
+            "",
+            "thread-123",
+            false,
+            None,
+            "续聊第一行\n续聊第二行",
+            "",
+            ".",
+            PermMode::Auto,
+            None,
+        )
+        .unwrap();
+        let resume_args: Vec<String> = resume
+            .as_std()
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert!(resume_args.windows(2).any(|pair| pair == ["resume", "thread-123"]));
+        assert_eq!(resume_args.last().map(String::as_str), Some("-"));
+        assert!(resume_args
+            .iter()
+            .all(|arg| !arg.contains('\r') && !arg.contains('\n')));
+        assert_eq!(resume_stdin, "续聊第一行\n续聊第二行");
     }
 
     #[test]

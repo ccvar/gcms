@@ -142,7 +142,8 @@ async fn run_capture(program: &str, args: &[&str], timeout: Duration) -> Option<
 }
 
 /// 解析可执行的完整路径给 spawn 用：Windows 上 npm 装的是 codex.cmd/wrangler.cmd，
-/// 裸名 CreateProcess 只补 .exe 永远找不到；显式 .cmd 路径 std 会安全地经 cmd.exe 启动。
+/// 裸名 CreateProcess 只补 .exe 永远找不到；显式 .cmd 路径 std 会经 cmd.exe 启动。
+/// 注意 .cmd 参数不能含换行，多行输入必须由调用方改走 stdin（见 agent::build_codex）。
 /// 找不到就原样返回（保持旧行为，让系统再试一次并给出自然报错）。
 pub fn resolve_bin(bin: &str) -> String {
     which(bin).unwrap_or_else(|| bin.to_string())
