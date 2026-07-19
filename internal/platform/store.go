@@ -215,8 +215,11 @@ CREATE TABLE IF NOT EXISTS site_google_analytics_summaries (
   site_id INTEGER PRIMARY KEY REFERENCES sites(id) ON DELETE CASCADE,
   property TEXT NOT NULL DEFAULT '',
   measurement_id TEXT NOT NULL DEFAULT '',
-  active_users_7d INTEGER NOT NULL DEFAULT 0,
-  sessions_7d INTEGER NOT NULL DEFAULT 0,
+	active_users_7d INTEGER NOT NULL DEFAULT 0,
+	sessions_7d INTEGER NOT NULL DEFAULT 0,
+	active_users INTEGER NOT NULL DEFAULT 0,
+	sessions INTEGER NOT NULL DEFAULT 0,
+	range_key TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL DEFAULT '',
   error_message TEXT NOT NULL DEFAULT '',
   fetched_at TEXT NOT NULL DEFAULT '',
@@ -229,7 +232,12 @@ CREATE TABLE IF NOT EXISTS site_google_search_console_summaries (
   clicks_7d INTEGER NOT NULL DEFAULT 0,
   impressions_7d INTEGER NOT NULL DEFAULT 0,
   ctr_7d REAL NOT NULL DEFAULT 0,
-  position_7d REAL NOT NULL DEFAULT 0,
+	position_7d REAL NOT NULL DEFAULT 0,
+	clicks INTEGER NOT NULL DEFAULT 0,
+	impressions INTEGER NOT NULL DEFAULT 0,
+	ctr REAL NOT NULL DEFAULT 0,
+	position REAL NOT NULL DEFAULT 0,
+	range_key TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL DEFAULT '',
   error_message TEXT NOT NULL DEFAULT '',
   fetched_at TEXT NOT NULL DEFAULT '',
@@ -301,7 +309,22 @@ func (s *Store) migrate() error {
 	if s == nil {
 		return nil
 	}
-	return s.ensureColumn("site_google_integrations", "data_stream", "TEXT NOT NULL DEFAULT ''")
+	for _, col := range []struct{ table, name, definition string }{
+		{"site_google_integrations", "data_stream", "TEXT NOT NULL DEFAULT ''"},
+		{"site_google_analytics_summaries", "active_users", "INTEGER NOT NULL DEFAULT 0"},
+		{"site_google_analytics_summaries", "sessions", "INTEGER NOT NULL DEFAULT 0"},
+		{"site_google_analytics_summaries", "range_key", "TEXT NOT NULL DEFAULT ''"},
+		{"site_google_search_console_summaries", "clicks", "INTEGER NOT NULL DEFAULT 0"},
+		{"site_google_search_console_summaries", "impressions", "INTEGER NOT NULL DEFAULT 0"},
+		{"site_google_search_console_summaries", "ctr", "REAL NOT NULL DEFAULT 0"},
+		{"site_google_search_console_summaries", "position", "REAL NOT NULL DEFAULT 0"},
+		{"site_google_search_console_summaries", "range_key", "TEXT NOT NULL DEFAULT ''"},
+	} {
+		if err := s.ensureColumn(col.table, col.name, col.definition); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) ensureColumn(table, column, definition string) error {

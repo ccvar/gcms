@@ -29,6 +29,7 @@ const (
 	googleOAuthClientIDKey     = "google.oauth.client_id"
 	googleOAuthClientSecretKey = "google.oauth.client_secret"
 	googleOAuthRedirectURLKey  = "google.oauth.redirect_url"
+	googleDataRangeKey         = "google.data_range"
 
 	googleAnalyticsReadonlyScope     = "https://www.googleapis.com/auth/analytics.readonly"
 	googleAnalyticsEditScope         = "https://www.googleapis.com/auth/analytics.edit"
@@ -620,9 +621,10 @@ func (s *Server) adminGoogleAnalyticsSummary(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	fetchedAt := time.Now()
+	dataRange := s.googleDataRange()
 	accessToken, err := s.googleAccessToken(r.Context(), r, acc)
 	if err == nil {
-		metrics, runErr := googleAnalyticsSevenDaySummary(r.Context(), accessToken, in.Property)
+		metrics, runErr := googleAnalyticsSummary(r.Context(), accessToken, in.Property, dataRange)
 		if runErr == nil {
 			sum := &platform.SiteGoogleAnalyticsSummary{
 				SiteID:        siteID,
@@ -630,6 +632,9 @@ func (s *Server) adminGoogleAnalyticsSummary(w http.ResponseWriter, r *http.Requ
 				MeasurementID: in.MeasurementID,
 				ActiveUsers7D: metrics.ActiveUsers7D,
 				Sessions7D:    metrics.Sessions7D,
+				ActiveUsers:   metrics.ActiveUsers7D,
+				Sessions:      metrics.Sessions7D,
+				RangeKey:      googleDataRangeKeyValue(dataRange),
 				Status:        platform.GoogleAnalyticsSummaryStatusOK,
 				FetchedAt:     fetchedAt,
 			}
@@ -642,6 +647,10 @@ func (s *Server) adminGoogleAnalyticsSummary(w http.ResponseWriter, r *http.Requ
 				"status":          sum.Status,
 				"active_users_7d": sum.ActiveUsers7D,
 				"sessions_7d":     sum.Sessions7D,
+				"active_users":    sum.ActiveUsers,
+				"sessions":        sum.Sessions,
+				"range_label":     dataRange.Label,
+				"range_key":       sum.RangeKey,
 				"fetched_at":      sum.FetchedAt.Format(time.RFC3339),
 			})
 			return
@@ -656,6 +665,7 @@ func (s *Server) adminGoogleAnalyticsSummary(w http.ResponseWriter, r *http.Requ
 		SiteID:        siteID,
 		Property:      in.Property,
 		MeasurementID: in.MeasurementID,
+		RangeKey:      googleDataRangeKeyValue(dataRange),
 		Status:        platform.GoogleAnalyticsSummaryStatusError,
 		ErrorMessage:  msg,
 		FetchedAt:     fetchedAt,
@@ -668,6 +678,7 @@ func (s *Server) adminGoogleAnalyticsSummary(w http.ResponseWriter, r *http.Requ
 		"ok":            false,
 		"status":        sum.Status,
 		"error_message": sum.ErrorMessage,
+		"range_label":   dataRange.Label,
 		"fetched_at":    sum.FetchedAt.Format(time.RFC3339),
 	})
 }
@@ -719,9 +730,10 @@ func (s *Server) adminGoogleSearchConsoleSummary(w http.ResponseWriter, r *http.
 		return
 	}
 	fetchedAt := time.Now()
+	dataRange := s.googleDataRange()
 	accessToken, err := s.googleAccessToken(r.Context(), r, acc)
 	if err == nil {
-		metrics, runErr := googleSearchConsoleSevenDaySummary(r.Context(), accessToken, in.Property)
+		metrics, runErr := googleSearchConsoleSummary(r.Context(), accessToken, in.Property, dataRange)
 		if runErr == nil {
 			sum := &platform.SiteGoogleSearchConsoleSummary{
 				SiteID:        siteID,
@@ -730,6 +742,11 @@ func (s *Server) adminGoogleSearchConsoleSummary(w http.ResponseWriter, r *http.
 				Impressions7D: metrics.Impressions7D,
 				CTR7D:         metrics.CTR7D,
 				Position7D:    metrics.Position7D,
+				Clicks:        metrics.Clicks7D,
+				Impressions:   metrics.Impressions7D,
+				CTR:           metrics.CTR7D,
+				Position:      metrics.Position7D,
+				RangeKey:      googleDataRangeKeyValue(dataRange),
 				Status:        platform.GoogleSearchConsoleSummaryStatusOK,
 				FetchedAt:     fetchedAt,
 			}
@@ -744,6 +761,10 @@ func (s *Server) adminGoogleSearchConsoleSummary(w http.ResponseWriter, r *http.
 				"impressions_7d": sum.Impressions7D,
 				"ctr_7d":         sum.CTR7D,
 				"position_7d":    sum.Position7D,
+				"clicks":         sum.Clicks,
+				"impressions":    sum.Impressions,
+				"range_label":    dataRange.Label,
+				"range_key":      sum.RangeKey,
 				"fetched_at":     sum.FetchedAt.Format(time.RFC3339),
 			})
 			return
@@ -757,6 +778,7 @@ func (s *Server) adminGoogleSearchConsoleSummary(w http.ResponseWriter, r *http.
 	sum := &platform.SiteGoogleSearchConsoleSummary{
 		SiteID:       siteID,
 		Property:     in.Property,
+		RangeKey:     googleDataRangeKeyValue(dataRange),
 		Status:       platform.GoogleSearchConsoleSummaryStatusError,
 		ErrorMessage: msg,
 		FetchedAt:    fetchedAt,
@@ -769,6 +791,7 @@ func (s *Server) adminGoogleSearchConsoleSummary(w http.ResponseWriter, r *http.
 		"ok":            false,
 		"status":        sum.Status,
 		"error_message": sum.ErrorMessage,
+		"range_label":   dataRange.Label,
 		"fetched_at":    sum.FetchedAt.Format(time.RFC3339),
 	})
 }
@@ -1501,6 +1524,93 @@ type googleSearchConsoleSummaryMetrics struct {
 	Position7D    float64
 }
 
+type googleDataRange struct {
+	Mode  string `json:"mode"`
+	Days  int    `json:"days"`
+	From  string `json:"from,omitempty"`
+	To    string `json:"to,omitempty"`
+	Label string `json:"-"`
+}
+
+func (s *Server) googleDataRange() googleDataRange {
+	rangeValue := googleDataRange{Mode: "days", Days: 7}
+	if s != nil && s.platform != nil {
+		if raw, err := s.platform.GetSetting(googleDataRangeKey); err == nil && strings.TrimSpace(raw) != "" {
+			_ = json.Unmarshal([]byte(raw), &rangeValue)
+		}
+	}
+	if rangeValue.Mode == "custom" {
+		from, fromErr := time.Parse("2006-01-02", strings.TrimSpace(rangeValue.From))
+		to, toErr := time.Parse("2006-01-02", strings.TrimSpace(rangeValue.To))
+		if fromErr == nil && toErr == nil && !from.After(to) && to.Sub(from).Hours() <= 90*24 {
+			rangeValue.From, rangeValue.To = from.Format("2006-01-02"), to.Format("2006-01-02")
+			rangeValue.Label = rangeValue.From + " 至 " + rangeValue.To
+			return rangeValue
+		}
+		rangeValue = googleDataRange{Mode: "days", Days: 7}
+	}
+	switch rangeValue.Days {
+	case 15, 30:
+	default:
+		rangeValue.Days = 7
+	}
+	rangeValue.Mode = "days"
+	rangeValue.Label = fmt.Sprintf("近 %d 天", rangeValue.Days)
+	return rangeValue
+}
+
+func (s *Server) adminGoogleDataRange(w http.ResponseWriter, r *http.Request) {
+	if s.platform == nil {
+		http.NotFound(w, r)
+		return
+	}
+	if _, ok := s.checkCSRF(w, r); !ok {
+		return
+	}
+	mode := strings.TrimSpace(r.FormValue("mode"))
+	rangeValue := googleDataRange{Mode: "days", Days: 7}
+	if mode == "custom" {
+		rangeValue.Mode = "custom"
+		rangeValue.From = strings.TrimSpace(r.FormValue("from"))
+		rangeValue.To = strings.TrimSpace(r.FormValue("to"))
+	} else {
+		days, err := strconv.Atoi(strings.TrimSpace(r.FormValue("days")))
+		if err != nil || (days != 7 && days != 15 && days != 30) {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "请选择 7、15 或 30 天。"})
+			return
+		}
+		rangeValue.Days = days
+	}
+	normalized := s.googleDataRangeFromValue(rangeValue)
+	if normalized.Mode == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "message": "自定义日期范围无效，最多支持 90 天。"})
+		return
+	}
+	raw, _ := json.Marshal(normalized)
+	if err := s.platform.SetSetting(googleDataRangeKey, string(raw)); err != nil {
+		s.serverError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "mode": normalized.Mode, "days": normalized.Days, "from": normalized.From, "to": normalized.To, "label": normalized.Label, "range_key": googleDataRangeKeyValue(normalized)})
+}
+
+func (s *Server) googleDataRangeFromValue(value googleDataRange) googleDataRange {
+	if value.Mode != "custom" {
+		if value.Days != 7 && value.Days != 15 && value.Days != 30 {
+			return googleDataRange{}
+		}
+		value.Mode, value.Label = "days", fmt.Sprintf("近 %d 天", value.Days)
+		return value
+	}
+	from, fromErr := time.Parse("2006-01-02", value.From)
+	to, toErr := time.Parse("2006-01-02", value.To)
+	if fromErr != nil || toErr != nil || from.After(to) || to.Sub(from).Hours() > 90*24 {
+		return googleDataRange{}
+	}
+	value.From, value.To, value.Label = from.Format("2006-01-02"), to.Format("2006-01-02"), from.Format("2006-01-02")+" 至 "+to.Format("2006-01-02")
+	return value
+}
+
 type googleSearchConsoleSiteOption struct {
 	URL             string `json:"url"`
 	PermissionLevel string `json:"permission_level"`
@@ -1657,13 +1767,14 @@ func googleAnalyticsProperties(ctx context.Context, accessToken string) ([]googl
 	return properties, err
 }
 
-func googleAnalyticsSevenDaySummary(ctx context.Context, accessToken, property string) (googleAnalyticsSummaryMetrics, error) {
+func googleAnalyticsSummary(ctx context.Context, accessToken, property string, dataRange googleDataRange) (googleAnalyticsSummaryMetrics, error) {
 	property = normalizeGoogleAnalyticsPropertyName(property)
 	if !validGoogleAnalyticsPropertyName(property) {
 		return googleAnalyticsSummaryMetrics{}, errors.New("GA4 属性无效，无法读取统计数据")
 	}
+	startDate, endDate := googleDataRangeDates(dataRange, false)
 	body := map[string]any{
-		"dateRanges": []map[string]string{{"startDate": "7daysAgo", "endDate": "today"}},
+		"dateRanges": []map[string]string{{"startDate": startDate, "endDate": endDate}},
 		"metrics":    []map[string]string{{"name": "activeUsers"}, {"name": "sessions"}},
 	}
 	var buf bytes.Buffer
@@ -1707,6 +1818,10 @@ func googleAnalyticsSevenDaySummary(ctx context.Context, accessToken, property s
 		ActiveUsers7D: googleAnalyticsMetricInt(out.Rows[0].MetricValues, 0),
 		Sessions7D:    googleAnalyticsMetricInt(out.Rows[0].MetricValues, 1),
 	}, nil
+}
+
+func googleAnalyticsSevenDaySummary(ctx context.Context, accessToken, property string) (googleAnalyticsSummaryMetrics, error) {
+	return googleAnalyticsSummary(ctx, accessToken, property, googleDataRange{Mode: "days", Days: 7})
 }
 
 func googleAnalyticsMetricInt(values []googleAnalyticsMetricValue, index int) int {
@@ -2301,16 +2416,15 @@ func googleSearchConsoleAddSite(ctx context.Context, accessToken, siteURL string
 	return nil
 }
 
-func googleSearchConsoleSevenDaySummary(ctx context.Context, accessToken, siteURL string) (googleSearchConsoleSummaryMetrics, error) {
+func googleSearchConsoleSummary(ctx context.Context, accessToken, siteURL string, dataRange googleDataRange) (googleSearchConsoleSummaryMetrics, error) {
 	siteURL, ok := normalizeGoogleSearchConsoleSiteURL(siteURL)
 	if !ok {
 		return googleSearchConsoleSummaryMetrics{}, errors.New("Google Search Console 站点属性不正确，无法读取搜索数据")
 	}
-	end := time.Now().AddDate(0, 0, -1)
-	start := end.AddDate(0, 0, -6)
+	startText, endText := googleDataRangeDates(dataRange, true)
 	body := map[string]any{
-		"startDate": start.Format("2006-01-02"),
-		"endDate":   end.Format("2006-01-02"),
+		"startDate": startText,
+		"endDate":   endText,
 		"rowLimit":  1,
 	}
 	raw, err := json.Marshal(body)
@@ -2361,6 +2475,33 @@ func googleSearchConsoleSevenDaySummary(ctx context.Context, accessToken, siteUR
 		CTR7D:         row.CTR,
 		Position7D:    row.Position,
 	}, nil
+}
+
+func googleSearchConsoleSevenDaySummary(ctx context.Context, accessToken, siteURL string) (googleSearchConsoleSummaryMetrics, error) {
+	return googleSearchConsoleSummary(ctx, accessToken, siteURL, googleDataRange{Mode: "days", Days: 7})
+}
+
+func googleDataRangeDates(dataRange googleDataRange, searchConsole bool) (string, string) {
+	if dataRange.Mode == "custom" && dataRange.From != "" && dataRange.To != "" {
+		return dataRange.From, dataRange.To
+	}
+	days := dataRange.Days
+	if days != 15 && days != 30 {
+		days = 7
+	}
+	end := time.Now()
+	if searchConsole {
+		end = end.AddDate(0, 0, -1)
+	}
+	start := end.AddDate(0, 0, -(days - 1))
+	return start.Format("2006-01-02"), end.Format("2006-01-02")
+}
+
+func googleDataRangeKeyValue(dataRange googleDataRange) string {
+	if dataRange.Mode == "custom" {
+		return "custom:" + dataRange.From + ":" + dataRange.To
+	}
+	return strconv.Itoa(dataRange.Days)
 }
 
 func googleRoundedMetric(v float64) int {

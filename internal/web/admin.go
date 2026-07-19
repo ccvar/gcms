@@ -1122,6 +1122,12 @@ func (s *Server) showAdminSites(w http.ResponseWriter, r *http.Request, status i
 		v.GoogleAnalyticsAdminAPIURL = googleCloudAPIEnableURL("analyticsadmin.googleapis.com", v.GoogleOAuthProjectID)
 		v.GoogleAnalyticsDataAPIURL = googleCloudAPIEnableURL("analyticsdata.googleapis.com", v.GoogleOAuthProjectID)
 		v.GoogleSearchConsoleAPIURL = googleCloudAPIEnableURL("webmasters.googleapis.com", v.GoogleOAuthProjectID)
+		googleRange := s.googleDataRange()
+		v.GoogleDataRangeMode = googleRange.Mode
+		v.GoogleDataRangeDays = googleRange.Days
+		v.GoogleDataRangeFrom = googleRange.From
+		v.GoogleDataRangeTo = googleRange.To
+		v.GoogleDataRangeLabel = googleRange.Label
 		if accounts, err := s.platform.GoogleAccounts(platform.GoogleServiceAnalytics); err == nil {
 			v.GoogleAnalyticsAccounts = accounts
 		}

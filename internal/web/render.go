@@ -314,6 +314,18 @@ func funcMap(imageSizes map[string]ImageSize) template.FuncMap {
 			}
 			return t.Local().Format("2006-01-02 15:04:05")
 		},
+		"maskEmail": func(email string) string {
+			email = strings.TrimSpace(email)
+			parts := strings.SplitN(email, "@", 2)
+			if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+				return email
+			}
+			local := parts[0]
+			if len([]rune(local)) > 2 {
+				local = string([]rune(local)[:2])
+			}
+			return local + "***@" + parts[1]
+		},
 		"adminPublicContentPath": adminPublicContentPath,
 		"automationLogParts":     automationLogParts,
 		"isodate": func(t time.Time) string {

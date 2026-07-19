@@ -1030,6 +1030,11 @@ type View struct {
 	GoogleAnalyticsAdminAPIURL   string                // Analytics Admin API 启用入口
 	GoogleAnalyticsDataAPIURL    string                // Analytics Data API 启用入口
 	GoogleSearchConsoleAPIURL    string                // Search Console API 启用入口
+	GoogleDataRangeMode          string                // GA/GSC 默认数据范围模式
+	GoogleDataRangeDays          int                   // 固定天数
+	GoogleDataRangeFrom          string                // 自定义开始日期
+	GoogleDataRangeTo            string                // 自定义结束日期
+	GoogleDataRangeLabel         string                // 展示用范围文案
 	GoogleAccounts               []*platform.GoogleAccount
 	GoogleAnalyticsAccounts      []*platform.GoogleAccount
 	GoogleSearchConsoleAccounts  []*platform.GoogleAccount
@@ -3394,6 +3399,7 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("GET /admin/google/oauth/start", s.requireAuth(s.adminGoogleOAuthStart))
 	mux.HandleFunc("GET /admin/google/oauth/callback", s.requireAuth(s.adminGoogleOAuthCallback))
 	mux.HandleFunc("POST /admin/google/oauth/config", s.requireAuth(s.adminGoogleOAuthConfig))
+	mux.HandleFunc("POST /admin/google/data-range", s.requireAuth(s.adminGoogleDataRange))
 	mux.HandleFunc("POST /admin/google/oauth/clear", s.requireAuth(s.adminGoogleOAuthClear))
 	mux.HandleFunc("POST /admin/google/accounts/delete", s.requireAuth(s.adminGoogleAccountDelete))
 	mux.HandleFunc("GET /admin/google/analytics/properties", s.requireAuth(s.adminGoogleAnalyticsProperties))

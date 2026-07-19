@@ -51,6 +51,9 @@ type SiteGoogleAnalyticsSummary struct {
 	MeasurementID string
 	ActiveUsers7D int
 	Sessions7D    int
+	ActiveUsers   int
+	Sessions      int
+	RangeKey      string
 	Status        string
 	ErrorMessage  string
 	FetchedAt     time.Time
@@ -64,6 +67,11 @@ type SiteGoogleSearchConsoleSummary struct {
 	Impressions7D int
 	CTR7D         float64
 	Position7D    float64
+	Clicks        int
+	Impressions   int
+	CTR           float64
+	Position      float64
+	RangeKey      string
 	Status        string
 	ErrorMessage  string
 	FetchedAt     time.Time
@@ -328,18 +336,21 @@ func (s *Store) UpsertSiteGoogleAnalyticsSummary(sum *SiteGoogleAnalyticsSummary
 		fetched = fmtTime(sum.FetchedAt)
 	}
 	now := fmtTime(time.Now())
-	_, err := s.db.Exec(`INSERT INTO site_google_analytics_summaries(site_id,property,measurement_id,active_users_7d,sessions_7d,status,error_message,fetched_at,updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?)
+	_, err := s.db.Exec(`INSERT INTO site_google_analytics_summaries(site_id,property,measurement_id,active_users_7d,sessions_7d,active_users,sessions,range_key,status,error_message,fetched_at,updated_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(site_id) DO UPDATE SET
 			property=excluded.property,
 			measurement_id=excluded.measurement_id,
 			active_users_7d=excluded.active_users_7d,
 			sessions_7d=excluded.sessions_7d,
+			active_users=excluded.active_users,
+			sessions=excluded.sessions,
+			range_key=excluded.range_key,
 			status=excluded.status,
 			error_message=excluded.error_message,
 			fetched_at=excluded.fetched_at,
 			updated_at=excluded.updated_at`,
-		sum.SiteID, strings.TrimSpace(sum.Property), strings.TrimSpace(sum.MeasurementID), sum.ActiveUsers7D, sum.Sessions7D,
+		sum.SiteID, strings.TrimSpace(sum.Property), strings.TrimSpace(sum.MeasurementID), sum.ActiveUsers7D, sum.Sessions7D, sum.ActiveUsers, sum.Sessions, strings.TrimSpace(sum.RangeKey),
 		status, strings.TrimSpace(sum.ErrorMessage), fetched, now)
 	return err
 }
@@ -348,7 +359,7 @@ func (s *Store) SiteGoogleAnalyticsSummary(siteID int64) (*SiteGoogleAnalyticsSu
 	if s == nil || siteID <= 0 {
 		return nil, false, nil
 	}
-	row := s.db.QueryRow(`SELECT site_id,property,measurement_id,active_users_7d,sessions_7d,status,error_message,fetched_at,updated_at
+	row := s.db.QueryRow(`SELECT site_id,property,measurement_id,active_users_7d,sessions_7d,active_users,sessions,range_key,status,error_message,fetched_at,updated_at
 		FROM site_google_analytics_summaries WHERE site_id=?`, siteID)
 	sum, err := scanSiteGoogleAnalyticsSummary(row)
 	if err == sql.ErrNoRows {
@@ -365,7 +376,7 @@ func (s *Store) SiteGoogleAnalyticsSummaries() (map[int64]*SiteGoogleAnalyticsSu
 	if s == nil {
 		return out, nil
 	}
-	rows, err := s.db.Query(`SELECT site_id,property,measurement_id,active_users_7d,sessions_7d,status,error_message,fetched_at,updated_at
+	rows, err := s.db.Query(`SELECT site_id,property,measurement_id,active_users_7d,sessions_7d,active_users,sessions,range_key,status,error_message,fetched_at,updated_at
 		FROM site_google_analytics_summaries ORDER BY site_id ASC`)
 	if err != nil {
 		return nil, err
@@ -405,19 +416,24 @@ func (s *Store) UpsertSiteGoogleSearchConsoleSummary(sum *SiteGoogleSearchConsol
 		fetched = fmtTime(sum.FetchedAt)
 	}
 	now := fmtTime(time.Now())
-	_, err := s.db.Exec(`INSERT INTO site_google_search_console_summaries(site_id,property,clicks_7d,impressions_7d,ctr_7d,position_7d,status,error_message,fetched_at,updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?)
+	_, err := s.db.Exec(`INSERT INTO site_google_search_console_summaries(site_id,property,clicks_7d,impressions_7d,ctr_7d,position_7d,clicks,impressions,ctr,position,range_key,status,error_message,fetched_at,updated_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(site_id) DO UPDATE SET
 			property=excluded.property,
 			clicks_7d=excluded.clicks_7d,
 			impressions_7d=excluded.impressions_7d,
 			ctr_7d=excluded.ctr_7d,
 			position_7d=excluded.position_7d,
+			clicks=excluded.clicks,
+			impressions=excluded.impressions,
+			ctr=excluded.ctr,
+			position=excluded.position,
+			range_key=excluded.range_key,
 			status=excluded.status,
 			error_message=excluded.error_message,
 			fetched_at=excluded.fetched_at,
 			updated_at=excluded.updated_at`,
-		sum.SiteID, strings.TrimSpace(sum.Property), sum.Clicks7D, sum.Impressions7D, sum.CTR7D, sum.Position7D,
+		sum.SiteID, strings.TrimSpace(sum.Property), sum.Clicks7D, sum.Impressions7D, sum.CTR7D, sum.Position7D, sum.Clicks, sum.Impressions, sum.CTR, sum.Position, strings.TrimSpace(sum.RangeKey),
 		status, strings.TrimSpace(sum.ErrorMessage), fetched, now)
 	return err
 }
@@ -426,7 +442,7 @@ func (s *Store) SiteGoogleSearchConsoleSummary(siteID int64) (*SiteGoogleSearchC
 	if s == nil || siteID <= 0 {
 		return nil, false, nil
 	}
-	row := s.db.QueryRow(`SELECT site_id,property,clicks_7d,impressions_7d,ctr_7d,position_7d,status,error_message,fetched_at,updated_at
+	row := s.db.QueryRow(`SELECT site_id,property,clicks_7d,impressions_7d,ctr_7d,position_7d,clicks,impressions,ctr,position,range_key,status,error_message,fetched_at,updated_at
 		FROM site_google_search_console_summaries WHERE site_id=?`, siteID)
 	sum, err := scanSiteGoogleSearchConsoleSummary(row)
 	if err == sql.ErrNoRows {
@@ -443,7 +459,7 @@ func (s *Store) SiteGoogleSearchConsoleSummaries() (map[int64]*SiteGoogleSearchC
 	if s == nil {
 		return out, nil
 	}
-	rows, err := s.db.Query(`SELECT site_id,property,clicks_7d,impressions_7d,ctr_7d,position_7d,status,error_message,fetched_at,updated_at
+	rows, err := s.db.Query(`SELECT site_id,property,clicks_7d,impressions_7d,ctr_7d,position_7d,clicks,impressions,ctr,position,range_key,status,error_message,fetched_at,updated_at
 		FROM site_google_search_console_summaries ORDER BY site_id ASC`)
 	if err != nil {
 		return nil, err
@@ -555,8 +571,11 @@ type siteGoogleAnalyticsSummaryScanner interface {
 func scanSiteGoogleAnalyticsSummary(row siteGoogleAnalyticsSummaryScanner) (*SiteGoogleAnalyticsSummary, error) {
 	var sum SiteGoogleAnalyticsSummary
 	var fetched, updated string
-	if err := row.Scan(&sum.SiteID, &sum.Property, &sum.MeasurementID, &sum.ActiveUsers7D, &sum.Sessions7D, &sum.Status, &sum.ErrorMessage, &fetched, &updated); err != nil {
+	if err := row.Scan(&sum.SiteID, &sum.Property, &sum.MeasurementID, &sum.ActiveUsers7D, &sum.Sessions7D, &sum.ActiveUsers, &sum.Sessions, &sum.RangeKey, &sum.Status, &sum.ErrorMessage, &fetched, &updated); err != nil {
 		return nil, err
+	}
+	if sum.ActiveUsers == 0 && sum.Sessions == 0 {
+		sum.ActiveUsers, sum.Sessions = sum.ActiveUsers7D, sum.Sessions7D
 	}
 	sum.FetchedAt = parseTime(fetched)
 	sum.UpdatedAt = parseTime(updated)
@@ -570,8 +589,11 @@ type siteGoogleSearchConsoleSummaryScanner interface {
 func scanSiteGoogleSearchConsoleSummary(row siteGoogleSearchConsoleSummaryScanner) (*SiteGoogleSearchConsoleSummary, error) {
 	var sum SiteGoogleSearchConsoleSummary
 	var fetched, updated string
-	if err := row.Scan(&sum.SiteID, &sum.Property, &sum.Clicks7D, &sum.Impressions7D, &sum.CTR7D, &sum.Position7D, &sum.Status, &sum.ErrorMessage, &fetched, &updated); err != nil {
+	if err := row.Scan(&sum.SiteID, &sum.Property, &sum.Clicks7D, &sum.Impressions7D, &sum.CTR7D, &sum.Position7D, &sum.Clicks, &sum.Impressions, &sum.CTR, &sum.Position, &sum.RangeKey, &sum.Status, &sum.ErrorMessage, &fetched, &updated); err != nil {
 		return nil, err
+	}
+	if sum.Clicks == 0 && sum.Impressions == 0 {
+		sum.Clicks, sum.Impressions, sum.CTR, sum.Position = sum.Clicks7D, sum.Impressions7D, sum.CTR7D, sum.Position7D
 	}
 	sum.FetchedAt = parseTime(fetched)
 	sum.UpdatedAt = parseTime(updated)

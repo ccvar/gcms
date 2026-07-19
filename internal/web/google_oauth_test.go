@@ -300,7 +300,7 @@ func TestGoogleOAuthConfigCanBeSavedFromPlatformSites(t *testing.T) {
 		t.Fatalf("sites with account status = %d", withAccount.Code)
 	}
 	accountBody := withAccount.Body.String()
-	if !strings.Contains(accountBody, "ga@example.com") || !strings.Contains(accountBody, "/admin/google/accounts/delete") || !strings.Contains(accountBody, "解除绑定") {
+	if !strings.Contains(accountBody, "ga***@example.com") || strings.Contains(accountBody, "ga@example.com") || !strings.Contains(accountBody, "/admin/google/accounts/delete") || !strings.Contains(accountBody, "解除绑定") {
 		t.Fatalf("sites page did not render google account unlink controls")
 	}
 	site, err := ps.DefaultSite()

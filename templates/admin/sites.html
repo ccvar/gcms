@@ -22,12 +22,13 @@
       </div>
       {{if .PlatformMode}}<div class="google-connectors" aria-label="{{.Admin.T "admin.sites.google_integrations" "Google 接入"}}" data-google-connectors data-google-oauth-ready="{{if .GoogleOAuthConfigured}}1{{else}}0{{end}}" data-google-oauth-ready-label="{{.Admin.T "admin.sites.google_oauth_ready" "已配置"}}" data-google-oauth-missing-label="{{.Admin.T "admin.sites.google_oauth_missing_badge" "未配置"}}">
         <details class="google-connect google-connect-oauth{{if .GoogleOAuthConfigured}} is-configured{{else}} is-missing{{end}}" data-google-oauth-root>
-          <summary data-tooltip="{{if .GoogleOAuthConfigured}}{{.Admin.T "admin.sites.google_oauth_tip_ready" "Google OAuth：已配置。新增授权账号会使用当前 Client ID。"}}{{else}}{{.Admin.T "admin.sites.google_oauth_tip_missing" "Google OAuth：未配置。先保存 Client ID 和 Client Secret。"}}{{end}}" data-ready-tooltip="{{.Admin.T "admin.sites.google_oauth_tip_ready" "Google OAuth：已配置。新增授权账号会使用当前 Client ID。"}}" data-missing-tooltip="{{.Admin.T "admin.sites.google_oauth_tip_missing" "Google OAuth：未配置。先保存 Client ID 和 Client Secret。"}}" aria-label="{{.Admin.T "admin.sites.google_oauth_title" "Google OAuth 配置"}}">{{template "site-icon-google-oauth"}}</summary>
+          <summary data-tooltip="{{if .GoogleOAuthConfigured}}{{.Admin.T "admin.sites.google_oauth_tip_ready" "Google OAuth：已配置。新增授权账号会使用当前 Client ID。"}}{{else}}{{.Admin.T "admin.sites.google_oauth_tip_missing" "Google OAuth：未配置。先保存 Client ID 和 Client Secret。"}}{{end}}" data-ready-tooltip="{{.Admin.T "admin.sites.google_oauth_tip_ready" "Google OAuth：已配置。新增授权账号会使用当前 Client ID。"}}" data-missing-tooltip="{{.Admin.T "admin.sites.google_oauth_tip_missing" "Google OAuth：未配置。先保存 Client ID 和 Client Secret。"}}" aria-label="{{.Admin.T "admin.sites.google_oauth_title" "Google OAuth 配置"}}">{{template "site-icon-google-oauth-trigger"}}</summary>
           <div class="google-connect-pop google-oauth-pop">
-            <div class="google-connect-head">
-              <strong>{{.Admin.T "admin.sites.google_oauth_title" "Google OAuth 配置"}}</strong>
-              <span data-google-oauth-state>{{if .GoogleOAuthConfigured}}{{.Admin.T "admin.sites.google_oauth_ready" "已配置"}}{{else}}{{.Admin.T "admin.sites.google_oauth_missing_badge" "未配置"}}{{end}}</span>
+            <div class="google-oauth-tabs" role="tablist">
+              <button type="button" class="google-oauth-tab is-active" data-google-oauth-tab="oauth" role="tab"><span class="google-oauth-tab-title"><span class="google-oauth-title-icon">{{template "site-icon-google"}}</span>Google OAuth 配置</span></button>
+              <button type="button" class="google-oauth-tab" data-google-oauth-tab="range" role="tab">GA / GSC 数据范围</button>
             </div>
+            <div class="google-oauth-tab-panel" data-google-oauth-tab-panel="oauth">
             <p class="google-connect-empty">{{.Admin.T "admin.sites.google_oauth_desc" "先保存 Google OAuth 客户端，Google Analytics 和 Google Search Console 才能新增授权账号。"}}</p>
             <div class="google-oauth-summary" data-google-oauth-summary{{if not .GoogleOAuthConfigured}} hidden{{end}}>
 	              <div class="google-oauth-ready">
@@ -79,7 +80,7 @@
                   {{range .GoogleAccounts}}
                   <li>
                     {{if .Picture}}<img src="{{.Picture}}" alt="" referrerpolicy="no-referrer">{{else}}<span class="google-account-avatar">G</span>{{end}}
-                    <span><strong>{{if .Email}}{{.Email}}{{else}}{{.Name}}{{end}}</strong><small>{{adminDateTime .UpdatedAt}}</small></span>
+                    <span><strong>{{if .Email}}{{maskEmail .Email}}{{else}}{{.Name}}{{end}}</strong><small>{{adminDateTime .UpdatedAt}}</small></span>
                     <form class="google-account-unlink-form" method="post" action="/admin/google/accounts/delete" data-google-account-unlink data-confirm-title="{{$.Admin.T "admin.sites.google_unlink_confirm_title" "确认解绑"}}" data-confirm-ok="{{$.Admin.T "admin.sites.google_unlink_ok" "解绑"}}" data-confirm="{{$.Admin.T "admin.sites.google_unlink_confirm" "确定解除绑定该授权账号？解除后不会删除 Google 账号，只是不再让本站使用它。"}}">
                       <input type="hidden" name="_csrf" value="{{$.CSRF}}">
                       <input type="hidden" name="service" value="all">
@@ -96,6 +97,21 @@
             {{if not .GoogleOAuthConfigured}}<p class="google-connect-hint google-connect-disabled-hint">{{.Admin.T "admin.sites.google_authorize_locked_hint" "请先保存 Client ID 和 Client Secret，再新增授权账号。"}}</p>{{end}}
             <div class="google-connect-actions">
               {{if .GoogleOAuthConfigured}}<a class="google-connect-add" data-google-authorize data-loading-label="{{.Admin.T "admin.sites.google_authorizing" "正在打开 Google 授权..."}}" href="/admin/google/oauth/start?service=all">{{template "site-icon-plus"}}<span>{{.Admin.T "admin.sites.google_add_account" "新增授权账号"}}</span></a>{{else}}<button class="google-connect-add is-disabled" type="button" data-google-open-oauth>{{template "site-icon-plus"}}<span>{{.Admin.T "admin.sites.google_add_after_config" "先配置 OAuth"}}</span></button>{{end}}
+            </div>
+            </div>
+            <div class="google-oauth-tab-panel google-data-range-panel" data-google-oauth-tab-panel="range" hidden>
+              <div class="google-data-range-copy"><strong>GA / GSC 默认数据范围</strong><span>站点卡片的 Google Analytics 与 Search Console 摘要统一使用此范围。</span></div>
+              <form class="google-data-range-form" method="post" action="/admin/google/data-range" data-google-data-range-form data-no-dirty data-no-busy>
+                <input type="hidden" name="_csrf" value="{{.CSRF}}">
+                <div class="google-range-choice-row">
+                  <label><span>数据范围</span><span class="google-select" data-google-select><button class="google-select-trigger" type="button" data-google-select-trigger aria-haspopup="listbox" aria-expanded="false"><span data-google-select-label>{{if eq .GoogleDataRangeMode "custom"}}自定义日期{{else}}固定天数{{end}}</span><span class="google-select-chevron" aria-hidden="true"></span></button><span class="google-select-menu" data-google-select-menu role="listbox" hidden><button type="button" data-google-select-option data-value="days"{{if eq .GoogleDataRangeMode "days"}} aria-selected="true"{{end}}>固定天数</button><button type="button" data-google-select-option data-value="custom"{{if eq .GoogleDataRangeMode "custom"}} aria-selected="true"{{end}}>自定义日期</button></span><input type="hidden" name="mode" value="{{.GoogleDataRangeMode}}" data-google-range-mode></span></label>
+                  <label data-google-range-days-wrap><span>最近</span><span class="google-select" data-google-select><button class="google-select-trigger" type="button" data-google-select-trigger aria-haspopup="listbox" aria-expanded="false"><span data-google-select-label>{{if eq .GoogleDataRangeDays 15}}15 天{{else if eq .GoogleDataRangeDays 30}}30 天{{else}}7 天（默认）{{end}}</span><span class="google-select-chevron" aria-hidden="true"></span></button><span class="google-select-menu" data-google-select-menu role="listbox" hidden><button type="button" data-google-select-option data-value="7"{{if eq .GoogleDataRangeDays 7}} aria-selected="true"{{end}}>7 天（默认）</button><button type="button" data-google-select-option data-value="15"{{if eq .GoogleDataRangeDays 15}} aria-selected="true"{{end}}>15 天</button><button type="button" data-google-select-option data-value="30"{{if eq .GoogleDataRangeDays 30}} aria-selected="true"{{end}}>30 天</button></span><input type="hidden" name="days" value="{{.GoogleDataRangeDays}}" data-google-range-days></span></label>
+                </div>
+                <div class="google-range-custom-fields" data-google-range-custom-fields{{if ne .GoogleDataRangeMode "custom"}} hidden{{end}}><label><span>开始日期</span><input type="date" name="from" value="{{.GoogleDataRangeFrom}}"></label><label><span>结束日期</span><input type="date" name="to" value="{{.GoogleDataRangeTo}}"></label></div>
+                <p class="google-data-range-current">当前：<strong data-google-range-current>{{.GoogleDataRangeLabel}}</strong>，保存后下次刷新卡片生效。</p>
+                <p class="google-oauth-status" data-google-data-range-status hidden></p>
+                <button class="google-oauth-save" type="submit">保存数据范围</button>
+              </form>
             </div>
           </div>
         </details>
@@ -212,14 +228,14 @@
                 <div class="site-card-metrics">
                   {{if and $ga $ga.Enabled}}
                     {{$gaCanRefresh := and $ga.GoogleAccountID $ga.Property $ga.MeasurementID}}
-                    <span class="site-ga-summary{{if and $gaSummary (eq $gaSummary.Status "ok")}} is-ready{{else if and $gaSummary (eq $gaSummary.Status "error")}} is-error{{end}}" data-ga-summary data-site-id="{{.ID}}" data-url="/admin/sites/{{.ID}}/google/analytics/summary" data-csrf="{{$.CSRF}}" data-refresh="{{if $gaCanRefresh}}1{{else}}0{{end}}" data-ok-template="{{$.Admin.T "admin.sites.google_analytics_summary" "GA：活跃 {active} · 访问 {sessions}"}}" data-error-label="{{$.Admin.T "admin.sites.google_analytics_unavailable" "数据暂不可用"}}" data-enabled-label="{{$.Admin.T "admin.sites.google_analytics_enabled" "统计已启用"}}" data-loading-label="{{$.Admin.T "admin.sites.google_analytics_loading" "正在刷新统计"}}" data-fetched-at="{{if $gaSummary}}{{$gaSummary.FetchedAt.Format "2006-01-02T15:04:05Z07:00"}}{{end}}" data-tooltip="{{if and $gaSummary $gaSummary.ErrorMessage}}{{$gaSummary.ErrorMessage}}{{else}}{{$.Admin.T "admin.sites.google_analytics_summary_tip" "Google Analytics 近 7 日数据。"}}{{end}}">
-                      <span data-ga-summary-text>{{if and $gaSummary (eq $gaSummary.Status "ok")}}{{printf ($.Admin.T "admin.sites.google_analytics_summary_printf" "GA：活跃 %d · 访问 %d") $gaSummary.ActiveUsers7D $gaSummary.Sessions7D}}{{else if and $gaSummary (eq $gaSummary.Status "error")}}{{$.Admin.T "admin.sites.google_analytics_unavailable" "数据暂不可用"}}{{else}}{{$.Admin.T "admin.sites.google_analytics_enabled" "统计已启用"}}{{end}}</span>
+                    <span class="site-ga-summary{{if and $gaSummary (eq $gaSummary.Status "ok")}} is-ready{{else if and $gaSummary (eq $gaSummary.Status "error")}} is-error{{end}}" data-ga-summary data-site-id="{{.ID}}" data-url="/admin/sites/{{.ID}}/google/analytics/summary" data-csrf="{{$.CSRF}}" data-refresh="{{if $gaCanRefresh}}1{{else}}0{{end}}" data-ok-template="{{$.Admin.T "admin.sites.google_analytics_summary" "GA：活跃 {active} · 访问 {sessions}"}}" data-error-label="{{$.Admin.T "admin.sites.google_analytics_unavailable" "数据暂不可用"}}" data-enabled-label="{{$.Admin.T "admin.sites.google_analytics_enabled" "统计已启用"}}" data-loading-label="{{$.Admin.T "admin.sites.google_analytics_loading" "正在刷新统计"}}" data-range-label="{{$.GoogleDataRangeLabel}}" data-range-key="{{printf "%d" $.GoogleDataRangeDays}}" data-summary-range-key="{{if $gaSummary}}{{$gaSummary.RangeKey}}{{end}}" data-fetched-at="{{if $gaSummary}}{{$gaSummary.FetchedAt.Format "2006-01-02T15:04:05Z07:00"}}{{end}}" data-tooltip="{{if and $gaSummary $gaSummary.ErrorMessage}}{{$gaSummary.ErrorMessage}}{{else}}Google Analytics {{$.GoogleDataRangeLabel}} 数据。{{end}}">
+                      <span data-ga-summary-text>{{if and $gaSummary (eq $gaSummary.Status "ok")}}{{printf ($.Admin.T "admin.sites.google_analytics_summary_printf" "GA：活跃 %d · 访问 %d") $gaSummary.ActiveUsers $gaSummary.Sessions}}{{else if and $gaSummary (eq $gaSummary.Status "error")}}{{$.Admin.T "admin.sites.google_analytics_unavailable" "数据暂不可用"}}{{else}}{{$.Admin.T "admin.sites.google_analytics_enabled" "统计已启用"}}{{end}}</span>
                     </span>
                   {{end}}
                   {{if and $gsc $gsc.Enabled}}
                     {{$gscCanRefresh := and $gsc.GoogleAccountID $gsc.Property}}
-                    <span class="site-gsc-summary{{if and $gscSummary (eq $gscSummary.Status "ok")}} is-ready{{else if and $gscSummary (eq $gscSummary.Status "error")}} is-error{{end}}" data-gsc-summary data-site-id="{{.ID}}" data-url="/admin/sites/{{.ID}}/google/search-console/summary" data-csrf="{{$.CSRF}}" data-refresh="{{if $gscCanRefresh}}1{{else}}0{{end}}" data-ok-template="{{$.Admin.T "admin.sites.google_search_summary" "GSC：点击 {clicks} · 曝光 {impressions}"}}" data-error-label="{{$.Admin.T "admin.sites.google_search_unavailable" "搜索数据暂不可用"}}" data-enabled-label="{{$.Admin.T "admin.sites.google_search_enabled" "搜索已接入"}}" data-loading-label="{{$.Admin.T "admin.sites.google_search_loading" "正在刷新搜索数据"}}" data-fetched-at="{{if $gscSummary}}{{$gscSummary.FetchedAt.Format "2006-01-02T15:04:05Z07:00"}}{{end}}" data-tooltip="{{if and $gscSummary $gscSummary.ErrorMessage}}{{$gscSummary.ErrorMessage}}{{else}}{{$.Admin.T "admin.sites.google_search_summary_tip" "Google Search Console 近 7 日搜索数据。"}}{{end}}">
-                      <span data-gsc-summary-text>{{if and $gscSummary (eq $gscSummary.Status "ok")}}{{printf ($.Admin.T "admin.sites.google_search_summary_printf" "GSC：点击 %d · 曝光 %d") $gscSummary.Clicks7D $gscSummary.Impressions7D}}{{else if and $gscSummary (eq $gscSummary.Status "error")}}{{$.Admin.T "admin.sites.google_search_unavailable" "搜索数据暂不可用"}}{{else}}{{$.Admin.T "admin.sites.google_search_enabled" "搜索已接入"}}{{end}}</span>
+                    <span class="site-gsc-summary{{if and $gscSummary (eq $gscSummary.Status "ok")}} is-ready{{else if and $gscSummary (eq $gscSummary.Status "error")}} is-error{{end}}" data-gsc-summary data-site-id="{{.ID}}" data-url="/admin/sites/{{.ID}}/google/search-console/summary" data-csrf="{{$.CSRF}}" data-refresh="{{if $gscCanRefresh}}1{{else}}0{{end}}" data-ok-template="{{$.Admin.T "admin.sites.google_search_summary" "GSC：点击 {clicks} · 曝光 {impressions}"}}" data-error-label="{{$.Admin.T "admin.sites.google_search_unavailable" "搜索数据暂不可用"}}" data-enabled-label="{{$.Admin.T "admin.sites.google_search_enabled" "搜索已接入"}}" data-loading-label="{{$.Admin.T "admin.sites.google_search_loading" "正在刷新搜索数据"}}" data-range-label="{{$.GoogleDataRangeLabel}}" data-range-key="{{printf "%d" $.GoogleDataRangeDays}}" data-summary-range-key="{{if $gscSummary}}{{$gscSummary.RangeKey}}{{end}}" data-fetched-at="{{if $gscSummary}}{{$gscSummary.FetchedAt.Format "2006-01-02T15:04:05Z07:00"}}{{end}}" data-tooltip="{{if and $gscSummary $gscSummary.ErrorMessage}}{{$gscSummary.ErrorMessage}}{{else}}Google Search Console {{$.GoogleDataRangeLabel}} 搜索数据。{{end}}">
+                      <span data-gsc-summary-text>{{if and $gscSummary (eq $gscSummary.Status "ok")}}{{printf ($.Admin.T "admin.sites.google_search_summary_printf" "GSC：点击 %d · 曝光 %d") $gscSummary.Clicks $gscSummary.Impressions}}{{else if and $gscSummary (eq $gscSummary.Status "error")}}{{$.Admin.T "admin.sites.google_search_unavailable" "搜索数据暂不可用"}}{{else}}{{$.Admin.T "admin.sites.google_search_enabled" "搜索已接入"}}{{end}}</span>
                     </span>
                   {{end}}
                 </div>
@@ -346,7 +362,7 @@
 	                                <select class="dd-native" name="google_account_id" data-dropdown-native data-ga-account-select>
 	                                  <option value="">{{$.Admin.T "admin.sites.google_choose_account" "选择授权账号"}}</option>
 	                                  {{range $idx, $account := $.GoogleAnalyticsAccounts}}
-	                                  <option value="{{$account.GoogleAccountID}}"{{if or (and $ga (eq $ga.GoogleAccountID $account.GoogleAccountID)) (and (not $ga) (eq $idx 0))}} selected{{end}}>{{if $account.Email}}{{$account.Email}}{{else}}{{if $account.Name}}{{$account.Name}}{{else}}{{$account.GoogleAccountID}}{{end}}{{end}}</option>
+                                <option value="{{$account.GoogleAccountID}}"{{if or (and $ga (eq $ga.GoogleAccountID $account.GoogleAccountID)) (and (not $ga) (eq $idx 0))}} selected{{end}}>{{if $account.Email}}{{maskEmail $account.Email}}{{else}}{{if $account.Name}}{{$account.Name}}{{else}}{{$account.GoogleAccountID}}{{end}}{{end}}</option>
 	                                  {{end}}
 	                                </select>
 	                                <ul class="dd-menu" role="listbox"></ul>
@@ -445,7 +461,7 @@
                               <select class="dd-native" name="google_account_id" data-dropdown-native data-gsc-account-select>
                                 <option value="">{{$.Admin.T "admin.sites.google_choose_account" "选择授权账号"}}</option>
                                 {{range $idx, $account := $.GoogleSearchConsoleAccounts}}
-                                <option value="{{$account.GoogleAccountID}}" data-scopes="{{$account.Scopes}}"{{if or (and $gsc (eq $gsc.GoogleAccountID $account.GoogleAccountID)) (and (not $gsc) (eq $idx 0))}} selected{{end}}>{{if $account.Email}}{{$account.Email}}{{else}}{{if $account.Name}}{{$account.Name}}{{else}}{{$account.GoogleAccountID}}{{end}}{{end}}</option>
+                                <option value="{{$account.GoogleAccountID}}" data-scopes="{{$account.Scopes}}"{{if or (and $gsc (eq $gsc.GoogleAccountID $account.GoogleAccountID)) (and (not $gsc) (eq $idx 0))}} selected{{end}}>{{if $account.Email}}{{maskEmail $account.Email}}{{else}}{{if $account.Name}}{{$account.Name}}{{else}}{{$account.GoogleAccountID}}{{end}}{{end}}</option>
                                 {{end}}
                               </select>
                               <ul class="dd-menu" role="listbox"></ul>
@@ -871,7 +887,8 @@
 {{define "site-icon-eye"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.5-6.5 9.5-6.5 9.5 6.5 9.5 6.5-3.5 6.5-9.5 6.5S2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.8"/></svg>{{end}}
 {{define "site-icon-edit"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4z"/></svg>{{end}}
 {{define "site-icon-unlink"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18.8 12.6a5 5 0 0 0 .3-6.6 5 5 0 0 0-7.1-.2l-1.2 1.2"/><path d="M5.2 11.4a5 5 0 0 0-.3 6.6 5 5 0 0 0 7.1.2l1.2-1.2"/><path d="m8 8-3-3"/><path d="m16 16 3 3"/></svg>{{end}}
-{{define "site-icon-google-oauth"}}<img class="google-connect-logo google-auth-logo" src="/assets/icons/google-auth.svg" alt="" aria-hidden="true">{{end}}
+{{define "site-icon-google-oauth-trigger"}}<img class="google-connect-logo google-auth-logo" src="/assets/icons/google.svg" alt="" aria-hidden="true">{{end}}
+{{define "site-icon-google"}}<img class="google-oauth-title-logo" src="/assets/icons/google-auth.svg" alt="" aria-hidden="true">{{end}}
 {{define "site-icon-google-analytics"}}<img class="google-connect-logo" src="/assets/icons/google-analytics.svg" alt="" aria-hidden="true">{{end}}
 {{define "site-icon-google-search-console"}}<img class="google-connect-logo" src="/assets/icons/google-search-console.svg" alt="" aria-hidden="true">{{end}}
 {{define "site-icon-package"}}<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.3 7 12 12l8.7-5"/><path d="M12 22V12"/></svg>{{end}}

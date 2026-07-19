@@ -4176,6 +4176,66 @@
   }
 })();
 
+/* ---------- Google OAuth 浮层：OAuth / GA-GSC 默认数据范围选项卡 ---------- */
+(function () {
+  var root = document.querySelector("[data-google-oauth-root]");
+  if (!root) return;
+  var tabs = root.querySelectorAll("[data-google-oauth-tab]");
+  var panels = root.querySelectorAll("[data-google-oauth-tab-panel]");
+  function selectTab(name) {
+    tabs.forEach(function (tab) {
+      var active = tab.getAttribute("data-google-oauth-tab") === name;
+      tab.classList.toggle("is-active", active);
+      tab.setAttribute("aria-selected", active ? "true" : "false");
+    });
+    panels.forEach(function (panel) { panel.hidden = panel.getAttribute("data-google-oauth-tab-panel") !== name; });
+  }
+  tabs.forEach(function (tab) { tab.addEventListener("click", function () { selectTab(tab.getAttribute("data-google-oauth-tab") || "oauth"); }); });
+  selectTab("oauth");
+  var form = root.querySelector("[data-google-data-range-form]");
+  if (!form) return;
+  var mode = form.querySelector("[data-google-range-mode]");
+  var daysWrap = form.querySelector("[data-google-range-days-wrap]");
+  var custom = form.querySelector("[data-google-range-custom-fields]");
+  var status = form.querySelector("[data-google-data-range-status]");
+  function closeSelects(except) {
+    form.querySelectorAll("[data-google-select]").forEach(function (select) {
+      if (select !== except) { select.classList.remove("is-open"); var menu = select.querySelector("[data-google-select-menu]"); if (menu) menu.hidden = true; var trigger = select.querySelector("[data-google-select-trigger]"); if (trigger) trigger.setAttribute("aria-expanded", "false"); }
+    });
+  }
+  form.querySelectorAll("[data-google-select]").forEach(function (select) {
+    var trigger = select.querySelector("[data-google-select-trigger]");
+    var menu = select.querySelector("[data-google-select-menu]");
+    var label = select.querySelector("[data-google-select-label]");
+    var input = select.querySelector("input[type=hidden]");
+    if (!trigger || !menu || !label || !input) return;
+    trigger.addEventListener("click", function () { var open = !select.classList.contains("is-open"); closeSelects(select); select.classList.toggle("is-open", open); menu.hidden = !open; trigger.setAttribute("aria-expanded", open ? "true" : "false"); });
+    menu.querySelectorAll("[data-google-select-option]").forEach(function (option) { option.addEventListener("click", function () { input.value = option.getAttribute("data-value") || ""; label.textContent = option.textContent.trim(); menu.querySelectorAll("[data-google-select-option]").forEach(function (item) { item.setAttribute("aria-selected", item === option ? "true" : "false"); }); closeSelects(); input.dispatchEvent(new Event("change", { bubbles: true })); }); });
+  });
+  document.addEventListener("click", function (event) { if (!event.target.closest || !event.target.closest("[data-google-select]")) closeSelects(); });
+  function syncMode() {
+    var isCustom = mode && mode.value === "custom";
+    if (daysWrap) daysWrap.hidden = isCustom;
+    if (custom) custom.hidden = !isCustom;
+  }
+  if (mode) mode.addEventListener("change", syncMode);
+  syncMode();
+  form.addEventListener("submit", function (event) {
+    event.preventDefault();
+    if (status) { status.hidden = false; status.classList.remove("is-error"); status.textContent = "保存中..."; }
+    fetch(form.action, { method: "POST", body: new URLSearchParams(new FormData(form)), credentials: "same-origin", headers: { "Accept": "application/json", "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8", "X-Requested-With": "XMLHttpRequest" } })
+      .then(function (response) { return response.text().then(function (raw) { var data = {}; try { data = raw ? JSON.parse(raw) : {}; } catch (ignore) {} if (!response.ok || !data.ok) throw new Error(data.message || ("保存失败（HTTP " + response.status + "）")); return data; }); })
+      .then(function (data) {
+        if (!data || !data.ok) throw new Error((data && data.message) || "保存失败");
+        var current = form.querySelector("[data-google-range-current]");
+        if (current) current.textContent = data.label || "已保存";
+        if (status) status.textContent = "已保存，刷新站点卡片后生效。";
+        document.querySelectorAll("[data-ga-summary], [data-gsc-summary]").forEach(function (el) { if (data.range_key) el.setAttribute("data-range-key", data.range_key); el.removeAttribute("data-summary-range-key"); });
+      })
+      .catch(function (error) { if (status) { status.classList.add("is-error"); status.textContent = error.message || "保存失败"; } });
+  });
+})();
+
 // 服务器健康度：站点管理页顶部的负载 / 内存 / 磁盘小指示，轮询刷新，隐藏标签页时暂停。
 (function () {
   var el = document.querySelector("[data-server-health]");
@@ -4593,6 +4653,7 @@
     // 错误快照不受新鲜度闸门保护：失败也会刷新 FetchedAt，若按 1 小时闸门算，
     // 授权修复后 pill 还会继续展示旧错误整整一小时。报错的一律重试。
     if (el.classList.contains("is-error")) return true;
+    if ((el.getAttribute("data-summary-range-key") || "") !== (el.getAttribute("data-range-key") || "")) return true;
     var raw = el.getAttribute("data-fetched-at") || "";
     if (!raw) return true;
     var d = new Date(raw);
@@ -4604,11 +4665,13 @@
     el.classList.remove("is-ready", "is-error", "is-loading");
     if (state) el.classList.add("is-" + state);
     var text = el.getAttribute("data-enabled-label") || "统计已启用";
-    if (state === "ready") text = summaryText(el, payload.active_users_7d, payload.sessions_7d);
+    if (state === "ready") text = summaryText(el, payload.active_users == null ? payload.active_users_7d : payload.active_users, payload.sessions == null ? payload.sessions_7d : payload.sessions);
     else if (state === "error") text = el.getAttribute("data-error-label") || "数据暂不可用";
     else if (state === "loading") text = el.getAttribute("data-loading-label") || "正在刷新统计";
     labelEl(el).textContent = text;
     if (payload.fetched_at) el.setAttribute("data-fetched-at", payload.fetched_at);
+    if (payload.range_key) el.setAttribute("data-summary-range-key", payload.range_key);
+    if (payload.range_label) el.setAttribute("data-tooltip", "Google Analytics " + payload.range_label + " 数据。");
     var tip = payload.error_message || el.getAttribute("data-tooltip") || text;
     el.setAttribute("data-tooltip", tip);
     el.setAttribute("title", tip);
@@ -4658,6 +4721,7 @@
     // 错误快照不受新鲜度闸门保护：失败也会刷新 FetchedAt，若按 1 小时闸门算，
     // 授权修复后 pill 还会继续展示旧错误整整一小时。报错的一律重试。
     if (el.classList.contains("is-error")) return true;
+    if ((el.getAttribute("data-summary-range-key") || "") !== (el.getAttribute("data-range-key") || "")) return true;
     var raw = el.getAttribute("data-fetched-at") || "";
     if (!raw) return true;
     var d = new Date(raw);
@@ -4669,11 +4733,13 @@
     el.classList.remove("is-ready", "is-error", "is-loading");
     if (state) el.classList.add("is-" + state);
     var text = el.getAttribute("data-enabled-label") || "搜索已接入";
-    if (state === "ready") text = summaryText(el, payload.clicks_7d, payload.impressions_7d);
+    if (state === "ready") text = summaryText(el, payload.clicks == null ? payload.clicks_7d : payload.clicks, payload.impressions == null ? payload.impressions_7d : payload.impressions);
     else if (state === "error") text = el.getAttribute("data-error-label") || "搜索数据暂不可用";
     else if (state === "loading") text = el.getAttribute("data-loading-label") || "正在刷新搜索数据";
     labelEl(el).textContent = text;
     if (payload.fetched_at) el.setAttribute("data-fetched-at", payload.fetched_at);
+    if (payload.range_key) el.setAttribute("data-summary-range-key", payload.range_key);
+    if (payload.range_label) el.setAttribute("data-tooltip", "Google Search Console " + payload.range_label + " 搜索数据。");
     var tip = payload.error_message || el.getAttribute("data-tooltip") || text;
     el.setAttribute("data-tooltip", tip);
     el.setAttribute("title", tip);
