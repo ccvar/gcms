@@ -1650,7 +1650,22 @@ func (s *Server) serveWithRuntime(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if siteAdminPath(r.URL.Path) {
-		sess, _ := s.currentSession(r)
+		sess, authenticated := s.currentSession(r)
+		if !authenticated {
+			// 站点后台路由需要先经过平台登录。此前这里会因为 currentSiteID=0
+			// 先跳到 /admin/sites，导致首次安装时出现 /admin -> /admin/sites，
+			// 并在本机反向代理使用默认 BASE_URL 时被平台 Host 校验拦成 404。
+			if !s.platformHostAllowed(r, pool) {
+				http.NotFound(w, r)
+				return
+			}
+			if wantsJSON(r) {
+				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "login_required", "message": "登录已过期，请重新登录。"})
+				return
+			}
+			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+			return
+		}
 		rt, ok := pool.runtimeByID(sess.currentSiteID)
 		if !ok || rt == nil || rt.server == nil {
 			http.Redirect(w, r, "/admin/sites", http.StatusSeeOther)
@@ -2121,7 +2136,17 @@ func (s *Server) platformHostAllowed(r *http.Request, pool *SiteRuntimePool) boo
 	if host == pool.platformHost {
 		return true
 	}
-	return pool.localPlatform && isLocalHostOnly(host)
+	if !pool.localPlatform {
+		return false
+	}
+	if isLocalHostOnly(host) {
+		return true
+	}
+	// 发布包首次启动时 BASE_URL 默认仍是 localhost。若 Caddy/Nginx 与 gcms
+	// 在同一台机器上，反代到 loopback 的连接可安全沿用真实请求 Host，避免
+	// 正式域名上的 /admin/login 被误判为未知平台 Host。外部直连仍然拒绝；
+	// 一旦配置了正式 BASE_URL，也继续严格只允许该平台域名。
+	return remoteIsLoopback(r.RemoteAddr)
 }
 
 func platformOnlyPath(path string) bool {

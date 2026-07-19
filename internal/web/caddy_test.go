@@ -55,3 +55,63 @@ func TestCaddyAsk(t *testing.T) {
 	check("evil.example.com", http.StatusForbidden) // unknown
 	check("", http.StatusBadRequest)                // missing
 }
+
+func TestPlatformHostAllowedBehindLocalReverseProxy(t *testing.T) {
+	localPool := &SiteRuntimePool{platformHost: "localhost:8080", localPlatform: true}
+	check := func(name, target, remote string, pool *SiteRuntimePool, want bool) {
+		t.Helper()
+		t.Run(name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, target, nil)
+			req.RemoteAddr = remote
+			if got := (&Server{}).platformHostAllowed(req, pool); got != want {
+				t.Fatalf("platformHostAllowed(%q, %q) = %v, want %v", req.Host, remote, got, want)
+			}
+		})
+	}
+
+	check("configured local host", "http://localhost:8080/admin/login", "203.0.113.10:40000", localPool, true)
+	check("public host through loopback proxy", "https://cms.example.test/admin/login", "127.0.0.1:40000", localPool, true)
+	check("public host through ipv6 loopback proxy", "https://cms.example.test/admin/login", "[::1]:40000", localPool, true)
+	check("public host through direct connection", "https://cms.example.test/admin/login", "203.0.113.10:40000", localPool, false)
+
+	publicPool := &SiteRuntimePool{platformHost: "platform.example.test"}
+	check("configured public host", "https://platform.example.test/admin/login", "203.0.113.10:40000", publicPool, true)
+	check("wrong public host through loopback proxy", "https://other.example.test/admin/login", "127.0.0.1:40000", publicPool, false)
+}
+
+func TestFirstInstallAdminRoutesToLoginBehindLocalReverseProxy(t *testing.T) {
+	_, handler, _, _, _ := newPlatformTestServerBase(t, "http://localhost:8080")
+
+	request := func(path string) *httptest.ResponseRecorder {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "https://cms.example.test"+path, nil)
+		req.RemoteAddr = "127.0.0.1:40000"
+		req.Header.Set("X-Forwarded-Proto", "https")
+		handler.ServeHTTP(rec, req)
+		return rec
+	}
+
+	admin := request("/admin")
+	if admin.Code != http.StatusSeeOther || admin.Header().Get("Location") != "/admin/login" {
+		t.Fatalf("anonymous /admin = %d %q, want 303 /admin/login", admin.Code, admin.Header().Get("Location"))
+	}
+
+	sites := request("/admin/sites")
+	if sites.Code != http.StatusSeeOther || sites.Header().Get("Location") != "/admin/login" {
+		t.Fatalf("anonymous /admin/sites = %d %q, want 303 /admin/login", sites.Code, sites.Header().Get("Location"))
+	}
+
+	login := request("/admin/login")
+	if login.Code != http.StatusOK {
+		t.Fatalf("GET /admin/login = %d, want 200; body=%s", login.Code, login.Body.String())
+	}
+
+	direct := httptest.NewRecorder()
+	directReq := httptest.NewRequest(http.MethodGet, "https://cms.example.test/admin/login", nil)
+	directReq.RemoteAddr = "203.0.113.10:40000"
+	handler.ServeHTTP(direct, directReq)
+	if direct.Code != http.StatusNotFound {
+		t.Fatalf("direct request with unknown host = %d, want 404", direct.Code)
+	}
+}
