@@ -1898,6 +1898,15 @@
       return false;
     }
 
+    // Tab 在 WebView2 / WKWebView 中可能先被宿主当成「切换页面焦点」，xterm 收不到，
+    // Shell 就无法做命令与路径补全。终端聚焦时显式走用户输入通道；Shift+Tab
+    // 保留终端通用的反向制表序列。带 Ctrl/Alt/Meta 的组合键仍交给 xterm/宿主。
+    if (e.key === 'Tab' && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      e.preventDefault(); e.stopPropagation();
+      t.input(e.shiftKey ? '\x1b[Z' : '\t', true);
+      return false;
+    }
+
     // WebView2 会把 Escape 留给宿主 WebView，xterm 收不到时 vi 就无法退出插入模式。
     // 这里直接走 xterm 的用户输入通道，macOS 也统一经过同一路径，且不会发送两次。
     if (e.key === 'Escape') {
