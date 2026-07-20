@@ -107,11 +107,24 @@ func TestFirstInstallAdminRoutesToLoginBehindLocalReverseProxy(t *testing.T) {
 		t.Fatalf("GET /admin/login = %d, want 200; body=%s", login.Code, login.Body.String())
 	}
 
+	asset := request("/assets/css/admin.css")
+	if asset.Code != http.StatusOK {
+		t.Fatalf("GET /assets/css/admin.css = %d, want 200; body=%s", asset.Code, asset.Body.String())
+	}
+
 	direct := httptest.NewRecorder()
 	directReq := httptest.NewRequest(http.MethodGet, "https://cms.example.test/admin/login", nil)
 	directReq.RemoteAddr = "203.0.113.10:40000"
 	handler.ServeHTTP(direct, directReq)
 	if direct.Code != http.StatusNotFound {
 		t.Fatalf("direct request with unknown host = %d, want 404", direct.Code)
+	}
+
+	directAsset := httptest.NewRecorder()
+	directAssetReq := httptest.NewRequest(http.MethodGet, "https://cms.example.test/assets/css/admin.css", nil)
+	directAssetReq.RemoteAddr = "203.0.113.10:40000"
+	handler.ServeHTTP(directAsset, directAssetReq)
+	if directAsset.Code != http.StatusNotFound {
+		t.Fatalf("direct asset request with unknown host = %d, want 404", directAsset.Code)
 	}
 }

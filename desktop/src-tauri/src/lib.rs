@@ -34,8 +34,9 @@ use tauri_plugin_notification::NotificationExt;
 
 use convo::{Conversation, Message};
 use gcms_remote::{
-    gcms_cloudflare_create_a_record, gcms_remote_access_check, gcms_remote_access_configure,
-    gcms_remote_install, gcms_remote_status,
+    gcms_cloudflare_clear_connection, gcms_cloudflare_create_a_record,
+    gcms_cloudflare_select_connection, gcms_remote_access_check, gcms_remote_access_configure,
+    gcms_remote_access_verify, gcms_remote_install, gcms_remote_status,
 };
 use tasks::ScheduledTask;
 use transfer::{export_pilot_transfer, import_pilot_transfer, inspect_pilot_transfer};
@@ -382,6 +383,64 @@ async fn connect_cloudflare(
     tauri::async_runtime::spawn_blocking(move || store.add_cloudflare(&name, &token, &account_id))
         .await
         .map_err(|e| e.to_string())?
+}
+
+/// 更新明确的一条 Cloudflare 连接：新 Token 必须仍包含原账号，避免用户误把另一账号的
+/// Token 覆盖进去；Zone 偏好与连接 id 均保留。
+#[tauri::command]
+async fn update_cloudflare_token(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    token: String,
+    zone: Option<String>,
+) -> Result<pack::Connection, String> {
+    let current = state.conns.get(&conn_id)?;
+    if current.kind != "cloudflare" {
+        return Err("这不是 Cloudflare 连接".into());
+    }
+    let verified = cf::verify_token(&token).await?;
+    if !verified
+        .accounts
+        .iter()
+        .any(|account| account.id == current.account_id)
+    {
+        return Err(format!(
+            "新 Token 无法访问原 Cloudflare 账号 {}，未更新连接",
+            current.account_id
+        ));
+    }
+    let zone = zone
+        .map(|zone| zone.trim().trim_end_matches('.').to_ascii_lowercase())
+        .filter(|zone| !zone.is_empty());
+    if let Some(zone) = zone.as_deref() {
+        if zone.contains('/') || zone.contains(':') {
+            return Err("Cloudflare Zone 名称无效".into());
+        }
+        let inspected = cf::inspect_hostname(&token, &current.account_id, zone, zone)
+            .await?
+            .ok_or_else(|| {
+                format!(
+                    "新 Token 无法访问 Zone {zone}，未更新连接。请确认它属于正确账号并包含 Zone: Read、DNS: Edit 权限"
+                )
+            })?;
+        if !inspected.ssl_error.is_empty() {
+            return Err(format!(
+                "新 Token 仍无法读取 {zone} 的 SSL/TLS 设置，未更新连接。请增加 Zone Settings: Read 权限：{}",
+                inspected.ssl_error
+            ));
+        }
+    }
+    let store = state.conns.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let updated = store.replace_cloudflare_token(&conn_id, &token)?;
+        if let Some(zone) = zone {
+            store.set_cloudflare_zone_preference(&conn_id, &zone)
+        } else {
+            Ok(updated)
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 // ---- SSH 远程连接 ----
@@ -2491,6 +2550,7 @@ fn system_proxy_url() -> Option<String> {
 
 /// 安装失败时抽「脚本自己说的话」：优先 stdout 末尾的有效行（官方脚本把失败原因写在
 /// 这里），stderr 只留异常首行并剥掉 PowerShell 的命令回显前缀（"… | iex : 消息"）。
+#[cfg(test)]
 fn install_err_brief(stdout: &[u8], stderr: &[u8]) -> String {
     let sout = String::from_utf8_lossy(stdout);
     let mut parts: Vec<String> = vec![];
@@ -5443,6 +5503,7 @@ pub fn run() {
             install_claude,
             verify_cf_token,
             connect_cloudflare,
+            update_cloudflare_token,
             verify_ssh,
             connect_ssh,
             update_ssh,
@@ -5455,8 +5516,11 @@ pub fn run() {
             gcms_remote_status,
             gcms_remote_install,
             gcms_remote_access_check,
+            gcms_cloudflare_select_connection,
+            gcms_cloudflare_clear_connection,
             gcms_cloudflare_create_a_record,
             gcms_remote_access_configure,
+            gcms_remote_access_verify,
             export_pilot_transfer,
             inspect_pilot_transfer,
             import_pilot_transfer,

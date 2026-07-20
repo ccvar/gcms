@@ -28,6 +28,10 @@ pub struct Connection {
     /// Cloudflare 账号 id（仅 kind=cloudflare）；gcms 连接为空。
     #[serde(default)]
     pub account_id: String,
+    /// 明确由这条 Cloudflare 连接管理的 Zone。一个 Zone 同时只应绑定一条连接；旧数据为空，
+    /// 首次遇到唯一候选时自动建立，多个候选则由用户选择。
+    #[serde(default)]
+    pub preferred_zones: Vec<String>,
     /// 以下均仅 kind=ssh。密码/私钥口令进钥匙串（account = conn_id，与其它 kind 同约定，
     /// 因此 remove 无需特殊处理、不会留孤儿密钥）；私钥只存路径引用，不拷贝用户私钥。
     #[serde(default)]
@@ -59,6 +63,20 @@ pub struct Connection {
 
 fn default_kind() -> String {
     "gcms".into()
+}
+
+fn normalize_cloudflare_zone(zone: &str) -> Result<String, String> {
+    let zone = zone.trim().trim_end_matches('.').to_lowercase();
+    if zone.is_empty()
+        || zone.contains('/')
+        || zone.contains(':')
+        || !zone.split('.').all(|label| {
+            !label.is_empty() && label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        })
+    {
+        return Err("Cloudflare Zone 名称无效".into());
+    }
+    Ok(zone)
 }
 
 /// 导入结果：包里没有嵌密钥且调用方也没提供时，返回 NeedsKey 让 UI 弹输入框。
@@ -231,6 +249,7 @@ impl ConnStore {
                 key_prefix: prefix,
                 key_kind: key_kind.to_string(),
                 account_id: String::new(),
+                preferred_zones: Vec::new(),
                 ssh_host: String::new(),
                 ssh_port: 0,
                 ssh_user: String::new(),
@@ -294,6 +313,7 @@ impl ConnStore {
             key_prefix: prefix,
             key_kind: "cf_token".into(),
             account_id: account_id.trim().to_string(),
+            preferred_zones: Vec::new(),
             ssh_host: String::new(),
             ssh_port: 0,
             ssh_user: String::new(),
@@ -390,6 +410,7 @@ impl ConnStore {
                 "ssh_password".into()
             },
             account_id: String::new(),
+            preferred_zones: Vec::new(),
             ssh_host: host.into(),
             ssh_port: port,
             ssh_user: user.into(),
@@ -442,6 +463,92 @@ impl ConnStore {
         slot.remark = remark.to_string();
         let out = slot.clone();
         self.save(&conns)?;
+        Ok(out)
+    }
+
+    /// 把一个 Cloudflare Zone 固定到明确连接。写入前会从其它连接移除同 Zone，避免后续
+    /// DNS/橙云操作因连接遍历顺序变化而换 Token。
+    pub fn set_cloudflare_zone_preference(
+        &self,
+        id: &str,
+        zone: &str,
+    ) -> Result<Connection, String> {
+        let zone = normalize_cloudflare_zone(zone)?;
+        let mut conns = self.list();
+        let Some(target) = conns.iter().position(|connection| connection.id == id) else {
+            return Err(format!("未找到连接 {id}"));
+        };
+        if conns[target].kind != "cloudflare" {
+            return Err("只能为 Cloudflare 连接绑定 Zone".into());
+        }
+        for connection in &mut conns {
+            connection
+                .preferred_zones
+                .retain(|saved| !saved.eq_ignore_ascii_case(&zone));
+        }
+        conns[target].preferred_zones.push(zone);
+        let out = conns[target].clone();
+        self.save(&conns)?;
+        Ok(out)
+    }
+
+    /// 清除一个 Zone 的固定连接。用于用户主动点击“改用其他连接”；下次检查会重新返回
+    /// 所有真实候选，而不是悄悄切换到连接列表里的下一枚 Token。
+    pub fn clear_cloudflare_zone_preference(&self, zone: &str) -> Result<(), String> {
+        let zone = normalize_cloudflare_zone(zone)?;
+        let mut conns = self.list();
+        let mut changed = false;
+        for connection in &mut conns {
+            let before = connection.preferred_zones.len();
+            connection
+                .preferred_zones
+                .retain(|saved| !saved.eq_ignore_ascii_case(&zone));
+            changed |= before != connection.preferred_zones.len();
+        }
+        if changed {
+            self.save(&conns)?;
+        }
+        Ok(())
+    }
+
+    /// 只替换指定 Cloudflare 连接的 Token；连接 id、账号、Zone 绑定和工作区全部保留。
+    /// 调用方必须先验证新 Token 仍可访问原 account_id。
+    pub fn replace_cloudflare_token(&self, id: &str, token: &str) -> Result<Connection, String> {
+        let token = token.trim();
+        if token.is_empty() {
+            return Err("Token 不能为空".into());
+        }
+        let mut conns = self.list();
+        let Some(target) = conns.iter().position(|connection| connection.id == id) else {
+            return Err(format!("未找到连接 {id}"));
+        };
+        if conns[target].kind != "cloudflare" {
+            return Err("这不是 Cloudflare 连接".into());
+        }
+        let prefix = keychain::key_prefix(token);
+        if let Some(duplicate) = conns.iter().enumerate().find(|(index, connection)| {
+            *index != target
+                && connection.kind == "cloudflare"
+                && connection.account_id == conns[target].account_id
+                && connection.key_prefix == prefix
+        }) {
+            return Err(format!(
+                "这枚 Token 已用于 Cloudflare 连接「{}」",
+                duplicate.1.name
+            ));
+        }
+        let previous = keychain::get_key(id)?;
+        keychain::set_key(id, token)?;
+        conns[target].key_prefix = prefix;
+        let out = conns[target].clone();
+        if let Err(error) = self.save(&conns) {
+            let restored = keychain::set_key(id, &previous);
+            return Err(if let Err(restore_error) = restored {
+                format!("{error}；恢复原 Token 失败：{restore_error}")
+            } else {
+                error
+            });
+        }
         Ok(out)
     }
 
@@ -755,6 +862,7 @@ mod tests {
             key_prefix: "gcms_ab".into(),
             key_kind: "gcms_".into(),
             account_id: String::new(),
+            preferred_zones: Vec::new(),
             ssh_host: String::new(),
             ssh_port: 0,
             ssh_user: String::new(),
@@ -776,6 +884,62 @@ mod tests {
         fs::remove_dir_all(&base).ok();
     }
 
+    #[test]
+    fn cloudflare_zone_preference_is_exclusive_and_clearable() {
+        let base = std::env::temp_dir().join(format!("pilot-cf-zone-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&base).unwrap();
+        let store = ConnStore::new(&base).unwrap();
+        let make = |id: &str| Connection {
+            id: id.into(),
+            name: format!("Cloudflare {id}"),
+            remark: String::new(),
+            kind: "cloudflare".into(),
+            api_base: String::new(),
+            skill_dir: String::new(),
+            key_prefix: format!("token-{id}…"),
+            key_kind: "cf_token".into(),
+            account_id: format!("account-{id}"),
+            preferred_zones: Vec::new(),
+            ssh_host: String::new(),
+            ssh_port: 0,
+            ssh_user: String::new(),
+            ssh_auth: String::new(),
+            ssh_key_path: String::new(),
+            ssh_fingerprint: String::new(),
+            ssh_os: String::new(),
+            ssh_os_id: String::new(),
+            pack_version: String::new(),
+            created_at: "t".into(),
+        };
+        store.save(&[make("one"), make("two")]).unwrap();
+
+        store
+            .set_cloudflare_zone_preference("one", " Example.COM. ")
+            .unwrap();
+        assert_eq!(
+            store.get("one").unwrap().preferred_zones,
+            vec!["example.com"]
+        );
+
+        store
+            .set_cloudflare_zone_preference("two", "example.com")
+            .unwrap();
+        assert!(store.get("one").unwrap().preferred_zones.is_empty());
+        assert_eq!(
+            store.get("two").unwrap().preferred_zones,
+            vec!["example.com"]
+        );
+
+        store
+            .clear_cloudflare_zone_preference("EXAMPLE.COM")
+            .unwrap();
+        assert!(store.get("two").unwrap().preferred_zones.is_empty());
+        assert!(store
+            .set_cloudflare_zone_preference("two", "https://example.com")
+            .is_err());
+        fs::remove_dir_all(&base).ok();
+    }
+
     /// 改远程连接：改地址/改名/换认证方式，以及不该发生的事（撞车、非 ssh、缺指纹）。
     /// 注意不碰钥匙串（CI 无钥匙串）：只走 secret 留空的路径。
     #[test]
@@ -793,6 +957,7 @@ mod tests {
             key_prefix: String::new(),
             key_kind: String::new(),
             account_id: String::new(),
+            preferred_zones: Vec::new(),
             ssh_host: host.into(),
             ssh_port: 22,
             ssh_user: user.into(),
@@ -1009,6 +1174,7 @@ mod tests {
             key_prefix: "gcmsp_ab".into(),
             key_kind: "gcmsp_".into(),
             account_id: String::new(),
+            preferred_zones: Vec::new(),
             ssh_host: String::new(),
             ssh_port: 0,
             ssh_user: String::new(),

@@ -12,6 +12,7 @@
   "admin.nav.logout": "Log Out",
   "admin.lang.label": "Admin Language",
   "admin.warning.default_password": "You are still using the default password. Change it soon to keep the site safe.",
+  "admin.warning.password_required": "Change the default password before continuing to the admin area.",
   "admin.warning.change_password": "Change Now",
   "admin.confirm.title": "Confirm Delete",
   "admin.action.cancel": "Cancel",

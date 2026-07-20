@@ -553,6 +553,12 @@ func emptyAboutPage(lang, siteName string) seedPost {
 // DefaultAdminPassword 是演示用默认管理员密码（仅用于首启提示与「是否仍为默认」校验）。
 const DefaultAdminPassword = "admin123"
 
+// IsDefaultAdminPasswordHash 校验管理员密码哈希是否仍对应内置默认密码。
+// 该函数供站点库、平台库和本机运维状态检查复用；调用方不得输出原始哈希。
+func IsDefaultAdminPasswordHash(hash string) bool {
+	return hash != "" && bcrypt.CompareHashAndPassword([]byte(hash), []byte(DefaultAdminPassword)) == nil
+}
+
 // IsDefaultPassword 报告当前管理员密码是否仍为内置默认密码（用于后台提示尽快修改）。
 // bcrypt 校验较慢，按 hash 缓存结果，仅当密码变更（hash 改变）时才重算。
 func (s *Store) IsDefaultPassword() bool {
@@ -566,7 +572,7 @@ func (s *Store) IsDefaultPassword() bool {
 		return s.pwIsDefault
 	}
 	s.pwHash = hash
-	s.pwIsDefault = bcrypt.CompareHashAndPassword([]byte(hash), []byte(DefaultAdminPassword)) == nil
+	s.pwIsDefault = IsDefaultAdminPasswordHash(hash)
 	return s.pwIsDefault
 }
 

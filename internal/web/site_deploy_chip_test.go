@@ -15,7 +15,6 @@ import (
 	"cms.ccvar.com/internal/i18n"
 	"cms.ccvar.com/internal/platform"
 	"cms.ccvar.com/internal/store"
-	"golang.org/x/crypto/bcrypt"
 )
 
 // 芯片单测统一用零值 AdminTr：catalog 为空时 T 返回 fallback（也就是中文文案），断言稳定。
@@ -427,14 +426,11 @@ func TestAdminSitesDeployChipsRendering(t *testing.T) {
 		t.Fatalf("open platform store: %v", err)
 	}
 	t.Cleanup(func() { _ = ps.Close() })
-	hash, err := bcrypt.GenerateFromPassword([]byte(store.DefaultAdminPassword), bcrypt.DefaultCost)
-	if err != nil {
-		t.Fatalf("hash password: %v", err)
-	}
+	hash := nonDefaultTestPasswordHash(t)
 	if err := ps.BootstrapDefaultSite(platform.DefaultSiteBootstrap{
 		Slug: "main", Name: "Chip Default", DBPath: defaultDB,
 		UploadDir: filepath.Join(dir, "main", "uploads"),
-		AdminUser: "admin", AdminPasswordHash: string(hash),
+		AdminUser: "admin", AdminPasswordHash: hash,
 		ManagementAutomationEnabled: true,
 	}); err != nil {
 		t.Fatalf("bootstrap default site: %v", err)
@@ -462,7 +458,7 @@ func TestAdminSitesDeployChipsRendering(t *testing.T) {
 	h := srv.Handler()
 
 	login := httptest.NewRecorder()
-	loginForm := url.Values{"username": {"admin"}, "password": {store.DefaultAdminPassword}}
+	loginForm := url.Values{"username": {"admin"}, "password": {nonDefaultTestPassword}}
 	loginReq := httptest.NewRequest(http.MethodPost, "https://platform.test/admin/login", strings.NewReader(loginForm.Encode()))
 	loginReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	h.ServeHTTP(login, loginReq)

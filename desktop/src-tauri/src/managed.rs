@@ -553,7 +553,8 @@ pub fn ramp_cap(days_since_enabled: u32) -> u32 {
 
 /// enabled_at → 已开启天数。旧记录 enabled_at=0（字段面世前开启的站）视为已过爬坡期，
 /// 返回 u32::MAX——别把老站掐死。
-pub fn days_since_enabled(enabled_at: u64, now: u64) -> u32 {
+#[cfg(test)]
+fn days_since_enabled(enabled_at: u64, now: u64) -> u32 {
     if enabled_at == 0 {
         return u32::MAX;
     }

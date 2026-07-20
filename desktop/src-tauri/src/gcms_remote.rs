@@ -2,9 +2,11 @@
 //!
 //! 公网接入按硬闸顺序执行：域名校验 → 服务器公网 IP / DNS 托管识别 → Cloudflare
 //! 真实源站核验（若适用）→ Caddy 只读预检 → 备份后配置。只有用户明确点击时才会
-//! 幂等创建一条灰云 A 记录；不会覆盖 DNS、自动创建 AAAA 或替用户切换橙云。
+//! 为主域名及可选跳转域名幂等创建缺失的灰云 A 记录；不会覆盖 DNS 或自动创建 AAAA。
+//! 源站 HTTPS 验证通过后，只有记录仍指向当前服务器且 Zone 使用 Full / Full (strict)
+//! 时，才会把这次一键配置涉及的 Cloudflare 记录切换为橙云。
 
-use super::{cf, ensure_ssh, keychain, AppState};
+use super::{cf, ensure_ssh, keychain, pack, AppState};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::net::{IpAddr, Ipv4Addr};
@@ -51,14 +53,37 @@ if [ "$running" = 0 ] && command -v curl >/dev/null 2>&1; then
   done
 fi
 base_url=''
+redirect_domain=''
 if [ -f "$root/shared/cms.conf" ]; then
   base_url=$(awk -F= '$1 == "BASE_URL" { sub(/^[^=]*=/, ""); gsub(/^[[:space:]]+|[[:space:]]+$/, ""); print; exit }' "$root/shared/cms.conf" 2>/dev/null || true)
+  redirect_domain=$(awk -F= '$1 == "PILOT_REDIRECT_DOMAIN" { sub(/^[^=]*=/, ""); gsub(/^[[:space:]]+|[[:space:]]+$/, ""); print; exit }' "$root/shared/cms.conf" 2>/dev/null || true)
+fi
+password_status=unknown
+admin_user=''
+bin="$root/current/bin/cms"
+# 老版本二进制会忽略未知参数并尝试再启动一个服务。只有确认包含本机状态命令时才调用，
+# 避免为了检测密码而触发端口冲突或写入数据库。
+if [ -x "$bin" ] && grep -a -Fq 'pilot-security-status' "$bin" 2>/dev/null; then
+  conf="$root/shared/cms.conf"
+  cms_db=$(awk -F= '$1 == "CMS_DB" { sub(/^[^=]*=/, ""); gsub(/^[[:space:]]+|[[:space:]]+$/, ""); print; exit }' "$conf" 2>/dev/null || true)
+  system_db=$(awk -F= '$1 == "SYSTEM_DB" { sub(/^[^=]*=/, ""); gsub(/^[[:space:]]+|[[:space:]]+$/, ""); print; exit }' "$conf" 2>/dev/null || true)
+  [ -n "$cms_db" ] || cms_db=shared/data/cms.db
+  case "$cms_db" in /*) ;; *) cms_db="$root/$cms_db" ;; esac
+  [ -n "$system_db" ] || system_db=$(dirname "$cms_db")/system.db
+  case "$system_db" in /*) ;; *) system_db="$root/$system_db" ;; esac
+  security_output=$(cd "$root" && CMS_DB="$cms_db" SYSTEM_DB="$system_db" "$bin" pilot-security-status 2>/dev/null || true)
+  detected=$(printf '%s\n' "$security_output" | awk -F '\t' '$1 == "PILOT_GCMS_PASSWORD_STATUS" { print $2; exit }')
+  case "$detected" in default|changed|unknown) password_status=$detected ;; esac
+  admin_user=$(printf '%s\n' "$security_output" | awk -F '\t' '$1 == "PILOT_GCMS_ADMIN_USER" { print $2; exit }')
 fi
 printf 'PILOT_GCMS_INSTALLED\t1\n'
 printf 'PILOT_GCMS_PATH\t%s\n' "$root"
 printf 'PILOT_GCMS_VERSION\t%s\n' "$version"
 printf 'PILOT_GCMS_RUNNING\t%s\n' "$running"
 printf 'PILOT_GCMS_BASE_URL\t%s\n' "$base_url"
+printf 'PILOT_GCMS_REDIRECT_DOMAIN\t%s\n' "$redirect_domain"
+printf 'PILOT_GCMS_PASSWORD_STATUS\t%s\n' "$password_status"
+printf 'PILOT_GCMS_ADMIN_USER\t%s\n' "$admin_user"
 "#;
 
 /// 完整下载后执行，避免 `curl | sh` 在下载失败时被空 shell 误判为成功。
@@ -102,6 +127,7 @@ printf 'PILOT_PUBLIC_IPV6\t%s\n' "$ipv6"
 const GCMS_CADDY_PREFLIGHT_CMD: &str = r#"
 set +e
 domain=${PILOT_DOMAIN:-}
+redirect_domain=${PILOT_REDIRECT_DOMAIN:-}
 uid=$(id -u 2>/dev/null || printf 'unknown')
 os=$(uname -s 2>/dev/null | tr '[:upper:]' '[:lower:]')
 privilege=none
@@ -188,8 +214,12 @@ printf 'PILOT_CADDY_PACKAGE_MANAGER\t%s\n' "$package_manager"
 printf 'PILOT_CADDY_SITE_EXISTS\t%s\n' "$site_exists"
 printf 'PILOT_CADDY_SITE_MANAGED\t%s\n' "$site_managed"
 if [ -n "$domain" ] && [ -d /etc/caddy ]; then
-  find /etc/caddy -type f ! -name '*.gcms-backup-*' ! -name '*.bak*' 2>/dev/null | while IFS= read -r file; do
-    grep -Fq "$domain" "$file" 2>/dev/null && printf 'PILOT_CADDY_DOMAIN_FILE\t%s\n' "$file"
+  for check_domain in "$domain" "$redirect_domain"; do
+    [ -n "$check_domain" ] || continue
+    escaped_domain=$(printf '%s' "$check_domain" | sed 's/[.]/\\./g')
+    find /etc/caddy -type f ! -name '*.gcms-backup-*' ! -name '*.bak*' 2>/dev/null | while IFS= read -r file; do
+      grep -Eq "(^|[[:space:],])((https?://)?${escaped_domain})(:[0-9]+)?([[:space:],{]|$)" "$file" 2>/dev/null && printf 'PILOT_CADDY_DOMAIN_FILE\t%s\n' "$file"
+    done
   done
 fi
 exit 0
@@ -200,6 +230,7 @@ const GCMS_CADDY_CONFIGURE_CMD: &str = r#"
 set -eu
 root=${PILOT_GCMS_HOME:?}
 domain=${PILOT_DOMAIN:?}
+redirect_domain=${PILOT_REDIRECT_DOMAIN:-}
 conf="$root/shared/cms.conf"
 caddyfile=/etc/caddy/Caddyfile
 sitefile=/etc/caddy/conf.d/gcms.caddy
@@ -255,6 +286,202 @@ if [ "$code" -ne 0 ]; then
   restore_before
   exit "$code"
 fi
+
+# Pilot 明确使用 301，并让跳转域名完整保留路径与查询参数。官方脚本先生成并校验
+# 主域名配置；这里仅在其 GCMS 托管站点文件中加入独立跳转块，再做一次完整校验。
+if [ -n "$redirect_domain" ]; then
+  tmp_site="${sitefile}.pilot.$$"
+  {
+    IFS= read -r first_line || true
+    printf '%s\n' "$first_line"
+    printf '%s {\n' "$redirect_domain"
+    printf '    redir https://%s{uri} 301\n' "$domain"
+    printf '}\n\n'
+    cat
+  } < "$sitefile" > "$tmp_site"
+  mv "$tmp_site" "$sitefile"
+  chmod 0644 "$sitefile"
+  if ! caddy validate --config "$caddyfile" --adapter caddyfile; then
+    printf '%s\n' '跳转域名配置校验失败，正在恢复修改前的配置…' >&2
+    restore_before
+    exit 45
+  fi
+  set +e
+  if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet caddy 2>/dev/null; then
+    systemctl reload caddy
+    reload_code=$?
+  else
+    caddy reload --config "$caddyfile" --adapter caddyfile
+    reload_code=$?
+  fi
+  set -e
+  if [ "$reload_code" -ne 0 ]; then
+    printf '%s\n' '跳转域名配置重载失败，正在恢复修改前的配置…' >&2
+    restore_before
+    exit 46
+  fi
+fi
+
+set_conf_value() {
+  key=$1
+  value=$2
+  tmp_conf="${conf}.pilot.$$"
+  if grep -q "^${key}=" "$conf" 2>/dev/null; then
+    awk -v k="$key" -v v="$value" 'BEGIN{done=0} $0 ~ "^" k "=" { print k "=" v; done=1; next } { print } END{ if (!done) print k "=" v }' "$conf" > "$tmp_conf"
+  else
+    cp "$conf" "$tmp_conf"
+    printf '%s=%s\n' "$key" "$value" >> "$tmp_conf"
+  fi
+  mv "$tmp_conf" "$conf"
+}
+set_conf_value PILOT_REDIRECT_DOMAIN "$redirect_domain"
+
+# setup-caddy.sh 会更新 shared/cms.conf 中的 BASE_URL / ADDR。GCMS 在启动时读取这些值，
+# 所以必须重启；否则新域名虽然能返回后台 HTML，/assets/* 仍会因旧 Host 配置而 404。
+# 显式清掉 SSH 登录环境里可能遗留的同名变量，否则 cms.sh 会让环境变量覆盖刚写入的配置。
+printf '%s\n' '正在重启 GCMS 以应用新的访问域名…'
+set +e
+(cd "$root"; unset ADDR BASE_URL CMS_DB GCMS_CADDY_ONDEMAND; ./scripts/cms.sh restart)
+code=$?
+set -e
+if [ "$code" -ne 0 ]; then
+  printf '%s\n' 'GCMS 重启失败，正在恢复修改前的配置…' >&2
+  restore_before
+  (cd "$root"; unset ADDR BASE_URL CMS_DB GCMS_CADDY_ONDEMAND; ./scripts/cms.sh restart) >/dev/null 2>&1 || true
+  exit "$code"
+fi
+"#;
+
+/// 修复已写入新域名、但实际仍由旧 GCMS 进程提供服务的安装。
+///
+/// 老安装可能遗留失效 PID 文件，或 SSH 登录环境中还导出了旧 BASE_URL：此时
+/// `cms.sh restart` 看似执行过，真正占用端口的进程却没有加载 shared/cms.conf。
+/// 脚本只会接管安装根目录下的 GCMS 二进制，不会按端口盲杀其它服务。
+const GCMS_REMOTE_RELOAD_DOMAIN_CMD: &str = r#"
+set -eu
+root=${PILOT_GCMS_HOME:?}
+domain=${PILOT_DOMAIN:?}
+conf="$root/shared/cms.conf"
+[ -x "$root/scripts/cms.sh" ] && [ -x "$root/current/bin/cms" ] && [ -f "$conf" ] || {
+  printf '%s\n' 'GCMS 标准目录不完整，无法重新加载域名配置' >&2
+  exit 2
+}
+
+set_conf_value() {
+  key=$1
+  value=$2
+  tmp="${conf}.pilot.$$"
+  if grep -q "^${key}=" "$conf" 2>/dev/null; then
+    awk -v k="$key" -v v="$value" 'BEGIN{done=0} $0 ~ "^" k "=" { print k "=" v; done=1; next } { print } END{ if (!done) print k "=" v }' "$conf" > "$tmp"
+  else
+    cp "$conf" "$tmp"
+    printf '%s=%s\n' "$key" "$value" >> "$tmp"
+  fi
+  mv "$tmp" "$conf"
+}
+
+# “重新检测”针对的就是已经确认过的访问域名。再次写入可修复旧版 Pilot 曾被
+# 登录环境 BASE_URL 覆盖、导致配置文件仍是 localhost 的情况。
+set_conf_value BASE_URL "https://$domain"
+
+restart_from_conf() {
+  (
+    cd "$root"
+    unset ADDR BASE_URL CMS_DB GCMS_CADDY_ONDEMAND
+    ./scripts/cms.sh restart
+  )
+}
+
+asset_code() {
+  command -v curl >/dev/null 2>&1 || { printf '000'; return; }
+  addr=$(awk -F= '$1 == "ADDR" { sub(/^[^=]*=/, ""); gsub(/^[[:space:]]+|[[:space:]]+$/, ""); print; exit }' "$conf" 2>/dev/null || true)
+  [ -n "$addr" ] || addr=127.0.0.1:8080
+  case "$addr" in
+    :*) target="127.0.0.1$addr" ;;
+    0.0.0.0:*) target="127.0.0.1:${addr##*:}" ;;
+    '[::]':*) target="127.0.0.1:${addr##*:}" ;;
+    '[::1]':*) target="$addr" ;;
+    *) target="$addr" ;;
+  esac
+  curl --noproxy '*' -sS -o /dev/null -w '%{http_code}' -H "Host: $domain" --connect-timeout 3 --max-time 6 "http://$target/assets/css/admin.css" 2>/dev/null || printf '000'
+}
+
+asset_ready() {
+  i=0
+  while [ "$i" -lt 5 ]; do
+    code=$(asset_code)
+    case "$code" in 2[0-9][0-9]|3[0-9][0-9]) return 0 ;; esac
+    i=$((i + 1))
+    sleep 1
+  done
+  return 1
+}
+
+set +e
+restart_from_conf
+restart_code=$?
+set -e
+if [ "$restart_code" -eq 0 ] && asset_ready; then
+  printf 'PILOT_GCMS_RELOADED\t1\n'
+  exit 0
+fi
+
+# PID 文件失效时，cms.sh 无法结束旧进程，新进程又会因端口占用而退出。
+# 仅枚举 exe 位于当前标准安装目录内的 cms 进程，绝不按名称或端口广泛终止。
+root_real=$(readlink -f "$root" 2>/dev/null || printf '%s' "$root")
+current_real=$(readlink -f "$root/current/bin/cms" 2>/dev/null || printf '')
+pids=''
+managed_unit=''
+if [ -d /proc ]; then
+  for proc in /proc/[0-9]*; do
+    [ -r "$proc/exe" ] || continue
+    pid=${proc##*/}
+    exe=$(readlink "$proc/exe" 2>/dev/null || true)
+    exe=${exe% (deleted)}
+    case "$exe" in
+      "$current_real"|"$root_real"/releases/*/bin/cms|"$root_real"/bin/cms)
+        unit=$(sed -n 's#^.*/\([^/]*\.service\)$#\1#p' "$proc/cgroup" 2>/dev/null | head -1 || true)
+        if [ -n "$unit" ] && command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet "$unit" 2>/dev/null; then
+          managed_unit=$unit
+        else
+          pids="$pids $pid"
+        fi
+        ;;
+    esac
+  done
+fi
+
+if [ -n "$managed_unit" ]; then
+  printf 'GCMS 由 systemd 服务 %s 托管；该服务仍在使用旧 BASE_URL，请更新服务环境后重启。\n' "$managed_unit" >&2
+  exit 46
+fi
+
+if [ -n "$pids" ]; then
+  for pid in $pids; do kill "$pid" 2>/dev/null || true; done
+  i=0
+  while [ "$i" -lt 12 ]; do
+    alive=''
+    for pid in $pids; do kill -0 "$pid" 2>/dev/null && alive="$alive $pid"; done
+    [ -z "$alive" ] && break
+    sleep 1
+    i=$((i + 1))
+  done
+  for pid in $pids; do kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null || true; done
+  rm -f "$root/run/cms.pid"
+  (
+    cd "$root"
+    unset ADDR BASE_URL CMS_DB GCMS_CADDY_ONDEMAND
+    ./scripts/cms.sh start
+  )
+fi
+
+if asset_ready; then
+  printf 'PILOT_GCMS_RELOADED\t1\n'
+  exit 0
+fi
+
+printf 'GCMS 已重启，但仍未按 %s 提供页面资源；请查看 %s/logs/cms.log。\n' "$domain" "$root" >&2
+exit 47
 "#;
 
 #[derive(Clone, Serialize, Default, Debug, PartialEq)]
@@ -264,6 +491,10 @@ pub(super) struct GcmsRemoteStatus {
     path: String,
     running: bool,
     base_url: String,
+    redirect_domain: String,
+    /// default | changed | unknown
+    password_status: String,
+    admin_user: String,
 }
 
 #[derive(Clone, Serialize, Default, Debug, PartialEq)]
@@ -301,10 +532,25 @@ pub(super) struct GcmsCloudflareRecord {
 }
 
 #[derive(Clone, Serialize, Default, Debug, PartialEq)]
+pub(super) struct GcmsCloudflareCandidate {
+    connection_id: String,
+    connection_name: String,
+    connection_remark: String,
+    key_prefix: String,
+    account_id: String,
+    zone_name: String,
+    status: String,
+    detail: String,
+    /// 已能读取 Zone、DNS 和 Zone Settings。DNS Edit 最终仍由写入 API 再校验。
+    permission_complete: bool,
+    preferred: bool,
+}
+
+#[derive(Clone, Serialize, Default, Debug, PartialEq)]
 pub(super) struct GcmsCloudflareCheck {
-    /// matched | connection_required | zone_not_found | permission_error | api_error |
-    /// record_missing | unsupported_record | origin_mismatch | zone_inactive | ssl_unreadable |
-    /// ssl_incompatible
+    /// matched | connection_required | connection_selection_required | zone_not_found |
+    /// permission_error | api_error | record_missing | unsupported_record | origin_mismatch |
+    /// zone_inactive | ssl_unreadable | ssl_incompatible
     status: String,
     connected_accounts: usize,
     connection_id: String,
@@ -317,6 +563,7 @@ pub(super) struct GcmsCloudflareCheck {
     ssl_mode: String,
     ssl_error: String,
     detail: String,
+    candidates: Vec<GcmsCloudflareCandidate>,
 }
 
 #[derive(Clone, Serialize, Debug, PartialEq)]
@@ -330,8 +577,22 @@ pub(super) struct GcmsAccessCheck {
     hosting: GcmsDnsHosting,
     direct_dns_matched: bool,
     cloudflare: Option<GcmsCloudflareCheck>,
+    primary_matched: bool,
+    redirect: Option<GcmsRedirectCheck>,
     matched: bool,
     caddy: Option<GcmsCaddyPreflight>,
+}
+
+#[derive(Clone, Serialize, Default, Debug, PartialEq)]
+pub(super) struct GcmsRedirectCheck {
+    domain: String,
+    dns_ipv4: Vec<String>,
+    dns_ipv6: Vec<String>,
+    dns_error: String,
+    hosting: GcmsDnsHosting,
+    direct_dns_matched: bool,
+    cloudflare: Option<GcmsCloudflareCheck>,
+    matched: bool,
 }
 
 #[derive(Clone, Serialize)]
@@ -341,11 +602,19 @@ pub(super) struct GcmsAccessApplyResult {
     https_ok: bool,
     http_status: Option<u16>,
     verification_error: String,
+    redirect_url: String,
+    redirect_ok: bool,
+    redirect_http_status: Option<u16>,
+    redirect_verification_error: String,
+    cloudflare_proxy_applicable: bool,
+    cloudflare_proxied: bool,
+    cloudflare_proxy_error: String,
 }
 
 #[derive(Clone, Serialize)]
 pub(super) struct GcmsCloudflareCreateResult {
     created: bool,
+    created_domains: Vec<String>,
     check: GcmsAccessCheck,
 }
 
@@ -376,7 +645,10 @@ struct RemoteCaddyProbe {
 }
 
 fn parse_gcms_remote_status(raw: &str) -> Result<GcmsRemoteStatus, String> {
-    let mut out = GcmsRemoteStatus::default();
+    let mut out = GcmsRemoteStatus {
+        password_status: "unknown".into(),
+        ..GcmsRemoteStatus::default()
+    };
     let mut saw_installed = false;
     for line in raw.lines() {
         let Some((key, value)) = line.split_once('\t') else {
@@ -391,6 +663,14 @@ fn parse_gcms_remote_status(raw: &str) -> Result<GcmsRemoteStatus, String> {
             "PILOT_GCMS_VERSION" => out.version = value.trim().to_string(),
             "PILOT_GCMS_RUNNING" => out.running = value.trim() == "1",
             "PILOT_GCMS_BASE_URL" => out.base_url = value.trim().to_string(),
+            "PILOT_GCMS_REDIRECT_DOMAIN" => out.redirect_domain = value.trim().to_string(),
+            "PILOT_GCMS_PASSWORD_STATUS" => {
+                out.password_status = match value.trim() {
+                    "default" | "changed" => value.trim().to_string(),
+                    _ => "unknown".to_string(),
+                }
+            }
+            "PILOT_GCMS_ADMIN_USER" => out.admin_user = value.trim().to_string(),
             _ => {}
         }
     }
@@ -436,6 +716,21 @@ fn normalize_public_domain(raw: &str) -> Result<String, String> {
         }
     }
     Ok(domain)
+}
+
+fn normalize_redirect_domain(
+    raw: Option<&str>,
+    primary_domain: &str,
+) -> Result<Option<String>, String> {
+    let Some(raw) = raw.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    let domain =
+        normalize_public_domain(raw).map_err(|error| format!("跳转域名不正确：{error}"))?;
+    if domain == primary_domain {
+        return Err("跳转域名不能与主访问域名相同".into());
+    }
+    Ok(Some(domain))
 }
 
 fn usable_public_ip(ip: IpAddr) -> bool {
@@ -658,8 +953,13 @@ async fn gcms_caddy_preflight_inner(
     state: &AppState,
     conn_id: &str,
     domain: &str,
+    redirect_domain: Option<&str>,
 ) -> Result<GcmsCaddyPreflight, String> {
-    let env = format!("PILOT_DOMAIN={}", shell_quote(domain));
+    let env = format!(
+        "PILOT_DOMAIN={} PILOT_REDIRECT_DOMAIN={}",
+        shell_quote(domain),
+        shell_quote(redirect_domain.unwrap_or_default())
+    );
     let body = shell_quote(GCMS_CADDY_PREFLIGHT_CMD);
     let command = format!("env {env} sh -c {body}");
     let out = state.ssh.exec(conn_id, &command, 35, false).await?;
@@ -891,6 +1191,7 @@ fn classify_cloudflare_inspection(
     inspect: cf::CfHostnameInspect,
     server_v4: &[IpAddr],
     server_v6: &[IpAddr],
+    allowed_cname_target: Option<&str>,
 ) -> GcmsCloudflareCheck {
     let relevant = inspect
         .records
@@ -909,14 +1210,31 @@ fn classify_cloudflare_inspection(
         .filter(|record| matches!(record.record_type.as_str(), "A" | "AAAA"))
         .collect::<Vec<_>>();
     let has_cname = relevant.iter().any(|record| record.record_type == "CNAME");
-    let origin_matched = !address_records.is_empty()
-        && address_records.iter().all(|record| {
-            record.content.parse::<IpAddr>().is_ok_and(|ip| match ip {
-                IpAddr::V4(_) => server_v4.contains(&ip),
-                IpAddr::V6(_) => server_v6.contains(&ip),
-            })
+    let cname_matched = address_records.is_empty()
+        && has_cname
+        && allowed_cname_target.is_some_and(|target| {
+            relevant
+                .iter()
+                .filter(|record| record.record_type == "CNAME")
+                .all(|record| {
+                    record
+                        .content
+                        .trim_end_matches('.')
+                        .eq_ignore_ascii_case(target)
+                })
         });
-    let proxied = relevant.iter().any(|record| record.proxied);
+    let origin_matched = cname_matched
+        || (!address_records.is_empty()
+            && address_records.iter().all(|record| {
+                record.content.parse::<IpAddr>().is_ok_and(|ip| match ip {
+                    IpAddr::V4(_) => server_v4.contains(&ip),
+                    IpAddr::V6(_) => server_v6.contains(&ip),
+                })
+            }));
+    let any_proxied = relevant.iter().any(|record| record.proxied);
+    // 同一主机名可能同时有 A / AAAA。只有全部相关记录都已代理，前端才可显示
+    // “橙云已完成”；部分代理仍需进入最后一步，把剩余记录安全补齐。
+    let proxied = !relevant.is_empty() && relevant.iter().all(|record| record.proxied);
     let records = relevant
         .into_iter()
         .map(|record| GcmsCloudflareRecord {
@@ -932,10 +1250,11 @@ fn classify_cloudflare_inspection(
             "record_missing",
             format!("Cloudflare Zone 中没有 {domain} 的 A、AAAA 或 CNAME 记录。"),
         )
-    } else if address_records.is_empty() && has_cname {
+    } else if address_records.is_empty() && has_cname && !cname_matched {
         (
             "unsupported_record",
-            "检测到 CNAME。为避免把代理链误判成源站，当前自动配置只核验直接 A / AAAA 记录。".into(),
+            "检测到指向其他目标的 CNAME。为避免把代理链误判成当前服务器，Pilot 不会自动修改。"
+                .into(),
         )
     } else if !origin_matched {
         (
@@ -954,12 +1273,12 @@ fn classify_cloudflare_inspection(
                 }
             ),
         )
-    } else if proxied && !inspect.ssl_error.is_empty() {
+    } else if any_proxied && !inspect.ssl_error.is_empty() {
         (
             "ssl_unreadable",
             "橙云已开启，但无法读取 SSL/TLS 模式。请给 Token 增加 Zone Settings: Read 权限后重新检测。".into(),
         )
-    } else if proxied && !matches!(inspect.ssl_mode.as_str(), "full" | "strict") {
+    } else if any_proxied && !matches!(inspect.ssl_mode.as_str(), "full" | "strict") {
         (
             "ssl_incompatible",
             format!(
@@ -974,8 +1293,18 @@ fn classify_cloudflare_inspection(
     } else {
         (
             "matched",
-            if proxied {
+            if cname_matched {
+                if proxied {
+                    "跳转域名的 CNAME 已指向主域名，橙云与 SSL/TLS 模式可安全继续。".into()
+                } else if any_proxied {
+                    "跳转域名只有部分记录开启橙云，Pilot 会在源站验证后补齐。".into()
+                } else {
+                    "跳转域名的 CNAME 已指向主域名。".into()
+                }
+            } else if proxied {
                 "橙云已开启；真实源站记录与服务器一致，SSL/TLS 模式可安全继续。".into()
+            } else if any_proxied {
+                "部分 DNS 记录已开启橙云；真实源站一致，Pilot 会在源站验证后补齐。".into()
             } else {
                 "Cloudflare DNS 记录与服务器一致；当前为仅 DNS。".into()
             },
@@ -995,6 +1324,75 @@ fn classify_cloudflare_inspection(
         ssl_mode: inspect.ssl_mode,
         ssl_error: inspect.ssl_error,
         detail,
+        candidates: Vec::new(),
+    }
+}
+
+fn cloudflare_error_is_permission_related(error: &str) -> bool {
+    error.contains("Cloudflare 401")
+        || error.contains("Cloudflare 403")
+        || error.contains("权限")
+        || error.to_ascii_lowercase().contains("unauthorized")
+}
+
+fn cloudflare_candidate(
+    connection: &pack::Connection,
+    zone: &str,
+    status: &str,
+    detail: &str,
+    permission_complete: bool,
+    preferred: bool,
+) -> GcmsCloudflareCandidate {
+    GcmsCloudflareCandidate {
+        connection_id: connection.id.clone(),
+        connection_name: connection.name.clone(),
+        connection_remark: connection.remark.clone(),
+        key_prefix: connection.key_prefix.clone(),
+        account_id: connection.account_id.clone(),
+        zone_name: zone.into(),
+        status: status.into(),
+        detail: detail.into(),
+        permission_complete,
+        preferred,
+    }
+}
+
+fn cloudflare_check_with_candidate(
+    status: &str,
+    connected_accounts: usize,
+    zone: &str,
+    detail: String,
+    selected: Option<&GcmsCloudflareCandidate>,
+    candidates: Vec<GcmsCloudflareCandidate>,
+) -> GcmsCloudflareCheck {
+    GcmsCloudflareCheck {
+        status: status.into(),
+        connected_accounts,
+        connection_id: selected
+            .map(|candidate| candidate.connection_id.clone())
+            .unwrap_or_default(),
+        connection_name: selected
+            .map(|candidate| candidate.connection_name.clone())
+            .unwrap_or_default(),
+        zone_name: zone.into(),
+        detail,
+        candidates,
+        ..Default::default()
+    }
+}
+
+fn auto_cloudflare_candidate_index(candidates: &[GcmsCloudflareCandidate]) -> Option<usize> {
+    let complete = candidates
+        .iter()
+        .enumerate()
+        .filter_map(|(index, candidate)| candidate.permission_complete.then_some(index))
+        .collect::<Vec<_>>();
+    if complete.len() == 1 {
+        complete.first().copied()
+    } else if candidates.len() == 1 {
+        Some(0)
+    } else {
+        None
     }
 }
 
@@ -1004,6 +1402,7 @@ async fn inspect_cloudflare_hosting(
     zone: &str,
     server_v4: &[IpAddr],
     server_v6: &[IpAddr],
+    allowed_cname_target: Option<&str>,
 ) -> GcmsCloudflareCheck {
     let connections = state
         .conns
@@ -1030,21 +1429,50 @@ async fn inspect_cloudflare_hosting(
         };
     }
 
-    let mut permission_errors = Vec::new();
-    let mut api_errors = Vec::new();
-    let mut readable_fallback = None;
-    for connection in connections {
+    let preferred_id = connections
+        .iter()
+        .find(|connection| {
+            connection
+                .preferred_zones
+                .iter()
+                .any(|saved| saved.eq_ignore_ascii_case(zone))
+        })
+        .map(|connection| connection.id.clone());
+    let mut ordered_connections = connections.iter().collect::<Vec<_>>();
+    ordered_connections
+        .sort_by_key(|connection| preferred_id.as_deref() != Some(connection.id.as_str()));
+    let mut found = Vec::<(GcmsCloudflareCheck, GcmsCloudflareCandidate)>::new();
+    let mut permission_failures = Vec::<GcmsCloudflareCandidate>::new();
+    let mut api_failures = Vec::<GcmsCloudflareCandidate>::new();
+    for connection in ordered_connections {
+        let preferred = preferred_id.as_deref() == Some(connection.id.as_str());
         let connection_id = connection.id.clone();
         let key_id = connection_id.clone();
         let token =
             match tauri::async_runtime::spawn_blocking(move || keychain::get_key(&key_id)).await {
                 Ok(Ok(token)) => token,
                 Ok(Err(error)) => {
-                    api_errors.push(format!("{}：{error}", connection.name));
+                    let detail = format!("{}：{error}", connection.name);
+                    api_failures.push(cloudflare_candidate(
+                        connection,
+                        zone,
+                        "api_error",
+                        &detail,
+                        false,
+                        preferred,
+                    ));
                     continue;
                 }
                 Err(error) => {
-                    api_errors.push(format!("{}：读取凭据失败（{error}）", connection.name));
+                    let detail = format!("{}：读取凭据失败（{error}）", connection.name);
+                    api_failures.push(cloudflare_candidate(
+                        connection,
+                        zone,
+                        "api_error",
+                        &detail,
+                        false,
+                        preferred,
+                    ));
                     continue;
                 }
             };
@@ -1058,63 +1486,226 @@ async fn inspect_cloudflare_hosting(
                     inspect,
                     server_v4,
                     server_v6,
+                    allowed_cname_target,
                 );
-                // 同一账号可能被重新连接过：旧 Token 读不到 SSL 设置时，继续寻找权限更完整的连接。
-                if classified.status == "ssl_unreadable" {
-                    readable_fallback.get_or_insert(classified);
-                    continue;
+                let candidate = cloudflare_candidate(
+                    connection,
+                    &classified.zone_name,
+                    &classified.status,
+                    &classified.detail,
+                    classified.ssl_error.is_empty(),
+                    preferred,
+                );
+                // 已有明确绑定时，正常检测只访问这一条连接，不再把用户的所有 Token
+                // 逐个试一遍。仅当它失效/无权/已不含该 Zone 时，才继续寻找可切换候选。
+                if preferred {
+                    let mut selected = classified;
+                    selected.candidates = vec![candidate];
+                    return selected;
                 }
-                return classified;
+                found.push((classified, candidate));
             }
             Ok(None) => {}
             Err(error) => {
-                let error = format!("{}：{error}", connection.name);
-                if error.contains("Cloudflare 401")
-                    || error.contains("Cloudflare 403")
-                    || error.contains("权限")
-                {
-                    permission_errors.push(error);
+                let detail = format!("{}：{error}", connection.name);
+                let candidate = cloudflare_candidate(
+                    connection,
+                    zone,
+                    if cloudflare_error_is_permission_related(&detail) {
+                        "permission_error"
+                    } else {
+                        "api_error"
+                    },
+                    &detail,
+                    false,
+                    preferred,
+                );
+                if cloudflare_error_is_permission_related(&detail) {
+                    permission_failures.push(candidate);
                 } else {
-                    api_errors.push(error);
+                    api_failures.push(candidate);
                 }
             }
         }
     }
 
-    if let Some(classified) = readable_fallback {
-        classified
-    } else if !permission_errors.is_empty() {
-        GcmsCloudflareCheck {
-            status: "permission_error".into(),
-            connected_accounts,
-            zone_name: zone.into(),
-            detail: format!(
-                "无法完整读取 Cloudflare Zone/DNS。请确认 Token 具有 Zone: Read、DNS: Read（或 Edit）；橙云还需 Zone Settings: Read。 {}",
-                permission_errors[0]
-            ),
-            ..Default::default()
+    let successful_candidates = found
+        .iter()
+        .map(|(_, candidate)| candidate.clone())
+        .collect::<Vec<_>>();
+
+    // 用户已经明确选择过时，绝不因列表顺序或另一个 Token 权限更高而悄悄换连接。
+    if let Some(preferred_id) = preferred_id.as_deref() {
+        if let Some((mut selected, _)) = found
+            .iter()
+            .find(|(_, candidate)| candidate.connection_id == preferred_id)
+            .cloned()
+        {
+            selected.candidates = successful_candidates;
+            return selected;
         }
-    } else if !api_errors.is_empty() {
-        GcmsCloudflareCheck {
-            status: "api_error".into(),
-            connected_accounts,
-            zone_name: zone.into(),
-            detail: format!(
-                "Cloudflare 只读检测暂时失败，请检查网络或系统钥匙串后重试。 {}",
-                api_errors[0]
-            ),
-            ..Default::default()
+        if let Some(selected) = permission_failures
+            .iter()
+            .find(|candidate| candidate.connection_id == preferred_id)
+        {
+            let mut candidates = successful_candidates;
+            candidates.push(selected.clone());
+            return cloudflare_check_with_candidate(
+                "permission_error",
+                connected_accounts,
+                zone,
+                format!(
+                    "已固定使用 Cloudflare 连接「{}」，但它无法完整读取 {zone}。请更新这条连接的 Token，至少授予 Zone: Read、DNS: Read（或 Edit）和 Zone Settings: Read。 {}",
+                    selected.connection_name, selected.detail
+                ),
+                Some(selected),
+                candidates,
+            );
         }
+        if let Some(selected) = api_failures
+            .iter()
+            .find(|candidate| candidate.connection_id == preferred_id)
+        {
+            let mut candidates = successful_candidates;
+            candidates.push(selected.clone());
+            return cloudflare_check_with_candidate(
+                "api_error",
+                connected_accounts,
+                zone,
+                format!(
+                    "已固定使用 Cloudflare 连接「{}」，但当前无法读取它。请检查网络、系统钥匙串或 Token 后重试。 {}",
+                    selected.connection_name, selected.detail
+                ),
+                Some(selected),
+                candidates,
+            );
+        }
+        if !found.is_empty() {
+            return cloudflare_check_with_candidate(
+                "connection_selection_required",
+                connected_accounts,
+                zone,
+                format!(
+                    "之前选中的 Cloudflare 连接已无法访问 {zone}。为避免误用其他 Token，Pilot 没有自动切换，请重新选择连接。"
+                ),
+                None,
+                successful_candidates,
+            );
+        }
+    }
+
+    // 没有历史选择：只有“唯一权限完整候选”或“唯一候选”才自动采用；其余交给用户。
+    let selected_index = auto_cloudflare_candidate_index(&successful_candidates);
+    if let Some(index) = selected_index {
+        let mut selected = found[index].0.clone();
+        selected.candidates = successful_candidates;
+        return selected;
+    }
+    if found.len() > 1 {
+        return cloudflare_check_with_candidate(
+            "connection_selection_required",
+            connected_accounts,
+            zone,
+            format!(
+                "有 {} 条 Cloudflare 连接都能管理 {zone}。请选择本次要使用的连接，Pilot 会记住选择并确保 DNS、HTTPS 与橙云始终使用同一枚 Token。",
+                found.len()
+            ),
+            None,
+            successful_candidates,
+        );
+    }
+
+    if permission_failures.len() == 1 {
+        let selected = &permission_failures[0];
+        return cloudflare_check_with_candidate(
+            "permission_error",
+            connected_accounts,
+            zone,
+            format!(
+                "Cloudflare 连接「{}」无法完整读取 {zone}。请更新这条连接的 Token，至少授予 Zone: Read、DNS: Read（或 Edit）和 Zone Settings: Read。 {}",
+                selected.connection_name, selected.detail
+            ),
+            Some(selected),
+            permission_failures.clone(),
+        );
+    }
+    if permission_failures.len() > 1 {
+        return cloudflare_check_with_candidate(
+            "connection_selection_required",
+            connected_accounts,
+            zone,
+            format!(
+                "有 {} 条 Cloudflare 连接因权限不足而无法确认是否管理 {zone}。请选择你为这个域名创建的连接，再更新它的 Token。",
+                permission_failures.len()
+            ),
+            None,
+            permission_failures,
+        );
+    }
+    if let Some(selected) = api_failures.first().cloned() {
+        return cloudflare_check_with_candidate(
+            "api_error",
+            connected_accounts,
+            zone,
+            format!(
+                "Cloudflare 只读检测暂时失败，请检查网络、系统钥匙串或 Token 后重试。 {}",
+                selected.detail
+            ),
+            (api_failures.len() == 1).then_some(&selected),
+            api_failures,
+        );
+    }
+    GcmsCloudflareCheck {
+        status: "zone_not_found".into(),
+        connected_accounts,
+        zone_name: zone.into(),
+        detail: format!(
+            "已连接的 {connected_accounts} 个 Cloudflare 账号中没有找到 {zone}，请连接持有该域名的账号。"
+        ),
+        ..Default::default()
+    }
+}
+
+async fn inspect_access_domain(
+    state: &AppState,
+    domain: &str,
+    server_v4: &[IpAddr],
+    server_v6: &[IpAddr],
+    allowed_cname_target: Option<&str>,
+) -> GcmsRedirectCheck {
+    let ((dns_v4, dns_v6, dns_error), hosting) =
+        tokio::join!(resolve_domain_ips(domain), detect_dns_hosting(domain));
+    // 不能只凭“其中一个地址命中”放行：遗留的 A/AAAA 会把一部分访客带到错误源站。
+    let direct_dns_matched = dns_addresses_match_server(&dns_v4, &dns_v6, server_v4, server_v6);
+    let cloudflare = if hosting.provider == "cloudflare" {
+        Some(
+            inspect_cloudflare_hosting(
+                state,
+                domain,
+                &hosting.zone,
+                server_v4,
+                server_v6,
+                allowed_cname_target,
+            )
+            .await,
+        )
     } else {
-        GcmsCloudflareCheck {
-            status: "zone_not_found".into(),
-            connected_accounts,
-            zone_name: zone.into(),
-            detail: format!(
-                "已连接的 {connected_accounts} 个 Cloudflare 账号中没有找到 {zone}，请连接持有该域名的账号。"
-            ),
-            ..Default::default()
-        }
+        None
+    };
+    // Cloudflare（尤其橙云）必须以 API 中的真实源站记录为准；其他托管商保持公网 DNS 对照。
+    let matched = cloudflare
+        .as_ref()
+        .map(|check| check.status == "matched")
+        .unwrap_or(direct_dns_matched);
+    GcmsRedirectCheck {
+        domain: domain.into(),
+        dns_ipv4: dns_v4.into_iter().map(|ip| ip.to_string()).collect(),
+        dns_ipv6: dns_v6.into_iter().map(|ip| ip.to_string()).collect(),
+        dns_error,
+        hosting,
+        direct_dns_matched,
+        cloudflare,
+        matched,
     }
 }
 
@@ -1122,8 +1713,10 @@ async fn gcms_remote_access_check_inner(
     state: &AppState,
     conn_id: &str,
     raw_domain: &str,
+    raw_redirect_domain: Option<&str>,
 ) -> Result<GcmsAccessCheck, String> {
     let domain = normalize_public_domain(raw_domain)?;
+    let redirect_domain = normalize_redirect_domain(raw_redirect_domain, &domain)?;
     let conn = state.conns.get(conn_id)?;
     if conn.kind != "ssh" {
         return Err("这不是远程服务器连接".into());
@@ -1153,24 +1746,28 @@ async fn gcms_remote_access_check_inner(
         return Err("无法从服务器探测公网 IP。请确认服务器能访问 api.ipify.org，或使用公网 IP 建立 SSH 连接".into());
     }
 
-    let ((dns_v4, dns_v6, dns_error), hosting) =
-        tokio::join!(resolve_domain_ips(&domain), detect_dns_hosting(&domain));
-    // 不能只凭“其中一个地址命中”放行：遗留的 A/AAAA 会把一部分访客带到错误源站。
-    let direct_dns_matched = dns_addresses_match_server(&dns_v4, &dns_v6, &server_v4, &server_v6);
-    let cloudflare = if hosting.provider == "cloudflare" {
-        Some(
-            inspect_cloudflare_hosting(state, &domain, &hosting.zone, &server_v4, &server_v6).await,
-        )
+    let (primary, redirect) = if let Some(redirect_domain) = redirect_domain.as_deref() {
+        let (primary, redirect) = tokio::join!(
+            inspect_access_domain(state, &domain, &server_v4, &server_v6, None),
+            inspect_access_domain(
+                state,
+                redirect_domain,
+                &server_v4,
+                &server_v6,
+                Some(&domain)
+            )
+        );
+        (primary, Some(redirect))
     } else {
-        None
+        (
+            inspect_access_domain(state, &domain, &server_v4, &server_v6, None).await,
+            None,
+        )
     };
-    // Cloudflare（尤其橙云）必须以 API 中的真实源站记录为准；其他托管商保持公网 DNS 对照。
-    let matched = cloudflare
-        .as_ref()
-        .map(|check| check.status == "matched")
-        .unwrap_or(direct_dns_matched);
+    let primary_matched = primary.matched;
+    let matched = primary_matched && redirect.as_ref().map(|check| check.matched).unwrap_or(true);
     let caddy = if matched {
-        Some(gcms_caddy_preflight_inner(state, conn_id, &domain).await?)
+        Some(gcms_caddy_preflight_inner(state, conn_id, &domain, redirect_domain.as_deref()).await?)
     } else {
         None
     };
@@ -1178,12 +1775,14 @@ async fn gcms_remote_access_check_inner(
         domain,
         server_ipv4: server_v4.into_iter().map(|ip| ip.to_string()).collect(),
         server_ipv6: server_v6.into_iter().map(|ip| ip.to_string()).collect(),
-        dns_ipv4: dns_v4.into_iter().map(|ip| ip.to_string()).collect(),
-        dns_ipv6: dns_v6.into_iter().map(|ip| ip.to_string()).collect(),
-        dns_error,
-        hosting,
-        direct_dns_matched,
-        cloudflare,
+        dns_ipv4: primary.dns_ipv4,
+        dns_ipv6: primary.dns_ipv6,
+        dns_error: primary.dns_error,
+        hosting: primary.hosting,
+        direct_dns_matched: primary.direct_dns_matched,
+        cloudflare: primary.cloudflare,
+        primary_matched,
+        redirect,
         matched,
         caddy,
     })
@@ -1194,8 +1793,90 @@ pub(super) async fn gcms_remote_access_check(
     state: tauri::State<'_, AppState>,
     conn_id: String,
     domain: String,
+    redirect_domain: Option<String>,
 ) -> Result<GcmsAccessCheck, String> {
-    gcms_remote_access_check_inner(&state, &conn_id, &domain).await
+    gcms_remote_access_check_inner(&state, &conn_id, &domain, redirect_domain.as_deref()).await
+}
+
+/// 用户在多个候选中明确选择管理某个 Zone 的 Cloudflare 连接。选择前重新只读确认
+/// 该 Token 确实能看到 Zone，避免仅凭前端传来的连接 id 写入错误绑定。
+#[tauri::command]
+pub(super) async fn gcms_cloudflare_select_connection(
+    state: tauri::State<'_, AppState>,
+    zone: String,
+    connection_id: String,
+) -> Result<pack::Connection, String> {
+    let zone = normalize_public_domain(&zone)?;
+    let connection = state.conns.get(&connection_id)?;
+    if connection.kind != "cloudflare" {
+        return Err("这不是 Cloudflare 连接".into());
+    }
+    let key_id = connection_id.clone();
+    let token = tauri::async_runtime::spawn_blocking(move || keychain::get_key(&key_id))
+        .await
+        .map_err(|error| format!("读取 Cloudflare 凭据失败：{error}"))??;
+    let inspect = cf::inspect_hostname(&token, &connection.account_id, &zone, &zone).await?;
+    if inspect.is_none() {
+        return Err(format!(
+            "Cloudflare 连接「{}」中没有找到 Zone {zone}，未保存选择",
+            connection.name
+        ));
+    }
+    state
+        .conns
+        .set_cloudflare_zone_preference(&connection_id, &zone)
+}
+
+/// 用户主动要求改用其他连接时，只清除本地 Zone 选择；不会删除 Token 或修改 Cloudflare。
+#[tauri::command]
+pub(super) async fn gcms_cloudflare_clear_connection(
+    state: tauri::State<'_, AppState>,
+    zone: String,
+) -> Result<(), String> {
+    let zone = normalize_public_domain(&zone)?;
+    state.conns.clear_cloudflare_zone_preference(&zone)
+}
+
+fn remember_cloudflare_selections(state: &AppState, check: &GcmsAccessCheck) -> Result<(), String> {
+    let mut selected = Vec::<(String, String)>::new();
+    if let Some(cloudflare) = check.cloudflare.as_ref() {
+        if !cloudflare.connection_id.is_empty() && !cloudflare.zone_name.is_empty() {
+            selected.push((
+                cloudflare.zone_name.clone(),
+                cloudflare.connection_id.clone(),
+            ));
+        }
+    }
+    if let Some(cloudflare) = check
+        .redirect
+        .as_ref()
+        .and_then(|redirect| redirect.cloudflare.as_ref())
+    {
+        if !cloudflare.connection_id.is_empty() && !cloudflare.zone_name.is_empty() {
+            selected.push((
+                cloudflare.zone_name.clone(),
+                cloudflare.connection_id.clone(),
+            ));
+        }
+    }
+
+    let mut seen = std::collections::HashMap::<String, String>::new();
+    for (zone_name, connection_id) in &selected {
+        if let Some(existing) = seen.insert(zone_name.to_ascii_lowercase(), connection_id.clone()) {
+            if existing != *connection_id {
+                return Err(format!(
+                    "同一个 Cloudflare Zone {} 被核验为两条不同连接，已停止操作，请重新选择",
+                    zone_name
+                ));
+            }
+        }
+    }
+    for (zone_name, connection_id) in selected {
+        state
+            .conns
+            .set_cloudflare_zone_preference(&connection_id, &zone_name)?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -1203,35 +1884,22 @@ pub(super) async fn gcms_cloudflare_create_a_record(
     state: tauri::State<'_, AppState>,
     conn_id: String,
     domain: String,
+    redirect_domain: Option<String>,
 ) -> Result<GcmsCloudflareCreateResult, String> {
     let conn = state.conns.get(&conn_id)?;
     if conn.kind != "ssh" {
         return Err("这不是远程服务器连接".into());
     }
     let _guard = begin_gcms_operation(&state, &conn_id)?;
-    let check = gcms_remote_access_check_inner(&state, &conn_id, &domain).await?;
-    let cloudflare = check
-        .cloudflare
-        .as_ref()
-        .ok_or("该域名当前未识别为 Cloudflare 托管")?;
-    if cloudflare.status == "matched" {
+    let check =
+        gcms_remote_access_check_inner(&state, &conn_id, &domain, redirect_domain.as_deref())
+            .await?;
+    if check.matched {
         return Ok(GcmsCloudflareCreateResult {
             created: false,
+            created_domains: Vec::new(),
             check,
         });
-    }
-    if cloudflare.status != "record_missing" {
-        return Err(format!("当前状态不允许自动创建记录：{}", cloudflare.detail));
-    }
-    if cloudflare.zone_status != "active" {
-        return Err(format!(
-            "Cloudflare Zone 当前状态为 {}，请先等待 Zone 激活",
-            if cloudflare.zone_status.is_empty() {
-                "未知"
-            } else {
-                &cloudflare.zone_status
-            }
-        ));
     }
     let address = match check.server_ipv4.as_slice() {
         [address] => address
@@ -1243,42 +1911,271 @@ pub(super) async fn gcms_cloudflare_create_a_record(
         ),
         _ => return Err("检测到多个服务器公网 IPv4，为避免选错源站，请手动配置 A 记录".into()),
     };
-    let cf_connection_id = cloudflare.connection_id.clone();
-    let zone_name = cloudflare.zone_name.clone();
-    if cf_connection_id.is_empty() || zone_name.is_empty() {
-        return Err("没有可用于创建记录的 Cloudflare 连接或 Zone".into());
-    }
-    let cf_connection = state.conns.get(&cf_connection_id)?;
-    if cf_connection.kind != "cloudflare" {
-        return Err("核验连接不是 Cloudflare 连接".into());
-    }
-    let key_id = cf_connection_id.clone();
-    let token = tauri::async_runtime::spawn_blocking(move || keychain::get_key(&key_id))
-        .await
-        .map_err(|error| format!("读取 Cloudflare 凭据失败：{error}"))??;
-    let created = cf::create_dns_only_a_record(
-        &token,
-        &cf_connection.account_id,
-        &zone_name,
-        &check.domain,
-        address,
-    )
-    .await
-    .map_err(|error| format!("创建 Cloudflare A 记录失败：{error}"))?;
-
-    let refreshed = gcms_remote_access_check_inner(&state, &conn_id, &check.domain)
-        .await
-        .map_err(|error| {
-            if created {
-                format!("A 记录已创建，但重新核验失败：{error}。可直接点击重新检测")
-            } else {
-                format!("A 记录已存在，但重新核验失败：{error}。可直接点击重新检测")
-            }
+    let mut targets = Vec::new();
+    for (label, route_domain, route_matched, cloudflare) in [
+        (
+            "主访问域名",
+            check.domain.as_str(),
+            check.primary_matched,
+            check.cloudflare.as_ref(),
+        ),
+        (
+            "跳转域名",
+            check
+                .redirect
+                .as_ref()
+                .map(|route| route.domain.as_str())
+                .unwrap_or_default(),
+            check
+                .redirect
+                .as_ref()
+                .map(|route| route.matched)
+                .unwrap_or(true),
+            check
+                .redirect
+                .as_ref()
+                .and_then(|route| route.cloudflare.as_ref()),
+        ),
+    ] {
+        if route_domain.is_empty() || route_matched {
+            continue;
+        }
+        let cloudflare = cloudflare.ok_or_else(|| {
+            format!("{label} {route_domain} 未由 Cloudflare 托管，请先手动完成 DNS 解析")
         })?;
+        if cloudflare.status != "record_missing" {
+            return Err(format!(
+                "{label} {route_domain} 当前不允许自动创建记录：{}",
+                cloudflare.detail
+            ));
+        }
+        if cloudflare.zone_status != "active" {
+            return Err(format!(
+                "{label}所在的 Cloudflare Zone 当前状态为 {}，请先等待 Zone 激活",
+                if cloudflare.zone_status.is_empty() {
+                    "未知"
+                } else {
+                    &cloudflare.zone_status
+                }
+            ));
+        }
+        if cloudflare.connection_id.is_empty() || cloudflare.zone_name.is_empty() {
+            return Err(format!(
+                "{label}没有可用于创建记录的 Cloudflare 连接或 Zone"
+            ));
+        }
+        targets.push((
+            label,
+            route_domain.to_string(),
+            cloudflare.connection_id.clone(),
+            cloudflare.zone_name.clone(),
+        ));
+    }
+    if targets.is_empty() {
+        return Err("当前域名状态不允许自动创建 Cloudflare 记录".into());
+    }
+
+    // 从此处起会发生 Cloudflare 写入：先固定 Zone→连接，保证主域名、跳转域名和后续
+    // 橙云操作不会因为连接列表顺序变化而换用另一枚 Token。
+    remember_cloudflare_selections(&state, &check)?;
+
+    // 先把所有连接和凭据读完，再开始任何 DNS 写入，避免第二个账号凭据无效时留下
+    // “只创建了一半”的可预见中间状态。网络/API 在写入期间失败仍会返回明确域名。
+    let mut prepared = Vec::new();
+    for (label, route_domain, cf_connection_id, zone_name) in targets {
+        let cf_connection = state.conns.get(&cf_connection_id)?;
+        if cf_connection.kind != "cloudflare" {
+            return Err(format!("{label}的核验连接不是 Cloudflare 连接"));
+        }
+        let key_id = cf_connection_id.clone();
+        let token = tauri::async_runtime::spawn_blocking(move || keychain::get_key(&key_id))
+            .await
+            .map_err(|error| format!("读取 Cloudflare 凭据失败：{error}"))??;
+        prepared.push((
+            label,
+            route_domain,
+            cf_connection.account_id,
+            zone_name,
+            token,
+        ));
+    }
+
+    let mut created_domains = Vec::new();
+    for (label, route_domain, account_id, zone_name, token) in prepared {
+        let created =
+            cf::create_dns_only_a_record(&token, &account_id, &zone_name, &route_domain, address)
+                .await
+                .map_err(|error| {
+                    format!("创建 {label} {route_domain} 的 Cloudflare A 记录失败：{error}")
+                })?;
+        if created {
+            created_domains.push(route_domain);
+        }
+    }
+
+    let redirect_domain = check.redirect.as_ref().map(|route| route.domain.as_str());
+    let refreshed =
+        gcms_remote_access_check_inner(&state, &conn_id, &check.domain, redirect_domain)
+            .await
+            .map_err(|error| {
+                if !created_domains.is_empty() {
+                    format!("DNS 记录已创建，但重新核验失败：{error}。可直接点击重新检测")
+                } else {
+                    format!("DNS 记录已存在，但重新核验失败：{error}。可直接点击重新检测")
+                }
+            })?;
     Ok(GcmsCloudflareCreateResult {
-        created,
+        created: !created_domains.is_empty(),
+        created_domains,
         check: refreshed,
     })
+}
+
+fn gcms_check_has_cloudflare(check: &GcmsAccessCheck) -> bool {
+    check.cloudflare.is_some()
+        || check
+            .redirect
+            .as_ref()
+            .is_some_and(|route| route.cloudflare.is_some())
+}
+
+/// 一键配置的最后一道安全闸：源站 HTTPS 已验证后，才尝试把本次涉及的 Cloudflare
+/// 主机名切换为橙云。失败不会回滚已可用的源站 HTTPS，但会作为明确结果返回前端。
+async fn gcms_enable_cloudflare_proxy(
+    state: &AppState,
+    check: &GcmsAccessCheck,
+) -> (bool, bool, String) {
+    let applicable = gcms_check_has_cloudflare(check);
+    if !applicable {
+        return (false, false, String::new());
+    }
+    if let Err(error) = remember_cloudflare_selections(state, check) {
+        return (true, false, error);
+    }
+    let expected_addresses = check
+        .server_ipv4
+        .iter()
+        .chain(check.server_ipv6.iter())
+        .filter_map(|address| address.parse::<IpAddr>().ok())
+        .collect::<Vec<_>>();
+    if expected_addresses.is_empty() {
+        return (
+            true,
+            false,
+            "未检测到可核验的服务器公网 IP，未开启 Cloudflare 橙云".into(),
+        );
+    }
+
+    let mut targets = Vec::new();
+    for (label, hostname, cloudflare, allowed_cname_target) in [
+        (
+            "主访问域名",
+            check.domain.as_str(),
+            check.cloudflare.as_ref(),
+            None,
+        ),
+        (
+            "跳转域名",
+            check
+                .redirect
+                .as_ref()
+                .map(|route| route.domain.as_str())
+                .unwrap_or_default(),
+            check
+                .redirect
+                .as_ref()
+                .and_then(|route| route.cloudflare.as_ref()),
+            Some(check.domain.as_str()),
+        ),
+    ] {
+        let Some(cloudflare) = cloudflare else {
+            continue;
+        };
+        if hostname.is_empty() {
+            continue;
+        }
+        if cloudflare.status != "matched" || !cloudflare.origin_matched {
+            return (
+                true,
+                false,
+                format!(
+                    "{label} {hostname} 尚未通过 Cloudflare 源站核验，未开启橙云：{}",
+                    cloudflare.detail
+                ),
+            );
+        }
+        if cloudflare.proxied {
+            continue;
+        }
+        if cloudflare.connection_id.is_empty() || cloudflare.zone_name.is_empty() {
+            return (
+                true,
+                false,
+                format!("{label} {hostname} 缺少可写入的 Cloudflare 连接或 Zone"),
+            );
+        }
+        targets.push((
+            label,
+            hostname.to_string(),
+            cloudflare.connection_id.clone(),
+            cloudflare.zone_name.clone(),
+            allowed_cname_target.map(str::to_string),
+        ));
+    }
+    if targets.is_empty() {
+        return (true, true, String::new());
+    }
+
+    // 在任何写入前先读取全部凭据，避免主域名已切换、跳转域名却因凭据缺失而中断。
+    let mut prepared = Vec::new();
+    for (label, hostname, connection_id, zone_name, allowed_cname_target) in targets {
+        let connection = match state.conns.get(&connection_id) {
+            Ok(connection) if connection.kind == "cloudflare" => connection,
+            Ok(_) => {
+                return (
+                    true,
+                    false,
+                    format!("{label} {hostname} 的核验连接不是 Cloudflare 连接"),
+                )
+            }
+            Err(error) => return (true, false, error),
+        };
+        let key_id = connection_id.clone();
+        let token =
+            match tauri::async_runtime::spawn_blocking(move || keychain::get_key(&key_id)).await {
+                Ok(Ok(token)) => token,
+                Ok(Err(error)) => return (true, false, error),
+                Err(error) => return (true, false, format!("读取 Cloudflare 凭据失败：{error}")),
+            };
+        prepared.push((
+            label,
+            hostname,
+            connection.account_id,
+            zone_name,
+            allowed_cname_target,
+            token,
+        ));
+    }
+
+    for (label, hostname, account_id, zone_name, allowed_cname_target, token) in prepared {
+        if let Err(error) = cf::enable_proxy_for_hostname(
+            &token,
+            &account_id,
+            &zone_name,
+            &hostname,
+            &expected_addresses,
+            allowed_cname_target.as_deref(),
+        )
+        .await
+        {
+            return (
+                true,
+                false,
+                format!("开启 {label} {hostname} 的 Cloudflare 橙云失败：{error}"),
+            );
+        }
+    }
+    (true, true, String::new())
 }
 
 struct GcmsOperationGuard {
@@ -1393,21 +2290,44 @@ async fn verify_gcms_https(domain: &str) -> (bool, Option<u16>, String) {
         Err(e) => return (false, None, format!("创建 HTTPS 检测请求失败：{e}")),
     };
     let url = format!("https://{domain}/admin");
+    // Caddy/浏览器曾可能把首次 404 按 immutable 缓存；每次验证使用独立查询参数，
+    // 确保读到修复后的源站响应，而不是旧的负缓存。
+    let cache_bust = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let asset_url = format!("https://{domain}/assets/css/admin.css?pilot_verify={cache_bust}");
     let mut last_error = String::new();
     for attempt in 0..3 {
         match client.get(&url).send().await {
             Ok(response) => {
                 let status = response.status();
                 let ok = status.is_success() || status.is_redirection();
-                return (
-                    ok,
-                    Some(status.as_u16()),
-                    if ok {
-                        String::new()
-                    } else {
-                        format!("HTTPS 已连通，但 /admin 返回 HTTP {}", status.as_u16())
-                    },
-                );
+                if !ok {
+                    return (
+                        false,
+                        Some(status.as_u16()),
+                        format!("HTTPS 已连通，但 /admin 返回 HTTP {}", status.as_u16()),
+                    );
+                }
+                return match client.get(&asset_url).send().await {
+                    Ok(asset) if asset.status().is_success() => {
+                        (true, Some(status.as_u16()), String::new())
+                    }
+                    Ok(asset) => (
+                        false,
+                        Some(status.as_u16()),
+                        format!(
+                            "HTTPS 已连通，但 GCMS 页面资源返回 HTTP {}",
+                            asset.status().as_u16()
+                        ),
+                    ),
+                    Err(e) => (
+                        false,
+                        Some(status.as_u16()),
+                        format!("HTTPS 已连通，但暂时无法读取 GCMS 页面资源：{e}"),
+                    ),
+                };
             }
             Err(e) => last_error = e.to_string(),
         }
@@ -1418,11 +2338,184 @@ async fn verify_gcms_https(domain: &str) -> (bool, Option<u16>, String) {
     (false, None, format!("HTTPS 暂未连通：{last_error}"))
 }
 
+fn gcms_verification_needs_domain_reload(error: &str) -> bool {
+    error.contains("GCMS 页面资源") || error.contains("/admin 返回 HTTP 404")
+}
+
+async fn verify_gcms_redirect(
+    primary_domain: &str,
+    redirect_domain: &str,
+) -> (bool, Option<u16>, String) {
+    let client = match reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(Duration::from_secs(18))
+        .build()
+    {
+        Ok(client) => client,
+        Err(error) => return (false, None, format!("创建跳转检测请求失败：{error}")),
+    };
+    let path = "/admin?pilot_redirect_verify=1";
+    let url = format!("https://{redirect_domain}{path}");
+    let expected = format!("https://{primary_domain}{path}");
+    let mut last_error = String::new();
+    for attempt in 0..3 {
+        match client.get(&url).send().await {
+            Ok(response) => {
+                let status = response.status();
+                let location = response
+                    .headers()
+                    .get(reqwest::header::LOCATION)
+                    .and_then(|value| value.to_str().ok())
+                    .unwrap_or_default();
+                if status.as_u16() == 301 && location == expected {
+                    return (true, Some(301), String::new());
+                }
+                last_error = if status.as_u16() != 301 {
+                    format!(
+                        "跳转域名已连通，但应返回 HTTP 301，实际返回 HTTP {}",
+                        status.as_u16()
+                    )
+                } else {
+                    format!(
+                        "跳转目标不正确：应为 {expected}，实际为 {}",
+                        if location.is_empty() {
+                            "未返回 Location"
+                        } else {
+                            location
+                        }
+                    )
+                };
+            }
+            Err(error) => last_error = format!("跳转域名 HTTPS 暂未连通：{error}"),
+        }
+        if attempt < 2 {
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        }
+    }
+    (false, None, last_error)
+}
+
+#[tauri::command]
+pub(super) async fn gcms_remote_access_verify(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    domain: String,
+    redirect_domain: Option<String>,
+    enable_cloudflare_proxy: Option<bool>,
+) -> Result<GcmsAccessApplyResult, String> {
+    let conn = state.conns.get(&conn_id)?;
+    if conn.kind != "ssh" {
+        return Err("这不是远程服务器连接".into());
+    }
+    let domain = normalize_public_domain(&domain)?;
+    let redirect_domain = normalize_redirect_domain(redirect_domain.as_deref(), &domain)?;
+    let _guard = begin_gcms_operation(&state, &conn_id)?;
+    let status = gcms_remote_status_inner(&state, &conn_id).await?;
+    let (mut https_ok, mut http_status, mut verification_error) = verify_gcms_https(&domain).await;
+
+    // 兼容旧版 Pilot 已写入 BASE_URL、但实际进程没有重新加载的安装：只有后台路由或
+    // 内置页面资源明确失败时才执行定向修复，然后重新验证；普通 DNS/证书等待不重启。
+    if !https_ok
+        && gcms_verification_needs_domain_reload(&verification_error)
+        && status.installed
+        && !status.path.is_empty()
+    {
+        let env = format!(
+            "PILOT_DOMAIN={} PILOT_GCMS_HOME={}",
+            shell_quote(&domain),
+            shell_quote(&status.path)
+        );
+        let body = shell_quote(GCMS_REMOTE_RELOAD_DOMAIN_CMD);
+        let command = format!("env {env} sh -c {body}");
+        let restarted = state.ssh.exec(&conn_id, &command, 120, false).await?;
+        if restarted.code == 0 {
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            (https_ok, http_status, verification_error) = verify_gcms_https(&domain).await;
+        } else {
+            let detail = gcms_install_log(&restarted.stdout, &restarted.stderr);
+            verification_error = format!(
+                "HTTPS 已连通，但页面资源自动修复失败：{}",
+                detail
+                    .lines()
+                    .rev()
+                    .map(str::trim)
+                    .find(|line| !line.is_empty())
+                    .unwrap_or("GCMS 重启失败")
+            );
+        }
+    }
+
+    let (mut redirect_ok, mut redirect_http_status, mut redirect_verification_error) =
+        if let Some(redirect_domain) = redirect_domain.as_deref() {
+            verify_gcms_redirect(&domain, redirect_domain).await
+        } else {
+            (true, None, String::new())
+        };
+    let mut all_https_ok = https_ok && redirect_ok;
+    if https_ok && !redirect_ok {
+        verification_error = redirect_verification_error.clone();
+    }
+    let (mut cloudflare_proxy_applicable, mut cloudflare_proxied, mut cloudflare_proxy_error) =
+        (false, false, String::new());
+    if all_https_ok && enable_cloudflare_proxy.unwrap_or(false) {
+        match gcms_remote_access_check_inner(&state, &conn_id, &domain, redirect_domain.as_deref())
+            .await
+        {
+            Ok(check) => {
+                (
+                    cloudflare_proxy_applicable,
+                    cloudflare_proxied,
+                    cloudflare_proxy_error,
+                ) = gcms_enable_cloudflare_proxy(&state, &check).await;
+            }
+            Err(error) => {
+                cloudflare_proxy_applicable = true;
+                cloudflare_proxy_error = format!("重新核验 Cloudflare 记录失败：{error}");
+            }
+        }
+        if cloudflare_proxied {
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            (https_ok, http_status, verification_error) = verify_gcms_https(&domain).await;
+            if let Some(redirect_domain) = redirect_domain.as_deref() {
+                (
+                    redirect_ok,
+                    redirect_http_status,
+                    redirect_verification_error,
+                ) = verify_gcms_redirect(&domain, redirect_domain).await;
+            }
+            all_https_ok = https_ok && redirect_ok;
+            if https_ok && !redirect_ok {
+                verification_error = redirect_verification_error.clone();
+            }
+        }
+    }
+    let refreshed = gcms_remote_status_inner(&state, &conn_id).await?;
+    Ok(GcmsAccessApplyResult {
+        status: refreshed,
+        url: format!("https://{domain}"),
+        https_ok: all_https_ok,
+        http_status,
+        verification_error,
+        redirect_url: redirect_domain
+            .as_ref()
+            .map(|domain| format!("https://{domain}"))
+            .unwrap_or_default(),
+        redirect_ok,
+        redirect_http_status,
+        redirect_verification_error,
+        cloudflare_proxy_applicable,
+        cloudflare_proxied,
+        cloudflare_proxy_error,
+    })
+}
+
 #[tauri::command]
 pub(super) async fn gcms_remote_access_configure(
     state: tauri::State<'_, AppState>,
     conn_id: String,
     domain: String,
+    redirect_domain: Option<String>,
+    enable_cloudflare_proxy: Option<bool>,
     on_event: Channel<GcmsInstallEvent>,
 ) -> Result<GcmsAccessApplyResult, String> {
     let conn = state.conns.get(&conn_id)?;
@@ -1437,17 +2530,36 @@ pub(super) async fn gcms_remote_access_configure(
     };
 
     phase("正在复核域名解析与服务器环境…");
-    let check = gcms_remote_access_check_inner(&state, &conn_id, &domain).await?;
+    let check =
+        gcms_remote_access_check_inner(&state, &conn_id, &domain, redirect_domain.as_deref())
+            .await?;
     if !check.matched {
-        let reason = check
-            .cloudflare
-            .as_ref()
+        let (label, route_cloudflare, route_dns_error) = if !check.primary_matched {
+            (
+                "主访问域名",
+                check.cloudflare.as_ref(),
+                check.dns_error.as_str(),
+            )
+        } else if let Some(redirect) = check.redirect.as_ref().filter(|route| !route.matched) {
+            (
+                "跳转域名",
+                redirect.cloudflare.as_ref(),
+                redirect.dns_error.as_str(),
+            )
+        } else {
+            ("域名", None, "")
+        };
+        let reason = route_cloudflare
             .map(|cloudflare| cloudflare.detail.as_str())
             .filter(|detail| !detail.is_empty())
-            .unwrap_or("域名解析尚未指向这台服务器");
-        return Err(format!("域名尚未通过安全校验：{reason}（未修改 Caddy）"));
+            .or_else(|| (!route_dns_error.is_empty()).then_some(route_dns_error))
+            .unwrap_or("DNS 解析尚未指向这台服务器");
+        return Err(format!("{label}尚未通过安全校验：{reason}（未修改 Caddy）"));
     }
-    let preflight = check.caddy.ok_or("未完成 Caddy 预检")?;
+    // 一旦用户确认进入配置流程，就把本次核验采用的 Cloudflare 连接固定下来。
+    // 即使记录已是橙云、后面无需 API 写入，今后的重新检测也会继续使用同一枚 Token。
+    remember_cloudflare_selections(&state, &check)?;
+    let preflight = check.caddy.clone().ok_or("未完成 Caddy 预检")?;
     if !preflight.can_auto_configure {
         return Err(format!("当前环境不允许自动配置：{}", preflight.detail));
     }
@@ -1462,8 +2574,15 @@ pub(super) async fn gcms_remote_access_configure(
         "正在备份并配置 Caddy…"
     });
     let env = format!(
-        "PILOT_DOMAIN={} PILOT_GCMS_HOME={}",
+        "PILOT_DOMAIN={} PILOT_REDIRECT_DOMAIN={} PILOT_GCMS_HOME={}",
         shell_quote(&check.domain),
+        shell_quote(
+            check
+                .redirect
+                .as_ref()
+                .map(|route| route.domain.as_str())
+                .unwrap_or_default()
+        ),
         shell_quote(&before.path)
     );
     let body = shell_quote(GCMS_CADDY_CONFIGURE_CMD);
@@ -1495,11 +2614,54 @@ pub(super) async fn gcms_remote_access_configure(
 
     phase("Caddy 已配置，正在验证 HTTPS…");
     let status = gcms_remote_status_inner(&state, &conn_id).await?;
-    let (https_ok, http_status, verification_error) = verify_gcms_https(&check.domain).await;
-    phase(if https_ok {
-        "公网访问已就绪"
-    } else {
+    let (mut primary_https_ok, mut http_status, mut verification_error) =
+        verify_gcms_https(&check.domain).await;
+    let (redirect_url, mut redirect_ok, mut redirect_http_status, mut redirect_verification_error) =
+        if let Some(redirect) = check.redirect.as_ref() {
+            let (ok, status, error) = verify_gcms_redirect(&check.domain, &redirect.domain).await;
+            (format!("https://{}", redirect.domain), ok, status, error)
+        } else {
+            (String::new(), true, None, String::new())
+        };
+    let mut https_ok = primary_https_ok && redirect_ok;
+    if primary_https_ok && !redirect_ok {
+        verification_error = redirect_verification_error.clone();
+    }
+    let (mut cloudflare_proxy_applicable, mut cloudflare_proxied, mut cloudflare_proxy_error) =
+        (false, false, String::new());
+    if https_ok && enable_cloudflare_proxy.unwrap_or(false) {
+        phase("源站 HTTPS 已就绪，正在开启 Cloudflare 橙云代理…");
+        (
+            cloudflare_proxy_applicable,
+            cloudflare_proxied,
+            cloudflare_proxy_error,
+        ) = gcms_enable_cloudflare_proxy(&state, &check).await;
+        if cloudflare_proxied {
+            phase("Cloudflare 橙云已开启，正在复检公网访问…");
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            (primary_https_ok, http_status, verification_error) =
+                verify_gcms_https(&check.domain).await;
+            if let Some(redirect) = check.redirect.as_ref() {
+                (
+                    redirect_ok,
+                    redirect_http_status,
+                    redirect_verification_error,
+                ) = verify_gcms_redirect(&check.domain, &redirect.domain).await;
+            }
+            https_ok = primary_https_ok && redirect_ok;
+            if primary_https_ok && !redirect_ok {
+                verification_error = redirect_verification_error.clone();
+            }
+        }
+    }
+    phase(if !https_ok {
         "配置已保存，等待 HTTPS 生效"
+    } else if cloudflare_proxy_applicable && !cloudflare_proxied {
+        "网站已可访问，Cloudflare 橙云需要确认"
+    } else if cloudflare_proxy_applicable {
+        "公网访问与 Cloudflare 代理已就绪"
+    } else {
+        "公网访问已就绪"
     });
     Ok(GcmsAccessApplyResult {
         status,
@@ -1507,6 +2669,13 @@ pub(super) async fn gcms_remote_access_configure(
         https_ok,
         http_status,
         verification_error,
+        redirect_url,
+        redirect_ok,
+        redirect_http_status,
+        redirect_verification_error,
+        cloudflare_proxy_applicable,
+        cloudflare_proxied,
+        cloudflare_proxy_error,
     })
 }
 
@@ -1517,18 +2686,36 @@ mod tests {
     #[test]
     fn parses_remote_gcms_probe() {
         let found = parse_gcms_remote_status(
-            "login banner\nPILOT_GCMS_INSTALLED\t1\nPILOT_GCMS_PATH\t/opt/gcms\nPILOT_GCMS_VERSION\tv1.3.36\nPILOT_GCMS_RUNNING\t1\nPILOT_GCMS_BASE_URL\thttps://cms.example.com\n",
+            "login banner\nPILOT_GCMS_INSTALLED\t1\nPILOT_GCMS_PATH\t/opt/gcms\nPILOT_GCMS_VERSION\tv1.3.36\nPILOT_GCMS_RUNNING\t1\nPILOT_GCMS_BASE_URL\thttps://cms.example.com\nPILOT_GCMS_REDIRECT_DOMAIN\twww.example.com\n",
         ).unwrap();
         assert!(found.installed && found.running);
         assert_eq!(found.path, "/opt/gcms");
         assert_eq!(found.version, "v1.3.36");
         assert_eq!(found.base_url, "https://cms.example.com");
+        assert_eq!(found.redirect_domain, "www.example.com");
+        assert_eq!(found.password_status, "unknown");
         assert!(
             !parse_gcms_remote_status("PILOT_GCMS_INSTALLED\t0\n")
                 .unwrap()
                 .installed
         );
         assert!(parse_gcms_remote_status("unrelated output").is_err());
+    }
+
+    #[test]
+    fn parses_remote_gcms_password_status_without_exposing_credentials() {
+        let found = parse_gcms_remote_status(
+            "PILOT_GCMS_INSTALLED\t1\nPILOT_GCMS_PATH\t/opt/gcms\nPILOT_GCMS_PASSWORD_STATUS\tdefault\nPILOT_GCMS_ADMIN_USER\tadmin\n",
+        )
+        .unwrap();
+        assert_eq!(found.password_status, "default");
+        assert_eq!(found.admin_user, "admin");
+
+        let invalid = parse_gcms_remote_status(
+            "PILOT_GCMS_INSTALLED\t1\nPILOT_GCMS_PATH\t/opt/gcms\nPILOT_GCMS_PASSWORD_STATUS\tnot-a-status\n",
+        )
+        .unwrap();
+        assert_eq!(invalid.password_status, "unknown");
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -1588,6 +2775,22 @@ mod tests {
     }
 
     #[test]
+    fn domain_reload_only_repairs_confirmed_gcms_route_failures() {
+        assert!(gcms_verification_needs_domain_reload(
+            "HTTPS 已连通，但 GCMS 页面资源返回 HTTP 404"
+        ));
+        assert!(gcms_verification_needs_domain_reload(
+            "HTTPS 已连通，但 /admin 返回 HTTP 404"
+        ));
+        assert!(!gcms_verification_needs_domain_reload(
+            "HTTPS 暂未连通：dns error"
+        ));
+        assert!(!gcms_verification_needs_domain_reload(
+            "HTTPS 已连通，但 /admin 返回 HTTP 503"
+        ));
+    }
+
+    #[test]
     fn validates_domain_before_shell_use() {
         assert_eq!(
             normalize_public_domain(" CMS.Example.COM. ").unwrap(),
@@ -1611,6 +2814,15 @@ mod tests {
             );
         }
         assert_eq!(shell_quote("a'b"), "'a'\"'\"'b'");
+        assert_eq!(
+            normalize_redirect_domain(Some(" WWW.Example.COM. "), "example.com").unwrap(),
+            Some("www.example.com".into())
+        );
+        assert_eq!(
+            normalize_redirect_domain(Some("  "), "example.com").unwrap(),
+            None
+        );
+        assert!(normalize_redirect_domain(Some("example.com"), "example.com").is_err());
     }
 
     #[test]
@@ -1645,6 +2857,7 @@ mod tests {
             zone_name: "example.com".into(),
             zone_status: "active".into(),
             records: vec![cf::CfDnsRecord {
+                id: "record-1".into(),
                 record_type: record_type.into(),
                 name: "cms.example.com".into(),
                 content: content.into(),
@@ -1667,6 +2880,7 @@ mod tests {
             cf_inspection("A", "203.0.113.8", true, "strict"),
             &server,
             &[],
+            None,
         );
         assert_eq!(ready.status, "matched");
         assert!(ready.proxied && ready.origin_matched);
@@ -1679,6 +2893,7 @@ mod tests {
             cf_inspection("A", "203.0.113.8", true, "flexible"),
             &server,
             &[],
+            None,
         );
         assert_eq!(flexible.status, "ssl_incompatible");
         assert!(flexible.origin_matched);
@@ -1693,8 +2908,38 @@ mod tests {
             unreadable,
             &server,
             &[],
+            None,
         );
         assert_eq!(unreadable.status, "ssl_unreadable");
+    }
+
+    #[test]
+    fn partial_cloudflare_proxy_is_not_reported_as_complete() {
+        let server_v4 = vec!["203.0.113.8".parse::<IpAddr>().unwrap()];
+        let server_v6 = vec!["2001:4860:4860::8888".parse::<IpAddr>().unwrap()];
+        let mut inspect = cf_inspection("A", "203.0.113.8", true, "strict");
+        inspect.records.push(cf::CfDnsRecord {
+            id: "record-2".into(),
+            record_type: "AAAA".into(),
+            name: "cms.example.com".into(),
+            content: "2001:4860:4860::8888".into(),
+            proxied: false,
+            proxiable: true,
+        });
+        let result = classify_cloudflare_inspection(
+            "cf-1",
+            "Cloudflare",
+            1,
+            "cms.example.com",
+            inspect,
+            &server_v4,
+            &server_v6,
+            None,
+        );
+        assert_eq!(result.status, "matched");
+        assert!(result.origin_matched);
+        assert!(!result.proxied);
+        assert!(result.detail.contains("部分 DNS 记录"));
     }
 
     #[test]
@@ -1710,9 +2955,38 @@ mod tests {
             inspect,
             &server,
             &[],
+            None,
         );
         assert_eq!(result.status, "matched");
         assert!(!result.proxied);
+    }
+
+    #[test]
+    fn cloudflare_auto_selection_only_chooses_an_unambiguous_connection() {
+        let candidate = |id: &str, permission_complete: bool| GcmsCloudflareCandidate {
+            connection_id: id.into(),
+            permission_complete,
+            ..Default::default()
+        };
+        assert_eq!(
+            auto_cloudflare_candidate_index(&[candidate("one", false)]),
+            Some(0)
+        );
+        assert_eq!(
+            auto_cloudflare_candidate_index(&[
+                candidate("old", false),
+                candidate("complete", true),
+            ]),
+            Some(1)
+        );
+        assert_eq!(
+            auto_cloudflare_candidate_index(&[candidate("one", true), candidate("two", true),]),
+            None
+        );
+        assert_eq!(
+            auto_cloudflare_candidate_index(&[candidate("one", false), candidate("two", false),]),
+            None
+        );
     }
 
     #[test]
@@ -1725,9 +2999,28 @@ mod tests {
             cf_inspection("CNAME", "origin.example.net", true, "strict"),
             &["203.0.113.8".parse::<IpAddr>().unwrap()],
             &[],
+            None,
         );
         assert_eq!(result.status, "unsupported_record");
         assert!(!result.origin_matched);
+    }
+
+    #[test]
+    fn cloudflare_redirect_cname_to_primary_is_safe() {
+        let mut inspect = cf_inspection("CNAME", "cms.example.com", true, "strict");
+        inspect.records[0].name = "www.example.com".into();
+        let result = classify_cloudflare_inspection(
+            "cf-1",
+            "Cloudflare",
+            1,
+            "www.example.com",
+            inspect,
+            &["203.0.113.8".parse::<IpAddr>().unwrap()],
+            &[],
+            Some("cms.example.com"),
+        );
+        assert_eq!(result.status, "matched");
+        assert!(result.origin_matched);
     }
 
     fn base_probe() -> RemoteCaddyProbe {
@@ -1800,6 +3093,7 @@ mod tests {
             GCMS_REMOTE_PUBLIC_IP_CMD,
             GCMS_CADDY_PREFLIGHT_CMD,
             GCMS_CADDY_CONFIGURE_CMD,
+            GCMS_REMOTE_RELOAD_DOMAIN_CMD,
         ] {
             let status = std::process::Command::new("sh")
                 .args(["-n", "-c", script])
@@ -1807,5 +3101,86 @@ mod tests {
                 .unwrap();
             assert!(status.success());
         }
+        assert!(GCMS_CADDY_CONFIGURE_CMD.contains("redir https://%s{uri} 301"));
+        assert!(GCMS_CADDY_CONFIGURE_CMD.contains("PILOT_REDIRECT_DOMAIN"));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn remote_domain_reload_ignores_inherited_base_url() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let base = std::env::temp_dir().join(format!(
+            "gcms-pilot-domain-reload-{}-{stamp}",
+            std::process::id()
+        ));
+        let root = base.join("gcms");
+        let fake_bin = base.join("bin");
+        let cms_bin = root.join("current/bin/cms");
+        for path in [
+            root.join("scripts"),
+            root.join("current/bin"),
+            root.join("shared"),
+            root.join("run"),
+            fake_bin.clone(),
+        ] {
+            std::fs::create_dir_all(path).unwrap();
+        }
+        let cms_script = root.join("scripts/cms.sh");
+        std::fs::write(
+            &cms_script,
+            r#"#!/bin/sh
+root=$(cd "$(dirname "$0")/.." && pwd)
+base=${BASE_URL:-$(sed -n 's/^BASE_URL=//p' "$root/shared/cms.conf")}
+printf '%s' "$base" > "$root/run/seen-base-url"
+exit 0
+"#,
+        )
+        .unwrap();
+        std::fs::write(&cms_bin, "#!/bin/sh\nexit 0\n").unwrap();
+        std::fs::write(
+            root.join("shared/cms.conf"),
+            "ADDR=127.0.0.1:18080\nBASE_URL=http://localhost:8080\n",
+        )
+        .unwrap();
+        let fake_curl = fake_bin.join("curl");
+        std::fs::write(&fake_curl, "#!/bin/sh\nprintf '200'\n").unwrap();
+        for path in [&cms_script, &cms_bin, &fake_curl] {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+
+        let output = std::process::Command::new("sh")
+            .args(["-c", GCMS_REMOTE_RELOAD_DOMAIN_CMD])
+            .env("PILOT_GCMS_HOME", &root)
+            .env("PILOT_DOMAIN", "new.example.test")
+            .env("BASE_URL", "http://stale.example.test")
+            .env(
+                "PATH",
+                format!(
+                    "{}:{}",
+                    fake_bin.display(),
+                    std::env::var("PATH").unwrap_or_default()
+                ),
+            )
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("run/seen-base-url")).unwrap(),
+            "https://new.example.test"
+        );
+        assert!(std::fs::read_to_string(root.join("shared/cms.conf"))
+            .unwrap()
+            .contains("BASE_URL=https://new.example.test"));
+        let _ = std::fs::remove_dir_all(base);
     }
 }

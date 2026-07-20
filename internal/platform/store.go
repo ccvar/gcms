@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"cms.ccvar.com/internal/store"
-	"golang.org/x/crypto/bcrypt"
 
 	_ "modernc.org/sqlite"
 )
@@ -157,6 +156,7 @@ CREATE TABLE IF NOT EXISTS platform_sessions (
   current_site_id INTEGER REFERENCES sites(id) ON DELETE SET NULL,
   expires_at TEXT NOT NULL,
   pw_dismissed INTEGER NOT NULL DEFAULT 0,
+  must_change_password INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -319,6 +319,7 @@ func (s *Store) migrate() error {
 		{"site_google_search_console_summaries", "ctr", "REAL NOT NULL DEFAULT 0"},
 		{"site_google_search_console_summaries", "position", "REAL NOT NULL DEFAULT 0"},
 		{"site_google_search_console_summaries", "range_key", "TEXT NOT NULL DEFAULT ''"},
+		{"platform_sessions", "must_change_password", "INTEGER NOT NULL DEFAULT 0"},
 	} {
 		if err := s.ensureColumn(col.table, col.name, col.definition); err != nil {
 			return err
@@ -1022,7 +1023,7 @@ func (s *Store) IsDefaultPassword() bool {
 		return s.pwIsDefault
 	}
 	s.pwHash = hash
-	s.pwIsDefault = bcrypt.CompareHashAndPassword([]byte(hash), []byte(store.DefaultAdminPassword)) == nil
+	s.pwIsDefault = store.IsDefaultAdminPasswordHash(hash)
 	return s.pwIsDefault
 }
 
@@ -1036,8 +1037,8 @@ func (s *Store) CreateAdminSession(token, user, csrf string, expiresAt time.Time
 	if err := s.db.QueryRow(`SELECT id FROM platform_admins WHERE username=?`, user).Scan(&adminID); err != nil {
 		return err
 	}
-	_, err := s.db.Exec(`INSERT INTO platform_sessions(token_hash,admin_id,csrf,current_site_id,expires_at,pw_dismissed,created_at,updated_at)
-		VALUES(?,?,?,?,?,0,?,?)`,
+	_, err := s.db.Exec(`INSERT INTO platform_sessions(token_hash,admin_id,csrf,current_site_id,expires_at,pw_dismissed,must_change_password,created_at,updated_at)
+		VALUES(?,?,?,?,?,0,0,?,?)`,
 		sessionTokenHash(token), adminID, csrf, nil, fmtTime(expiresAt), fmtTime(now), fmtTime(now))
 	return err
 }
@@ -1045,13 +1046,13 @@ func (s *Store) CreateAdminSession(token, user, csrf string, expiresAt time.Time
 func (s *Store) GetAdminSession(token string) (store.AdminSession, bool, error) {
 	var sess store.AdminSession
 	var expires string
-	var dismissed int
+	var dismissed, mustChange int
 	var currentSite sql.NullInt64
-	err := s.db.QueryRow(`SELECT a.username,ps.csrf,ps.current_site_id,ps.expires_at,ps.pw_dismissed
+	err := s.db.QueryRow(`SELECT a.username,ps.csrf,ps.current_site_id,ps.expires_at,ps.pw_dismissed,ps.must_change_password
 		FROM platform_sessions ps
 		JOIN platform_admins a ON a.id=ps.admin_id
 		WHERE ps.token_hash=?`, sessionTokenHash(token)).
-		Scan(&sess.User, &sess.CSRF, &currentSite, &expires, &dismissed)
+		Scan(&sess.User, &sess.CSRF, &currentSite, &expires, &dismissed, &mustChange)
 	if err == sql.ErrNoRows {
 		return store.AdminSession{}, false, nil
 	}
@@ -1065,6 +1066,7 @@ func (s *Store) GetAdminSession(token string) (store.AdminSession, bool, error) 
 	}
 	sess.ExpiresAt = t
 	sess.PwDismissed = dismissed == 1
+	sess.MustChangePassword = mustChange == 1
 	if currentSite.Valid {
 		sess.CurrentSiteID = currentSite.Int64
 	}
@@ -1078,6 +1080,11 @@ func (s *Store) DeleteAdminSession(token string) error {
 
 func (s *Store) DismissAdminPasswordWarning(token string) error {
 	_, err := s.db.Exec(`UPDATE platform_sessions SET pw_dismissed=1,updated_at=? WHERE token_hash=?`, fmtTime(time.Now()), sessionTokenHash(token))
+	return err
+}
+
+func (s *Store) RequireAdminPasswordChange(token string) error {
+	_, err := s.db.Exec(`UPDATE platform_sessions SET must_change_password=1,updated_at=? WHERE token_hash=?`, fmtTime(time.Now()), sessionTokenHash(token))
 	return err
 }
 

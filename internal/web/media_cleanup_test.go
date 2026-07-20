@@ -14,7 +14,6 @@ import (
 
 	"cms.ccvar.com/internal/platform"
 	"cms.ccvar.com/internal/store"
-	"golang.org/x/crypto/bcrypt"
 )
 
 func writeUploadFile(t *testing.T, dir, name, content string) {
@@ -130,17 +129,14 @@ func newMediaCleanupFixture(t *testing.T) *mediaCleanupFixture {
 		t.Fatalf("open platform store: %v", err)
 	}
 	t.Cleanup(func() { _ = ps.Close() })
-	hash, err := bcrypt.GenerateFromPassword([]byte(store.DefaultAdminPassword), bcrypt.DefaultCost)
-	if err != nil {
-		t.Fatalf("hash password: %v", err)
-	}
+	hash := nonDefaultTestPasswordHash(t)
 	if err := ps.BootstrapDefaultSite(platform.DefaultSiteBootstrap{
 		Slug:                        "main",
 		Name:                        "Main Cleanup Site",
 		DBPath:                      filepath.Join(dir, "default.db"),
 		UploadDir:                   defaultUploadDir,
 		AdminUser:                   "admin",
-		AdminPasswordHash:           string(hash),
+		AdminPasswordHash:           hash,
 		ManagementAutomationEnabled: true,
 	}); err != nil {
 		t.Fatalf("bootstrap default site: %v", err)
@@ -169,7 +165,7 @@ func newMediaCleanupFixture(t *testing.T) *mediaCleanupFixture {
 	h := srv.Handler()
 
 	login := httptest.NewRecorder()
-	loginForm := url.Values{"username": {"admin"}, "password": {store.DefaultAdminPassword}}
+	loginForm := url.Values{"username": {"admin"}, "password": {nonDefaultTestPassword}}
 	loginReq := httptest.NewRequest(http.MethodPost, "https://platform.test/admin/login", strings.NewReader(loginForm.Encode()))
 	loginReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	h.ServeHTTP(login, loginReq)

@@ -16,7 +16,6 @@ import (
 
 	"cms.ccvar.com/internal/platform"
 	"cms.ccvar.com/internal/store"
-	"golang.org/x/crypto/bcrypt"
 )
 
 func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
@@ -117,17 +116,14 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 		t.Fatalf("open platform store: %v", err)
 	}
 	t.Cleanup(func() { _ = ps.Close() })
-	hash, err := bcrypt.GenerateFromPassword([]byte(store.DefaultAdminPassword), bcrypt.DefaultCost)
-	if err != nil {
-		t.Fatalf("hash password: %v", err)
-	}
+	hash := nonDefaultTestPasswordHash(t)
 	if err := ps.BootstrapDefaultSite(platform.DefaultSiteBootstrap{
 		Slug:                        "main",
 		Name:                        "Default Runtime Site",
 		DBPath:                      defaultDB,
 		UploadDir:                   defaultUploadDir,
 		AdminUser:                   "admin",
-		AdminPasswordHash:           string(hash),
+		AdminPasswordHash:           hash,
 		ManagementAutomationEnabled: true,
 	}); err != nil {
 		t.Fatalf("bootstrap default site: %v", err)
@@ -164,7 +160,7 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 	h := srv.Handler()
 
 	login := httptest.NewRecorder()
-	loginForm := url.Values{"username": {"admin"}, "password": {store.DefaultAdminPassword}}
+	loginForm := url.Values{"username": {"admin"}, "password": {nonDefaultTestPassword}}
 	loginReq := httptest.NewRequest(http.MethodPost, "https://platform.test/admin/login", strings.NewReader(loginForm.Encode()))
 	loginReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	h.ServeHTTP(login, loginReq)
@@ -227,8 +223,8 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 	if body := platformPage.Body.String(); strings.Contains(body, `sites-list-panel`) || strings.Contains(body, `overview-panel-head`) {
 		t.Fatalf("platform page rendered an outer site-list panel")
 	}
-	if body := platformPage.Body.String(); !strings.Contains(body, `id="pw-warn"`) {
-		t.Fatalf("platform page did not render password warning")
+	if body := platformPage.Body.String(); strings.Contains(body, `id="pw-warn"`) {
+		t.Fatalf("platform page rendered a stale password warning after a non-default login")
 	}
 	if body := platformPage.Body.String(); !strings.Contains(body, `2 个站点`) {
 		t.Fatalf("platform page did not render site count")

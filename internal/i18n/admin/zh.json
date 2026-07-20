@@ -12,6 +12,7 @@
   "admin.nav.logout": "退出",
   "admin.lang.label": "后台语言",
   "admin.warning.default_password": "当前仍在使用默认密码，建议尽快修改以保证安全。",
+  "admin.warning.password_required": "首次登录需要先修改默认密码，完成后才能继续使用后台。",
   "admin.warning.change_password": "前往修改",
   "admin.confirm.title": "确认删除",
   "admin.action.cancel": "取消",

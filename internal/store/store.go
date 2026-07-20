@@ -214,13 +214,14 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 
 CREATE TABLE IF NOT EXISTS admin_sessions (
-  token_hash   TEXT PRIMARY KEY,
-  user         TEXT NOT NULL,
-  csrf         TEXT NOT NULL,
-  expires_at   TEXT NOT NULL,
-  pw_dismissed INTEGER NOT NULL DEFAULT 0,
-  created_at   TEXT NOT NULL,
-  updated_at   TEXT NOT NULL
+  token_hash           TEXT PRIMARY KEY,
+  user                 TEXT NOT NULL,
+  csrf                 TEXT NOT NULL,
+  expires_at           TEXT NOT NULL,
+  pw_dismissed         INTEGER NOT NULL DEFAULT 0,
+  must_change_password INTEGER NOT NULL DEFAULT 0,
+  created_at           TEXT NOT NULL,
+  updated_at           TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS automation_keys (
@@ -278,6 +279,7 @@ func (s *Store) migrate() error {
 	s.addColumnIfMissing("posts", "editor_mode", "TEXT NOT NULL DEFAULT 'markdown'")
 	s.addColumnIfMissing("posts", "comments_enabled", "INTEGER NOT NULL DEFAULT 0")
 	s.addColumnIfMissing("categories", "position", "INTEGER NOT NULL DEFAULT 0")
+	s.addColumnIfMissing("admin_sessions", "must_change_password", "INTEGER NOT NULL DEFAULT 0")
 	// 旧库（slug 全局唯一、无 lang 列）整体重建为多语种结构。
 	if err := s.rebuildForI18n(); err != nil {
 		return fmt.Errorf("多语种迁移失败: %w", err)
@@ -743,11 +745,12 @@ func parseTime(s sql.NullString) time.Time {
 // ---------- 后台会话 ----------
 
 type AdminSession struct {
-	User          string
-	CSRF          string
-	ExpiresAt     time.Time
-	PwDismissed   bool
-	CurrentSiteID int64
+	User               string
+	CSRF               string
+	ExpiresAt          time.Time
+	PwDismissed        bool
+	MustChangePassword bool
+	CurrentSiteID      int64
 }
 
 func sessionTokenHash(token string) string {
@@ -758,8 +761,8 @@ func sessionTokenHash(token string) string {
 func (s *Store) CreateAdminSession(token, user, csrf string, expiresAt time.Time) error {
 	now := time.Now()
 	_, _ = s.db.Exec(`DELETE FROM admin_sessions WHERE expires_at<=?`, fmtTime(now))
-	_, err := s.db.Exec(`INSERT INTO admin_sessions(token_hash,user,csrf,expires_at,pw_dismissed,created_at,updated_at)
-		VALUES(?,?,?,?,0,?,?)`,
+	_, err := s.db.Exec(`INSERT INTO admin_sessions(token_hash,user,csrf,expires_at,pw_dismissed,must_change_password,created_at,updated_at)
+		VALUES(?,?,?,?,0,0,?,?)`,
 		sessionTokenHash(token), user, csrf, fmtTime(expiresAt), fmtTime(now), fmtTime(now))
 	return err
 }
@@ -767,9 +770,9 @@ func (s *Store) CreateAdminSession(token, user, csrf string, expiresAt time.Time
 func (s *Store) GetAdminSession(token string) (AdminSession, bool, error) {
 	var sess AdminSession
 	var expires string
-	var dismissed int
-	err := s.db.QueryRow(`SELECT user,csrf,expires_at,pw_dismissed FROM admin_sessions WHERE token_hash=?`, sessionTokenHash(token)).
-		Scan(&sess.User, &sess.CSRF, &expires, &dismissed)
+	var dismissed, mustChange int
+	err := s.db.QueryRow(`SELECT user,csrf,expires_at,pw_dismissed,must_change_password FROM admin_sessions WHERE token_hash=?`, sessionTokenHash(token)).
+		Scan(&sess.User, &sess.CSRF, &expires, &dismissed, &mustChange)
 	if err == sql.ErrNoRows {
 		return AdminSession{}, false, nil
 	}
@@ -783,6 +786,7 @@ func (s *Store) GetAdminSession(token string) (AdminSession, bool, error) {
 	}
 	sess.ExpiresAt = t
 	sess.PwDismissed = dismissed == 1
+	sess.MustChangePassword = mustChange == 1
 	return sess, true, nil
 }
 
@@ -793,6 +797,11 @@ func (s *Store) DeleteAdminSession(token string) error {
 
 func (s *Store) DismissAdminPasswordWarning(token string) error {
 	_, err := s.db.Exec(`UPDATE admin_sessions SET pw_dismissed=1,updated_at=? WHERE token_hash=?`, fmtTime(time.Now()), sessionTokenHash(token))
+	return err
+}
+
+func (s *Store) RequireAdminPasswordChange(token string) error {
+	_, err := s.db.Exec(`UPDATE admin_sessions SET must_change_password=1,updated_at=? WHERE token_hash=?`, fmtTime(time.Now()), sessionTokenHash(token))
 	return err
 }
 

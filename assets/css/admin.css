@@ -722,6 +722,7 @@ a.overview-log-title { text-decoration: none; }
 }
 /* 默认密码提示横幅 */
 .pw-warn { display: flex; align-items: center; gap: .7rem; margin-bottom: 1.5rem; padding: .65rem .95rem; border: 1px solid #ecc56a; background: #fdf6e3; color: #7a5b16; border-radius: 10px; font-size: .9rem; }
+.pw-warn.is-required { border-color: #e4ae55; background: #fff4dd; box-shadow: 0 8px 24px rgba(122,91,22,.08); }
 .pw-warn-ico { flex: none; color: #c8860a; }
 .pw-warn-text { flex: 1; }
 .pw-warn-text strong { color: #5e4612; }

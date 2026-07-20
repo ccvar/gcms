@@ -9,8 +9,6 @@ import (
 	"regexp"
 	"strings"
 	"testing"
-
-	"cms.ccvar.com/internal/store"
 )
 
 // ---------- schema 声明 ----------
@@ -393,8 +391,11 @@ func TestFactoryHeroAnimRendering(t *testing.T) {
 
 func themeOptsAdminSession(t *testing.T, s *Server) (*http.Cookie, string) {
 	t.Helper()
+	if err := s.setAdminPasswordHash("admin", nonDefaultTestPasswordHash(t)); err != nil {
+		t.Fatalf("set non-default admin password: %v", err)
+	}
 	h := s.Handler()
-	form := url.Values{"username": {"admin"}, "password": {store.DefaultAdminPassword}}
+	form := url.Values{"username": {"admin"}, "password": {nonDefaultTestPassword}}
 	req := httptest.NewRequest(http.MethodPost, "https://example.test/admin/login", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()

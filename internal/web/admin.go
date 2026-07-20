@@ -40,11 +40,12 @@ const (
 )
 
 type session struct {
-	user          string
-	csrf          string
-	exp           time.Time
-	pwDismissed   bool // 本次会话已关闭「修改默认密码」提示（下次登录重新提示）
-	currentSiteID int64
+	user               string
+	csrf               string
+	exp                time.Time
+	pwDismissed        bool // 本次会话已关闭「修改默认密码」提示（下次登录重新提示）
+	mustChangePassword bool // 本会话使用默认密码登录，修改前不得进入其他后台页面
+	currentSiteID      int64
 }
 
 type settingsFlash struct {
@@ -67,6 +68,7 @@ type adminSessionStore interface {
 	GetAdminSession(token string) (store.AdminSession, bool, error)
 	DeleteAdminSession(token string) error
 	DismissAdminPasswordWarning(token string) error
+	RequireAdminPasswordChange(token string) error
 	SetAdminSessionSite(token string, siteID int64) error
 }
 
@@ -95,7 +97,11 @@ func (s *sessions) get(tok string) (session, bool) {
 	if err != nil || !ok {
 		return session{}, false
 	}
-	return session{user: dbSess.User, csrf: dbSess.CSRF, exp: dbSess.ExpiresAt, pwDismissed: dbSess.PwDismissed, currentSiteID: dbSess.CurrentSiteID}, true
+	return session{
+		user: dbSess.User, csrf: dbSess.CSRF, exp: dbSess.ExpiresAt,
+		pwDismissed: dbSess.PwDismissed, mustChangePassword: dbSess.MustChangePassword,
+		currentSiteID: dbSess.CurrentSiteID,
+	}, true
 }
 
 func (s *sessions) destroy(tok string) {
@@ -108,6 +114,10 @@ func (s *sessions) destroy(tok string) {
 // dismissPw 标记该会话已关闭默认密码提示。
 func (s *sessions) dismissPw(tok string) {
 	_ = s.store.DismissAdminPasswordWarning(tok)
+}
+
+func (s *sessions) requirePasswordChange(tok string) error {
+	return s.store.RequireAdminPasswordChange(tok)
 }
 
 func (s *sessions) setCurrentSite(tok string, siteID int64) error {
@@ -318,12 +328,24 @@ func (s *Server) clearSessionCookie(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if _, ok := s.currentSession(r); !ok {
+		sess, ok := s.currentSession(r)
+		if !ok {
 			if wantsJSON(r) {
 				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "login_required", "message": "登录已过期，请重新登录。"})
 				return
 			}
 			http.Redirect(w, r, "/admin/login", http.StatusSeeOther)
+			return
+		}
+		if sess.mustChangePassword && s.adminPasswordIsDefault() && r.URL.Path != s.adminPasswordURL() {
+			if wantsJSON(r) {
+				writeJSON(w, http.StatusPreconditionRequired, map[string]string{
+					"error":   "password_change_required",
+					"message": "首次登录需要先修改默认密码。",
+				})
+				return
+			}
+			http.Redirect(w, r, s.adminPasswordURL(), http.StatusSeeOther)
 			return
 		}
 		next(w, r)
@@ -508,6 +530,7 @@ func (s *Server) authed(v *View, sess session) {
 	v.Authed = true
 	v.CSRF = sess.csrf
 	v.ShowPwWarn = s.passwordWarningVisible(sess, false)
+	v.ForcePasswordChange = sess.mustChangePassword && s.adminPasswordIsDefault()
 	v.PlatformCurrentSiteID = sess.currentSiteID
 	v.AdminPreviewPrefix = s.adminSitePreviewPrefix(sess.currentSiteID)
 	// 「查看」已发布内容：站点绑了正式域名（或 CF 已发布）就开真实地址——预览通道只是
@@ -893,8 +916,12 @@ func (s *Server) editLang(r *http.Request) string {
 // ---------- 登录 / 登出 ----------
 
 func (s *Server) adminLoginForm(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.currentSession(r); ok {
-		http.Redirect(w, r, s.adminLandingPath(), http.StatusSeeOther)
+	if sess, ok := s.currentSession(r); ok {
+		target := s.adminLandingPath()
+		if sess.mustChangePassword && s.adminPasswordIsDefault() {
+			target = s.adminPasswordURL()
+		}
+		http.Redirect(w, r, target, http.StatusSeeOther)
 		return
 	}
 	s.rnd.Admin(w, "login", http.StatusOK, s.adminView(r, "登录"))
@@ -915,13 +942,25 @@ func (s *Server) adminLoginPost(w http.ResponseWriter, r *http.Request) {
 	storedUser, hash := s.adminCredentials()
 	if user == storedUser && hash != "" && bcrypt.CompareHashAndPassword([]byte(hash), []byte(pass)) == nil {
 		s.login.reset(ip)
+		mustChangePassword := s.adminPasswordIsDefault()
 		tok, err := s.sess.create(user)
 		if err != nil {
 			s.serverError(w, err)
 			return
 		}
+		if mustChangePassword {
+			if err := s.sess.requirePasswordChange(tok); err != nil {
+				s.sess.destroy(tok)
+				s.serverError(w, err)
+				return
+			}
+		}
 		s.setSessionCookie(w, r, tok)
-		http.Redirect(w, r, s.adminLandingPath(), http.StatusSeeOther)
+		target := s.adminLandingPath()
+		if mustChangePassword {
+			target = s.adminPasswordURL()
+		}
+		http.Redirect(w, r, target, http.StatusSeeOther)
 		return
 	}
 	s.login.fail(ip)
@@ -5313,6 +5352,8 @@ func (s *Server) changeAdminPassword(r *http.Request) string {
 		return "当前密码不正确。"
 	case len([]rune(neu)) < 6:
 		return "新密码至少 6 位。"
+	case neu == store.DefaultAdminPassword:
+		return "新密码不能继续使用默认密码。"
 	case neu != conf:
 		return "两次输入的新密码不一致。"
 	}

@@ -64,6 +64,16 @@ func TestBootstrapDefaultSiteAndPlatformSession(t *testing.T) {
 	if sess.CurrentSiteID != 0 {
 		t.Fatalf("new session current site id = %d, want 0", sess.CurrentSiteID)
 	}
+	if sess.MustChangePassword {
+		t.Fatalf("new session unexpectedly requires a password change")
+	}
+	if err := ps.RequireAdminPasswordChange("token"); err != nil {
+		t.Fatalf("require password change: %v", err)
+	}
+	sess, ok, err = ps.GetAdminSession("token")
+	if err != nil || !ok || !sess.MustChangePassword {
+		t.Fatalf("required password-change session: %#v ok=%v err=%v", sess, ok, err)
+	}
 	if err := ps.SetAdminSessionSite("token", site.ID); err != nil {
 		t.Fatalf("set current site: %v", err)
 	}

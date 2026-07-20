@@ -155,6 +155,7 @@ pub fn zprofile_needs_append(existing: &str) -> bool {
 
 /// Windows 用户级 Path 追加脚本（PowerShell）：读现值 → 按目录逐个查重 → 追加 → 全量写回。
 /// 用 [Environment]::SetEnvironmentVariable('Path',…,'User')，**绝不用 setx**（1024 字符截断）。
+#[cfg(any(windows, test))]
 pub fn ps_path_append_script(dirs: &[&str]) -> String {
     let mut s = String::from(
         "$p=[Environment]::GetEnvironmentVariable('Path','User'); if($null -eq $p){$p=''};",

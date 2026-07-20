@@ -12,6 +12,8 @@ export interface Connection {
   key_kind: string;
   /** Cloudflare 账号 id（仅 kind=cloudflare）。 */
   account_id: string;
+  /** 这条 Cloudflare 连接被明确选中管理的 Zone。 */
+  preferred_zones?: string[];
   /** 以下仅 kind=ssh。 */
   ssh_host?: string;
   ssh_port?: number;

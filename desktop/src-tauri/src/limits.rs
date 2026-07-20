@@ -44,7 +44,7 @@ pub fn defer_next_run(reset_ts: u64, task_id: &str) -> u64 {
 }
 
 /// 是否处于限额期（now < reset_ts）。
-pub fn is_limited(entry: Option<&LimitEntry>, now: u64) -> bool {
+fn is_limited(entry: Option<&LimitEntry>, now: u64) -> bool {
     entry.map(|e| now < e.reset_ts).unwrap_or(false)
 }
 
@@ -98,7 +98,10 @@ impl LimitStore {
     /// 该 brain 若在限额期，返回登记条目。
     pub fn active(&self, brain: &str, now: u64) -> Option<LimitEntry> {
         let _g = LOCK.lock().unwrap();
-        self.read().get(brain).filter(|e| now < e.reset_ts).cloned()
+        self.read()
+            .get(brain)
+            .filter(|entry| is_limited(Some(*entry), now))
+            .cloned()
     }
 
     /// 通知节流：本窗口还没通知过 → 标记已通知并返回 true（该发）；否则 false。

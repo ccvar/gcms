@@ -139,6 +139,9 @@ const (
 // assetVersion 取关键静态资源内容的短指纹：内容变了指纹就变，配合长缓存做缓存破坏。
 func assetVersion(fsys fs.FS) string {
 	h := fnv.New64a()
+	// v2 同时使此前被 Caddy 误标为 immutable 的 404 资源 URL 失效。仅修复路由而不
+	// 改 CSS 内容时也必须换查询指纹，否则浏览器可能继续使用旧的负缓存。
+	_, _ = h.Write([]byte("gcms-assets-v2\n"))
 	for _, p := range []string{"assets/css/style.css", "assets/css/public.css", "assets/css/admin.css", "assets/js/admin.js", "assets/js/site.js", "assets/js/toc.js"} {
 		if b, err := fs.ReadFile(fsys, p); err == nil {
 			_, _ = h.Write(b)
@@ -941,6 +944,7 @@ type View struct {
 	PlatformMode                 bool // 当前实例启用了平台级多站点
 	PlatformAdminView            bool // 平台级管理页，不显示当前站点后台导航
 	ShowPwWarn                   bool // 仍为默认密码且本会话未关闭提示
+	ForcePasswordChange          bool // 首次登录仍为默认密码，只允许进入安全页完成修改
 	CSRF                         string
 	Flash                        string
 	FormErr                      string
@@ -1639,6 +1643,14 @@ func (s *Server) serveWithRuntime(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if strings.HasPrefix(r.URL.Path, "/uploads/") && s.serveAdminScopedUpload(w, r, pool) {
+		return
+	}
+	// 首次安装后若本机 Caddy 已接入正式域名、但 GCMS 进程还没重新加载 BASE_URL，
+	// 平台登录页可以通过 loopback 反代兜底访问。内置静态资源也应走同一条安全兜底，
+	// 否则 HTML 返回 200，而 /assets/css/admin.css 与后台脚本会因未知 Host 全部 404。
+	// 仅平台 Host（或本机反代 + localhost BASE_URL）命中；外部未知 Host 仍不会放行。
+	if strings.HasPrefix(r.URL.Path, "/assets/") && s.platformHostAllowed(r, pool) {
+		s.siteHandler().ServeHTTP(w, r)
 		return
 	}
 	if platformOnlyPath(r.URL.Path) {

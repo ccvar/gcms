@@ -3,12 +3,14 @@
 package main
 
 import (
+	"database/sql"
 	"embed"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"cms.ccvar.com/internal/platform"
@@ -24,6 +26,11 @@ var assetsFS embed.FS
 
 func main() {
 	dbPath := env("CMS_DB", "data/cms.db")
+	systemDBPath := env("SYSTEM_DB", filepath.Join(filepath.Dir(dbPath), "system.db"))
+	if len(os.Args) == 2 && os.Args[1] == "pilot-security-status" {
+		printPilotSecurityStatus(dbPath, systemDBPath)
+		return
+	}
 	if dir := filepath.Dir(dbPath); dir != "" {
 		_ = os.MkdirAll(dir, 0o755)
 	}
@@ -36,7 +43,6 @@ func main() {
 
 	baseURL := env("BASE_URL", "http://localhost:8080")
 	uploadDir := env("UPLOAD_DIR", filepath.Join(filepath.Dir(dbPath), "uploads"))
-	systemDBPath := env("SYSTEM_DB", filepath.Join(filepath.Dir(dbPath), "system.db"))
 	ps, err := platform.Open(systemDBPath)
 	if err != nil {
 		log.Fatalf("打开平台数据库失败: %v", err)
@@ -98,6 +104,76 @@ func main() {
 			"  └─────────────────────────────────────────────┘\n\n")
 	}
 	log.Fatal(httpSrv.ListenAndServe())
+}
+
+// printPilotSecurityStatus 是给服务器本机运维探针使用的只读命令。
+// 它只输出状态和用户名，绝不输出密码哈希；公网 HTTP 路由不会暴露该信息。
+func printPilotSecurityStatus(dbPath, systemDBPath string) {
+	user, hash := readPilotAdminCredentials(systemDBPath, dbPath)
+	status := "unknown"
+	if hash != "" {
+		status = "changed"
+		if store.IsDefaultAdminPasswordHash(hash) {
+			status = "default"
+		}
+	}
+	fmt.Printf("PILOT_GCMS_PASSWORD_STATUS\t%s\n", status)
+	fmt.Printf("PILOT_GCMS_ADMIN_USER\t%s\n", pilotStatusField(user))
+}
+
+func readPilotAdminCredentials(systemDBPath, dbPath string) (string, string) {
+	if user, hash, ok := queryPilotAdminCredentials(systemDBPath,
+		`SELECT username,password_hash FROM platform_admins ORDER BY id ASC LIMIT 1`); ok && hash != "" {
+		return user, hash
+	}
+	return queryPilotSiteCredentials(dbPath)
+}
+
+func queryPilotSiteCredentials(path string) (string, string) {
+	if strings.TrimSpace(path) == "" {
+		return "", ""
+	}
+	if _, err := os.Stat(path); err != nil {
+		return "", ""
+	}
+	db, err := sql.Open("sqlite", fmt.Sprintf("file:%s?mode=ro&_pragma=busy_timeout(5000)", filepath.ToSlash(path)))
+	if err != nil {
+		return "", ""
+	}
+	defer db.Close()
+	var user, hash sql.NullString
+	err = db.QueryRow(`SELECT
+		(SELECT value FROM settings WHERE key='admin_user'),
+		(SELECT value FROM settings WHERE key='admin_password_hash')`).Scan(&user, &hash)
+	if err != nil {
+		return "", ""
+	}
+	return strings.TrimSpace(user.String), strings.TrimSpace(hash.String)
+}
+
+func queryPilotAdminCredentials(path, query string) (string, string, bool) {
+	if strings.TrimSpace(path) == "" {
+		return "", "", false
+	}
+	if _, err := os.Stat(path); err != nil {
+		return "", "", false
+	}
+	db, err := sql.Open("sqlite", fmt.Sprintf("file:%s?mode=ro&_pragma=busy_timeout(5000)", filepath.ToSlash(path)))
+	if err != nil {
+		return "", "", false
+	}
+	defer db.Close()
+	var user, hash string
+	if err := db.QueryRow(query).Scan(&user, &hash); err != nil {
+		return "", "", false
+	}
+	return strings.TrimSpace(user), strings.TrimSpace(hash), true
+}
+
+func pilotStatusField(value string) string {
+	value = strings.ReplaceAll(value, "\t", " ")
+	value = strings.ReplaceAll(value, "\r", " ")
+	return strings.ReplaceAll(value, "\n", " ")
 }
 
 func env(key, def string) string {
