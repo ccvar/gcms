@@ -60,7 +60,10 @@ pub struct SftpEntry {
 /// 权限位 → "rwxr-xr-x"。只取低 9 位；setuid/setgid/sticky 按 ls 的写法叠在执行位上。
 fn perm_str(mode: u32) -> String {
     let mut s = String::with_capacity(9);
-    for (i, group) in [(mode >> 6) & 7, (mode >> 3) & 7, mode & 7].iter().enumerate() {
+    for (i, group) in [(mode >> 6) & 7, (mode >> 3) & 7, mode & 7]
+        .iter()
+        .enumerate()
+    {
         s.push(if group & 4 != 0 { 'r' } else { '-' });
         s.push(if group & 2 != 0 { 'w' } else { '-' });
         // setuid(04000)/setgid(02000)/sticky(01000) 各自改写对应组的执行位
@@ -128,7 +131,9 @@ impl client::Handler for Client {
         &mut self,
         server_public_key: &russh::keys::ssh_key::PublicKey,
     ) -> Result<bool, Self::Error> {
-        let fp = server_public_key.fingerprint(Default::default()).to_string();
+        let fp = server_public_key
+            .fingerprint(Default::default())
+            .to_string();
         if let Ok(mut g) = self.seen.lock() {
             *g = fp.clone();
         }
@@ -164,7 +169,10 @@ async fn connect_auth(
     expect: Option<String>,
 ) -> Result<(client::Handle<Client>, String), String> {
     let seen = Arc::new(StdMutex::new(String::new()));
-    let handler = Client { expect: expect.clone(), seen: seen.clone() };
+    let handler = Client {
+        expect: expect.clone(),
+        seen: seen.clone(),
+    };
     let mut session = client::connect(cfg(), (host, port), handler)
         .await
         .map_err(|e| {
@@ -222,7 +230,11 @@ pub async fn probe(
             let _ = session
                 .disconnect(russh::Disconnect::ByApplication, "probe done", "")
                 .await;
-            Ok(SshProbe { fingerprint: fp, auth_ok: true, error: String::new() })
+            Ok(SshProbe {
+                fingerprint: fp,
+                auth_ok: true,
+                error: String::new(),
+            })
         }
         Err(e) => Err(e),
     }
@@ -294,11 +306,23 @@ fn parse_stats(s: &str) -> Result<SshStats, String> {
             cpu_idle = n[3] + n[4]; // idle + iowait
             seen_cpu = true;
         } else if let Some(v) = line.strip_prefix("MemTotal:") {
-            mem_total = v.split_whitespace().next().and_then(|x| x.parse().ok()).unwrap_or(0);
+            mem_total = v
+                .split_whitespace()
+                .next()
+                .and_then(|x| x.parse().ok())
+                .unwrap_or(0);
         } else if let Some(v) = line.strip_prefix("MemAvailable:") {
-            mem_avail = v.split_whitespace().next().and_then(|x| x.parse().ok()).unwrap_or(0);
+            mem_avail = v
+                .split_whitespace()
+                .next()
+                .and_then(|x| x.parse().ok())
+                .unwrap_or(0);
         } else if let Some(v) = line.strip_prefix("MemFree:") {
-            mem_free = v.split_whitespace().next().and_then(|x| x.parse().ok()).unwrap_or(0);
+            mem_free = v
+                .split_whitespace()
+                .next()
+                .and_then(|x| x.parse().ok())
+                .unwrap_or(0);
         } else if f.len() >= 6 && !seen_df {
             // df: 文件系统 1K块 已用 可用 容量 挂载点 —— 认「最后一列是 /」这一行
             if f[f.len() - 1] == "/" {
@@ -409,7 +433,15 @@ impl SshSessions {
         match g.get(conn_id) {
             Some(live) if !live.handle.is_closed() => {}
             _ => {
-                g.insert(conn_id.to_string(), Live { handle: Arc::new(session), ch: None, on_event: None, pty_gen: 0 });
+                g.insert(
+                    conn_id.to_string(),
+                    Live {
+                        handle: Arc::new(session),
+                        ch: None,
+                        on_event: None,
+                        pty_gen: 0,
+                    },
+                );
             }
         }
         Ok(())
@@ -469,11 +501,15 @@ impl SshSessions {
             loop {
                 match reader.wait().await {
                     Some(ChannelMsg::Data { data }) => {
-                        let _ = on_event.send(SshEvent::Data { b64: b64.encode(&data[..]) });
+                        let _ = on_event.send(SshEvent::Data {
+                            b64: b64.encode(&data[..]),
+                        });
                     }
                     // stderr 也直接进终端（交互式 shell 本来就混在一起显示）。
                     Some(ChannelMsg::ExtendedData { data, .. }) => {
-                        let _ = on_event.send(SshEvent::Data { b64: b64.encode(&data[..]) });
+                        let _ = on_event.send(SshEvent::Data {
+                            b64: b64.encode(&data[..]),
+                        });
                     }
                     Some(ChannelMsg::ExitStatus { .. }) | Some(ChannelMsg::Eof) => {}
                     Some(_) => {}
@@ -488,7 +524,9 @@ impl SshSessions {
                     g.remove(&id);
                 }
             }
-            let _ = on_event.send(SshEvent::Closed { error: String::new() });
+            let _ = on_event.send(SshEvent::Closed {
+                error: String::new(),
+            });
         });
         Ok(())
     }
@@ -519,7 +557,10 @@ impl SshSessions {
     }
 
     /// PTY 写半边（锁里克隆，锁外用）。见 Live.ch。
-    async fn pty(&self, conn_id: &str) -> Result<Arc<russh::ChannelWriteHalf<client::Msg>>, String> {
+    async fn pty(
+        &self,
+        conn_id: &str,
+    ) -> Result<Arc<russh::ChannelWriteHalf<client::Msg>>, String> {
         let g = self.map.lock().await;
         let live = g.get(conn_id).ok_or("会话未打开")?;
         live.ch.clone().ok_or_else(|| "终端未打开".to_string())
@@ -546,7 +587,12 @@ impl SshSessions {
     /// 会话在表里**且**底层连接还活着（网线拔了/服务端重启后 handle 会 is_closed 但仍留在表里）。
     /// ensure_ssh 用它做快速路径：活着就跳过重连、也不去读钥匙串；死了或没有就交给 ensure 重建。
     pub async fn is_open(&self, conn_id: &str) -> bool {
-        self.map.lock().await.get(conn_id).map(|l| !l.handle.is_closed()).unwrap_or(false)
+        self.map
+            .lock()
+            .await
+            .get(conn_id)
+            .map(|l| !l.handle.is_closed())
+            .unwrap_or(false)
     }
 
     /// 取一次远端负载。**故意不 ensure**：没有现成会话就直接失败，不为了顶栏那三个数
@@ -563,7 +609,11 @@ impl SshSessions {
     /// （包括收尾的「▸ 完成」）。别再写「用 conn_id 现查通道」的辅助函数 —— 那会绕过 echo 开关，
     /// 后台探测就会每 5 秒往终端吐一行（真出过这个 bug）。
     async fn sink(&self, conn_id: &str) -> Option<Channel<SshEvent>> {
-        self.map.lock().await.get(conn_id).and_then(|l| l.on_event.clone())
+        self.map
+            .lock()
+            .await
+            .get(conn_id)
+            .and_then(|l| l.on_event.clone())
     }
 
     /// 跑一条一次性命令（AI 桥用）。每次开一路新通道 → **每条命令是独立的一次性 shell**
@@ -579,11 +629,17 @@ impl SshSessions {
         echo_to_term: bool,
     ) -> Result<ExecOut, String> {
         // 通道在循环外取一次：每来一块数据都去抢表锁就太蠢了。
-        let sink = if echo_to_term { self.sink(conn_id).await } else { None };
+        let sink = if echo_to_term {
+            self.sink(conn_id).await
+        } else {
+            None
+        };
         if let Some(s) = &sink {
             // 醒目但克制：一行提示 + 命令原文，让人一眼看出这行不是自己敲的。
             let head = format!("\r\n\x1b[38;5;110m▸ AI\x1b[0m \x1b[1m{cmd}\x1b[0m\r\n");
-            let _ = s.send(SshEvent::Data { b64: base64::engine::general_purpose::STANDARD.encode(&head) });
+            let _ = s.send(SshEvent::Data {
+                b64: base64::engine::general_purpose::STANDARD.encode(&head),
+            });
         }
         self.exec_inner(conn_id, cmd, timeout_secs, sink).await
     }
@@ -597,7 +653,10 @@ impl SshSessions {
     ) -> Result<ExecOut, String> {
         let handle = {
             let g = self.map.lock().await;
-            g.get(conn_id).ok_or("会话未打开：请先连接远程终端")?.handle.clone()
+            g.get(conn_id)
+                .ok_or("会话未打开：请先连接远程终端")?
+                .handle
+                .clone()
         }; // 出锁再开通道：同上，别让一台失联的机器把整张会话表锁死
         let ch = handle
             .channel_open_session()
@@ -610,7 +669,12 @@ impl SshSessions {
         let (mut reader, _writer) = ch.split();
         let sink2 = sink.clone(); // collect 闭包要借走 sink，收尾那几行得另留一份
         let collect = async {
-            let mut out = ExecOut { stdout: String::new(), stderr: String::new(), code: -1, truncated: false };
+            let mut out = ExecOut {
+                stdout: String::new(),
+                stderr: String::new(),
+                code: -1,
+                truncated: false,
+            };
             let (mut so, mut se): (Vec<u8>, Vec<u8>) = (Vec::new(), Vec::new());
             let b64 = base64::engine::general_purpose::STANDARD;
             // 收到一块就往终端推一块 —— 这样 apt 装东西的进度是**滚出来**的，
@@ -619,7 +683,9 @@ impl SshSessions {
             let mut last_cr = false;
             let mut tee = |data: &[u8]| {
                 if let Some(s) = &sink {
-                    let _ = s.send(SshEvent::Data { b64: b64.encode(to_crlf(data, &mut last_cr)) });
+                    let _ = s.send(SshEvent::Data {
+                        b64: b64.encode(to_crlf(data, &mut last_cr)),
+                    });
                 }
             };
             loop {
@@ -659,7 +725,11 @@ impl SshSessions {
                 say(if out.code == 0 {
                     format!(
                         "\x1b[38;5;108m▸ 完成\x1b[0m{}\r\n",
-                        if out.truncated { "\x1b[90m（输出过长已截断）\x1b[0m" } else { "" }
+                        if out.truncated {
+                            "\x1b[90m（输出过长已截断）\x1b[0m"
+                        } else {
+                            ""
+                        }
                     )
                 } else {
                     format!("\x1b[31m▸ 退出码 {}\x1b[0m\r\n", out.code)
@@ -667,7 +737,9 @@ impl SshSessions {
                 Ok(out)
             }
             Err(_) => {
-                say(format!("\r\n\x1b[31m▸ AI 命令超时（{timeout_secs}s）\x1b[0m\r\n"));
+                say(format!(
+                    "\r\n\x1b[31m▸ AI 命令超时（{timeout_secs}s）\x1b[0m\r\n"
+                ));
                 Err(format!(
                     "命令超时（{timeout_secs} 秒未结束）。远端可能仍在跑：长任务请用 nohup/systemd 放后台再轮询查看。"
                 ))
@@ -681,7 +753,10 @@ impl SshSessions {
     async fn sftp(&self, conn_id: &str) -> Result<SftpSession, String> {
         let handle = {
             let g = self.map.lock().await;
-            g.get(conn_id).ok_or("会话未打开：请先连接远程终端")?.handle.clone()
+            g.get(conn_id)
+                .ok_or("会话未打开：请先连接远程终端")?
+                .handle
+                .clone()
         }; // 出锁再开通道：开通道要等服务端确认，持锁 await 会连坐整张表
         let ch = handle
             .channel_open_session()
@@ -741,7 +816,9 @@ impl SshSessions {
                 }
             }
         }
-        sftp.read(path).await.map_err(|e| format!("读取 {path} 失败: {e}"))
+        sftp.read(path)
+            .await
+            .map_err(|e| format!("读取 {path} 失败: {e}"))
     }
 
     /// 写整个文件（在线编辑保存 / 上传用）。
@@ -772,9 +849,13 @@ impl SshSessions {
     pub async fn remove(&self, conn_id: &str, path: &str, dir: bool) -> Result<(), String> {
         let sftp = self.sftp(conn_id).await?;
         if dir {
-            sftp.remove_dir(path).await.map_err(|e| format!("删除目录失败（非空？）: {e}"))
+            sftp.remove_dir(path)
+                .await
+                .map_err(|e| format!("删除目录失败（非空？）: {e}"))
         } else {
-            sftp.remove_file(path).await.map_err(|e| format!("删除文件失败: {e}"))
+            sftp.remove_file(path)
+                .await
+                .map_err(|e| format!("删除文件失败: {e}"))
         }
     }
 
@@ -815,7 +896,9 @@ impl SshSessions {
             .await
             .map_err(|e| format!("上传失败: {e}"))?;
         // copy 只 flush 不关句柄；SFTP 的 close 才让远端落定文件。
-        dst.shutdown().await.map_err(|e| format!("上传收尾失败: {e}"))?;
+        dst.shutdown()
+            .await
+            .map_err(|e| format!("上传收尾失败: {e}"))?;
         Ok(n)
     }
 }
@@ -859,10 +942,20 @@ MemFree:          645956 kB\n\
 MemAvailable:    3455572 kB\n\
 /dev/vda1       20511312 5350956  14096816  28% /\n";
         let s = parse_stats(out).unwrap();
-        assert_eq!(s.cpu_total, 1234567 + 8901 + 234567 + 45678901 + 12345 + 0 + 6789);
-        assert_eq!(s.cpu_idle, 45678901 + 12345, "idle 要含 iowait（等 IO 也不是在干活）");
+        assert_eq!(
+            s.cpu_total,
+            1234567 + 8901 + 234567 + 45678901 + 12345 + 0 + 6789
+        );
+        assert_eq!(
+            s.cpu_idle,
+            45678901 + 12345,
+            "idle 要含 iowait（等 IO 也不是在干活）"
+        );
         assert_eq!(s.mem_total_kb, 4009884);
-        assert_eq!(s.mem_avail_kb, 3455572, "有 MemAvailable 就别用 MemFree —— 缓存是可回收的");
+        assert_eq!(
+            s.mem_avail_kb, 3455572,
+            "有 MemAvailable 就别用 MemFree —— 缓存是可回收的"
+        );
         assert_eq!(s.disk_total_kb, 20511312);
         assert_eq!(s.disk_used_kb, 5350956);
     }
@@ -870,7 +963,10 @@ MemAvailable:    3455572 kB\n\
     #[test]
     fn parse_stats_edge_cases() {
         // 老内核没有 MemAvailable → 退回 MemFree
-        let s = parse_stats("cpu 1 2 3 4 5\nMemTotal: 100 kB\nMemFree: 40 kB\n/dev/sda1 10 4 6 40% /\n").unwrap();
+        let s = parse_stats(
+            "cpu 1 2 3 4 5\nMemTotal: 100 kB\nMemFree: 40 kB\n/dev/sda1 10 4 6 40% /\n",
+        )
+        .unwrap();
         assert_eq!(s.mem_avail_kb, 40);
         // 只认挂载点是 / 的那行（df 可能带别的行/表头）
         let s = parse_stats(
@@ -886,8 +982,15 @@ Filesystem 1024-blocks Used Available Capacity Mounted on\n\
         assert_eq!(s.cpu_total, 100);
         // 不是 Linux / 缺行 → 报错，UI 就不显示（别编数）
         assert!(parse_stats("").is_err());
-        assert!(parse_stats("cpu 1 2 3 4 5\n").is_err(), "缺内存和磁盘不能算成功");
-        assert!(parse_stats("MemTotal: 100 kB\nMemAvailable: 50 kB\n/dev/sda1 20 8 12 40% /\n").is_err(), "缺 cpu 行");
+        assert!(
+            parse_stats("cpu 1 2 3 4 5\n").is_err(),
+            "缺内存和磁盘不能算成功"
+        );
+        assert!(
+            parse_stats("MemTotal: 100 kB\nMemAvailable: 50 kB\n/dev/sda1 20 8 12 40% /\n")
+                .is_err(),
+            "缺 cpu 行"
+        );
     }
 
     /// exec 没有 PTY → 输出是裸 \n，直接写进终端会「阶梯状」（每行从上一行结尾处开始）。
@@ -904,7 +1007,11 @@ Filesystem 1024-blocks Used Available Capacity Mounted on\n\
         let mut cr = false;
         assert_eq!(to_crlf(b"a\r", &mut cr), b"a\r");
         assert!(cr, "块尾是 \\r，状态要带到下一块");
-        assert_eq!(to_crlf(b"\nb", &mut cr), b"\nb", "下块开头的 \\n 属于上块的 \\r，不该补");
+        assert_eq!(
+            to_crlf(b"\nb", &mut cr),
+            b"\nb",
+            "下块开头的 \\n 属于上块的 \\r，不该补"
+        );
 
         // 跨块的裸 \n（上块不是以 \r 结尾）照样要补
         let mut cr = false;
@@ -917,7 +1024,10 @@ Filesystem 1024-blocks Used Available Capacity Mounted on\n\
         assert_eq!(to_crlf(b"", &mut cr), b"");
         // 二进制/ANSI 转义原样穿过（终端要靠它上色、清屏）
         let mut cr = false;
-        assert_eq!(to_crlf(b"\x1b[31mred\x1b[0m\n", &mut cr), b"\x1b[31mred\x1b[0m\r\n");
+        assert_eq!(
+            to_crlf(b"\x1b[31mred\x1b[0m\n", &mut cr),
+            b"\x1b[31mred\x1b[0m\r\n"
+        );
     }
 
     #[test]

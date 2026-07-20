@@ -37,7 +37,10 @@ pub fn dist_urls(filename: &str) -> [String; 2] {
 
 /// 发行包文件名去扩展名＝解压后的根目录名。
 pub fn dist_root(filename: &str) -> String {
-    filename.trim_end_matches(".zip").trim_end_matches(".tar.gz").to_string()
+    filename
+        .trim_end_matches(".zip")
+        .trim_end_matches(".tar.gz")
+        .to_string()
 }
 
 /// "v22.14.0" / "22.14.0" → 22；解析不了 → 0。
@@ -64,7 +67,11 @@ fn current_os() -> &'static str {
 pub fn managed_bin_dir(data_dir: &Path) -> Option<PathBuf> {
     let f = dist_filename(current_os(), std::env::consts::ARCH)?;
     let root = data_dir.join("node").join(dist_root(&f));
-    Some(if cfg!(windows) { root } else { root.join("bin") })
+    Some(if cfg!(windows) {
+        root
+    } else {
+        root.join("bin")
+    })
 }
 
 /// npm 全局 prefix（托管安装的 claude/codex 落这里，不碰系统目录）。
@@ -75,7 +82,11 @@ pub fn npm_prefix_dir(data_dir: &Path) -> PathBuf {
 /// npm 全局 bin：win 的 .cmd shim 就在 prefix 根；unix 在 prefix/bin。
 pub fn npm_global_bin(data_dir: &Path) -> PathBuf {
     let p = npm_prefix_dir(data_dir);
-    if cfg!(windows) { p } else { p.join("bin") }
+    if cfg!(windows) {
+        p
+    } else {
+        p.join("bin")
+    }
 }
 
 /// 托管 node 可执行路径。
@@ -107,7 +118,10 @@ pub fn verify_managed(bin_dir: &Path) -> bool {
 pub fn prepend_path_dirs(dirs: &[PathBuf]) {
     let sep = if cfg!(windows) { ';' } else { ':' };
     let cur = std::env::var("PATH").unwrap_or_default();
-    let mut add: Vec<String> = dirs.iter().map(|p| p.to_string_lossy().to_string()).collect();
+    let mut add: Vec<String> = dirs
+        .iter()
+        .map(|p| p.to_string_lossy().to_string())
+        .collect();
     add.retain(|p| !cur.split(sep).any(|x| x == p));
     if add.is_empty() {
         return;
@@ -117,7 +131,9 @@ pub fn prepend_path_dirs(dirs: &[PathBuf]) {
 
 /// 把托管 node bin + npm 全局 bin 前置进本进程 PATH；幂等。启动时与自举成功后各调一次。
 pub fn prepend_process_path(data_dir: &Path) {
-    let Some(bin) = managed_bin_dir(data_dir) else { return };
+    let Some(bin) = managed_bin_dir(data_dir) else {
+        return;
+    };
     if !bin.exists() {
         return;
     }
@@ -126,7 +142,10 @@ pub fn prepend_process_path(data_dir: &Path) {
 
 /// macOS ~/.zprofile 追加块（带守卫标记；导出为 PATH 前置）。
 pub fn zprofile_block(bin_dirs: &[&str]) -> String {
-    format!("\n{ZPROFILE_MARK} (auto-added; safe to remove)\nexport PATH=\"{}:$PATH\"\n", bin_dirs.join(":"))
+    format!(
+        "\n{ZPROFILE_MARK} (auto-added; safe to remove)\nexport PATH=\"{}:$PATH\"\n",
+        bin_dirs.join(":")
+    )
 }
 
 /// zprofile 是否还需要追加（守卫标记不存在才写，幂等）。
@@ -137,7 +156,9 @@ pub fn zprofile_needs_append(existing: &str) -> bool {
 /// Windows 用户级 Path 追加脚本（PowerShell）：读现值 → 按目录逐个查重 → 追加 → 全量写回。
 /// 用 [Environment]::SetEnvironmentVariable('Path',…,'User')，**绝不用 setx**（1024 字符截断）。
 pub fn ps_path_append_script(dirs: &[&str]) -> String {
-    let mut s = String::from("$p=[Environment]::GetEnvironmentVariable('Path','User'); if($null -eq $p){$p=''};");
+    let mut s = String::from(
+        "$p=[Environment]::GetEnvironmentVariable('Path','User'); if($null -eq $p){$p=''};",
+    );
     for d in dirs {
         s.push_str(&format!(
             " if(-not (($p -split ';') -contains '{d}')){{ $p = (($p.TrimEnd(';')) + ';{d}').TrimStart(';') }};"
@@ -150,7 +171,10 @@ pub fn ps_path_append_script(dirs: &[&str]) -> String {
 /// 用户级持久 PATH 写入（幂等；失败不致命——调用方吐司提示手动配置）。
 /// Windows 写注册表 User Path；macOS 追加 ~/.zprofile 守卫块；Linux 不写（进程内前置已够应用内使用）。
 pub fn register_user_path(bin_dirs: &[PathBuf]) -> Result<(), String> {
-    let strs: Vec<String> = bin_dirs.iter().map(|p| p.to_string_lossy().to_string()).collect();
+    let strs: Vec<String> = bin_dirs
+        .iter()
+        .map(|p| p.to_string_lossy().to_string())
+        .collect();
     let refs: Vec<&str> = strs.iter().map(|s| s.as_str()).collect();
     #[cfg(windows)]
     {
@@ -161,7 +185,10 @@ pub fn register_user_path(bin_dirs: &[PathBuf]) -> Result<(), String> {
         c.creation_flags(0x0800_0000);
         let out = c.output().map_err(|e| e.to_string())?;
         if !out.status.success() {
-            return Err(String::from_utf8_lossy(&out.stderr).chars().take(200).collect());
+            return Err(String::from_utf8_lossy(&out.stderr)
+                .chars()
+                .take(200)
+                .collect());
         }
         return Ok(());
     }
@@ -177,7 +204,8 @@ pub fn register_user_path(bin_dirs: &[PathBuf]) -> Result<(), String> {
                 .append(true)
                 .open(&zp)
                 .map_err(|e| e.to_string())?;
-            f.write_all(zprofile_block(&refs).as_bytes()).map_err(|e| e.to_string())?;
+            f.write_all(zprofile_block(&refs).as_bytes())
+                .map_err(|e| e.to_string())?;
         }
         return Ok(());
     }
@@ -196,7 +224,8 @@ pub async fn ensure(data_dir: &Path, progress: impl Fn(&str, u32)) -> Result<Pat
     if verify_managed(&bin) {
         return Ok(bin);
     }
-    let filename = dist_filename(current_os(), std::env::consts::ARCH).expect("managed_bin_dir 已校验平台");
+    let filename =
+        dist_filename(current_os(), std::env::consts::ARCH).expect("managed_bin_dir 已校验平台");
     let mut data: Option<Vec<u8>> = None;
     let mut last_err = String::new();
     for url in dist_urls(&filename) {
@@ -238,7 +267,11 @@ pub fn grok_version_urls() -> [String; 2] {
 
 /// grok Windows 单文件 exe 产物地址（主源 → 回退）。arch 传 std::env::consts::ARCH。
 pub fn grok_win_exe_urls(version: &str, arch: &str) -> [String; 2] {
-    let plat = if arch == "aarch64" { "windows-aarch64" } else { "windows-x86_64" };
+    let plat = if arch == "aarch64" {
+        "windows-aarch64"
+    } else {
+        "windows-x86_64"
+    };
     [
         format!("https://x.ai/cli/grok-{version}-{plat}.exe"),
         format!("https://storage.googleapis.com/grok-build-public-artifacts/cli/grok-{version}-{plat}.exe"),
@@ -252,7 +285,8 @@ pub fn parse_grok_version(body: &str) -> Option<String> {
     let (a, b, c) = (parts.next()?, parts.next()?, parts.next()?);
     let num = |s: &str| !s.is_empty() && s.chars().all(|ch| ch.is_ascii_digit());
     let tail_ok = c.split('-').next().map(num).unwrap_or(false)
-        && c.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '.' || ch == '-');
+        && c.chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '.' || ch == '-');
     (num(a) && num(b) && tail_ok && !v.contains(char::is_whitespace)).then(|| v.to_string())
 }
 
@@ -307,12 +341,14 @@ pub(crate) async fn download(url: &str, progress: &impl Fn(&str, u32)) -> Result
 fn extract(node_dir: &Path, filename: &str, data: &[u8]) -> Result<(), String> {
     std::fs::create_dir_all(node_dir).map_err(|e| format!("创建 node 目录: {e}"))?;
     if filename.ends_with(".zip") {
-        let mut ar = zip::ZipArchive::new(std::io::Cursor::new(data)).map_err(|e| format!("读取 zip: {e}"))?;
+        let mut ar = zip::ZipArchive::new(std::io::Cursor::new(data))
+            .map_err(|e| format!("读取 zip: {e}"))?;
         ar.extract(node_dir).map_err(|e| format!("解压 zip: {e}"))?;
     } else {
         let gz = flate2::read::GzDecoder::new(data);
         let mut ar = tar::Archive::new(gz);
-        ar.unpack(node_dir).map_err(|e| format!("解压 tar.gz: {e}"))?;
+        ar.unpack(node_dir)
+            .map_err(|e| format!("解压 tar.gz: {e}"))?;
     }
     Ok(())
 }
@@ -324,18 +360,48 @@ mod tests {
     /// 各平台/架构的发行包文件名与双源 URL 拼装。
     #[test]
     fn dist_filename_and_urls() {
-        assert_eq!(dist_filename("windows", "x86_64").unwrap(), format!("node-{NODE_VERSION}-win-x64.zip"));
-        assert_eq!(dist_filename("windows", "aarch64").unwrap(), format!("node-{NODE_VERSION}-win-arm64.zip"));
-        assert_eq!(dist_filename("macos", "aarch64").unwrap(), format!("node-{NODE_VERSION}-darwin-arm64.tar.gz"));
-        assert_eq!(dist_filename("macos", "x86_64").unwrap(), format!("node-{NODE_VERSION}-darwin-x64.tar.gz"));
-        assert_eq!(dist_filename("linux", "x86_64").unwrap(), format!("node-{NODE_VERSION}-linux-x64.tar.gz"));
-        assert_eq!(dist_filename("linux", "aarch64").unwrap(), format!("node-{NODE_VERSION}-linux-arm64.tar.gz"));
-        assert!(dist_filename("freebsd", "x86_64").is_none(), "不支持的平台回 None（调用方回退脚本渠道）");
+        assert_eq!(
+            dist_filename("windows", "x86_64").unwrap(),
+            format!("node-{NODE_VERSION}-win-x64.zip")
+        );
+        assert_eq!(
+            dist_filename("windows", "aarch64").unwrap(),
+            format!("node-{NODE_VERSION}-win-arm64.zip")
+        );
+        assert_eq!(
+            dist_filename("macos", "aarch64").unwrap(),
+            format!("node-{NODE_VERSION}-darwin-arm64.tar.gz")
+        );
+        assert_eq!(
+            dist_filename("macos", "x86_64").unwrap(),
+            format!("node-{NODE_VERSION}-darwin-x64.tar.gz")
+        );
+        assert_eq!(
+            dist_filename("linux", "x86_64").unwrap(),
+            format!("node-{NODE_VERSION}-linux-x64.tar.gz")
+        );
+        assert_eq!(
+            dist_filename("linux", "aarch64").unwrap(),
+            format!("node-{NODE_VERSION}-linux-arm64.tar.gz")
+        );
+        assert!(
+            dist_filename("freebsd", "x86_64").is_none(),
+            "不支持的平台回 None（调用方回退脚本渠道）"
+        );
         let urls = dist_urls("node-v22.14.0-darwin-arm64.tar.gz");
-        assert_eq!(urls[0], "https://nodejs.org/dist/v22.14.0/node-v22.14.0-darwin-arm64.tar.gz");
+        assert_eq!(
+            urls[0],
+            "https://nodejs.org/dist/v22.14.0/node-v22.14.0-darwin-arm64.tar.gz"
+        );
         assert_eq!(urls[1], "https://registry.npmmirror.com/-/binary/node/v22.14.0/node-v22.14.0-darwin-arm64.tar.gz");
-        assert_eq!(dist_root("node-v22.14.0-win-x64.zip"), "node-v22.14.0-win-x64");
-        assert_eq!(dist_root("node-v22.14.0-darwin-arm64.tar.gz"), "node-v22.14.0-darwin-arm64");
+        assert_eq!(
+            dist_root("node-v22.14.0-win-x64.zip"),
+            "node-v22.14.0-win-x64"
+        );
+        assert_eq!(
+            dist_root("node-v22.14.0-darwin-arm64.tar.gz"),
+            "node-v22.14.0-darwin-arm64"
+        );
     }
 
     /// 版本解析：v 前缀/裸版本/垃圾输入。
@@ -364,7 +430,10 @@ mod tests {
         assert!(ps.contains("[Environment]::SetEnvironmentVariable('Path',$p,'User')"));
         assert!(ps.matches("-contains").count() == 2, "两个目录各自查重");
         assert!(ps.contains("C:\\d\\node") && ps.contains("C:\\d\\npm-global"));
-        assert!(!ps.to_lowercase().contains("setx"), "setx 会截断 1024 字符，绝不使用");
+        assert!(
+            !ps.to_lowercase().contains("setx"),
+            "setx 会截断 1024 字符，绝不使用"
+        );
     }
 
     /// 托管目录布局（当前平台口径）。
@@ -400,13 +469,19 @@ mod tests {
         assert!(grok_win_exe_urls("0.2.101", "aarch64")[0].contains("windows-aarch64.exe"));
         // 版本指针解析：正常/带后缀/换行 trim；HTML/空/多词拒绝
         assert_eq!(parse_grok_version("0.2.101\n").as_deref(), Some("0.2.101"));
-        assert_eq!(parse_grok_version("1.2.3-beta.1").as_deref(), Some("1.2.3-beta.1"));
+        assert_eq!(
+            parse_grok_version("1.2.3-beta.1").as_deref(),
+            Some("1.2.3-beta.1")
+        );
         assert!(parse_grok_version("<html>404</html>").is_none());
         assert!(parse_grok_version("").is_none());
         assert!(parse_grok_version("error: not found").is_none());
         assert!(parse_grok_version("0.2").is_none(), "两段不算版本");
         // 安装目录（官方布局）
-        assert_eq!(grok_win_bin_dir(Path::new("C:/Users/u")), Path::new("C:/Users/u").join(".grok").join("bin"));
+        assert_eq!(
+            grok_win_bin_dir(Path::new("C:/Users/u")),
+            Path::new("C:/Users/u").join(".grok").join("bin")
+        );
     }
 
     /// mac 真机自举 live 测试（下载 ~40MB，默认忽略）：cargo test --lib node_boot -- --ignored
@@ -415,7 +490,10 @@ mod tests {
     fn managed_node_bootstrap_live() {
         let dir = std::env::temp_dir().join(format!("node-boot-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
-        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
         let bin = rt
             .block_on(ensure(&dir, |phase, pct| println!("{phase} {pct}%")))
             .expect("自举成功");

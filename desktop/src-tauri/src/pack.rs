@@ -12,6 +12,9 @@ use crate::keychain;
 pub struct Connection {
     pub id: String,
     pub name: String,
+    /// 用户自定义备注；列表优先显示它，密钥仍只显示脱敏前缀。
+    #[serde(default)]
+    pub remark: String,
     /// 连接类型：gcms（导入技能包）| cloudflare（CF token 建站）| ssh（远程机器）。旧连接缺省即 gcms。
     #[serde(default = "default_kind")]
     pub kind: String,
@@ -106,6 +109,17 @@ impl ConnStore {
             .ok_or_else(|| format!("未找到连接 {id}"))
     }
 
+    /// 导入迁移包时写入连接元数据；密钥由 transfer 模块单独写入钥匙串。
+    pub fn upsert_imported(&self, connection: Connection) -> Result<(), String> {
+        let mut conns = self.list();
+        if let Some(slot) = conns.iter_mut().find(|c| c.id == connection.id) {
+            *slot = connection;
+        } else {
+            conns.push(connection);
+        }
+        self.save(&conns)
+    }
+
     /// 导入 zip 技能包。key 进 Keychain，不落任何盘面文件。
     /// 支持两种包：嵌密钥包（.env 内置 key）与原始包（.env.example 占位）——
     /// 原始包需要调用方经 `provided_key` 传入手动粘贴的密钥，否则返回 NeedsKey。
@@ -116,8 +130,7 @@ impl ConnStore {
         provided_key: Option<String>,
     ) -> Result<ImportOutcome, String> {
         let file = fs::File::open(zip_path).map_err(|e| format!("打开 zip 失败: {e}"))?;
-        let mut archive =
-            zip::ZipArchive::new(file).map_err(|e| format!("读取 zip 失败: {e}"))?;
+        let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("读取 zip 失败: {e}"))?;
 
         let conn_id = uuid::Uuid::new_v4().to_string();
         let dest = self.packs_dir.join(&conn_id);
@@ -127,8 +140,8 @@ impl ConnStore {
             .map_err(|e| format!("解压失败: {e}"))?;
 
         let result = (|| {
-            let skill_dir = find_skill_dir(&dest)
-                .ok_or("zip 里没有找到技能目录（缺少 scripts/gcms.js）")?;
+            let skill_dir =
+                find_skill_dir(&dest).ok_or("zip 里没有找到技能目录（缺少 scripts/gcms.js）")?;
             let env_path = skill_dir.join(".env");
             let example = skill_dir.join(".env.example");
             let env_file = if env_path.exists() {
@@ -144,7 +157,10 @@ impl ConnStore {
             }
             let api_key = if !key_missing(&embedded_key) {
                 embedded_key
-            } else if let Some(k) = provided_key.as_deref().map(str::trim).filter(|k| !k.is_empty())
+            } else if let Some(k) = provided_key
+                .as_deref()
+                .map(str::trim)
+                .filter(|k| !k.is_empty())
             {
                 k.to_string()
             } else {
@@ -197,14 +213,18 @@ impl ConnStore {
             keychain::set_key(&conn_id, &api_key)?;
             let mut f = fs::File::create(&env_path).map_err(|e| format!("重写 .env: {e}"))?;
             writeln!(f, "GCMS_API_BASE={api_base}").map_err(|e| e.to_string())?;
-            writeln!(f, "# GCMS_API_KEY 已由 GCMS Pilot 保管在 macOS 钥匙串，运行时自动注入")
-                .map_err(|e| e.to_string())?;
+            writeln!(
+                f,
+                "# GCMS_API_KEY 已由 GCMS Pilot 保管在 macOS 钥匙串，运行时自动注入"
+            )
+            .map_err(|e| e.to_string())?;
 
             let conn = Connection {
                 id: conn_id.clone(),
                 name: name
                     .filter(|s| !s.trim().is_empty())
                     .unwrap_or_else(|| default_name(&api_base)),
+                remark: String::new(),
                 kind: "gcms".into(),
                 api_base,
                 skill_dir: skill_dir.to_string_lossy().into_owned(),
@@ -262,7 +282,12 @@ impl ConnStore {
         keychain::set_key(&conn_id, token)?;
         let conn = Connection {
             id: conn_id.clone(),
-            name: if name.trim().is_empty() { "Cloudflare".into() } else { name.trim().into() },
+            name: if name.trim().is_empty() {
+                "Cloudflare".into()
+            } else {
+                name.trim().into()
+            },
+            remark: String::new(),
             kind: "cloudflare".into(),
             api_base: String::new(),
             skill_dir: dir.to_string_lossy().into_owned(),
@@ -304,8 +329,12 @@ impl ConnStore {
         secret: &str,
         fingerprint: &str,
     ) -> Result<Connection, String> {
-        let (host, user, key_path, fingerprint) =
-            (host.trim(), user.trim(), key_path.trim(), fingerprint.trim());
+        let (host, user, key_path, fingerprint) = (
+            host.trim(),
+            user.trim(),
+            key_path.trim(),
+            fingerprint.trim(),
+        );
         if host.is_empty() {
             return Err("主机不能为空".into());
         }
@@ -348,13 +377,18 @@ impl ConnStore {
             } else {
                 name.trim().into()
             },
+            remark: String::new(),
             kind: "ssh".into(),
             api_base: String::new(),
             skill_dir: dir.to_string_lossy().into_owned(),
             // 故意留空：key_prefix 会显示在连接列表里，SSH 这里的秘密是密码/口令，
             // 照抄前缀等于把密码前 13 位印在 UI 上。副标题改显 user@host:port。
             key_prefix: String::new(),
-            key_kind: if auth == "key" { "ssh_key".into() } else { "ssh_password".into() },
+            key_kind: if auth == "key" {
+                "ssh_key".into()
+            } else {
+                "ssh_password".into()
+            },
             account_id: String::new(),
             ssh_host: host.into(),
             ssh_port: port,
@@ -392,6 +426,25 @@ impl ConnStore {
         Ok(())
     }
 
+    /// 设置连接备注。空字符串表示清除；限制为单行短文本，避免把连接切换器撑坏。
+    pub fn set_remark(&self, id: &str, remark: &str) -> Result<Connection, String> {
+        let remark = remark.trim();
+        if remark.chars().count() > 60 {
+            return Err("备注最多 60 个字符".into());
+        }
+        if remark.chars().any(char::is_control) {
+            return Err("备注只能填写单行文字".into());
+        }
+        let mut conns = self.list();
+        let Some(slot) = conns.iter_mut().find(|c| c.id == id) else {
+            return Err(format!("未找到连接 {id}"));
+        };
+        slot.remark = remark.to_string();
+        let out = slot.clone();
+        self.save(&conns)?;
+        Ok(out)
+    }
+
     /// 记录远端系统信息（首次连上探到后写入，之后 UI 直接显示、不再连）。
     pub fn set_ssh_os(&self, id: &str, pretty: &str, os_id: &str) -> Result<Connection, String> {
         let mut conns = self.list();
@@ -423,8 +476,12 @@ impl ConnStore {
         secret: &str,
         fingerprint: &str,
     ) -> Result<Connection, String> {
-        let (host, user, key_path, fingerprint) =
-            (host.trim(), user.trim(), key_path.trim(), fingerprint.trim());
+        let (host, user, key_path, fingerprint) = (
+            host.trim(),
+            user.trim(),
+            key_path.trim(),
+            fingerprint.trim(),
+        );
         if host.is_empty() {
             return Err("主机不能为空".into());
         }
@@ -452,7 +509,11 @@ impl ConnStore {
         }
         // 去重：改成另一台已存在的机器（同 user@host:port）＝和那条连接撞车。
         if let Some(dup) = conns.iter().find(|c| {
-            c.id != id && c.kind == "ssh" && c.ssh_host == host && c.ssh_port == port && c.ssh_user == user
+            c.id != id
+                && c.kind == "ssh"
+                && c.ssh_host == host
+                && c.ssh_port == port
+                && c.ssh_user == user
         }) {
             return Err(format!(
                 "已存在相同的远程连接「{}」（{user}@{host}:{port}）。",
@@ -476,13 +537,24 @@ impl ConnStore {
                 let _ = keychain::delete_key(id);
             }
         };
-        let slot = conns.iter_mut().find(|c| c.id == id).expect("checked above");
-        slot.name = if name.trim().is_empty() { format!("{user}@{host}") } else { name.trim().into() };
+        let slot = conns
+            .iter_mut()
+            .find(|c| c.id == id)
+            .expect("checked above");
+        slot.name = if name.trim().is_empty() {
+            format!("{user}@{host}")
+        } else {
+            name.trim().into()
+        };
         slot.ssh_host = host.into();
         slot.ssh_port = port;
         slot.ssh_user = user.into();
         slot.ssh_auth = auth.into();
-        slot.ssh_key_path = if auth == "key" { key_path.into() } else { String::new() };
+        slot.ssh_key_path = if auth == "key" {
+            key_path.into()
+        } else {
+            String::new()
+        };
         slot.ssh_fingerprint = fingerprint.into();
         // 换了机器就别留旧系统信息（下次连上重探）。
         if old.ssh_host != host || old.ssh_port != port {
@@ -517,11 +589,16 @@ impl ConnStore {
         }
         let file = fs::File::open(zip_path).map_err(|e| format!("打开 zip 失败: {e}"))?;
         let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("读取 zip 失败: {e}"))?;
-        let tmp = self.packs_dir.join(format!("upgrade-{}", uuid::Uuid::new_v4()));
+        let tmp = self
+            .packs_dir
+            .join(format!("upgrade-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&tmp).map_err(|e| format!("create tmp dir: {e}"))?;
         let result = (|| {
-            archive.extract(&tmp).map_err(|e| format!("解压失败: {e}"))?;
-            let src = find_skill_dir(&tmp).ok_or("zip 里没有找到技能目录（缺少 scripts/gcms.js）")?;
+            archive
+                .extract(&tmp)
+                .map_err(|e| format!("解压失败: {e}"))?;
+            let src =
+                find_skill_dir(&tmp).ok_or("zip 里没有找到技能目录（缺少 scripts/gcms.js）")?;
             overlay_skill_dir(&src, Path::new(&conn.skill_dir))?;
             let mut conn = conn;
             let v = read_pack_version(Path::new(&conn.skill_dir));
@@ -585,7 +662,9 @@ fn find_skill_dir(root: &Path) -> Option<PathBuf> {
     for _ in 0..2 {
         let mut next = Vec::new();
         for dir in &level {
-            let Ok(entries) = fs::read_dir(dir) else { continue };
+            let Ok(entries) = fs::read_dir(dir) else {
+                continue;
+            };
             for e in entries.flatten() {
                 let p = e.path();
                 if p.is_dir() {
@@ -661,6 +740,42 @@ fn chrono_now() -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn connection_remark_rules() {
+        let base = std::env::temp_dir().join(format!("pilot-remark-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&base).unwrap();
+        let store = ConnStore::new(&base).unwrap();
+        let conn = Connection {
+            id: "c1".into(),
+            name: "gcms".into(),
+            remark: String::new(),
+            kind: "gcms".into(),
+            api_base: "https://example.com".into(),
+            skill_dir: String::new(),
+            key_prefix: "gcms_ab".into(),
+            key_kind: "gcms_".into(),
+            account_id: String::new(),
+            ssh_host: String::new(),
+            ssh_port: 0,
+            ssh_user: String::new(),
+            ssh_auth: String::new(),
+            ssh_key_path: String::new(),
+            ssh_fingerprint: String::new(),
+            ssh_os: String::new(),
+            ssh_os_id: String::new(),
+            pack_version: String::new(),
+            created_at: "t".into(),
+        };
+        store.save(&[conn]).unwrap();
+        let saved = store.set_remark("c1", "  cms.ccvar.com  ").unwrap();
+        assert_eq!(saved.remark, "cms.ccvar.com");
+        assert_eq!(store.get("c1").unwrap().remark, "cms.ccvar.com");
+        assert!(store.set_remark("c1", &"a".repeat(61)).is_err());
+        assert!(store.set_remark("c1", "two\nlines").is_err());
+        assert_eq!(store.set_remark("c1", "").unwrap().remark, "");
+        fs::remove_dir_all(&base).ok();
+    }
+
     /// 改远程连接：改地址/改名/换认证方式，以及不该发生的事（撞车、非 ssh、缺指纹）。
     /// 注意不碰钥匙串（CI 无钥匙串）：只走 secret 留空的路径。
     #[test]
@@ -669,30 +784,80 @@ mod tests {
         fs::create_dir_all(&base).unwrap();
         let store = ConnStore::new(&base).unwrap();
         let mk = |id: &str, host: &str, user: &str| Connection {
-            id: id.into(), name: format!("{user}@{host}"), kind: "ssh".into(),
-            api_base: String::new(), skill_dir: String::new(), key_prefix: String::new(),
-            key_kind: String::new(), account_id: String::new(),
-            ssh_host: host.into(), ssh_port: 22, ssh_user: user.into(),
-            ssh_auth: "key".into(), ssh_key_path: "/k/id_ed25519".into(),
+            id: id.into(),
+            name: format!("{user}@{host}"),
+            kind: "ssh".into(),
+            remark: String::new(),
+            api_base: String::new(),
+            skill_dir: String::new(),
+            key_prefix: String::new(),
+            key_kind: String::new(),
+            account_id: String::new(),
+            ssh_host: host.into(),
+            ssh_port: 22,
+            ssh_user: user.into(),
+            ssh_auth: "key".into(),
+            ssh_key_path: "/k/id_ed25519".into(),
             ssh_fingerprint: "SHA256:old".into(),
-            ssh_os: "Ubuntu 24.04".into(), ssh_os_id: "ubuntu".into(),
-            pack_version: String::new(), created_at: "t".into(),
+            ssh_os: "Ubuntu 24.04".into(),
+            ssh_os_id: "ubuntu".into(),
+            pack_version: String::new(),
+            created_at: "t".into(),
         };
-        let gcms = Connection { kind: "gcms".into(), ..mk("g1", "", "") };
+        let gcms = Connection {
+            kind: "gcms".into(),
+            ..mk("g1", "", "")
+        };
         // Connection 没有 Debug（也不该为了测试给它加），自己取错误文本
         fn err_of(r: Result<Connection, String>) -> String {
-            match r { Err(e) => e, Ok(_) => panic!("这一步本该失败") }
+            match r {
+                Err(e) => e,
+                Ok(_) => panic!("这一步本该失败"),
+            }
         }
-        store.save(&[mk("c1", "1.1.1.1", "root"), mk("c2", "2.2.2.2", "root"), gcms]).unwrap();
+        store
+            .save(&[
+                mk("c1", "1.1.1.1", "root"),
+                mk("c2", "2.2.2.2", "root"),
+                gcms,
+            ])
+            .unwrap();
 
         // 改名 + 换指纹（同机器）：系统信息保留，不必重探
-        let c = store.update_ssh("c1", "生产机", "1.1.1.1", 22, "root", "key", "/k/id_ed25519", "", "SHA256:new").unwrap();
+        let c = store
+            .update_ssh(
+                "c1",
+                "生产机",
+                "1.1.1.1",
+                22,
+                "root",
+                "key",
+                "/k/id_ed25519",
+                "",
+                "SHA256:new",
+            )
+            .unwrap();
         assert_eq!(c.name, "生产机");
         assert_eq!(c.ssh_fingerprint, "SHA256:new");
-        assert_eq!(c.ssh_os, "Ubuntu 24.04", "同一台机器不该丢掉已探到的系统信息");
+        assert_eq!(
+            c.ssh_os, "Ubuntu 24.04",
+            "同一台机器不该丢掉已探到的系统信息"
+        );
 
         // 换了机器：系统信息必须清掉（否则显示的是上一台机器的系统）
-        let c = store.update_ssh("c1", "", "9.9.9.9", 2222, "root", "key", "/k/id_ed25519", "", "SHA256:x").unwrap();
+        let c = store
+            .update_ssh(
+                "c1",
+                "",
+                "9.9.9.9",
+                2222,
+                "root",
+                "key",
+                "/k/id_ed25519",
+                "",
+                "SHA256:x",
+            )
+            .unwrap();
         assert_eq!(c.ssh_host, "9.9.9.9");
         assert_eq!(c.ssh_port, 2222);
         assert_eq!(c.ssh_os, "");
@@ -700,22 +865,64 @@ mod tests {
         assert_eq!(c.name, "root@9.9.9.9", "名字留空＝回到默认 user@host");
 
         // 撞上另一条已有连接（同 user@host:port）→ 拒
-        let err = err_of(store.update_ssh("c1", "", "2.2.2.2", 22, "root", "key", "/k/id_ed25519", "", "SHA256:x"));
+        let err = err_of(store.update_ssh(
+            "c1",
+            "",
+            "2.2.2.2",
+            22,
+            "root",
+            "key",
+            "/k/id_ed25519",
+            "",
+            "SHA256:x",
+        ));
         assert!(err.contains("已存在相同的远程连接"), "{err}");
         // 自己和自己不算撞车
-        assert!(store.update_ssh("c1", "", "9.9.9.9", 2222, "root", "key", "/k/id_ed25519", "", "SHA256:x").is_ok());
+        assert!(store
+            .update_ssh(
+                "c1",
+                "",
+                "9.9.9.9",
+                2222,
+                "root",
+                "key",
+                "/k/id_ed25519",
+                "",
+                "SHA256:x"
+            )
+            .is_ok());
 
         // 缺指纹 → 拒（TOFU 的底线：没确认过就不给存）
-        assert!(store.update_ssh("c1", "", "9.9.9.9", 2222, "root", "key", "/k/id_ed25519", "", "  ").is_err());
+        assert!(store
+            .update_ssh(
+                "c1",
+                "",
+                "9.9.9.9",
+                2222,
+                "root",
+                "key",
+                "/k/id_ed25519",
+                "",
+                "  "
+            )
+            .is_err());
         // key 认证但没给私钥路径 → 拒
-        assert!(store.update_ssh("c1", "", "9.9.9.9", 2222, "root", "key", "", "", "SHA256:x").is_err());
+        assert!(store
+            .update_ssh("c1", "", "9.9.9.9", 2222, "root", "key", "", "", "SHA256:x")
+            .is_err());
         // 从密钥换成密码却不给密码 → 拒（钥匙串里那条是私钥口令，不是密码，留着必错）
-        let err = err_of(store.update_ssh("c1", "", "9.9.9.9", 2222, "root", "password", "", "", "SHA256:x"));
+        let err = err_of(store.update_ssh(
+            "c1", "", "9.9.9.9", 2222, "root", "password", "", "", "SHA256:x",
+        ));
         assert!(err.contains("必须填密码"), "{err}");
         // 非 ssh 连接 → 拒
-        assert!(store.update_ssh("g1", "x", "h", 22, "u", "key", "/k", "", "SHA256:x").is_err());
+        assert!(store
+            .update_ssh("g1", "x", "h", 22, "u", "key", "/k", "", "SHA256:x")
+            .is_err());
         // 不存在的连接 → 拒
-        assert!(store.update_ssh("nope", "x", "h", 22, "u", "key", "/k", "", "SHA256:x").is_err());
+        assert!(store
+            .update_ssh("nope", "x", "h", 22, "u", "key", "/k", "", "SHA256:x")
+            .is_err());
 
         // 没被碰过的那条要原样还在（别把别人写坏了）
         let c2 = store.get("c2").unwrap();
@@ -762,7 +969,10 @@ mod tests {
 
     #[test]
     fn default_name_strips_scheme_and_path() {
-        assert_eq!(default_name("https://cms.ccvar.com/api/platform/v1"), "cms.ccvar.com");
+        assert_eq!(
+            default_name("https://cms.ccvar.com/api/platform/v1"),
+            "cms.ccvar.com"
+        );
     }
 
     #[test]
@@ -784,35 +994,59 @@ mod tests {
         let dest = base.join("skill-old");
         fs::create_dir_all(dest.join("scripts")).unwrap();
         fs::write(dest.join("scripts").join("gcms.js"), "OLD").unwrap();
-        fs::write(dest.join(".env"), "GCMS_API_BASE=https://x.example/api/platform/v1").unwrap();
+        fs::write(
+            dest.join(".env"),
+            "GCMS_API_BASE=https://x.example/api/platform/v1",
+        )
+        .unwrap();
         let conn = Connection {
-            id: "c1".into(), name: "x".into(), kind: "gcms".into(),
+            id: "c1".into(),
+            name: "x".into(),
+            kind: "gcms".into(),
+            remark: String::new(),
             api_base: "https://x.example/api/platform/v1".into(),
             skill_dir: dest.to_string_lossy().into_owned(),
-            key_prefix: "gcmsp_ab".into(), key_kind: "gcmsp_".into(),
+            key_prefix: "gcmsp_ab".into(),
+            key_kind: "gcmsp_".into(),
             account_id: String::new(),
-            ssh_host: String::new(), ssh_port: 0, ssh_user: String::new(),
-            ssh_auth: String::new(), ssh_key_path: String::new(), ssh_fingerprint: String::new(),
-            ssh_os: String::new(), ssh_os_id: String::new(),
-            pack_version: String::new(), created_at: "t".into(),
+            ssh_host: String::new(),
+            ssh_port: 0,
+            ssh_user: String::new(),
+            ssh_auth: String::new(),
+            ssh_key_path: String::new(),
+            ssh_fingerprint: String::new(),
+            ssh_os: String::new(),
+            ssh_os_id: String::new(),
+            pack_version: String::new(),
+            created_at: "t".into(),
         };
-        fs::write(base.join("connections.json"), serde_json::to_vec_pretty(&[conn]).unwrap()).unwrap();
+        fs::write(
+            base.join("connections.json"),
+            serde_json::to_vec_pretty(&[conn]).unwrap(),
+        )
+        .unwrap();
         // 新原始包 zip：无密钥（.env.example 占位）+ 新脚本 + PACK_VERSION
         let zip_path = base.join("pack.zip");
         {
             let f = fs::File::create(&zip_path).unwrap();
             let mut zw = zip::ZipWriter::new(f);
-            let o = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+            let o = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
             zw.start_file("kit/skill/scripts/gcms.js", o).unwrap();
             zw.write_all(b"NEW with relink").unwrap();
             zw.start_file("kit/skill/.env.example", o).unwrap();
-            zw.write_all(b"GCMS_API_BASE=https://x.example/api/platform/v1\nGCMS_API_KEY=gcmsp_xxx\n").unwrap();
+            zw.write_all(
+                b"GCMS_API_BASE=https://x.example/api/platform/v1\nGCMS_API_KEY=gcmsp_xxx\n",
+            )
+            .unwrap();
             zw.start_file("kit/skill/PACK_VERSION", o).unwrap();
             zw.write_all(b"v9.9.9\n").unwrap();
             zw.finish().unwrap();
         }
         // 不提供密钥导入 → 应命中唯一同地址连接，就地升级而非 NeedsKey
-        let out = store.import_zip(zip_path.to_str().unwrap(), None, None).unwrap();
+        let out = store
+            .import_zip(zip_path.to_str().unwrap(), None, None)
+            .unwrap();
         match out {
             ImportOutcome::Upgraded { connection } => {
                 assert_eq!(connection.id, "c1");
@@ -820,9 +1054,14 @@ mod tests {
             }
             _ => panic!("expected Upgraded outcome"),
         }
-        assert_eq!(fs::read_to_string(dest.join("scripts").join("gcms.js")).unwrap(), "NEW with relink");
+        assert_eq!(
+            fs::read_to_string(dest.join("scripts").join("gcms.js")).unwrap(),
+            "NEW with relink"
+        );
         // Pilot 管理的 .env 未被包内占位覆盖
-        assert!(fs::read_to_string(dest.join(".env")).unwrap().contains("x.example"));
+        assert!(fs::read_to_string(dest.join(".env"))
+            .unwrap()
+            .contains("x.example"));
         assert_eq!(store.get("c1").unwrap().pack_version, "v9.9.9");
         fs::remove_dir_all(&base).ok();
     }
@@ -847,12 +1086,24 @@ mod tests {
 
         overlay_skill_dir(&src, &dest).unwrap();
 
-        assert_eq!(fs::read_to_string(dest.join("scripts").join("gcms.js")).unwrap(), "NEW CLI with relink");
-        assert_eq!(fs::read_to_string(dest.join("SKILL.md")).unwrap(), "new docs");
-        assert_eq!(fs::read_to_string(dest.join(".env")).unwrap(), "GCMS_API_BASE=https://a.example"); // 未被包覆盖
-        assert_eq!(fs::read_to_string(dest.join("uploads").join("logo.png")).unwrap(), "userdata"); // 用户文件保留
+        assert_eq!(
+            fs::read_to_string(dest.join("scripts").join("gcms.js")).unwrap(),
+            "NEW CLI with relink"
+        );
+        assert_eq!(
+            fs::read_to_string(dest.join("SKILL.md")).unwrap(),
+            "new docs"
+        );
+        assert_eq!(
+            fs::read_to_string(dest.join(".env")).unwrap(),
+            "GCMS_API_BASE=https://a.example"
+        ); // 未被包覆盖
+        assert_eq!(
+            fs::read_to_string(dest.join("uploads").join("logo.png")).unwrap(),
+            "userdata"
+        ); // 用户文件保留
         assert!(!dest.join(".env.example").exists()); // 占位不引入
-        // 目标不存在 → 明确报错
+                                                      // 目标不存在 → 明确报错
         assert!(overlay_skill_dir(&src, &base.join("nope")).is_err());
         fs::remove_dir_all(&base).ok();
     }

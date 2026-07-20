@@ -34,8 +34,13 @@ pub struct BrainsInfo {
 
 pub async fn detect() -> BrainsInfo {
     augment_path_env(); // 每次检测都补一遍：刚装完的目录此刻才存在
-    let (claude, codex, grok, wrangler, node) =
-        tokio::join!(detect_claude(), detect_codex(), detect_grok(), detect_wrangler(), detect_node());
+    let (claude, codex, grok, wrangler, node) = tokio::join!(
+        detect_claude(),
+        detect_codex(),
+        detect_grok(),
+        detect_wrangler(),
+        detect_node()
+    );
     BrainsInfo {
         claude,
         codex,
@@ -79,16 +84,34 @@ fn detect_browser() -> BrainStatus {
         let mut v = Vec::new();
         for base in ["ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"] {
             if let Ok(b) = std::env::var(base) {
-                v.push(std::path::Path::new(&b).join("Google").join("Chrome").join("Application").join("chrome.exe"));
-                v.push(std::path::Path::new(&b).join("Microsoft").join("Edge").join("Application").join("msedge.exe"));
+                v.push(
+                    std::path::Path::new(&b)
+                        .join("Google")
+                        .join("Chrome")
+                        .join("Application")
+                        .join("chrome.exe"),
+                );
+                v.push(
+                    std::path::Path::new(&b)
+                        .join("Microsoft")
+                        .join("Edge")
+                        .join("Application")
+                        .join("msedge.exe"),
+                );
             }
         }
         v
     } else {
-        ["/usr/bin/google-chrome", "/usr/bin/google-chrome-stable", "/usr/bin/chromium", "/usr/bin/chromium-browser", "/usr/bin/microsoft-edge"]
-            .iter()
-            .map(std::path::PathBuf::from)
-            .collect()
+        [
+            "/usr/bin/google-chrome",
+            "/usr/bin/google-chrome-stable",
+            "/usr/bin/chromium",
+            "/usr/bin/chromium-browser",
+            "/usr/bin/microsoft-edge",
+        ]
+        .iter()
+        .map(std::path::PathBuf::from)
+        .collect()
     };
     for c in cands {
         if c.exists() {
@@ -113,7 +136,12 @@ async fn detect_wrangler() -> BrainStatus {
     st.path = path;
     if let Some((_, ver)) = run_capture(&st.path, &["--version"], Duration::from_secs(10)).await {
         // wrangler --version 可能多行，取首个非空行。
-        st.version = ver.lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim().to_string();
+        st.version = ver
+            .lines()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or("")
+            .trim()
+            .to_string();
     }
     st.logged_in = None; // token 由 env 注入，不看登录态
     st
@@ -221,8 +249,12 @@ async fn detect_claude() -> BrainStatus {
         st.version = ver;
     }
     // 登出时退出码是 1，但 stdout 仍是 JSON —— 只解析 stdout。
-    if let Some((_, out)) =
-        run_capture(&st.path, &["auth", "status", "--json"], Duration::from_secs(15)).await
+    if let Some((_, out)) = run_capture(
+        &st.path,
+        &["auth", "status", "--json"],
+        Duration::from_secs(15),
+    )
+    .await
     {
         if let Some(json_part) = extract_json(&out) {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&json_part) {
@@ -257,7 +289,8 @@ async fn detect_codex() -> BrainStatus {
     if let Some((_, ver)) = run_capture(&st.path, &["--version"], Duration::from_secs(10)).await {
         st.version = ver;
     }
-    if let Some((ok, out)) = run_capture(&st.path, &["login", "status"], Duration::from_secs(15)).await
+    if let Some((ok, out)) =
+        run_capture(&st.path, &["login", "status"], Duration::from_secs(15)).await
     {
         // codex login status: 登录时 exit 0 且输出 "Logged in ..."。
         st.logged_in = Some(ok && out.to_lowercase().contains("logged in"));
@@ -286,7 +319,12 @@ async fn detect_grok() -> BrainStatus {
     st.found = true;
     st.path = path;
     if let Some((_, ver)) = run_capture(&st.path, &["--version"], Duration::from_secs(10)).await {
-        st.version = ver.lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim().to_string();
+        st.version = ver
+            .lines()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or("")
+            .trim()
+            .to_string();
     }
     let auth = std::env::var("GROK_HOME")
         .map(std::path::PathBuf::from)

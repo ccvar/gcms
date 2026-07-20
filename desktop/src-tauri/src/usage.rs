@@ -25,17 +25,28 @@ fn log_path(data_dir: &Path) -> std::path::PathBuf {
 /// 参考统计不值得让回合报错。
 pub fn append(data_dir: &Path, e: &UsageEntry) {
     let p = log_path(data_dir);
-    let Ok(line) = serde_json::to_string(e) else { return };
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&p) {
+    let Ok(line) = serde_json::to_string(e) else {
+        return;
+    };
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&p)
+    {
         let _ = writeln!(f, "{line}");
     }
-    if std::fs::metadata(&p).map(|m| m.len() > 1_000_000).unwrap_or(false) {
+    if std::fs::metadata(&p)
+        .map(|m| m.len() > 1_000_000)
+        .unwrap_or(false)
+    {
         prune(&p, e.ts - 8 * 24 * 3600);
     }
 }
 
 fn prune(p: &Path, keep_since: i64) {
-    let Ok(raw) = std::fs::read_to_string(p) else { return };
+    let Ok(raw) = std::fs::read_to_string(p) else {
+        return;
+    };
     let kept: Vec<&str> = raw
         .lines()
         .filter(|l| {
@@ -60,9 +71,13 @@ pub struct UsageStats {
 
 pub fn stats(data_dir: &Path, since_a: i64, since_b: i64) -> UsageStats {
     let mut out = UsageStats::default();
-    let Ok(raw) = std::fs::read_to_string(log_path(data_dir)) else { return out };
+    let Ok(raw) = std::fs::read_to_string(log_path(data_dir)) else {
+        return out;
+    };
     for l in raw.lines() {
-        let Ok(e) = serde_json::from_str::<UsageEntry>(l) else { continue };
+        let Ok(e) = serde_json::from_str::<UsageEntry>(l) else {
+            continue;
+        };
         let total = e.input + e.cache_read + e.cache_create + e.output;
         if e.ts >= since_a {
             *out.window_a.entry(e.brain.clone()).or_insert(0) += total;
@@ -80,7 +95,8 @@ mod tests {
 
     #[test]
     fn append_and_stats_windows() {
-        let dir = std::env::temp_dir().join(format!("gcms-pilot-usage-test-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("gcms-pilot-usage-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let mk = |ts: i64, brain: &str, output: u64| UsageEntry {
             ts,

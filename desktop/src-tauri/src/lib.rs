@@ -2,13 +2,14 @@ mod acp;
 mod agent;
 mod brains;
 mod bridge;
-mod managed;
 mod cf;
 mod cf_templates;
 mod convo;
 mod discovery;
+mod gcms_remote;
 mod keychain;
 mod limits;
+mod managed;
 mod node_boot;
 mod pack;
 mod path_env;
@@ -18,6 +19,7 @@ mod ssh;
 mod static_server;
 mod tasks;
 mod tools;
+mod transfer;
 mod usage;
 
 use std::collections::HashSet;
@@ -31,7 +33,12 @@ use tauri::{AppHandle, Emitter, Manager, WindowEvent};
 use tauri_plugin_notification::NotificationExt;
 
 use convo::{Conversation, Message};
+use gcms_remote::{
+    gcms_cloudflare_create_a_record, gcms_remote_access_check, gcms_remote_access_configure,
+    gcms_remote_install, gcms_remote_status,
+};
 use tasks::ScheduledTask;
+use transfer::{export_pilot_transfer, import_pilot_transfer, inspect_pilot_transfer};
 
 struct AppState {
     conns: pack::ConnStore,
@@ -41,6 +48,8 @@ struct AppState {
     runs: agent::RunRegistry,
     /// 正在跑的定时任务 id（调度器与 run_task_now 共享，防止同一任务被重复触发）。
     firing: Arc<Mutex<HashSet<String>>>,
+    /// 正在执行一键安装、DNS 写入或公网配置的远程连接 id，防止同一台机器并发修改。
+    gcms_installing: Arc<Mutex<HashSet<String>>>,
     /// 应用数据目录（权限钩子资产 + 待批请求落在 <data_dir>/permit 下）。
     data_dir: PathBuf,
     /// 当前运行的本地预览（wrangler dev）进程；一次只跑一个。
@@ -61,10 +70,20 @@ fn cf_project_slug(s: &str) -> String {
     let slug: String = s
         .trim()
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
         .collect();
     let slug = slug.trim_matches('-').to_string();
-    if slug.is_empty() { "site".into() } else { slug }
+    if slug.is_empty() {
+        "site".into()
+    } else {
+        slug
+    }
 }
 
 /// 附件文件名消毒：只留安全字符，去路径，限长。
@@ -75,10 +94,20 @@ fn sanitize_filename(name: &str) -> String {
         .unwrap_or("file");
     let cleaned: String = base
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     let cleaned: String = cleaned.trim_matches('.').chars().take(80).collect();
-    if cleaned.is_empty() { "file".into() } else { cleaned }
+    if cleaned.is_empty() {
+        "file".into()
+    } else {
+        cleaned
+    }
 }
 
 /// 计算本轮 cwd 但不建目录：CF 连接＝工作区下的项目目录；gcms＝空串（调用方回退技能包目录）。
@@ -100,7 +129,8 @@ fn work_dir_path(conn: &pack::Connection, site_slug: &str) -> String {
 fn dir_has_content(dir: &std::path::Path) -> bool {
     std::fs::read_dir(dir)
         .map(|rd| {
-            rd.flatten().any(|e| !e.file_name().to_string_lossy().starts_with('.'))
+            rd.flatten()
+                .any(|e| !e.file_name().to_string_lossy().starts_with('.'))
         })
         .unwrap_or(false)
 }
@@ -159,11 +189,19 @@ async fn check_pack_update(
 ) -> Result<PackUpdateInfo, String> {
     let conn = state.conns.get(&conn_id)?;
     if conn.kind != "gcms" {
-        return Ok(PackUpdateInfo { current: String::new(), latest: String::new(), has_update: false });
+        return Ok(PackUpdateInfo {
+            current: String::new(),
+            latest: String::new(),
+            has_update: false,
+        });
     }
     let key = keychain::get_key(&conn.id)?;
     let url = format!("{}/skill-pack/version", conn.api_base.trim_end_matches('/'));
-    let none = PackUpdateInfo { current: conn.pack_version.clone(), latest: String::new(), has_update: false };
+    let none = PackUpdateInfo {
+        current: conn.pack_version.clone(),
+        latest: String::new(),
+        has_update: false,
+    };
     let resp = match reqwest::Client::new()
         .get(&url)
         .bearer_auth(&key)
@@ -178,7 +216,11 @@ async fn check_pack_update(
         .json::<serde_json::Value>()
         .await
         .ok()
-        .and_then(|v| v.get("version").and_then(|x| x.as_str()).map(str::to_string))
+        .and_then(|v| {
+            v.get("version")
+                .and_then(|x| x.as_str())
+                .map(str::to_string)
+        })
         .unwrap_or_default();
     if latest.is_empty() {
         return Ok(none);
@@ -187,18 +229,31 @@ async fn check_pack_update(
         // 版本未落库。看技能目录里有没有 PACK_VERSION 标记：
         // - 没有 ⇒ 一定是 v1.3.10 之前的老包 ⇒ 相对任何能答版本查询的服务端都算「有更新」，首次就提示；
         // - 有 ⇒ 读标记落库后正常比较（导入/升级时会读，这里只是兜底）。
-        let marker = std::fs::read_to_string(std::path::Path::new(&conn.skill_dir).join("PACK_VERSION"))
-            .map(|s| s.trim().to_string())
-            .unwrap_or_default();
+        let marker =
+            std::fs::read_to_string(std::path::Path::new(&conn.skill_dir).join("PACK_VERSION"))
+                .map(|s| s.trim().to_string())
+                .unwrap_or_default();
         if marker.is_empty() {
-            return Ok(PackUpdateInfo { current: String::new(), latest: latest.clone(), has_update: true });
+            return Ok(PackUpdateInfo {
+                current: String::new(),
+                latest: latest.clone(),
+                has_update: true,
+            });
         }
         let _ = state.conns.set_pack_version(&conn.id, &marker);
         let has = latest != marker;
-        return Ok(PackUpdateInfo { current: marker, latest, has_update: has });
+        return Ok(PackUpdateInfo {
+            current: marker,
+            latest,
+            has_update: has,
+        });
     }
     let has = latest != conn.pack_version;
-    Ok(PackUpdateInfo { current: conn.pack_version, latest, has_update: has })
+    Ok(PackUpdateInfo {
+        current: conn.pack_version,
+        latest,
+        has_update: has,
+    })
 }
 
 /// 一键升级技能包：用钥匙串密钥从服务端下载最新原始包，就地覆盖技能目录。
@@ -211,7 +266,12 @@ async fn update_pack(state: tauri::State<'_, AppState>, conn_id: String) -> Resu
     }
     // 后端权威守卫：该连接下有正在跑的对话（含托盘定时任务在后台开的轮——前端快照看不到）
     // 时拒绝升级，防止覆盖正在被 CLI 使用的脚本。前端的检查只是提示层，这里才是闸。
-    if state.convos.list().iter().any(|c| c.conn_id == conn_id && c.status == "running") {
+    if state
+        .convos
+        .list()
+        .iter()
+        .any(|c| c.conn_id == conn_id && c.status == "running")
+    {
         return Err("该连接下有对话正在运行（可能是定时任务），请等它跑完再升级技能包。".into());
     }
     let key = keychain::get_key(&conn.id)?;
@@ -236,11 +296,16 @@ async fn update_pack(state: tauri::State<'_, AppState>, conn_id: String) -> Resu
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
         .to_string();
-    let bytes = resp.bytes().await.map_err(|e| format!("读取技能包失败：{e}"))?;
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| format!("读取技能包失败：{e}"))?;
     if bytes.len() < 200 {
         return Err("下载的技能包内容异常（太小）".into());
     }
-    let tmp_zip = state.data_dir.join(format!("pack-update-{}.zip", uuid::Uuid::new_v4()));
+    let tmp_zip = state
+        .data_dir
+        .join(format!("pack-update-{}.zip", uuid::Uuid::new_v4()));
     std::fs::write(&tmp_zip, &bytes).map_err(|e| format!("写临时文件失败：{e}"))?;
     let store = state.conns.clone();
     let cid = conn_id.clone();
@@ -270,6 +335,18 @@ async fn remove_connection(state: tauri::State<'_, AppState>, id: String) -> Res
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn set_connection_remark(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    remark: String,
+) -> Result<pack::Connection, String> {
+    let store = state.conns.clone();
+    tauri::async_runtime::spawn_blocking(move || store.set_remark(&conn_id, &remark))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -367,7 +444,8 @@ async fn verify_ssh(
             }
         }
     }
-    let expect = (!expect_fingerprint.trim().is_empty()).then(|| expect_fingerprint.trim().to_string());
+    let expect =
+        (!expect_fingerprint.trim().is_empty()).then(|| expect_fingerprint.trim().to_string());
     ssh::probe(&host, if port == 0 { 22 } else { port }, &a, expect).await
 }
 
@@ -387,7 +465,16 @@ async fn connect_ssh(
 ) -> Result<pack::Connection, String> {
     let store = state.conns.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        store.add_ssh(&name, &host, port, &user, &auth, &key_path, &secret, &fingerprint)
+        store.add_ssh(
+            &name,
+            &host,
+            port,
+            &user,
+            &auth,
+            &key_path,
+            &secret,
+            &fingerprint,
+        )
     })
     .await
     .map_err(|e| e.to_string())?
@@ -412,7 +499,17 @@ async fn update_ssh(
     state.ssh.close(&conn_id).await;
     let store = state.conns.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        store.update_ssh(&conn_id, &name, &host, port, &user, &auth, &key_path, &secret, &fingerprint)
+        store.update_ssh(
+            &conn_id,
+            &name,
+            &host,
+            port,
+            &user,
+            &auth,
+            &key_path,
+            &secret,
+            &fingerprint,
+        )
     })
     .await
     .map_err(|e| e.to_string())?
@@ -434,10 +531,25 @@ fn parse_os_release(s: &str) -> (String, String) {
     let name = val("NAME");
     if !name.is_empty() {
         let v = val("VERSION_ID");
-        return (if v.is_empty() { name } else { format!("{name} {v}") }, id);
+        return (
+            if v.is_empty() {
+                name
+            } else {
+                format!("{name} {v}")
+            },
+            id,
+        );
     }
     // 不是 systemd 系（或压根没有 os-release）：调用方会把 uname 的输出丢进来兜底。
-    (s.trim().lines().next().unwrap_or_default().trim().to_string(), id)
+    (
+        s.trim()
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .to_string(),
+        id,
+    )
 }
 
 /// 探远端系统版本并记进连接（UI 用它显示「Ubuntu 24.04」+ 发行版图标）。
@@ -460,7 +572,12 @@ async fn ssh_os_probe(
     // 非 Linux（或精简镜像）没有 os-release → 退回 uname 也好过什么都不显示。
     let out = state
         .ssh
-        .exec(&conn_id, "cat /etc/os-release 2>/dev/null || uname -sr", 20, false) // 后台探测，别拿噪音污染终端
+        .exec(
+            &conn_id,
+            "cat /etc/os-release 2>/dev/null || uname -sr",
+            20,
+            false,
+        ) // 后台探测，别拿噪音污染终端
         .await?;
     let (pretty, os_id) = parse_os_release(&out.stdout);
     let store = state.conns.clone();
@@ -472,7 +589,10 @@ async fn ssh_os_probe(
 /// 取一次远端负载（CPU 累计计数 + 内存 + 根分区）。顶栏那三个数用它。
 /// 没有现成会话就直接失败 —— 前端静默忽略，不为了三个数去偷偷登服务器。
 #[tauri::command]
-async fn ssh_stats(state: tauri::State<'_, AppState>, conn_id: String) -> Result<ssh::SshStats, String> {
+async fn ssh_stats(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+) -> Result<ssh::SshStats, String> {
     state.ssh.stats(&conn_id).await
 }
 
@@ -678,7 +798,11 @@ fn save_attachment(
     let conn = state.conns.get(&conn_id)?;
     let dir = {
         let w = resolve_work_dir(&conn, &project)?;
-        if w.is_empty() { conn.skill_dir.clone() } else { w }
+        if w.is_empty() {
+            conn.skill_dir.clone()
+        } else {
+            w
+        }
     };
     if dir.is_empty() {
         return Err("没有可用的工作目录".into());
@@ -704,17 +828,29 @@ fn save_attachment(
         }
     }
     std::fs::write(&target, &data).map_err(|e| format!("保存附件失败: {e}"))?;
-    let name = target.file_name().and_then(|n| n.to_str()).unwrap_or(&safe).to_string();
+    let name = target
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(&safe)
+        .to_string();
     Ok(format!("uploads/{name}"))
 }
 
 /// 校验并解析消息里提到的文件路径为绝对路径。相对路径按工作目录解析；绝对路径
 /// （AI 常直接给全路径）也接，但 canonicalize 后必须仍在工作目录内——边界与相对
 /// 路径完全一致，工作目录之外一律拒绝。只读解析不建目录（目录被删就自然报错，调用方降级）。
-fn resolve_in_workdir(conn: &pack::Connection, project: &str, raw: &str) -> Result<std::path::PathBuf, String> {
+fn resolve_in_workdir(
+    conn: &pack::Connection,
+    project: &str,
+    raw: &str,
+) -> Result<std::path::PathBuf, String> {
     let dir = {
         let w = work_dir_path(conn, project);
-        if w.is_empty() { conn.skill_dir.clone() } else { w }
+        if w.is_empty() {
+            conn.skill_dir.clone()
+        } else {
+            w
+        }
     };
     if dir.is_empty() {
         return Err("没有可用的工作目录".into());
@@ -785,7 +921,9 @@ fn find_by_basename(root: &std::path::Path, raw: &str) -> Option<std::path::Path
     let mut stack = vec![(root.to_path_buf(), 0usize)];
     let mut seen = 0usize;
     while let Some((dir, depth)) = stack.pop() {
-        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         for e in rd.flatten() {
             seen += 1;
             if seen > 2000 {
@@ -827,7 +965,8 @@ mod os_release_tests {
         assert_eq!(p, "Ubuntu 24.04.1 LTS");
         assert_eq!(id, "ubuntu");
         // Debian
-        let (p, id) = parse_os_release("PRETTY_NAME=\"Debian GNU/Linux 12 (bookworm)\"\nID=debian\n");
+        let (p, id) =
+            parse_os_release("PRETTY_NAME=\"Debian GNU/Linux 12 (bookworm)\"\nID=debian\n");
         assert_eq!(p, "Debian GNU/Linux 12 (bookworm)");
         assert_eq!(id, "debian");
         // Alpine 没有 PRETTY_NAME → 退回 NAME + VERSION_ID
@@ -873,7 +1012,10 @@ mod workdir_tests {
     fn preview_port_dodges_a_taken_port() {
         let squatter = std::net::TcpListener::bind(("0.0.0.0", 0)).unwrap();
         let taken = squatter.local_addr().unwrap().port();
-        assert!(port_taken(taken), "通配占位下必须判定为「被占」（bind 探测在这里会说谎）");
+        assert!(
+            port_taken(taken),
+            "通配占位下必须判定为「被占」（bind 探测在这里会说谎）"
+        );
 
         // 用一个**真需要 wrangler** 的目录来验让端口（纯静态站走内建服务器，是另一条路，见下面那条测试）
         let d = std::env::temp_dir().join(format!("pv-{}", uuid::Uuid::new_v4()));
@@ -882,11 +1024,16 @@ mod workdir_tests {
         // wrangler 路径：必须自动让开，绝不能还用那个被占的端口
         let (cmd, port) = plan_cmd(&d, None, "", taken);
         assert_ne!(port, taken, "端口被占还硬用 → 预览窗里就是别人的页面");
-        assert!(cmd.contains(&format!("--port {port}")), "命令里的端口要跟返回的一致: {cmd}");
+        assert!(
+            cmd.contains(&format!("--port {port}")),
+            "命令里的端口要跟返回的一致: {cmd}"
+        );
         assert!(cmd.contains("wrangler pages dev ."));
 
         // 自定义 dev 命令：端口写死在命令里，改不了 → 必须报错而不是开个窗给别人的页面
-        let e = preview_plan(&d, Some("npm run dev".into()), "", taken).err().unwrap();
+        let e = preview_plan(&d, Some("npm run dev".into()), "", taken)
+            .err()
+            .unwrap();
         assert!(e.contains("已被别的程序占用"), "得说清是端口被占: {e}");
 
         // 端口没被占时：原样使用，产物目录也带上
@@ -928,7 +1075,10 @@ mod workdir_tests {
             std::fs::write(d.join("index.html"), "x").unwrap();
             std::fs::write(d.join(f), "x").unwrap();
             let (cmd, _) = plan_cmd(&d, None, "", 8788);
-            assert!(cmd.contains("wrangler pages dev"), "{f} 必须走 wrangler: {cmd}");
+            assert!(
+                cmd.contains("wrangler pages dev"),
+                "{f} 必须走 wrangler: {cmd}"
+            );
         }
 
         // pilot.json 自定义了 dev → 永远听用户的，别自作主张换成内建服务器。
@@ -956,10 +1106,17 @@ mod workdir_tests {
         );
 
         // 项目声明了 → 绝不能再传（传了会盖掉人家的）
-        std::fs::write(d.join("wrangler.toml"), "compatibility_date = \"2026-01-01\"\n").unwrap();
+        std::fs::write(
+            d.join("wrangler.toml"),
+            "compatibility_date = \"2026-01-01\"\n",
+        )
+        .unwrap();
         assert!(declares_compat_date(&d));
         let (cmd, _) = plan_cmd(&d, None, "", 8788);
-        assert!(!cmd.contains("--compatibility-date"), "项目声明了就别插手: {cmd}");
+        assert!(
+            !cmd.contains("--compatibility-date"),
+            "项目声明了就别插手: {cmd}"
+        );
 
         std::fs::remove_dir_all(&d).ok();
     }
@@ -982,30 +1139,58 @@ mod workdir_tests {
     /// 相对 / 绝对 / 站点口径绝对(/uploads/..) 路径都必须解析进工作目录；越界与逃逸一律拒绝。
     #[test]
     fn resolve_in_workdir_boundaries() {
-        let tmp = std::env::temp_dir().join(format!("gcms-pilot-workdir-test-{}", std::process::id()));
+        let tmp =
+            std::env::temp_dir().join(format!("gcms-pilot-workdir-test-{}", std::process::id()));
         let up = tmp.join("uploads");
         std::fs::create_dir_all(&up).unwrap();
         std::fs::write(up.join("a.svg"), "<svg/>").unwrap();
         let conn = test_conn(tmp.to_str().unwrap());
 
-        assert!(resolve_in_workdir(&conn, "", "uploads/a.svg").is_ok(), "相对路径");
+        assert!(
+            resolve_in_workdir(&conn, "", "uploads/a.svg").is_ok(),
+            "相对路径"
+        );
         let abs = tmp.join("uploads").join("a.svg");
-        assert!(resolve_in_workdir(&conn, "", abs.to_str().unwrap()).is_ok(), "工作目录内绝对路径");
-        assert!(resolve_in_workdir(&conn, "", "/uploads/a.svg").is_ok(), "站点口径绝对路径回退相对解析");
-        assert!(resolve_in_workdir(&conn, "", "/etc/hosts").is_err(), "工作目录之外的绝对路径");
+        assert!(
+            resolve_in_workdir(&conn, "", abs.to_str().unwrap()).is_ok(),
+            "工作目录内绝对路径"
+        );
+        assert!(
+            resolve_in_workdir(&conn, "", "/uploads/a.svg").is_ok(),
+            "站点口径绝对路径回退相对解析"
+        );
+        assert!(
+            resolve_in_workdir(&conn, "", "/etc/hosts").is_err(),
+            "工作目录之外的绝对路径"
+        );
         assert!(resolve_in_workdir(&conn, "", "../x").is_err(), "相对逃逸");
-        assert!(resolve_in_workdir(&conn, "", "uploads/missing.svg").is_err(), "不存在的文件");
+        assert!(
+            resolve_in_workdir(&conn, "", "uploads/missing.svg").is_err(),
+            "不存在的文件"
+        );
 
         // 文件名兜底：模型把真实文件链接成想象中的前缀（/mnt/data/、sandbox: 剥壳后）
         std::fs::create_dir_all(tmp.join("brand/out")).unwrap();
         std::fs::write(tmp.join("brand/out/preview.webp"), "x").unwrap();
-        assert!(resolve_in_workdir(&conn, "", "/mnt/data/preview.webp").is_ok(), "想象前缀按文件名找回");
-        assert!(resolve_in_workdir(&conn, "", "outputs/preview.webp").is_ok(), "相对路径写错也找回");
+        assert!(
+            resolve_in_workdir(&conn, "", "/mnt/data/preview.webp").is_ok(),
+            "想象前缀按文件名找回"
+        );
+        assert!(
+            resolve_in_workdir(&conn, "", "outputs/preview.webp").is_ok(),
+            "相对路径写错也找回"
+        );
         // 多处同名 → 有歧义不猜
         std::fs::write(tmp.join("uploads/preview.webp"), "y").unwrap();
-        assert!(resolve_in_workdir(&conn, "", "/mnt/data/preview.webp").is_err(), "同名多处不猜");
+        assert!(
+            resolve_in_workdir(&conn, "", "/mnt/data/preview.webp").is_err(),
+            "同名多处不猜"
+        );
         // 真不存在仍报错
-        assert!(resolve_in_workdir(&conn, "", "/mnt/data/nothing.webp").is_err(), "真不存在");
+        assert!(
+            resolve_in_workdir(&conn, "", "/mnt/data/nothing.webp").is_err(),
+            "真不存在"
+        );
         std::fs::remove_dir_all(&tmp).ok();
     }
 
@@ -1013,16 +1198,21 @@ mod workdir_tests {
     /// 家目录其他位置仍拒绝（resolve_in_workdir_boundaries 里的 /etc/hosts 用例）。
     #[test]
     fn codex_generated_images_root_allowed() {
-        let ch = std::env::temp_dir().join(format!("gcms-pilot-codexhome-test-{}", std::process::id()));
+        let ch =
+            std::env::temp_dir().join(format!("gcms-pilot-codexhome-test-{}", std::process::id()));
         std::fs::create_dir_all(ch.join("generated_images").join("sub")).unwrap();
         let img = ch.join("generated_images").join("sub").join("gen.png");
         std::fs::write(&img, "p").unwrap();
         std::env::set_var("CODEX_HOME", &ch);
 
-        let wd = std::env::temp_dir().join(format!("gcms-pilot-workdir2-test-{}", std::process::id()));
+        let wd =
+            std::env::temp_dir().join(format!("gcms-pilot-workdir2-test-{}", std::process::id()));
         std::fs::create_dir_all(&wd).unwrap();
         let conn = test_conn(wd.to_str().unwrap());
-        assert!(resolve_in_workdir(&conn, "", img.to_str().unwrap()).is_ok(), "生图目录放行");
+        assert!(
+            resolve_in_workdir(&conn, "", img.to_str().unwrap()).is_ok(),
+            "生图目录放行"
+        );
 
         std::env::remove_var("CODEX_HOME");
         std::fs::remove_dir_all(&ch).ok();
@@ -1048,18 +1238,35 @@ mod workdir_tests {
     /// WinINET ProxyServer 解析：单一 host:port / 分协议优先 https / 仅 ftp、socks 不猜 / 空与畸形。
     #[test]
     fn win_proxy_server_parse() {
-        assert_eq!(parse_win_proxy_server("127.0.0.1:7890").as_deref(), Some("127.0.0.1:7890"));
-        assert_eq!(parse_win_proxy_server("  10.0.0.1:8080  ").as_deref(), Some("10.0.0.1:8080"), "裸值去空白");
+        assert_eq!(
+            parse_win_proxy_server("127.0.0.1:7890").as_deref(),
+            Some("127.0.0.1:7890")
+        );
+        assert_eq!(
+            parse_win_proxy_server("  10.0.0.1:8080  ").as_deref(),
+            Some("10.0.0.1:8080"),
+            "裸值去空白"
+        );
         assert_eq!(
             parse_win_proxy_server("http=1.2.3.4:80;https=5.6.7.8:443;ftp=9.9.9.9:21").as_deref(),
             Some("5.6.7.8:443"),
             "分协议优先 https"
         );
-        assert_eq!(parse_win_proxy_server("http=1.2.3.4:80").as_deref(), Some("1.2.3.4:80"), "只有 http 段用 http");
-        assert!(parse_win_proxy_server("ftp=1.2.3.4:21;socks=5.6.7.8:1080").is_none(), "只配 ftp/socks 不硬猜");
+        assert_eq!(
+            parse_win_proxy_server("http=1.2.3.4:80").as_deref(),
+            Some("1.2.3.4:80"),
+            "只有 http 段用 http"
+        );
+        assert!(
+            parse_win_proxy_server("ftp=1.2.3.4:21;socks=5.6.7.8:1080").is_none(),
+            "只配 ftp/socks 不硬猜"
+        );
         assert!(parse_win_proxy_server("").is_none());
         assert!(parse_win_proxy_server("   ").is_none());
-        assert!(parse_win_proxy_server("https=").is_none(), "空段畸形不算命中");
+        assert!(
+            parse_win_proxy_server("https=").is_none(),
+            "空段畸形不算命中"
+        );
     }
 
     /// 安装详情取尾不取头：回显/进度剥掉、PS 异常首行只留 iex 后消息、超长保留末尾 600 字。
@@ -1070,40 +1277,73 @@ mod workdir_tests {
         let stderr = "[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072; irm https://claude.ai/install.ps1 | iex : Installation failed (exit code 1)\nAt line:1 char:1\n+ FullyQualifiedErrorId : xxx\n".as_bytes();
         let t = install_err_tail(stdout, stderr);
         assert!(t.contains("Failed to download"), "真错误保留: {t}");
-        assert!(t.contains("Installation failed (exit code 1)"), "回显行只留 iex 后消息: {t}");
+        assert!(
+            t.contains("Installation failed (exit code 1)"),
+            "回显行只留 iex 后消息: {t}"
+        );
         assert!(!t.contains("SecurityProtocol"), "命令回显剥掉");
         assert!(!t.contains("Installing Claude Code"), "进度行剥掉");
-        assert!(t.contains("At line:1"), "PS 装饰行保留（取尾语义，不做白名单）");
+        assert!(
+            t.contains("At line:1"),
+            "PS 装饰行保留（取尾语义，不做白名单）"
+        );
         // 超长取尾：真错误在末尾 600 字里，且带截断记号
         let long = format!("{}\nREAL ERROR AT TAIL", "x".repeat(2000));
         let t2 = install_err_tail(long.as_bytes(), b"");
         assert!(t2.starts_with('…') && t2.ends_with("REAL ERROR AT TAIL"));
-        assert!(t2.chars().count() <= 601, "…+600 字上限: {}", t2.chars().count());
+        assert!(
+            t2.chars().count() <= 601,
+            "…+600 字上限: {}",
+            t2.chars().count()
+        );
         // 无回显的普通短输出原样、不截
         assert_eq!(install_err_tail(b"boom", b""), "boom");
         // 全空 / 剥完只剩回显 → 占位
         assert_eq!(install_err_tail(b"", b""), "（无输出）");
-        assert_eq!(install_err_tail(b"Installing Claude Code native build latest...", b""), "（无输出）");
+        assert_eq!(
+            install_err_tail(b"Installing Claude Code native build latest...", b""),
+            "（无输出）"
+        );
     }
 
     /// 开启托管：三个配套任务（每日/审计/周报）创建齐、厂商/模型/强度逐项透传、
     /// 等级与上限进 prompt、记录字段完整、同站重复开启被拒。
     #[test]
     fn enable_managed_creates_tasks_and_passes_model() {
-        let dir = std::env::temp_dir().join(format!("gcms-pilot-managed-en-{}", uuid::Uuid::new_v4()));
+        let dir =
+            std::env::temp_dir().join(format!("gcms-pilot-managed-en-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let conn = test_conn(dir.to_str().unwrap()); // id = "t"
-        std::fs::write(dir.join("connections.json"), serde_json::to_vec_pretty(&[conn]).unwrap()).unwrap();
+        std::fs::write(
+            dir.join("connections.json"),
+            serde_json::to_vec_pretty(&[conn]).unwrap(),
+        )
+        .unwrap();
         let conns = pack::ConnStore::new(&dir).unwrap();
         let tstore = tasks::TaskStore::new(&dir);
         let mstore = managed::ManagedStore::new(&dir);
 
         let m = enable_managed(
-            &conns, &tstore, &mstore,
-            "t".into(), "blog".into(), "博客".into(), "定位：测试站".into(),
-            4, 3, "l1".into(), 500_000, "grok".into(), "grok-4.5".into(), "high".into(),
-            String::new(), String::new(), String::new(),
-            String::new(), String::new(), String::new(),
+            &conns,
+            &tstore,
+            &mstore,
+            "t".into(),
+            "blog".into(),
+            "博客".into(),
+            "定位：测试站".into(),
+            4,
+            3,
+            "l1".into(),
+            500_000,
+            "grok".into(),
+            "grok-4.5".into(),
+            "high".into(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
         )
         .expect("开启托管");
         assert_eq!(m.brain, "grok");
@@ -1118,10 +1358,21 @@ mod workdir_tests {
 
         let daily = tstore.get(&m.task_ids[0]).expect("每日任务");
         assert!(daily.title.starts_with("托管 · 每日内容"));
-        assert_eq!((daily.brain.as_str(), daily.model.as_str(), daily.effort.as_str()), ("grok", "grok-4.5", "high"), "模型透传");
+        assert_eq!(
+            (
+                daily.brain.as_str(),
+                daily.model.as_str(),
+                daily.effort.as_str()
+            ),
+            ("grok", "grok-4.5", "high"),
+            "模型透传"
+        );
         assert_eq!(daily.interval_minutes, 1440);
         assert!(daily.prompt.contains("不得超过 4 篇"));
-        assert!(daily.prompt.contains("可以直接发布"), "L1 的每日 prompt 放开常规发布");
+        assert!(
+            daily.prompt.contains("可以直接发布"),
+            "L1 的每日 prompt 放开常规发布"
+        );
 
         let audit = tstore.get(&m.task_ids[1]).expect("审计任务");
         assert!(audit.title.starts_with("托管 · 每周审计"));
@@ -1131,18 +1382,97 @@ mod workdir_tests {
         let report = tstore.get(&m.task_ids[2]).expect("周报任务");
         assert!(report.title.starts_with("托管 · 每周周报"));
         assert!(report.prompt.contains("本周实测数据"));
-        assert!(report.prompt.contains("计划关键词 vs 实际曝光词偏差"), "周报偏差对照节");
-        assert!(report.prompt.contains("定位：测试站"), "90 天计划随周报 prompt 下发");
+        assert!(
+            report.prompt.contains("计划关键词 vs 实际曝光词偏差"),
+            "周报偏差对照节"
+        );
+        assert!(
+            report.prompt.contains("定位：测试站"),
+            "90 天计划随周报 prompt 下发"
+        );
         assert_eq!(report.model, "grok-4.5");
 
         // 同站重复开启被拒；非法等级回落 l0
-        assert!(enable_managed(&conns, &tstore, &mstore, "t".into(), "blog".into(), String::new(), String::new(), 3, 2, "l0".into(), 0, String::new(), String::new(), String::new(), String::new(), String::new(), String::new(), String::new(), String::new(), String::new()).is_err());
-        let m2 = enable_managed(&conns, &tstore, &mstore, "t".into(), "shop".into(), String::new(), String::new(), 3, 2, "bogus".into(), 0, "claude".into(), "sonnet".into(), String::new(), String::new(), String::new(), String::new(), String::new(), String::new(), String::new()).unwrap();
+        assert!(enable_managed(
+            &conns,
+            &tstore,
+            &mstore,
+            "t".into(),
+            "blog".into(),
+            String::new(),
+            String::new(),
+            3,
+            2,
+            "l0".into(),
+            0,
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new()
+        )
+        .is_err());
+        let m2 = enable_managed(
+            &conns,
+            &tstore,
+            &mstore,
+            "t".into(),
+            "shop".into(),
+            String::new(),
+            String::new(),
+            3,
+            2,
+            "bogus".into(),
+            0,
+            "claude".into(),
+            "sonnet".into(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+        )
+        .unwrap();
         assert_eq!(m2.level, "l0", "非法等级回落 L0（安全侧）");
         // 配额爬坡：新开启（第 0 天）上界 7，传 30 被钳到 7
-        let m3 = enable_managed(&conns, &tstore, &mstore, "t".into(), "news".into(), String::new(), String::new(), 30, 2, "l0".into(), 0, "claude".into(), "sonnet".into(), String::new(), String::new(), String::new(), String::new(), String::new(), String::new(), String::new()).unwrap();
+        let m3 = enable_managed(
+            &conns,
+            &tstore,
+            &mstore,
+            "t".into(),
+            "news".into(),
+            String::new(),
+            String::new(),
+            30,
+            2,
+            "l0".into(),
+            0,
+            "claude".into(),
+            "sonnet".into(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+            String::new(),
+        )
+        .unwrap();
         assert_eq!(m3.weekly_post_limit, 7, "新站爬坡期钳到 7 篇/周");
-        assert!(tstore.get(&m3.task_ids[0]).unwrap().prompt.contains("不得超过 7 篇"), "钳后的上限进每日 prompt");
+        assert!(
+            tstore
+                .get(&m3.task_ids[0])
+                .unwrap()
+                .prompt
+                .contains("不得超过 7 篇"),
+            "钳后的上限进每日 prompt"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -1165,7 +1495,10 @@ mod workdir_tests {
         for m in ["ask", "auto"] {
             let mut c = test_conv("claude", "sonnet", m);
             apply_brain_switch(&mut c, "codex", "gpt-5.6", true); // is_ssh
-            assert_eq!(c.perm_mode, m, "ssh 对话切 codex 必须保住 {m}（桥还要靠它弹卡）");
+            assert_eq!(
+                c.perm_mode, m,
+                "ssh 对话切 codex 必须保住 {m}（桥还要靠它弹卡）"
+            );
             assert_eq!(c.session_ref, "", "跨厂商仍要抛弃旧 session");
         }
         // 非 ssh 照旧落 full：那里 codex 真的没有任何逐命令闸，ask/auto 名不副实（原行为不变）
@@ -1214,9 +1547,13 @@ mod workdir_tests {
 
     #[test]
     fn managed_fallback_recognizes_limits_without_retrying_generic_failures() {
-        assert!(retryable_executor_error("insufficient_quota: upgrade your plan"));
+        assert!(retryable_executor_error(
+            "insufficient_quota: upgrade your plan"
+        ));
         assert!(retryable_executor_error("HTTP 429 Too Many Requests"));
-        assert!(retryable_executor_error("model_unavailable: try again later"));
+        assert!(retryable_executor_error(
+            "model_unavailable: try again later"
+        ));
         assert!(!retryable_executor_error("connection reset by peer"));
         assert!(!retryable_executor_error("permission denied"));
     }
@@ -1260,7 +1597,10 @@ async fn read_workdir_image(
         }
         let data = std::fs::read(&p).map_err(|e| format!("读取失败: {e}"))?;
         use base64::Engine as _;
-        Ok(format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(data)))
+        Ok(format!(
+            "data:{mime};base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(data)
+        ))
     })
     .await
     .map_err(|e| e.to_string())?
@@ -1289,12 +1629,16 @@ async fn resolve_workdir_file(
 /// 列出某 CF 连接工作区下已有的站点项目（<workspace>/projects/* 目录名）。
 #[tauri::command]
 fn list_cf_projects(state: tauri::State<'_, AppState>, conn_id: String) -> Vec<String> {
-    let Ok(conn) = state.conns.get(&conn_id) else { return vec![] };
+    let Ok(conn) = state.conns.get(&conn_id) else {
+        return vec![];
+    };
     if conn.kind != "cloudflare" {
         return vec![];
     }
     let dir = std::path::Path::new(&conn.skill_dir).join("projects");
-    let Ok(rd) = std::fs::read_dir(&dir) else { return vec![] };
+    let Ok(rd) = std::fs::read_dir(&dir) else {
+        return vec![];
+    };
     let mut v: Vec<String> = rd
         .flatten()
         .filter(|e| e.path().is_dir())
@@ -1308,7 +1652,9 @@ fn list_cf_projects(state: tauri::State<'_, AppState>, conn_id: String) -> Vec<S
 /// 前端据此在"还只给了方案、没写文件"时把预览/部署置灰，避免点太早。
 #[tauri::command]
 fn cf_project_ready(state: tauri::State<'_, AppState>, conn_id: String, project: String) -> bool {
-    let Ok(conn) = state.conns.get(&conn_id) else { return false };
+    let Ok(conn) = state.conns.get(&conn_id) else {
+        return false;
+    };
     if conn.kind != "cloudflare" {
         return false;
     }
@@ -1316,7 +1662,9 @@ fn cf_project_ready(state: tauri::State<'_, AppState>, conn_id: String, project:
         .join("projects")
         .join(cf_project_slug(&project));
     fn has_site(dir: &std::path::Path, depth: u8) -> bool {
-        let Ok(rd) = std::fs::read_dir(dir) else { return false };
+        let Ok(rd) = std::fs::read_dir(dir) else {
+            return false;
+        };
         for e in rd.flatten() {
             let name = e.file_name().to_string_lossy().into_owned();
             let p = e.path();
@@ -1388,7 +1736,10 @@ fn free_port(want: u16) -> Option<u16> {
 async fn wait_preview(port: u16, secs: u64) -> bool {
     let deadline = std::time::Instant::now() + Duration::from_secs(secs);
     while std::time::Instant::now() < deadline {
-        if tokio::net::TcpStream::connect(("127.0.0.1", port)).await.is_ok() {
+        if tokio::net::TcpStream::connect(("127.0.0.1", port))
+            .await
+            .is_ok()
+        {
             return true;
         }
         tokio::time::sleep(Duration::from_millis(150)).await;
@@ -1447,7 +1798,11 @@ Pilot 改不了 —— 先关掉占用它的程序，或在 pilot.json 里换一
     }
     let p = free_port(port)
         .ok_or_else(|| format!("找不到空闲的预览端口（{port} 往上 64 个都被占着）。"))?;
-    let serve_dir = if out.is_empty() { dir.to_path_buf() } else { dir.join(out) };
+    let serve_dir = if out.is_empty() {
+        dir.to_path_buf()
+    } else {
+        dir.join(out)
+    };
     // ★ 静态站不该逼人装 wrangler。内置模板全是单文件零外链的静态 HTML，内建服务器伺候它
     //   零失真、且瞬间就起；而 wrangler 要 Node、要一大包，Windows 上没装就直接卡死在
     //   「25 秒没起来」（用户原话：「一定要安装 wrangler 吗」）。
@@ -1463,7 +1818,10 @@ Pilot 改不了 —— 先关掉占用它的程序，或在 pilot.json 里换一
     } else {
         format!(" --compatibility-date={FALLBACK_COMPAT_DATE}")
     };
-    Ok(PreviewPlan::Cmd(format!("wrangler pages dev {target} --ip 127.0.0.1 --port {p}{compat}"), p))
+    Ok(PreviewPlan::Cmd(
+        format!("wrangler pages dev {target} --ip 127.0.0.1 --port {p}{compat}"),
+        p,
+    ))
 }
 
 /// 从预览 URL 里取端口。
@@ -1517,7 +1875,12 @@ fn read_pilot_json(dir: &std::path::Path) -> (Option<String>, String, u16) {
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string());
-    let out = v.get("out").and_then(|x| x.as_str()).unwrap_or("").trim().to_string();
+    let out = v
+        .get("out")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
     let port = v
         .get("port")
         .and_then(|x| x.as_u64())
@@ -1529,7 +1892,9 @@ fn read_pilot_json(dir: &std::path::Path) -> (Option<String>, String, u16) {
 
 /// 停掉当前预览。外部进程要整树杀并回收（避免僵尸）；内建服务器 abort 掉即可。
 fn stop_preview(state: &AppState) {
-    let Some(h) = state.preview.lock().unwrap().take() else { return };
+    let Some(h) = state.preview.lock().unwrap().take() else {
+        return;
+    };
     match h.proc {
         PreviewProc::Builtin(task) => task.abort(), // listener 随之 drop，端口立刻松手
         PreviewProc::Child(mut child) => {
@@ -1577,12 +1942,18 @@ fn show_edit_menu(app: AppHandle, window: tauri::Window, editable: bool) -> Resu
         let paste = PredefinedMenuItem::paste(&app, Some("粘贴")).map_err(|e| e.to_string())?;
         let all = PredefinedMenuItem::select_all(&app, Some("全选")).map_err(|e| e.to_string())?;
         b = b.item(&cut).item(&copy).item(&paste).separator().item(&all);
-        b.build().map_err(|e| e.to_string())?.popup(window).map_err(|e| e.to_string())
+        b.build()
+            .map_err(|e| e.to_string())?
+            .popup(window)
+            .map_err(|e| e.to_string())
     } else {
         // 非输入框：只给「复制」（选中的消息文字）
         let copy = PredefinedMenuItem::copy(&app, Some("复制")).map_err(|e| e.to_string())?;
         b = b.item(&copy);
-        b.build().map_err(|e| e.to_string())?.popup(window).map_err(|e| e.to_string())
+        b.build()
+            .map_err(|e| e.to_string())?
+            .popup(window)
+            .map_err(|e| e.to_string())
     }
 }
 
@@ -1620,12 +1991,16 @@ async fn open_conn_window(
     )
     .title(&conn.name)
     .inner_size(1024.0, 700.0)
-    .min_inner_size(820.0, 560.0);
+    .min_inner_size(820.0, 560.0)
+    // Windows 上 Tauri 原生文件拖放会截走 WebView2 的 HTML5 drop；关闭后输入框可直接接收 File。
+    .disable_drag_drop_handler();
     // 主窗口在 tauri.conf 里是 Overlay + 隐藏标题（前端自己画标题栏），新窗口得对齐，
     // 否则同一套前端布局会和系统标题栏叠在一起。这两个设置只有 macOS 有。
     #[cfg(target_os = "macos")]
     {
-        b = b.title_bar_style(tauri::TitleBarStyle::Overlay).hidden_title(true);
+        b = b
+            .title_bar_style(tauri::TitleBarStyle::Overlay)
+            .hidden_title(true);
     }
     let w = b.build().map_err(|e| format!("打开新窗口失败: {e}"))?;
     #[cfg(target_os = "windows")]
@@ -1655,9 +2030,10 @@ fn open_preview_window(app: &AppHandle, url: &str, name: &str) -> Result<(), Str
     let parsed = url.parse().map_err(|e| format!("预览地址解析失败: {e}"))?;
     // mut 只有 macOS 分支用得上
     #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
-    let mut b = tauri::WebviewWindowBuilder::new(app, "preview", tauri::WebviewUrl::External(parsed))
-        .title(&title)
-        .inner_size(1024.0, 728.0);
+    let mut b =
+        tauri::WebviewWindowBuilder::new(app, "preview", tauri::WebviewUrl::External(parsed))
+            .title(&title)
+            .inner_size(1024.0, 728.0);
     #[cfg(target_os = "macos")]
     {
         // 这里**故意不用主窗口那套 Overlay**。Overlay = titlebarTransparent + fullSizeContentView，
@@ -1683,7 +2059,9 @@ async fn start_builtin(dir: std::path::PathBuf, port: u16) -> Result<PreviewProc
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .map_err(|e| format!("预览端口 {port} 绑不上: {e}"))?;
-    Ok(PreviewProc::Builtin(tauri::async_runtime::spawn(static_server::serve(dir, listener))))
+    Ok(PreviewProc::Builtin(tauri::async_runtime::spawn(
+        static_server::serve(dir, listener),
+    )))
 }
 
 /// 启动本地预览：静态站用内建服务器（不需要 wrangler），有 Workers/Pages 特性的才跑 wrangler；
@@ -1709,7 +2087,12 @@ async fn cf_preview_start(
     let (dev_cmd, out, port) = read_pilot_json(std::path::Path::new(&dir));
     // 一次只跑一个预览。先记下旧端口：停完要等它**真的**松手，否则紧接着的探测会把「正在退场」的
     // 端口当成「被占」，端口就一路往上爬。
-    let old_port = state.preview.lock().unwrap().as_ref().and_then(|h| url_port(&h.url));
+    let old_port = state
+        .preview
+        .lock()
+        .unwrap()
+        .as_ref()
+        .and_then(|h| url_port(&h.url));
     stop_preview(&state);
     if let Some(p) = old_port {
         wait_port_released(p, 2500).await;
@@ -1744,13 +2127,19 @@ async fn cf_preview_start(
                 use std::os::windows::process::CommandExt;
                 c.creation_flags(0x0800_0000);
             }
-            let child = c.spawn().map_err(|e| format!("启动预览失败: {e}\n{}", wrangler_hint()))?;
+            let child = c
+                .spawn()
+                .map_err(|e| format!("启动预览失败: {e}\n{}", wrangler_hint()))?;
             (PreviewProc::Child(child), p, true)
         }
     };
     let url = format!("http://127.0.0.1:{port}");
     let title_name = project.clone(); // project 下一行就被搬进 handle 了，标题要用得先留一份
-    *state.preview.lock().unwrap() = Some(PreviewHandle { proc, url: url.clone(), project });
+    *state.preview.lock().unwrap() = Some(PreviewHandle {
+        proc,
+        url: url.clone(),
+        project,
+    });
     // 外部进程才需要等（内建服务器在 bind 成功那刻就已经在听了）。
     if external && !wait_preview(port, 25).await {
         stop_preview(&state);
@@ -1789,7 +2178,11 @@ async fn cf_preview_template(
     state: tauri::State<'_, AppState>,
     slug: String,
 ) -> Result<String, String> {
-    if slug.is_empty() || !slug.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+    if slug.is_empty()
+        || !slug
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
         return Err("非法模板名".into());
     }
     let dir = state.data_dir.join("templates").join(&slug);
@@ -1813,7 +2206,12 @@ async fn cf_preview_template(
         .find(|c| c.kind == "cloudflare")
         .and_then(|c| keychain::get_key(&c.id).ok())
         .unwrap_or_default();
-    let old_port = state.preview.lock().unwrap().as_ref().and_then(|h| url_port(&h.url));
+    let old_port = state
+        .preview
+        .lock()
+        .unwrap()
+        .as_ref()
+        .and_then(|h| url_port(&h.url));
     stop_preview(&state);
     if let Some(p) = old_port {
         wait_port_released(p, 2500).await; // 见 wait_port_released：不等就会端口上爬
@@ -1851,7 +2249,9 @@ async fn cf_preview_template(
                 use std::os::windows::process::CommandExt;
                 c.creation_flags(0x0800_0000);
             }
-            let child = c.spawn().map_err(|e| format!("启动预览失败: {e}\n{}", wrangler_hint()))?;
+            let child = c
+                .spawn()
+                .map_err(|e| format!("启动预览失败: {e}\n{}", wrangler_hint()))?;
             (PreviewProc::Child(child), p, true)
         }
     };
@@ -1863,7 +2263,10 @@ async fn cf_preview_template(
     });
     if external && !wait_preview(port, 25).await {
         stop_preview(&state);
-        return Err(format!("模板预览没能在 25 秒内起来（端口 {port}）。\n{}", wrangler_hint()));
+        return Err(format!(
+            "模板预览没能在 25 秒内起来（端口 {port}）。\n{}",
+            wrangler_hint()
+        ));
     }
     open_preview_window(&app, &url, &title_name)?;
     Ok(url)
@@ -1881,7 +2284,11 @@ fn list_templates(state: tauri::State<'_, AppState>) -> Vec<cf_templates::Templa
 /// 读模板入口 HTML（模板卡用 iframe srcdoc 展示真实样子）。找不到返回空串；过大截断。
 #[tauri::command]
 fn template_index_html(state: tauri::State<'_, AppState>, slug: String) -> String {
-    if slug.is_empty() || !slug.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+    if slug.is_empty()
+        || !slug
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
         return String::new();
     }
     let dir = state.data_dir.join("templates").join(&slug);
@@ -1969,12 +2376,21 @@ async fn redetect_brains() -> Result<brains::BrainsInfo, String> {
 /// 让脚本内部的 curl / node 下载步骤也走代理（VPN 用户「浏览器能开 claude.ai 但安装失败」
 /// 的主因之一）。用户环境已有代理变量时不覆盖；读不到系统代理就什么都不注入。
 fn system_proxy_env() -> Vec<(String, String)> {
-    for k in ["HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"] {
+    for k in [
+        "HTTPS_PROXY",
+        "https_proxy",
+        "HTTP_PROXY",
+        "http_proxy",
+        "ALL_PROXY",
+        "all_proxy",
+    ] {
         if std::env::var_os(k).is_some() {
             return vec![];
         }
     }
-    let Some(mut u) = system_proxy_url() else { return vec![] };
+    let Some(mut u) = system_proxy_url() else {
+        return vec![];
+    };
     if !u.contains("://") {
         u = format!("http://{u}");
     }
@@ -2013,7 +2429,12 @@ fn parse_win_proxy_server(server: &str) -> Option<String> {
 fn system_proxy_url() -> Option<String> {
     let q = |name: &str| -> Option<String> {
         let mut c = std::process::Command::new("reg");
-        c.args(["query", r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings", "/v", name]);
+        c.args([
+            "query",
+            r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings",
+            "/v",
+            name,
+        ]);
         {
             use std::os::windows::process::CommandExt;
             c.creation_flags(0x0800_0000);
@@ -2038,7 +2459,10 @@ fn system_proxy_url() -> Option<String> {
 /// 代理只认环境变量，这里读出来转成环境变量）。
 #[cfg(target_os = "macos")]
 fn system_proxy_url() -> Option<String> {
-    let out = std::process::Command::new("scutil").arg("--proxy").output().ok()?;
+    let out = std::process::Command::new("scutil")
+        .arg("--proxy")
+        .output()
+        .ok()?;
     let s = String::from_utf8_lossy(&out.stdout);
     let get = |k: &str| -> Option<String> {
         s.lines()
@@ -2098,7 +2522,11 @@ fn install_err_brief(stdout: &[u8], stderr: &[u8]) -> String {
 /// PowerShell/npm 的真正异常都在输出末尾，取头只能看到回显、真错误被截掉。
 fn install_err_tail(stdout: &[u8], stderr: &[u8]) -> String {
     const MAX: usize = 600;
-    let combined = format!("{}\n{}", String::from_utf8_lossy(stdout), String::from_utf8_lossy(stderr));
+    let combined = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(stdout),
+        String::from_utf8_lossy(stderr)
+    );
     let kept: Vec<String> = combined
         .lines()
         .filter_map(|raw| {
@@ -2108,7 +2536,10 @@ fn install_err_tail(stdout: &[u8], stderr: &[u8]) -> String {
             }
             if l.contains("SecurityProtocol") || l.contains("install.ps1 | iex") {
                 // 命令回显（PS 异常首行会整句复读命令）：只留 "| iex : " 之后的真实消息
-                return l.rfind("| iex : ").map(|i| l[i + 8..].trim().to_string()).filter(|s| !s.is_empty());
+                return l
+                    .rfind("| iex : ")
+                    .map(|i| l[i + 8..].trim().to_string())
+                    .filter(|s| !s.is_empty());
             }
             Some(l.to_string())
         })
@@ -2149,7 +2580,11 @@ fn node_major() -> u32 {
 
 /// npm 全局装包：managed=Some((托管 node bin, data_dir)) 时用托管 npm——
 /// prefix 指到 <data_dir>/node/npm-global、子进程 PATH 前置托管 bin（npm 脚本自己也要找 node）。
-fn npm_install_global(pkg: &str, proxy: &[(String, String)], managed: Option<(&std::path::Path, &std::path::Path)>) -> Result<(), String> {
+fn npm_install_global(
+    pkg: &str,
+    proxy: &[(String, String)],
+    managed: Option<(&std::path::Path, &std::path::Path)>,
+) -> Result<(), String> {
     let mut c = match managed {
         Some((bin, data_dir)) => {
             let mut c = std::process::Command::new(node_boot::managed_npm_exe(bin));
@@ -2212,14 +2647,25 @@ fn install_claude_native(proxy: &[(String, String)]) -> Result<(), String> {
 /// ① 系统 Node≥18 → 系统 npm，行为与从前零变化；② 无 → 自举托管 Node（ensure：复用/下载/解压/校验，
 /// 进度经 "node-boot" 事件推前端）再用托管 npm 装；③ 自举成功后进程 PATH 前置 + 用户级持久 PATH
 ///（幂等；写入失败不致命，消息里提示手动）。native_fallback（仅 claude）：以上全失败回落官方脚本。
-async fn install_cli_via_node(app: AppHandle, data_dir: PathBuf, pkg: &'static str, cli_name: &'static str, native_fallback: bool) -> Result<String, String> {
+async fn install_cli_via_node(
+    app: AppHandle,
+    data_dir: PathBuf,
+    pkg: &'static str,
+    cli_name: &'static str,
+    native_fallback: bool,
+) -> Result<String, String> {
     let proxy = system_proxy_env();
-    let sys_node = tauri::async_runtime::spawn_blocking(node_major).await.map_err(|e| e.to_string())?;
+    let sys_node = tauri::async_runtime::spawn_blocking(node_major)
+        .await
+        .map_err(|e| e.to_string())?;
     let mut errs: Vec<String> = Vec::new();
     if sys_node >= 18 {
         // 系统 Node 可用：老路径，零变化。
         let p2 = proxy.clone();
-        match tauri::async_runtime::spawn_blocking(move || npm_install_global(pkg, &p2, None)).await.map_err(|e| e.to_string())? {
+        match tauri::async_runtime::spawn_blocking(move || npm_install_global(pkg, &p2, None))
+            .await
+            .map_err(|e| e.to_string())?
+        {
             Ok(()) => return Ok(format!("{cli_name} 安装完成（npm 渠道），正在重新检测…")),
             Err(e) => errs.push(format!("npm 渠道：{e}")),
         }
@@ -2227,23 +2673,34 @@ async fn install_cli_via_node(app: AppHandle, data_dir: PathBuf, pkg: &'static s
         // 自举托管 Node：进度推给前端（下载 x% → 解压 → 校验 → 装 CLI）。
         let app2 = app.clone();
         let boot = node_boot::ensure(&data_dir, move |phase, pct| {
-            let _ = app2.emit("node-boot", serde_json::json!({ "phase": phase, "pct": pct }));
+            let _ = app2.emit(
+                "node-boot",
+                serde_json::json!({ "phase": phase, "pct": pct }),
+            );
         })
         .await;
         match boot {
             Ok(bin) => {
                 let _ = app.emit("node-boot", serde_json::json!({ "phase": "npm", "pct": 0 }));
                 let (p2, bin2, dd2) = (proxy.clone(), bin.clone(), data_dir.clone());
-                let res = tauri::async_runtime::spawn_blocking(move || npm_install_global(pkg, &p2, Some((&bin2, &dd2))))
-                    .await
-                    .map_err(|e| e.to_string())?;
+                let res = tauri::async_runtime::spawn_blocking(move || {
+                    npm_install_global(pkg, &p2, Some((&bin2, &dd2)))
+                })
+                .await
+                .map_err(|e| e.to_string())?;
                 match res {
                     Ok(()) => {
                         // 立即生效：进程 PATH 前置（探测/CLI 子进程继承）；再写用户级持久 PATH。
                         node_boot::prepend_process_path(&data_dir);
-                        let mut msg = format!("{cli_name} 安装完成（托管 Node 渠道），正在重新检测…");
-                        if let Err(e) = node_boot::register_user_path(&[bin, node_boot::npm_global_bin(&data_dir)]) {
-                            msg.push_str(&format!("（已装好但未能写入系统 PATH，终端里使用需手动加：{e}）"));
+                        let mut msg =
+                            format!("{cli_name} 安装完成（托管 Node 渠道），正在重新检测…");
+                        if let Err(e) = node_boot::register_user_path(&[
+                            bin,
+                            node_boot::npm_global_bin(&data_dir),
+                        ]) {
+                            msg.push_str(&format!(
+                                "（已装好但未能写入系统 PATH，终端里使用需手动加：{e}）"
+                            ));
                         }
                         return Ok(msg);
                     }
@@ -2255,14 +2712,19 @@ async fn install_cli_via_node(app: AppHandle, data_dir: PathBuf, pkg: &'static s
     }
     if native_fallback {
         let p2 = proxy.clone();
-        match tauri::async_runtime::spawn_blocking(move || install_claude_native(&p2)).await.map_err(|e| e.to_string())? {
+        match tauri::async_runtime::spawn_blocking(move || install_claude_native(&p2))
+            .await
+            .map_err(|e| e.to_string())?
+        {
             Ok(()) => return Ok(format!("{cli_name} 安装完成，正在重新检测…")),
             Err(e) => errs.push(format!("官方脚本渠道：{e}")),
         }
     }
     let mut msg = String::from("安装失败：多为网络问题（VPN/代理没覆盖下载域名）");
     if sys_node < 18 {
-        msg.push_str("。更稳的替代：先装 Node.js(≥18)，再点一键安装将自动走 npm 通道（npm 遵循系统代理）");
+        msg.push_str(
+            "。更稳的替代：先装 Node.js(≥18)，再点一键安装将自动走 npm 通道（npm 遵循系统代理）",
+        );
     }
     msg.push_str(&format!("\n——详情（输出末尾）——\n{}", errs.join("\n")));
     Err(msg)
@@ -2271,8 +2733,18 @@ async fn install_cli_via_node(app: AppHandle, data_dir: PathBuf, pkg: &'static s
 /// 一键安装 Claude Code：系统 Node≥18 优先 npm 官方包渠道；无 Node 自举托管 Node 走 npm；
 /// 仍失败回落官方原生脚本。全渠道注入系统代理。
 #[tauri::command]
-async fn install_claude(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<String, String> {
-    install_cli_via_node(app, state.data_dir.clone(), "@anthropic-ai/claude-code", "Claude Code", true).await
+async fn install_claude(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<String, String> {
+    install_cli_via_node(
+        app,
+        state.data_dir.clone(),
+        "@anthropic-ai/claude-code",
+        "Claude Code",
+        true,
+    )
+    .await
 }
 
 /// 把系统代理补进本进程环境（已有环境变量不覆盖）：Windows 代理软件通常只设注册表
@@ -2286,7 +2758,10 @@ fn apply_system_proxy_to_process() {
 
 /// 一键安装 Codex：系统 Node≥18 走系统 npm；无 Node 自举托管 Node 再装（无原生脚本兜底）。
 #[tauri::command]
-async fn install_codex(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<String, String> {
+async fn install_codex(
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<String, String> {
     install_cli_via_node(app, state.data_dir.clone(), "@openai/codex", "Codex", false).await
 }
 
@@ -2294,9 +2769,15 @@ async fn install_codex(app: AppHandle, state: tauri::State<'_, AppState>) -> Res
 /// Windows 直下 grok 官方原生单文件 exe（URL 口径抄官方 install.sh，见 node_boot 注释）。
 /// 跨平台编译（mac 上可编译审读、纯函数有单测），仅 Windows 分支调用。
 #[cfg_attr(not(windows), allow(dead_code))]
-async fn install_grok_win_binary(app: &AppHandle, home: &std::path::Path) -> Result<String, String> {
+async fn install_grok_win_binary(
+    app: &AppHandle,
+    home: &std::path::Path,
+) -> Result<String, String> {
     let emit = |phase: &str, pct: u32| {
-        let _ = app.emit("node-boot", serde_json::json!({ "phase": phase, "pct": pct }));
+        let _ = app.emit(
+            "node-boot",
+            serde_json::json!({ "phase": phase, "pct": pct }),
+        );
     };
     // ① 最新 stable 版本号（主源 → GCS 回退）
     let mut version: Option<String> = None;
@@ -2314,7 +2795,9 @@ async fn install_grok_win_binary(app: &AppHandle, home: &std::path::Path) -> Res
         }
     }
     let Some(version) = version else {
-        return Err(format!("安装失败：获取 grok 版本号失败，多为网络问题（代理需覆盖 x.ai）\n——详情——\n{last_err}"));
+        return Err(format!(
+            "安装失败：获取 grok 版本号失败，多为网络问题（代理需覆盖 x.ai）\n——详情——\n{last_err}"
+        ));
     };
     // ② 下载单文件 exe（带真实进度）
     let mut data: Option<Vec<u8>> = None;
@@ -2334,7 +2817,8 @@ async fn install_grok_win_binary(app: &AppHandle, home: &std::path::Path) -> Res
     let bin_dir = node_boot::grok_win_bin_dir(home);
     std::fs::create_dir_all(&bin_dir).map_err(|e| format!("创建 {}: {e}", bin_dir.display()))?;
     for name in ["grok.exe", "agent.exe"] {
-        std::fs::write(bin_dir.join(name), &data).map_err(|e| format!("写入 {name} 失败（若在运行请先退出 grok）: {e}"))?;
+        std::fs::write(bin_dir.join(name), &data)
+            .map_err(|e| format!("写入 {name} 失败（若在运行请先退出 grok）: {e}"))?;
     }
     // ④ 校验 + PATH：进程内前置立即可被探测/拉起；用户级持久 PATH 幂等追加（失败不致命）。
     emit("grok-verify", 0);
@@ -2352,7 +2836,9 @@ async fn install_grok_win_binary(app: &AppHandle, home: &std::path::Path) -> Res
     }
     let mut msg = format!("Grok CLI {version} 安装完成，正在重新检测…");
     if let Err(e) = node_boot::register_user_path(&[bin_dir]) {
-        msg.push_str(&format!("（已装好但未能写入系统 PATH，终端里使用需手动加：{e}）"));
+        msg.push_str(&format!(
+            "（已装好但未能写入系统 PATH，终端里使用需手动加：{e}）"
+        ));
     }
     Ok(msg)
 }
@@ -2363,7 +2849,8 @@ async fn install_grok_win_binary(app: &AppHandle, home: &std::path::Path) -> Res
 async fn install_grok(app: AppHandle) -> Result<String, String> {
     #[cfg(windows)]
     {
-        let home = std::env::var("USERPROFILE").map_err(|_| "拿不到用户目录（USERPROFILE）".to_string())?;
+        let home = std::env::var("USERPROFILE")
+            .map_err(|_| "拿不到用户目录（USERPROFILE）".to_string())?;
         return install_grok_win_binary(&app, std::path::Path::new(&home)).await;
     }
     #[cfg(not(windows))]
@@ -2445,7 +2932,13 @@ async fn scheduled_preview_url(
     let conn = state.conns.get(&conn_id)?;
     // 老调用方（对话里的排期提案）只有文章语境，不传集合 → posts。
     let coll = collection.unwrap_or_default();
-    scheduled::preview_url(&conn, &site_slug, if coll.is_empty() { "posts" } else { &coll }, id).await
+    scheduled::preview_url(
+        &conn,
+        &site_slug,
+        if coll.is_empty() { "posts" } else { &coll },
+        id,
+    )
+    .await
 }
 
 #[tauri::command]
@@ -2526,9 +3019,9 @@ fn set_conversation_brain_model(
         .and_then(|c| state.conns.get(&c.conn_id).ok())
         .map(|x| x.kind == "ssh")
         .unwrap_or(false);
-    state
-        .convos
-        .mutate(&conv_id, now_secs(), move |c| apply_brain_switch(c, &brain, &model, is_ssh))
+    state.convos.mutate(&conv_id, now_secs(), move |c| {
+        apply_brain_switch(c, &brain, &model, is_ssh)
+    })
 }
 
 /// 会话进行中切换权限档位（plan/ask/auto/full）：仅改存储，下一轮 send_message 读到即用。
@@ -2598,9 +3091,24 @@ fn save_task(
     enabled: bool,
 ) -> Result<ScheduledTask, String> {
     upsert_task(
-        &state.conns, &state.tasks, id, conn_id, site_slugs, site_names, task_type, brain, model,
-        effort, String::new(), String::new(), String::new(), title, prompt, interval_minutes,
-        first_run, enabled,
+        &state.conns,
+        &state.tasks,
+        id,
+        conn_id,
+        site_slugs,
+        site_names,
+        task_type,
+        brain,
+        model,
+        effort,
+        String::new(),
+        String::new(),
+        String::new(),
+        title,
+        prompt,
+        interval_minutes,
+        first_run,
+        enabled,
     )
 }
 
@@ -2626,7 +3134,11 @@ fn upsert_task(
     first_run: i64,
     enabled: bool,
 ) -> Result<ScheduledTask, String> {
-    let site_slugs: Vec<String> = site_slugs.iter().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+    let site_slugs: Vec<String> = site_slugs
+        .iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
     if site_slugs.is_empty() {
         return Err("至少选择一个站点".into());
     }
@@ -2637,11 +3149,15 @@ fn upsert_task(
         return Err("周期至少 1 分钟".into());
     }
     // 连接必须存在，否则这个任务每次运行都会失败——直接在保存时拦下。
-    let conn = conns.get(&conn_id).map_err(|_| "所选连接不存在".to_string())?;
+    let conn = conns
+        .get(&conn_id)
+        .map_err(|_| "所选连接不存在".to_string())?;
     // ★ 远程连接不许挂定时任务：定时任务**无人值守、强制 full 档**（见 fire_task），
     // 那等于把一台真机的 root shell 交给没人看着的 AI 定期折腾。这个组合不提供。
     if conn.kind == "ssh" {
-        return Err("远程连接不支持定时任务：无人值守的自动执行会直接改动你的服务器，风险太大。".into());
+        return Err(
+            "远程连接不支持定时任务：无人值守的自动执行会直接改动你的服务器，风险太大。".into(),
+        );
     }
     let conn_name = conn.name;
     let now = now_secs();
@@ -2658,7 +3174,10 @@ fn upsert_task(
         conn_name,
         // 首个站点写进旧字段：列表展示与旧版数据结构兼容
         site_slug: site_slugs[0].clone(),
-        site_name: site_names.first().cloned().unwrap_or_else(|| site_slugs[0].clone()),
+        site_name: site_names
+            .first()
+            .cloned()
+            .unwrap_or_else(|| site_slugs[0].clone()),
         task_type,
         brain,
         model,
@@ -2668,17 +3187,33 @@ fn upsert_task(
         fallback_effort,
         site_slugs,
         site_names,
-        title: if title.trim().is_empty() { title_from(&prompt) } else { title.trim().into() },
+        title: if title.trim().is_empty() {
+            title_from(&prompt)
+        } else {
+            title.trim().into()
+        },
         prompt: prompt.trim().into(),
         interval_minutes,
         next_run: next,
         enabled,
         last_run: existing.as_ref().map(|e| e.last_run).unwrap_or(0),
-        last_status: existing.as_ref().map(|e| e.last_status.clone()).unwrap_or_default(),
-        last_summary: existing.as_ref().map(|e| e.last_summary.clone()).unwrap_or_default(),
-        last_conv_id: existing.as_ref().map(|e| e.last_conv_id.clone()).unwrap_or_default(),
+        last_status: existing
+            .as_ref()
+            .map(|e| e.last_status.clone())
+            .unwrap_or_default(),
+        last_summary: existing
+            .as_ref()
+            .map(|e| e.last_summary.clone())
+            .unwrap_or_default(),
+        last_conv_id: existing
+            .as_ref()
+            .map(|e| e.last_conv_id.clone())
+            .unwrap_or_default(),
         runs: existing.as_ref().map(|e| e.runs).unwrap_or(0),
-        history: existing.as_ref().map(|e| e.history.clone()).unwrap_or_default(),
+        history: existing
+            .as_ref()
+            .map(|e| e.history.clone())
+            .unwrap_or_default(),
         created_at: existing.as_ref().map(|e| e.created_at).unwrap_or(now),
         updated_at: now,
     };
@@ -2708,7 +3243,11 @@ fn set_task_enabled(
 }
 
 #[tauri::command]
-fn run_task_now(state: tauri::State<'_, AppState>, app: AppHandle, id: String) -> Result<(), String> {
+fn run_task_now(
+    state: tauri::State<'_, AppState>,
+    app: AppHandle,
+    id: String,
+) -> Result<(), String> {
     let task = state.tasks.get(&id).ok_or("任务不存在")?;
     // 与调度器共享同一 running 集：正在跑就拒绝，避免重复触发。
     {
@@ -2735,7 +3274,10 @@ fn run_task_now(state: tauri::State<'_, AppState>, app: AppHandle, id: String) -
     let data_dir = state.data_dir.clone();
     let ssh = state.ssh.clone();
     tauri::async_runtime::spawn(async move {
-        fire_task(app, conns, convos, runs, tstore, mstore, task, data_dir, ssh).await;
+        fire_task(
+            app, conns, convos, runs, tstore, mstore, task, data_dir, ssh,
+        )
+        .await;
         firing.lock().unwrap().remove(&id);
     });
     Ok(())
@@ -2760,7 +3302,15 @@ fn sync_daily_prompt(tasks: &tasks::TaskStore, m: &managed::ManagedSite) {
     if let Some(tid) = m.task_ids.first() {
         let p = managed::apply_custom_prompt(
             &m.custom_daily_prompt,
-            managed::daily_prompt(&m.site_name, &m.plan, m.weekly_post_limit, &m.review_notes, &m.level, m.weekly_edit_limit, &m.audit_notes),
+            managed::daily_prompt(
+                &m.site_name,
+                &m.plan,
+                m.weekly_post_limit,
+                &m.review_notes,
+                &m.level,
+                m.weekly_edit_limit,
+                &m.audit_notes,
+            ),
         );
         let _ = tasks.mutate(tid, |t| {
             t.prompt = p.clone();
@@ -2814,9 +3364,21 @@ fn managed_set_models(
     {
         return Err("备用模型不能与主模型完全相同".into());
     }
-    let fallback_brain = if fallback_enabled { fallback_brain.trim().to_string() } else { String::new() };
-    let fallback_model = if fallback_enabled { fallback_model.trim().to_string() } else { String::new() };
-    let fallback_effort = if fallback_enabled { fallback_effort.trim().to_string() } else { String::new() };
+    let fallback_brain = if fallback_enabled {
+        fallback_brain.trim().to_string()
+    } else {
+        String::new()
+    };
+    let fallback_model = if fallback_enabled {
+        fallback_model.trim().to_string()
+    } else {
+        String::new()
+    };
+    let fallback_effort = if fallback_enabled {
+        fallback_effort.trim().to_string()
+    } else {
+        String::new()
+    };
     let brain = brain.trim().to_string();
     let model = model.trim().to_string();
     let effort = effort.trim().to_string();
@@ -2899,10 +3461,26 @@ fn managed_enable(
     custom_report_prompt: String,
 ) -> Result<managed::ManagedSite, String> {
     enable_managed(
-        &state.conns, &state.tasks, &state.managed,
-        conn_id, site_slug, site_name, plan, weekly_post_limit, weekly_edit_limit, level,
-        token_weekly_budget, brain, model, effort, fallback_brain, fallback_model,
-        fallback_effort, custom_daily_prompt, custom_audit_prompt, custom_report_prompt,
+        &state.conns,
+        &state.tasks,
+        &state.managed,
+        conn_id,
+        site_slug,
+        site_name,
+        plan,
+        weekly_post_limit,
+        weekly_edit_limit,
+        level,
+        token_weekly_budget,
+        brain,
+        model,
+        effort,
+        fallback_brain,
+        fallback_model,
+        fallback_effort,
+        custom_daily_prompt,
+        custom_audit_prompt,
+        custom_report_prompt,
     )
 }
 
@@ -2942,44 +3520,85 @@ fn enable_managed(
     if managed_store.find_site(&conn_id, &site_slug).is_some() {
         return Err("该站点已在托管中".into());
     }
-    let level = if valid_level(&level) { level } else { "l0".to_string() };
-    let site_name = if site_name.trim().is_empty() { site_slug.clone() } else { site_name.trim().to_string() };
+    let level = if valid_level(&level) {
+        level
+    } else {
+        "l0".to_string()
+    };
+    let site_name = if site_name.trim().is_empty() {
+        site_slug.clone()
+    } else {
+        site_name.trim().to_string()
+    };
     // 配额爬坡：刚开启（第 0 天）上界 7 篇/周（满 30 天 14、60 天后 50，managed::ramp_cap），
     // 防新站短期批量灌内容被搜索引擎判责；UI 侧超过 7 会提示将被钳。
     let limit = weekly_post_limit.clamp(1, managed::ramp_cap(0));
     let edit_limit = weekly_edit_limit.clamp(1, 20);
     let daily = upsert_task(
-        conns, tasks, None, conn_id.clone(),
-        vec![site_slug.clone()], vec![site_name.clone()],
-        "article".into(), brain.clone(), model.clone(), effort.clone(),
-        fallback_brain.clone(), fallback_model.clone(), fallback_effort.clone(),
+        conns,
+        tasks,
+        None,
+        conn_id.clone(),
+        vec![site_slug.clone()],
+        vec![site_name.clone()],
+        "article".into(),
+        brain.clone(),
+        model.clone(),
+        effort.clone(),
+        fallback_brain.clone(),
+        fallback_model.clone(),
+        fallback_effort.clone(),
         format!("托管 · 每日内容 · {site_name}"),
         managed::apply_custom_prompt(
             &custom_daily_prompt,
             managed::daily_prompt(&site_name, &plan, limit, &[], &level, edit_limit, ""),
         ),
-        1440, 0, true,
+        1440,
+        0,
+        true,
     )?;
     let audit = upsert_task(
-        conns, tasks, None, conn_id.clone(),
-        vec![site_slug.clone()], vec![site_name.clone()],
-        "free".into(), brain.clone(), model.clone(), effort.clone(),
-        fallback_brain.clone(), fallback_model.clone(), fallback_effort.clone(),
+        conns,
+        tasks,
+        None,
+        conn_id.clone(),
+        vec![site_slug.clone()],
+        vec![site_name.clone()],
+        "free".into(),
+        brain.clone(),
+        model.clone(),
+        effort.clone(),
+        fallback_brain.clone(),
+        fallback_model.clone(),
+        fallback_effort.clone(),
         format!("托管 · 每周审计 · {site_name}"),
         managed::apply_custom_prompt(&custom_audit_prompt, managed::audit_prompt(&site_name)),
-        10080, 0, true,
+        10080,
+        0,
+        true,
     )?;
     let report = upsert_task(
-        conns, tasks, None, conn_id.clone(),
-        vec![site_slug.clone()], vec![site_name.clone()],
-        "free".into(), brain.clone(), model.clone(), effort.clone(),
-        fallback_brain.clone(), fallback_model.clone(), fallback_effort.clone(),
+        conns,
+        tasks,
+        None,
+        conn_id.clone(),
+        vec![site_slug.clone()],
+        vec![site_name.clone()],
+        "free".into(),
+        brain.clone(),
+        model.clone(),
+        effort.clone(),
+        fallback_brain.clone(),
+        fallback_model.clone(),
+        fallback_effort.clone(),
         format!("托管 · 每周周报 · {site_name}"),
         managed::apply_custom_prompt(
             &custom_report_prompt,
             managed::report_prompt(&site_name, &plan),
         ),
-        10080, 0, true,
+        10080,
+        0,
+        true,
     )?;
     let now = now_secs();
     let m = managed::ManagedSite {
@@ -3047,7 +3666,9 @@ fn managed_set_edit_limit(
     limit: u32,
 ) -> Result<Option<managed::ManagedSite>, String> {
     let limit = limit.clamp(1, 20);
-    let updated = state.managed.mutate(&id, now_secs(), |m| m.weekly_edit_limit = limit)?;
+    let updated = state
+        .managed
+        .mutate(&id, now_secs(), |m| m.weekly_edit_limit = limit)?;
     if let Some(m) = &updated {
         sync_daily_prompt(&state.tasks, m);
     }
@@ -3055,7 +3676,11 @@ fn managed_set_edit_limit(
 }
 
 /// 暂停/恢复托管＝启停全部配套任务（恢复时把 next_run 推进到未来，避免立刻补跑）。
-fn set_managed_paused(state: &AppState, id: &str, paused: bool) -> Result<Option<managed::ManagedSite>, String> {
+fn set_managed_paused(
+    state: &AppState,
+    id: &str,
+    paused: bool,
+) -> Result<Option<managed::ManagedSite>, String> {
     let now = now_secs();
     let updated = state.managed.mutate(id, now, |m| m.paused = paused)?;
     if let Some(m) = &updated {
@@ -3073,13 +3698,19 @@ fn set_managed_paused(state: &AppState, id: &str, paused: bool) -> Result<Option
 }
 
 #[tauri::command]
-fn managed_pause(state: tauri::State<'_, AppState>, id: String) -> Result<Option<managed::ManagedSite>, String> {
+fn managed_pause(
+    state: tauri::State<'_, AppState>,
+    id: String,
+) -> Result<Option<managed::ManagedSite>, String> {
     set_managed_paused(&state, &id, true)
 }
 
 /// 恢复托管：重启配套任务，并解除预算熔断标记（熔断恢复只能走这里=手动）。
 #[tauri::command]
-fn managed_resume(state: tauri::State<'_, AppState>, id: String) -> Result<Option<managed::ManagedSite>, String> {
+fn managed_resume(
+    state: tauri::State<'_, AppState>,
+    id: String,
+) -> Result<Option<managed::ManagedSite>, String> {
     let _ = state.managed.mutate(&id, now_secs(), |m| m.fused_at = 0)?;
     set_managed_paused(&state, &id, false)
 }
@@ -3087,7 +3718,9 @@ fn managed_resume(state: tauri::State<'_, AppState>, id: String) -> Result<Optio
 /// 关闭托管：删掉配套定时任务 + 托管记录。站点内容（含草稿）一概不动。
 #[tauri::command]
 fn managed_disable(state: tauri::State<'_, AppState>, id: String) -> Result<(), String> {
-    let Some(m) = state.managed.get(&id) else { return Ok(()) };
+    let Some(m) = state.managed.get(&id) else {
+        return Ok(());
+    };
     for tid in &m.task_ids {
         let _ = state.tasks.remove(tid);
     }
@@ -3111,13 +3744,22 @@ fn managed_record_reject(
     }
     let now = now_secs();
     let mut updated = state.managed.mutate(&id, now, |m| {
-        m.review_notes.insert(0, managed::ReviewNote {
-            ts: now,
-            post_id,
-            title: title.trim().to_string(),
-            reason: reason.trim().to_string(),
-        });
-        m.review_events.insert(0, managed::ReviewEvent { ts: now, approved: false });
+        m.review_notes.insert(
+            0,
+            managed::ReviewNote {
+                ts: now,
+                post_id,
+                title: title.trim().to_string(),
+                reason: reason.trim().to_string(),
+            },
+        );
+        m.review_events.insert(
+            0,
+            managed::ReviewEvent {
+                ts: now,
+                approved: false,
+            },
+        );
     })?;
     // 自动降级判定（先取出要用的数据再改 updated，避免自引用）。
     let demote = updated.as_ref().and_then(|m| {
@@ -3132,7 +3774,11 @@ fn managed_record_reject(
             x.level = target.into();
             x.demote_note = format!("已自动降到 {label}：{why}（{date}）。整改后可手动调回。");
         })?;
-        notify_user(&app, "托管已自动降级", format!("「{site_name}」{why}，已降到 {label}。"));
+        notify_user(
+            &app,
+            "托管已自动降级",
+            format!("「{site_name}」{why}，已降到 {label}。"),
+        );
     }
     if let Some(m) = &updated {
         sync_daily_prompt(&state.tasks, m);
@@ -3147,7 +3793,9 @@ fn managed_plan_save(
     id: String,
     plan: String,
 ) -> Result<Option<managed::ManagedSite>, String> {
-    let updated = state.managed.mutate(&id, now_secs(), |m| m.plan = plan.trim().to_string())?;
+    let updated = state
+        .managed
+        .mutate(&id, now_secs(), |m| m.plan = plan.trim().to_string())?;
     if let Some(m) = &updated {
         sync_daily_prompt(&state.tasks, m);
     }
@@ -3191,7 +3839,13 @@ async fn managed_publish(
     if let Some(m) = state.managed.find_site(&conn_id, &site_slug) {
         let now = now_secs();
         let _ = state.managed.mutate(&m.id, now, |x| {
-            x.review_events.insert(0, managed::ReviewEvent { ts: now, approved: true });
+            x.review_events.insert(
+                0,
+                managed::ReviewEvent {
+                    ts: now,
+                    approved: true,
+                },
+            );
         });
     }
     Ok(())
@@ -3245,7 +3899,12 @@ async fn managed_summary(
         })
         .collect();
     let stats = managed::week_stats(&conn, &m.site_slug).await?;
-    let week_tokens = managed_week_tokens(&state.tasks, &state.convos, &m, stats.week_start.max(0) as u64);
+    let week_tokens = managed_week_tokens(
+        &state.tasks,
+        &state.convos,
+        &m,
+        stats.week_start.max(0) as u64,
+    );
     Ok(managed::ManagedSummary {
         published_this_week: stats.published_this_week,
         drafts: stats.drafts_total,
@@ -3276,7 +3935,11 @@ async fn managed_prefire(
     mstore: &managed::ManagedStore,
     task: &ScheduledTask,
 ) -> ManagedGate {
-    let Some(m) = mstore.list().into_iter().find(|m| m.task_ids.contains(&task.id)) else {
+    let Some(m) = mstore
+        .list()
+        .into_iter()
+        .find(|m| m.task_ids.contains(&task.id))
+    else {
         return ManagedGate::Proceed(None);
     };
     let ws = managed::week_start_local().max(0) as u64;
@@ -3301,7 +3964,10 @@ async fn managed_prefire(
                     m.site_name, m.token_weekly_budget
                 ));
             }
-            return ManagedGate::Skip(format!("预算已熔断（{used}/{}），恢复需手动", m.token_weekly_budget));
+            return ManagedGate::Skip(format!(
+                "预算已熔断（{used}/{}），恢复需手动",
+                m.token_weekly_budget
+            ));
         }
     }
     let conn = match conns.get(&m.conn_id) {
@@ -3321,7 +3987,10 @@ async fn managed_prefire(
                 // 配额用完**不 Skip 整个任务**——只注入「禁止修改存量」权威行，常规创作照做。
                 if m.level == "l3" {
                     extra.push('\n');
-                    extra.push_str(&managed::edit_cap_line(stats.edited_count, m.weekly_edit_limit));
+                    extra.push_str(&managed::edit_cap_line(
+                        stats.edited_count,
+                        m.weekly_edit_limit,
+                    ));
                 }
                 return ManagedGate::Proceed(Some(extra));
             }
@@ -3340,7 +4009,15 @@ async fn managed_prefire(
                         let status = if t.last_run == 0 {
                             "还没跑过".to_string()
                         } else {
-                            format!("上次{}（共 {} 次）", if t.last_status == "ok" { "成功" } else { "失败" }, t.runs)
+                            format!(
+                                "上次{}（共 {} 次）",
+                                if t.last_status == "ok" {
+                                    "成功"
+                                } else {
+                                    "失败"
+                                },
+                                t.runs
+                            )
                         };
                         format!("{}：{status}", t.title)
                     })
@@ -3359,13 +4036,27 @@ async fn managed_prefire(
                         .take(5)
                         .map(|n| format!("《{}》：{}", n.title, n.reason))
                         .collect(),
-                    published_titles: if m.level == "l2" || m.level == "l3" { stats.published_titles } else { vec![] },
-                    edit_limit: if m.level == "l3" { m.weekly_edit_limit } else { 0 },
-                    edited_titles: if m.level == "l3" { stats.edited_titles } else { vec![] },
+                    published_titles: if m.level == "l2" || m.level == "l3" {
+                        stats.published_titles
+                    } else {
+                        vec![]
+                    },
+                    edit_limit: if m.level == "l3" {
+                        m.weekly_edit_limit
+                    } else {
+                        0
+                    },
+                    edited_titles: if m.level == "l3" {
+                        stats.edited_titles
+                    } else {
+                        vec![]
+                    },
                 };
                 managed::weekly_report_data(&facts)
             }
-            Err(e) => format!("【本周实测数据】拉取失败（{e}）——请在周报开头注明本周数据不可用，只做定性总结。"),
+            Err(e) => format!(
+                "【本周实测数据】拉取失败（{e}）——请在周报开头注明本周数据不可用，只做定性总结。"
+            ),
         };
         return ManagedGate::Proceed(Some(block));
     }
@@ -3391,7 +4082,11 @@ fn task_fallback(task: &ScheduledTask) -> Option<(String, String, String)> {
     {
         return None;
     }
-    Some((brain.to_string(), task.fallback_model.clone(), task.fallback_effort.clone()))
+    Some((
+        brain.to_string(),
+        task.fallback_model.clone(),
+        task.fallback_effort.clone(),
+    ))
 }
 
 fn retryable_executor_error(text: &str) -> bool {
@@ -3400,19 +4095,36 @@ fn retryable_executor_error(text: &str) -> bool {
     }
     let lower = text.to_ascii_lowercase();
     [
-        "rate_limit", "overloaded", "capacity", "model unavailable",
-        "model_unavailable", "temporarily unavailable", "model not found",
+        "rate_limit",
+        "overloaded",
+        "capacity",
+        "model unavailable",
+        "model_unavailable",
+        "temporarily unavailable",
+        "model not found",
     ]
     .iter()
     .any(|needle| lower.contains(needle))
-        || ["额度不足", "额度已用完", "达到限额", "限流", "配额", "模型不可用", "服务繁忙"]
-            .iter()
-            .any(|needle| text.contains(needle))
+        || [
+            "额度不足",
+            "额度已用完",
+            "达到限额",
+            "限流",
+            "配额",
+            "模型不可用",
+            "服务繁忙",
+        ]
+        .iter()
+        .any(|needle| text.contains(needle))
 }
 
 fn conversation_can_fallback(conv: &Conversation) -> bool {
     // 已经执行过任何工具时不再换模型，避免同一个任务被重复写入。
-    if conv.messages.iter().any(|message| !message.tools.is_empty()) {
+    if conv
+        .messages
+        .iter()
+        .any(|message| !message.tools.is_empty())
+    {
         return false;
     }
     conv.messages
@@ -3427,7 +4139,11 @@ fn conversation_can_fallback(conv: &Conversation) -> bool {
 }
 
 fn executor_label(brain: &str, model: &str) -> String {
-    if model.trim().is_empty() { brain.to_string() } else { format!("{brain} / {model}") }
+    if model.trim().is_empty() {
+        brain.to_string()
+    } else {
+        format!("{brain} / {model}")
+    }
 }
 
 /// 单站执行结果（多站任务撞限止损用）。
@@ -3459,7 +4175,10 @@ async fn fire_task(
     let lstore = limits::LimitStore::new(&data_dir);
     let fallback = task_fallback(&task);
     let mut initial_executor = (
-        task.brain.clone(), task.model.clone(), task.effort.clone(), false,
+        task.brain.clone(),
+        task.model.clone(),
+        task.effort.clone(),
+        false,
     );
     {
         let now = now_secs();
@@ -3472,7 +4191,10 @@ async fn fire_task(
                 initial_executor = (brain.clone(), model.clone(), effort.clone(), true);
             } else {
                 let next = limits::defer_next_run(entry.reset_ts, &task.id);
-                let msg = format!("订阅限额中，本次未运行——已顺延到 {} 后重试", fmt_ts_local(entry.reset_ts));
+                let msg = format!(
+                    "订阅限额中，本次未运行——已顺延到 {} 后重试",
+                    fmt_ts_local(entry.reset_ts)
+                );
                 let _ = tstore.mutate(&task.id, |x| {
                     if next > x.next_run {
                         x.next_run = next;
@@ -3480,14 +4202,29 @@ async fn fire_task(
                     x.last_run = now;
                     x.last_status = "ok".into();
                     x.last_summary = msg.clone();
-                    x.history.insert(0, tasks::TaskRun { ts: now, ok: true, summary: msg.clone(), sites: vec![], deferred: true });
+                    x.history.insert(
+                        0,
+                        tasks::TaskRun {
+                            ts: now,
+                            ok: true,
+                            summary: msg.clone(),
+                            sites: vec![],
+                            deferred: true,
+                        },
+                    );
                     x.history.truncate(20);
                 });
                 if lstore.claim_notify(&task.brain, now) {
-                    notify_user(&app, "订阅限额，定时任务已顺延", format!(
-                        "{} 处于限额期（预计 {} 恢复），「{}」等定时任务将自动顺延继续。",
-                        task.brain, fmt_ts_local(entry.reset_ts), task.title
-                    ));
+                    notify_user(
+                        &app,
+                        "订阅限额，定时任务已顺延",
+                        format!(
+                            "{} 处于限额期（预计 {} 恢复），「{}」等定时任务将自动顺延继续。",
+                            task.brain,
+                            fmt_ts_local(entry.reset_ts),
+                            task.title
+                        ),
+                    );
                 }
                 return;
             }
@@ -3503,7 +4240,16 @@ async fn fire_task(
                 x.runs += 1;
                 x.last_status = "ok".into();
                 x.last_summary = reason.clone();
-                x.history.insert(0, tasks::TaskRun { ts: now, ok: true, summary: reason.clone(), sites: vec![], deferred: false });
+                x.history.insert(
+                    0,
+                    tasks::TaskRun {
+                        ts: now,
+                        ok: true,
+                        summary: reason.clone(),
+                        sites: vec![],
+                        deferred: false,
+                    },
+                );
                 x.history.truncate(20);
             });
             return;
@@ -3526,8 +4272,18 @@ async fn fire_task(
         let sem = sem.clone();
         let limit_flag = limit_flag.clone();
         let lstore2 = lstore.clone();
-        let (conns, convos, runs, data_dir, ssh) = (conns.clone(), convos.clone(), runs.clone(), data_dir.clone(), ssh.clone());
-        let (conn_id, task_type, prompt) = (task.conn_id.clone(), task.task_type.clone(), effective_prompt.clone());
+        let (conns, convos, runs, data_dir, ssh) = (
+            conns.clone(),
+            convos.clone(),
+            runs.clone(),
+            data_dir.clone(),
+            ssh.clone(),
+        );
+        let (conn_id, task_type, prompt) = (
+            task.conn_id.clone(),
+            task.task_type.clone(),
+            effective_prompt.clone(),
+        );
         let fallback = fallback.clone();
         let (mut brain, mut model, mut effort, mut fallback_used) = initial_executor.clone();
         handles.push(tauri::async_runtime::spawn(async move {
@@ -3538,9 +4294,10 @@ async fn fire_task(
 
             // 同轮前一个站刚登记主执行器限额时，后续站直接走不同厂商的备用执行器。
             if !fallback_used && lstore2.active(&brain, now_secs()).is_some() {
-                if let Some((next_brain, next_model, next_effort)) = fallback
-                    .as_ref()
-                    .filter(|(next_brain, _, _)| next_brain != &brain && lstore2.active(next_brain, now_secs()).is_none())
+                if let Some((next_brain, next_model, next_effort)) =
+                    fallback.as_ref().filter(|(next_brain, _, _)| {
+                        next_brain != &brain && lstore2.active(next_brain, now_secs()).is_none()
+                    })
                 {
                     brain = next_brain.clone();
                     model = next_model.clone();
@@ -3555,17 +4312,32 @@ async fn fire_task(
             let executor = executor_label(&brain, &model);
             // 定时任务无人值守：只能全自动（询问/自动档会卡在等批准，永远回不来）。
             let res = create_conversation(
-                conns.clone(), convos.clone(), runs.clone(), conv_id,
-                conn_id.clone(), slug.clone(), name.clone(), vec![], vec![],
-                task_type.clone(), brain.clone(), model.clone(),
-                "full".into(), effort.clone(), prompt.clone(), sink, data_dir.clone(), ssh.clone(),
+                conns.clone(),
+                convos.clone(),
+                runs.clone(),
+                conv_id,
+                conn_id.clone(),
+                slug.clone(),
+                name.clone(),
+                vec![],
+                vec![],
+                task_type.clone(),
+                brain.clone(),
+                model.clone(),
+                "full".into(),
+                effort.clone(),
+                prompt.clone(),
+                sink,
+                data_dir.clone(),
+                ssh.clone(),
             )
             .await;
 
-            let should_fallback = !fallback_used && match &res {
-                Ok(conv) => conversation_can_fallback(conv),
-                Err(error) => retryable_executor_error(error),
-            };
+            let should_fallback = !fallback_used
+                && match &res {
+                    Ok(conv) => conversation_can_fallback(conv),
+                    Err(error) => retryable_executor_error(error),
+                };
             if should_fallback {
                 if let Some((next_brain, next_model, next_effort)) = fallback
                     .as_ref()
@@ -3573,7 +4345,10 @@ async fn fire_task(
                 {
                     // 主执行器的限额仍需登记，但备用可接管时不阻断本轮其他站点。
                     if let Ok(conv) = &res {
-                        if let Some(reset) = conv.messages.iter().rev()
+                        if let Some(reset) = conv
+                            .messages
+                            .iter()
+                            .rev()
                             .find(|message| message.role == "assistant")
                             .and_then(|message| message.limit_reset)
                         {
@@ -3582,15 +4357,33 @@ async fn fire_task(
                     }
                     let fallback_sink: Channel<agent::TurnEvent> = Channel::new(|_| Ok(()));
                     let fallback_res = create_conversation(
-                        conns, convos, runs, uuid::Uuid::new_v4().to_string(),
-                        conn_id, slug.clone(), name, vec![], vec![], task_type,
-                        next_brain.clone(), next_model.clone(), "full".into(),
-                        next_effort.clone(), prompt, fallback_sink, data_dir, ssh,
-                    ).await;
+                        conns,
+                        convos,
+                        runs,
+                        uuid::Uuid::new_v4().to_string(),
+                        conn_id,
+                        slug.clone(),
+                        name,
+                        vec![],
+                        vec![],
+                        task_type,
+                        next_brain.clone(),
+                        next_model.clone(),
+                        "full".into(),
+                        next_effort.clone(),
+                        prompt,
+                        fallback_sink,
+                        data_dir,
+                        ssh,
+                    )
+                    .await;
                     let fallback_executor = executor_label(next_brain, next_model);
                     return match fallback_res {
                         Ok(conv) => {
-                            if let Some(reset) = conv.messages.iter().rev()
+                            if let Some(reset) = conv
+                                .messages
+                                .iter()
+                                .rev()
                                 .find(|message| message.role == "assistant")
                                 .and_then(|message| message.limit_reset)
                             {
@@ -3599,10 +4392,14 @@ async fn fire_task(
                             }
                             (slug, SiteRun::Done(Box::new(conv), fallback_executor, true))
                         }
-                        Err(error) => (slug, SiteRun::Failed(
-                            format!("主模型不可用，备用模型执行失败：{error}"),
-                            fallback_executor, true,
-                        )),
+                        Err(error) => (
+                            slug,
+                            SiteRun::Failed(
+                                format!("主模型不可用，备用模型执行失败：{error}"),
+                                fallback_executor,
+                                true,
+                            ),
+                        ),
                     };
                 }
             }
@@ -3610,7 +4407,13 @@ async fn fire_task(
             match res {
                 Ok(c) => {
                     // 撞限检测：登记全局（create_conversation 里已登记，这里补拿生效 reset）并竖旗止损。
-                    if let Some(reset) = c.messages.iter().rev().find(|m| m.role == "assistant").and_then(|m| m.limit_reset) {
+                    if let Some(reset) = c
+                        .messages
+                        .iter()
+                        .rev()
+                        .find(|m| m.role == "assistant")
+                        .and_then(|m| m.limit_reset)
+                    {
                         let eff = lstore2.register(&brain, reset, now_secs());
                         *limit_flag.lock().unwrap() = Some(eff);
                     }
@@ -3629,15 +4432,31 @@ async fn fire_task(
     let mut run_sites: Vec<tasks::TaskRunSite> = Vec::with_capacity(targets.len());
     let mut fallback_count = 0usize;
     for h in handles {
-        let Ok((slug, outcome)) = h.await else { continue };
+        let Ok((slug, outcome)) = h.await else {
+            continue;
+        };
         match outcome {
             SiteRun::Done(c, executor, fallback_used) => {
                 if fallback_used {
                     fallback_count += 1;
                 }
-                let limited = c.messages.iter().rev().find(|m| m.role == "assistant").and_then(|m| m.limit_reset).is_some();
+                let limited = c
+                    .messages
+                    .iter()
+                    .rev()
+                    .find(|m| m.role == "assistant")
+                    .and_then(|m| m.limit_reset)
+                    .is_some();
                 if limited {
-                    run_sites.push(tasks::TaskRunSite { slug, ok: false, conv_id: c.id.clone(), error: "撞到订阅限额".into(), deferred: true, executor, fallback_used });
+                    run_sites.push(tasks::TaskRunSite {
+                        slug,
+                        ok: false,
+                        conv_id: c.id.clone(),
+                        error: "撞到订阅限额".into(),
+                        deferred: true,
+                        executor,
+                        fallback_used,
+                    });
                 } else {
                     ok_count += 1;
                     last_conv = c.id.clone();
@@ -3649,7 +4468,15 @@ async fn fire_task(
                         .find(|m| m.role == "assistant")
                         .map(|m| m.text.clone())
                         .unwrap_or_default();
-                    run_sites.push(tasks::TaskRunSite { slug, ok: true, conv_id: c.id.clone(), error: String::new(), deferred: false, executor, fallback_used });
+                    run_sites.push(tasks::TaskRunSite {
+                        slug,
+                        ok: true,
+                        conv_id: c.id.clone(),
+                        error: String::new(),
+                        deferred: false,
+                        executor,
+                        fallback_used,
+                    });
                 }
             }
             SiteRun::Failed(e, executor, fallback_used) => {
@@ -3660,10 +4487,26 @@ async fn fire_task(
                 if first_err.is_empty() {
                     first_err = format!("{slug}: {brief}");
                 }
-                run_sites.push(tasks::TaskRunSite { slug, ok: false, conv_id: String::new(), error: brief, deferred: false, executor, fallback_used });
+                run_sites.push(tasks::TaskRunSite {
+                    slug,
+                    ok: false,
+                    conv_id: String::new(),
+                    error: brief,
+                    deferred: false,
+                    executor,
+                    fallback_used,
+                });
             }
             SiteRun::LimitSkipped => {
-                run_sites.push(tasks::TaskRunSite { slug, ok: false, conv_id: String::new(), error: "限额顺延，本轮未运行".into(), deferred: true, executor: String::new(), fallback_used: false });
+                run_sites.push(tasks::TaskRunSite {
+                    slug,
+                    ok: false,
+                    conv_id: String::new(),
+                    error: "限额顺延，本轮未运行".into(),
+                    deferred: true,
+                    executor: String::new(),
+                    fallback_used: false,
+                });
             }
         }
     }
@@ -3673,7 +4516,11 @@ async fn fire_task(
     let all_ok = ok_count == targets.len();
     let deferred = limit_hit.is_some();
     let mut summary = if let Some(reset) = limit_hit {
-        format!("撞到订阅限额：完成 {ok_count}/{} 站，其余顺延——已顺延到 {} 后重试", targets.len(), fmt_ts_local(reset))
+        format!(
+            "撞到订阅限额：完成 {ok_count}/{} 站，其余顺延——已顺延到 {} 后重试",
+            targets.len(),
+            fmt_ts_local(reset)
+        )
     } else if multi {
         let mut s = format!("{ok_count}/{} 个站点成功", targets.len());
         if !first_err.is_empty() {
@@ -3693,7 +4540,11 @@ async fn fire_task(
         x.last_run = now;
         x.runs += 1;
         // 顺延＝非失败语义：限额不算这个任务「坏了」。
-        x.last_status = if all_ok || deferred { "ok".into() } else { "error".into() };
+        x.last_status = if all_ok || deferred {
+            "ok".into()
+        } else {
+            "error".into()
+        };
         x.last_summary = summary.clone();
         if !last_conv.is_empty() {
             x.last_conv_id = last_conv.clone();
@@ -3704,28 +4555,54 @@ async fn fire_task(
                 x.next_run = next;
             }
         }
-        x.history.insert(0, tasks::TaskRun { ts: now, ok: all_ok || deferred, summary: summary.clone(), sites: run_sites.clone(), deferred });
+        x.history.insert(
+            0,
+            tasks::TaskRun {
+                ts: now,
+                ok: all_ok || deferred,
+                summary: summary.clone(),
+                sites: run_sites.clone(),
+                deferred,
+            },
+        );
         x.history.truncate(20);
     });
     // 审计要点回灌：本任务是某托管的「每周审计」（task_ids[1]）且成功跑完 → 从最后一条
     // assistant 消息提取 AUDIT-NOTES 块存进托管记录，并同步每日任务 prompt——
     // 下轮创作避开重复主题、落实内链建议。没有块（老 prompt 跑的旧会话等）就保留上次要点。
     if all_ok && !last_assistant_full.is_empty() {
-        if let Some(m) = mstore.list().into_iter().find(|m| m.task_ids.get(1) == Some(&task.id)) {
+        if let Some(m) = mstore
+            .list()
+            .into_iter()
+            .find(|m| m.task_ids.get(1) == Some(&task.id))
+        {
             if let Some(notes) = managed::extract_audit_notes(&last_assistant_full) {
-                if let Ok(Some(updated)) = mstore.mutate(&m.id, now, |x| x.audit_notes = notes.clone()) {
+                if let Ok(Some(updated)) =
+                    mstore.mutate(&m.id, now, |x| x.audit_notes = notes.clone())
+                {
                     sync_daily_prompt(&tstore, &updated);
                 }
             }
         }
         // 周报归档：本任务是某托管的「每周周报」（task_ids[2]）→ 提取 REPORT-METRICS 块（剥掉不展示），
         // 正文截断后连指标一起存进 reports（新到旧，store 封顶 26 条）。
-        if let Some(m) = mstore.list().into_iter().find(|m| m.task_ids.get(2) == Some(&task.id)) {
+        if let Some(m) = mstore
+            .list()
+            .into_iter()
+            .find(|m| m.task_ids.get(2) == Some(&task.id))
+        {
             let (content, metrics) = managed::extract_report_metrics(&last_assistant_full);
             if !content.trim().is_empty() {
                 let content: String = content.chars().take(managed::REPORT_MAX_CHARS).collect();
                 let _ = mstore.mutate(&m.id, now, |x| {
-                    x.reports.insert(0, managed::ReportEntry { ts: now, content: content.clone(), metrics: metrics.clone() });
+                    x.reports.insert(
+                        0,
+                        managed::ReportEntry {
+                            ts: now,
+                            content: content.clone(),
+                            metrics: metrics.clone(),
+                        },
+                    );
                 });
             }
         }
@@ -3733,10 +4610,16 @@ async fn fire_task(
     // ② 撞限收尾：不发常规完成/失败通知——发一次性的「已顺延」通知（每 brain 每窗口一次）。
     if let Some(reset) = limit_hit {
         if lstore.claim_notify(&task.brain, now) {
-            notify_user(&app, "订阅限额，定时任务已顺延", format!(
-                "{} 处于限额期（预计 {} 恢复），「{}」将在恢复后自动重试。",
-                task.brain, fmt_ts_local(reset), task.title
-            ));
+            notify_user(
+                &app,
+                "订阅限额，定时任务已顺延",
+                format!(
+                    "{} 处于限额期（预计 {} 恢复），「{}」将在恢复后自动重试。",
+                    task.brain,
+                    fmt_ts_local(reset),
+                    task.title
+                ),
+            );
         }
         return;
     }
@@ -3747,12 +4630,20 @@ async fn fire_task(
             format!("{} · 已完成一次自动运行", task.title)
         }
     } else {
-        format!("{} · {}", task.title, summary.chars().take(80).collect::<String>())
+        format!(
+            "{} · {}",
+            task.title,
+            summary.chars().take(80).collect::<String>()
+        )
     };
     let _ = app
         .notification()
         .builder()
-        .title(if all_ok { "定时任务完成" } else { "定时任务失败" })
+        .title(if all_ok {
+            "定时任务完成"
+        } else {
+            "定时任务失败"
+        })
         .body(body)
         .show();
 }
@@ -3760,7 +4651,9 @@ async fn fire_task(
 /// 多站任务的并发上限：按机器核数自动协调（核数/2，钳在 2–6）。
 /// CLI 进程网络等待为主，但每个常驻几百 MB 内存，全并发会把低配机器打爆。
 fn task_concurrency() -> usize {
-    let cores = std::thread::available_parallelism().map(|c| c.get()).unwrap_or(4);
+    let cores = std::thread::available_parallelism()
+        .map(|c| c.get())
+        .unwrap_or(4);
     (cores / 2).clamp(2, 6)
 }
 
@@ -3816,12 +4709,25 @@ fn spawn_scheduler(app: AppHandle) {
 }
 
 fn user_msg(text: String, now: u64) -> Message {
-    Message { role: "user".into(), text, tools: vec![], ts: now, hidden: false, error: false, proposal: None, limit_reset: None }
+    Message {
+        role: "user".into(),
+        text,
+        tools: vec![],
+        ts: now,
+        hidden: false,
+        error: false,
+        proposal: None,
+        limit_reset: None,
+    }
 }
 fn assistant_msg(res: &agent::TurnResult, now: u64) -> Message {
     Message {
         role: "assistant".into(),
-        text: if res.text.trim().is_empty() && !res.ok { res.error.clone() } else { res.text.clone() },
+        text: if res.text.trim().is_empty() && !res.ok {
+            res.error.clone()
+        } else {
+            res.text.clone()
+        },
         tools: res.tools.clone(),
         ts: now,
         hidden: false,
@@ -3851,15 +4757,18 @@ fn apply_usage(c: &mut Conversation, res: &agent::TurnResult, data_dir: &std::pa
         let ctx = u.input + u.cache_read + u.cache_create;
         c.ctx_tokens = if c.brain == "codex" { 0 } else { ctx };
         c.total_tokens += ctx + u.output; // 累计（每轮全量计入，反映实际处理量）
-        usage::append(data_dir, &usage::UsageEntry {
-            ts: now_secs() as i64,
-            brain: c.brain.clone(),
-            model: c.model.clone(),
-            input: u.input,
-            output: u.output,
-            cache_read: u.cache_read,
-            cache_create: u.cache_create,
-        });
+        usage::append(
+            data_dir,
+            &usage::UsageEntry {
+                ts: now_secs() as i64,
+                brain: c.brain.clone(),
+                model: c.model.clone(),
+                input: u.input,
+                output: u.output,
+                cache_read: u.cache_read,
+                cache_create: u.cache_create,
+            },
+        );
     }
 }
 
@@ -3906,7 +4815,9 @@ async fn create_conversation(
     let multi = !is_cf && !is_ssh && site_slugs.len() > 1;
     let sys = if is_ssh {
         agent::ssh_system_prompt(
-            &conn.ssh_user, &conn.ssh_host, conn.ssh_port,
+            &conn.ssh_user,
+            &conn.ssh_host,
+            conn.ssh_port,
             &tools::ssh_js_path(&data_dir).to_string_lossy(),
         )
     } else if is_cf {
@@ -3926,7 +4837,10 @@ async fn create_conversation(
         sys
     } else {
         let shot = data_dir.join("tools").join("shot.js");
-        format!("{sys}\n\n{}", agent::shot_prompt(&shot.to_string_lossy(), is_cf))
+        format!(
+            "{sys}\n\n{}",
+            agent::shot_prompt(&shot.to_string_lossy(), is_cf)
+        )
     };
     let sys = design_fallback(sys, is_cf, &brain, &data_dir);
     let conv = Conversation {
@@ -3954,8 +4868,21 @@ async fn create_conversation(
     convos.upsert(conv)?;
 
     let res = agent::run_turn(
-        runs, conn, work_dir, brain, model, perm_mode, effort, data_dir.clone(), ssh, session_seed, true, Some(sys),
-        message.trim().to_string(), conv_id.clone(), on_event,
+        runs,
+        conn,
+        work_dir,
+        brain,
+        model,
+        perm_mode,
+        effort,
+        data_dir.clone(),
+        ssh,
+        session_seed,
+        true,
+        Some(sys),
+        message.trim().to_string(),
+        conv_id.clone(),
+        on_event,
     )
     .await;
 
@@ -3995,7 +4922,11 @@ async fn start_conversation(
         return Err("会话 id 缺失".into());
     }
     // ssh 连接没有「站点」这回事（对象就是那台机器）；其余 kind 仍必须指定站点/项目。
-    let is_ssh = state.conns.get(&conn_id).map(|c| c.kind == "ssh").unwrap_or(false);
+    let is_ssh = state
+        .conns
+        .get(&conn_id)
+        .map(|c| c.kind == "ssh")
+        .unwrap_or(false);
     if !is_ssh && site_slug.trim().is_empty() && site_slugs.len() < 2 {
         return Err("站点不能为空".into());
     }
@@ -4003,9 +4934,24 @@ async fn start_conversation(
         return Err("请先说点什么".into());
     }
     create_conversation(
-        state.conns.clone(), state.convos.clone(), state.runs.clone(),
-        conv_id, conn_id, site_slug, site_name, site_slugs, site_names, task_type, brain, model, perm_mode, effort, message, on_event,
-        state.data_dir.clone(), state.ssh.clone(),
+        state.conns.clone(),
+        state.convos.clone(),
+        state.runs.clone(),
+        conv_id,
+        conn_id,
+        site_slug,
+        site_name,
+        site_slugs,
+        site_names,
+        task_type,
+        brain,
+        model,
+        perm_mode,
+        effort,
+        message,
+        on_event,
+        state.data_dir.clone(),
+        state.ssh.clone(),
     )
     .await
 }
@@ -4128,7 +5074,9 @@ async fn rebuild_session(
     // 与 create_conversation 的首轮系统提示保持同款（重建＝换个 session 从头讲一遍规矩）。
     let sys = if is_ssh {
         agent::ssh_system_prompt(
-            &conn.ssh_user, &conn.ssh_host, conn.ssh_port,
+            &conn.ssh_user,
+            &conn.ssh_host,
+            conn.ssh_port,
             &tools::ssh_js_path(&state.data_dir).to_string_lossy(),
         )
     } else if is_cf {
@@ -4147,7 +5095,10 @@ async fn rebuild_session(
         sys
     } else {
         let shot = state.data_dir.join("tools").join("shot.js");
-        format!("{sys}\n\n{}", agent::shot_prompt(&shot.to_string_lossy(), is_cf))
+        format!(
+            "{sys}\n\n{}",
+            agent::shot_prompt(&shot.to_string_lossy(), is_cf)
+        )
     };
     let sys = design_fallback(sys, is_cf, &conv.brain, &state.data_dir);
     // 历史摘要（不含将要重跑的最后一条用户消息）；发给模型的组合消息不落库，界面保持干净。
@@ -4159,7 +5110,11 @@ async fn rebuild_session(
             "【会话已重建】以下是此前对话的记录，供你衔接上下文；项目/站点里的实际文件与内容以当前现状为准，先查看再动手：\n\n{recap}\n\n——\n【继续执行用户的最新请求】\n{last_user}"
         )
     };
-    let session_seed = if conv.brain == "claude" { uuid::Uuid::new_v4().to_string() } else { String::new() };
+    let session_seed = if conv.brain == "claude" {
+        uuid::Uuid::new_v4().to_string()
+    } else {
+        String::new()
+    };
 
     let res = agent::run_turn(
         state.runs.clone(),
@@ -4331,7 +5286,14 @@ read -s -k 1 "?按任意键关闭这个窗口…"
         // 用 cmd start 拉起一个可见的 PowerShell 窗口跑这个临时脚本。
         std::process::Command::new("cmd")
             .args([
-                "/c", "start", "", "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                "/c",
+                "start",
+                "",
+                "powershell",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
             ])
             .arg(&file)
             .spawn()
@@ -4440,6 +5402,7 @@ pub fn run() {
                 managed: managed::ManagedStore::new(&data_dir),
                 runs: agent::RunRegistry::default(),
                 firing: Arc::new(Mutex::new(HashSet::new())),
+                gcms_installing: Arc::new(Mutex::new(HashSet::new())),
                 data_dir: data_dir.clone(),
                 preview: Arc::new(Mutex::new(None)),
                 ssh: ssh::SshSessions::new(),
@@ -4471,6 +5434,7 @@ pub fn run() {
             check_pack_update,
             update_pack,
             remove_connection,
+            set_connection_remark,
             open_conn_window,
             show_edit_menu,
             discover_sites,
@@ -4488,6 +5452,14 @@ pub fn run() {
             ssh_input,
             ssh_resize,
             ssh_close,
+            gcms_remote_status,
+            gcms_remote_install,
+            gcms_remote_access_check,
+            gcms_cloudflare_create_a_record,
+            gcms_remote_access_configure,
+            export_pilot_transfer,
+            inspect_pilot_transfer,
+            import_pilot_transfer,
             sftp_list,
             sftp_home,
             sftp_read,

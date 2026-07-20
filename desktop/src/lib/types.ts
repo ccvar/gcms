@@ -1,6 +1,8 @@
 export interface Connection {
   id: string;
   name: string;
+  /** 用户自定义备注；缺省/空串时继续显示脱敏 Key。 */
+  remark?: string;
   /** gcms（导入技能包）| cloudflare（CF token 建站）| ssh（远程机器）。旧连接缺省即 gcms。 */
   kind: string;
   api_base: string;

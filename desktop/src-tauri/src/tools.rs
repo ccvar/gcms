@@ -229,7 +229,10 @@ pub fn design_plugin_dir(data_dir: &Path) -> PathBuf {
 
 /// SKILL.md 绝对路径（codex 兜底要在提示词里点名它）。
 pub fn design_skill_path(data_dir: &Path) -> PathBuf {
-    design_plugin_dir(data_dir).join("skills").join("web-design").join("SKILL.md")
+    design_plugin_dir(data_dir)
+        .join("skills")
+        .join("web-design")
+        .join("SKILL.md")
 }
 
 /// 把设计技能包写到 <data_dir>/plugins/pilot-design/（覆写以随版本刷新），返回根目录。
@@ -259,15 +262,27 @@ mod tests {
         // 清单：两家都读 .claude-plugin/plugin.json
         let mf = fs::read_to_string(root.join(".claude-plugin").join("plugin.json")).unwrap();
         let j: serde_json::Value = serde_json::from_str(&mf).expect("plugin.json 必须是合法 JSON");
-        assert_eq!(j["name"], "pilot-design", "plugin 名变了就等于换了技能命名空间");
+        assert_eq!(
+            j["name"], "pilot-design",
+            "plugin 名变了就等于换了技能命名空间"
+        );
 
         // 技能正文：必须在 skills/<name>/SKILL.md，且 frontmatter 的 name 与目录同名
         let skill = design_skill_path(&base);
-        assert_eq!(skill, root.join("skills").join("web-design").join("SKILL.md"));
+        assert_eq!(
+            skill,
+            root.join("skills").join("web-design").join("SKILL.md")
+        );
         let s = fs::read_to_string(&skill).unwrap();
         assert!(s.starts_with("---\n"), "缺 frontmatter，引擎不会把它当技能");
-        assert!(s.contains("name: web-design"), "frontmatter name 必须与目录名一致");
-        assert!(s.contains("description:"), "没有 description 就没法被按需触发");
+        assert!(
+            s.contains("name: web-design"),
+            "frontmatter name 必须与目录名一致"
+        );
+        assert!(
+            s.contains("description:"),
+            "没有 description 就没法被按需触发"
+        );
         // 规范本身的骨架（别哪天被删空了还没人发现）
         assert!(s.contains("--accent"));
         assert!(s.contains("4.5:1"));
@@ -382,7 +397,11 @@ mod tests {
         let s = String::from_utf8_lossy(&out.stdout);
         let v: serde_json::Value = serde_json::from_str(s.trim())
             .unwrap_or_else(|e| panic!("输出不是完整 JSON（被截断了？{} 字节）: {e}", s.len()));
-        assert_eq!(v["stdout"].as_str().unwrap().len(), 256 * 1024, "大输出被截断");
+        assert_eq!(
+            v["stdout"].as_str().unwrap().len(),
+            256 * 1024,
+            "大输出被截断"
+        );
         assert!(out.status.success());
         fs::remove_dir_all(&base).ok();
     }

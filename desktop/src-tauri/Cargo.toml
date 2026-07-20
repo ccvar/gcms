@@ -23,6 +23,8 @@ tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 base64 = "0.22"
+aes-gcm = "0.11"
+argon2 = "0.6.0-rc.8"
 tokio = { version = "1.52.3", features = ["process", "io-util", "time", "sync", "macros", "rt", "net", "rt-multi-thread", "fs"] }
 zip = "8.6.0"
 # 托管 Node 自举：解压 nodejs.org 的 tar.gz 便携包（zip 走上面的 zip crate）
@@ -48,4 +50,3 @@ apple-native-keyring-store = { version = "1.0.0", features = ["keychain"] }
 windows-native-keyring-store = "1.1.0"
 # 与 Tauri 同版本（0.61.3），保证 hwnd() 的 HWND 类型一致；用于给标题栏上色（DWM）。
 windows = { version = "0.61", features = ["Win32_Graphics_Dwm", "Win32_Foundation"] }
-

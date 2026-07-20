@@ -1,9 +1,11 @@
-//! Cloudflare API 轻客户端：验证 API Token + 拉取账号/域名列表。
+//! Cloudflare API 轻客户端：验证 API Token、拉取账号/域名、只读核验 Zone/DNS/SSL，
+//! 以及在用户明确操作后幂等创建一条仅 DNS 的 A 记录。
 //! token 只在验证/连接时经过 Rust，存进钥匙串后运行时以 `CLOUDFLARE_API_TOKEN` 注入 wrangler，
 //! 绝不落盘、绝不进 WebView。
 
 use serde::Serialize;
 use serde_json::Value;
+use std::net::Ipv4Addr;
 use std::time::Duration;
 
 const API: &str = "https://api.cloudflare.com/client/v4";
@@ -20,6 +22,25 @@ pub struct CfZone {
     pub name: String,
 }
 
+#[derive(Default, Clone, Debug, PartialEq)]
+pub struct CfDnsRecord {
+    pub record_type: String,
+    pub name: String,
+    pub content: String,
+    pub proxied: bool,
+    pub proxiable: bool,
+}
+
+#[derive(Default, Clone, Debug, PartialEq)]
+pub struct CfHostnameInspect {
+    pub zone_id: String,
+    pub zone_name: String,
+    pub zone_status: String,
+    pub records: Vec<CfDnsRecord>,
+    pub ssl_mode: String,
+    pub ssl_error: String,
+}
+
 #[derive(Serialize, Default)]
 pub struct CfVerify {
     /// 期望 "active"。
@@ -28,12 +49,22 @@ pub struct CfVerify {
     pub zones: Vec<CfZone>,
 }
 
-async fn cf_get(token: &str, path: &str) -> Result<Value, String> {
-    let resp = reqwest::Client::new()
-        .get(format!("{API}{path}"))
+async fn cf_get_query(token: &str, path: &str, query: &[(&str, &str)]) -> Result<Value, String> {
+    let mut url = reqwest::Url::parse(&format!("{API}{path}"))
+        .map_err(|error| format!("Cloudflare API 地址无效: {error}"))?;
+    if !query.is_empty() {
+        let mut pairs = url.query_pairs_mut();
+        for (key, value) in query {
+            pairs.append_pair(key, value);
+        }
+    }
+    let client = reqwest::Client::new();
+    let request = client
+        .get(url)
         .header("Authorization", format!("Bearer {token}"))
         .header("Content-Type", "application/json")
-        .timeout(Duration::from_secs(15))
+        .timeout(Duration::from_secs(15));
+    let resp = request
         .send()
         .await
         .map_err(|e| format!("请求 Cloudflare 失败: {e}"))?;
@@ -42,7 +73,12 @@ async fn cf_get(token: &str, path: &str) -> Result<Value, String> {
         .json()
         .await
         .map_err(|e| format!("Cloudflare 响应不是 JSON: {e}"))?;
-    if !status.is_success() || !body.get("success").and_then(Value::as_bool).unwrap_or(false) {
+    if !status.is_success()
+        || !body
+            .get("success")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    {
         let msg = body
             .get("errors")
             .and_then(|e| e.as_array())
@@ -55,6 +91,50 @@ async fn cf_get(token: &str, path: &str) -> Result<Value, String> {
     Ok(body)
 }
 
+async fn cf_get(token: &str, path: &str) -> Result<Value, String> {
+    cf_get_query(token, path, &[]).await
+}
+
+async fn cf_post_json(token: &str, path: &str, payload: &Value) -> Result<Value, String> {
+    let url = reqwest::Url::parse(&format!("{API}{path}"))
+        .map_err(|error| format!("Cloudflare API 地址无效: {error}"))?;
+    let resp = reqwest::Client::new()
+        .post(url)
+        .header("Authorization", format!("Bearer {token}"))
+        .header("Content-Type", "application/json")
+        .json(payload)
+        .timeout(Duration::from_secs(15))
+        .send()
+        .await
+        .map_err(|e| format!("请求 Cloudflare 失败: {e}"))?;
+    let status = resp.status();
+    let body: Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("Cloudflare 响应不是 JSON: {e}"))?;
+    if !status.is_success()
+        || !body
+            .get("success")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    {
+        let msg = body
+            .get("errors")
+            .and_then(Value::as_array)
+            .and_then(|errors| errors.first())
+            .and_then(|error| error.get("message"))
+            .and_then(Value::as_str)
+            .unwrap_or("未知错误（请确认 Token 具有 Zone · DNS · Edit 权限）");
+        let permission_hint = if matches!(status.as_u16(), 401 | 403) {
+            "；请重新连接具有 Zone · DNS · Edit 权限的 Token"
+        } else {
+            ""
+        };
+        return Err(format!("Cloudflare {status}: {msg}{permission_hint}"));
+    }
+    Ok(body)
+}
+
 fn parse_id_name(body: &Value) -> Vec<(String, String)> {
     body.get("result")
         .and_then(Value::as_array)
@@ -62,8 +142,14 @@ fn parse_id_name(body: &Value) -> Vec<(String, String)> {
             arr.iter()
                 .map(|x| {
                     (
-                        x.get("id").and_then(Value::as_str).unwrap_or_default().to_string(),
-                        x.get("name").and_then(Value::as_str).unwrap_or_default().to_string(),
+                        x.get("id")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_string(),
+                        x.get("name")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_string(),
                     )
                 })
                 .collect()
@@ -106,4 +192,288 @@ pub async fn verify_token(token: &str) -> Result<CfVerify, String> {
         accounts,
         zones,
     })
+}
+
+/// 只读检查一个主机名在指定 Cloudflare 账号里的 Zone、DNS 记录和 SSL 模式。
+/// `Ok(None)` 表示这个账号下没有该 Zone；不会创建或修改任何 Cloudflare 配置。
+pub async fn inspect_hostname(
+    token: &str,
+    account_id: &str,
+    zone_name: &str,
+    hostname: &str,
+) -> Result<Option<CfHostnameInspect>, String> {
+    let mut zone_query = vec![("name", zone_name), ("per_page", "50")];
+    if !account_id.is_empty() {
+        zone_query.push(("account.id", account_id));
+    }
+    let zones = cf_get_query(token, "/zones", &zone_query).await?;
+    let zone = zones
+        .get("result")
+        .and_then(Value::as_array)
+        .and_then(|items| {
+            items.iter().find(|item| {
+                item.get("name")
+                    .and_then(Value::as_str)
+                    .is_some_and(|name| name.eq_ignore_ascii_case(zone_name))
+            })
+        });
+    let Some(zone) = zone else {
+        return Ok(None);
+    };
+    let zone_id = zone
+        .get("id")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    if zone_id.is_empty() {
+        return Err("Cloudflare 返回了缺少 ID 的 Zone".into());
+    }
+    let zone_name = zone
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or(zone_name)
+        .to_string();
+    let zone_status = zone
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+
+    let records_body = cf_get_query(
+        token,
+        &format!("/zones/{zone_id}/dns_records"),
+        &[("name", hostname), ("per_page", "100")],
+    )
+    .await?;
+    let records = records_body
+        .get("result")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .map(|item| CfDnsRecord {
+                    record_type: item
+                        .get("type")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    name: item
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    content: item
+                        .get("content")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    proxied: item
+                        .get("proxied")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+                    proxiable: item
+                        .get("proxiable")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // 橙云记录必须知道 SSL 模式才能安全决定是否继续；权限不足时保留 DNS 结果并单独返回原因。
+    let (ssl_mode, ssl_error) = match cf_get(token, &format!("/zones/{zone_id}/settings/ssl")).await
+    {
+        Ok(body) => (
+            body.get("result")
+                .and_then(|result| result.get("value"))
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            String::new(),
+        ),
+        Err(error) => (String::new(), error),
+    };
+
+    Ok(Some(CfHostnameInspect {
+        zone_id,
+        zone_name,
+        zone_status,
+        records,
+        ssl_mode,
+        ssl_error,
+    }))
+}
+
+fn should_create_dns_only_a(
+    records: &[CfDnsRecord],
+    hostname: &str,
+    address: Ipv4Addr,
+) -> Result<bool, String> {
+    let relevant = records
+        .iter()
+        .filter(|record| {
+            record
+                .name
+                .trim_end_matches('.')
+                .eq_ignore_ascii_case(hostname)
+                && matches!(record.record_type.as_str(), "A" | "AAAA" | "CNAME")
+        })
+        .collect::<Vec<_>>();
+    if relevant.is_empty() {
+        return Ok(true);
+    }
+    if relevant.len() == 1
+        && relevant[0].record_type == "A"
+        && relevant[0]
+            .content
+            .parse::<Ipv4Addr>()
+            .is_ok_and(|current| current == address)
+    {
+        return Ok(false);
+    }
+    let summary = relevant
+        .iter()
+        .map(|record| format!("{} {}", record.record_type, record.content))
+        .collect::<Vec<_>>()
+        .join("、");
+    Err(format!(
+        "{hostname} 已存在 DNS 记录（{summary}）。为避免覆盖或制造双源站，Pilot 未修改 Cloudflare"
+    ))
+}
+
+/// 用户点击“一键创建 A 记录”后调用。创建前会重新读取精确主机名，已有同值 A 时幂等成功，
+/// 发现其他 A / AAAA / CNAME 时拒绝覆盖。返回 true 表示本次创建，false 表示同值记录已存在。
+pub async fn create_dns_only_a_record(
+    token: &str,
+    account_id: &str,
+    zone_name: &str,
+    hostname: &str,
+    address: Ipv4Addr,
+) -> Result<bool, String> {
+    let inspect = inspect_hostname(token, account_id, zone_name, hostname)
+        .await?
+        .ok_or_else(|| format!("Cloudflare 账号中没有找到 Zone {zone_name}"))?;
+    if inspect.zone_status != "active" {
+        return Err(format!(
+            "Cloudflare Zone 当前状态为 {}，激活后才能创建公网记录",
+            if inspect.zone_status.is_empty() {
+                "未知"
+            } else {
+                &inspect.zone_status
+            }
+        ));
+    }
+    if !should_create_dns_only_a(&inspect.records, hostname, address)? {
+        return Ok(false);
+    }
+
+    let body = cf_post_json(
+        token,
+        &format!("/zones/{}/dns_records", inspect.zone_id),
+        &serde_json::json!({
+            "type": "A",
+            "name": hostname,
+            "content": address.to_string(),
+            "ttl": 1,
+            "proxied": false
+        }),
+    )
+    .await?;
+    let created = body
+        .get("result")
+        .ok_or("Cloudflare 未返回已创建的 DNS 记录")?;
+    let created_type = created
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let created_name = created
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let created_content = created
+        .get("content")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if created_type != "A"
+        || !created_name
+            .trim_end_matches('.')
+            .eq_ignore_ascii_case(hostname)
+        || created_content != address.to_string()
+    {
+        return Err("Cloudflare 返回的已创建记录与请求不一致，请到控制台核对".into());
+    }
+    Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_id_name_lists_without_panicking_on_partial_items() {
+        let value = serde_json::json!({
+            "result": [
+                { "id": "one", "name": "Example" },
+                { "id": "two" }
+            ]
+        });
+        assert_eq!(
+            parse_id_name(&value),
+            vec![
+                ("one".into(), "Example".into()),
+                ("two".into(), String::new())
+            ]
+        );
+    }
+
+    fn record(record_type: &str, name: &str, content: &str, proxied: bool) -> CfDnsRecord {
+        CfDnsRecord {
+            record_type: record_type.into(),
+            name: name.into(),
+            content: content.into(),
+            proxied,
+            proxiable: matches!(record_type, "A" | "AAAA" | "CNAME"),
+        }
+    }
+
+    #[test]
+    fn dns_only_a_creation_is_idempotent_and_never_overwrites() {
+        let ip = "203.0.113.8".parse::<Ipv4Addr>().unwrap();
+        assert!(should_create_dns_only_a(&[], "cms.example.com", ip).unwrap());
+        assert!(!should_create_dns_only_a(
+            &[record("A", "cms.example.com", "203.0.113.8", true)],
+            "cms.example.com",
+            ip,
+        )
+        .unwrap());
+        assert!(should_create_dns_only_a(
+            &[record("TXT", "cms.example.com", "verification", false)],
+            "cms.example.com",
+            ip,
+        )
+        .unwrap());
+        assert!(should_create_dns_only_a(
+            &[record("A", "cms.example.com", "203.0.113.9", false)],
+            "cms.example.com",
+            ip,
+        )
+        .is_err());
+        assert!(should_create_dns_only_a(
+            &[record("AAAA", "cms.example.com", "2001:db8::8", false)],
+            "cms.example.com",
+            ip,
+        )
+        .is_err());
+        assert!(should_create_dns_only_a(
+            &[record(
+                "CNAME",
+                "cms.example.com",
+                "other.example.com",
+                false,
+            )],
+            "cms.example.com",
+            ip,
+        )
+        .is_err());
+    }
 }

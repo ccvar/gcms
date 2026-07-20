@@ -182,7 +182,12 @@ impl ConvStore {
             return Err("这个会话已失效，请新建对话".into());
         }
         // 去掉末尾的助手消息（失败或只写了一半的那条），重试会用一条新的替代它。
-        if slot.messages.last().map(|m| m.role == "assistant").unwrap_or(false) {
+        if slot
+            .messages
+            .last()
+            .map(|m| m.role == "assistant")
+            .unwrap_or(false)
+        {
             slot.messages.pop();
         }
         let Some(text) = slot
@@ -211,7 +216,12 @@ impl ConvStore {
         if slot.status == "running" {
             return Err("上一轮还在进行中，请稍候".into());
         }
-        if slot.messages.last().map(|m| m.role == "assistant").unwrap_or(false) {
+        if slot
+            .messages
+            .last()
+            .map(|m| m.role == "assistant")
+            .unwrap_or(false)
+        {
             slot.messages.pop();
         }
         let Some(text) = slot
@@ -327,13 +337,39 @@ mod tests {
     use super::*;
 
     fn msg(role: &str, text: &str) -> Message {
-        Message { role: role.into(), text: text.into(), tools: vec![], ts: 0, hidden: false, error: role == "assistant" && text.is_empty(), proposal: None, limit_reset: None }
+        Message {
+            role: role.into(),
+            text: text.into(),
+            tools: vec![],
+            ts: 0,
+            hidden: false,
+            error: role == "assistant" && text.is_empty(),
+            proposal: None,
+            limit_reset: None,
+        }
     }
     fn conv(id: &str, session: &str, msgs: Vec<Message>) -> Conversation {
         Conversation {
-            id: id.into(), conn_id: "c".into(), conn_name: "".into(), site_slug: "s".into(), site_name: "".into(),
-            task_type: "free".into(), brain: "claude".into(), model: "sonnet".into(), perm_mode: "full".into(), effort: String::new(),
-            site_slugs: vec![], site_names: vec![], session_ref: session.into(), title: "t".into(), messages: msgs, status: "idle".into(), created_at: 0, updated_at: 0, ctx_tokens: 0, total_tokens: 0,
+            id: id.into(),
+            conn_id: "c".into(),
+            conn_name: "".into(),
+            site_slug: "s".into(),
+            site_name: "".into(),
+            task_type: "free".into(),
+            brain: "claude".into(),
+            model: "sonnet".into(),
+            perm_mode: "full".into(),
+            effort: String::new(),
+            site_slugs: vec![],
+            site_names: vec![],
+            session_ref: session.into(),
+            title: "t".into(),
+            messages: msgs,
+            status: "idle".into(),
+            created_at: 0,
+            updated_at: 0,
+            ctx_tokens: 0,
+            total_tokens: 0,
         }
     }
 
@@ -343,7 +379,16 @@ mod tests {
         std::fs::create_dir_all(&base).unwrap();
         let store = ConvStore::new(&base);
         store
-            .upsert(conv("a", "sess-1", vec![msg("user", "第一题"), msg("assistant", "回答一"), msg("user", "第二题"), msg("assistant", "")]))
+            .upsert(conv(
+                "a",
+                "sess-1",
+                vec![
+                    msg("user", "第一题"),
+                    msg("assistant", "回答一"),
+                    msg("user", "第二题"),
+                    msg("assistant", ""),
+                ],
+            ))
             .unwrap();
 
         let text = store.begin_retry("a", 10).unwrap();
@@ -363,8 +408,26 @@ mod tests {
         let msgs = vec![
             msg("user", "第一问"),
             msg("assistant", "第一答"),
-            Message { role: "assistant".into(), text: "内部".into(), tools: vec![], ts: 0, hidden: true, error: false, proposal: None, limit_reset: None },
-            Message { role: "assistant".into(), text: "报错了".into(), tools: vec![], ts: 0, hidden: false, error: true, proposal: None, limit_reset: None },
+            Message {
+                role: "assistant".into(),
+                text: "内部".into(),
+                tools: vec![],
+                ts: 0,
+                hidden: true,
+                error: false,
+                proposal: None,
+                limit_reset: None,
+            },
+            Message {
+                role: "assistant".into(),
+                text: "报错了".into(),
+                tools: vec![],
+                ts: 0,
+                hidden: false,
+                error: true,
+                proposal: None,
+                limit_reset: None,
+            },
             msg("user", "最新请求"),
         ];
         let r = recap(&msgs, 8000);
@@ -373,7 +436,7 @@ mod tests {
         assert!(!r.contains("最新请求")); // 将要重跑的请求本身不进 recap
         assert!(!r.contains("内部")); // hidden 排除
         assert!(!r.contains("报错了")); // error 排除
-        // 预算收紧 → 保留最近 + 省略标注
+                                        // 预算收紧 → 保留最近 + 省略标注
         let tight = recap(&msgs, 12);
         assert!(tight.contains("（更早的历史已省略）") || tight.contains("第一答"));
     }
@@ -384,7 +447,13 @@ mod tests {
         std::fs::create_dir_all(&base).unwrap();
         let store = ConvStore::new(&base);
         // session_ref 为空（首轮就崩的会话）也能重建
-        store.upsert(conv("r1", "", vec![msg("user", "建个站"), msg("assistant", "")])).unwrap();
+        store
+            .upsert(conv(
+                "r1",
+                "",
+                vec![msg("user", "建个站"), msg("assistant", "")],
+            ))
+            .unwrap();
         let text = store.begin_rebuild("r1", 5).unwrap();
         assert_eq!(text, "建个站");
         let c = store.get("r1").unwrap();
@@ -398,7 +467,9 @@ mod tests {
         let base = std::env::temp_dir().join(format!("convo-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&base).unwrap();
         let store = ConvStore::new(&base);
-        store.upsert(conv("b", "", vec![msg("user", "问"), msg("assistant", "")])).unwrap();
+        store
+            .upsert(conv("b", "", vec![msg("user", "问"), msg("assistant", "")]))
+            .unwrap();
         assert!(store.begin_retry("b", 1).is_err()); // 无 session
         assert!(store.begin_retry("nope", 1).is_err()); // 会话不存在
         std::fs::remove_dir_all(&base).ok();

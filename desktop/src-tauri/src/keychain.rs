@@ -40,7 +40,8 @@ fn entry(conn_id: &str) -> Result<keyring_core::Entry, String> {
 /// 对**每条消息**都弹钥匙串授权框——缓存后最坏一次启动弹一次。
 /// 密钥本就随每轮注入子进程 env，进程内存持有不扩大信任面。
 fn cache() -> &'static std::sync::Mutex<std::collections::HashMap<String, String>> {
-    static C: OnceLock<std::sync::Mutex<std::collections::HashMap<String, String>>> = OnceLock::new();
+    static C: OnceLock<std::sync::Mutex<std::collections::HashMap<String, String>>> =
+        OnceLock::new();
     C.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
 }
 
@@ -48,7 +49,10 @@ pub fn set_key(conn_id: &str, key: &str) -> Result<(), String> {
     entry(conn_id)?
         .set_password(key)
         .map_err(|e| format!("keychain write: {e}"))?;
-    cache().lock().unwrap().insert(conn_id.to_string(), key.to_string());
+    cache()
+        .lock()
+        .unwrap()
+        .insert(conn_id.to_string(), key.to_string());
     Ok(())
 }
 

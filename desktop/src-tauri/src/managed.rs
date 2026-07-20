@@ -139,7 +139,10 @@ pub struct ManagedStore {
 
 impl ManagedStore {
     pub fn new(data_dir: &Path) -> Self {
-        Self { file: data_dir.join("managed.json"), lock: Arc::new(Mutex::new(())) }
+        Self {
+            file: data_dir.join("managed.json"),
+            lock: Arc::new(Mutex::new(())),
+        }
     }
 
     fn read(&self) -> Vec<ManagedSite> {
@@ -169,7 +172,9 @@ impl ManagedStore {
     /// 同一连接同一站点只允许一条托管记录。
     pub fn find_site(&self, conn_id: &str, site_slug: &str) -> Option<ManagedSite> {
         let _g = self.lock.lock().unwrap();
-        self.read().into_iter().find(|m| m.conn_id == conn_id && m.site_slug == site_slug)
+        self.read()
+            .into_iter()
+            .find(|m| m.conn_id == conn_id && m.site_slug == site_slug)
     }
 
     pub fn upsert(&self, m: ManagedSite) -> Result<(), String> {
@@ -245,7 +250,15 @@ pub fn demote_target(level: &str) -> Option<&'static str> {
 /// 有打回记录时注入「近期编辑打回意见」，有审计要点时注入「上次审计要点」。
 /// plan/notes/limit/level/audit_notes 任一变化后要重新生成并回写任务。
 /// 等级差异只在第 1 条边界：L0 只草稿；L1/L2 允许直接发布**常规文章**（结构性动作仍全部禁止）。
-pub fn daily_prompt(site_name: &str, plan: &str, weekly_limit: u32, notes: &[ReviewNote], level: &str, weekly_edit_limit: u32, audit_notes: &str) -> String {
+pub fn daily_prompt(
+    site_name: &str,
+    plan: &str,
+    weekly_limit: u32,
+    notes: &[ReviewNote],
+    level: &str,
+    weekly_edit_limit: u32,
+    audit_notes: &str,
+) -> String {
     let auto_publish = matches!(level, "l1" | "l2" | "l3");
     let rule1 = if auto_publish {
         "1. 常规文章完成并自检通过后，**可以直接发布**（status=published）；把握不足、话题敏感或实验性的内容仍存草稿待审；\
@@ -411,7 +424,9 @@ pub fn extract_report_metrics(text: &str) -> (String, ReportMetrics) {
         return (text.trim().to_string(), metrics); // 畸形块：不剥不解析
     };
     for line in rest[..end].lines() {
-        let Some((k, v)) = line.split_once(':') else { continue };
+        let Some((k, v)) = line.split_once(':') else {
+            continue;
+        };
         let val = v.trim().parse::<i64>().ok();
         match k.trim() {
             "published" => metrics.published = val,
@@ -451,11 +466,20 @@ pub struct WeekFacts {
 /// 组装【本周实测数据】注入块（纯函数，单测覆盖）。
 pub fn weekly_report_data(f: &WeekFacts) -> String {
     let mut s = String::from("【本周实测数据（Pilot 注入，以此为准）】\n");
-    s.push_str(&format!("- 本周发布：{} 篇；本周新增草稿：{} 篇（周上限 {}）；当前草稿共 {} 篇\n", f.published, f.drafts_new, f.weekly_limit, f.drafts_total));
+    s.push_str(&format!(
+        "- 本周发布：{} 篇；本周新增草稿：{} 篇（周上限 {}）；当前草稿共 {} 篇\n",
+        f.published, f.drafts_new, f.weekly_limit, f.drafts_total
+    ));
     if f.budget > 0 {
-        s.push_str(&format!("- token 用量：本周 {} / 预算 {}\n", f.week_tokens, f.budget));
+        s.push_str(&format!(
+            "- token 用量：本周 {} / 预算 {}\n",
+            f.week_tokens, f.budget
+        ));
     } else {
-        s.push_str(&format!("- token 用量：本周 {}（未设预算）\n", f.week_tokens));
+        s.push_str(&format!(
+            "- token 用量：本周 {}（未设预算）\n",
+            f.week_tokens
+        ));
     }
     for l in &f.task_lines {
         s.push_str(&format!("- 任务：{l}\n"));
@@ -475,7 +499,10 @@ pub fn weekly_report_data(f: &WeekFacts) -> String {
         }
     }
     if f.edit_limit > 0 {
-        s.push_str(&format!("- L3 存量维护：修改配额 {} 篇/周。请在周报单列『本周修改清单』与『观察名单』两节。\n", f.edit_limit));
+        s.push_str(&format!(
+            "- L3 存量维护：修改配额 {} 篇/周。请在周报单列『本周修改清单』与『观察名单』两节。\n",
+            f.edit_limit
+        ));
         if f.edited_titles.is_empty() {
             s.push_str("  - 实测（updated_at 口径）：本周没有已发布内容被修改；若每日任务自述有修改，请以其汇报核对后列出。\n");
         } else {
@@ -497,7 +524,9 @@ pub fn weekly_cap_skip(week_output: u32, limit: u32) -> Option<String> {
 
 /// 未达上限时注入每日任务 prompt 的权威计数行（替代 AI 自查）。
 pub fn weekly_count_line(week_output: u32, limit: u32) -> String {
-    format!("【本周产出（Pilot 实测，权威计数，直接采用、不必自查）】已产出 {week_output}/{limit} 篇。")
+    format!(
+        "【本周产出（Pilot 实测，权威计数，直接采用、不必自查）】已产出 {week_output}/{limit} 篇。"
+    )
 }
 
 /// L3 存量修改硬闸的注入行：edited 为 week_stats 的 edited 口径实测（updated_at≥周一 &&
@@ -589,7 +618,11 @@ pub fn extract_audit_notes(text: &str) -> Option<String> {
         return None;
     }
     let joined = block.lines().take(10).collect::<Vec<_>>().join("\n");
-    Some(if joined.chars().count() > 1000 { joined.chars().take(1000).collect() } else { joined })
+    Some(if joined.chars().count() > 1000 {
+        joined.chars().take(1000).collect()
+    } else {
+        joined
+    })
 }
 
 /// 预算熔断判定（budget=0 表示不限）。
@@ -599,7 +632,11 @@ pub fn budget_exceeded(week_tokens: u64, budget: u64) -> bool {
 
 /// 本周 token 累计：条目为（运行时间戳, 该次会话累计 token），只算 week_start 之后的。
 pub fn sum_week_tokens(entries: &[(u64, u64)], week_start: u64) -> u64 {
-    entries.iter().filter(|(ts, _)| *ts >= week_start).map(|(_, n)| n).sum()
+    entries
+        .iter()
+        .filter(|(ts, _)| *ts >= week_start)
+        .map(|(_, n)| n)
+        .sum()
 }
 
 /// 自动降级判定（events 最新在前）：连续 3 次打回；或最近 10 条样本≥5 且打回占比≥50%。
@@ -612,7 +649,11 @@ pub fn should_demote(events: &[ReviewEvent]) -> Option<String> {
     if recent.len() >= 5 {
         let rejects = recent.iter().filter(|e| !e.approved).count();
         if rejects * 2 >= recent.len() {
-            return Some(format!("最近 {} 次审核中 {} 次被打回", recent.len(), rejects));
+            return Some(format!(
+                "最近 {} 次审核中 {} 次被打回",
+                recent.len(),
+                rejects
+            ));
         }
     }
     None
@@ -661,7 +702,11 @@ pub struct TaskBrief {
 async fn site_api(conn: &Connection, site_slug: &str) -> Result<(String, String), String> {
     let key = keychain::get_key(&conn.id)?;
     let disc = discovery::discover(conn).await?;
-    let sites = disc.get("items").and_then(|i| i.as_array()).cloned().unwrap_or_default();
+    let sites = disc
+        .get("items")
+        .and_then(|i| i.as_array())
+        .cloned()
+        .unwrap_or_default();
     let api_base = sites
         .iter()
         .find(|s| s.get("slug").and_then(|v| v.as_str()) == Some(site_slug))
@@ -675,7 +720,11 @@ async fn site_api(conn: &Connection, site_slug: &str) -> Result<(String, String)
     Ok((api_base, key))
 }
 
-async fn get_posts(api_base: &str, key: &str, status: &str) -> Result<Vec<serde_json::Value>, String> {
+async fn get_posts(
+    api_base: &str,
+    key: &str,
+    status: &str,
+) -> Result<Vec<serde_json::Value>, String> {
     let url = format!("{api_base}/posts?status={status}&lang=all&limit=100");
     let resp = reqwest::Client::new()
         .get(&url)
@@ -688,7 +737,11 @@ async fn get_posts(api_base: &str, key: &str, status: &str) -> Result<Vec<serde_
         return Err(format!("读取内容列表失败：{}", resp.status()));
     }
     let body: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-    Ok(body.get("items").and_then(|i| i.as_array()).cloned().unwrap_or_default())
+    Ok(body
+        .get("items")
+        .and_then(|i| i.as_array())
+        .cloned()
+        .unwrap_or_default())
 }
 
 /// 托管开启前的机械预检结果（向导软警示用）。
@@ -709,7 +762,9 @@ pub async fn precheck(conn: &Connection, site_slug: &str) -> Result<PrecheckResu
     let (api_base, key) = site_api(conn, site_slug).await?;
     let client = reqwest::Client::new();
     let resp = client
-        .get(format!("{api_base}/posts?status=published&lang=all&limit=16"))
+        .get(format!(
+            "{api_base}/posts?status=published&lang=all&limit=16"
+        ))
         .header("Authorization", format!("Bearer {key}"))
         .timeout(Duration::from_secs(15))
         .send()
@@ -736,7 +791,11 @@ pub async fn precheck(conn: &Connection, site_slug: &str) -> Result<PrecheckResu
     let text = resp.text().await.unwrap_or_default();
     let stats = stats_probe_class(status, &text).to_string();
     let warnings = precheck_warnings(published_count, &stats);
-    Ok(PrecheckResult { published_count, stats, warnings })
+    Ok(PrecheckResult {
+        published_count,
+        stats,
+        warnings,
+    })
 }
 
 /// 待审队列：该站全部草稿（id/标题/语种/更新时间）。
@@ -748,9 +807,21 @@ pub async fn list_drafts(conn: &Connection, site_slug: &str) -> Result<Vec<Draft
         .filter(|it| !item_discarded(it)) // AI 标记报废的草稿不进待审队列（等主人清理）
         .map(|it| DraftItem {
             id: it.get("id").and_then(|v| v.as_i64()).unwrap_or(0),
-            title: it.get("title").and_then(|v| v.as_str()).unwrap_or("(无标题)").to_string(),
-            lang: it.get("lang").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-            updated_at: it.get("updated_at").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            title: it
+                .get("title")
+                .and_then(|v| v.as_str())
+                .unwrap_or("(无标题)")
+                .to_string(),
+            lang: it
+                .get("lang")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            updated_at: it
+                .get("updated_at")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
         })
         .collect();
     // 最近更新在前
@@ -789,7 +860,8 @@ pub async fn publish_post(conn: &Connection, site_slug: &str, id: i64) -> Result
 pub fn week_start_local() -> i64 {
     use chrono::{Datelike, Local, TimeZone};
     let now = Local::now();
-    let monday = now.date_naive() - chrono::Duration::days(now.weekday().num_days_from_monday() as i64);
+    let monday =
+        now.date_naive() - chrono::Duration::days(now.weekday().num_days_from_monday() as i64);
     let midnight = monday.and_hms_opt(0, 0, 0).unwrap_or_default();
     Local
         .from_local_datetime(&midnight)
@@ -817,7 +889,9 @@ pub struct WeekStats {
 
 /// 列表项是否被 AI 标记报废（discard）。老服务端没有 discarded 字段＝false，行为零变化。
 fn item_discarded(it: &serde_json::Value) -> bool {
-    it.get("discarded").and_then(|v| v.as_bool()).unwrap_or(false)
+    it.get("discarded")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
 }
 
 /// 某条目的时间字段 >= 起点（RFC3339 解析，解析不了按不命中处理）。
@@ -835,11 +909,17 @@ pub async fn week_stats(conn: &Connection, site_slug: &str) -> Result<WeekStats,
     let ws = week_start_local();
     let published = get_posts(&api_base, &key, "published").await?;
     let mut published_titles: Vec<String> = Vec::new();
-    for it in published.iter().filter(|it| item_time_since(it, "published_at", ws)) {
+    for it in published
+        .iter()
+        .filter(|it| item_time_since(it, "published_at", ws))
+    {
         if published_titles.len() >= 20 {
             break;
         }
-        let title = it.get("title").and_then(|v| v.as_str()).unwrap_or("(无标题)");
+        let title = it
+            .get("title")
+            .and_then(|v| v.as_str())
+            .unwrap_or("(无标题)");
         let lang = it.get("lang").and_then(|v| v.as_str()).unwrap_or("");
         let date = it
             .get("published_at")
@@ -848,28 +928,41 @@ pub async fn week_stats(conn: &Connection, site_slug: &str) -> Result<WeekStats,
             .unwrap_or_default();
         published_titles.push(format!("《{title}》（{lang} · {date}）"));
     }
-    let published_this_week = published.iter().filter(|it| item_time_since(it, "published_at", ws)).count() as u32;
+    let published_this_week = published
+        .iter()
+        .filter(|it| item_time_since(it, "published_at", ws))
+        .count() as u32;
     // L3 观察名单 + 修改配额硬闸：本周被动过的存量（updated_at 落在本周、但发布时间在本周之前）。
     let edited_count = published
         .iter()
-        .filter(|it| item_time_since(it, "updated_at", ws) && !item_time_since(it, "published_at", ws))
+        .filter(|it| {
+            item_time_since(it, "updated_at", ws) && !item_time_since(it, "published_at", ws)
+        })
         .count() as u32;
     let mut edited_titles: Vec<String> = Vec::new();
-    for it in published
-        .iter()
-        .filter(|it| item_time_since(it, "updated_at", ws) && !item_time_since(it, "published_at", ws))
-    {
+    for it in published.iter().filter(|it| {
+        item_time_since(it, "updated_at", ws) && !item_time_since(it, "published_at", ws)
+    }) {
         if edited_titles.len() >= 20 {
             break;
         }
-        let title = it.get("title").and_then(|v| v.as_str()).unwrap_or("(无标题)");
+        let title = it
+            .get("title")
+            .and_then(|v| v.as_str())
+            .unwrap_or("(无标题)");
         let lang = it.get("lang").and_then(|v| v.as_str()).unwrap_or("");
-        edited_titles.push(format!("《{title}》（{lang}，id {}）", it.get("id").and_then(|v| v.as_i64()).unwrap_or(0)));
+        edited_titles.push(format!(
+            "《{title}》（{lang}，id {}）",
+            it.get("id").and_then(|v| v.as_i64()).unwrap_or(0)
+        ));
     }
     let drafts = get_posts(&api_base, &key, "draft").await?;
     // 周产出配额按「本周新建」全量计（含已报废的——报废不返还配额，防先建后废钻空子）；
     // 待审数（drafts_total）排除已报废，另计 drafts_discarded 给「待清理」。
-    let drafts_new = drafts.iter().filter(|it| item_time_since(it, "created_at", ws)).count() as u32;
+    let drafts_new = drafts
+        .iter()
+        .filter(|it| item_time_since(it, "created_at", ws))
+        .count() as u32;
     let drafts_discarded = drafts.iter().filter(|it| item_discarded(it)).count() as u32;
     Ok(WeekStats {
         published_this_week,
@@ -888,20 +981,45 @@ mod tests {
     use super::*;
 
     fn note(title: &str, reason: &str) -> ReviewNote {
-        ReviewNote { ts: 1, post_id: 7, title: title.into(), reason: reason.into() }
+        ReviewNote {
+            ts: 1,
+            post_id: 7,
+            title: title.into(),
+            reason: reason.into(),
+        }
     }
 
     fn site(id: &str, slug: &str) -> ManagedSite {
         ManagedSite {
-            id: id.into(), conn_id: "c1".into(), site_slug: slug.into(), site_name: slug.into(),
-            level: "l0".into(), weekly_post_limit: 3, weekly_edit_limit: 2, plan: "定位：科技博客".into(),
-            custom_daily_prompt: String::new(), custom_audit_prompt: String::new(), custom_report_prompt: String::new(),
-            brain: "claude".into(), model: "sonnet".into(), effort: String::new(),
-            fallback_brain: String::new(), fallback_model: String::new(), fallback_effort: String::new(),
-            task_ids: vec!["t-daily".into(), "t-audit".into(), "t-report".into()], paused: false,
-            review_notes: vec![], token_weekly_budget: 0, fused_at: 0,
-            review_events: vec![], demote_note: String::new(),
-            audit_notes: String::new(), enabled_at: 1, reports: vec![], created_at: 1, updated_at: 1,
+            id: id.into(),
+            conn_id: "c1".into(),
+            site_slug: slug.into(),
+            site_name: slug.into(),
+            level: "l0".into(),
+            weekly_post_limit: 3,
+            weekly_edit_limit: 2,
+            plan: "定位：科技博客".into(),
+            custom_daily_prompt: String::new(),
+            custom_audit_prompt: String::new(),
+            custom_report_prompt: String::new(),
+            brain: "claude".into(),
+            model: "sonnet".into(),
+            effort: String::new(),
+            fallback_brain: String::new(),
+            fallback_model: String::new(),
+            fallback_effort: String::new(),
+            task_ids: vec!["t-daily".into(), "t-audit".into(), "t-report".into()],
+            paused: false,
+            review_notes: vec![],
+            token_weekly_budget: 0,
+            fused_at: 0,
+            review_events: vec![],
+            demote_note: String::new(),
+            audit_notes: String::new(),
+            enabled_at: 1,
+            reports: vec![],
+            created_at: 1,
+            updated_at: 1,
         }
     }
 
@@ -938,7 +1056,10 @@ mod tests {
         assert_eq!(m.impressions, None, "写 - 的项为 None");
         assert_eq!(m.clicks, None);
         assert!(content.contains("周报正文") && content.contains("一切正常"));
-        assert!(!content.contains("REPORT-METRICS") && !content.contains("published:"), "块从正文剥掉");
+        assert!(
+            !content.contains("REPORT-METRICS") && !content.contains("published:"),
+            "块从正文剥掉"
+        );
         // 无块：正文原样、指标全空
         let (c2, m2) = extract_report_metrics("普通周报，没有标记块");
         assert_eq!(c2, "普通周报，没有标记块");
@@ -957,7 +1078,17 @@ mod tests {
         let st = ManagedStore::new(&dir);
         st.upsert(site("m1", "blog")).unwrap();
         for i in 0..30u64 {
-            st.mutate("m1", i, |x| x.reports.insert(0, ReportEntry { ts: i, content: format!("r{i}"), metrics: ReportMetrics::default() })).unwrap();
+            st.mutate("m1", i, |x| {
+                x.reports.insert(
+                    0,
+                    ReportEntry {
+                        ts: i,
+                        content: format!("r{i}"),
+                        metrics: ReportMetrics::default(),
+                    },
+                )
+            })
+            .unwrap();
         }
         let m = st.get("m1").unwrap();
         assert_eq!(m.reports.len(), MAX_REPORTS, "周报归档封顶 26 条");
@@ -976,7 +1107,13 @@ mod tests {
         assert!(st.find_site("c1", "blog").is_some());
         assert!(st.find_site("c1", "nope").is_none());
         // mutate：暂停 + 记打回
-        let u = st.mutate("m1", 99, |m| { m.paused = true; m.review_notes.insert(0, note("t", "标题党")); }).unwrap().unwrap();
+        let u = st
+            .mutate("m1", 99, |m| {
+                m.paused = true;
+                m.review_notes.insert(0, note("t", "标题党"));
+            })
+            .unwrap()
+            .unwrap();
         assert!(u.paused);
         assert_eq!(u.updated_at, 99);
         assert_eq!(u.review_notes.len(), 1);
@@ -992,7 +1129,10 @@ mod tests {
         let st = ManagedStore::new(&dir);
         st.upsert(site("m1", "blog")).unwrap();
         for i in 0..25 {
-            st.mutate("m1", i, |m| m.review_notes.insert(0, note(&format!("p{i}"), "r"))).unwrap();
+            st.mutate("m1", i, |m| {
+                m.review_notes.insert(0, note(&format!("p{i}"), "r"))
+            })
+            .unwrap();
         }
         let m = st.get("m1").unwrap();
         assert_eq!(m.review_notes.len(), 20, "打回记录只留最近 20 条");
@@ -1003,7 +1143,15 @@ mod tests {
     /// 每日 prompt（L0）：计划摘要 + 硬边界（只草稿/限量/不动结构）+ 打回意见注入。
     #[test]
     fn daily_prompt_has_plan_limits_and_notes() {
-        let p = daily_prompt("科技站", "定位：面向开发者的 AI 周刊", 3, &[note("旧文", "标题太夸张"), note("另一篇", "缺少来源")], "l0", 2, "");
+        let p = daily_prompt(
+            "科技站",
+            "定位：面向开发者的 AI 周刊",
+            3,
+            &[note("旧文", "标题太夸张"), note("另一篇", "缺少来源")],
+            "l0",
+            2,
+            "",
+        );
         assert!(p.contains("科技站"));
         assert!(p.contains("L0 试运行"));
         assert!(p.contains("定位：面向开发者的 AI 周刊"));
@@ -1029,7 +1177,10 @@ mod tests {
         assert!(l1.contains("可以直接发布"));
         assert!(!l1.contains("绝不发布"), "L1 不应再有全面禁发条款");
         assert!(l1.contains("绝不定时发布"), "scheduled 仍禁");
-        assert!(l1.contains("绝不删除任何内容") && l1.contains("绝不修改导航"), "结构性禁令保留");
+        assert!(
+            l1.contains("绝不删除任何内容") && l1.contains("绝不修改导航"),
+            "结构性禁令保留"
+        );
         let l2 = daily_prompt("s", "p", 3, &[], "l2", 2, "");
         assert!(l2.contains("L2 自动发布+抽检"));
         assert!(l2.contains("可以直接发布"));
@@ -1044,7 +1195,10 @@ mod tests {
         let p = daily_prompt("s", "p", 3, &[], "l3", 4, "");
         assert!(p.contains("L3 存量维护"));
         assert!(p.contains("可以直接发布"), "L3 含 L1 的直发能力");
-        assert!(p.contains("search-stats") && p.contains("traffic-stats"), "先拉数据");
+        assert!(
+            p.contains("search-stats") && p.contains("traffic-stats"),
+            "先拉数据"
+        );
         assert!(p.contains("stats:read"));
         assert!(p.contains("禁止凭感觉修改"), "无数据时禁改存量");
         assert!(p.contains("不得超过 4 篇"), "修改配额注入");
@@ -1066,7 +1220,10 @@ mod tests {
         assert!(p.contains("search-stats") && p.contains("--days 28"));
         assert!(p.contains("有曝光但点击低") && p.contains("缺内容"));
         assert!(p.contains("写明选题依据"));
-        assert!(p.contains("统计不可用，按运营计划选题"), "降级条款：统计不可用继续创作、不算失败");
+        assert!(
+            p.contains("统计不可用，按运营计划选题"),
+            "降级条款：统计不可用继续创作、不算失败"
+        );
         assert!(p.contains("不算失败"));
         // L3 的“无数据禁改存量”只约束存量修改，常规选题按上面的降级条款继续
         let l3 = daily_prompt("s", "p", 3, &[], "l3", 2, "");
@@ -1081,7 +1238,10 @@ mod tests {
         // 周报：自跑 traffic-stats + search-stats --compare + page-stats、加数据表现段、不可用注明
         let r = report_prompt("s", "关键词方向：A、B");
         assert!(r.contains("traffic-stats") && r.contains("--days 7"));
-        assert!(r.contains("search-stats") && r.contains("--compare"), "双区间对比");
+        assert!(
+            r.contains("search-stats") && r.contains("--compare"),
+            "双区间对比"
+        );
         assert!(r.contains("page-stats"), "GA 分页流量");
         assert!(r.contains("本周数据表现"));
         assert!(r.contains("本周新发文的曝光/点击与上期对比"));
@@ -1089,9 +1249,15 @@ mod tests {
         assert!(r.contains("流量 top 页"));
         assert!(r.contains("计划关键词 vs 实际曝光词偏差"));
         assert!(r.contains("校准建议"));
-        assert!(r.contains("关键词方向：A、B"), "90 天计划随 prompt 下发（偏差对照基准）");
+        assert!(
+            r.contains("关键词方向：A、B"),
+            "90 天计划随 prompt 下发（偏差对照基准）"
+        );
         assert!(r.contains("数据不可用"));
-        assert!(r.contains("这不算失败"), "新命令带降级条款（老服务端没有 --compare/page-stats）");
+        assert!(
+            r.contains("这不算失败"),
+            "新命令带降级条款（老服务端没有 --compare/page-stats）"
+        );
         // Telegram 频道订阅数（cms 侧新命令 tg-stats，带降级：未配置/旧服务端不算失败）
         assert!(r.contains("tg-stats --site"));
         assert!(r.contains("汇报当前订阅数"));
@@ -1132,7 +1298,10 @@ mod tests {
     #[test]
     fn prompts_theme_option_slots() {
         let p = daily_prompt("s", "p", 3, &[], "l0", 2, "");
-        assert!(p.contains("（唯一例外：主题配置槽——factory.* 各项，见下）"), "第 3 条红线开受控口子");
+        assert!(
+            p.contains("（唯一例外：主题配置槽——factory.* 各项，见下）"),
+            "第 3 条红线开受控口子"
+        );
         assert!(p.contains("e) 主题配置槽维护"));
         assert!(p.contains("theme-options --site"));
         assert!(p.contains("本项整体跳过——这不算失败"), "旧服务端降级");
@@ -1142,12 +1311,18 @@ mod tests {
         // L3 绝对禁区同步同一例外（全 prompt 共两处例外句）
         let l3 = daily_prompt("s", "p", 3, &[], "l3", 2, "");
         assert!(l3.contains("绝对禁区"));
-        assert!(l3.matches("唯一例外：主题配置槽").count() >= 2, "第 3 条与 L3 禁区各一处");
+        assert!(
+            l3.matches("唯一例外：主题配置槽").count() >= 2,
+            "第 3 条与 L3 禁区各一处"
+        );
         // 审计：体检只进纪要不动手；审计边界不开口子（保持只读）
         let a = audit_prompt("s");
         assert!(a.contains("7. 主题配置槽体检"));
         assert!(a.contains("审计不动手"));
-        assert!(a.contains("绝不改导航/站点资料/内容类型"), "审计红线原样，不开例外");
+        assert!(
+            a.contains("绝不改导航/站点资料/内容类型"),
+            "审计红线原样，不开例外"
+        );
         // 周报：L3 修改清单含配置槽；非 L3 在产出汇报带一句
         let r = report_prompt("s", "计划");
         assert!(r.contains("主题配置槽的改动也如实列入"));
@@ -1162,11 +1337,17 @@ mod tests {
         assert!(p.contains("discard posts <id> --reason"));
         assert!(p.contains("理由写给管理员看"));
         assert!(p.contains("标记只对草稿有效，删除永远由站点主人执行"));
-        assert!(p.contains("写一行【建议弃用：理由】——这不算失败"), "旧服务端降级：正文开头写建议弃用");
+        assert!(
+            p.contains("写一行【建议弃用：理由】——这不算失败"),
+            "旧服务端降级：正文开头写建议弃用"
+        );
         let a = audit_prompt("s");
         assert!(a.contains("6. 无主草稿排查"));
         assert!(a.contains("discard posts <id> --reason"));
-        assert!(a.contains("建议弃用清单——这不算失败"), "旧服务端降级：只列纪要");
+        assert!(
+            a.contains("建议弃用清单——这不算失败"),
+            "旧服务端降级：只列纪要"
+        );
         assert!(a.contains("（id＋理由）"));
         let r = report_prompt("s", "计划");
         assert!(r.contains("discarded: N|-"), "指标块含本周报废数");
@@ -1179,9 +1360,16 @@ mod tests {
         let p = daily_prompt("s", "p", 3, &[], "l0", 2, "");
         assert!(p.contains("【商品站分支（启用了商品类型的站才生效）】"));
         assert!(p.contains("types --site") && p.contains("list products"));
-        assert!(p.contains("纯内容站，本段全部忽略（这不算失败）"), "降级：旧服务端/未启用零变化");
+        assert!(
+            p.contains("纯内容站，本段全部忽略（这不算失败）"),
+            "降级：旧服务端/未启用零变化"
+        );
         assert!(p.contains("商品与文章并重"));
-        assert!(p.contains("补齐已有商品的缺项") && p.contains("缺 meta_desc") && p.contains("缺英文配对"));
+        assert!(
+            p.contains("补齐已有商品的缺项")
+                && p.contains("缺 meta_desc")
+                && p.contains("缺英文配对")
+        );
         assert!(p.contains("有曝光的商品词优化对应商品页"));
         assert!(p.contains("确有新品资料才新建商品") && p.contains("规格≥3 行"));
         assert!(p.contains("被拒（422）按提示补齐"));
@@ -1208,13 +1396,24 @@ mod tests {
         assert!(l1.contains("quality_gate"));
         assert!(l1.contains("不得注水凑字数"));
         let l0 = daily_prompt("s", "p", 3, &[], "l0", 2, "");
-        assert!(!l0.contains("quality_gate"), "L0 只草稿，不需要发布质量门预告");
+        assert!(
+            !l0.contains("quality_gate"),
+            "L0 只草稿，不需要发布质量门预告"
+        );
     }
 
     /// 审计要点回灌：有要点时注入段落，空/空白不注入。
     #[test]
     fn daily_prompt_injects_audit_notes() {
-        let p = daily_prompt("s", "p", 3, &[], "l0", 2, "- 重复主题：AI 周报连发 3 篇\n- 内链建议：《A》→《B》");
+        let p = daily_prompt(
+            "s",
+            "p",
+            3,
+            &[],
+            "l0",
+            2,
+            "- 重复主题：AI 周报连发 3 篇\n- 内链建议：《A》→《B》",
+        );
         assert!(p.contains("【上次审计要点——选题避开重复主题、创作时落实内链】"));
         assert!(p.contains("AI 周报连发 3 篇"));
         assert!(p.contains("《A》→《B》"));
@@ -1225,11 +1424,21 @@ mod tests {
     /// AUDIT-NOTES 提取：有块取内容、无块 None、空块 None、超长按 10 行截断。
     #[test]
     fn extract_audit_notes_block() {
-        let msg = "纪要草稿 id=42，发现三条……\n```AUDIT-NOTES\n- 重复主题：X\n- 内链建议：Y\n```\n以上。";
-        assert_eq!(extract_audit_notes(msg).unwrap(), "- 重复主题：X\n- 内链建议：Y");
+        let msg =
+            "纪要草稿 id=42，发现三条……\n```AUDIT-NOTES\n- 重复主题：X\n- 内链建议：Y\n```\n以上。";
+        assert_eq!(
+            extract_audit_notes(msg).unwrap(),
+            "- 重复主题：X\n- 内链建议：Y"
+        );
         assert!(extract_audit_notes("普通汇报，没有标记块").is_none());
-        assert!(extract_audit_notes("```AUDIT-NOTES\n   \n```").is_none(), "空块不回灌");
-        assert!(extract_audit_notes("```AUDIT-NOTES\n- 没闭合的块").is_none(), "无闭合围栏不猜");
+        assert!(
+            extract_audit_notes("```AUDIT-NOTES\n   \n```").is_none(),
+            "空块不回灌"
+        );
+        assert!(
+            extract_audit_notes("```AUDIT-NOTES\n- 没闭合的块").is_none(),
+            "无闭合围栏不猜"
+        );
         // 超长截断：15 行只留前 10 行
         let long_block: String = (0..15).map(|i| format!("- 第 {i} 条\n")).collect();
         let got = extract_audit_notes(&format!("x\n```AUDIT-NOTES\n{long_block}```")).unwrap();
@@ -1265,11 +1474,21 @@ mod tests {
         // enabled_at → 天数换算
         let day = 86_400u64;
         assert_eq!(days_since_enabled(1_000_000, 1_000_000 + 3 * day), 3);
-        assert_eq!(ramp_cap(days_since_enabled(1_000_000, 1_000_000 + 3 * day)), 7);
-        assert_eq!(ramp_cap(days_since_enabled(1_000_000, 1_000_000 + 45 * day)), 14);
+        assert_eq!(
+            ramp_cap(days_since_enabled(1_000_000, 1_000_000 + 3 * day)),
+            7
+        );
+        assert_eq!(
+            ramp_cap(days_since_enabled(1_000_000, 1_000_000 + 45 * day)),
+            14
+        );
         // 老数据兜底：enabled_at=0 的旧站不受爬坡限制
         assert_eq!(days_since_enabled(0, 1_800_000_000), u32::MAX);
-        assert_eq!(ramp_cap(days_since_enabled(0, 1_800_000_000)), 50, "老站视为已过爬坡期");
+        assert_eq!(
+            ramp_cap(days_since_enabled(0, 1_800_000_000)),
+            50,
+            "老站视为已过爬坡期"
+        );
     }
 
     /// 预检软警示：0/14 篇警示（0 篇换开头）、15 篇/16 封顶不警示；stats 四态；组合两条齐出。
@@ -1285,7 +1504,10 @@ mod tests {
         assert_eq!(w14.len(), 1);
         assert!(w14[0].starts_with("站点存量内容较少（仅 14 篇已发布）"));
         assert!(precheck_warnings(15, "ok").is_empty(), "15 篇达标不警示");
-        assert!(precheck_warnings(16, "ok").is_empty(), "16 封顶（实际≥16）不警示");
+        assert!(
+            precheck_warnings(16, "ok").is_empty(),
+            "16 封顶（实际≥16）不警示"
+        );
         // stats 四态
         let wn = precheck_warnings(20, "not_connected");
         assert_eq!(wn.len(), 1);
@@ -1293,7 +1515,10 @@ mod tests {
         let ws = precheck_warnings(20, "no_scope");
         assert_eq!(ws.len(), 1);
         assert!(ws[0].contains("缺 stats:read 权限") && ws[0].contains("统计数据"));
-        assert!(precheck_warnings(20, "unavailable").is_empty(), "旧服务端不警示（prompt 自带降级）");
+        assert!(
+            precheck_warnings(20, "unavailable").is_empty(),
+            "旧服务端不警示（prompt 自带降级）"
+        );
         assert!(precheck_warnings(20, "ok").is_empty());
         // 组合：存量 + 统计各一条（存量在前）
         let both = precheck_warnings(3, "not_connected");
@@ -1305,12 +1530,38 @@ mod tests {
     #[test]
     fn stats_probe_classification() {
         assert_eq!(stats_probe_class(200, r#"{"ok":true,"rows":[]}"#), "ok");
-        assert_eq!(stats_probe_class(400, r#"{"error":"search_console_not_connected","message":"未接入"}"#), "not_connected");
-        assert_eq!(stats_probe_class(403, r#"{"error":"missing_scope","message":"访问权限不足。"}"#), "no_scope");
-        assert_eq!(stats_probe_class(403, "forbidden"), "no_scope", "非 JSON 体按 HTTP 403 兜底");
-        assert_eq!(stats_probe_class(404, "404 page not found"), "unavailable", "旧服务端没有该路由");
-        assert_eq!(stats_probe_class(500, r#"{"error":"store_error"}"#), "unavailable");
-        assert_eq!(stats_probe_class(502, r#"{"error":"google_api_error"}"#), "unavailable");
+        assert_eq!(
+            stats_probe_class(
+                400,
+                r#"{"error":"search_console_not_connected","message":"未接入"}"#
+            ),
+            "not_connected"
+        );
+        assert_eq!(
+            stats_probe_class(
+                403,
+                r#"{"error":"missing_scope","message":"访问权限不足。"}"#
+            ),
+            "no_scope"
+        );
+        assert_eq!(
+            stats_probe_class(403, "forbidden"),
+            "no_scope",
+            "非 JSON 体按 HTTP 403 兜底"
+        );
+        assert_eq!(
+            stats_probe_class(404, "404 page not found"),
+            "unavailable",
+            "旧服务端没有该路由"
+        );
+        assert_eq!(
+            stats_probe_class(500, r#"{"error":"store_error"}"#),
+            "unavailable"
+        );
+        assert_eq!(
+            stats_probe_class(502, r#"{"error":"google_api_error"}"#),
+            "unavailable"
+        );
     }
 
     /// 降级链：l3→l2、l2/l1→l0、l0 不降；未知等级不降。
@@ -1332,7 +1583,10 @@ mod tests {
         // 相对断言：3000 字计划只允许贡献「截断上限 2000 + 截断提示」——固定门槛会随
         // 模板条款增长误报（商品站分支加入时就撞过一次）。
         let base = daily_prompt("s", "", 3, &[], "l0", 2, "");
-        assert!(p.chars().count() < base.chars().count() + 2100, "prompt 不应被长计划撑爆");
+        assert!(
+            p.chars().count() < base.chars().count() + 2100,
+            "prompt 不应被长计划撑爆"
+        );
     }
 
     #[test]
@@ -1377,7 +1631,14 @@ mod tests {
     #[test]
     fn demote_rules() {
         let ev = |flags: &[bool]| -> Vec<ReviewEvent> {
-            flags.iter().enumerate().map(|(i, a)| ReviewEvent { ts: 100 - i as u64, approved: *a }).collect()
+            flags
+                .iter()
+                .enumerate()
+                .map(|(i, a)| ReviewEvent {
+                    ts: 100 - i as u64,
+                    approved: *a,
+                })
+                .collect()
         };
         // 连续 3 拒（最新在前）
         assert!(should_demote(&ev(&[false, false, false, true, true])).is_some());
@@ -1390,8 +1651,13 @@ mod tests {
         // 只有 2 条打回：既不够连续 3，也不够样本 5 → 不降（防过敏）
         assert!(should_demote(&ev(&[false, false])).is_none());
         // 10 条里 5 拒（50%）→ 降；更早的第 11 条不计
-        let mut eleven = ev(&[false, true, false, true, false, true, false, true, false, true]);
-        eleven.push(ReviewEvent { ts: 1, approved: false });
+        let mut eleven = ev(&[
+            false, true, false, true, false, true, false, true, false, true,
+        ]);
+        eleven.push(ReviewEvent {
+            ts: 1,
+            approved: false,
+        });
         assert!(should_demote(&eleven).is_some());
     }
 
@@ -1399,8 +1665,12 @@ mod tests {
     #[test]
     fn weekly_report_data_injects_facts() {
         let f = WeekFacts {
-            published: 2, drafts_total: 5, drafts_new: 3, weekly_limit: 4,
-            week_tokens: 120_000, budget: 500_000,
+            published: 2,
+            drafts_total: 5,
+            drafts_new: 3,
+            weekly_limit: 4,
+            week_tokens: 120_000,
+            budget: 500_000,
             task_lines: vec!["每日内容：成功 5 次 / 失败 1 次".into()],
             reject_reasons: vec!["《旧文》：标题太夸张".into()],
             published_titles: vec!["《AI 周报》（zh · 2026-07-13）".into()],
@@ -1416,7 +1686,19 @@ mod tests {
         assert!(s.contains("《旧文》：标题太夸张"));
         assert!(s.contains("抽查") && s.contains("《AI 周报》"));
         // 无预算/无打回/无清单的形态
-        let f2 = WeekFacts { published: 0, drafts_total: 0, drafts_new: 0, weekly_limit: 3, week_tokens: 10, budget: 0, task_lines: vec![], reject_reasons: vec![], published_titles: vec![], edit_limit: 0, edited_titles: vec![] };
+        let f2 = WeekFacts {
+            published: 0,
+            drafts_total: 0,
+            drafts_new: 0,
+            weekly_limit: 3,
+            week_tokens: 10,
+            budget: 0,
+            task_lines: vec![],
+            reject_reasons: vec![],
+            published_titles: vec![],
+            edit_limit: 0,
+            edited_titles: vec![],
+        };
         let s2 = weekly_report_data(&f2);
         assert!(s2.contains("未设预算"));
         assert!(s2.contains("本周无打回记录"));
@@ -1428,9 +1710,16 @@ mod tests {
     #[test]
     fn weekly_report_data_l3_watchlist() {
         let base = WeekFacts {
-            published: 1, drafts_total: 2, drafts_new: 1, weekly_limit: 3,
-            week_tokens: 10, budget: 0, task_lines: vec![], reject_reasons: vec![],
-            published_titles: vec![], edit_limit: 2,
+            published: 1,
+            drafts_total: 2,
+            drafts_new: 1,
+            weekly_limit: 3,
+            week_tokens: 10,
+            budget: 0,
+            task_lines: vec![],
+            reject_reasons: vec![],
+            published_titles: vec![],
+            edit_limit: 2,
             edited_titles: vec!["《旧文 A》（zh，id 7）".into()],
         };
         let s = weekly_report_data(&base);
@@ -1438,7 +1727,10 @@ mod tests {
         assert!(s.contains("本周修改清单") && s.contains("观察名单"));
         assert!(s.contains("《旧文 A》"));
         assert!(s.contains("回滚"), "提醒可用修订历史回滚");
-        let none = WeekFacts { edited_titles: vec![], ..base };
+        let none = WeekFacts {
+            edited_titles: vec![],
+            ..base
+        };
         let s2 = weekly_report_data(&none);
         assert!(s2.contains("没有已发布内容被修改"));
     }

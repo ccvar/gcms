@@ -76,8 +76,20 @@ pub async fn run_turn(
     plugin_dir: Option<PathBuf>,
 ) -> TurnResult {
     let fail = |e: String, session_ref: String| {
-        let _ = channel.send(TurnEvent::Done { ok: false, error: e.clone() });
-        TurnResult { ok: false, text: String::new(), tools: vec![], error: e, session_ref, proposal: None, usage: None, limit_reset: None }
+        let _ = channel.send(TurnEvent::Done {
+            ok: false,
+            error: e.clone(),
+        });
+        TurnResult {
+            ok: false,
+            text: String::new(),
+            tools: vec![],
+            error: e,
+            session_ref,
+            proposal: None,
+            usage: None,
+            limit_reset: None,
+        }
     };
 
     let model = model.trim().to_string();
@@ -116,7 +128,12 @@ pub async fn run_turn(
 
     let mut child = match cmd.spawn() {
         Ok(c) => c,
-        Err(e) => return fail(format!("启动 grok 失败（确认已安装并登录）: {e}"), session_ref),
+        Err(e) => {
+            return fail(
+                format!("启动 grok 失败（确认已安装并登录）: {e}"),
+                session_ref,
+            )
+        }
     };
     let mut stdin = match child.stdin.take() {
         Some(s) => s,
@@ -139,8 +156,19 @@ pub async fn run_turn(
     let drive_res: Result<Done, String> = match stdout {
         Some(out) => {
             let fut = drive(
-                &mut stdin, out, &st, &channel, is_first, &session_ref, system.as_deref(),
-                &message, &work_dir, mode, &pending_dir, &ssh_js, &turn_id,
+                &mut stdin,
+                out,
+                &st,
+                &channel,
+                is_first,
+                &session_ref,
+                system.as_deref(),
+                &message,
+                &work_dir,
+                mode,
+                &pending_dir,
+                &ssh_js,
+                &turn_id,
             );
             tokio::select! {
                 r = fut => r,
@@ -172,7 +200,8 @@ pub async fn run_turn(
             // 用户在批准卡上点了拒绝：grok 会取消整轮——这是用户主动决定，不算错误。
             "cancelled" if done.cancel_category == "PermissionRejected" => {
                 let t = if s.text.trim().is_empty() {
-                    "已按你的选择拒绝了该操作，本轮到此为止。需要继续，直接说下一步怎么做。".to_string()
+                    "已按你的选择拒绝了该操作，本轮到此为止。需要继续，直接说下一步怎么做。"
+                        .to_string()
                 } else {
                     s.text.clone()
                 };
@@ -183,9 +212,19 @@ pub async fn run_turn(
         (Err(e), _) => {
             // 补上 stderr / stdout 尾行的诊断线索（限流/欠费信息常在 stderr）。
             let hint = agent::last_nonempty(&err_text)
-                .or_else(|| if s.raw_tail.is_empty() { None } else { Some(s.raw_tail.clone()) })
+                .or_else(|| {
+                    if s.raw_tail.is_empty() {
+                        None
+                    } else {
+                        Some(s.raw_tail.clone())
+                    }
+                })
                 .unwrap_or_default();
-            let msg = if hint.is_empty() || e.contains(&hint) { e.clone() } else { format!("{e}（{hint}）") };
+            let msg = if hint.is_empty() || e.contains(&hint) {
+                e.clone()
+            } else {
+                format!("{e}（{hint}）")
+            };
             (false, s.text.clone(), msg)
         }
     };
@@ -199,7 +238,10 @@ pub async fn run_turn(
     let (clean_text, proposal) = agent::extract_proposal(&text);
     text = clean_text;
 
-    let _ = channel.send(TurnEvent::Done { ok, error: error.clone() });
+    let _ = channel.send(TurnEvent::Done {
+        ok,
+        error: error.clone(),
+    });
     TurnResult {
         ok,
         text,
@@ -242,9 +284,23 @@ async fn drive(
             "clientCapabilities": { "fs": { "readTextFile": false, "writeTextFile": false }, "terminal": false }
         }
     })).await?;
-    tokio::time::timeout(hs, pump(stdin, &mut reader, st, ch, 1, false, mode, pending_dir, ssh_js, conv_id))
-        .await
-        .map_err(|_| "grok initialize 超时".to_string())??;
+    tokio::time::timeout(
+        hs,
+        pump(
+            stdin,
+            &mut reader,
+            st,
+            ch,
+            1,
+            false,
+            mode,
+            pending_dir,
+            ssh_js,
+            conv_id,
+        ),
+    )
+    .await
+    .map_err(|_| "grok initialize 超时".to_string())??;
 
     let sid = if is_first {
         let mut params = serde_json::json!({ "cwd": work_dir, "mcpServers": [] });
@@ -259,18 +315,38 @@ async fn drive(
         })
         .await
         .map_err(|_| "grok 建会话超时".to_string())??;
-        let sid = res.get("sessionId").and_then(|s| s.as_str()).unwrap_or_default().to_string();
+        let sid = res
+            .get("sessionId")
+            .and_then(|s| s.as_str())
+            .unwrap_or_default()
+            .to_string();
         if sid.is_empty() {
             return Err("grok 未返回会话 id".into());
         }
         sid
     } else {
         tokio::time::timeout(hs, async {
-            send(stdin, &serde_json::json!({
-                "jsonrpc": "2.0", "id": 2, "method": "session/load",
-                "params": { "sessionId": session_ref, "cwd": work_dir, "mcpServers": [] }
-            })).await?;
-            pump(stdin, &mut reader, st, ch, 2, false, mode, pending_dir, ssh_js, conv_id).await
+            send(
+                stdin,
+                &serde_json::json!({
+                    "jsonrpc": "2.0", "id": 2, "method": "session/load",
+                    "params": { "sessionId": session_ref, "cwd": work_dir, "mcpServers": [] }
+                }),
+            )
+            .await?;
+            pump(
+                stdin,
+                &mut reader,
+                st,
+                ch,
+                2,
+                false,
+                mode,
+                pending_dir,
+                ssh_js,
+                conv_id,
+            )
+            .await
         })
         .await
         .map_err(|_| "grok 载入会话超时".to_string())??;
@@ -278,18 +354,42 @@ async fn drive(
     };
     st.lock().unwrap().session_ref = sid.clone();
 
-    send(stdin, &serde_json::json!({
-        "jsonrpc": "2.0", "id": 3, "method": "session/prompt",
-        "params": { "sessionId": sid, "prompt": [{ "type": "text", "text": message }] }
-    })).await?;
+    send(
+        stdin,
+        &serde_json::json!({
+            "jsonrpc": "2.0", "id": 3, "method": "session/prompt",
+            "params": { "sessionId": sid, "prompt": [{ "type": "text", "text": message }] }
+        }),
+    )
+    .await?;
     // prompt 阶段不设总超时：长任务合法，取消交给停止按钮（外层 select 杀进程）。
-    let res = pump(stdin, &mut reader, st, ch, 3, true, mode, pending_dir, ssh_js, conv_id).await?;
+    let res = pump(
+        stdin,
+        &mut reader,
+        st,
+        ch,
+        3,
+        true,
+        mode,
+        pending_dir,
+        ssh_js,
+        conv_id,
+    )
+    .await?;
 
-    let stop_reason = res.get("stopReason").and_then(|s| s.as_str()).unwrap_or("").to_string();
+    let stop_reason = res
+        .get("stopReason")
+        .and_then(|s| s.as_str())
+        .unwrap_or("")
+        .to_string();
     let meta = &res["_meta"];
     Ok(Done {
         stop_reason,
-        cancel_category: meta.get("cancellationCategory").and_then(|s| s.as_str()).unwrap_or("").to_string(),
+        cancel_category: meta
+            .get("cancellationCategory")
+            .and_then(|s| s.as_str())
+            .unwrap_or("")
+            .to_string(),
         usage: usage_from_meta(meta),
     })
 }
@@ -312,7 +412,10 @@ async fn pump(
     let mut buf = Vec::new();
     loop {
         buf.clear();
-        let n = reader.read_until(b'\n', &mut buf).await.map_err(|e| format!("读取 grok 输出失败: {e}"))?;
+        let n = reader
+            .read_until(b'\n', &mut buf)
+            .await
+            .map_err(|e| format!("读取 grok 输出失败: {e}"))?;
         if n == 0 {
             return Err("grok 进程意外退出".into());
         }
@@ -332,7 +435,8 @@ async fn pump(
                 // agent → client 请求：目前只有权限一种要真正处理；其余一律「不支持」，
                 // 让 agent 走兜底（我们没有声明 fs/terminal 能力，正常不会有别的请求）。
                 if method == "session/request_permission" {
-                    let allow = decide_and_wait(&msg["params"], mode, pending_dir, ssh_js, conv_id).await;
+                    let allow =
+                        decide_and_wait(&msg["params"], mode, pending_dir, ssh_js, conv_id).await;
                     let out = permission_response(&msg["id"], &msg["params"]["options"], allow);
                     send(stdin, &out).await?;
                 } else {
@@ -346,7 +450,10 @@ async fn pump(
                         st.lock().unwrap().text.push_str(&text);
                         let _ = ch.send(TurnEvent::Delta { text });
                     } else {
-                        st.lock().unwrap().tools.push(ToolCall { label: label.clone(), detail: detail.clone() });
+                        st.lock().unwrap().tools.push(ToolCall {
+                            label: label.clone(),
+                            detail: detail.clone(),
+                        });
                         let _ = ch.send(TurnEvent::Tool { label, detail });
                     }
                 }
@@ -356,10 +463,16 @@ async fn pump(
         // 响应帧：只认我们等的 id（agent 偶发自导自演的 "skills-reload" 响应帧，忽略）。
         if msg.get("id").and_then(|i| i.as_u64()) == Some(want_id) {
             if let Some(err) = msg.get("error") {
-                let m = err.get("message").and_then(|s| s.as_str()).unwrap_or("未知错误");
+                let m = err
+                    .get("message")
+                    .and_then(|s| s.as_str())
+                    .unwrap_or("未知错误");
                 return Err(format!("grok: {m}"));
             }
-            return Ok(msg.get("result").cloned().unwrap_or(serde_json::Value::Null));
+            return Ok(msg
+                .get("result")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null));
         }
     }
 }
@@ -395,7 +508,10 @@ async fn send(stdin: &mut ChildStdin, msg: &serde_json::Value) -> Result<(), Str
         .write_all(line.as_bytes())
         .await
         .map_err(|e| format!("写入 grok stdin 失败: {e}"))?;
-    stdin.flush().await.map_err(|e| format!("写入 grok stdin 失败: {e}"))
+    stdin
+        .flush()
+        .await
+        .map_err(|e| format!("写入 grok stdin 失败: {e}"))
 }
 
 // ---- 流事件解析（纯函数，夹具可测）----
@@ -445,7 +561,10 @@ fn tool_card(u: &serde_json::Value) -> (String, String) {
         .or_else(|| raw.get("description").and_then(|s| s.as_str()))
         .map(|s| s.to_string())
         .unwrap_or_else(|| {
-            u.get("title").and_then(|s| s.as_str()).map(|s| s.to_string()).unwrap_or_else(|| raw.to_string())
+            u.get("title")
+                .and_then(|s| s.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| raw.to_string())
         });
     (label.to_string(), detail.chars().take(200).collect())
 }
@@ -476,14 +595,22 @@ pub(crate) enum Decision {
     Allow,
     Deny,
     /// 弹批准卡（dangerous 控制卡片的红色强调）。
-    Card { dangerous: bool },
+    Card {
+        dangerous: bool,
+    },
 }
 
 /// 档位 × 工具类别 → 裁决。对齐 claude 档位语义：
 /// 只读（read/search/think 或标 read_only）任何档位直接放行（claude 的钩子同样放行只读）；
 /// full 全放；plan 非只读一律拒；ask 非只读全弹卡；
 /// auto＝acceptEdits 语义：编辑放行、命令安全放行、危险命令/网络抓取/删除弹卡、未知弹卡（安全侧）。
-pub(crate) fn decide(mode: PermMode, kind: &str, read_only: bool, cmd: &str, ssh_js: &str) -> Decision {
+pub(crate) fn decide(
+    mode: PermMode,
+    kind: &str,
+    read_only: bool,
+    cmd: &str,
+    ssh_js: &str,
+) -> Decision {
     if read_only || matches!(kind, "read" | "search" | "think") {
         return Decision::Allow;
     }
@@ -514,7 +641,9 @@ pub(crate) fn decide(mode: PermMode, kind: &str, read_only: bool, cmd: &str, ssh
 }
 
 /// 从 ACP 权限请求里抽（kind, read_only, cmd, desc, arg, tool 展示名, toolCallId）。
-pub(crate) fn permission_facts(params: &serde_json::Value) -> (String, bool, String, String, String, String, String) {
+pub(crate) fn permission_facts(
+    params: &serde_json::Value,
+) -> (String, bool, String, String, String, String, String) {
     let tc = &params["toolCall"];
     let meta = &tc["_meta"]["x.ai/tool"];
     let kind = tc
@@ -523,10 +652,21 @@ pub(crate) fn permission_facts(params: &serde_json::Value) -> (String, bool, Str
         .or_else(|| meta.get("kind").and_then(|s| s.as_str()))
         .unwrap_or("")
         .to_string();
-    let read_only = meta.get("read_only").and_then(|b| b.as_bool()).unwrap_or(false);
+    let read_only = meta
+        .get("read_only")
+        .and_then(|b| b.as_bool())
+        .unwrap_or(false);
     let raw = &tc["rawInput"];
-    let cmd = raw.get("command").and_then(|s| s.as_str()).unwrap_or("").to_string();
-    let desc = raw.get("description").and_then(|s| s.as_str()).unwrap_or("").to_string();
+    let cmd = raw
+        .get("command")
+        .and_then(|s| s.as_str())
+        .unwrap_or("")
+        .to_string();
+    let desc = raw
+        .get("description")
+        .and_then(|s| s.as_str())
+        .unwrap_or("")
+        .to_string();
     let arg = raw
         .get("url")
         .and_then(|s| s.as_str())
@@ -547,12 +687,22 @@ pub(crate) fn permission_facts(params: &serde_json::Value) -> (String, bool, Str
             .unwrap_or("tool")
             .to_string(),
     };
-    let call_id = tc.get("toolCallId").and_then(|s| s.as_str()).unwrap_or("").to_string();
+    let call_id = tc
+        .get("toolCallId")
+        .and_then(|s| s.as_str())
+        .unwrap_or("")
+        .to_string();
     (kind, read_only, cmd, desc, arg, tool, call_id)
 }
 
 /// 裁决 + 需要时弹卡等待。任何异常（写卡失败/超时/文件损坏）→ false（fail-closed）。
-async fn decide_and_wait(params: &serde_json::Value, mode: PermMode, pending_dir: &Path, ssh_js: &Path, conv_id: &str) -> bool {
+async fn decide_and_wait(
+    params: &serde_json::Value,
+    mode: PermMode,
+    pending_dir: &Path,
+    ssh_js: &Path,
+    conv_id: &str,
+) -> bool {
     let (kind, read_only, cmd, desc, arg, tool, call_id) = permission_facts(params);
     match decide(mode, &kind, read_only, &cmd, &ssh_js.to_string_lossy()) {
         Decision::Allow => true,
@@ -576,7 +726,9 @@ async fn decide_and_wait(params: &serde_json::Value, mode: PermMode, pending_dir
 fn card_id(call_id: &str) -> String {
     let ok = !call_id.is_empty()
         && call_id.len() <= 128
-        && call_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+        && call_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
     if ok {
         call_id.to_string()
     } else {
@@ -591,7 +743,9 @@ async fn wait_card(pending_dir: &Path, id: &str, payload: &serde_json::Value) ->
     }
     let req = pending_dir.join(format!("{id}.req.json"));
     let resp = pending_dir.join(format!("{id}.resp.json"));
-    let Ok(body) = serde_json::to_vec(payload) else { return false };
+    let Ok(body) = serde_json::to_vec(payload) else {
+        return false;
+    };
     if std::fs::write(&req, body).is_err() {
         return false;
     }
@@ -617,7 +771,11 @@ pub(crate) fn poll_card_once(req: &Path, resp: &Path) -> Option<bool> {
     let allow = std::fs::read(resp)
         .ok()
         .and_then(|raw| serde_json::from_slice::<serde_json::Value>(&raw).ok())
-        .and_then(|v| v.get("decision").and_then(|d| d.as_str()).map(|d| d == "allow"))
+        .and_then(|v| {
+            v.get("decision")
+                .and_then(|d| d.as_str())
+                .map(|d| d == "allow")
+        })
         .unwrap_or(false);
     let _ = std::fs::remove_file(resp);
     let _ = std::fs::remove_file(req);
@@ -626,11 +784,20 @@ pub(crate) fn poll_card_once(req: &Path, resp: &Path) -> Option<bool> {
 
 /// 组装权限应答：按 allow 选 allow_once / reject_once 选项；找不到对应选项时
 /// 落到任何 reject 类选项，再不行就 cancelled（等效拒绝——fail-closed）。
-pub(crate) fn permission_response(id: &serde_json::Value, options: &serde_json::Value, allow: bool) -> serde_json::Value {
+pub(crate) fn permission_response(
+    id: &serde_json::Value,
+    options: &serde_json::Value,
+    allow: bool,
+) -> serde_json::Value {
     let pick = |want: &str| {
         options.as_array().and_then(|a| {
             a.iter()
-                .find(|o| o.get("kind").and_then(|k| k.as_str()).map(|k| k.contains(want)).unwrap_or(false))
+                .find(|o| {
+                    o.get("kind")
+                        .and_then(|k| k.as_str())
+                        .map(|k| k.contains(want))
+                        .unwrap_or(false)
+                })
                 .and_then(|o| o.get("optionId").and_then(|s| s.as_str()))
                 .map(|s| s.to_string())
         })
@@ -669,7 +836,9 @@ mod tests {
     #[test]
     fn parse_update_text_tool_and_ignored() {
         // 文本增量
-        let d = parse_update(&json!({"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"你好"}}));
+        let d = parse_update(
+            &json!({"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"你好"}}),
+        );
         assert_eq!(d, Some((String::new(), String::new(), Some("你好".into()))));
         // 工具卡：命令类 label=exec、detail=命令本体（与 codex 卡片同款词汇）
         let t = parse_update(&fx_tool_call()).expect("tool_call 应产卡");
@@ -677,9 +846,18 @@ mod tests {
         assert_eq!(t.1, "echo acp-probe");
         assert!(t.2.is_none());
         // 思考流 / 更新帧 / 历史重放不渲染
-        assert!(parse_update(&json!({"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"x"}})).is_none());
-        assert!(parse_update(&json!({"sessionUpdate":"tool_call_update","toolCallId":"c","status":"completed"})).is_none());
-        assert!(parse_update(&json!({"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"旧消息"}})).is_none());
+        assert!(parse_update(
+            &json!({"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"x"}})
+        )
+        .is_none());
+        assert!(parse_update(
+            &json!({"sessionUpdate":"tool_call_update","toolCallId":"c","status":"completed"})
+        )
+        .is_none());
+        assert!(parse_update(
+            &json!({"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"旧消息"}})
+        )
+        .is_none());
     }
 
     #[test]
@@ -698,25 +876,60 @@ mod tests {
         use Decision::*;
         const JS: &str = "/d/tools/ssh.js";
         // 只读任何档位放行
-        for m in [PermMode::Plan, PermMode::Ask, PermMode::Auto, PermMode::Full] {
+        for m in [
+            PermMode::Plan,
+            PermMode::Ask,
+            PermMode::Auto,
+            PermMode::Full,
+        ] {
             assert_eq!(decide(m, "read", true, "", JS), Allow);
             assert_eq!(decide(m, "search", false, "", JS), Allow);
         }
         // full 全放
-        assert_eq!(decide(PermMode::Full, "execute", false, "rm -rf /", JS), Allow);
+        assert_eq!(
+            decide(PermMode::Full, "execute", false, "rm -rf /", JS),
+            Allow
+        );
         // plan 非只读一律拒（fail-closed 的只读模式）
         assert_eq!(decide(PermMode::Plan, "execute", false, "ls", JS), Deny);
         assert_eq!(decide(PermMode::Plan, "edit", false, "", JS), Deny);
         // ask 全弹卡；危险命令红色强调
-        assert_eq!(decide(PermMode::Ask, "execute", false, "npm install", JS), Card { dangerous: false });
-        assert_eq!(decide(PermMode::Ask, "execute", false, "wrangler pages deploy ./dist", JS), Card { dangerous: true });
+        assert_eq!(
+            decide(PermMode::Ask, "execute", false, "npm install", JS),
+            Card { dangerous: false }
+        );
+        assert_eq!(
+            decide(
+                PermMode::Ask,
+                "execute",
+                false,
+                "wrangler pages deploy ./dist",
+                JS
+            ),
+            Card { dangerous: true }
+        );
         // auto＝acceptEdits：编辑放行、安全命令放行、危险命令/抓取/删除弹卡、未知弹卡
         assert_eq!(decide(PermMode::Auto, "edit", false, "", JS), Allow);
-        assert_eq!(decide(PermMode::Auto, "execute", false, "npm run build", JS), Allow);
-        assert_eq!(decide(PermMode::Auto, "execute", false, "git push origin main", JS), Card { dangerous: true });
-        assert_eq!(decide(PermMode::Auto, "fetch", false, "", JS), Card { dangerous: true });
-        assert_eq!(decide(PermMode::Auto, "delete", false, "", JS), Card { dangerous: true });
-        assert_eq!(decide(PermMode::Auto, "other", false, "", JS), Card { dangerous: false });
+        assert_eq!(
+            decide(PermMode::Auto, "execute", false, "npm run build", JS),
+            Allow
+        );
+        assert_eq!(
+            decide(PermMode::Auto, "execute", false, "git push origin main", JS),
+            Card { dangerous: true }
+        );
+        assert_eq!(
+            decide(PermMode::Auto, "fetch", false, "", JS),
+            Card { dangerous: true }
+        );
+        assert_eq!(
+            decide(PermMode::Auto, "delete", false, "", JS),
+            Card { dangerous: true }
+        );
+        assert_eq!(
+            decide(PermMode::Auto, "other", false, "", JS),
+            Card { dangerous: false }
+        );
     }
 
     #[test]
@@ -767,30 +980,77 @@ mod tests {
 
         // 轮 1：全新会话 + 触发一次命令执行（full 档 → --always-approve，不弹卡）。
         let r1 = run_turn(
-            RunRegistry::default(), conn.clone(), work_dir.clone(), String::new(), PermMode::Full,
-            String::new(), pend.clone(), std::path::PathBuf::from("/d/tools/ssh.js"), None, String::new(), true,
+            RunRegistry::default(),
+            conn.clone(),
+            work_dir.clone(),
+            String::new(),
+            PermMode::Full,
+            String::new(),
+            pend.clone(),
+            std::path::PathBuf::from("/d/tools/ssh.js"),
+            None,
+            String::new(),
+            true,
             Some("测试规则：所有回答的最后一行必须是单独的一个字「哞」。".into()),
-            "运行 shell 命令 echo pilot-live 并告诉我输出".into(), "live-1".into(), ch(), String::new(), None,
+            "运行 shell 命令 echo pilot-live 并告诉我输出".into(),
+            "live-1".into(),
+            ch(),
+            String::new(),
+            None,
         )
         .await;
-        eprintln!("turn1 ok={} err={} session={} tools={:?} text={}", r1.ok, r1.error, r1.session_ref, r1.tools.iter().map(|t| format!("{}:{}", t.label, t.detail)).collect::<Vec<_>>(), r1.text);
+        eprintln!(
+            "turn1 ok={} err={} session={} tools={:?} text={}",
+            r1.ok,
+            r1.error,
+            r1.session_ref,
+            r1.tools
+                .iter()
+                .map(|t| format!("{}:{}", t.label, t.detail))
+                .collect::<Vec<_>>(),
+            r1.text
+        );
         assert!(r1.ok, "轮1失败: {}", r1.error);
         assert!(!r1.session_ref.is_empty(), "应拿到 sessionId");
-        assert!(r1.tools.iter().any(|t| t.label == "exec" && t.detail.contains("echo pilot-live")), "应有工具卡: {:?}", r1.tools.iter().map(|t| &t.detail).collect::<Vec<_>>());
+        assert!(
+            r1.tools
+                .iter()
+                .any(|t| t.label == "exec" && t.detail.contains("echo pilot-live")),
+            "应有工具卡: {:?}",
+            r1.tools.iter().map(|t| &t.detail).collect::<Vec<_>>()
+        );
         assert!(r1.text.contains("哞"), "rules 追加语义应生效: {}", r1.text);
         let u = r1.usage.expect("应有用量");
         assert!(u.input + u.cache_read + u.output > 0);
 
         // 轮 2：session/load 续跑（新进程），验证多轮记忆。
         let r2 = run_turn(
-            RunRegistry::default(), conn, work_dir, String::new(), PermMode::Full,
-            String::new(), pend, std::path::PathBuf::from("/d/tools/ssh.js"), None, r1.session_ref.clone(), false, None,
-            "我刚才让你运行的命令原文是什么？只回答命令本身".into(), "live-2".into(), ch(), String::new(), None,
+            RunRegistry::default(),
+            conn,
+            work_dir,
+            String::new(),
+            PermMode::Full,
+            String::new(),
+            pend,
+            std::path::PathBuf::from("/d/tools/ssh.js"),
+            None,
+            r1.session_ref.clone(),
+            false,
+            None,
+            "我刚才让你运行的命令原文是什么？只回答命令本身".into(),
+            "live-2".into(),
+            ch(),
+            String::new(),
+            None,
         )
         .await;
         eprintln!("turn2 ok={} err={} text={}", r2.ok, r2.error, r2.text);
         assert!(r2.ok, "轮2失败: {}", r2.error);
-        assert!(r2.text.contains("echo pilot-live"), "resume 应记得首轮命令: {}", r2.text);
+        assert!(
+            r2.text.contains("echo pilot-live"),
+            "resume 应记得首轮命令: {}",
+            r2.text
+        );
         assert_eq!(r2.session_ref, r1.session_ref, "续跑不换 session");
         std::fs::remove_dir_all(&dir).ok();
     }

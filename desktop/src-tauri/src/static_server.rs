@@ -33,7 +33,13 @@ pub fn needs_wrangler(dir: &Path) -> bool {
 }
 
 fn mime(p: &Path) -> &'static str {
-    match p.extension().and_then(|x| x.to_str()).unwrap_or("").to_ascii_lowercase().as_str() {
+    match p
+        .extension()
+        .and_then(|x| x.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase()
+        .as_str()
+    {
         "html" | "htm" => "text/html; charset=utf-8",
         "css" => "text/css; charset=utf-8",
         "js" | "mjs" => "text/javascript; charset=utf-8",
@@ -153,7 +159,13 @@ async fn handle(root: &Path, sock: &mut TcpStream) -> std::io::Result<()> {
     let method = parts.next().unwrap_or("");
     let target = parts.next().unwrap_or("/");
     if method != "GET" && method != "HEAD" {
-        return write_resp(sock, "405 Method Not Allowed", "text/plain; charset=utf-8", b"405").await;
+        return write_resp(
+            sock,
+            "405 Method Not Allowed",
+            "text/plain; charset=utf-8",
+            b"405",
+        )
+        .await;
     }
     match resolve(root, target) {
         Some(f) => {
@@ -171,7 +183,13 @@ async fn handle(root: &Path, sock: &mut TcpStream) -> std::io::Result<()> {
                 let body = tokio::fs::read(&custom).await.unwrap_or_default();
                 return write_resp(sock, "404 Not Found", "text/html; charset=utf-8", &body).await;
             }
-            write_resp(sock, "404 Not Found", "text/plain; charset=utf-8", b"404 Not Found").await
+            write_resp(
+                sock,
+                "404 Not Found",
+                "text/plain; charset=utf-8",
+                b"404 Not Found",
+            )
+            .await
         }
     }
 }
@@ -182,7 +200,9 @@ async fn handle(root: &Path, sock: &mut TcpStream) -> std::io::Result<()> {
 /// 而不是等 25 秒超时再说（wrangler 那条路就是这么坑的）。
 pub async fn serve(root: PathBuf, listener: TcpListener) {
     loop {
-        let Ok((mut sock, _)) = listener.accept().await else { continue };
+        let Ok((mut sock, _)) = listener.accept().await else {
+            continue;
+        };
         let root = root.clone();
         // tokio::spawn 而不是 tauri::async_runtime::spawn：这里本来就在 tokio 任务里
         // （Tauri 的异步运行时就是 tokio），用它才能在 #[tokio::test] 里原样跑起来。
@@ -202,14 +222,20 @@ mod tests {
         std::fs::create_dir_all(&base).unwrap();
         std::fs::write(base.join("index.html"), "<h1>hi</h1>").unwrap();
         // 纯静态站：不该逼人装 wrangler
-        assert!(!needs_wrangler(&base), "纯静态站不需要 wrangler —— 这正是用户问的那个点");
+        assert!(
+            !needs_wrangler(&base),
+            "纯静态站不需要 wrangler —— 这正是用户问的那个点"
+        );
 
         for f in ["_headers", "_redirects", "_worker.js", "wrangler.toml"] {
             let d = base.join(f.replace('.', "-"));
             std::fs::create_dir_all(&d).unwrap();
             std::fs::write(d.join("index.html"), "x").unwrap();
             std::fs::write(d.join(f), "x").unwrap();
-            assert!(needs_wrangler(&d), "{f}: 静态服务器给不出正确结果，必须交给 wrangler");
+            assert!(
+                needs_wrangler(&d),
+                "{f}: 静态服务器给不出正确结果，必须交给 wrangler"
+            );
         }
         // functions/ 是目录
         let d = base.join("fn-dir");
@@ -231,15 +257,30 @@ mod tests {
 
         assert!(resolve(&root, "/").is_some(), "/ → index.html");
         assert!(resolve(&root, "/index.html").is_some());
-        assert!(resolve(&root, "/sub/").is_some(), "目录 → 里面的 index.html");
-        assert!(resolve(&root, "/index.html?v=1#x").is_some(), "查询串和锚点要剥掉");
-        assert!(resolve(&root, "/a%20b.css").is_some(), "%20 要还原（用户存的模板文件名什么样都有）");
+        assert!(
+            resolve(&root, "/sub/").is_some(),
+            "目录 → 里面的 index.html"
+        );
+        assert!(
+            resolve(&root, "/index.html?v=1#x").is_some(),
+            "查询串和锚点要剥掉"
+        );
+        assert!(
+            resolve(&root, "/a%20b.css").is_some(),
+            "%20 要还原（用户存的模板文件名什么样都有）"
+        );
         assert!(resolve(&root, "/nope.html").is_none());
 
         // ★ 路径穿越
         assert!(resolve(&root, "/../secret.txt").is_none(), "..");
-        assert!(resolve(&root, "/sub/../../secret.txt").is_none(), "绕一圈的 ..");
-        assert!(resolve(&root, "/%2e%2e/secret.txt").is_none(), "编码过的 .. 也得挡（先解码再判段）");
+        assert!(
+            resolve(&root, "/sub/../../secret.txt").is_none(),
+            "绕一圈的 .."
+        );
+        assert!(
+            resolve(&root, "/%2e%2e/secret.txt").is_none(),
+            "编码过的 .. 也得挡（先解码再判段）"
+        );
         assert!(resolve(&root, "/..%2fsecret.txt").is_none(), "编码的分隔符");
 
         std::fs::remove_dir_all(&base).ok();
@@ -263,25 +304,49 @@ mod tests {
 
         async fn get(port: u16, path: &str) -> String {
             let mut s = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
-            s.write_all(format!("GET {path} HTTP/1.1\r\nHost: x\r\n\r\n").as_bytes()).await.unwrap();
+            s.write_all(format!("GET {path} HTTP/1.1\r\nHost: x\r\n\r\n").as_bytes())
+                .await
+                .unwrap();
             let mut out = Vec::new();
             s.read_to_end(&mut out).await.unwrap();
             String::from_utf8_lossy(&out).into_owned()
         }
 
         let r = get(port, "/").await;
-        assert!(r.starts_with("HTTP/1.1 200 OK"), "根路径该给 index.html: {}", &r[..r.len().min(60)]);
+        assert!(
+            r.starts_with("HTTP/1.1 200 OK"),
+            "根路径该给 index.html: {}",
+            &r[..r.len().min(60)]
+        );
         assert!(r.contains("<h1>模板首页</h1>"), "内容要对");
-        assert!(r.contains("text/html; charset=utf-8"), "中文要靠这个 charset 才不乱码");
-        assert!(r.contains("Cache-Control: no-store"), "预览必须立刻反映改动，不许缓存");
+        assert!(
+            r.contains("text/html; charset=utf-8"),
+            "中文要靠这个 charset 才不乱码"
+        );
+        assert!(
+            r.contains("Cache-Control: no-store"),
+            "预览必须立刻反映改动，不许缓存"
+        );
 
-        assert!(get(port, "/a.css").await.contains("text/css"), "CSS 的 content-type");
-        assert!(get(port, "/sub/").await.contains("sub"), "子目录 → 里面的 index.html");
-        assert!(get(port, "/nope").await.starts_with("HTTP/1.1 404"), "不存在 → 404");
+        assert!(
+            get(port, "/a.css").await.contains("text/css"),
+            "CSS 的 content-type"
+        );
+        assert!(
+            get(port, "/sub/").await.contains("sub"),
+            "子目录 → 里面的 index.html"
+        );
+        assert!(
+            get(port, "/nope").await.starts_with("HTTP/1.1 404"),
+            "不存在 → 404"
+        );
 
         // ★ 路径穿越：真发请求，不只是单测 resolve()
         let esc = get(port, "/../e2e-secret.txt").await;
-        assert!(esc.starts_with("HTTP/1.1 404"), "穿越必须挡死，绝不能把 root 外的文件吐出去");
+        assert!(
+            esc.starts_with("HTTP/1.1 404"),
+            "穿越必须挡死，绝不能把 root 外的文件吐出去"
+        );
         assert!(!esc.contains("不能被读到"), "内容一个字都不许漏");
 
         task.abort();
@@ -291,7 +356,11 @@ mod tests {
     #[test]
     fn mime_covers_what_templates_actually_use() {
         assert_eq!(mime(Path::new("a/index.html")), "text/html; charset=utf-8");
-        assert_eq!(mime(Path::new("a/x.SVG")), "image/svg+xml", "扩展名大小写不敏感");
+        assert_eq!(
+            mime(Path::new("a/x.SVG")),
+            "image/svg+xml",
+            "扩展名大小写不敏感"
+        );
         assert_eq!(mime(Path::new("a/x.css")), "text/css; charset=utf-8");
         assert_eq!(mime(Path::new("a/x.woff2")), "font/woff2");
         assert_eq!(mime(Path::new("a/unknown")), "application/octet-stream");

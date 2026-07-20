@@ -56,49 +56,171 @@ macro_rules! page {
     };
 }
 pub const BUILTIN: &[Builtin] = &[
-    Builtin { slug: "minimal", name: "极简留白", desc: "纯白底 · 大留白 · 一个低饱和强调色", category: "落地页",
-        pages: &[page!("minimal", "index.html")] },
-    Builtin { slug: "editorial", name: "杂志编辑", desc: "米白底 · 衬线大标题 · 窄栏长文", category: "落地页",
-        pages: &[page!("editorial", "index.html")] },
-    Builtin { slug: "dark-tech", name: "深色科技", desc: "近黑底 · 霓虹点缀 · 等宽字点缀", category: "落地页",
-        pages: &[page!("dark-tech", "index.html")] },
-    Builtin { slug: "warm-craft", name: "暖色手作", desc: "奶油底 · 陶土强调 · 圆润温暖", category: "落地页",
-        pages: &[page!("warm-craft", "index.html")] },
-    Builtin { slug: "saas", name: "企业 SaaS", desc: "浅底 · 卡片层次 · 标准价格分区", category: "落地页",
-        pages: &[page!("saas", "index.html")] },
-    Builtin { slug: "blog", name: "博客", desc: "冷灰纸底 · 梅子紫 · 文章列表 + 长文排版", category: "内容",
-        pages: &[page!("blog", "index.html"), page!("blog", "article.html")] },
-    Builtin { slug: "portfolio", name: "作品集", desc: "画廊灰墙 · 苔橄榄 · 作品网格 + 作品详情", category: "作品集",
-        pages: &[page!("portfolio", "index.html"), page!("portfolio", "work.html")] },
-    Builtin { slug: "shop", name: "电商店铺", desc: "琥珀金 · 商品列表 / 详情 / 购物车", category: "电商",
-        pages: &[page!("shop", "index.html"), page!("shop", "product.html"), page!("shop", "cart.html")] },
-    Builtin { slug: "corp", name: "企业官网", desc: "冷钢灰 · 石油蓝 · 首页 / 关于 / 联系", category: "企业",
-        pages: &[page!("corp", "index.html"), page!("corp", "about.html"), page!("corp", "contact.html")] },
-    Builtin { slug: "event", name: "活动报名", desc: "时间地点 · 日程表 · 讲者与票档", category: "活动",
-        pages: &[page!("event", "index.html")] },
+    Builtin {
+        slug: "minimal",
+        name: "极简留白",
+        desc: "纯白底 · 大留白 · 一个低饱和强调色",
+        category: "落地页",
+        pages: &[page!("minimal", "index.html")],
+    },
+    Builtin {
+        slug: "editorial",
+        name: "杂志编辑",
+        desc: "米白底 · 衬线大标题 · 窄栏长文",
+        category: "落地页",
+        pages: &[page!("editorial", "index.html")],
+    },
+    Builtin {
+        slug: "dark-tech",
+        name: "深色科技",
+        desc: "近黑底 · 霓虹点缀 · 等宽字点缀",
+        category: "落地页",
+        pages: &[page!("dark-tech", "index.html")],
+    },
+    Builtin {
+        slug: "warm-craft",
+        name: "暖色手作",
+        desc: "奶油底 · 陶土强调 · 圆润温暖",
+        category: "落地页",
+        pages: &[page!("warm-craft", "index.html")],
+    },
+    Builtin {
+        slug: "saas",
+        name: "企业 SaaS",
+        desc: "浅底 · 卡片层次 · 标准价格分区",
+        category: "落地页",
+        pages: &[page!("saas", "index.html")],
+    },
+    Builtin {
+        slug: "blog",
+        name: "博客",
+        desc: "冷灰纸底 · 梅子紫 · 文章列表 + 长文排版",
+        category: "内容",
+        pages: &[page!("blog", "index.html"), page!("blog", "article.html")],
+    },
+    Builtin {
+        slug: "portfolio",
+        name: "作品集",
+        desc: "画廊灰墙 · 苔橄榄 · 作品网格 + 作品详情",
+        category: "作品集",
+        pages: &[
+            page!("portfolio", "index.html"),
+            page!("portfolio", "work.html"),
+        ],
+    },
+    Builtin {
+        slug: "shop",
+        name: "电商店铺",
+        desc: "琥珀金 · 商品列表 / 详情 / 购物车",
+        category: "电商",
+        pages: &[
+            page!("shop", "index.html"),
+            page!("shop", "product.html"),
+            page!("shop", "cart.html"),
+        ],
+    },
+    Builtin {
+        slug: "corp",
+        name: "企业官网",
+        desc: "冷钢灰 · 石油蓝 · 首页 / 关于 / 联系",
+        category: "企业",
+        pages: &[
+            page!("corp", "index.html"),
+            page!("corp", "about.html"),
+            page!("corp", "contact.html"),
+        ],
+    },
+    Builtin {
+        slug: "event",
+        name: "活动报名",
+        desc: "时间地点 · 日程表 · 讲者与票档",
+        category: "活动",
+        pages: &[page!("event", "index.html")],
+    },
     // 外贸工厂：**正文英文**——受众是海外采购商，不是国内客户。这是它和「企业官网」那档的分水岭。
     // 主心骨是「优势」和「产品目录」，不是普通企业官网的公司简介。
-    Builtin { slug: "factory", name: "外贸工厂", desc: "深松绿 · 英文站 · 优势/产品/询盘 · OEM 出口制造商", category: "外贸",
-        pages: &[page!("factory", "index.html"), page!("factory", "products.html"),
-                 page!("factory", "product.html"), page!("factory", "contact.html")] },
-    Builtin { slug: "boutique", name: "东方精品店", desc: "墨黑朱漆 · 商品详情 / 购物袋 · 东方器物精品店", category: "电商",
-        pages: &[page!("boutique", "index.html"), page!("boutique", "product.html"),
-                 page!("boutique", "cart.html")] },
-    Builtin { slug: "darkroom", name: "暗房摄影", desc: "近黑底 · 胶片作品网格 + 暗房影集", category: "作品集",
-        pages: &[page!("darkroom", "index.html"), page!("darkroom", "work.html")] },
-    Builtin { slug: "fest", name: "音乐节现场", desc: "高饱和撞色 · 阵容 / 日程 / 票档 · 单页活动站", category: "活动",
-        pages: &[page!("fest", "index.html")] },
-    Builtin { slug: "ink", name: "手帖随笔", desc: "纸张留白 · 随笔列表 + 长文阅读", category: "内容",
-        pages: &[page!("ink", "index.html"), page!("ink", "article.html")] },
-    Builtin { slug: "machinery", name: "工业机械", desc: "钢蓝灰 · 英文产品目录 / 参数详情 / RFQ · 出口设备站", category: "外贸",
-        pages: &[page!("machinery", "index.html"), page!("machinery", "products.html"),
-                 page!("machinery", "product.html"), page!("machinery", "contact.html")] },
-    Builtin { slug: "warm-corp", name: "暖色企业", desc: "暖沙底 · 品牌服务 / 关于 / 联系 · 人文咨询公司", category: "企业",
-        pages: &[page!("warm-corp", "index.html"), page!("warm-corp", "about.html"),
-                 page!("warm-corp", "contact.html")] },
-    Builtin { slug: "pilot-launch-lab", name: "Pilot Launch Lab", desc: "石墨黑 · AI 建站与内容运营产品官网 · 工作流 / 能力 / 案例 / 托管", category: "落地页",
-        pages: &[page!("pilot-launch-lab", "index.html"), page!("pilot-launch-lab", "capabilities.html"),
-                 page!("pilot-launch-lab", "stories.html"), page!("pilot-launch-lab", "journal.html")] },
+    Builtin {
+        slug: "factory",
+        name: "外贸工厂",
+        desc: "深松绿 · 英文站 · 优势/产品/询盘 · OEM 出口制造商",
+        category: "外贸",
+        pages: &[
+            page!("factory", "index.html"),
+            page!("factory", "products.html"),
+            page!("factory", "product.html"),
+            page!("factory", "contact.html"),
+        ],
+    },
+    Builtin {
+        slug: "boutique",
+        name: "东方精品店",
+        desc: "墨黑朱漆 · 商品详情 / 购物袋 · 东方器物精品店",
+        category: "电商",
+        pages: &[
+            page!("boutique", "index.html"),
+            page!("boutique", "product.html"),
+            page!("boutique", "cart.html"),
+        ],
+    },
+    Builtin {
+        slug: "darkroom",
+        name: "暗房摄影",
+        desc: "近黑底 · 胶片作品网格 + 暗房影集",
+        category: "作品集",
+        pages: &[
+            page!("darkroom", "index.html"),
+            page!("darkroom", "work.html"),
+        ],
+    },
+    Builtin {
+        slug: "fest",
+        name: "音乐节现场",
+        desc: "高饱和撞色 · 阵容 / 日程 / 票档 · 单页活动站",
+        category: "活动",
+        pages: &[page!("fest", "index.html")],
+    },
+    Builtin {
+        slug: "ink",
+        name: "手帖随笔",
+        desc: "纸张留白 · 随笔列表 + 长文阅读",
+        category: "内容",
+        pages: &[page!("ink", "index.html"), page!("ink", "article.html")],
+    },
+    Builtin {
+        slug: "machinery",
+        name: "工业机械",
+        desc: "钢蓝灰 · 英文产品目录 / 参数详情 / RFQ · 出口设备站",
+        category: "外贸",
+        pages: &[
+            page!("machinery", "index.html"),
+            page!("machinery", "products.html"),
+            page!("machinery", "product.html"),
+            page!("machinery", "contact.html"),
+        ],
+    },
+    Builtin {
+        slug: "warm-corp",
+        name: "暖色企业",
+        desc: "暖沙底 · 品牌服务 / 关于 / 联系 · 人文咨询公司",
+        category: "企业",
+        pages: &[
+            page!("warm-corp", "index.html"),
+            page!("warm-corp", "about.html"),
+            page!("warm-corp", "contact.html"),
+        ],
+    },
+    Builtin {
+        slug: "pilot-launch-lab",
+        name: "Pilot Launch Lab",
+        desc: "石墨黑 · AI 建站与内容运营产品官网 · 工作流 / 能力 / 案例 / 托管",
+        category: "落地页",
+        pages: &[
+            page!("pilot-launch-lab", "index.html"),
+            page!("pilot-launch-lab", "capabilities.html"),
+            page!("pilot-launch-lab", "stories.html"),
+            page!("pilot-launch-lab", "journal.html"),
+        ],
+    },
 ];
 
 pub fn is_builtin(slug: &str) -> bool {
@@ -135,7 +257,9 @@ pub fn ensure_builtin(data_dir: &Path) -> std::io::Result<()> {
 /// 安全边界：**只删清单里写着 `builtin: true` 的**。`save()` 从来不写这个键，所以用户自己
 /// 沉淀的模板一个都碰不到。
 fn prune_stale_builtin(templates_dir: &Path) {
-    let Ok(rd) = fs::read_dir(templates_dir) else { return };
+    let Ok(rd) = fs::read_dir(templates_dir) else {
+        return;
+    };
     for e in rd.flatten() {
         let p = e.path();
         if !p.is_dir() {
@@ -185,7 +309,13 @@ fn slugify(s: &str) -> String {
     let slug: String = s
         .trim()
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
         .collect();
     slug.trim_matches('-').to_string()
 }
@@ -193,7 +323,9 @@ fn slugify(s: &str) -> String {
 fn safe_slug(slug: &str) -> bool {
     !slug.is_empty()
         && slug.len() <= 100
-        && slug.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        && slug
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
 /// 目录里是否有可拷贝内容（顶层存在非跳过项）。空项目/只有 node_modules 时为 false。
@@ -277,7 +409,9 @@ fn count_pages(dir: &Path) -> usize {
 }
 
 pub fn list(templates_dir: &Path) -> Vec<Template> {
-    let Ok(rd) = fs::read_dir(templates_dir) else { return vec![] };
+    let Ok(rd) = fs::read_dir(templates_dir) else {
+        return vec![];
+    };
     let mut v: Vec<Template> = rd
         .flatten()
         .filter(|e| e.path().is_dir())
@@ -289,16 +423,33 @@ pub fn list(templates_dir: &Path) -> Vec<Template> {
             let (name, desc, category, created) = mf
                 .map(|j| {
                     (
-                        j.get("name").and_then(|x| x.as_str()).unwrap_or(&slug).to_string(),
-                        j.get("desc").and_then(|x| x.as_str()).unwrap_or("").to_string(),
-                        j.get("category").and_then(|x| x.as_str()).unwrap_or("").to_string(),
+                        j.get("name")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or(&slug)
+                            .to_string(),
+                        j.get("desc")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        j.get("category")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("")
+                            .to_string(),
                         j.get("created_at").and_then(|x| x.as_u64()).unwrap_or(0),
                     )
                 })
                 .unwrap_or((slug.clone(), String::new(), String::new(), 0));
             let builtin = is_builtin(&slug);
             let pages = count_pages(&e.path());
-            Template { slug, name, desc, category, pages, created_at: created, builtin }
+            Template {
+                slug,
+                name,
+                desc,
+                category,
+                pages,
+                created_at: created,
+                builtin,
+            }
         })
         .collect();
     // 用户自己沉淀的在前（created_at 新→旧），随附模板 created_at=0 自然沉底。
@@ -328,7 +479,11 @@ pub fn delete(templates_dir: &Path, slug: &str) -> Result<(), String> {
 }
 
 /// 把模板拷进目标项目目录（引用模板建站）。
-pub fn instantiate(templates_dir: &Path, slug: &str, dest_project_dir: &Path) -> Result<(), String> {
+pub fn instantiate(
+    templates_dir: &Path,
+    slug: &str,
+    dest_project_dir: &Path,
+) -> Result<(), String> {
     if !safe_slug(slug) {
         return Err("非法模板名".into());
     }
@@ -338,7 +493,9 @@ pub fn instantiate(templates_dir: &Path, slug: &str, dest_project_dir: &Path) ->
     }
     // 目标项目已存在且非空 → 拒绝，别覆盖用户已有的项目。
     if dest_project_dir.is_dir()
-        && std::fs::read_dir(dest_project_dir).map(|mut r| r.next().is_some()).unwrap_or(false)
+        && std::fs::read_dir(dest_project_dir)
+            .map(|mut r| r.next().is_some())
+            .unwrap_or(false)
     {
         return Err("这个项目名已存在且非空，换个名字（不会覆盖你已有的项目）".into());
     }
@@ -363,7 +520,11 @@ mod tests {
             return None; // 离令牌太远，那个 # 不是它的值
         }
         let hex = rest.get(h + 1..h + 7)?;
-        let c = |a, b| u8::from_str_radix(hex.get(a..b)?, 16).ok().map(|v| v as f64 / 255.0);
+        let c = |a, b| {
+            u8::from_str_radix(hex.get(a..b)?, 16)
+                .ok()
+                .map(|v| v as f64 / 255.0)
+        };
         Some((c(0, 2)?, c(2, 4)?, c(4, 6)?))
     }
 
@@ -375,7 +536,11 @@ mod tests {
         if d < 1e-9 {
             return Some((0.0, 0.0)); // 纯灰：不占色相
         }
-        let s = if l > 0.5 { d / (2.0 - max - min) } else { d / (max + min) };
+        let s = if l > 0.5 {
+            d / (2.0 - max - min)
+        } else {
+            d / (max + min)
+        };
         let h = if max == r {
             ((g - b) / d).rem_euclid(6.0)
         } else if max == g {
@@ -388,8 +553,16 @@ mod tests {
 
     /// 底色是深的吗（WCAG 相对亮度 < 0.25）。深底与浅底的模板天然不会看混。
     fn bg_is_dark(html: &str) -> bool {
-        let Some((r, g, b)) = token_rgb(html, "--bg") else { return false };
-        let f = |v: f64| if v <= 0.03928 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) };
+        let Some((r, g, b)) = token_rgb(html, "--bg") else {
+            return false;
+        };
+        let f = |v: f64| {
+            if v <= 0.03928 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            }
+        };
         0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b) < 0.25
     }
 
@@ -410,22 +583,45 @@ mod tests {
         fs::create_dir_all(&old).unwrap();
         fs::write(old.join("index.html"), "<h1>老的随附模板</h1>").unwrap();
         // r#""# 而不是 br#""#：字节串字面量里不许有非 ASCII（中文会直接编译不过）
-        fs::write(old.join("pilot-template.json"), r#"{"name":"博客首页","builtin":true}"#).unwrap();
+        fs::write(
+            old.join("pilot-template.json"),
+            r#"{"name":"博客首页","builtin":true}"#,
+        )
+        .unwrap();
 
         // 用户自己沉淀的（save() 从不写 builtin 键）—— 名字同样不在 BUILTIN 里
         let mine = tdir.join("my-shop");
         fs::create_dir_all(&mine).unwrap();
         fs::write(mine.join("index.html"), "<h1>我自己的站</h1>").unwrap();
-        fs::write(mine.join("pilot-template.json"), r#"{"name":"我的店","created_at":123}"#).unwrap();
+        fs::write(
+            mine.join("pilot-template.json"),
+            r#"{"name":"我的店","created_at":123}"#,
+        )
+        .unwrap();
 
         ensure_builtin(&base).unwrap();
 
-        assert!(!old.exists(), "下架的随附模板该被清掉，否则会冒充成用户模板赖在库里");
-        assert!(mine.join("index.html").exists(), "★ 用户自己存的模板一个字节都不许碰");
+        assert!(
+            !old.exists(),
+            "下架的随附模板该被清掉，否则会冒充成用户模板赖在库里"
+        );
+        assert!(
+            mine.join("index.html").exists(),
+            "★ 用户自己存的模板一个字节都不许碰"
+        );
         let ls = list(&tdir);
-        assert!(ls.iter().any(|t| t.slug == "my-shop" && !t.builtin), "用户模板还得在，且不是 builtin");
-        assert!(!ls.iter().any(|t| t.slug == "blog-index"), "老档不该还在列表里");
-        assert!(ls.iter().any(|t| t.slug == "blog" && t.pages == 2), "新的合并档该在，且是两页");
+        assert!(
+            ls.iter().any(|t| t.slug == "my-shop" && !t.builtin),
+            "用户模板还得在，且不是 builtin"
+        );
+        assert!(
+            !ls.iter().any(|t| t.slug == "blog-index"),
+            "老档不该还在列表里"
+        );
+        assert!(
+            ls.iter().any(|t| t.slug == "blog" && t.pages == 2),
+            "新的合并档该在，且是两页"
+        );
 
         fs::remove_dir_all(&base).ok();
     }
@@ -495,7 +691,11 @@ mod tests {
         assert!(!tdir.join("coffee-landing").join(".env").exists());
         assert!(!tdir.join("coffee-landing").join("node_modules").exists());
         assert!(tdir.join("coffee-landing").join("index.html").exists());
-        assert!(tdir.join("coffee-landing").join("src").join("app.js").exists());
+        assert!(tdir
+            .join("coffee-landing")
+            .join("src")
+            .join("app.js")
+            .exists());
 
         let ls = list(&tdir);
         assert_eq!(ls.len(), 1);
@@ -523,29 +723,49 @@ mod tests {
 
         let ls = list(&tdir);
         assert_eq!(ls.len(), BUILTIN.len(), "每一档都该种进去");
-        assert!(ls.iter().all(|t| t.builtin), "随附模板必须标 builtin，前端据此挂标/藏删除键");
+        assert!(
+            ls.iter().all(|t| t.builtin),
+            "随附模板必须标 builtin，前端据此挂标/藏删除键"
+        );
         // 分类是前端筛选的唯一依据：漏一个，它就掉进「其他」那档里，看着像 bug
-        assert!(ls.iter().all(|t| !t.category.is_empty()), "随附模板都得有分类: {ls:?}");
+        assert!(
+            ls.iter().all(|t| !t.category.is_empty()),
+            "随附模板都得有分类: {ls:?}"
+        );
         // 光有风格档（全是落地页）等于没分类可筛
         assert!(
-            ls.iter().map(|t| t.category.as_str()).collect::<std::collections::HashSet<_>>().len() >= 3,
+            ls.iter()
+                .map(|t| t.category.as_str())
+                .collect::<std::collections::HashSet<_>>()
+                .len()
+                >= 3,
             "分类要真的铺开页型，不然筛选没意义"
         );
 
         // **每一页**都得是能直接渲染的自包含单文件（缩略图靠读 index.html 原文塞 srcdoc）
         for b in BUILTIN {
-            assert_eq!(b.pages[0].0, "index.html", "{}: 第一页必须是 index.html（缩略图与站点入口都认它）", b.slug);
+            assert_eq!(
+                b.pages[0].0, "index.html",
+                "{}: 第一页必须是 index.html（缩略图与站点入口都认它）",
+                b.slug
+            );
             for (file, _) in b.pages {
                 let html = fs::read_to_string(tdir.join(b.slug).join(file)).unwrap_or_default();
                 let at = format!("{}/{file}", b.slug);
-                assert!(html.contains("<style"), "{at}: CSS 必须内联，否则缩略图是白的");
+                assert!(
+                    html.contains("<style"),
+                    "{at}: CSS 必须内联，否则缩略图是白的"
+                );
                 assert!(html.contains("--accent"), "{at}: 必须有设计变量");
                 // 外链资源 = 缩略图 404 + 离线打不开。srcdoc 里相对路径会解析到 app 的 origin。
                 assert!(
                     !html.contains("<link rel=\"stylesheet\"") && !html.contains("<script src="),
                     "{at}: 不许外链 CSS/JS"
                 );
-                assert!(!html.contains("//fonts.googleapis.com"), "{at}: 不许外链字体");
+                assert!(
+                    !html.contains("//fonts.googleapis.com"),
+                    "{at}: 不许外链字体"
+                );
                 assert!(!html.contains("<img src=\"http"), "{at}: 不许外链图片");
             }
         }
@@ -560,7 +780,11 @@ mod tests {
         assert_eq!(by("darkroom").pages, 2, "暗房摄影 = 首页 + 作品详情");
         assert_eq!(by("fest").pages, 1, "音乐节现场 = 单页活动站");
         assert_eq!(by("ink").pages, 2, "手帖随笔 = 首页 + 长文");
-        assert_eq!(by("machinery").pages, 4, "工业机械 = 首页 + 目录 + 产品 + 询盘");
+        assert_eq!(
+            by("machinery").pages,
+            4,
+            "工业机械 = 首页 + 目录 + 产品 + 询盘"
+        );
         assert_eq!(by("warm-corp").pages, 3, "暖色企业 = 首页 + 关于 + 联系");
 
         for (slug, category) in [
@@ -598,7 +822,11 @@ mod tests {
 
         // 预览窗标题用的是显示名，不是 slug
         assert_eq!(display_name(&tdir, "saas"), "企业 SaaS");
-        assert_eq!(display_name(&tdir, "不存在"), "不存在", "读不到就退回 slug，别让标题弄挂预览");
+        assert_eq!(
+            display_name(&tdir, "不存在"),
+            "不存在",
+            "读不到就退回 slug，别让标题弄挂预览"
+        );
 
         // 删不掉
         assert!(delete(&tdir, "minimal").is_err(), "随附模板不该能删");
@@ -627,7 +855,10 @@ mod tests {
             for (file, _) in builtin.pages {
                 assert!(dest.join(file).is_file(), "{slug} 创建后缺少 {file}");
             }
-            assert!(!dest.join("_probe.html").exists(), "{slug} 不应夹带探针文件");
+            assert!(
+                !dest.join("_probe.html").exists(),
+                "{slug} 不应夹带探针文件"
+            );
         }
 
         // 覆写幂等：再种一次不炸、数量不变

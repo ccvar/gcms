@@ -27,13 +27,19 @@ pub fn effective_reset(reset: i64, now: u64) -> u64 {
         return now + 30 * 60;
     }
     let r = reset as u64;
-    if r <= now { now + 30 * 60 } else { r }
+    if r <= now {
+        now + 30 * 60
+    } else {
+        r
+    }
 }
 
 /// 顺延后的 next_run：reset_ts 加 ~120s 抖动（按任务 id 稳定散列到 [60,180)），
 /// 多个任务不在恢复点整齐扎堆重试。
 pub fn defer_next_run(reset_ts: u64, task_id: &str) -> u64 {
-    let hash: u64 = task_id.bytes().fold(1469598103934665603u64, |h, b| (h ^ b as u64).wrapping_mul(1099511628211));
+    let hash: u64 = task_id.bytes().fold(1469598103934665603u64, |h, b| {
+        (h ^ b as u64).wrapping_mul(1099511628211)
+    });
     reset_ts + 60 + hash % 120
 }
 
@@ -49,7 +55,9 @@ pub struct LimitStore {
 
 impl LimitStore {
     pub fn new(data_dir: &Path) -> Self {
-        Self { file: data_dir.join("limits.json") }
+        Self {
+            file: data_dir.join("limits.json"),
+        }
     }
 
     fn read(&self) -> HashMap<String, LimitEntry> {
@@ -97,7 +105,9 @@ impl LimitStore {
     pub fn claim_notify(&self, brain: &str, now: u64) -> bool {
         let _g = LOCK.lock().unwrap();
         let mut map = self.read();
-        let Some(entry) = map.get_mut(brain) else { return false };
+        let Some(entry) = map.get_mut(brain) else {
+            return false;
+        };
         if now >= entry.reset_ts || entry.notified {
             return false;
         }
@@ -114,9 +124,17 @@ mod tests {
     /// 保守登记：拿不到时间/过去的时间 → now+30 分钟；正常时间原样。
     #[test]
     fn effective_reset_fallbacks() {
-        assert_eq!(effective_reset(0, 1000), 1000 + 1800, "reset=0 保守 30 分钟");
+        assert_eq!(
+            effective_reset(0, 1000),
+            1000 + 1800,
+            "reset=0 保守 30 分钟"
+        );
         assert_eq!(effective_reset(-5, 1000), 1000 + 1800);
-        assert_eq!(effective_reset(900, 1000), 1000 + 1800, "过去的时间同样保守兜底");
+        assert_eq!(
+            effective_reset(900, 1000),
+            1000 + 1800,
+            "过去的时间同样保守兜底"
+        );
         assert_eq!(effective_reset(5000, 1000), 5000);
     }
 
@@ -134,7 +152,10 @@ mod tests {
     /// 限额期判定。
     #[test]
     fn limited_window() {
-        let e = LimitEntry { reset_ts: 2000, notified: false };
+        let e = LimitEntry {
+            reset_ts: 2000,
+            notified: false,
+        };
         assert!(is_limited(Some(&e), 1999));
         assert!(!is_limited(Some(&e), 2000), "到点即恢复");
         assert!(!is_limited(None, 0));
@@ -158,7 +179,11 @@ mod tests {
         assert!(st.claim_notify("claude", 200));
         assert!(!st.claim_notify("claude", 300), "同窗口只通知一次");
         // 只延后不提前
-        assert_eq!(st.register("claude", 3000, 100), 5000, "更早的 reset 不回退");
+        assert_eq!(
+            st.register("claude", 3000, 100),
+            5000,
+            "更早的 reset 不回退"
+        );
         assert!(!st.claim_notify("claude", 300), "同窗口微调不重置通知");
         // 新窗口（明显更晚）：reset 更新且通知复位
         assert_eq!(st.register("claude", 9000, 6000), 9000);
