@@ -1321,6 +1321,9 @@ func automationScopeBadges(scopes string) []string {
 	if m[apiScopeStatsRead] {
 		out = append(out, "统计数据：读取")
 	}
+	if labels := automationControlScopeLabels(m); len(labels) > 0 {
+		out = append(out, "Pilot 管理："+strings.Join(labels, "、"))
+	}
 	if labels := automationActionLabels(m, "content"); len(labels) > 0 {
 		out = append(out, "全部内容："+strings.Join(labels, "、"))
 	}
@@ -1350,6 +1353,30 @@ func automationActionLabels(scopes map[string]bool, resource string) []string {
 	} {
 		if scopes[resource+":"+action.key] {
 			labels = append(labels, action.label)
+		}
+	}
+	return labels
+}
+
+func automationControlScopeLabels(scopes map[string]bool) []string {
+	var labels []string
+	for _, item := range []struct {
+		scope string
+		label string
+	}{
+		{apiScopeControlRead, "能力自省"},
+		{apiScopeControlUnlock, "短时解锁"},
+		{apiScopeSitesCreate, "建站"},
+		{apiScopeSitesUpdate, "改站"},
+		{apiScopeSitesDelete, "删站"},
+		{apiScopeThemesRead, "读主题"},
+		{apiScopeThemesApply, "用主题"},
+		{apiScopeDomainsRead, "读域名"},
+		{apiScopeDomainsWrite, "配域名"},
+		{apiScopeSecurityWrite, "初始密码"},
+	} {
+		if scopes[item.scope] {
+			labels = append(labels, item.label)
 		}
 	}
 	return labels
@@ -1423,6 +1450,9 @@ func automationScopeBadgesAdmin(scopes string, admin *i18n.AdminTr) []string {
 	}
 	if m[apiScopeStatsRead] {
 		out = append(out, adminUI(admin, "admin.settings.automation.stats", "统计数据")+colon+adminUI(admin, "admin.settings.automation.read", "读取"))
+	}
+	if labels := automationControlScopeLabels(m); len(labels) > 0 {
+		out = append(out, adminUI(admin, "admin.platform_keys.control", "Pilot 统一管理")+colon+strings.Join(labels, sep))
 	}
 	if labels := automationActionLabelsAdmin(m, "content", admin); len(labels) > 0 {
 		out = append(out, adminUI(admin, "admin.settings.automation.content", "全部内容")+colon+strings.Join(labels, sep))

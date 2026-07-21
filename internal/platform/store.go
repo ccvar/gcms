@@ -280,6 +280,23 @@ CREATE TABLE IF NOT EXISTS platform_automation_logs (
 
 CREATE INDEX IF NOT EXISTS idx_platform_automation_logs_key
 ON platform_automation_logs(key_id, id DESC);
+
+CREATE TABLE IF NOT EXISTS platform_control_operation_receipts (
+  key_id          INTEGER NOT NULL REFERENCES platform_automation_keys(id) ON DELETE CASCADE,
+  operation       TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL,
+  request_hash    TEXT NOT NULL,
+  state           TEXT NOT NULL DEFAULT 'running' CHECK(state IN ('running', 'completed')),
+  http_status     INTEGER NOT NULL DEFAULT 0,
+  response_json   TEXT NOT NULL DEFAULT '',
+  created_at      TEXT NOT NULL,
+  updated_at      TEXT NOT NULL,
+  completed_at    TEXT,
+  PRIMARY KEY(key_id, operation, idempotency_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_platform_control_operation_receipts_updated
+ON platform_control_operation_receipts(updated_at DESC);
 `
 
 func Open(path string) (*Store, error) {

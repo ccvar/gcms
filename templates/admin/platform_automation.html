@@ -174,6 +174,19 @@
     <strong>{{.Admin.T "admin.settings.automation.stats" "统计数据"}}</strong>
     <label><input type="checkbox" name="scopes" value="stats:read"><span>{{.Admin.T "admin.settings.automation.stats_read" "读取统计"}}</span><small>{{.Admin.T "admin.settings.automation.stats_read_desc" "读取 Search Console 搜索词表现与 GA 流量汇总"}}</small></label>
   </div>
+  <div class="scope-group scope-group-wide">
+    <strong>{{.Admin.T "admin.platform_keys.control" "Pilot 统一管理"}}</strong>
+    <label><input type="checkbox" name="scopes" value="control:read"><span>{{.Admin.T "admin.platform_keys.control_read" "读取管理能力"}}</span><small>{{.Admin.T "admin.platform_keys.control_read_desc" "让 Pilot 识别当前 GCMS 支持的操作、风险等级与授权要求"}}</small></label>
+    <label><input type="checkbox" name="scopes" value="control:unlock"><span>{{.Admin.T "admin.platform_keys.control_unlock" "允许短时解锁"}}</span><small>{{.Admin.T "admin.platform_keys.control_unlock_desc" "用户在 Pilot 界面验证后台密码后，签发 5 分钟的指定操作授权；AI 不会看到密码"}}</small></label>
+    <label><input type="checkbox" name="scopes" value="sites:create"><span>{{.Admin.T "admin.platform_keys.sites_create" "创建站点"}}</span><small>{{.Admin.T "admin.platform_keys.sites_create_desc" "允许 Pilot 在用户确认后创建真实子站点"}}</small></label>
+    <label><input type="checkbox" name="scopes" value="sites:update"><span>{{.Admin.T "admin.platform_keys.sites_update" "修改站点"}}</span><small>{{.Admin.T "admin.platform_keys.sites_update_desc" "修改站点基础配置，不包含删除"}}</small></label>
+    <label><input type="checkbox" name="scopes" value="sites:delete"><span>{{.Admin.T "admin.platform_keys.sites_delete" "删除站点"}}</span><small>{{.Admin.T "admin.platform_keys.sites_delete_desc" "高风险：仍需用户输入后台密码短时解锁"}}</small></label>
+    <label><input type="checkbox" name="scopes" value="themes:read"><span>{{.Admin.T "admin.platform_keys.themes_read" "读取外观主题"}}</span><small>{{.Admin.T "admin.platform_keys.themes_read_desc" "让 AI 根据站点定位比较可用主题"}}</small></label>
+    <label><input type="checkbox" name="scopes" value="themes:apply"><span>{{.Admin.T "admin.platform_keys.themes_apply" "应用外观主题"}}</span><small>{{.Admin.T "admin.platform_keys.themes_apply_desc" "用户确认后应用 AI 选定的外观主题"}}</small></label>
+    <label><input type="checkbox" name="scopes" value="domains:read"><span>{{.Admin.T "admin.platform_keys.domains_read" "读取域名配置"}}</span><small>{{.Admin.T "admin.platform_keys.domains_read_desc" "读取 GCMS 的主域名、跳转域名和外部配置需求"}}</small></label>
+    <label><input type="checkbox" name="scopes" value="domains:write"><span>{{.Admin.T "admin.platform_keys.domains_write" "修改域名配置"}}</span><small>{{.Admin.T "admin.platform_keys.domains_write_desc" "高风险：修改 GCMS 内部域名；DNS、Caddy 和 HTTPS 仍由 Pilot 编排"}}</small></label>
+    <label><input type="checkbox" name="scopes" value="security:write"><span>{{.Admin.T "admin.platform_keys.security_write" "设置初始密码"}}</span><small>{{.Admin.T "admin.platform_keys.security_write_desc" "仅在仍使用首次安装默认密码时，通过 Pilot 原生界面设置；AI 不会看到密码"}}</small></label>
+  </div>
 </div>
 {{end}}
 

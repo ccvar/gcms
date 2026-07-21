@@ -37,11 +37,24 @@ func TestPlatformSkillFilesTokenless(t *testing.T) {
 		t.Fatalf("pack missing gcms.js; entries: %v", keysOf(entries))
 	}
 	// The multi-site CLI must have discovery + per-site routing, not the single-site shape.
-	for _, needle := range []string{"fetchSites", "resolveSite", "extractSite", `cmd === "sites"`, `"/sites/"`, "--site",
-		`cmd === "site-profile"`, `cmd === "site-profile-update"`, `cmd === "navigation"`, `cmd === "navigation-update"`} {
+	for _, needle := range []string{"fetchSites", "resolveSite", "extractSite", `cmd === "capabilities"`, `"/control/capabilities"`, `cmd === "sites"`, `"/sites/"`, "--site",
+		`cmd === "control-sites"`, `cmd === "site-create-plan"`, `cmd === "site-create"`, `cmd === "themes"`, `cmd === "theme-plan"`,
+		`cmd === "domains-plan"`, `cmd === "security-status"`, `cmd === "site-profile"`, `cmd === "site-profile-update"`, `cmd === "navigation"`, `cmd === "navigation-update"`} {
 		if !strings.Contains(cli, needle) {
 			t.Fatalf("gcms.js missing %q", needle)
 		}
+	}
+	for _, forbidden := range []string{`cmd === "unlock"`, "passwordFromArg", "GCMS_ADMIN_PASSWORD"} {
+		if strings.Contains(cli, forbidden) {
+			t.Fatalf("gcms.js must not collect admin passwords; found %q", forbidden)
+		}
+	}
+	if skill := entries[platformSkillFolder+"/SKILL.md"]; !strings.Contains(skill, "AI 不得") || !strings.Contains(skill, "Pilot UI") {
+		t.Fatalf("SKILL.md missing UI-only password boundary")
+	}
+	controlSpec := entries[platformSkillFolder+"/references/control-api.json"]
+	if !strings.Contains(controlSpec, `"/control/sites/{siteId}"`) || !strings.Contains(controlSpec, controlIdempotencyHeader) {
+		t.Fatalf("control-api.json missing management contract: %q", controlSpec)
 	}
 
 	// Tokenless pack ships .env.example with platform-root base + gcmsp_ placeholder, no live token.
@@ -127,7 +140,7 @@ func TestAdminDownloadPlatformSkillRoute(t *testing.T) {
 		t.Fatalf("content-type = %q", ct)
 	}
 	names := zipEntryNames(t, getRec.Body.Bytes())
-	if !names[platformSkillFolder+"/scripts/gcms.js"] || !names[platformSkillFolder+"/.env.example"] {
+	if !names[platformSkillFolder+"/scripts/gcms.js"] || !names[platformSkillFolder+"/references/control-api.json"] || !names[platformSkillFolder+"/.env.example"] {
 		t.Fatalf("zip entries missing expected files: %v", names)
 	}
 	if names[platformSkillFolder+"/.env"] {
@@ -174,7 +187,7 @@ func TestPlatformCLILiveEndToEnd(t *testing.T) {
 
 	token := "gcmsp_liveclitoken12345"
 	if _, err := ps.CreatePlatformKey("cli", token, token[:13], "all",
-		"posts:read,posts:write,posts:categories,links:categories,languages:read,media:write,site:read,site:write,navigation:read", nil, time.Time{}); err != nil {
+		"posts:read,posts:write,posts:categories,links:categories,languages:read,media:write,site:read,site:write,navigation:read,control:read,sites:create,themes:read,themes:apply", nil, time.Time{}); err != nil {
 		t.Fatalf("create platform key: %v", err)
 	}
 
@@ -193,8 +206,53 @@ func TestPlatformCLILiveEndToEnd(t *testing.T) {
 		return stdout.String(), stderr.String(), err
 	}
 
+	// capabilities: platform-control contract is discoverable without selecting a site.
+	out, errOut, err := run("capabilities")
+	if err != nil {
+		t.Fatalf("capabilities failed: %v\nstderr: %s", err, errOut)
+	}
+	if !strings.Contains(out, `"phase": "control-v1"`) || !strings.Contains(out, `"sites.create"`) {
+		t.Fatalf("capabilities output unexpected: %s", out)
+	}
+
+	// control-sites uses the management discovery endpoint and can include disabled members.
+	out, errOut, err = run("control-sites")
+	if err != nil {
+		t.Fatalf("control-sites failed: %v\nstderr: %s", err, errOut)
+	}
+	if !strings.Contains(out, `"slug": "blog"`) {
+		t.Fatalf("control-sites output unexpected: %s", out)
+	}
+
+	// A real management write must round-trip through the generated CLI's plan,
+	// confirmation and idempotency parsing. Replaying the same request-id must
+	// return the original result instead of creating a duplicate site.
+	childBody := `{"slug":"cli-child","name":"CLI Child"}`
+	out, errOut, err = run("site-create-plan", childBody)
+	if err != nil {
+		t.Fatalf("site-create-plan failed: %v\nstdout: %s\nstderr: %s", err, out, errOut)
+	}
+	if !strings.Contains(out, `"dry_run": true`) || !strings.Contains(out, `"seed_mode": "empty"`) || !strings.Contains(out, `"management_automation_enabled": true`) {
+		t.Fatalf("site-create-plan output unexpected: %s", out)
+	}
+	out, errOut, err = run("site-create", childBody, "--confirm", "true", "--request-id", "cli-create-001")
+	if err != nil {
+		t.Fatalf("site-create failed: %v\nstdout: %s\nstderr: %s", err, out, errOut)
+	}
+	if !strings.Contains(out, `"slug": "cli-child"`) || !strings.Contains(out, `"created": true`) {
+		t.Fatalf("site-create output unexpected: %s", out)
+	}
+	replayed, replayErrOut, replayErr := run("site-create", childBody, "--confirm", "true", "--request-id", "cli-create-001")
+	if replayErr != nil || replayed != out {
+		t.Fatalf("site-create replay mismatch: err=%v\nstdout: %s\nstderr: %s", replayErr, replayed, replayErrOut)
+	}
+	out, errOut, err = run("theme-plan", "--site", "cli-child", "magazine")
+	if err != nil || !strings.Contains(out, `"theme": "magazine"`) || !strings.Contains(out, `"dry_run": true`) {
+		t.Fatalf("theme-plan failed: err=%v\nstdout: %s\nstderr: %s", err, out, errOut)
+	}
+
 	// sites: discovery must list blog (all-mode key sees every enabled+automation site).
-	out, errOut, err := run("sites")
+	out, errOut, err = run("sites")
 	if err != nil {
 		t.Fatalf("sites failed: %v\nstderr: %s", err, errOut)
 	}

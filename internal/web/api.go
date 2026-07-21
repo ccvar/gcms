@@ -86,6 +86,19 @@ const (
 	apiScopeStatsRead           = "stats:read" // 读取 Search Console / GA 统计数据
 	apiScopePostCategoriesWrite = "posts:categories:write"
 	apiScopeLinkCategoriesWrite = "links:categories:write"
+
+	// 平台控制层权限与既有站点内容权限分离。老密钥不会因升级自动获得
+	// 建站、域名、安全设置等能力；只有明确签发这些 scope 的平台密钥才可见。
+	apiScopeControlRead   = "control:read"
+	apiScopeControlUnlock = "control:unlock"
+	apiScopeSitesCreate   = "sites:create"
+	apiScopeSitesUpdate   = "sites:update"
+	apiScopeSitesDelete   = "sites:delete"
+	apiScopeThemesRead    = "themes:read"
+	apiScopeThemesApply   = "themes:apply"
+	apiScopeDomainsRead   = "domains:read"
+	apiScopeDomainsWrite  = "domains:write"
+	apiScopeSecurityWrite = "security:write"
 )
 
 type apiRateLimiter struct {

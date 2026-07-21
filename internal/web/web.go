@@ -44,6 +44,8 @@ type Server struct {
 	sess            *sessions
 	login           *loginLimiter
 	apiLimiter      *apiRateLimiter
+	controlGrants   *controlGrantStore
+	controlMutation *sync.Mutex
 	i18n            *i18n.Manager
 	mux             *http.ServeMux
 	assetsFS        fs.FS
@@ -1374,7 +1376,7 @@ func NewWithPlatform(st *store.Store, ps *platform.Store, baseURL, uploadDir str
 	}
 	s := &Server{
 		store: st, platform: ps, rnd: rnd, baseURL: baseURL, platformBaseURL: baseURL, uploadDir: uploadDir, assetsFS: assetsFS,
-		sess: newSessions(sessionStore), login: newLoginLimiter(), apiLimiter: newAPIRateLimiter(), i18n: i18n.New(), assetVer: assetVersion(assetsFS), imageSizes: imageSizes,
+		sess: newSessions(sessionStore), login: newLoginLimiter(), apiLimiter: newAPIRateLimiter(), controlGrants: newControlGrantStore(), controlMutation: &sync.Mutex{}, i18n: i18n.New(), assetVer: assetVersion(assetsFS), imageSizes: imageSizes,
 		content: map[string]contentCacheEntry{}, endpoints: map[string]endpointCacheEntry{}, pages: map[string]pageCacheEntry{},
 		googleAnalytics:      newGoogleAnalyticsPropertiesCache(),
 		cloudflareStatusFile: cloudflareStatusPath(),
@@ -1563,6 +1565,8 @@ func (s *Server) cloneForRuntime(rt *SiteRuntime) *Server {
 		sess:                 s.sess,
 		login:                s.login,
 		apiLimiter:           s.apiLimiter,
+		controlGrants:        s.controlGrants,
+		controlMutation:      s.controlMutation,
 		i18n:                 i18n.New(),
 		assetsFS:             s.assetsFS,
 		assetVer:             s.assetVer,
@@ -1962,6 +1966,12 @@ func (s *Server) platformAutomationKilled() bool {
 func (s *Server) servePlatformAPI(w http.ResponseWriter, r *http.Request, pool *SiteRuntimePool) {
 	if !s.platformHostAllowed(r, pool) {
 		http.NotFound(w, r)
+		return
+	}
+	// 平台控制层（能力自省 / 短时解锁）不属于任何单站，必须在解析 siteID 前拦截。
+	// 它使用独立 scope，因此不改变旧平台密钥和站点密钥的行为。
+	if strings.HasPrefix(r.URL.Path, "/api/platform/v1/control/") {
+		s.servePlatformControl(w, r)
 		return
 	}
 	// 发现端点：GET /api/platform/v1/sites（含结尾斜杠），在解析数字 siteID 之前拦截。

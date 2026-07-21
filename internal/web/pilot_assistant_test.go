@@ -18,9 +18,14 @@ func TestPilotAssistantAutomationScopesCoverPlatformAutomation(t *testing.T) {
 		"content:read", "content:write", "content:publish",
 		"posts:categories", "posts:categories:write", "posts:pin",
 		"links:categories", "links:categories:write", "links:pin",
+		"control:read", "control:unlock", "sites:create", "sites:update", "sites:delete",
+		"themes:read", "themes:apply", "domains:read", "domains:write",
 	} {
 		if !got[want] {
 			t.Errorf("missing scope %q", want)
 		}
+	}
+	if got[apiScopeSecurityWrite] {
+		t.Fatal("Pilot 运营助手的 AI 密钥不得默认获得初始密码写权限")
 	}
 }

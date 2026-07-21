@@ -4995,6 +4995,18 @@ func automationScopesFromFormWithDefault(r *http.Request, useDefault bool) []str
 	if want[apiScopeLanguagesWrite] || want[apiScopeLanguagesEnable] || want[apiScopeLanguagesDefault] || want[apiScopeLanguagesCatalog] {
 		want[apiScopeLanguagesRead] = true
 	}
+	// 平台控制权限是独立的能力族：任一控制权限都自动补齐能力自省；
+	// 删站和改域名还必须允许 Pilot 在密码验证后签发短时授权；首次密码设置
+	// 是默认密码阶段的一次性操作，改由 Pilot 原生界面边界保护，不能依赖旧密码解锁。
+	for _, scope := range platformControlScopes() {
+		if want[scope] {
+			want[apiScopeControlRead] = true
+			break
+		}
+	}
+	if want[apiScopeSitesDelete] || want[apiScopeDomainsWrite] {
+		want[apiScopeControlUnlock] = true
+	}
 	var out []string
 	if want[apiScopeLanguagesRead] {
 		out = append(out, apiScopeLanguagesRead)
@@ -5017,6 +5029,11 @@ func automationScopesFromFormWithDefault(r *http.Request, useDefault bool) []str
 	// 注意（v1.3.16 教训）：这里是白名单式输出组装，仅通过 automationScopeValid 不够，
 	// 新 scope 必须同时加进这份列表，否则表单勾选后会被静默丢弃。
 	for _, scope := range []string{apiScopeSiteRead, apiScopeSiteWrite, apiScopeBrandAssetsWrite, apiScopeNavigationRead, apiScopeNavigationWrite, apiScopeStatsRead} {
+		if want[scope] {
+			out = append(out, scope)
+		}
+	}
+	for _, scope := range platformControlScopes() {
 		if want[scope] {
 			out = append(out, scope)
 		}
@@ -5053,7 +5070,9 @@ func automationScopesFromFormWithDefault(r *http.Request, useDefault bool) []str
 func automationScopeValid(scope string) bool {
 	switch scope {
 	case apiScopeLanguagesRead, apiScopeLanguagesWrite, apiScopeLanguagesEnable, apiScopeLanguagesDefault, apiScopeLanguagesCatalog, apiScopeMediaWrite, apiScopeSiteRead, apiScopeSiteWrite, apiScopeBrandAssetsWrite, apiScopeNavigationRead, apiScopeNavigationWrite,
-		apiScopeStatsRead, apiScopeTypesWrite, apiScopeContentRead, apiScopeContentWrite, apiScopeContentPublish:
+		apiScopeStatsRead, apiScopeTypesWrite, apiScopeContentRead, apiScopeContentWrite, apiScopeContentPublish,
+		apiScopeControlRead, apiScopeControlUnlock, apiScopeSitesCreate, apiScopeSitesUpdate, apiScopeSitesDelete,
+		apiScopeThemesRead, apiScopeThemesApply, apiScopeDomainsRead, apiScopeDomainsWrite, apiScopeSecurityWrite:
 		return true
 	}
 	// 扩展集合 scope（如 products:write / cases:read）：集合名为合法 slug 即放行——

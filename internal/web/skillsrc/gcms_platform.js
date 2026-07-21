@@ -44,7 +44,24 @@ function usage(code = 2) {
   const out = code === 0 ? console.log : console.error;
   out("Usage: (a platform key manages many sites; every content command needs --site <slug|id>)");
   out("  gcms.js help");
+  out("  gcms.js capabilities                # inspect platform-control operations, risk and unlock requirements (never handles passwords)");
   out("  gcms.js sites                       # discover manageable sites (run this first)");
+  out("  gcms.js control-sites               # list sites through the management API (includes disabled sites in this key's membership)");
+  out("  gcms.js control-site --site <slug|id>");
+  out("  gcms.js site-create-plan <json|@file>");
+  out("  gcms.js site-create <json|@file> --confirm true --request-id <stable-id>");
+  out("  gcms.js site-update-plan --site <slug|id> <json|@file>");
+  out("  gcms.js site-update --site <slug|id> <json|@file> --confirm true --request-id <stable-id>");
+  out("  gcms.js site-delete-plan --site <slug|id>");
+  out("  gcms.js site-delete --site <slug|id> --confirm true --request-id <stable-id>  # needs Pilot UI unlock");
+  out("  gcms.js themes [<theme-id>]");
+  out("  gcms.js theme-current --site <slug|id>");
+  out("  gcms.js theme-plan --site <slug|id> <theme-id|rollback>");
+  out("  gcms.js theme-apply --site <slug|id> <theme-id|rollback> --confirm true --request-id <stable-id>");
+  out("  gcms.js domains --site <slug|id>");
+  out("  gcms.js domains-plan --site <slug|id> <json|@file>");
+  out("  gcms.js domains-apply --site <slug|id> <json|@file> --confirm true --request-id <stable-id>  # needs Pilot UI unlock");
+  out("  gcms.js security-status             # status only; initial password is handled exclusively by Pilot UI");
   out("  gcms.js doctor [--site <slug|id>]");
   out("  gcms.js languages --site <slug|id> [--all]");
   out("  gcms.js language-create --site <slug|id> <json|@file>");
@@ -184,9 +201,9 @@ function mediaProbeBody() {
   return form;
 }
 
-async function rawRequest(method, urlPath, body) {
+async function rawRequest(method, urlPath, body, extraHeaders = {}) {
   requireConfig();
-  const headers = { Authorization: "Bearer " + key, Accept: "application/json" };
+  const headers = { Authorization: "Bearer " + key, Accept: "application/json", ...extraHeaders };
   const init = { method, headers };
   if (body !== undefined) {
     if (typeof FormData !== "undefined" && body instanceof FormData) {
@@ -207,14 +224,41 @@ async function rawRequest(method, urlPath, body) {
   return { ok: res.ok, status: res.status, data };
 }
 
-async function request(method, urlPath, body) {
-  const result = await rawRequest(method, urlPath, body);
+async function request(method, urlPath, body, extraHeaders) {
+  const result = await rawRequest(method, urlPath, body, extraHeaders);
   const { ok, data } = result;
   if (!ok) {
     console.error(JSON.stringify(data, null, 2));
     process.exit(1);
   }
   return data;
+}
+
+function controlMutationOptions(args) {
+  const opt = parseOptions(args);
+  if (!boolOption(opt.confirm)) {
+    console.error("This write command needs --confirm true after the user explicitly approves the dry-run result.");
+    process.exit(2);
+  }
+  const requestID = String(opt["request-id"] || "").trim();
+  if (requestID.length < 8 || requestID.length > 128) {
+    console.error("This write command needs a stable --request-id (8-128 characters). Reuse it only when retrying the same request.");
+    process.exit(2);
+  }
+  return { requestID };
+}
+
+async function controlMutation(method, urlPath, operation, body, optionArgs) {
+  const { requestID } = controlMutationOptions(optionArgs);
+  const headers = {
+    "X-GCMS-Control-Confirm": operation,
+    "Idempotency-Key": requestID
+  };
+  // Pilot may inject a short-lived operation-bound token after its native password UI.
+  // The skill never asks for, reads from stdin, or prints the GCMS backend password.
+  const unlock = String(process.env.GCMS_CONTROL_UNLOCK_TOKEN || "").trim();
+  if (unlock) headers["X-GCMS-Control-Unlock"] = unlock;
+  return request(method, urlPath, body, headers);
 }
 
 function print(data) {
@@ -233,11 +277,19 @@ function parseOnOff(value) {
 
 // ---- site discovery / resolution ----
 let sitesCache = null;
+let controlSitesCache = null;
 async function fetchSites() {
   if (sitesCache) return sitesCache;
   const data = await request("GET", "/sites");
   sitesCache = Array.isArray(data.items) ? data.items : [];
   return sitesCache;
+}
+
+async function fetchControlSites() {
+  if (controlSitesCache) return controlSitesCache;
+  const data = await request("GET", "/control/sites");
+  controlSitesCache = Array.isArray(data.items) ? data.items : [];
+  return controlSitesCache;
 }
 
 async function findSite(sel) {
@@ -255,6 +307,21 @@ async function resolveSite(sel) {
     const sites = await fetchSites();
     const avail = sites.length ? sites.map((s) => s.slug + " (#" + s.id + ")").join(", ") : "(none — this key has no manageable sites)";
     console.error("Unknown site '" + sel + "'. Manageable sites: " + avail);
+    process.exit(2);
+  }
+  return hit.id;
+}
+
+async function resolveControlSite(sel) {
+  if (sel == null || sel === "") {
+    console.error("This command needs --site <slug|id>. Run 'node gcms.js control-sites' first.");
+    process.exit(2);
+  }
+  const sites = await fetchControlSites();
+  const hit = sites.find((s) => String(s.id) === String(sel)) || sites.find((s) => s.slug === sel) || null;
+  if (!hit) {
+    const avail = sites.length ? sites.map((s) => s.slug + " (#" + s.id + ")").join(", ") : "(none)";
+    console.error("Unknown or unauthorized control site '" + sel + "'. Available: " + avail);
     process.exit(2);
   }
   return hit.id;
@@ -415,8 +482,104 @@ async function main() {
   const [cmd, collection, ...rest] = parsed.argv;
   if (!cmd || cmd === "help" || cmd === "--help" || cmd === "-h") usage(0);
 
+  if (cmd === "capabilities") {
+    print(await request("GET", "/control/capabilities"));
+    return;
+  }
+
   if (cmd === "sites" || cmd === "list-sites") {
     print(await request("GET", "/sites"));
+    return;
+  }
+
+  if (cmd === "control-sites") {
+    print(await request("GET", "/control/sites"));
+    return;
+  }
+
+  if (cmd === "control-site") {
+    const id = await resolveControlSite(siteSel);
+    print(await request("GET", "/control/sites/" + id));
+    return;
+  }
+
+  if (cmd === "site-create-plan" || cmd === "site-create") {
+    const bodyArg = collection;
+    if (!bodyArg) usage();
+    const body = bodyFromArg(bodyArg);
+    if (cmd === "site-create-plan") {
+      print(await request("POST", "/control/sites?dry_run=1", body));
+    } else {
+      print(await controlMutation("POST", "/control/sites", "sites.create", body, rest));
+    }
+    return;
+  }
+
+  if (cmd === "site-update-plan" || cmd === "site-update") {
+    const id = await resolveControlSite(siteSel);
+    const bodyArg = collection;
+    if (!bodyArg) usage();
+    const body = bodyFromArg(bodyArg);
+    if (cmd === "site-update-plan") {
+      print(await request("PATCH", "/control/sites/" + id + "?dry_run=1", body));
+    } else {
+      print(await controlMutation("PATCH", "/control/sites/" + id, "sites.update", body, rest));
+    }
+    return;
+  }
+
+  if (cmd === "site-delete-plan" || cmd === "site-delete") {
+    const id = await resolveControlSite(siteSel);
+    if (cmd === "site-delete-plan") {
+      print(await request("DELETE", "/control/sites/" + id + "?dry_run=1"));
+    } else {
+      print(await controlMutation("DELETE", "/control/sites/" + id, "sites.delete", undefined, [collection, ...rest].filter((v) => v != null)));
+    }
+    return;
+  }
+
+  if (cmd === "themes") {
+    const suffix = collection ? "/" + encodeURIComponent(collection) : "";
+    print(await request("GET", "/control/themes" + suffix));
+    return;
+  }
+
+  if (cmd === "theme-current" || cmd === "theme-plan" || cmd === "theme-apply") {
+    const id = await resolveControlSite(siteSel);
+    const target = collection;
+    if (cmd === "theme-current") {
+      print(await request("GET", "/control/sites/" + id + "/theme"));
+      return;
+    }
+    if (!target) usage();
+    const body = target === "rollback" ? { rollback: true } : { theme_id: target };
+    if (cmd === "theme-plan") {
+      print(await request("PUT", "/control/sites/" + id + "/theme?dry_run=1", body));
+    } else {
+      print(await controlMutation("PUT", "/control/sites/" + id + "/theme", "themes.apply", body, rest));
+    }
+    return;
+  }
+
+  if (cmd === "domains" || cmd === "domains-plan" || cmd === "domains-apply") {
+    const id = await resolveControlSite(siteSel);
+    if (cmd === "domains") {
+      print(await request("GET", "/control/sites/" + id + "/domains"));
+      return;
+    }
+    const bodyArg = collection;
+    if (!bodyArg) usage();
+    const body = bodyFromArg(bodyArg);
+    if (cmd === "domains-plan") {
+      print(await request("PUT", "/control/sites/" + id + "/domains?dry_run=1", body));
+    } else {
+      print(await controlMutation("PUT", "/control/sites/" + id + "/domains", "domains.apply", body, rest));
+    }
+    return;
+  }
+
+  if (cmd === "security-status") {
+    print(await request("GET", "/control/security"));
     return;
   }
 
