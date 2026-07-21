@@ -345,6 +345,229 @@ func TestPlatformKeyDiscoveryContract(t *testing.T) {
 	}
 }
 
+func TestPlatformKeyDiscoveryIntegrationSummary(t *testing.T) {
+	srv, h, ps, _, blogSite := setupPlatformAutomation(t)
+	token := "gcmsp_discovery_summary123"
+	if _, err := ps.CreatePlatformKey("pilot", token, token[:13], platform.KeyMembershipAllowlist,
+		"site:read,stats:read", []int64{blogSite.ID}, time.Time{}); err != nil {
+		t.Fatalf("create key: %v", err)
+	}
+	for key, value := range map[string]string{
+		googleOAuthClientIDKey:      "pilot-client.apps.googleusercontent.com",
+		googleOAuthClientSecretKey:  "oauth-client-secret",
+		googleDataRangeKey:          `{"mode":"days","days":15}`,
+		platformTelegramBotTokenKey: "888:platform-secret",
+	} {
+		if err := ps.SetSetting(key, value); err != nil {
+			t.Fatalf("set %s: %v", key, err)
+		}
+	}
+	for _, service := range []string{platform.GoogleServiceAnalytics, platform.GoogleServiceSearchConsole} {
+		if err := ps.UpsertGoogleAccount(&platform.GoogleAccount{
+			Service: service, GoogleAccountID: "shared-google-account", Email: "owner@example.com",
+			AccessToken: "access-secret", RefreshToken: "refresh-secret",
+		}); err != nil {
+			t.Fatalf("upsert %s account: %v", service, err)
+		}
+	}
+	if err := ps.UpsertSiteGoogleIntegration(&platform.SiteGoogleIntegration{
+		SiteID: blogSite.ID, Service: platform.GoogleServiceAnalytics, GoogleAccountID: "shared-google-account",
+		MeasurementID: "G-PILOT", Property: "properties/42", Enabled: true,
+	}); err != nil {
+		t.Fatalf("upsert analytics integration: %v", err)
+	}
+	if err := ps.UpsertSiteGoogleIntegration(&platform.SiteGoogleIntegration{
+		SiteID: blogSite.ID, Service: platform.GoogleServiceSearchConsole, GoogleAccountID: "shared-google-account",
+		Property: "https://blog.test/", Enabled: true,
+	}); err != nil {
+		t.Fatalf("upsert search integration: %v", err)
+	}
+	if err := ps.UpsertSiteGoogleAnalyticsSummary(&platform.SiteGoogleAnalyticsSummary{
+		SiteID: blogSite.ID, ActiveUsers: 17, Sessions: 23, RangeKey: "days:15",
+		Status: platform.GoogleAnalyticsSummaryStatusOK, FetchedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("upsert analytics summary: %v", err)
+	}
+	if err := ps.UpsertSiteGoogleSearchConsoleSummary(&platform.SiteGoogleSearchConsoleSummary{
+		SiteID: blogSite.ID, Clicks: 9, Impressions: 81, RangeKey: "days:15",
+		Status: platform.GoogleSearchConsoleSummaryStatusOK, FetchedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("upsert search summary: %v", err)
+	}
+	rt, ok := srv.runtimePool().runtimeByID(blogSite.ID)
+	if !ok || rt == nil || rt.Store == nil {
+		t.Fatal("blog runtime should be available")
+	}
+	_ = rt.Store.SetSetting(telegramChannelSetting, "@pilot_news")
+	_ = rt.Store.SetSetting(telegramChannelURLSetting, "https://t.me/pilot_news")
+	_ = rt.Store.SetSetting(telegramAutoPushSetting, "1")
+
+	rec := platformAPIReq(t, h, http.MethodGet, "/api/platform/v1/sites", token, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("discovery status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var payload struct {
+		Platform struct {
+			Google struct {
+				OAuthConfigured       bool `json:"oauth_configured"`
+				AuthorizedAccounts    int  `json:"authorized_accounts"`
+				AnalyticsAccounts     int  `json:"analytics_accounts"`
+				SearchConsoleAccounts int  `json:"search_console_accounts"`
+				DataRange             struct {
+					Days  int    `json:"days"`
+					Label string `json:"label"`
+				} `json:"data_range"`
+			} `json:"google"`
+			Telegram struct {
+				SharedBotConfigured bool `json:"shared_bot_configured"`
+			} `json:"telegram"`
+		} `json:"platform"`
+		Items []struct {
+			Integrations struct {
+				Analytics struct {
+					Configured  bool `json:"configured"`
+					Enabled     bool `json:"enabled"`
+					ActiveUsers int  `json:"active_users"`
+					Sessions    int  `json:"sessions"`
+				} `json:"analytics"`
+				Search struct {
+					Configured  bool `json:"configured"`
+					Enabled     bool `json:"enabled"`
+					Clicks      int  `json:"clicks"`
+					Impressions int  `json:"impressions"`
+				} `json:"search_console"`
+				Telegram struct {
+					Configured    bool `json:"configured"`
+					AutoPush      bool `json:"auto_push"`
+					UsesSharedBot bool `json:"uses_shared_bot"`
+				} `json:"telegram"`
+			} `json:"integrations"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode discovery summary: %v", err)
+	}
+	if !payload.Platform.Google.OAuthConfigured || payload.Platform.Google.AuthorizedAccounts != 1 ||
+		payload.Platform.Google.AnalyticsAccounts != 1 || payload.Platform.Google.SearchConsoleAccounts != 1 ||
+		payload.Platform.Google.DataRange.Days != 15 || !payload.Platform.Telegram.SharedBotConfigured {
+		t.Fatalf("platform integration summary mismatch: %#v", payload.Platform)
+	}
+	if len(payload.Items) != 1 {
+		t.Fatalf("items = %d, want 1", len(payload.Items))
+	}
+	in := payload.Items[0].Integrations
+	if !in.Analytics.Configured || !in.Analytics.Enabled || in.Analytics.ActiveUsers != 17 || in.Analytics.Sessions != 23 {
+		t.Fatalf("analytics summary mismatch: %#v", in.Analytics)
+	}
+	if !in.Search.Configured || !in.Search.Enabled || in.Search.Clicks != 9 || in.Search.Impressions != 81 {
+		t.Fatalf("search summary mismatch: %#v", in.Search)
+	}
+	if !in.Telegram.Configured || !in.Telegram.AutoPush || !in.Telegram.UsesSharedBot {
+		t.Fatalf("telegram summary mismatch: %#v", in.Telegram)
+	}
+	body := rec.Body.String()
+	for _, secret := range []string{"oauth-client-secret", "access-secret", "refresh-secret", "platform-secret"} {
+		if strings.Contains(body, secret) {
+			t.Fatalf("discovery leaked secret %q: %s", secret, body)
+		}
+	}
+}
+
+func TestPlatformControlIntegrationsReadWriteSameGCMSSettings(t *testing.T) {
+	_, h, ps, _, blogSite := setupPlatformAutomation(t)
+	token := "gcmsp_integrations_control123"
+	if _, err := ps.CreatePlatformKey("pilot", token, token[:13], platform.KeyMembershipAllowlist,
+		"site:read,site:write", []int64{blogSite.ID}, time.Time{}); err != nil {
+		t.Fatalf("create key: %v", err)
+	}
+	for key, value := range map[string]string{
+		googleOAuthClientIDKey:      "old-client.apps.googleusercontent.com",
+		googleOAuthClientSecretKey:  "keep-this-secret",
+		googleOAuthRedirectURLKey:   "https://platform.test/admin/google/oauth/callback",
+		googleDataRangeKey:          `{"mode":"days","days":7}`,
+		platformTelegramBotTokenKey: "888:keep-this-bot-token",
+	} {
+		if err := ps.SetSetting(key, value); err != nil {
+			t.Fatalf("set %s: %v", key, err)
+		}
+	}
+	for _, service := range []string{platform.GoogleServiceAnalytics, platform.GoogleServiceSearchConsole} {
+		if err := ps.UpsertGoogleAccount(&platform.GoogleAccount{
+			Service: service, GoogleAccountID: "google-account-1", Email: "owner@example.com", Name: "Owner",
+			AccessToken: "access-secret", RefreshToken: "refresh-secret",
+		}); err != nil {
+			t.Fatalf("upsert %s account: %v", service, err)
+		}
+	}
+
+	globalPath := "/api/platform/v1/control/integrations"
+	read := platformAPIReq(t, h, http.MethodGet, globalPath, token, nil)
+	if read.Code != http.StatusOK {
+		t.Fatalf("read global integrations = %d, body=%s", read.Code, read.Body.String())
+	}
+	for _, forbidden := range []string{"keep-this-secret", "keep-this-bot-token", "access-secret", "refresh-secret", "owner@example.com"} {
+		if strings.Contains(read.Body.String(), forbidden) {
+			t.Fatalf("global integration response leaked %q: %s", forbidden, read.Body.String())
+		}
+	}
+	if !strings.Contains(read.Body.String(), `"email":"ow***@example.com"`) {
+		t.Fatalf("global integration response should contain masked account: %s", read.Body.String())
+	}
+
+	globalUpdate, _ := json.Marshal(map[string]any{
+		"google": map[string]any{
+			"client_id": "new-client.apps.googleusercontent.com", "client_secret": "",
+			"redirect_url": "https://platform.test/admin/google/oauth/callback",
+			"data_range":   map[string]any{"mode": "days", "days": 30},
+		},
+		"telegram": map[string]any{"bot_token": ""},
+	})
+	saved := platformAPIReq(t, h, http.MethodPut, globalPath, token, globalUpdate)
+	if saved.Code != http.StatusOK {
+		t.Fatalf("save global integrations = %d, body=%s", saved.Code, saved.Body.String())
+	}
+	if got := ps.Setting(googleOAuthClientIDKey); got != "new-client.apps.googleusercontent.com" {
+		t.Fatalf("client id = %q", got)
+	}
+	if got := ps.Setting(googleOAuthClientSecretKey); got != "keep-this-secret" {
+		t.Fatalf("blank secret must preserve existing value, got %q", got)
+	}
+	if got := ps.Setting(platformTelegramBotTokenKey); got != "888:keep-this-bot-token" {
+		t.Fatalf("blank bot token must preserve existing value, got %q", got)
+	}
+	if got := ps.Setting(googleDataRangeKey); !strings.Contains(got, `"days":30`) {
+		t.Fatalf("data range not saved: %q", got)
+	}
+
+	sitePath := "/api/platform/v1/control/sites/" + strconv.FormatInt(blogSite.ID, 10) + "/integrations"
+	siteUpdate, _ := json.Marshal(map[string]any{
+		"analytics": map[string]any{
+			"enabled": true, "account_id": "google-account-1", "measurement_id": "G-PILOT1234",
+			"property": "properties/314159", "data_stream": "properties/314159/dataStreams/2718",
+		},
+		"search_console": map[string]any{
+			"enabled": true, "account_id": "google-account-1", "property": "https://blog.test/",
+		},
+	})
+	siteSaved := platformAPIReq(t, h, http.MethodPut, sitePath, token, siteUpdate)
+	if siteSaved.Code != http.StatusOK {
+		t.Fatalf("save site integrations = %d, body=%s", siteSaved.Code, siteSaved.Body.String())
+	}
+	analytics, ok, err := ps.SiteGoogleIntegration(blogSite.ID, platform.GoogleServiceAnalytics)
+	if err != nil || !ok || analytics == nil || !analytics.Enabled || analytics.MeasurementID != "G-PILOT1234" || analytics.Property != "properties/314159" {
+		t.Fatalf("analytics was not stored in GCMS platform store: %#v, ok=%v err=%v", analytics, ok, err)
+	}
+	search, ok, err := ps.SiteGoogleIntegration(blogSite.ID, platform.GoogleServiceSearchConsole)
+	if err != nil || !ok || search == nil || !search.Enabled || search.Property != "https://blog.test/" {
+		t.Fatalf("search console was not stored in GCMS platform store: %#v, ok=%v err=%v", search, ok, err)
+	}
+
+	siteRead := platformAPIReq(t, h, http.MethodGet, sitePath, token, nil)
+	if siteRead.Code != http.StatusOK || !strings.Contains(siteRead.Body.String(), `"measurement_id":"G-PILOT1234"`) || !strings.Contains(siteRead.Body.String(), `"property":"https://blog.test/"`) {
+		t.Fatalf("read site integrations = %d, body=%s", siteRead.Code, siteRead.Body.String())
+	}
+}
+
 func TestPlatformKeyAuditRouting(t *testing.T) {
 	_, h, ps, _, blogSite := setupPlatformAutomation(t)
 	token := "gcmsp_audit1234567890"

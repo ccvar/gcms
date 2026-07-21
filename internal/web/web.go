@@ -2101,6 +2101,7 @@ func (s *Server) servePlatformDiscovery(w http.ResponseWriter, r *http.Request, 
 			domainsBySite[d.SiteID] = append(domainsBySite[d.SiteID], d)
 		}
 	}
+	integrationSnapshot := s.discoveryIntegrationSnapshot()
 	items := make([]map[string]any, 0, len(sites))
 	for _, site := range sites {
 		publicURL := s.discoverySiteURL(site, domainsBySite[site.ID])
@@ -2114,13 +2115,138 @@ func (s *Server) servePlatformDiscovery(w http.ResponseWriter, r *http.Request, 
 			"logo":         s.discoverySiteLogo(pool, site, domainsBySite[site.ID]),
 			"favicon":      s.discoverySiteFavicon(pool, site, domainsBySite[site.ID]),
 			"readiness":    s.discoverySiteReadiness(pool, site, publicURL),
+			"integrations": s.discoverySiteIntegrations(pool, site, integrationSnapshot),
 		})
 	}
 	_ = s.platform.TouchPlatformKey(key.ID)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"items":     items,
 		"all_sites": key.MembershipMode == platform.KeyMembershipAll,
+		"platform":  s.discoveryPlatformStatus(r),
 	})
+}
+
+// discoveryIntegrationSnapshot 把平台级 Google 接入与统计摘要一次性读入内存，避免发现
+// 站点时按卡片逐项查询。读取失败只降级为“未配置/暂无摘要”，不影响旧发现契约可用性。
+type discoveryIntegrationSnapshot struct {
+	google    map[int64]map[string]*platform.SiteGoogleIntegration
+	analytics map[int64]*platform.SiteGoogleAnalyticsSummary
+	search    map[int64]*platform.SiteGoogleSearchConsoleSummary
+}
+
+func (s *Server) discoveryIntegrationSnapshot() discoveryIntegrationSnapshot {
+	snapshot := discoveryIntegrationSnapshot{
+		google:    map[int64]map[string]*platform.SiteGoogleIntegration{},
+		analytics: map[int64]*platform.SiteGoogleAnalyticsSummary{},
+		search:    map[int64]*platform.SiteGoogleSearchConsoleSummary{},
+	}
+	if s == nil || s.platform == nil {
+		return snapshot
+	}
+	if values, err := s.platform.SiteGoogleIntegrations(); err == nil {
+		snapshot.google = values
+	}
+	if values, err := s.platform.SiteGoogleAnalyticsSummaries(); err == nil {
+		snapshot.analytics = values
+	}
+	if values, err := s.platform.SiteGoogleSearchConsoleSummaries(); err == nil {
+		snapshot.search = values
+	}
+	return snapshot
+}
+
+// discoveryPlatformStatus 是 Pilot 站点管理页的全局接入摘要。只返回“是否已配置”、账号数
+// 与数据范围；OAuth 凭据、刷新令牌和 Telegram Bot Token 永远不会进入响应。
+func (s *Server) discoveryPlatformStatus(r *http.Request) map[string]any {
+	accountIDs := map[string]struct{}{}
+	analyticsAccounts, searchAccounts := 0, 0
+	if s != nil && s.platform != nil {
+		if accounts, err := s.platform.GoogleAccounts(platform.GoogleServiceAnalytics); err == nil {
+			analyticsAccounts = len(accounts)
+			for _, account := range accounts {
+				if account != nil && strings.TrimSpace(account.GoogleAccountID) != "" {
+					accountIDs[account.GoogleAccountID] = struct{}{}
+				}
+			}
+		}
+		if accounts, err := s.platform.GoogleAccounts(platform.GoogleServiceSearchConsole); err == nil {
+			searchAccounts = len(accounts)
+			for _, account := range accounts {
+				if account != nil && strings.TrimSpace(account.GoogleAccountID) != "" {
+					accountIDs[account.GoogleAccountID] = struct{}{}
+				}
+			}
+		}
+	}
+	dataRange := s.googleDataRange()
+	return map[string]any{
+		"google": map[string]any{
+			"oauth_configured":        s.googleOAuthConfigured(r),
+			"authorized_accounts":     len(accountIDs),
+			"analytics_accounts":      analyticsAccounts,
+			"search_console_accounts": searchAccounts,
+			"data_range": map[string]any{
+				"mode":  dataRange.Mode,
+				"days":  dataRange.Days,
+				"from":  dataRange.From,
+				"to":    dataRange.To,
+				"label": dataRange.Label,
+			},
+		},
+		"telegram": map[string]any{
+			"shared_bot_configured": s.platformTelegramBotToken() != "",
+		},
+	}
+}
+
+// discoverySiteIntegrations 返回单站卡片需要的脱敏摘要。Google 仅给开关与缓存统计，
+// Telegram 仅给公开频道信息和共享 Bot 使用状态，不回传任何账号/Token 标识。
+func (s *Server) discoverySiteIntegrations(pool *SiteRuntimePool, site *platform.Site, snapshot discoveryIntegrationSnapshot) map[string]any {
+	analytics := map[string]any{"configured": false, "enabled": false}
+	search := map[string]any{"configured": false, "enabled": false}
+	telegram := map[string]any{
+		"configured":      false,
+		"auto_push":       false,
+		"channel":         "",
+		"channel_url":     "",
+		"uses_shared_bot": false,
+	}
+	if site == nil {
+		return map[string]any{"analytics": analytics, "search_console": search, "telegram": telegram}
+	}
+	if services := snapshot.google[site.ID]; services != nil {
+		if integration := services[platform.GoogleServiceAnalytics]; integration != nil {
+			analytics["configured"] = true
+			analytics["enabled"] = integration.Enabled
+		}
+		if integration := services[platform.GoogleServiceSearchConsole]; integration != nil {
+			search["configured"] = true
+			search["enabled"] = integration.Enabled
+		}
+	}
+	if summary := snapshot.analytics[site.ID]; summary != nil {
+		analytics["active_users"] = summary.ActiveUsers
+		analytics["sessions"] = summary.Sessions
+		analytics["status"] = summary.Status
+		analytics["fetched_at"] = summary.FetchedAt
+	}
+	if summary := snapshot.search[site.ID]; summary != nil {
+		search["clicks"] = summary.Clicks
+		search["impressions"] = summary.Impressions
+		search["status"] = summary.Status
+		search["fetched_at"] = summary.FetchedAt
+	}
+	if pool != nil {
+		if rt, ok := pool.runtimeByID(site.ID); ok && rt != nil && rt.Store != nil {
+			status := s.siteTelegramStatusFor(rt.Store)
+			telegram["configured"] = status.Bound()
+			telegram["auto_push"] = status.AutoPush
+			telegram["channel"] = status.ChannelValue
+			telegram["channel_url"] = status.ChannelURL
+			telegram["uses_shared_bot"] = status.TokenAvailable && !status.SiteTokenSet
+		}
+	}
+	return map[string]any{"analytics": analytics, "search_console": search, "telegram": telegram}
 }
 
 // discoverySiteReadiness 给 Pilot 一组可以直接展示的、只读的上线准备事实。

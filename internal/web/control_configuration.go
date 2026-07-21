@@ -260,7 +260,7 @@ func controlExternalDomainRequirements() map[string]any {
 			"配置 Caddy 或其他反向代理",
 			"签发并验证 HTTPS 证书",
 		},
-		"note": "GCMS 只保存站点域名与跳转关系，不会修改 Cloudflare、DNS、Caddy 或 HTTPS。",
+		"note": "GCMS 只保存站点域名与跳转关系，不会修改 Cloudflare、DNS、Caddy 或 HTTPS；完整公网访问请使用 public_access.apply。",
 	}
 }
 

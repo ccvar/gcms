@@ -56,6 +56,11 @@ func platformControlOpenAPISpec(apiBase string) map[string]any {
 			"get":        map[string]any{"operationId": "domains.read", "summary": "Read GCMS internal primary and redirect domains", "responses": response},
 			"put":        map[string]any{"operationId": "domains.apply", "summary": "Validate or replace GCMS internal domain records", "parameters": mutationParams(true), "requestBody": jsonBody("DomainApplyInput"), "responses": response},
 		},
+		"/control/sites/{siteId}/public-access": map[string]any{
+			"parameters": []any{map[string]any{"name": "siteId", "in": "path", "required": true, "schema": map[string]any{"type": "integer", "format": "int64"}}},
+			"get":        map[string]any{"operationId": "public_access.read", "summary": "Read GCMS-owned DNS, Caddy and HTTPS status", "responses": response},
+			"post":       map[string]any{"operationId": "public_access.apply", "summary": "Configure public access through GCMS-owned integrations", "parameters": mutationParams(true), "requestBody": jsonBody("PublicAccessInput"), "responses": response},
+		},
 		"/control/security": map[string]any{"get": map[string]any{"operationId": "security.status", "summary": "Read initial-password status; password writes use the server-local GCMS CLI", "responses": response}},
 		"/control/unlock": map[string]any{
 			"post":   map[string]any{"operationId": "control.unlock", "summary": "Pilot-UI-only short-lived unlock", "parameters": []any{pilotUIParam}, "requestBody": jsonBody("UnlockInput"), "responses": response},
@@ -81,7 +86,13 @@ func platformControlOpenAPISpec(apiBase string) map[string]any {
 				"SiteUpdateInput":  map[string]any{"type": "object", "properties": map[string]any{"name": map[string]any{"type": "string"}, "status": map[string]any{"type": "string", "enum": []string{"enabled", "disabled"}}, "management_automation_enabled": map[string]any{"type": "boolean"}}},
 				"ThemeApplyInput":  map[string]any{"type": "object", "properties": map[string]any{"theme_id": map[string]any{"type": "string"}, "rollback": map[string]any{"type": "boolean"}}},
 				"DomainApplyInput": map[string]any{"type": "object", "properties": map[string]any{"primary_domain": map[string]any{"type": "string"}, "redirect_domains": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}}},
-				"UnlockInput":      map[string]any{"type": "object", "writeOnly": true, "required": []string{"password", "operations"}, "properties": map[string]any{"password": map[string]any{"type": "string", "format": "password", "writeOnly": true}, "operations": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}}},
+				"PublicAccessInput": map[string]any{"type": "object", "required": []string{"primary_domain"}, "properties": map[string]any{
+					"primary_domain":   map[string]any{"type": "string", "description": "主域名，不含协议、端口或路径"},
+					"redirect_domains": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "可选别名域名，GCMS 会配置 301 到主域名"},
+					"auto_dns":         map[string]any{"type": "boolean", "default": true, "description": "使用 GCMS 自己保存的 Cloudflare 配置自动创建或更新 DNS"},
+					"cloudflare_proxy": map[string]any{"type": "boolean", "description": "可选，设置 GCMS Cloudflare DNS 记录是否启用橙云代理"},
+				}},
+				"UnlockInput": map[string]any{"type": "object", "writeOnly": true, "required": []string{"password", "operations"}, "properties": map[string]any{"password": map[string]any{"type": "string", "format": "password", "writeOnly": true}, "operations": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}}},
 			},
 		},
 	}

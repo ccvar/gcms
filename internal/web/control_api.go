@@ -56,6 +56,8 @@ func platformControlCatalog() []platformControlOperation {
 		{ID: "themes.apply", Label: "应用或恢复外观主题", RequiredScope: apiScopeThemesApply, Risk: "write", Method: http.MethodPut, Endpoint: "/control/sites/{site_id}/theme", RequiresConfirmation: true, SupportsDryRun: true, Available: true},
 		{ID: "domains.read", Label: "读取域名配置", RequiredScope: apiScopeDomainsRead, Risk: "read", Method: http.MethodGet, Endpoint: "/control/sites/{site_id}/domains", Available: true},
 		{ID: "domains.apply", Label: "修改 GCMS 域名配置", RequiredScope: apiScopeDomainsWrite, Risk: "sensitive", Method: http.MethodPut, Endpoint: "/control/sites/{site_id}/domains", RequiresConfirmation: true, RequiresUnlock: true, SupportsDryRun: true, Available: true},
+		{ID: "public_access.read", Label: "读取公网访问状态", RequiredScope: apiScopeDomainsRead, Risk: "read", Method: http.MethodGet, Endpoint: "/control/sites/{site_id}/public-access", Available: true},
+		{ID: "public_access.apply", Label: "配置 GCMS 公网访问", RequiredScope: apiScopeDomainsWrite, Risk: "sensitive", Method: http.MethodPost, Endpoint: "/control/sites/{site_id}/public-access", RequiresConfirmation: true, RequiresUnlock: true, SupportsDryRun: true, Available: true},
 		{ID: "security.status", Label: "读取后台安全状态", RequiredScope: apiScopeControlRead, Risk: "read", Method: http.MethodGet, Endpoint: "/control/security", Available: true},
 	}
 }
@@ -181,6 +183,8 @@ func (s *Server) servePlatformControl(w http.ResponseWriter, r *http.Request) {
 		s.servePlatformControlThemes(w, r, "")
 	case "/api/platform/v1/control/security":
 		s.servePlatformControlSecurity(w, r)
+	case "/api/platform/v1/control/integrations":
+		s.servePlatformControlIntegrations(w, r)
 	default:
 		const prefix = "/api/platform/v1/control/"
 		rest := strings.TrimPrefix(path, prefix)
@@ -201,6 +205,10 @@ func (s *Server) servePlatformControl(w http.ResponseWriter, r *http.Request) {
 				s.servePlatformControlSiteTheme(w, r, siteID)
 			case len(parts) == 3 && parts[2] == "domains":
 				s.servePlatformControlSiteDomains(w, r, siteID)
+			case len(parts) == 3 && parts[2] == "public-access":
+				s.servePlatformControlSitePublicAccess(w, r, siteID)
+			case len(parts) == 3 && parts[2] == "integrations":
+				s.servePlatformControlSiteIntegrations(w, r, siteID)
 			default:
 				http.NotFound(w, r)
 			}
