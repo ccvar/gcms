@@ -18,6 +18,10 @@ pub struct Connection {
     /// 连接类型：gcms（导入技能包）| cloudflare（CF token 建站）| ssh（远程机器）。旧连接缺省即 gcms。
     #[serde(default = "default_kind")]
     pub kind: String,
+    /// 由“安装与管理 gcms”一键导入的运营助手所绑定的 SSH 连接 id。
+    /// 用来源而不是域名识别，服务器换域名后仍只更新同一个 Pilot 连接。
+    #[serde(default)]
+    pub source_ssh_id: String,
     pub api_base: String,
     /// 技能目录（gcms.js 的 cwd）；CF 连接则是该连接的工作区目录（技能包 + 项目都在其下）。
     pub skill_dir: String,
@@ -125,6 +129,118 @@ impl ConnStore {
             .into_iter()
             .find(|c| c.id == id)
             .ok_or_else(|| format!("未找到连接 {id}"))
+    }
+
+    /// 查找某台已连接服务器导入的 Pilot 运营助手。兼容首次加入来源字段之前，
+    /// 以同名 + 同 API 地址导入的连接，并在下一次绑定时自动收编。
+    pub fn pilot_assistant_for_source(
+        &self,
+        source_ssh_id: &str,
+        api_base: &str,
+    ) -> Option<Connection> {
+        let source_ssh_id = source_ssh_id.trim();
+        let api_base = api_base.trim().trim_end_matches('/');
+        let conns = self.list();
+        conns
+            .iter()
+            .find(|connection| {
+                connection.kind == "gcms" && connection.source_ssh_id == source_ssh_id
+            })
+            .cloned()
+            .or_else(|| {
+                conns.into_iter().find(|connection| {
+                    connection.kind == "gcms"
+                        && connection.source_ssh_id.is_empty()
+                        && connection.name == "Pilot 运营助手"
+                        && connection.api_base.trim_end_matches('/') == api_base
+                })
+            })
+    }
+
+    /// 把 gcms 连接绑定到一台来源服务器；可同时安全替换平台密钥与 API 地址。
+    /// 连接 id、技能目录和历史对话保持不变。
+    pub fn bind_pilot_assistant(
+        &self,
+        id: &str,
+        source_ssh_id: &str,
+        api_base: &str,
+        new_key: Option<&str>,
+    ) -> Result<Connection, String> {
+        let source_ssh_id = source_ssh_id.trim();
+        let api_base = api_base.trim().trim_end_matches('/');
+        if source_ssh_id.is_empty() {
+            return Err("缺少运营助手的来源服务器".into());
+        }
+        if !api_base.starts_with("https://") {
+            return Err("运营助手只允许使用 HTTPS API 地址".into());
+        }
+        let mut conns = self.list();
+        let Some(target) = conns.iter().position(|connection| connection.id == id) else {
+            return Err(format!("未找到连接 {id}"));
+        };
+        if conns[target].kind != "gcms" {
+            return Err("只能绑定 gcms 技能包连接".into());
+        }
+        if conns.iter().enumerate().any(|(index, connection)| {
+            index != target
+                && connection.kind == "gcms"
+                && connection.source_ssh_id == source_ssh_id
+        }) {
+            return Err("这台服务器已经绑定了另一个 Pilot 运营助手".into());
+        }
+
+        let env_path = Path::new(&conns[target].skill_dir).join(".env");
+        let previous_env = fs::read(&env_path).ok();
+        let previous_key = if new_key.is_some() {
+            keychain::get_key(id).ok()
+        } else {
+            None
+        };
+        let restore_key = || {
+            if new_key.is_some() {
+                match previous_key.as_deref() {
+                    Some(key) => {
+                        let _ = keychain::set_key(id, key);
+                    }
+                    None => {
+                        let _ = keychain::delete_key(id);
+                    }
+                }
+            }
+        };
+        if let Some(key) = new_key {
+            if !key.starts_with("gcmsp_") {
+                return Err("Pilot 运营助手必须使用平台密钥".into());
+            }
+            keychain::set_key(id, key)?;
+            conns[target].key_prefix = keychain::key_prefix(key);
+            conns[target].key_kind = "gcmsp_".into();
+        }
+        let env_body = format!(
+            "GCMS_API_BASE={api_base}\n# GCMS_API_KEY 已由 GCMS Pilot 保管在系统钥匙串，运行时自动注入\n"
+        );
+        if let Err(error) = fs::write(&env_path, env_body) {
+            restore_key();
+            return Err(format!("更新运营助手连接地址失败：{error}"));
+        }
+
+        conns[target].name = "Pilot 运营助手".into();
+        conns[target].api_base = api_base.into();
+        conns[target].source_ssh_id = source_ssh_id.into();
+        let out = conns[target].clone();
+        if let Err(error) = self.save(&conns) {
+            match previous_env {
+                Some(bytes) => {
+                    let _ = fs::write(&env_path, bytes);
+                }
+                None => {
+                    let _ = fs::remove_file(&env_path);
+                }
+            }
+            restore_key();
+            return Err(error);
+        }
+        Ok(out)
     }
 
     /// 导入迁移包时写入连接元数据；密钥由 transfer 模块单独写入钥匙串。
@@ -244,6 +360,7 @@ impl ConnStore {
                     .unwrap_or_else(|| default_name(&api_base)),
                 remark: String::new(),
                 kind: "gcms".into(),
+                source_ssh_id: String::new(),
                 api_base,
                 skill_dir: skill_dir.to_string_lossy().into_owned(),
                 key_prefix: prefix,
@@ -308,6 +425,7 @@ impl ConnStore {
             },
             remark: String::new(),
             kind: "cloudflare".into(),
+            source_ssh_id: String::new(),
             api_base: String::new(),
             skill_dir: dir.to_string_lossy().into_owned(),
             key_prefix: prefix,
@@ -399,6 +517,7 @@ impl ConnStore {
             },
             remark: String::new(),
             kind: "ssh".into(),
+            source_ssh_id: String::new(),
             api_base: String::new(),
             skill_dir: dir.to_string_lossy().into_owned(),
             // 故意留空：key_prefix 会显示在连接列表里，SSH 这里的秘密是密码/口令，
@@ -857,6 +976,7 @@ mod tests {
             name: "gcms".into(),
             remark: String::new(),
             kind: "gcms".into(),
+            source_ssh_id: String::new(),
             api_base: "https://example.com".into(),
             skill_dir: String::new(),
             key_prefix: "gcms_ab".into(),
@@ -885,6 +1005,58 @@ mod tests {
     }
 
     #[test]
+    fn pilot_assistant_lookup_prefers_source_and_adopts_legacy_same_base() {
+        let base =
+            std::env::temp_dir().join(format!("pilot-assistant-source-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&base).unwrap();
+        let store = ConnStore::new(&base).unwrap();
+        let make = |id: &str, source: &str, api: &str| Connection {
+            id: id.into(),
+            name: "Pilot 运营助手".into(),
+            remark: String::new(),
+            kind: "gcms".into(),
+            source_ssh_id: source.into(),
+            api_base: api.into(),
+            skill_dir: String::new(),
+            key_prefix: "gcmsp_test".into(),
+            key_kind: "gcmsp_".into(),
+            account_id: String::new(),
+            preferred_zones: Vec::new(),
+            ssh_host: String::new(),
+            ssh_port: 0,
+            ssh_user: String::new(),
+            ssh_auth: String::new(),
+            ssh_key_path: String::new(),
+            ssh_fingerprint: String::new(),
+            ssh_os: String::new(),
+            ssh_os_id: String::new(),
+            pack_version: String::new(),
+            created_at: "t".into(),
+        };
+        store
+            .save(&[
+                make("bound", "ssh-one", "https://old.example/api/platform/v1"),
+                make("legacy", "", "https://legacy.example/api/platform/v1"),
+            ])
+            .unwrap();
+        assert_eq!(
+            store
+                .pilot_assistant_for_source("ssh-one", "https://new.example/api/platform/v1")
+                .unwrap()
+                .id,
+            "bound"
+        );
+        assert_eq!(
+            store
+                .pilot_assistant_for_source("ssh-two", "https://legacy.example/api/platform/v1/")
+                .unwrap()
+                .id,
+            "legacy"
+        );
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
     fn cloudflare_zone_preference_is_exclusive_and_clearable() {
         let base = std::env::temp_dir().join(format!("pilot-cf-zone-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&base).unwrap();
@@ -894,6 +1066,7 @@ mod tests {
             name: format!("Cloudflare {id}"),
             remark: String::new(),
             kind: "cloudflare".into(),
+            source_ssh_id: String::new(),
             api_base: String::new(),
             skill_dir: String::new(),
             key_prefix: format!("token-{id}…"),
@@ -952,6 +1125,7 @@ mod tests {
             name: format!("{user}@{host}"),
             kind: "ssh".into(),
             remark: String::new(),
+            source_ssh_id: String::new(),
             api_base: String::new(),
             skill_dir: String::new(),
             key_prefix: String::new(),
@@ -1169,6 +1343,7 @@ mod tests {
             name: "x".into(),
             kind: "gcms".into(),
             remark: String::new(),
+            source_ssh_id: String::new(),
             api_base: "https://x.example/api/platform/v1".into(),
             skill_dir: dest.to_string_lossy().into_owned(),
             key_prefix: "gcmsp_ab".into(),

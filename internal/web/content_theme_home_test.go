@@ -11,7 +11,7 @@ import (
 	"cms.ccvar.com/internal/store"
 )
 
-// TestContentThemesHonorHomePostLimitWithMultipleFeatured 锁定四套内容骨架的
+// TestContentThemesHonorHomePostLimitWithMultipleFeatured 锁定独立内容骨架的
 // 首页数量口径：后台设置 N 条时，渲染 1 篇主推 + N-1 篇列表；除主推外的
 // 置顶文章仍进入列表，且第 N+1 篇不会越界出现。
 func TestContentThemesHonorHomePostLimitWithMultipleFeatured(t *testing.T) {
@@ -47,7 +47,7 @@ func TestContentThemesHonorHomePostLimitWithMultipleFeatured(t *testing.T) {
 		}
 	}
 
-	for _, theme := range []string{"field-ledger", "signal-archive", "paper-current", "night-watch"} {
+	for _, theme := range []string{"field-ledger", "signal-archive", "paper-current", "night-watch", "orbit-index", "column-stage", "type-cascade"} {
 		t.Run(theme, func(t *testing.T) {
 			if err := s.store.SetSetting("theme", theme); err != nil {
 				t.Fatalf("set theme: %v", err)

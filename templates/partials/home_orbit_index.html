@@ -1,0 +1,42 @@
+{{define "home_orbit_index"}}
+<div class="orbit-index-page">
+  <section class="oi-orbit-shell" aria-label="{{.CategoryAll.Title}}">
+    <div class="oi-orbit oi-orbit-outer" aria-hidden="true"></div>
+    <div class="oi-orbit oi-orbit-inner" aria-hidden="true"></div>
+
+    <nav class="oi-category-nodes" aria-label="{{.Tr.T "common.category_nav"}}">
+      {{range $i, $cat := .Categories}}{{if lt $i 5}}
+      <a class="oi-category-node oi-category-node-{{$i}}" href="{{$.Tr.U (printf "/category/%s" $cat.Slug)}}"><span aria-hidden="true">{{initial $cat.Name}}</span><b>{{$cat.Name}}</b><small>{{printf ($.Tr.T "category.count") $cat.Count}}</small></a>
+      {{end}}{{end}}
+    </nav>
+
+    <div class="oi-latest-notes">
+      {{range $i, $p := .Posts}}{{if lt $i 5}}
+      <a class="oi-latest-note oi-latest-note-{{$i}}" href="{{$.Tr.U (contentURL $p)}}"><i aria-hidden="true"></i><b>{{$p.Title}}</b><time datetime="{{$.Tr.ISODate $p.PublishedAt}}">{{$.Tr.Date $p.PublishedAt}}</time></a>
+      {{end}}{{end}}
+    </div>
+
+    {{with .Featured}}
+    <article class="oi-feature{{if not .CoverImage}} no-cover{{end}}">
+      <small>{{$.Site.HomeFeatured}}</small>
+      <h1><a href="{{$.Tr.U (contentURL .)}}">{{.Title}}</a></h1>
+      {{if .Excerpt}}<p>{{.Excerpt}}</p>{{end}}
+      <time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time>
+      {{if .CoverImage}}<a class="oi-feature-cover" href="{{$.Tr.U (contentURL .)}}"><img src="{{.CoverImage}}" alt="{{.Title}}" decoding="async"{{imgAttrs .CoverImage}}></a>{{end}}
+    </article>
+    {{end}}
+
+    <div class="oi-total">{{printf (.Tr.T "category.count") .TotalPosts}}</div>
+    <div class="oi-legend" aria-hidden="true"><span><i></i>{{.Tr.T "category.label"}}</span><span><i></i>{{.Site.HomeLatest}}</span></div>
+  </section>
+
+  {{if .Posts}}
+  <section class="oi-reading-queue">
+    <div class="oi-queue-label"><b>{{.Site.HomeLatest}}</b><span>→</span></div>
+    {{range $i, $p := .Posts}}{{if lt $i 3}}
+    <a class="oi-queue-card" href="{{$.Tr.U (contentURL $p)}}"><strong>{{printf "%02d" (add $i 1)}}</strong>{{if $p.CoverImage}}<img src="{{$p.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs $p.CoverImage}}>{{end}}<span><b>{{$p.Title}}</b><time datetime="{{$.Tr.ISODate $p.PublishedAt}}">{{$.Tr.Date $p.PublishedAt}}</time>{{if $p.Excerpt}}<em>{{$p.Excerpt}}</em>{{end}}</span></a>
+    {{end}}{{end}}
+  </section>
+  {{end}}
+</div>
+{{end}}

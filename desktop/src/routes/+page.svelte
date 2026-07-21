@@ -25,6 +25,7 @@
   import { PRESET_PROMPTS, loadUserPrompts, saveUserPrompts, newPromptId, type Prompt } from '$lib/prompts';
   import Dropdown from '$lib/Dropdown.svelte';
   import ConfirmDialog from '$lib/ConfirmDialog.svelte';
+  import GcmsPasswordDialog from '$lib/GcmsPasswordDialog.svelte';
   import { marked } from 'marked';
   import DOMPurify from 'dompurify';
 
@@ -127,7 +128,10 @@
   type GcmsRemoteStatus = {
     installed: boolean; version: string; path: string; running: boolean; port: number; base_url: string; redirect_domain: string;
     password_status: 'default' | 'changed' | 'unknown'; admin_user: string; password_change_supported: boolean;
+    assistant_import_supported?: boolean;
+    update_supported?: boolean;
   };
+  type GcmsRemoteUpdateInfo = { current: string; latest: string; has_update: boolean };
   type GcmsAccessHealth = {
     domain: string; checked: boolean; https_ok: boolean; verification_error: string;
     cloudflare_checked: boolean; cloudflare_proxy_applicable: boolean; cloudflare_proxied: boolean; cloudflare_proxy_error: string;
@@ -140,8 +144,11 @@
   type GcmsInstallEvent =
     | { type: 'phase'; message: string }
     | { type: 'log'; text: string }
-    | { type: 'progress'; current: number; total: number; source_index: number; source_total: number; message: string };
-  type GcmsMigrationProgress = { current: number; total: number; source_index: number; source_total: number; message: string };
+    | { type: 'progress'; current: number; total: number; source_index: number; source_total: number; message: string; bytes_current: number; bytes_total: number; bytes_per_second: number };
+  type GcmsMigrationProgress = {
+    current: number; total: number; source_index: number; source_total: number; message: string;
+    bytes_current: number; bytes_total: number; bytes_per_second: number;
+  };
   type GcmsCaddyPreflight = {
     mode: 'missing' | 'standard' | 'custom' | 'conflict' | 'unsupported';
     provider: 'caddy' | 'nginx';
@@ -232,6 +239,10 @@
   let gcmsServers = $state<Record<string, GcmsServerView>>({});
   let gcmsAccessHealthChecking = $state<Record<string, boolean>>({});
   let gcmsInstalling = $state<Record<string, number>>({});
+  let gcmsAssistantImporting = $state<Record<string, boolean>>({});
+  let gcmsUpdates = $state<Record<string, GcmsRemoteUpdateInfo>>({});
+  let gcmsUpdateChecking = $state<Record<string, boolean>>({});
+  let gcmsUpgrading = $state<Record<string, number>>({});
   let gcmsInstallClock = $state(Date.now());
   let gcmsPasswordEditor = $state<GcmsPasswordEditor | null>(null);
   let gcmsAccess = $state<GcmsAccessWizard | null>(null);
@@ -260,7 +271,9 @@
   let gcmsServiceActions = $state<Record<string, 'restart' | 'stop'>>({});
   let gcmsMigrationProgress = $state<GcmsMigrationProgress | null>(null);
   let gcmsMigrationLog = $state('');
+  let gcmsMigrationBodyEl = $state<HTMLDivElement | null>(null);
   let gcmsMigrationLogEl = $state<HTMLPreElement | null>(null);
+  let gcmsMigrationFollow = $state(true);
   const gcmsChecking = $derived(Object.values(gcmsServers).some((s) => s.checking));
 
   function gcmsMigrationRemoteState(instance: GcmsMigrationSnapshot): GcmsMigrationSnapshot['remote_state'] {
@@ -358,11 +371,7 @@
     return gcmsMigrationRemoteReady(instance)
       && instance.access_configured
       && !!domainFromUrl(instance.base_url)
-      && !instance.https_ok
-      && !instance.cloudflare_proxy_applicable
-      && !instance.cloudflare_proxied
-      && !instance.cloudflare_proxy_error
-      && !instance.last_error;
+      && !instance.https_ok;
   }
 
   async function refreshGcmsMigrationAccessHealthBatch(instances: GcmsMigrationSnapshot[]) {
@@ -391,11 +400,38 @@
     gcmsMigrationLog = next.length > 50_000 ? next.slice(-50_000) : next;
     await tick();
     if (gcmsMigrationLogEl) gcmsMigrationLogEl.scrollTop = gcmsMigrationLogEl.scrollHeight;
+    await scrollGcmsMigrationToLatest();
+  }
+
+  function handleGcmsMigrationBodyScroll() {
+    if (!gcmsMigrationBodyEl || !gcmsMigrationStaging) return;
+    const distance = gcmsMigrationBodyEl.scrollHeight - gcmsMigrationBodyEl.scrollTop - gcmsMigrationBodyEl.clientHeight;
+    gcmsMigrationFollow = distance <= 72;
+  }
+
+  async function scrollGcmsMigrationToLatest(force = false) {
+    await tick();
+    if (!gcmsMigrationBodyEl || (!force && !gcmsMigrationFollow)) return;
+    gcmsMigrationFollow = true;
+    gcmsMigrationBodyEl.scrollTop = gcmsMigrationBodyEl.scrollHeight;
   }
 
   function gcmsMigrationPercent(): number {
     if (!gcmsMigrationProgress?.total) return 0;
-    return Math.max(0, Math.min(100, Math.round((gcmsMigrationProgress.current / gcmsMigrationProgress.total) * 100)));
+    const transferFraction = gcmsMigrationProgress.bytes_total > 0
+      ? Math.min(1, gcmsMigrationProgress.bytes_current / gcmsMigrationProgress.bytes_total)
+      : 0;
+    // 流式传输合并了旧的“下载到本机 + 上传到目标”两个阶段，因此占两个进度刻度。
+    const effectiveCurrent = gcmsMigrationProgress.current + transferFraction * 2;
+    return Math.max(0, Math.min(100, Math.round((effectiveCurrent / gcmsMigrationProgress.total) * 100)));
+  }
+
+  function formatGcmsTransferBytes(value: number): string {
+    if (!Number.isFinite(value) || value <= 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const unit = Math.min(units.length - 1, Math.floor(Math.log(value) / Math.log(1024)));
+    const scaled = value / (1024 ** unit);
+    return `${scaled >= 100 || unit === 0 ? scaled.toFixed(0) : scaled.toFixed(1)} ${units[unit]}`;
   }
 
   function openGcmsMigration(targetId = '') {
@@ -413,6 +449,7 @@
     gcmsMigrationPreflight = null;
     gcmsMigrationProgress = null;
     gcmsMigrationLog = '';
+    gcmsMigrationFollow = true;
     void loadGcmsMigrationInstances();
   }
   function closeGcmsMigration() {
@@ -426,13 +463,18 @@
     if (gcmsMigrationChecking || gcmsMigrationStaging) return;
     if (!gcmsMigrationPreflight?.can_start) { gcmsMigrationError = '请先完成预检并处理所有问题'; return; }
     gcmsMigrationStaging = true; gcmsMigrationError = ''; gcmsMigrationPhase = '准备原始快照…'; gcmsMigrationStage = null;
-    gcmsMigrationProgress = null; gcmsMigrationLog = '';
+    gcmsMigrationProgress = null; gcmsMigrationLog = ''; gcmsMigrationFollow = true;
+    await scrollGcmsMigrationToLatest(true);
     const onEvent = new Channel<GcmsInstallEvent>();
     onEvent.onmessage = (event) => {
-      if (event.type === 'phase') gcmsMigrationPhase = event.message;
+      if (event.type === 'phase') {
+        gcmsMigrationPhase = event.message;
+        void scrollGcmsMigrationToLatest();
+      }
       else if (event.type === 'progress') {
         gcmsMigrationPhase = event.message;
         gcmsMigrationProgress = event;
+        void scrollGcmsMigrationToLatest();
       } else if (event.type === 'log') void appendGcmsMigrationLog(event.text);
     };
     try {
@@ -456,47 +498,53 @@
   async function restartGcmsMigrationInstance(instance: GcmsMigrationSnapshot) {
     if (gcmsMigrationRestarting || gcmsMigrationStopping) return;
     const action = instance.running ? '重启' : '启动';
-    const yes = await confirmDialog(
-      instance.running
-        ? `重启迁移实例「${instance.source_name}」？\n\n端口 :${instance.port} 的网站与后台会短暂不可访问，重启完成后自动恢复；目录、数据和域名配置不会改变。`
-        : `启动迁移实例「${instance.source_name}」？\n\n将按现有目录、端口 :${instance.port} 和域名配置启动服务，不会修改实例数据。`,
-      { title: `${action}迁移实例`, kind: 'warning', confirmText: `确认${action}` },
-    );
-    if (!yes) return;
-    gcmsMigrationRestarting = instance.id;
-    gcmsMigrationError = '';
-    try {
-      const refreshed = await invoke<GcmsMigrationSnapshot>('gcms_remote_migration_restart', { instanceId: instance.id });
-      gcmsMigrationInstances = gcmsMigrationInstances.map((item) => item.id === refreshed.id ? refreshed : item);
-      if (gcmsMigrationStage) gcmsMigrationStage = { ...gcmsMigrationStage, snapshots: gcmsMigrationStage.snapshots.map((item) => item.id === refreshed.id ? refreshed : item) };
-      say(`迁移实例已${action}`);
-    } catch (e) {
-      gcmsMigrationError = String(e);
-      say(gcmsMigrationError, 'err');
-    } finally {
-      gcmsMigrationRestarting = '';
-    }
+    gcmsInstanceMenu = null;
+    requestGcmsPassword({
+      title: `${action}迁移实例`,
+      message: instance.running
+        ? `端口 :${instance.port} 会短暂不可访问；目录、数据和域名配置不会改变。`
+        : `将按端口 :${instance.port} 和现有配置启动，不会修改实例数据。`,
+      instance: instance.source_name,
+      confirmText: `验证并${action}`,
+    }, async (adminPassword) => {
+      gcmsMigrationRestarting = instance.id;
+      gcmsMigrationError = '';
+      try {
+        const refreshed = await invoke<GcmsMigrationSnapshot>('gcms_remote_migration_restart', { instanceId: instance.id, adminPassword });
+        gcmsMigrationInstances = gcmsMigrationInstances.map((item) => item.id === refreshed.id ? refreshed : item);
+        if (gcmsMigrationStage) gcmsMigrationStage = { ...gcmsMigrationStage, snapshots: gcmsMigrationStage.snapshots.map((item) => item.id === refreshed.id ? refreshed : item) };
+        say(`迁移实例已${action}`);
+      } catch (e) {
+        gcmsMigrationError = String(e);
+        throw e;
+      } finally {
+        gcmsMigrationRestarting = '';
+      }
+    });
   }
   async function stopGcmsMigrationInstance(instance: GcmsMigrationSnapshot) {
     if (gcmsMigrationRestarting || gcmsMigrationStopping || !instance.running) return;
-    const yes = await confirmDialog(
-      `关闭迁移实例「${instance.source_name}」的服务？\n\n关闭后网站与后台会暂时不可访问；实例目录、数据、域名和开机自启配置都会保留，之后可点“重启”恢复。`,
-      { title: '关闭实例服务', kind: 'warning', confirmText: '关闭服务' },
-    );
-    if (!yes) return;
-    gcmsMigrationStopping = instance.id;
-    gcmsMigrationError = '';
-    try {
-      const refreshed = await invoke<GcmsMigrationSnapshot>('gcms_remote_migration_stop', { instanceId: instance.id });
-      gcmsMigrationInstances = gcmsMigrationInstances.map((item) => item.id === refreshed.id ? refreshed : item);
-      if (gcmsMigrationStage) gcmsMigrationStage = { ...gcmsMigrationStage, snapshots: gcmsMigrationStage.snapshots.map((item) => item.id === refreshed.id ? refreshed : item) };
-      say('迁移实例服务已关闭');
-    } catch (e) {
-      gcmsMigrationError = String(e);
-      say(gcmsMigrationError, 'err');
-    } finally {
-      gcmsMigrationStopping = '';
-    }
+    gcmsInstanceMenu = null;
+    requestGcmsPassword({
+      title: '关闭实例服务',
+      message: `端口 :${instance.port} 的网站与后台将不可访问；目录、数据、域名和开机自启配置都会保留。`,
+      instance: instance.source_name,
+      confirmText: '验证并关闭',
+    }, async (adminPassword) => {
+      gcmsMigrationStopping = instance.id;
+      gcmsMigrationError = '';
+      try {
+        const refreshed = await invoke<GcmsMigrationSnapshot>('gcms_remote_migration_stop', { instanceId: instance.id, adminPassword });
+        gcmsMigrationInstances = gcmsMigrationInstances.map((item) => item.id === refreshed.id ? refreshed : item);
+        if (gcmsMigrationStage) gcmsMigrationStage = { ...gcmsMigrationStage, snapshots: gcmsMigrationStage.snapshots.map((item) => item.id === refreshed.id ? refreshed : item) };
+        say('迁移实例服务已关闭');
+      } catch (e) {
+        gcmsMigrationError = String(e);
+        throw e;
+      } finally {
+        gcmsMigrationStopping = '';
+      }
+    });
   }
   async function recheckGcmsMigrationInstance(instance: GcmsMigrationSnapshot) {
     if (gcmsMigrationInstanceBusy(instance.id)) return;
@@ -528,10 +576,35 @@
     }
     const onlyForget = remoteState === 'missing';
     const actionLabel = onlyForget ? '移除记录' : remoteState === 'residual' ? '清理残留' : '卸载实例';
+    if (!onlyForget) {
+      gcmsInstanceMenu = null;
+      requestGcmsPassword({
+        title: actionLabel,
+        message: '将永久删除该实例的目录、数据、systemd 与 Web 配置。DNS 和 Cloudflare 记录会保留。',
+        instance: instance.source_name,
+        kind: 'danger',
+        confirmText: `验证并${actionLabel}`,
+      }, async (adminPassword) => {
+        gcmsMigrationRemoving = instance.id;
+        gcmsMigrationError = '';
+        try {
+          await invoke('gcms_remote_migration_uninstall', { instanceId: instance.id, adminPassword });
+          gcmsMigrationInstances = gcmsMigrationInstances.filter((item) => item.id !== instance.id);
+          gcmsMigrationSources = gcmsMigrationSources.filter((item) => item !== `instance:${instance.id}`);
+          if (gcmsMigrationStage) gcmsMigrationStage = { ...gcmsMigrationStage, snapshots: gcmsMigrationStage.snapshots.filter((item) => item.id !== instance.id) };
+          say(`${actionLabel}完成，DNS 与 Cloudflare 记录已保留`);
+        } catch (e) {
+          gcmsMigrationError = String(e);
+          void loadGcmsMigrationInstances();
+          throw e;
+        } finally {
+          gcmsMigrationRemoving = '';
+        }
+      });
+      return;
+    }
     const yes = await confirmDialog(
-      onlyForget
-        ? `移除迁移实例「${instance.source_name}」的本地记录？\n\nPilot 已再次确认远端没有实例目录、systemd 服务或托管的 Web 配置。此操作只清除 Pilot 中的登记。`
-        : `${actionLabel}「${instance.source_name}」？\n\n将永久删除该迁移实例的目录和数据，并移除 Pilot 创建的 systemd、Caddy / Nginx 配置。DNS 与 Cloudflare 记录会保留，不会影响目标服务器上的其他 GCMS。`,
+      `移除迁移实例「${instance.source_name}」的本地记录？\n\nPilot 已再次确认远端没有实例目录、systemd 服务或托管的 Web 配置。此操作只清除 Pilot 中的登记。`,
       { title: actionLabel, kind: 'danger', confirmText: actionLabel },
     );
     if (!yes) return;
@@ -539,11 +612,11 @@
     gcmsMigrationRemoving = instance.id;
     gcmsMigrationError = '';
     try {
-      await invoke(onlyForget ? 'gcms_remote_migration_forget' : 'gcms_remote_migration_uninstall', { instanceId: instance.id });
+      await invoke('gcms_remote_migration_forget', { instanceId: instance.id });
       gcmsMigrationInstances = gcmsMigrationInstances.filter((item) => item.id !== instance.id);
       gcmsMigrationSources = gcmsMigrationSources.filter((item) => item !== `instance:${instance.id}`);
       if (gcmsMigrationStage) gcmsMigrationStage = { ...gcmsMigrationStage, snapshots: gcmsMigrationStage.snapshots.filter((item) => item.id !== instance.id) };
-      say(onlyForget ? '迁移实例记录已移除' : `${actionLabel}完成，DNS 与 Cloudflare 记录已保留`);
+      say('迁移实例记录已移除');
     } catch (e) {
       gcmsMigrationError = String(e);
       say(gcmsMigrationError, 'err');
@@ -576,10 +649,106 @@
         targetId: gcmsMigrationTarget, sourceIds: gcmsMigrationSources,
       });
     } catch (e) { gcmsMigrationError = String(e); }
-    finally { gcmsMigrationChecking = false; }
+    finally {
+      gcmsMigrationChecking = false;
+      await scrollGcmsMigrationToLatest(true);
+    }
   }
 
   function gcmsServer(id: string): GcmsServerView { return gcmsServers[id] ?? emptyGcmsServer(); }
+  function gcmsPilotAssistant(sourceId: string): Connection | undefined {
+    return conns.find((connection) => connection.kind === 'gcms' && connection.source_ssh_id === sourceId);
+  }
+  function gcmsAssistantImportTip(status: GcmsRemoteStatus, imported: boolean): string {
+    if (!status.running) return '请先启动 GCMS 服务';
+    if (!gcmsHttpsConfigured(status)) return '请先设置访问域名并启用 HTTPS';
+    if (!status.assistant_import_supported) return '请先升级 GCMS，再导入 Pilot 运营助手';
+    return imported
+      ? '同步最新技能包与全站运营权限；已有对话会保留'
+      : '创建全站运营密钥并导入当前 Pilot；密钥只保存在系统钥匙串';
+  }
+  async function importGcmsPilotAssistant(c: Connection, status: GcmsRemoteStatus) {
+    if (gcmsAssistantImporting[c.id]) return;
+    if (!status.running) { say('请先启动 GCMS 服务，再导入 Pilot 运营助手', 'err'); return; }
+    if (!gcmsHttpsConfigured(status)) { say('请先设置访问域名并启用 HTTPS，再导入 Pilot 运营助手', 'err'); return; }
+    if (!status.assistant_import_supported) { say('当前 GCMS 版本尚不支持一键导入，请先升级 GCMS', 'err'); return; }
+    const existed = !!gcmsPilotAssistant(c.id);
+    gcmsAssistantImporting = { ...gcmsAssistantImporting, [c.id]: true };
+    try {
+      const outcome = await invoke<ImportOutcome>('gcms_remote_import_pilot_assistant', { connId: c.id });
+      if (outcome.status === 'needs_key') throw new Error('GCMS 未能签发 Pilot 运营助手密钥，请重新检测后再试');
+      delete packUpdates[outcome.connection.id];
+      await refreshConns();
+      say(existed || outcome.status === 'upgraded'
+        ? '「Pilot 运营助手」已更新，原有对话全部保留'
+        : '「Pilot 运营助手」已导入当前 Pilot');
+    } catch (e) {
+      say(String(e), 'err');
+    } finally {
+      const next = { ...gcmsAssistantImporting };
+      delete next[c.id];
+      gcmsAssistantImporting = next;
+    }
+  }
+  async function checkRemoteGcmsUpdate(connId: string, silent = false, force = false): Promise<GcmsRemoteUpdateInfo | null> {
+    if (gcmsUpdateChecking[connId] || gcmsUpgrading[connId]) return gcmsUpdates[connId] ?? null;
+    if (!force && gcmsUpdates[connId]) return gcmsUpdates[connId];
+    const status = gcmsServer(connId).status;
+    if (!status?.installed) return null;
+    if (!status.update_supported) {
+      if (!silent) say('当前 GCMS 安装不支持在线升级，请先使用标准安装包更新', 'err');
+      return null;
+    }
+    gcmsUpdateChecking = { ...gcmsUpdateChecking, [connId]: true };
+    try {
+      const info = await invoke<GcmsRemoteUpdateInfo>('gcms_remote_check_update', { connId });
+      gcmsUpdates = { ...gcmsUpdates, [connId]: info };
+      if (!silent) say(info.has_update ? `发现 GCMS 新版本 ${info.latest}` : `GCMS ${info.current || status.version} 已是最新版本`);
+      return info;
+    } catch (e) {
+      if (!silent) say(String(e), 'err');
+      return null;
+    } finally {
+      const next = { ...gcmsUpdateChecking };
+      delete next[connId];
+      gcmsUpdateChecking = next;
+    }
+  }
+  async function upgradeRemoteGcms(c: Connection, current: GcmsRemoteStatus) {
+    if (gcmsUpgrading[c.id] || gcmsInstalling[c.id]) return;
+    gcmsCardMenu = null;
+    const update = gcmsUpdates[c.id] ?? await checkRemoteGcmsUpdate(c.id, false, true);
+    if (!update) return;
+    if (!update.has_update) { say(`GCMS ${update.current || current.version} 已是最新版本`); return; }
+    const yes = await confirmDialog(
+      `将「${c.name}」上的 GCMS 从 ${update.current || current.version || '当前版本'} 升级到 ${update.latest}。\n升级器会校验签名、备份数据库并短暂重启服务；健康检查失败会自动回滚。`,
+      { title: '在线升级 GCMS', kind: 'info', confirmText: '开始升级' },
+    );
+    if (!yes) return;
+    gcmsUpgrading = { ...gcmsUpgrading, [c.id]: Date.now() };
+    patchGcmsServer(c.id, { status: current, error: '', phase: `准备升级到 ${update.latest}…`, log: '' });
+    const onEvent = new Channel<GcmsInstallEvent>();
+    onEvent.onmessage = (event) => {
+      if (event.type === 'phase') patchGcmsServer(c.id, { phase: event.message });
+      else if (event.type === 'log') {
+        const log = gcmsServer(c.id).log;
+        patchGcmsServer(c.id, { log: [log, event.text].filter(Boolean).join('\n') });
+      }
+    };
+    try {
+      const status = await invoke<GcmsRemoteStatus>('gcms_remote_upgrade', { connId: c.id, targetVersion: update.latest, onEvent });
+      patchGcmsServer(c.id, { status, error: '', phase: status.version === current.version ? '当前已是最新版本' : '升级完成' });
+      gcmsUpdates = { ...gcmsUpdates, [c.id]: { current: status.version, latest: update.latest, has_update: false } };
+      say(status.version === current.version ? `GCMS ${status.version || ''} 已是最新版本` : `GCMS 已升级到 ${status.version || update.latest}`);
+    } catch (e) {
+      patchGcmsServer(c.id, { status: current, error: String(e), phase: '在线升级失败' });
+      say(String(e), 'err');
+    } finally {
+      const next = { ...gcmsUpgrading };
+      delete next[c.id];
+      gcmsUpgrading = next;
+    }
+  }
   function gcmsDetailsTip(status: GcmsRemoteStatus): string {
     return `安装目录：${status.path || '未知'}`;
   }
@@ -628,10 +797,18 @@
   function openGcmsPasswordEditor(c: Connection, status: GcmsRemoteStatus, justInstalled = false) {
     if (gcmsPasswordEditor?.saving) return;
     gcmsCardMenu = null;
+    if (status.password_status === 'changed') {
+      say('后台密码已修改，请在 GCMS 后台继续管理', 'err');
+      return;
+    }
+    if (status.password_status !== 'default') {
+      say('无法确认后台仍在使用初始密码，请重新检测后再试', 'err');
+      return;
+    }
     if (!status.password_change_supported) {
       const url = gcmsPasswordUrl(status);
       if (url) openGcmsPasswordPage(status);
-      else say('当前 GCMS 版本需升级后才能在 Pilot 中修改密码', 'err');
+      else say('当前 GCMS 版本需升级后才能在 Pilot 中设置初始密码', 'err');
       return;
     }
     closeGcmsPasswordEditor();
@@ -687,8 +864,19 @@
       }
       say(`「${c.name}」的 GCMS 后台密码已更新，旧登录会话已退出`, 'ok');
     } catch (e) {
+      const message = String(e);
+      if (message.includes('仅支持设置首次安装的初始密码') || message.includes('后台密码已修改')) {
+        if (gcmsPasswordEditor?.connId === c.id) {
+          gcmsPasswordEditor.password = '';
+          gcmsPasswordEditor.confirm = '';
+          gcmsPasswordEditor = null;
+        }
+        await probeRemoteGcms(c.id);
+        say('后台密码已在 GCMS 中修改，Pilot 未覆盖现有密码', 'ok');
+        return;
+      }
       if (gcmsPasswordEditor?.connId === c.id) {
-        updateGcmsPasswordEditor({ saving: false, error: String(e) });
+        updateGcmsPasswordEditor({ saving: false, error: message });
       }
     }
   }
@@ -700,6 +888,20 @@
     gcmsChildMigration = null;
     closeGcmsPasswordEditor();
     gcmsInstallOpen = false;
+  }
+  function closeGcmsCurrentLayer() {
+    if (gcmsAccess?.creatingDns || gcmsAccess?.configuring || gcmsPasswordEditor?.saving) return;
+    if (gcmsAccess) {
+      gcmsCardMenu = null;
+      gcmsInstanceMenu = null;
+      gcmsAccess = null;
+      return;
+    }
+    if (gcmsChildMigration) {
+      gcmsChildMigration = null;
+      return;
+    }
+    closeGcmsInstaller();
   }
   function domainFromUrl(url: string): string {
     try { return /^https?:\/\//i.test(url) ? new URL(url).hostname : ''; }
@@ -886,7 +1088,7 @@
     return { label: '橙云待检测', tip: '尚未核验 Cloudflare 橙云状态；点击检测', tone: '', active: false };
   }
   function gcmsMigrationAccessHealth(instance: GcmsMigrationSnapshot): GcmsAccessHealth {
-    const checked = instance.https_ok || instance.cloudflare_proxy_applicable || instance.cloudflare_proxied || !!instance.cloudflare_proxy_error;
+    const checked = instance.https_ok || !!instance.last_error || instance.cloudflare_proxy_applicable || instance.cloudflare_proxied || !!instance.cloudflare_proxy_error;
     return {
       domain: domainFromUrl(instance.base_url),
       checked,
@@ -1259,7 +1461,31 @@
       if (gcmsAccess?.connId === connId) patchGcmsAccess({ checking: false, error: String(e), phase: '' });
     }
   }
-  async function createGcmsCloudflareA(): Promise<GcmsAccessCheck | null> {
+
+  function requestGcmsAccessPassword(
+    options: { title: string; message: string; kind?: GcmsPasswordKind; confirmText?: string },
+    run: (password: string) => Promise<void>,
+  ) {
+    if (!gcmsAccess) return;
+    const access = gcmsAccess;
+    const primaryStatus = !access.instancePath ? gcmsServer(access.connId).status : null;
+    const primaryConn = conns.find((item) => item.id === access.connId);
+    if (primaryStatus?.password_status === 'default' && primaryConn) {
+      openGcmsPasswordEditor(primaryConn, primaryStatus);
+      say('请先修改 GCMS 默认密码，再执行公网配置', 'err');
+      return;
+    }
+    const migration = access.migrationInstanceId
+      ? gcmsMigrationInstances.find((item) => item.id === access.migrationInstanceId)
+      : null;
+    requestGcmsPassword({
+      ...options,
+      account: primaryStatus?.admin_user || 'admin',
+      instance: migration?.source_name || primaryConn?.name || access.domain,
+    }, run);
+  }
+
+  async function createGcmsCloudflareA(adminPassword: string): Promise<GcmsAccessCheck | null> {
     if (!gcmsAccess || gcmsAccess.checking || gcmsAccess.creatingDns || gcmsAccess.configuring || !gcmsAccess.check || !canCreateGcmsCloudflareA(gcmsAccess.check)) return null;
     const connId = gcmsAccess.connId;
     const domain = gcmsAccess.check.domain;
@@ -1269,8 +1495,13 @@
       const childSiteId = gcmsAccess.childSiteId;
       const migrationInstanceId = gcmsAccess.migrationInstanceId;
       const result = childSiteId != null && migrationInstanceId
-        ? await invoke<GcmsCloudflareCreateResult>('gcms_remote_migration_site_create_a_record', { migrationInstanceId, siteId: childSiteId, domain, redirectDomain })
-        : await invoke<GcmsCloudflareCreateResult>('gcms_cloudflare_create_a_record', { connId, domain, redirectDomain });
+        ? await invoke<GcmsCloudflareCreateResult>('gcms_remote_migration_site_create_a_record', { migrationInstanceId, siteId: childSiteId, domain, redirectDomain, adminPassword })
+        : await invoke<GcmsCloudflareCreateResult>('gcms_cloudflare_create_a_record', {
+            connId, domain, redirectDomain, adminPassword,
+            instancePath: gcmsAccess.instancePath ?? null,
+            instancePort: gcmsAccess.instancePort ?? null,
+            migrationInstanceId: gcmsAccess.migrationInstanceId ?? null,
+          });
       if (gcmsAccess?.connId !== connId) return null;
       const notice = result.created
         ? result.check.matched ? `已连接 ${result.created_domains.join('、')}，并完成源站核验。` : 'DNS 记录已创建，等待生效后请重新检测。'
@@ -1280,12 +1511,20 @@
       return result.check;
     } catch (e) {
       if (gcmsAccess?.connId === connId) patchGcmsAccess({ creatingDns: false, error: String(e), phase: '' });
-      return null;
+      throw e;
     }
   }
-  async function configureGcmsAccess(checkOverride?: GcmsAccessCheck) {
+  async function configureGcmsAccess(checkOverride?: GcmsAccessCheck, adminPassword?: string) {
     const accessCheck = checkOverride ?? gcmsAccess?.check;
     if (!gcmsAccess || gcmsAccess.creatingDns || gcmsAccess.configuring || !accessCheck?.matched || !accessCheck.caddy?.can_auto_configure) return;
+    if (!adminPassword) {
+      requestGcmsAccessPassword({
+        title: '配置公网访问',
+        message: `将为 ${accessCheck.domain} 写入 Web 服务配置、申请 HTTPS，并按当前设置管理 Cloudflare 代理。`,
+        confirmText: '验证并配置',
+      }, async (password) => { await configureGcmsAccess(accessCheck, password); });
+      return;
+    }
     const connId = gcmsAccess.connId;
     const domain = accessCheck.domain;
     const redirectDomain = accessCheck.redirect?.domain ?? null;
@@ -1303,8 +1542,8 @@
       const childSiteId = gcmsAccess.childSiteId;
       const migrationInstanceId = gcmsAccess.migrationInstanceId;
       const result = childSiteId != null && migrationInstanceId
-        ? await invoke<GcmsAccessApplyResult>('gcms_remote_migration_site_access_configure', { migrationInstanceId, siteId: childSiteId, domain, redirectDomain, enableCloudflareProxy: true, onEvent })
-        : await invoke<GcmsAccessApplyResult>('gcms_remote_access_configure', { connId, domain, redirectDomain, enableCloudflareProxy: true, instancePath: gcmsAccess.instancePath ?? null, instancePort: gcmsAccess.instancePort ?? null, migrationInstanceId: gcmsAccess.migrationInstanceId ?? null, onEvent });
+        ? await invoke<GcmsAccessApplyResult>('gcms_remote_migration_site_access_configure', { migrationInstanceId, siteId: childSiteId, domain, redirectDomain, enableCloudflareProxy: true, adminPassword, onEvent })
+        : await invoke<GcmsAccessApplyResult>('gcms_remote_access_configure', { connId, domain, redirectDomain, enableCloudflareProxy: true, instancePath: gcmsAccess.instancePath ?? null, instancePort: gcmsAccess.instancePort ?? null, migrationInstanceId: gcmsAccess.migrationInstanceId ?? null, adminPassword, onEvent });
       if (gcmsAccess?.connId !== connId) return;
       if (!gcmsAccess.instancePath) patchGcmsServer(connId, { status: result.status, accessHealth: gcmsAccessHealthFromResult(result), error: '', phase: '' });
       patchGcmsAccess({ configuring: false, activeStep: 4, result, error: '', phase: result.https_ok ? '公网访问已就绪' : '配置已保存，等待 HTTPS 生效' });
@@ -1316,20 +1555,25 @@
         result.https_ok && result.cloudflare_proxy_applicable && !result.cloudflare_proxied ? 'err' : 'ok');
     } catch (e) {
       if (gcmsAccess?.connId === connId) patchGcmsAccess({ configuring: false, error: String(e), phase: '' });
+      throw e;
     }
   }
-  async function cutoverGcmsCloudflare(check: GcmsAccessCheck) {
+  async function cutoverGcmsCloudflare(check: GcmsAccessCheck, adminPassword?: string) {
     if (!gcmsAccess || gcmsAccess.checking || gcmsAccess.creatingDns || gcmsAccess.configuring || !canCutoverGcmsCloudflare(check) || !gcmsAccess.migrationInstanceId) return;
     const routes = gcmsAccessRoutes(check).filter((route) => !route.matched);
     const oldRecords = routes.flatMap((route) => (route.cloudflare?.records ?? [])
       .filter((record) => record.record_type === 'A' || record.record_type === 'AAAA')
       .map((record) => `${route.domain} ${record.record_type} ${record.content}`));
     const childSite = gcmsAccess.childSiteId != null;
-    const yes = await confirmDialog(
-      `将 ${routes.map((route) => route.domain).join('、')} 从旧服务器切换到当前${childSite ? '子站实例' : '迁移实例'}？\n\n当前记录：${oldRecords.join('；') || '未读取'}\n目标 IPv4：${check.server_ipv4[0]}\n\nPilot 会保留原橙云状态，配置并验证 HTTPS；任一步失败都会自动恢复旧记录。`,
-      { title: childSite ? '安全迁移子站域名' : '安全迁移老域名', kind: 'warning', confirmText: '建立回滚点并迁移' },
-    );
-    if (!yes || !gcmsAccess) return;
+    if (!adminPassword) {
+      requestGcmsAccessPassword({
+        title: childSite ? '安全迁移子站域名' : '安全迁移老域名',
+        message: `将 ${routes.map((route) => route.domain).join('、')} 切换到当前实例。\n当前记录：${oldRecords.join('；') || '未读取'}\n目标 IPv4：${check.server_ipv4[0]}\nPilot 会建立回滚点，失败时恢复旧记录。`,
+        confirmText: '验证并迁移',
+      }, async (password) => { await cutoverGcmsCloudflare(check, password); });
+      return;
+    }
+    if (!gcmsAccess) return;
     const connId = gcmsAccess.connId;
     const domain = check.domain;
     const redirectDomain = check.redirect?.domain ?? null;
@@ -1347,6 +1591,7 @@
         instancePort: gcmsAccess.instancePort ?? null,
         migrationInstanceId: gcmsAccess.migrationInstanceId,
         childSiteId: gcmsAccess.childSiteId ?? null,
+        adminPassword,
         onEvent,
       });
       if (gcmsAccess?.connId !== connId) return;
@@ -1356,6 +1601,7 @@
       say(childSite ? '子站域名已安全迁移到新服务器' : '老域名已安全迁移到新服务器');
     } catch (e) {
       if (gcmsAccess?.connId === connId) patchGcmsAccess({ configuring: false, activeStep: 2, error: String(e), phase: '' });
+      throw e;
     }
   }
   async function verifyGcmsAccess() {
@@ -1390,10 +1636,16 @@
       return;
     }
     if (canCreateGcmsCloudflareA(check)) {
-      const next = await createGcmsCloudflareA();
-      if (!next?.matched || !next.caddy) return;
-      if (next.caddy.can_auto_configure) await configureGcmsAccess(next);
-      else patchGcmsAccess({ activeStep: 3, error: '' });
+      requestGcmsAccessPassword({
+        title: '连接域名并配置公网访问',
+        message: `将为 ${check.domain} 创建缺失的 Cloudflare A 记录；解析生效后继续配置 HTTPS 与代理。`,
+        confirmText: '验证并继续',
+      }, async (adminPassword) => {
+        const next = await createGcmsCloudflareA(adminPassword);
+        if (!next?.matched || !next.caddy) return;
+        if (next.caddy.can_auto_configure) await configureGcmsAccess(next, adminPassword);
+        else patchGcmsAccess({ activeStep: 3, error: '' });
+      });
       return;
     }
     if (canCutoverGcmsCloudflare(check)) {
@@ -1473,6 +1725,10 @@
       const previousHealth = gcmsServer(id).accessHealth;
       const accessHealth = previousHealth?.domain && previousHealth.domain === domainFromUrl(status.base_url) ? previousHealth : null;
       patchGcmsServer(id, { checking: false, status, accessHealth, error: '', phase: '' });
+      if (status.installed && status.update_supported) void checkRemoteGcmsUpdate(id, true);
+      if (gcmsPasswordEditor?.connId === id && !gcmsPasswordEditor.saving && status.password_status !== 'default') {
+        closeGcmsPasswordEditor();
+      }
     } catch (e) {
       patchGcmsServer(id, { checking: false, status: null, error: String(e), phase: '' });
     }
@@ -1480,51 +1736,67 @@
   async function restartRemoteGcms(c: Connection, current: GcmsRemoteStatus) {
     if (gcmsServiceActions[c.id] || gcmsInstalling[c.id]) return;
     gcmsCardMenu = null;
-    const action = current.running ? '重启' : '启动';
-    const yes = await confirmDialog(
-      current.running
-        ? `重启「${c.name}」上的 GCMS 主实例？\n\n端口 :${current.port || 8080} 的网站与后台会短暂不可访问，重启完成后自动恢复；安装目录、数据与域名配置不会改变。`
-        : `启动「${c.name}」上的 GCMS 主实例？\n\n将按现有安装目录、端口 :${current.port || 8080} 和域名配置启动服务，不会修改站点数据。`,
-      { title: `${action} GCMS 服务`, kind: 'warning', confirmText: `确认${action}` },
-    );
-    if (!yes) return;
-    gcmsServiceActions = { ...gcmsServiceActions, [c.id]: 'restart' };
-    patchGcmsServer(c.id, { status: current, error: '', phase: current.running ? '正在重启 GCMS 服务…' : '正在启动 GCMS 服务…' });
-    try {
-      const status = await invoke<GcmsRemoteStatus>('gcms_remote_restart', { connId: c.id });
-      patchGcmsServer(c.id, { status, error: '', phase: '' });
-      say(`GCMS 服务已${action}`);
-    } catch (e) {
-      patchGcmsServer(c.id, { status: current, error: String(e), phase: '' });
-      say(String(e), 'err');
-    } finally {
-      const next = { ...gcmsServiceActions };
-      delete next[c.id];
-      gcmsServiceActions = next;
+    if (current.password_status === 'default') {
+      openGcmsPasswordEditor(c, current);
+      say('请先修改 GCMS 默认密码，再执行服务操作', 'err');
+      return;
     }
+    const action = current.running ? '重启' : '启动';
+    requestGcmsPassword({
+      title: `${action} GCMS 服务`,
+      message: current.running
+        ? `端口 :${current.port || 8080} 会短暂不可访问；安装目录、数据与域名配置不会改变。`
+        : `将按端口 :${current.port || 8080} 和现有配置启动，不会修改站点数据。`,
+      account: current.admin_user || 'admin',
+      instance: c.name,
+      confirmText: `验证并${action}`,
+    }, async (adminPassword) => {
+      gcmsServiceActions = { ...gcmsServiceActions, [c.id]: 'restart' };
+      patchGcmsServer(c.id, { status: current, error: '', phase: current.running ? '正在重启 GCMS 服务…' : '正在启动 GCMS 服务…' });
+      try {
+        const status = await invoke<GcmsRemoteStatus>('gcms_remote_restart', { connId: c.id, adminPassword });
+        patchGcmsServer(c.id, { status, error: '', phase: '' });
+        say(`GCMS 服务已${action}`);
+      } catch (e) {
+        patchGcmsServer(c.id, { status: current, error: String(e), phase: '' });
+        throw e;
+      } finally {
+        const next = { ...gcmsServiceActions };
+        delete next[c.id];
+        gcmsServiceActions = next;
+      }
+    });
   }
   async function stopRemoteGcms(c: Connection, current: GcmsRemoteStatus) {
     if (gcmsServiceActions[c.id] || gcmsInstalling[c.id] || !current.running) return;
     gcmsCardMenu = null;
-    const yes = await confirmDialog(
-      `关闭「${c.name}」上的 GCMS 主实例？\n\n关闭后网站与后台会暂时不可访问；安装目录、数据、域名与配置都会保留，之后可以重新启动。`,
-      { title: '关闭 GCMS 服务', kind: 'warning', confirmText: '关闭服务' },
-    );
-    if (!yes) return;
-    gcmsServiceActions = { ...gcmsServiceActions, [c.id]: 'stop' };
-    patchGcmsServer(c.id, { status: current, error: '', phase: '正在关闭 GCMS 服务…' });
-    try {
-      const status = await invoke<GcmsRemoteStatus>('gcms_remote_stop', { connId: c.id });
-      patchGcmsServer(c.id, { status, error: '', phase: '' });
-      say('GCMS 服务已关闭');
-    } catch (e) {
-      patchGcmsServer(c.id, { status: current, error: String(e), phase: '' });
-      say(String(e), 'err');
-    } finally {
-      const next = { ...gcmsServiceActions };
-      delete next[c.id];
-      gcmsServiceActions = next;
+    if (current.password_status === 'default') {
+      openGcmsPasswordEditor(c, current);
+      say('请先修改 GCMS 默认密码，再执行服务操作', 'err');
+      return;
     }
+    requestGcmsPassword({
+      title: '关闭 GCMS 服务',
+      message: '网站与后台将不可访问；安装目录、数据、域名与配置都会保留，之后可以重新启动。',
+      account: current.admin_user || 'admin',
+      instance: c.name,
+      confirmText: '验证并关闭',
+    }, async (adminPassword) => {
+      gcmsServiceActions = { ...gcmsServiceActions, [c.id]: 'stop' };
+      patchGcmsServer(c.id, { status: current, error: '', phase: '正在关闭 GCMS 服务…' });
+      try {
+        const status = await invoke<GcmsRemoteStatus>('gcms_remote_stop', { connId: c.id, adminPassword });
+        patchGcmsServer(c.id, { status, error: '', phase: '' });
+        say('GCMS 服务已关闭');
+      } catch (e) {
+        patchGcmsServer(c.id, { status: current, error: String(e), phase: '' });
+        throw e;
+      } finally {
+        const next = { ...gcmsServiceActions };
+        delete next[c.id];
+        gcmsServiceActions = next;
+      }
+    });
   }
   async function recheckRemoteGcms(c: Connection, current: GcmsRemoteStatus) {
     if (gcmsInstalling[c.id] || gcmsServer(c.id).checking) return;
@@ -1538,7 +1810,7 @@
       checking: true,
       status: current,
       error: '',
-      phase: '正在检查后台页面与样式资源，发现问题时会自动修复…',
+      phase: '正在只读检查后台页面、样式资源与公网状态…',
     });
     try {
       const result = await invoke<GcmsAccessApplyResult>('gcms_remote_access_verify', {
@@ -1611,7 +1883,7 @@
     }
   }
   $effect(() => {
-    if (!Object.keys(gcmsInstalling).length) return;
+    if (!Object.keys(gcmsInstalling).length && !Object.keys(gcmsUpgrading).length) return;
     gcmsInstallClock = Date.now();
     const timer = setInterval(() => (gcmsInstallClock = Date.now()), 500);
     return () => clearInterval(timer);
@@ -1713,6 +1985,60 @@
     confirmResolve = null;
     confirmState = null;
     resolve?.(value);
+  }
+
+  type GcmsPasswordKind = 'warning' | 'danger';
+  type GcmsPasswordRequest = {
+    id: number;
+    title: string;
+    message: string;
+    account: string;
+    instance: string;
+    kind: GcmsPasswordKind;
+    confirmText: string;
+    busy: boolean;
+    error: string;
+    run: (password: string) => Promise<void>;
+  };
+  let gcmsPasswordState = $state<GcmsPasswordRequest | null>(null);
+  let gcmsPasswordRequestId = 0;
+
+  function requestGcmsPassword(
+    options: { title: string; message: string; account?: string; instance?: string; kind?: GcmsPasswordKind; confirmText?: string },
+    run: (password: string) => Promise<void>,
+  ) {
+    if (confirmResolve) finishConfirm(false);
+    gcmsPasswordRequestId += 1;
+    gcmsPasswordState = {
+      id: gcmsPasswordRequestId,
+      title: options.title,
+      message: options.message,
+      account: options.account || 'admin',
+      instance: options.instance || '',
+      kind: options.kind || 'warning',
+      confirmText: options.confirmText || '确认操作',
+      busy: false,
+      error: '',
+      run,
+    };
+  }
+
+  async function submitGcmsPassword(password: string) {
+    const request = gcmsPasswordState;
+    if (!request || request.busy) return;
+    gcmsPasswordState = { ...request, busy: true, error: '' };
+    try {
+      await request.run(password);
+      if (gcmsPasswordState?.id === request.id) gcmsPasswordState = null;
+    } catch (error) {
+      if (gcmsPasswordState?.id === request.id) {
+        gcmsPasswordState = { ...request, busy: false, error: String(error) };
+      }
+    }
+  }
+
+  function cancelGcmsPassword() {
+    if (!gcmsPasswordState?.busy) gcmsPasswordState = null;
   }
 
   const activeConn = $derived(conns.find((c) => c.id === activeConnId) ?? null);
@@ -6265,6 +6591,7 @@
 {#snippet settingsIcon()}<svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="8" cy="8" r="2.1" stroke="currentColor" stroke-width="1.25" /><path d="M6.9 1.9h2.2l.45 1.55c.34.13.66.31.95.54l1.56-.4 1.1 1.9-1.1 1.15c.03.18.04.36.04.55s-.01.37-.04.55l1.1 1.15-1.1 1.9-1.56-.4c-.29.23-.61.41-.95.54L9.1 14.1H6.9l-.45-1.58a5.1 5.1 0 0 1-.95-.54l-1.56.4-1.1-1.9 1.1-1.15a3.4 3.4 0 0 1 0-1.1l-1.1-1.15 1.1-1.9 1.56.4c.29-.23.61-.41.95-.54L6.9 1.9Z" stroke="currentColor" stroke-width="1.15" stroke-linejoin="round" /></svg>{/snippet}
 {#snippet domainEditIcon()}<svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="7.2" cy="7.2" r="4.7" stroke="currentColor" stroke-width="1.2" /><path d="M2.6 7.2h9.2M7.2 2.5c1.35 1.35 2 2.92 2 4.7s-.65 3.35-2 4.7c-1.35-1.35-2-2.92-2-4.7s.65-3.35 2-4.7Z" stroke="currentColor" stroke-width="1.05" stroke-linecap="round" stroke-linejoin="round" /><path d="m10.7 12.1 2.65-2.65 1.2 1.2-2.65 2.65-1.65.45.45-1.65Z" fill="white" stroke="currentColor" stroke-width="1" stroke-linejoin="round" /></svg>{/snippet}
 {#snippet gcmsInstallIcon(size: number)}<svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="2" y="2.5" width="12" height="4.3" rx="1.2" stroke="currentColor" stroke-width="1.2" /><path d="M4.5 4.65h.01M7.2 4.65h4.3M8 8v5.5M5.5 11 8 13.5 10.5 11" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" /></svg>{/snippet}
+{#snippet gcmsUpdateIcon(size: number)}<svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 2.2v7.2M5.3 6.8 8 9.5l2.7-2.7M3 11.2v1.3c0 .7.6 1.3 1.3 1.3h7.4c.7 0 1.3-.6 1.3-1.3v-1.3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" /></svg>{/snippet}
 {#snippet gcmsMigrateIcon(size: number)}<svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M2.5 5h9M9.5 2.8 11.8 5 9.5 7.2M13.5 11h-9M6.5 8.8 4.2 11l2.3 2.2" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" /></svg>{/snippet}
 {#snippet externalLinkIcon(size: number)}<svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M6 3.5h6.5V10M12.2 3.8 3.8 12.2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /><path d="M11 9.5v2.3a1.2 1.2 0 0 1-1.2 1.2H4.2A1.2 1.2 0 0 1 3 11.8V6.2A1.2 1.2 0 0 1 4.2 5H6.5" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" /></svg>{/snippet}
 {#snippet serviceStopIcon(size: number)}<svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="3.2" y="3.2" width="9.6" height="9.6" rx="1.8" stroke="currentColor" stroke-width="1.35" /></svg>{/snippet}
@@ -6710,7 +7037,7 @@
 
 <!-- 远程服务器安装与管理 GCMS -->
 {#if gcmsInstallOpen}
-  <div class="mask" role="presentation" onclick={closeGcmsInstaller}></div>
+  <div class="mask" role="presentation" onclick={closeGcmsCurrentLayer}></div>
   <div class="sheet gcms-install-sheet">
     <header class="sheet-head">
       {#if gcmsAccess}
@@ -6765,7 +7092,13 @@
       {#if !gcmsAccess && !gcmsChildMigration}
         <button class="gcms-migrate-head-btn" onclick={() => openGcmsMigration()} disabled={sshServers.length < 2} data-tip={sshServers.length < 2 ? '至少需要两台 SSH 服务器' : '将一个或多个 GCMS 实例迁移到另一台服务器'}>{@render gcmsMigrateIcon(15)}<span>迁移</span></button>
       {/if}
-      <button class="x" onclick={closeGcmsInstaller} disabled={!!gcmsAccess?.creatingDns || !!gcmsAccess?.configuring}>×</button>
+      <button
+        class="x"
+        aria-label={gcmsAccess || gcmsChildMigration ? '关闭当前页面并返回' : '关闭'}
+        data-tip={gcmsAccess || gcmsChildMigration ? '关闭当前页面并返回' : '关闭'}
+        onclick={closeGcmsCurrentLayer}
+        disabled={!!gcmsAccess?.creatingDns || !!gcmsAccess?.configuring}
+      >×</button>
     </header>
     <div class="sheet-body">
       {#if gcmsAccess}
@@ -6794,7 +7127,7 @@
             <div class="gcms-access-block-head"><div><b>{gcmsAccess.intent === 'migrate_child' ? '确认子站访问域名' : '输入访问域名'}</b><small>{gcmsAccess.intent === 'migrate_child' ? '域名来自迁移后的子站配置，只会接管这个子站的访问流量' : '主域名用于打开后台；还可以让另一个域名自动跳转过来'}</small></div></div>
             <div class="gcms-domain-fields">
               <label>
-                <span><b>{gcmsAccess.intent === 'migrate_child' ? gcmsAccessChildDomainLabel(gcmsAccess) : '主访问域名'}</b><small>{gcmsAccess.intent === 'migrate_child' ? (gcmsAccess.childDomainKind === 'redirect' ? `迁移后 301 跳转到 ${gcmsAccess.childPrimaryDomain || '子站主域名'}` : '不会修改主 GCMS 后台域名、其他子站或同站其他域名') : 'GCMS 后台与 canonical 使用这个域名'}</small></span>
+                <span><b>{gcmsAccess.intent === 'migrate_child' ? gcmsAccessChildDomainLabel(gcmsAccess) : '主访问域名'}</b><small>{gcmsAccess.intent === 'migrate_child' ? (gcmsAccess.childDomainKind === 'redirect' ? `迁移后 301 跳转到 ${gcmsAccess.childPrimaryDomain || '子站主域名'}` : '不会修改主 GCMS 后台域名、其他子站或同站其他域名') : '以后使用这个域名打开 GCMS 后台'}</small></span>
                 <input
                   class="tin"
                   value={gcmsAccess.domain}
@@ -6837,18 +7170,19 @@
                 </div>
               {/if}
             </div>
+            <p class="gcms-access-help">
+              {#if gcmsAccess.intent === 'migrate_child'}
+                子站的每个域名独立检测和接管；下一步只检查当前域名的 DNS，不会修改服务器。
+              {:else}
+                <span>只填写域名，例如 <code>cms.example.com</code>，无需输入 <code>https://</code> 或 <code>/admin</code>。</span>
+                <span>下一步仅检查域名是否已连接，不会修改任何配置。</span>
+              {/if}
+            </p>
             <div class="gcms-domain-actions">
               <button class="btn primary sm gcms-domain-next" onclick={() => void checkGcmsAccess()} disabled={!gcmsAccess.domain.trim() || gcmsAccess.checking || gcmsAccess.creatingDns || gcmsAccess.configuring}>
                 {gcmsAccess.checking ? '检查中…' : '下一步'}
               </button>
             </div>
-            <p class="gcms-access-help">
-              {#if gcmsAccess.intent === 'migrate_child'}
-                子站的每个域名独立检测和接管；下一步只检查当前域名的 DNS，不会修改服务器。
-              {:else}
-                只填写域名，不要带 <code>https://</code> 或 <code>/admin</code>。下一步只检查 DNS，不会修改任何设置。
-              {/if}
-            </p>
           </section>
         {/if}
 
@@ -7257,13 +7591,14 @@
           {#each sshServers as c (c.id)}
             {@const state = gcmsServer(c.id)}
             {@const installingAt = gcmsInstalling[c.id]}
+            {@const upgradingAt = gcmsUpgrading[c.id]}
             {@const migratedInstances = gcmsMigrationInstances.filter((instance) => instance.target_id === c.id)}
             <section class="gcms-server-card" class:installed={!!state.status?.installed || migratedInstances.length > 0} class:failed={!!state.error}>
               <div class="gcms-server-head">
                 <span class="gcms-server-ic">{@render distroMark(distroOf(c), 18)}</span>
                 <span class="gcms-server-main"><b>{c.name}</b><small>{c.ssh_user}@{c.ssh_host}{c.ssh_port && c.ssh_port !== 22 ? `:${c.ssh_port}` : ''}{c.ssh_os ? ` · ${c.ssh_os}` : ''}</small></span>
-                {#if installingAt}
-                  <span class="gcms-state working"><span class="gcms-spin"></span>安装中</span>
+                {#if installingAt || upgradingAt}
+                  <span class="gcms-state working"><span class="gcms-spin"></span>{upgradingAt ? '升级中' : '安装中'}</span>
                 {:else if state.checking}
                   <span class="gcms-state checking"><span class="gcms-spin"></span>检测中</span>
                 {:else if state.status?.installed}
@@ -7279,15 +7614,17 @@
                 {/if}
               </div>
 
-              {#if installingAt}
+              {#if installingAt || upgradingAt}
                 <div class="gcms-progress"><span class="gcms-progress-bar"></span></div>
-                <div class="gcms-status-line"><span>{state.phase || '正在安装…'}</span><b>{elapsedLabel(gcmsInstallClock - installingAt)}</b></div>
+                <div class="gcms-status-line"><span>{state.phase || (upgradingAt ? '正在安全升级…' : '正在安装…')}</span><b>{elapsedLabel(gcmsInstallClock - (upgradingAt || installingAt))}</b></div>
               {:else if state.checking}
                 <div class="gcms-status-line"><span>{state.phase || '正在检测安装状态…'}</span></div>
               {:else if state.status?.installed}
                 {@const mainHttpsState = gcmsHttpsAccessState(state.accessHealth, gcmsHttpsConfigured(state.status))}
                 {@const mainCloudflareState = gcmsCloudflareAccessState(state.accessHealth, !!gcmsAccessHealthChecking[c.id], !!gcmsAdminUrl(state.status))}
                 {@const mainServiceAction = gcmsServiceActions[c.id]}
+                {@const updateInfo = gcmsUpdates[c.id]}
+                {@const updateChecking = !!gcmsUpdateChecking[c.id]}
                 <div class="gcms-main-instance-label">
                   <span>主实例</span><b>:{state.status.port || 8080}</b>
                   <span class="gcms-main-health" aria-label="公网访问状态">
@@ -7313,7 +7650,8 @@
                 </div>
                 <div class="gcms-facts">
                   <div class="gcms-fact">
-                    <b>{state.status.version || '版本未知'}</b><small>版本</small>
+                    <b>{state.status.version || '版本未知'}</b>
+                    <small class="gcms-version-line"><span>版本</span>{#if updateInfo?.has_update}<button type="button" data-tip={`在线升级到 ${updateInfo.latest}`} onclick={() => void upgradeRemoteGcms(c, state.status!)}>有新版 {updateInfo.latest}</button>{:else if updateChecking}<i>检查中…</i>{/if}</small>
                     <span class="gcms-fact-action passive" data-tip={gcmsDetailsTip(state.status)} aria-label="安装目录">
                       <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M1.8 4.5A1.4 1.4 0 0 1 3.2 3.1h3l1.3 1.5h5.3A1.4 1.4 0 0 1 14.2 6v6A1.4 1.4 0 0 1 12.8 13.4H3.2A1.4 1.4 0 0 1 1.8 12V4.5Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /><path d="M9.2 8.2h3M10.8 6.7l1.5 1.5-1.5 1.5" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round" /></svg>
                     </span>
@@ -7334,13 +7672,17 @@
                     {/if}
                   </div>
                 {:else}
-                  <div class="gcms-card-actions"><button class="btn sm primary" onclick={() => openGcmsAccess(c, state.status!)}>设置访问域名</button></div>
+                  <div class="gcms-card-actions">
+                    <button class="gcms-card-domain-action" onclick={() => openGcmsAccess(c, state.status!)}>
+                      {@render domainEditIcon()}<span>设置访问域名</span>
+                    </button>
+                  </div>
                 {/if}
                 {#if state.status.password_status === 'default'}
                   <div class="gcms-login-security is-warning">
                     <span class="gcms-login-copy"><span>默认账号 <b>{state.status.admin_user || 'admin'}</b></span><i>·</i><span>默认密码 <b>admin123</b></span></span>
                     {#if state.status.password_change_supported || gcmsPasswordUrl(state.status)}
-                      <button class="gcms-password-alert" data-tip={state.status.password_change_supported ? '直接在 Pilot 中安全修改；密码只通过 SSH 标准输入发送' : '公网开放后默认密码容易被自动尝试，请立即修改'} onclick={() => openGcmsPasswordEditor(c, state.status!)}>
+                      <button class="gcms-password-alert" data-tip={state.status.password_change_supported ? '仅替换首次安装的默认密码；密码只通过 SSH 标准输入发送' : '公网开放后默认密码容易被自动尝试，请立即修改'} onclick={() => openGcmsPasswordEditor(c, state.status!)}>
                         <svg width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M7.1 2.4 1.3 12.1A1.4 1.4 0 0 0 2.5 14h11a1.4 1.4 0 0 0 1.2-1.9L8.9 2.4a1.05 1.05 0 0 0-1.8 0Z" stroke="currentColor" stroke-width="1.25"/><path d="M8 5.7v3.7M8 11.8h.01" stroke="currentColor" stroke-width="1.35" stroke-linecap="round"/></svg>
                         <span>默认密码未修改</span><b>立即修改</b>
                       </button>
@@ -7353,6 +7695,22 @@
                 {:else}
                   <div class="gcms-login-security is-unknown" data-tip="当前 GCMS 版本暂不支持密码状态检测；升级后可自动确认"><span>后台账号 <b>{state.status.admin_user || 'admin'}</b></span><i>·</i><span>密码状态未确认</span></div>
                 {/if}
+                {@const pilotAssistant = gcmsPilotAssistant(c.id)}
+                {@const assistantImporting = !!gcmsAssistantImporting[c.id]}
+                {@const assistantReady = state.status.running && gcmsHttpsConfigured(state.status) && !!state.status.assistant_import_supported}
+                <button
+                  type="button"
+                  class="gcms-assistant-action"
+                  class:unavailable={!assistantReady}
+                  data-tip={gcmsAssistantImportTip(state.status, !!pilotAssistant)}
+                  aria-label={pilotAssistant ? '更新 Pilot 运营助手' : '导入 Pilot 运营助手'}
+                  disabled={assistantImporting}
+                  onclick={() => void importGcmsPilotAssistant(c, state.status!)}
+                >
+                  <span class="gcms-assistant-icon">{@render botIcon(13)}</span>
+                  <span class="gcms-assistant-copy"><b>Pilot 运营助手</b><small>{pilotAssistant ? '已在当前 Pilot · 同步最新权限' : '全站运营权限 · 仅当前 Pilot'}</small></span>
+                  <span class="gcms-assistant-verb">{assistantImporting ? '处理中…' : pilotAssistant ? '更新' : '一键导入'}</span>
+                </button>
                 {#if gcmsPasswordEditor?.connId === c.id}
                   {@const passwordEditor = gcmsPasswordEditor}
                   <form class="gcms-password-editor" class:just-installed={passwordEditor.justInstalled} data-gcms-password-editor autocomplete="off" onsubmit={(event) => { event.preventDefault(); void saveGcmsAdminPassword(c); }}>
@@ -7360,7 +7718,7 @@
                       <span class="gcms-password-editor-icon" aria-hidden="true">
                         <svg width="15" height="15" viewBox="0 0 18 18" fill="none"><path d="M9 1.8 15 4v4.3c0 3.7-2.4 6.3-6 7.9-3.6-1.6-6-4.2-6-7.9V4l6-2.2Z" stroke="currentColor" stroke-width="1.35" stroke-linejoin="round"/><path d="m6.5 8.9 1.6 1.6 3.5-3.6" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"/></svg>
                       </span>
-                      <span><b>{passwordEditor.justInstalled ? '安装完成，先保护后台' : '修改后台密码'}</b><small>{passwordEditor.justInstalled ? '设置后再开放公网访问更安全' : '保存后旧登录会话将自动退出'}</small></span>
+                      <span><b>设置初始后台密码</b><small>{passwordEditor.justInstalled ? '替换默认密码后再开放公网访问' : '仅用于替换首次安装的默认密码'}</small></span>
                       <button type="button" class="gcms-password-editor-close" aria-label="关闭密码设置" disabled={passwordEditor.saving} onclick={closeGcmsPasswordEditor}>×</button>
                     </div>
                     <div class="gcms-password-fields">
@@ -7381,7 +7739,7 @@
                     {#if passwordEditor.error}<p class="gcms-password-editor-error">{passwordEditor.error}</p>{/if}
                     <div class="gcms-password-editor-actions">
                       <button type="button" class="gcms-password-generate" disabled={passwordEditor.saving} onclick={generateGcmsPassword}>生成安全密码</button>
-                      <button type="submit" class="btn sm primary" disabled={passwordEditor.saving || !passwordEditor.password || !passwordEditor.confirm}>{passwordEditor.saving ? '正在保存…' : '保存新密码'}</button>
+                      <button type="submit" class="btn sm primary" disabled={passwordEditor.saving || !passwordEditor.password || !passwordEditor.confirm}>{passwordEditor.saving ? '正在保存…' : '保存初始密码'}</button>
                     </div>
                   </form>
                 {/if}
@@ -7422,15 +7780,26 @@
                           >{@render settingsIcon()}</button>
                         </span>
                       </div>
-                      <div class="gcms-instance-port"><span>迁移实例 · :{instance.port}</span>{#if remoteReady}{@render gcmsInstanceHealth(instance)}{/if}</div>
+                      <div class="gcms-instance-port"><span>迁移实例 · :{instance.port}</span>{#if remoteReady && adminUrl}{@render gcmsInstanceHealth(instance)}{/if}</div>
                       {#if remoteReady}
                         <div class="gcms-instance-meta"><span>{instance.version || '版本未知'}</span><span>{instance.service_enabled ? '开机自启' : '未设为开机自启'}</span></div>
                         {#if adminUrl}
                           <button class="gcms-instance-link" data-tip="在系统浏览器打开迁移实例后台" onclick={() => void openUrl(adminUrl)}><span>{adminUrl}</span><svg width="10" height="10" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M6 3.5h6.5V10M12.2 3.8 3.8 12.2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
                         {:else}
-                          <div class="gcms-instance-unbound"><b>未绑定域名</b>{#if sourceDomain}<span>原域名 {sourceDomain}</span>{:else}<span>可绑定一个新的访问域名</span>{/if}</div>
+                          <div class="gcms-instance-unbound">
+                            <div class="gcms-instance-unbound-copy">
+                              <span class="gcms-instance-unbound-icon">{@render domainEditIcon()}</span>
+                              <span><b>尚未设置访问域名</b><small>{sourceDomain ? `原域名 ${sourceDomain}` : '绑定域名后即可通过 HTTPS 访问后台'}</small></span>
+                            </div>
+                            <div class="gcms-instance-unbound-actions">
+                              {#if sourceDomain}
+                                <button type="button" disabled={instanceBusy} onclick={() => openGcmsMigrationDomain(instance, 'source')}>{@render gcmsMigrateIcon(12)}<span>迁移原域名</span></button>
+                              {/if}
+                              <button type="button" disabled={instanceBusy} onclick={() => openGcmsMigrationDomain(instance, 'new')}>{@render plusIcon()}<span>绑定新域名</span></button>
+                            </div>
+                          </div>
                         {/if}
-                        {#if instance.last_error}<p class="gcms-instance-operation-error">{instance.last_error}</p>{/if}
+                        {#if instance.last_error && !gcmsMigrationHealthChecking[instance.id]}<p class="gcms-instance-operation-error">{instance.last_error}</p>{/if}
                       {:else}
                         <div class="gcms-instance-remote-state">
                           <b>{remoteState === 'missing' ? '远端实例已不存在' : remoteState === 'residual' ? '发现待清理的残留' : remoteState === 'unreachable' ? '暂时无法确认远端状态' : '正在确认远端状态'}</b>
@@ -7443,7 +7812,7 @@
               {/if}
 
               {#if state.log}
-                <details class="gcms-log"><summary>安装日志</summary><pre>{state.log}</pre></details>
+                <details class="gcms-log"><summary>{upgradingAt || state.phase.includes('升级') ? '升级日志' : '安装日志'}</summary><pre>{state.log}</pre></details>
               {/if}
             </section>
           {/each}
@@ -7461,7 +7830,7 @@
       <div class="gcms-migration-title"><b>迁移 GCMS</b><small>迁移为独立实例，不影响目标服务器现有 GCMS</small></div>
       <button class="x" onclick={closeGcmsMigration} disabled={gcmsMigrationChecking}>×</button>
     </header>
-    <div class="sheet-body gcms-migration-body">
+    <div class="sheet-body gcms-migration-body" bind:this={gcmsMigrationBodyEl} onscroll={handleGcmsMigrationBodyScroll}>
       <div class="gcms-migration-flow">
         <section class="gcms-migration-side">
           <div class="gcms-migration-section-head">
@@ -7543,7 +7912,11 @@
             <div class="gcms-migration-live-track" aria-label={`迁移进度 ${gcmsMigrationPercent()}%`}><span style={`width:${gcmsMigrationPercent()}%`}></span></div>
             <div class="gcms-migration-live-meta">
               <span>{gcmsMigrationProgress.source_index ? `源实例 ${gcmsMigrationProgress.source_index}/${gcmsMigrationProgress.source_total}` : `共 ${gcmsMigrationProgress.source_total} 个源实例`}</span>
-              <span>阶段 {gcmsMigrationProgress.current}/{gcmsMigrationProgress.total}</span>
+              {#if gcmsMigrationProgress.bytes_total > 0}
+                <span>{formatGcmsTransferBytes(gcmsMigrationProgress.bytes_current)} / {formatGcmsTransferBytes(gcmsMigrationProgress.bytes_total)} · {formatGcmsTransferBytes(gcmsMigrationProgress.bytes_per_second)}/s</span>
+              {:else}
+                <span>阶段 {gcmsMigrationProgress.current}/{gcmsMigrationProgress.total}</span>
+              {/if}
             </div>
           {/if}
           {#if gcmsMigrationLog}<pre class="gcms-migration-live-log" bind:this={gcmsMigrationLogEl}>{gcmsMigrationLog}</pre>{/if}
@@ -7591,12 +7964,18 @@
     {@const httpsState = gcmsHttpsAccessState(menuState.accessHealth, gcmsHttpsConfigured(menuState.status))}
     {@const cloudflareState = gcmsCloudflareAccessState(menuState.accessHealth, !!gcmsAccessHealthChecking[menuConn.id], !!gcmsAdminUrl(menuState.status))}
     {@const serviceAction = gcmsServiceActions[menuConn.id]}
+    {@const updateInfo = gcmsUpdates[menuConn.id]}
+    {@const updateChecking = !!gcmsUpdateChecking[menuConn.id]}
     <div bind:this={gcmsCardMenuEl} class="ctx-menu fctx gcms-card-menu" class:ready={gcmsCardMenu.ready} style="left:{gcmsCardMenu.x}px; top:{gcmsCardMenu.y}px" role="menu" tabindex="-1">
       <button class="ctx-item" role="menuitem" onclick={() => void recheckRemoteGcms(menuConn, menuState.status!)}>{@render refreshIcon(false)}<span>重新检测</span></button>
+      <button class="ctx-item" role="menuitem" disabled={updateChecking || !menuState.status.update_supported} data-tip={!menuState.status.update_supported ? '当前安装不支持在线升级' : ''} onclick={() => { gcmsCardMenu = null; void checkRemoteGcmsUpdate(menuConn.id, false, true); }}>{@render refreshIcon(updateChecking)}<span>{updateChecking ? '检查更新中…' : '检查更新'}</span></button>
+      {#if updateInfo?.has_update}
+        <button class="ctx-item gcms-update-menu-item" role="menuitem" onclick={() => void upgradeRemoteGcms(menuConn, menuState.status!)}>{@render gcmsUpdateIcon(13)}<span>在线升级到 {updateInfo.latest}</span></button>
+      {/if}
       <button class="ctx-item" role="menuitem" disabled={!!serviceAction} onclick={() => void restartRemoteGcms(menuConn, menuState.status!)}>{@render refreshIcon(serviceAction === 'restart')}<span>{menuState.status.running ? '重启服务' : '启动服务'}</span></button>
       <button class="ctx-item danger" role="menuitem" disabled={!!serviceAction || !menuState.status.running} onclick={() => void stopRemoteGcms(menuConn, menuState.status!)}>{@render serviceStopIcon(12)}<span>关闭服务</span></button>
       <div class="gcms-card-menu-divider" aria-hidden="true"></div>
-      <button class="ctx-item" role="menuitem" onclick={() => openGcmsAccess(menuConn, menuState.status!)}>{@render domainEditIcon()}<span>{gcmsAdminUrl(menuState.status!) ? '变更域名' : '设置域名'}</span></button>
+      <button class="ctx-item" role="menuitem" onclick={() => openGcmsAccess(menuConn, menuState.status!)}>{@render domainEditIcon()}<span>{gcmsAdminUrl(menuState.status!) ? '变更域名' : '设置访问域名'}</span></button>
       <button class="ctx-item gcms-health-menu-item https" class:active={httpsState.active} class:warn={httpsState.tone === 'warn'} data-tip={httpsState.tip} role="menuitem" onclick={() => gcmsAdminUrl(menuState.status!) ? void openGcmsAccessHealth(menuConn, menuState.status!) : openGcmsAccess(menuConn, menuState.status!)}>{@render httpsLockIcon(13)}<span>{httpsState.label}</span></button>
       <button class="ctx-item gcms-health-menu-item cloudflare" class:active={cloudflareState.active} class:warn={cloudflareState.tone === 'warn'} data-tip={cloudflareState.tip} role="menuitem" onclick={() => gcmsAdminUrl(menuState.status!) ? void openGcmsAccessHealth(menuConn, menuState.status!) : openGcmsAccess(menuConn, menuState.status!)}>{@render cfMark(13)}<span>{cloudflareState.label}</span></button>
       <div class="gcms-card-menu-divider" aria-hidden="true"></div>
@@ -7608,7 +7987,6 @@
 {#if gcmsInstanceMenu}
   {@const menuInstance = gcmsMigrationInstances.find((instance) => instance.id === gcmsInstanceMenu?.instanceId)}
   {#if menuInstance}
-    {@const sourceDomain = domainFromUrl(menuInstance.source_base_url)}
     {@const menuRemoteState = gcmsMigrationRemoteState(menuInstance)}
     {@const menuRemoteReady = gcmsMigrationRemoteReady(menuInstance)}
     {@const menuInstanceBusy = gcmsMigrationInstanceBusy(menuInstance.id)}
@@ -7618,9 +7996,6 @@
         <div class="gcms-card-menu-divider" aria-hidden="true"></div>
         {#if menuInstance.access_configured}
           <button class="ctx-item" role="menuitem" onclick={() => openGcmsMigrationDomain(menuInstance, 'current')}>{@render domainEditIcon()}<span>变更域名</span></button>
-        {:else}
-          {#if sourceDomain}<button class="ctx-item" role="menuitem" onclick={() => openGcmsMigrationDomain(menuInstance, 'source')}>{@render gcmsMigrateIcon(13)}<span>迁移原域名</span></button>{/if}
-          <button class="ctx-item" role="menuitem" onclick={() => openGcmsMigrationDomain(menuInstance, 'new')}>{@render plusIcon()}<span>绑定新域名</span></button>
         {/if}
         <button class="ctx-item" role="menuitem" onclick={() => openGcmsMigrationSites(menuInstance)}>{@render gcmsMigrateIcon(13)}<span>迁移子站</span></button>
         <div class="gcms-card-menu-divider" aria-hidden="true"></div>
@@ -8208,6 +8583,20 @@
     cancelText={confirmState.cancelText}
     onConfirm={() => finishConfirm(true)}
     onCancel={() => finishConfirm(false)}
+  />
+{/if}
+{#if gcmsPasswordState}
+  <GcmsPasswordDialog
+    title={gcmsPasswordState.title}
+    message={gcmsPasswordState.message}
+    account={gcmsPasswordState.account}
+    instance={gcmsPasswordState.instance}
+    kind={gcmsPasswordState.kind}
+    confirmText={gcmsPasswordState.confirmText}
+    busy={gcmsPasswordState.busy}
+    error={gcmsPasswordState.error}
+    onConfirm={(password) => void submitGcmsPassword(password)}
+    onCancel={cancelGcmsPassword}
   />
 {/if}
 
@@ -9360,6 +9749,11 @@
   .gcms-facts b { font-size: 11.5px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .gcms-facts b.run { color: #34704a; }
   .gcms-facts small { margin-top: 1px; color: var(--faint); font-size: 9.5px; }
+  .gcms-version-line { min-width: 0; display: flex !important; align-items: center; gap: 4px; }
+  .gcms-version-line > span { flex: none; }
+  .gcms-version-line > i { overflow: hidden; font-size: 8.5px; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
+  .gcms-version-line > button { min-width: 0; padding: 0; border: 0; background: transparent; color: #a4482e; overflow: hidden; font: 600 8.5px/1.2 inherit; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+  .gcms-version-line > button:hover { background: transparent; color: #7f3524; text-decoration: underline; }
   .gcms-fact-action { position: absolute; top: 7px; right: 7px; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--faint); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
   .gcms-fact-action:hover { background: #ebe8e1; color: var(--text); }
   .gcms-fact-action.active { background: #e7e4dd; color: var(--text); }
@@ -9370,6 +9764,8 @@
   .gcms-card-menu .ctx-item span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .gcms-card-menu .ctx-item svg { width: 12px; height: 12px; flex: none; color: var(--faint); }
   .gcms-card-menu .ctx-item.danger svg { color: currentColor; }
+  .gcms-card-menu .gcms-update-menu-item { color: #34704a; }
+  .gcms-card-menu .gcms-update-menu-item svg { color: currentColor; }
   .gcms-card-menu-divider { height: 1px; margin: 3px 5px; background: var(--border); }
   .gcms-card-menu .gcms-health-menu-item.https.active { color: #34704a; }
   .gcms-card-menu .gcms-health-menu-item.warn { color: #9a6726; }
@@ -9395,6 +9791,18 @@
   .gcms-password-alert.passive { margin-left: 4px; cursor: help; }
   .gcms-login-security.is-safe { color: #4f7d5f; }
   .gcms-login-security.is-unknown { cursor: help; }
+  .gcms-assistant-action { width: calc(100% - 39px); min-width: 0; margin: 7px 0 0 39px; padding: 7px 8px; border: 1px solid #e7e3da; border-radius: 8px; background: #faf9f6; color: var(--text); display: grid; grid-template-columns: 25px minmax(0, 1fr) auto; align-items: center; gap: 7px; text-align: left; cursor: pointer; transition: border-color .15s ease, background .15s ease; }
+  .gcms-assistant-action:hover { border-color: #d9d3c8; background: #f5f3ee; }
+  .gcms-assistant-action:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+  .gcms-assistant-action:disabled { opacity: .68; cursor: wait; }
+  .gcms-assistant-action.unavailable:not(:disabled) { color: var(--dim); }
+  .gcms-assistant-icon { width: 25px; height: 25px; border-radius: 7px; background: #eeece7; color: var(--dim); display: inline-flex; align-items: center; justify-content: center; }
+  .gcms-assistant-action:not(.unavailable) .gcms-assistant-icon { background: #e8f3ec; color: #34704a; }
+  .gcms-assistant-copy { min-width: 0; display: grid; gap: 1px; }
+  .gcms-assistant-copy b { overflow: hidden; color: currentColor; font-size: 10px; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
+  .gcms-assistant-copy small { overflow: hidden; color: var(--faint); font-size: 8.5px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+  .gcms-assistant-verb { flex: none; color: var(--accent); font-size: 9px; font-weight: 600; white-space: nowrap; }
+  .gcms-assistant-action.unavailable .gcms-assistant-verb { color: var(--faint); }
   .gcms-password-editor { width: calc(100% - 39px); min-width: 0; margin: 8px 0 0 39px; padding: 9px; border: 1px solid #e5cfaa; border-radius: 9px; background: #fffbf4; display: grid; gap: 8px; }
   .gcms-password-editor.just-installed { border-color: #bfdcc9; background: #f7fcf8; }
   .gcms-password-editor-head { min-width: 0; display: flex; align-items: center; gap: 7px; }
@@ -9422,6 +9830,8 @@
   .gcms-health-error { padding: 7px 9px; border-radius: 8px; background: #fbefec; }
   .gcms-missing { color: var(--dim); }
   .gcms-card-actions { display: flex; align-items: center; gap: 5px; margin: 9px 0 0 39px; }
+  .gcms-card-domain-action { padding: 2px 0; border: 0; background: transparent; color: #9a6726; display: inline-flex; align-items: center; gap: 5px; font: 500 10px/1.35 inherit; cursor: pointer; transition: color .15s ease; }
+  .gcms-card-domain-action:hover { color: #704716; }
   .gcms-install-btn { min-width: 84px; }
   .gcms-instance-list { display: grid; gap: 7px; margin: 11px 0 0 39px; padding-top: 10px; border-top: 1px solid var(--border); }
   .gcms-instance-card { min-width: 0; display: grid; gap: 7px; padding: 9px; border: 1px solid #d7e6dc; border-radius: 9px; background: #fbfefc; }
@@ -9447,9 +9857,16 @@
   .gcms-instance-link:hover { text-decoration: underline; }
   .gcms-instance-link span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .gcms-instance-link svg { flex: none; }
-  .gcms-instance-unbound { min-width: 0; display: flex; align-items: center; gap: 6px; color: var(--faint); font-size: 9.5px; }
-  .gcms-instance-unbound b { flex: none; padding: 2px 5px; border-radius: 999px; background: #fff2df; color: #9a6726; font-size: 9px; }
-  .gcms-instance-unbound span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .gcms-instance-unbound { min-width: 0; display: grid; gap: 6px; padding: 7px 8px; border-radius: 7px; background: #f6f5f1; }
+  .gcms-instance-unbound-copy { min-width: 0; display: flex; align-items: center; gap: 6px; }
+  .gcms-instance-unbound-icon { flex: none; color: var(--faint); display: inline-flex; align-items: center; }
+  .gcms-instance-unbound-copy > span:last-child { min-width: 0; display: grid; gap: 1px; }
+  .gcms-instance-unbound-copy b { color: #9a6726; font-size: 10px; line-height: 1.3; }
+  .gcms-instance-unbound-copy small { min-width: 0; overflow: hidden; color: var(--faint); font-size: 9px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+  .gcms-instance-unbound-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding-left: 18px; }
+  .gcms-instance-unbound-actions button { padding: 0; border: 0; background: transparent; color: var(--dim); opacity: .76; display: inline-flex; align-items: center; gap: 4px; font: 400 9px/1.35 inherit; cursor: pointer; transition: color .15s ease, opacity .15s ease; }
+  .gcms-instance-unbound-actions button:hover { color: var(--text); opacity: 1; }
+  .gcms-instance-unbound-actions button:disabled { opacity: .45; cursor: default; }
   .gcms-instance-operation-error { margin: 0; color: var(--err); font-size: 9.5px; line-height: 1.45; }
   .gcms-instance-remote-state { display: grid; gap: 2px; padding: 7px 8px; border-radius: 7px; background: rgb(255 255 255 / 72%); }
   .gcms-instance-remote-state b { color: var(--dim); font-size: 10px; }
@@ -9503,11 +9920,11 @@
   .gcms-redirect-toggle svg.open { transform: rotate(180deg); }
   .gcms-redirect-field { display: grid; gap: 5px; padding: 0 2px 1px; }
   .gcms-redirect-field > small { color: var(--faint); font-size: 9px; line-height: 1.4; }
-  .gcms-domain-actions { min-height: 31px; display: flex; align-items: center; gap: 7px; margin-top: 9px; }
+  .gcms-domain-actions { min-height: 31px; display: flex; align-items: center; gap: 7px; margin-top: 10px; }
   .gcms-domain-actions .gcms-domain-next { min-width: 70px; margin-left: auto; padding-right: 12px; padding-left: 12px; font-size: 10.5px; }
   .gcms-domain-suggest { min-width: 0; max-width: 100%; width: fit-content; padding: 2px 1px; border: 0; background: transparent; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--accent); font: 500 9.5px/1.35 inherit; text-align: left; cursor: pointer; }
   .gcms-domain-suggest:hover { text-decoration: underline; }
-  .gcms-access-help { margin: 6px 1px 0; color: var(--faint); font-size: 10px; line-height: 1.45; }
+  .gcms-access-help { margin: 9px 1px 0; color: var(--faint); display: grid; gap: 1px; font-size: 10px; line-height: 1.45; }
   .gcms-access-help code { font: inherit; }
   .gcms-access-progress { display: flex; align-items: center; gap: 6px; margin-top: 9px; color: var(--accent); font-size: 10.5px; }
   .gcms-access-error { margin-top: 9px; padding: 7px 9px; border-radius: 8px; background: #faece8; color: var(--err); font-size: 10.5px; line-height: 1.5; word-break: break-word; }

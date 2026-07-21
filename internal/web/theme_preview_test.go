@@ -69,9 +69,18 @@ func TestThemePreviewRendersAllThemes(t *testing.T) {
 		if strings.HasPrefix(th.ID, "night-watch") {
 			skeleton, ok = "nw-hero", true
 		}
+		if strings.HasPrefix(th.ID, "orbit-index") {
+			skeleton, ok = "oi-orbit-shell", true
+		}
+		if strings.HasPrefix(th.ID, "column-stage") {
+			skeleton, ok = "cs-stage", true
+		}
+		if strings.HasPrefix(th.ID, "type-cascade") {
+			skeleton, ok = "tc-cascade", true
+		}
 		if ok {
 			needle := `class="` + skeleton + `"`
-			if strings.HasPrefix(th.ID, "field-ledger") || strings.HasPrefix(th.ID, "signal-archive") || strings.HasPrefix(th.ID, "paper-current") || strings.HasPrefix(th.ID, "night-watch") {
+			if contentThemeFamily(th.ID) != "" {
 				needle = `class="` + skeleton
 			}
 			if !strings.Contains(body, needle) {
@@ -83,6 +92,9 @@ func TestThemePreviewRendersAllThemes(t *testing.T) {
 			"signal-archive": {">主题索引<", ">最新内容信号<", ">探索全部内容主题"},
 			"paper-current":  {">内容目录<", ">查看完整目录"},
 			"night-watch":    {">证据板<", ">最新特派<", ">EVIDENCE BOARD<"},
+			"orbit-index":    {">环形索引<", ">Orbit Index<"},
+			"column-stage":   {">栏幕<", ">Column Stage<"},
+			"type-cascade":   {">字幕瀑布<", ">Type Cascade<"},
 		} {
 			if !strings.HasPrefix(th.ID, prefix) {
 				continue
@@ -94,15 +106,26 @@ func TestThemePreviewRendersAllThemes(t *testing.T) {
 			}
 		}
 		if contentThemeFamily(th.ID) != "" {
+			family := contentThemeFamily(th.ID)
 			brandClass := `class="ct-header-brand"`
-			if strings.HasPrefix(th.ID, "paper-current") {
+			switch family {
+			case "paper-current":
 				brandClass = `class="pc-header-brand"`
+			case "orbit-index":
+				brandClass = `class="oi-header-brand"`
+			case "column-stage":
+				brandClass = `class="cs-header-brand"`
+			case "type-cascade":
+				brandClass = `class="tc-rail-brand"`
 			}
 			start := strings.Index(body, brandClass)
 			if start < 0 {
 				t.Errorf("theme %q preview missing content-theme brand wrapper", th.ID)
 			} else if end := strings.Index(body[start:], `</div>`); end >= 0 && strings.Contains(body[start:start+end], "<small>") {
 				t.Errorf("theme %q content-theme header still renders a brand subtitle", th.ID)
+			}
+			if (family == "orbit-index" || family == "column-stage" || family == "type-cascade") && strings.Contains(body, `class="ct-palette"`) {
+				t.Errorf("theme %q renders the design palette annotation in the public footer", th.ID)
 			}
 		}
 	}

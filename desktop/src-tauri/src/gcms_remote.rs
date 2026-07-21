@@ -13,7 +13,7 @@ use std::fs;
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::ipc::Channel;
 use zeroize::Zeroizing;
 
@@ -74,6 +74,10 @@ admin_user=''
 bin="$root/current/bin/cms"
 password_change_supported=0
 [ -x "$bin" ] && grep -a -Fq 'pilot-set-admin-password' "$bin" 2>/dev/null && password_change_supported=1
+assistant_import_supported=0
+[ -x "$bin" ] && grep -a -Fq 'pilot-issue-assistant-key' "$bin" 2>/dev/null && assistant_import_supported=1
+update_supported=0
+[ -x "$root/scripts/cms.sh" ] && grep -Fq 'upgrade)' "$root/scripts/cms.sh" 2>/dev/null && update_supported=1
 # 老版本二进制会忽略未知参数并尝试再启动一个服务。只有确认包含本机状态命令时才调用，
 # 避免为了检测密码而触发端口冲突或写入数据库。
 if [ -x "$bin" ] && grep -a -Fq 'pilot-security-status' "$bin" 2>/dev/null; then
@@ -99,10 +103,12 @@ printf 'PILOT_GCMS_REDIRECT_DOMAIN\t%s\n' "$redirect_domain"
 printf 'PILOT_GCMS_PASSWORD_STATUS\t%s\n' "$password_status"
 printf 'PILOT_GCMS_ADMIN_USER\t%s\n' "$admin_user"
 printf 'PILOT_GCMS_PASSWORD_CHANGE_SUPPORTED\t%s\n' "$password_change_supported"
+printf 'PILOT_GCMS_ASSISTANT_IMPORT_SUPPORTED\t%s\n' "$assistant_import_supported"
+printf 'PILOT_GCMS_UPDATE_SUPPORTED\t%s\n' "$update_supported"
 "#;
 
-/// 通过 stdin 调用 GCMS 本机专用命令修改后台密码。密码不进入 shell 参数、环境变量、
-/// 配置文件或日志；脚本只负责解析标准安装目录中的数据库位置。
+/// 通过 stdin 调用 GCMS 本机专用命令替换首次安装的默认密码。密码不进入 shell 参数、
+/// 环境变量、配置文件或日志；脚本只负责解析标准安装目录中的数据库位置。
 const GCMS_REMOTE_SET_ADMIN_PASSWORD_CMD: &str = r#"
 set -eu
 root=${PILOT_GCMS_ROOT:?}
@@ -125,6 +131,54 @@ export CMS_DB="$cms_db" SYSTEM_DB="$system_db"
 exec "$bin" pilot-set-admin-password
 "#;
 
+/// 通过 stdin 调用 GCMS 本机密码校验命令。密码不会进入 shell 参数、环境变量或日志，
+/// 成功时只返回固定标记；旧版 GCMS 必须先升级，不能退化为前端假校验。
+const GCMS_REMOTE_VERIFY_ADMIN_PASSWORD_CMD: &str = r#"
+set -eu
+root=${PILOT_GCMS_ROOT:?}
+bin="$root/current/bin/cms"
+[ -x "$bin" ] || { printf '%s\n' 'GCMS 可执行文件不存在' >&2; exit 3; }
+grep -a -Fq 'pilot-verify-admin-password' "$bin" 2>/dev/null || {
+  printf '%s\n' '当前 GCMS 版本不支持登录密码确认，请先升级 GCMS' >&2
+  exit 4
+}
+conf="$root/shared/cms.conf"
+cms_db=$(awk -F= '$1 == "CMS_DB" { sub(/^[^=]*=/, ""); gsub(/^[[:space:]]+|[[:space:]]+$/, ""); print; exit }' "$conf" 2>/dev/null || true)
+system_db=$(awk -F= '$1 == "SYSTEM_DB" { sub(/^[^=]*=/, ""); gsub(/^[[:space:]]+|[[:space:]]+$/, ""); print; exit }' "$conf" 2>/dev/null || true)
+[ -n "$cms_db" ] || cms_db=shared/data/cms.db
+case "$cms_db" in /*) ;; *) cms_db="$root/$cms_db" ;; esac
+[ -n "$system_db" ] || system_db=$(dirname "$cms_db")/system.db
+case "$system_db" in /*) ;; *) system_db="$root/$system_db" ;; esac
+[ -f "$cms_db" ] || { printf '%s\n' 'GCMS 站点数据库不存在' >&2; exit 5; }
+cd "$root"
+export CMS_DB="$cms_db" SYSTEM_DB="$system_db"
+exec "$bin" pilot-verify-admin-password
+"#;
+
+/// 创建或复用 GCMS 内的「Pilot 运营助手」平台密钥。现有密钥从 stdin 传入：
+/// 有效时仅补齐全站权限；失效时才轮换同名密钥。明文不会进入命令参数或日志。
+const GCMS_REMOTE_ISSUE_ASSISTANT_KEY_CMD: &str = r#"
+set -eu
+root=${PILOT_GCMS_ROOT:?}
+bin="$root/current/bin/cms"
+[ -x "$bin" ] || { printf '%s\n' 'GCMS 可执行文件不存在' >&2; exit 3; }
+grep -a -Fq 'pilot-issue-assistant-key' "$bin" 2>/dev/null || {
+  printf '%s\n' '当前 GCMS 版本不支持导入 Pilot 运营助手，请先升级 GCMS' >&2
+  exit 4
+}
+conf="$root/shared/cms.conf"
+cms_db=$(awk -F= '$1 == "CMS_DB" { sub(/^[^=]*=/, ""); gsub(/^[[:space:]]+|[[:space:]]+$/, ""); print; exit }' "$conf" 2>/dev/null || true)
+system_db=$(awk -F= '$1 == "SYSTEM_DB" { sub(/^[^=]*=/, ""); gsub(/^[[:space:]]+|[[:space:]]+$/, ""); print; exit }' "$conf" 2>/dev/null || true)
+[ -n "$cms_db" ] || cms_db=shared/data/cms.db
+case "$cms_db" in /*) ;; *) cms_db="$root/$cms_db" ;; esac
+[ -n "$system_db" ] || system_db=$(dirname "$cms_db")/system.db
+case "$system_db" in /*) ;; *) system_db="$root/$system_db" ;; esac
+[ -f "$system_db" ] || { printf '%s\n' 'GCMS 平台数据库不存在' >&2; exit 5; }
+cd "$root"
+export CMS_DB="$cms_db" SYSTEM_DB="$system_db"
+exec "$bin" pilot-issue-assistant-key
+"#;
+
 /// 完整下载后执行，避免 `curl | sh` 在下载失败时被空 shell 误判为成功。
 const GCMS_REMOTE_INSTALL_CMD: &str = r#"
 set -eu
@@ -140,6 +194,66 @@ else
   exit 127
 fi
 sh "$tmp"
+"#;
+
+/// 从服务器实际使用的更新源读取最新版本。检查和正式升级走同一台服务器的网络，
+/// 避免 Pilot 本机能访问发布仓库、远端服务器却无法下载时给出错误的“可升级”判断。
+const GCMS_REMOTE_CHECK_UPDATE_CMD: &str = r#"
+set -eu
+root=${PILOT_GCMS_ROOT:?}
+script="$root/scripts/cms.sh"
+[ -x "$script" ] && grep -Fq 'upgrade)' "$script" 2>/dev/null || {
+  printf '%s\n' '当前 GCMS 安装不支持在线升级' >&2
+  exit 3
+}
+command -v python3 >/dev/null 2>&1 || {
+  printf '%s\n' '检查更新需要 python3，请先在服务器安装 python3' >&2
+  exit 4
+}
+current=$(awk -F= '$1 == "VERSION" { sub(/^[^=]*=/, ""); print; exit }' "$root/current/BUILD_INFO" 2>/dev/null || true)
+[ -n "$current" ] || current=$(awk -F= '$1 == "VERSION" { sub(/^[^=]*=/, ""); print; exit }' "$root/BUILD_INFO" 2>/dev/null || true)
+update_url=${GCMS_UPDATE_URL:-}
+if [ -z "$update_url" ]; then
+  repo=${GCMS_RELEASE_REPO:-}
+  [ -n "$repo" ] || repo=$(awk -F= '$1 == "RELEASE_REPO" { sub(/^[^=]*=/, ""); print; exit }' "$root/current/BUILD_INFO" 2>/dev/null || true)
+  [ -n "$repo" ] || repo=$(awk -F= '$1 == "RELEASE_REPO" { sub(/^[^=]*=/, ""); print; exit }' "$root/BUILD_INFO" 2>/dev/null || true)
+  [ -n "$repo" ] || repo=ccvar/gcms-releases
+  update_url="https://github.com/$repo/releases/latest/download/manifest.json"
+fi
+tmp=$(mktemp 2>/dev/null || mktemp -t gcms-update-check)
+trap 'rm -f "$tmp"' EXIT HUP INT TERM
+if command -v curl >/dev/null 2>&1; then
+  curl -fsSL --retry 2 --connect-timeout 12 --max-time 35 "$update_url" -o "$tmp"
+elif command -v wget >/dev/null 2>&1; then
+  wget -q --timeout=35 -O "$tmp" "$update_url"
+else
+  printf '%s\n' '检查更新需要 curl 或 wget' >&2
+  exit 5
+fi
+latest=$(python3 - "$tmp" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding='utf-8') as handle:
+    print(str(json.load(handle).get('version') or '').strip())
+PY
+)
+[ -n "$latest" ] || { printf '%s\n' '更新清单缺少版本号' >&2; exit 6; }
+printf 'PILOT_GCMS_CURRENT_VERSION\t%s\n' "$current"
+printf 'PILOT_GCMS_LATEST_VERSION\t%s\n' "$latest"
+"#;
+
+/// 正式升级完全委托标准发布包内置的升级器：校验 manifest 签名与 SHA256、备份数据库、
+/// 原子切换 current，健康检查失败时自动回滚。Pilot 不自行替换二进制或数据文件。
+const GCMS_REMOTE_UPGRADE_CMD: &str = r#"
+set -eu
+root=${PILOT_GCMS_ROOT:?}
+target=${PILOT_GCMS_TARGET:?}
+script="$root/scripts/cms.sh"
+[ -x "$script" ] && grep -Fq 'upgrade)' "$script" 2>/dev/null || {
+  printf '%s\n' '当前 GCMS 安装不支持在线升级' >&2
+  exit 3
+}
+cd "$root"
+exec "$script" upgrade "$target"
 "#;
 
 /// 主实例服务控制。只调用探测到的标准安装目录里的管理脚本，不按进程名或端口
@@ -892,6 +1006,7 @@ finished=1
 /// 老安装可能遗留失效 PID 文件，或 SSH 登录环境中还导出了旧 BASE_URL：此时
 /// `cms.sh restart` 看似执行过，真正占用端口的进程却没有加载 shared/cms.conf。
 /// 脚本只会接管安装根目录下的 GCMS 二进制，不会按端口盲杀其它服务。
+#[cfg(test)]
 const GCMS_REMOTE_RELOAD_DOMAIN_CMD: &str = r#"
 set -eu
 root=${PILOT_GCMS_HOME:?}
@@ -1038,6 +1153,15 @@ pub(super) struct GcmsRemoteStatus {
     password_status: String,
     admin_user: String,
     password_change_supported: bool,
+    assistant_import_supported: bool,
+    update_supported: bool,
+}
+
+#[derive(Clone, Serialize, Default, Debug, PartialEq)]
+pub(super) struct GcmsRemoteUpdateInfo {
+    current: String,
+    latest: String,
+    has_update: bool,
 }
 
 #[derive(Clone, Serialize, Default, Debug, PartialEq)]
@@ -1182,14 +1306,6 @@ fn migration_now() -> u64 {
 
 fn migration_registry_path(data_dir: &Path) -> PathBuf {
     data_dir.join("gcms-migration-instances.json")
-}
-
-struct MigrationCacheGuard(PathBuf);
-
-impl Drop for MigrationCacheGuard {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
-    }
 }
 
 fn clear_migration_cache(data_dir: &Path) {
@@ -2169,6 +2285,9 @@ pub(super) enum GcmsInstallEvent {
         source_index: u32,
         source_total: u32,
         message: String,
+        bytes_current: u64,
+        bytes_total: u64,
+        bytes_per_second: u64,
     },
 }
 
@@ -2190,6 +2309,36 @@ fn send_gcms_migration_progress(
         source_index,
         source_total,
         message,
+        bytes_current: 0,
+        bytes_total: 0,
+        bytes_per_second: 0,
+    });
+}
+
+#[allow(clippy::too_many_arguments)]
+fn send_gcms_migration_transfer_progress(
+    channel: &Channel<GcmsInstallEvent>,
+    current: u32,
+    total: u32,
+    source_index: u32,
+    source_total: u32,
+    message: &str,
+    bytes_current: u64,
+    bytes_total: u64,
+    started: Instant,
+) {
+    let elapsed_ms = started.elapsed().as_millis().max(1);
+    let bytes_per_second =
+        ((bytes_current as u128).saturating_mul(1_000) / elapsed_ms).min(u64::MAX as u128) as u64;
+    let _ = channel.send(GcmsInstallEvent::Progress {
+        current,
+        total,
+        source_index,
+        source_total,
+        message: message.to_string(),
+        bytes_current,
+        bytes_total,
+        bytes_per_second,
     });
 }
 
@@ -2262,6 +2411,10 @@ fn parse_gcms_remote_status(raw: &str) -> Result<GcmsRemoteStatus, String> {
             "PILOT_GCMS_PASSWORD_CHANGE_SUPPORTED" => {
                 out.password_change_supported = value.trim() == "1"
             }
+            "PILOT_GCMS_ASSISTANT_IMPORT_SUPPORTED" => {
+                out.assistant_import_supported = value.trim() == "1"
+            }
+            "PILOT_GCMS_UPDATE_SUPPORTED" => out.update_supported = value.trim() == "1",
             _ => {}
         }
     }
@@ -3134,6 +3287,306 @@ pub(super) async fn gcms_remote_status(
     gcms_remote_status_inner(&state, &conn_id).await
 }
 
+fn parse_version_key(value: &str) -> Option<(Vec<u64>, Option<&str>)> {
+    let value = value.trim().trim_start_matches(['v', 'V']);
+    let (core, suffix) = value
+        .split_once('-')
+        .map_or((value, None), |(core, suffix)| (core, Some(suffix)));
+    let numbers = core
+        .split('.')
+        .map(str::parse::<u64>)
+        .collect::<Result<Vec<_>, _>>()
+        .ok()?;
+    (!numbers.is_empty()).then_some((numbers, suffix.filter(|value| !value.is_empty())))
+}
+
+fn gcms_version_is_newer(current: &str, latest: &str) -> bool {
+    let (mut current_numbers, current_suffix) = match parse_version_key(current) {
+        Some(value) => value,
+        None => return false,
+    };
+    let (mut latest_numbers, latest_suffix) = match parse_version_key(latest) {
+        Some(value) => value,
+        None => return false,
+    };
+    let width = current_numbers.len().max(latest_numbers.len());
+    current_numbers.resize(width, 0);
+    latest_numbers.resize(width, 0);
+    match latest_numbers.cmp(&current_numbers) {
+        std::cmp::Ordering::Greater => true,
+        std::cmp::Ordering::Less => false,
+        std::cmp::Ordering::Equal => match (current_suffix, latest_suffix) {
+            (Some(_), None) => true,
+            (Some(current), Some(latest)) => latest > current,
+            _ => false,
+        },
+    }
+}
+
+fn parse_gcms_remote_update_info(
+    raw: &str,
+    fallback_current: &str,
+) -> Result<GcmsRemoteUpdateInfo, String> {
+    let mut current = fallback_current.trim().to_string();
+    let mut latest = String::new();
+    for line in raw.lines() {
+        let Some((key, value)) = line.split_once('\t') else {
+            continue;
+        };
+        match key.trim() {
+            "PILOT_GCMS_CURRENT_VERSION" if !value.trim().is_empty() => {
+                current = value.trim().to_string()
+            }
+            "PILOT_GCMS_LATEST_VERSION" => latest = value.trim().to_string(),
+            _ => {}
+        }
+    }
+    if latest.is_empty() {
+        return Err("服务器未返回 GCMS 最新版本".into());
+    }
+    Ok(GcmsRemoteUpdateInfo {
+        has_update: gcms_version_is_newer(&current, &latest),
+        current,
+        latest,
+    })
+}
+
+#[tauri::command]
+pub(super) async fn gcms_remote_check_update(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+) -> Result<GcmsRemoteUpdateInfo, String> {
+    let connection = state.conns.get(&conn_id)?;
+    if connection.kind != "ssh" {
+        return Err("这不是远程服务器连接".into());
+    }
+    let _guard = begin_gcms_operation(&state, &conn_id)?;
+    let status = gcms_remote_status_inner(&state, &conn_id).await?;
+    if !status.installed {
+        return Err("这台服务器尚未安装 GCMS".into());
+    }
+    if !status.update_supported {
+        return Err("当前 GCMS 安装不支持在线升级".into());
+    }
+    let command = format!(
+        "env PILOT_GCMS_ROOT={} sh -c {}",
+        shell_quote(&status.path),
+        shell_quote(GCMS_REMOTE_CHECK_UPDATE_CMD)
+    );
+    let result = state.ssh.exec(&conn_id, &command, 60, false).await?;
+    if result.code != 0 {
+        let detail = result
+            .stderr
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty())
+            .unwrap_or("更新源暂时不可用");
+        return Err(format!(
+            "检查 GCMS 更新失败：{}",
+            detail.chars().take(240).collect::<String>()
+        ));
+    }
+    parse_gcms_remote_update_info(&result.stdout, &status.version)
+}
+
+fn gcms_platform_api_base(status: &GcmsRemoteStatus) -> Result<String, String> {
+    let raw = status.base_url.trim();
+    if raw.is_empty() {
+        return Err("请先为 GCMS 设置访问域名和 HTTPS，再导入 Pilot 运营助手".into());
+    }
+    let mut url = reqwest::Url::parse(raw).map_err(|_| "GCMS 访问地址格式不正确")?;
+    if url.scheme() != "https" {
+        return Err("Pilot 运营助手包含全站密钥，请先配置 HTTPS 后再导入".into());
+    }
+    let host = url.host_str().unwrap_or_default();
+    let loopback = host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<IpAddr>()
+            .map(|address| address.is_loopback())
+            .unwrap_or(false);
+    if host.is_empty() || loopback {
+        return Err("请先设置可从本机访问的 GCMS 域名，再导入 Pilot 运营助手".into());
+    }
+    url.set_username("")
+        .map_err(|_| "GCMS 访问地址不能包含账号信息")?;
+    url.set_password(None)
+        .map_err(|_| "GCMS 访问地址不能包含账号信息")?;
+    url.set_path("/api/platform/v1");
+    url.set_query(None);
+    url.set_fragment(None);
+    Ok(url.to_string().trim_end_matches('/').to_string())
+}
+
+fn valid_pilot_assistant_key(value: &str) -> bool {
+    let Some(secret) = value.trim().strip_prefix("gcmsp_") else {
+        return false;
+    };
+    secret.len() == 64 && secret.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn parse_pilot_assistant_key(raw: &str, current: &str) -> Result<Zeroizing<String>, String> {
+    let mut reused = false;
+    for line in raw.lines() {
+        let Some((key, value)) = line.split_once('\t') else {
+            continue;
+        };
+        match key.trim() {
+            "PILOT_GCMS_ASSISTANT_KEY" if valid_pilot_assistant_key(value) => {
+                return Ok(Zeroizing::new(value.trim().to_string()));
+            }
+            "PILOT_GCMS_ASSISTANT_KEY_REUSED" => reused = value.trim() == "1",
+            _ => {}
+        }
+    }
+    if reused && valid_pilot_assistant_key(current) {
+        return Ok(Zeroizing::new(current.trim().to_string()));
+    }
+    Err("GCMS 未返回有效的 Pilot 运营助手密钥".into())
+}
+
+async fn download_pilot_assistant_pack(api_base: &str, key: &str) -> Result<Vec<u8>, String> {
+    const MAX_PACK_BYTES: u64 = 32 * 1024 * 1024;
+    let url = format!("{}/skill-pack", api_base.trim_end_matches('/'));
+    let response = reqwest::Client::new()
+        .get(&url)
+        .bearer_auth(key)
+        .timeout(Duration::from_secs(60))
+        .send()
+        .await
+        .map_err(|error| format!("连接 GCMS 下载运营助手失败：{error}"))?;
+    if !response.status().is_success() {
+        return Err(match response.status().as_u16() {
+            401 | 403 => "GCMS 已签发密钥，但平台技能包鉴权失败；请重新检测或升级 GCMS".into(),
+            404 => "当前 GCMS 版本缺少平台技能包接口，请先升级 GCMS".into(),
+            status => format!("下载 Pilot 运营助手失败：HTTP {status}"),
+        });
+    }
+    if response.content_length().unwrap_or(0) > MAX_PACK_BYTES {
+        return Err("Pilot 运营助手技能包异常（超过 32 MB）".into());
+    }
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|error| format!("读取 Pilot 运营助手技能包失败：{error}"))?;
+    if bytes.len() < 200 || bytes.len() as u64 > MAX_PACK_BYTES {
+        return Err("Pilot 运营助手技能包内容异常".into());
+    }
+    Ok(bytes.to_vec())
+}
+
+/// 从当前 Pilot 已连接并安装的 GCMS 直接导入专用运营助手。
+/// 密钥只经 SSH stdin/stdout 短暂传递，落地后仅保存在系统钥匙串；WebView 永远拿不到明文。
+#[tauri::command]
+pub(super) async fn gcms_remote_import_pilot_assistant(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+) -> Result<pack::ImportOutcome, String> {
+    let source = state.conns.get(&conn_id)?;
+    if source.kind != "ssh" {
+        return Err("这不是远程服务器连接".into());
+    }
+    let _guard = begin_gcms_operation(&state, &conn_id)?;
+    let status = gcms_remote_status_inner(&state, &conn_id).await?;
+    if !status.installed {
+        return Err("这台服务器尚未安装 GCMS".into());
+    }
+    if !status.running {
+        return Err("GCMS 服务尚未运行，请先启动服务".into());
+    }
+    if !status.assistant_import_supported {
+        return Err("当前 GCMS 版本不支持一键导入 Pilot 运营助手，请先升级 GCMS".into());
+    }
+    let api_base = gcms_platform_api_base(&status)?;
+    let existing = state.conns.pilot_assistant_for_source(&conn_id, &api_base);
+    let current_key = Zeroizing::new(
+        existing
+            .as_ref()
+            .and_then(|connection| keychain::get_key(&connection.id).ok())
+            .unwrap_or_default(),
+    );
+
+    ensure_ssh(&state, &conn_id).await?;
+    let command = format!(
+        "env PILOT_GCMS_ROOT={} sh -c {}",
+        shell_quote(&status.path),
+        shell_quote(GCMS_REMOTE_ISSUE_ASSISTANT_KEY_CMD)
+    );
+    let issued = state
+        .ssh
+        .exec_with_stdin(&conn_id, &command, current_key.as_bytes(), 45)
+        .await?;
+    if issued.code != 0 {
+        let detail = issued
+            .stderr
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty())
+            .unwrap_or("远端命令未返回错误详情");
+        return Err(format!(
+            "创建 Pilot 运营助手失败（退出码 {}）：{}",
+            issued.code,
+            detail.chars().take(240).collect::<String>()
+        ));
+    }
+    let assistant_key = parse_pilot_assistant_key(&issued.stdout, current_key.as_str())?;
+    let pack_bytes = download_pilot_assistant_pack(&api_base, assistant_key.as_str()).await?;
+    let temp_zip = state
+        .data_dir
+        .join(format!("pilot-assistant-{}.zip", uuid::Uuid::new_v4()));
+    fs::write(&temp_zip, pack_bytes).map_err(|error| format!("保存临时技能包失败：{error}"))?;
+
+    let store = state.conns.clone();
+    let source_id = conn_id.clone();
+    let zip_path = temp_zip.to_string_lossy().into_owned();
+    let joined = if let Some(existing) = existing {
+        tauri::async_runtime::spawn_blocking(move || {
+            store.upgrade_from_zip(&existing.id, &zip_path)?;
+            let connection = store.bind_pilot_assistant(
+                &existing.id,
+                &source_id,
+                &api_base,
+                Some(assistant_key.as_str()),
+            )?;
+            Ok(pack::ImportOutcome::Upgraded { connection })
+        })
+        .await
+    } else {
+        tauri::async_runtime::spawn_blocking(move || {
+            let outcome = store.import_zip(
+                &zip_path,
+                Some("Pilot 运营助手".into()),
+                Some(assistant_key.to_string()),
+            )?;
+            match outcome {
+                pack::ImportOutcome::Imported { connection } => {
+                    match store.bind_pilot_assistant(&connection.id, &source_id, &api_base, None) {
+                        Ok(connection) => Ok(pack::ImportOutcome::Imported { connection }),
+                        Err(error) => {
+                            let _ = store.remove(&connection.id);
+                            Err(error)
+                        }
+                    }
+                }
+                pack::ImportOutcome::Upgraded { connection } => {
+                    let connection = store.bind_pilot_assistant(
+                        &connection.id,
+                        &source_id,
+                        &api_base,
+                        Some(assistant_key.as_str()),
+                    )?;
+                    Ok(pack::ImportOutcome::Upgraded { connection })
+                }
+                pack::ImportOutcome::NeedsKey { .. } => {
+                    Err("GCMS 已签发密钥，但技能包导入仍要求手动输入".into())
+                }
+            }
+        })
+        .await
+    };
+    let _ = fs::remove_file(&temp_zip);
+    joined.map_err(|error| format!("导入 Pilot 运营助手任务失败：{error}"))?
+}
+
 fn validate_gcms_admin_password(password: &str) -> Result<(), String> {
     if password.chars().any(|ch| matches!(ch, '\0' | '\r' | '\n')) {
         return Err("新密码不能包含换行或空字符".into());
@@ -3149,6 +3602,90 @@ fn validate_gcms_admin_password(password: &str) -> Result<(), String> {
         return Err("新密码不能继续使用默认密码".into());
     }
     Ok(())
+}
+
+fn validate_gcms_confirmation_password(password: &str) -> Result<(), String> {
+    if password.is_empty() {
+        return Err("请输入 GCMS 登录密码".into());
+    }
+    if password.chars().any(|ch| matches!(ch, '\0' | '\r' | '\n')) {
+        return Err("GCMS 登录密码不能包含换行或空字符".into());
+    }
+    if password.len() > 72 {
+        return Err("GCMS 登录密码过长".into());
+    }
+    Ok(())
+}
+
+fn ensure_gcms_confirmation_status(status: &GcmsRemoteStatus) -> Result<(), String> {
+    if !status.installed || status.path.trim().is_empty() {
+        return Err("未检测到可确认身份的标准 GCMS 实例".into());
+    }
+    match status.password_status.as_str() {
+        "changed" => Ok(()),
+        "default" => Err("后台仍使用默认密码，请先修改密码后再执行此操作".into()),
+        _ => Err("无法确认 GCMS 密码状态，请先升级 GCMS 并重新检测".into()),
+    }
+}
+
+async fn verify_gcms_admin_password_for_status(
+    state: &AppState,
+    conn_id: &str,
+    status: &GcmsRemoteStatus,
+    password: &str,
+) -> Result<(), String> {
+    validate_gcms_confirmation_password(password)?;
+    ensure_gcms_confirmation_status(status)?;
+    let command = format!(
+        "env PILOT_GCMS_ROOT={} sh -c {}",
+        shell_quote(&status.path),
+        shell_quote(GCMS_REMOTE_VERIFY_ADMIN_PASSWORD_CMD),
+    );
+    let result = state
+        .ssh
+        .exec_with_stdin(conn_id, &command, password.as_bytes(), 45)
+        .await?;
+    if result.code != 0 {
+        let detail = result
+            .stderr
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty())
+            .unwrap_or("远端命令未返回错误详情");
+        return Err(format!(
+            "GCMS 身份确认失败：{}",
+            detail.chars().take(240).collect::<String>()
+        ));
+    }
+    if !result
+        .stdout
+        .lines()
+        .any(|line| line.trim() == "PILOT_GCMS_PASSWORD_VERIFIED\t1")
+    {
+        return Err("GCMS 未返回有效的身份确认结果".into());
+    }
+    Ok(())
+}
+
+async fn verify_gcms_admin_password_at(
+    state: &AppState,
+    conn_id: &str,
+    instance_path: Option<&str>,
+    password: &str,
+) -> Result<GcmsRemoteStatus, String> {
+    let status = gcms_remote_status_at(state, conn_id, instance_path).await?;
+    verify_gcms_admin_password_for_status(state, conn_id, &status, password).await?;
+    Ok(status)
+}
+
+fn ensure_gcms_initial_password_status(status: &str) -> Result<(), String> {
+    match status {
+        "default" => Ok(()),
+        "changed" => {
+            Err("后台密码已修改，Pilot 仅支持设置首次安装的初始密码，请在 GCMS 后台继续管理".into())
+        }
+        _ => Err("无法确认后台仍在使用初始密码，请重新检测后再试".into()),
+    }
 }
 
 #[tauri::command]
@@ -3169,8 +3706,9 @@ pub(super) async fn gcms_remote_set_admin_password(
     if !before.installed {
         return Err("这台服务器尚未安装标准 GCMS".into());
     }
+    ensure_gcms_initial_password_status(&before.password_status)?;
     if !before.password_change_supported {
-        return Err("当前 GCMS 版本不支持在 Pilot 中修改密码，请先升级 GCMS".into());
+        return Err("当前 GCMS 版本不支持在 Pilot 中设置初始密码，请先升级 GCMS".into());
     }
 
     let command = format!(
@@ -3190,7 +3728,7 @@ pub(super) async fn gcms_remote_set_admin_password(
             .find(|line| !line.is_empty())
             .unwrap_or("远端命令未返回错误详情");
         return Err(format!(
-            "修改后台密码失败（退出码 {}）：{}",
+            "设置初始后台密码失败（退出码 {}）：{}",
             result.code,
             detail.chars().take(240).collect::<String>()
         ));
@@ -3214,6 +3752,7 @@ async fn gcms_remote_service_action(
     state: &AppState,
     conn_id: &str,
     action: &str,
+    admin_password: &str,
 ) -> Result<GcmsRemoteStatus, String> {
     let conn = state.conns.get(conn_id)?;
     if conn.kind != "ssh" {
@@ -3227,6 +3766,7 @@ async fn gcms_remote_service_action(
     if action == "stop" && !before.running {
         return Ok(before);
     }
+    verify_gcms_admin_password_for_status(state, conn_id, &before, admin_password).await?;
     let script_action = if action == "restart" && !before.running {
         "start"
     } else {
@@ -3290,16 +3830,20 @@ async fn gcms_remote_service_action(
 pub(super) async fn gcms_remote_restart(
     state: tauri::State<'_, AppState>,
     conn_id: String,
+    admin_password: String,
 ) -> Result<GcmsRemoteStatus, String> {
-    gcms_remote_service_action(&state, &conn_id, "restart").await
+    let admin_password = Zeroizing::new(admin_password);
+    gcms_remote_service_action(&state, &conn_id, "restart", admin_password.as_str()).await
 }
 
 #[tauri::command]
 pub(super) async fn gcms_remote_stop(
     state: tauri::State<'_, AppState>,
     conn_id: String,
+    admin_password: String,
 ) -> Result<GcmsRemoteStatus, String> {
-    gcms_remote_service_action(&state, &conn_id, "stop").await
+    let admin_password = Zeroizing::new(admin_password);
+    gcms_remote_service_action(&state, &conn_id, "stop", admin_password.as_str()).await
 }
 
 /// 多源独立实例迁移的安全预检。
@@ -3475,15 +4019,6 @@ pub(super) async fn gcms_remote_migration_stage(
     let _target_guard = begin_gcms_operation(&state, &target_id)?;
     let run_id = uuid::Uuid::new_v4().to_string();
     let staging_root = format!("{}/.staging/{run_id}", target_environment.root);
-    let local_cache_root = state.data_dir.join("migration-cache").join(&run_id);
-    fs::create_dir_all(&local_cache_root)
-        .map_err(|error| format!("创建本地迁移缓存失败：{error}"))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(&local_cache_root, fs::Permissions::from_mode(0o700));
-    }
-    let _cache_guard = MigrationCacheGuard(local_cache_root.clone());
     let init = format!(
         "umask 077; mkdir -p {root}; chmod 700 {root}; find {parent} -mindepth 1 -maxdepth 1 -type d -mtime +1 -exec rm -rf -- {{}} + 2>/dev/null || true",
         root = shell_quote(&staging_root),
@@ -3796,18 +4331,37 @@ pub(super) async fn gcms_remote_migration_stage(
                 bytes as f64 / 1_048_576.0
             ),
         );
-        send_gcms_migration_progress(
-            &on_event,
-            source_start + 1,
-            total_steps,
-            source_index,
-            source_total,
-            format!("快照已创建，正在下载「{}」…", source_spec.name),
-        );
-        let local_archive = local_cache_root.join(format!("{index}.tar.gz"));
-        let download = state
+        let target_archive = format!("{staging_root}/{instance_id}.tar.gz");
+        let transfer_message = format!("快照已创建，正在安全传输「{}」…", source_spec.name);
+        let transfer_started = Instant::now();
+        let mut last_progress_emit = Instant::now();
+        let transfer = state
             .ssh
-            .download(source_id, &remote_archive, &local_archive.to_string_lossy())
+            .relay_file(
+                source_id,
+                &remote_archive,
+                &target_id,
+                &target_archive,
+                |transferred| {
+                    if transferred == 0
+                        || (bytes > 0 && transferred >= bytes)
+                        || last_progress_emit.elapsed() >= Duration::from_millis(200)
+                    {
+                        send_gcms_migration_transfer_progress(
+                            &on_event,
+                            source_start + 1,
+                            total_steps,
+                            source_index,
+                            source_total,
+                            &transfer_message,
+                            transferred,
+                            bytes,
+                            transfer_started,
+                        );
+                        last_progress_emit = Instant::now();
+                    }
+                },
+            )
             .await;
         let _ = state
             .ssh
@@ -3818,49 +4372,70 @@ pub(super) async fn gcms_remote_migration_stage(
                 false,
             )
             .await;
-        if let Err(error) = download {
-            let _ = fs::remove_file(&local_archive);
-            let failure = format!("下载「{}」快照失败：{error}", source_spec.name);
-            send_gcms_migration_log(&on_event, format!("[失败] {failure}"));
-            send_gcms_migration_progress(
-                &on_event,
-                source_done,
-                total_steps,
-                source_index,
-                source_total,
-                format!("「{}」迁移失败，继续处理下一个", source_spec.name),
-            );
-            failures.push(failure);
-            continue;
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = fs::set_permissions(&local_archive, fs::Permissions::from_mode(0o600));
-        }
-        let target_archive = format!("{staging_root}/{instance_id}.tar.gz");
-        send_gcms_migration_log(
+        let transferred = match transfer {
+            Ok(transferred) if bytes == 0 || transferred == bytes => transferred,
+            Ok(transferred) => {
+                let failure = format!(
+                    "传输「{}」快照不完整：应为 {} 字节，实际 {} 字节",
+                    source_spec.name, bytes, transferred
+                );
+                let _ = state
+                    .ssh
+                    .exec(
+                        &target_id,
+                        &format!("rm -f {}", shell_quote(&target_archive)),
+                        30,
+                        false,
+                    )
+                    .await;
+                send_gcms_migration_log(&on_event, format!("[失败] {failure}"));
+                send_gcms_migration_progress(
+                    &on_event,
+                    source_done,
+                    total_steps,
+                    source_index,
+                    source_total,
+                    format!("「{}」迁移失败，继续处理下一个", source_spec.name),
+                );
+                failures.push(failure);
+                continue;
+            }
+            Err(error) => {
+                let failure = format!("流式传输「{}」快照失败：{error}", source_spec.name);
+                let _ = state
+                    .ssh
+                    .exec(
+                        &target_id,
+                        &format!("rm -f {}", shell_quote(&target_archive)),
+                        30,
+                        false,
+                    )
+                    .await;
+                send_gcms_migration_log(&on_event, format!("[失败] {failure}"));
+                send_gcms_migration_progress(
+                    &on_event,
+                    source_done,
+                    total_steps,
+                    source_index,
+                    source_total,
+                    format!("「{}」迁移失败，继续处理下一个", source_spec.name),
+                );
+                failures.push(failure);
+                continue;
+            }
+        };
+        send_gcms_migration_transfer_progress(
             &on_event,
-            format!("[下载] 「{}」快照已落到本机临时缓存", source_spec.name),
-        );
-        send_gcms_migration_progress(
-            &on_event,
-            source_start + 2,
+            source_start + 1,
             total_steps,
             source_index,
             source_total,
-            format!("正在上传「{}」到目标服务器…", source_spec.name),
+            &transfer_message,
+            transferred,
+            bytes,
+            transfer_started,
         );
-        let upload = state
-            .ssh
-            .upload(
-                &target_id,
-                &local_archive.to_string_lossy(),
-                &target_archive,
-            )
-            .await;
-        let _ = fs::remove_file(&local_archive);
-        if let Err(error) = upload {
+        if transferred == 0 {
             let _ = state
                 .ssh
                 .exec(
@@ -3870,7 +4445,7 @@ pub(super) async fn gcms_remote_migration_stage(
                     false,
                 )
                 .await;
-            let failure = format!("上传「{}」到目标服务器失败：{error}", source_spec.name);
+            let failure = format!("传输「{}」快照失败：目标文件为空", source_spec.name);
             send_gcms_migration_log(&on_event, format!("[失败] {failure}"));
             send_gcms_migration_progress(
                 &on_event,
@@ -3894,7 +4469,10 @@ pub(super) async fn gcms_remote_migration_stage(
             .await;
         send_gcms_migration_log(
             &on_event,
-            format!("[上传] 「{}」快照已送达目标服务器", source_spec.name),
+            format!(
+                "[传输] 「{}」已从源服务器流式送达目标服务器（未写入 Pilot 本机磁盘）",
+                source_spec.name
+            ),
         );
         send_gcms_migration_progress(
             &on_event,
@@ -4320,7 +4898,9 @@ pub(super) async fn gcms_remote_migration_refresh_access(
 pub(super) async fn gcms_remote_migration_restart(
     state: tauri::State<'_, AppState>,
     instance_id: String,
+    admin_password: String,
 ) -> Result<GcmsMigrationSnapshot, String> {
+    let admin_password = Zeroizing::new(admin_password);
     let mut instance = read_migration_registry(&state.data_dir)
         .into_iter()
         .find(|item| item.id == instance_id)
@@ -4333,6 +4913,13 @@ pub(super) async fn gcms_remote_migration_restart(
         return Err("目标连接不是 SSH 服务器".into());
     }
     let _guard = begin_gcms_operation(&state, &instance.target_id)?;
+    verify_gcms_admin_password_at(
+        &state,
+        &instance.target_id,
+        Some(&instance.instance_path),
+        admin_password.as_str(),
+    )
+    .await?;
     let environment = migration_target_env(&state, &instance.target_id).await?;
     if !matches!(environment.privilege.as_str(), "root" | "sudo") {
         return Err("重启迁移实例需要 root 或免密 sudo".into());
@@ -4378,7 +4965,9 @@ pub(super) async fn gcms_remote_migration_restart(
 pub(super) async fn gcms_remote_migration_stop(
     state: tauri::State<'_, AppState>,
     instance_id: String,
+    admin_password: String,
 ) -> Result<GcmsMigrationSnapshot, String> {
+    let admin_password = Zeroizing::new(admin_password);
     let mut instance = read_migration_registry(&state.data_dir)
         .into_iter()
         .find(|item| item.id == instance_id)
@@ -4391,6 +4980,13 @@ pub(super) async fn gcms_remote_migration_stop(
         return Err("目标连接不是 SSH 服务器".into());
     }
     let _guard = begin_gcms_operation(&state, &instance.target_id)?;
+    verify_gcms_admin_password_at(
+        &state,
+        &instance.target_id,
+        Some(&instance.instance_path),
+        admin_password.as_str(),
+    )
+    .await?;
     let environment = migration_target_env(&state, &instance.target_id).await?;
     if !matches!(environment.privilege.as_str(), "root" | "sudo") {
         return Err("停止迁移实例需要 root 或免密 sudo".into());
@@ -4457,7 +5053,9 @@ pub(super) async fn gcms_remote_migration_forget(
 pub(super) async fn gcms_remote_migration_uninstall(
     state: tauri::State<'_, AppState>,
     instance_id: String,
+    admin_password: String,
 ) -> Result<(), String> {
+    let admin_password = Zeroizing::new(admin_password);
     let instance = read_migration_registry(&state.data_dir)
         .into_iter()
         .find(|item| item.id == instance_id)
@@ -4468,6 +5066,13 @@ pub(super) async fn gcms_remote_migration_uninstall(
         return Err("目标连接不是 SSH 服务器".into());
     }
     let _guard = begin_gcms_operation(&state, &instance.target_id)?;
+    verify_gcms_admin_password_at(
+        &state,
+        &instance.target_id,
+        Some(&instance.instance_path),
+        admin_password.as_str(),
+    )
+    .await?;
     let environment = migration_target_env(&state, &instance.target_id).await?;
     if !matches!(environment.privilege.as_str(), "root" | "sudo") {
         return Err("卸载迁移实例需要 root 或免密 sudo".into());
@@ -5546,12 +6151,14 @@ async fn gcms_cloudflare_create_a_record_inner(
     instance_port: Option<u16>,
     child_site_id: Option<i64>,
     allowed_primary_cname_target: Option<&str>,
+    admin_password: &str,
 ) -> Result<GcmsCloudflareCreateResult, String> {
     let conn = state.conns.get(&conn_id)?;
     if conn.kind != "ssh" {
         return Err("这不是远程服务器连接".into());
     }
     let _guard = begin_gcms_operation(&state, &conn_id)?;
+    verify_gcms_admin_password_at(state, &conn_id, instance_path, admin_password).await?;
     let check = gcms_remote_access_check_context_inner(
         state,
         &conn_id,
@@ -5714,16 +6321,36 @@ pub(super) async fn gcms_cloudflare_create_a_record(
     conn_id: String,
     domain: String,
     redirect_domain: Option<String>,
+    instance_path: Option<String>,
+    instance_port: Option<u16>,
+    migration_instance_id: Option<String>,
+    admin_password: String,
 ) -> Result<GcmsCloudflareCreateResult, String> {
+    let admin_password = Zeroizing::new(admin_password);
+    let migration_instance = migration_instance_for_request(
+        &state.data_dir,
+        migration_instance_id.as_deref(),
+        &conn_id,
+        instance_path.as_deref(),
+    )?;
+    let effective_path = migration_instance
+        .as_ref()
+        .map(|instance| instance.instance_path.as_str())
+        .or(instance_path.as_deref());
+    let effective_port = migration_instance
+        .as_ref()
+        .map(|instance| instance.port)
+        .or(instance_port);
     gcms_cloudflare_create_a_record_inner(
         &state,
         conn_id,
         domain,
         redirect_domain,
+        effective_path,
+        effective_port,
         None,
         None,
-        None,
-        None,
+        admin_password.as_str(),
     )
     .await
 }
@@ -5735,7 +6362,9 @@ pub(super) async fn gcms_remote_migration_site_create_a_record(
     site_id: i64,
     domain: String,
     redirect_domain: Option<String>,
+    admin_password: String,
 ) -> Result<GcmsCloudflareCreateResult, String> {
+    let admin_password = Zeroizing::new(admin_password);
     let (instance, _, route) = migration_site_for_request(
         &state,
         &migration_instance_id,
@@ -5753,6 +6382,7 @@ pub(super) async fn gcms_remote_migration_site_create_a_record(
         Some(instance.port),
         Some(site_id),
         route.allowed_cname_target(),
+        admin_password.as_str(),
     )
     .await
 }
@@ -6035,6 +6665,88 @@ pub(super) async fn gcms_remote_install(
     Ok(after)
 }
 
+#[tauri::command]
+pub(super) async fn gcms_remote_upgrade(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    target_version: String,
+    on_event: Channel<GcmsInstallEvent>,
+) -> Result<GcmsRemoteStatus, String> {
+    let connection = state.conns.get(&conn_id)?;
+    if connection.kind != "ssh" {
+        return Err("这不是远程服务器连接".into());
+    }
+    let _guard = begin_gcms_operation(&state, &conn_id)?;
+    let phase = |message: &str| {
+        let _ = on_event.send(GcmsInstallEvent::Phase {
+            message: message.to_string(),
+        });
+    };
+
+    phase("正在核验 GCMS 安装与升级器…");
+    let before = gcms_remote_status_inner(&state, &conn_id).await?;
+    if !before.installed {
+        return Err("这台服务器尚未安装 GCMS".into());
+    }
+    if !before.update_supported {
+        return Err("当前 GCMS 安装不支持在线升级，请先使用标准安装包更新".into());
+    }
+    let target_version = target_version.trim();
+    if parse_version_key(target_version).is_none() {
+        return Err("目标 GCMS 版本格式不正确，请重新检查更新".into());
+    }
+    if !gcms_version_is_newer(&before.version, target_version) {
+        return Err(format!(
+            "当前 GCMS {} 已不低于目标版本 {}，请重新检查更新",
+            before.version, target_version
+        ));
+    }
+    phase("正在下载、校验并安全升级 GCMS…");
+    let command = format!(
+        "env PILOT_GCMS_ROOT={} PILOT_GCMS_TARGET={} sh -c {}",
+        shell_quote(&before.path),
+        shell_quote(target_version),
+        shell_quote(GCMS_REMOTE_UPGRADE_CMD)
+    );
+    let result = state.ssh.exec(&conn_id, &command, 1_800, false).await?;
+    let log = gcms_install_log(&result.stdout, &result.stderr);
+    if !log.is_empty() {
+        let _ = on_event.send(GcmsInstallEvent::Log { text: log.clone() });
+    }
+    if result.code != 0 {
+        let brief = log
+            .lines()
+            .rev()
+            .map(str::trim)
+            .find(|line| !line.is_empty())
+            .unwrap_or("升级器未返回错误详情");
+        return Err(format!(
+            "GCMS 在线升级失败（退出码 {}）：{}",
+            result.code,
+            brief.chars().take(300).collect::<String>()
+        ));
+    }
+
+    phase("升级完成，正在验证服务与版本…");
+    let after = gcms_remote_status_inner(&state, &conn_id).await?;
+    if !after.installed {
+        return Err("升级命令已完成，但标准 GCMS 安装目录无法识别".into());
+    }
+    if before.running && !after.running {
+        return Err("升级器已完成，但 GCMS 服务未恢复运行；请查看升级日志".into());
+    }
+    phase(if after.version == before.version {
+        "当前已经是最新版本"
+    } else {
+        "GCMS 在线升级完成"
+    });
+    Ok(after)
+}
+
+fn gcms_https_status_is_transient(status: u16) -> bool {
+    matches!(status, 408 | 425 | 429 | 502..=504 | 520..=526)
+}
+
 async fn verify_gcms_https(domain: &str) -> (bool, Option<u16>, String) {
     let client = match reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
@@ -6053,36 +6765,40 @@ async fn verify_gcms_https(domain: &str) -> (bool, Option<u16>, String) {
         .as_millis();
     let asset_url = format!("https://{domain}/assets/css/admin.css?pilot_verify={cache_bust}");
     let mut last_error = String::new();
+    let mut last_status = None;
     for attempt in 0..3 {
         match client.get(&url).send().await {
             Ok(response) => {
                 let status = response.status();
                 let ok = status.is_success() || status.is_redirection();
                 if !ok {
-                    return (
-                        false,
-                        Some(status.as_u16()),
-                        format!("HTTPS 已连通，但 /admin 返回 HTTP {}", status.as_u16()),
-                    );
-                }
-                return match client.get(&asset_url).send().await {
-                    Ok(asset) if asset.status().is_success() => {
-                        (true, Some(status.as_u16()), String::new())
+                    let code = status.as_u16();
+                    last_status = Some(code);
+                    last_error = format!("HTTPS 已连通，但 /admin 返回 HTTP {code}");
+                    if attempt < 2 && gcms_https_status_is_transient(code) {
+                        tokio::time::sleep(Duration::from_secs(2)).await;
+                        continue;
                     }
-                    Ok(asset) => (
-                        false,
-                        Some(status.as_u16()),
-                        format!(
-                            "HTTPS 已连通，但 GCMS 页面资源返回 HTTP {}",
-                            asset.status().as_u16()
-                        ),
-                    ),
-                    Err(e) => (
-                        false,
-                        Some(status.as_u16()),
-                        format!("HTTPS 已连通，但暂时无法读取 GCMS 页面资源：{e}"),
-                    ),
-                };
+                    return (false, last_status, last_error);
+                }
+                last_status = Some(status.as_u16());
+                match client.get(&asset_url).send().await {
+                    Ok(asset) if asset.status().is_success() => {
+                        return (true, last_status, String::new());
+                    }
+                    Ok(asset) => {
+                        let code = asset.status().as_u16();
+                        last_error = format!("HTTPS 已连通，但 GCMS 页面资源返回 HTTP {code}");
+                        if attempt < 2 && gcms_https_status_is_transient(code) {
+                            tokio::time::sleep(Duration::from_secs(2)).await;
+                            continue;
+                        }
+                        return (false, last_status, last_error);
+                    }
+                    Err(e) => {
+                        last_error = format!("HTTPS 已连通，但暂时无法读取 GCMS 页面资源：{e}");
+                    }
+                }
             }
             Err(e) => last_error = e.to_string(),
         }
@@ -6090,9 +6806,18 @@ async fn verify_gcms_https(domain: &str) -> (bool, Option<u16>, String) {
             tokio::time::sleep(Duration::from_secs(2)).await;
         }
     }
-    (false, None, format!("HTTPS 暂未连通：{last_error}"))
+    (
+        false,
+        last_status,
+        if last_status.is_some() {
+            last_error
+        } else {
+            format!("HTTPS 暂未连通：{last_error}")
+        },
+    )
 }
 
+#[cfg(test)]
 fn gcms_verification_needs_domain_reload(error: &str) -> bool {
     error.contains("GCMS 页面资源") || error.contains("/admin 返回 HTTP 404")
 }
@@ -6156,7 +6881,7 @@ pub(super) async fn gcms_remote_access_verify(
     conn_id: String,
     domain: String,
     redirect_domain: Option<String>,
-    enable_cloudflare_proxy: Option<bool>,
+    _enable_cloudflare_proxy: Option<bool>,
     instance_path: Option<String>,
     _instance_port: Option<u16>,
     migration_instance_id: Option<String>,
@@ -6204,77 +6929,26 @@ pub(super) async fn gcms_remote_access_verify(
         .map(|instance| instance.port)
         .or(_instance_port);
     let _guard = begin_gcms_operation(&state, &conn_id)?;
-    let status = gcms_remote_status_at(&state, &conn_id, effective_instance_path).await?;
-    let (mut https_ok, mut http_status, mut verification_error) =
+    let (https_ok, http_status, mut verification_error) =
         if let Some(target) = child_redirect_target {
             verify_gcms_redirect(target, &domain).await
         } else {
             verify_gcms_https(&domain).await
         };
 
-    // 兼容旧版 Pilot 已写入 BASE_URL、但实际进程没有重新加载的安装：只有后台路由或
-    // 内置页面资源明确失败时才执行定向修复，然后重新验证；普通 DNS/证书等待不重启。
-    if child_site_id.is_none()
-        && !https_ok
-        && gcms_verification_needs_domain_reload(&verification_error)
-        && status.installed
-        && !status.path.is_empty()
-    {
-        let env = format!(
-            "PILOT_DOMAIN={} PILOT_GCMS_HOME={} PILOT_GCMS_SERVICE_NAME={}",
-            shell_quote(&domain),
-            shell_quote(&status.path),
-            shell_quote(
-                migration_instance
-                    .as_ref()
-                    .map(|instance| instance.service_name.as_str())
-                    .unwrap_or_default()
-            )
-        );
-        let body = shell_quote(GCMS_REMOTE_RELOAD_DOMAIN_CMD);
-        let command = if migration_instance.is_some() {
-            let environment = migration_target_env(&state, &conn_id).await?;
-            if environment.privilege == "root" {
-                format!("env {env} sh -c {body}")
-            } else if environment.privilege == "sudo" {
-                format!("sudo -n env {env} sh -c {body}")
-            } else {
-                return Err("重新加载迁移实例需要 root 或免密 sudo".into());
-            }
-        } else {
-            format!("env {env} sh -c {body}")
-        };
-        let restarted = state.ssh.exec(&conn_id, &command, 120, false).await?;
-        if restarted.code == 0 {
-            tokio::time::sleep(Duration::from_secs(2)).await;
-            (https_ok, http_status, verification_error) = verify_gcms_https(&domain).await;
-        } else {
-            let detail = gcms_install_log(&restarted.stdout, &restarted.stderr);
-            verification_error = format!(
-                "HTTPS 已连通，但页面资源自动修复失败：{}",
-                detail
-                    .lines()
-                    .rev()
-                    .map(str::trim)
-                    .find(|line| !line.is_empty())
-                    .unwrap_or("GCMS 重启失败")
-            );
-        }
-    }
-
-    let (mut redirect_ok, mut redirect_http_status, mut redirect_verification_error) =
+    let (redirect_ok, redirect_http_status, redirect_verification_error) =
         if let Some(redirect_domain) = redirect_domain.as_deref() {
             verify_gcms_redirect(&domain, redirect_domain).await
         } else {
             (true, None, String::new())
         };
-    let mut all_https_ok = https_ok && redirect_ok;
+    let all_https_ok = https_ok && redirect_ok;
     if https_ok && !redirect_ok {
         verification_error = redirect_verification_error.clone();
     }
     let (mut cloudflare_proxy_applicable, mut cloudflare_proxied, mut cloudflare_proxy_error) =
         (false, false, String::new());
-    if all_https_ok && enable_cloudflare_proxy.unwrap_or(false) {
+    if all_https_ok {
         match gcms_remote_access_check_context_inner(
             &state,
             &conn_id,
@@ -6292,31 +6966,11 @@ pub(super) async fn gcms_remote_access_verify(
                     cloudflare_proxy_applicable,
                     cloudflare_proxied,
                     cloudflare_proxy_error,
-                ) = gcms_enable_cloudflare_proxy(&state, &check).await;
+                ) = gcms_cloudflare_proxy_health(&check);
             }
             Err(error) => {
                 cloudflare_proxy_applicable = true;
                 cloudflare_proxy_error = format!("重新核验 Cloudflare 记录失败：{error}");
-            }
-        }
-        if cloudflare_proxied {
-            tokio::time::sleep(Duration::from_secs(2)).await;
-            (https_ok, http_status, verification_error) =
-                if let Some(target) = child_redirect_target {
-                    verify_gcms_redirect(target, &domain).await
-                } else {
-                    verify_gcms_https(&domain).await
-                };
-            if let Some(redirect_domain) = redirect_domain.as_deref() {
-                (
-                    redirect_ok,
-                    redirect_http_status,
-                    redirect_verification_error,
-                ) = verify_gcms_redirect(&domain, redirect_domain).await;
-            }
-            all_https_ok = https_ok && redirect_ok;
-            if https_ok && !redirect_ok {
-                verification_error = redirect_verification_error.clone();
             }
         }
     }
@@ -6615,9 +7269,23 @@ pub(super) async fn gcms_remote_access_configure(
     instance_path: Option<String>,
     instance_port: Option<u16>,
     migration_instance_id: Option<String>,
+    admin_password: String,
     on_event: Channel<GcmsInstallEvent>,
 ) -> Result<GcmsAccessApplyResult, String> {
+    let admin_password = Zeroizing::new(admin_password);
     let _guard = begin_gcms_operation(&state, &conn_id)?;
+    let migration_instance = migration_instance_for_request(
+        &state.data_dir,
+        migration_instance_id.as_deref(),
+        &conn_id,
+        instance_path.as_deref(),
+    )?;
+    let verification_path = migration_instance
+        .as_ref()
+        .map(|instance| instance.instance_path.as_str())
+        .or(instance_path.as_deref());
+    verify_gcms_admin_password_at(&state, &conn_id, verification_path, admin_password.as_str())
+        .await?;
     gcms_remote_access_configure_inner(
         &state,
         conn_id,
@@ -6643,8 +7311,10 @@ pub(super) async fn gcms_remote_migration_site_access_configure(
     domain: String,
     redirect_domain: Option<String>,
     enable_cloudflare_proxy: Option<bool>,
+    admin_password: String,
     on_event: Channel<GcmsInstallEvent>,
 ) -> Result<GcmsAccessApplyResult, String> {
+    let admin_password = Zeroizing::new(admin_password);
     let (instance, _, route) = migration_site_for_request(
         &state,
         &migration_instance_id,
@@ -6654,6 +7324,13 @@ pub(super) async fn gcms_remote_migration_site_access_configure(
     )
     .await?;
     let _guard = begin_gcms_operation(&state, &instance.target_id)?;
+    verify_gcms_admin_password_at(
+        &state,
+        &instance.target_id,
+        Some(&instance.instance_path),
+        admin_password.as_str(),
+    )
+    .await?;
     gcms_remote_access_configure_inner(
         &state,
         instance.target_id,
@@ -6758,8 +7435,10 @@ pub(super) async fn gcms_remote_access_cutover(
     instance_port: Option<u16>,
     migration_instance_id: String,
     child_site_id: Option<i64>,
+    admin_password: String,
     on_event: Channel<GcmsInstallEvent>,
 ) -> Result<GcmsAccessApplyResult, String> {
+    let admin_password = Zeroizing::new(admin_password);
     if migration_instance_id.trim().is_empty() {
         return Err("只有已登记的迁移实例才能自动切换老域名".into());
     }
@@ -6801,6 +7480,13 @@ pub(super) async fn gcms_remote_access_cutover(
     let effective_path = migration_instance.instance_path.clone();
     let effective_port = migration_instance.port;
     let _guard = begin_gcms_operation(&state, &conn_id)?;
+    verify_gcms_admin_password_at(
+        &state,
+        &conn_id,
+        Some(&effective_path),
+        admin_password.as_str(),
+    )
+    .await?;
     let phase = |message: &str| {
         let _ = on_event.send(GcmsInstallEvent::Phase {
             message: message.to_string(),
@@ -7096,12 +7782,14 @@ mod tests {
     #[test]
     fn parses_remote_gcms_password_status_without_exposing_credentials() {
         let found = parse_gcms_remote_status(
-            "PILOT_GCMS_INSTALLED\t1\nPILOT_GCMS_PATH\t/opt/gcms\nPILOT_GCMS_PASSWORD_STATUS\tdefault\nPILOT_GCMS_ADMIN_USER\tadmin\nPILOT_GCMS_PASSWORD_CHANGE_SUPPORTED\t1\n",
+            "PILOT_GCMS_INSTALLED\t1\nPILOT_GCMS_PATH\t/opt/gcms\nPILOT_GCMS_PASSWORD_STATUS\tdefault\nPILOT_GCMS_ADMIN_USER\tadmin\nPILOT_GCMS_PASSWORD_CHANGE_SUPPORTED\t1\nPILOT_GCMS_ASSISTANT_IMPORT_SUPPORTED\t1\nPILOT_GCMS_UPDATE_SUPPORTED\t1\n",
         )
         .unwrap();
         assert_eq!(found.password_status, "default");
         assert_eq!(found.admin_user, "admin");
         assert!(found.password_change_supported);
+        assert!(found.assistant_import_supported);
+        assert!(found.update_supported);
 
         let invalid = parse_gcms_remote_status(
             "PILOT_GCMS_INSTALLED\t1\nPILOT_GCMS_PATH\t/opt/gcms\nPILOT_GCMS_PASSWORD_STATUS\tnot-a-status\n",
@@ -7109,6 +7797,61 @@ mod tests {
         .unwrap();
         assert_eq!(invalid.password_status, "unknown");
         assert!(!invalid.password_change_supported);
+        assert!(!invalid.assistant_import_supported);
+        assert!(!invalid.update_supported);
+    }
+
+    #[test]
+    fn compares_and_parses_remote_gcms_updates() {
+        assert!(gcms_version_is_newer("v1.3.38", "v1.3.39"));
+        assert!(gcms_version_is_newer("v1.3.39-rc.1", "v1.3.39"));
+        assert!(!gcms_version_is_newer("v1.3.39", "v1.3.39"));
+        assert!(!gcms_version_is_newer("v1.3.40", "v1.3.39"));
+        assert!(!gcms_version_is_newer("dev", "v1.3.39"));
+
+        let info = parse_gcms_remote_update_info(
+            "banner\nPILOT_GCMS_CURRENT_VERSION\tv1.3.38\nPILOT_GCMS_LATEST_VERSION\tv1.3.39\n",
+            "",
+        )
+        .unwrap();
+        assert_eq!(info.current, "v1.3.38");
+        assert_eq!(info.latest, "v1.3.39");
+        assert!(info.has_update);
+        assert!(parse_gcms_remote_update_info("unrelated", "v1.3.38").is_err());
+    }
+
+    #[test]
+    fn parses_pilot_assistant_key_and_builds_secure_platform_base() {
+        let current = format!("gcmsp_{}", "a".repeat(64));
+        let issued = format!("PILOT_GCMS_ASSISTANT_KEY\tgcmsp_{}\n", "b".repeat(64));
+        assert_eq!(
+            parse_pilot_assistant_key(&issued, "").unwrap().as_str(),
+            format!("gcmsp_{}", "b".repeat(64))
+        );
+        assert_eq!(
+            parse_pilot_assistant_key("PILOT_GCMS_ASSISTANT_KEY_REUSED\t1\n", &current)
+                .unwrap()
+                .as_str(),
+            current
+        );
+        assert!(
+            parse_pilot_assistant_key("PILOT_GCMS_ASSISTANT_KEY_REUSED\t1\n", "gcmsp_invalid")
+                .is_err()
+        );
+
+        let status = GcmsRemoteStatus {
+            base_url: "https://cms.example.com/admin?old=1".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            gcms_platform_api_base(&status).unwrap(),
+            "https://cms.example.com/api/platform/v1"
+        );
+        let local = GcmsRemoteStatus {
+            base_url: "http://127.0.0.1:8080".into(),
+            ..Default::default()
+        };
+        assert!(gcms_platform_api_base(&local).is_err());
     }
 
     #[test]
@@ -7119,6 +7862,34 @@ mod tests {
         assert!(validate_gcms_admin_password("valid-pass\nword").is_err());
         assert!(validate_gcms_admin_password(&"密".repeat(25)).is_err());
         assert!(validate_gcms_admin_password(&"x".repeat(73)).is_err());
+    }
+
+    #[test]
+    fn validates_confirmation_password_without_rejecting_legacy_length() {
+        assert!(validate_gcms_confirmation_password("legacy").is_ok());
+        assert!(validate_gcms_confirmation_password("").is_err());
+        assert!(validate_gcms_confirmation_password("bad\npassword").is_err());
+        assert!(validate_gcms_confirmation_password(&"x".repeat(73)).is_err());
+
+        let mut status = GcmsRemoteStatus {
+            installed: true,
+            path: "/opt/gcms".into(),
+            password_status: "default".into(),
+            ..Default::default()
+        };
+        assert!(ensure_gcms_confirmation_status(&status)
+            .unwrap_err()
+            .contains("默认密码"));
+        status.password_status = "changed".into();
+        assert!(ensure_gcms_confirmation_status(&status).is_ok());
+    }
+
+    #[test]
+    fn initial_password_status_only_allows_default() {
+        assert!(ensure_gcms_initial_password_status("default").is_ok());
+        let changed = ensure_gcms_initial_password_status("changed").unwrap_err();
+        assert!(changed.contains("仅支持设置首次安装的初始密码"));
+        assert!(ensure_gcms_initial_password_status("unknown").is_err());
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -7191,6 +7962,16 @@ mod tests {
         assert!(!gcms_verification_needs_domain_reload(
             "HTTPS 已连通，但 /admin 返回 HTTP 503"
         ));
+    }
+
+    #[test]
+    fn https_verification_retries_transient_edge_failures() {
+        for status in [408, 425, 429, 502, 503, 504, 520, 525, 526] {
+            assert!(gcms_https_status_is_transient(status), "HTTP {status}");
+        }
+        for status in [301, 400, 401, 403, 404, 501, 527] {
+            assert!(!gcms_https_status_is_transient(status), "HTTP {status}");
+        }
     }
 
     #[test]
@@ -7847,6 +8628,10 @@ mod tests {
         for script in [
             GCMS_REMOTE_PROBE_CMD,
             GCMS_REMOTE_SET_ADMIN_PASSWORD_CMD,
+            GCMS_REMOTE_VERIFY_ADMIN_PASSWORD_CMD,
+            GCMS_REMOTE_ISSUE_ASSISTANT_KEY_CMD,
+            GCMS_REMOTE_CHECK_UPDATE_CMD,
+            GCMS_REMOTE_UPGRADE_CMD,
             GCMS_REMOTE_PUBLIC_IP_CMD,
             GCMS_REMOTE_SERVICE_ACTION_CMD,
             GCMS_CADDY_PREFLIGHT_CMD,
@@ -7869,6 +8654,10 @@ mod tests {
         }
         assert!(GCMS_REMOTE_SET_ADMIN_PASSWORD_CMD.contains("pilot-set-admin-password"));
         assert!(!GCMS_REMOTE_SET_ADMIN_PASSWORD_CMD.contains("PASSWORD="));
+        assert!(GCMS_REMOTE_VERIFY_ADMIN_PASSWORD_CMD.contains("pilot-verify-admin-password"));
+        assert!(!GCMS_REMOTE_VERIFY_ADMIN_PASSWORD_CMD.contains("PASSWORD="));
+        assert!(GCMS_REMOTE_ISSUE_ASSISTANT_KEY_CMD.contains("pilot-issue-assistant-key"));
+        assert!(!GCMS_REMOTE_ISSUE_ASSISTANT_KEY_CMD.contains("GCMS_API_KEY="));
         assert!(GCMS_CADDY_CONFIGURE_CMD.contains("redir https://%s{uri} 301"));
         assert!(GCMS_CADDY_CONFIGURE_CMD.contains("PILOT_REDIRECT_DOMAIN"));
         assert!(GCMS_NGINX_CONFIGURE_CMD.contains("nginx -t"));

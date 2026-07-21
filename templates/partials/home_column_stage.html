@@ -1,0 +1,26 @@
+{{define "home_column_stage"}}
+<div class="column-stage-page">
+  <section class="cs-manifesto"><strong>{{if .Site.HeroDescription}}{{.Site.HeroDescription}}{{else}}{{.Site.Description}}{{end}}</strong><span>{{.Site.Name}}</span>{{with .Featured}}<time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time>{{end}}</section>
+
+  <section class="cs-stage" aria-label="{{.Site.HomeLatest}}">
+    {{range $i, $p := .Posts}}{{if eq $i 0}}
+    <article class="cs-panel cs-panel-1"><div class="cs-panel-copy"><strong>01</strong><small>{{with $p.Category}}{{.Name}} · {{categoryCount $.Categories .Slug}}{{else}}{{$.Site.HomeLatest}}{{end}}</small><i></i><time datetime="{{$.Tr.ISODate $p.PublishedAt}}">{{$.Tr.Date $p.PublishedAt}}</time><h2><a href="{{$.Tr.U (contentURL $p)}}">{{$p.Title}}</a></h2></div>{{if $p.CoverImage}}<a class="cs-panel-cover" href="{{$.Tr.U (contentURL $p)}}"><img src="{{$p.CoverImage}}" alt="{{$p.Title}}" decoding="async"{{imgAttrs $p.CoverImage}}></a>{{end}}</article>
+    {{end}}{{end}}
+    {{range $i, $p := .Posts}}{{if eq $i 1}}
+    <article class="cs-panel cs-panel-2"><div class="cs-panel-copy"><strong>02</strong><small>{{with $p.Category}}{{.Name}} · {{categoryCount $.Categories .Slug}}{{else}}{{$.Site.HomeLatest}}{{end}}</small><i></i><time datetime="{{$.Tr.ISODate $p.PublishedAt}}">{{$.Tr.Date $p.PublishedAt}}</time><h2><a href="{{$.Tr.U (contentURL $p)}}">{{$p.Title}}</a></h2></div>{{if $p.CoverImage}}<a class="cs-panel-cover" href="{{$.Tr.U (contentURL $p)}}"><img src="{{$p.CoverImage}}" alt="{{$p.Title}}" decoding="async"{{imgAttrs $p.CoverImage}}></a>{{end}}</article>
+    {{end}}{{end}}
+
+    {{with .Featured}}
+    <article class="cs-panel cs-panel-feature"><div class="cs-panel-copy"><small>{{$.Site.HomeFeatured}}</small><h1><a href="{{$.Tr.U (contentURL .)}}">{{.Title}}</a></h1><i></i>{{if .Excerpt}}<p>{{.Excerpt}}</p>{{end}}<time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time></div>{{if .CoverImage}}<a class="cs-panel-cover" href="{{$.Tr.U (contentURL .)}}"><img src="{{.CoverImage}}" alt="{{.Title}}" decoding="async"{{imgAttrs .CoverImage}}></a>{{end}}<a class="cs-read" href="{{$.Tr.U (contentURL .)}}">{{$.Tr.T "home.read_more"}} →</a></article>
+    {{end}}
+
+    {{range $i, $p := .Posts}}{{if eq $i 2}}
+    <article class="cs-panel cs-panel-4"><div class="cs-panel-copy"><strong>04</strong><small>{{with $p.Category}}{{.Name}} · {{categoryCount $.Categories .Slug}}{{else}}{{$.Site.HomeLatest}}{{end}}</small><i></i><time datetime="{{$.Tr.ISODate $p.PublishedAt}}">{{$.Tr.Date $p.PublishedAt}}</time><h2><a href="{{$.Tr.U (contentURL $p)}}">{{$p.Title}}</a></h2></div>{{if $p.CoverImage}}<a class="cs-panel-cover" href="{{$.Tr.U (contentURL $p)}}"><img src="{{$p.CoverImage}}" alt="{{$p.Title}}" decoding="async"{{imgAttrs $p.CoverImage}}></a>{{end}}</article>
+    {{end}}{{end}}
+    {{range $i, $p := .Posts}}{{if eq $i 3}}
+    <article class="cs-panel cs-panel-5"><div class="cs-panel-copy"><strong>05</strong><small>{{with $p.Category}}{{.Name}} · {{categoryCount $.Categories .Slug}}{{else}}{{$.Site.HomeLatest}}{{end}}</small><i></i><time datetime="{{$.Tr.ISODate $p.PublishedAt}}">{{$.Tr.Date $p.PublishedAt}}</time><h2><a href="{{$.Tr.U (contentURL $p)}}">{{$p.Title}}</a></h2></div>{{if $p.CoverImage}}<a class="cs-panel-cover" href="{{$.Tr.U (contentURL $p)}}"><img src="{{$p.CoverImage}}" alt="{{$p.Title}}" decoding="async"{{imgAttrs $p.CoverImage}}></a>{{end}}</article>
+    {{end}}{{end}}
+  </section>
+  {{range $i, $p := .Posts}}{{if ge $i 4}}<a class="cs-overflow-row" href="{{$.Tr.U (contentURL $p)}}"><strong>{{printf "%02d" (add $i 2)}}</strong><span>{{with $p.Category}}{{.Name}} · {{end}}{{$p.Title}}</span><time datetime="{{$.Tr.ISODate $p.PublishedAt}}">{{$.Tr.Date $p.PublishedAt}}</time></a>{{end}}{{end}}
+</div>
+{{end}}

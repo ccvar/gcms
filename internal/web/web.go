@@ -212,6 +212,18 @@ var Themes = []ThemeOption{
 	{"night-watch-cyan", "夜哨 · 青光", "Night Watch 的青光色卡", "content"},
 	{"night-watch-amber", "夜哨 · 琥珀", "Night Watch 的琥珀色卡", "content"},
 	{"night-watch-violet", "夜哨 · 紫电", "Night Watch 的紫电色卡", "content"},
+	{"orbit-index", "环形索引 · Orbit Index", "以分类和最新文章组成轨道式内容导航，中心承载精选文章", "content"},
+	{"orbit-index-coral", "环形索引 · 珊瑚", "Orbit Index 的珊瑚暖色色卡", "content"},
+	{"orbit-index-forest", "环形索引 · 森林", "Orbit Index 的森林绿色卡", "content"},
+	{"orbit-index-violet", "环形索引 · 紫晶", "Orbit Index 的紫晶色卡", "content"},
+	{"column-stage", "栏幕 · Column Stage", "五栏全屏内容舞台，精选文章居中展开，其他文章形成连续幕墙", "content"},
+	{"column-stage-citrus", "栏幕 · 柑橘", "Column Stage 的柑橘色卡", "content"},
+	{"column-stage-mineral", "栏幕 · 矿物", "Column Stage 的矿物色卡", "content"},
+	{"column-stage-noir", "栏幕 · 夜墨", "Column Stage 的夜墨色卡", "content"},
+	{"type-cascade", "字幕瀑布 · Type Cascade", "左侧品牌轨与阶梯式大标题内容流，精选文章在列表内直接展开", "content"},
+	{"type-cascade-cobalt", "字幕瀑布 · 钴蓝", "Type Cascade 的钴蓝色卡", "content"},
+	{"type-cascade-coral", "字幕瀑布 · 珊瑚", "Type Cascade 的珊瑚色卡", "content"},
+	{"type-cascade-cyan", "字幕瀑布 · 青光", "Type Cascade 的青光色卡", "content"},
 	{"blueprint", "蓝图 · Blueprint", "工程制图：方格纸底纹 + 墨线 + 等宽技术标注 + 角落标题栏", "general"},
 	{"riso", "孔版 · Risograph", "独立孔版印刷：双专色叠印、网点质感、套印偏移、硬阴影", "content"},
 	{"quiet", "和敬 · Quiet", "和风留白：极阔间距、竖向节奏、发丝线、一点朱印强调", "content"},
@@ -430,6 +442,9 @@ var themeLayouts = map[string]string{
 	"signal-archive": "index", "signal-archive-ink": "index", "signal-archive-copper": "index", "signal-archive-cobalt": "index",
 	"paper-current": "index", "paper-current-sage": "index", "paper-current-rose": "index", "paper-current-indigo": "index",
 	"night-watch": "index", "night-watch-cyan": "index", "night-watch-amber": "index", "night-watch-violet": "index",
+	"orbit-index": "index", "orbit-index-coral": "index", "orbit-index-forest": "index", "orbit-index-violet": "index",
+	"column-stage": "index", "column-stage-citrus": "index", "column-stage-mineral": "index", "column-stage-noir": "index",
+	"type-cascade": "index", "type-cascade-cobalt": "index", "type-cascade-coral": "index", "type-cascade-cyan": "index",
 	// 皮肤复用骨架（新皮 → 既有骨）
 	"grove":     "sidebar",
 	"obsidian":  "bento",
@@ -534,10 +549,10 @@ func layoutForTheme(theme string) string {
 	return "topbar"
 }
 
-// contentThemeFamily 返回四套独立内容骨架的族名。色卡变体共享同一骨架，
+// contentThemeFamily 返回独立内容骨架的族名。色卡变体共享同一骨架，
 // 其余既有主题返回空字符串，确保不会误入新页头/页脚分支。
 func contentThemeFamily(theme string) string {
-	for _, family := range []string{"field-ledger", "signal-archive", "paper-current", "night-watch"} {
+	for _, family := range []string{"field-ledger", "signal-archive", "paper-current", "night-watch", "orbit-index", "column-stage", "type-cascade"} {
 		if theme == family || strings.HasPrefix(theme, family+"-") {
 			return family
 		}
@@ -597,6 +612,9 @@ var themeAccentDefault = map[string]string{
 	"signal-archive": "#a92f1e", "signal-archive-ink": "#d5e95b", "signal-archive-copper": "#b96a3d", "signal-archive-cobalt": "#315fc2",
 	"paper-current": "#2f5f9f", "paper-current-sage": "#47765e", "paper-current-rose": "#b54b58", "paper-current-indigo": "#4c4ba6",
 	"night-watch": "#d8f32f", "night-watch-cyan": "#40e0d0", "night-watch-amber": "#f4b942", "night-watch-violet": "#b59cff",
+	"orbit-index": "#174ea6", "orbit-index-coral": "#d94b2b", "orbit-index-forest": "#347460", "orbit-index-violet": "#7452b8",
+	"column-stage": "#c81258", "column-stage-citrus": "#f06a24", "column-stage-mineral": "#147c84", "column-stage-noir": "#d8f32f",
+	"type-cascade": "#b9ec00", "type-cascade-cobalt": "#2e5fd0", "type-cascade-coral": "#e14624", "type-cascade-cyan": "#17a6b8",
 	"paperwhite": "#3156c8", "citrus": "#e34f32",
 	"bookshop": "#2d5bd1", "canal": "#177c76", "confetti": "#e34b46", "icebox": "#3569d4",
 	"ledger": "#26735b", "signal": "#ff5a36", "gallery": "#263f8f", "coast": "#147d85",
@@ -656,6 +674,9 @@ var themeRadiusDefault = map[string]string{
 	"signal-archive": "0", "signal-archive-ink": "0", "signal-archive-copper": "0", "signal-archive-cobalt": "0",
 	"paper-current": "0", "paper-current-sage": "0", "paper-current-rose": "0", "paper-current-indigo": "0",
 	"night-watch": "0", "night-watch-cyan": "0", "night-watch-amber": "0", "night-watch-violet": "0",
+	"orbit-index": "0", "orbit-index-coral": "0", "orbit-index-forest": "0", "orbit-index-violet": "0",
+	"column-stage": "0", "column-stage-citrus": "0", "column-stage-mineral": "0", "column-stage-noir": "0",
+	"type-cascade": "0", "type-cascade-cobalt": "0", "type-cascade-coral": "0", "type-cascade-cyan": "0",
 	"paperwhite": "6", "citrus": "16",
 	"bookshop": "4", "canal": "10", "confetti": "14", "icebox": "12",
 	"ledger": "2", "signal": "4", "gallery": "0", "coast": "14",
@@ -869,7 +890,7 @@ type View struct {
 	Year         int
 	Theme        string
 	Layout       string
-	// ContentThemeFamily 只标记四套独立内容骨架；它是主题 ID 的派生值，
+	// ContentThemeFamily 只标记独立内容骨架；它是主题 ID 的派生值，
 	// 不对应后台设置，也不会改变旧主题的页头、页脚或首页分发。
 	ContentThemeFamily string
 	ThemeStyle         template.CSS
@@ -4180,11 +4201,35 @@ func (s *Server) adminThemePreview(w http.ResponseWriter, r *http.Request) {
 	v.Site.InjectHead = ""
 	v.Site.InjectBody = ""
 
-	posts, _ := s.store.ListPublished(lang, 0, 4)
+	previewLimit := 4
+	newContentPreview := v.ContentThemeFamily == "orbit-index" || v.ContentThemeFamily == "column-stage" || v.ContentThemeFamily == "type-cascade"
+	if newContentPreview {
+		previewLimit = 6
+	}
+	// Column Stage 的首屏设计固定为 5 个完整栏位；真实站点仍按后台的
+	// 首页条数继续渲染第 6 条及后续内容，但主题库预览不额外造出第 6 条。
+	if v.ContentThemeFamily == "column-stage" {
+		previewLimit = 5
+	}
+	posts, _ := s.store.ListPublished(lang, 0, previewLimit)
 	if total, err := s.store.CountPublished(lang); err == nil {
 		v.TotalPosts = total
 	}
-	if len(posts) == 0 {
+	syntheticContentPreview := len(posts) == 0 && newContentPreview
+	if syntheticContentPreview {
+		now := time.Now()
+		posts = []*store.Post{
+			{Title: "线下空间的复利：当城市重新成为体验容器", Excerpt: "在线边界模糊的时代，真实空间正在通过体验密度与关系连接构建长期价值。", PublishedAt: now, CoverImage: "/assets/screenshots/cloudflare-deploy.webp"},
+			{Title: "算法推荐的回音壁：我们如何被量身定制地隔离", Excerpt: "从推荐系统的便利出发，重新审视信息如何抵达每一个人。", PublishedAt: now.AddDate(0, 0, -1), CoverImage: "/assets/screenshots/seo-output.webp"},
+			{Title: "老旧小区的电梯博弈：一部关于更新的社会学笔记", Excerpt: "更新不只是技术问题，也是共同生活如何继续的协商过程。", PublishedAt: now.AddDate(0, 0, -2), CoverImage: "/assets/screenshots/site-management.webp"},
+			{Title: "制造业的下一站：从规模扩张到能力重构", Excerpt: "组织能力、自动化与真实需求共同定义下一阶段的制造价值。", PublishedAt: now.AddDate(0, 0, -3), CoverImage: "/assets/screenshots/automation-api.webp"},
+			{Title: "展览作为一种叙事：从策展结构看意义如何被组织", Excerpt: "空间、顺序与视线让内容在阅读之外形成新的关系。", PublishedAt: now.AddDate(0, 0, -4), CoverImage: "/assets/screenshots/theme-settings.webp"},
+			{Title: "非遗的当代命题：保护、活化与市场之间", Excerpt: "传统如何进入当代生活，同时保留可验证的来源和脉络。", PublishedAt: now.AddDate(0, 0, -5), CoverImage: "/assets/screenshots/article-editor.webp"},
+		}
+		if len(posts) > previewLimit {
+			posts = posts[:previewLimit]
+		}
+	} else if len(posts) == 0 {
 		posts = []*store.Post{
 			{Title: v.Site.Name + " 更新日志", Excerpt: v.Site.Description, PublishedAt: time.Now()},
 			{Title: "快速开始", Excerpt: "安装、配置与内容发布流程。", PublishedAt: time.Now()},
@@ -4200,10 +4245,25 @@ func (s *Server) adminThemePreview(w http.ResponseWriter, r *http.Request) {
 	}
 	v.Categories, _ = s.store.ListCategories(lang, "post")
 	if len(v.Categories) == 0 {
-		v.Categories = []*store.Category{
-			{Slug: "guides", Name: "指南", Count: 3},
-			{Slug: "reference", Name: "参考", Count: 2},
-			{Slug: "updates", Name: "更新", Count: 1},
+		if syntheticContentPreview {
+			v.Categories = []*store.Category{
+				{Slug: "city", Name: "城市与空间", Count: 98},
+				{Slug: "society", Name: "社会切线", Count: 168},
+				{Slug: "technology", Name: "经济与技术", Count: 84},
+				{Slug: "culture", Name: "文化切片", Count: 112},
+				{Slug: "methods", Name: "方法与模型", Count: 154},
+			}
+		} else {
+			v.Categories = []*store.Category{
+				{Slug: "guides", Name: "指南", Count: 3},
+				{Slug: "reference", Name: "参考", Count: 2},
+				{Slug: "updates", Name: "更新", Count: 1},
+			}
+		}
+	}
+	if syntheticContentPreview {
+		for i, post := range posts {
+			post.Category = v.Categories[i%len(v.Categories)]
 		}
 	}
 	v.KnowledgeGroups = s.knowledgeGroups(lang, v.CategoryAll, v.Categories, posts, len(posts), s.intSetting(homePostsPerPageKey, defaultHomePostsPerPage, minHomePostsPerPage, maxHomePostsPerPage))

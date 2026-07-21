@@ -342,6 +342,7 @@ mod tests {
             name: "s".into(),
             remark: String::new(),
             kind: "ssh".into(),
+            source_ssh_id: String::new(),
             api_base: String::new(),
             skill_dir: String::new(),
             key_prefix: String::new(),

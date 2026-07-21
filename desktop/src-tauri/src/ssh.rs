@@ -978,6 +978,57 @@ impl SshSessions {
             .map_err(|e| format!("上传收尾失败: {e}"))?;
         Ok(n)
     }
+
+    /// 在两条已认证 SSH 连接之间流式转发文件。数据只经过 Pilot 进程内存中的固定大小
+    /// 缓冲区，不写入本机磁盘，也不会把任一连接的 SSH 凭据交给另一台服务器。
+    pub async fn relay_file<F>(
+        &self,
+        source_conn_id: &str,
+        source_remote: &str,
+        target_conn_id: &str,
+        target_remote: &str,
+        mut on_progress: F,
+    ) -> Result<u64, String>
+    where
+        F: FnMut(u64),
+    {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+        let source_sftp = self.sftp(source_conn_id).await?;
+        let target_sftp = self.sftp(target_conn_id).await?;
+        let mut source = source_sftp
+            .open(source_remote)
+            .await
+            .map_err(|e| format!("打开源服务器文件 {source_remote} 失败: {e}"))?;
+        let mut target = target_sftp
+            .create(target_remote)
+            .await
+            .map_err(|e| format!("创建目标服务器文件 {target_remote} 失败: {e}"))?;
+        let mut buffer = vec![0_u8; 128 * 1024];
+        let mut transferred = 0_u64;
+        on_progress(0);
+        loop {
+            let read = source
+                .read(&mut buffer)
+                .await
+                .map_err(|e| format!("读取源服务器快照失败: {e}"))?;
+            if read == 0 {
+                break;
+            }
+            target
+                .write_all(&buffer[..read])
+                .await
+                .map_err(|e| format!("写入目标服务器快照失败: {e}"))?;
+            transferred = transferred.saturating_add(read as u64);
+            on_progress(transferred);
+        }
+        // SFTP close 才代表服务端已经接收完整文件；不能只依赖 write_all 的成功。
+        target
+            .shutdown()
+            .await
+            .map_err(|e| format!("目标服务器文件收尾失败: {e}"))?;
+        Ok(transferred)
+    }
 }
 
 #[cfg(test)]

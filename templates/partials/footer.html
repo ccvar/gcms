@@ -1,4 +1,4 @@
-{{define "footer"}}{{if .ContentThemeFamily}}{{template "footer_content_theme" .}}{{else if eq .Layout "factory-trade"}}{{template "footer_factory_trade" .}}{{else if eq .Layout "factory-sidebar"}}{{template "footer_factory_sidebar" .}}{{else if eq .Layout "factory-vision"}}{{template "footer_factory_vision" .}}{{else}}{{template "footer_default" .}}{{end}}{{template "footer_contact_overlays" .}}{{end}}
+{{define "footer"}}{{if eq .ContentThemeFamily "orbit-index"}}{{template "footer_orbit_index" .}}{{else if eq .ContentThemeFamily "column-stage"}}{{template "footer_column_stage" .}}{{else if eq .ContentThemeFamily "type-cascade"}}{{template "footer_type_cascade" .}}{{else if .ContentThemeFamily}}{{template "footer_content_theme" .}}{{else if eq .Layout "factory-trade"}}{{template "footer_factory_trade" .}}{{else if eq .Layout "factory-sidebar"}}{{template "footer_factory_sidebar" .}}{{else if eq .Layout "factory-vision"}}{{template "footer_factory_vision" .}}{{else}}{{template "footer_default" .}}{{end}}{{template "footer_contact_overlays" .}}{{end}}
 
 {{define "footer_content_theme"}}
   <footer class="site-footer ct-footer">
@@ -12,6 +12,18 @@
       </nav>
     </div>
   </footer>
+{{end}}
+
+{{define "footer_orbit_index"}}
+  <footer class="site-footer oi-footer"><p>© {{.Year}} {{.Site.Name}}. {{.Tr.T "footer.rights"}}</p><nav><a href="{{.Tr.U "/about"}}">{{.Tr.T "nav.about"}} →</a><a href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} →</a></nav></footer>
+{{end}}
+
+{{define "footer_column_stage"}}
+  <footer class="site-footer cs-footer"><div><b>{{printf (.Tr.T "category.count") .TotalPosts}}</b><a href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} →</a><a href="{{.Tr.U "/about"}}">{{.Tr.T "nav.about"}} →</a></div><p>© {{.Year}} {{.Site.Name}}. {{.Tr.T "footer.rights"}}</p></footer>
+{{end}}
+
+{{define "footer_type_cascade"}}
+  <footer class="site-footer tc-footer"><p>© {{.Year}} {{.Site.Name}}. {{.Tr.T "footer.rights"}}</p></footer>
 {{end}}
 
 {{define "footer_default"}}  <footer class="site-footer">

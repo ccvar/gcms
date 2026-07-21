@@ -4,8 +4,10 @@ package main
 
 import (
 	"bytes"
+	"crypto/rand"
 	"database/sql"
 	"embed"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -39,7 +41,19 @@ func main() {
 			return
 		case "pilot-set-admin-password":
 			if err := setPilotAdminPassword(dbPath, systemDBPath, os.Stdin, os.Stdout); err != nil {
-				fmt.Fprintf(os.Stderr, "修改后台密码失败：%v\n", err)
+				fmt.Fprintf(os.Stderr, "设置初始后台密码失败：%v\n", err)
+				os.Exit(1)
+			}
+			return
+		case "pilot-verify-admin-password":
+			if err := verifyPilotAdminPassword(dbPath, systemDBPath, os.Stdin, os.Stdout); err != nil {
+				fmt.Fprintf(os.Stderr, "确认后台登录密码失败：%v\n", err)
+				os.Exit(1)
+			}
+			return
+		case "pilot-issue-assistant-key":
+			if err := issuePilotAssistantKey(systemDBPath, os.Stdin, os.Stdout); err != nil {
+				fmt.Fprintf(os.Stderr, "签发 Pilot 运营助手密钥失败：%v\n", err)
 				os.Exit(1)
 			}
 			return
@@ -135,11 +149,102 @@ func printPilotSecurityStatus(dbPath, systemDBPath string) {
 	fmt.Printf("PILOT_GCMS_ADMIN_USER\t%s\n", pilotStatusField(user))
 }
 
+const pilotAssistantName = "Pilot 运营助手"
+
+// issuePilotAssistantKey 为本机 Pilot 创建或复用专用平台密钥。
+// 调用方可以从 stdin 传入当前钥匙串中的密钥：若它仍对应同一个助手，只补齐权限，
+// 不轮换；否则复用并轮换已有同名记录，或首次创建。明文只在新签发时输出一次。
+func issuePilotAssistantKey(systemDBPath string, input io.Reader, output io.Writer) error {
+	if strings.TrimSpace(systemDBPath) == "" {
+		return errors.New("未配置平台数据库")
+	}
+	if _, err := os.Stat(systemDBPath); err != nil {
+		if os.IsNotExist(err) {
+			return errors.New("平台数据库不存在")
+		}
+		return fmt.Errorf("无法读取平台数据库：%w", err)
+	}
+
+	var current string
+	if input != nil {
+		raw, err := io.ReadAll(io.LimitReader(input, 513))
+		if err != nil {
+			return errors.New("读取现有助手密钥失败")
+		}
+		defer clearBytes(raw)
+		if len(raw) > 512 {
+			return errors.New("现有助手密钥格式异常")
+		}
+		current = strings.TrimSpace(string(raw))
+	}
+
+	ps, err := platform.Open(systemDBPath)
+	if err != nil {
+		return fmt.Errorf("打开平台数据库：%w", err)
+	}
+	defer ps.Close()
+	scopes := strings.Join(web.PilotAssistantAutomationScopes(), ",")
+
+	if current != "" {
+		if key, ok, err := ps.GetPlatformKeyByToken(current); err != nil {
+			return fmt.Errorf("校验现有助手密钥：%w", err)
+		} else if ok && key.Name == pilotAssistantName {
+			if err := ps.UpdatePlatformKey(key.ID, pilotAssistantName, platform.KeyMembershipAll, scopes, nil, time.Time{}); err != nil {
+				return fmt.Errorf("更新助手权限：%w", err)
+			}
+			fmt.Fprintln(output, "PILOT_GCMS_ASSISTANT_KEY_REUSED\t1")
+			return nil
+		}
+	}
+
+	keys, err := ps.ListPlatformKeys()
+	if err != nil {
+		return fmt.Errorf("读取平台密钥：%w", err)
+	}
+	var existingID int64
+	for _, key := range keys {
+		if key.Name == pilotAssistantName && key.Active() {
+			existingID = key.ID
+			break
+		}
+	}
+	token, prefix, err := newPilotAssistantToken()
+	if err != nil {
+		return err
+	}
+	if existingID > 0 {
+		if err := ps.UpdatePlatformKey(existingID, pilotAssistantName, platform.KeyMembershipAll, scopes, nil, time.Time{}); err != nil {
+			return fmt.Errorf("更新助手权限：%w", err)
+		}
+		if err := ps.RotatePlatformKeyToken(existingID, token, prefix); err != nil {
+			return fmt.Errorf("轮换助手密钥：%w", err)
+		}
+	} else if _, err := ps.CreatePlatformKey(pilotAssistantName, token, prefix, platform.KeyMembershipAll, scopes, nil, time.Time{}); err != nil {
+		return fmt.Errorf("创建助手密钥：%w", err)
+	}
+	fmt.Fprintf(output, "PILOT_GCMS_ASSISTANT_KEY\t%s\n", token)
+	return nil
+}
+
+func newPilotAssistantToken() (token, prefix string, err error) {
+	var secret [32]byte
+	if _, err = rand.Read(secret[:]); err != nil {
+		return "", "", errors.New("无法生成安全密钥")
+	}
+	token = "gcmsp_" + hex.EncodeToString(secret[:])
+	prefix = token
+	if len(prefix) > 13 {
+		prefix = prefix[:13]
+	}
+	return token, prefix, nil
+}
+
 // bcrypt 只安全定义到 72 字节；在读取阶段就设硬上限，避免悄悄截断两个不同密码。
 const pilotAdminPasswordMaxBytes = 72
 
-// setPilotAdminPassword 是给服务器本机运维使用的写入命令。
-// 新密码只从 stdin 读取，绝不接受命令行参数，也不会写入输出、日志或配置文件。
+// setPilotAdminPassword 只替换首次安装产生的默认密码。
+// 新密码只从 stdin 读取，绝不接受命令行参数，也不会写入输出、日志或配置文件；
+// 一旦用户已在 GCMS 中修改密码，本命令必须拒绝覆盖。
 func setPilotAdminPassword(dbPath, systemDBPath string, input io.Reader, output io.Writer) error {
 	password, err := readPilotAdminPassword(input)
 	if err != nil {
@@ -168,24 +273,43 @@ func setPilotAdminPassword(dbPath, systemDBPath string, input io.Reader, output 
 	}
 	defer ps.Close()
 
-	user, _, credentialsErr := ps.GetAdminCredentials()
-	if credentialsErr != nil && !errors.Is(credentialsErr, sql.ErrNoRows) {
-		return fmt.Errorf("读取平台管理员：%w", credentialsErr)
-	}
-	if strings.TrimSpace(user) == "" {
-		user, _ = st.GetSetting("admin_user")
-	}
-	if strings.TrimSpace(user) == "" {
-		user = "admin"
-	}
-
 	hash, err := bcrypt.GenerateFromPassword(password, bcrypt.DefaultCost)
 	if err != nil {
 		return fmt.Errorf("生成密码凭据：%w", err)
 	}
 	defer clearBytes(hash)
 
-	// 先注销所有旧会话，再同步平台与旧站点凭据。平台库是多站后台的权威来源，
+	platformUser, platformHash, credentialsErr := ps.GetAdminCredentials()
+	if credentialsErr != nil && !errors.Is(credentialsErr, sql.ErrNoRows) {
+		return fmt.Errorf("读取平台管理员：%w", credentialsErr)
+	}
+	siteUser, _ := st.GetSetting("admin_user")
+	siteHash, _ := st.GetSetting("admin_password_hash")
+	user := strings.TrimSpace(platformUser)
+	if strings.TrimSpace(user) == "" {
+		user = strings.TrimSpace(siteUser)
+	}
+	if strings.TrimSpace(user) == "" {
+		user = "admin"
+	}
+
+	// 平台库是当前登录的权威来源，站点库是兼容回退来源。任一已存在的凭据
+	// 不再是默认密码，都说明用户已经完成过设置，此时绝不能从 Pilot 覆盖。
+	defaultConfirmed := false
+	for _, currentHash := range []string{strings.TrimSpace(platformHash), strings.TrimSpace(siteHash)} {
+		if currentHash == "" {
+			continue
+		}
+		if !store.IsDefaultAdminPasswordHash(currentHash) {
+			return errors.New("后台密码已修改；Pilot 仅支持设置首次安装的初始密码，请在 GCMS 后台继续管理")
+		}
+		defaultConfirmed = true
+	}
+	if !defaultConfirmed {
+		return errors.New("无法确认后台仍在使用初始密码，已拒绝修改")
+	}
+
+	// 仅在确认仍是默认密码后注销旧会话，再同步平台与旧站点凭据。平台库是多站后台的权威来源，
 	// 站点库继续同步，保证旧版与降级读取仍使用同一个密码。
 	if err := ps.RevokeAdminSessions(); err != nil {
 		return fmt.Errorf("注销平台旧会话：%w", err)
@@ -204,6 +328,32 @@ func setPilotAdminPassword(dbPath, systemDBPath string, input io.Reader, output 
 	}
 
 	fmt.Fprintln(output, "PILOT_GCMS_PASSWORD_UPDATED\t1")
+	fmt.Fprintf(output, "PILOT_GCMS_ADMIN_USER\t%s\n", pilotStatusField(user))
+	return nil
+}
+
+// verifyPilotAdminPassword 是给 Pilot 敏感运维操作使用的本机校验入口。
+// 密码只从 stdin 读取并在返回前清零；输出只包含固定成功标记和用户名。
+// 默认密码不能作为敏感操作确认凭据，必须先在 GCMS 中完成修改。
+func verifyPilotAdminPassword(dbPath, systemDBPath string, input io.Reader, output io.Writer) error {
+	password, err := readPilotConfirmationPassword(input)
+	if err != nil {
+		return err
+	}
+	defer clearBytes(password)
+
+	user, hash := readPilotAdminCredentials(systemDBPath, dbPath)
+	if strings.TrimSpace(hash) == "" {
+		return errors.New("无法读取 GCMS 后台登录凭据")
+	}
+	if store.IsDefaultAdminPasswordHash(hash) {
+		return errors.New("后台仍使用默认密码，请先修改密码后再执行此操作")
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(hash), password); err != nil {
+		return errors.New("GCMS 登录密码不正确")
+	}
+
+	fmt.Fprintln(output, "PILOT_GCMS_PASSWORD_VERIFIED\t1")
 	fmt.Fprintf(output, "PILOT_GCMS_ADMIN_USER\t%s\n", pilotStatusField(user))
 	return nil
 }
@@ -239,6 +389,35 @@ func readPilotAdminPassword(input io.Reader) ([]byte, error) {
 	if bytes.Equal(password, []byte(store.DefaultAdminPassword)) {
 		clearBytes(password)
 		return nil, errors.New("新密码不能继续使用默认密码")
+	}
+	return password, nil
+}
+
+func readPilotConfirmationPassword(input io.Reader) ([]byte, error) {
+	if input == nil {
+		return nil, errors.New("没有收到 GCMS 登录密码")
+	}
+	password, err := io.ReadAll(io.LimitReader(input, pilotAdminPasswordMaxBytes+1))
+	if err != nil {
+		return nil, errors.New("读取 GCMS 登录密码失败")
+	}
+	if len(password) > pilotAdminPasswordMaxBytes {
+		clearBytes(password)
+		return nil, errors.New("GCMS 登录密码过长")
+	}
+	password = bytes.TrimSuffix(password, []byte{'\n'})
+	password = bytes.TrimSuffix(password, []byte{'\r'})
+	if len(password) == 0 {
+		clearBytes(password)
+		return nil, errors.New("请输入 GCMS 登录密码")
+	}
+	if !utf8.Valid(password) {
+		clearBytes(password)
+		return nil, errors.New("GCMS 登录密码必须是有效文本")
+	}
+	if bytes.ContainsAny(password, "\x00\r\n") {
+		clearBytes(password)
+		return nil, errors.New("GCMS 登录密码不能包含换行或空字符")
 	}
 	return password, nil
 }

@@ -36,13 +36,15 @@ use convo::{Conversation, Message};
 use gcms_remote::{
     gcms_cloudflare_clear_connection, gcms_cloudflare_create_a_record,
     gcms_cloudflare_select_connection, gcms_remote_access_check, gcms_remote_access_configure,
-    gcms_remote_access_cutover, gcms_remote_access_verify, gcms_remote_install,
-    gcms_remote_migration_forget, gcms_remote_migration_instances, gcms_remote_migration_preflight,
+    gcms_remote_access_cutover, gcms_remote_access_verify, gcms_remote_check_update,
+    gcms_remote_import_pilot_assistant, gcms_remote_install, gcms_remote_migration_forget,
+    gcms_remote_migration_instances, gcms_remote_migration_preflight,
     gcms_remote_migration_refresh_access, gcms_remote_migration_restart,
     gcms_remote_migration_site_access_check, gcms_remote_migration_site_access_configure,
     gcms_remote_migration_site_create_a_record, gcms_remote_migration_sites,
     gcms_remote_migration_stage, gcms_remote_migration_stop, gcms_remote_migration_uninstall,
     gcms_remote_restart, gcms_remote_set_admin_password, gcms_remote_status, gcms_remote_stop,
+    gcms_remote_upgrade,
 };
 use tasks::ScheduledTask;
 use transfer::{export_pilot_transfer, import_pilot_transfer, inspect_pilot_transfer};
@@ -5531,6 +5533,9 @@ pub fn run() {
             ssh_close,
             gcms_remote_status,
             gcms_remote_install,
+            gcms_remote_check_update,
+            gcms_remote_upgrade,
+            gcms_remote_import_pilot_assistant,
             gcms_remote_set_admin_password,
             gcms_remote_restart,
             gcms_remote_stop,

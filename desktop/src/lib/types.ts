@@ -5,6 +5,8 @@ export interface Connection {
   remark?: string;
   /** gcms（导入技能包）| cloudflare（CF token 建站）| ssh（远程机器）。旧连接缺省即 gcms。 */
   kind: string;
+  /** 一键导入的 Pilot 运营助手所绑定的来源 SSH 连接。 */
+  source_ssh_id?: string;
   api_base: string;
   skill_dir: string;
   /** SSH 连接此项恒为空：它的秘密是密码/口令，显示前缀等于把密码印在 UI 上。 */

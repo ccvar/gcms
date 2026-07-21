@@ -1,0 +1,21 @@
+{{define "home_type_cascade"}}
+<div class="type-cascade-page">
+  <main class="tc-cascade">
+    {{with .Featured}}
+    <article class="tc-feature{{if not .CoverImage}} no-cover{{end}}">
+      <strong class="tc-index">01</strong>
+      <div class="tc-feature-main"><small>{{$.Site.HomeFeatured}}</small><h1><a href="{{$.Tr.U (contentURL .)}}">{{.Title}}</a></h1>{{if .CoverImage}}<a class="tc-feature-cover" href="{{$.Tr.U (contentURL .)}}"><img src="{{.CoverImage}}" alt="{{.Title}}" decoding="async"{{imgAttrs .CoverImage}}></a>{{end}}</div>
+      <div class="tc-feature-detail">{{if .Excerpt}}<p>{{.Excerpt}}</p>{{end}}<time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time><a href="{{$.Tr.U (contentURL .)}}">{{$.Tr.T "home.read_more"}} →</a></div>
+    </article>
+    {{end}}
+
+    {{if .Posts}}<section class="tc-rows" aria-label="{{.Site.HomeLatest}}">
+      {{range $i, $p := .Posts}}{{if lt $i 5}}
+      <article class="tc-row tc-row-{{$i}}"><strong class="tc-index">{{printf "%02d" (add $i 2)}}</strong><div><small>{{with $p.Category}}{{.Name}}{{else}}{{$.Site.HomeLatest}}{{end}}</small><h2><a href="{{$.Tr.U (contentURL $p)}}">{{$p.Title}}</a></h2></div>{{if and $p.CoverImage (or (eq $i 1) (eq $i 3))}}<a class="tc-row-cover" href="{{$.Tr.U (contentURL $p)}}"><img src="{{$p.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs $p.CoverImage}}></a>{{end}}<time datetime="{{$.Tr.ISODate $p.PublishedAt}}">{{$.Tr.Date $p.PublishedAt}}</time></article>
+      {{end}}{{end}}
+    </section>{{end}}
+  </main>
+
+  {{if .Categories}}<aside class="tc-category-index"><b>{{.CategoryAll.Title}}</b>{{range $i, $cat := .Categories}}{{if lt $i 5}}<a href="{{$.Tr.U (printf "/category/%s" $cat.Slug)}}"><span>{{$cat.Name}}</span><small>{{$cat.Count}}</small></a>{{end}}{{end}}</aside>{{end}}
+</div>
+{{end}}
