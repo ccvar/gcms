@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::ipc::Channel;
+use zeroize::Zeroizing;
 
 /// 官方 install.sh 的标准结构：root 默认 /opt/gcms，普通用户默认 $HOME/gcms。
 const GCMS_REMOTE_PROBE_CMD: &str = r#"
@@ -71,6 +72,8 @@ fi
 password_status=unknown
 admin_user=''
 bin="$root/current/bin/cms"
+password_change_supported=0
+[ -x "$bin" ] && grep -a -Fq 'pilot-set-admin-password' "$bin" 2>/dev/null && password_change_supported=1
 # 老版本二进制会忽略未知参数并尝试再启动一个服务。只有确认包含本机状态命令时才调用，
 # 避免为了检测密码而触发端口冲突或写入数据库。
 if [ -x "$bin" ] && grep -a -Fq 'pilot-security-status' "$bin" 2>/dev/null; then
@@ -95,6 +98,31 @@ printf 'PILOT_GCMS_BASE_URL\t%s\n' "$base_url"
 printf 'PILOT_GCMS_REDIRECT_DOMAIN\t%s\n' "$redirect_domain"
 printf 'PILOT_GCMS_PASSWORD_STATUS\t%s\n' "$password_status"
 printf 'PILOT_GCMS_ADMIN_USER\t%s\n' "$admin_user"
+printf 'PILOT_GCMS_PASSWORD_CHANGE_SUPPORTED\t%s\n' "$password_change_supported"
+"#;
+
+/// 通过 stdin 调用 GCMS 本机专用命令修改后台密码。密码不进入 shell 参数、环境变量、
+/// 配置文件或日志；脚本只负责解析标准安装目录中的数据库位置。
+const GCMS_REMOTE_SET_ADMIN_PASSWORD_CMD: &str = r#"
+set -eu
+root=${PILOT_GCMS_ROOT:?}
+bin="$root/current/bin/cms"
+[ -x "$bin" ] || { printf '%s\n' 'GCMS 可执行文件不存在' >&2; exit 3; }
+grep -a -Fq 'pilot-set-admin-password' "$bin" 2>/dev/null || {
+  printf '%s\n' '当前 GCMS 版本不支持本机修改密码，请先升级' >&2
+  exit 4
+}
+conf="$root/shared/cms.conf"
+cms_db=$(awk -F= '$1 == "CMS_DB" { sub(/^[^=]*=/, ""); gsub(/^[[:space:]]+|[[:space:]]+$/, ""); print; exit }' "$conf" 2>/dev/null || true)
+system_db=$(awk -F= '$1 == "SYSTEM_DB" { sub(/^[^=]*=/, ""); gsub(/^[[:space:]]+|[[:space:]]+$/, ""); print; exit }' "$conf" 2>/dev/null || true)
+[ -n "$cms_db" ] || cms_db=shared/data/cms.db
+case "$cms_db" in /*) ;; *) cms_db="$root/$cms_db" ;; esac
+[ -n "$system_db" ] || system_db=$(dirname "$cms_db")/system.db
+case "$system_db" in /*) ;; *) system_db="$root/$system_db" ;; esac
+[ -f "$cms_db" ] || { printf '%s\n' 'GCMS 站点数据库不存在' >&2; exit 5; }
+cd "$root"
+export CMS_DB="$cms_db" SYSTEM_DB="$system_db"
+exec "$bin" pilot-set-admin-password
 "#;
 
 /// 完整下载后执行，避免 `curl | sh` 在下载失败时被空 shell 误判为成功。
@@ -163,6 +191,7 @@ domain=${PILOT_DOMAIN:-}
 redirect_domain=${PILOT_REDIRECT_DOMAIN:-}
 instance_path=${PILOT_GCMS_INSTANCE_PATH:-}
 instance_port=${PILOT_GCMS_INSTANCE_PORT:-}
+child_site_id=${PILOT_GCMS_CHILD_SITE_ID:-}
 uid=$(id -u 2>/dev/null || printf 'unknown')
 os=$(uname -s 2>/dev/null | tr '[:upper:]' '[:lower:]')
 privilege=none
@@ -233,11 +262,15 @@ if [ -n "$instance_path" ] && { [ -z "$instance_port" ] || [ "$instance_port" = 
 fi
 site_file=/etc/caddy/conf.d/gcms.caddy
 [ -n "$instance_path" ] && [ -n "$instance_port" ] && site_file="/etc/caddy/conf.d/pilot-gcms-${instance_port}.caddy"
+[ -n "$instance_path" ] && [ -n "$instance_port" ] && [ -n "$child_site_id" ] && {
+  safe_domain=$(printf '%s' "$domain" | tr -c 'A-Za-z0-9.-' '-')
+  site_file="/etc/caddy/conf.d/pilot-gcms-${instance_port}-site-${child_site_id}-${safe_domain}.caddy"
+}
 site_exists=0
 site_managed=0
 if [ -f "$site_file" ]; then
   site_exists=1
-  grep -Eq '^# Managed by (GCMS setup-caddy\.sh\.|Pilot migration\.)' "$site_file" 2>/dev/null && site_managed=1
+  grep -Eq '^# Managed by (GCMS setup-caddy\.sh\.|Pilot migration\.|Pilot child-site migration\.)' "$site_file" 2>/dev/null && site_managed=1
 fi
 
 nginx_path=$(command -v nginx 2>/dev/null || true)
@@ -272,12 +305,16 @@ if command -v docker >/dev/null 2>&1; then
 fi
 nginx_suffix=''
 [ -n "$instance_path" ] && [ -n "$instance_port" ] && nginx_suffix="-${instance_port}"
+[ -n "$instance_path" ] && [ -n "$instance_port" ] && [ -n "$child_site_id" ] && {
+  safe_domain=$(printf '%s' "$domain" | tr -c 'A-Za-z0-9.-' '-')
+  nginx_suffix="-${instance_port}-site-${child_site_id}-${safe_domain}"
+}
 nginx_site_file="/etc/nginx/conf.d/pilot-gcms${nginx_suffix}.conf"
 nginx_site_exists=0
 nginx_site_managed=0
 if [ -f "$nginx_site_file" ]; then
   nginx_site_exists=1
-  grep -Fq '# Managed by GCMS Pilot.' "$nginx_site_file" 2>/dev/null && nginx_site_managed=1
+  grep -Eq '^# Managed by (GCMS Pilot\.|Pilot child-site migration\.)' "$nginx_site_file" 2>/dev/null && nginx_site_managed=1
 fi
 
 printf 'PILOT_CADDY_OS\t%s\n' "$os"
@@ -338,6 +375,8 @@ redirect_domain=${PILOT_REDIRECT_DOMAIN:-}
 instance_path=${PILOT_GCMS_INSTANCE_PATH:-}
 instance_port=${PILOT_GCMS_INSTANCE_PORT:-}
 service_name=${PILOT_GCMS_SERVICE_NAME:-}
+child_site_id=${PILOT_GCMS_CHILD_SITE_ID:-}
+child_redirect_target=${PILOT_GCMS_CHILD_REDIRECT_TARGET:-}
 conf="$root/shared/cms.conf"
 caddyfile=/etc/caddy/Caddyfile
 sitefile=/etc/caddy/conf.d/gcms.caddy
@@ -410,6 +449,9 @@ restore_before() {
 # 避免把目标机原有 /opt/gcms 的域名或配置覆盖掉。
 if [ -n "$instance_path" ]; then
   [ -n "$instance_port" ] || { printf '%s\n' '迁移实例缺少端口' >&2; exit 2; }
+  if [ -n "$child_site_id" ]; then
+    case "$child_site_id" in *[!0-9]*|'') printf '%s\n' '子站标识无效' >&2; exit 2 ;; esac
+  fi
   if ! command -v caddy >/dev/null 2>&1; then
     if command -v apt-get >/dev/null 2>&1; then
       apt-get update -qq >/dev/null 2>&1 || true
@@ -425,8 +467,18 @@ if [ -n "$instance_path" ]; then
   command -v caddy >/dev/null 2>&1 || { printf '%s\n' '目标服务器尚未安装 Caddy，且当前系统包管理器无法自动安装，请先安装 Caddy 后重试' >&2; exit 127; }
   mkdir -p /etc/caddy/conf.d
   sitefile="/etc/caddy/conf.d/pilot-gcms-${instance_port}.caddy"
+  managed_header='# Managed by Pilot migration.'
+  if [ -n "$child_site_id" ]; then
+    safe_domain=$(printf '%s' "$domain" | tr -c 'A-Za-z0-9.-' '-')
+    sitefile="/etc/caddy/conf.d/pilot-gcms-${instance_port}-site-${child_site_id}-${safe_domain}.caddy"
+    managed_header='# Managed by Pilot child-site migration.'
+  fi
   had_instance_site=0
-  [ -f "$sitefile" ] && { cp "$sitefile" "$work/instance.caddy"; had_instance_site=1; }
+  if [ -f "$sitefile" ]; then
+    grep -Fq "$managed_header" "$sitefile" 2>/dev/null || { printf '%s\n' "子站配置文件已存在但不属于 Pilot：$sitefile" >&2; exit 3; }
+    cp "$sitefile" "$work/instance.caddy"
+    had_instance_site=1
+  fi
   restore_instance_before() {
     cp "$work/cms.conf" "$conf" 2>/dev/null || true
     if [ "$had_caddyfile" = 1 ]; then cp "$work/Caddyfile" "$caddyfile" 2>/dev/null || true; else rm -f "$caddyfile" 2>/dev/null || true; fi
@@ -447,24 +499,32 @@ if [ -n "$instance_path" ]; then
     printf 'import /etc/caddy/conf.d/*.caddy\n' > "$caddyfile"
   fi
   {
-    printf '# Managed by Pilot migration.\n'
-    printf '%s {\n' "$domain"
-    printf '    reverse_proxy 127.0.0.1:%s\n' "$instance_port"
-    printf '}\n'
-    if [ -n "$redirect_domain" ]; then
+    printf '%s\n' "$managed_header"
+    [ -z "$child_site_id" ] || printf '# Child site ID: %s\n' "$child_site_id"
+    if [ -n "$child_site_id" ] && [ -n "$child_redirect_target" ]; then
+      printf '# Redirect target: %s\n' "$child_redirect_target"
+      printf '%s {\n    redir https://%s{uri} 301\n}\n' "$domain" "$child_redirect_target"
+    else
+      printf '%s {\n' "$domain"
+      printf '    reverse_proxy 127.0.0.1:%s\n' "$instance_port"
+      printf '}\n'
+    fi
+    if [ -z "$child_site_id" ] && [ -n "$redirect_domain" ]; then
       printf '\n%s {\n    redir https://%s{uri} 301\n}\n' "$redirect_domain" "$domain"
     fi
   } > "$sitefile"
-  set_conf_value() {
-    key=$1; value=$2; tmp_conf="${conf}.pilot.$$"
-    if grep -q "^${key}=" "$conf" 2>/dev/null; then
-      awk -v k="$key" -v v="$value" 'BEGIN{done=0} $0 ~ "^" k "=" { print k "=" v; done=1; next } { print } END{ if (!done) print k "=" v }' "$conf" > "$tmp_conf"
-    else
-      cp "$conf" "$tmp_conf"; printf '%s=%s\n' "$key" "$value" >> "$tmp_conf"
-    fi
-    mv "$tmp_conf" "$conf"
-  }
-  set_conf_value BASE_URL "https://$domain"
+  if [ -z "$child_site_id" ]; then
+    set_conf_value() {
+      key=$1; value=$2; tmp_conf="${conf}.pilot.$$"
+      if grep -q "^${key}=" "$conf" 2>/dev/null; then
+        awk -v k="$key" -v v="$value" 'BEGIN{done=0} $0 ~ "^" k "=" { print k "=" v; done=1; next } { print } END{ if (!done) print k "=" v }' "$conf" > "$tmp_conf"
+      else
+        cp "$conf" "$tmp_conf"; printf '%s=%s\n' "$key" "$value" >> "$tmp_conf"
+      fi
+      mv "$tmp_conf" "$conf"
+    }
+    set_conf_value BASE_URL "https://$domain"
+  fi
   if ! caddy validate --config "$caddyfile" --adapter caddyfile >/dev/null 2>&1; then
     printf '%s\n' '迁移实例 Caddy 配置校验失败，正在恢复…' >&2
     restore_instance_before
@@ -481,13 +541,15 @@ if [ -n "$instance_path" ]; then
     migration_finished=1
     exit 46
   fi
-  if ! restart_gcms; then
-    printf '%s\n' '迁移实例重启失败，正在恢复域名配置…' >&2
-    restore_instance_before
-    migration_finished=1
-    exit 47
+  if [ -z "$child_site_id" ]; then
+    if ! restart_gcms; then
+      printf '%s\n' '迁移实例重启失败，正在恢复域名配置…' >&2
+      restore_instance_before
+      migration_finished=1
+      exit 47
+    fi
+    mark_migration_access
   fi
-  mark_migration_access
   migration_finished=1
   exit 0
 fi
@@ -587,6 +649,8 @@ redirect_domain=${PILOT_REDIRECT_DOMAIN:-}
 instance_path=${PILOT_GCMS_INSTANCE_PATH:-}
 instance_port=${PILOT_GCMS_INSTANCE_PORT:-}
 service_name=${PILOT_GCMS_SERVICE_NAME:-}
+child_site_id=${PILOT_GCMS_CHILD_SITE_ID:-}
+child_redirect_target=${PILOT_GCMS_CHILD_REDIRECT_TARGET:-}
 conf="$root/shared/cms.conf"
 nginx_conf=/etc/nginx/nginx.conf
 [ -x "$root/scripts/cms.sh" ] && [ -f "$conf" ] || { printf '%s\n' 'GCMS 标准目录不完整' >&2; exit 2; }
@@ -605,6 +669,11 @@ case "$port" in *[!0-9]*|'') printf '%s\n' 'GCMS 监听端口无效' >&2; exit 6
 
 suffix=''
 [ -n "$instance_path" ] && suffix="-${port}"
+if [ -n "$child_site_id" ]; then
+  case "$child_site_id" in *[!0-9]*|'') printf '%s\n' '子站标识无效' >&2; exit 2 ;; esac
+  safe_domain=$(printf '%s' "$domain" | tr -c 'A-Za-z0-9.-' '-')
+  suffix="-${port}-site-${child_site_id}-${safe_domain}"
+fi
 sitefile="/etc/nginx/conf.d/pilot-gcms${suffix}.conf"
 safe_domain=$(printf '%s' "$domain" | tr -c 'A-Za-z0-9.-' '-')
 cert_name="pilot-gcms-${safe_domain}"
@@ -614,7 +683,15 @@ acme_root=/var/lib/pilot-gcms-acme
 work=$(mktemp -d 2>/dev/null || mktemp -d -t pilot-gcms-nginx)
 cp "$conf" "$work/cms.conf"
 had_site=0
-[ -f "$sitefile" ] && { cp "$sitefile" "$work/site.conf"; had_site=1; }
+if [ -f "$sitefile" ]; then
+  if [ -n "$child_site_id" ]; then
+    grep -Fq '# Managed by Pilot child-site migration.' "$sitefile" 2>/dev/null || { printf '%s\n' "子站配置文件已存在但不属于 Pilot：$sitefile" >&2; exit 3; }
+  else
+    grep -Fq '# Managed by GCMS Pilot.' "$sitefile" 2>/dev/null || { printf '%s\n' "GCMS 配置文件已存在但不属于 Pilot：$sitefile" >&2; exit 3; }
+  fi
+  cp "$sitefile" "$work/site.conf"
+  had_site=1
+fi
 finished=0
 gcms_changed=0
 
@@ -672,7 +749,7 @@ mkdir -p /etc/nginx/conf.d "$acme_root/.well-known/acme-challenge"
 ipv6_listen=0
 [ -s /proc/net/if_inet6 ] && ipv6_listen=1
 {
-  printf '# Managed by GCMS Pilot.\n'
+  if [ -n "$child_site_id" ]; then printf '# Managed by Pilot child-site migration.\n# Child site ID: %s\n' "$child_site_id"; else printf '# Managed by GCMS Pilot.\n'; fi
   printf '# Temporary HTTP site used for certificate issuance.\n'
   printf 'server {\n'
   printf '    listen 80;\n'
@@ -685,14 +762,18 @@ ipv6_listen=0
   printf '        default_type text/plain;\n'
   printf '        try_files $uri =404;\n'
   printf '    }\n'
-  printf '    location / {\n'
-  printf '        proxy_pass http://127.0.0.1:%s;\n' "$port"
-  printf '        proxy_http_version 1.1;\n'
-  printf '        proxy_set_header Host $host;\n'
-  printf '        proxy_set_header X-Real-IP $remote_addr;\n'
-  printf '        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n'
-  printf '        proxy_set_header X-Forwarded-Proto http;\n'
-  printf '    }\n'
+  if [ -n "$child_site_id" ] && [ -n "$child_redirect_target" ]; then
+    printf '    location / { return 301 https://%s$request_uri; }\n' "$child_redirect_target"
+  else
+    printf '    location / {\n'
+    printf '        proxy_pass http://127.0.0.1:%s;\n' "$port"
+    printf '        proxy_http_version 1.1;\n'
+    printf '        proxy_set_header Host $host;\n'
+    printf '        proxy_set_header X-Real-IP $remote_addr;\n'
+    printf '        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n'
+    printf '        proxy_set_header X-Forwarded-Proto http;\n'
+    printf '    }\n'
+  fi
   printf '}\n'
 } > "$sitefile"
 chmod 0644 "$sitefile"
@@ -724,7 +805,7 @@ set -- "$@" -d "$domain"
 [ -s "$cert_dir/fullchain.pem" ] && [ -s "$cert_dir/privkey.pem" ] || { printf '%s\n' '证书申请完成但未找到证书文件' >&2; exit 7; }
 
 {
-  printf '# Managed by GCMS Pilot.\n'
+  if [ -n "$child_site_id" ]; then printf '# Managed by Pilot child-site migration.\n# Child site ID: %s\n' "$child_site_id"; else printf '# Managed by GCMS Pilot.\n'; fi
   printf 'server {\n'
   printf '    listen 80;\n'
   [ "$ipv6_listen" = 1 ] && printf '    listen [::]:80;\n'
@@ -736,7 +817,11 @@ set -- "$@" -d "$domain"
   printf '        default_type text/plain;\n'
   printf '        try_files $uri =404;\n'
   printf '    }\n'
-  printf '    location / { return 301 https://%s$request_uri; }\n' "$domain"
+  if [ -n "$child_site_id" ] && [ -n "$child_redirect_target" ]; then
+    printf '    location / { return 301 https://%s$request_uri; }\n' "$child_redirect_target"
+  else
+    printf '    location / { return 301 https://%s$request_uri; }\n' "$domain"
+  fi
   printf '}\n\n'
   printf 'server {\n'
   printf '    listen 443 ssl;\n'
@@ -745,19 +830,23 @@ set -- "$@" -d "$domain"
   printf '    ssl_certificate %s/fullchain.pem;\n' "$cert_dir"
   printf '    ssl_certificate_key %s/privkey.pem;\n' "$cert_dir"
   printf '    ssl_protocols TLSv1.2 TLSv1.3;\n'
-  printf '    client_max_body_size 100m;\n'
-  printf '    location / {\n'
-  printf '        proxy_pass http://127.0.0.1:%s;\n' "$port"
-  printf '        proxy_http_version 1.1;\n'
-  printf '        proxy_set_header Host $host;\n'
-  printf '        proxy_set_header X-Real-IP $remote_addr;\n'
-  printf '        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n'
-  printf '        proxy_set_header X-Forwarded-Proto https;\n'
-  printf '        proxy_set_header Upgrade $http_upgrade;\n'
-  printf '        proxy_set_header Connection "upgrade";\n'
-  printf '        proxy_read_timeout 300s;\n'
-  printf '        proxy_buffering off;\n'
-  printf '    }\n'
+  if [ -n "$child_site_id" ] && [ -n "$child_redirect_target" ]; then
+    printf '    return 301 https://%s$request_uri;\n' "$child_redirect_target"
+  else
+    printf '    client_max_body_size 100m;\n'
+    printf '    location / {\n'
+    printf '        proxy_pass http://127.0.0.1:%s;\n' "$port"
+    printf '        proxy_http_version 1.1;\n'
+    printf '        proxy_set_header Host $host;\n'
+    printf '        proxy_set_header X-Real-IP $remote_addr;\n'
+    printf '        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n'
+    printf '        proxy_set_header X-Forwarded-Proto https;\n'
+    printf '        proxy_set_header Upgrade $http_upgrade;\n'
+    printf '        proxy_set_header Connection "upgrade";\n'
+    printf '        proxy_read_timeout 300s;\n'
+    printf '        proxy_buffering off;\n'
+    printf '    }\n'
+  fi
   printf '}\n'
   if [ -n "$redirect_domain" ]; then
     printf '\nserver {\n'
@@ -773,26 +862,28 @@ set -- "$@" -d "$domain"
 chmod 0644 "$sitefile"
 reload_nginx
 
-set_conf_value() {
-  key=$1
-  value=$2
-  tmp_conf="${conf}.pilot.$$"
-  if grep -q "^${key}=" "$conf" 2>/dev/null; then
-    awk -v k="$key" -v v="$value" 'BEGIN{done=0} $0 ~ "^" k "=" { print k "=" v; done=1; next } { print } END{ if (!done) print k "=" v }' "$conf" > "$tmp_conf"
-  else
-    cp "$conf" "$tmp_conf"
-    printf '%s=%s\n' "$key" "$value" >> "$tmp_conf"
-  fi
-  mv "$tmp_conf" "$conf"
-}
-set_conf_value ADDR "127.0.0.1:$port"
-set_conf_value BASE_URL "https://$domain"
-set_conf_value PILOT_REDIRECT_DOMAIN "$redirect_domain"
-gcms_changed=1
+if [ -z "$child_site_id" ]; then
+  set_conf_value() {
+    key=$1
+    value=$2
+    tmp_conf="${conf}.pilot.$$"
+    if grep -q "^${key}=" "$conf" 2>/dev/null; then
+      awk -v k="$key" -v v="$value" 'BEGIN{done=0} $0 ~ "^" k "=" { print k "=" v; done=1; next } { print } END{ if (!done) print k "=" v }' "$conf" > "$tmp_conf"
+    else
+      cp "$conf" "$tmp_conf"
+      printf '%s=%s\n' "$key" "$value" >> "$tmp_conf"
+    fi
+    mv "$tmp_conf" "$conf"
+  }
+  set_conf_value ADDR "127.0.0.1:$port"
+  set_conf_value BASE_URL "https://$domain"
+  set_conf_value PILOT_REDIRECT_DOMAIN "$redirect_domain"
+  gcms_changed=1
 
-printf '%s\n' '正在重启 GCMS 以应用新的访问域名…'
-restart_gcms
-mark_migration_access
+  printf '%s\n' '正在重启 GCMS 以应用新的访问域名…'
+  restart_gcms
+  mark_migration_access
+fi
 finished=1
 "#;
 
@@ -946,6 +1037,7 @@ pub(super) struct GcmsRemoteStatus {
     /// default | changed | unknown
     password_status: String,
     admin_user: String,
+    password_change_supported: bool,
 }
 
 #[derive(Clone, Serialize, Default, Debug, PartialEq)]
@@ -1005,10 +1097,60 @@ pub(super) struct GcmsMigrationSnapshot {
     cloudflare_proxy_error: String,
     service_name: String,
     service_installed: bool,
+    service_enabled: bool,
     running: bool,
+    /// running | stopped | missing | residual | unreachable | unknown
+    remote_state: String,
+    /// 远端状态的人类可读说明；与安装、HTTPS 等操作错误分开保存。
+    remote_detail: String,
     created_at: u64,
     updated_at: u64,
     last_error: String,
+}
+
+#[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq)]
+#[serde(default)]
+pub(super) struct GcmsMigrationSiteDomain {
+    id: i64,
+    scheme: String,
+    host: String,
+    is_primary: bool,
+    redirect_to_primary: bool,
+    enabled: bool,
+    access_configured: bool,
+    /// caddy | nginx | ""
+    web_provider: String,
+}
+
+#[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq)]
+#[serde(default)]
+pub(super) struct GcmsMigrationSiteCloudflare {
+    configured: bool,
+    published: bool,
+    status: String,
+    deploy_mode: String,
+    primary_domain: String,
+    worker_name: String,
+    pages_project_name: String,
+    account_name: String,
+    zone_name: String,
+    token_set: bool,
+}
+
+#[derive(Clone, Serialize, Deserialize, Default, Debug, PartialEq)]
+#[serde(default)]
+pub(super) struct GcmsMigrationSite {
+    id: i64,
+    slug: String,
+    name: String,
+    status: String,
+    is_default: bool,
+    data_present: bool,
+    uploads_present: bool,
+    /// main | cloudflare | local | unbound
+    deployment: String,
+    domains: Vec<GcmsMigrationSiteDomain>,
+    cloudflare: GcmsMigrationSiteCloudflare,
 }
 
 #[derive(Clone, Serialize, Default, Debug, PartialEq)]
@@ -1062,6 +1204,13 @@ fn read_migration_registry(data_dir: &Path) -> Vec<GcmsMigrationSnapshot> {
     // 早期记录只有 base_url 字段，而该值实际来自源实例复制后的 cms.conf，不能据此
     // 判断目标服务器已经接管域名。升级时把它迁到“源域名”槽位，避免误显示可访问。
     for instance in &mut instances {
+        if instance.remote_state.is_empty() {
+            instance.remote_state = "unknown".into();
+            // 旧版只有 service_installed；迁移后先沿用这个值，下一次远端探测会校准。
+            if !instance.service_enabled {
+                instance.service_enabled = instance.service_installed;
+            }
+        }
         if !instance.access_configured
             && instance.source_base_url.is_empty()
             && !instance.base_url.is_empty()
@@ -1103,6 +1252,44 @@ fn upsert_migration_instance(
     Ok(instance)
 }
 
+fn remove_migration_instance_record(data_dir: &Path, instance_id: &str) -> Result<(), String> {
+    let mut instances = read_migration_registry(data_dir);
+    let before = instances.len();
+    instances.retain(|item| item.id != instance_id);
+    if instances.len() == before {
+        return Err("迁移实例记录不存在".into());
+    }
+    save_migration_registry(data_dir, &instances)
+}
+
+fn validate_migration_cleanup_snapshot(instance: &GcmsMigrationSnapshot) -> Result<(), String> {
+    let Some(suffix) = instance.id.strip_prefix("gcms-") else {
+        return Err("迁移实例 ID 不合法，已停止清理".into());
+    };
+    if suffix.len() != 16 || !suffix.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("迁移实例 ID 不合法，已停止清理".into());
+    }
+    if instance.service_name != format!("pilot-{}", instance.id) {
+        return Err("迁移实例服务名与本地登记不一致，已停止清理".into());
+    }
+    let path = Path::new(&instance.instance_path);
+    if !path.is_absolute()
+        || path.file_name().and_then(|value| value.to_str()) != Some(instance.id.as_str())
+        || path.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::ParentDir | std::path::Component::CurDir
+            )
+        })
+    {
+        return Err("迁移实例目录与实例 ID 不匹配，已停止清理".into());
+    }
+    if !(1024..=65535).contains(&instance.port) {
+        return Err("迁移实例端口不合法，已停止清理".into());
+    }
+    Ok(())
+}
+
 fn update_migration_instance_status(
     data_dir: &Path,
     instance_id: &str,
@@ -1121,6 +1308,8 @@ fn update_migration_instance_status(
         return Err("迁移实例记录不存在，未更新域名状态".into());
     };
     instance.running = status.running;
+    instance.remote_state = if status.running { "running" } else { "stopped" }.into();
+    instance.remote_detail.clear();
     if !status.version.is_empty() {
         instance.version = status.version.clone();
     }
@@ -1517,6 +1706,307 @@ systemctl is-active --quiet "$service_name"
 printf 'PILOT_GCMS_SERVICE_INSTALLED\t1\n'
 "#;
 
+/// 迁移实例存在性探测。它只读取 Pilot 自己约定的目录、systemd unit 和按端口命名的
+/// Web 配置，用来区分“连接不上”“实例已删除”和“还留有残余”。
+const GCMS_MIGRATION_PRESENCE_CMD: &str = r#"
+set +e
+instance=${PILOT_GCMS_INSTANCE:?}
+service_name=${PILOT_GCMS_SERVICE_NAME:?}
+instance_port=${PILOT_GCMS_INSTANCE_PORT:?}
+unit="/etc/systemd/system/${service_name}.service"
+caddy_site="/etc/caddy/conf.d/pilot-gcms-${instance_port}.caddy"
+nginx_site="/etc/nginx/conf.d/pilot-gcms-${instance_port}.conf"
+marker="$instance/.pilot-instance"
+
+path_exists=0
+marker_exists=0
+service_exists=0
+service_enabled=0
+service_running=0
+caddy_exists=0
+nginx_exists=0
+child_caddy_exists=0
+child_nginx_exists=0
+[ -d "$instance" ] && path_exists=1
+[ -f "$marker" ] && marker_exists=1
+if [ -f "$unit" ] || { command -v systemctl >/dev/null 2>&1 && systemctl cat "$service_name" >/dev/null 2>&1; }; then
+  service_exists=1
+  systemctl is-enabled --quiet "$service_name" >/dev/null 2>&1 && service_enabled=1
+  systemctl is-active --quiet "$service_name" >/dev/null 2>&1 && service_running=1
+fi
+[ -f "$caddy_site" ] && caddy_exists=1
+[ -f "$nginx_site" ] && nginx_exists=1
+for child_site in /etc/caddy/conf.d/pilot-gcms-${instance_port}-site-*.caddy; do
+  [ -f "$child_site" ] && child_caddy_exists=1 && break
+done
+for child_site in /etc/nginx/conf.d/pilot-gcms-${instance_port}-site-*.conf; do
+  [ -f "$child_site" ] && child_nginx_exists=1 && break
+done
+
+printf 'PILOT_INSTANCE_PATH_EXISTS\t%s\n' "$path_exists"
+printf 'PILOT_INSTANCE_MARKER_EXISTS\t%s\n' "$marker_exists"
+printf 'PILOT_INSTANCE_SERVICE_EXISTS\t%s\n' "$service_exists"
+printf 'PILOT_INSTANCE_SERVICE_ENABLED\t%s\n' "$service_enabled"
+printf 'PILOT_INSTANCE_SERVICE_RUNNING\t%s\n' "$service_running"
+printf 'PILOT_INSTANCE_CADDY_EXISTS\t%s\n' "$caddy_exists"
+printf 'PILOT_INSTANCE_NGINX_EXISTS\t%s\n' "$nginx_exists"
+printf 'PILOT_INSTANCE_CHILD_CADDY_EXISTS\t%s\n' "$child_caddy_exists"
+printf 'PILOT_INSTANCE_CHILD_NGINX_EXISTS\t%s\n' "$child_nginx_exists"
+if [ -f "$marker" ]; then
+  awk -F= '$1 == "ACCESS_DOMAIN" { printf "PILOT_INSTANCE_ACCESS_DOMAIN\t%s\n", $2 } $1 == "ACCESS_REDIRECT_DOMAIN" { printf "PILOT_INSTANCE_ACCESS_REDIRECT\t%s\n", $2 }' "$marker" 2>/dev/null || true
+fi
+"#;
+
+/// 只清理由 Pilot 迁移功能创建且身份匹配的资源。DNS / Cloudflare 记录刻意不动：
+/// 用户可能还需要把域名切到别处，不能把“卸载实例”扩大成“删除公网记录”。
+const GCMS_MIGRATION_UNINSTALL_CMD: &str = r#"
+set -eu
+instance_id=${PILOT_GCMS_INSTANCE_ID:?}
+instance=${PILOT_GCMS_INSTANCE:?}
+service_name=${PILOT_GCMS_SERVICE_NAME:?}
+instance_port=${PILOT_GCMS_INSTANCE_PORT:?}
+unit="/etc/systemd/system/${service_name}.service"
+caddy_site="/etc/caddy/conf.d/pilot-gcms-${instance_port}.caddy"
+nginx_site="/etc/nginx/conf.d/pilot-gcms-${instance_port}.conf"
+
+case "$instance_id" in gcms-[0-9a-f][0-9a-f]*) ;; *) printf '%s\n' '迁移实例 ID 不合法' >&2; exit 2 ;; esac
+case "$service_name" in *[!A-Za-z0-9_.@-]*|'') printf '%s\n' '迁移服务名称不合法' >&2; exit 2 ;; esac
+case "$instance_port" in *[!0-9]*|'') printf '%s\n' '迁移端口不合法' >&2; exit 2 ;; esac
+
+# 先把全部目标验明身份，再做任何删除，避免清到用户自行维护的同名资源。
+if [ -e "$instance" ]; then
+  [ -d "$instance" ] || { printf '%s\n' "迁移路径不是目录：$instance" >&2; exit 3; }
+  marker="$instance/.pilot-instance"
+  [ -f "$marker" ] || { printf '%s\n' '实例目录仍存在，但缺少 Pilot 标记；为避免误删已停止' >&2; exit 3; }
+  marker_id=$(awk -F= '$1 == "INSTANCE_ID" { print $2; exit }' "$marker" 2>/dev/null || true)
+  [ "$marker_id" = "$instance_id" ] || { printf '%s\n' '实例目录的 Pilot 标记与本地登记不一致' >&2; exit 3; }
+fi
+if [ -f "$unit" ] && ! grep -Fq '# Managed by GCMS Pilot migration.' "$unit"; then
+  printf '%s\n' '同名 systemd 服务不是由 Pilot 管理，已停止清理' >&2
+  exit 3
+fi
+if [ -f "$caddy_site" ] && ! grep -Fq '# Managed by Pilot migration.' "$caddy_site"; then
+  printf '%s\n' '同名 Caddy 配置不是由 Pilot 管理，已停止清理' >&2
+  exit 3
+fi
+if [ -f "$nginx_site" ] && ! grep -Fq '# Managed by GCMS Pilot.' "$nginx_site"; then
+  printf '%s\n' '同名 Nginx 配置不是由 Pilot 管理，已停止清理' >&2
+  exit 3
+fi
+for child_site in /etc/caddy/conf.d/pilot-gcms-${instance_port}-site-*.caddy; do
+  [ ! -f "$child_site" ] || grep -Fq '# Managed by Pilot child-site migration.' "$child_site" || {
+    printf '%s\n' "子站 Caddy 配置不是由 Pilot 管理：$child_site" >&2
+    exit 3
+  }
+done
+for child_site in /etc/nginx/conf.d/pilot-gcms-${instance_port}-site-*.conf; do
+  [ ! -f "$child_site" ] || grep -Fq '# Managed by Pilot child-site migration.' "$child_site" || {
+    printf '%s\n' "子站 Nginx 配置不是由 Pilot 管理：$child_site" >&2
+    exit 3
+  }
+done
+
+if [ -f "$unit" ]; then
+  systemctl disable "$service_name" >/dev/null 2>&1 || true
+  systemctl stop "$service_name" >/dev/null 2>&1 || true
+  rm -f "$unit"
+  systemctl daemon-reload >/dev/null 2>&1 || true
+  systemctl reset-failed "$service_name" >/dev/null 2>&1 || true
+fi
+if [ -d "$instance" ]; then
+  [ -x "$instance/scripts/cms.sh" ] && (cd "$instance" && ./scripts/cms.sh stop) >/dev/null 2>&1 || true
+  rm -rf -- "$instance"
+fi
+caddy_changed=0
+if [ -f "$caddy_site" ]; then
+  rm -f "$caddy_site"
+  caddy_changed=1
+fi
+for child_site in /etc/caddy/conf.d/pilot-gcms-${instance_port}-site-*.caddy; do
+  if [ -f "$child_site" ]; then rm -f -- "$child_site"; caddy_changed=1; fi
+done
+if [ "$caddy_changed" = 1 ]; then
+  if command -v caddy >/dev/null 2>&1 && [ -f /etc/caddy/Caddyfile ] && caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1; then
+    systemctl reload caddy >/dev/null 2>&1 || caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1 || true
+  fi
+fi
+nginx_changed=0
+if [ -f "$nginx_site" ]; then
+  rm -f "$nginx_site"
+  nginx_changed=1
+fi
+for child_site in /etc/nginx/conf.d/pilot-gcms-${instance_port}-site-*.conf; do
+  if [ -f "$child_site" ]; then rm -f -- "$child_site"; nginx_changed=1; fi
+done
+if [ "$nginx_changed" = 1 ]; then
+  if command -v nginx >/dev/null 2>&1 && nginx -t >/dev/null 2>&1; then
+    systemctl reload nginx >/dev/null 2>&1 || nginx -s reload >/dev/null 2>&1 || true
+  fi
+fi
+printf 'PILOT_GCMS_INSTANCE_REMOVED\t1\n'
+"#;
+
+/// 从迁移后的独立实例中只读列出多站点。第一阶段已经把 system.db、各站点 SQLite、
+/// 上传目录和 Cloudflare 发布状态一并复制；这里仅识别第二阶段需要接管的站点与域名，
+/// 不读取或输出 Cloudflare Token 等敏感值。
+const GCMS_MIGRATION_SITES_CMD: &str = r##"
+set -eu
+instance=${PILOT_GCMS_INSTANCE:?}
+instance_port=${PILOT_GCMS_INSTANCE_PORT:?}
+command -v python3 >/dev/null 2>&1 || { printf '%s\n' '服务器缺少 python3，无法读取 GCMS 子站清单' >&2; exit 127; }
+python3 - "$instance" "$instance_port" <<'PY'
+import json
+import os
+import re
+import sqlite3
+import sys
+
+root = os.path.realpath(sys.argv[1])
+port = int(sys.argv[2])
+conf_path = os.path.join(root, "shared", "cms.conf")
+
+def read_conf(path):
+    values = {}
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            for raw in handle:
+                line = raw.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                values[key.strip()] = value.strip()
+    except OSError:
+        pass
+    return values
+
+def resolve_path(value, fallback):
+    value = (value or fallback).strip()
+    if not os.path.isabs(value):
+        value = os.path.join(root, value)
+    return os.path.normpath(value)
+
+def read_settings(path):
+    wanted = {
+        "cloudflare.account_id", "cloudflare.api_token", "cloudflare.deploy_mode",
+        "cloudflare.worker_name", "cloudflare.pages_project_name", "cloudflare.zone_name",
+        "cloudflare.account_name", "cloudflare.domains", "cloudflare.origin_url",
+    }
+    values = {}
+    if not os.path.isfile(path):
+        return values
+    try:
+        db = sqlite3.connect(path, timeout=4)
+        db.execute("PRAGMA query_only=ON")
+        rows = db.execute("SELECT key,value FROM settings").fetchall()
+        db.close()
+        for key, value in rows:
+            if key in wanted:
+                values[str(key)] = str(value or "")
+    except Exception:
+        return {}
+    return values
+
+def read_status(path):
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            value = json.load(handle)
+            return value if isinstance(value, dict) else {}
+    except Exception:
+        return {}
+
+def managed_provider(site_id, host):
+    safe = re.sub(r"[^A-Za-z0-9.\-]", "-", host)
+    caddy = f"/etc/caddy/conf.d/pilot-gcms-{port}-site-{site_id}-{safe}.caddy"
+    nginx = f"/etc/nginx/conf.d/pilot-gcms-{port}-site-{site_id}-{safe}.conf"
+    if os.path.isfile(caddy):
+        try:
+            if "# Managed by Pilot child-site migration." in open(caddy, "r", encoding="utf-8", errors="ignore").read(256):
+                return "caddy"
+        except OSError:
+            pass
+    if os.path.isfile(nginx):
+        try:
+            if "# Managed by Pilot child-site migration." in open(nginx, "r", encoding="utf-8", errors="ignore").read(256):
+                return "nginx"
+        except OSError:
+            pass
+    return ""
+
+conf = read_conf(conf_path)
+cms_db = resolve_path(conf.get("CMS_DB", ""), "shared/data/cms.db")
+system_db = resolve_path(conf.get("SYSTEM_DB", ""), os.path.join(os.path.dirname(cms_db), "system.db"))
+if not os.path.isfile(system_db):
+    raise SystemExit(f"未找到多站点数据库：{system_db}")
+
+db = sqlite3.connect(system_db, timeout=5)
+db.execute("PRAGMA query_only=ON")
+sites = db.execute("""
+    SELECT id,slug,name,status,is_default,db_path,upload_dir
+    FROM sites ORDER BY is_default DESC,id ASC
+""").fetchall()
+domains = db.execute("""
+    SELECT id,site_id,scheme,host,is_primary,redirect_to_primary,enabled
+    FROM site_domains ORDER BY site_id ASC,is_primary DESC,id ASC
+""").fetchall()
+db.close()
+
+by_site = {}
+for row in domains:
+    domain_id, site_id, scheme, host, primary, redirect, enabled = row
+    host = str(host or "").strip().lower().rstrip(".")
+    if not host:
+        continue
+    provider = managed_provider(int(site_id), host)
+    by_site.setdefault(int(site_id), []).append({
+        "id": int(domain_id), "scheme": str(scheme or "https"), "host": host,
+        "is_primary": bool(primary), "redirect_to_primary": bool(redirect),
+        "enabled": bool(enabled), "access_configured": bool(provider), "web_provider": provider,
+    })
+
+result = []
+for row in sites:
+    site_id, slug, name, state, is_default, db_path_raw, upload_raw = row
+    site_id = int(site_id)
+    site_db = resolve_path(str(db_path_raw or ""), cms_db if bool(is_default) else "")
+    upload_dir = resolve_path(str(upload_raw or ""), os.path.join(os.path.dirname(site_db), "uploads"))
+    settings = read_settings(site_db)
+    status_path = os.path.join(root, "run", "cloudflare-deploy.json") if bool(is_default) else os.path.join(os.path.dirname(site_db), "run", "cloudflare-deploy.json")
+    cf_status = read_status(status_path)
+    last_deploy = str(cf_status.get("last_deploy_at") or "").strip()
+    published = bool(cf_status.get("published")) or (str(cf_status.get("status") or "") == "success" and bool(last_deploy))
+    configured = bool(cf_status.get("configured")) or bool(settings.get("cloudflare.account_id") and settings.get("cloudflare.api_token"))
+    deploy_mode = str(cf_status.get("deploy_mode") or settings.get("cloudflare.deploy_mode") or "").strip()
+    site_domains = by_site.get(site_id, [])
+    enabled_domains = [item for item in site_domains if item["enabled"]]
+    if bool(is_default):
+        deployment = "main"
+    elif published:
+        deployment = "cloudflare"
+    elif enabled_domains:
+        deployment = "local"
+    else:
+        deployment = "unbound"
+    result.append({
+        "id": site_id, "slug": str(slug or ""), "name": str(name or slug or ""),
+        "status": str(state or ""), "is_default": bool(is_default),
+        "data_present": os.path.isfile(site_db), "uploads_present": os.path.isdir(upload_dir),
+        "deployment": deployment, "domains": site_domains,
+        "cloudflare": {
+            "configured": configured, "published": published,
+            "status": str(cf_status.get("status") or ""), "deploy_mode": deploy_mode,
+            "primary_domain": str(cf_status.get("primary_domain") or ""),
+            "worker_name": str(cf_status.get("worker_name") or settings.get("cloudflare.worker_name") or ""),
+            "pages_project_name": str(cf_status.get("pages_project_name") or settings.get("cloudflare.pages_project_name") or ""),
+            "account_name": str(settings.get("cloudflare.account_name") or ""),
+            "zone_name": str(settings.get("cloudflare.zone_name") or ""),
+            "token_set": bool(cf_status.get("token_set")) or bool(settings.get("cloudflare.api_token")),
+        },
+    })
+
+print("PILOT_GCMS_SITES_JSON\t" + json.dumps(result, ensure_ascii=False, separators=(",", ":")))
+PY
+"##;
+
 #[derive(Clone, Serialize, Default, Debug, PartialEq)]
 pub(super) struct GcmsCaddyPreflight {
     /// missing | standard | custom | conflict | unsupported
@@ -1592,6 +2082,8 @@ pub(super) struct GcmsCloudflareCheck {
 #[derive(Clone, Serialize, Debug, PartialEq)]
 pub(super) struct GcmsAccessCheck {
     domain: String,
+    /// 允许当前域名以 CNAME 指向的规范域名。普通主域名为空；子站别名为该子站主域名。
+    allowed_cname_target: String,
     server_ipv4: Vec<String>,
     server_ipv6: Vec<String>,
     dns_ipv4: Vec<String>,
@@ -1604,6 +2096,27 @@ pub(super) struct GcmsAccessCheck {
     redirect: Option<GcmsRedirectCheck>,
     matched: bool,
     caddy: Option<GcmsCaddyPreflight>,
+}
+
+#[derive(Clone, Debug)]
+struct GcmsMigrationSiteRoute {
+    domain: GcmsMigrationSiteDomain,
+    primary_domain: String,
+}
+
+impl GcmsMigrationSiteRoute {
+    fn allowed_cname_target(&self) -> Option<&str> {
+        (!self.primary_domain.is_empty()
+            && !self.domain.host.eq_ignore_ascii_case(&self.primary_domain))
+        .then_some(self.primary_domain.as_str())
+    }
+
+    fn redirect_target(&self) -> Option<&str> {
+        (self.domain.redirect_to_primary
+            && !self.primary_domain.is_empty()
+            && !self.domain.host.eq_ignore_ascii_case(&self.primary_domain))
+        .then_some(self.primary_domain.as_str())
+    }
 }
 
 #[derive(Clone, Serialize, Default, Debug, PartialEq)]
@@ -1746,6 +2259,9 @@ fn parse_gcms_remote_status(raw: &str) -> Result<GcmsRemoteStatus, String> {
                 }
             }
             "PILOT_GCMS_ADMIN_USER" => out.admin_user = value.trim().to_string(),
+            "PILOT_GCMS_PASSWORD_CHANGE_SUPPORTED" => {
+                out.password_change_supported = value.trim() == "1"
+            }
             _ => {}
         }
     }
@@ -1772,6 +2288,313 @@ fn parse_migration_target_env(raw: &str) -> GcmsMigrationTargetEnv {
         }
     }
     environment
+}
+
+#[derive(Default, Debug, PartialEq)]
+struct GcmsMigrationPresence {
+    path_exists: bool,
+    marker_exists: bool,
+    service_exists: bool,
+    service_enabled: bool,
+    service_running: bool,
+    caddy_exists: bool,
+    nginx_exists: bool,
+    child_caddy_exists: bool,
+    child_nginx_exists: bool,
+    access_domain: String,
+    access_redirect_domain: String,
+}
+
+impl GcmsMigrationPresence {
+    fn any_remote_resource(&self) -> bool {
+        self.path_exists
+            || self.service_exists
+            || self.caddy_exists
+            || self.nginx_exists
+            || self.child_caddy_exists
+            || self.child_nginx_exists
+    }
+}
+
+fn parse_migration_presence(raw: &str) -> Result<GcmsMigrationPresence, String> {
+    let mut presence = GcmsMigrationPresence::default();
+    let mut saw_path = false;
+    let mut saw_service = false;
+    for line in raw.lines() {
+        let Some((key, value)) = line.split_once('\t') else {
+            continue;
+        };
+        let enabled = value.trim() == "1";
+        match key.trim() {
+            "PILOT_INSTANCE_PATH_EXISTS" => {
+                saw_path = true;
+                presence.path_exists = enabled;
+            }
+            "PILOT_INSTANCE_MARKER_EXISTS" => presence.marker_exists = enabled,
+            "PILOT_INSTANCE_SERVICE_EXISTS" => {
+                saw_service = true;
+                presence.service_exists = enabled;
+            }
+            "PILOT_INSTANCE_SERVICE_ENABLED" => presence.service_enabled = enabled,
+            "PILOT_INSTANCE_SERVICE_RUNNING" => presence.service_running = enabled,
+            "PILOT_INSTANCE_CADDY_EXISTS" => presence.caddy_exists = enabled,
+            "PILOT_INSTANCE_NGINX_EXISTS" => presence.nginx_exists = enabled,
+            "PILOT_INSTANCE_CHILD_CADDY_EXISTS" => presence.child_caddy_exists = enabled,
+            "PILOT_INSTANCE_CHILD_NGINX_EXISTS" => presence.child_nginx_exists = enabled,
+            "PILOT_INSTANCE_ACCESS_DOMAIN" => presence.access_domain = value.trim().to_string(),
+            "PILOT_INSTANCE_ACCESS_REDIRECT" => {
+                presence.access_redirect_domain = value.trim().to_string()
+            }
+            _ => {}
+        }
+    }
+    if !saw_path || !saw_service {
+        return Err("无法识别服务器返回的迁移实例状态".into());
+    }
+    Ok(presence)
+}
+
+fn migration_presence_state(
+    presence: &GcmsMigrationPresence,
+    status_installed: bool,
+    status_error: Option<&str>,
+) -> (String, String) {
+    if !presence.any_remote_resource() {
+        return (
+            "missing".into(),
+            "远端未发现实例目录、systemd 服务或 Pilot 管理的 Web 配置".into(),
+        );
+    }
+    if presence.path_exists && presence.marker_exists && presence.service_exists && status_installed
+    {
+        return (
+            if presence.service_running {
+                "running"
+            } else {
+                "stopped"
+            }
+            .into(),
+            String::new(),
+        );
+    }
+
+    let mut details = Vec::new();
+    if presence.path_exists {
+        if !presence.marker_exists {
+            details.push("实例目录缺少 Pilot 身份标记".to_string());
+        } else if !status_installed {
+            details.push(
+                status_error
+                    .filter(|value| !value.trim().is_empty())
+                    .map(|value| format!("实例目录不完整：{value}"))
+                    .unwrap_or_else(|| "实例目录不完整，未检测到可运行的 GCMS".into()),
+            );
+        }
+    } else {
+        details.push("实例目录已不存在".into());
+    }
+    if presence.service_exists {
+        details.push("systemd 服务仍然存在".into());
+    } else if presence.path_exists {
+        details.push("systemd 服务已不存在".into());
+    }
+    if presence.caddy_exists
+        || presence.nginx_exists
+        || presence.child_caddy_exists
+        || presence.child_nginx_exists
+    {
+        details.push("公网访问配置仍然存在".into());
+    }
+    ("residual".into(), details.join("；"))
+}
+
+async fn probe_migration_presence(
+    state: &AppState,
+    instance: &GcmsMigrationSnapshot,
+) -> Result<GcmsMigrationPresence, String> {
+    ensure_ssh(state, &instance.target_id).await?;
+    let command = format!(
+        "env PILOT_GCMS_INSTANCE={} PILOT_GCMS_SERVICE_NAME={} PILOT_GCMS_INSTANCE_PORT={} sh -c {}",
+        shell_quote(&instance.instance_path),
+        shell_quote(&instance.service_name),
+        instance.port,
+        shell_quote(GCMS_MIGRATION_PRESENCE_CMD),
+    );
+    let output = state
+        .ssh
+        .exec(&instance.target_id, &command, 25, false)
+        .await?;
+    if output.code != 0 {
+        let detail = output.stderr.trim();
+        return Err(if detail.is_empty() {
+            format!("检测迁移实例失败（退出码 {}）", output.code)
+        } else {
+            format!("检测迁移实例失败：{detail}")
+        });
+    }
+    parse_migration_presence(&output.stdout)
+}
+
+fn parse_migration_sites(raw: &str) -> Result<Vec<GcmsMigrationSite>, String> {
+    let payload = raw
+        .lines()
+        .find_map(|line| line.strip_prefix("PILOT_GCMS_SITES_JSON\t"))
+        .ok_or_else(|| "服务器没有返回可识别的 GCMS 子站清单".to_string())?;
+    let mut sites: Vec<GcmsMigrationSite> = serde_json::from_str(payload)
+        .map_err(|error| format!("解析 GCMS 子站清单失败：{error}"))?;
+    for site in &mut sites {
+        site.domains
+            .sort_by_key(|domain| (!domain.is_primary, domain.id));
+    }
+    sites.sort_by_key(|site| (!site.is_default, site.id));
+    Ok(sites)
+}
+
+async fn load_migration_sites(
+    state: &AppState,
+    instance: &GcmsMigrationSnapshot,
+) -> Result<Vec<GcmsMigrationSite>, String> {
+    ensure_ssh(state, &instance.target_id).await?;
+    if !gcms_remote_status_at(state, &instance.target_id, Some(&instance.instance_path))
+        .await?
+        .installed
+    {
+        return Err("迁移实例目录不完整，无法读取子站".into());
+    }
+    let environment = migration_target_env(state, &instance.target_id).await?;
+    let env = format!(
+        "PILOT_GCMS_INSTANCE={} PILOT_GCMS_INSTANCE_PORT={}",
+        shell_quote(&instance.instance_path),
+        instance.port,
+    );
+    let body = shell_quote(GCMS_MIGRATION_SITES_CMD);
+    let command = if environment.privilege == "root" {
+        format!("env {env} sh -c {body}")
+    } else if environment.privilege == "sudo" {
+        format!("sudo -n env {env} sh -c {body}")
+    } else {
+        return Err("读取迁移实例子站需要 root 或免密 sudo".into());
+    };
+    let output = state
+        .ssh
+        .exec(&instance.target_id, &command, 45, false)
+        .await
+        .map_err(|error| format!("读取 GCMS 子站失败：{error}"))?;
+    if output.code != 0 {
+        let detail = gcms_install_log(&output.stdout, &output.stderr);
+        return Err(format!(
+            "读取 GCMS 子站失败：{}",
+            detail
+                .lines()
+                .rev()
+                .map(str::trim)
+                .find(|line| !line.is_empty())
+                .unwrap_or("未知错误")
+        ));
+    }
+    parse_migration_sites(&output.stdout)
+}
+
+#[tauri::command]
+pub(super) async fn gcms_remote_migration_sites(
+    state: tauri::State<'_, AppState>,
+    instance_id: String,
+) -> Result<Vec<GcmsMigrationSite>, String> {
+    let instance = read_migration_registry(&state.data_dir)
+        .into_iter()
+        .find(|item| item.id == instance_id)
+        .ok_or("迁移实例记录不存在")?;
+    load_migration_sites(&state, &instance).await
+}
+
+fn migration_site_route_for_request(
+    site: &GcmsMigrationSite,
+    domain: &str,
+    redirect_domain: Option<&str>,
+) -> Result<GcmsMigrationSiteRoute, String> {
+    let domain = normalize_public_domain(domain)?;
+    if redirect_domain
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty())
+    {
+        return Err("子站的主域名与别名需要逐条迁移，请从子站域名列表选择要处理的域名".into());
+    }
+    let enabled_domains = site
+        .domains
+        .iter()
+        .filter(|item| item.enabled)
+        .collect::<Vec<_>>();
+    let selected = enabled_domains
+        .iter()
+        .find(|item| item.host.eq_ignore_ascii_case(&domain))
+        .copied()
+        .cloned();
+    let Some(selected) = selected else {
+        return Err(format!("域名 {domain} 不属于子站「{}」", site.name));
+    };
+    let primary = enabled_domains
+        .iter()
+        .find(|item| item.is_primary)
+        .or_else(|| enabled_domains.first())
+        .copied();
+    let primary_domain = primary.map(|item| item.host.clone()).unwrap_or_default();
+    if selected.redirect_to_primary && primary_domain.is_empty() {
+        return Err("该跳转别名没有可用主域名，无法安全迁移".into());
+    }
+    if !selected.host.eq_ignore_ascii_case(&primary_domain)
+        && !selected.access_configured
+        && primary.is_some_and(|item| !item.access_configured)
+    {
+        return Err(format!(
+            "请先迁移子站主域名 {primary_domain}，再处理别名 {}",
+            selected.host
+        ));
+    }
+    Ok(GcmsMigrationSiteRoute {
+        domain: selected,
+        primary_domain,
+    })
+}
+
+async fn migration_site_for_request(
+    state: &AppState,
+    migration_instance_id: &str,
+    site_id: i64,
+    domain: &str,
+    redirect_domain: Option<&str>,
+) -> Result<
+    (
+        GcmsMigrationSnapshot,
+        GcmsMigrationSite,
+        GcmsMigrationSiteRoute,
+    ),
+    String,
+> {
+    if site_id <= 0 {
+        return Err("子站标识无效".into());
+    }
+    let instance = read_migration_registry(&state.data_dir)
+        .into_iter()
+        .find(|item| item.id == migration_instance_id)
+        .ok_or("迁移实例记录不存在")?;
+    let sites = load_migration_sites(state, &instance).await?;
+    let site = sites
+        .into_iter()
+        .find(|item| item.id == site_id)
+        .ok_or("迁移实例中没有找到这个子站")?;
+    if site.is_default {
+        return Err("默认站点应使用“迁移原域名 / 绑定新域名”，不走子站迁移".into());
+    }
+    if site.deployment == "cloudflare" {
+        return Err(
+            "该子站已经发布到 Cloudflare，数据随实例复制后已完成接管，无需切换服务器域名".into(),
+        );
+    }
+    if !site.data_present {
+        return Err("子站数据库不完整，已停止域名迁移".into());
+    }
+    let route = migration_site_route_for_request(&site, domain, redirect_domain)?;
+    Ok((instance, site, route))
 }
 
 async fn migration_target_env(
@@ -2309,6 +3132,82 @@ pub(super) async fn gcms_remote_status(
     conn_id: String,
 ) -> Result<GcmsRemoteStatus, String> {
     gcms_remote_status_inner(&state, &conn_id).await
+}
+
+fn validate_gcms_admin_password(password: &str) -> Result<(), String> {
+    if password.chars().any(|ch| matches!(ch, '\0' | '\r' | '\n')) {
+        return Err("新密码不能包含换行或空字符".into());
+    }
+    let length = password.chars().count();
+    if length < 8 {
+        return Err("新密码至少需要 8 个字符".into());
+    }
+    if password.len() > 72 {
+        return Err("新密码过长，最多 72 个英文字符（中文等字符占用更多长度）".into());
+    }
+    if password == "admin123" {
+        return Err("新密码不能继续使用默认密码".into());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub(super) async fn gcms_remote_set_admin_password(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    password: String,
+) -> Result<GcmsRemoteStatus, String> {
+    // 从 IPC 接收后立刻放进自动清零容器；任何返回路径都会覆盖这段内存。
+    let password = Zeroizing::new(password);
+    validate_gcms_admin_password(password.as_str())?;
+    let conn = state.conns.get(&conn_id)?;
+    if conn.kind != "ssh" {
+        return Err("这不是远程服务器连接".into());
+    }
+    let _guard = begin_gcms_operation(&state, &conn_id)?;
+    let before = gcms_remote_status_at(&state, &conn_id, None).await?;
+    if !before.installed {
+        return Err("这台服务器尚未安装标准 GCMS".into());
+    }
+    if !before.password_change_supported {
+        return Err("当前 GCMS 版本不支持在 Pilot 中修改密码，请先升级 GCMS".into());
+    }
+
+    let command = format!(
+        "env PILOT_GCMS_ROOT={} sh -c {}",
+        shell_quote(&before.path),
+        shell_quote(GCMS_REMOTE_SET_ADMIN_PASSWORD_CMD)
+    );
+    let result = state
+        .ssh
+        .exec_with_stdin(&conn_id, &command, password.as_bytes(), 45)
+        .await?;
+    if result.code != 0 {
+        let detail = result
+            .stderr
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty())
+            .unwrap_or("远端命令未返回错误详情");
+        return Err(format!(
+            "修改后台密码失败（退出码 {}）：{}",
+            result.code,
+            detail.chars().take(240).collect::<String>()
+        ));
+    }
+    if !result
+        .stdout
+        .lines()
+        .any(|line| line.trim() == "PILOT_GCMS_PASSWORD_UPDATED\t1")
+    {
+        return Err("GCMS 未确认密码已经更新".into());
+    }
+
+    let after = gcms_remote_status_at(&state, &conn_id, None).await?;
+    if after.password_status != "changed" {
+        return Err("密码命令已完成，但安全状态校验未通过，请重新检测".into());
+    }
+    Ok(after)
 }
 
 async fn gcms_remote_service_action(
@@ -3126,13 +4025,18 @@ pub(super) async fn gcms_remote_migration_stage(
             cloudflare_proxy_error: String::new(),
             service_name,
             service_installed: service_result.is_ok(),
+            service_enabled: service_result.is_ok(),
             running: false,
+            remote_state: "unknown".into(),
+            remote_detail: String::new(),
             created_at: now,
             updated_at: now,
             last_error: String::new(),
         };
         if let Err(error) = service_result {
             instance.last_error = format!("实例已恢复，但{error}");
+            instance.remote_state = "residual".into();
+            instance.remote_detail = instance.last_error.clone();
             if let Ok(stored) = upsert_migration_instance(&state.data_dir, instance.clone()) {
                 snapshots.push(stored);
             }
@@ -3167,6 +4071,7 @@ pub(super) async fn gcms_remote_migration_stage(
         match gcms_remote_status_at(&state, &target_id, Some(&instance_path)).await {
             Ok(remote) => {
                 instance.running = remote.running;
+                instance.remote_state = if remote.running { "running" } else { "stopped" }.into();
                 if !remote.version.is_empty() {
                     instance.version = remote.version;
                 }
@@ -3254,73 +4159,86 @@ pub(super) async fn gcms_remote_migration_instances(
     }
     let mut instances = read_migration_registry(&state.data_dir);
     for instance in &mut instances {
+        let previous_remote_state = instance.remote_state.clone();
         match state.conns.get(&instance.target_id) {
             Ok(connection) if connection.kind == "ssh" => {
-                match gcms_remote_status_at(
-                    &state,
-                    &instance.target_id,
-                    Some(&instance.instance_path),
-                )
-                .await
-                {
-                    Ok(status) => {
-                        instance.running = status.running;
-                        if !status.version.is_empty() {
-                            instance.version = status.version;
+                match probe_migration_presence(&state, instance).await {
+                    Ok(presence) => {
+                        instance.service_installed = presence.service_exists;
+                        instance.service_enabled = presence.service_enabled;
+                        instance.running = false;
+
+                        if !presence.access_domain.is_empty() {
+                            instance.access_configured = true;
+                            instance.base_url = format!("https://{}", presence.access_domain);
+                            instance.redirect_domain = presence.access_redirect_domain.clone();
                         }
-                        if instance.source_base_url.is_empty() && !instance.access_configured {
-                            instance.source_base_url = status.base_url.clone();
-                            instance.source_redirect_domain = status.redirect_domain.clone();
-                        }
-                        if instance.access_configured {
-                            instance.base_url = status.base_url;
-                            instance.redirect_domain = status.redirect_domain;
+
+                        let (status, status_error) = if presence.path_exists {
+                            match gcms_remote_status_at(
+                                &state,
+                                &instance.target_id,
+                                Some(&instance.instance_path),
+                            )
+                            .await
+                            {
+                                Ok(status) => (Some(status), None),
+                                Err(error) => (None, Some(error)),
+                            }
                         } else {
-                            instance.base_url.clear();
-                            instance.redirect_domain.clear();
+                            (None, None)
+                        };
+                        if let Some(status) = status.as_ref() {
+                            if !status.version.is_empty() {
+                                instance.version = status.version.clone();
+                            }
+                            if instance.source_base_url.is_empty() && !instance.access_configured {
+                                instance.source_base_url = status.base_url.clone();
+                                instance.source_redirect_domain = status.redirect_domain.clone();
+                            }
+                            if instance.access_configured {
+                                instance.base_url = status.base_url.clone();
+                                instance.redirect_domain = status.redirect_domain.clone();
+                            } else {
+                                instance.base_url.clear();
+                                instance.redirect_domain.clear();
+                            }
                         }
+
+                        let (mut remote_state, remote_detail) = migration_presence_state(
+                            &presence,
+                            status.as_ref().is_some_and(|value| value.installed),
+                            status_error.as_deref(),
+                        );
+                        if matches!(remote_state.as_str(), "running" | "stopped") {
+                            instance.running = presence.service_running
+                                || status.as_ref().is_some_and(|value| value.running);
+                            remote_state = if instance.running {
+                                "running"
+                            } else {
+                                "stopped"
+                            }
+                            .into();
+                            if !matches!(previous_remote_state.as_str(), "running" | "stopped") {
+                                instance.last_error.clear();
+                            }
+                        }
+                        instance.remote_state = remote_state;
+                        instance.remote_detail = remote_detail;
                     }
                     Err(error) => {
+                        // 连接失败不等于实例不存在。保留上次登记，只把本次结果标为未知。
                         instance.running = false;
-                        instance.last_error = error;
-                    }
-                }
-                let service_probe = format!(
-                    "systemctl is-enabled --quiet {service} 2>/dev/null && printf 'PILOT_SERVICE_ENABLED\\t1\\n' || true; awk -F= '$1 == \"ACCESS_DOMAIN\" {{ printf \"PILOT_ACCESS_DOMAIN\\t%s\\n\", $2 }} $1 == \"ACCESS_REDIRECT_DOMAIN\" {{ printf \"PILOT_ACCESS_REDIRECT\\t%s\\n\", $2 }}' {marker} 2>/dev/null || true",
-                    service = shell_quote(&instance.service_name),
-                    marker = shell_quote(&format!("{}/.pilot-instance", instance.instance_path))
-                );
-                if let Ok(out) = state
-                    .ssh
-                    .exec(&instance.target_id, &service_probe, 20, false)
-                    .await
-                {
-                    instance.service_installed = out
-                        .stdout
-                        .lines()
-                        .any(|line| line == "PILOT_SERVICE_ENABLED\t1");
-                    let marker_domain = out.stdout.lines().find_map(|line| {
-                        line.strip_prefix("PILOT_ACCESS_DOMAIN\t")
-                            .map(str::trim)
-                            .filter(|value| !value.is_empty())
-                    });
-                    if let Some(domain) = marker_domain {
-                        instance.access_configured = true;
-                        instance.base_url = format!("https://{domain}");
-                        instance.redirect_domain = out
-                            .stdout
-                            .lines()
-                            .find_map(|line| {
-                                line.strip_prefix("PILOT_ACCESS_REDIRECT\t").map(str::trim)
-                            })
-                            .unwrap_or_default()
-                            .to_string();
+                        instance.remote_state = "unreachable".into();
+                        instance.remote_detail =
+                            format!("暂时无法连接目标服务器，不能确认实例是否仍存在：{error}");
                     }
                 }
             }
             _ => {
                 instance.running = false;
-                instance.last_error = "对应的目标 SSH 连接已不存在".into();
+                instance.remote_state = "unreachable".into();
+                instance.remote_detail = "对应的目标 SSH 连接已不存在，不能确认远端实例状态".into();
             }
         }
         instance.updated_at = migration_now();
@@ -3407,6 +4325,9 @@ pub(super) async fn gcms_remote_migration_restart(
         .into_iter()
         .find(|item| item.id == instance_id)
         .ok_or("迁移实例记录不存在")?;
+    if !matches!(instance.remote_state.as_str(), "running" | "stopped") {
+        return Err("远端实例状态尚未确认，请先重新检测".into());
+    }
     let target = state.conns.get(&instance.target_id)?;
     if target.kind != "ssh" {
         return Err("目标连接不是 SSH 服务器".into());
@@ -3441,6 +4362,9 @@ pub(super) async fn gcms_remote_migration_restart(
         gcms_remote_status_at(&state, &instance.target_id, Some(&instance.instance_path)).await?;
     instance.running = status.running;
     instance.service_installed = true;
+    instance.service_enabled = true;
+    instance.remote_state = if status.running { "running" } else { "stopped" }.into();
+    instance.remote_detail.clear();
     if instance.access_configured {
         instance.base_url = status.base_url;
         instance.redirect_domain = status.redirect_domain;
@@ -3459,6 +4383,9 @@ pub(super) async fn gcms_remote_migration_stop(
         .into_iter()
         .find(|item| item.id == instance_id)
         .ok_or("迁移实例记录不存在")?;
+    if !matches!(instance.remote_state.as_str(), "running" | "stopped") {
+        return Err("远端实例状态尚未确认，请先重新检测".into());
+    }
     let target = state.conns.get(&instance.target_id)?;
     if target.kind != "ssh" {
         return Err("目标连接不是 SSH 服务器".into());
@@ -3490,25 +4417,123 @@ pub(super) async fn gcms_remote_migration_stop(
     }
     instance.running = false;
     instance.service_installed = true;
+    instance.remote_state = "stopped".into();
+    instance.remote_detail.clear();
     instance.last_error.clear();
     instance.updated_at = migration_now();
     upsert_migration_instance(&state.data_dir, instance)
 }
 
-async fn gcms_caddy_preflight_inner(
+#[tauri::command]
+pub(super) async fn gcms_remote_migration_forget(
+    state: tauri::State<'_, AppState>,
+    instance_id: String,
+) -> Result<(), String> {
+    let instance = read_migration_registry(&state.data_dir)
+        .into_iter()
+        .find(|item| item.id == instance_id)
+        .ok_or("迁移实例记录不存在")?;
+    let target = state.conns.get(&instance.target_id)?;
+    if target.kind != "ssh" {
+        return Err("目标 SSH 连接已不存在，无法安全确认远端资源是否已删除".into());
+    }
+    let _guard = begin_gcms_operation(&state, &instance.target_id)?;
+    let presence = probe_migration_presence(&state, &instance).await?;
+    if presence.any_remote_resource() {
+        let (_, detail) = migration_presence_state(&presence, false, None);
+        return Err(format!(
+            "远端仍有实例资源，不能只移除本地记录：{}",
+            if detail.is_empty() {
+                "请先执行卸载或清理残留"
+            } else {
+                detail.as_str()
+            }
+        ));
+    }
+    remove_migration_instance_record(&state.data_dir, &instance.id)
+}
+
+#[tauri::command]
+pub(super) async fn gcms_remote_migration_uninstall(
+    state: tauri::State<'_, AppState>,
+    instance_id: String,
+) -> Result<(), String> {
+    let instance = read_migration_registry(&state.data_dir)
+        .into_iter()
+        .find(|item| item.id == instance_id)
+        .ok_or("迁移实例记录不存在")?;
+    validate_migration_cleanup_snapshot(&instance)?;
+    let target = state.conns.get(&instance.target_id)?;
+    if target.kind != "ssh" {
+        return Err("目标连接不是 SSH 服务器".into());
+    }
+    let _guard = begin_gcms_operation(&state, &instance.target_id)?;
+    let environment = migration_target_env(&state, &instance.target_id).await?;
+    if !matches!(environment.privilege.as_str(), "root" | "sudo") {
+        return Err("卸载迁移实例需要 root 或免密 sudo".into());
+    }
+
+    let cleanup_env = format!(
+        "PILOT_GCMS_INSTANCE_ID={} PILOT_GCMS_INSTANCE={} PILOT_GCMS_SERVICE_NAME={} PILOT_GCMS_INSTANCE_PORT={}",
+        shell_quote(&instance.id),
+        shell_quote(&instance.instance_path),
+        shell_quote(&instance.service_name),
+        instance.port,
+    );
+    let cleanup_body = shell_quote(GCMS_MIGRATION_UNINSTALL_CMD);
+    let command = if environment.privilege == "root" {
+        format!("env {cleanup_env} sh -c {cleanup_body}")
+    } else {
+        format!("sudo -n env {cleanup_env} sh -c {cleanup_body}")
+    };
+    let output = state
+        .ssh
+        .exec(&instance.target_id, &command, 240, false)
+        .await
+        .map_err(|error| format!("清理迁移实例失败：{error}"))?;
+    if output.code != 0 {
+        let detail = gcms_install_log(&output.stdout, &output.stderr);
+        return Err(format!(
+            "清理迁移实例失败：{}",
+            detail
+                .lines()
+                .rev()
+                .map(str::trim)
+                .find(|line| !line.is_empty())
+                .unwrap_or("未知错误")
+        ));
+    }
+
+    let remaining = probe_migration_presence(&state, &instance).await?;
+    if remaining.any_remote_resource() {
+        let (_, detail) = migration_presence_state(&remaining, false, None);
+        return Err(format!("实例未完全清理：{detail}"));
+    }
+    // 公网 DNS / Cloudflare 记录刻意保留，只删除 Pilot 本地的实例登记。
+    remove_migration_instance_record(&state.data_dir, &instance.id)
+}
+
+async fn gcms_caddy_preflight_context_inner(
     state: &AppState,
     conn_id: &str,
     domain: &str,
     redirect_domain: Option<&str>,
     instance_path: Option<&str>,
     instance_port: Option<u16>,
+    child_site_id: Option<i64>,
 ) -> Result<GcmsCaddyPreflight, String> {
     let env = format!(
-        "PILOT_DOMAIN={} PILOT_REDIRECT_DOMAIN={} PILOT_GCMS_INSTANCE_PATH={} PILOT_GCMS_INSTANCE_PORT={}",
+        "PILOT_DOMAIN={} PILOT_REDIRECT_DOMAIN={} PILOT_GCMS_INSTANCE_PATH={} PILOT_GCMS_INSTANCE_PORT={} PILOT_GCMS_CHILD_SITE_ID={}",
         shell_quote(domain),
         shell_quote(redirect_domain.unwrap_or_default()),
         shell_quote(instance_path.unwrap_or_default()),
-        instance_port.unwrap_or(0)
+        instance_port.unwrap_or(0),
+        shell_quote(
+            &child_site_id
+                .filter(|value| *value > 0)
+                .map(|value| value.to_string())
+                .unwrap_or_default()
+        )
     );
     let body = shell_quote(GCMS_CADDY_PREFLIGHT_CMD);
     let command = format!("env {env} sh -c {body}");
@@ -4259,13 +5284,15 @@ async fn inspect_access_domain(
     }
 }
 
-async fn gcms_remote_access_check_inner(
+async fn gcms_remote_access_check_context_inner(
     state: &AppState,
     conn_id: &str,
     raw_domain: &str,
     raw_redirect_domain: Option<&str>,
     instance_path: Option<&str>,
     instance_port: Option<u16>,
+    child_site_id: Option<i64>,
+    allowed_primary_cname_target: Option<&str>,
 ) -> Result<GcmsAccessCheck, String> {
     let domain = normalize_public_domain(raw_domain)?;
     let redirect_domain = normalize_redirect_domain(raw_redirect_domain, &domain)?;
@@ -4312,7 +5339,14 @@ async fn gcms_remote_access_check_inner(
         (primary, Some(redirect))
     } else {
         (
-            inspect_access_domain(state, &domain, &server_v4, &server_v6, None).await,
+            inspect_access_domain(
+                state,
+                &domain,
+                &server_v4,
+                &server_v6,
+                allowed_primary_cname_target,
+            )
+            .await,
             None,
         )
     };
@@ -4320,13 +5354,14 @@ async fn gcms_remote_access_check_inner(
     let matched = primary_matched && redirect.as_ref().map(|check| check.matched).unwrap_or(true);
     let caddy = if matched {
         Some(
-            gcms_caddy_preflight_inner(
+            gcms_caddy_preflight_context_inner(
                 state,
                 conn_id,
                 &domain,
                 redirect_domain.as_deref(),
                 instance_path,
                 instance_port,
+                child_site_id,
             )
             .await?,
         )
@@ -4335,6 +5370,7 @@ async fn gcms_remote_access_check_inner(
     };
     Ok(GcmsAccessCheck {
         domain,
+        allowed_cname_target: allowed_primary_cname_target.unwrap_or_default().to_string(),
         server_ipv4: server_v4.into_iter().map(|ip| ip.to_string()).collect(),
         server_ipv6: server_v6.into_iter().map(|ip| ip.to_string()).collect(),
         dns_ipv4: primary.dns_ipv4,
@@ -4348,6 +5384,27 @@ async fn gcms_remote_access_check_inner(
         matched,
         caddy,
     })
+}
+
+async fn gcms_remote_access_check_inner(
+    state: &AppState,
+    conn_id: &str,
+    raw_domain: &str,
+    raw_redirect_domain: Option<&str>,
+    instance_path: Option<&str>,
+    instance_port: Option<u16>,
+) -> Result<GcmsAccessCheck, String> {
+    gcms_remote_access_check_context_inner(
+        state,
+        conn_id,
+        raw_domain,
+        raw_redirect_domain,
+        instance_path,
+        instance_port,
+        None,
+        None,
+    )
+    .await
 }
 
 #[tauri::command]
@@ -4366,6 +5423,35 @@ pub(super) async fn gcms_remote_access_check(
         redirect_domain.as_deref(),
         instance_path.as_deref(),
         instance_port,
+    )
+    .await
+}
+
+#[tauri::command]
+pub(super) async fn gcms_remote_migration_site_access_check(
+    state: tauri::State<'_, AppState>,
+    migration_instance_id: String,
+    site_id: i64,
+    domain: String,
+    redirect_domain: Option<String>,
+) -> Result<GcmsAccessCheck, String> {
+    let (instance, _, route) = migration_site_for_request(
+        &state,
+        &migration_instance_id,
+        site_id,
+        &domain,
+        redirect_domain.as_deref(),
+    )
+    .await?;
+    gcms_remote_access_check_context_inner(
+        &state,
+        &instance.target_id,
+        &domain,
+        redirect_domain.as_deref(),
+        Some(&instance.instance_path),
+        Some(instance.port),
+        Some(site_id),
+        route.allowed_cname_target(),
     )
     .await
 }
@@ -4451,25 +5537,30 @@ fn remember_cloudflare_selections(state: &AppState, check: &GcmsAccessCheck) -> 
     Ok(())
 }
 
-#[tauri::command]
-pub(super) async fn gcms_cloudflare_create_a_record(
-    state: tauri::State<'_, AppState>,
+async fn gcms_cloudflare_create_a_record_inner(
+    state: &AppState,
     conn_id: String,
     domain: String,
     redirect_domain: Option<String>,
+    instance_path: Option<&str>,
+    instance_port: Option<u16>,
+    child_site_id: Option<i64>,
+    allowed_primary_cname_target: Option<&str>,
 ) -> Result<GcmsCloudflareCreateResult, String> {
     let conn = state.conns.get(&conn_id)?;
     if conn.kind != "ssh" {
         return Err("这不是远程服务器连接".into());
     }
     let _guard = begin_gcms_operation(&state, &conn_id)?;
-    let check = gcms_remote_access_check_inner(
-        &state,
+    let check = gcms_remote_access_check_context_inner(
+        state,
         &conn_id,
         &domain,
         redirect_domain.as_deref(),
-        None,
-        None,
+        instance_path,
+        instance_port,
+        child_site_id,
+        allowed_primary_cname_target,
     )
     .await?;
     if check.matched {
@@ -4555,7 +5646,7 @@ pub(super) async fn gcms_cloudflare_create_a_record(
 
     // 从此处起会发生 Cloudflare 写入：先固定 Zone→连接，保证主域名、跳转域名和后续
     // 橙云操作不会因为连接列表顺序变化而换用另一枚 Token。
-    remember_cloudflare_selections(&state, &check)?;
+    remember_cloudflare_selections(state, &check)?;
 
     // 先把所有连接和凭据读完，再开始任何 DNS 写入，避免第二个账号凭据无效时留下
     // “只创建了一半”的可预见中间状态。网络/API 在写入期间失败仍会返回明确域名。
@@ -4592,13 +5683,15 @@ pub(super) async fn gcms_cloudflare_create_a_record(
     }
 
     let redirect_domain = check.redirect.as_ref().map(|route| route.domain.as_str());
-    let refreshed = gcms_remote_access_check_inner(
-        &state,
+    let refreshed = gcms_remote_access_check_context_inner(
+        state,
         &conn_id,
         &check.domain,
         redirect_domain,
-        None,
-        None,
+        instance_path,
+        instance_port,
+        child_site_id,
+        allowed_primary_cname_target,
     )
     .await
     .map_err(|error| {
@@ -4613,6 +5706,55 @@ pub(super) async fn gcms_cloudflare_create_a_record(
         created_domains,
         check: refreshed,
     })
+}
+
+#[tauri::command]
+pub(super) async fn gcms_cloudflare_create_a_record(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    domain: String,
+    redirect_domain: Option<String>,
+) -> Result<GcmsCloudflareCreateResult, String> {
+    gcms_cloudflare_create_a_record_inner(
+        &state,
+        conn_id,
+        domain,
+        redirect_domain,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+}
+
+#[tauri::command]
+pub(super) async fn gcms_remote_migration_site_create_a_record(
+    state: tauri::State<'_, AppState>,
+    migration_instance_id: String,
+    site_id: i64,
+    domain: String,
+    redirect_domain: Option<String>,
+) -> Result<GcmsCloudflareCreateResult, String> {
+    let (instance, _, route) = migration_site_for_request(
+        &state,
+        &migration_instance_id,
+        site_id,
+        &domain,
+        redirect_domain.as_deref(),
+    )
+    .await?;
+    gcms_cloudflare_create_a_record_inner(
+        &state,
+        instance.target_id,
+        domain,
+        redirect_domain,
+        Some(&instance.instance_path),
+        Some(instance.port),
+        Some(site_id),
+        route.allowed_cname_target(),
+    )
+    .await
 }
 
 fn gcms_check_has_cloudflare(check: &GcmsAccessCheck) -> bool {
@@ -4685,7 +5827,7 @@ async fn gcms_enable_cloudflare_proxy(
             "主访问域名",
             check.domain.as_str(),
             check.cloudflare.as_ref(),
-            None,
+            (!check.allowed_cname_target.is_empty()).then_some(check.allowed_cname_target.as_str()),
         ),
         (
             "跳转域名",
@@ -5018,6 +6160,7 @@ pub(super) async fn gcms_remote_access_verify(
     instance_path: Option<String>,
     _instance_port: Option<u16>,
     migration_instance_id: Option<String>,
+    child_site_id: Option<i64>,
 ) -> Result<GcmsAccessApplyResult, String> {
     let conn = state.conns.get(&conn_id)?;
     if conn.kind != "ssh" {
@@ -5025,6 +6168,27 @@ pub(super) async fn gcms_remote_access_verify(
     }
     let domain = normalize_public_domain(&domain)?;
     let redirect_domain = normalize_redirect_domain(redirect_domain.as_deref(), &domain)?;
+    let child_route = if let (Some(instance_id), Some(site_id)) =
+        (migration_instance_id.as_deref(), child_site_id)
+    {
+        let (_, _, route) = migration_site_for_request(
+            &state,
+            instance_id,
+            site_id,
+            &domain,
+            redirect_domain.as_deref(),
+        )
+        .await?;
+        Some(route)
+    } else {
+        None
+    };
+    let allowed_primary_cname_target = child_route
+        .as_ref()
+        .and_then(GcmsMigrationSiteRoute::allowed_cname_target);
+    let child_redirect_target = child_route
+        .as_ref()
+        .and_then(GcmsMigrationSiteRoute::redirect_target);
     let migration_instance = migration_instance_for_request(
         &state.data_dir,
         migration_instance_id.as_deref(),
@@ -5041,11 +6205,17 @@ pub(super) async fn gcms_remote_access_verify(
         .or(_instance_port);
     let _guard = begin_gcms_operation(&state, &conn_id)?;
     let status = gcms_remote_status_at(&state, &conn_id, effective_instance_path).await?;
-    let (mut https_ok, mut http_status, mut verification_error) = verify_gcms_https(&domain).await;
+    let (mut https_ok, mut http_status, mut verification_error) =
+        if let Some(target) = child_redirect_target {
+            verify_gcms_redirect(target, &domain).await
+        } else {
+            verify_gcms_https(&domain).await
+        };
 
     // 兼容旧版 Pilot 已写入 BASE_URL、但实际进程没有重新加载的安装：只有后台路由或
     // 内置页面资源明确失败时才执行定向修复，然后重新验证；普通 DNS/证书等待不重启。
-    if !https_ok
+    if child_site_id.is_none()
+        && !https_ok
         && gcms_verification_needs_domain_reload(&verification_error)
         && status.installed
         && !status.path.is_empty()
@@ -5105,13 +6275,15 @@ pub(super) async fn gcms_remote_access_verify(
     let (mut cloudflare_proxy_applicable, mut cloudflare_proxied, mut cloudflare_proxy_error) =
         (false, false, String::new());
     if all_https_ok && enable_cloudflare_proxy.unwrap_or(false) {
-        match gcms_remote_access_check_inner(
+        match gcms_remote_access_check_context_inner(
             &state,
             &conn_id,
             &domain,
             redirect_domain.as_deref(),
             effective_instance_path,
             effective_instance_port,
+            child_site_id,
+            allowed_primary_cname_target,
         )
         .await
         {
@@ -5129,7 +6301,12 @@ pub(super) async fn gcms_remote_access_verify(
         }
         if cloudflare_proxied {
             tokio::time::sleep(Duration::from_secs(2)).await;
-            (https_ok, http_status, verification_error) = verify_gcms_https(&domain).await;
+            (https_ok, http_status, verification_error) =
+                if let Some(target) = child_redirect_target {
+                    verify_gcms_redirect(target, &domain).await
+                } else {
+                    verify_gcms_https(&domain).await
+                };
             if let Some(redirect_domain) = redirect_domain.as_deref() {
                 (
                     redirect_ok,
@@ -5144,17 +6321,19 @@ pub(super) async fn gcms_remote_access_verify(
         }
     }
     let refreshed = gcms_remote_status_at(&state, &conn_id, effective_instance_path).await?;
-    if let Some(instance_id) = migration_instance_id.as_deref() {
-        update_migration_instance_status(
-            &state.data_dir,
-            instance_id,
-            &refreshed,
-            all_https_ok,
-            cloudflare_proxy_applicable,
-            cloudflare_proxied,
-            &cloudflare_proxy_error,
-            (!all_https_ok).then_some(verification_error.as_str()),
-        )?;
+    if child_site_id.is_none() {
+        if let Some(instance_id) = migration_instance_id.as_deref() {
+            update_migration_instance_status(
+                &state.data_dir,
+                instance_id,
+                &refreshed,
+                all_https_ok,
+                cloudflare_proxy_applicable,
+                cloudflare_proxied,
+                &cloudflare_proxy_error,
+                (!all_https_ok).then_some(verification_error.as_str()),
+            )?;
+        }
     }
     Ok(GcmsAccessApplyResult {
         status: refreshed,
@@ -5184,6 +6363,9 @@ async fn gcms_remote_access_configure_inner(
     instance_path: Option<String>,
     instance_port: Option<u16>,
     migration_instance_id: Option<String>,
+    child_site_id: Option<i64>,
+    allowed_primary_cname_target: Option<String>,
+    child_redirect_target: Option<String>,
     on_event: &Channel<GcmsInstallEvent>,
 ) -> Result<GcmsAccessApplyResult, String> {
     let conn = state.conns.get(&conn_id)?;
@@ -5211,13 +6393,15 @@ async fn gcms_remote_access_configure_inner(
     };
 
     phase("正在复核域名解析与服务器环境…");
-    let check = gcms_remote_access_check_inner(
+    let check = gcms_remote_access_check_context_inner(
         &state,
         &conn_id,
         &domain,
         redirect_domain.as_deref(),
         effective_instance_path,
         effective_instance_port,
+        child_site_id,
+        allowed_primary_cname_target.as_deref(),
     )
     .await?;
     if !check.matched {
@@ -5263,7 +6447,7 @@ async fn gcms_remote_access_configure_inner(
         "正在备份并配置 Caddy…"
     });
     let env = format!(
-        "PILOT_DOMAIN={} PILOT_REDIRECT_DOMAIN={} PILOT_GCMS_HOME={} PILOT_GCMS_INSTANCE_PATH={} PILOT_GCMS_INSTANCE_PORT={} PILOT_GCMS_SERVICE_NAME={}",
+        "PILOT_DOMAIN={} PILOT_REDIRECT_DOMAIN={} PILOT_GCMS_HOME={} PILOT_GCMS_INSTANCE_PATH={} PILOT_GCMS_INSTANCE_PORT={} PILOT_GCMS_SERVICE_NAME={} PILOT_GCMS_CHILD_SITE_ID={} PILOT_GCMS_CHILD_REDIRECT_TARGET={}",
         shell_quote(&check.domain),
         shell_quote(
             check
@@ -5280,7 +6464,14 @@ async fn gcms_remote_access_configure_inner(
                 .as_ref()
                 .map(|instance| instance.service_name.as_str())
                 .unwrap_or_default()
-        )
+        ),
+        shell_quote(
+            &child_site_id
+                .filter(|value| *value > 0)
+                .map(|value| value.to_string())
+                .unwrap_or_default()
+        ),
+        shell_quote(child_redirect_target.as_deref().unwrap_or_default()),
     );
     let configure_script = if preflight.provider == "nginx" {
         GCMS_NGINX_CONFIGURE_CMD
@@ -5328,7 +6519,11 @@ async fn gcms_remote_access_configure_inner(
     });
     let status = gcms_remote_status_at(&state, &conn_id, effective_instance_path).await?;
     let (mut primary_https_ok, mut http_status, mut verification_error) =
-        verify_gcms_https(&check.domain).await;
+        if let Some(target) = child_redirect_target.as_deref() {
+            verify_gcms_redirect(target, &check.domain).await
+        } else {
+            verify_gcms_https(&check.domain).await
+        };
     let (redirect_url, mut redirect_ok, mut redirect_http_status, mut redirect_verification_error) =
         if let Some(redirect) = check.redirect.as_ref() {
             let (ok, status, error) = verify_gcms_redirect(&check.domain, &redirect.domain).await;
@@ -5353,7 +6548,11 @@ async fn gcms_remote_access_configure_inner(
             phase("Cloudflare 橙云已开启，正在复检公网访问…");
             tokio::time::sleep(Duration::from_secs(2)).await;
             (primary_https_ok, http_status, verification_error) =
-                verify_gcms_https(&check.domain).await;
+                if let Some(target) = child_redirect_target.as_deref() {
+                    verify_gcms_redirect(target, &check.domain).await
+                } else {
+                    verify_gcms_https(&check.domain).await
+                };
             if let Some(redirect) = check.redirect.as_ref() {
                 (
                     redirect_ok,
@@ -5376,17 +6575,19 @@ async fn gcms_remote_access_configure_inner(
     } else {
         "公网访问已就绪"
     });
-    if let Some(instance_id) = migration_instance_id.as_deref() {
-        update_migration_instance_status(
-            &state.data_dir,
-            instance_id,
-            &status,
-            https_ok,
-            cloudflare_proxy_applicable,
-            cloudflare_proxied,
-            &cloudflare_proxy_error,
-            (!https_ok).then_some(verification_error.as_str()),
-        )?;
+    if child_site_id.is_none() {
+        if let Some(instance_id) = migration_instance_id.as_deref() {
+            update_migration_instance_status(
+                &state.data_dir,
+                instance_id,
+                &status,
+                https_ok,
+                cloudflare_proxy_applicable,
+                cloudflare_proxied,
+                &cloudflare_proxy_error,
+                (!https_ok).then_some(verification_error.as_str()),
+            )?;
+        }
     }
     Ok(GcmsAccessApplyResult {
         status,
@@ -5426,6 +6627,45 @@ pub(super) async fn gcms_remote_access_configure(
         instance_path,
         instance_port,
         migration_instance_id,
+        None,
+        None,
+        None,
+        &on_event,
+    )
+    .await
+}
+
+#[tauri::command]
+pub(super) async fn gcms_remote_migration_site_access_configure(
+    state: tauri::State<'_, AppState>,
+    migration_instance_id: String,
+    site_id: i64,
+    domain: String,
+    redirect_domain: Option<String>,
+    enable_cloudflare_proxy: Option<bool>,
+    on_event: Channel<GcmsInstallEvent>,
+) -> Result<GcmsAccessApplyResult, String> {
+    let (instance, _, route) = migration_site_for_request(
+        &state,
+        &migration_instance_id,
+        site_id,
+        &domain,
+        redirect_domain.as_deref(),
+    )
+    .await?;
+    let _guard = begin_gcms_operation(&state, &instance.target_id)?;
+    gcms_remote_access_configure_inner(
+        &state,
+        instance.target_id,
+        domain,
+        None,
+        enable_cloudflare_proxy,
+        Some(instance.instance_path),
+        Some(instance.port),
+        Some(migration_instance_id),
+        Some(site_id),
+        route.allowed_cname_target().map(str::to_string),
+        route.redirect_target().map(str::to_string),
         &on_event,
     )
     .await
@@ -5517,6 +6757,7 @@ pub(super) async fn gcms_remote_access_cutover(
     instance_path: Option<String>,
     instance_port: Option<u16>,
     migration_instance_id: String,
+    child_site_id: Option<i64>,
     on_event: Channel<GcmsInstallEvent>,
 ) -> Result<GcmsAccessApplyResult, String> {
     if migration_instance_id.trim().is_empty() {
@@ -5536,6 +6777,27 @@ pub(super) async fn gcms_remote_access_cutover(
     if instance_port.is_some_and(|port| port != 0 && port != migration_instance.port) {
         return Err("迁移实例端口与本地登记不一致".into());
     }
+    let child_route = if let Some(site_id) = child_site_id {
+        let (_, _, route) = migration_site_for_request(
+            &state,
+            &migration_instance_id,
+            site_id,
+            &domain,
+            redirect_domain.as_deref(),
+        )
+        .await?;
+        Some(route)
+    } else {
+        None
+    };
+    let allowed_primary_cname_target = child_route
+        .as_ref()
+        .and_then(GcmsMigrationSiteRoute::allowed_cname_target)
+        .map(str::to_string);
+    let child_redirect_target = child_route
+        .as_ref()
+        .and_then(GcmsMigrationSiteRoute::redirect_target)
+        .map(str::to_string);
     let effective_path = migration_instance.instance_path.clone();
     let effective_port = migration_instance.port;
     let _guard = begin_gcms_operation(&state, &conn_id)?;
@@ -5546,13 +6808,15 @@ pub(super) async fn gcms_remote_access_cutover(
     };
 
     phase("正在建立 Cloudflare DNS 回滚点…");
-    let check = gcms_remote_access_check_inner(
+    let check = gcms_remote_access_check_context_inner(
         &state,
         &conn_id,
         &domain,
         redirect_domain.as_deref(),
         Some(&effective_path),
         Some(effective_port),
+        child_site_id,
+        allowed_primary_cname_target.as_deref(),
     )
     .await?;
     if check.matched {
@@ -5565,6 +6829,9 @@ pub(super) async fn gcms_remote_access_cutover(
             Some(effective_path),
             Some(effective_port),
             Some(migration_instance_id),
+            child_site_id,
+            allowed_primary_cname_target.clone(),
+            child_redirect_target.clone(),
             &on_event,
         )
         .await;
@@ -5663,13 +6930,15 @@ pub(super) async fn gcms_remote_access_cutover(
     }
 
     phase("DNS 已切到目标服务器，正在复核并配置 HTTPS…");
-    let switched = gcms_remote_access_check_inner(
+    let switched = gcms_remote_access_check_context_inner(
         &state,
         &conn_id,
         &check.domain,
         check.redirect.as_ref().map(|route| route.domain.as_str()),
         Some(&effective_path),
         Some(effective_port),
+        child_site_id,
+        allowed_primary_cname_target.as_deref(),
     )
     .await;
     let switched = match switched {
@@ -5702,6 +6971,9 @@ pub(super) async fn gcms_remote_access_cutover(
         Some(effective_path.clone()),
         Some(effective_port),
         Some(migration_instance_id.clone()),
+        child_site_id,
+        allowed_primary_cname_target.clone(),
+        child_redirect_target.clone(),
         &on_event,
     )
     .await;
@@ -5710,7 +6982,7 @@ pub(super) async fn gcms_remote_access_cutover(
         Err(error) => {
             let rollback_error = rollback_gcms_cutovers(&applied).await;
             let detail = format!("目标服务器配置失败：{error}");
-            let cleanup_error = if rollback_error.is_empty() {
+            let cleanup_error = if rollback_error.is_empty() && child_site_id.is_none() {
                 clear_failed_migration_cutover(&state, &migration_instance, &detail).await
             } else {
                 String::new()
@@ -5734,7 +7006,11 @@ pub(super) async fn gcms_remote_access_cutover(
             break;
         }
         tokio::time::sleep(Duration::from_secs(4)).await;
-        let (primary_ok, status, error) = verify_gcms_https(&switched.domain).await;
+        let (primary_ok, status, error) = if let Some(target) = child_redirect_target.as_deref() {
+            verify_gcms_redirect(target, &switched.domain).await
+        } else {
+            verify_gcms_https(&switched.domain).await
+        };
         configured.http_status = status;
         configured.verification_error = error;
         let (redirect_ok, redirect_status, redirect_error) =
@@ -5756,8 +7032,11 @@ pub(super) async fn gcms_remote_access_cutover(
             configured.verification_error.clone()
         };
         if rollback_error.is_empty() {
-            let cleanup_error =
-                clear_failed_migration_cutover(&state, &migration_instance, &detail).await;
+            let cleanup_error = if child_site_id.is_none() {
+                clear_failed_migration_cutover(&state, &migration_instance, &detail).await
+            } else {
+                String::new()
+            };
             return Err(if cleanup_error.is_empty() {
                 format!("{detail}；Cloudflare 已自动恢复旧源站")
             } else {
@@ -5766,21 +7045,27 @@ pub(super) async fn gcms_remote_access_cutover(
                 )
             });
         }
-        update_migration_instance_status(
-            &state.data_dir,
-            &migration_instance_id,
-            &configured.status,
-            configured.https_ok,
-            configured.cloudflare_proxy_applicable,
-            configured.cloudflare_proxied,
-            &configured.cloudflare_proxy_error,
-            Some(&detail),
-        )?;
+        if child_site_id.is_none() {
+            update_migration_instance_status(
+                &state.data_dir,
+                &migration_instance_id,
+                &configured.status,
+                configured.https_ok,
+                configured.cloudflare_proxy_applicable,
+                configured.cloudflare_proxied,
+                &configured.cloudflare_proxy_error,
+                Some(&detail),
+            )?;
+        }
         return Err(format!(
             "{detail}；Cloudflare 自动回滚失败：{rollback_error}"
         ));
     }
-    phase("老域名已安全切换到迁移实例");
+    phase(if child_site_id.is_some() {
+        "子站域名已安全切换到迁移实例"
+    } else {
+        "老域名已安全切换到迁移实例"
+    });
     Ok(configured)
 }
 
@@ -5811,17 +7096,29 @@ mod tests {
     #[test]
     fn parses_remote_gcms_password_status_without_exposing_credentials() {
         let found = parse_gcms_remote_status(
-            "PILOT_GCMS_INSTALLED\t1\nPILOT_GCMS_PATH\t/opt/gcms\nPILOT_GCMS_PASSWORD_STATUS\tdefault\nPILOT_GCMS_ADMIN_USER\tadmin\n",
+            "PILOT_GCMS_INSTALLED\t1\nPILOT_GCMS_PATH\t/opt/gcms\nPILOT_GCMS_PASSWORD_STATUS\tdefault\nPILOT_GCMS_ADMIN_USER\tadmin\nPILOT_GCMS_PASSWORD_CHANGE_SUPPORTED\t1\n",
         )
         .unwrap();
         assert_eq!(found.password_status, "default");
         assert_eq!(found.admin_user, "admin");
+        assert!(found.password_change_supported);
 
         let invalid = parse_gcms_remote_status(
             "PILOT_GCMS_INSTALLED\t1\nPILOT_GCMS_PATH\t/opt/gcms\nPILOT_GCMS_PASSWORD_STATUS\tnot-a-status\n",
         )
         .unwrap();
         assert_eq!(invalid.password_status, "unknown");
+        assert!(!invalid.password_change_supported);
+    }
+
+    #[test]
+    fn validates_remote_admin_password_before_sending_it() {
+        assert!(validate_gcms_admin_password("A-safe-password-2026!").is_ok());
+        assert!(validate_gcms_admin_password("short").is_err());
+        assert!(validate_gcms_admin_password("admin123").is_err());
+        assert!(validate_gcms_admin_password("valid-pass\nword").is_err());
+        assert!(validate_gcms_admin_password(&"密".repeat(25)).is_err());
+        assert!(validate_gcms_admin_password(&"x".repeat(73)).is_err());
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -6068,6 +7365,7 @@ mod tests {
         );
         let mut check = GcmsAccessCheck {
             domain: "cms.example.com".into(),
+            allowed_cname_target: String::new(),
             server_ipv4: vec!["203.0.113.8".into()],
             server_ipv6: Vec::new(),
             dns_ipv4: vec!["203.0.113.8".into()],
@@ -6371,6 +7669,7 @@ mod tests {
             cloudflare_proxy_applicable: true,
             cloudflare_proxied: true,
             service_name: "pilot-gcms-test".into(),
+            remote_state: "unknown".into(),
             created_at: 1,
             updated_at: 1,
             ..Default::default()
@@ -6424,11 +7723,130 @@ mod tests {
         let _ = fs::remove_dir_all(data_dir);
     }
 
+    #[test]
+    fn migration_presence_distinguishes_missing_residual_and_running() {
+        let missing = parse_migration_presence(
+            "PILOT_INSTANCE_PATH_EXISTS\t0\nPILOT_INSTANCE_MARKER_EXISTS\t0\nPILOT_INSTANCE_SERVICE_EXISTS\t0\nPILOT_INSTANCE_SERVICE_ENABLED\t0\nPILOT_INSTANCE_SERVICE_RUNNING\t0\nPILOT_INSTANCE_CADDY_EXISTS\t0\nPILOT_INSTANCE_NGINX_EXISTS\t0\n",
+        )
+        .unwrap();
+        assert_eq!(migration_presence_state(&missing, false, None).0, "missing");
+
+        let residual = parse_migration_presence(
+            "PILOT_INSTANCE_PATH_EXISTS\t0\nPILOT_INSTANCE_MARKER_EXISTS\t0\nPILOT_INSTANCE_SERVICE_EXISTS\t1\nPILOT_INSTANCE_SERVICE_ENABLED\t1\nPILOT_INSTANCE_SERVICE_RUNNING\t0\nPILOT_INSTANCE_CADDY_EXISTS\t1\nPILOT_INSTANCE_NGINX_EXISTS\t0\n",
+        )
+        .unwrap();
+        let (state, detail) = migration_presence_state(&residual, false, None);
+        assert_eq!(state, "residual");
+        assert!(detail.contains("实例目录已不存在"));
+        assert!(detail.contains("systemd 服务仍然存在"));
+        assert!(detail.contains("公网访问配置仍然存在"));
+
+        let running = parse_migration_presence(
+            "PILOT_INSTANCE_PATH_EXISTS\t1\nPILOT_INSTANCE_MARKER_EXISTS\t1\nPILOT_INSTANCE_SERVICE_EXISTS\t1\nPILOT_INSTANCE_SERVICE_ENABLED\t1\nPILOT_INSTANCE_SERVICE_RUNNING\t1\nPILOT_INSTANCE_CADDY_EXISTS\t1\nPILOT_INSTANCE_NGINX_EXISTS\t0\nPILOT_INSTANCE_ACCESS_DOMAIN\tcms.example.com\n",
+        )
+        .unwrap();
+        assert_eq!(running.access_domain, "cms.example.com");
+        assert_eq!(migration_presence_state(&running, true, None).0, "running");
+
+        let child_web_residual = parse_migration_presence(
+            "PILOT_INSTANCE_PATH_EXISTS\t0\nPILOT_INSTANCE_MARKER_EXISTS\t0\nPILOT_INSTANCE_SERVICE_EXISTS\t0\nPILOT_INSTANCE_SERVICE_ENABLED\t0\nPILOT_INSTANCE_SERVICE_RUNNING\t0\nPILOT_INSTANCE_CADDY_EXISTS\t0\nPILOT_INSTANCE_NGINX_EXISTS\t0\nPILOT_INSTANCE_CHILD_CADDY_EXISTS\t1\nPILOT_INSTANCE_CHILD_NGINX_EXISTS\t0\n",
+        )
+        .unwrap();
+        let (state, detail) = migration_presence_state(&child_web_residual, false, None);
+        assert_eq!(state, "residual");
+        assert!(detail.contains("公网访问配置仍然存在"));
+    }
+
+    #[test]
+    fn parses_migration_child_sites_and_prioritizes_primary_domain() {
+        let sites = parse_migration_sites(
+            "banner\nPILOT_GCMS_SITES_JSON\t[{\"id\":2,\"slug\":\"docs\",\"name\":\"Docs\",\"deployment\":\"local\",\"data_present\":true,\"domains\":[{\"id\":12,\"host\":\"www.example.com\",\"enabled\":true},{\"id\":11,\"host\":\"docs.example.com\",\"is_primary\":true,\"enabled\":true}],\"cloudflare\":{}}]\n",
+        )
+        .unwrap();
+        assert_eq!(sites.len(), 1);
+        assert_eq!(sites[0].slug, "docs");
+        assert_eq!(sites[0].domains[0].host, "docs.example.com");
+        assert!(sites[0].domains[0].is_primary);
+    }
+
+    #[test]
+    fn migration_child_domains_are_selected_and_migrated_independently() {
+        let site = GcmsMigrationSite {
+            id: 2,
+            name: "Docs".into(),
+            domains: vec![
+                GcmsMigrationSiteDomain {
+                    id: 11,
+                    host: "docs.example.com".into(),
+                    is_primary: true,
+                    enabled: true,
+                    access_configured: true,
+                    ..Default::default()
+                },
+                GcmsMigrationSiteDomain {
+                    id: 12,
+                    host: "help.example.com".into(),
+                    enabled: true,
+                    ..Default::default()
+                },
+                GcmsMigrationSiteDomain {
+                    id: 13,
+                    host: "www.docs.example.com".into(),
+                    redirect_to_primary: true,
+                    enabled: true,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+
+        let primary = migration_site_route_for_request(&site, "docs.example.com", None).unwrap();
+        assert!(primary.allowed_cname_target().is_none());
+        assert!(primary.redirect_target().is_none());
+
+        let alias = migration_site_route_for_request(&site, "help.example.com", None).unwrap();
+        assert_eq!(alias.allowed_cname_target(), Some("docs.example.com"));
+        assert!(alias.redirect_target().is_none());
+
+        let redirect =
+            migration_site_route_for_request(&site, "www.docs.example.com", None).unwrap();
+        assert_eq!(redirect.allowed_cname_target(), Some("docs.example.com"));
+        assert_eq!(redirect.redirect_target(), Some("docs.example.com"));
+
+        assert!(migration_site_route_for_request(
+            &site,
+            "docs.example.com",
+            Some("www.docs.example.com")
+        )
+        .is_err());
+        assert!(migration_site_route_for_request(&site, "other.example.com", None).is_err());
+    }
+
+    #[test]
+    fn migration_cleanup_scope_requires_generated_identity_and_path() {
+        let valid = GcmsMigrationSnapshot {
+            id: "gcms-0123456789abcdef".into(),
+            instance_path: "/opt/gcms-instances/gcms-0123456789abcdef".into(),
+            service_name: "pilot-gcms-0123456789abcdef".into(),
+            port: 18080,
+            ..Default::default()
+        };
+        assert!(validate_migration_cleanup_snapshot(&valid).is_ok());
+
+        let mut invalid = valid.clone();
+        invalid.instance_path = "/opt/gcms-instances/other".into();
+        assert!(validate_migration_cleanup_snapshot(&invalid).is_err());
+        invalid = valid;
+        invalid.service_name = "caddy".into();
+        assert!(validate_migration_cleanup_snapshot(&invalid).is_err());
+    }
+
     #[cfg(not(target_os = "windows"))]
     #[test]
     fn remote_shell_scripts_pass_syntax_check() {
         for script in [
             GCMS_REMOTE_PROBE_CMD,
+            GCMS_REMOTE_SET_ADMIN_PASSWORD_CMD,
             GCMS_REMOTE_PUBLIC_IP_CMD,
             GCMS_REMOTE_SERVICE_ACTION_CMD,
             GCMS_CADDY_PREFLIGHT_CMD,
@@ -6439,6 +7857,9 @@ mod tests {
             GCMS_MIGRATION_STAGE_CMD,
             GCMS_MIGRATION_RESTORE_CMD,
             GCMS_MIGRATION_SERVICE_CMD,
+            GCMS_MIGRATION_PRESENCE_CMD,
+            GCMS_MIGRATION_UNINSTALL_CMD,
+            GCMS_MIGRATION_SITES_CMD,
         ] {
             let status = std::process::Command::new("sh")
                 .args(["-n", "-c", script])
@@ -6446,6 +7867,8 @@ mod tests {
                 .unwrap();
             assert!(status.success());
         }
+        assert!(GCMS_REMOTE_SET_ADMIN_PASSWORD_CMD.contains("pilot-set-admin-password"));
+        assert!(!GCMS_REMOTE_SET_ADMIN_PASSWORD_CMD.contains("PASSWORD="));
         assert!(GCMS_CADDY_CONFIGURE_CMD.contains("redir https://%s{uri} 301"));
         assert!(GCMS_CADDY_CONFIGURE_CMD.contains("PILOT_REDIRECT_DOMAIN"));
         assert!(GCMS_NGINX_CONFIGURE_CMD.contains("nginx -t"));

@@ -1689,6 +1689,7 @@ dependencies = [
  "uuid",
  "windows 0.61.3",
  "windows-native-keyring-store",
+ "zeroize",
  "zip 8.6.0",
 ]
 

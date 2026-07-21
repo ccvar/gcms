@@ -1012,6 +1012,16 @@ func (s *Store) SetAdminPasswordHash(username, hash string) error {
 	return err
 }
 
+// RevokeAdminSessions 注销平台后台的全部会话。
+// 密码由服务器本机运维命令轮换时，不保留任何旧登录态。
+func (s *Store) RevokeAdminSessions() error {
+	if s == nil {
+		return nil
+	}
+	_, err := s.db.Exec(`DELETE FROM platform_sessions`)
+	return err
+}
+
 func (s *Store) IsDefaultPassword() bool {
 	_, hash, err := s.GetAdminCredentials()
 	if err != nil || hash == "" {

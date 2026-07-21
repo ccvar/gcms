@@ -85,6 +85,25 @@ fn perm_str(mode: u32) -> String {
     s
 }
 
+/// 删除目录前的最低限度路径保护。远端路径始终按 POSIX 规则处理，不能用宿主机的
+/// `std::path::Path`（Pilot 在 Windows 上运行时会套用 Windows 路径语义）。
+fn validate_remove_dir_path(path: &str) -> Result<(), String> {
+    let path = path.trim();
+    if path.is_empty() || path.trim_matches('/').is_empty() {
+        return Err("拒绝删除远端根目录".to_string());
+    }
+    if path.split('/').any(|part| matches!(part, "." | "..")) {
+        return Err("删除路径不能包含 . 或 ..".to_string());
+    }
+    Ok(())
+}
+
+/// 把任意远端路径安全地放进 POSIX shell 单引号。删除目录会在服务器上执行一次
+/// `rm -rf`，避免 SFTP 每删一个文件都跨网络往返。
+fn posix_shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
+}
+
 /// 由「已存的连接 + 钥匙串」组装认证材料。凭据只在 Rust 侧流转，绝不出这个进程。
 /// 无口令私钥不会有钥匙串条目 —— get_key 失败按「无口令」处理，不是错误。
 pub fn auth_for(conn: &crate::pack::Connection) -> Result<SshAuth, String> {
@@ -641,7 +660,21 @@ impl SshSessions {
                 b64: base64::engine::general_purpose::STANDARD.encode(&head),
             });
         }
-        self.exec_inner(conn_id, cmd, timeout_secs, sink).await
+        self.exec_inner(conn_id, cmd, timeout_secs, sink, None)
+            .await
+    }
+
+    /// 跑一条需要标准输入的一次性命令。标准输入不会拼进命令文本，也不会回显到终端；
+    /// 适合传递密码等短暂敏感数据。发送后立即关闭 stdin，让远端程序能可靠读到 EOF。
+    pub async fn exec_with_stdin(
+        &self,
+        conn_id: &str,
+        cmd: &str,
+        stdin: &[u8],
+        timeout_secs: u64,
+    ) -> Result<ExecOut, String> {
+        self.exec_inner(conn_id, cmd, timeout_secs, None, Some(stdin))
+            .await
     }
 
     async fn exec_inner(
@@ -650,6 +683,7 @@ impl SshSessions {
         cmd: &str,
         timeout_secs: u64,
         sink: Option<Channel<SshEvent>>,
+        stdin: Option<&[u8]>,
     ) -> Result<ExecOut, String> {
         let handle = {
             let g = self.map.lock().await;
@@ -666,7 +700,17 @@ impl SshSessions {
             .await
             .map_err(|e| format!("下发命令失败: {e}"))?;
 
-        let (mut reader, _writer) = ch.split();
+        let (mut reader, writer) = ch.split();
+        if let Some(data) = stdin {
+            writer
+                .data_bytes(data.to_vec())
+                .await
+                .map_err(|e| format!("写入命令标准输入失败: {e}"))?;
+            writer
+                .eof()
+                .await
+                .map_err(|e| format!("关闭命令标准输入失败: {e}"))?;
+        }
         let sink2 = sink.clone(); // collect 闭包要借走 sink，收尾那几行得另留一份
         let collect = async {
             let mut out = ExecOut {
@@ -849,9 +893,42 @@ impl SshSessions {
     pub async fn remove(&self, conn_id: &str, path: &str, dir: bool) -> Result<(), String> {
         let sftp = self.sftp(conn_id).await?;
         if dir {
-            sftp.remove_dir(path)
+            validate_remove_dir_path(path)?;
+            // 先用 lstat 确认调用方没有把符号链接伪装成目录；canonicalize 会跟随
+            // 最后一段符号链接，所以顺序不能反。
+            let metadata = sftp
+                .symlink_metadata(path)
                 .await
-                .map_err(|e| format!("删除目录失败（非空？）: {e}"))
+                .map_err(|e| format!("读取待删除文件夹失败: {e}"))?;
+            if !metadata.is_dir() {
+                return Err("目标不是文件夹，请刷新目录后重试".to_string());
+            }
+            let target = sftp
+                .canonicalize(path)
+                .await
+                .map_err(|e| format!("解析待删除文件夹失败: {e}"))?;
+            if target.trim_matches('/').is_empty() {
+                return Err("拒绝删除远端根目录".to_string());
+            }
+            // SFTP 的 rmdir 只能删空目录；逐项删除会为每个文件产生一次网络往返。
+            // 校验完成后交给远端 rm 在服务器本地遍历，速度接近用户直接敲命令。
+            drop(sftp);
+            let command = format!("rm -rf -- {}", posix_shell_quote(&target));
+            let output = self.exec(conn_id, &command, 300, false).await?;
+            if output.code != 0 {
+                let detail = if !output.stderr.trim().is_empty() {
+                    output.stderr.trim()
+                } else if !output.stdout.trim().is_empty() {
+                    output.stdout.trim()
+                } else {
+                    "远端未返回详细原因"
+                };
+                return Err(format!(
+                    "删除文件夹失败（退出码 {}）：{detail}",
+                    output.code
+                ));
+            }
+            Ok(())
         } else {
             sftp.remove_file(path)
                 .await
@@ -906,6 +983,27 @@ impl SshSessions {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remove_dir_rejects_dangerous_directory_paths() {
+        for path in ["", " ", "/", "///", ".", "..", "/tmp/../", "/home/./site"] {
+            assert!(
+                validate_remove_dir_path(path).is_err(),
+                "危险路径应该被拒绝: {path:?}"
+            );
+        }
+        assert!(validate_remove_dir_path("/home/deploy/cms.ccvar.com").is_ok());
+        assert!(validate_remove_dir_path("cms.ccvar.com").is_ok());
+    }
+
+    #[test]
+    fn remove_dir_shell_quote_cannot_escape_the_argument() {
+        assert_eq!(posix_shell_quote("/srv/site"), "'/srv/site'");
+        assert_eq!(
+            posix_shell_quote("/srv/a'b; rm -rf /"),
+            "'/srv/a'\"'\"'b; rm -rf /'"
+        );
+    }
 
     /// ★ 回归：**回显必须只经 sink 这一个出口**。
     /// 出过的 bug：收尾那行「▸ 完成」用的是「按 conn_id 现查通道」的辅助函数，绕过了 echo 开关，

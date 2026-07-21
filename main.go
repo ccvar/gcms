@@ -3,19 +3,24 @@
 package main
 
 import (
+	"bytes"
 	"database/sql"
 	"embed"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"cms.ccvar.com/internal/platform"
 	"cms.ccvar.com/internal/store"
 	"cms.ccvar.com/internal/web"
+	"golang.org/x/crypto/bcrypt"
 )
 
 //go:embed templates
@@ -27,9 +32,18 @@ var assetsFS embed.FS
 func main() {
 	dbPath := env("CMS_DB", "data/cms.db")
 	systemDBPath := env("SYSTEM_DB", filepath.Join(filepath.Dir(dbPath), "system.db"))
-	if len(os.Args) == 2 && os.Args[1] == "pilot-security-status" {
-		printPilotSecurityStatus(dbPath, systemDBPath)
-		return
+	if len(os.Args) == 2 {
+		switch os.Args[1] {
+		case "pilot-security-status":
+			printPilotSecurityStatus(dbPath, systemDBPath)
+			return
+		case "pilot-set-admin-password":
+			if err := setPilotAdminPassword(dbPath, systemDBPath, os.Stdin, os.Stdout); err != nil {
+				fmt.Fprintf(os.Stderr, "修改后台密码失败：%v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
 	}
 	if dir := filepath.Dir(dbPath); dir != "" {
 		_ = os.MkdirAll(dir, 0o755)
@@ -119,6 +133,120 @@ func printPilotSecurityStatus(dbPath, systemDBPath string) {
 	}
 	fmt.Printf("PILOT_GCMS_PASSWORD_STATUS\t%s\n", status)
 	fmt.Printf("PILOT_GCMS_ADMIN_USER\t%s\n", pilotStatusField(user))
+}
+
+// bcrypt 只安全定义到 72 字节；在读取阶段就设硬上限，避免悄悄截断两个不同密码。
+const pilotAdminPasswordMaxBytes = 72
+
+// setPilotAdminPassword 是给服务器本机运维使用的写入命令。
+// 新密码只从 stdin 读取，绝不接受命令行参数，也不会写入输出、日志或配置文件。
+func setPilotAdminPassword(dbPath, systemDBPath string, input io.Reader, output io.Writer) error {
+	password, err := readPilotAdminPassword(input)
+	if err != nil {
+		return err
+	}
+	defer clearBytes(password)
+
+	if strings.TrimSpace(dbPath) == "" {
+		return errors.New("未配置站点数据库")
+	}
+	if _, err := os.Stat(dbPath); err != nil {
+		if os.IsNotExist(err) {
+			return errors.New("站点数据库不存在")
+		}
+		return fmt.Errorf("无法读取站点数据库：%w", err)
+	}
+
+	st, err := store.Open(dbPath)
+	if err != nil {
+		return fmt.Errorf("打开站点数据库：%w", err)
+	}
+	defer st.Close()
+	ps, err := platform.Open(systemDBPath)
+	if err != nil {
+		return fmt.Errorf("打开平台数据库：%w", err)
+	}
+	defer ps.Close()
+
+	user, _, credentialsErr := ps.GetAdminCredentials()
+	if credentialsErr != nil && !errors.Is(credentialsErr, sql.ErrNoRows) {
+		return fmt.Errorf("读取平台管理员：%w", credentialsErr)
+	}
+	if strings.TrimSpace(user) == "" {
+		user, _ = st.GetSetting("admin_user")
+	}
+	if strings.TrimSpace(user) == "" {
+		user = "admin"
+	}
+
+	hash, err := bcrypt.GenerateFromPassword(password, bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("生成密码凭据：%w", err)
+	}
+	defer clearBytes(hash)
+
+	// 先注销所有旧会话，再同步平台与旧站点凭据。平台库是多站后台的权威来源，
+	// 站点库继续同步，保证旧版与降级读取仍使用同一个密码。
+	if err := ps.RevokeAdminSessions(); err != nil {
+		return fmt.Errorf("注销平台旧会话：%w", err)
+	}
+	if err := st.RevokeAdminSessions(); err != nil {
+		return fmt.Errorf("注销站点旧会话：%w", err)
+	}
+	if err := ps.SetAdminPasswordHash(user, string(hash)); err != nil {
+		return fmt.Errorf("更新平台管理员密码：%w", err)
+	}
+	if err := st.SetSetting("admin_user", user); err != nil {
+		return fmt.Errorf("同步站点管理员：%w", err)
+	}
+	if err := st.SetSetting("admin_password_hash", string(hash)); err != nil {
+		return fmt.Errorf("同步站点管理员密码：%w", err)
+	}
+
+	fmt.Fprintln(output, "PILOT_GCMS_PASSWORD_UPDATED\t1")
+	fmt.Fprintf(output, "PILOT_GCMS_ADMIN_USER\t%s\n", pilotStatusField(user))
+	return nil
+}
+
+func readPilotAdminPassword(input io.Reader) ([]byte, error) {
+	if input == nil {
+		return nil, errors.New("没有收到新密码")
+	}
+	password, err := io.ReadAll(io.LimitReader(input, pilotAdminPasswordMaxBytes+1))
+	if err != nil {
+		return nil, errors.New("读取新密码失败")
+	}
+	if len(password) > pilotAdminPasswordMaxBytes {
+		clearBytes(password)
+		return nil, errors.New("新密码过长，最多 72 个英文字符（中文等字符占用更多长度）")
+	}
+	// 兼容人在终端中输入后按 Enter；由 Pilot 传入时没有行尾，不会改变密码内容。
+	password = bytes.TrimSuffix(password, []byte{'\n'})
+	password = bytes.TrimSuffix(password, []byte{'\r'})
+	if !utf8.Valid(password) {
+		clearBytes(password)
+		return nil, errors.New("新密码必须是有效文本")
+	}
+	if bytes.ContainsAny(password, "\x00\r\n") {
+		clearBytes(password)
+		return nil, errors.New("新密码不能包含换行或空字符")
+	}
+	length := utf8.RuneCount(password)
+	if length < 8 {
+		clearBytes(password)
+		return nil, errors.New("新密码至少需要 8 个字符")
+	}
+	if bytes.Equal(password, []byte(store.DefaultAdminPassword)) {
+		clearBytes(password)
+		return nil, errors.New("新密码不能继续使用默认密码")
+	}
+	return password, nil
+}
+
+func clearBytes(value []byte) {
+	for i := range value {
+		value[i] = 0
+	}
 }
 
 func readPilotAdminCredentials(systemDBPath, dbPath string) (string, string) {

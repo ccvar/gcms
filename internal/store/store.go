@@ -795,6 +795,16 @@ func (s *Store) DeleteAdminSession(token string) error {
 	return err
 }
 
+// RevokeAdminSessions 注销当前站点的全部后台会话。
+// 本机运维命令修改密码后调用它，避免旧会话在凭据轮换后继续有效。
+func (s *Store) RevokeAdminSessions() error {
+	if s == nil {
+		return nil
+	}
+	_, err := s.db.Exec(`DELETE FROM admin_sessions`)
+	return err
+}
+
 func (s *Store) DismissAdminPasswordWarning(token string) error {
 	_, err := s.db.Exec(`UPDATE admin_sessions SET pw_dismissed=1,updated_at=? WHERE token_hash=?`, fmtTime(time.Now()), sessionTokenHash(token))
 	return err
