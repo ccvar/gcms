@@ -2051,7 +2051,8 @@ func (s *Server) servePlatformKeyRequest(w http.ResponseWriter, r *http.Request,
 
 // servePlatformDiscovery 回应 GET /api/platform/v1/sites：仅平台密钥可用，返回该密钥当前**实际可管**的站点集。
 // 契约（已冻结，CLI 是硬消费方）：{"items":[{"id","slug","name","capabilities","api_base"}],"all_sites":bool}
-// 附加字段（可选、只增不改，供 gcms Pilot 等客户端展示）："url" 站点公开地址（无法确定时为空）、"logo" 站点 Logo 绝对地址（未设置时为空）。
+// 附加字段（可选、只增不改，供 gcms Pilot 等客户端展示）："url" 站点公开地址（无法确定时为空）、
+// "logo" 站点 Logo 绝对地址（未设置时为空）、"readiness" 新站上线准备状态。
 func (s *Server) servePlatformDiscovery(w http.ResponseWriter, r *http.Request, pool *SiteRuntimePool) {
 	if r.Method != http.MethodGet {
 		apiError(w, http.StatusMethodNotAllowed, "method_not_allowed", "仅支持 GET。")
@@ -2102,15 +2103,17 @@ func (s *Server) servePlatformDiscovery(w http.ResponseWriter, r *http.Request, 
 	}
 	items := make([]map[string]any, 0, len(sites))
 	for _, site := range sites {
+		publicURL := s.discoverySiteURL(site, domainsBySite[site.ID])
 		items = append(items, map[string]any{
 			"id":           site.ID,
 			"slug":         site.Slug,
 			"name":         site.Name,
 			"capabilities": caps,
 			"api_base":     fmt.Sprintf("%s/api/platform/v1/sites/%d", base, site.ID),
-			"url":          s.discoverySiteURL(site, domainsBySite[site.ID]),
+			"url":          publicURL,
 			"logo":         s.discoverySiteLogo(pool, site, domainsBySite[site.ID]),
-			"favicon":      s.discoverySiteFavicon(site, domainsBySite[site.ID]),
+			"favicon":      s.discoverySiteFavicon(pool, site, domainsBySite[site.ID]),
+			"readiness":    s.discoverySiteReadiness(pool, site, publicURL),
 		})
 	}
 	_ = s.platform.TouchPlatformKey(key.ID)
@@ -2118,6 +2121,64 @@ func (s *Server) servePlatformDiscovery(w http.ResponseWriter, r *http.Request, 
 		"items":     items,
 		"all_sites": key.MembershipMode == platform.KeyMembershipAll,
 	})
+}
+
+// discoverySiteReadiness 给 Pilot 一组可以直接展示的、只读的上线准备事实。
+// 这里返回的是“是否已由用户/AI 明确配置”，而不是前台能否拿到某个资源 URL：新站尚未绑定域名时，
+// Logo 等相对路径无法绝对化，但配置本身依然存在，不能因此误报为缺失。内置占位资源不算已完成品牌配置。
+func (s *Server) discoverySiteReadiness(pool *SiteRuntimePool, site *platform.Site, publicURL string) map[string]any {
+	state := map[string]any{
+		"public_url":        publicURL != "",
+		"https":             strings.HasPrefix(strings.ToLower(publicURL), "https://"),
+		"logo":              false,
+		"favicon":           false,
+		"share_image":       false,
+		"published_content": false,
+	}
+	if pool == nil || site == nil {
+		return state
+	}
+	rt, ok := pool.runtimeByID(site.ID)
+	if !ok || rt == nil || rt.Store == nil {
+		return state
+	}
+	logo, favicon, shareImage := discoveryRuntimeBrand(rt)
+	state["logo"] = logo != "" && logo != defaultLogoPath && logo != defaultLogoENPath
+	state["favicon"] = favicon != "" && favicon != defaultFaviconPath
+	state["share_image"] = shareImage != "" && shareImage != defaultShareImageURL && shareImage != "/assets/og-cover-en.webp"
+	if _, published, err := rt.Store.LastPublicUpdate(); err == nil {
+		state["published_content"] = published
+	}
+	return state
+}
+
+// discoveryRuntimeBrand 统一按站点当前默认语种读取生效中的品牌设置。
+// Logo / 分享图允许按语种覆盖，直接读裸 settings 会把“前台已经生效”的素材误判成未配置；
+// favicon 是全站设置，也从同一份运行时视图取值，确保发现接口与真实页面同源。
+func discoveryRuntimeBrand(rt *SiteRuntime) (logo, favicon, shareImage string) {
+	if rt == nil || rt.Store == nil {
+		return "", "", ""
+	}
+	if rt.server != nil {
+		view := rt.server.site(rt.server.defaultLang())
+		return strings.TrimSpace(view.Logo), strings.TrimSpace(view.Favicon), strings.TrimSpace(view.ShareImage)
+	}
+	return strings.TrimSpace(rt.Store.Setting("site.logo")),
+		strings.TrimSpace(rt.Store.Setting("site.favicon")),
+		strings.TrimSpace(rt.Store.Setting("site.share_image"))
+}
+
+// discoveryUploadDataURL 把尚未部署的新站上传素材以内联图片交给已鉴权的 Pilot。
+// imageFileDataURL 自带 256 KiB 上限和图片 MIME 校验，避免把大文件或任意文件塞进发现响应。
+func discoveryUploadDataURL(rt *SiteRuntime, raw string) string {
+	if rt == nil || strings.TrimSpace(rt.UploadDir) == "" || !strings.HasPrefix(raw, "/uploads/") {
+		return ""
+	}
+	name, ok := uploadNameFromPath(strings.Split(raw, "?")[0])
+	if !ok {
+		return ""
+	}
+	return imageFileDataURL(filepath.Join(rt.UploadDir, name))
 }
 
 // discoverySiteURL 给出站点对外可访问的公开地址，与站点管理卡片上的官方域名保持一致：
@@ -2145,7 +2206,8 @@ func (s *Server) discoverySiteURL(site *platform.Site, domains []*platform.SiteD
 	return s.siteBaseURL(site, domains)
 }
 
-// discoverySiteLogo 读取站点的 site.logo 设置并转成绝对地址；拿不到公开地址的相对 Logo 返回空。
+// discoverySiteLogo 读取站点当前生效的 Logo。已部署时返回公开绝对地址；尚未部署时，
+// 对受控的小型上传图片返回 data URL，让 Pilot 可以立即替换建站占位图。
 func (s *Server) discoverySiteLogo(pool *SiteRuntimePool, site *platform.Site, domains []*platform.SiteDomain) string {
 	if pool == nil || site == nil {
 		return ""
@@ -2154,33 +2216,34 @@ func (s *Server) discoverySiteLogo(pool *SiteRuntimePool, site *platform.Site, d
 	if !ok || rt == nil || rt.Store == nil {
 		return ""
 	}
-	logo := strings.TrimSpace(rt.Store.Setting("site.logo"))
-	if logo == "" {
+	logo, _, _ := discoveryRuntimeBrand(rt)
+	if logo == "" || logo == defaultLogoPath || logo == defaultLogoENPath {
 		return ""
 	}
-	if strings.HasPrefix(logo, "http://") || strings.HasPrefix(logo, "https://") {
+	if strings.HasPrefix(logo, "http://") || strings.HasPrefix(logo, "https://") || strings.HasPrefix(logo, "data:image/") {
 		return logo
 	}
 	base := s.discoverySiteURL(site, domains)
 	if base == "" {
-		return ""
+		return discoveryUploadDataURL(rt, logo)
 	}
 	return base + "/" + strings.TrimLeft(logo, "/")
 }
 
-// discoverySiteFavicon 给出站点 favicon 的**公开**绝对地址，供无 admin 会话的客户端（gcms Pilot）加载。
+// discoverySiteFavicon 给出站点 favicon 的可展示地址，供无 admin 会话的客户端（gcms Pilot）加载。
 // 关键：**不能**走 platformSiteIconURL——它把上传图标改写成鉴权的 /admin/sites/{id}/uploads/... 路由，
 // 已发布的 Cloudflare 静态站按 /admin 前缀直接 404、平台侧则 302 到登录页（仅认 cookie，不认 API key）。
 // 改为直接读站点自己的 site.favicon（导出会把 /uploads、/assets 一并发布），用站点公开域名绝对化；
-// data:/绝对 URL 原样返回；只放行导出真正会服务的公开前缀，其余（含无公开域名）返回空由客户端回退。
-func (s *Server) discoverySiteFavicon(site *platform.Site, domains []*platform.SiteDomain) string {
-	if site == nil {
+// data:/绝对 URL 原样返回；上传文件优先安全内联，其他相对路径仅在已有公开域名时绝对化。
+func (s *Server) discoverySiteFavicon(pool *SiteRuntimePool, site *platform.Site, domains []*platform.SiteDomain) string {
+	if pool == nil || site == nil {
 		return ""
 	}
-	raw := ""
-	if rt, ok := s.runtimePool().runtimeByID(site.ID); ok && rt != nil && rt.Store != nil {
-		raw = strings.TrimSpace(rt.Store.Setting("site.favicon"))
+	rt, ok := pool.runtimeByID(site.ID)
+	if !ok || rt == nil || rt.Store == nil {
+		return ""
 	}
+	_, raw, _ := discoveryRuntimeBrand(rt)
 	if raw == "" && site.IsDefault {
 		raw = defaultFaviconPath // "/assets/favicon.svg"，导出会发布
 	}
@@ -2193,6 +2256,11 @@ func (s *Server) discoverySiteFavicon(site *platform.Site, domains []*platform.S
 	// 仅 /assets、/uploads、/favicon.ico 在导出上公开可取；其余（含 /admin 改写）一律不发。
 	if !(strings.HasPrefix(raw, "/assets/") || strings.HasPrefix(raw, "/uploads/") || raw == "/favicon.ico") {
 		return ""
+	}
+	// 上传的站点图标优先内联：写入后即刻可在 Pilot 显示，不必等域名、部署或 CDN 缓存。
+	// 文件过大/缺失时再退回公开地址。
+	if dataURL := discoveryUploadDataURL(rt, raw); dataURL != "" {
+		return dataURL
 	}
 	base := s.discoverySiteURL(site, domains)
 	if base == "" {

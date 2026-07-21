@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -194,7 +195,7 @@ func TestPlatformKeyDispatchMembership(t *testing.T) {
 }
 
 func TestPlatformKeyDiscoveryContract(t *testing.T) {
-	_, h, ps, _, blogSite := setupPlatformAutomation(t)
+	srv, h, ps, _, blogSite := setupPlatformAutomation(t)
 	token := "gcmsp_discovery123456"
 	if _, err := ps.CreatePlatformKey("bot", token, token[:13], platform.KeyMembershipAllowlist,
 		"posts:read", []int64{blogSite.ID}, time.Time{}); err != nil {
@@ -219,6 +220,15 @@ func TestPlatformKeyDiscoveryContract(t *testing.T) {
 			APIBase      string   `json:"api_base"`
 			URL          string   `json:"url"`
 			Logo         string   `json:"logo"`
+			Favicon      string   `json:"favicon"`
+			Readiness    *struct {
+				PublicURL        bool `json:"public_url"`
+				HTTPS            bool `json:"https"`
+				Logo             bool `json:"logo"`
+				Favicon          bool `json:"favicon"`
+				ShareImage       bool `json:"share_image"`
+				PublishedContent bool `json:"published_content"`
+			} `json:"readiness"`
 		} `json:"items"`
 		AllSites bool `json:"all_sites"`
 	}
@@ -248,6 +258,90 @@ func TestPlatformKeyDiscoveryContract(t *testing.T) {
 	}
 	if it.Logo != "" {
 		t.Fatalf("discovery logo should be empty when site.logo unset, got %q", it.Logo)
+	}
+	if it.Readiness == nil {
+		t.Fatal("discovery readiness should be present")
+	}
+	if !it.Readiness.PublicURL || !it.Readiness.HTTPS {
+		t.Fatalf("discovery readiness should reflect the bound HTTPS domain: %#v", it.Readiness)
+	}
+	if it.Readiness.Logo || it.Readiness.Favicon || it.Readiness.ShareImage {
+		t.Fatalf("built-in or empty brand assets must remain pending: %#v", it.Readiness)
+	}
+	if !it.Readiness.PublishedContent {
+		t.Fatalf("published fixture content should be reflected in readiness: %#v", it.Readiness)
+	}
+
+	// 未部署的新站没有公开域名，但只要真实 Logo / favicon 已写入并能由站点使用，
+	// readiness 就必须判定完成，Pilot 也必须拿到可直接展示的受控内联图片。
+	rt, ok := srv.runtimePool().runtimeByID(blogSite.ID)
+	if !ok || rt == nil || rt.Store == nil {
+		t.Fatal("blog runtime should be available")
+	}
+	brandSVG := []byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" fill="#1677ff"/></svg>`)
+	if err := os.WriteFile(filepath.Join(rt.UploadDir, "brand.svg"), brandSVG, 0o644); err != nil {
+		t.Fatalf("write test brand: %v", err)
+	}
+	// ICO 是当前新站向导实际上传的格式；发现接口只负责受控传输，不解析或改写图片内容。
+	if err := os.WriteFile(filepath.Join(rt.UploadDir, "favicon.ico"), []byte{0x00, 0x00, 0x01, 0x00, 0x00, 0x00}, 0o644); err != nil {
+		t.Fatalf("write test favicon: %v", err)
+	}
+	if err := rt.Store.SetSetting("site.logo", "/uploads/brand.svg"); err != nil {
+		t.Fatalf("set test logo: %v", err)
+	}
+	if err := rt.Store.SetSetting("site.favicon", "/uploads/favicon.ico"); err != nil {
+		t.Fatalf("set test favicon: %v", err)
+	}
+	if err := ps.ReplaceSiteDomains(blogSite.ID, nil); err != nil {
+		t.Fatalf("clear blog domains: %v", err)
+	}
+
+	rec = platformAPIReq(t, h, http.MethodGet, "/api/platform/v1/sites", token, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("discovery without public domain status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	payload = struct {
+		Items []struct {
+			ID           int64    `json:"id"`
+			Slug         string   `json:"slug"`
+			Name         string   `json:"name"`
+			Capabilities []string `json:"capabilities"`
+			APIBase      string   `json:"api_base"`
+			URL          string   `json:"url"`
+			Logo         string   `json:"logo"`
+			Favicon      string   `json:"favicon"`
+			Readiness    *struct {
+				PublicURL        bool `json:"public_url"`
+				HTTPS            bool `json:"https"`
+				Logo             bool `json:"logo"`
+				Favicon          bool `json:"favicon"`
+				ShareImage       bool `json:"share_image"`
+				PublishedContent bool `json:"published_content"`
+			} `json:"readiness"`
+		} `json:"items"`
+		AllSites bool `json:"all_sites"`
+	}{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal undeployed discovery: %v (body=%s)", err, rec.Body.String())
+	}
+	if len(payload.Items) != 1 {
+		t.Fatalf("undeployed discovery items = %d, want 1", len(payload.Items))
+	}
+	it = payload.Items[0]
+	if it.URL != "" {
+		t.Fatalf("undeployed discovery url = %q, want empty", it.URL)
+	}
+	if !strings.HasPrefix(it.Logo, "data:image/svg+xml;base64,") {
+		t.Fatalf("undeployed logo should be an inline image, got %q", it.Logo)
+	}
+	if !strings.HasPrefix(it.Favicon, "data:image/x-icon;base64,") {
+		t.Fatalf("undeployed favicon should be an inline image, got %q", it.Favicon)
+	}
+	if it.Readiness == nil || !it.Readiness.Logo || !it.Readiness.Favicon {
+		t.Fatalf("uploaded brand assets must be ready without a public domain: %#v", it.Readiness)
+	}
+	if it.Readiness.PublicURL || it.Readiness.HTTPS {
+		t.Fatalf("domain readiness must remain pending for undeployed site: %#v", it.Readiness)
 	}
 }
 
