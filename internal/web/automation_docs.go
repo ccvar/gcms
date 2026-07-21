@@ -1373,7 +1373,6 @@ func automationControlScopeLabels(scopes map[string]bool) []string {
 		{apiScopeThemesApply, "用主题"},
 		{apiScopeDomainsRead, "读域名"},
 		{apiScopeDomainsWrite, "配域名"},
-		{apiScopeSecurityWrite, "初始密码"},
 	} {
 		if scopes[item.scope] {
 			labels = append(labels, item.label)

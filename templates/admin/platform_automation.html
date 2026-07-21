@@ -185,7 +185,6 @@
     <label><input type="checkbox" name="scopes" value="themes:apply"><span>{{.Admin.T "admin.platform_keys.themes_apply" "应用外观主题"}}</span><small>{{.Admin.T "admin.platform_keys.themes_apply_desc" "用户确认后应用 AI 选定的外观主题"}}</small></label>
     <label><input type="checkbox" name="scopes" value="domains:read"><span>{{.Admin.T "admin.platform_keys.domains_read" "读取域名配置"}}</span><small>{{.Admin.T "admin.platform_keys.domains_read_desc" "读取 GCMS 的主域名、跳转域名和外部配置需求"}}</small></label>
     <label><input type="checkbox" name="scopes" value="domains:write"><span>{{.Admin.T "admin.platform_keys.domains_write" "修改域名配置"}}</span><small>{{.Admin.T "admin.platform_keys.domains_write_desc" "高风险：修改 GCMS 内部域名；DNS、Caddy 和 HTTPS 仍由 Pilot 编排"}}</small></label>
-    <label><input type="checkbox" name="scopes" value="security:write"><span>{{.Admin.T "admin.platform_keys.security_write" "设置初始密码"}}</span><small>{{.Admin.T "admin.platform_keys.security_write_desc" "仅在仍使用首次安装默认密码时，通过 Pilot 原生界面设置；AI 不会看到密码"}}</small></label>
   </div>
 </div>
 {{end}}

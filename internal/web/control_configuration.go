@@ -5,11 +5,9 @@ import (
 	"net/http"
 	"sort"
 	"strings"
-	"unicode/utf8"
 
 	"cms.ccvar.com/internal/platform"
 	"cms.ccvar.com/internal/store"
-	"golang.org/x/crypto/bcrypt"
 )
 
 const (
@@ -471,107 +469,19 @@ func controlPasswordStatus(s *Server) map[string]any {
 		"default":                           isDefault,
 		"changed":                           !isDefault,
 		"initial_password_change_available": isDefault,
+		"initial_password_change_transport": "gcms_cli",
+		"password_write_api_available":      false,
 	}
 }
 
 func (s *Server) servePlatformControlSecurity(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodGet:
-		if _, ok := s.requirePlatformControlKey(w, r, apiScopeControlRead); !ok {
-			return
-		}
-		writeJSON(w, http.StatusOK, controlPasswordStatus(s))
-	case http.MethodPost:
-		key, ok := s.requirePlatformControlKey(w, r, apiScopeSecurityWrite)
-		if !ok {
-			return
-		}
-		if !platformControlTransportAllowed(r) {
-			w.Header().Set("Upgrade", "TLS/1.2")
-			apiError(w, http.StatusUpgradeRequired, "https_required", "初始密码只能通过 HTTPS 或本机连接设置。")
-			return
-		}
-		if controlDryRun(r) {
-			if r.Body != nil && r.ContentLength != 0 {
-				var empty struct{}
-				if !decodeAPIJSON(w, r, &empty) {
-					return
-				}
-			}
-			s.executeControlMutation(w, r, key, "security.initial-password", "security.initial-password|requirements=v1", func() (int, any, error) {
-				if !s.adminPasswordIsDefault() {
-					return 0, nil, newControlMutationError(http.StatusConflict, "initial_password_already_changed", "后台初始密码已经修改，不能通过此接口再次设置。")
-				}
-				return http.StatusOK, map[string]any{
-					"ok": true, "dry_run": true,
-					"requirements": map[string]any{
-						"minimum_characters":       8,
-						"maximum_bytes":            72,
-						"must_differ_from_default": true,
-						"handled_by":               "pilot_ui",
-					},
-				}, nil
-			})
-			return
-		}
-		if strings.ToLower(strings.TrimSpace(r.Header.Get(controlUIRequestHeader))) != controlUIPilotValue {
-			apiError(w, http.StatusForbidden, "pilot_ui_required", "初始密码只能由 Pilot 原生界面提交。")
-			return
-		}
-		var in struct {
-			NewPassword     string `json:"new_password"`
-			ConfirmPassword string `json:"confirm_password"`
-		}
-		if !decodeAPIJSON(w, r, &in) {
-			return
-		}
-		switch {
-		case utf8.RuneCountInString(in.NewPassword) < 8:
-			apiError(w, http.StatusBadRequest, "password_too_short", "新密码至少需要 8 个字符。")
-			return
-		case len([]byte(in.NewPassword)) > 72:
-			apiError(w, http.StatusBadRequest, "password_too_long", "新密码不能超过 72 字节。")
-			return
-		case in.NewPassword == store.DefaultAdminPassword:
-			apiError(w, http.StatusBadRequest, "default_password_not_allowed", "新密码不能继续使用默认密码。")
-			return
-		case in.NewPassword != in.ConfirmPassword:
-			apiError(w, http.StatusBadRequest, "password_confirmation_mismatch", "两次输入的新密码不一致。")
-			return
-		}
-
-		// Deliberately excludes the password. Initial-password change is a one-time
-		// transition, so the operation + protocol version is a stable fingerprint.
-		fingerprint := "security.initial-password|version=v1"
-		s.executeControlMutation(w, r, key, "security.initial-password", fingerprint, func() (int, any, error) {
-			if !s.adminPasswordIsDefault() {
-				return 0, nil, newControlMutationError(http.StatusConflict, "initial_password_already_changed", "后台初始密码已经修改，不能通过此接口再次设置。")
-			}
-			hash, err := bcrypt.GenerateFromPassword([]byte(in.NewPassword), bcrypt.DefaultCost)
-			if err != nil {
-				return 0, nil, newControlMutationError(http.StatusInternalServerError, "password_hash_failed", "无法安全生成新密码。")
-			}
-			user, _ := s.adminCredentials()
-			if strings.TrimSpace(user) == "" {
-				user = "admin"
-			}
-			if err := s.platform.RevokeAdminSessions(); err != nil {
-				return 0, nil, newControlMutationError(http.StatusInternalServerError, "session_revoke_failed", "无法撤销现有后台会话，密码未修改。")
-			}
-			if err := s.store.RevokeAdminSessions(); err != nil {
-				return 0, nil, newControlMutationError(http.StatusInternalServerError, "session_revoke_failed", "无法撤销默认站点会话，密码未修改。")
-			}
-			if err := s.setAdminPasswordHash(user, string(hash)); err != nil {
-				return 0, nil, newControlMutationError(http.StatusInternalServerError, "password_update_failed", "无法更新后台初始密码。")
-			}
-			_ = s.platform.CreatePlatformAutomationLog(key.ID, 0, "control_security_initial_password", "security", 0,
-				"已通过 Pilot 原生界面修改首次安装默认密码并撤销后台会话")
-			response := controlPasswordStatus(s)
-			response["ok"] = true
-			response["sessions_revoked"] = true
-			return http.StatusOK, response, nil
-		})
-	default:
-		apiError(w, http.StatusMethodNotAllowed, "method_not_allowed", "仅支持 GET 或 POST。")
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		apiError(w, http.StatusMethodNotAllowed, "password_write_not_available", "控制 API 不提供密码写入；初始密码只能由 Pilot 通过服务器上的 GCMS 专用 CLI 设置。")
+		return
 	}
+	if _, ok := s.requirePlatformControlKey(w, r, apiScopeControlRead); !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, controlPasswordStatus(s))
 }

@@ -98,7 +98,10 @@ const (
 	apiScopeThemesApply   = "themes:apply"
 	apiScopeDomainsRead   = "domains:read"
 	apiScopeDomainsWrite  = "domains:write"
-	apiScopeSecurityWrite = "security:write"
+
+	// v1.3.40 曾短暂写入过部分平台密钥。它不再对应任何 HTTP 能力，
+	// 新签发时拒绝，旧密钥解析时也必须丢弃。
+	retiredAPIScopeSecurityWrite = "security:write"
 )
 
 type apiRateLimiter struct {
@@ -2668,6 +2671,9 @@ func apiScopeMap(scopes string) map[string]bool {
 	out := map[string]bool{}
 	for _, s := range strings.Split(scopes, ",") {
 		if s = strings.TrimSpace(s); s != "" {
+			if s == retiredAPIScopeSecurityWrite {
+				continue
+			}
 			out[s] = true
 		}
 	}

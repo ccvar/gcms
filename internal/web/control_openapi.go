@@ -19,10 +19,6 @@ func platformControlOpenAPISpec(apiBase string) map[string]any {
 		}
 		return out
 	}
-	initialPasswordParams := append(mutationParams(false), map[string]any{
-		"name": controlUIRequestHeader, "in": "header", "schema": map[string]any{"type": "string", "const": controlUIPilotValue},
-		"description": "Required for execution. Proves the password came from Pilot's native UI; it is not used by the skill CLI.",
-	})
 	pilotUIParam := map[string]any{
 		"name": controlUIRequestHeader, "in": "header", "required": true,
 		"schema":      map[string]any{"type": "string", "const": controlUIPilotValue},
@@ -60,10 +56,7 @@ func platformControlOpenAPISpec(apiBase string) map[string]any {
 			"get":        map[string]any{"operationId": "domains.read", "summary": "Read GCMS internal primary and redirect domains", "responses": response},
 			"put":        map[string]any{"operationId": "domains.apply", "summary": "Validate or replace GCMS internal domain records", "parameters": mutationParams(true), "requestBody": jsonBody("DomainApplyInput"), "responses": response},
 		},
-		"/control/security": map[string]any{
-			"get":  map[string]any{"operationId": "security.status", "summary": "Read initial-password status", "responses": response},
-			"post": map[string]any{"operationId": "security.initial-password", "summary": "Pilot-UI-only initial default password replacement", "parameters": initialPasswordParams, "requestBody": jsonBody("InitialPasswordInput"), "responses": response},
-		},
+		"/control/security": map[string]any{"get": map[string]any{"operationId": "security.status", "summary": "Read initial-password status; password writes use the server-local GCMS CLI", "responses": response}},
 		"/control/unlock": map[string]any{
 			"post":   map[string]any{"operationId": "control.unlock", "summary": "Pilot-UI-only short-lived unlock", "parameters": []any{pilotUIParam}, "requestBody": jsonBody("UnlockInput"), "responses": response},
 			"delete": map[string]any{"operationId": "control.unlock.revoke", "summary": "Revoke a short-lived unlock", "parameters": []any{map[string]any{"name": controlUnlockHeader, "in": "header", "required": true, "schema": map[string]any{"type": "string"}}}, "responses": response},
@@ -71,7 +64,7 @@ func platformControlOpenAPISpec(apiBase string) map[string]any {
 	}
 	return map[string]any{
 		"openapi":  "3.1.0",
-		"info":     map[string]any{"title": "GCMS Platform Control API", "version": "v1", "description": "Additive management API. Passwords are accepted only by Pilot-native UI endpoints and never by the skill CLI."},
+		"info":     map[string]any{"title": "GCMS Platform Control API", "version": "v1", "description": "Additive management API. It exposes password status but never accepts an initial-password write; Pilot uses the server-local GCMS CLI for that transition."},
 		"servers":  []any{map[string]any{"url": strings.TrimRight(apiBase, "/")}},
 		"security": []any{map[string]any{"bearerAuth": []any{}}},
 		"paths":    paths,
@@ -85,11 +78,10 @@ func platformControlOpenAPISpec(apiBase string) map[string]any {
 					"site_kind":                     map[string]any{"type": "string", "enum": []string{"content", "factory", "dtc"}, "default": "content"},
 					"management_automation_enabled": map[string]any{"type": "boolean", "default": true, "description": "Keep true so Pilot can continue building the new site without requiring an admin login."},
 				}},
-				"SiteUpdateInput":      map[string]any{"type": "object", "properties": map[string]any{"name": map[string]any{"type": "string"}, "status": map[string]any{"type": "string", "enum": []string{"enabled", "disabled"}}, "management_automation_enabled": map[string]any{"type": "boolean"}}},
-				"ThemeApplyInput":      map[string]any{"type": "object", "properties": map[string]any{"theme_id": map[string]any{"type": "string"}, "rollback": map[string]any{"type": "boolean"}}},
-				"DomainApplyInput":     map[string]any{"type": "object", "properties": map[string]any{"primary_domain": map[string]any{"type": "string"}, "redirect_domains": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}}},
-				"InitialPasswordInput": map[string]any{"type": "object", "writeOnly": true, "required": []string{"new_password", "confirm_password"}, "properties": map[string]any{"new_password": map[string]any{"type": "string", "format": "password", "minLength": 8, "maxLength": 72, "writeOnly": true}, "confirm_password": map[string]any{"type": "string", "format": "password", "writeOnly": true}}},
-				"UnlockInput":          map[string]any{"type": "object", "writeOnly": true, "required": []string{"password", "operations"}, "properties": map[string]any{"password": map[string]any{"type": "string", "format": "password", "writeOnly": true}, "operations": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}}},
+				"SiteUpdateInput":  map[string]any{"type": "object", "properties": map[string]any{"name": map[string]any{"type": "string"}, "status": map[string]any{"type": "string", "enum": []string{"enabled", "disabled"}}, "management_automation_enabled": map[string]any{"type": "boolean"}}},
+				"ThemeApplyInput":  map[string]any{"type": "object", "properties": map[string]any{"theme_id": map[string]any{"type": "string"}, "rollback": map[string]any{"type": "boolean"}}},
+				"DomainApplyInput": map[string]any{"type": "object", "properties": map[string]any{"primary_domain": map[string]any{"type": "string"}, "redirect_domains": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}}},
+				"UnlockInput":      map[string]any{"type": "object", "writeOnly": true, "required": []string{"password", "operations"}, "properties": map[string]any{"password": map[string]any{"type": "string", "format": "password", "writeOnly": true}, "operations": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}}},
 			},
 		},
 	}

@@ -100,14 +100,16 @@ func TestPlatformControlCapabilitiesAreAdditive(t *testing.T) {
 	if update.Granted {
 		t.Fatalf("sites.update must reflect missing key scope: %#v", update)
 	}
-	security := controlOperationFromBody(t, rec.Body.Bytes(), "security.initial-password")
-	if security.Granted || !security.Available || !security.UIOnly || security.RequiresUnlock {
-		t.Fatalf("security.initial-password contract = %#v", security)
+	if strings.Contains(rec.Body.String(), `"id":"security.initial-password"`) || strings.Contains(rec.Body.String(), `"required_scope":"security:write"`) {
+		t.Fatalf("initial-password write must not be advertised to automation keys: %s", rec.Body.String())
 	}
 
 	openAPI := platformAPIReq(t, h, http.MethodGet, "/api/platform/v1/control/openapi.json", controlToken, nil)
 	if openAPI.Code != http.StatusOK || !strings.Contains(openAPI.Body.String(), `"/control/sites/{siteId}"`) || !strings.Contains(openAPI.Body.String(), controlIdempotencyHeader) {
 		t.Fatalf("control openapi = %d %s", openAPI.Code, openAPI.Body.String())
+	}
+	if strings.Contains(openAPI.Body.String(), "security.initial-password") || strings.Contains(openAPI.Body.String(), "InitialPasswordInput") {
+		t.Fatalf("control openapi exposes initial-password write: %s", openAPI.Body.String())
 	}
 }
 
@@ -244,18 +246,17 @@ func TestPlatformControlScopeIssuanceAndDefaults(t *testing.T) {
 			t.Fatalf("control scope dependency %q missing from %v", want, got)
 		}
 	}
+	legacySecurityScope := retiredAPIScopeSecurityWrite
 	securityReq := &http.Request{Method: http.MethodPost, Header: make(http.Header), Form: url.Values{
-		"scopes": {apiScopeSecurityWrite},
+		"scopes": {legacySecurityScope},
 	}}
 	securityScopes := automationScopesFromFormRequired(securityReq)
 	securityJoined := "," + strings.Join(securityScopes, ",") + ","
-	for _, want := range []string{apiScopeControlRead, apiScopeSecurityWrite} {
-		if !strings.Contains(securityJoined, ","+want+",") {
-			t.Fatalf("security scope dependency %q missing from %v", want, securityScopes)
-		}
+	if strings.Contains(securityJoined, ","+legacySecurityScope+",") || automationScopeValid(legacySecurityScope) {
+		t.Fatalf("legacy security:write must not be grantable from automation forms: %v", securityScopes)
 	}
-	if strings.Contains(securityJoined, ","+apiScopeControlUnlock+",") {
-		t.Fatalf("initial-password setup must not require an unlock from the default password: %v", securityScopes)
+	if apiScopeMap(apiScopeControlRead + "," + legacySecurityScope)[legacySecurityScope] {
+		t.Fatal("legacy security:write must be discarded when old keys are parsed")
 	}
 	defaults := "," + strings.Join(defaultAutomationScopes(), ",") + ","
 	for _, denied := range platformControlScopes() {

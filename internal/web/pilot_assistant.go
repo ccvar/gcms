@@ -25,15 +25,10 @@ func PilotAssistantAutomationScopes() []string {
 		apiScopeContentPublish,
 	}
 	// Pilot 运营助手密钥可发现统一控制契约。这些 scope 只是第一道门；
-	// 标记 requires_unlock 的操作没有后台密码仍然无法执行。
-	//
-	// security:write 不进入 AI 技能包的默认密钥。首次密码设置继续使用
-	// GCMS 本机专用命令，由 Pilot 原生界面经 SSH stdin 提交新密码；这样
-	// AI 即使直接构造 HTTP 请求，也不能只凭技能包密钥修改后台密码。
+	// 标记 requires_unlock 的操作没有后台密码仍然无法执行。初始密码没有
+	// HTTP 写 scope 或控制操作，只能由 Pilot 经 SSH stdin 调 GCMS 专用 CLI。
 	for _, scope := range platformControlScopes() {
-		if scope != apiScopeSecurityWrite {
-			scopes = append(scopes, scope)
-		}
+		scopes = append(scopes, scope)
 	}
 	seen := make(map[string]bool, len(scopes)+16)
 	for _, scope := range scopes {

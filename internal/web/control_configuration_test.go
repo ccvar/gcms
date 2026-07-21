@@ -11,8 +11,6 @@ import (
 	"time"
 
 	"cms.ccvar.com/internal/platform"
-	"cms.ccvar.com/internal/store"
-	"golang.org/x/crypto/bcrypt"
 )
 
 type controlConfigurationRequest struct {
@@ -265,74 +263,29 @@ func TestPlatformControlDomainsDryRunConflictAndPersist(t *testing.T) {
 	}
 }
 
-func TestPlatformControlInitialPasswordChangeIsUIOnlyAndOneTime(t *testing.T) {
+func TestPlatformControlSecurityIsReadOnlyEvenForLegacyScope(t *testing.T) {
 	srv, h, ps, _, _ := setupPlatformAutomation(t)
 	token := "gcmsp_securitycontrol12"
 	createControlConfigurationKey(t, ps, token, platform.KeyMembershipAll,
-		strings.Join([]string{apiScopeControlRead, apiScopeSecurityWrite}, ","), nil)
+		strings.Join([]string{apiScopeControlRead, retiredAPIScopeSecurityWrite}, ","), nil)
 
 	status := controlConfigurationAPIReq(t, h, http.MethodGet, "/api/platform/v1/control/security", token, nil, controlConfigurationRequest{})
-	if status.Code != http.StatusOK || !strings.Contains(status.Body.String(), `"password_status":"default"`) || !strings.Contains(status.Body.String(), `"initial_password_change_available":true`) {
+	if status.Code != http.StatusOK || !strings.Contains(status.Body.String(), `"password_status":"default"`) || !strings.Contains(status.Body.String(), `"initial_password_change_available":true`) || !strings.Contains(status.Body.String(), `"initial_password_change_transport":"gcms_cli"`) || !strings.Contains(status.Body.String(), `"password_write_api_available":false`) {
 		t.Fatalf("default password status = %d %s", status.Code, status.Body.String())
 	}
-	dryRun := controlConfigurationAPIReq(t, h, http.MethodPost, "/api/platform/v1/control/security?dry_run=1", token, []byte(`{}`), controlConfigurationRequest{})
-	if dryRun.Code != http.StatusOK || !strings.Contains(dryRun.Body.String(), `"maximum_bytes":72`) {
-		t.Fatalf("password dry run = %d %s", dryRun.Code, dryRun.Body.String())
+	password := "Must-Never-Reach-The-Control-API-2026!"
+	body := []byte(`{"new_password":"` + password + `","confirm_password":"` + password + `"}`)
+	for _, path := range []string{"/api/platform/v1/control/security", "/api/platform/v1/control/security?dry_run=1"} {
+		blocked := controlConfigurationAPIReq(t, h, http.MethodPost, path, token, body,
+			controlConfigurationRequest{Confirm: "security.initial-password", IdempotencyKey: "legacy-password-write", PilotUI: true})
+		if blocked.Code != http.StatusMethodNotAllowed || !strings.Contains(blocked.Body.String(), "password_write_not_available") || blocked.Header().Get("Allow") != http.MethodGet {
+			t.Fatalf("legacy password write was not blocked: %d %s headers=%v", blocked.Code, blocked.Body.String(), blocked.Header())
+		}
+		if strings.Contains(blocked.Body.String(), password) {
+			t.Fatalf("blocked password leaked in response: %s", blocked.Body.String())
+		}
 	}
 	if !srv.adminPasswordIsDefault() {
-		t.Fatal("password dry run changed credentials")
-	}
-
-	password := "New-Initial-Password-2026!"
-	body, _ := json.Marshal(map[string]string{"new_password": password, "confirm_password": password})
-	withoutUI := controlConfigurationAPIReq(t, h, http.MethodPost, "/api/platform/v1/control/security", token, body,
-		controlConfigurationRequest{Confirm: "security.initial-password", IdempotencyKey: "password-no-ui"})
-	if withoutUI.Code != http.StatusForbidden || !strings.Contains(withoutUI.Body.String(), "pilot_ui_required") {
-		t.Fatalf("non-UI password change = %d %s", withoutUI.Code, withoutUI.Body.String())
-	}
-
-	if err := ps.CreateAdminSession("platform-session-before-password", "admin", "csrf", time.Now().Add(time.Hour)); err != nil {
-		t.Fatalf("create platform session: %v", err)
-	}
-	if err := srv.store.CreateAdminSession("site-session-before-password", "admin", "csrf", time.Now().Add(time.Hour)); err != nil {
-		t.Fatalf("create site session: %v", err)
-	}
-	change := controlConfigurationAPIReq(t, h, http.MethodPost, "/api/platform/v1/control/security", token, body,
-		controlConfigurationRequest{Confirm: "security.initial-password", IdempotencyKey: "password-change-1", PilotUI: true})
-	if change.Code != http.StatusOK {
-		t.Fatalf("initial password change = %d %s", change.Code, change.Body.String())
-	}
-	if strings.Contains(change.Body.String(), password) || strings.Contains(change.Body.String(), store.DefaultAdminPassword) {
-		t.Fatalf("password leaked in response: %s", change.Body.String())
-	}
-	_, platformHash, err := ps.GetAdminCredentials()
-	if err != nil || bcrypt.CompareHashAndPassword([]byte(platformHash), []byte(password)) != nil {
-		t.Fatalf("platform password not updated: err=%v", err)
-	}
-	defaultHash := srv.store.Setting("admin_password_hash")
-	if bcrypt.CompareHashAndPassword([]byte(defaultHash), []byte(password)) != nil {
-		t.Fatal("default site password was not updated")
-	}
-	if _, ok, _ := ps.GetAdminSession("platform-session-before-password"); ok {
-		t.Fatal("platform admin sessions were not revoked")
-	}
-	if _, ok, _ := srv.store.GetAdminSession("site-session-before-password"); ok {
-		t.Fatal("default-site admin sessions were not revoked")
-	}
-
-	secondPassword := "Another-Initial-Password-2026!"
-	secondBody, _ := json.Marshal(map[string]string{"new_password": secondPassword, "confirm_password": secondPassword})
-	second := controlConfigurationAPIReq(t, h, http.MethodPost, "/api/platform/v1/control/security", token, secondBody,
-		controlConfigurationRequest{Confirm: "security.initial-password", IdempotencyKey: "password-change-2", PilotUI: true})
-	if second.Code != http.StatusConflict || !strings.Contains(second.Body.String(), "initial_password_already_changed") {
-		t.Fatalf("second initial password change = %d %s", second.Code, second.Body.String())
-	}
-	if strings.Contains(second.Body.String(), secondPassword) {
-		t.Fatalf("rejected password leaked: %s", second.Body.String())
-	}
-
-	dryRunWithPassword := controlConfigurationAPIReq(t, h, http.MethodPost, "/api/platform/v1/control/security?dry_run=1", token, body, controlConfigurationRequest{})
-	if dryRunWithPassword.Code != http.StatusBadRequest || strings.Contains(dryRunWithPassword.Body.String(), password) {
-		t.Fatalf("password dry-run body handling = %d %s", dryRunWithPassword.Code, dryRunWithPassword.Body.String())
+		t.Fatal("blocked control API request changed the initial password")
 	}
 }

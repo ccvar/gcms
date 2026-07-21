@@ -25,7 +25,7 @@ func TestPilotAssistantAutomationScopesCoverPlatformAutomation(t *testing.T) {
 			t.Errorf("missing scope %q", want)
 		}
 	}
-	if got[apiScopeSecurityWrite] {
+	if got[retiredAPIScopeSecurityWrite] {
 		t.Fatal("Pilot 运营助手的 AI 密钥不得默认获得初始密码写权限")
 	}
 }

@@ -57,7 +57,6 @@ func platformControlCatalog() []platformControlOperation {
 		{ID: "domains.read", Label: "读取域名配置", RequiredScope: apiScopeDomainsRead, Risk: "read", Method: http.MethodGet, Endpoint: "/control/sites/{site_id}/domains", Available: true},
 		{ID: "domains.apply", Label: "修改 GCMS 域名配置", RequiredScope: apiScopeDomainsWrite, Risk: "sensitive", Method: http.MethodPut, Endpoint: "/control/sites/{site_id}/domains", RequiresConfirmation: true, RequiresUnlock: true, SupportsDryRun: true, Available: true},
 		{ID: "security.status", Label: "读取后台安全状态", RequiredScope: apiScopeControlRead, Risk: "read", Method: http.MethodGet, Endpoint: "/control/security", Available: true},
-		{ID: "security.initial-password", Label: "修改首次安装默认密码", RequiredScope: apiScopeSecurityWrite, Risk: "sensitive", Method: http.MethodPost, Endpoint: "/control/security", RequiresConfirmation: true, SupportsDryRun: true, UIOnly: true, Available: true},
 	}
 }
 
@@ -72,7 +71,6 @@ func platformControlScopes() []string {
 		apiScopeThemesApply,
 		apiScopeDomainsRead,
 		apiScopeDomainsWrite,
-		apiScopeSecurityWrite,
 	}
 }
 

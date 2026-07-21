@@ -4996,8 +4996,8 @@ func automationScopesFromFormWithDefault(r *http.Request, useDefault bool) []str
 		want[apiScopeLanguagesRead] = true
 	}
 	// 平台控制权限是独立的能力族：任一控制权限都自动补齐能力自省；
-	// 删站和改域名还必须允许 Pilot 在密码验证后签发短时授权；首次密码设置
-	// 是默认密码阶段的一次性操作，改由 Pilot 原生界面边界保护，不能依赖旧密码解锁。
+	// 删站和改域名还必须允许 Pilot 在密码验证后签发短时授权。初始密码
+	// 不属于 HTTP 自动化权限，只能通过服务器上的 GCMS 专用 CLI 设置。
 	for _, scope := range platformControlScopes() {
 		if want[scope] {
 			want[apiScopeControlRead] = true
@@ -5068,11 +5068,16 @@ func automationScopesFromFormWithDefault(r *http.Request, useDefault bool) []str
 }
 
 func automationScopeValid(scope string) bool {
+	// v1.3.40 曾短暂暴露过 HTTP 初始密码写权限。该 scope 已永久退役，
+	// 必须在动态集合规则前硬拒绝，避免它被误当成 security 集合的 write。
+	if scope == retiredAPIScopeSecurityWrite {
+		return false
+	}
 	switch scope {
 	case apiScopeLanguagesRead, apiScopeLanguagesWrite, apiScopeLanguagesEnable, apiScopeLanguagesDefault, apiScopeLanguagesCatalog, apiScopeMediaWrite, apiScopeSiteRead, apiScopeSiteWrite, apiScopeBrandAssetsWrite, apiScopeNavigationRead, apiScopeNavigationWrite,
 		apiScopeStatsRead, apiScopeTypesWrite, apiScopeContentRead, apiScopeContentWrite, apiScopeContentPublish,
 		apiScopeControlRead, apiScopeControlUnlock, apiScopeSitesCreate, apiScopeSitesUpdate, apiScopeSitesDelete,
-		apiScopeThemesRead, apiScopeThemesApply, apiScopeDomainsRead, apiScopeDomainsWrite, apiScopeSecurityWrite:
+		apiScopeThemesRead, apiScopeThemesApply, apiScopeDomainsRead, apiScopeDomainsWrite:
 		return true
 	}
 	// 扩展集合 scope（如 products:write / cases:read）：集合名为合法 slug 即放行——
