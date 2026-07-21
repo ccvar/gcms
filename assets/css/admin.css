@@ -583,6 +583,25 @@ body.admin { background: var(--line-soft); }
 .google-oauth-ready svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
 .google-oauth-ready strong { display: block; color: var(--ink); font-size: .82rem; line-height: 1.25; }
 .google-oauth-ready small { display: block; margin-top: .12rem; color: var(--muted); font-size: .72rem; line-height: 1.45; }
+.cloudflare-auth-connect { position: relative; }
+.cloudflare-summary-icon { display: inline-grid; place-items: center; width: 20px; height: 20px; color: #a9a39a; }
+.cloudflare-summary-icon svg { width: 20px; height: 20px; fill: currentColor !important; stroke: none !important; }
+.cloudflare-auth-connect.is-configured .cloudflare-summary-icon { color: #f38020; }
+.cloudflare-auth-pop { width: min(390px, calc(100vw - 2rem)); }
+.cloudflare-auth-list { display: grid; gap: .42rem; }
+.cloudflare-auth-item { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; align-items: center; gap: .48rem; padding: .52rem .56rem; border: 1px solid var(--line-soft); border-radius: 8px; background: color-mix(in srgb, var(--line-soft) 28%, transparent); }
+.cloudflare-auth-item-icon { display: inline-grid; place-items: center; width: 24px; height: 24px; color: #f38020; }
+.cloudflare-auth-item-icon.is-missing { color: #aaa59c; }
+.cloudflare-auth-item-icon svg { width: 19px; height: 19px; fill: currentColor; stroke: none; }
+.cloudflare-auth-item strong, .cloudflare-auth-item small { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cloudflare-auth-item strong { color: var(--ink); font-size: .78rem; line-height: 1.25; }
+.cloudflare-auth-item small { margin-top: .1rem; color: var(--muted); font-size: .68rem; line-height: 1.3; }
+.cloudflare-auth-item b { color: var(--faint); font-size: .66rem; white-space: nowrap; }
+.cloudflare-auth-item .cloudflare-auth-ok { color: var(--ok); }
+.cloudflare-auth-scope { margin: 0; padding: .48rem .56rem; border-radius: 7px; background: var(--line-soft); color: var(--muted); font-size: .7rem; line-height: 1.4; }
+.cloudflare-auth-actions { display: flex; align-items: center; gap: .35rem; flex-wrap: wrap; }
+.cloudflare-auth-actions .google-connect-add { min-height: 30px; padding: .36rem .58rem; font-size: .72rem; }
+.cloudflare-auth-actions .google-connect-config { min-height: 30px; padding: .34rem .4rem; font-size: .7rem; }
 .google-oauth-view-toggle { display: inline-grid; place-items: center; width: 28px; height: 28px; margin-top: -.1rem; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; }
 .google-oauth-view-toggle svg { width: 17px; height: 17px; stroke-width: 2; }
 .google-oauth-view-toggle:hover,

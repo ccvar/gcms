@@ -180,6 +180,33 @@
             </script>
           </div>
         </details>
+        <details class="google-connect cloudflare-auth-connect{{if or .CFDNSTokenSet .CFDeployTokenSet}} is-configured{{else}} is-missing{{end}}">
+          <summary data-tooltip="{{if or .CFDNSTokenSet .CFDeployTokenSet}}Cloudflare：已有授权，可用于 DNS 和站点部署{{else}}Cloudflare：尚未授权{{end}}" aria-label="Cloudflare 授权"><span class="cloudflare-summary-icon">{{template "site-icon-cloudflare"}}</span></summary>
+          <div class="google-connect-pop cloudflare-auth-pop">
+            <div class="google-connect-head">
+              <strong>Cloudflare 授权</strong>
+              <span>{{if or .CFDNSTokenSet .CFDeployTokenSet}}已配置{{else}}未配置{{end}}</span>
+            </div>
+            <p class="google-connect-empty">收集当前 GCMS 已保存的 Cloudflare 授权，用于 DNS 记录、橙云代理和站点部署。</p>
+            <div class="cloudflare-auth-list">
+              <div class="cloudflare-auth-item">
+                <span class="cloudflare-auth-item-icon{{if not .CFDNSTokenSet}} is-missing{{end}}">{{template "site-icon-cloudflare"}}</span>
+                <span><strong>DNS / 公网访问</strong><small>{{if .CFDNSTokenSet}}已授权 · {{.CFDNSFingerprint}}{{else}}未配置{{end}}</small></span>
+                {{if .CFDNSTokenSet}}<b class="cloudflare-auth-ok">已授权</b>{{else}}<b>未配置</b>{{end}}
+              </div>
+              <div class="cloudflare-auth-item">
+                <span class="cloudflare-auth-item-icon{{if not .CFDeployTokenSet}} is-missing{{end}}">{{template "site-icon-cloudflare"}}</span>
+                <span><strong>站点部署 API</strong><small>{{if .CFDeployTokenSet}}已授权{{else}}未配置部署 Token{{end}}</small></span>
+                {{if .CFDeployTokenSet}}<b class="cloudflare-auth-ok">已授权</b>{{else}}<b>未配置</b>{{end}}
+              </div>
+            </div>
+            {{if or .CFAccountName .CFZoneName}}<p class="cloudflare-auth-scope">{{if .CFAccountName}}账号：{{.CFAccountName}}{{end}}{{if and .CFAccountName .CFZoneName}} · {{end}}{{if .CFZoneName}}Zone：{{.CFZoneName}}{{end}}</p>{{end}}
+            <div class="cloudflare-auth-actions">
+              <a class="google-connect-add" href="/admin/settings/cloudflare">{{template "site-icon-settings"}}<span>管理 Cloudflare 授权</span></a>
+              {{if .CFAuthorizeURL}}<a class="google-connect-config" href="{{.CFAuthorizeURL}}" target="_blank" rel="noopener">{{template "site-icon-link"}}<span>查看授权模板</span></a>{{end}}
+            </div>
+          </div>
+        </details>
       </div>{{end}}
       <button class="btn btn-primary icon-text" type="button" data-site-create-open>{{template "site-icon-plus"}}<span>{{.Admin.T "admin.sites.create" "新建站点"}}</span></button>
     </div>

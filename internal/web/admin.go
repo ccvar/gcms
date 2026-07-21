@@ -1148,6 +1148,9 @@ func (s *Server) showAdminSites(w http.ResponseWriter, r *http.Request, status i
 		cfTok := strings.TrimSpace(s.platform.Setting(platformCFDNSTokenKey))
 		v.CFDNSTokenSet = cfTok != ""
 		v.CFDNSFingerprint = cloudflareTokenFingerprint(cfTok)
+		v.CFDeployTokenSet = strings.TrimSpace(s.platform.Setting(cloudflareAPITokenKey)) != ""
+		v.CFAccountName = strings.TrimSpace(s.platform.Setting(cloudflareAccountNameKey))
+		v.CFZoneName = strings.TrimSpace(s.platform.Setting(cloudflareZoneNameKey))
 		v.CFServerIPv4 = s.platform.Setting(platformServerIPv4Key)
 		v.CFServerIPv6 = s.platform.Setting(platformServerIPv6Key)
 		v.CFAuthorizeURL = cloudflareAPITokenTemplateURL("GCMS DNS")

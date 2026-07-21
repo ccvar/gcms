@@ -158,6 +158,37 @@ func (s *Server) controlGlobalIntegrationsResponse(r *http.Request) map[string]a
 		"telegram": map[string]any{
 			"shared_bot_configured": s.platformTelegramBotToken() != "",
 		},
+		"cloudflare": s.controlCloudflareAuthorizationResponse(),
+	}
+}
+
+// controlCloudflareAuthorizationResponse only exposes safe authorization metadata.
+// The actual Cloudflare tokens stay in GCMS settings and are never returned to Pilot.
+func (s *Server) controlCloudflareAuthorizationResponse() map[string]any {
+	if s == nil || s.platform == nil {
+		return map[string]any{"authorizations": []map[string]any{}}
+	}
+	items := []map[string]any{}
+	add := func(id, label, purpose, token string) {
+		if strings.TrimSpace(token) == "" {
+			return
+		}
+		items = append(items, map[string]any{
+			"id":         id,
+			"label":      label,
+			"purpose":    purpose,
+			"source":     "gcms",
+			"configured": true,
+		})
+	}
+	add("dns", "Cloudflare DNS 授权", "公网访问、DNS 记录与橙云设置", s.platform.Setting(platformCFDNSTokenKey))
+	add("deploy", "Cloudflare 部署授权", "站点部署与 Cloudflare 资源", s.platform.Setting(cloudflareAPITokenKey))
+	return map[string]any{
+		"authorizations":    items,
+		"dns_configured":    strings.TrimSpace(s.platform.Setting(platformCFDNSTokenKey)) != "",
+		"deploy_configured": strings.TrimSpace(s.platform.Setting(cloudflareAPITokenKey)) != "",
+		"zone":              strings.TrimSpace(s.platform.Setting(cloudflareZoneNameKey)),
+		"account":           strings.TrimSpace(s.platform.Setting(cloudflareAccountNameKey)),
 	}
 }
 

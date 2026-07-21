@@ -1125,6 +1125,9 @@ type View struct {
 	CaddyOnDemand                bool         // 已启用 Caddy 按需签发（决定域名绑定指引显示自动/手动）
 	CFDNSTokenSet                bool         // 平台级 Cloudflare DNS 令牌已授权
 	CFDNSFingerprint             string       // 已授权令牌指纹（展示用）
+	CFDeployTokenSet             bool         // 平台级 Cloudflare 部署令牌已授权
+	CFAccountName                string       // Cloudflare 账号名称（展示用）
+	CFZoneName                   string       // Cloudflare Zone 名称（展示用）
 	CFServerIPv4                 string       // 记住的服务器 IPv4（DNS A 记录目标）
 	CFServerIPv6                 string       // 记住的服务器 IPv6（DNS AAAA 记录目标，可选）
 	CFAuthorizeURL               string       // Cloudflare 授权模板链接
@@ -2196,6 +2199,7 @@ func (s *Server) discoveryPlatformStatus(r *http.Request) map[string]any {
 		"telegram": map[string]any{
 			"shared_bot_configured": s.platformTelegramBotToken() != "",
 		},
+		"cloudflare": s.controlCloudflareAuthorizationResponse(),
 	}
 }
 
