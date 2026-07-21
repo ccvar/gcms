@@ -113,6 +113,10 @@ var themeSkeletonDescEN = map[string]string{
 const themeBgFallback = "#fbfaf7"
 
 var themeBgDefault = map[string]string{
+	"field-ledger": "#f7f5f0", "field-ledger-graphite": "#101216", "field-ledger-ocean": "#eef5f4", "field-ledger-plum": "#f5f0f4", "field-ledger-amber": "#fbf4e8",
+	"signal-archive": "#f8f6f0", "signal-archive-ink": "#111315", "signal-archive-copper": "#f6eee7", "signal-archive-cobalt": "#eef3fb",
+	"paper-current": "#f4f1e9", "paper-current-sage": "#eff3ed", "paper-current-rose": "#fbefee", "paper-current-indigo": "#f0f0f8",
+	"night-watch": "#090c0d", "night-watch-cyan": "#091314", "night-watch-amber": "#11100b", "night-watch-violet": "#100d17",
 	"magazine": "#ffffff", "terminal": "#0b0f14", "brutalist": "#f3f3ee", "notebook": "#fbf7ec",
 	"swiss": "#ffffff", "pastel": "#faf7ff", "newspaper": "#f6f4ee", "darkpro": "#0e1016",
 	"landing": "#fbfcff", "product": "#f8fafc", "prism": "#09090b", "exchange": "#05080d",
@@ -187,8 +191,25 @@ func themeBg(id string) string {
 // （terminal 等宽终端、brutalist 粗框硬阴影、riso 网点套印偏移、quiet 和风留白、
 // gilded 细字重宽字距、porcelain 巨字 hero……），互不为配色变体，独立成卡。
 var themeFamilies = map[string]string{
-	"paperwhite": "editorial",
-	"citrus":     "editorial",
+	"field-ledger":          "field-ledger",
+	"field-ledger-graphite": "field-ledger",
+	"field-ledger-ocean":    "field-ledger",
+	"field-ledger-plum":     "field-ledger",
+	"field-ledger-amber":    "field-ledger",
+	"signal-archive":        "signal-archive",
+	"signal-archive-ink":    "signal-archive",
+	"signal-archive-copper": "signal-archive",
+	"signal-archive-cobalt": "signal-archive",
+	"paper-current":         "paper-current",
+	"paper-current-sage":    "paper-current",
+	"paper-current-rose":    "paper-current",
+	"paper-current-indigo":  "paper-current",
+	"night-watch":           "night-watch",
+	"night-watch-cyan":      "night-watch",
+	"night-watch-amber":     "night-watch",
+	"night-watch-violet":    "night-watch",
+	"paperwhite":            "editorial",
+	"citrus":                "editorial",
 	// dawnfair 挂 dtc-flagship 骨架,但覆写了字重/按钮/卡片结构(Shopify Dawn 设计身份),
 	// 按「合并唯一合法理由=纯配色变体」的铁律独立成卡(用户实测也找不到它)。
 	"dawnfair": "dawnfair",

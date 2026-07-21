@@ -1,0 +1,39 @@
+{{define "home_night_watch"}}
+<div class="night-watch-page">
+  <section class="nw-hero wrap">
+    <div class="nw-hero-copy">
+      {{if .Site.HeroEyebrow}}<p class="nw-kicker">{{.Site.HeroEyebrow}}</p>{{end}}
+      <h1>{{nl2br .Site.HeroTitle}}</h1>
+      <p>{{.Site.HeroDescription}}</p>
+      <div class="nw-hero-actions">
+        {{with .Featured}}<a href="{{$.Tr.U (contentURL .)}}">{{$.Tr.T "home.read_more"}} →</a>{{else}}<a href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} →</a>{{end}}
+        <a class="quiet" href="{{.Tr.U "/about"}}">{{.Tr.T "home.cta_more"}} →</a>
+      </div>
+    </div>
+    {{with .Featured}}
+    <div class="nw-hero-media{{if not .CoverImage}} no-cover{{end}}">
+      <a class="nw-hero-image" href="{{$.Tr.U (contentURL .)}}">{{if .CoverImage}}<img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<strong>{{.Title}}</strong>{{end}}</a>
+      <aside class="nw-field-note"><small>{{$.Site.HomeFeatured}} · {{$.Tr.Date .PublishedAt}}</small>{{if .Excerpt}}<p>{{.Excerpt}}</p>{{else}}<p>{{.Title}}</p>{{end}}<a href="{{$.Tr.U (contentURL .)}}">{{$.Tr.T "home.read_more"}} →</a></aside>
+    </div>
+    {{end}}
+  </section>
+
+  {{if .Posts}}
+  <section class="nw-pulse"><div class="wrap"><b>● {{.Site.HomeLatest}}</b>{{range $i, $p := .Posts}}{{if lt $i 4}}<a href="{{$.Tr.U (contentURL $p)}}"><time>{{$.Tr.Date $p.PublishedAt}}</time>　{{$p.Title}} ↗</a>{{end}}{{end}}<a class="nw-pulse-all" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} →</a></div></section>
+  {{end}}
+
+  <section class="nw-board wrap">
+    <main>
+      <div class="nw-board-head"><h2>{{.Site.HomeLatest}}</h2><small>{{.CategoryAll.Title}}</small></div>
+      {{if .Posts}}<div class="nw-board-cols"><span>{{.Tr.T "category.label"}}</span><span>#</span><span>{{.Site.HomeLatest}}</span><span>{{.Site.HomeFeatured}}</span><span>{{.Tr.T "common.date"}}</span></div>{{end}}
+      {{range $i, $p := .Posts}}
+      <a class="nw-row" href="{{$.Tr.U (contentURL $p)}}"><strong>{{with $p.Category}}{{.Name}}{{else}}{{$.Site.HomeLatest}}{{end}}</strong><b>{{printf "%02d" (add $i 1)}}</b><span><h3>{{$p.Title}}</h3>{{if $p.Excerpt}}<p>{{$p.Excerpt}}</p>{{end}}</span>{{if $p.CoverImage}}<img src="{{$p.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs $p.CoverImage}}>{{end}}<time>{{$.Tr.Date $p.PublishedAt}}</time></a>
+      {{end}}
+      {{if .Posts}}<a class="nw-board-all" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} →</a>{{end}}
+    </main>
+    {{with .Featured}}
+    <aside class="nw-dispatch"><div class="nw-dispatch-head"><h2>{{$.Site.HomeFeatured}}</h2><a href="{{$.Tr.U $.CategoryAll.Path}}">{{$.Tr.T "home.view_more"}} →</a></div>{{if .CoverImage}}<a href="{{$.Tr.U (contentURL .)}}"><img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}></a>{{end}}<small>{{$.Site.HomeFeatured}} · {{$.Tr.Date .PublishedAt}}</small><h3>{{.Title}}</h3>{{if .Excerpt}}<p>{{.Excerpt}}</p>{{end}}<a class="nw-dispatch-cta" href="{{$.Tr.U (contentURL .)}}">{{$.Tr.T "home.read_more"}} →</a></aside>
+    {{end}}
+  </section>
+</div>
+{{end}}

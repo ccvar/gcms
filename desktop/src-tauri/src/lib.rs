@@ -36,7 +36,11 @@ use convo::{Conversation, Message};
 use gcms_remote::{
     gcms_cloudflare_clear_connection, gcms_cloudflare_create_a_record,
     gcms_cloudflare_select_connection, gcms_remote_access_check, gcms_remote_access_configure,
-    gcms_remote_access_verify, gcms_remote_install, gcms_remote_status,
+    gcms_remote_access_cutover, gcms_remote_access_verify, gcms_remote_install,
+    gcms_remote_migration_instances, gcms_remote_migration_preflight,
+    gcms_remote_migration_refresh_access, gcms_remote_migration_restart,
+    gcms_remote_migration_stage, gcms_remote_migration_stop, gcms_remote_restart,
+    gcms_remote_status, gcms_remote_stop,
 };
 use tasks::ScheduledTask;
 use transfer::{export_pilot_transfer, import_pilot_transfer, inspect_pilot_transfer};
@@ -1097,6 +1101,16 @@ mod workdir_tests {
 
         // 端口没被占时：原样使用，产物目录也带上
         drop(squatter);
+        // 上面的 port_taken 会实际建立一次 TCP 连接。macOS 偶尔会在 listener
+        // 关闭后的极短窗口里仍让下一次 connect 成功，等内核确认端口释放再断言，
+        // 避免把 socket 关闭时序误报成端口选择回归。
+        for _ in 0..20 {
+            if !port_taken(taken) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(!port_taken(taken), "测试占位监听关闭后端口应释放");
         let (cmd, port) = plan_cmd(&d, None, "dist", taken);
         assert_eq!(port, taken);
         assert!(cmd.contains("wrangler pages dev dist"));
@@ -5515,11 +5529,20 @@ pub fn run() {
             ssh_close,
             gcms_remote_status,
             gcms_remote_install,
+            gcms_remote_restart,
+            gcms_remote_stop,
+            gcms_remote_migration_preflight,
+            gcms_remote_migration_instances,
+            gcms_remote_migration_refresh_access,
+            gcms_remote_migration_restart,
+            gcms_remote_migration_stop,
+            gcms_remote_migration_stage,
             gcms_remote_access_check,
             gcms_cloudflare_select_connection,
             gcms_cloudflare_clear_connection,
             gcms_cloudflare_create_a_record,
             gcms_remote_access_configure,
+            gcms_remote_access_cutover,
             gcms_remote_access_verify,
             export_pilot_transfer,
             inspect_pilot_transfer,

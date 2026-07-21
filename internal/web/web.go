@@ -195,6 +195,23 @@ var Themes = []ThemeOption{
 	{"split", "分屏 · Split", "满屏左右分栏：左侧巨型标题 + 右侧整块精选，黑白克制、大气留白", "general"},
 	{"axis", "中线 · Axis", "全居中宣言式：巨型居中标题 + 中线分隔的居中列表，极致对称留白", "general"},
 	{"journal", "文选 · Journal", "学刊小开本：窄栏衬线、文本优先、克制留白，学术 / 文学气质", "content"},
+	{"field-ledger", "现场账本 · Field Ledger", "研究型内容索引：议题信号、证据链图谱、精选研究与实时更新", "content"},
+	{"field-ledger-graphite", "现场账本 · 石墨", "Field Ledger 的深色石墨色卡", "content"},
+	{"field-ledger-ocean", "现场账本 · 海洋", "Field Ledger 的海洋青色卡", "content"},
+	{"field-ledger-plum", "现场账本 · 梅子", "Field Ledger 的梅子紫色卡", "content"},
+	{"field-ledger-amber", "现场账本 · 琥珀", "Field Ledger 的琥珀暖色卡", "content"},
+	{"signal-archive", "信号库 · Signal Archive", "研究索引、证据链与主题信号的档案型骨架", "content"},
+	{"signal-archive-ink", "信号库 · 墨黑", "Signal Archive 的墨黑色卡", "content"},
+	{"signal-archive-copper", "信号库 · 铜棕", "Signal Archive 的铜棕色卡", "content"},
+	{"signal-archive-cobalt", "信号库 · 钴蓝", "Signal Archive 的钴蓝色卡", "content"},
+	{"paper-current", "纸上潮汐 · Paper Current", "窄栏导览、长文阅读与本期目录", "content"},
+	{"paper-current-sage", "纸上潮汐 · 鼠尾草", "Paper Current 的鼠尾草色卡", "content"},
+	{"paper-current-rose", "纸上潮汐 · 玫瑰", "Paper Current 的玫瑰色卡", "content"},
+	{"paper-current-indigo", "纸上潮汐 · 靛蓝", "Paper Current 的靛蓝色卡", "content"},
+	{"night-watch", "夜哨 · Night Watch", "深色监测、实时脉冲与证据看板", "content"},
+	{"night-watch-cyan", "夜哨 · 青光", "Night Watch 的青光色卡", "content"},
+	{"night-watch-amber", "夜哨 · 琥珀", "Night Watch 的琥珀色卡", "content"},
+	{"night-watch-violet", "夜哨 · 紫电", "Night Watch 的紫电色卡", "content"},
 	{"blueprint", "蓝图 · Blueprint", "工程制图：方格纸底纹 + 墨线 + 等宽技术标注 + 角落标题栏", "general"},
 	{"riso", "孔版 · Risograph", "独立孔版印刷：双专色叠印、网点质感、套印偏移、硬阴影", "content"},
 	{"quiet", "和敬 · Quiet", "和风留白：极阔间距、竖向节奏、发丝线、一点朱印强调", "content"},
@@ -409,6 +426,10 @@ var themeLayouts = map[string]string{
 	"cinema":        "cinema",
 	"collage":       "collage",
 	"constellation": "constellation",
+	"field-ledger":  "index", "field-ledger-graphite": "index", "field-ledger-ocean": "index", "field-ledger-plum": "index", "field-ledger-amber": "index",
+	"signal-archive": "index", "signal-archive-ink": "index", "signal-archive-copper": "index", "signal-archive-cobalt": "index",
+	"paper-current": "index", "paper-current-sage": "index", "paper-current-rose": "index", "paper-current-indigo": "index",
+	"night-watch": "index", "night-watch-cyan": "index", "night-watch-amber": "index", "night-watch-violet": "index",
 	// 皮肤复用骨架（新皮 → 既有骨）
 	"grove":     "sidebar",
 	"obsidian":  "bento",
@@ -513,6 +534,17 @@ func layoutForTheme(theme string) string {
 	return "topbar"
 }
 
+// contentThemeFamily 返回四套独立内容骨架的族名。色卡变体共享同一骨架，
+// 其余既有主题返回空字符串，确保不会误入新页头/页脚分支。
+func contentThemeFamily(theme string) string {
+	for _, family := range []string{"field-ledger", "signal-archive", "paper-current", "night-watch"} {
+		if theme == family || strings.HasPrefix(theme, family+"-") {
+			return family
+		}
+	}
+	return ""
+}
+
 func validTheme(id string) bool {
 	for _, t := range Themes {
 		if t.ID == id {
@@ -561,6 +593,10 @@ var themeAccentDefault = map[string]string{
 	"almanac": "#bf4229", "nightshift": "#8f6bff", "inbox": "#2563eb", "midnight": "#7aa2ff",
 	"catalog": "#d94f35", "nightmarket": "#62f5c4", "broadcast": "#e34b62", "airwave": "#a88bff",
 	"exhibit": "#2f5d50", "afterhours": "#ff6659",
+	"field-ledger": "#b33d1f", "field-ledger-graphite": "#d8e900", "field-ledger-ocean": "#087d8e", "field-ledger-plum": "#7e3d72", "field-ledger-amber": "#a65c18",
+	"signal-archive": "#a92f1e", "signal-archive-ink": "#d5e95b", "signal-archive-copper": "#b96a3d", "signal-archive-cobalt": "#315fc2",
+	"paper-current": "#2f5f9f", "paper-current-sage": "#47765e", "paper-current-rose": "#b54b58", "paper-current-indigo": "#4c4ba6",
+	"night-watch": "#d8f32f", "night-watch-cyan": "#40e0d0", "night-watch-amber": "#f4b942", "night-watch-violet": "#b59cff",
 	"paperwhite": "#3156c8", "citrus": "#e34f32",
 	"bookshop": "#2d5bd1", "canal": "#177c76", "confetti": "#e34b46", "icebox": "#3569d4",
 	"ledger": "#26735b", "signal": "#ff5a36", "gallery": "#263f8f", "coast": "#147d85",
@@ -616,6 +652,10 @@ var themeRadiusDefault = map[string]string{
 	"almanac": "10", "nightshift": "10", "inbox": "10", "midnight": "10",
 	"catalog": "10", "nightmarket": "10", "broadcast": "14", "airwave": "14",
 	"exhibit": "2", "afterhours": "2",
+	"field-ledger": "0", "field-ledger-graphite": "0", "field-ledger-ocean": "0", "field-ledger-plum": "0", "field-ledger-amber": "0",
+	"signal-archive": "0", "signal-archive-ink": "0", "signal-archive-copper": "0", "signal-archive-cobalt": "0",
+	"paper-current": "0", "paper-current-sage": "0", "paper-current-rose": "0", "paper-current-indigo": "0",
+	"night-watch": "0", "night-watch-cyan": "0", "night-watch-amber": "0", "night-watch-violet": "0",
 	"paperwhite": "6", "citrus": "16",
 	"bookshop": "4", "canal": "10", "confetti": "14", "icebox": "12",
 	"ledger": "2", "signal": "4", "gallery": "0", "coast": "14",
@@ -829,8 +869,11 @@ type View struct {
 	Year         int
 	Theme        string
 	Layout       string
-	ThemeStyle   template.CSS
-	AssetVer     string
+	// ContentThemeFamily 只标记四套独立内容骨架；它是主题 ID 的派生值，
+	// 不对应后台设置，也不会改变旧主题的页头、页脚或首页分发。
+	ContentThemeFamily string
+	ThemeStyle         template.CSS
+	AssetVer           string
 
 	// 多语种（前台）
 	Tr                      *i18n.Tr
@@ -848,6 +891,7 @@ type View struct {
 	AdminReturn             string
 
 	Posts           []*store.Post
+	TotalPosts      int // 当前语种已发布文章总数（供内容骨架展示真实统计）
 	Featured        *store.Post
 	FeaturedMore    []*store.Post
 	FeatLinks       []*store.Post
@@ -3631,7 +3675,7 @@ func (s *Server) viewForLang(r *http.Request, lang, nav string) *View {
 		tr = tr.WithPrefix(localizedPrefix(prefix, lang))
 	}
 	v := &View{
-		Site: st, Nav: nav, Year: time.Now().Year(), Theme: st.Theme, Layout: layoutForTheme(st.Theme), ThemeStyle: s.themeOverride(),
+		Site: st, Nav: nav, Year: time.Now().Year(), Theme: st.Theme, Layout: layoutForTheme(st.Theme), ContentThemeFamily: contentThemeFamily(st.Theme), ThemeStyle: s.themeOverride(),
 		Tr: tr, Lang: lang, AssetVer: s.assetVer,
 		SitemapURL:    previewRootPath(r, "/sitemap.xml"),
 		RobotsURL:     previewRootPath(r, "/robots.txt"),
@@ -3786,6 +3830,7 @@ func (s *Server) applyTheme(v *View, theme string) {
 	}
 	v.Theme = theme
 	v.Layout = layoutForTheme(theme)
+	v.ContentThemeFamily = contentThemeFamily(theme)
 	v.Site.Theme = theme
 	v.ThemeStyle = s.themeOverrideFor(theme)
 }
@@ -4136,12 +4181,18 @@ func (s *Server) adminThemePreview(w http.ResponseWriter, r *http.Request) {
 	v.Site.InjectBody = ""
 
 	posts, _ := s.store.ListPublished(lang, 0, 4)
+	if total, err := s.store.CountPublished(lang); err == nil {
+		v.TotalPosts = total
+	}
 	if len(posts) == 0 {
 		posts = []*store.Post{
 			{Title: v.Site.Name + " 更新日志", Excerpt: v.Site.Description, PublishedAt: time.Now()},
 			{Title: "快速开始", Excerpt: "安装、配置与内容发布流程。", PublishedAt: time.Now()},
 			{Title: "设计与主题", Excerpt: "为不同类型的网站选择合适的前台结构。", PublishedAt: time.Now()},
 		}
+	}
+	if v.TotalPosts == 0 {
+		v.TotalPosts = len(posts)
 	}
 	v.Featured = posts[0]
 	if len(posts) > 1 {
@@ -4237,6 +4288,7 @@ func (s *Server) renderHome(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	v := s.view(r, "home")
+	v.TotalPosts = total
 	v.SEO = v.Site.Home()
 	v.Categories, _ = s.store.ListCategories(lang, "post")
 	v.KnowledgeGroups = s.knowledgeGroups(lang, v.CategoryAll, v.Categories, posts, total, postsPerPage)
@@ -4257,6 +4309,12 @@ func (s *Server) renderHome(w http.ResponseWriter, r *http.Request) {
 		} else if len(posts) > 0 {
 			v.Featured = posts[0]
 			v.Posts = posts[1:]
+		}
+		// 四套独立内容骨架把「首页显示数量」解释为首页总文章数：
+		// 1 篇主推 + N-1 篇列表。只从列表排除主推本身，其余置顶文章
+		// 仍按发布时间参与列表；旧主题继续沿用 FeaturedMore 的既有口径。
+		if v.ContentThemeFamily != "" {
+			v.Posts = contentThemeHomePosts(posts, v.Featured, postsPerPage)
 		}
 		// 链接模块：仅当存在「置顶」链接时才在首页展示
 		if linksLimit > 0 {
@@ -4280,6 +4338,33 @@ func (s *Server) renderHome(w http.ResponseWriter, r *http.Request) {
 	v.Langs, v.SEO.Alternates = s.i18nLinksForRequest(r, v.Site.BaseURL, lang, ph)
 	setPagination(v, page, totalPages, "/")
 	s.rnd.Public(w, "home", http.StatusOK, v)
+}
+
+// contentThemeHomePosts 为四套独立内容骨架组装首页文章列表。
+// limit 包含 featured 槽，因此列表最多返回 limit-1 篇；featured 之外的
+// 置顶文章不会被过滤，避免多篇置顶时首页只剩一条普通文章。
+func contentThemeHomePosts(posts []*store.Post, featured *store.Post, limit int) []*store.Post {
+	if featured == nil {
+		if len(posts) > limit && limit >= 0 {
+			return posts[:limit]
+		}
+		return posts
+	}
+	if limit <= 1 {
+		return nil
+	}
+
+	out := make([]*store.Post, 0, min(len(posts), limit-1))
+	for _, post := range posts {
+		if post == nil || post.ID == featured.ID {
+			continue
+		}
+		out = append(out, post)
+		if len(out) == limit-1 {
+			break
+		}
+	}
+	return out
 }
 
 func (s *Server) knowledgeHeroLinks(lang string) []*store.Post {

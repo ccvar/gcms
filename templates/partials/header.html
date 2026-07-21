@@ -1,4 +1,4 @@
-{{define "header"}}{{if eq .Layout "factory-trade"}}{{template "header_factory_trade" .}}{{else if eq .Layout "factory-sidebar"}}{{template "header_factory_sidebar" .}}{{else}}{{template "header_topbar" .}}{{end}}{{end}}
+{{define "header"}}{{if eq .ContentThemeFamily "paper-current"}}{{template "header_paper_current" .}}{{else if .ContentThemeFamily}}{{template "header_content_theme" .}}{{else if eq .Layout "factory-trade"}}{{template "header_factory_trade" .}}{{else if eq .Layout "factory-sidebar"}}{{template "header_factory_sidebar" .}}{{else}}{{template "header_topbar" .}}{{end}}{{end}}
 
 {{define "header_brand"}}{{/* 品牌（logo/文字/两者），三种页头共用；跟随站点 brand 设置 */}}
       {{if and .Site.Logo (ne .Site.Brand "text")}}<a class="brand has-logo{{if eq .Site.Brand "both"}} with-name{{end}}" href="{{.Tr.U "/"}}"><img class="brand-logo" src="{{.Site.Logo}}" alt="{{.Site.Name}}" decoding="async"{{imgAttrs .Site.Logo}}{{if .Site.LogoScale}} style="transform:scale({{.Site.LogoScale}})"{{end}}{{if .VisualEdit}} data-visual-edit="site.logo" data-visual-label="站点 Logo" data-visual-kind="image"{{end}}>{{if eq .Site.Brand "both"}}<span class="brand-name"{{if .VisualEdit}} data-visual-edit="site.name" data-visual-label="站点名称"{{end}}>{{.Site.Name}}</span>{{end}}</a>{{else}}<a class="brand" href="{{.Tr.U "/"}}"{{if .VisualEdit}} data-visual-edit="site.name" data-visual-label="站点名称"{{end}}>{{.Site.Name}}</a>{{end}}
@@ -48,6 +48,51 @@
         {{template "header_search" .}}
         {{template "header_lang" .}}
       </nav>
+    </div>
+  </header>
+{{end}}
+
+{{define "header_content_theme"}}{{/* 四套新内容骨架共用的三段式页头：品牌 / 居中主导航 / 工具。
+     只由 ContentThemeFamily 命中，旧主题继续走 header_topbar。 */}}
+  <header class="site-header ct-site-header">
+    <div class="wrap ct-header-grid">
+      <div class="ct-header-brand">
+        {{template "header_brand" .}}
+      </div>
+      <button type="button" class="menu-toggle" aria-label="{{.Tr.T "common.main_nav"}}" aria-expanded="false" aria-controls="site-nav">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+      </button>
+      <nav class="nav ct-main-nav" id="site-nav" aria-label="{{.Tr.T "common.main_nav"}}">
+        {{range .Menu}}<a href="{{.Href}}"{{$.ExternalLinkAttrs .Href}}{{if .Active}} aria-current="page"{{end}}{{if $.VisualEdit}} data-visual-edit="nav.{{.Index}}" data-visual-label="{{.Label}}"{{end}}>{{.Label}}</a>{{end}}
+      </nav>
+      <div class="ct-header-tools">
+        {{template "header_search" .}}
+        {{template "header_lang" .}}
+        <a class="ct-header-cta" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}}</a>
+      </div>
+    </div>
+  </header>
+{{end}}
+
+{{define "header_paper_current"}}{{/* Paper Current 的导航即设计稿中的左侧书脊；
+     使用现有品牌、菜单、搜索和语言数据，不新增主题参数。 */}}
+  <header class="site-header pc-site-header">
+    <div class="wrap pc-header-rail">
+      <div class="pc-header-brand">
+        {{template "header_brand" .}}
+      </div>
+      <button type="button" class="menu-toggle" aria-label="{{.Tr.T "common.main_nav"}}" aria-expanded="false" aria-controls="site-nav">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+      </button>
+      <nav class="nav pc-rail-nav" id="site-nav" aria-label="{{.Tr.T "common.main_nav"}}">
+        {{range .Menu}}<a href="{{.Href}}"{{$.ExternalLinkAttrs .Href}}{{if .Active}} aria-current="page"{{end}}{{if $.VisualEdit}} data-visual-edit="nav.{{.Index}}" data-visual-label="{{.Label}}"{{end}}>{{.Label}}</a>{{end}}
+        <div class="pc-rail-tools">
+          {{template "header_search" .}}
+          {{template "header_lang" .}}
+          <a class="pc-rail-cta" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} →</a>
+        </div>
+      </nav>
+      <p class="pc-rail-copy">© {{.Year}} {{.Site.Name}}<br>{{.Tr.T "footer.rights"}}</p>
     </div>
   </header>
 {{end}}

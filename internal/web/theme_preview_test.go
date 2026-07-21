@@ -56,8 +56,54 @@ func TestThemePreviewRendersAllThemes(t *testing.T) {
 		if !strings.Contains(body, `data-theme-layout="`+wantLayout+`"`) {
 			t.Errorf("theme %q preview missing data-theme-layout=%q", th.ID, wantLayout)
 		}
-		if skeleton, ok := layoutSkeletons[wantLayout]; ok && !strings.Contains(body, `class="`+skeleton+`"`) {
-			t.Errorf("theme %q preview missing %s skeleton", th.ID, skeleton)
+		skeleton, ok := layoutSkeletons[wantLayout]
+		if strings.HasPrefix(th.ID, "field-ledger") {
+			skeleton, ok = "fl-mast", true
+		}
+		if strings.HasPrefix(th.ID, "signal-archive") {
+			skeleton, ok = "sa-hero", true
+		}
+		if strings.HasPrefix(th.ID, "paper-current") {
+			skeleton, ok = "pc-hero", true
+		}
+		if strings.HasPrefix(th.ID, "night-watch") {
+			skeleton, ok = "nw-hero", true
+		}
+		if ok {
+			needle := `class="` + skeleton + `"`
+			if strings.HasPrefix(th.ID, "field-ledger") || strings.HasPrefix(th.ID, "signal-archive") || strings.HasPrefix(th.ID, "paper-current") || strings.HasPrefix(th.ID, "night-watch") {
+				needle = `class="` + skeleton
+			}
+			if !strings.Contains(body, needle) {
+				t.Errorf("theme %q preview missing %s skeleton", th.ID, skeleton)
+			}
+		}
+		for prefix, fixedLabels := range map[string][]string{
+			"field-ledger":   {">FIELD LEDGER<"},
+			"signal-archive": {">主题索引<", ">最新内容信号<", ">探索全部内容主题"},
+			"paper-current":  {">内容目录<", ">查看完整目录"},
+			"night-watch":    {">证据板<", ">最新特派<", ">EVIDENCE BOARD<"},
+		} {
+			if !strings.HasPrefix(th.ID, prefix) {
+				continue
+			}
+			for _, label := range fixedLabels {
+				if strings.Contains(body, label) {
+					t.Errorf("theme %q still renders fixed content label %q", th.ID, label)
+				}
+			}
+		}
+		if contentThemeFamily(th.ID) != "" {
+			brandClass := `class="ct-header-brand"`
+			if strings.HasPrefix(th.ID, "paper-current") {
+				brandClass = `class="pc-header-brand"`
+			}
+			start := strings.Index(body, brandClass)
+			if start < 0 {
+				t.Errorf("theme %q preview missing content-theme brand wrapper", th.ID)
+			} else if end := strings.Index(body[start:], `</div>`); end >= 0 && strings.Contains(body[start:start+end], "<small>") {
+				t.Errorf("theme %q content-theme header still renders a brand subtitle", th.ID)
+			}
 		}
 	}
 

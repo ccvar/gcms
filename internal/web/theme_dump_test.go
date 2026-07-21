@@ -28,7 +28,8 @@ func TestDumpNewThemePreviews(t *testing.T) {
 		"cutpaper", "primary", "atlas", "mintmap", "pinboard", "spectrum",
 		"daybook", "civic", "broadsheet", "salmonpress", "fieldguide", "bluebook",
 		"sunclock", "seedcalendar", "postbox", "airmail", "apothecary", "toolroom",
-		"publicradio", "morningfm", "whitecube", "botanical"}
+		"publicradio", "morningfm", "whitecube", "botanical",
+		"field-ledger", "signal-archive", "paper-current", "night-watch"}
 	_, h, ps, _, blogSite := setupPlatformAutomation(t)
 	cookie := platformAdminSession(t, ps)
 	enter := httptest.NewRecorder()
@@ -53,6 +54,18 @@ func TestDumpNewThemePreviews(t *testing.T) {
 		body = strings.ReplaceAll(body, `src="/assets/`, `src="../../assets/`)
 		if err := os.WriteFile(filepath.Join(dir, id+".html"), []byte(body), 0o644); err != nil {
 			t.Fatal(err)
+		}
+		// 四套内容骨架还需按真实桌面视口做 1:1 回归；后台卡片预览本身固定为
+		// 1120px，因此另存一份只解除预览容器约束的 QA 页面。结构、数据和生产 CSS
+		// 均保持不变，不把测试尺寸写进正式模板。
+		if contentThemeFamily(id) != "" {
+			full := strings.Replace(body, "</head>", `<style>
+				html { width:auto !important; min-width:0 !important; min-height:100% !important; overflow:auto !important; }
+				body { width:auto !important; min-height:100vh !important; margin:0 !important; overflow:hidden !important; }
+			</style></head>`, 1)
+			if err := os.WriteFile(filepath.Join(dir, id+"-full.html"), []byte(full), 0o644); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
 	t.Logf("dumped %d previews to %s", len(newIDs), dir)

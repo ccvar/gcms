@@ -1,4 +1,18 @@
-{{define "footer"}}{{if eq .Layout "factory-trade"}}{{template "footer_factory_trade" .}}{{else if eq .Layout "factory-sidebar"}}{{template "footer_factory_sidebar" .}}{{else if eq .Layout "factory-vision"}}{{template "footer_factory_vision" .}}{{else}}{{template "footer_default" .}}{{end}}{{template "footer_contact_overlays" .}}{{end}}
+{{define "footer"}}{{if .ContentThemeFamily}}{{template "footer_content_theme" .}}{{else if eq .Layout "factory-trade"}}{{template "footer_factory_trade" .}}{{else if eq .Layout "factory-sidebar"}}{{template "footer_factory_sidebar" .}}{{else if eq .Layout "factory-vision"}}{{template "footer_factory_vision" .}}{{else}}{{template "footer_default" .}}{{end}}{{template "footer_contact_overlays" .}}{{end}}
+
+{{define "footer_content_theme"}}
+  <footer class="site-footer ct-footer">
+    <div class="wrap ct-footer-row">
+      <p>© {{.Year}} {{.Site.Name}}. {{.Tr.T "footer.rights"}}</p>
+      {{if .Site.FooterNote}}<p>{{.Site.FooterNote}}</p>{{end}}
+      <nav aria-label="{{.Tr.T "footer.site"}}">
+        <a href="{{.Tr.U "/about"}}">{{.Tr.T "footer.about"}}</a>
+        <a href="{{.Tr.U "/rss.xml"}}">{{.Tr.T "footer.rss"}}</a>
+        <a href="#top">↑</a>
+      </nav>
+    </div>
+  </footer>
+{{end}}
 
 {{define "footer_default"}}  <footer class="site-footer">
     <div class="wrap">

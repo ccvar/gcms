@@ -43,6 +43,16 @@ pub struct CfHostnameInspect {
     pub ssl_error: String,
 }
 
+#[derive(Clone, Debug)]
+pub struct CfAddressCutoverPlan {
+    pub zone_id: String,
+    pub zone_name: String,
+    pub hostname: String,
+    pub previous_records: Vec<CfDnsRecord>,
+    pub target_ipv4: Ipv4Addr,
+    pub target_ipv6: Option<std::net::Ipv6Addr>,
+}
+
 #[derive(Serialize, Default)]
 pub struct CfVerify {
     /// 期望 "active"。
@@ -452,6 +462,235 @@ pub async fn create_dns_only_a_record(
     Ok(true)
 }
 
+/// 为“迁移后继续使用原域名”准备一份可回滚的 Cloudflare 地址切换计划。
+///
+/// 为避免误改负载均衡、CNAME 链或双源站，只接受精确主机名下恰好一条 A，及至多
+/// 一条 AAAA。若原记录含 AAAA，目标服务器也必须有唯一公网 IPv6 才允许继续。
+pub async fn prepare_address_cutover(
+    token: &str,
+    account_id: &str,
+    zone_name: &str,
+    hostname: &str,
+    target_ipv4: Ipv4Addr,
+    target_ipv6: Option<std::net::Ipv6Addr>,
+) -> Result<CfAddressCutoverPlan, String> {
+    let inspect = inspect_hostname(token, account_id, zone_name, hostname)
+        .await?
+        .ok_or_else(|| format!("Cloudflare 账号中没有找到 Zone {zone_name}"))?;
+    build_address_cutover_plan(inspect, hostname, target_ipv4, target_ipv6)
+}
+
+fn build_address_cutover_plan(
+    inspect: CfHostnameInspect,
+    hostname: &str,
+    target_ipv4: Ipv4Addr,
+    target_ipv6: Option<std::net::Ipv6Addr>,
+) -> Result<CfAddressCutoverPlan, String> {
+    if inspect.zone_status != "active" {
+        return Err(format!(
+            "Cloudflare Zone 当前状态为 {}，激活后才能切换源站",
+            if inspect.zone_status.is_empty() {
+                "未知"
+            } else {
+                &inspect.zone_status
+            }
+        ));
+    }
+    let relevant = inspect
+        .records
+        .iter()
+        .filter(|record| {
+            record
+                .name
+                .trim_end_matches('.')
+                .eq_ignore_ascii_case(hostname)
+                && matches!(record.record_type.as_str(), "A" | "AAAA" | "CNAME")
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if relevant.iter().any(|record| record.record_type == "CNAME") {
+        return Err(format!(
+            "{hostname} 当前使用 CNAME。为避免改坏代理链，Pilot 不会自动切换"
+        ));
+    }
+    let ipv4_records = relevant
+        .iter()
+        .filter(|record| record.record_type == "A")
+        .collect::<Vec<_>>();
+    let ipv6_records = relevant
+        .iter()
+        .filter(|record| record.record_type == "AAAA")
+        .collect::<Vec<_>>();
+    if ipv4_records.len() != 1 {
+        return Err(format!(
+            "{hostname} 必须恰好有一条 A 记录才能安全切换，当前为 {} 条",
+            ipv4_records.len()
+        ));
+    }
+    if ipv6_records.len() > 1 {
+        return Err(format!(
+            "{hostname} 有多条 AAAA 记录，可能属于多源站配置，Pilot 未修改"
+        ));
+    }
+    if !ipv6_records.is_empty() && target_ipv6.is_none() {
+        return Err(format!(
+            "{hostname} 现有 AAAA 记录，但目标服务器没有唯一可用的公网 IPv6。请先处理 AAAA，避免部分访问仍落到旧服务器"
+        ));
+    }
+    if relevant.iter().any(|record| record.id.is_empty()) {
+        return Err(format!(
+            "Cloudflare 未返回 {hostname} 的完整记录 ID，无法建立回滚点"
+        ));
+    }
+    Ok(CfAddressCutoverPlan {
+        zone_id: inspect.zone_id,
+        zone_name: inspect.zone_name,
+        hostname: hostname.to_string(),
+        previous_records: relevant,
+        target_ipv4,
+        target_ipv6,
+    })
+}
+
+fn cutover_content(plan: &CfAddressCutoverPlan, record: &CfDnsRecord) -> Result<String, String> {
+    match record.record_type.as_str() {
+        "A" => Ok(plan.target_ipv4.to_string()),
+        "AAAA" => plan
+            .target_ipv6
+            .map(|address| address.to_string())
+            .ok_or_else(|| format!("{} 缺少目标 IPv6", plan.hostname)),
+        other => Err(format!("不支持切换 {other} 记录")),
+    }
+}
+
+async fn patch_cutover_records(
+    token: &str,
+    plan: &CfAddressCutoverPlan,
+    restore: bool,
+) -> Result<(), String> {
+    let mut restore_errors = Vec::new();
+    for record in &plan.previous_records {
+        let content = if restore {
+            record.content.clone()
+        } else {
+            cutover_content(plan, record)?
+        };
+        let payload = if restore {
+            serde_json::json!({ "content": content, "proxied": record.proxied })
+        } else {
+            serde_json::json!({ "content": content })
+        };
+        let update: Result<(), String> = async {
+            let body = cf_patch_json(
+                token,
+                &format!("/zones/{}/dns_records/{}", plan.zone_id, record.id),
+                &payload,
+            )
+            .await?;
+            let updated = body
+                .get("result")
+                .ok_or("Cloudflare 未返回已更新的 DNS 记录")?;
+            if updated.get("content").and_then(Value::as_str) != Some(content.as_str()) {
+                return Err(format!(
+                    "Cloudflare 未确认 {} 的 {} 记录已更新",
+                    plan.hostname, record.record_type
+                ));
+            }
+            if updated
+                .get("proxied")
+                .and_then(Value::as_bool)
+                .is_some_and(|proxied| proxied != record.proxied)
+            {
+                return Err(format!(
+                    "Cloudflare 意外改变了 {} 的代理状态",
+                    plan.hostname
+                ));
+            }
+            Ok(())
+        }
+        .await;
+        if let Err(error) = update {
+            if restore {
+                restore_errors.push(format!("{} {}：{error}", record.record_type, record.name));
+            } else {
+                return Err(error);
+            }
+        }
+    }
+    if restore_errors.is_empty() {
+        Ok(())
+    } else {
+        Err(restore_errors.join("；"))
+    }
+}
+
+async fn confirm_cutover_records(
+    token: &str,
+    account_id: &str,
+    plan: &CfAddressCutoverPlan,
+    restored: bool,
+) -> Result<(), String> {
+    let inspect = inspect_hostname(token, account_id, &plan.zone_name, &plan.hostname)
+        .await?
+        .ok_or_else(|| format!("重新核验时找不到 Zone {}", plan.zone_name))?;
+    for previous in &plan.previous_records {
+        let expected = if restored {
+            previous.content.clone()
+        } else {
+            cutover_content(plan, previous)?
+        };
+        let current = inspect
+            .records
+            .iter()
+            .find(|record| record.id == previous.id)
+            .ok_or_else(|| format!("重新核验时找不到 {} 记录", previous.record_type))?;
+        if current.content != expected || current.proxied != previous.proxied {
+            return Err(format!(
+                "{} 的 {} 记录复核不一致",
+                plan.hostname, previous.record_type
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// 应用源站切换。任一记录写入或复核失败时，会立即尝试恢复整组旧记录。
+pub async fn apply_address_cutover(
+    token: &str,
+    account_id: &str,
+    plan: &CfAddressCutoverPlan,
+) -> Result<(), String> {
+    if let Err(error) = patch_cutover_records(token, plan, false).await {
+        let rollback = restore_address_cutover(token, account_id, plan).await;
+        return Err(match rollback {
+            Ok(()) => format!("切换失败，Cloudflare 已恢复原记录：{error}"),
+            Err(rollback_error) => {
+                format!("切换失败，且自动恢复未完成：{error}；回滚错误：{rollback_error}")
+            }
+        });
+    }
+    if let Err(error) = confirm_cutover_records(token, account_id, plan, false).await {
+        let rollback = restore_address_cutover(token, account_id, plan).await;
+        return Err(match rollback {
+            Ok(()) => format!("切换复核失败，Cloudflare 已恢复原记录：{error}"),
+            Err(rollback_error) => {
+                format!("切换复核失败，且自动恢复未完成：{error}；回滚错误：{rollback_error}")
+            }
+        });
+    }
+    Ok(())
+}
+
+/// 恢复切换前的记录内容与原有橙云状态，并重新读取 API 复核。
+pub async fn restore_address_cutover(
+    token: &str,
+    account_id: &str,
+    plan: &CfAddressCutoverPlan,
+) -> Result<(), String> {
+    patch_cutover_records(token, plan, true).await?;
+    confirm_cutover_records(token, account_id, plan, true).await
+}
+
 fn safe_proxy_records<'a>(
     records: &'a [CfDnsRecord],
     hostname: &str,
@@ -660,6 +899,71 @@ mod tests {
             ip,
         )
         .is_err());
+    }
+
+    fn active_inspect(records: Vec<CfDnsRecord>) -> CfHostnameInspect {
+        CfHostnameInspect {
+            zone_id: "zone-one".into(),
+            zone_name: "example.com".into(),
+            zone_status: "active".into(),
+            records,
+            ssl_mode: "strict".into(),
+            ssl_error: String::new(),
+        }
+    }
+
+    #[test]
+    fn address_cutover_requires_a_single_reversible_origin() {
+        let target_v4 = "203.0.113.20".parse::<Ipv4Addr>().unwrap();
+        let target_v6 = "2001:db8::20".parse().unwrap();
+        let hostname = "cms.example.com";
+        let plan = build_address_cutover_plan(
+            active_inspect(vec![record("A", hostname, "203.0.113.10", true)]),
+            hostname,
+            target_v4,
+            None,
+        )
+        .unwrap();
+        assert_eq!(plan.previous_records[0].content, "203.0.113.10");
+        assert!(plan.previous_records[0].proxied);
+
+        assert!(build_address_cutover_plan(
+            active_inspect(vec![
+                record("A", hostname, "203.0.113.10", false),
+                record("A", hostname, "203.0.113.11", false),
+            ]),
+            hostname,
+            target_v4,
+            None,
+        )
+        .is_err());
+        assert!(build_address_cutover_plan(
+            active_inspect(vec![record("CNAME", hostname, "old.example.com", true,)]),
+            hostname,
+            target_v4,
+            None,
+        )
+        .is_err());
+        assert!(build_address_cutover_plan(
+            active_inspect(vec![
+                record("A", hostname, "203.0.113.10", false),
+                record("AAAA", hostname, "2001:db8::10", false),
+            ]),
+            hostname,
+            target_v4,
+            None,
+        )
+        .is_err());
+        assert!(build_address_cutover_plan(
+            active_inspect(vec![
+                record("A", hostname, "203.0.113.10", false),
+                record("AAAA", hostname, "2001:db8::10", false),
+            ]),
+            hostname,
+            target_v4,
+            Some(target_v6),
+        )
+        .is_ok());
     }
 
     #[test]

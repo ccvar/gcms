@@ -1,0 +1,32 @@
+{{define "home_paper_current"}}
+<div class="paper-current-page">
+  <section class="pc-hero wrap">
+    <div class="pc-hero-copy">
+      <p class="pc-kicker">{{printf (.Tr.T "category.count") .TotalPosts}}</p>
+      <h1>{{nl2br .Site.HeroTitle}}</h1>
+      <p>{{.Site.HeroDescription}}</p>
+      <a href="{{.Tr.U "/about"}}">{{.Tr.T "home.cta_more"}} →</a>
+    </div>
+    {{with .Featured}}
+    <aside class="pc-note"><small>{{$.Site.HomeFeatured}} · {{$.Tr.Date .PublishedAt}}</small>{{if .Excerpt}}<strong>{{.Excerpt}}</strong>{{else}}<strong>{{.Title}}</strong>{{end}}<a href="{{$.Tr.U (contentURL .)}}">{{$.Tr.T "home.read_more"}} →</a></aside>
+    {{end}}
+  </section>
+
+  <section class="pc-main wrap">
+    <main>
+      {{with .Featured}}
+      <article class="pc-feature{{if not .CoverImage}} no-cover{{end}}">
+        {{if .CoverImage}}<a class="pc-feature-cover" href="{{$.Tr.U (contentURL .)}}"><img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}></a>{{end}}
+        <div><small>{{$.Site.HomeFeatured}} · {{$.Tr.Date .PublishedAt}}</small><h2>{{.Title}}</h2>{{if .Excerpt}}<p>{{.Excerpt}}</p>{{end}}<a href="{{$.Tr.U (contentURL .)}}">{{$.Tr.T "home.read_more"}} →</a></div>
+      </article>
+      {{end}}
+      {{if .Posts}}
+      <div class="pc-stream"><h2>{{.Site.HomeLatest}}</h2>{{range .Posts}}<a href="{{$.Tr.U (contentURL .)}}"><time>{{$.Tr.Date .PublishedAt}}</time><span><small>{{with .Category}}{{.Name}}{{else}}{{$.Site.HomeLatest}}{{end}}</small><b>{{.Title}}</b>{{if .Excerpt}}<em>{{.Excerpt}}</em>{{end}}</span>{{if .CoverImage}}<img src="{{.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{end}}<i>{{$.Tr.T "home.read_more"}} →</i></a>{{end}}<a class="pc-stream-all" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} →</a></div>
+      {{end}}
+    </main>
+    {{if .Posts}}
+    <aside class="pc-toc"><h2>{{.CategoryAll.Title}}</h2>{{range $i, $p := .Posts}}{{if lt $i 5}}<a href="{{$.Tr.U (contentURL $p)}}"><b>{{printf "%02d" (add $i 1)}}</b><span>{{with $p.Category}}{{.Name}}{{else}}{{$.Site.HomeLatest}}{{end}}<br><strong>{{$p.Title}}</strong></span></a>{{end}}{{end}}<a class="pc-all" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} →</a></aside>
+    {{end}}
+  </section>
+</div>
+{{end}}

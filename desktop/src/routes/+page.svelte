@@ -125,15 +125,24 @@
   }
 
   type GcmsRemoteStatus = {
-    installed: boolean; version: string; path: string; running: boolean; base_url: string; redirect_domain: string;
+    installed: boolean; version: string; path: string; running: boolean; port: number; base_url: string; redirect_domain: string;
     password_status: 'default' | 'changed' | 'unknown'; admin_user: string;
   };
-  type GcmsServerView = { checking: boolean; status: GcmsRemoteStatus | null; error: string; phase: string; log: string };
-  type GcmsInstallEvent = { type: 'phase'; message: string } | { type: 'log'; text: string };
+  type GcmsAccessHealth = {
+    domain: string; checked: boolean; https_ok: boolean; verification_error: string;
+    cloudflare_checked: boolean; cloudflare_proxy_applicable: boolean; cloudflare_proxied: boolean; cloudflare_proxy_error: string;
+  };
+  type GcmsServerView = { checking: boolean; status: GcmsRemoteStatus | null; accessHealth: GcmsAccessHealth | null; error: string; phase: string; log: string };
+  type GcmsInstallEvent =
+    | { type: 'phase'; message: string }
+    | { type: 'log'; text: string }
+    | { type: 'progress'; current: number; total: number; source_index: number; source_total: number; message: string };
+  type GcmsMigrationProgress = { current: number; total: number; source_index: number; source_total: number; message: string };
   type GcmsCaddyPreflight = {
     mode: 'missing' | 'standard' | 'custom' | 'conflict' | 'unsupported';
+    provider: 'caddy' | 'nginx';
     installed: boolean; version: string; running: boolean; can_auto_configure: boolean;
-    privilege: 'root' | 'sudo' | 'none'; config_path: string; port_80: string; port_443: string;
+    privilege: 'root' | 'sudo' | 'none'; config_path: string; site_path: string; port_80: string; port_443: string;
     domain_conflicts: string[]; detail: string;
   };
   type GcmsDnsHosting = {
@@ -166,20 +175,306 @@
     cloudflare_proxy_applicable: boolean; cloudflare_proxied: boolean; cloudflare_proxy_error: string;
   };
   type GcmsCloudflareCreateResult = { created: boolean; created_domains: string[]; check: GcmsAccessCheck };
+  type GcmsMigrationServer = {
+    id: string; connection_id: string; name: string; server_name: string; instance_kind: 'main' | 'migration' | 'target';
+    role: 'source' | 'target'; installed: boolean; version: string; path: string; running: boolean; port: number;
+    base_url: string; redirect_domain: string; service_ready: boolean; service_detail: string;
+  };
+  type GcmsMigrationPreflight = {
+    target: GcmsMigrationServer; sources: GcmsMigrationServer[]; issues: string[]; domain_conflicts: string[]; can_start: boolean;
+  };
+  type GcmsMigrationSnapshot = {
+    id: string; target_id: string; source_id: string; source_name: string; version: string; bytes: number;
+    instance_path: string; port: number; source_base_url: string; source_redirect_domain: string;
+    base_url: string; redirect_domain: string; access_configured: boolean; service_name: string;
+    https_ok: boolean; cloudflare_proxy_applicable: boolean; cloudflare_proxied: boolean; cloudflare_proxy_error: string;
+    service_installed: boolean; running: boolean; created_at: number; updated_at: number; last_error: string;
+  };
+  type GcmsMigrationStageResult = { target_id: string; snapshots: GcmsMigrationSnapshot[]; failures: string[]; backup_path: string };
+  type GcmsMigrationSourceOption = {
+    value: string; label: string; sub: string; disabled?: boolean; connectionId: string;
+    instanceKind: 'main' | 'migration'; serverName: string; instanceName: string;
+    version: string; port: number; running: boolean; domain: string;
+  };
   type GcmsAccessWizard = {
     connId: string; connName: string; domain: string; redirectDomain: string; checking: boolean; creatingDns: boolean; configuring: boolean;
+    instancePath?: string; instancePort?: number; migrationInstanceId?: string;
+    intent: 'configure' | 'migrate_source' | 'bind_new' | 'change' | 'https_proxy';
     activeStep: number; detailsOpen: boolean; redirectOpen: boolean;
     check: GcmsAccessCheck | null; result: GcmsAccessApplyResult | null;
     error: string; notice: string; phase: string; log: string;
   };
-  const emptyGcmsServer = (): GcmsServerView => ({ checking: false, status: null, error: '', phase: '', log: '' });
+  const emptyGcmsServer = (): GcmsServerView => ({ checking: false, status: null, accessHealth: null, error: '', phase: '', log: '' });
   const sshServers = $derived(conns.filter((c) => c.kind === 'ssh'));
   let gcmsServers = $state<Record<string, GcmsServerView>>({});
+  let gcmsAccessHealthChecking = $state<Record<string, boolean>>({});
   let gcmsInstalling = $state<Record<string, number>>({});
   let gcmsInstallClock = $state(Date.now());
   let gcmsAccess = $state<GcmsAccessWizard | null>(null);
-  let gcmsCardMenu = $state<null | { connId: string; x: number; y: number }>(null);
+  let gcmsCardMenu = $state<null | { connId: string; x: number; y: number; anchorTop: number; anchorBottom: number; anchorRight: number; ready: boolean }>(null);
+  let gcmsCardMenuEl = $state<HTMLDivElement | null>(null);
+  let gcmsInstanceMenu = $state<null | { instanceId: string; x: number; y: number; anchorTop: number; anchorBottom: number; anchorRight: number; ready: boolean }>(null);
+  let gcmsInstanceMenuEl = $state<HTMLDivElement | null>(null);
+  let gcmsMigrationOpen = $state(false);
+  let gcmsMigrationTarget = $state('');
+  let gcmsMigrationSourcePick = $state('');
+  let gcmsMigrationSources = $state<string[]>([]);
+  let gcmsMigrationChecking = $state(false);
+  let gcmsMigrationStaging = $state(false);
+  let gcmsMigrationPhase = $state('');
+  let gcmsMigrationStage = $state<GcmsMigrationStageResult | null>(null);
+  let gcmsMigrationError = $state('');
+  let gcmsMigrationPreflight = $state<GcmsMigrationPreflight | null>(null);
+  let gcmsMigrationInstances = $state<GcmsMigrationSnapshot[]>([]);
+  let gcmsMigrationInstancesLoading = $state(false);
+  let gcmsMigrationHealthChecking = $state<Record<string, boolean>>({});
+  let gcmsMigrationRestarting = $state('');
+  let gcmsMigrationStopping = $state('');
+  let gcmsServiceActions = $state<Record<string, 'restart' | 'stop'>>({});
+  let gcmsMigrationProgress = $state<GcmsMigrationProgress | null>(null);
+  let gcmsMigrationLog = $state('');
+  let gcmsMigrationLogEl = $state<HTMLPreElement | null>(null);
   const gcmsChecking = $derived(Object.values(gcmsServers).some((s) => s.checking));
+
+  const gcmsMigrationTargetOptions = $derived(sshServers.map((c) => ({ value: c.id, label: c.remark?.trim() || c.name, sub: `${c.ssh_user}@${c.ssh_host}` })));
+  const gcmsMigrationAllSourceOptions = $derived.by(() => {
+    const options: GcmsMigrationSourceOption[] = [];
+    for (const c of sshServers) {
+      const status = gcmsServer(c.id).status;
+      const serverName = c.remark?.trim() || c.name;
+      options.push({
+        value: `main:${c.id}`,
+        label: `${serverName} · 主实例`,
+        sub: `${c.ssh_user}@${c.ssh_host} · :${status?.port || 8080} · ${status?.installed ? `GCMS ${status.version || '版本未知'}` : '未安装 GCMS'}`,
+        disabled: !status?.installed,
+        connectionId: c.id,
+        instanceKind: 'main',
+        serverName,
+        instanceName: serverName,
+        version: status?.version || '',
+        port: status?.port || 8080,
+        running: !!status?.running,
+        domain: domainFromUrl(status?.base_url || ''),
+      });
+    }
+    for (const instance of gcmsMigrationInstances) {
+      const c = sshServers.find((item) => item.id === instance.target_id);
+      if (!c) continue;
+      const serverName = c.remark?.trim() || c.name;
+      const domain = domainFromUrl(instance.base_url || instance.source_base_url);
+      options.push({
+        value: `instance:${instance.id}`,
+        label: `${instance.source_name || domain || '迁移实例'} · 迁移实例`,
+        sub: `${serverName} · :${instance.port} · GCMS ${instance.version || '版本未知'}`,
+        disabled: !instance.instance_path,
+        connectionId: instance.target_id,
+        instanceKind: 'migration',
+        serverName,
+        instanceName: instance.source_name || domain || '迁移实例',
+        version: instance.version,
+        port: instance.port,
+        running: instance.running,
+        domain,
+      });
+    }
+    return options;
+  });
+  const gcmsMigrationSourceOptions = $derived(gcmsMigrationAllSourceOptions.filter((option) =>
+    option.connectionId !== gcmsMigrationTarget && !gcmsMigrationSources.includes(option.value)));
+  function gcmsMigrationSourceOption(id: string): GcmsMigrationSourceOption | undefined {
+    return gcmsMigrationAllSourceOptions.find((option) => option.value === id);
+  }
+  function changeGcmsMigrationTarget() {
+    gcmsMigrationSourcePick = '';
+    gcmsMigrationSources = gcmsMigrationSources.filter((id) => gcmsMigrationSourceOption(id)?.connectionId !== gcmsMigrationTarget);
+    gcmsMigrationError = '';
+    gcmsMigrationPreflight = null;
+  }
+
+  async function loadGcmsMigrationInstances() {
+    if (gcmsMigrationInstancesLoading) return;
+    gcmsMigrationInstancesLoading = true;
+    try {
+      const instances = await invoke<GcmsMigrationSnapshot[]>('gcms_remote_migration_instances');
+      gcmsMigrationInstances = instances;
+      const pending = instances.filter(gcmsMigrationAccessNeedsRefresh);
+      if (pending.length) void refreshGcmsMigrationAccessHealthBatch(pending);
+    } catch (e) {
+      gcmsMigrationError = String(e);
+    } finally {
+      gcmsMigrationInstancesLoading = false;
+    }
+  }
+
+  function gcmsMigrationAccessNeedsRefresh(instance: GcmsMigrationSnapshot): boolean {
+    return instance.access_configured
+      && !!domainFromUrl(instance.base_url)
+      && !instance.https_ok
+      && !instance.cloudflare_proxy_applicable
+      && !instance.cloudflare_proxied
+      && !instance.cloudflare_proxy_error
+      && !instance.last_error;
+  }
+
+  async function refreshGcmsMigrationAccessHealthBatch(instances: GcmsMigrationSnapshot[]) {
+    for (const instance of instances) await refreshGcmsMigrationAccessHealth(instance);
+  }
+
+  async function refreshGcmsMigrationAccessHealth(instance: GcmsMigrationSnapshot) {
+    if (gcmsMigrationHealthChecking[instance.id]) return;
+    gcmsMigrationHealthChecking = { ...gcmsMigrationHealthChecking, [instance.id]: true };
+    try {
+      const refreshed = await invoke<GcmsMigrationSnapshot>('gcms_remote_migration_refresh_access', { instanceId: instance.id });
+      gcmsMigrationInstances = gcmsMigrationInstances.map((item) => item.id === refreshed.id ? refreshed : item);
+      if (gcmsMigrationStage) gcmsMigrationStage = { ...gcmsMigrationStage, snapshots: gcmsMigrationStage.snapshots.map((item) => item.id === refreshed.id ? refreshed : item) };
+    } catch {
+      // 状态回填是后台只读增强；失败时保留灰色未知态，用户仍可点击图标进入完整检测。
+    } finally {
+      const next = { ...gcmsMigrationHealthChecking };
+      delete next[instance.id];
+      gcmsMigrationHealthChecking = next;
+    }
+  }
+
+  async function appendGcmsMigrationLog(text: string) {
+    if (!text.trim()) return;
+    const next = [gcmsMigrationLog, text].filter(Boolean).join('\n');
+    gcmsMigrationLog = next.length > 50_000 ? next.slice(-50_000) : next;
+    await tick();
+    if (gcmsMigrationLogEl) gcmsMigrationLogEl.scrollTop = gcmsMigrationLogEl.scrollHeight;
+  }
+
+  function gcmsMigrationPercent(): number {
+    if (!gcmsMigrationProgress?.total) return 0;
+    return Math.max(0, Math.min(100, Math.round((gcmsMigrationProgress.current / gcmsMigrationProgress.total) * 100)));
+  }
+
+  function openGcmsMigration(targetId = '') {
+    gcmsCardMenu = null;
+    gcmsInstanceMenu = null;
+    gcmsMigrationOpen = true;
+    gcmsMigrationTarget = targetId || sshServers.find((c) => gcmsServer(c.id).status?.installed)?.id || sshServers[0]?.id || '';
+    gcmsMigrationSourcePick = '';
+    gcmsMigrationSources = [];
+    gcmsMigrationChecking = false;
+    gcmsMigrationStaging = false;
+    gcmsMigrationPhase = '';
+    gcmsMigrationStage = null;
+    gcmsMigrationError = '';
+    gcmsMigrationPreflight = null;
+    gcmsMigrationProgress = null;
+    gcmsMigrationLog = '';
+    void loadGcmsMigrationInstances();
+  }
+  function closeGcmsMigration() {
+    if (gcmsMigrationChecking || gcmsMigrationStaging) return;
+    gcmsMigrationOpen = false;
+    gcmsMigrationSourcePick = '';
+    gcmsMigrationPreflight = null;
+    gcmsMigrationError = '';
+  }
+  async function stageGcmsMigration() {
+    if (gcmsMigrationChecking || gcmsMigrationStaging) return;
+    if (!gcmsMigrationPreflight?.can_start) { gcmsMigrationError = '请先完成预检并处理所有问题'; return; }
+    gcmsMigrationStaging = true; gcmsMigrationError = ''; gcmsMigrationPhase = '准备原始快照…'; gcmsMigrationStage = null;
+    gcmsMigrationProgress = null; gcmsMigrationLog = '';
+    const onEvent = new Channel<GcmsInstallEvent>();
+    onEvent.onmessage = (event) => {
+      if (event.type === 'phase') gcmsMigrationPhase = event.message;
+      else if (event.type === 'progress') {
+        gcmsMigrationPhase = event.message;
+        gcmsMigrationProgress = event;
+      } else if (event.type === 'log') void appendGcmsMigrationLog(event.text);
+    };
+    try {
+      gcmsMigrationStage = await invoke<GcmsMigrationStageResult>('gcms_remote_migration_stage', {
+        targetId: gcmsMigrationTarget, sourceIds: gcmsMigrationSources, onEvent,
+      });
+      gcmsMigrationInstances = gcmsMigrationStage.snapshots.length
+        ? [...gcmsMigrationStage.snapshots, ...gcmsMigrationInstances.filter((item) => !gcmsMigrationStage?.snapshots.some((snapshot) => snapshot.id === item.id))]
+        : gcmsMigrationInstances;
+      gcmsMigrationPhase = gcmsMigrationStage.failures.length ? '迁移已完成，但有部分实例需要处理' : '独立实例已迁移并登记';
+      if (!gcmsMigrationStage.failures.length && gcmsMigrationStage.snapshots.length) {
+        await refreshGcmsServers();
+        gcmsMigrationOpen = false;
+        gcmsInstallOpen = true;
+        gcmsAccess = null;
+        say(`迁移完成，已新增 ${gcmsMigrationStage.snapshots.length} 个独立实例`);
+      }
+    } catch (e) { gcmsMigrationError = String(e); gcmsMigrationPhase = ''; }
+    finally { gcmsMigrationStaging = false; }
+  }
+  async function restartGcmsMigrationInstance(instance: GcmsMigrationSnapshot) {
+    if (gcmsMigrationRestarting || gcmsMigrationStopping) return;
+    const action = instance.running ? '重启' : '启动';
+    const yes = await confirmDialog(
+      instance.running
+        ? `重启迁移实例「${instance.source_name}」？\n\n端口 :${instance.port} 的网站与后台会短暂不可访问，重启完成后自动恢复；目录、数据和域名配置不会改变。`
+        : `启动迁移实例「${instance.source_name}」？\n\n将按现有目录、端口 :${instance.port} 和域名配置启动服务，不会修改实例数据。`,
+      { title: `${action}迁移实例`, kind: 'warning', confirmText: `确认${action}` },
+    );
+    if (!yes) return;
+    gcmsMigrationRestarting = instance.id;
+    gcmsMigrationError = '';
+    try {
+      const refreshed = await invoke<GcmsMigrationSnapshot>('gcms_remote_migration_restart', { instanceId: instance.id });
+      gcmsMigrationInstances = gcmsMigrationInstances.map((item) => item.id === refreshed.id ? refreshed : item);
+      if (gcmsMigrationStage) gcmsMigrationStage = { ...gcmsMigrationStage, snapshots: gcmsMigrationStage.snapshots.map((item) => item.id === refreshed.id ? refreshed : item) };
+      say(`迁移实例已${action}`);
+    } catch (e) {
+      gcmsMigrationError = String(e);
+      say(gcmsMigrationError, 'err');
+    } finally {
+      gcmsMigrationRestarting = '';
+    }
+  }
+  async function stopGcmsMigrationInstance(instance: GcmsMigrationSnapshot) {
+    if (gcmsMigrationRestarting || gcmsMigrationStopping || !instance.running) return;
+    const yes = await confirmDialog(
+      `关闭迁移实例「${instance.source_name}」的服务？\n\n关闭后网站与后台会暂时不可访问；实例目录、数据、域名和开机自启配置都会保留，之后可点“重启”恢复。`,
+      { title: '关闭实例服务', kind: 'warning', confirmText: '关闭服务' },
+    );
+    if (!yes) return;
+    gcmsMigrationStopping = instance.id;
+    gcmsMigrationError = '';
+    try {
+      const refreshed = await invoke<GcmsMigrationSnapshot>('gcms_remote_migration_stop', { instanceId: instance.id });
+      gcmsMigrationInstances = gcmsMigrationInstances.map((item) => item.id === refreshed.id ? refreshed : item);
+      if (gcmsMigrationStage) gcmsMigrationStage = { ...gcmsMigrationStage, snapshots: gcmsMigrationStage.snapshots.map((item) => item.id === refreshed.id ? refreshed : item) };
+      say('迁移实例服务已关闭');
+    } catch (e) {
+      gcmsMigrationError = String(e);
+      say(gcmsMigrationError, 'err');
+    } finally {
+      gcmsMigrationStopping = '';
+    }
+  }
+  function addGcmsMigrationSource(id: string) {
+    const option = gcmsMigrationSourceOption(id);
+    if (option && !option.disabled && option.connectionId !== gcmsMigrationTarget && !gcmsMigrationSources.includes(id)) {
+      gcmsMigrationSources = [...gcmsMigrationSources, id];
+    }
+    gcmsMigrationSourcePick = '';
+    gcmsMigrationError = '';
+    gcmsMigrationPreflight = null;
+  }
+  function removeGcmsMigrationSource(id: string) {
+    gcmsMigrationSources = gcmsMigrationSources.filter((item) => item !== id);
+    gcmsMigrationError = '';
+    gcmsMigrationPreflight = null;
+  }
+  async function checkGcmsMigration() {
+    if (gcmsMigrationChecking) return;
+    if (!gcmsMigrationTarget) { gcmsMigrationError = '请选择目标服务器'; return; }
+    if (!gcmsMigrationSources.length) { gcmsMigrationError = '至少选择一个源实例'; return; }
+    gcmsMigrationChecking = true; gcmsMigrationError = ''; gcmsMigrationPreflight = null;
+    try {
+      gcmsMigrationPreflight = await invoke<GcmsMigrationPreflight>('gcms_remote_migration_preflight', {
+        targetId: gcmsMigrationTarget, sourceIds: gcmsMigrationSources,
+      });
+    } catch (e) { gcmsMigrationError = String(e); }
+    finally { gcmsMigrationChecking = false; }
+  }
 
   function gcmsServer(id: string): GcmsServerView { return gcmsServers[id] ?? emptyGcmsServer(); }
   function gcmsDetailsTip(status: GcmsRemoteStatus): string {
@@ -196,6 +491,9 @@
       url.hash = '';
       return url.toString();
     } catch { return ''; }
+  }
+  function gcmsHttpsConfigured(status: Pick<GcmsRemoteStatus, 'base_url'>): boolean {
+    return /^https:\/\//i.test(status.base_url.trim());
   }
   function openGcmsAddress(status: GcmsRemoteStatus) {
     const url = gcmsAdminUrl(status);
@@ -219,6 +517,7 @@
   function closeGcmsInstaller() {
     if (gcmsAccess?.creatingDns || gcmsAccess?.configuring) return;
     gcmsCardMenu = null;
+    gcmsInstanceMenu = null;
     gcmsAccess = null;
     gcmsInstallOpen = false;
   }
@@ -226,32 +525,193 @@
     try { return /^https?:\/\//i.test(url) ? new URL(url).hostname : ''; }
     catch { return ''; }
   }
-  function openGcmsAccess(c: Connection, status: GcmsRemoteStatus) {
+  function openGcmsAccess(
+    c: Connection,
+    status: GcmsRemoteStatus,
+    instance?: { id: string; path: string; port: number; domain?: string; redirectDomain?: string; intent?: GcmsAccessWizard['intent'] },
+    intentOverride?: GcmsAccessWizard['intent'],
+  ) {
     gcmsCardMenu = null;
+    gcmsInstanceMenu = null;
     gcmsAccess = {
-      connId: c.id, connName: c.name, domain: domainFromUrl(status.base_url), redirectDomain: status.redirect_domain || '', checking: false, creatingDns: false, configuring: false,
+      connId: c.id, connName: c.name, domain: instance?.domain || domainFromUrl(status.base_url), redirectDomain: instance ? instance.redirectDomain || '' : status.redirect_domain || '', checking: false, creatingDns: false, configuring: false,
+      instancePath: instance?.path, instancePort: instance?.port, migrationInstanceId: instance?.id,
+      intent: intentOverride || instance?.intent || 'configure',
       activeStep: 1, detailsOpen: false, redirectOpen: false,
       check: null, result: null, error: '', notice: '', phase: '', log: '',
     };
   }
-  function toggleGcmsCardMenu(e: MouseEvent, connId: string) {
+  function openGcmsMigrationDomain(snapshot: GcmsMigrationSnapshot, mode: 'current' | 'source' | 'new' | 'https_proxy' = snapshot.access_configured ? 'current' : 'source') {
+    const target = sshServers.find((item) => item.id === snapshot.target_id);
+    if (!target) {
+      gcmsMigrationError = '对应的目标 SSH 连接已经不存在。';
+      return;
+    }
+    const selectedBaseUrl = mode === 'current' || mode === 'https_proxy' ? snapshot.base_url : mode === 'source' ? snapshot.source_base_url : '';
+    const selectedRedirectDomain = mode === 'current' || mode === 'https_proxy' ? snapshot.redirect_domain : mode === 'source' ? snapshot.source_redirect_domain : '';
+    const status = gcmsServer(target.id).status ?? {
+      installed: true, version: snapshot.version, path: snapshot.instance_path, running: snapshot.running,
+      port: snapshot.port,
+      base_url: selectedBaseUrl, redirect_domain: selectedRedirectDomain,
+      password_status: 'unknown' as const, admin_user: '',
+    };
+    gcmsMigrationOpen = false;
+    gcmsInstallOpen = true;
+    openGcmsAccess(target, status, {
+      id: snapshot.id,
+      path: snapshot.instance_path,
+      port: snapshot.port,
+      domain: domainFromUrl(selectedBaseUrl),
+      redirectDomain: selectedRedirectDomain,
+      intent: mode === 'source' ? 'migrate_source' : mode === 'new' ? 'bind_new' : mode === 'https_proxy' ? 'https_proxy' : 'change',
+    });
+  }
+
+  async function openGcmsAccessHealth(c: Connection, status: GcmsRemoteStatus) {
+    gcmsInstallOpen = true;
+    openGcmsAccess(c, status, undefined, 'https_proxy');
+    await checkGcmsAccess();
+  }
+
+  async function openGcmsMigrationAccessHealth(snapshot: GcmsMigrationSnapshot) {
+    openGcmsMigrationDomain(snapshot, 'https_proxy');
+    if (gcmsAccess) await checkGcmsAccess();
+  }
+
+  function gcmsAccessTitle(access: GcmsAccessWizard): string {
+    if (access.intent === 'https_proxy') return '配置 HTTPS / 橙云';
+    if (access.intent === 'migrate_source') return '迁移原域名';
+    if (access.intent === 'bind_new') return '绑定新域名';
+    if (access.intent === 'change') return '变更访问域名';
+    return '设置访问域名';
+  }
+  function gcmsMigrationAdminUrl(instance: GcmsMigrationSnapshot): string {
+    if (!instance.access_configured) return '';
+    return gcmsAdminUrl({
+      installed: true, version: instance.version, path: instance.instance_path, running: instance.running,
+      port: instance.port,
+      base_url: instance.base_url, redirect_domain: instance.redirect_domain,
+      password_status: 'unknown', admin_user: '',
+    });
+  }
+  function gcmsAccessHealthFromResult(result: GcmsAccessApplyResult, cloudflareChecked = true): GcmsAccessHealth {
+    return {
+      domain: domainFromUrl(result.url || result.status.base_url),
+      checked: true,
+      https_ok: result.https_ok,
+      verification_error: result.verification_error,
+      cloudflare_checked: cloudflareChecked && (result.https_ok || result.cloudflare_proxy_applicable || result.cloudflare_proxied || !!result.cloudflare_proxy_error),
+      cloudflare_proxy_applicable: result.cloudflare_proxy_applicable,
+      cloudflare_proxied: result.cloudflare_proxied,
+      cloudflare_proxy_error: result.cloudflare_proxy_error,
+    };
+  }
+  type GcmsAccessPartState = { label: string; tip: string; tone: 'ok' | 'warn' | ''; active: boolean };
+  function gcmsHttpsAccessState(health: GcmsAccessHealth | null, configured: boolean, checking = false): GcmsAccessPartState {
+    if (checking) return configured
+      ? { label: 'HTTPS 已配置', tip: 'HTTPS 配置已存在，正在后台核验可用性', tone: 'ok', active: true }
+      : { label: 'HTTPS 检测中', tip: '正在后台核验 HTTPS 状态', tone: '', active: false };
+    if (health?.https_ok) return { label: 'HTTPS 已配置', tip: 'HTTPS、后台页面与样式资源均已验证；点击可重新检测', tone: 'ok', active: true };
+    if (health?.checked) return { label: 'HTTPS 待处理', tip: health.verification_error || 'HTTPS 尚未通过验证；点击查看并处理', tone: 'warn', active: false };
+    if (configured) return { label: 'HTTPS 已配置', tip: '服务器已有 HTTPS 配置，尚未保存最近一次可用性检测结果；点击检测', tone: 'ok', active: true };
+    return { label: 'HTTPS 未配置', tip: '尚未配置 HTTPS；点击开始配置', tone: '', active: false };
+  }
+  function gcmsCloudflareAccessState(health: GcmsAccessHealth | null, checking = false, configured = true): GcmsAccessPartState {
+    if (checking) return { label: '橙云检测中', tip: '正在从 Cloudflare 只读核验代理状态', tone: '', active: false };
+    if (!configured) return { label: '橙云未配置', tip: '尚未绑定访问域名，Cloudflare 橙云未配置；点击开始配置', tone: '', active: false };
+    if (health?.cloudflare_proxied) {
+      const extra = health.cloudflare_proxy_error ? `\n${health.cloudflare_proxy_error}` : '';
+      return { label: '橙云已开启', tip: `Cloudflare 橙云代理已开启；点击可重新检测${extra}`, tone: 'ok', active: true };
+    }
+    if (health?.cloudflare_proxy_applicable && health.cloudflare_proxy_error) return { label: '橙云待处理', tip: health.cloudflare_proxy_error, tone: 'warn', active: false };
+    if (health?.cloudflare_proxy_applicable) return { label: '橙云未开启', tip: '已识别 Cloudflare DNS，但橙云代理尚未开启；点击继续配置', tone: '', active: false };
+    if (health?.cloudflare_checked) return { label: '橙云未配置', tip: '当前域名没有可管理的 Cloudflare 橙云配置', tone: '', active: false };
+    return { label: '橙云待检测', tip: '尚未核验 Cloudflare 橙云状态；点击检测', tone: '', active: false };
+  }
+  function gcmsMigrationAccessHealth(instance: GcmsMigrationSnapshot): GcmsAccessHealth {
+    const checked = instance.https_ok || instance.cloudflare_proxy_applicable || instance.cloudflare_proxied || !!instance.cloudflare_proxy_error;
+    return {
+      domain: domainFromUrl(instance.base_url),
+      checked,
+      https_ok: instance.https_ok,
+      verification_error: instance.last_error,
+      cloudflare_checked: checked,
+      cloudflare_proxy_applicable: instance.cloudflare_proxy_applicable,
+      cloudflare_proxied: instance.cloudflare_proxied,
+      cloudflare_proxy_error: instance.cloudflare_proxy_error,
+    };
+  }
+  async function toggleGcmsCardMenu(e: MouseEvent, connId: string) {
     e.stopPropagation();
+    gcmsInstanceMenu = null;
     if (gcmsCardMenu?.connId === connId) {
       gcmsCardMenu = null;
       return;
     }
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const width = 124;
-    const height = 64;
-    const x = Math.max(8, Math.min(rect.right - width, window.innerWidth - width - 8));
-    const below = rect.bottom + 5;
-    const y = below + height <= window.innerHeight - 8 ? below : Math.max(8, rect.top - height - 5);
-    gcmsCardMenu = { connId, x, y };
+    gcmsCardMenu = {
+      connId,
+      x: Math.max(8, rect.right - 180),
+      y: rect.bottom + 5,
+      anchorTop: rect.top,
+      anchorBottom: rect.bottom,
+      anchorRight: rect.right,
+      ready: false,
+    };
+    await tick();
+    if (!gcmsCardMenu || gcmsCardMenu.connId !== connId || !gcmsCardMenuEl) return;
+    const menuRect = gcmsCardMenuEl.getBoundingClientRect();
+    const x = Math.max(8, Math.min(gcmsCardMenu.anchorRight - menuRect.width, window.innerWidth - menuRect.width - 8));
+    const below = gcmsCardMenu.anchorBottom + 5;
+    const y = below + menuRect.height <= window.innerHeight - 8
+      ? below
+      : Math.max(8, gcmsCardMenu.anchorTop - menuRect.height - 5);
+    gcmsCardMenu = { ...gcmsCardMenu, x, y, ready: true };
+    const status = gcmsServer(connId).status;
+    if (status && !gcmsServer(connId).accessHealth?.cloudflare_checked) void refreshGcmsServerAccessHealth(connId, status);
   }
   $effect(() => {
     if (!gcmsCardMenu) return;
     const close = () => (gcmsCardMenu = null);
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') gcmsCardMenu = null; };
+    window.addEventListener('click', close);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('click', close);
+      window.removeEventListener('keydown', onKey);
+    };
+  });
+  async function toggleGcmsInstanceMenu(e: MouseEvent, instanceId: string) {
+    e.stopPropagation();
+    gcmsCardMenu = null;
+    if (gcmsInstanceMenu?.instanceId === instanceId) {
+      gcmsInstanceMenu = null;
+      return;
+    }
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    gcmsInstanceMenu = {
+      instanceId,
+      x: Math.max(8, rect.right - 180),
+      y: rect.bottom + 5,
+      anchorTop: rect.top,
+      anchorBottom: rect.bottom,
+      anchorRight: rect.right,
+      ready: false,
+    };
+    await tick();
+    if (!gcmsInstanceMenu || gcmsInstanceMenu.instanceId !== instanceId || !gcmsInstanceMenuEl) return;
+    const menuRect = gcmsInstanceMenuEl.getBoundingClientRect();
+    const x = Math.max(8, Math.min(gcmsInstanceMenu.anchorRight - menuRect.width, window.innerWidth - menuRect.width - 8));
+    const below = gcmsInstanceMenu.anchorBottom + 5;
+    const y = below + menuRect.height <= window.innerHeight - 8
+      ? below
+      : Math.max(8, gcmsInstanceMenu.anchorTop - menuRect.height - 5);
+    gcmsInstanceMenu = { ...gcmsInstanceMenu, x, y, ready: true };
+  }
+  $effect(() => {
+    if (!gcmsInstanceMenu) return;
+    const close = () => (gcmsInstanceMenu = null);
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') gcmsInstanceMenu = null; };
     window.addEventListener('click', close);
     window.addEventListener('keydown', onKey);
     return () => {
@@ -284,13 +744,15 @@
   }
   function setGcmsAccessStep(step: number) {
     if (!gcmsAccess || gcmsAccess.checking || gcmsAccess.creatingDns || gcmsAccess.configuring) return;
-    if (step >= 1 && step <= gcmsReachedStep(gcmsAccess)) patchGcmsAccess({ activeStep: step, error: '' });
+    if (gcmsAccess.intent === 'https_proxy' && gcmsAccess.check?.matched && gcmsAccess.check.caddy && step < 3) return;
+    if (step >= 1 && step <= gcmsReachedStep(gcmsAccess)) patchGcmsAccess({ activeStep: step, detailsOpen: false, error: '' });
   }
-  function caddyModeLabel(caddy: GcmsCaddyPreflight): string {
-    if (caddy.mode === 'missing') return '待安装';
-    if (caddy.mode === 'standard') return caddy.running ? '标准 Caddy · 运行中' : '标准 Caddy · 未运行';
-    if (caddy.mode === 'conflict') return '存在冲突';
-    if (caddy.mode === 'custom') return '自定义环境';
+  function webModeLabel(web: GcmsCaddyPreflight): string {
+    if (web.provider === 'nginx' && web.can_auto_configure) return '可自动处理';
+    if (web.mode === 'missing') return '待安装';
+    if (web.mode === 'standard') return web.running ? '标准 Caddy · 运行中' : '标准 Caddy · 未运行';
+    if (web.mode === 'conflict') return '存在冲突';
+    if (web.mode === 'custom') return '自定义环境';
     return '不支持自动配置';
   }
   function dnsHostingLabel(hosting: GcmsDnsHosting): string {
@@ -399,6 +861,14 @@
       return !!cf && cf.status === 'record_missing' && !!cf.connection_id && cf.zone_status === 'active';
     });
   }
+  function canCutoverGcmsCloudflare(check: GcmsAccessCheck): boolean {
+    if (!gcmsAccess?.migrationInstanceId || check.server_ipv4.length !== 1) return false;
+    const unresolved = gcmsAccessRoutes(check).filter((route) => !route.matched);
+    return unresolved.length > 0 && unresolved.every((route) => {
+      const cf = route.cloudflare;
+      return !!cf && cf.status === 'origin_mismatch' && !!cf.connection_id && cf.zone_status === 'active';
+    });
+  }
   function gcmsCloudflareSummary(check: GcmsAccessCheck): string {
     const cf = gcmsActionCloudflare(check);
     if (check.matched) {
@@ -411,13 +881,16 @@
     if (canCreateGcmsCloudflareA(check)) return check.redirect
       ? 'Pilot 会先创建缺少的灰云 A 记录，再配置 HTTPS 和 301；源站验证通过后自动开启橙云。'
       : 'Pilot 会先连接域名并配置源站 HTTPS，验证后台正常后自动开启 Cloudflare 橙云。';
+    if (canCutoverGcmsCloudflare(check)) return check.redirect
+      ? '这是迁移实例。Pilot 可为两个老域名建立 DNS 回滚点，切到新服务器并验证 HTTPS；失败会恢复旧源站。'
+      : '这是迁移实例。Pilot 可先建立 DNS 回滚点，再把老域名切到新服务器并验证后台；失败会恢复旧源站。';
     if (gcmsManualUnmatchedRoute(check)) return `${gcmsManualUnmatchedRoute(check)!.role}尚未指向这台服务器，请按高级设置中的记录提示完成 DNS 配置。`;
     if (!cf) return '有域名尚未连接到这台服务器，请按高级设置中的记录提示完成 DNS 配置。';
     if (cf.status === 'connection_required') return '这个域名由 Cloudflare 管理。连接对应账号后，Pilot 就能自动完成后续设置。';
     if (cf.status === 'connection_selection_required') return 'Pilot 找到了多条可能管理这个域名的 Cloudflare 连接。请选择一条，后续 DNS、HTTPS 与橙云都会固定使用它。';
     if (cf.status === 'zone_not_found') return '当前连接的 Cloudflare 账号中没有这个域名，请连接管理该域名的账号。';
     if (cf.status === 'permission_error' || cf.status === 'ssl_unreadable') return `当前使用「${cloudflareConnectionDisplay(cf.connection_id)}」，它缺少核验所需权限。更新这一条连接即可，不会影响其他 Token。`;
-    if (cf.status === 'origin_mismatch') return '该域名当前指向另一台服务器。Pilot 不会自动覆盖，请先在 Cloudflare 中确认。';
+    if (cf.status === 'origin_mismatch') return '该域名当前指向另一台服务器。普通接入不会覆盖；只有已登记迁移实例可在明确确认后安全切换。';
     if (cf.status === 'unsupported_record') return '检测到不能安全自动修改的 DNS 记录，Pilot 已停止操作以避免覆盖现有配置。';
     if (cf.status === 'zone_inactive') return '这个 Cloudflare Zone 尚未激活，请先在 Cloudflare 完成域名托管。';
     if (cf.status === 'ssl_incompatible') return '橙云已开启，但当前 SSL/TLS 模式不适合源站 HTTPS，请先调整 Cloudflare 设置。';
@@ -427,6 +900,7 @@
     const cf = gcmsActionCloudflare(check);
     if (check.matched) return check.caddy?.can_auto_configure ? '域名已连接，准备配置 HTTPS' : '服务器环境需要确认';
     if (canCreateGcmsCloudflareA(check)) return check.redirect ? '还差一步：连接两个域名' : '还差一步：连接域名';
+    if (canCutoverGcmsCloudflare(check)) return check.redirect ? '旧域名已识别，可以一起迁移' : '旧域名已识别，可以安全迁移';
     if (gcmsManualUnmatchedRoute(check)) return '有一个域名需要手动连接';
     if (!cf) return '需要先完成 DNS 连接';
     if (cf.status === 'connection_selection_required') return '选择管理这个域名的连接';
@@ -438,6 +912,7 @@
     const cf = gcmsActionCloudflare(check);
     if (check.matched) return '已连接';
     if (canCreateGcmsCloudflareA(check)) return '可以自动处理';
+    if (canCutoverGcmsCloudflare(check)) return '可安全迁移';
     if (gcmsManualUnmatchedRoute(check)) return '需要设置';
     if (!cf) return '需要设置';
     if (cf.status === 'connection_selection_required') return '请选择连接';
@@ -447,6 +922,7 @@
   function gcmsCloudflareActionLabel(check: GcmsAccessCheck): string {
     const cf = gcmsActionCloudflare(check);
     if ((check.matched && check.caddy?.can_auto_configure) || canCreateGcmsCloudflareA(check)) return '一键完成配置';
+    if (canCutoverGcmsCloudflare(check)) return '安全迁移老域名';
     if (gcmsManualUnmatchedRoute(check)) return '查看处理建议';
     if (!cf) return '查看处理建议';
     if (cf.status === 'matched' || cf.status === 'record_missing') return '查看处理建议';
@@ -464,12 +940,22 @@
   async function checkGcmsAccess() {
     if (!gcmsAccess || gcmsAccess.checking || gcmsAccess.creatingDns || gcmsAccess.configuring) return;
     const connId = gcmsAccess.connId;
+    const intent = gcmsAccess.intent;
     const domain = gcmsAccess.domain.trim();
     const redirectDomain = gcmsAccess.redirectDomain.trim() || null;
     patchGcmsAccess({ checking: true, result: null, error: '', notice: '', phase: '正在识别 DNS 托管商并核验源站…', log: '' });
     try {
-      const check = await invoke<GcmsAccessCheck>('gcms_remote_access_check', { connId, domain, redirectDomain });
-      if (gcmsAccess?.connId === connId) patchGcmsAccess({ checking: false, activeStep: 2, detailsOpen: false, check, domain: check.domain, redirectDomain: check.redirect?.domain ?? '', error: '', phase: '' });
+      const check = await invoke<GcmsAccessCheck>('gcms_remote_access_check', { connId, domain, redirectDomain, instancePath: gcmsAccess?.instancePath ?? null, instancePort: gcmsAccess?.instancePort ?? null });
+      if (gcmsAccess?.connId === connId) patchGcmsAccess({
+        checking: false,
+        activeStep: intent === 'https_proxy' && check.matched && !!check.caddy ? 3 : 2,
+        detailsOpen: false,
+        check,
+        domain: check.domain,
+        redirectDomain: check.redirect?.domain ?? '',
+        error: '',
+        phase: '',
+      });
     } catch (e) {
       if (gcmsAccess?.connId === connId) patchGcmsAccess({ checking: false, activeStep: gcmsAccess.check ? 2 : 1, error: String(e), phase: '' });
     }
@@ -543,22 +1029,60 @@
     onEvent.onmessage = (event) => {
       if (gcmsAccess?.connId !== connId) return;
       if (event.type === 'phase') patchGcmsAccess({ phase: event.message });
-      else {
+      else if (event.type === 'log') {
         const current = gcmsAccess.log;
         patchGcmsAccess({ log: [current, event.text].filter(Boolean).join('\n') });
       }
     };
     try {
-      const result = await invoke<GcmsAccessApplyResult>('gcms_remote_access_configure', { connId, domain, redirectDomain, enableCloudflareProxy: true, onEvent });
+      const result = await invoke<GcmsAccessApplyResult>('gcms_remote_access_configure', { connId, domain, redirectDomain, enableCloudflareProxy: true, instancePath: gcmsAccess.instancePath ?? null, instancePort: gcmsAccess.instancePort ?? null, migrationInstanceId: gcmsAccess.migrationInstanceId ?? null, onEvent });
       if (gcmsAccess?.connId !== connId) return;
-      patchGcmsServer(connId, { status: result.status, error: '', phase: '' });
+      if (!gcmsAccess.instancePath) patchGcmsServer(connId, { status: result.status, accessHealth: gcmsAccessHealthFromResult(result), error: '', phase: '' });
       patchGcmsAccess({ configuring: false, activeStep: 4, result, error: '', phase: result.https_ok ? '公网访问已就绪' : '配置已保存，等待 HTTPS 生效' });
+      if (gcmsAccess.migrationInstanceId) void loadGcmsMigrationInstances();
       say(result.https_ok
         ? result.cloudflare_proxy_applicable && !result.cloudflare_proxied ? '网站已可访问，Cloudflare 橙云需要确认' : 'GCMS 公网访问已配置'
         : '配置已保存，HTTPS 可能仍在签发证书',
         result.https_ok && result.cloudflare_proxy_applicable && !result.cloudflare_proxied ? 'err' : 'ok');
     } catch (e) {
       if (gcmsAccess?.connId === connId) patchGcmsAccess({ configuring: false, error: String(e), phase: '' });
+    }
+  }
+  async function cutoverGcmsCloudflare(check: GcmsAccessCheck) {
+    if (!gcmsAccess || gcmsAccess.checking || gcmsAccess.creatingDns || gcmsAccess.configuring || !canCutoverGcmsCloudflare(check) || !gcmsAccess.migrationInstanceId) return;
+    const routes = gcmsAccessRoutes(check).filter((route) => !route.matched);
+    const oldRecords = routes.flatMap((route) => (route.cloudflare?.records ?? [])
+      .filter((record) => record.record_type === 'A' || record.record_type === 'AAAA')
+      .map((record) => `${route.domain} ${record.record_type} ${record.content}`));
+    const yes = await confirmDialog(
+      `将 ${routes.map((route) => route.domain).join('、')} 从旧服务器切换到当前迁移实例？\n\n当前记录：${oldRecords.join('；') || '未读取'}\n目标 IPv4：${check.server_ipv4[0]}\n\nPilot 会保留原橙云状态，配置并验证 HTTPS；任一步失败都会自动恢复旧记录。`,
+      { title: '安全迁移老域名', kind: 'warning', confirmText: '建立回滚点并迁移' },
+    );
+    if (!yes || !gcmsAccess) return;
+    const connId = gcmsAccess.connId;
+    const domain = check.domain;
+    const redirectDomain = check.redirect?.domain ?? null;
+    patchGcmsAccess({ configuring: true, result: null, error: '', notice: '', phase: '正在建立 DNS 回滚点…', log: '' });
+    const onEvent = new Channel<GcmsInstallEvent>();
+    onEvent.onmessage = (event) => {
+      if (gcmsAccess?.connId !== connId) return;
+      if (event.type === 'phase') patchGcmsAccess({ phase: event.message });
+      else if (event.type === 'log') patchGcmsAccess({ log: [gcmsAccess.log, event.text].filter(Boolean).join('\n') });
+    };
+    try {
+      const result = await invoke<GcmsAccessApplyResult>('gcms_remote_access_cutover', {
+        connId, domain, redirectDomain,
+        instancePath: gcmsAccess.instancePath ?? null,
+        instancePort: gcmsAccess.instancePort ?? null,
+        migrationInstanceId: gcmsAccess.migrationInstanceId,
+        onEvent,
+      });
+      if (gcmsAccess?.connId !== connId) return;
+      patchGcmsAccess({ configuring: false, activeStep: 4, result, error: '', notice: '', phase: '老域名已迁移到新服务器' });
+      void loadGcmsMigrationInstances();
+      say('老域名已安全迁移到新服务器');
+    } catch (e) {
+      if (gcmsAccess?.connId === connId) patchGcmsAccess({ configuring: false, activeStep: 2, error: String(e), phase: '' });
     }
   }
   async function verifyGcmsAccess() {
@@ -568,10 +1092,11 @@
     const redirectDomain = gcmsAccess.redirectDomain.trim() || null;
     patchGcmsAccess({ checking: true, error: '', phase: '正在重新检测 HTTPS 与页面资源…' });
     try {
-      const result = await invoke<GcmsAccessApplyResult>('gcms_remote_access_verify', { connId, domain, redirectDomain, enableCloudflareProxy: true });
+      const result = await invoke<GcmsAccessApplyResult>('gcms_remote_access_verify', { connId, domain, redirectDomain, enableCloudflareProxy: true, instancePath: gcmsAccess.instancePath ?? null, instancePort: gcmsAccess.instancePort ?? null, migrationInstanceId: gcmsAccess.migrationInstanceId ?? null });
       if (gcmsAccess?.connId !== connId) return;
-      patchGcmsServer(connId, { status: result.status, error: '', phase: '' });
+      if (!gcmsAccess.instancePath) patchGcmsServer(connId, { status: result.status, accessHealth: gcmsAccessHealthFromResult(result), error: '', phase: '' });
       patchGcmsAccess({ checking: false, activeStep: 4, result, error: '', phase: result.https_ok ? 'HTTPS 已就绪' : '等待 HTTPS 生效' });
+      if (gcmsAccess.migrationInstanceId) void loadGcmsMigrationInstances();
       say(result.https_ok
         ? result.cloudflare_proxy_applicable
           ? result.cloudflare_proxied ? 'HTTPS、页面资源与 Cloudflare 橙云已验证' : 'HTTPS 已验证，但 Cloudflare 橙云仍需确认'
@@ -595,6 +1120,10 @@
       if (!next?.matched || !next.caddy) return;
       if (next.caddy.can_auto_configure) await configureGcmsAccess(next);
       else patchGcmsAccess({ activeStep: 3, error: '' });
+      return;
+    }
+    if (canCutoverGcmsCloudflare(check)) {
+      await cutoverGcmsCloudflare(check);
       return;
     }
     if (gcmsManualUnmatchedRoute(check)) {
@@ -627,14 +1156,100 @@
   function patchGcmsServer(id: string, patch: Partial<GcmsServerView>) {
     gcmsServers = { ...gcmsServers, [id]: { ...gcmsServer(id), ...patch } };
   }
+  async function refreshGcmsServerAccessHealth(id: string, status: GcmsRemoteStatus) {
+    if (gcmsAccessHealthChecking[id]) return;
+    const domain = domainFromUrl(status.base_url);
+    if (!domain) return;
+    gcmsAccessHealthChecking = { ...gcmsAccessHealthChecking, [id]: true };
+    try {
+      const check = await invoke<GcmsAccessCheck>('gcms_remote_access_check', {
+        connId: id,
+        domain,
+        redirectDomain: status.redirect_domain.trim() || null,
+        instancePath: null,
+        instancePort: null,
+      });
+      const cloudflareRoutes = gcmsAccessRoutes(check).map((route) => route.cloudflare).filter((value): value is GcmsCloudflareCheck => !!value);
+      const previous = gcmsServer(id).accessHealth;
+      patchGcmsServer(id, {
+        accessHealth: {
+          domain,
+          checked: previous?.checked ?? false,
+          https_ok: previous?.https_ok ?? false,
+          verification_error: previous?.verification_error ?? '',
+          cloudflare_checked: true,
+          cloudflare_proxy_applicable: cloudflareRoutes.length > 0,
+          cloudflare_proxied: cloudflareRoutes.length > 0 && cloudflareRoutes.every((route) => route.proxied),
+          cloudflare_proxy_error: cloudflareRoutes.filter((route) => route.status !== 'matched').map((route) => route.detail).filter(Boolean).join('；'),
+        },
+      });
+    } catch {
+      // 菜单状态核验失败时保持灰色未知态；完整错误仍会在用户进入配置流程后展示。
+    } finally {
+      const next = { ...gcmsAccessHealthChecking };
+      delete next[id];
+      gcmsAccessHealthChecking = next;
+    }
+  }
   async function probeRemoteGcms(id: string) {
     if (gcmsInstalling[id]) return;
     patchGcmsServer(id, { checking: true, status: null, error: '', phase: '正在连接并检测…' });
     try {
       const status = await invoke<GcmsRemoteStatus>('gcms_remote_status', { connId: id });
-      patchGcmsServer(id, { checking: false, status, error: '', phase: '' });
+      const previousHealth = gcmsServer(id).accessHealth;
+      const accessHealth = previousHealth?.domain && previousHealth.domain === domainFromUrl(status.base_url) ? previousHealth : null;
+      patchGcmsServer(id, { checking: false, status, accessHealth, error: '', phase: '' });
     } catch (e) {
       patchGcmsServer(id, { checking: false, status: null, error: String(e), phase: '' });
+    }
+  }
+  async function restartRemoteGcms(c: Connection, current: GcmsRemoteStatus) {
+    if (gcmsServiceActions[c.id] || gcmsInstalling[c.id]) return;
+    gcmsCardMenu = null;
+    const action = current.running ? '重启' : '启动';
+    const yes = await confirmDialog(
+      current.running
+        ? `重启「${c.name}」上的 GCMS 主实例？\n\n端口 :${current.port || 8080} 的网站与后台会短暂不可访问，重启完成后自动恢复；安装目录、数据与域名配置不会改变。`
+        : `启动「${c.name}」上的 GCMS 主实例？\n\n将按现有安装目录、端口 :${current.port || 8080} 和域名配置启动服务，不会修改站点数据。`,
+      { title: `${action} GCMS 服务`, kind: 'warning', confirmText: `确认${action}` },
+    );
+    if (!yes) return;
+    gcmsServiceActions = { ...gcmsServiceActions, [c.id]: 'restart' };
+    patchGcmsServer(c.id, { status: current, error: '', phase: current.running ? '正在重启 GCMS 服务…' : '正在启动 GCMS 服务…' });
+    try {
+      const status = await invoke<GcmsRemoteStatus>('gcms_remote_restart', { connId: c.id });
+      patchGcmsServer(c.id, { status, error: '', phase: '' });
+      say(`GCMS 服务已${action}`);
+    } catch (e) {
+      patchGcmsServer(c.id, { status: current, error: String(e), phase: '' });
+      say(String(e), 'err');
+    } finally {
+      const next = { ...gcmsServiceActions };
+      delete next[c.id];
+      gcmsServiceActions = next;
+    }
+  }
+  async function stopRemoteGcms(c: Connection, current: GcmsRemoteStatus) {
+    if (gcmsServiceActions[c.id] || gcmsInstalling[c.id] || !current.running) return;
+    gcmsCardMenu = null;
+    const yes = await confirmDialog(
+      `关闭「${c.name}」上的 GCMS 主实例？\n\n关闭后网站与后台会暂时不可访问；安装目录、数据、域名与配置都会保留，之后可以重新启动。`,
+      { title: '关闭 GCMS 服务', kind: 'warning', confirmText: '关闭服务' },
+    );
+    if (!yes) return;
+    gcmsServiceActions = { ...gcmsServiceActions, [c.id]: 'stop' };
+    patchGcmsServer(c.id, { status: current, error: '', phase: '正在关闭 GCMS 服务…' });
+    try {
+      const status = await invoke<GcmsRemoteStatus>('gcms_remote_stop', { connId: c.id });
+      patchGcmsServer(c.id, { status, error: '', phase: '' });
+      say('GCMS 服务已关闭');
+    } catch (e) {
+      patchGcmsServer(c.id, { status: current, error: String(e), phase: '' });
+      say(String(e), 'err');
+    } finally {
+      const next = { ...gcmsServiceActions };
+      delete next[c.id];
+      gcmsServiceActions = next;
     }
   }
   async function recheckRemoteGcms(c: Connection, current: GcmsRemoteStatus) {
@@ -661,7 +1276,18 @@
       const error = result.https_ok
         ? ''
         : `页面检查未通过：${result.verification_error || 'HTTPS 或页面资源尚未就绪'}`;
-      patchGcmsServer(c.id, { checking: false, status: result.status, error, phase: '' });
+      const previousHealth = gcmsServer(c.id).accessHealth;
+      const checkedHealth = gcmsAccessHealthFromResult(result, false);
+      const accessHealth = previousHealth?.domain === checkedHealth.domain
+        ? {
+            ...checkedHealth,
+            cloudflare_checked: previousHealth.cloudflare_checked,
+            cloudflare_proxy_applicable: previousHealth.cloudflare_proxy_applicable,
+            cloudflare_proxied: previousHealth.cloudflare_proxied,
+            cloudflare_proxy_error: previousHealth.cloudflare_proxy_error,
+          }
+        : checkedHealth;
+      patchGcmsServer(c.id, { checking: false, status: result.status, accessHealth, error, phase: '' });
       say(
         result.https_ok ? '重新检测完成，后台页面与样式资源均正常' : '检测完成，但页面样式仍未恢复',
         result.https_ok ? 'ok' : 'err',
@@ -673,7 +1299,10 @@
     }
   }
   async function refreshGcmsServers() {
-    await Promise.all(sshServers.map((c) => probeRemoteGcms(c.id)));
+    await Promise.all([
+      ...sshServers.map((c) => probeRemoteGcms(c.id)),
+      loadGcmsMigrationInstances(),
+    ]);
   }
   function openGcmsInstaller() {
     switcherOpen = false;
@@ -685,7 +1314,7 @@
   async function installRemoteGcms(c: Connection) {
     if (gcmsInstalling[c.id]) return;
     gcmsInstalling = { ...gcmsInstalling, [c.id]: Date.now() };
-    patchGcmsServer(c.id, { checking: false, status: null, error: '', phase: '准备安装…', log: '' });
+    patchGcmsServer(c.id, { checking: false, status: null, accessHealth: null, error: '', phase: '准备安装…', log: '' });
     const onEvent = new Channel<GcmsInstallEvent>();
     onEvent.onmessage = (event) => {
       if (event.type === 'phase') patchGcmsServer(c.id, { phase: event.message });
@@ -3067,6 +3696,14 @@
 
   // ---------- 连接 Cloudflare ----------
   const CF_TOKEN_URL = 'https://dash.cloudflare.com/profile/api-tokens';
+  const CF_TOKEN_PERMISSIONS = [
+    { key: 'page', type: 'edit' },
+    { key: 'workers_scripts', type: 'edit' },
+    { key: 'd1', type: 'edit' },
+    { key: 'dns', type: 'edit' },
+    { key: 'zone', type: 'read' },
+    { key: 'zone_settings', type: 'read' },
+  ] as const;
   const CF_DASH_URL = 'https://dash.cloudflare.com/';
   let cfOpen = $state(false);
   let cfToken = $state('');
@@ -3079,14 +3716,24 @@
   let cfName = $state('');
   let cfPermsOpen = $state(false);
   let cfResumeGcms = $state(false);
+  let cfResumeGcmsVerify = $state(false);
   let cfUpdateId = $state('');
   let cfUpdateZone = $state('');
   function cfUpdateConnection(): Connection | null {
     return conns.find((connection) => connection.id === cfUpdateId) ?? null;
   }
+  function cfTokenTemplateUrl(): string {
+    const url = new URL(CF_TOKEN_URL);
+    url.searchParams.set('permissionGroupKeys', JSON.stringify(CF_TOKEN_PERMISSIONS));
+    url.searchParams.set('accountId', cfUpdateConnection()?.account_id || '*');
+    url.searchParams.set('zoneId', 'all');
+    url.searchParams.set('name', cfUpdateZone ? `GCMS Pilot ${cfUpdateZone}` : 'GCMS Pilot');
+    return url.toString();
+  }
   function resetCfConnect(resumeGcms: boolean, updateId = '', updateZone = '') {
     const updating = conns.find((connection) => connection.id === updateId);
     cfResumeGcms = resumeGcms;
+    cfResumeGcmsVerify = resumeGcms && gcmsAccess?.activeStep === 4 && !!gcmsAccess.result;
     cfUpdateId = updating?.id ?? '';
     cfUpdateZone = updateZone.trim();
     cfOpen = true; cfToken = ''; cfErr = ''; cfAccounts = []; cfZones = [];
@@ -3096,11 +3743,9 @@
   }
   function openCfConnect() { resetCfConnect(false); }
   function openCfForGcms() {
-    gcmsInstallOpen = false;
     resetCfConnect(true);
   }
   function openCfUpdateForGcms(connectionId: string, zone: string) {
-    gcmsInstallOpen = false;
     resetCfConnect(true, connectionId, zone);
   }
   function closeCfConnect() {
@@ -3108,6 +3753,7 @@
     const resumeGcms = cfResumeGcms && !!gcmsAccess;
     cfOpen = false;
     cfResumeGcms = false;
+    cfResumeGcmsVerify = false;
     cfUpdateId = '';
     cfUpdateZone = '';
     if (resumeGcms) gcmsInstallOpen = true;
@@ -3149,10 +3795,15 @@
         ? await invoke<Connection>('update_cloudflare_token', { connId: updating.id, token: cfToken.trim(), zone: cfUpdateZone || null })
         : await invoke<Connection>('connect_cloudflare', { name: cfName.trim(), token: cfToken.trim(), accountId: cfAccountId });
       const resumeGcms = cfResumeGcms && !!gcmsAccess;
-      cfOpen = false; cfResumeGcms = false; cfUpdateId = ''; cfUpdateZone = '';
+      const resumeGcmsVerify = cfResumeGcmsVerify;
+      cfOpen = false; cfResumeGcms = false; cfResumeGcmsVerify = false; cfUpdateId = ''; cfUpdateZone = '';
       say(updating ? `已更新 Cloudflare 连接「${updating.remark?.trim() || conn.name}」` : `已连接 Cloudflare「${conn.name}」`);
       await refreshConns();
-      if (resumeGcms && gcmsAccess) { gcmsInstallOpen = true; await checkGcmsAccess(); }
+      if (resumeGcms && gcmsAccess) {
+        gcmsInstallOpen = true;
+        if (resumeGcmsVerify) await verifyGcmsAccess();
+        else await checkGcmsAccess();
+      }
       else await selectConn(conn.id);
     } catch (e) { cfErr = String(e); }
     finally { cfConnecting = false; }
@@ -3802,7 +4453,7 @@
   // 原生 title 出现慢、样式与应用割裂。首次悬停时把 title 搬进 data-tip（保留 aria-label
   // 供无障碍），统一由一个 fixed 浮层显示——不受侧栏等滚动容器裁剪。
   // disabled 按钮不触发鼠标事件 → 需要 tip 的禁用按钮外面包 .tipwrap 承载 data-tip。
-  let tip = $state<{ x: number; y: number; text: string; below: boolean } | null>(null);
+  let tip = $state<{ x: number; y: number; text: string; below: boolean; align: 'center' | 'end' } | null>(null);
   let imgTip = $state<{ x: number; y: number; url: string; below: boolean } | null>(null);
   let imgTipReady = $state(false); // 图片 onload 之前浮层不可见，避免空白小块→大图的闪变
   let hoverWant = ''; // 正在等加载的悬停目标（工作目录图片异步读完时校验还悬停着才弹）
@@ -3865,8 +4516,11 @@
     if (!text) { tip = null; return; }
     const r = el.getBoundingClientRect();
     const below = r.top < 64; // 贴近顶部时改为在元素下方显示
-    const x = Math.min(Math.max(r.left + r.width / 2, 120), window.innerWidth - 120);
-    tip = { x, y: below ? r.bottom + 7 : r.top - 7, text, below };
+    const align = el.dataset.tipAlign === 'end' ? 'end' : 'center';
+    const x = align === 'end'
+      ? Math.min(r.right, window.innerWidth - 8)
+      : Math.min(Math.max(r.left + r.width / 2, 120), window.innerWidth - 120);
+    tip = { x, y: below ? r.bottom + 7 : r.top - 7, text, below, align };
   }
 
   // ---------- 右键菜单（原生） ----------
@@ -4444,7 +5098,7 @@
     {#if flash}<div class="flash {flashKind}">{flash}</div>{/if}
 
     {#if tip}
-      <div class="tipbox" class:below={tip.below} style="left:{tip.x}px; top:{tip.y}px">{tip.text}</div>
+      <div class="tipbox" class:below={tip.below} class:end={tip.align === 'end'} style="left:{tip.x}px; top:{tip.y}px">{tip.text}</div>
     {/if}
     {#if imgTip}
       {@const iu = imgTip.url}
@@ -4463,8 +5117,9 @@
         <div class="hero-card">
           <div class="hero-mark"><AppIcon size={54} /></div>
           <h1>开始之前，先连接一个来源</h1>
-          <p>导入 gcms 技能包为你的站点做内容，或连接 Cloudflare 让本地 Claude / Codex / Grok 帮你建站并部署。</p>
+          <p>安装 gcms 到远程服务器、导入技能包为站点做内容，或连接 Cloudflare 让本地 Claude / Codex / Grok 帮你建站并部署。</p>
           <div class="hero-btns">
+            <button class="btn soft hero-import" onclick={openGcmsInstaller}>{@render gcmsInstallIcon(15)}安装 gcms</button>
             <button class="btn soft hero-import" onclick={importPack} disabled={importBusy}>{@render plusIcon()}{importBusy ? '导入中…' : '导入技能包'}</button>
             <button class="btn soft hero-import" onclick={openCfConnect}>{@render cfMark(15)}连接 Cloudflare</button>
           </div>
@@ -5298,7 +5953,37 @@
 {#snippet settingsIcon()}<svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="8" cy="8" r="2.1" stroke="currentColor" stroke-width="1.25" /><path d="M6.9 1.9h2.2l.45 1.55c.34.13.66.31.95.54l1.56-.4 1.1 1.9-1.1 1.15c.03.18.04.36.04.55s-.01.37-.04.55l1.1 1.15-1.1 1.9-1.56-.4c-.29.23-.61.41-.95.54L9.1 14.1H6.9l-.45-1.58a5.1 5.1 0 0 1-.95-.54l-1.56.4-1.1-1.9 1.1-1.15a3.4 3.4 0 0 1 0-1.1l-1.1-1.15 1.1-1.9 1.56.4c.29-.23.61-.41.95-.54L6.9 1.9Z" stroke="currentColor" stroke-width="1.15" stroke-linejoin="round" /></svg>{/snippet}
 {#snippet domainEditIcon()}<svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="7.2" cy="7.2" r="4.7" stroke="currentColor" stroke-width="1.2" /><path d="M2.6 7.2h9.2M7.2 2.5c1.35 1.35 2 2.92 2 4.7s-.65 3.35-2 4.7c-1.35-1.35-2-2.92-2-4.7s.65-3.35 2-4.7Z" stroke="currentColor" stroke-width="1.05" stroke-linecap="round" stroke-linejoin="round" /><path d="m10.7 12.1 2.65-2.65 1.2 1.2-2.65 2.65-1.65.45.45-1.65Z" fill="white" stroke="currentColor" stroke-width="1" stroke-linejoin="round" /></svg>{/snippet}
 {#snippet gcmsInstallIcon(size: number)}<svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="2" y="2.5" width="12" height="4.3" rx="1.2" stroke="currentColor" stroke-width="1.2" /><path d="M4.5 4.65h.01M7.2 4.65h4.3M8 8v5.5M5.5 11 8 13.5 10.5 11" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" /></svg>{/snippet}
+{#snippet gcmsMigrateIcon(size: number)}<svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M2.5 5h9M9.5 2.8 11.8 5 9.5 7.2M13.5 11h-9M6.5 8.8 4.2 11l2.3 2.2" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" /></svg>{/snippet}
+{#snippet externalLinkIcon(size: number)}<svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M6 3.5h6.5V10M12.2 3.8 3.8 12.2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /><path d="M11 9.5v2.3a1.2 1.2 0 0 1-1.2 1.2H4.2A1.2 1.2 0 0 1 3 11.8V6.2A1.2 1.2 0 0 1 4.2 5H6.5" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" /></svg>{/snippet}
+{#snippet serviceStopIcon(size: number)}<svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="3.2" y="3.2" width="9.6" height="9.6" rx="1.8" stroke="currentColor" stroke-width="1.35" /></svg>{/snippet}
+{#snippet httpsLockIcon(size: number)}<svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.7" stroke="currentColor" stroke-width="1.3" /><path d="M5.2 7V5.3a2.8 2.8 0 0 1 5.6 0V7M8 9.7v1.8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" /></svg>{/snippet}
 {#snippet cfMark(size: number)}<svg class="cf-mark" width={size} height={size} viewBox="0 0 128 128"><path fill="#fff" d="m115.679 69.288l-15.591-8.94l-2.689-1.163l-63.781.436v32.381h82.061z" /><path fill="#f38020" d="M87.295 89.022c.763-2.617.472-5.015-.8-6.796c-1.163-1.635-3.125-2.58-5.488-2.689l-44.737-.581c-.291 0-.545-.145-.691-.363s-.182-.509-.109-.8c.145-.436.581-.763 1.054-.8l45.137-.581c5.342-.254 11.157-4.579 13.192-9.885l2.58-6.723c.109-.291.145-.581.073-.872c-2.906-13.158-14.644-22.97-28.672-22.97c-12.938 0-23.913 8.359-27.838 19.952a13.35 13.35 0 0 0-9.267-2.58c-6.215.618-11.193 5.597-11.811 11.811c-.145 1.599-.036 3.162.327 4.615C10.104 70.051 2 78.337 2 88.549c0 .909.073 1.817.182 2.726a.895.895 0 0 0 .872.763h82.57c.472 0 .909-.327 1.054-.8z" /><path fill="#faae40" d="M101.542 60.275c-.4 0-.836 0-1.236.036c-.291 0-.545.218-.654.509l-1.744 6.069c-.763 2.617-.472 5.015.8 6.796c1.163 1.635 3.125 2.58 5.488 2.689l9.522.581c.291 0 .545.145.691.363s.182.545.109.8c-.145.436-.581.763-1.054.8l-9.924.582c-5.379.254-11.157 4.579-13.192 9.885l-.727 1.853c-.145.363.109.727.509.727h34.089c.4 0 .763-.254.872-.654c.581-2.108.909-4.325.909-6.614c0-13.447-10.975-24.422-24.458-24.422" /></svg>{/snippet}
+{#snippet gcmsInstanceHealth(instance: GcmsMigrationSnapshot)}
+  {@const accessHealth = gcmsMigrationAccessHealth(instance)}
+  {@const accessChecking = !!gcmsMigrationHealthChecking[instance.id]}
+  {@const httpsState = gcmsHttpsAccessState(accessHealth, instance.access_configured && gcmsHttpsConfigured({ base_url: instance.base_url }), accessChecking)}
+  {@const cloudflareState = gcmsCloudflareAccessState(accessHealth, accessChecking, instance.access_configured)}
+  <span class="gcms-instance-health" aria-label="公网访问状态">
+    <button
+      class="gcms-instance-status-action https"
+      class:active={httpsState.active}
+      class:warn={httpsState.tone === 'warn'}
+      data-tip={httpsState.tip}
+      data-tip-align="end"
+      aria-label={httpsState.label}
+      onclick={() => instance.access_configured ? void openGcmsMigrationAccessHealth(instance) : openGcmsMigrationDomain(instance, 'new')}
+    >{@render httpsLockIcon(13)}</button>
+    <button
+      class="gcms-instance-status-action cloudflare"
+      class:active={cloudflareState.active}
+      class:warn={cloudflareState.tone === 'warn'}
+      data-tip={cloudflareState.tip}
+      data-tip-align="end"
+      aria-label={cloudflareState.label}
+      onclick={() => instance.access_configured ? void openGcmsMigrationAccessHealth(instance) : openGcmsMigrationDomain(instance, 'new')}
+    >{@render cfMark(13)}</button>
+  </span>
+{/snippet}
 <!-- 对话主体（消息 + 输入框）。抽成 snippet 是为了两处共用同一份：
      独立的对话页，和远程工作台底部的对话面板。所有状态都是模块级的，直接用即可。
      注意 bind:this={threadEl} —— 同一时刻只会渲染一处（对话页与远程视图互斥），不会打架。 -->
@@ -5720,7 +6405,19 @@
           <button class="gcms-back" aria-label="返回服务器列表" data-tip="返回服务器列表" disabled={gcmsAccess.creatingDns || gcmsAccess.configuring} onclick={() => !gcmsAccess?.creatingDns && !gcmsAccess?.configuring && (gcmsAccess = null)}>
             <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m9.8 3.5-4.5 4.5 4.5 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
           </button>
-          <div><b>设置访问域名</b><small>{gcmsAccess.connName}</small></div>
+          <div>
+            <b>{gcmsAccessTitle(gcmsAccess)}</b>
+            {#if gcmsAccess.migrationInstanceId}
+              <small class="gcms-access-instance-context">
+                <span data-tip={gcmsAccess.instancePath ? `独立实例目录：${gcmsAccess.instancePath}` : '独立迁移实例'}>迁移实例</span>
+                <code>:{gcmsAccess.instancePort || '未知端口'}</code>
+                <i>·</i>
+                <em>{gcmsAccess.connName}</em>
+              </small>
+            {:else}
+              <small>{gcmsAccess.connName}</small>
+            {/if}
+          </div>
         </div>
       {:else}
         <div class="gcms-sheet-title">
@@ -5740,11 +6437,15 @@
           </div>
         </div>
       {/if}
+      {#if !gcmsAccess}
+        <button class="gcms-migrate-head-btn" onclick={() => openGcmsMigration()} disabled={sshServers.length < 2} data-tip={sshServers.length < 2 ? '至少需要两台 SSH 服务器' : '将一个或多个 GCMS 实例迁移到另一台服务器'}>{@render gcmsMigrateIcon(15)}<span>迁移</span></button>
+      {/if}
       <button class="x" onclick={closeGcmsInstaller} disabled={!!gcmsAccess?.creatingDns || !!gcmsAccess?.configuring}>×</button>
     </header>
     <div class="sheet-body">
       {#if gcmsAccess}
         {@const reachedStep = gcmsReachedStep(gcmsAccess)}
+        {@const httpsMaintenanceReady = gcmsAccess.intent === 'https_proxy' && !!gcmsAccess.check?.matched && !!gcmsAccess.check?.caddy}
         <div class="gcms-access-steps" aria-label="访问域名设置进度">
           {#each ['域名', '连接', '配置 HTTPS', '完成'] as label, i}
             <button
@@ -5752,13 +6453,13 @@
               class:done={reachedStep > i + 1}
               class:current={gcmsAccess.activeStep === i + 1}
               aria-current={gcmsAccess.activeStep === i + 1 ? 'step' : undefined}
-              disabled={i + 1 > reachedStep || gcmsAccess.checking || gcmsAccess.creatingDns || gcmsAccess.configuring}
+              disabled={i + 1 > reachedStep || (httpsMaintenanceReady && i + 1 < 3) || gcmsAccess.checking || gcmsAccess.creatingDns || gcmsAccess.configuring}
               onclick={() => setGcmsAccessStep(i + 1)}
             ><i>{reachedStep > i + 1 ? '✓' : i + 1}</i><span>{label}</span></button>
             {#if i < 3}<span class="gcms-step-line" class:done={reachedStep > i + 1} aria-hidden="true"></span>{/if}
           {/each}
         </div>
-        {#if gcmsAccess.checking || gcmsAccess.creatingDns}<div class="gcms-access-progress gcms-step-status"><span class="gcms-spin"></span>{gcmsAccess.phase}</div>{/if}
+        {#if gcmsAccess.checking || gcmsAccess.creatingDns || (gcmsAccess.configuring && gcmsAccess.activeStep === 2)}<div class="gcms-access-progress gcms-step-status"><span class="gcms-spin"></span>{gcmsAccess.phase}</div>{/if}
         {#if gcmsAccess.error}<div class="gcms-access-error gcms-step-status">{gcmsAccess.error}</div>{/if}
         {#if gcmsAccess.notice && gcmsAccess.activeStep === 2}<div class="gcms-access-notice gcms-step-status">{gcmsAccess.notice}</div>{/if}
 
@@ -5822,13 +6523,14 @@
 
         {#if gcmsAccess.activeStep === 2 && gcmsAccess.check}
           {@const accessCheck = gcmsAccess.check}
-          <section class="gcms-access-block" class:ok={accessCheck.matched || canCreateGcmsCloudflareA(accessCheck)} class:warn={!accessCheck.matched && !canCreateGcmsCloudflareA(accessCheck)}>
+          {@const isCloudflareCutover = canCutoverGcmsCloudflare(accessCheck)}
+          <section class="gcms-access-block" class:ok={accessCheck.matched || canCreateGcmsCloudflareA(accessCheck) || canCutoverGcmsCloudflare(accessCheck)} class:warn={!accessCheck.matched && !canCreateGcmsCloudflareA(accessCheck) && !canCutoverGcmsCloudflare(accessCheck)}>
             <div class="gcms-access-block-head">
               <div>
-                <b>{gcmsHasCloudflare(accessCheck) ? '连接域名' : '域名连接检查'}</b>
-                <small>{gcmsHasCloudflare(accessCheck) ? 'Pilot 已找到 Cloudflare，可以自动完成后续设置' : accessCheck.matched ? '域名已连接到当前服务器' : '请先完成域名连接，再重新检测'}</small>
+                <b>{isCloudflareCutover ? '确认迁移原域名' : gcmsHasCloudflare(accessCheck) ? '连接域名' : '域名连接检查'}</b>
+                <small>{isCloudflareCutover ? 'Cloudflare 中的旧源站记录已识别，确认后再切换到当前迁移实例' : gcmsHasCloudflare(accessCheck) ? 'Pilot 已找到 Cloudflare，可以自动完成后续设置' : accessCheck.matched ? '域名已连接到当前服务器' : '请先完成域名连接，再重新检测'}</small>
               </div>
-              <span class="gcms-access-badge" class:ok={accessCheck.matched || canCreateGcmsCloudflareA(accessCheck)}>
+              <span class="gcms-access-badge" class:ok={accessCheck.matched || canCreateGcmsCloudflareA(accessCheck) || canCutoverGcmsCloudflare(accessCheck)}>
                 {gcmsHasCloudflare(accessCheck) ? gcmsCloudflareBadgeLabel(accessCheck) : accessCheck.matched ? '已连接' : '需要设置'}
               </span>
             </div>
@@ -5842,6 +6544,7 @@
                   <p>{gcmsCloudflareSummary(accessCheck)}</p>
                   <div class="gcms-cf-domains">
                     {#each gcmsAccessRoutes(accessCheck) as route}
+                      {@const migrationPending = isCloudflareCutover && !route.matched && route.cloudflare?.status === 'origin_mismatch'}
                       <div class:ok={route.matched} class:missing={route.cloudflare?.status === 'record_missing'}>
                         <span>{route.role}</span><code>{route.domain}</code>
                         {#if route.matched}
@@ -5849,7 +6552,9 @@
                             <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="m2.8 6.1 2 2 4.4-4.4" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round" /></svg>
                           </em>
                         {:else}
-                          <em>{route.cloudflare?.status === 'record_missing' ? '待自动创建' : route.cloudflare ? cloudflareStatusLabel(route.cloudflare) : '待设置'}</em>
+                          <em class:migration={migrationPending} aria-label={migrationPending ? '当前 DNS 仍指向迁移前的旧源站，确认安全迁移后才会切换' : undefined}>
+                            {#if migrationPending}<svg width="9" height="9" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2 6h7M6.8 3.5 9.5 6 6.8 8.5" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" /></svg><span>待迁移</span>{:else}{route.cloudflare?.status === 'record_missing' ? '待自动创建' : route.cloudflare ? cloudflareStatusLabel(route.cloudflare) : '待设置'}{/if}
+                          </em>
                         {/if}
                       </div>
                     {/each}
@@ -5873,7 +6578,7 @@
                     class="btn primary gcms-auto-btn"
                     onclick={() => void runGcmsCloudflareAction(accessCheck)}
                     disabled={gcmsAccess.checking || gcmsAccess.creatingDns || gcmsAccess.configuring}
-                  >{gcmsAccess.creatingDns ? '正在配置 DNS…' : gcmsCloudflareActionLabel(accessCheck)}</button>
+                  >{gcmsAccess.creatingDns ? '正在配置 DNS…' : gcmsAccess.configuring ? (gcmsAccess.phase || '安全迁移中…') : gcmsCloudflareActionLabel(accessCheck)}</button>
                 {/if}
                 {#if ['permission_error', 'ssl_unreadable'].includes(cfCheck.status) && hasOtherCloudflareConnections(cfCheck.connection_id)}
                   <button type="button" class="gcms-change-cf" onclick={() => void changeGcmsCloudflareConnection()} disabled={gcmsAccess.checking}>改用其他连接</button>
@@ -5928,6 +6633,8 @@
                       <small class="gcms-readonly-note warn">仅检测到 IPv6，Pilot 不会自动创建 AAAA。请先确认 IPv4，或在验证 IPv6 入站 80/443 后手动配置。</small>
                     {:else if cfCheck.status === 'record_missing'}
                       <small class="gcms-readonly-note">“一键完成配置”会先新增缺少的灰云 A 记录；源站 HTTPS 验证通过后再开启橙云。不会创建 AAAA 或覆盖现有记录。</small>
+                    {:else if cfCheck.status === 'origin_mismatch' && canCutoverGcmsCloudflare(accessCheck)}
+                      <small class="gcms-readonly-note warn">“安全迁移老域名”只更新当前 A（及可对应的单条 AAAA）记录，保留橙云状态；后台和资源验证失败会自动恢复这里显示的旧源站。</small>
                     {:else}
                       <small class="gcms-readonly-note">核验过程不会修改现有记录、源站 IP 或橙云状态。</small>
                     {/if}
@@ -5986,13 +6693,13 @@
               </div>
             {/if}
           </section>
-          {#if gcmsHasCloudflare(accessCheck)}
+          {#if gcmsHasCloudflare(accessCheck) && gcmsAccess.intent !== 'https_proxy'}
             <button class="gcms-edit-domain gcms-edit-domain-outside" onclick={() => setGcmsAccessStep(1)}>← 修改域名</button>
           {/if}
         {/if}
 
         {#if gcmsAccess.activeStep === 3 && gcmsAccess.check?.matched && gcmsAccess.check.caddy}
-          {@const caddy = gcmsAccess.check.caddy}
+          {@const web = gcmsAccess.check.caddy}
           {#if gcmsAccess.configuring}
             <section class="gcms-access-block gcms-auto-progress-card">
               <span class="gcms-auto-progress-ic"><span class="gcms-spin"></span></span>
@@ -6000,34 +6707,58 @@
               {#if gcmsAccess.log}<details class="gcms-log gcms-access-log"><summary>查看配置日志</summary><pre>{gcmsAccess.log}</pre></details>{/if}
             </section>
           {:else}
-            <section class="gcms-access-block" class:ok={caddy.can_auto_configure} class:warn={!caddy.can_auto_configure}>
+            <section class="gcms-access-block" class:ok={web.can_auto_configure} class:warn={!web.can_auto_configure}>
               <div class="gcms-access-block-head">
-                <div><b>开启 HTTPS 前检查</b><small>{caddy.detail}</small></div>
-                <span class="gcms-access-badge" class:ok={caddy.can_auto_configure}>{caddyModeLabel(caddy)}</span>
+                <div>
+                  <b>{gcmsAccess.intent === 'https_proxy' ? '检查 HTTPS / 橙云状态' : web.provider === 'nginx' ? '检测到服务器正在使用 Nginx' : '开启 HTTPS 前检查'}</b>
+                  <small>{gcmsAccess.intent === 'https_proxy'
+                    ? '当前域名已经连接。Pilot 将重新验证源站 HTTPS，并在安全条件满足时开启 Cloudflare 橙云。'
+                    : web.provider === 'nginx' && web.can_auto_configure
+                    ? 'Pilot 可以复用现有服务，不会停止或覆盖已有网站。'
+                    : web.detail}</small>
+                </div>
+                <span class="gcms-access-badge" class:ok={web.can_auto_configure}>{webModeLabel(web)}</span>
               </div>
-              <div class="gcms-caddy-facts">
-                <span><small>权限</small><b>{caddy.privilege === 'root' ? 'root' : caddy.privilege === 'sudo' ? '免密 sudo' : '不足'}</b></span>
-                <span><small>端口 80 / 443</small><b>{caddy.port_80} / {caddy.port_443}</b></span>
-                {#if caddy.installed}<span><small>版本</small><b>{caddy.version || '已安装'}</b></span>{/if}
-                {#if caddy.config_path}<span><small>主配置</small><b>{caddy.config_path}</b></span>{/if}
-              </div>
-              {#if caddy.can_auto_configure}
+              {#if web.can_auto_configure}
                 <div class="gcms-config-note">
                   <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 1.8 14 4.5v3.8c0 3-2.4 5.1-6 6-3.6-.9-6-3-6-6V4.5l6-2.7Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /><path d="m5.4 8 1.7 1.7 3.6-3.8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" /></svg>
-                  <span>{gcmsAccess.check.redirect
+                  <span>{web.provider === 'nginx'
+                    ? `将只新增一份独立的 GCMS 站点配置，申请 HTTPS 证书，并在 Nginx 校验通过后安全重载；失败会自动回滚。`
+                    : gcmsAccess.check.redirect
                     ? `将为 ${gcmsAccess.check.domain} 配置 HTTPS，并让 ${gcmsAccess.check.redirect.domain} 以 301 跳转到主域名；路径与参数会保留。`
-                    : caddy.mode === 'missing' ? '将安装官方 Caddy 软件包，并写入独立的 GCMS 站点配置。' : '将先备份现有文件，只更新 GCMS 独立配置；校验失败会自动回滚。'}{gcmsHasCloudflare(gcmsAccess.check) ? ' 源站 HTTPS 验证通过后会自动开启 Cloudflare 橙云。' : ''}</span>
+                    : web.mode === 'missing' ? '将安装官方 Caddy 软件包，并写入独立的 GCMS 站点配置。' : '将先备份现有文件，只更新 GCMS 独立配置；校验失败会自动回滚。'}{gcmsHasCloudflare(gcmsAccess.check) ? ' 源站 HTTPS 验证通过后会自动开启 Cloudflare 橙云。' : ''}</span>
                 </div>
                 {#if !gcmsAccess.result}
-                  <button class="btn primary gcms-config-btn" onclick={() => void configureGcmsAccess()} disabled={gcmsAccess.configuring}>
-                    {gcmsAccess.configuring ? (gcmsAccess.phase || '处理中…') : '自动配置 HTTPS'}
-                  </button>
+                  <div class="gcms-web-config-actions">
+                    <button class="btn primary gcms-config-btn" onclick={() => void configureGcmsAccess()} disabled={gcmsAccess.configuring}>
+                      {gcmsAccess.configuring ? (gcmsAccess.phase || '处理中…') : gcmsAccess.intent === 'https_proxy' ? '检查并继续配置' : web.provider === 'nginx' ? '使用 Nginx 继续' : '自动配置 HTTPS'}
+                    </button>
+                    <button
+                      type="button"
+                      class="gcms-advanced-toggle gcms-web-details-toggle"
+                      aria-expanded={gcmsAccess.detailsOpen}
+                      onclick={() => patchGcmsAccess({ detailsOpen: !gcmsAccess?.detailsOpen })}
+                    >
+                      <span>{gcmsAccess.detailsOpen ? '收起高级信息' : '查看高级信息'}</span>
+                      <svg class:open={gcmsAccess.detailsOpen} width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M3 4.5 6 7.5 9 4.5" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" /></svg>
+                    </button>
+                  </div>
                 {/if}
               {:else}
-                <div class="gcms-manual-note"><b>未修改服务器</b><span>{caddy.detail}</span></div>
+                <div class="gcms-manual-note"><b>{web.provider === 'nginx' ? '暂不能自动接入 Nginx' : '未修改服务器'}</b><span>{web.detail}</span></div>
+              {/if}
+              {#if gcmsAccess.detailsOpen}
+                <div class="gcms-caddy-facts gcms-web-facts">
+                  <span><small>当前服务</small><b>{web.provider === 'nginx' ? 'Nginx' : 'Caddy'}</b></span>
+                  <span><small>权限</small><b>{web.privilege === 'root' ? 'root' : web.privilege === 'sudo' ? '免密 sudo' : '不足'}</b></span>
+                  <span><small>端口 80 / 443</small><b>{web.port_80} / {web.port_443}</b></span>
+                  {#if web.installed}<span><small>版本</small><b>{web.version || '已安装'}</b></span>{/if}
+                  {#if web.config_path}<span><small>主配置</small><b>{web.config_path}</b></span>{/if}
+                  {#if web.site_path}<span><small>Pilot 配置</small><b>{web.site_path}</b></span>{/if}
+                </div>
               {/if}
               {#if gcmsAccess.log}<details class="gcms-log gcms-access-log"><summary>查看配置日志</summary><pre>{gcmsAccess.log}</pre></details>{/if}
-              <div class="gcms-step-nav"><button class="btn sm ghost" onclick={() => setGcmsAccessStep(2)}>返回连接域名</button></div>
+              {#if gcmsAccess.intent !== 'https_proxy'}<div class="gcms-step-nav"><button class="btn sm ghost" onclick={() => setGcmsAccessStep(2)}>返回连接域名</button></div>{/if}
             </section>
           {/if}
         {/if}
@@ -6046,14 +6777,14 @@
               <b>{!accessResult.https_ok
                 ? '配置已完成，正在等待 HTTPS'
                 : proxyPermissionRequired
-                  ? '网站已可访问，橙云还差一个权限'
+                  ? '网站已可访问，补充权限即可开启橙云'
                   : proxySslModeRequired
                     ? '网站已可访问，需确认 Cloudflare SSL'
                     : proxyPending ? '网站已可访问，橙云待开启' : '访问域名已设置完成'}</b>
               <small data-tip={!accessResult.https_ok ? accessResult.verification_error : proxyPending ? accessResult.cloudflare_proxy_error : undefined}>{!accessResult.https_ok
                 ? 'DNS 与证书通常需要 1–5 分钟。无需重复配置，请稍后点击“重新检测”。'
                 : proxyPermissionRequired
-                  ? `当前使用「${proxyConnectionLabel}」${proxyConnection?.key_prefix ? `（${proxyConnection.key_prefix}）` : ''}管理 ${proxyCloudflare?.zone_name || '这个 Zone'}，它缺少“Zone Settings: Read”。更新这一条连接即可，其他 Token 和网站访问不受影响。`
+                  ? `「${proxyConnectionLabel}」${proxyConnection?.key_prefix ? `（${proxyConnection.key_prefix}）` : ''}可以管理 ${proxyCloudflare?.zone_name || '这个 Zone'} 的 DNS，但还不能读取 SSL/TLS 设置。补充权限后 Pilot 会自动回来重新检测，网站访问不会中断。`
                   : proxySslModeRequired
                     ? '请先把 Cloudflare SSL/TLS 模式设为 Full 或 Full (strict)，保存后回来重试。网站当前不受影响。'
                     : proxyPending
@@ -6063,14 +6794,14 @@
             {#if proxyPermissionRequired}
               <div class="gcms-result-actions">
                 {#if proxyCloudflare?.connection_id}
-                  <button class="btn sm primary" onclick={() => openCfUpdateForGcms(proxyCloudflare!.connection_id, proxyCloudflare!.zone_name)}>更新此连接</button>
+                  <button class="btn sm primary" onclick={() => openCfUpdateForGcms(proxyCloudflare!.connection_id, proxyCloudflare!.zone_name)}>补充所需权限</button>
                 {:else}
                   <button class="btn sm primary" onclick={openCfForGcms}>连接 Cloudflare</button>
                 {/if}
                 {#if proxyCloudflare?.connection_id && hasOtherCloudflareConnections(proxyCloudflare.connection_id)}
                   <button class="gcms-result-retry" onclick={() => void changeGcmsCloudflareConnection()} disabled={gcmsAccess.checking}>改用其他连接</button>
                 {/if}
-                <button class="gcms-result-retry" onclick={() => void verifyGcmsAccess()} disabled={gcmsAccess.checking}>{gcmsAccess.checking ? '处理中…' : '已更新，重试'}</button>
+                <button class="gcms-result-retry" onclick={() => void verifyGcmsAccess()} disabled={gcmsAccess.checking}>{gcmsAccess.checking ? '正在检测…' : '重新检测橙云'}</button>
               </div>
             {:else if proxySslModeRequired}
               <div class="gcms-result-actions">
@@ -6100,7 +6831,8 @@
           {#each sshServers as c (c.id)}
             {@const state = gcmsServer(c.id)}
             {@const installingAt = gcmsInstalling[c.id]}
-            <section class="gcms-server-card" class:installed={!!state.status?.installed} class:failed={!!state.error}>
+            {@const migratedInstances = gcmsMigrationInstances.filter((instance) => instance.target_id === c.id)}
+            <section class="gcms-server-card" class:installed={!!state.status?.installed || migratedInstances.length > 0} class:failed={!!state.error}>
               <div class="gcms-server-head">
                 <span class="gcms-server-ic">{@render distroMark(distroOf(c), 18)}</span>
                 <span class="gcms-server-main"><b>{c.name}</b><small>{c.ssh_user}@{c.ssh_host}{c.ssh_port && c.ssh_port !== 22 ? `:${c.ssh_port}` : ''}{c.ssh_os ? ` · ${c.ssh_os}` : ''}</small></span>
@@ -6110,6 +6842,8 @@
                   <span class="gcms-state checking"><span class="gcms-spin"></span>检测中</span>
                 {:else if state.status?.installed}
                   <span class="gcms-state ok"><span class="gcms-state-dot"></span>已安装</span>
+                {:else if migratedInstances.length}
+                  <span class="gcms-state ok"><span class="gcms-state-dot"></span>{migratedInstances.length} 个实例</span>
                 {:else if state.error}
                   <span class="gcms-state err">检测失败</span>
                 {:else if state.status}
@@ -6125,6 +6859,32 @@
               {:else if state.checking}
                 <div class="gcms-status-line"><span>{state.phase || '正在检测安装状态…'}</span></div>
               {:else if state.status?.installed}
+                {@const mainHttpsState = gcmsHttpsAccessState(state.accessHealth, gcmsHttpsConfigured(state.status))}
+                {@const mainCloudflareState = gcmsCloudflareAccessState(state.accessHealth, !!gcmsAccessHealthChecking[c.id], !!gcmsAdminUrl(state.status))}
+                {@const mainServiceAction = gcmsServiceActions[c.id]}
+                <div class="gcms-main-instance-label">
+                  <span>主实例</span><b>:{state.status.port || 8080}</b>
+                  <span class="gcms-main-health" aria-label="公网访问状态">
+                    <button
+                      class="gcms-main-health-icon https"
+                      class:active={mainHttpsState.active}
+                      class:warn={mainHttpsState.tone === 'warn'}
+                      data-tip={`${mainHttpsState.label} · 点击查看`}
+                      data-tip-align="end"
+                      aria-label={mainHttpsState.label}
+                      onclick={() => gcmsAdminUrl(state.status!) ? void openGcmsAccessHealth(c, state.status!) : openGcmsAccess(c, state.status!)}
+                    >{@render httpsLockIcon(12)}</button>
+                    <button
+                      class="gcms-main-health-icon cloudflare"
+                      class:active={mainCloudflareState.active}
+                      class:warn={mainCloudflareState.tone === 'warn'}
+                      data-tip={`${mainCloudflareState.label} · 点击查看`}
+                      data-tip-align="end"
+                      aria-label={mainCloudflareState.label}
+                      onclick={() => gcmsAdminUrl(state.status!) ? void openGcmsAccessHealth(c, state.status!) : openGcmsAccess(c, state.status!)}
+                    >{@render cfMark(12)}</button>
+                  </span>
+                </div>
                 <div class="gcms-facts">
                   <div class="gcms-fact">
                     <b>{state.status.version || '版本未知'}</b><small>版本</small>
@@ -6133,8 +6893,8 @@
                     </span>
                   </div>
                   <div class="gcms-fact">
-                    <b class:run={state.status.running}>{state.status.running ? '运行中' : '未运行'}</b><small>服务</small>
-                    <button class="gcms-fact-action" class:active={gcmsCardMenu?.connId === c.id} data-tip="服务设置" aria-label="打开服务设置" aria-haspopup="menu" aria-expanded={gcmsCardMenu?.connId === c.id} onclick={(e) => toggleGcmsCardMenu(e, c.id)}>{@render settingsIcon()}</button>
+                    <b class:run={state.status.running && mainServiceAction !== 'stop'}>{mainServiceAction === 'restart' ? (state.status.running ? '重启中…' : '启动中…') : mainServiceAction === 'stop' ? '关闭中…' : state.status.running ? '运行中' : '未运行'}</b><small>服务</small>
+                    <button class="gcms-fact-action" class:active={gcmsCardMenu?.connId === c.id} data-tip={mainServiceAction ? '服务操作进行中' : '服务设置'} aria-label="打开服务设置" aria-haspopup="menu" aria-expanded={gcmsCardMenu?.connId === c.id} disabled={!!mainServiceAction} onclick={(e) => toggleGcmsCardMenu(e, c.id)}>{@render settingsIcon()}</button>
                   </div>
                 </div>
                 {#if gcmsAdminUrl(state.status)}
@@ -6178,6 +6938,42 @@
                 <div class="gcms-card-actions"><button class="btn sm primary gcms-install-btn" onclick={() => void installRemoteGcms(c)}>一键安装</button><button class="btn sm ghost bare" onclick={() => void probeRemoteGcms(c.id)}>重新检测</button></div>
               {/if}
 
+              {#if migratedInstances.length}
+                <div class="gcms-instance-list">
+                  {#each migratedInstances as instance (instance.id)}
+                    {@const adminUrl = gcmsMigrationAdminUrl(instance)}
+                    {@const sourceDomain = domainFromUrl(instance.source_base_url)}
+                    <article class="gcms-instance-card" class:error={!!instance.last_error}>
+                      <div class="gcms-instance-head">
+                        <span><b>{instance.source_name}</b></span>
+                        <span class="gcms-instance-head-tools">
+                          <i class:run={instance.running}>{instance.running ? '运行中' : '未运行'}</i>
+                          <button
+                            class="gcms-instance-menu-trigger"
+                            class:active={gcmsInstanceMenu?.instanceId === instance.id}
+                            data-tip="实例设置"
+                            data-tip-align="end"
+                            aria-label={`打开迁移实例 ${instance.source_name} 的设置`}
+                            aria-haspopup="menu"
+                            aria-expanded={gcmsInstanceMenu?.instanceId === instance.id}
+                            disabled={gcmsMigrationRestarting === instance.id || gcmsMigrationStopping === instance.id}
+                            onclick={(e) => toggleGcmsInstanceMenu(e, instance.id)}
+                          >{@render settingsIcon()}</button>
+                        </span>
+                      </div>
+                      <div class="gcms-instance-port"><span>迁移实例 · :{instance.port}</span>{@render gcmsInstanceHealth(instance)}</div>
+                      <div class="gcms-instance-meta"><span>{instance.version || '版本未知'}</span><span>{instance.service_installed ? '开机自启' : '自启未配置'}</span></div>
+                      {#if adminUrl}
+                        <button class="gcms-instance-link" data-tip="在系统浏览器打开迁移实例后台" onclick={() => void openUrl(adminUrl)}><span>{adminUrl}</span><svg width="10" height="10" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M6 3.5h6.5V10M12.2 3.8 3.8 12.2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
+                      {:else}
+                        <div class="gcms-instance-unbound"><b>未绑定域名</b>{#if sourceDomain}<span>原域名 {sourceDomain}</span>{:else}<span>可绑定一个新的访问域名</span>{/if}</div>
+                      {/if}
+                      {#if instance.last_error}<p>{instance.last_error}</p>{/if}
+                    </article>
+                  {/each}
+                </div>
+              {/if}
+
               {#if state.log}
                 <details class="gcms-log"><summary>安装日志</summary><pre>{state.log}</pre></details>
               {/if}
@@ -6190,13 +6986,170 @@
   </div>
 {/if}
 
+{#if gcmsMigrationOpen}
+  <div class="mask gcms-migration-mask" role="presentation" onclick={closeGcmsMigration}></div>
+  <div class="sheet gcms-migration-sheet" role="dialog" aria-modal="true" aria-label="迁移 GCMS">
+    <header class="sheet-head">
+      <div class="gcms-migration-title"><b>迁移 GCMS</b><small>迁移为独立实例，不影响目标服务器现有 GCMS</small></div>
+      <button class="x" onclick={closeGcmsMigration} disabled={gcmsMigrationChecking}>×</button>
+    </header>
+    <div class="sheet-body gcms-migration-body">
+      <div class="gcms-migration-flow">
+        <section class="gcms-migration-side">
+          <div class="gcms-migration-section-head">
+            <span class="gcms-migration-section-title">
+              <b>源实例</b>
+              <span
+                class="gcms-migration-note"
+                role="note"
+                aria-label="独立迁移，不合并数据库，也不覆盖目标已有 GCMS"
+                data-tip={'主实例和迁移实例都可单独选择。\n每个源实例都会恢复为新的独立实例。\n不会合并数据库，也不会覆盖目标已有 GCMS。'}
+              >
+                <span class="gcms-migration-note-icon" aria-hidden="true"><svg width="12" height="12" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6.2" stroke="currentColor" stroke-width="1.3" /><path d="M8 7.2v3.5" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" /><circle cx="8" cy="4.8" r=".9" fill="currentColor" /></svg></span>
+                <span>独立迁移</span>
+              </span>
+            </span>
+            <small>{gcmsMigrationInstancesLoading ? '正在读取实例…' : gcmsMigrationSources.length ? `已选 ${gcmsMigrationSources.length} 个` : '可多选'}</small>
+          </div>
+          <Dropdown
+            bind:value={gcmsMigrationSourcePick}
+            options={gcmsMigrationSourceOptions}
+            placeholder={gcmsMigrationInstancesLoading ? '正在读取实例…' : gcmsMigrationSourceOptions.length ? '选择 GCMS 实例…' : (gcmsMigrationSources.length ? '没有更多可选实例' : '暂无可选源实例')}
+            disabled={gcmsMigrationInstancesLoading || !gcmsMigrationSourceOptions.length || gcmsMigrationChecking || gcmsMigrationStaging}
+            onchange={addGcmsMigrationSource}
+          />
+          {#if gcmsMigrationSources.length}
+            <div class="gcms-migration-sources">
+              {#each gcmsMigrationSources as sourceId (sourceId)}
+                {@const source = gcmsMigrationSourceOption(sourceId)}
+                {#if source}
+                  <div class="gcms-migration-source selected">
+                    <span class="gcms-migration-source-main">
+                      <span class="gcms-migration-source-name"><b>{source.instanceName}</b><i>{source.instanceKind === 'main' ? '主实例' : '迁移实例'}</i></span>
+                      <small>{source.serverName} · :{source.port} · GCMS {source.version || '版本未知'} · {source.running ? '运行中' : '未运行'}{source.domain ? ` · ${source.domain}` : ''}</small>
+                    </span>
+                    <button class="gcms-migration-source-remove" type="button" aria-label={`移除源实例 ${source.instanceName}`} data-tip="移除" disabled={gcmsMigrationChecking || gcmsMigrationStaging} onclick={() => removeGcmsMigrationSource(sourceId)}>×</button>
+                  </div>
+                {/if}
+              {/each}
+            </div>
+          {:else}
+            <div class="gcms-migration-source-empty">尚未选择源实例，请从上方添加主实例或迁移实例。</div>
+          {/if}
+        </section>
+        <div class="gcms-migration-arrow" aria-hidden="true"><svg width="28" height="18" viewBox="0 0 28 18" fill="none"><path d="M1 9h23M18 3l7 6-7 6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></svg></div>
+        <section class="gcms-migration-side gcms-migration-target-side">
+          <div class="gcms-migration-section-head"><b>目标服务器</b><small>独立运行在这里</small></div>
+          <Dropdown bind:value={gcmsMigrationTarget} options={gcmsMigrationTargetOptions} disabled={gcmsMigrationChecking || gcmsMigrationStaging} onchange={changeGcmsMigrationTarget} />
+          {#if gcmsMigrationTarget}
+            {@const targetConn = sshServers.find((c) => c.id === gcmsMigrationTarget)}
+            {@const targetState = gcmsServer(gcmsMigrationTarget)}
+            <div class="gcms-migration-target-card"><b>{targetConn?.remark?.trim() || targetConn?.name}</b><small>{targetConn?.ssh_user}@{targetConn?.ssh_host}</small><span>{targetState.status?.installed ? `已有 GCMS ${targetState.status.version || ''} · 保持运行` : '当前没有主 GCMS · 可接收独立实例'}</span></div>
+          {/if}
+        </section>
+      </div>
+      {#if gcmsMigrationError}<div class="gcms-access-error gcms-step-status">{gcmsMigrationError}</div>{/if}
+      {#if gcmsMigrationPreflight}
+        <section class="gcms-migration-report" class:ready={gcmsMigrationPreflight.can_start}>
+          <div class="gcms-migration-report-head"><b>{gcmsMigrationPreflight.can_start ? '预检通过' : '发现需要处理的问题'}</b><span>{gcmsMigrationPreflight.sources.length} 个源实例 → 1 台目标服务器</span></div>
+          <div class="gcms-migration-facts">
+            <span><small>目标</small><b>{gcmsMigrationPreflight.target.name}</b></span>
+            <span><small>目标状态</small><b>{gcmsMigrationPreflight.target.installed ? `已有 GCMS ${gcmsMigrationPreflight.target.version || ''}（保留）` : '没有主 GCMS'}</b></span>
+            <span><small>域名数量</small><b>{gcmsMigrationPreflight.sources.filter((s) => s.base_url).length}</b></span>
+          </div>
+          {#if gcmsMigrationPreflight.issues.length}
+            <ul>{#each gcmsMigrationPreflight.issues as issue}<li>{issue}</li>{/each}</ul>
+          {:else}
+            <p>基础检查通过。目标服务器现有 GCMS 不会停止或覆盖；每个源实例会使用独立目录、端口和服务运行，域名在迁移完成后单独确认。</p>
+          {/if}
+        </section>
+      {/if}
+      {#if gcmsMigrationPhase || gcmsMigrationLog}
+        <section class="gcms-migration-live" aria-live="polite">
+          <div class="gcms-migration-live-head">
+            {#if gcmsMigrationStaging}<span class="gcms-spin" aria-hidden="true"></span>{:else}<span class="gcms-migration-live-dot" aria-hidden="true"></span>{/if}
+            <b>{gcmsMigrationPhase || '迁移任务日志'}</b>
+            {#if gcmsMigrationProgress}<strong>{gcmsMigrationPercent()}%</strong>{/if}
+          </div>
+          {#if gcmsMigrationProgress}
+            <div class="gcms-migration-live-track" aria-label={`迁移进度 ${gcmsMigrationPercent()}%`}><span style={`width:${gcmsMigrationPercent()}%`}></span></div>
+            <div class="gcms-migration-live-meta">
+              <span>{gcmsMigrationProgress.source_index ? `源实例 ${gcmsMigrationProgress.source_index}/${gcmsMigrationProgress.source_total}` : `共 ${gcmsMigrationProgress.source_total} 个源实例`}</span>
+              <span>阶段 {gcmsMigrationProgress.current}/{gcmsMigrationProgress.total}</span>
+            </div>
+          {/if}
+          {#if gcmsMigrationLog}<pre class="gcms-migration-live-log" bind:this={gcmsMigrationLogEl}>{gcmsMigrationLog}</pre>{/if}
+        </section>
+      {/if}
+      {#if gcmsMigrationStage}
+        <section class="gcms-migration-report" class:ready={gcmsMigrationStage.snapshots.length > 0 && !gcmsMigrationStage.failures.length}>
+          <div class="gcms-migration-report-head"><b>{gcmsMigrationStage.failures.length ? '迁移结果' : '独立实例已完成'}</b><span>原有实例未修改</span></div>
+          {#if gcmsMigrationStage.snapshots.length}
+            <div class="gcms-migration-snapshot-list">
+              {#each gcmsMigrationStage.snapshots as snapshot}
+                <div class="gcms-migration-snapshot-row">
+                  <span><b>{snapshot.source_name}</b><small>{snapshot.version || '版本未知'} · :{snapshot.port} · {snapshot.service_installed ? '已开机自启' : '自启未完成'} · {Math.max(1, Math.round(snapshot.bytes / 1024 / 1024))} MB</small></span>
+                  <span class="gcms-migration-snapshot-actions">
+                    {#if domainFromUrl(snapshot.source_base_url)}<button class="btn sm ghost" onclick={() => openGcmsMigrationDomain(snapshot, 'source')}>迁移原域名</button>{/if}
+                    <button class="btn sm ghost" onclick={() => openGcmsMigrationDomain(snapshot, 'new')}>绑定新域名</button>
+                  </span>
+                </div>
+              {/each}
+            </div>
+          {/if}
+          {#if gcmsMigrationStage.failures.length}<ul>{#each gcmsMigrationStage.failures as failure}<li>{failure}</li>{/each}</ul>{/if}
+          <p>成功实例已登记并由独立 systemd 服务托管。失败项可以修复后再次执行，已完成实例会被识别并跳过。</p>
+        </section>
+      {/if}
+    </div>
+    <footer class="gcms-migration-footer">
+      <button class="btn ghost" onclick={closeGcmsMigration} disabled={gcmsMigrationChecking || gcmsMigrationStaging}>关闭</button>
+      {#if gcmsMigrationStage}
+        {#if gcmsMigrationStage.failures.length}<button class="btn primary gcms-migration-action" onclick={() => void stageGcmsMigration()} disabled={gcmsMigrationStaging}>{#if gcmsMigrationStaging}<span class="gcms-spin" aria-hidden="true"></span>{/if}{gcmsMigrationStaging ? '重试中…' : '重试失败项'}</button>{:else}<button class="btn primary" disabled>迁移已完成</button>{/if}
+      {:else if gcmsMigrationPreflight?.can_start}
+        <button class="btn primary gcms-migration-action" onclick={() => void stageGcmsMigration()} disabled={gcmsMigrationChecking || gcmsMigrationStaging}>{#if gcmsMigrationStaging}<span class="gcms-spin" aria-hidden="true"></span>{/if}{gcmsMigrationStaging ? '迁移中…' : '开始原始迁移'}</button>
+      {:else}
+        <button class="btn primary" onclick={() => void checkGcmsMigration()} disabled={gcmsMigrationChecking || gcmsMigrationStaging || !gcmsMigrationTarget || !gcmsMigrationSources.length}>{gcmsMigrationChecking ? '预检中…' : '开始安全预检'}</button>
+      {/if}
+    </footer>
+  </div>
+{/if}
+
 {#if gcmsCardMenu}
   {@const menuConn = conns.find((c) => c.id === gcmsCardMenu?.connId)}
   {@const menuState = menuConn ? gcmsServer(menuConn.id) : null}
   {#if menuConn && menuState?.status?.installed}
-    <div class="ctx-menu fctx gcms-card-menu" style="left:{gcmsCardMenu.x}px; top:{gcmsCardMenu.y}px" role="menu" tabindex="-1">
+    {@const httpsState = gcmsHttpsAccessState(menuState.accessHealth, gcmsHttpsConfigured(menuState.status))}
+    {@const cloudflareState = gcmsCloudflareAccessState(menuState.accessHealth, !!gcmsAccessHealthChecking[menuConn.id], !!gcmsAdminUrl(menuState.status))}
+    {@const serviceAction = gcmsServiceActions[menuConn.id]}
+    <div bind:this={gcmsCardMenuEl} class="ctx-menu fctx gcms-card-menu" class:ready={gcmsCardMenu.ready} style="left:{gcmsCardMenu.x}px; top:{gcmsCardMenu.y}px" role="menu" tabindex="-1">
       <button class="ctx-item" role="menuitem" onclick={() => void recheckRemoteGcms(menuConn, menuState.status!)}>{@render refreshIcon(false)}<span>重新检测</span></button>
+      <button class="ctx-item" role="menuitem" disabled={!!serviceAction} onclick={() => void restartRemoteGcms(menuConn, menuState.status!)}>{@render refreshIcon(serviceAction === 'restart')}<span>{menuState.status.running ? '重启服务' : '启动服务'}</span></button>
+      <button class="ctx-item danger" role="menuitem" disabled={!!serviceAction || !menuState.status.running} onclick={() => void stopRemoteGcms(menuConn, menuState.status!)}>{@render serviceStopIcon(12)}<span>关闭服务</span></button>
+      <div class="gcms-card-menu-divider" aria-hidden="true"></div>
       <button class="ctx-item" role="menuitem" onclick={() => openGcmsAccess(menuConn, menuState.status!)}>{@render domainEditIcon()}<span>{gcmsAdminUrl(menuState.status!) ? '变更域名' : '设置域名'}</span></button>
+      <button class="ctx-item gcms-health-menu-item https" class:active={httpsState.active} class:warn={httpsState.tone === 'warn'} data-tip={httpsState.tip} role="menuitem" onclick={() => gcmsAdminUrl(menuState.status!) ? void openGcmsAccessHealth(menuConn, menuState.status!) : openGcmsAccess(menuConn, menuState.status!)}>{@render httpsLockIcon(13)}<span>{httpsState.label}</span></button>
+      <button class="ctx-item gcms-health-menu-item cloudflare" class:active={cloudflareState.active} class:warn={cloudflareState.tone === 'warn'} data-tip={cloudflareState.tip} role="menuitem" onclick={() => gcmsAdminUrl(menuState.status!) ? void openGcmsAccessHealth(menuConn, menuState.status!) : openGcmsAccess(menuConn, menuState.status!)}>{@render cfMark(13)}<span>{cloudflareState.label}</span></button>
+      <div class="gcms-card-menu-divider" aria-hidden="true"></div>
+      <button class="ctx-item" role="menuitem" onclick={() => openGcmsMigration(menuConn.id)}>{@render gcmsMigrateIcon(14)}<span>迁移到此服务器</span></button>
+    </div>
+  {/if}
+{/if}
+
+{#if gcmsInstanceMenu}
+  {@const menuInstance = gcmsMigrationInstances.find((instance) => instance.id === gcmsInstanceMenu?.instanceId)}
+  {#if menuInstance}
+    {@const sourceDomain = domainFromUrl(menuInstance.source_base_url)}
+    <div bind:this={gcmsInstanceMenuEl} class="ctx-menu fctx gcms-card-menu" class:ready={gcmsInstanceMenu.ready} style="left:{gcmsInstanceMenu.x}px; top:{gcmsInstanceMenu.y}px" role="menu" tabindex="-1">
+      {#if menuInstance.access_configured}
+        <button class="ctx-item" role="menuitem" onclick={() => openGcmsMigrationDomain(menuInstance, 'current')}>{@render domainEditIcon()}<span>变更域名</span></button>
+      {:else}
+        {#if sourceDomain}<button class="ctx-item" role="menuitem" onclick={() => openGcmsMigrationDomain(menuInstance, 'source')}>{@render gcmsMigrateIcon(13)}<span>迁移原域名</span></button>{/if}
+        <button class="ctx-item" role="menuitem" onclick={() => openGcmsMigrationDomain(menuInstance, 'new')}>{@render plusIcon()}<span>绑定新域名</span></button>
+      {/if}
+      <div class="gcms-card-menu-divider" aria-hidden="true"></div>
+      <button class="ctx-item" role="menuitem" disabled={!!gcmsMigrationStopping || !!gcmsMigrationRestarting || !menuInstance.service_installed} onclick={() => void restartGcmsMigrationInstance(menuInstance)}>{@render refreshIcon(gcmsMigrationRestarting === menuInstance.id)}<span>{menuInstance.running ? '重启服务' : '启动服务'}</span></button>
+      <button class="ctx-item danger" role="menuitem" disabled={!!gcmsMigrationStopping || !!gcmsMigrationRestarting || !menuInstance.service_installed || !menuInstance.running} onclick={() => void stopGcmsMigrationInstance(menuInstance)}>{@render serviceStopIcon(12)}<span>关闭服务</span></button>
     </div>
   {/if}
 {/if}
@@ -6396,8 +7349,8 @@
 
 {#if cfOpen}
   {@const updatingCf = cfUpdateConnection()}
-  <div class="mask" role="presentation" onclick={closeCfConnect}></div>
-  <div class="modal cf-modal">
+  <div class="mask cf-mask" role="presentation" onclick={closeCfConnect}></div>
+  <div class="modal cf-modal" role="dialog" aria-modal="true" aria-label={updatingCf ? '更新 Cloudflare 连接' : '连接 Cloudflare'}>
     <header class="sheet-head"><div><b>{updatingCf ? '更新' : '连接'} {@render cfMark(15)} Cloudflare</b><small class="dim" style="margin-left:10px">token 只进钥匙串，绝不落盘</small></div><button class="x" onclick={closeCfConnect} disabled={cfConnecting || cfVerifying}>×</button></header>
     <div class="sheet-body">
       {#if updatingCf}
@@ -6408,7 +7361,7 @@
         <p class="hint">不用在已有的很多 Token 中猜哪一个需要修改。建议直接为这条 Pilot 连接新建一枚权限完整的 Token；验证成功后只替换这一条连接，其他连接不受影响。</p>
       {:else if cfResumeGcms && gcmsAccess}<p class="hint">连接后会自动返回并重新核验 <b>{gcmsAccess.domain}</b>。只有你随后明确点击“一键完成配置”，Pilot 才会在安全条件满足时新增一条灰云 A 记录。</p>{/if}
       <div class="cf-step">
-        <p class="cf-step-t">① {updatingCf ? '为这条连接新建一枚 API Token' : '在 Cloudflare 建一个 API Token'}（选 <b>Create Custom Token</b>）</p>
+        <p class="cf-step-t">① {updatingCf ? '为这条连接新建一枚 API Token' : '在 Cloudflare 建一个 API Token'}（下列权限已预选）</p>
         <button class="cf-perms-toggle" type="button" onclick={() => (cfPermsOpen = !cfPermsOpen)}>
           <svg class="cf-chev" class:open={cfPermsOpen} width="10" height="10" viewBox="0 0 12 12" fill="none"><path d="M3 4.5 6 7.5 9 4.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>
           所需权限（6 项）
@@ -6423,7 +7376,7 @@
             <li>Zone · Zone Settings · <b>Read</b>（核验橙云 SSL 模式）</li>
           </ul>
         {/if}
-        <button class="btn soft" onclick={() => openUrl(CF_TOKEN_URL)}>{updatingCf ? '为此连接新建' : '打开'} {@render cfMark(14)} Cloudflare Token ↗</button>
+        <button class="btn soft" onclick={() => openUrl(cfTokenTemplateUrl())}>{updatingCf ? '为此连接新建' : '打开'} {@render cfMark(14)} Cloudflare Token ↗</button>
       </div>
       <div class="cf-step">
         <p class="cf-step-t">② 把{updatingCf ? '新的' : '生成的'} Token 粘到这里：</p>
@@ -7194,6 +8147,8 @@
   /* 全局 tips 浮层（fixed，不受滚动容器裁剪） */
   .tipbox { position: fixed; z-index: 130; transform: translate(-50%, -100%); background: #26241f; color: #fff; font-size: 11px; line-height: 1.45; padding: 5px 9px; border-radius: 7px; width: max-content; max-width: 280px; white-space: pre-line; pointer-events: none; text-align: left; box-shadow: 0 5px 16px rgba(0, 0, 0, .18); animation: tipin .12s ease-out .3s both; }
   .tipbox.below { transform: translate(-50%, 0); }
+  .tipbox.end { transform: translate(-100%, -100%); }
+  .tipbox.below.end { transform: translate(-100%, 0); }
   .imgtip { position: fixed; z-index: 130; transform: translate(-50%, -100%); padding: 5px; border-radius: 10px; background: #fff; border: 1px solid rgba(0, 0, 0, .1); box-shadow: 0 8px 24px rgba(0, 0, 0, .18); pointer-events: none; visibility: hidden; }
   .imgtip.ready { visibility: visible; animation: tipin .12s ease-out both; }
   .imgtip.below { transform: translate(-50%, 0); }
@@ -7594,7 +8549,8 @@
   .setup-add-menu button:hover { background: #f4f3ef; }
   .setup-add-menu button:disabled { opacity: .5; cursor: default; }
   .setup-add-menu button :global(svg) { flex: none; color: var(--dim); }
-  .cf-modal { width: min(440px, 94vw); max-height: 88vh; }
+  .mask.cf-mask { z-index: 70; }
+  .modal.cf-modal { z-index: 80; width: min(440px, 94vw); max-height: 88vh; }
   .cf-step { border-top: 0.5px solid var(--border); padding-top: 12px; margin-top: 6px; }
   .cf-step:first-child { border-top: none; padding-top: 0; margin-top: 0; }
   .cf-step-t { font-size: 13px; color: var(--text); margin: 0 0 7px; line-height: 1.5; }
@@ -7750,10 +8706,80 @@
   .sheet-head { display: flex; justify-content: space-between; align-items: center; padding: 15px 18px; border-bottom: 1px solid var(--border); }
   .sheet-body { padding: 16px 18px; overflow-y: auto; display: flex; flex-direction: column; gap: 7px; }
   .gcms-install-sheet .sheet-body { flex: 1 1 auto; min-height: 0; gap: 12px; }
+  .gcms-migrate-head-btn { margin-left: auto; margin-right: 4px; display: inline-flex; align-items: center; gap: 5px; padding: 5px 7px; border: 0; background: transparent; color: var(--dim); font: inherit; font-size: 12px; cursor: pointer; border-radius: 7px; }
+  .gcms-migrate-head-btn:hover { background: var(--soft); color: var(--ink); }
+  .gcms-migrate-head-btn:disabled { opacity: .45; cursor: default; }
+  .gcms-migration-sheet { z-index: 70; overflow-x: hidden; }
+  .gcms-migration-mask { z-index: 65; }
+  .gcms-migration-sheet .sheet-head { align-items: flex-start; gap: 16px; }
+  .gcms-migration-title { min-width: 0; display: flex; flex-direction: column; gap: 7px; }
+  .gcms-migration-title b { line-height: 1.25; }
+  .gcms-migration-title small { display: block; color: var(--faint); font-size: 10.5px; font-weight: 400; line-height: 1.4; }
+  .gcms-migration-body { flex: 1 1 auto; min-height: 0; gap: 12px; overflow-x: hidden; padding-bottom: 16px; }
+  .gcms-migration-body > * { flex-shrink: 0; }
+  .gcms-migration-snapshot-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .gcms-migration-snapshot-row > span { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .gcms-migration-snapshot-row small { color: var(--faint); font-size: 11px; }
+  .gcms-migration-snapshot-row .btn { flex: none; }
+  .gcms-migration-note { display: inline-flex; align-items: center; gap: 3px; padding: 2px 6px 2px 4px; border-radius: 6px; background: var(--soft); color: var(--faint); font-size: 10.5px; line-height: 1.4; font-weight: 500; cursor: help; white-space: nowrap; flex: none; }
+  .gcms-migration-note-icon { width: 15px; height: 15px; display: inline-flex; align-items: center; justify-content: center; color: var(--faint); flex: none; }
+  .gcms-migration-flow { width: 100%; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); align-items: stretch; gap: 10px; }
+  .gcms-migration-side { width: 100%; max-width: 100%; display: grid; gap: 8px; min-width: 0; box-sizing: border-box; }
+  .gcms-migration-target-side { align-content: start; }
+  .gcms-migration-arrow { height: 18px; display: grid; place-items: center; align-self: center; color: var(--faint); transform: rotate(90deg); }
+  .gcms-migration-section-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 3px; }
+  .gcms-migration-section-title { min-width: 0; display: flex; align-items: center; gap: 8px; }
+  .gcms-migration-section-head small { color: var(--faint); font-size: 11px; }
+  .gcms-migration-sources { min-width: 0; display: grid; gap: 7px; }
+  .gcms-migration-source { width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; display: flex; align-items: center; gap: 10px; padding: 9px 10px 9px 11px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }
+  .gcms-migration-source.selected { border-color: #c5dfcf; background: #fbfefc; }
+  .gcms-migration-source-main { display: grid; min-width: 0; flex: 1; gap: 2px; }
+  .gcms-migration-source-main b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .gcms-migration-source-main small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-size: 11px; }
+  .gcms-migration-source-name { min-width: 0; display: flex; align-items: center; gap: 6px; }
+  .gcms-migration-source-name b { min-width: 0; }
+  .gcms-migration-source-name i { flex: none; padding: 1px 5px; border-radius: 999px; background: var(--soft); color: var(--dim); font-size: 9.5px; font-style: normal; font-weight: 500; }
+  .gcms-migration-source-remove { width: 25px; height: 25px; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--faint); font: inherit; font-size: 18px; line-height: 1; cursor: pointer; flex: none; }
+  .gcms-migration-source-remove:hover { background: #f2eee8; color: var(--err); }
+  .gcms-migration-source-remove:disabled { opacity: .45; cursor: default; }
+  .gcms-migration-source-empty { padding: 12px; border: 1px dashed var(--border); border-radius: 10px; color: var(--faint); font-size: 11.5px; text-align: center; }
+  .gcms-migration-target-card { width: 100%; min-width: 0; max-width: 100%; box-sizing: border-box; display: grid; gap: 4px; padding: 11px; border: 1px solid #cfe3d5; border-radius: 10px; background: #fbfefc; }
+  .gcms-migration-target-card b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .gcms-migration-target-card small, .gcms-migration-target-card span { color: var(--faint); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .gcms-migration-report { display: grid; gap: 10px; padding: 12px; border: 1px solid #ead2c8; border-radius: 10px; background: #fffaf8; }
+  .gcms-migration-report.ready { border-color: #cfe3d5; background: #fbfefc; }
+  .gcms-migration-report-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .gcms-migration-report-head span { color: var(--faint); font-size: 10.5px; }
+  .gcms-migration-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+  .gcms-migration-facts span { display: grid; gap: 2px; padding: 8px 9px; border-radius: 8px; background: var(--soft); min-width: 0; }
+  .gcms-migration-facts small { color: var(--faint); font-size: 10px; }
+  .gcms-migration-facts b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; }
+  .gcms-migration-report ul { margin: 0; padding-left: 18px; color: #9b4b35; font-size: 11.5px; line-height: 1.6; }
+  .gcms-migration-report p { margin: 0; color: var(--dim); font-size: 11.5px; line-height: 1.55; }
+  .gcms-migration-footer { flex: none; display: flex; align-items: center; justify-content: flex-end; gap: 7px; padding: 12px 18px; border-top: 1px solid var(--border); background: var(--bg); box-shadow: 0 -8px 18px rgb(35 29 20 / 4%); }
+  .gcms-migration-action { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+  .gcms-migration-live { display: grid; gap: 8px; padding: 11px; border: 1px solid var(--border); border-radius: 10px; background: #faf9f6; }
+  .gcms-migration-live-head { min-width: 0; display: flex; align-items: center; gap: 7px; color: var(--dim); font-size: 11.5px; }
+  .gcms-migration-live-head b { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .gcms-migration-live-head strong { color: var(--accent); font: 600 10.5px/1 ui-monospace, monospace; }
+  .gcms-migration-live-dot { width: 7px; height: 7px; border-radius: 50%; background: #4a9161; flex: none; }
+  .gcms-migration-live-track { height: 4px; overflow: hidden; border-radius: 999px; background: #e7e3dc; }
+  .gcms-migration-live-track span { display: block; height: 100%; border-radius: inherit; background: var(--accent); transition: width .2s ease; }
+  .gcms-migration-live-meta { display: flex; justify-content: space-between; gap: 8px; color: var(--faint); font-size: 10px; }
+  .gcms-migration-live-log { max-height: 150px; margin: 0; padding: 9px 10px; overflow: auto; border-radius: 8px; background: #211f1c; color: #e9e5dc; white-space: pre-wrap; word-break: break-word; font: 9.5px/1.55 ui-monospace, monospace; scrollbar-width: thin; }
+  .gcms-migration-snapshot-list { display: grid; gap: 6px; }
+  .gcms-migration-snapshot-list > div { display: flex; justify-content: space-between; gap: 8px; font-size: 11.5px; }
+  .gcms-migration-snapshot-list span { color: var(--faint); white-space: nowrap; }
+  .gcms-migration-snapshot-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 5px; }
   .gcms-sheet-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
   .gcms-sheet-title > div { min-width: 0; }
   .gcms-sheet-title b { display: block; }
   .gcms-sheet-title small { display: flex; align-items: center; gap: 4px; margin-top: 2px; color: var(--faint); font-size: 10.5px; font-weight: 500; }
+  .gcms-access-instance-context { min-width: 0; }
+  .gcms-access-instance-context > span { flex: none; padding: 1px 5px; border-radius: 999px; background: #edf2f8; color: #526b87; font-size: 8.5px; cursor: help; }
+  .gcms-access-instance-context code { flex: none; color: var(--accent); font: 600 9px/1.2 ui-monospace, monospace; }
+  .gcms-access-instance-context i { color: var(--border2); font-style: normal; }
+  .gcms-access-instance-context em { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-style: normal; }
   .gcms-title-ic { width: 30px; height: 30px; border-radius: 9px; background: #f2eee8; color: var(--accent); display: inline-flex; align-items: center; justify-content: center; flex: none; }
   .gcms-back { width: 30px; height: 30px; padding: 0; border: 1px solid var(--border); border-radius: 9px; background: #fff; color: var(--dim); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
   .gcms-back:hover { background: #f4f2ed; color: var(--text); }
@@ -7777,6 +8803,17 @@
   .gcms-state.working, .gcms-state.checking { background: #f7efe8; color: var(--accent); }
   .gcms-state-dot { width: 6px; height: 6px; border-radius: 50%; background: #3f8a59; }
   .gcms-spin { width: 9px; height: 9px; border: 1.4px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: rspin .7s linear infinite; }
+  .gcms-main-instance-label { width: calc(100% - 39px); margin: 9px 0 -3px 39px; display: flex; align-items: center; gap: 6px; color: var(--faint); font-size: 9.5px; }
+  .gcms-main-instance-label b { color: var(--dim); font: 600 9.5px/1 ui-monospace, monospace; }
+  .gcms-main-health { margin-left: auto; display: inline-flex; align-items: center; gap: 5px; }
+  .gcms-main-health-icon { width: 15px; height: 15px; padding: 0; border: 0; background: transparent; color: #c5c2bb; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+  .gcms-main-health-icon:hover { background: transparent; color: var(--dim); }
+  .gcms-main-health-icon:focus-visible { outline: 1px solid currentColor; outline-offset: 2px; border-radius: 4px; }
+  .gcms-main-health-icon.https.active { color: #34704a; }
+  .gcms-main-health-icon.warn { color: #a16a22; }
+  .gcms-main-health-icon.cloudflare :global(.cf-mark) { filter: grayscale(1); opacity: .36; }
+  .gcms-main-health-icon.cloudflare.active :global(.cf-mark) { filter: none; opacity: 1; }
+  .gcms-main-health-icon.cloudflare.warn :global(.cf-mark) { filter: grayscale(.72); opacity: .72; }
   .gcms-status-line { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 9px 1px 0 39px; color: var(--dim); font-size: 11px; }
   .gcms-status-line b { flex: none; color: var(--accent); font: 600 10.5px ui-monospace, monospace; }
   .gcms-progress { height: 3px; margin: 10px 1px 0 39px; border-radius: 3px; overflow: hidden; background: #eee9e1; }
@@ -7792,9 +8829,18 @@
   .gcms-fact-action:hover { background: #ebe8e1; color: var(--text); }
   .gcms-fact-action.active { background: #e7e4dd; color: var(--text); }
   .gcms-fact-action.passive { cursor: help; }
-  .gcms-card-menu { z-index: 190; min-width: 124px; padding: 4px; border-radius: 9px; }
+  .gcms-card-menu { z-index: 190; min-width: 180px; max-width: min(240px, calc(100vw - 16px)); padding: 4px; border-radius: 9px; visibility: hidden; }
+  .gcms-card-menu.ready { visibility: visible; }
   .gcms-card-menu .ctx-item { justify-content: flex-start; gap: 7px; padding: 5px 7px; border-radius: 6px; font-size: 11.5px; line-height: 1.25; }
+  .gcms-card-menu .ctx-item span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .gcms-card-menu .ctx-item svg { width: 12px; height: 12px; flex: none; color: var(--faint); }
+  .gcms-card-menu .ctx-item.danger svg { color: currentColor; }
+  .gcms-card-menu-divider { height: 1px; margin: 3px 5px; background: var(--border); }
+  .gcms-card-menu .gcms-health-menu-item.https.active { color: #34704a; }
+  .gcms-card-menu .gcms-health-menu-item.warn { color: #9a6726; }
+  .gcms-card-menu .gcms-health-menu-item.cloudflare :global(.cf-mark) { filter: grayscale(1); opacity: .42; }
+  .gcms-card-menu .gcms-health-menu-item.cloudflare.active :global(.cf-mark) { filter: none; opacity: 1; }
+  .gcms-card-menu .gcms-health-menu-item.cloudflare.warn :global(.cf-mark) { filter: grayscale(.75); opacity: .72; }
   .gcms-access-details { width: calc(100% - 39px); min-width: 0; margin: 6px 0 0 39px; }
   .gcms-access-link { max-width: 100%; min-width: 0; padding: 0; border: 0; background: transparent; color: var(--accent); display: flex; align-items: center; gap: 3px; cursor: pointer; font: 500 9.5px/1.4 inherit; text-align: left; }
   .gcms-access-link:hover { background: transparent; text-decoration: underline; }
@@ -7820,6 +8866,39 @@
   .gcms-missing { color: var(--dim); }
   .gcms-card-actions { display: flex; align-items: center; gap: 5px; margin: 9px 0 0 39px; }
   .gcms-install-btn { min-width: 84px; }
+  .gcms-instance-list { display: grid; gap: 7px; margin: 11px 0 0 39px; padding-top: 10px; border-top: 1px solid var(--border); }
+  .gcms-instance-card { min-width: 0; display: grid; gap: 7px; padding: 9px; border: 1px solid #d7e6dc; border-radius: 9px; background: #fbfefc; }
+  .gcms-instance-card.error { border-color: #ead2c8; background: #fffaf8; }
+  .gcms-instance-head { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 7px; }
+  .gcms-instance-head > span:first-child { min-width: 0; display: grid; gap: 1px; }
+  .gcms-instance-head b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .gcms-instance-head b { font-size: 11.5px; }
+  .gcms-instance-head i { flex: none; color: var(--faint); font-size: 9.5px; font-style: normal; }
+  .gcms-instance-head i.run { color: #34704a; }
+  .gcms-instance-head-tools { flex: none; display: inline-flex; align-items: center; gap: 5px; }
+  .gcms-instance-menu-trigger { width: 23px; height: 23px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--faint); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+  .gcms-instance-menu-trigger:hover, .gcms-instance-menu-trigger.active { background: var(--soft); color: var(--text); }
+  .gcms-instance-menu-trigger:disabled { opacity: .45; cursor: default; }
+  .gcms-instance-port { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--faint); font-size: 9.5px; }
+  .gcms-instance-port > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .gcms-instance-health { flex: none; display: inline-flex; align-items: center; gap: 3px; }
+  .gcms-instance-meta { display: flex; gap: 9px; color: var(--faint); font-size: 9.5px; }
+  .gcms-instance-link { max-width: 100%; min-width: 0; padding: 0; border: 0; background: transparent; color: var(--accent); display: flex; align-items: center; gap: 3px; cursor: pointer; font: 500 9.5px/1.4 inherit; text-align: left; }
+  .gcms-instance-link:hover { text-decoration: underline; }
+  .gcms-instance-link span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .gcms-instance-link svg { flex: none; }
+  .gcms-instance-unbound { min-width: 0; display: flex; align-items: center; gap: 6px; color: var(--faint); font-size: 9.5px; }
+  .gcms-instance-unbound b { flex: none; padding: 2px 5px; border-radius: 999px; background: #fff2df; color: #9a6726; font-size: 9px; }
+  .gcms-instance-unbound span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .gcms-instance-card > p { margin: 0; color: var(--err); font-size: 9.5px; line-height: 1.45; }
+  .gcms-instance-status-action { appearance: none; width: 16px; height: 18px; padding: 0; border: 0; box-shadow: none; background: transparent; color: #aaa79f; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+  .gcms-instance-status-action.https.active { color: #34704a; }
+  .gcms-instance-status-action.warn { color: #9a6726; }
+  .gcms-instance-status-action.cloudflare :global(.cf-mark) { filter: grayscale(1); opacity: .42; }
+  .gcms-instance-status-action.cloudflare.active :global(.cf-mark) { filter: none; opacity: 1; }
+  .gcms-instance-status-action.cloudflare.warn :global(.cf-mark) { filter: grayscale(.75); opacity: .72; }
+  .gcms-instance-status-action:hover { color: var(--text); }
+  .gcms-instance-status-action:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 35%, transparent); outline-offset: 2px; border-radius: 3px; }
   .gcms-log { margin: 9px 0 0 39px; border-top: 1px solid var(--border); padding-top: 7px; }
   .gcms-log summary { color: var(--dim); font-size: 10.5px; cursor: pointer; }
   .gcms-log pre { max-height: 220px; margin: 7px 0 0; padding: 9px; border-radius: 8px; overflow: auto; background: #1d1b19; color: #e9e5dc; white-space: pre-wrap; word-break: break-word; font: 10px/1.55 ui-monospace, monospace; }
@@ -7917,11 +8996,13 @@
   .gcms-cf-simple b { display: block; font-size: 12px; }
   .gcms-cf-simple p { margin: 3px 0 0; color: var(--dim); font-size: 10.5px; line-height: 1.55; }
   .gcms-cf-domains { display: grid; gap: 4px; margin-top: 7px; }
-  .gcms-cf-domains > div { width: 100%; min-width: 0; min-height: 34px; padding: 6px 8px; border: 1px solid #e3e6ea; border-radius: 8px; background: rgb(255 255 255 / .82); display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 7px; }
+  .gcms-cf-domains > div { width: 100%; min-width: 0; min-height: 28px; padding: 4px 7px; border: 1px solid #e3e6ea; border-radius: 7px; background: rgb(255 255 255 / .82); display: grid; grid-template-columns: auto minmax(0, 1fr) max-content; align-items: center; gap: 5px; }
   .gcms-cf-domains > div.missing { border-color: #eadbc4; background: #fffaf3; }
   .gcms-cf-domains > div > span { flex: none; color: var(--faint); font-size: 8.5px; }
-  .gcms-cf-domains code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font: 600 10.5px/1.3 ui-monospace, monospace; }
-  .gcms-cf-domains em { padding: 1px 4px; border-radius: 999px; background: #f5ede0; color: #916124; font: normal 600 7.5px/1.3 inherit; white-space: nowrap; }
+  .gcms-cf-domains code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font: 600 9.75px/1.3 ui-monospace, monospace; }
+  .gcms-cf-domains em { width: max-content; max-width: 100%; justify-self: end; padding: 1px 4px; border-radius: 999px; background: #f5ede0; color: #916124; display: inline-flex; align-items: center; gap: 2px; font-family: inherit; font-size: 8px; font-style: normal; font-weight: 600; line-height: 1.15; white-space: nowrap; }
+  .gcms-cf-domains em.migration { background: #edf2f8; color: #526b87; cursor: default; }
+  .gcms-cf-domains em.migration svg { flex: none; }
   .gcms-cf-domains div.missing em { padding: 1px 5px; background: #f7ead6; color: #8b6027; font-size: 7.25px; }
   .gcms-cf-domains div.ok { border-color: #dce9e0; }
   .gcms-cf-domains div.ok em.connected { width: 18px; height: 18px; padding: 0; border-radius: 50%; background: #e6f3eb; color: #34704a; display: inline-flex; align-items: center; justify-content: center; cursor: help; }
@@ -7974,6 +9055,11 @@
   .gcms-config-note { display: flex; align-items: flex-start; gap: 6px; margin-top: 9px; padding: 7px 8px; border-radius: 8px; background: #edf6f0; color: #34704a; font-size: 10px; line-height: 1.45; }
   .gcms-config-note svg { flex: none; margin-top: 1px; }
   .gcms-config-btn { width: 100%; margin-top: 8px; }
+  .gcms-web-config-actions { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: stretch; gap: 6px; margin-top: 8px; }
+  .gcms-web-config-actions .gcms-config-btn { min-width: 0; margin-top: 0; }
+  .gcms-web-details-toggle { min-height: 34px; display: inline-flex; align-items: center; justify-content: center; gap: 4px; padding: 0 10px; border: 1px solid var(--border); border-radius: 9px; background: var(--card); color: var(--dim); font: 500 9.5px/1.2 inherit; white-space: nowrap; cursor: pointer; }
+  .gcms-web-details-toggle:hover { border-color: #d7d2c8; color: var(--text); }
+  .gcms-web-facts { margin-top: 7px; }
   .gcms-manual-note { display: flex; flex-direction: column; gap: 2px; margin-top: 9px; padding: 8px 9px; border-radius: 8px; background: #faece8; color: var(--err); font-size: 10.5px; line-height: 1.5; }
   .gcms-manual-note span { color: #80574e; }
   .gcms-auto-progress-card { min-height: 150px; display: grid; grid-template-columns: 34px minmax(0, 1fr); align-content: center; align-items: center; gap: 10px; }

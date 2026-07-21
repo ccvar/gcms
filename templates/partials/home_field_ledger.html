@@ -1,0 +1,60 @@
+{{define "home_field_ledger"}}
+<div class="field-ledger-page">
+  <section class="fl-mast wrap">
+    <div class="fl-mast-main">
+      {{if .Site.HeroEyebrow}}<p class="fl-eyebrow">{{.Site.HeroEyebrow}}</p>{{end}}
+      <h1>{{nl2br .Site.HeroTitle}}</h1>
+      {{if .Site.Tagline}}<p class="fl-kicker">{{.Site.Tagline}}</p>{{end}}
+    </div>
+    <aside class="fl-issue" aria-label="{{.CategoryAll.Title}}">
+      <span>{{.CategoryAll.Label}}</span>
+      <strong>{{printf "%03d" .TotalPosts}}</strong>
+      {{with .Featured}}<small>{{$.Tr.Date .PublishedAt}}<br>{{with .Category}}{{.Name}}{{end}}</small>{{end}}
+    </aside>
+    <div class="fl-note">
+      <p>{{if .Site.Description}}{{.Site.Description}}{{else}}{{.Site.HeroDescription}}{{end}}</p>
+      <a href="{{.Tr.U "/about"}}">{{.Tr.T "nav.about"}} →</a>
+    </div>
+  </section>
+
+  {{if .Categories}}
+  <section class="fl-signals wrap" aria-label="{{.Tr.T "common.category_nav"}}">
+    <div class="fl-signal-label">{{.Tr.T "common.category_nav"}}<br><b>{{.CategoryAll.Title}}</b></div>
+    {{range $i, $cat := .Categories}}
+      {{if lt $i 7}}<a class="fl-signal" href="{{$.Tr.U (printf "/category/%s" $cat.Slug)}}"><strong>{{printf "%02d" (add $i 1)}} {{$cat.Name}}</strong><span>{{printf ($.Tr.T "category.count") $cat.Count}}</span></a>{{end}}
+    {{end}}
+    <a class="fl-signal-all" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} →</a>
+  </section>
+  {{end}}
+
+  <div class="fl-content wrap">
+    <main class="fl-stream">
+      {{with .Featured}}
+      <article class="fl-feature{{if not .CoverImage}} no-cover{{end}}">
+        <div class="fl-feature-no"><span>{{$.Site.HomeFeatured}}</span><b>01</b><small>{{$.Tr.Date .PublishedAt}}<br>{{with .Category}}{{.Name}}{{end}}</small></div>
+        <div class="fl-feature-copy">
+          <div class="fl-meta">{{with .Category}}{{.Name}} · {{end}}{{$.Tr.Date .PublishedAt}}</div>
+          <h2><a href="{{$.Tr.U (contentURL .)}}">{{.Title}}</a></h2>
+          {{if .Excerpt}}<p>{{.Excerpt}}</p>{{end}}
+          <a class="fl-read" href="{{$.Tr.U (contentURL .)}}">{{$.Tr.T "home.read_more"}} →</a>
+        </div>
+        {{if .CoverImage}}<a class="fl-evidence" href="{{$.Tr.U (contentURL .)}}"><img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}></a>{{end}}
+      </article>
+      {{end}}
+      <div class="fl-rows">
+        {{range $i, $p := .Posts}}
+        <a class="fl-row" href="{{$.Tr.U (contentURL $p)}}"><span class="fl-row-no">{{printf "%02d" (add $i 2)}}</span><span><b>{{$p.Title}}</b><small>{{with $p.Category}}{{.Name}} · {{end}}{{$.Tr.Date $p.PublishedAt}}</small></span><em>{{with $p.Category}}{{.Name}}{{else}}{{$.Site.HomeLatest}}{{end}}</em></a>
+        {{end}}
+      </div>
+    </main>
+    {{if .Posts}}
+    <aside class="fl-index"><div class="fl-index-head"><b>{{.Site.HomeLatest}}</b><span>● {{.Tr.T "common.date"}}</span></div>
+      {{range $i, $p := .Posts}}
+        {{if lt $i 5}}<a class="fl-live" href="{{$.Tr.U (contentURL $p)}}"><strong>{{printf "%02d" (add $i 1)}}</strong><span>{{$p.Title}}<small>{{$.Tr.Date $p.PublishedAt}}</small></span></a>{{end}}
+      {{end}}
+      <a class="fl-index-all" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} →</a>
+    </aside>
+    {{end}}
+  </div>
+</div>
+{{end}}

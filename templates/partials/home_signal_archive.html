@@ -1,0 +1,33 @@
+{{define "home_signal_archive"}}
+<div class="signal-archive-page">
+  <section class="sa-hero wrap">
+    <div class="sa-hero-copy">
+      {{if .Site.HeroEyebrow}}<p class="sa-kicker">{{.Site.HeroEyebrow}}</p>{{end}}
+      <h1>{{nl2br .Site.HeroTitle}}</h1>
+      <p>{{.Site.HeroDescription}}</p>
+      <div class="sa-stats" aria-label="{{.CategoryAll.Title}}">
+        <b>{{.TotalPosts}}<small>{{.CategoryAll.Label}}</small></b>
+        <b>{{len .Categories}}<small>{{.Tr.T "category.label"}}</small></b>
+        {{if .Featured}}<b>{{add 1 (len .FeaturedMore)}}<small>{{.Site.HomeFeatured}}</small></b>{{end}}
+      </div>
+    </div>
+    {{with .Featured}}
+    <article class="sa-feature{{if not .CoverImage}} no-cover{{end}}">
+      <div class="sa-feature-copy"><small>{{$.Site.HomeFeatured}} · {{$.Tr.Date .PublishedAt}}</small><h2>{{.Title}}</h2>{{if .Excerpt}}<p>{{.Excerpt}}</p>{{end}}<a href="{{$.Tr.U (contentURL .)}}">{{$.Tr.T "home.read_more"}} →</a></div>
+      {{if .CoverImage}}<a class="sa-feature-cover" href="{{$.Tr.U (contentURL .)}}"><img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}></a>{{end}}
+    </article>
+    {{end}}
+  </section>
+
+  {{if .Posts}}
+  <section class="sa-timeline"><div class="wrap"><b>{{.Site.HomeLatest}}</b>{{range $i, $p := .Posts}}{{if lt $i 5}}<a href="{{$.Tr.U (contentURL $p)}}"><i></i><small>{{$.Tr.Date $p.PublishedAt}}</small><span>{{$p.Title}}</span></a>{{end}}{{end}}<a class="sa-more" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} →</a></div></section>
+  {{end}}
+
+  <section class="sa-body wrap">
+    {{if .Categories}}
+    <aside class="sa-topics"><div class="sa-topics-head"><h2>{{.CategoryAll.Title}}</h2><a href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} →</a></div>{{range $i, $cat := .Categories}}{{if lt $i 7}}<a href="{{$.Tr.U (printf "/category/%s" $cat.Slug)}}"><span>{{$cat.Name}}</span><b>{{$cat.Count}}</b></a>{{end}}{{end}}<a class="sa-topic-more" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} →</a></aside>
+    {{end}}
+    <main class="sa-list"><div class="sa-list-head"><h2>{{.Site.HomeLatest}}</h2><nav><a class="active" href="{{.Tr.U .CategoryAll.Path}}">{{.CategoryAll.Label}}</a>{{range $i, $cat := .Categories}}{{if lt $i 4}}<a href="{{$.Tr.U (printf "/category/%s" $cat.Slug)}}">{{$cat.Name}}</a>{{end}}{{end}}</nav></div>{{range $i, $p := .Posts}}<a class="sa-row" href="{{$.Tr.U (contentURL $p)}}"><time>{{$.Tr.Date $p.PublishedAt}}</time><div><small>{{with $p.Category}}{{.Name}}{{else}}{{$.Site.HomeLatest}}{{end}}</small><h3>{{$p.Title}}</h3>{{if $p.Excerpt}}<p>{{$p.Excerpt}}</p>{{end}}</div>{{if $p.CoverImage}}<img src="{{$p.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs $p.CoverImage}}>{{end}}</a>{{end}}</main>
+  </section>
+</div>
+{{end}}
