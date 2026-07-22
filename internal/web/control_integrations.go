@@ -31,8 +31,9 @@ type controlGlobalTelegramInput struct {
 }
 
 type controlGlobalIntegrationsInput struct {
-	Google   *controlGlobalGoogleInput   `json:"google"`
-	Telegram *controlGlobalTelegramInput `json:"telegram"`
+	Google     *controlGlobalGoogleInput   `json:"google"`
+	Telegram   *controlGlobalTelegramInput `json:"telegram"`
+	Cloudflare *controlCloudflareInput     `json:"cloudflare"`
 }
 
 type controlSiteGoogleInput struct {
@@ -138,6 +139,11 @@ func (s *Server) applyControlGlobalIntegrations(r *http.Request, in controlGloba
 			return "store_error", "保存 Telegram Bot Token 失败。"
 		}
 	}
+	if in.Cloudflare != nil {
+		if code, message := s.applyControlCloudflare(r.Context(), *in.Cloudflare); code != "" {
+			return code, message
+		}
+	}
 	return "", ""
 }
 
@@ -166,29 +172,47 @@ func (s *Server) controlGlobalIntegrationsResponse(r *http.Request) map[string]a
 // The actual Cloudflare tokens stay in GCMS settings and are never returned to Pilot.
 func (s *Server) controlCloudflareAuthorizationResponse() map[string]any {
 	if s == nil || s.platform == nil {
-		return map[string]any{"authorizations": []map[string]any{}}
+		return map[string]any{"authorizations": []map[string]any{}, "zones": []map[string]any{}}
 	}
-	items := []map[string]any{}
-	add := func(id, label, purpose, token string) {
-		if strings.TrimSpace(token) == "" {
-			return
+	authorizations := s.readControlCloudflareAuthorizations()
+	items := make([]map[string]any, 0, len(authorizations))
+	zones := []map[string]any{}
+	zoneSeen := map[string]bool{}
+	accountName := ""
+	zoneName := ""
+	for _, authorization := range authorizations {
+		item := controlCloudflareAuthorizationSafeItem(authorization)
+		item["purpose"] = "DNS、域名绑定与 Cloudflare 部署"
+		items = append(items, item)
+		if accountName == "" {
+			accountName = authorization.AccountName
 		}
-		items = append(items, map[string]any{
-			"id":         id,
-			"label":      label,
-			"purpose":    purpose,
-			"source":     "gcms",
-			"configured": true,
-		})
+		for _, zone := range authorization.Zones {
+			if zoneSeen[zone.ID] {
+				continue
+			}
+			zoneSeen[zone.ID] = true
+			zones = append(zones, map[string]any{
+				"id": zone.ID, "name": zone.Name,
+				"account_id": zone.AccountID, "account": zone.AccountName,
+				"authorization_id": authorization.ID,
+			})
+		}
 	}
-	add("dns", "Cloudflare DNS 授权", "公网访问、DNS 记录与橙云设置", s.platform.Setting(platformCFDNSTokenKey))
-	add("deploy", "Cloudflare 部署授权", "站点部署与 Cloudflare 资源", s.platform.Setting(cloudflareAPITokenKey))
+	if len(zones) == 1 {
+		zoneName, _ = zones[0]["name"].(string)
+	}
+	configured := len(items) > 0
 	return map[string]any{
-		"authorizations":    items,
-		"dns_configured":    strings.TrimSpace(s.platform.Setting(platformCFDNSTokenKey)) != "",
-		"deploy_configured": strings.TrimSpace(s.platform.Setting(cloudflareAPITokenKey)) != "",
-		"zone":              strings.TrimSpace(s.platform.Setting(cloudflareZoneNameKey)),
-		"account":           strings.TrimSpace(s.platform.Setting(cloudflareAccountNameKey)),
+		"authorizations":      items,
+		"authorization_count": len(items),
+		"configured":          configured,
+		"dns_configured":      configured,
+		"deploy_configured":   configured,
+		"zones":               zones,
+		"zone_count":          len(zones),
+		"zone":                zoneName,
+		"account":             accountName,
 	}
 }
 

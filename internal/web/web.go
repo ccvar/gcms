@@ -2185,6 +2185,7 @@ func (s *Server) discoverySiteItem(pool *SiteRuntimePool, site *platform.Site, d
 		"pending_count":                 pendingCount,
 		"readiness":                     s.discoverySiteReadiness(displayPool, site, publicURL),
 		"integrations":                  s.discoverySiteIntegrations(displayPool, site, integrationSnapshot),
+		"deployment":                    s.discoverySiteDeployment(displayPool, site, publicURL),
 	}
 }
 
