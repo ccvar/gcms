@@ -2,7 +2,9 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -227,12 +229,14 @@ func TestPlatformKeyDiscoveryContract(t *testing.T) {
 			ContentCount  int      `json:"content_count"`
 			PendingCount  int      `json:"pending_count"`
 			Readiness     *struct {
-				PublicURL        bool `json:"public_url"`
-				HTTPS            bool `json:"https"`
-				Logo             bool `json:"logo"`
-				Favicon          bool `json:"favicon"`
-				ShareImage       bool `json:"share_image"`
-				PublishedContent bool `json:"published_content"`
+				SiteInfo         bool     `json:"site_info"`
+				SiteInfoMissing  []string `json:"site_info_missing"`
+				PublicURL        bool     `json:"public_url"`
+				HTTPS            bool     `json:"https"`
+				Logo             bool     `json:"logo"`
+				Favicon          bool     `json:"favicon"`
+				ShareImage       bool     `json:"share_image"`
+				PublishedContent bool     `json:"published_content"`
 			} `json:"readiness"`
 		} `json:"items"`
 		LifecycleItems []struct {
@@ -281,6 +285,10 @@ func TestPlatformKeyDiscoveryContract(t *testing.T) {
 	if !it.Readiness.PublicURL || !it.Readiness.HTTPS {
 		t.Fatalf("discovery readiness should reflect the bound HTTPS domain: %#v", it.Readiness)
 	}
+	missingSiteInfo := "," + strings.Join(it.Readiness.SiteInfoMissing, ",") + ","
+	if it.Readiness.SiteInfo || !strings.Contains(missingSiteInfo, ",tagline,") || !strings.Contains(missingSiteInfo, ",description,") {
+		t.Fatalf("default site identity should remain pending: %#v", it.Readiness)
+	}
 	if it.Readiness.Logo || it.Readiness.Favicon || it.Readiness.ShareImage {
 		t.Fatalf("built-in or empty brand assets must remain pending: %#v", it.Readiness)
 	}
@@ -328,6 +336,12 @@ func TestPlatformKeyDiscoveryContract(t *testing.T) {
 	if err := rt.Store.SetSetting("site.favicon", "/uploads/favicon.ico"); err != nil {
 		t.Fatalf("set test favicon: %v", err)
 	}
+	if err := rt.Store.SetSetting("site.tagline", "A focused publishing journal"); err != nil {
+		t.Fatalf("set test tagline: %v", err)
+	}
+	if err := rt.Store.SetSetting("site.description", "Independent reporting and practical field notes."); err != nil {
+		t.Fatalf("set test description: %v", err)
+	}
 	if err := ps.ReplaceSiteDomains(blogSite.ID, nil); err != nil {
 		t.Fatalf("clear blog domains: %v", err)
 	}
@@ -352,12 +366,14 @@ func TestPlatformKeyDiscoveryContract(t *testing.T) {
 			ContentCount  int      `json:"content_count"`
 			PendingCount  int      `json:"pending_count"`
 			Readiness     *struct {
-				PublicURL        bool `json:"public_url"`
-				HTTPS            bool `json:"https"`
-				Logo             bool `json:"logo"`
-				Favicon          bool `json:"favicon"`
-				ShareImage       bool `json:"share_image"`
-				PublishedContent bool `json:"published_content"`
+				SiteInfo         bool     `json:"site_info"`
+				SiteInfoMissing  []string `json:"site_info_missing"`
+				PublicURL        bool     `json:"public_url"`
+				HTTPS            bool     `json:"https"`
+				Logo             bool     `json:"logo"`
+				Favicon          bool     `json:"favicon"`
+				ShareImage       bool     `json:"share_image"`
+				PublishedContent bool     `json:"published_content"`
 			} `json:"readiness"`
 		} `json:"items"`
 		LifecycleItems []struct {
@@ -385,6 +401,9 @@ func TestPlatformKeyDiscoveryContract(t *testing.T) {
 	}
 	if it.Readiness == nil || !it.Readiness.Logo || !it.Readiness.Favicon {
 		t.Fatalf("uploaded brand assets must be ready without a public domain: %#v", it.Readiness)
+	}
+	if !it.Readiness.SiteInfo || len(it.Readiness.SiteInfoMissing) != 0 {
+		t.Fatalf("customized site identity should be ready: %#v", it.Readiness)
 	}
 	if it.Readiness.PublicURL || it.Readiness.HTTPS {
 		t.Fatalf("domain readiness must remain pending for undeployed site: %#v", it.Readiness)
@@ -449,13 +468,13 @@ func TestPlatformKeyDiscoveryIntegrationSummary(t *testing.T) {
 		t.Fatalf("upsert search integration: %v", err)
 	}
 	if err := ps.UpsertSiteGoogleAnalyticsSummary(&platform.SiteGoogleAnalyticsSummary{
-		SiteID: blogSite.ID, ActiveUsers: 17, Sessions: 23, RangeKey: "days:15",
+		SiteID: blogSite.ID, ActiveUsers: 17, Sessions: 23, RangeKey: "15",
 		Status: platform.GoogleAnalyticsSummaryStatusOK, FetchedAt: time.Now(),
 	}); err != nil {
 		t.Fatalf("upsert analytics summary: %v", err)
 	}
 	if err := ps.UpsertSiteGoogleSearchConsoleSummary(&platform.SiteGoogleSearchConsoleSummary{
-		SiteID: blogSite.ID, Clicks: 9, Impressions: 81, RangeKey: "days:15",
+		SiteID: blogSite.ID, Clicks: 9, Impressions: 81, RangeKey: "15",
 		Status: platform.GoogleSearchConsoleSummaryStatusOK, FetchedAt: time.Now(),
 	}); err != nil {
 		t.Fatalf("upsert search summary: %v", err)
@@ -536,6 +555,109 @@ func TestPlatformKeyDiscoveryIntegrationSummary(t *testing.T) {
 		if strings.Contains(body, secret) {
 			t.Fatalf("discovery leaked secret %q: %s", secret, body)
 		}
+	}
+}
+
+func TestPlatformKeyDiscoveryRefreshesGoogleSummariesForCurrentRange(t *testing.T) {
+	_, h, ps, _, blogSite := setupPlatformAutomation(t)
+	token := "gcmsp_discovery_refresh123"
+	if _, err := ps.CreatePlatformKey("pilot", token, token[:13], platform.KeyMembershipAllowlist,
+		"site:read,stats:read", []int64{blogSite.ID}, time.Time{}); err != nil {
+		t.Fatalf("create key: %v", err)
+	}
+	if err := ps.SetSetting(googleDataRangeKey, `{"mode":"days","days":30}`); err != nil {
+		t.Fatalf("set data range: %v", err)
+	}
+	for _, service := range []string{platform.GoogleServiceAnalytics, platform.GoogleServiceSearchConsole} {
+		if err := ps.UpsertGoogleAccount(&platform.GoogleAccount{
+			Service: service, GoogleAccountID: "refresh-account", AccessToken: "current-access-token",
+		}); err != nil {
+			t.Fatalf("upsert %s account: %v", service, err)
+		}
+	}
+	if err := ps.UpsertSiteGoogleIntegration(&platform.SiteGoogleIntegration{
+		SiteID: blogSite.ID, Service: platform.GoogleServiceAnalytics, GoogleAccountID: "refresh-account",
+		MeasurementID: "G-REFRESH", Property: "properties/300", Enabled: true,
+	}); err != nil {
+		t.Fatalf("upsert analytics integration: %v", err)
+	}
+	if err := ps.UpsertSiteGoogleIntegration(&platform.SiteGoogleIntegration{
+		SiteID: blogSite.ID, Service: platform.GoogleServiceSearchConsole, GoogleAccountID: "refresh-account",
+		Property: "https://blog.test/", Enabled: true,
+	}); err != nil {
+		t.Fatalf("upsert search integration: %v", err)
+	}
+	if err := ps.UpsertSiteGoogleAnalyticsSummary(&platform.SiteGoogleAnalyticsSummary{
+		SiteID: blogSite.ID, ActiveUsers: 7, Sessions: 8, RangeKey: "7",
+		Status: platform.GoogleAnalyticsSummaryStatusOK, FetchedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("upsert stale analytics summary: %v", err)
+	}
+	if err := ps.UpsertSiteGoogleSearchConsoleSummary(&platform.SiteGoogleSearchConsoleSummary{
+		SiteID: blogSite.ID, Clicks: 9, Impressions: 10, RangeKey: "7",
+		Status: platform.GoogleSearchConsoleSummaryStatusOK, FetchedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("upsert stale search summary: %v", err)
+	}
+
+	oldAnalyticsFetch := discoveryGoogleAnalyticsSummaryFetch
+	oldSearchFetch := discoveryGoogleSearchSummaryFetch
+	t.Cleanup(func() {
+		discoveryGoogleAnalyticsSummaryFetch = oldAnalyticsFetch
+		discoveryGoogleSearchSummaryFetch = oldSearchFetch
+	})
+	analyticsRange := make(chan string, 1)
+	searchRange := make(chan string, 1)
+	discoveryGoogleAnalyticsSummaryFetch = func(_ context.Context, token, property string, dataRange googleDataRange) (googleAnalyticsSummaryMetrics, error) {
+		if token != "current-access-token" || property != "properties/300" {
+			return googleAnalyticsSummaryMetrics{}, errors.New("unexpected analytics request")
+		}
+		analyticsRange <- googleDataRangeKeyValue(dataRange)
+		return googleAnalyticsSummaryMetrics{ActiveUsers7D: 30, Sessions7D: 44}, nil
+	}
+	discoveryGoogleSearchSummaryFetch = func(_ context.Context, token, property string, dataRange googleDataRange) (googleSearchConsoleSummaryMetrics, error) {
+		if token != "current-access-token" || property != "https://blog.test/" {
+			return googleSearchConsoleSummaryMetrics{}, errors.New("unexpected search request")
+		}
+		searchRange <- googleDataRangeKeyValue(dataRange)
+		return googleSearchConsoleSummaryMetrics{Clicks7D: 12, Impressions7D: 240}, nil
+	}
+
+	rec := platformAPIReq(t, h, http.MethodGet, "/api/platform/v1/sites?refresh_stats=1", token, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("refresh discovery status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var payload struct {
+		StatsRefresh discoveryStatsRefreshReport `json:"stats_refresh"`
+		Items        []struct {
+			Integrations struct {
+				Analytics struct {
+					ActiveUsers int `json:"active_users"`
+					Sessions    int `json:"sessions"`
+				} `json:"analytics"`
+				Search struct {
+					Clicks      int `json:"clicks"`
+					Impressions int `json:"impressions"`
+				} `json:"search_console"`
+			} `json:"integrations"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode refreshed discovery: %v", err)
+	}
+	if !payload.StatsRefresh.Requested || payload.StatsRefresh.Refreshed != 2 || payload.StatsRefresh.Failed != 0 {
+		t.Fatalf("refresh report = %#v", payload.StatsRefresh)
+	}
+	if len(payload.Items) != 1 || payload.Items[0].Integrations.Analytics.ActiveUsers != 30 ||
+		payload.Items[0].Integrations.Analytics.Sessions != 44 || payload.Items[0].Integrations.Search.Clicks != 12 ||
+		payload.Items[0].Integrations.Search.Impressions != 240 {
+		t.Fatalf("refreshed discovery values = %#v", payload.Items)
+	}
+	if got := <-analyticsRange; got != "30" {
+		t.Fatalf("analytics range = %q", got)
+	}
+	if got := <-searchRange; got != "30" {
+		t.Fatalf("search range = %q", got)
 	}
 }
 

@@ -654,11 +654,10 @@ func (s *Server) platformSitePreviewURL(siteID int64) string {
 	if prefix == "" {
 		return "/" + s.defaultLang() + "/"
 	}
-	siteServer := s
-	if rt, ok := s.runtimePool().runtimeByID(siteID); ok && rt != nil && rt.server != nil {
-		siteServer = rt.server
-	}
-	return localizedPath(prefix, siteServer.defaultLang(), "/")
+	// 平台卡片只保存稳定的站点预览入口，不把“当前默认语种”写死进 href。
+	// 真正打开时由 serveSitePreview 读取该站点的实时语种设置；这样站点从 zh
+	// 切到 en 后，旧后台页面也不会继续把用户带到 /en/zh/。
+	return strings.TrimRight(prefix, "/") + "/"
 }
 
 func (s *Server) platformOfficialSiteURL(siteID int64) (string, string) {

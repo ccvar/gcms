@@ -257,10 +257,9 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 	if idLangPlatformPage.Code != http.StatusOK {
 		t.Fatalf("id-lang platform page status = %d, body = %s", idLangPlatformPage.Code, idLangPlatformPage.Body.String())
 	}
-	otherIDPreviewPath := "/admin/sites/" + strconv.FormatInt(otherSite.ID, 10) + "/preview/id/"
-	otherWrongPreviewPath := "/admin/sites/" + strconv.FormatInt(otherSite.ID, 10) + "/preview/zh/"
-	if body := idLangPlatformPage.Body.String(); !strings.Contains(body, `href="`+otherIDPreviewPath+`"`) || strings.Contains(body, `href="`+otherWrongPreviewPath+`"`) {
-		t.Fatalf("platform page did not use site default language for preview link")
+	otherPreviewRoot := "/admin/sites/" + strconv.FormatInt(otherSite.ID, 10) + "/preview/"
+	if body := idLangPlatformPage.Body.String(); !strings.Contains(body, `href="`+otherPreviewRoot+`"`) || strings.Contains(body, otherPreviewRoot+"id/") || strings.Contains(body, otherPreviewRoot+"zh/") {
+		t.Fatalf("platform page did not render a language-neutral preview link")
 	}
 	if err := otherRuntime.Store.SetSetting("locales", "zh"); err != nil {
 		t.Fatalf("restore other site zh locale: %v", err)
@@ -685,6 +684,41 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 	if err := ps.CreateAdminSession("preview-token", "admin", "csrf", time.Now().Add(time.Hour)); err != nil {
 		t.Fatalf("create preview session: %v", err)
 	}
+	// 平台卡片使用不绑定语种的稳定入口；真正打开时读取站点此刻的默认语种。
+	previewRoot := "/admin/sites/" + strconv.FormatInt(otherSite.ID, 10) + "/preview/"
+	neutralPreview := httptest.NewRecorder()
+	neutralPreviewReq := httptest.NewRequest(http.MethodGet, "https://platform.test"+previewRoot, nil)
+	neutralPreviewReq.AddCookie(&http.Cookie{Name: cookieName, Value: "preview-token"})
+	h.ServeHTTP(neutralPreview, neutralPreviewReq)
+	if neutralPreview.Code != http.StatusOK || !strings.Contains(neutralPreview.Body.String(), "Blog Runtime Site") {
+		t.Fatalf("language-neutral preview status = %d, body = %s", neutralPreview.Code, neutralPreview.Body.String())
+	}
+	// 站点从 zh 切成 en 后，历史 /preview/zh/ 链接应被纠正到 /preview/en/，
+	// 不能把 zh 当成普通页面路径拼成 /en/zh/。
+	previewRuntime, ok := srv.runtimePool().runtimeByID(otherSite.ID)
+	if !ok || previewRuntime == nil || previewRuntime.Store == nil {
+		t.Fatal("preview runtime missing before stale-language regression")
+	}
+	if err := previewRuntime.Store.SetSetting("locales", "en"); err != nil {
+		t.Fatalf("set other site en locale: %v", err)
+	}
+	stalePreview := httptest.NewRecorder()
+	stalePreviewReq := httptest.NewRequest(http.MethodGet, "https://platform.test"+previewRoot+"zh/", nil)
+	stalePreviewReq.AddCookie(&http.Cookie{Name: cookieName, Value: "preview-token"})
+	h.ServeHTTP(stalePreview, stalePreviewReq)
+	if stalePreview.Code != http.StatusFound || stalePreview.Header().Get("Location") != previewRoot+"en/" {
+		t.Fatalf("stale preview redirect = %d %q, want 302 %q", stalePreview.Code, stalePreview.Header().Get("Location"), previewRoot+"en/")
+	}
+	if err := previewRuntime.Store.SetSetting("locales", "zh"); err != nil {
+		t.Fatalf("restore other site zh locale after stale preview: %v", err)
+	}
+	unlocalizedPreview := httptest.NewRecorder()
+	unlocalizedPreviewReq := httptest.NewRequest(http.MethodGet, "https://platform.test"+previewRoot+"about", nil)
+	unlocalizedPreviewReq.AddCookie(&http.Cookie{Name: cookieName, Value: "preview-token"})
+	h.ServeHTTP(unlocalizedPreview, unlocalizedPreviewReq)
+	if unlocalizedPreview.Code != http.StatusFound || unlocalizedPreview.Header().Get("Location") != previewRoot+"zh/about" {
+		t.Fatalf("unlocalized preview redirect = %d %q, want 302 %q", unlocalizedPreview.Code, unlocalizedPreview.Header().Get("Location"), previewRoot+"zh/about")
+	}
 	preview := httptest.NewRecorder()
 	previewReq := httptest.NewRequest(http.MethodGet, "https://platform.test/admin/sites/"+strconv.FormatInt(otherSite.ID, 10)+"/preview/zh/", nil)
 	previewReq.AddCookie(&http.Cookie{Name: cookieName, Value: "preview-token"})
@@ -789,7 +823,7 @@ func TestMultisiteRuntimeRoutesByHost(t *testing.T) {
 	if renamedPlatformPage.Code != http.StatusOK {
 		t.Fatalf("renamed platform page status = %d, body = %s", renamedPlatformPage.Code, renamedPlatformPage.Body.String())
 	}
-	if body := renamedPlatformPage.Body.String(); !strings.Contains(body, "Renamed Blog Site") || !strings.Contains(body, `/admin/sites/`+strconv.FormatInt(otherSite.ID, 10)+`/preview/zh/`) || strings.Contains(body, `/admin/sites/`+strconv.FormatInt(otherSite.ID, 10)+`/preview"`) {
+	if body := renamedPlatformPage.Body.String(); !strings.Contains(body, "Renamed Blog Site") || !strings.Contains(body, `/admin/sites/`+strconv.FormatInt(otherSite.ID, 10)+`/preview/`) || strings.Contains(body, `/admin/sites/`+strconv.FormatInt(otherSite.ID, 10)+`/preview/zh/`) {
 		t.Fatalf("platform page did not render renamed site: %s", body)
 	}
 

@@ -1831,12 +1831,25 @@ func (s *Server) serveSitePreview(w http.ResponseWriter, r *http.Request, pool *
 		http.NotFound(w, r)
 		return
 	}
+	previewPrefix := "/admin/sites/" + strconv.FormatInt(siteID, 10) + "/preview"
 	if rest == "" || rest == "/" {
 		rest = "/" + rt.server.defaultLang() + "/"
+	} else {
+		// 兼容后台页面、书签或历史消息里已经落下的旧语种预览链接。
+		// 若第一段是系统认识、但当前站点已经停用的语种，就把它替换为
+		// 站点此刻的默认语种，而不是让 withLocale 把旧语种当成页面路径。
+		head, tail := shiftPath(rest)
+		if rt.server.i18n.Known(head) && !rt.server.langEnabled(head) {
+			target := localizedPath(previewPrefix, rt.server.defaultLang(), tail)
+			if r.URL.RawQuery != "" {
+				target += "?" + r.URL.RawQuery
+			}
+			http.Redirect(w, r, target, http.StatusFound)
+			return
+		}
 	}
 	nextURL := *r.URL
 	nextURL.Path = rest
-	previewPrefix := "/admin/sites/" + strconv.FormatInt(siteID, 10) + "/preview"
 	ctx := withPreviewRoutePrefix(withPreviewNoindex(r.Context()), previewPrefix)
 	req := r.Clone(ctx)
 	req.URL = &nextURL
@@ -2106,6 +2119,10 @@ func (s *Server) servePlatformDiscovery(w http.ResponseWriter, r *http.Request, 
 			manageableIDs[site.ID] = true
 		}
 	}
+	refreshReport := discoveryStatsRefreshReport{}
+	if parseAPIBool(r.URL.Query().Get("refresh_stats")) {
+		refreshReport = s.refreshDiscoveryGoogleSummaries(r.Context(), r, manageableIDs)
+	}
 	caps := key.ScopeList()
 	if caps == nil {
 		caps = []string{}
@@ -2132,12 +2149,16 @@ func (s *Server) servePlatformDiscovery(w http.ResponseWriter, r *http.Request, 
 		}
 	}
 	_ = s.platform.TouchPlatformKey(key.ID)
-	writeJSON(w, http.StatusOK, map[string]any{
+	response := map[string]any{
 		"items":           items,
 		"lifecycle_items": lifecycleItems,
 		"all_sites":       key.MembershipMode == platform.KeyMembershipAll,
 		"platform":        s.discoveryPlatformStatus(r),
-	})
+	}
+	if refreshReport.Requested {
+		response["stats_refresh"] = refreshReport
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 // discoverySiteItem 统一生成对话发现列表和站点管理列表的单站摘要。
@@ -2234,6 +2255,7 @@ type discoveryIntegrationSnapshot struct {
 	google    map[int64]map[string]*platform.SiteGoogleIntegration
 	analytics map[int64]*platform.SiteGoogleAnalyticsSummary
 	search    map[int64]*platform.SiteGoogleSearchConsoleSummary
+	rangeKey  string
 }
 
 func (s *Server) discoveryIntegrationSnapshot() discoveryIntegrationSnapshot {
@@ -2254,6 +2276,7 @@ func (s *Server) discoveryIntegrationSnapshot() discoveryIntegrationSnapshot {
 	if values, err := s.platform.SiteGoogleSearchConsoleSummaries(); err == nil {
 		snapshot.search = values
 	}
+	snapshot.rangeKey = googleDataRangeKeyValue(s.googleDataRange())
 	return snapshot
 }
 
@@ -2328,16 +2351,26 @@ func (s *Server) discoverySiteIntegrations(pool *SiteRuntimePool, site *platform
 		}
 	}
 	if summary := snapshot.analytics[site.ID]; summary != nil {
-		analytics["active_users"] = summary.ActiveUsers
-		analytics["sessions"] = summary.Sessions
 		analytics["status"] = summary.Status
 		analytics["fetched_at"] = summary.FetchedAt
+		analytics["range_key"] = summary.RangeKey
+		if summary.RangeKey == snapshot.rangeKey && summary.Status == platform.GoogleAnalyticsSummaryStatusOK {
+			analytics["active_users"] = summary.ActiveUsers
+			analytics["sessions"] = summary.Sessions
+		} else if summary.RangeKey != snapshot.rangeKey {
+			analytics["status"] = "stale"
+		}
 	}
 	if summary := snapshot.search[site.ID]; summary != nil {
-		search["clicks"] = summary.Clicks
-		search["impressions"] = summary.Impressions
 		search["status"] = summary.Status
 		search["fetched_at"] = summary.FetchedAt
+		search["range_key"] = summary.RangeKey
+		if summary.RangeKey == snapshot.rangeKey && summary.Status == platform.GoogleSearchConsoleSummaryStatusOK {
+			search["clicks"] = summary.Clicks
+			search["impressions"] = summary.Impressions
+		} else if summary.RangeKey != snapshot.rangeKey {
+			search["status"] = "stale"
+		}
 	}
 	if pool != nil {
 		if rt, ok := pool.runtimeByID(site.ID); ok && rt != nil && rt.Store != nil {
@@ -2357,6 +2390,8 @@ func (s *Server) discoverySiteIntegrations(pool *SiteRuntimePool, site *platform
 // Logo 等相对路径无法绝对化，但配置本身依然存在，不能因此误报为缺失。内置占位资源不算已完成品牌配置。
 func (s *Server) discoverySiteReadiness(pool *SiteRuntimePool, site *platform.Site, publicURL string) map[string]any {
 	state := map[string]any{
+		"site_info":         false,
+		"site_info_missing": []string{"name", "tagline", "description"},
 		"public_url":        publicURL != "",
 		"https":             strings.HasPrefix(strings.ToLower(publicURL), "https://"),
 		"logo":              false,
@@ -2371,6 +2406,9 @@ func (s *Server) discoverySiteReadiness(pool *SiteRuntimePool, site *platform.Si
 	if !ok || rt == nil || rt.Store == nil {
 		return state
 	}
+	siteInfoReady, siteInfoMissing := discoverySiteInfoReadiness(rt)
+	state["site_info"] = siteInfoReady
+	state["site_info_missing"] = siteInfoMissing
 	logo, favicon, shareImage := discoveryRuntimeBrand(rt)
 	state["logo"] = logo != "" && logo != defaultLogoPath && logo != defaultLogoENPath
 	state["favicon"] = favicon != "" && favicon != defaultFaviconPath
@@ -2379,6 +2417,56 @@ func (s *Server) discoverySiteReadiness(pool *SiteRuntimePool, site *platform.Si
 		state["published_content"] = published
 	}
 	return state
+}
+
+// discoverySiteInfoReadiness 判断站点是否已经从首装样板变成自己的站点身份。
+// 名称、副标题和简介都属于上线前的基础信息；仅仅把平台记录命名了，但前台仍保留
+// gcms/CCVAR 样板文案时不能算完成。返回稳定字段名，Pilot 再负责翻译为用户文案。
+func discoverySiteInfoReadiness(rt *SiteRuntime) (bool, []string) {
+	missing := []string{"name", "tagline", "description"}
+	if rt == nil || rt.Store == nil {
+		return false, missing
+	}
+
+	name := strings.TrimSpace(rt.Store.Setting("site.name"))
+	tagline := strings.TrimSpace(rt.Store.Setting("site.tagline"))
+	description := strings.TrimSpace(rt.Store.Setting("site.description"))
+	if rt.server != nil {
+		view := rt.server.site(rt.server.defaultLang())
+		name = strings.TrimSpace(view.Name)
+		tagline = strings.TrimSpace(view.Tagline)
+		description = strings.TrimSpace(view.Description)
+	}
+
+	isOneOf := func(value string, placeholders ...string) bool {
+		for _, placeholder := range placeholders {
+			if strings.EqualFold(strings.TrimSpace(value), strings.TrimSpace(placeholder)) {
+				return true
+			}
+		}
+		return false
+	}
+	missing = missing[:0]
+	if name == "" || isOneOf(name, "gcms", "CCVAR 简记") {
+		missing = append(missing, "name")
+	}
+	if tagline == "" || isOneOf(tagline,
+		"内容发布、搜索增长，一个后台跑通",
+		"记录技术、工具与思考",
+		"Publish content and grow search from one admin",
+		"Notes on engineering, tools & thinking",
+	) {
+		missing = append(missing, "tagline")
+	}
+	if description == "" || isOneOf(description,
+		"gcms 把文章、页面、资源链接、全语种内容、主题、SEO/GEO、Cloudflare 静态部署、多站管理和 AI 自运营接口收进同一个后台；无需搭数据库服务和前端构建环境，一行命令即可部署，1 vCPU / 512MB 内存的小规格 VPS 也能稳定起步。",
+		"gcms brings posts, pages, resource links, multilingual content, themes, SEO/GEO, Cloudflare static deployment, multisite management and AI-operation APIs into one lightweight admin. No database server or frontend build pipeline required: deploy with one command and start on a 1 vCPU / 512MB VPS.",
+		"用 Go 与 SQLite 构建的轻量内容站，关注后端工程、极简设计与搜索引擎优化。",
+		"A lightweight content site built with Go and SQLite — focused on backend engineering, minimal design and SEO.",
+	) {
+		missing = append(missing, "description")
+	}
+	return len(missing) == 0, missing
 }
 
 // discoveryRuntimeBrand 统一按站点当前默认语种读取生效中的品牌设置。
@@ -3102,12 +3190,9 @@ func (s *Server) withLocale(next http.Handler) http.Handler {
 			w.Header().Add("Vary", "Accept-Language")
 			w.Header().Set("Cache-Control", "private, no-store")
 		}
-		target := "/" + targetLang
-		if r.URL.Path == "/" {
-			target += "/"
-		} else {
-			target += r.URL.Path
-		}
+		// 站点预览运行在 /admin/sites/{id}/preview 下；无语种路径的跳转
+		// 也必须留在这个前缀里，不能逃到平台主站的 /{lang}/。
+		target := localizedPath(previewRoutePrefixFrom(r.Context()), targetLang, r.URL.Path)
 		if r.URL.RawQuery != "" {
 			target += "?" + r.URL.RawQuery
 		}
