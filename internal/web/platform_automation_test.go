@@ -213,15 +213,20 @@ func TestPlatformKeyDiscoveryContract(t *testing.T) {
 	}
 	var payload struct {
 		Items []struct {
-			ID           int64    `json:"id"`
-			Slug         string   `json:"slug"`
-			Name         string   `json:"name"`
-			Capabilities []string `json:"capabilities"`
-			APIBase      string   `json:"api_base"`
-			URL          string   `json:"url"`
-			Logo         string   `json:"logo"`
-			Favicon      string   `json:"favicon"`
-			Readiness    *struct {
+			ID            int64    `json:"id"`
+			Slug          string   `json:"slug"`
+			Name          string   `json:"name"`
+			Status        string   `json:"status"`
+			IsDefault     bool     `json:"is_default"`
+			Capabilities  []string `json:"capabilities"`
+			APIBase       string   `json:"api_base"`
+			URL           string   `json:"url"`
+			Logo          string   `json:"logo"`
+			Favicon       string   `json:"favicon"`
+			LanguageCount int      `json:"language_count"`
+			ContentCount  int      `json:"content_count"`
+			PendingCount  int      `json:"pending_count"`
+			Readiness     *struct {
 				PublicURL        bool `json:"public_url"`
 				HTTPS            bool `json:"https"`
 				Logo             bool `json:"logo"`
@@ -230,6 +235,11 @@ func TestPlatformKeyDiscoveryContract(t *testing.T) {
 				PublishedContent bool `json:"published_content"`
 			} `json:"readiness"`
 		} `json:"items"`
+		LifecycleItems []struct {
+			ID                          int64  `json:"id"`
+			Status                      string `json:"status"`
+			ManagementAutomationEnabled bool   `json:"management_automation_enabled"`
+		} `json:"lifecycle_items"`
 		AllSites bool `json:"all_sites"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
@@ -241,9 +251,15 @@ func TestPlatformKeyDiscoveryContract(t *testing.T) {
 	if len(payload.Items) != 1 {
 		t.Fatalf("discovery items = %d, want 1 (blog only): %s", len(payload.Items), rec.Body.String())
 	}
+	if len(payload.LifecycleItems) != 1 || payload.LifecycleItems[0].ID != blogSite.ID || payload.LifecycleItems[0].Status != "enabled" || !payload.LifecycleItems[0].ManagementAutomationEnabled {
+		t.Fatalf("discovery lifecycle items mismatch: %#v", payload.LifecycleItems)
+	}
 	it := payload.Items[0]
 	if it.ID != blogSite.ID || it.Slug != "blog" {
 		t.Fatalf("discovery item mismatch: %#v", it)
+	}
+	if it.Status != "enabled" || it.IsDefault {
+		t.Fatalf("discovery lifecycle fields mismatch: status=%q is_default=%v", it.Status, it.IsDefault)
 	}
 	if len(it.Capabilities) == 0 || it.Capabilities[0] != "posts:read" {
 		t.Fatalf("discovery capabilities = %v, want posts:read", it.Capabilities)
@@ -270,6 +286,26 @@ func TestPlatformKeyDiscoveryContract(t *testing.T) {
 	}
 	if !it.Readiness.PublishedContent {
 		t.Fatalf("published fixture content should be reflected in readiness: %#v", it.Readiness)
+	}
+	summaryRuntime, summaryOK := srv.runtimePool().runtimeByID(blogSite.ID)
+	if !summaryOK || summaryRuntime == nil || summaryRuntime.Store == nil {
+		t.Fatal("blog runtime should be available for discovery summary")
+	}
+	locales := srv.i18n.ActiveWith(summaryRuntime.Store.Setting("locales"), summaryRuntime.Store.Setting("custom_locales"))
+	defaultLang := "zh"
+	if len(locales) > 0 {
+		defaultLang = locales[0].Code
+	}
+	wantContent, err := summaryRuntime.Store.CountContent(defaultLang)
+	if err != nil {
+		t.Fatalf("count discovery content: %v", err)
+	}
+	wantPending, err := summaryRuntime.Store.CountScheduled()
+	if err != nil {
+		t.Fatalf("count discovery pending content: %v", err)
+	}
+	if it.LanguageCount != len(locales) || it.ContentCount != wantContent || it.PendingCount != wantPending {
+		t.Fatalf("discovery summary = languages %d content %d pending %d, want %d/%d/%d", it.LanguageCount, it.ContentCount, it.PendingCount, len(locales), wantContent, wantPending)
 	}
 
 	// 未部署的新站没有公开域名，但只要真实 Logo / favicon 已写入并能由站点使用，
@@ -302,15 +338,20 @@ func TestPlatformKeyDiscoveryContract(t *testing.T) {
 	}
 	payload = struct {
 		Items []struct {
-			ID           int64    `json:"id"`
-			Slug         string   `json:"slug"`
-			Name         string   `json:"name"`
-			Capabilities []string `json:"capabilities"`
-			APIBase      string   `json:"api_base"`
-			URL          string   `json:"url"`
-			Logo         string   `json:"logo"`
-			Favicon      string   `json:"favicon"`
-			Readiness    *struct {
+			ID            int64    `json:"id"`
+			Slug          string   `json:"slug"`
+			Name          string   `json:"name"`
+			Status        string   `json:"status"`
+			IsDefault     bool     `json:"is_default"`
+			Capabilities  []string `json:"capabilities"`
+			APIBase       string   `json:"api_base"`
+			URL           string   `json:"url"`
+			Logo          string   `json:"logo"`
+			Favicon       string   `json:"favicon"`
+			LanguageCount int      `json:"language_count"`
+			ContentCount  int      `json:"content_count"`
+			PendingCount  int      `json:"pending_count"`
+			Readiness     *struct {
 				PublicURL        bool `json:"public_url"`
 				HTTPS            bool `json:"https"`
 				Logo             bool `json:"logo"`
@@ -319,6 +360,11 @@ func TestPlatformKeyDiscoveryContract(t *testing.T) {
 				PublishedContent bool `json:"published_content"`
 			} `json:"readiness"`
 		} `json:"items"`
+		LifecycleItems []struct {
+			ID                          int64  `json:"id"`
+			Status                      string `json:"status"`
+			ManagementAutomationEnabled bool   `json:"management_automation_enabled"`
+		} `json:"lifecycle_items"`
 		AllSites bool `json:"all_sites"`
 	}{}
 	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
@@ -342,6 +388,26 @@ func TestPlatformKeyDiscoveryContract(t *testing.T) {
 	}
 	if it.Readiness.PublicURL || it.Readiness.HTTPS {
 		t.Fatalf("domain readiness must remain pending for undeployed site: %#v", it.Readiness)
+	}
+
+	// 关闭后站点不再属于可调用 items，但必须留在 lifecycle_items，Pilot 才能显示灰色卡片并重新启用。
+	if err := ps.SetSiteStatus(blogSite.ID, "disabled"); err != nil {
+		t.Fatalf("disable site for lifecycle discovery: %v", err)
+	}
+	rec = platformAPIReq(t, h, http.MethodGet, "/api/platform/v1/sites", token, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("disabled discovery status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	payload.Items = nil
+	payload.LifecycleItems = nil
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("unmarshal disabled discovery: %v (body=%s)", err, rec.Body.String())
+	}
+	if len(payload.Items) != 0 {
+		t.Fatalf("disabled site must not remain callable, items=%#v", payload.Items)
+	}
+	if len(payload.LifecycleItems) != 1 || payload.LifecycleItems[0].ID != blogSite.ID || payload.LifecycleItems[0].Status != "disabled" {
+		t.Fatalf("disabled site must remain manageable, lifecycle=%#v", payload.LifecycleItems)
 	}
 }
 

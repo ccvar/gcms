@@ -2055,7 +2055,10 @@ func (s *Server) servePlatformKeyRequest(w http.ResponseWriter, r *http.Request,
 // servePlatformDiscovery 回应 GET /api/platform/v1/sites：仅平台密钥可用，返回该密钥当前**实际可管**的站点集。
 // 契约（已冻结，CLI 是硬消费方）：{"items":[{"id","slug","name","capabilities","api_base"}],"all_sites":bool}
 // 附加字段（可选、只增不改，供 gcms Pilot 等客户端展示）："url" 站点公开地址（无法确定时为空）、
-// "logo" 站点 Logo 绝对地址（未设置时为空）、"readiness" 新站上线准备状态。
+// "logo" 站点 Logo 绝对地址（未设置时为空）、"status" / "is_default" 站点生命周期信息、
+// "language_count" / "content_count" / "pending_count" 站点卡片统计、
+// "readiness" 新站上线准备状态；"lifecycle_items" 是当前密钥成员范围内的完整站点列表，
+// 包含已关闭或关闭自动化的站点，供管理界面重新启用，且不改变 items 的“发现即能调用”语义。
 func (s *Server) servePlatformDiscovery(w http.ResponseWriter, r *http.Request, pool *SiteRuntimePool) {
 	if r.Method != http.MethodGet {
 		apiError(w, http.StatusMethodNotAllowed, "method_not_allowed", "仅支持 GET。")
@@ -2087,10 +2090,21 @@ func (s *Server) servePlatformDiscovery(w http.ResponseWriter, r *http.Request, 
 		apiError(w, http.StatusForbidden, "platform_automation_disabled", "平台自动化已被全局关闭。")
 		return
 	}
-	sites, err := s.platform.ManageableSites(key)
+	manageableSites, err := s.platform.ManageableSites(key)
 	if err != nil {
 		apiError(w, http.StatusInternalServerError, "store_error", err.Error())
 		return
+	}
+	allSites, err := s.platform.Sites()
+	if err != nil {
+		apiError(w, http.StatusInternalServerError, "store_error", err.Error())
+		return
+	}
+	manageableIDs := make(map[int64]bool, len(manageableSites))
+	for _, site := range manageableSites {
+		if site != nil {
+			manageableIDs[site.ID] = true
+		}
 	}
 	caps := key.ScopeList()
 	if caps == nil {
@@ -2105,28 +2119,113 @@ func (s *Server) servePlatformDiscovery(w http.ResponseWriter, r *http.Request, 
 		}
 	}
 	integrationSnapshot := s.discoveryIntegrationSnapshot()
-	items := make([]map[string]any, 0, len(sites))
-	for _, site := range sites {
-		publicURL := s.discoverySiteURL(site, domainsBySite[site.ID])
-		items = append(items, map[string]any{
-			"id":           site.ID,
-			"slug":         site.Slug,
-			"name":         site.Name,
-			"capabilities": caps,
-			"api_base":     fmt.Sprintf("%s/api/platform/v1/sites/%d", base, site.ID),
-			"url":          publicURL,
-			"logo":         s.discoverySiteLogo(pool, site, domainsBySite[site.ID]),
-			"favicon":      s.discoverySiteFavicon(pool, site, domainsBySite[site.ID]),
-			"readiness":    s.discoverySiteReadiness(pool, site, publicURL),
-			"integrations": s.discoverySiteIntegrations(pool, site, integrationSnapshot),
-		})
+	items := make([]map[string]any, 0, len(manageableSites))
+	lifecycleItems := make([]map[string]any, 0, len(allSites))
+	for _, site := range allSites {
+		if site == nil || !key.CanManageSite(site.ID) {
+			continue
+		}
+		item := s.discoverySiteItem(pool, site, domainsBySite[site.ID], caps, base, integrationSnapshot)
+		lifecycleItems = append(lifecycleItems, item)
+		if manageableIDs[site.ID] {
+			items = append(items, item)
+		}
 	}
 	_ = s.platform.TouchPlatformKey(key.ID)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"items":     items,
-		"all_sites": key.MembershipMode == platform.KeyMembershipAll,
-		"platform":  s.discoveryPlatformStatus(r),
+		"items":           items,
+		"lifecycle_items": lifecycleItems,
+		"all_sites":       key.MembershipMode == platform.KeyMembershipAll,
+		"platform":        s.discoveryPlatformStatus(r),
 	})
+}
+
+// discoverySiteItem 统一生成对话发现列表和站点管理列表的单站摘要。
+// 已关闭站点不在运行时池中，必要时临时只读打开自己的数据库，避免灰色卡片丢失图标、统计与接入状态。
+func (s *Server) discoverySiteItem(pool *SiteRuntimePool, site *platform.Site, domains []*platform.SiteDomain, caps []string, base string, integrationSnapshot discoveryIntegrationSnapshot) map[string]any {
+	displayPool, closeDisplayPool := discoverySiteDisplayPool(pool, site)
+	defer closeDisplayPool()
+	publicURL := s.discoverySiteURL(site, domains)
+	languageCount, contentCount, pendingCount := s.discoverySiteCounts(displayPool, site)
+	return map[string]any{
+		"id":                            site.ID,
+		"slug":                          site.Slug,
+		"name":                          site.Name,
+		"status":                        site.Status,
+		"is_default":                    site.IsDefault,
+		"management_automation_enabled": site.ManagementAutomationEnabled,
+		"capabilities":                  caps,
+		"api_base":                      fmt.Sprintf("%s/api/platform/v1/sites/%d", base, site.ID),
+		"url":                           publicURL,
+		"logo":                          s.discoverySiteLogo(displayPool, site, domains),
+		"favicon":                       s.discoverySiteFavicon(displayPool, site, domains),
+		"language_count":                languageCount,
+		"content_count":                 contentCount,
+		"pending_count":                 pendingCount,
+		"readiness":                     s.discoverySiteReadiness(displayPool, site, publicURL),
+		"integrations":                  s.discoverySiteIntegrations(displayPool, site, integrationSnapshot),
+	}
+}
+
+func discoverySiteDisplayPool(pool *SiteRuntimePool, site *platform.Site) (*SiteRuntimePool, func()) {
+	if pool != nil && site != nil {
+		if _, ok := pool.runtimeByID(site.ID); ok {
+			return pool, func() {}
+		}
+	}
+	if site == nil || strings.TrimSpace(site.DBPath) == "" {
+		return pool, func() {}
+	}
+	opened, err := store.Open(site.DBPath)
+	if err != nil {
+		return pool, func() {}
+	}
+	temporary := &SiteRuntimePool{byID: map[int64]*SiteRuntime{
+		site.ID: {Site: site, Store: opened, UploadDir: site.UploadDir},
+	}}
+	return temporary, func() { opened.Close() }
+}
+
+// discoverySiteCounts 与 GCMS 后台站点卡片使用同一统计口径：启用语种数、
+// 默认语种的全部内容数（含草稿）以及全部语种的待发布数。关闭站点不会加载到运行时池，
+// 因此必要时直接只读打开它自己的数据库，确保 Pilot 关闭卡片仍保留真实摘要。
+func (s *Server) discoverySiteCounts(pool *SiteRuntimePool, site *platform.Site) (languageCount, contentCount, pendingCount int) {
+	if s == nil || site == nil {
+		return 0, 0, 0
+	}
+	var st *store.Store
+	closeStore := false
+	if pool != nil {
+		if rt, ok := pool.runtimeByID(site.ID); ok && rt != nil {
+			st = rt.Store
+		}
+	}
+	if st == nil && strings.TrimSpace(site.DBPath) != "" {
+		opened, err := store.Open(site.DBPath)
+		if err == nil {
+			st = opened
+			closeStore = true
+		}
+	}
+	if st == nil {
+		return 0, 0, 0
+	}
+	if closeStore {
+		defer st.Close()
+	}
+	locales := s.i18n.ActiveWith(st.Setting("locales"), st.Setting("custom_locales"))
+	languageCount = len(locales)
+	defaultLang := "zh"
+	if len(locales) > 0 {
+		defaultLang = locales[0].Code
+	}
+	if count, err := st.CountContent(defaultLang); err == nil {
+		contentCount = count
+	}
+	if count, err := st.CountScheduled(); err == nil {
+		pendingCount = count
+	}
+	return languageCount, contentCount, pendingCount
 }
 
 // discoveryIntegrationSnapshot 把平台级 Google 接入与统计摘要一次性读入内存，避免发现
