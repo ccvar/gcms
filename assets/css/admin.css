@@ -632,9 +632,16 @@ body.admin { background: var(--line-soft); }
 .google-oauth-api-checklist strong { color: var(--ink-soft); font-size: .74rem; }
 .google-oauth-api-checklist p { margin: 0; }
 .google-oauth-api-checklist div { display: grid; gap: .12rem; }
-.google-oauth-api-checklist a { display: inline-flex; align-items: center; gap: .24rem; width: fit-content; color: var(--accent); font-weight: 800; }
-.google-oauth-api-checklist .ext-arrow { flex: none; transition: transform var(--speed); }
-.google-oauth-api-checklist a:hover .ext-arrow { transform: translate(2px, -2px); }
+.google-oauth-api-checklist a { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: .45rem; width: 100%; color: var(--accent); font-weight: 800; }
+.external-link-affordance { width: 28px; height: 28px; box-sizing: border-box; display: inline-grid; place-items: center; flex: none; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--muted); transition: color var(--speed), background var(--speed), border-color var(--speed), transform var(--speed); }
+.external-link-affordance .ext-link-icon { display: block; }
+.google-oauth-api-checklist a:hover .external-link-affordance,
+.google-oauth-api-checklist a:focus-visible .external-link-affordance,
+.external-link-action:hover .external-link-affordance,
+.external-link-action:focus-visible .external-link-affordance { border-color: var(--line); background: var(--surface); color: var(--accent); }
+.google-oauth-api-checklist a:active .external-link-affordance,
+.external-link-action:active .external-link-affordance { transform: translateY(1px); }
+.external-link-action .external-link-affordance { margin: -.25rem -.38rem -.25rem 0; }
 .google-oauth-api-checklist small { color: var(--muted); line-height: 1.45; }
 .google-oauth-form label { display: grid; gap: .28rem; min-width: 0; color: var(--ink-soft); font-size: .72rem; font-weight: 800; line-height: 1.25; }
 .google-oauth-form input { width: 100%; box-sizing: border-box; min-height: 34px; padding: .45rem .55rem; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: var(--ink); font: inherit; font-size: .78rem; line-height: 1.3; }

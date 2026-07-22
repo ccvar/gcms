@@ -872,15 +872,15 @@
       <strong>{{.Admin.T "admin.sites.google_api_check_title" "同一个 Google Cloud 项目还需要启用"}}</strong>
       <p>{{if .GoogleOAuthProjectID}}{{printf (.Admin.T "admin.sites.google_api_check_project" "当前 Client ID 推断项目号：%s。") .GoogleOAuthProjectID}}{{else}}{{.Admin.T "admin.sites.google_api_check_no_project" "保存 Client ID 后，系统会按 Client ID 推断项目号并生成对应启用链接。"}}{{end}}</p>
       <div>
-        <a href="{{.GoogleAnalyticsAdminAPIURL}}" target="_blank" rel="noopener"><span>{{.Admin.T "admin.sites.google_enable_ga_admin_api" "启用 Google Analytics Admin API"}}</span><span class="ext-arrow" aria-hidden="true">↗</span></a>
+        <a href="{{.GoogleAnalyticsAdminAPIURL}}" target="_blank" rel="noopener" data-tooltip="{{.Admin.T "admin.sites.google_open_ga_admin_api" "在浏览器中打开 Google Analytics Admin API 配置页"}}"><span>{{.Admin.T "admin.sites.google_enable_ga_admin_api" "启用 Google Analytics Admin API"}}</span><span class="external-link-affordance">{{template "icon-extlink-compact"}}</span></a>
         <small>{{.Admin.T "admin.sites.google_enable_ga_admin_api_hint" "自动读取 GA4 属性、查找或创建 Web 数据流需要它。"}}</small>
       </div>
       <div>
-        <a href="{{.GoogleAnalyticsDataAPIURL}}" target="_blank" rel="noopener"><span>{{.Admin.T "admin.sites.google_enable_ga_data_api" "启用 Google Analytics Data API"}}</span><span class="ext-arrow" aria-hidden="true">↗</span></a>
+        <a href="{{.GoogleAnalyticsDataAPIURL}}" target="_blank" rel="noopener" data-tooltip="{{.Admin.T "admin.sites.google_open_ga_data_api" "在浏览器中打开 Google Analytics Data API 配置页"}}"><span>{{.Admin.T "admin.sites.google_enable_ga_data_api" "启用 Google Analytics Data API"}}</span><span class="external-link-affordance">{{template "icon-extlink-compact"}}</span></a>
         <small>{{.Admin.T "admin.sites.google_enable_ga_data_api_hint" "读取站点卡片的近 7 日活跃用户和访问次数需要它。"}}</small>
       </div>
       <div>
-        <a href="{{.GoogleSearchConsoleAPIURL}}" target="_blank" rel="noopener"><span>{{.Admin.T "admin.sites.google_enable_search_console_api" "启用 Google Search Console API"}}</span><span class="ext-arrow" aria-hidden="true">↗</span></a>
+        <a href="{{.GoogleSearchConsoleAPIURL}}" target="_blank" rel="noopener" data-tooltip="{{.Admin.T "admin.sites.google_open_search_console_api" "在浏览器中打开 Google Search Console API 配置页"}}"><span>{{.Admin.T "admin.sites.google_enable_search_console_api" "启用 Google Search Console API"}}</span><span class="external-link-affordance">{{template "icon-extlink-compact"}}</span></a>
         <small>{{.Admin.T "admin.sites.google_enable_search_console_api_hint" "读取或自动添加 Google Search Console 站点属性需要它。"}}</small>
       </div>
     </div>

@@ -1526,7 +1526,7 @@
               <small><label class="inline-check"><input type="checkbox" name="redirect_aliases" value="1"{{if $cf.RedirectAliases}} checked{{end}}> {{.Admin.T "admin.settings.cloudflare.redirect_aliases" "别名域名 301 跳转到主域名"}}</label></small>
             </label>
             <div class="cloudflare-template-actions">
-              <a class="btn icon-text" href="{{$cf.TokenTemplateURL}}" target="_blank" rel="noopener" data-cf-token-template>{{.Admin.T "admin.settings.cloudflare.template_link" "打开 Cloudflare 授权模板"}} <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7"/><path d="M9 7h8v8"/></svg></a>
+              <a class="btn icon-text external-link-action" href="{{$cf.TokenTemplateURL}}" target="_blank" rel="noopener" data-cf-token-template data-tooltip="{{.Admin.T "admin.settings.cloudflare.open_template_browser" "在浏览器中打开 Cloudflare 授权模板"}}"><span>{{.Admin.T "admin.settings.cloudflare.template_link" "打开 Cloudflare 授权模板"}}</span><span class="external-link-affordance">{{template "icon-extlink-compact"}}</span></a>
               <button class="btn icon-text" type="button" data-copy-target="cf-token-template-url"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>{{.Admin.T "admin.settings.cloudflare.copy_template_url" "复制链接"}}</button>
             </div>
             <div class="cloudflare-token-control" data-cf-token-field>

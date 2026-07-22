@@ -442,6 +442,7 @@
   "admin.sites.chip_title_domain": "Domain bound %s (live days count from domain binding)",
   "admin.sites.chip_title_site_created": "Site created %s (no deploy record; live days count from creation)",
   "admin.sites.chip_title_updated": "Content last publicly updated %s (latest change across all published content, extensions included)",
+  "admin.sites.chip_title_updated_on_launch": "Content last changed %s; because the site went live later, Updated is counted from launch at %s",
   "admin.sites.chip_title_no_content": "No published content yet",
   "admin.sites.locale_count": "%d locales",
   "admin.sites.content_count": "%d items",

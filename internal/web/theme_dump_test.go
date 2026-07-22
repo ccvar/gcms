@@ -30,7 +30,10 @@ func TestDumpNewThemePreviews(t *testing.T) {
 		"sunclock", "seedcalendar", "postbox", "airmail", "apothecary", "toolroom",
 		"publicradio", "morningfm", "whitecube", "botanical",
 		"field-ledger", "signal-archive", "paper-current", "night-watch",
-		"orbit-index", "column-stage", "type-cascade"}
+		"orbit-index", "column-stage", "type-cascade",
+		"briefing-desk", "briefing-desk-white", "briefing-desk-sage", "briefing-desk-ink",
+		"decision-wall", "decision-wall-white", "decision-wall-mint", "decision-wall-carbon",
+		"route-atlas", "route-atlas-white", "route-atlas-indigo", "route-atlas-moss"}
 	_, h, ps, _, blogSite := setupPlatformAutomation(t)
 	cookie := platformAdminSession(t, ps)
 	enter := httptest.NewRecorder()
@@ -75,7 +78,7 @@ func TestDumpNewThemePreviews(t *testing.T) {
 
 	// 三套新骨架还必须覆盖真实公共内页，避免只把首页做成设计稿、关于页又退回通用皮肤。
 	public := newTestPublicServer(t, "")
-	for _, id := range []string{"orbit-index", "column-stage", "type-cascade"} {
+	for _, id := range []string{"orbit-index", "column-stage", "type-cascade", "briefing-desk", "decision-wall", "route-atlas"} {
 		if err := public.store.SetSetting("theme", id); err != nil {
 			t.Fatalf("set public theme %s: %v", id, err)
 		}

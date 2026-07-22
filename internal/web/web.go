@@ -226,6 +226,18 @@ var Themes = []ThemeOption{
 	{"type-cascade-cobalt", "字幕瀑布 · 钴蓝", "Type Cascade 的钴蓝色卡", "content"},
 	{"type-cascade-coral", "字幕瀑布 · 珊瑚", "Type Cascade 的珊瑚色卡", "content"},
 	{"type-cascade-cyan", "字幕瀑布 · 青光", "Type Cascade 的青光色卡", "content"},
+	{"briefing-desk", "注册简报 · Briefing Desk", "报刊式信息核验首页：主视觉、检查清单、指南横条与最新内容", "content"},
+	{"briefing-desk-white", "注册简报 · 纯白", "Briefing Desk 的纯白背景色卡", "content"},
+	{"briefing-desk-sage", "注册简报 · 灰绿", "Briefing Desk 的灰绿色卡", "content"},
+	{"briefing-desk-ink", "注册简报 · 夜墨", "Briefing Desk 的夜墨色卡", "content"},
+	{"decision-wall", "决策墙 · Decision Wall", "强对比决策首页：巨型宣言、精选阅读、主题轨道与双栏文章流", "content"},
+	{"decision-wall-white", "决策墙 · 纯白", "Decision Wall 的纯白背景色卡", "content"},
+	{"decision-wall-mint", "决策墙 · 薄荷", "Decision Wall 的薄荷色卡", "content"},
+	{"decision-wall-carbon", "决策墙 · 碳黑", "Decision Wall 的碳黑色卡", "content"},
+	{"route-atlas", "路径图 · Route Atlas", "路径式内容首页：左侧索引、中部步骤与右侧更新流", "content"},
+	{"route-atlas-white", "路径图 · 纯白", "Route Atlas 的纯白背景色卡", "content"},
+	{"route-atlas-indigo", "路径图 · 靛青", "Route Atlas 的靛青色卡", "content"},
+	{"route-atlas-moss", "路径图 · 苔绿", "Route Atlas 的苔绿色卡", "content"},
 	{"blueprint", "蓝图 · Blueprint", "工程制图：方格纸底纹 + 墨线 + 等宽技术标注 + 角落标题栏", "general"},
 	{"riso", "孔版 · Risograph", "独立孔版印刷：双专色叠印、网点质感、套印偏移、硬阴影", "content"},
 	{"quiet", "和敬 · Quiet", "和风留白：极阔间距、竖向节奏、发丝线、一点朱印强调", "content"},
@@ -447,6 +459,9 @@ var themeLayouts = map[string]string{
 	"orbit-index": "index", "orbit-index-coral": "index", "orbit-index-forest": "index", "orbit-index-violet": "index",
 	"column-stage": "index", "column-stage-citrus": "index", "column-stage-mineral": "index", "column-stage-noir": "index",
 	"type-cascade": "index", "type-cascade-cobalt": "index", "type-cascade-coral": "index", "type-cascade-cyan": "index",
+	"briefing-desk": "index", "briefing-desk-white": "index", "briefing-desk-sage": "index", "briefing-desk-ink": "index",
+	"decision-wall": "index", "decision-wall-white": "index", "decision-wall-mint": "index", "decision-wall-carbon": "index",
+	"route-atlas": "index", "route-atlas-white": "index", "route-atlas-indigo": "index", "route-atlas-moss": "index",
 	// 皮肤复用骨架（新皮 → 既有骨）
 	"grove":     "sidebar",
 	"obsidian":  "bento",
@@ -554,7 +569,7 @@ func layoutForTheme(theme string) string {
 // contentThemeFamily 返回独立内容骨架的族名。色卡变体共享同一骨架，
 // 其余既有主题返回空字符串，确保不会误入新页头/页脚分支。
 func contentThemeFamily(theme string) string {
-	for _, family := range []string{"field-ledger", "signal-archive", "paper-current", "night-watch", "orbit-index", "column-stage", "type-cascade"} {
+	for _, family := range []string{"field-ledger", "signal-archive", "paper-current", "night-watch", "orbit-index", "column-stage", "type-cascade", "briefing-desk", "decision-wall", "route-atlas"} {
 		if theme == family || strings.HasPrefix(theme, family+"-") {
 			return family
 		}
@@ -617,6 +632,9 @@ var themeAccentDefault = map[string]string{
 	"orbit-index": "#174ea6", "orbit-index-coral": "#d94b2b", "orbit-index-forest": "#347460", "orbit-index-violet": "#7452b8",
 	"column-stage": "#c81258", "column-stage-citrus": "#f06a24", "column-stage-mineral": "#147c84", "column-stage-noir": "#d8f32f",
 	"type-cascade": "#b9ec00", "type-cascade-cobalt": "#2e5fd0", "type-cascade-coral": "#e14624", "type-cascade-cyan": "#17a6b8",
+	"briefing-desk": "#b52b24", "briefing-desk-white": "#9f251f", "briefing-desk-sage": "#3f6a58", "briefing-desk-ink": "#e5b44f",
+	"decision-wall": "#ff5a4f", "decision-wall-white": "#154fc3", "decision-wall-mint": "#087f69", "decision-wall-carbon": "#74a7ff",
+	"route-atlas": "#b33a2b", "route-atlas-white": "#9f3024", "route-atlas-indigo": "#365aa8", "route-atlas-moss": "#526b42",
 	"paperwhite": "#3156c8", "citrus": "#e34f32",
 	"bookshop": "#2d5bd1", "canal": "#177c76", "confetti": "#e34b46", "icebox": "#3569d4",
 	"ledger": "#26735b", "signal": "#ff5a36", "gallery": "#263f8f", "coast": "#147d85",
@@ -679,6 +697,9 @@ var themeRadiusDefault = map[string]string{
 	"orbit-index": "0", "orbit-index-coral": "0", "orbit-index-forest": "0", "orbit-index-violet": "0",
 	"column-stage": "0", "column-stage-citrus": "0", "column-stage-mineral": "0", "column-stage-noir": "0",
 	"type-cascade": "0", "type-cascade-cobalt": "0", "type-cascade-coral": "0", "type-cascade-cyan": "0",
+	"briefing-desk": "0", "briefing-desk-white": "0", "briefing-desk-sage": "0", "briefing-desk-ink": "0",
+	"decision-wall": "0", "decision-wall-white": "0", "decision-wall-mint": "0", "decision-wall-carbon": "0",
+	"route-atlas": "0", "route-atlas-white": "0", "route-atlas-indigo": "0", "route-atlas-moss": "0",
 	"paperwhite": "6", "citrus": "16",
 	"bookshop": "4", "canal": "10", "confetti": "14", "icebox": "12",
 	"ledger": "2", "signal": "4", "gallery": "0", "coast": "14",
@@ -4595,7 +4616,8 @@ func (s *Server) adminThemePreview(w http.ResponseWriter, r *http.Request) {
 	v.Site.InjectBody = ""
 
 	previewLimit := 4
-	newContentPreview := v.ContentThemeFamily == "orbit-index" || v.ContentThemeFamily == "column-stage" || v.ContentThemeFamily == "type-cascade"
+	newContentPreview := v.ContentThemeFamily == "orbit-index" || v.ContentThemeFamily == "column-stage" || v.ContentThemeFamily == "type-cascade" ||
+		v.ContentThemeFamily == "briefing-desk" || v.ContentThemeFamily == "decision-wall" || v.ContentThemeFamily == "route-atlas"
 	if newContentPreview {
 		previewLimit = 6
 	}
@@ -4763,7 +4785,7 @@ func (s *Server) renderHome(w http.ResponseWriter, r *http.Request) {
 			v.Featured = posts[0]
 			v.Posts = posts[1:]
 		}
-		// 四套独立内容骨架把「首页显示数量」解释为首页总文章数：
+		// 独立内容骨架把「首页显示数量」解释为首页总文章数：
 		// 1 篇主推 + N-1 篇列表。只从列表排除主推本身，其余置顶文章
 		// 仍按发布时间参与列表；旧主题继续沿用 FeaturedMore 的既有口径。
 		if v.ContentThemeFamily != "" {
@@ -4793,7 +4815,7 @@ func (s *Server) renderHome(w http.ResponseWriter, r *http.Request) {
 	s.rnd.Public(w, "home", http.StatusOK, v)
 }
 
-// contentThemeHomePosts 为四套独立内容骨架组装首页文章列表。
+// contentThemeHomePosts 为独立内容骨架组装首页文章列表。
 // limit 包含 featured 槽，因此列表最多返回 limit-1 篇；featured 之外的
 // 置顶文章不会被过滤，避免多篇置顶时首页只剩一条普通文章。
 func contentThemeHomePosts(posts []*store.Post, featured *store.Post, limit int) []*store.Post {

@@ -11,8 +11,9 @@ package web
 //     CF 首发时间持久化在状态档 first_deploy_at（写档时自动回填，见 writeCloudflareStatusFile）；
 //     升级前的老档从现存历史推：历史未滚满即真首发，滚满取现存最旧一条当下界并在悬停注明。
 //     两个锚点都没有再回落站点创建时间。
-//     M=前台可感知的最近内容更新：全部已发布内容（含扩展类型）max(published_at, updated_at)，
-//     显示为「今天 / x 天前」。
+//     M=前台可感知的最近更新：全部已发布内容（含扩展类型）max(published_at, updated_at)
+//     与首次对外服务时间取较新者，显示为「今天 / x 天前」。站点导入旧内容后刚上线时，
+//     “更新”不会早于“运行”起点，避免出现「运行 1 天 · 更新 31 天前」的矛盾口径。
 //   - 悬停 title 给出精确日期与口径说明。
 //
 // 渲染拆成 Parts（标签淡、数值实）：模板/JS 恢复用 SteadyHTML，纯文本场景用 Text。
@@ -81,11 +82,25 @@ func buildDeployChip(admin *i18n.AdminTr, in deployChipInput, now time.Time) *De
 		lines = append(lines, sinceLine)
 	}
 	if in.HasContent && !in.ContentAt.IsZero() {
+		contentAt := in.ContentAt
+		contentBeforeLaunch := !deployAt.IsZero() && contentAt.Before(deployAt)
+		if contentBeforeLaunch {
+			// 导入内容的原始时间可能早于站点首次上线；首次上线本身就是一次对外更新。
+			contentAt = deployAt
+		}
 		parts = append(parts, DeployChipPart{
 			Label: admin.T("admin.sites.chip_updated_label", "更新"),
-			Value: chipRelDays(admin, in.ContentAt, now),
+			Value: chipRelDays(admin, contentAt, now),
 		})
-		lines = append(lines, fmt.Sprintf(admin.T("admin.sites.chip_title_updated", "内容最近对外更新：%s（全部已发布内容的最新改动，含扩展类型）"), in.ContentAt.Local().Format("2006-01-02 15:04")))
+		if contentBeforeLaunch {
+			lines = append(lines, fmt.Sprintf(
+				admin.T("admin.sites.chip_title_updated_on_launch", "内容最近改动：%s；首次上线晚于该内容，“更新”按上线时间 %s 计"),
+				in.ContentAt.Local().Format("2006-01-02 15:04"),
+				contentAt.Local().Format("2006-01-02 15:04"),
+			))
+		} else {
+			lines = append(lines, fmt.Sprintf(admin.T("admin.sites.chip_title_updated", "内容最近对外更新：%s（全部已发布内容的最新改动，含扩展类型）"), contentAt.Local().Format("2006-01-02 15:04")))
+		}
 	} else {
 		lines = append(lines, admin.T("admin.sites.chip_title_no_content", "暂无已发布内容"))
 	}

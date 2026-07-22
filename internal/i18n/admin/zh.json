@@ -442,6 +442,7 @@
   "admin.sites.chip_title_domain": "域名绑定于 %s（运行天数按域名绑定时间计）",
   "admin.sites.chip_title_site_created": "站点创建于 %s（未记录部署时间，运行天数按创建时间计）",
   "admin.sites.chip_title_updated": "内容最近对外更新：%s（全部已发布内容的最新改动，含扩展类型）",
+  "admin.sites.chip_title_updated_on_launch": "内容最近改动：%s；首次上线晚于该内容，“更新”按上线时间 %s 计",
   "admin.sites.chip_title_no_content": "暂无已发布内容",
   "admin.sites.locale_count": "%d语种",
   "admin.sites.content_count": "%d条内容",

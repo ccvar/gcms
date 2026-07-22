@@ -78,6 +78,15 @@ func TestThemePreviewRendersAllThemes(t *testing.T) {
 		if strings.HasPrefix(th.ID, "type-cascade") {
 			skeleton, ok = "tc-cascade", true
 		}
+		if strings.HasPrefix(th.ID, "briefing-desk") {
+			skeleton, ok = "briefing-desk-page", true
+		}
+		if strings.HasPrefix(th.ID, "decision-wall") {
+			skeleton, ok = "decision-wall-page", true
+		}
+		if strings.HasPrefix(th.ID, "route-atlas") {
+			skeleton, ok = "route-atlas-page", true
+		}
 		if ok {
 			needle := `class="` + skeleton + `"`
 			if contentThemeFamily(th.ID) != "" {
@@ -117,12 +126,20 @@ func TestThemePreviewRendersAllThemes(t *testing.T) {
 				brandClass = `class="cs-header-brand"`
 			case "type-cascade":
 				brandClass = `class="tc-rail-brand"`
+			case "briefing-desk", "decision-wall", "route-atlas":
+				brandClass = `class="wg-header-brand"`
 			}
 			start := strings.Index(body, brandClass)
 			if start < 0 {
 				t.Errorf("theme %q preview missing content-theme brand wrapper", th.ID)
-			} else if end := strings.Index(body[start:], `</div>`); end >= 0 && strings.Contains(body[start:start+end], "<small>") {
-				t.Errorf("theme %q content-theme header still renders a brand subtitle", th.ID)
+			} else if end := strings.Index(body[start:], `</div>`); end >= 0 {
+				brandHTML := body[start : start+end]
+				if strings.Contains(brandHTML, "<small>") {
+					t.Errorf("theme %q content-theme header still renders a brand subtitle", th.ID)
+				}
+				if family == "decision-wall" && !strings.Contains(brandHTML, `class="brand-logo"`) {
+					t.Errorf("theme %q decision-wall header does not render the configured site logo", th.ID)
+				}
 			}
 			if (family == "orbit-index" || family == "column-stage" || family == "type-cascade") && strings.Contains(body, `class="ct-palette"`) {
 				t.Errorf("theme %q renders the design palette annotation in the public footer", th.ID)
@@ -140,6 +157,9 @@ func TestThemePreviewRendersAllThemes(t *testing.T) {
 		if !publicCSSHasTheme(t, h, cookie, th.ID) {
 			t.Errorf("public.css missing [data-theme=%q] block", th.ID)
 		}
+	}
+	if !strings.Contains(publicCSSCache, `[data-theme^="route-atlas"] .post-list.search-results:has(> .search-empty) { border-bottom:0; border-left:0; }`) {
+		t.Error("route-atlas search empty state still inherits the list frame")
 	}
 }
 

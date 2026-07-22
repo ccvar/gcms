@@ -1,0 +1,60 @@
+{{define "home_decision_wall"}}
+<div class="decision-wall-page">
+  <section class="dw-hero{{if not .Featured}} dw-hero-solo{{end}}">
+    <div class="dw-hero-copy">
+      {{if .Site.HeroEyebrow}}<p{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+      <h1{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{if .Site.HeroTitle}}{{.Site.HeroTitle}}{{else}}{{with .Featured}}{{.Title}}{{else}}{{.Site.Name}}{{end}}{{end}}</h1>
+      {{if .Site.HeroDescription}}<div class="dw-hero-description"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</div>{{end}}
+    </div>
+
+    {{with .Featured}}
+    <article class="dw-feature">
+      <a class="dw-feature-cover{{if not .CoverImage}} dw-media-empty{{end}}" href="{{$.Tr.U (contentURL .)}}">{{if .CoverImage}}<img src="{{.CoverImage}}" alt="{{.Title}}" decoding="async" fetchpriority="high"{{imgAttrs .CoverImage}}>{{else}}<span>{{initial .Title}}</span>{{end}}</a>
+      <div class="dw-feature-copy">
+        <small>{{$.Site.HomeFeatured}}</small>
+        <h2><a href="{{$.Tr.U (contentURL .)}}">{{.Title}}</a></h2>
+        <time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time>
+        {{if .Excerpt}}<p>{{.Excerpt}}</p>{{end}}
+        <a class="dw-read" href="{{$.Tr.U (contentURL .)}}">{{$.Tr.T "home.read_more"}} →</a>
+      </div>
+    </article>
+    {{end}}
+  </section>
+
+  {{if .Categories}}
+  <nav class="dw-topic-rail" aria-label="{{.Tr.T "common.category_nav"}}">
+    {{range $i, $cat := .Categories}}{{if lt $i 4}}<a href="{{$.Tr.U (printf "/category/%s" $cat.Slug)}}">{{$cat.Name}}</a>{{end}}{{end}}
+  </nav>
+  {{end}}
+
+  {{if .Posts}}
+  <section class="dw-content">
+    <div class="dw-guides">
+      <h2>{{.CategoryAll.Title}}</h2>
+      {{range $i, $p := .Posts}}{{if lt $i 2}}
+      <article>
+        <h3><a href="{{$.Tr.U (contentURL $p)}}">{{$p.Title}}</a></h3>
+        <time datetime="{{$.Tr.ISODate $p.PublishedAt}}">{{$.Tr.Date $p.PublishedAt}}</time>
+        {{if $p.Excerpt}}<p>{{$p.Excerpt}}</p>{{end}}
+        <a href="{{$.Tr.U (contentURL $p)}}">{{$.Tr.T "home.read_more"}} →</a>
+      </article>
+      {{end}}{{end}}
+    </div>
+
+    {{if gt (len .Posts) 2}}
+    <div class="dw-latest">
+      <h2>{{.Site.HomeLatest}}</h2>
+      {{range $i, $p := .Posts}}{{if and (ge $i 2) (lt $i 6)}}
+      <a class="dw-latest-row" href="{{$.Tr.U (contentURL $p)}}">
+        <strong>{{printf "%02d" (sub $i 1)}}</strong>
+        <span class="dw-latest-cover{{if not $p.CoverImage}} dw-media-empty{{end}}">{{if $p.CoverImage}}<img src="{{$p.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs $p.CoverImage}}>{{else}}<i>{{initial $p.Title}}</i>{{end}}</span>
+        <span><b>{{$p.Title}}</b><time datetime="{{$.Tr.ISODate $p.PublishedAt}}">{{$.Tr.Date $p.PublishedAt}}</time>{{if $p.Excerpt}}<em>{{$p.Excerpt}}</em>{{end}}</span>
+      </a>
+      {{end}}{{end}}
+      <a class="dw-all" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} →</a>
+    </div>
+    {{end}}
+  </section>
+  {{end}}
+</div>
+{{end}}

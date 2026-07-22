@@ -64,6 +64,28 @@ func TestBuildDeployChipServerDomain(t *testing.T) {
 	}
 }
 
+func TestBuildDeployChipImportedContentCannotPredateLaunch(t *testing.T) {
+	now := chipNow()
+	createdAt := now.AddDate(0, 0, -1)
+	contentAt := now.AddDate(0, 0, -31)
+	chip := buildDeployChip(chipTr(), deployChipInput{
+		Site:       &platform.Site{ID: 1, IsDefault: true, CreatedAt: createdAt},
+		ContentAt:  contentAt,
+		HasContent: true,
+	}, now)
+	if chip == nil || chip.Pending {
+		t.Fatalf("chip = %+v, want deployed", chip)
+	}
+	if chip.Text != "运行 1天 · 更新 1天前" {
+		t.Fatalf("chip text = %q, want launch-clamped update", chip.Text)
+	}
+	if !strings.Contains(chip.Title, contentAt.Local().Format("2006-01-02 15:04")) ||
+		!strings.Contains(chip.Title, createdAt.Local().Format("2006-01-02 15:04")) ||
+		!strings.Contains(chip.Title, "按上线时间") {
+		t.Fatalf("chip title = %q, want original content and effective launch times", chip.Title)
+	}
+}
+
 func TestBuildDeployChipServerDomainEarliestWithoutPrimary(t *testing.T) {
 	now := chipNow()
 	chip := buildDeployChip(chipTr(), deployChipInput{

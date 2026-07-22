@@ -1,4 +1,4 @@
-{{define "header"}}{{if eq .ContentThemeFamily "type-cascade"}}{{template "header_type_cascade" .}}{{else if eq .ContentThemeFamily "orbit-index"}}{{template "header_orbit_index" .}}{{else if eq .ContentThemeFamily "column-stage"}}{{template "header_column_stage" .}}{{else if eq .ContentThemeFamily "paper-current"}}{{template "header_paper_current" .}}{{else if .ContentThemeFamily}}{{template "header_content_theme" .}}{{else if eq .Layout "factory-trade"}}{{template "header_factory_trade" .}}{{else if eq .Layout "factory-sidebar"}}{{template "header_factory_sidebar" .}}{{else}}{{template "header_topbar" .}}{{end}}{{end}}
+{{define "header"}}{{if or (eq .ContentThemeFamily "briefing-desk") (eq .ContentThemeFamily "decision-wall") (eq .ContentThemeFamily "route-atlas")}}{{template "header_web3_guides" .}}{{else if eq .ContentThemeFamily "type-cascade"}}{{template "header_type_cascade" .}}{{else if eq .ContentThemeFamily "orbit-index"}}{{template "header_orbit_index" .}}{{else if eq .ContentThemeFamily "column-stage"}}{{template "header_column_stage" .}}{{else if eq .ContentThemeFamily "paper-current"}}{{template "header_paper_current" .}}{{else if .ContentThemeFamily}}{{template "header_content_theme" .}}{{else if eq .Layout "factory-trade"}}{{template "header_factory_trade" .}}{{else if eq .Layout "factory-sidebar"}}{{template "header_factory_sidebar" .}}{{else}}{{template "header_topbar" .}}{{end}}{{end}}
 
 {{define "header_brand"}}{{/* 品牌（logo/文字/两者），三种页头共用；跟随站点 brand 设置 */}}
       {{if and .Site.Logo (ne .Site.Brand "text")}}<a class="brand has-logo{{if eq .Site.Brand "both"}} with-name{{end}}" href="{{.Tr.U "/"}}"><img class="brand-logo" src="{{.Site.Logo}}" alt="{{.Site.Name}}" decoding="async"{{imgAttrs .Site.Logo}}{{if .Site.LogoScale}} style="transform:scale({{.Site.LogoScale}})"{{end}}{{if .VisualEdit}} data-visual-edit="site.logo" data-visual-label="站点 Logo" data-visual-kind="image"{{end}}>{{if eq .Site.Brand "both"}}<span class="brand-name"{{if .VisualEdit}} data-visual-edit="site.name" data-visual-label="站点名称"{{end}}>{{.Site.Name}}</span>{{end}}</a>{{else}}<a class="brand" href="{{.Tr.U "/"}}"{{if .VisualEdit}} data-visual-edit="site.name" data-visual-label="站点名称"{{end}}>{{.Site.Name}}</a>{{end}}
@@ -70,6 +70,27 @@
         {{template "header_lang" .}}
         <a class="ct-header-cta" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}}</a>
       </div>
+    </div>
+  </header>
+{{end}}
+
+{{define "header_web3_guides"}}{{/* Web3 指南类三套骨架共用数据结构，视觉由各主题族 CSS 独立控制。 */}}
+  <header class="site-header wg-site-header wg-{{.ContentThemeFamily}}-header">
+    <div class="wg-header-grid">
+      <div class="wg-header-brand">
+        {{if eq .ContentThemeFamily "briefing-desk"}}
+        <a class="brand wg-wordmark" href="{{.Tr.U "/"}}"{{if .VisualEdit}} data-visual-edit="site.name" data-visual-label="站点名称"{{end}}>{{.Site.Name}}</a>
+        {{else}}
+        {{template "header_brand" .}}
+        {{end}}
+      </div>
+      <button type="button" class="menu-toggle" aria-label="{{.Tr.T "common.main_nav"}}" aria-expanded="false" aria-controls="site-nav">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+      </button>
+      <nav class="nav wg-main-nav" id="site-nav" aria-label="{{.Tr.T "common.main_nav"}}">
+        {{range .Menu}}<a href="{{.Href}}"{{$.ExternalLinkAttrs .Href}}{{if .Active}} aria-current="page"{{end}}{{if $.VisualEdit}} data-visual-edit="nav.{{.Index}}" data-visual-label="{{.Label}}"{{end}}>{{.Label}}</a>{{end}}
+      </nav>
+      <div class="wg-header-tools">{{template "header_search" .}}{{template "header_lang" .}}</div>
     </div>
   </header>
 {{end}}

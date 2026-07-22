@@ -29,6 +29,17 @@ func themeByID(t *testing.T, id string) ThemeOption {
 	return ThemeOption{}
 }
 
+func TestWeb3GuideFamiliesHavePureWhiteSkin(t *testing.T) {
+	for _, id := range []string{"briefing-desk-white", "decision-wall-white", "route-atlas-white"} {
+		if got := themeBg(id); got != "#ffffff" {
+			t.Errorf("themeBg(%q) = %q, want pure white", id, got)
+		}
+		if family := familyForTheme(id); family == id || family == "" {
+			t.Errorf("familyForTheme(%q) = %q, want grouped skeleton family", id, family)
+		}
+	}
+}
+
 // 配色族聚合：卡数=族数、皮肤全覆盖不重不漏、骨架族用骨架对名、
 // 独立皮族恢复皮肤自己的名字与描述、选中回显与激活皮规则不变。
 func TestThemeFamilyCards(t *testing.T) {
