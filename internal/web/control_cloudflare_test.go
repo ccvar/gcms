@@ -40,6 +40,22 @@ func TestControlCloudflareResponseNeverLeaksToken(t *testing.T) {
 	}
 }
 
+func TestNormalizeControlCloudflareAuthorizationsDeduplicatesSameToken(t *testing.T) {
+	items := normalizeControlCloudflareAuthorizations([]controlCloudflareAuthorization{
+		{Label: "Pilot 连接", Token: "same-cloudflare-token"},
+		{Label: "另一个名称", Token: "  same-cloudflare-token\n"},
+	})
+	if len(items) != 1 {
+		t.Fatalf("same token produced %d authorizations, want 1: %#v", len(items), items)
+	}
+	if items[0].ID != controlCloudflareAuthorizationID("same-cloudflare-token") {
+		t.Fatalf("authorization id did not use the normalized token: %#v", items[0])
+	}
+	if items[0].Label != "Pilot 连接" {
+		t.Fatalf("deduplication should preserve the first authorization metadata: %#v", items[0])
+	}
+}
+
 func TestControlSiteDeploymentResponseUsesGCMSCloudflareState(t *testing.T) {
 	fixture := setupControlSitesFixture(t)
 	secret := "cf-site-secret-must-never-reach-pilot"

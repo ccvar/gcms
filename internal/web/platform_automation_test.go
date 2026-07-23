@@ -756,6 +756,59 @@ func TestPlatformControlIntegrationsReadWriteSameGCMSSettings(t *testing.T) {
 	}
 }
 
+func TestPlatformControlGoogleProvisionRoutesUseServiceWorkflows(t *testing.T) {
+	_, h, ps, _, blogSite := setupPlatformAutomation(t)
+	token := "gcmsp_google_provision123"
+	if _, err := ps.CreatePlatformKey("pilot", token, token[:13], platform.KeyMembershipAllowlist,
+		"site:read,site:write", []int64{blogSite.ID}, time.Time{}); err != nil {
+		t.Fatalf("create key: %v", err)
+	}
+	body, _ := json.Marshal(map[string]any{"account_id": ""})
+	base := "/api/platform/v1/control/sites/" + strconv.FormatInt(blogSite.ID, 10) + "/integrations/"
+	for _, service := range []string{"analytics", "search-console"} {
+		rec := platformAPIReq(t, h, http.MethodPost, base+service+"/enable", token, body)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s provision status = %d, body=%s", service, rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), "请选择 Google") {
+			t.Fatalf("%s route did not reach Google workflow: %s", service, rec.Body.String())
+		}
+	}
+
+	for _, service := range []string{platform.GoogleServiceAnalytics, platform.GoogleServiceSearchConsole} {
+		if err := ps.UpsertGoogleAccount(&platform.GoogleAccount{
+			Service: service, GoogleAccountID: "google-account-1", AccessToken: "access-token",
+			TokenExpiry: time.Now().Add(time.Hour),
+		}); err != nil {
+			t.Fatalf("upsert %s account: %v", service, err)
+		}
+	}
+	oldGoogleHTTPClient := googleHTTPClient
+	googleHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch {
+		case strings.Contains(req.URL.Path, "/properties/123/dataStreams"):
+			return jsonTestResponse(req, http.StatusOK, `{"dataStreams":[{"name":"properties/123/dataStreams/456","type":"WEB_DATA_STREAM","webStreamData":{"defaultUri":"https://blog.test","measurementId":"G-PILOTFLOW"}}]}`), nil
+		case req.URL.Path == "/webmasters/v3/sites":
+			return jsonTestResponse(req, http.StatusOK, `{"siteEntry":[{"siteUrl":"https://blog.test/","permissionLevel":"siteOwner"}]}`), nil
+		default:
+			t.Fatalf("unexpected Google request: %s %s", req.Method, req.URL.String())
+			return jsonTestResponse(req, http.StatusNotFound, `{}`), nil
+		}
+	})}
+	t.Cleanup(func() { googleHTTPClient = oldGoogleHTTPClient })
+
+	analyticsBody, _ := json.Marshal(map[string]any{"account_id": "google-account-1", "property": "properties/123"})
+	analyticsRec := platformAPIReq(t, h, http.MethodPost, base+"analytics/enable", token, analyticsBody)
+	if analyticsRec.Code != http.StatusOK || !strings.Contains(analyticsRec.Body.String(), `"measurement_id":"G-PILOTFLOW"`) {
+		t.Fatalf("analytics provision = %d, body=%s", analyticsRec.Code, analyticsRec.Body.String())
+	}
+	searchBody, _ := json.Marshal(map[string]any{"account_id": "google-account-1"})
+	searchRec := platformAPIReq(t, h, http.MethodPost, base+"search-console/enable", token, searchBody)
+	if searchRec.Code != http.StatusOK || !strings.Contains(searchRec.Body.String(), `"reused":true`) {
+		t.Fatalf("search console provision = %d, body=%s", searchRec.Code, searchRec.Body.String())
+	}
+}
+
 func TestPlatformKeyAuditRouting(t *testing.T) {
 	_, h, ps, _, blogSite := setupPlatformAutomation(t)
 	token := "gcmsp_audit1234567890"

@@ -1415,6 +1415,7 @@ func NewWithPlatform(st *store.Store, ps *platform.Store, baseURL, uploadDir str
 		}
 	}
 	s.resumeCloudflareSync()
+	s.resumeControlPublicAccessProxyJobs()
 	return s, nil
 }
 
@@ -2091,7 +2092,8 @@ func (s *Server) servePlatformKeyRequest(w http.ResponseWriter, r *http.Request,
 // 附加字段（可选、只增不改，供 gcms Pilot 等客户端展示）："url" 站点公开地址（无法确定时为空）、
 // "logo" 站点 Logo 绝对地址（未设置时为空）、"status" / "is_default" 站点生命周期信息、
 // "language_count" / "content_count" / "pending_count" 站点卡片统计、
-// "readiness" 新站上线准备状态；"lifecycle_items" 是当前密钥成员范围内的完整站点列表，
+// "readiness" 新站上线准备状态；"public_access" 是关闭配置向导后仍可展示的
+// DNS / HTTPS / 橙云进度摘要；"lifecycle_items" 是当前密钥成员范围内的完整站点列表，
 // 包含已关闭或关闭自动化的站点，供管理界面重新启用，且不改变 items 的“发现即能调用”语义。
 func (s *Server) servePlatformDiscovery(w http.ResponseWriter, r *http.Request, pool *SiteRuntimePool) {
 	if r.Method != http.MethodGet {
@@ -2207,6 +2209,7 @@ func (s *Server) discoverySiteItem(pool *SiteRuntimePool, site *platform.Site, d
 		"readiness":                     s.discoverySiteReadiness(displayPool, site, publicURL),
 		"integrations":                  s.discoverySiteIntegrations(displayPool, site, integrationSnapshot),
 		"deployment":                    s.discoverySiteDeployment(displayPool, site, publicURL),
+		"public_access":                 s.discoverySitePublicAccess(site.ID, domains),
 	}
 }
 

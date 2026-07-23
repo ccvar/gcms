@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -46,10 +47,21 @@ func (s *Server) publicAccessStatus(ctx context.Context, siteID int64, site *pla
 		"https":    map[string]any{"status": "not_checked"},
 	}
 	if primary == "" {
+		status["cloudflare_proxy"] = s.controlPublicAccessProxyView(siteID, primary, false)
 		return status
 	}
 
 	info := s.detectDomainDNS(ctx, primary)
+	proxyActual := info.Proxied
+	if !proxyActual {
+		proxyCtx, proxyCancel := context.WithTimeout(ctx, 6*time.Second)
+		proxyActual = s.controlPublicAccessProxyActual(proxyCtx, siteID, primary, false)
+		proxyCancel()
+		if proxyActual {
+			info.Proxied = true
+			info.PointsToServer = "via_cloudflare"
+		}
+	}
 	status["provider"] = info.Provider
 	status["dns"] = map[string]any{
 		"status":       info.PointsToServer,
@@ -58,6 +70,7 @@ func (s *Server) publicAccessStatus(ctx context.Context, siteID int64, site *pla
 		"a_records":    info.ARecords,
 		"proxied":      info.Proxied,
 	}
+	status["cloudflare_proxy"] = s.controlPublicAccessProxyView(siteID, primary, proxyActual)
 	proxy := detectReverseProxy()
 	status["caddy"] = map[string]any{
 		"available":     proxy.Kind == "caddy",
@@ -131,14 +144,52 @@ func (s *Server) servePlatformControlSitePublicAccess(w http.ResponseWriter, r *
 				_ = s.reloadRuntimePool()
 				return 0, nil, newControlMutationError(http.StatusInternalServerError, "runtime_reload_failed", "域名配置未生效，已尝试恢复原配置。")
 			}
-			messages := make([]string, 0, 2)
-			if in.AutoDNS == nil || *in.AutoDNS {
-				if msg := s.applyCloudflareDNSForSpecs(r.Context(), specs, in.CloudflareProxy); msg != "" {
+			messages := make([]string, 0, 3)
+			autoDNS := in.AutoDNS == nil || *in.AutoDNS
+			proxyRequested := false
+			if autoDNS {
+				if in.CloudflareProxy != nil {
+					proxyRequested = *in.CloudflareProxy
+				} else {
+					proxyRequested = strings.TrimSpace(s.platform.Setting(platformCFProxiedKey)) != "0"
+				}
+			}
+			proxyState := newControlPublicAccessProxyState(primaryHostFromDomainSpecs(specs), proxyRequested)
+			proxyStateSaved := s.saveControlPublicAccessProxyState(site.ID, proxyState) == nil
+			monitorReady := true
+			if autoDNS {
+				// Always expose the origin through grey-cloud first. Orange-cloud
+				// is a later transition after Caddy has a working certificate.
+				greyCloud := false
+				msg, dnsErr := s.applyCloudflareDNSForSpecs(r.Context(), specs, &greyCloud)
+				if msg != "" {
 					messages = append(messages, msg)
+				}
+				if dnsErr != nil {
+					monitorReady = false
+					if proxyStateSaved {
+						proxyState.AccessState = publicAccessProgressAttention
+						proxyState.AccessStage = "dns"
+						proxyState.AccessMessage = strings.TrimSpace(msg)
+						if proxyState.AccessMessage == "" {
+							proxyState.AccessMessage = "Cloudflare DNS 配置失败：" + dnsErr.Error()
+						}
+						if proxyRequested {
+							proxyState.Status = publicAccessProxyFailed
+							proxyState.Error = proxyState.AccessMessage
+						}
+						s.updateControlPublicAccessProxyState(site.ID, proxyState)
+					}
 				}
 			}
 			if msg := s.applyCaddySites(); msg != "" {
 				messages = append(messages, msg)
+			}
+			// Public-access progress is independent from the orange-cloud choice.
+			// Manual DNS and grey-cloud flows must still move through DNS / HTTPS
+			// pending states so Pilot can keep the card actionable after closing.
+			if proxyStateSaved && monitorReady {
+				s.scheduleControlPublicAccessProxy(site.ID, proxyState.Generation)
 			}
 			response["messages"] = messages
 			ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
@@ -152,14 +203,16 @@ func (s *Server) servePlatformControlSitePublicAccess(w http.ResponseWriter, r *
 	}
 }
 
-func (s *Server) applyCloudflareDNSForSpecs(ctx context.Context, specs []platform.SiteDomainSpec, proxy *bool) string {
+func (s *Server) applyCloudflareDNSForSpecs(ctx context.Context, specs []platform.SiteDomainSpec, proxy *bool) (string, error) {
 	token := strings.TrimSpace(s.platform.Setting(platformCFDNSTokenKey))
 	if token == "" {
-		return "GCMS 尚未配置 Cloudflare DNS；请在 GCMS 的 Cloudflare 设置中授权，或手动添加 DNS 记录。"
+		msg := "GCMS 尚未配置 Cloudflare DNS；请在 GCMS 的 Cloudflare 设置中授权，或手动添加 DNS 记录。"
+		return msg, fmt.Errorf("cloudflare DNS token is not configured")
 	}
 	ip := s.serverPublicIP()
 	if strings.TrimSpace(ip.IPv4) == "" && strings.TrimSpace(ip.IPv6) == "" {
-		return "GCMS 未检测到服务器公网 IP，无法自动创建 DNS 记录。"
+		msg := "GCMS 未检测到服务器公网 IP，无法自动创建 DNS 记录。"
+		return msg, fmt.Errorf("server public IP is unavailable")
 	}
 	proxied := strings.TrimSpace(s.platform.Setting(platformCFProxiedKey)) != "0"
 	if proxy != nil {
@@ -172,13 +225,13 @@ func (s *Server) applyCloudflareDNSForSpecs(ctx context.Context, specs []platfor
 		}
 	}
 	if len(hosts) == 0 {
-		return ""
+		return "", nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	results, err := applyCloudflareDNS(ctx, token, ip.IPv4, ip.IPv6, hosts, proxied)
 	if err != nil {
-		return "读取 GCMS Cloudflare 域名失败：" + err.Error()
+		return "读取 GCMS Cloudflare 域名失败：" + err.Error(), err
 	}
 	var okHosts, failed []string
 	for _, result := range results {
@@ -199,5 +252,9 @@ func (s *Server) applyCloudflareDNSForSpecs(ctx context.Context, specs []platfor
 	if len(failed) > 0 {
 		parts = append(parts, "DNS 未处理："+strings.Join(failed, "；")+"。")
 	}
-	return strings.Join(parts, " ")
+	message := strings.Join(parts, " ")
+	if len(failed) > 0 {
+		return message, fmt.Errorf("cloudflare DNS failed for %d host(s)", len(failed))
+	}
+	return message, nil
 }

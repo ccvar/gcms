@@ -90,7 +90,7 @@ func platformControlOpenAPISpec(apiBase string) map[string]any {
 					"primary_domain":   map[string]any{"type": "string", "description": "主域名，不含协议、端口或路径"},
 					"redirect_domains": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "可选别名域名，GCMS 会配置 301 到主域名"},
 					"auto_dns":         map[string]any{"type": "boolean", "default": true, "description": "使用 GCMS 自己保存的 Cloudflare 配置自动创建或更新 DNS"},
-					"cloudflare_proxy": map[string]any{"type": "boolean", "description": "可选，设置 GCMS Cloudflare DNS 记录是否启用橙云代理"},
+					"cloudflare_proxy": map[string]any{"type": "boolean", "description": "可选；为 true 时先以灰云完成 DNS 与源站 HTTPS，验证通过后再自动开启橙云代理"},
 				}},
 				"UnlockInput": map[string]any{"type": "object", "writeOnly": true, "required": []string{"password", "operations"}, "properties": map[string]any{"password": map[string]any{"type": "string", "format": "password", "writeOnly": true}, "operations": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}}},
 			},

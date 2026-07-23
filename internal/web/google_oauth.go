@@ -829,12 +829,21 @@ func (s *Server) adminGoogleSearchConsoleSites(w http.ResponseWriter, r *http.Re
 }
 
 func (s *Server) adminCreateGoogleAnalyticsStream(w http.ResponseWriter, r *http.Request) {
+	s.createGoogleAnalyticsStream(w, r, true)
+}
+
+// createGoogleAnalyticsStream is shared by the GCMS admin and the authenticated
+// platform-control API used by Pilot. Authentication is performed by the caller;
+// only the browser-admin caller needs a CSRF check.
+func (s *Server) createGoogleAnalyticsStream(w http.ResponseWriter, r *http.Request, requireCSRF bool) {
 	if s.platform == nil {
 		http.NotFound(w, r)
 		return
 	}
-	if _, ok := s.checkCSRF(w, r); !ok {
-		return
+	if requireCSRF {
+		if _, ok := s.checkCSRF(w, r); !ok {
+			return
+		}
 	}
 	siteID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || siteID <= 0 {
@@ -1069,12 +1078,21 @@ func (s *Server) adminCreateGoogleAnalyticsStream(w http.ResponseWriter, r *http
 }
 
 func (s *Server) adminCreateGoogleSearchConsoleProperty(w http.ResponseWriter, r *http.Request) {
+	s.createGoogleSearchConsoleProperty(w, r, true)
+}
+
+// createGoogleSearchConsoleProperty is the single orchestration path for both
+// the GCMS admin and Pilot. The platform-control caller has already authenticated
+// its automation key, so it deliberately skips only the browser CSRF check.
+func (s *Server) createGoogleSearchConsoleProperty(w http.ResponseWriter, r *http.Request, requireCSRF bool) {
 	if s.platform == nil {
 		http.NotFound(w, r)
 		return
 	}
-	if _, ok := s.checkCSRF(w, r); !ok {
-		return
+	if requireCSRF {
+		if _, ok := s.checkCSRF(w, r); !ok {
+			return
+		}
 	}
 	siteID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || siteID <= 0 {

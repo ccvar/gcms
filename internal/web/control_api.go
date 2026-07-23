@@ -213,6 +213,10 @@ func (s *Server) servePlatformControl(w http.ResponseWriter, r *http.Request) {
 				s.servePlatformControlSitePublicAccess(w, r, siteID)
 			case len(parts) == 3 && parts[2] == "integrations":
 				s.servePlatformControlSiteIntegrations(w, r, siteID)
+			case len(parts) == 5 && parts[2] == "integrations" && parts[4] == "enable" && parts[3] == "analytics":
+				s.servePlatformControlSiteGoogleProvision(w, r, siteID, platform.GoogleServiceAnalytics)
+			case len(parts) == 5 && parts[2] == "integrations" && parts[4] == "enable" && parts[3] == "search-console":
+				s.servePlatformControlSiteGoogleProvision(w, r, siteID, platform.GoogleServiceSearchConsole)
 			default:
 				http.NotFound(w, r)
 			}

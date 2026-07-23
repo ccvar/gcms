@@ -3,6 +3,8 @@ package web
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 
 	"cms.ccvar.com/internal/platform"
@@ -48,6 +50,14 @@ type controlSiteGoogleInput struct {
 type controlSiteIntegrationsInput struct {
 	Analytics     *controlSiteGoogleInput `json:"analytics"`
 	SearchConsole *controlSiteGoogleInput `json:"search_console"`
+}
+
+type controlSiteGoogleProvisionInput struct {
+	AccountID        string `json:"account_id"`
+	DefaultURI       string `json:"default_uri"`
+	Property         string `json:"property"`
+	PropertyMode     string `json:"property_mode"`
+	AnalyticsAccount string `json:"analytics_account"`
 }
 
 func (s *Server) servePlatformControlIntegrations(w http.ResponseWriter, r *http.Request) {
@@ -298,6 +308,49 @@ func (s *Server) servePlatformControlSiteIntegrations(w http.ResponseWriter, r *
 	}
 }
 
+// servePlatformControlSiteGoogleProvision exposes the same domain-aware setup
+// workflow used by the GCMS admin. It is intentionally separate from the generic
+// integration PUT endpoint: "enabled" is an outcome of successful provisioning,
+// not a value Pilot may optimistically persist.
+func (s *Server) servePlatformControlSiteGoogleProvision(w http.ResponseWriter, r *http.Request, siteID int64, service string) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST")
+		apiError(w, http.StatusMethodNotAllowed, "method_not_allowed", "仅支持 POST。")
+		return
+	}
+	key, ok := s.requirePlatformControlKey(w, r, apiScopeSiteWrite)
+	if !ok || !controlSiteMembershipAllowed(w, key, siteID) {
+		return
+	}
+	if !s.controlIntegrationSiteExists(w, siteID) {
+		return
+	}
+	var in controlSiteGoogleProvisionInput
+	if !decodeAPIJSON(w, r, &in) {
+		return
+	}
+	form := url.Values{}
+	form.Set("google_account_id", strings.TrimSpace(in.AccountID))
+	form.Set("default_uri", strings.TrimSpace(in.DefaultURI))
+	form.Set("property", strings.TrimSpace(in.Property))
+	form.Set("property_mode", strings.TrimSpace(in.PropertyMode))
+	form.Set("analytics_account", strings.TrimSpace(in.AnalyticsAccount))
+	r.Form = form
+	r.PostForm = form
+	r.SetPathValue("id", strconv.FormatInt(siteID, 10))
+	r.Header.Set("Accept", "application/json")
+
+	_ = s.platform.CreatePlatformAutomationLog(key.ID, siteID, "site_google_provision", "site", siteID, "已通过 Pilot 发起站点 Google 接入")
+	switch service {
+	case platform.GoogleServiceAnalytics:
+		s.createGoogleAnalyticsStream(w, r, false)
+	case platform.GoogleServiceSearchConsole:
+		s.createGoogleSearchConsoleProperty(w, r, false)
+	default:
+		apiError(w, http.StatusNotFound, "google_service_not_found", "未知的 Google 接入类型。")
+	}
+}
+
 func (s *Server) controlIntegrationSiteExists(w http.ResponseWriter, siteID int64) bool {
 	_, ok, err := s.platform.GetSite(siteID)
 	if err != nil {
@@ -414,6 +467,10 @@ func (s *Server) controlSiteIntegrationsResponse(siteID int64) map[string]any {
 		if service == platform.GoogleServiceAnalytics {
 			response["analytics"] = item
 		} else {
+			if integration.Property != "" && !integration.Enabled {
+				item["needs_verification"] = true
+				item["verify_url"] = googleSearchConsoleWebURL(integration.Property)
+			}
 			response["search_console"] = item
 		}
 	}
