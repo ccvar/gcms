@@ -77,9 +77,10 @@ func controlConfigurationUnlock(t *testing.T, h http.Handler, token, password, o
 
 func TestPlatformControlThemesListApplyAndRollback(t *testing.T) {
 	srv, h, ps, _, blogSite := setupPlatformAutomation(t)
+	setPlatformTestPassword(t, ps, controlTestPassword)
 	token := "gcmsp_themecontrol12345"
 	createControlConfigurationKey(t, ps, token, platform.KeyMembershipAllowlist,
-		strings.Join([]string{apiScopeControlRead, apiScopeThemesRead, apiScopeThemesApply}, ","), []int64{blogSite.ID})
+		strings.Join([]string{apiScopeControlRead, apiScopeControlUnlock, apiScopeThemesRead, apiScopeThemesApply}, ","), []int64{blogSite.ID})
 
 	list := controlConfigurationAPIReq(t, h, http.MethodGet, "/api/platform/v1/control/themes", token, nil, controlConfigurationRequest{})
 	if list.Code != http.StatusOK {
@@ -180,9 +181,17 @@ func TestPlatformControlThemesListApplyAndRollback(t *testing.T) {
 	}
 
 	runtime.server.setCachedEndpoint("control-theme-test", "application/json", []byte(`{}`), time.Hour)
-	apply := controlConfigurationAPIReq(t, h, http.MethodPut,
+	blocked := controlConfigurationAPIReq(t, h, http.MethodPut,
 		"/api/platform/v1/control/sites/"+strconv.FormatInt(blogSite.ID, 10)+"/theme", token, body,
 		controlConfigurationRequest{Confirm: "themes.apply", IdempotencyKey: "theme-apply-1"})
+	if blocked.Code != http.StatusForbidden || !strings.Contains(blocked.Body.String(), `"error":"unlock_required"`) ||
+		!strings.Contains(blocked.Body.String(), "themes.apply_live") {
+		t.Fatalf("bound-site theme apply without unlock = %d %s", blocked.Code, blocked.Body.String())
+	}
+	unlock := controlConfigurationUnlock(t, h, token, controlTestPassword, "themes.apply_live")
+	apply := controlConfigurationAPIReq(t, h, http.MethodPut,
+		"/api/platform/v1/control/sites/"+strconv.FormatInt(blogSite.ID, 10)+"/theme", token, body,
+		controlConfigurationRequest{Confirm: "themes.apply", IdempotencyKey: "theme-apply-1", UnlockToken: unlock})
 	if apply.Code != http.StatusOK {
 		t.Fatalf("theme apply = %d %s", apply.Code, apply.Body.String())
 	}
@@ -197,7 +206,7 @@ func TestPlatformControlThemesListApplyAndRollback(t *testing.T) {
 	}
 	applyReplay := controlConfigurationAPIReq(t, h, http.MethodPut,
 		"/api/platform/v1/control/sites/"+strconv.FormatInt(blogSite.ID, 10)+"/theme", token, body,
-		controlConfigurationRequest{Confirm: "themes.apply", IdempotencyKey: "theme-apply-1"})
+		controlConfigurationRequest{Confirm: "themes.apply", IdempotencyKey: "theme-apply-1", UnlockToken: unlock})
 	if applyReplay.Code != http.StatusOK || applyReplay.Header().Get(controlIdempotencyReplayedHeader) != "true" {
 		t.Fatalf("theme apply replay = %d headers=%v body=%s", applyReplay.Code, applyReplay.Header(), applyReplay.Body.String())
 	}
@@ -205,7 +214,7 @@ func TestPlatformControlThemesListApplyAndRollback(t *testing.T) {
 	rollbackBody := []byte(`{"action":"rollback"}`)
 	rollback := controlConfigurationAPIReq(t, h, http.MethodPut,
 		"/api/platform/v1/control/sites/"+strconv.FormatInt(blogSite.ID, 10)+"/theme", token, rollbackBody,
-		controlConfigurationRequest{Confirm: "themes.apply", IdempotencyKey: "theme-rollback-1"})
+		controlConfigurationRequest{Confirm: "themes.apply", IdempotencyKey: "theme-rollback-1", UnlockToken: unlock})
 	if rollback.Code != http.StatusOK || !strings.Contains(rollback.Body.String(), `"rolled_back":true`) {
 		t.Fatalf("theme rollback = %d %s", rollback.Code, rollback.Body.String())
 	}
@@ -217,17 +226,85 @@ func TestPlatformControlThemesListApplyAndRollback(t *testing.T) {
 	}
 	rollbackReplay := controlConfigurationAPIReq(t, h, http.MethodPut,
 		"/api/platform/v1/control/sites/"+strconv.FormatInt(blogSite.ID, 10)+"/theme", token, rollbackBody,
-		controlConfigurationRequest{Confirm: "themes.apply", IdempotencyKey: "theme-rollback-1"})
+		controlConfigurationRequest{Confirm: "themes.apply", IdempotencyKey: "theme-rollback-1", UnlockToken: unlock})
 	if rollbackReplay.Code != http.StatusOK || rollbackReplay.Header().Get(controlIdempotencyReplayedHeader) != "true" {
 		t.Fatalf("theme rollback replay = %d headers=%v body=%s", rollbackReplay.Code, rollbackReplay.Header(), rollbackReplay.Body.String())
 	}
 }
 
+func TestPlatformControlThemeUnlockDependsOnLiveSite(t *testing.T) {
+	srv, h, ps, defaultSite, blogSite := setupPlatformAutomation(t)
+	setPlatformTestPassword(t, ps, controlTestPassword)
+	if err := ps.ReplaceSiteDomains(blogSite.ID, nil); err != nil {
+		t.Fatalf("unbind blog site: %v", err)
+	}
+	token := "gcmsp_themeliveguard123"
+	createControlConfigurationKey(t, ps, token, platform.KeyMembershipAll,
+		strings.Join([]string{apiScopeControlUnlock, apiScopeThemesRead, apiScopeThemesApply}, ","), nil)
+
+	blogRuntime, ok := srv.runtimePool().runtimeByID(blogSite.ID)
+	if !ok || blogRuntime == nil || blogRuntime.Store == nil {
+		t.Fatal("blog runtime missing")
+	}
+	if err := blogRuntime.Store.SetSetting("theme", "editorial"); err != nil {
+		t.Fatalf("seed blog theme: %v", err)
+	}
+	body := []byte(`{"theme_id":"magazine"}`)
+	unboundPlan := controlConfigurationAPIReq(t, h, http.MethodPut,
+		"/api/platform/v1/control/sites/"+strconv.FormatInt(blogSite.ID, 10)+"/theme?dry_run=1", token, body,
+		controlConfigurationRequest{})
+	if unboundPlan.Code != http.StatusOK || !strings.Contains(unboundPlan.Body.String(), `"execution_requires_unlock":false`) {
+		t.Fatalf("unbound theme dry-run = %d %s", unboundPlan.Code, unboundPlan.Body.String())
+	}
+	unboundApply := controlConfigurationAPIReq(t, h, http.MethodPut,
+		"/api/platform/v1/control/sites/"+strconv.FormatInt(blogSite.ID, 10)+"/theme", token, body,
+		controlConfigurationRequest{Confirm: "themes.apply", IdempotencyKey: "unbound-theme-1"})
+	if unboundApply.Code != http.StatusOK {
+		t.Fatalf("unbound theme apply without unlock = %d %s", unboundApply.Code, unboundApply.Body.String())
+	}
+
+	defaultRuntime, ok := srv.runtimePool().runtimeByID(defaultSite.ID)
+	if !ok || defaultRuntime == nil || defaultRuntime.Store == nil {
+		t.Fatal("default runtime missing")
+	}
+	if err := defaultRuntime.Store.SetSetting("theme", "editorial"); err != nil {
+		t.Fatalf("seed default theme: %v", err)
+	}
+	defaultPlan := controlConfigurationAPIReq(t, h, http.MethodPut,
+		"/api/platform/v1/control/sites/"+strconv.FormatInt(defaultSite.ID, 10)+"/theme?dry_run=1", token, body,
+		controlConfigurationRequest{})
+	if defaultPlan.Code != http.StatusOK || !strings.Contains(defaultPlan.Body.String(), `"execution_requires_unlock":true`) ||
+		!strings.Contains(defaultPlan.Body.String(), `"unlock_operation":"themes.apply_live"`) {
+		t.Fatalf("default theme dry-run without unlock = %d %s", defaultPlan.Code, defaultPlan.Body.String())
+	}
+	if got := controlCurrentTheme(defaultRuntime.Store); got != "editorial" {
+		t.Fatalf("default dry-run changed theme to %q", got)
+	}
+	blocked := controlConfigurationAPIReq(t, h, http.MethodPut,
+		"/api/platform/v1/control/sites/"+strconv.FormatInt(defaultSite.ID, 10)+"/theme", token, body,
+		controlConfigurationRequest{Confirm: "themes.apply", IdempotencyKey: "default-theme-1"})
+	if blocked.Code != http.StatusForbidden || !strings.Contains(blocked.Body.String(), `"error":"unlock_required"`) ||
+		!strings.Contains(blocked.Body.String(), "themes.apply_live") {
+		t.Fatalf("default theme apply without unlock = %d %s", blocked.Code, blocked.Body.String())
+	}
+	unlock := controlConfigurationUnlock(t, h, token, controlTestPassword, "themes.apply_live")
+	applied := controlConfigurationAPIReq(t, h, http.MethodPut,
+		"/api/platform/v1/control/sites/"+strconv.FormatInt(defaultSite.ID, 10)+"/theme", token, body,
+		controlConfigurationRequest{Confirm: "themes.apply", IdempotencyKey: "default-theme-1", UnlockToken: unlock})
+	if applied.Code != http.StatusOK {
+		t.Fatalf("default theme apply with unlock = %d %s", applied.Code, applied.Body.String())
+	}
+	if got := controlCurrentTheme(defaultRuntime.Store); got != "magazine" {
+		t.Fatalf("default applied theme = %q, want magazine", got)
+	}
+}
+
 func TestPlatformControlThemeExpectedCurrentGuardsExecution(t *testing.T) {
 	srv, h, ps, _, blogSite := setupPlatformAutomation(t)
+	setPlatformTestPassword(t, ps, controlTestPassword)
 	token := "gcmsp_themeexpected123"
 	createControlConfigurationKey(t, ps, token, platform.KeyMembershipAllowlist,
-		strings.Join([]string{apiScopeThemesRead, apiScopeThemesApply}, ","), []int64{blogSite.ID})
+		strings.Join([]string{apiScopeControlUnlock, apiScopeThemesRead, apiScopeThemesApply}, ","), []int64{blogSite.ID})
 	runtime, ok := srv.runtimePool().runtimeByID(blogSite.ID)
 	if !ok || runtime == nil || runtime.Store == nil {
 		t.Fatal("blog runtime missing")
@@ -237,9 +314,10 @@ func TestPlatformControlThemeExpectedCurrentGuardsExecution(t *testing.T) {
 	}
 
 	staleBody := []byte(`{"theme_id":"magazine","expected_current_theme":"terminal"}`)
+	unlock := controlConfigurationUnlock(t, h, token, controlTestPassword, "themes.apply_live")
 	stale := controlConfigurationAPIReq(t, h, http.MethodPut,
 		"/api/platform/v1/control/sites/"+strconv.FormatInt(blogSite.ID, 10)+"/theme", token, staleBody,
-		controlConfigurationRequest{Confirm: "themes.apply", IdempotencyKey: "theme-stale-apply"})
+		controlConfigurationRequest{Confirm: "themes.apply", IdempotencyKey: "theme-stale-apply", UnlockToken: unlock})
 	if stale.Code != http.StatusConflict || !strings.Contains(stale.Body.String(), `"error":"theme_changed"`) {
 		t.Fatalf("stale theme apply = %d %s, want 409 theme_changed", stale.Code, stale.Body.String())
 	}

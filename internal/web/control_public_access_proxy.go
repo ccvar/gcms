@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -34,6 +35,7 @@ type controlPublicAccessProxyState struct {
 	PrimaryDomain string `json:"primary_domain,omitempty"`
 	Generation    string `json:"generation,omitempty"`
 	ProxyApplied  bool   `json:"proxy_applied,omitempty"`
+	VerifiedAt    int64  `json:"verified_at,omitempty"`
 	Error         string `json:"error,omitempty"`
 	AccessState   string `json:"access_state,omitempty"`
 	AccessStage   string `json:"access_stage,omitempty"`
@@ -50,15 +52,36 @@ type controlPublicAccessProxyView struct {
 }
 
 type discoveryPublicAccessSummary struct {
-	State     string `json:"state"` // pending | attention | ready
-	Stage     string `json:"stage"` // dns | https | proxy | ready
-	Host      string `json:"host,omitempty"`
-	Message   string `json:"message,omitempty"`
-	UpdatedAt int64  `json:"updated_at,omitempty"`
+	State             string `json:"state"` // pending | attention | ready
+	Stage             string `json:"stage"` // dns | https | proxy | ready
+	Host              string `json:"host,omitempty"`
+	Message           string `json:"message,omitempty"`
+	UpdatedAt         int64  `json:"updated_at,omitempty"`
+	Generation        string `json:"generation,omitempty"`
+	DomainFingerprint string `json:"domain_fingerprint,omitempty"`
+	CanClear          bool   `json:"can_clear,omitempty"`
 }
 
 func controlPublicAccessProxySettingKey(siteID int64) string {
 	return fmt.Sprintf("%s%d", controlPublicAccessProxySettingPrefix, siteID)
+}
+
+func controlPublicAccessDomainFingerprint(siteID int64, domains []*platform.SiteDomain) string {
+	parts := make([]string, 0, len(domains))
+	for _, domain := range domains {
+		if domain == nil || !domain.Enabled || domain.SiteID != siteID {
+			continue
+		}
+		role := "alias"
+		if domain.IsPrimary {
+			role = "primary"
+		} else if domain.RedirectToPrimary {
+			role = "redirect"
+		}
+		parts = append(parts, role+":"+strings.ToLower(strings.TrimSpace(domain.Scheme))+"://"+strings.ToLower(strings.TrimSpace(domain.Host)))
+	}
+	sort.Strings(parts)
+	return controlRequestHash(fmt.Sprintf("site=%d|domains=%s", siteID, strings.Join(parts, ",")))
 }
 
 func newControlPublicAccessProxyState(primary string, requested bool) controlPublicAccessProxyState {
@@ -125,30 +148,36 @@ func (s *Server) updateControlPublicAccessProxyState(siteID int64, next controlP
 	return s.saveControlPublicAccessProxyState(siteID, next) == nil
 }
 
-func (s *Server) controlPublicAccessProxyView(siteID int64, primary string, actual bool) controlPublicAccessProxyView {
+func (s *Server) controlPublicAccessProxyView(siteID int64, primary string, actual, originVerified bool) controlPublicAccessProxyView {
 	primary = strings.ToLower(strings.TrimSpace(primary))
 	state, ok := s.loadControlPublicAccessProxyState(siteID)
 	if !ok || (state.PrimaryDomain != "" && primary != "" && state.PrimaryDomain != primary) {
-		if actual {
+		if actual && originVerified {
 			return controlPublicAccessProxyView{Requested: true, Actual: true, Status: publicAccessProxyEnabled}
 		}
 		return controlPublicAccessProxyView{Actual: false, Status: publicAccessProxyDisabled}
 	}
 	status := state.Status
-	// A status read also verifies HTTPS through the currently resolved route.
-	// If DNS is visibly proxied, the public-access handler can combine this with
-	// its HTTPS result and safely treat the proxy transition as complete.
+	// Cloudflare NS / edge IP only proves that the hostname uses Cloudflare. It
+	// does not prove that the request reaches this GCMS. Access is complete only
+	// after the caller has also verified a 200 response carrying X-Gcms.
 	if state.Requested && actual {
 		status = publicAccessProxyEnabled
 		needsSave := state.Status != publicAccessProxyEnabled ||
-			state.AccessState != publicAccessProgressReady ||
-			state.AccessStage != "ready" ||
-			strings.TrimSpace(state.AccessMessage) != "" ||
-			strings.TrimSpace(state.Error) != ""
+			strings.TrimSpace(state.Error) != "" ||
+			(originVerified && (state.VerifiedAt == 0 ||
+				state.AccessState != publicAccessProgressReady ||
+				state.AccessStage != "ready" ||
+				strings.TrimSpace(state.AccessMessage) != ""))
 		state.Error = ""
-		state.AccessState = publicAccessProgressReady
-		state.AccessStage = "ready"
-		state.AccessMessage = ""
+		if originVerified {
+			if state.VerifiedAt == 0 {
+				state.VerifiedAt = time.Now().Unix()
+			}
+			state.AccessState = publicAccessProgressReady
+			state.AccessStage = "ready"
+			state.AccessMessage = ""
+		}
 		if needsSave {
 			state.Status = publicAccessProxyEnabled
 			_ = s.saveControlPublicAccessProxyState(siteID, state)
@@ -210,10 +239,12 @@ func (s *Server) discoverySitePublicAccess(siteID int64, domains []*platform.Sit
 		return nil
 	}
 	summary := &discoveryPublicAccessSummary{
-		Host:      primary,
-		Stage:     controlPublicAccessSummaryStage(state),
-		Message:   strings.TrimSpace(state.AccessMessage),
-		UpdatedAt: state.UpdatedAt,
+		Host:              primary,
+		Stage:             controlPublicAccessSummaryStage(state),
+		Message:           strings.TrimSpace(state.AccessMessage),
+		UpdatedAt:         state.UpdatedAt,
+		Generation:        state.Generation,
+		DomainFingerprint: controlPublicAccessDomainFingerprint(siteID, domains),
 	}
 	if summary.Message == "" {
 		summary.Message = strings.TrimSpace(state.Error)
@@ -224,6 +255,7 @@ func (s *Server) discoverySitePublicAccess(siteID int64, domains []*platform.Sit
 		return summary
 	case publicAccessProgressAttention:
 		summary.State = publicAccessProgressAttention
+		summary.CanClear = state.VerifiedAt == 0 && (summary.Stage == "dns" || summary.Stage == "https")
 		return summary
 	case publicAccessProgressReady:
 		summary.State = publicAccessProgressReady
@@ -350,6 +382,9 @@ func (s *Server) runControlPublicAccessProxy(siteID int64, generation string) {
 		verifyCtx, cancel := context.WithTimeout(context.Background(), 9*time.Second)
 		verified := verifyDomainReachable(verifyCtx, primary)
 		cancel()
+		if verified.OK && state.VerifiedAt == 0 {
+			state.VerifiedAt = time.Now().Unix()
+		}
 		if verified.OK && state.ProxyApplied {
 			state.Status = publicAccessProxyEnabled
 			state.Error = ""
@@ -377,8 +412,21 @@ func (s *Server) runControlPublicAccessProxy(siteID int64, generation string) {
 			if !s.updateControlPublicAccessProxyState(siteID, state) {
 				return
 			}
+			if s.controlMutation != nil {
+				s.controlMutation.Lock()
+			}
+			lockedState, stillCurrent := s.loadControlPublicAccessProxyState(siteID)
+			if !stillCurrent || lockedState.Generation != generation || !lockedState.Requested {
+				if s.controlMutation != nil {
+					s.controlMutation.Unlock()
+				}
+				return
+			}
 			proxy := true
 			message, applyErr := s.applyCloudflareDNSForSpecs(context.Background(), specs, &proxy)
+			if s.controlMutation != nil {
+				s.controlMutation.Unlock()
+			}
 			state, ok = s.loadControlPublicAccessProxyState(siteID)
 			if !ok || state.Generation != generation || !state.Requested {
 				return

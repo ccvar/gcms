@@ -13,27 +13,40 @@ func TestControlPublicAccessProxyStateSeparatesIntentFromActualDNS(t *testing.T)
 		t.Fatalf("save proxy intent: %v", err)
 	}
 
-	pending := srv.controlPublicAccessProxyView(site.ID, "blog.test", false)
+	pending := srv.controlPublicAccessProxyView(site.ID, "blog.test", false, false)
 	if !pending.Requested || pending.Actual || pending.Status != publicAccessProxyPending {
 		t.Fatalf("pending view = %#v", pending)
 	}
 
-	enabled := srv.controlPublicAccessProxyView(site.ID, "blog.test", true)
+	proxiedOnly := srv.controlPublicAccessProxyView(site.ID, "blog.test", true, false)
+	if !proxiedOnly.Requested || !proxiedOnly.Actual || proxiedOnly.Status != publicAccessProxyEnabled {
+		t.Fatalf("proxied-only view = %#v", proxiedOnly)
+	}
+	stillPending, ok := srv.loadControlPublicAccessProxyState(site.ID)
+	if !ok || stillPending.AccessState != publicAccessProgressPending || stillPending.VerifiedAt != 0 {
+		t.Fatalf("Cloudflare-only detection marked access ready: %#v ok=%v", stillPending, ok)
+	}
+
+	enabled := srv.controlPublicAccessProxyView(site.ID, "blog.test", true, true)
 	if !enabled.Requested || !enabled.Actual || enabled.Status != publicAccessProxyEnabled || enabled.Error != "" {
 		t.Fatalf("enabled view = %#v", enabled)
+	}
+	verified, ok := srv.loadControlPublicAccessProxyState(site.ID)
+	if !ok || verified.AccessState != publicAccessProgressReady || verified.VerifiedAt == 0 {
+		t.Fatalf("verified origin did not mark access ready: %#v ok=%v", verified, ok)
 	}
 
 	state.Status = publicAccessProxyEnabled
 	if err := srv.saveControlPublicAccessProxyState(site.ID, state); err != nil {
 		t.Fatalf("save enabled state: %v", err)
 	}
-	missingActual := srv.controlPublicAccessProxyView(site.ID, "blog.test", false)
+	missingActual := srv.controlPublicAccessProxyView(site.ID, "blog.test", false, false)
 	if !missingActual.Requested || missingActual.Actual || missingActual.Status != publicAccessProxyFailed || missingActual.Error == "" {
 		t.Fatalf("missing actual proxy view = %#v", missingActual)
 	}
 
 	// A state from an older domain must not leak into a later rebind.
-	stale := srv.controlPublicAccessProxyView(site.ID, "new-blog.test", false)
+	stale := srv.controlPublicAccessProxyView(site.ID, "new-blog.test", false, false)
 	if stale.Requested || stale.Actual || stale.Status != publicAccessProxyDisabled {
 		t.Fatalf("stale-domain view = %#v", stale)
 	}
@@ -134,7 +147,8 @@ func TestDiscoverySitePublicAccessSummary(t *testing.T) {
 		t.Fatalf("save failed state: %v", err)
 	}
 	summary = srv.discoverySitePublicAccess(site.ID, domains)
-	if summary == nil || summary.State != "attention" || summary.Stage != "dns" {
+	if summary == nil || summary.State != "attention" || summary.Stage != "dns" || !summary.CanClear ||
+		summary.Generation == "" || summary.DomainFingerprint == "" {
 		t.Fatalf("attention summary = %#v", summary)
 	}
 
@@ -143,11 +157,12 @@ func TestDiscoverySitePublicAccessSummary(t *testing.T) {
 	state.AccessStage = "ready"
 	state.AccessMessage = ""
 	state.Error = ""
+	state.VerifiedAt = 123
 	if err := srv.saveControlPublicAccessProxyState(site.ID, state); err != nil {
 		t.Fatalf("save ready state: %v", err)
 	}
 	summary = srv.discoverySitePublicAccess(site.ID, domains)
-	if summary == nil || summary.State != "ready" || summary.Stage != "ready" {
+	if summary == nil || summary.State != "ready" || summary.Stage != "ready" || summary.CanClear {
 		t.Fatalf("ready summary = %#v", summary)
 	}
 }

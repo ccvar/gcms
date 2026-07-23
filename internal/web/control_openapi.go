@@ -82,7 +82,14 @@ func platformControlOpenAPISpec(apiBase string) map[string]any {
 		"/control/sites/{siteId}/theme": map[string]any{
 			"parameters": []any{map[string]any{"name": "siteId", "in": "path", "required": true, "schema": map[string]any{"type": "integer", "format": "int64"}}},
 			"get":        map[string]any{"operationId": "themes.current", "summary": "Read selected and rollback themes", "responses": response},
-			"put":        map[string]any{"operationId": "themes.apply", "summary": "Validate, apply, or rollback a theme", "parameters": mutationParams(false), "requestBody": jsonBody("ThemeApplyInput"), "responses": response},
+			"put": map[string]any{
+				"operationId": "themes.apply",
+				"summary":     "Validate, apply, or rollback a theme",
+				"description": "Dry-run and execution for an unbound non-default site do not require a password token. Executing apply or rollback for the default site, or for any site with an enabled domain, requires the optional X-GCMS-Control-Unlock header bound to themes.apply_live. X-GCMS-Control-Confirm and idempotency receipts continue to use themes.apply.",
+				"parameters":  mutationParams(true),
+				"requestBody": jsonBody("ThemeApplyInput"),
+				"responses":   response,
+			},
 		},
 		"/control/sites/{siteId}/domains": map[string]any{
 			"parameters": []any{map[string]any{"name": "siteId", "in": "path", "required": true, "schema": map[string]any{"type": "integer", "format": "int64"}}},
@@ -93,6 +100,14 @@ func platformControlOpenAPISpec(apiBase string) map[string]any {
 			"parameters": []any{map[string]any{"name": "siteId", "in": "path", "required": true, "schema": map[string]any{"type": "integer", "format": "int64"}}},
 			"get":        map[string]any{"operationId": "public_access.read", "summary": "Read GCMS-owned DNS, Caddy and HTTPS status", "responses": response},
 			"post":       map[string]any{"operationId": "public_access.apply", "summary": "Configure public access through GCMS-owned integrations", "parameters": mutationParams(true), "requestBody": jsonBody("PublicAccessInput"), "responses": response},
+			"delete": map[string]any{
+				"operationId": "public_access.clear_unverified",
+				"summary":     "Clear a failed, never-verified public-access attempt",
+				"description": "Only a non-default site's attention-stage DNS/HTTPS attempt can be cleared. The current domain fingerprint, worker generation and a fresh GCMS HTTPS verification are checked again under the mutation lock. External DNS records are preserved.",
+				"parameters":  mutationParams(true),
+				"requestBody": jsonBody("PublicAccessClearInput"),
+				"responses":   response,
+			},
 		},
 		"/control/security": map[string]any{"get": map[string]any{"operationId": "security.status", "summary": "Read initial-password status; password writes use the server-local GCMS CLI", "responses": response}},
 		"/control/unlock": map[string]any{
@@ -139,6 +154,11 @@ func platformControlOpenAPISpec(apiBase string) map[string]any {
 					"redirect_domains": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "可选别名域名，GCMS 会配置 301 到主域名"},
 					"auto_dns":         map[string]any{"type": "boolean", "default": true, "description": "使用 GCMS 自己保存的 Cloudflare 配置自动创建或更新 DNS"},
 					"cloudflare_proxy": map[string]any{"type": "boolean", "description": "可选；为 true 时先以灰云完成 DNS 与源站 HTTPS，验证通过后再自动开启橙云代理"},
+				}},
+				"PublicAccessClearInput": map[string]any{"type": "object", "required": []string{"expected_primary_domain", "expected_generation", "expected_domain_fingerprint"}, "properties": map[string]any{
+					"expected_primary_domain":     map[string]any{"type": "string", "description": "The exact primary host shown by the latest discovery response."},
+					"expected_generation":         map[string]any{"type": "string", "description": "Opaque public-access attempt generation from discovery."},
+					"expected_domain_fingerprint": map[string]any{"type": "string", "description": "Opaque primary-and-alias snapshot fingerprint from discovery."},
 				}},
 				"UnlockInput": map[string]any{"type": "object", "writeOnly": true, "required": []string{"password", "operations"}, "properties": map[string]any{"password": map[string]any{"type": "string", "format": "password", "writeOnly": true}, "operations": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}}},
 			},

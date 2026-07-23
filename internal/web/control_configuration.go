@@ -323,6 +323,19 @@ func (s *Server) servePlatformControlSiteTheme(w http.ResponseWriter, r *http.Re
 			return
 		}
 
+		liveSite := site.IsDefault
+		if !liveSite {
+			domains, err := s.controlDomainsForSite(site.ID)
+			if err != nil {
+				apiError(w, http.StatusInternalServerError, "theme_live_status_failed", "无法确认站点是否已上线，未执行主题变更。")
+				return
+			}
+			liveSite = len(domains) > 0
+		}
+		if !controlDryRun(r) && liveSite && !s.requireControlUnlock(w, r, key, "themes.apply_live") {
+			return
+		}
+
 		// The request fingerprint intentionally excludes mutable current/previous
 		// state, so a completed apply or rollback can be replayed idempotently.
 		fingerprint := fmt.Sprintf("site=%d|action=%s|theme=%s|expected=%s", site.ID, map[bool]string{true: "rollback", false: "apply"}[rollback], target, expectedCurrent)
@@ -367,12 +380,17 @@ func (s *Server) servePlatformControlSiteTheme(w http.ResponseWriter, r *http.Re
 				"to": map[string]any{
 					"id": to, "category": toTheme.Category, "layout": layoutForTheme(to),
 				},
-				"category_changed": categoryChanged,
-				"layout_changed":   layoutChanged,
+				"category_changed":          categoryChanged,
+				"layout_changed":            layoutChanged,
+				"live_site":                 liveSite,
+				"execution_requires_unlock": liveSite,
 				"impact": map[string]any{
 					"content": false, "navigation": false, "domains": false,
 				},
 				"warnings": warnings,
+			}
+			if liveSite {
+				response["unlock_operation"] = "themes.apply_live"
 			}
 			if controlDryRun(r) || from == to {
 				return http.StatusOK, response, nil

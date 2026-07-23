@@ -81,7 +81,7 @@ func TestPlatformControlCapabilitiesAreAdditive(t *testing.T) {
 
 	controlToken := "gcmsp_controlcaps12345"
 	if _, err := ps.CreatePlatformKey("pilot", controlToken, controlToken[:13], platform.KeyMembershipAll,
-		strings.Join([]string{apiScopeControlRead, apiScopeControlUnlock, apiScopeSitesCreate, apiScopeSitesDelete, apiScopeCategoriesDelete, apiScopeNavigationDelete}, ","), nil, time.Time{}); err != nil {
+		strings.Join([]string{apiScopeControlRead, apiScopeControlUnlock, apiScopeSitesCreate, apiScopeSitesDelete, apiScopeCategoriesDelete, apiScopeNavigationDelete, apiScopeThemesApply, apiScopeDomainsWrite}, ","), nil, time.Time{}); err != nil {
 		t.Fatalf("create control key: %v", err)
 	}
 	rec := platformAPIReq(t, h, http.MethodGet, "/api/platform/v1/control/capabilities", controlToken, nil)
@@ -106,6 +106,19 @@ func TestPlatformControlCapabilitiesAreAdditive(t *testing.T) {
 	if update.Granted {
 		t.Fatalf("sites.update must reflect missing key scope: %#v", update)
 	}
+	themeApply := controlOperationFromBody(t, rec.Body.Bytes(), "themes.apply")
+	if !themeApply.Granted || themeApply.RequiresUnlock || !themeApply.RequiresConfirmation || !themeApply.SupportsDryRun {
+		t.Fatalf("themes.apply contract = %#v", themeApply)
+	}
+	themeApplyLive := controlOperationFromBody(t, rec.Body.Bytes(), "themes.apply_live")
+	if !themeApplyLive.Granted || !themeApplyLive.Available || !themeApplyLive.RequiresUnlock || themeApplyLive.Risk != "sensitive" {
+		t.Fatalf("themes.apply_live contract = %#v", themeApplyLive)
+	}
+	clearUnverified := controlOperationFromBody(t, rec.Body.Bytes(), "public_access.clear_unverified")
+	if !clearUnverified.Granted || !clearUnverified.Available || !clearUnverified.RequiresUnlock ||
+		!clearUnverified.RequiresConfirmation || !clearUnverified.SupportsDryRun || clearUnverified.Risk != "destructive" {
+		t.Fatalf("public_access.clear_unverified contract = %#v", clearUnverified)
+	}
 	if strings.Contains(rec.Body.String(), `"id":"security.initial-password"`) || strings.Contains(rec.Body.String(), `"required_scope":"security:write"`) {
 		t.Fatalf("initial-password write must not be advertised to automation keys: %s", rec.Body.String())
 	}
@@ -116,6 +129,12 @@ func TestPlatformControlCapabilitiesAreAdditive(t *testing.T) {
 	}
 	if strings.Contains(openAPI.Body.String(), "security.initial-password") || strings.Contains(openAPI.Body.String(), "InitialPasswordInput") {
 		t.Fatalf("control openapi exposes initial-password write: %s", openAPI.Body.String())
+	}
+	if !strings.Contains(openAPI.Body.String(), controlUnlockHeader) ||
+		!strings.Contains(openAPI.Body.String(), "themes.apply_live") ||
+		!strings.Contains(openAPI.Body.String(), "public_access.clear_unverified") ||
+		!strings.Contains(openAPI.Body.String(), "PublicAccessClearInput") {
+		t.Fatalf("control openapi does not describe protected live operations: %s", openAPI.Body.String())
 	}
 }
 
@@ -250,6 +269,15 @@ func TestPlatformControlScopeIssuanceAndDefaults(t *testing.T) {
 	for _, want := range []string{apiScopeControlRead, apiScopeControlUnlock, apiScopeSitesDelete, apiScopeCategoriesDelete, apiScopeNavigationDelete} {
 		if !strings.Contains(joined, ","+want+",") {
 			t.Fatalf("control scope dependency %q missing from %v", want, got)
+		}
+	}
+	themeReq := &http.Request{Method: http.MethodPost, Header: make(http.Header), Form: url.Values{
+		"scopes": {apiScopeThemesApply},
+	}}
+	themeScopes := "," + strings.Join(automationScopesFromFormRequired(themeReq), ",") + ","
+	for _, want := range []string{apiScopeControlRead, apiScopeControlUnlock, apiScopeThemesApply} {
+		if !strings.Contains(themeScopes, ","+want+",") {
+			t.Fatalf("theme scope dependency %q missing from %s", want, themeScopes)
 		}
 	}
 	legacySecurityScope := retiredAPIScopeSecurityWrite

@@ -58,12 +58,14 @@ func platformControlCatalog() []platformControlOperation {
 		{ID: "themes.current", Label: "读取站点当前主题", RequiredScope: apiScopeThemesRead, Risk: "read", Method: http.MethodGet, Endpoint: "/control/sites/{site_id}/theme", Available: true},
 		{ID: "themes.preview", Label: "预览候选外观主题", RequiredScope: apiScopeThemesRead, Risk: "read", Method: http.MethodPost, Endpoint: "/control/sites/{site_id}/preview-url", Available: true},
 		{ID: "themes.apply", Label: "应用或恢复外观主题", RequiredScope: apiScopeThemesApply, Risk: "write", Method: http.MethodPut, Endpoint: "/control/sites/{site_id}/theme", RequiresConfirmation: true, SupportsDryRun: true, Available: true},
+		{ID: "themes.apply_live", Label: "在已上线站点应用或恢复外观主题", RequiredScope: apiScopeThemesApply, Risk: "sensitive", Method: http.MethodPut, Endpoint: "/control/sites/{site_id}/theme", RequiresUnlock: true, Available: true},
 		{ID: "domains.read", Label: "读取域名配置", RequiredScope: apiScopeDomainsRead, Risk: "read", Method: http.MethodGet, Endpoint: "/control/sites/{site_id}/domains", Available: true},
 		{ID: "domains.apply", Label: "修改 GCMS 域名配置", RequiredScope: apiScopeDomainsWrite, Risk: "sensitive", Method: http.MethodPut, Endpoint: "/control/sites/{site_id}/domains", RequiresConfirmation: true, RequiresUnlock: true, SupportsDryRun: true, Available: true},
 		{ID: "deployment.read", Label: "读取站点部署与运行状态", RequiredScope: apiScopeDomainsRead, Risk: "read", Method: http.MethodGet, Endpoint: "/control/sites/{site_id}/deployment", Available: true},
 		{ID: "deployment.apply", Label: "配置站点域名与 Cloudflare 部署", RequiredScope: apiScopeDomainsWrite, Risk: "write", Method: http.MethodPut, Endpoint: "/control/sites/{site_id}/deployment", RequiresConfirmation: true, SupportsDryRun: true, Available: true},
 		{ID: "public_access.read", Label: "读取公网访问状态", RequiredScope: apiScopeDomainsRead, Risk: "read", Method: http.MethodGet, Endpoint: "/control/sites/{site_id}/public-access", Available: true},
 		{ID: "public_access.apply", Label: "配置 GCMS 公网访问", RequiredScope: apiScopeDomainsWrite, Risk: "sensitive", Method: http.MethodPost, Endpoint: "/control/sites/{site_id}/public-access", RequiresConfirmation: true, RequiresUnlock: true, SupportsDryRun: true, Available: true},
+		{ID: "public_access.clear_unverified", Label: "清除未验证成功的访问域名", RequiredScope: apiScopeDomainsWrite, Risk: "destructive", Method: http.MethodDelete, Endpoint: "/control/sites/{site_id}/public-access", RequiresConfirmation: true, RequiresUnlock: true, SupportsDryRun: true, Available: true},
 		{ID: "security.status", Label: "读取后台安全状态", RequiredScope: apiScopeControlRead, Risk: "read", Method: http.MethodGet, Endpoint: "/control/security", Available: true},
 	}
 }

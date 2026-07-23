@@ -4998,15 +4998,16 @@ func automationScopesFromFormWithDefault(r *http.Request, useDefault bool) []str
 		want[apiScopeLanguagesRead] = true
 	}
 	// 平台控制权限是独立的能力族：任一控制权限都自动补齐能力自省；
-	// 删除与改域名还必须允许 Pilot 在密码验证后签发短时授权。初始密码
-	// 不属于 HTTP 自动化权限，只能通过服务器上的 GCMS 专用 CLI 设置。
+	// 删除、改域名以及已上线站点改主题还必须允许 Pilot 在密码验证后签发
+	// 短时授权。初始密码不属于 HTTP 自动化权限，只能通过服务器上的 GCMS
+	// 专用 CLI 设置。
 	for _, scope := range platformControlScopes() {
 		if want[scope] {
 			want[apiScopeControlRead] = true
 			break
 		}
 	}
-	if want[apiScopeSitesDelete] || want[apiScopeCategoriesDelete] || want[apiScopeNavigationDelete] || want[apiScopeDomainsWrite] {
+	if want[apiScopeSitesDelete] || want[apiScopeCategoriesDelete] || want[apiScopeNavigationDelete] || want[apiScopeDomainsWrite] || want[apiScopeThemesApply] {
 		want[apiScopeControlUnlock] = true
 	}
 	var out []string
