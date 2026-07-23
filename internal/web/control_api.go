@@ -217,6 +217,8 @@ func (s *Server) servePlatformControl(w http.ResponseWriter, r *http.Request) {
 				s.servePlatformControlSiteGoogleProvision(w, r, siteID, platform.GoogleServiceAnalytics)
 			case len(parts) == 5 && parts[2] == "integrations" && parts[4] == "enable" && parts[3] == "search-console":
 				s.servePlatformControlSiteGoogleProvision(w, r, siteID, platform.GoogleServiceSearchConsole)
+			case len(parts) == 5 && parts[2] == "integrations" && parts[3] == "analytics" && parts[4] == "options":
+				s.servePlatformControlSiteGoogleAnalyticsOptions(w, r, siteID)
 			default:
 				http.NotFound(w, r)
 			}

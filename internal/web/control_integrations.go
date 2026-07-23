@@ -351,6 +351,56 @@ func (s *Server) servePlatformControlSiteGoogleProvision(w http.ResponseWriter, 
 	}
 }
 
+func (s *Server) servePlatformControlSiteGoogleAnalyticsOptions(w http.ResponseWriter, r *http.Request, siteID int64) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", "GET")
+		apiError(w, http.StatusMethodNotAllowed, "method_not_allowed", "仅支持 GET。")
+		return
+	}
+	key, ok := s.requirePlatformControlKey(w, r, apiScopeSiteRead)
+	if !ok || !controlSiteMembershipAllowed(w, key, siteID) {
+		return
+	}
+	site, exists, err := s.platform.GetSite(siteID)
+	if err != nil {
+		apiError(w, http.StatusInternalServerError, "site_read_failed", "无法读取站点。")
+		return
+	}
+	if !exists {
+		apiError(w, http.StatusNotFound, "site_not_found", "站点不存在。")
+		return
+	}
+	googleAccountID := strings.TrimSpace(r.URL.Query().Get("account"))
+	if googleAccountID == "" {
+		apiError(w, http.StatusBadRequest, "google_account_required", "请选择 Google Analytics 授权账号。")
+		return
+	}
+	acc, exists, err := s.platform.GoogleAccount(platform.GoogleServiceAnalytics, googleAccountID)
+	if err != nil {
+		apiError(w, http.StatusInternalServerError, "google_account_read_failed", "读取 Google Analytics 授权账号失败。")
+		return
+	}
+	if !exists {
+		apiError(w, http.StatusNotFound, "google_account_not_found", "没有找到该 Google Analytics 授权账号。")
+		return
+	}
+	accessToken, err := s.googleAccessToken(r.Context(), r, acc)
+	if err != nil {
+		apiError(w, http.StatusBadRequest, "google_authorization_failed", err.Error())
+		return
+	}
+	defaultURI := s.defaultGoogleAnalyticsURI(r, site)
+	accounts, properties, warning, err := s.googleAnalyticsPropertyOptions(r.Context(), googleAccountID, accessToken, defaultURI)
+	if err != nil {
+		apiError(w, http.StatusBadGateway, "analytics_options_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "accounts": accounts, "properties": properties,
+		"warning": warning, "default_uri": defaultURI,
+	})
+}
+
 func (s *Server) controlIntegrationSiteExists(w http.ResponseWriter, siteID int64) bool {
 	_, ok, err := s.platform.GetSite(siteID)
 	if err != nil {

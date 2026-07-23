@@ -786,6 +786,8 @@ func TestPlatformControlGoogleProvisionRoutesUseServiceWorkflows(t *testing.T) {
 	oldGoogleHTTPClient := googleHTTPClient
 	googleHTTPClient = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		switch {
+		case strings.Contains(req.URL.Path, "/accountSummaries"):
+			return jsonTestResponse(req, http.StatusOK, `{"accountSummaries":[{"name":"accountSummaries/1","account":"accounts/1","displayName":"Pilot Analytics","propertySummaries":[{"property":"properties/123","displayName":"Blog GA4"}]}]}`), nil
 		case strings.Contains(req.URL.Path, "/properties/123/dataStreams"):
 			return jsonTestResponse(req, http.StatusOK, `{"dataStreams":[{"name":"properties/123/dataStreams/456","type":"WEB_DATA_STREAM","webStreamData":{"defaultUri":"https://blog.test","measurementId":"G-PILOTFLOW"}}]}`), nil
 		case req.URL.Path == "/webmasters/v3/sites":
@@ -797,6 +799,10 @@ func TestPlatformControlGoogleProvisionRoutesUseServiceWorkflows(t *testing.T) {
 	})}
 	t.Cleanup(func() { googleHTTPClient = oldGoogleHTTPClient })
 
+	optionsRec := platformAPIReq(t, h, http.MethodGet, base+"analytics/options?account=google-account-1", token, nil)
+	if optionsRec.Code != http.StatusOK || !strings.Contains(optionsRec.Body.String(), `"matched":true`) || !strings.Contains(optionsRec.Body.String(), `"display_name":"Blog GA4"`) {
+		t.Fatalf("analytics options = %d, body=%s", optionsRec.Code, optionsRec.Body.String())
+	}
 	analyticsBody, _ := json.Marshal(map[string]any{"account_id": "google-account-1", "property": "properties/123"})
 	analyticsRec := platformAPIReq(t, h, http.MethodPost, base+"analytics/enable", token, analyticsBody)
 	if analyticsRec.Code != http.StatusOK || !strings.Contains(analyticsRec.Body.String(), `"measurement_id":"G-PILOTFLOW"`) {
