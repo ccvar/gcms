@@ -86,8 +86,9 @@ func TestPlatformControlThemesListApplyAndRollback(t *testing.T) {
 		t.Fatalf("theme list = %d %s", list.Code, list.Body.String())
 	}
 	var catalog struct {
-		Items         []controlTheme `json:"items"`
-		SelectedTheme string         `json:"selected_theme"`
+		Items         []controlTheme       `json:"items"`
+		Families      []controlThemeFamily `json:"families"`
+		SelectedTheme string               `json:"selected_theme"`
 	}
 	if err := json.Unmarshal(list.Body.Bytes(), &catalog); err != nil {
 		t.Fatalf("decode theme list: %v", err)
@@ -107,6 +108,36 @@ func TestPlatformControlThemesListApplyAndRollback(t *testing.T) {
 	}
 	if !foundStructured || !foundSelected || !validTheme(catalog.SelectedTheme) {
 		t.Fatalf("theme catalog structure/selection invalid: structured=%v selected=%q selected_flag=%v", foundStructured, catalog.SelectedTheme, foundSelected)
+	}
+	seenSkins := make(map[string]bool, len(Themes))
+	selectedSkins := 0
+	selectedFamilies := 0
+	for _, family := range catalog.Families {
+		if family.ID == "" || family.Name == "" || family.Description == "" || len(family.Categories) == 0 || len(family.Skins) == 0 {
+			t.Fatalf("incomplete theme family: %#v", family)
+		}
+		if family.Selected {
+			selectedFamilies++
+		}
+		for _, skin := range family.Skins {
+			if skin.ID == "" || skin.Name == "" || skin.Description == "" || skin.Category == "" || skin.Layout == "" ||
+				skin.Accent == "" || skin.Background == "" || skin.Radius == "" {
+				t.Fatalf("incomplete theme skin in family %q: %#v", family.ID, skin)
+			}
+			if seenSkins[skin.ID] {
+				t.Fatalf("theme skin %q appears in more than one family", skin.ID)
+			}
+			seenSkins[skin.ID] = true
+			if skin.Selected {
+				selectedSkins++
+				if skin.ID != catalog.SelectedTheme || !family.Selected {
+					t.Fatalf("selected skin/family mismatch: family=%q skin=%q selected_theme=%q", family.ID, skin.ID, catalog.SelectedTheme)
+				}
+			}
+		}
+	}
+	if len(seenSkins) != len(Themes) || selectedSkins != 1 || selectedFamilies != 1 {
+		t.Fatalf("theme family catalog coverage: skins=%d/%d selected_skins=%d selected_families=%d", len(seenSkins), len(Themes), selectedSkins, selectedFamilies)
 	}
 	detail := controlConfigurationAPIReq(t, h, http.MethodGet, "/api/platform/v1/control/themes/magazine", token, nil, controlConfigurationRequest{})
 	if detail.Code != http.StatusOK || !strings.Contains(detail.Body.String(), `"id":"magazine"`) {
@@ -128,6 +159,24 @@ func TestPlatformControlThemesListApplyAndRollback(t *testing.T) {
 	}
 	if got := controlCurrentTheme(runtime.Store); got != "editorial" {
 		t.Fatalf("dry run changed theme to %q", got)
+	}
+	var plan struct {
+		CurrentTheme    string `json:"current_theme"`
+		TargetTheme     string `json:"target_theme"`
+		CategoryChanged bool   `json:"category_changed"`
+		LayoutChanged   bool   `json:"layout_changed"`
+		Impact          struct {
+			Content    bool `json:"content"`
+			Navigation bool `json:"navigation"`
+			Domains    bool `json:"domains"`
+		} `json:"impact"`
+	}
+	if err := json.Unmarshal(dryRun.Body.Bytes(), &plan); err != nil {
+		t.Fatalf("decode theme plan: %v", err)
+	}
+	if plan.CurrentTheme != "editorial" || plan.TargetTheme != "magazine" || plan.CategoryChanged ||
+		plan.Impact.Content || plan.Impact.Navigation || plan.Impact.Domains {
+		t.Fatalf("unexpected theme plan: %#v", plan)
 	}
 
 	runtime.server.setCachedEndpoint("control-theme-test", "application/json", []byte(`{}`), time.Hour)
@@ -174,6 +223,40 @@ func TestPlatformControlThemesListApplyAndRollback(t *testing.T) {
 	}
 }
 
+func TestPlatformControlThemeExpectedCurrentGuardsExecution(t *testing.T) {
+	srv, h, ps, _, blogSite := setupPlatformAutomation(t)
+	token := "gcmsp_themeexpected123"
+	createControlConfigurationKey(t, ps, token, platform.KeyMembershipAllowlist,
+		strings.Join([]string{apiScopeThemesRead, apiScopeThemesApply}, ","), []int64{blogSite.ID})
+	runtime, ok := srv.runtimePool().runtimeByID(blogSite.ID)
+	if !ok || runtime == nil || runtime.Store == nil {
+		t.Fatal("blog runtime missing")
+	}
+	if err := runtime.Store.SetSetting("theme", "editorial"); err != nil {
+		t.Fatalf("seed current theme: %v", err)
+	}
+
+	staleBody := []byte(`{"theme_id":"magazine","expected_current_theme":"terminal"}`)
+	stale := controlConfigurationAPIReq(t, h, http.MethodPut,
+		"/api/platform/v1/control/sites/"+strconv.FormatInt(blogSite.ID, 10)+"/theme", token, staleBody,
+		controlConfigurationRequest{Confirm: "themes.apply", IdempotencyKey: "theme-stale-apply"})
+	if stale.Code != http.StatusConflict || !strings.Contains(stale.Body.String(), `"error":"theme_changed"`) {
+		t.Fatalf("stale theme apply = %d %s, want 409 theme_changed", stale.Code, stale.Body.String())
+	}
+	if got := controlCurrentTheme(runtime.Store); got != "editorial" {
+		t.Fatalf("stale apply changed theme to %q", got)
+	}
+
+	// dry-run always reports the live current state, even if a caller's previous
+	// expectation is stale; execution is the point protected by the compare guard.
+	plan := controlConfigurationAPIReq(t, h, http.MethodPut,
+		"/api/platform/v1/control/sites/"+strconv.FormatInt(blogSite.ID, 10)+"/theme?dry_run=1", token, staleBody,
+		controlConfigurationRequest{})
+	if plan.Code != http.StatusOK || !strings.Contains(plan.Body.String(), `"current_theme":"editorial"`) {
+		t.Fatalf("stale theme dry-run = %d %s", plan.Code, plan.Body.String())
+	}
+}
+
 func TestPlatformControlConfigurationHonorsMembershipForDisabledSites(t *testing.T) {
 	_, h, ps, defaultSite, blogSite := setupPlatformAutomation(t)
 	token := "gcmsp_configallowlist1"
@@ -197,6 +280,88 @@ func TestPlatformControlConfigurationHonorsMembershipForDisabledSites(t *testing
 		"/api/platform/v1/control/sites/"+strconv.FormatInt(blogSite.ID, 10)+"/theme", token, nil, controlConfigurationRequest{})
 	if allowed.Code != http.StatusOK || !strings.Contains(allowed.Body.String(), `"site_status":"disabled"`) {
 		t.Fatalf("disabled allowlisted site = %d %s", allowed.Code, allowed.Body.String())
+	}
+}
+
+func TestPlatformDiscoveryThemeSummaryHonorsScopeAndDisabledSites(t *testing.T) {
+	srv, h, ps, _, blogSite := setupPlatformAutomation(t)
+	runtime, ok := srv.runtimePool().runtimeByID(blogSite.ID)
+	if !ok || runtime == nil || runtime.Store == nil {
+		t.Fatal("blog runtime missing")
+	}
+	if err := runtime.Store.SetSetting("theme", "tradewind"); err != nil {
+		t.Fatalf("seed current theme: %v", err)
+	}
+	if err := runtime.Store.SetSetting(controlPreviousThemeSettingKey, "editorial"); err != nil {
+		t.Fatalf("seed previous theme: %v", err)
+	}
+
+	withoutScope := "gcmsp_themehidden12345"
+	createControlConfigurationKey(t, ps, withoutScope, platform.KeyMembershipAllowlist,
+		"posts:read", []int64{blogSite.ID})
+	hidden := platformAPIReq(t, h, http.MethodGet, "/api/platform/v1/sites", withoutScope, nil)
+	if hidden.Code != http.StatusOK {
+		t.Fatalf("discovery without themes scope = %d %s", hidden.Code, hidden.Body.String())
+	}
+	var hiddenPayload struct {
+		Items []map[string]json.RawMessage `json:"items"`
+	}
+	if err := json.Unmarshal(hidden.Body.Bytes(), &hiddenPayload); err != nil || len(hiddenPayload.Items) != 1 {
+		t.Fatalf("decode discovery without themes scope: items=%d err=%v body=%s", len(hiddenPayload.Items), err, hidden.Body.String())
+	}
+	if _, exposed := hiddenPayload.Items[0]["theme"]; exposed {
+		t.Fatalf("discovery exposed theme without themes:read: %s", hidden.Body.String())
+	}
+
+	withScope := "gcmsp_themevisible1234"
+	createControlConfigurationKey(t, ps, withScope, platform.KeyMembershipAllowlist,
+		apiScopeThemesRead, []int64{blogSite.ID})
+	visible := platformAPIReq(t, h, http.MethodGet, "/api/platform/v1/sites", withScope, nil)
+	if visible.Code != http.StatusOK {
+		t.Fatalf("discovery with themes scope = %d %s", visible.Code, visible.Body.String())
+	}
+	var visiblePayload struct {
+		Items []struct {
+			Theme *controlSiteThemeSummary `json:"theme"`
+		} `json:"items"`
+		LifecycleItems []struct {
+			ID     int64                    `json:"id"`
+			Status string                   `json:"status"`
+			Theme  *controlSiteThemeSummary `json:"theme"`
+		} `json:"lifecycle_items"`
+	}
+	if err := json.Unmarshal(visible.Body.Bytes(), &visiblePayload); err != nil || len(visiblePayload.Items) != 1 {
+		t.Fatalf("decode discovery with themes scope: items=%d err=%v body=%s", len(visiblePayload.Items), err, visible.Body.String())
+	}
+	theme := visiblePayload.Items[0].Theme
+	if theme == nil || theme.ID != "tradewind" || theme.Family != "factory-catalog" || theme.FamilyName == "" ||
+		theme.Category != ThemeCategoryFactory || theme.Layout != "factory-catalog" ||
+		theme.PreviousTheme != "editorial" || !theme.CanRollback {
+		t.Fatalf("unexpected discovery theme summary: %#v", theme)
+	}
+
+	if err := ps.SetSiteStatus(blogSite.ID, "disabled"); err != nil {
+		t.Fatalf("disable site: %v", err)
+	}
+	if err := srv.reloadRuntimePool(); err != nil {
+		t.Fatalf("reload runtimes after disabling site: %v", err)
+	}
+	disabled := platformAPIReq(t, h, http.MethodGet, "/api/platform/v1/sites", withScope, nil)
+	if disabled.Code != http.StatusOK {
+		t.Fatalf("disabled discovery with themes scope = %d %s", disabled.Code, disabled.Body.String())
+	}
+	visiblePayload.Items = nil
+	visiblePayload.LifecycleItems = nil
+	if err := json.Unmarshal(disabled.Body.Bytes(), &visiblePayload); err != nil {
+		t.Fatalf("decode disabled discovery: %v body=%s", err, disabled.Body.String())
+	}
+	if len(visiblePayload.Items) != 0 || len(visiblePayload.LifecycleItems) != 1 {
+		t.Fatalf("disabled discovery membership mismatch: items=%d lifecycle=%d", len(visiblePayload.Items), len(visiblePayload.LifecycleItems))
+	}
+	disabledTheme := visiblePayload.LifecycleItems[0].Theme
+	if visiblePayload.LifecycleItems[0].ID != blogSite.ID || visiblePayload.LifecycleItems[0].Status != "disabled" ||
+		disabledTheme == nil || disabledTheme.ID != "tradewind" || disabledTheme.PreviousTheme != "editorial" {
+		t.Fatalf("disabled site lost theme summary: %#v", visiblePayload.LifecycleItems[0])
 	}
 }
 

@@ -464,9 +464,11 @@ type apiHeading struct {
 }
 
 type apiPreviewURLResponse struct {
-	PreviewURL string `json:"preview_url"`
-	ExpiresAt  string `json:"expires_at"`
-	TTLSeconds int64  `json:"ttl_seconds"`
+	PreviewURL   string `json:"preview_url"`
+	ExpiresAt    string `json:"expires_at"`
+	TTLSeconds   int64  `json:"ttl_seconds"`
+	ThemeID      string `json:"theme_id,omitempty"`
+	CurrentTheme string `json:"current_theme,omitempty"`
 }
 
 type frontendPreviewClaims struct {
@@ -482,6 +484,7 @@ type sitePreviewClaims struct {
 	SiteID  int64  `json:"site_id"`
 	Expires int64  `json:"exp"`
 	Nonce   string `json:"nonce"`
+	ThemeID string `json:"theme_id,omitempty"`
 }
 
 const (
@@ -2489,14 +2492,23 @@ func (s *Server) verifyFrontendPreviewToken(token string) (frontendPreviewClaims
 }
 
 func (s *Server) signSitePreviewToken(siteID int64, expires time.Time) (string, error) {
+	return s.signSiteThemePreviewToken(siteID, "", expires)
+}
+
+func (s *Server) signSiteThemePreviewToken(siteID int64, themeID string, expires time.Time) (string, error) {
 	if siteID <= 0 || expires.IsZero() {
 		return "", fmt.Errorf("站点预览参数无效")
+	}
+	themeID = strings.TrimSpace(themeID)
+	if themeID != "" && !validTheme(themeID) {
+		return "", fmt.Errorf("站点预览主题无效")
 	}
 	payload, err := json.Marshal(sitePreviewClaims{
 		Kind:    "site",
 		SiteID:  siteID,
 		Expires: expires.Unix(),
 		Nonce:   randToken()[:24],
+		ThemeID: themeID,
 	})
 	if err != nil {
 		return "", err
@@ -2543,6 +2555,9 @@ func (s *Server) verifySitePreviewToken(token string, expectedSiteID int64) (sit
 		return sitePreviewClaims{}, "expired"
 	}
 	if claims.Kind != "site" || claims.SiteID <= 0 || claims.SiteID != expectedSiteID || strings.TrimSpace(claims.Nonce) == "" {
+		return sitePreviewClaims{}, "invalid"
+	}
+	if claims.ThemeID != "" && !validTheme(claims.ThemeID) {
 		return sitePreviewClaims{}, "invalid"
 	}
 	return claims, ""

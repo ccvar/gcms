@@ -37,6 +37,39 @@ type controlTheme struct {
 	Selected    bool                 `json:"selected"`
 }
 
+type controlThemeSkin struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Category    string `json:"category"`
+	Layout      string `json:"layout"`
+	Accent      string `json:"accent"`
+	Background  string `json:"background"`
+	Radius      string `json:"radius"`
+	Selected    bool   `json:"selected"`
+}
+
+type controlThemeFamily struct {
+	ID          string             `json:"id"`
+	Name        string             `json:"name"`
+	Description string             `json:"description"`
+	Categories  []string           `json:"categories"`
+	Selected    bool               `json:"selected"`
+	Skins       []controlThemeSkin `json:"skins"`
+}
+
+type controlSiteThemeSummary struct {
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	Description   string `json:"description"`
+	Family        string `json:"family"`
+	FamilyName    string `json:"family_name"`
+	Category      string `json:"category"`
+	Layout        string `json:"layout"`
+	PreviousTheme string `json:"previous_theme"`
+	CanRollback   bool   `json:"can_rollback"`
+}
+
 func controlCurrentTheme(st *store.Store) string {
 	if st == nil {
 		return "editorial"
@@ -73,6 +106,106 @@ func controlThemePayload(theme ThemeOption, selected string) controlTheme {
 	}
 }
 
+func controlThemeRegistryCards(adminLang string) []ThemeCard {
+	cards := make([]ThemeCard, 0, len(Themes))
+	for _, theme := range Themes {
+		display := themeOptionForAdmin(theme, adminLang)
+		accent := themeAccentDefault[theme.ID]
+		if accent == "" {
+			accent = themeAccentDefault["editorial"]
+		}
+		radius := themeRadiusDefault[theme.ID]
+		if radius == "" {
+			radius = "10"
+		}
+		cards = append(cards, ThemeCard{
+			ID:       theme.ID,
+			Name:     display.Name,
+			Desc:     display.Desc,
+			Category: theme.Category,
+			Accent:   accent,
+			Radius:   radius,
+			Bg:       themeBg(theme.ID),
+		})
+	}
+	return cards
+}
+
+func controlThemeFamilies(selected, adminLang string) []controlThemeFamily {
+	cards := themeFamilyCards(controlThemeRegistryCards(adminLang), selected, adminLang)
+	out := make([]controlThemeFamily, 0, len(cards))
+	for _, family := range cards {
+		skins := make([]controlThemeSkin, 0, len(family.Skins))
+		for _, skin := range family.Skins {
+			skins = append(skins, controlThemeSkin{
+				ID:          skin.ID,
+				Name:        skin.Name,
+				Description: skin.Desc,
+				Category:    skin.Category,
+				Layout:      layoutForTheme(skin.ID),
+				Accent:      skin.Accent,
+				Background:  skin.Bg,
+				Radius:      skin.Radius,
+				Selected:    skin.ID == selected,
+			})
+		}
+		out = append(out, controlThemeFamily{
+			ID:          family.Family,
+			Name:        family.Name,
+			Description: family.Desc,
+			Categories:  strings.Fields(family.Categories),
+			Selected:    family.Selected,
+			Skins:       skins,
+		})
+	}
+	return out
+}
+
+func lookupControlThemeOption(id string) (ThemeOption, bool) {
+	for _, theme := range Themes {
+		if theme.ID == id {
+			return theme, true
+		}
+	}
+	return ThemeOption{}, false
+}
+
+func controlThemeSummary(st *store.Store, adminLang string) controlSiteThemeSummary {
+	current := controlCurrentTheme(st)
+	theme, ok := lookupControlThemeOption(current)
+	if !ok {
+		theme, _ = lookupControlThemeOption("editorial")
+		current = theme.ID
+	}
+	display := themeOptionForAdmin(theme, adminLang)
+	familyID := familyForTheme(current)
+	familyName := familyID
+	for _, family := range controlThemeFamilies(current, adminLang) {
+		if family.ID == familyID {
+			familyName = family.Name
+			break
+		}
+	}
+	previous := ""
+	if st != nil {
+		previous = strings.TrimSpace(st.Setting(controlPreviousThemeSettingKey))
+		if !validTheme(previous) {
+			previous = ""
+		}
+	}
+	return controlSiteThemeSummary{
+		ID:            current,
+		Name:          display.Name,
+		Description:   display.Desc,
+		Family:        familyID,
+		FamilyName:    familyName,
+		Category:      theme.Category,
+		Layout:        layoutForTheme(current),
+		PreviousTheme: previous,
+		CanRollback:   previous != "",
+	}
+}
+
 // servePlatformControlThemes returns the server theme catalog. selected reflects
 // the platform default site's current theme; per-site selection is exposed by
 // servePlatformControlSiteTheme.
@@ -104,6 +237,7 @@ func (s *Server) servePlatformControlThemes(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, map[string]any{
 		"items":          items,
 		"selected_theme": selected,
+		"families":       controlThemeFamilies(selected, r.URL.Query().Get("lang")),
 	})
 }
 
@@ -137,9 +271,10 @@ func (s *Server) controlConfigurationSite(w http.ResponseWriter, r *http.Request
 }
 
 type controlThemeMutationInput struct {
-	ThemeID  string `json:"theme_id"`
-	Action   string `json:"action,omitempty"`
-	Rollback bool   `json:"rollback,omitempty"`
+	ThemeID              string `json:"theme_id"`
+	Action               string `json:"action,omitempty"`
+	Rollback             bool   `json:"rollback,omitempty"`
+	ExpectedCurrentTheme string `json:"expected_current_theme,omitempty"`
 }
 
 func (s *Server) servePlatformControlSiteTheme(w http.ResponseWriter, r *http.Request, siteID int64) {
@@ -182,18 +317,37 @@ func (s *Server) servePlatformControlSiteTheme(w http.ResponseWriter, r *http.Re
 			apiError(w, http.StatusBadRequest, "invalid_theme", "请选择有效的外观主题。")
 			return
 		}
+		expectedCurrent := strings.TrimSpace(in.ExpectedCurrentTheme)
+		if expectedCurrent != "" && !validTheme(expectedCurrent) {
+			apiError(w, http.StatusBadRequest, "invalid_expected_theme", "expected_current_theme 不是有效的外观主题。")
+			return
+		}
 
 		// The request fingerprint intentionally excludes mutable current/previous
 		// state, so a completed apply or rollback can be replayed idempotently.
-		fingerprint := fmt.Sprintf("site=%d|action=%s|theme=%s", site.ID, map[bool]string{true: "rollback", false: "apply"}[rollback], target)
+		fingerprint := fmt.Sprintf("site=%d|action=%s|theme=%s|expected=%s", site.ID, map[bool]string{true: "rollback", false: "apply"}[rollback], target, expectedCurrent)
 		s.executeControlMutation(w, r, key, "themes.apply", fingerprint, func() (int, any, error) {
 			from := controlCurrentTheme(runtime.Store)
+			if !controlDryRun(r) && expectedCurrent != "" && from != expectedCurrent {
+				return 0, nil, newControlMutationError(http.StatusConflict, "theme_changed", "站点主题已发生变化，请重新预览并确认。")
+			}
 			to := target
 			if rollback {
 				to = strings.TrimSpace(runtime.Store.Setting(controlPreviousThemeSettingKey))
 				if !validTheme(to) {
 					return 0, nil, newControlMutationError(http.StatusConflict, "theme_rollback_unavailable", "没有可恢复的上一个主题。")
 				}
+			}
+			fromTheme, _ := lookupControlThemeOption(from)
+			toTheme, _ := lookupControlThemeOption(to)
+			layoutChanged := layoutForTheme(from) != layoutForTheme(to)
+			categoryChanged := fromTheme.Category != toTheme.Category
+			warnings := make([]string, 0, 2)
+			if categoryChanged {
+				warnings = append(warnings, "目标主题所属站点类型不同，请检查首页内容与主题配置是否完整。")
+			}
+			if layoutChanged {
+				warnings = append(warnings, "目标主题使用不同的页面骨架，请在应用前完成整站预览。")
 			}
 			response := map[string]any{
 				"ok":             true,
@@ -205,6 +359,20 @@ func (s *Server) servePlatformControlSiteTheme(w http.ResponseWriter, r *http.Re
 				"theme":          to,
 				"layout":         layoutForTheme(to),
 				"changed":        from != to,
+				"current_theme":  from,
+				"target_theme":   to,
+				"from": map[string]any{
+					"id": from, "category": fromTheme.Category, "layout": layoutForTheme(from),
+				},
+				"to": map[string]any{
+					"id": to, "category": toTheme.Category, "layout": layoutForTheme(to),
+				},
+				"category_changed": categoryChanged,
+				"layout_changed":   layoutChanged,
+				"impact": map[string]any{
+					"content": false, "navigation": false, "domains": false,
+				},
+				"warnings": warnings,
 			}
 			if controlDryRun(r) || from == to {
 				return http.StatusOK, response, nil

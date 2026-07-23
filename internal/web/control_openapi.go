@@ -45,7 +45,9 @@ func platformControlOpenAPISpec(apiBase string) map[string]any {
 			"parameters": []any{map[string]any{"name": "siteId", "in": "path", "required": true, "schema": map[string]any{"type": "integer", "format": "int64"}}},
 			"post": map[string]any{
 				"operationId": "sites.preview",
-				"summary":     "Create a short-lived private whole-site preview URL",
+				"summary":     "Create a short-lived private whole-site or candidate-theme preview URL",
+				"description": "An empty body preserves the current-theme preview and requires control:read. Supplying theme_id previews that validated candidate without changing settings and requires themes:read.",
+				"requestBody": map[string]any{"required": false, "content": map[string]any{"application/json": map[string]any{"schema": map[string]any{"$ref": "#/components/schemas/ThemePreviewInput"}}}},
 				"responses": map[string]any{
 					"201": map[string]any{"description": "Preview URL created", "content": map[string]any{"application/json": map[string]any{"schema": map[string]any{"$ref": "#/components/schemas/PreviewURLResponse"}}}},
 					"403": map[string]any{"description": "Missing scope, membership, or site automation is disabled"},
@@ -114,13 +116,23 @@ func platformControlOpenAPISpec(apiBase string) map[string]any {
 					"site_kind":                     map[string]any{"type": "string", "enum": []string{"content", "factory", "dtc"}, "default": "content"},
 					"management_automation_enabled": map[string]any{"type": "boolean", "default": true, "description": "Keep true so Pilot can continue building the new site without requiring an admin login."},
 				}},
-				"SiteUpdateInput":  map[string]any{"type": "object", "properties": map[string]any{"name": map[string]any{"type": "string"}, "status": map[string]any{"type": "string", "enum": []string{"enabled", "disabled"}}, "management_automation_enabled": map[string]any{"type": "boolean"}}},
-				"ThemeApplyInput":  map[string]any{"type": "object", "properties": map[string]any{"theme_id": map[string]any{"type": "string"}, "rollback": map[string]any{"type": "boolean"}}},
+				"SiteUpdateInput": map[string]any{"type": "object", "properties": map[string]any{"name": map[string]any{"type": "string"}, "status": map[string]any{"type": "string", "enum": []string{"enabled", "disabled"}}, "management_automation_enabled": map[string]any{"type": "boolean"}}},
+				"ThemeApplyInput": map[string]any{"type": "object", "properties": map[string]any{
+					"theme_id":               map[string]any{"type": "string"},
+					"rollback":               map[string]any{"type": "boolean"},
+					"action":                 map[string]any{"type": "string", "enum": []string{"apply", "rollback"}},
+					"expected_current_theme": map[string]any{"type": "string", "description": "Optional optimistic concurrency guard. A non-dry-run request returns 409 theme_changed when the live theme differs."},
+				}},
+				"ThemePreviewInput": map[string]any{"type": "object", "properties": map[string]any{
+					"theme_id": map[string]any{"type": "string", "description": "Validated candidate theme rendered with live site data without persisting it."},
+				}},
 				"DomainApplyInput": map[string]any{"type": "object", "properties": map[string]any{"primary_domain": map[string]any{"type": "string"}, "redirect_domains": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}}},
 				"PreviewURLResponse": map[string]any{"type": "object", "required": []string{"preview_url", "expires_at", "ttl_seconds"}, "properties": map[string]any{
-					"preview_url": map[string]any{"type": "string", "format": "uri"},
-					"expires_at":  map[string]any{"type": "string", "format": "date-time"},
-					"ttl_seconds": map[string]any{"type": "integer", "minimum": 1},
+					"preview_url":   map[string]any{"type": "string", "format": "uri"},
+					"expires_at":    map[string]any{"type": "string", "format": "date-time"},
+					"ttl_seconds":   map[string]any{"type": "integer", "minimum": 1},
+					"theme_id":      map[string]any{"type": "string", "description": "Candidate theme from the signed claims; omitted for a current-theme preview."},
+					"current_theme": map[string]any{"type": "string", "description": "Persisted theme at signing time."},
 				}},
 				"PublicAccessInput": map[string]any{"type": "object", "required": []string{"primary_domain"}, "properties": map[string]any{
 					"primary_domain":   map[string]any{"type": "string", "description": "主域名，不含协议、端口或路径"},

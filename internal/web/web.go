@@ -1926,7 +1926,7 @@ func (s *Server) serveSignedSitePreview(w http.ResponseWriter, r *http.Request, 
 			http.NotFound(w, r)
 			return
 		}
-		_, tokenState := rt.server.verifySitePreviewToken(token, siteID)
+		claims, tokenState := rt.server.verifySitePreviewToken(token, siteID)
 		switch tokenState {
 		case "expired":
 			w.Header().Set("X-Robots-Tag", "noindex, nofollow")
@@ -1936,6 +1936,11 @@ func (s *Server) serveSignedSitePreview(w http.ResponseWriter, r *http.Request, 
 			return
 		case "":
 			previewPrefix := "/preview/sites/" + strconv.FormatInt(siteID, 10) + "/site/" + token
+			if claims.ThemeID != "" {
+				// 候选主题只来自已验证的签名载荷，不能通过 query/path 替换；
+				// withPreviewTheme 仅影响本次请求树的渲染，不写 settings 或公共缓存。
+				r = r.WithContext(withPreviewTheme(r.Context(), claims.ThemeID))
+			}
 			s.serveRuntimeSitePreview(w, r, rt, previewPrefix, target)
 			return
 		default:
@@ -2162,6 +2167,8 @@ func (s *Server) servePlatformKeyRequest(w http.ResponseWriter, r *http.Request,
 // "readiness" 新站上线准备状态；"public_access" 是关闭配置向导后仍可展示的
 // DNS / HTTPS / 橙云进度摘要；"lifecycle_items" 是当前密钥成员范围内的完整站点列表，
 // 包含已关闭或关闭自动化的站点，供管理界面重新启用，且不改变 items 的“发现即能调用”语义。
+// 当调用密钥持有 themes:read 时，每个站点还会附加 "theme" 摘要；没有该权限的旧密钥
+// 不返回该字段，避免发现接口越权泄露控制层配置。
 func (s *Server) servePlatformDiscovery(w http.ResponseWriter, r *http.Request, pool *SiteRuntimePool) {
 	if r.Method != http.MethodGet {
 		apiError(w, http.StatusMethodNotAllowed, "method_not_allowed", "仅支持 GET。")
@@ -2226,13 +2233,14 @@ func (s *Server) servePlatformDiscovery(w http.ResponseWriter, r *http.Request, 
 		}
 	}
 	integrationSnapshot := s.discoveryIntegrationSnapshot()
+	includeTheme := apiScopeMap(key.Scopes)[apiScopeThemesRead]
 	items := make([]map[string]any, 0, len(manageableSites))
 	lifecycleItems := make([]map[string]any, 0, len(allSites))
 	for _, site := range allSites {
 		if site == nil || !key.CanManageSite(site.ID) {
 			continue
 		}
-		item := s.discoverySiteItem(pool, site, domainsBySite[site.ID], caps, base, integrationSnapshot)
+		item := s.discoverySiteItem(pool, site, domainsBySite[site.ID], caps, base, integrationSnapshot, includeTheme)
 		lifecycleItems = append(lifecycleItems, item)
 		if manageableIDs[site.ID] {
 			items = append(items, item)
@@ -2253,12 +2261,12 @@ func (s *Server) servePlatformDiscovery(w http.ResponseWriter, r *http.Request, 
 
 // discoverySiteItem 统一生成对话发现列表和站点管理列表的单站摘要。
 // 已关闭站点不在运行时池中，必要时临时只读打开自己的数据库，避免灰色卡片丢失图标、统计与接入状态。
-func (s *Server) discoverySiteItem(pool *SiteRuntimePool, site *platform.Site, domains []*platform.SiteDomain, caps []string, base string, integrationSnapshot discoveryIntegrationSnapshot) map[string]any {
+func (s *Server) discoverySiteItem(pool *SiteRuntimePool, site *platform.Site, domains []*platform.SiteDomain, caps []string, base string, integrationSnapshot discoveryIntegrationSnapshot, includeTheme bool) map[string]any {
 	displayPool, closeDisplayPool := discoverySiteDisplayPool(pool, site)
 	defer closeDisplayPool()
 	publicURL := s.discoverySiteURL(site, domains)
 	languageCount, contentCount, pendingCount := s.discoverySiteCounts(displayPool, site)
-	return map[string]any{
+	item := map[string]any{
 		"id":                            site.ID,
 		"slug":                          site.Slug,
 		"name":                          site.Name,
@@ -2278,6 +2286,12 @@ func (s *Server) discoverySiteItem(pool *SiteRuntimePool, site *platform.Site, d
 		"deployment":                    s.discoverySiteDeployment(displayPool, site, publicURL),
 		"public_access":                 s.discoverySitePublicAccess(site.ID, domains),
 	}
+	if includeTheme && displayPool != nil {
+		if runtime, ok := displayPool.runtimeByID(site.ID); ok && runtime != nil && runtime.Store != nil {
+			item["theme"] = controlThemeSummary(runtime.Store, "zh")
+		}
+	}
+	return item
 }
 
 func discoverySiteDisplayPool(pool *SiteRuntimePool, site *platform.Site) (*SiteRuntimePool, func()) {

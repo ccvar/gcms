@@ -56,6 +56,7 @@ func platformControlCatalog() []platformControlOperation {
 		{ID: "themes.list", Label: "读取外观主题", RequiredScope: apiScopeThemesRead, Risk: "read", Method: http.MethodGet, Endpoint: "/control/themes", Available: true},
 		{ID: "themes.get", Label: "读取主题详情", RequiredScope: apiScopeThemesRead, Risk: "read", Method: http.MethodGet, Endpoint: "/control/themes/{theme_id}", Available: true},
 		{ID: "themes.current", Label: "读取站点当前主题", RequiredScope: apiScopeThemesRead, Risk: "read", Method: http.MethodGet, Endpoint: "/control/sites/{site_id}/theme", Available: true},
+		{ID: "themes.preview", Label: "预览候选外观主题", RequiredScope: apiScopeThemesRead, Risk: "read", Method: http.MethodPost, Endpoint: "/control/sites/{site_id}/preview-url", Available: true},
 		{ID: "themes.apply", Label: "应用或恢复外观主题", RequiredScope: apiScopeThemesApply, Risk: "write", Method: http.MethodPut, Endpoint: "/control/sites/{site_id}/theme", RequiresConfirmation: true, SupportsDryRun: true, Available: true},
 		{ID: "domains.read", Label: "读取域名配置", RequiredScope: apiScopeDomainsRead, Risk: "read", Method: http.MethodGet, Endpoint: "/control/sites/{site_id}/domains", Available: true},
 		{ID: "domains.apply", Label: "修改 GCMS 域名配置", RequiredScope: apiScopeDomainsWrite, Risk: "sensitive", Method: http.MethodPut, Endpoint: "/control/sites/{site_id}/domains", RequiresConfirmation: true, RequiresUnlock: true, SupportsDryRun: true, Available: true},
