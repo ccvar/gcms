@@ -50,8 +50,8 @@ function usage(code = 2) {
   out("  gcms.js language-default <code>");
   out("  gcms.js language-catalog <code>");
   out("  gcms.js language-catalog-update <code> <json|@file>");
-  out("  gcms.js site-profile");
-  out("  gcms.js site-profile-update <json|@file>");
+  out("  gcms.js site-profile                         # 含全站首页显示数量");
+  out("  gcms.js site-profile-update <json|@file>      # 可写 home_links_limit(0..24)、home_posts_per_page(1..50)");
   out("  gcms.js theme-options [--lang xx]           # 当前主题声明的配置槽与现值（site:read；写入走 site-profile-update 的 factory_*/dtc_* 字段）");
   out("  gcms.js navigation");
   out("  gcms.js navigation-update <json|@file>");
@@ -316,6 +316,9 @@ async function doctor() {
       add("openapi_post_featured_path", !!(paths["/posts/featured/{id}"] && paths["/posts/featured/{id}"].patch));
       add("openapi_link_featured_path", !!(paths["/links/featured/{id}"] && paths["/links/featured/{id}"].patch));
       add("openapi_featured_schema", !!schemas.FeaturedInput);
+      const siteResponseProps = schemas.SiteProfileResponse && schemas.SiteProfileResponse.properties ? schemas.SiteProfileResponse.properties : {};
+      const sitePatchProps = schemas.SiteProfilePatch && schemas.SiteProfilePatch.properties ? schemas.SiteProfilePatch.properties : {};
+      add("openapi_home_display_schema", !!siteResponseProps.home_links_limit && !!siteResponseProps.home_posts_per_page && !!sitePatchProps.home_links_limit && !!sitePatchProps.home_posts_per_page);
       add("openapi_post_all_entry_path", !!(paths["/posts/categories/all-entry"] && paths["/posts/categories/all-entry"].get && paths["/posts/categories/all-entry"].patch));
       add("openapi_link_all_entry_path", !!(paths["/links/categories/all-entry"] && paths["/links/categories/all-entry"].get && paths["/links/categories/all-entry"].patch));
       add("openapi_all_entry_schema", !!schemas.CategoryAllEntryResponse && !!schemas.CategoryAllEntryPatch);

@@ -73,8 +73,8 @@ function usage(code = 2) {
   out("  gcms.js language-default --site <slug|id> <code>");
   out("  gcms.js language-catalog --site <slug|id> <code>");
   out("  gcms.js language-catalog-update --site <slug|id> <code> <json|@file>");
-  out("  gcms.js site-profile --site <slug|id>");
-  out("  gcms.js site-profile-update --site <slug|id> <json|@file>");
+  out("  gcms.js site-profile --site <slug|id>                         # 含全站首页显示数量");
+  out("  gcms.js site-profile-update --site <slug|id> <json|@file>      # 可写 home_links_limit(0..24)、home_posts_per_page(1..50)");
   out("  gcms.js theme-options --site <slug|id> [--lang xx]   # 该站当前主题声明的配置槽与现值（site:read；写入走 site-profile-update 的 factory_*/dtc_* 字段）");
   out("  gcms.js navigation --site <slug|id>");
   out("  gcms.js navigation-update --site <slug|id> <json|@file>");
@@ -443,6 +443,11 @@ async function doctor(siteSel) {
         add("openapi_media_path", !!(paths["/media"] && paths["/media"].post));
         add("openapi_post_preview_path", !!(paths["/posts/{id}/preview"] && paths["/posts/{id}/preview"].get));
         add("openapi_post_featured_path", !!(paths["/posts/featured/{id}"] && paths["/posts/featured/{id}"].patch));
+        add("openapi_link_featured_path", !!(paths["/links/featured/{id}"] && paths["/links/featured/{id}"].patch));
+        add("openapi_featured_schema", !!schemas.FeaturedInput);
+        const siteResponseProps = schemas.SiteProfileResponse && schemas.SiteProfileResponse.properties ? schemas.SiteProfileResponse.properties : {};
+        const sitePatchProps = schemas.SiteProfilePatch && schemas.SiteProfilePatch.properties ? schemas.SiteProfilePatch.properties : {};
+        add("openapi_home_display_schema", !!siteResponseProps.home_links_limit && !!siteResponseProps.home_posts_per_page && !!sitePatchProps.home_links_limit && !!sitePatchProps.home_posts_per_page);
         add("openapi_schemas", !!schemas.LanguageItemResponse && !!schemas.ContentPreview);
       }
     } catch (err) {

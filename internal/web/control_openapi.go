@@ -41,6 +41,18 @@ func platformControlOpenAPISpec(apiBase string) map[string]any {
 			"patch":      map[string]any{"operationId": "sites.update", "summary": "Validate or update site metadata/status", "parameters": mutationParams(false), "requestBody": jsonBody("SiteUpdateInput"), "responses": response},
 			"delete":     map[string]any{"operationId": "sites.delete", "summary": "Validate or archive-delete a disabled non-default site", "parameters": mutationParams(true), "responses": response},
 		},
+		"/control/sites/{siteId}/preview-url": map[string]any{
+			"parameters": []any{map[string]any{"name": "siteId", "in": "path", "required": true, "schema": map[string]any{"type": "integer", "format": "int64"}}},
+			"post": map[string]any{
+				"operationId": "sites.preview",
+				"summary":     "Create a short-lived private whole-site preview URL",
+				"responses": map[string]any{
+					"201": map[string]any{"description": "Preview URL created", "content": map[string]any{"application/json": map[string]any{"schema": map[string]any{"$ref": "#/components/schemas/PreviewURLResponse"}}}},
+					"403": map[string]any{"description": "Missing scope, membership, or site automation is disabled"},
+					"404": map[string]any{"description": "Site runtime not found"},
+				},
+			},
+		},
 		"/control/sites/{siteId}/categories/{collection}/{categoryId}": map[string]any{
 			"parameters": []any{
 				map[string]any{"name": "siteId", "in": "path", "required": true, "schema": map[string]any{"type": "integer", "format": "int64"}},
@@ -105,6 +117,11 @@ func platformControlOpenAPISpec(apiBase string) map[string]any {
 				"SiteUpdateInput":  map[string]any{"type": "object", "properties": map[string]any{"name": map[string]any{"type": "string"}, "status": map[string]any{"type": "string", "enum": []string{"enabled", "disabled"}}, "management_automation_enabled": map[string]any{"type": "boolean"}}},
 				"ThemeApplyInput":  map[string]any{"type": "object", "properties": map[string]any{"theme_id": map[string]any{"type": "string"}, "rollback": map[string]any{"type": "boolean"}}},
 				"DomainApplyInput": map[string]any{"type": "object", "properties": map[string]any{"primary_domain": map[string]any{"type": "string"}, "redirect_domains": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}}},
+				"PreviewURLResponse": map[string]any{"type": "object", "required": []string{"preview_url", "expires_at", "ttl_seconds"}, "properties": map[string]any{
+					"preview_url": map[string]any{"type": "string", "format": "uri"},
+					"expires_at":  map[string]any{"type": "string", "format": "date-time"},
+					"ttl_seconds": map[string]any{"type": "integer", "minimum": 1},
+				}},
 				"PublicAccessInput": map[string]any{"type": "object", "required": []string{"primary_domain"}, "properties": map[string]any{
 					"primary_domain":   map[string]any{"type": "string", "description": "主域名，不含协议、端口或路径"},
 					"redirect_domains": map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "可选别名域名，GCMS 会配置 301 到主域名"},

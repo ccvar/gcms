@@ -1101,7 +1101,7 @@
           <table class="admin-table api-endpoints">
           <tbody>
             <tr><th>{{.Admin.T "admin.settings.automation.languages" "语种"}}</th><td class="slug">GET/POST /languages · PATCH /languages/{code}</td></tr>
-            <tr><th>{{.Admin.T "admin.settings.automation.site_profile" "站点文案"}}</th><td class="slug">GET/PATCH /site-profile</td></tr>
+            <tr><th>{{.Admin.T "admin.settings.automation.site_profile" "站点资料"}}</th><td class="slug">GET/PATCH /site-profile</td></tr>
             <tr><th>{{.Admin.T "admin.settings.automation.navigation" "导航菜单"}}</th><td class="slug">GET/PATCH /navigation</td></tr>
             <tr><th>{{.Admin.T "admin.settings.automation.media" "媒体"}}</th><td class="slug">POST /media</td></tr>
             <tr><th>{{.Admin.T "admin.settings.automation.post_categories" "文章分类"}}</th><td class="slug">GET/POST /posts/categories · PATCH /posts/categories/{id}</td></tr>
@@ -1286,8 +1286,8 @@
               </div>
               <div class="scope-group scope-group-wide">
                 <strong>{{.Admin.T "admin.settings.automation.site_starter" "新站初始化"}}</strong>
-                <label><input type="checkbox" name="scopes" value="site:read"><span>{{.Admin.T "admin.settings.automation.site_profile_read" "读取站点文案"}}</span><small>{{.Admin.T "admin.settings.automation.site_profile_read_desc" "读取站点名称、Hero、首页标题和默认作者"}}</small></label>
-                <label><input type="checkbox" name="scopes" value="site:write"><span>{{.Admin.T "admin.settings.automation.site_profile_write" "修改站点文案"}}</span><small>{{.Admin.T "admin.settings.automation.site_profile_write_desc" "更新多语种站点文案、首页标题和默认作者"}}</small></label>
+                <label><input type="checkbox" name="scopes" value="site:read"><span>{{.Admin.T "admin.settings.automation.site_profile_read" "读取站点资料"}}</span><small>{{.Admin.T "admin.settings.automation.site_profile_read_desc" "读取站点名称、Hero、首页标题、默认作者和首页显示数量"}}</small></label>
+                <label><input type="checkbox" name="scopes" value="site:write"><span>{{.Admin.T "admin.settings.automation.site_profile_write" "修改站点资料"}}</span><small>{{.Admin.T "admin.settings.automation.site_profile_write_desc" "更新多语种站点文案、首页标题、默认作者和全站首页显示数量"}}</small></label>
                 <label><input type="checkbox" name="scopes" value="brand:assets:write"><span>{{.Admin.T "admin.settings.automation.brand_assets_write" "修改品牌资产"}}</span><small>{{.Admin.T "admin.settings.automation.brand_assets_write_desc" "更新站点 Logo、浏览器图标和分享图"}}</small></label>
                 <label><input type="checkbox" name="scopes" value="navigation:read"><span>{{.Admin.T "admin.settings.automation.navigation_read" "读取导航"}}</span><small>{{.Admin.T "admin.settings.automation.navigation_read_desc" "查看当前导航菜单和各语种文字"}}</small></label>
                 <label><input type="checkbox" name="scopes" value="navigation:write"><span>{{.Admin.T "admin.settings.automation.navigation_write" "修改导航"}}</span><small>{{.Admin.T "admin.settings.automation.navigation_write_desc" "写入导航顺序、链接和多语种菜单文字"}}</small></label>
@@ -1363,8 +1363,8 @@
               </div>
               <div class="scope-group scope-group-wide">
                 <strong>{{.Admin.T "admin.settings.automation.site_starter" "新站初始化"}}</strong>
-                <label><input type="checkbox" name="scopes" value="site:read" data-scope-edit><span>{{.Admin.T "admin.settings.automation.site_profile_read" "读取站点文案"}}</span><small>{{.Admin.T "admin.settings.automation.site_profile_read_desc" "读取站点名称、Hero、首页标题和默认作者"}}</small></label>
-                <label><input type="checkbox" name="scopes" value="site:write" data-scope-edit><span>{{.Admin.T "admin.settings.automation.site_profile_write" "修改站点文案"}}</span><small>{{.Admin.T "admin.settings.automation.site_profile_write_desc" "更新多语种站点文案、首页标题和默认作者"}}</small></label>
+                <label><input type="checkbox" name="scopes" value="site:read" data-scope-edit><span>{{.Admin.T "admin.settings.automation.site_profile_read" "读取站点资料"}}</span><small>{{.Admin.T "admin.settings.automation.site_profile_read_desc" "读取站点名称、Hero、首页标题、默认作者和首页显示数量"}}</small></label>
+                <label><input type="checkbox" name="scopes" value="site:write" data-scope-edit><span>{{.Admin.T "admin.settings.automation.site_profile_write" "修改站点资料"}}</span><small>{{.Admin.T "admin.settings.automation.site_profile_write_desc" "更新多语种站点文案、首页标题、默认作者和全站首页显示数量"}}</small></label>
                 <label><input type="checkbox" name="scopes" value="brand:assets:write" data-scope-edit><span>{{.Admin.T "admin.settings.automation.brand_assets_write" "修改品牌资产"}}</span><small>{{.Admin.T "admin.settings.automation.brand_assets_write_desc" "更新站点 Logo、浏览器图标和分享图"}}</small></label>
                 <label><input type="checkbox" name="scopes" value="navigation:read" data-scope-edit><span>{{.Admin.T "admin.settings.automation.navigation_read" "读取导航"}}</span><small>{{.Admin.T "admin.settings.automation.navigation_read_desc" "查看当前导航菜单和各语种文字"}}</small></label>
                 <label><input type="checkbox" name="scopes" value="navigation:write" data-scope-edit><span>{{.Admin.T "admin.settings.automation.navigation_write" "修改导航"}}</span><small>{{.Admin.T "admin.settings.automation.navigation_write_desc" "写入导航顺序、链接和多语种菜单文字"}}</small></label>

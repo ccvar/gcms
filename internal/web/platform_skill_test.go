@@ -3,6 +3,7 @@ package web
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -41,7 +42,8 @@ func TestPlatformSkillFilesTokenless(t *testing.T) {
 		`cmd === "control-sites"`, `cmd === "site-create-plan"`, `cmd === "site-create"`, `cmd === "themes"`, `cmd === "theme-plan"`,
 		`cmd === "domains-plan"`, `cmd === "security-status"`, `cmd === "category-delete-plan"`, `cmd === "category-delete"`,
 		`"categories.delete"`, `cmd === "navigation-delete-plan"`, `cmd === "navigation-delete"`, `"navigation.delete"`,
-		`cmd === "site-profile"`, `cmd === "site-profile-update"`, `cmd === "navigation"`, `cmd === "navigation-update"`} {
+		`cmd === "site-profile"`, `cmd === "site-profile-update"`, `cmd === "navigation"`, `cmd === "navigation-update"`,
+		`cmd === "pin"`, `"/featured/"`} {
 		if !strings.Contains(cli, needle) {
 			t.Fatalf("gcms.js missing %q", needle)
 		}
@@ -314,7 +316,7 @@ func TestPlatformCLILiveEndToEnd(t *testing.T) {
 
 	token := "gcmsp_liveclitoken12345"
 	if _, err := ps.CreatePlatformKey("cli", token, token[:13], "all",
-		"posts:read,posts:write,posts:categories,links:categories,languages:read,media:write,site:read,site:write,navigation:read,control:read,sites:create,themes:read,themes:apply", nil, time.Time{}); err != nil {
+		"posts:read,posts:write,posts:categories,posts:pin,links:read,links:write,links:categories,links:pin,languages:read,media:write,site:read,site:write,navigation:read,control:read,sites:create,themes:read,themes:apply", nil, time.Time{}); err != nil {
 		t.Fatalf("create platform key: %v", err)
 	}
 
@@ -404,6 +406,70 @@ func TestPlatformCLILiveEndToEnd(t *testing.T) {
 	if !strings.Contains(out, "CLI Live Draft") {
 		t.Fatalf("create output unexpected: %s", out)
 	}
+	var createdPost struct {
+		Item apiContentItem `json:"item"`
+	}
+	if err := json.Unmarshal([]byte(out), &createdPost); err != nil || createdPost.Item.ID == 0 {
+		t.Fatalf("decode created post: err=%v output=%s", err, out)
+	}
+
+	// pin posts on → off: the platform skill must route to the per-site featured
+	// endpoint and preserve the dedicated posts:pin authorization contract.
+	for _, tc := range []struct {
+		value string
+		want  bool
+	}{
+		{value: "on", want: true},
+		{value: "off", want: false},
+	} {
+		out, errOut, err = run("pin", "--site", "blog", "posts", strconv.FormatInt(createdPost.Item.ID, 10), tc.value)
+		if err != nil {
+			t.Fatalf("pin posts %s failed: %v\nstdout: %s\nstderr: %s", tc.value, err, out, errOut)
+		}
+		var got struct {
+			Item apiContentItem `json:"item"`
+		}
+		if err := json.Unmarshal([]byte(out), &got); err != nil {
+			t.Fatalf("decode pin posts %s output: %v\n%s", tc.value, err, out)
+		}
+		if got.Item.Featured != tc.want {
+			t.Fatalf("pin posts %s featured = %v, want %v; output=%s", tc.value, got.Item.Featured, tc.want, out)
+		}
+	}
+
+	// Links use a distinct links:pin scope and the same CLI branch. Exercise both
+	// transitions so neither collection can silently lose the platform route.
+	out, errOut, err = run("create", "links", "--site", "blog", `{"title":"CLI Live Link","lang":"zh","status":"draft","link_url":"https://example.com"}`)
+	if err != nil {
+		t.Fatalf("create link failed: %v\nstdout: %s\nstderr: %s", err, out, errOut)
+	}
+	var createdLink struct {
+		Item apiContentItem `json:"item"`
+	}
+	if err := json.Unmarshal([]byte(out), &createdLink); err != nil || createdLink.Item.ID == 0 {
+		t.Fatalf("decode created link: err=%v output=%s", err, out)
+	}
+	for _, tc := range []struct {
+		value string
+		want  bool
+	}{
+		{value: "on", want: true},
+		{value: "off", want: false},
+	} {
+		out, errOut, err = run("pin", "--site", "blog", "links", strconv.FormatInt(createdLink.Item.ID, 10), tc.value)
+		if err != nil {
+			t.Fatalf("pin links %s failed: %v\nstdout: %s\nstderr: %s", tc.value, err, out, errOut)
+		}
+		var got struct {
+			Item apiContentItem `json:"item"`
+		}
+		if err := json.Unmarshal([]byte(out), &got); err != nil {
+			t.Fatalf("decode pin links %s output: %v\n%s", tc.value, err, out)
+		}
+		if got.Item.Featured != tc.want {
+			t.Fatalf("pin links %s featured = %v, want %v; output=%s", tc.value, got.Item.Featured, tc.want, out)
+		}
+	}
 
 	// list drafts on blog: the created post must appear (proves /sites/{id} prefixing round-trips).
 	out, _, err = run("list", "posts", "--site", "blog", "--lang", "zh", "--status", "draft")
@@ -414,8 +480,9 @@ func TestPlatformCLILiveEndToEnd(t *testing.T) {
 		t.Fatalf("list did not include the created draft: %s", out)
 	}
 
-	// site-profile roundtrip: PATCH via CLI then read back (新站建设 depends on these commands).
-	out, errOut, err = run("site-profile-update", "--site", "blog", `{"lang":"zh","hero_title":"CLI E2E Hero"}`)
+	// site-profile roundtrip: localized copy and global homepage display settings share
+	// the same command, while the latter stay at the PATCH top level.
+	out, errOut, err = run("site-profile-update", "--site", "blog", `{"lang":"zh","hero_title":"CLI E2E Hero","home_links_limit":5,"home_posts_per_page":9}`)
 	if err != nil {
 		t.Fatalf("site-profile-update failed: %v\nstdout: %s\nstderr: %s", err, out, errOut)
 	}
@@ -423,7 +490,9 @@ func TestPlatformCLILiveEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("site-profile failed: %v\nstderr: %s", err, errOut)
 	}
-	if !strings.Contains(out, "CLI E2E Hero") {
+	if !strings.Contains(out, "CLI E2E Hero") ||
+		!strings.Contains(out, `"home_links_limit": 5`) ||
+		!strings.Contains(out, `"home_posts_per_page": 9`) {
 		t.Fatalf("site-profile did not reflect the update: %s", out)
 	}
 

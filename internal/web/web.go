@@ -1854,6 +1854,22 @@ func (s *Server) serveSitePreview(w http.ResponseWriter, r *http.Request, pool *
 		return
 	}
 	previewPrefix := "/admin/sites/" + strconv.FormatInt(siteID, 10) + "/preview"
+	s.serveRuntimeSitePreview(w, r, rt, previewPrefix, rest)
+}
+
+// serveRuntimeSitePreview 是后台登录预览与 Pilot 短时私有预览共用的整站渲染入口。
+// previewPrefix 会写入上下文，使站内导航、语种切换、sitemap 等链接继续留在同一
+// 预览作用域；页面本身不会进入缓存或搜索索引。
+func (s *Server) serveRuntimeSitePreview(w http.ResponseWriter, r *http.Request, rt *SiteRuntime, previewPrefix, rest string) {
+	if rt == nil || rt.server == nil {
+		http.NotFound(w, r)
+		return
+	}
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", "GET, HEAD")
+		http.Error(w, "仅支持 GET 或 HEAD。", http.StatusMethodNotAllowed)
+		return
+	}
 	if rest == "" || rest == "/" {
 		rest = "/" + rt.server.defaultLang() + "/"
 	} else {
@@ -1877,13 +1893,17 @@ func (s *Server) serveSitePreview(w http.ResponseWriter, r *http.Request, pool *
 	req.URL = &nextURL
 	w.Header().Set("X-Robots-Tag", "noindex, nofollow")
 	w.Header().Set("Cache-Control", "no-store")
+	// Referrer-Policy 由站点安全中间件统一设为 strict-origin-when-cross-origin：
+	// 同源上传资源仍能从完整预览前缀定位目标站点，对外则不会泄露票据路径。
 	rt.server.siteHandler().ServeHTTP(w, req)
 }
 
-// serveSignedSitePreview 处理 /preview/sites/{siteID}/{collection}/{id}?token=…：
-// 为「公开域名不由本服务直接服务」的站点（如已发布 Cloudflare 静态导出、或根本没绑 Go 侧域名）
-// 提供一条按站点 ID 分发、不依赖 Host 路由的前台预览入口。刻意不要求登录态——
-// 链接本身带短期 HMAC 签名，改写路径后由目标站点的 frontendPreviewContent 用它自己的密钥校验。
+// serveSignedSitePreview 为「公开域名不由本服务直接服务」的站点提供两类按站点 ID
+// 分发、不依赖 Host 路由的预览：
+//   - /preview/sites/{siteID}/{collection}/{id}?token=…：单篇未发布内容；
+//   - /preview/sites/{siteID}/site/{token}/…：Pilot 的短时私有整站预览。
+//
+// 两类链接都不要求后台登录态，但使用独立签名域的短期 HMAC 票据。
 func (s *Server) serveSignedSitePreview(w http.ResponseWriter, r *http.Request, pool *SiteRuntimePool, siteID int64, rest string) {
 	rt, ok := pool.runtimeByID(siteID)
 	if !ok || rt == nil || rt.server == nil || rt.Site == nil {
@@ -1894,11 +1914,58 @@ func (s *Server) serveSignedSitePreview(w http.ResponseWriter, r *http.Request, 
 		http.NotFound(w, r)
 		return
 	}
+	if token, target, ok := signedWholeSitePreviewTarget(rest); ok {
+		// 票据签发后仍实时尊重站点停用与自动化开关，避免最长 15 分钟的
+		// 凭证窗口绕过管理员刚刚执行的撤权操作。
+		if s.platform == nil {
+			http.NotFound(w, r)
+			return
+		}
+		site, found, err := s.platform.GetSite(siteID)
+		if err != nil || !found || site == nil || site.Status != "enabled" || !site.ManagementAutomationEnabled {
+			http.NotFound(w, r)
+			return
+		}
+		_, tokenState := rt.server.verifySitePreviewToken(token, siteID)
+		switch tokenState {
+		case "expired":
+			w.Header().Set("X-Robots-Tag", "noindex, nofollow")
+			w.Header().Set("Cache-Control", "no-store")
+			w.Header().Set("Referrer-Policy", "no-referrer")
+			http.Error(w, "预览链接已过期，请返回 Pilot 重新打开。", http.StatusGone)
+			return
+		case "":
+			previewPrefix := "/preview/sites/" + strconv.FormatInt(siteID, 10) + "/site/" + token
+			s.serveRuntimeSitePreview(w, r, rt, previewPrefix, target)
+			return
+		default:
+			http.NotFound(w, r)
+			return
+		}
+	}
 	nextURL := *r.URL
 	nextURL.Path = "/preview" + rest
 	req := r.Clone(r.Context())
 	req.URL = &nextURL
 	rt.server.siteHandler().ServeHTTP(w, req)
+}
+
+// signedWholeSitePreviewTarget 解析 "/site/{token}/…"，token 放在路径中，
+// 使预览页生成的站内链接可以自然携带票据，而无需依赖 Cookie 或后台登录态。
+func signedWholeSitePreviewTarget(rest string) (token, target string, ok bool) {
+	const prefix = "/site/"
+	if !strings.HasPrefix(rest, prefix) {
+		return "", "", false
+	}
+	tokenAndPath := strings.TrimPrefix(rest, prefix)
+	token, tail, hasTail := strings.Cut(tokenAndPath, "/")
+	if strings.TrimSpace(token) == "" {
+		return "", "", false
+	}
+	if !hasTail || tail == "" {
+		return token, "/", true
+	}
+	return token, "/" + tail, true
 }
 
 // signedSitePreviewTarget 解析 /preview/sites/{siteID}/{collection}/{id} 形式的路径，
@@ -4694,12 +4761,16 @@ func (s *Server) adminThemePreview(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	v.KnowledgeGroups = s.knowledgeGroups(lang, v.CategoryAll, v.Categories, posts, len(posts), s.intSetting(homePostsPerPageKey, defaultHomePostsPerPage, minHomePostsPerPage, maxHomePostsPerPage))
-	v.FeatLinks = s.knowledgeHeroLinks(lang)
-	if len(v.FeatLinks) == 0 {
+	knowledgeLinksLimit := s.intSetting(homeLinksLimitKey, defaultHomeLinksLimit, minHomeLinksLimit, maxHomeLinksLimit)
+	v.FeatLinks = s.knowledgeHeroLinks(lang, knowledgeLinksLimit)
+	if len(v.FeatLinks) == 0 && knowledgeLinksLimit > 0 {
 		v.FeatLinks = []*store.Post{
 			{Title: "文档", Excerpt: "查看部署、配置与 API 用法。"},
 			{Title: "发布", Excerpt: "版本更新与一键升级流程。"},
 			{Title: "生态", Excerpt: "自动化接口与内容助手接入。"},
+		}
+		if len(v.FeatLinks) > knowledgeLinksLimit {
+			v.FeatLinks = v.FeatLinks[:knowledgeLinksLimit]
 		}
 	}
 	// 工厂骨架预览：站点没有商品时补几条商品样例，让缩略图能表达骨架结构。
@@ -4811,7 +4882,7 @@ func (s *Server) renderHome(w http.ResponseWriter, r *http.Request) {
 		v.Posts = posts
 	}
 	if v.Theme == "knowledge" {
-		v.FeatLinks = s.knowledgeHeroLinks(lang)
+		v.FeatLinks = s.knowledgeHeroLinks(lang, linksLimit)
 	}
 	// 工厂骨架首页：商品 + 「工厂实力」（主题试穿预览同样生效——v.Layout 已反映候选主题）。
 	s.fillFactoryHome(v, lang)
@@ -4854,8 +4925,10 @@ func contentThemeHomePosts(posts []*store.Post, featured *store.Post, limit int)
 	return out
 }
 
-func (s *Server) knowledgeHeroLinks(lang string) []*store.Post {
-	const limit = 12
+func (s *Server) knowledgeHeroLinks(lang string, limit int) []*store.Post {
+	if limit <= 0 {
+		return nil
+	}
 	out := make([]*store.Post, 0, limit)
 	seen := map[int64]bool{}
 	add := func(items []*store.Post) {

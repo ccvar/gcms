@@ -47,6 +47,7 @@ func platformControlCatalog() []platformControlOperation {
 		{ID: "control.openapi", Label: "读取控制接口契约", RequiredScope: apiScopeControlRead, Risk: "read", Method: http.MethodGet, Endpoint: "/control/openapi.json", Available: true},
 		{ID: "sites.list", Label: "读取站点列表", RequiredScope: apiScopeControlRead, Risk: "read", Method: http.MethodGet, Endpoint: "/control/sites", Available: true},
 		{ID: "sites.get", Label: "读取站点详情", RequiredScope: apiScopeControlRead, Risk: "read", Method: http.MethodGet, Endpoint: "/control/sites/{site_id}", Available: true},
+		{ID: "sites.preview", Label: "创建站点私有预览", RequiredScope: apiScopeControlRead, Risk: "read", Method: http.MethodPost, Endpoint: "/control/sites/{site_id}/preview-url", Available: true},
 		{ID: "sites.create", Label: "创建站点", RequiredScope: apiScopeSitesCreate, Risk: "write", Method: http.MethodPost, Endpoint: "/control/sites", RequiresConfirmation: true, SupportsDryRun: true, Available: true},
 		{ID: "sites.update", Label: "修改站点", RequiredScope: apiScopeSitesUpdate, Risk: "write", Method: http.MethodPatch, Endpoint: "/control/sites/{site_id}", RequiresConfirmation: true, SupportsDryRun: true, Available: true},
 		{ID: "sites.delete", Label: "归档删除站点", RequiredScope: apiScopeSitesDelete, Risk: "destructive", Method: http.MethodDelete, Endpoint: "/control/sites/{site_id}", RequiresConfirmation: true, RequiresUnlock: true, SupportsDryRun: true, Available: true},
@@ -215,6 +216,8 @@ func (s *Server) servePlatformControl(w http.ResponseWriter, r *http.Request) {
 				s.servePlatformControlSiteDeployment(w, r, siteID)
 			case len(parts) == 3 && parts[2] == "public-access":
 				s.servePlatformControlSitePublicAccess(w, r, siteID)
+			case len(parts) == 3 && parts[2] == "preview-url":
+				s.servePlatformControlSitePreviewURL(w, r, siteID)
 			case len(parts) == 5 && parts[2] == "categories":
 				categoryID, err := strconv.ParseInt(parts[4], 10, 64)
 				if err != nil || categoryID <= 0 {

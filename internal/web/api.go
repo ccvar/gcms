@@ -385,7 +385,9 @@ type apiFactoryIndustriesItem struct {
 
 type apiSiteProfilePatch struct {
 	apiSiteProfileInput
-	Items []apiSiteProfileInput `json:"items,omitempty"`
+	HomeLinksLimit   *int                  `json:"home_links_limit,omitempty"`
+	HomePostsPerPage *int                  `json:"home_posts_per_page,omitempty"`
+	Items            []apiSiteProfileInput `json:"items,omitempty"`
 }
 
 // apiThemeOptionSlot GET /theme-options 的一个数据槽：spec 注册表（键/类型/文案/语种规则）
@@ -475,8 +477,16 @@ type frontendPreviewClaims struct {
 	Revision   string `json:"rev,omitempty"`
 }
 
+type sitePreviewClaims struct {
+	Kind    string `json:"kind"`
+	SiteID  int64  `json:"site_id"`
+	Expires int64  `json:"exp"`
+	Nonce   string `json:"nonce"`
+}
+
 const (
 	frontendPreviewTTL           = 2 * time.Hour
+	sitePreviewTTL               = 15 * time.Minute
 	frontendPreviewSecretSetting = "preview.secret"
 )
 
@@ -786,11 +796,19 @@ func (s *Server) apiUpdateSiteProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	items := in.Items
-	if len(items) == 0 && in.hasFields() {
+	if len(items) == 0 && in.apiSiteProfileInput.hasFields() {
 		items = []apiSiteProfileInput{in.apiSiteProfileInput}
 	}
-	if len(items) == 0 {
+	if len(items) == 0 && !in.hasHomeDisplayFields() {
 		apiError(w, http.StatusBadRequest, "empty_patch", "没有收到需要更新的站点资料。")
+		return
+	}
+	if in.hasHomeDisplayFields() && !automationScopeAllowed(auth.scopes, apiScopeSiteWrite) {
+		apiError(w, http.StatusForbidden, "missing_scope", "这条访问权限不能修改首页显示设置。")
+		return
+	}
+	if errMsg := validateAPIHomeDisplaySettings(in); errMsg != "" {
+		apiError(w, http.StatusBadRequest, "bad_request", errMsg)
 		return
 	}
 	for i := range items {
@@ -806,6 +824,10 @@ func (s *Server) apiUpdateSiteProfile(w http.ResponseWriter, r *http.Request) {
 			apiError(w, http.StatusBadRequest, "bad_request", errMsg)
 			return
 		}
+	}
+	if errMsg := s.applyAPIHomeDisplaySettings(in); errMsg != "" {
+		apiError(w, http.StatusInternalServerError, "store_error", errMsg)
+		return
 	}
 	s.recordAutomationLog(auth, "update", "site", 0, "更新站点资料")
 	s.clearGeneratedCaches()
@@ -1683,7 +1705,35 @@ func (in apiSiteProfileInput) hasFields() bool {
 }
 
 func (in apiSiteProfilePatch) hasFields() bool {
-	return in.apiSiteProfileInput.hasFields()
+	return in.apiSiteProfileInput.hasFields() || in.hasHomeDisplayFields()
+}
+
+func (in apiSiteProfilePatch) hasHomeDisplayFields() bool {
+	return in.HomeLinksLimit != nil || in.HomePostsPerPage != nil
+}
+
+func validateAPIHomeDisplaySettings(in apiSiteProfilePatch) string {
+	if in.HomeLinksLimit != nil && (*in.HomeLinksLimit < minHomeLinksLimit || *in.HomeLinksLimit > maxHomeLinksLimit) {
+		return "home_links_limit 必须在 " + strconv.Itoa(minHomeLinksLimit) + " 到 " + strconv.Itoa(maxHomeLinksLimit) + " 之间。"
+	}
+	if in.HomePostsPerPage != nil && (*in.HomePostsPerPage < minHomePostsPerPage || *in.HomePostsPerPage > maxHomePostsPerPage) {
+		return "home_posts_per_page 必须在 " + strconv.Itoa(minHomePostsPerPage) + " 到 " + strconv.Itoa(maxHomePostsPerPage) + " 之间。"
+	}
+	return ""
+}
+
+func (s *Server) applyAPIHomeDisplaySettings(in apiSiteProfilePatch) string {
+	if in.HomeLinksLimit != nil {
+		if err := s.store.SetSetting(homeLinksLimitKey, strconv.Itoa(*in.HomeLinksLimit)); err != nil {
+			return err.Error()
+		}
+	}
+	if in.HomePostsPerPage != nil {
+		if err := s.store.SetSetting(homePostsPerPageKey, strconv.Itoa(*in.HomePostsPerPage)); err != nil {
+			return err.Error()
+		}
+	}
+	return ""
 }
 
 func (s *Server) apiSiteProfileResponse() map[string]any {
@@ -1692,7 +1742,12 @@ func (s *Server) apiSiteProfileResponse() map[string]any {
 	for _, loc := range locales {
 		items = append(items, s.apiSiteProfileItem(loc.Code))
 	}
-	return map[string]any{"default": s.defaultLang(), "items": items}
+	return map[string]any{
+		"default":             s.defaultLang(),
+		"home_links_limit":    s.intSetting(homeLinksLimitKey, defaultHomeLinksLimit, minHomeLinksLimit, maxHomeLinksLimit),
+		"home_posts_per_page": s.intSetting(homePostsPerPageKey, defaultHomePostsPerPage, minHomePostsPerPage, maxHomePostsPerPage),
+		"items":               items,
+	}
 }
 
 func (s *Server) apiSiteProfileItem(lang string) apiSiteProfileItem {
@@ -2429,6 +2484,66 @@ func (s *Server) verifyFrontendPreviewToken(token string) (frontendPreviewClaims
 	}
 	if claims.ID <= 0 || (claims.Collection != "posts" && claims.Collection != "links") {
 		return frontendPreviewClaims{}, "invalid"
+	}
+	return claims, ""
+}
+
+func (s *Server) signSitePreviewToken(siteID int64, expires time.Time) (string, error) {
+	if siteID <= 0 || expires.IsZero() {
+		return "", fmt.Errorf("站点预览参数无效")
+	}
+	payload, err := json.Marshal(sitePreviewClaims{
+		Kind:    "site",
+		SiteID:  siteID,
+		Expires: expires.Unix(),
+		Nonce:   randToken()[:24],
+	})
+	if err != nil {
+		return "", err
+	}
+	encodedPayload := base64.RawURLEncoding.EncodeToString(payload)
+	sig, err := s.sitePreviewSignature(encodedPayload)
+	if err != nil {
+		return "", err
+	}
+	return encodedPayload + "." + sig, nil
+}
+
+func (s *Server) sitePreviewSignature(encodedPayload string) (string, error) {
+	secret, err := s.previewSigningSecret()
+	if err != nil {
+		return "", err
+	}
+	mac := hmac.New(sha256.New, secret)
+	// 与单篇内容预览使用同一份站点私钥，但采用独立的签名域，避免两类
+	// token 即使载荷碰巧相似也能互相复用。
+	_, _ = mac.Write([]byte("site-preview\x00"))
+	_, _ = mac.Write([]byte(encodedPayload))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil)), nil
+}
+
+func (s *Server) verifySitePreviewToken(token string, expectedSiteID int64) (sitePreviewClaims, string) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return sitePreviewClaims{}, "invalid"
+	}
+	want, err := s.sitePreviewSignature(parts[0])
+	if err != nil || !hmac.Equal([]byte(want), []byte(parts[1])) {
+		return sitePreviewClaims{}, "invalid"
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		return sitePreviewClaims{}, "invalid"
+	}
+	var claims sitePreviewClaims
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return sitePreviewClaims{}, "invalid"
+	}
+	if claims.Expires <= 0 || time.Now().After(time.Unix(claims.Expires, 0)) {
+		return sitePreviewClaims{}, "expired"
+	}
+	if claims.Kind != "site" || claims.SiteID <= 0 || claims.SiteID != expectedSiteID || strings.TrimSpace(claims.Nonce) == "" {
+		return sitePreviewClaims{}, "invalid"
 	}
 	return claims, ""
 }

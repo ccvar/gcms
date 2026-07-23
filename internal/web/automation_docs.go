@@ -482,8 +482,8 @@ func automationLanguageCatalogUpdateOperation() map[string]any {
 
 func automationSiteProfileGetOperation() map[string]any {
 	return map[string]any{
-		"summary":     "读取站点文案",
-		"description": "读取每个启用语种的站点名称、标语、描述、首页 Hero 文案、Hero 右侧视觉、首页区块标题、页脚说明和默认作者。新站初始化时先读取再覆盖。",
+		"summary":     "读取站点资料与首页显示设置",
+		"description": "读取每个启用语种的站点名称、标语、描述、首页 Hero 文案、Hero 右侧视觉、首页区块标题、页脚说明和默认作者；顶层同时返回全站共用的首页链接数量与文章每页数量。新站初始化或调整首页密度时先读取再覆盖。",
 		"operationId": "getSiteProfile",
 		"tags":        []string{"站点初始化"},
 		"responses":   automationResponses("SiteProfileResponse"),
@@ -505,8 +505,8 @@ func automationThemeOptionsGetOperation() map[string]any {
 
 func automationSiteProfileUpdateOperation() map[string]any {
 	return map[string]any{
-		"summary":     "更新站点文案",
-		"description": "按语种更新站点基础文案和首页文案。拥有品牌资产权限时，也可以更新 Logo、分享图和 Hero 右侧视觉。主题配置数据槽（工厂主题族的 factory_stats / factory_process / factory_cta / factory_categories / factory_industries / factory_gallery / factory_faq，独立站主题族另有 dtc_testimonials——只能录入真实用户评价，绝不编造）也走这里，随 lang 分语种、传空清除回落默认。可传单个语种对象，也可传 items 数组批量更新。默认语种的站点名称不能为空。",
+		"summary":     "更新站点资料与首页显示设置",
+		"description": "按语种更新站点基础文案和首页文案；顶层 home_links_limit（0..24）与 home_posts_per_page（1..50）是全站、全语种共用的首页显示设置，需要 site:write，0 个链接会隐藏首页链接模块。拥有品牌资产权限时，也可以更新 Logo、分享图和 Hero 右侧视觉。主题配置数据槽（工厂主题族的 factory_stats / factory_process / factory_cta / factory_categories / factory_industries / factory_gallery / factory_faq，独立站主题族另有 dtc_testimonials——只能录入真实用户评价，绝不编造）也走这里，随 lang 分语种、传空清除回落默认。可传单个语种对象，也可传 items 数组批量更新；两个首页数量字段只能放在顶层。默认语种的站点名称不能为空。",
 		"operationId": "updateSiteProfile",
 		"tags":        []string{"站点初始化"},
 		"requestBody": automationJSONBody("SiteProfilePatch"),
@@ -974,7 +974,15 @@ func automationOpenAPISchemas() map[string]any {
 			"type": "object",
 			"properties": map[string]any{
 				"default": map[string]any{"type": "string", "description": "默认语种。"},
-				"items":   map[string]any{"type": "array", "items": map[string]any{"$ref": "#/components/schemas/SiteProfileItem"}},
+				"home_links_limit": map[string]any{
+					"type": "integer", "minimum": minHomeLinksLimit, "maximum": maxHomeLinksLimit, "default": defaultHomeLinksLimit,
+					"description": "首页链接模块最多显示的数量；常规主题展示已置顶链接，知识库主题会在置顶不足时补充最新链接；0 表示隐藏链接模块。全站、全语种共用。",
+				},
+				"home_posts_per_page": map[string]any{
+					"type": "integer", "minimum": minHomePostsPerPage, "maximum": maxHomePostsPerPage, "default": defaultHomePostsPerPage,
+					"description": "首页每页文章数量，也决定首页内容密度与分页。全站、全语种共用。",
+				},
+				"items": map[string]any{"type": "array", "items": map[string]any{"$ref": "#/components/schemas/SiteProfileItem"}},
 			},
 		},
 		"ThemeOptionsResponse": map[string]any{
@@ -1040,6 +1048,14 @@ func automationOpenAPISchemas() map[string]any {
 					"type":        "array",
 					"description": "批量更新多个语种。也可以直接在顶层传入单个语种字段。",
 					"items":       map[string]any{"$ref": "#/components/schemas/SiteProfileItem"},
+				},
+				"home_links_limit": map[string]any{
+					"type": "integer", "minimum": minHomeLinksLimit, "maximum": maxHomeLinksLimit, "default": defaultHomeLinksLimit,
+					"description": "全站首页链接模块最多显示的数量；0 表示隐藏链接模块。只能放在 PATCH 顶层，需要 site:write。",
+				},
+				"home_posts_per_page": map[string]any{
+					"type": "integer", "minimum": minHomePostsPerPage, "maximum": maxHomePostsPerPage, "default": defaultHomePostsPerPage,
+					"description": "全站首页每页文章数量。只能放在 PATCH 顶层，需要 site:write。",
 				},
 				"lang":                map[string]any{"type": "string"},
 				"name":                map[string]any{"type": "string"},
@@ -1305,7 +1321,7 @@ func automationScopeBadges(scopes string) []string {
 		if m[apiScopeSiteWrite] {
 			actions = append(actions, "修改")
 		}
-		out = append(out, "站点文案："+strings.Join(actions, "、"))
+		out = append(out, "站点资料："+strings.Join(actions, "、"))
 	}
 	if m[apiScopeBrandAssetsWrite] {
 		out = append(out, "品牌资产：修改")
@@ -1436,7 +1452,7 @@ func automationScopeBadgesAdmin(scopes string, admin *i18n.AdminTr) []string {
 		if m[apiScopeSiteWrite] {
 			labels = append(labels, adminUI(admin, "admin.settings.automation.write", "修改"))
 		}
-		out = append(out, adminUI(admin, "admin.settings.automation.site_profile", "站点文案")+colon+strings.Join(labels, sep))
+		out = append(out, adminUI(admin, "admin.settings.automation.site_profile", "站点资料")+colon+strings.Join(labels, sep))
 	}
 	if m[apiScopeBrandAssetsWrite] {
 		out = append(out, adminUI(admin, "admin.settings.automation.brand_assets", "品牌资产")+colon+adminUI(admin, "admin.settings.automation.write", "修改"))
@@ -2321,7 +2337,8 @@ func automationSkillMarkdown(apiBase string) string {
 		"- `publish-review`：发布前复核；只有用户明确要求且权限允许才发布。",
 		"- `preview`：发布前读取文章或链接预览，检查渲染后的正文 HTML、目录和正式 URL。",
 		"- `preview-url`：生成短期有效的前台预览链接，用真实前台模板复核草稿。",
-		"- `pin`：在用户明确要求时，切换文章或链接的置顶状态；置顶会影响首页精选文章或精选链接，不适用于页面。",
+		"- `pin`：在用户明确要求时，切换文章或链接的置顶状态；置顶按当前单条、单语种生效，不自动联动互译内容，且只有已到发布时间的已发布内容会在首页显示；不适用于页面。",
+		"- `homepage-display`：调整首页显示密度。先读取 `/site-profile` 顶层的 `home_links_limit` 与 `home_posts_per_page`，用户明确确认后再用 `site-profile-update` 只修改目标字段；两个值全站、全语种共用，链接数量设为 0 会隐藏首页链接模块。",
 		"",
 		"## 工作规则",
 		"",
@@ -2340,8 +2357,9 @@ func automationSkillMarkdown(apiBase string) string {
 		"13. 默认只创建或修改草稿。",
 		"14. 只有用户明确要求发布，并且访问密钥有对应资源的发布权限，才设置 `status` 为 `published` 或 `scheduled`。",
 		"15. 发布前优先用 `GET /posts/{id}/preview` 或 `GET /links/{id}/preview` 复核草稿渲染结果；需要浏览器复核时再生成 `preview-url`。",
-		"16. 需要置顶或取消置顶文章/链接时，先用 `q`、`slug` 或列表查到准确 id，再调用 `PATCH /posts/featured/{id}` 或 `PATCH /links/featured/{id}`，请求体只传 `{\"featured\":true}` 或 `{\"featured\":false}`；需要对应的置顶权限。",
-		"17. 完成后告诉用户变更了哪些内容、对应 id、语种、状态，以及建议人工复核的点。",
+		"16. 需要置顶或取消置顶文章/链接时，先用 `q`、`slug` 或列表查到准确 id，再调用 `PATCH /posts/featured/{id}` 或 `PATCH /links/featured/{id}`，请求体只传 `{\"featured\":true}` 或 `{\"featured\":false}`；需要对应的置顶权限。置顶只作用于这条内容的语种，草稿或未到发布时间的定时内容不会立即出现在首页。",
+		"17. 需要调整首页链接数量或文章每页数量时，先读取 `/site-profile`，再在 PATCH 顶层传 `home_links_limit`（0..24）或 `home_posts_per_page`（1..50）；它们全站、全语种共用，需要 `site:write`，不要放进 `items`。",
+		"18. 完成后告诉用户变更了哪些内容、对应 id、语种、状态，以及建议人工复核的点。",
 		"",
 		"## 内容模型边界",
 		"",
@@ -2366,8 +2384,9 @@ func automationSkillMarkdown(apiBase string) string {
 		"- `node scripts/gcms.js language-default en`",
 		"- `node scripts/gcms.js language-catalog id`",
 		"- `node scripts/gcms.js language-catalog-update id '{\"catalog\":{\"home.cta_start\":\"Mulai membaca\"}}'`",
-		"- `node scripts/gcms.js site-profile`（读取站点文案 / Hero / 首页标题）",
+		"- `node scripts/gcms.js site-profile`（读取站点文案 / Hero / 首页标题及全站首页显示数量）",
 		"- `node scripts/gcms.js site-profile-update '{\"lang\":\"zh\",\"hero_title\":\"新标题\"}'`",
+		"- `node scripts/gcms.js site-profile-update '{\"home_links_limit\":8,\"home_posts_per_page\":6}'`（全站、全语种共用；链接为 0 时隐藏首页链接模块）",
 		"- `node scripts/gcms.js navigation`",
 		"- `node scripts/gcms.js navigation-update @nav.json`",
 		"- `node scripts/gcms.js upload ./cover.webp`",
