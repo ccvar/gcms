@@ -3444,6 +3444,96 @@ fn parse_pilot_assistant_key(raw: &str, current: &str) -> Result<Zeroizing<Strin
     Err("GCMS 未返回有效的 Pilot 运营助手密钥".into())
 }
 
+/// 用服务器当前版本声明的权限集合刷新一条已经绑定的 Pilot 运营助手密钥。
+///
+/// 远端命令会先核对 stdin 中的现有 token：仍有效时只更新 scopes，不轮换 token；
+/// token 在远端已经失效时，GCMS 才会轮换同名专用密钥，并通过系统钥匙串原子接管。
+/// 本地钥匙串不可读则直接停止，绝不把读取异常当成“需要轮换”。
+/// 调用方必须已经持有该 SSH 连接的 GCMS 操作门闩。
+async fn sync_existing_pilot_assistant_key(
+    state: &AppState,
+    source_conn_id: &str,
+    status: &GcmsRemoteStatus,
+    assistant: &pack::Connection,
+) -> Result<pack::Connection, String> {
+    if assistant.kind != "gcms" {
+        return Err("关联连接不是 GCMS 技能包".into());
+    }
+    if assistant.name != "Pilot 运营助手" || assistant.key_kind != "gcmsp_" {
+        return Err("关联连接不是 GCMS 签发的 Pilot 运营助手".into());
+    }
+    if !assistant.source_ssh_id.trim().is_empty()
+        && assistant.source_ssh_id.trim() != source_conn_id
+    {
+        return Err("Pilot 运营助手与来源服务器不匹配".into());
+    }
+    if !status.installed || !status.running {
+        return Err("GCMS 服务尚未运行，无法同步 Pilot 运营助手权限".into());
+    }
+    if !status.assistant_import_supported {
+        return Err("当前 GCMS 版本不支持同步 Pilot 运营助手权限".into());
+    }
+    let api_base = gcms_platform_api_base(status)?;
+    // 自动更新不能把“钥匙串暂时不可读”误判成“没有 key”并在服务端轮换；
+    // 只有确实读到旧 token 后，才允许 GCMS 判断复用或轮换。
+    let current_key = Zeroizing::new(
+        keychain::get_key(&assistant.id)
+            .map_err(|error| format!("读取 Pilot 运营助手密钥失败：{error}"))?,
+    );
+
+    ensure_ssh(state, source_conn_id).await?;
+    let command = format!(
+        "env PILOT_GCMS_ROOT={} sh -c {}",
+        shell_quote(&status.path),
+        shell_quote(GCMS_REMOTE_ISSUE_ASSISTANT_KEY_CMD)
+    );
+    let issued = state
+        .ssh
+        .exec_with_stdin(source_conn_id, &command, current_key.as_bytes(), 45)
+        .await?;
+    if issued.code != 0 {
+        let detail = issued
+            .stderr
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty())
+            .unwrap_or("远端命令未返回错误详情");
+        return Err(format!(
+            "同步 Pilot 运营助手权限失败（退出码 {}）：{}",
+            issued.code,
+            detail.chars().take(240).collect::<String>()
+        ));
+    }
+    let assistant_key = parse_pilot_assistant_key(&issued.stdout, current_key.as_str())?;
+    let replacement =
+        (assistant_key.as_str() != current_key.as_str()).then_some(assistant_key.as_str());
+    state
+        .conns
+        .bind_pilot_assistant(&assistant.id, source_conn_id, &api_base, replacement)
+}
+
+/// 技能包同步入口使用的权限刷新包装：自己取得远程操作门闩并重新探测真实状态，
+/// 防止与 GCMS 升级、重启或其它服务器写操作并发。
+pub(super) async fn gcms_remote_sync_pilot_assistant_key(
+    state: &AppState,
+    source_conn_id: &str,
+    assistant_conn_id: &str,
+) -> Result<pack::Connection, String> {
+    let source = state.conns.get(source_conn_id)?;
+    if source.kind != "ssh" {
+        return Err("Pilot 运营助手关联的来源不是远程服务器".into());
+    }
+    let _guard = begin_gcms_operation(state, source_conn_id)?;
+    let status = gcms_remote_status_inner(state, source_conn_id).await?;
+    let api_base = gcms_platform_api_base(&status)?;
+    let assistant = state
+        .conns
+        .pilot_assistant_for_source(source_conn_id, &api_base)
+        .filter(|connection| connection.id == assistant_conn_id)
+        .ok_or("技能包与来源 GCMS 的绑定关系已变化，请重新检测连接")?;
+    sync_existing_pilot_assistant_key(state, source_conn_id, &status, &assistant).await
+}
+
 async fn download_pilot_assistant_pack(api_base: &str, key: &str) -> Result<Vec<u8>, String> {
     const MAX_PACK_BYTES: u64 = 32 * 1024 * 1024;
     let url = format!("{}/skill-pack", api_base.trim_end_matches('/'));
@@ -3676,6 +3766,31 @@ async fn verify_gcms_admin_password_at(
     let status = gcms_remote_status_at(state, conn_id, instance_path).await?;
     verify_gcms_admin_password_for_status(state, conn_id, &status, password).await?;
     Ok(status)
+}
+
+#[tauri::command]
+pub(super) async fn gcms_remote_verify_admin_password(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    instance_path: Option<String>,
+    migration_instance_id: Option<String>,
+    admin_password: String,
+) -> Result<(), String> {
+    let admin_password = Zeroizing::new(admin_password);
+    let migration_instance = migration_instance_for_request(
+        &state.data_dir,
+        migration_instance_id.as_deref(),
+        &conn_id,
+        instance_path.as_deref(),
+    )?;
+    let verification_path = migration_instance
+        .as_ref()
+        .map(|instance| instance.instance_path.as_str())
+        .or(instance_path.as_deref());
+    let _guard = begin_gcms_operation(&state, &conn_id)?;
+    verify_gcms_admin_password_at(&state, &conn_id, verification_path, admin_password.as_str())
+        .await?;
+    Ok(())
 }
 
 fn ensure_gcms_initial_password_status(status: &str) -> Result<(), String> {
@@ -6734,6 +6849,28 @@ pub(super) async fn gcms_remote_upgrade(
     }
     if before.running && !after.running {
         return Err("升级器已完成，但 GCMS 服务未恢复运行；请查看升级日志".into());
+    }
+    // 旧 Pilot 连接的 scope 是签发时快照。新版 GCMS 成功启动后，用原 token
+    // 再跑一次本机专用签发命令即可原地补齐新权限；命中旧版未记录 source_ssh_id
+    // 的同域名连接时，bind 还会顺手把来源关系收编。这里绝不创建新连接或覆盖技能包。
+    if after.running {
+        let assistant_api = gcms_platform_api_base(&after).unwrap_or_default();
+        if let Some(assistant) = state
+            .conns
+            .pilot_assistant_for_source(&conn_id, &assistant_api)
+        {
+            phase("正在同步 Pilot 运营助手权限…");
+            match sync_existing_pilot_assistant_key(&state, &conn_id, &after, &assistant).await {
+                Ok(_) => phase("Pilot 运营助手权限已同步"),
+                Err(error) => {
+                    let _ = on_event.send(GcmsInstallEvent::Log {
+                        text: format!(
+                            "GCMS 已升级，但 Pilot 运营助手权限同步未完成；同步技能包时会重试：{error}"
+                        ),
+                    });
+                }
+            }
+        }
     }
     phase(if after.version == before.version {
         "当前已经是最新版本"

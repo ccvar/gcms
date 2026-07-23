@@ -95,6 +95,11 @@ fn fix_windows() {
     if let Ok(appdata) = std::env::var("APPDATA") {
         dirs.push(format!("{appdata}\\npm"));
     }
+    // 3) Claude 官方 Windows 安装器的默认目录。必须在应用启动阶段就补，而不是依赖
+    // 前端先跑一次 detect；这样定时任务/恢复会话也能直接解析到原生 claude.exe。
+    if let Ok(profile) = std::env::var("USERPROFILE") {
+        dirs.push(format!("{profile}\\.local\\bin"));
+    }
 
     if dirs.is_empty() {
         return;

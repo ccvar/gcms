@@ -16,7 +16,7 @@ export interface Prefs {
 
 const KEY = 'gcms.pilot.prefs';
 
-export const DEFAULT_PREFS: Prefs = { brain: 'claude', model: 'sonnet', customClaudeIds: [], customCodexIds: [], customGrokIds: [], taskType: 'article', perm: 'full', effort: '' };
+export const DEFAULT_PREFS: Prefs = { brain: 'claude', model: 'sonnet', customClaudeIds: [], customCodexIds: [], customGrokIds: [], taskType: 'siteops', perm: 'full', effort: '' };
 
 export function loadPrefs(): Prefs {
   try {
@@ -34,6 +34,8 @@ export function loadPrefs(): Prefs {
       if (x && !p.customCodexIds.includes(x)) p.customCodexIds.push(x);
       delete p.customClaude;
       delete p.customCodex;
+      // 旧启动器的“内容创作/自由对话”都绑定站点，升级后统一进入“站点运营”。
+      if (p.taskType === 'article' || p.taskType === 'free') p.taskType = 'siteops';
       return p;
     }
   } catch {

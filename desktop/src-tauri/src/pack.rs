@@ -2,9 +2,12 @@
 //! key 剥离进 Keychain，.env 只留 GCMS_API_BASE → 连接元数据存 connections.json。
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::ffi::OsString;
 use std::fs;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use crate::keychain;
 
@@ -846,33 +849,289 @@ fn read_pack_version(skill_dir: &Path) -> String {
         .unwrap_or_default()
 }
 
-/// 把新包的技能目录覆盖到已有技能目录上：只写包里有的文件，绝不删除既有文件；
-/// 根级 `.env` 跳过（由 Pilot 管理：只含 GCMS_API_BASE，密钥在钥匙串）——
-/// uploads/、shots/ 等用户/运行时文件因此天然保留。
-fn overlay_skill_dir(src: &Path, dest: &Path) -> Result<(), String> {
-    fn walk(src: &Path, dest: &Path, root: bool) -> Result<(), String> {
-        fs::create_dir_all(dest).map_err(|e| format!("create dir {}: {e}", dest.display()))?;
-        let entries = fs::read_dir(src).map_err(|e| format!("read dir {}: {e}", src.display()))?;
-        for e in entries.flatten() {
-            let name = e.file_name();
-            let ns = name.to_string_lossy();
-            if root && (ns == ".env" || ns == ".env.example") {
-                continue; // 保留现有 .env（含正确 base）；example 也不需要
+/// 同一技能目录的导入和在线升级必须串行。弱引用让已不用的目录锁自动从表里淘汰，
+/// 不会随着连接数量增长永久占内存。
+fn skill_overlay_lock(dest: &Path) -> Arc<Mutex<()>> {
+    static LOCKS: OnceLock<Mutex<HashMap<PathBuf, Weak<Mutex<()>>>>> = OnceLock::new();
+
+    let parent = dest.parent().unwrap_or_else(|| Path::new("."));
+    let key = parent
+        .canonicalize()
+        .map(|parent| match dest.file_name() {
+            Some(name) => parent.join(name),
+            None => parent,
+        })
+        .unwrap_or_else(|_| dest.to_path_buf());
+    let mut locks = LOCKS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    locks.retain(|_, lock| lock.strong_count() > 0);
+    if let Some(lock) = locks.get(&key).and_then(Weak::upgrade) {
+        return lock;
+    }
+    let lock = Arc::new(Mutex::new(()));
+    locks.insert(key, Arc::downgrade(&lock));
+    lock
+}
+
+fn transaction_paths(dest: &Path) -> Result<(PathBuf, PathBuf), String> {
+    let name = dest
+        .file_name()
+        .ok_or_else(|| format!("技能目录路径无效：{}", dest.display()))?;
+    let parent = dest.parent().unwrap_or_else(|| Path::new("."));
+    let mut stage_name = OsString::from(".");
+    stage_name.push(name);
+    stage_name.push(".pilot-update-stage");
+    let mut backup_name = OsString::from(".");
+    backup_name.push(name);
+    backup_name.push(".pilot-update-backup");
+    Ok((parent.join(stage_name), parent.join(backup_name)))
+}
+
+/// 与 `Path::exists` 不同，断开的符号链接也算存在。
+fn path_lexists(path: &Path) -> Result<bool, String> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(format!("检查 {} 失败: {error}", path.display())),
+    }
+}
+
+fn remove_path(path: &Path) -> Result<(), String> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(format!("检查 {} 失败: {error}", path.display())),
+    };
+    if metadata.file_type().is_dir() {
+        fs::remove_dir_all(path).map_err(|e| format!("删除目录 {} 失败: {e}", path.display()))
+    } else {
+        // 普通文件、符号链接及 Unix socket 等特殊目录项都只删除该项本身。
+        fs::remove_file(path).map_err(|e| format!("删除文件 {} 失败: {e}", path.display()))
+    }
+}
+
+fn copy_symlink(src: &Path, dest: &Path) -> Result<(), String> {
+    let target = fs::read_link(src).map_err(|e| format!("读取链接 {} 失败: {e}", src.display()))?;
+
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&target, dest)
+            .map_err(|e| format!("复制链接 {} 失败: {e}", dest.display()))
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::{symlink_dir, symlink_file};
+
+        let target_is_dir = fs::metadata(src).map(|metadata| metadata.is_dir()).ok();
+        let result = match target_is_dir {
+            Some(true) => symlink_dir(&target, dest),
+            Some(false) => symlink_file(&target, dest),
+            // 断开的链接无法探知类型；文件链接优先，失败再尝试目录链接。
+            None => symlink_file(&target, dest).or_else(|_| symlink_dir(&target, dest)),
+        };
+        result.map_err(|e| format!("复制链接 {} 失败: {e}", dest.display()))
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = target;
+        Err(format!("当前平台不支持复制符号链接：{}", src.display()))
+    }
+}
+
+/// 把现有技能目录完整克隆成候选目录。普通文件优先硬链接，以免大型 uploads/
+/// 重复占空间；跨文件系统或文件系统不支持硬链接时回退到复制。
+fn clone_skill_tree(src: &Path, dest: &Path) -> Result<(), String> {
+    let metadata = fs::symlink_metadata(src)
+        .map_err(|e| format!("读取技能目录 {} 失败: {e}", src.display()))?;
+    if !metadata.file_type().is_dir() {
+        return Err(format!("技能目录不是普通目录：{}", src.display()));
+    }
+    fs::create_dir(dest).map_err(|e| format!("创建暂存目录 {} 失败: {e}", dest.display()))?;
+    let entries =
+        fs::read_dir(src).map_err(|e| format!("读取技能目录 {} 失败: {e}", src.display()))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("读取目录项 {} 失败: {e}", src.display()))?;
+        let source = entry.path();
+        let target = dest.join(entry.file_name());
+        let file_type = entry
+            .file_type()
+            .map_err(|e| format!("读取目录项类型 {} 失败: {e}", source.display()))?;
+        if file_type.is_dir() {
+            clone_skill_tree(&source, &target)?;
+        } else if file_type.is_file() {
+            if fs::hard_link(&source, &target).is_err() {
+                fs::copy(&source, &target)
+                    .map_err(|e| format!("复制 {} 失败: {e}", source.display()))?;
             }
-            let sp = e.path();
-            let dp = dest.join(&name);
-            if sp.is_dir() {
-                walk(&sp, &dp, false)?;
-            } else {
-                fs::copy(&sp, &dp).map_err(|e| format!("覆盖 {} 失败: {e}", dp.display()))?;
-            }
+        } else if file_type.is_symlink() {
+            copy_symlink(&source, &target)?;
+        } else {
+            return Err(format!("暂不支持复制特殊文件：{}", source.display()));
         }
-        Ok(())
     }
-    if !dest.is_dir() {
-        return Err(format!("原技能目录不存在：{}", dest.display()));
+    Ok(())
+}
+
+/// 只改候选目录。替换普通文件前必须先 unlink：候选中的旧文件通常与正式目录
+/// 是硬链接，直接 `copy` 会截断同一个 inode，从而破坏事务性。
+fn overlay_into_stage(src: &Path, stage: &Path, root: bool) -> Result<(), String> {
+    let entries =
+        fs::read_dir(src).map_err(|e| format!("读取新技能包 {} 失败: {e}", src.display()))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("读取目录项 {} 失败: {e}", src.display()))?;
+        let name = entry.file_name();
+        let name_text = name.to_string_lossy();
+        if root && (name_text == ".env" || name_text == ".env.example") {
+            continue; // 两者都保留目标目录原值；不存在时也不从包内引入。
+        }
+        let source = entry.path();
+        let target = stage.join(&name);
+        let file_type = entry
+            .file_type()
+            .map_err(|e| format!("读取目录项类型 {} 失败: {e}", source.display()))?;
+        if file_type.is_dir() {
+            if path_lexists(&target)? {
+                let target_type = fs::symlink_metadata(&target)
+                    .map_err(|e| format!("读取 {} 失败: {e}", target.display()))?
+                    .file_type();
+                if !target_type.is_dir() {
+                    remove_path(&target)?;
+                    fs::create_dir(&target)
+                        .map_err(|e| format!("创建目录 {} 失败: {e}", target.display()))?;
+                }
+            } else {
+                fs::create_dir(&target)
+                    .map_err(|e| format!("创建目录 {} 失败: {e}", target.display()))?;
+            }
+            overlay_into_stage(&source, &target, false)?;
+        } else if file_type.is_file() {
+            remove_path(&target)?;
+            fs::copy(&source, &target)
+                .map_err(|e| format!("覆盖 {} 失败: {e}", target.display()))?;
+        } else if file_type.is_symlink() {
+            remove_path(&target)?;
+            copy_symlink(&source, &target)?;
+        } else {
+            return Err(format!(
+                "新技能包包含不支持的特殊文件：{}",
+                source.display()
+            ));
+        }
     }
-    walk(src, dest, true)
+    Ok(())
+}
+
+fn validate_skill_tree(skill_dir: &Path) -> Result<(), String> {
+    let cli = skill_dir.join("scripts").join("gcms.js");
+    let metadata = fs::symlink_metadata(&cli)
+        .map_err(|e| format!("技能目录缺少 scripts/gcms.js（{}）: {e}", cli.display()))?;
+    if !metadata.file_type().is_file() {
+        return Err(format!("scripts/gcms.js 不是普通文件：{}", cli.display()));
+    }
+    Ok(())
+}
+
+/// 恢复上一次进程在两个 rename 之间退出留下的现场：
+/// - backup 有、dest 无：第一步完成但第二步未完成，恢复旧目录；
+/// - backup 和有效 dest 都有：第二步已完成，只需清理旧备份；
+/// - backup 和无效 dest 都有：保守回滚到旧目录。
+fn recover_overlay_transaction(dest: &Path, stage: &Path, backup: &Path) -> Result<(), String> {
+    if path_lexists(backup)? {
+        if !path_lexists(dest)? {
+            fs::rename(backup, dest).map_err(|e| {
+                format!(
+                    "恢复上次技能包更新失败（{} → {}）: {e}",
+                    backup.display(),
+                    dest.display()
+                )
+            })?;
+        } else if validate_skill_tree(dest).is_ok() {
+            remove_path(backup)?;
+        } else {
+            remove_path(stage)?;
+            fs::rename(dest, stage)
+                .map_err(|e| format!("暂存未完成的技能目录 {} 失败: {e}", dest.display()))?;
+            if let Err(error) = fs::rename(backup, dest) {
+                let restore_new = fs::rename(stage, dest);
+                return Err(match restore_new {
+                    Ok(()) => format!("恢复旧技能目录失败，已保留当前目录：{error}"),
+                    Err(restore_error) => {
+                        format!("恢复旧技能目录失败：{error}；恢复当前目录也失败：{restore_error}")
+                    }
+                });
+            }
+            remove_path(stage)?;
+        }
+    }
+    remove_path(stage)
+}
+
+/// 把新包事务式覆盖到已有技能目录：先在同级完整准备候选目录，再用两次同盘 rename
+/// 切换。根级 `.env` / `.env.example`、uploads/、shots/ 等用户和运行时文件均从
+/// 旧目录保留；任何准备错误都不会触碰正式目录。
+fn overlay_skill_dir(src: &Path, dest: &Path) -> Result<(), String> {
+    let lock = skill_overlay_lock(dest);
+    let _guard = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let (stage, backup) = transaction_paths(dest)?;
+
+    // 即使本次传入的新包无效，也先把上次崩溃留下的正式目录恢复到可用状态。
+    recover_overlay_transaction(dest, &stage, &backup)?;
+    validate_skill_tree(src)?;
+    let dest_metadata =
+        fs::symlink_metadata(dest).map_err(|_| format!("原技能目录不存在：{}", dest.display()))?;
+    if !dest_metadata.file_type().is_dir() {
+        return Err(format!("原技能目录不是普通目录：{}", dest.display()));
+    }
+
+    let preparation = (|| {
+        clone_skill_tree(dest, &stage)?;
+        overlay_into_stage(src, &stage, true)?;
+        validate_skill_tree(&stage)
+    })();
+    if let Err(error) = preparation {
+        let cleanup = remove_path(&stage);
+        return Err(match cleanup {
+            Ok(()) => error,
+            Err(cleanup_error) => format!("{error}；清理暂存目录失败：{cleanup_error}"),
+        });
+    }
+
+    if let Err(error) = fs::rename(dest, &backup) {
+        let cleanup = remove_path(&stage);
+        return Err(match cleanup {
+            Ok(()) => format!("备份原技能目录 {} 失败: {error}", dest.display()),
+            Err(cleanup_error) => format!(
+                "备份原技能目录 {} 失败: {error}；清理暂存目录失败：{cleanup_error}",
+                dest.display()
+            ),
+        });
+    }
+    if let Err(error) = fs::rename(&stage, dest) {
+        return match fs::rename(&backup, dest) {
+            Ok(()) => {
+                let cleanup = remove_path(&stage);
+                Err(match cleanup {
+                    Ok(()) => format!("启用新技能目录失败，已恢复原目录：{error}"),
+                    Err(cleanup_error) => format!(
+                        "启用新技能目录失败，已恢复原目录；清理暂存目录失败：{cleanup_error}"
+                    ),
+                })
+            }
+            Err(restore_error) => Err(format!(
+                "启用新技能目录失败：{error}；恢复原目录也失败：{restore_error}（备份保留在 {}）",
+                backup.display()
+            )),
+        };
+    }
+
+    // 第二次 rename 已经提交成功；清理失败不应把一次成功更新报告成失败，下次调用
+    // 会在持锁状态下识别有效 dest 并继续清掉固定 backup。
+    let _ = remove_path(&backup);
+    Ok(())
 }
 
 /// 在解压目录下找包含 scripts/gcms.js 的技能目录（兼容平台包/单站包/嵌套一层的情况）。
@@ -1417,6 +1676,7 @@ mod tests {
         fs::create_dir_all(dest.join("uploads")).unwrap();
         fs::write(dest.join("scripts").join("gcms.js"), "OLD CLI").unwrap();
         fs::write(dest.join(".env"), "GCMS_API_BASE=https://a.example").unwrap();
+        fs::write(dest.join(".env.example"), "LOCAL EXAMPLE").unwrap();
         fs::write(dest.join("uploads").join("logo.png"), "userdata").unwrap();
         // 新包：新脚本 + 新文档 + 占位 .env/.env.example（不得覆盖现有 .env）
         fs::create_dir_all(src.join("scripts")).unwrap();
@@ -1443,9 +1703,72 @@ mod tests {
             fs::read_to_string(dest.join("uploads").join("logo.png")).unwrap(),
             "userdata"
         ); // 用户文件保留
-        assert!(!dest.join(".env.example").exists()); // 占位不引入
-                                                      // 目标不存在 → 明确报错
+        assert_eq!(
+            fs::read_to_string(dest.join(".env.example")).unwrap(),
+            "LOCAL EXAMPLE"
+        ); // 已有 example 保留，不被包内占位覆盖
+           // 目标不存在 → 明确报错
         assert!(overlay_skill_dir(&src, &base.join("nope")).is_err());
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn overlay_preparation_failure_keeps_destination_untouched() {
+        let base = std::env::temp_dir().join(format!("pilot-ovl-fail-{}", uuid::Uuid::new_v4()));
+        let dest = base.join("skill");
+        let src = base.join("new");
+        fs::create_dir_all(dest.join("scripts")).unwrap();
+        fs::write(dest.join("scripts/gcms.js"), "OLD CLI").unwrap();
+        fs::write(dest.join("keep.txt"), "old user data").unwrap();
+        // gcms.js 伪装成目录：候选包的准备校验必须失败，且不得开始切换正式目录。
+        fs::create_dir_all(src.join("scripts/gcms.js")).unwrap();
+        fs::write(src.join("new.txt"), "new pack file").unwrap();
+
+        let error = overlay_skill_dir(&src, &dest).unwrap_err();
+        assert!(error.contains("不是普通文件"), "{error}");
+        assert_eq!(
+            fs::read_to_string(dest.join("scripts/gcms.js")).unwrap(),
+            "OLD CLI"
+        );
+        assert_eq!(
+            fs::read_to_string(dest.join("keep.txt")).unwrap(),
+            "old user data"
+        );
+        assert!(!dest.join("new.txt").exists());
+        let (stage, backup) = transaction_paths(&dest).unwrap();
+        assert!(!path_lexists(&stage).unwrap());
+        assert!(!path_lexists(&backup).unwrap());
+
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn overlay_recovers_backup_left_between_renames() {
+        let base = std::env::temp_dir().join(format!("pilot-ovl-recover-{}", uuid::Uuid::new_v4()));
+        let dest = base.join("skill");
+        let invalid_src = base.join("invalid-new");
+        fs::create_dir_all(dest.join("scripts")).unwrap();
+        fs::write(dest.join("scripts/gcms.js"), "OLD CLI").unwrap();
+        fs::write(dest.join("keep.txt"), "old user data").unwrap();
+        fs::create_dir_all(&invalid_src).unwrap();
+
+        let (stage, backup) = transaction_paths(&dest).unwrap();
+        fs::rename(&dest, &backup).unwrap();
+        fs::create_dir_all(stage.join("scripts")).unwrap();
+        fs::write(stage.join("scripts/gcms.js"), "UNCOMMITTED CLI").unwrap();
+
+        // 新调用先恢复崩溃现场，再校验本次包；因此本次虽失败，旧目录仍应恢复。
+        assert!(overlay_skill_dir(&invalid_src, &dest).is_err());
+        assert_eq!(
+            fs::read_to_string(dest.join("scripts/gcms.js")).unwrap(),
+            "OLD CLI"
+        );
+        assert_eq!(
+            fs::read_to_string(dest.join("keep.txt")).unwrap(),
+            "old user data"
+        );
+        assert!(!path_lexists(&stage).unwrap());
+        assert!(!path_lexists(&backup).unwrap());
         fs::remove_dir_all(&base).ok();
     }
 }

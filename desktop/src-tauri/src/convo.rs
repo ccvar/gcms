@@ -56,11 +56,13 @@ pub struct Message {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Conversation {
     pub id: String,
+    /// 会话在侧栏中的固定归属。workspace 会话只借这个字段记住“在哪里创建”，
+    /// 实际运行始终使用隔离的 workspace 连接，不读取该连接的站点或凭据。
     pub conn_id: String,
     pub conn_name: String,
     pub site_slug: String,
     pub site_name: String,
-    /// article | sitebuild | free
+    /// siteops | sitebuild | workspace | remote（article/free 为旧会话兼容值）
     pub task_type: String,
     pub brain: String,
     pub model: String,
@@ -76,6 +78,10 @@ pub struct Conversation {
     /// 与 site_slugs 对齐的站点名。
     #[serde(default)]
     pub site_names: Vec<String>,
+    /// 自由对话显式选择的本地工作目录。空串表示使用 Pilot 为该会话创建的隔离目录。
+    /// 只有 task_type=workspace 会读取；其它任务必须忽略，避免把本地路径误当站点上下文。
+    #[serde(default)]
+    pub workspace_dir: String,
     /// claude 的 session uuid 或 codex 的 thread_id；首轮后回填。
     pub session_ref: String,
     pub title: String,
@@ -275,6 +281,33 @@ impl ConvStore {
         Ok(())
     }
 
+    /// 早期 workspace 会话统一写在一个合成连接下，因此会在每个真实连接之间“跟着走”。
+    /// 升级后第一次看到它们时固定到当时所在的真实连接；只迁移尚未归属的旧记录。
+    pub fn anchor_legacy_workspace(
+        &self,
+        legacy_conn_id: &str,
+        conn_id: &str,
+        conn_name: &str,
+    ) -> Result<Vec<Conversation>, String> {
+        let _g = self.lock.lock().unwrap();
+        let mut list = self.read();
+        let mut changed = false;
+        for conversation in &mut list {
+            if conversation.task_type == "workspace"
+                && (conversation.conn_id.trim().is_empty()
+                    || conversation.conn_id == legacy_conn_id)
+            {
+                conversation.conn_id = conn_id.to_string();
+                conversation.conn_name = conn_name.to_string();
+                changed = true;
+            }
+        }
+        if changed {
+            self.save(&list)?;
+        }
+        Ok(list)
+    }
+
     /// 启动时把残留 running 的会话置回 idle（进程随退出被杀，不可能还在跑）。
     pub fn mark_idle(&self, now: u64) {
         let _g = self.lock.lock().unwrap();
@@ -362,6 +395,7 @@ mod tests {
             effort: String::new(),
             site_slugs: vec![],
             site_names: vec![],
+            workspace_dir: String::new(),
             session_ref: session.into(),
             title: "t".into(),
             messages: msgs,
@@ -371,6 +405,47 @@ mod tests {
             ctx_tokens: 0,
             total_tokens: 0,
         }
+    }
+
+    #[test]
+    fn legacy_workspace_is_anchored_once_and_stops_roaming() {
+        let base = std::env::temp_dir().join(format!("convo-anchor-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&base).unwrap();
+        let store = ConvStore::new(&base);
+
+        let mut workspace = conv("workspace", "session", vec![]);
+        workspace.task_type = "workspace".into();
+        workspace.conn_id = "__workspace__".into();
+        workspace.conn_name = "自由对话".into();
+        store.upsert(workspace).unwrap();
+
+        let mut site = conv("site", "session", vec![]);
+        site.conn_id = "site-owner".into();
+        store.upsert(site).unwrap();
+
+        let anchored = store
+            .anchor_legacy_workspace("__workspace__", "created-here", "创建位置")
+            .unwrap();
+        let workspace = anchored.iter().find(|c| c.id == "workspace").unwrap();
+        assert_eq!(workspace.conn_id, "created-here");
+        assert_eq!(workspace.conn_name, "创建位置");
+        assert_eq!(
+            anchored.iter().find(|c| c.id == "site").unwrap().conn_id,
+            "site-owner"
+        );
+
+        let anchored_again = store
+            .anchor_legacy_workspace("__workspace__", "somewhere-else", "别处")
+            .unwrap();
+        assert_eq!(
+            anchored_again
+                .iter()
+                .find(|c| c.id == "workspace")
+                .unwrap()
+                .conn_id,
+            "created-here"
+        );
+        std::fs::remove_dir_all(&base).ok();
     }
 
     #[test]

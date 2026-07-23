@@ -15,11 +15,12 @@
   import SiteFav from '$lib/SiteFav.svelte';
   import ModelFx from '$lib/ModelFx.svelte';
   import UsageRing from '$lib/UsageRing.svelte';
-  import { tip as tipAction } from '$lib/tip';
+  import { hideTip, showTipFor, tip as tipAction } from '$lib/tip';
   import AppIcon from '$lib/AppIcon.svelte';
   import type {
-    Connection, Discovery, Site, BrainsInfo, Brain, ImportOutcome,
+    Connection, Discovery, Site, SiteDeployment, SitePublicAccessStatus, SitePublicAccessSummary, SitePublicAccessApplyResult, BrainsInfo, Brain, ImportOutcome, GlobalIntegrationsConfig, SiteIntegrationsConfig, CloudflareAuthorization,
     Conversation, Message, TaskType, TurnEvent, ToolCall, ScheduledItem, ScheduledTask, TaskProposal,
+    ThemeCatalogItem, ThemeSkin, ThemeFamily, ThemeCatalog, SiteThemeState, ThemeMutationResult, ThemePreviewURL,
   } from '$lib/types';
   import { loadPrefs, savePrefs } from '$lib/defaults';
   import { PRESET_PROMPTS, loadUserPrompts, saveUserPrompts, newPromptId, type Prompt } from '$lib/prompts';
@@ -34,6 +35,10 @@
   let activeConnId = $state('');
   let discovery = $state<Discovery | null>(null);
   let discoveryLoading = $state(false);
+  let siteStatusBusy = $state<Record<number, boolean>>({});
+  let sitePreviewBusy = $state<Record<string, boolean>>({});
+  let sitesGlobalMenuKind = $state<'google' | 'telegram' | 'cloudflare' | null>(null);
+  let sitesGlobalMenuEl = $state<HTMLDivElement | null>(null);
   let brains = $state<BrainsInfo | null>(null);
   let importBusy = $state(false);
   let setupOpen = $state(false);
@@ -132,6 +137,16 @@
     update_supported?: boolean;
   };
   type GcmsRemoteUpdateInfo = { current: string; latest: string; has_update: boolean };
+  type PackUpdateInfo = {
+    current: string;
+    latest: string;
+    has_update: boolean;
+    status?: 'ok' | 'unsupported' | 'unreachable' | 'error';
+    error?: string;
+  };
+  type UnifiedUpdateStatus = 'idle' | 'checking' | 'available' | 'current' | 'unreachable' | 'unsupported' | 'waiting' | 'updating' | 'verifying' | 'done' | 'failed';
+  type UnifiedRunState = { status: UnifiedUpdateStatus; message: string };
+  type UpdateActionResult = { ok: boolean; message: string };
   type GcmsAccessHealth = {
     domain: string; checked: boolean; https_ok: boolean; verification_error: string;
     cloudflare_checked: boolean; cloudflare_proxy_applicable: boolean; cloudflare_proxied: boolean; cloudflare_proxy_error: string;
@@ -242,6 +257,7 @@
   let gcmsAssistantImporting = $state<Record<string, boolean>>({});
   let gcmsUpdates = $state<Record<string, GcmsRemoteUpdateInfo>>({});
   let gcmsUpdateChecking = $state<Record<string, boolean>>({});
+  let gcmsUpdateErrors = $state<Record<string, string>>({});
   let gcmsUpgrading = $state<Record<string, number>>({});
   let gcmsInstallClock = $state(Date.now());
   let gcmsPasswordEditor = $state<GcmsPasswordEditor | null>(null);
@@ -499,13 +515,16 @@
     if (gcmsMigrationRestarting || gcmsMigrationStopping) return;
     const action = instance.running ? '重启' : '启动';
     gcmsInstanceMenu = null;
-    requestGcmsPassword({
+    requestVerifiedGcmsPassword({
       title: `${action}迁移实例`,
       message: instance.running
         ? `端口 :${instance.port} 会短暂不可访问；目录、数据和域名配置不会改变。`
         : `将按端口 :${instance.port} 和现有配置启动，不会修改实例数据。`,
       instance: instance.source_name,
-      confirmText: `验证并${action}`,
+    }, {
+      connId: instance.target_id,
+      instancePath: instance.instance_path,
+      migrationInstanceId: instance.id,
     }, async (adminPassword) => {
       gcmsMigrationRestarting = instance.id;
       gcmsMigrationError = '';
@@ -525,11 +544,14 @@
   async function stopGcmsMigrationInstance(instance: GcmsMigrationSnapshot) {
     if (gcmsMigrationRestarting || gcmsMigrationStopping || !instance.running) return;
     gcmsInstanceMenu = null;
-    requestGcmsPassword({
+    requestVerifiedGcmsPassword({
       title: '关闭实例服务',
       message: `端口 :${instance.port} 的网站与后台将不可访问；目录、数据、域名和开机自启配置都会保留。`,
       instance: instance.source_name,
-      confirmText: '验证并关闭',
+    }, {
+      connId: instance.target_id,
+      instancePath: instance.instance_path,
+      migrationInstanceId: instance.id,
     }, async (adminPassword) => {
       gcmsMigrationStopping = instance.id;
       gcmsMigrationError = '';
@@ -578,12 +600,15 @@
     const actionLabel = onlyForget ? '移除记录' : remoteState === 'residual' ? '清理残留' : '卸载实例';
     if (!onlyForget) {
       gcmsInstanceMenu = null;
-      requestGcmsPassword({
+      requestVerifiedGcmsPassword({
         title: actionLabel,
         message: '将永久删除该实例的目录、数据、systemd 与 Web 配置。DNS 和 Cloudflare 记录会保留。',
         instance: instance.source_name,
         kind: 'danger',
-        confirmText: `验证并${actionLabel}`,
+      }, {
+        connId: instance.target_id,
+        instancePath: instance.instance_path,
+        migrationInstanceId: instance.id,
       }, async (adminPassword) => {
         gcmsMigrationRemoving = instance.id;
         gcmsMigrationError = '';
@@ -659,9 +684,17 @@
   function gcmsPilotAssistant(sourceId: string): Connection | undefined {
     return conns.find((connection) => connection.kind === 'gcms' && connection.source_ssh_id === sourceId);
   }
+  function connectionDisplayName(connection: Connection): string {
+    const assistantDomain = connection.kind === 'gcms' && connection.source_ssh_id
+      ? domainFromUrl(connection.api_base)
+      : '';
+    return assistantDomain || connection.name;
+  }
   function gcmsAssistantImportTip(status: GcmsRemoteStatus, imported: boolean): string {
     if (!status.running) return '请先启动 GCMS 服务';
-    if (!gcmsHttpsConfigured(status)) return '请先设置访问域名并启用 HTTPS';
+    if (!gcmsHttpsConfigured(status)) return imported
+      ? '访问域名不可用；已导入记录会保留，修复后可继续同步'
+      : '请先设置访问域名并启用 HTTPS';
     if (!status.assistant_import_supported) return '请先升级 GCMS，再导入 Pilot 运营助手';
     return imported
       ? '同步最新技能包与全站运营权限；已有对话会保留'
@@ -678,10 +711,12 @@
       const outcome = await invoke<ImportOutcome>('gcms_remote_import_pilot_assistant', { connId: c.id });
       if (outcome.status === 'needs_key') throw new Error('GCMS 未能签发 Pilot 运营助手密钥，请重新检测后再试');
       delete packUpdates[outcome.connection.id];
+      delete packUpdateChecks[outcome.connection.id];
       await refreshConns();
+      const assistantName = connectionDisplayName(outcome.connection);
       say(existed || outcome.status === 'upgraded'
-        ? '「Pilot 运营助手」已更新，原有对话全部保留'
-        : '「Pilot 运营助手」已导入当前 Pilot');
+        ? `「${assistantName}」已更新，原有对话全部保留`
+        : `「${assistantName}」已导入当前 Pilot`);
     } catch (e) {
       say(String(e), 'err');
     } finally {
@@ -692,21 +727,33 @@
   }
   async function checkRemoteGcmsUpdate(connId: string, silent = false, force = false): Promise<GcmsRemoteUpdateInfo | null> {
     if (gcmsUpdateChecking[connId] || gcmsUpgrading[connId]) return gcmsUpdates[connId] ?? null;
+    if (force) {
+      const updates = { ...gcmsUpdates };
+      delete updates[connId];
+      gcmsUpdates = updates;
+    }
     if (!force && gcmsUpdates[connId]) return gcmsUpdates[connId];
     const status = gcmsServer(connId).status;
     if (!status?.installed) return null;
     if (!status.update_supported) {
-      if (!silent) say('当前 GCMS 安装不支持在线升级，请先使用标准安装包更新', 'err');
+      const message = '当前 GCMS 安装不支持在线升级，请先使用标准安装包更新';
+      gcmsUpdateErrors = { ...gcmsUpdateErrors, [connId]: message };
+      if (!silent) say(message, 'err');
       return null;
     }
     gcmsUpdateChecking = { ...gcmsUpdateChecking, [connId]: true };
     try {
       const info = await invoke<GcmsRemoteUpdateInfo>('gcms_remote_check_update', { connId });
       gcmsUpdates = { ...gcmsUpdates, [connId]: info };
+      const errors = { ...gcmsUpdateErrors };
+      delete errors[connId];
+      gcmsUpdateErrors = errors;
       if (!silent) say(info.has_update ? `发现 GCMS 新版本 ${info.latest}` : `GCMS ${info.current || status.version} 已是最新版本`);
       return info;
     } catch (e) {
-      if (!silent) say(String(e), 'err');
+      const message = String(e);
+      gcmsUpdateErrors = { ...gcmsUpdateErrors, [connId]: message };
+      if (!silent) say(message, 'err');
       return null;
     } finally {
       const next = { ...gcmsUpdateChecking };
@@ -714,17 +761,38 @@
       gcmsUpdateChecking = next;
     }
   }
-  async function upgradeRemoteGcms(c: Connection, current: GcmsRemoteStatus) {
-    if (gcmsUpgrading[c.id] || gcmsInstalling[c.id]) return;
+  function sameUpdateVersion(actual: string, expected: string): boolean {
+    return actual.trim().replace(/^v/i, '') === expected.trim().replace(/^v/i, '');
+  }
+  async function upgradeRemoteGcms(
+    c: Connection,
+    current: GcmsRemoteStatus,
+    options: { confirm?: boolean; notify?: boolean; refreshPacks?: boolean } = {},
+  ): Promise<UpdateActionResult> {
+    const notify = options.notify !== false;
+    const shouldConfirm = options.confirm !== false;
+    if (gcmsUpgrading[c.id] || gcmsInstalling[c.id]) return { ok: false, message: '该服务器已有操作正在进行' };
+    const activePacks = gcmsPacksForServer(c.id).filter((pack) => connectionHasActiveTurn(pack.id));
+    if (activePacks.length) {
+      const message = `关联连接「${activePacks.map(connectionDisplayName).join('、')}」有对话正在运行，请等本轮结束后再升级 GCMS`;
+      if (notify) say(message, 'err');
+      return { ok: false, message };
+    }
     gcmsCardMenu = null;
-    const update = gcmsUpdates[c.id] ?? await checkRemoteGcmsUpdate(c.id, false, true);
-    if (!update) return;
-    if (!update.has_update) { say(`GCMS ${update.current || current.version} 已是最新版本`); return; }
-    const yes = await confirmDialog(
-      `将「${c.name}」上的 GCMS 从 ${update.current || current.version || '当前版本'} 升级到 ${update.latest}。\n升级器会校验签名、备份数据库并短暂重启服务；健康检查失败会自动回滚。`,
-      { title: '在线升级 GCMS', kind: 'info', confirmText: '开始升级' },
-    );
-    if (!yes) return;
+    const update = gcmsUpdates[c.id] ?? await checkRemoteGcmsUpdate(c.id, !notify, true);
+    if (!update) return { ok: false, message: gcmsUpdateErrors[c.id] || '无法取得 GCMS 更新信息' };
+    if (!update.has_update) {
+      const message = `GCMS ${update.current || current.version} 已是最新版本`;
+      if (notify) say(message);
+      return { ok: true, message };
+    }
+    if (shouldConfirm) {
+      const yes = await confirmDialog(
+        `将「${c.name}」上的 GCMS 从 ${update.current || current.version || '当前版本'} 升级到 ${update.latest}。\n升级器会校验签名、备份数据库并短暂重启服务；健康检查失败会自动回滚。`,
+        { title: '在线升级 GCMS', kind: 'info', confirmText: '开始升级' },
+      );
+      if (!yes) return { ok: false, message: '已取消升级' };
+    }
     gcmsUpgrading = { ...gcmsUpgrading, [c.id]: Date.now() };
     patchGcmsServer(c.id, { status: current, error: '', phase: `准备升级到 ${update.latest}…`, log: '' });
     const onEvent = new Channel<GcmsInstallEvent>();
@@ -735,14 +803,29 @@
         patchGcmsServer(c.id, { log: [log, event.text].filter(Boolean).join('\n') });
       }
     };
+    let observed = current;
     try {
       const status = await invoke<GcmsRemoteStatus>('gcms_remote_upgrade', { connId: c.id, targetVersion: update.latest, onEvent });
-      patchGcmsServer(c.id, { status, error: '', phase: status.version === current.version ? '当前已是最新版本' : '升级完成' });
+      observed = status;
+      if (!sameUpdateVersion(status.version, update.latest)) {
+        throw new Error(`升级后版本核验失败：期望 ${update.latest}，服务器实际为 ${status.version || '未知'}`);
+      }
+      patchGcmsServer(c.id, { status, error: '', phase: '升级完成' });
       gcmsUpdates = { ...gcmsUpdates, [c.id]: { current: status.version, latest: update.latest, has_update: false } };
-      say(status.version === current.version ? `GCMS ${status.version || ''} 已是最新版本` : `GCMS 已升级到 ${status.version || update.latest}`);
+      const errors = { ...gcmsUpdateErrors };
+      delete errors[c.id];
+      gcmsUpdateErrors = errors;
+      const message = `GCMS 已升级到 ${status.version || update.latest}`;
+      if (options.refreshPacks !== false) {
+        await Promise.all(gcmsPacksForServer(c.id).map((pack) => maybeCheckPackUpdate(pack.id, true, false)));
+      }
+      if (notify) say(message);
+      return { ok: true, message };
     } catch (e) {
-      patchGcmsServer(c.id, { status: current, error: String(e), phase: '在线升级失败' });
-      say(String(e), 'err');
+      const message = String(e);
+      patchGcmsServer(c.id, { status: observed, error: message, phase: '在线升级失败' });
+      if (notify) say(message, 'err');
+      return { ok: false, message };
     } finally {
       const next = { ...gcmsUpgrading };
       delete next[c.id];
@@ -1478,10 +1561,14 @@
     const migration = access.migrationInstanceId
       ? gcmsMigrationInstances.find((item) => item.id === access.migrationInstanceId)
       : null;
-    requestGcmsPassword({
+    requestVerifiedGcmsPassword({
       ...options,
       account: primaryStatus?.admin_user || 'admin',
       instance: migration?.source_name || primaryConn?.name || access.domain,
+    }, {
+      connId: access.connId,
+      instancePath: access.instancePath,
+      migrationInstanceId: access.migrationInstanceId,
     }, run);
   }
 
@@ -1717,7 +1804,7 @@
       gcmsAccessHealthChecking = next;
     }
   }
-  async function probeRemoteGcms(id: string) {
+  async function probeRemoteGcms(id: string, checkForUpdates = true) {
     if (gcmsInstalling[id]) return;
     patchGcmsServer(id, { checking: true, status: null, error: '', phase: '正在连接并检测…' });
     try {
@@ -1725,7 +1812,7 @@
       const previousHealth = gcmsServer(id).accessHealth;
       const accessHealth = previousHealth?.domain && previousHealth.domain === domainFromUrl(status.base_url) ? previousHealth : null;
       patchGcmsServer(id, { checking: false, status, accessHealth, error: '', phase: '' });
-      if (status.installed && status.update_supported) void checkRemoteGcmsUpdate(id, true);
+      if (checkForUpdates && status.installed && status.update_supported) void checkRemoteGcmsUpdate(id, true, true);
       if (gcmsPasswordEditor?.connId === id && !gcmsPasswordEditor.saving && status.password_status !== 'default') {
         closeGcmsPasswordEditor();
       }
@@ -1742,15 +1829,14 @@
       return;
     }
     const action = current.running ? '重启' : '启动';
-    requestGcmsPassword({
+    requestVerifiedGcmsPassword({
       title: `${action} GCMS 服务`,
       message: current.running
         ? `端口 :${current.port || 8080} 会短暂不可访问；安装目录、数据与域名配置不会改变。`
         : `将按端口 :${current.port || 8080} 和现有配置启动，不会修改站点数据。`,
       account: current.admin_user || 'admin',
       instance: c.name,
-      confirmText: `验证并${action}`,
-    }, async (adminPassword) => {
+    }, { connId: c.id }, async (adminPassword) => {
       gcmsServiceActions = { ...gcmsServiceActions, [c.id]: 'restart' };
       patchGcmsServer(c.id, { status: current, error: '', phase: current.running ? '正在重启 GCMS 服务…' : '正在启动 GCMS 服务…' });
       try {
@@ -1775,13 +1861,12 @@
       say('请先修改 GCMS 默认密码，再执行服务操作', 'err');
       return;
     }
-    requestGcmsPassword({
+    requestVerifiedGcmsPassword({
       title: '关闭 GCMS 服务',
       message: '网站与后台将不可访问；安装目录、数据、域名与配置都会保留，之后可以重新启动。',
       account: current.admin_user || 'admin',
       instance: c.name,
-      confirmText: '验证并关闭',
-    }, async (adminPassword) => {
+    }, { connId: c.id }, async (adminPassword) => {
       gcmsServiceActions = { ...gcmsServiceActions, [c.id]: 'stop' };
       patchGcmsServer(c.id, { status: current, error: '', phase: '正在关闭 GCMS 服务…' });
       try {
@@ -1890,6 +1975,9 @@
   });
   // 连接切换器里每条连接的右键菜单（新窗口打开 / 编辑 / 删除）。
   let connCtx = $state<null | { x: number; y: number; conn: Connection }>(null);
+  // 删除确认期间保留连接切换器与右键菜单，让用户始终看得见操作来源；
+  // 取消后仍回到原菜单，确认后才由 removeConn 主动收起右键菜单。
+  let connCtxConfirmPinned = $state(false);
   function openConnCtx(e: MouseEvent, c: Connection) {
     e.preventDefault();
     e.stopPropagation(); // 别让全局那个输入框右键菜单也跳出来
@@ -1921,8 +2009,8 @@
   }
   $effect(() => {
     if (!connCtx) return;
-    const close = () => (connCtx = null);
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') connCtx = null; };
+    const close = () => { if (!connCtxConfirmPinned) connCtx = null; };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !connCtxConfirmPinned) connCtx = null; };
     window.addEventListener('click', close);
     window.addEventListener('contextmenu', close);
     window.addEventListener('keydown', onKey);
@@ -1952,8 +2040,12 @@
   });
   $effect(() => {
     if (!switcherOpen) return;
-    const onDoc = (e: MouseEvent) => { if (footerEl && !footerEl.contains(e.target as Node)) switcherOpen = false; };
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') switcherOpen = false; };
+    const onDoc = (e: MouseEvent) => {
+      const target = e.target as Element | null;
+      if (connCtxConfirmPinned || target?.closest('[data-keep-connection-menu]')) return;
+      if (footerEl && !footerEl.contains(e.target as Node)) switcherOpen = false;
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !connCtxConfirmPinned) switcherOpen = false; };
     // 捕获阶段：点空白（含拖拽区）也能关闭切换器。
     document.addEventListener('mousedown', onDoc, true);
     document.addEventListener('keydown', onKey);
@@ -1998,16 +2090,95 @@
     confirmText: string;
     busy: boolean;
     error: string;
-    run: (password: string) => Promise<void>;
+    verify: (password: string) => Promise<void>;
+    onVerified?: (password: string) => Promise<void>;
+  };
+  type GcmsPasswordTarget = {
+    connId: string;
+    instancePath?: string;
+    migrationInstanceId?: string;
+  };
+  type GcmsNativeUnlockOperation = 'public_access.apply' | 'public_access.clear_unverified' | 'themes.apply_live';
+  type GcmsNativeUnlockResult = {
+    operations: string[];
+    expires_at: string;
+    ttl_seconds: number;
   };
   let gcmsPasswordState = $state<GcmsPasswordRequest | null>(null);
   let gcmsPasswordRequestId = 0;
+  let gcmsNativeUnlockGrants = $state<Record<string, number>>({});
+
+  function gcmsNativeUnlockKey(connId: string, siteId: number, operation: GcmsNativeUnlockOperation): string {
+    return `${connId}:${siteId}:${operation}`;
+  }
+
+  function hasGcmsNativeUnlock(connId: string, siteId: number, operation: GcmsNativeUnlockOperation): boolean {
+    return (gcmsNativeUnlockGrants[gcmsNativeUnlockKey(connId, siteId, operation)] ?? 0) > Date.now() + 2_000;
+  }
+
+  function rememberGcmsNativeUnlock(
+    connId: string,
+    siteId: number,
+    operation: GcmsNativeUnlockOperation,
+    result: GcmsNativeUnlockResult,
+  ) {
+    // Tauri 每个 GCMS 连接只保留一枚短时令牌；新授权会覆盖同连接的旧授权，
+    // 因此前端也只记住这次 operation，避免误以为其它操作仍然可用。
+    const next = Object.fromEntries(
+      Object.entries(gcmsNativeUnlockGrants).filter(([key]) => !key.startsWith(`${connId}:`)),
+    );
+    const ttlMs = Math.max(0, (result.ttl_seconds || 300) * 1_000 - 3_000);
+    next[gcmsNativeUnlockKey(connId, siteId, operation)] = Date.now() + ttlMs;
+    gcmsNativeUnlockGrants = next;
+  }
+
+  function forgetGcmsNativeUnlock(connId: string, siteId: number, operation: GcmsNativeUnlockOperation) {
+    const key = gcmsNativeUnlockKey(connId, siteId, operation);
+    if (!(key in gcmsNativeUnlockGrants)) return;
+    const next = { ...gcmsNativeUnlockGrants };
+    delete next[key];
+    gcmsNativeUnlockGrants = next;
+  }
+
+  function isGcmsNativeUnlockError(error: unknown): boolean {
+    return /unlock_required|(?:授权|解锁).*(?:失效|过期)|需要.*(?:重新授权|解锁)|重新验证.*后台密码|请先.*短时解锁/i.test(String(error));
+  }
+
+  async function unlockGcmsNativeOperation(
+    connId: string,
+    siteId: number,
+    operation: GcmsNativeUnlockOperation,
+    password: string,
+  ) {
+    try {
+      const result = await invoke<GcmsNativeUnlockResult>('gcms_control_unlock', {
+        connId,
+        password,
+        operations: [operation],
+      });
+      rememberGcmsNativeUnlock(connId, siteId, operation, result);
+    } catch (error) {
+      const message = String(error);
+      if (/unknown_operation|未知的高风险操作|unlock_not_required|不需要密码解锁/i.test(message)) {
+        if (operation === 'themes.apply_live') {
+          throw new Error('当前 GCMS 版本尚未支持线上主题的密码验证，请先升级 GCMS 后再应用主题。');
+        }
+        if (operation === 'public_access.clear_unverified') {
+          throw new Error('当前 GCMS 版本尚未支持安全清除未生效域名，请先升级 GCMS 后重试。');
+        }
+      }
+      throw error;
+    }
+  }
 
   function requestGcmsPassword(
     options: { title: string; message: string; account?: string; instance?: string; kind?: GcmsPasswordKind; confirmText?: string },
-    run: (password: string) => Promise<void>,
+    verify: (password: string) => Promise<void>,
+    onVerified?: (password: string) => Promise<void>,
   ) {
     if (confirmResolve) finishConfirm(false);
+    // 密码弹窗有自己的反馈区域；清掉旧 Toast，避免它被遮罩模糊后变成看不清的黑框。
+    flash = '';
     gcmsPasswordRequestId += 1;
     gcmsPasswordState = {
       id: gcmsPasswordRequestId,
@@ -2019,8 +2190,25 @@
       confirmText: options.confirmText || '确认操作',
       busy: false,
       error: '',
-      run,
+      verify,
+      onVerified,
     };
+  }
+
+  function requestVerifiedGcmsPassword(
+    options: { title: string; message: string; account?: string; instance?: string; kind?: GcmsPasswordKind; confirmText?: string },
+    target: GcmsPasswordTarget,
+    onVerified: (password: string) => Promise<void>,
+  ) {
+    // 弹窗只承担身份校验；具体操作会在弹窗关闭后继续，因此按钮不再暗示两者同步完成。
+    requestGcmsPassword({ ...options, confirmText: '验证密码' }, async (password) => {
+      await invoke('gcms_remote_verify_admin_password', {
+        connId: target.connId,
+        instancePath: target.instancePath ?? null,
+        migrationInstanceId: target.migrationInstanceId ?? null,
+        adminPassword: password,
+      });
+    }, onVerified);
   }
 
   async function submitGcmsPassword(password: string) {
@@ -2028,8 +2216,15 @@
     if (!request || request.busy) return;
     gcmsPasswordState = { ...request, busy: true, error: '' };
     try {
-      await request.run(password);
+      await request.verify(password);
       if (gcmsPasswordState?.id === request.id) gcmsPasswordState = null;
+      if (request.onVerified) {
+        // 身份验证结束即卸载密码弹窗；后续长任务回到原抽屉展示状态与错误。
+        await tick();
+        void request.onVerified(password).catch((error) => {
+          console.warn('GCMS 身份验证后的操作失败', error);
+        });
+      }
     } catch (error) {
       if (gcmsPasswordState?.id === request.id) {
         gcmsPasswordState = { ...request, busy: false, error: String(error) };
@@ -2043,6 +2238,1895 @@
 
   const activeConn = $derived(conns.find((c) => c.id === activeConnId) ?? null);
   const sites = $derived(discovery?.items ?? []);
+  const dashboardAllSites = $derived(discovery?.lifecycle_items ?? sites);
+  const dashboardSites = $derived(dashboardAllSites);
+
+  type SiteGoogleService = 'analytics' | 'search_console';
+  type IntegrationEditor = { kind: 'google' | 'telegram' | 'cloudflare' | 'site-analytics' | 'site-search-console'; connId: string; site?: Site };
+  type SiteDeploymentEditor = { connId: string; site: Site };
+  type SiteThemeEditor = { connId: string; site: Site };
+  type SiteThemeView = 'select' | 'confirm';
+  type SiteThemeIntent = 'apply' | 'rollback';
+  type SiteThemeCategory = 'content' | 'factory' | 'dtc' | 'general';
+  type GlobalGoogleForm = {
+    clientId: string; clientSecret: string; redirectUrl: string;
+    rangeMode: 'days' | 'custom'; rangeDays: string; rangeFrom: string; rangeTo: string;
+  };
+  type SiteIntegrationForm = {
+    analytics: { enabled: boolean; accountId: string; measurementId: string; property: string; dataStream: string; analyticsAccount: string };
+    searchConsole: { enabled: boolean; accountId: string; property: string };
+  };
+  type GoogleAnalyticsAccountChoice = { name: string; display_name: string };
+  type GoogleAnalyticsPropertyChoice = {
+    name: string; display_name: string; account: string; account_display_name: string;
+    measurement_id?: string; default_uri?: string; matched?: boolean; matched_measurement_id?: string;
+  };
+  type GoogleAnalyticsOptionsResult = {
+    ok: boolean;
+    accounts: GoogleAnalyticsAccountChoice[];
+    properties: GoogleAnalyticsPropertyChoice[];
+    warning?: string;
+    default_uri?: string;
+  };
+  type SiteGoogleProvisionResult = {
+    ok: boolean;
+    message?: string;
+    enabled?: boolean;
+    measurement_id?: string;
+    property?: string;
+    data_stream?: string;
+    reused?: boolean;
+    property_created?: boolean;
+    needs_verification?: boolean;
+    verify_url?: string;
+  };
+  type CloudflareConnectionSyncResult = {
+    imported: number;
+    skipped: number;
+    failures: { connection_id: string; label: string; error: string }[];
+  };
+  let integrationEditor = $state<IntegrationEditor | null>(null);
+  let integrationGlobal = $state<GlobalIntegrationsConfig | null>(null);
+  let integrationSite = $state<SiteIntegrationsConfig | null>(null);
+  let integrationLoading = $state(false);
+  let integrationSaving = $state(false);
+  let integrationError = $state('');
+  let integrationNotice = $state('');
+  let integrationProvisionResult = $state<SiteGoogleProvisionResult | null>(null);
+  let analyticsOptions = $state<GoogleAnalyticsOptionsResult | null>(null);
+  let analyticsOptionsLoading = $state(false);
+  let analyticsOptionsRequestId = 0;
+  let siteGoogleEditing = $state(true);
+  let integrationSurface = $state<'modal' | 'popover'>('modal');
+  let googleGlobalTab = $state<'oauth' | 'range'>('oauth');
+  let googleOauthEditing = $state(false);
+  let googleOauthDetailsOpen = $state(false);
+  let telegramBotToken = $state('');
+  let cloudflareToken = $state('');
+  let cloudflareLabel = $state('');
+  let cloudflareSyncing = $state(false);
+  let cloudflareSyncRequestId = 0;
+  let deploymentEditor = $state<SiteDeploymentEditor | null>(null);
+  let deploymentRebinding = $state(false);
+  let deploymentConfig = $state<SitePublicAccessStatus | null>(null);
+  let deploymentGlobal = $state<GlobalIntegrationsConfig | null>(null);
+  let deploymentLoading = $state(false);
+  let deploymentSaving = $state(false);
+  let deploymentError = $state('');
+  let deploymentNotice = $state('');
+  let deploymentPrimaryDomain = $state('');
+  let deploymentAliasDomains = $state('');
+  let deploymentStep = $state<1 | 2 | 3 | 4>(1);
+  let deploymentRedirectOpen = $state(false);
+  let deploymentRedirectAliases = $state(true);
+  let deploymentAutoDns = $state(true);
+  let deploymentCloudflareProxy = $state(true);
+  let deploymentMessages = $state<string[]>([]);
+  let deploymentApplied = $state(false);
+  let deploymentPolling = $state(false);
+  let deploymentPollAttempts = 0;
+  let deploymentPollTimer: ReturnType<typeof setTimeout> | null = null;
+  let publicAccessSummaryRefreshBusy = false;
+  let siteCardMenu = $state<null | {
+    connId: string;
+    siteId: number;
+    x: number;
+    y: number;
+    anchorTop: number;
+    anchorBottom: number;
+    anchorRight: number;
+    ready: boolean;
+  }>(null);
+  let siteCardMenuEl = $state<HTMLDivElement | null>(null);
+  let themeEditor = $state<SiteThemeEditor | null>(null);
+  let themeCatalog = $state<ThemeCatalog | null>(null);
+  let themeState = $state<SiteThemeState | null>(null);
+  let themeView = $state<SiteThemeView>('select');
+  let themeCategory = $state<SiteThemeCategory>('content');
+  let themeSelectedFamilyId = $state('');
+  let themeSelectedSkinId = $state('');
+  let themePlan = $state<ThemeMutationResult | null>(null);
+  let themeIntent = $state<SiteThemeIntent>('apply');
+  let themeRequestId = $state('');
+  let themeLoading = $state(false);
+  let themeBusy = $state(false);
+  let themePreviewBusy = $state(false);
+  let themeError = $state('');
+  let themeNotice = $state('');
+  let themeLoadRequestId = 0;
+  type ThemeThumbStatus = 'idle' | 'loading' | 'ready' | 'error';
+  type ThemeThumbEntry = {
+    url: string;
+    expiresAt: number;
+    status: ThemeThumbStatus;
+    visible: boolean;
+    error?: string;
+  };
+  type ThemeThumbTarget = { familyId: string; themeId: string };
+  let themeThumbs = $state<Record<string, ThemeThumbEntry>>({});
+  let themeThumbGeneration = 0;
+  const themeThumbInflight = new Map<string, Promise<void>>();
+  type LocalPublicAccessSummary = SitePublicAccessSummary & { started_at: number; proxy_requested: boolean };
+  let localPublicAccessSummaries = $state<Record<string, LocalPublicAccessSummary>>({});
+  let siteDomainClearChecking = $state('');
+  let globalGoogleForm = $state<GlobalGoogleForm>({ clientId: '', clientSecret: '', redirectUrl: '', rangeMode: 'days', rangeDays: '7', rangeFrom: '', rangeTo: '' });
+  let siteIntegrationForm = $state<SiteIntegrationForm>({
+    analytics: { enabled: true, accountId: '', measurementId: '', property: '', dataStream: '', analyticsAccount: '' },
+    searchConsole: { enabled: true, accountId: '', property: '' },
+  });
+  const googleRangeOptions = [
+    { value: '7', label: '近 7 天（默认）' },
+    { value: '15', label: '近 15 天' },
+    { value: '30', label: '近 30 天' },
+  ];
+  const googleRequiredApis = [
+    { api: 'analyticsadmin.googleapis.com', label: '启用 Google Analytics Admin API', hint: '自动读取 GA4 属性、查找或创建 Web 数据流需要它。' },
+    { api: 'analyticsdata.googleapis.com', label: '启用 Google Analytics Data API', hint: '读取站点卡片的活跃用户和访问次数需要它。' },
+    { api: 'searchconsole.googleapis.com', label: '启用 Google Search Console API', hint: '读取或自动添加 Google Search Console 站点属性需要它。' },
+  ];
+
+  function googleCloudProjectNumber(clientId: string) {
+    return clientId.trim().match(/^(\d+)-/)?.[1] ?? '';
+  }
+
+  function googleCloudApiUrl(api: string, clientId: string) {
+    const project = googleCloudProjectNumber(clientId);
+    const url = `https://console.developers.google.com/apis/api/${api}/overview`;
+    return project ? `${url}?project=${encodeURIComponent(project)}` : url;
+  }
+
+  function googleAccountOptions(kind: 'analytics' | 'search_console') {
+    const accounts = kind === 'analytics' ? integrationGlobal?.google.analytics_accounts : integrationGlobal?.google.search_console_accounts;
+    const options = (accounts ?? []).map((account) => ({ value: account.account_id, label: account.label || account.email || 'Google 账号', sub: account.email }));
+    const selected = kind === 'analytics' ? siteIntegrationForm.analytics.accountId : siteIntegrationForm.searchConsole.accountId;
+    if (selected && !options.some((option) => option.value === selected)) options.unshift({ value: selected, label: '当前授权账号', sub: 'GCMS 已保存；如已失效请重新授权' });
+    return options;
+  }
+  function googleAccountLabel(kind: 'analytics' | 'search_console', accountId: string) {
+    const accounts = kind === 'analytics' ? integrationGlobal?.google.analytics_accounts : integrationGlobal?.google.search_console_accounts;
+    const account = (accounts ?? []).find((item) => item.account_id === accountId);
+    return account?.label || account?.email || '已授权 Google 账号';
+  }
+  function googleAnalyticsPropertyOptions() {
+    if (!analyticsOptions) return [];
+    const options = [{
+      value: '__create__',
+      label: '创建新的 GA4 属性和统计代码',
+      sub: '仅在没有匹配当前域名的数据流时使用',
+    }];
+    for (const property of analyticsOptions?.properties ?? []) {
+      const measurement = property.matched_measurement_id || property.measurement_id || '';
+      options.push({
+        value: property.name,
+        label: `${property.display_name || property.name}${property.matched ? ' · 已匹配当前域名' : ''}`,
+        sub: [property.account_display_name, measurement].filter(Boolean).join(' · '),
+      });
+    }
+    if (siteIntegrationForm.analytics.property && siteIntegrationForm.analytics.property !== '__create__' && !options.some((option) => option.value === siteIntegrationForm.analytics.property)) {
+      options.push({ value: siteIntegrationForm.analytics.property, label: '当前 GA4 属性', sub: siteIntegrationForm.analytics.property });
+    }
+    return options;
+  }
+  function googleAnalyticsAdminAccountOptions() {
+    return (analyticsOptions?.accounts ?? []).map((account) => ({
+      value: account.name,
+      label: account.display_name || account.name,
+      sub: account.name,
+    }));
+  }
+  function googleAuthorizedAccounts() {
+    const merged = new Map<string, { account_id: string; label: string; email: string; services: string[] }>();
+    for (const [service, accounts] of [
+      ['Google Analytics', integrationGlobal?.google.analytics_accounts ?? []],
+      ['Search Console', integrationGlobal?.google.search_console_accounts ?? []],
+    ] as const) {
+      for (const account of accounts) {
+        const key = account.account_id || account.email || account.label;
+        const current = merged.get(key);
+        if (current) current.services.push(service);
+        else merged.set(key, { ...account, services: [service] });
+      }
+    }
+    return [...merged.values()];
+  }
+  function initializeGlobalIntegrationForm(config: GlobalIntegrationsConfig) {
+    const range = config.google.data_range;
+    globalGoogleForm = {
+      clientId: config.google.client_id || '', clientSecret: '', redirectUrl: config.google.redirect_url || '',
+      rangeMode: range.mode === 'custom' ? 'custom' : 'days', rangeDays: String(range.days || 7),
+      rangeFrom: range.from || '', rangeTo: range.to || '',
+    };
+    telegramBotToken = '';
+    cloudflareToken = '';
+    cloudflareLabel = '';
+  }
+  function initializeSiteIntegrationForm(config: SiteIntegrationsConfig, site: Site) {
+    const analytics = config.analytics;
+    const search = config.search_console;
+    const searchHost = hostOf(site.url || '').replace(/^www\./i, '');
+    const defaultSearchProperty = searchHost ? `sc-domain:${searchHost}` : '';
+    siteIntegrationForm = {
+      analytics: {
+        enabled: analytics.configured && analytics.enabled,
+        accountId: analytics.account_id || '', measurementId: analytics.measurement_id || '',
+        property: analytics.property || '', dataStream: analytics.data_stream || '', analyticsAccount: '',
+      },
+      searchConsole: {
+        enabled: search.configured && search.enabled,
+        accountId: search.account_id || '', property: search.property || defaultSearchProperty,
+      },
+    };
+  }
+  function resetCloudflareSyncState() {
+    cloudflareSyncRequestId += 1;
+    cloudflareSyncing = false;
+  }
+  async function syncPilotCloudflareConnections(connId: string) {
+    const requestId = ++cloudflareSyncRequestId;
+    let result: CloudflareConnectionSyncResult | null = null;
+    cloudflareSyncing = true;
+    integrationNotice = '正在同步 Pilot 已连接的 Cloudflare Token…';
+    try {
+      result = await invoke<CloudflareConnectionSyncResult>('gcms_cloudflare_connections_sync', { connId });
+      if (requestId !== cloudflareSyncRequestId || integrationEditor?.kind !== 'cloudflare' || integrationEditor.connId !== connId) return;
+      // 专用同步命令不返回 PUT 响应，杜绝异常服务端把 Token 原样回显到 WebView；
+      // 完成后只通过既有的安全 GET 契约刷新授权元数据。
+      integrationGlobal = await invoke<GlobalIntegrationsConfig>('gcms_integrations_get', { connId, siteId: null });
+      if (requestId !== cloudflareSyncRequestId || integrationEditor?.kind !== 'cloudflare' || integrationEditor.connId !== connId) return;
+      const imported = result.imported || 0;
+      const skipped = result.skipped || 0;
+      integrationNotice = imported > 0
+        ? `已从 Pilot 导入 ${imported} 份 Cloudflare 授权${skipped > 0 ? `；${skipped} 份已存在，未重复添加` : ''}`
+        : skipped > 0
+          ? `Pilot 已连接的 ${skipped} 份 Cloudflare 授权已存在，未重复添加`
+          : '';
+      integrationError = result.failures.length
+        ? result.failures.map((failure) => `「${failure.label || 'Cloudflare 连接'}」：${failure.error}`).join('；')
+        : '';
+      if (imported > 0) await refreshDiscoverySummary(connId);
+    } catch (error) {
+      if (requestId === cloudflareSyncRequestId && integrationEditor?.kind === 'cloudflare' && integrationEditor.connId === connId) {
+        integrationError = result
+          ? `Pilot Cloudflare 连接已处理，但刷新授权列表失败：${String(error)}`
+          : `自动导入 Pilot Cloudflare 连接失败：${String(error)}`;
+        integrationNotice = result?.imported
+          ? `已从 Pilot 导入 ${result.imported} 份 Cloudflare 授权`
+          : '';
+      }
+    } finally {
+      if (requestId === cloudflareSyncRequestId) cloudflareSyncing = false;
+    }
+  }
+  async function loadGlobalIntegration(kind: 'google' | 'telegram' | 'cloudflare', surface: 'modal' | 'popover') {
+    if (!activeConnId) return;
+    resetCloudflareSyncState();
+    integrationSurface = surface;
+    sitesGlobalMenuKind = surface === 'popover' ? kind : null;
+    const connId = activeConnId;
+    integrationEditor = { kind, connId };
+    integrationGlobal = null; integrationSite = null;
+    integrationLoading = true; integrationSaving = false; integrationError = ''; integrationNotice = '';
+    googleOauthEditing = false; googleOauthDetailsOpen = false;
+    try {
+      const config = await invoke<GlobalIntegrationsConfig>('gcms_integrations_get', { connId, siteId: null });
+      if (integrationEditor?.connId !== connId || integrationEditor.kind !== kind) return;
+      integrationGlobal = config;
+      initializeGlobalIntegrationForm(config);
+      const target = conns.find((connection) => connection.id === connId);
+      if (kind === 'cloudflare' && target?.source_ssh_id?.trim() && conns.some((connection) => connection.kind === 'cloudflare' && connection.key_kind === 'cf_token')) {
+        void syncPilotCloudflareConnections(connId);
+      }
+    } catch (error) { integrationError = String(error); }
+    finally { integrationLoading = false; }
+  }
+  async function openIntegrationEditor(kind: 'google' | 'telegram' | 'cloudflare') {
+    await loadGlobalIntegration(kind, 'modal');
+  }
+  function toggleSitesGlobalIntegration(kind: 'google' | 'telegram' | 'cloudflare') {
+    if (sitesGlobalMenuKind === kind && integrationSurface === 'popover') {
+      closeSitesGlobalMenu();
+      return;
+    }
+    void loadGlobalIntegration(kind, 'popover');
+  }
+  async function loadSiteAnalyticsOptions(accountId: string, preserveProperty = true) {
+    const editor = integrationEditor;
+    const normalizedAccount = accountId.trim();
+    if (!editor || editor.kind !== 'site-analytics' || !editor.site || !normalizedAccount) {
+      analyticsOptions = null;
+      analyticsOptionsLoading = false;
+      return;
+    }
+    const requestId = ++analyticsOptionsRequestId;
+    analyticsOptionsLoading = true;
+    integrationError = '';
+    try {
+      const result = await invoke<GoogleAnalyticsOptionsResult>('gcms_site_google_analytics_options', {
+        connId: editor.connId,
+        siteId: editor.site.id,
+        accountId: normalizedAccount,
+      });
+      if (requestId !== analyticsOptionsRequestId || integrationEditor?.kind !== 'site-analytics' || siteIntegrationForm.analytics.accountId !== normalizedAccount) return;
+      analyticsOptions = result;
+      const currentProperty = preserveProperty ? siteIntegrationForm.analytics.property : '';
+      const hasCurrent = currentProperty === '__create__' || result.properties.some((property) => property.name === currentProperty);
+      const matched = result.properties.find((property) => property.matched);
+      siteIntegrationForm.analytics.property = hasCurrent ? currentProperty : matched?.name || '__create__';
+      const property = result.properties.find((item) => item.name === siteIntegrationForm.analytics.property);
+      siteIntegrationForm.analytics.analyticsAccount = siteIntegrationForm.analytics.property === '__create__' && result.accounts.length === 1
+        ? result.accounts[0].name
+        : property?.account || '';
+      const status = matched && !hasCurrent
+        ? '已找到当前域名已有 GA4 数据流，启用后会直接复用。'
+        : siteIntegrationForm.analytics.property === '__create__'
+          ? result.accounts.length === 0
+            ? '当前授权账号没有可用的 Analytics 账号，请先在 Google Analytics 中开通。'
+            : result.accounts.length > 1
+              ? '没有匹配到当前域名的数据流，请选择 Analytics 账号后创建新的 GA4 属性。'
+              : '没有匹配到当前域名的数据流，将自动创建 GA4 属性和数据流。'
+          : '将使用选择的 GA4 属性；没有匹配数据流时会自动创建 Web 数据流。';
+      integrationNotice = [status, result.warning].filter(Boolean).join(' ');
+    } catch (error) {
+      if (requestId === analyticsOptionsRequestId) {
+        analyticsOptions = null;
+        integrationError = String(error);
+      }
+    } finally {
+      if (requestId === analyticsOptionsRequestId) analyticsOptionsLoading = false;
+    }
+  }
+  function changeSiteAnalyticsAuthorization(accountId: string) {
+    siteIntegrationForm.analytics.accountId = accountId;
+    siteIntegrationForm.analytics.property = '';
+    siteIntegrationForm.analytics.analyticsAccount = '';
+    void loadSiteAnalyticsOptions(accountId, false);
+  }
+  function changeSiteAnalyticsProperty(property: string) {
+    siteIntegrationForm.analytics.property = property;
+    const selected = analyticsOptions?.properties.find((item) => item.name === property);
+    if (selected?.account) siteIntegrationForm.analytics.analyticsAccount = selected.account;
+    else if (property === '__create__') siteIntegrationForm.analytics.analyticsAccount = analyticsOptions?.accounts.length === 1 ? analyticsOptions.accounts[0].name : '';
+  }
+  async function openSiteIntegrationEditor(site: Site, service: SiteGoogleService) {
+    if (!activeConnId) return;
+    resetCloudflareSyncState();
+    sitesGlobalMenuKind = null;
+    integrationSurface = 'modal';
+    const connId = activeConnId;
+    integrationEditor = { kind: service === 'analytics' ? 'site-analytics' : 'site-search-console', connId, site };
+    integrationGlobal = null; integrationSite = null;
+    integrationLoading = true; integrationSaving = false; integrationError = ''; integrationNotice = ''; integrationProvisionResult = null; siteGoogleEditing = true;
+    analyticsOptionsRequestId += 1; analyticsOptions = null; analyticsOptionsLoading = false;
+    try {
+      const [globalConfig, siteConfig] = await Promise.all([
+        invoke<GlobalIntegrationsConfig>('gcms_integrations_get', { connId, siteId: null }),
+        invoke<SiteIntegrationsConfig>('gcms_integrations_get', { connId, siteId: site.id }),
+      ]);
+      if (integrationEditor?.connId !== connId || integrationEditor?.site?.id !== site.id) return;
+      integrationGlobal = globalConfig; integrationSite = siteConfig;
+      initializeGlobalIntegrationForm(globalConfig);
+      initializeSiteIntegrationForm(siteConfig, site);
+      siteGoogleEditing = service === 'analytics' ? !siteConfig.analytics.enabled : !siteConfig.search_console.enabled;
+      if (service === 'analytics' && !siteIntegrationForm.analytics.accountId && globalConfig.google.analytics_accounts.length === 1) {
+        siteIntegrationForm.analytics.accountId = globalConfig.google.analytics_accounts[0].account_id;
+      }
+      if (service === 'search_console' && !siteIntegrationForm.searchConsole.accountId && globalConfig.google.search_console_accounts.length === 1) {
+        siteIntegrationForm.searchConsole.accountId = globalConfig.google.search_console_accounts[0].account_id;
+      }
+      if (service === 'analytics' && siteGoogleEditing && siteIntegrationForm.analytics.accountId) {
+        void loadSiteAnalyticsOptions(siteIntegrationForm.analytics.accountId);
+      }
+    } catch (error) { integrationError = String(error); }
+    finally { integrationLoading = false; }
+  }
+  function closeIntegrationEditor() {
+    if (integrationSaving) return;
+    resetCloudflareSyncState();
+    analyticsOptionsRequestId += 1; analyticsOptions = null; analyticsOptionsLoading = false;
+    sitesGlobalMenuKind = null;
+    integrationEditor = null; integrationGlobal = null; integrationSite = null;
+    integrationError = ''; integrationNotice = ''; integrationProvisionResult = null; siteGoogleEditing = true; telegramBotToken = ''; cloudflareToken = ''; cloudflareLabel = '';
+    googleOauthEditing = false; googleOauthDetailsOpen = false;
+  }
+  function closeSitesGlobalMenu() {
+    if (integrationSaving) return;
+    resetCloudflareSyncState();
+    sitesGlobalMenuKind = null;
+    if (integrationSurface === 'popover') {
+      integrationEditor = null; integrationGlobal = null; integrationSite = null;
+      integrationError = ''; integrationNotice = ''; telegramBotToken = ''; cloudflareToken = ''; cloudflareLabel = '';
+      googleOauthEditing = false; googleOauthDetailsOpen = false;
+    }
+  }
+  function closeSitesGlobalMenuOnOutsideClick(event: MouseEvent) {
+    if (!sitesGlobalMenuKind || !sitesGlobalMenuEl) return;
+    // Dropdown 选中后会先卸载 fixed 菜单，再把 click 冒泡到 window；此时仅用
+    // contains(event.target) 会把刚才的内部点击误判为外部点击。composedPath 保留了
+    // 事件触发时的原始 DOM 路径，因此即使选项节点已卸载，也不会关掉父浮层。
+    const path = event.composedPath();
+    if (!path.includes(sitesGlobalMenuEl) && !sitesGlobalMenuEl.contains(event.target as Node)) closeSitesGlobalMenu();
+  }
+  function reloadIntegrationEditor() {
+    const editor = integrationEditor;
+    if (!editor) return;
+    if (editor.kind === 'site-analytics' && editor.site) void openSiteIntegrationEditor(editor.site, 'analytics');
+    else if (editor.kind === 'site-search-console' && editor.site) void openSiteIntegrationEditor(editor.site, 'search_console');
+    else if (editor.kind === 'google' || editor.kind === 'telegram' || editor.kind === 'cloudflare') void loadGlobalIntegration(editor.kind, integrationSurface);
+  }
+  async function refreshDiscoverySummary(connId: string, refreshStats = false): Promise<Discovery | null> {
+    const requestSeq = selSeq;
+    try {
+      const next = await invoke<Discovery>('discover_sites', { connId, refreshStats });
+      // 自动补绑可能与用户切换连接、手动刷新并发。旧请求仍可把局部结果交给调用方解析，
+      // 但不能覆盖用户稍后拿到的 discovery。
+      if (activeConnId === connId && requestSeq === selSeq) {
+        discovery = next;
+        for (const site of next.lifecycle_items ?? next.items ?? []) {
+          if (site.public_access) delete localPublicAccessSummaries[publicAccessSummaryKey(connId, site.id)];
+        }
+      }
+      return next;
+    } catch {
+      // 已保存成功时不让摘要刷新失败覆盖成功提示；调用方可通过 null 补充提醒。
+      return null;
+    }
+  }
+
+  type ThemeMutationDetails = ThemeMutationResult & {
+    current_theme?: string;
+    target_theme?: string;
+    category_changed?: boolean;
+    layout_changed?: boolean;
+    from?: { id?: string; category?: string; layout?: string };
+    to?: { id?: string; category?: string; layout?: string };
+  };
+  const themeCategoryOptions: { id: SiteThemeCategory; label: string }[] = [
+    { id: 'content', label: '内容 / 资讯' },
+    { id: 'factory', label: '工厂 / B2B' },
+    { id: 'dtc', label: '独立站 / 零售' },
+    { id: 'general', label: '通用' },
+  ];
+  function themeSummaryId(site: Site | null | undefined): string {
+    return site?.theme?.id?.trim() || site?.theme?.theme?.trim() || '';
+  }
+  function themeSummaryName(site: Site | null | undefined): string {
+    return site?.theme?.name?.trim() || '';
+  }
+  function currentThemeId(): string {
+    return themeState?.theme?.trim() || themeSummaryId(themeEditor?.site);
+  }
+  function themeFamilies(): ThemeFamily[] {
+    return themeCatalog?.families ?? [];
+  }
+  function themeFamilySkins(family: ThemeFamily): ThemeSkin[] {
+    return family.skins ?? [];
+  }
+  function themeAllItems(): (ThemeCatalogItem | ThemeSkin)[] {
+    const byId = new Map<string, ThemeCatalogItem | ThemeSkin>();
+    for (const item of themeCatalog?.items ?? []) byId.set(item.id, item);
+    for (const family of themeFamilies()) {
+      for (const skin of themeFamilySkins(family)) byId.set(skin.id, skin);
+    }
+    return [...byId.values()];
+  }
+  function themeItem(themeId: string): ThemeCatalogItem | ThemeSkin | null {
+    return themeAllItems().find((item) => item.id === themeId) ?? null;
+  }
+  function themeFamilyFor(themeId: string): ThemeFamily | null {
+    return themeFamilies().find((family) => themeFamilySkins(family).some((skin) => skin.id === themeId)) ?? null;
+  }
+  function themeName(themeId: string): string {
+    if (!themeId) return '尚未选择';
+    return themeItem(themeId)?.name || (themeId === currentThemeId() ? (themeState?.name || themeSummaryName(themeEditor?.site)) : '') || themeId;
+  }
+  function themeFamilyName(themeId: string): string {
+    const family = themeFamilyFor(themeId);
+    if (family?.name) return family.name;
+    const summary = themeEditor?.site?.theme as (Site['theme'] & { family_name?: string }) | null | undefined;
+    return themeId === currentThemeId() ? (summary?.family_name || summary?.family || themeState?.family || '未分组') : '未分组';
+  }
+  function themeCategoryLabel(category?: string): string {
+    return themeCategoryOptions.find((item) => item.id === category)?.label || '通用';
+  }
+  function themeLayoutLabel(layout?: string): string {
+    if (!layout) return '默认骨架';
+    const labels: Record<string, string> = {
+      topbar: '顶部导航',
+      editorial: '编辑内容',
+      magazine: '杂志内容',
+      'factory-catalog': '产品目录',
+      'factory-showcase': '案例展示',
+      'factory-onepage': '单页展示',
+      'factory-solutions': '解决方案',
+      'factory-engineering': '工程参数',
+      'factory-trade': '外贸询盘',
+      'factory-sidebar': '侧栏目录',
+      'factory-vision': '品牌视觉',
+      'factory-herofold': '首屏展示',
+      'dtc-flagship': '旗舰商城',
+      'dtc-solo': '单品商城',
+      'dtc-lookbook': '画册商城',
+    };
+    return labels[layout] || layout;
+  }
+  function themeFamilyCategories(family: ThemeFamily): string[] {
+    const declared = family.categories?.length ? family.categories : family.category ? [family.category] : [];
+    if (declared.length) return declared;
+    return [...new Set(themeFamilySkins(family).map((skin) => skin.category || 'general'))];
+  }
+  function themeFamilyMatchesCategory(family: ThemeFamily, category: SiteThemeCategory): boolean {
+    return themeFamilyCategories(family).includes(category);
+  }
+  function themeCategoryFamilyCount(category: SiteThemeCategory): number {
+    return themeFamilies().filter((family) => themeFamilyMatchesCategory(family, category)).length;
+  }
+  function filteredThemeFamilies(): ThemeFamily[] {
+    return themeFamilies().filter((family) => themeFamilyMatchesCategory(family, themeCategory));
+  }
+  function selectedThemeFamily(): ThemeFamily | null {
+    return themeFamilies().find((family) => family.id === themeSelectedFamilyId)
+      ?? themeFamilyFor(themeSelectedSkinId)
+      ?? null;
+  }
+  function selectedThemeSkin(family?: ThemeFamily | null): ThemeSkin | null {
+    const target = family ?? selectedThemeFamily();
+    if (!target) return themeItem(themeSelectedSkinId) as ThemeSkin | null;
+    return themeFamilySkins(target).find((skin) => skin.id === themeSelectedSkinId)
+      ?? themeFamilySkins(target).find((skin) => skin.selected)
+      ?? themeFamilySkins(target)[0]
+      ?? null;
+  }
+  function themeSkinColor(skin: ThemeSkin, kind: 'accent' | 'background'): string {
+    const value = kind === 'accent' ? skin.accent : skin.background;
+    return value?.trim() || (kind === 'accent' ? '#6f6b62' : '#f4f2ed');
+  }
+  function themeThumbKey(familyId: string, themeId: string, editor = themeEditor): string {
+    if (!editor || !familyId || !themeId) return '';
+    return `${editor.connId}:${editor.site.id}:${familyId}:${themeId}`;
+  }
+  function themeThumbEntry(familyId: string, themeId: string): ThemeThumbEntry | null {
+    const key = themeThumbKey(familyId, themeId);
+    return key ? themeThumbs[key] ?? null : null;
+  }
+  function cachedThemePreviewURL(themeId: string): string {
+    const family = themeFamilyFor(themeId);
+    const cached = family ? themeThumbEntry(family.id, themeId) : null;
+    return cached?.url && cached.expiresAt > Date.now() + 30_000 ? cached.url : '';
+  }
+  function resetThemeThumbs() {
+    themeThumbGeneration += 1;
+    themeThumbs = {};
+    themeThumbInflight.clear();
+  }
+  function themeThumbExpiresAt(result: ThemePreviewURL): number {
+    const explicit = result.expires_at ? Date.parse(result.expires_at) : Number.NaN;
+    if (Number.isFinite(explicit)) return explicit;
+    const ttlSeconds = Math.max(60, result.ttl_seconds ?? 15 * 60);
+    return Date.now() + ttlSeconds * 1000;
+  }
+  async function ensureThemeThumb(target: ThemeThumbTarget) {
+    const editor = themeEditor;
+    const key = themeThumbKey(target.familyId, target.themeId, editor);
+    if (!editor || !key || editor.site.status === 'disabled') return;
+    const cached = themeThumbs[key];
+    // 已成功渲染的缩略图在本次弹窗生命周期内保持常驻，避免滚出视区后重复加载。
+    if (cached?.status === 'ready' && cached.url) return;
+    if (cached?.url && cached.expiresAt > Date.now() + 30_000) return;
+    if (cached?.status === 'error' || themeThumbInflight.has(key)) return;
+
+    const generation = themeThumbGeneration;
+    themeThumbs[key] = {
+      url: '',
+      expiresAt: 0,
+      status: 'loading',
+      visible: cached?.visible ?? true,
+    };
+    const pending = (async () => {
+      try {
+        const result = await invoke<ThemePreviewURL>('gcms_site_theme_preview_url', {
+          connId: editor.connId,
+          siteId: editor.site.id,
+          themeId: target.themeId,
+        });
+        const previewUrl = normalizedSiteURL(result.preview_url);
+        if (!previewUrl) throw new Error('GCMS 没有返回有效的候选主题预览地址');
+        if (
+          generation !== themeThumbGeneration
+          || themeEditor?.connId !== editor.connId
+          || themeEditor.site.id !== editor.site.id
+        ) return;
+        themeThumbs[key] = {
+          url: previewUrl,
+          expiresAt: themeThumbExpiresAt(result),
+          status: 'loading',
+          visible: themeThumbs[key]?.visible ?? false,
+        };
+      } catch (error) {
+        if (generation !== themeThumbGeneration) return;
+        themeThumbs[key] = {
+          url: '',
+          expiresAt: 0,
+          status: 'error',
+          visible: themeThumbs[key]?.visible ?? false,
+          error: themeFriendlyError(error),
+        };
+      }
+    })();
+    themeThumbInflight.set(key, pending);
+    try {
+      await pending;
+    } finally {
+      if (themeThumbInflight.get(key) === pending) themeThumbInflight.delete(key);
+    }
+  }
+  function setThemeThumbVisible(target: ThemeThumbTarget, visible: boolean) {
+    const key = themeThumbKey(target.familyId, target.themeId);
+    if (!key) return;
+    const current = themeThumbs[key];
+    if (current) {
+      current.visible = visible;
+    } else {
+      themeThumbs[key] = { url: '', expiresAt: 0, status: 'idle', visible };
+    }
+    if (visible) void ensureThemeThumb(target);
+  }
+  function markThemeThumbLoaded(target: ThemeThumbTarget, url: string) {
+    const key = themeThumbKey(target.familyId, target.themeId);
+    const current = key ? themeThumbs[key] : null;
+    if (current?.url === url) current.status = 'ready';
+  }
+  function markThemeThumbFailed(target: ThemeThumbTarget, url: string) {
+    const key = themeThumbKey(target.familyId, target.themeId);
+    const current = key ? themeThumbs[key] : null;
+    if (!current || current.url !== url) return;
+    current.url = '';
+    current.status = 'error';
+    current.error = '真实缩略图暂时无法载入';
+  }
+  function themeThumbViewport(node: HTMLElement, initial: ThemeThumbTarget) {
+    let target = initial;
+    let visible = false;
+    const sync = (nextVisible: boolean) => {
+      if (visible === nextVisible) return;
+      visible = nextVisible;
+      setThemeThumbVisible(target, visible);
+    };
+    if (typeof IntersectionObserver === 'undefined') {
+      sync(true);
+      return {
+        update(next: ThemeThumbTarget) {
+          const wasVisible = visible;
+          if (wasVisible) setThemeThumbVisible(target, false);
+          target = next;
+          if (wasVisible) setThemeThumbVisible(target, true);
+        },
+        destroy() { if (visible) setThemeThumbVisible(target, false); },
+      };
+    }
+    const observer = new IntersectionObserver(
+      ([entry]) => sync(Boolean(entry?.isIntersecting)),
+      { rootMargin: '120px 0px' },
+    );
+    observer.observe(node);
+    return {
+      update(next: ThemeThumbTarget) {
+        if (next.familyId === target.familyId && next.themeId === target.themeId) return;
+        if (visible) setThemeThumbVisible(target, false);
+        target = next;
+        if (visible) setThemeThumbVisible(target, true);
+      },
+      destroy() {
+        observer.disconnect();
+        if (visible) setThemeThumbVisible(target, false);
+      },
+    };
+  }
+  function chooseThemeFamily(family: ThemeFamily) {
+    if (themeBusy) return;
+    themeSelectedFamilyId = family.id;
+    const skins = themeFamilySkins(family);
+    const current = currentThemeId();
+    themeSelectedSkinId = skins.some((skin) => skin.id === themeSelectedSkinId)
+      ? themeSelectedSkinId
+      : skins.find((skin) => skin.id === current)?.id || skins.find((skin) => skin.selected)?.id || skins[0]?.id || '';
+    themePlan = null;
+    themeError = '';
+    themeNotice = '';
+  }
+  function chooseThemeSkin(family: ThemeFamily, skin: ThemeSkin) {
+    if (themeBusy) return;
+    themeSelectedFamilyId = family.id;
+    themeSelectedSkinId = skin.id;
+    themePlan = null;
+    themeError = '';
+    themeNotice = '';
+  }
+  function chooseThemeCategory(category: SiteThemeCategory) {
+    themeCategory = category;
+    themeNotice = '';
+    const families = filteredThemeFamilies();
+    if (!families.some((family) => family.id === themeSelectedFamilyId) && families[0]) chooseThemeFamily(families[0]);
+  }
+  function themeFriendlyError(error: unknown): string {
+    const message = String(error);
+    if (/theme_changed|主题已发生变化|\b409\b/i.test(message)) return '站点主题已在其他位置发生变化，请重新选择并预览。';
+    if (/scope|forbidden|permission|无权|权限|\b403\b/i.test(message)) return '当前平台密钥没有主题管理权限，请在 GCMS 为它开放主题读取和应用权限。';
+    if (/unknown command|not found|404|不支持|不存在/i.test(message)) return '当前 GCMS 版本尚未提供 Pilot 主题中心，请先升级 GCMS 后再重试。';
+    if (/disabled|已关闭/i.test(message)) return '站点当前已关闭，请先启用站点再预览或更换主题。';
+    return message;
+  }
+  function themeCategoryFor(themeId: string): SiteThemeCategory {
+    const category = themeItem(themeId)?.category || themeFamilyCategories(themeFamilyFor(themeId) ?? { id: '', name: '', skins: [] })[0];
+    return themeCategoryOptions.some((item) => item.id === category) ? category as SiteThemeCategory : 'general';
+  }
+  function initializeThemeSelection() {
+    const current = currentThemeId();
+    const family = themeFamilyFor(current) ?? themeFamilies()[0] ?? null;
+    themeSelectedFamilyId = family?.id || '';
+    themeSelectedSkinId = current || themeFamilySkins(family ?? { id: '', name: '', skins: [] })[0]?.id || '';
+    themeCategory = current ? themeCategoryFor(current) : (themeFamilyCategories(family ?? { id: '', name: '', skins: [] })[0] as SiteThemeCategory || 'content');
+    if (!themeCategoryOptions.some((item) => item.id === themeCategory)) themeCategory = 'general';
+  }
+  async function loadSiteThemeEditor(editor: SiteThemeEditor) {
+    const requestId = ++themeLoadRequestId;
+    themeLoading = true;
+    themeError = '';
+    try {
+      const [catalog, current] = await Promise.all([
+        invoke<ThemeCatalog>('gcms_themes_get', { connId: editor.connId }),
+        invoke<SiteThemeState>('gcms_site_theme_get', { connId: editor.connId, siteId: editor.site.id }),
+      ]);
+      if (requestId !== themeLoadRequestId || themeEditor?.connId !== editor.connId || themeEditor.site.id !== editor.site.id) return;
+      themeCatalog = catalog;
+      themeState = current;
+      if ((catalog.families?.length ?? 0) === 0) {
+        themeError = '当前 GCMS 尚未返回主题家族信息，请升级 GCMS 后重新打开主题中心。';
+        return;
+      }
+      initializeThemeSelection();
+      themeView = 'select';
+    } catch (error) {
+      if (requestId === themeLoadRequestId) themeError = themeFriendlyError(error);
+    } finally {
+      if (requestId === themeLoadRequestId) themeLoading = false;
+    }
+  }
+  function openSiteThemeEditor(site: Site) {
+    if (!activeConnId || discovery?.synthetic || site.id <= 0) return;
+    siteCardMenu = null;
+    closeSitesGlobalMenu();
+    resetThemeThumbs();
+    const editor = { connId: activeConnId, site };
+    themeEditor = editor;
+    themeCatalog = null;
+    themeState = null;
+    themePlan = null;
+    themeRequestId = '';
+    themeView = 'select';
+    themeLoading = true;
+    themeBusy = false;
+    themePreviewBusy = false;
+    themeError = '';
+    themeNotice = '';
+    void loadSiteThemeEditor(editor);
+  }
+  function closeSiteThemeEditor() {
+    if (themeBusy || themePreviewBusy) return;
+    themeLoadRequestId += 1;
+    resetThemeThumbs();
+    themeEditor = null;
+    themeCatalog = null;
+    themeState = null;
+    themePlan = null;
+    themeError = '';
+    themeNotice = '';
+  }
+  function themeRequestKey(): string {
+    try { return crypto.randomUUID(); }
+    catch { return `theme-${Date.now()}-${Math.random().toString(36).slice(2)}`; }
+  }
+  async function previewSelectedTheme(themeId = themeSelectedSkinId) {
+    const editor = themeEditor;
+    if (!editor || themePreviewBusy || !themeId) return;
+    if (editor.site.status === 'disabled') {
+      themeError = '站点当前已关闭，请先启用站点再打开真实数据预览。';
+      return;
+    }
+    themePreviewBusy = true;
+    themeError = '';
+    try {
+      let previewUrl = cachedThemePreviewURL(themeId);
+      if (!previewUrl) {
+        const result = await invoke<ThemePreviewURL>('gcms_site_theme_preview_url', {
+          connId: editor.connId,
+          siteId: editor.site.id,
+          themeId,
+        });
+        previewUrl = normalizedSiteURL(result.preview_url);
+      }
+      if (!previewUrl) throw new Error('GCMS 没有返回有效的候选主题预览地址');
+      await openUrl(previewUrl);
+    } catch (error) {
+      themeError = themeFriendlyError(error);
+    } finally {
+      themePreviewBusy = false;
+    }
+  }
+  function themeMutationDetails(result: ThemeMutationResult | null): ThemeMutationDetails | null {
+    return result as ThemeMutationDetails | null;
+  }
+  function plannedCurrentTheme(): string {
+    const plan = themeMutationDetails(themePlan);
+    return plan?.current_theme || plan?.from?.id || currentThemeId();
+  }
+  function plannedTargetTheme(): string {
+    const plan = themeMutationDetails(themePlan);
+    return plan?.target_theme || plan?.to?.id || plan?.theme || (themeIntent === 'rollback' ? themeState?.previous_theme || '' : themeSelectedSkinId);
+  }
+  function plannedThemeRequiresPassword(): boolean {
+    const planned = themeMutationDetails(themePlan)?.execution_requires_unlock;
+    if (typeof planned === 'boolean') return planned;
+    const site = themeEditor?.site;
+    return Boolean(site && (site.is_default || siteHasBoundDomain(site)));
+  }
+  async function planSiteThemeChange(intent: SiteThemeIntent, targetThemeId = '') {
+    const editor = themeEditor;
+    if (!editor || themeBusy) return;
+    const rollback = intent === 'rollback';
+    const themeId = rollback ? '' : targetThemeId || themeSelectedSkinId;
+    if (!rollback && !themeId) {
+      themeError = '请先选择一个主题。';
+      return;
+    }
+    if (!rollback && themeId === currentThemeId()) {
+      themeNotice = '当前站点已经在使用这个主题。';
+      themeView = 'select';
+      return;
+    }
+    if (editor.site.status === 'disabled') {
+      themeError = '站点当前已关闭，请先启用站点再更换主题。';
+      return;
+    }
+    themeBusy = true;
+    themeError = '';
+    themeNotice = '';
+    try {
+      const result = await invoke<ThemeMutationResult>('gcms_site_theme_plan', {
+        connId: editor.connId,
+        siteId: editor.site.id,
+        themeId: themeId || null,
+        rollback,
+        expectedCurrentTheme: currentThemeId() || null,
+      });
+      themePlan = result;
+      themeIntent = intent;
+      themeRequestId = themeRequestKey();
+      themeView = 'confirm';
+    } catch (error) {
+      themeError = themeFriendlyError(error);
+    } finally {
+      themeBusy = false;
+    }
+  }
+  function updateLocalSiteTheme(current: SiteThemeState) {
+    const editor = themeEditor;
+    if (!editor) return;
+    const item = themeItem(current.theme || '');
+    const family = themeFamilyFor(current.theme || '');
+    editor.site.theme = {
+      ...(editor.site.theme ?? {}),
+      id: current.theme,
+      theme: current.theme,
+      name: item?.name || current.name || current.theme,
+      description: item?.description,
+      family: family?.id || current.family,
+      family_name: family?.name,
+      category: item?.category || current.category,
+      layout: current.layout || item?.layout,
+      previous_theme: current.previous_theme,
+      can_rollback: current.can_rollback,
+    };
+  }
+  async function reloadAppliedTheme(editor: SiteThemeEditor): Promise<SiteThemeState | null> {
+    try {
+      const current = await invoke<SiteThemeState>('gcms_site_theme_get', { connId: editor.connId, siteId: editor.site.id });
+      if (themeEditor?.connId === editor.connId && themeEditor.site.id === editor.site.id) {
+        themeState = current;
+        updateLocalSiteTheme(current);
+      }
+      return current;
+    } catch {
+      return null;
+    }
+  }
+  async function applyConfirmedSiteThemeChange(requireUnlock: boolean) {
+    const editor = themeEditor;
+    if (!editor || !themePlan || themeBusy || !themeRequestId) return;
+    const rollback = themeIntent === 'rollback';
+    const target = plannedTargetTheme();
+    const before = plannedCurrentTheme();
+    themeBusy = true;
+    themeError = '';
+    try {
+      const result = await invoke<ThemeMutationResult>('gcms_site_theme_apply', {
+        connId: editor.connId,
+        siteId: editor.site.id,
+        themeId: rollback ? null : target,
+        rollback,
+        requestId: themeRequestId,
+        expectedCurrentTheme: before || null,
+        requireUnlock,
+      });
+      let current = await reloadAppliedTheme(editor);
+      if (!current) {
+        const appliedTheme = result.theme || result.target_theme || target;
+        current = {
+          ...(themeState ?? { theme: appliedTheme }),
+          site_id: editor.site.id,
+          site_status: editor.site.status,
+          theme: appliedTheme,
+          layout: result.layout || themeItem(appliedTheme)?.layout,
+          previous_theme: rollback ? '' : before,
+          can_rollback: !rollback && before !== appliedTheme,
+        };
+        themeState = current;
+        updateLocalSiteTheme(current);
+      }
+      const appliedId = current?.theme || target;
+      themeNotice = rollback
+        ? `已恢复为“${themeName(appliedId)}”。`
+        : `已应用“${themeName(appliedId)}”，站点内容、导航和域名均保持不变。`;
+      themePlan = null;
+      themeRequestId = '';
+      initializeThemeSelection();
+      themeView = 'select';
+      const refreshed = await refreshDiscoverySummary(editor.connId);
+      const freshSite = (refreshed?.lifecycle_items ?? refreshed?.items ?? []).find((site) => site.id === editor.site.id);
+      if (freshSite && themeEditor?.site.id === editor.site.id) {
+        // 新旧 GCMS 混用时发现摘要可能还没有 theme 字段；保留刚刚从主题端点
+        // 读到的权威状态，避免成功后卡片文案短暂退回“主题”。
+        if (!freshSite.theme && editor.site.theme) freshSite.theme = editor.site.theme;
+        themeEditor = { ...editor, site: freshSite };
+      }
+    } catch (error) {
+      const friendly = themeFriendlyError(error);
+      if (isGcmsNativeUnlockError(error)) {
+        forgetGcmsNativeUnlock(editor.connId, editor.site.id, 'themes.apply_live');
+        if (themePlan) themePlan = { ...themePlan, execution_requires_unlock: true, unlock_operation: 'themes.apply_live' };
+      }
+      themeError = friendly;
+      if (/重新选择并预览/.test(friendly)) {
+        themePlan = null;
+        themeRequestId = '';
+        themeView = 'select';
+        await reloadAppliedTheme(editor);
+        initializeThemeSelection();
+      }
+    } finally {
+      themeBusy = false;
+    }
+  }
+  function confirmSiteThemeChange() {
+    const editor = themeEditor;
+    if (!editor || !themePlan || themeBusy || !themeRequestId) return;
+    const requiresPassword = plannedThemeRequiresPassword();
+    if (!requiresPassword) {
+      void applyConfirmedSiteThemeChange(false);
+      return;
+    }
+    if (hasGcmsNativeUnlock(editor.connId, editor.site.id, 'themes.apply_live')) {
+      void applyConfirmedSiteThemeChange(true);
+      return;
+    }
+    const connId = editor.connId;
+    const siteId = editor.site.id;
+    const requestId = themeRequestId;
+    const rollback = themeIntent === 'rollback';
+    requestGcmsPassword({
+      title: rollback ? '验证后恢复主题' : '验证后应用主题',
+      message: `“${editor.site.name || editor.site.slug}”已经对外提供访问，本次主题变更会立即影响线上展示。请输入 GCMS 后台密码完成短时授权；密码不会保存。`,
+      account: 'admin',
+      instance: editor.site.name || editor.site.slug,
+      confirmText: rollback ? '验证并恢复' : '验证并应用',
+    }, async (password) => {
+      await unlockGcmsNativeOperation(connId, siteId, 'themes.apply_live', password);
+    }, async () => {
+      if (
+        themeEditor?.connId !== connId
+        || themeEditor.site.id !== siteId
+        || themeRequestId !== requestId
+        || !themePlan
+      ) return;
+      await applyConfirmedSiteThemeChange(true);
+    });
+  }
+  function themePlanWarnings(): string[] {
+    return (themePlan?.warnings ?? []).map((warning) => typeof warning === 'string' ? warning : warning.message).filter(Boolean);
+  }
+
+  async function refreshPendingPublicAccessSummaries(connId: string) {
+    if (publicAccessSummaryRefreshBusy || document.hidden || activeConnId !== connId) return;
+    publicAccessSummaryRefreshBusy = true;
+    try {
+      const next = await refreshDiscoverySummary(connId);
+      const fallbackSites = (next?.lifecycle_items ?? next?.items ?? [])
+        .filter((site) => !site.public_access && localPublicAccessSummaries[publicAccessSummaryKey(connId, site.id)]?.state === 'pending');
+      await Promise.all(fallbackSites.map(async (site) => {
+        const key = publicAccessSummaryKey(connId, site.id);
+        try {
+          const status = await invoke<SitePublicAccessStatus>('gcms_public_access_check', { connId, siteId: site.id });
+          updateLocalPublicAccessSummary(connId, site.id, status, localPublicAccessSummaries[key]?.proxy_requested);
+        } catch {
+          expireLocalPublicAccessSummary(key);
+        }
+      }));
+    }
+    finally { publicAccessSummaryRefreshBusy = false; }
+  }
+  // 关闭域名向导后，GCMS 的后台任务仍会继续等待 DNS / HTTPS / 橙云。
+  // 只要当前卡片仍有 pending 摘要，就轻量刷新发现接口；超时会由 GCMS
+  // 持久化为 attention，避免永远显示“处理中”。
+  $effect(() => {
+    const connId = activeConnId;
+    const hasPending = (discovery?.lifecycle_items ?? discovery?.items ?? [])
+      .some((site) => sitePublicAccessSummaryFor(site, connId)?.state === 'pending');
+    if (!connId || !hasPending) return;
+    const timer = setInterval(() => { void refreshPendingPublicAccessSummaries(connId); }, 10000);
+    return () => clearInterval(timer);
+  });
+  async function saveGlobalGoogleIntegration() {
+    const editor = integrationEditor;
+    if (!editor || editor.kind !== 'google' || integrationSaving) return;
+    integrationSaving = true; integrationError = ''; integrationNotice = '';
+    const range = globalGoogleForm.rangeMode === 'custom'
+      ? { mode: 'custom', days: 0, from: globalGoogleForm.rangeFrom, to: globalGoogleForm.rangeTo }
+      : { mode: 'days', days: Number(globalGoogleForm.rangeDays || 7), from: '', to: '' };
+    const google: Record<string, unknown> = {
+      client_id: globalGoogleForm.clientId.trim(), redirect_url: globalGoogleForm.redirectUrl.trim(), data_range: range,
+    };
+    if (globalGoogleForm.clientSecret.trim()) google.client_secret = globalGoogleForm.clientSecret.trim();
+    try {
+      const config = await invoke<GlobalIntegrationsConfig>('gcms_integrations_save', { connId: editor.connId, siteId: null, payload: { google } });
+      integrationGlobal = config; initializeGlobalIntegrationForm(config);
+      if (config.google.oauth_configured) googleOauthEditing = false;
+      integrationNotice = 'Google 全局配置已同步到 GCMS，正在刷新站点统计…';
+      const refreshed = await refreshDiscoverySummary(editor.connId, true);
+      const failed = refreshed?.stats_refresh?.failed ?? 0;
+      integrationNotice = !refreshed
+        ? '数据范围已保存；统计刷新失败，可点击顶部刷新重试'
+        : failed > 0
+          ? `数据范围已保存，统计已刷新；${failed} 项暂不可用`
+          : '数据范围已保存，站点统计已刷新';
+    } catch (error) { integrationError = String(error); }
+    finally { integrationSaving = false; }
+  }
+  async function saveGlobalTelegramIntegration(clear = false) {
+    const editor = integrationEditor;
+    if (!editor || editor.kind !== 'telegram' || integrationSaving) return;
+    integrationSaving = true; integrationError = ''; integrationNotice = '';
+    const telegram: Record<string, unknown> = clear ? { clear: true } : {};
+    if (!clear && telegramBotToken.trim()) telegram.bot_token = telegramBotToken.trim();
+    try {
+      const config = await invoke<GlobalIntegrationsConfig>('gcms_integrations_save', { connId: editor.connId, siteId: null, payload: { telegram } });
+      integrationGlobal = config; telegramBotToken = '';
+      integrationNotice = clear ? '共享 Bot 已从 GCMS 移除' : 'Telegram 全局配置已同步到 GCMS';
+      await refreshDiscoverySummary(editor.connId);
+    } catch (error) { integrationError = String(error); }
+    finally { integrationSaving = false; }
+  }
+  async function saveGlobalCloudflareAuthorization(removeId = '') {
+    const editor = integrationEditor;
+    if (!editor || editor.kind !== 'cloudflare' || integrationSaving || cloudflareSyncing) return;
+    if (removeId) {
+      const confirmed = await confirmDialog('移除后，使用这份授权的域名将无法继续由 GCMS 自动维护 DNS 或发布。现有 DNS 记录和线上内容不会被删除。', {
+        title: '移除 Cloudflare 授权', kind: 'danger', confirmText: '确认移除',
+      });
+      if (!confirmed) return;
+    } else if (!cloudflareToken.trim()) {
+      integrationError = '请输入 Cloudflare API Token。';
+      return;
+    }
+    integrationSaving = true; integrationError = ''; integrationNotice = '';
+    try {
+      const cloudflare = removeId
+        ? { remove_id: removeId }
+        : { api_token: cloudflareToken.trim(), label: cloudflareLabel.trim() };
+      const config = await invoke<GlobalIntegrationsConfig>('gcms_integrations_save', {
+        connId: editor.connId, siteId: null, payload: { cloudflare },
+      });
+      integrationGlobal = config;
+      cloudflareToken = ''; cloudflareLabel = '';
+      integrationNotice = removeId ? 'Cloudflare 授权已从 GCMS 移除' : 'Cloudflare 授权已验证并安全保存到 GCMS';
+      await refreshDiscoverySummary(editor.connId);
+    } catch (error) { integrationError = String(error); }
+    finally { integrationSaving = false; }
+  }
+
+  function cloudflareAuthorizationAccountLabel(authorization: CloudflareAuthorization): string {
+    const zoneAccount = (authorization.zones ?? [])
+      .map((zone) => zone.account_name || zone.account || '')
+      .find((account) => account.trim())
+      ?.trim();
+    const account = authorization.account?.trim() || zoneAccount;
+    if (account) return `账号：${account}`;
+    if (authorization.account_id?.trim()) return `账号 ID：${authorization.account_id.trim()}`;
+    return `${authorization.zone_count ?? authorization.zones?.length ?? 0} 个可用 Zone`;
+  }
+
+  function normalizeDeploymentDomain(value: string): string {
+    const trimmed = value.trim().toLowerCase();
+    if (!trimmed) return '';
+    const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+    try {
+      return new URL(withScheme).hostname.replace(/\.$/, '');
+    } catch {
+      return trimmed.replace(/^https?:\/\//i, '').split('/')[0].split(':')[0].replace(/\.$/, '');
+    }
+  }
+  function deploymentAliases(): string[] {
+    const primary = normalizeDeploymentDomain(deploymentPrimaryDomain);
+    return [...new Set(
+      deploymentAliasDomains
+        .split(/[\n,]+/)
+        .map(normalizeDeploymentDomain)
+        .filter(Boolean),
+    )].filter((domain) => domain !== primary);
+  }
+  function publicAccessHttpsOk(status?: SitePublicAccessStatus | null): boolean {
+    return status?.https?.ok === true || status?.https?.status === 'ok';
+  }
+  function publicAccessDnsReady(status?: SitePublicAccessStatus | null): boolean {
+    const value = status?.dns?.status;
+    return value === true || ['yes', 'via_cloudflare', 'ok', 'active', 'configured', 'ready'].includes(String(value || '').toLowerCase());
+  }
+  function publicAccessCaddyReady(status?: SitePublicAccessStatus | null): boolean {
+    return status?.caddy?.integrated === true
+      || status?.caddy?.running === true
+      || ['ok', 'active', 'configured', 'ready', 'running'].includes(String(status?.caddy?.status || '').toLowerCase());
+  }
+  function publicAccessPrimaryHost(status?: SitePublicAccessStatus | null): string {
+    return status?.domain?.primary_domain?.host?.trim() || '';
+  }
+  function publicAccessProxyRequested(status?: SitePublicAccessStatus | null): boolean {
+    if (typeof status?.cloudflare_proxy?.requested === 'boolean') return status.cloudflare_proxy.requested;
+    return deploymentAutoDns && deploymentCloudflareProxy;
+  }
+  function publicAccessProxyEnabled(status?: SitePublicAccessStatus | null): boolean {
+    return status?.cloudflare_proxy?.status === 'enabled'
+      || status?.cloudflare_proxy?.actual === true
+      || status?.dns?.proxied === true;
+  }
+  function publicAccessProxyPending(status?: SitePublicAccessStatus | null): boolean {
+    return publicAccessProxyRequested(status)
+      && ['pending', 'enabling'].includes(String(status?.cloudflare_proxy?.status || '').toLowerCase());
+  }
+  function publicAccessProxyFailed(status?: SitePublicAccessStatus | null): boolean {
+    return publicAccessProxyRequested(status)
+      && status?.cloudflare_proxy?.status === 'failed'
+      && !publicAccessProxyEnabled(status);
+  }
+  function publicAccessConfigurationComplete(status?: SitePublicAccessStatus | null): boolean {
+    if (!publicAccessHttpsOk(status)) return false;
+    return !publicAccessProxyRequested(status) || publicAccessProxyEnabled(status);
+  }
+  function publicAccessResultState(status?: SitePublicAccessStatus | null): 'success' | 'pending' | 'attention' {
+    if (publicAccessConfigurationComplete(status)) return 'success';
+    if (publicAccessProxyFailed(status)) return 'attention';
+    if (publicAccessHttpsOk(status) && publicAccessProxyRequested(status)) return 'pending';
+    const statusHost = publicAccessPrimaryHost(status);
+    const formHost = normalizeDeploymentDomain(deploymentPrimaryDomain);
+    if (deploymentApplied || (publicAccessCaddyReady(status) && !!statusHost && statusHost === formHost)) return 'pending';
+    return 'attention';
+  }
+  function publicAccessRootUrl(status?: SitePublicAccessStatus | null): string {
+    const host = publicAccessPrimaryHost(status) || normalizeDeploymentDomain(deploymentPrimaryDomain);
+    return host ? `https://${host}` : '';
+  }
+  function publicAccessReasonText(status?: SitePublicAccessStatus | null): string {
+    const reason = status?.https?.reason?.trim();
+    if (!reason) return '';
+    const normalized = reason.toLowerCase();
+    if (normalized === 'unreachable' || normalized.includes('connection refused')) return 'Pilot 暂时无法连接该网站。';
+    if (normalized.includes('timeout') || normalized.includes('timed out')) return '网站连接检查超时。';
+    if (normalized.includes('certificate') || normalized.includes('tls')) return 'HTTPS 证书尚未签发或验证完成。';
+    if (normalized.includes('dns')) return '域名解析尚未完全生效。';
+    if (normalized.includes('403') || normalized.includes('forbidden')) return '网站已响应，但连通性验证被访问规则拦截。';
+    return '网站连通性检查尚未通过。';
+  }
+  function publicAccessPendingTitle(status?: SitePublicAccessStatus | null): string {
+    if (publicAccessHttpsOk(status) && publicAccessProxyRequested(status)) {
+      return status?.cloudflare_proxy?.status === 'enabling' ? '网站已可访问，正在开启橙云' : '网站已可访问，正在等待橙云生效';
+    }
+    if (!publicAccessDnsReady(status)) return deploymentAutoDns ? '配置已完成，正在等待 DNS 生效' : '服务器配置已完成，还需设置 DNS';
+    return 'DNS 已生效，正在等待 HTTPS 证书';
+  }
+  function publicAccessPendingText(status?: SitePublicAccessStatus | null): string {
+    if (publicAccessHttpsOk(status) && publicAccessProxyRequested(status)) {
+      return '源站 HTTPS 已验证通过，GCMS 正在安全开启 Cloudflare 代理。此过程不会中断当前访问，可先关闭窗口。';
+    }
+    if (!publicAccessDnsReady(status)) {
+      if (!deploymentAutoDns) return '请先在 DNS 服务商中将域名指向当前服务器；解析生效后点击“重新检查”。';
+      return 'Cloudflare 记录已提交。DNS 传播通常需要几分钟，少数情况可能更久；无需重复配置，可先关闭窗口，稍后点击“重新检查”。';
+    }
+    return '域名已经连接，HTTPS 证书正在签发。通常几分钟内完成；无需重复配置，稍后点击“重新检查”。';
+  }
+  function publicAccessAttentionText(status?: SitePublicAccessStatus | null): string {
+    if (publicAccessProxyFailed(status)) {
+      return status?.cloudflare_proxy?.error?.trim()
+        || 'Cloudflare 自动配置没有完成。可单独重试，已经成功的 DNS、Caddy 与 HTTPS 设置不会回滚。';
+    }
+    if (!publicAccessDnsReady(status)) {
+      return deploymentAutoDns
+        ? '尚未检测到有效的 DNS 记录。请确认 Cloudflare 授权覆盖该域名，处理后点击“重新检查”。'
+        : '请先在 DNS 服务商中将域名指向当前服务器，解析生效后点击“重新检查”。';
+    }
+    return 'DNS 已连接，但服务器绑定或 HTTPS 尚未配置完成。请返回检查配置后重新应用。';
+  }
+  function publicAccessAttentionTitle(status?: SitePublicAccessStatus | null): string {
+    if (publicAccessProxyFailed(status)) {
+      return publicAccessHttpsOk(status) ? '网站已可访问，橙云开启失败' : 'Cloudflare 自动配置未完成';
+    }
+    return publicAccessDnsReady(status) ? '服务器配置还没有完成' : '还需要完成域名连接';
+  }
+  function publicAccessResultHint(status?: SitePublicAccessStatus | null): string {
+    if (publicAccessConfigurationComplete(status)) {
+      return publicAccessProxyEnabled(status) ? 'HTTPS 与橙云均已启用' : '当前已可访问 · 未启用橙云';
+    }
+    if (publicAccessProxyFailed(status)) return publicAccessHttpsOk(status) ? '网站可访问 · 橙云开启失败' : '自动配置失败 · 可以重试';
+    if (publicAccessHttpsOk(status) && publicAccessProxyRequested(status)) return '网站可访问 · 橙云正在生效';
+    if (publicAccessResultState(status) === 'attention') return '请按上方提示处理';
+    if (!publicAccessDnsReady(status)) return deploymentAutoDns ? 'DNS 正在传播，可先关闭此窗口' : '请完成 DNS 设置后重新检查';
+    return 'HTTPS 正在生效，可稍后重新检查';
+  }
+  function publicAccessSuccessTitle(status?: SitePublicAccessStatus | null): string {
+    return publicAccessProxyEnabled(status) ? '全部配置已完成' : '访问域名已设置完成';
+  }
+  function publicAccessSuccessText(status?: SitePublicAccessStatus | null): string {
+    return publicAccessProxyEnabled(status)
+      ? '域名、DNS、源站 HTTPS 与 Cloudflare 橙云均已验证通过。'
+      : '域名、DNS 与源站 HTTPS 已验证通过；你选择了暂不启用 Cloudflare 橙云。';
+  }
+  function publicAccessSummaryKey(connId: string, siteId: number): string {
+    return `${connId}:${siteId}`;
+  }
+  function sitePublicAccessSummaryFor(site: Site, connId = activeConnId): SitePublicAccessSummary | null {
+    return site.public_access ?? localPublicAccessSummaries[publicAccessSummaryKey(connId, site.id)] ?? null;
+  }
+  function expireLocalPublicAccessSummary(key: string) {
+    const summary = localPublicAccessSummaries[key];
+    if (!summary || summary.state !== 'pending' || Date.now() / 1000 - summary.started_at < 600) return;
+    localPublicAccessSummaries[key] = {
+      ...summary,
+      state: 'attention',
+      message: `${sitePublicAccessLabel(summary)}已超过 10 分钟。请从部署行右侧的设置菜单检查解析，或更换域名。`,
+      updated_at: Math.floor(Date.now() / 1000),
+    };
+  }
+  function updateLocalPublicAccessSummary(
+    connId: string,
+    siteId: number,
+    status: SitePublicAccessStatus,
+    proxyRequested?: boolean,
+  ) {
+    const key = publicAccessSummaryKey(connId, siteId);
+    const existing = localPublicAccessSummaries[key];
+    const expectsProxy = proxyRequested ?? existing?.proxy_requested ?? status.cloudflare_proxy?.requested === true;
+    if (publicAccessHttpsOk(status) && (!expectsProxy || publicAccessProxyEnabled(status))) {
+      delete localPublicAccessSummaries[key];
+      return;
+    }
+    const stage: SitePublicAccessSummary['stage'] = publicAccessHttpsOk(status) && expectsProxy
+      ? 'proxy'
+      : publicAccessDnsReady(status) ? 'https' : 'dns';
+    const proxyFailed = stage === 'proxy' && publicAccessProxyFailed(status);
+    const now = Math.floor(Date.now() / 1000);
+    const startedAt = existing?.started_at ?? now;
+    const timedOut = now - startedAt >= 600;
+    const state: SitePublicAccessSummary['state'] = proxyFailed || timedOut ? 'attention' : 'pending';
+    let message = stage === 'proxy'
+      ? status.cloudflare_proxy?.error?.trim() || '网站已可访问，正在等待 Cloudflare 橙云生效。'
+      : stage === 'https'
+        ? publicAccessReasonText(status) || 'DNS 已生效，正在等待源站 HTTPS 验证通过。'
+        : '正在等待 DNS 生效。';
+    if (timedOut && !proxyFailed) {
+      message = `${stage === 'dns' ? 'DNS' : stage === 'https' ? 'HTTPS' : 'Cloudflare 橙云'} 等待超过 10 分钟。请检查配置或更换域名。`;
+    }
+    localPublicAccessSummaries[key] = {
+      state,
+      stage,
+      host: publicAccessPrimaryHost(status),
+      message,
+      updated_at: now,
+      generation: status.generation,
+      domain_fingerprint: status.domain_fingerprint,
+      can_clear: status.can_clear_unverified === true,
+      started_at: startedAt,
+      proxy_requested: expectsProxy,
+    };
+  }
+  function sitePublicAccessLabel(summary?: SitePublicAccessSummary | null): string {
+    if (!summary || summary.state === 'ready') return '';
+    if (summary.stage === 'proxy') return summary.state === 'attention' ? '橙云未生效' : '橙云生效中';
+    if (summary.stage === 'https') return summary.state === 'attention' ? 'HTTPS 尚未生效' : '等待 HTTPS 生效';
+    return summary.state === 'attention' ? 'DNS 尚未生效' : '等待 DNS 生效';
+  }
+  async function toggleSiteCardMenu(event: MouseEvent, site: Site) {
+    event.stopPropagation();
+    const connId = activeConnId;
+    if (!connId || discovery?.synthetic || site.id <= 0) return;
+    if (siteCardMenu?.connId === connId && siteCardMenu.siteId === site.id) {
+      siteCardMenu = null;
+      return;
+    }
+    closeSitesGlobalMenu();
+    gcmsCardMenu = null;
+    gcmsInstanceMenu = null;
+    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    siteCardMenu = {
+      connId,
+      siteId: site.id,
+      x: Math.max(8, rect.right - 190),
+      y: rect.bottom + 5,
+      anchorTop: rect.top,
+      anchorBottom: rect.bottom,
+      anchorRight: rect.right,
+      ready: false,
+    };
+    await tick();
+    if (!siteCardMenu || siteCardMenu.connId !== connId || siteCardMenu.siteId !== site.id || !siteCardMenuEl) return;
+    const menuRect = siteCardMenuEl.getBoundingClientRect();
+    const x = Math.max(8, Math.min(siteCardMenu.anchorRight - menuRect.width, window.innerWidth - menuRect.width - 8));
+    const below = siteCardMenu.anchorBottom + 5;
+    const y = below + menuRect.height <= window.innerHeight - 8
+      ? below
+      : Math.max(8, siteCardMenu.anchorTop - menuRect.height - 5);
+    siteCardMenu = { ...siteCardMenu, x, y, ready: true };
+  }
+  $effect(() => {
+    if (!siteCardMenu) return;
+    const close = () => (siteCardMenu = null);
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') siteCardMenu = null;
+    };
+    window.addEventListener('click', close);
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    return () => {
+      window.removeEventListener('click', close);
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+    };
+  });
+  function sitePublicAccessTip(summary?: SitePublicAccessSummary | null): string {
+    if (!summary) return '';
+    const detail = summary.message?.replace(/\s+/g, ' ').trim();
+    const action = summary.can_clear
+      ? '可从设置菜单检查配置，或清除这个未生效域名。'
+      : '可从设置菜单检查配置或更换域名。';
+    if (summary.state === 'attention') {
+      return [detail || `${sitePublicAccessLabel(summary)}，请检查域名解析。`, action].join(' ');
+    }
+    return [detail || `${sitePublicAccessLabel(summary)}，Pilot 会继续自动检查。`, action].join(' ');
+  }
+  function siteCanClearUnverifiedDomain(site: Site, connId = activeConnId): boolean {
+    if (!connId || site.is_default || !siteHasBoundDomain(site)) return false;
+    const summary = sitePublicAccessSummaryFor(site, connId);
+    if (
+      !summary?.can_clear
+      || summary.state !== 'attention'
+      || (summary.stage !== 'dns' && summary.stage !== 'https')
+      || !summary.generation
+      || !summary.domain_fingerprint
+    ) return false;
+    const summaryHost = normalizeDeploymentDomain(summary.host || '');
+    const currentHost = normalizeDeploymentDomain(hostOf(sitePublicURL(site)));
+    return !!summaryHost && summaryHost === currentHost;
+  }
+  function stopDeploymentStatusPoll() {
+    if (deploymentPollTimer !== null) clearTimeout(deploymentPollTimer);
+    deploymentPollTimer = null;
+    deploymentPollAttempts = 0;
+    deploymentPolling = false;
+  }
+  function scheduleDeploymentStatusPoll(delay = 3500) {
+    if (!deploymentEditor || deploymentPollTimer !== null || deploymentPollAttempts >= 72) return;
+    if (!deploymentApplied || publicAccessResultState(deploymentConfig) !== 'pending') return;
+    deploymentPollTimer = setTimeout(() => {
+      deploymentPollTimer = null;
+      deploymentPollAttempts += 1;
+      void recheckSitePublicAccess(true);
+    }, delay);
+  }
+  function initializeDeploymentForm(status: SitePublicAccessStatus, preserveStep = false) {
+    deploymentPrimaryDomain = publicAccessPrimaryHost(status);
+    deploymentAliasDomains = (status.domain?.redirect_domains ?? []).map((domain) => domain.host).filter(Boolean).join('\n');
+    deploymentRedirectOpen = !!deploymentAliasDomains.trim();
+    deploymentRedirectAliases = true;
+    deploymentAutoDns = (deploymentGlobal?.cloudflare.authorization_count || 0) > 0;
+    deploymentCloudflareProxy = deploymentAutoDns
+      && (typeof status.cloudflare_proxy?.requested === 'boolean' ? status.cloudflare_proxy.requested : true);
+    if (!preserveStep) {
+      if (publicAccessHttpsOk(status)) deploymentStep = 4;
+      else if (publicAccessCaddyReady(status)) deploymentStep = 3;
+      else if (publicAccessPrimaryHost(status)) deploymentStep = 2;
+      else deploymentStep = 1;
+    }
+  }
+  async function openSiteDeploymentEditor(site: Site, editDomain = false, targetConnId = activeConnId) {
+    if (!targetConnId || site.id <= 0 || site.is_default) return;
+    siteCardMenu = null;
+    stopDeploymentStatusPoll();
+    closeSitesGlobalMenu();
+    const connId = targetConnId;
+    deploymentEditor = { connId, site };
+    deploymentRebinding = editDomain;
+    deploymentConfig = null; deploymentGlobal = null;
+    deploymentLoading = true; deploymentSaving = false; deploymentError = ''; deploymentNotice = ''; deploymentMessages = [];
+    deploymentApplied = false;
+    deploymentStep = 1; deploymentRedirectOpen = false; deploymentRedirectAliases = true;
+    deploymentAutoDns = true; deploymentCloudflareProxy = true;
+    try {
+      const [status, globalConfig] = await Promise.all([
+        invoke<SitePublicAccessStatus>('gcms_public_access_check', { connId, siteId: site.id }),
+        invoke<GlobalIntegrationsConfig>('gcms_integrations_get', { connId, siteId: null }),
+      ]);
+      if (deploymentEditor?.connId !== connId || deploymentEditor.site.id !== site.id) return;
+      deploymentConfig = status; deploymentGlobal = globalConfig;
+      initializeDeploymentForm(status);
+      updateLocalPublicAccessSummary(connId, site.id, status, deploymentAutoDns && deploymentCloudflareProxy);
+      deploymentApplied = publicAccessProxyPending(status);
+      scheduleDeploymentStatusPoll();
+      if (editDomain) deploymentStep = 1;
+    } catch (error) { deploymentError = String(error); }
+    finally { deploymentLoading = false; }
+  }
+  function openProtectedSiteDeploymentEditor(site: Site, targetConnId = activeConnId) {
+    const connId = targetConnId;
+    if (!connId || site.id <= 0 || site.is_default || site.status === 'disabled') return;
+    const hasBoundDomain = siteHasBoundDomain(site);
+    siteCardMenu = null;
+    if (!hasBoundDomain || hasGcmsNativeUnlock(connId, site.id, 'public_access.apply')) {
+      void openSiteDeploymentEditor(site, hasBoundDomain, connId);
+      return;
+    }
+    requestGcmsPassword({
+      title: '验证后管理访问域名',
+      message: `“${site.name || site.slug}”已经绑定正式域名。修改部署、DNS、Caddy 或 HTTPS 会影响线上访问，请先验证 GCMS 后台密码。密码只用于本次短时授权，不会保存。`,
+      account: 'admin',
+      instance: site.name || site.slug,
+      confirmText: '验证并继续',
+    }, async (password) => {
+      await unlockGcmsNativeOperation(connId, site.id, 'public_access.apply', password);
+    }, async () => {
+      if (activeConnId !== connId) return;
+      await openSiteDeploymentEditor(site, true, connId);
+    });
+  }
+  async function clearUnverifiedSiteDomain(site: Site) {
+    const connId = activeConnId;
+    const summary = connId ? sitePublicAccessSummaryFor(site, connId) : null;
+    if (!connId || !summary || !siteCanClearUnverifiedDomain(site, connId)) return;
+    const domain = normalizeDeploymentDomain(summary.host || '');
+    const actionKey = `${connId}:${site.id}`;
+    const payload = {
+      expected_primary_domain: domain,
+      expected_generation: summary.generation,
+      expected_domain_fingerprint: summary.domain_fingerprint,
+    };
+    siteCardMenu = null;
+    siteDomainClearChecking = actionKey;
+    try {
+      await invoke<SitePublicAccessApplyResult>('gcms_public_access_clear_unverified', {
+        connId,
+        siteId: site.id,
+        payload,
+        dryRun: true,
+      });
+    } catch (error) {
+      say(String(error), 'err');
+      return;
+    } finally {
+      if (siteDomainClearChecking === actionKey) siteDomainClearChecking = '';
+    }
+    requestGcmsPassword({
+      title: '清除未生效域名',
+      message: `“${domain}”尚未通过 GCMS 的 DNS / HTTPS 验证。清除后，GCMS 会移除该站点的域名与 Caddy 路由；为避免误删，Cloudflare 或其他 DNS 服务商中的记录会保留。请输入 GCMS 后台密码确认。`,
+      account: 'admin',
+      instance: site.name || site.slug,
+      kind: 'danger',
+      confirmText: '验证并清除',
+    }, async (password) => {
+      await unlockGcmsNativeOperation(connId, site.id, 'public_access.clear_unverified', password);
+    }, async () => {
+      siteDomainClearChecking = actionKey;
+      try {
+        const result = await invoke<SitePublicAccessApplyResult>('gcms_public_access_clear_unverified', {
+          connId,
+          siteId: site.id,
+          payload,
+          dryRun: false,
+        });
+        delete localPublicAccessSummaries[publicAccessSummaryKey(connId, site.id)];
+        await refreshDiscoverySummary(connId);
+        say(result.messages?.[0] || `已清除未生效域名 ${domain}`);
+      } catch (error) {
+        if (isGcmsNativeUnlockError(error)) {
+          forgetGcmsNativeUnlock(connId, site.id, 'public_access.clear_unverified');
+        }
+        throw error;
+      } finally {
+        if (siteDomainClearChecking === actionKey) siteDomainClearChecking = '';
+      }
+    });
+  }
+  function retrySiteDeploymentEditor() {
+    const editor = deploymentEditor;
+    if (editor) void openSiteDeploymentEditor(editor.site, deploymentRebinding, editor.connId);
+  }
+  function closeSiteDeploymentEditor() {
+    if (deploymentSaving) return;
+    stopDeploymentStatusPoll();
+    deploymentEditor = null; deploymentConfig = null; deploymentGlobal = null;
+    deploymentRebinding = false;
+    deploymentError = ''; deploymentNotice = ''; deploymentMessages = []; deploymentApplied = false;
+  }
+  function nextSiteDeploymentStep() {
+    deploymentError = '';
+    deploymentNotice = '';
+    if (deploymentStep === 1) {
+      const primary = normalizeDeploymentDomain(deploymentPrimaryDomain);
+      if (!primary || !primary.includes('.')) {
+        deploymentError = '请输入有效的访问域名。';
+        return;
+      }
+      deploymentPrimaryDomain = primary;
+      if (deploymentRedirectOpen) deploymentAliasDomains = deploymentAliases().join('\n');
+      deploymentStep = 2;
+      return;
+    }
+    if (deploymentStep === 2) deploymentStep = 3;
+  }
+  function previousSiteDeploymentStep() {
+    deploymentError = '';
+    deploymentNotice = '';
+    deploymentStep = deploymentStep === 3 ? 2 : 1;
+  }
+  async function applySitePublicAccess() {
+    const editor = deploymentEditor;
+    if (!editor || deploymentSaving) return;
+    deploymentSaving = true; deploymentError = ''; deploymentNotice = ''; deploymentMessages = [];
+    try {
+      const result = await invoke<SitePublicAccessApplyResult>('gcms_public_access_apply', {
+        connId: editor.connId,
+        siteId: editor.site.id,
+        payload: {
+          primary_domain: normalizeDeploymentDomain(deploymentPrimaryDomain),
+          redirect_domains: deploymentRedirectOpen && deploymentRedirectAliases ? deploymentAliases() : [],
+          auto_dns: deploymentAutoDns,
+          cloudflare_proxy: deploymentAutoDns ? deploymentCloudflareProxy : false,
+        },
+      });
+      const status = result.status ?? await invoke<SitePublicAccessStatus>('gcms_public_access_check', { connId: editor.connId, siteId: editor.site.id });
+      deploymentConfig = status;
+      deploymentMessages = result.messages ?? [];
+      deploymentNotice = result.ok === false ? '' : '访问域名配置已同步到 GCMS';
+      deploymentApplied = result.ok !== false;
+      initializeDeploymentForm(status, true);
+      updateLocalPublicAccessSummary(
+        editor.connId,
+        editor.site.id,
+        status,
+        deploymentAutoDns && deploymentCloudflareProxy,
+      );
+      deploymentStep = 4;
+      scheduleDeploymentStatusPoll();
+      await refreshDiscoverySummary(editor.connId);
+    } catch (error) {
+      const message = String(error);
+      if (isGcmsNativeUnlockError(message)) {
+        forgetGcmsNativeUnlock(editor.connId, editor.site.id, 'public_access.apply');
+      }
+      deploymentError = message;
+    }
+    finally { deploymentSaving = false; }
+  }
+  async function recheckSitePublicAccess(quiet = false) {
+    const editor = deploymentEditor;
+    if (!editor || deploymentLoading || deploymentPolling || deploymentSaving) return;
+    if (quiet) deploymentPolling = true;
+    else {
+      stopDeploymentStatusPoll();
+      deploymentLoading = true;
+    }
+    if (!quiet) {
+      deploymentError = '';
+      deploymentNotice = '';
+    }
+    try {
+      const status = await invoke<SitePublicAccessStatus>('gcms_public_access_check', { connId: editor.connId, siteId: editor.site.id });
+      if (deploymentEditor?.connId !== editor.connId || deploymentEditor.site.id !== editor.site.id) return;
+      deploymentConfig = status;
+      initializeDeploymentForm(status, true);
+      updateLocalPublicAccessSummary(
+        editor.connId,
+        editor.site.id,
+        status,
+        deploymentAutoDns && deploymentCloudflareProxy,
+      );
+      deploymentStep = 4;
+      if (!quiet || publicAccessConfigurationComplete(status) || publicAccessProxyFailed(status)) {
+        await refreshDiscoverySummary(editor.connId);
+      }
+    } catch (error) {
+      if (!quiet) deploymentError = String(error);
+    }
+    finally {
+      deploymentLoading = false;
+      deploymentPolling = false;
+      scheduleDeploymentStatusPoll(5000);
+    }
+  }
+  function confirmSitePublicAccess() {
+    const editor = deploymentEditor;
+    if (!editor || deploymentSaving) return;
+    if (hasGcmsNativeUnlock(editor.connId, editor.site.id, 'public_access.apply')) {
+      void applySitePublicAccess();
+      return;
+    }
+    requestGcmsPassword({
+      title: deploymentRebinding ? '确认更换访问域名' : '确认绑定访问域名',
+      message: '将更新 GCMS 的域名、DNS 与 Caddy / HTTPS 配置。密码仅用于签发本次短时授权，不会保存。',
+      account: 'admin',
+      instance: editor.site.name || editor.site.slug,
+      confirmText: '验证并应用',
+    }, async (password) => {
+      await unlockGcmsNativeOperation(editor.connId, editor.site.id, 'public_access.apply', password);
+    }, async () => {
+      await applySitePublicAccess();
+    });
+  }
+  async function provisionSiteGoogle(service: SiteGoogleService) {
+    const editor = integrationEditor;
+    const expectedKind = service === 'analytics' ? 'site-analytics' : 'site-search-console';
+    if (!editor || editor.kind !== expectedKind || !editor.site || integrationSaving) return;
+    const accountId = service === 'analytics'
+      ? siteIntegrationForm.analytics.accountId.trim()
+      : siteIntegrationForm.searchConsole.accountId.trim();
+    if (!accountId) {
+      integrationError = '请先选择一个已授权的 Google 账号。';
+      return;
+    }
+    const payload = service === 'analytics'
+      ? {
+          account_id: accountId,
+          property: siteIntegrationForm.analytics.property.trim(),
+          property_mode: siteIntegrationForm.analytics.property === '__create__' ? 'create' : '',
+          analytics_account: siteIntegrationForm.analytics.analyticsAccount.trim(),
+          default_uri: '',
+        }
+      : {
+          account_id: accountId,
+          property: siteIntegrationForm.searchConsole.property.trim(),
+          // GCMS 的自动接口优先读取 default_uri；这里同步传入显式属性，
+          // 让 sc-domain 域名级属性真正成为默认，而不是被 URL 前缀覆盖。
+          default_uri: siteIntegrationForm.searchConsole.property.trim(),
+        };
+    integrationSaving = true; integrationError = ''; integrationNotice = ''; integrationProvisionResult = null;
+    try {
+      const result = await invoke<SiteGoogleProvisionResult>('gcms_site_google_provision', {
+        connId: editor.connId,
+        siteId: editor.site.id,
+        service,
+        payload,
+      });
+      integrationProvisionResult = result;
+      integrationNotice = result.message || (service === 'analytics' ? 'Google Analytics 已启用' : 'Google Search Console 已启用');
+      integrationSite = await invoke<SiteIntegrationsConfig>('gcms_integrations_get', {
+        connId: editor.connId,
+        siteId: editor.site.id,
+      });
+      initializeSiteIntegrationForm(integrationSite, editor.site);
+      if (service === 'analytics' ? integrationSite.analytics.enabled : integrationSite.search_console.enabled) siteGoogleEditing = false;
+      await refreshDiscoverySummary(editor.connId, true);
+    } catch (error) {
+      integrationError = String(error);
+    } finally {
+      integrationSaving = false;
+    }
+  }
+  function editSiteGoogle(service: SiteGoogleService) {
+    siteGoogleEditing = true;
+    integrationError = '';
+    integrationNotice = '';
+    if (service === 'analytics' && siteIntegrationForm.analytics.accountId) {
+      void loadSiteAnalyticsOptions(siteIntegrationForm.analytics.accountId);
+    }
+  }
+  function cancelSiteGoogleEdit() {
+    const editor = integrationEditor;
+    if (!editor?.site || !integrationSite) return;
+    analyticsOptionsRequestId += 1;
+    analyticsOptionsLoading = false;
+    analyticsOptions = null;
+    initializeSiteIntegrationForm(integrationSite, editor.site);
+    integrationError = '';
+    integrationNotice = '';
+    siteGoogleEditing = false;
+  }
+  async function clearSiteIntegration(kind: 'analytics' | 'search_console') {
+    const editor = integrationEditor;
+    const expectedKind = kind === 'analytics' ? 'site-analytics' : 'site-search-console';
+    if (!editor || editor.kind !== expectedKind || !editor.site || integrationSaving) return;
+    const serviceLabel = kind === 'analytics' ? 'Google Analytics' : 'Google Search Console';
+    const confirmed = await confirmDialog(`解除后，GCMS 将停止读取该站点的 ${serviceLabel} 数据；Google 账号中的属性和历史数据不会被删除。`, {
+      title: `解除 ${serviceLabel}`,
+      kind: 'danger',
+      confirmText: '确认解除',
+    });
+    if (!confirmed) return;
+    integrationSaving = true; integrationError = ''; integrationNotice = '';
+    try {
+      const config = await invoke<SiteIntegrationsConfig>('gcms_integrations_save', {
+        connId: editor.connId, siteId: editor.site.id, payload: { [kind]: { clear: true } },
+      });
+      integrationSite = config; initializeSiteIntegrationForm(config, editor.site);
+      integrationNotice = kind === 'analytics' ? '已解除 Google Analytics' : '已解除 Google Search Console';
+      await refreshDiscoverySummary(editor.connId);
+    } catch (error) { integrationError = String(error); }
+    finally { integrationSaving = false; }
+  }
+
+  const READINESS_ITEMS: { label: string; ready: (readiness: NonNullable<Site['readiness']>) => boolean | undefined }[] = [
+    { label: '站点信息', ready: (readiness) => readiness.site_info },
+    { label: '访问域名', ready: (readiness) => readiness.public_url && readiness.https },
+    { label: 'Logo 与网站图标', ready: (readiness) => readiness.logo && readiness.favicon },
+    { label: '分享图', ready: (readiness) => readiness.share_image },
+    { label: '首批内容', ready: (readiness) => readiness.published_content },
+  ];
+  function siteReadiness(site: Site): { done: number; total: number; missing: string[]; known: boolean } {
+    if (!site.readiness) return { done: 0, total: READINESS_ITEMS.length, missing: [], known: false };
+    const missing = READINESS_ITEMS.filter((item) => item.ready(site.readiness!) !== true).map((item) => item.label);
+    return { done: READINESS_ITEMS.length - missing.length, total: READINESS_ITEMS.length, missing, known: true };
+  }
+  function isLegacyAdminPreviewURL(raw?: string): boolean {
+    const value = (raw ?? '').trim();
+    if (!value) return false;
+    try {
+      return /^\/admin\/sites\/\d+\/preview(?:\/|$)/i.test(new URL(value, 'https://pilot.invalid').pathname);
+    } catch {
+      return /^\/admin\/sites\/\d+\/preview(?:\/|$)/i.test(value);
+    }
+  }
+  function normalizedSiteURL(raw?: string): string {
+    let value = (raw ?? '').trim();
+    if (!value || isLegacyAdminPreviewURL(value)) return '';
+    if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) {
+      if (value.startsWith('/')) return '';
+      value = `https://${value}`;
+    }
+    try {
+      const parsed = new URL(value);
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return '';
+      return parsed.toString().replace(/\/+$/, '');
+    } catch {
+      return '';
+    }
+  }
+  function gcmsBaseURLFor(conn: Connection | null | undefined): string {
+    return normalizedSiteURL((conn?.api_base ?? '').replace(/\/api(?:\/platform\/v1)?\/?$/i, ''));
+  }
+  /** 站点真正可公开打开的地址；历史后台预览路径绝不能当成公开域名。 */
+  function sitePublicURL(site: Site, conn: Connection | null = activeConn): string {
+    if (site.is_default) return gcmsBaseURLFor(conn);
+    const deployment = site.deployment;
+    const primary = deployment?.domains?.find((domain) => domain.primary)?.host;
+    for (const candidate of [
+      deployment?.public_url,
+      deployment?.primary_domain,
+      primary,
+      site.url,
+    ]) {
+      const value = normalizedSiteURL(candidate);
+      if (value) return value;
+    }
+    return '';
+  }
+  /** 已配置主域名、别名或公网地址的站点，直接进入运营状态展示。 */
+  function siteHasBoundDomain(site: Site): boolean {
+    const deployment = site.deployment;
+    return Boolean(
+      deployment?.primary_domain?.trim()
+      || deployment?.public_url?.trim()
+      || normalizedSiteURL(site.url)
+      || deployment?.domains?.some((domain) => domain.host?.trim())
+    );
+  }
+  function hasSiteSummary(site: Site): boolean {
+    return typeof site.language_count === 'number' && Number.isFinite(site.language_count)
+      && typeof site.content_count === 'number' && Number.isFinite(site.content_count)
+      && typeof site.pending_count === 'number' && Number.isFinite(site.pending_count);
+  }
+  function siteSummary(site: Site): string {
+    if (!hasSiteSummary(site)) return '统计数据待同步';
+    return `${site.language_count}语种 · ${site.content_count}条内容 · ${site.pending_count}条待发`;
+  }
+  function gcmsBaseURL(): string {
+    return gcmsBaseURLFor(activeConn);
+  }
+  function gcmsAdminURL(path = '/admin/sites'): string {
+    const base = gcmsBaseURL();
+    return base ? `${base}${path.startsWith('/') ? path : `/${path}`}` : '';
+  }
+  function siteAdminURL(site: Site): string {
+    const base = sitePublicURL(site);
+    return base ? `${base}/admin` : gcmsAdminURL('/admin/sites');
+  }
+  function sitePreviewKey(connId: string, siteID: number): string {
+    return `${connId}:${siteID}`;
+  }
+  function sitePreviewIsBusy(connId: string, siteID: number): boolean {
+    return !!sitePreviewBusy[sitePreviewKey(connId, siteID)];
+  }
+  async function openSitePreview(site: Site, connId: string) {
+    const conn = conns.find((item) => item.id === connId) ?? null;
+    const publicURL = sitePublicURL(site, conn);
+    if (publicURL) {
+      await openUrl(publicURL);
+      return;
+    }
+    // 单站技能包没有平台签发端点；它本身的 API Host 就是当前站点入口。
+    if (site.id <= 0 || discovery?.synthetic) {
+      const base = gcmsBaseURLFor(conn);
+      if (base) await openUrl(base);
+      else say('当前站点没有可用的预览地址', 'err');
+      return;
+    }
+    const key = sitePreviewKey(connId, site.id);
+    if (sitePreviewBusy[key]) return;
+    sitePreviewBusy = { ...sitePreviewBusy, [key]: true };
+    try {
+      const result = await invoke<{ preview_url: string; expires_at: string; ttl_seconds: number }>('gcms_site_preview_url', {
+        connId,
+        siteId: site.id,
+      });
+      const previewURL = normalizedSiteURL(result.preview_url);
+      if (!previewURL) throw new Error('GCMS 没有返回有效的私有预览地址');
+      await openUrl(previewURL);
+    } catch (error) {
+      say(`无法打开站点预览：${String(error)}`, 'err');
+    } finally {
+      const next = { ...sitePreviewBusy };
+      delete next[key];
+      sitePreviewBusy = next;
+    }
+  }
+  function openGcmsAdmin(path = '/admin/sites') {
+    const url = gcmsAdminURL(path);
+    if (url) void openUrl(url);
+    else say('当前连接没有可用的 GCMS 后台地址', 'err');
+  }
 
   /** 全部厂商（顺序即下拉展示顺序）。新增厂商在此登记，brainUsable/brainLabel/模型档随之生效。 */
   const ALL_BRAINS: Brain[] = ['claude', 'codex', 'grok'];
@@ -2072,7 +4156,7 @@
       // 当前厂商永远可选（会话已经在用它了，灰掉只会让触发器显示成一个选不中的项）。
       // 远程连接下的 codex 不置灰、只挂注记：它能用，只是那道闸是打折的（完整说法见 permTipFor）。
       const usable = b === cur || brainUsable(b);
-      const note = isCodexSsh(b, isSshConn) ? CODEX_SSH_NOTE : usable ? '' : brains?.[b].found ? '未登录' : '未安装';
+      const note = isCodexSsh(b, activeConvIsSsh) ? CODEX_SSH_NOTE : usable ? '' : brains?.[b].found ? '未登录' : '未安装';
       for (const m of launcherModelOpts(b)) {
         out.push({ value: `${b}::${m.value}`, label: m.label, sub: note || m.sub, icon: b, disabled: !usable });
       }
@@ -2097,7 +4181,7 @@
     const label = brainLabel(brain);
     // ★ 这个框就是「在真机上自动重跑」的同意点：切完立刻 rebuildSession 重跑最近一条请求。
     // 切到 codex 的风险必须**当场**说，不能只靠权限档位 tip 那种要悬停才出的——用户点完就跑了。
-    const risk = isCodexSsh(brain, isSshConn)
+    const risk = isCodexSsh(brain, activeConvIsSsh)
       ? `\n\n注意：Codex 无头模式没有逐命令闸。经 Pilot 跑的远程命令仍会弹卡${threadPerm === 'full' ? '（但「全自动」档下这些卡也全关了）' : ''}，但它可以绕开 Pilot、直接用你本机的 ssh 和 ~/.ssh 密钥连这台机器——那条路一张卡都不弹。`
       : '';
     const yes = await confirmDialog(
@@ -2132,7 +4216,13 @@
       if (viewBusy) say('权限档位已切换，从下一轮开始生效（不影响正在跑的这轮）');
     } catch (e) { say(String(e), 'err'); }
   }
-  let view = $state<'launcher' | 'thread' | 'schedule' | 'tasks' | 'managed' | 'templates' | 'prompts' | 'remote'>('launcher');
+  let view = $state<'launcher' | 'thread' | 'sites' | 'schedule' | 'tasks' | 'managed' | 'templates' | 'prompts' | 'remote'>('launcher');
+
+  async function openSites() {
+    if (activeConn?.kind !== 'gcms') return;
+    view = 'sites'; activeConvId = ''; activeConv = null;
+    if (!discovery && activeConnId) await selectConn(activeConnId);
+  }
 
   // 排期视图
   let sched = $state<ScheduledItem[]>([]);
@@ -2152,6 +4242,9 @@
 
   // 定时任务
   let tasks = $state<ScheduledTask[]>([]);
+  // tasks.json 是 Pilot 的全局调度账本，后台必须读取全部任务；界面则严格按当前
+  // 技能包连接分区，避免切换连接后看到、统计或操作到其它技能包的任务。
+  const tasksOfConn = $derived(tasks.filter((task) => task.conn_id === activeConnId));
   async function openTasks() { view = 'tasks'; activeConvId = ''; activeConv = null; await loadTasks(); }
   async function loadTasks() { try { tasks = await invoke<ScheduledTask[]>('list_tasks'); } catch (e) { say(String(e), 'err'); } }
 
@@ -2385,7 +4478,7 @@
     const t0 = Math.floor(midnight.getTime() / 1000);
     let ran = 0, failed = 0, deferred = 0, enabled = 0;
     let next: { ts: number; title: string } | null = null;
-    for (const t of tasks) {
+    for (const t of tasksOfConn) {
       if (t.enabled) {
         enabled++;
         if (t.next_run > 0 && (!next || t.next_run < next.ts)) next = { ts: t.next_run, title: t.title };
@@ -2399,7 +4492,7 @@
         }
       }
     }
-    return { total: tasks.length, enabled, ran, failed, deferred, next };
+    return { total: tasksOfConn.length, enabled, ran, failed, deferred, next };
   });
   const taskNextLabel = $derived.by(() => {
     const n = taskAgg.next;
@@ -2547,7 +4640,7 @@
       const conv = await invoke<Conversation>('start_conversation', {
         convId: id, connId: activeConnId, siteSlug: mwSite, siteName: site?.name || mwSite,
         siteSlugs: [], siteNames: [], taskType: 'free', brain: mwBrain, model: mwModel,
-        permMode: 'auto', effort: mwEffort, message: MW_PLAN_PROMPT, onEvent: makeChannel(id),
+        permMode: 'auto', effort: mwEffort, workspaceDir: '', message: MW_PLAN_PROMPT, onEvent: makeChannel(id),
       });
       const last = [...conv.messages].reverse().find((x) => x.role === 'assistant' && !x.error && x.text.trim());
       if (last) mwPlan = last.text.trim();
@@ -2732,7 +4825,11 @@
   // Cloudflare 建站：连接是 CF 时，lSite 复用为「项目名」，站点选择器换成项目输入。
   const isCfConn = $derived(activeConn?.kind === 'cloudflare');
   let cfProjects = $state<string[]>([]);
-  const activeConvIsCf = $derived(!!activeConv && conns.find((c) => c.id === activeConv!.conn_id)?.kind === 'cloudflare');
+  // 自由对话的 conn_id 只表示侧栏创建位置，绝不能把该连接当成运行上下文。
+  const activeConvIsCf = $derived(!!activeConv && activeConv.task_type !== 'workspace' && conns.find((c) => c.id === activeConv!.conn_id)?.kind === 'cloudflare');
+  const activeConvConn = $derived(activeConv && activeConv.task_type !== 'workspace' ? (conns.find((c) => c.id === activeConv!.conn_id) ?? null) : null);
+  const activeConvIsSsh = $derived(activeConvConn?.kind === 'ssh');
+  const activeConvIsWorkspace = $derived(activeConv?.task_type === 'workspace');
   let previewBusy = $state(false);
   let cfReady = $state(false); // 项目是否已建出可预览/部署的内容（否则预览/部署置灰）
   async function checkCfReady() {
@@ -2832,8 +4929,145 @@
   let lTask = $state<TaskType>(prefs.taskType);
   let lBrain = $state<Brain>(prefs.brain);
   let lModel = $state(prefs.model);
-  let lPerm = $state<string>(prefs.perm ?? 'full');
+  let lPerm = $state<string>(prefs.taskType === 'sitebuild' && (prefs.perm ?? 'full') === 'full' ? 'auto' : (prefs.perm ?? 'full'));
   let lEffort = $state<string>(prefs.effort ?? '');
+  const WORKSPACE_CONN_ID = '__workspace__';
+  let workspaceDir = $state('');
+  function workspaceFolderName(path: string): string {
+    const parts = path.replace(/[\\/]+$/, '').split(/[\\/]/).filter(Boolean);
+    return parts[parts.length - 1] || path;
+  }
+  async function chooseWorkspaceFolder() {
+    const picked = await open({ title: '选择自由对话使用的文件夹', directory: true, multiple: false });
+    if (typeof picked === 'string' && picked.trim()) workspaceDir = picked;
+  }
+  type SiteBuildMode = 'guided' | 'chat';
+  type SiteBuildKind = 'auto' | 'content' | 'factory' | 'dtc';
+  type SiteBuildLanguage = 'auto' | 'zh' | 'en' | 'zh-en';
+  type SiteBuildContentPlan = 'structure' | 'drafts' | 'empty';
+  type SiteBuildDraft = {
+    kind: SiteBuildKind;
+    goal: string;
+    audience: string;
+    language: SiteBuildLanguage;
+    name: string;
+    slug: string;
+    pages: string[];
+    style: string;
+    reference: string;
+    contentPlan: SiteBuildContentPlan;
+    notes: string;
+  };
+  const freshSiteBuildDraft = (): SiteBuildDraft => ({
+    kind: 'auto', goal: '', audience: '', language: 'auto', name: '', slug: '', pages: [],
+    style: 'auto', reference: '', contentPlan: 'structure', notes: '',
+  });
+  let siteBuildMode = $state<SiteBuildMode>('guided');
+  let siteBuildStep = $state(1);
+  let siteBuildDraft = $state<SiteBuildDraft>(freshSiteBuildDraft());
+  const SITE_BUILD_KINDS: { value: SiteBuildKind; label: string; sub: string }[] = [
+    { value: 'auto', label: '让 AI 判断', sub: '根据业务目标推荐合适类型' },
+    { value: 'content', label: '内容 / 品牌站', sub: '博客、媒体、知识与品牌介绍' },
+    { value: 'factory', label: '工厂外贸站', sub: '产品展示、工厂实力与询盘' },
+    { value: 'dtc', label: '品牌独立站', sub: '面向消费者的产品与品牌体验' },
+  ];
+  const SITE_BUILD_GOAL_EXAMPLE = '向海外采购商展示露营装备生产能力，并获得真实询盘';
+  const SITE_BUILD_LANGUAGES: { value: SiteBuildLanguage; label: string }[] = [
+    { value: 'auto', label: '让 AI 判断' },
+    { value: 'zh', label: '简体中文' },
+    { value: 'en', label: 'English' },
+    { value: 'zh-en', label: '中英双语' },
+  ];
+  const SITE_BUILD_PAGES = ['首页', '关于我们', '产品 / 服务', '文章 / 资讯', '案例', '常见问题', '联系我们'];
+  const SITE_BUILD_STYLES = [
+    { value: 'auto', label: '让 AI 选择', sub: '读取真实主题后推荐' },
+    { value: 'clean', label: '清爽简约', sub: '留白、克制、易阅读' },
+    { value: 'editorial', label: '内容编辑感', sub: '适合长文与观点内容' },
+    { value: 'professional', label: '专业企业', sub: '稳重、可信、信息清晰' },
+    { value: 'warm', label: '温暖品牌', sub: '亲和、有生活方式气质' },
+    { value: 'dark', label: '深色科技', sub: '高对比、现代、偏技术' },
+  ];
+  const SITE_BUILD_CONTENT_PLANS: { value: SiteBuildContentPlan; label: string; sub: string }[] = [
+    { value: 'structure', label: '先搭基础框架', sub: '推荐；配置结构、导航和资料，不直接发布内容' },
+    { value: 'drafts', label: '框架 + 少量草稿', sub: '基于可验证资料生成未发布草稿，稍后继续完善' },
+    { value: 'empty', label: '仅创建空站', sub: '只创建独立站点，其他内容以后再配置' },
+  ];
+  const SITE_BUILD_MODES: { value: SiteBuildMode; label: string; short: string; sub: string }[] = [
+    { value: 'guided', label: '引导创建', short: '引导', sub: '推荐 · 分 4 步说清需求，不需要懂 GCMS' },
+    { value: 'chat', label: '对话创建', short: '对话', sub: '直接描述完整需求，适合熟悉建站的人' },
+  ];
+  const siteBuildSlugValid = $derived(!siteBuildDraft.slug.trim() || /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(siteBuildDraft.slug.trim()));
+  const siteBuildGuideReady = $derived(!!siteBuildDraft.goal.trim() && siteBuildSlugValid);
+  const siteBuildChatReady = $derived(!!siteBuildDraft.notes.trim());
+  const siteBuildHasStructuredInput = $derived(!!(
+    siteBuildDraft.goal.trim() || siteBuildDraft.audience.trim() || siteBuildDraft.name.trim() || siteBuildDraft.slug.trim()
+    || siteBuildDraft.pages.length || siteBuildDraft.reference.trim() || siteBuildDraft.kind !== 'auto'
+    || siteBuildDraft.language !== 'auto' || siteBuildDraft.style !== 'auto' || siteBuildDraft.contentPlan !== 'structure'
+  ));
+  function siteBuildChoiceLabel<T extends string>(options: { value: T; label: string }[], value: T): string {
+    return options.find((option) => option.value === value)?.label ?? value;
+  }
+  function patchSiteBuildDraft(patch: Partial<SiteBuildDraft>) {
+    siteBuildDraft = { ...siteBuildDraft, ...patch };
+  }
+  function toggleSiteBuildPage(page: string) {
+    const pages = siteBuildDraft.pages.includes(page)
+      ? siteBuildDraft.pages.filter((item) => item !== page)
+      : [...siteBuildDraft.pages, page];
+    patchSiteBuildDraft({ pages });
+  }
+  function slugifySiteBuildName(value: string): string {
+    return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').replace(/-{2,}/g, '-');
+  }
+  function suggestSiteBuildSlug() {
+    if (siteBuildDraft.slug.trim()) return;
+    const slug = slugifySiteBuildName(siteBuildDraft.name);
+    if (slug) patchSiteBuildDraft({ slug });
+  }
+  function setSiteBuildMode(mode: SiteBuildMode) {
+    siteBuildMode = mode;
+    if (mode === 'guided' && siteBuildStep < 1) siteBuildStep = 1;
+  }
+  function siteBuildMessage(): string {
+    const kind = siteBuildDraft.kind === 'auto'
+      ? '请根据业务目标在 content、factory、dtc 三种真实站点类型中推荐，并解释理由'
+      : `${siteBuildChoiceLabel(SITE_BUILD_KINDS, siteBuildDraft.kind)}（site_kind=${siteBuildDraft.kind}）`;
+    const language = siteBuildChoiceLabel(SITE_BUILD_LANGUAGES, siteBuildDraft.language);
+    const style = SITE_BUILD_STYLES.find((item) => item.value === siteBuildDraft.style)?.label ?? '让 AI 选择';
+    const contentPlan = SITE_BUILD_CONTENT_PLANS.find((item) => item.value === siteBuildDraft.contentPlan);
+    const lines = [
+      `请在当前 GCMS 平台中规划一个全新子站点。`,
+      '',
+      '【业务定位】',
+      `- 建站目标：${siteBuildDraft.goal.trim() || '请从补充要求中识别并先向我确认'}`,
+      `- 目标受众：${siteBuildDraft.audience.trim() || '请根据建站目标建议'}`,
+      `- 站点类型：${kind}`,
+      `- 内容语言：${language}`,
+      '',
+      '【站点结构】',
+      `- 站点名称：${siteBuildDraft.name.trim() || '请建议一个清晰、真实的名称'}`,
+      `- 站点标识 slug：${siteBuildDraft.slug.trim() || '请建议一个简短、合法且未占用的英文 slug'}`,
+      `- 希望包含的页面：${siteBuildDraft.pages.length ? siteBuildDraft.pages.join('、') : '请根据站点类型规划必要页面和导航'}`,
+      '',
+      '【外观方向】',
+      `- 视觉偏好：${style}`,
+      `- 参考网站或补充风格：${siteBuildDraft.reference.trim() || '无；请从 GCMS 当前真实可用主题中选择'}`,
+      '',
+      '【首轮建设范围】',
+      `- ${contentPlan?.label ?? '先搭基础框架'}：${contentPlan?.sub ?? ''}`,
+    ];
+    if (siteBuildDraft.notes.trim()) lines.push('', '【补充要求】', siteBuildDraft.notes.trim());
+    lines.push(
+      '',
+      '【执行边界】',
+      '1. 先实时读取 capabilities、control-sites 和 themes，不要猜测站点类型、主题 ID 或现有数据。',
+      '2. 先给出站点类型、结构和主题推荐理由，并运行 site-create-plan；本条消息不代表我已确认创建。',
+      '3. 只有在我明确确认预检结果后，才执行幂等 site-create；主题也必须先 theme-plan，再等我确认应用。',
+      '4. 默认只创建空站或未发布草稿，不发布内容，不伪造案例、评价或业务事实。',
+      '5. 本阶段不修改域名、DNS、Cloudflare、Caddy 或 HTTPS；创建完成后另列上线清单。',
+    );
+    return lines.join('\n');
+  }
   const permOpts = [
     { value: 'plan', label: '计划', sub: '只读 · 只给方案' },
     { value: 'ask', label: '询问', sub: '每步都要你批准' },
@@ -2893,7 +5127,7 @@
   // 下拉里直接置灰，省掉那行说明。Codex 实际就两档能用：计划(只读) / 全自动(建站要联网，跑得动)。
   // **远程连接例外**：那里的命令闸在 Pilot 里（AI 桥，见 bridge.rs），不依赖厂商的钩子能力，
   // 所以 codex 一样能逐条确认远程命令 —— 这两档对它有意义，不置灰。
-  // 远程连接下每个档位的长说明（挂 data-tip，Dropdown 会把它交给全局 .tipbox；\n 会保留）。
+  // 远程连接下每个档位的长说明（挂 data-tip，Dropdown 会把它交给全局 .ui-tip；\n 会保留）。
   // ★ 这些话原来是 composer 下面的常驻框，现在长在档位本身上 —— 那才是**决策点**：
   // 原来的写法全都 reactive 于 perm==='full'，等于用户已经把闸拨到底了才弹出来说「这样很危险」，
   // 亡羊补牢。挂在选项上，用户在**拨之前**就读得到；挂在触发器上，选完悬停还能复查。
@@ -3017,11 +5251,31 @@
     (node as unknown as { __autogrow?: () => void }).__autogrow = resize;
     return { destroy: () => node.removeEventListener('input', resize) };
   }
+  // 单行省略文案只有真的被截断时才挂全局 tooltip；宽度够时保持安静。
+  function overflowTip(node: HTMLElement, text: string) {
+    let current = text;
+    let frame = 0;
+    const sync = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const clipped = node.scrollWidth > node.clientWidth + 1 || node.scrollHeight > node.clientHeight + 1;
+        if (clipped && current) node.dataset.tip = current;
+        else delete node.dataset.tip;
+      });
+    };
+    const observer = new ResizeObserver(sync);
+    observer.observe(node);
+    sync();
+    return {
+      update(value: string) { current = value; sync(); },
+      destroy() { cancelAnimationFrame(frame); observer.disconnect(); delete node.dataset.tip; },
+    };
+  }
   let draftEl = $state<HTMLTextAreaElement | undefined>();
   let lDraftEl = $state<HTMLTextAreaElement | undefined>();
   // 程序化清空（发送/排队/切会话）不触发 input 事件，这里补一脚
   $effect(() => { void draft; const el = draftEl as unknown as { __autogrow?: () => void } | undefined; el?.__autogrow?.(); });
-  $effect(() => { void lDraft; const el = lDraftEl as unknown as { __autogrow?: () => void } | undefined; el?.__autogrow?.(); });
+  $effect(() => { void lDraft; void siteBuildDraft.notes; const el = lDraftEl as unknown as { __autogrow?: () => void } | undefined; el?.__autogrow?.(); });
 
   // ---------- composer / live turn ----------
   let draft = $state('');
@@ -3148,26 +5402,29 @@
   const searchResults = $derived.by(() => {
     const q = searchQ.trim().toLowerCase();
     const list = convos.filter((c) => {
-      if (c.conn_id !== activeConnId) return false; // 只搜当前连接下的会话，别把别的连接（gcms）串进来
+      // 每条会话固定在创建它的连接里；自由对话也只是不注入上下文，不是全局漂浮记录。
+      if (c.conn_id !== activeConnId) return false;
       if (!q) return true;
       const site = sites.find((s) => s.slug === c.site_slug);
       const host = site?.url ? hostOf(site.url).toLowerCase() : '';
       return (c.title || '').toLowerCase().includes(q)
         || (c.site_name || '').toLowerCase().includes(q)
         || (c.site_slug || '').toLowerCase().includes(q)
+        || (c.workspace_dir || '').toLowerCase().includes(q)
         || host.includes(q);
     });
     return list.slice(0, 60);
   });
   type SearchEntry =
-    | { kind: 'view'; view: 'schedule' | 'tasks' | 'managed' | 'templates'; label: string }
+    | { kind: 'view'; view: 'sites' | 'schedule' | 'tasks' | 'managed' | 'templates'; label: string }
     | { kind: 'task'; t: ScheduledTask }
     | { kind: 'managed'; m: ManagedSite }
     | { kind: 'conv'; c: Conversation }
     | { kind: 'template'; t: Template }
     | { kind: 'conn'; c: Connection }
     | { kind: 'sched-find'; q: string };
-  const SEARCH_VIEWS: { view: 'schedule' | 'tasks' | 'managed' | 'templates'; label: string }[] = [
+  const SEARCH_VIEWS: { view: 'sites' | 'schedule' | 'tasks' | 'managed' | 'templates'; label: string }[] = [
+    { view: 'sites', label: '站点' },
     { view: 'schedule', label: '排期' },
     { view: 'tasks', label: '定时任务' },
     { view: 'managed', label: '托管' },
@@ -3180,6 +5437,7 @@
     const views = SEARCH_VIEWS
       // 模板库只有 Cloudflare 连接有；别的连接下选中它只会被弹回启动页（见上面的视图守卫）
       .filter((v) => v.view !== 'templates' || activeConn?.kind === 'cloudflare')
+      .filter((v) => v.view !== 'sites' || activeConn?.kind === 'gcms')
       .filter((v) => !q || v.label.includes(q))
       .map((v) => ({ kind: 'view' as const, ...v }));
     if (views.length) out.push({ title: '视图', entries: views });
@@ -3193,8 +5451,7 @@
         .slice(0, 8);
       if (connHits.length) out.push({ title: '远程连接', entries: connHits.map((c) => ({ kind: 'conn' as const, c })) });
       // 定时任务：标题 / prompt / 站点名（slug 与展示名都算）
-      const taskHits = tasks
-        .filter((t) => t.conn_id === activeConnId)
+      const taskHits = tasksOfConn
         .filter((t) => {
           const names = [t.title, t.prompt, t.site_name, t.site_slug, ...(t.site_names ?? []), ...(t.site_slugs ?? [])].join('\n').toLowerCase();
           return names.includes(q);
@@ -3227,7 +5484,8 @@
   function pickEntry(it: SearchEntry) {
     searchOpen = false;
     if (it.kind === 'view') {
-      if (it.view === 'schedule') void openSchedule();
+      if (it.view === 'sites') void openSites();
+      else if (it.view === 'schedule') void openSchedule();
       else if (it.view === 'tasks') void openTasks();
       else if (it.view === 'templates') openTemplates();
       else void openManaged();
@@ -3292,17 +5550,577 @@
     }
     return custom || pages;
   }
-  // 当前会话站点的公开地址：CF 从项目文件探测；gcms 用 discovery 里站点自带的 url。
+  const activeGcmsSite = $derived.by((): Site | null => {
+    const c = activeConv;
+    if (!c || activeConvConn?.kind !== 'gcms' || c.task_type === 'free' || isMultiSiteConversation(c)) return null;
+    if (c.task_type === 'sitebuild') return sitebuildHasCreationSignal(c) ? resolveSitebuildSite(c, sites) : null;
+    const slug = c.site_slug.trim().toLowerCase();
+    return slug ? (sites.find((site) => site.slug.toLowerCase() === slug) ?? null) : null;
+  });
+  // 当前会话站点的公开地址：CF 从项目文件探测；GCMS 只认真实公网地址，
+  // 不再把旧的 /admin/sites/{id}/preview 路径暴露给浏览器。
   const activeSiteUrl = $derived.by(() => {
     const c = activeConv;
     if (!c) return '';
     if (activeConvIsCf) return detectSiteUrl([c]);
-    return sites.find((s) => s.slug === c.site_slug)?.url ?? '';
+    return activeGcmsSite ? sitePublicURL(activeGcmsSite, activeConvConn) : '';
   });
+  const activeSitePreviewBusy = $derived.by(() =>
+    activeGcmsSite && activeConvConn
+      ? sitePreviewIsBusy(activeConvConn.id, activeGcmsSite.id)
+      : false
+  );
+  async function openActiveSitePreview() {
+    if (!activeGcmsSite || !activeConvConn) return;
+    await openSitePreview(activeGcmsSite, activeConvConn.id);
+  }
   // 从当前发现结果里按 slug 找站点图标（favicon 优先，其次 logo）；找不到返回空由 SiteFav 用首字母兜底。
   // 站点公开地址猜标准 favicon 位置，作为 discovery favicon/logo 之外的兜底（SiteFav 加载失败再退首字母）。
   function faviconGuess(url?: string): string { const u = (url ?? '').trim(); return u ? u.replace(/\/+$/, '') + '/favicon.ico' : ''; }
-  function siteFav(slug: string): string { const s = sites.find((x) => x.slug === slug); return s?.favicon || s?.logo || faviconGuess(s?.url); }
+  function explicitSiteIcon(slug: string): string {
+    const site = sites.find((item) => item.slug === slug);
+    return site?.favicon || site?.logo || '';
+  }
+  function isMultiSiteConversation(c: Conversation | null | undefined): boolean {
+    return (c?.site_slugs?.length ?? 0) > 1;
+  }
+  function sitebuildIconPending(c: Conversation | null | undefined): boolean {
+    // 历史多站会话里可能保留 task_type=sitebuild；多站身份必须优先，不能误装成新站建设。
+    return !!c && !isMultiSiteConversation(c) && c.task_type === 'sitebuild' && !explicitSiteIcon(c.site_slug);
+  }
+  function siteFav(slug: string): string { const s = sites.find((x) => x.slug === slug); return explicitSiteIcon(slug) || faviconGuess(s ? sitePublicURL(s) : ''); }
+
+  /**
+   * 建站会话最初是平台级会话，真正创建成功后才有站点可绑定。站点候选按最新消息优先，
+   * 并优先读取真正执行 site-create 的命令，避免多次修改预检方案后误绑旧候选。
+   */
+  function sitebuildConversationText(c: Conversation): string {
+    return [
+      c.title,
+      ...c.messages.flatMap((message) => [message.text || '', ...(message.tools ?? []).map((tool) => tool.detail || '')]),
+    ].join('\n');
+  }
+  const SITE_CREATE_EXEC_RE =
+    /(?:^|(?:&&|\|\||;|\n)\s*)(?:[A-Za-z_]\w*=(?:"[^"]*"|'[^']*'|[^\s;&|]+)\s+)*(?:\/usr\/bin\/env\s+)?(?:[^\s;&|]*\/)?node(?:\.exe)?\s+(?:"[^"]*gcms\.js"|'[^']*gcms\.js'|[^\s;&|]*gcms\.js)\s+site-create(?=$|[\s;&|])/i;
+  const SITE_CREATE_POSIX_SHELL_RE =
+    /^\s*(?:[A-Za-z_]\w*=(?:"[^"]*"|'[^']*'|[^\s;&|]+)\s+)*(?:\/usr\/bin\/env\s+)?(?:[^\s;&|"'`]+[\\/])*(?:zsh|bash|sh|dash|ksh)(?:\.exe)?\s+-[A-Za-z]*c[A-Za-z]*\s+/i;
+  const SITE_CREATE_CMD_SHELL_RE =
+    /^\s*(?:[A-Za-z]:[\\/])?(?:[^\s;&|"'`]+[\\/])*(?:cmd)(?:\.exe)?(?:\s+\/[dqs])*\s+\/c\s+/i;
+  const SITE_CREATE_POWERSHELL_RE =
+    /^\s*(?:[A-Za-z]:[\\/])?(?:[^\s;&|"'`]+[\\/])*(?:powershell|pwsh)(?:\.exe)?(?:\s+-(?:NoProfile|NonInteractive|NoLogo|ExecutionPolicy|WindowStyle)(?:\s+(?!-)\S+)?)*\s+-(?:Command|c)\s+/i;
+  function sitebuildExecCommandCandidates(detail: string): string[] {
+    const raw = detail.trim();
+    if (!raw) return [];
+    const candidates = [raw];
+    for (const wrapper of [SITE_CREATE_POSIX_SHELL_RE, SITE_CREATE_CMD_SHELL_RE, SITE_CREATE_POWERSHELL_RE]) {
+      const match = raw.match(wrapper);
+      if (!match) continue;
+      let inner = raw.slice(match[0].length).trimStart();
+      const quote = inner[0];
+      if (quote === '"' || quote === "'") {
+        inner = inner.slice(1);
+        // Codex 只保留命令前 200 字，外层引号经常没有落入 detail，不能要求必须闭合。
+        if (inner.endsWith(quote)) inner = inner.slice(0, -1);
+      }
+      if (inner.trim()) candidates.push(inner.trim());
+    }
+    return candidates;
+  }
+  function sitebuildToolExecutedCreate(tool: ToolCall): boolean {
+    return /^(?:bash|exec)$/i.test((tool.label || '').trim())
+      && sitebuildExecCommandCandidates(tool.detail || '').some((command) => SITE_CREATE_EXEC_RE.test(command));
+  }
+  function sitebuildToolsExecutedCreate(tools: ToolCall[] | null | undefined): boolean {
+    return (tools ?? []).some(sitebuildToolExecutedCreate);
+  }
+  function sitebuildCreateWasRejected(text: string | null | undefined, tools?: ToolCall[]): boolean {
+    const value = text || '';
+    if (/(?:site-create[^\n]{0,100}(?:失败|failed|error|退出码|取消|拒绝|未批准|未执行|permission denied|cancelled|canceled|not executed)|(?:创建|新建)[^\n。]{0,28}(?:失败|未成功|未完成|无法)|(?:slug|站点标识)[^\n。]{0,56}(?:已存在|被占用|冲突|already exists|conflict))/i.test(value)) return true;
+    const genericRefusal = /(?:(?:用户|权限|工具|操作|命令)[^\n。]{0,30}(?:拒绝|取消|未批准|未执行)|user[^\n.]{0,30}(?:denied|declined)|permission denied|cancel(?:led|ed)|not executed)/i.test(value);
+    if (!genericRefusal) return false;
+    // “用户拒绝了该工具调用”通常不带工具名：只有 site-create 是本轮最后一个执行工具时，
+    // 才把这句拒绝归到创建；若后面还有 theme 等命令，不能错过已经完成的建站。
+    let createIndex = -1;
+    let lastExecIndex = -1;
+    for (const [index, tool] of (tools ?? []).entries()) {
+      if (/^(?:bash|exec)$/i.test((tool.label || '').trim())) lastExecIndex = index;
+      if (sitebuildToolExecutedCreate(tool)) createIndex = index;
+    }
+    return createIndex >= 0 && createIndex === lastExecIndex;
+  }
+  function sitebuildReportsCreateSuccess(c: Conversation): boolean {
+    const result = [...c.messages].reverse().find((message) =>
+      message.role === 'assistant' && sitebuildToolsExecutedCreate(message.tools)
+    );
+    return !!result && !sitebuildCreateWasRejected(result.text, result.tools)
+      && /(?:已(?:成功)?创建|创建成功|创建完成|成功新建|created successfully|site-create[^\n]{0,80}(?:"?ok"?|success))/i.test(result.text || '');
+  }
+  function sitebuildRecentConversationText(c: Conversation): string {
+    return [
+      ...[...c.messages].reverse().flatMap((message) => [
+        ...[...(message.tools ?? [])].reverse().map((tool) => tool.detail || ''),
+        message.text || '',
+      ]),
+      c.title,
+    ].join('\n');
+  }
+  function sitebuildCreateCommandText(c: Conversation): string {
+    return [...c.messages].reverse().flatMap((message) =>
+      [...(message.tools ?? [])].reverse()
+        .filter(sitebuildToolExecutedCreate)
+        .flatMap((tool) => sitebuildExecCommandCandidates(tool.detail || ''))
+        .map((command) => command.replace(/\\"/g, '"').replace(/\\'/g, "'"))
+    ).join('\n');
+  }
+  function sitebuildCreateSlugCandidates(c: Conversation): string[] {
+    const text = sitebuildCreateCommandText(c);
+    const out: string[] = [];
+    const pattern = /\bsite-create\b[^\n]*?--slug\s+[`"']?([a-z0-9]+(?:-[a-z0-9]+)*)/gi;
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(text))) {
+      const slug = match[1].toLowerCase();
+      if (!out.includes(slug)) out.push(slug);
+    }
+    return out;
+  }
+  function sitebuildSlugCandidates(c: Conversation): string[] {
+    const text = [sitebuildCreateCommandText(c), sitebuildRecentConversationText(c)].filter(Boolean).join('\n');
+    const out: string[] = [];
+    const patterns = [
+      /\bsite-create(?:-plan)?\b[^\n]*?--slug\s+[`"']?([a-z0-9]+(?:-[a-z0-9]+)*)/gi,
+      /["']slug["']\s*[:=]\s*[`"']?([a-z0-9]+(?:-[a-z0-9]+)*)/gi,
+      /\bslug\b\s*(?:[：:=]|为|是|用)?\s*[`"'「“]?([a-z0-9]+(?:-[a-z0-9]+)*)/gi,
+    ];
+    for (const pattern of patterns) {
+      let match: RegExpExecArray | null;
+      while ((match = pattern.exec(text))) {
+        const slug = match[1].toLowerCase();
+        if (!out.includes(slug)) out.push(slug);
+      }
+    }
+    return out;
+  }
+  function sitebuildIdCandidates(c: Conversation): number[] {
+    const text = sitebuildRecentConversationText(c);
+    const out: number[] = [];
+    const patterns = [
+      /(?:新站|站点)[^\n]{0,48}?\bID\b\s*[：:=]?\s*`?#?(\d+)\b/gi,
+      /\bID\b\s*[：:=]?\s*`?#?(\d+)\b[^\n]{0,48}?\bslug\b/gi,
+      /["']id["']\s*:\s*(\d+)[^\n]{0,96}?["']slug["']/gi,
+    ];
+    for (const pattern of patterns) {
+      let match: RegExpExecArray | null;
+      while ((match = pattern.exec(text))) {
+        const id = Number(match[1]);
+        if (Number.isInteger(id) && id > 0 && !out.includes(id)) out.push(id);
+      }
+    }
+    return out;
+  }
+  function sitebuildNameCandidates(c: Conversation): string[] {
+    const text = sitebuildRecentConversationText(c);
+    const out: string[] = [];
+    const patterns = [
+      /站点名称\s*[：:=]\s*[`"'「“]?([^`"'」”\n，,]{1,64})/g,
+      /名称(?:叫|为|是)\s*[：:=]?\s*[`"'「“]?([^`"'」”\n，,]{1,64})/g,
+      /[「“]([^」”\n]{1,64})[」”]\s*(?:已创建|创建成功)/g,
+    ];
+    for (const pattern of patterns) {
+      let match: RegExpExecArray | null;
+      while ((match = pattern.exec(text))) {
+        const name = match[1].trim();
+        if (name && !out.includes(name)) out.push(name);
+      }
+    }
+    return out;
+  }
+  function resolveSitebuildSite(c: Conversation | null | undefined, discovered: Site[]): Site | null {
+    if (!c || !discovered.length) return null;
+    const boundSlug = c.site_slug.trim().toLowerCase();
+    if (boundSlug) {
+      const bound = discovered.find((site) => site.slug.toLowerCase() === boundSlug);
+      if (bound) return bound;
+    }
+    // 真实创建命令里的 slug 是最强证据；旧预检或冲突提示里的站点 ID 不能抢在它前面。
+    for (const slug of sitebuildCreateSlugCandidates(c)) {
+      const match = discovered.find((site) => site.slug.toLowerCase() === slug);
+      if (match) return match;
+    }
+    for (const id of sitebuildIdCandidates(c)) {
+      const match = discovered.find((site) => site.id === id);
+      if (match) return match;
+    }
+    for (const slug of sitebuildSlugCandidates(c)) {
+      const match = discovered.find((site) => site.slug.toLowerCase() === slug);
+      if (match) return match;
+    }
+    for (const name of sitebuildNameCandidates(c)) {
+      const matches = discovered.filter((site) => site.name.trim() === name);
+      if (matches.length === 1) return matches[0];
+    }
+    return null;
+  }
+  const sitebuildPendingDiscoveryBaselines = new Map<string, Set<string>>();
+  function sitebuildHasCreationSignal(c: Conversation | null | undefined): boolean {
+    if (!c) return false;
+    if (c.site_slug.trim()) return true;
+    // 用户需求、系统说明、预检输出甚至搜索结果里都可能出现 “site-create”。
+    // 当前运行中的创建由内存 baseline 保护；应用重启后的历史补绑还必须有明确成功回报，
+    // 不能仅凭曾出现过工具卡就把同 slug 的旧站绑进来。
+    const executed = c.messages.some((message) =>
+      message.role === 'assistant' && !message.error && sitebuildToolsExecutedCreate(message.tools)
+        && !sitebuildCreateWasRejected(message.text, message.tools)
+    );
+    return executed && (sitebuildPendingDiscoveryBaselines.has(c.id) || sitebuildReportsCreateSuccess(c));
+  }
+  function sitebuildSiteIdentity(site: Site): string {
+    return `${site.id}:${site.slug.trim().toLowerCase()}`;
+  }
+
+  // 新站会话的上线准备条：状态优先读 GCMS discovery 的 readiness；旧版服务端没有该字段时，
+  // 公开地址仍可可靠判断，品牌资产和内容状态则明确标成“待检查”，绝不把未知误报成缺失。
+  type SiteReadinessTone = 'done' | 'blocker' | 'todo' | 'check';
+  type SiteReadinessItem = {
+    id: 'identify' | 'profile' | 'access' | 'brand' | 'share' | 'publish';
+    label: string;
+    detail: string;
+    tone: SiteReadinessTone;
+    prompt: string;
+  };
+  let siteReadinessOpenFor = $state('');
+  let sitebuildSyncingByConv = $state<Record<string, boolean>>({});
+  let sitebuildSyncFailedByConv = $state<Record<string, boolean>>({});
+  const activeSiteReadinessContext = $derived.by(() => {
+    const c = activeConv;
+    return !!c && activeConvConn?.kind === 'gcms' && c.task_type === 'sitebuild' && !isMultiSiteConversation(c);
+  });
+  const activeReadinessSite = $derived.by(() => {
+    const c = activeConv;
+    if (!activeSiteReadinessContext || !c || !sitebuildHasCreationSignal(c)) return null;
+    const site = resolveSitebuildSite(c, sites);
+    const baseline = sitebuildPendingDiscoveryBaselines.get(c.id);
+    return site && baseline?.has(sitebuildSiteIdentity(site)) && !sitebuildReportsCreateSuccess(c)
+      ? null
+      : site;
+  });
+  const activeSiteReadinessWaitingForSite = $derived(activeSiteReadinessContext && !activeReadinessSite);
+  const activeSiteReadinessOpen = $derived(!!activeConvId && siteReadinessOpenFor === activeConvId);
+  const activeSiteReadinessItems = $derived.by((): SiteReadinessItem[] => {
+    const site = activeReadinessSite;
+    if (!site) return [{
+      id: 'identify',
+      label: '识别新站',
+      tone: 'check',
+      detail: '暂未识别到新站，创建完成后会自动同步',
+      prompt: '检查上方的新站创建结果；创建成功后 Pilot 会自动同步并识别站点。若仍未找到，可使用上线准备摘要右侧的刷新图标重新检测，避免重复创建。',
+    }];
+    const readiness = site.readiness;
+    const profileReady = readiness?.site_info;
+    const profileMissingLabels: Record<string, string> = { name: '站点名称', tagline: '副标题', description: '站点简介' };
+    const profileMissing = (readiness?.site_info_missing ?? []).map((field) => profileMissingLabels[field] || field);
+    const publicURL = sitePublicURL(site, activeConvConn);
+    const publicReady = readiness?.public_url ?? siteHasBoundDomain(site);
+    const httpsReady = readiness?.https ?? /^https:\/\//i.test(publicURL);
+    const logoReady = readiness ? readiness.logo : (site.logo ? true : undefined);
+    const faviconReady = readiness ? readiness.favicon : (site.favicon ? true : undefined);
+    const shareReady = readiness?.share_image;
+    const publishedReady = readiness?.published_content;
+    const assetTone = (value: boolean | undefined): SiteReadinessTone => value === true ? 'done' : value === false ? 'todo' : 'check';
+    const assetDetail = (value: boolean | undefined, done: string, missing: string): string => value === true ? done : value === false ? missing : '等待读取 GCMS 的真实设置';
+    const brandTone: SiteReadinessTone = logoReady === false || faviconReady === false
+      ? 'todo' : logoReady === true && faviconReady === true ? 'done' : 'check';
+    const brandDetail = logoReady === true && faviconReady === true
+      ? 'Logo 与网站图标均已配置'
+      : logoReady === false && faviconReady === false
+        ? 'Logo 与网站图标仍使用默认素材'
+        : logoReady === false ? '还需要配置站点 Logo'
+            : faviconReady === false ? '还需要配置网站图标'
+            : '等待读取 GCMS 的真实品牌设置';
+    return [
+      {
+        id: 'profile', label: '站点信息', tone: profileReady === true ? 'done' : profileReady === false ? 'blocker' : 'check',
+        detail: profileReady === true
+          ? '站点名称、副标题与简介均已完善'
+          : profileReady === false
+            ? `${profileMissing.length ? profileMissing.join('、') : '基础站点信息'}仍需完善`
+            : '等待读取 GCMS 的真实站点信息',
+        prompt: '检查并完善当前站点的基础信息，包括站点名称、副标题和站点简介。先读取现有设置，指出仍是首装样板或缺失的字段，再结合站点定位给出可直接采用的文案；等我确认后再写入。',
+      },
+      {
+        id: 'access', label: '访问域名', tone: publicReady && httpsReady ? 'done' : 'blocker',
+        detail: !publicReady
+          ? '尚未绑定访问域名'
+          : httpsReady
+            ? `${hostOf(site.url || '')} 已可通过 HTTPS 访问`
+            : `${hostOf(site.url || '')} 已连接，HTTPS 尚未就绪`,
+        prompt: '统一检查当前站点的访问域名、DNS 与 HTTPS 状态，明确还差哪一步；优先使用 Pilot 的“设置访问域名”流程完成处理，不要把域名连接与 HTTPS 拆成两套重复操作。',
+      },
+      {
+        id: 'brand', label: 'Logo 与网站图标', tone: brandTone,
+        detail: brandDetail,
+        prompt: '统一检查当前站点的 Logo 与 favicon/ico。先读取现有素材；缺失时结合站点定位提出一套一致的品牌标识方案，由 Logo 提炼适合小尺寸显示的网站图标，并说明各自尺寸与用途。不要覆盖已经配置好的素材，等我确认方案后再分别生成并写入。',
+      },
+      {
+        id: 'share', label: '分享图', tone: assetTone(shareReady),
+        detail: assetDetail(shareReady, '已配置自定义分享图', '仍在使用默认分享图'),
+        prompt: '检查当前站点分享图。若仍是默认图，请先给出适合社交分享的 1200×630 方案，等我确认后再写入。',
+      },
+      {
+        id: 'publish', label: '首批内容', tone: assetTone(publishedReady),
+        detail: assetDetail(publishedReady, '已有公开内容', '当前只有草稿或尚无公开内容'),
+        prompt: '检查当前站点的草稿与发布状态，列出适合首批发布的内容及发布前问题；不要直接发布。',
+      },
+    ];
+  });
+  const activeSiteReadinessPending = $derived(activeSiteReadinessItems.filter((item) => item.tone !== 'done'));
+  // 全部完成后不再长期占用对话区；只有存在待办、异常或尚未关联站点时显示。
+  const activeSiteReadinessVisible = $derived(activeSiteReadinessContext
+    && activeSiteReadinessPending.length > 0);
+  const activeSiteReadinessDoneCount = $derived(activeSiteReadinessItems.length - activeSiteReadinessPending.length);
+  const activeSiteReadinessBlockers = $derived(activeSiteReadinessItems.filter((item) => item.tone === 'blocker').length);
+  const activeSiteReadinessTodos = $derived(activeSiteReadinessItems.filter((item) => item.tone === 'todo').length);
+  const activeSiteReadinessChecks = $derived(activeSiteReadinessItems.filter((item) => item.tone === 'check').length);
+  const activeSiteReadinessSummary = $derived.by(() => {
+    if (!activeSiteReadinessItems.length) return '';
+    if (activeSiteReadinessWaitingForSite) return '1 项待处理';
+    if (!activeSiteReadinessPending.length) return '已完成上线准备';
+    const parts: string[] = [];
+    if (activeSiteReadinessBlockers) parts.push(`${activeSiteReadinessBlockers} 项上线前必做`);
+    if (activeSiteReadinessTodos) parts.push(`${activeSiteReadinessTodos} 项建议完善`);
+    if (activeSiteReadinessChecks) parts.push(`${activeSiteReadinessChecks} 项待检查`);
+    return parts.join(' · ');
+  });
+  const activeSiteReadinessDetail = $derived(activeSiteReadinessWaitingForSite
+    ? '暂未识别到新站，创建完成后会自动同步'
+    : activeSiteReadinessPending.length
+      ? `还差：${activeSiteReadinessPending.slice(0, 3).map((item) => item.label).join('、')}${activeSiteReadinessPending.length > 3 ? '…' : ''}`
+      : '站点信息、访问域名、品牌素材与首批内容均已就绪');
+  let gcmsPublicAccessOpeningFor = $state('');
+  let gcmsUnlockPromptedKeys = $state<Set<string>>(new Set());
+
+  type GcmsControlUnlockOperation =
+    | 'categories.delete'
+    | 'navigation.delete'
+    | 'sites.delete'
+    | 'domains.apply'
+    | 'public_access.apply'
+    | 'themes.apply_live';
+  type GcmsControlUnlockAction = {
+    operation: GcmsControlUnlockOperation;
+    title: string;
+    detail: string;
+  };
+  const gcmsControlUnlockActions: Array<GcmsControlUnlockAction & { pattern: RegExp }> = [
+    {
+      operation: 'categories.delete',
+      title: '确认删除分类',
+      detail: '删除后，该分类下的内容会变为未分类；验证成功后 Pilot 会让 AI 继续刚才的操作。',
+      pattern: /(?:\bcategories\.delete\b|\bcategory-delete\b(?!-plan))/i,
+    },
+    {
+      operation: 'navigation.delete',
+      title: '确认删除导航项',
+      detail: '这会改变站点公开导航；验证成功后 Pilot 会让 AI 继续刚才的操作。',
+      pattern: /(?:\bnavigation\.delete\b|\bnavigation-delete\b(?!-plan))/i,
+    },
+    {
+      operation: 'sites.delete',
+      title: '确认删除站点',
+      detail: '这会归档删除真实站点；验证成功后 Pilot 会让 AI 继续刚才的操作。',
+      pattern: /(?:\bsites\.delete\b|\bsite-delete\b(?!-plan))/i,
+    },
+    {
+      operation: 'domains.apply',
+      title: '确认修改域名',
+      detail: '这会修改站点的真实域名配置；验证成功后 Pilot 会让 AI 继续刚才的操作。',
+      pattern: /(?:\bdomains\.apply\b|\bdomains-apply\b(?!-plan))/i,
+    },
+    {
+      operation: 'public_access.apply',
+      title: '确认配置公网访问',
+      detail: '这会修改域名、DNS、Caddy 与 HTTPS 配置；验证成功后 Pilot 会让 AI 继续刚才的操作。',
+      pattern: /(?:\bpublic_access\.apply\b|\bpublic-access-apply\b(?!-plan))/i,
+    },
+    {
+      operation: 'themes.apply_live',
+      title: '确认修改线上主题',
+      detail: '这会立即改变已上线站点的公开外观；验证成功后 Pilot 会让 AI 继续刚才的操作。',
+      pattern: /(?:\bthemes\.apply_live\b|\btheme-apply\b(?!-plan))/i,
+    },
+  ];
+  function conversationGcmsUnlockAction(c: Conversation | null): GcmsControlUnlockAction | null {
+    if (!c || conns.find((connection) => connection.id === c.conn_id)?.kind !== 'gcms') return null;
+    // 只看最近一轮尚未被用户继续处理的助手回复；历史消息里的
+    // unlock_required 不能一直显示密码验证入口。
+    const lastUser = c.messages.map((message, index) => message.role === 'user' ? index : -1).reduce((max, index) => Math.max(max, index), -1);
+    const latestAssistant = [...c.messages.slice(lastUser + 1)].reverse().find((message) => message.role === 'assistant');
+    const responseText = latestAssistant?.text || '';
+    if (!latestAssistant || !/\bunlock_required\b/i.test(responseText)) return null;
+    // GCMS 技能契约要求把 unlock_required 和 operation id 原样带回。只认本条失败说明，
+    // 不能把同轮早已成功的工具命令与普通的“密码解锁”说明拼成一次授权请求。
+    if (
+      /(?:没有|不存在|并无|找不到|未(?:出现|返回|发生|触发|检测到|收到|发现)|无需|不需要|并非)[^\n。]{0,80}\bunlock_required\b/i.test(responseText)
+      || /\bunlock_required\b[^\n。]{0,80}(?:不存在|并无|未(?:出现|返回|发生|触发)|无需|不需要|并非)/i.test(responseText)
+    ) return null;
+    const toolEvidence = (latestAssistant.tools ?? []).map((tool) => `${tool.label} ${tool.detail}`).join('\n');
+    const toolMatches = gcmsControlUnlockActions.filter((action) => action.pattern.test(toolEvidence));
+    const explicit = gcmsControlUnlockActions.find((action) => action.pattern.test(responseText));
+    // 真正被拒的正式命令必须落在本条工具记录里；只有一项候选时可兼容没有复述
+    // operation id 的旧助手，多项候选则必须由错误正文明确指出，避免重试错操作。
+    const matched = explicit && toolMatches.some((action) => action.operation === explicit.operation)
+      ? explicit
+      : toolMatches.length === 1 ? toolMatches[0] : null;
+    if (matched?.operation === 'themes.apply_live') {
+      const slug = c.site_slug.trim().toLowerCase();
+      const site = c.task_type === 'sitebuild'
+        ? resolveSitebuildSite(c, sites)
+        : slug ? (sites.find((item) => item.slug.trim().toLowerCase() === slug) ?? null) : null;
+      // 默认站始终属于线上站点；非默认站只有真正绑定访问域名后才需要密码。
+      // 站点尚未解析出来时保持保守，不在前端擅自豁免服务端保护。
+      if (site?.is_default === false && !siteHasBoundDomain(site)) return null;
+    }
+    return matched
+      ? { operation: matched.operation, title: matched.title, detail: matched.detail }
+      : null;
+  }
+  const activeConversationUnlockAction = $derived.by(() => conversationGcmsUnlockAction(activeConv));
+  const activeGcmsPublicAccessPending = $derived.by(() => {
+    if (!activeSiteReadinessContext || activeConvConn?.kind !== 'gcms') return false;
+    return activeSiteReadinessItems.some((item) => item.id === 'access' && item.tone === 'blocker');
+  });
+  const activeGcmsExternalAccessPending = $derived.by(() => {
+    const c = activeConv;
+    if (!c || activeConvConn?.kind !== 'gcms') return false;
+    const text = sitebuildConversationText(c);
+    // 只要已经解析到真实 GCMS 站点，就以实时 discovery/readiness 为准。
+    // 会话正文可能保留公网配置前的历史诊断，不能因此继续显示“配置公网访问”。
+    if (activeReadinessSite) return activeGcmsPublicAccessPending;
+    return /外部(?:访问)?尚未上线|DNS\s*[：:]\s*无|HTTP\s*[：:]\s*502|HTTPS\s*[：:]\s*(?:无法|未建立|失败)|原生界面.*(?:上线|部署)/i.test(text);
+  });
+  async function openGcmsPublicAccessEditor() {
+    const conversation = activeConv;
+    const gcmsConnection = activeConvConn;
+    if (!conversation || !gcmsConnection || gcmsConnection.kind !== 'gcms') return;
+    const openKey = `${conversation.id}:${gcmsConnection.id}`;
+    if (gcmsPublicAccessOpeningFor === openKey) return;
+    gcmsPublicAccessOpeningFor = openKey;
+    try {
+      // 会话可以从搜索或任务入口跨连接打开；此时全局 discovery 仍可能短暂保留
+      // 上一个 GCMS 的站点。这里始终按会话自己的连接重新发现，再解析真实站点，
+      // 绝不使用历史对话中的 URL，也不直接提交任何域名。
+      const current = await invoke<Discovery>('discover_sites', {
+        connId: gcmsConnection.id,
+        refreshStats: false,
+      });
+      if (activeConvId !== conversation.id || activeConvConn?.id !== gcmsConnection.id) return;
+      if (activeConnId === gcmsConnection.id) discovery = current;
+      const discoveredSites = current.lifecycle_items?.length ? current.lifecycle_items : current.items;
+      const resolved = resolveSitebuildSite(conversation, discoveredSites);
+      const pendingBaseline = sitebuildPendingDiscoveryBaselines.get(conversation.id);
+      const site = resolved && pendingBaseline?.has(sitebuildSiteIdentity(resolved))
+        && !sitebuildReportsCreateSuccess(conversation)
+        ? null
+        : resolved;
+      if (!site || site.id <= 0) {
+        void syncCreatedSitebuildConversation(conversation);
+        say('暂未识别到 GCMS 的真实站点，Pilot 会自动同步；若上方显示创建失败，请先完成或重试创建', 'err');
+        return;
+      }
+      if (site.is_default) {
+        say('默认站点使用 GCMS 平台域名，无需单独配置公网访问', 'err');
+        return;
+      }
+      if (site.status === 'disabled') {
+        say('请先启用这个站点，再配置公网访问', 'err');
+        return;
+      }
+      openProtectedSiteDeploymentEditor(site, gcmsConnection.id);
+    } catch (error) {
+      say(`读取当前站点失败：${String(error)}`, 'err');
+    } finally {
+      if (gcmsPublicAccessOpeningFor === openKey) gcmsPublicAccessOpeningFor = '';
+    }
+  }
+  function openGcmsControlUnlock(action: GcmsControlUnlockAction) {
+    const c = activeConv;
+    const conn = activeConvConn;
+    if (!c || !conn || conn.kind !== 'gcms') return;
+    requestGcmsPassword({
+      title: action.title,
+      message: `${action.detail}\n请输入 GCMS 后台登录密码，仅用于签发本次短时授权。密码不会进入对话，也不会保存到 Pilot。`,
+      account: 'admin',
+      instance: conn.name,
+      confirmText: '验证密码',
+      kind: 'danger',
+    }, async (password) => {
+      await invoke('gcms_control_unlock', {
+        connId: conn.id,
+        password,
+        operations: [action.operation],
+      });
+    }, async () => {
+      // 解锁令牌只在 Pilot 内存中保存，并在启动下一轮 AI 进程时注入。
+      // 发送一条窄化续跑指令，而不是重跑整条用户请求：上一轮在触发
+      // unlock_required 之前可能已经完成其它写入，整轮 retry 会重复副作用。
+      await continueGcmsControlOperation(c.id, action);
+    });
+  }
+  async function continueGcmsControlOperation(convId: string, action: GcmsControlUnlockAction) {
+    if (running[convId]) return;
+    const base = activeConvId === convId ? activeConv : convos.find((conversation) => conversation.id === convId);
+    if (!base) return;
+    const message = [
+      `Pilot 原生界面已完成 ${action.operation} 的短时密码授权。`,
+      '只重试上一轮因 unlock_required 未完成的同一个受控操作：必须沿用完全相同的 operation、目标、参数、request-id，以及该操作如有的 expected_revision。',
+      '不要重新执行上一轮已经成功的任何写操作，也不要改动或扩大删除范围。若无法从上一条工具命令确定完全相同的请求，请停止并说明。',
+    ].join('\n');
+    delete autoRetried[convId];
+    delete retryExhausted[convId];
+    beginTurn(convId, { ...base, messages: [...base.messages, optimisticUser(message)], status: 'running' });
+    try {
+      const conv = await invoke<Conversation>('send_message', { convId, message, onEvent: makeChannel(convId) });
+      await refreshConvos();
+      const failed = lives[convId]?.failed ?? false;
+      const errText = lives[convId]?.error ?? '';
+      endTurn(conv, convId);
+      maybeAutoRetry(convId, failed, errText);
+    } catch (error) {
+      await failTurn(error, convId);
+    }
+  }
+  $effect(() => {
+    const action = activeConversationUnlockAction;
+    const conversation = activeConv;
+    if (!action || !conversation || running[conversation.id] || gcmsPasswordState) return;
+    // 公网访问有自己的向导式密码入口，避免同一状态弹出两个密码框。
+    if (action.operation === 'public_access.apply' && activeGcmsExternalAccessPending) return;
+    const latestAssistant = [...conversation.messages].reverse().find((message) => message.role === 'assistant');
+    const promptKey = `${conversation.id}:${latestAssistant?.ts ?? 0}:${action.operation}`;
+    if (gcmsUnlockPromptedKeys.has(promptKey)) return;
+    gcmsUnlockPromptedKeys = new Set([...gcmsUnlockPromptedKeys, promptKey]);
+    requestAnimationFrame(() => {
+      if (!gcmsPasswordState && activeConv?.id === conversation.id) openGcmsControlUnlock(action);
+    });
+  });
+  function toggleSiteReadiness() {
+    if (!activeConvId) return;
+    siteReadinessOpenFor = activeSiteReadinessOpen ? '' : activeConvId;
+  }
+  function fillSiteReadiness(item?: SiteReadinessItem) {
+    const site = activeReadinessSite;
+    if (!site) return;
+    const targets = activeSiteReadinessPending.map((entry) => entry.label).join('、');
+    const goal = item?.prompt || (targets
+      ? `继续完善当前站点的上线准备事项：${targets}。先检查真实状态，再按优先级给出下一步。`
+      : '对当前站点做一次上线后复查，确认公开访问、品牌素材和已发布内容仍然正常。');
+    const instruction = `${goal}\n\n只处理当前站点 ${site.name || site.slug}（slug=${site.slug}）。先实时读取状态，不要凭会话文字猜测；涉及发布、域名、DNS、HTTPS 或覆盖品牌素材时，先给出预检与变更摘要，等待我确认。`;
+    draft = draft.trim() ? `${draft.trimEnd()}\n\n${instruction}` : instruction;
+    requestAnimationFrame(() => {
+      draftEl?.focus();
+      const end = draft.length;
+      draftEl?.setSelectionRange(end, end);
+    });
+  }
 
   // 「新窗口打开」开出来的窗口，label 是 `conn-<id>`：这一份前端就固定开在那个连接上。
   // （连接/对话/SSH 会话都在 Rust 侧同一份 AppState 里，多个窗口看到的是同一份数据。）
@@ -3317,7 +6135,9 @@
   }
   async function refreshConns() {
     try {
-      conns = await invoke('list_connections');
+      const next = await invoke<Connection[]>('list_connections');
+      conns = next;
+      pruneConnectionUpdateState(next);
       if (!activeConnId && conns.length) {
         const want = bootConnId();
         selectConn(conns.some((c) => c.id === want) ? want : conns[0].id);
@@ -3330,56 +6150,325 @@
     try { await navigator.clipboard.writeText(cmd); copiedCmd = cmd; setTimeout(() => { if (copiedCmd === cmd) copiedCmd = ''; }, 1500); }
     catch { say('复制失败，请手动选中命令复制', 'err'); }
   }
-  // 技能包新增/移除站点后，重新拉取当前连接的可管站点列表。
-  async function refreshSites() { if (activeConnId && !discoveryLoading) await selectConn(activeConnId); }
+  // 手动刷新 gcms 连接：立即检查技能包版本，再重新发现可管站点。
+  // 发现新版时只显示既有升级入口，由用户主动确认升级，不自动覆盖技能包。
+  async function refreshSites(connId = activeConnId) {
+    const id = connId;
+    if (!id || discoveryLoading || connectionSyncing[id]) return;
+    const conn = conns.find((c) => c.id === id);
+    if (!conn || conn.kind !== 'gcms') return;
+    connectionSyncing[id] = true;
+    try {
+      const update = await maybeCheckPackUpdate(id, true);
+      if (update?.has_update) say(`发现技能包新版 ${update.latest}，可点击“升级技能包”更新`);
+      await selectConn(id, undefined, true);
+    } finally {
+      delete connectionSyncing[id];
+    }
+  }
   let brainsBusy = $state(false);
   // 手动重新检测：走 redetect_brains（后端先重读登录 shell 的 PATH，再探测）——治「装/登录完仍显示未安装/未登录」。
   async function refreshBrainsManual() { brainsBusy = true; try { brains = await invoke('redetect_brains'); } catch (e) { say(String(e), 'err'); } finally { brainsBusy = false; } }
 
   // 应用版本 + 在线检查更新（Tauri updater：拉 release 仓 latest.json，ed25519 验签后下载安装再重启）。
+  const isMainWindow = (() => { try { return getCurrentWindow().label === 'main'; } catch { return true; } })();
+  const PILOT_UPDATE_RECEIPT_KEY = 'gcms.pilot.updateReceipt';
   let appVersion = $state('');
   let updBusy = $state(false);
   let updMsg = $state('');
   let updPct = $state(-1); // 下载进度 0-100；-1 = 不确定（无 content-length）
   let updAvail = $state(''); // 非空 = 静默检查到的新版本号，驱动工具栏「待更新」图标
-  getVersion().then((v) => (appVersion = v)).catch(() => { /* */ });
-  // 静默检查：只置「有更新」标记，不弹窗、不自动下载；失败（离线 / 非 Tauri 环境）静默忽略。
-  async function checkUpdateSilent() {
-    if (updBusy) return;
+  let pilotUpdateStatus = $state<UnifiedUpdateStatus>('idle');
+  let pilotUpdateError = $state('');
+  let pilotReleaseNotes = $state('');
+  let pilotPublishedAt = $state('');
+  let pilotUpdateReceipt = $state('');
+  getVersion().then((v) => {
+    appVersion = v;
+    try {
+      const receipt = JSON.parse(localStorage.getItem(PILOT_UPDATE_RECEIPT_KEY) || 'null') as { target?: string; mode?: 'pilot' | 'recommended' } | null;
+      if (receipt?.target && sameUpdateVersion(v, receipt.target)) {
+        pilotUpdateReceipt = receipt.mode === 'recommended'
+          ? `推荐更新已完成，Pilot 已更新到 ${v}`
+          : `Pilot 已更新到 ${v}`;
+        localStorage.removeItem(PILOT_UPDATE_RECEIPT_KEY);
+      }
+    } catch { /* 忽略旧版或损坏的回执 */ }
+  }).catch(() => { /* */ });
+
+  // 只检查并释放 updater 资源句柄；主窗口统一调度，连接子窗口不重复请求更新源。
+  async function checkPilotUpdate(silent = true): Promise<GcmsRemoteUpdateInfo | null> {
+    if (!isMainWindow || updBusy || pilotUpdateStatus === 'checking') return null;
+    pilotUpdateStatus = 'checking';
+    pilotUpdateError = '';
+    updAvail = '';
     try {
       const upd = await checkUpdate();
-      updAvail = upd ? upd.version : '';
-      if (upd) { try { await upd.close(); } catch { /* */ } } // 释放句柄，点击时再重新拉取下载
-    } catch { /* 离线 / dev 无后端：忽略 */ }
-  }
-  async function runUpdate() {
-    if (updBusy) return;
-    updBusy = true; updMsg = '检查中…'; updPct = -1;
-    try {
-      const upd = await checkUpdate();
-      if (!upd) { updAvail = ''; updMsg = '已是最新版本'; return; }
+      if (!upd) {
+        updAvail = '';
+        pilotReleaseNotes = '';
+        pilotPublishedAt = '';
+        pilotUpdateStatus = 'current';
+        return { current: appVersion, latest: appVersion, has_update: false };
+      }
       updAvail = upd.version;
-      const ok = await confirmDialog(`发现新版本 ${upd.version}，现在下载更新并重启？`, { title: '有可用更新', kind: 'info' });
-      if (!ok) { updMsg = ''; return; }
+      pilotReleaseNotes = upd.body || '';
+      pilotPublishedAt = upd.date || '';
+      pilotUpdateStatus = 'available';
+      const info = { current: upd.currentVersion || appVersion, latest: upd.version, has_update: true };
+      try { await upd.close(); } catch { /* */ }
+      return info;
+    } catch (e) {
+      pilotUpdateError = String(e);
+      pilotUpdateStatus = 'unreachable';
+      if (!silent) say(`检查 Pilot 更新失败：${pilotUpdateError}`, 'err');
+      return null;
+    }
+  }
+
+  async function installPilotUpdate(options: { confirm?: boolean; notify?: boolean; expectedVersion?: string; recommended?: boolean } = {}): Promise<UpdateActionResult> {
+    const notify = options.notify !== false;
+    const shouldConfirm = options.confirm !== false;
+    if (!isMainWindow) return { ok: false, message: '请在 Pilot 主窗口中更新客户端' };
+    if (updBusy) return { ok: false, message: 'Pilot 更新正在进行' };
+    updBusy = true; updMsg = '检查中…'; updPct = -1;
+    pilotUpdateStatus = 'checking'; pilotUpdateError = '';
+    let installed = false;
+    let upd: Awaited<ReturnType<typeof checkUpdate>> = null;
+    try {
+      upd = await checkUpdate();
+      if (!upd) {
+        updAvail = ''; updMsg = '已是最新版本'; pilotUpdateStatus = 'current';
+        return { ok: true, message: updMsg };
+      }
+      updAvail = upd.version;
+      pilotReleaseNotes = upd.body || '';
+      pilotPublishedAt = upd.date || '';
+      pilotUpdateStatus = 'available';
+      if (options.expectedVersion && !sameUpdateVersion(upd.version, options.expectedVersion)) {
+        const message = `Pilot 最新版本已从 ${options.expectedVersion} 变为 ${upd.version}，请重新检查后再更新`;
+        updMsg = message;
+        pilotUpdateError = message;
+        try { await upd.close(); } catch { /* */ }
+        return { ok: false, message };
+      }
+      if (shouldConfirm) {
+        const ok = await confirmDialog(`发现新版本 ${upd.version}，现在下载更新并重启？`, { title: '有可用更新', kind: 'info' });
+        if (!ok) {
+          updMsg = '';
+          try { await upd.close(); } catch { /* */ }
+          return { ok: false, message: '已取消更新' };
+        }
+      }
       let total = 0, got = 0;
       updMsg = '准备下载…'; updPct = 0;
+      pilotUpdateStatus = 'updating';
       await upd.downloadAndInstall((ev) => {
         if (ev.event === 'Started') { total = ev.data.contentLength ?? 0; got = 0; updPct = 0; updMsg = '下载更新…'; }
         else if (ev.event === 'Progress') { got += ev.data.chunkLength; updPct = total > 0 ? Math.min(100, Math.round((got / total) * 100)) : -1; updMsg = total > 0 ? `下载更新 ${updPct}%` : '下载更新…'; }
         else if (ev.event === 'Finished') { updPct = 100; updMsg = '安装中…'; }
       });
+      installed = true;
+      try {
+        localStorage.setItem(PILOT_UPDATE_RECEIPT_KEY, JSON.stringify({
+          target: upd.version,
+          mode: options.recommended ? 'recommended' : 'pilot',
+          installedAt: Date.now(),
+        }));
+      } catch { /* */ }
       updMsg = '即将重启…'; updPct = 100;
+      pilotUpdateStatus = 'done';
       await relaunch();
-    } catch (e) { updMsg = '更新失败：' + String(e); updPct = -1; }
+      return { ok: true, message: `Pilot 已安装 ${upd.version}` };
+    } catch (e) {
+      const detail = String(e);
+      updPct = -1;
+      if (!upd) updAvail = '';
+      if (installed) {
+        updMsg = `已安装，等待手动重启：${detail}`;
+        pilotUpdateStatus = 'waiting';
+      } else {
+        updMsg = `更新失败：${detail}`;
+        pilotUpdateStatus = 'failed';
+      }
+      pilotUpdateError = detail;
+      if (notify) say(updMsg, 'err');
+      try { await upd?.close(); } catch { /* */ }
+      return { ok: false, message: updMsg };
+    }
     finally { updBusy = false; }
   }
-  // 启动后稍等再静默查一次（让窗口先就绪），之后每 6 小时查一次（应用常驻，SPA 不卸载无需清理）。
-  setTimeout(checkUpdateSilent, 4000);
-  setInterval(checkUpdateSilent, 6 * 60 * 60 * 1000);
+  async function runUpdate() { await installPilotUpdate({ confirm: true, notify: true }); }
+
+  // 主窗口启动后汇总检查三类更新，之后每 6 小时刷新同一份更新快照。
+  $effect(() => {
+    if (!isMainWindow) return;
+    const initial = setTimeout(() => { void checkAllUpdates(true); }, 5000);
+    const periodic = setInterval(() => { void checkAllUpdates(true); }, 6 * 60 * 60 * 1000);
+    return () => { clearTimeout(initial); clearInterval(periodic); };
+  });
   async function refreshConvos() { try { convos = await invoke('list_conversations'); } catch (e) { say(String(e), 'err'); } }
+  let workspaceAnchorBusy = false;
+  // 旧版把自由对话统一存成 __workspace__，无法知道原创建位置。升级后在它第一次出现的
+  // 当前连接中固定一次；后端只迁移未归属记录，所以之后切换连接不会再“跟着走”。
+  $effect(() => {
+    const connId = activeConnId;
+    const hasLegacyWorkspace = convos.some((c) => c.task_type === 'workspace' && (!c.conn_id.trim() || c.conn_id === WORKSPACE_CONN_ID));
+    if (!connId || !hasLegacyWorkspace || workspaceAnchorBusy) return;
+    workspaceAnchorBusy = true;
+    queueMicrotask(async () => {
+      try {
+        convos = await invoke<Conversation[]>('anchor_workspace_conversations', { connId });
+        if (activeConv?.task_type === 'workspace' && (!activeConv.conn_id.trim() || activeConv.conn_id === WORKSPACE_CONN_ID)) {
+          activeConv = convos.find((c) => c.id === activeConv?.id) ?? activeConv;
+        }
+      } catch (error) {
+        console.warn('固定旧自由对话位置失败', error);
+      } finally {
+        workspaceAnchorBusy = false;
+      }
+    });
+  });
+
+  type SitebuildSyncOptions = { createdThisTurn?: boolean; baseline?: Set<string>; generation?: number };
+  const sitebuildBinding = new Set<string>();
+  const sitebuildAutoSyncInFlight = new Set<string>();
+  const sitebuildAutoSyncAttempts = new Map<string, number>();
+  const sitebuildAutoSyncRetryTimers = new Map<string, { runKey: string; timer: ReturnType<typeof setTimeout> }>();
+  const sitebuildAutoSyncGeneration = new Map<string, number>();
+  const sitebuildAutoSyncPending = new Map<string, { conversation: Conversation; options: SitebuildSyncOptions }>();
+  const sitebuildTurnDiscoveryBaselines = new Map<string, Set<string>>();
+  function clearSitebuildAutoSyncRetry(convId: string) {
+    const scheduled = sitebuildAutoSyncRetryTimers.get(convId);
+    if (scheduled) clearTimeout(scheduled.timer);
+    sitebuildAutoSyncRetryTimers.delete(convId);
+  }
+  async function bindResolvedSitebuildConversation(c: Conversation, site: Site): Promise<boolean> {
+    if (sitebuildBinding.has(c.id)) return false;
+    sitebuildBinding.add(c.id);
+    try {
+      const updated = await invoke<Conversation | null>('bind_sitebuild_conversation', {
+        convId: c.id, siteSlug: site.slug, siteName: site.name || site.slug,
+      });
+      if (updated) {
+        convos = convos.some((item) => item.id === updated.id)
+          ? convos.map((item) => item.id === updated.id ? updated : item)
+          : [updated, ...convos];
+        if (activeConvId === updated.id) activeConv = updated;
+        sitebuildPendingDiscoveryBaselines.delete(c.id);
+        return true;
+      }
+      return false;
+    } catch (error) {
+      console.warn('绑定新站建设会话失败', error);
+      return false;
+    } finally {
+      sitebuildBinding.delete(c.id);
+    }
+  }
+  /** 发现真正创建出的站点后，把平台级建站会话切换为该站点会话；图标与后续上下文同步切换。 */
+  async function syncUnboundSitebuildConversations(connId: string, discovered: Site[], authoritative?: Conversation | null) {
+    if (!discovered.length) return;
+    // selectConn 与 refreshConvos 可能并发；轮末返回的 authoritative/activeConv 比列表快照更新，
+    // 必须让它覆盖同 id 的旧条目，否则刚写进回复里的 slug/ID 会被同秒旧快照吃掉。
+    const candidates = new Map<string, Conversation>();
+    for (const c of convos) candidates.set(c.id, c);
+    if (activeConv?.conn_id === connId) candidates.set(activeConv.id, activeConv);
+    if (authoritative?.conn_id === connId) candidates.set(authoritative.id, authoritative);
+    const pending = [...candidates.values()].filter((c) => c.conn_id === connId && !isMultiSiteConversation(c)
+      && c.task_type === 'sitebuild' && !c.site_slug.trim() && sitebuildHasCreationSignal(c)
+      && !sitebuildAutoSyncInFlight.has(c.id) && !sitebuildAutoSyncRetryTimers.has(c.id)
+      && !sitebuildSyncFailedByConv[c.id] && !running[c.id]);
+    for (const c of pending) {
+      const site = resolveSitebuildSite(c, discovered);
+      const baseline = sitebuildPendingDiscoveryBaselines.get(c.id);
+      if (site && baseline?.has(sitebuildSiteIdentity(site)) && !sitebuildReportsCreateSuccess(c)) continue;
+      if (site) await bindResolvedSitebuildConversation(c, site);
+    }
+  }
+
+  /** site-create 真正执行后由 Pilot 自动等待 GCMS 列表可见，再绑定会话；不把刷新责任交给用户。 */
+  async function syncCreatedSitebuildConversation(c: Conversation, options: SitebuildSyncOptions = {}) {
+    if (c.task_type !== 'sitebuild' || isMultiSiteConversation(c) || c.site_slug.trim()
+      || (!options.createdThisTurn && !sitebuildHasCreationSignal(c))) return;
+    const generation = options.generation ?? sitebuildAutoSyncGeneration.get(c.id) ?? 0;
+    if (generation !== (sitebuildAutoSyncGeneration.get(c.id) ?? 0)) return;
+    const runOptions: SitebuildSyncOptions = { ...options, generation };
+    const runKey = `${c.id}:${c.updated_at}:${c.messages.length}`;
+    const scheduled = sitebuildAutoSyncRetryTimers.get(c.id);
+    if (scheduled?.runKey === runKey) return;
+    if (sitebuildAutoSyncInFlight.has(c.id)) {
+      sitebuildAutoSyncPending.set(c.id, { conversation: c, options: runOptions });
+      return;
+    }
+    if (scheduled) clearSitebuildAutoSyncRetry(c.id);
+    const attempt = sitebuildAutoSyncAttempts.get(runKey) ?? 0;
+    const maxAttempts = 3;
+    if (attempt >= maxAttempts) {
+      sitebuildSyncFailedByConv[c.id] = true;
+      return;
+    }
+    sitebuildAutoSyncAttempts.set(runKey, attempt + 1);
+    sitebuildAutoSyncInFlight.add(c.id);
+    delete sitebuildSyncFailedByConv[c.id];
+    sitebuildSyncingByConv[c.id] = true;
+    let bound = false;
+    try {
+      const delays = [0, 1200, 2500, 4500];
+      for (const delay of delays) {
+        if (delay) await new Promise<void>((resolve) => setTimeout(resolve, delay));
+        if (generation !== (sitebuildAutoSyncGeneration.get(c.id) ?? 0)) return;
+        const current = await refreshDiscoverySummary(c.conn_id);
+        if (generation !== (sitebuildAutoSyncGeneration.get(c.id) ?? 0)) return;
+        if (!current) continue;
+        const discovered = current.lifecycle_items?.length ? current.lifecycle_items : current.items;
+        const site = resolveSitebuildSite(c, discovered);
+        if (!site) continue;
+        // 当前创建回合已有可靠 discovery 快照时，只自动接纳新出现的站点。
+        // 幂等重试返回既有站点时，助手明确报告创建成功后仍可绑定；slug 冲突则不会误绑旧站。
+        const baseline = options.baseline ?? sitebuildPendingDiscoveryBaselines.get(c.id);
+        if (baseline?.has(sitebuildSiteIdentity(site))
+          && !sitebuildReportsCreateSuccess(c)) continue;
+        if (await bindResolvedSitebuildConversation(c, site)) {
+          bound = true;
+          delete sitebuildSyncFailedByConv[c.id];
+          clearSitebuildAutoSyncRetry(c.id);
+          return;
+        }
+      }
+    } finally {
+      delete sitebuildSyncingByConv[c.id];
+      sitebuildAutoSyncInFlight.delete(c.id);
+      const pending = sitebuildAutoSyncPending.get(c.id);
+      if (pending && pending.options.generation === (sitebuildAutoSyncGeneration.get(c.id) ?? 0)) {
+        sitebuildAutoSyncPending.delete(c.id);
+        const latest = activeConv?.id === c.id ? activeConv : convos.find((item) => item.id === c.id);
+        if (!latest?.site_slug.trim()) {
+          queueMicrotask(() => {
+            void syncCreatedSitebuildConversation(latest ?? pending.conversation, pending.options);
+          });
+        }
+      }
+    }
+    if (!bound) {
+      const completedAttempts = sitebuildAutoSyncAttempts.get(runKey) ?? 1;
+      if (completedAttempts < maxAttempts) {
+        const timer = setTimeout(() => {
+          const currentTimer = sitebuildAutoSyncRetryTimers.get(c.id);
+          if (currentTimer?.runKey !== runKey) return;
+          sitebuildAutoSyncRetryTimers.delete(c.id);
+          const latest = activeConv?.id === c.id ? activeConv : convos.find((item) => item.id === c.id);
+          if (latest) void syncCreatedSitebuildConversation(latest, runOptions);
+        }, completedAttempts === 1 ? 10000 : 20000);
+        sitebuildAutoSyncRetryTimers.set(c.id, { runKey, timer });
+      } else {
+        sitebuildSyncFailedByConv[c.id] = true;
+      }
+    }
+  }
 
   let selSeq = 0;
-  async function selectConn(id: string) {
+  async function selectConn(id: string, authoritativeSitebuild?: Conversation | null, refreshStats = false) {
     const switching = id !== activeConnId;
     const conn = conns.find((c) => c.id === id);
     const seq = ++selSeq; activeConnId = id; discovery = null;
@@ -3388,7 +6477,10 @@
       // 换连接＝换工作区：关掉上个连接的对话/排期/定时任务视图，别串场。
       // 模板库 / 提示词库只在 CF 连接下有；切到 gcms 时也退回启动页。
       activeConvId = ''; activeConv = null;
-      if (view === 'thread' || view === 'schedule' || view === 'tasks' || view === 'managed' || view === 'remote' || ((view === 'templates' || view === 'prompts') && conn?.kind !== 'cloudflare')) view = 'launcher';
+      taskModalOpen = false; taskHistoryFor = null; hlTaskIds = [];
+      if (view === 'thread' || view === 'schedule' || view === 'tasks' || view === 'managed' || view === 'remote'
+        || (view === 'sites' && conn?.kind !== 'gcms')
+        || ((view === 'templates' || view === 'prompts') && conn?.kind !== 'cloudflare')) view = 'launcher';
     }
     if (conn?.kind === 'ssh') {
       // SSH 连接没有站点/项目可发现，也没有独立的启动页/对话页——**一切都在远程工作台里**
@@ -3413,10 +6505,37 @@
       return;
     }
     discoveryLoading = true;
-    try { const r = await invoke<Discovery>('discover_sites', { connId: id }); if (seq === selSeq) discovery = r; }
+    let discovered: Site[] = [];
+    try {
+      const r = await invoke<Discovery>('discover_sites', { connId: id, refreshStats });
+      if (seq === selSeq) { discovery = r; discovered = r.items; }
+    }
     catch (e) { if (seq === selSeq) say(String(e), 'err'); }
     finally { if (seq === selSeq) { discoveryLoading = false; if (!lSite && discovery?.items.length) lSite = discovery.items[0].slug; } }
+    if (seq === selSeq) await syncUnboundSitebuildConversations(id, discovered, authoritativeSitebuild);
   }
+
+  // 历史建站会话可能已成功创建站点、但旧版 Pilot 没有落盘绑定。只要当前 discovery
+  // 已能唯一识别，就在后台补绑；无需用户再发一条消息或手点刷新。
+  $effect(() => {
+    const c = activeConv;
+    const discovered = sites;
+    if (!c || !discovered.length || c.conn_id !== activeConnId || activeConvConn?.kind !== 'gcms'
+      || c.task_type !== 'sitebuild' || isMultiSiteConversation(c) || c.site_slug.trim() || !sitebuildHasCreationSignal(c)
+      || sitebuildAutoSyncInFlight.has(c.id) || sitebuildAutoSyncRetryTimers.has(c.id)
+      || !!sitebuildSyncFailedByConv[c.id] || !!running[c.id]) return;
+    if (!resolveSitebuildSite(c, discovered) || sitebuildBinding.has(c.id)) return;
+    queueMicrotask(() => { void syncUnboundSitebuildConversations(c.conn_id, discovered, c); });
+  });
+  // 应用重启、跨连接打开历史会话或 GCMS 短暂延迟时，同样自动补做发现；
+  // 同一轮按 id + 时间 + 消息数只运行一次，后续真正重试创建会自然生成新的 key。
+  $effect(() => {
+    const c = activeConv;
+    if (!c || c.conn_id !== activeConnId || activeConvConn?.kind !== 'gcms'
+      || c.task_type !== 'sitebuild' || isMultiSiteConversation(c) || c.site_slug.trim()
+      || !sitebuildHasCreationSignal(c) || !!running[c.id] || activeReadinessSite) return;
+    queueMicrotask(() => { void syncCreatedSitebuildConversation(c); });
+  });
 
   $effect(() => { refreshConns(); refreshBrains(); refreshConvos(); });
   $effect(() => {
@@ -3440,6 +6559,7 @@
       keyOpen = false;
       if (o.status === 'upgraded') {
         delete packUpdates[o.connection.id];
+        delete packUpdateChecks[o.connection.id];
         say(`「${o.connection.name}」技能包已就地升级，对话全部保留`);
       } else {
         say(`已导入「${o.connection.name}」`);
@@ -3456,35 +6576,364 @@
 
   // ---------- 技能包更新（徽标 + 一键升级） ----------
   let packUpdates = $state<Record<string, string>>({}); // connId → 可升级到的版本
+  let packUpdateChecks = $state<Record<string, PackUpdateInfo>>({});
   let packUpdating = $state<Record<string, boolean>>({});
-  // 选中 gcms 连接时静默查一次版本（每连接每 24h 最多一次；旧服务端/断网都静默跳过）。
-  async function maybeCheckPackUpdate(connId: string) {
+  let connectionSyncing = $state<Record<string, boolean>>({});
+
+  // ---------- 统一更新中心 ----------
+  let updateCenterOpen = $state(false);
+  let updateCheckingAll = $state(false);
+  let updateRunningAll = $state(false);
+  let updateCheckedAt = $state(0);
+  let updateCenterError = $state('');
+  let updateCenterNotice = $state('');
+  let updateRunStates = $state<Record<string, UnifiedRunState>>({});
+  const unifiedPlannedPackCount = $derived.by(() => {
+    const ids = new Set(Object.keys(packUpdates));
+    for (const server of sshServers) {
+      if (!gcmsUpdates[server.id]?.has_update) continue;
+      for (const pack of conns) {
+        if (pack.kind === 'gcms' && pack.source_ssh_id === server.id) ids.add(pack.id);
+      }
+    }
+    return ids.size;
+  });
+  const unifiedAvailableCount = $derived(
+    (updAvail ? 1 : 0)
+      + Object.values(gcmsUpdates).filter((info) => info.has_update).length
+      + unifiedPlannedPackCount,
+  );
+  const unifiedCategoryCount = $derived(
+    (updAvail ? 1 : 0)
+      + (Object.values(gcmsUpdates).some((info) => info.has_update) ? 1 : 0)
+      + (unifiedPlannedPackCount ? 1 : 0),
+  );
+  const topUpdateVisible = $derived(
+    isMainWindow && (unifiedAvailableCount > 0 || updateCenterOpen || updateRunningAll || updBusy),
+  );
+
+  function retainConnectionKeys<T>(record: Record<string, T>, ids: Set<string>): Record<string, T> {
+    return Object.fromEntries(Object.entries(record).filter(([id]) => ids.has(id))) as Record<string, T>;
+  }
+  function pruneConnectionUpdateState(connections: Connection[]) {
+    const ids = new Set(connections.map((connection) => connection.id));
+    gcmsUpdates = retainConnectionKeys(gcmsUpdates, ids);
+    gcmsUpdateErrors = retainConnectionKeys(gcmsUpdateErrors, ids);
+    packUpdates = retainConnectionKeys(packUpdates, ids);
+    packUpdateChecks = retainConnectionKeys(packUpdateChecks, ids);
+    updateRunStates = Object.fromEntries(Object.entries(updateRunStates).filter(([key]) => {
+      if (key === updateRunKey('pilot')) return true;
+      const split = key.indexOf(':');
+      return split > 0 && ids.has(key.slice(split + 1));
+    })) as Record<string, UnifiedRunState>;
+  }
+
+  function gcmsPacksForServer(sourceId: string): Connection[] {
+    return conns.filter((connection) => connection.kind === 'gcms' && connection.source_ssh_id === sourceId);
+  }
+  function connectionHasActiveTurn(connId: string): boolean {
+    return Object.values(running).includes(connId) || convos.some((conversation) => conversation.conn_id === connId && conversation.status === 'running');
+  }
+  function standaloneUpdatePacks(): Connection[] {
+    const serverIds = new Set(sshServers.map((server) => server.id));
+    return conns.filter((connection) => connection.kind === 'gcms'
+      && (!connection.source_ssh_id || !serverIds.has(connection.source_ssh_id)));
+  }
+  function updateRunKey(kind: 'pilot' | 'gcms' | 'pack', id = ''): string { return id ? `${kind}:${id}` : kind; }
+  function setUpdateRunState(key: string, status: UnifiedUpdateStatus, message: string) {
+    updateRunStates = { ...updateRunStates, [key]: { status, message } };
+  }
+  function updateStateLabel(status: UnifiedUpdateStatus): string {
+    switch (status) {
+      case 'checking': return '检查中';
+      case 'available': return '可更新';
+      case 'current': return '已是最新';
+      case 'unreachable': return '无法检查';
+      case 'unsupported': return '暂不支持';
+      case 'waiting': return '等待处理';
+      case 'updating': return '更新中';
+      case 'verifying': return '验证中';
+      case 'done': return '已完成';
+      case 'failed': return '失败';
+      default: return '尚未检查';
+    }
+  }
+  function pilotUnifiedState(): UnifiedRunState {
+    const runningState = updateRunStates[updateRunKey('pilot')];
+    if (runningState) return runningState;
+    if (updBusy) return { status: 'updating', message: updMsg || '正在更新 Pilot' };
+    if (pilotUpdateStatus === 'unreachable' || pilotUpdateStatus === 'failed') return { status: pilotUpdateStatus, message: pilotUpdateError || updMsg || '无法检查 Pilot 更新' };
+    if (updAvail) return { status: 'available', message: `${appVersion || '当前版本'} → ${updAvail}` };
+    if (pilotUpdateStatus === 'current') return { status: 'current', message: appVersion ? `当前 v${appVersion}` : '当前已是最新版' };
+    return { status: pilotUpdateStatus, message: pilotUpdateStatus === 'checking' ? '正在检查客户端更新…' : '尚未检查客户端更新' };
+  }
+  function gcmsUnifiedState(connection: Connection): UnifiedRunState {
+    const runningState = updateRunStates[updateRunKey('gcms', connection.id)];
+    if (runningState) return runningState;
+    if (gcmsUpgrading[connection.id]) return { status: 'updating', message: gcmsServer(connection.id).phase || '正在安全升级…' };
+    if (gcmsUpdateChecking[connection.id] || gcmsServer(connection.id).checking) return { status: 'checking', message: '正在检查服务器版本…' };
+    const view = gcmsServer(connection.id);
+    if (view.error) return { status: 'unreachable', message: view.error };
+    if (!view.status) return { status: 'idle', message: '尚未检测 GCMS 安装状态' };
+    if (!view.status.installed) return { status: 'unsupported', message: '这台服务器尚未安装 GCMS' };
+    if (!view.status.update_supported) return { status: 'unsupported', message: '当前安装方式不支持在线升级' };
+    if (gcmsUpdateErrors[connection.id]) return { status: 'unreachable', message: gcmsUpdateErrors[connection.id] };
+    const info = gcmsUpdates[connection.id];
+    if (info?.has_update) return { status: 'available', message: `${info.current || view.status.version || '当前版本'} → ${info.latest}` };
+    if (info) return { status: 'current', message: `当前 ${info.current || view.status.version || '版本未知'}` };
+    return { status: 'idle', message: `当前 ${view.status.version || '版本未知'}，尚未检查更新` };
+  }
+  function packUnifiedState(connection: Connection): UnifiedRunState {
+    const runningState = updateRunStates[updateRunKey('pack', connection.id)];
+    if (runningState) return runningState;
+    if (packUpdating[connection.id]) return { status: 'updating', message: '正在同步技能包…' };
+    const info = packUpdateChecks[connection.id];
+    const sourceUpdate = connection.source_ssh_id ? gcmsUpdates[connection.source_ssh_id] : null;
+    if (sourceUpdate?.has_update) return { status: 'waiting', message: `GCMS 升级到 ${sourceUpdate.latest} 后自动同步` };
+    if (packUpdates[connection.id]) return { status: 'available', message: `${info?.current || connection.pack_version || '旧版本'} → ${packUpdates[connection.id]}` };
+    if (info?.status === 'unreachable' || info?.status === 'error') return { status: 'unreachable', message: info.error || '无法检查技能包版本' };
+    if (info?.status === 'unsupported') return { status: 'unsupported', message: info.error || '对应 GCMS 暂不支持技能包同步' };
+    if (info?.status === 'ok') return { status: 'current', message: `当前 ${info.current || info.latest || connection.pack_version || '版本未知'}` };
+    return { status: 'idle', message: `当前 ${connection.pack_version || '版本未知'}，尚未检查同步状态` };
+  }
+  function formatUpdateCheckedAt(): string {
+    if (!updateCheckedAt) return '尚未完成统一检查';
+    const date = new Date(updateCheckedAt);
+    return `上次检查 ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+  }
+  function openUpdateCenter() {
+    if (!isMainWindow) { say('请在 Pilot 主窗口中打开更新中心', 'err'); return; }
+    setupOpen = false;
+    updateCenterOpen = true;
+    updateCenterError = '';
+    if (!updateCheckedAt || Date.now() - updateCheckedAt > 10 * 60 * 1000) void checkAllUpdates(false);
+  }
+  function closeUpdateCenter() {
+    if (updateRunningAll || updBusy) return;
+    updateCenterOpen = false;
+  }
+  async function forEachUpdateTarget<T>(items: T[], limit: number, worker: (item: T) => Promise<void>) {
+    let cursor = 0;
+    const count = Math.min(Math.max(1, limit), items.length);
+    await Promise.all(Array.from({ length: count }, async () => {
+      while (cursor < items.length) {
+        const index = cursor;
+        cursor += 1;
+        await worker(items[index]);
+      }
+    }));
+  }
+
+  async function checkAllUpdates(silent = false) {
+    if (!isMainWindow || updateCheckingAll || updateRunningAll || updBusy) return;
+    updateCheckingAll = true;
+    updateCenterError = '';
+    updateCenterNotice = '';
+    updateRunStates = {};
+    try {
+      const servers = [...sshServers];
+      const packs = conns.filter((connection) => connection.kind === 'gcms');
+      await Promise.all([
+        checkPilotUpdate(true),
+        forEachUpdateTarget(servers, 3, async (connection) => {
+          const view = gcmsServer(connection.id);
+          if (!view.status || view.error) await probeRemoteGcms(connection.id, false);
+          const status = gcmsServer(connection.id).status;
+          if (status?.installed && status.update_supported) await checkRemoteGcmsUpdate(connection.id, true, true);
+        }),
+        forEachUpdateTarget(packs, 4, async (connection) => { await maybeCheckPackUpdate(connection.id, true, false); }),
+      ]);
+      updateCheckedAt = Date.now();
+    } catch (e) {
+      updateCenterError = `统一检查未完成：${String(e)}`;
+      if (!silent) say(updateCenterError, 'err');
+    } finally {
+      updateCheckingAll = false;
+    }
+  }
+
+  // 选中 gcms 连接时静默查一次版本（每连接每 24h 最多一次；统一检查可强制刷新）。
+  async function maybeCheckPackUpdate(connId: string, force = false, notify = force): Promise<PackUpdateInfo | null> {
     const conn = conns.find((c) => c.id === connId);
-    if (!conn || conn.kind !== 'gcms') return;
+    if (!conn || conn.kind !== 'gcms') return null;
     const k = 'gcms.pilot.packCheck.' + connId;
     const last = Number(localStorage.getItem(k) || 0);
-    if (Date.now() - last < 24 * 3600 * 1000) return;
+    if (!force && Date.now() - last < 24 * 3600 * 1000) return packUpdateChecks[connId] ?? null;
     try {
-      const r = await invoke<{ current: string; latest: string; has_update: boolean }>('check_pack_update', { connId });
-      localStorage.setItem(k, String(Date.now())); // 查成功才消耗 24h 窗口；失败（断网等）下次选中直接重试
-      if (r.has_update) packUpdates[connId] = r.latest;
-    } catch { /* 静默 */ }
-  }
-  async function upgradePack(connId: string) {
-    if (packUpdating[connId]) return;
-    // 有对话正在跑时不升级：换脚本会影响在途回合。
-    if (Object.values(running).includes(connId) || convos.some((c) => c.conn_id === connId && c.status === 'running')) {
-      say('该连接下有对话正在运行，请先点停止结束这一轮，再升级技能包。', 'err');
-      return;
+      const raw = await invoke<PackUpdateInfo>('check_pack_update', { connId });
+      const r: PackUpdateInfo = { ...raw, status: raw.status ?? (raw.latest ? 'ok' : 'error') };
+      packUpdateChecks = { ...packUpdateChecks, [connId]: r };
+      const next = { ...packUpdates };
+      if (r.status === 'ok') {
+        localStorage.setItem(k, String(Date.now()));
+        if (r.has_update) next[connId] = r.latest;
+        else delete next[connId];
+      } else {
+        delete next[connId];
+        if (r.status === 'unsupported') localStorage.setItem(k, String(Date.now()));
+        if (notify) say(r.error || '无法检查技能包更新', 'err');
+      }
+      packUpdates = next;
+      return r;
+    } catch (e) {
+      const message = `检查技能包更新失败：${String(e)}`;
+      packUpdateChecks = { ...packUpdateChecks, [connId]: { current: conn.pack_version || '', latest: '', has_update: false, status: 'error', error: message } };
+      const next = { ...packUpdates };
+      delete next[connId];
+      packUpdates = next;
+      if (notify) say(message, 'err');
+      return null;
     }
-    packUpdating[connId] = true;
+  }
+  async function upgradePack(connId: string, options: { notify?: boolean } = {}): Promise<UpdateActionResult> {
+    const notify = options.notify !== false;
+    if (packUpdating[connId]) return { ok: false, message: '该技能包正在同步' };
+    const connection = conns.find((item) => item.id === connId && item.kind === 'gcms');
+    const sourceUpdate = connection?.source_ssh_id ? gcmsUpdates[connection.source_ssh_id] : null;
+    if (sourceUpdate?.has_update) {
+      const message = `请先把来源 GCMS 更新到 ${sourceUpdate.latest}，随后再同步技能包`;
+      if (notify) say(message, 'err');
+      return { ok: false, message };
+    }
+    // 有对话正在跑时不升级：换脚本会影响在途回合。
+    if (connectionHasActiveTurn(connId)) {
+      const message = '该连接下有对话正在运行，请等这一轮结束后再同步技能包。';
+      if (notify) say(message, 'err');
+      return { ok: false, message };
+    }
+    packUpdating = { ...packUpdating, [connId]: true };
     try {
-      const msg = await invoke<string>('update_pack', { connId });
-      delete packUpdates[connId];
-      say(msg);
+      const targetVersion = packUpdates[connId] || packUpdateChecks[connId]?.latest || '';
+      const msg = await invoke<string>('update_pack', { connId, targetVersion: targetVersion || null });
+      const next = { ...packUpdates };
+      delete next[connId];
+      packUpdates = next;
       await refreshConns();
-    } catch (e) { say(String(e), 'err'); }
-    finally { delete packUpdating[connId]; }
+      const verified = await maybeCheckPackUpdate(connId, true, false);
+      if (!verified || verified.status !== 'ok') {
+        const message = `${msg}，但未能复核同步后的版本`;
+        if (notify) say(message, 'err');
+        return { ok: false, message };
+      }
+      if (verified.has_update) {
+        const message = `技能包已写入，但服务端当前仍要求同步到 ${verified.latest}`;
+        if (notify) say(message, 'err');
+        return { ok: false, message };
+      }
+      if (notify) say(msg);
+      return { ok: true, message: msg };
+    } catch (e) {
+      const message = String(e);
+      if (notify) say(message, 'err');
+      return { ok: false, message };
+    } finally {
+      const next = { ...packUpdating };
+      delete next[connId];
+      packUpdating = next;
+    }
+  }
+
+  async function runRecommendedUpdates() {
+    if (updateCheckingAll || updateRunningAll || updBusy) return;
+    if (!updateCheckedAt) await checkAllUpdates(false);
+    const gcmsTargets = sshServers.filter((connection) => gcmsUpdates[connection.id]?.has_update && gcmsServer(connection.id).status?.installed);
+    const packIds = new Set<string>(Object.keys(packUpdates));
+    for (const server of gcmsTargets) for (const pack of gcmsPacksForServer(server.id)) packIds.add(pack.id);
+    const willUpdatePilot = !!updAvail;
+    const total = gcmsTargets.length + packIds.size + (willUpdatePilot ? 1 : 0);
+    if (!total) { updateCenterNotice = '当前没有需要执行的更新'; return; }
+    const summary = [
+      gcmsTargets.length ? `${gcmsTargets.length} 个 GCMS` : '',
+      packIds.size ? `${packIds.size} 个技能包` : '',
+      willUpdatePilot ? 'Pilot 客户端' : '',
+    ].filter(Boolean).join('、');
+    const confirmed = await confirmDialog(
+      `将按推荐顺序更新：${summary}。\nGCMS 会逐台备份、短暂重启并验证；关联技能包随后同步。前面的项目全部完成后，Pilot 才会安装并重启。`,
+      { title: '执行推荐更新', kind: 'info', confirmText: '开始更新' },
+    );
+    if (!confirmed) return;
+
+    updateRunningAll = true;
+    updateCenterError = '';
+    updateCenterNotice = '';
+    updateRunStates = {};
+    const processedPacks = new Set<string>();
+    let failures = 0;
+
+    const runPack = async (connection: Connection) => {
+      if (processedPacks.has(connection.id)) return;
+      processedPacks.add(connection.id);
+      const key = updateRunKey('pack', connection.id);
+      setUpdateRunState(key, 'updating', '正在同步技能包…');
+      const result = await upgradePack(connection.id, { notify: false });
+      if (result.ok) setUpdateRunState(key, 'done', result.message);
+      else {
+        failures += 1;
+        const waiting = result.message.includes('正在运行');
+        setUpdateRunState(key, waiting ? 'waiting' : 'failed', result.message);
+      }
+    };
+
+    try {
+      for (const server of gcmsTargets) {
+        const key = updateRunKey('gcms', server.id);
+        const current = gcmsServer(server.id).status;
+        if (!current) {
+          failures += 1;
+          setUpdateRunState(key, 'failed', '服务器状态已变化，请重新检查');
+          continue;
+        }
+        setUpdateRunState(key, 'updating', `正在升级到 ${gcmsUpdates[server.id].latest}…`);
+        const result = await upgradeRemoteGcms(server, current, { confirm: false, notify: false, refreshPacks: false });
+        if (!result.ok) {
+          failures += 1;
+          setUpdateRunState(key, result.message.includes('正在运行') ? 'waiting' : 'failed', result.message);
+          for (const pack of gcmsPacksForServer(server.id)) {
+            processedPacks.add(pack.id);
+            setUpdateRunState(updateRunKey('pack', pack.id), 'waiting', '来源 GCMS 升级失败，本次未同步');
+          }
+          continue;
+        }
+        setUpdateRunState(key, 'done', result.message);
+        for (const pack of gcmsPacksForServer(server.id)) {
+          const info = await maybeCheckPackUpdate(pack.id, true, false);
+          if (info?.status === 'ok' && info.has_update) await runPack(pack);
+          else if (info?.status !== 'ok') {
+            processedPacks.add(pack.id);
+            failures += 1;
+            setUpdateRunState(updateRunKey('pack', pack.id), 'failed', info?.error || 'GCMS 已升级，但无法检查关联技能包');
+          } else {
+            processedPacks.add(pack.id);
+            setUpdateRunState(updateRunKey('pack', pack.id), 'done', '技能包已与 GCMS 保持一致');
+          }
+        }
+      }
+
+      for (const pack of conns.filter((connection) => connection.kind === 'gcms')) {
+        if (!processedPacks.has(pack.id) && packUpdates[pack.id]) await runPack(pack);
+      }
+
+      if (willUpdatePilot) {
+        const pilotKey = updateRunKey('pilot');
+        if (failures) {
+          setUpdateRunState(pilotKey, 'waiting', '前序更新存在失败项，本次暂不重启 Pilot');
+        } else {
+          setUpdateRunState(pilotKey, 'updating', `正在安装 Pilot ${updAvail}…`);
+          const result = await installPilotUpdate({ confirm: false, notify: false, expectedVersion: updAvail, recommended: true });
+          if (!result.ok) {
+            failures += 1;
+            setUpdateRunState(pilotKey, pilotUpdateStatus === 'waiting' ? 'waiting' : 'failed', result.message);
+          }
+        }
+      }
+
+      updateCenterNotice = failures
+        ? `本轮已结束，${failures} 项需要处理；修复后重新检查即可重试`
+        : '本轮更新已全部完成';
+      updateCheckedAt = Date.now();
+    } finally {
+      updateRunningAll = false;
+    }
   }
 
   // ---------- 新建 / 编辑远程连接（SSH） ----------
@@ -3785,6 +7234,98 @@
 
   // ---------- 远程终端（xterm + PTY 流） ----------
   const isSshConn = $derived(activeConn?.kind === 'ssh');
+  // GCMS 的「新站建设」是平台级任务：目标是创建一个全新子站点，不应先绑到任一已有站点。
+  const isGcmsSiteBuild = $derived(activeConn?.kind === 'gcms' && lTask === 'sitebuild');
+  const isWorkspaceChat = $derived(!isSshConn && !isCfConn && lTask === 'workspace');
+  function selectLauncherTask(task: TaskType) {
+    lTask = task;
+    if (task === 'workspace') {
+      lSite = '';
+      lSites = [];
+      // 自由对话可能接入任意本地目录，默认保留逐次确认边界。
+      if (lPerm === 'full') lPerm = 'ask';
+    } else if (task === 'sitebuild' && activeConn?.kind === 'gcms') {
+      if (lSite === '__multi__' || !sites.some((site) => site.slug === lSite)) lSite = sites[0]?.slug ?? '';
+      lSites = [];
+      // 默认保留可控边界：读操作自动执行，实际站点/主题写入会由危险命令规则弹确认卡。
+      if (lPerm === 'full') lPerm = 'auto';
+    } else if (!lSite || lSite === '__multi__' || !sites.some((site) => site.slug === lSite)) {
+      lSite = sites[0]?.slug ?? '';
+      lSites = [];
+    }
+  }
+  async function toggleSiteStatus(site: Site) {
+    const connId = activeConnId;
+    if (!connId || siteStatusBusy[site.id]) return;
+    if (site.is_default) {
+      say('默认站点始终启用，不能关闭', 'err');
+      return;
+    }
+    const isDisabled = site.status === 'disabled';
+    const nextStatus = isDisabled ? 'enabled' : 'disabled';
+    const siteName = site.name || site.slug;
+    const confirmed = await confirmDialog(
+      isDisabled
+        ? `启用后「${siteName}」会恢复公开访问。确定启用这个站点吗？`
+        : `关闭后「${siteName}」会停止公开访问，数据、域名和配置都会保留。确定关闭这个站点吗？`,
+      {
+        title: isDisabled ? '启用站点' : '关闭站点',
+        kind: isDisabled ? 'info' : 'danger',
+        confirmText: isDisabled ? '启用站点' : '关闭站点',
+      },
+    );
+    if (!confirmed) return;
+
+    siteStatusBusy = { ...siteStatusBusy, [site.id]: true };
+    try {
+      await invoke('gcms_site_status_set', {
+        connId,
+        siteId: site.id,
+        status: nextStatus,
+        requestId: `pilot-${crypto.randomUUID()}`,
+      });
+      if (activeConnId === connId && discovery) {
+        const lifecycle = discovery.lifecycle_items ?? discovery.items;
+        const updatedSite = { ...(lifecycle.find((item) => item.id === site.id) ?? site), status: nextStatus };
+        const nextItems = nextStatus === 'disabled'
+          ? discovery.items.filter((item) => item.id !== site.id)
+          : updatedSite.management_automation_enabled === false
+            ? discovery.items
+            : discovery.items.some((item) => item.id === site.id)
+              ? discovery.items.map((item) => item.id === site.id ? updatedSite : item)
+              : [...discovery.items, updatedSite];
+        discovery = {
+          ...discovery,
+          items: nextItems,
+          lifecycle_items: lifecycle.map((item) => item.id === site.id ? updatedSite : item),
+        };
+      }
+      await refreshDiscoverySummary(connId);
+      say(isDisabled ? '站点已启用' : '站点已关闭');
+    } catch (error) {
+      say(String(error), 'err');
+    } finally {
+      const next = { ...siteStatusBusy };
+      delete next[site.id];
+      siteStatusBusy = next;
+    }
+  }
+  function startSiteBuild() {
+    newChat();
+    selectLauncherTask('sitebuild');
+    siteBuildMode = 'guided';
+    siteBuildStep = 1;
+    siteBuildDraft = freshSiteBuildDraft();
+    view = 'launcher';
+  }
+  function operateSite(site: Site) {
+    if (site.status === 'disabled') return;
+    newChat();
+    selectLauncherTask('siteops');
+    lSite = site.slug;
+    lSites = [];
+    view = 'launcher';
+  }
   let termEl = $state<HTMLDivElement | null>(null);
   let termOn = $state(false);
   let termBusy = $state(false); // 建连中：刷新键转起来 + 禁重复点
@@ -4339,6 +7880,15 @@
     { key: 'zone', type: 'read' },
     { key: 'zone_settings', type: 'read' },
   ] as const;
+  const GCMS_CF_TOKEN_PERMISSIONS = [
+    { key: 'workers_scripts', type: 'edit' },
+    { key: 'workers_routes', type: 'edit' },
+    { key: 'page', type: 'edit' },
+    { key: 'dns', type: 'edit' },
+    { key: 'cache', type: 'purge' },
+    { key: 'zone', type: 'read' },
+    { key: 'account_settings', type: 'read' },
+  ] as const;
   const CF_DASH_URL = 'https://dash.cloudflare.com/';
   let cfOpen = $state(false);
   let cfToken = $state('');
@@ -4363,6 +7913,14 @@
     url.searchParams.set('accountId', cfUpdateConnection()?.account_id || '*');
     url.searchParams.set('zoneId', 'all');
     url.searchParams.set('name', cfUpdateZone ? `GCMS Pilot ${cfUpdateZone}` : 'GCMS Pilot');
+    return url.toString();
+  }
+  function gcmsCloudflareTokenTemplateUrl(): string {
+    const url = new URL(CF_TOKEN_URL);
+    url.searchParams.set('permissionGroupKeys', JSON.stringify(GCMS_CF_TOKEN_PERMISSIONS));
+    url.searchParams.set('accountId', '*');
+    url.searchParams.set('zoneId', 'all');
+    url.searchParams.set('name', 'GCMS Cloudflare Deploy');
     return url.toString();
   }
   function resetCfConnect(resumeGcms: boolean, updateId = '', updateZone = '') {
@@ -4590,15 +8148,18 @@
     if (!saveUserPrompts(userPrompts)) say('删除已生效，但本地存储写入异常，重启后可能恢复', 'err');
   }
 
-  async function removeConn(id: string) {
+  async function removeConn(id: string, preserveMenu = false) {
     // 该连接下有对话正在跑一轮时不删：否则删掉会话行会让在途回合回写失败（「会话丢失」），子进程还在用已删的密钥/目录。
     const runningUnderConn = Object.values(running).includes(id);
     if (runningUnderConn || convos.some((c) => c.conn_id === id && c.status === 'running')) {
       say('该连接下有对话正在运行，请先点停止结束这一轮，再删除连接。', 'err');
       return;
     }
+    if (preserveMenu) connCtxConfirmPinned = true;
     const yes = await confirmDialog('删除这个连接？技能包目录、钥匙串密钥，以及该连接下的所有对话都会一并删除。', { title: '删除连接', kind: 'danger' });
+    if (preserveMenu) connCtxConfirmPinned = false;
     if (!yes) return;
+    if (preserveMenu) connCtx = null;
     try {
       await invoke('remove_connection', { id });
       if (activeConnId === id) { activeConnId = ''; discovery = null; }
@@ -4647,8 +8208,20 @@
   async function openConv(id: string) {
     const c = await invoke<Conversation | null>('get_conversation', { id });
     if (!c) { await refreshConvos(); return; }
-    // 打开的对话可能属于别的连接（从搜索/任务链接进来）——切到它自己的连接，否则侧栏会把它过滤掉。
-    if (c.conn_id !== activeConnId) activeConnId = c.conn_id;
+    // 打开的对话可能属于别的连接（从搜索/任务链接进来）——切到它固定的创建位置，
+    // workspace 也一样；这只影响侧栏位置，后端仍使用隔离运行环境。
+    if (c.conn_id !== activeConnId) {
+      const targetConnection = conns.find((connection) => connection.id === c.conn_id);
+      if (targetConnection) {
+        activeConnId = c.conn_id;
+        // 跨 GCMS 连接打开对话时，旧 discovery 不能参与新会话的站点/readiness 判断。
+        // 先清空旧站点，再异步加载当前连接；selectConn 此时按同连接刷新，不会清掉刚打开的对话。
+        if (targetConnection.kind === 'gcms') {
+          discovery = null;
+          void selectConn(c.conn_id, c);
+        }
+      }
+    }
     activeConv = c; activeConvId = id; threadModel = c.model; threadPerm = c.perm_mode || 'full'; threadEffort = c.effort || '';
     // 远程连接的对话在工作台里开，不跳去独立对话页。
     // 命令行开着就让它开着 —— 面板开关是用户自己拨的，翻个旧对话不该替他改布局。
@@ -4657,7 +8230,7 @@
       if (!wb.chat) setWbFlags({ chat: true });
     } else view = 'thread';
     attachments = []; queued = null; // 换会话清掉未发送的附件 / 等待消息
-    expandSite(c.site_slug);
+    expandSite(conversationGroupKey(c));
     checkCfReady();
     scrollSoon(true);
   }
@@ -4694,6 +8267,21 @@
   // 首轮也能流式渲染 + 停止（cancel 键对准真正的注册表 key）。
   function beginTurn(convId: string, optimistic: Conversation) {
     if (retryTimers[convId]) { clearTimeout(retryTimers[convId]); delete retryTimers[convId]; } // 任何新一轮开始都取消该会话待触发的自动重连
+    clearSitebuildAutoSyncRetry(convId);
+    sitebuildAutoSyncGeneration.set(convId, (sitebuildAutoSyncGeneration.get(convId) ?? 0) + 1);
+    sitebuildAutoSyncPending.delete(convId);
+    if (optimistic.task_type === 'sitebuild' && !isMultiSiteConversation(optimistic)
+      && optimistic.conn_id === activeConnId
+      && conns.find((connection) => connection.id === optimistic.conn_id)?.kind === 'gcms'
+      && discovery) {
+      const baselineSites = discovery.lifecycle_items?.length ? discovery.lifecycle_items : discovery.items;
+      sitebuildTurnDiscoveryBaselines.set(
+        convId,
+        new Set(baselineSites.map(sitebuildSiteIdentity)),
+      );
+    } else {
+      sitebuildTurnDiscoveryBaselines.delete(convId);
+    }
     lives[convId] = { text: '', tools: [], error: '', failed: false, startedAt: Date.now() };
     running[convId] = optimistic.conn_id;
     activeConv = optimistic; activeConvId = convId; threadModel = optimistic.model; threadPerm = optimistic.perm_mode || 'full'; threadEffort = optimistic.effort || '';
@@ -4710,20 +8298,43 @@
   }
   function endTurn(conv: Conversation | null, convId: string) {
     const failed = lives[convId]?.failed ?? false; // 删缓冲前先取，供等待消息门控用
+    const createdSiteThisTurn = sitebuildToolsExecutedCreate(lives[convId]?.tools);
+    const createRejectedThisTurn = sitebuildCreateWasRejected(lives[convId]?.text, lives[convId]?.tools);
+    const sitebuildBaseline = sitebuildTurnDiscoveryBaselines.get(convId);
+    sitebuildTurnDiscoveryBaselines.delete(convId);
     // 仅当用户仍停留在这条会话时用权威结果覆盖，避免打断已切到别的会话的用户。
     // 覆盖源按新鲜度择优：运行中改的档位/模型晚于轮末快照落库，刷新过的列表条目更全；
     // 但 refreshConvos 失败时列表是旧值（甚至 startChat 的乐观条目），无脑取列表会把
     // 刚跑完的整轮消息打回去——updated_at 更旧就回退用快照。
     if (conv && activeConvId === convId) {
       const inList = convos.find((x) => x.id === convId);
-      const fresh = inList && inList.updated_at >= conv.updated_at ? inList : conv;
+      // 时间戳精度是秒：列表旧快照与轮末结果可能 updated_at 相同。相同时消息更多的
+      // 才是真正的新版本，否则会丢掉刚返回的 slug/站点 ID，导致新站永远无法自动关联。
+      const fresh = !inList ? conv
+        : inList.updated_at > conv.updated_at ? inList
+          : inList.updated_at < conv.updated_at ? conv
+            : inList.messages.length > conv.messages.length ? inList : conv;
       activeConv = fresh; threadModel = fresh.model; threadPerm = fresh.perm_mode || 'full'; threadEffort = fresh.effort || '';
+      convos = convos.some((item) => item.id === fresh.id)
+        ? convos.map((item) => item.id === fresh.id ? fresh : item)
+        : [fresh, ...convos];
     }
     delete running[convId];
     delete lives[convId];
     if (activeConvId === convId) {
       checkCfReady(); // 这轮可能写了文件，重新判定预览/部署是否可用
       scrollSoon(); // 流式缓冲换成权威消息后高度还会变，贴底状态要延续。
+    }
+    // 只有本轮真实执行且未明确失败的 site-create 才自动等待并关联新站；
+    // site-create-plan / 等待用户确认阶段绝不提前显示上线准备。
+    // 即便后续主题或汇报步骤失败，也要继续只读发现，避免已创建的新站成为“孤儿”。
+    if (conv?.task_type === 'sitebuild' && !isMultiSiteConversation(conv)
+      && activeConvId === convId && activeConnId === conv.conn_id
+      && conns.find((c) => c.id === conv.conn_id)?.kind === 'gcms'
+      && createdSiteThisTurn && !createRejectedThisTurn) {
+      if (sitebuildBaseline) sitebuildPendingDiscoveryBaselines.set(convId, sitebuildBaseline);
+      else sitebuildPendingDiscoveryBaselines.delete(convId);
+      void syncCreatedSitebuildConversation(conv, { createdThisTurn: true, baseline: sitebuildBaseline });
     }
     // 等待消息：这轮**成功**结束、用户还在本会话，才把排队的那条发出去（失败/要重连时不发，避免连环失败）。
     let sentQueued = false;
@@ -4757,23 +8368,29 @@
   }
 
   async function startChat() {
-    const multi = !isSshConn && lSites.length > 1;
-    if ((!isSshConn && !multi && !lSite.trim()) || !lDraft.trim() || !brainUsable(lBrain)) return;
-    const site = sites.find((s) => s.slug === lSite);
-    const taskType = isSshConn ? 'remote' : isCfConn ? 'sitebuild' : lTask;
+    const platformBuild = isGcmsSiteBuild;
+    const workspace = isWorkspaceChat;
+    const multi = !platformBuild && !workspace && !isSshConn && lSites.length > 1;
+    const targetReady = isSshConn || platformBuild || workspace || multi || !!lSite.trim();
+    const buildReady = platformBuild ? (siteBuildMode === 'guided' ? siteBuildGuideReady : siteBuildChatReady) : !!lDraft.trim();
+    if (!targetReady || !buildReady || !brainUsable(lBrain)) return;
+    const site = platformBuild || workspace ? undefined : sites.find((s) => s.slug === lSite);
+    const taskType: TaskType = isSshConn ? 'remote' : isCfConn ? 'sitebuild' : workspace ? 'workspace' : lTask;
     prefs.brain = lBrain; prefs.model = lModel; prefs.taskType = lTask; prefs.perm = lPerm; prefs.effort = lEffort; savePrefs(prefs);
     const model = lModel;
     // CF 建站：把所选视觉风格的 tokens 指令拼进首条消息（可见、可追溯）。
     const styleDir = isCfConn && lStyle ? STYLE_DIRECTIVES[lStyle] : '';
-    const text = lDraft.trim() + (styleDir ? `\n\n【视觉风格】${styleDir}` : '');
+    const text = platformBuild ? siteBuildMessage() : lDraft.trim() + (styleDir ? `\n\n【视觉风格】${styleDir}` : '');
     const id = crypto.randomUUID();
     const now = Math.floor(Date.now() / 1000);
     // 远程连接没有站点：slug 留空，侧栏分组名用 user@host（那就是这台机器的身份）。
-    const mSlug = multi || isSshConn ? '' : lSite;
-    const mName = isSshConn ? `${activeConn?.ssh_user}@${activeConn?.ssh_host}` : multi ? `多站 · ${lSites.length} 站` : (site?.name || lSite);
+    const mSlug = platformBuild || workspace || multi || isSshConn ? '' : lSite;
+    const mName = isSshConn ? `${activeConn?.ssh_user}@${activeConn?.ssh_host}` : platformBuild ? '新站建设' : workspace ? (workspaceDir ? workspaceFolderName(workspaceDir) : '自由对话') : multi ? `多站 · ${lSites.length} 站` : (site?.name || lSite);
     const mNames = multi ? lSites.map((sl) => sites.find((x) => x.slug === sl)?.name || sl) : [];
+    const conversationConnId = activeConnId;
     const optimistic: Conversation = {
-      id, conn_id: activeConnId, conn_name: activeConn?.name ?? '', site_slug: mSlug, site_name: mName, site_slugs: multi ? [...lSites] : [],
+      id, conn_id: conversationConnId, conn_name: activeConn?.name ?? '', site_slug: mSlug, site_name: mName, site_slugs: multi ? [...lSites] : [],
+      workspace_dir: workspace ? workspaceDir : '',
       task_type: taskType, brain: lBrain, model, perm_mode: lPerm, effort: lEffort, session_ref: '',
       title: text.slice(0, 30), messages: [optimisticUser(text)], status: 'running', created_at: now, updated_at: now,
     };
@@ -4781,17 +8398,20 @@
     convos = [optimistic, ...convos];
     delete autoRetried[id];
     beginTurn(id, optimistic);
-    lDraft = '';
+    if (!platformBuild) lDraft = '';
     try {
       const conv = await invoke<Conversation>('start_conversation', {
-        convId: id, connId: activeConnId, siteSlug: mSlug, siteName: mName,
+        convId: id, connId: conversationConnId, siteSlug: mSlug, siteName: mName,
         siteSlugs: multi ? lSites : [], siteNames: mNames,
         taskType, brain: lBrain, model, permMode: lPerm, effort: lEffort,
+        workspaceDir: workspace ? workspaceDir : '',
         message: text, onEvent: makeChannel(id),
       });
       await refreshConvos();
       const failed = lives[id]?.failed ?? false; const errText = lives[id]?.error ?? '';
       endTurn(conv, id);
+      if (!failed && platformBuild) { siteBuildDraft = freshSiteBuildDraft(); siteBuildStep = 1; siteBuildMode = 'guided'; }
+      if (!failed && workspace) workspaceDir = '';
       maybeAutoRetry(id, failed, errText);
     } catch (e) { await failTurn(e, id); }
   }
@@ -4823,7 +8443,8 @@
   // 顺带让上次读失败（''）的条目在重进会话时有重试机会。
   let thumbs = $state<Record<string, string>>({});
   const thumbJobs = new Map<string, Promise<string>>();
-  function thumbKey(p: string): string { return (activeConv?.conn_id ?? '') + '|' + (activeConv?.site_slug ?? '') + '|' + p; }
+  function conversationProject(c: Conversation): string { return c.task_type === 'workspace' ? c.id : c.site_slug; }
+  function thumbKey(p: string): string { return activeConv ? activeConv.conn_id + '|' + conversationProject(activeConv) + '|' + p : '||' + p; }
   // 读工作目录内图片 → data URI（并发去重；失败缓存空串＝退回文件卡样式）。
   function loadWorkdirImg(connId: string, project: string, p: string): Promise<string> {
     const k = connId + '|' + project + '|' + p;
@@ -4850,12 +8471,13 @@
   $effect(() => {
     const c = activeConv;
     if (!c) return;
-    const prefix = c.conn_id + '|' + c.site_slug + '|';
+    const project = conversationProject(c);
+    const prefix = c.conn_id + '|' + project + '|';
     const stale = Object.keys(thumbs).filter((k) => !k.startsWith(prefix));
     if (stale.length) { const keep = { ...thumbs }; for (const k of stale) delete keep[k]; thumbs = keep; }
     for (const m of c.messages) {
       const atts = m.role === 'user' ? splitAttachments(m.text).atts : splitGenImages(m.text).atts;
-      for (const p of atts) if (isImgPath(p)) ensureThumb(c.conn_id, c.site_slug, p);
+      for (const p of atts) if (isImgPath(p)) ensureThumb(c.conn_id, project, p);
     }
   });
   // 点缩略图看大图（点任意处/Esc 关闭）
@@ -4869,7 +8491,7 @@
     attaching = true;
     try {
       const buf = new Uint8Array(await f.arrayBuffer());
-      const path = await invoke<string>('save_attachment', { connId: activeConv.conn_id, project: activeConv.site_slug, filename: f.name, data: Array.from(buf) });
+      const path = await invoke<string>('save_attachment', { connId: activeConv.conn_id, project: conversationProject(activeConv), filename: f.name, data: Array.from(buf) });
       let preview = '';
       if (f.type.startsWith('image/')) {
         preview = await new Promise<string>((res) => { const r = new FileReader(); r.onload = () => res(String(r.result)); r.onerror = () => res(''); r.readAsDataURL(f); });
@@ -5086,9 +8708,8 @@
 
   // ---------- 全局自定义 tips（替换原生 title 系统提示） ----------
   // 原生 title 出现慢、样式与应用割裂。首次悬停时把 title 搬进 data-tip（保留 aria-label
-  // 供无障碍），统一由一个 fixed 浮层显示——不受侧栏等滚动容器裁剪。
+  // 供无障碍），再交给共享定位器按真实尺寸避让视口边缘。
   // disabled 按钮不触发鼠标事件 → 需要 tip 的禁用按钮外面包 .tipwrap 承载 data-tip。
-  let tip = $state<{ x: number; y: number; text: string; below: boolean; align: 'center' | 'end' } | null>(null);
   let imgTip = $state<{ x: number; y: number; url: string; below: boolean } | null>(null);
   let imgTipReady = $state(false); // 图片 onload 之前浮层不可见，避免空白小块→大图的闪变
   let hoverWant = ''; // 正在等加载的悬停目标（工作目录图片异步读完时校验还悬停着才弹）
@@ -5117,7 +8738,7 @@
         const x = Math.min(Math.max(r0.left + r0.width / 2, 150), window.innerWidth - 150);
         const place = { x, y: below ? r0.bottom + 8 : r0.top - 8, below };
         holder.style.cursor = 'zoom-in';
-        tip = null;
+        hideTip();
         if (u || known) {
           hoverWant = ''; // 立即可显示：作废先前挂着的异步加载，防止旧图旧坐标顶掉当前浮层
           const src = u || (known as string);
@@ -5128,7 +8749,7 @@
           imgTip = null;
           if (c) {
             hoverWant = k;
-            loadWorkdirImg(c.conn_id, c.site_slug, rel).then((d) => {
+            loadWorkdirImg(c.conn_id, conversationProject(c), rel).then((d) => {
               if (d && hoverWant === k) { imgTipReady = false; imgTip = { ...place, url: d }; }
             });
           }
@@ -5140,7 +8761,7 @@
     hoverWant = '';
     imgTip = null;
     const el = tgt.closest?.('[title], [data-tip]') as HTMLElement | null;
-    if (!el) { tip = null; return; }
+    if (!el) { hideTip(); return; }
     const t = el.getAttribute('title');
     if (t) {
       el.removeAttribute('title');
@@ -5148,14 +8769,8 @@
       if (!el.getAttribute('aria-label') && !el.textContent?.trim()) el.setAttribute('aria-label', t);
     }
     const text = el.getAttribute('data-tip') ?? '';
-    if (!text) { tip = null; return; }
-    const r = el.getBoundingClientRect();
-    const below = r.top < 64; // 贴近顶部时改为在元素下方显示
-    const align = el.dataset.tipAlign === 'end' ? 'end' : 'center';
-    const x = align === 'end'
-      ? Math.min(r.right, window.innerWidth - 8)
-      : Math.min(Math.max(r.left + r.width / 2, 120), window.innerWidth - 120);
-    tip = { x, y: below ? r.bottom + 7 : r.top - 7, text, below, align };
+    if (!text) { hideTip(); return; }
+    showTipFor(el, text, { align: el.dataset.tipAlign === 'end' ? 'end' : 'center' });
   }
 
   // ---------- 右键菜单（原生） ----------
@@ -5264,7 +8879,7 @@
     // 点击是明确意图：之前失败过（负缓存空串）的条目给重试机会——文件可能刚被生成出来
     const k = thumbKey(p);
     if (thumbs[k] === '') { const t2 = { ...thumbs }; delete t2[k]; thumbs = t2; }
-    loadWorkdirImg(c.conn_id, c.site_slug, p).then((d) => {
+    loadWorkdirImg(c.conn_id, conversationProject(c), p).then((d) => {
       if (d) lightbox = d;
       else say('预览失败：文件不存在、超过 8MB，或在工作目录之外', 'err');
     });
@@ -5273,7 +8888,7 @@
     const c = activeConv;
     if (!c) return;
     try {
-      const abs = await invoke<string>('resolve_workdir_file', { connId: c.conn_id, project: c.site_slug, path: p });
+      const abs = await invoke<string>('resolve_workdir_file', { connId: c.conn_id, project: conversationProject(c), path: p });
       await revealItemInDir(abs);
     } catch { say('打不开：文件不存在（可能还没生成或已移动），或在工作目录之外', 'err'); }
   }
@@ -5310,7 +8925,23 @@
     return out;
   }
 
-  function taskLabel(t: string): string { return t === 'sitebuild' ? '新站建设' : t === 'article' ? '内容创作' : t === 'remote' ? '远程运维' : '自由对话'; }
+  function normalizedTaskType(t: string): string {
+    return t === 'article' || t === 'free' || t === 'siteops' ? 'siteops' : t;
+  }
+  function taskLabel(t: string): string {
+    const task = normalizedTaskType(t);
+    return task === 'sitebuild' ? '新站建设' : task === 'siteops' ? '站点运营' : task === 'remote' ? '远程运维' : '自由对话';
+  }
+  function conversationTaskLabel(c: Conversation | null | undefined): string {
+    return isMultiSiteConversation(c) ? '跨站会话' : taskLabel(c?.task_type ?? '');
+  }
+  function conversationGroupKey(c: Conversation): string {
+    if (c.task_type === 'workspace') return WORKSPACE_CONN_ID;
+    // 旧版允许在“新站建设”任务类型下选多个现有站点；site_slugs 才是它真实的会话范围。
+    if (isMultiSiteConversation(c)) return '__multi__';
+    if (c.task_type === 'sitebuild' && !c.site_slug.trim()) return '__sitebuild__';
+    return c.site_slug || '(未指定站点)';
+  }
   function brainLabel(b: string): string { return b === 'codex' ? 'Codex' : b === 'grok' ? 'Grok' : 'Claude'; }
   function fmt(secs: number): string { return new Date(secs * 1000).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }); }
   function fmtSched(iso: string): string {
@@ -5518,15 +9149,19 @@
   function isLauncherModel(b: string, m: string): boolean { return launcherModelOpts(b).some((o) => o.value === m); }
 
   // 会话按「站点 → 任务类型」两级分组：站点按最近活动倒序；任务类型固定顺序，只留有会话的。
-  const TASK_ORDER = ['article', 'sitebuild', 'free', 'remote'];
+  const TASK_ORDER = ['siteops', 'sitebuild', 'workspace', 'remote'];
   const grouped = $derived.by(() => {
     const bySite = new Map<string, { slug: string; name: string; recent: number; convs: Conversation[] }>();
     for (const c of convos) {
-      if (c.conn_id !== activeConnId) continue; // 侧栏只显示当前连接的对话，别串场
+      // 运行环境可以独立，但侧栏位置必须稳定：所有会话都只显示在创建它的连接下。
+      if (c.conn_id !== activeConnId) continue;
       const multi = (c.site_slugs?.length ?? 0) > 1;
-      const key = multi ? '__multi__' : (c.site_slug || '(未指定站点)');
+      const key = conversationGroupKey(c);
       let g = bySite.get(key);
-      if (!g) { g = { slug: key, name: multi ? '跨站会话' : (c.site_name || c.site_slug || key), recent: 0, convs: [] }; bySite.set(key, g); }
+      const groupName = key === WORKSPACE_CONN_ID ? '自由对话'
+        : key === '__sitebuild__' ? '新站建设'
+          : multi ? '跨站会话' : (c.site_name || c.site_slug || key);
+      if (!g) { g = { slug: key, name: groupName, recent: 0, convs: [] }; bySite.set(key, g); }
       g.convs.push(c);
       if (c.updated_at > g.recent) g.recent = c.updated_at;
     }
@@ -5534,13 +9169,15 @@
     return groups.map((s) => {
       const subs: { type: string; label: string; items: Conversation[] }[] = [];
       for (const t of TASK_ORDER) {
-        const items = s.convs.filter((c) => c.task_type === t).sort((a, b) => b.updated_at - a.updated_at);
+        const items = s.convs.filter((c) => normalizedTaskType(c.task_type) === t).sort((a, b) => b.updated_at - a.updated_at);
         if (items.length) subs.push({ type: t, label: taskLabel(t), items });
       }
-      const others = s.convs.filter((c) => !TASK_ORDER.includes(c.task_type)).sort((a, b) => b.updated_at - a.updated_at);
+      const others = s.convs.filter((c) => !TASK_ORDER.includes(normalizedTaskType(c.task_type))).sort((a, b) => b.updated_at - a.updated_at);
       if (others.length) subs.push({ type: 'other', label: '其它', items: others });
       // 分组头的域名：CF 从项目文件探测；gcms 用 discovery 里站点自带的公开地址。
-      return { slug: s.slug, name: s.name, count: s.convs.length, subs, url: isCfConn ? detectSiteUrl(s.convs) : (sites.find((x) => x.slug === s.slug)?.url ?? '') };
+      const virtual = s.slug === WORKSPACE_CONN_ID || s.slug === '__sitebuild__';
+      const pendingSiteIcon = s.convs.some((c) => sitebuildIconPending(c));
+      return { slug: s.slug, name: s.name, count: s.convs.length, subs, pendingSiteIcon, url: virtual ? '' : isCfConn ? detectSiteUrl(s.convs) : (sites.find((x) => x.slug === s.slug)?.url ?? '') };
     });
   });
   // CF 页脚：有域名（已部署）的项目算「站点」。
@@ -5564,11 +9201,11 @@
   }
 </script>
 
-<svelte:window oncontextmenu={onCtxMenu} onmouseover={onTipHover} onscrollcapture={() => { tip = null; imgTip = null; hoverWant = ''; }} onresize={() => { tip = null; imgTip = null; hoverWant = ''; }} onkeydown={(e) => { if (e.key === 'Escape' && lightbox) lightbox = ''; }} />
-<main class="app" class:win={isWindows} class:fs={isFullscreen} class:rail-collapsed={railCollapsed}>
+<svelte:window onclick={closeSitesGlobalMenuOnOutsideClick} oncontextmenu={onCtxMenu} onmouseover={onTipHover} onscrollcapture={() => { hideTip(); imgTip = null; hoverWant = ''; }} onresize={() => { hideTip(); imgTip = null; hoverWant = ''; }} onkeydown={(e) => { if (e.key === 'Escape') { if (lightbox) lightbox = ''; closeSitesGlobalMenu(); if (themeEditor) closeSiteThemeEditor(); } }} />
+<main class="app" class:win={isWindows} class:fs={isFullscreen} class:rail-collapsed={railCollapsed} class:top-update-visible={topUpdateVisible}>
   <!-- 融合式标题栏：透明拖拽条铺满顶部，红绿灯与工具按钮浮在其上（macOS Overlay） -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="titlebar" data-tauri-drag-region aria-hidden="true" onmousedown={startDrag} style="width:{railCollapsed ? 140 : railWidth}px"></div>
+  <div class="titlebar" data-tauri-drag-region aria-hidden="true" onmousedown={startDrag} style="width:{railCollapsed ? (topUpdateVisible ? 167 : 140) : railWidth}px"></div>
 
   <!-- 顶部工具：折叠侧栏 + 搜索会话（窗口模式紧挨红绿灯右侧；全屏时无红绿灯，与左栏菜单左对齐） -->
   <div class="win-tools" class:fs={isFullscreen} class:win={isWindows}>
@@ -5585,29 +9222,32 @@
         <path d="M11.7 11.7L15 15" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
       </svg>
     </button>
-    {#if updAvail}
-      <button class="wt upd" onclick={runUpdate} disabled={updBusy}
-        title={updBusy ? (updMsg || '更新中…') : `有新版本 ${updAvail}，点击下载并更新`} aria-label="有可用更新">
-        {#if updBusy}
+    {#if topUpdateVisible}
+      <button class="wt upd" class:active={updateCenterOpen} onclick={openUpdateCenter}
+        title={updateCheckingAll ? '正在检查全部更新' : unifiedAvailableCount ? `发现 ${unifiedAvailableCount} 项更新，打开更新中心` : '打开更新中心'} aria-label="打开更新中心">
+        {#if updBusy || updateCheckingAll || updateRunningAll}
           <svg class="upd-spin" width="15" height="15" viewBox="0 0 18 18" fill="none"><path d="M15.5 9a6.5 6.5 0 1 1-2-4.72" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" /></svg>
         {:else}
           <svg width="15" height="15" viewBox="0 0 18 18" fill="none">
             <path d="M9 3v7.4M5.8 7.2 9 10.4l3.2-3.2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
             <path d="M4.2 14.3h9.6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
           </svg>
-          <span class="upd-dot"></span>
+          {#if unifiedAvailableCount}<span class="upd-count">{unifiedAvailableCount > 9 ? '9+' : unifiedAvailableCount}</span>{/if}
         {/if}
       </button>
     {/if}
   </div>
 
-  {#if updBusy}
+  {#if updBusy || updateRunningAll}
     <div class="upd-toast" role="status">
       <svg class="upd-spin" width="13" height="13" viewBox="0 0 18 18" fill="none"><path d="M15.5 9a6.5 6.5 0 1 1-2-4.72" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /></svg>
-      <span class="upd-toast-msg">{updMsg}</span>
-      {#if updPct >= 0}<span class="upd-toast-bar"><span style="width:{updPct}%"></span></span>{/if}
+      <span class="upd-toast-msg">{updBusy ? updMsg : '正在按推荐顺序更新…'}</span>
+      {#if updBusy && updPct >= 0}<span class="upd-toast-bar"><span style="width:{updPct}%"></span></span>{/if}
     </div>
   {/if}
+
+  <!-- 全局操作反馈挂在应用根层：无论当前打开抽屉、弹窗还是确认框，都应位于最外层。 -->
+  {#if flash}<div class="flash {flashKind}" role="status" aria-live="polite">{flash}</div>{/if}
 
   <!-- 左栏 -->
   <aside class="rail" class:collapsed={railCollapsed} style="width:{railWidth}px">
@@ -5622,6 +9262,10 @@
         新对话
       </button>
       {#if !isCfConn && !isSshConn}
+      <button class="railnav {view === 'sites' ? 'on' : ''}" onclick={openSites} disabled={!activeConn}>
+        {@render sitesIcon(14)}
+        站点
+      </button>
       <button class="railnav {view === 'schedule' ? 'on' : ''}" onclick={openSchedule} disabled={!activeConn}>
         {@render scheduleIcon(14)}
         排期
@@ -5648,13 +9292,25 @@
     </div>
 
     <div class="convos" class:scrolled={convosScrolled} onscroll={(e) => (convosScrolled = (e.currentTarget as HTMLElement).scrollTop > 2)}>
-      {#if convos.length === 0}
+      {#if grouped.length === 0}
         <p class="rail-empty">还没有对话。<br />选好站点和模型，直接说你想做什么。</p>
       {/if}
       {#each grouped as g (g.slug)}
         <button class="site-grp" onclick={() => toggleSite(g.slug)} title={g.name}>
           <svg class="site-grp-chev" class:collapsed={collapsedSites.has(g.slug)} width="10" height="10" viewBox="0 0 12 12" fill="none"><path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>
-          {#if isSshConn}{@render sshMark(13)}{:else if isCfConn}{#if g.url}<img class="site-grp-fav" src={faviconOf(g.url)} alt="" onerror={(e) => ((e.currentTarget as HTMLImageElement).style.display = 'none')} />{/if}{:else}<SiteFav src={siteFav(g.slug)} label={g.slug} size={14} />{/if}
+          {#if g.slug === WORKSPACE_CONN_ID}
+            {@render workspaceMark(14)}
+          {:else if g.slug === '__multi__'}
+            {@render multiSiteMark(14)}
+          {:else if g.slug === '__sitebuild__' || g.pendingSiteIcon}
+            {@render siteBuildMark(14)}
+          {:else if isSshConn}
+            {@render sshMark(13)}
+          {:else if isCfConn}
+            {#if g.url}<img class="site-grp-fav" src={faviconOf(g.url)} alt="" onerror={(e) => ((e.currentTarget as HTMLImageElement).style.display = 'none')} />{/if}
+          {:else}
+            <SiteFav src={siteFav(g.slug)} label={g.slug} size={14} />
+          {/if}
           <span class="site-grp-name">{g.name}</span>
           {#if g.slug === '__multi__' && multiGroupInfo.count}<span class="site-grp-host" data-tip={multiGroupInfo.tip}>{multiGroupInfo.count} 个站点</span>{/if}
           {#if g.url}<span class="site-grp-host" title={hostOf(g.url)}>{hostOf(g.url)}</span>{/if}
@@ -5686,7 +9342,7 @@
             <button class="cs-item {activeConnId === c.id ? 'on' : ''}" onclick={() => { selectConn(c.id); switcherOpen = false; }}
               oncontextmenu={(e) => openConnCtx(e, c)}>
               {#if c.kind === 'cloudflare'}{@render cfMark(18)}{:else if c.kind === 'ssh'}{@render sshMark(18)}{:else}<SiteMark size={18} />{/if}
-              <span class="cs-main"><b>{c.name}{#if packUpdates[c.id]}<span class="pack-dot" title="技能包有新版，去「连接与模型设置」一键升级"></span>{/if}</b>
+              <span class="cs-main"><b>{connectionDisplayName(c)}{#if packUpdates[c.id]}<span class="pack-dot" title="技能包有新版，去「连接与模型设置」一键升级"></span>{/if}</b>
                 {#if c.kind === 'ssh'}
                   <small class="cs-os">{@render distroMark(distroOf(c), 12)}<span class="cs-os-label">{sshSub(c)}</span></small>
                 {:else}
@@ -5708,7 +9364,7 @@
     <button class="rail-foot" class:open={switcherOpen} onclick={() => { switcherOpen = !switcherOpen; }}>
       {#if isCfConn}{@render cfMark(18)}{:else if isSshConn}{@render sshMark(18)}{:else if activeConn && sites.length}<SiteFav src={siteFav(sites[0].slug)} label={sites[0].slug} size={18} />{:else}<AppIcon size={18} />{/if}
       <span class="foot-main">
-        <b>{activeConn?.name ?? '未连接'}</b>
+        <b>{activeConn ? connectionDisplayName(activeConn) : '未连接'}</b>
         <!-- 未连接时不出副文案：中间大区域已有导入/连接引导，这里越安静越好（原来那句「点此导入技能包」
              既和点击行为对不上，又只提了三种连接方式里的一种，已去掉）。 -->
         {#if activeConn}<small>{#if isCfConn}{cfProjects.length} 个项目{cfSiteCount ? ` · ${cfSiteCount} 个站点` : ''}{:else if isSshConn}<!--
@@ -5716,9 +9372,9 @@
         --><span class="foot-os" role="button" tabindex="-1" title="远端系统 · 点击重新检测"
           onclick={(e) => { e.stopPropagation(); probeOs(activeConnId, true); }}
           onkeydown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); probeOs(activeConnId, true); } }}
-          >{@render distroMark(distroOf(activeConn), 12)}{osProbing[activeConnId] ? '检测系统…' : sshSub(activeConn)}</span>{:else}{sites.length} 个站点<span class="foot-rfz" role="button" tabindex="-1" title="刷新站点（技能包新增站点后点这里）"
+          >{@render distroMark(distroOf(activeConn), 12)}{osProbing[activeConnId] ? '检测系统…' : sshSub(activeConn)}</span>{:else}{sites.length} 个站点<span class="foot-rfz" role="button" tabindex="-1" title="检查技能包更新并刷新站点"
           onclick={(e) => { e.stopPropagation(); refreshSites(); }}
-          onkeydown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); refreshSites(); } }}>{@render refreshIcon(discoveryLoading)}</span>{/if}</small>{/if}
+          onkeydown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); refreshSites(); } }}>{@render refreshIcon(discoveryLoading || !!connectionSyncing[activeConnId])}</span>{/if}</small>{/if}
       </span>
       <!-- 永远是展开箭头（空态也一样）：这是个切换器，不是设置快捷键。 -->
       <svg class="foot-chev" class:up={switcherOpen} width="13" height="13" viewBox="0 0 12 12" fill="none">
@@ -5730,11 +9386,6 @@
 
   <!-- 主区 -->
   <section class="main">
-    {#if flash}<div class="flash {flashKind}">{flash}</div>{/if}
-
-    {#if tip}
-      <div class="tipbox" class:below={tip.below} class:end={tip.align === 'end'} style="left:{tip.x}px; top:{tip.y}px">{tip.text}</div>
-    {/if}
     {#if imgTip}
       {@const iu = imgTip.url}
       <div class="imgtip" class:ready={imgTipReady} class:below={imgTip.below} style="left:{imgTip.x}px; top:{imgTip.y}px">
@@ -5808,45 +9459,246 @@
             <p class="sub">给项目起个名，描述你想要的网站——边聊边建，随时本地预览，满意了再部署到 Cloudflare。</p>
           {:else}
             <h1>想让它帮你做点什么？</h1>
-            <p class="sub">选好站点和模型，像聊天一样把需求说清楚，它会边聊边把事情做掉。</p>
+            <p class="sub">选择一种工作方式和模型，像聊天一样把需求说清楚，它会边聊边把事情做掉。</p>
             <div class="task-seg">
-              {#each [['article', '内容创作', '策划并撰写文章'], ['sitebuild', '新站建设', '从零搭建整个站点'], ['free', '自由对话', '任意内容运营']] as t (t[0])}
-                <button class:on={lTask === t[0]} onclick={() => (lTask = t[0] as TaskType)}>
-                  {@render taskIcon(t[0])}
-                  <span class="ts-txt"><b>{t[1]}</b><small>{t[2]}</small></span>
-                </button>
+              {#each [['siteops', '站点运营', '内容、SEO 与日常运营'], ['sitebuild', '新站建设', '创建并搭建全新子站点'], ['workspace', '自由对话', '不关联站点，可接入文件夹']] as t (t[0])}
+                {@const taskSub = t[0] === 'sitebuild' && activeConn?.kind === 'gcms'
+                  ? (siteBuildMode === 'guided' ? '4 步引导' : '直接描述')
+                  : t[2]}
+                <div class="launcher-task" class:on={lTask === t[0]} class:has-mode={t[0] === 'sitebuild' && isGcmsSiteBuild}>
+                  <button class="launcher-task-main" onclick={() => selectLauncherTask(t[0] as TaskType)}>
+                    {@render taskIcon(t[0])}
+                    <span class="ts-txt">
+                      <b>{t[1]}</b>
+                      <small use:overflowTip={taskSub}>{taskSub}</small>
+                    </span>
+                  </button>
+                  {#if t[0] === 'sitebuild' && isGcmsSiteBuild}
+                    <div class="launcher-sitebuild-mode" aria-label="新站建设方式">
+                      <Dropdown
+                        compact
+                        bind:value={siteBuildMode}
+                        options={SITE_BUILD_MODES}
+                        tip="切换新站建设方式"
+                        onchange={(value) => setSiteBuildMode(value as SiteBuildMode)}
+                      />
+                    </div>
+                  {/if}
+                </div>
               {/each}
             </div>
           {/if}
 
-          <div class="composer big">
-            <textarea bind:value={lDraft} bind:this={lDraftEl} use:autogrow rows="3"
-              placeholder={isSshConn ? '例如：看看这台机器的配置和已装的东西，然后帮我装上 Docker' : isCfConn ? '例如：做个卖手冲咖啡的落地页，深色调，留个邮箱订阅表单存到 D1，先给我方案' : lTask === 'sitebuild' ? '例如：帮我搭一个介绍露营装备的中文站，风格轻松，先给我一个方案' : '例如：帮我写一篇 2026 年 macOS 效率工具盘点，先列个提纲'}
-              oncompositionstart={() => (composing = true)} oncompositionend={() => (composing = false)}
-              onkeydown={(e) => onComposerKey(e, startChat)}></textarea>
-            <div class="composer-bar">
-              <div class="cb-left">
-                {#if isSshConn}
-                  <!-- 远程连接没有站点/项目可选：对象就是那台机器 -->
-                  <span class="ssh-target">{@render sshMark(13)}{activeConn?.ssh_user}@{activeConn?.ssh_host}:{activeConn?.ssh_port}</span>
-                {:else if isCfConn}
-                  <input class="cf-proj-in" bind:value={lSite} placeholder="项目名，如 coffee-landing" spellcheck="false" autocapitalize="off" autocorrect="off" />
-                  <Dropdown compact bind:value={lStyle} options={STYLE_OPTS} />
-                {:else}
-                  <Dropdown compact searchable bind:value={lSite} options={launcherSiteOpts} placeholder="选择站点" onchange={onLauncherSitePick} />
-                  {#if !lSites.length && sites.length > 1}<button class="multi-add" title="多站会话：同时操作多个站点" onclick={enterMultiMode}>+多站</button>{/if}
-                {/if}
+          {#if isGcmsSiteBuild}
+            {#if siteBuildMode === 'chat' && siteBuildHasStructuredInput}
+              <div class="sitebuild-shared-context">
+                <span class="sitebuild-context-check">✓</span>
+                <span><b>已带上引导信息</b><small>{siteBuildDraft.goal || siteBuildDraft.name || '站点类型、结构或外观偏好已保留'}</small></span>
+                <button type="button" onclick={() => setSiteBuildMode('guided')}>查看或修改</button>
               </div>
-              <div class="cb-right">
-                <Dropdown compact bind:value={lPerm} options={permOptsFor(lBrain, isSshConn)} tone={permTone(lPerm)} tip={permTipFor(lBrain, lPerm, isSshConn)} />
-                <ModelFx options={comboOpts} value={`${lBrain}::${lModel}`} effort={lEffort} onpick={pickCombo} oneffort={(v: string) => { lEffort = v; prefs.effort = v; savePrefs(prefs); }} />
-                <UsageRing />
-                <button class="send" onclick={startChat} disabled={(!isSshConn && !lSite.trim() && lSites.length < 2) || !lDraft.trim() || !brainUsable(lBrain)} title="发送（Enter）">↑</button>
+            {/if}
+          {/if}
+
+          {#if !isGcmsSiteBuild || siteBuildMode === 'chat'}
+            <div class="composer big">
+              {#if isGcmsSiteBuild}
+                <textarea bind:value={siteBuildDraft.notes} bind:this={lDraftEl} use:autogrow rows="3"
+                  placeholder="直接说出完整需求，例如：创建一个介绍露营装备的中文站，面向新手，风格轻松；先给我建站与主题方案"
+                  oncompositionstart={() => (composing = true)} oncompositionend={() => (composing = false)}
+                  onkeydown={(e) => onComposerKey(e, startChat)}></textarea>
+              {:else}
+                <textarea bind:value={lDraft} bind:this={lDraftEl} use:autogrow rows="3"
+                  placeholder={isSshConn ? '例如：看看这台机器的配置和已装的东西，然后帮我装上 Docker' : isCfConn ? '例如：做个卖手冲咖啡的落地页，深色调，留个邮箱订阅表单存到 D1，先给我方案' : isWorkspaceChat ? '任意聊点什么；需要处理本地文件时，可在左下角添加一个文件夹' : '例如：分析这个站点最近的内容表现，并给出下一步运营计划'}
+                  oncompositionstart={() => (composing = true)} oncompositionend={() => (composing = false)}
+                  onkeydown={(e) => onComposerKey(e, startChat)}></textarea>
+              {/if}
+              <div class="composer-bar">
+                <div class="cb-left">
+                  {#if isSshConn}
+                    <!-- 远程连接没有站点/项目可选：对象就是那台机器 -->
+                    <span class="ssh-target">{@render sshMark(13)}{activeConn?.ssh_user}@{activeConn?.ssh_host}:{activeConn?.ssh_port}</span>
+                  {:else if isCfConn}
+                    <input class="cf-proj-in" bind:value={lSite} placeholder="项目名，如 coffee-landing" spellcheck="false" autocapitalize="off" autocorrect="off" />
+                    <Dropdown compact bind:value={lStyle} options={STYLE_OPTS} />
+                  {:else if isGcmsSiteBuild}
+                    <span class="gcms-build-target" title="将在当前 GCMS 平台中创建一个全新子站点">
+                      <AppIcon size={15} />
+                      <span><b>新建站点</b><small>{activeConn?.name}</small></span>
+                    </span>
+                  {:else if isWorkspaceChat}
+                    <div class="workspace-picker">
+                      <button type="button" class="workspace-folder" class:selected={!!workspaceDir} data-tip={workspaceDir || '选择一个本地文件夹作为本次自由对话的工作目录'} onclick={chooseWorkspaceFolder}>
+                        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M1.8 4.3a1.5 1.5 0 0 1 1.5-1.5h3l1.4 1.6h5a1.5 1.5 0 0 1 1.5 1.5v6a1.5 1.5 0 0 1-1.5 1.5H3.3a1.5 1.5 0 0 1-1.5-1.5V4.3Z" stroke="currentColor" stroke-width="1.25" stroke-linejoin="round" /></svg>
+                        <span>{workspaceDir ? workspaceFolderName(workspaceDir) : '添加文件夹'}</span>
+                      </button>
+                      {#if workspaceDir}<button type="button" class="workspace-clear" aria-label="移除文件夹" data-tip="移除文件夹，改为纯对话" onclick={() => (workspaceDir = '')}>×</button>{/if}
+                    </div>
+                  {:else}
+                    <Dropdown compact searchable bind:value={lSite} options={launcherSiteOpts} placeholder="选择站点" onchange={onLauncherSitePick} />
+                    {#if !lSites.length && sites.length > 1}<button class="multi-add" title="多站会话：同时操作多个站点" onclick={enterMultiMode}>+多站</button>{/if}
+                  {/if}
+                </div>
+                <div class="cb-right">
+                  <Dropdown compact bind:value={lPerm} options={permOptsFor(lBrain, isSshConn)} tone={permTone(lPerm)} tip={permTipFor(lBrain, lPerm, isSshConn)} />
+                  <ModelFx options={comboOpts} value={`${lBrain}::${lModel}`} effort={lEffort} onpick={pickCombo} oneffort={(v: string) => { lEffort = v; prefs.effort = v; savePrefs(prefs); }} />
+                  <UsageRing />
+                  <button class="send" onclick={startChat} disabled={(!isSshConn && !isGcmsSiteBuild && !isWorkspaceChat && !lSite.trim() && lSites.length < 2) || (isGcmsSiteBuild ? !siteBuildChatReady : !lDraft.trim()) || !brainUsable(lBrain)} title="发送（Enter）">↑</button>
+                </div>
               </div>
             </div>
-          </div>
+          {:else}
+            <section class="sitebuild-guide" aria-label="引导创建新站">
+              <div class="sitebuild-progress" aria-label="建站步骤">
+                <button type="button" class:active={siteBuildStep === 1} class:done={siteBuildStep > 1} onclick={() => (siteBuildStep = 1)}><span>{siteBuildStep > 1 ? '✓' : '1'}</span><b>定位</b></button>
+                <i></i>
+                <button type="button" class:active={siteBuildStep === 2} class:done={siteBuildStep > 2} disabled={siteBuildStep < 2} onclick={() => (siteBuildStep = 2)}><span>{siteBuildStep > 2 ? '✓' : '2'}</span><b>结构</b></button>
+                <i></i>
+                <button type="button" class:active={siteBuildStep === 3} class:done={siteBuildStep > 3} disabled={siteBuildStep < 3} onclick={() => (siteBuildStep = 3)}><span>{siteBuildStep > 3 ? '✓' : '3'}</span><b>外观</b></button>
+                <i></i>
+                <button type="button" class:active={siteBuildStep === 4} disabled={siteBuildStep < 4} onclick={() => (siteBuildStep = 4)}><span>4</span><b>确认</b></button>
+              </div>
+
+              <div class="sitebuild-step-panel">
+                {#if siteBuildStep === 1}
+                  <div class="sitebuild-step-head">
+                    <div><span>01</span><h2>这个网站要解决什么问题？</h2></div>
+                    <p>先说清业务和访问者，技术细节交给 AI。</p>
+                  </div>
+                  <label class="sitebuild-field sitebuild-goal">
+                    <span><b>建站目标</b><small>必填 · 用一两句话描述</small></span>
+                    <textarea
+                      bind:value={siteBuildDraft.goal}
+                      rows="2"
+                      placeholder={`例如：${SITE_BUILD_GOAL_EXAMPLE}`}
+                      title="双击填入示例"
+                      ondblclick={() => { if (!siteBuildDraft.goal.trim()) patchSiteBuildDraft({ goal: SITE_BUILD_GOAL_EXAMPLE }); }}
+                    ></textarea>
+                  </label>
+                  <div class="sitebuild-field">
+                    <span><b>更接近哪类网站？</b><small>不确定就让 AI 判断</small></span>
+                    <div class="sitebuild-choice-grid kind-grid">
+                      {#each SITE_BUILD_KINDS as option (option.value)}
+                        <button type="button" class:active={siteBuildDraft.kind === option.value} onclick={() => patchSiteBuildDraft({ kind: option.value })}>
+                          <b>{option.label}</b><small>{option.sub}</small>
+                        </button>
+                      {/each}
+                    </div>
+                  </div>
+                  <div class="sitebuild-two-col">
+                    <label class="sitebuild-field">
+                      <span><b>主要给谁看？</b><small>可选</small></span>
+                      <input class="tin" bind:value={siteBuildDraft.audience} placeholder="例如：欧美户外品牌采购负责人" />
+                    </label>
+                    <div class="sitebuild-field">
+                      <span><b>主要语言</b><small>可稍后增加</small></span>
+                      <div class="sitebuild-chips language-chips">
+                        {#each SITE_BUILD_LANGUAGES as option (option.value)}
+                          <button type="button" class:active={siteBuildDraft.language === option.value} onclick={() => patchSiteBuildDraft({ language: option.value })}>{option.label}</button>
+                        {/each}
+                      </div>
+                    </div>
+                  </div>
+                {:else if siteBuildStep === 2}
+                  <div class="sitebuild-step-head">
+                    <div><span>02</span><h2>给站点一个清晰的骨架</h2></div>
+                    <p>名称和页面都可以留给 AI 建议，你只需要修正方向。</p>
+                  </div>
+                  <div class="sitebuild-two-col">
+                    <label class="sitebuild-field">
+                      <span><b>站点名称</b><small>可选</small></span>
+                      <input class="tin" bind:value={siteBuildDraft.name} onblur={suggestSiteBuildSlug} placeholder="例如：Northpeak Outdoor" />
+                    </label>
+                    <label class="sitebuild-field">
+                      <span><b>英文标识 slug</b><small>可由 AI 建议</small></span>
+                      <input class:error={!siteBuildSlugValid} class="tin" bind:value={siteBuildDraft.slug} placeholder="例如 northpeak-outdoor" spellcheck="false" autocapitalize="off" autocorrect="off" />
+                      {#if !siteBuildSlugValid}<small class="sitebuild-error">只能使用小写字母、数字和中划线，且不能以中划线开头或结尾。</small>{/if}
+                    </label>
+                  </div>
+                  <div class="sitebuild-field">
+                    <span><b>希望包含哪些页面？</b><small>可多选；不选则由 AI 规划</small></span>
+                    <div class="sitebuild-chips page-chips">
+                      {#each SITE_BUILD_PAGES as page (page)}
+                        <button type="button" class:active={siteBuildDraft.pages.includes(page)} onclick={() => toggleSiteBuildPage(page)}>{page}</button>
+                      {/each}
+                    </div>
+                  </div>
+                  <p class="sitebuild-inline-note">AI 会先检查站点标识是否可用，再给出导航和内容类型方案；这一步不会创建站点。</p>
+                {:else if siteBuildStep === 3}
+                  <div class="sitebuild-step-head">
+                    <div><span>03</span><h2>描述感觉，不必认识主题名</h2></div>
+                    <p>AI 会实时读取当前 GCMS 的主题库，只推荐真实可用的主题。</p>
+                  </div>
+                  <div class="sitebuild-choice-grid style-grid">
+                    {#each SITE_BUILD_STYLES as option (option.value)}
+                      <button type="button" class:active={siteBuildDraft.style === option.value} onclick={() => patchSiteBuildDraft({ style: option.value })}>
+                        <b>{option.label}</b><small>{option.sub}</small>
+                      </button>
+                    {/each}
+                  </div>
+                  <label class="sitebuild-field">
+                    <span><b>参考网站或额外风格要求</b><small>可选 · 不会照搬</small></span>
+                    <input class="tin" bind:value={siteBuildDraft.reference} placeholder="例如：喜欢某个网站的排版，或希望更克制、少动画" />
+                  </label>
+                  <div class="sitebuild-theme-note"><span>✦</span><p><b>最终主题由真实数据决定</b><small>AI 会展示候选主题、推荐理由和切换影响；你确认后才应用。</small></p></div>
+                {:else}
+                  <div class="sitebuild-step-head">
+                    <div><span>04</span><h2>确认首轮建设范围</h2></div>
+                    <p>先生成可检查的方案，不会因为点击按钮就直接建站。</p>
+                  </div>
+                  <div class="sitebuild-content-plans">
+                    {#each SITE_BUILD_CONTENT_PLANS as option (option.value)}
+                      <button type="button" class:active={siteBuildDraft.contentPlan === option.value} onclick={() => patchSiteBuildDraft({ contentPlan: option.value })}>
+                        <span class="sitebuild-radio"></span><span><b>{option.label}</b><small>{option.sub}</small></span>
+                      </button>
+                    {/each}
+                  </div>
+                  <div class="sitebuild-review">
+                    <div><span>目标</span><b>{siteBuildDraft.goal || '尚未填写'}</b></div>
+                    <div><span>类型</span><b>{siteBuildDraft.kind === 'auto' ? '由 AI 推荐' : siteBuildChoiceLabel(SITE_BUILD_KINDS, siteBuildDraft.kind)}</b></div>
+                    <div><span>名称 / 标识</span><b>{siteBuildDraft.name || '由 AI 建议'} · {siteBuildDraft.slug || '由 AI 建议'}</b></div>
+                    <div><span>页面</span><b>{siteBuildDraft.pages.length ? siteBuildDraft.pages.join('、') : '由 AI 规划'}</b></div>
+                    <div><span>外观</span><b>{SITE_BUILD_STYLES.find((item) => item.value === siteBuildDraft.style)?.label ?? '让 AI 选择'}</b></div>
+                  </div>
+                  <label class="sitebuild-field">
+                    <span><b>还有什么要补充？</b><small>这里与“对话创建”共用，切换不会丢失</small></span>
+                    <textarea bind:value={siteBuildDraft.notes} rows="2" placeholder="例如：不要虚构客户案例；先只做中文，后续再补英文"></textarea>
+                  </label>
+                  <div class="sitebuild-runtime">
+                    <span class="gcms-build-target" title="将在当前 GCMS 平台中创建一个全新子站点">
+                      <AppIcon size={15} />
+                      <span><b>新建站点</b><small>{activeConn?.name}</small></span>
+                    </span>
+                    <div>
+                      <Dropdown compact bind:value={lPerm} options={permOptsFor(lBrain, false)} tone={permTone(lPerm)} tip={permTipFor(lBrain, lPerm, false)} />
+                      <ModelFx options={comboOpts} value={`${lBrain}::${lModel}`} effort={lEffort} onpick={pickCombo} oneffort={(v: string) => { lEffort = v; prefs.effort = v; savePrefs(prefs); }} />
+                      <UsageRing />
+                    </div>
+                  </div>
+                {/if}
+              </div>
+
+              <div class="sitebuild-guide-footer">
+                <button type="button" class="btn ghost" disabled={siteBuildStep === 1} onclick={() => (siteBuildStep = Math.max(1, siteBuildStep - 1))}>上一步</button>
+                <span>步骤 {siteBuildStep} / 4</span>
+                {#if siteBuildStep < 4}
+                  <button type="button" class="btn primary" disabled={(siteBuildStep === 1 && !siteBuildDraft.goal.trim()) || (siteBuildStep === 2 && !siteBuildSlugValid)} onclick={() => (siteBuildStep = Math.min(4, siteBuildStep + 1))}>下一步</button>
+                {:else}
+                  <button type="button" class="btn primary sitebuild-submit" disabled={!siteBuildGuideReady || !brainUsable(lBrain)} onclick={startChat}>让 AI 生成建站方案</button>
+                {/if}
+              </div>
+              {#if siteBuildStep === 4}<p class="sitebuild-safe-note">只会读取能力、站点和主题并执行预检；看到方案后仍需你明确确认才会创建。</p>{/if}
+            </section>
+          {/if}
 <!-- 远程连接的档位警告不在这儿了：全都长在权限下拉的选项/触发器 tip 上（见 permTipFor）。
                挂在档位本身＝用户**拨之前**就读得到；挂在下面＝拨到底了才弹，亡羊补牢。 -->
+          {#if isGcmsSiteBuild}
+            <div class="sitebuild-note">
+              <span>AI 会读取 GCMS 的真实主题并先给方案；你确认后才会创建站点。</span>
+              {#if packUpdates[activeConnId]}
+                <button onclick={() => upgradePack(activeConnId)} disabled={!!packUpdating[activeConnId]}>{packUpdating[activeConnId] ? '升级中…' : `建议先升级技能包 ${packUpdates[activeConnId]}`}</button>
+              {/if}
+            </div>
+          {/if}
           {#if lSites.length}
             <div class="tsites launcher-sites">
               {#each lSites as sl (sl)}
@@ -5856,6 +9708,351 @@
           {/if}
           {#if !brainUsable(lBrain)}<p class="hint warn-text">所选厂商未就绪，点左下角设置里「去授权」。</p>{/if}
           {#if isCfConn && brains?.wrangler && !brains.wrangler.found}{@render wrNote()}{/if}
+        </div>
+      </div>
+
+    {:else if view === 'sites'}
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <header class="thread-head" data-tauri-drag-region onmousedown={startDrag}>
+        <div class="th-info">
+          <b class="th-title">{@render sitesIcon(16)}<span>站点</span></b>
+          <small>{activeConn?.name || 'GCMS'} · {sites.length} 个可管理站点</small>
+        </div>
+        <div class="th-actions sites-head-actions">
+          <div class="sites-global-menu" bind:this={sitesGlobalMenuEl}>
+            <div class="sites-global-triggers">
+              <button type="button" class="sites-global-trigger google" class:configured={discovery?.platform?.google.oauth_configured} aria-label="全局 Google 数据设置" aria-expanded={sitesGlobalMenuKind === 'google'} data-tip={discovery?.platform?.google.oauth_configured ? 'Google 数据已配置' : 'Google 数据未配置'} onclick={() => toggleSitesGlobalIntegration('google')}>
+                {@render googleIcon(17)}
+              </button>
+              <button type="button" class="sites-global-trigger telegram" class:configured={discovery?.platform?.telegram.shared_bot_configured} aria-label="全局 Telegram 推送设置" aria-expanded={sitesGlobalMenuKind === 'telegram'} data-tip={discovery?.platform?.telegram.shared_bot_configured ? 'Telegram 共享 Bot 已配置' : 'Telegram 共享 Bot 未配置'} onclick={() => toggleSitesGlobalIntegration('telegram')}>
+                {@render telegramIcon(17)}
+              </button>
+              <button type="button" class="sites-global-trigger cloudflare" class:configured={!!(discovery?.platform?.cloudflare?.authorization_count || discovery?.platform?.cloudflare?.configured || discovery?.platform?.cloudflare?.dns_configured)} aria-label="全局 Cloudflare 授权设置" aria-expanded={sitesGlobalMenuKind === 'cloudflare'} data-tip={(discovery?.platform?.cloudflare?.authorization_count || 0) > 0 ? `Cloudflare 已配置 ${discovery?.platform?.cloudflare?.authorization_count} 份授权` : 'Cloudflare 未配置'} onclick={() => toggleSitesGlobalIntegration('cloudflare')}>
+                {@render cfMark(17)}
+              </button>
+            </div>
+            {#if sitesGlobalMenuKind && integrationSurface === 'popover' && integrationEditor?.kind === sitesGlobalMenuKind}
+              <div class="sites-global-popover" class:google-oauth-popover={sitesGlobalMenuKind === 'google'} role="dialog" aria-label={sitesGlobalMenuKind === 'google' ? 'Google 数据' : sitesGlobalMenuKind === 'telegram' ? 'Telegram 推送' : 'Cloudflare 授权'}>
+                {#if integrationLoading}
+                  <div class="integration-loading compact"><span class="gcms-spin"></span><span>正在读取 GCMS 当前配置…</span></div>
+                {:else if integrationError && !integrationGlobal}
+                  <div class="err-note">{integrationError}</div>
+                  <div class="popover-actions"><button class="btn soft small" onclick={reloadIntegrationEditor}>重新读取</button></div>
+                {:else if integrationGlobal && sitesGlobalMenuKind === 'google'}
+                  <div class="google-pop-tabs" role="tablist" aria-label="Google 配置">
+                    <button type="button" class:active={googleGlobalTab === 'oauth'} role="tab" aria-selected={googleGlobalTab === 'oauth'} onclick={() => (googleGlobalTab = 'oauth')}><span>{@render googleAuthIcon(16)}</span>Google OAuth 配置</button>
+                    <button type="button" class:active={googleGlobalTab === 'range'} role="tab" aria-selected={googleGlobalTab === 'range'} onclick={() => (googleGlobalTab = 'range')}>GA / GSC 数据范围</button>
+                  </div>
+                  {#if googleGlobalTab === 'oauth'}
+                    <div class="google-pop-panel">
+                      <p class="google-pop-desc">先保存 Google OAuth 客户端，Google Analytics 和 Google Search Console 才能新增授权账号。</p>
+                      {#if integrationGlobal.google.oauth_configured && !googleOauthEditing}
+                        <div class="google-oauth-ready-box">
+                          <span class="google-ready-check" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m6 12 4 4 8-9" /></svg></span>
+                          <span><strong>OAuth 已配置</strong><small>新增授权账号会使用当前 Client ID。</small></span>
+                          <button type="button" class="google-oauth-view" class:active={googleOauthDetailsOpen} aria-label={googleOauthDetailsOpen ? '收起 OAuth 配置' : '查看 OAuth 配置'} aria-expanded={googleOauthDetailsOpen} data-tip={googleOauthDetailsOpen ? '收起 OAuth 配置' : '查看 OAuth 配置'} onclick={() => (googleOauthDetailsOpen = !googleOauthDetailsOpen)}>
+                            <svg viewBox="0 0 24 24"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" /><circle cx="12" cy="12" r="2.5" /></svg>
+                          </button>
+                        </div>
+                        {#if googleOauthDetailsOpen}
+                          <div class="google-oauth-details">
+                            <dl>
+                              <div><dt>Client ID</dt><dd>{integrationGlobal.google.client_id || '-'}</dd></div>
+                              <div><dt>Client Secret</dt><dd>{integrationGlobal.google.client_secret_configured ? '已保存（不会明文显示）' : '-'}</dd></div>
+                              <div><dt>Redirect URI</dt><dd>{integrationGlobal.google.redirect_url || '-'}</dd></div>
+                            </dl>
+                            <button class="btn soft small" type="button" onclick={() => (googleOauthEditing = true)}>修改 OAuth 配置</button>
+                          </div>
+                        {/if}
+                      {:else}
+                        <div class="google-oauth-edit-stack">
+                          {@render googleOauthSetupGuide(globalGoogleForm.clientId)}
+                          <div class="google-oauth-form">
+                            <label><span>Client ID</span><input bind:value={globalGoogleForm.clientId} placeholder="Google OAuth Client ID" spellcheck="false" autocomplete="off" /></label>
+                            <label><span>Client Secret</span><input type="text" bind:value={globalGoogleForm.clientSecret} placeholder={integrationGlobal.google.client_secret_configured ? '已安全保存，留空保持不变' : 'Google OAuth Client Secret'} autocomplete="off" spellcheck="false" /></label>
+                            <label><span>Redirect URI</span><input bind:value={globalGoogleForm.redirectUrl} placeholder="https://cms.example.com/admin/google/oauth/callback" spellcheck="false" autocomplete="off" /></label>
+                            <div class="google-oauth-form-actions">
+                              {#if integrationGlobal.google.oauth_configured}<button class="google-oauth-cancel" type="button" onclick={() => (googleOauthEditing = false)}>取消</button>{/if}
+                              <button class="google-oauth-save" type="button" onclick={() => void saveGlobalGoogleIntegration()} disabled={integrationSaving || !globalGoogleForm.clientId.trim()}>{integrationSaving ? '保存中…' : '保存 OAuth 配置'}</button>
+                            </div>
+                          </div>
+                        </div>
+                      {/if}
+
+                      <div class="google-account-scope">
+                        <div class="google-account-head"><strong>授权账号</strong><span>{googleAuthorizedAccounts().length} 个账号</span></div>
+                        {#if googleAuthorizedAccounts().length}
+                          <ul class="google-account-list">
+                            {#each googleAuthorizedAccounts() as account (account.account_id || account.email)}
+                              <li><span class="google-account-avatar">{(account.email || account.label || 'G').slice(0, 1).toUpperCase()}</span><span><strong>{account.email || account.label}</strong><small>{account.services.join(' · ')}</small></span></li>
+                            {/each}
+                          </ul>
+                        {:else}
+                          <p class="google-empty">还没有授权账号。</p>
+                        {/if}
+                        <div class="google-connect-actions">
+                          {#if integrationGlobal.google.oauth_configured && integrationGlobal.google.authorize_url}
+                            <button class="google-connect-add" type="button" onclick={() => void openUrl(integrationGlobal!.google.authorize_url)}>{@render plusIcon()}<span>新增授权账号</span></button>
+                          {:else}
+                            <button class="google-connect-add disabled" type="button" onclick={() => (googleOauthEditing = true)}>{@render plusIcon()}<span>先配置 OAuth</span></button>
+                          {/if}
+                        </div>
+                      </div>
+                      {#if integrationNotice}<div class="ok-note">{integrationNotice}</div>{/if}
+                      {#if integrationError}<div class="err-note">{integrationError}</div>{/if}
+                    </div>
+                  {:else}
+                    <div class="google-pop-panel">
+                      <div class="google-range-copy"><strong>GA / GSC 默认数据范围</strong><span>站点卡片的 Google Analytics 与 Search Console 摘要统一使用此范围。</span></div>
+                      <div class="google-range-form">
+                        <div class="integration-range-row">
+                          <div class="tfield"><span>数据范围</span><Dropdown bind:value={globalGoogleForm.rangeMode} options={[{ value: 'days', label: '固定天数' }, { value: 'custom', label: '自定义日期' }]} /></div>
+                          {#if globalGoogleForm.rangeMode === 'days'}
+                            <div class="tfield"><span>最近</span><Dropdown bind:value={globalGoogleForm.rangeDays} options={googleRangeOptions} /></div>
+                          {:else}
+                            <label class="tfield"><span>开始日期</span><input class="tin" type="date" bind:value={globalGoogleForm.rangeFrom} /></label>
+                            <label class="tfield"><span>结束日期</span><input class="tin" type="date" bind:value={globalGoogleForm.rangeTo} /></label>
+                          {/if}
+                        </div>
+                        <p>当前：<strong>{integrationGlobal.google.data_range.label || `近 ${integrationGlobal.google.data_range.days || 7} 天`}</strong>，保存后下次刷新卡片生效。</p>
+                        {#if integrationNotice}<div class="ok-note">{integrationNotice}</div>{/if}
+                        {#if integrationError}<div class="err-note">{integrationError}</div>{/if}
+                        <button class="google-oauth-save wide" type="button" onclick={() => void saveGlobalGoogleIntegration()} disabled={integrationSaving}>{integrationSaving ? '保存中…' : '保存数据范围'}</button>
+                      </div>
+                    </div>
+                  {/if}
+                {:else if integrationGlobal && sitesGlobalMenuKind === 'telegram'}
+                  <div class="simple-global-pop">
+                    <div class="simple-global-head"><span class="sites-global-mark telegram-mark">{@render telegramIcon(18)}</span><div><strong>Telegram Bot（平台共用）</strong><small>{integrationGlobal.telegram.shared_bot_configured ? '已配置' : '未配置'}</small></div></div>
+                    <p>一次填好全平台共用的 Bot Token；各站点只需单独绑定频道。</p>
+                    <label class="tfield"><span>Bot Token</span><input class="tin" type="password" bind:value={telegramBotToken} placeholder={integrationGlobal.telegram.shared_bot_configured ? '已配置，留空保持不变' : '123456789:AA…'} autocomplete="new-password" /></label>
+                    {#if integrationNotice}<div class="ok-note">{integrationNotice}</div>{/if}
+                    {#if integrationError}<div class="err-note">{integrationError}</div>{/if}
+                    <div class="popover-actions"><button class="btn primary small" onclick={() => void saveGlobalTelegramIntegration()} disabled={integrationSaving || (!telegramBotToken.trim() && !integrationGlobal.telegram.shared_bot_configured)}>{integrationSaving ? '保存中…' : '保存平台 Bot'}</button>{#if integrationGlobal.telegram.shared_bot_configured}<button class="btn ghost small" onclick={() => void saveGlobalTelegramIntegration(true)} disabled={integrationSaving}>清除</button>{/if}</div>
+                  </div>
+                {:else if integrationGlobal && sitesGlobalMenuKind === 'cloudflare'}
+                  <div class="simple-global-pop">
+                    <div class="simple-global-head"><span class="sites-global-mark cloudflare-mark">{@render cfMark(18)}</span><div><strong>Cloudflare 授权</strong><small>{integrationGlobal.cloudflare.authorization_count || 0} 份授权 · {integrationGlobal.cloudflare.zone_count || 0} 个 Zone</small></div></div>
+                    {#if integrationGlobal.cloudflare.authorizations.length}
+                      <div class="cloudflare-auth-list">
+                        {#each integrationGlobal.cloudflare.authorizations as auth (auth.id)}
+                          <div class="cloudflare-auth-item">
+                            <span class="cloudflare-auth-item-icon">{@render cfMark(17)}</span>
+                            <span><strong>{auth.label || 'Cloudflare 授权'}</strong><small>{cloudflareAuthorizationAccountLabel(auth)}</small></span>
+                            <button type="button" class="cloudflare-auth-remove" data-tip="从 GCMS 移除这份授权" aria-label={`移除 ${auth.label || 'Cloudflare 授权'}`} onclick={() => void saveGlobalCloudflareAuthorization(auth.id)} disabled={integrationSaving || cloudflareSyncing || !auth.id}>×</button>
+                          </div>
+                        {/each}
+                      </div>
+                    {:else}
+                      <div class="cloudflare-empty"><b>还没有 Cloudflare 授权</b><small>添加后可按域名自动匹配账号与 Zone。</small></div>
+                    {/if}
+                    <div class="cloudflare-auth-form">
+                      <label><span>备注 <small>可选</small></span><input bind:value={cloudflareLabel} placeholder="例如：公司主账号" autocomplete="off" /></label>
+                      <div class="cloudflare-auth-field">
+                        <div class="cloudflare-token-label">
+                          <span>API Token</span>
+                          <button
+                            type="button"
+                            aria-label="在浏览器中打开 Cloudflare 授权模板"
+                            use:tipAction={'在浏览器中打开 Cloudflare 授权模板'}
+                            onclick={(event) => { event.stopPropagation(); void openUrl(gcmsCloudflareTokenTemplateUrl()); }}
+                          >
+                            <span>打开授权模板</span>
+                            <span class="external-link-affordance">{@render externalLinkIcon(14)}</span>
+                          </button>
+                        </div>
+                        <input aria-label="Cloudflare API Token" type="text" bind:value={cloudflareToken} placeholder="仅发送给 GCMS 验证并保存" autocomplete="off" spellcheck="false" />
+                      </div>
+                      <button class="google-oauth-save wide" type="button" onclick={() => void saveGlobalCloudflareAuthorization()} disabled={integrationSaving || cloudflareSyncing || !cloudflareToken.trim()}>{cloudflareSyncing ? '正在同步已连接 Token…' : integrationSaving ? '验证并保存中…' : '验证并添加授权'}</button>
+                    </div>
+                    {#if integrationNotice}<div class="ok-note">{integrationNotice}</div>{/if}
+                    {#if integrationError}<div class="err-note">{integrationError}</div>{/if}
+                  </div>
+                {/if}
+              </div>
+            {/if}
+          </div>
+          <button class="icon-btn" onclick={() => void refreshSites()} disabled={discoveryLoading || !!connectionSyncing[activeConnId]} title="检查更新并刷新站点">{@render refreshIcon(discoveryLoading || !!connectionSyncing[activeConnId])}</button>
+          <button class="btn soft bare" onclick={startSiteBuild}>{@render plusIcon()}新建站点</button>
+        </div>
+      </header>
+      <div class="thread">
+        <div class="sites-page">
+          {#if discoveryLoading && dashboardAllSites.length === 0}
+            <p class="center-hint">正在读取站点…</p>
+          {:else if dashboardAllSites.length === 0}
+            <div class="sites-empty">
+              <span>{@render sitesIcon(22)}</span>
+              <b>当前密钥还没有可管理的站点</b>
+              <p>可以新建一个站点，或在 GCMS 后台调整这枚平台密钥的站点授权范围。</p>
+              <div><button class="btn primary" onclick={startSiteBuild}>新建站点</button><button class="btn" onclick={() => openGcmsAdmin('/admin/sites')}>管理授权</button></div>
+            </div>
+          {:else}
+            <div class="sites-grid">
+              {#each dashboardSites as site (site.id)}
+                {@const ready = siteReadiness(site)}
+                {@const ga = site.integrations?.analytics}
+                {@const gsc = site.integrations?.search_console}
+                {@const telegram = site.integrations?.telegram}
+                {@const deployment = site.deployment}
+                {@const publicAccess = sitePublicAccessSummaryFor(site)}
+                {@const deploymentDisplayProvider = deployment?.provider === 'cloudflare'
+                  ? 'cloudflare'
+                  : deployment?.provider === 'server' || (site.is_default && deployment?.summary?.pending === false)
+                    ? 'server'
+                    : null}
+                {@const deploymentRowProvider = deploymentDisplayProvider ?? (site.is_default ? 'server' : 'pending')}
+                {@const deploymentRowPending = deploymentRowProvider === 'pending'}
+                {@const publicUrl = sitePublicURL(site)}
+                {@const siteDisabled = site.status === 'disabled'}
+                {@const statusChanging = !!siteStatusBusy[site.id]}
+                {@const previewOpening = sitePreviewIsBusy(activeConnId, site.id)}
+                <article class="site-dashboard-card" class:disabled={siteDisabled}>
+                  <div class="site-dashboard-main">
+                    <span class="site-dashboard-fav"><SiteFav src={site.favicon || site.logo || faviconGuess(publicUrl)} label={site.name || site.slug} size={22} /></span>
+                    <div class="site-dashboard-title">
+                      <b title={site.name || site.slug}>{site.name || site.slug}</b>
+                      <small title={hasSiteSummary(site) ? siteSummary(site) : '当前 GCMS 尚未返回语种、内容与待发统计；升级 GCMS 并刷新后会自动显示。'}>{siteSummary(site)}</small>
+                    </div>
+                    <div class="site-dashboard-status">
+                      <div class="site-dashboard-integrations" aria-label="站点接入状态">
+                        <button type="button" class="site-integration" class:configured={ga?.configured} class:attention={ga?.configured && !ga.enabled} data-tip={ga?.configured ? (ga.enabled ? `Google Analytics 已启用 · ${ga.active_users ?? 0} 活跃 · ${ga.sessions ?? 0} 访问` : 'Google Analytics 已配置，但接入尚未完成') : 'Google Analytics 未配置'} onclick={() => void openSiteIntegrationEditor(site, 'analytics')}>
+                          {@render googleAnalyticsIcon(14)}
+                        </button>
+                        <button type="button" class="site-integration" class:configured={gsc?.configured} class:attention={gsc?.configured && !gsc.enabled} data-tip={gsc?.configured ? (gsc.enabled ? `Google Search Console 已启用 · ${gsc.clicks ?? 0} 点击 · ${gsc.impressions ?? 0} 曝光` : 'Google Search Console 已添加属性，等待完成所有权验证') : 'Google Search Console 未配置'} onclick={() => void openSiteIntegrationEditor(site, 'search_console')}>
+                          {@render googleSearchConsoleIcon(14)}
+                        </button>
+                        <span class="site-integration telegram" class:configured={telegram?.configured} data-tip={telegram?.configured ? `Telegram 已绑定${telegram.auto_push ? '，自动推送已开启' : ''}` : 'Telegram 未绑定'}>
+                          {@render telegramIcon(14)}
+                        </span>
+                        {#if !discovery?.synthetic && site.id > 0}
+                          <button
+                            type="button"
+                            class="site-integration site-state"
+                            class:configured={!siteDisabled}
+                            class:busy={statusChanging}
+                            disabled={statusChanging}
+                            aria-label={site.is_default ? '默认站点始终启用' : (siteDisabled ? '启用站点' : '关闭站点')}
+                            aria-pressed={!siteDisabled}
+                            data-tip={statusChanging ? '正在切换站点状态…' : (site.is_default ? '默认站点始终启用，不能关闭' : (siteDisabled ? '站点已关闭，点击启用' : '站点已启用，点击关闭'))}
+                            onclick={() => void toggleSiteStatus(site)}
+                          >
+                            {@render sitePowerIcon(14)}
+                          </button>
+                        {/if}
+                      </div>
+                      {#if ga?.enabled || gsc?.enabled}
+                        <div class="site-dashboard-metrics" aria-label="站点访问数据">
+                          {#if ga?.enabled}
+                            <span class="site-dashboard-metric" class:ready={ga.status === 'ok' || ga.active_users != null || ga.sessions != null} class:error={ga.status === 'error'} data-tip="Google Analytics 访问数据">
+                              {#if ga.status === 'error'}
+                                <b>GA：</b>数据暂不可用
+                              {:else if ga.active_users != null || ga.sessions != null}
+                                <b>GA：</b>活跃 {ga.active_users ?? 0} · 访问 {ga.sessions ?? 0}
+                              {:else}
+                                <b>GA：</b>统计已启用
+                              {/if}
+                            </span>
+                          {/if}
+                          {#if gsc?.enabled}
+                            <span class="site-dashboard-metric" class:ready={gsc.status === 'ok' || gsc.clicks != null || gsc.impressions != null} class:error={gsc.status === 'error'} data-tip="Google Search Console 搜索数据">
+                              {#if gsc.status === 'error'}
+                                <b>GSC：</b>数据暂不可用
+                              {:else if gsc.clicks != null || gsc.impressions != null}
+                                <b>GSC：</b>点击 {gsc.clicks ?? 0} · 曝光 {gsc.impressions ?? 0}
+                              {:else}
+                                <b>GSC：</b>搜索已接入
+                              {/if}
+                            </span>
+                          {/if}
+                        </div>
+                      {/if}
+                    </div>
+                  </div>
+                  <div class="site-deployment-row" class:pending={deploymentRowPending}>
+                    <span
+                      class="site-deployment-copy"
+                      title={deployment?.summary?.title || (deploymentRowPending ? '站点尚未部署到公网服务器' : undefined)}
+                    >
+                      <span class="site-deployment-provider">
+                        {@render deploymentProviderIcon(deploymentRowPending ? 'server' : deploymentRowProvider, 13)}
+                        <b>{deploymentRowPending ? '待部署' : deploymentRowProvider === 'cloudflare' ? 'Cloudflare' : '服务器'}</b>
+                      </span>
+                      {#if !deploymentRowPending && deployment?.summary?.text}
+                        <span class="site-deployment-separator" aria-hidden="true">·</span>
+                        <span class="site-deployment-summary">{deployment.summary.text}</span>
+                      {/if}
+                    </span>
+                    {#if !discovery?.synthetic && site.id > 0}
+                      <button
+                        type="button"
+                        class="site-deployment-settings"
+                        class:active={siteCardMenu?.connId === activeConnId && siteCardMenu.siteId === site.id}
+                        aria-label="打开站点设置"
+                        aria-haspopup="menu"
+                        aria-expanded={siteCardMenu?.connId === activeConnId && siteCardMenu.siteId === site.id}
+                        data-tip="部署与站点设置"
+                        onclick={(event) => void toggleSiteCardMenu(event, site)}
+                      >{@render settingsIcon()}</button>
+                    {/if}
+                  </div>
+                  <div class="site-dashboard-actions">
+                    {#if siteHasBoundDomain(site) || site.is_default || deployment?.summary?.pending === false || (ready.known && ready.done >= ready.total)}
+                      <button type="button" class="site-operate-action" disabled={siteDisabled} onclick={() => operateSite(site)}>
+                        {@render siteOpsIcon(13)}<span>运营站点</span>
+                      </button>
+                    {:else}
+                      <span
+                        class="site-readiness-status"
+                        class:incomplete={ready.known}
+                        class:unknown={!ready.known}
+                        data-tip={ready.known ? `还差：${ready.missing.join('、')}` : '当前 GCMS 尚未返回上线准备状态'}
+                      >
+                        {ready.known ? `${ready.done}/${ready.total} 就绪` : '准备状态待同步'}
+                      </span>
+                    {/if}
+                    <span></span>
+                    {#if site.is_default}
+                      {#if publicUrl}
+                        <button type="button" class="site-domain-action" disabled={siteDisabled} title={siteDisabled ? '站点已关闭' : `打开 GCMS 默认站点 ${publicUrl}`} onclick={() => void openUrl(publicUrl)}>
+                          <span>{hostOf(publicUrl)}</span><b>↗</b>
+                        </button>
+                      {:else}
+                        <span class="site-default-domain" data-tip="默认站点使用当前 GCMS 平台域名">使用 GCMS 域名</span>
+                      {/if}
+                    {:else if publicUrl}
+                      <div class="site-domain-controls">
+                        {#if publicAccess && publicAccess.state !== 'ready'}
+                          <span
+                            class="site-domain-progress"
+                            class:attention={publicAccess.state === 'attention'}
+                            role="status"
+                            aria-label={sitePublicAccessLabel(publicAccess)}
+                            data-tip={sitePublicAccessTip(publicAccess)}
+                          ></span>
+                        {/if}
+                        <button type="button" class="site-domain-action" disabled={siteDisabled} title={siteDisabled ? '站点已关闭' : `打开 ${publicUrl}`} onclick={() => void openUrl(publicUrl || '')}>
+                          <span>{hostOf(publicUrl)}</span><b>↗</b>
+                        </button>
+                      </div>
+                    {:else}
+                      <div class="site-domain-controls">
+                        <button
+                          type="button"
+                          class="site-domain-action"
+                          disabled={siteDisabled || previewOpening}
+                          title={siteDisabled ? '站点已关闭' : '通过 GCMS API 打开短时私有预览'}
+                          onclick={() => void openSitePreview(site, activeConnId)}
+                        >
+                          <span>{previewOpening ? '正在打开…' : '预览站点'}</span><b>↗</b>
+                        </button>
+                      </div>
+                    {/if}
+                  </div>
+                </article>
+              {/each}
+            </div>
+          {/if}
         </div>
       </div>
 
@@ -5923,7 +10120,7 @@
       </header>
       <div class="thread">
         <div class="sched-inner">
-          {#if tasks.length === 0}
+          {#if tasksOfConn.length === 0}
             <div class="sched-empty">
               <div class="cal-mark">⏰</div>
               <b>还没有定时任务</b>
@@ -5942,7 +10139,7 @@
                 <span class="ss-seg" use:tipAction={'启用任务中最近一次将触发的时间'}><span class="ss-lbl">下次</span><b class="ss-num">{taskNextLabel}</b></span>
               </div>
             </div>
-            {#each tasks as t (t.id)}
+            {#each tasksOfConn as t (t.id)}
               <div class="task-card {t.enabled ? '' : 'off'} {hlTaskIds.includes(t.id) ? 'hl' : ''}">
                 <div class="task-toggle">
                   <button class="switch {t.enabled ? 'on' : ''}" title={t.enabled ? '已启用' : '已暂停'} onclick={() => toggleTask(t)}><span></span></button>
@@ -6387,10 +10584,31 @@
       <header class="thread-head" data-tauri-drag-region onmousedown={startDrag}>
         <div class="th-info">
           <b>{activeConv?.title}</b>
-          <small>{#if activeConvIsCf}{@render cfMark(13)}{:else}<SiteFav src={siteFav(activeConv?.site_slug ?? '')} label={activeConv?.site_slug ?? ''} size={13} />{/if} {#if (activeConv?.site_slugs?.length ?? 0) > 1}<span data-tip={convSitesTip(activeConv)}>{activeConv?.site_name}</span>{:else}{activeConv?.site_name || activeConv?.site_slug}{/if} · {taskLabel(activeConv?.task_type ?? '')} · {@render brainTag(activeConv?.brain ?? 'claude', brainLabel(activeConv?.brain ?? '') + (activeConv?.brain === 'claude' && activeConv?.model ? ` ${activeConv.model}` : ''))}</small>
+          <small>
+            {#if activeConvIsWorkspace}
+              {@render workspaceMark(13)} {activeConv?.workspace_dir ? workspaceFolderName(activeConv.workspace_dir) : '纯对话'}
+            {:else if isMultiSiteConversation(activeConv)}
+              {@render multiSiteMark(13)} <span data-tip={convSitesTip(activeConv)}>{activeConv?.site_name || `多站 · ${activeConv?.site_slugs?.length ?? 0} 站`}</span>
+            {:else if activeConvIsCf}
+              {@render cfMark(13)} {activeConv?.site_name || activeConv?.site_slug}
+            {:else if sitebuildIconPending(activeConv)}
+              {@render siteBuildMark(13)} {activeConv?.site_slug ? (activeConv?.site_name || activeConv?.site_slug) : '新站建设'}
+            {:else}
+              <SiteFav src={siteFav(activeConv?.site_slug ?? '')} label={activeConv?.site_slug ?? ''} size={13} />
+              {#if (activeConv?.site_slugs?.length ?? 0) > 1}<span data-tip={convSitesTip(activeConv)}>{activeConv?.site_name}</span>{:else}{activeConv?.site_name || activeConv?.site_slug}{/if}
+            {/if}
+            · {conversationTaskLabel(activeConv)} · {@render brainTag(activeConv?.brain ?? 'claude', brainLabel(activeConv?.brain ?? '') + (activeConv?.brain === 'claude' && activeConv?.model ? ` ${activeConv.model}` : ''))}
+          </small>
         </div>
         {#if activeSiteUrl}
           <button class="th-open" onclick={() => openUrl(activeSiteUrl)} title="打开 {activeSiteUrl}">{hostOf(activeSiteUrl)}<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M6 3.5h6.5V10M12.2 3.8 3.8 12.2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
+        {:else if activeGcmsSite && activeConvConn}
+          <button
+            class="th-open"
+            disabled={activeSitePreviewBusy}
+            onclick={() => void openActiveSitePreview()}
+            title="通过 GCMS API 打开短时私有预览"
+          >{activeSitePreviewBusy ? '正在打开…' : '预览站点'}<svg width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="M6 3.5h6.5V10M12.2 3.8 3.8 12.2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg></button>
         {/if}
       </header>
 
@@ -6433,8 +10651,16 @@
                   <span class="si-main"><b>{it.m.site_name}</b><small>{levelLabel(it.m.level)}{it.m.paused ? ' · 已暂停' : ''}</small></span>
                 {:else if it.kind === 'conv'}
                   {@const site = sites.find((s) => s.slug === it.c.site_slug)}
-                  <SiteFav src={siteFav(it.c.site_slug)} label={it.c.site_slug} size={15} />
-                  <span class="si-main"><b>{it.c.title || '未命名会话'}</b><small>{#if (it.c.site_slugs?.length ?? 0) > 1}<span data-tip={convSitesTip(it.c)}>{it.c.site_name}</span>{:else}{it.c.site_name || it.c.site_slug}{#if site?.url} · {hostOf(site.url)}{/if}{/if}</small></span>
+                  {#if it.c.task_type === 'workspace'}
+                    {@render workspaceMark(15)}
+                  {:else if isMultiSiteConversation(it.c)}
+                    {@render multiSiteMark(15)}
+                  {:else if sitebuildIconPending(it.c)}
+                    {@render siteBuildMark(15)}
+                  {:else}
+                    <SiteFav src={siteFav(it.c.site_slug)} label={it.c.site_slug} size={15} />
+                  {/if}
+                  <span class="si-main"><b>{it.c.title || '未命名会话'}</b><small>{#if it.c.task_type === 'workspace'}{it.c.workspace_dir ? workspaceFolderName(it.c.workspace_dir) : '纯对话'}{:else if isMultiSiteConversation(it.c)}<span data-tip={convSitesTip(it.c)}>{it.c.site_name || `多站 · ${it.c.site_slugs?.length ?? 0} 站`}</span>{:else if it.c.task_type === 'sitebuild' && !it.c.site_slug}新站建设{:else}{it.c.site_name || it.c.site_slug}{#if site?.url} · {hostOf(site.url)}{/if}{/if}</small></span>
                   {@render brainTag(it.c.brain, brainLabel(it.c.brain))}
                 {:else if it.kind === 'template'}
                   <!-- 与左栏「模板库」同一个图标：搜到的东西该看得出是同一样东西 -->
@@ -6578,8 +10804,16 @@
     <path d="M21 3v5h-5" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" />
   </svg>
 {/snippet}
+{#snippet backChevronIcon(size: number)}<svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m9.8 3.5-4.5 4.5 4.5 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>{/snippet}
 
 {#snippet plusIcon()}<svg class="plus-ic" width="13" height="13" viewBox="0 0 14 14" fill="none"><path d="M7 2.4v9.2M2.4 7h9.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" /></svg>{/snippet}
+{#snippet sitesIcon(size: number)}<svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 3 3 7.5 12 12l9-4.5L12 3Z" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" /><path d="m3 12 9 4.5 9-4.5M3 16.5 12 21l9-4.5" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" /></svg>{/snippet}
+{#snippet googleIcon(size: number)}<img class="vendor-icon" src="/icons/google.svg" width={size} height={size} alt="" aria-hidden="true" />{/snippet}
+{#snippet googleAuthIcon(size: number)}<img class="vendor-icon" src="/icons/google-auth.svg" width={size} height={size} alt="" aria-hidden="true" />{/snippet}
+{#snippet googleAnalyticsIcon(size: number)}<img class="vendor-icon" src="/icons/google-analytics.svg" width={size} height={size} alt="" aria-hidden="true" />{/snippet}
+{#snippet googleSearchConsoleIcon(size: number)}<img class="vendor-icon" src="/icons/google-search-console.svg" width={size} height={size} alt="" aria-hidden="true" />{/snippet}
+{#snippet telegramIcon(size: number)}<svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M21.5 4.6 3 11.8c-1.1.4-1 1 .1 1.3l4.6 1.4 1.7 5.5c.3.9.8 1 1.5.4l2.5-2.4 4.8 3.5c.7.4 1.3.1 1.5-.8l3-14.1c.3-1.1-.4-1.6-1.2-1Z" stroke="currentColor" stroke-width="1.45" stroke-linejoin="round" /><path d="m7.7 14.5 11-8.5" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" /></svg>{/snippet}
+{#snippet sitePowerIcon(size: number)}<svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M8 2v5M16 2v5M7 7h10v5a5 5 0 0 1-10 0V7ZM12 17v5" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" /></svg>{/snippet}
 {#snippet scheduleIcon(size: number)}<svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="2.5" y="3" width="11" height="10.5" rx="1.5" stroke="currentColor" stroke-width="1.3" /><path d="M2.5 6h11M5.5 2v2M10.5 2v2" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" /></svg>{/snippet}
 {#snippet clockIcon(size: number)}<svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="8" cy="8" r="5.5" stroke="currentColor" stroke-width="1.3" /><path d="M8 5v3l2 1.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" /></svg>{/snippet}
 {#snippet templateIcon(size: number)}<svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="2.5" y="2.5" width="4.5" height="4.5" rx="1" stroke="currentColor" stroke-width="1.3" /><rect x="9" y="2.5" width="4.5" height="4.5" rx="1" stroke="currentColor" stroke-width="1.3" /><rect x="2.5" y="9" width="4.5" height="4.5" rx="1" stroke="currentColor" stroke-width="1.3" /><rect x="9" y="9" width="4.5" height="4.5" rx="1" stroke="currentColor" stroke-width="1.3" /></svg>{/snippet}
@@ -6593,11 +10827,59 @@
 {#snippet gcmsInstallIcon(size: number)}<svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="2" y="2.5" width="12" height="4.3" rx="1.2" stroke="currentColor" stroke-width="1.2" /><path d="M4.5 4.65h.01M7.2 4.65h4.3M8 8v5.5M5.5 11 8 13.5 10.5 11" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" /></svg>{/snippet}
 {#snippet gcmsUpdateIcon(size: number)}<svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 2.2v7.2M5.3 6.8 8 9.5l2.7-2.7M3 11.2v1.3c0 .7.6 1.3 1.3 1.3h7.4c.7 0 1.3-.6 1.3-1.3v-1.3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" /></svg>{/snippet}
 {#snippet gcmsMigrateIcon(size: number)}<svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M2.5 5h9M9.5 2.8 11.8 5 9.5 7.2M13.5 11h-9M6.5 8.8 4.2 11l2.3 2.2" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" /></svg>{/snippet}
-{#snippet externalLinkIcon(size: number)}<svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M6 3.5h6.5V10M12.2 3.8 3.8 12.2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /><path d="M11 9.5v2.3a1.2 1.2 0 0 1-1.2 1.2H4.2A1.2 1.2 0 0 1 3 11.8V6.2A1.2 1.2 0 0 1 4.2 5H6.5" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" /></svg>{/snippet}
+{#snippet externalLinkIcon(size: number)}<svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M6 3.5h6.5V10M12.2 3.8 3.8 12.2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>{/snippet}
+{#snippet googleOauthSetupGuide(clientId: string)}
+  <div class="google-oauth-guides">
+    <section class="google-oauth-guide-card">
+      <strong>Client ID 和 Client Secret 从哪里获取？</strong>
+      <ol>
+        <li><button type="button" class="google-guide-link" onclick={() => void openUrl('https://console.cloud.google.com/apis/credentials')}>打开 Google Cloud 凭据页 {@render externalLinkIcon(11)}</button>，创建 OAuth 客户端 ID，在「应用类型」里选择「Web 应用」。</li>
+        <li>在「已获授权的重定向 URI」里点击「添加 URI」，粘贴下方 Redirect URI；「已获授权的 JavaScript 来源」可以先不填。</li>
+        <li>创建后复制 Client ID 和 Client Secret，粘贴到这里保存。</li>
+      </ol>
+    </section>
+    <section class="google-oauth-guide-card api-checklist">
+      <strong>同一个 Google Cloud 项目还需要启用</strong>
+      <p class="google-guide-project">
+        {#if googleCloudProjectNumber(clientId)}
+          当前 Client ID 推断项目号：<b>{googleCloudProjectNumber(clientId)}</b>。
+        {:else}
+          填入 Client ID 后，下面的链接会自动定位到对应项目。
+        {/if}
+      </p>
+      <div class="google-api-guide-list">
+        {#each googleRequiredApis as item (item.api)}
+          <button
+            type="button"
+            class="google-api-guide-item"
+            aria-label={`${item.label}，在浏览器中打开配置页`}
+            use:tipAction={`在浏览器中打开${item.label.replace(/^启用\s*/, '')}配置页`}
+            onclick={() => void openUrl(googleCloudApiUrl(item.api, clientId))}
+          >
+            <span><b>{item.label}</b><small>{item.hint}</small></span>
+            <span class="external-link-affordance">{@render externalLinkIcon(14)}</span>
+          </button>
+        {/each}
+      </div>
+    </section>
+  </div>
+{/snippet}
 {#snippet serviceStopIcon(size: number)}<svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="3.2" y="3.2" width="9.6" height="9.6" rx="1.8" stroke="currentColor" stroke-width="1.35" /></svg>{/snippet}
 {#snippet trashIcon(size: number)}<svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3.4 4.5h9.2M6 2.5h4l.6 2M5 6.5v6M8 6.5v6M11 6.5v6M4.2 4.5l.6 9h6.4l.6-9" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" /></svg>{/snippet}
 {#snippet httpsLockIcon(size: number)}<svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.7" stroke="currentColor" stroke-width="1.3" /><path d="M5.2 7V5.3a2.8 2.8 0 0 1 5.6 0V7M8 9.7v1.8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" /></svg>{/snippet}
 {#snippet cfMark(size: number)}<svg class="cf-mark" width={size} height={size} viewBox="0 0 128 128"><path fill="#fff" d="m115.679 69.288l-15.591-8.94l-2.689-1.163l-63.781.436v32.381h82.061z" /><path fill="#f38020" d="M87.295 89.022c.763-2.617.472-5.015-.8-6.796c-1.163-1.635-3.125-2.58-5.488-2.689l-44.737-.581c-.291 0-.545-.145-.691-.363s-.182-.509-.109-.8c.145-.436.581-.763 1.054-.8l45.137-.581c5.342-.254 11.157-4.579 13.192-9.885l2.58-6.723c.109-.291.145-.581.073-.872c-2.906-13.158-14.644-22.97-28.672-22.97c-12.938 0-23.913 8.359-27.838 19.952a13.35 13.35 0 0 0-9.267-2.58c-6.215.618-11.193 5.597-11.811 11.811c-.145 1.599-.036 3.162.327 4.615C10.104 70.051 2 78.337 2 88.549c0 .909.073 1.817.182 2.726a.895.895 0 0 0 .872.763h82.57c.472 0 .909-.327 1.054-.8z" /><path fill="#faae40" d="M101.542 60.275c-.4 0-.836 0-1.236.036c-.291 0-.545.218-.654.509l-1.744 6.069c-.763 2.617-.472 5.015.8 6.796c1.163 1.635 3.125 2.58 5.488 2.689l9.522.581c.291 0 .545.145.691.363s.182.545.109.8c-.145.436-.581.763-1.054.8l-9.924.582c-5.379.254-11.157 4.579-13.192 9.885l-.727 1.853c-.145.363.109.727.509.727h34.089c.4 0 .763-.254.872-.654c.581-2.108.909-4.325.909-6.614c0-13.447-10.975-24.422-24.458-24.422" /></svg>{/snippet}
+{#snippet serverDeploymentIcon(size: number)}
+  <svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="2.2" y="2.2" width="11.6" height="4.6" rx="1.2" stroke="currentColor" stroke-width="1.25" /><rect x="2.2" y="9.2" width="11.6" height="4.6" rx="1.2" stroke="currentColor" stroke-width="1.25" /><path d="M4.5 4.5h.01M4.5 11.5h.01M7 4.5h4.4M7 11.5h4.4" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" /></svg>
+{/snippet}
+{#snippet deploymentProviderIcon(provider: string, size: number)}
+  {#if provider === 'cloudflare'}
+    {@render cfMark(size)}
+  {:else if provider === 'server'}
+    {@render serverDeploymentIcon(size)}
+  {:else}
+    <svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M4.1 12.9h7.7a2.6 2.6 0 0 0 .45-5.15A4.3 4.3 0 0 0 4 6.6a3.15 3.15 0 0 0 .1 6.3Z" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" /><path d="M8 7.4v4M6.4 9l1.6-1.6L9.6 9" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" /></svg>
+  {/if}
+{/snippet}
 {#snippet gcmsInstanceHealth(instance: GcmsMigrationSnapshot)}
   {@const accessHealth = gcmsMigrationAccessHealth(instance)}
   {@const accessChecking = !!gcmsMigrationHealthChecking[instance.id]}
@@ -6652,6 +10934,25 @@
           </div>
         </div>
       {/if}
+      {#if activeConversationUnlockAction
+        && !(activeConversationUnlockAction.operation === 'public_access.apply' && activeGcmsExternalAccessPending)
+        && activeConv
+        && !running[activeConv.id]}
+        <div class="msg assistant">
+          <div class="permit-card danger">
+            <div class="permit-head">
+              <span class="permit-dot"></span>
+              需要验证 GCMS 后台密码
+              <span class="permit-tag">高风险操作</span>
+            </div>
+            <div class="permit-desc">{activeConversationUnlockAction.title}</div>
+            <div class="permit-meta">{activeConversationUnlockAction.detail}</div>
+            <div class="permit-act">
+              <button class="btn sm primary" onclick={() => openGcmsControlUnlock(activeConversationUnlockAction)}>输入密码并继续</button>
+            </div>
+          </div>
+        </div>
+      {/if}
       {#each activePermits as p (p.id)}
         <div class="msg assistant">
           <div class="permit-card" class:danger={p.dangerous}>
@@ -6687,6 +10988,93 @@
         <span class="tipwrap" data-tip={cfReady ? '存成模板，以后一键复用' : '先让 AI 建出页面再存'}><button class="cb-prev dim" onclick={openSaveTmpl} disabled={!cfReady}><svg width="12" height="12" viewBox="0 0 16 16" fill="none"><rect x="2.6" y="2.6" width="4.3" height="4.3" rx="1" stroke="currentColor" stroke-width="1.3" /><rect x="9.1" y="2.6" width="4.3" height="4.3" rx="1" stroke="currentColor" stroke-width="1.3" /><rect x="2.6" y="9.1" width="4.3" height="4.3" rx="1" stroke="currentColor" stroke-width="1.3" /><rect x="9.1" y="9.1" width="4.3" height="4.3" rx="1" stroke="currentColor" stroke-width="1.3" /></svg>存模板</button></span>
       </div>
     {/if}
+    {#if activeSiteReadinessVisible}
+      <section
+        class="site-ready"
+        class:blocked={activeSiteReadinessBlockers > 0}
+        class:complete={!activeSiteReadinessPending.length}
+        aria-label="站点上线准备"
+      >
+        <div class="site-ready-summary">
+          <button class="site-ready-toggle" onclick={toggleSiteReadiness} aria-expanded={activeSiteReadinessOpen}>
+            <span class="site-ready-icon" aria-hidden="true">
+              <svg width="15" height="15" viewBox="0 0 16 16" fill="none">
+                <rect x="2.3" y="2.3" width="11.4" height="11.4" rx="2" stroke="currentColor" stroke-width="1.25" />
+                <path d="m4.8 6.1 1.1 1.1 1.8-2M4.8 10.2l1.1 1.1 1.8-2M9.3 6.2h2M9.3 10.3h2" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </span>
+            <span class="site-ready-copy">
+              <span class="site-ready-title"><strong>上线准备</strong><small>{activeSiteReadinessSummary}</small></span>
+              <span class="site-ready-detail">{activeSiteReadinessDetail}</span>
+            </span>
+            <svg class="site-ready-chev" class:open={activeSiteReadinessOpen} width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="m3 4.5 3 3 3-3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>
+          </button>
+          {#if activeSiteReadinessWaitingForSite}
+            <button
+              class="site-ready-refresh"
+              aria-label={discoveryLoading || !!connectionSyncing[activeConv?.conn_id ?? ''] ? '正在重新检测站点' : '重新检测站点'}
+              data-tip={discoveryLoading || !!connectionSyncing[activeConv?.conn_id ?? ''] ? '正在重新检测站点' : '重新检测站点'}
+              onclick={() => void refreshSites(activeConv?.conn_id ?? '')}
+              disabled={discoveryLoading || !!connectionSyncing[activeConv?.conn_id ?? '']}
+            >
+              {@render refreshIcon(discoveryLoading || !!connectionSyncing[activeConv?.conn_id ?? ''])}
+            </button>
+          {:else}
+            <button
+              class="site-ready-continue"
+              class:unlock={activeGcmsExternalAccessPending && !!activeReadinessSite}
+              onclick={() => activeGcmsExternalAccessPending && activeReadinessSite
+                ? void openGcmsPublicAccessEditor()
+                : fillSiteReadiness()}
+              disabled={!!gcmsPublicAccessOpeningFor || (activeGcmsExternalAccessPending && !!activeReadinessSite && !activeConvConn)}
+            >
+              {#if activeGcmsExternalAccessPending && activeReadinessSite}
+                <svg class="site-ready-continue-icon" width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <path d="M8 2.2v11.6M2.2 8h11.6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+                </svg>
+                {gcmsPublicAccessOpeningFor ? '正在打开…' : '配置公网访问'}
+              {:else}
+                {activeSiteReadinessPending.length ? '继续完善' : '复查'}
+              {/if}
+            </button>
+          {/if}
+        </div>
+        {#if activeSiteReadinessOpen}
+          <div class="site-ready-body">
+            {#if activeSiteReadinessPending.length}
+              <div class="site-ready-list">
+                {#each activeSiteReadinessPending as item (item.id)}
+                  <button
+                    class="site-ready-item {item.tone}"
+                    onclick={() => fillSiteReadiness(item)}
+                    disabled={item.id === 'identify'}
+                  >
+                    <span class="site-ready-dot" aria-hidden="true"></span>
+                    <span class="site-ready-item-copy"><b>{item.label}</b><small>{item.detail}</small></span>
+                    <span class="site-ready-item-act">
+                      {item.id === 'identify'
+                        ? '待识别'
+                        : item.tone === 'check' ? '检查' : '处理'}{item.id === 'identify' ? '' : ' →'}
+                    </span>
+                  </button>
+                {/each}
+              </div>
+            {:else}
+              <div class="site-ready-all"><span>✓</span><div><b>上线准备已完成</b><small>需要时可以重新读取 GCMS 状态。</small></div></div>
+            {/if}
+            {#if activeReadinessSite}
+              <div class="site-ready-foot">
+                <span>已完成 {activeSiteReadinessDoneCount}/{activeSiteReadinessItems.length}</span>
+                <button onclick={() => void refreshSites(activeConv?.conn_id ?? '')} disabled={discoveryLoading || !!connectionSyncing[activeConv?.conn_id ?? '']}>
+                  <svg class:spin={discoveryLoading || !!connectionSyncing[activeConv?.conn_id ?? '']} width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M13.5 8A5.5 5.5 0 1 1 8 2.5c1.55 0 3.03.65 4.07 1.8L13.5 5.8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" /><path d="M13.5 2.8v3h-3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" /></svg>
+                  重新检查
+                </button>
+              </div>
+            {/if}
+          </div>
+        {/if}
+      </section>
+    {/if}
     <div class="composer" class:fileover={composerFileOver} role="group" aria-label="消息输入"
       ondragover={onComposerDragOver} ondragleave={onComposerDragLeave} ondrop={onComposerDrop}>
       {#if queued && queued.convId === activeConvId}
@@ -6717,16 +11105,22 @@
         <div class="cb-left">
           {#if activeConvIsCf}
             <span class="cb-ro" title="项目已固定"><span class="cb-ro-t">{activeConv?.site_slug}</span></span>
-          {:else if isSshConn}
+          {:else if activeConvIsWorkspace}
+            <span class="cb-ro" title={activeConv?.workspace_dir || '本会话未关联文件夹'}>{@render workspaceMark(15)}<span class="cb-ro-t">{activeConv?.workspace_dir ? workspaceFolderName(activeConv.workspace_dir) : '纯对话'}</span></span>
+          {:else if activeConvIsSsh}
             <!-- 远程对话没有站点：这里放远端系统的图标 + 机器地址。
                  （不能走下面那支：SiteFav 拿到空 slug 会画出一个「?」占位符。） -->
-            <span class="cb-ro" title={activeConn?.ssh_os || '远端系统未知'}>{@render distroMark(distroOf(activeConn), 15)}<span class="cb-ro-t">{activeConv?.site_name}</span></span>
+            <span class="cb-ro" title={activeConvConn?.ssh_os || '远端系统未知'}>{@render distroMark(distroOf(activeConvConn), 15)}<span class="cb-ro-t">{activeConv?.site_name}</span></span>
+          {:else if isMultiSiteConversation(activeConv)}
+            <span class="cb-ro" title={convSitesTip(activeConv)}>{@render multiSiteMark(15)}<span class="cb-ro-t">{activeConv?.site_name || `多站 · ${activeConv?.site_slugs?.length ?? 0} 站`}</span></span>
+          {:else if sitebuildIconPending(activeConv)}
+            <span class="cb-ro" title="站点图标完成后会自动替换">{@render siteBuildMark(15)}<span class="cb-ro-t">{activeConv?.site_slug ? (activeConv?.site_name || activeConv?.site_slug) : '新站建设'}</span></span>
           {:else}
             <span class="cb-ro" title={(activeConv?.site_slugs?.length ?? 0) > 1 ? convSitesTip(activeConv) : '会话的站点已固定，不可更改'}><SiteFav src={siteFav(activeConv?.site_slug ?? '')} label={activeConv?.site_slug ?? ''} size={15} /><span class="cb-ro-t">{activeConv?.site_name || activeConv?.site_slug}</span></span>
           {/if}
         </div>
         <div class="cb-right">
-          <Dropdown compact bind:value={threadPerm} options={permOptsFor(activeConv?.brain ?? 'claude', isSshConn)} tone={permTone(threadPerm)} tip={permTipFor(activeConv?.brain ?? 'claude', threadPerm, isSshConn)} onchange={persistThreadPerm} />
+          <Dropdown compact bind:value={threadPerm} options={permOptsFor(activeConv?.brain ?? 'claude', activeConvIsSsh)} tone={permTone(threadPerm)} tip={permTipFor(activeConv?.brain ?? 'claude', threadPerm, activeConvIsSsh)} onchange={persistThreadPerm} />
           <!-- 模型下拉列全部厂商（图标区分）：同厂商下一轮生效；跨厂商确认后以历史摘要重建续跑 -->
           <ModelFx options={threadComboOpts} value={`${activeConv?.brain ?? 'claude'}::${threadModel}`} effort={threadEffort} lockModel={viewBusy} onpick={(v: string) => { void pickThreadCombo(v); }} oneffort={persistThreadEffort} />
           <UsageRing ctx={activeConv?.ctx_tokens ?? 0} limit={ctxLimitAdaptive(activeConv?.brain ?? 'claude', activeConv?.model ?? '', activeConv?.ctx_tokens ?? 0)} total={activeConv?.total_tokens ?? 0} />
@@ -6814,14 +11208,34 @@
 
 {#snippet taskIcon(kind: string)}
   <span class="ts-ic">
-    {#if kind === 'article'}
-      <svg width="17" height="17" viewBox="0 0 20 20" fill="none"><path d="M12.4 3H6.2A1.7 1.7 0 0 0 4.5 4.7v10.6A1.7 1.7 0 0 0 6.2 17h7.6a1.7 1.7 0 0 0 1.7-1.7V6.1L12.4 3Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" /><path d="M12 3.3V6a1 1 0 0 0 1 1h2.7M7.6 10.4h4.8M7.6 13h4.8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /></svg>
+    {#if kind === 'article' || kind === 'siteops'}
+      {@render siteOpsIcon(17)}
     {:else if kind === 'sitebuild'}
-      <svg width="17" height="17" viewBox="0 0 20 20" fill="none"><rect x="3.3" y="3.3" width="13.4" height="13.4" rx="2.2" stroke="currentColor" stroke-width="1.4" /><path d="M3.5 7.6h13M7.6 7.8v8.8" stroke="currentColor" stroke-width="1.4" /></svg>
+      {@render siteBuildMark(17)}
     {:else}
       <svg width="17" height="17" viewBox="0 0 20 20" fill="none"><path d="M4 6.6A2.6 2.6 0 0 1 6.6 4h6.8A2.6 2.6 0 0 1 16 6.6v3.9a2.6 2.6 0 0 1-2.6 2.6H8.2l-3.1 2.7a.42.42 0 0 1-.7-.32V6.6Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" /></svg>
     {/if}
   </span>
+{/snippet}
+
+{#snippet siteOpsIcon(size: number)}
+  <svg width={size} height={size} viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M12.4 3H6.2A1.7 1.7 0 0 0 4.5 4.7v10.6A1.7 1.7 0 0 0 6.2 17h7.6a1.7 1.7 0 0 0 1.7-1.7V6.1L12.4 3Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" /><path d="M12 3.3V6a1 1 0 0 0 1 1h2.7M7.6 10.4h4.8M7.6 13h4.8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" /></svg>
+{/snippet}
+
+{#snippet paletteIcon(size: number)}
+  <svg width={size} height={size} viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M10 2.8a7.2 7.2 0 1 0 0 14.4h1.15c.9 0 1.35-1.06.72-1.7l-.42-.42a1.8 1.8 0 0 1 1.28-3.08h1.02A3.45 3.45 0 0 0 17.2 8.55C17.2 5.1 14.05 2.8 10 2.8Z" stroke="currentColor" stroke-width="1.35" stroke-linejoin="round" /><circle cx="6.3" cy="8.1" r="1" fill="currentColor" /><circle cx="8.5" cy="5.5" r="1" fill="currentColor" /><circle cx="12" cy="5.4" r="1" fill="currentColor" /><circle cx="14.1" cy="8" r="1" fill="currentColor" /></svg>
+{/snippet}
+
+{#snippet siteBuildMark(size: number)}
+  <svg width={size} height={size} viewBox="0 0 20 20" fill="none" aria-hidden="true"><rect x="3.3" y="3.3" width="13.4" height="13.4" rx="2.2" stroke="currentColor" stroke-width="1.4" /><path d="M3.5 7.6h13M7.6 7.8v8.8" stroke="currentColor" stroke-width="1.4" /></svg>
+{/snippet}
+
+{#snippet multiSiteMark(size: number)}
+  <svg width={size} height={size} viewBox="0 0 20 20" fill="none" aria-hidden="true"><rect x="2.8" y="3.2" width="10.4" height="10.4" rx="2" stroke="currentColor" stroke-width="1.35" /><rect x="6.8" y="6.8" width="10.4" height="10.4" rx="2" fill="var(--bg, #fff)" stroke="currentColor" stroke-width="1.35" /></svg>
+{/snippet}
+
+{#snippet workspaceMark(size: number)}
+  <svg width={size} height={size} viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M4 6.6A2.6 2.6 0 0 1 6.6 4h6.8A2.6 2.6 0 0 1 16 6.6v3.9a2.6 2.6 0 0 1-2.6 2.6H8.2l-3.1 2.7a.42.42 0 0 1-.7-.32V6.6Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" /></svg>
 {/snippet}
 
 {#snippet cmds(tools: ToolCall[])}
@@ -6879,7 +11293,7 @@
             onclick={() => selectConn(c.id)} onkeydown={(e) => e.key === 'Enter' && selectConn(c.id)}
             oncontextmenu={(e) => openConnCtx(e, c)}>
             {#if c.kind === 'cloudflare'}{@render cfMark(22)}{:else if c.kind === 'ssh'}{@render sshMark(22)}{:else}<SiteMark size={22} />{/if}
-            <span class="conn-main"><b>{c.name}</b>
+            <span class="conn-main"><b>{connectionDisplayName(c)}</b>
               {#if c.kind === 'ssh'}
                 <small class="cs-os">{@render distroMark(distroOf(c), 12)}<span class="cs-os-label">{sshSub(c)}</span></small>
               {:else}
@@ -6895,7 +11309,7 @@
                 onclick={(e) => { e.stopPropagation(); upgradePack(c.id); }}>{packUpdating[c.id] ? '升级中…' : `升级技能包 ${packUpdates[c.id]}`}</button>
             {/if}
             {#if activeConnId === c.id && c.kind !== 'cloudflare' && c.kind !== 'ssh'}
-              <button class="icon-btn sm" title="刷新站点（技能包新增站点后点这里）" onclick={(e) => { e.stopPropagation(); refreshSites(); }}>{@render refreshIcon(discoveryLoading)}</button>
+              <button class="icon-btn sm" title="检查技能包更新并刷新站点" disabled={discoveryLoading || !!connectionSyncing[c.id] || !!packUpdating[c.id]} onclick={(e) => { e.stopPropagation(); refreshSites(c.id); }}>{@render refreshIcon(discoveryLoading || !!connectionSyncing[c.id])}</button>
             {/if}
             <button class="x sm" title="删除连接" onclick={(e) => { e.stopPropagation(); removeConn(c.id); }}>×</button>
           </div>
@@ -6969,9 +11383,141 @@
       <div class="brain-row">
         <span class="brain-ic"><AppIcon size={20} /></span>
         <span class="brain-main"><b>GCMS Pilot</b><small>{appVersion ? `v${appVersion}` : ''}{updMsg ? ` · ${updMsg}` : ''}</small></span>
-        <button class="btn small ghost bare" onclick={runUpdate} disabled={updBusy}>{updBusy ? '检查中…' : '检查更新'}</button>
+        <button class="btn small ghost bare about-update-entry" onclick={openUpdateCenter} disabled={!isMainWindow}>
+          {@render gcmsUpdateIcon(14)}
+          <span>{unifiedAvailableCount ? `${unifiedAvailableCount} 项更新` : '更新中心'}</span>
+        </button>
       </div>
     </div>
+  </div>
+{/if}
+
+{#if updateCenterOpen}
+  <div class="mask update-center-mask" role="presentation" onclick={closeUpdateCenter}></div>
+  <div class="sheet update-center-sheet" role="dialog" aria-modal="true" aria-label="更新中心">
+    <header class="sheet-head update-center-head">
+      <div class="update-center-title">
+        <span class="update-center-title-icon" aria-hidden="true">{@render gcmsUpdateIcon(16)}</span>
+        <span class="update-center-title-copy">
+          <b>更新中心</b>
+          <small>{formatUpdateCheckedAt()}</small>
+        </span>
+      </div>
+      <div class="update-center-head-actions">
+        <button
+          type="button"
+          class="icon-btn"
+          aria-label={updateCheckingAll ? '正在重新检查更新' : '重新检查更新'}
+          data-tip={updateCheckingAll ? '正在重新检查更新…' : '重新检查更新'}
+          onclick={() => void checkAllUpdates(false)}
+          disabled={updateCheckingAll || updateRunningAll || updBusy}
+        >{@render refreshIcon(updateCheckingAll)}</button>
+        <button class="x" onclick={closeUpdateCenter} disabled={updateRunningAll || updBusy}>×</button>
+      </div>
+    </header>
+    <div class="sheet-body update-center-body">
+      <section class="update-overview" class:has-updates={unifiedAvailableCount > 0}>
+        <span class="update-overview-icon" aria-hidden="true">
+          {#if updateCheckingAll}<span class="upd-spin"></span>{:else}{@render gcmsUpdateIcon(18)}{/if}
+        </span>
+        <span>
+          <b>{updateCheckingAll ? '正在检查三类更新…' : unifiedAvailableCount ? `发现 ${unifiedAvailableCount} 项更新` : '统一检查已完成'}</b>
+          <small>{updateCheckingAll ? '正在读取 Pilot、GCMS 与技能包的真实版本' : unifiedAvailableCount ? `涉及 ${unifiedCategoryCount} 类更新，将按依赖顺序执行` : '无法确认的项目会单独标出，不会被当作最新版'}</small>
+        </span>
+      </section>
+
+      {#if pilotUpdateReceipt}<div class="update-center-notice success">{pilotUpdateReceipt}</div>{/if}
+      {#if updateCenterNotice}<div class="update-center-notice">{updateCenterNotice}</div>{/if}
+      {#if updateCenterError}<div class="update-center-notice error">{updateCenterError}</div>{/if}
+
+      {#each [pilotUnifiedState()] as pilotState}
+        <section class="update-section">
+          <div class="update-section-title"><span>Pilot 客户端</span><small>全局 · 最后执行</small></div>
+          <div class="update-item pilot">
+            <span class="update-item-icon"><AppIcon size={20} /></span>
+            <span class="update-item-copy">
+              <b>GCMS Pilot</b>
+              <small>{pilotState.message}</small>
+              {#if pilotReleaseNotes && pilotState.status === 'available'}<i>{pilotReleaseNotes}</i>{/if}
+            </span>
+            <span class="update-state {pilotState.status}" title={pilotState.message}>{updateStateLabel(pilotState.status)}</span>
+            {#if pilotState.status === 'available'}
+              <button class="btn small ghost" onclick={() => void runUpdate()} disabled={updateRunningAll || updBusy}>更新</button>
+            {/if}
+          </div>
+        </section>
+      {/each}
+
+      <section class="update-section">
+        <div class="update-section-title"><span>GCMS 与关联技能包</span><small>{sshServers.length} 台服务器</small></div>
+        {#if sshServers.length}
+          <div class="update-server-list">
+            {#each sshServers as server (server.id)}
+              {@const gcmsState = gcmsUnifiedState(server)}
+              {@const serverPacks = gcmsPacksForServer(server.id)}
+              {@const serverStatus = gcmsServer(server.id).status}
+              <article class="update-server-group">
+                <div class="update-server-title">
+                  <span class="update-server-mark" aria-hidden="true">{@render gcmsInstallIcon(15)}</span>
+                  <span><b>{server.name}</b><small>{server.ssh_user}@{server.ssh_host}</small></span>
+                </div>
+                <div class="update-item gcms">
+                  <span class="update-tree-line root" aria-hidden="true"></span>
+                  <span class="update-item-copy"><b>GCMS</b><small>{gcmsState.message}</small></span>
+                  <span class="update-state {gcmsState.status}" title={gcmsState.message}>{updateStateLabel(gcmsState.status)}</span>
+                  {#if gcmsState.status === 'available' && serverStatus}
+                    <button class="btn small ghost" onclick={() => void upgradeRemoteGcms(server, serverStatus)} disabled={updateRunningAll || !!gcmsUpgrading[server.id]}>更新</button>
+                  {/if}
+                </div>
+                {#each serverPacks as pack (pack.id)}
+                  {@const packState = packUnifiedState(pack)}
+                  <div class="update-item pack">
+                    <span class="update-tree-line" aria-hidden="true"></span>
+                    <span class="update-item-copy"><b>{connectionDisplayName(pack)}</b><small>技能包同步 · {packState.message}</small></span>
+                    <span class="update-state {packState.status}" title={packState.message}>{updateStateLabel(packState.status)}</span>
+                    {#if packState.status === 'available'}
+                      <button class="btn small ghost" onclick={() => void upgradePack(pack.id)} disabled={updateRunningAll || !!packUpdating[pack.id]}>同步</button>
+                    {/if}
+                  </div>
+                {/each}
+                {#if !serverPacks.length}<div class="update-empty-child">尚未关联 Pilot 技能包</div>{/if}
+              </article>
+            {/each}
+          </div>
+        {:else}
+          <div class="update-empty">还没有远程服务器连接</div>
+        {/if}
+      </section>
+
+      {#each [standaloneUpdatePacks()] as standalonePacks}
+        {#if standalonePacks.length}
+          <section class="update-section">
+            <div class="update-section-title"><span>独立技能包</span><small>未关联远程服务器</small></div>
+            <div class="update-standalone-list">
+              {#each standalonePacks as pack (pack.id)}
+                {@const packState = packUnifiedState(pack)}
+                <div class="update-item pack standalone">
+                  <span class="update-item-icon package" aria-hidden="true">{@render botIcon(14)}</span>
+                  <span class="update-item-copy"><b>{connectionDisplayName(pack)}</b><small>{packState.message}</small></span>
+                  <span class="update-state {packState.status}" title={packState.message}>{updateStateLabel(packState.status)}</span>
+                  {#if packState.status === 'available'}
+                    <button class="btn small ghost" onclick={() => void upgradePack(pack.id)} disabled={updateRunningAll || !!packUpdating[pack.id]}>同步</button>
+                  {/if}
+                </div>
+              {/each}
+            </div>
+          </section>
+        {/if}
+      {/each}
+
+      <p class="update-center-footnote">推荐顺序：GCMS 逐台升级并验证 → 同步关联技能包 → 安装并重启 Pilot。独立迁移实例暂不纳入自动更新。</p>
+    </div>
+    <footer class="update-center-footer">
+      <button class="btn ghost" onclick={closeUpdateCenter} disabled={updateRunningAll || updBusy}>关闭</button>
+      <button class="btn primary" onclick={() => void runRecommendedUpdates()} disabled={updateCheckingAll || updateRunningAll || updBusy || unifiedAvailableCount === 0}>
+        {updateRunningAll || updBusy ? '正在更新…' : unifiedAvailableCount ? `按推荐顺序更新 ${unifiedAvailableCount} 项` : '当前无需更新'}
+      </button>
+    </footer>
   </div>
 {/if}
 
@@ -7043,7 +11589,7 @@
       {#if gcmsAccess}
         <div class="gcms-sheet-title">
           <button class="gcms-back" aria-label={gcmsAccess.childSiteId != null ? '返回子站列表' : '返回服务器列表'} data-tip={gcmsAccess.childSiteId != null ? '返回子站列表' : '返回服务器列表'} disabled={gcmsAccess.creatingDns || gcmsAccess.configuring} onclick={() => !gcmsAccess?.creatingDns && !gcmsAccess?.configuring && (gcmsAccess = null)}>
-            <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m9.8 3.5-4.5 4.5 4.5 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
+            {@render backChevronIcon(15)}
           </button>
           <div>
             <b>{gcmsAccessTitle(gcmsAccess)}</b>
@@ -7697,20 +12243,36 @@
                 {/if}
                 {@const pilotAssistant = gcmsPilotAssistant(c.id)}
                 {@const assistantImporting = !!gcmsAssistantImporting[c.id]}
-                {@const assistantReady = state.status.running && gcmsHttpsConfigured(state.status) && !!state.status.assistant_import_supported}
-                <button
-                  type="button"
-                  class="gcms-assistant-action"
-                  class:unavailable={!assistantReady}
-                  data-tip={gcmsAssistantImportTip(state.status, !!pilotAssistant)}
-                  aria-label={pilotAssistant ? '更新 Pilot 运营助手' : '导入 Pilot 运营助手'}
-                  disabled={assistantImporting}
-                  onclick={() => void importGcmsPilotAssistant(c, state.status!)}
-                >
-                  <span class="gcms-assistant-icon">{@render botIcon(13)}</span>
-                  <span class="gcms-assistant-copy"><b>Pilot 运营助手</b><small>{pilotAssistant ? '已在当前 Pilot · 同步最新权限' : '全站运营权限 · 仅当前 Pilot'}</small></span>
-                  <span class="gcms-assistant-verb">{assistantImporting ? '处理中…' : pilotAssistant ? '更新' : '一键导入'}</span>
-                </button>
+                {@const assistantAccessConfigured = gcmsHttpsConfigured(state.status)}
+                {@const assistantReady = state.status.running && assistantAccessConfigured && !!state.status.assistant_import_supported}
+                {#if !assistantAccessConfigured && !pilotAssistant}
+                  <p class="gcms-assistant-prerequisite">
+                    <span aria-hidden="true">{@render botIcon(11)}</span>
+                    <span>设置访问域名后，可将 Pilot 运营助手一键导入当前 Pilot</span>
+                  </p>
+                {:else}
+                  <button
+                    type="button"
+                    class="gcms-assistant-action"
+                    class:unavailable={!assistantReady}
+                    class:disconnected={!assistantAccessConfigured && !!pilotAssistant}
+                    data-tip={gcmsAssistantImportTip(state.status, !!pilotAssistant)}
+                    aria-label={!assistantAccessConfigured ? '修复 Pilot 运营助手访问域名' : pilotAssistant ? '更新 Pilot 运营助手' : '导入 Pilot 运营助手'}
+                    disabled={assistantImporting}
+                    onclick={() => {
+                      if (!assistantAccessConfigured) { openGcmsAccess(c, state.status!); return; }
+                      void importGcmsPilotAssistant(c, state.status!);
+                    }}
+                  >
+                    <span class="gcms-assistant-icon">{@render botIcon(13)}</span>
+                    <span class="gcms-assistant-copy"><b>Pilot 运营助手</b><small>{!assistantAccessConfigured ? '连接不可用 · 已保留导入记录' : pilotAssistant ? '已在当前 Pilot · 同步最新权限' : '全站运营权限 · 仅当前 Pilot'}</small></span>
+                    {#if assistantAccessConfigured && pilotAssistant}
+                      <span class="gcms-assistant-verb icon-only" aria-hidden="true">{@render refreshIcon(assistantImporting)}</span>
+                    {:else}
+                      <span class="gcms-assistant-verb">{assistantImporting ? '处理中…' : !assistantAccessConfigured ? '修复访问域名' : '一键导入'}</span>
+                    {/if}
+                  </button>
+                {/if}
                 {#if gcmsPasswordEditor?.connId === c.id}
                   {@const passwordEditor = gcmsPasswordEditor}
                   <form class="gcms-password-editor" class:just-installed={passwordEditor.justInstalled} data-gcms-password-editor autocomplete="off" onsubmit={(event) => { event.preventDefault(); void saveGcmsAdminPassword(c); }}>
@@ -7726,7 +12288,7 @@
                         <span>新密码</span>
                         <span class="gcms-password-input">
                           <input type={passwordEditor.visible ? 'text' : 'password'} value={passwordEditor.password} maxlength="72" autocomplete="new-password" placeholder="至少 8 个字符" disabled={passwordEditor.saving} oninput={(event) => updateGcmsPasswordEditor({ password: event.currentTarget.value, error: '' })} />
-                          <button type="button" data-tip={passwordEditor.visible ? '隐藏密码' : '显示密码'} aria-label={passwordEditor.visible ? '隐藏密码' : '显示密码'} disabled={passwordEditor.saving} onclick={() => updateGcmsPasswordEditor({ visible: !passwordEditor.visible })}>
+                          <button type="button" tabindex="-1" data-tip={passwordEditor.visible ? '隐藏密码' : '显示密码'} aria-label={passwordEditor.visible ? '隐藏密码' : '显示密码'} disabled={passwordEditor.saving} onclick={() => updateGcmsPasswordEditor({ visible: !passwordEditor.visible })}>
                             <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M1.5 8s2.3-4 6.5-4 6.5 4 6.5 4-2.3 4-6.5 4-6.5-4-6.5-4Z" stroke="currentColor" stroke-width="1.2"/><circle cx="8" cy="8" r="1.8" stroke="currentColor" stroke-width="1.2"/></svg>
                           </button>
                         </span>
@@ -7957,6 +12519,57 @@
   </div>
 {/if}
 
+{#if siteCardMenu}
+  {@const menuSite = siteCardMenu.connId === activeConnId ? dashboardAllSites.find((site) => site.id === siteCardMenu?.siteId) : null}
+  {#if menuSite}
+    {@const canClearUnverifiedDomain = siteCanClearUnverifiedDomain(menuSite, siteCardMenu.connId)}
+    <div
+      bind:this={siteCardMenuEl}
+      class="ctx-menu fctx gcms-card-menu site-card-menu"
+      class:ready={siteCardMenu.ready}
+      style="left:{siteCardMenu.x}px; top:{siteCardMenu.y}px"
+      role="menu"
+      aria-label={`${menuSite.name || menuSite.slug}站点设置`}
+      tabindex="-1"
+    >
+      {#if !menuSite.is_default}
+        <button
+          class="ctx-item"
+          role="menuitem"
+          disabled={menuSite.status === 'disabled'}
+          data-tip={menuSite.status === 'disabled' ? '请先启用站点，再修改部署与访问域名' : ''}
+          onclick={() => openProtectedSiteDeploymentEditor(menuSite)}
+        >
+          {@render domainEditIcon()}
+          <span>{sitePublicURL(menuSite) ? '部署与访问域名' : '部署站点'}</span>
+        </button>
+        {#if canClearUnverifiedDomain}
+          <button
+            class="ctx-item danger"
+            role="menuitem"
+            disabled={siteDomainClearChecking === `${siteCardMenu.connId}:${menuSite.id}`}
+            data-tip="仅清除尚未通过 GCMS DNS / HTTPS 验证的域名"
+            onclick={() => void clearUnverifiedSiteDomain(menuSite)}
+          >
+            {@render trashIcon(12)}
+            <span>清除未生效域名</span>
+          </button>
+        {/if}
+        <div class="gcms-card-menu-divider" aria-hidden="true"></div>
+      {/if}
+      <button
+        class="ctx-item"
+        role="menuitem"
+        data-tip={menuSite.status === 'disabled' ? '可查看主题；启用站点后才能预览和更换' : ''}
+        onclick={() => openSiteThemeEditor(menuSite)}
+      >
+        {@render paletteIcon(12)}
+        <span>外观主题</span>
+      </button>
+    </div>
+  {/if}
+{/if}
+
 {#if gcmsCardMenu}
   {@const menuConn = conns.find((c) => c.id === gcmsCardMenu?.connId)}
   {@const menuState = menuConn ? gcmsServer(menuConn.id) : null}
@@ -8008,6 +12621,637 @@
       {/if}
     </div>
   {/if}
+{/if}
+
+{#if integrationEditor && integrationSurface === 'modal'}
+  <div class="mask" role="presentation" onclick={closeIntegrationEditor}></div>
+  <div class="modal wide integration-modal" role="dialog" aria-modal="true" aria-label={integrationEditor.kind === 'google' ? 'Google 数据设置' : integrationEditor.kind === 'telegram' ? 'Telegram 推送设置' : integrationEditor.kind === 'cloudflare' ? 'Cloudflare 授权设置' : integrationEditor.kind === 'site-analytics' ? '站点 Google Analytics 设置' : '站点 Google Search Console 设置'}>
+    <header class="sheet-head integration-head">
+      <div class="integration-head-title">
+        <span class="integration-head-icon">
+          {#if integrationEditor.kind === 'google'}
+            {@render googleIcon(19)}
+          {:else if integrationEditor.kind === 'telegram'}
+            {@render telegramIcon(19)}
+          {:else if integrationEditor.kind === 'cloudflare'}
+            {@render cfMark(19)}
+          {:else if integrationEditor.kind === 'site-analytics'}
+            {@render googleAnalyticsIcon(19)}
+          {:else if integrationEditor.kind === 'site-search-console'}
+            {@render googleSearchConsoleIcon(19)}
+          {:else if integrationEditor.site}
+            <SiteFav src={integrationEditor.site.favicon || integrationEditor.site.logo || faviconGuess(integrationEditor.site.url)} label={integrationEditor.site.name || integrationEditor.site.slug} size={21} />
+          {/if}
+        </span>
+        <span>
+          <b>{integrationEditor.kind === 'google' ? 'Google 数据' : integrationEditor.kind === 'telegram' ? 'Telegram 推送' : integrationEditor.kind === 'cloudflare' ? 'Cloudflare 授权' : integrationEditor.kind === 'site-analytics' ? `${integrationEditor.site?.name || integrationEditor.site?.slug || '站点'} · Google Analytics` : `${integrationEditor.site?.name || integrationEditor.site?.slug || '站点'} · Search Console`}</b>
+          <small>{integrationEditor.kind === 'site-analytics' ? '自动匹配并复用当前域名的数据流' : integrationEditor.kind === 'site-search-console' ? '自动匹配、添加并检查站点所有权' : '平台全局配置 · 与 GCMS 后台保持一致'}</small>
+        </span>
+      </div>
+      <button class="x" onclick={closeIntegrationEditor} disabled={integrationSaving}>×</button>
+    </header>
+    <div class="sheet-body integration-body">
+      {#if integrationLoading}
+        <div class="integration-loading"><span class="gcms-spin"></span><span>正在读取 GCMS 当前配置…</span></div>
+      {:else if integrationError && !integrationGlobal && !integrationSite}
+        <div class="err-note">{integrationError}</div>
+        <div class="row-end"><button class="btn" onclick={reloadIntegrationEditor}>重新读取</button></div>
+      {:else if integrationEditor.kind === 'google' && integrationGlobal}
+        <section class="integration-section">
+          <div class="integration-section-head">
+            <div><b>Google OAuth 客户端</b><small>供 Google Analytics 与 Search Console 授权共用</small></div>
+            <span class:ok={integrationGlobal.google.oauth_configured}>{integrationGlobal.google.oauth_configured ? '已配置' : '未配置'}</span>
+          </div>
+          {@render googleOauthSetupGuide(globalGoogleForm.clientId)}
+          <div class="tfield"><span>Client ID</span><input class="tin" bind:value={globalGoogleForm.clientId} placeholder="Google OAuth Client ID" spellcheck="false" autocomplete="off" /></div>
+          <div class="tfield"><span>Client Secret</span><input class="tin" type="text" bind:value={globalGoogleForm.clientSecret} placeholder={integrationGlobal.google.client_secret_configured ? '已安全保存，留空保持不变' : 'Google OAuth Client Secret'} autocomplete="off" spellcheck="false" /></div>
+          <div class="tfield"><span>回调地址 <small>需与 Google Cloud 控制台完全一致</small></span><input class="tin" bind:value={globalGoogleForm.redirectUrl} placeholder="https://cms.example.com/admin/google/oauth/callback" spellcheck="false" autocomplete="off" /></div>
+        </section>
+
+        <section class="integration-section">
+          <div class="integration-section-head"><div><b>站点卡片默认数据范围</b><small>GA 与 GSC 摘要统一使用此范围</small></div></div>
+          <div class="integration-range-row">
+            <div class="tfield"><span>范围类型</span><Dropdown bind:value={globalGoogleForm.rangeMode} options={[{ value: 'days', label: '固定天数' }, { value: 'custom', label: '自定义日期' }]} /></div>
+            {#if globalGoogleForm.rangeMode === 'days'}
+              <div class="tfield"><span>最近</span><Dropdown bind:value={globalGoogleForm.rangeDays} options={googleRangeOptions} /></div>
+            {:else}
+              <label class="tfield"><span>开始日期</span><input class="tin" type="date" bind:value={globalGoogleForm.rangeFrom} /></label>
+              <label class="tfield"><span>结束日期</span><input class="tin" type="date" bind:value={globalGoogleForm.rangeTo} /></label>
+            {/if}
+          </div>
+        </section>
+
+        <section class="integration-account-summary">
+          <div>
+            <b>授权账号</b>
+            <small>Analytics {integrationGlobal.google.analytics_accounts.length} 个 · Search Console {integrationGlobal.google.search_console_accounts.length} 个</small>
+          </div>
+          {#if integrationGlobal.google.authorize_url}<button class="btn soft small" onclick={() => void openUrl(integrationGlobal!.google.authorize_url)}>管理授权 ↗</button>{/if}
+        </section>
+        {#if integrationNotice}<div class="ok-note">{integrationNotice}</div>{/if}
+        {#if integrationError}<div class="err-note">{integrationError}</div>{/if}
+        <div class="row-end integration-actions"><button class="btn ghost" onclick={closeIntegrationEditor} disabled={integrationSaving}>取消</button><button class="btn primary" onclick={() => void saveGlobalGoogleIntegration()} disabled={integrationSaving || !globalGoogleForm.clientId.trim()}>{integrationSaving ? '保存中…' : '保存到 GCMS'}</button></div>
+      {:else if integrationEditor.kind === 'telegram' && integrationGlobal}
+        <section class="integration-section telegram-config-section">
+          <div class="integration-section-head">
+            <div><b>平台共享 Bot</b><small>各站点可以绑定不同频道，共用这枚 Bot Token 推送</small></div>
+            <span class:ok={integrationGlobal.telegram.shared_bot_configured}>{integrationGlobal.telegram.shared_bot_configured ? '已配置' : '未配置'}</span>
+          </div>
+          <div class="tfield"><span>Bot Token</span><input class="tin" type="password" bind:value={telegramBotToken} placeholder={integrationGlobal.telegram.shared_bot_configured ? '已安全保存，留空保持不变' : '从 BotFather 获取的 Token'} autocomplete="new-password" /></div>
+          <p class="hint">Token 不会从 GCMS 回传到 Pilot；这里只显示是否已配置，保存时写回 GCMS 的同一项设置。</p>
+        </section>
+        {#if integrationNotice}<div class="ok-note">{integrationNotice}</div>{/if}
+        {#if integrationError}<div class="err-note">{integrationError}</div>{/if}
+        <div class="row-end integration-actions">
+          {#if integrationGlobal.telegram.shared_bot_configured}<button class="btn danger bare" onclick={() => void saveGlobalTelegramIntegration(true)} disabled={integrationSaving}>移除共享 Bot</button>{/if}
+          <span></span><button class="btn ghost" onclick={closeIntegrationEditor} disabled={integrationSaving}>取消</button><button class="btn primary" onclick={() => void saveGlobalTelegramIntegration()} disabled={integrationSaving || (!telegramBotToken.trim() && !integrationGlobal.telegram.shared_bot_configured)}>{integrationSaving ? '保存中…' : '保存到 GCMS'}</button>
+        </div>
+      {:else if integrationEditor.kind === 'cloudflare' && integrationGlobal}
+        <section class="integration-section">
+          <div class="integration-section-head">
+            <div><b>Cloudflare 授权</b><small>由 GCMS 加密保存并执行 DNS 与发布操作，Pilot 不保存或回显 Token</small></div>
+            <span class:ok={(integrationGlobal.cloudflare.authorization_count || 0) > 0}>{integrationGlobal.cloudflare.authorization_count || 0} 份</span>
+          </div>
+          {#if integrationGlobal.cloudflare.authorizations.length}
+            <div class="integration-authorization-list">
+              {#each integrationGlobal.cloudflare.authorizations as authorization}
+                <div class="integration-authorization-item">
+                  <span class="sites-global-mark cloudflare-mark">{@render cfMark(17)}</span>
+                  <div><b>{authorization.label || 'Cloudflare 授权'}</b><small>{cloudflareAuthorizationAccountLabel(authorization)}</small></div>
+                  <button type="button" class="cloudflare-auth-remove" data-tip="从 GCMS 移除这份授权" aria-label={`移除 ${authorization.label || 'Cloudflare 授权'}`} onclick={() => void saveGlobalCloudflareAuthorization(authorization.id)} disabled={integrationSaving || cloudflareSyncing || !authorization.id}>×</button>
+                </div>
+              {/each}
+            </div>
+          {:else}
+            <div class="integration-callout warn"><span>{@render cfMark(18)}</span><div><b>还没有 Cloudflare 授权</b><small>在这里添加后会同步到 GCMS，并可按域名自动匹配账号与 Zone。</small></div></div>
+          {/if}
+          <div class="cloudflare-auth-form integration-cloudflare-form">
+            <label><span>备注 <small>可选</small></span><input bind:value={cloudflareLabel} placeholder="例如：公司主账号" autocomplete="off" /></label>
+            <div class="cloudflare-auth-field">
+              <div class="cloudflare-token-label">
+                <span>API Token</span>
+                <button
+                  type="button"
+                  aria-label="在浏览器中打开 Cloudflare 授权模板"
+                  use:tipAction={'在浏览器中打开 Cloudflare 授权模板'}
+                  onclick={(event) => { event.stopPropagation(); void openUrl(gcmsCloudflareTokenTemplateUrl()); }}
+                >
+                  <span>打开授权模板</span>
+                  <span class="external-link-affordance">{@render externalLinkIcon(14)}</span>
+                </button>
+              </div>
+              <input aria-label="Cloudflare API Token" type="text" bind:value={cloudflareToken} placeholder="仅发送给 GCMS 验证并保存" autocomplete="off" spellcheck="false" />
+            </div>
+            <button class="google-oauth-save wide" type="button" onclick={() => void saveGlobalCloudflareAuthorization()} disabled={integrationSaving || cloudflareSyncing || !cloudflareToken.trim()}>{cloudflareSyncing ? '正在同步已连接 Token…' : integrationSaving ? '验证并保存中…' : '验证并添加授权'}</button>
+          </div>
+        </section>
+        {#if integrationNotice}<div class="ok-note">{integrationNotice}</div>{/if}
+        {#if integrationError}<div class="err-note">{integrationError}</div>{/if}
+        <div class="row-end integration-actions"><button class="btn soft" onclick={() => openGcmsAdmin('/admin/sites')}>打开 GCMS 后台 ↗</button><span></span><button class="btn primary" onclick={closeIntegrationEditor} disabled={integrationSaving}>完成</button></div>
+      {:else if integrationEditor.kind === 'site-analytics' && integrationEditor.site && integrationGlobal && integrationSite}
+        {@const editorSite = integrationEditor.site}
+        {#if !integrationGlobal.google.oauth_configured}
+          <div class="integration-callout warn"><span>{@render googleIcon(18)}</span><div><b>先配置 Google OAuth</b><small>GCMS 尚未保存完整的 OAuth 客户端，配置后才能新增授权账号。</small></div><button class="btn soft small" onclick={() => void openIntegrationEditor('google')}>去配置</button></div>
+        {:else if integrationGlobal.google.analytics_accounts.length === 0}
+          <div class="integration-callout"><span>{@render googleAnalyticsIcon(18)}</span><div><b>还没有 Analytics 授权账号</b><small>先完成一次 Google Analytics 授权，再回来启用访问统计。</small></div>{#if integrationGlobal.google.authorize_url}<button class="btn soft small" onclick={() => void openUrl(integrationGlobal!.google.authorize_url)}>新增授权 ↗</button>{/if}</div>
+        {/if}
+
+        <section class="integration-section site-google-section">
+          <div class="integration-section-head site-integration-title">
+            <div><span class="integration-service-icon">{@render googleAnalyticsIcon(18)}</span><span><b>访问统计</b><small>{siteIntegrationForm.analytics.enabled ? '已启用，统计代码由 GCMS 自动维护' : 'GCMS 会先复用匹配的数据流，没有时才创建'}</small></span></div>
+            <span class:ok={siteIntegrationForm.analytics.enabled}>{siteIntegrationForm.analytics.enabled ? '已启用' : integrationSite.analytics.configured ? '待完成' : '未接入'}</span>
+          </div>
+          {#if siteIntegrationForm.analytics.enabled && !siteGoogleEditing}
+            <div class="site-google-overview">
+              <div><small>授权账号</small><b>{googleAccountLabel('analytics', integrationSite.analytics.account_id || '')}</b></div>
+              <div><small>当前网站</small><b>{editorSite.url || hostOf(editorSite.url || '') || '未设置'}</b></div>
+              <div><small>GA4 属性</small><b>{integrationSite.analytics.property || '自动匹配'}</b></div>
+              <div><small>Measurement ID</small><b>{integrationSite.analytics.measurement_id || '等待 Google 返回'}</b></div>
+              <div><small>当前数据</small><b>活跃 {editorSite.integrations?.analytics.active_users ?? 0} · 访问 {editorSite.integrations?.analytics.sessions ?? 0}</b></div>
+            </div>
+          {:else}
+            <div class="integration-form-grid">
+              <div class="tfield full"><span>授权账号</span><Dropdown bind:value={siteIntegrationForm.analytics.accountId} options={googleAccountOptions('analytics')} placeholder="选择 Analytics 授权账号" onchange={changeSiteAnalyticsAuthorization} /></div>
+              <div class="tfield full"><span>当前网站</span><div class="integration-readonly">{editorSite.url || hostOf(editorSite.url || '') || '站点尚未设置可访问域名'}</div></div>
+              <div class="tfield full">
+                <span>GA4 属性 {#if analyticsOptionsLoading}<small>正在读取 Analytics…</small>{/if}</span>
+                <Dropdown
+                  bind:value={siteIntegrationForm.analytics.property}
+                  options={googleAnalyticsPropertyOptions()}
+                  placeholder={analyticsOptionsLoading ? '正在匹配当前域名…' : '自动匹配当前域名'}
+                  disabled={analyticsOptionsLoading || !siteIntegrationForm.analytics.accountId}
+                  searchable
+                  onchange={changeSiteAnalyticsProperty}
+                />
+              </div>
+              {#if siteIntegrationForm.analytics.property === '__create__' && (analyticsOptions?.accounts.length || 0) > 1}
+                <div class="tfield full">
+                  <span>Analytics 账号 <small>新 GA4 属性将创建在此账号下</small></span>
+                  <Dropdown bind:value={siteIntegrationForm.analytics.analyticsAccount} options={googleAnalyticsAdminAccountOptions()} placeholder="自动选择 Analytics 账号" />
+                </div>
+              {/if}
+            </div>
+            {#if siteIntegrationForm.analytics.property === '__create__' && analyticsOptions && analyticsOptions.accounts.length === 0}
+              <div class="integration-callout warn"><span>{@render googleAnalyticsIcon(18)}</span><div><b>没有可用的 Analytics 账号</b><small>请先在 Google Analytics 中开通账号，再回到这里重新读取。</small></div></div>
+            {/if}
+            {#if integrationSite.analytics.configured}
+              <div class="site-google-result">
+                <span><small>Measurement ID</small><b>{integrationSite.analytics.measurement_id || '等待 Google 返回'}</b></span>
+                <span><small>GA4 Property</small><b>{integrationSite.analytics.property || '自动选择'}</b></span>
+              </div>
+            {/if}
+          {/if}
+        </section>
+
+        {#if integrationProvisionResult?.reused}<div class="integration-callout"><span>{@render googleAnalyticsIcon(18)}</span><div><b>已复用已有数据流</b><small>没有重复创建 GA4 Property 或 Web Data Stream。</small></div></div>{/if}
+        {#if integrationNotice}<div class="ok-note">{integrationNotice}</div>{/if}
+        {#if integrationError}<div class="err-note">{integrationError}</div>{/if}
+        <div class="row-end integration-actions">
+          {#if integrationSite.analytics.configured}<button class="btn integration-danger-action" onclick={() => void clearSiteIntegration('analytics')} disabled={integrationSaving}>解除 Analytics</button>{/if}
+          <span></span>
+          {#if siteIntegrationForm.analytics.enabled && !siteGoogleEditing}
+            <button class="btn ghost" onclick={() => editSiteGoogle('analytics')} disabled={integrationSaving}>修改配置</button>
+            <button class="btn primary" onclick={closeIntegrationEditor} disabled={integrationSaving}>完成</button>
+          {:else}
+            {#if siteIntegrationForm.analytics.enabled}<button class="btn ghost" onclick={cancelSiteGoogleEdit} disabled={integrationSaving}>取消修改</button>{:else}<button class="btn ghost" onclick={closeIntegrationEditor} disabled={integrationSaving}>取消</button>{/if}
+            <button class="btn primary" onclick={() => void provisionSiteGoogle('analytics')} disabled={integrationSaving || analyticsOptionsLoading || !siteIntegrationForm.analytics.accountId.trim() || !integrationGlobal.google.oauth_configured || (siteIntegrationForm.analytics.property === '__create__' && !siteIntegrationForm.analytics.analyticsAccount.trim())}>{integrationSaving ? '正在检测并配置…' : siteIntegrationForm.analytics.property === '__create__' ? '创建并启用统计' : siteIntegrationForm.analytics.enabled ? '保存修改' : '启用访问统计'}</button>
+          {/if}
+        </div>
+      {:else if integrationEditor.kind === 'site-search-console' && integrationEditor.site && integrationGlobal && integrationSite}
+        {@const editorSite = integrationEditor.site}
+        {#if !integrationGlobal.google.oauth_configured}
+          <div class="integration-callout warn"><span>{@render googleIcon(18)}</span><div><b>先配置 Google OAuth</b><small>GCMS 尚未保存完整的 OAuth 客户端，配置后才能新增授权账号。</small></div><button class="btn soft small" onclick={() => void openIntegrationEditor('google')}>去配置</button></div>
+        {:else if integrationGlobal.google.search_console_accounts.length === 0}
+          <div class="integration-callout"><span>{@render googleSearchConsoleIcon(18)}</span><div><b>还没有 Search Console 授权账号</b><small>先完成一次 Search Console 授权，再回来启用搜索数据。</small></div>{#if integrationGlobal.google.authorize_url}<button class="btn soft small" onclick={() => void openUrl(integrationGlobal!.google.authorize_url)}>新增授权 ↗</button>{/if}</div>
+        {/if}
+
+        <section class="integration-section site-google-section">
+          <div class="integration-section-head site-integration-title">
+            <div><span class="integration-service-icon">{@render googleSearchConsoleIcon(18)}</span><span><b>搜索数据</b><small>{siteIntegrationForm.searchConsole.enabled ? '已启用，正在读取点击与曝光数据' : integrationSite.search_console.needs_verification ? '站点属性已添加，等待完成所有权验证' : '系统会先匹配已有属性，没有时自动添加'}</small></span></div>
+            <span class:ok={siteIntegrationForm.searchConsole.enabled}>{siteIntegrationForm.searchConsole.enabled ? '已启用' : integrationSite.search_console.needs_verification ? '待验证' : '未接入'}</span>
+          </div>
+          {#if siteIntegrationForm.searchConsole.enabled && !siteGoogleEditing}
+            <div class="site-google-overview">
+              <div><small>授权账号</small><b>{googleAccountLabel('search_console', integrationSite.search_console.account_id || '')}</b></div>
+              <div><small>当前网站</small><b>{editorSite.url || hostOf(editorSite.url || '') || '未设置'}</b></div>
+              <div><small>Search Console 属性</small><b>{integrationSite.search_console.property || '自动匹配'}</b></div>
+              <div><small>当前数据</small><b>点击 {editorSite.integrations?.search_console.clicks ?? 0} · 曝光 {editorSite.integrations?.search_console.impressions ?? 0}</b></div>
+            </div>
+          {:else}
+            <div class="integration-form-grid">
+              <div class="tfield full"><span>授权账号</span><Dropdown bind:value={siteIntegrationForm.searchConsole.accountId} options={googleAccountOptions('search_console')} placeholder="选择 Search Console 授权账号" /></div>
+              <div class="tfield full"><span>当前网站</span><div class="integration-readonly">{editorSite.url || hostOf(editorSite.url || '') || '站点尚未设置可访问域名'}</div></div>
+            </div>
+            {#if integrationSite.search_console.property}
+              <div class="site-google-result single">
+                <span><small>Search Console 属性</small><b>{integrationSite.search_console.property}</b></span>
+              </div>
+            {/if}
+            <details class="site-google-advanced">
+              <summary>高级选项</summary>
+              <label class="tfield full"><span>指定站点属性 <small>默认使用覆盖整个域名的域名级属性</small></span><input class="tin" bind:value={siteIntegrationForm.searchConsole.property} placeholder={`sc-domain:${hostOf(editorSite.url || '').replace(/^www\./i, '')}`} spellcheck="false" /></label>
+            </details>
+          {/if}
+        </section>
+
+        {#if integrationSite.search_console.needs_verification}
+          <div class="integration-callout warn verification-callout">
+            <span>{@render googleSearchConsoleIcon(18)}</span>
+            <div><b>还差一步：完成站点所有权验证</b><small>在 Search Console 完成验证后，回到这里重新检测即可启用。</small></div>
+            {#if integrationSite.search_console.verify_url}<button class="btn soft verification-open" onclick={() => void openUrl(integrationSite!.search_console.verify_url!)} disabled={integrationSaving}>打开 Search Console 验证 ↗</button>{/if}
+          </div>
+        {/if}
+        {#if integrationNotice}<div class="ok-note">{integrationNotice}</div>{/if}
+        {#if integrationError}<div class="err-note">{integrationError}</div>{/if}
+        <div class="row-end integration-actions">
+          {#if integrationSite.search_console.configured}<button class="btn integration-danger-action" onclick={() => void clearSiteIntegration('search_console')} disabled={integrationSaving}>解除 Search Console</button>{/if}
+          <span></span>
+          {#if siteIntegrationForm.searchConsole.enabled && !siteGoogleEditing}
+            <button class="btn ghost" onclick={() => editSiteGoogle('search_console')} disabled={integrationSaving}>修改配置</button>
+            <button class="btn primary" onclick={closeIntegrationEditor} disabled={integrationSaving}>完成</button>
+          {:else}
+            {#if siteIntegrationForm.searchConsole.enabled}<button class="btn ghost" onclick={cancelSiteGoogleEdit} disabled={integrationSaving}>取消修改</button>{:else}<button class="btn ghost" onclick={closeIntegrationEditor} disabled={integrationSaving}>取消</button>{/if}
+            <button class="btn primary" onclick={() => void provisionSiteGoogle('search_console')} disabled={integrationSaving || !siteIntegrationForm.searchConsole.accountId.trim() || !integrationGlobal.google.oauth_configured}>{integrationSaving ? '正在检测站点属性…' : integrationSite.search_console.needs_verification ? '我已验证，重新检测' : siteIntegrationForm.searchConsole.enabled ? '保存修改' : '启用搜索数据'}</button>
+          {/if}
+        </div>
+      {/if}
+    </div>
+  </div>
+{/if}
+
+{#if themeEditor}
+  <div class="mask" role="presentation" onclick={closeSiteThemeEditor}></div>
+  <div class="modal wide theme-modal" role="dialog" aria-modal="true" aria-label={`${themeEditor.site.name || themeEditor.site.slug} · 外观主题`} aria-busy={themeLoading || themeBusy}>
+    <header class="sheet-head integration-head theme-sheet-head">
+      <div class="integration-head-title">
+        <span class="integration-head-icon theme-head-icon">{@render paletteIcon(20)}</span>
+        <span>
+          <b>{themeEditor.site.name || themeEditor.site.slug} · 外观主题</b>
+        </span>
+      </div>
+      <button class="x" onclick={closeSiteThemeEditor} disabled={themeBusy || themePreviewBusy}>×</button>
+      {#if !themeLoading && themeCatalog && themeState && themeView === 'select'}
+        <div class="theme-category-row">
+          <nav class="theme-category-nav" aria-label="主题分类">
+            {#each themeCategoryOptions as category (category.id)}
+              <button
+                type="button"
+                class:active={themeCategory === category.id}
+                aria-current={themeCategory === category.id ? 'page' : undefined}
+                onclick={() => chooseThemeCategory(category.id)}
+              >
+                <span>{category.label}</span>
+                <small>{themeCategoryFamilyCount(category.id)}</small>
+              </button>
+            {/each}
+          </nav>
+          {#if themeState.can_rollback && themeState.previous_theme}
+            <button
+              class="theme-header-rollback"
+              type="button"
+              onclick={() => void planSiteThemeChange('rollback')}
+              disabled={themeBusy || themeEditor.site.status === 'disabled'}
+            >恢复上一主题</button>
+          {/if}
+        </div>
+      {/if}
+    </header>
+
+    <div class="sheet-body theme-body">
+      {#if themeLoading}
+        <div class="integration-loading theme-loading"><span class="gcms-spin"></span><span>正在读取 GCMS 主题与当前配置…</span></div>
+      {:else if !themeCatalog || !themeState}
+        <div class="theme-state-empty">
+          <span class="theme-state-mark">{@render paletteIcon(23)}</span>
+          <b>暂时无法打开主题中心</b>
+          <p>{themeError || 'GCMS 没有返回完整的主题信息。'}</p>
+          <button class="btn" onclick={() => void loadSiteThemeEditor(themeEditor!)}>重新读取</button>
+        </div>
+      {:else if themeView === 'select'}
+        {#if themeEditor.site.status === 'disabled'}
+          <div class="theme-callout warn"><b>站点当前已关闭</b><span>可以浏览主题，但需先启用站点才能预览和应用。</span></div>
+        {/if}
+        {#if themeNotice}<div class="ok-note theme-notice">{themeNotice}</div>{/if}
+        {#if themeError}<div class="err-note theme-error">{themeError}</div>{/if}
+        {#if filteredThemeFamilies().length === 0}
+          <div class="theme-state-empty compact">
+            <span class="theme-state-mark">{@render paletteIcon(20)}</span>
+            <b>这个分类暂无可用主题</b>
+            <p>请切换其他站点类型，或升级 GCMS 获取最新主题目录。</p>
+          </div>
+        {:else}
+          <div class="theme-family-grid">
+            {#each filteredThemeFamilies() as family (family.id)}
+              {@const skin = selectedThemeSkin(family)}
+              {@const familyChosen = themeSelectedFamilyId === family.id}
+              {@const thumbTarget = { familyId: family.id, themeId: skin?.id || '' }}
+              {@const thumb = skin ? themeThumbEntry(family.id, skin.id) : null}
+              <article class="theme-family-card" class:selected={familyChosen}>
+                <div class="theme-family-main">
+                  <span
+                    class="theme-family-visual"
+                    use:themeThumbViewport={thumbTarget}
+                    style={`--theme-accent:${themeSkinColor(skin ?? { id: family.id, name: family.name }, 'accent')};--theme-bg:${themeSkinColor(skin ?? { id: family.id, name: family.name }, 'background')}`}
+                  >
+                    {#if thumb?.url && (thumb.visible || thumb.status === 'ready')}
+                      {#key thumb.url}
+                        <iframe
+                          class:ready={thumb.status === 'ready'}
+                          src={thumb.url}
+                          title={`${family.name}真实效果缩略图`}
+                          aria-hidden="true"
+                          tabindex="-1"
+                          loading="lazy"
+                          sandbox="allow-scripts allow-same-origin"
+                          referrerpolicy="strict-origin-when-cross-origin"
+                          onload={() => markThemeThumbLoaded(thumbTarget, thumb.url)}
+                          onerror={() => markThemeThumbFailed(thumbTarget, thumb.url)}
+                        ></iframe>
+                      {/key}
+                    {/if}
+                    <span class="theme-family-fallback" class:hidden={thumb?.status === 'ready'}>
+                      <i></i><i></i><i></i>
+                    </span>
+                    {#if familyChosen}<em>正在选择</em>{:else if themeFamilySkins(family).some((item) => item.id === currentThemeId())}<em>当前家族</em>{/if}
+                  </span>
+                  {#if skin}
+                    <button
+                      class="theme-card-action theme-card-inline-action theme-preview-action"
+                      type="button"
+                      aria-label={`预览 ${skin.name}`}
+                      use:tipAction={themePreviewBusy && themeSelectedSkinId === skin.id ? '正在打开主题预览…' : '在浏览器中预览此主题效果'}
+                      onclick={() => {
+                        chooseThemeSkin(family, skin);
+                        void previewSelectedTheme(skin.id);
+                      }}
+                      disabled={themePreviewBusy || themeBusy || themeEditor.site.status === 'disabled'}
+                    >{@render externalLinkIcon(12)}</button>
+                  {/if}
+                  <span class="theme-family-copy">
+                    <span class="theme-family-title">
+                      <b>{family.name}</b>
+                      {#if skin}
+                        <button
+                          class="theme-card-action apply theme-card-inline-action theme-apply-action"
+                          type="button"
+                          aria-label={skin.id === currentThemeId() ? `${skin.name}，当前主题` : `应用 ${skin.name}`}
+                          onclick={() => {
+                            chooseThemeSkin(family, skin);
+                            void planSiteThemeChange('apply', skin.id);
+                          }}
+                          disabled={skin.id === currentThemeId() || themeBusy || themeEditor.site.status === 'disabled'}
+                        >{skin.id === currentThemeId() ? '当前主题' : themeBusy && themeSelectedSkinId === skin.id ? '检查中…' : '应用此主题'}</button>
+                      {/if}
+                    </span>
+                    <small>{family.description || skin?.description || '适合这一类站点的完整页面风格。'}</small>
+                    <span class="theme-family-meta">
+                      <span>{themeLayoutLabel(skin?.layout || family.layout)} · {themeFamilySkins(family).length} 款配色</span>
+                      <span class="theme-skin-row" aria-label={`${family.name}配色`}>
+                        {#each themeFamilySkins(family) as option (option.id)}
+                          <button
+                            type="button"
+                            class:selected={themeSelectedSkinId === option.id}
+                            class:current={currentThemeId() === option.id}
+                            aria-label={`${option.name}${currentThemeId() === option.id ? '，当前使用' : ''}`}
+                            aria-pressed={themeSelectedSkinId === option.id}
+                            data-tip={`${option.name}${currentThemeId() === option.id ? ' · 当前使用' : ''}`}
+                            style={`--skin-color:${themeSkinColor(option, 'accent')};--skin-bg:${themeSkinColor(option, 'background')}`}
+                            onclick={() => chooseThemeSkin(family, option)}
+                          ><span></span></button>
+                        {/each}
+                      </span>
+                    </span>
+                  </span>
+                  <button class="theme-family-hit" type="button" onclick={() => chooseThemeFamily(family)} aria-label={`选择主题家族 ${family.name}`} aria-pressed={familyChosen}></button>
+                </div>
+              </article>
+            {/each}
+          </div>
+        {/if}
+      {:else if themeView === 'confirm' && themePlan}
+        {@const fromId = plannedCurrentTheme()}
+        {@const toId = plannedTargetTheme()}
+        {@const details = themeMutationDetails(themePlan)}
+        <section class="theme-confirm">
+          <div class="theme-confirm-mark">{@render paletteIcon(24)}</div>
+          <div class="theme-confirm-title">
+            <b>{themeIntent === 'rollback' ? '确认恢复上一个主题？' : '确认应用这个主题？'}</b>
+            <small>{plannedThemeRequiresPassword()
+              ? '站点已对外提供访问，确认时需要验证 GCMS 后台密码。'
+              : '这是尚未上线站点的可恢复外观变更，无需验证密码。'}</small>
+          </div>
+          <div class="theme-change-route">
+            <span><small>当前</small><b>{themeName(fromId)}</b><em>{themeLayoutLabel(details?.from?.layout || themeItem(fromId)?.layout)}</em></span>
+            <strong aria-hidden="true">→</strong>
+            <span class="target"><small>{themeIntent === 'rollback' ? '恢复为' : '应用后'}</small><b>{themeName(toId)}</b><em>{themeLayoutLabel(details?.to?.layout || themeItem(toId)?.layout)}</em></span>
+          </div>
+          <div class="theme-impact">
+            <span>✓ 文章内容不变</span>
+            <span>✓ 导航结构不变</span>
+            <span>✓ 域名与接入不变</span>
+          </div>
+          <p>应用后 GCMS 会刷新页面缓存；使用 Cloudflare 自动同步的站点会继续同步线上版本。完成后可以恢复到这次变更前的主题。</p>
+          {#if themePlanWarnings().length}
+            <div class="theme-warning-list"><b>应用前请留意</b><ul>{#each themePlanWarnings() as warning}<li>{warning}</li>{/each}</ul></div>
+          {/if}
+        </section>
+        {#if themeError}<div class="err-note theme-error">{themeError}</div>{/if}
+      {/if}
+    </div>
+    {#if !themeLoading && themeCatalog && themeState && themeView === 'confirm' && themePlan}
+      {@const footerTargetId = plannedTargetTheme()}
+      <div class="theme-footer">
+        <div><button class="btn ghost" onclick={() => { themePlan = null; themeRequestId = ''; themeView = 'select'; }} disabled={themeBusy}>返回</button></div>
+        <div>
+          <button class="btn soft" onclick={() => void previewSelectedTheme(footerTargetId)} disabled={themeBusy || themePreviewBusy}>{themePreviewBusy ? '正在打开…' : '再次预览 ↗'}</button>
+          <button class="btn primary" onclick={() => void confirmSiteThemeChange()} disabled={themeBusy}>{themeBusy ? (themeIntent === 'rollback' ? '正在恢复…' : '正在应用…') : themeIntent === 'rollback' ? '确认恢复' : '确认应用'}</button>
+        </div>
+      </div>
+    {/if}
+  </div>
+{/if}
+
+{#if deploymentEditor}
+  <div class="mask" role="presentation" onclick={closeSiteDeploymentEditor}></div>
+  <div class="modal wide deployment-modal" role="dialog" aria-modal="true" aria-label={deploymentRebinding ? '更换访问域名' : '绑定访问域名'}>
+    <header class="sheet-head integration-head">
+      <div class="integration-head-title">
+        <span class="integration-head-icon deployment-head-icon">{@render deploymentProviderIcon('server', 19)}</span>
+        <span><b>{deploymentRebinding ? '更换访问域名' : '绑定访问域名'}</b><small>{deploymentEditor.site.name || deploymentEditor.site.slug} · 由 GCMS 配置 DNS 与 Caddy / HTTPS</small></span>
+      </div>
+      <button class="x" onclick={closeSiteDeploymentEditor} disabled={deploymentSaving}>×</button>
+    </header>
+    <div class="sheet-body deployment-body">
+      {#if deploymentLoading}
+        <div class="integration-loading"><span class="gcms-spin"></span><span>正在读取 GCMS 公网访问状态…</span></div>
+      {:else if !deploymentConfig}
+        <div class="deployment-load-error">
+          <div class="err-note">{deploymentError || '暂时无法读取站点公网访问配置。'}</div>
+          <button class="btn" onclick={retrySiteDeploymentEditor}>重新读取</button>
+        </div>
+      {:else}
+        <div class="deployment-wizard">
+          <nav class="deployment-steps" aria-label="绑定访问域名步骤">
+            {#each [{ id: 1, label: '域名' }, { id: 2, label: 'DNS' }, { id: 3, label: '应用绑定' }, { id: 4, label: '验证' }] as step}
+              <div class="deployment-step" class:active={deploymentStep === step.id} class:done={deploymentStep > step.id || (step.id === 4 && publicAccessConfigurationComplete(deploymentConfig))}>
+                <span>{deploymentStep > step.id || (step.id === 4 && publicAccessConfigurationComplete(deploymentConfig)) ? '✓' : step.id}</span>
+                <b>{step.label}</b>
+              </div>
+            {/each}
+          </nav>
+
+          <div class="deployment-stage">
+            {#if deploymentStep === 1}
+              <section class="deployment-panel">
+                <div class="deployment-panel-head"><span>1</span><div><b>输入访问域名</b><small>这是访客以后打开 GCMS 站点的正式网址。</small></div></div>
+                <label class="tfield deployment-primary-field">
+                  <span>主域名 <small>必填</small></span>
+                  <input class="tin" bind:value={deploymentPrimaryDomain} placeholder="cms.example.com" spellcheck="false" autocapitalize="off" autocorrect="off" disabled={deploymentSaving} />
+                </label>
+                <button type="button" class="deployment-expand" aria-expanded={deploymentRedirectOpen} onclick={() => (deploymentRedirectOpen = !deploymentRedirectOpen)}>
+                  <span><b>添加跳转域名</b><small>可选，例如让 www.example.com 跳转到主域名</small></span>
+                  <svg class="deployment-expand-chevron" class:open={deploymentRedirectOpen} width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="m3.5 5.25 3.5 3.5 3.5-3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
+                </button>
+                {#if deploymentRedirectOpen}
+                  <label class="tfield">
+                    <span>跳转域名 <small>每行一个</small></span>
+                    <textarea class="tin deployment-aliases" rows="3" bind:value={deploymentAliasDomains} placeholder="www.example.com" spellcheck="false" autocapitalize="off" disabled={deploymentSaving}></textarea>
+                  </label>
+                  <div class="deployment-toggle-row">
+                    <span><b>301 跳转到主域名</b><small>保留访问路径和查询参数，避免重复页面。</small></span>
+                    <button type="button" class="switch {deploymentRedirectAliases ? 'on' : ''}" aria-label="跳转域名 301 到主域名" aria-pressed={deploymentRedirectAliases} onclick={() => (deploymentRedirectAliases = !deploymentRedirectAliases)}><span></span></button>
+                  </div>
+                {/if}
+                <p class="deployment-stage-note">这一步只检查域名格式，不会修改 DNS 或服务器。</p>
+              </section>
+            {:else if deploymentStep === 2}
+              <section class="deployment-panel">
+                <div class="deployment-panel-head"><span>2</span><div><b>连接域名</b><small>让域名指向当前 GCMS 服务。</small></div></div>
+                {#if (deploymentGlobal?.cloudflare.authorization_count || 0) > 0}
+                  <div class="deployment-provider-card ready">
+                    <span class="deployment-provider-mark">{@render cfMark(20)}</span>
+                    <div><b>Cloudflare 已连接</b><small>GCMS 会按 {deploymentPrimaryDomain} 自动匹配账号与 Zone。</small></div>
+                    <em>{deploymentGlobal?.cloudflare.authorization_count || 0} 份授权</em>
+                  </div>
+                  <div class="deployment-option-list">
+                    <div class="deployment-toggle-row">
+                      <span><b>自动配置 DNS</b><small>安全创建或更新主域名和跳转域名的记录。</small></span>
+                      <button type="button" class="switch {deploymentAutoDns ? 'on' : ''}" aria-label="自动配置 DNS" aria-pressed={deploymentAutoDns} onclick={() => (deploymentAutoDns = !deploymentAutoDns)}><span></span></button>
+                    </div>
+                    <div class="deployment-toggle-row" class:muted={!deploymentAutoDns}>
+                      <span><b>HTTPS 验证后自动开启橙云</b><small>先保持灰云完成源站证书验证，再由 GCMS 自动开启代理。</small></span>
+                      <button type="button" class="switch {deploymentAutoDns && deploymentCloudflareProxy ? 'on' : ''}" aria-label="HTTPS 验证后自动开启 Cloudflare 橙云" aria-pressed={deploymentAutoDns && deploymentCloudflareProxy} disabled={!deploymentAutoDns} onclick={() => (deploymentCloudflareProxy = !deploymentCloudflareProxy)}><span></span></button>
+                    </div>
+                  </div>
+                {:else}
+                  <div class="deployment-provider-card warning">
+                    <span class="deployment-provider-mark">{@render cfMark(20)}</span>
+                    <div><b>还没有 Cloudflare 授权</b><small>可以先添加授权，让 GCMS 自动完成 DNS；也可以手动配置 DNS 后继续。</small></div>
+                  </div>
+                  <div class="deployment-dns-actions">
+                    <button class="btn primary" onclick={() => { closeSiteDeploymentEditor(); void openIntegrationEditor('cloudflare'); }}>添加 Cloudflare 授权</button>
+                    <button class="btn ghost" onclick={() => { deploymentAutoDns = false; deploymentStep = 3; }}>我会手动配置 DNS</button>
+                  </div>
+                {/if}
+                {#if !deploymentAutoDns}
+                  <div class="deployment-manual-note"><b>手动 DNS 模式</b><span>请将 {deploymentPrimaryDomain} 指向当前服务器；Pilot 只会继续配置 Caddy / HTTPS，不会修改 DNS。</span></div>
+                {/if}
+                {#if publicAccessDnsReady(deploymentConfig)}
+                  <div class="deployment-current-state ok"><span>✓</span><div><b>当前 DNS 已连接</b><small>{deploymentConfig.dns?.provider || '已检测到有效解析'}{deploymentConfig.dns?.proxied ? ' · 橙云已开启' : deploymentAutoDns && deploymentCloudflareProxy ? ' · 当前为灰云，HTTPS 验证后自动开启橙云' : ' · 当前为灰云'}</small></div></div>
+                {/if}
+              </section>
+            {:else if deploymentStep === 3}
+              <section class="deployment-panel">
+                <div class="deployment-panel-head"><span>3</span><div><b>确认应用绑定</b><small>GCMS 将配置 Caddy、HTTPS，并验证站点可以公开访问。</small></div></div>
+                <dl class="deployment-review">
+                  <div><dt>主域名</dt><dd>{deploymentPrimaryDomain}</dd></div>
+                  <div><dt>跳转域名</dt><dd>{deploymentRedirectOpen && deploymentAliases().length ? deploymentAliases().join('、') : '未设置'}</dd></div>
+                  <div><dt>DNS</dt><dd>{deploymentAutoDns ? `Cloudflare 自动配置${deploymentCloudflareProxy ? '，验证后开启橙云' : ''}` : '由你手动配置'}</dd></div>
+                  <div><dt>服务器</dt><dd>Caddy / HTTPS 自动配置</dd></div>
+                </dl>
+                <div class="deployment-safety-note"><span>i</span><div><b>不会使用 Workers / Pages 发布</b><small>本次只处理域名、DNS、Caddy 与 HTTPS，不会改动 GCMS 的静态发布设置或站点内容。</small></div></div>
+                <p class="deployment-stage-note">应用前需要输入 GCMS 管理员密码完成一次性授权，密码不会保存。</p>
+              </section>
+            {:else}
+              <section class="deployment-panel deployment-result-panel">
+                {#if publicAccessConfigurationComplete(deploymentConfig)}
+                  <div class="deployment-result success"><span>✓</span><div><b>{publicAccessSuccessTitle(deploymentConfig)}</b><small>{publicAccessSuccessText(deploymentConfig)}</small></div></div>
+                {:else if publicAccessResultState(deploymentConfig) === 'pending'}
+                  <div class="deployment-result pending"><span>…</span><div><b>{publicAccessPendingTitle(deploymentConfig)}</b><small>{publicAccessPendingText(deploymentConfig)}</small></div></div>
+                {:else}
+                  <div class="deployment-result attention"><span>!</span><div><b>{publicAccessAttentionTitle(deploymentConfig)}</b><small>{publicAccessAttentionText(deploymentConfig)}</small></div></div>
+                {/if}
+                <div class="deployment-result-url">
+                  <span>网站地址</span>
+                  <button
+                    type="button"
+                    class="deployment-result-link"
+                    aria-label="在系统浏览器打开网站"
+                    data-tip="在系统浏览器打开网站"
+                    onclick={() => void openUrl(publicAccessRootUrl(deploymentConfig))}
+                  >
+                    <b>{publicAccessRootUrl(deploymentConfig)}</b>
+                    {@render externalLinkIcon(13)}
+                  </button>
+                  <div class="deployment-result-status">
+                    <small class:ok={publicAccessHttpsOk(deploymentConfig)}>{publicAccessResultHint(deploymentConfig)}</small>
+                    {#if !publicAccessConfigurationComplete(deploymentConfig)}
+                      <button
+                        type="button"
+                        class="deployment-result-refresh"
+                        aria-label="重新检查网站访问状态"
+                        data-tip={deploymentPolling ? '正在重新检查…' : '重新检查 DNS、HTTPS 与 Cloudflare 橙云状态'}
+                        disabled={deploymentLoading || deploymentPolling || deploymentSaving}
+                        onclick={() => void recheckSitePublicAccess(true)}
+                      >{@render refreshIcon(deploymentPolling)}</button>
+                    {/if}
+                  </div>
+                </div>
+                {#if deploymentConfig.https?.reason || deploymentConfig.cloudflare_proxy?.error || deploymentMessages.length || deploymentNotice}
+                  <details class="deployment-result-details">
+                    <summary>查看配置详情</summary>
+                    <div>
+                      {#if publicAccessReasonText(deploymentConfig)}<p>{publicAccessReasonText(deploymentConfig)}</p>{/if}
+                      {#if deploymentConfig.cloudflare_proxy?.error}<p>{deploymentConfig.cloudflare_proxy.error}</p>{/if}
+                      {#if deploymentMessages.length}
+                        <ul class="deployment-messages">{#each deploymentMessages as message}<li>{message}</li>{/each}</ul>
+                      {/if}
+                      {#if deploymentNotice}<p>{deploymentNotice}</p>{/if}
+                    </div>
+                  </details>
+                {/if}
+              </section>
+            {/if}
+            {#if deploymentError}<div class="err-note deployment-error">{deploymentError}</div>{/if}
+          </div>
+
+          <footer class="deployment-footer">
+            <div>
+              {#if deploymentStep === 1}
+                <button class="btn ghost" onclick={closeSiteDeploymentEditor} disabled={deploymentSaving}>取消</button>
+              {:else if deploymentStep < 4}
+                <button class="btn ghost" onclick={previousSiteDeploymentStep} disabled={deploymentSaving}>上一步</button>
+              {:else}
+                <button class="deployment-change-domain" onclick={() => { deploymentError = ''; deploymentApplied = false; deploymentRebinding = true; deploymentStep = 1; }} disabled={deploymentSaving}>
+                  {@render backChevronIcon(13)}
+                  <span>修改域名</span>
+                </button>
+              {/if}
+            </div>
+            <div>
+              {#if deploymentStep === 1 || deploymentStep === 2}
+                <button class="btn primary" onclick={nextSiteDeploymentStep} disabled={deploymentSaving || (deploymentStep === 1 && !deploymentPrimaryDomain.trim())}>下一步</button>
+              {:else if deploymentStep === 3}
+                <button class="btn primary" onclick={confirmSitePublicAccess} disabled={deploymentSaving}>{deploymentSaving ? '正在配置…' : '确认并开始配置'}</button>
+              {:else}
+                <button class="btn" onclick={closeSiteDeploymentEditor}>完成</button>
+              {/if}
+            </div>
+          </footer>
+        </div>
+      {/if}
+    </div>
+  </div>
 {/if}
 
 <!-- 密钥输入 -->
@@ -8105,7 +13349,7 @@
       <button class="ctx-item" role="menuitem" onclick={() => { switcherOpen = false; openSshEdit(c); }}>编辑连接…</button>
     {:else if c.kind === 'gcms'}
       <div class="ctx-div"></div>
-      <button class="ctx-item" role="menuitem" onclick={() => { switcherOpen = false; selectConn(c.id); refreshSites(); }}>刷新站点</button>
+      <button class="ctx-item" role="menuitem" onclick={() => { switcherOpen = false; refreshSites(c.id); }} disabled={!!connectionSyncing[c.id]}>检查更新并刷新站点</button>
       {#if packUpdates[c.id]}
         <button class="ctx-item" role="menuitem" onclick={() => upgradePack(c.id)} disabled={!!packUpdating[c.id]}>升级技能包 {packUpdates[c.id]}</button>
       {/if}
@@ -8114,7 +13358,12 @@
       <button class="ctx-item" role="menuitem" onclick={() => openConnRemark(c)}>{c.remark?.trim() ? '修改备注…' : '设置备注…'}</button>
     {/if}
     <div class="ctx-div"></div>
-    <button class="ctx-item danger" role="menuitem" onclick={() => { switcherOpen = false; removeConn(c.id); }}>删除连接…</button>
+    <button
+      class="ctx-item danger"
+      role="menuitem"
+      data-keep-connection-menu
+      onclick={(e) => { e.stopPropagation(); void removeConn(c.id, true); }}
+    >删除连接…</button>
   </div>
 {/if}
 
@@ -8794,6 +14043,18 @@
   .ssh-target { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--rail); color: var(--dim); font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
   .ssh-target :global(svg) { color: var(--faint); flex: none; }
   .ssh-target :global(svg.distro) { transform: translateY(1px); }
+  .gcms-build-target { display: inline-flex; align-items: center; gap: 7px; min-width: 0; padding: 3px 7px 3px 4px; color: var(--text); }
+  .gcms-build-target > span { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+  .gcms-build-target b { font-size: 12px; white-space: nowrap; }
+  .gcms-build-target small { color: var(--faint); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .workspace-picker { min-width: 0; display: inline-flex; align-items: center; gap: 2px; }
+  .workspace-folder { min-width: 0; max-width: 210px; height: 27px; display: inline-flex; align-items: center; gap: 6px; padding: 0 9px; border: 1px solid var(--border); border-radius: 999px; background: var(--rail); color: var(--dim); font: inherit; font-size: 11.5px; cursor: pointer; }
+  .workspace-folder:hover { background: #f4f2ed; color: var(--text); }
+  .workspace-folder.selected { color: var(--text); background: #f7f6f2; }
+  .workspace-folder svg { flex: none; color: var(--faint); }
+  .workspace-folder span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .workspace-clear { width: 23px; height: 23px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--faint); font-size: 15px; line-height: 1; cursor: pointer; }
+  .workspace-clear:hover { background: #eeeae3; color: var(--text); }
   .ssh-host { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .92em; background: var(--accent-soft); border-radius: 5px; padding: 1px 5px; }
   .ssh-key-row { display: flex; gap: 6px; align-items: center; }
   .ssh-key-row .tin { flex: 1; min-width: 0; }
@@ -8866,8 +14127,10 @@
   /* 待更新图标：锚在侧栏右上角（跟随 rail 右边界），静默检查发现新版时出现。 */
   /* 待更新指示：并入 win-tools，样式同折叠/搜索（无底、灰色 + 悬停高亮），仅右上角一个柔和强调色小点。 */
   .wt.upd { position: relative; }
+  .wt.upd.active { background: rgba(0, 0, 0, .07); color: var(--text); }
   .wt.upd:disabled { opacity: .55; }
   .upd-dot { position: absolute; top: 3px; right: 4px; width: 5px; height: 5px; border-radius: 50%; background: var(--accent); border: 1.5px solid var(--rail); }
+  .upd-count { position: absolute; top: -1px; right: -3px; min-width: 12px; height: 12px; padding: 0 3px; box-sizing: border-box; display: inline-flex; align-items: center; justify-content: center; border: 1.5px solid var(--rail); border-radius: 999px; background: var(--accent); color: #fff; font-size: 7.5px; font-weight: 750; line-height: 1; }
   .upd-spin { animation: upd-spin .7s linear infinite; transform-origin: center; }
   @keyframes upd-spin { to { transform: rotate(360deg); } }
   /* 更新进度小药丸：点更新后顶部居中显示 状态文字 + 进度条，直到重启。 */
@@ -8914,6 +14177,7 @@
   /* 线程头右上角：站点域名 + ↗，点开站点 */
   .th-open { flex: none; display: inline-flex; align-items: center; gap: 4px; background: none; border: none; padding: 4px 6px; border-radius: 7px; color: var(--accent); font: inherit; font-size: 12.5px; cursor: pointer; }
   .th-open:hover { background: #f1efe9; }
+  .th-open:disabled { opacity: .5; cursor: wait; }
   .th-open svg { flex: none; }
   /* 任务类型子组标签 */
   /* padding-left 19：让对话行的厂商图标中心对齐分组头里的站点图标中心
@@ -9009,7 +14273,7 @@
   /* ---- 主区 ---- */
   .main { flex: 1; position: relative; display: flex; flex-direction: column; min-width: 0; padding-top: 0; }
   /* 吐司：pre-wrap 让「——详情——」多行错误可读；err 形态限高可滚动（安装失败输出末尾等） */
-  .flash { position: absolute; top: 40px; left: 50%; transform: translateX(-50%); z-index: 40; background: #14231a; color: #fff; padding: 9px 16px; border-radius: 10px; font-size: 13px; box-shadow: var(--shadow); max-width: 70%; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .flash { position: fixed; top: 40px; left: 50%; transform: translateX(-50%); z-index: 1200; background: #14231a; color: #fff; padding: 9px 16px; border-radius: 10px; font-size: 13px; box-shadow: var(--shadow); max-width: 70%; white-space: pre-wrap; overflow-wrap: anywhere; -webkit-app-region: no-drag; }
   .flash.err { max-height: 42vh; overflow-y: auto; }
   /* 自定义右键菜单（替换 WKWebView 默认英文菜单） */
   .ctx-menu { position: fixed; z-index: 120; min-width: 148px; background: #fff; border: 1px solid var(--border); border-radius: 11px; box-shadow: 0 12px 32px rgba(30,25,15,.16); padding: 5px; animation: pop .1s ease-out; }
@@ -9017,11 +14281,6 @@
   .ctx-item:hover:not(:disabled) { background: #f1efe9; }
   .ctx-item:disabled { color: var(--faint); cursor: default; }
   .ctx-div { height: 1px; background: var(--border); margin: 4px 6px; }
-  /* 全局 tips 浮层（fixed，不受滚动容器裁剪） */
-  .tipbox { position: fixed; z-index: 130; transform: translate(-50%, -100%); background: #26241f; color: #fff; font-size: 11px; line-height: 1.45; padding: 5px 9px; border-radius: 7px; width: max-content; max-width: 280px; white-space: pre-line; pointer-events: none; text-align: left; box-shadow: 0 5px 16px rgba(0, 0, 0, .18); animation: tipin .12s ease-out .3s both; }
-  .tipbox.below { transform: translate(-50%, 0); }
-  .tipbox.end { transform: translate(-100%, -100%); }
-  .tipbox.below.end { transform: translate(-100%, 0); }
   .imgtip { position: fixed; z-index: 130; transform: translate(-50%, -100%); padding: 5px; border-radius: 10px; background: #fff; border: 1px solid rgba(0, 0, 0, .1); box-shadow: 0 8px 24px rgba(0, 0, 0, .18); pointer-events: none; visibility: hidden; }
   .imgtip.ready { visibility: visible; animation: tipin .12s ease-out both; }
   .imgtip.below { transform: translate(-50%, 0); }
@@ -9035,9 +14294,9 @@
 
   /* safe center：内容比可视区高时退回顶对齐可滚动，避免居中把顶部裁掉。 */
   .center { flex: 1; display: flex; align-items: safe center; justify-content: center; overflow-y: auto; padding: 24px; }
-  /* 启动页：上下居中、左右铺满主区域宽度。 */
+  /* 启动页：大屏不无限拉宽，入口区与下方的新站引导共用同一条 920px 内容基线。 */
   .center.launch-center { align-items: safe center; justify-content: flex-start; padding: 24px 40px; }
-  .center.launch-center .launcher { width: 100%; }
+  .center.launch-center .launcher { width: min(920px, 100%); margin-inline: auto; }
   .hero-card { text-align: center; max-width: 460px; }
   .hero-mark { display: flex; justify-content: center; margin-bottom: 6px; }
   .hero-card h1 { font-size: 22px; margin: 12px 0 8px; }
@@ -9065,14 +14324,118 @@
   .launcher h1 { font-size: 26px; margin: 0 0 6px; letter-spacing: -.01em; }
   .launcher .sub { color: var(--dim); margin: 0 0 22px; }
   .task-seg { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 30px; }
-  .task-seg button { text-align: left; background: var(--card); border: 1px solid var(--border2); border-radius: 12px; padding: 11px 13px; cursor: pointer; display: flex; align-items: center; gap: 10px; transition: border-color .12s, background .12s; }
-  .task-seg button:hover { border-color: #cfccc2; }
-  .task-seg button.on { border-color: var(--accent); }
+  .launcher-task { position: relative; min-width: 0; min-height: 54px; border: 1px solid var(--border2); border-radius: 12px; background: var(--card); transition: border-color .12s, background .12s; }
+  .launcher-task:hover { border-color: #cfccc2; }
+  .launcher-task.on { border-color: var(--accent); }
+  .launcher-task-main { width: 100%; height: 100%; min-height: 52px; box-sizing: border-box; text-align: left; background: transparent; border: 0; border-radius: inherit; padding: 11px 13px; cursor: pointer; display: flex; align-items: center; gap: 10px; color: inherit; font: inherit; }
+  .launcher-task.has-mode .launcher-task-main { padding-right: 56px; }
   .ts-ic { flex: none; width: 30px; height: 30px; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; background: #edecef; color: var(--dim); transition: background .12s, color .12s; }
-  .task-seg button.on .ts-ic { color: var(--accent); }
+  .launcher-task.on .ts-ic { color: var(--accent); }
   .ts-txt { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
   .task-seg b { font-size: 13.5px; }
   .task-seg small { color: var(--dim); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .launcher-sitebuild-mode { position: absolute; z-index: 3; top: 10px; right: 8px; max-width: 48px; }
+  .launcher-sitebuild-mode :global(.dd-trigger.compact) {
+    --chip-h: 19px; max-width: 48px; padding: 0 4px 0 6px; gap: 1px; border-color: transparent; border-radius: 999px;
+    background: #f1efe9; color: var(--accent); font-size: 9.5px; font-weight: 600;
+  }
+  .launcher-sitebuild-mode :global(.dd-trigger.compact:hover),
+  .launcher-sitebuild-mode :global(.dd-trigger.compact.open) { background: #e9e6df; color: var(--accent); }
+  .launcher-sitebuild-mode :global(.dd-label) { text-overflow: clip; }
+  .launcher-sitebuild-mode :global(.dd-chev) { width: 9px; height: 9px; color: currentColor; }
+
+  /* GCMS 新站建设：模式入口收进主任务卡，下面只保留当前模式真正需要的内容。
+     两种入口共用 siteBuildDraft，切换模式只换呈现，不清空用户已经填写的内容。 */
+  .sitebuild-shared-context { width: min(660px, 100%); margin: -6px auto 9px; display: flex; align-items: center; gap: 8px; color: var(--dim); }
+  .sitebuild-context-check { flex: none; width: 19px; height: 19px; display: inline-grid; place-items: center; border-radius: 50%; background: #e6f2e9; color: #2d7a4b; font-size: 10px; font-weight: 700; }
+  .sitebuild-shared-context > span:nth-child(2) { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 7px; }
+  .sitebuild-shared-context b { flex: none; color: var(--text); font-size: 10.5px; }
+  .sitebuild-shared-context small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-size: 10.5px; }
+  .sitebuild-shared-context button { flex: none; border: 0; background: none; color: var(--accent); padding: 2px 3px; font-size: 10.5px; cursor: pointer; }
+  .sitebuild-shared-context button:hover { text-decoration: underline; }
+
+  .sitebuild-guide {
+    width: min(920px, 100%); margin: 0 auto; overflow: hidden; border: 1px solid var(--border2); border-radius: 14px; background: #fff;
+    box-shadow: 0 8px 26px rgba(30, 25, 15, .05);
+  }
+  .sitebuild-progress { display: flex; align-items: center; padding: 13px 20px; border-bottom: 1px solid var(--border); background: #fbfaf7; }
+  .sitebuild-progress button { flex: none; display: inline-flex; align-items: center; gap: 6px; border: 0; background: none; color: var(--faint); padding: 0; cursor: pointer; }
+  .sitebuild-progress button:disabled { cursor: default; }
+  .sitebuild-progress button span { width: 22px; height: 22px; display: inline-grid; place-items: center; border-radius: 50%; background: #ebe9e3; color: #9c978d; font-size: 11px; font-weight: 650; }
+  .sitebuild-progress button b { font-size: 11.5px; font-weight: 550; white-space: nowrap; }
+  .sitebuild-progress button.active { color: var(--text); }
+  .sitebuild-progress button.active span { background: var(--accent); color: #fff; }
+  .sitebuild-progress button.done { color: #3b7b54; }
+  .sitebuild-progress button.done span { background: #e6f2e9; color: #2d7a4b; }
+  .sitebuild-progress > i { flex: 1; min-width: 18px; height: 1px; margin: 0 11px; background: var(--border2); }
+
+  .sitebuild-step-panel { padding: 19px 22px 17px; }
+  .sitebuild-step-head { display: grid; grid-template-columns: max-content minmax(0, 1fr); column-gap: 9px; row-gap: 5px; margin-bottom: 18px; }
+  .sitebuild-step-head > div { min-width: 0; display: contents; }
+  .sitebuild-step-head > div > span { grid-column: 1; grid-row: 1; align-self: start; margin-top: 5px; color: var(--accent); font: 600 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .04em; }
+  .sitebuild-step-head h2 { grid-column: 2; grid-row: 1; margin: 0; font-size: 17px; line-height: 1.35; letter-spacing: -.01em; }
+  .sitebuild-step-head > p { grid-column: 2; grid-row: 2; margin: 0; color: var(--dim); font-size: 11.5px; line-height: 1.55; text-align: left; }
+  .sitebuild-field { min-width: 0; display: grid; align-content: start; gap: 7px; }
+  .sitebuild-field + .sitebuild-field { margin-top: 14px; }
+  .sitebuild-field > span { display: flex; align-items: baseline; flex-wrap: wrap; gap: 7px; line-height: 1.35; }
+  .sitebuild-field > span b { font-size: 12.5px; font-weight: 600; }
+  .sitebuild-field > span small { color: var(--faint); font-size: 10.5px; }
+  .sitebuild-field input.tin { height: 36px; font-size: 13px; }
+  .sitebuild-field input.error { border-color: #d96b55; background: #fffafa; }
+  .sitebuild-field textarea { width: 100%; min-height: 58px; resize: vertical; padding: 9px 11px; font-size: 13px; line-height: 1.55; }
+  .sitebuild-goal { margin-bottom: 15px; }
+  .sitebuild-error { color: var(--err); font-size: 10.5px; line-height: 1.45; }
+  .sitebuild-two-col { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 15px; }
+  .sitebuild-two-col .sitebuild-field { margin-top: 0; }
+  .sitebuild-two-col + .sitebuild-field { margin-top: 20px; }
+
+  .sitebuild-choice-grid { display: grid; gap: 7px; }
+  .sitebuild-choice-grid.kind-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .sitebuild-choice-grid.style-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); margin-bottom: 15px; }
+  .sitebuild-choice-grid button {
+    min-width: 0; display: grid; gap: 2px; padding: 9px 10px; border: 1px solid var(--border); border-radius: 9px; background: #faf9f6;
+    color: var(--text); text-align: left; cursor: pointer;
+  }
+  .sitebuild-choice-grid button:hover { border-color: #cec9bd; background: #fff; }
+  .sitebuild-choice-grid button.active { border-color: #c69b8d; background: #fff8f5; box-shadow: inset 0 0 0 1px rgba(160, 60, 43, .06); }
+  .sitebuild-choice-grid button b { font-size: 11.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sitebuild-choice-grid button small { color: var(--faint); font-size: 9.5px; line-height: 1.35; }
+
+  .sitebuild-chips { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; min-height: 36px; }
+  .sitebuild-chips button { border: 1px solid var(--border); border-radius: 999px; background: #faf9f6; color: var(--dim); padding: 4px 10px; font-size: 11px; cursor: pointer; }
+  .sitebuild-chips button:hover { color: var(--text); border-color: #cec9bd; }
+  .sitebuild-chips button.active { color: var(--accent); border-color: #c69b8d; background: #fff7f3; }
+  .language-chips { flex-wrap: nowrap; gap: 4px; }
+  .language-chips button { flex: 1 1 0; min-width: 0; padding-inline: 6px; font-size: 10px; white-space: nowrap; }
+  .page-chips { min-height: auto; }
+  .sitebuild-inline-note { margin: 14px 0 0; padding: 8px 10px; border-radius: 8px; background: #f7f6f2; color: var(--dim); font-size: 10.5px; line-height: 1.55; }
+  .sitebuild-theme-note { display: flex; align-items: center; gap: 10px; margin-top: 14px; padding: 9px 11px; border: 1px solid #d8e6db; border-radius: 9px; background: #f4faf5; }
+  .sitebuild-theme-note > span { flex: none; width: 26px; height: 26px; display: inline-grid; place-items: center; border-radius: 7px; background: #fff; color: #34704a; box-shadow: var(--shadow-sm); }
+  .sitebuild-theme-note p { min-width: 0; display: grid; gap: 1px; margin: 0; }
+  .sitebuild-theme-note b { font-size: 11.5px; }
+  .sitebuild-theme-note small { color: var(--dim); font-size: 10.5px; line-height: 1.45; }
+
+  .sitebuild-content-plans { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
+  .sitebuild-content-plans button { min-width: 0; display: flex; align-items: flex-start; gap: 8px; padding: 9px 10px; border: 1px solid var(--border); border-radius: 9px; background: #faf9f6; color: var(--text); text-align: left; cursor: pointer; }
+  .sitebuild-content-plans button:hover { border-color: #cec9bd; background: #fff; }
+  .sitebuild-content-plans button.active { border-color: #c69b8d; background: #fff8f5; }
+  .sitebuild-content-plans button > span:last-child { min-width: 0; display: grid; gap: 2px; }
+  .sitebuild-content-plans b { font-size: 11.5px; }
+  .sitebuild-content-plans small { color: var(--faint); font-size: 9.5px; line-height: 1.4; }
+  .sitebuild-radio { flex: none; width: 13px; height: 13px; margin-top: 2px; border: 1px solid #bbb6ab; border-radius: 50%; background: #fff; box-shadow: inset 0 0 0 3px #fff; }
+  .sitebuild-content-plans button.active .sitebuild-radio { border-color: var(--accent); background: var(--accent); }
+  .sitebuild-review { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px 18px; margin: 13px 0; padding: 9px 11px; border-radius: 9px; background: #f7f6f2; }
+  .sitebuild-review > div { min-width: 0; display: flex; align-items: baseline; gap: 8px; padding: 4px 0; }
+  .sitebuild-review span { flex: none; width: 62px; color: var(--faint); font-size: 10px; }
+  .sitebuild-review b { min-width: 0; color: var(--text); font-size: 11px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sitebuild-runtime { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border); }
+  .sitebuild-runtime > div { display: flex; align-items: center; gap: 3px; flex: none; }
+
+  .sitebuild-guide-footer { display: flex; align-items: center; gap: 8px; padding: 11px 22px; border-top: 1px solid var(--border); background: #fbfaf7; }
+  .sitebuild-guide-footer > span { flex: 1; color: var(--faint); font-size: 10.5px; text-align: center; }
+  .sitebuild-guide-footer .btn { min-width: 76px; }
+  .sitebuild-guide-footer .sitebuild-submit { min-width: 156px; }
+  .sitebuild-safe-note { margin: 0; padding: 0 22px 11px; background: #fbfaf7; color: var(--faint); font-size: 10.5px; line-height: 1.5; text-align: right; }
 
   /* 表单控件统一尺度（桌面紧凑密度）：13px 字 + 5px 10px 内边距 + 8px 圆角，单行高约 30px。
      composer 聊天输入框不吃这套（下方 composer 专属规则钉回 14px 大字）。 */
@@ -9173,12 +14536,16 @@
     .thread-head.managed-head::before { transform: scaleY(.5); }
   }
   /* 侧栏收起：红绿灯 + 悬浮的折叠/搜索钮压在内容区左上，页头统一左让位（全部视图受益）。
-     mac 窗口态 140px（红绿灯≈70 + 两钮）；全屏/Windows 无红绿灯（钮在 left:12），100px 够。 */
+     发现更新时顶部临时增加更新入口，页头再让出一个按钮宽度，避免压住页面标题图标。 */
   .app.rail-collapsed .thread-head { padding-left: 140px; }
   .app.rail-collapsed.fs .thread-head, .app.rail-collapsed.win .thread-head { padding-left: 100px; }
+  .app.rail-collapsed.top-update-visible .thread-head { padding-left: 167px; }
+  .app.rail-collapsed.top-update-visible.fs .thread-head,
+  .app.rail-collapsed.top-update-visible.win .thread-head { padding-left: 127px; }
   /* 页头右侧操作聚拢成组贴右（th-info 撑开剩余空间，组内间距统一） */
   .th-actions { display: flex; align-items: center; gap: 8px; flex: none; }
-  .th-info b { display: block; font-size: 15px; line-height: 1.35; }
+  .th-info { min-width: 0; flex: 1 1 auto; overflow: hidden; }
+  .th-info b { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; line-height: 1.35; }
   .th-info b.th-title { display: inline-flex; align-items: center; gap: 7px; }
   .th-title :global(svg) { flex: none; color: var(--dim); }
   .th-info small { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; color: var(--dim); font-size: 12px; margin-top: 2px; }
@@ -9255,6 +14622,935 @@
   @keyframes wldot { 0%, 45% { opacity: 0; transform: scale(.2); } 62% { opacity: 1; transform: scale(1); } 82% { opacity: 1; } 100% { opacity: 0; } }
   @media (prefers-reduced-motion: reduce) { .wl-trace, .wl-dot { animation: none; } .wl-trace { stroke-dashoffset: 0; } .wl-dot { opacity: 1; } }
   @keyframes pulse { 50% { opacity: .35; } }
+
+  /* 站点视图：Pilot 原生读取全局接入与单站摘要；复杂配置仍由 GCMS 作为唯一事实源。 */
+  .sites-head-actions .btn { display: inline-flex; align-items: center; gap: 5px; }
+  .sites-global-menu { position: relative; flex: none; }
+  .sites-global-triggers { height: 30px; display: inline-flex; align-items: center; gap: .46rem; }
+  .sites-global-trigger { width: 30px; height: 30px; flex: none; padding: 0; border: 0; border-radius: 7px; background: transparent; display: grid; place-items: center; color: var(--dim); cursor: pointer; opacity: .38; filter: grayscale(1); transition: color .15s, opacity .15s, transform .15s, box-shadow .15s, filter .15s; }
+  .sites-global-trigger:hover,
+  .sites-global-trigger[aria-expanded="true"] { opacity: .62; transform: translateY(-1px); }
+  .sites-global-trigger:focus-visible { outline: none; box-shadow: 0 0 0 3px rgb(166 57 42 / 12%); }
+  .sites-global-trigger.configured { opacity: .96; filter: none; }
+  .sites-global-trigger.telegram.configured { color: #5d91ad; }
+  .sites-global-popover { position: absolute; z-index: 80; top: calc(100% + .5rem); right: 0; width: min(430px, calc(100vw - 2rem)); max-height: min(700px, calc(100vh - 86px)); overflow: auto; box-sizing: border-box; display: grid; gap: .68rem; padding: .78rem; border: 1px solid var(--border); border-radius: 9px; background: var(--card); box-shadow: 0 18px 42px rgb(27 26 23 / 14%); }
+  .sites-global-popover.google-oauth-popover { width: min(460px, calc(100vw - 32px)); }
+  .integration-loading.compact { min-height: 116px; }
+  .google-pop-tabs { display: flex; gap: .22rem; padding: .2rem; border-radius: 8px; background: #efede7; }
+  .google-pop-tabs button { min-width: 0; flex: 1; min-height: 30px; display: inline-flex; align-items: center; justify-content: center; gap: .38rem; padding: .35rem .5rem; border: 0; border-radius: 6px; background: transparent; color: var(--dim); font: inherit; font-size: .72rem; font-weight: 800; white-space: nowrap; cursor: pointer; }
+  .google-pop-tabs button > span { display: inline-grid; place-items: center; }
+  .google-pop-tabs button.active { background: #fff; color: var(--text); box-shadow: 0 1px 4px rgb(27 26 23 / 8%); }
+  .google-pop-panel { display: grid; gap: .82rem; padding: .62rem .18rem .16rem; }
+  .google-pop-desc, .google-empty { margin: 0; color: var(--dim); font-size: .76rem; line-height: 1.55; }
+  .google-oauth-ready-box { display: grid; grid-template-columns: 30px minmax(0, 1fr) 28px; align-items: center; gap: 9px; padding: 10px 11px; border: 1px solid #e9e6de; border-radius: 9px; background: #fbfaf7; }
+  .google-ready-check { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 999px; background: #e8f5ee; color: #14945b; }
+  .google-ready-check svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 2.3; stroke-linecap: round; stroke-linejoin: round; }
+  .google-oauth-ready-box > span:nth-child(2) { min-width: 0; }
+  .google-oauth-ready-box strong, .google-oauth-ready-box small { display: block; }
+  .google-oauth-ready-box strong { font-size: 12.5px; }
+  .google-oauth-ready-box small { margin-top: 1px; color: var(--dim); font-size: 10.5px; }
+  .google-oauth-view { width: 28px; height: 28px; padding: 0; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--dim); display: grid; place-items: center; cursor: pointer; }
+  .google-oauth-view:hover, .google-oauth-view.active { border-color: #e4dfd4; background: #f2f0ea; color: var(--text); }
+  .google-oauth-view svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .google-oauth-details { display: grid; gap: 8px; padding-top: 9px; border-top: 1px solid #eeeae1; }
+  .google-oauth-details dl { display: grid; gap: 7px; margin: 0; padding: 9px 10px; border: 1px solid #ece9e1; border-radius: 8px; background: #faf9f6; }
+  .google-oauth-details dl > div { min-width: 0; }
+  .google-oauth-details dt { color: var(--faint); font-size: 9.5px; font-weight: 700; text-transform: uppercase; }
+  .google-oauth-details dd { margin: 1px 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dim); font-size: 10.5px; font-weight: 600; }
+  .google-oauth-edit-stack, .google-oauth-guides { display: grid; gap: 8px; }
+  .google-oauth-guide-card { display: grid; gap: 6px; padding: 9px 10px; border: 1px solid #e6e1d8; border-radius: 9px; background: #fbfaf7; color: var(--dim); font-size: 10.5px; line-height: 1.5; }
+  .google-oauth-guide-card > strong { color: var(--text); font-size: 11.5px; line-height: 1.35; }
+  .google-oauth-guide-card ol { display: grid; gap: 4px; margin: 0; padding-left: 18px; }
+  .google-oauth-guide-card li { padding-left: 1px; }
+  .google-oauth-guide-card li::marker { color: var(--accent); font-weight: 800; }
+  .google-guide-link { display: inline-flex; align-items: center; gap: 2px; padding: 0; border: 0; background: transparent; color: var(--accent); font: inherit; font-weight: 800; cursor: pointer; }
+  .google-guide-link:hover { text-decoration: underline; text-underline-offset: 2px; }
+  .google-guide-project { margin: 0; color: var(--dim); font-size: 10px; }
+  .google-guide-project b { color: var(--text); font-variant-numeric: tabular-nums; }
+  .google-api-guide-list { display: grid; gap: 1px; }
+  .google-api-guide-item { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 6px 0; border: 0; border-top: 1px solid #eee9e0; background: transparent; color: var(--accent); text-align: left; font: inherit; cursor: pointer; }
+  .google-api-guide-item:first-child { border-top: 0; }
+  .google-api-guide-item > span:first-child { min-width: 0; }
+  .google-api-guide-item b, .google-api-guide-item small { display: block; }
+  .google-api-guide-item b { font-size: 10.5px; line-height: 1.35; }
+  .google-api-guide-item small { margin-top: 1px; color: var(--dim); font-size: 9.5px; line-height: 1.4; font-weight: 500; }
+  .google-api-guide-item:hover b { text-decoration: underline; text-underline-offset: 2px; }
+  .external-link-affordance { flex: none; width: 28px; height: 28px; box-sizing: border-box; display: inline-grid; place-items: center; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--dim); transition: color .15s ease, background .15s ease, border-color .15s ease, transform .15s ease; }
+  .external-link-affordance > svg { display: block; }
+  .google-api-guide-item:hover .external-link-affordance,
+  .google-api-guide-item:focus-visible .external-link-affordance,
+  .cloudflare-token-label > button:hover .external-link-affordance,
+  .cloudflare-token-label > button:focus-visible .external-link-affordance { border-color: #e2ddd3; background: #f3f0ea; color: var(--accent); }
+  .google-api-guide-item:active .external-link-affordance,
+  .cloudflare-token-label > button:active .external-link-affordance { transform: translateY(1px); }
+  .integration-section > .google-oauth-guides { margin-top: 2px; }
+  .google-oauth-form { display: grid; gap: 8px; padding: 10px; border: 1px solid #ece9e1; border-radius: 9px; background: #faf9f6; }
+  .google-oauth-form label { display: grid; gap: 4px; color: var(--dim); font-size: 10.5px; font-weight: 700; }
+  .google-oauth-form input { width: 100%; min-height: 34px; box-sizing: border-box; padding: 7px 9px; border: 1px solid var(--border2); border-radius: 7px; outline: 0; background: #fff; color: var(--text); font: inherit; font-size: 11.5px; }
+  .google-oauth-form input:focus { border-color: #b8b1a5; box-shadow: 0 0 0 3px rgb(65 57 43 / 6%); }
+  .google-oauth-form-actions, .google-connect-actions, .popover-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .google-oauth-save, .google-oauth-cancel, .google-connect-add { min-height: 31px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 6px 10px; border: 1px solid #dfd9ce; border-radius: 8px; background: #fff; color: var(--accent); font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; }
+  .google-oauth-save:hover, .google-oauth-cancel:hover, .google-connect-add:hover { background: #f5f1ec; }
+  .google-oauth-save:disabled, .google-connect-add.disabled { opacity: .48; cursor: default; }
+  .google-oauth-save.wide { width: 100%; }
+  .google-account-scope { display: grid; gap: 8px; padding-top: 10px; border-top: 1px solid #ece9e1; }
+  .google-account-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .google-account-head strong { font-size: 12.5px; }
+  .google-account-head span { color: var(--faint); font-size: 10.5px; }
+  .google-account-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+  .google-account-list li { min-width: 0; display: grid; grid-template-columns: 28px minmax(0, 1fr); align-items: center; gap: 8px; padding: 7px 8px; border: 1px solid #ece9e1; border-radius: 8px; background: #faf9f6; }
+  .google-account-avatar { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 999px; background: #526b76; color: #fff; font-size: 12px; }
+  .google-account-list li > span:last-child { min-width: 0; }
+  .google-account-list strong, .google-account-list small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .google-account-list strong { font-size: 11.5px; }
+  .google-account-list small { margin-top: 1px; color: var(--faint); font-size: 9.5px; }
+  .google-range-copy { display: grid; gap: 3px; }
+  .google-range-copy strong { font-size: 12.5px; }
+  .google-range-copy span { color: var(--dim); font-size: 10.5px; line-height: 1.45; }
+  .google-range-form { display: grid; gap: 9px; padding: 10px; border: 1px solid #ece9e1; border-radius: 9px; background: #faf9f6; }
+  .google-range-form > p { margin: 0; color: var(--dim); font-size: 10.5px; }
+  .simple-global-pop { display: grid; gap: 10px; }
+  .simple-global-head { display: flex; align-items: center; gap: 9px; }
+  .simple-global-head > div { min-width: 0; }
+  .simple-global-head strong, .simple-global-head small { display: block; }
+  .simple-global-head strong { font-size: 12.5px; }
+  .simple-global-head small { margin-top: 1px; color: var(--dim); font-size: 10.5px; }
+  .simple-global-pop > p { margin: 0; color: var(--dim); font-size: 11px; line-height: 1.55; }
+  .cloudflare-auth-list { display: grid; gap: 6px; }
+  .cloudflare-auth-item { min-width: 0; display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 7px 8px; border: 1px solid #ece9e1; border-radius: 8px; background: #faf9f6; }
+  .cloudflare-auth-item-icon { color: #f38020; }
+  .cloudflare-auth-item > span:nth-child(2) { min-width: 0; }
+  .cloudflare-auth-item strong, .cloudflare-auth-item small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cloudflare-auth-item strong { font-size: 11px; }
+  .cloudflare-auth-item small { color: var(--faint); font-size: 9.5px; }
+  .cloudflare-auth-item b { color: var(--dim); font-size: 9.5px; }
+  .cloudflare-auth-remove { width: 24px; height: 24px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--faint); font: inherit; font-size: 17px; line-height: 1; cursor: pointer; }
+  .cloudflare-auth-remove:hover { background: var(--err-soft); color: var(--err); }
+  .cloudflare-auth-remove:disabled { opacity: .4; cursor: default; }
+  .cloudflare-empty { display: grid; gap: 2px; padding: 9px 10px; border: 1px dashed var(--border2); border-radius: 8px; background: #faf9f6; }
+  .cloudflare-empty b { font-size: 11.5px; }
+  .cloudflare-empty small { color: var(--dim); font-size: 10px; }
+  .cloudflare-auth-form { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr); gap: 8px; padding-top: 9px; border-top: 1px solid #ece9e1; }
+  .cloudflare-auth-form label { min-width: 0; display: grid; gap: 4px; color: var(--dim); font-size: 10.5px; font-weight: 700; }
+  .cloudflare-auth-form label > span { min-height: 16px; display: flex; align-items: center; gap: 4px; }
+  .cloudflare-auth-form label small { color: var(--faint); font-size: 9.5px; font-weight: 500; }
+  .cloudflare-auth-field { min-width: 0; display: grid; gap: 4px; }
+  .cloudflare-token-label { min-width: 0; min-height: 16px; display: flex; align-items: center; justify-content: space-between; gap: 7px; color: var(--dim); font-size: 10.5px; font-weight: 700; }
+  .cloudflare-token-label > button { flex: none; display: inline-flex; align-items: center; gap: 3px; padding: 0; border: 0; border-radius: 7px; outline: 0; background: transparent; color: var(--accent); font: inherit; font-size: 9.5px; line-height: 1.2; cursor: pointer; }
+  .cloudflare-token-label .external-link-affordance { width: 14px; height: 14px; border: 0; border-radius: 0; }
+  .cloudflare-token-label > button:hover .external-link-affordance,
+  .cloudflare-token-label > button:focus-visible .external-link-affordance { border-color: transparent; background: transparent; }
+  .cloudflare-token-label > button:hover > span:first-child { text-decoration: underline; text-underline-offset: 2px; }
+  .cloudflare-token-label > button:focus-visible { box-shadow: 0 0 0 3px rgb(65 57 43 / 8%); }
+  .cloudflare-auth-form input { width: 100%; height: 34px; min-height: 34px; box-sizing: border-box; padding: 7px 9px; border: 1px solid var(--border2); border-radius: 7px; outline: 0; background: #fff; color: var(--text); font: inherit; font-size: 11.5px; }
+  .cloudflare-auth-form input:focus { border-color: #b8b1a5; box-shadow: 0 0 0 3px rgb(65 57 43 / 6%); }
+  .cloudflare-auth-form > button { grid-column: 1 / -1; }
+  .integration-cloudflare-form { grid-template-columns: 1fr; }
+  .integration-cloudflare-form > button { grid-column: auto; }
+  .sites-page { width: min(1480px, 100%); margin: 0 auto; padding: 20px 24px 32px; box-sizing: border-box; container-type: inline-size; }
+  .sites-global-mark { flex: none; width: 29px; height: 29px; display: grid; place-items: center; border-radius: 8px; background: #fff; box-shadow: 0 1px 3px rgb(35 29 20 / 9%); font-size: 15px; font-weight: 700; }
+  .google-mark { color: #4285f4; }
+  .telegram-mark { color: #5d91ad; }
+  .vendor-icon { display: block; object-fit: contain; }
+  .sites-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: 10px; }
+  @media (min-width: 1500px) { .sites-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  .site-dashboard-card { min-width: 0; overflow: hidden; border: 1px solid var(--border); border-radius: 12px; background: var(--card); padding: 12px; box-shadow: var(--shadow-sm); }
+  .site-dashboard-card.disabled { border-color: #dedbd4; background: #f1f0ec; box-shadow: none; }
+  .site-dashboard-main { display: flex; align-items: flex-start; gap: 9px; min-width: 0; }
+  .site-dashboard-fav { flex: none; display: inline-flex; margin-top: 4px; }
+  .site-dashboard-card.disabled .site-dashboard-fav { opacity: .55; filter: grayscale(.85); }
+  .site-dashboard-title { flex: 1; min-width: 0; }
+  .site-dashboard-title b, .site-dashboard-title small { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .site-dashboard-title b { font-size: 14px; font-weight: 650; }
+  .site-dashboard-title small { margin-top: 1px; color: var(--dim); font-size: 9px; line-height: 1.2; }
+  .site-dashboard-card.disabled .site-dashboard-title, .site-dashboard-card.disabled .site-dashboard-metrics, .site-dashboard-card.disabled .site-readiness-status { opacity: .58; }
+  .site-dashboard-status { flex: none; max-width: min(230px, 60%); display: grid; justify-items: end; gap: 3px; }
+  .site-dashboard-integrations { display: inline-flex; align-items: center; justify-content: flex-end; gap: .2rem; }
+  .site-integration { width: 21px; height: 21px; flex: none; display: inline-grid; place-items: center; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--dim); font: inherit; cursor: help; opacity: .42; filter: grayscale(1); transition: color .15s, opacity .15s, transform .15s, filter .15s; }
+  button.site-integration { cursor: pointer; }
+  .site-integration:hover { opacity: .68; transform: translateY(-1px); }
+  .site-integration.configured { opacity: .95; filter: none; }
+  .site-integration.attention { position: relative; opacity: 1; }
+  .site-integration.attention::after { position: absolute; top: 0; right: -3px; width: 5px; height: 5px; border-radius: 50%; background: #d99022; content: ""; }
+  .site-integration.telegram.configured { color: #5d91ad; }
+  .site-integration.site-state.configured { color: #b2771d; opacity: 1; filter: none; }
+  .site-integration.site-state.busy { opacity: .5; }
+  .site-integration.site-state:disabled { cursor: wait; transform: none; }
+  .site-dashboard-card.disabled .site-integration:not(.site-state) { opacity: .22; filter: grayscale(1); }
+  .site-dashboard-metrics { max-width: 100%; display: grid; justify-items: end; gap: 2px; overflow: hidden; }
+  .site-dashboard-metric { min-width: 0; max-width: 100%; min-height: 17px; box-sizing: border-box; display: block; padding: 2px 6px; overflow: hidden; border-radius: 999px; background: #f1f0ec; color: var(--dim); font-size: 8.5px; font-weight: 650; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; cursor: help; font-variant-numeric: tabular-nums; }
+  .site-dashboard-metric b { color: currentColor; font-weight: 760; }
+  .site-dashboard-metric.ready { background: #edf7f0; color: #296943; }
+  .site-dashboard-metric.error { background: #fff4e5; color: #98641a; }
+  .site-deployment-row { min-width: 0; min-height: 30px; display: flex; align-items: center; gap: 6px; margin-top: 9px; padding: 8px 0 0; border-top: 1px solid #efede7; color: var(--dim); font-size: 10.5px; line-height: 1.2; }
+  .site-deployment-copy { min-width: 0; flex: 1 1 auto; display: inline-flex; align-items: center; gap: 6px; overflow: hidden; }
+  .site-deployment-provider { display: inline-flex; align-items: center; gap: 5px; flex: none; color: var(--text); }
+  .site-deployment-provider b { font-size: 11.5px; font-weight: 650; }
+  .site-deployment-row.pending .site-deployment-provider { color: var(--dim); }
+  .site-deployment-separator { flex: none; color: var(--faint); }
+  .site-deployment-summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .site-deployment-settings { width: 21px; height: 21px; flex: none; display: inline-grid; place-items: center; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--faint); cursor: pointer; transition: color .15s, background .15s; }
+  .site-deployment-settings:hover, .site-deployment-settings.active { background: #f1f0ec; color: var(--text); }
+  .site-deployment-settings:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
+  .site-dashboard-card.disabled .site-deployment-row { opacity: .58; }
+  .site-deployment-row + .site-dashboard-actions { margin-top: 7px; }
+  .site-dashboard-actions { min-height: 30px; display: flex; align-items: center; gap: 3px; margin-top: 9px; padding-top: 8px; border-top: 1px solid #efede7; }
+  .site-dashboard-actions > span:not(.site-readiness-status) { flex: 1; }
+  .site-operate-action { display: inline-flex; align-items: center; gap: 5px; padding: 2px 0; border: 0; background: none; color: var(--text); font: inherit; font-size: 11.5px; font-weight: 600; line-height: 1.2; cursor: pointer; }
+  .site-operate-action svg { flex: none; }
+  .site-operate-action:hover { color: var(--accent); }
+  .site-operate-action:disabled { opacity: .42; cursor: not-allowed; }
+  .site-readiness-status { display: inline-flex; align-items: center; flex: none; min-height: 20px; padding: 2px 7px; border-radius: 999px; font-size: 10.5px; font-weight: 600; line-height: 1.2; cursor: help; }
+  .site-readiness-status.incomplete { background: #f7eee1; color: #9a6820; }
+  .site-readiness-status.unknown { background: #f0efeb; color: var(--dim); }
+  .site-domain-controls { min-width: 0; max-width: 82%; display: inline-flex; align-items: center; justify-content: flex-end; gap: 5px; }
+  .site-domain-progress { width: 6px; height: 6px; flex: none; display: inline-block; border-radius: 50%; background: #c68427; cursor: help; }
+  .site-domain-progress.attention { background: #c84f42; }
+  .site-domain-action { min-width: 0; max-width: 60%; display: inline-flex; align-items: center; justify-content: flex-end; gap: 4px; padding: 2px 0; border: 0; background: none; color: var(--dim); font: inherit; font-size: 11.5px; line-height: 1.2; cursor: pointer; }
+  .site-domain-controls .site-domain-action { max-width: none; }
+  .site-domain-action span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .site-domain-action b { flex: none; font-weight: 500; }
+  .site-domain-action:hover { color: var(--text); }
+  .site-domain-action:disabled { opacity: .42; cursor: not-allowed; }
+  .site-default-domain { display: inline-flex; align-items: center; color: var(--dim); font-size: 11.5px; line-height: 1.2; white-space: nowrap; cursor: help; }
+  .sites-empty { margin-top: 12px; padding: 58px 24px; border: 1px dashed var(--border2); border-radius: 14px; text-align: center; color: var(--dim); }
+  .sites-empty > span { width: 42px; height: 42px; margin: 0 auto 12px; display: grid; place-items: center; border-radius: 12px; background: #f1f0ec; color: var(--dim); }
+  .sites-empty b { display: block; color: var(--text); font-size: 14px; }
+  .sites-empty p { max-width: 430px; margin: 5px auto 13px; font-size: 12px; }
+  .sites-empty > div { display: flex; justify-content: center; gap: 8px; }
+  .sites-empty.compact { padding-block: 34px; }
+
+  /* 站点接入配置：值来自并写回 GCMS，本地不保存任何第三方密钥。 */
+  .integration-modal { width: min(620px, 94vw) !important; }
+  .integration-head-title { min-width: 0; display: flex; align-items: center; gap: 10px; }
+  .integration-head-title > span:last-child { min-width: 0; display: grid; gap: 1px; }
+  .integration-head-title b { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .integration-head-title small { color: var(--faint); font-size: 10.5px; }
+  .integration-head-icon { width: 32px; height: 32px; flex: none; display: grid; place-items: center; border-radius: 9px; background: #f1f0ec; color: #5d91ad; }
+  .integration-body { gap: 10px; }
+  .integration-loading { min-height: 120px; display: flex; align-items: center; justify-content: center; gap: 9px; color: var(--dim); font-size: 12.5px; }
+  .integration-section { display: flex; flex-direction: column; gap: 9px; padding: 12px; border: 1px solid var(--border); border-radius: 11px; background: #faf9f6; }
+  .integration-section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  .integration-section-head > div { min-width: 0; }
+  .integration-section-head > div > b, .integration-section-head > div > small { display: block; }
+  .integration-section-head b { font-size: 13px; }
+  .integration-section-head small { margin-top: 1px; color: var(--dim); font-size: 10.5px; font-weight: 400; }
+  .integration-section-head > span { flex: none; padding: 2px 7px; border-radius: 999px; background: #efeee9; color: var(--dim); font-size: 10px; }
+  .integration-section-head > span.ok { background: #e8f4ec; color: var(--ok); }
+  .integration-section .tfield > span small { color: var(--faint); font-size: 10px; }
+  .integration-range-row, .integration-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+  .integration-form-grid .full { grid-column: 1 / -1; }
+  .integration-account-summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 4px 2px; }
+  .integration-account-summary b, .integration-account-summary small { display: block; }
+  .integration-account-summary b { font-size: 12.5px; }
+  .integration-account-summary small { margin-top: 2px; color: var(--dim); font-size: 10.5px; }
+  .integration-callout { display: flex; align-items: center; gap: 10px; padding: 10px 11px; border-radius: 10px; background: #f1f4f8; }
+  .integration-callout.warn { background: #fbf4e8; }
+  .integration-callout > span { width: 29px; height: 29px; flex: none; display: grid; place-items: center; border-radius: 8px; background: #fff; }
+  .integration-callout > div { flex: 1; min-width: 0; }
+  .integration-callout b, .integration-callout small { display: block; }
+  .integration-callout b { font-size: 12.5px; }
+  .integration-callout small { margin-top: 1px; color: var(--dim); font-size: 10.5px; }
+  .verification-callout { align-items: center; }
+  .verification-open { flex: none; min-height: 32px; white-space: nowrap; }
+  .integration-danger-action { min-height: 28px; padding: 4px 9px; border-width: 1px; border-color: #df9f96; border-radius: 7px; background: #fff8f6; color: var(--err); font-size: 11px; line-height: 1.2; }
+  .integration-danger-action:hover:not(:disabled) { border-color: var(--err); background: var(--err-soft); }
+  .integration-authorization-list { display: flex; flex-direction: column; gap: 6px; }
+  .integration-authorization-item { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 8px 9px; border: 1px solid #ece9e1; border-radius: 9px; background: #fff; }
+  .integration-authorization-item > div { min-width: 0; flex: 1; }
+  .integration-authorization-item b, .integration-authorization-item small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .integration-authorization-item b { font-size: 12px; }
+  .integration-authorization-item small { margin-top: 1px; color: var(--dim); font-size: 10px; }
+  .integration-authorization-item > .sites-global-mark { width: 27px; height: 27px; }
+  .ok-text { flex: none; color: var(--ok); font-size: 10.5px; }
+  .dim-text { flex: none; color: var(--dim); font-size: 10.5px; }
+  .sites-global-trigger.cloudflare.configured { opacity: 1; }
+  .cloudflare-mark { color: #f38020; }
+  .site-integration-title > div { display: flex; align-items: center; gap: 9px; }
+  .site-integration-title > div > span:last-child { min-width: 0; display: grid; gap: 3px; }
+  .site-integration-title > div > span:last-child small { margin-top: 0; line-height: 1.35; }
+  .integration-service-icon { width: 30px; height: 30px; flex: none; display: grid; place-items: center; border-radius: 8px; background: #fff; box-shadow: 0 1px 3px rgb(35 29 20 / 7%); }
+  .integration-readonly { min-height: 37px; display: flex; align-items: center; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: #f2f1ed; color: var(--dim); font-size: 12px; overflow-wrap: anywhere; }
+  .site-google-result { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+  .site-google-result.single { grid-template-columns: 1fr; }
+  .site-google-result > span { min-width: 0; padding: 8px 9px; border: 1px solid #e8e5dd; border-radius: 8px; background: #fff; }
+  .site-google-result small, .site-google-result b { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .site-google-result small { color: var(--faint); font-size: 9.5px; }
+  .site-google-result b { margin-top: 2px; color: var(--text); font-size: 11px; }
+  .site-google-overview { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border: 1px solid #e8e5dd; border-radius: 10px; overflow: hidden; background: #fff; }
+  .site-google-overview > div { min-width: 0; min-height: 38px; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 10px; border-bottom: 1px solid #efede7; }
+  .site-google-overview > div:nth-child(odd) { border-right: 1px solid #efede7; }
+  .site-google-overview > div:last-child { border-bottom: 0; }
+  .site-google-overview > div:nth-child(3):nth-last-child(2), .site-google-overview > div:nth-child(3):nth-last-child(2) + div { border-bottom: 0; }
+  .site-google-overview > div:last-child:nth-child(odd) { grid-column: 1 / -1; border-right: 0; border-bottom: 0; }
+  .site-google-overview small, .site-google-overview b { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .site-google-overview small { flex: none; color: var(--faint); font-size: 9.5px; }
+  .site-google-overview b { flex: 1; color: var(--text); font-size: 11px; font-weight: 560; text-align: right; }
+  .site-google-advanced { padding-top: 1px; }
+  .site-google-advanced summary { width: fit-content; color: var(--dim); font-size: 10.5px; cursor: pointer; }
+  .site-google-advanced[open] summary { margin-bottom: 8px; }
+  .integration-clear { align-self: flex-start; border: 0; background: none; padding: 1px 0; color: var(--err); font: inherit; font-size: 10.5px; cursor: pointer; }
+  .integration-clear:hover { text-decoration: underline; }
+  .integration-actions { margin-top: 0; }
+  .integration-actions > span { flex: 1; }
+  .ok-note { color: var(--ok); background: #eef7f1; border: 1px solid #d5eadc; border-radius: 8px; padding: 8px 10px; font-size: 12px; }
+  @media (max-width: 620px) {
+    .verification-callout { align-items: flex-start; flex-wrap: wrap; }
+    .verification-callout > div { flex-basis: calc(100% - 40px); }
+    .verification-open { margin-left: 39px; }
+  }
+
+  /* 站点主题中心：卡片只负责入口，目录、真实预览与确认都在独立宽浮层完成。 */
+  .modal.theme-modal {
+    width: min(840px, 94vw) !important;
+    height: min(720px, 88vh);
+    max-height: 88vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .theme-head-icon { color: #8a6332; background: #f6efe3; }
+  .modal.theme-modal .theme-body {
+    width: 100%;
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 10px 18px 12px;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+  .theme-loading { flex: 1; min-height: 260px; }
+  .theme-state-empty {
+    min-height: 250px;
+    margin: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 26px;
+    text-align: center;
+  }
+  .theme-state-empty.compact { min-height: 190px; margin: 0; border: 1px dashed var(--border2); border-radius: 12px; }
+  .theme-state-mark { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 12px; background: #f5efe5; color: #8a6332; }
+  .theme-state-empty b { font-size: 14px; }
+  .theme-state-empty p { max-width: 470px; margin: 0 0 4px; color: var(--dim); font-size: 11.5px; line-height: 1.55; }
+  .theme-callout { display: flex; align-items: center; gap: 7px; padding: 9px 11px; border-radius: 9px; background: #eef7f1; color: var(--ok); font-size: 11px; }
+  .theme-callout.warn { background: #fbf3e6; color: #96651f; }
+  .theme-callout b { flex: none; font-size: 11px; }
+  .theme-callout span { color: currentColor; opacity: .88; }
+  .theme-notice, .theme-error { flex: none; }
+  .sheet-head.theme-sheet-head {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: 14px;
+    row-gap: 3px;
+    padding: 10px 18px 8px;
+  }
+  .theme-sheet-head > .x { grid-column: 2; grid-row: 1; }
+  .theme-category-row {
+    grid-column: 1 / -1;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-left: 42px;
+    padding: 0;
+  }
+  .theme-category-nav {
+    min-width: 0;
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    padding: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .theme-category-nav::-webkit-scrollbar { display: none; }
+  .theme-category-nav button {
+    flex: none;
+    display: inline-flex;
+    align-items: baseline;
+    gap: 4px;
+    padding: 1px 0;
+    border: 0;
+    background: transparent;
+    color: var(--dim);
+    font: inherit;
+    font-size: 10.5px;
+    line-height: 1.3;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .theme-category-nav button:hover { color: var(--text); }
+  .theme-category-nav button.active { color: var(--text); font-weight: 680; }
+  .theme-category-nav button small { color: var(--faint); font-size: 9.5px; font-weight: 450; }
+  .theme-category-nav button.active small { color: var(--dim); }
+  .theme-header-rollback {
+    min-height: 22px;
+    flex: none;
+    padding: 2px 7px;
+    border: 1px solid #e2b3ac;
+    border-radius: 7px;
+    background: #fff9f7;
+    color: var(--err);
+    font: inherit;
+    font-size: 9.5px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .theme-header-rollback:hover:not(:disabled) { border-color: #d78e84; background: #fff4f1; }
+  .theme-header-rollback:focus-visible { outline: 2px solid #d78e84; outline-offset: 1px; }
+  .theme-header-rollback:disabled { opacity: .45; cursor: default; }
+  .theme-family-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-content: start; gap: 9px; padding-bottom: 3px; }
+  .theme-family-card { min-width: 0; display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--border); border-radius: 11px; background: #fff; transition: border-color .15s, box-shadow .15s; }
+  .theme-family-card:hover { border-color: #d7d2c8; }
+  .theme-family-card.selected { border-color: #9b7d54; box-shadow: 0 0 0 2px rgb(142 106 59 / 10%); }
+  .theme-family-main { position: relative; width: 100%; flex: 1; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); gap: 7px; padding: 8px; color: var(--text); text-align: left; }
+  .theme-family-visual { position: relative; width: 100%; height: auto; aspect-ratio: 16 / 9; overflow: hidden; border: 1px solid rgb(60 49 34 / 10%); border-radius: 8px; background: var(--theme-bg); color: var(--theme-accent); isolation: isolate; }
+  .theme-family-visual iframe {
+    position: absolute;
+    z-index: 0;
+    inset: 0 auto auto 0;
+    width: 600%;
+    height: 600%;
+    border: 0;
+    background: var(--theme-bg);
+    opacity: 0;
+    pointer-events: none;
+    transform: scale(.1666667);
+    transform-origin: 0 0;
+    transition: opacity .2s ease;
+  }
+  .theme-family-visual iframe.ready { opacity: 1; }
+  .theme-family-fallback { position: absolute; z-index: 1; inset: 0; display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 16px 1fr; gap: 4px; padding: 7px; opacity: 1; transition: opacity .18s ease; }
+  .theme-family-fallback.hidden { opacity: 0; }
+  .theme-family-fallback i { display: block; border-radius: 3px; background: currentColor; opacity: .16; }
+  .theme-family-fallback i:first-child { grid-column: 1 / -1; opacity: .88; }
+  .theme-family-fallback i:nth-child(2) { opacity: .28; }
+  .theme-family-fallback i:nth-child(3) { opacity: .09; }
+  .theme-family-visual em { position: absolute; z-index: 2; right: 5px; bottom: 5px; padding: 1px 4px; border-radius: 999px; background: rgb(255 255 255 / 86%); color: var(--theme-accent); font-size: 7.5px; font-style: normal; font-weight: 700; }
+  .theme-family-copy { min-width: 0; min-height: 67px; align-self: stretch; }
+  .theme-family-title { min-width: 0; display: flex; align-items: center; gap: 6px; }
+  .theme-family-title > b { min-width: 0; flex: 1; overflow: hidden; font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
+  .theme-family-copy > small { height: 28px; margin-top: 2px; overflow: hidden; color: var(--dim); font-size: 9px; line-height: 1.5; }
+  .theme-family-meta {
+    position: relative;
+    z-index: 4;
+    min-width: 0;
+    min-height: 21px;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin-top: 2px;
+  }
+  .theme-family-meta > span:first-child { flex: none; overflow: hidden; color: var(--faint); font-size: 8.5px; text-overflow: ellipsis; white-space: nowrap; }
+  .theme-family-hit { position: absolute; z-index: 3; inset: 0; border: 0; background: transparent; cursor: pointer; }
+  .theme-family-hit:focus-visible { outline: 2px solid #9b7d54; outline-offset: -3px; border-radius: 9px; }
+  .theme-skin-row { min-width: 0; min-height: 19px; flex: 1 1 auto; display: flex; align-items: center; gap: 5px; overflow-x: auto; scrollbar-width: none; }
+  .theme-skin-row::-webkit-scrollbar { display: none; }
+  .theme-skin-row button { position: relative; width: 19px; height: 19px; flex: none; display: grid; place-items: center; padding: 2px; border: 1px solid transparent; border-radius: 50%; background: transparent; cursor: pointer; }
+  .theme-skin-row button > span { width: 100%; height: 100%; display: block; border: 2px solid var(--skin-bg); border-radius: 50%; background: var(--skin-color); box-shadow: 0 0 0 1px rgb(50 43 32 / 12%); }
+  .theme-skin-row button:hover { border-color: #c4bbaa; }
+  .theme-skin-row button.selected { border-color: #7d6950; }
+  .theme-skin-row button.current::after { position: absolute; right: -2px; top: -2px; width: 5px; height: 5px; border: 1px solid #fff; border-radius: 50%; background: var(--ok); content: ""; }
+  .theme-card-action {
+    min-height: 22px;
+    flex: none;
+    padding: 2px 7px;
+    border: 1px solid #ddd8ce;
+    border-radius: 7px;
+    background: #fff;
+    color: var(--dim);
+    font: inherit;
+    font-size: 9px;
+    font-weight: 570;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .theme-card-action:hover:not(:disabled) { border-color: #c9c1b4; color: var(--text); background: #faf9f6; }
+  .theme-card-action.apply { border-color: #35322c; background: #35322c; color: #fff; }
+  .theme-card-action.apply:hover:not(:disabled) { border-color: #24211d; background: #24211d; color: #fff; }
+  .theme-card-action:focus-visible { outline: 2px solid #9b7d54; outline-offset: 1px; }
+  .theme-card-action:disabled { cursor: default; }
+  .theme-card-inline-action {
+    position: relative;
+    z-index: 4;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transform: translateY(2px);
+    transition: opacity .14s ease, transform .14s ease, visibility .14s;
+  }
+  .theme-family-card:hover .theme-card-inline-action,
+  .theme-family-card:focus-within .theme-card-inline-action,
+  .theme-family-card.selected .theme-card-inline-action {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transform: translateY(0);
+  }
+  .theme-family-card:hover .theme-card-inline-action:disabled,
+  .theme-family-card:focus-within .theme-card-inline-action:disabled,
+  .theme-family-card.selected .theme-card-inline-action:disabled { opacity: .45; }
+  .theme-preview-action {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    width: 25px;
+    height: 25px;
+    min-height: 25px;
+    display: grid;
+    place-items: center;
+    padding: 0;
+    background: rgb(255 255 255 / 90%);
+    box-shadow: 0 2px 8px rgb(38 32 24 / 10%);
+    backdrop-filter: blur(6px);
+  }
+  .theme-apply-action { min-height: 21px; padding-inline: 7px; font-size: 8.5px; }
+  .theme-footer {
+    position: relative;
+    z-index: 2;
+    flex: none;
+    min-height: 58px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin: 0;
+    padding: 10px 18px;
+    border-top: 1px solid var(--border);
+    background: #fff;
+  }
+  .theme-footer > div { display: flex; align-items: center; gap: 7px; }
+  .theme-confirm { max-width: 630px; margin: auto; display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 12px; padding: 20px; border: 1px solid var(--border); border-radius: 14px; background: #faf9f6; }
+  .theme-confirm-mark { width: 44px; height: 44px; display: grid; place-items: center; border-radius: 12px; background: #f4ecdf; color: #8a6332; }
+  .theme-confirm-title { min-width: 0; align-self: center; }
+  .theme-confirm-title b, .theme-confirm-title small { display: block; }
+  .theme-confirm-title b { font-size: 15px; }
+  .theme-confirm-title small { margin-top: 2px; color: var(--dim); font-size: 10.5px; }
+  .theme-change-route { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 12px; }
+  .theme-change-route > span { min-width: 0; display: grid; gap: 2px; padding: 11px 12px; border: 1px solid #e5e1d8; border-radius: 10px; background: #fff; }
+  .theme-change-route > span.target { border-color: #cdbb9e; background: #fffdf8; }
+  .theme-change-route small { color: var(--faint); font-size: 9.5px; }
+  .theme-change-route b { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+  .theme-change-route em { overflow: hidden; color: var(--dim); font-size: 9.5px; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
+  .theme-change-route > strong { color: var(--faint); font-size: 18px; font-weight: 400; }
+  .theme-impact { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; }
+  .theme-impact span { padding: 3px 7px; border-radius: 999px; background: #eaf5ed; color: var(--ok); font-size: 9.5px; font-weight: 620; }
+  .theme-confirm > p { grid-column: 1 / -1; margin: 0; color: var(--dim); font-size: 10.5px; line-height: 1.6; }
+  .theme-warning-list { grid-column: 1 / -1; padding: 9px 11px; border-radius: 9px; background: #fbf2e3; color: #8d5f1d; font-size: 10.5px; }
+  .theme-warning-list b { font-size: 11px; }
+  .theme-warning-list ul { margin: 4px 0 0; padding-left: 18px; }
+  @media (max-width: 760px) {
+    .modal.theme-modal { width: 100vw !important; height: 100vh; max-height: 100vh; border-radius: 0; }
+    .modal.theme-modal .theme-body { padding: 10px 14px 12px; }
+    .theme-family-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .theme-family-visual iframe { width: 500%; height: 500%; transform: scale(.2); }
+    .theme-category-row { margin-left: 0; }
+    .theme-category-nav { gap: 15px; }
+    .theme-footer { padding-inline: 14px; flex-wrap: wrap; }
+    .theme-footer > div:last-child { margin-left: auto; }
+    .theme-confirm { padding: 15px; }
+    .theme-change-route { grid-template-columns: 1fr; }
+    .theme-change-route > strong { transform: rotate(90deg); text-align: center; }
+  }
+  @media (max-width: 520px) {
+    .theme-family-grid { grid-template-columns: 1fr; }
+    .theme-family-visual iframe { width: 400%; height: 400%; transform: scale(.25); }
+  }
+
+  .modal.deployment-modal {
+    width: min(590px, 94vw) !important;
+    height: fit-content;
+    max-height: calc(100vh - 30px);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .deployment-body {
+    flex: 0 1 auto;
+    min-height: 0;
+    padding: 0 !important;
+    overflow: hidden !important;
+    gap: 0;
+  }
+  .deployment-head-icon { color: var(--text); }
+  .deployment-load-error {
+    min-height: 180px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 24px;
+  }
+  .deployment-wizard {
+    height: auto;
+    max-height: calc(100vh - 104px);
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .deployment-steps {
+    flex: none;
+    display: flex;
+    align-items: center;
+    padding: 13px 18px 11px;
+    border-bottom: 1px solid var(--border);
+  }
+  .deployment-step {
+    position: relative;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    flex: 1 1 0;
+    gap: 6px;
+    color: var(--faint);
+  }
+  .deployment-step:last-child { flex: none; }
+  .deployment-step:not(:last-child)::after {
+    content: '';
+    height: 1px;
+    flex: 1;
+    min-width: 8px;
+    margin-right: 7px;
+    background: #ddd9cf;
+  }
+  .deployment-step > span {
+    width: 22px;
+    height: 22px;
+    flex: none;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    background: #eceae4;
+    color: #9f9a90;
+    font-size: 10px;
+    font-weight: 700;
+  }
+  .deployment-step b { white-space: nowrap; font-size: 11px; font-weight: 600; }
+  .deployment-step.active { color: var(--text); }
+  .deployment-step.active > span { background: var(--text); color: #fff; }
+  .deployment-step.done { color: var(--ok); }
+  .deployment-step.done > span { background: #e5f3e9; color: var(--ok); }
+  .deployment-step.done:not(:last-child)::after { background: #b9dec5; }
+  .deployment-stage {
+    flex: 0 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 18px;
+  }
+  .deployment-panel { display: flex; flex-direction: column; gap: 14px; }
+  .deployment-panel-head { display: flex; align-items: flex-start; gap: 10px; }
+  .deployment-panel-head > span {
+    width: 25px;
+    height: 25px;
+    flex: none;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    background: #efede7;
+    color: var(--dim);
+    font-size: 10px;
+    font-weight: 700;
+  }
+  .deployment-panel-head > div { min-width: 0; }
+  .deployment-panel-head b, .deployment-panel-head small { display: block; }
+  .deployment-panel-head b { font-size: 15px; }
+  .deployment-panel-head small { margin-top: 2px; color: var(--dim); font-size: 11px; line-height: 1.5; }
+  .deployment-primary-field { margin-top: 2px; }
+  .deployment-aliases { min-height: 72px; resize: vertical; }
+  .deployment-expand {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 11px 12px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: #faf9f6;
+    color: var(--text);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .deployment-expand > span { min-width: 0; }
+  .deployment-expand b, .deployment-expand small { display: block; }
+  .deployment-expand b { font-size: 12px; }
+  .deployment-expand small { margin-top: 1px; color: var(--dim); font-size: 10px; }
+  .deployment-expand-chevron { flex: none; color: var(--dim); transition: transform .16s ease; }
+  .deployment-expand-chevron.open { transform: rotate(180deg); }
+  .deployment-toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 10px 0;
+  }
+  .deployment-toggle-row + .deployment-toggle-row { border-top: 1px solid #ece9e1; }
+  .deployment-toggle-row > span { min-width: 0; }
+  .deployment-toggle-row b, .deployment-toggle-row small { display: block; }
+  .deployment-toggle-row b { font-size: 12px; }
+  .deployment-toggle-row small { margin-top: 2px; color: var(--dim); font-size: 10px; line-height: 1.45; }
+  .deployment-toggle-row.muted { opacity: .5; }
+  .deployment-stage-note {
+    margin: 0;
+    padding: 9px 11px;
+    border-radius: 9px;
+    background: #f5f3ee;
+    color: var(--dim);
+    font-size: 10.5px;
+    line-height: 1.55;
+  }
+  .deployment-provider-card {
+    display: grid;
+    grid-template-columns: 34px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    padding: 12px;
+    border: 1px solid #dce9df;
+    border-radius: 11px;
+    background: #f2f8f4;
+  }
+  .deployment-provider-card.warning { border-color: #ead9ba; background: #fbf6eb; }
+  .deployment-provider-mark {
+    width: 34px;
+    height: 34px;
+    display: grid;
+    place-items: center;
+    border-radius: 9px;
+    background: #fff;
+    color: #f38020;
+    box-shadow: 0 1px 3px rgb(35 29 20 / 8%);
+  }
+  .deployment-provider-card > div { min-width: 0; }
+  .deployment-provider-card b, .deployment-provider-card small { display: block; }
+  .deployment-provider-card b { font-size: 12.5px; }
+  .deployment-provider-card small { margin-top: 2px; color: var(--dim); font-size: 10px; line-height: 1.45; }
+  .deployment-provider-card em {
+    flex: none;
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: #fff;
+    color: var(--ok);
+    font-size: 9.5px;
+    font-style: normal;
+    white-space: nowrap;
+  }
+  .deployment-option-list { padding: 0 11px; border: 1px solid var(--border); border-radius: 10px; background: #faf9f6; }
+  .deployment-dns-actions { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+  .deployment-manual-note {
+    display: grid;
+    gap: 2px;
+    padding: 10px 11px;
+    border: 1px dashed var(--border2);
+    border-radius: 9px;
+    color: var(--dim);
+    font-size: 10.5px;
+  }
+  .deployment-manual-note b { color: var(--text); font-size: 11.5px; }
+  .deployment-current-state {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 10px 11px;
+    border-radius: 9px;
+    background: #eff7f1;
+  }
+  .deployment-current-state > span {
+    width: 24px;
+    height: 24px;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    background: #dcefe2;
+    color: var(--ok);
+    font-weight: 700;
+  }
+  .deployment-current-state b, .deployment-current-state small { display: block; }
+  .deployment-current-state b { font-size: 11.5px; }
+  .deployment-current-state small { margin-top: 1px; color: var(--dim); font-size: 9.5px; }
+  .deployment-review {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin: 0;
+    padding: 11px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: #faf9f6;
+  }
+  .deployment-review > div { min-width: 0; padding: 7px 8px; border-radius: 8px; background: #fff; }
+  .deployment-review dt { color: var(--faint); font-size: 9.5px; }
+  .deployment-review dd {
+    margin: 2px 0 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text);
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .deployment-safety-note {
+    display: flex;
+    align-items: flex-start;
+    gap: 9px;
+    padding: 10px 11px;
+    border-radius: 10px;
+    background: #f1f4f8;
+  }
+  .deployment-safety-note > span {
+    width: 23px;
+    height: 23px;
+    flex: none;
+    display: grid;
+    place-items: center;
+    border: 1px solid #b9c3ce;
+    border-radius: 50%;
+    color: #687788;
+    font: 700 11px serif;
+  }
+  .deployment-safety-note b, .deployment-safety-note small { display: block; }
+  .deployment-safety-note b { font-size: 11.5px; }
+  .deployment-safety-note small { margin-top: 2px; color: var(--dim); font-size: 10px; line-height: 1.5; }
+  .deployment-result-panel { gap: 11px; }
+  .deployment-result {
+    display: grid;
+    grid-template-columns: 38px minmax(0, 1fr);
+    align-items: center;
+    gap: 11px;
+    padding: 14px;
+    border: 1px solid #d4e8da;
+    border-radius: 12px;
+    background: #f0f8f2;
+  }
+  .deployment-result.pending { border-color: #ead7b5; background: #fbf5e9; }
+  .deployment-result.attention { border-color: #ecc8c1; background: #fcf2ef; }
+  .deployment-result > span {
+    width: 38px;
+    height: 38px;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    background: #dbefe1;
+    color: var(--ok);
+    font-size: 18px;
+    font-weight: 700;
+  }
+  .deployment-result.pending > span { background: #f4e6cb; color: #a16b1f; }
+  .deployment-result.attention > span { background: #f6ddd8; color: #b54636; }
+  .deployment-result b, .deployment-result small { display: block; }
+  .deployment-result b { font-size: 13px; }
+  .deployment-result small { margin-top: 3px; color: var(--dim); font-size: 10.5px; line-height: 1.5; }
+  .deployment-result-url {
+    display: grid;
+    gap: 3px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: #fff;
+  }
+  .deployment-result-url span { color: var(--faint); font-size: 9.5px; }
+  .deployment-result-link {
+    min-width: 0;
+    width: fit-content;
+    max-width: 100%;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--text);
+    cursor: pointer;
+  }
+  .deployment-result-link b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+  .deployment-result-link svg { flex: none; }
+  .deployment-result-link:hover { color: var(--accent); }
+  .deployment-result-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 3px; }
+  .deployment-result-url small { color: #a16b1f; font-size: 9.5px; }
+  .deployment-result-url small.ok { color: var(--ok); }
+  .deployment-result-status {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 3px;
+  }
+  .deployment-result-refresh {
+    width: 16px;
+    height: 16px;
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--faint);
+    cursor: pointer;
+  }
+  .deployment-result-refresh .rfz { width: 12px; height: 12px; }
+  .deployment-result-refresh:hover { background: var(--rail); color: var(--text); }
+  .deployment-result-refresh:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .deployment-result-refresh:disabled { opacity: .45; cursor: default; }
+  .deployment-result-details { border-top: 1px solid var(--border); color: var(--dim); font-size: 10px; }
+  .deployment-result-details summary { width: fit-content; padding-top: 9px; cursor: pointer; color: var(--dim); }
+  .deployment-result-details > div { display: grid; gap: 7px; padding-top: 8px; }
+  .deployment-result-details p { margin: 0; line-height: 1.55; }
+  .deployment-messages { margin: 0; padding: 8px 11px 8px 27px; border-radius: 9px; background: #f7f6f2; color: var(--dim); font-size: 10px; line-height: 1.6; }
+  .deployment-error { margin-top: 10px; }
+  .deployment-footer {
+    flex: none;
+    min-height: 58px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 10px 18px;
+    border-top: 1px solid var(--border);
+    background: #fff;
+  }
+  .deployment-footer > div { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .deployment-change-domain {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 1px;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+    color: var(--dim);
+    font: 500 10px/1.3 inherit;
+    cursor: pointer;
+  }
+  .deployment-change-domain:hover { color: var(--text); }
+  .deployment-change-domain:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .deployment-change-domain:disabled { opacity: .45; cursor: default; }
+  @media (max-width: 620px) {
+    .sites-global-grid, .sites-grid { grid-template-columns: 1fr; }
+    .integration-range-row, .integration-form-grid { grid-template-columns: 1fr; }
+    .integration-form-grid .full { grid-column: auto; }
+    .cloudflare-auth-form { grid-template-columns: 1fr; }
+    .cloudflare-auth-form > button { grid-column: auto; }
+    .modal.deployment-modal { width: 100vw !important; height: 100vh; max-height: 100vh; border-radius: 0; }
+    .deployment-body { flex: 1; }
+    .deployment-wizard { height: 100%; max-height: none; }
+    .deployment-steps { padding-inline: 12px; }
+    .deployment-step b { font-size: 9.5px; }
+    .deployment-stage { flex: 1; padding: 14px; }
+    .deployment-provider-card { grid-template-columns: 32px minmax(0, 1fr); }
+    .deployment-provider-card em { grid-column: 2; justify-self: start; }
+    .deployment-review { grid-template-columns: 1fr; }
+    .deployment-footer { padding-inline: 14px; }
+  }
 
   /* 排期视图 */
   .sched-inner { max-width: 720px; margin: 0 auto; padding: 18px 24px 24px; }
@@ -9362,6 +15658,10 @@
   .tsite-chip button { border: none; background: none; padding: 0 2px; font-size: 13px; line-height: 1; color: var(--faint); cursor: pointer; }
   .tsite-chip button:hover { color: var(--accent); }
   .launcher-sites { margin-top: 7px; }
+  .sitebuild-note { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 8px; padding: 0 3px; color: var(--faint); font-size: 11.5px; }
+  .sitebuild-note button { flex: none; border: 0; background: none; color: var(--accent); font: inherit; cursor: pointer; padding: 2px 3px; }
+  .sitebuild-note button:hover { text-decoration: underline; }
+  .sitebuild-note button:disabled { color: var(--faint); cursor: default; text-decoration: none; }
   .multi-add { flex: none; border: none; background: none; padding: 2px 4px; font-size: 11.5px; color: var(--faint); cursor: pointer; border-radius: 6px; }
   .multi-add:hover { color: var(--accent); background: #f1efe9; }
   /* 任务弹窗里的 模型+强度（对话同款 ModelFx），套输入框外观（--ctl-h 定高，内容 flex 垂直居中） */
@@ -9374,6 +15674,58 @@
 
   .composer-wrap { flex: none; padding: 10px 24px 20px; }
   .composer-wrap .composer { max-width: 760px; margin: 0 auto; }
+  /* 新站上线准备：属于输入区而不是聊天消息。默认保持一条紧凑摘要，按需展开真实待办。 */
+  .site-ready { max-width: 760px; margin: 0 auto 6px; border: 1px solid #ddd9cf; border-radius: 10px; background: rgba(255, 255, 255, .96); overflow: hidden; }
+  .site-ready.blocked { border-color: #ead5b8; background: #fffdf9; }
+  .site-ready.complete { border-color: #cfe3d5; background: #fbfefc; }
+  .site-ready-summary { min-height: 40px; display: flex; align-items: stretch; gap: 4px; padding: 2px 4px 2px 5px; }
+  .site-ready-toggle { flex: 1; min-width: 0; border: 0; border-radius: 7px; background: none; padding: 3px 5px; display: flex; align-items: center; gap: 6px; color: var(--text); text-align: left; cursor: pointer; }
+  .site-ready-toggle:hover { background: #f6f4ef; }
+  .site-ready-icon { width: 24px; height: 24px; flex: none; display: inline-flex; align-items: center; justify-content: center; border-radius: 7px; color: #756e62; background: #f1efe9; }
+  .site-ready.blocked .site-ready-icon { color: #a46b16; background: #fbf1df; }
+  .site-ready.complete .site-ready-icon { color: #287248; background: #e9f5ed; }
+  .site-ready-copy { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 0; }
+  .site-ready-title { min-width: 0; display: flex; align-items: baseline; gap: 6px; white-space: nowrap; }
+  .site-ready-title strong { flex: none; font-size: 12.5px; font-weight: 650; }
+  .site-ready-title small { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--dim); font-size: 11px; }
+  .site-ready-detail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-size: 10.5px; line-height: 1.35; }
+  .site-ready-chev { flex: none; color: var(--faint); transition: transform .15s; }
+  .site-ready-chev.open { transform: rotate(180deg); }
+  .site-ready-continue { align-self: center; flex: none; min-width: 62px; height: 26px; padding: 0 9px; border: 0; border-radius: 7px; background: var(--accent); color: #fff; display: inline-flex; align-items: center; justify-content: center; gap: 4px; font-size: 11px; font-weight: 550; cursor: pointer; }
+  .site-ready-continue-icon { display: inline-block; vertical-align: -2px; }
+  .site-ready-continue:hover { background: var(--accent-h); }
+  .site-ready-continue.unlock { background: #a7651d; }
+  .site-ready-continue.unlock:hover { background: #8e5317; }
+  .site-ready-continue:disabled { opacity: .55; cursor: default; }
+  .site-ready-refresh { align-self: center; flex: none; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--faint); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+  .site-ready-refresh :global(.rfz) { width: 12px; height: 12px; }
+  .site-ready-refresh:hover { background: #f6f4ef; color: var(--text); }
+  .site-ready-refresh:disabled { opacity: .5; cursor: default; }
+  .site-ready-body { border-top: 1px solid #ebe8e0; padding: 5px; }
+  .site-ready-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
+  .site-ready-item { min-width: 0; min-height: 41px; padding: 6px 7px; border: 1px solid #e9e6de; border-radius: 8px; background: #fbfaf7; display: flex; align-items: center; gap: 6px; color: var(--text); text-align: left; cursor: pointer; }
+  .site-ready-item:hover { border-color: #d6d1c5; background: #f7f5f0; }
+  .site-ready-item:disabled { opacity: .72; cursor: default; }
+  .site-ready-item:disabled:hover { border-color: #e9e6de; background: #fbfaf7; }
+  .site-ready-dot { width: 7px; height: 7px; flex: none; border-radius: 50%; background: #a9a49a; }
+  .site-ready-item.blocker .site-ready-dot { background: #b64a38; }
+  .site-ready-item.todo .site-ready-dot { background: #c78b2b; }
+  .site-ready-item-copy { flex: 1; min-width: 0; }
+  .site-ready-item-copy b, .site-ready-item-copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .site-ready-item-copy b { font-size: 11.5px; font-weight: 600; }
+  .site-ready-item-copy small { margin-top: 1px; color: var(--faint); font-size: 10px; }
+  .site-ready-item-act { flex: none; color: var(--dim); font-size: 10.5px; }
+  .site-ready-item.blocker .site-ready-item-act { color: #a53a29; }
+  .site-ready-all { min-height: 45px; display: flex; align-items: center; gap: 8px; padding: 5px 8px; color: #287248; }
+  .site-ready-all > span { width: 24px; height: 24px; flex: none; display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; background: #e9f5ed; font-size: 12px; }
+  .site-ready-all b, .site-ready-all small { display: block; }
+  .site-ready-all b { font-size: 11.5px; }
+  .site-ready-all small { margin-top: 1px; color: var(--dim); font-size: 10px; }
+  .site-ready-foot { min-height: 27px; margin-top: 5px; padding: 3px 3px 0 9px; border-top: 1px solid #efede7; display: flex; align-items: flex-end; justify-content: space-between; color: var(--faint); font-size: 10px; }
+  .site-ready-foot button { border: 0; border-radius: 6px; background: none; padding: 3px 5px; display: inline-flex; align-items: center; gap: 4px; color: var(--dim); font-size: 10.5px; cursor: pointer; }
+  .site-ready-foot button:hover:not(:disabled) { color: var(--text); background: #f2f0eb; }
+  .site-ready-foot button:disabled { opacity: .5; cursor: default; }
+  .site-ready-foot svg.spin { animation: rspin .7s linear infinite; }
 
   /* ---- 按钮 / 弹窗 ---- */
   /* 动作按钮统一尺度：13px 字 + 6px 14px 内边距，高约 30px（与输入框/下拉同高，主次同高）。 */
@@ -9578,6 +15930,61 @@
   .modal { inset: 0; margin: auto; height: fit-content; max-height: 88vh; width: min(440px, 92vw); border-radius: 14px; overflow: hidden; }
   .sheet-head { display: flex; justify-content: space-between; align-items: center; padding: 15px 18px; border-bottom: 1px solid var(--border); }
   .sheet-body { padding: 16px 18px; overflow-y: auto; display: flex; flex-direction: column; gap: 7px; }
+  .update-center-mask { z-index: 65; }
+  .update-center-sheet { z-index: 70; width: min(540px, 96vw); background: #fbfaf7; }
+  .about-update-entry { display: inline-flex; align-items: center; gap: 5px; }
+  .about-update-entry :global(svg) { flex: none; color: var(--dim); }
+  .update-center-title { min-width: 0; display: flex; align-items: center; gap: 9px; }
+  .update-center-title-icon { flex: none; width: 29px; height: 29px; display: grid; place-items: center; border-radius: 8px; background: var(--accent-soft); color: var(--accent); }
+  .update-center-title-copy { min-width: 0; display: grid; gap: 2px; }
+  .update-center-title-copy b { font-size: 15px; }
+  .update-center-title-copy small { color: var(--faint); font-size: 10.5px; font-weight: 400; }
+  .update-center-head-actions { display: flex; align-items: center; gap: 5px; }
+  .update-center-body { flex: 1 1 auto; min-height: 0; gap: 13px; padding: 15px 17px 18px; }
+  .update-overview { display: flex; align-items: center; gap: 11px; padding: 12px 13px; border: 1px solid var(--border); border-radius: 12px; background: #fff; }
+  .update-overview.has-updates { border-color: #ded4c4; background: #fffdf8; }
+  .update-overview-icon { flex: none; width: 34px; height: 34px; display: grid; place-items: center; border-radius: 10px; background: var(--accent-soft); color: var(--accent); }
+  .update-overview-icon .upd-spin { width: 15px; height: 15px; box-sizing: border-box; border: 1.7px solid currentColor; border-top-color: transparent; border-radius: 50%; }
+  .update-overview > span:last-child { min-width: 0; display: grid; gap: 2px; }
+  .update-overview b { font-size: 13px; }
+  .update-overview small { color: var(--dim); font-size: 10.5px; line-height: 1.45; }
+  .update-center-notice { padding: 8px 10px; border: 1px solid #e6dfd3; border-radius: 9px; background: #f7f4ee; color: var(--dim); font-size: 11px; line-height: 1.5; }
+  .update-center-notice.success { border-color: #cfe5d8; background: #eef8f2; color: var(--ok); }
+  .update-center-notice.error { border-color: var(--err-border); background: var(--err-soft); color: var(--err); }
+  .update-section { display: grid; gap: 7px; }
+  .update-section-title { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 0 2px; }
+  .update-section-title > span { color: var(--text); font-size: 11.5px; font-weight: 700; }
+  .update-section-title > small { color: var(--faint); font-size: 9.5px; }
+  .update-item { min-width: 0; display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 9px; padding: 9px 10px; }
+  .update-item.pilot, .update-item.standalone { border: 1px solid var(--border); border-radius: 11px; background: #fff; }
+  .update-item-icon { flex: none; width: 28px; height: 28px; display: grid; place-items: center; border-radius: 8px; background: var(--soft); color: var(--dim); }
+  .update-item-icon.package { color: var(--accent); }
+  .update-item-copy { min-width: 0; display: grid; gap: 2px; }
+  .update-item-copy b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; }
+  .update-item-copy small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dim); font-size: 10.5px; }
+  .update-item-copy i { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-size: 9.5px; font-style: normal; }
+  .update-state { flex: none; min-width: 48px; padding: 3px 6px; border-radius: 999px; background: var(--soft); color: var(--dim); font-size: 9.5px; font-weight: 650; line-height: 1.25; text-align: center; white-space: nowrap; }
+  .update-state.available { background: #fff1dc; color: #a65b00; }
+  .update-state.current, .update-state.done { background: #eaf6ee; color: var(--ok); }
+  .update-state.checking, .update-state.updating, .update-state.verifying { background: #eceff6; color: #46619b; }
+  .update-state.waiting, .update-state.unsupported { background: #f3f0e9; color: #826c47; }
+  .update-state.unreachable, .update-state.failed { background: var(--err-soft); color: var(--err); }
+  .update-item .btn.small { flex: none; min-width: 42px; padding-inline: 7px; }
+  .update-server-list, .update-standalone-list { display: grid; gap: 8px; }
+  .update-server-group { overflow: hidden; border: 1px solid var(--border); border-radius: 12px; background: #fff; }
+  .update-server-title { display: flex; align-items: center; gap: 8px; padding: 9px 11px 7px; border-bottom: 1px solid #eee9e1; background: #fdfcf9; }
+  .update-server-title > span:last-child { min-width: 0; display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: baseline; gap: 7px; }
+  .update-server-title b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; }
+  .update-server-title small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font: 9.5px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .update-server-mark { flex: none; width: 25px; height: 25px; display: grid; place-items: center; border-radius: 7px; background: var(--accent-soft); color: var(--accent); }
+  .update-server-group .update-item { position: relative; margin-left: 12px; padding-left: 20px; }
+  .update-server-group .update-item + .update-item { border-top: 1px solid #f0ece5; }
+  .update-tree-line { position: absolute; left: 8px; top: 0; bottom: 50%; width: 10px; border-left: 1px solid #d8d1c6; border-bottom: 1px solid #d8d1c6; border-bottom-left-radius: 5px; }
+  .update-tree-line.root { top: 50%; bottom: auto; height: 0; border-left: 0; border-bottom-left-radius: 0; }
+  .update-empty-child { margin: 0 11px 9px 32px; color: var(--faint); font-size: 10px; }
+  .update-empty { padding: 18px; border: 1px dashed var(--border); border-radius: 11px; color: var(--faint); font-size: 11px; text-align: center; }
+  .update-center-footnote { margin: 0; padding: 9px 10px; border-radius: 9px; background: #f1efe9; color: var(--dim); font-size: 10px; line-height: 1.55; }
+  .update-center-footer { flex: none; display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 11px 17px; border-top: 1px solid var(--border); background: #fff; }
   .gcms-install-sheet .sheet-body { flex: 1 1 auto; min-height: 0; gap: 12px; }
   .gcms-migrate-head-btn { margin-left: auto; margin-right: 4px; display: inline-flex; align-items: center; gap: 5px; padding: 5px 7px; border: 0; background: transparent; color: var(--dim); font: inherit; font-size: 12px; cursor: pointer; border-radius: 7px; }
   .gcms-migrate-head-btn:hover { background: var(--soft); color: var(--ink); }
@@ -9760,6 +16167,7 @@
   .gcms-fact-action.passive { cursor: help; }
   .gcms-card-menu { z-index: 190; min-width: 180px; max-width: min(240px, calc(100vw - 16px)); padding: 4px; border-radius: 9px; visibility: hidden; }
   .gcms-card-menu.ready { visibility: visible; }
+  .site-card-menu { width: max-content; min-width: 0; max-width: min(220px, calc(100vw - 16px)); }
   .gcms-card-menu .ctx-item { justify-content: flex-start; gap: 7px; padding: 5px 7px; border-radius: 6px; font-size: 11.5px; line-height: 1.25; }
   .gcms-card-menu .ctx-item span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .gcms-card-menu .ctx-item svg { width: 12px; height: 12px; flex: none; color: var(--faint); }
@@ -9791,18 +16199,25 @@
   .gcms-password-alert.passive { margin-left: 4px; cursor: help; }
   .gcms-login-security.is-safe { color: #4f7d5f; }
   .gcms-login-security.is-unknown { cursor: help; }
+  .gcms-assistant-prerequisite { width: calc(100% - 39px); min-width: 0; margin: 7px 0 0 39px; color: var(--faint); display: flex; align-items: center; gap: 5px; font-size: 8.5px; line-height: 1.4; }
+  .gcms-assistant-prerequisite > span:first-child { flex: none; color: #aaa69d; display: inline-flex; }
   .gcms-assistant-action { width: calc(100% - 39px); min-width: 0; margin: 7px 0 0 39px; padding: 7px 8px; border: 1px solid #e7e3da; border-radius: 8px; background: #faf9f6; color: var(--text); display: grid; grid-template-columns: 25px minmax(0, 1fr) auto; align-items: center; gap: 7px; text-align: left; cursor: pointer; transition: border-color .15s ease, background .15s ease; }
   .gcms-assistant-action:hover { border-color: #d9d3c8; background: #f5f3ee; }
   .gcms-assistant-action:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
   .gcms-assistant-action:disabled { opacity: .68; cursor: wait; }
   .gcms-assistant-action.unavailable:not(:disabled) { color: var(--dim); }
+  .gcms-assistant-action.disconnected { border-color: #ead2a2; background: #fffaf2; }
   .gcms-assistant-icon { width: 25px; height: 25px; border-radius: 7px; background: #eeece7; color: var(--dim); display: inline-flex; align-items: center; justify-content: center; }
   .gcms-assistant-action:not(.unavailable) .gcms-assistant-icon { background: #e8f3ec; color: #34704a; }
   .gcms-assistant-copy { min-width: 0; display: grid; gap: 1px; }
   .gcms-assistant-copy b { overflow: hidden; color: currentColor; font-size: 10px; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
   .gcms-assistant-copy small { overflow: hidden; color: var(--faint); font-size: 8.5px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
   .gcms-assistant-verb { flex: none; color: var(--accent); font-size: 9px; font-weight: 600; white-space: nowrap; }
+  .gcms-assistant-verb.icon-only { width: 14px; height: 14px; color: var(--faint); display: inline-flex; align-items: center; justify-content: center; }
+  .gcms-assistant-verb.icon-only .rfz { width: 12px; height: 12px; }
+  .gcms-assistant-action:hover .gcms-assistant-verb.icon-only { color: var(--text); }
   .gcms-assistant-action.unavailable .gcms-assistant-verb { color: var(--faint); }
+  .gcms-assistant-action.disconnected .gcms-assistant-verb { color: #9a6726; }
   .gcms-password-editor { width: calc(100% - 39px); min-width: 0; margin: 8px 0 0 39px; padding: 9px; border: 1px solid #e5cfaa; border-radius: 9px; background: #fffbf4; display: grid; gap: 8px; }
   .gcms-password-editor.just-installed { border-color: #bfdcc9; background: #f7fcf8; }
   .gcms-password-editor-head { min-width: 0; display: flex; align-items: center; gap: 7px; }
@@ -10068,6 +16483,9 @@
   .gcms-result-retry:disabled { opacity: .55; cursor: default; text-decoration: none; }
   .conn-remark { cursor: help; }
   .conn-remark-modal { width: min(370px, 92vw); }
+  .conn-remark-modal .sheet-head > div { min-width: 0; display: flex; align-items: baseline; gap: 8px; }
+  .conn-remark-modal .sheet-head b { flex: none; }
+  .conn-remark-modal .sheet-head small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sec-head { display: flex; justify-content: space-between; align-items: center; font-size: 11px; letter-spacing: .03em; text-transform: uppercase; color: var(--faint); font-weight: 600; margin-bottom: 1px; }
   .sec-head.mt { margin-top: 12px; }
   .transfer-entry { width: 100%; margin-top: 13px; padding: 9px 0; border: 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); background: transparent; color: var(--text); display: flex; align-items: center; gap: 9px; text-align: left; cursor: pointer; }
@@ -10180,8 +16598,8 @@
   .ss-dot.off { background: #b7b2a9; }
   .ss-dot.err { background: #c94f37; }
   .ss-dot.warn { background: #d9a400; }
-  /* 共享 hover 气泡（$lib/tip action 挂到 body 上）：深色小圆角、白字、单行、不挡交互 */
-  :global(.ui-tip) { position: fixed; z-index: 96; pointer-events: none; background: #26241f; color: #fff; font-size: 11px; line-height: 1.5; padding: 3px 9px; border-radius: 6px; width: max-content; max-width: 340px; white-space: normal; box-shadow: 0 4px 14px rgba(30, 25, 15, .22); }
+  /* 全局共享 hover 气泡：挂到 body，真实测量后避让四边；高于弹窗，永远不被局部层级压住。 */
+  :global(.ui-tip) { position: fixed; z-index: 1400; box-sizing: border-box; pointer-events: none; visibility: hidden; background: #26241f; color: #fff; font-size: 11px; line-height: 1.5; padding: 5px 9px; border-radius: 7px; width: max-content; max-width: min(320px, calc(100vw - 16px)); white-space: pre-line; overflow-wrap: anywhere; text-align: left; box-shadow: 0 5px 16px rgba(0, 0, 0, .18); animation: tipin .12s ease-out both; }
   .md-exc { display: flex; align-items: center; gap: 6px; width: fit-content; max-width: 100%; padding: 2px 6px; margin-left: -6px; border: none; background: none; border-radius: 7px; font-size: 12px; color: var(--dim); cursor: pointer; text-align: left; }
   .md-exc:hover { background: #efede7; }
   .md-exc-name { color: var(--text); font-weight: 500; }
@@ -10332,10 +16750,35 @@
   .md-precheck ul { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
   .md-pre-ack { margin-right: auto; align-self: center; font-size: 11.5px; color: var(--dim); }
   @media (max-width: 760px) {
+    .sites-page { padding: 14px 14px 24px; }
+    .sites-global-popover { position: fixed; top: 52px; right: 12px; width: min(430px, calc(100vw - 24px)); }
+    .sites-global-popover-grid, .sites-grid { grid-template-columns: 1fr; }
+    .site-dashboard-card { padding: 13px; }
+    .site-dashboard-actions { flex-wrap: wrap; }
+    .site-dashboard-actions > span:not(.site-readiness-status) { display: none; }
+    .site-domain-controls { max-width: 100%; margin-left: auto; }
+    .sites-head-actions .btn { padding-inline: 9px; }
+    .center.launch-center { padding: 20px 18px; }
+    .task-seg { gap: 7px; }
+    .launcher-task-main { padding: 9px; gap: 7px; }
+    .launcher-task.has-mode .launcher-task-main { padding-right: 53px; }
+    .launcher-sitebuild-mode { top: 9px; right: 6px; }
+    .sitebuild-progress { padding-inline: 14px; }
+    .sitebuild-progress > i { min-width: 8px; margin-inline: 7px; }
+    .sitebuild-step-panel { padding: 17px 16px 15px; }
+    .sitebuild-step-head { gap: 4px; }
+    .sitebuild-choice-grid.kind-grid, .sitebuild-choice-grid.style-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .sitebuild-two-col, .sitebuild-content-plans, .sitebuild-review { grid-template-columns: 1fr; }
+    .sitebuild-runtime { align-items: flex-start; flex-wrap: wrap; }
+    .sitebuild-guide-footer { padding-inline: 16px; }
+    .sitebuild-safe-note { padding-inline: 16px; text-align: left; }
     .md-model-grid, .md-managed-wizard .trow { grid-template-columns: 1fr; }
     .md-wizard-footer { padding: 10px 14px; }
     .md-wizard-footer .md-pre-ack { display: none; }
     .md-prompt-tabs { width: 100%; overflow-x: auto; }
     .md-prompt-tabs button { flex: 1 0 auto; }
+    .site-ready-list { grid-template-columns: 1fr; }
+    .site-ready-title small { display: none; }
+    .site-ready-continue { min-width: 60px; padding-inline: 9px; }
   }
 </style>

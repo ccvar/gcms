@@ -1,10 +1,10 @@
 <script lang="ts">
   import BrainIcon from './BrainIcon.svelte';
-  // tip：选项的长说明，挂 data-tip 交给全局那个 fixed 浮层（+page.svelte 的 onTipHover 用
-  // closest('[title],[data-tip]') 代理，.tipbox 是 z-index:130 > 菜单的 90，且 white-space:pre-line
-  // 认 \n）—— 比塞进 sub 强：菜单 compact 时才 240px 宽，长文案会把那一行撑成七八行。
+  // tip：选项的长说明，挂 data-tip 交给全局 fixed 浮层（+page.svelte 的 onTipHover 用
+  // closest('[title],[data-tip]') 代理，共享 .ui-tip 会按真实尺寸避让视口并保留 \n）—— 比塞进
+  // sub 强：菜单 compact 时才 240px 宽，长文案会把那一行撑成七八行。
   // tone：给 sub 上风险色（'danger'/'warn'）。组件原有的 tone 只染触发器，够不到菜单里的选项行。
-  interface Opt { value: string; label: string; sub?: string; disabled?: boolean; icon?: string; img?: string; tip?: string; tone?: string; }
+  interface Opt { value: string; label: string; short?: string; sub?: string; disabled?: boolean; icon?: string; img?: string; tip?: string; tone?: string; }
   // 站点图标：有 logo 用 logo，否则用 slug 首字母做圆形占位。
 
   let {
@@ -102,7 +102,7 @@
        同款做法见 UsageRing.svelte 的 `use:tip={open ? '' : tipText}`。 -->
   <button type="button" class="dd-trigger" class:open class:compact class:bare class:tone-warn={tone === 'warn'} class:tone-danger={tone === 'danger'} onclick={toggle} {disabled} data-tip={open ? null : tip || null}>
     <span class="dd-label" class:placeholder={!current}>
-      {#if current}{@render lead(current)}{/if}{current?.label ?? placeholder}
+      {#if current}{@render lead(current)}{/if}{current?.short ?? current?.label ?? placeholder}
     </span>
     <svg class="dd-chev" class:up={open} width="12" height="12" viewBox="0 0 12 12" fill="none">
       <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />

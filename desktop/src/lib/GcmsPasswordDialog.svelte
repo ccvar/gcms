@@ -88,7 +88,7 @@
             disabled={busy}
             aria-invalid={error ? 'true' : 'false'}
           />
-          <button class="password-eye" type="button" aria-label={visible ? '隐藏密码' : '显示密码'} title={visible ? '隐藏密码' : '显示密码'} onclick={() => (visible = !visible)} disabled={busy}>
+          <button class="password-eye" type="button" tabindex="-1" aria-label={visible ? '隐藏密码' : '显示密码'} title={visible ? '隐藏密码' : '显示密码'} onclick={() => (visible = !visible)} disabled={busy}>
             {#if visible}
               <svg viewBox="0 0 24 24" fill="none"><path d="m4 4 16 16M10.6 10.7a2 2 0 0 0 2.7 2.7M9.2 5.5A9.8 9.8 0 0 1 12 5c5.5 0 8.5 7 8.5 7a15.3 15.3 0 0 1-2.2 3.3M6.3 7.1A15.5 15.5 0 0 0 3.5 12s3 7 8.5 7c1 0 1.9-.2 2.7-.5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
             {:else}

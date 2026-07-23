@@ -44,7 +44,7 @@ use gcms_remote::{
     gcms_remote_migration_site_create_a_record, gcms_remote_migration_sites,
     gcms_remote_migration_stage, gcms_remote_migration_stop, gcms_remote_migration_uninstall,
     gcms_remote_restart, gcms_remote_set_admin_password, gcms_remote_status, gcms_remote_stop,
-    gcms_remote_upgrade,
+    gcms_remote_upgrade, gcms_remote_verify_admin_password,
 };
 use tasks::ScheduledTask;
 use transfer::{export_pilot_transfer, import_pilot_transfer, inspect_pilot_transfer};
@@ -59,6 +59,11 @@ struct AppState {
     firing: Arc<Mutex<HashSet<String>>>,
     /// 正在执行一键安装、DNS 写入或公网配置的远程连接 id，防止同一台机器并发修改。
     gcms_installing: Arc<Mutex<HashSet<String>>>,
+    /// 正在更新技能包的 gcms 连接 id；同一连接串行，不同连接可并行。
+    pack_updating: Arc<Mutex<HashSet<String>>>,
+    /// 从 Pilot 钥匙串同步 Cloudflare 授权时必须串行：GCMS 当前是读改写，
+    /// 并发导入不同 Token 可能让后一次写入覆盖前一次结果。
+    cloudflare_import_lock: tokio::sync::Mutex<()>,
     /// 应用数据目录（权限钩子资产 + 待批请求落在 <data_dir>/permit 下）。
     data_dir: PathBuf,
     /// 当前运行的本地预览（wrangler dev）进程；一次只跑一个。
@@ -163,6 +168,100 @@ fn resolve_work_dir(conn: &pack::Connection, site_slug: &str) -> Result<String, 
     Ok(dir)
 }
 
+/// 自由对话运行时使用的合成连接 id。新会话的 Conversation.conn_id 记录侧栏创建位置，
+/// 不再写这个值；仅为运行隔离、附件解析和旧数据迁移保留。
+const WORKSPACE_CONNECTION_ID: &str = "__workspace__";
+
+/// 自由对话不借用当前 GCMS/Cloudflare/SSH 连接：这个合成连接只负责给智能体一个 cwd，
+/// 不存在于 connections.json，也没有任何钥匙串凭据。
+fn workspace_connection(work_dir: &str) -> pack::Connection {
+    pack::Connection {
+        id: WORKSPACE_CONNECTION_ID.into(),
+        name: "自由对话".into(),
+        remark: String::new(),
+        kind: "workspace".into(),
+        source_ssh_id: String::new(),
+        api_base: String::new(),
+        skill_dir: work_dir.into(),
+        key_prefix: String::new(),
+        key_kind: String::new(),
+        account_id: String::new(),
+        preferred_zones: vec![],
+        ssh_host: String::new(),
+        ssh_port: 0,
+        ssh_user: String::new(),
+        ssh_auth: String::new(),
+        ssh_key_path: String::new(),
+        ssh_fingerprint: String::new(),
+        ssh_os: String::new(),
+        ssh_os_id: String::new(),
+        pack_version: String::new(),
+        created_at: String::new(),
+    }
+}
+
+/// 自由对话的 cwd：用户选了文件夹就只使用该目录；未选择时创建每会话独立的空白目录。
+/// 外部目录必须真实存在且为目录，绝不代建一个看似成功的错误路径。
+fn resolve_workspace_dir(
+    data_dir: &std::path::Path,
+    conv_id: &str,
+    selected: &str,
+) -> Result<String, String> {
+    let selected = selected.trim();
+    let dir = if selected.is_empty() {
+        let dir = data_dir.join("workspaces").join(conv_id);
+        std::fs::create_dir_all(&dir).map_err(|e| format!("创建自由对话空间失败: {e}"))?;
+        dir
+    } else {
+        let dir = std::fs::canonicalize(selected)
+            .map_err(|_| "所选文件夹不可用，请重新选择后新建自由对话".to_string())?;
+        if !dir.is_dir() {
+            return Err("所选路径不是文件夹".into());
+        }
+        dir
+    };
+    Ok(dir.to_string_lossy().into_owned())
+}
+
+fn conversation_runtime(
+    conns: &pack::ConnStore,
+    data_dir: &std::path::Path,
+    conv: &Conversation,
+) -> Result<(pack::Connection, String), String> {
+    if conv.task_type == "workspace" {
+        let work_dir = resolve_workspace_dir(data_dir, &conv.id, &conv.workspace_dir)?;
+        return Ok((workspace_connection(&work_dir), work_dir));
+    }
+    let conn = conns.get(&conv.conn_id)?;
+    let work_dir = resolve_work_dir(&conn, &conv.site_slug)?;
+    Ok((conn, work_dir))
+}
+
+/// 附件命令既服务普通站点，也服务运行环境与侧栏归属分离的自由对话。
+/// workspace 前端用会话 id 作为 project，借此只取回该会话已经确认过的 cwd；
+/// 其它连接继续沿用原来的 conn + project 解析规则。
+fn attachment_runtime(
+    state: &AppState,
+    conn_id: &str,
+    project: &str,
+) -> Result<(pack::Connection, String), String> {
+    // 新版 workspace 的 conn_id 是侧栏固定位置，不是运行连接；project 才是会话 id。
+    // 先按 project 识别会话，可同时兼容旧版仍传 __workspace__ 的调用方。
+    if let Some(conv) = state.convos.get(project) {
+        if conv.task_type == "workspace" {
+            if conn_id != WORKSPACE_CONNECTION_ID && conn_id != conv.conn_id {
+                return Err("自由对话归属不匹配".into());
+            }
+            let (conn, _) = conversation_runtime(&state.conns, &state.data_dir, &conv)?;
+            return Ok((conn, String::new()));
+        }
+    }
+    if conn_id == WORKSPACE_CONNECTION_ID {
+        return Err("自由对话不存在".into());
+    }
+    Ok((state.conns.get(conn_id)?, project.to_string()))
+}
+
 #[tauri::command]
 fn list_connections(state: tauri::State<'_, AppState>) -> Vec<pack::Connection> {
     state.conns.list()
@@ -181,16 +280,119 @@ async fn import_pack(
         .map_err(|e| e.to_string())?
 }
 
+/// 技能包版本在旧包与服务端响应中可能只差一个 v 前缀；
+/// 所有检查、幂等与落地验证都必须用同一口径。
+fn normalized_pack_version(value: &str) -> &str {
+    let value = value.trim();
+    value
+        .strip_prefix('v')
+        .or_else(|| value.strip_prefix('V'))
+        .unwrap_or(value)
+        .trim()
+}
+
+fn pack_versions_equal(left: &str, right: &str) -> bool {
+    normalized_pack_version(left) == normalized_pack_version(right)
+}
+
+/// 只读取下载 ZIP 中的 PACK_VERSION，不解压、不写盘。
+/// 多个标记可以有相同规范化版本，但互相冲突必须拒绝。
+fn pack_version_from_zip(bytes: &[u8]) -> Result<String, String> {
+    use std::io::{Cursor, Read as _};
+
+    let mut archive = zip::ZipArchive::new(Cursor::new(bytes))
+        .map_err(|error| format!("读取技能包 zip 失败：{error}"))?;
+    let mut found = String::new();
+    for index in 0..archive.len() {
+        let mut file = archive
+            .by_index(index)
+            .map_err(|error| format!("读取技能包 zip 条目失败：{error}"))?;
+        if file.is_dir()
+            || file.name().trim_end_matches('/').rsplit('/').next() != Some("PACK_VERSION")
+        {
+            continue;
+        }
+        if file.size() > 4096 {
+            return Err("技能包 PACK_VERSION 内容异常（太大）".into());
+        }
+        let mut value = String::new();
+        file.read_to_string(&mut value)
+            .map_err(|error| format!("读取技能包 PACK_VERSION 失败：{error}"))?;
+        let value = value.trim();
+        if value.is_empty() {
+            continue;
+        }
+        if !found.is_empty() && !pack_versions_equal(&found, value) {
+            return Err(format!(
+                "技能包 zip 包含冲突的 PACK_VERSION：{found} / {value}"
+            ));
+        }
+        if found.is_empty() {
+            found = value.to_string();
+        }
+    }
+    Ok(found)
+}
+
+#[cfg(test)]
+mod pack_version_tests {
+    use super::{pack_version_from_zip, pack_versions_equal};
+    use std::io::{Cursor, Write as _};
+
+    fn version_zip(entries: &[(&str, &str)]) -> Vec<u8> {
+        let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        for (path, value) in entries {
+            writer.start_file(*path, options).unwrap();
+            writer.write_all(value.as_bytes()).unwrap();
+        }
+        writer.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn version_comparison_ignores_one_v_prefix_and_outer_whitespace() {
+        assert!(pack_versions_equal(" v1.3.49\n", "1.3.49"));
+        assert!(pack_versions_equal("V1.3.49", " 1.3.49 "));
+        assert!(!pack_versions_equal("vv1.3.49", "1.3.49"));
+        assert!(!pack_versions_equal("1.3.49", "1.3.50"));
+    }
+
+    #[test]
+    fn reads_pack_version_from_zip_and_accepts_equivalent_duplicates() {
+        let bytes = version_zip(&[
+            ("kit/skill/PACK_VERSION", "v1.3.49\n"),
+            ("nested/PACK_VERSION", " 1.3.49 "),
+        ]);
+        assert_eq!(pack_version_from_zip(&bytes).unwrap(), "v1.3.49");
+    }
+
+    #[test]
+    fn rejects_conflicting_pack_versions_in_zip() {
+        let bytes = version_zip(&[
+            ("kit/skill/PACK_VERSION", "1.3.49"),
+            ("nested/PACK_VERSION", "1.3.50"),
+        ]);
+        assert!(pack_version_from_zip(&bytes)
+            .unwrap_err()
+            .contains("冲突的 PACK_VERSION"));
+    }
+}
+
 #[derive(serde::Serialize)]
 struct PackUpdateInfo {
     current: String,
     latest: String,
     has_update: bool,
+    /// ok | unsupported | unreachable | error
+    status: String,
+    error: String,
 }
 
 /// 查询技能包是否有新版：GET {api_base}/skill-pack/version（密钥鉴权）。
 /// 旧连接（pack_version 为空）：技能目录无 PACK_VERSION 标记 ⇒ 必是老包，首次就提示有更新；
-/// 有标记则读取落库后正常比较。服务端太老没有该端点（404）或网络失败 → 静默视为无更新（不打扰用户）。
+/// 有标记则读取落库后正常比较。服务端不支持、不可达或响应异常会返回明确状态，
+/// 避免统一更新中心把“无法检查”误报成“已是最新”。
 #[tauri::command]
 async fn check_pack_update(
     state: tauri::State<'_, AppState>,
@@ -202,15 +404,12 @@ async fn check_pack_update(
             current: String::new(),
             latest: String::new(),
             has_update: false,
+            status: "unsupported".into(),
+            error: "只有 gcms 技能包连接支持检查更新".into(),
         });
     }
     let key = keychain::get_key(&conn.id)?;
     let url = format!("{}/skill-pack/version", conn.api_base.trim_end_matches('/'));
-    let none = PackUpdateInfo {
-        current: conn.pack_version.clone(),
-        latest: String::new(),
-        has_update: false,
-    };
     let resp = match reqwest::Client::new()
         .get(&url)
         .bearer_auth(&key)
@@ -218,21 +417,61 @@ async fn check_pack_update(
         .send()
         .await
     {
-        Ok(r) if r.status().is_success() => r,
-        _ => return Ok(none), // 404（旧服务端）/网络失败：静默无更新
+        Ok(resp) => resp,
+        Err(error) => {
+            return Ok(PackUpdateInfo {
+                current: conn.pack_version,
+                latest: String::new(),
+                has_update: false,
+                status: "unreachable".into(),
+                error: format!("连接技能包更新服务失败：{error}"),
+            });
+        }
     };
-    let latest = resp
-        .json::<serde_json::Value>()
-        .await
-        .ok()
-        .and_then(|v| {
-            v.get("version")
-                .and_then(|x| x.as_str())
-                .map(str::to_string)
-        })
+    let response_status = resp.status();
+    if response_status == reqwest::StatusCode::NOT_FOUND {
+        return Ok(PackUpdateInfo {
+            current: conn.pack_version,
+            latest: String::new(),
+            has_update: false,
+            status: "unsupported".into(),
+            error: "服务端版本太旧，还不支持技能包在线更新".into(),
+        });
+    }
+    if !response_status.is_success() {
+        return Ok(PackUpdateInfo {
+            current: conn.pack_version,
+            latest: String::new(),
+            has_update: false,
+            status: "error".into(),
+            error: format!("检查技能包更新失败：HTTP {response_status}"),
+        });
+    }
+    let payload = match resp.json::<serde_json::Value>().await {
+        Ok(payload) => payload,
+        Err(error) => {
+            return Ok(PackUpdateInfo {
+                current: conn.pack_version,
+                latest: String::new(),
+                has_update: false,
+                status: "error".into(),
+                error: format!("解析技能包版本响应失败：{error}"),
+            });
+        }
+    };
+    let latest = payload
+        .get("version")
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
         .unwrap_or_default();
-    if latest.is_empty() {
-        return Ok(none);
+    if latest.trim().is_empty() {
+        return Ok(PackUpdateInfo {
+            current: conn.pack_version,
+            latest: String::new(),
+            has_update: false,
+            status: "error".into(),
+            error: "技能包版本响应缺少 version".into(),
+        });
     }
     if conn.pack_version.is_empty() {
         // 版本未落库。看技能目录里有没有 PACK_VERSION 标记：
@@ -247,31 +486,355 @@ async fn check_pack_update(
                 current: String::new(),
                 latest: latest.clone(),
                 has_update: true,
+                status: "ok".into(),
+                error: String::new(),
             });
         }
         let _ = state.conns.set_pack_version(&conn.id, &marker);
-        let has = latest != marker;
+        let has = !pack_versions_equal(&latest, &marker);
         return Ok(PackUpdateInfo {
             current: marker,
             latest,
             has_update: has,
+            status: "ok".into(),
+            error: String::new(),
         });
     }
-    let has = latest != conn.pack_version;
+    let has = !pack_versions_equal(&latest, &conn.pack_version);
     Ok(PackUpdateInfo {
         current: conn.pack_version,
         latest,
         has_update: has,
+        status: "ok".into(),
+        error: String::new(),
     })
+}
+
+#[derive(serde::Serialize)]
+struct GcmsUnlockResult {
+    operations: Vec<String>,
+    expires_at: String,
+    ttl_seconds: u64,
+}
+
+/// 由 Pilot 原生密码弹窗签发 GCMS 控制层短时授权。
+/// 密码只在本次 IPC 调用中经过内存，绝不写入对话、技能包或连接文件。
+#[tauri::command]
+async fn gcms_control_unlock(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    password: String,
+    operations: Vec<String>,
+) -> Result<GcmsUnlockResult, String> {
+    let conn = state.conns.get(&conn_id)?;
+    if conn.kind != "gcms" {
+        return Err("只有 GCMS 技能包连接支持控制层解锁".into());
+    }
+    let operations: Vec<String> = operations
+        .into_iter()
+        .map(|item| item.trim().to_string())
+        .filter(|item| !item.is_empty())
+        .collect();
+    if operations.is_empty() {
+        return Err("缺少需要解锁的操作".into());
+    }
+    if password.is_empty() {
+        return Err("请输入 GCMS 后台密码".into());
+    }
+    let key = keychain::get_key(&conn.id)?;
+    let url = format!("{}/control/unlock", conn.api_base.trim_end_matches('/'));
+    let response = reqwest::Client::new()
+        .post(url)
+        .bearer_auth(key)
+        .header("X-GCMS-Control-UI", "pilot")
+        .json(&serde_json::json!({ "password": password, "operations": operations }))
+        .timeout(Duration::from_secs(15))
+        .send()
+        .await
+        .map_err(|e| format!("无法连接 GCMS 解锁服务：{e}"))?;
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    let value: serde_json::Value = serde_json::from_str(&body).unwrap_or_default();
+    if !status.is_success() {
+        let code = value
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        let message = value
+            .get("message")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default();
+        return Err(if !message.is_empty() {
+            message.to_string()
+        } else if code == "default_password" {
+            "请先修改 GCMS 后台默认密码，再进行短时解锁".into()
+        } else {
+            format!("GCMS 解锁失败（HTTP {}）", status.as_u16())
+        });
+    }
+    let token = value
+        .get("unlock_token")
+        .and_then(|v| v.as_str())
+        .filter(|v| !v.is_empty())
+        .ok_or("GCMS 解锁响应缺少授权令牌")?;
+    let expires_at_text = value
+        .get("expires_at")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+    let ttl_seconds = value
+        .get("ttl_seconds")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(300);
+    // 以服务端给出的 TTL 为准，留两秒余量，避免刚好在下一轮请求中到期。
+    let expires_at = now_secs().saturating_add(ttl_seconds.saturating_sub(2));
+    agent::store_gcms_unlock(&conn.id, token.to_string(), expires_at);
+    Ok(GcmsUnlockResult {
+        operations,
+        expires_at: expires_at_text.to_string(),
+        ttl_seconds,
+    })
+}
+
+async fn gcms_control_request(
+    conn: &pack::Connection,
+    site_id: i64,
+    method: reqwest::Method,
+    payload: Option<serde_json::Value>,
+    operation: Option<&str>,
+    dry_run: bool,
+) -> Result<serde_json::Value, String> {
+    if conn.kind != "gcms" {
+        return Err("只有 GCMS 技能包连接支持公网访问控制 API".into());
+    }
+    if site_id <= 0 {
+        return Err("GCMS 站点 ID 无效；请先刷新站点列表".into());
+    }
+    let key = keychain::get_key(&conn.id)?;
+    let mut url = format!(
+        "{}/control/sites/{}/public-access",
+        conn.api_base.trim_end_matches('/'),
+        site_id
+    );
+    if dry_run {
+        url.push_str("?dry_run=1");
+    }
+    let client = reqwest::Client::new();
+    let mut request = client
+        .request(method, url)
+        .bearer_auth(key)
+        .header("X-GCMS-Control-UI", "pilot")
+        .timeout(Duration::from_secs(45));
+    if let Some(operation) = operation {
+        let token =
+            agent::gcms_unlock_token(&conn.id).ok_or("请先在 Pilot 原生界面完成 GCMS 短时解锁")?;
+        let request_label = operation.replace('.', "-").replace('_', "-");
+        request = request
+            .header("X-GCMS-Control-Unlock", token)
+            .header("X-GCMS-Control-Confirm", operation)
+            .header(
+                "Idempotency-Key",
+                format!("pilot-{}-{}", request_label, uuid::Uuid::new_v4().simple()),
+            );
+    }
+    if let Some(body) = payload {
+        request = request.json(&body);
+    }
+    let response = request
+        .send()
+        .await
+        .map_err(|e| format!("无法连接 GCMS 公网访问服务：{e}"))?;
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    let value: serde_json::Value =
+        serde_json::from_str(&body).unwrap_or_else(|_| serde_json::json!({"message": body.trim()}));
+    if !status.is_success() {
+        let message = value
+            .get("message")
+            .and_then(|v| v.as_str())
+            .or_else(|| value.get("error").and_then(|v| v.as_str()))
+            .unwrap_or("GCMS 公网访问请求失败");
+        return Err(format!(
+            "GCMS 公网访问接口 HTTP {}：{}",
+            status.as_u16(),
+            message
+        ));
+    }
+    Ok(value)
+}
+
+/// 通过 GCMS 自己的控制 API 读取公网访问状态；不需要 SSH，也不使用 Pilot 的 Cloudflare 连接。
+#[tauri::command]
+async fn gcms_public_access_check(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    site_id: i64,
+) -> Result<serde_json::Value, String> {
+    let conn = state.conns.get(&conn_id)?;
+    gcms_control_request(&conn, site_id, reqwest::Method::GET, None, None, false).await
+}
+
+/// 通过 GCMS 自己的控制 API 执行完整公网访问编排：域名、GCMS DNS 配置、Caddy 与 HTTPS
+/// 均由 GCMS 服务端处理。Pilot 只传递用户确认的目标域名和短时授权。
+#[tauri::command]
+async fn gcms_public_access_apply(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    site_id: i64,
+    payload: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let conn = state.conns.get(&conn_id)?;
+    gcms_control_request(
+        &conn,
+        site_id,
+        reqwest::Method::POST,
+        Some(payload),
+        Some("public_access.apply"),
+        false,
+    )
+    .await
+}
+
+/// 清除一个从未通过 GCMS HTTPS 验证的失败域名任务。dry_run 先由服务端
+/// 重新检查状态；正式执行还必须携带仅绑定到该清除操作的短时授权。
+#[tauri::command]
+async fn gcms_public_access_clear_unverified(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    site_id: i64,
+    payload: serde_json::Value,
+    dry_run: bool,
+) -> Result<serde_json::Value, String> {
+    let conn = state.conns.get(&conn_id)?;
+    gcms_control_request(
+        &conn,
+        site_id,
+        reqwest::Method::DELETE,
+        Some(payload),
+        if dry_run {
+            None
+        } else {
+            Some("public_access.clear_unverified")
+        },
+        dry_run,
+    )
+    .await
+}
+
+/// 按连接限定技能包更新，并在所有成功、失败与提前返回路径自动释放。
+struct PackUpdateGuard {
+    active: Arc<Mutex<HashSet<String>>>,
+    conn_id: String,
+}
+
+impl Drop for PackUpdateGuard {
+    fn drop(&mut self) {
+        if let Ok(mut active) = self.active.lock() {
+            active.remove(&self.conn_id);
+        }
+    }
+}
+
+fn begin_pack_update(state: &AppState, conn_id: &str) -> Result<PackUpdateGuard, String> {
+    let mut active = state
+        .pack_updating
+        .lock()
+        .map_err(|_| "技能包更新状态锁异常")?;
+    if !active.insert(conn_id.to_string()) {
+        return Err("该连接正在更新技能包，请等待当前更新完成".into());
+    }
+    drop(active);
+    Ok(PackUpdateGuard {
+        active: state.pack_updating.clone(),
+        conn_id: conn_id.to_string(),
+    })
+}
+
+/// 回合启动与技能包维护共用同一把门闩：先检查连接未进入维护，
+/// 再在持锁期间同步把会话置为 running。闭包不得 await，锁不会跨异步调用持有。
+fn begin_turn_with_pack_gate<T, F>(
+    pack_updating: &Arc<Mutex<HashSet<String>>>,
+    conn_id: &str,
+    start: F,
+) -> Result<T, String>
+where
+    F: FnOnce() -> Result<T, String>,
+{
+    let active = pack_updating.lock().map_err(|_| "技能包维护状态锁异常")?;
+    if active.contains(conn_id) {
+        return Err("该连接正在更新技能包，请等待更新完成后再发起任务".into());
+    }
+    let result = start();
+    drop(active);
+    result
+}
+
+#[cfg(test)]
+mod pack_maintenance_gate_tests {
+    use super::begin_turn_with_pack_gate;
+    use std::cell::Cell;
+    use std::collections::HashSet;
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn rejects_the_maintained_connection_without_starting_a_turn() {
+        let active = Arc::new(Mutex::new(HashSet::from(["gcms-a".to_string()])));
+        let called = Cell::new(false);
+        let error = begin_turn_with_pack_gate(&active, "gcms-a", || {
+            called.set(true);
+            Ok::<_, String>(())
+        })
+        .unwrap_err();
+
+        assert!(!called.get());
+        assert!(error.contains("正在更新技能包"));
+    }
+
+    #[test]
+    fn holds_the_gate_through_turn_start_and_allows_other_connections() {
+        let active = Arc::new(Mutex::new(HashSet::from(["gcms-a".to_string()])));
+        let result = begin_turn_with_pack_gate(&active, "gcms-b", || {
+            assert!(
+                active.try_lock().is_err(),
+                "会话置 running 前必须仍持有维护门闩"
+            );
+            Ok::<_, String>(42)
+        })
+        .unwrap();
+
+        assert_eq!(result, 42);
+        assert!(active.lock().unwrap().contains("gcms-a"));
+    }
 }
 
 /// 一键升级技能包：用钥匙串密钥从服务端下载最新原始包，就地覆盖技能目录。
 /// 连接 / 密钥 / 对话全保留。
 #[tauri::command]
-async fn update_pack(state: tauri::State<'_, AppState>, conn_id: String) -> Result<String, String> {
-    let conn = state.conns.get(&conn_id)?;
-    if conn.kind != "gcms" {
+async fn update_pack(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    target_version: Option<String>,
+) -> Result<String, String> {
+    let observed = state.conns.get(&conn_id)?;
+    if observed.kind != "gcms" {
         return Err("只有 gcms 技能包连接支持升级".into());
+    }
+    let _guard = begin_pack_update(&state, &conn_id)?;
+    // 读取旧快照后、取得维护门闩前，另一窗口的更新可能已经完成；必须重读。
+    let mut conn = state.conns.get(&conn_id)?;
+    let target_version = target_version.unwrap_or_default().trim().to_string();
+    if !target_version.is_empty() && normalized_pack_version(&target_version).is_empty() {
+        return Err("目标技能包版本无效，请重新检查更新".into());
+    }
+    if !target_version.is_empty()
+        && !conn.pack_version.is_empty()
+        && !pack_versions_equal(&observed.pack_version, &conn.pack_version)
+        && !pack_versions_equal(&conn.pack_version, &target_version)
+    {
+        return Err(format!(
+            "技能包本地版本已变为 {}，与原目标 {} 不一致，请重新检查更新",
+            conn.pack_version.trim(),
+            target_version
+        ));
     }
     // 后端权威守卫：该连接下有正在跑的对话（含托盘定时任务在后台开的轮——前端快照看不到）
     // 时拒绝升级，防止覆盖正在被 CLI 使用的脚本。前端的检查只是提示层，这里才是闸。
@@ -282,6 +845,30 @@ async fn update_pack(state: tauri::State<'_, AppState>, conn_id: String) -> Resu
         .any(|c| c.conn_id == conn_id && c.status == "running")
     {
         return Err("该连接下有对话正在运行（可能是定时任务），请等它跑完再升级技能包。".into());
+    }
+    // 受管连接的技能包更新同时刷新服务端专用 key 的权限快照。
+    // 旧 token 仍有效时只补 scopes，不轮换；这样即使技能包已经是目标版本，
+    // 新增的受密码保护操作权限也能随“同步”自动落地，无需重新导入连接。
+    let source_ssh_id = conn.source_ssh_id.trim().to_string();
+    let access_refreshed = if source_ssh_id.is_empty() {
+        false
+    } else {
+        conn = gcms_remote::gcms_remote_sync_pilot_assistant_key(&state, &source_ssh_id, &conn.id)
+            .await?;
+        true
+    };
+    if !target_version.is_empty()
+        && !conn.pack_version.is_empty()
+        && pack_versions_equal(&conn.pack_version, &target_version)
+    {
+        return Ok(if access_refreshed {
+            format!(
+                "技能包已同步到 {}，运营助手权限也已刷新",
+                conn.pack_version.trim()
+            )
+        } else {
+            format!("技能包已同步到 {}，无需重复下载", conn.pack_version.trim())
+        });
     }
     let key = keychain::get_key(&conn.id)?;
     let url = format!("{}/skill-pack", conn.api_base.trim_end_matches('/'));
@@ -299,11 +886,12 @@ async fn update_pack(state: tauri::State<'_, AppState>, conn_id: String) -> Resu
             format!("下载技能包失败：HTTP {}", resp.status())
         });
     }
-    let version = resp
+    let header_version = resp
         .headers()
         .get("X-GCMS-Version")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
+        .trim()
         .to_string();
     let bytes = resp
         .bytes()
@@ -311,6 +899,51 @@ async fn update_pack(state: tauri::State<'_, AppState>, conn_id: String) -> Resu
         .map_err(|e| format!("读取技能包失败：{e}"))?;
     if bytes.len() < 200 {
         return Err("下载的技能包内容异常（太小）".into());
+    }
+    let zip_version = pack_version_from_zip(&bytes)?;
+    if !header_version.is_empty()
+        && !zip_version.is_empty()
+        && !pack_versions_equal(&header_version, &zip_version)
+    {
+        return Err(format!(
+            "下载的技能包版本不一致：响应头为 {header_version}，zip 内为 {zip_version}，未写入技能包"
+        ));
+    }
+    if !target_version.is_empty() {
+        if header_version.is_empty() && zip_version.is_empty() {
+            return Err(format!(
+                "下载的技能包未声明版本，无法确认是目标 {target_version}，未写入技能包"
+            ));
+        }
+        if !header_version.is_empty() && !pack_versions_equal(&header_version, &target_version) {
+            return Err(format!(
+                "技能包响应版本已变为 {header_version}，与原目标 {target_version} 不一致，请重新检查更新"
+            ));
+        }
+        if !zip_version.is_empty() && !pack_versions_equal(&zip_version, &target_version) {
+            return Err(format!(
+                "技能包 zip 版本已变为 {zip_version}，与原目标 {target_version} 不一致，请重新检查更新"
+            ));
+        }
+    }
+    let expected_version = if !target_version.is_empty() {
+        target_version.clone()
+    } else if !header_version.is_empty() {
+        header_version.clone()
+    } else {
+        zip_version.clone()
+    };
+    // 维护门闩会阻止新的回合启动；写盘前仍再做一次权威检查，防御遗漏路径
+    // 或外部状态变化。此时 zip 还只在内存中，放弃不会留下临时文件或部分覆盖。
+    if state
+        .convos
+        .list()
+        .iter()
+        .any(|c| c.conn_id == conn_id && c.status == "running")
+    {
+        return Err(
+            "技能包已下载，但检测到该连接启动了新任务，未写入技能包。请等任务结束后重试。".into(),
+        );
     }
     let tmp_zip = state
         .data_dir
@@ -323,14 +956,29 @@ async fn update_pack(state: tauri::State<'_, AppState>, conn_id: String) -> Resu
         .await
         .map_err(|e| e.to_string())?;
     let _ = std::fs::remove_file(&tmp_zip);
-    result?;
-    if !version.is_empty() {
-        let _ = state.conns.set_pack_version(&conn_id, &version);
+    let upgraded = result?;
+    if !zip_version.is_empty() && !pack_versions_equal(&upgraded.pack_version, &zip_version) {
+        return Err(format!(
+            "技能包已写入，但落地 PACK_VERSION 为 {}，预期为 {}，请重新检查",
+            upgraded.pack_version.trim(),
+            zip_version
+        ));
     }
-    Ok(if version.is_empty() {
+    if !header_version.is_empty() {
+        state.conns.set_pack_version(&conn_id, &header_version)?;
+    }
+    let landed_version = state.conns.get(&conn_id)?.pack_version;
+    if !expected_version.is_empty() && !pack_versions_equal(&landed_version, &expected_version) {
+        return Err(format!(
+            "技能包已写入，但落地版本为 {}，预期为 {}，请重新检查",
+            landed_version.trim(),
+            expected_version
+        ));
+    }
+    Ok(if landed_version.is_empty() {
         "技能包已升级，对话全部保留".into()
     } else {
-        format!("技能包已升级到 {version}，对话全部保留")
+        format!("技能包已升级到 {}，对话全部保留", landed_version.trim())
     })
 }
 
@@ -362,9 +1010,431 @@ async fn set_connection_remark(
 async fn discover_sites(
     state: tauri::State<'_, AppState>,
     conn_id: String,
+    refresh_stats: Option<bool>,
 ) -> Result<serde_json::Value, String> {
     let conn = state.conns.get(&conn_id)?;
-    discovery::discover(&conn).await
+    discovery::discover_with_refresh(&conn, refresh_stats.unwrap_or(false)).await
+}
+
+#[tauri::command]
+async fn gcms_site_preview_url(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    site_id: i64,
+) -> Result<serde_json::Value, String> {
+    let conn = state.conns.get(&conn_id)?;
+    discovery::site_preview_url(&conn, site_id).await
+}
+
+#[tauri::command]
+async fn gcms_themes_get(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+) -> Result<serde_json::Value, String> {
+    let conn = state.conns.get(&conn_id)?;
+    discovery::themes(&conn).await
+}
+
+#[tauri::command]
+async fn gcms_site_theme_get(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    site_id: i64,
+) -> Result<serde_json::Value, String> {
+    let conn = state.conns.get(&conn_id)?;
+    discovery::site_theme(&conn, site_id).await
+}
+
+#[tauri::command]
+async fn gcms_site_theme_preview_url(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    site_id: i64,
+    theme_id: String,
+) -> Result<serde_json::Value, String> {
+    let conn = state.conns.get(&conn_id)?;
+    discovery::site_theme_preview_url(&conn, site_id, &theme_id).await
+}
+
+#[tauri::command]
+async fn gcms_site_theme_plan(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    site_id: i64,
+    theme_id: Option<String>,
+    rollback: bool,
+    expected_current_theme: Option<String>,
+) -> Result<serde_json::Value, String> {
+    let conn = state.conns.get(&conn_id)?;
+    discovery::plan_site_theme(
+        &conn,
+        site_id,
+        theme_id.as_deref(),
+        rollback,
+        expected_current_theme.as_deref(),
+    )
+    .await
+}
+
+#[tauri::command]
+async fn gcms_site_theme_apply(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    site_id: i64,
+    theme_id: Option<String>,
+    rollback: bool,
+    request_id: String,
+    expected_current_theme: Option<String>,
+    require_unlock: bool,
+) -> Result<serde_json::Value, String> {
+    let conn = state.conns.get(&conn_id)?;
+    let unlock_token = if require_unlock {
+        Some(
+            agent::gcms_unlock_token(&conn.id)
+                .ok_or("主题安全授权已失效，请重新验证 GCMS 后台密码")?,
+        )
+    } else {
+        None
+    };
+    discovery::apply_site_theme(
+        &conn,
+        site_id,
+        theme_id.as_deref(),
+        rollback,
+        &request_id,
+        expected_current_theme.as_deref(),
+        unlock_token.as_deref(),
+    )
+    .await
+}
+
+#[tauri::command]
+async fn gcms_integrations_get(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    site_id: Option<i64>,
+) -> Result<serde_json::Value, String> {
+    let conn = state.conns.get(&conn_id)?;
+    discovery::integrations(&conn, site_id).await
+}
+
+#[tauri::command]
+async fn gcms_integrations_save(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    site_id: Option<i64>,
+    payload: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let conn = state.conns.get(&conn_id)?;
+    discovery::save_integrations(&conn, site_id, &payload).await
+}
+
+#[tauri::command]
+async fn gcms_site_google_provision(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    site_id: i64,
+    service: String,
+    payload: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let conn = state.conns.get(&conn_id)?;
+    discovery::provision_site_google(&conn, site_id, &service, &payload).await
+}
+
+#[tauri::command]
+async fn gcms_site_google_analytics_options(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    site_id: i64,
+    account_id: String,
+) -> Result<serde_json::Value, String> {
+    let conn = state.conns.get(&conn_id)?;
+    discovery::site_google_analytics_options(&conn, site_id, &account_id).await
+}
+
+#[derive(serde::Serialize)]
+struct CloudflareImportFailure {
+    connection_id: String,
+    label: String,
+    error: String,
+}
+
+#[derive(serde::Serialize)]
+struct CloudflareImportResult {
+    imported: usize,
+    skipped: usize,
+    failures: Vec<CloudflareImportFailure>,
+}
+
+fn cloudflare_authorization_id(token: &str) -> String {
+    use sha2::Digest as _;
+
+    let digest = sha2::Sha256::digest(token.trim().as_bytes());
+    let mut prefix = String::with_capacity(12);
+    for byte in &digest[..6] {
+        use std::fmt::Write as _;
+        let _ = write!(prefix, "{byte:02x}");
+    }
+    format!("cf_{prefix}")
+}
+
+fn cloudflare_authorization_ids(config: &serde_json::Value) -> HashSet<String> {
+    config
+        .pointer("/cloudflare/authorizations")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|item| item.get("id").and_then(serde_json::Value::as_str))
+        .map(str::to_string)
+        .collect()
+}
+
+fn validate_cloudflare_import_target(conn: &pack::Connection) -> Result<(), String> {
+    if conn.kind != "gcms" || conn.key_kind != "gcmsp_" {
+        return Err("只能把 Cloudflare 授权同步到 GCMS 平台助手连接。".into());
+    }
+    if conn.source_ssh_id.trim().is_empty() {
+        return Err("自动导入只对 Pilot 已验证并管理的 GCMS 服务器开放。".into());
+    }
+    let url = reqwest::Url::parse(conn.api_base.trim())
+        .map_err(|_| "GCMS 平台助手的 API 地址无效。".to_string())?;
+    if url.scheme() != "https" || url.host_str().is_none() {
+        return Err("Cloudflare Token 只允许通过 HTTPS 同步到 GCMS。".into());
+    }
+    Ok(())
+}
+
+fn cloudflare_import_label(conn: &pack::Connection) -> String {
+    let label = conn.remark.trim();
+    if !label.is_empty() {
+        return label.to_string();
+    }
+    let label = conn.name.trim();
+    if label.is_empty() {
+        "Cloudflare 连接".into()
+    } else {
+        label.to_string()
+    }
+}
+
+fn redact_cloudflare_token(message: String, token: &str) -> String {
+    let trimmed = token.trim();
+    if trimmed.is_empty() {
+        return message;
+    }
+    let redacted = message.replace(token, "[Token 已隐藏]");
+    if token == trimmed {
+        redacted
+    } else {
+        redacted.replace(trimmed, "[Token 已隐藏]")
+    }
+}
+
+/// 把 Pilot 已连接的 Cloudflare Token 直接从系统钥匙串同步到当前 GCMS。
+/// WebView 只收到计数和脱敏错误，Token 不作为 IPC 参数或返回值出现。
+#[tauri::command]
+async fn gcms_cloudflare_connections_sync(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+) -> Result<CloudflareImportResult, String> {
+    use serde_json::json;
+    use zeroize::{Zeroize as _, Zeroizing};
+
+    let _guard = state.cloudflare_import_lock.lock().await;
+    let target = state.conns.get(&conn_id)?;
+    validate_cloudflare_import_target(&target)?;
+    let managed_source = state
+        .conns
+        .get(target.source_ssh_id.trim())
+        .map_err(|_| "GCMS 受管服务器连接已不存在，不能自动导入 Cloudflare Token。".to_string())?;
+    if managed_source.kind != "ssh" {
+        return Err("GCMS 受管来源无效，不能自动导入 Cloudflare Token。".into());
+    }
+
+    // 同步锁内重新读取，等待中的第二次调用会看到第一次已经写入的授权并直接跳过。
+    let config = discovery::integrations(&target, None).await?;
+    let mut authorization_ids = cloudflare_authorization_ids(&config);
+    let sources: Vec<pack::Connection> = state
+        .conns
+        .list()
+        .into_iter()
+        .filter(|conn| conn.kind == "cloudflare" && conn.key_kind == "cf_token")
+        .collect();
+    let mut imported = 0;
+    let mut skipped = 0;
+    let mut failures = Vec::new();
+
+    for source in sources {
+        let label = cloudflare_import_label(&source);
+        let source_id = source.id.clone();
+        let token = match tokio::task::spawn_blocking(move || keychain::get_key(&source_id)).await {
+            Ok(Ok(token)) => Zeroizing::new(token),
+            Ok(Err(error)) => {
+                failures.push(CloudflareImportFailure {
+                    connection_id: source.id,
+                    label,
+                    error,
+                });
+                continue;
+            }
+            Err(error) => {
+                failures.push(CloudflareImportFailure {
+                    connection_id: source.id,
+                    label,
+                    error: format!("读取系统钥匙串失败: {error}"),
+                });
+                continue;
+            }
+        };
+        if token.trim().is_empty() {
+            failures.push(CloudflareImportFailure {
+                connection_id: source.id,
+                label,
+                error: "系统钥匙串中的 Token 为空。".into(),
+            });
+            continue;
+        }
+
+        let authorization_id = cloudflare_authorization_id(&token);
+        if authorization_ids.contains(&authorization_id) {
+            skipped += 1;
+            continue;
+        }
+
+        let mut payload = json!({
+            "cloudflare": {
+                "api_token": token.trim(),
+                "label": label.clone(),
+            }
+        });
+        let saved = discovery::save_integrations(&target, None, &payload).await;
+        if let Some(serde_json::Value::String(secret)) =
+            payload.pointer_mut("/cloudflare/api_token")
+        {
+            secret.zeroize();
+        }
+        match saved {
+            Ok(_) => {
+                authorization_ids.insert(authorization_id);
+                imported += 1;
+            }
+            Err(error) => failures.push(CloudflareImportFailure {
+                connection_id: source.id,
+                label,
+                error: redact_cloudflare_token(error, &token),
+            }),
+        }
+    }
+
+    Ok(CloudflareImportResult {
+        imported,
+        skipped,
+        failures,
+    })
+}
+
+#[cfg(test)]
+mod cloudflare_import_tests {
+    use super::*;
+
+    fn connection(kind: &str, key_kind: &str, api_base: &str) -> pack::Connection {
+        pack::Connection {
+            id: "test".into(),
+            name: "Cloudflare".into(),
+            remark: String::new(),
+            kind: kind.into(),
+            source_ssh_id: "ssh-test".into(),
+            api_base: api_base.into(),
+            skill_dir: String::new(),
+            key_prefix: String::new(),
+            key_kind: key_kind.into(),
+            account_id: String::new(),
+            preferred_zones: Vec::new(),
+            ssh_host: String::new(),
+            ssh_port: 0,
+            ssh_user: String::new(),
+            ssh_auth: String::new(),
+            ssh_key_path: String::new(),
+            ssh_fingerprint: String::new(),
+            ssh_os: String::new(),
+            ssh_os_id: String::new(),
+            pack_version: String::new(),
+            created_at: String::new(),
+        }
+    }
+
+    #[test]
+    fn authorization_id_matches_gcms_and_trims_token() {
+        assert_eq!(cloudflare_authorization_id("abc"), "cf_ba7816bf8f01");
+        assert_eq!(cloudflare_authorization_id("  abc\n"), "cf_ba7816bf8f01");
+    }
+
+    #[test]
+    fn import_target_must_be_https_platform_connection() {
+        assert!(validate_cloudflare_import_target(&connection(
+            "gcms",
+            "gcmsp_",
+            "https://cms.example.com/api/platform/v1"
+        ))
+        .is_ok());
+        assert!(validate_cloudflare_import_target(&connection(
+            "gcms",
+            "gcms_",
+            "https://cms.example.com/api/platform/v1"
+        ))
+        .is_err());
+        assert!(validate_cloudflare_import_target(&connection(
+            "gcms",
+            "gcmsp_",
+            "http://cms.example.com/api/platform/v1"
+        ))
+        .is_err());
+        let mut unmanaged = connection("gcms", "gcmsp_", "https://cms.example.com/api/platform/v1");
+        unmanaged.source_ssh_id.clear();
+        assert!(validate_cloudflare_import_target(&unmanaged).is_err());
+    }
+
+    #[test]
+    fn remote_errors_cannot_echo_the_token_to_webview() {
+        let token = "secret-cloudflare-token";
+        let message = redact_cloudflare_token(format!("invalid token: {token}"), token);
+        assert!(!message.contains(token));
+        assert!(message.contains("Token 已隐藏"));
+    }
+}
+
+#[tauri::command]
+async fn gcms_site_status_set(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    site_id: i64,
+    status: String,
+    request_id: String,
+) -> Result<serde_json::Value, String> {
+    let conn = state.conns.get(&conn_id)?;
+    discovery::set_site_status(&conn, site_id, &status, &request_id).await
+}
+
+#[tauri::command]
+async fn gcms_site_deployment_get(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    site_id: i64,
+) -> Result<serde_json::Value, String> {
+    let conn = state.conns.get(&conn_id)?;
+    discovery::site_deployment(&conn, site_id).await
+}
+
+#[tauri::command]
+async fn gcms_site_deployment_save(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    site_id: i64,
+    payload: serde_json::Value,
+    request_id: String,
+) -> Result<serde_json::Value, String> {
+    let conn = state.conns.get(&conn_id)?;
+    discovery::save_site_deployment(&conn, site_id, &payload, &request_id).await
 }
 
 #[tauri::command]
@@ -862,9 +1932,9 @@ fn save_attachment(
     if data.len() > 25_000_000 {
         return Err("文件太大（上限 25MB）".into());
     }
-    let conn = state.conns.get(&conn_id)?;
+    let (conn, runtime_project) = attachment_runtime(&state, &conn_id, &project)?;
     let dir = {
-        let w = resolve_work_dir(&conn, &project)?;
+        let w = resolve_work_dir(&conn, &runtime_project)?;
         if w.is_empty() {
             conn.skill_dir.clone()
         } else {
@@ -1662,9 +2732,9 @@ async fn read_workdir_image(
         "avif" => "image/avif",
         _ => return Err("不是图片文件".into()),
     };
-    let conn = state.conns.get(&conn_id)?;
+    let (conn, runtime_project) = attachment_runtime(&state, &conn_id, &project)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let p = resolve_in_workdir(&conn, &project, &path)?;
+        let p = resolve_in_workdir(&conn, &runtime_project, &path)?;
         let meta = std::fs::metadata(&p).map_err(|e| format!("读取失败: {e}"))?;
         if !meta.is_file() {
             return Err("不是文件".into());
@@ -1691,9 +2761,9 @@ async fn resolve_workdir_file(
     project: String,
     path: String,
 ) -> Result<String, String> {
-    let conn = state.conns.get(&conn_id)?;
+    let (conn, runtime_project) = attachment_runtime(&state, &conn_id, &project)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let p = resolve_in_workdir(&conn, &project, &path)?;
+        let p = resolve_in_workdir(&conn, &runtime_project, &path)?;
         if !p.is_file() {
             return Err("文件不存在".into());
         }
@@ -2840,7 +3910,11 @@ async fn install_codex(
     app: AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<String, String> {
-    install_cli_via_node(app, state.data_dir.clone(), "@openai/codex", "Codex", false).await
+    let result =
+        install_cli_via_node(app, state.data_dir.clone(), "@openai/codex", "Codex", false).await?;
+    // 安装完成后立即处理可能遗留的旧 models_cache.json，避免用户第一次对话才发现问题。
+    crate::agent::prepare_codex_cache().await?;
+    Ok(result)
 }
 
 /// 一键安装 Grok CLI（官方脚本 curl | bash，装到 ~/.grok/bin 并自动補 PATH）。
@@ -3029,6 +4103,18 @@ fn get_conversation(state: tauri::State<'_, AppState>, id: String) -> Option<Con
     state.convos.get(&id)
 }
 
+/// 把旧版全局自由对话一次性固定到用户当前看到的连接。之后切换连接不再重复迁移。
+#[tauri::command]
+fn anchor_workspace_conversations(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+) -> Result<Vec<Conversation>, String> {
+    let conn = state.conns.get(&conn_id)?;
+    state
+        .convos
+        .anchor_legacy_workspace(WORKSPACE_CONNECTION_ID, &conn.id, &conn.name)
+}
+
 #[tauri::command]
 fn delete_conversation(state: tauri::State<'_, AppState>, id: String) -> Result<(), String> {
     state.convos.remove(&id)
@@ -3094,8 +4180,14 @@ fn set_conversation_brain_model(
     let is_ssh = state
         .convos
         .get(&conv_id)
-        .and_then(|c| state.conns.get(&c.conn_id).ok())
-        .map(|x| x.kind == "ssh")
+        .map(|c| {
+            c.task_type == "workspace"
+                || state
+                    .conns
+                    .get(&c.conn_id)
+                    .map(|x| x.kind == "ssh")
+                    .unwrap_or(false)
+        })
         .unwrap_or(false);
     state.convos.mutate(&conv_id, now_secs(), move |c| {
         apply_brain_switch(c, &brain, &model, is_ssh)
@@ -3349,11 +4441,21 @@ fn run_task_now(
     let tstore = state.tasks.clone();
     let mstore = state.managed.clone();
     let firing = state.firing.clone();
+    let pack_updating = state.pack_updating.clone();
     let data_dir = state.data_dir.clone();
     let ssh = state.ssh.clone();
     tauri::async_runtime::spawn(async move {
         fire_task(
-            app, conns, convos, runs, tstore, mstore, task, data_dir, ssh,
+            app,
+            conns,
+            convos,
+            runs,
+            tstore,
+            mstore,
+            task,
+            pack_updating,
+            data_dir,
+            ssh,
         )
         .await;
         firing.lock().unwrap().remove(&id);
@@ -4245,6 +5347,7 @@ async fn fire_task(
     tstore: tasks::TaskStore,
     mstore: managed::ManagedStore,
     task: ScheduledTask,
+    pack_updating: Arc<Mutex<HashSet<String>>>,
     data_dir: PathBuf,
     ssh: ssh::SshSessions,
 ) {
@@ -4350,10 +5453,11 @@ async fn fire_task(
         let sem = sem.clone();
         let limit_flag = limit_flag.clone();
         let lstore2 = lstore.clone();
-        let (conns, convos, runs, data_dir, ssh) = (
+        let (conns, convos, runs, pack_updating, data_dir, ssh) = (
             conns.clone(),
             convos.clone(),
             runs.clone(),
+            pack_updating.clone(),
             data_dir.clone(),
             ssh.clone(),
         );
@@ -4393,6 +5497,7 @@ async fn fire_task(
                 conns.clone(),
                 convos.clone(),
                 runs.clone(),
+                pack_updating.clone(),
                 conv_id,
                 conn_id.clone(),
                 slug.clone(),
@@ -4404,6 +5509,7 @@ async fn fire_task(
                 model.clone(),
                 "full".into(),
                 effort.clone(),
+                String::new(),
                 prompt.clone(),
                 sink,
                 data_dir.clone(),
@@ -4438,6 +5544,7 @@ async fn fire_task(
                         conns,
                         convos,
                         runs,
+                        pack_updating,
                         uuid::Uuid::new_v4().to_string(),
                         conn_id,
                         slug.clone(),
@@ -4449,6 +5556,7 @@ async fn fire_task(
                         next_model.clone(),
                         "full".into(),
                         next_effort.clone(),
+                        String::new(),
                         prompt,
                         fallback_sink,
                         data_dir,
@@ -4774,11 +5882,24 @@ fn spawn_scheduler(app: AppHandle) {
                 let tstore = state.tasks.clone();
                 let mstore = state.managed.clone();
                 let running2 = running.clone();
+                let pack_updating = state.pack_updating.clone();
                 let tid = t.id.clone();
                 let data_dir = state.data_dir.clone();
                 let ssh = state.ssh.clone();
                 tauri::async_runtime::spawn(async move {
-                    fire_task(app2, conns, convos, runs, tstore, mstore, t, data_dir, ssh).await;
+                    fire_task(
+                        app2,
+                        conns,
+                        convos,
+                        runs,
+                        tstore,
+                        mstore,
+                        t,
+                        pack_updating,
+                        data_dir,
+                        ssh,
+                    )
+                    .await;
                     running2.lock().unwrap().remove(&tid);
                 });
             }
@@ -4863,6 +5984,7 @@ async fn create_conversation(
     conns: pack::ConnStore,
     convos: convo::ConvStore,
     runs: agent::RunRegistry,
+    pack_updating: Arc<Mutex<HashSet<String>>>,
     conv_id: String,
     conn_id: String,
     site_slug: String,
@@ -4874,12 +5996,12 @@ async fn create_conversation(
     model: String,
     perm_mode: String,
     effort: String,
+    workspace_dir: String,
     message: String,
     on_event: Channel<agent::TurnEvent>,
     data_dir: PathBuf,
     ssh: ssh::SshSessions,
 ) -> Result<Conversation, String> {
-    let conn = conns.get(&conn_id)?;
     let now = now_secs();
     // 会话种子：claude 由我们指定 uuid（--session-id）；codex/grok 由 CLI 自己生成、首轮结果回填。
     let session_seed = if brain == "claude" {
@@ -4887,11 +6009,33 @@ async fn create_conversation(
     } else {
         String::new()
     };
-    let work_dir = resolve_work_dir(&conn, site_slug.trim())?;
+    let is_workspace = task_type == "workspace";
+    // workspace 仍用隔离的合成连接运行，但侧栏归属固定为创建时的真实连接。
+    let workspace_owner = if is_workspace {
+        Some(conns.get(&conn_id)?)
+    } else {
+        None
+    };
+    let work_dir = if is_workspace {
+        resolve_workspace_dir(&data_dir, &conv_id, &workspace_dir)?
+    } else {
+        let conn = conns.get(&conn_id)?;
+        resolve_work_dir(&conn, site_slug.trim())?
+    };
+    let conn = if is_workspace {
+        workspace_connection(&work_dir)
+    } else {
+        conns.get(&conn_id)?
+    };
     let is_cf = conn.kind == "cloudflare";
     let is_ssh = conn.kind == "ssh";
-    let multi = !is_cf && !is_ssh && site_slugs.len() > 1;
-    let sys = if is_ssh {
+    // site_slugs 是真实操作范围，必须优先于历史 task_type。旧版允许在 sitebuild 下发起多站会话；
+    // 若先看 task_type，会把它误当成平台级“创建新站”，甚至丢掉已有的多站清单。
+    let (is_gcms_sitebuild, multi) =
+        conversation_scope(&conn.kind, &task_type, &site_slug, site_slugs.len());
+    let sys = if is_workspace {
+        agent::workspace_system_prompt(!workspace_dir.trim().is_empty())
+    } else if is_ssh {
         agent::ssh_system_prompt(
             &conn.ssh_user,
             &conn.ssh_host,
@@ -4906,12 +6050,14 @@ async fn create_conversation(
         )
     } else if multi {
         agent::multi_site_system_prompt(&site_slugs, &site_names)
+    } else if is_gcms_sitebuild {
+        agent::platform_sitebuild_system_prompt(&conn.name, site_slug.trim(), &site_name)
     } else {
         agent::system_prompt(&task_type, site_slug.trim(), &site_name)
     };
     // 追加网页截图能力说明（shot.js 在启动时生成到 <data_dir>/tools/）。
     // ssh 会话不给：那是运维场景，截图帮不上忙，只是白占提示词。
-    let sys = if is_ssh {
+    let sys = if is_ssh || is_workspace {
         sys
     } else {
         let shot = data_dir.join("tools").join("shot.js");
@@ -4921,14 +6067,23 @@ async fn create_conversation(
         )
     };
     let sys = design_fallback(sys, is_cf, &brain, &data_dir);
+    let (stored_conn_id, stored_conn_name) = workspace_owner
+        .as_ref()
+        .map(|owner| (owner.id.clone(), owner.name.clone()))
+        .unwrap_or_else(|| (conn.id.clone(), conn.name.clone()));
     let conv = Conversation {
         id: conv_id.clone(),
-        conn_id: conn.id.clone(),
-        conn_name: conn.name.clone(),
+        conn_id: stored_conn_id,
+        conn_name: stored_conn_name,
         site_slug: site_slug.trim().to_string(),
         site_name,
         site_slugs: if multi { site_slugs.clone() } else { vec![] },
         site_names: if multi { site_names.clone() } else { vec![] },
+        workspace_dir: if is_workspace {
+            workspace_dir.trim().to_string()
+        } else {
+            String::new()
+        },
         task_type,
         brain: brain.clone(),
         model: model.clone(),
@@ -4943,7 +6098,8 @@ async fn create_conversation(
         ctx_tokens: 0,
         total_tokens: 0,
     };
-    convos.upsert(conv)?;
+    let turn_conn_id = conv.conn_id.clone();
+    begin_turn_with_pack_gate(&pack_updating, &turn_conn_id, || convos.upsert(conv))?;
 
     let res = agent::run_turn(
         runs,
@@ -4966,7 +6122,10 @@ async fn create_conversation(
 
     let now2 = now_secs();
     let updated = convos.mutate(&conv_id, now2, |c| {
-        if !res.session_ref.is_empty() {
+        // Claude 首轮会预生成 --session-id；若 CLI 连进程都没启动，run_turn 的失败结果
+        // 仍会带回这个种子。失败时绝不能落库，否则“重试”会拿幽灵 id 去 --resume，
+        // 随后只能得到 `No conversation found with session ID`。
+        if session_ref_is_persistable(res.ok, &res.session_ref) {
             c.session_ref = res.session_ref.clone();
         }
         c.status = "idle".into();
@@ -4975,6 +6134,90 @@ async fn create_conversation(
         note_limit(&data_dir, &c.brain, &res);
     })?;
     updated.ok_or_else(|| "会话丢失".into())
+}
+
+fn session_ref_is_persistable(turn_ok: bool, session_ref: &str) -> bool {
+    turn_ok && !session_ref.is_empty()
+}
+
+#[cfg(test)]
+mod conversation_session_tests {
+    use super::session_ref_is_persistable;
+
+    #[test]
+    fn failed_first_turn_does_not_persist_preallocated_claude_session() {
+        assert!(!session_ref_is_persistable(
+            false,
+            "75739ec2-daa6-44c0-930c-30309ca88e45"
+        ));
+    }
+
+    #[test]
+    fn successful_turn_requires_a_non_empty_session_reference() {
+        assert!(session_ref_is_persistable(true, "session-created-by-cli"));
+        assert!(!session_ref_is_persistable(true, ""));
+    }
+}
+
+/// 判定 GCMS 会话的范围。多站清单是持久化的真实目标，优先级高于历史任务类型；
+/// 这是兼容旧版“sitebuild + 多站选择”记录的关键，不能交换两个分支的顺序。
+fn conversation_scope(
+    conn_kind: &str,
+    task_type: &str,
+    site_slug: &str,
+    site_count: usize,
+) -> (bool, bool) {
+    let multi = conn_kind != "cloudflare" && conn_kind != "ssh" && site_count >= 2;
+    let platform_sitebuild =
+        conn_kind == "gcms" && task_type == "sitebuild" && site_slug.trim().is_empty() && !multi;
+    (platform_sitebuild, multi)
+}
+
+/// 是否已经有可操作目标。GCMS 新站建设发生在平台层，创建前本来就不存在站点 slug。
+fn conversation_target_ready(
+    conn_kind: &str,
+    task_type: &str,
+    site_slug: &str,
+    site_count: usize,
+) -> bool {
+    task_type == "workspace"
+        || conn_kind == "ssh"
+        || (conn_kind == "gcms" && task_type == "sitebuild")
+        || !site_slug.trim().is_empty()
+        || site_count >= 2
+}
+
+#[cfg(test)]
+mod conversation_target_tests {
+    use super::{conversation_scope, conversation_target_ready};
+
+    #[test]
+    fn gcms_sitebuild_is_platform_scoped_but_other_flows_still_need_a_target() {
+        assert!(conversation_target_ready("gcms", "sitebuild", "", 0));
+        assert!(!conversation_target_ready("gcms", "article", "", 0));
+        assert!(!conversation_target_ready("gcms", "free", "", 0));
+        assert!(conversation_target_ready("gcms", "free", "blog", 0));
+        assert!(conversation_target_ready("gcms", "free", "", 2));
+        assert!(!conversation_target_ready("cloudflare", "sitebuild", "", 0));
+        assert!(conversation_target_ready("ssh", "remote", "", 0));
+        assert!(conversation_target_ready("workspace", "workspace", "", 0));
+    }
+
+    #[test]
+    fn legacy_sitebuild_with_multiple_sites_stays_a_multi_site_conversation() {
+        assert_eq!(
+            conversation_scope("gcms", "sitebuild", "", 2),
+            (false, true)
+        );
+        assert_eq!(
+            conversation_scope("gcms", "sitebuild", "", 0),
+            (true, false)
+        );
+        assert_eq!(
+            conversation_scope("gcms", "sitebuild", "new-site", 0),
+            (false, false)
+        );
+    }
 }
 
 /// 开新会话（前端命令）：conv_id 前端生成，从首轮就能流式渲染 + 停止。
@@ -4993,19 +6236,22 @@ async fn start_conversation(
     model: String,
     perm_mode: String,
     effort: String,
+    workspace_dir: String,
     message: String,
     on_event: Channel<agent::TurnEvent>,
 ) -> Result<Conversation, String> {
     if conv_id.trim().is_empty() {
         return Err("会话 id 缺失".into());
     }
-    // ssh 连接没有「站点」这回事（对象就是那台机器）；其余 kind 仍必须指定站点/项目。
-    let is_ssh = state
-        .conns
-        .get(&conn_id)
-        .map(|c| c.kind == "ssh")
-        .unwrap_or(false);
-    if !is_ssh && site_slug.trim().is_empty() && site_slugs.len() < 2 {
+    // 自由对话和 GCMS 新站建设都不要求已有站点；其它会话仍必须有明确目标。
+    let conn_kind = if task_type == "workspace" {
+        // 运行环境虽然隔离，侧栏归属仍必须是一个真实、存在的创建位置。
+        state.conns.get(&conn_id)?;
+        "workspace".to_string()
+    } else {
+        state.conns.get(&conn_id)?.kind
+    };
+    if !conversation_target_ready(&conn_kind, &task_type, &site_slug, site_slugs.len()) {
         return Err("站点不能为空".into());
     }
     if message.trim().is_empty() {
@@ -5015,6 +6261,7 @@ async fn start_conversation(
         state.conns.clone(),
         state.convos.clone(),
         state.runs.clone(),
+        state.pack_updating.clone(),
         conv_id,
         conn_id,
         site_slug,
@@ -5026,12 +6273,51 @@ async fn start_conversation(
         model,
         perm_mode,
         effort,
+        workspace_dir,
         message,
         on_event,
         state.data_dir.clone(),
         state.ssh.clone(),
     )
     .await
+}
+
+/// 新站真正创建出来后，把平台级建站会话绑定到它。
+/// 绑定前 UI 使用“新站建设”图标；绑定后侧栏、标题栏和后续系统提示都会自动使用真实站点。
+#[tauri::command]
+fn bind_sitebuild_conversation(
+    state: tauri::State<'_, AppState>,
+    conv_id: String,
+    site_slug: String,
+    site_name: String,
+) -> Result<Option<Conversation>, String> {
+    let slug = site_slug.trim();
+    if slug.is_empty() {
+        return Err("新站标识不能为空".into());
+    }
+    let current = state.convos.get(&conv_id).ok_or("会话不存在")?;
+    if current.task_type != "sitebuild" {
+        return Err("只有新站建设会话可以绑定站点".into());
+    }
+    if current.site_slugs.len() > 1 {
+        return Err("跨站会话不能绑定为单个新站".into());
+    }
+    let conn = state.conns.get(&current.conn_id)?;
+    if conn.kind != "gcms" {
+        return Err("只有 GCMS 新站建设会话可以绑定站点".into());
+    }
+    if !current.site_slug.trim().is_empty() && current.site_slug != slug {
+        return Err("该建站会话已经绑定到其它站点".into());
+    }
+    let name = if site_name.trim().is_empty() {
+        slug.to_string()
+    } else {
+        site_name.trim().to_string()
+    };
+    state.convos.mutate(&conv_id, now_secs(), |c| {
+        c.site_slug = slug.to_string();
+        c.site_name = name.clone();
+    })
 }
 
 /// 续对话：resume 同一会话跑一轮。
@@ -5047,11 +6333,14 @@ async fn send_message(
     }
     let conv = state.convos.get(&conv_id).ok_or("会话不存在")?;
     let now = now_secs();
-    // 原子开始：锁内检查 running/session 并追加用户消息，杜绝并发起两轮。
-    match state
-        .convos
-        .begin_turn(&conv_id, now, user_msg(message.trim().to_string(), now))
-    {
+    // 原子开始：技能包门闩内再进入会话锁，检查 running/session、
+    // 追加用户消息并置 running，杜绝维护与新回合互相穿过。
+    let turn_start = begin_turn_with_pack_gate(&state.pack_updating, &conv.conn_id, || {
+        Ok(state
+            .convos
+            .begin_turn(&conv_id, now, user_msg(message.trim().to_string(), now)))
+    })?;
+    match turn_start {
         convo::TurnStart::NotFound => return Err("会话不存在".into()),
         convo::TurnStart::Busy => return Err("上一轮还在进行中，请稍候".into()),
         convo::TurnStart::NoSession => {
@@ -5059,8 +6348,7 @@ async fn send_message(
         }
         convo::TurnStart::Started => {}
     }
-    let conn = state.conns.get(&conv.conn_id)?;
-    let work_dir = resolve_work_dir(&conn, &conv.site_slug)?;
+    let (conn, work_dir) = conversation_runtime(&state.conns, &state.data_dir, &conv)?;
 
     let res = agent::run_turn(
         state.runs.clone(),
@@ -5099,10 +6387,12 @@ async fn retry_turn(
     on_event: Channel<agent::TurnEvent>,
 ) -> Result<Conversation, String> {
     let now = now_secs();
-    let message = state.convos.begin_retry(&conv_id, now)?;
+    let current = state.convos.get(&conv_id).ok_or("会话不存在")?;
+    let message = begin_turn_with_pack_gate(&state.pack_updating, &current.conn_id, || {
+        state.convos.begin_retry(&conv_id, now)
+    })?;
     let conv = state.convos.get(&conv_id).ok_or("会话不存在")?;
-    let conn = state.conns.get(&conv.conn_id)?;
-    let work_dir = resolve_work_dir(&conn, &conv.site_slug)?;
+    let (conn, work_dir) = conversation_runtime(&state.conns, &state.data_dir, &conv)?;
 
     let res = agent::run_turn(
         state.runs.clone(),
@@ -5143,14 +6433,25 @@ async fn rebuild_session(
     on_event: Channel<agent::TurnEvent>,
 ) -> Result<Conversation, String> {
     let now = now_secs();
-    let last_user = state.convos.begin_rebuild(&conv_id, now)?;
+    let current = state.convos.get(&conv_id).ok_or("会话不存在")?;
+    let last_user = begin_turn_with_pack_gate(&state.pack_updating, &current.conn_id, || {
+        state.convos.begin_rebuild(&conv_id, now)
+    })?;
     let conv = state.convos.get(&conv_id).ok_or("会话不存在")?;
-    let conn = state.conns.get(&conv.conn_id)?;
-    let work_dir = resolve_work_dir(&conn, &conv.site_slug)?;
+    let (conn, work_dir) = conversation_runtime(&state.conns, &state.data_dir, &conv)?;
     let is_cf = conn.kind == "cloudflare";
     let is_ssh = conn.kind == "ssh";
+    let is_workspace = conv.task_type == "workspace";
+    let (is_gcms_sitebuild, multi) = conversation_scope(
+        &conn.kind,
+        &conv.task_type,
+        &conv.site_slug,
+        conv.site_slugs.len(),
+    );
     // 与 create_conversation 的首轮系统提示保持同款（重建＝换个 session 从头讲一遍规矩）。
-    let sys = if is_ssh {
+    let sys = if is_workspace {
+        agent::workspace_system_prompt(!conv.workspace_dir.trim().is_empty())
+    } else if is_ssh {
         agent::ssh_system_prompt(
             &conn.ssh_user,
             &conn.ssh_host,
@@ -5164,12 +6465,14 @@ async fn rebuild_session(
             &conn.account_id,
             dir_has_content(std::path::Path::new(&work_dir)),
         )
-    } else if conv.site_slugs.len() > 1 {
+    } else if multi {
         agent::multi_site_system_prompt(&conv.site_slugs, &conv.site_names)
+    } else if is_gcms_sitebuild {
+        agent::platform_sitebuild_system_prompt(&conn.name, &conv.site_slug, &conv.site_name)
     } else {
         agent::system_prompt(&conv.task_type, &conv.site_slug, &conv.site_name)
     };
-    let sys = if is_ssh {
+    let sys = if is_ssh || is_workspace {
         sys
     } else {
         let shot = state.data_dir.join("tools").join("shot.js");
@@ -5216,7 +6519,7 @@ async fn rebuild_session(
     let now2 = now_secs();
     let updated = state.convos.mutate(&conv_id, now2, |c| {
         // 只有这轮成功才把新 session 接上；失败保留旧 ref（反正都坏，避免半截会话顶掉）。
-        if res.ok && !res.session_ref.is_empty() {
+        if session_ref_is_persistable(res.ok, &res.session_ref) {
             c.session_ref = res.session_ref.clone();
         }
         c.status = "idle".into();
@@ -5236,6 +6539,24 @@ fn title_from(message: &str) -> String {
     }
 }
 
+#[cfg(any(target_os = "windows", test))]
+fn powershell_single_quote(value: &str) -> String {
+    value.replace('\'', "''")
+}
+
+#[cfg(test)]
+mod brain_login_command_tests {
+    use super::powershell_single_quote;
+
+    #[test]
+    fn powershell_cli_path_escapes_single_quotes() {
+        assert_eq!(
+            powershell_single_quote(r"C:\Users\O'Brien\Claude Code\claude.cmd"),
+            r"C:\Users\O''Brien\Claude Code\claude.cmd"
+        );
+    }
+}
+
 /// 打开 Terminal 跑对应 CLI 的登录命令（.command 以 zsh 登录 shell 执行，PATH 完整；
 /// claude auth login / codex login 会自动拉起浏览器完成授权）。
 #[tauri::command]
@@ -5252,6 +6573,19 @@ fn open_brain_login(app: tauri::AppHandle, brain: String) -> Result<(), String> 
         "claude" => ("claude auth status --json", r#""loggedIn": true"#),
         "grok" => ("grok models", "logged in with"),
         _ => ("codex login status", "logged in"),
+    };
+    // Windows 上一键安装可能位于 Pilot 私有托管目录；命令行安装也可能与 PATH 中其它
+    // Claude 版本并存。授权与状态复查必须固定使用检测/对话同款的绝对路径，不能让新
+    // PowerShell 再自行解析到另一份 shim。Codex/Grok 保持原有登录命令不变。
+    #[cfg(target_os = "windows")]
+    let (login_cmd, status_cmd) = if brain == "claude" {
+        let cli = powershell_single_quote(&brains::resolve_bin("claude"));
+        (
+            format!("& '{cli}' auth login --claudeai"),
+            format!("& '{cli}' auth status --json"),
+        )
+    } else {
+        (login_cmd.to_string(), status_cmd.to_string())
     };
     // 系统代理注入：授权终端里的 CLI 只认环境变量（浏览器走系统代理没事，CLI 的登录/OIDC
     // 发现请求会直连超时）。生成脚本时把检测到的代理写进开头并回显一行，便于用户自诊。
@@ -5481,6 +6815,8 @@ pub fn run() {
                 runs: agent::RunRegistry::default(),
                 firing: Arc::new(Mutex::new(HashSet::new())),
                 gcms_installing: Arc::new(Mutex::new(HashSet::new())),
+                pack_updating: Arc::new(Mutex::new(HashSet::new())),
+                cloudflare_import_lock: tokio::sync::Mutex::new(()),
                 data_dir: data_dir.clone(),
                 preview: Arc::new(Mutex::new(None)),
                 ssh: ssh::SshSessions::new(),
@@ -5510,12 +6846,30 @@ pub fn run() {
             list_connections,
             import_pack,
             check_pack_update,
+            gcms_control_unlock,
+            gcms_public_access_check,
+            gcms_public_access_apply,
+            gcms_public_access_clear_unverified,
             update_pack,
             remove_connection,
             set_connection_remark,
             open_conn_window,
             show_edit_menu,
             discover_sites,
+            gcms_site_preview_url,
+            gcms_themes_get,
+            gcms_site_theme_get,
+            gcms_site_theme_preview_url,
+            gcms_site_theme_plan,
+            gcms_site_theme_apply,
+            gcms_integrations_get,
+            gcms_integrations_save,
+            gcms_site_google_provision,
+            gcms_site_google_analytics_options,
+            gcms_cloudflare_connections_sync,
+            gcms_site_status_set,
+            gcms_site_deployment_get,
+            gcms_site_deployment_save,
             detect_brains,
             install_wrangler,
             install_claude,
@@ -5537,6 +6891,7 @@ pub fn run() {
             gcms_remote_upgrade,
             gcms_remote_import_pilot_assistant,
             gcms_remote_set_admin_password,
+            gcms_remote_verify_admin_password,
             gcms_remote_restart,
             gcms_remote_stop,
             gcms_remote_migration_preflight,
@@ -5592,8 +6947,10 @@ pub fn run() {
             open_brain_login,
             list_conversations,
             get_conversation,
+            anchor_workspace_conversations,
             delete_conversation,
             start_conversation,
+            bind_sitebuild_conversation,
             send_message,
             retry_turn,
             rebuild_session,
