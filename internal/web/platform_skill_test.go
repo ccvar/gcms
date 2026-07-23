@@ -39,7 +39,9 @@ func TestPlatformSkillFilesTokenless(t *testing.T) {
 	// The multi-site CLI must have discovery + per-site routing, not the single-site shape.
 	for _, needle := range []string{"fetchSites", "resolveSite", "extractSite", `cmd === "capabilities"`, `"/control/capabilities"`, `cmd === "sites"`, `"/sites/"`, "--site",
 		`cmd === "control-sites"`, `cmd === "site-create-plan"`, `cmd === "site-create"`, `cmd === "themes"`, `cmd === "theme-plan"`,
-		`cmd === "domains-plan"`, `cmd === "security-status"`, `cmd === "site-profile"`, `cmd === "site-profile-update"`, `cmd === "navigation"`, `cmd === "navigation-update"`} {
+		`cmd === "domains-plan"`, `cmd === "security-status"`, `cmd === "category-delete-plan"`, `cmd === "category-delete"`,
+		`"categories.delete"`, `cmd === "navigation-delete-plan"`, `cmd === "navigation-delete"`, `"navigation.delete"`,
+		`cmd === "site-profile"`, `cmd === "site-profile-update"`, `cmd === "navigation"`, `cmd === "navigation-update"`} {
 		if !strings.Contains(cli, needle) {
 			t.Fatalf("gcms.js missing %q", needle)
 		}
@@ -49,7 +51,8 @@ func TestPlatformSkillFilesTokenless(t *testing.T) {
 			t.Fatalf("gcms.js must not collect admin passwords; found %q", forbidden)
 		}
 	}
-	if skill := entries[platformSkillFolder+"/SKILL.md"]; !strings.Contains(skill, "AI 不得") || !strings.Contains(skill, "Pilot UI") {
+	if skill := entries[platformSkillFolder+"/SKILL.md"]; !strings.Contains(skill, "AI 不得") || !strings.Contains(skill, "Pilot UI") ||
+		!strings.Contains(skill, "category-delete-plan") || !strings.Contains(skill, "navigation-delete-plan") {
 		t.Fatalf("SKILL.md missing UI-only password boundary")
 	}
 	controlSpec := entries[platformSkillFolder+"/references/control-api.json"]
@@ -118,6 +121,130 @@ func TestPlatformSkillScriptNodeCheck(t *testing.T) {
 		if err != nil {
 			t.Fatalf("node --check %s failed: %v\n%s", name, err, out)
 		}
+	}
+}
+
+func TestPlatformCLIControlledDeleteCommands(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node not installed; skipping controlled-delete CLI test")
+	}
+	const (
+		prefix      = "/api/platform/v1"
+		unlockToken = "gcmsu_test_unlock"
+	)
+	h := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet && r.URL.Path == prefix+"/control/sites" {
+			_, _ = io.WriteString(w, `{"items":[{"id":12,"slug":"blog","name":"Blog"}]}`)
+			return
+		}
+		var operation string
+		switch r.URL.Path {
+		case prefix + "/control/sites/12/categories/posts/42":
+			operation = "categories.delete"
+		case prefix + "/control/sites/12/navigation/0":
+			operation = "navigation.delete"
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = io.WriteString(w, `{"error":"unexpected_path"}`)
+			return
+		}
+		if r.Method != http.MethodDelete {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			_, _ = io.WriteString(w, `{"error":"unexpected_method"}`)
+			return
+		}
+		if r.URL.Query().Get("dry_run") == "1" {
+			if r.Header.Get(controlConfirmHeader) != "" || r.Header.Get(controlIdempotencyHeader) != "" ||
+				r.Header.Get(controlUnlockHeader) != "" {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = io.WriteString(w, `{"error":"plan_must_not_send_mutation_headers"}`)
+				return
+			}
+			_, _ = io.WriteString(w, `{"dry_run":true,"operation":"`+operation+`","impact_revision":"plan-revision-123"}`)
+			return
+		}
+		if r.Header.Get(controlConfirmHeader) != operation ||
+			r.Header.Get(controlIdempotencyHeader) == "" ||
+			r.Header.Get(controlUnlockHeader) != unlockToken {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"error":"missing_control_headers"}`)
+			return
+		}
+		if operation == "navigation.delete" && r.URL.Query().Get("expected_url") != "/pricing" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"error":"missing_expected_url"}`)
+			return
+		}
+		if r.URL.Query().Get("expected_revision") != "plan-revision-123" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"error":"missing_expected_revision"}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"deleted":true,"operation":"`+operation+`"}`)
+	})
+	ts := httptest.NewServer(h)
+	defer ts.Close()
+
+	dir := t.TempDir()
+	scriptPath := filepath.Join(dir, "gcms.js")
+	if err := os.WriteFile(scriptPath, []byte(platformSkillScript()), 0o644); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+	run := func(args ...string) (string, string, error) {
+		cmd := exec.Command(node, append([]string{scriptPath}, args...)...)
+		cmd.Env = append(os.Environ(),
+			"GCMS_API_BASE="+ts.URL+prefix,
+			"GCMS_API_KEY=gcmsp_test_controlled_delete",
+			"GCMS_CONTROL_UNLOCK_TOKEN="+unlockToken,
+		)
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		err := cmd.Run()
+		return stdout.String(), stderr.String(), err
+	}
+
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "category plan",
+			args: []string{"category-delete-plan", "--site", "blog", "posts", "42"},
+			want: `"dry_run": true`,
+		},
+		{
+			name: "category apply",
+			args: []string{"category-delete", "--site", "blog", "posts", "42", "--expected-revision", "plan-revision-123", "--confirm", "true", "--request-id", "delete-category-42"},
+			want: `"operation": "categories.delete"`,
+		},
+		{
+			name: "navigation plan",
+			args: []string{"navigation-delete-plan", "--site", "blog", "0"},
+			want: `"dry_run": true`,
+		},
+		{
+			name: "navigation apply",
+			args: []string{"navigation-delete", "--site", "blog", "0", "--expected-url", "/pricing", "--expected-revision", "plan-revision-123", "--confirm", "true", "--request-id", "delete-navigation-0"},
+			want: `"operation": "navigation.delete"`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, errOut, err := run(tc.args...)
+			if err != nil {
+				t.Fatalf("command failed: %v\nstdout: %s\nstderr: %s", err, out, errOut)
+			}
+			if !strings.Contains(out, tc.want) {
+				t.Fatalf("output missing %q: %s", tc.want, out)
+			}
+		})
+	}
+
+	_, errOut, err := run("category-delete", "--site", "blog", "posts", "42", "--expected-revision", "plan-revision-123")
+	if err == nil || !strings.Contains(errOut, "--confirm true") {
+		t.Fatalf("category delete without confirmation should fail: err=%v stderr=%s", err, errOut)
 	}
 }
 

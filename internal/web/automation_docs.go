@@ -1073,9 +1073,11 @@ func automationOpenAPISchemas() map[string]any {
 		"NavigationResponse": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"default":   map[string]any{"type": "string"},
-				"languages": map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-				"items":     map[string]any{"type": "array", "items": map[string]any{"$ref": "#/components/schemas/NavigationItem"}},
+				"default":    map[string]any{"type": "string"},
+				"languages":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+				"items":      map[string]any{"type": "array", "items": map[string]any{"$ref": "#/components/schemas/NavigationItem"}},
+				"configured": map[string]any{"type": "boolean", "description": "true 表示已保存显式导航配置；false 表示 items 是前台当前使用的默认导航。"},
+				"source":     map[string]any{"type": "string", "enum": []string{"configured", "defaults"}},
 			},
 		},
 		"NavigationInput": map[string]any{
@@ -1369,6 +1371,8 @@ func automationControlScopeLabels(scopes map[string]bool) []string {
 		{apiScopeSitesCreate, "建站"},
 		{apiScopeSitesUpdate, "改站"},
 		{apiScopeSitesDelete, "删站"},
+		{apiScopeCategoriesDelete, "删分类"},
+		{apiScopeNavigationDelete, "删导航"},
 		{apiScopeThemesRead, "读主题"},
 		{apiScopeThemesApply, "用主题"},
 		{apiScopeDomainsRead, "读域名"},

@@ -4273,10 +4273,15 @@ func (s *Server) applyTheme(v *View, theme string) {
 	v.ThemeStyle = s.themeOverrideFor(theme)
 }
 
-// menuItems 构建前台页眉导航：未配置时回落默认菜单（首页/分类/关于，用 i18n 文案）。
+// menuItems 构建前台页眉导航：从未配置时回落默认菜单；
+// 明确保存为 [] 时保持空导航，不再偷偷恢复默认项。
 func (s *Server) menuItems(r *http.Request, lang string, tr *i18n.Tr, nav string) []MenuItem {
-	rows := parseMenuRows(s.store.Setting("nav_menu"))
+	rawNavigation := s.store.Setting("nav_menu")
+	rows := parseMenuRows(rawNavigation)
 	if len(rows) == 0 {
+		if menuRowsConfigured(rawNavigation) {
+			return []MenuItem{}
+		}
 		categoryPath := s.archiveConfig(lang, "post").Path
 		linksPath := s.archiveConfig(lang, "link").Path
 		return []MenuItem{
@@ -4551,11 +4556,15 @@ func (s *Server) menuTargetOptions(admins ...*i18n.AdminTr) []MenuTargetOption {
 	return opts
 }
 
-// menuEditRows 为后台导航编辑提供回填行：未配置时给出默认菜单可编辑副本（各语种填 i18n 文案）。
+// menuEditRows 为后台导航编辑提供回填行：从未配置时给出默认菜单可编辑副本；
+// 明确保存为 [] 时保持空列表，仍可由编辑器重新添加。
 func (s *Server) menuEditRows(admins ...*i18n.AdminTr) []MenuRow {
 	targets := s.menuTargetOptions(admins...)
-	if rows := parseMenuRows(s.store.Setting("nav_menu")); len(rows) > 0 {
+	rawNavigation := s.store.Setting("nav_menu")
+	if rows := parseMenuRows(rawNavigation); len(rows) > 0 {
 		return decorateMenuRows(rows, targets)
+	} else if menuRowsConfigured(rawNavigation) {
+		return []MenuRow{}
 	}
 	byValue := map[string]MenuTargetOption{}
 	for _, opt := range targets {

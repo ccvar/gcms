@@ -89,15 +89,17 @@ const (
 
 	// 平台控制层权限与既有站点内容权限分离。老密钥不会因升级自动获得
 	// 建站、域名、安全设置等能力；只有明确签发这些 scope 的平台密钥才可见。
-	apiScopeControlRead   = "control:read"
-	apiScopeControlUnlock = "control:unlock"
-	apiScopeSitesCreate   = "sites:create"
-	apiScopeSitesUpdate   = "sites:update"
-	apiScopeSitesDelete   = "sites:delete"
-	apiScopeThemesRead    = "themes:read"
-	apiScopeThemesApply   = "themes:apply"
-	apiScopeDomainsRead   = "domains:read"
-	apiScopeDomainsWrite  = "domains:write"
+	apiScopeControlRead      = "control:read"
+	apiScopeControlUnlock    = "control:unlock"
+	apiScopeSitesCreate      = "sites:create"
+	apiScopeSitesUpdate      = "sites:update"
+	apiScopeSitesDelete      = "sites:delete"
+	apiScopeCategoriesDelete = "categories:delete"
+	apiScopeNavigationDelete = "navigation:delete"
+	apiScopeThemesRead       = "themes:read"
+	apiScopeThemesApply      = "themes:apply"
+	apiScopeDomainsRead      = "domains:read"
+	apiScopeDomainsWrite     = "domains:write"
 
 	// v1.3.40 曾短暂写入过部分平台密钥。它不再对应任何 HTTP 能力，
 	// 新签发时拒绝，旧密钥解析时也必须丢弃。
@@ -849,6 +851,11 @@ func (s *Server) apiUpdateNavigation(w http.ResponseWriter, r *http.Request) {
 			labels[k] = strings.TrimSpace(v)
 		}
 		rows = append(rows, MenuRow{URL: u, Labels: labels})
+	}
+	currentRows, _, _ := s.effectiveMenuRows()
+	if auth.platform && navigationRowsRemoved(currentRows, rows) {
+		apiError(w, http.StatusForbidden, "navigation_delete_requires_control", "删除或替换导航项需要使用 Pilot 受控删除，并验证 GCMS 后台密码。")
+		return
 	}
 	b, _ := json.Marshal(rows)
 	if err := s.store.SetSetting("nav_menu", string(b)); err != nil {
@@ -1957,7 +1964,7 @@ func (s *Server) applyAPISiteProfileInput(in *apiSiteProfileInput) string {
 }
 
 func (s *Server) apiNavigationResponse() map[string]any {
-	rows := parseMenuRows(s.store.Setting("nav_menu"))
+	rows, _, configured := s.effectiveMenuRows()
 	items := make([]apiNavigationItem, 0, len(rows))
 	for _, row := range rows {
 		labels := map[string]string{}
@@ -1970,7 +1977,14 @@ func (s *Server) apiNavigationResponse() map[string]any {
 	for _, loc := range s.locales() {
 		langs = append(langs, loc.Code)
 	}
-	return map[string]any{"default": s.defaultLang(), "languages": langs, "items": items}
+	source := "configured"
+	if !configured {
+		source = "defaults"
+	}
+	return map[string]any{
+		"default": s.defaultLang(), "languages": langs, "items": items,
+		"configured": configured, "source": source,
+	}
 }
 
 func (in apiCategoryAllEntryPatch) hasFields() bool {
@@ -2551,9 +2565,9 @@ func (s *Server) validateAPICategory(p *store.Post) string {
 	if cat == nil {
 		return "分类不存在。"
 	}
-	want := "post"
-	if p.Type == "link" {
-		want = "link"
+	want := strings.TrimSpace(p.Type)
+	if want == "page" || want == "" {
+		return "该内容类型不能设置分类。"
 	}
 	if cat.Kind != want || cat.Lang != p.Lang {
 		return "分类语种或类型与内容不匹配。"

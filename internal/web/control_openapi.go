@@ -41,6 +41,25 @@ func platformControlOpenAPISpec(apiBase string) map[string]any {
 			"patch":      map[string]any{"operationId": "sites.update", "summary": "Validate or update site metadata/status", "parameters": mutationParams(false), "requestBody": jsonBody("SiteUpdateInput"), "responses": response},
 			"delete":     map[string]any{"operationId": "sites.delete", "summary": "Validate or archive-delete a disabled non-default site", "parameters": mutationParams(true), "responses": response},
 		},
+		"/control/sites/{siteId}/categories/{collection}/{categoryId}": map[string]any{
+			"parameters": []any{
+				map[string]any{"name": "siteId", "in": "path", "required": true, "schema": map[string]any{"type": "integer", "format": "int64"}},
+				map[string]any{"name": "collection", "in": "path", "required": true, "schema": map[string]any{"type": "string"}, "description": "Collection name such as posts, links, or products."},
+				map[string]any{"name": "categoryId", "in": "path", "required": true, "schema": map[string]any{"type": "integer", "format": "int64"}},
+				map[string]any{"name": "remove_navigation", "in": "query", "schema": map[string]any{"type": "boolean", "default": false}, "description": "Also remove exact navigation references reported by dry-run."},
+				map[string]any{"name": "expected_revision", "in": "query", "schema": map[string]any{"type": "string"}, "description": "Required for execution; copy impact_revision from the matching dry-run."},
+			},
+			"delete": map[string]any{"operationId": "categories.delete", "summary": "Inspect impact or delete one category; associated content becomes uncategorized", "parameters": mutationParams(true), "responses": response},
+		},
+		"/control/sites/{siteId}/navigation/{index}": map[string]any{
+			"parameters": []any{
+				map[string]any{"name": "siteId", "in": "path", "required": true, "schema": map[string]any{"type": "integer", "format": "int64"}},
+				map[string]any{"name": "index", "in": "path", "required": true, "schema": map[string]any{"type": "integer", "minimum": 0}, "description": "Zero-based index from the latest navigation response."},
+				map[string]any{"name": "expected_url", "in": "query", "schema": map[string]any{"type": "string"}, "description": "Required for execution; guards against deleting an item after the list changed."},
+				map[string]any{"name": "expected_revision", "in": "query", "schema": map[string]any{"type": "string"}, "description": "Required for execution; copy impact_revision from the matching dry-run."},
+			},
+			"delete": map[string]any{"operationId": "navigation.delete", "summary": "Inspect or delete one navigation item", "parameters": mutationParams(true), "responses": response},
+		},
 		"/control/themes": map[string]any{"get": map[string]any{"operationId": "themes.list", "summary": "List structured theme choices for AI recommendation", "responses": response}},
 		"/control/themes/{themeId}": map[string]any{
 			"parameters": []any{map[string]any{"name": "themeId", "in": "path", "required": true, "schema": map[string]any{"type": "string"}}},

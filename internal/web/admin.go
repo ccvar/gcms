@@ -4998,7 +4998,7 @@ func automationScopesFromFormWithDefault(r *http.Request, useDefault bool) []str
 		want[apiScopeLanguagesRead] = true
 	}
 	// 平台控制权限是独立的能力族：任一控制权限都自动补齐能力自省；
-	// 删站和改域名还必须允许 Pilot 在密码验证后签发短时授权。初始密码
+	// 删除与改域名还必须允许 Pilot 在密码验证后签发短时授权。初始密码
 	// 不属于 HTTP 自动化权限，只能通过服务器上的 GCMS 专用 CLI 设置。
 	for _, scope := range platformControlScopes() {
 		if want[scope] {
@@ -5006,7 +5006,7 @@ func automationScopesFromFormWithDefault(r *http.Request, useDefault bool) []str
 			break
 		}
 	}
-	if want[apiScopeSitesDelete] || want[apiScopeDomainsWrite] {
+	if want[apiScopeSitesDelete] || want[apiScopeCategoriesDelete] || want[apiScopeNavigationDelete] || want[apiScopeDomainsWrite] {
 		want[apiScopeControlUnlock] = true
 	}
 	var out []string
@@ -5079,6 +5079,7 @@ func automationScopeValid(scope string) bool {
 	case apiScopeLanguagesRead, apiScopeLanguagesWrite, apiScopeLanguagesEnable, apiScopeLanguagesDefault, apiScopeLanguagesCatalog, apiScopeMediaWrite, apiScopeSiteRead, apiScopeSiteWrite, apiScopeBrandAssetsWrite, apiScopeNavigationRead, apiScopeNavigationWrite,
 		apiScopeStatsRead, apiScopeTypesWrite, apiScopeContentRead, apiScopeContentWrite, apiScopeContentPublish,
 		apiScopeControlRead, apiScopeControlUnlock, apiScopeSitesCreate, apiScopeSitesUpdate, apiScopeSitesDelete,
+		apiScopeCategoriesDelete, apiScopeNavigationDelete,
 		apiScopeThemesRead, apiScopeThemesApply, apiScopeDomainsRead, apiScopeDomainsWrite:
 		return true
 	}

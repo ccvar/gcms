@@ -62,6 +62,10 @@ function usage(code = 2) {
   out("  gcms.js domains-plan --site <slug|id> <json|@file>");
   out("  gcms.js domains-apply --site <slug|id> <json|@file> --confirm true --request-id <stable-id>  # needs Pilot UI unlock");
   out("  gcms.js security-status             # status only; initial password is handled exclusively by Pilot UI");
+  out("  gcms.js category-delete-plan --site <slug|id> <collection> <category-id> [--remove-navigation true]");
+  out("  gcms.js category-delete --site <slug|id> <collection> <category-id> --expected-revision <revision-from-plan> [--remove-navigation true] --confirm true --request-id <stable-id>  # needs Pilot UI unlock");
+  out("  gcms.js navigation-delete-plan --site <slug|id> <zero-based-index>");
+  out("  gcms.js navigation-delete --site <slug|id> <zero-based-index> --expected-url <url-from-plan> --expected-revision <revision-from-plan> --confirm true --request-id <stable-id>  # needs Pilot UI unlock");
   out("  gcms.js doctor [--site <slug|id>]");
   out("  gcms.js languages --site <slug|id> [--all]");
   out("  gcms.js language-create --site <slug|id> <json|@file>");
@@ -580,6 +584,69 @@ async function main() {
 
   if (cmd === "security-status") {
     print(await request("GET", "/control/security"));
+    return;
+  }
+
+  if (cmd === "category-delete-plan" || cmd === "category-delete") {
+    const id = await resolveControlSite(siteSel);
+    const targetCollection = collection;
+    const categoryID = rest[0];
+    if (!targetCollection || !categoryID || !/^[1-9][0-9]*$/.test(String(categoryID))) usage();
+    const deleteOptions = parseOptions(rest.slice(1));
+    const removeNavigation = boolOption(deleteOptions["remove-navigation"]);
+    const expectedRevision = String(deleteOptions["expected-revision"] || "").trim();
+    const targetPath = "/control/sites/" + id + "/categories/" +
+      encodeURIComponent(targetCollection) + "/" + encodeURIComponent(categoryID);
+    const query = removeNavigation ? "&remove_navigation=1" : "";
+    if (cmd === "category-delete-plan") {
+      print(await request("DELETE", targetPath + "?dry_run=1" + query));
+    } else {
+      if (!expectedRevision) {
+        console.error("category-delete needs --expected-revision copied from the latest category-delete-plan result.");
+        process.exit(2);
+      }
+      const qs = new URLSearchParams({ expected_revision: expectedRevision });
+      if (removeNavigation) qs.set("remove_navigation", "1");
+      print(await controlMutation(
+        "DELETE",
+        targetPath + "?" + qs.toString(),
+        "categories.delete",
+        undefined,
+        rest.slice(1)
+      ));
+    }
+    return;
+  }
+
+  if (cmd === "navigation-delete-plan" || cmd === "navigation-delete") {
+    const id = await resolveControlSite(siteSel);
+    const index = collection;
+    if (index == null || !/^[0-9]+$/.test(String(index))) usage();
+    const targetPath = "/control/sites/" + id + "/navigation/" + encodeURIComponent(index);
+    if (cmd === "navigation-delete-plan") {
+      if (rest.length !== 0) usage();
+      print(await request("DELETE", targetPath + "?dry_run=1"));
+    } else {
+      const deleteOptions = parseOptions(rest);
+      const expectedURL = String(deleteOptions["expected-url"] || "").trim();
+      const expectedRevision = String(deleteOptions["expected-revision"] || "").trim();
+      if (!expectedURL) {
+        console.error("navigation-delete needs --expected-url copied from the latest navigation-delete-plan result.");
+        process.exit(2);
+      }
+      if (!expectedRevision) {
+        console.error("navigation-delete needs --expected-revision copied from the latest navigation-delete-plan result.");
+        process.exit(2);
+      }
+      const qs = new URLSearchParams({ expected_url: expectedURL, expected_revision: expectedRevision });
+      print(await controlMutation(
+        "DELETE",
+        targetPath + "?" + qs.toString(),
+        "navigation.delete",
+        undefined,
+        rest
+      ));
+    }
     return;
   }
 

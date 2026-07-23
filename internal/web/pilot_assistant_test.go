@@ -19,6 +19,7 @@ func TestPilotAssistantAutomationScopesCoverPlatformAutomation(t *testing.T) {
 		"posts:categories", "posts:categories:write", "posts:pin",
 		"links:categories", "links:categories:write", "links:pin",
 		"control:read", "control:unlock", "sites:create", "sites:update", "sites:delete",
+		"categories:delete", "navigation:delete",
 		"themes:read", "themes:apply", "domains:read", "domains:write",
 	} {
 		if !got[want] {

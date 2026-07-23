@@ -50,6 +50,8 @@ func platformControlCatalog() []platformControlOperation {
 		{ID: "sites.create", Label: "创建站点", RequiredScope: apiScopeSitesCreate, Risk: "write", Method: http.MethodPost, Endpoint: "/control/sites", RequiresConfirmation: true, SupportsDryRun: true, Available: true},
 		{ID: "sites.update", Label: "修改站点", RequiredScope: apiScopeSitesUpdate, Risk: "write", Method: http.MethodPatch, Endpoint: "/control/sites/{site_id}", RequiresConfirmation: true, SupportsDryRun: true, Available: true},
 		{ID: "sites.delete", Label: "归档删除站点", RequiredScope: apiScopeSitesDelete, Risk: "destructive", Method: http.MethodDelete, Endpoint: "/control/sites/{site_id}", RequiresConfirmation: true, RequiresUnlock: true, SupportsDryRun: true, Available: true},
+		{ID: "categories.delete", Label: "删除内容分类", RequiredScope: apiScopeCategoriesDelete, Risk: "destructive", Method: http.MethodDelete, Endpoint: "/control/sites/{site_id}/categories/{collection}/{category_id}", RequiresConfirmation: true, RequiresUnlock: true, SupportsDryRun: true, Available: true},
+		{ID: "navigation.delete", Label: "删除导航入口", RequiredScope: apiScopeNavigationDelete, Risk: "destructive", Method: http.MethodDelete, Endpoint: "/control/sites/{site_id}/navigation/{index}", RequiresConfirmation: true, RequiresUnlock: true, SupportsDryRun: true, Available: true},
 		{ID: "themes.list", Label: "读取外观主题", RequiredScope: apiScopeThemesRead, Risk: "read", Method: http.MethodGet, Endpoint: "/control/themes", Available: true},
 		{ID: "themes.get", Label: "读取主题详情", RequiredScope: apiScopeThemesRead, Risk: "read", Method: http.MethodGet, Endpoint: "/control/themes/{theme_id}", Available: true},
 		{ID: "themes.current", Label: "读取站点当前主题", RequiredScope: apiScopeThemesRead, Risk: "read", Method: http.MethodGet, Endpoint: "/control/sites/{site_id}/theme", Available: true},
@@ -71,6 +73,8 @@ func platformControlScopes() []string {
 		apiScopeSitesCreate,
 		apiScopeSitesUpdate,
 		apiScopeSitesDelete,
+		apiScopeCategoriesDelete,
+		apiScopeNavigationDelete,
 		apiScopeThemesRead,
 		apiScopeThemesApply,
 		apiScopeDomainsRead,
@@ -211,6 +215,20 @@ func (s *Server) servePlatformControl(w http.ResponseWriter, r *http.Request) {
 				s.servePlatformControlSiteDeployment(w, r, siteID)
 			case len(parts) == 3 && parts[2] == "public-access":
 				s.servePlatformControlSitePublicAccess(w, r, siteID)
+			case len(parts) == 5 && parts[2] == "categories":
+				categoryID, err := strconv.ParseInt(parts[4], 10, 64)
+				if err != nil || categoryID <= 0 {
+					apiError(w, http.StatusBadRequest, "bad_category_id", "分类 ID 无效。")
+					return
+				}
+				s.servePlatformControlSiteCategoryDelete(w, r, siteID, parts[3], categoryID)
+			case len(parts) == 4 && parts[2] == "navigation":
+				index, err := strconv.Atoi(parts[3])
+				if err != nil || index < 0 {
+					apiError(w, http.StatusBadRequest, "bad_navigation_index", "导航序号无效。")
+					return
+				}
+				s.servePlatformControlSiteNavigationDelete(w, r, siteID, index)
 			case len(parts) == 3 && parts[2] == "integrations":
 				s.servePlatformControlSiteIntegrations(w, r, siteID)
 			case len(parts) == 5 && parts[2] == "integrations" && parts[4] == "enable" && parts[3] == "analytics":
@@ -464,7 +482,7 @@ func (s *Server) requireControlUnlock(w http.ResponseWriter, r *http.Request, ke
 	_, hash := s.adminCredentials()
 	token := strings.TrimSpace(r.Header.Get(controlUnlockHeader))
 	if token == "" || hash == "" || s.controlGrants == nil || !s.controlGrants.valid(key.ID, token, operation, controlCredentialRevision(hash), time.Now()) {
-		apiError(w, http.StatusForbidden, "unlock_required", "该操作需要在 Pilot 中输入后台密码重新授权。")
+		apiError(w, http.StatusForbidden, "unlock_required", "操作 "+operation+" 需要在 Pilot 中输入后台密码重新授权。")
 		return false
 	}
 	return true

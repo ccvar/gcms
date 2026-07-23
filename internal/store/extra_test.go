@@ -104,3 +104,34 @@ func TestPostExtraColumnAddedToLegacyDB(t *testing.T) {
 		t.Fatalf("extra not restored after migrate: got=%+v err=%v", got, err)
 	}
 }
+
+func TestCompareAndSetSettingTreatsMissingAsEmptyAndKeepsCacheCurrent(t *testing.T) {
+	st, err := Open(filepath.Join(t.TempDir(), "cms.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	const key = "test.compare_and_set.missing"
+	updated, err := st.CompareAndSetSetting(key, "", "first")
+	if err != nil || !updated {
+		t.Fatalf("insert missing setting: updated=%v err=%v", updated, err)
+	}
+	if got := st.Setting(key); got != "first" {
+		t.Fatalf("cached inserted setting = %q, want first", got)
+	}
+	updated, err = st.CompareAndSetSetting(key, "stale", "wrong")
+	if err != nil || updated {
+		t.Fatalf("stale setting compare: updated=%v err=%v", updated, err)
+	}
+	if got := st.Setting(key); got != "first" {
+		t.Fatalf("stale compare changed cache to %q", got)
+	}
+	updated, err = st.CompareAndSetSetting(key, "first", "second")
+	if err != nil || !updated {
+		t.Fatalf("update matched setting: updated=%v err=%v", updated, err)
+	}
+	if got := st.Setting(key); got != "second" {
+		t.Fatalf("cached updated setting = %q, want second", got)
+	}
+}

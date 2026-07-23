@@ -110,6 +110,18 @@ func TestIssuePilotAssistantKeyCreatesReusesAndRotatesOneFullAccessKey(t *testin
 			t.Fatalf("assistant key missing scope %q", scope)
 		}
 	}
+	// 模拟旧版 GCMS 已签发、但还没有后来新增控制权限的 Pilot 密钥。
+	// 再次运行本机签发命令必须复用同一 token，并把权限集合升级到当前版本。
+	if err := ps.UpdatePlatformKey(
+		key.ID,
+		pilotAssistantName,
+		platform.KeyMembershipAll,
+		"posts:read,navigation:write",
+		nil,
+		time.Time{},
+	); err != nil {
+		t.Fatalf("downgrade assistant scopes: %v", err)
+	}
 	if err := ps.Close(); err != nil {
 		t.Fatalf("close platform store: %v", err)
 	}
@@ -120,6 +132,25 @@ func TestIssuePilotAssistantKeyCreatesReusesAndRotatesOneFullAccessKey(t *testin
 	}
 	if strings.TrimSpace(reused.String()) != "PILOT_GCMS_ASSISTANT_KEY_REUSED\t1" {
 		t.Fatalf("unexpected reuse output %q", reused.String())
+	}
+	ps, err = platform.Open(systemPath)
+	if err != nil {
+		t.Fatalf("reopen reused platform store: %v", err)
+	}
+	reusedKey, ok, err := ps.GetPlatformKeyByToken(firstToken)
+	if err != nil || !ok {
+		t.Fatalf("reused key missing: ok=%v err=%v", ok, err)
+	}
+	if reusedKey.ID != key.ID {
+		t.Fatalf("reused assistant key id = %d, want original %d", reusedKey.ID, key.ID)
+	}
+	for _, scope := range []string{"categories:delete", "navigation:delete"} {
+		if !strings.Contains(","+reusedKey.Scopes+",", ","+scope+",") {
+			t.Fatalf("reused assistant key missing upgraded scope %q: %q", scope, reusedKey.Scopes)
+		}
+	}
+	if err := ps.Close(); err != nil {
+		t.Fatalf("close reused platform store: %v", err)
 	}
 
 	var rotated bytes.Buffer

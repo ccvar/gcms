@@ -81,7 +81,7 @@ func TestPlatformControlCapabilitiesAreAdditive(t *testing.T) {
 
 	controlToken := "gcmsp_controlcaps12345"
 	if _, err := ps.CreatePlatformKey("pilot", controlToken, controlToken[:13], platform.KeyMembershipAll,
-		strings.Join([]string{apiScopeControlRead, apiScopeControlUnlock, apiScopeSitesCreate, apiScopeSitesDelete}, ","), nil, time.Time{}); err != nil {
+		strings.Join([]string{apiScopeControlRead, apiScopeControlUnlock, apiScopeSitesCreate, apiScopeSitesDelete, apiScopeCategoriesDelete, apiScopeNavigationDelete}, ","), nil, time.Time{}); err != nil {
 		t.Fatalf("create control key: %v", err)
 	}
 	rec := platformAPIReq(t, h, http.MethodGet, "/api/platform/v1/control/capabilities", controlToken, nil)
@@ -95,6 +95,12 @@ func TestPlatformControlCapabilitiesAreAdditive(t *testing.T) {
 	remove := controlOperationFromBody(t, rec.Body.Bytes(), "sites.delete")
 	if !remove.Granted || !remove.RequiresUnlock || remove.Risk != "destructive" {
 		t.Fatalf("sites.delete contract = %#v", remove)
+	}
+	for _, operation := range []string{"categories.delete", "navigation.delete"} {
+		remove := controlOperationFromBody(t, rec.Body.Bytes(), operation)
+		if !remove.Granted || !remove.Available || !remove.RequiresUnlock || !remove.RequiresConfirmation || !remove.SupportsDryRun || remove.Risk != "destructive" {
+			t.Fatalf("%s contract = %#v", operation, remove)
+		}
 	}
 	update := controlOperationFromBody(t, rec.Body.Bytes(), "sites.update")
 	if update.Granted {
@@ -237,11 +243,11 @@ func TestPlatformControlUnlockGuards(t *testing.T) {
 
 func TestPlatformControlScopeIssuanceAndDefaults(t *testing.T) {
 	req := &http.Request{Method: http.MethodPost, Header: make(http.Header), Form: url.Values{
-		"scopes": {apiScopeSitesDelete},
+		"scopes": {apiScopeSitesDelete, apiScopeCategoriesDelete, apiScopeNavigationDelete},
 	}}
 	got := automationScopesFromFormRequired(req)
 	joined := "," + strings.Join(got, ",") + ","
-	for _, want := range []string{apiScopeControlRead, apiScopeControlUnlock, apiScopeSitesDelete} {
+	for _, want := range []string{apiScopeControlRead, apiScopeControlUnlock, apiScopeSitesDelete, apiScopeCategoriesDelete, apiScopeNavigationDelete} {
 		if !strings.Contains(joined, ","+want+",") {
 			t.Fatalf("control scope dependency %q missing from %v", want, got)
 		}

@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -126,10 +127,16 @@ type Store struct {
 	pwHash      string
 	pwIsDefault bool
 	// 设置项读多写少，启动后缓存在内存中；后台保存设置时同步更新。
-	settingsMu     sync.RWMutex
-	settings       map[string]string
-	settingsLoaded bool
+	settingsWriteMu sync.Mutex
+	settingsMu      sync.RWMutex
+	settings        map[string]string
+	settingsLoaded  bool
 }
+
+var (
+	ErrSettingChanged  = errors.New("setting changed")
+	ErrCategoryChanged = errors.New("category changed")
+)
 
 func Open(path string) (*Store, error) {
 	// 通过 DSN 设置 WAL、忙等待与外键约束。
@@ -1178,10 +1185,299 @@ func (s *Store) UpdateCategory(c *Category) error {
 	return err
 }
 
+// CategoryDeleteUsage 是删除分类前展示给 Pilot 的完整影响范围。
+// Discarded 与状态计数可能重叠，因为“已弃用”是内容上的独立标记。
+type CategoryDeleteUsage struct {
+	Total     int
+	Published int
+	Draft     int
+	Scheduled int
+	Discarded int
+	Other     int
+	Items     []CategoryDeleteUsageItem
+	Revision  string
+}
+
+type CategoryDeleteUsageItem struct {
+	ID        int64
+	Title     string
+	Type      string
+	Lang      string
+	Status    string
+	Discarded bool
+}
+
+type categoryDeleteQueryer interface {
+	Query(query string, args ...any) (*sql.Rows, error)
+}
+
+type settingExecer interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
+// CategoryDeleteContextRevision 对同类型分类及其关联内容数量生成稳定摘要。
+// 删除事务会再次计算该摘要，避免预检完成后新增翻译、同路径分类或迁移内容，
+// 导致用户确认的影响范围与实际删除瞬间不一致。
+func (s *Store) CategoryDeleteContextRevision(kind string) (string, error) {
+	return categoryDeleteContextRevision(s.db, kind)
+}
+
+func categoryDeleteContextRevision(q categoryDeleteQueryer, kind string) (string, error) {
+	rows, err := q.Query(`
+		SELECT c.id,c.slug,c.name,c.description,c.position,c.lang,c.trans_group,c.kind,COUNT(p.id)
+		FROM categories c
+		LEFT JOIN posts p ON p.category_id=c.id
+		WHERE c.kind=?
+		GROUP BY c.id,c.slug,c.name,c.description,c.position,c.lang,c.trans_group,c.kind
+		ORDER BY c.id`, kind)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	revisionHash := sha256.New()
+	for rows.Next() {
+		var (
+			id, contentCount int64
+			slug, name       string
+			description      string
+			position         int
+			lang, transGroup string
+			currentKind      string
+		)
+		if err := rows.Scan(&id, &slug, &name, &description, &position, &lang, &transGroup, &currentKind, &contentCount); err != nil {
+			return "", err
+		}
+		_, _ = fmt.Fprintf(revisionHash, "%d\x00%s\x00%s\x00%s\x00%d\x00%s\x00%s\x00%s\x00%d\n",
+			id, slug, name, description, position, lang, transGroup, currentKind, contentCount)
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(revisionHash.Sum(nil)), nil
+}
+
+// CategoryUsageForDelete 统计所有状态的关联内容，不能复用 Category.Count：
+// 后者只统计已发布内容，会让删除预警漏掉草稿、定时和弃用内容。
+func (s *Store) CategoryUsageForDelete(id int64, sampleLimit int) (CategoryDeleteUsage, error) {
+	var usage CategoryDeleteUsage
+	err := s.db.QueryRow(`
+		SELECT COUNT(*),
+			COALESCE(SUM(CASE WHEN status='published' THEN 1 ELSE 0 END),0),
+			COALESCE(SUM(CASE WHEN status='draft' THEN 1 ELSE 0 END),0),
+			COALESCE(SUM(CASE WHEN status='scheduled' THEN 1 ELSE 0 END),0),
+			COALESCE(SUM(CASE WHEN discarded_at IS NOT NULL THEN 1 ELSE 0 END),0),
+			COALESCE(SUM(CASE WHEN status NOT IN ('published','draft','scheduled') THEN 1 ELSE 0 END),0)
+		FROM posts WHERE category_id=?`, id).
+		Scan(&usage.Total, &usage.Published, &usage.Draft, &usage.Scheduled, &usage.Discarded, &usage.Other)
+	if err != nil {
+		return CategoryDeleteUsage{}, err
+	}
+	revisionRows, err := s.db.Query(`
+		SELECT id,status,updated_at,COALESCE(discarded_at,'')
+		FROM posts WHERE category_id=? ORDER BY id`, id)
+	if err != nil {
+		return CategoryDeleteUsage{}, err
+	}
+	revisionHash := sha256.New()
+	for revisionRows.Next() {
+		var (
+			contentID   int64
+			status      string
+			updatedAt   string
+			discardedAt string
+		)
+		if err := revisionRows.Scan(&contentID, &status, &updatedAt, &discardedAt); err != nil {
+			_ = revisionRows.Close()
+			return CategoryDeleteUsage{}, err
+		}
+		_, _ = fmt.Fprintf(revisionHash, "%d\x00%s\x00%s\x00%s\n", contentID, status, updatedAt, discardedAt)
+	}
+	if err := revisionRows.Err(); err != nil {
+		_ = revisionRows.Close()
+		return CategoryDeleteUsage{}, err
+	}
+	if err := revisionRows.Close(); err != nil {
+		return CategoryDeleteUsage{}, err
+	}
+	usage.Revision = hex.EncodeToString(revisionHash.Sum(nil))
+	if sampleLimit <= 0 {
+		return usage, nil
+	}
+	if sampleLimit > 20 {
+		sampleLimit = 20
+	}
+	rows, err := s.db.Query(`
+		SELECT id,title,type,lang,status,discarded_at IS NOT NULL
+		FROM posts WHERE category_id=?
+		ORDER BY CASE status WHEN 'published' THEN 0 WHEN 'scheduled' THEN 1 ELSE 2 END, updated_at DESC, id DESC
+		LIMIT ?`, id, sampleLimit)
+	if err != nil {
+		return CategoryDeleteUsage{}, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var item CategoryDeleteUsageItem
+		if err := rows.Scan(&item.ID, &item.Title, &item.Type, &item.Lang, &item.Status, &item.Discarded); err != nil {
+			return CategoryDeleteUsage{}, err
+		}
+		usage.Items = append(usage.Items, item)
+	}
+	return usage, rows.Err()
+}
+
 func (s *Store) DeleteCategory(id int64) error {
 	// 外键 ON DELETE SET NULL：文章的 category_id 自动置空。
 	_, err := s.db.Exec(`DELETE FROM categories WHERE id=?`, id)
 	return err
+}
+
+// DeleteCategoryWithNavigation 在同一事务内复核分类、关联内容和导航快照，
+// 再删除分类并按需替换 nav_menu。关联内容由外键置为未分类；
+// 返回值用于让 Pilot 准确报告实际影响。
+func (s *Store) DeleteCategoryWithNavigation(expectedCategory *Category, expectedContentRevision, expectedContextRevision string, expectedNavigationJSON, navigationJSON *string) (deleted bool, uncategorized int, err error) {
+	if expectedCategory == nil {
+		return false, 0, ErrCategoryChanged
+	}
+	if expectedNavigationJSON != nil {
+		s.settingsWriteMu.Lock()
+		defer s.settingsWriteMu.Unlock()
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return false, 0, err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	var current Category
+	err = tx.QueryRow(`SELECT id,slug,name,description,position,lang,trans_group,kind FROM categories WHERE id=?`, expectedCategory.ID).
+		Scan(&current.ID, &current.Slug, &current.Name, &current.Description, &current.Position, &current.Lang, &current.TransGroup, &current.Kind)
+	if errors.Is(err, sql.ErrNoRows) {
+		_ = tx.Rollback()
+		return false, 0, nil
+	}
+	if err != nil {
+		return false, 0, err
+	}
+	if current.ID != expectedCategory.ID ||
+		current.Slug != expectedCategory.Slug ||
+		current.Name != expectedCategory.Name ||
+		current.Description != expectedCategory.Description ||
+		current.Position != expectedCategory.Position ||
+		current.Lang != expectedCategory.Lang ||
+		current.TransGroup != expectedCategory.TransGroup ||
+		current.Kind != expectedCategory.Kind {
+		err = ErrCategoryChanged
+		return false, 0, err
+	}
+	if expectedContextRevision != "" {
+		currentContextRevision, revisionErr := categoryDeleteContextRevision(tx, current.Kind)
+		if revisionErr != nil {
+			err = revisionErr
+			return false, 0, err
+		}
+		if currentContextRevision != expectedContextRevision {
+			err = ErrCategoryChanged
+			return false, 0, err
+		}
+	}
+	if err = tx.QueryRow(`SELECT COUNT(*) FROM posts WHERE category_id=?`, current.ID).Scan(&uncategorized); err != nil {
+		return false, 0, err
+	}
+	revisionRows, queryErr := tx.Query(`
+		SELECT id,status,updated_at,COALESCE(discarded_at,'')
+		FROM posts WHERE category_id=? ORDER BY id`, current.ID)
+	if queryErr != nil {
+		err = queryErr
+		return false, 0, err
+	}
+	revisionHash := sha256.New()
+	for revisionRows.Next() {
+		var (
+			contentID   int64
+			status      string
+			updatedAt   string
+			discardedAt string
+		)
+		if scanErr := revisionRows.Scan(&contentID, &status, &updatedAt, &discardedAt); scanErr != nil {
+			_ = revisionRows.Close()
+			err = scanErr
+			return false, 0, err
+		}
+		_, _ = fmt.Fprintf(revisionHash, "%d\x00%s\x00%s\x00%s\n", contentID, status, updatedAt, discardedAt)
+	}
+	if rowsErr := revisionRows.Err(); rowsErr != nil {
+		_ = revisionRows.Close()
+		err = rowsErr
+		return false, 0, err
+	}
+	if closeErr := revisionRows.Close(); closeErr != nil {
+		err = closeErr
+		return false, 0, err
+	}
+	if expectedContentRevision != "" && hex.EncodeToString(revisionHash.Sum(nil)) != expectedContentRevision {
+		err = ErrCategoryChanged
+		return false, 0, err
+	}
+	if expectedNavigationJSON != nil {
+		var currentNavigation string
+		navigationErr := tx.QueryRow(`SELECT value FROM settings WHERE key='nav_menu'`).Scan(&currentNavigation)
+		if errors.Is(navigationErr, sql.ErrNoRows) {
+			currentNavigation = ""
+		} else if navigationErr != nil {
+			err = navigationErr
+			return false, 0, err
+		}
+		if currentNavigation != *expectedNavigationJSON {
+			err = ErrSettingChanged
+			return false, 0, err
+		}
+	}
+	result, err := tx.Exec(`
+		DELETE FROM categories
+		WHERE id=? AND slug=? AND name=? AND description=? AND position=? AND lang=? AND trans_group=? AND kind=?`,
+		current.ID, current.Slug, current.Name, current.Description, current.Position, current.Lang, current.TransGroup, current.Kind)
+	if err != nil {
+		return false, 0, err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, 0, err
+	}
+	if affected == 0 {
+		err = ErrCategoryChanged
+		return false, 0, err
+	}
+	if navigationJSON != nil {
+		if expectedNavigationJSON == nil {
+			return false, 0, fmt.Errorf("expected navigation setting is required")
+		}
+		updated, updateErr := compareAndSetSetting(tx, "nav_menu", *expectedNavigationJSON, *navigationJSON)
+		if updateErr != nil {
+			err = updateErr
+			return false, 0, err
+		}
+		if !updated {
+			err = ErrSettingChanged
+			return false, 0, err
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return false, 0, err
+	}
+	if navigationJSON != nil {
+		s.settingsMu.Lock()
+		if s.settingsLoaded {
+			if s.settings == nil {
+				s.settings = map[string]string{}
+			}
+			s.settings["nav_menu"] = *navigationJSON
+		}
+		s.settingsMu.Unlock()
+	}
+	return true, uncategorized, nil
 }
 
 func (s *Store) CategorySlugExists(lang, slug string, exceptID int64) (bool, error) {
@@ -1990,6 +2286,8 @@ func (s *Store) SlugExists(lang, slug string, exceptID int64) (bool, error) {
 // ---------- 设置 ----------
 
 func (s *Store) loadSettings() error {
+	s.settingsWriteMu.Lock()
+	defer s.settingsWriteMu.Unlock()
 	rows, err := s.db.Query(`SELECT key,value FROM settings`)
 	if err != nil {
 		return err
@@ -2038,6 +2336,8 @@ func (s *Store) Setting(key string) string {
 }
 
 func (s *Store) SetSetting(key, value string) error {
+	s.settingsWriteMu.Lock()
+	defer s.settingsWriteMu.Unlock()
 	_, err := s.db.Exec(`INSERT INTO settings(key,value) VALUES(?,?)
 		ON CONFLICT(key) DO UPDATE SET value=excluded.value`, key, value)
 	if err != nil {
@@ -2052,6 +2352,46 @@ func (s *Store) SetSetting(key, value string) error {
 	}
 	s.settingsMu.Unlock()
 	return err
+}
+
+// CompareAndSetSetting 只在数据库中的当前值仍与 expected 完全一致时更新，
+// 用于按列表下标执行的高风险操作，避免并发编辑后误删另一项。
+func (s *Store) CompareAndSetSetting(key, expected, value string) (bool, error) {
+	s.settingsWriteMu.Lock()
+	defer s.settingsWriteMu.Unlock()
+	updated, err := compareAndSetSetting(s.db, key, expected, value)
+	if err != nil {
+		return false, err
+	}
+	if !updated {
+		return false, nil
+	}
+	s.settingsMu.Lock()
+	if s.settingsLoaded {
+		if s.settings == nil {
+			s.settings = map[string]string{}
+		}
+		s.settings[key] = value
+	}
+	s.settingsMu.Unlock()
+	return true, nil
+}
+
+// compareAndSetSetting 把不存在的设置行视为当前值为空字符串。
+// 这样从未物化过的默认导航也能在一次原子写入中变为显式配置。
+func compareAndSetSetting(exec settingExecer, key, expected, value string) (bool, error) {
+	result, err := exec.Exec(`
+		INSERT INTO settings(key,value)
+		SELECT ?,?
+		WHERE (?='' AND NOT EXISTS (SELECT 1 FROM settings WHERE key=?))
+		   OR EXISTS (SELECT 1 FROM settings WHERE key=? AND value=?)
+		ON CONFLICT(key) DO UPDATE SET value=excluded.value WHERE settings.value=?`,
+		key, value, expected, key, key, expected, expected)
+	if err != nil {
+		return false, err
+	}
+	affected, err := result.RowsAffected()
+	return affected > 0, err
 }
 
 // AllPostReferenceTexts 返回全部 posts 行的文本字段拼接（所有语种、所有类型、含草稿），

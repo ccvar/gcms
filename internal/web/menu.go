@@ -54,6 +54,30 @@ func parseMenuRows(s string) []MenuRow {
 	return out
 }
 
+// menuRowsConfigured 区分“从未配置导航”和用户明确保存的空数组。
+// 前者仍可回落默认导航；后者表示用户确实要隐藏全部导航入口。
+func menuRowsConfigured(s string) bool {
+	s = strings.TrimSpace(s)
+	if !strings.HasPrefix(s, "[") {
+		return false
+	}
+	var rows []MenuRow
+	return json.Unmarshal([]byte(s), &rows) == nil
+}
+
+// effectiveMenuRows 返回前台当前实际可见、可由 Pilot 管理的导航。
+// nav_menu 未配置时，前台会显示默认项，因此管理 API 也必须返回同一组默认项，
+// 否则默认入口既看不见也无法走受控删除。
+func (s *Server) effectiveMenuRows() (rows []MenuRow, raw string, configured bool) {
+	raw = s.store.Setting("nav_menu")
+	rows = parseMenuRows(raw)
+	configured = menuRowsConfigured(raw)
+	if len(rows) > 0 || configured {
+		return rows, raw, configured
+	}
+	return s.menuEditRows(), raw, false
+}
+
 // buildMenuJSON 把后台表单的并列数组（nav_url[] + nav_label_<lang>[]）压成 JSON。
 func buildMenuJSON(urls []string, labelsByLang map[string][]string) string {
 	var list []MenuRow
@@ -73,7 +97,7 @@ func buildMenuJSON(urls []string, labelsByLang map[string][]string) string {
 		list = append(list, MenuRow{URL: u, Labels: labels})
 	}
 	if len(list) == 0 {
-		return ""
+		return "[]"
 	}
 	b, _ := json.Marshal(list)
 	return string(b)

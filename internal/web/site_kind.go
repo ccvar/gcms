@@ -120,8 +120,12 @@ func applySiteKindPreset(st *store.Store, mgr *i18n.Manager, kind string, seedDe
 	}
 	productRow := MenuRow{URL: "/" + product.URLPrefix, Labels: productLabels}
 
-	rows := parseMenuRows(st.Setting("nav_menu"))
+	rawNavigation := st.Setting("nav_menu")
+	rows := parseMenuRows(rawNavigation)
 	if len(rows) == 0 {
+		if menuRowsConfigured(rawNavigation) {
+			return nil // 用户明确选择空导航，不因启用内容类型而自动恢复默认项。
+		}
 		rows = []MenuRow{
 			{URL: "/", Labels: labelsFor("nav.home")},
 			productRow,
