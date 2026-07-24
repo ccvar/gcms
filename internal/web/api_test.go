@@ -1620,6 +1620,19 @@ func TestAPICreatePreviewURLDirectSiteKeepsOwnDomain(t *testing.T) {
 // 并用 /preview/sites/{id} 前缀按站点 ID 分发；打开后由 Go 动态渲染草稿。
 func TestAPICreatePreviewURLCloudflareSiteFallsBackToPlatformHost(t *testing.T) {
 	h, blogRT, blogSiteID, postID, token := newPreviewURLPlatformFixture(t)
+	const coverName = "private-content-cover.webp"
+	if err := os.WriteFile(filepath.Join(blogRT.UploadDir, coverName), []byte("private-cover"), 0o644); err != nil {
+		t.Fatalf("write preview cover: %v", err)
+	}
+	post, err := blogRT.Store.GetPostByID(postID)
+	if err != nil || post == nil {
+		t.Fatalf("get preview post: %v", err)
+	}
+	post.CoverImage = "/uploads/" + coverName
+	post.Content += "\n\n![Private cover](/uploads/" + coverName + ")"
+	if err := blogRT.Store.UpdatePost(post); err != nil {
+		t.Fatalf("update preview post media: %v", err)
+	}
 	blogRT.server.writeCloudflareStatus(CloudflareStatus{
 		Status:        "success",
 		LastDeployAt:  time.Now().UTC().Format(time.RFC3339),
@@ -1649,6 +1662,16 @@ func TestAPICreatePreviewURLCloudflareSiteFallsBackToPlatformHost(t *testing.T) 
 	u, err := url.Parse(got.PreviewURL)
 	if err != nil {
 		t.Fatalf("parse preview URL: %v", err)
+	}
+	mediaPath := "/preview/sites/" + strconv.FormatInt(blogSiteID, 10) + "/media/" +
+		url.PathEscape(u.Query().Get("token")) + "/uploads/" + coverName
+	if !strings.Contains(page.Body.String(), mediaPath) {
+		t.Fatalf("content preview did not scope uploaded media URL: want %q", mediaPath)
+	}
+	media := httptest.NewRecorder()
+	h.ServeHTTP(media, httptest.NewRequest(http.MethodGet, "https://platform.test"+mediaPath, nil))
+	if media.Code != http.StatusOK || media.Body.String() != "private-cover" {
+		t.Fatalf("open content preview media without referer = %d %q", media.Code, media.Body.String())
 	}
 	plain := httptest.NewRecorder()
 	plainURL := "https://platform.test/preview/posts/" + strconv.FormatInt(postID, 10) + "?token=" + u.Query().Get("token")

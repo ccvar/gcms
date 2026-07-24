@@ -328,7 +328,7 @@ impl ConvStore {
 
 /// 把历史消息压成文本记录，供「重建会话」注入新会话衔接上下文。
 /// 排除：隐藏消息、错误消息、以及**结尾最后一条用户消息**（那是将要重跑的请求本身）。
-/// budget 为字符预算，超出时保留最近的并在开头标注省略；单条消息截前 2000 字符。
+/// budget 为字符预算，超出时保留最近的并在开头标注省略；单条消息截前 8000 字符。
 pub fn recap(messages: &[Message], budget: usize) -> String {
     let last_user = messages.iter().rposition(|m| m.role == "user");
     let mut lines: Vec<String> = Vec::new();
@@ -337,7 +337,7 @@ pub fn recap(messages: &[Message], budget: usize) -> String {
             continue;
         }
         let who = if m.role == "user" { "用户" } else { "助手" };
-        let body: String = m.text.trim().chars().take(2000).collect();
+        let body: String = m.text.trim().chars().take(8000).collect();
         lines.push(format!("{who}：{body}"));
     }
     let mut used = 0usize;

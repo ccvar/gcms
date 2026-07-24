@@ -13227,6 +13227,37 @@ html.js-fnav[data-theme-layout="factory-herofold"] .site-header.nav-open { backg
 [data-theme^="paper-current"] .article-grid.has-toc {
   grid-template-columns:minmax(0,760px) 210px;
 }
+[data-theme^="paper-current"] .article-grid.pc-article-grid.has-toc {
+  grid-template-columns:minmax(0,1022px);
+}
+[data-theme^="paper-current"] .pc-article-grid.has-toc .article-main {
+  display:grid;
+  grid-template-columns:minmax(0,760px) 210px;
+  column-gap:52px;
+  align-items:start;
+}
+[data-theme^="paper-current"] .pc-article-grid.has-toc .article-reading {
+  grid-column:1;
+  grid-row:1;
+  min-width:0;
+}
+[data-theme^="paper-current"] .pc-article-grid.has-toc .toc-rail {
+  grid-column:2;
+  grid-row:1;
+  position:static;
+  align-self:stretch;
+  margin:0;
+}
+[data-theme^="paper-current"] .pc-article-grid.has-toc .toc {
+  position:sticky;
+  top:24px;
+}
+[data-theme^="paper-current"] .pc-article-grid.has-toc :is(.article-foot,.pager) {
+  grid-column:1 / -1;
+}
+[data-theme^="paper-current"] .pc-article-grid .article-col {
+  padding-bottom:clamp(72px,7vw,96px);
+}
 [data-theme^="paper-current"] .article-head {
   text-align:center;
 }
@@ -13312,6 +13343,25 @@ html.js-fnav[data-theme-layout="factory-herofold"] .site-header.nav-open { backg
   :is([data-theme^="field-ledger"],[data-theme^="signal-archive"],[data-theme^="paper-current"],[data-theme^="night-watch"]) .article-grid.has-toc { grid-template-columns:minmax(0,760px); }
   [data-theme^="signal-archive"] .page-head .wrap { display:block; }
   [data-theme^="signal-archive"] .page-head > .wrap > p:last-child:not(.eyebrow) { padding:0; border:0; }
+}
+
+@media (max-width:1100px) {
+  [data-theme^="paper-current"] .pc-article-grid.has-toc .article-main {
+    grid-template-columns:minmax(0,760px);
+  }
+  [data-theme^="paper-current"] .pc-article-grid.has-toc .toc-rail {
+    grid-column:1;
+    grid-row:1;
+    align-self:start;
+    margin-bottom:1.6rem;
+  }
+  [data-theme^="paper-current"] .pc-article-grid.has-toc .toc {
+    position:static;
+  }
+  [data-theme^="paper-current"] .pc-article-grid.has-toc .article-reading {
+    grid-column:1;
+    grid-row:2;
+  }
 }
 
 @media (max-width:600px) {

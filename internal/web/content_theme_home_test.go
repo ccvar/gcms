@@ -101,3 +101,66 @@ func TestContentThemesHonorHomePostLimitWithMultipleFeatured(t *testing.T) {
 		})
 	}
 }
+
+// TestPaperCurrentArticleSeparatesReadingRailFromEnding 锁定 Paper Current
+// 详情页的阅读阶段：目录只跟标题/正文共用两栏，标签、翻页与相关阅读在其后；
+// 防止长文滚动到底时目录被整条 article-col 带到页脚旁边。
+func TestPaperCurrentArticleSeparatesReadingRailFromEnding(t *testing.T) {
+	s := newTestPublicServer(t, "")
+	if err := s.store.SetSetting("theme", "paper-current"); err != nil {
+		t.Fatalf("set theme: %v", err)
+	}
+	if _, err := s.store.CreatePost(&store.Post{
+		Type:        "post",
+		Lang:        "zh",
+		Slug:        "paper-current-reading-rail",
+		Title:       "纸上潮汐长文布局",
+		Content:     "## 第一节\n\n正文内容。\n\n## 第二节\n\n更多正文。",
+		Status:      "published",
+		EditorMode:  "markdown",
+		PublishedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("create post: %v", err)
+	}
+	s.clearGeneratedCaches()
+
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/zh/posts/paper-current-reading-rail/", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("article status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`class="article-grid has-toc pc-article-grid"`,
+		`class="article-main"`,
+		`class="toc-rail"`,
+		`class="article-reading"`,
+		`class="article-foot"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("paper-current article missing %q", want)
+		}
+	}
+	if strings.Count(body, `class="toc-rail"`) != 1 {
+		t.Fatalf("paper-current article renders %d TOC rails, want 1", strings.Count(body, `class="toc-rail"`))
+	}
+	mainAt := strings.Index(body, `class="article-main"`)
+	tocAt := strings.Index(body, `class="toc-rail"`)
+	readingAt := strings.Index(body, `class="article-reading"`)
+	footAt := strings.Index(body, `class="article-foot"`)
+	if !(mainAt < tocAt && tocAt < readingAt && readingAt < footAt) {
+		t.Fatalf("paper-current reading order = main:%d toc:%d reading:%d foot:%d", mainAt, tocAt, readingAt, footAt)
+	}
+
+	css := getBody(t, s.Handler(), "/assets/css/public.css", http.StatusOK)
+	for _, want := range []string{
+		`[data-theme^="paper-current"] .article-grid.pc-article-grid.has-toc`,
+		`[data-theme^="paper-current"] .pc-article-grid.has-toc .article-reading`,
+		`[data-theme^="paper-current"] .pc-article-grid.has-toc .toc`,
+		`[data-theme^="paper-current"] .pc-article-grid .article-col`,
+	} {
+		if !strings.Contains(css, want) {
+			t.Fatalf("public.css missing Paper Current article contract %q", want)
+		}
+	}
+}

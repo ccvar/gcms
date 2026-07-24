@@ -76,6 +76,8 @@ func statsGet(t *testing.T, s *Server, token, path string) (*httptest.ResponseRe
 		s.apiStatsTraffic(w, req)
 	case strings.Contains(path, "/stats/pages"):
 		s.apiStatsPages(w, req)
+	case strings.Contains(path, "/stats/analytics"):
+		s.apiStatsAnalytics(w, req)
 	default:
 		s.apiStatsSearch(w, req)
 	}
@@ -107,7 +109,7 @@ func TestStatsScopeIssuable(t *testing.T) {
 
 func TestStatsEndpointsRequireScope(t *testing.T) {
 	s, token := newTestStatsServer(t, "posts:read,posts:write", true)
-	for _, path := range []string{"/api/admin/v1/stats/search", "/api/admin/v1/stats/traffic", "/api/admin/v1/stats/pages"} {
+	for _, path := range []string{"/api/admin/v1/stats/search", "/api/admin/v1/stats/traffic", "/api/admin/v1/stats/pages", "/api/admin/v1/stats/analytics?group=sources"} {
 		w, out := statsGet(t, s, token, path)
 		if w.Code != http.StatusForbidden {
 			t.Fatalf("%s without stats:read = %d, want 403; body = %s", path, w.Code, w.Body.String())
@@ -120,6 +122,59 @@ func TestStatsEndpointsRequireScope(t *testing.T) {
 	w, _ := statsGet(t, s, "", "/api/admin/v1/stats/search")
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("anonymous stats = %d, want 401", w.Code)
+	}
+}
+
+func TestStatsAnalyticsDimensions(t *testing.T) {
+	s, token := newTestStatsServer(t, "stats:read", true)
+	calls := 0
+	var gotSpec statsAnalyticsSpec
+	var gotDays, gotLimit int
+	orig := statsAnalyticsFetch
+	statsAnalyticsFetch = func(
+		ctx context.Context,
+		accessToken, property string,
+		spec statsAnalyticsSpec,
+		days, limit int,
+	) (statsAnalyticsReport, error) {
+		calls++
+		gotSpec, gotDays, gotLimit = spec, days, limit
+		return statsAnalyticsReport{
+			Dimensions: append([]string(nil), spec.Dimensions...),
+			Rows: []statsAnalyticsRow{{
+				Values:                 []string{"Organic Search", "google / organic"},
+				ActiveUsers:            21,
+				Sessions:               28,
+				EngagementRate:         0.625,
+				AverageSessionDuration: 83.4,
+			}},
+		}, nil
+	}
+	t.Cleanup(func() { statsAnalyticsFetch = orig })
+
+	w, out := statsGet(t, s, token, "/api/admin/v1/stats/analytics?group=sources&days=30&limit=80")
+	if w.Code != http.StatusOK || out["ok"] != true || out["group"] != "sources" {
+		t.Fatalf("analytics = %d %v", w.Code, out)
+	}
+	if gotDays != 30 || gotLimit != 80 {
+		t.Fatalf("days/limit = %d/%d, want 30/80", gotDays, gotLimit)
+	}
+	if strings.Join(gotSpec.Dimensions, ",") != "sessionDefaultChannelGroup,sessionSourceMedium" {
+		t.Fatalf("dimensions = %v", gotSpec.Dimensions)
+	}
+	rows := out["rows"].([]any)
+	row := rows[0].(map[string]any)
+	if row["active_users"].(float64) != 21 || row["sessions"].(float64) != 28 || row["engagement_rate"].(float64) != 0.625 {
+		t.Fatalf("rows = %v", rows)
+	}
+	if w2, _ := statsGet(t, s, token, "/api/admin/v1/stats/analytics?group=sources&days=30&limit=80"); w2.Code != http.StatusOK {
+		t.Fatalf("cached analytics failed")
+	}
+	if calls != 1 {
+		t.Fatalf("fetch calls = %d, want 1（应命中缓存）", calls)
+	}
+	if bad, badOut := statsGet(t, s, token, "/api/admin/v1/stats/analytics?group=unknown"); bad.Code != http.StatusBadRequest || badOut["error"] != "invalid_group" {
+		t.Fatalf("invalid group = %d %v", bad.Code, badOut)
 	}
 }
 
@@ -206,11 +261,11 @@ func TestStatsTrafficCacheAndDefaults(t *testing.T) {
 // 只存在于前期的行不进结果（基准是当前区间）。
 func TestMergeStatsCompareRows(t *testing.T) {
 	cur := []statsSearchRow{
-		{Query: "gcms 教程", Page: "https://e.com/a", Clicks: 12, Impressions: 340, Position: 9.4},
+		{Query: "gcms 教程", Page: "https://e.com/a", Clicks: 12, Impressions: 340, CTR: 0.035, Position: 9.4},
 		{Query: "新词", Page: "https://e.com/b", Clicks: 3, Impressions: 50, Position: 18.2},
 	}
 	prev := []statsSearchRow{
-		{Query: "gcms 教程", Page: "https://e.com/a", Clicks: 5, Impressions: 210, Position: 14.2},
+		{Query: "gcms 教程", Page: "https://e.com/a", Clicks: 5, Impressions: 210, CTR: 0.024, Position: 14.2},
 		{Query: "gcms 教程", Page: "https://e.com/other", Clicks: 9, Impressions: 100, Position: 6.0}, // 同 query 不同 page，不该串
 		{Query: "掉出的词", Page: "https://e.com/c", Clicks: 7, Impressions: 90, Position: 4.1},         // 仅前期，有意丢弃
 	}
@@ -219,15 +274,53 @@ func TestMergeStatsCompareRows(t *testing.T) {
 		t.Fatalf("rows = %d, want 2", len(rows))
 	}
 	first := rows[0]
-	if first.PrevClicks == nil || *first.PrevClicks != 5 || first.PrevImpressions == nil || *first.PrevImpressions != 210 || first.PrevPosition == nil || *first.PrevPosition != 14.2 {
+	if first.PrevClicks == nil || *first.PrevClicks != 5 || first.PrevImpressions == nil || *first.PrevImpressions != 210 || first.PrevCTR == nil || *first.PrevCTR != 0.024 || first.PrevPosition == nil || *first.PrevPosition != 14.2 {
 		t.Fatalf("first prev = %+v", first)
 	}
 	if first.Clicks != 12 || first.Impressions != 340 || first.Position != 9.4 {
 		t.Fatalf("first current 被合并改写：%+v", first)
 	}
 	second := rows[1]
-	if second.PrevClicks != nil || second.PrevImpressions != nil || second.PrevPosition != nil {
+	if second.PrevClicks != nil || second.PrevImpressions != nil || second.PrevCTR != nil || second.PrevPosition != nil {
 		t.Fatalf("前期无数据应置 null：%+v", second)
+	}
+}
+
+func TestStatsSearchGroups(t *testing.T) {
+	s, token := newTestStatsServer(t, "stats:read", true)
+	orig := statsSearchDimensionsFetch
+	var gotDimensions [][]string
+	statsSearchDimensionsFetch = func(_ context.Context, _, _ string, _, _ time.Time, _ int, dimensions []string) ([]statsSearchRow, error) {
+		gotDimensions = append(gotDimensions, append([]string(nil), dimensions...))
+		if len(dimensions) == 0 {
+			return []statsSearchRow{{Clicks: 9, Impressions: 180, CTR: 0.05, Position: 7.4}}, nil
+		}
+		return []statsSearchRow{{Query: "gcms", Clicks: 4, Impressions: 100, CTR: 0.04, Position: 8.2}}, nil
+	}
+	t.Cleanup(func() { statsSearchDimensionsFetch = orig })
+
+	w, out := statsGet(t, s, token, "/api/admin/v1/stats/search?days=15&group=query")
+	if w.Code != http.StatusOK || out["group"] != "query" {
+		t.Fatalf("query group = %d %v", w.Code, out)
+	}
+	rows := out["rows"].([]any)
+	if len(rows) != 1 || rows[0].(map[string]any)["ctr"].(float64) != 0.04 {
+		t.Fatalf("query rows = %v", rows)
+	}
+
+	w, out = statsGet(t, s, token, "/api/admin/v1/stats/search?days=15&group=total")
+	if w.Code != http.StatusOK || out["group"] != "total" {
+		t.Fatalf("total group = %d %v", w.Code, out)
+	}
+	if len(gotDimensions) != 2 || len(gotDimensions[0]) != 1 || gotDimensions[0][0] != "query" || len(gotDimensions[1]) != 0 {
+		t.Fatalf("dimensions = %#v", gotDimensions)
+	}
+
+	if w, _ := statsGet(t, s, token, "/api/admin/v1/stats/search?group=date&compare=1"); w.Code != http.StatusBadRequest {
+		t.Fatalf("date compare status = %d, want 400", w.Code)
+	}
+	if w, _ := statsGet(t, s, token, "/api/admin/v1/stats/search?group=unknown"); w.Code != http.StatusBadRequest {
+		t.Fatalf("invalid group status = %d, want 400", w.Code)
 	}
 }
 

@@ -1017,6 +1017,36 @@ async fn discover_sites(
 }
 
 #[tauri::command]
+async fn gcms_site_create_capability(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+) -> Result<serde_json::Value, String> {
+    let conn = state.conns.get(&conn_id)?;
+    discovery::site_create_capability(&conn).await
+}
+
+#[tauri::command]
+async fn gcms_site_create_plan(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    payload: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let conn = state.conns.get(&conn_id)?;
+    discovery::plan_site_create(&conn, &payload).await
+}
+
+#[tauri::command]
+async fn gcms_site_create(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    payload: serde_json::Value,
+    request_id: String,
+) -> Result<serde_json::Value, String> {
+    let conn = state.conns.get(&conn_id)?;
+    discovery::create_site(&conn, &payload, &request_id).await
+}
+
+#[tauri::command]
 async fn gcms_site_preview_url(
     state: tauri::State<'_, AppState>,
     conn_id: String,
@@ -1116,6 +1146,35 @@ async fn gcms_integrations_get(
 ) -> Result<serde_json::Value, String> {
     let conn = state.conns.get(&conn_id)?;
     discovery::integrations(&conn, site_id).await
+}
+
+#[tauri::command]
+async fn gcms_site_search_stats(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    site_id: i64,
+    days: i64,
+    limit: i64,
+    compare: bool,
+    group: String,
+    fresh: bool,
+) -> Result<serde_json::Value, String> {
+    let conn = state.conns.get(&conn_id)?;
+    discovery::site_search_stats(&conn, site_id, days, limit, compare, &group, fresh).await
+}
+
+#[tauri::command]
+async fn gcms_site_analytics_stats(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    site_id: i64,
+    days: i64,
+    limit: i64,
+    group: String,
+    fresh: bool,
+) -> Result<serde_json::Value, String> {
+    let conn = state.conns.get(&conn_id)?;
+    discovery::site_analytics_stats(&conn, site_id, days, limit, &group, fresh).await
 }
 
 #[tauri::command]
@@ -3116,6 +3175,7 @@ fn show_edit_menu(app: AppHandle, window: tauri::Window, editable: bool) -> Resu
 #[tauri::command]
 async fn open_conn_window(
     app: AppHandle,
+    window: tauri::Window,
     state: tauri::State<'_, AppState>,
     conn_id: String,
 ) -> Result<(), String> {
@@ -3128,8 +3188,14 @@ async fn open_conn_window(
         let _ = w.set_focus();
         return Ok(());
     }
-    // mut 只有 macOS 分支用得上（下面那两个设置是 mac 专有）
-    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
+    // 跟随发起「新窗口打开」的那扇窗口，而不是每次退回固定 1024×700。
+    // inner_size 是物理像素，Builder 收的是逻辑像素；必须按源窗口缩放系数换算，
+    // 否则 Retina / Windows 缩放屏上新窗口会放大一倍或明显变小。
+    let source_size = match (window.inner_size(), window.scale_factor()) {
+        (Ok(size), Ok(scale)) => Some(size.to_logical::<f64>(scale)),
+        _ => None,
+    };
+    let source_maximized = window.is_maximized().unwrap_or(false);
     let mut b = tauri::WebviewWindowBuilder::new(
         &app,
         &label,
@@ -3137,10 +3203,15 @@ async fn open_conn_window(
         tauri::WebviewUrl::App("index.html".into()),
     )
     .title(&conn.name)
-    .inner_size(1024.0, 700.0)
+    .maximized(source_maximized)
     .min_inner_size(820.0, 560.0)
     // Windows 上 Tauri 原生文件拖放会截走 WebView2 的 HTML5 drop；关闭后输入框可直接接收 File。
     .disable_drag_drop_handler();
+    b = if let Some(size) = source_size {
+        b.inner_size(size.width, size.height)
+    } else {
+        b.inner_size(1024.0, 700.0)
+    };
     // 主窗口在 tauri.conf 里是 Overlay + 隐藏标题（前端自己画标题栏），新窗口得对齐，
     // 否则同一套前端布局会和系统标题栏叠在一起。这两个设置只有 macOS 有。
     #[cfg(target_os = "macos")]
@@ -6483,7 +6554,9 @@ async fn rebuild_session(
     };
     let sys = design_fallback(sys, is_cf, &conv.brain, &state.data_dir);
     // 历史摘要（不含将要重跑的最后一条用户消息）；发给模型的组合消息不落库，界面保持干净。
-    let recap = convo::recap(&conv.messages, 8000);
+    // 手动重建只在底层会话确实损坏/超限时使用。给新 session 足够的近期记录，
+    // 避免旧 8k 字符预算让长对话看起来像被清空；界面中的原始消息始终原样保留。
+    let recap = convo::recap(&conv.messages, 64_000);
     let message = if recap.is_empty() {
         last_user
     } else {
@@ -6856,6 +6929,9 @@ pub fn run() {
             open_conn_window,
             show_edit_menu,
             discover_sites,
+            gcms_site_create_capability,
+            gcms_site_create_plan,
+            gcms_site_create,
             gcms_site_preview_url,
             gcms_themes_get,
             gcms_site_theme_get,
@@ -6863,6 +6939,8 @@ pub fn run() {
             gcms_site_theme_plan,
             gcms_site_theme_apply,
             gcms_integrations_get,
+            gcms_site_search_stats,
+            gcms_site_analytics_stats,
             gcms_integrations_save,
             gcms_site_google_provision,
             gcms_site_google_analytics_options,

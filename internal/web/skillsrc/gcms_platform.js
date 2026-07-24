@@ -99,9 +99,10 @@ function usage(code = 2) {
   out('  gcms.js discard --site <slug|id> <collection> <id> --reason "为何建议弃用"   # 报废申请：只给草稿打标记，删除由管理员执行');
   out("  gcms.js undiscard --site <slug|id> <collection> <id>   # 撤销报废标记");
   out("  gcms.js audit --site <slug|id> <collection> [--lang zh|all] [--limit 50] [--deep true]");
-  out("  gcms.js search-stats --site <slug|id> [--days 28] [--limit 100] [--compare]  # Search Console 搜索词表现（stats:read；--compare 附带紧前等长区间对比）");
+  out("  gcms.js search-stats --site <slug|id> [--days 28] [--limit 100] [--group query_page|query|page|date|total] [--compare] [--fresh]  # Search Console 搜索表现（stats:read）");
   out("  gcms.js traffic-stats --site <slug|id> [--days 7]         # GA 活跃用户/会话汇总（stats:read）");
   out("  gcms.js page-stats --site <slug|id> [--days 7] [--limit 50]  # GA 页面路径 × 活跃用户/会话（stats:read）");
+  out("  gcms.js analytics-stats --site <slug|id> [--days 7] [--limit 50] [--group sources|geography|devices|trend] [--fresh] # GA 细分维度（stats:read）");
   out("  gcms.js tg-stats --site <slug|id>           # Telegram 频道订阅数（stats:read；未配置返回 telegram_not_configured）");
   out("  （collection = posts|pages|links 或该站 types 里的扩展集合，如 products/docs/自定义）");
   process.exit(code);
@@ -826,16 +827,19 @@ async function main() {
   }
 
   // 统计数据（stats:read）：Search Console 搜索词表现 / GA 流量与页面汇总，服务端缓存 1 小时。
-  // search-stats --compare 让服务端附带「紧前等长区间」同 key 数据（prev_clicks/prev_impressions/prev_position）。
-  if (cmd === "search-stats" || cmd === "traffic-stats" || cmd === "page-stats") {
+  // search-stats --compare 让服务端附带「紧前等长区间」同 key 数据；--fresh 绕过一小时缓存。
+  if (cmd === "search-stats" || cmd === "traffic-stats" || cmd === "page-stats" || cmd === "analytics-stats") {
     const args = [collection, ...rest].filter((a) => a != null);
     const compare = cmd === "search-stats" && args.includes("--compare");
-    const opt = parseOptions(args.filter((a) => a !== "--compare"));
+    const fresh = (cmd === "search-stats" || cmd === "analytics-stats") && args.includes("--fresh");
+    const opt = parseOptions(args.filter((a) => a !== "--compare" && a !== "--fresh"));
     const qs = new URLSearchParams();
     if (opt.days != null) qs.set("days", opt.days);
     if (cmd !== "traffic-stats" && opt.limit != null) qs.set("limit", opt.limit);
+    if ((cmd === "search-stats" || cmd === "analytics-stats") && opt.group != null) qs.set("group", opt.group);
     if (compare) qs.set("compare", "1");
-    const statsPath = cmd === "search-stats" ? "/stats/search" : cmd === "page-stats" ? "/stats/pages" : "/stats/traffic";
+    if (fresh) qs.set("fresh", "1");
+    const statsPath = cmd === "search-stats" ? "/stats/search" : cmd === "page-stats" ? "/stats/pages" : cmd === "analytics-stats" ? "/stats/analytics" : "/stats/traffic";
     print(await request("GET", P(statsPath + (qs.toString() ? "?" + qs.toString() : ""))));
     return;
   }

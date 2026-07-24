@@ -46,6 +46,119 @@
   let setupAddOpen = $state(false);
   let setupAddEl = $state<HTMLElement | null>(null);
   let switcherOpen = $state(false);
+  type GscStatsGroup = 'query' | 'page' | 'date' | 'total';
+  type GscInsightsTab = 'opportunities' | 'queries' | 'pages' | 'trend';
+  type GscStatsRow = {
+    query: string;
+    page: string;
+    date?: string;
+    clicks: number;
+    impressions: number;
+    ctr: number;
+    position: number;
+    prev_clicks?: number | null;
+    prev_impressions?: number | null;
+    prev_ctr?: number | null;
+    prev_position?: number | null;
+  };
+  type GscStatsPayload = {
+    ok: boolean;
+    days: number;
+    property: string;
+    group?: string;
+    compare?: boolean;
+    rows: GscStatsRow[];
+  };
+  type GscSelectedRow = { id: string; group: 'query' | 'page'; label: string; row: GscStatsRow };
+  const GSC_RANGE_OPTIONS = [
+    { value: '7', label: '近 7 天' },
+    { value: '15', label: '近 15 天' },
+    { value: '28', label: '近 28 天' },
+    { value: '30', label: '近 30 天' },
+    { value: '90', label: '近 3 个月' },
+  ];
+  const GSC_SHEET_WIDTH_KEY = 'gcms.pilot.gscInsightsWidth.v2';
+  const GSC_SHEET_DEFAULT_WIDTH = 480;
+  const GSC_SHEET_MIN_WIDTH = 400;
+  const GSC_SHEET_MAX_WIDTH = 1180;
+  let gscInsightsSite = $state<Site | null>(null);
+  let gscInsightsConnId = $state('');
+  let gscInsightsTab = $state<GscInsightsTab>('opportunities');
+  let gscInsightsDays = $state('28');
+  let gscInsightsWidth = $state(loadGscInsightsWidth());
+  let gscInsightsResizing = $state(false);
+  let gscInsightsScrollable = $state(false);
+  let gscInsightsData = $state<Partial<Record<GscStatsGroup, GscStatsPayload>>>({});
+  let gscInsightsLoading = $state<Partial<Record<GscStatsGroup, boolean>>>({});
+  let gscInsightsErrors = $state<Partial<Record<GscStatsGroup, string>>>({});
+  let gscInsightsSelected = $state<Record<string, GscSelectedRow>>({});
+  let gscInsightsSeq = 0;
+  let gscResizeStartX = 0;
+  let gscResizeStartWidth = 0;
+  let gscResizeSheet: HTMLElement | null = null;
+  type GaDimensionGroup = 'sources' | 'geography' | 'devices' | 'trend';
+  type GaInsightsTab = 'overview' | 'pages' | GaDimensionGroup;
+  type GaStatsGroup = 'traffic' | 'pages' | GaDimensionGroup;
+  type GaTrafficPayload = {
+    ok: boolean;
+    days: number;
+    property: string;
+    active_users: number;
+    sessions: number;
+    engagement_rate?: number;
+    average_session_duration?: number;
+  };
+  type GaPageRow = {
+    path: string;
+    active_users: number;
+    sessions: number;
+    engagement_rate?: number;
+    average_session_duration?: number;
+  };
+  type GaPagesPayload = {
+    ok: boolean;
+    days: number;
+    property: string;
+    rows: GaPageRow[];
+  };
+  type GaDimensionRow = {
+    values: string[];
+    active_users: number;
+    sessions: number;
+    engagement_rate: number;
+    average_session_duration: number;
+  };
+  type GaDimensionPayload = {
+    ok: boolean;
+    days: number;
+    property: string;
+    group: GaDimensionGroup;
+    dimensions: string[];
+    rows: GaDimensionRow[];
+  };
+  type GaSelectedRow = {
+    id: string;
+    group: Exclude<GaStatsGroup, 'traffic'>;
+    label: string;
+    secondary?: string;
+    active_users: number;
+    sessions: number;
+    engagement_rate?: number;
+    average_session_duration?: number;
+  };
+  const GA_RANGE_OPTIONS = GSC_RANGE_OPTIONS;
+  let gaInsightsSite = $state<Site | null>(null);
+  let gaInsightsConnId = $state('');
+  let gaInsightsTab = $state<GaInsightsTab>('overview');
+  let gaInsightsDays = $state('30');
+  let gaInsightsScrollable = $state(false);
+  let gaInsightsTraffic = $state<GaTrafficPayload | null>(null);
+  let gaInsightsPages = $state<GaPagesPayload | null>(null);
+  let gaInsightsDimensions = $state<Partial<Record<GaDimensionGroup, GaDimensionPayload>>>({});
+  let gaInsightsLoading = $state<Partial<Record<GaStatsGroup, boolean>>>({});
+  let gaInsightsErrors = $state<Partial<Record<GaStatsGroup, string>>>({});
+  let gaInsightsSelected = $state<Record<string, GaSelectedRow>>({});
+  let gaInsightsSeq = 0;
   type TransferSelection = { all: boolean; connections: boolean; sessions: boolean; tasks: boolean; managed: boolean; templates: boolean; preferences: boolean };
   type TransferCounts = { connections: number; sessions: number; tasks: number; managed: number; templates: number; preferences: boolean; secrets: boolean };
   type TransferPreview = { encrypted: boolean; version: number; counts: TransferCounts };
@@ -4962,9 +5075,88 @@
     kind: 'auto', goal: '', audience: '', language: 'auto', name: '', slug: '', pages: [],
     style: 'auto', reference: '', contentPlan: 'structure', notes: '',
   });
+  type QuickSiteKind = 'content' | 'factory' | 'dtc';
+  type QuickSiteSeed = 'empty' | 'demo';
+  type QuickSiteStep = 'form' | 'review' | 'success';
+  type QuickSiteCapability = {
+    id?: string;
+    available?: boolean;
+    granted?: boolean;
+    required_scope?: string;
+    requires_confirmation?: boolean;
+    supports_dry_run?: boolean;
+    membership_mode?: string;
+    membership_allowed?: boolean;
+    can_create?: boolean;
+    unavailable_reason?: string;
+  };
+  type QuickSiteInput = {
+    slug: string;
+    name: string;
+    site_kind: QuickSiteKind;
+    seed_mode: QuickSiteSeed;
+    management_automation_enabled: boolean;
+  };
+  type QuickSitePlan = {
+    dry_run?: boolean;
+    operation?: string;
+    normalized_input?: QuickSiteInput;
+    impact?: {
+      creates_site?: boolean;
+      creates_standard_storage?: boolean;
+      seed_mode?: QuickSiteSeed;
+    };
+    warnings?: string[];
+  };
+  type QuickSiteCreatedItem = {
+    id?: number;
+    slug: string;
+    name: string;
+    status?: string;
+    site_kind?: QuickSiteKind | string;
+    management_automation_enabled?: boolean;
+  };
+  type QuickSiteCreateResult = {
+    item?: QuickSiteCreatedItem;
+    created?: boolean;
+    warnings?: string[];
+  };
+  const QUICK_SITE_KINDS: { value: QuickSiteKind; label: string; sub: string }[] = [
+    { value: 'content', label: '内容站', sub: '博客、资讯与文档等内容形态' },
+    { value: 'factory', label: '工厂站', sub: '面向外贸工厂，包含商品内容入口' },
+    { value: 'dtc', label: '外贸独立站', sub: '跨境品牌官网，包含商品内容入口' },
+  ];
+  const QUICK_SITE_SEEDS: { value: QuickSiteSeed; label: string; sub: string }[] = [
+    { value: 'empty', label: '空数据', sub: '推荐；只创建基础设置，从零开始建设' },
+    { value: 'demo', label: '带演示数据', sub: '写入 GCMS 示例内容，后续需要检查或清理' },
+  ];
   let siteBuildMode = $state<SiteBuildMode>('guided');
   let siteBuildStep = $state(1);
   let siteBuildDraft = $state<SiteBuildDraft>(freshSiteBuildDraft());
+  let newSiteChoiceOpen = $state(false);
+  let newSiteChoiceEl = $state<HTMLElement | null>(null);
+  let newSiteTriggerEl = $state<HTMLButtonElement | null>(null);
+  let quickSiteOpen = $state(false);
+  let quickSiteEl = $state<HTMLElement | null>(null);
+  let quickSiteSlugEl = $state<HTMLInputElement | null>(null);
+  let quickSiteConnId = $state('');
+  let quickSiteStep = $state<QuickSiteStep>('form');
+  let quickSiteSlug = $state('');
+  let quickSiteName = $state('');
+  let quickSiteKind = $state<QuickSiteKind>('content');
+  let quickSiteSeed = $state<QuickSiteSeed>('empty');
+  let quickSiteCapability = $state<QuickSiteCapability | null>(null);
+  let quickSiteCapabilityLoading = $state(false);
+  let quickSiteBusy = $state(false);
+  let quickSiteError = $state('');
+  let quickSiteNotice = $state('');
+  let quickSitePlan = $state<QuickSitePlan | null>(null);
+  let quickSiteResult = $state<QuickSiteCreateResult | null>(null);
+  let quickSiteCreatedSite = $state<Site | null>(null);
+  let quickSiteRequestId = $state('');
+  let quickSiteRequestFingerprint = $state('');
+  const quickSiteSlugValid = $derived(/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(quickSiteSlug.trim()) && quickSiteSlug.trim().length <= 63);
+  const quickSiteFormReady = $derived(quickSiteSlugValid && !!quickSiteName.trim() && quickSiteCapability?.can_create === true);
   const SITE_BUILD_KINDS: { value: SiteBuildKind; label: string; sub: string }[] = [
     { value: 'auto', label: '让 AI 判断', sub: '根据业务目标推荐合适类型' },
     { value: 'content', label: '内容 / 品牌站', sub: '博客、媒体、知识与品牌介绍' },
@@ -5281,7 +5473,7 @@
   let draft = $state('');
   // 并发对话：running = convId → connId（在跑的对话；带 connId 便于删连接时可靠判定）；lives = 每个对话的流式缓冲。
   let running = $state<Record<string, string>>({});
-  let lives = $state<Record<string, { text: string; tools: ToolCall[]; error: string; failed: boolean; startedAt: number }>>({});
+  let lives = $state<Record<string, { text: string; tools: ToolCall[]; error: string; failed: boolean; startedAt: number; compactedAt?: number; compactedPreTokens?: number }>>({});
   let autoRetried = $state<Record<string, boolean>>({}); // convId → 本轮已自动重试过（每个用户轮只自动重试一次）
   let retryTimers: Record<string, ReturnType<typeof setTimeout>> = {}; // 待触发的自动重连定时器（新一轮开始时取消，防陈旧触发）
   // 智能升级：手动重试后若以同样的错误再次失败，说明 resume 救不了 → 之后只显示「重建继续」。
@@ -5310,17 +5502,21 @@
     return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s`;
   }
   // 会话大小/用量：上下文按「厂商 + 模型」估算——codex 272k；grok-4.5 500k（ACP initialize
-  // 的 totalContextTokens 实测值）；claude 按模型细分：fable ＝ Max 专属档、窗口 1M，
-  // sonnet/opus/haiku/自定义保持 200k 保守默认（Pro 档就是 200k，绝不虚报）。
+  // 的 totalContextTokens 实测值）。Claude 当前 Sonnet / Opus / Fable 是 1M；
+  // Haiku 4.5 仍是 200k。旧版或无法识别的自定义 Claude ID 保守按 200k。
   function ctxLimit(brain: string, model = ''): number {
     if (brain === 'codex') return 272000;
     if (brain === 'grok') return 500000;
-    return model.toLowerCase().includes('fable') ? 1_000_000 : 200_000;
+    const id = (model.trim() || 'sonnet').toLowerCase();
+    if (id === 'sonnet' || id === 'opus' || id.includes('fable') || id.includes('mythos')) return 1_000_000;
+    if (/claude-(?:sonnet-5|sonnet-4-[6-9]|opus-4-[6-9])(?:$|-)/.test(id)) return 1_000_000;
+    return 200_000;
   }
   // 实测自适应升档（证据驱动，只升不降）：实测 ctx 已超过假定上限的 95%，说明真实窗口更大
   //（如 Max 订阅跑 Sonnet 实际 1M），按下一档 1M 计；展示百分比由调用方钳 100%。
   function ctxLimitAdaptive(brain: string, model: string, ctx: number): number {
     const base = ctxLimit(brain, model);
+    if (brain === 'claude' && model.toLowerCase().includes('haiku')) return base;
     return base < 1_000_000 && ctx > base * 0.95 ? 1_000_000 : base;
   }
   // 拖动窗口：忽略交互元素（按钮/输入等），否则点它们会误触发拖动。
@@ -7318,6 +7514,289 @@
     siteBuildDraft = freshSiteBuildDraft();
     view = 'launcher';
   }
+  async function openNewSiteChoice(event?: MouseEvent) {
+    if (event?.currentTarget instanceof HTMLButtonElement) newSiteTriggerEl = event.currentTarget;
+    sitesGlobalMenuKind = null;
+    quickSiteOpen = false;
+    newSiteChoiceOpen = true;
+    await tick();
+    newSiteChoiceEl?.focus();
+  }
+  async function closeNewSiteChoice(restoreFocus = true) {
+    newSiteChoiceOpen = false;
+    if (restoreFocus) {
+      await tick();
+      newSiteTriggerEl?.focus();
+    }
+  }
+  function chooseGuidedSiteBuild() {
+    newSiteChoiceOpen = false;
+    startSiteBuild();
+  }
+  function resetQuickSitePlan() {
+    quickSitePlan = null;
+    quickSiteRequestId = '';
+    quickSiteRequestFingerprint = '';
+    if (quickSiteCapability?.can_create) quickSiteError = '';
+  }
+  function quickSitePayload(): QuickSiteInput {
+    return {
+      slug: quickSiteSlug.trim(),
+      name: quickSiteName.trim(),
+      site_kind: quickSiteKind,
+      seed_mode: quickSiteSeed,
+      management_automation_enabled: true,
+    };
+  }
+  function quickSiteFingerprint(payload = quickSitePayload()): string {
+    return JSON.stringify(payload);
+  }
+  function newQuickSiteRequestId(slug: string): string {
+    const uuid = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+    return `pilot-site-create-${slug}-${uuid}`;
+  }
+  function quickSiteConnection() {
+    return conns.find((connection) => connection.id === quickSiteConnId) ?? null;
+  }
+  function quickSiteConnectionHost(): string {
+    const base = quickSiteConnection()?.api_base?.trim();
+    if (!base) return '';
+    try { return new URL(base).host; }
+    catch { return base.replace(/^https?:\/\//, '').split('/')[0]; }
+  }
+  function friendlyQuickSiteError(error: unknown): string {
+    const message = String(error).replace(/^Error:\s*/i, '').trim();
+    if (/site_slug_conflict|站点标记已存在|slug.+(?:冲突|存在)/i.test(message)) return '这个站点标识已经存在，请返回修改后重新预检。';
+    if (/membership_scope|覆盖全部站点/i.test(message)) return '当前平台密钥只能管理部分站点，不能创建新站点。请换用覆盖全部站点的平台密钥。';
+    if (/scope|sites:create|未授权|forbidden|403/i.test(message)) return '当前平台密钥没有创建站点权限，请在 GCMS 中补充 sites:create 权限后重试。';
+    return message || '操作失败，请稍后重试。';
+  }
+  async function loadQuickSiteCapability() {
+    if (!quickSiteConnId || quickSiteCapabilityLoading) return;
+    quickSiteCapabilityLoading = true;
+    quickSiteCapability = null;
+    quickSiteError = '';
+    try {
+      const capability = await invoke<QuickSiteCapability>('gcms_site_create_capability', { connId: quickSiteConnId });
+      quickSiteCapability = capability;
+      if (!capability.can_create) {
+        quickSiteError = capability.unavailable_reason
+          || (!capability.available
+            ? '当前 GCMS 版本尚未提供快速创建能力，请先升级 GCMS。'
+            : !capability.granted
+              ? '当前平台密钥没有创建站点权限，请在 GCMS 中补充 sites:create 权限。'
+              : '只有覆盖全部站点的平台密钥可以创建新站点。');
+      }
+    } catch (error) {
+      quickSiteError = friendlyQuickSiteError(error);
+    } finally {
+      quickSiteCapabilityLoading = false;
+    }
+  }
+  async function openQuickSiteCreate() {
+    newSiteChoiceOpen = false;
+    quickSiteConnId = activeConnId;
+    quickSiteStep = 'form';
+    quickSiteSlug = '';
+    quickSiteName = '';
+    quickSiteKind = 'content';
+    quickSiteSeed = 'empty';
+    quickSiteCapability = null;
+    quickSiteBusy = false;
+    quickSiteError = '';
+    quickSiteNotice = '';
+    quickSitePlan = null;
+    quickSiteResult = null;
+    quickSiteCreatedSite = null;
+    quickSiteRequestId = '';
+    quickSiteRequestFingerprint = '';
+    quickSiteOpen = true;
+    await tick();
+    quickSiteSlugEl?.focus();
+    void loadQuickSiteCapability();
+  }
+  async function backQuickSiteToChoice() {
+    if (quickSiteBusy) return;
+    quickSiteOpen = false;
+    newSiteChoiceOpen = true;
+    await tick();
+    newSiteChoiceEl?.focus();
+  }
+  async function closeQuickSiteCreate(restoreFocus = true) {
+    if (quickSiteBusy) return;
+    quickSiteOpen = false;
+    if (restoreFocus) {
+      await tick();
+      newSiteTriggerEl?.focus();
+    }
+  }
+  function handleNewSiteDialogKeydown(event: KeyboardEvent) {
+    if (event.key !== 'Escape') return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (quickSiteBusy) return;
+    if (quickSiteOpen) void closeQuickSiteCreate();
+    else if (newSiteChoiceOpen) void closeNewSiteChoice();
+  }
+  function suggestQuickSiteSlug(focusSlug = false) {
+    if (quickSiteSlug.trim()) return;
+    const suggestion = slugifySiteBuildName(quickSiteName);
+    if (suggestion) {
+      quickSiteSlug = suggestion.slice(0, 63).replace(/-+$/, '');
+      resetQuickSitePlan();
+      if (focusSlug) void tick().then(() => quickSiteSlugEl?.focus());
+    }
+  }
+  async function planQuickSiteCreate() {
+    if (quickSiteBusy || !quickSiteFormReady) return;
+    if (!quickSiteCapability?.supports_dry_run) {
+      quickSiteError = '当前 GCMS 没有返回预检能力，不能安全创建站点；请先升级 GCMS。';
+      return;
+    }
+    const payload = quickSitePayload();
+    const fingerprint = quickSiteFingerprint(payload);
+    if (quickSiteRequestFingerprint !== fingerprint) {
+      quickSiteRequestFingerprint = fingerprint;
+      quickSiteRequestId = newQuickSiteRequestId(payload.slug);
+    }
+    quickSiteBusy = true;
+    quickSiteError = '';
+    try {
+      const plan = await invoke<QuickSitePlan>('gcms_site_create_plan', { connId: quickSiteConnId, payload });
+      if (!plan?.dry_run || plan.operation !== 'sites.create') throw new Error('GCMS 没有返回有效的新建站点预检结果。');
+      quickSitePlan = plan;
+      quickSiteStep = 'review';
+      await tick();
+      quickSiteEl?.focus();
+    } catch (error) {
+      quickSitePlan = null;
+      quickSiteError = friendlyQuickSiteError(error);
+    } finally {
+      quickSiteBusy = false;
+    }
+  }
+  function editQuickSiteCreate() {
+    if (quickSiteBusy) return;
+    quickSiteStep = 'form';
+    quickSiteError = '';
+    void tick().then(() => quickSiteSlugEl?.focus());
+  }
+  async function continueQuickSiteDiscoverySync(connId: string, created: QuickSiteCreatedItem) {
+    for (const delay of [2000, 4000, 8000]) {
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      const refreshed = await refreshDiscoverySummary(connId, true);
+      const fresh = (refreshed?.lifecycle_items ?? refreshed?.items ?? []).find((site) =>
+        (created.id != null && site.id === created.id) || site.slug === created.slug
+      ) ?? null;
+      if (!fresh) continue;
+      if (quickSiteConnId === connId && quickSiteResult?.item?.slug === created.slug) {
+        quickSiteCreatedSite = fresh;
+        quickSiteNotice = '';
+      }
+      return;
+    }
+  }
+  async function createQuickSite() {
+    if (quickSiteBusy || !quickSitePlan || !quickSiteRequestId) return;
+    const payload = quickSitePayload();
+    if (quickSiteFingerprint(payload) !== quickSiteRequestFingerprint) {
+      quickSiteStep = 'form';
+      quickSitePlan = null;
+      quickSiteError = '创建信息已经变化，请重新预检。';
+      return;
+    }
+    quickSiteBusy = true;
+    quickSiteError = '';
+    quickSiteNotice = '';
+    try {
+      quickSiteResult = await invoke<QuickSiteCreateResult>('gcms_site_create', {
+        connId: quickSiteConnId,
+        payload,
+        requestId: quickSiteRequestId,
+      });
+      if (!quickSiteResult?.item?.slug) throw new Error('GCMS 已响应，但没有返回可识别的站点信息。可以再次确认，Pilot 会沿用同一请求标识安全核对，不会重复创建。');
+      quickSiteStep = 'success';
+      const created = quickSiteResult.item;
+      // 创建响应只保证返回安全身份摘要；站点卡片仍以 discover_sites 的完整事实为准。
+      // GCMS 重载运行时后可能有极短的可见性延迟，因此在本地短轮询，不让用户手动刷新。
+      const retryDelays = [0, 280, 650, 1100];
+      for (const delay of retryDelays) {
+        if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+        const refreshed = await refreshDiscoverySummary(quickSiteConnId, true);
+        quickSiteCreatedSite = (refreshed?.lifecycle_items ?? refreshed?.items ?? []).find((site) =>
+          (created.id != null && site.id === created.id) || site.slug === created.slug
+        ) ?? null;
+        if (quickSiteCreatedSite) break;
+      }
+      if (!quickSiteCreatedSite) {
+        quickSiteNotice = '站点已创建，GCMS 列表仍在同步；Pilot 会继续在后台自动获取。';
+        void continueQuickSiteDiscoverySync(quickSiteConnId, created);
+      }
+      await tick();
+      quickSiteEl?.focus();
+    } catch (error) {
+      quickSiteError = friendlyQuickSiteError(error);
+    } finally {
+      quickSiteBusy = false;
+    }
+  }
+  async function finishQuickSiteCreate() {
+    if (quickSiteBusy) return;
+    quickSiteOpen = false;
+    view = 'sites';
+    await tick();
+  }
+  async function continueQuickSiteWithAI() {
+    if (quickSiteBusy) return;
+    const created = quickSiteResult?.item;
+    const slug = created?.slug || quickSiteSlug.trim();
+    const name = quickSiteCreatedSite?.name || created?.name || quickSiteName.trim() || slug;
+    const brain = brainUsable(lBrain) ? lBrain : firstUsableBrain();
+    if (!brainUsable(brain)) {
+      quickSiteError = '还没有可用的 AI，请先在“连接与模型设置”中完成一个模型授权。';
+      return;
+    }
+    const model = brain === lBrain && isLauncherModel(brain, lModel) ? lModel : defaultModelFor(brain);
+    const effort = brain === lBrain ? lEffort : '';
+    const text = [
+      `站点「${name}」（slug=${slug}）已经通过 Pilot 快速创建，并已绑定到当前对话。`,
+      '',
+      '本轮只做只读检查：',
+      '1. 实时读取当前站点资料、站点类型、主题、内容数量和上线准备状态；',
+      '2. 区分“上线前必须完成”和“可稍后完善”，按优先级给出下一步建设清单；',
+      '3. 说明每一步需要我补充的真实业务资料。',
+      '',
+      '本轮不要创建、修改、删除或发布任何内容，不要应用主题，不要配置域名、DNS、Cloudflare、Caddy 或 HTTPS。等我明确选择下一步后再执行写操作。',
+    ].join('\n');
+    const id = crypto.randomUUID();
+    const now = Math.floor(Date.now() / 1000);
+    const connId = quickSiteConnId;
+    const optimistic: Conversation = {
+      id, conn_id: connId, conn_name: quickSiteConnection()?.name ?? '', site_slug: slug, site_name: name, site_slugs: [],
+      workspace_dir: '', task_type: 'sitebuild', brain, model, perm_mode: 'auto', effort, session_ref: '',
+      title: `继续完善 ${name}`, messages: [optimisticUser(text)], status: 'running', created_at: now, updated_at: now,
+    };
+    quickSiteOpen = false;
+    convos = [optimistic, ...convos];
+    delete autoRetried[id];
+    beginTurn(id, optimistic);
+    try {
+      const conv = await invoke<Conversation>('start_conversation', {
+        convId: id, connId, siteSlug: slug, siteName: name, siteSlugs: [], siteNames: [],
+        taskType: 'sitebuild', brain, model, permMode: 'auto', effort, workspaceDir: '',
+        message: text, onEvent: makeChannel(id),
+      });
+      await refreshConvos();
+      const failed = lives[id]?.failed ?? false;
+      const errText = lives[id]?.error ?? '';
+      endTurn(conv, id);
+      maybeAutoRetry(id, failed, errText);
+    } catch (error) {
+      await failTurn(error, id);
+    }
+  }
   function operateSite(site: Site) {
     if (site.status === 'disabled') return;
     newChat();
@@ -8234,6 +8713,691 @@
     checkCfReady();
     scrollSoon(true);
   }
+
+  function gscHasScope(site: Site | null): boolean {
+    if (!site) return false;
+    const capabilities = Array.isArray(site.capabilities) ? site.capabilities : [];
+    return capabilities.some((value) => String(value).toLowerCase() === 'stats:read');
+  }
+  function gscRows(group: GscStatsGroup): GscStatsRow[] {
+    return gscInsightsData[group]?.rows ?? [];
+  }
+  function loadGscInsightsWidth(): number {
+    try {
+      const value = Number(localStorage.getItem(GSC_SHEET_WIDTH_KEY));
+      return Number.isFinite(value) && value >= GSC_SHEET_MIN_WIDTH && value <= GSC_SHEET_MAX_WIDTH
+        ? value
+        : GSC_SHEET_DEFAULT_WIDTH;
+    } catch {
+      return GSC_SHEET_DEFAULT_WIDTH;
+    }
+  }
+  function clampGscInsightsWidth(value: number): number {
+    const viewportMax = typeof window === 'undefined'
+      ? GSC_SHEET_MAX_WIDTH
+      : Math.max(320, window.innerWidth - 8);
+    const viewportMin = Math.min(GSC_SHEET_MIN_WIDTH, viewportMax);
+    return Math.round(Math.min(GSC_SHEET_MAX_WIDTH, viewportMax, Math.max(viewportMin, value)));
+  }
+  function saveGscInsightsWidth() {
+    try { localStorage.setItem(GSC_SHEET_WIDTH_KEY, String(gscInsightsWidth)); } catch { /* */ }
+  }
+  function setGscInsightsWidth(value: number) {
+    gscInsightsWidth = clampGscInsightsWidth(value);
+  }
+  function startGscInsightsResize(event: MouseEvent) {
+    if (event.button !== 0) return;
+    const sheet = event.currentTarget as HTMLElement;
+    const bounds = sheet.getBoundingClientRect();
+    if (event.clientX > bounds.left + 28) return;
+    event.preventDefault();
+    event.stopPropagation();
+    hideTip();
+    gscResizeStartX = event.clientX;
+    gscResizeStartWidth = bounds.width || gscInsightsWidth;
+    gscResizeSheet = sheet;
+    gscInsightsResizing = true;
+    document.body.style.cursor = 'ew-resize';
+    document.body.style.userSelect = 'none';
+  }
+  function moveGscInsightsResize(event: MouseEvent) {
+    if (!gscInsightsResizing) return;
+    event.preventDefault();
+    const nextWidth = clampGscInsightsWidth(gscResizeStartWidth - (event.clientX - gscResizeStartX));
+    gscInsightsWidth = nextWidth;
+    if (gscResizeSheet) gscResizeSheet.style.width = `${nextWidth}px`;
+  }
+  function stopGscInsightsResize() {
+    if (!gscInsightsResizing) return;
+    gscInsightsResizing = false;
+    gscResizeSheet = null;
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    saveGscInsightsWidth();
+  }
+  function onGscInsightsResizeKey(event: KeyboardEvent) {
+    const delta = event.key === 'ArrowLeft' ? 24 : event.key === 'ArrowRight' ? -24 : 0;
+    if (!delta) return;
+    event.preventDefault();
+    setGscInsightsWidth(gscInsightsWidth + delta);
+    saveGscInsightsWidth();
+  }
+  function resetGscInsightsWidth() {
+    setGscInsightsWidth(GSC_SHEET_DEFAULT_WIDTH);
+    saveGscInsightsWidth();
+  }
+  function observeGscInsightsOverflow(node: HTMLElement) {
+    let frame = 0;
+    const update = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const scrollable = node.scrollHeight > node.clientHeight + 2;
+        if (gscInsightsScrollable !== scrollable) gscInsightsScrollable = scrollable;
+      });
+    };
+    const resizeObserver = new ResizeObserver(update);
+    const mutationObserver = new MutationObserver(update);
+    resizeObserver.observe(node);
+    mutationObserver.observe(node, { childList: true, subtree: true, characterData: true });
+    update();
+    return {
+      destroy() {
+        cancelAnimationFrame(frame);
+        resizeObserver.disconnect();
+        mutationObserver.disconnect();
+        gscInsightsScrollable = false;
+      },
+    };
+  }
+  function gscInitialDays(site: Site): string {
+    const rangeKey = site.integrations?.search_console?.range_key?.trim() ?? '';
+    return ['7', '15', '30'].includes(rangeKey) ? rangeKey : '28';
+  }
+  function gscSummaryTotal(): GscStatsRow | null {
+    const summary = gscInsightsSite?.integrations?.search_console;
+    if (!summary || (summary.clicks == null && summary.impressions == null)) return null;
+    if (summary.range_key && summary.range_key !== gscInsightsDays) return null;
+    return {
+      query: '',
+      page: '',
+      clicks: summary.clicks ?? 0,
+      impressions: summary.impressions ?? 0,
+      ctr: summary.ctr ?? 0,
+      position: summary.position ?? 0,
+    };
+  }
+  function gscTotal(): GscStatsRow | null {
+    const payload = gscInsightsData.total;
+    const row = payload?.rows?.[0] ?? null;
+    const exactTotal = payload?.group === 'total' && payload.days === Number(gscInsightsDays);
+    if (exactTotal && row) return row;
+    // 旧版 GCMS 会忽略 group=total，并返回 query×page 的第一行。此时站点卡片
+    // 摘要才是同一时间范围的真实全站汇总，不能把第一行误当成总计。
+    return gscSummaryTotal() ?? row;
+  }
+  function gscCompact(value: number | null | undefined): string {
+    if (value == null || !Number.isFinite(value)) return '—';
+    return new Intl.NumberFormat('zh-CN', { notation: value >= 10000 ? 'compact' : 'standard', maximumFractionDigits: 1 }).format(value);
+  }
+  function gscPercent(value: number | null | undefined): string {
+    if (value == null || !Number.isFinite(value)) return '—';
+    return `${(value * 100).toFixed(value >= 0.1 ? 1 : 2)}%`;
+  }
+  function gscPosition(value: number | null | undefined): string {
+    if (value == null || !Number.isFinite(value) || value <= 0) return '—';
+    return value.toFixed(1);
+  }
+  function gscDelta(current: number, previous: number | null | undefined, reverse = false): { label: string; tone: 'up' | 'down' | 'flat' } {
+    if (previous == null || !Number.isFinite(previous)) return { label: '无上期', tone: 'flat' };
+    const raw = current - previous;
+    if (Math.abs(raw) < 0.0001) return { label: '持平', tone: 'flat' };
+    const improved = reverse ? raw < 0 : raw > 0;
+    if (previous === 0) return { label: `${improved ? '↑' : '↓'} 新增`, tone: improved ? 'up' : 'down' };
+    const pct = Math.abs(raw / previous) * 100;
+    return { label: `${improved ? '↑' : '↓'} ${pct.toFixed(pct >= 10 ? 0 : 1)}%`, tone: improved ? 'up' : 'down' };
+  }
+  function gscPageLabel(page: string): string {
+    if (!page) return '—';
+    try {
+      const url = new URL(page);
+      return `${url.pathname || '/'}${url.search}`;
+    } catch {
+      return page;
+    }
+  }
+  function gscPageHost(page: string): string {
+    try { return new URL(page).host; } catch { return ''; }
+  }
+  function gscSelectionID(group: 'query' | 'page', row: GscStatsRow): string {
+    return `${group}:${group === 'query' ? row.query : row.page}`;
+  }
+  function gscIsSelected(group: 'query' | 'page', row: GscStatsRow): boolean {
+    return !!gscInsightsSelected[gscSelectionID(group, row)];
+  }
+  function toggleGscSelection(group: 'query' | 'page', row: GscStatsRow) {
+    const id = gscSelectionID(group, row);
+    const next = { ...gscInsightsSelected };
+    if (next[id]) delete next[id];
+    else next[id] = { id, group, label: group === 'query' ? row.query : row.page, row };
+    gscInsightsSelected = next;
+  }
+  function gscOpportunities() {
+    const rows = gscRows('query');
+    if (!rows.length) return [];
+    const averageImpressions = rows.reduce((sum, row) => sum + row.impressions, 0) / rows.length;
+    const threshold = Math.max(20, averageImpressions * .55);
+    return rows.map((row) => {
+      const labels: string[] = [];
+      if (row.impressions >= threshold && row.clicks === 0) labels.push('高曝光零点击');
+      if (row.position >= 4 && row.position <= 20) labels.push('排名 4–20');
+      if (row.impressions >= threshold && row.ctr < .025) labels.push('CTR 偏低');
+      if (row.prev_impressions != null && row.prev_impressions > 0 && row.impressions >= row.prev_impressions * 1.25) labels.push('曝光增长');
+      if (!labels.length) return null;
+      const score = row.impressions
+        * (row.clicks === 0 ? 2.2 : 1)
+        * (row.position >= 4 && row.position <= 20 ? 1.7 : 1)
+        * (row.ctr < .025 ? 1.35 : 1);
+      const action = row.clicks === 0 || row.ctr < .025
+        ? '先核对搜索意图，再调整标题与摘要承诺'
+        : row.position >= 4 && row.position <= 20
+          ? '补强对应页面的答案深度、证据与内链'
+          : '检查增长来源并扩展同一真实意图';
+      return { row, labels, action, score };
+    }).filter((item): item is NonNullable<typeof item> => !!item).sort((a, b) => b.score - a.score).slice(0, 24);
+  }
+  function normalizeGscRows(group: GscStatsGroup, source: GscStatsRow[]): GscStatsRow[] {
+    // 兼容尚未支持 group 的 GCMS：旧接口会始终返回 query×page，同一搜索词可出现多次。
+    // 在客户端按当前视图再聚合，既避免 keyed each 因重复键中断切页，也不把重复行伪装成独立搜索词。
+    const rows = (source ?? []).filter((row) => {
+      if (group === 'query') return !!row.query;
+      if (group === 'page') return !!row.page;
+      if (group === 'date') return !!row.date;
+      return true;
+    });
+    const keyOf = (row: GscStatsRow) => {
+      if (group === 'query') return row.query;
+      if (group === 'page') return row.page;
+      if (group === 'date') return row.date ?? '';
+      return 'total';
+    };
+    const buckets = new Map<string, GscStatsRow[]>();
+    for (const row of rows) {
+      const key = keyOf(row);
+      const bucket = buckets.get(key);
+      if (bucket) bucket.push(row);
+      else buckets.set(key, [row]);
+    }
+    return [...buckets.values()].map((bucket) => {
+      if (bucket.length === 1) return bucket[0];
+      const first = bucket[0];
+      const clicks = bucket.reduce((sum, row) => sum + (row.clicks || 0), 0);
+      const impressions = bucket.reduce((sum, row) => sum + (row.impressions || 0), 0);
+      const positionWeight = bucket.reduce((sum, row) => sum + (row.impressions > 0 ? row.impressions : 0), 0);
+      const position = positionWeight > 0
+        ? bucket.reduce((sum, row) => sum + (row.position || 0) * Math.max(0, row.impressions || 0), 0) / positionWeight
+        : bucket.reduce((sum, row) => sum + (row.position || 0), 0) / bucket.length;
+      const hasPrevious = bucket.some((row) => row.prev_clicks != null || row.prev_impressions != null || row.prev_position != null);
+      const prevClicks = hasPrevious ? bucket.reduce((sum, row) => sum + (row.prev_clicks ?? 0), 0) : null;
+      const prevImpressions = hasPrevious ? bucket.reduce((sum, row) => sum + (row.prev_impressions ?? 0), 0) : null;
+      const previousPositionRows = bucket.filter((row) => row.prev_position != null);
+      const previousPositionWeight = previousPositionRows.reduce((sum, row) => sum + Math.max(0, row.prev_impressions ?? 0), 0);
+      const prevPosition = !hasPrevious || !previousPositionRows.length
+        ? null
+        : previousPositionWeight > 0
+          ? previousPositionRows.reduce((sum, row) => sum + (row.prev_position ?? 0) * Math.max(0, row.prev_impressions ?? 0), 0) / previousPositionWeight
+          : previousPositionRows.reduce((sum, row) => sum + (row.prev_position ?? 0), 0) / previousPositionRows.length;
+      return {
+        ...first,
+        query: group === 'page' || group === 'total' ? '' : first.query,
+        page: group === 'query' || group === 'total' ? '' : first.page,
+        clicks,
+        impressions,
+        ctr: impressions > 0 ? clicks / impressions : 0,
+        position,
+        prev_clicks: prevClicks,
+        prev_impressions: prevImpressions,
+        prev_ctr: prevImpressions && prevClicks != null ? prevClicks / prevImpressions : null,
+        prev_position: prevPosition,
+      };
+    });
+  }
+  function gscTabGroup(tab = gscInsightsTab): GscStatsGroup {
+    if (tab === 'pages') return 'page';
+    if (tab === 'trend') return 'date';
+    return 'query';
+  }
+  async function loadGscGroup(group: GscStatsGroup, fresh = false) {
+    const site = gscInsightsSite;
+    const connId = gscInsightsConnId;
+    if (!site || !connId || site.id <= 0 || gscInsightsLoading[group]) return;
+    const seq = gscInsightsSeq;
+    gscInsightsLoading = { ...gscInsightsLoading, [group]: true };
+    const nextErrors = { ...gscInsightsErrors };
+    delete nextErrors[group];
+    gscInsightsErrors = nextErrors;
+    try {
+      const result = await invoke<GscStatsPayload>('gcms_site_search_stats', {
+        connId,
+        siteId: site.id,
+        days: Number(gscInsightsDays),
+        // 新版 GCMS 会把 total 强制为 1；旧版会忽略 group，因此给足行数，
+        // 在没有站点摘要时仍能聚合出比“第一行”可靠的兼容结果。
+        limit: group === 'date' ? 90 : group === 'page' ? 500 : 1000,
+        compare: group !== 'date',
+        group,
+        fresh,
+      });
+      if (seq !== gscInsightsSeq || gscInsightsSite?.id !== site.id || gscInsightsConnId !== connId) return;
+      gscInsightsData = { ...gscInsightsData, [group]: { ...result, rows: normalizeGscRows(group, result.rows ?? []) } };
+    } catch (error) {
+      if (seq !== gscInsightsSeq || gscInsightsSite?.id !== site.id || gscInsightsConnId !== connId) return;
+      gscInsightsErrors = { ...gscInsightsErrors, [group]: String(error) };
+    } finally {
+      if (seq === gscInsightsSeq) gscInsightsLoading = { ...gscInsightsLoading, [group]: false };
+    }
+  }
+  function loadGscCurrent(fresh = false) {
+    const group = gscTabGroup();
+    void loadGscGroup(group, fresh);
+    if (group !== 'total') void loadGscGroup('total', fresh);
+  }
+  function openGscInsights(site: Site) {
+    closeGaInsights();
+    gscInsightsSeq += 1;
+    gscInsightsWidth = clampGscInsightsWidth(loadGscInsightsWidth());
+    gscInsightsSite = site;
+    gscInsightsConnId = activeConnId;
+    gscInsightsTab = 'opportunities';
+    gscInsightsDays = gscInitialDays(site);
+    gscInsightsData = {};
+    gscInsightsLoading = {};
+    gscInsightsErrors = {};
+    gscInsightsSelected = {};
+    sitesGlobalMenuKind = null;
+    switcherOpen = false;
+    void loadGscGroup('total');
+    void loadGscGroup('query');
+  }
+  function closeGscInsights() {
+    gscInsightsSeq += 1;
+    gscInsightsSite = null;
+    gscInsightsData = {};
+    gscInsightsLoading = {};
+    gscInsightsErrors = {};
+    gscInsightsSelected = {};
+  }
+  function selectGscTab(tab: GscInsightsTab) {
+    gscInsightsTab = tab;
+    const group = gscTabGroup(tab);
+    void loadGscGroup(group);
+    if (group !== 'total') void loadGscGroup('total');
+  }
+  function changeGscDays(value: string) {
+    gscInsightsDays = value;
+    gscInsightsSeq += 1;
+    gscInsightsData = {};
+    gscInsightsLoading = {};
+    gscInsightsErrors = {};
+    gscInsightsSelected = {};
+    void loadGscGroup('total');
+    void loadGscGroup(gscTabGroup());
+  }
+  function gscFocusLines(rows: GscSelectedRow[]): string {
+    if (!rows.length) return '';
+    return '\n\n优先分析我在数据面板中选中的项目：\n' + rows.slice(0, 20).map((item) => {
+      const row = item.row;
+      const label = item.label.replace(/\s+/g, ' ').trim();
+      return `- ${item.group === 'query' ? '搜索词' : '页面'}「${label}」：点击 ${row.clicks}，曝光 ${row.impressions}，CTR ${gscPercent(row.ctr)}，平均排名 ${gscPosition(row.position)}`;
+    }).join('\n');
+  }
+  async function handoffGscToChat(single?: GscSelectedRow) {
+    const site = gscInsightsSite;
+    const connId = gscInsightsConnId;
+    if (!site || !connId) return;
+    const selected = single ? [single] : Object.values(gscInsightsSelected);
+    const days = Number(gscInsightsDays);
+    const prompt = `请分析站点「${site.name || site.slug}」（slug: ${site.slug}）最近 ${days} 天的 Google Search Console 表现，并与紧前等长周期比较。
+
+先通过以下命令读取真实数据，不要只依赖我在界面里看到的摘要：
+- \`node scripts/gcms.js search-stats --site ${site.slug} --days ${days} --group total --compare\`：精确汇总；
+- \`node scripts/gcms.js search-stats --site ${site.slug} --days ${days} --limit 500 --group query --compare\`：搜索词；
+- \`node scripts/gcms.js search-stats --site ${site.slug} --days ${days} --limit 200 --group page --compare\`：落地页；
+- \`node scripts/gcms.js search-stats --site ${site.slug} --days ${days} --group date\`：每日趋势。
+
+重点识别：
+1. 高曝光低点击或零点击、平均排名 4–20 的真实机会词；
+2. 曝光、点击或排名显著增长/下滑的页面及可能原因；
+3. 搜索词与落地页搜索意图不匹配的情况；
+4. 按影响与投入排序的具体优化动作，并明确要改哪一页、为什么、如何验证。
+
+不要关键词堆砌，不要编造数据或案例；数据不足时明确说明。${gscFocusLines(selected)}`;
+    closeGscInsights();
+    if (activeConnId !== connId) await selectConn(connId);
+    activeConvId = '';
+    activeConv = null;
+    view = 'launcher';
+    lTask = 'siteops';
+    lSites = [];
+    lSite = site.slug;
+    lDraft = prompt;
+    await tick();
+    lDraftEl?.focus();
+    const end = lDraft.length;
+    lDraftEl?.setSelectionRange(end, end);
+  }
+
+  function observeGaInsightsOverflow(node: HTMLElement) {
+    let frame = 0;
+    const update = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const scrollable = node.scrollHeight > node.clientHeight + 2;
+        if (gaInsightsScrollable !== scrollable) gaInsightsScrollable = scrollable;
+      });
+    };
+    const resizeObserver = new ResizeObserver(update);
+    const mutationObserver = new MutationObserver(update);
+    resizeObserver.observe(node);
+    mutationObserver.observe(node, { childList: true, subtree: true, characterData: true });
+    update();
+    return {
+      destroy() {
+        cancelAnimationFrame(frame);
+        resizeObserver.disconnect();
+        mutationObserver.disconnect();
+        gaInsightsScrollable = false;
+      },
+    };
+  }
+  function gaInitialDays(site: Site): string {
+    const rangeKey = site.integrations?.analytics?.range_key?.trim() ?? '';
+    return ['7', '15', '28', '30', '90'].includes(rangeKey) ? rangeKey : '30';
+  }
+  function gaSummaryTraffic(): GaTrafficPayload | null {
+    const summary = gaInsightsSite?.integrations?.analytics;
+    if (!summary || (summary.active_users == null && summary.sessions == null)) return null;
+    if (summary.range_key && summary.range_key !== gaInsightsDays) return null;
+    return {
+      ok: true,
+      days: Number(gaInsightsDays),
+      property: '',
+      active_users: summary.active_users ?? 0,
+      sessions: summary.sessions ?? 0,
+    };
+  }
+  function gaTraffic(): GaTrafficPayload | null {
+    if (gaInsightsTraffic?.days === Number(gaInsightsDays)) return gaInsightsTraffic;
+    return gaSummaryTraffic();
+  }
+  function gaRows(): GaPageRow[] {
+    return gaInsightsPages?.days === Number(gaInsightsDays) ? (gaInsightsPages.rows ?? []) : [];
+  }
+  function gaDimensionRows(group: GaDimensionGroup): GaDimensionRow[] {
+    const payload = gaInsightsDimensions[group];
+    return payload?.days === Number(gaInsightsDays) ? (payload.rows ?? []) : [];
+  }
+  function gaDimensionGroupForTab(tab: GaInsightsTab = gaInsightsTab): GaDimensionGroup | null {
+    return tab === 'sources' || tab === 'geography' || tab === 'devices' || tab === 'trend' ? tab : null;
+  }
+  function gaTabGroup(tab: GaInsightsTab = gaInsightsTab): Exclude<GaStatsGroup, 'traffic'> {
+    return tab === 'overview' ? 'pages' : tab;
+  }
+  function gaSessionsPerUser(traffic: GaTrafficPayload | null): string {
+    if (!traffic || traffic.active_users <= 0) return '—';
+    return (traffic.sessions / traffic.active_users).toFixed(1);
+  }
+  function gaPercent(value: number | null | undefined): string {
+    if (value == null || !Number.isFinite(value)) return '—';
+    return `${(value * 100).toFixed(value > 0 && value < 0.01 ? 1 : 0)}%`;
+  }
+  function gaDuration(value: number | null | undefined): string {
+    if (value == null || !Number.isFinite(value) || value < 0) return '—';
+    const seconds = Math.round(value);
+    if (seconds < 60) return `${seconds} 秒`;
+    const minutes = Math.floor(seconds / 60);
+    const rest = seconds % 60;
+    return rest ? `${minutes}分${rest}秒` : `${minutes} 分`;
+  }
+  function gaPathLabel(path: string): string {
+    const value = path.trim();
+    if (!value) return '（未提供页面路径）';
+    try {
+      const url = new URL(value);
+      return `${url.pathname || '/'}${url.search}`;
+    } catch {
+      return value;
+    }
+  }
+  function gaDimensionCopy(group: GaDimensionGroup, row: GaDimensionRow): { label: string; secondary: string } {
+    const values = row.values.map((value) => value.trim()).filter(Boolean);
+    if (group === 'sources') {
+      return { label: values[0] || '未归类渠道', secondary: values[1] || '来源 / 媒介未提供' };
+    }
+    if (group === 'geography') {
+      return { label: values[0] || '未知国家/地区', secondary: values[1] && values[1] !== values[0] ? values[1] : '' };
+    }
+    if (group === 'devices') {
+      return { label: values[0] || '未知设备', secondary: values.slice(1).join(' · ') };
+    }
+    const raw = values[0] || '';
+    if (/^\d{8}$/.test(raw)) {
+      return { label: `${raw.slice(0, 4)}-${raw.slice(4, 6)}-${raw.slice(6, 8)}`, secondary: '' };
+    }
+    return { label: raw || '未知日期', secondary: '' };
+  }
+  function gaViewCopy(tab: GaInsightsTab): { title: string; description: string; empty: string } {
+    switch (tab) {
+      case 'overview':
+        return { title: '主要访问页面', description: '按活跃用户展示最主要的内容入口。', empty: '这个时间范围还没有页面访问数据' };
+      case 'pages':
+        return { title: '页面访问明细', description: '比较页面带来的用户、访问与互动质量，最多展示 200 行。', empty: '这个时间范围还没有页面访问数据' };
+      case 'sources':
+        return { title: '流量来源', description: '按默认渠道与来源 / 媒介判断访问从哪里来。', empty: '这个时间范围还没有来源数据' };
+      case 'geography':
+        return { title: '访问地区', description: '按国家 / 地区与区域判断受众分布。', empty: '这个时间范围还没有地区数据' };
+      case 'devices':
+        return { title: '设备环境', description: '按设备、操作系统与浏览器检查真实访问环境。', empty: '这个时间范围还没有设备数据' };
+      case 'trend':
+        return { title: '每日趋势', description: '按天观察访问量与互动质量变化。', empty: '这个时间范围还没有每日趋势' };
+    }
+  }
+  function gaTrendMaxSessions(rows: GaDimensionRow[]): number {
+    return Math.max(1, ...rows.map((row) => row.sessions));
+  }
+  function gaSelectionID(group: Exclude<GaStatsGroup, 'traffic'>, label: string, secondary = ''): string {
+    return `${group}:${label}:${secondary}`;
+  }
+  function gaPageSelection(row: GaPageRow): GaSelectedRow {
+    return {
+      id: gaSelectionID('pages', row.path),
+      group: 'pages',
+      label: row.path,
+      active_users: row.active_users,
+      sessions: row.sessions,
+      engagement_rate: row.engagement_rate,
+      average_session_duration: row.average_session_duration,
+    };
+  }
+  function gaDimensionSelection(group: GaDimensionGroup, row: GaDimensionRow): GaSelectedRow {
+    const copy = gaDimensionCopy(group, row);
+    return {
+      id: gaSelectionID(group, copy.label, copy.secondary),
+      group,
+      label: copy.label,
+      secondary: copy.secondary,
+      active_users: row.active_users,
+      sessions: row.sessions,
+      engagement_rate: row.engagement_rate,
+      average_session_duration: row.average_session_duration,
+    };
+  }
+  function gaIsSelected(item: GaSelectedRow): boolean {
+    return !!gaInsightsSelected[item.id];
+  }
+  function toggleGaSelection(item: GaSelectedRow) {
+    const id = item.id;
+    const next = { ...gaInsightsSelected };
+    if (next[id]) delete next[id];
+    else next[id] = item;
+    gaInsightsSelected = next;
+  }
+  async function loadGaStats(group: GaStatsGroup, fresh = false) {
+    const site = gaInsightsSite;
+    const connId = gaInsightsConnId;
+    if (!site || !connId || site.id <= 0 || gaInsightsLoading[group]) return;
+    const seq = gaInsightsSeq;
+    gaInsightsLoading = { ...gaInsightsLoading, [group]: true };
+    const nextErrors = { ...gaInsightsErrors };
+    delete nextErrors[group];
+    gaInsightsErrors = nextErrors;
+    try {
+      if (group === 'traffic') {
+        const result = await invoke<GaTrafficPayload>('gcms_site_analytics_stats', {
+          connId,
+          siteId: site.id,
+          days: Number(gaInsightsDays),
+          limit: 1,
+          group,
+          fresh,
+        });
+        if (seq !== gaInsightsSeq || gaInsightsSite?.id !== site.id || gaInsightsConnId !== connId) return;
+        gaInsightsTraffic = result;
+      } else if (group === 'pages') {
+        const result = await invoke<GaPagesPayload>('gcms_site_analytics_stats', {
+          connId,
+          siteId: site.id,
+          days: Number(gaInsightsDays),
+          limit: 200,
+          group,
+          fresh,
+        });
+        if (seq !== gaInsightsSeq || gaInsightsSite?.id !== site.id || gaInsightsConnId !== connId) return;
+        gaInsightsPages = { ...result, rows: result.rows ?? [] };
+      } else {
+        const result = await invoke<GaDimensionPayload>('gcms_site_analytics_stats', {
+          connId,
+          siteId: site.id,
+          days: Number(gaInsightsDays),
+          limit: group === 'trend' ? 100 : 200,
+          group,
+          fresh,
+        });
+        if (seq !== gaInsightsSeq || gaInsightsSite?.id !== site.id || gaInsightsConnId !== connId) return;
+        gaInsightsDimensions = {
+          ...gaInsightsDimensions,
+          [group]: { ...result, group, rows: result.rows ?? [], dimensions: result.dimensions ?? [] },
+        };
+      }
+    } catch (error) {
+      if (seq !== gaInsightsSeq || gaInsightsSite?.id !== site.id || gaInsightsConnId !== connId) return;
+      gaInsightsErrors = { ...gaInsightsErrors, [group]: String(error) };
+    } finally {
+      if (seq === gaInsightsSeq) gaInsightsLoading = { ...gaInsightsLoading, [group]: false };
+    }
+  }
+  function loadGaCurrent(fresh = false) {
+    void loadGaStats('traffic', fresh);
+    void loadGaStats(gaTabGroup(), fresh);
+  }
+  function openGaInsights(site: Site) {
+    closeGscInsights();
+    gaInsightsSeq += 1;
+    gscInsightsWidth = clampGscInsightsWidth(loadGscInsightsWidth());
+    gaInsightsSite = site;
+    gaInsightsConnId = activeConnId;
+    gaInsightsTab = 'overview';
+    gaInsightsDays = gaInitialDays(site);
+    gaInsightsTraffic = null;
+    gaInsightsPages = null;
+    gaInsightsDimensions = {};
+    gaInsightsLoading = {};
+    gaInsightsErrors = {};
+    gaInsightsSelected = {};
+    sitesGlobalMenuKind = null;
+    switcherOpen = false;
+    loadGaCurrent();
+  }
+  function closeGaInsights() {
+    gaInsightsSeq += 1;
+    gaInsightsSite = null;
+    gaInsightsTraffic = null;
+    gaInsightsPages = null;
+    gaInsightsDimensions = {};
+    gaInsightsLoading = {};
+    gaInsightsErrors = {};
+    gaInsightsSelected = {};
+  }
+  function selectGaTab(tab: GaInsightsTab) {
+    gaInsightsTab = tab;
+    void loadGaStats(gaTabGroup(tab));
+  }
+  function changeGaDays(value: string) {
+    gaInsightsDays = value;
+    gaInsightsSeq += 1;
+    gaInsightsTraffic = null;
+    gaInsightsPages = null;
+    gaInsightsDimensions = {};
+    gaInsightsLoading = {};
+    gaInsightsErrors = {};
+    gaInsightsSelected = {};
+    loadGaCurrent();
+  }
+  function gaFocusLines(rows: GaSelectedRow[]): string {
+    if (!rows.length) return '';
+    const groupNames: Record<GaSelectedRow['group'], string> = {
+      pages: '页面',
+      sources: '来源',
+      geography: '地区',
+      devices: '设备',
+      trend: '日期',
+    };
+    return '\n\n优先分析我在数据面板中选中的项目：\n' + rows.slice(0, 30).map((item) => {
+      const rawLabel = item.group === 'pages' ? gaPathLabel(item.label) : item.label;
+      const label = rawLabel.replace(/\s+/g, ' ').trim();
+      const secondary = item.secondary ? `（${item.secondary.replace(/\s+/g, ' ').trim()}）` : '';
+      return `- ${groupNames[item.group]}「${label}」${secondary}：活跃用户 ${item.active_users}，访问次数 ${item.sessions}，互动率 ${gaPercent(item.engagement_rate)}，平均访问时长 ${gaDuration(item.average_session_duration)}`;
+    }).join('\n');
+  }
+  async function handoffGaToChat(single?: GaSelectedRow) {
+    const site = gaInsightsSite;
+    const connId = gaInsightsConnId;
+    if (!site || !connId) return;
+    const selected = single ? [single] : Object.values(gaInsightsSelected);
+    const days = Number(gaInsightsDays);
+    const prompt = `请分析站点「${site.name || site.slug}」（slug: ${site.slug}）最近 ${days} 天的 Google Analytics 流量表现。
+
+先通过以下命令读取真实数据，不要只依赖界面摘要：
+- \`node scripts/gcms.js traffic-stats --site ${site.slug} --days ${days}\`：全站活跃用户与访问次数；
+- \`node scripts/gcms.js page-stats --site ${site.slug} --days ${days} --limit 200\`：页面流量与互动质量；
+- \`node scripts/gcms.js analytics-stats --site ${site.slug} --days ${days} --limit 200 --group sources\`：渠道与来源/媒介；
+- \`node scripts/gcms.js analytics-stats --site ${site.slug} --days ${days} --limit 200 --group geography\`：国家与地区；
+- \`node scripts/gcms.js analytics-stats --site ${site.slug} --days ${days} --limit 200 --group devices\`：设备类型、系统与浏览器；
+- \`node scripts/gcms.js analytics-stats --site ${site.slug} --days ${days} --limit 100 --group trend\`：每日趋势。
+
+请重点判断：
+1. 哪些页面贡献了主要访问，流量是否过度集中；
+2. 哪些渠道、国家/地区和设备组合真正带来高互动访问；
+3. 每日趋势是否存在持续增长、异常下滑或一次性峰值；
+4. 哪些高价值内容入口值得补强正文、转化路径与相关内链；
+5. 结合 Search Console 的真实查询词，区分“已有访问但搜索表现弱”和“有曝光但访问未形成”的页面；
+6. 按影响与投入排序给出具体动作，并说明要改哪一页、为什么、如何验证。
+
+不要编造转化或归因结论；样本过小时明确说明不确定性，当前接口没有提供的维度也必须明确说明。${gaFocusLines(selected)}`;
+    closeGaInsights();
+    if (activeConnId !== connId) await selectConn(connId);
+    activeConvId = '';
+    activeConv = null;
+    view = 'launcher';
+    lTask = 'siteops';
+    lSites = [];
+    lSite = site.slug;
+    lDraft = prompt;
+    await tick();
+    lDraftEl?.focus();
+    const end = lDraft.length;
+    lDraftEl?.setSelectionRange(end, end);
+  }
+
   async function deleteConv(id: string) {
     // 对话进行中不删：否则删掉会话行会孤儿掉后台在跑的 CLI 子进程 + 触发「会话丢失」。先停止再删。
     if (running[id]) { say('对话进行中，请先点停止再删除。', 'err'); return; }
@@ -8252,6 +9416,14 @@
       if (!buf) return; // 该对话已结束/被清（切走后仍可能收到尾包）
       if (ev.type === 'delta') { buf.text += ev.text; if (activeConvId === convId) scrollSoon(); }
       else if (ev.type === 'tool') { buf.tools = [...buf.tools, { label: ev.label, detail: ev.detail }]; if (activeConvId === convId) scrollSoon(); }
+      else if (ev.type === 'context_compacted') {
+        buf.compactedAt = Date.now();
+        buf.compactedPreTokens = ev.pre_tokens;
+        if (activeConvId === convId) {
+          say('Claude 已自动整理上下文，对话记录保持不变');
+          scrollSoon();
+        }
+      }
       else if (ev.type === 'done') { if (!ev.ok) { buf.error = ev.error; buf.failed = true; } }
     };
     return ch;
@@ -8337,20 +9509,14 @@
       void syncCreatedSitebuildConversation(conv, { createdThisTurn: true, baseline: sitebuildBaseline });
     }
     // 等待消息：这轮**成功**结束、用户还在本会话，才把排队的那条发出去（失败/要重连时不发，避免连环失败）。
-    let sentQueued = false;
     if (!failed && queued && queued.convId === convId && activeConvId === convId) {
       const q = queued; queued = null;
       draft = q.text; attachments = q.atts;
       queueMicrotask(() => { void send(); });
-      sentQueued = true;
     }
-    // 自动重建：claude 上下文 ≥90% 且本轮成功 → 直接换新会话续聊（带历史摘要，界面消息不丢）。
-    // codex 没有真实上下文读数不触发；发了排队消息这轮先跑它，下轮收尾再检查（阈值有余量）。
-    // 重建成功后 ctx 掉回摘要大小不会连环触发；重建失败走 failTurn 也不会循环。
-    if (!sentQueued && !failed && conv && conv.brain === 'claude' && (conv.ctx_tokens ?? 0) >= ctxLimit('claude', conv.model ?? '') * 0.9) {
-      if (activeConvId === convId) say('上下文接近上限，已自动重建续聊');
-      queueMicrotask(() => { void rebuildSession(convId); });
-    }
+    // 不在接近上限时自动 rebuild：rebuild 会创建全新的底层 Claude session，只能靠摘要
+    // 衔接，等同于主动丢弃原生会话上下文。Claude Code 会自行管理长会话；若底层真的返回
+    // 上下文超限，保留完整界面历史并让用户从错误卡明确选择「重建继续」。
   }
   async function failTurn(e: unknown, convId: string) {
     delete running[convId];
@@ -9118,10 +10284,10 @@
   // 厂商发新版自动跟随、无需更新客户端。sub 版本号仅「当前实际版本」提示，可能滞后。
   // Fable 例外：claude 2.1.96 尚无 fable 别名（实测报错），只能用全 ID，出新版需更新这里。
   const CLAUDE_MODELS = [
-    { value: 'sonnet', label: 'Sonnet', sub: '性价比 · 当前 Sonnet 5' },
-    { value: 'opus', label: 'Opus', sub: '最强 · 当前 Opus 4.8' },
-    { value: 'claude-fable-5', label: 'Fable', sub: 'Claude 5 家族 · Fable 5' },
-    { value: 'haiku', label: 'Haiku', sub: '最快 · 当前 Haiku 4.5' },
+    { value: 'sonnet', label: 'Sonnet', sub: '性价比 · 当前 Sonnet 5 · 1M 上下文' },
+    { value: 'opus', label: 'Opus', sub: '最强 · 当前 Opus 4.8 · 1M 上下文' },
+    { value: 'claude-fable-5', label: 'Fable', sub: 'Claude 5 家族 · Fable 5 · 1M 上下文' },
+    { value: 'haiku', label: 'Haiku', sub: '最快 · 当前 Haiku 4.5 · 200k 上下文' },
   ];
   // Codex 档位 = 具体模型 ID（-c model=）。首项「跟随 Codex 默认」= 不覆盖本地 codex 配置。
   // 型号取自本机 codex 模型清单，会随厂商更新；要用别的新模型走下方「自定义模型 ID」。
@@ -9201,7 +10367,17 @@
   }
 </script>
 
-<svelte:window onclick={closeSitesGlobalMenuOnOutsideClick} oncontextmenu={onCtxMenu} onmouseover={onTipHover} onscrollcapture={() => { hideTip(); imgTip = null; hoverWant = ''; }} onresize={() => { hideTip(); imgTip = null; hoverWant = ''; }} onkeydown={(e) => { if (e.key === 'Escape') { if (lightbox) lightbox = ''; closeSitesGlobalMenu(); if (themeEditor) closeSiteThemeEditor(); } }} />
+<svelte:window
+  onclick={closeSitesGlobalMenuOnOutsideClick}
+  oncontextmenu={onCtxMenu}
+  onmouseover={onTipHover}
+  onmousemove={moveGscInsightsResize}
+  onmouseup={stopGscInsightsResize}
+  onblur={stopGscInsightsResize}
+  onscrollcapture={() => { hideTip(); imgTip = null; hoverWant = ''; }}
+  onresize={() => { hideTip(); imgTip = null; hoverWant = ''; }}
+  onkeydown={(e) => { if (e.key === 'Escape') { if (lightbox) lightbox = ''; closeSitesGlobalMenu(); if (themeEditor) closeSiteThemeEditor(); } }}
+/>
 <main class="app" class:win={isWindows} class:fs={isFullscreen} class:rail-collapsed={railCollapsed} class:top-update-visible={topUpdateVisible}>
   <!-- 融合式标题栏：透明拖拽条铺满顶部，红绿灯与工具按钮浮在其上（macOS Overlay） -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -9873,7 +11049,7 @@
             {/if}
           </div>
           <button class="icon-btn" onclick={() => void refreshSites()} disabled={discoveryLoading || !!connectionSyncing[activeConnId]} title="检查更新并刷新站点">{@render refreshIcon(discoveryLoading || !!connectionSyncing[activeConnId])}</button>
-          <button class="btn soft bare" onclick={startSiteBuild}>{@render plusIcon()}新建站点</button>
+          <button class="btn soft bare" onclick={(event) => void openNewSiteChoice(event)}>{@render plusIcon()}新建站点</button>
         </div>
       </header>
       <div class="thread">
@@ -9885,7 +11061,7 @@
               <span>{@render sitesIcon(22)}</span>
               <b>当前密钥还没有可管理的站点</b>
               <p>可以新建一个站点，或在 GCMS 后台调整这枚平台密钥的站点授权范围。</p>
-              <div><button class="btn primary" onclick={startSiteBuild}>新建站点</button><button class="btn" onclick={() => openGcmsAdmin('/admin/sites')}>管理授权</button></div>
+              <div><button class="btn primary" onclick={(event) => void openNewSiteChoice(event)}>新建站点</button><button class="btn" onclick={() => openGcmsAdmin('/admin/sites')}>管理授权</button></div>
             </div>
           {:else}
             <div class="sites-grid">
@@ -9944,26 +11120,52 @@
                       {#if ga?.enabled || gsc?.enabled}
                         <div class="site-dashboard-metrics" aria-label="站点访问数据">
                           {#if ga?.enabled}
-                            <span class="site-dashboard-metric" class:ready={ga.status === 'ok' || ga.active_users != null || ga.sessions != null} class:error={ga.status === 'error'} data-tip="Google Analytics 访问数据">
-                              {#if ga.status === 'error'}
-                                <b>GA：</b>数据暂不可用
-                              {:else if ga.active_users != null || ga.sessions != null}
-                                <b>GA：</b>活跃 {ga.active_users ?? 0} · 访问 {ga.sessions ?? 0}
-                              {:else}
-                                <b>GA：</b>统计已启用
-                              {/if}
-                            </span>
+                            <button
+                              type="button"
+                              class="site-dashboard-metric ga"
+                              class:ready={ga.status === 'ok' || ga.active_users != null || ga.sessions != null}
+                              class:error={ga.status === 'error'}
+                              aria-label={`查看 ${site.name || site.slug} 的 Google Analytics 访问表现`}
+                              data-tip="点击查看流量概览、热门页面并交给 AI 分析"
+                              onclick={() => openGaInsights(site)}
+                            >
+                              <span class="site-dashboard-metric-label">
+                                {#if ga.status === 'error'}
+                                  <b>GA：</b>数据暂不可用
+                                {:else if ga.active_users != null || ga.sessions != null}
+                                  <b>GA：</b>活跃 {ga.active_users ?? 0} · 访问 {ga.sessions ?? 0}
+                                {:else}
+                                  <b>GA：</b>统计已启用
+                                {/if}
+                              </span>
+                              <span class="site-dashboard-metric-open" aria-hidden="true">
+                                <svg width="8" height="8" viewBox="0 0 12 12" fill="none"><path d="m4.25 2.5 3.5 3.5-3.5 3.5" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round" /></svg>
+                              </span>
+                            </button>
                           {/if}
                           {#if gsc?.enabled}
-                            <span class="site-dashboard-metric" class:ready={gsc.status === 'ok' || gsc.clicks != null || gsc.impressions != null} class:error={gsc.status === 'error'} data-tip="Google Search Console 搜索数据">
-                              {#if gsc.status === 'error'}
-                                <b>GSC：</b>数据暂不可用
-                              {:else if gsc.clicks != null || gsc.impressions != null}
-                                <b>GSC：</b>点击 {gsc.clicks ?? 0} · 曝光 {gsc.impressions ?? 0}
-                              {:else}
-                                <b>GSC：</b>搜索已接入
-                              {/if}
-                            </span>
+                            <button
+                              type="button"
+                              class="site-dashboard-metric gsc"
+                              class:ready={gsc.status === 'ok' || gsc.clicks != null || gsc.impressions != null}
+                              class:error={gsc.status === 'error'}
+                              aria-label={`查看 ${site.name || site.slug} 的 Google Search Console 搜索表现`}
+                              data-tip="点击查看搜索词、页面、趋势和 SEO 机会"
+                              onclick={() => openGscInsights(site)}
+                            >
+                              <span class="site-dashboard-metric-label">
+                                {#if gsc.status === 'error'}
+                                  <b>GSC：</b>数据暂不可用
+                                {:else if gsc.clicks != null || gsc.impressions != null}
+                                  <b>GSC：</b>点击 {gsc.clicks ?? 0} · 曝光 {gsc.impressions ?? 0}
+                                {:else}
+                                  <b>GSC：</b>搜索已接入
+                                {/if}
+                              </span>
+                              <span class="site-dashboard-metric-open" aria-hidden="true">
+                                <svg width="8" height="8" viewBox="0 0 12 12" fill="none"><path d="m4.25 2.5 3.5 3.5-3.5 3.5" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round" /></svg>
+                              </span>
+                            </button>
                           {/if}
                         </div>
                       {/if}
@@ -10820,6 +12022,7 @@
 {#snippet promptIcon(size: number)}<svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 3h10a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H6.5L4 13.2V11H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" /><path d="M5.2 6.2h5.6M5.2 8.4h3.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" /></svg>{/snippet}
 <!-- 托管的机器人头图标（侧栏导航 + 空态复用，传 size）。viewBox 24 下 stroke 2 ≈ 侧栏 16 系图标的 1.3，视觉同粗。 -->
 {#snippet botIcon(size: number)}<svg width={size} height={size} viewBox="0 0 24 24" fill="none"><path d="M12 8V4H8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /><rect x="4" y="8" width="16" height="12" rx="2" stroke="currentColor" stroke-width="2" stroke-linejoin="round" /><path d="M2 14h2M20 14h2M9 13v2M15 13v2" stroke="currentColor" stroke-width="2" stroke-linecap="round" /></svg>{/snippet}
+{#snippet aiAnalyzeIcon(size: number)}<svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M7.2 1.8c.3 2.5 1.5 3.7 4 4-2.5.3-3.7 1.5-4 4-.3-2.5-1.5-3.7-4-4 2.5-.3 3.7-1.5 4-4Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /><path d="M12.2 9.2c.16 1.45.85 2.14 2.3 2.3-1.45.16-2.14.85-2.3 2.3-.16-1.45-.85-2.14-2.3-2.3 1.45-.16 2.14-.85 2.3-2.3Z" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round" /></svg>{/snippet}
 
 {#snippet gearIcon()}<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M2 5.3h3.5M9.3 5.3H14M2 10.7h5.1M10.9 10.7H14" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" /><circle cx="7.4" cy="5.3" r="1.6" stroke="currentColor" stroke-width="1.3" /><circle cx="9" cy="10.7" r="1.6" stroke="currentColor" stroke-width="1.3" /></svg>{/snippet}
 {#snippet settingsIcon()}<svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true"><circle cx="8" cy="8" r="2.1" stroke="currentColor" stroke-width="1.25" /><path d="M6.9 1.9h2.2l.45 1.55c.34.13.66.31.95.54l1.56-.4 1.1 1.9-1.1 1.15c.03.18.04.36.04.55s-.01.37-.04.55l1.1 1.15-1.1 1.9-1.56-.4c-.29.23-.61.41-.95.54L9.1 14.1H6.9l-.45-1.58a5.1 5.1 0 0 1-.95-.54l-1.56.4-1.1-1.9 1.1-1.15a3.4 3.4 0 0 1 0-1.1l-1.1-1.15 1.1-1.9 1.56.4c.29-.23.61-.41.95-.54L6.9 1.9Z" stroke="currentColor" stroke-width="1.15" stroke-linejoin="round" /></svg>{/snippet}
@@ -10919,6 +12122,13 @@
         <div class="msg assistant">
           <div class="body">
             {#if liveView.tools.length}{@render cmds(liveView.tools)}{/if}
+            {#if liveView.compactedAt}
+              <div class="context-compact-note">
+                <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 5.2h10M5 2.8l-2 2.4 2 2.4M13 10.8H3M11 8.4l2 2.4-2 2.4" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" /></svg>
+                <span>Claude 已自动整理上下文</span>
+                <small>同一会话继续，聊天记录保持不变</small>
+              </div>
+            {/if}
             <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
             {#if liveView.text}<div class="text md" onclick={mdClick} onauxclick={mdClick}>{@html mdRender(liveView.text)}</div>{/if}
             {#if liveView.error}<div class="err-note">{liveView.error}</div>
@@ -11251,6 +12461,397 @@
     <div class="tools">{#each tools as t, i (i)}{@render toolChip(t)}{/each}</div>
   </details>
 {/snippet}
+
+{#if gaInsightsSite}
+  {@const traffic = gaTraffic()}
+  {@const pageRows = gaRows()}
+  {@const activeGaGroup = gaTabGroup()}
+  {@const activeGaDimensionGroup = gaDimensionGroupForTab()}
+  {@const activeGaDimensionRows = activeGaDimensionGroup ? gaDimensionRows(activeGaDimensionGroup) : []}
+  {@const visibleGaRows = gaInsightsTab === 'overview' ? pageRows.slice(0, 6) : pageRows}
+  {@const activeGaRowCount = activeGaDimensionGroup ? activeGaDimensionRows.length : visibleGaRows.length}
+  {@const activeGaLoading = !!gaInsightsLoading[activeGaGroup]}
+  {@const activeGaError = gaInsightsErrors[activeGaGroup]}
+  {@const gaCopy = gaViewCopy(gaInsightsTab)}
+  {@const gaTrendMax = gaTrendMaxSessions(activeGaDimensionRows)}
+  {@const selectedGaCount = Object.keys(gaInsightsSelected).length}
+  {@const trafficLoading = !!gaInsightsLoading.traffic}
+  <div class="mask" role="presentation" onclick={closeGaInsights}></div>
+  <div
+    class="sheet gsc-insights-sheet ga-insights-sheet"
+    style={`width:min(${gscInsightsWidth}px, calc(100vw - 8px))`}
+    role="dialog"
+    aria-modal="true"
+    aria-label={`${gaInsightsSite.name || gaInsightsSite.slug} 访问表现`}
+    onmousedowncapture={startGscInsightsResize}
+  >
+    <button
+      type="button"
+      class="gsc-insights-resize"
+      aria-label="拖动调整访问表现面板宽度"
+      data-tip="左右拖动调整宽度，双击恢复默认"
+      onkeydown={onGscInsightsResizeKey}
+      ondblclick={resetGscInsightsWidth}
+    ></button>
+    {#if gscInsightsResizing}<div class="gsc-insights-resize-shield" aria-hidden="true"></div>{/if}
+    <header class="sheet-head gsc-insights-head">
+      <div class="gsc-insights-title">
+        <span class="gsc-insights-title-icon ga-insights-title-icon" aria-hidden="true">{@render googleAnalyticsIcon(18)}</span>
+        <span><b>Google 访问表现</b><small>{gaInsightsSite.name || gaInsightsSite.slug} · {gaInsightsSite.url ? hostOf(gaInsightsSite.url) : gaInsightsSite.slug}</small></span>
+      </div>
+      <button class="x" aria-label="关闭访问表现" onclick={closeGaInsights}>×</button>
+    </header>
+    <div
+      class="sheet-body gsc-insights-body"
+      class:scrollable={gaInsightsScrollable}
+      use:observeGaInsightsOverflow
+    >
+      <section class="gsc-overview">
+        <div class="gsc-overview-bar">
+          <div>
+            <b>流量概览</b>
+            <small>Google Analytics 数据可能延迟 24–48 小时</small>
+          </div>
+          <div class="gsc-overview-actions">
+            <Dropdown compact menuCompact bind:value={gaInsightsDays} options={GA_RANGE_OPTIONS} onchange={changeGaDays} />
+            <button class="icon-btn" aria-label="刷新当前访问数据" data-tip="绕过一小时缓存，重新读取 Google 数据" onclick={() => loadGaCurrent(true)} disabled={trafficLoading || activeGaLoading}>
+              {@render refreshIcon(trafficLoading || activeGaLoading)}
+            </button>
+          </div>
+        </div>
+        {#if Array.isArray(gaInsightsSite.capabilities) && !gscHasScope(gaInsightsSite)}
+          <div class="gsc-scope-warning">当前连接密钥缺少 <b>stats:read</b>，请在 GCMS 后台补充统计读取权限后刷新连接。</div>
+        {/if}
+        {#if trafficLoading && !traffic}
+          <div class="gsc-kpis ga-kpis loading" aria-label="正在读取访问概览"><i></i><i></i><i></i><i></i></div>
+        {:else}
+          <div class="gsc-kpis ga-kpis">
+            <div><small>活跃用户</small><b>{gscCompact(traffic?.active_users)}</b><span class="flat">近 {gaInsightsDays} 天</span></div>
+            <div><small>访问次数</small><b>{gscCompact(traffic?.sessions)}</b><span class="flat">近 {gaInsightsDays} 天</span></div>
+            <div><small>互动率</small><b>{gaPercent(traffic?.engagement_rate)}</b><span class="flat">有效互动访问</span></div>
+            <div><small>平均访问时长</small><b>{gaDuration(traffic?.average_session_duration)}</b><span class="flat">每次访问</span></div>
+          </div>
+        {/if}
+        {#if gaInsightsErrors.traffic}<div class="gsc-inline-error">{gaInsightsErrors.traffic}</div>{/if}
+      </section>
+
+      <div class="gsc-tabs ga-tabs" role="tablist" aria-label="访问表现维度">
+        <button type="button" class:active={gaInsightsTab === 'overview'} role="tab" aria-selected={gaInsightsTab === 'overview'} onclick={() => selectGaTab('overview')}>概览</button>
+        <button type="button" class:active={gaInsightsTab === 'pages'} role="tab" aria-selected={gaInsightsTab === 'pages'} onclick={() => selectGaTab('pages')}>页面{#if pageRows.length}<span>{pageRows.length}</span>{/if}</button>
+        <button type="button" class:active={gaInsightsTab === 'sources'} role="tab" aria-selected={gaInsightsTab === 'sources'} onclick={() => selectGaTab('sources')}>来源{#if gaDimensionRows('sources').length}<span>{gaDimensionRows('sources').length}</span>{/if}</button>
+        <button type="button" class:active={gaInsightsTab === 'geography'} role="tab" aria-selected={gaInsightsTab === 'geography'} onclick={() => selectGaTab('geography')}>地区{#if gaDimensionRows('geography').length}<span>{gaDimensionRows('geography').length}</span>{/if}</button>
+        <button type="button" class:active={gaInsightsTab === 'devices'} role="tab" aria-selected={gaInsightsTab === 'devices'} onclick={() => selectGaTab('devices')}>设备{#if gaDimensionRows('devices').length}<span>{gaDimensionRows('devices').length}</span>{/if}</button>
+        <button type="button" class:active={gaInsightsTab === 'trend'} role="tab" aria-selected={gaInsightsTab === 'trend'} onclick={() => selectGaTab('trend')}>趋势{#if gaDimensionRows('trend').length}<span>{gaDimensionRows('trend').length}</span>{/if}</button>
+      </div>
+
+      <section class="gsc-data-view">
+        <div class="gsc-view-intro">
+          <span>
+            <b>{gaCopy.title}</b>
+            <small>{gaCopy.description}</small>
+          </span>
+          <em>{gaInsightsTab === 'overview' ? `${activeGaRowCount} 项` : `${activeGaRowCount} 行`}</em>
+        </div>
+        {#if activeGaLoading && !activeGaRowCount}
+          <div class="gsc-loading-state"><span class="wr-spin"></span><b>正在读取 Google Analytics…</b><small>首次读取可能需要几秒</small></div>
+        {:else if activeGaError}
+          <div class="gsc-error-state">
+            <span aria-hidden="true">!</span>
+            <b>暂时无法读取这组数据</b>
+            <p>{activeGaError}</p>
+            <button class="btn soft small" onclick={() => loadGaStats(activeGaGroup, true)}>重新读取</button>
+          </div>
+        {:else if activeGaDimensionGroup === 'trend' && activeGaDimensionRows.length}
+          <div class="ga-trend-list">
+            {#each activeGaDimensionRows as row, index (`ga-trend:${row.values.join(':')}:${index}`)}
+              {@const copy = gaDimensionCopy('trend', row)}
+              {@const focus = gaDimensionSelection('trend', row)}
+              {@const selected = gaIsSelected(focus)}
+              <div class="ga-trend-row" class:selected>
+                <button type="button" class="gsc-row-check" class:selected aria-label={selected ? `取消选择 ${copy.label}` : `选择 ${copy.label}`} onclick={() => toggleGaSelection(focus)}>{selected ? '✓' : ''}</button>
+                <time>{copy.label}</time>
+                <span class="ga-trend-track" aria-hidden="true"><i style={`width:${Math.max(4, (row.sessions / gaTrendMax) * 100)}%`}></i></span>
+                <span><small>用户 / 访问</small><b>{gscCompact(row.active_users)} / {gscCompact(row.sessions)}</b></span>
+                <span><small>互动率</small><b>{gaPercent(row.engagement_rate)}</b></span>
+                <span><small>平均时长</small><b>{gaDuration(row.average_session_duration)}</b></span>
+                <button type="button" class="gsc-table-ai" data-tip={`让 AI 分析 ${copy.label} 的流量`} data-tip-align="end" aria-label={`让 AI 分析 ${copy.label}`} onclick={() => void handoffGaToChat(focus)}>{@render aiAnalyzeIcon(10)}</button>
+              </div>
+            {/each}
+          </div>
+        {:else if activeGaDimensionGroup && activeGaDimensionRows.length}
+          <div class="gsc-table-wrap">
+            <div class="gsc-table ga-dimension-table" role="table">
+              <div class="gsc-tr head" role="row">
+                <span></span>
+                <span>{activeGaDimensionGroup === 'sources' ? '渠道 / 来源' : activeGaDimensionGroup === 'geography' ? '国家 / 地区' : '设备 / 环境'}</span>
+                <span>用户 / 访问</span>
+                <span>互动率</span>
+                <span>平均时长</span>
+              </div>
+              {#each activeGaDimensionRows as row, index (`ga-${activeGaDimensionGroup}:${row.values.join(':')}:${index}`)}
+                {@const copy = gaDimensionCopy(activeGaDimensionGroup, row)}
+                {@const focus = gaDimensionSelection(activeGaDimensionGroup, row)}
+                {@const selected = gaIsSelected(focus)}
+                <div class="gsc-tr" class:selected role="row">
+                  <button type="button" class="gsc-row-check" class:selected aria-label={selected ? `取消选择 ${copy.label}` : `选择 ${copy.label}`} onclick={() => toggleGaSelection(focus)}>{selected ? '✓' : ''}</button>
+                  <span class="gsc-primary-cell" title={copy.secondary ? `${copy.label} · ${copy.secondary}` : copy.label}><b>{copy.label}</b>{#if copy.secondary}<small>{copy.secondary}</small>{/if}</span>
+                  <span><b>{gscCompact(row.active_users)} / {gscCompact(row.sessions)}</b></span>
+                  <span><b>{gaPercent(row.engagement_rate)}</b></span>
+                  <span><b>{gaDuration(row.average_session_duration)}</b></span>
+                  <button type="button" class="gsc-table-ai" data-tip={`让 AI 分析 ${copy.label}`} data-tip-align="end" aria-label={`让 AI 分析 ${copy.label}`} onclick={() => void handoffGaToChat(focus)}>{@render aiAnalyzeIcon(10)}</button>
+                </div>
+              {/each}
+            </div>
+          </div>
+        {:else if visibleGaRows.length}
+          <div class="gsc-table-wrap">
+            <div class="gsc-table ga-page-table" role="table">
+              <div class="gsc-tr head" role="row"><span></span><span>页面</span><span>用户 / 访问</span><span>互动率</span><span>平均时长</span></div>
+              {#each visibleGaRows as row, index (`ga-page:${row.path}:${index}`)}
+                {@const focus = gaPageSelection(row)}
+                {@const selected = gaIsSelected(focus)}
+                <div class="gsc-tr" class:selected role="row">
+                  <button type="button" class="gsc-row-check" class:selected aria-label={selected ? `取消选择 ${row.path}` : `选择 ${row.path}`} onclick={() => toggleGaSelection(focus)}>{selected ? '✓' : ''}</button>
+                  <span class="gsc-primary-cell" title={row.path}><b>{gaPathLabel(row.path)}</b></span>
+                  <span><b>{gscCompact(row.active_users)} / {gscCompact(row.sessions)}</b></span>
+                  <span><b>{gaPercent(row.engagement_rate)}</b></span>
+                  <span><b>{gaDuration(row.average_session_duration)}</b></span>
+                  <button type="button" class="gsc-table-ai" data-tip="让 AI 分析这个页面" data-tip-align="end" aria-label={`让 AI 分析 ${row.path}`} onclick={() => void handoffGaToChat(focus)}>{@render aiAnalyzeIcon(10)}</button>
+                </div>
+              {/each}
+            </div>
+          </div>
+        {:else}
+          <div class="gsc-empty-state"><b>{gaCopy.empty}</b><p>新接入的站点可能需要等待 Google 汇总，或扩大时间范围后再试。</p></div>
+        {/if}
+      </section>
+    </div>
+    <footer class="gsc-insights-footer">
+      <span>{selectedGaCount ? `已选择 ${selectedGaCount} 项，AI 将优先分析` : '不选择时，AI 会分析整个时间范围'}</span>
+      <button class="btn primary" onclick={() => void handoffGaToChat()} disabled={Array.isArray(gaInsightsSite.capabilities) && !gscHasScope(gaInsightsSite)}>
+        {@render aiAnalyzeIcon(11)}
+        <span>让 AI 分析{selectedGaCount ? ` ${selectedGaCount} 项` : ''}</span>
+      </button>
+    </footer>
+  </div>
+{/if}
+
+{#if gscInsightsSite}
+  {@const total = gscTotal()}
+  {@const activeGroup = gscTabGroup()}
+  {@const activeRows = gscRows(activeGroup)}
+  {@const activeError = gscInsightsErrors[activeGroup]}
+  {@const activeLoading = !!gscInsightsLoading[activeGroup]}
+  {@const selectedCount = Object.keys(gscInsightsSelected).length}
+  <div class="mask" role="presentation" onclick={closeGscInsights}></div>
+  <div
+    class="sheet gsc-insights-sheet"
+    style={`width:min(${gscInsightsWidth}px, calc(100vw - 8px))`}
+    role="dialog"
+    aria-modal="true"
+    aria-label={`${gscInsightsSite.name || gscInsightsSite.slug} 搜索表现`}
+    onmousedowncapture={startGscInsightsResize}
+  >
+    <button
+      type="button"
+      class="gsc-insights-resize"
+      aria-label="拖动调整搜索表现面板宽度"
+      data-tip="左右拖动调整宽度，双击恢复默认"
+      onkeydown={onGscInsightsResizeKey}
+      ondblclick={resetGscInsightsWidth}
+    ></button>
+    {#if gscInsightsResizing}<div class="gsc-insights-resize-shield" aria-hidden="true"></div>{/if}
+    <header class="sheet-head gsc-insights-head">
+      <div class="gsc-insights-title">
+        <span class="gsc-insights-title-icon" aria-hidden="true">{@render googleSearchConsoleIcon(18)}</span>
+        <span><b>Google 搜索表现</b><small>{gscInsightsSite.name || gscInsightsSite.slug} · {gscInsightsSite.url ? hostOf(gscInsightsSite.url) : gscInsightsSite.slug}</small></span>
+      </div>
+      <button class="x" aria-label="关闭搜索表现" onclick={closeGscInsights}>×</button>
+    </header>
+    <div
+      class="sheet-body gsc-insights-body"
+      class:scrollable={gscInsightsScrollable}
+      use:observeGscInsightsOverflow
+    >
+      <section class="gsc-overview">
+        <div class="gsc-overview-bar">
+          <div>
+            <b>搜索概览</b>
+            <small>数据通常比 Search Console 后台延迟 1–3 天</small>
+          </div>
+          <div class="gsc-overview-actions">
+            <Dropdown compact menuCompact bind:value={gscInsightsDays} options={GSC_RANGE_OPTIONS} onchange={changeGscDays} />
+            <button class="icon-btn" aria-label="刷新当前搜索数据" data-tip="绕过一小时缓存，重新读取 Google 数据" onclick={() => loadGscCurrent(true)} disabled={activeLoading || !!gscInsightsLoading.total}>
+              {@render refreshIcon(activeLoading || !!gscInsightsLoading.total)}
+            </button>
+          </div>
+        </div>
+        {#if Array.isArray(gscInsightsSite.capabilities) && !gscHasScope(gscInsightsSite)}
+          <div class="gsc-scope-warning">当前连接密钥缺少 <b>stats:read</b>，请在 GCMS 后台补充统计读取权限后刷新连接。</div>
+        {/if}
+        {#if gscInsightsLoading.total && !total}
+          <div class="gsc-kpis loading" aria-label="正在读取搜索概览"><i></i><i></i><i></i><i></i></div>
+        {:else}
+          {@const clickDelta = gscDelta(total?.clicks ?? 0, total?.prev_clicks)}
+          {@const impressionDelta = gscDelta(total?.impressions ?? 0, total?.prev_impressions)}
+          {@const ctrDelta = gscDelta(total?.ctr ?? 0, total?.prev_ctr)}
+          {@const positionDelta = gscDelta(total?.position ?? 0, total?.prev_position, true)}
+          <div class="gsc-kpis">
+            <div><small>点击</small><b>{gscCompact(total?.clicks)}</b><span class={clickDelta.tone}>{clickDelta.label}</span></div>
+            <div><small>曝光</small><b>{gscCompact(total?.impressions)}</b><span class={impressionDelta.tone}>{impressionDelta.label}</span></div>
+            <div><small>CTR</small><b>{gscPercent(total?.ctr)}</b><span class={ctrDelta.tone}>{ctrDelta.label}</span></div>
+            <div><small>平均排名</small><b>{gscPosition(total?.position)}</b><span class={positionDelta.tone}>{positionDelta.label}</span></div>
+          </div>
+        {/if}
+        {#if gscInsightsErrors.total}<div class="gsc-inline-error">{gscInsightsErrors.total}</div>{/if}
+      </section>
+
+      <div class="gsc-tabs" role="tablist" aria-label="搜索表现维度">
+        <button type="button" class:active={gscInsightsTab === 'opportunities'} role="tab" aria-selected={gscInsightsTab === 'opportunities'} onclick={() => selectGscTab('opportunities')}>搜索机会</button>
+        <button type="button" class:active={gscInsightsTab === 'queries'} role="tab" aria-selected={gscInsightsTab === 'queries'} onclick={() => selectGscTab('queries')}>搜索词{#if gscRows('query').length}<span>{gscRows('query').length}</span>{/if}</button>
+        <button type="button" class:active={gscInsightsTab === 'pages'} role="tab" aria-selected={gscInsightsTab === 'pages'} onclick={() => selectGscTab('pages')}>页面{#if gscRows('page').length}<span>{gscRows('page').length}</span>{/if}</button>
+        <button type="button" class:active={gscInsightsTab === 'trend'} role="tab" aria-selected={gscInsightsTab === 'trend'} onclick={() => selectGscTab('trend')}>趋势</button>
+      </div>
+
+      <section class="gsc-data-view">
+        {#if activeLoading && !activeRows.length}
+          <div class="gsc-loading-state"><span class="wr-spin"></span><b>正在读取 Google Search Console…</b><small>首次读取可能需要几秒</small></div>
+        {:else if activeError}
+          <div class="gsc-error-state">
+            <span aria-hidden="true">!</span>
+            <b>暂时无法读取这组数据</b>
+            <p>{activeError}</p>
+            <button class="btn soft small" onclick={() => loadGscGroup(activeGroup, true)}>重新读取</button>
+          </div>
+        {:else if gscInsightsTab === 'opportunities'}
+          {@const opportunities = gscOpportunities()}
+          <div class="gsc-view-intro"><span><b>可优先处理的搜索机会</b><small>按曝光、CTR、排名区间和环比自动筛选；规则只负责找线索，最终判断交给真实搜索意图。</small></span><em>{opportunities.length} 项</em></div>
+          {#if opportunities.length}
+            <div class="gsc-opportunity-list">
+              {#each opportunities as item, index (`opportunity:${item.row.query}:${index}`)}
+                {@const selected = gscIsSelected('query', item.row)}
+                {@const focus = { id: gscSelectionID('query', item.row), group: 'query' as const, label: item.row.query, row: item.row }}
+                {@const clicksDelta = gscDelta(item.row.clicks, item.row.prev_clicks)}
+                <article class="gsc-opportunity" class:selected>
+                  <button type="button" class="gsc-row-check" class:selected aria-label={selected ? `取消选择 ${item.row.query}` : `选择 ${item.row.query}`} onclick={() => toggleGscSelection('query', item.row)}>{selected ? '✓' : ''}</button>
+                  <div class="gsc-opportunity-copy">
+                    <div>
+                      <b title={item.row.query}>{item.row.query || '（未提供搜索词）'}</b>
+                      <span class="gsc-tags" title={item.labels.join('、')}>
+                        {#each item.labels.slice(0, 2) as label}<i>{label}</i>{/each}
+                        {#if item.labels.length > 2}<i>+{item.labels.length - 2}</i>{/if}
+                      </span>
+                    </div>
+                    <small>{item.action}</small>
+                  </div>
+                  <div class="gsc-opportunity-metrics">
+                    <span><small>点击</small><b>{item.row.clicks}</b><i class={clicksDelta.tone}>{clicksDelta.label}</i></span>
+                    <span><small>曝光</small><b>{gscCompact(item.row.impressions)}</b></span>
+                    <span><small>CTR</small><b>{gscPercent(item.row.ctr)}</b></span>
+                    <span><small>排名</small><b>{gscPosition(item.row.position)}</b></span>
+                  </div>
+                  <button
+                    type="button"
+                    class="gsc-row-ai"
+                    aria-label={`让 AI 分析搜索词：${item.row.query}`}
+                    data-tip="让 AI 分析这个搜索词"
+                    data-tip-align="end"
+                    onclick={() => void handoffGscToChat(focus)}
+                  >{@render aiAnalyzeIcon(10)}</button>
+                </article>
+              {/each}
+            </div>
+          {:else}
+            <div class="gsc-empty-state"><b>当前区间没有明显的优先机会</b><p>可以切到“搜索词”查看完整数据，或扩大时间范围。</p></div>
+          {/if}
+        {:else if gscInsightsTab === 'queries'}
+          <div class="gsc-view-intro"><span><b>搜索词</b><small>Google 按点击量返回，最多展示 1,000 行。</small></span><em>{activeRows.length} 行</em></div>
+          {#if activeRows.length}
+            <div class="gsc-table-wrap">
+              <div class="gsc-table gsc-query-table" role="table">
+                <div class="gsc-tr head" role="row"><span></span><span>搜索词</span><span>点击/曝光</span><span>CTR</span><span>排名</span></div>
+                {#each activeRows as row, index (`query:${row.query}:${index}`)}
+                  {@const selected = gscIsSelected('query', row)}
+                  {@const focus = { id: gscSelectionID('query', row), group: 'query' as const, label: row.query, row }}
+                  {@const clicksDelta = gscDelta(row.clicks, row.prev_clicks)}
+                  {@const impressionsDelta = gscDelta(row.impressions, row.prev_impressions)}
+                  {@const positionDelta = gscDelta(row.position, row.prev_position, true)}
+                  <div class="gsc-tr" class:selected role="row">
+                    <button type="button" class="gsc-row-check" class:selected aria-label={selected ? `取消选择 ${row.query}` : `选择 ${row.query}`} onclick={() => toggleGscSelection('query', row)}>{selected ? '✓' : ''}</button>
+                    <span class="gsc-primary-cell" title={row.query}><b>{row.query || '（空搜索词）'}</b></span>
+                    <span class="gsc-combined-metric" title={`点击 ${row.clicks} / 曝光 ${row.impressions}`}>
+                      <b>{row.clicks}/{gscCompact(row.impressions)}</b>
+                      <small><i class={clicksDelta.tone}>{clicksDelta.label}</i><em>/</em><i class={impressionsDelta.tone}>{impressionsDelta.label}</i></small>
+                    </span>
+                    <span><b>{gscPercent(row.ctr)}</b></span>
+                    <span><b>{gscPosition(row.position)}</b><small class={positionDelta.tone}>{positionDelta.label}</small></span>
+                    <button type="button" class="gsc-table-ai" data-tip="让 AI 分析这个搜索词" data-tip-align="end" aria-label={`让 AI 分析 ${row.query}`} onclick={() => void handoffGscToChat(focus)}>{@render aiAnalyzeIcon(10)}</button>
+                  </div>
+                {/each}
+              </div>
+            </div>
+          {:else}
+            <div class="gsc-empty-state"><b>这个时间范围还没有搜索词数据</b><p>新接入的站点可能需要等待 Google 汇总。</p></div>
+          {/if}
+        {:else if gscInsightsTab === 'pages'}
+          <div class="gsc-view-intro"><span><b>搜索落地页</b><small>按页面聚合，适合定位正在增长或需要修复的内容。</small></span><em>{activeRows.length} 行</em></div>
+          {#if activeRows.length}
+            <div class="gsc-table-wrap">
+              <div class="gsc-table gsc-page-table" role="table">
+                <div class="gsc-tr head" role="row"><span></span><span>页面</span><span>点击/曝光</span><span>CTR</span><span>排名</span></div>
+                {#each activeRows as row, index (`page:${row.page}:${index}`)}
+                  {@const selected = gscIsSelected('page', row)}
+                  {@const focus = { id: gscSelectionID('page', row), group: 'page' as const, label: row.page, row }}
+                  {@const clicksDelta = gscDelta(row.clicks, row.prev_clicks)}
+                  {@const impressionsDelta = gscDelta(row.impressions, row.prev_impressions)}
+                  {@const positionDelta = gscDelta(row.position, row.prev_position, true)}
+                  <div class="gsc-tr" class:selected role="row">
+                    <button type="button" class="gsc-row-check" class:selected aria-label={selected ? `取消选择 ${row.page}` : `选择 ${row.page}`} onclick={() => toggleGscSelection('page', row)}>{selected ? '✓' : ''}</button>
+                    <span class="gsc-primary-cell" title={row.page}><b>{gscPageLabel(row.page)}</b><small>{gscPageHost(row.page)}</small></span>
+                    <span class="gsc-combined-metric" title={`点击 ${row.clicks} / 曝光 ${row.impressions}`}>
+                      <b>{row.clicks}/{gscCompact(row.impressions)}</b>
+                      <small><i class={clicksDelta.tone}>{clicksDelta.label}</i><em>/</em><i class={impressionsDelta.tone}>{impressionsDelta.label}</i></small>
+                    </span>
+                    <span><b>{gscPercent(row.ctr)}</b></span>
+                    <span><b>{gscPosition(row.position)}</b><small class={positionDelta.tone}>{positionDelta.label}</small></span>
+                    <button type="button" class="gsc-table-ai" data-tip="让 AI 分析这个页面" data-tip-align="end" aria-label={`让 AI 分析 ${row.page}`} onclick={() => void handoffGscToChat(focus)}>{@render aiAnalyzeIcon(10)}</button>
+                  </div>
+                {/each}
+              </div>
+            </div>
+          {:else}
+            <div class="gsc-empty-state"><b>这个时间范围还没有页面数据</b><p>扩大时间范围后再试，或检查 Search Console 属性是否正确。</p></div>
+          {/if}
+        {:else}
+          {@const trendRows = [...activeRows].sort((a, b) => (a.date || '').localeCompare(b.date || ''))}
+          {@const trendMax = Math.max(1, ...trendRows.map((row) => row.impressions))}
+          <div class="gsc-view-intro"><span><b>每日趋势</b><small>曝光用于柱长，点击叠加在右侧；最近一天可能仍在汇总。</small></span><em>{trendRows.length} 天</em></div>
+          {#if trendRows.length}
+            <div class="gsc-trend">
+              {#each trendRows as row, index (`date:${row.date ?? ''}:${index}`)}
+                <div class="gsc-trend-row">
+                  <time>{row.date?.slice(5) || '—'}</time>
+                  <div class="gsc-trend-track"><i style={`width:${Math.max(2, row.impressions / trendMax * 100)}%`}></i></div>
+                  <span><b>{gscCompact(row.impressions)}</b> 曝光</span>
+                  <span><b>{row.clicks}</b> 点击</span>
+                </div>
+              {/each}
+            </div>
+          {:else}
+            <div class="gsc-empty-state"><b>这个时间范围还没有每日趋势</b><p>Search Console 有数据后会自动出现。</p></div>
+          {/if}
+        {/if}
+      </section>
+    </div>
+    <footer class="gsc-insights-footer">
+      <span>{selectedCount ? `已选择 ${selectedCount} 项，AI 将优先分析` : '不选择时，AI 会分析整个时间范围'}</span>
+      <button class="btn primary" onclick={() => void handoffGscToChat()} disabled={Array.isArray(gscInsightsSite.capabilities) && !gscHasScope(gscInsightsSite)}>
+        {@render aiAnalyzeIcon(11)}
+        <span>让 AI 分析{selectedCount ? ` ${selectedCount} 项` : ''}</span>
+      </button>
+    </footer>
+  </div>
+{/if}
 
 <!-- 设置弹窗 -->
 {#if setupOpen}
@@ -12625,7 +14226,13 @@
 
 {#if integrationEditor && integrationSurface === 'modal'}
   <div class="mask" role="presentation" onclick={closeIntegrationEditor}></div>
-  <div class="modal wide integration-modal" role="dialog" aria-modal="true" aria-label={integrationEditor.kind === 'google' ? 'Google 数据设置' : integrationEditor.kind === 'telegram' ? 'Telegram 推送设置' : integrationEditor.kind === 'cloudflare' ? 'Cloudflare 授权设置' : integrationEditor.kind === 'site-analytics' ? '站点 Google Analytics 设置' : '站点 Google Search Console 设置'}>
+  <div
+    class="modal wide integration-modal"
+    class:site-google-modal={integrationEditor.kind === 'site-analytics' || integrationEditor.kind === 'site-search-console'}
+    role="dialog"
+    aria-modal="true"
+    aria-label={integrationEditor.kind === 'google' ? 'Google 数据设置' : integrationEditor.kind === 'telegram' ? 'Telegram 推送设置' : integrationEditor.kind === 'cloudflare' ? 'Cloudflare 授权设置' : integrationEditor.kind === 'site-analytics' ? '站点 Google Analytics 设置' : '站点 Google Search Console 设置'}
+  >
     <header class="sheet-head integration-head">
       <div class="integration-head-title">
         <span class="integration-head-icon">
@@ -13251,6 +14858,220 @@
         </div>
       {/if}
     </div>
+  </div>
+{/if}
+
+<!-- 新建站点：先让用户选择 AI 引导或原生快速创建，避免一个按钮混合两种心智模型。 -->
+{#if newSiteChoiceOpen}
+  <div class="mask new-site-mask" role="presentation" onclick={() => void closeNewSiteChoice()}></div>
+  <div
+    class="modal new-site-choice-modal"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="new-site-choice-title"
+    tabindex="-1"
+    bind:this={newSiteChoiceEl}
+    onkeydown={handleNewSiteDialogKeydown}
+  >
+    <header class="sheet-head new-site-head">
+      <div>
+        <b id="new-site-choice-title">新建站点</b>
+        <small>选择适合你的创建方式</small>
+      </div>
+      <button class="x" type="button" aria-label="关闭" onclick={() => void closeNewSiteChoice()}>×</button>
+    </header>
+    <div class="sheet-body new-site-choice-body">
+      <button class="new-site-choice-card recommended" type="button" onclick={chooseGuidedSiteBuild}>
+        <span class="new-site-choice-icon ai" aria-hidden="true">{@render siteBuildMark(21)}</span>
+        <span class="new-site-choice-copy">
+          <span class="new-site-choice-title"><b>AI 引导创建</b><em>推荐</em></span>
+          <small>用对话梳理定位、结构、内容和主题，适合第一次建站。</small>
+          <span>进入新站建设对话 <b aria-hidden="true">→</b></span>
+        </span>
+      </button>
+      <button class="new-site-choice-card" type="button" onclick={() => void openQuickSiteCreate()}>
+        <span class="new-site-choice-icon quick">{@render sitesIcon(21)}</span>
+        <span class="new-site-choice-copy">
+          <span class="new-site-choice-title"><b>快速创建</b></span>
+          <small>直接填写站点标识、名称和类型，只创建 GCMS 基础站点。</small>
+          <span>填写创建信息 <b aria-hidden="true">→</b></span>
+        </span>
+      </button>
+      <p class="new-site-choice-note">两种方式都会创建真实的 GCMS 子站点；域名、主题与公开发布仍在创建后单独配置。</p>
+    </div>
+  </div>
+{/if}
+
+{#if quickSiteOpen}
+  <div class="mask new-site-mask" role="presentation" onclick={() => void closeQuickSiteCreate()}></div>
+  <div
+    class="modal wide quick-site-modal"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="quick-site-title"
+    aria-busy={quickSiteBusy || quickSiteCapabilityLoading}
+    tabindex="-1"
+    bind:this={quickSiteEl}
+    onkeydown={handleNewSiteDialogKeydown}
+  >
+    <header class="sheet-head new-site-head">
+      <div>
+        <b id="quick-site-title">{quickSiteStep === 'success' ? '站点创建完成' : quickSiteStep === 'review' ? '确认创建站点' : '快速创建站点'}</b>
+        <small>{quickSiteStep === 'success' ? (quickSiteCreatedSite ? '基础站点已经同步到 Pilot' : quickSiteNotice ? '站点已创建，列表正在同步' : '站点已创建') : quickSiteStep === 'review' ? '预检通过后再执行真实创建' : '只创建基础站点，域名可以稍后绑定'}</small>
+      </div>
+      <button class="x" type="button" aria-label="关闭" disabled={quickSiteBusy} onclick={() => void closeQuickSiteCreate()}>×</button>
+    </header>
+
+    {#if quickSiteStep === 'form'}
+      <form class="quick-site-form" onsubmit={(event) => { event.preventDefault(); void planQuickSiteCreate(); }}>
+        <div class="sheet-body quick-site-body">
+          <section class="quick-site-target" aria-label="目标 GCMS 平台">
+            <span class="quick-site-target-mark"><AppIcon size={22} /></span>
+            <span><small>目标 GCMS</small><b>{quickSiteConnection()?.name || '当前平台'}</b>{#if quickSiteConnectionHost()}<em>{quickSiteConnectionHost()}</em>{/if}</span>
+            {#if quickSiteCapabilityLoading}
+              <i class="checking"><span aria-hidden="true"></span>检查中</i>
+            {:else if quickSiteCapability?.can_create}
+              <i class="ready"><span aria-hidden="true">✓</span>可创建</i>
+            {:else if quickSiteCapability}
+              <i class="blocked">需要处理</i>
+            {:else}
+              <i>当前平台</i>
+            {/if}
+          </section>
+
+          <div class="quick-site-fields">
+            <label class="tfield">
+              <span>站点标识</span>
+              <input
+                class="tin"
+                bind:this={quickSiteSlugEl}
+                bind:value={quickSiteSlug}
+                oninput={resetQuickSitePlan}
+                placeholder="例如 blog 或 docs-site"
+                maxlength="63"
+                autocomplete="off"
+                spellcheck="false"
+                autocapitalize="off"
+                autocorrect="off"
+                disabled={quickSiteBusy}
+              />
+              <small class:invalid={!!quickSiteSlug && !quickSiteSlugValid}>只能使用小写字母、数字和短横线，且不能以短横线开头或结尾。</small>
+            </label>
+            <label class="tfield">
+              <span class="quick-site-label-row"><span>站点名称</span>{#if !quickSiteSlug.trim()}<button type="button" onclick={() => suggestQuickSiteSlug(true)} disabled={!slugifySiteBuildName(quickSiteName)}>生成标识</button>{/if}</span>
+              <input
+                class="tin"
+                bind:value={quickSiteName}
+                oninput={resetQuickSitePlan}
+                onblur={() => suggestQuickSiteSlug(false)}
+                placeholder="品牌官网 / 文档中心"
+                maxlength="80"
+                autocomplete="off"
+                disabled={quickSiteBusy}
+              />
+            </label>
+          </div>
+
+          <fieldset class="quick-site-options">
+            <legend>站点类型</legend>
+            <div class="quick-site-kind-grid">
+              {#each QUICK_SITE_KINDS as option}
+                <label class:selected={quickSiteKind === option.value}>
+                  <input type="radio" name="quick-site-kind" value={option.value} bind:group={quickSiteKind} onchange={resetQuickSitePlan} disabled={quickSiteBusy} />
+                  <span><b>{option.label}</b><small>{option.sub}</small></span>
+                </label>
+              {/each}
+            </div>
+          </fieldset>
+
+          <fieldset class="quick-site-options">
+            <legend>初始化内容</legend>
+            <div class="quick-site-seed-grid">
+              {#each QUICK_SITE_SEEDS as option}
+                <label class:selected={quickSiteSeed === option.value} class:warning={option.value === 'demo'}>
+                  <input type="radio" name="quick-site-seed" value={option.value} bind:group={quickSiteSeed} onchange={resetQuickSitePlan} disabled={quickSiteBusy} />
+                  <span><b>{option.label}</b><small>{option.sub}</small></span>
+                </label>
+              {/each}
+            </div>
+          </fieldset>
+
+          {#if quickSiteSeed === 'demo'}
+            <div class="quick-site-warning"><b>会写入演示内容</b><span>适合体验 GCMS；正式站点通常建议选择空数据，避免后续清理。</span></div>
+          {/if}
+          {#if quickSiteError}
+            <div class="err-note quick-site-error">
+              <span>{quickSiteError}</span>
+              {#if !quickSiteCapabilityLoading && quickSiteCapability?.can_create !== true}
+                <button type="button" onclick={() => void loadQuickSiteCapability()}>重新检查</button>
+              {/if}
+            </div>
+          {/if}
+        </div>
+        <footer class="quick-site-footer">
+          <button class="quick-site-back" type="button" onclick={() => void backQuickSiteToChoice()} disabled={quickSiteBusy}>
+            {@render backChevronIcon(13)}<span>返回</span>
+          </button>
+          <button class="btn primary" type="submit" disabled={quickSiteBusy || quickSiteCapabilityLoading || !quickSiteFormReady}>
+            {quickSiteBusy ? '正在预检…' : '检查并继续'}
+          </button>
+        </footer>
+      </form>
+    {:else if quickSiteStep === 'review' && quickSitePlan}
+      {@const plannedSite = quickSitePlan.normalized_input ?? quickSitePayload()}
+      <div class="sheet-body quick-site-body quick-site-review">
+        <div class="quick-site-review-hero">
+          <span>{@render sitesIcon(23)}</span>
+          <div><b>{plannedSite.name}</b><small>{plannedSite.slug}</small></div>
+          <em>预检通过</em>
+        </div>
+        <dl class="quick-site-review-grid">
+          <div><dt>目标平台</dt><dd>{quickSiteConnection()?.name || '当前 GCMS'}</dd></div>
+          <div><dt>站点类型</dt><dd>{QUICK_SITE_KINDS.find((option) => option.value === plannedSite.site_kind)?.label || plannedSite.site_kind}</dd></div>
+          <div><dt>初始化内容</dt><dd>{plannedSite.seed_mode === 'demo' ? '带演示数据' : '空数据'}</dd></div>
+          <div><dt>Pilot 管理</dt><dd>{plannedSite.management_automation_enabled ? '创建后自动启用' : '不启用'}</dd></div>
+        </dl>
+        <section class="quick-site-impact">
+          <b>本次创建会做什么</b>
+          <ul>
+            <li>创建一个独立站点记录、数据库和上传目录</li>
+            <li>应用“{QUICK_SITE_KINDS.find((option) => option.value === plannedSite.site_kind)?.label || plannedSite.site_kind}”的基础结构</li>
+            <li>{plannedSite.seed_mode === 'demo' ? '写入 GCMS 演示内容' : '只保留基础页面，不导入演示内容'}</li>
+          </ul>
+          <p>不会绑定域名、修改 DNS、应用主题或公开发布内容；创建站点无需后台密码。</p>
+        </section>
+        {#if quickSitePlan.warnings?.length}
+          <div class="quick-site-warning"><b>预检提醒</b><span>{quickSitePlan.warnings.join('；')}</span></div>
+        {/if}
+        {#if quickSiteError}<div class="err-note">{quickSiteError}</div>{/if}
+      </div>
+      <footer class="quick-site-footer">
+        <button class="quick-site-back" type="button" onclick={editQuickSiteCreate} disabled={quickSiteBusy}>
+          {@render backChevronIcon(13)}<span>返回修改</span>
+        </button>
+        <button class="btn primary" type="button" onclick={() => void createQuickSite()} disabled={quickSiteBusy}>
+          {quickSiteBusy ? '正在创建…' : '确认创建站点'}
+        </button>
+      </footer>
+    {:else if quickSiteStep === 'success'}
+      <div class="sheet-body quick-site-body quick-site-success">
+        <span class="quick-site-success-mark" aria-hidden="true"><svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="m6.5 12.5 3.4 3.4 7.8-8.1" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" /></svg></span>
+        <div><b>{quickSiteResult?.item?.name || quickSiteName}</b><small>{quickSiteResult?.item?.slug || quickSiteSlug}</small></div>
+        <p>基础站点已经通过 Pilot 创建。接下来可以让 AI 读取真实状态并继续完善，也可以先返回站点列表。</p>
+        <div class="quick-site-next">
+          <span><b>当前状态</b><small>{quickSiteSeed === 'demo' ? '已导入演示内容；尚未配置域名和主题' : '未导入演示内容；尚未配置域名和主题'}</small></span>
+          <span><b>推荐下一步</b><small>由 AI 检查上线准备项并制定建设顺序</small></span>
+        </div>
+        {#if quickSiteNotice}<div class="quick-site-sync-note">{quickSiteNotice}</div>{/if}
+        {#if quickSiteError}<div class="err-note">{quickSiteError}</div>{/if}
+      </div>
+      <footer class="quick-site-footer success">
+        <button class="quick-site-back" type="button" onclick={() => void finishQuickSiteCreate()} disabled={quickSiteBusy}>
+          {@render backChevronIcon(13)}<span>返回站点</span>
+        </button>
+        <button class="btn primary" type="button" onclick={() => void continueQuickSiteWithAI()} disabled={quickSiteBusy}>继续由 AI 完善</button>
+      </footer>
+    {/if}
   </div>
 {/if}
 
@@ -14616,6 +16437,8 @@
   .working:not(:first-child) { margin-top: 12px; }
   .wl { flex: none; }
   .working-t { font-size: 12px; color: var(--faint); font-variant-numeric: tabular-nums; }
+  .context-compact-note { display: flex; align-items: center; gap: 6px; width: fit-content; margin: 2px 0 9px; padding: 5px 8px; border-radius: 8px; color: #267457; background: #edf7f1; font-size: 12px; }
+  .context-compact-note small { color: #6e8d7d; font-size: 11px; }
   .wl-trace { animation: wldraw 1.5s ease-in-out infinite; }
   @keyframes wldraw { 0% { stroke-dashoffset: 100; opacity: 1; } 55% { stroke-dashoffset: 0; opacity: 1; } 82% { stroke-dashoffset: 0; opacity: 1; } 100% { stroke-dashoffset: 0; opacity: 0; } }
   .wl-dot { transform-box: fill-box; transform-origin: center; animation: wldot 1.5s ease-in-out infinite; }
@@ -14778,10 +16601,135 @@
   .site-integration.site-state:disabled { cursor: wait; transform: none; }
   .site-dashboard-card.disabled .site-integration:not(.site-state) { opacity: .22; filter: grayscale(1); }
   .site-dashboard-metrics { max-width: 100%; display: grid; justify-items: end; gap: 2px; overflow: hidden; }
-  .site-dashboard-metric { min-width: 0; max-width: 100%; min-height: 17px; box-sizing: border-box; display: block; padding: 2px 6px; overflow: hidden; border-radius: 999px; background: #f1f0ec; color: var(--dim); font-size: 8.5px; font-weight: 650; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; cursor: help; font-variant-numeric: tabular-nums; }
+  .site-dashboard-metric { min-width: 0; max-width: 100%; min-height: 17px; box-sizing: border-box; display: block; padding: 2px 6px; overflow: hidden; border: 0; border-radius: 999px; background: #f1f0ec; color: var(--dim); font-family: inherit; font-size: 8.5px; font-weight: 650; line-height: 1.3; text-align: left; text-overflow: ellipsis; white-space: nowrap; cursor: help; font-variant-numeric: tabular-nums; }
   .site-dashboard-metric b { color: currentColor; font-weight: 760; }
   .site-dashboard-metric.ready { background: #edf7f0; color: #296943; }
   .site-dashboard-metric.error { background: #fff4e5; color: #98641a; }
+  .site-dashboard-metric.gsc, .site-dashboard-metric.ga { display: inline-flex; align-items: center; gap: 2px; cursor: pointer; transition: background .15s, color .15s, box-shadow .15s; }
+  .site-dashboard-metric-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .site-dashboard-metric-open { width: 8px; height: 8px; flex: none; display: inline-grid; place-items: center; opacity: .62; transition: opacity .15s, transform .15s; }
+  .site-dashboard-metric.gsc:hover, .site-dashboard-metric.ga:hover { background: #e1f1e6; color: #1f6039; box-shadow: inset 0 0 0 1px rgba(41,105,67,.12); }
+  .site-dashboard-metric.gsc:hover .site-dashboard-metric-open, .site-dashboard-metric.ga:hover .site-dashboard-metric-open { opacity: 1; transform: translateX(1px); }
+  .site-dashboard-metric.gsc:focus-visible, .site-dashboard-metric.ga:focus-visible { outline: 2px solid rgba(41,105,67,.35); outline-offset: 1px; }
+
+  .sheet.gsc-insights-sheet { width: min(480px, calc(100vw - 8px)); }
+  .gsc-insights-resize { position: absolute; z-index: 12; top: 0; bottom: 0; left: -8px; width: 24px; padding: 0; border: 0; outline: none; background: transparent; cursor: ew-resize; touch-action: none; user-select: none; -webkit-app-region: no-drag; }
+  .gsc-insights-resize::after { position: absolute; top: 50%; left: 9px; width: 3px; height: 58px; border-radius: 999px; background: #aaa69d; content: ""; opacity: .34; transform: translateY(-50%); transition: opacity .15s, background .15s; }
+  .gsc-insights-resize:hover::after, .gsc-insights-resize:focus-visible::after, .gsc-insights-resize:active::after { background: var(--accent); opacity: .82; }
+  .gsc-insights-resize-shield { position: fixed; z-index: 11; inset: 0; cursor: ew-resize; user-select: none; -webkit-app-region: no-drag; }
+  .sheet-head.gsc-insights-head { box-sizing: border-box; height: 46px; min-height: 46px; padding: 5px 14px; }
+  .gsc-insights-title { min-width: 0; display: flex; align-items: center; gap: 7px; }
+  .gsc-insights-title-icon { width: 25px; height: 25px; flex: none; display: inline-flex; align-items: center; justify-content: center; border-radius: 7px; background: #f4f3ef; }
+  .gsc-insights-title > span:last-child { min-width: 0; display: grid; gap: 1px; }
+  .gsc-insights-title b { font-size: 13px; line-height: 1.2; }
+  .gsc-insights-title small { overflow: hidden; color: var(--faint); font-size: 9.5px; line-height: 1.2; font-weight: 450; text-overflow: ellipsis; white-space: nowrap; }
+  .gsc-insights-body { flex: 1 1 auto; min-height: 0; gap: 12px; padding: 14px 18px 18px; overflow-y: hidden; }
+  .gsc-insights-body.scrollable { overflow-y: auto; }
+  .sheet.ga-insights-sheet .gsc-insights-body { padding-bottom: 30px; scroll-padding-bottom: 30px; }
+  .gsc-overview { padding: 0; border: 0; border-radius: 0; background: transparent; }
+  .gsc-overview-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .gsc-overview-bar > div:first-child { min-width: 0; display: grid; gap: 2px; }
+  .gsc-overview-bar b { font-size: 13px; }
+  .gsc-overview-bar small { color: var(--faint); font-size: 10.5px; }
+  .gsc-overview-actions { flex: none; display: flex; align-items: center; gap: 3px; }
+  .gsc-overview-actions :global(.dd-trigger.compact) { --chip-h: 21px; padding-inline: 7px; border: 1px solid var(--border); border-radius: 7px; background: #fff; font-size: 11px; line-height: 1; }
+  .gsc-scope-warning, .gsc-inline-error { margin-top: 10px; padding: 8px 10px; border-radius: 8px; font-size: 10.5px; line-height: 1.45; }
+  .gsc-scope-warning { background: #fff5e7; color: #8d5c16; }
+  .gsc-inline-error { background: #fff0ed; color: var(--err); }
+  .gsc-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; margin-top: 11px; }
+  .gsc-kpis.ga-kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .gsc-kpis > div { min-width: 0; display: grid; gap: 2px; padding: 9px 10px; overflow: visible; border: 1px solid #ebe8e0; border-radius: 9px; background: #fff; }
+  .gsc-kpis small { color: var(--faint); font-size: 9.5px; }
+  .gsc-kpis b { overflow: hidden; font-size: 17px; line-height: 1.1; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+  .gsc-kpis span { font-size: 9px; font-weight: 650; }
+  .gsc-kpis span.up, .gsc-tr small.up, .gsc-opportunity-metrics i.up { color: #238253; }
+  .gsc-kpis span.down, .gsc-tr small.down, .gsc-opportunity-metrics i.down { color: #c34a3c; }
+  .gsc-kpis span.flat, .gsc-tr small.flat, .gsc-opportunity-metrics i.flat { color: var(--faint); }
+  .gsc-kpis.loading > i { height: 54px; border-radius: 9px; background: linear-gradient(100deg, #efede7 20%, #f8f7f4 42%, #efede7 64%); background-size: 220% 100%; animation: gsc-shimmer 1.25s linear infinite; }
+  @keyframes gsc-shimmer { to { background-position-x: -220%; } }
+  .gsc-tabs { position: sticky; z-index: 5; top: 0; flex: none; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 2px; margin-top: 9px; padding: 3px; border-radius: 9px; background: #efede7; }
+  .gsc-tabs.ga-tabs { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  .gsc-tabs.ga-tabs button { gap: 2px; padding-inline: 2px; font-size: 9.5px; }
+  .gsc-tabs.ga-tabs button span { min-width: 14px; padding-inline: 3px; font-size: 7.5px; }
+  .gsc-tabs button { min-width: 0; height: 27px; display: inline-flex; align-items: center; justify-content: center; gap: 4px; border: 0; border-radius: 7px; background: transparent; color: var(--dim); font: inherit; font-size: 11px; font-weight: 650; cursor: pointer; }
+  .gsc-tabs button:hover { color: var(--text); }
+  .gsc-tabs button.active { background: #fff; color: var(--text); box-shadow: 0 1px 3px rgba(36,31,23,.09); }
+  .gsc-tabs button span { min-width: 17px; padding: 1px 4px; border-radius: 999px; background: #e6e3dc; color: var(--faint); font-size: 8.5px; line-height: 1.4; }
+  .gsc-tabs button.active span { background: #edf7f0; color: #296943; }
+  .gsc-data-view { min-height: 0; }
+  .gsc-view-intro { min-height: 42px; display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding: 2px 1px 10px; }
+  .gsc-view-intro > span { min-width: 0; display: grid; gap: 2px; }
+  .gsc-view-intro b { font-size: 13px; }
+  .gsc-view-intro small { color: var(--faint); font-size: 10px; line-height: 1.45; }
+  .gsc-view-intro em { flex: none; padding-top: 2px; color: var(--faint); font-size: 10px; font-style: normal; }
+  .gsc-loading-state, .gsc-error-state, .gsc-empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px; padding: 18px 24px; border: 1px dashed var(--border2); border-radius: 12px; color: var(--dim); text-align: center; }
+  .gsc-loading-state, .gsc-error-state { min-height: 150px; }
+  .gsc-empty-state { min-height: 84px; }
+  .gsc-loading-state b, .gsc-error-state b, .gsc-empty-state b { color: var(--text); font-size: 12.5px; }
+  .gsc-loading-state small, .gsc-error-state p, .gsc-empty-state p { max-width: 440px; margin: 0; color: var(--faint); font-size: 10.5px; line-height: 1.5; }
+  .gsc-error-state > span { width: 32px; height: 32px; display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; background: #fde8e4; color: var(--err); font-size: 16px; font-weight: 750; }
+  .gsc-opportunity-list { display: grid; gap: 7px; }
+  .gsc-opportunity { position: relative; min-width: 0; display: grid; grid-template-columns: 20px minmax(0, 1fr); align-items: start; gap: 8px 9px; padding: 10px; border: 1px solid var(--border); border-radius: 11px; background: #fff; transition: border-color .15s, background .15s; }
+  .gsc-opportunity:hover { border-color: #d5d1c7; }
+  .gsc-opportunity.selected { border-color: #b9d5c2; background: #fbfefc; }
+  .gsc-row-check { width: 16px; height: 16px; flex: none; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 1px solid #cbc7bd; border-radius: 4px; background: #fff; color: #fff; font: inherit; font-size: 9px; cursor: pointer; }
+  .gsc-row-check:hover { border-color: #8a857b; }
+  .gsc-row-check.selected { border-color: #2d7950; background: #2d7950; }
+  .gsc-opportunity-copy { min-width: 0; grid-column: 2; grid-row: 1; align-self: center; display: grid; gap: 4px; }
+  .gsc-opportunity-copy > div { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 7px; }
+  .gsc-opportunity-copy b { min-width: 0; flex: 1 1 auto; overflow: hidden; font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
+  .gsc-opportunity-copy > small { overflow: hidden; color: var(--faint); font-size: 9.5px; text-overflow: ellipsis; white-space: nowrap; }
+  .gsc-tags { min-width: 0; display: flex; gap: 3px; overflow: visible; }
+  .gsc-tags i { flex: none; padding: 2px 5px; border-radius: 999px; background: #fff4e5; color: #94611c; font-size: 8px; font-style: normal; font-weight: 650; white-space: nowrap; }
+  .gsc-opportunity-metrics { grid-column: 2 / -1; grid-row: 2; width: 100%; display: grid; grid-template-columns: repeat(4, minmax(58px, 1fr)); gap: 7px; padding-top: 5px; border-top: 1px solid #f0eee8; }
+  .gsc-opportunity-metrics > span { min-width: 0; min-height: 18px; display: flex; align-items: baseline; gap: 4px; overflow: hidden; }
+  .gsc-opportunity-metrics small { color: var(--faint); font-size: 8px; }
+  .gsc-opportunity-metrics b { overflow: hidden; font-size: 10.5px; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+  .gsc-opportunity-metrics i { font-size: 7.5px; font-style: normal; font-weight: 650; }
+  .gsc-row-ai, .gsc-table-ai { border: 0; border-radius: 7px; background: #f1efe9; color: var(--dim); font: inherit; font-size: 9.5px; font-weight: 650; cursor: pointer; white-space: nowrap; }
+  .gsc-row-ai { position: absolute; top: 50%; right: 8px; width: 20px; height: 20px; display: inline-grid; place-items: center; padding: 0; border-radius: 6px; opacity: 0; pointer-events: none; transform: translateY(calc(-50% - 2px)); box-shadow: 0 2px 6px rgba(36,31,23,.08); transition: opacity .15s, transform .15s, color .15s, background .15s; }
+  .gsc-opportunity:hover .gsc-row-ai, .gsc-opportunity:focus-within .gsc-row-ai { opacity: 1; pointer-events: auto; transform: translateY(-50%); }
+  .gsc-row-ai:hover, .gsc-row-ai:focus-visible, .gsc-table-ai:hover { background: #2f2c27; color: #fff; }
+  .gsc-table-wrap { overflow: visible; border: 1px solid var(--border); border-radius: 11px; background: #fff; }
+  .gsc-table { width: 100%; min-width: 0; }
+  .gsc-tr { position: relative; min-height: 44px; display: grid; grid-template-columns: 25px minmax(0, 1fr) 86px 54px 48px; align-items: center; gap: 7px; padding: 6px 9px; border-top: 1px solid #efede7; }
+  .gsc-query-table .gsc-tr { grid-template-columns: 22px minmax(0, 1fr) 72px 42px 42px; gap: 5px; padding-inline: 8px; }
+  .ga-page-table .gsc-tr,
+  .ga-dimension-table .gsc-tr { grid-template-columns: 22px minmax(0, 1fr) 64px 50px 62px; gap: 5px; padding-inline: 8px; }
+  .gsc-tr:first-child { border-top: 0; }
+  .gsc-tr:not(.head):hover { background: #faf9f6; }
+  .gsc-tr.selected { background: #f7fbf8; }
+  .gsc-tr.head { min-height: 30px; background: #f7f6f2; color: var(--faint); font-size: 8.5px; font-weight: 650; }
+  .gsc-tr > span { min-width: 0; display: grid; gap: 1px; font-variant-numeric: tabular-nums; }
+  .gsc-tr > span > b { overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+  .gsc-tr > span > small { overflow: hidden; color: var(--faint); font-size: 7.5px; text-overflow: ellipsis; white-space: nowrap; }
+  .gsc-combined-metric > small { display: flex; align-items: center; gap: 3px; }
+  .gsc-combined-metric > small i { overflow: hidden; font-style: normal; text-overflow: ellipsis; }
+  .gsc-combined-metric > small em { color: var(--faint); font-style: normal; }
+  .gsc-primary-cell > b { color: var(--text); font-size: 10.5px !important; }
+  .gsc-table-ai { position: absolute; z-index: 2; top: 50%; right: 3px; width: 20px; height: 20px; display: inline-grid; place-items: center; margin: 0; padding: 0; border-radius: 6px; opacity: 0; pointer-events: none; transform: translateY(calc(-50% - 2px)); box-shadow: 0 2px 6px rgba(36,31,23,.08); transition: opacity .15s, transform .15s, color .15s, background .15s; }
+  .gsc-tr:hover .gsc-table-ai, .gsc-tr:focus-within .gsc-table-ai { opacity: 1; pointer-events: auto; transform: translateY(-50%); }
+  .gsc-trend { display: grid; gap: 4px; padding: 10px; border: 1px solid var(--border); border-radius: 11px; background: #fff; }
+  .gsc-trend-row { min-height: 26px; display: grid; grid-template-columns: 42px minmax(90px, 1fr) 78px 65px; align-items: center; gap: 9px; color: var(--dim); font-size: 9px; font-variant-numeric: tabular-nums; }
+  .gsc-trend-row time { color: var(--faint); }
+  .gsc-trend-track { height: 8px; overflow: hidden; border-radius: 999px; background: #efede7; }
+  .gsc-trend-track i { height: 100%; display: block; border-radius: inherit; background: linear-gradient(90deg, #4285f4, #34a853); }
+  .gsc-trend-row span { white-space: nowrap; }
+  .gsc-trend-row b { color: var(--text); }
+  .ga-trend-list { display: grid; overflow: hidden; border: 1px solid var(--border); border-radius: 11px; background: #fff; }
+  .ga-trend-row { position: relative; min-width: 0; min-height: 42px; display: grid; grid-template-columns: 18px 58px minmax(42px, 1fr) 62px 50px 62px; align-items: center; gap: 6px; padding: 6px 8px; border-top: 1px solid #efede7; font-variant-numeric: tabular-nums; }
+  .ga-trend-row:first-child { border-top: 0; }
+  .ga-trend-row:hover { background: #faf9f6; }
+  .ga-trend-row.selected { background: #f7fbf8; }
+  .ga-trend-row time { color: var(--dim); font-size: 8.5px; white-space: nowrap; }
+  .ga-trend-row > span:not(.ga-trend-track) { min-width: 0; display: grid; gap: 1px; }
+  .ga-trend-row small { overflow: hidden; color: var(--faint); font-size: 7px; text-overflow: ellipsis; white-space: nowrap; }
+  .ga-trend-row b { overflow: hidden; font-size: 9.5px; text-overflow: ellipsis; white-space: nowrap; }
+  .ga-trend-track { height: 7px; overflow: hidden; border-radius: 999px; background: #efede7; }
+  .ga-trend-track i { height: 100%; display: block; border-radius: inherit; background: linear-gradient(90deg, #f9ab00, #34a853); }
+  .gsc-insights-footer { min-height: 39px; flex: none; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 11px; border-top: 1px solid var(--border); background: var(--bg); }
+  .gsc-insights-footer > span { min-width: 0; overflow: hidden; color: var(--faint); font-size: 9px; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
+  .gsc-insights-footer .btn { min-height: 26px; flex: none; min-width: 86px; display: inline-flex; align-items: center; justify-content: center; gap: 3px; padding: 3px 8px; font-size: 10.5px; line-height: 1.1; }
   .site-deployment-row { min-width: 0; min-height: 30px; display: flex; align-items: center; gap: 6px; margin-top: 9px; padding: 8px 0 0; border-top: 1px solid #efede7; color: var(--dim); font-size: 10.5px; line-height: 1.2; }
   .site-deployment-copy { min-width: 0; flex: 1 1 auto; display: inline-flex; align-items: center; gap: 6px; overflow: hidden; }
   .site-deployment-provider { display: inline-flex; align-items: center; gap: 5px; flex: none; color: var(--text); }
@@ -14822,11 +16770,16 @@
 
   /* 站点接入配置：值来自并写回 GCMS，本地不保存任何第三方密钥。 */
   .integration-modal { width: min(620px, 94vw) !important; }
-  .integration-head-title { min-width: 0; display: flex; align-items: center; gap: 10px; }
+  .integration-modal.site-google-modal { width: min(500px, calc(100vw - 24px)) !important; }
+  .integration-modal.site-google-modal .integration-body {
+    min-width: 0;
+    overflow-x: hidden;
+  }
+  .integration-head-title { min-width: 0; display: flex; align-items: center; gap: 7px; }
   .integration-head-title > span:last-child { min-width: 0; display: grid; gap: 1px; }
-  .integration-head-title b { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .integration-head-title small { color: var(--faint); font-size: 10.5px; }
-  .integration-head-icon { width: 32px; height: 32px; flex: none; display: grid; place-items: center; border-radius: 9px; background: #f1f0ec; color: #5d91ad; }
+  .integration-head-title b { font-size: 13.5px; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .integration-head-title small { color: var(--faint); font-size: 9.5px; line-height: 1.2; }
+  .integration-head-icon { width: 27px; height: 27px; flex: none; display: grid; place-items: center; border-radius: 8px; background: #f1f0ec; color: #5d91ad; }
   .integration-body { gap: 10px; }
   .integration-loading { min-height: 120px; display: flex; align-items: center; justify-content: center; gap: 9px; color: var(--dim); font-size: 12.5px; }
   .integration-section { display: flex; flex-direction: column; gap: 9px; padding: 12px; border: 1px solid var(--border); border-radius: 11px; background: #faf9f6; }
@@ -14944,21 +16897,27 @@
   .theme-callout span { color: currentColor; opacity: .88; }
   .theme-notice, .theme-error { flex: none; }
   .sheet-head.theme-sheet-head {
+    min-height: 68px;
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: 29px 20px;
     align-items: center;
-    column-gap: 14px;
+    align-content: center;
+    column-gap: 10px;
     row-gap: 3px;
-    padding: 10px 18px 8px;
+    padding: 7px 14px 8px;
   }
+  .theme-sheet-head > .integration-head-title { grid-column: 1; grid-row: 1; }
   .theme-sheet-head > .x { grid-column: 2; grid-row: 1; }
   .theme-category-row {
     grid-column: 1 / -1;
+    grid-row: 2;
     min-width: 0;
+    min-height: 20px;
     display: flex;
     align-items: center;
     gap: 12px;
-    margin-left: 42px;
+    margin-left: 34px;
     padding: 0;
   }
   .theme-category-nav {
@@ -15928,17 +17887,141 @@
   /* margin:auto 居中而非 transform——transform 会给内部 position:fixed 的下拉菜单
      制造 containing block，菜单被钳进弹窗坐标系再被 overflow:hidden 裁掉（遮挡）。 */
   .modal { inset: 0; margin: auto; height: fit-content; max-height: 88vh; width: min(440px, 92vw); border-radius: 14px; overflow: hidden; }
-  .sheet-head { display: flex; justify-content: space-between; align-items: center; padding: 15px 18px; border-bottom: 1px solid var(--border); }
+  .sheet-head { box-sizing: border-box; min-height: 48px; display: flex; justify-content: space-between; align-items: center; padding: 7px 14px; border-bottom: 1px solid var(--border); }
+  .sheet-head > b { min-width: 0; overflow: hidden; font-size: 13.5px; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
   .sheet-body { padding: 16px 18px; overflow-y: auto; display: flex; flex-direction: column; gap: 7px; }
+  .new-site-mask { z-index: 72; }
+  .modal.new-site-choice-modal, .modal.quick-site-modal { z-index: 73; border-radius: 18px; }
+  .modal.new-site-choice-modal { width: min(460px, calc(100vw - 40px)); }
+  /* 主窗口使用 Overlay 标题栏，窗口左上角约 30px 属于系统控制区。
+     高表单至少留出 36px 上边距，避免弹窗和 macOS 红黄绿按钮争抢同一区域。 */
+  .modal.quick-site-modal { width: min(620px, calc(100vw - 40px)); max-height: min(680px, calc(100vh - 72px)); }
+  .new-site-head { min-height: 48px; padding: 7px 14px; }
+  .new-site-head > div { min-width: 0; display: grid; gap: 1px; }
+  .new-site-head > div > b { font-size: 14px; line-height: 1.2; }
+  .new-site-head > div > small { color: var(--faint); font-size: 10px; line-height: 1.25; }
+  .new-site-choice-body { gap: 8px; padding: 14px 16px 13px; }
+  .new-site-choice-card {
+    width: 100%; min-width: 0; display: grid; grid-template-columns: 40px minmax(0, 1fr); align-items: center; gap: 11px;
+    padding: 12px; border: 1px solid var(--border2); border-radius: 12px; background: #fff; color: var(--text);
+    text-align: left; cursor: pointer; transition: border-color .15s, background .15s, transform .15s, box-shadow .15s;
+  }
+  .new-site-choice-card:hover { border-color: #ccc6ba; background: #fdfcf9; transform: translateY(-1px); box-shadow: var(--shadow-sm); }
+  .new-site-choice-card:focus-visible { outline: none; border-color: #b8a98d; box-shadow: 0 0 0 3px rgb(180 146 85 / 13%); }
+  .new-site-choice-card.recommended { border-color: #ddc7a1; background: #fffdf8; }
+  .new-site-choice-icon { width: 40px; height: 40px; display: grid; place-items: center; border-radius: 10px; color: var(--dim); background: #f1f0ec; }
+  .new-site-choice-icon.ai { color: #a55232; background: #f9eee8; }
+  .new-site-choice-copy { min-width: 0; display: grid; gap: 3px; }
+  .new-site-choice-title { display: flex; align-items: center; gap: 6px; }
+  .new-site-choice-title b { font-size: 13.5px; }
+  .new-site-choice-title em { padding: 1px 7px; border-radius: 999px; background: #f4e8d2; color: #9a5b0b; font-size: 10px; font-style: normal; font-weight: 650; }
+  .new-site-choice-copy > small { color: var(--dim); font-size: 11px; line-height: 1.45; }
+  .new-site-choice-copy > span:last-child { color: var(--accent); font-size: 11px; font-weight: 600; }
+  .new-site-choice-note { margin: 2px 2px 0; color: var(--faint); font-size: 10px; line-height: 1.45; text-align: center; }
+  .quick-site-form { min-height: 0; display: flex; flex: 1 1 auto; flex-direction: column; overflow: hidden; }
+  .quick-site-body { min-height: 0; gap: 10px; padding: 13px 17px; }
+  .quick-site-target {
+    display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 9px;
+    padding: 9px 10px; border: 1px solid var(--border); border-radius: 11px; background: #faf9f6;
+  }
+  .quick-site-target-mark { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 9px; background: #fff; box-shadow: var(--shadow-sm); }
+  .quick-site-target > span:nth-child(2) { min-width: 0; display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: baseline; column-gap: 8px; }
+  .quick-site-target small { grid-column: 1 / -1; color: var(--faint); font-size: 10px; }
+  .quick-site-target b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+  .quick-site-target em { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-size: 10.5px; font-style: normal; }
+  .quick-site-target > i { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 999px; background: #eceae4; color: var(--dim); font-size: 10px; font-style: normal; white-space: nowrap; }
+  .quick-site-target > i.ready { background: #e4f4ea; color: var(--ok); }
+  .quick-site-target > i.ready > span { font-weight: 700; }
+  .quick-site-target > i.blocked { background: var(--err-soft); color: var(--err); }
+  .quick-site-target > i.checking > span { width: 9px; height: 9px; box-sizing: border-box; border: 1.3px solid currentColor; border-top-color: transparent; border-radius: 50%; animation: upd-spin .7s linear infinite; }
+  .quick-site-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .quick-site-fields .tfield { gap: 5px; }
+  .quick-site-fields .tin { height: 36px; padding-inline: 11px; font-size: 12.5px; }
+  .quick-site-fields .tfield > small { min-height: 14px; color: var(--faint); font-size: 9.5px; line-height: 1.4; }
+  .quick-site-fields .tfield > small.invalid { color: var(--err); }
+  .quick-site-label-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .quick-site-label-row > button { padding: 0; border: 0; background: transparent; color: var(--dim); font: inherit; font-size: 10px; cursor: pointer; }
+  .quick-site-label-row > button:hover:not(:disabled) { color: var(--text); text-decoration: underline; text-underline-offset: 2px; }
+  .quick-site-label-row > button:disabled { color: var(--faint); cursor: default; }
+  .quick-site-options { min-width: 0; margin: 0; padding: 0; border: 0; }
+  .quick-site-options legend { margin-bottom: 5px; color: var(--dim); font-size: 11.5px; }
+  .quick-site-kind-grid, .quick-site-seed-grid { display: grid; gap: 7px; }
+  .quick-site-kind-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .quick-site-seed-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .quick-site-kind-grid > label, .quick-site-seed-grid > label {
+    min-width: 0; display: grid; grid-template-columns: 16px minmax(0, 1fr); align-items: start; gap: 7px; padding: 8px 9px;
+    border: 1px solid var(--border2); border-radius: 10px; background: #fff; cursor: pointer;
+  }
+  .quick-site-kind-grid > label:hover, .quick-site-seed-grid > label:hover { background: #fcfbf8; }
+  .quick-site-kind-grid > label.selected, .quick-site-seed-grid > label.selected { border-color: #b7a27e; background: #fbf7ef; box-shadow: inset 0 0 0 1px rgb(155 119 55 / 8%); }
+  .quick-site-kind-grid input, .quick-site-seed-grid input { width: 14px; height: 14px; margin: 1px 0 0; accent-color: #a65737; }
+  .quick-site-kind-grid label > span, .quick-site-seed-grid label > span { min-width: 0; display: grid; gap: 2px; }
+  .quick-site-kind-grid b, .quick-site-seed-grid b { font-size: 12px; }
+  .quick-site-kind-grid small, .quick-site-seed-grid small { color: var(--dim); font-size: 9.8px; line-height: 1.4; }
+  .quick-site-warning { display: grid; gap: 2px; padding: 7px 9px; border: 1px solid #efd4a6; border-radius: 9px; background: #fff8eb; color: #86520e; }
+  .quick-site-warning b { font-size: 11.5px; }
+  .quick-site-warning span { font-size: 10.5px; line-height: 1.5; }
+  .quick-site-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .quick-site-error > span { min-width: 0; }
+  .quick-site-error > button { flex: none; padding: 0; border: 0; background: transparent; color: var(--err); font: inherit; font-size: 11px; font-weight: 600; cursor: pointer; }
+  .quick-site-footer { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 17px 7px; border-top: 1px solid var(--border); background: #fff; }
+  .quick-site-back { min-height: 27px; display: inline-flex; align-items: center; gap: 3px; padding: 3px 1px; border: 0; background: transparent; color: var(--dim); font: inherit; font-size: 11.5px; cursor: pointer; }
+  .quick-site-back:hover:not(:disabled) { color: var(--text); }
+  .quick-site-back:disabled { opacity: .5; cursor: default; }
+  .quick-site-back svg { flex: none; }
+  .quick-site-footer .btn.primary { min-height: 29px; padding: 4px 11px; border-radius: 7px; font-size: 11.5px; }
+  .quick-site-review { gap: 10px; }
+  .quick-site-review-hero { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; align-items: center; gap: 9px; }
+  .quick-site-review-hero > span:first-child { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 10px; background: #f1f0ec; color: var(--dim); }
+  .quick-site-review-hero > div { min-width: 0; display: grid; gap: 1px; }
+  .quick-site-review-hero b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 16px; }
+  .quick-site-review-hero small { color: var(--dim); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+  .quick-site-review-hero em { padding: 3px 9px; border-radius: 999px; background: #e6f4eb; color: var(--ok); font-size: 10px; font-style: normal; font-weight: 650; }
+  .quick-site-review-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 0; overflow: hidden; border: 1px solid var(--border); border-radius: 12px; }
+  .quick-site-review-grid > div { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; }
+  .quick-site-review-grid > div:nth-child(odd) { border-right: 1px solid var(--border); }
+  .quick-site-review-grid > div:nth-child(n + 3) { border-top: 1px solid var(--border); }
+  .quick-site-review-grid dt { color: var(--faint); font-size: 10.5px; }
+  .quick-site-review-grid dd { min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-size: 11.5px; font-weight: 600; text-align: right; }
+  .quick-site-impact { padding: 9px 10px; border: 1px solid var(--border); border-radius: 11px; background: #faf9f6; }
+  .quick-site-impact > b { font-size: 12px; }
+  .quick-site-impact ul { display: grid; gap: 3px; margin: 6px 0; padding-left: 18px; color: var(--dim); font-size: 10.5px; line-height: 1.45; }
+  .quick-site-impact li::marker { color: var(--faint); }
+  .quick-site-impact p { margin: 0; padding-top: 6px; border-top: 1px solid var(--border); color: var(--faint); font-size: 10px; line-height: 1.45; }
+  .quick-site-success { align-items: center; gap: 7px; padding-block: 22px 19px; text-align: center; }
+  .quick-site-success-mark { width: 50px; height: 50px; display: grid; place-items: center; border-radius: 50%; background: #e4f4ea; color: var(--ok); }
+  .quick-site-success > div:nth-child(2) { display: grid; gap: 1px; margin-top: 2px; }
+  .quick-site-success > div:nth-child(2) b { font-size: 18px; }
+  .quick-site-success > div:nth-child(2) small { color: var(--dim); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+  .quick-site-success > p { max-width: 500px; margin: 4px auto 7px; color: var(--dim); font-size: 11.5px; line-height: 1.6; }
+  .quick-site-next { width: min(520px, 100%); display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); overflow: hidden; border: 1px solid var(--border); border-radius: 12px; text-align: left; }
+  .quick-site-next > span { min-width: 0; display: grid; gap: 2px; padding: 11px 12px; }
+  .quick-site-next > span + span { border-left: 1px solid var(--border); }
+  .quick-site-next b { font-size: 11.5px; }
+  .quick-site-next small { color: var(--dim); font-size: 10px; line-height: 1.45; }
+  .quick-site-sync-note { width: min(520px, 100%); padding: 8px 10px; border: 1px solid #e6dccb; border-radius: 9px; background: #fbf7ef; color: var(--dim); font-size: 10.5px; line-height: 1.5; text-align: left; }
+  .quick-site-success .err-note { width: min(520px, 100%); text-align: left; }
+  @media (max-width: 640px) {
+    .modal.new-site-choice-modal, .modal.quick-site-modal { width: calc(100vw - 18px); max-height: calc(100vh - 72px); }
+    .new-site-head { min-height: 48px; padding: 7px 14px; }
+    .new-site-choice-body, .quick-site-body { padding: 12px 14px; }
+    .quick-site-fields, .quick-site-kind-grid, .quick-site-seed-grid, .quick-site-review-grid, .quick-site-next { grid-template-columns: 1fr; }
+    .quick-site-review-grid > div:nth-child(odd) { border-right: 0; }
+    .quick-site-review-grid > div + div { border-top: 1px solid var(--border); }
+    .quick-site-next > span + span { border-left: 0; border-top: 1px solid var(--border); }
+    .quick-site-footer { padding: 6px 15px 8px; }
+    .quick-site-footer .btn.primary { flex: none; padding-inline: 10px; }
+    .quick-site-target em { display: none; }
+  }
   .update-center-mask { z-index: 65; }
   .update-center-sheet { z-index: 70; width: min(540px, 96vw); background: #fbfaf7; }
   .about-update-entry { display: inline-flex; align-items: center; gap: 5px; }
   .about-update-entry :global(svg) { flex: none; color: var(--dim); }
-  .update-center-title { min-width: 0; display: flex; align-items: center; gap: 9px; }
-  .update-center-title-icon { flex: none; width: 29px; height: 29px; display: grid; place-items: center; border-radius: 8px; background: var(--accent-soft); color: var(--accent); }
-  .update-center-title-copy { min-width: 0; display: grid; gap: 2px; }
-  .update-center-title-copy b { font-size: 15px; }
-  .update-center-title-copy small { color: var(--faint); font-size: 10.5px; font-weight: 400; }
+  .update-center-title { min-width: 0; display: flex; align-items: center; gap: 7px; }
+  .update-center-title-icon { flex: none; width: 26px; height: 26px; display: grid; place-items: center; border-radius: 7px; background: var(--accent-soft); color: var(--accent); }
+  .update-center-title-copy { min-width: 0; display: grid; gap: 1px; }
+  .update-center-title-copy b { font-size: 13.5px; line-height: 1.2; }
+  .update-center-title-copy small { color: var(--faint); font-size: 9.5px; line-height: 1.2; font-weight: 400; }
   .update-center-head-actions { display: flex; align-items: center; gap: 5px; }
   .update-center-body { flex: 1 1 auto; min-height: 0; gap: 13px; padding: 15px 17px 18px; }
   .update-overview { display: flex; align-items: center; gap: 11px; padding: 12px 13px; border: 1px solid var(--border); border-radius: 12px; background: #fff; }
@@ -15991,10 +18074,10 @@
   .gcms-migrate-head-btn:disabled { opacity: .45; cursor: default; }
   .gcms-migration-sheet { z-index: 70; overflow-x: hidden; }
   .gcms-migration-mask { z-index: 65; }
-  .gcms-migration-sheet .sheet-head { align-items: flex-start; gap: 16px; }
-  .gcms-migration-title { min-width: 0; display: flex; flex-direction: column; gap: 7px; }
+  .gcms-migration-sheet .sheet-head { align-items: center; gap: 12px; }
+  .gcms-migration-title { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
   .gcms-migration-title b { line-height: 1.25; }
-  .gcms-migration-title small { display: block; color: var(--faint); font-size: 10.5px; font-weight: 400; line-height: 1.4; }
+  .gcms-migration-title small { display: block; color: var(--faint); font-size: 9.5px; font-weight: 400; line-height: 1.2; }
   .gcms-migration-body { flex: 1 1 auto; min-height: 0; gap: 12px; overflow-x: hidden; padding-bottom: 16px; }
   .gcms-migration-body > * { flex-shrink: 0; }
   .gcms-migration-snapshot-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
@@ -16051,10 +18134,10 @@
   .gcms-migration-snapshot-list > div { display: flex; justify-content: space-between; gap: 8px; font-size: 11.5px; }
   .gcms-migration-snapshot-list span { color: var(--faint); white-space: nowrap; }
   .gcms-migration-snapshot-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 5px; }
-  .gcms-sheet-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .gcms-sheet-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
   .gcms-sheet-title > div { min-width: 0; }
   .gcms-sheet-title b { display: block; }
-  .gcms-sheet-title small { display: flex; align-items: center; gap: 4px; margin-top: 2px; color: var(--faint); font-size: 10.5px; font-weight: 500; }
+  .gcms-sheet-title small { display: flex; align-items: center; gap: 4px; margin-top: 1px; color: var(--faint); font-size: 9.5px; line-height: 1.2; font-weight: 500; }
   .gcms-access-instance-context { min-width: 0; }
   .gcms-access-instance-context > span { flex: none; padding: 1px 5px; border-radius: 999px; background: #edf2f8; color: #526b87; font-size: 8.5px; cursor: help; }
   .gcms-access-instance-context code { flex: none; color: var(--accent); font: 600 9px/1.2 ui-monospace, monospace; }
@@ -16111,8 +18194,8 @@
   .gcms-child-domain-action:hover { text-decoration: underline; }
   .gcms-child-domain-action:disabled { color: var(--faint); cursor: default; text-decoration: none; }
   .gcms-child-domain-empty { padding: 8px 9px; border-radius: 8px; background: var(--soft); color: var(--faint); font-size: 9.5px; line-height: 1.5; }
-  .gcms-title-ic { width: 30px; height: 30px; border-radius: 9px; background: #f2eee8; color: var(--accent); display: inline-flex; align-items: center; justify-content: center; flex: none; }
-  .gcms-back { width: 30px; height: 30px; padding: 0; border: 1px solid var(--border); border-radius: 9px; background: #fff; color: var(--dim); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+  .gcms-title-ic { width: 27px; height: 27px; border-radius: 8px; background: #f2eee8; color: var(--accent); display: inline-flex; align-items: center; justify-content: center; flex: none; }
+  .gcms-back { width: 27px; height: 27px; padding: 0; border: 1px solid var(--border); border-radius: 8px; background: #fff; color: var(--dim); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
   .gcms-back:hover { background: #f4f2ed; color: var(--text); }
   .gcms-back:disabled { opacity: .5; cursor: default; }
   .gcms-intro-tip { width: 15px; height: 15px; margin: -2px 0; display: inline-flex; align-items: center; justify-content: center; color: var(--faint); border-radius: 50%; cursor: help; }
@@ -16497,7 +18580,7 @@
   .transfer-entry-arrow { margin-left: auto; color: var(--faint); flex: none; }
   .transfer-sheet { width: min(480px, 94vw); }
   .transfer-sheet .sheet-head > div { min-width: 0; display: grid; gap: 2px; }
-  .transfer-sheet .sheet-head small { color: var(--faint); font-size: 10.5px; font-weight: 400; }
+  .transfer-sheet .sheet-head small { color: var(--faint); font-size: 9.5px; line-height: 1.2; font-weight: 400; }
   .transfer-body { gap: 12px; }
   .transfer-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; padding: 3px; border-radius: 9px; background: #f1efe9; }
   .transfer-tabs button { min-height: 34px; border: 0; border-radius: 7px; background: transparent; color: var(--dim); font: inherit; font-size: 12px; cursor: pointer; }
@@ -16749,6 +18832,50 @@
   .md-precheck b { display: inline-flex; align-items: center; gap: 5px; }
   .md-precheck ul { margin: 6px 0 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
   .md-pre-ack { margin-right: auto; align-self: center; font-size: 11.5px; color: var(--dim); }
+
+  /* 弹窗底部操作区统一使用紧凑规格。正文末尾的 row-end 也铺到弹窗边缘，
+     看起来和独立 footer 是同一套组件，同时不影响表单内部的小型操作行。 */
+  .modal > .sheet-body > .row-end:last-child {
+    box-sizing: border-box;
+    min-height: 40px;
+    flex: none;
+    margin: 5px -18px -16px;
+    padding: 5px 14px 7px;
+    border-top: 1px solid var(--border);
+    background: var(--bg);
+  }
+  .theme-footer,
+  .deployment-footer,
+  .quick-site-footer,
+  .update-center-footer,
+  .gcms-migration-footer,
+  .ed-footer,
+  .md-wizard-footer {
+    box-sizing: border-box;
+    min-height: 40px;
+    gap: 6px;
+    padding: 5px 14px 7px;
+  }
+  .modal > .sheet-body > .row-end:last-child .btn,
+  .theme-footer .btn,
+  .deployment-footer .btn,
+  .quick-site-footer .btn,
+  .update-center-footer .btn,
+  .gcms-migration-footer .btn,
+  .ed-footer .btn,
+  .md-wizard-footer .btn {
+    box-sizing: border-box;
+    min-height: 28px;
+    padding: 4px 10px;
+    border-radius: 7px;
+    font-size: 11.5px;
+    line-height: 1.15;
+  }
+  .deployment-footer .deployment-change-domain,
+  .quick-site-footer .quick-site-back {
+    min-height: 27px;
+    font-size: 11.5px;
+  }
   @media (max-width: 760px) {
     .sites-page { padding: 14px 14px 24px; }
     .sites-global-popover { position: fixed; top: 52px; right: 12px; width: min(430px, calc(100vw - 24px)); }
@@ -16773,12 +18900,18 @@
     .sitebuild-guide-footer { padding-inline: 16px; }
     .sitebuild-safe-note { padding-inline: 16px; text-align: left; }
     .md-model-grid, .md-managed-wizard .trow { grid-template-columns: 1fr; }
-    .md-wizard-footer { padding: 10px 14px; }
+    .md-wizard-footer { padding: 5px 12px 7px; }
     .md-wizard-footer .md-pre-ack { display: none; }
     .md-prompt-tabs { width: 100%; overflow-x: auto; }
     .md-prompt-tabs button { flex: 1 0 auto; }
     .site-ready-list { grid-template-columns: 1fr; }
     .site-ready-title small { display: none; }
     .site-ready-continue { min-width: 60px; padding-inline: 9px; }
+    .sheet.gsc-insights-sheet { width: 100vw; }
+    .gsc-insights-resize { display: none; }
+    .gsc-insights-body { padding-inline: 13px; }
+    .gsc-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .gsc-opportunity { grid-template-columns: 20px minmax(0, 1fr); }
+    .gsc-opportunity-metrics { grid-column: 2 / -1; grid-template-columns: repeat(4, minmax(44px, 1fr)); width: 100%; }
   }
 </style>

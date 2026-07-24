@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -53,6 +54,17 @@ func TestPlatformControlSitePreviewURL(t *testing.T) {
 	if previewURL.Scheme != "https" || previewURL.Host != "platform.test" || !strings.HasPrefix(previewURL.Path, wantPrefix) {
 		t.Fatalf("preview_url = %q, want platform URL under %q", got.PreviewURL, wantPrefix)
 	}
+	runtime, ok := srv.runtimePool().runtimeByID(blogSite.ID)
+	if !ok || runtime == nil || runtime.Store == nil {
+		t.Fatal("blog runtime missing")
+	}
+	const previewLogo = "private-preview-logo.svg"
+	if err := os.WriteFile(runtime.UploadDir+"/"+previewLogo, []byte("<svg xmlns=\"http://www.w3.org/2000/svg\"/>"), 0o644); err != nil {
+		t.Fatalf("write preview logo: %v", err)
+	}
+	if err := runtime.Store.SetSetting("site.logo", "/uploads/"+previewLogo); err != nil {
+		t.Fatalf("set preview logo: %v", err)
+	}
 
 	// 无后台 Cookie、无 GCMS 密码也能打开；页面链接始终留在同一票据路径中。
 	page := httptest.NewRecorder()
@@ -68,6 +80,15 @@ func TestPlatformControlSitePreviewURL(t *testing.T) {
 	body := page.Body.String()
 	if !strings.Contains(body, "Blog Site") || !strings.Contains(body, wantPrefix) {
 		t.Fatalf("preview did not render target site inside signed prefix: %s", body)
+	}
+	mediaPath := strings.TrimRight(previewURL.Path, "/") + "/uploads/" + previewLogo
+	if !strings.Contains(body, mediaPath) {
+		t.Fatalf("preview did not scope uploaded media URL: want %q", mediaPath)
+	}
+	media := httptest.NewRecorder()
+	h.ServeHTTP(media, httptest.NewRequest(http.MethodGet, "https://platform.test"+mediaPath, nil))
+	if media.Code != http.StatusOK {
+		t.Fatalf("open preview media without referer = %d %s", media.Code, media.Body.String())
 	}
 
 	// 票据与站点绑定，不能换一个 site ID 复用。

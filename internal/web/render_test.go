@@ -35,3 +35,19 @@ func TestAddImageLoadingHintsHandlesRenderedHTML(t *testing.T) {
 		t.Fatalf("should not duplicate existing attrs: %s", got)
 	}
 }
+
+func TestRewritePreviewUploadURLsOnlyChangesURLContexts(t *testing.T) {
+	const prefix = "/preview/sites/7/site/signed-token"
+	body := []byte(`<img src="/uploads/a.webp"><div data-image='/uploads/b.webp' style="background-image:url('/uploads/c.webp')"></div><code>/uploads/keep.webp</code>`)
+	got := string(rewritePreviewUploadURLs(body, prefix))
+	for _, want := range []string{
+		`src="` + prefix + `/uploads/a.webp"`,
+		`data-image='` + prefix + `/uploads/b.webp'`,
+		`url('` + prefix + `/uploads/c.webp')`,
+		`<code>/uploads/keep.webp</code>`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("rewritten preview HTML missing %q: %s", want, got)
+		}
+	}
+}

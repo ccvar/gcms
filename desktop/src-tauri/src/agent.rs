@@ -198,6 +198,7 @@ impl Drop for ScopedPromptFile {
 pub enum TurnEvent {
     Delta { text: String },
     Tool { label: String, detail: String },
+    ContextCompacted { pre_tokens: u64 },
     Done { ok: bool, error: String },
 }
 
@@ -960,6 +961,25 @@ fn clarify_claude_cli_error(brain: &str, error: String) -> String {
         return error;
     }
     let lower = error.to_ascii_lowercase();
+    let context_limit = [
+        "prompt is too long",
+        "context window",
+        "context length",
+        "maximum context",
+        "max context",
+        "too many tokens",
+        "input is too long",
+        "request too large",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+        || (error.contains("上下文")
+            && (error.contains("超限") || error.contains("上限") || error.contains("过长")));
+    if context_limit {
+        return format!(
+            "Claude 的当前底层会话已达到上下文上限。Pilot 中的聊天记录仍完整保留；请点击「重建继续」，Pilot 会用历史记录接入一个新的 Claude 会话。原始错误：{error}"
+        );
+    }
     let unknown_option = [
         "unknown option",
         "unknown argument",
@@ -1216,6 +1236,14 @@ fn build_claude(
     if !budget.is_empty() {
         cmd.env("MAX_THINKING_TOKENS", budget);
     }
+    // Claude Code 原生 auto-compact 会在**同一个 session**内清理旧工具输出并摘要历史，
+    // 不会像 Pilot 旧逻辑那样换 UUID。给它留 10% 余量，避免大文件/工具输出在默认约 95%
+    // 的临界点直接顶爆；用户显式禁用或自定义阈值时尊重其环境设置。
+    if std::env::var_os("DISABLE_AUTO_COMPACT").is_none()
+        && std::env::var_os("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE").is_none()
+    {
+        cmd.env("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE", "90");
+    }
     apply_env_cwd(&mut cmd, conn, work_dir, api_key, lease);
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -1333,6 +1361,10 @@ fn parse_stream(
 
 fn parse_claude(ev: &serde_json::Value, ch: &Channel<TurnEvent>, collect: &Arc<Mutex<Collect>>) {
     match ev.get("type").and_then(|t| t.as_str()) {
+        Some("system") if claude_compact_pre_tokens(ev).is_some() => {
+            let pre_tokens = claude_compact_pre_tokens(ev).unwrap_or(0);
+            let _ = ch.send(TurnEvent::ContextCompacted { pre_tokens });
+        }
         Some("stream_event") => {
             let e = &ev["event"];
             if e.get("type").and_then(|t| t.as_str()) == Some("content_block_delta") {
@@ -1391,6 +1423,16 @@ fn parse_claude(ev: &serde_json::Value, ch: &Channel<TurnEvent>, collect: &Arc<M
         }
         _ => {}
     }
+}
+
+fn claude_compact_pre_tokens(ev: &serde_json::Value) -> Option<u64> {
+    (ev.get("type").and_then(|t| t.as_str()) == Some("system")
+        && ev.get("subtype").and_then(|t| t.as_str()) == Some("compact_boundary"))
+    .then(|| {
+        ev.pointer("/compact_metadata/pre_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0)
+    })
 }
 
 fn parse_codex(ev: &serde_json::Value, ch: &Channel<TurnEvent>, collect: &Arc<Mutex<Collect>>) {
@@ -1779,6 +1821,43 @@ mod tests {
             "unknown option '--append-system-prompt-file'".into(),
         );
         assert_eq!(codex, "unknown option '--append-system-prompt-file'");
+    }
+
+    #[test]
+    fn claude_context_limit_error_explains_that_pilot_history_is_preserved() {
+        for raw in [
+            "Prompt is too long",
+            "maximum context length exceeded",
+            "input is too long for the context window",
+            "上下文已超过上限",
+        ] {
+            let clarified = clarify_claude_cli_error("claude", raw.into());
+            assert!(clarified.contains("聊天记录仍完整保留"));
+            assert!(clarified.contains("重建继续"));
+            assert!(clarified.contains(raw));
+        }
+    }
+
+    #[test]
+    fn claude_compact_boundary_serializes_for_the_frontend() {
+        let raw = json!({
+            "type": "system",
+            "subtype": "compact_boundary",
+            "compact_metadata": {"pre_tokens": 912345, "trigger": "auto"}
+        });
+        assert_eq!(claude_compact_pre_tokens(&raw), Some(912_345));
+        assert_eq!(
+            claude_compact_pre_tokens(&json!({"type":"system","subtype":"init"})),
+            None
+        );
+
+        let event = TurnEvent::ContextCompacted {
+            pre_tokens: 912_345,
+        };
+        assert_eq!(
+            serde_json::to_value(event).unwrap(),
+            json!({"type":"context_compacted","pre_tokens":912345})
+        );
     }
 
     #[test]

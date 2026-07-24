@@ -83,10 +83,15 @@ node scripts/gcms.js update posts 123 '{"meta_desc":"Updated SEO description"}'
 node scripts/gcms.js update posts 123 '{}' --robots "noindex, follow" --canonical https://example.com/original
 node scripts/gcms.js audit posts --lang zh --limit 50
 node scripts/gcms.js audit pages --lang zh --limit 20 --deep true
-node scripts/gcms.js search-stats --days 28 --limit 100
-node scripts/gcms.js search-stats --days 28 --compare
+node scripts/gcms.js search-stats --days 28 --limit 100 --group query
+node scripts/gcms.js search-stats --days 28 --group page --compare
+node scripts/gcms.js search-stats --days 28 --group date
 node scripts/gcms.js traffic-stats --days 7
 node scripts/gcms.js page-stats --days 7 --limit 50
+node scripts/gcms.js analytics-stats --days 30 --limit 200 --group sources
+node scripts/gcms.js analytics-stats --days 30 --limit 200 --group geography
+node scripts/gcms.js analytics-stats --days 30 --limit 200 --group devices
+node scripts/gcms.js analytics-stats --days 30 --limit 100 --group trend
 node scripts/gcms.js tg-stats
 ```
 
@@ -109,10 +114,11 @@ node scripts/gcms.js tg-stats
 
 ## Statistics (stats:read)
 
-- `search-stats` returns Search Console query x page performance (clicks, impressions, average position) for the last `--days` days (clamped 1..90, default 28; `--limit` clamped 1..1000, default 100). Typical use: find queries ranking 8-20 and improve the matching old post.
-- `search-stats --compare` additionally fetches the immediately preceding window of equal length and merges it by query+page: each row gains `prev_clicks`, `prev_impressions`, `prev_position` (null when the query+page had no data before). Use it to review how an optimization moved the needle.
-- `traffic-stats` returns GA active users and sessions for the last `--days` days (default 7).
-- `page-stats` returns GA per-page traffic rows `{path, active_users, sessions}` (default `--days 7`, `--limit 50`, sorted by active users desc). Combine with `search-stats` to pick which old page to improve.
+- `search-stats` returns Search Console performance with clicks, impressions, CTR and average position for the last `--days` days (clamped 1..90, default 28; `--limit` clamped 1..1000, default 100). `--group` accepts `query_page` (default), `query`, `page`, `date`, or `total`; use `--fresh` only when an uncached read is necessary.
+- `search-stats --compare` additionally fetches the immediately preceding window of equal length and merges it by the selected group: each row gains `prev_clicks`, `prev_impressions`, `prev_ctr`, `prev_position` (null when the key had no data before). `date` does not support compare.
+- `traffic-stats` returns GA active users, sessions, engagement rate and average session duration for the last `--days` days (default 7).
+- `page-stats` returns GA per-page traffic rows `{path, active_users, sessions, engagement_rate, average_session_duration}` (default `--days 7`, `--limit 50`, sorted by active users desc). Combine with `search-stats` to pick which old page to improve.
+- `analytics-stats` returns GA breakdown rows with the same four quality metrics. `--group` accepts `sources` (default channel + source/medium), `geography` (country + region), `devices` (device + OS + browser), or `trend` (daily rows). Use these dimensions to explain where useful traffic comes from instead of inferring from totals.
 - Responses are cached server-side for 1 hour; if the site has no Search Console / GA integration the API returns `search_console_not_connected` / `analytics_not_connected` — ask the user to connect Google in the platform admin first.
 - `tg-stats` returns the Telegram channel subscriber count `{ok, members}` via `GET /stats/telegram` (also cached 1 hour). Use it to track reader-to-subscriber conversion. If the site has no Telegram channel configured the API returns `telegram_not_configured` — ask the user to configure it in the site admin (Settings → Telegram) first. On an older server without this command the request returns 404; that is not a failure, just skip it.
 

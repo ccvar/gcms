@@ -79,14 +79,18 @@ export interface Site {
       sessions?: number;
       status?: string;
       fetched_at?: string;
+      range_key?: string;
     };
     search_console: {
       configured: boolean;
       enabled: boolean;
       clicks?: number;
       impressions?: number;
+      ctr?: number;
+      position?: number;
       status?: string;
       fetched_at?: string;
+      range_key?: string;
     };
     telegram: {
       configured: boolean;
@@ -557,6 +561,7 @@ export interface Conversation {
 export type TurnEvent =
   | { type: 'delta'; text: string }
   | { type: 'tool'; label: string; detail: string }
+  | { type: 'context_compacted'; pre_tokens: number }
   | { type: 'done'; ok: boolean; error: string };
 
 export interface ScheduledItem {

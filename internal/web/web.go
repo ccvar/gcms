@@ -909,10 +909,14 @@ type View struct {
 	Site         seo.Site
 	SEO          seo.Meta
 	ForceNoindex bool
-	Nav          string
-	Year         int
-	Theme        string
-	Layout       string
+	// PreviewMediaPrefix is set only for platform-hosted child-site previews.
+	// The renderer uses it to keep /uploads/... requests inside the signed
+	// preview scope instead of relying on the browser Referer header.
+	PreviewMediaPrefix string
+	Nav                string
+	Year               int
+	Theme              string
+	Layout             string
 	// ContentThemeFamily 只标记独立内容骨架；它是主题 ID 的派生值，
 	// 不对应后台设置，也不会改变旧主题的页头、页脚或首页分发。
 	ContentThemeFamily string
@@ -1888,7 +1892,10 @@ func (s *Server) serveRuntimeSitePreview(w http.ResponseWriter, r *http.Request,
 	}
 	nextURL := *r.URL
 	nextURL.Path = rest
-	ctx := withPreviewRoutePrefix(withPreviewNoindex(r.Context()), previewPrefix)
+	ctx := withPreviewMediaPrefix(
+		withPreviewRoutePrefix(withPreviewNoindex(r.Context()), previewPrefix),
+		previewPrefix,
+	)
 	req := r.Clone(ctx)
 	req.URL = &nextURL
 	w.Header().Set("X-Robots-Tag", "noindex, nofollow")
@@ -1912,6 +1919,21 @@ func (s *Server) serveSignedSitePreview(w http.ResponseWriter, r *http.Request, 
 	}
 	if !rt.Site.IsDefault && rt.Site.Status != "enabled" {
 		http.NotFound(w, r)
+		return
+	}
+	if token, name, ok := signedContentPreviewMediaTarget(rest); ok {
+		if _, state := rt.server.verifyFrontendPreviewToken(token); state != "" {
+			http.NotFound(w, r)
+			return
+		}
+		nextURL := *r.URL
+		nextURL.Path = "/uploads/" + name
+		nextURL.RawQuery = ""
+		req := r.Clone(r.Context())
+		req.URL = &nextURL
+		w.Header().Set("X-Robots-Tag", "noindex, nofollow")
+		w.Header().Set("Cache-Control", "private, no-store")
+		rt.server.siteHandler().ServeHTTP(w, req)
 		return
 	}
 	if token, target, ok := signedWholeSitePreviewTarget(rest); ok {
@@ -1950,9 +1972,38 @@ func (s *Server) serveSignedSitePreview(w http.ResponseWriter, r *http.Request, 
 	}
 	nextURL := *r.URL
 	nextURL.Path = "/preview" + rest
-	req := r.Clone(r.Context())
+	token := strings.TrimSpace(r.URL.Query().Get("token"))
+	ctx := r.Context()
+	if token != "" {
+		mediaPrefix := "/preview/sites/" + strconv.FormatInt(siteID, 10) + "/media/" + url.PathEscape(token)
+		ctx = withPreviewMediaPrefix(ctx, mediaPrefix)
+	}
+	req := r.Clone(ctx)
 	req.URL = &nextURL
 	rt.server.siteHandler().ServeHTTP(w, req)
+}
+
+// signedContentPreviewMediaTarget parses the explicit media route used by a
+// single-content preview:
+//
+//	/media/{frontend-preview-token}/uploads/{filename}
+//
+// Keeping the token in the path lets image requests select and authorize the
+// target child site without cookies or a Referer header.
+func signedContentPreviewMediaTarget(rest string) (token, name string, ok bool) {
+	const prefix = "/media/"
+	if !strings.HasPrefix(rest, prefix) {
+		return "", "", false
+	}
+	token, tail, found := strings.Cut(strings.TrimPrefix(rest, prefix), "/uploads/")
+	if !found || strings.TrimSpace(token) == "" {
+		return "", "", false
+	}
+	name, ok = uploadNameFromPath("/uploads/" + tail)
+	if !ok {
+		return "", "", false
+	}
+	return token, name, true
 }
 
 // signedWholeSitePreviewTarget 解析 "/site/{token}/…"，token 放在路径中，
@@ -2474,6 +2525,8 @@ func (s *Server) discoverySiteIntegrations(pool *SiteRuntimePool, site *platform
 		if summary.RangeKey == snapshot.rangeKey && summary.Status == platform.GoogleSearchConsoleSummaryStatusOK {
 			search["clicks"] = summary.Clicks
 			search["impressions"] = summary.Impressions
+			search["ctr"] = summary.CTR
+			search["position"] = summary.Position
 		} else if summary.RangeKey != snapshot.rangeKey {
 			search["status"] = "stale"
 		}
@@ -2976,6 +3029,7 @@ const publicBaseKey ctxKey = 1
 const previewNoindexKey ctxKey = 2
 const previewRoutePrefixKey ctxKey = 3
 const previewThemeKey ctxKey = 4
+const previewMediaPrefixKey ctxKey = 5
 
 func withLang(ctx context.Context, lang string) context.Context {
 	return context.WithValue(ctx, langKey, lang)
@@ -3004,6 +3058,19 @@ func previewNoindexFrom(ctx context.Context) bool {
 
 func previewRoutePrefixFrom(ctx context.Context) string {
 	v, _ := ctx.Value(previewRoutePrefixKey).(string)
+	return v
+}
+
+func withPreviewMediaPrefix(ctx context.Context, prefix string) context.Context {
+	prefix = strings.TrimRight(strings.TrimSpace(prefix), "/")
+	if prefix == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, previewMediaPrefixKey, prefix)
+}
+
+func previewMediaPrefixFrom(ctx context.Context) string {
+	v, _ := ctx.Value(previewMediaPrefixKey).(string)
 	return v
 }
 
@@ -3930,6 +3997,7 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("GET /api/admin/v1/stats/search", s.apiStatsSearch)
 	mux.HandleFunc("GET /api/admin/v1/stats/traffic", s.apiStatsTraffic)
 	mux.HandleFunc("GET /api/admin/v1/stats/pages", s.apiStatsPages)
+	mux.HandleFunc("GET /api/admin/v1/stats/analytics", s.apiStatsAnalytics)
 	mux.HandleFunc("GET /api/admin/v1/stats/telegram", s.apiStatsTelegram)
 	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/openapi.json", s.apiPlatformOpenAPI)
 	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/languages", s.apiLanguages)
@@ -3982,6 +4050,7 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/stats/search", s.apiStatsSearch)
 	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/stats/traffic", s.apiStatsTraffic)
 	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/stats/pages", s.apiStatsPages)
+	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/stats/analytics", s.apiStatsAnalytics)
 	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/stats/telegram", s.apiStatsTelegram)
 
 	// 临时前台预览：由自动化 API 生成短期签名 URL，渲染真实前台模板但不索引、不缓存。
@@ -4196,12 +4265,13 @@ func (s *Server) viewForLang(r *http.Request, lang, nav string) *View {
 	v := &View{
 		Site: st, Nav: nav, Year: time.Now().Year(), Theme: st.Theme, Layout: layoutForTheme(st.Theme), ContentThemeFamily: contentThemeFamily(st.Theme), ThemeStyle: s.themeOverride(),
 		Tr: tr, Lang: lang, AssetVer: s.assetVer,
-		SitemapURL:    previewRootPath(r, "/sitemap.xml"),
-		RobotsURL:     previewRootPath(r, "/robots.txt"),
-		CategoryAll:   s.archiveConfig(lang, "post"),
-		LinksAll:      s.archiveConfig(lang, "link"),
-		ExternalLinks: s.externalLinkPolicy(),
-		ForceNoindex:  previewNoindexFrom(r.Context()),
+		PreviewMediaPrefix: previewMediaPrefixFrom(r.Context()),
+		SitemapURL:         previewRootPath(r, "/sitemap.xml"),
+		RobotsURL:          previewRootPath(r, "/robots.txt"),
+		CategoryAll:        s.archiveConfig(lang, "post"),
+		LinksAll:           s.archiveConfig(lang, "link"),
+		ExternalLinks:      s.externalLinkPolicy(),
+		ForceNoindex:       previewNoindexFrom(r.Context()),
 	}
 	// 主题试穿：预览请求树内所有页面换候选主题渲染（不改站点设置、不进公共页缓存）。
 	if th := previewThemeFrom(r.Context()); th != "" {

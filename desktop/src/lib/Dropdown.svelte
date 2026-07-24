@@ -13,12 +13,13 @@
     placeholder = '选择…',
     disabled = false,
     compact = false,
+    menuCompact = false,
     searchable = false,
     tone = '',
     bare = false,
     tip = '',
     onchange,
-  }: { value: string; options: Opt[]; placeholder?: string; disabled?: boolean; compact?: boolean; searchable?: boolean; tone?: string; bare?: boolean; tip?: string; onchange?: (value: string) => void } = $props();
+  }: { value: string; options: Opt[]; placeholder?: string; disabled?: boolean; compact?: boolean; menuCompact?: boolean; searchable?: boolean; tone?: string; bare?: boolean; tip?: string; onchange?: (value: string) => void } = $props();
 
   let open = $state(false);
   let root: HTMLDivElement | undefined = $state();
@@ -48,7 +49,7 @@
     const up = belowSpace < 220 && aboveSpace > belowSpace;
     const maxH = Math.min(300, Math.max(96, up ? aboveSpace : belowSpace));
     // 紧凑模式触发器很窄，菜单加宽到 ≥240px；靠右时钳制左边界防溢出。
-    const width = compact ? Math.max(r.width, 240) : r.width;
+    const width = menuCompact ? Math.max(r.width, 132) : compact ? Math.max(r.width, 240) : r.width;
     let left = r.left;
     if (compact) left = Math.max(12, Math.min(left, window.innerWidth - width - 12));
     const vert = up
@@ -109,7 +110,7 @@
     </svg>
   </button>
   {#if open}
-    <div class="dd-menu" style={menuStyle}>
+    <div class="dd-menu" class:menu-compact={menuCompact} style={menuStyle}>
       {#if showSearch}
         <div class="dd-search">
           <input bind:this={searchEl} bind:value={query} placeholder="搜索站点…" spellcheck="false" autocapitalize="off" autocorrect="off" />
@@ -194,6 +195,10 @@
   .dd-otext small.danger { color: var(--err, #dc2626); }
   .dd-otext small.warn { color: var(--warn, #b45309); }
   .dd-check { color: var(--accent, #33302a); flex: none; font-size: 13px; margin-left: auto; }
+  .dd-menu.menu-compact { padding: 3px; border-radius: 9px; }
+  .dd-menu.menu-compact .dd-opt { min-height: 27px; gap: 6px; padding: 4px 8px; border-radius: 6px; }
+  .dd-menu.menu-compact .dd-otext b { font-size: 12px; line-height: 1.15; }
+  .dd-menu.menu-compact .dd-check { font-size: 11px; }
   .dd-search { position: sticky; top: 0; z-index: 1; background: #fff; padding: 2px 2px 5px; margin-bottom: 2px; border-bottom: 1px solid var(--border, #ecebe6); }
   .dd-search input { width: 100%; border: none; outline: none; background: #f4f3ef; border-radius: 7px; padding: 6px 9px; font: inherit; font-size: 13px; color: var(--text, #26241f); }
   .dd-empty { padding: 14px 12px; text-align: center; color: var(--faint, #a29d93); font-size: 12.5px; }

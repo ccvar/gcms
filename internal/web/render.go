@@ -499,13 +499,52 @@ func (r *Renderer) execute(w http.ResponseWriter, key, layout string, status int
 	_, _ = buf.WriteTo(w)
 }
 
+func rewritePreviewUploadURLs(body []byte, prefix string) []byte {
+	prefix = strings.TrimRight(strings.TrimSpace(prefix), "/")
+	if prefix == "" || !bytes.Contains(body, []byte("/uploads/")) {
+		return body
+	}
+	// Rewrite URL-bearing HTML attributes and inline CSS only. A plain textual
+	// mention such as <code>/uploads/example.webp</code> must remain unchanged.
+	replacements := [][2]string{
+		{`="/uploads/`, `="` + prefix + `/uploads/`},
+		{`='/uploads/`, `='` + prefix + `/uploads/`},
+		{`url("/uploads/`, `url("` + prefix + `/uploads/`},
+		{`url('/uploads/`, `url('` + prefix + `/uploads/`},
+		{`url(/uploads/`, `url(` + prefix + `/uploads/`},
+	}
+	for _, replacement := range replacements {
+		body = bytes.ReplaceAll(body, []byte(replacement[0]), []byte(replacement[1]))
+	}
+	return body
+}
+
 // Public 渲染公开页面。
 func (r *Renderer) Public(w http.ResponseWriter, name string, status int, data any) {
-	if v, ok := data.(*View); ok && v.ForceNoindex {
+	v, isView := data.(*View)
+	if isView && v.ForceNoindex {
 		v.SEO.Robots = "noindex, nofollow"
 		v.SEO.Alternates = nil
 	}
-	r.execute(w, name, "public_layout", status, data)
+	if !isView || v.PreviewMediaPrefix == "" {
+		r.execute(w, name, "public_layout", status, data)
+		return
+	}
+	t, ok := r.sets[name]
+	if !ok {
+		http.Error(w, "模板不存在: "+name, http.StatusInternalServerError)
+		return
+	}
+	var buf bytes.Buffer
+	if err := t.ExecuteTemplate(&buf, "public_layout", data); err != nil {
+		log.Printf("渲染 %s 失败: %v", name, err)
+		http.Error(w, "内部错误", http.StatusInternalServerError)
+		return
+	}
+	body := rewritePreviewUploadURLs(buf.Bytes(), v.PreviewMediaPrefix)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
+	_, _ = w.Write(body)
 }
 
 // ThemePreview 渲染后台主题卡片使用的轻量缩略图页面。

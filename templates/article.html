@@ -1,12 +1,4 @@
-{{define "body"}}{{$p := .Post}}  <div class="read-progress" aria-hidden="true"><i></i></div>
-  <main class="wrap">
-    <div class="article-grid{{if .TOC}} has-toc{{end}}">
-      <nav class="breadcrumb article-bc" aria-label="{{.Tr.T "common.breadcrumb"}}">
-        <a href="{{.Tr.U "/"}}">{{.Tr.T "nav.home"}}</a><span class="sep">/</span>
-        {{with $p.Category}}<a href="{{$.Tr.U (printf "/category/%s" .Slug)}}">{{.Name}}</a><span class="sep">/</span>{{end}}
-        <span aria-current="page">{{$p.Title}}</span>
-      </nav>
-      {{if .TOC}}
+{{define "article_toc"}}
       <aside class="toc-rail">
         <details class="toc" open>
           <summary>{{.Tr.T "common.toc"}}</summary>
@@ -16,10 +8,21 @@
           </ul>
         </details>
       </aside>
-      {{end}}
+{{end}}
+{{define "body"}}{{$p := .Post}}  <div class="read-progress" aria-hidden="true"><i></i></div>
+  <main class="wrap">
+    <div class="article-grid{{if .TOC}} has-toc{{end}}{{if eq .ContentThemeFamily "paper-current"}} pc-article-grid{{end}}">
+      <nav class="breadcrumb article-bc" aria-label="{{.Tr.T "common.breadcrumb"}}">
+        <a href="{{.Tr.U "/"}}">{{.Tr.T "nav.home"}}</a><span class="sep">/</span>
+        {{with $p.Category}}<a href="{{$.Tr.U (printf "/category/%s" .Slug)}}">{{.Name}}</a><span class="sep">/</span>{{end}}
+        <span aria-current="page">{{$p.Title}}</span>
+      </nav>
+      {{if and .TOC (ne .ContentThemeFamily "paper-current")}}{{template "article_toc" .}}{{end}}
 
       <div class="article-col">
         <article class="article-main">
+          {{if and .TOC (eq .ContentThemeFamily "paper-current")}}{{template "article_toc" .}}{{end}}
+          <div class="article-reading">
           <header class="article-head">
             {{with $p.Category}}<p class="kicker">{{.Name}}</p>{{end}}
             <h1>{{$p.Title}}</h1>
@@ -37,6 +40,7 @@
 
           <div class="prose">
             {{.ContentHTML}}
+          </div>
           </div>
 
           <div class="article-foot">
