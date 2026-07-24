@@ -25,6 +25,8 @@
   import { loadPrefs, savePrefs } from '$lib/defaults';
   import { PRESET_PROMPTS, loadUserPrompts, saveUserPrompts, newPromptId, type Prompt } from '$lib/prompts';
   import Dropdown from '$lib/Dropdown.svelte';
+  import GaOverviewChart from '$lib/GaOverviewChart.svelte';
+  import GscOverviewChart from '$lib/GscOverviewChart.svelte';
   import ConfirmDialog from '$lib/ConfirmDialog.svelte';
   import GcmsPasswordDialog from '$lib/GcmsPasswordDialog.svelte';
   import { marked } from 'marked';
@@ -61,6 +63,7 @@
     prev_ctr?: number | null;
     prev_position?: number | null;
   };
+  type GscTrendChartRow = GscStatsRow & { date: string };
   type GscStatsPayload = {
     ok: boolean;
     days: number;
@@ -8722,6 +8725,9 @@
   function gscRows(group: GscStatsGroup): GscStatsRow[] {
     return gscInsightsData[group]?.rows ?? [];
   }
+  function gscTrendChartRows(): GscTrendChartRow[] {
+    return gscRows('date').filter((row): row is GscTrendChartRow => !!row.date?.trim());
+  }
   function loadGscInsightsWidth(): number {
     try {
       const value = Number(localStorage.getItem(GSC_SHEET_WIDTH_KEY));
@@ -9000,6 +9006,7 @@
     const group = gscTabGroup();
     void loadGscGroup(group, fresh);
     if (group !== 'total') void loadGscGroup('total', fresh);
+    if (gscInsightsTab === 'opportunities') void loadGscGroup('date', fresh);
   }
   function openGscInsights(site: Site) {
     closeGaInsights();
@@ -9017,6 +9024,7 @@
     switcherOpen = false;
     void loadGscGroup('total');
     void loadGscGroup('query');
+    void loadGscGroup('date');
   }
   function closeGscInsights() {
     gscInsightsSeq += 1;
@@ -9031,6 +9039,7 @@
     const group = gscTabGroup(tab);
     void loadGscGroup(group);
     if (group !== 'total') void loadGscGroup('total');
+    if (tab === 'opportunities') void loadGscGroup('date');
   }
   function changeGscDays(value: string) {
     gscInsightsDays = value;
@@ -9041,6 +9050,7 @@
     gscInsightsSelected = {};
     void loadGscGroup('total');
     void loadGscGroup(gscTabGroup());
+    if (gscInsightsTab === 'opportunities') void loadGscGroup('date');
   }
   function gscFocusLines(rows: GscSelectedRow[]): string {
     if (!rows.length) return '';
@@ -9298,6 +9308,7 @@
   function loadGaCurrent(fresh = false) {
     void loadGaStats('traffic', fresh);
     void loadGaStats(gaTabGroup(), fresh);
+    if (gaInsightsTab === 'overview') void loadGaStats('trend', fresh);
   }
   function openGaInsights(site: Site) {
     closeGscInsights();
@@ -9330,6 +9341,7 @@
   function selectGaTab(tab: GaInsightsTab) {
     gaInsightsTab = tab;
     void loadGaStats(gaTabGroup(tab));
+    if (tab === 'overview') void loadGaStats('trend');
   }
   function changeGaDays(value: string) {
     gaInsightsDays = value;
@@ -12474,6 +12486,9 @@
   {@const activeGaError = gaInsightsErrors[activeGaGroup]}
   {@const gaCopy = gaViewCopy(gaInsightsTab)}
   {@const gaTrendMax = gaTrendMaxSessions(activeGaDimensionRows)}
+  {@const overviewGaTrendRows = gaDimensionRows('trend')}
+  {@const overviewGaTrendLoading = !!gaInsightsLoading.trend}
+  {@const overviewGaTrendError = gaInsightsErrors.trend ?? ''}
   {@const selectedGaCount = Object.keys(gaInsightsSelected).length}
   {@const trafficLoading = !!gaInsightsLoading.traffic}
   <div class="mask" role="presentation" onclick={closeGaInsights}></div>
@@ -12514,8 +12529,8 @@
           </div>
           <div class="gsc-overview-actions">
             <Dropdown compact menuCompact bind:value={gaInsightsDays} options={GA_RANGE_OPTIONS} onchange={changeGaDays} />
-            <button class="icon-btn" aria-label="刷新当前访问数据" data-tip="绕过一小时缓存，重新读取 Google 数据" onclick={() => loadGaCurrent(true)} disabled={trafficLoading || activeGaLoading}>
-              {@render refreshIcon(trafficLoading || activeGaLoading)}
+            <button class="icon-btn" aria-label="刷新当前访问数据" data-tip="绕过一小时缓存，重新读取 Google 数据" onclick={() => loadGaCurrent(true)} disabled={trafficLoading || activeGaLoading || overviewGaTrendLoading}>
+              {@render refreshIcon(trafficLoading || activeGaLoading || overviewGaTrendLoading)}
             </button>
           </div>
         </div>
@@ -12533,6 +12548,15 @@
           </div>
         {/if}
         {#if gaInsightsErrors.traffic}<div class="gsc-inline-error">{gaInsightsErrors.traffic}</div>{/if}
+        {#if gaInsightsTab === 'overview'}
+          <GaOverviewChart
+            rows={overviewGaTrendRows}
+            days={Number(gaInsightsDays)}
+            loading={overviewGaTrendLoading}
+            error={overviewGaTrendError}
+            onOpenTrend={() => selectGaTab('trend')}
+          />
+        {/if}
       </section>
 
       <div class="gsc-tabs ga-tabs" role="tablist" aria-label="访问表现维度">
@@ -12642,6 +12666,9 @@
   {@const activeRows = gscRows(activeGroup)}
   {@const activeError = gscInsightsErrors[activeGroup]}
   {@const activeLoading = !!gscInsightsLoading[activeGroup]}
+  {@const overviewGscTrendRows = gscTrendChartRows()}
+  {@const overviewGscTrendLoading = !!gscInsightsLoading.date}
+  {@const overviewGscTrendError = gscInsightsErrors.date ?? ''}
   {@const selectedCount = Object.keys(gscInsightsSelected).length}
   <div class="mask" role="presentation" onclick={closeGscInsights}></div>
   <div
@@ -12681,8 +12708,8 @@
           </div>
           <div class="gsc-overview-actions">
             <Dropdown compact menuCompact bind:value={gscInsightsDays} options={GSC_RANGE_OPTIONS} onchange={changeGscDays} />
-            <button class="icon-btn" aria-label="刷新当前搜索数据" data-tip="绕过一小时缓存，重新读取 Google 数据" onclick={() => loadGscCurrent(true)} disabled={activeLoading || !!gscInsightsLoading.total}>
-              {@render refreshIcon(activeLoading || !!gscInsightsLoading.total)}
+            <button class="icon-btn" aria-label="刷新当前搜索数据" data-tip="绕过一小时缓存，重新读取 Google 数据" onclick={() => loadGscCurrent(true)} disabled={activeLoading || !!gscInsightsLoading.total || (gscInsightsTab === 'opportunities' && overviewGscTrendLoading)}>
+              {@render refreshIcon(activeLoading || !!gscInsightsLoading.total || (gscInsightsTab === 'opportunities' && overviewGscTrendLoading))}
             </button>
           </div>
         </div>
@@ -12704,6 +12731,15 @@
           </div>
         {/if}
         {#if gscInsightsErrors.total}<div class="gsc-inline-error">{gscInsightsErrors.total}</div>{/if}
+        {#if gscInsightsTab === 'opportunities'}
+          <GscOverviewChart
+            rows={overviewGscTrendRows}
+            days={Number(gscInsightsDays)}
+            loading={overviewGscTrendLoading}
+            error={overviewGscTrendError}
+            onOpenTrend={() => selectGscTab('trend')}
+          />
+        {/if}
       </section>
 
       <div class="gsc-tabs" role="tablist" aria-label="搜索表现维度">
