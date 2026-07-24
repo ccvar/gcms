@@ -301,6 +301,95 @@ func TestRunScheduledPublish(t *testing.T) {
 	}
 }
 
+func configureScheduledPublishCloudflareRealtime(t *testing.T, s *Server) {
+	t.Helper()
+	settings := map[string]string{
+		cloudflareAPITokenKey:   "test-token",
+		cloudflareDeployModeKey: cloudflareModeWorkerAssets,
+		cloudflareWorkerNameKey: "gcms-scheduled-publish-test",
+		cloudflareDomainsKey: encodeCloudflareDomains([]CloudflareDomain{{
+			Host:    "scheduled.example.com",
+			Primary: true,
+		}}),
+		cloudflareAutoSyncKey: "1",
+		cloudflareSyncModeKey: cloudflareSyncModeRealtime,
+	}
+	for key, value := range settings {
+		if err := s.store.SetSetting(key, value); err != nil {
+			t.Fatalf("set Cloudflare setting %q: %v", key, err)
+		}
+	}
+	t.Cleanup(s.stopCloudflareTimer)
+}
+
+func TestRunScheduledPublishSchedulesCloudflareRealtimeSync(t *testing.T) {
+	s, _ := newTestAutomationServer(t, "posts:read")
+	configureScheduledPublishCloudflareRealtime(t, s)
+
+	s.cacheMu.Lock()
+	s.content["scheduled-post"] = contentCacheEntry{}
+	s.endpoints = map[string]endpointCacheEntry{"feed": {}}
+	s.pages = map[string]pageCacheEntry{"home": {}}
+	s.cacheMu.Unlock()
+
+	if _, err := s.store.CreatePost(&store.Post{
+		Type: "post", Slug: "cloudflare-scheduled", Title: "Cloudflare 定时文章",
+		Status: "scheduled", Lang: "zh", PublishedAt: time.Now().Add(-time.Minute),
+	}); err != nil {
+		t.Fatalf("create scheduled post: %v", err)
+	}
+
+	s.RunScheduledPublish()
+
+	s.cacheMu.RLock()
+	contentCount, endpointCount, pageCount := len(s.content), len(s.endpoints), len(s.pages)
+	s.cacheMu.RUnlock()
+	if contentCount != 0 || endpointCount != 0 || pageCount != 0 {
+		t.Fatalf("定时发布后前台缓存未完整清理：content=%d endpoints=%d pages=%d",
+			contentCount, endpointCount, pageCount)
+	}
+	if got := s.store.Setting(cloudflareSyncPendingKey); got != "1" {
+		t.Fatalf("Cloudflare sync pending = %q, want 1", got)
+	}
+	nextAt := s.store.Setting(cloudflareSyncNextAtKey)
+	if _, err := time.Parse(time.RFC3339, nextAt); err != nil {
+		t.Fatalf("Cloudflare sync next_at = %q, want RFC3339 time: %v", nextAt, err)
+	}
+	s.cloudflareMu.Lock()
+	timerArmed := s.cloudflareTimer != nil
+	s.cloudflareMu.Unlock()
+	if !timerArmed {
+		t.Fatalf("定时发布未启动 Cloudflare 实时同步防抖计时器")
+	}
+}
+
+func TestRunScheduledPublishWithoutDuePostsDoesNotScheduleCloudflareSync(t *testing.T) {
+	s, _ := newTestAutomationServer(t, "posts:read")
+	configureScheduledPublishCloudflareRealtime(t, s)
+
+	if _, err := s.store.CreatePost(&store.Post{
+		Type: "post", Slug: "cloudflare-not-due", Title: "尚未到点",
+		Status: "scheduled", Lang: "zh", PublishedAt: time.Now().Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("create future scheduled post: %v", err)
+	}
+
+	s.RunScheduledPublish()
+
+	if got := s.store.Setting(cloudflareSyncPendingKey); got != "" {
+		t.Fatalf("没有到期文章时不应标记 Cloudflare 待同步，得到 %q", got)
+	}
+	if got := s.store.Setting(cloudflareSyncNextAtKey); got != "" {
+		t.Fatalf("没有到期文章时不应安排 Cloudflare 同步时间，得到 %q", got)
+	}
+	s.cloudflareMu.Lock()
+	timerArmed := s.cloudflareTimer != nil
+	s.cloudflareMu.Unlock()
+	if timerArmed {
+		t.Fatalf("没有到期文章时不应启动 Cloudflare 同步计时器")
+	}
+}
+
 // TestAPIStatsTelegram /stats/telegram：未配置 → 400 telegram_not_configured；
 // 配置后返回 {ok,members} 并缓存 1 小时（第二次不再打 Bot API）。
 func TestAPIStatsTelegram(t *testing.T) {
