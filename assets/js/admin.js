@@ -1818,8 +1818,46 @@
 
   /* ---------- 自定义下拉（替代 <select>） ---------- */
   var openDD = null;
+  function restoreDDMenu(dd) {
+    if (!dd || !dd._ddPortalMenu) return;
+    var menu = dd._ddPortalMenu;
+    if (dd._ddMenuParent) dd._ddMenuParent.insertBefore(menu, dd._ddMenuNext || null);
+    menu.classList.remove("dd-portal");
+    menu.style.left = "";
+    menu.style.top = "";
+    menu.style.width = "";
+    menu.style.maxHeight = "";
+    dd._ddPortalMenu = null;
+    dd._ddMenuParent = null;
+    dd._ddMenuNext = null;
+  }
+  function portalDDMenu(dd, menu, toggle) {
+    if (!dd || !menu || !toggle || !dd.closest(".modal") || dd.hasAttribute("data-dropdown-search")) return;
+    var rect = toggle.getBoundingClientRect();
+    dd._ddPortalMenu = menu;
+    dd._ddMenuParent = menu.parentNode;
+    dd._ddMenuNext = menu.nextSibling;
+    menu.classList.add("dd-portal");
+    document.body.appendChild(menu);
+    var gap = 6;
+    var maxBelow = Math.max(120, window.innerHeight - rect.bottom - gap - 12);
+    menu.style.left = Math.max(12, rect.left) + "px";
+    menu.style.top = (rect.bottom + gap) + "px";
+    menu.style.width = Math.max(180, Math.min(rect.width, window.innerWidth - 24)) + "px";
+    menu.style.maxHeight = Math.min(260, maxBelow) + "px";
+    var menuRect = menu.getBoundingClientRect();
+    if (menuRect.bottom > window.innerHeight - 12 && rect.top > menuRect.height + gap + 12) {
+      menu.style.top = Math.max(12, rect.top - menuRect.height - gap) + "px";
+    }
+  }
   function closeDD() {
-    if (openDD) { openDD.classList.remove("open"); openDD.querySelector(".dd-toggle").setAttribute("aria-expanded", "false"); openDD = null; }
+    if (openDD) {
+      var closing = openDD;
+      closing.classList.remove("open");
+      closing.querySelector(".dd-toggle").setAttribute("aria-expanded", "false");
+      restoreDDMenu(closing);
+      openDD = null;
+    }
   }
   function initDropdown(dd) {
     if (!dd || dd.dataset.ddReady === "1") return;
@@ -1924,6 +1962,7 @@
 	          dd.classList.add("open");
 	          toggle.setAttribute("aria-expanded", "true");
 	          openDD = dd;
+	          portalDDMenu(dd, menu, toggle);
 	          if (searchInput) {
 	            searchInput.value = "";
 	            filterNativeMenu();
@@ -1959,7 +1998,12 @@
       e.stopPropagation();
       var willOpen = !dd.classList.contains("open");
       closeDD();
-      if (willOpen) { dd.classList.add("open"); toggle.setAttribute("aria-expanded", "true"); openDD = dd; }
+      if (willOpen) {
+        dd.classList.add("open");
+        toggle.setAttribute("aria-expanded", "true");
+        openDD = dd;
+        portalDDMenu(dd, dd.querySelector(".dd-menu"), toggle);
+      }
     });
     items.forEach(function (li) { li.addEventListener("click", function () { select(li); closeDD(); }); });
     dd.addEventListener("keydown", function (e) {
@@ -1978,6 +2022,8 @@
     else initDropdown(dd);
   };
   document.addEventListener("click", closeDD);
+  window.addEventListener("resize", closeDD);
+  window.addEventListener("scroll", closeDD, true);
 
   /* 列表里的发布状态快捷菜单：点击空白处收起，避免表格里同时打开多个菜单。 */
   function closeStatusMenus(except) {
@@ -4080,7 +4126,13 @@
       var btn = e.submitter || submitBtnsFor(form)[0];
       if (btn && !btn.disabled) {
         var orig = btn.textContent;
-        setTimeout(function () { btn.disabled = true; btn.dataset.busy = "1"; btn.textContent = orig.indexOf("上传") >= 0 ? "上传中…" : "处理中…"; }, 0);
+        btn.dataset.busyLabel = orig;
+        setTimeout(function () {
+          if (!btn.dataset.busyLabel) return;
+          btn.disabled = true;
+          btn.dataset.busy = "1";
+          btn.textContent = orig.indexOf("上传") >= 0 ? "上传中…" : "处理中…";
+        }, 0);
       }
     });
   });
@@ -4110,6 +4162,11 @@
       form.addEventListener("input", recheck);
       form.addEventListener("change", recheck);
       form.addEventListener("dd:change", recheck);
+      form.addEventListener("admin:form-saved", function () {
+        base = sig();
+        contentTouched = false;
+        recheck();
+      });
       if (rich) rich.addEventListener("input", function () { contentTouched = true; recheck(); });
       recheck(); // 初始：未改动 → 禁用保存
     });
@@ -4898,6 +4955,8 @@
 (function () {
   var form = document.querySelector('form.admin-form[action="/admin/settings/appearance"]');
   if (!form || !window.fetch || !window.URLSearchParams) return;
+  var initialThemeInput = form.querySelector('input[name="theme"]:checked');
+  var initialTheme = initialThemeInput ? initialThemeInput.value : "";
   var busy = false;
   form.addEventListener("submit", function (e) {
     e.preventDefault();
@@ -4909,7 +4968,13 @@
     submits.forEach(function (b) { b.disabled = true; b.setAttribute("aria-busy", "true"); });
     function done() {
       busy = false;
-      submits.forEach(function (b) { b.disabled = false; b.removeAttribute("aria-busy"); });
+      submits.forEach(function (b) {
+        b.disabled = false;
+        b.removeAttribute("aria-busy");
+        if (b.dataset.busyLabel) b.textContent = b.dataset.busyLabel;
+        delete b.dataset.busy;
+        delete b.dataset.busyLabel;
+      });
     }
     fetch(form.action, {
       method: "POST",
@@ -4921,6 +4986,15 @@
     }).then(function (res) {
       done();
       if (res.ok && res.json.ok) {
+        var selectedThemeInput = form.querySelector('input[name="theme"]:checked');
+        var selectedTheme = selectedThemeInput ? selectedThemeInput.value : "";
+        // 主题 options schema 由服务端按当前主题装配。换主题后必须重新装配页面，
+        // 否则「主题配置」弹窗仍显示旧主题的槽（例如从内容主题切到 Pilot 时只剩 Hero）。
+        if (selectedTheme && selectedTheme !== initialTheme) {
+          window.location.reload();
+          return;
+        }
+        form.dispatchEvent(new CustomEvent("admin:form-saved", { bubbles: false }));
         if (window.adminShowFlash) window.adminShowFlash(res.json.message || "外观设置已保存。", false);
         if (window.gcmsOpenModals && window.gcmsCloseModal) {
           window.gcmsOpenModals().forEach(function (m) { window.gcmsCloseModal(m); });

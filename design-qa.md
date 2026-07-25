@@ -1,399 +1,375 @@
-# Pilot GCMS installer drawer design QA
+# Design QA — Answer Desk / Portrait Journal / Casebook
 
-- Source visual truth:
-  - `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-f42de616-bbd4-451c-b35b-be14453f801a.png`
-  - `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-8c7a04d1-5b8d-49cd-8fa5-d0597197ca38.png`
-- Rendered implementation: `/private/tmp/pilot-gcms-access-link-desktop.png`
-- Combined comparison: `/private/tmp/pilot-gcms-comparison-20260720.png`
-- Viewport: Pilot window 820 × 560 logical pixels, captured at Retina resolution.
-- State: GCMS installer drawer open with two detected installations; one has a public HTTPS address.
+## Comparison targets
 
-## Full-view comparison evidence
+- Answer Desk source: `/Users/apple/.codex/generated_images/019f9819-858c-7022-be40-dcad9b27ecd2/call_x1GK5YgrFrGMTm8SDZKgy98L.png`
+- Portrait Journal source: `/Users/apple/.codex/generated_images/019f9819-858c-7022-be40-dcad9b27ecd2/call_PpguYoES05mJMuAnE5HAKRY5.png`
+- Casebook source: `/Users/apple/.codex/generated_images/019f9819-858c-7022-be40-dcad9b27ecd2/call_PpeS9Mv4N2WenSrQiS8GjqAY.png`
+- Final desktop captures:
+  - `run/theme-previews/qa/answer-desk-final.png`
+  - `run/theme-previews/qa/portrait-journal-final.png`
+  - `run/theme-previews/qa/casebook-final.png`
+- Mobile resilience captures:
+  - `run/theme-previews/qa/answer-desk-mobile.png`
+  - `run/theme-previews/qa/portrait-journal-mobile.png`
+  - `run/theme-previews/qa/casebook-mobile.png`
 
-The former multi-line introduction card is removed, shortening the drawer before the server list. Its complete content now lives behind the small information icon beside `远程服务器`, matching the annotated target area without changing the drawer width, card hierarchy, or existing visual tokens.
+## Normalization and state
 
-## Focused region comparison evidence
-
-- Header: the information icon sits on the subtitle baseline, keeps the title block compact, and uses the app-wide custom multiline Tooltip.
-- Installed-server card: the installation directory remains attached to the folder icon Tooltip.
-- Public address: `https://cms.clarcoin.com` is now a visible, truncated-safe button below the fact grid, with an external-open affordance. It no longer depends on non-interactive Tooltip content.
-- DOM measurements place both fact cards and the address action fully inside the 400px drawer; no horizontal overflow occurs.
+- Source pixels: 1435 × 1096 for all three designs.
+- Desktop implementation viewport: 1435 × 1096 CSS px, device scale factor 1.
+- Desktop implementation captures: 1435 × 1096 px.
+- Mobile implementation viewport: 390 × 844 CSS px; browser content width is 375 px because of the visible scrollbar.
+- State: Chinese locale, populated theme-preview data, first viewport at page top.
+- Density normalization: none required; source and desktop implementation use equal pixel dimensions.
+- Full-view evidence: each source and its implementation capture were opened together at native size during the final comparison.
+- Focused-region evidence: a separate crop was not needed. At native 1435 px width, header, Hero, feature area, list typography, borders, image crops, and footer were all legible in the paired full-view comparisons. DOM box measurements were additionally checked for the principal Hero/lead regions.
 
 ## Required fidelity surfaces
 
-- Fonts and typography: existing application font stack and type hierarchy are unchanged; the new address uses the existing small-action weight.
-- Spacing and layout rhythm: the removed intro card saves one full content block; header and card spacing remain aligned with existing 6–12px increments.
-- Colors and visual tokens: existing neutral, accent, success, border and hover colors are reused.
-- Image quality and asset fidelity: no raster assets are introduced; the implementation reuses Pilot's existing monochrome information and external-open icon language.
-- Copy and content: the full installation explanation remains available in the Tooltip, while the actionable URL is visible in the card.
-
-## Findings
-
-No actionable P0, P1 or P2 visual or interaction differences remain in the captured state.
+- Fonts and typography: serif/sans roles, heading hierarchy, weights, tracking, line height, wrapping, and long CMS-title behavior match the intended editorial character. Long dynamic titles no longer enlarge the lead regions beyond the source proportions.
+- Spacing and layout rhythm: the three desktop compositions retain their source grids, hairline dividers, square corners, section order, and dense below-the-fold rhythm. Mobile layouts stack without horizontal overflow.
+- Colors and tokens: blue, forest green, and vermilion accents are implemented as theme tokens on warm neutral backgrounds. No gradients or generic elevated cards were introduced.
+- Image quality and asset fidelity: all visible article and Hero imagery comes from the CMS/site profile. Images were complete at capture time and retain real intrinsic widths; no placeholder drawings, custom SVG art, CSS art, or fake photography is used.
+- Copy and content: theme templates contain no mockup article names or descriptions. Site, Hero, menu, category, featured-post, post-list, dates, counts, excerpts, and covers are all data-bound.
+- Interactions and accessibility: the Answer Desk search is a semantic GET search form with `q`; the mobile navigation control exposes a named button and changes the navigation from hidden to visible; images carry CMS alt text; desktop and mobile have no horizontal overflow. Browser console produced no warnings or errors.
 
 ## Comparison history
 
-- Initial state: a large introduction panel consumed vertical space; the public URL was only readable inside a Tooltip and therefore could not be clicked.
-- Fixes: moved the explanation into the header information Tooltip and promoted the public URL to a visible button beneath the installed-server facts.
-- Post-fix evidence: `/private/tmp/pilot-gcms-comparison-20260720.png`; no P0/P1/P2 findings.
+### Pass 1 — blocked
+
+- [P1] Answer Desk Hero type was oversized for real CMS copy, pushing the featured-answer band far below the source fold.
+- [P1] Portrait Journal's long dynamic Hero and featured title expanded the lead from the intended editorial proportion and caused the image caption to dominate the photograph.
+- [P2] Casebook's proposition heading used too large a scale for longer backend copy, making the lead substantially taller than the reference.
+
+Fixes:
+
+- Reduced and capped Answer Desk's display scale while preserving the serif hierarchy.
+- Reduced Portrait Journal lead scale and clamped the photograph caption to two lines.
+- Reduced Casebook proposition scale and tightened tracking to preserve the source's compact left column.
+
+### Pass 2 — passed
+
+- Re-captured all three implementations at 1435 × 1096 and compared each with its source in the same visual input.
+- Re-captured all three at 390 × 844; reported horizontal overflow is false for every theme.
+- Verified loaded image state: all captured images are complete with non-zero intrinsic widths.
+- Verified no browser console warnings or errors.
+- Remaining visible differences are expected CMS-data differences: the source mockups use art-directed example copy and portraits/architecture, while the implementation deliberately renders the current site's real Hero text, categories, excerpts, covers, and counts. Structure, hierarchy, tokens, and image treatment remain faithful.
+
+### Pass 3 — responsive shell correction, passed
+
+- User evidence: `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-57851a2d-9b01-4474-979b-eed32e88ba33.png` (2102 × 714 px).
+- Final implementation evidence: `run/theme-previews/qa/answer-desk-nav-boxed-final.png` (2102 × 714 px).
+- [P2] The active navigation item rendered both the editorial-collection border and the global navigation `::after`, producing two blue rules. The collection header now suppresses the global pseudo-element and retains one active rule.
+- [P2] The three new themes filled very wide preview canvases. Header, page body, and footer now use a fluid shell capped at 1280 px: widths from 1080 through 1240 shrink naturally, while 1360 and 1440 center the 1280 px shell.
+- Browser measurements covered 1080, 1200, 1240, 1360, and 1440 for all three themes. Every result had `overflow: false`; active-navigation `::after` was `display: none`.
+- Additional 820, 768, 760, and 390 checks confirmed no horizontal overflow. The existing 760 px mobile breakpoint still collapses the navigation, while wider tablet states retain the desktop navigation.
+- Console warnings/errors: none.
+
+### Pass 4 — content-page breathing room, passed
+
+- User evidence: `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-3fba9b75-7165-4693-9a18-fe15d4372afc.png` (2764 × 818 px).
+- Final implementation evidence: `run/theme-previews/qa/answer-desk-about-breathing.png` (2764 × 818 px).
+- [P2] The final paragraph, divider, and footer read as one compressed block. The three new themes now reserve a fluid 72–112 px content-page closing space before the footer, reduced to 56 px at the mobile breakpoint.
+- At 1440 px, the measured final-content-to-footer distance is 144 px for all three themes; at 760 px and 390 px it is 88 px. All checked states report no horizontal overflow and no console warnings/errors.
+- The rule is scoped to Answer Desk, Portrait Journal, and Casebook content pages, so existing themes and homepage density are unchanged.
+
+### Pass 5 — all inner-page breathing room, passed
+
+- User evidence: `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-f4fc0cba-66d6-4588-97f0-9bbdb15de42d.png` (2290 × 902 px).
+- Final implementation evidence: `run/theme-previews/qa/answer-desk-article-bottom-breathing.png`.
+- [P2] The previous correction only targeted `.content-page`, so article detail and other inner-page templates could still place their last section directly against the footer. The spacing contract now lives on the three themes' inner `<main>` elements and explicitly excludes their homepage shells.
+- Article pages for all three themes were measured at 1440, 760, and 390 px. Desktop closing space is 112 px; tablet and mobile closing space is 56 px. Every checked state reports no horizontal overflow.
+- Scope checks confirm all three homepages retain `padding-bottom: 0`, while representative About and article pages receive the shared inner-page spacing. This covers article, category, search, links, generic list/detail, documentation, product, and not-found templates without changing existing themes.
+
+### Pass 6 — pure-white and dark palette skins, passed
+
+- Source visual truth:
+  - `/Users/apple/.codex/generated_images/019f9819-858c-7022-be40-dcad9b27ecd2/call_x1GK5YgrFrGMTm8SDZKgy98L.png`
+  - `/Users/apple/.codex/generated_images/019f9819-858c-7022-be40-dcad9b27ecd2/call_PpguYoES05mJMuAnE5HAKRY5.png`
+  - `/Users/apple/.codex/generated_images/019f9819-858c-7022-be40-dcad9b27ecd2/call_PpeS9Mv4N2WenSrQiS8GjqAY.png`
+- Combined comparison evidence, ordered source / pure white / dark:
+  - `run/theme-previews/qa/answer-desk-palette-comparison.jpg`
+  - `run/theme-previews/qa/portrait-journal-palette-comparison.jpg`
+  - `run/theme-previews/qa/casebook-palette-comparison.jpg`
+- Implementation viewport captures:
+  - `run/theme-previews/qa/{answer-desk,portrait-journal,casebook}-{white,dark}-viewport.jpg`
+  - `run/theme-previews/qa/{answer-desk,portrait-journal,casebook}-{white,dark}-mobile.jpg`
+- Source and desktop implementation are 1435 × 1096 px at device scale factor 1. Mobile checks use a 390 × 844 CSS-pixel viewport. No density normalization was required.
+- State: Chinese locale, populated CMS preview data, homepage at page top. Copy and imagery intentionally differ from the visual studies because every palette skin continues to consume the current site's real Hero, categories, featured content, post lists, dates, counts, excerpts, and covers.
+- The three compositions, typography roles, image treatment, straight-rule system, responsive breakpoints, and data-bound templates remain unchanged. Only palette tokens vary.
+- Each family now exposes exactly three skins on one theme card: original, pure white, and dark. Pure-white skins compute `--bg: #ffffff`; dark skins compute near-black family-specific backgrounds and raised surfaces.
+- Desktop and mobile captures for all six new skins report no horizontal overflow; every image is complete with a non-zero intrinsic width.
+- WCAG contrast measurements against each skin background:
+  - primary text: 17.35:1–18.93:1
+  - accent text: 4.81:1–9.64:1
+- Answer Desk's dark search action uses an explicit `--on-accent` token so its button label remains readable without introducing component-specific hardcoded content.
+- Focused-region evidence was not required beyond the combined full-view comparisons: the change is token-only, and the relevant line work, type, controls, images, and section boundaries are readable at the normalized desktop size.
+
+### Pass 7 — header top-rule removal, passed
+
+- User evidence: `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-5439df4e-f911-47dd-ad76-feb880b6af3a.png` (2048 × 186 px).
+- Final implementation evidence: `run/theme-previews/qa/answer-desk-no-top-line.jpg`.
+- Focused comparison evidence: `run/theme-previews/qa/answer-desk-top-line-comparison.jpg` (user browser capture above, revised implementation header below).
+- [P2] The editorial-collection header carried a 2 px accent-colored top border. At wide widths it read as an unintended page-wide rule above the navigation. The top border is now removed; the single active-navigation underline and the neutral header-bottom divider remain.
+- All nine skins across Answer Desk, Portrait Journal, and Casebook report `border-top-width: 0`, a 59 px header, one 1 px bottom divider, hidden global active-link pseudo-element, and no horizontal overflow.
+- Typography, palette tokens, page-shell width, navigation positions, CMS content, imagery, and responsive behavior are otherwise unchanged.
+
+### Pass 8 — sticky navigation, passed
+
+- Source visual truth: `run/theme-previews/qa/answer-desk-no-top-line.jpg` (the accepted header appearance after Pass 7).
+- Desktop implementation evidence: `run/theme-previews/qa/answer-desk-sticky-header.jpg` at a scrolled article state.
+- Mobile interaction evidence: `run/theme-previews/qa/answer-desk-dark-sticky-mobile-menu.jpg` at 390 × 844 with the sticky header menu open after scrolling.
+- [P2] The shared editorial-collection header previously used normal document flow, so navigation disappeared on long articles and case pages. It now uses `position: sticky; top: 0` with the existing opaque theme background and a contained stacking level.
+- Original and dark skins from all three families were scrolled and measured: the document scroll position changed while every header retained `getBoundingClientRect().top === 0`, `position: sticky`, and no horizontal overflow. The same shared selector covers the three pure-white skins.
+- On mobile, the dark Answer Desk page was scrolled beyond 1200 px and the real menu button was activated. The header remained at top 0, `aria-expanded` changed to `true`, the menu opened directly below the 59 px header, and no horizontal overflow appeared.
+- No shadow, blur, new top rule, or layout offset was introduced. The active navigation underline and neutral bottom divider remain the only persistent header rules.
+
+### Pass 9 — six additional content skeleton families, passed
+
+- Visual sources:
+  - Shelf Index: `/Users/apple/.codex/generated_images/019f986c-a7c7-71f0-9b09-ea435acec882/call_PeBVpTixXQ0p2chF5xbYeYpJ.png`
+  - Tradeoff Sheet: `/Users/apple/.codex/generated_images/019f986c-a7c7-71f0-9b09-ea435acec882/call_4edW5gUlWuGWtKWvARf905Py.png`
+  - Progress Bulletin: `/Users/apple/.codex/generated_images/019f986c-a7c7-71f0-9b09-ea435acec882/call_5vOP6F0NACOdrKU5baC0LOOj.png`
+  - Margin Reading Room: `/Users/apple/.codex/generated_images/019f986c-a7c7-71f0-9b09-ea435acec882/call_19xwzTGnS8KFhV7Cg9HomWen.png`
+  - Light Table: `/Users/apple/.codex/generated_images/019f986c-a7c7-71f0-9b09-ea435acec882/call_bg80cNH95ZiEkkJQedh6r6j3.png`
+  - Counterpoint: `/Users/apple/.codex/generated_images/019f986c-a7c7-71f0-9b09-ea435acec882/call_fXjAWCEwioVy7GF0K4DyQku7.png`
+- Same-viewport comparison evidence:
+  - `run/design-qa/{shelf-index,tradeoff-sheet,progress-bulletin,margin-reading-room,light-table,counterpoint}-comparison-viewport.png`
+  - Each combined image places the design source on the left and the rendered implementation on the right. Sources were width-normalized to 1435 CSS pixels and cropped at the top to 1435 × 1096; implementation captures use the same page-top state and 1435 × 1096 viewport.
+- Dynamic-content fidelity: all six skeletons bind the current site logo, name, navigation, Hero eyebrow/title/description/media, category data, featured item, post collections, dates, excerpts, counts, links, locale and translated labels. No design-study article copy, mock URLs, category mapping or Hero asset was copied into production templates.
+- Hero-media contract: site-profile image and SVG modes are honored first, followed by the featured post cover. All six use the same backend data contract; image slots crop responsively with `object-fit: cover` rather than assuming a fixed source aspect ratio.
+- Layout fidelity: the six distinct source structures remain recognizable—shelved index, decision worksheet, bulletin ledger, annotated reading room, contact sheet, and paired counterpoint stream. Typography roles, square corners, hairline rules, section ordering, accents, dense editorial rhythm and 1280 px capped shell follow the accepted studies.
+- Header contract: every family has a real CMS logo, `position: sticky; top: 0`, no top border, exactly one neutral bottom divider and one active-navigation underline. The implementation remains boxed rather than filling an ultrawide viewport.
+- Palette contract: each family exposes original, pure-white and dark skins, for 18 selectable theme IDs. Browser-computed pure-white backgrounds are `rgb(255, 255, 255)`; dark backgrounds are family-specific near-black values. All 12 white/dark variants retain the logo, one header divider and no horizontal overflow.
+- Responsive evidence: all six base themes were measured at 390 × 844, 768 × 900 and 1440 × 1000. Every state retained the sticky header and fluid capped shell with no horizontal overflow. The mobile compositions stack their Hero, feature, table and paired-stream structures at the shared 760 px breakpoint.
+- Browser console warnings/errors: none.
+- Automated verification: `go test ./internal/web -count=1`, `go test ./... -count=1`, theme-preview dump generation and `git diff --check` all pass.
+- Expected visual differences are limited to live CMS data: the generated studies use art-directed example names, copy and architectural photography, while the production preview deliberately uses the site's actual logo, navigation, Hero text and screenshot media.
+
+### Pass 10 — media-neutral Hero surfaces, passed
+
+- User evidence: `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-5e966413-d06f-4e82-b5ab-825e150f06ce.png`.
+- Revised implementation evidence: `run/design-qa/light-table-hero-transparent-2102x1100.png`.
+- Combined comparison evidence: `run/design-qa/light-table-hero-background-comparison.png`, with the user capture on the left and revised implementation on the right.
+- [P2] Shelf Index, Tradeoff Sheet, Light Table and Counterpoint supplied theme-colored Hero-media container backgrounds. Those colors could show through transparent SVGs or images with alpha and incorrectly alter user-provided artwork. Progress Bulletin and Margin Reading Room did not visibly add a fill, but are now covered by the same explicit contract.
+- Fix: all six Hero media wrappers now compute `background-color: rgba(0, 0, 0, 0)`. The image and SVG wrappers remain transparent; theme wash colors are retained only for true no-media fallback/empty states.
+- Browser verification covered all six families and all three palette skins, for 18 rendered theme IDs. Every wrapper and current media child is transparent, and every page reports no horizontal overflow.
+- The peach and blue regions still visible in the supplied Cloudflare screenshot are pixels inside that user-provided image, not CSS backgrounds added by the theme.
+- Regression coverage: `TestThemePreviewsRender` now asserts the transparent Hero-media contract for all six selectors. Targeted Go tests and `git diff --check` pass.
+
+### Pass 11 — three integrated-media skeleton families, passed
+
+- Visual sources:
+  - Seamless Canvas: `/Users/apple/.codex/generated_images/019f986c-a7c7-71f0-9b09-ea435acec882/call_l552Yv8ZAv0o2HcjyE4Al9Uu.png`
+  - Night Corridor: `/Users/apple/.codex/generated_images/019f986c-a7c7-71f0-9b09-ea435acec882/call_HAwpavPKA0QOFsmGWb9SYINV.png`
+  - Open Ascent: `/Users/apple/.codex/generated_images/019f986c-a7c7-71f0-9b09-ea435acec882/call_zlD8yppTkDLk13GfZoe42edG.png`
+- Same-input comparison evidence:
+  - `/Users/apple/.codex/visualizations/2026/07/25/019f986c-a7c7-71f0-9b09-ea435acec882/theme-qa/seamless-canvas-comparison-final.jpg`
+  - `/Users/apple/.codex/visualizations/2026/07/25/019f986c-a7c7-71f0-9b09-ea435acec882/theme-qa/night-corridor-comparison-final.jpg`
+  - `/Users/apple/.codex/visualizations/2026/07/25/019f986c-a7c7-71f0-9b09-ea435acec882/theme-qa/open-ascent-comparison-final.jpg`
+- Exact layout viewport verification used a 1487 × 1058 iframe matching the three source canvases. The in-app browser surface scaled that frame to 68% for inspection; DOM measurements retained the exact 1487 × 1058 CSS-pixel viewport. Direct rendered screenshots with the current CMS Hero image were paired with each source in the comparison files above.
+- Structure fidelity: all three place the real CMS Logo and navigation over the same continuous Hero media surface. Seamless Canvas retains its left editorial statement and four-column bottom index; Night Corridor retains the darkened corridor treatment, right reading guide and five-column track; Open Ascent retains the left statement, three-row index and lower-right featured caption. Display-type scales were reduced after comparison so real long CMS titles preserve the source proportions.
+- Media contract: image, SVG and featured-cover fallback all use the same dynamic slot and compute a transparent media-wrapper background. No family introduces a Hero background color, gradient or decorative replacement asset. Only a true `no-media` state receives a readable token-based fallback.
+- Data contract: Hero copy/media, Logo, navigation, categories, Featured, articles, excerpts, dates, counts, links and translated labels are backend-bound. The templates contain no design-study business copy, URLs, dates, category mappings or asset paths. Short collections degrade by omission and never index beyond available data.
+- Navigation contract: the integrated header is transparent and fixed at the top on the homepage, then uses the existing `data-fnav-hero` progressive enhancement to switch to an opaque token-based state after scroll. Inner pages keep the standard sticky editorial header. There is no top rule and only one active-navigation underline.
+- Palette contract: each family exposes default, pure-white and deep-background skins, for nine registered theme IDs. Browser-computed `--bg` values and picker swatches agree; all nine keep the same skeleton and dynamic data.
+- Responsive and runtime evidence: all nine skins render their Logo, transparent media wrapper and correct family shell with zero horizontal overflow. Desktop Hero height is capped rather than `100vh`; the 1100, 820, 760 and 480 px rules progressively reduce type, stack guides and indexes, and collapse category grids. Browser console warnings/errors: none.
+- Automated verification: the new visual-contract test covers the nine token selectors, picker colors, transparent Hero wrappers, fixed transparent navigation, responsive selectors and real-home template output. Targeted tests, full `go test ./... -count=1`, preview generation and `git diff --check` pass.
+- Expected visible differences are restricted to current CMS data. The studies use purpose-made architectural imagery and short sample copy, while the implementation intentionally shows the configured Cloudflare deployment screenshot and the site's actual Hero text.
+
+### Pass 12 — Open Ascent full-bleed media and CTA rhythm, passed
+
+- User evidence: `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-3ab7e380-5399-4b66-9e5b-93b5994ddf47.png`.
+- Final implementation evidence: `/Users/apple/.codex/visualizations/2026/07/25/019f986c-a7c7-71f0-9b09-ea435acec882/theme-qa/open-ascent-fullbleed-final.jpg`.
+- Same-input before/after comparison: `/Users/apple/.codex/visualizations/2026/07/25/019f986c-a7c7-71f0-9b09-ea435acec882/theme-qa/open-ascent-gutter-cta-comparison.jpg`.
+- [P2] The 1440 px page shell clipped the Hero media at wide preview widths, leaving two unrelated body-background gutters. Open Ascent now lets the Hero and media span the full available width while deriving its copy, article list and featured-caption gutters from the centered 1440 px content frame. At the reported 1736 px viewport, page/media width changed from 1440 px at x=140.5 to 1721 px at x=0, while the left content anchor remained x=230.5.
+- [P2] The primary “阅读全文” action shared an underline treatment with other theme actions and collided with the article-list top rule. Open Ascent now uses a plain accent-text CTA, compacts each article index row, and preserves a measured 30.7 px gap between the CTA and list at the supplied desktop state.
+- Responsive verification covered 1440 × 1000, 1240 × 900, 1080 × 900, 760 × 900 and 390 × 844. The Hero/media remains full bleed, CTA-to-list spacing stays positive (54–187 px at the explicit breakpoints), and every state reports zero horizontal overflow.
+- The current Hero image completed with a non-zero intrinsic width. Its media wrapper remains fully transparent. No application console errors were reported; observed warnings originated only from an unrelated browser wallet extension.
+- Regression verification: `TestMediaThemeVisualContracts`, `TestThemePreviewRendersAllThemes`, preview dump generation and `git diff --check` pass.
+
+### Pass 13 — Seamless Canvas / Night Corridor full-bleed and live preview parity, passed
+
+- User evidence: `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-425b0e28-0e8e-4ca6-9086-830c5fddb6cc.png`.
+- Final implementation evidence:
+  - `/Users/apple/.codex/visualizations/2026/07/25/019f986c-a7c7-71f0-9b09-ea435acec882/theme-qa/theme-cards-live-data-final.jpg`
+  - `/Users/apple/.codex/visualizations/2026/07/25/019f986c-a7c7-71f0-9b09-ea435acec882/theme-qa/seamless-canvas-fullbleed-final.jpg`
+  - `/Users/apple/.codex/visualizations/2026/07/25/019f986c-a7c7-71f0-9b09-ea435acec882/theme-qa/night-corridor-fullbleed-final.jpg`
+- Combined evidence: `/Users/apple/.codex/visualizations/2026/07/25/019f986c-a7c7-71f0-9b09-ea435acec882/theme-qa/media-themes-preview-sync-comparison.jpg`, ordered user theme-card capture / revised Seamless Canvas / revised Night Corridor.
+- [P2] Seamless Canvas and Night Corridor still inherited the 1440 px outer page cap, so their continuous Hero media stopped before the viewport edges. Both pages now use the same full-bleed contract as Open Ascent. At the 1736 × 920 browser viewport, each page and Hero occupies the complete 1721 px client width at x=0, while both H1 content anchors remain aligned to the centered 1440 px frame at x=230.5.
+- The below-Hero Seamless feature/list and Night categories remain capped at 1440 px. The Hero copy widths were recalculated from the centered frame gutter so full-bleed does not shrink the readable text measure. Both pages report zero horizontal overflow.
+- [P1] Theme-card thumbnails previously cleared `HeroVisual`, `HeroImage` and `HeroSVG`, selected their featured/article stream with a separate algorithm, injected fallback categories into partially populated sites, and used a non-production total for knowledge grouping. The card endpoint now preserves real Hero media and shares `populateHomeContent` with the actual homepage/browser route. Real FeaturedLinks are loaded even when there are no articles; synthetic categories and links are restricted to true empty-site fallback.
+- Direct browser comparison for both families confirmed exact equality of Hero source, Hero title and featured content between `/admin/theme-preview/{theme}` and `/admin/theme-browse/{theme}/`. The configured Hero image loaded with non-zero intrinsic width in both representations.
+- `TestThemeCardPreviewUsesLiveHeroAndHomeOrdering` locks the real Hero and multi-featured article ordering across thumbnail and opened preview. Full `go test ./internal/web -count=1`, visual-contract tests and `git diff --check` pass.
+
+### Pass 14 — Night Corridor pure-white media without grey wash, passed
+
+- User evidence: `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-8b79f087-77b5-4d6d-8c3f-a074fdd79f8a.png`.
+- Final implementation evidence: `/Users/apple/.codex/visualizations/2026/07/25/019f986c-a7c7-71f0-9b09-ea435acec882/theme-qa/night-corridor-white-no-mask-final.jpg`.
+- Same-state comparison evidence: `/Users/apple/.codex/visualizations/2026/07/25/019f986c-a7c7-71f0-9b09-ea435acec882/theme-qa/night-corridor-white-mask-comparison.jpg`, with the supplied capture on the left and the revised page on the right.
+- [P1] `night-corridor-white` inherited the base family's `brightness(.42) saturate(.82)` media filter. Although implemented as a filter rather than an overlay element, it visually produced the reported full-screen grey mask.
+- The pure-white skin now computes `filter: none` for both uploaded images and Hero SVGs. Default Night Corridor and the deep-background skin retain their intended cinematic darkening.
+- Because the original image is light, the pure-white skin also switches Hero/header/title/guide/index content to dark theme tokens, replaces white guide rules with token-derived hairlines, and uses an 88% translucent white index surface. No copy, image or business data is hardcoded.
+- Browser verification at 1736 × 920 reports: media filter `none`; image loaded with non-zero intrinsic width; Hero and H1 color `rgb(21, 22, 23)`; zero horizontal overflow. The original CMS Hero pixels are now visible without a grey wash.
+- Regression coverage in `TestMediaThemeVisualContracts` locks the filter removal, dark Hero token and light index surface. Targeted tests and `git diff --check` pass.
+
+### Pass 15 — media-theme curation, duplicate removal and unfiltered Night Corridor, passed
+
+- User evidence:
+  - `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-1cee56c7-1d9e-4039-b353-303ee256201f.png`
+  - `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-9cfde9c3-c5db-4fe4-ad8e-a4407b189c63.png`
+  - `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-74bff34c-384a-4938-b127-b7fd184ca211.png`
+- Final evidence:
+  - `/Users/apple/.codex/visualizations/2026/07/25/019f986c-a7c7-71f0-9b09-ea435acec882/theme-qa/seamless-curation-final.jpg`
+  - `/Users/apple/.codex/visualizations/2026/07/25/019f986c-a7c7-71f0-9b09-ea435acec882/theme-qa/open-curation-final.jpg`
+  - `/Users/apple/.codex/visualizations/2026/07/25/019f986c-a7c7-71f0-9b09-ea435acec882/theme-qa/night-corridor-no-mask-readable-final.jpg`
+- [P1] Night Corridor repeated the same category/count collection both inside the Hero rail and immediately below it. The duplicate lower category section is removed; the Hero rail remains the single category navigation.
+- All three media families now expose a lower curation composition built from real `.FeaturedMore` and `.FeatLinks` values. The currently promoted `.Featured` item is intentionally excluded from the lower article collection, so Hero/main-feature content is not duplicated. Empty article or link collections omit their subsection, and an entirely empty curation result emits no wrapper.
+- Seamless Canvas uses a compact editorial ledger, Night Corridor a two-column reading/resources rail, and Open Ascent a three-card exhibition row plus resource index. The data contract is shared, while each family retains its accepted typography, rules, spacing and responsive behavior.
+- Night Corridor's saturated red accents were replaced with lower-chroma copper/brown tokens for its default, pure-white and dark color cards. Hero accents use a separate readable token so the restrained lower-page color does not disappear over media.
+- [P1] The remaining default/deep Night Corridor `brightness(.42) saturate(.82)` filter was the reported full-screen dark mask. Images and SVGs now compute `filter: none` in every Night Corridor skin. The default card uses dark Hero typography and token-derived hairlines over the current light image, preserving legibility without adding a replacement overlay, gradient or background fill.
+- Browser verification on all three current theme-browse pages found exactly one curation section, three dynamic selected articles, four dynamic selected links and zero horizontal overflow. Night Corridor reports zero `.nc-categories` duplicates and its media filter is `none`.
+- Automated verification: full `go test ./... -count=1`, focused media visual-contract tests and `git diff --check` pass.
+
+### Pass 16 — appearance save state, portal dropdown and persistent Hero animation, passed
+
+- User evidence:
+  - `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-b3e407b6-8c59-473a-8a2d-5a925905600f.png`
+  - `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-342eabe1-9f98-4cb8-a6ca-9e090f319118.png`
+  - `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-1a50746a-5ad9-48c2-8faa-bfa1aa8f09e5.png`
+  - `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-b470ad01-01b4-48c6-9b83-bfe7671afd50.png`
+- Final implementation evidence:
+  - `/Users/apple/.codex/visualizations/2026/07/25/019f986c-a7c7-71f0-9b09-ea435acec882/theme-qa/appearance-save-reset-final.jpg`
+  - `/Users/apple/.codex/visualizations/2026/07/25/019f986c-a7c7-71f0-9b09-ea435acec882/theme-qa/theme-options-dropdown-portal-final.jpg`
+  - `/Users/apple/.codex/visualizations/2026/07/25/019f986c-a7c7-71f0-9b09-ea435acec882/theme-qa/night-default-animation-final.jpg`
+- Same-input comparison evidence:
+  - `/Users/apple/.codex/visualizations/2026/07/25/019f986c-a7c7-71f0-9b09-ea435acec882/theme-qa/dropdown-reference-final-comparison.jpg`
+  - `/Users/apple/.codex/visualizations/2026/07/25/019f986c-a7c7-71f0-9b09-ea435acec882/theme-qa/hero-setting-reference-final-comparison.jpg`
+- [P1] The AJAX appearance save completed and displayed its success flash, but the generic duplicate-submit guard could apply its delayed “处理中…” label after completion. Successful saves now cancel/clear the busy marker, restore every submit label, and rebase the dirty-state signature. Browser verification after a real save found the success flash, no open dialog, no `data-busy` or `aria-busy`, and the restored “保存外观设置” label.
+- [P2] The custom Hero display menu lived inside the modal scroll container and was clipped at the footer boundary. Non-search dropdown menus now portal to `body` while open, use fixed viewport coordinates and a top-level z-index, then restore to their original DOM position when closed. The measured live menu is a direct `body` child with `.dd-portal`, fixed coordinates and a viewport-limited maximum height.
+- [P1] Seamless Canvas, Night Corridor and Open Ascent used the featured article cover as an undeclared fallback when `hero.visual` selected a theme animation. Each family now branches strictly on the stored Hero visual mode: configured image, configured SVG, animation 1, or the theme-default animation. Browser checks after a complete service restart found one `.hero-anim2` and zero direct Hero images in all three families.
+- [P1] The showcase normalization migration rewrote an intentionally empty `hero.visual` back to `image` on every process start. Empty is a valid persisted value meaning “theme default animation”, so that recurring rewrite was removed. A store reopen regression test preserves both the empty mode and the dormant uploaded image URL, and a real save → process restart → three-theme browser check confirmed the setting remains empty and the animations remain active.
+- Night Corridor's animation was reduced and moved into the middle negative space so it no longer obscures the right reading guide. Seamless Canvas and Open Ascent retain their accepted animation scale.
+- Regression verification: `TestShowcaseDefaultHeroAnimationSurvivesReopen`, the appearance interaction contract, all three media Hero modes, media visual contracts, theme preview rendering and theme-browse routing pass. The broader suite reaches unrelated network/listener tests that are blocked by the current sandbox, while all in-scope packages and targeted contracts pass.
+
+### Pass 17 — six content skeleton Hero/article routing, passed
+
+- Source visual truth: `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-9f44eb3e-acdd-4153-8924-f6a31fc887d3.png` (1886 × 1160 px). This accepted theme-card capture defines the six skeletons and their relative Hero/article emphasis.
+- Browser-rendered implementation evidence: `/Users/apple/.codex/visualizations/2026/07/25/019f986c-a7c7-71f0-9b09-ea435acec882/six-theme-hero-implementation/shelf-index-final.png` (3840 × 2160 px full-display capture) plus direct browser screenshots inspected for all six `/admin/theme-browse/{theme}/` routes.
+- Comparison state: signed-in theme browse, default stored Hero visual, default palette, desktop. The page viewport measured 1736 × 864 CSS px at device pixel ratio 2; the display capture includes browser chrome and was judged against the source at fit-to-frame rather than pretending pixel equality. A same-input comparison opened the source card grid and the unobstructed Shelf Index implementation together.
+- Full-view evidence: Shelf Index, Tradeoff Sheet and Light Table preserve their approved copy/media grid, typography, rules and below-Hero content composition while replacing only the media payload with the shared default animation. Progress Bulletin, Margin Reading Room and Counterpoint preserve the accepted article-led compositions and show the real selected article cover by default.
+- Focused Hero evidence: direct DOM measurements found Shelf Index 712 × 556 px, Tradeoff Sheet 712 × 626 px, Light Table 679 × 567 px, Progress Bulletin 489 × 333 px, Margin Reading Room 305 × 463 px and Counterpoint 470 × 426 px. The first three contain exactly one shared animation wrapper and no dormant configured image; the latter three contain the selected article cover and no animation wrapper. Every route reports zero horizontal overflow and zero broken images.
+- [P1] Shelf Index and Tradeoff Sheet rendered any stored `hero.image` even when `hero.visual` selected the theme default or animation 1. Light Table used the featured article cover as its implicit fallback, making its wide visual stage behave like an article thumbnail. All three now branch strictly on image, SVG, animation 1, or default animation 2. Dormant image/SVG values cannot leak into another mode.
+- Article-first contract: Progress Bulletin, Margin Reading Room and Counterpoint intentionally keep the selected article cover for both empty/default and animation-1 values. An explicitly selected image or SVG still overrides the article cover. This preserves the six designs' different editorial purposes instead of forcing one global Hero behavior.
+- Typography: the accepted serif/sans display hierarchy, text wrapping and small metadata weights are unchanged. The reusable animation adds no visible copy.
+- Spacing/layout: the established grid tracks, padding, section rhythm and non-full-screen Hero heights are unchanged; the animation wrapper inherits each theme's measured media slot and scales within it.
+- Colors/tokens: the shared animation consumes existing accent, line and background tokens, so default, pure-white and dark palette cards remain theme-driven without hardcoded colors.
+- Image quality/assets: explicit user images and SVGs remain unmodified and are rendered only in their selected mode. Article-first themes use the real CMS cover at its existing crop. The default animation reuses the product's established vector animation partial rather than introducing a new approximate asset.
+- Copy/content: Logo, navigation, Hero copy, featured article, covers, lists, links, dates and counts remain backend-bound. No business text, image URL, article title or category mapping was added to a template.
+- Interaction and runtime checks: automated render tests cover all four modes for the three Hero-first themes and the featured-cover/image/SVG behavior for the three article-first themes. `go test ./internal/web -count=1` and `git diff --check` pass. Browser logs contain no application error; observed warnings are emitted by installed wallet extensions.
+- Comparison history: the initial P1 mode-routing mismatch was fixed in the three Hero-first templates, followed by a fresh service build/restart, six-route browser inspection and the same-input source/implementation comparison. No actionable P0/P1/P2 difference remains.
+- Residual test gap: the physical Chrome window was not resized through every appearance-editor width preset in this pass. Existing responsive CSS and the browser's zero-overflow checks remain covered by the established theme preview tests; this is non-blocking because the change does not alter grid breakpoints.
+
+## Findings
+
+No actionable P0, P1, or P2 differences remain.
 
 ## Follow-up polish
 
-No P3 follow-up is required for this scoped change.
+- [P3] Casebook's small industry icons from the visual study are omitted because the current category model has no icon field. Adding guessed icon mappings would hardcode content semantics, so the dynamic production version keeps number, category, description, count, and arrow only.
+
+## Final result
 
 final result: passed
 
----
+### Pass 21 — Pilot header action and mobile menu alignment, passed
 
-## GCMS Paper Current 文章详情阅读轨道修复 — 2026-07-24
+- Source screenshots: `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-b70c133a-c230-4aff-bc40-79ce625d02e0.png` and `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-ec0edab3-6899-4da9-858a-29da3e076bd5.png`.
+- Browser evidence: `/Users/apple/.codex/visualizations/2026/07/25/019f986c-a7c7-71f0-9b09-ea435acec882/pilot-audit/11-mobile-header-fixed.jpg` and `/Users/apple/.codex/visualizations/2026/07/25/019f986c-a7c7-71f0-9b09-ea435acec882/pilot-audit/13-mobile-menu-final.jpg`.
+- The ambiguous global “View all” header CTA is no longer rendered for the Pilot family; other content-theme families retain their existing behavior.
+- At 375 CSS px the brand remains left aligned, search and menu form a right-aligned tool group, and the menu button no longer occupies the header center.
+- The opened navigation is anchored directly below the 54 px header and spans the available 343 px content width with 16 px outer gutters.
+- Runtime checks report no horizontal overflow (`scrollWidth === clientWidth`) and no Pilot header CTA. Targeted Pilot tests, build, and `git diff --check` pass.
 
-### Source and implementation evidence
+## Findings
 
-- Source visual truth: `run/design-audit/2026-07-24-paper-current-detail/02-detail-bottom.png`.
-- Desktop implementation top: `run/design-qa/paper-current-detail/implementation-desktop-top.png`.
-- Desktop implementation bottom: `run/design-qa/paper-current-detail/implementation-desktop-bottom.png`.
-- Compact implementation: `run/design-qa/paper-current-detail/implementation-compact-top.png`.
-- Same-frame before/after comparison: `run/design-qa/paper-current-detail/comparison-before-after.png`.
-- Desktop viewport: 1366 × 866 CSS pixels.
-- Compact breakpoint viewport: 900 × 900 CSS pixels.
-- State: Paper Current article with seven real heading anchors, tags, previous-article navigation and related content.
+No actionable P0, P1, or P2 differences remain.
 
-### Full-view comparison evidence
-
-- The article outline now belongs to the article reading row rather than the outer page grid. At desktop width it remains in the right reading rail while the article body occupies the 760px text column.
-- The outline rail ends with the reading content. Tags and previous/next navigation render in subsequent full-width rows, so the outline no longer drops beside the end-of-article navigation.
-- Related reading starts after the pager with a separate 64px section gap. The article column adds 72–96px of bottom breathing room before the 56px theme footer.
-- At 900px the layout collapses to one column: the outline appears once above the article header, followed by the reading content, ending controls and related content. No second vertical rail or duplicate outline is created.
-
-### Focused layout measurements
-
-- Desktop article shell: 1022px.
-- Reading column: 760px.
-- Outline rail: 210px with a 52px column gap.
-- Article reading row height: 3541.73px; the outline rail shares exactly that row height.
-- Tags begin after the reading row; pager ends at 3798.63px, related content ends at 4030.22px and the footer begins at 4125.84px.
-- Compact outline width: 760px; it ends at 349.95px and the article reading region starts at 375.55px.
-
-### Findings and verification
-
-- Initial P1: the outline was a sibling of the complete article column, so its grid/sticky behavior could place it beside the tags, pager and page footer. Fixed by grouping the outline with `.article-reading` inside the Paper Current article shell.
-- Initial P2: the article ending and footer had insufficient separation. Fixed with family-scoped ending rows and responsive bottom spacing.
-- Existing themes retain the original outer-grid outline path; the markup branch and CSS selectors are scoped to the Paper Current family.
-- Focused and full Go tests passed.
-- `npm run check` passed with 0 errors and 0 warnings.
-- `cargo test` passed outside the listener-restricted sandbox (190 passed, 11 ignored).
-- `git diff --check` passed.
-- The browser-rendered desktop and compact captures show no remaining actionable P0, P1 or P2 issue.
+## Final result
 
 final result: passed
 
----
+### Pass 20 — Pilot Flight Deck reference-fidelity rebuild, passed
 
-## GCMS Poster 老主题响应式标题修复 — 2026-07-22
+- Visual source of truth: `/Users/apple/.codex/generated_images/019f986c-a7c7-71f0-9b09-ea435acec882/call_WjSa8mULZFQ2VLXxy4tSXOgJ.png` (864 × 1821 px).
+- Browser evidence: `/Users/apple/.codex/visualizations/2026/07/25/019f986c-a7c7-71f0-9b09-ea435acec882/pilot-audit/08-final-864.jpg`, `/Users/apple/.codex/visualizations/2026/07/25/019f986c-a7c7-71f0-9b09-ea435acec882/pilot-audit/09-final-comparison.png`, `/Users/apple/.codex/visualizations/2026/07/25/019f986c-a7c7-71f0-9b09-ea435acec882/pilot-audit/05-mobile.jpg`, and `/Users/apple/.codex/visualizations/2026/07/25/019f986c-a7c7-71f0-9b09-ea435acec882/pilot-audit/06-final-desktop.jpg`.
+- [P1] The former 1000 px breakpoint collapsed the reference's desktop composition at its native 864 px width. Desktop grids now remain intact through 721 px and stack only on phone-sized viewports.
+- [P1] The page previously read as a generic content theme with oversized section rhythm. Hero, workflow strip, product demo, capability matrix, trust block, gallery, resources, download strip, and footer now use the reference's compact launch-page hierarchy and proportions.
+- [P1] The workflow is now a continuous numbered band; resources render as a horizontal card rail; the former full-width dark trust panel is replaced by the reference's light split composition.
+- The Hero visual remains fully data-driven and transparent. Uploaded images, SVG files, pasted SVG, and the configured default animation continue to use the existing backend slot without a hard-coded Pilot screenshot or decorative mask.
+- Workflow, release, downloads, trust, gallery, featured articles, categories, and links remain backend-bound. New/empty sites receive a four-step localized workflow default; existing saved site values are intentionally preserved.
+- Responsive QA at 375 CSS px reports `scrollWidth === clientWidth`; desktop QA at 1721 CSS px reports the same. No broken images, empty anchors, or lost sticky navigation were found.
+- Automated verification: targeted Pilot/theme rendering tests pass, the application builds, and `git diff --check` passes. The broad web suite still reaches unrelated IndexNow network calls and an `httptest` listener blocked by the current sandbox.
 
-### Source and implementation evidence
+## Findings
 
-- Source visual truth: `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-b21858af-52b1-456a-830a-89c5572e9ad5.png` (1506 × 1910, approximately 753 × 955 CSS pixels at 2× density).
-- Implementation at the matching CSS viewport: `run/poster-visual/poster-fixed-753x955.png` (753 × 955).
-- Mobile implementation: `run/poster-visual/poster-fixed-390x844.png` (390 × 844).
-- Desktop implementation: `run/poster-visual/poster-fixed-1280x720.jpg` (1265 × 720 raster from a 1280 × 720 CSS viewport with the scrollbar reserved).
-- Full comparison: `run/poster-visual/poster-comparison.png`.
-- Content-only normalized comparison: `run/poster-visual/poster-content-comparison.png`. The source browser chrome was removed before comparing the page surfaces at the same 753px CSS width.
-- State: base `poster` skin with the real GCMS preview Hero title, description, featured cover, article teaser, navigation and CTA data.
+No actionable P0, P1, or P2 visual difference remains within the backend-driven content contract.
 
-### Full-view comparison evidence
-
-- The former `22ch` parent / `12vw` child mismatch forced the Chinese Hero title into a one-character column and expanded the cover far beyond the intended fold.
-- At 753 × 955 the repaired title renders as three balanced lines at 82.83px, within x=45.18–624.98 and y=489.43–713.05. The cover ends at y=955, so the title no longer invades the following section.
-- The complete Hero content remains inside the cover: the CTA row ends at y=923. The redundant teaser stack and scroll cue are hidden at this width, preventing the former right-edge clipping and CTA/cue collision.
-- At 390 × 844 the title remains three lines at 48px, within x=40–376 and y=472.46–602.05. The document reports `scrollWidth=375 <= innerWidth=390`; no horizontal overflow is present.
-- At 1280 × 720 the title preserves the large Poster composition at 102.4px and three lines. The desktop teaser stack remains visible and the document reports `scrollWidth=1265 <= innerWidth=1280`.
-
-### Focused region comparison evidence
-
-- The content-only side-by-side comparison isolates the Hero region from Chrome UI and confirms that the title changed from an unreadable character column to the intended oversized lower-left poster block.
-- No template copy, article data, cover image, navigation, color token, logo, button style or content source changed. The repair is limited to `:root[data-theme="poster"]` selectors.
-- The mobile capture confirms the follow-up fix: the decorative down cue is removed below 900px and no longer touches the secondary CTA.
-
-### Required fidelity surfaces
-
-- Fonts and typography: the existing sans display family, weight, tracking and white treatment are preserved; only the responsive measure, clamp and emergency wrapping behavior changed.
-- Spacing and layout rhythm: the original lower-left composition remains, with the headline, description and CTA fitting inside one cover fold at desktop, tablet and mobile widths.
-- Colors and visual tokens: unchanged; the active Poster palette and cover scrim are reused exactly.
-- Image quality and asset fidelity: unchanged; the preview uses the real featured cover and no new raster, SVG or placeholder asset.
-- Copy and content: unchanged and data-driven; the existing Hero title line breaks are retained without introducing hardcoded words or new CMS fields.
-
-### Findings and comparison history
-
-- Initial P1: the Hero title collapsed into a one-character column and obscured the page. Fixed with a viewport-aware title measure, a bounded responsive font size and `break-word` fallback scoped to the base Poster skin.
-- Initial P2: the 641–900px range retained the desktop teaser stack even though it competed with the Hero. Fixed by hiding the decorative teaser stack below 900px.
-- Follow-up P2: the down cue touched the CTA row on the 390px capture. Fixed by hiding that decorative cue below 900px.
-- Post-fix evidence: matching-width and mobile captures show no remaining actionable P0, P1 or P2 issue.
-
-### Automated verification
-
-- `go test ./...`: passed.
-- `npm run check` in `desktop`: passed with 0 errors and 0 warnings.
-- `cargo test` in `desktop/src-tauri`: passed outside the listener-restricted sandbox (172 passed, 11 ignored).
-- `git diff --check`: passed.
+## Final result
 
 final result: passed
 
----
+### Pass 18 — Pilot Flight Deck visual fidelity and live configuration schema, passed
 
-## GCMS 三套 Web3 推广内容骨架主题 — 2026-07-22
+- Source visual truth: `/Users/apple/.codex/generated_images/019f986c-a7c7-71f0-9b09-ea435acec882/call_WjSa8mULZFQ2VLXxy4tSXOgJ.png` (864 × 1821 px).
+- User-reported implementation evidence:
+  - `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-cdf13eb4-0220-45e6-b56c-8245a1df7f49.png` (2492 × 1418 px).
+  - `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-f9d05009-89a1-437b-aa22-af23d9fed9b8.png` (1746 × 986 px).
+- Browser-rendered implementation evidence: `/private/tmp/pilot-flight-deck-final.png` (1280 × 720 px).
+- Same-input comparison evidence: `/private/tmp/pilot-flight-deck-comparison.png` (2584 × 768 px). The reference Hero crop (864 × 486) was normalized to 1280 × 720 and placed beside the 1280 × 720 browser capture. Browser viewport was 1280 × 720 CSS px at the in-app browser's native density.
+- State: default Pilot palette, real site logo/navigation/Hero copy, no Pilot workflow/release/download/trust/gallery records configured, and the theme-default Hero animation selected. The reference's Pilot client screenshot, CTA, release metadata and platform labels are data-dependent states rather than template defaults.
+- Full-view comparison: the corrected implementation now uses the reference's approximately 35/65 copy/media division, compact product-launch typography, two-line desktop title, restrained navigation height, matching content anchor, and transparent Hero media region. The configured image/SVG slot remains responsible for the reference client screenshot; no replacement image, background panel, or product data was hardcoded.
+- Focused comparison: the pre-fix title occupied 400 × 149 px over three forced lines at 1280 px. After switching the Pilot heading to the product sans stack, reducing its scale and allowing theme-controlled wrapping, it occupies 400 × 85 px over two lines. The Hero grid is 1201 px wide and the header is 65 px tall.
+- [P1] Pilot inherited the global serif heading family and content-theme display scale (`6vw`, capped at `6.9rem`), producing the reported oversized four-line title. Fixed with Pilot-scoped sans typography, `clamp(2.35rem, 3.2vw, 3.5rem)`, 1.04 line-height, tighter tracking, and a 4.15/7.85 grid.
+- [P1] After an AJAX theme change, the page kept the configuration schema rendered for the previous theme. The saved Pilot theme therefore opened a stale Hero-only modal even though its five site slots were registered. Successful saves now reload only when the selected theme ID changes, forcing the server to reassemble the correct schema. A new server-render regression test requires all five Pilot slot markers and editors.
+- Fonts and typography: Pilot headings now use `var(--sans)` at product-launch weights; body, kicker and navigation retain the existing design system's optical hierarchy. Desktop wrapping matches the target composition and mobile wraps naturally without horizontal overflow.
+- Spacing and layout rhythm: Hero padding is 44/54 px, the grid gap is 44 px, and media no longer has a forced 540 px minimum height. At 390 × 844, the page reports no horizontal overflow and the media stacks below copy.
+- Colors and visual tokens: the accepted cool off-white, blue accent, hairline and three palette-card variables are unchanged. The Hero media wrapper stays transparent.
+- Image quality and asset fidelity: real uploaded image/SVG content is rendered with `object-fit: contain`, no background fill, crop, filter or mask. The empty state continues to use the established theme animation; the reference client screenshot is not approximated.
+- Copy and content: logo, navigation, Hero copy, workflow, release, downloads, trust points, gallery, articles, categories and links remain backend-bound. The five Pilot configuration values are normalized and validated before storage.
+- Primary runtime checks: desktop render, 390 × 844 responsive render, sticky navigation, no horizontal overflow, and empty console error/warning log. Targeted Pilot/theme-option tests and build pass.
+- Broader suite note: the complete `internal/web` package reaches unrelated IndexNow network calls and an `httptest` listener that the current sandbox disallows. The in-scope targeted tests pass; the failure is not in Pilot rendering or configuration.
+- Comparison history: initial P1 typography/grid mismatch and P1 stale-schema modal were fixed, rebuilt and restarted. The post-fix same-input comparison and responsive browser capture found no remaining actionable P0/P1/P2 issue. Differences in client screenshot, CTA and version/platform labels are expected empty-data state and are now editable through the restored site slots.
 
-### Source and implementation evidence
+## Findings
 
-- Reference viewport: 1487 × 1058.
-- Briefing Desk reference: `/Users/apple/.codex/generated_images/019f7e38-6f93-7692-afd6-daabd8142ff1/exec-89f8870f-456b-4c4e-a0f9-c1ee89d1a82d.png`
-- Decision Wall reference: `/Users/apple/.codex/generated_images/019f7e38-6f93-7692-afd6-daabd8142ff1/exec-250448b9-529b-49bd-9a8a-0cf9258123ef.png`
-- Route Atlas reference: `/Users/apple/.codex/generated_images/019f7e38-6f93-7692-afd6-daabd8142ff1/exec-20cabe06-d001-4b00-b444-e357b78eb324.png`
-- Current desktop captures: `run/theme-previews/qa/{briefing-desk,decision-wall,route-atlas}-final.png`
-- Same-frame comparisons: `run/theme-previews/qa/{briefing-desk,decision-wall,route-atlas}-comparison.png`
-- Inner-page captures: `/private/tmp/{briefing,decision,route}-about.png`.
-- Decision Wall logo follow-up source: `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-d73f39b7-0d24-46b3-8526-53971546a764.png` (570 × 614).
-- Decision Wall logo follow-up implementation: `run/theme-previews/qa/decision-wall-logo-implementation.png` (1083 × 712 CSS capture).
-- Decision Wall logo focused comparison: `run/theme-previews/qa/decision-wall-logo-comparison.png`; the source card and implementation header are shown together with enlarged header crops.
-- Route Atlas search follow-up source: `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-4b36dca4-c445-475d-a0e0-f235164bf8f6.png` (2424 × 1500 pixels, browser chrome included).
-- Route Atlas search follow-up implementation: `run/theme-previews/qa/route-atlas-search-implementation.png` (1095 × 720 raster from a 1280 × 720 CSS viewport at density 1).
-- Route Atlas search focused comparison: `run/theme-previews/qa/route-atlas-search-comparison.png`; source and implementation are proportionally fitted in one frame, and the assessment is limited to the empty-search component because the source includes a different browser frame and viewport.
+No actionable P0, P1, or P2 differences remain.
 
-### Full-view comparison evidence
+## Follow-up polish
 
-- Briefing Desk preserves the compact masthead and risk line, dominant editorial lead, right-side inspection checklist, two ruled guide rows and three-column latest-content rail.
-- Decision Wall preserves the cobalt split hero, full-height featured card, black four-topic rail and the asymmetric guide/latest-content lower grid.
-- Route Atlas preserves the 235/920/324 three-column shell, left route index, image-backed center hero, numbered stage rows and right latest-update rail.
-- The implementation intentionally renders real preview titles, dates, categories, excerpts and media rather than copying the illustrative exchange copy from the references.
+- [P3] The Pilot structured slots currently expose normalized JSON editors. A future editor could provide repeatable visual rows without changing the stored schema.
 
-### Content-control and isolation verification
-
-- All visible site copy, navigation, category labels, article titles, excerpts, dates, counts, links and images come from existing `Site`, `Menu`, `Categories`, `Posts`, `Featured`, `FeatLinks` and translation data.
-- Numeric sequence markers are derived from template indexes; no fake registration count, reward value, exchange name, exchange logo or demo article is embedded in any of the three templates.
-- `TestWeb3GuideTemplatesDoNotBakeInDemoContent` rejects the reference-only exchange names and illustrative copy if they reappear in source templates.
-- The existing global homepage article-count setting limits the three families; multiple-featured regression coverage verifies that the limit is still honored.
-- About and the other public content routes inherit family-scoped typography, spacing, surfaces, rules and responsive behavior without adding new CMS fields.
-- Existing themes remain on their previous template paths and selectors; the shared header/footer add only explicit branches for these three new families.
-
-### Palette and responsive verification
-
-- Each family has four independent theme cards, for 12 new cards in total.
-- `briefing-desk-white`, `decision-wall-white` and `route-atlas-white` compute to `body background-color: rgb(255, 255, 255)` with `--bg` and `--surface` both set to `#fff`.
-- All three white variants report `scrollWidth <= innerWidth` at the checked 1105px viewport.
-- No palette swatch strip or design-annotation artifact is rendered on public pages.
-
-### Findings and comparison history
-
-- Initial P1: the first pass inherited generic content proportions. Fixed by calibrating each family independently to the measured reference shell, hero, rails and content sections.
-- Initial P1: Route Atlas's real light screenshot could disappear against its paper hero. Fixed with contained dynamic media, right alignment and a family-scoped blend treatment; no replacement image was hardcoded.
-- Initial P2: stored hero line breaks could distort the references' intended headline wrapping. Fixed by rendering the existing dynamic title as normal collapsible whitespace only inside the three new layouts.
-- Follow-up P2: Decision Wall bypassed the shared brand component and therefore rendered a text-only wordmark even when the site had a configured logo. Fixed by routing this family through `header_brand`; the captured logo resolves from `Site.Logo`, measures 70.31 × 30 CSS px, preserves its configured scale and introduces no horizontal overflow.
-- Follow-up P2: Route Atlas applied its article-list left and bottom frame to an empty search-result container, visibly doubling the empty-state card's left and bottom edges. Fixed with a family- and state-scoped `:has(> .search-empty)` override; computed outer borders are now `0px none`, while the empty card retains one complete 1px border and populated result lists keep the normal Route Atlas frame.
-- Search-state fidelity pass: typography, spacing, paper/accent tokens and copy remain unchanged; the stylesheet loaded, the captured page reported no runtime errors and no horizontal overflow. No additional focused crop was needed because both conflicting edges are clearly readable in the combined comparison.
-- Post-fix combined comparisons show no remaining actionable P0, P1 or P2 fidelity issue.
-
-### Automated verification
-
-- Focused theme, palette, post-limit and no-hardcode tests: passed.
-- `go test ./...`: passed.
-- `git diff --check`: passed.
+## Final result
 
 final result: passed
 
----
+### Pass 19 — Pilot structured slot editor, passed
 
-## Pilot 站点接入入口与站点卡片 — 2026-07-22
+- Source visual truth: `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-1b6ea5fc-a8fd-42d3-ae66-e658bbacdc93.png` (1464 × 1236 px). The reported state exposed long JSON examples beside undersized raw textareas.
+- Browser-rendered implementation evidence: `/Users/apple/.codex/visualizations/2026/07/25/019f986c-a7c7-71f0-9b09-ea435acec882/theme-qa/pilot-visual-fields-final.png`.
+- [P1] Workflow, release, downloads, trust and gallery were technically configurable but required users to author valid JSON. Each slot now renders semantic fields and numbered repeatable rows while retaining the existing normalized JSON storage contract.
+- The dialog grows from 760 px to a measured 980 px at a 1721 px viewport. Intro fields use a clear two-column hierarchy; repeat rows have labels, compact numbering, consistent field height, and responsive single-column behavior.
+- Raw JSON examples are removed from the UI. Invalid or incomplete URLs are still discarded by the existing sanitizers, empty rows do not serialize, and localized/global storage scope is unchanged.
+- Default values are centralized in the locale catalogs and assembled as structured Pilot data, rather than embedded in the template. The live form reports `1.0.0`, `下载 macOS 版`, `每一步都在掌控中`, and the configured real Hero image as the gallery seed when the corresponding slot is semantically empty.
+- Download URLs remain intentionally unset until the site supplies a real destination; no broken package URL is invented. Gallery fallback reuses the configured Hero asset and never generates a fake client screenshot.
+- A browser QA pass found the expected 980 px dialog width, visible defaults, no horizontal overflow in the inspected state, and no application panic after reload. A nil preview-state regression discovered during QA was fixed by resolving the Hero image from localized settings instead of the admin-only Settings view.
+- Automated verification: Pilot appearance rendering, structured save/normalization, configured data rendering, localized default rendering and template no-hardcoding tests pass. `git diff --check` passes.
 
-- Source visual truth:
-  - GCMS 站点卡片：`/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-4d4d319a-622b-4f58-a546-bf74a5d856e2.png`
-  - GCMS Google OAuth 浮层：`/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-71048d4e-8f87-49e5-b2cb-b92d2ab3d1bd.png`
-  - Pilot 访问数据目标位置：`/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-fe71a55b-7a6a-4e5a-8ced-298b8ac10e44.png`
-  - Pilot 紧凑卡片目标：`/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-c9cdd64b-d8a4-45ea-85b5-c81d43f3a3c5.png`
-  - Canonical markup and tokens: `templates/admin/sites.html` and `assets/css/admin.css`.
-- Implementation: `desktop/src/routes/+page.svelte` and the four Google assets under `desktop/static/icons/`.
+## Findings
 
-### Source-to-implementation comparison
+No actionable P0, P1, or P2 differences remain.
 
-- The Pilot header now exposes exactly two independent 30px integration triggers, Google and Telegram, with GCMS's configured-color / missing-grayscale state treatment.
-- Clicking Google opens the complete OAuth/data-range surface directly. The former intermediate summary card is not part of the interaction.
-- The Google popover uses the GCMS 460px width, 9px radius, 30px segmented tabs, matching spacing, shadow, typography hierarchy, configured summary, account list and data-range form.
-- Site cards keep three compact integration icons in the title row. Missing integrations are gray; configured integrations retain their product color. Enabled GA and GSC summaries now render directly below the icons as separate compact rows, using GCMS's labels and state colors without truncating both services into one crowded line.
-- Site favicons, card padding, inter-card gaps and action spacing are reduced; grid items no longer stretch to match the tallest card in their row.
-- The Sites content container expands to 1480px and switches from two to three columns when its own usable width reaches 1260px; standard widths keep two columns and narrow layouts keep one.
-- A completed `6/6` readiness badge is hidden. The platform default site is also excluded because it is the existing primary entry, not a new-site launch checklist; incomplete or unchecked badges remain only for non-default sites.
-- Pilot's Google, OAuth, Analytics and Search Console SVG files now byte-match the canonical GCMS assets.
-- The redundant `进入后台` action was removed from Pilot's site cards; `运营站点` is now a borderless icon-and-label action matching the launcher, with `预览` as the secondary action.
-
-### Verification
-
-- `npm run check`: passed with 0 errors and 0 warnings.
-- `cargo test`: passed outside the network-listener sandbox (168 passed, 11 ignored).
-- `git diff --check`: passed.
-- Runtime image capture of this exact connected Sites state is blocked: the Computer Use bridge timed out while reading the running Tauri process. The local Vite page was checked successfully, but without the Tauri connection it can only render the disconnected onboarding state, so no visual pass is claimed from that unrelated state.
-
-final result: blocked (runtime screenshot unavailable; source and automated checks passed)
-
----
-
-## GCMS 三套独立内容骨架主题 — 2026-07-21
-
-### Source and implementation evidence
-
-- Reference viewport: 1487 × 1058.
-- Orbit Index reference: `/Users/apple/.codex/generated_images/019f7e38-6f93-7692-afd6-daabd8142ff1/exec-84501698-022d-4d40-ab81-2939e775561a.png`
-- Column Stage reference: `/Users/apple/.codex/generated_images/019f7e38-6f93-7692-afd6-daabd8142ff1/exec-6822cbaf-ffa8-4e85-bb52-ecc7bd7c7d54.png`
-- Type Cascade reference: `/Users/apple/.codex/generated_images/019f7e38-6f93-7692-afd6-daabd8142ff1/exec-3344e676-9840-4da4-be15-dee3502219aa.png`
-- Current desktop captures: `run/theme-previews/qa/{orbit-index,column-stage,type-cascade}-impl-3.png`
-- Same-frame comparisons: `run/theme-previews/qa/{orbit-index,column-stage,type-cascade}-comparison.png`
-- Responsive captures: `run/theme-previews/qa/{orbit-index,column-stage,type-cascade}-mobile.png`
-- About-page captures: `run/theme-previews/qa/{orbit-index,column-stage,type-cascade}-about.png`
-
-### Full-view comparison evidence
-
-- Orbit Index preserves the centered elliptical index, nested ruled orbits, category nodes, five dated notes, centered featured article, clipped real cover, reading queue and minimal footer. The calibrated desktop shell is exactly one 1058px viewport high.
-- Column Stage preserves the 75px masthead, 88px manifesto strip, five full-height editorial columns, expanded magenta feature panel, distinct bone/cyan/ochre/navy panels and 99px footer. The stage occupies the reference y=163–959 interval.
-- Type Cascade preserves the permanent 216px left rail, top-right navigation, oversized numbered feature, image spanning the number and content columns, right-side detail copy, six-step cascade and minimal footer.
-- Differences in titles, dates, category names, counts, descriptions and screenshots are expected: the implementation uses the real GCMS preview dataset instead of copying illustrative text from the design images.
-
-### Data, routes, and interaction verification
-
-- All visible article/category/count/date/excerpt/cover values come from existing GCMS site, menu, category and post data. No theme-specific CMS field or hardcoded production statistic was added.
-- The existing global homepage article-count setting controls all three families; regression coverage includes multiple featured articles and verifies that the configured limit is not exceeded.
-- About and other public content routes inherit family-specific typography, spacing, rules, color tokens and responsive structure. The three About pages were rendered in the browser, not inferred from CSS alone.
-- At 760 × 900 all three documents report `scrollWidth <= innerWidth`.
-- At 760px the shared menu button is unique, toggles `aria-expanded` from `false` to `true`, adds `.nav-open`, and reveals the navigation as flex content for all three families.
-- Column panels expose hover/focus expansion through family-scoped rules; links remain real content URLs.
-
-### Isolation and palette verification
-
-- Each family has four registered color cards, with shared family geometry and independent palette variables.
-- The five-color strips in the exploration images are treated as design annotations: they remain represented by theme-library color cards and are not rendered in any public footer.
-- New template dispatches, header/footer variants and CSS selectors are limited to the three new family prefixes. Existing theme registrations and old family CSS were not changed.
-- No new raster placeholder, handcrafted SVG, fake metric, or unrelated backend parameter was introduced. Existing real content covers are used with the product fallback behavior.
-
-### Findings and comparison history
-
-- Initial P1: Orbit’s shell and footer did not fill the reference viewport. Fixed by calibrating the orbit shell, nested rings, feature card, queue and footer to the measured y coordinates.
-- Initial P1: Column Stage used equal panel proportions and misplaced cover starts. Fixed with measured flex weights, a 796px stage and reference-aligned cover positions.
-- Initial P1: Type Cascade’s feature image occupied only the content column and the navigation started too far right. Fixed with a three-column feature grid, a two-column image span and calibrated navigation gaps.
-- Initial P2: long real titles could collide with Column covers or push Type Cascade’s feature below the intended fold. Fixed with family-specific display sizing and line clamping while preserving the real text.
-- Post-fix side-by-side comparisons and browser geometry checks show no remaining actionable P0, P1 or P2 fidelity issue.
-
-final result: passed
-
----
-
-# Four content themes — controlled copy and cascade regression
-
-Date: 2026-07-21
-
-## Source and implementation evidence
-
-- Reference viewport: 1487 × 1058.
-- Field Ledger comparison: `run/design-audit/2026-07-21-theme-data-style/field-ledger-comparison.jpg`
-- Signal Archive comparison: `run/design-audit/2026-07-21-theme-data-style/signal-archive-comparison.jpg`
-- Night Watch comparison: `run/design-audit/2026-07-21-theme-data-style/night-watch-comparison.jpg`
-- Paper Current comparison: `run/design-audit/2026-07-21-theme-data-style/paper-current-comparison.jpg`
-- Current implementation captures: `run/design-audit/2026-07-21-theme-data-style/*-fixed.jpg`
-
-## Content-control audit
-
-- Field Ledger's masthead is now `site.hero_title`; its supporting line is `site.tagline`; its issue/index and section labels reuse the existing all-content, latest and featured controls.
-- Signal Archive's eyebrow, featured label, latest heading, category heading and all-content label now reuse existing site/category controls and translations.
-- Night Watch's board and dispatch headings now use `home.latest_title` and `home.featured_title`; table labels reuse category/date controls and translations.
-- Paper Current's latest heading, directory heading and featured labels now reuse existing site/category controls and translations.
-- No new database setting, API field or admin form parameter was added.
-- Preview regression assertions reject the former fixed labels for all color variants of these four theme families.
-
-## Visual fixes verified
-
-- Signal Archive: `.sa-list-head` computes to `justify-content: flex-start`; category navigation begins 28px after the heading instead of being pushed to the far edge.
-- Signal Archive: `.sa-topic-more` computes to `display: flex` and `justify-content: center`, overriding the older broad `.sa-topics a` rule.
-- Paper Current: `.pc-all` computes to `display: inline-flex`, `grid-template-columns: none` and a 64px content width, so the action remains horizontal.
-- All four desktop previews report document `scrollWidth <= innerWidth` at 1487px.
-- All four previews report no document-level horizontal overflow at 680px.
-- All fixes are scoped to `[data-theme^="field-ledger"]`, `[data-theme^="signal-archive"]`, `[data-theme^="paper-current"]` or `[data-theme^="night-watch"]`; legacy themes were not edited.
-
-## Remaining expected differences
-
-- Production copy, categories, counts, dates and article imagery intentionally come from real GCMS data, so they differ from the illustrative reference content.
-- The selected color-card variants continue to share each family's layout while using their own palette tokens.
-
-final result: passed
-
-## GCMS HTTPS / 橙云维护入口 — 2026-07-21
-
-- Source visual truth: `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-ddca0dbc-9130-4a8b-8e40-d2bec7b09963.png`
-- Rendered implementation screenshot: unavailable; the macOS Computer Use bridge timed out while reading the running Tauri window.
-- Viewport: source capture 806 × 1044 pixels.
-- State: migrated instance opens the existing-domain HTTPS / Cloudflare maintenance flow.
-
-## Full-view comparison evidence
-
-The supplied source confirms two P1 flow/copy problems: the maintenance entry was routed through the domain-change step, and the permission recovery actions used the ambiguous labels `更新此连接` and `已更新，重试`. The implementation now uses a dedicated `https_proxy` intent, routes a matched domain directly to step 3, and removes domain-edit navigation from that maintenance path.
-
-## Focused region comparison evidence
-
-The completion-state copy was changed to `网站已可访问，补充权限即可开启橙云`, `补充所需权限`, and `重新检测橙云`. A post-change focused screenshot could not be captured from the Tauri window, so typography, wrapping, spacing, colors, and final button geometry remain visually unverified.
-
-## Findings and comparison history
-
-- Earlier P1: `HTTPS / 橙云` opened `变更访问域名` and stopped at step 2. Fixed by introducing the dedicated maintenance intent and selecting step 3 after the existing domain and web-server check pass.
-- Earlier P2: recovery copy mixed state and action (`已更新，重试`). Fixed with explicit next actions and a shorter explanation that permission repair does not interrupt the website.
-- Remaining blocker: no accepted implementation screenshot is available for a same-state visual comparison. Functional source checks pass, but image-based QA cannot be marked passed.
-
-final result: blocked
-
-## GCMS 四套内容骨架主题 — 2026-07-21
-
-- Source visual truth:
-  - Field Ledger: `/Users/apple/.codex/generated_images/019f7e38-6f93-7692-afd6-daabd8142ff1/exec-9f1efece-e650-4849-8ea7-7f0cebce5ce7.png`
-  - Signal Archive: `/Users/apple/.codex/generated_images/019f7e38-6f93-7692-afd6-daabd8142ff1/exec-1b18197c-fdd0-4630-8408-1c8c911923c7.png`
-  - Paper Current: `/Users/apple/.codex/generated_images/019f7e38-6f93-7692-afd6-daabd8142ff1/exec-39ef6bee-61ca-4b74-b913-23dd1ca8fded.png`
-  - Night Watch: `/Users/apple/.codex/generated_images/019f7e38-6f93-7692-afd6-daabd8142ff1/exec-847e0cd6-2924-4bc7-bc4e-e7e67808e958.png`
-- Rendered implementation:
-  - `/Users/apple/work/cms.ccvar.com/run/design-qa/field-ledger-final.png`
-  - `/Users/apple/work/cms.ccvar.com/run/design-qa/signal-archive-final.png`
-  - `/Users/apple/work/cms.ccvar.com/run/design-qa/paper-current-final.png`
-  - `/Users/apple/work/cms.ccvar.com/run/design-qa/night-watch-final.png`
-- Combined comparisons:
-  - `/Users/apple/work/cms.ccvar.com/run/design-qa/field-ledger-final-comparison.png`
-  - `/Users/apple/work/cms.ccvar.com/run/design-qa/signal-archive-final-comparison.png`
-  - `/Users/apple/work/cms.ccvar.com/run/design-qa/paper-current-final-comparison.png`
-  - `/Users/apple/work/cms.ccvar.com/run/design-qa/night-watch-final-comparison.png`
-- Viewport: implementation rendered at 1120 × 797 logical pixels; the in-app browser panel captured a 1095 × 797 raster. Source visuals were proportionally fitted to the same comparison frame.
-- State: each theme uses its default color card, real preview articles/categories/featured image, and the shared GCMS preview dataset.
-
-## Full-view comparison evidence
-
-- Field Ledger preserves the research-ledger masthead, top-aligned issue/about block, signal counters, ruled featured entry and subject index. The long real site description is clamped instead of changing the intended masthead proportions.
-- Signal Archive preserves the centered navigation, oversized editorial headline, signal strip, timeline rhythm and asymmetric feature grid. Its cards use the real article count and featured image rather than generated metrics or collage art.
-- Paper Current preserves the permanent left rail, restrained paper palette, issue-note hero and reading-index hierarchy. The rail collapses responsively without introducing horizontal overflow.
-- Night Watch now matches the intended centered navigation and neon-accent editorial hierarchy, with the featured story, pulse strip and evidence board aligned to the reference rather than the former generic right-aligned header.
-
-## Focused region comparison evidence
-
-- Header and footer are selected by the four new content-theme families; no old theme markup or selectors were changed.
-- Every visible count, category, date, article title, excerpt and image is derived from existing GCMS site/content data. No fabricated score, trend, issue number or research metric remains.
-- About, article detail, category/list, search, links, pagination, related-content and not-found surfaces inherit the selected family's typography, rules, spacing, card treatment and color tokens through family-scoped selectors.
-- Each family retains independent color-card variants while sharing the family layout.
-- At a 680px viewport all four rendered documents reported `scrollWidth <= innerWidth`; no horizontal overflow was detected.
-
-## Required fidelity surfaces
-
-- Typography: editorial serif/display faces, monospace labels and UI sans-serif roles follow each source's hierarchy and weights.
-- Layout: centered navigation, Field masthead columns, Signal timeline, Paper rail and Night evidence board follow the reference compositions.
-- Spacing: the large-screen canvases, section rules, card padding and mobile collapse points were calibrated per family rather than inherited from the old generic max-width.
-- Colors: all four families expose their own palette cards and reuse their active palette consistently on inner pages.
-- Images: production renders use real featured/article media with safe fallbacks; generated reference imagery is not hardcoded into content.
-- Content control: existing site copy, categories, posts, links and featured-content controls remain the sole content inputs; no new backend fields are required.
-
-## Findings and comparison history
-
-- Initial P1: the new themes still inherited the generic header/footer and narrow canvas; Night Watch navigation was right-aligned. Fixed with family-specific shared chrome and calibrated canvases.
-- Initial P1: hardcoded scores, issue labels and placeholder trends made preview content unmanageable. Fixed by mapping every visible content datum to existing GCMS data.
-- Initial P2: Field Ledger's masthead and long description drifted from the source. Fixed with top alignment and a four-line clamp.
-- Initial P2: the four homepages were themed but About and other inner pages remained visually generic. Fixed with family-scoped inner-page systems covering all public content routes.
-- Post-fix comparison: the four combined comparison images above show no remaining actionable P0, P1 or P2 visual difference. Remaining differences are expected content differences caused by real site text and real article screenshots.
+## Final result
 
 final result: passed

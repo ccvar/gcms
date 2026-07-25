@@ -206,8 +206,8 @@ func TestExtDetailRobotsAndCanonicalOverrides(t *testing.T) {
 	}
 }
 
-// 商品详情输出 BreadcrumbList（首页→商品→分类→本品），Product JSON-LD 的 image 含图集多图。
-func TestProductDetailJSONLDBreadcrumbAndImages(t *testing.T) {
+// B2B 商品没有真实结构化报价/评价时输出 WebPage + BreadcrumbList，不输出残缺 Product。
+func TestProductDetailJSONLDUsesWebPageWithoutIncompleteProduct(t *testing.T) {
 	s := extSEOTestServer(t, "product")
 	catID, err := s.store.CreateCategory(&store.Category{Slug: "cnc", Name: "CNC 加工", Lang: "zh", Kind: "product"})
 	if err != nil {
@@ -223,15 +223,18 @@ func TestProductDetailJSONLDBreadcrumbAndImages(t *testing.T) {
 	}
 	body := getBody(t, s.Handler(), "/zh/products/cnc-part/", http.StatusOK)
 	for _, want := range []string{
+		`"@type":"WebPage"`,
 		`"@type":"BreadcrumbList"`,
 		`"name":"CNC 加工"`,
 		`"item":"https://example.test/zh/products/cat/cnc"`,
-		// image 数组：封面 + 图集（与封面重复的去重）。
-		`"image":["https://example.test/uploads/p1.webp","https://example.test/uploads/p2.webp"]`,
+		`"primaryImageOfPage":"https://example.test/uploads/p1.webp"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("product detail JSON-LD missing %q", want)
 		}
+	}
+	if strings.Contains(body, `"@type":"Product"`) {
+		t.Fatalf("没有真实 offers/review/aggregateRating 时不应输出 Product JSON-LD")
 	}
 }
 

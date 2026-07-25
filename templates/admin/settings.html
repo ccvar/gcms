@@ -584,6 +584,90 @@
           </div>
           {{end}}
         </div>
+        {{else if eq .Type "json"}}
+        <div class="field-group theme-opt-json">
+          <h3 class="group-head">{{$.Admin.T .LabelKey .Label}}{{if .Localized}} <span class="scope-pill">{{$.Admin.T "admin.scope.current_lang" "当前语种"}}</span>{{else}} <span class="scope-pill">{{$.Admin.T "admin.scope.global" "全站共用"}}</span>{{end}}</h3>
+          <p class="muted opt-desc">{{$.Admin.T .DescKey .Desc}}</p>
+          <textarea name="theme_json_{{replace .Key "." "_"}}" rows="7" spellcheck="false" placeholder="{{.Example}}">{{.RawText}}</textarea>
+        </div>
+        {{else if eq .Type "pilot-workflow"}}
+        <div class="field-group theme-opt-pilot">
+          <h3 class="group-head">{{.Label}} <span class="scope-pill">{{$.Admin.T "admin.scope.current_lang" "当前语种"}}</span></h3>
+          <p class="muted opt-desc">{{.Desc}}</p>
+          <div class="pilot-opt-intro">
+            <label><span>区块标题</span><input name="pilot_workflow_title" value="{{.PilotWorkflow.Title}}" placeholder="从目标到交付"></label>
+            <label><span>区块说明</span><input name="pilot_workflow_note" value="{{.PilotWorkflow.Note}}" placeholder="一个对话，推进完整工作"></label>
+          </div>
+          <div class="pilot-opt-list" aria-label="流程步骤">
+            {{range $i, $item := .PilotWorkflow.Items}}
+            <div class="pilot-opt-row pilot-opt-row-two">
+              <span class="pilot-opt-index">{{printf "%02d" (add $i 1)}}</span>
+              <label><span>步骤标题</span><input name="pilot_workflow_title_{{$i}}" value="{{$item.Title}}" placeholder="例如：描述目标"></label>
+              <label><span>一句话说明</span><input name="pilot_workflow_note_{{$i}}" value="{{$item.Note}}" placeholder="说明这一阶段完成什么"></label>
+            </div>
+            {{end}}
+          </div>
+        </div>
+        {{else if eq .Type "pilot-release"}}
+        <div class="field-group theme-opt-pilot">
+          <h3 class="group-head">{{.Label}} <span class="scope-pill">{{$.Admin.T "admin.scope.current_lang" "当前语种"}}</span></h3>
+          <p class="muted opt-desc">{{.Desc}}</p>
+          <div class="pilot-opt-release">
+            <label><span>版本号</span><input name="pilot_release_version" value="{{.PilotRelease.Version}}" placeholder="1.2.0"></label>
+            <label><span>发布日期</span><input name="pilot_release_date" value="{{.PilotRelease.Date}}" placeholder="2026-07-25"></label>
+            <label><span>发布通道</span><input name="pilot_release_channel" value="{{.PilotRelease.Channel}}" placeholder="Stable"></label>
+            <label class="pilot-opt-url"><span>版本说明链接</span><input name="pilot_release_url" value="{{.PilotRelease.URL}}" placeholder="/release-notes"></label>
+          </div>
+        </div>
+        {{else if eq .Type "pilot-downloads"}}
+        <div class="field-group theme-opt-pilot">
+          <h3 class="group-head">{{.Label}} <span class="scope-pill">{{$.Admin.T "admin.scope.current_lang" "当前语种"}}</span></h3>
+          <p class="muted opt-desc">{{.Desc}}</p>
+          <div class="pilot-opt-intro">
+            <label><span>区块标题</span><input name="pilot_downloads_title" value="{{.PilotDownloads.Title}}" placeholder="下载 Pilot"></label>
+            <label><span>区块说明</span><input name="pilot_downloads_note" value="{{.PilotDownloads.Note}}" placeholder="选择适合当前设备的版本"></label>
+          </div>
+          <div class="pilot-opt-list" aria-label="下载包">
+            {{range $i, $item := .PilotDownloads.Items}}
+            <div class="pilot-opt-row pilot-opt-download">
+              <span class="pilot-opt-index">{{printf "%02d" (add $i 1)}}</span>
+              <label><span>按钮文案</span><input name="pilot_download_label_{{$i}}" value="{{$item.Label}}" placeholder="下载 macOS 版"></label>
+              <label><span>平台</span><input name="pilot_download_platform_{{$i}}" value="{{$item.Platform}}" placeholder="macOS"></label>
+              <label><span>架构</span><input name="pilot_download_arch_{{$i}}" value="{{$item.Arch}}" placeholder="Apple Silicon"></label>
+              <label class="pilot-opt-url"><span>下载地址</span><input name="pilot_download_url_{{$i}}" value="{{$item.URL}}" placeholder="/downloads/pilot.dmg"></label>
+              <label><span>附加信息</span><input name="pilot_download_meta_{{$i}}" value="{{$item.Meta}}" placeholder="124 MB"></label>
+            </div>
+            {{end}}
+          </div>
+        </div>
+        {{else if eq .Type "pilot-trust"}}
+        <div class="field-group theme-opt-pilot">
+          <h3 class="group-head">{{.Label}} <span class="scope-pill">{{$.Admin.T "admin.scope.current_lang" "当前语种"}}</span></h3>
+          <p class="muted opt-desc">{{.Desc}}</p>
+          <div class="pilot-opt-intro">
+            <label><span>区块标题</span><input name="pilot_trust_title" value="{{.PilotTrust.Title}}" placeholder="每一步都在掌控中"></label>
+            <label><span>区块说明</span><input name="pilot_trust_note" value="{{.PilotTrust.Note}}" placeholder="清楚说明产品的安全边界"></label>
+          </div>
+          <div class="pilot-opt-list" aria-label="信任说明">
+            {{range $i, $item := .PilotTrust.Items}}
+            <div class="pilot-opt-row pilot-opt-row-two">
+              <span class="pilot-opt-index">{{printf "%02d" (add $i 1)}}</span>
+              <label><span>能力标题</span><input name="pilot_trust_title_{{$i}}" value="{{$item.Title}}" placeholder="例如：本地执行"></label>
+              <label><span>真实说明</span><input name="pilot_trust_note_{{$i}}" value="{{$item.Note}}" placeholder="说明数据如何处理"></label>
+            </div>
+            {{end}}
+          </div>
+        </div>
+        {{else if eq .Type "pilot-gallery"}}
+        <div class="field-group theme-opt-pilot">
+          <h3 class="group-head">{{.Label}} <span class="scope-pill">{{$.Admin.T "admin.scope.global" "全站共用"}}</span></h3>
+          <p class="muted opt-desc">{{.Desc}}</p>
+          <div class="pilot-opt-gallery">
+            {{range $i, $url := .PilotGallery}}
+            <label><span>截图 {{printf "%02d" (add $i 1)}}</span><input name="pilot_gallery_{{$i}}" value="{{$url}}" placeholder="/uploads/pilot-screen-{{add $i 1}}.webp"></label>
+            {{end}}
+          </div>
+        </div>
         {{end}}
         {{end}}
 

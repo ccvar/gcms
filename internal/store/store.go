@@ -459,9 +459,9 @@ func (s *Store) normalizeShowcaseDefaults() error {
 			return err
 		}
 	}
-	if _, err := s.db.Exec(`UPDATE settings SET value='image' WHERE key='hero.visual' AND value='' AND ` + demo); err != nil {
-		return err
-	}
+	// hero.visual 的空字符串是用户可保存的有效值，明确表示“使用主题默认动画”。
+	// 不能在每次启动的演示数据归一化里把它改回 image；缺失的旧库键已由上面的
+	// INSERT 补齐，已有空值必须原样保留。
 	if _, err := s.db.Exec(`UPDATE posts
 		SET slug='start', trans_group='s-page-start'
 		WHERE type='page' AND slug='contact' AND trans_group='s-page-contact' AND ` + demo + `

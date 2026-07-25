@@ -204,6 +204,9 @@ func (s *Server) renderExtDetail(w http.ResponseWriter, r *http.Request, ct *Con
 		Image:       v.Site.ContentImage(mainImg),
 		Author:      author,
 	}
+	// 所有扩展详情都先输出通用 WebPage。商品页只有在未来具备真实结构化报价或
+	// 真实评价后才应追加 Product；当前 B2B“面议/询盘”数据不足，不能伪造富摘要字段。
+	v.SEO.JSONLD = append(v.SEO.JSONLD, v.Site.ContentPage(p.Title, v.SEO.Canonical, v.SEO.Description, v.SEO.Image))
 	// 询盘区块（工厂/外贸站 P1）：product 详情页 + 已配置联系方式才渲染。
 	// P1 硬编码 product；若未来更多类型需要询盘，可在 ContentType 上加开关替换这里的判断。
 	if ct.Key == "product" && v.Contact.Any() {
@@ -212,11 +215,6 @@ func (s *Server) renderExtDetail(w http.ResponseWriter, r *http.Request, ct *Con
 	}
 	tplName := detailTemplate(ct)
 	if ct.Key == "product" {
-		// Product 结构化数据（工厂/外贸站 P2）：brand=站点名、sku 从规格嗅探、
-		// image=封面+图集多图；不输出 offers/price——口径：price 字段是自由文本且可不填
-		// （「US$ 12.5/pc」「面议」…），无法承诺 schema.org offers 要求的结构化币种/数值，
-		// 且本 CMS 不做交易，绝不编造报价。价格仅作为普通规格行在页面可见文本中呈现。
-		v.SEO.JSONLD = append(v.SEO.JSONLD, v.Site.Product(p, v.SEO.Canonical, v.SEO.Description, productSKU(p), gallery))
 		if isFactoryLayout(v.Layout) || isDTCLayout(v.Layout) {
 			// 工厂/独立站骨架：商品详情走专属模板（图集 + 规格表 + 首屏询盘 + 相关商品）。
 			tplName = "product_detail"

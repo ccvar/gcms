@@ -1,0 +1,76 @@
+{{define "home_answer_desk"}}
+<div class="answer-desk-page">
+  <section class="ad-hero">
+    <div class="ad-hero-copy">
+      {{if .Site.HeroEyebrow}}<p class="ad-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+      <h1{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+      {{if .Site.HeroDescription}}<p class="ad-hero-description"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+      <form class="ad-search" action="{{.Tr.U "/search"}}" method="get" role="search">
+        <input type="search" name="q" placeholder="{{.Tr.T "search.placeholder"}}" aria-label="{{.Tr.T "search.title"}}">
+        <button type="submit">{{.Tr.T "nav.search"}}</button>
+      </form>
+      {{if .Categories}}<nav class="ad-suggestions" aria-label="{{.Tr.T "common.category_nav"}}">
+        <small>{{.Tr.T "category.label"}}</small>
+        {{range $i, $cat := .Categories}}{{if lt $i 4}}<a href="{{$.Tr.U (printf "/category/%s" $cat.Slug)}}">{{$cat.Name}}</a>{{end}}{{end}}
+      </nav>{{end}}
+    </div>
+    <div class="ad-hero-media"{{if .VisualEdit}} data-visual-edit="hero.image" data-visual-label="Hero 图片" data-visual-kind="image"{{end}}>
+      {{if and (eq .Site.HeroVisual "image") .Site.HeroImage}}
+      <img src="{{.Site.HeroImage}}" alt="{{.Site.HeroAlt}}" decoding="async" fetchpriority="high"{{imgAttrs .Site.HeroImage}}>
+      {{else if and (eq .Site.HeroVisual "svg") .Site.HeroSVG}}
+      <div class="ad-hero-embed">{{safeHTML .Site.HeroSVG}}</div>
+      {{else}}{{with .Featured}}{{if .CoverImage}}<img src="{{.CoverImage}}" alt="{{.Title}}" decoding="async" fetchpriority="high"{{imgAttrs .CoverImage}}>{{end}}{{end}}{{end}}
+    </div>
+  </section>
+
+  {{with .Featured}}
+  <section class="ad-feature">
+    <div class="ad-feature-title">
+      <small>{{$.Site.HomeFeatured}}</small>
+      <h2><a href="{{$.Tr.U (contentURL .)}}">{{.Title}}</a></h2>
+      <p>{{with .Category}}{{.Name}} · {{end}}<time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time></p>
+    </div>
+    <div class="ad-feature-answer">
+      {{if .Excerpt}}<p>{{.Excerpt}}</p>{{end}}
+      <a href="{{$.Tr.U (contentURL .)}}">{{$.Tr.T "home.read_more"}} →</a>
+    </div>
+    {{if .CoverImage}}<a class="ad-feature-cover" href="{{$.Tr.U (contentURL .)}}"><img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}></a>{{end}}
+  </section>
+  {{end}}
+
+  {{if .Posts}}
+  <section class="ad-popular">
+    <header><h2>{{.Site.HomeLatest}}</h2><a href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} →</a></header>
+    <div class="ad-question-head"><span>{{.CategoryAll.Label}}</span><span>{{.Tr.T "category.label"}}</span><span>{{.Tr.T "common.date"}}</span></div>
+    {{range .Posts}}
+    <a class="ad-question-row" href="{{$.Tr.U (contentURL .)}}">
+      <span><b>{{.Title}}</b>{{if .Excerpt}}<em>{{.Excerpt}}</em>{{end}}</span>
+      <small>{{with .Category}}{{.Name}}{{else}}{{$.Site.HomeLatest}}{{end}}</small>
+      <time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time>
+    </a>
+    {{end}}
+  </section>
+  {{end}}
+
+  {{if .Categories}}
+  <section class="ad-bottom">
+    <div class="ad-topics">
+      <h2>{{.CategoryAll.Title}}</h2>
+      <div>
+        {{range $i, $cat := .Categories}}{{if lt $i 6}}
+        <a href="{{$.Tr.U (printf "/category/%s" $cat.Slug)}}">
+          <b>{{$cat.Name}}</b>
+          {{if $cat.Description}}<span>{{$cat.Description}}</span>{{end}}
+          <strong>{{printf ($.Tr.T "category.count") $cat.Count}}</strong>
+        </a>
+        {{end}}{{end}}
+      </div>
+    </div>
+    {{if .Posts}}<aside class="ad-updates">
+      <h2>{{.Site.HomeLatest}}</h2>
+      {{range $i, $p := .Posts}}{{if lt $i 5}}<a href="{{$.Tr.U (contentURL $p)}}"><span>{{$p.Title}}</span><time datetime="{{$.Tr.ISODate $p.PublishedAt}}">{{$.Tr.Date $p.PublishedAt}}</time></a>{{end}}{{end}}
+    </aside>{{end}}
+  </section>
+  {{end}}
+</div>
+{{end}}

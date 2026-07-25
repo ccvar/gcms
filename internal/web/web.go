@@ -238,6 +238,45 @@ var Themes = []ThemeOption{
 	{"route-atlas-white", "路径图 · 纯白", "Route Atlas 的纯白背景色卡", "content"},
 	{"route-atlas-indigo", "路径图 · 靛青", "Route Atlas 的靛青色卡", "content"},
 	{"route-atlas-moss", "路径图 · 苔绿", "Route Atlas 的苔绿色卡", "content"},
+	{"answer-desk", "问答台 · Answer Desk", "搜索先行的问答首页：问题入口、精选解答、热门问题与主题导航", "content"},
+	{"answer-desk-white", "问答台 · 纯白", "Answer Desk 的纯白背景色卡", "content"},
+	{"answer-desk-dark", "问答台 · 深夜", "Answer Desk 的深色背景色卡", "content"},
+	{"portrait-journal", "人物志 · Portrait Journal", "人物驱动的访谈与特写首页：主访谈、人物档案、主题索引与最近对话", "content"},
+	{"portrait-journal-white", "人物志 · 纯白", "Portrait Journal 的纯白背景色卡", "content"},
+	{"portrait-journal-dark", "人物志 · 深林", "Portrait Journal 的深色背景色卡", "content"},
+	{"casebook", "案例册 · Casebook", "案例驱动的内容首页：旗舰案例、行业索引、案例切片与最新案例速览", "content"},
+	{"casebook-white", "案例册 · 纯白", "Casebook 的纯白背景色卡", "content"},
+	{"casebook-dark", "案例册 · 深炭", "Casebook 的深色背景色卡", "content"},
+	{"shelf-index", "层架 · Shelf Index", "层架式知识首页：图文 Hero、精选阅读、分类层级与最近索引", "content"},
+	{"shelf-index-white", "层架 · 纯白", "Shelf Index 的纯白背景色卡", "content"},
+	{"shelf-index-dark", "层架 · 深蓝", "Shelf Index 的深色背景色卡", "content"},
+	{"tradeoff-sheet", "权衡表 · Tradeoff Sheet", "决策工作表首页：图文 Hero、当前关注、决策透镜与连续文章清单", "content"},
+	{"tradeoff-sheet-white", "权衡表 · 纯白", "Tradeoff Sheet 的纯白背景色卡", "content"},
+	{"tradeoff-sheet-dark", "权衡表 · 深褐", "Tradeoff Sheet 的深色背景色卡", "content"},
+	{"progress-bulletin", "进度公报 · Progress Bulletin", "时间公报式首页：图文 Hero、本期公报、分类索引与日期账簿", "content"},
+	{"progress-bulletin-white", "进度公报 · 纯白", "Progress Bulletin 的纯白背景色卡", "content"},
+	{"progress-bulletin-dark", "进度公报 · 深夜", "Progress Bulletin 的深色背景色卡", "content"},
+	{"margin-reading-room", "旁注阅览室 · Margin Reading Room", "研究型阅读首页：三段导读、阅读视角、伴读清单与内容索引", "content"},
+	{"margin-reading-room-white", "旁注阅览室 · 纯白", "Margin Reading Room 的纯白背景色卡", "content"},
+	{"margin-reading-room-dark", "旁注阅览室 · 深林", "Margin Reading Room 的深色背景色卡", "content"},
+	{"light-table", "光桌 · Light Table", "视觉内容首页：图像主导 Hero、精选展签与四列接触印样", "content"},
+	{"light-table-white", "光桌 · 纯白", "Light Table 的纯白背景色卡", "content"},
+	{"light-table-dark", "光桌 · 暗房", "Light Table 的深色背景色卡", "content"},
+	{"counterpoint", "复调 · Counterpoint", "双路径阅读首页：问题 Hero、主题引子、成对文章与最新索引", "content"},
+	{"counterpoint-white", "复调 · 纯白", "Counterpoint 的纯白背景色卡", "content"},
+	{"counterpoint-dark", "复调 · 深海", "Counterpoint 的深色背景色卡", "content"},
+	{"seamless-canvas", "融幕 · Seamless Canvas", "Hero、Logo 与导航共用连续媒体画布，首屏底部嵌入分类索引", "content"},
+	{"seamless-canvas-white", "融幕 · 纯白", "Seamless Canvas 的纯白背景色卡", "content"},
+	{"seamless-canvas-dark", "融幕 · 深影", "Seamless Canvas 的深色背景色卡", "content"},
+	{"night-corridor", "夜廊 · Night Corridor", "深色沉浸 Hero、融合导航、右侧阅读清单与底部内容轨道", "content"},
+	{"night-corridor-white", "夜廊 · 纯白", "Night Corridor 的纯白背景色卡", "content"},
+	{"night-corridor-dark", "夜廊 · 深夜", "Night Corridor 的深色背景色卡", "content"},
+	{"open-ascent", "天阶 · Open Ascent", "明亮建筑式 Hero、融合导航、三条首屏索引与精选阅读展签", "content"},
+	{"open-ascent-white", "天阶 · 纯白", "Open Ascent 的纯白背景色卡", "content"},
+	{"open-ascent-dark", "天阶 · 深蓝", "Open Ascent 的深色背景色卡", "content"},
+	{"pilot-flight-deck", "领航台 · Pilot Flight Deck", "为 Pilot 客户端打造的连续产品首屏：客户端视觉、工作流、能力、案例、资源与下载", "content"},
+	{"pilot-flight-deck-white", "领航台 · 纯白", "Pilot Flight Deck 的纯白背景色卡", "content"},
+	{"pilot-flight-deck-dark", "领航台 · 深空", "Pilot Flight Deck 的深色背景色卡", "content"},
 	{"blueprint", "蓝图 · Blueprint", "工程制图：方格纸底纹 + 墨线 + 等宽技术标注 + 角落标题栏", "general"},
 	{"riso", "孔版 · Risograph", "独立孔版印刷：双专色叠印、网点质感、套印偏移、硬阴影", "content"},
 	{"quiet", "和敬 · Quiet", "和风留白：极阔间距、竖向节奏、发丝线、一点朱印强调", "content"},
@@ -462,6 +501,19 @@ var themeLayouts = map[string]string{
 	"briefing-desk": "index", "briefing-desk-white": "index", "briefing-desk-sage": "index", "briefing-desk-ink": "index",
 	"decision-wall": "index", "decision-wall-white": "index", "decision-wall-mint": "index", "decision-wall-carbon": "index",
 	"route-atlas": "index", "route-atlas-white": "index", "route-atlas-indigo": "index", "route-atlas-moss": "index",
+	"answer-desk": "answer-desk", "answer-desk-white": "answer-desk", "answer-desk-dark": "answer-desk",
+	"portrait-journal": "portrait-journal", "portrait-journal-white": "portrait-journal", "portrait-journal-dark": "portrait-journal",
+	"casebook": "casebook", "casebook-white": "casebook", "casebook-dark": "casebook",
+	"shelf-index": "shelf-index", "shelf-index-white": "shelf-index", "shelf-index-dark": "shelf-index",
+	"tradeoff-sheet": "tradeoff-sheet", "tradeoff-sheet-white": "tradeoff-sheet", "tradeoff-sheet-dark": "tradeoff-sheet",
+	"progress-bulletin": "progress-bulletin", "progress-bulletin-white": "progress-bulletin", "progress-bulletin-dark": "progress-bulletin",
+	"margin-reading-room": "margin-reading-room", "margin-reading-room-white": "margin-reading-room", "margin-reading-room-dark": "margin-reading-room",
+	"light-table": "light-table", "light-table-white": "light-table", "light-table-dark": "light-table",
+	"counterpoint": "counterpoint", "counterpoint-white": "counterpoint", "counterpoint-dark": "counterpoint",
+	"seamless-canvas": "seamless-canvas", "seamless-canvas-white": "seamless-canvas", "seamless-canvas-dark": "seamless-canvas",
+	"night-corridor": "night-corridor", "night-corridor-white": "night-corridor", "night-corridor-dark": "night-corridor",
+	"open-ascent": "open-ascent", "open-ascent-white": "open-ascent", "open-ascent-dark": "open-ascent",
+	"pilot-flight-deck": "pilot-flight-deck", "pilot-flight-deck-white": "pilot-flight-deck", "pilot-flight-deck-dark": "pilot-flight-deck",
 	// 皮肤复用骨架（新皮 → 既有骨）
 	"grove":     "sidebar",
 	"obsidian":  "bento",
@@ -569,7 +621,7 @@ func layoutForTheme(theme string) string {
 // contentThemeFamily 返回独立内容骨架的族名。色卡变体共享同一骨架，
 // 其余既有主题返回空字符串，确保不会误入新页头/页脚分支。
 func contentThemeFamily(theme string) string {
-	for _, family := range []string{"field-ledger", "signal-archive", "paper-current", "night-watch", "orbit-index", "column-stage", "type-cascade", "briefing-desk", "decision-wall", "route-atlas"} {
+	for _, family := range []string{"field-ledger", "signal-archive", "paper-current", "night-watch", "orbit-index", "column-stage", "type-cascade", "briefing-desk", "decision-wall", "route-atlas", "answer-desk", "portrait-journal", "casebook", "shelf-index", "tradeoff-sheet", "progress-bulletin", "margin-reading-room", "light-table", "counterpoint", "seamless-canvas", "night-corridor", "open-ascent", "pilot-flight-deck"} {
 		if theme == family || strings.HasPrefix(theme, family+"-") {
 			return family
 		}
@@ -635,6 +687,19 @@ var themeAccentDefault = map[string]string{
 	"briefing-desk": "#b52b24", "briefing-desk-white": "#9f251f", "briefing-desk-sage": "#3f6a58", "briefing-desk-ink": "#e5b44f",
 	"decision-wall": "#ff5a4f", "decision-wall-white": "#154fc3", "decision-wall-mint": "#087f69", "decision-wall-carbon": "#74a7ff",
 	"route-atlas": "#b33a2b", "route-atlas-white": "#9f3024", "route-atlas-indigo": "#365aa8", "route-atlas-moss": "#526b42",
+	"answer-desk": "#2457d6", "answer-desk-white": "#2457d6", "answer-desk-dark": "#78a0ff",
+	"portrait-journal": "#304b32", "portrait-journal-white": "#304b32", "portrait-journal-dark": "#8eb893",
+	"casebook": "#c34b2d", "casebook-white": "#c34b2d", "casebook-dark": "#f07a5c",
+	"shelf-index": "#2457a6", "shelf-index-white": "#2457a6", "shelf-index-dark": "#8fb4ff",
+	"tradeoff-sheet": "#c7532f", "tradeoff-sheet-white": "#b94728", "tradeoff-sheet-dark": "#ff9b73",
+	"progress-bulletin": "#d9341b", "progress-bulletin-white": "#c92f19", "progress-bulletin-dark": "#ff806c",
+	"margin-reading-room": "#28634f", "margin-reading-room-white": "#28634f", "margin-reading-room-dark": "#8fc7ae",
+	"light-table": "#c54f28", "light-table-white": "#b84625", "light-table-dark": "#ff9a72",
+	"counterpoint": "#a33d31", "counterpoint-white": "#96372d", "counterpoint-dark": "#ef8c7e",
+	"seamless-canvas": "#c74624", "seamless-canvas-white": "#b73a1f", "seamless-canvas-dark": "#ff9274",
+	"night-corridor": "#ff5a42", "night-corridor-white": "#b63b2a", "night-corridor-dark": "#ff765f",
+	"open-ascent": "#155dcc", "open-ascent-white": "#155dcc", "open-ascent-dark": "#83adff",
+	"pilot-flight-deck": "#1763e8", "pilot-flight-deck-white": "#1763e8", "pilot-flight-deck-dark": "#76a9ff",
 	"paperwhite": "#3156c8", "citrus": "#e34f32",
 	"bookshop": "#2d5bd1", "canal": "#177c76", "confetti": "#e34b46", "icebox": "#3569d4",
 	"ledger": "#26735b", "signal": "#ff5a36", "gallery": "#263f8f", "coast": "#147d85",
@@ -700,6 +765,19 @@ var themeRadiusDefault = map[string]string{
 	"briefing-desk": "0", "briefing-desk-white": "0", "briefing-desk-sage": "0", "briefing-desk-ink": "0",
 	"decision-wall": "0", "decision-wall-white": "0", "decision-wall-mint": "0", "decision-wall-carbon": "0",
 	"route-atlas": "0", "route-atlas-white": "0", "route-atlas-indigo": "0", "route-atlas-moss": "0",
+	"answer-desk": "0", "answer-desk-white": "0", "answer-desk-dark": "0",
+	"portrait-journal": "0", "portrait-journal-white": "0", "portrait-journal-dark": "0",
+	"casebook": "0", "casebook-white": "0", "casebook-dark": "0",
+	"shelf-index": "0", "shelf-index-white": "0", "shelf-index-dark": "0",
+	"tradeoff-sheet": "0", "tradeoff-sheet-white": "0", "tradeoff-sheet-dark": "0",
+	"progress-bulletin": "0", "progress-bulletin-white": "0", "progress-bulletin-dark": "0",
+	"margin-reading-room": "0", "margin-reading-room-white": "0", "margin-reading-room-dark": "0",
+	"light-table": "0", "light-table-white": "0", "light-table-dark": "0",
+	"counterpoint": "0", "counterpoint-white": "0", "counterpoint-dark": "0",
+	"seamless-canvas": "0", "seamless-canvas-white": "0", "seamless-canvas-dark": "0",
+	"night-corridor": "0", "night-corridor-white": "0", "night-corridor-dark": "0",
+	"open-ascent": "0", "open-ascent-white": "0", "open-ascent-dark": "0",
+	"pilot-flight-deck": "8", "pilot-flight-deck-white": "8", "pilot-flight-deck-dark": "8",
 	"paperwhite": "6", "citrus": "16",
 	"bookshop": "4", "canal": "10", "confetti": "14", "icebox": "12",
 	"ledger": "2", "signal": "4", "gallery": "0", "coast": "14",
@@ -981,6 +1059,13 @@ type View struct {
 	DTCSelling      []DTCSelling     // 单品骨架「卖点分解」（gallery 逐图 × specs 逐对；空不渲染）
 	DTCScenes       []string         // 单品骨架「使用场景」余图（卖点分解没吃完的 gallery）
 	DTCLookGroups   []DTCLookGroup   // 画册骨架系列组（分类 → 商品封面墙；无分类回落全部商品一组）
+
+	// Pilot 客户端宣传骨架。所有产品业务内容来自站点配置；空槽对应区块不渲染。
+	PilotWorkflow  PilotSection[PilotStep]
+	PilotRelease   PilotRelease
+	PilotDownloads PilotSection[PilotDownload]
+	PilotTrust     PilotSection[PilotTrustPoint]
+	PilotGallery   []string
 
 	ContentHTML template.HTML
 	TOC         []Heading
@@ -4772,24 +4857,25 @@ func (s *Server) adminThemePreview(w http.ResponseWriter, r *http.Request) {
 	v := s.view(r, "home")
 	s.applyTheme(v, theme)
 	v.SEO = v.Site.Home()
-	v.Site.HeroVisual = ""
-	v.Site.HeroImage = ""
-	v.Site.HeroSVG = ""
+	// 主题卡缩略图与完整试穿页复用同一套真实 Hero 数据。只隔离自定义注入，
+	// 避免后台 iframe 执行站点脚本；图片/SVG 本身必须保留，才能真实反映主题效果。
 	v.Site.InjectHead = ""
 	v.Site.InjectBody = ""
 
-	previewLimit := 4
+	postsPerPage := s.intSetting(homePostsPerPageKey, defaultHomePostsPerPage, minHomePostsPerPage, maxHomePostsPerPage)
+	previewLimit := postsPerPage
 	newContentPreview := v.ContentThemeFamily == "orbit-index" || v.ContentThemeFamily == "column-stage" || v.ContentThemeFamily == "type-cascade" ||
-		v.ContentThemeFamily == "briefing-desk" || v.ContentThemeFamily == "decision-wall" || v.ContentThemeFamily == "route-atlas"
-	if newContentPreview {
-		previewLimit = 6
+		v.ContentThemeFamily == "briefing-desk" || v.ContentThemeFamily == "decision-wall" || v.ContentThemeFamily == "route-atlas" ||
+		v.ContentThemeFamily == "answer-desk" || v.ContentThemeFamily == "portrait-journal" || v.ContentThemeFamily == "casebook" ||
+		v.ContentThemeFamily == "shelf-index" || v.ContentThemeFamily == "tradeoff-sheet" || v.ContentThemeFamily == "progress-bulletin" ||
+		v.ContentThemeFamily == "margin-reading-room" || v.ContentThemeFamily == "light-table" || v.ContentThemeFamily == "counterpoint" ||
+		v.ContentThemeFamily == "seamless-canvas" || v.ContentThemeFamily == "night-corridor" || v.ContentThemeFamily == "open-ascent"
+	posts, err := s.store.ListPublished(lang, 0, previewLimit)
+	if err != nil {
+		s.serverError(w, err)
+		return
 	}
-	// Column Stage 的首屏设计固定为 5 个完整栏位；真实站点仍按后台的
-	// 首页条数继续渲染第 6 条及后续内容，但主题库预览不额外造出第 6 条。
-	if v.ContentThemeFamily == "column-stage" {
-		previewLimit = 5
-	}
-	posts, _ := s.store.ListPublished(lang, 0, previewLimit)
+	hasRealPosts := len(posts) > 0
 	if total, err := s.store.CountPublished(lang); err == nil {
 		v.TotalPosts = total
 	}
@@ -4817,12 +4903,16 @@ func (s *Server) adminThemePreview(w http.ResponseWriter, r *http.Request) {
 	if v.TotalPosts == 0 {
 		v.TotalPosts = len(posts)
 	}
-	v.Featured = posts[0]
-	if len(posts) > 1 {
-		v.Posts = posts[1:]
+	if hasRealPosts {
+		s.populateHomeContent(v, lang, posts, postsPerPage, s.intSetting(homeLinksLimitKey, defaultHomeLinksLimit, minHomeLinksLimit, maxHomeLinksLimit), 1)
+	} else {
+		v.Featured = posts[0]
+		if len(posts) > 1 {
+			v.Posts = posts[1:]
+		}
 	}
 	v.Categories, _ = s.store.ListCategories(lang, "post")
-	if len(v.Categories) == 0 {
+	if !hasRealPosts && len(v.Categories) == 0 {
 		if syntheticContentPreview {
 			v.Categories = []*store.Category{
 				{Slug: "city", Name: "城市与空间", Count: 98},
@@ -4844,10 +4934,15 @@ func (s *Server) adminThemePreview(w http.ResponseWriter, r *http.Request) {
 			post.Category = v.Categories[i%len(v.Categories)]
 		}
 	}
-	v.KnowledgeGroups = s.knowledgeGroups(lang, v.CategoryAll, v.Categories, posts, len(posts), s.intSetting(homePostsPerPageKey, defaultHomePostsPerPage, minHomePostsPerPage, maxHomePostsPerPage))
+	v.KnowledgeGroups = s.knowledgeGroups(lang, v.CategoryAll, v.Categories, posts, v.TotalPosts, postsPerPage)
 	knowledgeLinksLimit := s.intSetting(homeLinksLimitKey, defaultHomeLinksLimit, minHomeLinksLimit, maxHomeLinksLimit)
-	v.FeatLinks = s.knowledgeHeroLinks(lang, knowledgeLinksLimit)
-	if len(v.FeatLinks) == 0 && knowledgeLinksLimit > 0 {
+	if v.Theme == "knowledge" {
+		v.FeatLinks = s.knowledgeHeroLinks(lang, knowledgeLinksLimit)
+	} else if !hasRealPosts && knowledgeLinksLimit > 0 {
+		// 空文章站点仍可能配置了真实置顶链接；先使用真实数据，再考虑空站占位。
+		v.FeatLinks, _ = s.store.FeaturedLinks(lang, knowledgeLinksLimit)
+	}
+	if !hasRealPosts && len(v.FeatLinks) == 0 && knowledgeLinksLimit > 0 && v.ContentThemeFamily != "pilot-flight-deck" {
 		v.FeatLinks = []*store.Post{
 			{Title: "文档", Excerpt: "查看部署、配置与 API 用法。"},
 			{Title: "发布", Excerpt: "版本更新与一键升级流程。"},
@@ -4914,6 +5009,8 @@ func (s *Server) adminThemePreview(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	// Pilot 预览读取与真实首页完全相同的站点配置，不注入版本、平台或下载链接样例。
+	s.fillPilotHome(v, lang)
 	s.rnd.ThemePreview(w, http.StatusOK, v)
 }
 
@@ -4934,37 +5031,7 @@ func (s *Server) renderHome(w http.ResponseWriter, r *http.Request) {
 	v.SEO = v.Site.Home()
 	v.Categories, _ = s.store.ListCategories(lang, "post")
 	v.KnowledgeGroups = s.knowledgeGroups(lang, v.CategoryAll, v.Categories, posts, total, postsPerPage)
-	if page == 1 {
-		// 精选优先取置顶文章（可多篇），否则取最新一篇
-		if fps, _ := s.store.FeaturedPosts(lang, postsPerPage); len(fps) > 0 {
-			v.Featured = fps[0]
-			v.FeaturedMore = fps[1:]
-			fset := map[int64]bool{}
-			for _, f := range fps {
-				fset[f.ID] = true
-			}
-			for _, p := range posts {
-				if !fset[p.ID] {
-					v.Posts = append(v.Posts, p)
-				}
-			}
-		} else if len(posts) > 0 {
-			v.Featured = posts[0]
-			v.Posts = posts[1:]
-		}
-		// 独立内容骨架把「首页显示数量」解释为首页总文章数：
-		// 1 篇主推 + N-1 篇列表。只从列表排除主推本身，其余置顶文章
-		// 仍按发布时间参与列表；旧主题继续沿用 FeaturedMore 的既有口径。
-		if v.ContentThemeFamily != "" {
-			v.Posts = contentThemeHomePosts(posts, v.Featured, postsPerPage)
-		}
-		// 链接模块：仅当存在「置顶」链接时才在首页展示
-		if linksLimit > 0 {
-			v.FeatLinks, _ = s.store.FeaturedLinks(lang, linksLimit)
-		}
-	} else {
-		v.Posts = posts
-	}
+	s.populateHomeContent(v, lang, posts, postsPerPage, linksLimit, page)
 	if v.Theme == "knowledge" {
 		v.FeatLinks = s.knowledgeHeroLinks(lang, linksLimit)
 	}
@@ -4972,6 +5039,8 @@ func (s *Server) renderHome(w http.ResponseWriter, r *http.Request) {
 	s.fillFactoryHome(v, lang)
 	// 独立站骨架首页：商品 + 品牌数字/图集/评价（按骨架消费的槽子集装载）。
 	s.fillDTCHome(v, lang)
+	// Pilot 宣传骨架：流程、版本、下载、信任说明与客户端图集均从站点槽装载。
+	s.fillPilotHome(v, lang)
 	// 首页在每个语种都存在 → 全语种 hreflang
 	ph := map[string]string{}
 	for _, l := range s.locales() {
@@ -4980,6 +5049,44 @@ func (s *Server) renderHome(w http.ResponseWriter, r *http.Request) {
 	v.Langs, v.SEO.Alternates = s.i18nLinksForRequest(r, v.Site.BaseURL, lang, ph)
 	setPagination(v, page, totalPages, "/")
 	s.rnd.Public(w, "home", http.StatusOK, v)
+}
+
+// populateHomeContent 统一真实首页与后台主题卡缩略图的数据选择规则。
+// 这样主题卡不是另一份“演示首页”，而是同一站点在固定画布中的真实缩放视图。
+func (s *Server) populateHomeContent(v *View, lang string, posts []*store.Post, postsPerPage, linksLimit, page int) {
+	if page != 1 {
+		v.Posts = posts
+		return
+	}
+
+	// 精选优先取置顶文章（可多篇），否则取最新一篇。
+	if fps, _ := s.store.FeaturedPosts(lang, postsPerPage); len(fps) > 0 {
+		v.Featured = fps[0]
+		v.FeaturedMore = fps[1:]
+		fset := map[int64]bool{}
+		for _, f := range fps {
+			fset[f.ID] = true
+		}
+		for _, p := range posts {
+			if !fset[p.ID] {
+				v.Posts = append(v.Posts, p)
+			}
+		}
+	} else if len(posts) > 0 {
+		v.Featured = posts[0]
+		v.Posts = posts[1:]
+	}
+
+	// 独立内容骨架把「首页显示数量」解释为首页总文章数：
+	// 1 篇主推 + N-1 篇列表。只从列表排除主推本身，其余置顶文章
+	// 仍按发布时间参与列表；旧主题继续沿用 FeaturedMore 的既有口径。
+	if v.ContentThemeFamily != "" {
+		v.Posts = contentThemeHomePosts(posts, v.Featured, postsPerPage)
+	}
+	// 链接模块：仅当存在「置顶」链接时才在首页展示。
+	if linksLimit > 0 {
+		v.FeatLinks, _ = s.store.FeaturedLinks(lang, linksLimit)
+	}
 }
 
 // contentThemeHomePosts 为独立内容骨架组装首页文章列表。

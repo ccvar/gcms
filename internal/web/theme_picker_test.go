@@ -40,6 +40,42 @@ func TestWeb3GuideFamiliesHavePureWhiteSkin(t *testing.T) {
 	}
 }
 
+func TestEditorialCollectionFamiliesHaveWhiteAndDarkSkins(t *testing.T) {
+	cards := themeFamilyCards(pickerCardsFromRegistry(t), "editorial", "zh")
+	for _, family := range []string{
+		"answer-desk", "portrait-journal", "casebook",
+		"shelf-index", "tradeoff-sheet", "progress-bulletin",
+		"margin-reading-room", "light-table", "counterpoint",
+		"seamless-canvas", "night-corridor", "open-ascent",
+	} {
+		var found *ThemeFamilyCard
+		for i := range cards {
+			if cards[i].Family == family {
+				found = &cards[i]
+				break
+			}
+		}
+		if found == nil {
+			t.Fatalf("missing %s family card", family)
+		}
+		want := []string{family, family + "-white", family + "-dark"}
+		if len(found.Skins) != len(want) {
+			t.Fatalf("%s skins = %d, want %d", family, len(found.Skins), len(want))
+		}
+		for i, id := range want {
+			if found.Skins[i].ID != id {
+				t.Errorf("%s skin[%d] = %q, want %q", family, i, found.Skins[i].ID, id)
+			}
+		}
+		if got := themeBg(family + "-white"); got != "#ffffff" {
+			t.Errorf("%s white background = %q, want #ffffff", family, got)
+		}
+		if got := themeBg(family + "-dark"); !strings.HasPrefix(got, "#0") && !strings.HasPrefix(got, "#1") {
+			t.Errorf("%s dark background = %q, want a near-black swatch", family, got)
+		}
+	}
+}
+
 // 配色族聚合：卡数=族数、皮肤全覆盖不重不漏、骨架族用骨架对名、
 // 独立皮族恢复皮肤自己的名字与描述、选中回显与激活皮规则不变。
 func TestThemeFamilyCards(t *testing.T) {

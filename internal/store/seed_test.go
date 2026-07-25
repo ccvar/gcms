@@ -476,7 +476,7 @@ func TestBundledCoverPathsMigrateToWebP(t *testing.T) {
 		"site.hero_description":     "gcms 把文章、页面、资源链接、全语种内容、主题、SEO/GEO、Cloudflare 静态部署、多站管理和 AI 自运营接口收进同一个后台；无需搭数据库服务和前端构建环境，一行命令即可部署，1 vCPU / 512MB 内存的小规格 VPS 也能稳定起步。",
 		"site.share_image":          "/assets/og-cover.webp",
 		"site.share_image::en":      "/assets/og-cover-en.webp",
-		"hero.visual":               "image",
+		"hero.visual":               "",
 		"hero.image":                "/assets/hero-product-overview-brand.webp",
 		"hero.visual::en":           "image",
 		"hero.image::en":            "/assets/hero-product-overview-brand-en.webp",
@@ -593,6 +593,35 @@ func TestClearDemoContentKeepsBaseSettings(t *testing.T) {
 	}
 	if got := st.Setting("theme"); got != "product" {
 		t.Fatalf("theme = %q, want product", got)
+	}
+}
+
+func TestShowcaseDefaultHeroAnimationSurvivesReopen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cms.db")
+	st, err := Open(path)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	if err := st.SetSetting("hero.visual", ""); err != nil {
+		t.Fatalf("set default hero visual: %v", err)
+	}
+	if err := st.SetSetting("hero.image", "/uploads/custom-hero.webp"); err != nil {
+		t.Fatalf("keep configured hero image: %v", err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatalf("close store: %v", err)
+	}
+
+	st, err = Open(path)
+	if err != nil {
+		t.Fatalf("reopen store: %v", err)
+	}
+	defer st.Close()
+	if got := st.Setting("hero.visual"); got != "" {
+		t.Fatalf("hero.visual after reopen = %q, want default animation", got)
+	}
+	if got := st.Setting("hero.image"); got != "/uploads/custom-hero.webp" {
+		t.Fatalf("hero.image after reopen = %q, want preserved upload", got)
 	}
 }
 

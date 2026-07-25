@@ -22,18 +22,32 @@ import (
 
 // 槽类型：决定外观页渲染哪种编辑控件与 settings 值的格式。
 const (
-	themeOptHero     = "hero"     // 既有 Hero 右侧视觉控件（hero.visual/hero.image/hero.svg，全局）
-	themeOptStats    = "stats"    // 数字组 JSON [{num,label}]，最多 Max 组
-	themeOptSteps    = "steps"    // 步骤组 JSON [{title,note}] ×Max + 全局开关 EnabledKey
-	themeOptTextPair = "textpair" // 文本对 JSON {title,note}
-	themeOptToggle   = "toggle"   // 纯开关区块（内容零配置，如分类入口卡区），只有 EnabledKey
-	themeOptPairs    = "pairs"    // 名称+一句话组 JSON [{name,note}] ×Max + 开关（如应用行业）
-	themeOptQAList   = "qalist"   // 问答组 JSON [{q,a}] ×Max + 开关（如 FAQ）
-	themeOptGallery  = "gallery"  // 图片 URL 列表 JSON ["url",...]（全局；空 = 区块不渲染）
+	themeOptHero           = "hero"     // 既有 Hero 右侧视觉控件（hero.visual/hero.image/hero.svg，全局）
+	themeOptStats          = "stats"    // 数字组 JSON [{num,label}]，最多 Max 组
+	themeOptSteps          = "steps"    // 步骤组 JSON [{title,note}] ×Max + 全局开关 EnabledKey
+	themeOptTextPair       = "textpair" // 文本对 JSON {title,note}
+	themeOptToggle         = "toggle"   // 纯开关区块（内容零配置，如分类入口卡区），只有 EnabledKey
+	themeOptPairs          = "pairs"    // 名称+一句话组 JSON [{name,note}] ×Max + 开关（如应用行业）
+	themeOptQAList         = "qalist"   // 问答组 JSON [{q,a}] ×Max + 开关（如 FAQ）
+	themeOptGallery        = "gallery"  // 图片 URL 列表 JSON ["url",...]（全局；空 = 区块不渲染）
+	themeOptJSON           = "json"     // 结构化 JSON 槽；由主题专属解析器校验、规范化后落库
+	themeOptPilotWorkflow  = "pilot-workflow"
+	themeOptPilotRelease   = "pilot-release"
+	themeOptPilotDownloads = "pilot-downloads"
+	themeOptPilotTrust     = "pilot-trust"
+	themeOptPilotGallery   = "pilot-gallery"
 	// 评价组 JSON [{name,region,quote}] ×Max（独立站族）。没有开关也没有默认：
 	// 未配置区块不渲染——评价只能录真实用户的话，绝不编造占位。
 	themeOptTestimonials = "testimonials"
 )
+
+var pilotThemeOptions = []ThemeOptionSpec{
+	{Key: pilotWorkflowSettingKey, Type: themeOptPilotWorkflow, Label: "使用流程", Desc: "配置流程区标题、说明与步骤；空白步骤不会显示。", Localized: true, Max: maxPilotWorkflow},
+	{Key: pilotReleaseSettingKey, Type: themeOptPilotRelease, Label: "当前版本", Desc: "用于首屏版本条和版本说明链接；全部留空时使用主题默认。", Localized: true},
+	{Key: pilotDownloadsSettingKey, Type: themeOptPilotDownloads, Label: "下载包", Desc: "按平台维护下载入口；包名称与下载地址完整时才会显示。", Localized: true, Max: maxPilotDownloads},
+	{Key: pilotTrustSettingKey, Type: themeOptPilotTrust, Label: "信任说明", Desc: "说明本地执行、确认机制与数据安全等真实能力。", Localized: true, Max: maxPilotTrust},
+	{Key: pilotGallerySettingKey, Type: themeOptPilotGallery, Label: "客户端图集", Desc: "填写真实客户端截图地址，最多 6 张；支持站内路径或完整 URL。", Max: maxPilotGallery},
+}
 
 // ThemeOptionSpec 是主题声明的一个可配置数据槽。
 type ThemeOptionSpec struct {
@@ -312,6 +326,8 @@ func themeOptionSpecs(theme string) []ThemeOptionSpec {
 		specs = append(specs, factoryLayoutThemeOptions(layout)...)
 	case isDTCLayout(layout):
 		specs = append(specs, dtcLayoutThemeOptions(layout)...)
+	case layout == "pilot-flight-deck":
+		specs = append(specs, pilotThemeOptions...)
 	}
 	return specs
 }
@@ -352,8 +368,14 @@ type ThemeOptionView struct {
 	Pairs             []ThemePairField  // pairs 槽，补齐到 Max 行
 	Testimonials      []ThemeTestiField // testimonials 槽，补齐到 Max 行（无默认占位）
 	GalleryText       string            // gallery 槽：每行一个 URL 的 textarea 值
+	RawText           string            // json 槽：规范 JSON 文本
 	Title, Note       string            // textpair 槽
 	TitleDef, NoteDef string
+	PilotWorkflow     PilotSection[PilotStep]
+	PilotRelease      PilotRelease
+	PilotDownloads    PilotSection[PilotDownload]
+	PilotTrust        PilotSection[PilotTrustPoint]
+	PilotGallery      []string
 }
 
 // themeOptionViews 按主题 schema 装配外观页表单数据；lang 是编辑语种（读裸键或 ::lang 键）。
@@ -437,6 +459,51 @@ func (s *Server) themeOptionViews(theme, lang string) []ThemeOptionView {
 		case themeOptGallery:
 			// 图集全局（不分语种）：读裸键。
 			v.GalleryText = strings.Join(parseFactoryGallery(s.store.Setting(spec.Key)), "\n")
+		case themeOptJSON:
+			if spec.Localized {
+				v.RawText = s.store.Setting(s.copyKey(spec.Key, lang))
+			} else {
+				v.RawText = s.store.Setting(spec.Key)
+			}
+		case themeOptPilotWorkflow:
+			v.PilotWorkflow = parsePilotWorkflow(raw)
+			if v.PilotWorkflow.Title == "" && v.PilotWorkflow.Note == "" && len(v.PilotWorkflow.Items) == 0 {
+				v.PilotWorkflow = defaultPilotWorkflow(tr.T)
+			}
+			for len(v.PilotWorkflow.Items) < spec.Max {
+				v.PilotWorkflow.Items = append(v.PilotWorkflow.Items, PilotStep{})
+			}
+		case themeOptPilotRelease:
+			v.PilotRelease = parsePilotRelease(raw)
+			if v.PilotRelease.Version == "" && v.PilotRelease.Date == "" && v.PilotRelease.Channel == "" && v.PilotRelease.URL == "" {
+				v.PilotRelease = defaultPilotRelease(tr.T)
+			}
+		case themeOptPilotDownloads:
+			v.PilotDownloads = parsePilotDownloads(raw)
+			if v.PilotDownloads.Title == "" && v.PilotDownloads.Note == "" && len(v.PilotDownloads.Items) == 0 {
+				v.PilotDownloads = defaultPilotDownloads(tr.T)
+			}
+			for len(v.PilotDownloads.Items) < spec.Max {
+				v.PilotDownloads.Items = append(v.PilotDownloads.Items, PilotDownload{})
+			}
+		case themeOptPilotTrust:
+			v.PilotTrust = parsePilotTrust(raw)
+			if v.PilotTrust.Title == "" && v.PilotTrust.Note == "" && len(v.PilotTrust.Items) == 0 {
+				v.PilotTrust = defaultPilotTrust(tr.T)
+			}
+			for len(v.PilotTrust.Items) < spec.Max {
+				v.PilotTrust.Items = append(v.PilotTrust.Items, PilotTrustPoint{})
+			}
+		case themeOptPilotGallery:
+			v.PilotGallery = parsePilotGallery(s.store.Setting(spec.Key))
+			if len(v.PilotGallery) == 0 {
+				if hero := cleanPilotURL(s.localizedSetting("hero.image", lang, "")); hero != "" {
+					v.PilotGallery = append(v.PilotGallery, hero)
+				}
+			}
+			for len(v.PilotGallery) < spec.Max {
+				v.PilotGallery = append(v.PilotGallery, "")
+			}
 		}
 		out = append(out, v)
 	}
@@ -605,6 +672,84 @@ func (s *Server) saveThemeOptionsFromForm(r *http.Request, lang string) {
 			rows = append(rows, DTCTestimonial{Name: name, Region: strings.TrimSpace(r.FormValue(fmt.Sprintf("dtc_testi_region_%d", i))), Quote: quote})
 		}
 		_ = s.store.SetSetting(s.copyKey(dtcTestimonialsSettingKey, lang), marshalThemeOptionJSON(rows, len(rows) == 0))
+	}
+
+	if posted[pilotWorkflowSettingKey] {
+		workflow := PilotSection[PilotStep]{
+			Title: strings.TrimSpace(r.FormValue("pilot_workflow_title")),
+			Note:  strings.TrimSpace(r.FormValue("pilot_workflow_note")),
+		}
+		for i := 0; i < maxPilotWorkflow; i++ {
+			item := PilotStep{
+				Title: strings.TrimSpace(r.FormValue(fmt.Sprintf("pilot_workflow_title_%d", i))),
+				Note:  strings.TrimSpace(r.FormValue(fmt.Sprintf("pilot_workflow_note_%d", i))),
+			}
+			if item.Title != "" {
+				workflow.Items = append(workflow.Items, item)
+			}
+		}
+		empty := workflow.Title == "" && workflow.Note == "" && len(workflow.Items) == 0
+		_ = s.store.SetSetting(s.copyKey(pilotWorkflowSettingKey, lang), marshalThemeOptionJSON(workflow, empty))
+	}
+
+	if posted[pilotReleaseSettingKey] {
+		release := PilotRelease{
+			Version: strings.TrimSpace(r.FormValue("pilot_release_version")),
+			Date:    strings.TrimSpace(r.FormValue("pilot_release_date")),
+			Channel: strings.TrimSpace(r.FormValue("pilot_release_channel")),
+			URL:     cleanPilotURL(r.FormValue("pilot_release_url")),
+		}
+		empty := release.Version == "" && release.Date == "" && release.Channel == "" && release.URL == ""
+		_ = s.store.SetSetting(s.copyKey(pilotReleaseSettingKey, lang), marshalThemeOptionJSON(release, empty))
+	}
+
+	if posted[pilotDownloadsSettingKey] {
+		downloads := PilotSection[PilotDownload]{
+			Title: strings.TrimSpace(r.FormValue("pilot_downloads_title")),
+			Note:  strings.TrimSpace(r.FormValue("pilot_downloads_note")),
+		}
+		for i := 0; i < maxPilotDownloads; i++ {
+			item := PilotDownload{
+				Label:    strings.TrimSpace(r.FormValue(fmt.Sprintf("pilot_download_label_%d", i))),
+				Platform: strings.TrimSpace(r.FormValue(fmt.Sprintf("pilot_download_platform_%d", i))),
+				Arch:     strings.TrimSpace(r.FormValue(fmt.Sprintf("pilot_download_arch_%d", i))),
+				URL:      cleanPilotURL(r.FormValue(fmt.Sprintf("pilot_download_url_%d", i))),
+				Meta:     strings.TrimSpace(r.FormValue(fmt.Sprintf("pilot_download_meta_%d", i))),
+			}
+			if item.Label != "" && item.URL != "" {
+				downloads.Items = append(downloads.Items, item)
+			}
+		}
+		empty := downloads.Title == "" && downloads.Note == "" && len(downloads.Items) == 0
+		_ = s.store.SetSetting(s.copyKey(pilotDownloadsSettingKey, lang), marshalThemeOptionJSON(downloads, empty))
+	}
+
+	if posted[pilotTrustSettingKey] {
+		trust := PilotSection[PilotTrustPoint]{
+			Title: strings.TrimSpace(r.FormValue("pilot_trust_title")),
+			Note:  strings.TrimSpace(r.FormValue("pilot_trust_note")),
+		}
+		for i := 0; i < maxPilotTrust; i++ {
+			item := PilotTrustPoint{
+				Title: strings.TrimSpace(r.FormValue(fmt.Sprintf("pilot_trust_title_%d", i))),
+				Note:  strings.TrimSpace(r.FormValue(fmt.Sprintf("pilot_trust_note_%d", i))),
+			}
+			if item.Title != "" {
+				trust.Items = append(trust.Items, item)
+			}
+		}
+		empty := trust.Title == "" && trust.Note == "" && len(trust.Items) == 0
+		_ = s.store.SetSetting(s.copyKey(pilotTrustSettingKey, lang), marshalThemeOptionJSON(trust, empty))
+	}
+
+	if posted[pilotGallerySettingKey] {
+		gallery := make([]string, 0, maxPilotGallery)
+		for i := 0; i < maxPilotGallery; i++ {
+			if value := cleanPilotURL(r.FormValue(fmt.Sprintf("pilot_gallery_%d", i))); value != "" {
+				gallery = append(gallery, value)
+			}
+		}
+		_ = s.store.SetSetting(pilotGallerySettingKey, marshalThemeOptionJSON(gallery, len(gallery) == 0))
 	}
 }
 

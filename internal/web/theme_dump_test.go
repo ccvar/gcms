@@ -33,7 +33,19 @@ func TestDumpNewThemePreviews(t *testing.T) {
 		"orbit-index", "column-stage", "type-cascade",
 		"briefing-desk", "briefing-desk-white", "briefing-desk-sage", "briefing-desk-ink",
 		"decision-wall", "decision-wall-white", "decision-wall-mint", "decision-wall-carbon",
-		"route-atlas", "route-atlas-white", "route-atlas-indigo", "route-atlas-moss"}
+		"route-atlas", "route-atlas-white", "route-atlas-indigo", "route-atlas-moss",
+		"answer-desk", "answer-desk-white", "answer-desk-dark",
+		"portrait-journal", "portrait-journal-white", "portrait-journal-dark",
+		"casebook", "casebook-white", "casebook-dark",
+		"shelf-index", "shelf-index-white", "shelf-index-dark",
+		"tradeoff-sheet", "tradeoff-sheet-white", "tradeoff-sheet-dark",
+		"progress-bulletin", "progress-bulletin-white", "progress-bulletin-dark",
+		"margin-reading-room", "margin-reading-room-white", "margin-reading-room-dark",
+		"light-table", "light-table-white", "light-table-dark",
+		"counterpoint", "counterpoint-white", "counterpoint-dark",
+		"seamless-canvas", "seamless-canvas-white", "seamless-canvas-dark",
+		"night-corridor", "night-corridor-white", "night-corridor-dark",
+		"open-ascent", "open-ascent-white", "open-ascent-dark"}
 	_, h, ps, _, blogSite := setupPlatformAutomation(t)
 	cookie := platformAdminSession(t, ps)
 	enter := httptest.NewRecorder()
@@ -66,6 +78,7 @@ func TestDumpNewThemePreviews(t *testing.T) {
 			full := strings.Replace(body, "</head>", `<style>
 				html { width:auto !important; min-width:0 !important; min-height:100% !important; overflow:auto !important; }
 				body { width:auto !important; min-height:100vh !important; margin:0 !important; overflow:hidden !important; }
+				.site-header { position:sticky !important; top:0 !important; }
 				.oi-footer,.cs-footer { display:grid !important; }
 				.tc-footer { display:flex !important; }
 			</style></head>`, 1)
@@ -76,22 +89,41 @@ func TestDumpNewThemePreviews(t *testing.T) {
 		}
 	}
 
-	// 三套新骨架还必须覆盖真实公共内页，避免只把首页做成设计稿、关于页又退回通用皮肤。
+	// 新骨架还必须覆盖真实公共内页，避免只把首页做成设计稿，普通页面或文章页又退回通用皮肤。
 	public := newTestPublicServer(t, "")
-	for _, id := range []string{"orbit-index", "column-stage", "type-cascade", "briefing-desk", "decision-wall", "route-atlas"} {
+	for _, id := range []string{
+		"orbit-index", "column-stage", "type-cascade", "briefing-desk", "decision-wall", "route-atlas",
+		"answer-desk", "answer-desk-white", "answer-desk-dark",
+		"portrait-journal", "portrait-journal-white", "portrait-journal-dark",
+		"casebook", "casebook-white", "casebook-dark",
+		"shelf-index", "shelf-index-white", "shelf-index-dark",
+		"tradeoff-sheet", "tradeoff-sheet-white", "tradeoff-sheet-dark",
+		"progress-bulletin", "progress-bulletin-white", "progress-bulletin-dark",
+		"margin-reading-room", "margin-reading-room-white", "margin-reading-room-dark",
+		"light-table", "light-table-white", "light-table-dark",
+		"counterpoint", "counterpoint-white", "counterpoint-dark",
+		"seamless-canvas", "seamless-canvas-white", "seamless-canvas-dark",
+		"night-corridor", "night-corridor-white", "night-corridor-dark",
+		"open-ascent", "open-ascent-white", "open-ascent-dark",
+	} {
 		if err := public.store.SetSetting("theme", id); err != nil {
 			t.Fatalf("set public theme %s: %v", id, err)
 		}
 		public.clearGeneratedCaches()
-		rec := httptest.NewRecorder()
-		public.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/zh/about", nil))
-		if rec.Code != http.StatusOK {
-			t.Fatalf("about page %s: %d", id, rec.Code)
-		}
-		body := strings.ReplaceAll(rec.Body.String(), `href="/assets/`, `href="../../assets/`)
-		body = strings.ReplaceAll(body, `src="/assets/`, `src="../../assets/`)
-		if err := os.WriteFile(filepath.Join(dir, id+"-about.html"), []byte(body), 0o644); err != nil {
-			t.Fatal(err)
+		for _, page := range []struct{ Path, Suffix string }{
+			{"/zh/about", "about"},
+			{"/zh/posts/cloudflare-static-deploy/", "article"},
+		} {
+			rec := httptest.NewRecorder()
+			public.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, page.Path, nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("%s page %s: %d", page.Suffix, id, rec.Code)
+			}
+			body := strings.ReplaceAll(rec.Body.String(), `href="/assets/`, `href="../../assets/`)
+			body = strings.ReplaceAll(body, `src="/assets/`, `src="../../assets/`)
+			if err := os.WriteFile(filepath.Join(dir, id+"-"+page.Suffix+".html"), []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
 	t.Logf("dumped %d previews to %s", len(newIDs), dir)

@@ -1,0 +1,106 @@
+{{define "home_pilot_flight_deck"}}
+<div class="pfd-page">
+  <section class="pfd-hero">
+    <div class="pfd-wrap pfd-hero-grid">
+      <div class="pfd-hero-copy">
+        {{if .Site.HeroEyebrow}}<p class="pfd-kicker"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉题"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+        <h1{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+        {{if .Site.HeroDescription}}<p class="pfd-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+        <div class="pfd-actions">
+          {{if .PilotDownloads.Items}}{{with index .PilotDownloads.Items 0}}<a class="pfd-btn primary" href="{{.URL}}"{{$.ExternalLinkAttrs .URL}}>{{.Label}} <span>→</span></a>{{end}}{{end}}
+          {{if .PilotWorkflow.Items}}<a class="pfd-btn" href="#pilot-workflow">{{.PilotWorkflow.Title}} <span>↓</span></a>{{end}}
+        </div>
+        {{if or .PilotRelease.Version .PilotRelease.Date .PilotRelease.Channel}}
+        <div class="pfd-release">
+          {{if .PilotRelease.URL}}<a href="{{.PilotRelease.URL}}"{{.ExternalLinkAttrs .PilotRelease.URL}}{{else}}<span{{end}}>
+            {{if .PilotRelease.Version}}<strong>{{.PilotRelease.Version}}</strong>{{end}}
+            {{if .PilotRelease.Channel}}<span>{{.PilotRelease.Channel}}</span>{{end}}
+            {{if .PilotRelease.Date}}<time>{{.PilotRelease.Date}}</time>{{end}}
+          {{if .PilotRelease.URL}}</a>{{else}}</span>{{end}}
+        </div>
+        {{end}}
+      </div>
+      <div class="pfd-hero-media"{{if .VisualEdit}} data-visual-edit="hero.image" data-visual-label="Pilot 客户端主视觉" data-visual-kind="image"{{end}}>
+        {{if and (eq .Site.HeroVisual "image") .Site.HeroImage}}
+          <img src="{{.Site.HeroImage}}" alt="{{.Site.HeroAlt}}" decoding="async" fetchpriority="high"{{imgAttrs .Site.HeroImage}}>
+        {{else if and (eq .Site.HeroVisual "svg") .Site.HeroSVG}}
+          <div class="pfd-hero-embed">{{safeHTML .Site.HeroSVG}}</div>
+        {{else if eq .Site.HeroVisual "anim1"}}
+          <div class="pfd-hero-animation">{{template "content_hero_anim1" .}}</div>
+        {{else}}
+          <div class="pfd-hero-animation">{{template "content_hero_anim2" .}}</div>
+        {{end}}
+      </div>
+    </div>
+  </section>
+
+  {{if .PilotWorkflow.Items}}
+  <section class="pfd-workflow" id="pilot-workflow">
+    <div class="pfd-wrap">
+      <div class="pfd-step-grid">
+        {{range $i, $step := .PilotWorkflow.Items}}<article><span>{{printf "%02d" (add $i 1)}}</span><h3>{{$step.Title}}</h3>{{if $step.Note}}<p>{{$step.Note}}</p>{{end}}</article>{{end}}
+      </div>
+    </div>
+  </section>
+  {{end}}
+
+  {{if .PilotGallery}}
+  <section class="pfd-demo">
+    <div class="pfd-wrap pfd-demo-grid">
+      <div class="pfd-shot"><img src="{{index .PilotGallery 0}}" alt="" loading="lazy" decoding="async"{{imgAttrs (index .PilotGallery 0)}}></div>
+      {{with .Featured}}<div class="pfd-demo-copy">{{with .Category}}<p class="pfd-kicker">{{.Name}}</p>{{end}}<h2>{{.Title}}</h2>{{if .Excerpt}}<p>{{.Excerpt}}</p>{{end}}<a href="{{$.Tr.U (contentURL .)}}">{{$.Tr.T "home.read_more"}} →</a></div>{{end}}
+    </div>
+  </section>
+  {{end}}
+
+  {{if .Categories}}
+  <section class="pfd-capabilities">
+    <div class="pfd-wrap">
+      <header class="pfd-section-head"><h2>{{.Site.HomeLatest}}</h2><a href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} →</a></header>
+      <div class="pfd-cap-grid">
+        {{range $i, $cat := .Categories}}{{if lt $i 6}}<a href="{{$.Tr.U (printf "/category/%s" $cat.Slug)}}"><span>{{printf "%02d" (add $i 1)}}</span><h3>{{$cat.Name}}</h3>{{if $cat.Description}}<p>{{$cat.Description}}</p>{{end}}</a>{{end}}{{end}}
+      </div>
+    </div>
+  </section>
+  {{end}}
+
+  {{if .PilotTrust.Items}}
+  <section class="pfd-trust">
+    <div class="pfd-wrap pfd-trust-grid">
+      <div><p>{{.PilotTrust.Note}}</p><h2>{{.PilotTrust.Title}}</h2></div>
+      <div class="pfd-trust-list">{{range .PilotTrust.Items}}<article><h3>{{.Title}}</h3>{{if .Note}}<p>{{.Note}}</p>{{end}}</article>{{end}}</div>
+    </div>
+  </section>
+  {{end}}
+
+  {{if or .Featured .FeaturedMore}}
+  <section class="pfd-cases">
+    <div class="pfd-wrap">
+      <header class="pfd-section-head"><h2>{{.Site.HomeFeatured}}</h2><a href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} →</a></header>
+      <div class="pfd-case-grid">
+        {{with .Featured}}<article class="lead">{{if .CoverImage}}<a class="pfd-cover" href="{{$.Tr.U (contentURL .)}}"><img src="{{.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}></a>{{end}}<h3><a href="{{$.Tr.U (contentURL .)}}">{{.Title}}</a></h3>{{if .Excerpt}}<p>{{.Excerpt}}</p>{{end}}</article>{{end}}
+        {{range $i, $post := .FeaturedMore}}{{if lt $i 2}}<article>{{if $post.CoverImage}}<a class="pfd-cover" href="{{$.Tr.U (contentURL $post)}}"><img src="{{$post.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs $post.CoverImage}}></a>{{end}}<h3><a href="{{$.Tr.U (contentURL $post)}}">{{$post.Title}}</a></h3>{{if $post.Excerpt}}<p>{{$post.Excerpt}}</p>{{end}}</article>{{end}}{{end}}
+      </div>
+    </div>
+  </section>
+  {{end}}
+
+  {{if .FeatLinks}}
+  <section class="pfd-resources">
+    <div class="pfd-wrap">
+      <header class="pfd-section-head"><h2>{{.Site.HomeLinks}}</h2><a href="{{.Tr.U .LinksAll.Path}}">{{.Tr.T "home.view_all"}} →</a></header>
+      <div class="pfd-resource-list">{{range .FeatLinks}}<a href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}"><span>{{.Title}}</span>{{if .Excerpt}}<small>{{.Excerpt}}</small>{{end}}<b>↗</b></a>{{end}}</div>
+    </div>
+  </section>
+  {{end}}
+
+  {{if .PilotDownloads.Items}}
+  <section class="pfd-downloads">
+    <div class="pfd-wrap pfd-download-grid">
+      <header><p>{{.PilotDownloads.Note}}</p><h2>{{.PilotDownloads.Title}}</h2></header>
+      <div>{{range .PilotDownloads.Items}}<a href="{{.URL}}"{{$.ExternalLinkAttrs .URL}}><strong>{{.Label}}</strong><span>{{.Platform}}{{if .Arch}} · {{.Arch}}{{end}}{{if .Meta}} · {{.Meta}}{{end}}</span><b>↓</b></a>{{end}}</div>
+    </div>
+  </section>
+  {{end}}
+</div>
+{{end}}

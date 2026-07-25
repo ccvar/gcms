@@ -70,7 +70,7 @@ func TestContentCanonicalsUseTrailingSlash(t *testing.T) {
 	}
 }
 
-func TestLinkMetaIncludesProductAndFAQStructuredData(t *testing.T) {
+func TestLinkMetaUsesWebPageAndFAQStructuredData(t *testing.T) {
 	site := Site{BaseURL: "https://example.test", Prefix: "/zh", Name: "GCMS", LangTag: "zh-CN"}
 	meta := site.Link(&store.Post{
 		Type:       "link",
@@ -84,15 +84,15 @@ func TestLinkMetaIncludesProductAndFAQStructuredData(t *testing.T) {
 		Status:     "published",
 	})
 
-	product := jsonLDByType(meta.JSONLD, "Product")
-	if product == nil {
-		t.Fatalf("missing Product JSON-LD: %#v", meta.JSONLD)
+	if product := jsonLDByType(meta.JSONLD, "Product"); product != nil {
+		t.Fatalf("外部资源链接不应输出 Product JSON-LD: %#v", product)
 	}
-	if product["url"] != "https://example.test/zh/links/toolbox/" {
-		t.Fatalf("product url = %#v", product["url"])
+	page := jsonLDByType(meta.JSONLD, "WebPage")
+	if page == nil || page["url"] != "https://example.test/zh/links/toolbox/" {
+		t.Fatalf("WebPage JSON-LD = %#v", page)
 	}
-	if product["sameAs"] != "https://example.com/toolbox" {
-		t.Fatalf("product sameAs = %#v", product["sameAs"])
+	if page["significantLink"] != "https://example.com/toolbox" {
+		t.Fatalf("significantLink = %#v", page["significantLink"])
 	}
 
 	faq := jsonLDByType(meta.JSONLD, "FAQPage")

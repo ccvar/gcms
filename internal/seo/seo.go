@@ -423,6 +423,8 @@ func (s Site) Links(cat *store.Category) Meta {
 }
 
 // Link 链接详情页：WebPage(指向外部资源) + BreadcrumbList。
+// 外部资源并不是本站出售的商品，因此不能标成 Product；否则在没有真实报价或评价时，
+// Google 会把它识别为无效的 Product 富摘要。
 func (s Site) Link(p *store.Post) Meta {
 	label := s.linksLabel()
 	canon := OverrideOr(p.CanonicalOverride, s.AbsDir("/links/"+p.Slug))
@@ -435,7 +437,6 @@ func (s Site) Link(p *store.Post) Meta {
 		"@context": "https://schema.org", "@type": "WebPage",
 		"name": p.Title, "description": desc, "url": canon,
 		"inLanguage": s.langTag(), "primaryImageOfPage": img,
-		"mainEntity": map[string]any{"@id": canon + "#product"},
 	}
 	if p.LinkURL != "" {
 		page["significantLink"] = p.LinkURL
@@ -443,25 +444,8 @@ func (s Site) Link(p *store.Post) Meta {
 	if p.Keywords != "" {
 		page["keywords"] = p.Keywords
 	}
-	product := map[string]any{
-		"@context":    "https://schema.org",
-		"@type":       "Product",
-		"@id":         canon + "#product",
-		"name":        p.Title,
-		"description": desc,
-		"url":         canon,
-		"image":       img,
-		"inLanguage":  s.langTag(),
-		"brand":       map[string]any{"@type": "Brand", "name": s.Name},
-	}
-	if p.Category != nil && p.Category.Name != "" {
-		product["category"] = p.Category.Name
-	}
-	if p.LinkURL != "" {
-		product["sameAs"] = p.LinkURL
-	}
 	crumbs := s.breadcrumb([]crumb{{s.homeLabel(), s.Abs("/")}, {label, s.Abs("/links")}, {p.Title, ""}})
-	jsonld := []any{page, product, crumbs}
+	jsonld := []any{page, crumbs}
 	if faq := faqPageFromMarkdown(p.Content, s.langTag()); faq != nil {
 		jsonld = append(jsonld, faq)
 	}
@@ -471,8 +455,30 @@ func (s Site) Link(p *store.Post) Meta {
 	}
 }
 
-// Product 商品详情页（扩展类型 product，工厂/外贸站）的 Product 结构化数据。
-// 与链接页 Link() 内嵌的 Product 节点相互独立：这里描述的是站点自己的实体商品，
+// ContentPage 是扩展内容详情页的通用 WebPage 结构化数据。
+// B2B 商品在没有真实 Offer/Review/AggregateRating 时也走这一结构，避免输出
+// Google 无法用于富摘要的残缺 Product。页面依然保留商品 OG 类型和可见询盘功能。
+func (s Site) ContentPage(name, canon, desc, image string) map[string]any {
+	page := map[string]any{
+		"@context":   "https://schema.org",
+		"@type":      "WebPage",
+		"name":       name,
+		"url":        canon,
+		"inLanguage": s.langTag(),
+		"isPartOf":   map[string]any{"@type": "WebSite", "name": s.Name, "url": s.Abs("/")},
+	}
+	if desc != "" {
+		page["description"] = desc
+	}
+	if image != "" {
+		page["primaryImageOfPage"] = image
+	}
+	return page
+}
+
+// Product 构造 Product 基础节点，保留给未来接入“真实结构化报价/评价”时复用。
+// 调用方只有在同时添加 offers、review 或 aggregateRating 之一后才可输出该节点。
+// brand 恒为站点名，sku 从规格里嗅探（没有就不输出）。
 // brand 恒为站点名，sku 从规格里嗅探（没有就不输出）。
 // gallery 是图集补充图（相对路径会被绝对化）：多图时 image 输出数组（商品富结果建议多图），
 // 单图维持字符串。刻意不输出 offers/price——工厂站不做线上交易，绝不编造报价。

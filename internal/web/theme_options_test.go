@@ -6,10 +6,37 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 )
+
+func TestAppearanceInteractionContracts(t *testing.T) {
+	jsBytes, err := os.ReadFile(filepath.Join("..", "..", "assets", "js", "admin.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(jsBytes)
+	for _, marker := range []string{
+		"busyLabel",
+		"admin:form-saved",
+		"portalDDMenu",
+		"restoreDDMenu",
+	} {
+		if !strings.Contains(js, marker) {
+			t.Errorf("admin.js misses appearance interaction contract %q", marker)
+		}
+	}
+	cssBytes, err := os.ReadFile(filepath.Join("..", "..", "assets", "css", "admin.css"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(cssBytes), ".dd-menu.dd-portal") {
+		t.Error("admin.css misses top-layer dropdown portal rule")
+	}
+}
 
 // ---------- schema 声明 ----------
 
