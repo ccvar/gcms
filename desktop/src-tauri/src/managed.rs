@@ -1,10 +1,11 @@
 //! 托管站点（P1 · L0 试运行）：把站点交给 AI 按周循环运营，**边界机制化**——
-//! 开启托管＝存一条 ManagedSite 记录 + 自动创建两个配套定时任务（每日内容 / 每周审计），
+//! 开启计划托管＝存一条 ManagedSite 记录 + 三个配套任务（每日内容 / 每周审计 / 每周周报），
 //! AI 永远只产草稿，发布/打回都在 Pilot 的待审队列里由人完成。
 //! 持久化 managed.json（原子写 + 互斥，仿 tasks.rs）；HTTP 侧仿 scheduled.rs
 //!（同款 Bearer 鉴权 + discovery 解析 api_base）。
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -30,12 +31,351 @@ pub struct ReviewEvent {
     pub approved: bool,
 }
 
+/// 托管方案。字段面世前的记录、以及未来版本写入的未知值，都必须安全回落到
+/// `Plan`：计划托管是已经在线运行的旧路径，不能因为升级而被悄悄切到增长托管。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ManagedMode {
+    Growth,
+    #[default]
+    #[serde(other)]
+    Plan,
+}
+
+impl ManagedMode {
+    pub fn is_growth(self) -> bool {
+        self == Self::Growth
+    }
+}
+
+fn deserialize_managed_mode<'de, D>(deserializer: D) -> Result<ManagedMode, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<String>::deserialize(deserializer)?;
+    Ok(match value.as_deref() {
+        Some("growth") => ManagedMode::Growth,
+        _ => ManagedMode::Plan,
+    })
+}
+
+/// 增长托管的站点定位契约。它是机会筛选的硬边界，搜索量不能越过定位直接决定选题。
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GrowthPositioning {
+    pub audience: String,
+    pub markets: Vec<String>,
+    pub languages: Vec<String>,
+    pub pillars: Vec<String>,
+    pub business_goal: String,
+    pub excluded_topics: Vec<String>,
+    pub brand_terms: Vec<String>,
+    pub conversion_goal: String,
+}
+
+impl GrowthPositioning {
+    /// API 调用和旧记录都可能携带空白项；统一清洗后再持久化，避免界面误判为
+    /// “已填写”，也避免空字符串参与增长主题匹配。
+    pub fn normalized(mut self) -> Self {
+        fn clean(values: Vec<String>) -> Vec<String> {
+            let mut seen = HashSet::new();
+            values
+                .into_iter()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty() && seen.insert(value.clone()))
+                .collect()
+        }
+        self.audience = self.audience.trim().to_string();
+        self.business_goal = self.business_goal.trim().to_string();
+        self.conversion_goal = self.conversion_goal.trim().to_string();
+        self.markets = clean(self.markets);
+        self.languages = clean(self.languages);
+        self.pillars = clean(self.pillars);
+        self.excluded_topics = clean(self.excluded_topics);
+        self.brand_terms = clean(self.brand_terms);
+        self
+    }
+
+    pub fn uses_automatic_scope(&self) -> bool {
+        self.audience.trim().is_empty()
+            && self.markets.iter().all(|value| value.trim().is_empty())
+            && self.pillars.iter().all(|value| value.trim().is_empty())
+            && self.business_goal.trim().is_empty()
+            && self.brand_terms.iter().all(|value| value.trim().is_empty())
+    }
+}
+
+fn default_growth_scan_window_days() -> u32 {
+    28
+}
+
+fn default_growth_review_windows_days() -> Vec<u32> {
+    vec![14, 28]
+}
+
+/// 增长托管配置。周产出上限、等级、模型和预算继续复用 `ManagedSite` 的成熟字段，
+/// 避免同一约束出现两份相互冲突的配置。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GrowthConfig {
+    pub positioning: GrowthPositioning,
+    /// GSC/GA 机会扫描窗口；默认 28 天。
+    pub scan_window_days: u32,
+    /// 发布/修改后的复盘节点；默认 14、28 天。
+    pub review_windows_days: Vec<u32>,
+}
+
+impl Default for GrowthConfig {
+    fn default() -> Self {
+        Self {
+            positioning: GrowthPositioning::default(),
+            scan_window_days: default_growth_scan_window_days(),
+            review_windows_days: default_growth_review_windows_days(),
+        }
+    }
+}
+
+/// 单个数据源的可用状态。未知值回落 `Unknown`，不得把异常数据误判为可用。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GrowthDataSourceStatus {
+    Ready,
+    Disconnected,
+    MissingScope,
+    Unavailable,
+    Stale,
+    #[default]
+    #[serde(other)]
+    Unknown,
+}
+
+impl GrowthDataSourceStatus {
+    pub fn is_ready(self) -> bool {
+        self == Self::Ready
+    }
+}
+
+/// GA 或 GSC 的健康快照。
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GrowthDataSourceHealth {
+    pub status: GrowthDataSourceStatus,
+    pub checked_at: u64,
+    /// 数据最新覆盖到的日期（`YYYY-MM-DD`）；空表示接口未返回。
+    pub data_through: String,
+    pub sample_days: u32,
+    pub rows: u32,
+    pub message: String,
+}
+
+/// 对外展示和决策降级使用的数据依据。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GrowthDataBasis {
+    Full,
+    Search,
+    Analytics,
+    #[default]
+    #[serde(other)]
+    Positioning,
+}
+
+/// GA/GSC 分开记录，授权失效时可单源降级，不必把整个增长托管停掉。
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GrowthDataHealth {
+    pub gsc: GrowthDataSourceHealth,
+    pub ga: GrowthDataSourceHealth,
+}
+
+impl GrowthDataHealth {
+    pub fn basis(&self) -> GrowthDataBasis {
+        // “已授权”与“本轮真的有数据可用于决策”是两回事。窗口内 0 行时仍保留
+        // Ready 供界面展示接入状态，但机会依据必须回落到定位，不能误称数据驱动。
+        match (
+            self.gsc.status.is_ready() && self.gsc.rows > 0,
+            self.ga.status.is_ready() && self.ga.rows > 0,
+        ) {
+            (true, true) => GrowthDataBasis::Full,
+            (true, false) => GrowthDataBasis::Search,
+            (false, true) => GrowthDataBasis::Analytics,
+            (false, false) => GrowthDataBasis::Positioning,
+        }
+    }
+}
+
+/// 机会动作与增长扫描引擎的 JSON 名保持一致。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GrowthOpportunityAction {
+    NewContent,
+    RefreshContent,
+    CtrOptimize,
+    InternalLink,
+    #[default]
+    #[serde(other)]
+    Watch,
+}
+
+/// 机会生命周期。同一站点只有明确进入 `Queued` 且过了冷却期的机会可被每日任务消费。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GrowthOpportunityStatus {
+    #[default]
+    Candidate,
+    Queued,
+    Drafting,
+    /// 已检测到真实草稿写入，等待用户在 Pilot 待审队列批准。
+    DraftReady,
+    Published,
+    Observing,
+    Completed,
+    Postponed,
+    Dismissed,
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GrowthConfidence {
+    High,
+    Medium,
+    #[default]
+    #[serde(other)]
+    Low,
+}
+
+/// GSC 证据使用快照值，避免每次打开界面时历史推荐理由发生漂移。
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GrowthGscEvidence {
+    pub window_days: u32,
+    pub query: String,
+    pub page: String,
+    pub normalized_path: String,
+    pub clicks: f64,
+    pub impressions: f64,
+    pub ctr: f64,
+    pub position: f64,
+    pub previous_clicks: Option<f64>,
+    pub previous_impressions: Option<f64>,
+    pub previous_ctr: Option<f64>,
+    pub previous_position: Option<f64>,
+}
+
+/// GA 只作为落地页质量信号；当前没有转化事件时不能把它解释为业务收入。
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GrowthGaEvidence {
+    pub window_days: u32,
+    pub path: String,
+    pub active_users: f64,
+    pub sessions: f64,
+    pub engagement_rate: f64,
+    pub average_session_duration: f64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GrowthEvidence {
+    pub collected_at: u64,
+    pub gsc: Option<GrowthGscEvidence>,
+    pub ga: Option<GrowthGaEvidence>,
+}
+
+/// 发布后的确定性复盘快照。基线保存在 `GrowthOpportunity.evidence`，这里按
+/// 14/28 天等配置窗口保存真实 GA/GSC 后续值，周报只据此比较，不让模型猜测。
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GrowthReviewSnapshot {
+    pub window_days: u32,
+    pub collected_at: u64,
+    /// 因客户端暂停、离线或数据源故障错过精确节点后补采；展示和周报必须明确
+    /// 标注“补采”，不能把它冒充发布后的准时窗口。
+    pub recorded_late: bool,
+    /// 接口在该复盘节点是否成功响应；成功但目标页 0 行时仍为 true，
+    /// 以便区分“真实为 0”和“来源暂不可用”。
+    pub gsc_available: bool,
+    pub ga_available: bool,
+    pub evidence: GrowthEvidence,
+}
+
+/// 可审计、可排队的增长机会。`reason` 是给用户看的解释，`evidence` 是当时的数据快照；
+/// 二者都持久化，保证后续复盘能还原“为什么当时做了这个决定”。
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GrowthOpportunity {
+    pub id: String,
+    pub action: GrowthOpportunityAction,
+    pub status: GrowthOpportunityStatus,
+    pub title: String,
+    pub pillar: String,
+    pub audience: String,
+    pub language: String,
+    pub query_cluster: Vec<String>,
+    /// GCMS 当前文章 id 是数字，但持久化用字符串以兼容商品/页面等其他内容类型。
+    pub target_content_id: Option<String>,
+    pub target_url: String,
+    pub output_content_id: Option<String>,
+    pub evidence: GrowthEvidence,
+    /// 0..100 的确定性规则分；展示层可隐藏原始分数，只显示推荐理由。
+    pub score: f64,
+    pub confidence: GrowthConfidence,
+    pub reason: String,
+    pub expected_metric: String,
+    pub created_at: u64,
+    pub updated_at: u64,
+    pub cooldown_until: u64,
+    pub review_at: u64,
+    /// 真正进入线上观察的时间；草稿待审阶段保持 0。
+    pub observing_since: u64,
+    /// 已完成的复盘窗口（通常 14、28 天）。
+    pub reviews: Vec<GrowthReviewSnapshot>,
+}
+
+impl GrowthOpportunity {
+    /// 每日增长任务唯一可消费的状态：用户/规则已经排队，且冷却期结束。
+    pub fn is_executable_at(&self, now: u64) -> bool {
+        self.status == GrowthOpportunityStatus::Queued && self.cooldown_until <= now
+    }
+}
+
+/// 增长托管运行状态。计划托管记录不创建这块数据，保持原持久化行为轻量。
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GrowthState {
+    pub data_health: GrowthDataHealth,
+    pub opportunities: Vec<GrowthOpportunity>,
+    pub last_scan_at: u64,
+    pub next_scan_at: u64,
+    /// 每日执行任务本轮正在处理的机会。任务结束后据此进入观察或退回队列，
+    /// 避免并发/失败时靠标题猜测是哪一条。
+    pub active_opportunity_id: String,
+    /// 数据不足、URL 映射率低等非阻断提示；与真正的拉取错误分开。
+    pub warnings: Vec<String>,
+    pub last_error: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GrowthManaged {
+    pub config: GrowthConfig,
+    pub state: GrowthState,
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct ManagedSite {
     pub id: String,
     pub conn_id: String,
     pub site_slug: String,
     pub site_name: String,
+    /// 缺失时按计划托管读取，保证升级前已运行的站点行为完全不变。
+    #[serde(default, deserialize_with = "deserialize_managed_mode")]
+    pub mode: ManagedMode,
+    /// 仅增长托管使用；计划托管保持 None，不参与原任务与 prompt 路径。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub growth: Option<GrowthManaged>,
     /// P1 只有 "l0"（试运行：只产草稿，人审人发）。
     pub level: String,
     /// 每周新建草稿上限（写进每日任务的硬约束）。
@@ -135,6 +475,9 @@ fn default_edit_limit() -> u32 {
 pub struct ManagedStore {
     file: PathBuf,
     lock: Arc<Mutex<()>>,
+    /// 开启托管会先创建三条任务、再落托管记录。用进程内预留把这段跨文件写入
+    /// 串成同站点唯一事务，避免两个入口并发时各自创建一套孤儿任务。
+    reservations: Arc<Mutex<HashSet<String>>>,
 }
 
 impl ManagedStore {
@@ -142,7 +485,37 @@ impl ManagedStore {
         Self {
             file: data_dir.join("managed.json"),
             lock: Arc::new(Mutex::new(())),
+            reservations: Arc::new(Mutex::new(HashSet::new())),
         }
+    }
+
+    fn site_key(conn_id: &str, site_slug: &str) -> String {
+        format!("{conn_id}\u{0}{site_slug}")
+    }
+
+    /// 在创建配套任务前原子预留站点。调用方无论成功失败都必须 release；
+    /// lib.rs 的 RAII guard 会自动完成释放和失败任务清理。
+    pub fn reserve_site(&self, conn_id: &str, site_slug: &str) -> Result<(), String> {
+        let _g = self.lock.lock().unwrap();
+        if self
+            .read()
+            .iter()
+            .any(|site| site.conn_id == conn_id && site.site_slug == site_slug)
+        {
+            return Err("该站点已在托管中；同一站点同一时间只能运行一种托管方案".into());
+        }
+        let key = Self::site_key(conn_id, site_slug);
+        if !self.reservations.lock().unwrap().insert(key) {
+            return Err("该站点正在开启托管，请勿重复操作".into());
+        }
+        Ok(())
+    }
+
+    pub fn release_site(&self, conn_id: &str, site_slug: &str) {
+        self.reservations
+            .lock()
+            .unwrap()
+            .remove(&Self::site_key(conn_id, site_slug));
     }
 
     fn read(&self) -> Vec<ManagedSite> {
@@ -180,6 +553,11 @@ impl ManagedStore {
     pub fn upsert(&self, m: ManagedSite) -> Result<(), String> {
         let _g = self.lock.lock().unwrap();
         let mut list = self.read();
+        if list.iter().any(|site| {
+            site.id != m.id && site.conn_id == m.conn_id && site.site_slug == m.site_slug
+        }) {
+            return Err("该站点已在托管中；同一站点同一时间只能运行一种托管方案".into());
+        }
         if let Some(slot) = list.iter_mut().find(|x| x.id == m.id) {
             *slot = m;
         } else {
@@ -205,6 +583,27 @@ impl ManagedStore {
             return Ok(None);
         };
         f(slot);
+        slot.review_notes.truncate(MAX_NOTES);
+        slot.review_events.truncate(MAX_NOTES);
+        slot.reports.truncate(MAX_REPORTS);
+        slot.updated_at = now;
+        let updated = slot.clone();
+        self.save(&list)?;
+        Ok(Some(updated))
+    }
+
+    /// 在同一把 store 锁内完成校验与修改。用于“候选→排队”这类状态机迁移，
+    /// 避免先 get 校验、再 mutate 时被并发扫描或另一个用户操作插队覆盖。
+    pub fn mutate_checked<F>(&self, id: &str, now: u64, f: F) -> Result<Option<ManagedSite>, String>
+    where
+        F: FnOnce(&mut ManagedSite) -> Result<(), String>,
+    {
+        let _g = self.lock.lock().unwrap();
+        let mut list = self.read();
+        let Some(slot) = list.iter_mut().find(|m| m.id == id) else {
+            return Ok(None);
+        };
+        f(slot)?;
         slot.review_notes.truncate(MAX_NOTES);
         slot.review_events.truncate(MAX_NOTES);
         slot.reports.truncate(MAX_REPORTS);
@@ -700,7 +1099,10 @@ pub struct TaskBrief {
 }
 
 /// 解析站点 api_base + 取连接密钥。
-async fn site_api(conn: &Connection, site_slug: &str) -> Result<(String, String), String> {
+pub(crate) async fn site_api(
+    conn: &Connection,
+    site_slug: &str,
+) -> Result<(String, String), String> {
     let key = keychain::get_key(&conn.id)?;
     let disc = discovery::discover(conn).await?;
     let sites = disc
@@ -721,7 +1123,7 @@ async fn site_api(conn: &Connection, site_slug: &str) -> Result<(String, String)
     Ok((api_base, key))
 }
 
-async fn get_posts(
+pub(crate) async fn get_posts(
     api_base: &str,
     key: &str,
     status: &str,
@@ -996,6 +1398,8 @@ mod tests {
             conn_id: "c1".into(),
             site_slug: slug.into(),
             site_name: slug.into(),
+            mode: ManagedMode::Plan,
+            growth: None,
             level: "l0".into(),
             weekly_post_limit: 3,
             weekly_edit_limit: 2,
@@ -1024,6 +1428,34 @@ mod tests {
         }
     }
 
+    #[test]
+    fn growth_positioning_normalization_allows_a_clean_automatic_scope() {
+        let positioning = GrowthPositioning {
+            audience: "   ".into(),
+            markets: vec![" US ".into(), "".into(), "US".into()],
+            languages: vec![" en ".into(), " ".into()],
+            pillars: vec![" ".into()],
+            business_goal: "\n".into(),
+            excluded_topics: vec![" medical ".into()],
+            brand_terms: vec![],
+            conversion_goal: "  lead  ".into(),
+        }
+        .normalized();
+        assert_eq!(positioning.markets, vec!["US"]);
+        assert_eq!(positioning.languages, vec!["en"]);
+        assert!(positioning.pillars.is_empty());
+        assert_eq!(positioning.excluded_topics, vec!["medical"]);
+        assert_eq!(positioning.conversion_goal, "lead");
+        assert!(
+            !positioning.uses_automatic_scope(),
+            "市场被显式指定时不应显示为完全自动"
+        );
+
+        assert!(GrowthPositioning::default()
+            .normalized()
+            .uses_automatic_scope());
+    }
+
     /// 旧版 managed.json（没有 brain/model/effort/预算/审核事件等新字段）必须还能读——serde default 兜底。
     #[test]
     fn old_records_without_model_fields_still_load() {
@@ -1042,6 +1474,113 @@ mod tests {
         assert_eq!(v[0].audit_notes, "", "旧记录没有审计要点");
         assert_eq!(v[0].enabled_at, 0, "旧记录 enabled_at=0（视为已过爬坡期）");
         assert!(v[0].reports.is_empty(), "旧记录没有周报归档");
+        assert_eq!(v[0].mode, ManagedMode::Plan, "旧记录必须默认计划托管");
+        assert!(v[0].growth.is_none(), "旧记录不凭空创建增长状态");
+    }
+
+    /// 模式字段的兼容策略：明确 growth 才进入新路径；缺失或未来未知值都留在计划托管。
+    #[test]
+    fn managed_mode_is_backward_and_forward_safe() {
+        let growth: ManagedSite = serde_json::from_str(
+            r#"{"id":"m1","conn_id":"c1","site_slug":"s","site_name":"S",
+            "mode":"growth","level":"l0","weekly_post_limit":3,"plan":"p",
+            "task_ids":[],"paused":false,"created_at":1,"updated_at":1}"#,
+        )
+        .expect("growth 记录可读");
+        assert!(growth.mode.is_growth());
+        assert!(
+            growth.growth.is_none(),
+            "模式与配置分离：缺配置不能伪造已完成初始化"
+        );
+
+        let future: ManagedSite = serde_json::from_str(
+            r#"{"id":"m2","conn_id":"c1","site_slug":"s2","site_name":"S2",
+            "mode":"future_mode","level":"l0","weekly_post_limit":3,"plan":"p",
+            "task_ids":[],"paused":false,"created_at":1,"updated_at":1}"#,
+        )
+        .expect("未知模式不能拖垮整个 managed.json");
+        assert_eq!(future.mode, ManagedMode::Plan, "未知值安全回落旧路径");
+
+        let null_mode: ManagedSite = serde_json::from_str(
+            r#"{"id":"m3","conn_id":"c1","site_slug":"s3","site_name":"S3",
+            "mode":null,"level":"l0","weekly_post_limit":3,"plan":"p",
+            "task_ids":[],"paused":false,"created_at":1,"updated_at":1}"#,
+        )
+        .expect("空模式也不能拖垮 managed.json");
+        assert_eq!(null_mode.mode, ManagedMode::Plan);
+
+        let encoded = serde_json::to_value(&future).expect("可序列化");
+        assert_eq!(encoded.get("mode").and_then(|v| v.as_str()), Some("plan"));
+        assert!(encoded.get("growth").is_none(), "计划托管不输出空增长块");
+    }
+
+    #[test]
+    fn growth_defaults_and_data_basis_are_stable() {
+        let config: GrowthConfig = serde_json::from_str(
+            r#"{"positioning":{"audience":"采购负责人","pillars":["设备选型"]}}"#,
+        )
+        .expect("缺省增长配置可读");
+        assert_eq!(config.scan_window_days, 28);
+        assert_eq!(config.review_windows_days, vec![14, 28]);
+        assert_eq!(config.positioning.audience, "采购负责人");
+        assert_eq!(config.positioning.pillars, vec!["设备选型"]);
+        assert!(config.positioning.excluded_topics.is_empty());
+
+        let mut health = GrowthDataHealth::default();
+        assert_eq!(health.basis(), GrowthDataBasis::Positioning);
+        health.gsc.status = GrowthDataSourceStatus::Ready;
+        assert_eq!(
+            health.basis(),
+            GrowthDataBasis::Positioning,
+            "授权成功但没有真实行时不能宣称已使用搜索数据"
+        );
+        health.gsc.rows = 1;
+        assert_eq!(health.basis(), GrowthDataBasis::Search);
+        health.ga.status = GrowthDataSourceStatus::Ready;
+        assert_eq!(
+            health.basis(),
+            GrowthDataBasis::Search,
+            "GA 没有真实页面行时仍只按 GSC 数据运行"
+        );
+        health.ga.rows = 1;
+        assert_eq!(health.basis(), GrowthDataBasis::Full);
+        health.gsc.status = GrowthDataSourceStatus::Stale;
+        assert_eq!(health.basis(), GrowthDataBasis::Analytics);
+    }
+
+    #[test]
+    fn growth_opportunity_only_executes_when_queued_and_cooled_down() {
+        let mut opportunity = GrowthOpportunity {
+            id: "opp-1".into(),
+            action: GrowthOpportunityAction::NewContent,
+            status: GrowthOpportunityStatus::Candidate,
+            cooldown_until: 100,
+            ..GrowthOpportunity::default()
+        };
+        assert!(!opportunity.is_executable_at(200), "候选项不能被任务偷跑");
+        opportunity.status = GrowthOpportunityStatus::Queued;
+        assert!(!opportunity.is_executable_at(99), "冷却期内不能执行");
+        assert!(opportunity.is_executable_at(100), "到达冷却点才可执行");
+        opportunity.status = GrowthOpportunityStatus::Postponed;
+        assert!(!opportunity.is_executable_at(200), "推迟项不能执行");
+    }
+
+    #[test]
+    fn unknown_growth_enums_degrade_to_non_executable_values() {
+        let opportunity: GrowthOpportunity = serde_json::from_str(
+            r#"{"id":"opp-x","action":"future_action","status":"future_status",
+            "confidence":"future_confidence"}"#,
+        )
+        .expect("未来枚举值不能拖垮增长状态");
+        assert_eq!(opportunity.action, GrowthOpportunityAction::Watch);
+        assert_eq!(opportunity.status, GrowthOpportunityStatus::Unknown);
+        assert_eq!(opportunity.confidence, GrowthConfidence::Low);
+        assert!(!opportunity.is_executable_at(u64::MAX));
+
+        let source: GrowthDataSourceHealth =
+            serde_json::from_str(r#"{"status":"future_health"}"#).expect("健康状态兼容");
+        assert_eq!(source.status, GrowthDataSourceStatus::Unknown);
+        assert!(!source.status.is_ready());
     }
 
     /// REPORT-METRICS 提取：有块（数字/-混合）、无块、畸形块、剥离验证、归档封顶。
@@ -1107,6 +1646,21 @@ mod tests {
         assert_eq!(st.list().len(), 2);
         assert!(st.find_site("c1", "blog").is_some());
         assert!(st.find_site("c1", "nope").is_none());
+        let mut duplicate = site("m3", "blog");
+        duplicate.mode = ManagedMode::Growth;
+        assert!(
+            st.upsert(duplicate).is_err(),
+            "不同方案也不能重复占用同一站点"
+        );
+        st.reserve_site("c1", "pending").unwrap();
+        assert!(
+            st.reserve_site("c1", "pending").is_err(),
+            "任务创建期间的并发开启必须被预留挡住"
+        );
+        st.release_site("c1", "pending");
+        st.reserve_site("c1", "pending")
+            .expect("失败或完成后应释放预留");
+        st.release_site("c1", "pending");
         // mutate：暂停 + 记打回
         let u = st
             .mutate("m1", 99, |m| {

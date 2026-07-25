@@ -10,6 +10,8 @@ mod gcms_remote;
 mod keychain;
 mod limits;
 mod managed;
+mod managed_growth;
+mod managed_growth_service;
 mod node_boot;
 mod pack;
 mod path_env;
@@ -2682,6 +2684,35 @@ mod workdir_tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 
+    #[test]
+    fn only_growth_scan_and_review_run_in_read_only_mode() {
+        let plan: managed::ManagedSite = serde_json::from_value(serde_json::json!({
+            "id": "plan", "conn_id": "c1", "site_slug": "plan-site", "site_name": "Plan",
+            "mode": "plan", "level": "l0", "weekly_post_limit": 3, "weekly_edit_limit": 2,
+            "plan": "", "task_ids": ["plan-daily", "plan-audit", "plan-report"],
+            "paused": false, "created_at": 1, "updated_at": 1
+        }))
+        .unwrap();
+        let growth: managed::ManagedSite = serde_json::from_value(serde_json::json!({
+            "id": "growth", "conn_id": "c1", "site_slug": "growth-site", "site_name": "Growth",
+            "mode": "growth", "growth": {}, "level": "l0", "weekly_post_limit": 3,
+            "weekly_edit_limit": 2, "plan": "",
+            "task_ids": ["growth-daily", "growth-scan", "growth-review"],
+            "paused": false, "created_at": 1, "updated_at": 1
+        }))
+        .unwrap();
+        let records = vec![plan, growth];
+        assert_eq!(scheduled_task_perm_mode(&records, "growth-daily"), "full");
+        assert_eq!(scheduled_task_perm_mode(&records, "growth-scan"), "plan");
+        assert_eq!(scheduled_task_perm_mode(&records, "growth-review"), "plan");
+        assert_eq!(
+            scheduled_task_perm_mode(&records, "plan-audit"),
+            "full",
+            "旧计划托管权限行为必须保持不变"
+        );
+        assert_eq!(scheduled_task_perm_mode(&records, "ordinary-task"), "full");
+    }
+
     fn test_conv(brain: &str, model: &str, perm: &str) -> Conversation {
         serde_json::from_value(serde_json::json!({
             "id": "c1", "conn_id": "t", "conn_name": "", "site_slug": "s", "site_name": "",
@@ -4550,9 +4581,14 @@ fn notify_user(app: &AppHandle, title: &str, body: String) {
 /// 审计要点任一变化后调用，否则任务还带着旧边界跑。审计任务 prompt 是静态的，不用同步。
 /// 后台任务（fire_task）没有 AppState，签名收 TaskStore。
 fn sync_daily_prompt(tasks: &tasks::TaskStore, m: &managed::ManagedSite) {
+    let growth_positioning = m.growth.as_ref().map(|growth| &growth.config.positioning);
     if let Some(tid) = m.task_ids.first() {
-        let p = managed::apply_custom_prompt(
-            &m.custom_daily_prompt,
+        let generated = if m.mode.is_growth() {
+            managed_growth_service::daily_prompt(
+                &m.site_name,
+                growth_positioning.unwrap_or(&managed::GrowthPositioning::default()),
+            )
+        } else {
             managed::daily_prompt(
                 &m.site_name,
                 &m.plan,
@@ -4561,18 +4597,32 @@ fn sync_daily_prompt(tasks: &tasks::TaskStore, m: &managed::ManagedSite) {
                 &m.level,
                 m.weekly_edit_limit,
                 &m.audit_notes,
-            ),
-        );
+            )
+        };
+        let p = if m.mode.is_growth() {
+            managed_growth_service::apply_daily_prompt(&m.custom_daily_prompt, generated, &m.level)
+        } else {
+            managed::apply_custom_prompt(&m.custom_daily_prompt, generated)
+        };
         let _ = tasks.mutate(tid, |t| {
             t.prompt = p.clone();
             t.updated_at = now_secs();
         });
     }
     if let Some(tid) = m.task_ids.get(1) {
-        let p = managed::apply_custom_prompt(
-            &m.custom_audit_prompt,
-            managed::audit_prompt(&m.site_name),
-        );
+        let generated = if m.mode.is_growth() {
+            managed_growth_service::scan_prompt(
+                &m.site_name,
+                growth_positioning.unwrap_or(&managed::GrowthPositioning::default()),
+            )
+        } else {
+            managed::audit_prompt(&m.site_name)
+        };
+        let p = if m.mode.is_growth() {
+            managed_growth_service::apply_readonly_prompt(&m.custom_audit_prompt, generated)
+        } else {
+            managed::apply_custom_prompt(&m.custom_audit_prompt, generated)
+        };
         let _ = tasks.mutate(tid, |t| {
             t.prompt = p.clone();
             t.updated_at = now_secs();
@@ -4580,10 +4630,19 @@ fn sync_daily_prompt(tasks: &tasks::TaskStore, m: &managed::ManagedSite) {
     }
     // 周报 prompt 带计划摘要（「计划关键词 vs 实际曝光词偏差」的对照基准），计划变了要跟着换。
     if let Some(tid) = m.task_ids.get(2) {
-        let p = managed::apply_custom_prompt(
-            &m.custom_report_prompt,
-            managed::report_prompt(&m.site_name, &m.plan),
-        );
+        let generated = if m.mode.is_growth() {
+            managed_growth_service::report_prompt(
+                &m.site_name,
+                growth_positioning.unwrap_or(&managed::GrowthPositioning::default()),
+            )
+        } else {
+            managed::report_prompt(&m.site_name, &m.plan)
+        };
+        let p = if m.mode.is_growth() {
+            managed_growth_service::apply_readonly_prompt(&m.custom_report_prompt, generated)
+        } else {
+            managed::apply_custom_prompt(&m.custom_report_prompt, generated)
+        };
         let _ = tasks.mutate(tid, |t| {
             t.prompt = p.clone();
             t.updated_at = now_secs();
@@ -4687,7 +4746,7 @@ fn managed_prompt_preview(
     }
 }
 
-/// 开启托管：存记录 + 自动创建两个配套定时任务（每日内容 1440 分钟 / 每周审计 10080 分钟）。
+/// 开启计划托管：存记录 + 自动创建三个配套任务（每日内容 / 每周审计 / 每周周报）。
 /// 任务标题带「托管 · 」前缀，在定时任务视图里也可见可管。
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
@@ -4739,6 +4798,55 @@ fn valid_level(level: &str) -> bool {
     matches!(level, "l0" | "l1" | "l2" | "l3")
 }
 
+/// 托管开启跨 managed.json / tasks.json 两份账本。预留保证同站点只进入一个方案；
+/// 中途任何一步失败时，已经创建的配套任务会自动清理，避免留下无主定时任务。
+struct ManagedSetupGuard<'a> {
+    managed: &'a managed::ManagedStore,
+    tasks: &'a tasks::TaskStore,
+    conn_id: String,
+    site_slug: String,
+    task_ids: Vec<String>,
+    committed: bool,
+}
+
+impl<'a> ManagedSetupGuard<'a> {
+    fn claim(
+        managed: &'a managed::ManagedStore,
+        tasks: &'a tasks::TaskStore,
+        conn_id: &str,
+        site_slug: &str,
+    ) -> Result<Self, String> {
+        managed.reserve_site(conn_id, site_slug)?;
+        Ok(Self {
+            managed,
+            tasks,
+            conn_id: conn_id.to_string(),
+            site_slug: site_slug.to_string(),
+            task_ids: vec![],
+            committed: false,
+        })
+    }
+
+    fn track(&mut self, task: &ScheduledTask) {
+        self.task_ids.push(task.id.clone());
+    }
+
+    fn commit(&mut self) {
+        self.committed = true;
+    }
+}
+
+impl Drop for ManagedSetupGuard<'_> {
+    fn drop(&mut self) {
+        if !self.committed {
+            for id in &self.task_ids {
+                let _ = self.tasks.remove(id);
+            }
+        }
+        self.managed.release_site(&self.conn_id, &self.site_slug);
+    }
+}
+
 /// managed_enable 的核心（纯 store 版，可单测）：厂商/模型/强度既透传给三个配套任务
 ///（每日内容/每周审计/每周周报），也存进托管记录（卡片展示 + 后续同步用）。
 #[allow(clippy::too_many_arguments)]
@@ -4768,9 +4876,6 @@ fn enable_managed(
     if site_slug.is_empty() {
         return Err("请选择要托管的站点".into());
     }
-    if managed_store.find_site(&conn_id, &site_slug).is_some() {
-        return Err("该站点已在托管中".into());
-    }
     let level = if valid_level(&level) {
         level
     } else {
@@ -4785,6 +4890,7 @@ fn enable_managed(
     // 防新站短期批量灌内容被搜索引擎判责；UI 侧超过 7 会提示将被钳。
     let limit = weekly_post_limit.clamp(1, managed::ramp_cap(0));
     let edit_limit = weekly_edit_limit.clamp(1, 20);
+    let mut setup = ManagedSetupGuard::claim(managed_store, tasks, &conn_id, &site_slug)?;
     let daily = upsert_task(
         conns,
         tasks,
@@ -4808,6 +4914,7 @@ fn enable_managed(
         0,
         true,
     )?;
+    setup.track(&daily);
     let audit = upsert_task(
         conns,
         tasks,
@@ -4828,6 +4935,7 @@ fn enable_managed(
         0,
         true,
     )?;
+    setup.track(&audit);
     let report = upsert_task(
         conns,
         tasks,
@@ -4851,12 +4959,15 @@ fn enable_managed(
         0,
         true,
     )?;
+    setup.track(&report);
     let now = now_secs();
     let m = managed::ManagedSite {
         id: uuid::Uuid::new_v4().to_string(),
         conn_id,
         site_slug,
         site_name,
+        mode: managed::ManagedMode::Plan,
+        growth: None,
         level,
         weekly_post_limit: limit,
         weekly_edit_limit: edit_limit,
@@ -4884,7 +4995,302 @@ fn enable_managed(
         updated_at: now,
     };
     managed_store.upsert(m.clone())?;
+    setup.commit();
     Ok(m)
+}
+
+/// 开启增长托管。它与 managed_enable 使用同一份站点唯一性约束，但任务标题、提示词、
+/// 配置和机会状态完全独立；旧的计划托管记录不会经过本函数。
+#[allow(clippy::too_many_arguments)]
+#[tauri::command]
+async fn managed_growth_enable(
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    site_slug: String,
+    site_name: String,
+    plan: String,
+    positioning: managed::GrowthPositioning,
+    weekly_post_limit: u32,
+    weekly_edit_limit: u32,
+    level: String,
+    token_weekly_budget: u64,
+    brain: String,
+    model: String,
+    effort: String,
+    fallback_brain: String,
+    fallback_model: String,
+    fallback_effort: String,
+    custom_daily_prompt: String,
+    custom_audit_prompt: String,
+    custom_report_prompt: String,
+) -> Result<managed::ManagedSite, String> {
+    let site_slug = site_slug.trim().to_string();
+    if site_slug.is_empty() {
+        return Err("请选择要托管的站点".into());
+    }
+    let positioning = positioning.normalized();
+    let level = if valid_level(&level) {
+        level
+    } else {
+        "l0".to_string()
+    };
+    let site_name = if site_name.trim().is_empty() {
+        site_slug.clone()
+    } else {
+        site_name.trim().to_string()
+    };
+    let limit = weekly_post_limit.clamp(1, managed::ramp_cap(0));
+    let edit_limit = weekly_edit_limit.clamp(1, 20);
+    let mut setup = ManagedSetupGuard::claim(&state.managed, &state.tasks, &conn_id, &site_slug)?;
+    let daily = upsert_task(
+        &state.conns,
+        &state.tasks,
+        None,
+        conn_id.clone(),
+        vec![site_slug.clone()],
+        vec![site_name.clone()],
+        "article".into(),
+        brain.clone(),
+        model.clone(),
+        effort.clone(),
+        fallback_brain.clone(),
+        fallback_model.clone(),
+        fallback_effort.clone(),
+        format!("增长托管 · 每日执行 · {site_name}"),
+        managed_growth_service::apply_daily_prompt(
+            &custom_daily_prompt,
+            managed_growth_service::daily_prompt(&site_name, &positioning),
+            &level,
+        ),
+        1440,
+        0,
+        true,
+    )?;
+    setup.track(&daily);
+    let scan_task = upsert_task(
+        &state.conns,
+        &state.tasks,
+        None,
+        conn_id.clone(),
+        vec![site_slug.clone()],
+        vec![site_name.clone()],
+        "free".into(),
+        brain.clone(),
+        model.clone(),
+        effort.clone(),
+        fallback_brain.clone(),
+        fallback_model.clone(),
+        fallback_effort.clone(),
+        format!("增长托管 · 每周扫描 · {site_name}"),
+        managed_growth_service::apply_readonly_prompt(
+            &custom_audit_prompt,
+            managed_growth_service::scan_prompt(&site_name, &positioning),
+        ),
+        10080,
+        0,
+        true,
+    )?;
+    setup.track(&scan_task);
+    let report = upsert_task(
+        &state.conns,
+        &state.tasks,
+        None,
+        conn_id.clone(),
+        vec![site_slug.clone()],
+        vec![site_name.clone()],
+        "free".into(),
+        brain.clone(),
+        model.clone(),
+        effort.clone(),
+        fallback_brain.clone(),
+        fallback_model.clone(),
+        fallback_effort.clone(),
+        format!("增长托管 · 每周复盘 · {site_name}"),
+        managed_growth_service::apply_readonly_prompt(
+            &custom_report_prompt,
+            managed_growth_service::report_prompt(&site_name, &positioning),
+        ),
+        10080,
+        0,
+        true,
+    )?;
+    setup.track(&report);
+    let now = now_secs();
+    let record = managed::ManagedSite {
+        id: uuid::Uuid::new_v4().to_string(),
+        conn_id: conn_id.clone(),
+        site_slug: site_slug.clone(),
+        site_name,
+        mode: managed::ManagedMode::Growth,
+        growth: Some(managed::GrowthManaged {
+            config: managed::GrowthConfig {
+                positioning,
+                ..managed::GrowthConfig::default()
+            },
+            state: managed::GrowthState::default(),
+        }),
+        level,
+        weekly_post_limit: limit,
+        weekly_edit_limit: edit_limit,
+        plan: plan.trim().to_string(),
+        custom_daily_prompt: custom_daily_prompt.trim().to_string(),
+        custom_audit_prompt: custom_audit_prompt.trim().to_string(),
+        custom_report_prompt: custom_report_prompt.trim().to_string(),
+        brain,
+        model,
+        effort,
+        fallback_brain,
+        fallback_model,
+        fallback_effort,
+        task_ids: vec![daily.id, scan_task.id, report.id],
+        paused: false,
+        review_notes: vec![],
+        token_weekly_budget,
+        fused_at: 0,
+        review_events: vec![],
+        demote_note: String::new(),
+        audit_notes: String::new(),
+        enabled_at: now,
+        reports: vec![],
+        created_at: now,
+        updated_at: now,
+    };
+    state.managed.upsert(record.clone())?;
+    setup.commit();
+    // 不把 guard（包含同步 store 引用）跨过后续网络 await；此时记录已落盘，
+    // 失败只记录数据源状态，不再回滚一个有效的增长托管方案。
+    drop(setup);
+    // 第一次扫描是软步骤：数据未接入时按定位生成低置信度机会；网络暂时不可用也不回滚托管。
+    if let Err(error) = refresh_growth_record(&state.conns, &state.managed, &record.id).await {
+        // 记录与三条任务已经原子提交；初次数据扫描是软步骤，哪怕连错误说明都因
+        // 极端磁盘故障写不进去，也不能向 UI 假报“开启失败”诱导用户重复开启。
+        let _ = state.managed.mutate(&record.id, now_secs(), |managed| {
+            if let Some(growth) = managed.growth.as_mut() {
+                growth.state.last_error = error.clone();
+            }
+        });
+    }
+    state
+        .managed
+        .get(&record.id)
+        .ok_or("增长托管记录保存失败".into())
+}
+
+async fn refresh_growth_record(
+    conns: &pack::ConnStore,
+    managed_store: &managed::ManagedStore,
+    id: &str,
+) -> Result<Option<managed::ManagedSite>, String> {
+    let current = managed_store.get(id).ok_or("托管记录不存在")?;
+    if !current.mode.is_growth() {
+        return Err("该站点使用的是计划托管".into());
+    }
+    let growth = current.growth.as_ref().ok_or("增长托管配置缺失")?;
+    let conn = conns.get(&current.conn_id)?;
+    let snapshot = managed_growth_service::scan(
+        &conn,
+        &current.site_slug,
+        &growth.config.positioning,
+        &growth.state.opportunities,
+        growth.config.scan_window_days,
+        &growth.config.review_windows_days,
+        now_secs(),
+    )
+    .await?;
+    let now = now_secs();
+    managed_store.mutate(id, now, |managed| {
+        if let Some(growth) = managed.growth.as_mut() {
+            growth.state.data_health = snapshot.data_health;
+            growth.state.opportunities = managed_growth_service::merge_with_current(
+                &growth.state.opportunities,
+                snapshot.opportunities,
+                &snapshot.review_samples,
+                &growth.config.review_windows_days,
+                now,
+            );
+            growth.state.warnings = snapshot.warnings;
+            growth.state.last_error = snapshot.error;
+            growth.state.last_scan_at = now;
+            growth.state.next_scan_at = now.saturating_add(7 * 86_400);
+        }
+    })
+}
+
+/// 用户手动刷新增长机会。只读取数据并更新机会池，不会创建、修改或发布内容。
+#[tauri::command]
+async fn managed_growth_scan(
+    state: tauri::State<'_, AppState>,
+    id: String,
+) -> Result<Option<managed::ManagedSite>, String> {
+    refresh_growth_record(&state.conns, &state.managed, &id).await
+}
+
+/// 机会池中的显式决策：加入执行队列、稍后处理或忽略。只有 queued 会被每日任务消费。
+#[tauri::command]
+fn managed_growth_opportunity_action(
+    state: tauri::State<'_, AppState>,
+    id: String,
+    opportunity_id: String,
+    action: String,
+) -> Result<Option<managed::ManagedSite>, String> {
+    let now = now_secs();
+    let action = action.trim().to_ascii_lowercase();
+    if !matches!(action.as_str(), "queue" | "postpone" | "dismiss") {
+        return Err(format!("未知的增长机会操作：{action}"));
+    }
+    let updated = state.managed.mutate_checked(&id, now, |managed| {
+        if !managed.mode.is_growth() {
+            return Err("该站点使用的是计划托管".into());
+        }
+        let level = managed.level.clone();
+        let opportunity = managed
+            .growth
+            .as_mut()
+            .and_then(|growth| {
+                growth
+                    .state
+                    .opportunities
+                    .iter_mut()
+                    .find(|item| item.id == opportunity_id)
+            })
+            .ok_or("增长机会不存在或已被刷新移除")?;
+        if !matches!(
+            opportunity.status,
+            managed::GrowthOpportunityStatus::Candidate
+                | managed::GrowthOpportunityStatus::Postponed
+        ) {
+            return Err("这条机会已进入执行或观察阶段，不能重复变更决策".into());
+        }
+        if action == "queue" && opportunity.action == managed::GrowthOpportunityAction::Watch {
+            return Err("“继续观察”机会没有写入动作，无需加入执行队列".into());
+        }
+        if action == "queue"
+            && opportunity.action != managed::GrowthOpportunityAction::NewContent
+            && level != "l3"
+        {
+            return Err("修改已发布内容的增长机会必须使用 L3 托管等级".into());
+        }
+        match action.as_str() {
+            "queue" => {
+                opportunity.status = managed::GrowthOpportunityStatus::Queued;
+                // 用户主动重新加入队列时，解除“稍后”产生的本地延迟；真实执行冷却仍由扫描合并。
+                if opportunity.cooldown_until <= now.saturating_add(7 * 86_400) {
+                    opportunity.cooldown_until = 0;
+                }
+            }
+            "postpone" => {
+                opportunity.status = managed::GrowthOpportunityStatus::Postponed;
+                opportunity.cooldown_until = now.saturating_add(7 * 86_400);
+            }
+            "dismiss" => {
+                opportunity.status = managed::GrowthOpportunityStatus::Dismissed;
+            }
+            _ => unreachable!("操作类型已在写入前完成校验"),
+        }
+        opportunity.updated_at = now;
+        Ok(())
+    })?;
+    updated.ok_or("托管记录不存在".into()).map(Some)
 }
 
 /// 调整托管等级（l0/l1/l2）：手动调级清空自动降级说明，并同步每日任务 prompt。
@@ -4994,6 +5400,7 @@ fn managed_record_reject(
         return Err("请写一句打回理由（会注入后续任务让它规避）".into());
     }
     let now = now_secs();
+    let post_id_text = post_id.to_string();
     let mut updated = state.managed.mutate(&id, now, |m| {
         m.review_notes.insert(
             0,
@@ -5011,6 +5418,25 @@ fn managed_record_reject(
                 approved: false,
             },
         );
+        // 增长托管的待审草稿要回到同一机会的返工队列。保留原动作和基线，
+        // 但把目标锁定到这篇草稿；后续提示词会强制 PATCH 此 id 并重新待审，
+        // 不允许另建一篇造成重复内容。
+        if m.mode.is_growth() {
+            if let Some(growth) = m.growth.as_mut() {
+                if let Some(opportunity) = growth.state.opportunities.iter_mut().find(|item| {
+                    item.status == managed::GrowthOpportunityStatus::DraftReady
+                        && item.output_content_id.as_deref() == Some(post_id_text.as_str())
+                }) {
+                    opportunity.target_content_id = Some(post_id_text.clone());
+                    opportunity.status = managed::GrowthOpportunityStatus::Queued;
+                    opportunity.cooldown_until = 0;
+                    opportunity.review_at = 0;
+                    opportunity.observing_since = 0;
+                    opportunity.updated_at = now;
+                    growth.state.active_opportunity_id.clear();
+                }
+            }
+        }
     })?;
     // 自动降级判定（先取出要用的数据再改 updated，避免自引用）。
     let demote = updated.as_ref().and_then(|m| {
@@ -5089,15 +5515,36 @@ async fn managed_publish(
     managed::publish_post(&conn, &site_slug, id).await?;
     if let Some(m) = state.managed.find_site(&conn_id, &site_slug) {
         let now = now_secs();
-        let _ = state.managed.mutate(&m.id, now, |x| {
-            x.review_events.insert(
-                0,
-                managed::ReviewEvent {
-                    ts: now,
-                    approved: true,
-                },
-            );
-        });
+        let review_days = m
+            .growth
+            .as_ref()
+            .and_then(|growth| growth.config.review_windows_days.first().copied())
+            .unwrap_or(14)
+            .clamp(1, 365);
+        let content_id = id.to_string();
+        state
+            .managed
+            .mutate(&m.id, now, |x| {
+                x.review_events.insert(
+                    0,
+                    managed::ReviewEvent {
+                        ts: now,
+                        approved: true,
+                    },
+                );
+                if let Some(growth) = x.growth.as_mut() {
+                    if let Some(opportunity) = growth.state.opportunities.iter_mut().find(|item| {
+                        item.status == managed::GrowthOpportunityStatus::DraftReady
+                            && item.output_content_id.as_deref() == Some(content_id.as_str())
+                    }) {
+                        opportunity.status = managed::GrowthOpportunityStatus::Observing;
+                        opportunity.updated_at = now;
+                        opportunity.observing_since = now;
+                        opportunity.review_at = now.saturating_add(review_days as u64 * 86_400);
+                    }
+                }
+            })
+            .map_err(|error| format!("内容已发布，但增长托管状态同步失败：{error}"))?;
     }
     Ok(())
 }
@@ -5225,8 +5672,315 @@ async fn managed_prefire(
         Ok(c) => c,
         Err(_) => return ManagedGate::Proceed(None),
     };
+    if m.mode.is_growth() {
+        // 每周扫描任务由 Pilot 先读取并固化真实数据，模型只负责解释，不参与打分。
+        if m.task_ids.get(1) == Some(&task.id) {
+            return match refresh_growth_record(conns, mstore, &m.id).await {
+                Ok(Some(updated)) => {
+                    let growth = updated.growth.unwrap_or_default();
+                    ManagedGate::Proceed(Some(managed_growth_service::scan_prompt_block(
+                        &growth.state.opportunities,
+                        &growth.state.warnings,
+                    )))
+                }
+                Ok(None) => ManagedGate::Skip("增长托管记录不存在".into()),
+                Err(error) => ManagedGate::Proceed(Some(format!(
+                    "【增长扫描快照】本次数据读取失败：{error}。请只说明数据不可用，不要猜测机会。"
+                ))),
+            };
+        }
+        // 每日执行任务只消费用户明确加入队列的机会。超过一天未扫描时先软刷新一次，
+        // 扫描失败仍保留原队列，不能因为瞬时网络问题丢掉用户决策。
+        if m.task_ids.first() == Some(&task.id) {
+            let mut current = m.clone();
+            let should_refresh = current
+                .growth
+                .as_ref()
+                .map(|growth| now_secs().saturating_sub(growth.state.last_scan_at) >= 86_400)
+                .unwrap_or(true);
+            if should_refresh {
+                if let Ok(Some(updated)) = refresh_growth_record(conns, mstore, &current.id).await {
+                    current = updated;
+                }
+            }
+            let now = now_secs();
+            let active_id = current
+                .growth
+                .as_ref()
+                .map(|growth| growth.state.active_opportunity_id.clone())
+                .unwrap_or_default();
+            if !active_id.is_empty() {
+                let active = current.growth.as_ref().and_then(|growth| {
+                    growth
+                        .state
+                        .opportunities
+                        .iter()
+                        .find(|item| item.id == active_id)
+                        .cloned()
+                });
+                if let Some(active) =
+                    active.filter(|item| item.status == managed::GrowthOpportunityStatus::Drafting)
+                {
+                    if now.saturating_sub(active.updated_at) < 6 * 3_600 {
+                        return ManagedGate::Skip(
+                            "上一条增长机会仍在执行或等待 GCMS 写入确认，本轮不重复启动".into(),
+                        );
+                    }
+                    let review_days = current
+                        .growth
+                        .as_ref()
+                        .and_then(|growth| growth.config.review_windows_days.first().copied())
+                        .unwrap_or(14)
+                        .clamp(1, 365);
+                    match managed_growth_service::verify_execution(
+                        &conn,
+                        &current.site_slug,
+                        &active,
+                        &current.level,
+                        active.updated_at,
+                        "",
+                    )
+                    .await
+                    {
+                        Ok(Some(output)) => {
+                            let output_id = output.content_id.clone();
+                            let output_url = output.url.clone();
+                            let published = output.status == "published";
+                            let synced = mstore.mutate(&current.id, now, |managed| {
+                                if let Some(growth) = managed.growth.as_mut() {
+                                    if let Some(item) = growth
+                                        .state
+                                        .opportunities
+                                        .iter_mut()
+                                        .find(|item| item.id == active_id)
+                                    {
+                                        item.output_content_id = Some(output_id.clone());
+                                        if !output_url.trim().is_empty() {
+                                            item.target_url = output_url.clone();
+                                        }
+                                        item.status = if published {
+                                            managed::GrowthOpportunityStatus::Observing
+                                        } else {
+                                            managed::GrowthOpportunityStatus::DraftReady
+                                        };
+                                        item.updated_at = now;
+                                        if published {
+                                            item.observing_since = now;
+                                            item.review_at =
+                                                now.saturating_add(review_days as u64 * 86_400);
+                                        }
+                                    }
+                                    growth.state.active_opportunity_id.clear();
+                                }
+                            });
+                            match synced {
+                                Ok(Some(_)) => {}
+                                Ok(None) => {
+                                    return ManagedGate::Skip(
+                                        "已确认上一轮真实写入，但增长托管记录已不存在".into(),
+                                    );
+                                }
+                                Err(error) => {
+                                    return ManagedGate::Skip(format!(
+                                        "已确认上一轮真实写入，但状态同步失败：{error}；本轮不重复执行"
+                                    ));
+                                }
+                            }
+                            return ManagedGate::Skip(if published {
+                                "已从 GCMS 恢复确认上一轮发布，本轮不重复执行".into()
+                            } else {
+                                "已从 GCMS 恢复确认上一轮草稿，等待用户审核".into()
+                            });
+                        }
+                        Ok(None) => {
+                            let warning =
+                                "上一轮执行超过 6 小时仍未检测到真实内容写入，已安全退回队列"
+                                    .to_string();
+                            let recovered = mstore.mutate(&current.id, now, |managed| {
+                                if let Some(growth) = managed.growth.as_mut() {
+                                    if let Some(item) = growth
+                                        .state
+                                        .opportunities
+                                        .iter_mut()
+                                        .find(|item| item.id == active_id)
+                                    {
+                                        item.status = managed::GrowthOpportunityStatus::Queued;
+                                        item.updated_at = now;
+                                        item.cooldown_until = 0;
+                                    }
+                                    growth.state.active_opportunity_id.clear();
+                                    if !growth.state.warnings.contains(&warning) {
+                                        growth.state.warnings.push(warning.clone());
+                                    }
+                                }
+                            });
+                            if let Err(error) = recovered {
+                                return ManagedGate::Skip(format!(
+                                    "上一轮未检测到真实写入，但恢复队列失败：{error}；已保持现场防止重复执行"
+                                ));
+                            }
+                            return ManagedGate::Skip(
+                                "上一轮未检测到真实写入，已恢复到队列，下次运行再执行".into(),
+                            );
+                        }
+                        Err(error) => {
+                            let warning = format!(
+                                "上一轮写入暂时无法回读确认，已保持现场防止重复执行：{error}"
+                            );
+                            let _ = mstore.mutate(&current.id, now, |managed| {
+                                if let Some(growth) = managed.growth.as_mut() {
+                                    if !growth.state.warnings.contains(&warning) {
+                                        growth.state.warnings.push(warning.clone());
+                                    }
+                                }
+                            });
+                            return ManagedGate::Skip(warning);
+                        }
+                    }
+                } else if let Ok(Some(updated)) = mstore.mutate(&current.id, now, |managed| {
+                    if let Some(growth) = managed.growth.as_mut() {
+                        growth.state.active_opportunity_id.clear();
+                    }
+                }) {
+                    current = updated;
+                }
+            }
+            let Some(growth) = current.growth.as_ref() else {
+                return ManagedGate::Skip("增长托管配置缺失".into());
+            };
+            let Some(opportunity) = growth
+                .state
+                .opportunities
+                .iter()
+                .find(|item| item.is_executable_at(now))
+                .cloned()
+            else {
+                return ManagedGate::Skip(
+                    "当前没有已确认并加入队列的增长机会；等待下次扫描或用户确认".into(),
+                );
+            };
+            if opportunity.action != managed::GrowthOpportunityAction::NewContent
+                && current.level != "l3"
+            {
+                return ManagedGate::Skip(
+                    "队首机会需要修改已发布内容；请切换到 L3 或改选“新增内容”机会".into(),
+                );
+            }
+            // 增长托管的动作来自持久化机会队列，配额核验必须 fail-closed：
+            // 统计瞬时不可用时宁可顺延，也不能在不知道本周产出/修改量的情况下继续写入。
+            let stats = match managed::week_stats(&conn, &current.site_slug).await {
+                Ok(stats) => stats,
+                Err(error) => {
+                    return ManagedGate::Skip(format!(
+                        "暂时无法核验增长托管的周配额，本轮安全顺延：{error}"
+                    ));
+                }
+            };
+            let output = stats.published_this_week + stats.drafts_new;
+            let is_rework = opportunity.action == managed::GrowthOpportunityAction::NewContent
+                && opportunity.target_content_id.is_some();
+            if opportunity.action == managed::GrowthOpportunityAction::NewContent && !is_rework {
+                if let Some(reason) = managed::weekly_cap_skip(output, current.weekly_post_limit) {
+                    return ManagedGate::Skip(reason);
+                }
+            }
+            let mut count_line = managed::weekly_count_line(output, current.weekly_post_limit);
+            if current.level == "l3"
+                && opportunity.action != managed::GrowthOpportunityAction::NewContent
+            {
+                if stats.edited_count >= current.weekly_edit_limit {
+                    return ManagedGate::Skip(format!(
+                        "本周存量修改已达上限 {}/{}",
+                        stats.edited_count, current.weekly_edit_limit
+                    ));
+                }
+                count_line.push('\n');
+                count_line.push_str(&managed::edit_cap_line(
+                    stats.edited_count,
+                    current.weekly_edit_limit,
+                ));
+            }
+            let cooldown_days =
+                if opportunity.action == managed::GrowthOpportunityAction::NewContent && !is_rework
+                {
+                    56
+                } else {
+                    28
+                };
+            let opportunity_id = opportunity.id.clone();
+            let claim = mstore.mutate_checked(&current.id, now, |managed| {
+                if !managed.mode.is_growth() {
+                    return Err("托管方案已发生变化".into());
+                }
+                if managed.paused || managed.fused_at > 0 {
+                    return Err("增长托管当前已暂停或熔断".into());
+                }
+                if opportunity.action != managed::GrowthOpportunityAction::NewContent
+                    && managed.level != "l3"
+                {
+                    return Err("当前托管等级已不允许修改线上存量".into());
+                }
+                let growth = managed.growth.as_mut().ok_or("增长托管配置缺失")?;
+                if !growth.state.active_opportunity_id.is_empty() {
+                    return Err("已有增长机会正在执行".into());
+                }
+                let item = growth
+                    .state
+                    .opportunities
+                    .iter_mut()
+                    .find(|item| item.id == opportunity_id)
+                    .ok_or("增长机会已在扫描过程中发生变化")?;
+                if !item.is_executable_at(now)
+                    || item.action != opportunity.action
+                    || item.target_content_id != opportunity.target_content_id
+                {
+                    return Err("增长机会状态已变化，请等待下一轮".into());
+                }
+                growth.state.active_opportunity_id = opportunity_id.clone();
+                item.status = managed::GrowthOpportunityStatus::Drafting;
+                item.updated_at = now;
+                item.cooldown_until = now.saturating_add(cooldown_days * 86_400);
+                Ok(())
+            });
+            if let Err(error) = &claim {
+                return ManagedGate::Skip(format!("未启动增长机会：{error}"));
+            }
+            let claimed = match claim {
+                Ok(Some(claimed)) => claimed,
+                _ => return ManagedGate::Skip("增长托管记录已不存在，本轮未启动".into()),
+            };
+            let claimed_growth = claimed
+                .growth
+                .as_ref()
+                .expect("原子 claim 已验证增长托管配置");
+            let mut block = managed_growth_service::opportunity_prompt_block(
+                &opportunity,
+                &claimed_growth.config.positioning,
+                &claimed.level,
+            );
+            if let Some(target_id) = opportunity
+                .target_content_id
+                .as_deref()
+                .and_then(|value| value.parse::<i64>().ok())
+            {
+                if let Some(note) = claimed
+                    .review_notes
+                    .iter()
+                    .find(|note| note.post_id == target_id)
+                {
+                    block.push_str(&format!(
+                        "\n【用户打回意见（本轮必须修正）】\n草稿：{}\n理由：{}",
+                        note.title, note.reason
+                    ));
+                }
+            }
+            block.push('\n');
+            block.push_str(&count_line);
+            return ManagedGate::Proceed(Some(block));
+        }
+    }
     // 每日内容任务：周上限硬闸 + 权威计数注入（L3 再注入存量修改配额硬闸行）
-    if m.task_ids.first() == Some(&task.id) {
+    if !m.mode.is_growth() && m.task_ids.first() == Some(&task.id) {
         match managed::week_stats(&conn, &m.site_slug).await {
             Ok(stats) => {
                 let output = stats.published_this_week + stats.drafts_new;
@@ -5250,7 +6004,7 @@ async fn managed_prefire(
     }
     // 每周周报任务：注入真实数据块
     if m.task_ids.get(2) == Some(&task.id) {
-        let block = match managed::week_stats(&conn, &m.site_slug).await {
+        let mut block = match managed::week_stats(&conn, &m.site_slug).await {
             Ok(stats) => {
                 let task_lines: Vec<String> = m
                     .task_ids
@@ -5309,6 +6063,43 @@ async fn managed_prefire(
                 "【本周实测数据】拉取失败（{e}）——请在周报开头注明本周数据不可用，只做定性总结。"
             ),
         };
+        if m.mode.is_growth() {
+            if let Some(growth) = m.growth.as_ref() {
+                let candidate = growth
+                    .state
+                    .opportunities
+                    .iter()
+                    .filter(|item| item.status == managed::GrowthOpportunityStatus::Candidate)
+                    .count();
+                let queued = growth
+                    .state
+                    .opportunities
+                    .iter()
+                    .filter(|item| item.status == managed::GrowthOpportunityStatus::Queued)
+                    .count();
+                let observing = growth
+                    .state
+                    .opportunities
+                    .iter()
+                    .filter(|item| {
+                        matches!(
+                            item.status,
+                            managed::GrowthOpportunityStatus::Published
+                                | managed::GrowthOpportunityStatus::Observing
+                        )
+                    })
+                    .count();
+                block.push_str(&format!(
+                    "\n【增长机会状态（Pilot 实测）】数据依据：{:?}；候选 {candidate}；已排队 {queued}；观察中 {observing}；上次扫描 {}。",
+                    growth.state.data_health.basis(),
+                    growth.state.last_scan_at
+                ));
+                block.push('\n');
+                block.push_str(&managed_growth_service::review_prompt_block(
+                    &growth.state.opportunities,
+                ));
+            }
+        }
         return ManagedGate::Proceed(Some(block));
     }
     ManagedGate::Proceed(None)
@@ -5394,6 +6185,23 @@ fn executor_label(brain: &str, model: &str) -> String {
         brain.to_string()
     } else {
         format!("{brain} / {model}")
+    }
+}
+
+/// 增长托管的扫描与复盘只消费 Pilot 已固化的事实快照，后台模型不需要、也不应该
+/// 拥有写权限。旧计划托管与增长每日执行保持原权限，避免改变既有运行行为。
+fn scheduled_task_perm_mode(managed_sites: &[managed::ManagedSite], task_id: &str) -> &'static str {
+    if managed_sites.iter().any(|site| {
+        site.mode.is_growth()
+            && site
+                .task_ids
+                .iter()
+                .skip(1)
+                .any(|managed_task_id| managed_task_id == task_id)
+    }) {
+        "plan"
+    } else {
+        "full"
     }
 }
 
@@ -5511,6 +6319,7 @@ async fn fire_task(
         Some(extra) => format!("{}\n\n{extra}", task.prompt),
         None => task.prompt.clone(),
     };
+    let task_perm_mode = scheduled_task_perm_mode(&mstore.list(), &task.id).to_string();
     let targets = task.targets();
     let multi = targets.len() > 1;
     // 并发执行，信号量限流：CLI 进程以网络等待为主，但每个要吃几百 MB 内存，
@@ -5532,10 +6341,11 @@ async fn fire_task(
             data_dir.clone(),
             ssh.clone(),
         );
-        let (conn_id, task_type, prompt) = (
+        let (conn_id, task_type, prompt, perm_mode) = (
             task.conn_id.clone(),
             task.task_type.clone(),
             effective_prompt.clone(),
+            task_perm_mode.clone(),
         );
         let fallback = fallback.clone();
         let (mut brain, mut model, mut effort, mut fallback_used) = initial_executor.clone();
@@ -5563,7 +6373,8 @@ async fn fire_task(
             // 后台运行没有前端接收方，用一个丢弃事件的 Channel。
             let sink: Channel<agent::TurnEvent> = Channel::new(|_| Ok(()));
             let executor = executor_label(&brain, &model);
-            // 定时任务无人值守：只能全自动（询问/自动档会卡在等批准，永远回不来）。
+            // 无人值守任务不能使用 ask/auto。增长扫描与复盘使用 plan 真只读，
+            // 其余执行型任务保持 full。
             let res = create_conversation(
                 conns.clone(),
                 convos.clone(),
@@ -5578,7 +6389,7 @@ async fn fire_task(
                 task_type.clone(),
                 brain.clone(),
                 model.clone(),
-                "full".into(),
+                perm_mode.clone(),
                 effort.clone(),
                 String::new(),
                 prompt.clone(),
@@ -5625,7 +6436,7 @@ async fn fire_task(
                         task_type,
                         next_brain.clone(),
                         next_model.clone(),
-                        "full".into(),
+                        perm_mode,
                         next_effort.clone(),
                         String::new(),
                         prompt,
@@ -5824,6 +6635,121 @@ async fn fire_task(
         );
         x.history.truncate(20);
     });
+    let mut managed_sync_error = String::new();
+    // 增长每日任务的机会状态闭环：对话成功不等于 GCMS 已落盘，必须回读真实内容。
+    // 草稿进入待审，已发布内容进入观察；回读异常保留 Drafting 现场，防止重复写入。
+    if let Some(m) = mstore
+        .list()
+        .into_iter()
+        .find(|m| m.mode.is_growth() && m.task_ids.first() == Some(&task.id))
+    {
+        let active_id = m
+            .growth
+            .as_ref()
+            .map(|growth| growth.state.active_opportunity_id.clone())
+            .unwrap_or_default();
+        if !active_id.is_empty() {
+            let active = m.growth.as_ref().and_then(|growth| {
+                growth
+                    .state
+                    .opportunities
+                    .iter()
+                    .find(|item| item.id == active_id)
+                    .cloned()
+            });
+            let verification = if let Some(active) = active.as_ref() {
+                match conns.get(&m.conn_id) {
+                    Ok(conn) => {
+                        managed_growth_service::verify_execution(
+                            &conn,
+                            &m.site_slug,
+                            active,
+                            &m.level,
+                            active.updated_at,
+                            &last_assistant_full,
+                        )
+                        .await
+                    }
+                    Err(error) => Err(error),
+                }
+            } else {
+                Ok(None)
+            };
+            let review_days = m
+                .growth
+                .as_ref()
+                .and_then(|growth| growth.config.review_windows_days.first().copied())
+                .unwrap_or(14)
+                .clamp(1, 365);
+            let sync_result = mstore.mutate(&m.id, now, |managed| {
+                if let Some(growth) = managed.growth.as_mut() {
+                    let Some(item) = growth
+                        .state
+                        .opportunities
+                        .iter_mut()
+                        .find(|item| item.id == active_id)
+                    else {
+                        growth.state.active_opportunity_id.clear();
+                        return;
+                    };
+                    match &verification {
+                        Ok(Some(output)) => {
+                            item.output_content_id = Some(output.content_id.clone());
+                            if !output.url.trim().is_empty() {
+                                item.target_url = output.url.clone();
+                            }
+                            item.status = if output.status == "published" {
+                                managed::GrowthOpportunityStatus::Observing
+                            } else {
+                                managed::GrowthOpportunityStatus::DraftReady
+                            };
+                            item.updated_at = now;
+                            if output.status == "published" {
+                                item.observing_since = now;
+                                item.review_at = now.saturating_add(
+                                    review_days as u64 * 86_400,
+                                );
+                            } else {
+                                item.review_at = 0;
+                            }
+                            growth.state.active_opportunity_id.clear();
+                        }
+                        Ok(None) if !all_ok || deferred => {
+                            item.status = managed::GrowthOpportunityStatus::Queued;
+                            item.updated_at = now;
+                            item.cooldown_until = 0;
+                            growth.state.active_opportunity_id.clear();
+                        }
+                        Ok(None) => {
+                            let warning = "AI 已完成，但暂未唯一确认到 GCMS 的真实写入；保留执行现场，稍后自动复核".to_string();
+                            if !growth.state.warnings.contains(&warning) {
+                                growth.state.warnings.push(warning);
+                            }
+                        }
+                        Err(error) => {
+                            let warning = format!(
+                                "GCMS 写入回读失败，已保留执行现场防止重复：{error}"
+                            );
+                            if !growth.state.warnings.contains(&warning) {
+                                growth.state.warnings.push(warning);
+                            }
+                        }
+                    }
+                }
+            });
+            if let Err(error) = sync_result {
+                managed_sync_error = format!("AI 执行已结束，但增长托管状态同步失败：{error}");
+                let _ = tstore.mutate(&task.id, |stored| {
+                    stored.last_status = "error".into();
+                    stored.last_summary = managed_sync_error.clone();
+                    if let Some(history) = stored.history.first_mut().filter(|run| run.ts == now) {
+                        history.ok = false;
+                        history.summary = managed_sync_error.clone();
+                    }
+                });
+            }
+        }
+    }
     // 审计要点回灌：本任务是某托管的「每周审计」（task_ids[1]）且成功跑完 → 从最后一条
     // assistant 消息提取 AUDIT-NOTES 块存进托管记录，并同步每日任务 prompt——
     // 下轮创作避开重复主题、落实内链建议。没有块（老 prompt 跑的旧会话等）就保留上次要点。
@@ -5831,7 +6757,7 @@ async fn fire_task(
         if let Some(m) = mstore
             .list()
             .into_iter()
-            .find(|m| m.task_ids.get(1) == Some(&task.id))
+            .find(|m| !m.mode.is_growth() && m.task_ids.get(1) == Some(&task.id))
         {
             if let Some(notes) = managed::extract_audit_notes(&last_assistant_full) {
                 if let Ok(Some(updated)) =
@@ -5880,12 +6806,19 @@ async fn fire_task(
         }
         return;
     }
-    let body = if all_ok {
+    let run_ok = all_ok && managed_sync_error.is_empty();
+    let body = if run_ok {
         if multi {
             format!("{} · {} 个站点全部完成", task.title, targets.len())
         } else {
             format!("{} · 已完成一次自动运行", task.title)
         }
+    } else if !managed_sync_error.is_empty() {
+        format!(
+            "{} · {}",
+            task.title,
+            managed_sync_error.chars().take(80).collect::<String>()
+        )
     } else {
         format!(
             "{} · {}",
@@ -5896,7 +6829,7 @@ async fn fire_task(
     let _ = app
         .notification()
         .builder()
-        .title(if all_ok {
+        .title(if run_ok {
             "定时任务完成"
         } else {
             "定时任务失败"
@@ -7047,6 +7980,9 @@ pub fn run() {
             managed_list,
             managed_prompt_preview,
             managed_enable,
+            managed_growth_enable,
+            managed_growth_scan,
+            managed_growth_opportunity_action,
             managed_set_level,
             managed_set_edit_limit,
             managed_set_models,

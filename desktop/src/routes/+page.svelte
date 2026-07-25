@@ -29,8 +29,50 @@
   import GscOverviewChart from '$lib/GscOverviewChart.svelte';
   import ConfirmDialog from '$lib/ConfirmDialog.svelte';
   import GcmsPasswordDialog from '$lib/GcmsPasswordDialog.svelte';
+  import { dialogGeometry, type DialogGeometryOptions } from '$lib/dialogGeometry';
+  import { sheetWidth, type SheetWidthOptions } from '$lib/sheetWidth';
   import { marked } from 'marked';
   import DOMPurify from 'dompurify';
+
+  const DIALOG_GEOMETRY = {
+    integration: { id: 'integration-settings', minWidth: 420, minHeight: 300, draggable: true, resizable: true, rememberPosition: true, rememberSize: true },
+    theme: { id: 'site-theme', minWidth: 620, minHeight: 440, draggable: true, resizable: true, rememberPosition: true, rememberSize: true },
+    deployment: { id: 'site-deployment', minWidth: 480, minHeight: 420, draggable: true, resizable: true, rememberPosition: true, rememberSize: true },
+    newSiteChoice: { id: 'new-site-choice', minWidth: 380, minHeight: 220, draggable: true, resizable: false, rememberPosition: true },
+    quickSite: { id: 'quick-site-create', minWidth: 520, minHeight: 460, draggable: true, resizable: true, rememberPosition: true, rememberSize: true },
+    skillKey: { id: 'skill-key-import', minWidth: 320, minHeight: 160, draggable: true, resizable: false, rememberPosition: true },
+    ssh: { id: 'ssh-connection', minWidth: 460, minHeight: 420, draggable: true, resizable: true, rememberPosition: true, rememberSize: true },
+    connectionRemark: { id: 'connection-remark', minWidth: 320, minHeight: 160, draggable: true, resizable: false, rememberPosition: true },
+    fileOperation: { id: 'file-operation', minWidth: 320, minHeight: 160, draggable: true, resizable: false, rememberPosition: true },
+    fileEditor: { id: 'file-editor', minWidth: 480, minHeight: 320, draggable: true, resizable: true, rememberPosition: true, rememberSize: true },
+    cloudflare: { id: 'cloudflare-connect', minWidth: 380, minHeight: 360, draggable: true, resizable: true, rememberPosition: true, rememberSize: true },
+    templateSave: { id: 'template-save', minWidth: 320, minHeight: 180, draggable: true, resizable: false, rememberPosition: true },
+    templateUse: { id: 'template-use', minWidth: 320, minHeight: 180, draggable: true, resizable: false, rememberPosition: true },
+    promptEditor: { id: 'prompt-editor', minWidth: 420, minHeight: 320, draggable: true, resizable: true, rememberPosition: true, rememberSize: true },
+    taskEditor: { id: 'scheduled-task-editor', minWidth: 460, minHeight: 420, draggable: true, resizable: true, rememberPosition: true, rememberSize: true },
+    taskHistory: { id: 'scheduled-task-history', minWidth: 440, minHeight: 320, draggable: true, resizable: true, rememberPosition: true, rememberSize: true },
+    // 多步骤向导各步骤内容高度差异很大：允许本次打开时手动缩放，
+    // 但不跨次记忆高度，避免第 3 步的尺寸把第 1 步撑出大片空白。
+    managedWizard: { id: 'managed-wizard', minWidth: 520, minHeight: 460, draggable: true, resizable: true, rememberPosition: true, rememberSize: false },
+    reportList: { id: 'managed-report-list', minWidth: 420, minHeight: 300, draggable: true, resizable: true, rememberPosition: true, rememberSize: true },
+    reportView: { id: 'managed-report-view', minWidth: 460, minHeight: 340, draggable: true, resizable: true, rememberPosition: true, rememberSize: true },
+    managedReject: { id: 'managed-reject', minWidth: 360, minHeight: 240, draggable: true, resizable: false, rememberPosition: true },
+  } satisfies Record<string, DialogGeometryOptions>;
+
+  function integrationDialogGeometry(kind: string): DialogGeometryOptions {
+    return {
+      ...DIALOG_GEOMETRY.integration,
+      id: `integration-settings-${kind}`,
+    };
+  }
+
+  const SHEET_WIDTH = {
+    setup: { id: 'connection-settings', defaultWidth: 400, minWidth: 360, maxWidth: 720, label: '调整连接与模型面板宽度' },
+    updateCenter: { id: 'update-center', defaultWidth: 540, minWidth: 440, maxWidth: 900, label: '调整更新中心面板宽度' },
+    transfer: { id: 'configuration-transfer', defaultWidth: 480, minWidth: 420, maxWidth: 900, label: '调整导入导出面板宽度' },
+    gcmsInstall: { id: 'gcms-install', defaultWidth: 400, minWidth: 360, maxWidth: 900, label: '调整 GCMS 安装面板宽度' },
+    gcmsMigration: { id: 'gcms-migration', defaultWidth: 400, minWidth: 400, maxWidth: 1000, label: '调整 GCMS 迁移面板宽度' },
+  } satisfies Record<string, SheetWidthOptions>;
 
   // ---------- setup ----------
   let conns = $state<Connection[]>([]);
@@ -4361,14 +4403,71 @@
   // tasks.json 是 Pilot 的全局调度账本，后台必须读取全部任务；界面则严格按当前
   // 技能包连接分区，避免切换连接后看到、统计或操作到其它技能包的任务。
   const tasksOfConn = $derived(tasks.filter((task) => task.conn_id === activeConnId));
+  let taskCardMenu = $state<null | {
+    taskId: string;
+    x: number;
+    y: number;
+    anchorTop: number;
+    anchorBottom: number;
+    anchorRight: number;
+    ready: boolean;
+  }>(null);
+  let taskCardMenuEl = $state<HTMLDivElement | null>(null);
   async function openTasks() { view = 'tasks'; activeConvId = ''; activeConv = null; await loadTasks(); }
   async function loadTasks() { try { tasks = await invoke<ScheduledTask[]>('list_tasks'); } catch (e) { say(String(e), 'err'); } }
 
-  // ---------- 托管（AI 全权运营站点 · P1/L0 试运行）----------
-  // 机制化边界：AI 只产草稿（配套任务 prompt 写死硬约束），发布/打回都在待审队列里由人完成。
+  // ---------- 托管（计划托管 / 增长托管）----------
+  // 两种方案共享等级、预算和危险操作边界；是否只产草稿由托管等级决定，增长托管另有机会确认与复盘闭环。
+  type ManagedMode = 'plan' | 'growth';
   type ManagedNote = { ts: number; post_id: number; title: string; reason: string };
+  type GrowthOpportunityAction = 'new_content' | 'refresh_content' | 'ctr_optimize' | 'internal_link' | 'watch';
+  type GrowthOpportunityStatus = 'candidate' | 'queued' | 'drafting' | 'draft_ready' | 'published' | 'observing' | 'completed' | 'postponed' | 'dismissed' | 'unknown';
+  type GrowthEvidence = {
+    collected_at: number;
+    gsc?: { window_days: number; query: string; page: string; clicks: number; impressions: number; ctr: number; position: number } | null;
+    ga?: { window_days: number; path: string; active_users: number; sessions: number; engagement_rate: number; average_session_duration: number } | null;
+  };
+  type GrowthReviewSnapshot = {
+    window_days: number;
+    collected_at: number;
+    recorded_late: boolean;
+    gsc_available: boolean;
+    ga_available: boolean;
+    evidence: GrowthEvidence;
+  };
+  type GrowthOpportunity = {
+    id: string; action: GrowthOpportunityAction; status: GrowthOpportunityStatus;
+    title: string; pillar: string; audience: string; language: string;
+    query_cluster: string[]; target_content_id?: string | null; target_url: string;
+    output_content_id?: string | null; score: number; confidence: 'high' | 'medium' | 'low';
+    reason: string; expected_metric: string; created_at: number; updated_at: number;
+    cooldown_until: number; review_at: number; observing_since: number;
+    evidence?: GrowthEvidence;
+    reviews: GrowthReviewSnapshot[];
+  };
+  type GrowthManaged = {
+    config: {
+      positioning: {
+        audience: string; markets: string[]; languages: string[]; pillars: string[];
+        business_goal: string; excluded_topics: string[]; brand_terms: string[]; conversion_goal: string;
+      };
+      scan_window_days: number; review_windows_days: number[];
+    };
+    state: {
+      data_health: {
+        gsc: { status: string; checked_at: number; data_through: string; sample_days: number; rows: number; message: string };
+        ga: { status: string; checked_at: number; data_through: string; sample_days: number; rows: number; message: string };
+      };
+      opportunities: GrowthOpportunity[];
+      last_scan_at: number; next_scan_at: number; active_opportunity_id: string;
+      warnings: string[]; last_error: string;
+    };
+  };
   type ManagedSite = {
     id: string; conn_id: string; site_slug: string; site_name: string; level: string;
+    /** 旧记录没有 mode，统一按计划托管兼容。 */
+    mode?: ManagedMode;
+    growth?: GrowthManaged;
     weekly_post_limit: number; weekly_edit_limit: number; plan: string; brain: string; model: string; effort: string;
     fallback_brain?: string; fallback_model?: string; fallback_effort?: string;
     task_ids: string[]; paused: boolean; review_notes: ManagedNote[];
@@ -4378,6 +4477,41 @@
     reports: { ts: number; content: string; metrics: ManagedReportMetrics }[];
     created_at: number; updated_at: number;
   };
+  function managedModeOf(m: ManagedSite): ManagedMode { return m.mode === 'growth' ? 'growth' : 'plan'; }
+  function growthBasis(m: ManagedSite): string {
+    const gscHealth = m.growth?.state.data_health.gsc;
+    const gaHealth = m.growth?.state.data_health.ga;
+    const gsc = gscHealth?.status === 'ready' && (gscHealth.rows ?? 0) > 0;
+    const ga = gaHealth?.status === 'ready' && (gaHealth.rows ?? 0) > 0;
+    return gsc && ga ? '数据驱动' : gsc || ga ? '混合驱动' : '定位驱动';
+  }
+  function managedModeLabel(m: ManagedSite): string { return managedModeOf(m) === 'growth' ? `增长托管 · ${growthBasis(m)}` : '计划托管'; }
+  function growthActionLabel(action: GrowthOpportunityAction): string {
+    return action === 'new_content' ? '新增内容'
+      : action === 'refresh_content' ? '更新旧文'
+      : action === 'ctr_optimize' ? '优化点击率'
+      : action === 'internal_link' ? '补充内链'
+      : '继续观察';
+  }
+  function growthStatusLabel(status: GrowthOpportunityStatus): string {
+    return status === 'candidate' ? '待确认'
+      : status === 'queued' ? '已排队'
+      : status === 'drafting' ? '执行中'
+      : status === 'draft_ready' ? '待审草稿'
+      : status === 'published' || status === 'observing' ? '观察中'
+      : status === 'completed' ? '已复盘'
+      : status === 'postponed' ? '稍后'
+      : status === 'dismissed' ? '已忽略'
+      : '未知';
+  }
+  function growthSourceLabel(status: string): string {
+    return status === 'ready' ? '已接入'
+      : status === 'disconnected' ? '未接入'
+      : status === 'missing_scope' ? '缺少权限'
+      : status === 'stale' ? '数据过期'
+      : status === 'unavailable' ? '暂不可用'
+      : '待检测';
+  }
   type ManagedReportMetrics = { published: number | null; drafts_new: number | null; rejected: number | null; discarded: number | null; tokens: number | null; impressions: number | null; clicks: number | null };
   type ManagedDraft = { id: number; title: string; lang: string; updated_at: string };
   type ManagedSummary = {
@@ -4389,9 +4523,18 @@
   const managedOfConn = $derived(managedList.filter((m) => m.conn_id === activeConnId));
   let mSummaries = $state<Record<string, ManagedSummary>>({});
   let mDrafts = $state<Record<string, ManagedDraft[]>>({});
-  let mQueueOpen = $state<Record<string, boolean>>({});
-  let mPlanOpen = $state<Record<string, boolean>>({});
+  type ManagedCardPanel = 'growth' | 'queue' | 'plan';
+  // 每张托管卡只允许展开一个内容区，避免队列、计划和增长机会纵向叠加。
+  let mOpenPanel = $state<Record<string, ManagedCardPanel | undefined>>({});
   let mPlanDraft = $state<Record<string, string>>({});
+  let mGrowthBusy = $state<Record<string, boolean>>({});
+  function toggleManagedCardPanel(m: ManagedSite, panel: ManagedCardPanel) {
+    const opening = mOpenPanel[m.id] !== panel;
+    mOpenPanel[m.id] = opening ? panel : undefined;
+    if (opening && panel === 'plan' && managedModeOf(m) === 'plan' && mPlanDraft[m.id] === undefined) {
+      mPlanDraft[m.id] = m.plan;
+    }
+  }
   async function openManaged() { view = 'managed'; activeConvId = ''; activeConv = null; await loadManaged(); }
   async function loadManaged(feedback = false) {
     if (managedLoading) return;
@@ -4426,15 +4569,55 @@
     catch (e) { say(String(e), 'err'); }
   }
   async function disableManaged(m: ManagedSite) {
-    const yes = await confirmDialog(`关闭「${m.site_name}」的托管？两个配套定时任务会被删除；站点内容与草稿一概不动。`, { title: '关闭托管', kind: 'warning' });
+    const yes = await confirmDialog(`关闭「${m.site_name}」的托管？三个配套任务会被删除；站点内容与草稿一概不动。`, { title: '关闭托管', kind: 'warning' });
     if (!yes) return;
     try { await invoke('managed_disable', { id: m.id }); await loadManaged(); await loadTasks(); } catch (e) { say(String(e), 'err'); }
   }
   async function saveManagedPlan(m: ManagedSite) {
     try {
       await invoke('managed_plan_save', { id: m.id, plan: mPlanDraft[m.id] ?? '' });
-      say('计划已保存，并已同步进每日任务'); mPlanOpen[m.id] = false; await loadManaged();
+      say('计划已保存，并已同步进每日任务'); mOpenPanel[m.id] = undefined; await loadManaged();
     } catch (e) { say(String(e), 'err'); }
+  }
+  function replaceManaged(updated: ManagedSite | null | undefined) {
+    if (!updated) return;
+    managedList = managedList.map((item) => item.id === updated.id ? updated : item);
+  }
+  async function scanManagedGrowth(m: ManagedSite) {
+    if (mGrowthBusy[m.id]) return;
+    mGrowthBusy[m.id] = true;
+    try {
+      const updated = await invoke<ManagedSite | null>('managed_growth_scan', { id: m.id });
+      replaceManaged(updated);
+      say('增长机会已按最新 GA、GSC 与站点内容重新分析');
+    } catch (e) {
+      say(`刷新增长机会失败：${String(e)}`, 'err');
+    } finally {
+      mGrowthBusy[m.id] = false;
+    }
+  }
+  async function decideGrowthOpportunity(m: ManagedSite, opportunity: GrowthOpportunity, action: 'queue' | 'postpone' | 'dismiss') {
+    if (mGrowthBusy[m.id]) return;
+    if (action === 'queue' && opportunity.action === 'watch') {
+      say('继续观察项不执行内容写入；系统会在后续扫描和复盘中自动更新判断', 'err');
+      return;
+    }
+    if (action === 'queue' && opportunity.action !== 'new_content' && m.level !== 'l3') {
+      say('这条机会会修改已发布内容；请先把托管等级调整为 L3，或选择“新增内容”机会', 'err');
+      return;
+    }
+    mGrowthBusy[m.id] = true;
+    try {
+      const updated = await invoke<ManagedSite | null>('managed_growth_opportunity_action', {
+        id: m.id, opportunityId: opportunity.id, action,
+      });
+      replaceManaged(updated);
+      say(action === 'queue' ? '已加入增长执行队列' : action === 'postpone' ? '已推迟 7 天' : '已忽略这条机会');
+    } catch (e) {
+      say(`更新机会失败：${String(e)}`, 'err');
+    } finally {
+      mGrowthBusy[m.id] = false;
+    }
   }
   async function managedPreview(m: ManagedSite, d: ManagedDraft) {
     try { const u = await invoke<string>('scheduled_preview_url', { connId: m.conn_id, siteSlug: m.site_slug, id: d.id }); await openUrl(u); }
@@ -4459,7 +4642,7 @@
         try { await invoke('run_task_now', { id: m.task_ids[0] }); say('已记录打回，并已触发每日任务立即返工'); }
         catch (e) { say(`已记录打回，但触发返工失败：${String(e)}`, 'err'); }
       } else {
-        say('已记录打回意见，后续任务会规避同类问题');
+        say(managedModeOf(m) === 'growth' ? '已记录审核意见，同一草稿已进入返工队列' : '已记录打回意见，后续任务会规避同类问题');
       }
       rejectFor = null; rejectReason = ''; await loadManaged();
     } catch (e) { say(String(e), 'err'); }
@@ -4587,17 +4770,77 @@
     }
     return out;
   });
+  let managedSiteQuery = $state('');
+  function siteDomainBySlug(slug: string): string {
+    const site = sites.find((item) => item.slug.toLowerCase() === slug.toLowerCase());
+    const publicURL = site ? sitePublicURL(site) : '';
+    return publicURL ? hostOf(publicURL) : '未绑定域名';
+  }
+  function siteIndexLetter(name: string, domain: string): string {
+    const nameInitial = name.trim().charAt(0).toUpperCase();
+    if (/^[A-Z]$/.test(nameInitial)) return nameInitial;
+    const domainInitial = domain.trim().replace(/^www\./i, '').charAt(0).toUpperCase();
+    return /^[A-Z]$/.test(domainInitial) ? domainInitial : '#';
+  }
+  function compareSiteJump(aName: string, aDomain: string, bName: string, bDomain: string): number {
+    const aLetter = siteIndexLetter(aName, aDomain);
+    const bLetter = siteIndexLetter(bName, bDomain);
+    if (aLetter !== bLetter) {
+      if (aLetter === '#') return 1;
+      if (bLetter === '#') return -1;
+      return aLetter.localeCompare(bLetter);
+    }
+    return aName.localeCompare(bName, 'zh-CN', { numeric: true, sensitivity: 'base' });
+  }
+  function siteIndexLetters(items: Array<{ name: string; domain: string }>): string[] {
+    return [...new Set(items.map((item) => siteIndexLetter(item.name, item.domain)))].sort((a, b) => {
+      if (a === '#') return 1;
+      if (b === '#') return -1;
+      return a.localeCompare(b);
+    });
+  }
+  function scrollSiteIndex(listId: string, letter: string) {
+    const list = document.getElementById(listId);
+    const target = list?.querySelector<HTMLElement>(`[data-site-letter="${letter}"]`);
+    if (!list || !target) return;
+    list.scrollTo({ top: Math.max(0, target.offsetTop - 2), behavior: 'smooth' });
+  }
+  function managedSiteDomain(m: ManagedSite): string {
+    return siteDomainBySlug(m.site_slug);
+  }
+  const managedSitesForJump = $derived.by(() => {
+    const query = managedSiteQuery.trim().toLowerCase();
+    const matches = query
+      ? managedOfConn.filter((m) =>
+          m.site_name.toLowerCase().includes(query)
+          || m.site_slug.toLowerCase().includes(query)
+          || managedSiteDomain(m).toLowerCase().includes(query)
+          || managedModeLabel(m).toLowerCase().includes(query)
+        )
+      : [...managedOfConn];
+    return matches.sort((a, b) =>
+      compareSiteJump(a.site_name, managedSiteDomain(a), b.site_name, managedSiteDomain(b))
+    );
+  });
+  const managedSiteLetters = $derived.by(() =>
+    siteIndexLetters(managedSitesForJump.map((site) => ({ name: site.site_name, domain: managedSiteDomain(site) })))
+  );
+  const showManagedSiteIndex = $derived(
+    managedOfConn.length > 10 && !managedSiteQuery.trim() && managedSiteLetters.length > 1
+  );
+  function jumpToManagedCard(id: string) {
+    managedSiteQuery = '';
+    document.getElementById(`mc-${id}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  }
   /** 定时任务概览（纯本地派生，按 history 汇总今日口径）。 */
   const taskAgg = $derived.by(() => {
     const midnight = new Date();
     midnight.setHours(0, 0, 0, 0);
     const t0 = Math.floor(midnight.getTime() / 1000);
     let ran = 0, failed = 0, deferred = 0, enabled = 0;
-    let next: { ts: number; title: string } | null = null;
     for (const t of tasksOfConn) {
       if (t.enabled) {
         enabled++;
-        if (t.next_run > 0 && (!next || t.next_run < next.ts)) next = { ts: t.next_run, title: t.title };
       }
       for (const r of t.history ?? []) {
         if (r.ts < t0) continue;
@@ -4608,14 +4851,68 @@
         }
       }
     }
-    return { total: tasksOfConn.length, enabled, ran, failed, deferred, next };
+    return { total: tasksOfConn.length, enabled, ran, failed, deferred };
   });
-  const taskNextLabel = $derived.by(() => {
-    const n = taskAgg.next;
-    if (!n) return '无启用任务';
-    if (n.ts * 1000 - Date.now() < 60_000) return `即将（${n.title}）`;
-    return `${fmtSched(new Date(n.ts * 1000).toISOString())}（${n.title}）`;
+  type TaskSiteJump = {
+    slug: string;
+    name: string;
+    domain: string;
+    taskCount: number;
+    enabledTaskCount: number;
+    firstTaskId: string;
+    firstEnabledTaskId: string;
+  };
+  let taskSiteQuery = $state('');
+  const taskSitesForJump = $derived.by(() => {
+    const bySlug = new Map<string, TaskSiteJump>();
+    for (const task of tasksOfConn) {
+      const listedSlugs = (task.site_slugs?.length ? task.site_slugs : [task.site_slug]).filter(Boolean);
+      const seenInTask = new Set<string>();
+      for (const [index, slug] of listedSlugs.entries()) {
+        const key = slug.toLowerCase();
+        if (seenInTask.has(key)) continue;
+        seenInTask.add(key);
+        const current = bySlug.get(key);
+        if (current) {
+          current.taskCount += 1;
+          if (task.enabled) {
+            current.enabledTaskCount += 1;
+            if (!current.firstEnabledTaskId) current.firstEnabledTaskId = task.id;
+          }
+          continue;
+        }
+        const discovered = sites.find((site) => site.slug.toLowerCase() === key);
+        const listedName = task.site_names?.[index];
+        bySlug.set(key, {
+          slug,
+          name: discovered?.name || listedName || (slug === task.site_slug ? task.site_name : '') || slug,
+          domain: siteDomainBySlug(slug),
+          taskCount: 1,
+          enabledTaskCount: task.enabled ? 1 : 0,
+          firstTaskId: task.id,
+          firstEnabledTaskId: task.enabled ? task.id : '',
+        });
+      }
+    }
+    return [...bySlug.values()].sort((a, b) => compareSiteJump(a.name, a.domain, b.name, b.domain));
   });
+  const visibleTaskSitesForJump = $derived.by(() => {
+    const query = taskSiteQuery.trim().toLowerCase();
+    if (!query) return taskSitesForJump;
+    return taskSitesForJump.filter((site) =>
+      site.name.toLowerCase().includes(query)
+      || site.slug.toLowerCase().includes(query)
+      || site.domain.toLowerCase().includes(query)
+    );
+  });
+  const taskSiteLetters = $derived.by(() => siteIndexLetters(taskSitesForJump));
+  const showTaskSiteIndex = $derived(
+    taskSitesForJump.length > 10 && !taskSiteQuery.trim() && taskSiteLetters.length > 1
+  );
+  function jumpToTaskSite(site: TaskSiteJump) {
+    taskSiteQuery = '';
+    document.getElementById(`tc-${site.firstEnabledTaskId || site.firstTaskId}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  }
   // 周报：查看=打开周报任务上次运行的对话；立即生成=run_task_now。
   async function genReportNow(taskId: string) {
     try { await invoke('run_task_now', { id: taskId }); say('周报生成中——完成后点「查看周报」打开对话'); }
@@ -4651,8 +4948,9 @@
     else say(`已发布 ${ok} 篇`);
     void loadManagedDetail(m);
   }
-  // 开启向导（3 步：选站 → 90 天计划 → 模型/等级/上限/预算与边界确认）
+  // 开启向导：先选托管方案，再进入各自独立的 3 步流程。
   let mwOpen = $state(false);
+  let mwMode = $state<ManagedMode | ''>('');
   let mwStep = $state(1);
   let mwSite = $state('');
   let mwPlan = $state('');
@@ -4670,6 +4968,16 @@
   let mwLevel = $state('l0');
   let mwBudget = $state(0);
   let mwEditLimit = $state(2);
+  // 增长托管的结构化定位。它与计划托管的 90 天自由文本隔离，避免新逻辑改变旧任务。
+  let mwGrowthAudience = $state('');
+  let mwGrowthMarkets = $state('');
+  let mwGrowthLanguages = $state('');
+  let mwGrowthPillars = $state('');
+  let mwGrowthBusinessGoal = $state('');
+  let mwGrowthExcludedTopics = $state('');
+  let mwGrowthPositionOpen = $state(false);
+  let mwGrowthBoundaryOpen = $state(false);
+  let mwBodyEl = $state<HTMLDivElement | null>(null);
   type ManagedPromptKey = 'daily' | 'audit' | 'report';
   type ManagedPromptSet = Record<ManagedPromptKey, string>;
   const blankManagedPrompts = (): ManagedPromptSet => ({ daily: '', audit: '', report: '' });
@@ -4709,9 +5017,15 @@
       if (seq === mwPrecheckSeq) mwWarns = r.warnings;
     } catch { /* 预检失败：静默降级 */ }
   }
-  $effect(() => { if (mwOpen && mwSite) void runMwPrecheck(mwSite); else { mwPrecheckSeq++; mwWarns = []; } });
+  $effect(() => { if (mwOpen && mwMode && mwSite) void runMwPrecheck(mwSite); else { mwPrecheckSeq++; mwWarns = []; } });
+  function setMwStep(step: number) {
+    mwStep = step;
+    requestAnimationFrame(() => {
+      if (mwBodyEl) mwBodyEl.scrollTop = 0;
+    });
+  }
   function openManagedWizard() {
-    mwOpen = true; mwStep = 1; mwPlan = ''; mwLimit = 3; mwGenBusy = false; mwBusy = false;
+    mwOpen = true; mwMode = ''; mwStep = 1; mwPlan = ''; mwLimit = 3; mwGenBusy = false; mwBusy = false;
     mwSite = sites.find((s) => !managedOfConn.some((m) => m.site_slug === s.slug))?.slug ?? '';
     mwBrain = brainUsable(prefs.brain) ? prefs.brain : firstUsableBrain();
     mwModel = mwBrain === prefs.brain && isLauncherModel(mwBrain, prefs.model) ? prefs.model : defaultModelFor(mwBrain);
@@ -4719,9 +5033,26 @@
     const fallback = ALL_BRAINS.find((brain) => brain !== mwBrain && brainUsable(brain)) ?? firstUsableBrain();
     mwFallbackEnabled = false; mwFallbackBrain = fallback; mwFallbackModel = defaultModelFor(fallback); mwFallbackEffort = '';
     mwLevel = 'l0'; mwBudget = 0; mwEditLimit = 2;
+    mwGrowthAudience = ''; mwGrowthMarkets = ''; mwGrowthLanguages = '';
+    mwGrowthPillars = ''; mwGrowthBusinessGoal = ''; mwGrowthExcludedTopics = '';
+    mwGrowthPositionOpen = false; mwGrowthBoundaryOpen = false;
     mwPromptOpen = false; mwPromptTab = 'daily'; mwPromptBusy = false; mwPromptError = '';
     mwPrompts = blankManagedPrompts(); mwPromptDefaults = blankManagedPrompts();
     mwPromptEdited = { daily: false, audit: false, report: false };
+    requestAnimationFrame(() => {
+      if (mwBodyEl) mwBodyEl.scrollTop = 0;
+    });
+  }
+  function chooseManagedMode(mode: ManagedMode) {
+    mwMode = mode;
+    setMwStep(1);
+    // reactive precheck 只会在选好方案后运行；增长托管会在第一步明确展示 GA/GSC 数据状态。
+  }
+  function backToManagedModeChoice() {
+    mwMode = '';
+    setMwStep(1);
+    mwPrecheckSeq++;
+    mwWarns = [];
   }
   // 向导里换厂商后，档位不属于该厂商时回落默认（与任务表单同规则）。
   $effect(() => { if (mwOpen && !isLauncherModel(mwBrain, mwModel)) mwModel = defaultModelFor(mwBrain); });
@@ -4739,6 +5070,39 @@
       disabled: taken,
     };
   }));
+  const mwSelectedSite = $derived(sites.find((s) => s.slug === mwSite));
+  const mwGrowthDataState = $derived.by(() => {
+    const ga = mwSelectedSite?.integrations?.analytics;
+    const gsc = mwSelectedSite?.integrations?.search_console;
+    return {
+      ga: !!ga?.enabled,
+      gsc: !!gsc?.enabled,
+      gaConfigured: !!ga?.configured,
+      gscConfigured: !!gsc?.configured,
+    };
+  });
+  function splitManagedLines(value: string): string[] {
+    return value.split(/[\n,，、]+/).map((item) => item.trim()).filter(Boolean);
+  }
+  const mwGrowthAutoPositioning = $derived(
+    !mwGrowthAudience.trim() &&
+    !splitManagedLines(mwGrowthMarkets).length &&
+    !splitManagedLines(mwGrowthLanguages).length &&
+    !splitManagedLines(mwGrowthPillars).length &&
+    !mwGrowthBusinessGoal.trim() &&
+    !splitManagedLines(mwGrowthExcludedTopics).length
+  );
+  function mwGrowthPlanText(): string {
+    const parts = [
+      `目标用户：${mwGrowthAudience.trim() || '由 Pilot 根据现有内容自动识别'}`,
+      `目标市场：${splitManagedLines(mwGrowthMarkets).join('、') || '跟随站点现有市场'}`,
+      `运营语言：${splitManagedLines(mwGrowthLanguages).join('、') || '跟随站点现有语言'}`,
+      `内容支柱：${splitManagedLines(mwGrowthPillars).join('；') || '由 Pilot 根据现有内容与搜索数据自动识别'}`,
+      `业务目标：${mwGrowthBusinessGoal.trim() || '在现有站点方向内提升自然搜索覆盖与有效访问'}`,
+      `排除主题：${splitManagedLines(mwGrowthExcludedTopics).join('、') || '无'}`,
+    ];
+    return `增长托管定位\n${parts.map((part) => `• ${part}`).join('\n')}`;
+  }
   const MW_PLAN_PROMPT = `请为本站生成一份 90 天内容运营计划（纯文本，将作为后续每日内容任务的方向依据）。
 先读站点资料、导航与近期内容摸清定位，然后输出：
 1) 站点定位与目标读者（两三句）；2) 3-5 个内容支柱（每个配 2-3 个具体选题方向）；
@@ -4785,7 +5149,7 @@
     finally { mwPromptBusy = false; }
   }
   async function mwEnterStep3() {
-    mwStep = 3;
+    setMwStep(3);
     await mwRefreshPromptDefaults();
   }
   function mwPromptInput(value: string) {
@@ -4819,6 +5183,56 @@
       mwOpen = false; await loadManaged(); await loadTasks();
     } catch (e) { say(String(e), 'err'); }
     finally { mwBusy = false; }
+  }
+
+  const mwGrowthReady = $derived(
+    !!mwSite &&
+    brainUsable(mwBrain as Brain) &&
+    mwFallbackValid
+  );
+  async function mwEnableGrowth() {
+    if (!mwGrowthReady || mwBusy) return;
+    mwBusy = true;
+    const site = sites.find((s) => s.slug === mwSite);
+    try {
+      await invoke('managed_growth_enable', {
+        connId: activeConnId,
+        siteSlug: mwSite,
+        siteName: site?.name || mwSite,
+        plan: mwGrowthPlanText(),
+        positioning: {
+          audience: mwGrowthAudience.trim(),
+          markets: splitManagedLines(mwGrowthMarkets),
+          languages: splitManagedLines(mwGrowthLanguages),
+          pillars: splitManagedLines(mwGrowthPillars),
+          business_goal: mwGrowthBusinessGoal.trim(),
+          excluded_topics: splitManagedLines(mwGrowthExcludedTopics),
+          brand_terms: [],
+          conversion_goal: '',
+        },
+        weeklyPostLimit: Math.min(50, Math.max(1, Math.round(Number(mwLimit) || 3))),
+        weeklyEditLimit: Math.min(20, Math.max(1, Math.round(Number(mwEditLimit) || 2))),
+        level: mwLevel,
+        tokenWeeklyBudget: Math.max(0, Math.round(Number(mwBudget) || 0)),
+        brain: mwBrain,
+        model: mwModel,
+        effort: mwEffort,
+        fallbackBrain: mwFallbackEnabled ? mwFallbackBrain : '',
+        fallbackModel: mwFallbackEnabled ? mwFallbackModel : '',
+        fallbackEffort: mwFallbackEnabled ? mwFallbackEffort : '',
+        customDailyPrompt: '',
+        customAuditPrompt: '',
+        customReportPrompt: '',
+      });
+      say('增长托管已开启：会先形成增长机会，再安排内容与复盘');
+      mwOpen = false;
+      await loadManaged();
+      await loadTasks();
+    } catch (e) {
+      say(`开启增长托管失败：${String(e)}`, 'err');
+    } finally {
+      mwBusy = false;
+    }
   }
 
   interface TaskForm {
@@ -4858,7 +5272,55 @@
     };
     taskModalOpen = true;
   }
+  async function toggleTaskCardMenu(event: MouseEvent, taskId: string) {
+    event.stopPropagation();
+    if (taskCardMenu?.taskId === taskId) {
+      taskCardMenu = null;
+      return;
+    }
+    closeSitesGlobalMenu();
+    siteCardMenu = null;
+    gcmsCardMenu = null;
+    gcmsInstanceMenu = null;
+    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    taskCardMenu = {
+      taskId,
+      x: Math.max(8, rect.right - 132),
+      y: rect.bottom + 5,
+      anchorTop: rect.top,
+      anchorBottom: rect.bottom,
+      anchorRight: rect.right,
+      ready: false,
+    };
+    await tick();
+    if (!taskCardMenu || taskCardMenu.taskId !== taskId || !taskCardMenuEl) return;
+    const menuRect = taskCardMenuEl.getBoundingClientRect();
+    const x = Math.max(8, Math.min(taskCardMenu.anchorRight - menuRect.width, window.innerWidth - menuRect.width - 8));
+    const below = taskCardMenu.anchorBottom + 5;
+    const y = below + menuRect.height <= window.innerHeight - 8
+      ? below
+      : Math.max(8, taskCardMenu.anchorTop - menuRect.height - 5);
+    taskCardMenu = { ...taskCardMenu, x, y, ready: true };
+  }
+  $effect(() => {
+    if (!taskCardMenu) return;
+    const close = () => (taskCardMenu = null);
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') taskCardMenu = null;
+    };
+    window.addEventListener('click', close);
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    return () => {
+      window.removeEventListener('click', close);
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+    };
+  });
   function openEditTask(t: ScheduledTask) {
+    taskCardMenu = null;
     pendingProposalKey = '';
     // 编辑保留任务原本所属的连接，绝不改绑到当前活动连接。
     tf = {
@@ -4913,11 +5375,13 @@
   }
   async function toggleTask(t: ScheduledTask) { try { await invoke('set_task_enabled', { id: t.id, enabled: !t.enabled }); await loadTasks(); } catch (e) { say(String(e), 'err'); } }
   async function deleteTask(t: ScheduledTask) {
+    taskCardMenu = null;
     const yes = await confirmDialog(`删除定时任务「${t.title}」？`, { title: '删除任务', kind: 'danger' });
     if (!yes) return;
     try { await invoke('delete_task', { id: t.id }); await loadTasks(); } catch (e) { say(String(e), 'err'); }
   }
   async function runTaskNow(t: ScheduledTask) {
+    taskCardMenu = null;
     try { await invoke('run_task_now', { id: t.id }); say('已手动触发，稍后在对话历史里查看结果'); setTimeout(loadTasks, 1500); }
     catch (e) { say(String(e), 'err'); }
   }
@@ -11346,15 +11810,63 @@
             <div class="md-board">
               <div class="stat-strip">
                 <span class="ss-seg" use:tipAction={'定时任务总数'}><b class="ss-num">{taskAgg.total}</b><span class="ss-lbl">任务</span></span>
+                {#if taskSitesForJump.length}
+                  <span class="ss-seg ss-pop ss-site-jump">
+                    <button type="button" class="ss-site-jump-trigger" aria-controls="task-site-jump-list" aria-label={`${taskSitesForJump.length} 个定时任务站点，展开可搜索并定位任务`} aria-haspopup="menu">
+                      <b class="ss-num">{taskSitesForJump.length}</b><span class="ss-lbl">站点</span>
+                      <svg class="ss-jump-chev" width="10" height="10" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="m3 4.5 3 3 3-3" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" /></svg>
+                    </button>
+                    <div class="ss-pop-menu ss-site-menu">
+                      {#if taskSitesForJump.length > 6}
+                        <label class="ss-site-search">
+                          <input bind:value={taskSiteQuery} aria-label="搜索定时任务站点" placeholder="搜索站点名称或域名…" spellcheck="false" autocapitalize="off" autocorrect="off" />
+                        </label>
+                      {/if}
+                      <div class="ss-site-menu-body" class:indexed={showTaskSiteIndex}>
+                        {#if showTaskSiteIndex}
+                          <nav class="ss-site-alpha" aria-label="按首字母定位定时任务站点">
+                            {#each taskSiteLetters as letter (letter)}
+                              <button type="button" aria-controls="task-site-jump-list" aria-label={`定位到 ${letter} 开头的站点`} onclick={() => scrollSiteIndex('task-site-jump-list', letter)}>{letter}</button>
+                            {/each}
+                          </nav>
+                        {/if}
+                        <div class="ss-site-menu-list" id="task-site-jump-list">
+                          {#each visibleTaskSitesForJump as site (site.slug)}
+                            <button
+                              class="md-site-jump task-site-jump"
+                              class:paused={site.enabledTaskCount === 0}
+                              class:partial={site.enabledTaskCount > 0 && site.enabledTaskCount < site.taskCount}
+                              data-site-letter={siteIndexLetter(site.name, site.domain)}
+                              title={site.enabledTaskCount === 0 ? '该站当前没有启用任务；点击定位到第一条待启用任务' : '点击定位到该站的第一条启用任务'}
+                              onclick={() => jumpToTaskSite(site)}
+                            >
+                              <SiteFav src={siteFav(site.slug)} label={site.slug} size={15} />
+                              <span class="md-site-jump-copy"><b>{site.name}</b><small>{site.domain}</small></span>
+                              <span
+                                class="md-site-jump-state task-site-count"
+                                class:paused={site.enabledTaskCount === 0}
+                                class:partial={site.enabledTaskCount > 0 && site.enabledTaskCount < site.taskCount}
+                              >{site.enabledTaskCount === 0
+                                ? '待启用'
+                                : site.enabledTaskCount === site.taskCount
+                                  ? `${site.taskCount} 启用`
+                                  : `${site.enabledTaskCount}/${site.taskCount} 启用`}</span>
+                            </button>
+                          {/each}
+                          {#if visibleTaskSitesForJump.length === 0}<div class="ss-site-empty">没有匹配的任务站点</div>{/if}
+                        </div>
+                      </div>
+                    </div>
+                  </span>
+                {/if}
                 <span class="ss-seg" use:tipAction={'处于启用状态的任务数'}><i class="ss-dot ok"></i><b class="ss-num">{taskAgg.enabled}</b><span class="ss-lbl">启用</span></span>
                 <span class="ss-seg" use:tipAction={'今日零点起实际触发次数（不含顺延）'}><b class="ss-num">{taskAgg.ran}</b><span class="ss-lbl">今日已跑</span></span>
                 {#if taskAgg.failed}<span class="ss-seg" use:tipAction={'今日运行失败的次数'}><i class="ss-dot err"></i><b class="ss-num">{taskAgg.failed}</b><span class="ss-lbl">失败</span></span>{/if}
                 {#if taskAgg.deferred}<span class="ss-seg" use:tipAction={'撞订阅限额自动改期，不算失败'}><i class="ss-dot warn"></i><b class="ss-num">{taskAgg.deferred}</b><span class="ss-lbl">限额顺延</span></span>{/if}
-                <span class="ss-seg" use:tipAction={'启用任务中最近一次将触发的时间'}><span class="ss-lbl">下次</span><b class="ss-num">{taskNextLabel}</b></span>
               </div>
             </div>
             {#each tasksOfConn as t (t.id)}
-              <div class="task-card {t.enabled ? '' : 'off'} {hlTaskIds.includes(t.id) ? 'hl' : ''}">
+              <div class="task-card {t.enabled ? '' : 'off'} {hlTaskIds.includes(t.id) ? 'hl' : ''}" id={`tc-${t.id}`}>
                 <div class="task-toggle">
                   <button class="switch {t.enabled ? 'on' : ''}" title={t.enabled ? '已启用' : '已暂停'} onclick={() => toggleTask(t)}><span></span></button>
                 </div>
@@ -11375,13 +11887,15 @@
                   {/if}
                 </div>
                 <div class="task-actions">
-                  <button class="icon-btn" title="立即运行" onclick={() => runTaskNow(t)} aria-label="立即运行">
-                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M5 3.4l7.2 4.6L5 12.6z" fill="currentColor" /></svg>
-                  </button>
-                  <button class="icon-btn" title="编辑" onclick={() => openEditTask(t)} aria-label="编辑">
-                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M11.5 2.5l2 2L6 12l-2.5.5L4 10l7.5-7.5z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" /></svg>
-                  </button>
-                  <button class="x sm" title="删除" onclick={() => deleteTask(t)}>×</button>
+                  <button
+                    class="icon-btn task-settings-trigger"
+                    class:active={taskCardMenu?.taskId === t.id}
+                    data-tip="任务操作"
+                    aria-label={`打开「${t.title}」任务操作`}
+                    aria-haspopup="menu"
+                    aria-expanded={taskCardMenu?.taskId === t.id}
+                    onclick={(event) => void toggleTaskCardMenu(event, t.id)}
+                  >{@render settingsIcon()}</button>
                 </div>
               </div>
             {/each}
@@ -11410,7 +11924,7 @@
             <div class="sched-empty">
               <div class="cal-mark">{@render botIcon(34)}</div>
               <b>还没有托管的站点</b>
-              <p>把站点交给 AI 按周循环运营：每天按计划写稿存草稿、每周自查审计；你只在待审队列里批准发布或打回。</p>
+              <p>选择计划托管按节奏运营，或用增长托管结合站点定位与 GA/GSC 数据持续发现机会；执行始终受等级、预算与审核边界控制。</p>
               <button class="btn soft bare" onclick={openManagedWizard} style="margin-top:16px" disabled={!sites.length}>{@render plusIcon()}开启托管</button>
             </div>
           {:else}
@@ -11418,7 +11932,38 @@
                  收进「待审」段的 hover 弹层里（点条目定位到卡片，见 .ss-pop-menu）。 -->
             <div class="md-board">
               <div class="stat-strip">
-                <span class="ss-seg" use:tipAction={'本连接下已开启托管的站点数'}><b class="ss-num">{managedOfConn.length}</b><span class="ss-lbl">托管站</span></span>
+                <span class="ss-seg ss-pop ss-site-jump">
+                  <button type="button" class="ss-site-jump-trigger" aria-controls="managed-site-jump-list" aria-label={`${managedOfConn.length} 个托管站，展开可搜索并定位站点`} aria-haspopup="menu">
+                    <b class="ss-num">{managedOfConn.length}</b><span class="ss-lbl">托管站</span>
+                    <svg class="ss-jump-chev" width="10" height="10" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="m3 4.5 3 3 3-3" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" /></svg>
+                  </button>
+                  <div class="ss-pop-menu ss-site-menu">
+                    {#if managedOfConn.length > 6}
+                      <label class="ss-site-search">
+                        <input bind:value={managedSiteQuery} aria-label="搜索托管站点" placeholder="搜索站点名称或域名…" spellcheck="false" autocapitalize="off" autocorrect="off" />
+                      </label>
+                    {/if}
+                    <div class="ss-site-menu-body" class:indexed={showManagedSiteIndex}>
+                      {#if showManagedSiteIndex}
+                        <nav class="ss-site-alpha" aria-label="按首字母定位托管站点">
+                          {#each managedSiteLetters as letter (letter)}
+                            <button type="button" aria-controls="managed-site-jump-list" aria-label={`定位到 ${letter} 开头的站点`} onclick={() => scrollSiteIndex('managed-site-jump-list', letter)}>{letter}</button>
+                          {/each}
+                        </nav>
+                      {/if}
+                      <div class="ss-site-menu-list" id="managed-site-jump-list">
+                        {#each managedSitesForJump as site (site.id)}
+                          <button class="md-site-jump" data-site-letter={siteIndexLetter(site.site_name, managedSiteDomain(site))} title="点击定位到该站卡片" onclick={() => jumpToManagedCard(site.id)}>
+                            <SiteFav src={siteFav(site.site_slug)} label={site.site_slug} size={15} />
+                            <span class="md-site-jump-copy"><b>{site.site_name}</b><small>{managedSiteDomain(site)} · {managedModeOf(site) === 'growth' ? '增长托管' : '计划托管'}</small></span>
+                            <span class:fused={Boolean(site.fused_at)} class:paused={site.paused} class="md-site-jump-state">{site.fused_at ? '熔断' : site.paused ? '暂停' : '运行'}</span>
+                          </button>
+                        {/each}
+                        {#if managedSitesForJump.length === 0}<div class="ss-site-empty">没有匹配的托管站点</div>{/if}
+                      </div>
+                    </div>
+                  </div>
+                </span>
                 <span class="ss-seg" use:tipAction={'正常运行中的托管站数'}><i class="ss-dot ok"></i><b class="ss-num">{mdAgg.run}</b><span class="ss-lbl">运行</span></span>
                 {#if mdAgg.paused}<span class="ss-seg" use:tipAction={'已暂停的托管站数'}><i class="ss-dot off"></i><b class="ss-num">{mdAgg.paused}</b><span class="ss-lbl">暂停</span></span>{/if}
                 {#if mdAgg.fused}<span class="ss-seg" use:tipAction={'周预算触顶自动停的站数'}><i class="ss-dot err"></i><b class="ss-num">{mdAgg.fused}</b><span class="ss-lbl">熔断</span></span>{/if}
@@ -11445,7 +11990,9 @@
             {#each managedOfConn as m (m.id)}
               {@const sum = mSummaries[m.id]}
               {@const drafts = mDrafts[m.id] ?? []}
-              {@const reportTask = sum?.tasks.find((t) => t.title.includes('每周周报'))}
+              {@const reportTask = sum?.tasks.find((t) => t.title.includes('每周周报') || t.title.includes('每周复盘'))}
+              {@const growthOpps = (m.growth?.state.opportunities ?? []).filter((item) => item.status !== 'dismissed')}
+              {@const growthPending = growthOpps.filter((item) => item.status === 'candidate').length}
               {@const tP = reportTrend(m, 'published')}
               {@const tC = reportTrend(m, 'clicks')}
               <div class="task-card {m.paused ? 'off' : ''}" id={`mc-${m.id}`}>
@@ -11455,6 +12002,7 @@
                 <div class="task-body">
                   <div class="md-title-row">
                     <b><SiteFav src={siteFav(m.site_slug)} label={m.site_slug} size={14} /> {m.site_name}</b>
+                    <span class="md-mode-badge" class:growth={managedModeOf(m) === 'growth'}>{managedModeLabel(m)}</span>
                     <span class="md-lv-badge" title="点击调整托管等级"><Dropdown compact bare bind:value={m.level} options={LEVEL_OPTS} onchange={(v: string) => changeLevel(m, v)} /></span>
                     {#if m.level === 'l3'}<span class="md-badge lv3">慎用</span>{/if}
                     {#if m.paused}<span class="md-badge off">已暂停</span>{/if}
@@ -11476,7 +12024,7 @@
                   {#if sum}
                     <div class="task-meta">
                       {#each sum.tasks as t (t.id)}
-                        <span class="md-task {t.enabled ? '' : 'off'}" title={t.title}>{t.title.includes('每日') ? '每日内容' : t.title.includes('周报') ? '每周周报' : '每周审计'}{t.last_run ? `：上次${t.last_status === 'ok' ? '成功' : '失败'}` : '：还没跑过'}</span>
+                        <span class="md-task {t.enabled ? '' : 'off'}" title={t.title}>{t.title.includes('每日') ? (managedModeOf(m) === 'growth' ? '每日执行' : '每日内容') : t.title.includes('周报') || t.title.includes('复盘') ? (managedModeOf(m) === 'growth' ? '每周复盘' : '每周周报') : managedModeOf(m) === 'growth' ? '每周扫描' : '每周审计'}{t.last_run ? `：上次${t.last_status === 'ok' ? '成功' : '失败'}` : '：还没跑过'}</span>
                       {/each}
                       {#if m.fallback_brain}<span class="md-task" title="主模型受限时接管一次">备用：<BrainIcon brain={m.fallback_brain} size={12} /> {modelDisp(m.fallback_brain, m.fallback_model ?? '')}</span>{/if}
                     </div>
@@ -11488,16 +12036,111 @@
                     <p class="md-warn">{m.demote_note}</p>
                   {/if}
                   <div class="md-actions">
-                    <button class="link md-primary" onclick={() => (mQueueOpen[m.id] = !mQueueOpen[m.id])}>待审队列{drafts.length ? `（${drafts.length}）` : ''}</button>
-                    <button class="link" onclick={() => { mPlanOpen[m.id] = !mPlanOpen[m.id]; if (mPlanDraft[m.id] === undefined) mPlanDraft[m.id] = m.plan; }}>运营计划</button>
+                    {#if managedModeOf(m) === 'growth'}
+                      <button type="button" class="link md-primary md-panel-toggle" class:active={mOpenPanel[m.id] === 'growth'} aria-expanded={mOpenPanel[m.id] === 'growth'} aria-controls={`managed-panel-${m.id}-growth`} onclick={() => toggleManagedCardPanel(m, 'growth')}>
+                        <span>增长机会{growthPending ? `（${growthPending}）` : ''}</span>
+                        <svg class="md-panel-chevron" width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="m3 4.5 3 3 3-3" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" /></svg>
+                      </button>
+                    {/if}
+                    <button type="button" class="link md-primary md-panel-toggle" class:active={mOpenPanel[m.id] === 'queue'} aria-expanded={mOpenPanel[m.id] === 'queue'} aria-controls={`managed-panel-${m.id}-queue`} onclick={() => toggleManagedCardPanel(m, 'queue')}>
+                      <span>待审队列{drafts.length ? `（${drafts.length}）` : ''}</span>
+                      <svg class="md-panel-chevron" width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="m3 4.5 3 3 3-3" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" /></svg>
+                    </button>
+                    <button type="button" class="link md-panel-toggle" class:active={mOpenPanel[m.id] === 'plan'} aria-expanded={mOpenPanel[m.id] === 'plan'} aria-controls={`managed-panel-${m.id}-plan`} onclick={() => toggleManagedCardPanel(m, 'plan')}>
+                      <span>{managedModeOf(m) === 'growth' ? '站点定位' : '运营计划'}</span>
+                      <svg class="md-panel-chevron" width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="m3 4.5 3 3 3-3" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" /></svg>
+                    </button>
                     {#if reportTask}
                       <button class="link" onclick={() => m.reports?.length ? (reportListFor = m) : (reportTask.last_conv_id ? openConv(reportTask.last_conv_id) : say('还没有周报——点「立即生成」跑一份'))}>查看周报{m.reports?.length ? `（${m.reports.length}）` : ''}</button>
                       <button class="link" onclick={() => genReportNow(reportTask.id)}>立即生成</button>
                     {/if}
                     <button class="link" onclick={() => adjustTasks(m)}>调整任务</button>
                   </div>
-                  {#if mQueueOpen[m.id]}
-                    <div class="md-queue">
+                  {#if managedModeOf(m) === 'growth' && mOpenPanel[m.id] === 'growth'}
+                    <div class="md-growth-panel" id={`managed-panel-${m.id}-growth`}>
+                      <div class="md-growth-panel-head">
+                        <span>
+                          <b>增长机会</b>
+                          <small>{growthBasis(m)} · {m.growth?.state.last_scan_at ? `上次扫描 ${fmt(m.growth.state.last_scan_at)}` : '尚未扫描'}</small>
+                        </span>
+                        <button class="icon-btn sm" onclick={() => void scanManagedGrowth(m)} disabled={mGrowthBusy[m.id]} aria-label="重新分析增长机会" data-tip="只读取 GA、GSC 与 GCMS 内容，不会写入站点">{@render refreshIcon(!!mGrowthBusy[m.id])}</button>
+                      </div>
+                      <div class="md-growth-sources">
+                        <span class:ready={m.growth?.state.data_health.gsc.status === 'ready'}><i></i>GSC {growthSourceLabel(m.growth?.state.data_health.gsc.status ?? '')}{#if m.growth?.state.data_health.gsc.rows} · {m.growth.state.data_health.gsc.rows} 条{/if}</span>
+                        <span class:ready={m.growth?.state.data_health.ga.status === 'ready'}><i></i>GA {growthSourceLabel(m.growth?.state.data_health.ga.status ?? '')}{#if m.growth?.state.data_health.ga.rows} · {m.growth.state.data_health.ga.rows} 页{/if}</span>
+                        <span><i></i>定位 · {m.growth?.config.positioning.pillars.length ? `${m.growth.config.positioning.pillars.length} 个内容支柱` : '自动识别'}</span>
+                      </div>
+                      {#if m.growth?.state.warnings?.length}
+                        <p class="md-growth-notice">{m.growth.state.warnings.join('；')}</p>
+                      {/if}
+                      {#if m.growth?.state.last_error}
+                        <p class="md-growth-error">部分数据不可用：{m.growth.state.last_error}</p>
+                      {/if}
+                      {#if growthOpps.length === 0}
+                        <div class="md-growth-empty">
+                          <span>当前没有增长机会</span>
+                          <small>点击右上角刷新；未填写定位时会依据现有内容和已映射页面识别方向。</small>
+                        </div>
+                      {:else}
+                        <div class="md-growth-opps">
+                          {#each growthOpps as opportunity (opportunity.id)}
+                            <article class="md-growth-opp" class:queued={opportunity.status === 'queued'} class:observing={opportunity.status === 'observing' || opportunity.status === 'completed' || opportunity.status === 'published'}>
+                              <div class="md-growth-opp-main">
+                                <span class="md-growth-action">{growthActionLabel(opportunity.action)}</span>
+                                <b title={opportunity.title}>{opportunity.title}</b>
+                                <span class="md-growth-score">{Math.round(opportunity.score)} 分 · {growthStatusLabel(opportunity.status)}</span>
+                              </div>
+                              <p>{opportunity.reason}</p>
+                              <div class="md-growth-evidence">
+                                {#if opportunity.pillar}<span>支柱：{opportunity.pillar}</span>{/if}
+                                {#if opportunity.evidence?.gsc}<span>曝光 {Math.round(opportunity.evidence.gsc.impressions)} · 点击 {Math.round(opportunity.evidence.gsc.clicks)} · 排名 {opportunity.evidence.gsc.position.toFixed(1)}</span>{/if}
+                                {#if opportunity.evidence?.ga}<span>访问 {Math.round(opportunity.evidence.ga.sessions)} · 互动率 {Math.round(opportunity.evidence.ga.engagement_rate * 100)}%</span>{/if}
+                              </div>
+                              {#if (opportunity.status === 'observing' || opportunity.status === 'completed') && opportunity.reviews?.length}
+                                <div class="md-growth-reviews" aria-label="真实数据复盘">
+                                  {#each opportunity.reviews as review (`${review.window_days}-${review.collected_at}`)}
+                                    <div class="md-growth-review" title={`${review.recorded_late ? '错过计划节点后的补采数据' : '按计划采集'} · ${fmt(review.collected_at)}`}>
+                                      <b>{review.window_days} 天{review.recorded_late ? ' · 补采' : ''}</b>
+                                      {#if review.evidence.gsc}
+                                        <span>曝光 {Math.round(review.evidence.gsc.impressions)}</span>
+                                        <span>点击 {Math.round(review.evidence.gsc.clicks)}</span>
+                                        <span>排名 {review.evidence.gsc.position.toFixed(1)}</span>
+                                      {:else if review.gsc_available}
+                                        <span>GSC 目标词 0</span>
+                                      {:else}
+                                        <span>GSC 暂不可用</span>
+                                      {/if}
+                                      {#if review.evidence.ga}
+                                        <span>访问 {Math.round(review.evidence.ga.sessions)}</span>
+                                        <span>互动 {Math.round(review.evidence.ga.engagement_rate * 100)}%</span>
+                                      {:else if review.ga_available}
+                                        <span>GA 目标页 0</span>
+                                      {:else}
+                                        <span>GA 暂不可用</span>
+                                      {/if}
+                                    </div>
+                                  {/each}
+                                </div>
+                              {/if}
+                              {#if opportunity.status === 'candidate' || opportunity.status === 'postponed'}
+                                <div class="md-growth-opp-actions">
+                                  {#if opportunity.action === 'watch'}
+                                    <span class="md-growth-watch-tip" data-tip="这是只读观察项，不会创建或修改内容">无需执行 · 后续扫描自动复盘</span>
+                                  {:else}
+                                    <button class="btn sm" onclick={() => void decideGrowthOpportunity(m, opportunity, 'queue')} disabled={mGrowthBusy[m.id] || (opportunity.action !== 'new_content' && m.level !== 'l3')} data-tip={opportunity.action !== 'new_content' && m.level !== 'l3' ? '修改旧内容需要 L3 存量维护' : '加入后由每日执行任务消费'}>加入队列</button>
+                                  {/if}
+                                  <button class="link" onclick={() => void decideGrowthOpportunity(m, opportunity, 'postpone')} disabled={mGrowthBusy[m.id]}>稍后</button>
+                                  <button class="link" onclick={() => void decideGrowthOpportunity(m, opportunity, 'dismiss')} disabled={mGrowthBusy[m.id]}>忽略</button>
+                                </div>
+                              {/if}
+                            </article>
+                          {/each}
+                        </div>
+                      {/if}
+                    </div>
+                  {/if}
+                  {#if mOpenPanel[m.id] === 'queue'}
+                    <div class="md-queue" id={`managed-panel-${m.id}-queue`}>
                       {#if drafts.length === 0}
                         <p class="hint">暂无待审草稿——等每日任务跑出第一篇，或点上面「刷新」。</p>
                       {/if}
@@ -11520,14 +12163,27 @@
                       {/each}
                     </div>
                   {/if}
-                  {#if mPlanOpen[m.id]}
-                    <div class="md-plan">
-                      <textarea class="tin" rows="8" bind:value={mPlanDraft[m.id]} placeholder="90 天运营计划（每日任务的方向依据）…"></textarea>
-                      <div class="row-end">
-                        <button class="btn sm ghost" onclick={() => (mPlanOpen[m.id] = false)}>收起</button>
-                        <button class="btn sm" onclick={() => saveManagedPlan(m)}>保存并同步任务</button>
+                  {#if mOpenPanel[m.id] === 'plan'}
+                    {#if managedModeOf(m) === 'growth'}
+                      <div class="md-growth-position-summary" id={`managed-panel-${m.id}-plan`}>
+                        <div><small>目标用户</small><b>{m.growth?.config.positioning.audience || '根据现有内容自动识别'}</b></div>
+                        <div><small>业务目标</small><b>{m.growth?.config.positioning.business_goal || '提升现有方向的有效自然访问'}</b></div>
+                        <div><small>主要市场</small><b>{m.growth?.config.positioning.markets.join('、') || '跟随站点'}</b></div>
+                        <div><small>运营语言</small><b>{m.growth?.config.positioning.languages.join('、') || '跟随站点'}</b></div>
+                        <div class="wide"><small>内容支柱</small><b>{m.growth?.config.positioning.pillars.join(' · ') || '根据现有内容与搜索数据自动识别'}</b></div>
+                        {#if m.growth?.config.positioning.excluded_topics.length}
+                          <div class="wide muted"><small>排除主题</small><b>{m.growth.config.positioning.excluded_topics.join(' · ')}</b></div>
+                        {/if}
                       </div>
-                    </div>
+                    {:else}
+                      <div class="md-plan" id={`managed-panel-${m.id}-plan`}>
+                        <textarea class="tin" rows="8" bind:value={mPlanDraft[m.id]} placeholder="90 天运营计划（每日任务的方向依据）…"></textarea>
+                        <div class="row-end">
+                          <button class="btn sm ghost" onclick={() => (mOpenPanel[m.id] = undefined)}>收起</button>
+                          <button class="btn sm" onclick={() => saveManagedPlan(m)}>保存并同步任务</button>
+                        </div>
+                      </div>
+                    {/if}
                   {/if}
                   {#if m.level === 'l3'}
                     <p class="md-foot-warn">⚠️ L3 存量维护：AI 可修改已发布内容、把低质旧文转草稿下线（每周 ≤
@@ -12034,6 +12690,8 @@
 {#snippet promptIcon(size: number)}<svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 3h10a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H6.5L4 13.2V11H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" /><path d="M5.2 6.2h5.6M5.2 8.4h3.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" /></svg>{/snippet}
 <!-- 托管的机器人头图标（侧栏导航 + 空态复用，传 size）。viewBox 24 下 stroke 2 ≈ 侧栏 16 系图标的 1.3，视觉同粗。 -->
 {#snippet botIcon(size: number)}<svg width={size} height={size} viewBox="0 0 24 24" fill="none"><path d="M12 8V4H8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /><rect x="4" y="8" width="16" height="12" rx="2" stroke="currentColor" stroke-width="2" stroke-linejoin="round" /><path d="M2 14h2M20 14h2M9 13v2M15 13v2" stroke="currentColor" stroke-width="2" stroke-linecap="round" /></svg>{/snippet}
+{#snippet managedPlanIcon(size: number)}<svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="4" y="3.5" width="16" height="17" rx="2.4" stroke="currentColor" stroke-width="1.8" /><path d="M8 8h8M8 12h8M8 16h5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" /><path d="M8 2.5v2M16 2.5v2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" /></svg>{/snippet}
+{#snippet managedGrowthIcon(size: number)}<svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 18.5 9.2 13l3.7 3.2L20 7.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /><path d="M15.5 7.5H20V12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" /><circle cx="5" cy="6" r="2" stroke="currentColor" stroke-width="1.7" /></svg>{/snippet}
 {#snippet aiAnalyzeIcon(size: number)}<svg width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M7.2 1.8c.3 2.5 1.5 3.7 4 4-2.5.3-3.7 1.5-4 4-.3-2.5-1.5-3.7-4-4 2.5-.3 3.7-1.5 4-4Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /><path d="M12.2 9.2c.16 1.45.85 2.14 2.3 2.3-1.45.16-2.14.85-2.3 2.3-.16-1.45-.85-2.14-2.3-2.3 1.45-.16 2.14-.85 2.3-2.3Z" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round" /></svg>{/snippet}
 
 {#snippet gearIcon()}<svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M2 5.3h3.5M9.3 5.3H14M2 10.7h5.1M10.9 10.7H14" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" /><circle cx="7.4" cy="5.3" r="1.6" stroke="currentColor" stroke-width="1.3" /><circle cx="9" cy="10.7" r="1.6" stroke="currentColor" stroke-width="1.3" /></svg>{/snippet}
@@ -12892,7 +13550,7 @@
 <!-- 设置弹窗 -->
 {#if setupOpen}
   <div class="mask" role="presentation" onclick={() => { setupAddOpen = false; setupOpen = false; }}></div>
-  <div class="sheet">
+  <div class="sheet" use:sheetWidth={SHEET_WIDTH.setup} role="dialog" aria-modal="true" aria-label="连接与模型">
     <header class="sheet-head"><b>连接与模型</b><button class="x" onclick={() => { setupAddOpen = false; setupOpen = false; }}>×</button></header>
     <div class="sheet-body">
       <div class="sec-head">
@@ -13031,7 +13689,7 @@
 
 {#if updateCenterOpen}
   <div class="mask update-center-mask" role="presentation" onclick={closeUpdateCenter}></div>
-  <div class="sheet update-center-sheet" role="dialog" aria-modal="true" aria-label="更新中心">
+  <div class="sheet update-center-sheet" use:sheetWidth={SHEET_WIDTH.updateCenter} role="dialog" aria-modal="true" aria-label="更新中心">
     <header class="sheet-head update-center-head">
       <div class="update-center-title">
         <span class="update-center-title-icon" aria-hidden="true">{@render gcmsUpdateIcon(16)}</span>
@@ -13160,7 +13818,7 @@
 
 {#if transferOpen}
   <div class="mask" role="presentation" onclick={closeTransfer}></div>
-  <div class="sheet transfer-sheet" role="dialog" aria-modal="true" aria-label="配置与会话导入导出">
+  <div class="sheet transfer-sheet" use:sheetWidth={SHEET_WIDTH.transfer} role="dialog" aria-modal="true" aria-label="配置与会话导入导出">
     <header class="sheet-head"><div><b>配置与会话导入 / 导出</b><small>可迁移 Pilot 的本地工作状态</small></div><button class="x" onclick={closeTransfer} disabled={transferBusy}>×</button></header>
     <div class="sheet-body transfer-body">
       <div class="transfer-tabs" role="tablist">
@@ -13221,7 +13879,7 @@
 <!-- 远程服务器安装与管理 GCMS -->
 {#if gcmsInstallOpen}
   <div class="mask" role="presentation" onclick={closeGcmsCurrentLayer}></div>
-  <div class="sheet gcms-install-sheet">
+  <div class="sheet gcms-install-sheet" use:sheetWidth={SHEET_WIDTH.gcmsInstall} role="dialog" aria-modal="true" aria-label="安装与管理 GCMS">
     <header class="sheet-head">
       {#if gcmsAccess}
         <div class="gcms-sheet-title">
@@ -14024,7 +14682,7 @@
 
 {#if gcmsMigrationOpen}
   <div class="mask gcms-migration-mask" role="presentation" onclick={closeGcmsMigration}></div>
-  <div class="sheet gcms-migration-sheet" role="dialog" aria-modal="true" aria-label="迁移 GCMS">
+  <div class="sheet gcms-migration-sheet" use:sheetWidth={SHEET_WIDTH.gcmsMigration} role="dialog" aria-modal="true" aria-label="迁移 GCMS">
     <header class="sheet-head">
       <div class="gcms-migration-title"><b>迁移 GCMS</b><small>迁移为独立实例，不影响目标服务器现有 GCMS</small></div>
       <button class="x" onclick={closeGcmsMigration} disabled={gcmsMigrationChecking}>×</button>
@@ -14156,6 +14814,35 @@
   </div>
 {/if}
 
+{#if taskCardMenu}
+  {@const menuTask = tasksOfConn.find((task) => task.id === taskCardMenu?.taskId)}
+  {#if menuTask}
+    <div
+      bind:this={taskCardMenuEl}
+      class="ctx-menu fctx gcms-card-menu task-card-menu"
+      class:ready={taskCardMenu.ready}
+      style="left:{taskCardMenu.x}px; top:{taskCardMenu.y}px"
+      role="menu"
+      aria-label={`${menuTask.title}任务操作`}
+      tabindex="-1"
+    >
+      <button class="ctx-item" role="menuitem" onclick={() => void runTaskNow(menuTask)}>
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M5 3.4l7.2 4.6L5 12.6z" fill="currentColor" /></svg>
+        <span>立即运行</span>
+      </button>
+      <button class="ctx-item" role="menuitem" onclick={() => openEditTask(menuTask)}>
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M11.5 2.5l2 2L6 12l-2.5.5L4 10l7.5-7.5z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" /></svg>
+        <span>编辑任务</span>
+      </button>
+      <div class="gcms-card-menu-divider" aria-hidden="true"></div>
+      <button class="ctx-item danger" role="menuitem" onclick={() => void deleteTask(menuTask)}>
+        {@render trashIcon(12)}
+        <span>删除任务</span>
+      </button>
+    </div>
+  {/if}
+{/if}
+
 {#if siteCardMenu}
   {@const menuSite = siteCardMenu.connId === activeConnId ? dashboardAllSites.find((site) => site.id === siteCardMenu?.siteId) : null}
   {#if menuSite}
@@ -14264,6 +14951,7 @@
   <div class="mask" role="presentation" onclick={closeIntegrationEditor}></div>
   <div
     class="modal wide integration-modal"
+    use:dialogGeometry={integrationDialogGeometry(integrationEditor.kind)}
     class:site-google-modal={integrationEditor.kind === 'site-analytics' || integrationEditor.kind === 'site-search-console'}
     role="dialog"
     aria-modal="true"
@@ -14524,7 +15212,7 @@
 
 {#if themeEditor}
   <div class="mask" role="presentation" onclick={closeSiteThemeEditor}></div>
-  <div class="modal wide theme-modal" role="dialog" aria-modal="true" aria-label={`${themeEditor.site.name || themeEditor.site.slug} · 外观主题`} aria-busy={themeLoading || themeBusy}>
+  <div class="modal wide theme-modal" use:dialogGeometry={DIALOG_GEOMETRY.theme} role="dialog" aria-modal="true" aria-label={`${themeEditor.site.name || themeEditor.site.slug} · 外观主题`} aria-busy={themeLoading || themeBusy}>
     <header class="sheet-head integration-head theme-sheet-head">
       <div class="integration-head-title">
         <span class="integration-head-icon theme-head-icon">{@render paletteIcon(20)}</span>
@@ -14716,7 +15404,7 @@
 
 {#if deploymentEditor}
   <div class="mask" role="presentation" onclick={closeSiteDeploymentEditor}></div>
-  <div class="modal wide deployment-modal" role="dialog" aria-modal="true" aria-label={deploymentRebinding ? '更换访问域名' : '绑定访问域名'}>
+  <div class="modal wide deployment-modal" use:dialogGeometry={DIALOG_GEOMETRY.deployment} role="dialog" aria-modal="true" aria-label={deploymentRebinding ? '更换访问域名' : '绑定访问域名'}>
     <header class="sheet-head integration-head">
       <div class="integration-head-title">
         <span class="integration-head-icon deployment-head-icon">{@render deploymentProviderIcon('server', 19)}</span>
@@ -14902,6 +15590,7 @@
   <div class="mask new-site-mask" role="presentation" onclick={() => void closeNewSiteChoice()}></div>
   <div
     class="modal new-site-choice-modal"
+    use:dialogGeometry={DIALOG_GEOMETRY.newSiteChoice}
     role="dialog"
     aria-modal="true"
     aria-labelledby="new-site-choice-title"
@@ -14942,6 +15631,7 @@
   <div class="mask new-site-mask" role="presentation" onclick={() => void closeQuickSiteCreate()}></div>
   <div
     class="modal wide quick-site-modal"
+    use:dialogGeometry={DIALOG_GEOMETRY.quickSite}
     role="dialog"
     aria-modal="true"
     aria-labelledby="quick-site-title"
@@ -15114,7 +15804,7 @@
 <!-- 密钥输入 -->
 {#if keyOpen}
   <div class="mask" role="presentation" onclick={() => !importBusy && (keyOpen = false)}></div>
-  <div class="modal">
+  <div class="modal" use:dialogGeometry={DIALOG_GEOMETRY.skillKey} role="dialog" aria-modal="true" aria-label="导入技能包密钥">
     <header class="sheet-head"><div><b>原始技能包 · 需要密钥</b><small class="dim">{keyBase}</small></div><button class="x" onclick={() => (keyOpen = false)} disabled={importBusy}>×</button></header>
     <div class="sheet-body">
       <p class="hint">粘贴 gcms 后台生成的密钥（gcmsp_…），只会存入 {keystoreName}，不写进任何文件。</p>
@@ -15131,7 +15821,7 @@
 <!-- 连接 Cloudflare -->
 {#if sshOpen}
   <div class="mask" role="presentation" onclick={() => (sshOpen = false)}></div>
-  <div class="modal wide">
+  <div class="modal wide" use:dialogGeometry={DIALOG_GEOMETRY.ssh} role="dialog" aria-modal="true" aria-label={sshEditId ? '编辑远程连接' : '新建远程连接'}>
     <header class="sheet-head"><b>{sshEditId ? '编辑远程连接' : '新建远程连接'}</b><button class="x" onclick={() => (sshOpen = false)}>×</button></header>
     <div class="sheet-body">
       <p class="hint">{#if sshEditId}改完地址 / 用户 / 认证方式后要重新「测试连接」核对指纹再保存；只改名字可以直接保存。密码 / 私钥口令留空＝沿用 {keystoreName} 里已存的那条。{:else}SSH 到一台远程机器：能开终端、管文件、让 AI 帮你干活。密码 / 私钥口令只进 {keystoreName}，绝不落盘。{/if}</p>
@@ -15226,7 +15916,7 @@
 
 {#if connRemarkEdit}
   <div class="mask" role="presentation" onclick={() => !connRemarkEdit?.busy && (connRemarkEdit = null)}></div>
-  <div class="modal conn-remark-modal" role="dialog" aria-modal="true" aria-label="设置连接备注">
+  <div class="modal conn-remark-modal" use:dialogGeometry={DIALOG_GEOMETRY.connectionRemark} role="dialog" aria-modal="true" aria-label="设置连接备注">
     <header class="sheet-head"><div><b>设置备注</b><small class="dim">{connRemarkEdit.name}</small></div><button class="x" onclick={() => (connRemarkEdit = null)} disabled={connRemarkEdit.busy}>×</button></header>
     <div class="sheet-body">
       <p class="hint">备注会替代列表里的脱敏 Key；鼠标悬停仍可查看原来的脱敏 Key。留空保存即可清除。</p>
@@ -15271,7 +15961,7 @@
 
 {#if fsAsk}
   <div class="mask" role="presentation" onclick={() => !fsAsk?.busy && (fsAsk = null)}></div>
-  <div class="modal">
+  <div class="modal" use:dialogGeometry={DIALOG_GEOMETRY.fileOperation} role="dialog" aria-modal="true" aria-label={fsAsk.mode === 'mkdir' ? '新建文件夹' : `重命名 ${fsAsk.from}`}>
     <header class="sheet-head"><b>{fsAsk.mode === 'mkdir' ? '新建文件夹' : `重命名「${fsAsk.from}」`}</b><button class="x" onclick={() => (fsAsk = null)} disabled={fsAsk.busy}>×</button></header>
     <div class="sheet-body">
       <p class="hint">位置：<code>{sftpPath}</code></p>
@@ -15288,7 +15978,7 @@
 
 {#if edOpen}
   <div class="mask" role="presentation" onclick={() => !edSaving && (edOpen = false)}></div>
-  <div class="modal ed-modal" role="dialog" aria-modal="true" aria-label={`编辑文件 ${edPath}`} aria-busy={edSaving}>
+  <div class="modal ed-modal" use:dialogGeometry={DIALOG_GEOMETRY.fileEditor} role="dialog" aria-modal="true" aria-label={`编辑文件 ${edPath}`} aria-busy={edSaving}>
     <header class="sheet-head"><div><b>编辑文件</b><small class="dim ed-path">{edPath}</small></div><button class="x" onclick={() => (edOpen = false)} disabled={edSaving}>×</button></header>
     <div class="sheet-body ed-body">
       {#if edLoading}
@@ -15312,7 +16002,7 @@
 {#if cfOpen}
   {@const updatingCf = cfUpdateConnection()}
   <div class="mask cf-mask" role="presentation" onclick={closeCfConnect}></div>
-  <div class="modal cf-modal" role="dialog" aria-modal="true" aria-label={updatingCf ? '更新 Cloudflare 连接' : '连接 Cloudflare'}>
+  <div class="modal cf-modal" use:dialogGeometry={DIALOG_GEOMETRY.cloudflare} role="dialog" aria-modal="true" aria-label={updatingCf ? '更新 Cloudflare 连接' : '连接 Cloudflare'}>
     <header class="sheet-head"><div><b>{updatingCf ? '更新' : '连接'} {@render cfMark(15)} Cloudflare</b><small class="dim" style="margin-left:10px">token 只进钥匙串，绝不落盘</small></div><button class="x" onclick={closeCfConnect} disabled={cfConnecting || cfVerifying}>×</button></header>
     <div class="sheet-body">
       {#if updatingCf}
@@ -15375,7 +16065,7 @@
 <!-- 存为模板 -->
 {#if saveTmplOpen}
   <div class="mask" role="presentation" onclick={() => !saveTmplBusy && (saveTmplOpen = false)}></div>
-  <div class="modal">
+  <div class="modal" use:dialogGeometry={DIALOG_GEOMETRY.templateSave} role="dialog" aria-modal="true" aria-label="存为模板">
     <header class="sheet-head"><b>存为模板</b><button class="x" onclick={() => (saveTmplOpen = false)} disabled={saveTmplBusy}>×</button></header>
     <div class="sheet-body">
       <p class="hint">当前项目会被复制成模板（自动去掉密钥、依赖、构建产物），之后可引用它快速建站。</p>
@@ -15393,7 +16083,7 @@
 <!-- 用模板建站 -->
 {#if useTmplOpen}
   <div class="mask" role="presentation" onclick={() => !useTmplBusy && (useTmplOpen = false)}></div>
-  <div class="modal">
+  <div class="modal" use:dialogGeometry={DIALOG_GEOMETRY.templateUse} role="dialog" aria-modal="true" aria-label="用模板建站">
     <header class="sheet-head"><div><b>用模板建站</b><small class="dim" style="margin-left:10px">{useTmplName}</small></div><button class="x" onclick={() => (useTmplOpen = false)} disabled={useTmplBusy}>×</button></header>
     <div class="sheet-body">
       {#if !isCfConn}<p class="hint warn-text">请先在左下角切到一个 Cloudflare 连接，再用模板建站。</p>{/if}
@@ -15411,7 +16101,7 @@
 <!-- 提示词 新建/编辑 -->
 {#if promptEditOpen}
   <div class="mask" role="presentation" onclick={() => (promptEditOpen = false)}></div>
-  <div class="modal wide">
+  <div class="modal wide" use:dialogGeometry={DIALOG_GEOMETRY.promptEditor} role="dialog" aria-modal="true" aria-label={promptEditId ? '编辑提示词' : '新增提示词'}>
     <header class="sheet-head"><b>{promptEditId ? '编辑提示词' : '新增提示词'}</b><button class="x" onclick={() => (promptEditOpen = false)}>×</button></header>
     <div class="sheet-body">
       <input class="tin" bind:value={promptEditTitle} placeholder="标题，如 手冲咖啡落地页" spellcheck="false" />
@@ -15427,7 +16117,7 @@
 <!-- 定时任务 新建/编辑 -->
 {#if taskModalOpen}
   <div class="mask" role="presentation" onclick={() => (taskModalOpen = false)}></div>
-  <div class="modal wide">
+  <div class="modal wide" use:dialogGeometry={DIALOG_GEOMETRY.taskEditor} role="dialog" aria-modal="true" aria-label={tf.id ? '编辑定时任务' : '新建定时任务'}>
     <header class="sheet-head"><b>{tf.id ? '编辑定时任务' : '新建定时任务'}</b><button class="x" onclick={() => (taskModalOpen = false)}>×</button></header>
     <div class="sheet-body">
       {#if tf.id && tf.connId !== activeConnId}
@@ -15466,7 +16156,7 @@
 
 {#if taskHistoryFor}
   <div class="mask" role="presentation" onclick={() => (taskHistoryFor = null)}></div>
-  <div class="modal wide">
+  <div class="modal wide" use:dialogGeometry={DIALOG_GEOMETRY.taskHistory} role="dialog" aria-modal="true" aria-label={`运行记录 · ${taskHistoryFor.title}`}>
     <header class="sheet-head"><b>运行记录 · {taskHistoryFor.title}</b><button class="x" onclick={() => (taskHistoryFor = null)}>×</button></header>
     <div class="sheet-body">
       {#each taskHistoryFor.history ?? [] as r, i (`${r.ts}-${i}`)}
@@ -15499,12 +16189,40 @@
   {/if}
 {/snippet}
 
-<!-- 托管 · 开启向导（3 步：选站 → 90 天计划 → 上限与边界确认） -->
+<!-- 托管 · 先选方案，再进入彼此隔离的计划托管 / 增长托管向导 -->
 {#if mwOpen}
   <div class="mask" role="presentation" onclick={() => !mwBusy && !mwGenBusy && (mwOpen = false)}></div>
-  <div class="modal wide md-managed-wizard">
-    <header class="sheet-head"><b>托管一个站点<small class="dim"> · 第 {mwStep}/3 步</small></b><button class="x" onclick={() => (mwOpen = false)} disabled={mwBusy}>×</button></header>
-    <div class="sheet-body">
+  <div class="modal wide md-managed-wizard" use:dialogGeometry={DIALOG_GEOMETRY.managedWizard} role="dialog" aria-modal="true" aria-labelledby="managed-wizard-title">
+    <header class="sheet-head">
+      <b id="managed-wizard-title">{mwMode === 'growth' ? '增长托管' : mwMode === 'plan' ? '计划托管' : '托管一个站点'}{#if mwMode}<small class="dim"> · 第 {mwStep}/3 步</small>{/if}</b>
+      <button class="x" aria-label="关闭托管向导" onclick={() => (mwOpen = false)} disabled={mwBusy}>×</button>
+    </header>
+    <div class="sheet-body" bind:this={mwBodyEl}>
+      {#if !mwMode}
+        <div class="md-mode-intro">
+          <b>选择托管方案</b>
+          <span>两种方案互相隔离；已有托管站点继续使用计划托管，不会被新方案改变。</span>
+        </div>
+        <div class="md-mode-options">
+          <button type="button" class="md-mode-option" onclick={() => chooseManagedMode('plan')}>
+            <span class="md-mode-icon plan">{@render managedPlanIcon(21)}</span>
+            <span class="md-mode-copy">
+              <strong>计划托管</strong>
+              <small>按照 90 天运营计划和固定节奏持续生产内容，适合新站或数据较少的站点。</small>
+              <em>使用现有托管方式 <span>→</span></em>
+            </span>
+          </button>
+          <button type="button" class="md-mode-option growth" onclick={() => chooseManagedMode('growth')}>
+            <span class="md-mode-icon growth">{@render managedGrowthIcon(21)}</span>
+            <span class="md-mode-copy">
+              <span class="md-mode-name"><strong>增长托管</strong><i>新方案</i></span>
+              <small>结合站点定位、GA 与 GSC 发现机会，再安排新增、优化和复盘。</small>
+              <em>配置增长托管 <span>→</span></em>
+            </span>
+          </button>
+        </div>
+        <p class="md-mode-note">同一站点同一时间只能运行一种托管方案，避免重复选题和任务冲突。</p>
+      {:else if mwMode === 'plan'}
       {#if mwStep === 1}
         <div class="tfield"><span>选择站点（一个站一条托管）</span>
           <Dropdown searchable bind:value={mwSite} options={mwSiteOpts} placeholder="选择站点" />
@@ -15618,19 +16336,171 @@
         </details>
         {@render mwPrecheckBlock()}
       {/if}
+      {:else}
+        {#if mwStep === 1}
+          <div class="tfield"><span>选择站点（一个站一条托管）</span>
+            <Dropdown searchable bind:value={mwSite} options={mwSiteOpts} placeholder="选择站点" />
+          </div>
+          <div class="md-growth-data">
+            <div class="md-growth-data-head">
+              <span>
+                <b>增长依据</b>
+                <small>补充定位可收紧边界；留空则依据现有内容，GSC 发现机会，GA 判断访问质量。</small>
+              </span>
+              <em class:partial={!mwGrowthDataState.ga || !mwGrowthDataState.gsc}>{mwGrowthDataState.ga && mwGrowthDataState.gsc ? '数据已就绪' : '可先积累数据'}</em>
+            </div>
+            <div class="md-growth-data-grid">
+              <span class="ready"><i>✓</i><b>站点定位</b><small>可选补充 / 自动识别</small></span>
+              <span class:ready={mwGrowthDataState.gsc} class:pending={!mwGrowthDataState.gsc}>
+                <i>{mwGrowthDataState.gsc ? '✓' : '·'}</i><b>Search Console</b><small>{mwGrowthDataState.gsc ? '已接入' : mwGrowthDataState.gscConfigured ? '待完成验证' : '未接入'}</small>
+              </span>
+              <span class:ready={mwGrowthDataState.ga} class:pending={!mwGrowthDataState.ga}>
+                <i>{mwGrowthDataState.ga ? '✓' : '·'}</i><b>Google Analytics</b><small>{mwGrowthDataState.ga ? '已接入' : mwGrowthDataState.gaConfigured ? '待完成配置' : '未接入'}</small>
+              </span>
+            </div>
+            {#if !mwGrowthDataState.ga || !mwGrowthDataState.gsc}
+              <p>数据不完整不会阻止开启：托管会先守住现有内容方向，接入后自动转为站点方向 + 数据的混合驱动。</p>
+            {/if}
+          </div>
+          {@render mwPrecheckBlock()}
+        {:else if mwStep === 2}
+          <div class="md-growth-position-head">
+            <span><b>确认站点方向</b><small>可以直接使用自动识别，也可以补充少量信息让方向更准确。</small></span>
+            <em>{mwGrowthAutoPositioning ? '当前：自动识别' : '自动识别 + 你的补充'}</em>
+          </div>
+          <div class="md-growth-auto" class:with-input={!mwGrowthAutoPositioning}>
+            <span class="md-mode-icon growth">{@render managedGrowthIcon(19)}</span>
+            <span class="md-growth-auto-copy">
+              <span><b>自动识别站点方向</b><i>推荐</i></span>
+              <small>Pilot 会结合现有内容、页面结构、站点语言，以及已接入的 GA/GSC 数据识别增长方向。</small>
+              <em>未接入数据也可以继续；后续会随真实数据自动完善。</em>
+            </span>
+            <span class="md-growth-auto-state">{mwGrowthAutoPositioning ? '已选择' : '已合并补充'}</span>
+          </div>
+          <button
+            type="button"
+            class="md-growth-position-toggle"
+            aria-expanded={mwGrowthPositionOpen}
+            aria-controls="mw-growth-position-fields"
+            onclick={() => (mwGrowthPositionOpen = !mwGrowthPositionOpen)}
+          >
+            <span>
+              <b>手动补充定位</b>
+              <small>可选 · 适合已有明确市场或业务目标的站点</small>
+            </span>
+            <svg class:open={mwGrowthPositionOpen} width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="m3.5 5.25 3.5 3.5 3.5-3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
+          </button>
+          {#if mwGrowthPositionOpen}
+            <div id="mw-growth-position-fields" class="md-growth-position-fields">
+              <div class="md-growth-position-section">
+                <span class="md-growth-position-label"><b>常用信息</b><small>留空的项目仍由 Pilot 自动识别</small></span>
+                <div class="trow">
+                  <label class="tfield"><span>目标用户</span><input class="tin" bind:value={mwGrowthAudience} placeholder="例如：准备采购工业设备的海外工厂" /></label>
+                  <label class="tfield"><span>主要市场</span><input class="tin" bind:value={mwGrowthMarkets} placeholder="例如：美国、德国" /></label>
+                </div>
+                <label class="tfield"><span>业务目标</span><input class="tin" bind:value={mwGrowthBusinessGoal} placeholder="例如：获得设备询盘" /></label>
+              </div>
+              <button
+                type="button"
+                class="md-growth-boundary-toggle"
+                aria-expanded={mwGrowthBoundaryOpen}
+                aria-controls="mw-growth-boundary-fields"
+                onclick={() => (mwGrowthBoundaryOpen = !mwGrowthBoundaryOpen)}
+              >
+                <span><b>内容边界</b><small>高级 · 只在需要限定语言、主题范围时填写</small></span>
+                <svg class:open={mwGrowthBoundaryOpen} width="13" height="13" viewBox="0 0 14 14" fill="none" aria-hidden="true"><path d="m3.5 5.25 3.5 3.5 3.5-3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
+              </button>
+              {#if mwGrowthBoundaryOpen}
+                <div id="mw-growth-boundary-fields" class="md-growth-boundary-fields">
+                  <label class="tfield"><span>运营语言</span><input class="tin" bind:value={mwGrowthLanguages} placeholder="例如：英文、德文；留空跟随站点" /></label>
+                  <label class="tfield"><span>内容支柱 <small>每行一个</small></span>
+                    <textarea class="tin" rows="3" bind:value={mwGrowthPillars} placeholder="例如：&#10;设备选型&#10;应用案例&#10;成本与维护"></textarea>
+                  </label>
+                  <label class="tfield"><span>排除主题 <small>每行一个</small></span>
+                    <textarea class="tin" rows="2" bind:value={mwGrowthExcludedTopics} placeholder="例如：消费级产品、医疗用途"></textarea>
+                  </label>
+                </div>
+              {/if}
+              <p class="md-growth-position-note">你的补充会作为明确边界；未填写的部分继续自动识别。陌生主题不会自动执行。</p>
+            </div>
+          {/if}
+        {:else}
+          <div class="md-growth-review">
+            <span class="md-mode-icon growth">{@render managedGrowthIcon(19)}</span>
+            <span><b>{mwSelectedSite?.name || mwSite} · 增长托管</b><small>先形成机会，再执行内容，发布后进入观察与复盘。</small></span>
+            <em>{mwGrowthAutoPositioning ? '自动识别' : mwGrowthDataState.ga && mwGrowthDataState.gsc ? '数据驱动' : '定位驱动起步'}</em>
+          </div>
+          <div class="md-growth-loop" aria-label="增长托管运行方式">
+            <span><i>1</i><b>每周扫描</b><small>定位 + GSC + GA</small></span>
+            <i>→</i>
+            <span><i>2</i><b>机会执行</b><small>新增 / 优化 / 观察</small></span>
+            <i>→</i>
+            <span><i>3</i><b>效果复盘</b><small>14 / 28 天检查</small></span>
+          </div>
+          <div class="md-model-grid">
+            <div class="tfield md-model-card md-model-primary">
+              <div class="md-model-head"><strong>主模型</strong><small>扫描、执行和周报共用</small></div>
+              <div class="tfield-fx"><ModelFx options={comboOpts} value={`${mwBrain}::${mwModel}`} effort={mwEffort} onpick={(v: string) => { const i = v.indexOf('::'); if (i > 0) { mwBrain = v.slice(0, i); mwModel = v.slice(i + 2); } }} oneffort={(v: string) => (mwEffort = v)} /></div>
+            </div>
+            <div class="tfield md-model-card md-model-fallback">
+              <div class="md-model-head md-model-head-fallback">
+                <span><strong>备用模型</strong><small>主模型受限时自动接管一次</small></span>
+                <button type="button" class="md-fallback-switch" class:active={mwFallbackEnabled} role="switch" aria-checked={mwFallbackEnabled} aria-label={mwFallbackEnabled ? '停用备用模型' : '启用备用模型'} onclick={() => (mwFallbackEnabled = !mwFallbackEnabled)}><span></span></button>
+              </div>
+              {#if mwFallbackEnabled}
+                <div class="tfield-fx"><ModelFx options={comboOpts} value={`${mwFallbackBrain}::${mwFallbackModel}`} effort={mwFallbackEffort} onpick={(v: string) => { const i = v.indexOf('::'); if (i > 0) { mwFallbackBrain = v.slice(0, i); mwFallbackModel = v.slice(i + 2); } }} oneffort={(v: string) => (mwFallbackEffort = v)} /></div>
+              {:else}
+                <button type="button" class="md-fallback-empty" onclick={() => (mwFallbackEnabled = true)}><span>＋ 添加备用模型</span></button>
+              {/if}
+            </div>
+          </div>
+          <div class="trow">
+            <div class="tfield"><span class="md-field-label"><b>托管等级</b><small>决定发布与存量修改边界</small></span><Dropdown bind:value={mwLevel} options={LEVEL_OPTS} /></div>
+            <label class="tfield"><span class="md-field-label"><b>每周产出上限</b><small>新建与更新合计</small></span><input class="tin" type="number" min="1" max="50" bind:value={mwLimit} /></label>
+          </div>
+          <div class="trow">
+            <label class="tfield"><span class="md-field-label"><b>每周 token 预算</b><small>0＝不限，触顶自动熔断</small></span><input class="tin" type="number" min="0" step="50000" bind:value={mwBudget} /></label>
+            {#if mwLevel === 'l3'}
+              <label class="tfield"><span class="md-field-label"><b>每周存量修改上限</b><small>L3 · Pilot 实测把关</small></span><input class="tin" type="number" min="1" max="20" bind:value={mwEditLimit} /></label>
+            {:else}
+              <div class="md-growth-safe"><b>默认安全边界</b><small>不删除内容，不改站点结构；数据不足时不擅自优化旧文。</small></div>
+            {/if}
+          </div>
+          {#if mwLevel === 'l3'}
+            <div class="md-danger"><b>⚠️ L3 会修改已发布内容</b><p>仅在 GA/GSC 数据充分且机会明确时执行；修改会留修订历史，每周最多 {mwEditLimit} 篇。</p></div>
+          {/if}
+          {@render mwPrecheckBlock()}
+        {/if}
+      {/if}
     </div>
     <footer class="md-wizard-footer">
-      {#if mwStep === 3}<span class="md-bound-tip" data-tip={mwBoundaryTip()} aria-label="边界说明"><span class="md-bound-icon">!</span><span>边界说明</span></span>{/if}
-      {#if mwWarns.length}<span class="md-pre-ack">已知悉风险，仍可继续</span>{/if}
-      {#if mwStep === 1}
+      {#if !mwMode}
         <button class="btn ghost" onclick={() => (mwOpen = false)}>取消</button>
-        <button class="btn primary" onclick={() => (mwStep = 2)} disabled={!mwSite}>下一步</button>
-      {:else if mwStep === 2}
-        <button class="btn ghost" onclick={() => (mwStep = 1)}>上一步</button>
-        <button class="btn primary" onclick={() => void mwEnterStep3()}>下一步{mwPlan.trim() ? '' : '（暂不填计划）'}</button>
+      {:else if mwMode === 'plan'}
+        {#if mwStep === 3}<span class="md-bound-tip" data-tip={mwBoundaryTip()} aria-label="边界说明"><span class="md-bound-icon">!</span><span>边界说明</span></span>{/if}
+        {#if mwWarns.length}<span class="md-pre-ack">已知悉风险，仍可继续</span>{/if}
+        {#if mwStep === 1}
+          <button class="btn ghost" onclick={backToManagedModeChoice}>返回方案</button>
+          <button class="btn primary" onclick={() => setMwStep(2)} disabled={!mwSite}>下一步</button>
+        {:else if mwStep === 2}
+          <button class="btn ghost" onclick={() => setMwStep(1)}>上一步</button>
+          <button class="btn primary" onclick={() => void mwEnterStep3()}>下一步{mwPlan.trim() ? '' : '（暂不填计划）'}</button>
+        {:else}
+          <button class="btn ghost" onclick={() => setMwStep(2)}>上一步</button>
+          <button class="btn primary" onclick={mwEnable} disabled={mwBusy || !mwSite || !brainUsable(mwBrain as Brain) || !mwFallbackValid}>{mwBusy ? '开启中…' : '确认并开启计划托管'}</button>
+        {/if}
       {:else}
-        <button class="btn ghost" onclick={() => (mwStep = 2)}>上一步</button>
-        <button class="btn primary" onclick={mwEnable} disabled={mwBusy || !mwSite || !brainUsable(mwBrain as Brain) || !mwFallbackValid}>{mwBusy ? '开启中…' : '确认并开启托管'}</button>
+        {#if mwStep === 3}<span class="md-bound-tip" data-tip="增长托管会先生成机会池，再按等级边界执行；同一站点不会同时运行计划托管。" aria-label="边界说明"><span class="md-bound-icon">!</span><span>边界说明</span></span>{/if}
+        {#if mwStep === 1}
+          <button class="btn ghost" onclick={backToManagedModeChoice}>返回方案</button>
+          <button class="btn primary" onclick={() => setMwStep(2)} disabled={!mwSite}>下一步</button>
+        {:else if mwStep === 2}
+          <button class="btn ghost" onclick={() => setMwStep(1)}>上一步</button>
+          <button class="btn primary" onclick={() => setMwStep(3)}>{mwGrowthAutoPositioning ? '使用自动识别并继续' : '保存定位并继续'}</button>
+        {:else}
+          <button class="btn ghost" onclick={() => setMwStep(2)}>上一步</button>
+          <button class="btn primary" onclick={mwEnableGrowth} disabled={mwBusy || !mwGrowthReady}>{mwBusy ? '开启中…' : '确认并开启增长托管'}</button>
+        {/if}
       {/if}
     </footer>
   </div>
@@ -15639,7 +16509,7 @@
 <!-- 托管 · 周报归档：历史列表（新到旧，周次+核心数字），点条目看渲染后的正文 -->
 {#if reportListFor}
   <div class="mask" role="presentation" onclick={() => (reportListFor = null)}></div>
-  <div class="modal wide">
+  <div class="modal wide" use:dialogGeometry={DIALOG_GEOMETRY.reportList} role="dialog" aria-modal="true" aria-label={`周报归档 · ${reportListFor.site_name}`}>
     <header class="sheet-head"><b>周报归档 · {reportListFor.site_name}<small class="dim"> · {reportListFor.reports.length} 份</small></b><button class="x" onclick={() => (reportListFor = null)}>×</button></header>
     <div class="sheet-body">
       {#each reportListFor.reports as r, i (r.ts)}
@@ -15653,7 +16523,7 @@
 {/if}
 {#if reportView}
   <div class="mask" role="presentation" onclick={() => (reportView = null)}></div>
-  <div class="modal wide">
+  <div class="modal wide" use:dialogGeometry={DIALOG_GEOMETRY.reportView} role="dialog" aria-modal="true" aria-label={`周报 · ${fmt(reportView.ts)}`}>
     <header class="sheet-head"><b>周报 · {fmt(reportView.ts)}</b><button class="x" onclick={() => (reportView = null)}>×</button></header>
     <div class="sheet-body">
       {#if reportMetLine(reportView.metrics)}<p class="hint">{reportMetLine(reportView.metrics)}</p>{/if}
@@ -15666,15 +16536,20 @@
 <!-- 托管 · 打回理由 -->
 {#if rejectFor}
   <div class="mask" role="presentation" onclick={() => (rejectFor = null)}></div>
-  <div class="modal">
+  <div class="modal" use:dialogGeometry={DIALOG_GEOMETRY.managedReject} role="dialog" aria-modal="true" aria-label={`打回 ${rejectFor.d.title}`}>
     <header class="sheet-head"><b>打回《{rejectFor.d.title}》</b><button class="x" onclick={() => (rejectFor = null)}>×</button></header>
     <div class="sheet-body">
-      <p class="hint">草稿不会被删除；理由会注入后续每日任务，让它规避同类问题（保留最近 20 条）。打回率过高会自动降级（L3→L2，L1/L2→L0）。</p>
+      <p class="hint">
+        {managedModeOf(rejectFor.m) === 'growth'
+          ? '草稿不会被删除；本次意见会锁定到同一草稿，返工后重新进入待审，不会另建重复文章（保留最近 20 条）。'
+          : '草稿不会被删除；理由会注入后续每日任务，让它规避同类问题（保留最近 20 条）。'}
+        打回率过高会自动降级（L3→L2，L1/L2→L0）。
+      </p>
       <textarea class="tin" rows="3" bind:value={rejectReason} placeholder="例如：标题太夸张 / 事实来源不足 / 和上周主题重复…"></textarea>
       <div class="row-end">
         <button class="btn ghost" onclick={() => (rejectFor = null)}>取消</button>
         <button class="btn" title="记录理由后立即触发一次每日任务，让 AI 带着意见返工" onclick={() => submitReject(true)} disabled={!rejectReason.trim()}>打回并立即返工</button>
-        <button class="btn primary" onclick={() => submitReject(false)} disabled={!rejectReason.trim()}>记录打回</button>
+        <button class="btn primary" onclick={() => submitReject(false)} disabled={!rejectReason.trim()}>{managedModeOf(rejectFor.m) === 'growth' ? '记录审核意见' : '记录打回'}</button>
       </div>
     </div>
   </div>
@@ -17626,6 +18501,7 @@
   .task-last { font-size: 12px; margin-top: 5px; color: var(--dim); display: flex; gap: 6px; flex-wrap: wrap; align-items: baseline; }
   .task-last.ok { color: var(--ok); } .task-last.error { color: var(--err); }
   .task-actions { display: flex; align-items: center; gap: 4px; flex: none; }
+  .task-settings-trigger.active { background: #ebe8e1; color: var(--text); }
 
   .modal.wide { width: min(520px, 94vw); }
   .trow { display: flex; gap: 12px; }
@@ -17926,6 +18802,32 @@
   .sheet-head { box-sizing: border-box; min-height: 48px; display: flex; justify-content: space-between; align-items: center; padding: 7px 14px; border-bottom: 1px solid var(--border); }
   .sheet-head > b { min-width: 0; overflow: hidden; font-size: 13.5px; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; }
   .sheet-body { padding: 16px 18px; overflow-y: auto; display: flex; flex-direction: column; gap: 7px; }
+  :global(.modal[data-dialog-geometry="true"] > .sheet-head) { flex: none; user-select: none; }
+  :global(.modal[data-dialog-geometry="true"] > .sheet-head[data-dialog-dragging="true"]) { cursor: grabbing !important; }
+  :global(.modal[data-dialog-resizable="true"] > .sheet-body) { flex: 1 1 auto; min-width: 0; min-height: 0; }
+  :global(.modal[data-dialog-resizable="true"] > .sheet-body > textarea.tin) { flex: 1 1 auto; min-height: 120px; resize: none; }
+  :global(.modal.integration-modal[data-dialog-resizable="true"] .integration-body) { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+  :global(.modal.deployment-modal[data-dialog-resizable="true"] .deployment-body) { flex: 1 1 auto; }
+  :global(.modal.deployment-modal[data-dialog-resizable="true"] .deployment-wizard) { height: 100%; max-height: none; }
+  :global(.modal.deployment-modal[data-dialog-resizable="true"] .deployment-stage) { flex: 1 1 auto; }
+  :global(.modal.quick-site-modal[data-dialog-resizable="true"] .quick-site-form) { width: 100%; min-width: 0; height: 100%; }
+  :global([data-dialog-resize="se"])::after {
+    position: absolute;
+    right: 3px;
+    bottom: 3px;
+    width: 6px;
+    height: 6px;
+    border-right: 1.5px solid var(--faint);
+    border-bottom: 1.5px solid var(--faint);
+    content: "";
+    opacity: .52;
+    transition: border-color .15s, opacity .15s;
+  }
+  :global([data-dialog-resize="se"]:hover)::after,
+  :global([data-dialog-resize="se"]:focus-visible)::after { border-color: var(--accent); opacity: .9; }
+  :global(.sheet-width-handle:hover .sheet-width-handle-grip),
+  :global(.sheet-width-handle:focus-visible .sheet-width-handle-grip) { background: var(--accent) !important; opacity: .82 !important; }
+  :global(.sheet-width-handle:focus-visible) { outline: 2px solid var(--accent) !important; outline-offset: -4px !important; }
   .new-site-mask { z-index: 72; }
   .modal.new-site-choice-modal, .modal.quick-site-modal { z-index: 73; border-radius: 18px; }
   .modal.new-site-choice-modal { width: min(460px, calc(100vw - 40px)); }
@@ -18287,6 +19189,7 @@
   .gcms-card-menu { z-index: 190; min-width: 180px; max-width: min(240px, calc(100vw - 16px)); padding: 4px; border-radius: 9px; visibility: hidden; }
   .gcms-card-menu.ready { visibility: visible; }
   .site-card-menu { width: max-content; min-width: 0; max-width: min(220px, calc(100vw - 16px)); }
+  .task-card-menu { width: max-content; min-width: 112px; max-width: min(180px, calc(100vw - 16px)); }
   .gcms-card-menu .ctx-item { justify-content: flex-start; gap: 7px; padding: 5px 7px; border-radius: 6px; font-size: 11.5px; line-height: 1.25; }
   .gcms-card-menu .ctx-item span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .gcms-card-menu .ctx-item svg { width: 12px; height: 12px; flex: none; color: var(--faint); }
@@ -18717,6 +19620,79 @@
   .ss-dot.off { background: #b7b2a9; }
   .ss-dot.err { background: #c94f37; }
   .ss-dot.warn { background: #d9a400; }
+  .ss-site-jump-trigger { display: inline-flex; align-items: baseline; gap: 5px; padding: 1px 2px; border: 0; border-radius: 6px; outline: none; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+  .ss-site-jump-trigger:focus-visible { box-shadow: 0 0 0 2px rgb(65 57 43 / 14%); }
+  .ss-jump-chev { flex: none; align-self: center; color: var(--faint); transition: transform .12s; }
+  .ss-site-jump:hover .ss-jump-chev,
+  .ss-site-jump:focus-within .ss-jump-chev { transform: rotate(180deg); }
+  .ss-pop-menu.ss-site-menu {
+    width: min(232px, calc(100vw - 24px));
+    max-height: min(300px, calc(100vh - 120px));
+    box-sizing: border-box;
+    padding: 4px;
+    overflow: hidden;
+  }
+  .ss-site-search { z-index: 1; display: block; flex: none; padding: 1px 1px 4px; border-bottom: 1px solid var(--line); background: #fff; }
+  .ss-site-search input { width: 100%; box-sizing: border-box; padding: 5px 7px; border: 0; border-radius: 6px; outline: none; background: #f3f1ec; color: var(--text); font: inherit; font-size: 11px; }
+  .ss-site-search input:focus { box-shadow: inset 0 0 0 1px #cfc9bd; background: #fff; }
+  .ss-site-menu-body {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    flex: 1;
+    min-height: 0;
+    max-height: min(260px, calc(100vh - 160px));
+  }
+  .ss-site-menu-body.indexed { grid-template-columns: 18px minmax(0, 1fr); }
+  .ss-site-alpha {
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1px;
+    padding: 2px 1px;
+    border-right: 1px solid var(--line);
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    scrollbar-width: none;
+  }
+  .ss-site-alpha::-webkit-scrollbar { display: none; }
+  .ss-site-alpha button {
+    flex: none;
+    width: 16px;
+    height: 16px;
+    display: inline-grid;
+    place-items: center;
+    padding: 0;
+    border: 0;
+    border-radius: 4px;
+    outline: none;
+    background: transparent;
+    color: var(--faint);
+    font: inherit;
+    font-size: 8.5px;
+    font-weight: 650;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .ss-site-alpha button:hover,
+  .ss-site-alpha button:focus-visible { background: #eeeae2; color: var(--text); }
+  .ss-site-menu-list { position: relative; min-width: 0; min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior-y: contain; }
+  .md-site-jump { width: 100%; min-width: 0; box-sizing: border-box; display: grid; grid-template-columns: 17px minmax(0, 1fr) auto; align-items: center; gap: 6px; padding: 5px 6px; border: 0; border-radius: 6px; background: transparent; color: var(--text); text-align: left; font: inherit; cursor: pointer; }
+  .md-site-jump:hover, .md-site-jump:focus-visible { outline: none; background: #f2f0eb; }
+  .md-site-jump-copy { min-width: 0; display: grid; gap: 1px; }
+  .md-site-jump-copy b, .md-site-jump-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .md-site-jump-copy b { font-size: 11px; line-height: 1.25; font-weight: 600; }
+  .md-site-jump-copy small { color: var(--faint); font-size: 9px; line-height: 1.25; }
+  .md-site-jump-state { flex: none; padding: 1px 5px; border-radius: 999px; background: #e8f3ec; color: #27704c; font-size: 9px; }
+  .md-site-jump-state.task-site-count { background: #e8f3ec; color: #27704c; }
+  .md-site-jump-state.task-site-count.partial { background: #fbf1dc; color: #94621c; }
+  .md-site-jump-state.task-site-count.paused { background: #efede8; color: var(--faint); }
+  .task-site-jump.paused .md-site-jump-copy b { color: var(--dim); font-weight: 500; }
+  .task-site-jump.paused .md-site-jump-copy small { color: #b4afa5; }
+  .md-site-jump-state.paused { background: #efede8; color: var(--dim); }
+  .md-site-jump-state.fused { background: #f9eae6; color: #a84936; }
+  .ss-site-empty { padding: 12px 8px; color: var(--faint); font-size: 11px; text-align: center; }
   /* 全局共享 hover 气泡：挂到 body，真实测量后避让四边；高于弹窗，永远不被局部层级压住。 */
   :global(.ui-tip) { position: fixed; z-index: 1400; box-sizing: border-box; pointer-events: none; visibility: hidden; background: #26241f; color: #fff; font-size: 11px; line-height: 1.5; padding: 5px 9px; border-radius: 7px; width: max-content; max-width: min(320px, calc(100vw - 16px)); white-space: pre-line; overflow-wrap: anywhere; text-align: left; box-shadow: 0 5px 16px rgba(0, 0, 0, .18); animation: tipin .12s ease-out both; }
   .md-exc { display: flex; align-items: center; gap: 6px; width: fit-content; max-width: 100%; padding: 2px 6px; margin-left: -6px; border: none; background: none; border-radius: 7px; font-size: 12px; color: var(--dim); cursor: pointer; text-align: left; }
@@ -18758,6 +19734,8 @@
   .md-title-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0; }
   .md-title-row > b { display: inline-flex; align-items: center; gap: 4px; min-width: 0; }
   .md-title-row > b :global(.site-fav) { flex: none; }
+  .md-mode-badge { display: inline-flex; align-items: center; min-height: 20px; padding: 1px 7px; border-radius: 999px; background: #f0eee8; color: var(--dim); font-size: 10.5px; line-height: 1.2; white-space: nowrap; }
+  .md-mode-badge.growth { background: #e8f2ec; color: #27704c; }
   .md-model-badge { display: inline-flex; align-items: center; margin-left: 1px; }
   .md-model-badge :global(.fx-trigger) { height: 22px; border: 1px solid var(--border2); border-radius: 999px; background: #f7f4ee; padding: 0 8px; font-size: 10.5px; }
   .md-model-badge :global(.fx-trigger:hover), .md-model-badge :global(.fx-trigger.open) { border-color: var(--accent); color: var(--accent); background: #fff; }
@@ -18771,6 +19749,10 @@
   .md-actions .link { padding: 3px 9px; border-radius: 999px; font-size: 12px; color: var(--dim, #6b675f); }
   .md-actions .link:hover { background: #f1efe9; color: var(--text, #26241f); text-decoration: none; }
   .md-actions .link.md-primary { color: var(--accent); box-shadow: inset 0 0 0 1px #e6cabb; }
+  .md-actions .md-panel-toggle { display: inline-flex; align-items: center; gap: 3px; }
+  .md-panel-chevron { flex: none; opacity: .62; transition: transform 140ms ease, opacity 140ms ease; }
+  .md-panel-toggle:hover .md-panel-chevron { opacity: 1; }
+  .md-panel-toggle[aria-expanded="true"] .md-panel-chevron { opacity: .9; transform: rotate(180deg); }
   /* 等级选择器伪装成头部徽标（bare 触发器 + 绿底胶囊） */
   .md-lv-badge { display: inline-block; margin-left: 8px; vertical-align: 1px; }
   .md-lv-badge :global(.dd) { width: auto; }
@@ -18788,11 +19770,272 @@
   .md-prev:hover { color: var(--accent); }
   .md-plan { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; }
   .md-plan textarea { font-size: 12.5px; line-height: 1.6; }
+  .md-growth-position-summary {
+    min-width: 0;
+    margin-top: 8px;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    background: #fbfaf7;
+    overflow: hidden;
+  }
+  .md-growth-position-summary > div { min-width: 0; display: grid; gap: 2px; padding: 7px 9px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+  .md-growth-position-summary > div:nth-child(2n) { border-right: 0; }
+  .md-growth-position-summary > div.wide { grid-column: 1 / -1; border-right: 0; }
+  .md-growth-position-summary > div:last-child { border-bottom: 0; }
+  .md-growth-position-summary small { color: var(--faint); font-size: 9.5px; }
+  .md-growth-position-summary b { min-width: 0; overflow: hidden; font-size: 10.5px; line-height: 1.45; text-overflow: ellipsis; white-space: nowrap; }
+  .md-growth-position-summary .muted b { color: #8a641d; font-weight: 500; }
+  .md-growth-panel {
+    min-width: 0;
+    margin-top: 8px;
+    padding: 10px;
+    border: 1px solid #d8e5dc;
+    border-radius: 11px;
+    background: #f8fbf9;
+  }
+  .md-growth-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .md-growth-panel-head > span { min-width: 0; display: grid; gap: 1px; }
+  .md-growth-panel-head b { font-size: 12.5px; }
+  .md-growth-panel-head small { overflow: hidden; color: var(--faint); font-size: 10.5px; text-overflow: ellipsis; white-space: nowrap; }
+  .md-growth-panel-head .icon-btn.sm { width: 25px; height: 25px; flex: none; }
+  .md-growth-sources { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+  .md-growth-sources > span {
+    min-height: 21px;
+    padding: 1px 7px;
+    border-radius: 999px;
+    background: #efede8;
+    color: var(--dim);
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 10px;
+    line-height: 1.3;
+  }
+  .md-growth-sources > span > i { width: 5px; height: 5px; flex: none; border-radius: 50%; background: #b0aba1; }
+  .md-growth-sources > span.ready { background: #e8f3ec; color: #27704c; }
+  .md-growth-sources > span.ready > i { background: #23905b; }
+  .md-growth-notice, .md-growth-error {
+    margin: 8px 0 0;
+    padding: 6px 8px;
+    border-radius: 7px;
+    font-size: 10.5px;
+    line-height: 1.5;
+  }
+  .md-growth-notice { background: #f8f1e3; color: #8a641d; }
+  .md-growth-error { background: #f9ece8; color: #9c422f; }
+  .md-growth-empty { min-height: 54px; margin-top: 8px; border: 1px dashed #d8ded9; border-radius: 8px; display: grid; place-content: center; gap: 2px; text-align: center; }
+  .md-growth-empty > span { font-size: 11.5px; font-weight: 600; }
+  .md-growth-empty > small { color: var(--faint); font-size: 10px; }
+  .md-growth-opps { display: grid; gap: 7px; margin-top: 8px; }
+  .md-growth-opp {
+    min-width: 0;
+    padding: 8px 9px;
+    border: 1px solid #e2e0d9;
+    border-radius: 8px;
+    background: #fff;
+  }
+  .md-growth-opp.queued { border-color: #c8dfd0; background: #fbfefc; }
+  .md-growth-opp.observing { border-color: #d8dfeb; background: #fbfcfe; }
+  .md-growth-opp-main { min-width: 0; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 7px; }
+  .md-growth-opp-main > b { overflow: hidden; font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
+  .md-growth-action { padding: 1px 6px; border-radius: 999px; background: #e8f2ec; color: #27704c; font-size: 9.5px; white-space: nowrap; }
+  .md-growth-score { color: var(--faint); font-size: 9.5px; white-space: nowrap; }
+  .md-growth-opp > p { margin: 5px 0 0; color: var(--dim); font-size: 10.5px; line-height: 1.5; }
+  .md-growth-evidence { display: flex; align-items: center; flex-wrap: wrap; gap: 3px 10px; margin-top: 5px; color: var(--faint); font-size: 9.5px; }
+  .md-growth-reviews { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+  .md-growth-review {
+    min-width: 0;
+    padding: 4px 6px;
+    border: 1px solid #dce5df;
+    border-radius: 6px;
+    background: #f5faf7;
+    color: var(--dim);
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 2px 6px;
+    font-size: 9px;
+    line-height: 1.4;
+  }
+  .md-growth-review > b { color: #28704c; font-size: 9.5px; white-space: nowrap; }
+  .md-growth-review > span { white-space: nowrap; }
+  .md-growth-opp-actions { display: flex; align-items: center; justify-content: flex-end; gap: 9px; margin-top: 7px; padding-top: 7px; border-top: 1px dashed var(--line); }
+  .md-growth-opp-actions .btn.sm { min-height: 27px; padding: 0 10px; font-size: 10.5px; }
+  .md-growth-opp-actions .link { color: var(--dim); font-size: 10.5px; }
+  .md-growth-watch-tip { margin-right: auto; color: var(--faint); font-size: 9.5px; }
   .md-genrow { display: flex; align-items: center; gap: 10px; margin: 6px 0 10px; }
   /* 向导按当前步骤内容自适应；只有第 3 步内容超过视口时才让正文滚动。 */
   .md-managed-wizard { height: fit-content; max-height: 88vh; overflow: hidden; }
   .md-managed-wizard .sheet-body { flex: 1 1 auto; min-height: 0; padding-bottom: 16px; }
   .md-managed-wizard .sheet-body > * { flex-shrink: 0; }
+  .md-mode-intro { display: grid; gap: 3px; margin-bottom: 4px; }
+  .md-mode-intro b { font-size: 14px; }
+  .md-mode-intro span { color: var(--dim); font-size: 11.5px; line-height: 1.5; }
+  .md-mode-options { display: grid; gap: 10px; }
+  .md-mode-option {
+    appearance: none;
+    width: 100%;
+    display: grid;
+    grid-template-columns: 44px minmax(0, 1fr);
+    align-items: center;
+    gap: 12px;
+    padding: 14px;
+    border: 1px solid var(--border2);
+    border-radius: 12px;
+    background: #fff;
+    color: var(--text);
+    text-align: left;
+    font: inherit;
+    cursor: pointer;
+    transition: border-color 140ms ease, background 140ms ease, transform 140ms ease;
+  }
+  .md-mode-option:hover { border-color: #cdbeb2; background: #fcfbf8; transform: translateY(-1px); }
+  .md-mode-option.growth { border-color: #d9c29d; background: #fffcf6; }
+  .md-mode-option.growth:hover { border-color: #b78b4a; }
+  .md-mode-icon { width: 42px; height: 42px; display: inline-grid; place-items: center; border-radius: 11px; background: #f0eee8; color: var(--dim); }
+  .md-mode-icon.growth { background: #edf5ef; color: #28704c; }
+  .md-mode-copy { min-width: 0; display: grid; gap: 4px; }
+  .md-mode-copy strong { font-size: 14px; line-height: 1.25; }
+  .md-mode-copy small { color: var(--dim); font-size: 11.5px; line-height: 1.5; }
+  .md-mode-copy em { color: var(--accent); font-size: 11.5px; font-style: normal; font-weight: 600; }
+  .md-mode-name { display: flex; align-items: center; gap: 7px; }
+  .md-mode-name i { padding: 2px 7px; border-radius: 999px; background: #f6ead2; color: #9a6416; font-size: 9.5px; line-height: 1.35; font-style: normal; }
+  .md-mode-note { margin: 2px 0 0; text-align: center; color: var(--faint); font-size: 10.5px; }
+  .md-growth-data { display: grid; gap: 10px; padding: 13px; border: 1px solid var(--border2); border-radius: 11px; background: #fbfaf7; }
+  .md-growth-data-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .md-growth-data-head > span { display: grid; gap: 2px; }
+  .md-growth-data-head b { font-size: 13px; }
+  .md-growth-data-head small { color: var(--dim); font-size: 10.5px; }
+  .md-growth-data-head em { flex: none; padding: 3px 8px; border-radius: 999px; background: #e8f2ec; color: #27704c; font-size: 10.5px; font-style: normal; }
+  .md-growth-data-head em.partial { background: #f7eedb; color: #956619; }
+  .md-growth-data-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
+  .md-growth-data-grid > span { min-width: 0; display: grid; grid-template-columns: 17px minmax(0, 1fr); column-gap: 5px; row-gap: 1px; align-items: center; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+  .md-growth-data-grid i { grid-row: 1 / 3; width: 16px; height: 16px; display: inline-grid; place-items: center; border-radius: 50%; background: #e6f3eb; color: #227148; font-size: 10px; font-style: normal; font-weight: 700; }
+  .md-growth-data-grid .pending i { background: #f7edd9; color: #a06c16; }
+  .md-growth-data-grid b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10.5px; }
+  .md-growth-data-grid small { color: var(--faint); font-size: 9.5px; }
+  .md-growth-data > p { margin: -1px 0 0; color: #8a641d; font-size: 10.5px; line-height: 1.5; }
+  .md-growth-position-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
+  .md-growth-position-head > span { display: grid; gap: 2px; }
+  .md-growth-position-head b { font-size: 14px; }
+  .md-growth-position-head small { color: var(--dim); font-size: 11px; }
+  .md-growth-position-head em { color: var(--faint); font-size: 10px; font-style: normal; white-space: nowrap; }
+  .md-growth-auto {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: 36px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    padding: 11px 12px;
+    border: 1px solid #cfe1d5;
+    border-radius: 11px;
+    background: #f6faf7;
+  }
+  .md-growth-auto.with-input { border-color: #d9c29d; background: #fffcf6; }
+  .md-growth-auto .md-mode-icon { width: 34px; height: 34px; border-radius: 9px; }
+  .md-growth-auto-copy { min-width: 0; display: grid; gap: 2px; }
+  .md-growth-auto-copy > span { display: flex; align-items: center; gap: 7px; }
+  .md-growth-auto-copy b { font-size: 13px; }
+  .md-growth-auto-copy i {
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: #e6f2ea;
+    color: #28704c;
+    font-size: 9.5px;
+    font-style: normal;
+    font-weight: 650;
+  }
+  .md-growth-auto-copy small { color: var(--dim); font-size: 10.5px; line-height: 1.45; }
+  .md-growth-auto-copy em { color: var(--faint); font-size: 10px; line-height: 1.4; font-style: normal; }
+  .md-growth-auto-state {
+    align-self: start;
+    padding: 3px 8px;
+    border-radius: 999px;
+    background: #e6f2ea;
+    color: #28704c;
+    font-size: 10px;
+    white-space: nowrap;
+  }
+  .md-growth-position-toggle,
+  .md-growth-boundary-toggle {
+    appearance: none;
+    width: 100%;
+    border: 1px solid var(--border2);
+    background: #fff;
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .md-growth-position-toggle {
+    min-height: 52px;
+    margin-top: 3px;
+    padding: 9px 12px;
+    border-radius: 10px;
+  }
+  .md-growth-position-toggle:hover,
+  .md-growth-boundary-toggle:hover { border-color: #cdbeb2; background: #fcfbf8; }
+  .md-growth-position-toggle:focus-visible,
+  .md-growth-boundary-toggle:focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 32%, transparent); outline-offset: 1px; }
+  .md-growth-position-toggle > span,
+  .md-growth-boundary-toggle > span { min-width: 0; display: grid; gap: 2px; }
+  .md-growth-position-toggle b { font-size: 12.5px; }
+  .md-growth-position-toggle small,
+  .md-growth-boundary-toggle small { color: var(--faint); font-size: 10px; line-height: 1.4; }
+  .md-growth-position-toggle > svg,
+  .md-growth-boundary-toggle > svg { flex: none; color: var(--faint); transition: transform 140ms ease; }
+  .md-growth-position-toggle > svg.open,
+  .md-growth-boundary-toggle > svg.open { transform: rotate(180deg); }
+  .md-growth-position-fields {
+    display: grid;
+    gap: 9px;
+    padding: 11px 12px;
+    border: 1px solid var(--border2);
+    border-radius: 10px;
+    background: #fbfaf7;
+  }
+  .md-growth-position-section { display: grid; gap: 8px; }
+  .md-growth-position-label { display: flex; align-items: baseline; gap: 7px; }
+  .md-growth-position-label b { font-size: 12px; }
+  .md-growth-position-label small { color: var(--faint); font-size: 10px; }
+  .md-growth-boundary-toggle {
+    min-height: 42px;
+    padding: 7px 9px;
+    border-radius: 8px;
+    background: #fff;
+  }
+  .md-growth-boundary-toggle b { font-size: 11.5px; }
+  .md-growth-boundary-fields { display: grid; gap: 8px; padding: 1px 2px 0; }
+  .md-growth-position-note {
+    margin: 0;
+    padding: 7px 9px;
+    border-radius: 7px;
+    background: #f2f7f3;
+    color: var(--dim);
+    font-size: 10px;
+    line-height: 1.5;
+  }
+  .md-growth-review { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid #d9c29d; border-radius: 10px; background: #fffcf6; }
+  .md-growth-review .md-mode-icon { width: 34px; height: 34px; border-radius: 8px; }
+  .md-growth-review > span:not(.md-mode-icon) { min-width: 0; display: grid; gap: 2px; }
+  .md-growth-review b { font-size: 13px; }
+  .md-growth-review small { color: var(--dim); font-size: 10.5px; }
+  .md-growth-review em { margin-left: auto; padding: 3px 8px; border-radius: 999px; background: #e8f2ec; color: #27704c; font-size: 10px; font-style: normal; white-space: nowrap; }
+  .md-growth-loop { display: grid; grid-template-columns: 1fr auto 1fr auto 1fr; align-items: center; gap: 7px; margin: 2px 0 8px; }
+  .md-growth-loop > span { display: grid; grid-template-columns: 20px minmax(0, 1fr); column-gap: 5px; align-items: center; padding: 7px 8px; border-radius: 8px; background: #f4f2ed; }
+  .md-growth-loop > span > i { grid-row: 1 / 3; width: 19px; height: 19px; display: inline-grid; place-items: center; border-radius: 50%; background: #fff; color: var(--accent); font-size: 9.5px; font-style: normal; font-weight: 700; }
+  .md-growth-loop b { font-size: 10.5px; }
+  .md-growth-loop small { color: var(--faint); font-size: 9px; }
+  .md-growth-loop > i { color: var(--faint); font-style: normal; font-size: 11px; }
+  .md-growth-safe { min-width: 0; display: grid; align-content: center; gap: 3px; padding: 8px 10px; border: 1px solid #d9e7dd; border-radius: 8px; background: #f2f8f4; }
+  .md-growth-safe b { color: #27704c; font-size: 11.5px; }
+  .md-growth-safe small { color: var(--dim); font-size: 10.5px; line-height: 1.45; }
   .md-wizard-footer {
     flex: none;
     display: flex;
@@ -18936,6 +20179,9 @@
     .sitebuild-guide-footer { padding-inline: 16px; }
     .sitebuild-safe-note { padding-inline: 16px; text-align: left; }
     .md-model-grid, .md-managed-wizard .trow { grid-template-columns: 1fr; }
+    .md-growth-data-grid { grid-template-columns: 1fr; }
+    .md-growth-loop { grid-template-columns: 1fr; }
+    .md-growth-loop > i { display: none; }
     .md-wizard-footer { padding: 5px 12px 7px; }
     .md-wizard-footer .md-pre-ack { display: none; }
     .md-prompt-tabs { width: 100%; overflow-x: auto; }
