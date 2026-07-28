@@ -469,6 +469,11 @@ func (s *Server) controlSiteRequiresUnlock(site *platform.Site) (bool, error) {
 	if site.IsDefault {
 		return true, nil
 	}
+	// Cloudflare 托管发布可能不写入 site_domains，但仍然已经存在真实公网入口；
+	// 必须与发现接口和站点卡片的“已绑定域名”口径一致，不能因此免除线上保护。
+	if publicURL, _ := s.platformOfficialSiteURL(site.ID); strings.TrimSpace(publicURL) != "" {
+		return true, nil
+	}
 	domains, err := s.controlDomainsForSite(site.ID)
 	if err != nil {
 		return true, err

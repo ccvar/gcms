@@ -297,3 +297,102 @@ func TestPlatformNativePageUnlockUsesSiteBoundChallenge(t *testing.T) {
 		t.Fatalf("platform publish = %d %s", published.Code, published.Body.String())
 	}
 }
+
+func TestPlatformUnboundSitePagePublishDoesNotRequirePasswordUnlock(t *testing.T) {
+	root, handler, platformStore, _, blogSite := setupPlatformAutomation(t)
+	if err := platformStore.ReplaceSiteDomains(blogSite.ID, nil); err != nil {
+		t.Fatalf("clear blog domains: %v", err)
+	}
+	platformToken := "gcmsp_page_unbound_publish_2026"
+	if _, err := platformStore.CreatePlatformKey(
+		"pilot-unbound-pages", platformToken, platformToken[:13], platform.KeyMembershipAll,
+		strings.Join([]string{apiScopePageProjectsRead, apiScopePagesPublish}, ","),
+		nil, time.Time{},
+	); err != nil {
+		t.Fatal(err)
+	}
+	runtime, ok := root.runtimePool().runtimeByID(blogSite.ID)
+	if !ok || runtime.Store == nil {
+		t.Fatal("blog runtime unavailable")
+	}
+	pageID, err := runtime.Store.CreatePost(&store.Post{
+		Type: "page", Lang: "zh", Slug: "unbound-publish-page",
+		Title: "未绑定域名页面", Content: "baseline", Status: "draft",
+		TransGroup: "zh:unbound-publish-page",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err := runtime.Store.CreatePageProject(store.CreatePageProjectInput{
+		PostID: pageID, Mode: store.PageModeComposition, SchemaVersion: 1,
+		ShellMode: store.PageShellSite, CreatedBy: store.PageOriginAPI,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision, _, err := runtime.Store.CreatePageProjectRevision(store.CreatePageRevisionInput{
+		ProjectID: project.ID, RevisionKind: store.PageRevisionStandardBaseline,
+		PageMetaJSON: `{"lang":"zh","slug":"unbound-publish-page","title":"未绑定域名页面"}`,
+		ManifestJSON: "{}", StandardContent: "baseline",
+		Origin: store.PageOriginAPI, ActorID: "test", RequestID: "unbound-baseline",
+		Summary: "baseline", ValidationJSON: `{"valid":true}`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, err = runtime.Store.GetPageProject(project.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prefix := "/api/platform/v1/sites/" + strconv.FormatInt(blogSite.ID, 10)
+	base := prefix + "/page-projects/" + strconv.FormatInt(project.ID, 10)
+	body := map[string]any{"revision_id": revision.ID}
+	capabilityRequest := httptest.NewRequest(
+		http.MethodGet, "https://platform.test"+prefix+"/page-platform/capabilities", nil,
+	)
+	capabilityRequest.Header.Set("Authorization", "Bearer "+platformToken)
+	capabilityResponse := httptest.NewRecorder()
+	handler.ServeHTTP(capabilityResponse, capabilityRequest)
+	var capabilities pagePlatformCapabilitiesResponse
+	if capabilityResponse.Code != http.StatusOK {
+		t.Fatalf("unbound capabilities = %d %s", capabilityResponse.Code, capabilityResponse.Body.String())
+	}
+	if err := json.Unmarshal(capabilityResponse.Body.Bytes(), &capabilities); err != nil {
+		t.Fatal(err)
+	}
+	publishCapability := pagePlatformOperationForTest(t, capabilities.Operations, pageApprovalPublish)
+	if publishCapability.RequiresUnlock ||
+		publishCapability.Confirmation != pagePlatformConfirmationExplicit {
+		t.Fatalf("unbound publish capability = %#v", publishCapability)
+	}
+	request := func(path, requestID string) *httptest.ResponseRecorder {
+		raw, marshalErr := json.Marshal(body)
+		if marshalErr != nil {
+			t.Fatal(marshalErr)
+		}
+		req := httptest.NewRequest(http.MethodPost, "https://platform.test"+path, bytes.NewReader(raw))
+		req.Header.Set("Authorization", "Bearer "+platformToken)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set(pagePlatformConcurrencyHeader, project.ETag())
+		if requestID != "" {
+			req.Header.Set(pagePlatformIdempotencyHeader, requestID)
+		}
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, req)
+		return response
+	}
+	plan := request(base+"/publish-plan", "")
+	if plan.Code != http.StatusOK ||
+		!strings.Contains(plan.Body.String(), `"requires_approval_token":false`) {
+		t.Fatalf("unbound publish plan = %d %s", plan.Code, plan.Body.String())
+	}
+	published := request(base+"/publish", "unbound-page-publish")
+	if published.Code != http.StatusCreated ||
+		strings.Contains(published.Body.String(), `"unlock_required":true`) {
+		t.Fatalf("unbound publish = %d %s", published.Code, published.Body.String())
+	}
+	publication, err := runtime.Store.GetPageProject(project.ID)
+	if err != nil || publication == nil || publication.PublishedRevisionID != revision.ID {
+		t.Fatalf("published project = %#v err=%v", publication, err)
+	}
+}

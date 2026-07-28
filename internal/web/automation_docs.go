@@ -703,7 +703,7 @@ func automationOpenAPISpec(apiBase string) map[string]any {
 	} {
 		op := pageOperation(operation[0], operation[1], []map[string]any{pageProjectParam}, true, true)
 		op["parameters"] = append(op["parameters"].([]map[string]any), pageNativeUnlockHeader)
-		op["description"] = "先调用对应 *-plan。正式请求缺少确认时返回 unlock_required + 服务端签名 page_challenge；后台密码只由 Pilot 原生界面提交。原生令牌绑定 operation/site/page/project/revision/build/实时数据快照/ETag/request-id/主体，approval token 永不进入模型上下文。"
+		op["description"] = "先调用对应 *-plan。默认站或已绑定域名的站点在正式请求缺少确认时返回 unlock_required + 服务端签名 page_challenge；未绑定域名的非默认站仍要求显式 confirm、If-Match 与 request-id，但不要求后台密码。后台密码只由 Pilot 原生界面提交；原生令牌绑定 operation/site/page/project/revision/build/实时数据快照/ETag/request-id/主体，approval token 永不进入模型上下文。"
 		op["requestBody"] = pageJSONRequestBody(
 			[]string{"revision_id"},
 			map[string]any{

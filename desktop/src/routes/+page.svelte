@@ -8654,15 +8654,8 @@
     const created = quickSiteResult?.item;
     const slug = created?.slug || quickSiteSlug.trim();
     const name = quickSiteCreatedSite?.name || created?.name || quickSiteName.trim() || slug;
-    const brain = brainUsable(lBrain) ? lBrain : firstUsableBrain();
-    if (!brainUsable(brain)) {
-      quickSiteError = '还没有可用的 AI，请先在“连接与模型设置”中完成一个模型授权。';
-      return;
-    }
-    const model = brain === lBrain && isLauncherModel(brain, lModel) ? lModel : defaultModelFor(brain);
-    const effort = brain === lBrain ? lEffort : '';
     const text = [
-      `站点「${name}」（slug=${slug}）已经通过 Pilot 快速创建，并已绑定到当前对话。`,
+      `站点「${name}」（slug=${slug}）已经通过 Pilot 快速创建。`,
       '',
       '本轮只做只读检查：',
       '1. 实时读取当前站点资料、站点类型、主题、内容数量和上线准备状态；',
@@ -8671,32 +8664,20 @@
       '',
       '本轮不要创建、修改、删除或发布任何内容，不要应用主题，不要配置域名、DNS、Cloudflare、Caddy 或 HTTPS。等我明确选择下一步后再执行写操作。',
     ].join('\n');
-    const id = crypto.randomUUID();
-    const now = Math.floor(Date.now() / 1000);
-    const connId = quickSiteConnId;
-    const optimistic: Conversation = {
-      id, conn_id: connId, conn_name: quickSiteConnection()?.name ?? '', site_slug: slug, site_name: name, site_slugs: [],
-      workspace_dir: '', task_type: 'sitebuild', brain, model, perm_mode: 'auto', effort, session_ref: '',
-      title: `继续完善 ${name}`, messages: [optimisticUser(text)], status: 'running', created_at: now, updated_at: now,
-    };
+
+    // 这里只准备一条正常的新对话，不替用户发送。这样站点上下文已经选好，
+    // 但用户仍可编辑提示词、切换厂商/模型、思考强度和权限后再主动发送。
     quickSiteOpen = false;
-    convos = [optimistic, ...convos];
-    delete autoRetried[id];
-    beginTurn(id, optimistic);
-    try {
-      const conv = await invoke<Conversation>('start_conversation', {
-        convId: id, connId, siteSlug: slug, siteName: name, siteSlugs: [], siteNames: [],
-        taskType: 'sitebuild', brain, model, permMode: 'auto', effort, fast: lFast, workspaceDir: '',
-        message: text, onEvent: makeChannel(id),
-      });
-      await refreshConvos();
-      const failed = lives[id]?.failed ?? false;
-      const errText = lives[id]?.error ?? '';
-      endTurn(conv, id);
-      maybeAutoRetry(id, failed, errText);
-    } catch (error) {
-      await failTurn(error, id);
-    }
+    newChat();
+    selectLauncherTask('siteops');
+    lSite = slug;
+    lSites = [];
+    lDraft = text;
+    view = 'launcher';
+    await tick();
+    lDraftEl?.focus();
+    const end = lDraft.length;
+    lDraftEl?.setSelectionRange(end, end);
   }
   function operateSite(site: Site) {
     if (site.status === 'disabled') return;
@@ -16575,10 +16556,10 @@
       <div class="sheet-body quick-site-body quick-site-success">
         <span class="quick-site-success-mark" aria-hidden="true"><svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="m6.5 12.5 3.4 3.4 7.8-8.1" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" /></svg></span>
         <div><b>{quickSiteResult?.item?.name || quickSiteName}</b><small>{quickSiteResult?.item?.slug || quickSiteSlug}</small></div>
-        <p>基础站点已经通过 Pilot 创建。接下来可以让 AI 读取真实状态并继续完善，也可以先返回站点列表。</p>
+        <p>基础站点已经通过 Pilot 创建。接下来可以把建议任务带到对话中，调整提示词和模型后再发送；也可以先返回站点列表。</p>
         <div class="quick-site-next">
           <span><b>当前状态</b><small>{quickSiteSeed === 'demo' ? '已导入演示内容；尚未配置域名和主题' : '未导入演示内容；尚未配置域名和主题'}</small></span>
-          <span><b>推荐下一步</b><small>由 AI 检查上线准备项并制定建设顺序</small></span>
+          <span><b>推荐下一步</b><small>先编辑任务与选择模型，再由 AI 检查上线准备项</small></span>
         </div>
         {#if quickSiteNotice}<div class="quick-site-sync-note">{quickSiteNotice}</div>{/if}
         {#if quickSiteError}<div class="err-note">{quickSiteError}</div>{/if}
@@ -16587,7 +16568,7 @@
         <button class="quick-site-back" type="button" onclick={() => void finishQuickSiteCreate()} disabled={quickSiteBusy}>
           {@render backChevronIcon(13)}<span>返回站点</span>
         </button>
-        <button class="btn primary" type="button" onclick={() => void continueQuickSiteWithAI()} disabled={quickSiteBusy}>继续由 AI 完善</button>
+        <button class="btn primary" type="button" onclick={() => void continueQuickSiteWithAI()} disabled={quickSiteBusy}>去对话中完善</button>
       </footer>
     {/if}
   </div>

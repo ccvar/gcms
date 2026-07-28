@@ -1289,6 +1289,23 @@ func (s *Server) pageRevisionWasPublished(projectID, revisionID int64) (bool, er
 	return false, nil
 }
 
+// 页面发布/回滚只有会改变真实线上入口时才需要后台密码。
+// 单站模式本身就是公开站点；平台模式下，默认站始终在线，非默认站则以
+// 已启用的站点域名为准。无法确认状态时保持 fail-closed。
+func (s *Server) pagePublicationRequiresNativeApproval() (bool, error) {
+	if s.platform == nil || s.platformSiteID <= 0 {
+		return true, nil
+	}
+	site, ok, err := s.platform.GetSite(s.platformSiteID)
+	if err != nil {
+		return true, err
+	}
+	if !ok || site == nil {
+		return true, fmt.Errorf("站点不存在")
+	}
+	return s.controlSiteRequiresUnlock(site)
+}
+
 func (s *Server) publicationPlan(w http.ResponseWriter, r *http.Request, operation string) {
 	if _, ok := s.requirePagePlatformScope(w, r, apiScopePagesPublish); !ok {
 		return
@@ -1360,11 +1377,16 @@ func (s *Server) publicationPlan(w http.ResponseWriter, r *http.Request, operati
 	if build != nil {
 		buildID = build.ID
 	}
+	requiresApproval, err := s.pagePublicationRequiresNativeApproval()
+	if err != nil {
+		apiError(w, http.StatusInternalServerError, "publication_live_status_failed", "无法确认站点是否已上线，未生成发布预检。")
+		return
+	}
 	w.Header().Set("ETag", project.ETag())
 	writeJSON(w, http.StatusOK, map[string]any{
 		"operation": operation, "project_id": project.ID, "page_id": project.PostID,
 		"revision_id": revision.ID, "build_id": buildID, "can_execute": canPublish,
-		"requires_approval_token": true, "approval_token_issued": false,
+		"requires_approval_token": requiresApproval, "approval_token_issued": false,
 		"validation": validation,
 		"impact": map[string]any{
 			"public_revision_from":    project.PublishedRevisionID,
@@ -1535,41 +1557,50 @@ func (s *Server) publishPageProject(w http.ResponseWriter, r *http.Request, oper
 		DataSnapshotHash: serverSnapshotHash,
 		RequestID:        requestID,
 	}
-	approvalToken := strings.TrimSpace(in.ApprovalToken)
-	nativeState := ""
-	if approvalToken == "" {
-		approvalToken, nativeState = resolveNativePageApproval(
-			s, auth, strings.TrimSpace(r.Header.Get(controlUnlockHeader)), approvalTarget,
-		)
+	requiresApproval, err := s.pagePublicationRequiresNativeApproval()
+	if err != nil {
+		apiError(w, http.StatusInternalServerError, "publication_live_status_failed", "无法确认站点是否已上线，未执行页面操作。")
+		return
 	}
-	approval, state := consumePageApprovalToken(s, approvalToken, approvalTarget)
-	if state != "" {
-		challenge, challengeErr := issueNativePageChallenge(s, auth, approvalTarget)
-		if challengeErr != nil {
-			apiError(w, http.StatusInternalServerError, "confirmation_unavailable", "无法创建页面原生确认挑战。")
+	approvalID := ""
+	if requiresApproval {
+		approvalToken := strings.TrimSpace(in.ApprovalToken)
+		nativeState := ""
+		if approvalToken == "" {
+			approvalToken, nativeState = resolveNativePageApproval(
+				s, auth, strings.TrimSpace(r.Header.Get(controlUnlockHeader)), approvalTarget,
+			)
+		}
+		approval, state := consumePageApprovalToken(s, approvalToken, approvalTarget)
+		if state != "" {
+			challenge, challengeErr := issueNativePageChallenge(s, auth, approvalTarget)
+			if challengeErr != nil {
+				apiError(w, http.StatusInternalServerError, "confirmation_unavailable", "无法创建页面原生确认挑战。")
+				return
+			}
+			message := "unlock_required：请在 Pilot 原生界面确认本次页面" +
+				map[bool]string{true: "回滚", false: "发布"}[operation == pageApprovalRollback] +
+				"，后台密码不会进入对话或技能脚本。"
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"error": "publish_confirmation_required", "message": message,
+				"unlock_required": true, "operation": operation,
+				"unlock_challenge": challenge, "unlock_state": nativeState,
+				"site_id": s.platformSiteID, "project_id": project.ID,
+				"page_id": project.PostID, "revision_id": in.RevisionID,
+				"build_id": in.BuildID, "etag": project.ETag(),
+				"data_snapshot_hash": serverSnapshotHash,
+				"request_id":         requestID,
+				"admin_path":         "/admin/pages/" + strconv.FormatInt(project.PostID, 10) + "/project",
+			})
 			return
 		}
-		message := "unlock_required：请在 Pilot 原生界面确认本次页面" +
-			map[bool]string{true: "回滚", false: "发布"}[operation == pageApprovalRollback] +
-			"，后台密码不会进入对话或技能脚本。"
-		writeJSON(w, http.StatusConflict, map[string]any{
-			"error": "publish_confirmation_required", "message": message,
-			"unlock_required": true, "operation": operation,
-			"unlock_challenge": challenge, "unlock_state": nativeState,
-			"site_id": s.platformSiteID, "project_id": project.ID,
-			"page_id": project.PostID, "revision_id": in.RevisionID,
-			"build_id": in.BuildID, "etag": project.ETag(),
-			"data_snapshot_hash": serverSnapshotHash,
-			"request_id":         requestID,
-			"admin_path":         "/admin/pages/" + strconv.FormatInt(project.PostID, 10) + "/project",
-		})
-		return
+		approvalID = approval.ID
 	}
 	s.pagePublicationMu.Lock()
 	publication, created, err := s.store.PublishPageProject(store.PublishPageProjectInput{
 		ProjectID: project.ID, RevisionID: in.RevisionID, BuildID: in.BuildID,
 		ExpectedWorkingRevisionID: project.WorkingRevisionID, Action: action,
-		ApprovalID: approval.ID, ActorID: actorID,
+		ApprovalID: approvalID, ActorID: actorID,
 		Origin: store.PageOriginAPI, RequestID: requestID,
 		RequestHash:      requestHash,
 		DataSnapshotHash: serverSnapshotHash,

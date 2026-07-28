@@ -559,5 +559,19 @@ func (s *Server) servePagePlatformCapabilities(w http.ResponseWriter, r *http.Re
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, pagePlatformCapabilities(auth.scopes))
+	capabilities := pagePlatformCapabilities(auth.scopes)
+	if requiresApproval, err := s.pagePublicationRequiresNativeApproval(); err == nil && !requiresApproval {
+		for i := range capabilities.Operations {
+			if capabilities.Operations[i].ID != pageApprovalPublish &&
+				capabilities.Operations[i].ID != pageApprovalRollback {
+				continue
+			}
+			// 未绑定域名的非默认站没有真实线上入口：仍要求显式 confirm、
+			// request-id 与 If-Match，但不要求后台密码或 approval token。
+			capabilities.Operations[i].RequiresUnlock = false
+			capabilities.Operations[i].Confirmation = pagePlatformConfirmationExplicit
+			capabilities.Operations[i].Concurrency = pagePlatformConcurrencyIfMatch
+		}
+	}
+	writeJSON(w, http.StatusOK, capabilities)
 }
