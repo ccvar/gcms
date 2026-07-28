@@ -140,7 +140,10 @@
 :is([data-theme^="shelf-index"],[data-theme^="tradeoff-sheet"],[data-theme^="progress-bulletin"],[data-theme^="margin-reading-room"],[data-theme^="light-table"],[data-theme^="counterpoint"]) body {
   background:var(--bg); color:var(--ink); font-family:var(--sans);
 }
-:is([data-theme^="shelf-index"],[data-theme^="tradeoff-sheet"],[data-theme^="progress-bulletin"],[data-theme^="margin-reading-room"],[data-theme^="light-table"],[data-theme^="counterpoint"]) main { overflow:hidden; }
+:is([data-theme^="shelf-index"],[data-theme^="tradeoff-sheet"],[data-theme^="progress-bulletin"],[data-theme^="margin-reading-room"],[data-theme^="light-table"],[data-theme^="counterpoint"])
+main:has(> :is(.shelf-index-page,.tradeoff-sheet-page,.progress-bulletin-page,.margin-reading-room-page,.light-table-page,.counterpoint-page)) {
+  overflow:hidden;
+}
 :is([data-theme^="shelf-index"],[data-theme^="tradeoff-sheet"],[data-theme^="progress-bulletin"],[data-theme^="margin-reading-room"],[data-theme^="light-table"],[data-theme^="counterpoint"]) .ec-site-header {
   position:sticky; top:0; z-index:20; height:73px; border:0; border-bottom:1px solid var(--line);
   background:var(--bg); backdrop-filter:none;
@@ -5022,7 +5025,7 @@ img.cover, img.article-cover { object-fit: cover; width: 100%; display: block; }
 }
 
 /* ---- shell: full-bleed, page/body must NOT scroll horizontally ---- */
-[data-theme-layout="deck"] main { display: block; overflow-x: hidden; }
+[data-theme-layout="deck"] main:has(> .deck-shell) { display: block; overflow-x: hidden; }
 [data-theme-layout="deck"] .deck-shell { position: relative; background: var(--bg); }
 
 /* the ONLY horizontal-scroll region */
@@ -7316,7 +7319,8 @@ html[data-theme-layout="poster"] {
 :is([data-theme^="seamless-canvas"],[data-theme^="night-corridor"],[data-theme^="open-ascent"]) body {
   background:var(--bg); color:var(--ink); font-family:var(--sans);
 }
-:is([data-theme^="seamless-canvas"],[data-theme^="night-corridor"],[data-theme^="open-ascent"]) main {
+:is([data-theme^="seamless-canvas"],[data-theme^="night-corridor"],[data-theme^="open-ascent"])
+main:has(> :is(.seamless-canvas-page,.night-corridor-page,.open-ascent-page)) {
   overflow:hidden;
 }
 :is(.seamless-canvas-page,.night-corridor-page,.open-ascent-page) {
@@ -15179,7 +15183,10 @@ html.js-fnav[data-theme-layout="factory-herofold"] .site-header.nav-open { backg
 :is([data-theme^="answer-desk"],[data-theme^="portrait-journal"],[data-theme^="casebook"]) body {
   background:var(--bg); color:var(--ink); font-family:var(--sans);
 }
-:is([data-theme^="answer-desk"],[data-theme^="portrait-journal"],[data-theme^="casebook"]) main { overflow:hidden; }
+:is([data-theme^="answer-desk"],[data-theme^="portrait-journal"],[data-theme^="casebook"])
+main:has(> :is(.answer-desk-page,.portrait-journal-page,.casebook-page)) {
+  overflow:hidden;
+}
 :is([data-theme^="answer-desk"],[data-theme^="portrait-journal"],[data-theme^="casebook"]) .ec-site-header {
   position:sticky; top:0; z-index:20; height:59px; border-top:0;
   border-bottom:1px solid var(--line); background:var(--bg); backdrop-filter:none;

@@ -408,9 +408,24 @@ func TestThemePreviewRendersAllThemes(t *testing.T) {
 		`.mr-hero-media { padding:0; overflow:hidden; background:transparent; }`,
 		`.lt-hero-visual { position:relative; min-height:340px; overflow:hidden; background:transparent; }`,
 		`.cp-hero-media { position:relative; min-height:250px; overflow:hidden; background:transparent; }`,
+		`main:has(> :is(.shelf-index-page,.tradeoff-sheet-page,.progress-bulletin-page,.margin-reading-room-page,.light-table-page,.counterpoint-page)) {`,
+		`main:has(> :is(.seamless-canvas-page,.night-corridor-page,.open-ascent-page)) {`,
+		`main:has(> :is(.answer-desk-page,.portrait-journal-page,.casebook-page)) {`,
+		`[data-theme-layout="deck"] main:has(> .deck-shell) { display: block; overflow-x: hidden; }`,
 	} {
 		if !strings.Contains(publicCSSCache, want) {
 			t.Errorf("editorial collection responsive shell missing CSS contract %q", want)
+		}
+	}
+	for _, forbidden := range []string{
+		`[data-theme^="counterpoint"]) main { overflow:hidden; }`,
+		`[data-theme^="open-ascent"]) main {
+  overflow:hidden;`,
+		`[data-theme^="casebook"]) main { overflow:hidden; }`,
+		`[data-theme-layout="deck"] main { display: block; overflow-x: hidden; }`,
+	} {
+		if strings.Contains(publicCSSCache, forbidden) {
+			t.Errorf("article TOC sticky ancestor still has overflow clipping %q", forbidden)
 		}
 	}
 }
