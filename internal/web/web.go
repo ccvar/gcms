@@ -2875,6 +2875,8 @@ func platformOnlyPath(path string) bool {
 		return true
 	case path == "/admin/server-health":
 		return true
+	case path == "/admin/pre-active", path == "/admin/pre-stable":
+		return true
 	case strings.HasPrefix(path, "/admin/google/"):
 		return true
 	case path == "/admin/backups" || strings.HasPrefix(path, "/admin/backups/"):
@@ -4150,6 +4152,8 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("GET /admin", s.requireAuth(s.adminDashboard))
 	mux.HandleFunc("GET /admin/sites", s.requireAuth(s.adminSites))
 	mux.HandleFunc("GET /admin/server-health", s.requireAuth(s.adminServerHealth))
+	mux.HandleFunc("GET /admin/pre-active", s.requireAuth(s.adminPreviewActivate))
+	mux.HandleFunc("GET /admin/pre-stable", s.requireAuth(s.adminPreviewDeactivate))
 	mux.HandleFunc("GET /admin/google/oauth/start", s.requireAuth(s.adminGoogleOAuthStart))
 	mux.HandleFunc("GET /admin/google/oauth/callback", s.requireAuth(s.adminGoogleOAuthCallback))
 	mux.HandleFunc("POST /admin/google/oauth/config", s.requireAuth(s.adminGoogleOAuthConfig))

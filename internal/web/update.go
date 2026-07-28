@@ -10,13 +10,13 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 
 	"cms.ccvar.com/internal/version"
 )
 
 type UpdateInfo struct {
 	Current         version.Info
+	Channel         string
 	LatestTag       string
 	LatestName      string
 	LatestURL       string
@@ -69,13 +69,23 @@ type manifestAsset struct {
 }
 
 func checkLatestRelease(ctx context.Context) *UpdateInfo {
-	info := currentUpdateInfo()
+	return checkLatestReleaseForChannel(ctx, updateChannelStable)
+}
+
+func checkLatestReleaseForChannel(ctx context.Context, channel string) *UpdateInfo {
+	channel = normalizeUpdateChannel(channel)
+	info := currentUpdateInfoForChannel(channel)
 	cur := info.Current
-	manifestURL := updateManifestURL(cur)
+	manifestURL := updateManifestURLForChannel(cur, channel)
 	if err := fillUpdateFromManifest(ctx, info, manifestURL); err == nil {
 		return info
 	} else {
 		info.Error = "更新清单：" + err.Error()
+	}
+	// Preview 必须故障关闭：私有/预览清单不可达时不能回退到 Stable，
+	// 否则页面展示与真正升级会跨通道，甚至把预览实例指向旧稳定版本。
+	if channel == updateChannelPreview {
+		return info
 	}
 	if err := fillUpdateFromGitHub(ctx, info); err != nil {
 		info.Error = info.Error + "；GitHub API：" + err.Error()
@@ -86,10 +96,35 @@ func checkLatestRelease(ctx context.Context) *UpdateInfo {
 }
 
 func currentUpdateInfo() *UpdateInfo {
-	return &UpdateInfo{Current: version.Current(), CheckedAt: time.Now()}
+	return currentUpdateInfoForChannel(updateChannelStable)
+}
+
+func currentUpdateInfoForChannel(channel string) *UpdateInfo {
+	return &UpdateInfo{
+		Current:   version.Current(),
+		Channel:   normalizeUpdateChannel(channel),
+		CheckedAt: time.Now(),
+	}
 }
 
 func updateManifestURL(cur version.Info) string {
+	return updateManifestURLForChannel(cur, updateChannelStable)
+}
+
+func updateManifestURLForChannel(cur version.Info, channel string) string {
+	if normalizeUpdateChannel(channel) == updateChannelPreview {
+		if v := strings.TrimSpace(os.Getenv("GCMS_PREVIEW_UPDATE_URL")); v != "" {
+			return v
+		}
+		repo := strings.TrimSpace(os.Getenv("GCMS_PREVIEW_RELEASE_REPO"))
+		if repo == "" {
+			repo = strings.TrimSpace(version.PreviewRepo)
+		}
+		if repo == "" {
+			repo = "ccvar/gcms-preview-releases"
+		}
+		return "https://github.com/" + repo + "/releases/latest/download/manifest.json"
+	}
 	if v := strings.TrimSpace(os.Getenv("GCMS_UPDATE_URL")); v != "" {
 		return v
 	}
@@ -120,19 +155,23 @@ func fillUpdateFromManifest(ctx context.Context, info *UpdateInfo, manifestURL s
 	if strings.TrimSpace(mf.Version) == "" {
 		return fmt.Errorf("manifest 缺少 version")
 	}
+	releaseRepo := strings.TrimSpace(mf.ReleaseRepo)
+	if releaseRepo == "" {
+		releaseRepo = info.Current.Repo
+	}
 
 	info.ManifestURL = resp.Request.URL.String()
 	info.LatestTag = mf.Version
 	info.LatestName = mf.Name
 	info.LatestURL = mf.ReleaseURL
 	if info.LatestURL == "" {
-		info.LatestURL = releaseTagURL(info.Current.Repo, mf.Version)
+		info.LatestURL = releaseTagURL(releaseRepo, mf.Version)
 	}
 	info.LatestBody = strings.TrimSpace(mf.Notes)
 	info.PublishedAt = formatManifestTime(mf.PublishedAt)
 	info.ChecksumURL = mf.ChecksumURL
 	if info.ChecksumURL == "" {
-		info.ChecksumURL = releaseDownloadURL(info.Current.Repo, mf.Version, "checksums.txt")
+		info.ChecksumURL = releaseDownloadURL(releaseRepo, mf.Version, "checksums.txt")
 	}
 	info.UpdateAvailable = versionGreater(mf.Version, info.Current.Version)
 
@@ -143,7 +182,7 @@ func fillUpdateFromManifest(ctx context.Context, info *UpdateInfo, manifestURL s
 		info.AssetName = a.Name
 		info.AssetURL = a.URL
 		if info.AssetURL == "" {
-			info.AssetURL = releaseDownloadURL(info.Current.Repo, mf.Version, a.Name)
+			info.AssetURL = releaseDownloadURL(releaseRepo, mf.Version, a.Name)
 		}
 		info.SHA256 = a.SHA256
 		info.AssetSize = a.Size
@@ -234,40 +273,109 @@ func versionGreater(latest, current string) bool {
 	if current == "" || current == "dev" {
 		return false
 	}
-	la, lok := versionParts(latest)
-	ca, cok := versionParts(current)
+	la, lok := parseSemVersion(latest)
+	ca, cok := parseSemVersion(current)
 	if !lok || !cok {
 		return latest != current
 	}
-	for i := 0; i < len(la) || i < len(ca); i++ {
-		var l, c int
-		if i < len(la) {
-			l = la[i]
-		}
-		if i < len(ca) {
-			c = ca[i]
-		}
-		if l != c {
-			return l > c
-		}
-	}
-	return false
+	return compareSemVersion(la, ca) > 0
 }
 
-func versionParts(v string) ([]int, bool) {
-	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
-	var parts []int
-	for _, s := range strings.FieldsFunc(v, func(r rune) bool {
-		return r == '.' || r == '-' || r == '_' || unicode.IsSpace(r)
-	}) {
-		if s == "" {
+type semVersion struct {
+	core       [3]int
+	prerelease []string
+}
+
+func parseSemVersion(raw string) (semVersion, bool) {
+	raw = strings.TrimPrefix(strings.TrimSpace(raw), "v")
+	raw = strings.SplitN(raw, "+", 2)[0]
+	main, pre, _ := strings.Cut(raw, "-")
+	parts := strings.Split(main, ".")
+	if len(parts) == 0 || len(parts) > 3 {
+		return semVersion{}, false
+	}
+	var out semVersion
+	for i, part := range parts {
+		if part == "" || (len(part) > 1 && part[0] == '0') {
+			return semVersion{}, false
+		}
+		n, err := strconv.Atoi(part)
+		if err != nil || n < 0 {
+			return semVersion{}, false
+		}
+		out.core[i] = n
+	}
+	if pre == "" {
+		return out, true
+	}
+	out.prerelease = strings.Split(pre, ".")
+	for _, identifier := range out.prerelease {
+		if identifier == "" {
+			return semVersion{}, false
+		}
+		for _, r := range identifier {
+			if !(r >= 'a' && r <= 'z') &&
+				!(r >= 'A' && r <= 'Z') &&
+				!(r >= '0' && r <= '9') &&
+				r != '-' {
+				return semVersion{}, false
+			}
+		}
+		if _, err := strconv.Atoi(identifier); err == nil &&
+			len(identifier) > 1 && identifier[0] == '0' {
+			return semVersion{}, false
+		}
+	}
+	return out, true
+}
+
+func compareSemVersion(a, b semVersion) int {
+	for i := range a.core {
+		if a.core[i] < b.core[i] {
+			return -1
+		}
+		if a.core[i] > b.core[i] {
+			return 1
+		}
+	}
+	if len(a.prerelease) == 0 && len(b.prerelease) == 0 {
+		return 0
+	}
+	if len(a.prerelease) == 0 {
+		return 1
+	}
+	if len(b.prerelease) == 0 {
+		return -1
+	}
+	for i := 0; i < len(a.prerelease) && i < len(b.prerelease); i++ {
+		left, right := a.prerelease[i], b.prerelease[i]
+		if left == right {
 			continue
 		}
-		n, err := strconv.Atoi(s)
-		if err != nil {
-			break
+		ln, lerr := strconv.Atoi(left)
+		rn, rerr := strconv.Atoi(right)
+		switch {
+		case lerr == nil && rerr == nil:
+			if ln < rn {
+				return -1
+			}
+			return 1
+		case lerr == nil:
+			return -1
+		case rerr == nil:
+			return 1
+		case left < right:
+			return -1
+		default:
+			return 1
 		}
-		parts = append(parts, n)
 	}
-	return parts, len(parts) > 0
+	switch {
+	case len(a.prerelease) < len(b.prerelease):
+		return -1
+	case len(a.prerelease) > len(b.prerelease):
+		return 1
+	default:
+		return 0
+	}
 }

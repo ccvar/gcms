@@ -439,8 +439,8 @@ backup_db() {
   mkdir -p "$backup_dir/db"
   printf '%s\n' "$CMS_DB" > "$backup_dir/CMS_DB_PATH"
   for suffix in "" "-wal" "-shm"; do
-    src="${db}${suffix}"
-    [ -f "$src" ] && cp -p "$src" "$backup_dir/db/cms.db${suffix}"
+   src="${db}${suffix}"
+[ ! -f "$src" ] || cp -p "$src" "$backup_dir/db/cms.db${suffix}"
   done
 }
 
@@ -551,7 +551,7 @@ upgrade() {
   current_os=${current%/*}
   current_arch=${current#*/}
 
-  murl=$(manifest_url)
+murl=${2-$(manifest_url)}
   manifest="$work/manifest.json"
   write_upgrade_status running manifest "$target" "下载更新清单"
   info "下载更新清单：$murl"
@@ -652,7 +652,7 @@ upgrade() {
   fi
 
   write_upgrade_status success done "$new_version" "升级完成，服务原本未运行，未自动启动"
-  ok "升级完成：$current_version → $new_version（服务原本未运行，未自动启动）"
+  ok "升级完成：${current_version} → ${new_version}（服务原本未运行，未自动启动）"
 }
 
 # 在 cms.conf 中新增或更新一个 KEY=VALUE（awk 实现，macOS / Linux 通用）。
@@ -787,7 +787,7 @@ CCVAR 简记 CMS · 启停脚本（macOS / Linux）
   status    查看运行状态（PID 与访问地址）。
   build     （重新）编译为 bin/cms。仅源码仓库可用，二进制发布包不包含源码。
   logs      实时跟踪「本次运行」日志（Ctrl-C 退出）。
-  upgrade   从公开发布仓库升级到最新版本，可选指定版本：upgrade v1.0.5。
+upgrade   从更新通道升级到新版本，可选指定版本：upgrade v1.0.5。
   upgrade-status
             输出最近一次升级状态（run/upgrade.json）。
   caddy-setup
@@ -822,7 +822,7 @@ case "${1:-}" in
   status)  status ;;
   build)   build ;;
   logs)    logs ;;
-  upgrade) shift; upgrade "${1:-}" ;;
+  upgrade) shift;upgrade "${1:-}" "${2:-}";;
   upgrade-status) upgrade_status ;;
   caddy-setup) caddy_setup ;;
   ""|help|-h|--help) usage ;;

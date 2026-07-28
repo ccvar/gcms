@@ -1112,7 +1112,7 @@ func (s *Server) adminDashboard(w http.ResponseWriter, r *http.Request) {
 	v.OverviewRecent = recent
 	v.AutomationKeys = keys
 	v.AutomationLogs = logs
-	v.Update = currentUpdateInfo()
+	v.Update = s.currentUpdateInfo()
 	v.Upgrade = readUpgradeStatus()
 	v.OverviewStatus = s.adminOverviewStatus(v, keys)
 	s.rnd.Admin(w, "dashboard", http.StatusOK, v)
@@ -1845,7 +1845,7 @@ func (s *Server) showAdminUpdates(w http.ResponseWriter, r *http.Request, flash,
 	s.platformAuthed(v, sess)
 	v.Flash = flash
 	v.FormErr = formErr
-	v.Update = currentUpdateInfo()
+	v.Update = s.currentUpdateInfo()
 	v.Upgrade = readUpgradeStatus()
 	status := http.StatusOK
 	if formErr != "" {
@@ -4436,7 +4436,23 @@ func writeQueuedUpgradeStatus(version string) {
 	writeUpgradeStatus(st)
 }
 
-func launchUpgrade(version string) error {
+func upgradeCommandArgs(root, version, manifestURL string) []string {
+	args := []string{filepath.Join(root, "scripts", "cms.sh"), "upgrade"}
+	version = strings.TrimSpace(version)
+	manifestURL = strings.TrimSpace(manifestURL)
+	if version != "" {
+		args = append(args, version)
+	}
+	if manifestURL != "" {
+		if version == "" {
+			args = append(args, "")
+		}
+		args = append(args, manifestURL)
+	}
+	return args
+}
+
+func launchUpgrade(version, manifestURL string) error {
 	root := upgradeRoot()
 	logPath := upgradeRunnerLogPath()
 	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
@@ -4447,10 +4463,7 @@ func launchUpgrade(version string) error {
 		return err
 	}
 
-	args := []string{filepath.Join(root, "scripts", "cms.sh"), "upgrade"}
-	if version = strings.TrimSpace(version); version != "" {
-		args = append(args, version)
-	}
+	args := upgradeCommandArgs(root, version, manifestURL)
 	cmd := exec.Command("sh", args...)
 	cmd.Dir = root
 	cmd.Env = os.Environ()
@@ -4474,7 +4487,7 @@ func (s *Server) adminUpgradeStatus(w http.ResponseWriter, r *http.Request) {
 func (s *Server) adminUpdateCheck(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 6*time.Second)
 	defer cancel()
-	writeJSON(w, http.StatusOK, checkLatestRelease(ctx))
+	writeJSON(w, http.StatusOK, s.checkLatestRelease(ctx))
 }
 
 func (s *Server) adminStartUpgrade(w http.ResponseWriter, r *http.Request) {
@@ -4501,7 +4514,7 @@ func (s *Server) adminStartUpgrade(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeQueuedUpgradeStatus(version)
-	if err := launchUpgrade(version); err != nil {
+	if err := launchUpgrade(version, s.selectedUpdateManifestURL()); err != nil {
 		failed := UpgradeStatus{
 			Status:  "failed",
 			Step:    "launch",
@@ -4791,7 +4804,7 @@ func (s *Server) showSettings(w http.ResponseWriter, r *http.Request, section, f
 	case "cloudflare":
 		v.Cloudflare = s.cloudflareViewForRequest(r)
 	case "updates":
-		v.Update = currentUpdateInfo()
+		v.Update = s.currentUpdateInfo()
 		v.Upgrade = readUpgradeStatus()
 	}
 
