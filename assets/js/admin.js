@@ -1971,7 +1971,14 @@
 	          } else {
 	            li.textContent = title;
 	          }
-          li.addEventListener("click", function () { chooseNative(li); closeDD(); });
+          li.addEventListener("click", function (e) {
+            chooseNative(li);
+            if (!dd.hasAttribute("data-dropdown-stay-open")) closeDD();
+            else {
+              e.stopPropagation();
+              if (searchInput) searchInput.focus();
+            }
+          });
 	          menu.appendChild(li);
 	          nativeItems.push(li);
 	        });
@@ -3032,25 +3039,62 @@
     });
   })();
 
-  /* 主题真实缩略图：进入视口附近再加载，加载前显示骨架态 */
+  /* 主题真实缩略图：进入视口附近再加载，加载前显示骨架态。
+     一张卡是一个完整首页 iframe；线上若快速拖到底，同时渲染十几张会让数据库、
+     HTML/CSS 布局和主线程一起拥堵。这里限制为两个并发，并在出队时重新检查视口：
+     快速滚动途中已经离开的卡不会继续抢占请求与渲染资源。 */
   (function () {
     var previews = Array.prototype.slice.call(document.querySelectorAll("[data-theme-preview]"));
     if (!previews.length) return;
+    var queue = [];
+    var active = 0;
+    var maxConcurrent = 2;
 
-    function loadPreview(box) {
-      if (!box || box.dataset.loaded === "1") return;
+    function nearViewport(box) {
+      if (!box || box.closest("[data-theme-hidden]") || !box.getClientRects().length) return false;
+      var rect = box.getBoundingClientRect();
+      return rect.bottom >= -100 && rect.top <= window.innerHeight + 100;
+    }
+
+    function pumpQueue() {
+      while (active < maxConcurrent && queue.length) {
+        var box = queue.shift();
+        if (box) delete box.dataset.previewQueued;
+        if (!nearViewport(box) || box.dataset.loaded === "1") continue;
+        active += 1;
+        loadPreview(box, function () {
+          active = Math.max(0, active - 1);
+          pumpQueue();
+        });
+      }
+    }
+
+    function enqueuePreview(box) {
+      if (!box || box.dataset.loaded === "1" || box.dataset.previewQueued === "1") return;
+      box.dataset.previewQueued = "1";
+      queue.push(box);
+      pumpQueue();
+    }
+
+    function loadPreview(box, done) {
+      if (!box || box.dataset.loaded === "1") { done(); return; }
       var frame = box.querySelector("iframe[data-src]");
-      if (!frame) return;
+      if (!frame) { done(); return; }
       box.dataset.loaded = "1";
+      if (observer) observer.unobserve(box);
       box.classList.add("is-loading");
-      frame.addEventListener("load", function () {
+      var settled = false;
+      var watchdog = window.setTimeout(function () { finish(false); }, 15000);
+      function finish(ok) {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(watchdog);
         box.classList.remove("is-loading");
-        box.classList.add("is-loaded");
-      }, { once: true });
-      frame.addEventListener("error", function () {
-        box.classList.remove("is-loading");
-        box.classList.add("is-error");
-      }, { once: true });
+        box.classList.add(ok ? "is-loaded" : "is-error");
+        done();
+      }
+      frame.addEventListener("load", function () { finish(true); }, { once: true });
+      frame.addEventListener("error", function () { finish(false); }, { once: true });
       frame.src = freshThemePreviewURL(frame.dataset.src);
     }
 
@@ -3058,15 +3102,24 @@
       var observer = new IntersectionObserver(function (entries) {
         entries.forEach(function (entry) {
           if (!entry.isIntersecting) return;
-          loadPreview(entry.target);
-          observer.unobserve(entry.target);
+          enqueuePreview(entry.target);
         });
-      }, { rootMargin: "240px 0px" });
+      }, { rootMargin: "100px 0px" });
       previews.forEach(function (box) { observer.observe(box); });
     } else {
-      previews.forEach(function (box, i) {
-        setTimeout(function () { loadPreview(box); }, i * 90);
-      });
+      var scheduled = false;
+      function scanVisible() {
+        scheduled = false;
+        previews.forEach(function (box) { if (nearViewport(box)) enqueuePreview(box); });
+      }
+      function scheduleScan() {
+        if (scheduled) return;
+        scheduled = true;
+        window.requestAnimationFrame(scanVisible);
+      }
+      window.addEventListener("scroll", scheduleScan, { passive: true });
+      window.addEventListener("resize", scheduleScan);
+      scheduleScan();
     }
   })();
 

@@ -8,6 +8,9 @@
   <style>
     html { width: 100%; min-width: 1120px; min-height: 760px; overflow: hidden; background: var(--bg); }
     body { width: 1120px; min-height: 760px; margin: 0 auto; overflow: hidden; background: var(--bg); }
+    /* 卡片缩略图是静态取景，不需要运行每个主题的持续动画。暂停动画可避免
+       页面向下浏览后，几十个已加载 iframe 仍在后台逐帧合成。 */
+    *, *::before, *::after { animation-play-state: paused !important; scroll-behavior: auto !important; }
     /* 侧栏型骨架：竖栏是 position:fixed + 100vh，body 靠 padding-left 让位。
        上面那条 .site-header{position:relative} 与骨架规则**特异度相同**(0,2,0)、又写在后面，
        会把竖栏打回文档流——于是它占满一屏高，把正文整个挤出裁切区（预览只剩半边）。

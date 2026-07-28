@@ -24,6 +24,9 @@ func TestAppearanceInteractionContracts(t *testing.T) {
 		"admin:form-saved",
 		"portalDDMenu",
 		"restoreDDMenu",
+		"maxConcurrent = 2",
+		"nearViewport",
+		"previewQueued",
 	} {
 		if !strings.Contains(js, marker) {
 			t.Errorf("admin.js misses appearance interaction contract %q", marker)
@@ -33,8 +36,13 @@ func TestAppearanceInteractionContracts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(cssBytes), ".dd-menu.dd-portal") {
+	css := string(cssBytes)
+	if !strings.Contains(css, ".dd-menu.dd-portal") {
 		t.Error("admin.css misses top-layer dropdown portal rule")
+	}
+	if !strings.Contains(css, "content-visibility: auto") ||
+		!strings.Contains(css, ".tc-live.is-loading::after") {
+		t.Error("admin.css misses offscreen theme-card rendering guards")
 	}
 }
 

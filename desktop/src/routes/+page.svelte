@@ -7883,7 +7883,16 @@
     }
     packUpdating = { ...packUpdating, [connId]: true };
     try {
-      const targetVersion = packUpdates[connId] || packUpdateChecks[connId]?.latest || '';
+      // 点击同步到真正下载之间，来源 GCMS 可能刚完成升级或切换更新通道。
+      // 每次写盘前重新读取服务端权威版本，避免拿更新中心的旧快照（例如 v1.3.58）
+      // 去校验已经切到 Preview 的响应（例如 v1.3.59-preview.1）。
+      const fresh = await maybeCheckPackUpdate(connId, true, false);
+      if (!fresh || fresh.status !== 'ok' || !fresh.latest.trim()) {
+        const message = fresh?.error || '同步前无法确认服务端技能包版本，请检查连接后重试';
+        if (notify) say(message, 'err');
+        return { ok: false, message };
+      }
+      const targetVersion = fresh.latest.trim();
       const msg = await invoke<string>('update_pack', { connId, targetVersion: targetVersion || null });
       const next = { ...packUpdates };
       delete next[connId];
@@ -7903,7 +7912,13 @@
       if (notify) say(msg);
       return { ok: true, message: msg };
     } catch (e) {
-      const message = String(e);
+      let message = String(e);
+      if (message.includes('与原目标') && message.includes('重新检查更新')) {
+        const refreshed = await maybeCheckPackUpdate(connId, true, false);
+        if (refreshed?.status === 'ok' && refreshed.latest.trim()) {
+          message = `技能包目标已更新为 ${refreshed.latest.trim()}，请确认后再次点击同步`;
+        }
+      }
       if (notify) say(message, 'err');
       return { ok: false, message };
     } finally {
