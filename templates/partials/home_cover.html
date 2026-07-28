@@ -1,0 +1,79 @@
+{{define "home_cover"}}
+  {{/* 封面 Cover — 3:4 杂志封面居中大卡：期号行 / 900 字重刊名 / 封面故事 / 散布 coverlines / 条码；
+       主导航由 CSS 把标准 .site-header 重塑成封面顶部切片（见 public.css LAYOUT: cover），此处不再画导航 */}}
+  <div class="cv-desk">
+
+    <section class="cv-cover">
+      {{if or .Site.HeroEyebrow .Featured .Posts}}
+      <p class="cv-issue">
+        {{if .Site.HeroEyebrow}}<span class="cv-issue-seg"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</span>{{end}}
+        {{if .Featured}}<time class="cv-issue-seg" datetime="{{.Tr.ISODate .Featured.PublishedAt}}">{{.Tr.Date .Featured.PublishedAt}}</time>{{else if .Posts}}{{with index .Posts 0}}<time class="cv-issue-seg" datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time>{{end}}{{end}}
+        {{if .Posts}}<span class="cv-issue-seg">{{printf (.Tr.T "category.count") (len .Posts)}}</span>{{end}}
+      </p>
+      {{end}}
+      <h1 class="cv-name"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+      {{if .Site.HeroDescription}}<p class="cv-sub"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+
+      {{with .Featured}}
+      <a class="cv-story" href="{{$.Tr.U (contentURL .)}}">
+        <span class="cv-kicker"><b>{{$.Site.HomeFeatured}}</b>{{with .Category}}<i aria-hidden="true">/</i><span>{{.Name}}</span>{{end}}</span>
+        {{if .CoverImage}}<span class="cv-story-plate"><img src="{{.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}></span>{{end}}
+        <span class="cv-story-h">{{.Title}}</span>
+        {{if .Excerpt}}<span class="cv-story-ex">{{.Excerpt}}</span>{{end}}
+        <span class="cv-story-foot"><time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time><span class="cv-story-more">{{$.Tr.T "home.read_more"}} <span class="arrow" aria-hidden="true">→</span></span></span>
+      </a>
+      {{end}}
+
+      {{if .Posts}}
+      <ul class="cv-lines">
+        {{range $i, $p := .Posts}}{{if lt $i 4}}
+        <li class="cv-line"><a href="{{$.Tr.U (contentURL $p)}}">
+          <span class="cv-line-t">{{$p.Title}}</span>
+          {{with $p.Category}}<span class="cv-line-c">{{.Name}}</span>{{end}}
+        </a></li>
+        {{end}}{{end}}
+      </ul>
+      {{end}}
+
+      <span class="cv-barcode" aria-hidden="true"></span>
+    </section>
+
+    {{if .FeatLinks}}
+    <section class="cv-rack" aria-label="{{.Site.HomeLinks}}">
+      <h2 class="cv-sec-h">{{.Site.HomeLinks}}</h2>
+      <div class="cv-rack-row">
+        {{range .FeatLinks}}
+        <a class="cv-pick" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+          <span class="cv-pick-ic">{{if .CoverImage}}<img src="{{.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}</span>
+          <span class="cv-pick-t">{{.Title}}</span>
+        </a>
+        {{end}}
+      </div>
+    </section>
+    {{end}}
+
+    {{if gt (len .Posts) 4}}
+    <section class="cv-toc">
+      <div class="cv-toc-head">
+        <h2 class="cv-sec-h">{{.Site.HomeLatest}}</h2>
+        <a class="cv-toc-all" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      {{range $i, $p := .Posts}}{{if ge $i 4}}
+      <a class="cv-row" href="{{$.Tr.U (contentURL $p)}}">
+        <span class="cv-row-t">{{$p.Title}}</span>
+        {{with $p.Category}}<span class="cv-row-c">{{.Name}}</span>{{end}}
+        <time class="cv-row-d" datetime="{{$.Tr.ISODate $p.PublishedAt}}">{{$.Tr.Date $p.PublishedAt}}</time>
+      </a>
+      {{end}}{{end}}
+    </section>
+    {{end}}
+
+    {{if .Categories}}
+    <nav class="cv-cats" aria-label="{{.Tr.T "nav.category"}}">
+      {{range .Categories}}<a class="cv-cat" href="{{$.Tr.U (printf "/category/%s" .Slug)}}">{{.Name}}<small>{{.Count}}</small></a>{{end}}
+      <a class="cv-cat cv-cat-all" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}}</a>
+    </nav>
+    {{end}}
+
+  </div>
+{{end}}

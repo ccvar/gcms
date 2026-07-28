@@ -16,6 +16,7 @@ mod node_boot;
 mod pack;
 mod path_env;
 mod permit;
+mod pilot_console;
 mod scheduled;
 mod ssh;
 mod static_server;
@@ -72,6 +73,8 @@ struct AppState {
     preview: Arc<Mutex<Option<PreviewHandle>>>,
     /// 活跃的 SSH PTY 会话（按 conn_id）。
     ssh: ssh::SshSessions,
+    /// GCMS 网页控制台绑定元数据；设备密钥只保存在系统凭据存储。
+    pilot_bindings: pilot_console::BindingStore,
 }
 
 fn now_secs() -> u64 {
@@ -519,6 +522,47 @@ struct GcmsUnlockResult {
     ttl_seconds: u64,
 }
 
+fn gcms_control_unlock_payload(
+    password: &str,
+    operations: &[String],
+    page_challenge: &str,
+) -> serde_json::Value {
+    let mut payload = serde_json::json!({
+        "password": password,
+        "operations": operations,
+    });
+    // 旧版 GCMS 的 JSON 解码器拒绝未知字段。普通控制操作没有页面挑战时
+    // 必须完全省略，而不是发送 null/空串；页面发布等新版协议才携带它。
+    if !page_challenge.is_empty() {
+        payload["page_challenge"] = serde_json::json!(page_challenge);
+    }
+    payload
+}
+
+#[cfg(test)]
+mod gcms_control_unlock_payload_tests {
+    use super::gcms_control_unlock_payload;
+
+    #[test]
+    fn omits_empty_page_challenge_for_legacy_gcms() {
+        let operations = vec!["navigation.delete".to_string()];
+        let payload = gcms_control_unlock_payload("secret", &operations, "");
+        assert_eq!(payload["password"], "secret");
+        assert_eq!(payload["operations"][0], "navigation.delete");
+        assert!(
+            payload.get("page_challenge").is_none(),
+            "旧 GCMS 会拒绝未知字段，空挑战必须完全省略"
+        );
+    }
+
+    #[test]
+    fn includes_page_challenge_for_target_bound_page_unlock() {
+        let operations = vec!["pages.publish".to_string()];
+        let payload = gcms_control_unlock_payload("secret", &operations, "gcmspc_signed");
+        assert_eq!(payload["page_challenge"], "gcmspc_signed");
+    }
+}
+
 /// 由 Pilot 原生密码弹窗签发 GCMS 控制层短时授权。
 /// 密码只在本次 IPC 调用中经过内存，绝不写入对话、技能包或连接文件。
 #[tauri::command]
@@ -527,6 +571,7 @@ async fn gcms_control_unlock(
     conn_id: String,
     password: String,
     operations: Vec<String>,
+    page_challenge: Option<String>,
 ) -> Result<GcmsUnlockResult, String> {
     let conn = state.conns.get(&conn_id)?;
     if conn.kind != "gcms" {
@@ -545,11 +590,13 @@ async fn gcms_control_unlock(
     }
     let key = keychain::get_key(&conn.id)?;
     let url = format!("{}/control/unlock", conn.api_base.trim_end_matches('/'));
+    let page_challenge = page_challenge.unwrap_or_default().trim().to_string();
+    let payload = gcms_control_unlock_payload(&password, &operations, &page_challenge);
     let response = reqwest::Client::new()
         .post(url)
         .bearer_auth(key)
         .header("X-GCMS-Control-UI", "pilot")
-        .json(&serde_json::json!({ "password": password, "operations": operations }))
+        .json(&payload)
         .timeout(Duration::from_secs(15))
         .send()
         .await
@@ -1110,6 +1157,7 @@ async fn gcms_site_theme_plan(
 
 #[tauri::command]
 async fn gcms_site_theme_apply(
+    app: AppHandle,
     state: tauri::State<'_, AppState>,
     conn_id: String,
     site_id: i64,
@@ -1128,7 +1176,7 @@ async fn gcms_site_theme_apply(
     } else {
         None
     };
-    discovery::apply_site_theme(
+    let result = discovery::apply_site_theme(
         &conn,
         site_id,
         theme_id.as_deref(),
@@ -1137,7 +1185,17 @@ async fn gcms_site_theme_apply(
         expected_current_theme.as_deref(),
         unlock_token.as_deref(),
     )
-    .await
+    .await?;
+    // 主题中心可以运行在独立窗口中；应用成功后广播给所有窗口，让主窗口同步刷新卡片。
+    // 广播失败不应把已经成功的 GCMS 写操作伪装成失败，保持原有命令错误语义。
+    let _ = app.emit(
+        "site-theme-changed",
+        serde_json::json!({
+            "conn_id": conn_id,
+            "site_id": site_id,
+        }),
+    );
+    Ok(result)
 }
 
 #[tauri::command]
@@ -2794,6 +2852,53 @@ mod workdir_tests {
         assert!(!retryable_executor_error("connection reset by peer"));
         assert!(!retryable_executor_error("permission denied"));
     }
+
+    #[test]
+    fn scheduled_fallback_requires_a_complete_distinct_model() {
+        assert_eq!(
+            normalize_task_fallback(
+                "claude",
+                "sonnet",
+                "high",
+                String::new(),
+                String::new(),
+                "orphan-effort".into(),
+            )
+            .unwrap(),
+            ("".into(), "".into(), "".into()),
+            "关闭备用模型时不应残留强度"
+        );
+        assert!(normalize_task_fallback(
+            "claude",
+            "sonnet",
+            "",
+            "codex".into(),
+            String::new(),
+            String::new(),
+        )
+        .is_err());
+        assert!(normalize_task_fallback(
+            "claude",
+            "sonnet",
+            "high",
+            "claude".into(),
+            "sonnet".into(),
+            "high".into(),
+        )
+        .is_err());
+        assert_eq!(
+            normalize_task_fallback(
+                "claude",
+                "sonnet",
+                "high",
+                " codex ".into(),
+                " gpt-5.5 ".into(),
+                " medium ".into(),
+            )
+            .unwrap(),
+            ("codex".into(), "gpt-5.5".into(), "medium".into())
+        );
+    }
 }
 
 /// 读工作目录内的图片为 data URI（webview 读不了本地文件）。附件缩略图（uploads/xx）和
@@ -3256,6 +3361,82 @@ async fn open_conn_window(
     style_titlebar_windows(&w);
     let _ = w.set_focus();
     Ok(())
+}
+
+/// 在真正的系统窗口中打开站点主题中心。
+///
+/// 主题窗口使用正常系统标题栏，且不设置父窗口，因此可以移出 Pilot 主窗口、跨屏拖动，
+/// 也可以独立调整大小。连接 id 与站点 id 通过 label 传给前端，URL 必须保持精确的
+/// `index.html`，否则 SvelteKit 开发服务器会把它当成不存在的静态路径。
+#[tauri::command]
+async fn open_site_theme_window(
+    app: AppHandle,
+    window: tauri::Window,
+    state: tauri::State<'_, AppState>,
+    conn_id: String,
+    site_id: i64,
+    site_name: String,
+) -> Result<(), String> {
+    if site_id <= 0 {
+        return Err("站点标识无效".into());
+    }
+    let conn = state.conns.get(&conn_id)?;
+    // site_id 固定在第一个分隔段；其后的完整内容都是 conn_id，即使 conn_id 自身含连字符
+    // 也能由前端无歧义还原。连接 id 与 open_conn_window 使用相同的 label 字符约束。
+    let label = format!("theme-{site_id}-{conn_id}");
+    if let Some(w) = app.get_webview_window(&label) {
+        let _ = w.unminimize();
+        let _ = w.show();
+        let _ = w.set_focus();
+        return Ok(());
+    }
+
+    // 从发起窗口的逻辑尺寸推导初始尺寸，并限幅，避免小窗口里过挤或大屏上铺满整屏。
+    let source_size = match (window.inner_size(), window.scale_factor()) {
+        (Ok(size), Ok(scale)) => Some(size.to_logical::<f64>(scale)),
+        _ => None,
+    };
+    let (width, height) = source_size
+        .map(|size| {
+            (
+                (size.width * 0.92).clamp(920.0, 1440.0),
+                (size.height * 0.90).clamp(640.0, 960.0),
+            )
+        })
+        .unwrap_or((1180.0, 780.0));
+    let site_name = site_name.trim();
+    let title = if site_name.is_empty() {
+        format!("{} · 外观主题", conn.name)
+    } else {
+        format!("{site_name} · 外观主题")
+    };
+    let w =
+        tauri::WebviewWindowBuilder::new(&app, &label, tauri::WebviewUrl::App("index.html".into()))
+            .title(&title)
+            .decorations(true)
+            .resizable(true)
+            .inner_size(width, height)
+            .min_inner_size(820.0, 560.0)
+            .center()
+            // Windows 上让 WebView2 继续接收 HTML5 文件拖放。
+            .disable_drag_drop_handler()
+            .build()
+            .map_err(|e| format!("打开主题中心失败: {e}"))?;
+    #[cfg(target_os = "windows")]
+    style_titlebar_windows(&w);
+    let _ = w.set_focus();
+    Ok(())
+}
+
+/// 只允许主题中心关闭自己，避免前端误用该命令关闭主窗口或连接工作区。
+#[tauri::command]
+fn close_site_theme_window(window: tauri::Window) -> Result<(), String> {
+    if !window.label().starts_with("theme-") {
+        return Err("只能关闭主题中心窗口".into());
+    }
+    window
+        .destroy()
+        .map_err(|e| format!("关闭主题中心失败: {e}"))
 }
 
 /// 预览窗的标题：带上正在预览的是谁（一次只跑一个预览，窗会被复用 → 标题必须跟着换，
@@ -4235,9 +4416,17 @@ fn set_conversation_model(
     conv_id: String,
     model: String,
 ) -> Result<Option<Conversation>, String> {
-    state
-        .convos
-        .mutate(&conv_id, now_secs(), move |c| c.model = model)
+    state.convos.mutate(&conv_id, now_secs(), move |c| {
+        let changed = c.model != model;
+        c.model = model;
+        // ★ claude 的 `--resume` 无视 `--model`（2.1.96 实测：resume 换档后自报仍是旧模型）——
+        // 「同厂商换档下一轮生效」对 claude 是空头支票。换模型就清 session_ref，
+        // 下一条消息走 StartedFresh 重建路（新 session + 历史摘要），模型才真正切换。
+        // codex/grok 的模型是逐轮配置下发，不受此坑影响，session 照留。
+        if changed && c.brain == "claude" {
+            c.session_ref = String::new();
+        }
+    })
 }
 
 /// 跨厂商切换的会话字段改写：brain+model 一起换。换厂商时清空 session_ref——
@@ -4310,21 +4499,138 @@ fn set_conversation_effort(
         .mutate(&conv_id, now_secs(), move |c| c.effort = effort)
 }
 
+/// Claude CLI 的可升级情况。**只读**：查 npm registry 的已发布版本，不碰本机安装。
+#[derive(serde::Serialize)]
+struct CliUpdateInfo {
+    installed: String,
+    latest: String,
+    has_update: bool,
+    /// 会被真正升级的那一个（= PATH 里第一个）。
+    target: String,
+    /// PATH 上全部同名安装。>1 时 UI 必须警示：只有第一个生效。
+    all: Vec<String>,
+    /// 升到 latest 之后能不能用 headless fast mode（当前是否已够也看 brains.claude_fast_ok）。
+    fast_after_upgrade: bool,
+}
+
+/// 查有没有新版。**故意不用 `claude update`**：它没有「只检查」模式
+///（`--help` 原文 "Check for updates and install if available"），调用即安装 ——
+/// 不能为了显示一个版本号就擅自改用户的环境。npm registry 是只读且够权威的来源
+///（实测与 CLI changelog 的最新条目一致）。
+#[tauri::command]
+async fn check_claude_update() -> Result<CliUpdateInfo, String> {
+    let all = brains::which_all("claude");
+    let target = all.first().cloned().unwrap_or_default();
+    if target.is_empty() {
+        return Err("PATH 上找不到 claude".into());
+    }
+    let installed_raw = tokio::process::Command::new(&target)
+        .arg("--version")
+        .output()
+        .await
+        .map_err(|e| format!("读取本机版本失败: {e}"))?;
+    let installed = String::from_utf8_lossy(&installed_raw.stdout).trim().to_string();
+
+    let out = tokio::process::Command::new(brains::resolve_bin("npm"))
+        .args(["view", "@anthropic-ai/claude-code", "version"])
+        .output()
+        .await
+        .map_err(|e| format!("查询最新版失败（需要 npm）: {e}"))?;
+    let latest = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if latest.is_empty() {
+        return Err("没查到已发布版本（网络或 npm 不可用）".into());
+    }
+    let cur = agent::parse_version_triplet(&installed);
+    let new = agent::parse_version_triplet(&latest);
+    // ★ 版本号必须按数值三元组比，不能比字符串："2.1.96" > "2.1.220" 在字符串序下成立，
+    //   那会把「有新版」判成「已最新」，而且不报错。
+    let has_update = matches!((cur, new), (Some(c), Some(n)) if n > c);
+    Ok(CliUpdateInfo {
+        installed,
+        latest,
+        has_update,
+        target,
+        all,
+        fast_after_upgrade: new.is_some_and(|n| n >= brains::FAST_MIN_CLI),
+    })
+}
+
+/// 执行升级：对 **PATH 里第一个** claude 跑它自带的 `update`。
+/// 前端必须先弹确认（会改本机环境），这里只负责执行并把原始输出回传 —— 包括多安装警告那类
+/// 信息，别替用户吞掉。
+#[tauri::command]
+async fn upgrade_claude_cli() -> Result<String, String> {
+    let target = brains::which_all("claude")
+        .first()
+        .cloned()
+        .ok_or_else(|| "PATH 上找不到 claude".to_string())?;
+    let out = tokio::process::Command::new(&target)
+        .arg("update")
+        .output()
+        .await
+        .map_err(|e| format!("执行升级失败: {e}"))?;
+    let mut text = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+    if !err.is_empty() {
+        text = if text.is_empty() { err } else { format!("{text}\n{err}") };
+    }
+    if !out.status.success() {
+        return Err(if text.is_empty() { "升级失败（无输出）".into() } else { text });
+    }
+    Ok(text)
+}
+
+/// 运行中改 fast：和 effort 一样每轮下发，下一轮生效。
+#[tauri::command]
+fn set_conversation_fast(
+    state: tauri::State<'_, AppState>,
+    conv_id: String,
+    fast: bool,
+) -> Result<Option<convo::Conversation>, String> {
+    state.convos.mutate(&conv_id, now_secs(), move |c| c.fast = fast)
+}
+
 #[tauri::command]
 fn set_conversation_perm_mode(
     state: tauri::State<'_, AppState>,
     conv_id: String,
     perm_mode: String,
 ) -> Result<Option<Conversation>, String> {
-    state
+    let to_full = perm_mode == "full";
+    let updated = state
         .convos
-        .mutate(&conv_id, now_secs(), move |c| c.perm_mode = perm_mode)
+        .mutate(&conv_id, now_secs(), move |c| c.perm_mode = perm_mode)?;
+    // ★ 切到「全自动」对**正在跑的这一轮**实时生效：已弹出/将弹出的批准卡全部自动放行
+    //（钩子在轮询应答文件，写 allow 即放行；后续新请求由 list_pending_permits 兜）。
+    // 收紧方向（full→询问 等）只能下一轮生效——full 那轮根本没装钩子，无从拦起。
+    if to_full {
+        permit::auto_allow_for(&state.data_dir.join("permit").join("pending"), &conv_id);
+    }
+    Ok(updated)
 }
 
 /// 列出所有等待用户批准的工具调用（钩子写在 <data_dir>/permit/pending）。UI 轮询它渲染批准卡。
+/// 会话已切到「全自动」的请求不出卡：本轮是带旧档启动的，钩子还在陆续写新请求——
+/// 轮询到这里就地放行，让「运行中切全自动」真正实时生效。
 #[tauri::command]
 fn list_pending_permits(state: tauri::State<'_, AppState>) -> Vec<permit::PendingPermit> {
-    permit::list_pending(&state.data_dir.join("permit").join("pending"))
+    let dir = state.data_dir.join("permit").join("pending");
+    let all = permit::list_pending(&dir);
+    if all.is_empty() {
+        return all;
+    }
+    let full: std::collections::HashSet<String> = state
+        .convos
+        .list()
+        .into_iter()
+        .filter(|c| c.perm_mode == "full")
+        .map(|c| c.id)
+        .collect();
+    let (auto, show): (Vec<_>, Vec<_>) = all.into_iter().partition(|p| full.contains(&p.conv));
+    for p in &auto {
+        let _ = permit::respond(&dir, &p.id, true);
+    }
+    show
 }
 
 /// 应答一条待批请求：allow=放行 / 否则拒绝。钩子轮询到响应文件后据此放行或拦截。
@@ -4356,6 +4662,9 @@ fn save_task(
     brain: String,
     model: String,
     effort: String,
+    fallback_brain: String,
+    fallback_model: String,
+    fallback_effort: String,
     title: String,
     prompt: String,
     interval_minutes: u64,
@@ -4373,15 +4682,44 @@ fn save_task(
         brain,
         model,
         effort,
-        String::new(),
-        String::new(),
-        String::new(),
+        fallback_brain,
+        fallback_model,
+        fallback_effort,
         title,
         prompt,
         interval_minutes,
         first_run,
         enabled,
     )
+}
+
+fn normalize_task_fallback(
+    brain: &str,
+    model: &str,
+    effort: &str,
+    fallback_brain: String,
+    fallback_model: String,
+    fallback_effort: String,
+) -> Result<(String, String, String), String> {
+    let fallback_brain = fallback_brain.trim().to_string();
+    let fallback_model = fallback_model.trim().to_string();
+    let fallback_effort = fallback_effort.trim().to_string();
+    let fallback_enabled = !fallback_brain.is_empty() || !fallback_model.is_empty();
+    if fallback_enabled && (fallback_brain.is_empty() || fallback_model.is_empty()) {
+        return Err("备用模型配置不完整".into());
+    }
+    if fallback_enabled
+        && fallback_brain == brain.trim()
+        && fallback_model == model.trim()
+        && fallback_effort == effort.trim()
+    {
+        return Err("备用模型不能与主模型完全相同".into());
+    }
+    Ok(if fallback_enabled {
+        (fallback_brain, fallback_model, fallback_effort)
+    } else {
+        (String::new(), String::new(), String::new())
+    })
 }
 
 /// 构建 + 落库一个定时任务：save_task 命令与「托管」配套任务创建共用的核心逻辑。
@@ -4420,6 +4758,14 @@ fn upsert_task(
     if interval_minutes < 1 {
         return Err("周期至少 1 分钟".into());
     }
+    let (fallback_brain, fallback_model, fallback_effort) = normalize_task_fallback(
+        &brain,
+        &model,
+        &effort,
+        fallback_brain,
+        fallback_model,
+        fallback_effort,
+    )?;
     // 连接必须存在，否则这个任务每次运行都会失败——直接在保存时拦下。
     let conn = conns
         .get(&conn_id)
@@ -6391,6 +6737,9 @@ async fn fire_task(
                 model.clone(),
                 perm_mode.clone(),
                 effort.clone(),
+                // 无人值守任务一律不开 fast：它按 $10/$50 per Mtok 在订阅之外单独计费，
+                // 没有人在场确认，不能替用户产生这笔开销。
+                false,
                 String::new(),
                 prompt.clone(),
                 sink,
@@ -6438,6 +6787,7 @@ async fn fire_task(
                         next_model.clone(),
                         perm_mode,
                         next_effort.clone(),
+                        false, // 同上：限额回退仍是无人值守，不开 fast
                         String::new(),
                         prompt,
                         fallback_sink,
@@ -7000,6 +7350,8 @@ async fn create_conversation(
     model: String,
     perm_mode: String,
     effort: String,
+    // fast 模式（Opus 5 / Opus 4.8）。tauri 命令参数不吃 serde 属性，前端必须显式传。
+    fast: bool,
     workspace_dir: String,
     message: String,
     on_event: Channel<agent::TurnEvent>,
@@ -7093,6 +7445,7 @@ async fn create_conversation(
         model: model.clone(),
         perm_mode: perm_mode.clone(),
         effort: effort.clone(),
+        fast,
         session_ref: String::new(),
         title: title_from(&message),
         messages: vec![user_msg(message.trim().to_string(), now)],
@@ -7113,6 +7466,7 @@ async fn create_conversation(
         model,
         perm_mode,
         effort,
+        fast,
         data_dir.clone(),
         ssh,
         session_seed,
@@ -7240,6 +7594,7 @@ async fn start_conversation(
     model: String,
     perm_mode: String,
     effort: String,
+    fast: bool,
     workspace_dir: String,
     message: String,
     on_event: Channel<agent::TurnEvent>,
@@ -7277,6 +7632,7 @@ async fn start_conversation(
         model,
         perm_mode,
         effort,
+        fast,
         workspace_dir,
         message,
         on_event,
@@ -7347,8 +7703,10 @@ async fn send_message(
     match turn_start {
         convo::TurnStart::NotFound => return Err("会话不存在".into()),
         convo::TurnStart::Busy => return Err("上一轮还在进行中，请稍候".into()),
-        convo::TurnStart::NoSession => {
-            return Err("这个会话已失效（首轮未建立），请新建对话".into())
+        convo::TurnStart::StartedFresh => {
+            // 老对话的底层会话不存在（当年首轮 401 就崩 / 换厂商清空）——不再死路一条：
+            // 按重建口径新起 session（同款系统提示 + 历史摘要）原地续跑这条新消息。
+            return run_fresh_turn(&state, conv_id, message.trim().to_string(), on_event).await;
         }
         convo::TurnStart::Started => {}
     }
@@ -7362,6 +7720,7 @@ async fn send_message(
         conv.model.clone(),
         conv.perm_mode.clone(),
         conv.effort.clone(),
+        conv.fast,
         state.data_dir.clone(),
         state.ssh.clone(),
         conv.session_ref.clone(),
@@ -7406,6 +7765,7 @@ async fn retry_turn(
         conv.model.clone(),
         conv.perm_mode.clone(),
         conv.effort.clone(),
+        conv.fast,
         state.data_dir.clone(),
         state.ssh.clone(),
         conv.session_ref.clone(),
@@ -7441,6 +7801,18 @@ async fn rebuild_session(
     let last_user = begin_turn_with_pack_gate(&state.pack_updating, &current.conn_id, || {
         state.convos.begin_rebuild(&conv_id, now)
     })?;
+    run_fresh_turn(&state, conv_id, last_user, on_event).await
+}
+
+/// 新会话首轮续跑——rebuild_session 与 send_message「复活老对话」的共用核心：
+/// 同款系统提示 + 历史摘要（recap 自动跳过将要重跑的最后一条用户消息）+ 本轮消息，
+/// 成功后把新 session id 接回本会话。调用方须已完成 begin_*（消息入列、running 就位）。
+async fn run_fresh_turn(
+    state: &tauri::State<'_, AppState>,
+    conv_id: String,
+    last_user: String,
+    on_event: Channel<agent::TurnEvent>,
+) -> Result<Conversation, String> {
     let conv = state.convos.get(&conv_id).ok_or("会话不存在")?;
     let (conn, work_dir) = conversation_runtime(&state.conns, &state.data_dir, &conv)?;
     let is_cf = conn.kind == "cloudflare";
@@ -7511,6 +7883,7 @@ async fn rebuild_session(
         conv.model.clone(),
         conv.perm_mode.clone(),
         conv.effort.clone(),
+        conv.fast,
         state.data_dir.clone(),
         state.ssh.clone(),
         session_seed,
@@ -7552,7 +7925,9 @@ fn powershell_single_quote(value: &str) -> String {
 
 #[cfg(test)]
 mod brain_login_command_tests {
-    use super::powershell_single_quote;
+    use super::{
+        is_claude_auth_error, powershell_single_quote, validate_claude_oauth_token,
+    };
 
     #[test]
     fn powershell_cli_path_escapes_single_quotes() {
@@ -7561,6 +7936,173 @@ mod brain_login_command_tests {
             r"C:\Users\O''Brien\Claude Code\claude.cmd"
         );
     }
+
+    #[test]
+    fn claude_subscription_token_validation_rejects_console_keys_and_truncation() {
+        assert!(validate_claude_oauth_token("").is_err());
+        assert!(validate_claude_oauth_token("too-short").is_err());
+        assert!(validate_claude_oauth_token(
+            "sk-ant-api03-this-is-a-console-key-not-a-subscription-token"
+        )
+        .is_err());
+        assert_eq!(
+            validate_claude_oauth_token(
+                "  sk-ant-oat01-this-is-a-long-enough-subscription-token-value  "
+            )
+            .unwrap(),
+            "sk-ant-oat01-this-is-a-long-enough-subscription-token-value"
+        );
+    }
+
+    #[test]
+    fn claude_401_on_stdout_is_a_credential_failure() {
+        assert!(is_claude_auth_error(
+            r#"Failed to authenticate. API Error: 401 {"message":"Invalid bearer token"}"#
+        ));
+    }
+}
+
+/// 深度验证 Claude 凭据。`claude auth status` 只读本地记录会说谎——桌面端换号后
+/// 旧 token 已废，它照样报 loggedIn:true（实测）。真话只能靠一次最小无头调用：
+/// 正常账号几秒内答复；凭据失效会挂在 OAuth 提示上（stdin 关了也挂），只能硬超时
+/// 并杀掉。返回 true=真能用，false=凭据失效；其它异常（网络/模型档位）报 Err，
+/// 不冤枉凭据。调用方负责节流（跑一次是一次真实的最小 haiku 计费）。
+#[tauri::command]
+async fn brain_verify_claude() -> Result<bool, String> {
+    let token = keychain::claude_oauth_token()?;
+    verify_claude_credential(token.as_deref()).await
+}
+
+async fn verify_claude_credential(token: Option<&str>) -> Result<bool, String> {
+    let path = brains::resolve_bin("claude");
+    if path.is_empty() {
+        return Err("没有找到 claude，请先安装".into());
+    }
+    let mut cmd = tokio::process::Command::new(&path);
+    if let Some(token) = token {
+        // 用户在 Pilot 中显式选择订阅 Token 时，必须让它成为本次验证的真实凭据；
+        // 否则继承环境中的 AUTH_TOKEN/API_KEY 会按 Claude 优先级盖过它。
+        cmd.env_remove("ANTHROPIC_AUTH_TOKEN")
+            .env_remove("ANTHROPIC_API_KEY");
+        cmd.env("CLAUDE_CODE_OAUTH_TOKEN", token);
+    }
+    cmd.args(["-p", "reply with exactly: ok", "--model", "haiku"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true); // 超时丢弃 future 时把挂死的子进程收掉
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000);
+    }
+    match tokio::time::timeout(std::time::Duration::from_secs(25), cmd.output()).await {
+        Err(_) => Ok(false), // 挂死在授权提示 = 凭据失效
+        Ok(Err(e)) => Err(format!("启动 claude 失败：{e}")),
+        Ok(Ok(out)) => {
+            if out.status.success() && !out.stdout.is_empty() {
+                return Ok(true);
+            }
+            // Claude Code 不同版本会把 API Error 写到 stdout 或 stderr；两边都必须看。
+            let diagnostic = format!(
+                "{}\n{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            let err = diagnostic.to_lowercase();
+            if is_claude_auth_error(&err) {
+                Ok(false)
+            } else {
+                Err(format!(
+                    "验证未通过：{}",
+                    err.chars().take(160).collect::<String>()
+                ))
+            }
+        }
+    }
+}
+
+fn is_claude_auth_error(text: &str) -> bool {
+    ["auth", "login", "credential", "unauthorized", "401", "token", "oauth"]
+        .iter()
+        .any(|needle| text.to_ascii_lowercase().contains(needle))
+}
+
+/// 保存 `claude setup-token` 生成的订阅 OAuth Token。只写系统安全存储，不修改
+/// shell profile、Claude settings 或任何可导出的 Pilot 配置。
+#[tauri::command]
+async fn save_claude_oauth_token(token: String) -> Result<(), String> {
+    let token = validate_claude_oauth_token(&token)?.to_string();
+    match verify_claude_credential(Some(&token)).await {
+        Ok(true) => keychain::set_claude_oauth_token(&token),
+        Ok(false) => Err(
+            "Anthropic 拒绝了这个 Token（401）。请重新运行 claude setup-token 并复制新 Token"
+                .into(),
+        ),
+        Err(error) => Err(format!("Token 尚未保存：{error}")),
+    }
+}
+
+fn validate_claude_oauth_token(token: &str) -> Result<&str, String> {
+    let token = token.trim();
+    if token.is_empty() {
+        return Err("请粘贴 Claude 订阅 Token".into());
+    }
+    if token.chars().any(char::is_whitespace) {
+        return Err("Token 中不能包含空格或换行，请确认复制完整".into());
+    }
+    if token.starts_with("sk-ant-api") {
+        return Err("这里仅支持 Claude Code 订阅 Token，不支持 Anthropic Console API Key".into());
+    }
+    if token.len() < 32 {
+        return Err("Token 过短，请运行 claude setup-token 后复制完整结果".into());
+    }
+    Ok(token)
+}
+
+#[tauri::command]
+fn clear_claude_oauth_token() -> Result<(), String> {
+    keychain::delete_claude_oauth_token()
+}
+
+/// 重新绑定第一步：退出该 CLI 的当前账号（headless 跑 logout，不开终端）。
+/// 之后前端接着走 open_brain_login 的授权终端登录新账号。
+/// logout 命令失败不算错（多半是本来就没登录）——以随后的状态检测为准。
+#[tauri::command]
+async fn brain_logout(brain: String) -> Result<(), String> {
+    let (bin, args): (&str, &[&str]) = match brain.as_str() {
+        "claude" => ("claude", &["auth", "logout"]),
+        "codex" => ("codex", &["logout"]),
+        "grok" => ("grok", &["logout"]),
+        other => return Err(format!("未知的执行引擎: {other}")),
+    };
+    let path = brains::resolve_bin(bin);
+    if path.is_empty() {
+        return Err(format!("没有找到 {bin}，请先安装"));
+    }
+    // 显式“重新绑定”必须先移除 Pilot 注入的订阅 Token；否则它的认证优先于 CLI
+    // 浏览器登录，新账号登录成功后实际请求仍会继续使用旧 Token。
+    if brain == "claude" {
+        keychain::delete_claude_oauth_token()?;
+    }
+    let mut cmd = tokio::process::Command::new(&path);
+    cmd.args(args)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW：别闪控制台
+    }
+    let fut = async {
+        let child = cmd.spawn().map_err(|e| format!("启动 {bin} 失败：{e}"))?;
+        let _ = child.wait_with_output().await;
+        Ok::<(), String>(())
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(20), fut)
+        .await
+        .map_err(|_| format!("{bin} logout 超时"))?
 }
 
 /// 打开 Terminal 跑对应 CLI 的登录命令（.command 以 zsh 登录 shell 执行，PATH 完整；
@@ -7826,9 +8368,11 @@ pub fn run() {
                 data_dir: data_dir.clone(),
                 preview: Arc::new(Mutex::new(None)),
                 ssh: ssh::SshSessions::new(),
+                pilot_bindings: pilot_console::BindingStore::new(&data_dir),
             });
             setup_tray(app.handle())?;
             spawn_scheduler(app.handle().clone());
+            pilot_console::spawn_worker(app.handle().clone());
             // 每次启动都把主窗口显示并置前——修复自动更新 relaunch 后 macOS 不激活、窗口看不到（要点 Dock 才出来）。
             show_main(app.handle());
             #[cfg(target_os = "windows")]
@@ -7850,6 +8394,11 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             list_connections,
+            pilot_console::pilot_console_bind,
+            pilot_console::pilot_console_status,
+            pilot_console::pilot_console_unbind,
+            pilot_console::pilot_console_reconnect,
+            pilot_console::pilot_console_set_default_site,
             import_pack,
             check_pack_update,
             gcms_control_unlock,
@@ -7860,6 +8409,8 @@ pub fn run() {
             remove_connection,
             set_connection_remark,
             open_conn_window,
+            open_site_theme_window,
+            close_site_theme_window,
             show_edit_menu,
             discover_sites,
             gcms_site_create_capability,
@@ -7956,6 +8507,10 @@ pub fn run() {
             redetect_brains,
             list_scheduled,
             open_brain_login,
+            brain_logout,
+            brain_verify_claude,
+            save_claude_oauth_token,
+            clear_claude_oauth_token,
             list_conversations,
             get_conversation,
             anchor_workspace_conversations,
@@ -7970,6 +8525,9 @@ pub fn run() {
             set_conversation_brain_model,
             set_conversation_perm_mode,
             set_conversation_effort,
+            set_conversation_fast,
+            check_claude_update,
+            upgrade_claude_cli,
             list_pending_permits,
             respond_permit,
             list_tasks,

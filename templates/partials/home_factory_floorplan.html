@@ -1,0 +1,120 @@
+{{define "home_factory_floorplan"}}
+  {{/* factory-floorplan — 平面图：整页读成一张车间俯视图纸。
+       页头=图例条导航（CSS 重塑标准 .site-header：导航项前挂分类色小方块，五色 nth 循环；
+       ≤620px 交还基础汉堡抽屉，不新增 header define）。hero=左侧文案 + 右侧「车间俯视
+       平面图」：grid 分区块，各区半透明分区色 + 细边 + CSS 计数器区号（ZONE A…）+ 区名/小注；
+       分区数据优先 factory.industries，次选分类入口（可点击进分类），都没配时渲染四块
+       纯装饰分区（aria-hidden）。商品=设备位卡（区号色标 + U-01 设备位号，CSS 计数器生成）。
+       数据全由 fillFactoryHome 装载；空数据整块不渲染，封面缺失走首字兜底；
+       区块编号取 .FactorySectionNum（跳过未渲染区块，编号连续）。 */}}
+  <div class="fpl-wrap">
+    <section class="fpl-hero">
+      <div class="fpl-hero-copy">
+        {{if .Site.HeroEyebrow}}<p class="fpl-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+        <h1 class="fpl-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+        {{if .Site.HeroDescription}}<p class="fpl-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+        <div class="fpl-cta">
+          {{if .Contact.Any}}<a class="btn btn-primary" href="#factory-contact">{{.Tr.T "contact.float_label"}} <span class="arrow" aria-hidden="true">→</span></a>
+          {{else}}<a class="btn btn-primary" href="{{.Tr.U "/products"}}">{{.Tr.T "factory.products"}} <span class="arrow" aria-hidden="true">→</span></a>{{end}}
+          <a class="btn" href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}}</a>
+        </div>
+      </div>
+      {{/* 车间俯视平面图：最多 5 区；区号/角标/图纸网格全由 CSS 生成 */}}
+      <div class="fpl-plan">
+        {{template "factory_hero_slot" .}}
+        {{if .FactoryIndustries}}
+        {{range $i, $z := .FactoryIndustries}}{{if lt $i 5}}<div class="fpl-zone"><b class="fpl-zone-name">{{$z.Name}}</b>{{if $z.Note}}<i class="fpl-zone-note">{{$z.Note}}</i>{{end}}</div>
+        {{end}}{{end}}
+        {{else if .FactoryCats}}
+        {{range $i, $c := .FactoryCats}}{{if lt $i 5}}<a class="fpl-zone" href="{{$.Tr.U $c.URL}}"><b class="fpl-zone-name">{{$c.Name}}</b><i class="fpl-zone-note">{{printf ($.Tr.T "factory.categories_count") $c.Count}}</i></a>
+        {{end}}{{end}}
+        {{else}}
+        <div class="fpl-zone fpl-zone-bare" aria-hidden="true"></div><div class="fpl-zone fpl-zone-bare" aria-hidden="true"></div>
+        <div class="fpl-zone fpl-zone-bare" aria-hidden="true"></div><div class="fpl-zone fpl-zone-bare" aria-hidden="true"></div>
+        {{end}}
+      </div>
+    </section>
+
+    <section class="fpl-strength">
+      {{if .FactoryStats}}<dl class="f-stats fpl-stats">{{range .FactoryStats}}<div class="f-stat"><dt>{{.Num}}</dt><dd>{{.Label}}</dd></div>
+        {{end}}</dl>{{else}}{{template "factory_about" .}}{{end}}
+    </section>
+
+    {{if .FactoryCats}}
+    <section class="fpl-section">
+      <div class="fpl-head"><div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "categories"}}</span>{{.Tr.T "factory.categories"}}</p><h2>{{.Tr.T "factory.categories"}}</h2></div></div>
+      {{template "factory_categories" .}}
+    </section>
+    {{end}}
+
+    <section class="fpl-section fpl-units-sec">
+      <div class="fpl-head">
+        <div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "products"}}</span>{{.Tr.T "factory.products"}}</p><h2>{{.Tr.T "factory.products"}}</h2></div>
+        <a href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="fpl-grid">
+        {{range .FactoryProducts}}
+        <a class="fpl-card" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+          <span class="fpl-card-media{{if not .CoverImage}} fpl-card-gen{{end}}">
+            {{if .CoverImage}}<img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}
+          </span>
+          <span class="fpl-card-body">
+            {{with .Category}}<span class="fpl-card-cat">{{.Name}}</span>{{end}}
+            <span class="fpl-card-title">{{.Title}}</span>
+            {{if .Excerpt}}<span class="fpl-card-ex">{{.Excerpt}}</span>{{end}}
+            {{with productChips .}}<span class="f-chips">{{range .}}<span class="f-chip"><b>{{.K}}</b><i>{{.V}}</i></span>{{end}}</span>{{end}}
+          </span>
+        </a>
+        {{else}}<p class="fpl-empty muted">{{.Tr.T "factory.no_products"}}</p>{{end}}
+      </div>
+    </section>
+
+    {{if .FactoryProcessOn}}
+    <section class="fpl-section fpl-process-sec">
+      <div class="fpl-head"><div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "process"}}</span>{{.Tr.T "factory.process"}}</p><h2>{{.Tr.T "factory.process"}}</h2></div></div>
+      {{template "factory_process_steps" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryIndustries}}
+    <section class="fpl-section fpl-industries-sec">
+      <div class="fpl-head"><div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "industries"}}</span>{{.Tr.T "factory.industries"}}</p><h2>{{.Tr.T "factory.industries"}}</h2></div></div>
+      {{template "factory_industries" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryGallery}}
+    <section class="fpl-section">
+      <div class="fpl-head"><div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "gallery"}}</span>{{.Tr.T "factory.gallery"}}</p><h2>{{.Tr.T "factory.gallery"}}</h2></div></div>
+      {{template "factory_gallery" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryQAs}}
+    <section class="fpl-section">
+      <div class="fpl-head"><div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "faq"}}</span>{{.Tr.T "factory.faq"}}</p><h2>{{.Tr.T "factory.faq"}}</h2></div></div>
+      {{template "factory_faq" .}}
+    </section>
+    {{end}}
+
+    {{if .Posts}}
+    <section class="fpl-section fpl-news">
+      <div class="fpl-head fpl-news-head">
+        <div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "news"}}</span>{{.Tr.T "factory.news"}}</p><h2>{{.Tr.T "factory.news"}}</h2></div>
+        <a href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="fpl-news-list">
+        {{range $i, $p := .Posts}}{{if lt $i 3}}
+        <a class="fpl-news-item" href="{{$.Tr.U (contentURL $p)}}">
+          <time datetime="{{$.Tr.ISODate $p.PublishedAt}}">{{$.Tr.Date $p.PublishedAt}}</time>
+          <span class="fpl-news-title">{{$p.Title}}</span>
+          <span class="arrow" aria-hidden="true">→</span>
+        </a>
+        {{end}}{{end}}
+      </div>
+    </section>
+    {{end}}
+  </div>
+
+  {{template "factory_cta" .}}
+{{end}}

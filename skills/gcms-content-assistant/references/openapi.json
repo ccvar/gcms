@@ -19,6 +19,491 @@
     }
   ],
   "paths": {
+    "/page-platform/capabilities": {
+      "get": {
+        "operationId": "getPagePlatformCapabilities",
+        "summary": "Discover live page modes, operations, scopes, limits, and safety protocols",
+        "responses": {
+          "200": { "description": "Capability catalog; clients must check available and granted independently" }
+        }
+      }
+    },
+    "/page-projects": {
+      "get": {
+        "operationId": "pages.project.list",
+        "summary": "Discover existing page projects and their latest ETags",
+        "parameters": [
+          { "name": "page_id", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1 } },
+          { "name": "lang", "in": "query", "required": false, "schema": { "type": "string" } },
+          { "name": "slug", "in": "query", "required": false, "schema": { "type": "string" } },
+          { "name": "mode", "in": "query", "required": false, "schema": { "type": "string", "enum": ["composition", "app"] } },
+          { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 } },
+          { "name": "offset", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 0, "default": 0 } }
+        ],
+        "responses": {
+          "200": { "description": "Matching page projects, page summaries, ETags and governance links" }
+        }
+      },
+      "post": {
+        "operationId": "pages.project.create",
+        "summary": "Create a sidecar composition/app project for an existing standard page",
+        "description": "Requires If-Match from the standard-page conversion plan and Idempotency-Key. Existing standard-page data remains unchanged.",
+        "parameters": [
+          { "$ref": "#/components/parameters/PageIfMatch" },
+          { "$ref": "#/components/parameters/PageIdempotencyKey" }
+        ],
+        "responses": {
+          "201": { "description": "Project and immutable baseline revision" },
+          "409": { "description": "Revision/idempotency conflict; never overwrite" }
+        }
+      }
+    },
+    "/page-projects/{project_id}": {
+      "get": {
+        "operationId": "pages.project.get",
+        "summary": "Read a page project and its working revision",
+        "parameters": [
+          { "$ref": "#/components/parameters/PageProjectId" }
+        ],
+        "responses": {
+          "200": { "description": "Project envelope; ETag response header is required for the next write" }
+        }
+      }
+    },
+    "/page-projects/{project_id}/revisions": {
+      "get": {
+        "operationId": "pages.revision.list",
+        "summary": "List immutable project revisions",
+        "parameters": [
+          { "$ref": "#/components/parameters/PageProjectId" },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "integer", "minimum": 1, "default": 100 }
+          }
+        ],
+        "responses": {
+          "200": { "description": "Immutable revision list" }
+        }
+      },
+      "post": {
+        "operationId": "pages.revision.create",
+        "summary": "Create an immutable revision from base_revision_id",
+        "parameters": [
+          { "$ref": "#/components/parameters/PageProjectId" },
+          { "$ref": "#/components/parameters/PageIfMatch" },
+          { "$ref": "#/components/parameters/PageIdempotencyKey" }
+        ],
+        "responses": {
+          "201": { "description": "New working revision" },
+          "409": { "description": "ETag/base revision/idempotency conflict; fetch and merge" }
+        }
+      }
+    },
+    "/page-projects/{project_id}/revisions/{revision_id}": {
+      "get": {
+        "operationId": "pages.revision.get",
+        "summary": "Read an immutable project revision",
+        "parameters": [
+          { "$ref": "#/components/parameters/PageProjectId" },
+          { "$ref": "#/components/parameters/PageRevisionId" }
+        ],
+        "responses": {
+          "200": { "description": "Exact immutable revision" },
+          "404": { "description": "Revision does not belong to this project" }
+        }
+      }
+    },
+    "/page-projects/{project_id}/restore": {
+      "post": {
+        "operationId": "pages.revision.restore",
+        "summary": "Create a new working revision from immutable history",
+        "parameters": [
+          { "$ref": "#/components/parameters/PageProjectId" },
+          { "$ref": "#/components/parameters/PageIfMatch" },
+          { "$ref": "#/components/parameters/PageIdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["revision_id"],
+                "properties": {
+                  "revision_id": { "type": "integer", "minimum": 1 },
+                  "summary": { "type": "string" }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "New immutable restore revision" },
+          "409": { "description": "ETag or idempotency conflict" }
+        }
+      }
+    },
+    "/page-design-context": {
+      "get": {
+        "operationId": "pages.design_context.get",
+        "summary": "Read the live Pilot page-design context",
+        "description": "Returns the current site identity, Hero, theme inheritance defaults, navigation, component registry, real data sources, page recipes, workflow policy, and required preview sizes.",
+        "parameters": [
+          {
+            "name": "lang",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": { "description": "Versioned live page-design context" }
+        }
+      }
+    },
+    "/page-components": {
+      "get": {
+        "operationId": "pages.components.list",
+        "summary": "List the component registry and property schemas",
+        "responses": {
+          "200": { "description": "Supported composition components" }
+        }
+      }
+    },
+    "/page-data-sources": {
+      "get": {
+        "operationId": "pages.data_sources.list",
+        "summary": "List live GCMS data sources and binding fields",
+        "parameters": [
+          {
+            "name": "lang",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": { "description": "Available live data sources" }
+        }
+      }
+    },
+    "/page-bindings/preview": {
+      "post": {
+        "operationId": "pages.bindings.preview",
+        "summary": "Preview a manifest or component binding against live data",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "type": "object" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Resolved preview data without writing a revision" }
+        }
+      }
+    },
+    "/page-projects/{project_id}/assets": {
+      "get": {
+        "operationId": "pages.asset.list",
+        "summary": "List immutable project assets",
+        "parameters": [
+          { "$ref": "#/components/parameters/PageProjectId" }
+        ],
+        "responses": {
+          "200": { "description": "Project asset list" }
+        }
+      },
+      "post": {
+        "operationId": "pages.asset.upload",
+        "summary": "Upload a validated composition image using multipart/form-data",
+        "parameters": [
+          { "$ref": "#/components/parameters/PageProjectId" },
+          { "$ref": "#/components/parameters/PageIfMatch" },
+          { "$ref": "#/components/parameters/PageIdempotencyKey" }
+        ],
+        "responses": {
+          "201": { "description": "Server-managed immutable asset" },
+          "422": { "description": "Unsafe or invalid asset" }
+        }
+      }
+    },
+    "/page-projects/{project_id}/app-package": {
+      "post": {
+        "operationId": "pages.app.upload",
+        "summary": "Upload a validated sandboxed app ZIP using multipart/form-data",
+        "parameters": [
+          { "$ref": "#/components/parameters/PageProjectId" },
+          { "$ref": "#/components/parameters/PageIfMatch" },
+          { "$ref": "#/components/parameters/PageIdempotencyKey" }
+        ],
+        "responses": {
+          "201": { "description": "Immutable app revision" },
+          "422": { "description": "Unsafe path, remote code, undeclared capability, or limit violation" }
+        }
+      }
+    },
+    "/page-projects/{project_id}/app-files/{file_path}": {
+      "get": {
+        "operationId": "pages.app.source.read",
+        "summary": "Read an editable private app text source",
+        "parameters": [
+          { "$ref": "#/components/parameters/PageProjectId" },
+          { "$ref": "#/components/parameters/PageFilePath" },
+          {
+            "name": "revision_id",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "integer", "minimum": 1 }
+          }
+        ],
+        "responses": {
+          "200": { "description": "Text source from an immutable private bundle" }
+        }
+      },
+      "put": {
+        "operationId": "pages.app.source.edit",
+        "summary": "Replace an allow-listed text source and create a new revision",
+        "parameters": [
+          { "$ref": "#/components/parameters/PageProjectId" },
+          { "$ref": "#/components/parameters/PageFilePath" },
+          { "$ref": "#/components/parameters/PageIfMatch" },
+          { "$ref": "#/components/parameters/PageIdempotencyKey" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["base_revision_id", "content"],
+                "properties": {
+                  "base_revision_id": { "type": "integer", "minimum": 1 },
+                  "content": { "type": "string" },
+                  "summary": { "type": "string" },
+                  "conversation_id": { "type": "string" }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "description": "New immutable app revision after whole-bundle validation" },
+          "422": { "description": "Unsafe path, source, manifest, or capability declaration" }
+        }
+      }
+    },
+    "/page-projects/{project_id}/capabilities": {
+      "get": {
+        "operationId": "pages.app.capabilities.list",
+        "summary": "List declared, available, requested, and granted app capabilities",
+        "parameters": [
+          { "$ref": "#/components/parameters/PageProjectId" }
+        ],
+        "responses": {
+          "200": { "description": "Capability states and controlled configuration" }
+        }
+      }
+    },
+    "/page-projects/{project_id}/capabilities/request": {
+      "post": {
+        "operationId": "pages.app.capabilities.request",
+        "summary": "Request a manifest-declared app capability",
+        "parameters": [
+          { "$ref": "#/components/parameters/PageProjectId" },
+          { "$ref": "#/components/parameters/PageIfMatch" },
+          { "$ref": "#/components/parameters/PageIdempotencyKey" }
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/PageCapabilityRequest"
+        },
+        "responses": {
+          "201": { "description": "Capability request recorded" },
+          "422": { "description": "Capability is undeclared or unavailable" }
+        }
+      }
+    },
+    "/page-projects/{project_id}/capabilities/apply": {
+      "post": {
+        "operationId": "pages.app.capabilities.apply",
+        "summary": "Approve or deny a requested app capability",
+        "description": "Approval accepts no password or approval token. The first request returns unlock_required/page_challenge bound to site/page/project/revision/capability/normalized config/decision/ETag/request-id/subject; Pilot native UI retries the byte-equivalent request with X-GCMS-Control-Unlock.",
+        "parameters": [
+          { "$ref": "#/components/parameters/PageProjectId" },
+          { "$ref": "#/components/parameters/PageIfMatch" },
+          { "$ref": "#/components/parameters/PageIdempotencyKey" },
+          { "$ref": "#/components/parameters/PageControlUnlock" }
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/PageCapabilityDecision"
+        },
+        "responses": {
+          "200": { "description": "Capability decision recorded or idempotently replayed" },
+          "409": { "description": "Target conflict or Pilot-native unlock required" }
+        }
+      }
+    },
+    "/page-projects/{project_id}/capabilities/revoke": {
+      "post": {
+        "operationId": "pages.app.capabilities.revoke",
+        "summary": "Immediately revoke an app capability",
+        "parameters": [
+          { "$ref": "#/components/parameters/PageProjectId" },
+          { "$ref": "#/components/parameters/PageIfMatch" },
+          { "$ref": "#/components/parameters/PageIdempotencyKey" }
+        ],
+        "requestBody": {
+          "$ref": "#/components/requestBodies/PageCapabilityRequest"
+        },
+        "responses": {
+          "200": { "description": "Capability revoked or idempotently replayed" }
+        }
+      }
+    },
+    "/page-projects/{project_id}/validate": {
+      "post": {
+        "operationId": "pages.validate",
+        "summary": "Validate an exact revision",
+        "parameters": [
+          { "$ref": "#/components/parameters/PageProjectId" },
+          { "$ref": "#/components/parameters/PageIfMatch" }
+        ],
+        "responses": { "200": { "description": "Validation diagnostics" } }
+      }
+    },
+    "/page-projects/{project_id}/builds": {
+      "post": {
+        "operationId": "pages.build",
+        "summary": "Build an exact immutable revision",
+        "parameters": [
+          { "$ref": "#/components/parameters/PageProjectId" },
+          { "$ref": "#/components/parameters/PageIfMatch" },
+          { "$ref": "#/components/parameters/PageIdempotencyKey" }
+        ],
+        "responses": { "201": { "description": "Immutable build and diagnostics" } }
+      }
+    },
+    "/page-projects/{project_id}/builds/{build_id}": {
+      "get": {
+        "operationId": "pages.build.get",
+        "summary": "Read an immutable build and its diagnostics",
+        "parameters": [
+          { "$ref": "#/components/parameters/PageProjectId" },
+          { "$ref": "#/components/parameters/PageBuildId" }
+        ],
+        "responses": {
+          "200": { "description": "Exact build record" }
+        }
+      }
+    },
+    "/page-projects/{project_id}/preview-url": {
+      "post": {
+        "operationId": "pages.preview",
+        "summary": "Create a short-lived private preview for an exact revision/build",
+        "parameters": [
+          { "$ref": "#/components/parameters/PageProjectId" },
+          { "$ref": "#/components/parameters/PageIfMatch" }
+        ],
+        "responses": { "201": { "description": "Signed no-store/noindex preview URL" } }
+      }
+    },
+    "/page-projects/{project_id}/publish-plan": {
+      "post": {
+        "operationId": "pages.publish_plan",
+        "summary": "Validate and describe the exact publication impact",
+        "parameters": [
+          { "$ref": "#/components/parameters/PageProjectId" },
+          { "$ref": "#/components/parameters/PageIfMatch" }
+        ],
+        "responses": {
+          "200": { "description": "Impact, validation, revision and build identity" },
+          "409": { "description": "Revision/build conflict or build_stale after live bound data changed" }
+        }
+      }
+    },
+    "/page-projects/{project_id}/publish": {
+      "post": {
+        "operationId": "pages.publish",
+        "summary": "Publish after Pilot-native target-bound confirmation",
+        "description": "Without native confirmation returns unlock_required and an opaque page_challenge. The backend password and internal approval token never enter the model context. The native token is bound to operation/site/page/project/revision/build/live-data snapshot/ETag/request-id/subject.",
+        "parameters": [
+          { "$ref": "#/components/parameters/PageProjectId" },
+          { "$ref": "#/components/parameters/PageIfMatch" },
+          { "$ref": "#/components/parameters/PageIdempotencyKey" },
+          { "$ref": "#/components/parameters/PageControlUnlock" }
+        ],
+        "responses": {
+          "201": { "description": "Publication created" },
+          "409": { "description": "Target/build conflict, build_stale, or native confirmation required" }
+        }
+      }
+    },
+    "/page-projects/{project_id}/publications": {
+      "get": {
+        "operationId": "pages.publication.list",
+        "summary": "List immutable page publication records",
+        "parameters": [
+          { "$ref": "#/components/parameters/PageProjectId" },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "integer", "minimum": 1, "default": 100 }
+          }
+        ],
+        "responses": {
+          "200": { "description": "Publication history" }
+        }
+      }
+    },
+    "/page-projects/{project_id}/rollback-plan": {
+      "post": {
+        "operationId": "pages.rollback_plan",
+        "summary": "Validate and describe rollback to an exact historical revision",
+        "parameters": [
+          { "$ref": "#/components/parameters/PageProjectId" },
+          { "$ref": "#/components/parameters/PageIfMatch" }
+        ],
+        "responses": {
+          "200": { "description": "Rollback impact and target identity" },
+          "409": { "description": "Revision/build conflict or build_stale after live bound data changed" }
+        }
+      }
+    },
+    "/page-projects/{project_id}/rollback": {
+      "post": {
+        "operationId": "pages.rollback",
+        "summary": "Rollback after Pilot-native target-bound confirmation",
+        "description": "The same native boundary as publication binds operation/site/page/project/revision/build/live-data snapshot/ETag/request-id/subject; the AI never receives the password or internal approval token.",
+        "parameters": [
+          { "$ref": "#/components/parameters/PageProjectId" },
+          { "$ref": "#/components/parameters/PageIfMatch" },
+          { "$ref": "#/components/parameters/PageIdempotencyKey" },
+          { "$ref": "#/components/parameters/PageControlUnlock" }
+        ],
+        "responses": {
+          "201": { "description": "Rollback publication created" },
+          "409": { "description": "Target/build conflict, build_stale, or native confirmation required" }
+        }
+      }
+    },
+    "/control/unlock": {
+      "post": {
+        "operationId": "pages.native_unlock",
+        "summary": "Pilot-native page publish/rollback/capability confirmation",
+        "description": "UI-only. Requires X-GCMS-Control-UI: pilot and the exact page_challenge for pages.publish, pages.rollback, or page_capabilities.grant. Never call this from the skill or ask the user for a password.",
+        "responses": {
+          "201": { "description": "Short-lived target-bound unlock token" },
+          "403": { "description": "Not Pilot native UI or missing scope" },
+          "409": { "description": "Challenge expired, used, or target changed" }
+        }
+      }
+    },
     "/languages": {
       "get": {
         "summary": "List enabled languages",
@@ -344,6 +829,71 @@
           }
         }
       }
+    },
+    "/site-profile": {
+      "get": {
+        "summary": "Read site profile and global Logo scale",
+        "operationId": "getSiteProfile",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SiteProfileResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "summary": "Update site profile or global Logo scale",
+        "description": "logo_scale must be a top-level field, is shared by every language, accepts 0.3 through 2, and requires brand:assets:write.",
+        "operationId": "updateSiteProfile",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SiteProfilePatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SiteProfileResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid field or value",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Missing brand:assets:write",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/APIError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -404,6 +954,7 @@
       },
       "CreatePosts": {
         "summary": "Create post",
+        "description": "Creates content and returns its current strong ETag.",
         "operationId": "createPosts",
         "tags": [
           "Posts"
@@ -413,12 +964,16 @@
         },
         "responses": {
           "201": {
-            "description": "Created"
+            "description": "Created",
+            "headers": {
+              "ETag": { "$ref": "#/components/headers/ContentETag" }
+            }
           }
         }
       },
       "GetPosts": {
         "summary": "Get post",
+        "description": "Returns the current strong ETag for a later conditional update.",
         "operationId": "getPosts",
         "tags": [
           "Posts"
@@ -430,12 +985,16 @@
         ],
         "responses": {
           "200": {
-            "description": "OK"
+            "description": "OK",
+            "headers": {
+              "ETag": { "$ref": "#/components/headers/ContentETag" }
+            }
           }
         }
       },
       "UpdatePosts": {
         "summary": "Update post",
+        "description": "If-Match remains optional for legacy compatibility. New clients should send the strong ETag from the latest read; a stale value returns revision_conflict instead of overwriting.",
         "operationId": "updatePosts",
         "tags": [
           "Posts"
@@ -443,6 +1002,9 @@
         "parameters": [
           {
             "$ref": "#/components/parameters/ID"
+          },
+          {
+            "$ref": "#/components/parameters/ContentIfMatch"
           }
         ],
         "requestBody": {
@@ -450,7 +1012,13 @@
         },
         "responses": {
           "200": {
-            "description": "OK"
+            "description": "OK",
+            "headers": {
+              "ETag": { "$ref": "#/components/headers/ContentETag" }
+            }
+          },
+          "409": {
+            "description": "If-Match is stale"
           }
         }
       },
@@ -491,6 +1059,7 @@
       },
       "CreatePages": {
         "summary": "Create page",
+        "description": "Creates a legacy standard page and returns its current strong ETag.",
         "operationId": "createPages",
         "tags": [
           "Pages"
@@ -500,12 +1069,16 @@
         },
         "responses": {
           "201": {
-            "description": "Created"
+            "description": "Created",
+            "headers": {
+              "ETag": { "$ref": "#/components/headers/ContentETag" }
+            }
           }
         }
       },
       "GetPages": {
         "summary": "Get page",
+        "description": "Returns the current strong ETag for a later conditional update.",
         "operationId": "getPages",
         "tags": [
           "Pages"
@@ -517,12 +1090,16 @@
         ],
         "responses": {
           "200": {
-            "description": "OK"
+            "description": "OK",
+            "headers": {
+              "ETag": { "$ref": "#/components/headers/ContentETag" }
+            }
           }
         }
       },
       "UpdatePages": {
         "summary": "Update page",
+        "description": "If-Match remains optional for old-client compatibility. New clients should send the strong ETag from the latest read. Existing page projects return project_api_required; the bundled skill only edits legacy standard-page drafts and never publishes through this compatibility route.",
         "operationId": "updatePages",
         "tags": [
           "Pages"
@@ -530,6 +1107,9 @@
         "parameters": [
           {
             "$ref": "#/components/parameters/ID"
+          },
+          {
+            "$ref": "#/components/parameters/ContentIfMatch"
           }
         ],
         "requestBody": {
@@ -537,7 +1117,13 @@
         },
         "responses": {
           "200": {
-            "description": "OK"
+            "description": "OK",
+            "headers": {
+              "ETag": { "$ref": "#/components/headers/ContentETag" }
+            }
+          },
+          "409": {
+            "description": "If-Match is stale or the page is owned by a page project"
           }
         }
       },
@@ -578,6 +1164,7 @@
       },
       "CreateLinks": {
         "summary": "Create link",
+        "description": "Creates content and returns its current strong ETag.",
         "operationId": "createLinks",
         "tags": [
           "Links"
@@ -587,12 +1174,16 @@
         },
         "responses": {
           "201": {
-            "description": "Created"
+            "description": "Created",
+            "headers": {
+              "ETag": { "$ref": "#/components/headers/ContentETag" }
+            }
           }
         }
       },
       "GetLinks": {
         "summary": "Get link",
+        "description": "Returns the current strong ETag for a later conditional update.",
         "operationId": "getLinks",
         "tags": [
           "Links"
@@ -604,12 +1195,16 @@
         ],
         "responses": {
           "200": {
-            "description": "OK"
+            "description": "OK",
+            "headers": {
+              "ETag": { "$ref": "#/components/headers/ContentETag" }
+            }
           }
         }
       },
       "UpdateLinks": {
         "summary": "Update link",
+        "description": "If-Match remains optional for legacy compatibility. New clients should send the strong ETag from the latest read; a stale value returns revision_conflict instead of overwriting.",
         "operationId": "updateLinks",
         "tags": [
           "Links"
@@ -617,6 +1212,9 @@
         "parameters": [
           {
             "$ref": "#/components/parameters/ID"
+          },
+          {
+            "$ref": "#/components/parameters/ContentIfMatch"
           }
         ],
         "requestBody": {
@@ -624,12 +1222,71 @@
         },
         "responses": {
           "200": {
-            "description": "OK"
+            "description": "OK",
+            "headers": {
+              "ETag": { "$ref": "#/components/headers/ContentETag" }
+            }
+          },
+          "409": {
+            "description": "If-Match is stale"
           }
         }
       }
     },
     "parameters": {
+      "PageProjectId": {
+        "name": "project_id",
+        "in": "path",
+        "required": true,
+        "schema": { "type": "integer", "minimum": 1 }
+      },
+      "PageRevisionId": {
+        "name": "revision_id",
+        "in": "path",
+        "required": true,
+        "schema": { "type": "integer", "minimum": 1 }
+      },
+      "PageBuildId": {
+        "name": "build_id",
+        "in": "path",
+        "required": true,
+        "schema": { "type": "integer", "minimum": 1 }
+      },
+      "PageFilePath": {
+        "name": "file_path",
+        "in": "path",
+        "required": true,
+        "description": "Percent-encoded package-relative path. Empty, absolute, dot, dot-dot, and backslash segments are forbidden.",
+        "schema": { "type": "string", "minLength": 1 }
+      },
+      "PageIfMatch": {
+        "name": "If-Match",
+        "in": "header",
+        "required": true,
+        "description": "Exact ETag from the latest project response. Never guess or overwrite after a conflict.",
+        "schema": { "type": "string" }
+      },
+      "PageIdempotencyKey": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": true,
+        "description": "Stable only for byte-equivalent retries of one logical request.",
+        "schema": { "type": "string", "minLength": 8, "maxLength": 200 }
+      },
+      "PageControlUnlock": {
+        "name": "X-GCMS-Control-Unlock",
+        "in": "header",
+        "required": false,
+        "description": "Short-lived target-bound credential injected only by Pilot native UI. The AI must never receive, print, or persist it.",
+        "schema": { "type": "string", "writeOnly": true }
+      },
+      "ContentIfMatch": {
+        "name": "If-Match",
+        "in": "header",
+        "required": false,
+        "description": "Strong ETag from the latest single-item read or write. New clients should send it; omission is retained only for legacy compatibility.",
+        "schema": { "type": "string" }
+      },
       "ID": {
         "name": "id",
         "in": "path",
@@ -701,7 +1358,46 @@
         }
       }
     },
+    "headers": {
+      "ContentETag": {
+        "description": "Strong validator for the complete persisted content row.",
+        "schema": { "type": "string" }
+      }
+    },
     "requestBodies": {
+      "PageCapabilityRequest": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "required": ["capability"],
+              "properties": {
+                "capability": { "type": "string" },
+                "config": { "type": "object", "additionalProperties": true }
+              },
+              "additionalProperties": false
+            }
+          }
+        }
+      },
+      "PageCapabilityDecision": {
+        "required": true,
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "required": ["capability", "decision"],
+              "properties": {
+                "capability": { "type": "string" },
+                "decision": { "type": "string", "enum": ["approve", "deny"] },
+                "config": { "type": "object", "additionalProperties": true }
+              },
+              "additionalProperties": false
+            }
+          }
+        }
+      },
       "MediaUpload": {
         "required": true,
         "content": {
@@ -1053,6 +1749,58 @@
             "type": "string"
           },
           "text": {
+            "type": "string"
+          }
+        }
+      },
+      "SiteProfileResponse": {
+        "type": "object",
+        "properties": {
+          "default": {
+            "type": "string"
+          },
+          "home_links_limit": {
+            "type": "integer"
+          },
+          "home_posts_per_page": {
+            "type": "integer"
+          },
+          "logo_scale": {
+            "type": "number",
+            "minimum": 0.3,
+            "maximum": 2,
+            "multipleOf": 0.05,
+            "default": 1,
+            "description": "Global front-end Logo display scale. 1 keeps the original display size."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "SiteProfilePatch": {
+        "type": "object",
+        "properties": {
+          "logo_scale": {
+            "type": "number",
+            "minimum": 0.3,
+            "maximum": 2,
+            "multipleOf": 0.05,
+            "default": 1,
+            "description": "Top-level global Logo display scale. Requires brand:assets:write; do not place it inside items."
+          }
+        }
+      },
+      "APIError": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "message": {
             "type": "string"
           }
         }

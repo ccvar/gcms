@@ -1,0 +1,104 @@
+{{define "home_dtc_toybox"}}
+  {{/* dtc-toybox — 玩具盒：玩具/母婴品牌独立站首页。开盖 hero（盒盖=纯 CSS 四色积木条，
+       720px 归位普通流；三态照 flagship：image 全幅 scrim / svg 内嵌 / 默认 dtc_hero_anim
+       轻动画）→ 分类积木条（Categories 四色轮换收纳格）→ 玩具格三列（白卡 3px 墨描边
+       + 右上悬出圆形贴纸徽章=分类名或首枚规格签，720px 收回卡内）→ 品牌数字（积木顶边
+       色卡）→ 现场图集 → 用户评价（未配置不渲染、绝不编造）→ FAQ → 联系 CTA
+       （dtc_cta 复用）。数据由 fillDTCHome 装载；所有可选槽空数据整段不渲染。 */}}
+  {{$heroImg := ""}}{{if and (eq .Site.HeroVisual "image") .Site.HeroImage}}{{$heroImg = .Site.HeroImage}}{{end}}
+  {{$heroSVG := and (eq .Site.HeroVisual "svg") (ne .Site.HeroSVG "")}}
+  {{$heroAnim := and (not $heroImg) (not $heroSVG)}}
+  <div class="tbx-wrap">
+    <section class="tbx-hero{{if $heroImg}} has-img{{else if $heroAnim}} has-anim{{end}}">
+      {{if $heroImg}}<img class="tbx-hero-img" src="{{$heroImg}}" alt="{{.Site.HeroAlt}}" decoding="async" fetchpriority="high"{{imgAttrs $heroImg}}>{{end}}
+      <div class="tbx-hero-inner">
+        <div class="tbx-hero-copy">
+          {{if .Site.HeroEyebrow}}<p class="dt-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+          <h1 class="tbx-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+          {{if .Site.HeroDescription}}<p class="tbx-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+          <div class="tbx-cta">
+            <a class="btn btn-primary" href="{{.Tr.U "/products"}}">{{.Tr.T "dtc.shop_now"}} <span class="arrow" aria-hidden="true">→</span></a>
+            {{if .Contact.Any}}<a class="btn dt-btn-ghost" href="#dtc-contact">{{.Tr.T "contact.float_label"}}</a>{{end}}
+          </div>
+        </div>
+        {{if $heroSVG}}<div class="tbx-hero-side dt-embed" aria-hidden="true">{{safeHTML .Site.HeroSVG}}</div>
+        {{else if $heroAnim}}<div class="tbx-hero-side dt-heroanim" aria-hidden="true">{{template "dtc_hero_anim" .}}</div>{{end}}
+      </div>
+    </section>
+
+    {{if .FactoryCats}}
+    <nav class="tbx-bins" aria-label="{{.Tr.T "factory.categories"}}">
+      {{range .FactoryCats}}
+      <a class="tbx-bin" href="{{$.Tr.U .URL}}"><span class="tbx-bin-name">{{.Name}}</span><span class="tbx-bin-n">{{.Count}}</span></a>
+      {{end}}
+    </nav>
+    {{end}}
+
+    {{if .FactoryProducts}}
+    <section class="tbx-section tbx-shelf">
+      <div class="dt-head">
+        <div><p class="dt-eyebrow">{{.Tr.T "dtc.label.products"}}</p><h2>{{.Tr.T "dtc.bestsellers"}}</h2></div>
+        <a href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="tbx-grid">
+        {{range .FactoryProducts}}
+        {{$chips := productChips .}}
+        {{$badge := ""}}{{with .Category}}{{$badge = .Name}}{{end}}{{if and (not $badge) $chips}}{{$badge = (index $chips 0).V}}{{end}}
+        <a class="tbx-card" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+          {{if $badge}}<span class="tbx-sticker">{{$badge}}</span>{{end}}
+          <span class="tbx-card-media{{if not .CoverImage}} dt-gen{{end}}">
+            {{if .CoverImage}}<img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}
+          </span>
+          <span class="tbx-card-body">
+            <span class="tbx-card-title">{{.Title}}</span>
+            {{if $chips}}<span class="f-chips">{{range $chips}}<span class="f-chip"><b>{{.K}}</b><i>{{.V}}</i></span>{{end}}</span>{{end}}
+          </span>
+        </a>
+        {{end}}
+      </div>
+    </section>
+    {{end}}
+
+    {{if .FactoryStats}}
+    <section class="tbx-section tbx-figures">
+      <div class="dt-head">
+        <div><p class="dt-eyebrow">{{.Tr.T "dtc.label.story"}}</p><h2>{{.Tr.T "dtc.story"}}</h2></div>
+      </div>
+      <dl class="dt-stats">
+        {{range .FactoryStats}}
+        <div class="dt-stat"><dt>{{.Num}}</dt><dd>{{.Label}}</dd></div>
+        {{end}}
+      </dl>
+    </section>
+    {{end}}
+
+    {{if .FactoryGallery}}
+    <section class="tbx-section tbx-gallery-sec">
+      <div class="dt-head">
+        <div><p class="dt-eyebrow">{{.Tr.T "dtc.label.scenes"}}</p><h2>{{.Tr.T "dtc.scenes"}}</h2></div>
+      </div>
+      {{template "factory_gallery" .}}
+    </section>
+    {{end}}
+
+    {{if .DTCTestimonials}}
+    <section class="tbx-section tbx-reviews">
+      <div class="dt-head">
+        <div><p class="dt-eyebrow">{{.Tr.T "dtc.label.reviews"}}</p><h2>{{.Tr.T "dtc.reviews"}}</h2></div>
+      </div>
+      {{template "dtc_testimonials" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryQAs}}
+    <section class="tbx-section tbx-faq-sec">
+      <div class="dt-head">
+        <div><p class="dt-eyebrow">{{.Tr.T "dtc.label.guide"}}</p><h2>{{.Tr.T "factory.faq"}}</h2></div>
+      </div>
+      {{template "factory_faq" .}}
+    </section>
+    {{end}}
+  </div>
+
+  {{template "dtc_cta" .}}
+{{end}}

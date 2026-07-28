@@ -1,0 +1,606 @@
+{{define "body"}}
+  <div class="page-workbench-head{{if .PageCanCompose}} is-composer{{if .PageEditorSimple}} is-simple{{else}} is-advanced{{end}}{{end}}"{{if .PageCanCompose}} data-page-editor-mode="{{.PageEditorMode}}"{{end}}>
+    <div class="page-workbench-title">
+      {{if .PageCanCompose}}
+      <div class="page-workbench-breadcrumb">
+        <a class="crumb" href="/admin/pages?lang={{.PagePost.Lang}}">页面</a>
+        <span class="crumb-sep">/</span>
+        <span>{{.PageModeLabel}}</span>
+      </div>
+      <div class="page-workbench-heading">
+        <h1>{{.PageMeta.Title}}</h1>
+        {{if .PageCanCompose}}
+        <span class="page-save-state" data-page-save-state aria-live="polite">{{if .PagePublished}}线上版本已保存{{else}}草稿已保存{{end}}</span>
+        {{else}}
+        <span class="page-state">{{if .PagePublished}}线上版本{{else}}工作草稿{{end}}</span>
+        {{end}}
+      </div>
+      {{else}}
+      <a class="crumb" href="/admin/pages?lang={{.PagePost.Lang}}">页面</a>
+      <span class="crumb-sep">/</span>
+      <span class="page-kind page-kind-{{.PageProject.Mode}}">{{.PageModeLabel}}</span>
+      <h1>{{.PageMeta.Title}}</h1>
+      <span class="page-state">{{if .PagePublished}}线上版本{{else}}工作草稿{{end}}</span>
+      {{end}}
+    </div>
+    <div class="page-workbench-actions">
+      {{if .PageCanCompose}}
+      {{if .PageEditorSimple}}
+      <button class="btn btn-primary page-save-action" type="submit" form="page-composer-form">保存修改</button>
+      <a class="btn page-preview-action" href="/admin/pages/{{.PagePost.ID}}/project/preview?revision={{.PageRevision.ID}}" target="page-preview-window">预览</a>
+      <form method="post" action="/admin/pages/{{.PagePost.ID}}/project/publish"
+        data-confirm="确定把当前修订发布到线上吗？"
+        data-confirm-title="确认发布"
+        data-confirm-ok="发布">
+        <input type="hidden" name="_csrf" value="{{.CSRF}}">
+        <input type="hidden" name="_etag" value="{{.PageETag}}">
+        <button class="btn btn-publish" type="submit"{{if .PagePublished}} disabled{{end}}>发布</button>
+      </form>
+      <a class="page-editor-mode-link" href="{{.PageAdvancedEditorURL}}" data-page-editor-mode="advanced">高级编排</a>
+      {{else}}
+      <button class="btn" type="button" data-page-validate>校验</button>
+      <a class="btn" href="/admin/pages/{{.PagePost.ID}}/project/preview?revision={{.PageRevision.ID}}" target="page-preview-window">新窗口预览 ↗</a>
+      <button class="btn btn-primary" type="submit" form="page-composer-form">保存新修订</button>
+      <form method="post" action="/admin/pages/{{.PagePost.ID}}/project/publish"
+        data-confirm="确定把当前修订发布到线上吗？"
+        data-confirm-title="确认发布"
+        data-confirm-ok="发布">
+        <input type="hidden" name="_csrf" value="{{.CSRF}}">
+        <input type="hidden" name="_etag" value="{{.PageETag}}">
+        <button class="btn btn-publish" type="submit"{{if .PagePublished}} disabled{{end}}>发布</button>
+      </form>
+      <a class="page-editor-mode-link" href="{{.PageSimpleEditorURL}}" data-page-editor-mode="simple">返回简单编辑</a>
+      {{end}}
+      {{end}}
+    </div>
+  </div>
+
+  {{if .Flash}}<div class="flash">{{.Flash}}</div>{{end}}
+  {{if .PageConflict}}
+  <div class="page-conflict" role="alert">
+    <strong>这个页面刚刚被其他操作更新了。</strong>
+    <p>你的表单基于旧修订，服务端没有覆盖新数据。当前版本为 <code>{{.PageConflictETag}}</code>，请刷新后再合并修改。</p>
+    <a class="btn" href="/admin/pages/{{.PagePost.ID}}/project">加载最新修订</a>
+  </div>
+  {{end}}
+  {{if .PageDiagnostics}}
+  <div class="page-diagnostics" role="alert">
+    <strong>校验结果</strong>
+    <ul>{{range .PageDiagnostics}}<li class="is-{{.Level}}"><code>{{.Code}}</code>{{if .Path}} · {{.Path}}{{end}} — {{.Message}}</li>{{end}}</ul>
+  </div>
+  {{end}}
+
+  {{if .PageCanCompose}}
+  <form id="page-composer-form" class="page-composer-form{{if .PageEditorSimple}} is-simple{{else}} is-advanced{{end}}" method="post" action="/admin/pages/{{.PagePost.ID}}/project{{if .PageEditorAdvanced}}?editor=advanced{{end}}" data-page-editor-mode="{{.PageEditorMode}}">
+    <input type="hidden" name="_csrf" value="{{.CSRF}}">
+    <input type="hidden" name="_etag" value="{{.PageETag}}">
+    <textarea name="manifest_json" data-page-manifest hidden>{{.PageManifestPretty}}</textarea>
+    <textarea data-page-registry hidden>{{if .PageEditorSimple}}{{json .PageComponentCatalog}}{{else}}{{json .PageComponents}}{{end}}</textarea>
+    <textarea data-page-data-sources hidden>{{json .PageDataSources}}</textarea>
+
+    <div class="page-canvas-toolbar" aria-label="页面编辑工具">
+      {{if .PageEditorSimple}}
+      <div class="page-canvas-toolbar-left">
+        <div class="page-editor-view-tabs" role="group" aria-label="编辑方式">
+          <button type="button" class="is-active" data-page-view-mode="edit">{{template "icon-edit"}}编辑</button>
+          <button type="button" data-page-view-mode="browse">{{template "page-composer-icon-eye"}}浏览</button>
+        </div>
+      </div>
+      <div class="page-canvas-toolbar-center">
+        <div class="page-device-tabs" role="group" aria-label="预览设备">
+          <button type="button" class="is-active" data-page-device="desktop">{{template "page-composer-icon-desktop"}}桌面</button>
+          <button type="button" data-page-device="tablet">{{template "page-composer-icon-tablet"}}平板</button>
+          <button type="button" data-page-device="mobile">{{template "page-composer-icon-mobile"}}手机</button>
+        </div>
+        <div class="dropdown page-composer-select page-width-select" data-select-dropdown>
+          <button type="button" class="dd-toggle" aria-haspopup="listbox" aria-expanded="false" aria-label="画布宽度">
+            {{template "page-composer-icon-width"}}
+            <span class="dd-label">宽屏 1240</span>
+            <svg class="dd-caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+          </button>
+          <select class="dd-native" data-dropdown-native data-page-width aria-label="画布宽度">
+            <option value="1080">紧凑 1080</option>
+            <option value="1200">舒适 1200</option>
+            <option value="1240" selected>宽屏 1240</option>
+            <option value="1360">展示 1360</option>
+            <option value="1440">超宽 1440</option>
+          </select>
+          <ul class="dd-menu" role="listbox"></ul>
+        </div>
+        <div class="page-history-actions" role="group" aria-label="修改历史">
+          <button type="button" data-page-undo disabled>{{template "page-composer-icon-undo"}}撤销</button>
+          <button type="button" data-page-redo disabled>{{template "page-composer-icon-redo"}}重做</button>
+        </div>
+        <span class="page-editor-help">点击页面中的区块开始编辑</span>
+        <label class="page-current-only page-current-only-native"><input type="checkbox" data-page-current-only> 只看当前页</label>
+        <span class="page-validation-state" data-page-validation-state aria-live="polite">修订 #{{.PageRevision.RevisionNo}}</span>
+      </div>
+      <div class="page-canvas-toolbar-right">
+        <div class="page-beginner-tabs" role="tablist" aria-label="区块设置">
+          <button type="button" class="is-active" data-page-beginner-tab="content">内容</button>
+          <button type="button" data-page-beginner-tab="style">样式</button>
+          <button type="button" data-page-beginner-tab="data">数据</button>
+        </div>
+      </div>
+      {{else}}
+      <span>画布</span>
+      <div class="page-device-tabs" role="group" aria-label="设备">
+        <button type="button" class="is-active" data-page-device="desktop">{{template "page-composer-icon-desktop"}}桌面</button>
+        <button type="button" data-page-device="tablet">{{template "page-composer-icon-tablet"}}平板</button>
+        <button type="button" data-page-device="mobile">{{template "page-composer-icon-mobile"}}手机</button>
+      </div>
+      <div class="dropdown page-composer-select page-width-select" data-select-dropdown>
+        <button type="button" class="dd-toggle" aria-haspopup="listbox" aria-expanded="false" aria-label="画布宽度">
+          {{template "page-composer-icon-width"}}
+          <span class="dd-label">宽屏 1240</span>
+          <svg class="dd-caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        <select class="dd-native" data-dropdown-native data-page-width aria-label="画布宽度">
+          <option value="1080">紧凑 1080</option>
+          <option value="1200">舒适 1200</option>
+          <option value="1240" selected>宽屏 1240</option>
+          <option value="1360">展示 1360</option>
+          <option value="1440">超宽 1440</option>
+        </select>
+        <ul class="dd-menu" role="listbox"></ul>
+      </div>
+      <label class="page-current-only"><input type="checkbox" data-page-current-only> 只看当前页</label>
+      <span class="page-validation-state" data-page-validation-state aria-live="polite">修订 #{{.PageRevision.RevisionNo}}</span>
+      {{end}}
+    </div>
+
+    <div class="page-composer-grid" data-page-composer>
+      <aside class="page-composer-left">
+        {{if .PageEditorSimple}}
+        <section class="page-simple-outline">
+          <div class="page-panel-head">
+            <div><h2>页面区块</h2><p>拖动区块调整页面顺序</p></div>
+            <button type="button" class="page-icon-btn" data-page-collapse-all title="收起区块列表" aria-label="收起区块列表">−</button>
+          </div>
+          <ol class="page-section-tree" data-page-section-tree aria-label="页面区块"></ol>
+          <details class="page-component-catalog" data-page-component-catalog>
+            <summary data-page-add-section data-page-add-block>添加区块</summary>
+            <div class="page-component-catalog-head">
+              <strong>选择页面区块</strong>
+              <span>添加后可直接编辑内容</span>
+            </div>
+            <div class="page-component-palette">
+              {{range .PageComponentCatalog}}
+              <button type="button" data-page-add-component="{{.Type}}" title="{{.Description}}">
+                <span><strong>{{.Label}}</strong><small>{{.Description}}</small></span>
+                <em>{{.CategoryLabel}}</em>
+              </button>
+              {{end}}
+            </div>
+          </details>
+        </section>
+        {{else}}
+        <section>
+          <div class="page-panel-head">
+            <div><small>01</small><h2>页面结构</h2></div>
+            <button type="button" class="page-icon-btn" data-page-collapse-all title="收起全部">−</button>
+          </div>
+          <ol class="page-section-tree" data-page-section-tree aria-label="页面区块"></ol>
+        </section>
+        <section>
+          <div class="page-panel-head">
+            <div><small>02</small><h2>组件库</h2></div>
+          </div>
+          <div class="page-component-palette">
+            {{range .PageComponents}}
+            <button type="button" data-page-add-component="{{.Type}}">
+              <span>{{.Type}}</span>
+              <small>{{.Group}}</small>
+            </button>
+            {{end}}
+          </div>
+        </section>
+        {{end}}
+      </aside>
+
+      <section class="page-composer-canvas">
+        <div class="page-preview-shell" data-page-preview-shell style="--page-preview-width:1240px">
+          <iframe
+            title="页面修订预览"
+            src="/admin/pages/{{.PagePost.ID}}/project/preview?revision={{.PageRevision.ID}}"
+            data-page-preview
+            loading="eager"></iframe>
+        </div>
+        <p class="page-preview-note">预览固定到修订 #{{.PageRevision.RevisionNo}}；结构修改保存后才会进入统一服务端渲染器。</p>
+      </section>
+
+      <aside class="page-composer-right">
+        {{if .PageEditorSimple}}
+        <section class="page-inspector-panel page-beginner-panel is-active">
+          <div class="page-panel-empty" data-page-inspector-empty data-page-beginner-panel="content">
+            <small>内容编辑</small>
+            <strong>选择一个页面区块</strong>
+            <p>从左侧选择区块，然后在这里修改标题、文字、按钮和图片等内容。</p>
+          </div>
+          <div data-page-inspector hidden>
+            <div class="page-inspector-heading">
+              <div><small>正在编辑</small><h2 data-page-component-title></h2></div>
+              <div>
+                <button type="button" data-page-duplicate title="复制当前区块">复制</button>
+                <button type="button" data-page-delete title="删除当前区块">删除</button>
+              </div>
+            </div>
+          </div>
+          <div class="page-property-list" data-page-properties></div>
+          <div class="page-beginner-panel-head" data-page-beginner-panel="style" hidden>
+            <small>区块样式</small>
+            <strong>布局与设备适配</strong>
+            <p>分别检查桌面、平板和手机上的布局；不需要调整时可保留默认值。</p>
+          </div>
+          <div class="page-responsive-editor" data-page-responsive></div>
+          <div class="page-beginner-panel-head" data-page-beginner-panel="data" hidden>
+            <small>真实内容</small>
+            <strong>数据来源</strong>
+            <p>让文章、商品或其他已发布内容自动出现在这个区块中。</p>
+          </div>
+          <div data-page-binding></div>
+        </section>
+
+        <div class="page-simple-system-fields" hidden>
+          {{template "page-composer-meta-fields" .}}
+        </div>
+        {{else}}
+        <div class="page-inspector-tabs" role="tablist">
+          <button type="button" class="is-active" data-page-panel-tab="component">组件</button>
+          <button type="button" data-page-panel-tab="page">页面</button>
+          <button type="button" data-page-panel-tab="history">版本</button>
+        </div>
+
+        <section class="page-inspector-panel is-active" data-page-panel="component">
+          <div class="page-panel-empty" data-page-inspector-empty>
+            <small>组件设置</small>
+            <strong>选择一个组件</strong>
+            <p>从左侧结构树选择组件，在这里编辑属性、数据绑定和不同设备下的布局。</p>
+          </div>
+          <div data-page-inspector hidden>
+            <div class="page-inspector-heading">
+              <div><small>当前组件</small><h2 data-page-component-title></h2></div>
+              <div>
+                <button type="button" data-page-duplicate title="复制">复制</button>
+                <button type="button" data-page-delete title="删除">删除</button>
+              </div>
+            </div>
+            <div class="page-property-list" data-page-properties></div>
+            <details class="page-inspector-group" open>
+              <summary>数据绑定</summary>
+              <div data-page-binding></div>
+            </details>
+            <details class="page-inspector-group">
+              <summary>响应式</summary>
+              <div class="page-responsive-editor" data-page-responsive></div>
+            </details>
+          </div>
+        </section>
+
+        <section class="page-inspector-panel" data-page-panel="page">
+          <div class="page-meta-fields">
+            <label><span>标题</span><input name="title" value="{{.PageMeta.Title}}" required></label>
+            <label><span>Slug</span><input name="slug" value="{{.PageMeta.Slug}}" required></label>
+            <label><span>简介</span><textarea name="excerpt" rows="3">{{.PageMeta.Excerpt}}</textarea></label>
+            <label><span>SEO 描述</span><textarea name="meta_desc" rows="3">{{.PageMeta.MetaDesc}}</textarea></label>
+            <label><span>关键词</span><input name="keywords" value="{{.PageMeta.Keywords}}"></label>
+            <label><span>封面图片</span><input name="cover_image" value="{{.PageMeta.CoverImage}}" placeholder="/uploads/..."></label>
+            <label><span>作者</span><input name="author" value="{{.PageMeta.Author}}"></label>
+            <label><span>Site Shell</span>
+              <div class="dropdown page-composer-select" data-select-dropdown>
+                <button type="button" class="dd-toggle" aria-haspopup="listbox" aria-expanded="false"><span class="dd-label">站点页头与页脚</span><svg class="dd-caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+                <select class="dd-native" data-dropdown-native data-page-shell>
+                  <option value="site">站点页头与页脚</option>
+                  <option value="minimal">极简品牌框架</option>
+                  <option value="none">无站点框架</option>
+                </select>
+                <ul class="dd-menu" role="listbox"></ul>
+              </div>
+            </label>
+            <label><span>内容宽度</span>
+              <div class="dropdown page-composer-select" data-select-dropdown>
+                <button type="button" class="dd-toggle" aria-haspopup="listbox" aria-expanded="false"><span class="dd-label">舒适</span><svg class="dd-caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+                <select class="dd-native" data-dropdown-native data-page-content-width>
+                  <option value="compact">紧凑</option>
+                  <option value="comfortable">舒适</option>
+                  <option value="wide">宽屏</option>
+                  <option value="full">通栏</option>
+                </select>
+                <ul class="dd-menu" role="listbox"></ul>
+              </div>
+            </label>
+            <label><span>区块间距</span>
+              <div class="dropdown page-composer-select" data-select-dropdown>
+                <button type="button" class="dd-toggle" aria-haspopup="listbox" aria-expanded="false"><span class="dd-label">舒适</span><svg class="dd-caret" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+                <select class="dd-native" data-dropdown-native data-page-section-gap>
+                  <option value="compact">紧凑</option>
+                  <option value="comfortable">舒适</option>
+                  <option value="spacious">宽松</option>
+                </select>
+                <ul class="dd-menu" role="listbox"></ul>
+              </div>
+            </label>
+            <label><span>Robots 覆盖</span><input name="robots_override" value="{{.PageMeta.RobotsOverride}}"></label>
+            <label><span>Canonical 覆盖</span><input name="canonical_override" value="{{.PageMeta.CanonicalOverride}}"></label>
+            <label><span>修订说明</span><textarea name="summary" rows="2" placeholder="说明本次结构或内容修改"></textarea></label>
+          </div>
+        </section>
+
+        <section class="page-inspector-panel" data-page-panel="history">
+          <div class="page-revision-list">
+            {{range .PageRevisions}}
+            <article{{if eq .ID $.PageRevision.ID}} class="is-current"{{end}}>
+              <div>
+                <strong>#{{.RevisionNo}} · {{adminDateTime .CreatedAt}}</strong>
+                <span>{{.Summary}}</span>
+                <small>{{.Origin}} · {{.ActorID}}</small>
+              </div>
+              {{if ne .ID $.PageRevision.ID}}
+              <div class="page-revision-actions">
+                {{if eq .RevisionKind "composition"}}
+                <button type="submit" form="page-restore-{{.ID}}">恢复编辑</button>
+                <button type="submit" form="page-rollback-{{.ID}}">回滚上线</button>
+                {{end}}
+              </div>
+              {{else}}<span class="page-current-mark">当前</span>{{end}}
+            </article>
+            {{end}}
+          </div>
+        </section>
+        {{end}}
+      </aside>
+    </div>
+  </form>
+
+  {{range .PageRevisions}}{{if and (ne .ID $.PageRevision.ID) (eq .RevisionKind "composition")}}
+  <form id="page-restore-{{.ID}}" method="post" action="/admin/pages/{{$.PagePost.ID}}/project/restore"
+    data-confirm="把修订 #{{.RevisionNo}} 恢复为新的工作版本？当前版本不会被删除。"
+    data-confirm-title="确认恢复"
+    data-confirm-ok="恢复">
+    <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+    <input type="hidden" name="_etag" value="{{$.PageETag}}">
+    <input type="hidden" name="revision_id" value="{{.ID}}">
+  </form>
+  <form id="page-rollback-{{.ID}}" method="post" action="/admin/pages/{{$.PagePost.ID}}/project/rollback"
+    data-confirm="确定把线上页面回滚到修订 #{{.RevisionNo}}？工作草稿不会被覆盖。"
+    data-confirm-title="确认回滚"
+    data-confirm-ok="回滚">
+    <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+    <input type="hidden" name="_etag" value="{{$.PageETag}}">
+    <input type="hidden" name="revision_id" value="{{.ID}}">
+  </form>
+  {{end}}{{end}}
+  {{else}}
+  <section class="page-app-admin" data-page-app-admin data-app-csrf="{{.CSRF}}" data-app-etag="{{.PageETag}}">
+    <div class="page-app-summary card">
+      <div>
+        <span class="page-kind page-kind-app">互动应用</span>
+        <h2>{{.PageMeta.Title}}</h2>
+        <p>源码只进入私有版本库；构建器重新校验静态包并生成不可变产物，预览始终运行在 sandbox iframe。</p>
+      </div>
+      <dl>
+        <div><dt>工作修订</dt><dd>#{{.PageRevision.RevisionNo}}</dd></div>
+        <div><dt>构建状态</dt><dd>{{.PageProject.BuildStatus}}</dd></div>
+        <div><dt>Site Shell</dt><dd>{{.PageProject.ShellMode}}</dd></div>
+        <div><dt>来源</dt><dd>{{.PageOriginLabel}}</dd></div>
+      </dl>
+    </div>
+
+    <div class="page-app-grid">
+      <div class="page-app-main">
+        <section class="card page-app-preview-card">
+          <div class="page-panel-head">
+            <div><small>安全预览</small><h2>运行结果</h2></div>
+            {{if .PageAppReadyBuild}}<a class="btn" href="/admin/pages/{{.PagePost.ID}}/project/app-preview?revision={{.PageRevision.ID}}&amp;build={{.PageAppReadyBuild.ID}}" target="_blank">新窗口 ↗</a>{{end}}
+          </div>
+          {{if .PageAppReadyBuild}}
+          <iframe
+            title="互动应用隔离预览"
+            sandbox="allow-scripts allow-same-origin"
+            referrerpolicy="no-referrer"
+            src="/admin/pages/{{.PagePost.ID}}/project/app-preview?revision={{.PageRevision.ID}}&amp;build={{.PageAppReadyBuild.ID}}"></iframe>
+          {{else}}
+          <div class="page-app-empty">上传应用包并完成安全构建后，这里才会加载隔离预览。</div>
+          {{end}}
+        </section>
+
+        <section class="card">
+          <div class="page-panel-head">
+            <div><small>不可变源码</small><h2>工程文件</h2></div>
+            <span class="muted">{{len .PageAppFiles}} 个文件</span>
+          </div>
+          {{if .PageAppFiles}}
+          <div class="page-app-file-list">
+            {{range .PageAppFiles}}
+            {{if .Editable}}
+            <a href="/admin/pages/{{$.PagePost.ID}}/project?edit_file={{urlquery .Path}}#app-source-editor">
+              <strong>{{.Path}}</strong><span>在线编辑 · {{filesize .Size}}</span><code>{{.SHA256}}</code>
+            </a>
+            {{else}}
+            <a href="/admin/pages/{{$.PagePost.ID}}/project/app-file?revision={{$.PageRevision.ID}}&amp;path={{urlquery .Path}}">
+              <strong>{{.Path}}</strong><span>下载资源 · {{filesize .Size}}</span><code>{{.SHA256}}</code>
+            </a>
+            {{end}}
+            {{end}}
+          </div>
+          {{else}}<div class="page-app-empty">当前修订还没有应用源码。</div>{{end}}
+          {{if .PageAppEditFile}}
+          <div class="page-app-source-editor" id="app-source-editor">
+            <div class="page-panel-head">
+              <div><small>编辑现有文本文件</small><h3>{{.PageAppEditFile}}</h3></div>
+              <a class="btn btn-ghost" href="/admin/pages/{{.PagePost.ID}}/project/app-file?revision={{.PageRevision.ID}}&amp;path={{urlquery .PageAppEditFile}}">下载原文件</a>
+            </div>
+            <p>{{.PageAppEditMedia}} · {{.PageAppEditSHA256}}</p>
+            <form method="post" action="/admin/pages/{{.PagePost.ID}}/project/app-file">
+              <input type="hidden" name="_csrf" value="{{.CSRF}}">
+              <input type="hidden" name="_etag" value="{{.PageETag}}">
+              <input type="hidden" name="base_revision_id" value="{{.PageRevision.ID}}">
+              <input type="hidden" name="path" value="{{.PageAppEditFile}}">
+              <label>
+                <span>源码（保存会重新校验整包并生成新修订）</span>
+                <textarea name="content" rows="24" spellcheck="false">{{.PageAppEditContent}}</textarea>
+              </label>
+              <label>
+                <span>修改说明</span>
+                <input type="text" name="summary" maxlength="240" placeholder="例如：调整游戏计分逻辑">
+              </label>
+              <div class="page-app-source-actions">
+                <button class="btn" type="submit">校验并保存新修订</button>
+                <a class="btn btn-ghost" href="/admin/pages/{{.PagePost.ID}}/project">取消</a>
+              </div>
+            </form>
+          </div>
+          {{end}}
+        </section>
+
+        <section class="card">
+          <div class="page-panel-head">
+            <div><small>构建审计</small><h2>构建日志</h2></div>
+          </div>
+          {{if .PageAppBuilds}}
+          <div class="page-app-build-list">
+            {{range .PageAppBuilds}}
+            <article>
+              <span class="page-state">{{.Status}}</span>
+              <strong>Build #{{.ID}}</strong>
+              <small>{{.RuntimeVersion}} · {{adminDateTime .CreatedAt}}</small>
+              {{if .DiagnosticsJSON}}<pre>{{.DiagnosticsJSON}}</pre>{{end}}
+            </article>
+            {{end}}
+          </div>
+          {{else}}<div class="page-app-empty">尚未创建构建。</div>{{end}}
+        </section>
+      </div>
+
+      <aside class="page-app-side">
+        <section class="card">
+          <div class="page-panel-head">
+            <div><small>工程输入</small><h2>上传应用包</h2></div>
+          </div>
+          <p class="muted">只接受符合 app-manifest.json 协议的 ZIP。不会执行安装脚本，也不接受客户端传入 storage_ref。</p>
+          <label class="page-app-upload">
+            <input type="file" accept=".zip,application/zip" data-page-app-file>
+            <span>选择 ZIP 文件</span>
+          </label>
+          <button class="btn btn-primary" type="button" data-page-app-upload>校验并保存新修订</button>
+          <span class="page-app-operation-state" data-page-app-operation-state aria-live="polite"></span>
+        </section>
+
+        <section class="card">
+          <div class="page-panel-head">
+            <div><small>静态构建</small><h2>构建与发布</h2></div>
+          </div>
+          <form method="post" action="/admin/pages/{{.PagePost.ID}}/project/app-build" data-page-app-build-form>
+            <input type="hidden" name="_csrf" value="{{.CSRF}}">
+            <input type="hidden" name="_etag" value="{{.PageETag}}">
+            <button class="btn" type="submit"{{if not .PageAppHasSource}} disabled{{end}}>创建安全构建</button>
+          </form>
+          <form method="post" action="/admin/pages/{{.PagePost.ID}}/project/publish"
+            data-confirm="确定发布当前互动应用构建？"
+            data-confirm-title="确认发布"
+            data-confirm-ok="发布">
+            <input type="hidden" name="_csrf" value="{{.CSRF}}">
+            <input type="hidden" name="_etag" value="{{.PageETag}}">
+            <button class="btn btn-publish" type="submit"{{if or (not .PageAppReadyBuild) .PagePublished}} disabled{{end}}>发布当前构建</button>
+          </form>
+        </section>
+
+        <section class="card">
+          <div class="page-panel-head">
+            <div><small>默认拒绝</small><h2>运行能力</h2></div>
+          </div>
+          {{if .PageAppCapabilities}}
+          <div class="page-app-capabilities">
+            {{range .PageAppCapabilities}}
+            <article>
+              <div><strong>{{.Name}}</strong><span class="page-state">{{.Status}}</span></div>
+              <p>{{.Description}}</p>
+              {{if .Grantable}}
+              <form method="post" action="/admin/pages/{{$.PagePost.ID}}/project/app-capability">
+                <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+                <input type="hidden" name="_etag" value="{{$.PageETag}}">
+                <input type="hidden" name="capability" value="{{.Name}}">
+                <label><span>受控配置 JSON</span><textarea name="config" rows="3">{{.ConfigJSON}}</textarea></label>
+                <div>
+                  <button class="btn" type="submit" name="action" value="approve">批准</button>
+                  <button class="btn btn-ghost" type="submit" name="action" value="revoke">撤销</button>
+                </div>
+              </form>
+              {{else}}<small>此能力无需授权或当前运行时不提供。</small>{{end}}
+            </article>
+            {{end}}
+          </div>
+          {{else}}<div class="page-app-empty">当前应用未声明需要人工审批的运行能力。</div>{{end}}
+        </section>
+
+        <section class="card">
+          <div class="page-panel-head">
+            <div><small>版本</small><h2>历史修订</h2></div>
+          </div>
+          <div class="page-revision-list">
+            {{range .PageRevisions}}
+            <article{{if eq .ID $.PageRevision.ID}} class="is-current"{{end}}>
+              <div><strong>#{{.RevisionNo}}</strong><span>{{.Summary}}</span><small>{{.Origin}} · {{adminDateTime .CreatedAt}}</small></div>
+              {{if and (ne .ID $.PageRevision.ID) (eq .RevisionKind "app")}}
+              <div class="page-revision-actions"><button type="submit" form="page-app-restore-{{.ID}}">恢复</button><button type="submit" form="page-app-rollback-{{.ID}}">回滚</button></div>
+              {{end}}
+            </article>
+            {{end}}
+          </div>
+        </section>
+      </aside>
+    </div>
+  </section>
+  {{range .PageRevisions}}{{if and (ne .ID $.PageRevision.ID) (eq .RevisionKind "app")}}
+  <form id="page-app-restore-{{.ID}}" method="post" action="/admin/pages/{{$.PagePost.ID}}/project/restore"
+    data-confirm="把应用修订 #{{.RevisionNo}} 恢复为新的工作版本？"
+    data-confirm-title="确认恢复"
+    data-confirm-ok="恢复">
+    <input type="hidden" name="_csrf" value="{{$.CSRF}}"><input type="hidden" name="_etag" value="{{$.PageETag}}"><input type="hidden" name="revision_id" value="{{.ID}}">
+  </form>
+  <form id="page-app-rollback-{{.ID}}" method="post" action="/admin/pages/{{$.PagePost.ID}}/project/rollback"
+    data-confirm="把线上应用回滚到修订 #{{.RevisionNo}}？"
+    data-confirm-title="确认回滚"
+    data-confirm-ok="回滚">
+    <input type="hidden" name="_csrf" value="{{$.CSRF}}"><input type="hidden" name="_etag" value="{{$.PageETag}}"><input type="hidden" name="revision_id" value="{{.ID}}">
+  </form>
+  {{end}}{{end}}
+  {{end}}
+{{end}}
+
+{{define "page-composer-meta-fields"}}
+  <input name="title" value="{{.PageMeta.Title}}" required>
+  <input name="slug" value="{{.PageMeta.Slug}}" required>
+  <textarea name="excerpt">{{.PageMeta.Excerpt}}</textarea>
+  <textarea name="meta_desc">{{.PageMeta.MetaDesc}}</textarea>
+  <input name="keywords" value="{{.PageMeta.Keywords}}">
+  <input name="cover_image" value="{{.PageMeta.CoverImage}}">
+  <input name="author" value="{{.PageMeta.Author}}">
+  <select data-page-shell aria-label="Site Shell">
+    <option value="site">站点页头与页脚</option>
+    <option value="minimal">极简品牌框架</option>
+    <option value="none">无站点框架</option>
+  </select>
+  <select data-page-content-width aria-label="内容宽度">
+    <option value="compact">紧凑</option>
+    <option value="comfortable">舒适</option>
+    <option value="wide">宽屏</option>
+    <option value="full">通栏</option>
+  </select>
+  <select data-page-section-gap aria-label="区块间距">
+    <option value="compact">紧凑</option>
+    <option value="comfortable">舒适</option>
+    <option value="spacious">宽松</option>
+  </select>
+  <input name="robots_override" value="{{.PageMeta.RobotsOverride}}">
+  <input name="canonical_override" value="{{.PageMeta.CanonicalOverride}}">
+  <textarea name="summary" placeholder="说明本次结构或内容修改"></textarea>
+{{end}}
+
+{{define "page-composer-icon-desktop"}}<svg class="visual-btn-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8"/><path d="M12 16v4"/></svg>{{end}}
+{{define "page-composer-icon-tablet"}}<svg class="visual-btn-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="3" width="12" height="18" rx="2"/><path d="M11 17h2"/></svg>{{end}}
+{{define "page-composer-icon-mobile"}}<svg class="visual-btn-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="2" width="8" height="20" rx="2"/><path d="M11 18h2"/></svg>{{end}}
+{{define "page-composer-icon-width"}}<svg class="visual-btn-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="6" width="16" height="12" rx="2"/><path d="M8 10h8"/><path d="M8 14h5"/></svg>{{end}}
+{{define "page-composer-icon-eye"}}<svg class="visual-btn-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6z"/><circle cx="12" cy="12" r="2.5"/></svg>{{end}}
+{{define "page-composer-icon-undo"}}<svg class="visual-btn-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 7 4 12l5 5"/><path d="M20 17a7 7 0 0 0-7-7H4"/></svg>{{end}}
+{{define "page-composer-icon-redo"}}<svg class="visual-btn-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 7 5 5-5 5"/><path d="M4 17a7 7 0 0 1 7-7h9"/></svg>{{end}}

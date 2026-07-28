@@ -78,6 +78,21 @@ VERSION=${VERSION:-$(git -C "$ROOT" describe --tags --match 'v[0-9]*' --always -
 COMMIT=${COMMIT:-$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)}
 BUILT_AT=${BUILT_AT:-$(date -u '+%Y-%m-%dT%H:%M:%SZ')}
 RELEASE_REPO=${RELEASE_REPO:-ccvar/gcms-releases}
+PREVIEW_RELEASE_REPO=${PREVIEW_RELEASE_REPO:-ccvar/gcms-preview-releases}
+PREVIEW_ACTIVATION_CODE_HASH=${PREVIEW_ACTIVATION_CODE_HASH:-}
+RELEASE_PUBLIC_KEY_FILE=${GCMS_RELEASE_PUBLIC_KEY_FILE:-$SCRIPT_DIR/update-public.pem}
+if [ -n "$PREVIEW_ACTIVATION_CODE_HASH" ]; then
+  case "$PREVIEW_ACTIVATION_CODE_HASH" in
+    *[!0-9a-fA-F]*)
+      err "PREVIEW_ACTIVATION_CODE_HASH 必须是 SHA-256 十六进制值"
+      exit 2
+      ;;
+  esac
+  if [ "${#PREVIEW_ACTIVATION_CODE_HASH}" -ne 64 ]; then
+    err "PREVIEW_ACTIVATION_CODE_HASH 必须是 64 位 SHA-256 十六进制值"
+    exit 2
+  fi
+fi
 NAME="cms-${VERSION}-${GOOS}-${GOARCH}"
 OUT="$ROOT/dist"
 DIR="$OUT/$NAME"
@@ -92,16 +107,16 @@ mkdir -p "$RELEASE_DIR/bin" "$RELEASE_DIR/scripts" "$DIR/scripts" "$DIR/shared/d
 minify_release_assets
 info "编译 $GOOS/$GOARCH …"
 ( cd "$ROOT" && CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
-    go build -trimpath -ldflags "-s -w -X cms.ccvar.com/internal/version.Version=${VERSION} -X cms.ccvar.com/internal/version.Commit=${COMMIT} -X cms.ccvar.com/internal/version.BuiltAt=${BUILT_AT} -X cms.ccvar.com/internal/version.Repo=${RELEASE_REPO}" -o "$RELEASE_DIR/bin/cms$BINEXT" . )
+    go build -trimpath -ldflags "-s -w -X cms.ccvar.com/internal/version.Version=${VERSION} -X cms.ccvar.com/internal/version.Commit=${COMMIT} -X cms.ccvar.com/internal/version.BuiltAt=${BUILT_AT} -X cms.ccvar.com/internal/version.Repo=${RELEASE_REPO} -X cms.ccvar.com/internal/version.PreviewRepo=${PREVIEW_RELEASE_REPO} -X cms.ccvar.com/internal/version.PreviewActivationCodeHash=${PREVIEW_ACTIVATION_CODE_HASH}" -o "$RELEASE_DIR/bin/cms$BINEXT" . )
 ok "已编译 → releases/$VERSION/bin/cms$BINEXT （$(du -h "$RELEASE_DIR/bin/cms$BINEXT" | cut -f1)）"
 restore_assets
 
 # ---- 拷贝启停脚本与默认配置 ----
 cp "$SCRIPT_DIR/cms.sh" "$SCRIPT_DIR/cms.ps1" "$SCRIPT_DIR/gcms-caddy-sync.sh" "$DIR/scripts/"
 cp "$SCRIPT_DIR/cms.sh" "$SCRIPT_DIR/cms.ps1" "$SCRIPT_DIR/gcms-caddy-sync.sh" "$RELEASE_DIR/scripts/"
-if [ -f "$SCRIPT_DIR/update-public.pem" ]; then
-  cp "$SCRIPT_DIR/update-public.pem" "$DIR/scripts/"
-  cp "$SCRIPT_DIR/update-public.pem" "$RELEASE_DIR/scripts/"
+if [ -f "$RELEASE_PUBLIC_KEY_FILE" ]; then
+  cp "$RELEASE_PUBLIC_KEY_FILE" "$DIR/scripts/update-public.pem"
+  cp "$RELEASE_PUBLIC_KEY_FILE" "$RELEASE_DIR/scripts/update-public.pem"
 fi
 chmod +x "$DIR/scripts/cms.sh" "$DIR/scripts/gcms-caddy-sync.sh"
 chmod +x "$RELEASE_DIR/scripts/cms.sh" "$RELEASE_DIR/scripts/gcms-caddy-sync.sh"

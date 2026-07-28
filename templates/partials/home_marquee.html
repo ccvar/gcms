@@ -1,0 +1,79 @@
+{{define "home_marquee"}}
+  {{/* 戏台 Marquee — 剧院门头页头（CSS 重塑）+ 场次单：主打大行 / 售票口胶囊 / 期号场次行卡 */}}
+  <div class="mq-wrap">
+
+    <section class="mq-stage">
+      {{if .Site.HeroEyebrow}}<p class="mq-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+      <h1 class="mq-title"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+      {{if .Site.HeroDescription}}<p class="mq-desc"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+      {{if .Categories}}
+      <nav class="mq-slate" aria-label="{{.Tr.T "nav.category"}}">
+        {{range .Categories}}<a class="mq-slot" href="{{$.Tr.U (printf "/category/%s" .Slug)}}"><span class="mq-slot-name">{{.Name}}</span><span class="mq-slot-n">{{.Count}}</span></a>{{end}}
+        <a class="mq-slot mq-slot-all" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}}</a>
+      </nav>
+      {{end}}
+    </section>
+
+    {{with .Featured}}
+    <a class="mq-feature{{if not .CoverImage}} mq-feature-solo{{end}}" href="{{$.Tr.U (contentURL .)}}">
+      <span class="mq-feature-body">
+        <span class="mq-billing"><b class="mq-billing-tag">{{$.Site.HomeFeatured}}</b>{{with .Category}}<span class="mq-billing-cat">{{.Name}}</span>{{end}}</span>
+        <span class="mq-feature-h">{{.Title}}</span>
+        {{if .Excerpt}}<span class="mq-feature-ex">{{.Excerpt}}</span>{{end}}
+        <span class="mq-feature-foot">
+          <time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time>
+          <span class="mq-feature-more">{{$.Tr.T "home.read_more"}} <span class="arrow" aria-hidden="true">→</span></span>
+        </span>
+      </span>
+      {{if .CoverImage}}<span class="mq-feature-cover"><img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}></span>{{end}}
+    </a>
+    {{end}}
+
+    {{if .FeatLinks}}
+    <nav class="mq-booths" aria-label="{{.Site.HomeLinks}}">
+      <h2 class="mq-booths-h">{{.Site.HomeLinks}}</h2>
+      <div class="mq-booths-row">
+        {{range .FeatLinks}}
+        <a class="mq-booth" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+          <span class="mq-booth-ic">{{if .CoverImage}}<img src="{{.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}</span>
+          <span class="mq-booth-t">{{.Title}}</span>
+        </a>
+        {{end}}
+      </div>
+    </nav>
+    {{end}}
+
+    {{if .Posts}}
+    <section class="mq-bill">
+      <div class="mq-bill-head">
+        <h2 class="mq-bill-t">{{.Site.HomeLatest}}</h2>
+        <a class="mq-bill-all" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <ol class="mq-rows">
+        {{range .Posts}}
+        <li class="mq-row">
+          <a class="mq-row-in" href="{{$.Tr.U (contentURL .)}}">
+            <span class="mq-no" aria-hidden="true"></span>
+            <span class="mq-row-body">
+              <span class="mq-row-h">{{.Title}}</span>
+              {{if .Excerpt}}<span class="mq-row-ex">{{.Excerpt}}</span>{{end}}
+            </span>
+            <span class="mq-row-side">
+              {{with .Category}}<span class="mq-row-cat">{{.Name}}</span>{{end}}
+              <time class="mq-row-date" datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time>
+            </span>
+          </a>
+        </li>
+        {{end}}
+      </ol>
+    </section>
+    {{end}}
+
+    <footer class="mq-exit">
+      <a href="{{.Tr.U "/about"}}">{{.Tr.T "home.cta_more"}}</a>
+      <span aria-hidden="true">·</span>
+      <a href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}}</a>
+    </footer>
+
+  </div>
+{{end}}

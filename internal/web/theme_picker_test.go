@@ -311,3 +311,56 @@ func TestThemeBgKeysRegistered(t *testing.T) {
 		}
 	}
 }
+
+// 第二批工厂与 DTC 骨架都约定「原生 + 反差 + 纯白」三张色卡。
+// 这批主题不能走 themeBgFallback，否则后台卡片与真实页面会看起来像同一配色。
+func TestSecondBatchThemeFamiliesHaveExplicitBackgrounds(t *testing.T) {
+	layouts := map[string]bool{}
+	for _, layout := range []string{
+		"factory-andon", "factory-certwall", "factory-container", "factory-crate",
+		"factory-draftdesk", "factory-exportmap", "factory-floorplan", "factory-furnace",
+		"factory-gantry", "factory-gauge", "factory-hazardtape", "factory-inspection",
+		"factory-line", "factory-nameplate", "factory-pipeworks", "factory-quotation",
+		"factory-rackwall", "factory-sampleroom", "factory-shutter", "factory-tonnage",
+		"dtc-vitrine", "dtc-journal", "dtc-catalogue", "dtc-bazaar", "dtc-column",
+		"dtc-swissgrid", "dtc-runway", "dtc-atelier", "dtc-monthbox", "dtc-booth",
+		"dtc-apothecary", "dtc-grocer", "dtc-cellar", "dtc-basecamp", "dtc-toybox",
+		"dtc-paperie", "dtc-mono", "dtc-flatlay", "dtc-flyer", "dtc-lightbox",
+	} {
+		layouts[layout] = true
+	}
+
+	countByLayout := map[string]int{}
+	for _, th := range Themes {
+		layout := layoutForTheme(th.ID)
+		if !layouts[layout] {
+			continue
+		}
+		countByLayout[layout]++
+		bg, ok := themeBgDefault[th.ID]
+		if !ok || bg == "" {
+			t.Errorf("%s (%s) 没有显式登记背景色", th.ID, layout)
+		}
+		if strings.HasSuffix(th.ID, "-white") && bg != "#ffffff" {
+			t.Errorf("%s 的纯白色卡 = %q, want #ffffff", th.ID, bg)
+		}
+	}
+	for layout := range layouts {
+		if got := countByLayout[layout]; got != 3 {
+			t.Errorf("%s 登记了 %d 张色卡, want 3", layout, got)
+		}
+	}
+
+	for _, family := range [][]string{
+		{"swissgrid", "swissgrid-noir", "swissgrid-white"},
+		{"mono", "mono-noir", "mono-white"},
+	} {
+		seen := map[string]bool{}
+		for _, id := range family {
+			seen[themeBgDefault[id]] = true
+		}
+		if len(seen) != 3 {
+			t.Errorf("%v 背景色没有形成原生/反差/纯白三种清晰变体：%v", family, seen)
+		}
+	}
+}

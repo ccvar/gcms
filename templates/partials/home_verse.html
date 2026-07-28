@@ -1,0 +1,77 @@
+{{define "home_verse"}}
+  {{/* 诗笺 Verse — 宣纸诗笺：左留白导航(慢文案沉底) + 右朱丝栏竖排卷 + 笺条卡两列 + 朱印落款 */}}
+  <div class="vs-wrap">
+
+    <header class="vs-hero">
+      <div class="vs-margin">
+        {{if .Categories}}
+        <nav class="vs-nav" aria-label="{{.Tr.T "nav.category"}}">
+          {{range .Categories}}<a class="vs-nav-item" href="{{$.Tr.U (printf "/category/%s" .Slug)}}"><span class="vs-nav-name">{{.Name}}</span><span class="vs-nav-n">{{.Count}}</span></a>{{end}}
+          <a class="vs-nav-item vs-nav-all" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+        </nav>
+        {{end}}
+        {{if .FeatLinks}}
+        <aside class="vs-links" aria-label="{{.Site.HomeLinks}}">
+          <h2 class="vs-links-h">{{.Site.HomeLinks}}</h2>
+          {{range .FeatLinks}}
+          <a class="vs-link" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+            <span class="vs-link-ic">{{if .CoverImage}}<img src="{{.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}</span>
+            <span class="vs-link-t">{{.Title}}</span>
+          </a>
+          {{end}}
+        </aside>
+        {{end}}
+        {{if .Site.HeroDescription}}<p class="vs-slow"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+      </div>
+      <div class="vs-scroll">
+        <h1 class="vs-title"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+        {{if .Site.HeroEyebrow}}<span class="vs-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</span>{{end}}
+      </div>
+    </header>
+
+    {{if or .Featured .Posts}}
+    <section class="vs-list">
+      <div class="vs-list-head">
+        <h2 class="vs-list-t">{{.Site.HomeLatest}}</h2>
+        <a class="vs-list-all" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="vs-grid">
+        {{with .Featured}}
+        <article class="vs-card vs-card-lead">
+          <a class="vs-card-in" href="{{$.Tr.U (contentURL .)}}">
+            <span class="vs-edge"><time class="vs-edge-date" datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time></span>
+            <span class="vs-card-body">
+              <span class="vs-kicker">{{$.Site.HomeFeatured}}</span>
+              {{if .CoverImage}}<span class="vs-card-cover"><img src="{{.CoverImage}}" alt="{{.Title}}" decoding="async" fetchpriority="high"{{imgAttrs .CoverImage}}></span>{{end}}
+              <span class="vs-card-t">{{.Title}}</span>
+              {{if .Excerpt}}<span class="vs-card-ex">{{.Excerpt}}</span>{{end}}
+              {{with .Category}}<span class="vs-card-cat">{{.Name}}</span>{{end}}
+            </span>
+          </a>
+        </article>
+        {{end}}
+        {{range .Posts}}
+        <article class="vs-card">
+          <a class="vs-card-in" href="{{$.Tr.U (contentURL .)}}">
+            <span class="vs-edge"><time class="vs-edge-date" datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time></span>
+            <span class="vs-card-body">
+              <span class="vs-card-t">{{.Title}}</span>
+              {{if .Excerpt}}<span class="vs-card-ex">{{.Excerpt}}</span>{{end}}
+              {{with .Category}}<span class="vs-card-cat">{{.Name}}</span>{{end}}
+            </span>
+          </a>
+        </article>
+        {{end}}
+      </div>
+    </section>
+    {{end}}
+
+    <footer class="vs-colophon">
+      <span class="vs-seal" aria-hidden="true">{{if .Site.Name}}{{initial .Site.Name}}{{else}}{{initial .Site.HeroTitle}}{{end}}</span>
+      <a href="{{.Tr.U "/about"}}">{{.Tr.T "home.cta_more"}}</a>
+      <span aria-hidden="true">·</span>
+      <a href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}}</a>
+    </footer>
+
+  </div>
+{{end}}

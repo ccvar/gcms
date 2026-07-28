@@ -1,0 +1,93 @@
+{{define "home_dtc_swissgrid"}}
+  {{/* dtc-swissgrid — 严选格：瑞士网格排版的品牌店。双层页头（顶部黑色公告细条
+       = HeroEyebrow 文案位，车道由 CSS 在 .site-header::before 预留、本分片的
+       .swg-notice 绝对定位入位，≤720px 归位普通流）＋ hero 大字行（HeroTitle
+       瑞士粗黑体）＋ 1px 网格线商品陈列（卡编号 SG-NN 由 CSS counter 生成，
+       规格签 productChips 代替价格）。数据由 fillDTCHome 装载；
+       商品区在 .FactoryProducts 为空时整段不渲染，其余区块空数据优雅缺省。 */}}
+  {{/* hero 槽三态（照 dtc-flagship 抄法）：image+配图=全幅底图 scrim 压字；
+       svg=右侧内嵌；default/anim*=右侧 DTC 轻动画（dtc_hero_anim 复用）。 */}}
+  {{$heroImg := ""}}{{if and (eq .Site.HeroVisual "image") .Site.HeroImage}}{{$heroImg = .Site.HeroImage}}{{end}}
+  {{$heroSVG := and (eq .Site.HeroVisual "svg") (ne .Site.HeroSVG "")}}
+  {{$heroAnim := and (not $heroImg) (not $heroSVG)}}
+  {{if .Site.HeroEyebrow}}<p class="swg-notice"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+  <div class="swg-wrap">
+    <section class="swg-hero{{if $heroImg}} has-img{{else if $heroAnim}} has-anim{{end}}">
+      {{if $heroImg}}<img class="swg-hero-img" src="{{$heroImg}}" alt="{{.Site.HeroAlt}}" decoding="async" fetchpriority="high"{{imgAttrs $heroImg}}>{{end}}
+      <div class="swg-hero-inner">
+        <div class="swg-hero-copy">
+          <h1 class="swg-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+          {{if .Site.HeroDescription}}<p class="swg-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+          <div class="swg-cta">
+            <a class="btn btn-primary" href="{{.Tr.U "/products"}}">{{.Tr.T "dtc.shop_now"}} <span class="arrow" aria-hidden="true">→</span></a>
+            {{if .Contact.Any}}<a class="btn dt-btn-ghost" href="#dtc-contact">{{.Tr.T "contact.float_label"}}</a>{{end}}
+          </div>
+        </div>
+        {{if $heroSVG}}<div class="swg-hero-side dt-embed" aria-hidden="true">{{safeHTML .Site.HeroSVG}}</div>
+        {{else if $heroAnim}}<div class="swg-hero-side dt-heroanim" aria-hidden="true">{{template "dtc_hero_anim" .}}</div>{{end}}
+      </div>
+    </section>
+
+    {{if .FactoryCats}}
+    <nav class="swg-cats" aria-label="{{.Tr.T "common.category_nav"}}">
+      {{range .FactoryCats}}<a href="{{$.Tr.U .URL}}"><span>{{.Name}}</span><small>{{.Count}}</small></a>
+      {{end}}<a class="swg-cats-all" href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+    </nav>
+    {{end}}
+
+    {{if .FactoryProducts}}
+    <section class="swg-section swg-products">
+      <div class="swg-head">
+        <h2>{{.Tr.T "dtc.bestsellers"}}</h2>
+        <a href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="swg-grid">
+        {{range .FactoryProducts}}
+        <a class="swg-card" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+          <span class="swg-card-media{{if not .CoverImage}} dt-gen{{end}}">
+            {{if .CoverImage}}<img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}
+          </span>
+          <span class="swg-card-body">
+            <span class="swg-card-title">{{.Title}}</span>
+            {{with productChips .}}<span class="f-chips">{{range .}}<span class="f-chip"><b>{{.K}}</b><i>{{.V}}</i></span>{{end}}</span>{{end}}
+          </span>
+        </a>
+        {{end}}
+      </div>
+    </section>
+    {{end}}
+
+    {{if .FactoryStats}}
+    <section class="swg-section swg-facts">
+      <div class="swg-head"><h2>{{.Tr.T "dtc.story"}}</h2></div>
+      <dl class="dt-stats">
+        {{range .FactoryStats}}<div class="dt-stat"><dt>{{.Num}}</dt><dd>{{.Label}}</dd></div>
+        {{end}}
+      </dl>
+    </section>
+    {{end}}
+
+    {{if .FactoryGallery}}
+    <section class="swg-section">
+      <div class="swg-head"><h2>{{.Tr.T "dtc.scenes"}}</h2></div>
+      {{template "factory_gallery" .}}
+    </section>
+    {{end}}
+
+    {{if .DTCTestimonials}}
+    <section class="swg-section">
+      <div class="swg-head"><h2>{{.Tr.T "dtc.reviews"}}</h2></div>
+      {{template "dtc_testimonials" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryQAs}}
+    <section class="swg-section">
+      <div class="swg-head"><h2>{{.Tr.T "factory.faq"}}</h2></div>
+      {{template "factory_faq" .}}
+    </section>
+    {{end}}
+  </div>
+
+  {{template "dtc_cta" .}}
+{{end}}

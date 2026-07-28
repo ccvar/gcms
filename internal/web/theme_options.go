@@ -22,15 +22,16 @@ import (
 
 // 槽类型：决定外观页渲染哪种编辑控件与 settings 值的格式。
 const (
-	themeOptHero           = "hero"     // 既有 Hero 右侧视觉控件（hero.visual/hero.image/hero.svg，全局）
-	themeOptStats          = "stats"    // 数字组 JSON [{num,label}]，最多 Max 组
-	themeOptSteps          = "steps"    // 步骤组 JSON [{title,note}] ×Max + 全局开关 EnabledKey
-	themeOptTextPair       = "textpair" // 文本对 JSON {title,note}
-	themeOptToggle         = "toggle"   // 纯开关区块（内容零配置，如分类入口卡区），只有 EnabledKey
-	themeOptPairs          = "pairs"    // 名称+一句话组 JSON [{name,note}] ×Max + 开关（如应用行业）
-	themeOptQAList         = "qalist"   // 问答组 JSON [{q,a}] ×Max + 开关（如 FAQ）
-	themeOptGallery        = "gallery"  // 图片 URL 列表 JSON ["url",...]（全局；空 = 区块不渲染）
-	themeOptJSON           = "json"     // 结构化 JSON 槽；由主题专属解析器校验、规范化后落库
+	themeOptHero           = "hero"           // 既有 Hero 右侧视觉控件（hero.visual/hero.image/hero.svg，全局）
+	themeOptStats          = "stats"          // 数字组 JSON [{num,label}]，最多 Max 组
+	themeOptSteps          = "steps"          // 步骤组 JSON [{title,note}] ×Max + 全局开关 EnabledKey
+	themeOptTextPair       = "textpair"       // 文本对 JSON {title,note}
+	themeOptToggle         = "toggle"         // 纯开关区块（内容零配置，如分类入口卡区），只有 EnabledKey
+	themeOptPairs          = "pairs"          // 名称+一句话组 JSON [{name,note}] ×Max + 开关（如应用行业）
+	themeOptQAList         = "qalist"         // 问答组 JSON [{q,a}] ×Max + 开关（如 FAQ）
+	themeOptGallery        = "gallery"        // 图片 URL 列表 JSON ["url",...]（全局；空 = 区块不渲染）
+	themeOptCertifications = "certifications" // 真实认证 JSON [{name,note}]；空 = 不渲染，绝不内置虚构资质
+	themeOptJSON           = "json"           // 结构化 JSON 槽；由主题专属解析器校验、规范化后落库
 	themeOptPilotWorkflow  = "pilot-workflow"
 	themeOptPilotRelease   = "pilot-release"
 	themeOptPilotDownloads = "pilot-downloads"
@@ -138,6 +139,17 @@ var factoryThemeOptions = []ThemeOptionSpec{
 		Example:  `["/uploads/workshop-1.webp","/uploads/workshop-2.webp"]`,
 	},
 	{
+		Key:       factoryCertificationsSettingKey,
+		Type:      themeOptCertifications,
+		LabelKey:  "admin.settings.appearance.factory_certifications",
+		Label:     "认证与审核（真实资料）",
+		DescKey:   "admin.settings.appearance.factory_certifications_desc",
+		Desc:      "只填写站点真实持有的认证、检测或审核信息；名称非空才显示。留空时首页不渲染认证区，绝不生成示例资质。",
+		Localized: true,
+		Max:       maxFactoryCertifications,
+		Example:   `[{"name":"认证 / 审核名称","note":"证书编号或有效期"}]`,
+	},
+	{
 		Key:        factoryFAQSettingKey,
 		Type:       themeOptQAList,
 		LabelKey:   "admin.settings.appearance.factory_faq",
@@ -165,22 +177,42 @@ var factoryThemeOptions = []ThemeOptionSpec{
 // header/footer 分支的实际渲染，含间接消费）：
 //   - onepage 不渲染分类卡/行业/图集（页头锚点跟随 process/faq 开关，属同槽消费）；
 //   - solutions 的行业槽升格为「解决方案」编号大卡（一级入口），不渲染分类卡/图集/FAQ；
-//   - engineering 首页是规格对比表 + 认证墙 + 参数分类入口，只吃 stats/categories/cta；
-//   - trade/sidebar 的分类树在双层页头/侧栏竖栏（header.html/footer.html 分支）消费 categories；
+//   - engineering 首页是规格对比表 + 认证墙 + 参数分类入口，只吃 stats/categories/certifications/cta；
+//   - trade 的分类树与认证资料在页头/页脚消费；sidebar 的分类树在侧栏竖栏消费；
 //   - vision 页脚 = factory_cta 通栏（footer.html 分支），且 hero 无图时回落 gallery 首图；
 //   - herofold 的 hero 同样回落 gallery 首图。
 //
 // 新骨架未登记时回落全量（宁可多渲染配置项，绝不让数据槽失联）。
 var factoryLayoutSlots = map[string][]string{
 	"factory-catalog":     {factoryStatsSettingKey, factoryProcessSettingKey, factoryCategoriesEnabledKey, factoryIndustriesSettingKey, factoryGallerySettingKey, factoryFAQSettingKey, factoryCTASettingKey},
-	"factory-showcase":    {factoryStatsSettingKey, factoryProcessSettingKey, factoryCategoriesEnabledKey, factoryIndustriesSettingKey, factoryGallerySettingKey, factoryFAQSettingKey, factoryCTASettingKey},
+	"factory-showcase":    {factoryStatsSettingKey, factoryProcessSettingKey, factoryCategoriesEnabledKey, factoryIndustriesSettingKey, factoryGallerySettingKey, factoryCertificationsSettingKey, factoryFAQSettingKey, factoryCTASettingKey},
 	"factory-onepage":     {factoryStatsSettingKey, factoryProcessSettingKey, factoryFAQSettingKey, factoryCTASettingKey},
-	"factory-solutions":   {factoryStatsSettingKey, factoryProcessSettingKey, factoryIndustriesSettingKey, factoryCTASettingKey},
-	"factory-engineering": {factoryStatsSettingKey, factoryCategoriesEnabledKey, factoryCTASettingKey},
-	"factory-trade":       {factoryStatsSettingKey, factoryProcessSettingKey, factoryCategoriesEnabledKey, factoryIndustriesSettingKey, factoryGallerySettingKey, factoryFAQSettingKey, factoryCTASettingKey},
+	"factory-solutions":   {factoryStatsSettingKey, factoryProcessSettingKey, factoryIndustriesSettingKey, factoryCertificationsSettingKey, factoryCTASettingKey},
+	"factory-engineering": {factoryStatsSettingKey, factoryCategoriesEnabledKey, factoryCertificationsSettingKey, factoryCTASettingKey},
+	"factory-trade":       {factoryStatsSettingKey, factoryProcessSettingKey, factoryCategoriesEnabledKey, factoryIndustriesSettingKey, factoryGallerySettingKey, factoryCertificationsSettingKey, factoryFAQSettingKey, factoryCTASettingKey},
 	"factory-sidebar":     {factoryStatsSettingKey, factoryProcessSettingKey, factoryCategoriesEnabledKey, factoryIndustriesSettingKey, factoryGallerySettingKey, factoryFAQSettingKey, factoryCTASettingKey},
 	"factory-vision":      {factoryStatsSettingKey, factoryProcessSettingKey, factoryCategoriesEnabledKey, factoryIndustriesSettingKey, factoryGallerySettingKey, factoryFAQSettingKey, factoryCTASettingKey},
-	"factory-herofold":    {factoryStatsSettingKey, factoryProcessSettingKey, factoryCategoriesEnabledKey, factoryIndustriesSettingKey, factoryGallerySettingKey, factoryFAQSettingKey, factoryCTASettingKey},
+	"factory-herofold":    {factoryStatsSettingKey, factoryProcessSettingKey, factoryCategoriesEnabledKey, factoryIndustriesSettingKey, factoryGallerySettingKey, factoryCertificationsSettingKey, factoryFAQSettingKey, factoryCTASettingKey},
+	"factory-andon":       {factoryStatsSettingKey, factoryProcessSettingKey, factoryCategoriesEnabledKey, factoryIndustriesSettingKey, factoryGallerySettingKey, factoryFAQSettingKey, factoryCTASettingKey},
+	"factory-certwall":    {factoryStatsSettingKey, factoryProcessSettingKey, factoryCategoriesEnabledKey, factoryIndustriesSettingKey, factoryGallerySettingKey, factoryCertificationsSettingKey, factoryFAQSettingKey, factoryCTASettingKey},
+	"factory-container":   {factoryStatsSettingKey, factoryProcessSettingKey, factoryCategoriesEnabledKey, factoryIndustriesSettingKey, factoryGallerySettingKey, factoryCertificationsSettingKey, factoryFAQSettingKey, factoryCTASettingKey},
+	"factory-crate":       {factoryStatsSettingKey, factoryProcessSettingKey, factoryCategoriesEnabledKey, factoryIndustriesSettingKey, factoryGallerySettingKey, factoryCertificationsSettingKey, factoryFAQSettingKey, factoryCTASettingKey},
+	"factory-draftdesk":   {factoryStatsSettingKey, factoryProcessSettingKey, factoryCategoriesEnabledKey, factoryIndustriesSettingKey, factoryGallerySettingKey, factoryCertificationsSettingKey, factoryFAQSettingKey, factoryCTASettingKey},
+	"factory-exportmap":   {factoryStatsSettingKey, factoryProcessSettingKey, factoryCategoriesEnabledKey, factoryIndustriesSettingKey, factoryGallerySettingKey, factoryCertificationsSettingKey, factoryFAQSettingKey, factoryCTASettingKey},
+	"factory-floorplan":   {factoryStatsSettingKey, factoryProcessSettingKey, factoryCategoriesEnabledKey, factoryIndustriesSettingKey, factoryGallerySettingKey, factoryFAQSettingKey, factoryCTASettingKey},
+	"factory-furnace":     {factoryStatsSettingKey, factoryProcessSettingKey, factoryCategoriesEnabledKey, factoryIndustriesSettingKey, factoryGallerySettingKey, factoryCertificationsSettingKey, factoryFAQSettingKey, factoryCTASettingKey},
+	"factory-gantry":      {factoryStatsSettingKey, factoryProcessSettingKey, factoryCategoriesEnabledKey, factoryIndustriesSettingKey, factoryGallerySettingKey, factoryCertificationsSettingKey, factoryFAQSettingKey, factoryCTASettingKey},
+	"factory-gauge":       {factoryStatsSettingKey, factoryProcessSettingKey, factoryCategoriesEnabledKey, factoryIndustriesSettingKey, factoryGallerySettingKey, factoryCertificationsSettingKey, factoryFAQSettingKey, factoryCTASettingKey},
+	"factory-hazardtape":  {factoryStatsSettingKey, factoryProcessSettingKey, factoryCategoriesEnabledKey, factoryIndustriesSettingKey, factoryGallerySettingKey, factoryCertificationsSettingKey, factoryFAQSettingKey, factoryCTASettingKey},
+	"factory-inspection":  {factoryStatsSettingKey, factoryProcessSettingKey, factoryCategoriesEnabledKey, factoryIndustriesSettingKey, factoryGallerySettingKey, factoryCertificationsSettingKey, factoryFAQSettingKey, factoryCTASettingKey},
+	"factory-line":        {factoryStatsSettingKey, factoryProcessSettingKey, factoryCategoriesEnabledKey, factoryIndustriesSettingKey, factoryGallerySettingKey, factoryCertificationsSettingKey, factoryFAQSettingKey, factoryCTASettingKey},
+	"factory-nameplate":   {factoryStatsSettingKey, factoryProcessSettingKey, factoryCategoriesEnabledKey, factoryIndustriesSettingKey, factoryGallerySettingKey, factoryCertificationsSettingKey, factoryFAQSettingKey, factoryCTASettingKey},
+	"factory-pipeworks":   {factoryStatsSettingKey, factoryProcessSettingKey, factoryCategoriesEnabledKey, factoryIndustriesSettingKey, factoryGallerySettingKey, factoryFAQSettingKey, factoryCTASettingKey},
+	"factory-quotation":   {factoryStatsSettingKey, factoryProcessSettingKey, factoryCategoriesEnabledKey, factoryIndustriesSettingKey, factoryGallerySettingKey, factoryFAQSettingKey, factoryCTASettingKey},
+	"factory-rackwall":    {factoryStatsSettingKey, factoryProcessSettingKey, factoryCategoriesEnabledKey, factoryIndustriesSettingKey, factoryGallerySettingKey, factoryCertificationsSettingKey, factoryFAQSettingKey, factoryCTASettingKey},
+	"factory-sampleroom":  {factoryStatsSettingKey, factoryProcessSettingKey, factoryCategoriesEnabledKey, factoryIndustriesSettingKey, factoryGallerySettingKey, factoryCertificationsSettingKey, factoryFAQSettingKey, factoryCTASettingKey},
+	"factory-shutter":     {factoryStatsSettingKey, factoryProcessSettingKey, factoryCategoriesEnabledKey, factoryIndustriesSettingKey, factoryGallerySettingKey, factoryFAQSettingKey, factoryCTASettingKey},
+	"factory-tonnage":     {factoryStatsSettingKey, factoryProcessSettingKey, factoryCategoriesEnabledKey, factoryIndustriesSettingKey, factoryGallerySettingKey, factoryFAQSettingKey, factoryCTASettingKey},
 }
 
 // factoryLayoutThemeOptions 按骨架挑出消费的槽子集（保持 factoryThemeOptions 声明顺序）；
@@ -291,9 +323,29 @@ func dtcCTAOptionSpec() ThemeOptionSpec {
 //
 // 新骨架未登记时回落全量（同 factoryLayoutSlots 的约定）。
 var dtcLayoutSlots = map[string][]string{
-	"dtc-flagship": {factoryStatsSettingKey, factoryCategoriesEnabledKey, factoryGallerySettingKey, dtcTestimonialsSettingKey, factoryFAQSettingKey, factoryCTASettingKey},
-	"dtc-solo":     {factoryStatsSettingKey, factoryGallerySettingKey, dtcTestimonialsSettingKey, factoryFAQSettingKey, factoryCTASettingKey},
-	"dtc-lookbook": {factoryGallerySettingKey, factoryCTASettingKey},
+	"dtc-flagship":   {factoryStatsSettingKey, factoryCategoriesEnabledKey, factoryGallerySettingKey, dtcTestimonialsSettingKey, factoryFAQSettingKey, factoryCTASettingKey},
+	"dtc-solo":       {factoryStatsSettingKey, factoryGallerySettingKey, dtcTestimonialsSettingKey, factoryFAQSettingKey, factoryCTASettingKey},
+	"dtc-lookbook":   {factoryGallerySettingKey, factoryCTASettingKey},
+	"dtc-vitrine":    {factoryStatsSettingKey, factoryCategoriesEnabledKey, factoryGallerySettingKey, dtcTestimonialsSettingKey, factoryFAQSettingKey, factoryCTASettingKey},
+	"dtc-journal":    {factoryStatsSettingKey, factoryCategoriesEnabledKey, factoryGallerySettingKey, dtcTestimonialsSettingKey, factoryFAQSettingKey, factoryCTASettingKey},
+	"dtc-catalogue":  {factoryStatsSettingKey, factoryCategoriesEnabledKey, dtcTestimonialsSettingKey, factoryFAQSettingKey, factoryCTASettingKey},
+	"dtc-bazaar":     {factoryStatsSettingKey, factoryCategoriesEnabledKey, factoryGallerySettingKey, dtcTestimonialsSettingKey, factoryFAQSettingKey, factoryCTASettingKey},
+	"dtc-column":     {factoryStatsSettingKey, dtcTestimonialsSettingKey, factoryFAQSettingKey, factoryCTASettingKey},
+	"dtc-swissgrid":  {factoryStatsSettingKey, factoryCategoriesEnabledKey, factoryGallerySettingKey, dtcTestimonialsSettingKey, factoryFAQSettingKey, factoryCTASettingKey},
+	"dtc-runway":     {factoryStatsSettingKey, factoryCategoriesEnabledKey, factoryGallerySettingKey, dtcTestimonialsSettingKey, factoryFAQSettingKey, factoryCTASettingKey},
+	"dtc-atelier":    {factoryStatsSettingKey, factoryCategoriesEnabledKey, factoryGallerySettingKey, dtcTestimonialsSettingKey, factoryFAQSettingKey, factoryCTASettingKey},
+	"dtc-monthbox":   {factoryStatsSettingKey, dtcTestimonialsSettingKey, factoryFAQSettingKey, factoryCTASettingKey},
+	"dtc-booth":      {factoryStatsSettingKey, factoryCategoriesEnabledKey, factoryGallerySettingKey, dtcTestimonialsSettingKey, factoryFAQSettingKey, factoryCTASettingKey},
+	"dtc-apothecary": {factoryStatsSettingKey, factoryCategoriesEnabledKey, factoryGallerySettingKey, dtcTestimonialsSettingKey, factoryFAQSettingKey, factoryCTASettingKey},
+	"dtc-grocer":     {factoryStatsSettingKey, factoryCategoriesEnabledKey, factoryGallerySettingKey, dtcTestimonialsSettingKey, factoryFAQSettingKey, factoryCTASettingKey},
+	"dtc-cellar":     {factoryStatsSettingKey, factoryCategoriesEnabledKey, factoryGallerySettingKey, dtcTestimonialsSettingKey, factoryFAQSettingKey, factoryCTASettingKey},
+	"dtc-basecamp":   {factoryStatsSettingKey, factoryCategoriesEnabledKey, factoryGallerySettingKey, dtcTestimonialsSettingKey, factoryFAQSettingKey, factoryCTASettingKey},
+	"dtc-toybox":     {factoryStatsSettingKey, factoryCategoriesEnabledKey, factoryGallerySettingKey, dtcTestimonialsSettingKey, factoryFAQSettingKey, factoryCTASettingKey},
+	"dtc-paperie":    {factoryStatsSettingKey, factoryCategoriesEnabledKey, factoryGallerySettingKey, dtcTestimonialsSettingKey, factoryFAQSettingKey, factoryCTASettingKey},
+	"dtc-mono":       {factoryStatsSettingKey, factoryCategoriesEnabledKey, factoryGallerySettingKey, dtcTestimonialsSettingKey, factoryFAQSettingKey, factoryCTASettingKey},
+	"dtc-flatlay":    {factoryStatsSettingKey, factoryCategoriesEnabledKey, factoryGallerySettingKey, dtcTestimonialsSettingKey, factoryFAQSettingKey, factoryCTASettingKey},
+	"dtc-flyer":      {factoryStatsSettingKey, factoryCategoriesEnabledKey, factoryGallerySettingKey, dtcTestimonialsSettingKey, factoryFAQSettingKey, factoryCTASettingKey},
+	"dtc-lightbox":   {factoryStatsSettingKey, factoryCategoriesEnabledKey, factoryGallerySettingKey, dtcTestimonialsSettingKey, factoryFAQSettingKey, factoryCTASettingKey},
 }
 
 // dtcLayoutThemeOptions 按独立站骨架挑槽子集（保持 dtcThemeOptions 声明顺序）；
@@ -368,8 +420,9 @@ type ThemeOptionView struct {
 	Pairs             []ThemePairField  // pairs 槽，补齐到 Max 行
 	Testimonials      []ThemeTestiField // testimonials 槽，补齐到 Max 行（无默认占位）
 	GalleryText       string            // gallery 槽：每行一个 URL 的 textarea 值
-	RawText           string            // json 槽：规范 JSON 文本
-	Title, Note       string            // textpair 槽
+	Certifications    []FactoryCertification
+	RawText           string // json 槽：规范 JSON 文本
+	Title, Note       string // textpair 槽
 	TitleDef, NoteDef string
 	PilotWorkflow     PilotSection[PilotStep]
 	PilotRelease      PilotRelease
@@ -459,6 +512,11 @@ func (s *Server) themeOptionViews(theme, lang string) []ThemeOptionView {
 		case themeOptGallery:
 			// 图集全局（不分语种）：读裸键。
 			v.GalleryText = strings.Join(parseFactoryGallery(s.store.Setting(spec.Key)), "\n")
+		case themeOptCertifications:
+			v.Certifications = parseFactoryCertifications(raw)
+			for len(v.Certifications) < spec.Max {
+				v.Certifications = append(v.Certifications, FactoryCertification{})
+			}
 		case themeOptJSON:
 			if spec.Localized {
 				v.RawText = s.store.Setting(s.copyKey(spec.Key, lang))
@@ -642,6 +700,21 @@ func (s *Server) saveThemeOptionsFromForm(r *http.Request, lang string) {
 			}
 		}
 		_ = s.store.SetSetting(factoryGallerySettingKey, marshalThemeOptionJSON(gallery, len(gallery) == 0))
+	}
+
+	if posted[factoryCertificationsSettingKey] {
+		rows := make([]FactoryCertification, 0, maxFactoryCertifications)
+		for i := 0; i < maxFactoryCertifications; i++ {
+			name := strings.TrimSpace(r.FormValue(fmt.Sprintf("factory_certification_name_%d", i)))
+			if name == "" {
+				continue
+			}
+			rows = append(rows, FactoryCertification{
+				Name: name,
+				Note: strings.TrimSpace(r.FormValue(fmt.Sprintf("factory_certification_note_%d", i))),
+			})
+		}
+		_ = s.store.SetSetting(s.copyKey(factoryCertificationsSettingKey, lang), marshalThemeOptionJSON(rows, len(rows) == 0))
 	}
 
 	if posted[factoryFAQSettingKey] {

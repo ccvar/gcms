@@ -49,17 +49,28 @@ pub async fn discover_with_refresh(
         .await
         .map_err(|e| format!("请求发现接口失败: {e}"))?;
     let status = resp.status();
+    let retry_after = resp
+        .headers()
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
     let body: Value = resp
         .json()
         .await
         .map_err(|e| format!("发现接口响应不是 JSON: {e}"))?;
     if !status.is_success() {
-        let msg = body
-            .get("error")
-            .and_then(|e| e.get("message"))
-            .and_then(Value::as_str)
-            .unwrap_or("未知错误");
-        return Err(format!("发现接口 {status}: {msg}"));
+        let msg = response_message(&body);
+        let retry_hint = if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            retry_after
+                .as_deref()
+                .map(|seconds| format!("（请在 {seconds} 秒后重试）"))
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
+        return Err(format!("发现接口 {status}: {msg}{retry_hint}"));
     }
     Ok(body)
 }
@@ -863,6 +874,12 @@ mod tests {
         let body =
             json!({"error": {"code": "default_site_protected", "message": "默认站点不能关闭。"}});
         assert_eq!(response_message(&body), "默认站点不能关闭。");
+    }
+
+    #[test]
+    fn response_message_reads_gcms_top_level_error() {
+        let body = json!({"error": "rate_limited", "message": "请求过于频繁，请稍后再试。"});
+        assert_eq!(response_message(&body), "请求过于频繁，请稍后再试。");
     }
 
     #[test]

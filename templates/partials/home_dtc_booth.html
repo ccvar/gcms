@@ -1,0 +1,103 @@
+{{define "home_dtc_booth"}}
+  {{/* dtc-booth — 展位：展馆气质的外贸独立站首页。品牌墙深色横幅 hero（HALL/BOOTH
+       小字位=HeroEyebrow、大字=HeroTitle；三态照 flagship：image 全幅 scrim /
+       svg 内嵌 / 默认 dtc_hero_anim 轻动画）→ 展区指示牌（Categories 箭头签）
+       → 展位编号卡（A-NN 由 CSS counter 生成 + 图 + 标题 + 规格签）→ 展会数字
+       （FactoryStats）→ 现场图集 → 观众评价（未配置不渲染、绝不编造）→ FAQ
+       → 预约洽谈 CTA（dtc_cta 复用，.Contact.Any 分支同 flagship）。
+       数据由 fillDTCHome 装载；所有可选槽空数据整段不渲染。 */}}
+  {{$heroImg := ""}}{{if and (eq .Site.HeroVisual "image") .Site.HeroImage}}{{$heroImg = .Site.HeroImage}}{{end}}
+  {{$heroSVG := and (eq .Site.HeroVisual "svg") (ne .Site.HeroSVG "")}}
+  {{$heroAnim := and (not $heroImg) (not $heroSVG)}}
+  <div class="bth-wrap">
+    <section class="bth-hero{{if $heroImg}} has-img{{else if $heroAnim}} has-anim{{end}}">
+      {{if $heroImg}}<img class="bth-hero-img" src="{{$heroImg}}" alt="{{.Site.HeroAlt}}" decoding="async" fetchpriority="high"{{imgAttrs $heroImg}}>{{end}}
+      <div class="bth-hero-inner">
+        <div class="bth-hero-copy">
+          {{if .Site.HeroEyebrow}}<p class="bth-hall"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+          <h1 class="bth-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+          {{if .Site.HeroDescription}}<p class="bth-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+          <div class="bth-cta">
+            <a class="btn btn-primary" href="{{.Tr.U "/products"}}">{{.Tr.T "dtc.shop_now"}} <span class="arrow" aria-hidden="true">→</span></a>
+            {{if .Contact.Any}}<a class="btn dt-btn-ghost" href="#dtc-contact">{{.Tr.T "contact.float_label"}}</a>{{end}}
+          </div>
+        </div>
+        {{if $heroSVG}}<div class="bth-hero-side dt-embed" aria-hidden="true">{{safeHTML .Site.HeroSVG}}</div>
+        {{else if $heroAnim}}<div class="bth-hero-side dt-heroanim" aria-hidden="true">{{template "dtc_hero_anim" .}}</div>{{end}}
+      </div>
+    </section>
+
+    {{if .FactoryCats}}
+    <nav class="bth-zones" aria-label="{{.Tr.T "factory.categories"}}">
+      {{range .FactoryCats}}
+      <a class="bth-sign bth-zone" href="{{$.Tr.U .URL}}"><span class="bth-zone-name">{{.Name}}</span><span class="bth-zone-n">{{.Count}}</span></a>
+      {{end}}
+    </nav>
+    {{end}}
+
+    {{if .FactoryProducts}}
+    <section class="bth-section bth-exhibits">
+      <div class="dt-head">
+        <div><p class="dt-eyebrow">{{.Tr.T "dtc.label.products"}}</p><h2>{{.Tr.T "dtc.bestsellers"}}</h2></div>
+        <a href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="bth-grid">
+        {{range .FactoryProducts}}
+        <a class="bth-card" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+          <span class="bth-card-top"><b class="bth-no" aria-hidden="true"></b><i class="bth-card-word" aria-hidden="true">{{$.Tr.T "dtc.series"}}</i></span>
+          <span class="bth-card-media{{if not .CoverImage}} dt-gen{{end}}">
+            {{if .CoverImage}}<img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}
+          </span>
+          <span class="bth-card-body">
+            <span class="bth-card-title">{{.Title}}</span>
+            {{with productChips .}}<span class="f-chips">{{range .}}<span class="f-chip"><b>{{.K}}</b><i>{{.V}}</i></span>{{end}}</span>{{end}}
+          </span>
+        </a>
+        {{end}}
+      </div>
+    </section>
+    {{end}}
+
+    {{if .FactoryStats}}
+    <section class="bth-section bth-figures">
+      <div class="dt-head">
+        <div><p class="dt-eyebrow">{{.Tr.T "dtc.label.story"}}</p><h2>{{.Tr.T "dtc.story"}}</h2></div>
+      </div>
+      <dl class="dt-stats">
+        {{range .FactoryStats}}
+        <div class="dt-stat"><dt>{{.Num}}</dt><dd>{{.Label}}</dd></div>
+        {{end}}
+      </dl>
+    </section>
+    {{end}}
+
+    {{if .FactoryGallery}}
+    <section class="bth-section bth-gallery-sec">
+      <div class="dt-head">
+        <div><p class="dt-eyebrow">{{.Tr.T "dtc.label.scenes"}}</p><h2>{{.Tr.T "dtc.scenes"}}</h2></div>
+      </div>
+      {{template "factory_gallery" .}}
+    </section>
+    {{end}}
+
+    {{if .DTCTestimonials}}
+    <section class="bth-section bth-reviews">
+      <div class="dt-head">
+        <div><p class="dt-eyebrow">{{.Tr.T "dtc.label.reviews"}}</p><h2>{{.Tr.T "dtc.reviews"}}</h2></div>
+      </div>
+      {{template "dtc_testimonials" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryQAs}}
+    <section class="bth-section bth-faq-sec">
+      <div class="dt-head">
+        <div><p class="dt-eyebrow">{{.Tr.T "dtc.label.guide"}}</p><h2>{{.Tr.T "factory.faq"}}</h2></div>
+      </div>
+      {{template "factory_faq" .}}
+    </section>
+    {{end}}
+  </div>
+
+  {{template "dtc_cta" .}}
+{{end}}

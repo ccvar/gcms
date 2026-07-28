@@ -1,6 +1,9 @@
 package store
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // ContentTypeRow 是「扩展」可视化设计器在数据库里保存的一条自定义内容类型定义（每站独立）。
 // name 与 fields 以 JSON 文本保存，由上层 web 解析为运行期类型。
@@ -80,6 +83,13 @@ func (s *Store) SaveContentType(r *ContentTypeRow) error {
 			position=excluded.position, updated_at=excluded.updated_at`,
 		r.Key, r.Name, r.Icon, r.URLPrefix, r.Fields,
 		boolInt(r.HasCategory), boolInt(r.Searchable), boolInt(r.Hierarchical), r.Position, now, now)
+	if err != nil && strings.Contains(err.Error(), "content_type_page_route_conflict") {
+		prefix := strings.TrimSpace(r.URLPrefix)
+		if prefix == "" {
+			prefix = strings.TrimSpace(r.Key)
+		}
+		return &PageRouteConflictError{Slug: prefix}
+	}
 	return err
 }
 

@@ -1,0 +1,85 @@
+{{define "home_script"}}
+  {{/* 剧本 Script — 等宽剧本页：场景行(INT.) + 居中片名 + V.O. 旁白(Featured) + SCENE 条目(CSS counter) + 片尾字幕(FeatLinks) */}}
+  <div class="scp-wrap">
+    <article class="scp-page">
+
+      {{if or .Site.HeroEyebrow .Posts}}
+      <div class="scp-slug">
+        <span class="scp-slug-l">
+          <b class="scp-int" aria-hidden="true">INT.</b>
+          {{if .Site.HeroEyebrow}}<span class="scp-slug-txt"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</span>{{end}}
+        </span>
+        {{if .Posts}}<span class="scp-draft">{{.Site.HomeLatest}} · {{len .Posts}}</span>{{end}}
+      </div>
+      {{end}}
+
+      <header class="scp-title-page">
+        <h1 class="scp-title"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+        {{if .Site.HeroDescription}}<p class="scp-byline"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+      </header>
+
+      {{if .Categories}}
+      <nav class="scp-cast" aria-label="{{.Tr.T "nav.category"}}">
+        {{range .Categories}}<a class="scp-cast-item" href="{{$.Tr.U (printf "/category/%s" .Slug)}}"><span class="scp-cast-name">{{.Name}}</span><span class="scp-cast-n">{{.Count}}</span></a>{{end}}
+        <a class="scp-cast-item scp-cast-all" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}}</a>
+      </nav>
+      {{end}}
+
+      {{with .Featured}}
+      <section class="scp-vo">
+        <a class="scp-vo-in" href="{{$.Tr.U (contentURL .)}}">
+          <span class="scp-vo-char"><b>{{$.Site.HomeFeatured}}</b> <i aria-hidden="true">(V.O.)</i></span>
+          {{if .CoverImage}}<span class="scp-vo-cover"><img src="{{.CoverImage}}" alt="{{.Title}}" decoding="async" fetchpriority="high"{{imgAttrs .CoverImage}}></span>{{end}}
+          <span class="scp-vo-t">{{.Title}}</span>
+          {{if .Excerpt}}<span class="scp-vo-line">{{.Excerpt}}</span>{{end}}
+          <span class="scp-vo-paren">({{with .Category}}{{.Name}} · {{end}}<time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time>)</span>
+        </a>
+      </section>
+      {{end}}
+
+      {{if .Posts}}
+      <section class="scp-scenes">
+        <div class="scp-scenes-head">
+          <h2 class="scp-scenes-t">{{.Site.HomeLatest}}</h2>
+          <a class="scp-scenes-all" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+        </div>
+        {{range .Posts}}
+        <article class="scp-scene">
+          <a class="scp-scene-in" href="{{$.Tr.U (contentURL .)}}">
+            <span class="scp-scene-no" aria-hidden="true"></span>
+            <span class="scp-scene-body">
+              <span class="scp-scene-h">{{.Title}}</span>
+              {{if .Excerpt}}<span class="scp-scene-ex">{{.Excerpt}}</span>{{end}}
+              {{with .Category}}<span class="scp-scene-cat">{{.Name}}</span>{{end}}
+            </span>
+            <time class="scp-scene-date" datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time>
+          </a>
+        </article>
+        {{end}}
+      </section>
+      {{end}}
+
+      {{if .FeatLinks}}
+      <aside class="scp-credits" aria-label="{{.Site.HomeLinks}}">
+        <h2 class="scp-credits-h">{{.Site.HomeLinks}}</h2>
+        <div class="scp-credits-grid">
+          {{range .FeatLinks}}
+          <a class="scp-credit" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+            <span class="scp-credit-t">{{.Title}}</span>
+            {{if .Excerpt}}<span class="scp-credit-ex">{{.Excerpt}}</span>{{end}}
+          </a>
+          {{end}}
+        </div>
+      </aside>
+      {{end}}
+
+      <footer class="scp-fade">
+        <span class="scp-fade-word" aria-hidden="true">FADE OUT.</span>
+        <a href="{{.Tr.U "/about"}}">{{.Tr.T "home.cta_more"}}</a>
+        <span aria-hidden="true">·</span>
+        <a href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}}</a>
+      </footer>
+
+    </article>
+  </div>
+{{end}}

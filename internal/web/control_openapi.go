@@ -160,7 +160,15 @@ func platformControlOpenAPISpec(apiBase string) map[string]any {
 					"expected_generation":         map[string]any{"type": "string", "description": "Opaque public-access attempt generation from discovery."},
 					"expected_domain_fingerprint": map[string]any{"type": "string", "description": "Opaque primary-and-alias snapshot fingerprint from discovery."},
 				}},
-				"UnlockInput": map[string]any{"type": "object", "writeOnly": true, "required": []string{"password", "operations"}, "properties": map[string]any{"password": map[string]any{"type": "string", "format": "password", "writeOnly": true}, "operations": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}}},
+				"UnlockInput": map[string]any{
+					"type": "object", "writeOnly": true, "required": []string{"password", "operations"},
+					"description": "Only Pilot native UI may submit this object. pages.publish, pages.rollback, and page_capabilities.grant additionally require page_challenge copied from the exact failed page request; the resulting token is target- and request-bound.",
+					"properties": map[string]any{
+						"password":       map[string]any{"type": "string", "format": "password", "writeOnly": true},
+						"operations":     map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+						"page_challenge": map[string]any{"type": "string", "writeOnly": true, "description": "Opaque short-lived challenge for one exact publication or capability-decision target, including site/page/project/revision/ETag/request-id."},
+					},
+				},
 			},
 		},
 	}

@@ -209,6 +209,13 @@ func TestControlMutationChecksScopeAndUnlockFromCatalog(t *testing.T) {
 	if locked.Code != http.StatusForbidden || !strings.Contains(locked.Body.String(), "unlock_required") {
 		t.Fatalf("unlock denial = %d %s", locked.Code, locked.Body.String())
 	}
+	var lockedPayload map[string]any
+	if err := json.Unmarshal(locked.Body.Bytes(), &lockedPayload); err != nil {
+		t.Fatalf("decode unlock denial: %v", err)
+	}
+	if lockedPayload["unlock_required"] != true || lockedPayload["operation"] != "domains.apply" {
+		t.Fatalf("unlock denial lacks machine-readable operation: %#v", lockedPayload)
+	}
 
 	unlockToken, _, err := srv.controlGrants.issue(unlockedKey.ID, []string{"domains.apply"}, controlCredentialRevision(hash), time.Now())
 	if err != nil {

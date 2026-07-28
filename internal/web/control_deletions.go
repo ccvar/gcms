@@ -59,8 +59,13 @@ func (s *Server) servePlatformControlSiteCategoryDelete(w http.ResponseWriter, r
 		apiError(w, http.StatusUnprocessableEntity, "expected_revision_required", "正式删除必须带上预检查返回的 expected_revision。")
 		return
 	}
+	requireUnlock, err := s.controlSiteRequiresUnlock(site)
+	if err != nil {
+		apiError(w, http.StatusInternalServerError, "category_live_status_failed", "无法确认站点是否已上线，未执行分类删除。")
+		return
+	}
 	fingerprint := controlMutationFingerprint("categories.delete", normalized)
-	s.executeControlMutation(w, r, key, "categories.delete", fingerprint, func() (int, any, error) {
+	s.executeControlMutationWithUnlockRequirement(w, r, key, "categories.delete", fingerprint, requireUnlock, func() (int, any, error) {
 		category, err := runtime.Store.GetCategoryByID(categoryID)
 		if err != nil {
 			return 0, nil, newControlMutationError(http.StatusInternalServerError, "category_read_failed", "无法读取分类。")
@@ -73,6 +78,7 @@ func (s *Server) servePlatformControlSiteCategoryDelete(w http.ResponseWriter, r
 			return 0, nil, newControlMutationError(http.StatusInternalServerError, "category_impact_failed", "无法读取分类删除影响。")
 		}
 		plan["normalized_input"] = normalized
+		plan["execution_requires_unlock"] = requireUnlock
 		if controlDryRun(r) {
 			return http.StatusOK, plan, nil
 		}
@@ -361,8 +367,13 @@ func (s *Server) servePlatformControlSiteNavigationDelete(w http.ResponseWriter,
 		return
 	}
 	normalized := controlNavigationDeleteNormalized{SiteID: siteID, Index: index, ExpectedURL: expectedURL, ExpectedRevision: expectedRevision}
+	requireUnlock, err := s.controlSiteRequiresUnlock(site)
+	if err != nil {
+		apiError(w, http.StatusInternalServerError, "navigation_live_status_failed", "无法确认站点是否已上线，未执行导航删除。")
+		return
+	}
 	fingerprint := controlMutationFingerprint("navigation.delete", normalized)
-	s.executeControlMutation(w, r, key, "navigation.delete", fingerprint, func() (int, any, error) {
+	s.executeControlMutationWithUnlockRequirement(w, r, key, "navigation.delete", fingerprint, requireUnlock, func() (int, any, error) {
 		rows, rawNavigation, configured := runtime.server.effectiveMenuRows()
 		if index < 0 || index >= len(rows) {
 			return 0, nil, newControlMutationError(http.StatusNotFound, "navigation_item_not_found", "导航项不存在，请刷新导航列表后重试。")
@@ -390,10 +401,11 @@ func (s *Server) servePlatformControlSiteNavigationDelete(w http.ResponseWriter,
 		if controlDryRun(r) {
 			return http.StatusOK, map[string]any{
 				"dry_run": true, "operation": "navigation.delete",
-				"normalized_input": controlNavigationDeleteNormalized{SiteID: siteID, Index: index, ExpectedURL: target.URL, ExpectedRevision: impactRevision},
-				"item":             item,
-				"impact_revision":  impactRevision,
-				"remaining_count":  len(rows) - 1,
+				"normalized_input":          controlNavigationDeleteNormalized{SiteID: siteID, Index: index, ExpectedURL: target.URL, ExpectedRevision: impactRevision},
+				"item":                      item,
+				"impact_revision":           impactRevision,
+				"remaining_count":           len(rows) - 1,
+				"execution_requires_unlock": requireUnlock,
 				"navigation_source": func() string {
 					if configured {
 						return "configured"

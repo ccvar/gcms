@@ -23,6 +23,20 @@ func PilotAssistantAutomationScopes() []string {
 		apiScopeContentRead,
 		apiScopeContentWrite,
 		apiScopeContentPublish,
+		// 新页面工程使用独立权限族，不能依赖旧 content:* 隐式继承。
+		apiScopePagesRead,
+		apiScopePageProjectsRead,
+		apiScopePageProjectsWrite,
+		apiScopePageProjectsBuild,
+		apiScopePageAssetsWrite,
+		apiScopePageAppsWrite,
+		apiScopePagePreviewRead,
+		apiScopePagesPublish,
+		apiScopePageCapabilitiesRequest,
+		// Grant remains a distinct high-risk scope. The built-in Pilot may reach
+		// its endpoint only so the server can issue a target-bound native
+		// password challenge; old content:* keys never inherit this scope.
+		apiScopePageCapabilitiesGrant,
 	}
 	// Pilot 运营助手密钥可发现统一控制契约。这些 scope 只是第一道门；
 	// 标记 requires_unlock 的操作没有后台密码仍然无法执行。初始密码没有

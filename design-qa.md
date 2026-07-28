@@ -283,6 +283,238 @@ No actionable P0, P1, or P2 differences remain.
 
 final result: passed
 
+### Pass 29 — Fixed-sidebar theme-card preview framing, passed
+
+- Source visual truth: `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-77804881-4761-4e81-b136-bebfad47e0a6.png` (1848 × 1168 px). It shows Catalogue and Atelier cards rendering only the left rail while their page content is pushed outside the thumbnail crop.
+- Browser evidence: `/Users/apple/.codex/visualizations/2026/07/25/019f986c-a7c7-71f0-9b09-ea435acec882/sidebar-preview-audit/01-before-picker.png`, `/Users/apple/.codex/visualizations/2026/07/25/019f986c-a7c7-71f0-9b09-ea435acec882/sidebar-preview-audit/04-after-picker.png`, and the focused same-input comparison `/Users/apple/.codex/visualizations/2026/07/25/019f986c-a7c7-71f0-9b09-ea435acec882/sidebar-preview-audit/05-before-after-catalogue.png`.
+- [P1] The preview-only `.site-header:not(.pc-site-header) { position: relative; }` rule had equal specificity to the four fixed-sidebar layout rules and loaded later. It therefore turned a `100vh` rail into an in-flow block, pushing the main skeleton below the fixed 760 px preview crop.
+- The recovery selector is deliberately limited to `sidebar`, `factory-sidebar`, `dtc-catalogue`, and `dtc-atelier`. It covers all 16 registered skins in those families without changing ordinary top bars, Paper Current's dedicated rail, Type Cascade's independent rail, or Column's right-side index.
+- Before the fix, Catalogue reported `position: relative` and `main.top = 1152`. After the fix its header reports `position: fixed`, `left = 0`, `top = 0`, and `main.top = 0`.
+- Browser regression checks also pass for Sidebar (`main width 844`), Factory Sidebar (`main width 856`), and Atelier (`main top 26`, `main width 1024`); all four representative rails remain fixed at the left edge while useful content is visible in the first frame.
+- The card's existing 16:10 crop, lazy loading, real-data preview endpoint, and 560% × `.18` scale are unchanged. No theme-specific content or preview image was hard-coded.
+- Automated verification: `TestThemePreviewKeepsFixedSidebarLayoutsOutOfFlow`, `TestThemePreviewRendersAllThemes`, and the ThemePreview/ThemeBrowse/ThemePicker/DTC targeted web suite pass.
+
+## Findings
+
+No actionable P0, P1, or P2 difference remains for fixed-sidebar theme-card thumbnails.
+
+## Final result
+
+final result: passed
+
+### Pass 28 — Responsive visibility controls and flat page filters, passed
+
+- Source visual truth:
+  - `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-dad19284-7175-4cf5-aec9-dd9f81261d1c.png` (2538 × 504 px), showing the unwanted white card shell around the page-list filters.
+  - `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-a0a8e13e-9add-419c-982c-4527b98afc1a.png` (2864 × 1660 px), showing the unexplained oversized checkbox squares in the responsive inspector.
+- Browser-rendered implementation evidence:
+  - `/Users/apple/work/cms.ccvar.com/.qa/page-filters-flat-final.jpg` (1880 × 864 px, authenticated Chrome viewport at native capture density).
+  - `/Users/apple/work/cms.ccvar.com/.qa/responsive-visibility-switches-bottom-final.jpg` (1721 × 912 px, authenticated Chrome viewport at native capture density).
+  - `/Users/apple/work/cms.ccvar.com/.qa/responsive-visibility-switches-final.jpg` (1721 × 912 px, desktop switch focused state).
+- Same-input focused comparison: `/Users/apple/work/cms.ccvar.com/.qa/visibility-filter-comparison.png` (2400 × 1400 px). The source and browser-rendered filter rows were cropped and normalized into equal 1100 × 145 px cells; the source and browser-rendered responsive inspectors were cropped and normalized into equal 1000 × 820 px cells. Source screenshots do not expose CSS viewport or DPR metadata; their stored density is 72 dpi. No density-specific visual finding was filed.
+- State: authenticated page list and page 51 simple composition editor, the first Hero section selected, Style tab open, desktop canvas active, and all three device visibility values restored to their original visible state. No Save or Publish action was submitted.
+- Full-view evidence: the page-list screenshot shows the beige page background flowing directly around the search and dropdown controls. The duplicate white surface, outer border, radius, and shadow are gone while each control retains its own visible boundary. The editor screenshot shows the complete desktop/tablet/mobile inspector without the former blank square controls.
+- Focused evidence: the combined comparison makes both fixes legible in one image. The old unlabelled large squares are replaced by compact accent switches labelled “在桌面显示”, “在平板显示”, and “在手机显示”.
+- [P1] The generic editor input rule applied full-width/min-height styling to the breakpoint `hidden` checkboxes, producing large empty squares with no clear meaning. The simple editor now presents positive display switches and inverts their checked value only at the existing `responsive.*.hidden` protocol boundary.
+- [P2] The page-list filter form added a second white card, border, radius, and elevation around controls that already had their own borders. The outer form is now transparent, borderless, radius-free, and padding-free; its compact grid and individual control affordances remain intact.
+- Fonts and typography: existing admin font families, weights, field labels, table copy, and hierarchy remain unchanged. Only the formerly missing visibility labels were added.
+- Spacing and layout rhythm: the filter controls keep their existing compact 8 px grid gap without an extra padded shell. Visibility rows use a restrained divider and compact 34 × 20 px switch; the narrow-screen rule preserves a 44 px label hit area.
+- Colors and visual tokens: controls continue to use the existing surface, line, muted, and accent tokens. The page background is now visible around the filter controls, and checked switches use the existing admin accent.
+- Image quality and asset fidelity: no product image, icon, logo, or illustrative asset was added, replaced, or approximated. The change uses a standard form-control treatment only.
+- Copy and content: all page data, filter choices, URLs, revisions, and publication state remain unchanged. The UI says what the control does; the stored `hidden` field and schema are unchanged.
+- Primary interactions tested: the Style tab exposes exactly three named switches; all begin checked. Turning desktop display off creates an unsaved edit and unchecks the switch; turning it back on restores the saved manifest and disables Save. The same off/on restoration was verified for mobile. No revision or database write occurred.
+- Runtime checks: both authenticated routes render after the rebuilt server restart, Chrome reports no application console errors on either tab, JavaScript syntax validation passes, targeted admin page/composition tests pass, the application builds, formatting is clean, and `git diff --check` passes.
+- Comparison history: the source captures contained one P1 affordance failure and one P2 duplicate-surface issue. Both were fixed before the browser capture; the post-fix full and focused comparison found no remaining actionable P0/P1/P2 difference.
+
+## Findings
+
+No actionable P0, P1, or P2 difference remains. The filter row is visually lighter, and device visibility is now explicit without changing the stored page protocol.
+
+## Final result
+
+final result: passed
+
+### Pass 25 — 普通用户自由编排编辑器，passed
+
+- Product Design 选定稿：`/Users/apple/.codex/generated_images/019f9819-858c-7022-be40-dcad9b27ecd2/call_1TnF3r6xho7KZm8Tw9U4duJq.png`（1487 × 1058 px）。
+- Chrome 实现截图：
+  - `/Users/apple/work/cms.ccvar.com/.qa/simple-editor-final-top-1487x1058.png`（设计稿对应桌面状态）。
+  - `/Users/apple/work/cms.ccvar.com/.qa/simple-editor-1080x900.png`（紧凑桌面）。
+  - `/Users/apple/work/cms.ccvar.com/.qa/simple-editor-390x844.png`（手机）。
+- 同图对照：`/Users/apple/work/cms.ccvar.com/.qa/simple-editor-comparison.png`。参考稿与同尺寸实现并排检查了页面层级、三栏比例、工具条、选区、右栏表单、边框、圆角、间距和字体；实际预览继续使用当前站点主题与真实后端数据，没有把设计稿示例内容或装饰图硬编码进渲染器。
+- 自由编排页默认进入简单模式；左侧只显示中文业务区块，中央为真实修订预览，右侧为内容、样式、数据三类设置。高级组件标识和原工作台仅在“高级编排”中显示；互动应用继续使用原高级工作台。
+- Chrome 真实交互通过：iframe/结构树点选同步、选区浮层、编辑/浏览往返、内容/样式/数据切换、中文添加区块目录、桌面/平板/手机切换、通用宽度下拉、修改后保存启用、发布禁用、撤销后恢复原草稿、高级/简单模式往返。未执行保存或发布，数据库未产生测试修订。
+- 浏览器验收发现并修复了三项 P1：初始选中区块未显示右栏字段、树中定位区块会带动外层页面滚动、浏览模式隐藏了返回编辑入口。修正后没有剩余可执行 P0/P1/P2。
+- 1487、1080 与 390 CSS px 均无横向溢出；1080 时检查器下移，390 时工具条与三段工作区按单列排列。应用自身 warning/error 为 0；仅观察到用户浏览器扩展产生的独立 warning。
+- 自动验证：`node --check assets/js/admin.js`、页面平台定向测试、完整 `go test ./internal/web -count=1`、`go build -o bin/cms .` 与 `git diff --check` 均通过。
+
+## Findings
+
+No actionable P0, P1, or P2 visual or interaction difference remains in this scope.
+
+## Final result
+
+final result: passed
+
+### Pass 24 — Pilot mobile spacing rhythm, passed
+
+- Source visual truth: `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-c532579e-0624-42ab-9c35-9d8bc4574bdf.png` (958 × 1322 px), showing the reported mobile state with cards and composer touching the white content frame.
+- Browser-rendered implementation evidence: `/private/tmp/pilot-mobile-breathing-final.png` at 390 × 844 CSS px and `/private/tmp/pilot-mobile-breathing-480.png` at 480 × 844 CSS px.
+- Same-input comparison evidence: `/private/tmp/pilot-mobile-breathing-comparison.png`. The source was normalized to the 465 px browser-capture width and placed beside the 480 CSS px implementation state.
+- State: mobile new-conversation screen, site-operations mode selected, no available site or Pilot.
+- [P2] The previous mobile override removed all horizontal padding from `.pc-main`, making the mode cards, composer and safety note share the exact content-frame edge. The corrected layout adds 16 px horizontal and 26/34 px vertical main padding.
+- [P2] The welcome copy, mode cards and composer had nearly uniform, compressed spacing. The welcome group now uses 16/28 px spacing, its heading has a 12 px text gap, card rows use a 12 px gap, and the transition into the composer uses 24 px.
+- Typography: the existing type families and sizes are preserved; the welcome paragraph now uses a 1.65 line height and a 320 px readable measure.
+- Spacing and layout rhythm: all interactive blocks align to a consistent inset, while the surrounding off-white frame remains visible. The safety note gains a 14 px separation and side inset.
+- Colors and tokens: no palette or state-color changes were made.
+- Image and icon fidelity: the existing Pilot-aligned icons remain unchanged.
+- Copy and content: all text and real empty-device state remain unchanged.
+- Responsive behavior: both 390 and 480 CSS px states retain the compact top controls, single-column launcher, visible composer actions and no horizontal overflow. Browser console errors: none.
+
+## Findings
+
+No actionable P0, P1, or P2 mobile spacing issue remains.
+
+## Final result
+
+final result: passed
+
+### Pass 23 — Pilot header device controls density, passed
+
+- Source visual truth: `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-43f72dac-4968-4a7b-83dc-7a1cd7c5b726.png` (2634 × 1136 px), with the device selector, connection summary and refresh action marked as oversized.
+- Browser-rendered implementation evidence: `/private/tmp/pilot-top-controls-compact-desktop-final.png` at 1280 × 720 CSS px and `/private/tmp/pilot-top-controls-compact-mobile-final.png` at 390 × 844 CSS px.
+- Focused same-input comparison evidence: `/private/tmp/pilot-top-controls-compact-comparison.png`. Source and corrected toolbar crops were normalized to 700 px width for direct density comparison.
+- State: no bound Pilot, `0 在线 · 0 设备`, refresh action available.
+- [P2] The original header used a 260 px device selector, 34 px refresh button, larger status padding and 8 px inter-control gaps. The corrected group uses a 196 px selector, 30 px control height, a 30 px refresh button, 6 px gaps and smaller 10–11 px utility type.
+- [P2] At 390 px, the earlier available width caused the refresh action to wrap beneath the selector and the page title to break awkwardly. The mobile header now uses a 148 px selector, 28 px controls, 4 px gaps, nowrap behavior and a 24 px single-line title.
+- Typography and spacing: utility labels retain the existing admin font and optical weight while using compact control sizing. Desktop and mobile alignment is vertically centered and the title/content hierarchy is unchanged.
+- Colors and visual tokens: the existing white surface, border, muted icon and online/offline status tokens are unchanged.
+- Image and icon fidelity: the existing refresh icon asset and status indicator are preserved; no new approximation was introduced.
+- Copy and content: device selection and real online/device counts are unchanged.
+- Interaction: the refresh button was activated successfully after the change and the page produced no browser console errors.
+
+## Findings
+
+No actionable P0, P1, or P2 difference remains for the header device-control density.
+
+## Final result
+
+final result: passed
+
+### Pass 22 — Pilot composer dropdown density, passed
+
+- Source visual truth: `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-3a85bdce-2dd6-4d88-a819-9f899a86c291.png` (1532 × 776 px), showing the reported oversized default model trigger and open model menu.
+- Browser-rendered implementation evidence: `/private/tmp/pilot-dropdown-compact-desktop-open.png` at 1280 × 720 CSS px and `/private/tmp/pilot-dropdown-compact-open.png` at 390 × 844 CSS px.
+- Focused same-input comparison evidence: `/private/tmp/pilot-dropdown-compact-comparison.png`. The source and corrected dropdown regions were normalized to 430 px width and stacked for direct density comparison.
+- State: new conversation, site-operations mode, no available bound device, model dropdown open with its inherited default selected.
+- [P2] The original trigger preserved long “Pilot 默认” phrases and the global menu inherited large type, padding and row height. The composer-scoped trigger is now 26 px high with 10.5 px type; menu rows use 11 px type, 26 px minimum height and 5 × 7 px padding.
+- [P2] Default labels now read `Codex · 默认`, `Claude Code · 默认`, `Grok · 默认` and `默认强度`, removing redundant wording while preserving the source of the default.
+- Layout rhythm: model width is 132 px, effort width is 92 px, site width is capped at 160 px, control gaps are 2–6 px, and the menu remains aligned to its trigger.
+- Colors and tokens: existing GCMS dropdown surface, line, accent, hover and selected colors remain unchanged. Only density and copy were adjusted.
+- Typography: compact UI sizes and weights remain legible at both desktop and 390 px mobile widths; no option wraps.
+- Image and icon fidelity: no visible asset was added or approximated in this pass.
+- Interaction and accessibility: the shared dropdown behavior, native select synchronization, selected check, keyboard semantics and ARIA-expanded state are retained. The open model menu exposed all three options and produced no browser console errors.
+
+## Findings
+
+No actionable P0, P1, or P2 difference remains for the composer dropdown density.
+
+## Final result
+
+final result: passed
+
+### Pass 21 — GCMS Pilot 新对话与 Pilot 客户端视觉对齐，passed
+
+- Source visual truth: `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-3bef011d-01e0-447e-bd85-e0ee08e8f1d1.png` and the production Pilot launcher/composer implementation in `desktop/src/routes/+page.svelte`.
+- Browser-rendered implementation evidence: `/private/tmp/pilot-console-full-final.png` at the default desktop viewport and `/private/tmp/pilot-console-mobile.png` at 390 × 844 CSS px.
+- Same-input comparison evidence: `/private/tmp/pilot-console-qa-comparison.png`. The Pilot reference crop and browser implementation crop were normalized to 716 px and stacked in one image for direct typography, spacing, card and control comparison.
+- State: “新对话” selected, default “站点运营” mode, no bound device available, disabled site selection and send action. The empty-device state is real and is not visually presented as successful or online.
+- [P1] The former GCMS form used oversized workflow cards, a separate three-column settings row, a large standalone textarea and a square blue send button. It did not read like the Pilot composer. The form now follows Pilot's actual launcher/composer structure: compact three-mode cards, integrated context/model/effort controls, restrained textarea height and a circular arrow send control.
+- [P1] Text glyph placeholders were replaced with the same external SVG icon assets used by Pilot's launcher semantics for site operations, site building, free conversation and send.
+- [P2] Mode context now behaves like Pilot: site operations exposes the site picker, site building shows a new-site context label, and free conversation no longer requires a selected site.
+- Typography and spacing: launcher card labels, secondary descriptions, icon tiles, 12 px radii, compact gaps and selected inset border follow Pilot's component measurements. The GCMS page shell intentionally retains its established serif heading and off-white admin frame.
+- Controls and interaction: the model and effort controls use the shared admin dropdown component. The model dropdown opened with three real options and the selected state; switching among all three modes updated the visible context without a page refresh.
+- Responsive QA: at 390 × 844 CSS px the mode cards stack, composer controls reflow without horizontal overflow, the circular send control stays visible and the mobile bottom navigation remains available.
+- Runtime QA: the final desktop and mobile states produced no browser console errors.
+
+## Findings
+
+No actionable P0, P1, or P2 visual difference remains in the new-conversation surface.
+
+## Final result
+
+final result: passed
+
+### Pass 24 — 页面列表筛选与高级页面工作台收口，passed
+
+- 参考截图：
+  - `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-3a037806-4ba7-4965-95ea-d7eb7c3403be.png`（2362 × 1362 px，页面列表）。
+  - `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-4f625c0e-ad38-4dc7-91cb-f8319859ab7d.png`（3448 × 1874 px，自由编排工作台）。
+- Chrome 实现截图：
+  - `/private/tmp/gcms-pages-list-after.png`（1736 × 864 px）。
+  - `/private/tmp/gcms-composer-after.png`（1721 × 857 px，未选组件）。
+  - `/private/tmp/gcms-composer-inspector-after.png`（1721 × 857 px，已选组件与右侧属性面板）。
+- 同图对照：
+  - `/private/tmp/gcms-pages-list-compare.png`。
+  - `/private/tmp/gcms-composer-compare.png`。
+- 页面列表筛选区由原来的大尺寸表单收紧为 52 px 整体高度；搜索、四个筛选下拉和提交按钮均为 34 px 控件高度。四个下拉复用后台现有 `dropdown[data-select-dropdown]` 交互，实际展开、选择“自由编排”和按钮联动均通过。
+- 自由编排页面始终提供工作修订预览；互动应用在安全构建通过后提供工作修订预览，未构建状态显示不可用预览提示。两类高级页面的未发布草稿均提供删除入口。
+- 高级页面删除使用独立端点并要求 CSRF、当前 ETag、草稿状态、从未发布且无历史发布记录；已发布或存在发布历史的项目不会显示可执行删除。视觉验收未触发实际删除。
+- 工作台取消超宽负边距与页面级横向滚动，改为受视口约束的三栏容器。左侧结构/组件库和右侧设置面板各自独立滚动，滚动条统一为 7 px 细轨道；中间画布与预览框限制在可用列宽内。
+- 画布宽度下拉和动态组件属性单选均复用通用下拉。设备切换、画布下拉展开、结构树选中、右侧属性渲染与预览 iframe 均在真实 8080 登录态通过。
+- Chrome 控制台过滤掉浏览器扩展日志后，应用自身 warning/error 数为 0。
+- 自动验证：`go test ./internal/web -count=1`、相关高级页面定向测试、`node --check assets/js/admin.js`、`go build -o bin/cms .` 与 `git diff --check` 均通过。
+
+## Findings
+
+No actionable P0, P1, or P2 visual or interaction difference remains in this scope.
+
+## Final result
+
+final result: passed
+
+### Pass 23 — Advanced page creation forms, passed
+
+- User-reported source evidence: `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-a5adf6a3-a7f8-4774-a887-a7150c2094c5.png` and `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-19ddc47f-37e0-4964-ba90-587a9933f6f3.png`.
+- Browser-rendered evidence: `/private/tmp/gcms-page-form-composition-final.png` at the normal desktop viewport and `/private/tmp/gcms-page-form-app-mobile-final.png` at 390 × 844 CSS px.
+- Same-artifact comparison: `/private/tmp/gcms-page-form-before-after-final.png`.
+- [P1] The composition and app creation forms used undefined `.form-grid` and `.form-actions` classes, so native inline controls produced the reported arbitrary layout. Both modes now share one structured GCMS admin form with a mode header, three semantic field groups, explicit labels, help associations, and a dedicated action footer.
+- [P1] The form inherited the generic content-card hover lift and used the wrong `.form-error` class. It now has a static form surface and uses the existing styled `.form-err` alert.
+- [P1] Page Platform styles referenced an undefined `--card` token. All platform surfaces now use the established `--surface` token.
+- Desktop QA measured an 860 px form, six contained fields, one required field, and 44 px primary action height. Mobile QA measured a 327 px form within a 390 px viewport, no horizontal overflow, full-width contained controls, valid label/control associations, 44 px actions, and matching visual/keyboard action order.
+- Composition and app keep the same backend contract and field names. Their labels, guidance and CTA text vary by mode; no site, customer or campaign data is hard-coded.
+- Native required-field validation remains authoritative; after it passes, the submit action becomes busy and locked so a double click cannot create duplicate drafts.
+- Automated verification: targeted create-form rendering and validation-error preservation tests pass, the complete `internal/web` package passes, and `git diff --check` passes.
+
+## Findings
+
+No actionable P0, P1, or P2 visual difference remains.
+
+## Final result
+
+final result: passed
+
+### Pass 22 — Editorial trio responsive and release closure, passed
+
+- The three themes in this delivery are `answer-desk`, `portrait-journal`, and `casebook`; `field-ledger` was the pre-existing theme visible in the first browse screenshot and is not part of this trio.
+- User-reported navigation reference: `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-5439df4e-f911-47dd-ad76-feb880b6af3a.png`.
+- Browser-rendered implementation evidence: `/private/tmp/gcms-theme-answer-desk-viewport.png`.
+- Same-artifact before/after comparison: `/private/tmp/gcms-answer-desk-nav-comparison.png`. The user screenshot's page-header region and the current browser render were normalized into adjacent panels and visually inspected together. The current header has a measured `0px` top border, one `2px` active-navigation underline, no generated duplicate underline, and remains sticky at `top: 0`.
+- Palette evidence: `/private/tmp/gcms-editorial-trio-palettes.png`. It contains the browser-rendered white and dark cards for all three skeletons in one inspected matrix: Answer Desk white/deep-night, Portrait Journal white/deep-forest, and Casebook white/deep-charcoal.
+- Desktop browser matrix covered 1080, 1200, 1240, 1360, and 1440 CSS px for all three themes. Every result reported zero horizontal overflow. The content shell follows the available width through 1240 and caps at a centered 1280 px at 1360/1440, so the themes no longer behave as full-screen canvases.
+- Mobile browser QA at 390 × 844 covered all three themes: the effective 375 px content viewport had zero horizontal overflow, the page shell measured 375 px, and the menu trigger replaced the desktop navigation.
+- The same three standard pages and article pages measured 112 px between their final content and footer at 1440 px. This closes the reported footer crowding on both ordinary pages and related-reading article pages.
+- All nine palette IDs render the same backend-bound family skeleton. The added regression test supplies CMS Hero values and requires each base/white/dark theme to consume them, preventing a palette card from drifting into hard-coded demo content.
+- The advanced-page workbench was also browser-verified at its exact 1080/1200/1240/1360/1440 presets, plus 768 px tablet and 390 px phone modes. Composition data binding, immutable revisions, app build/preview/public interaction, trusted-shell/untrusted-app sandbox separation, and the corrected responsive grid were exercised against disposable QA data.
+
+## Findings
+
+No actionable P0, P1, or P2 visual difference remains in the three-theme scope or the page-platform workbench.
+
+## Final result
+
+final result: passed
+
 ### Pass 21 — Pilot header action and mobile menu alignment, passed
 
 - Source screenshots: `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-b70c133a-c230-4aff-bc40-79ce625d02e0.png` and `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-ec0edab3-6899-4da9-858a-29da3e076bd5.png`.
@@ -369,6 +601,54 @@ final result: passed
 ## Findings
 
 No actionable P0, P1, or P2 differences remain.
+
+## Final result
+
+final result: passed
+
+### Pass 26 — Simple editor compact operation chrome, passed
+
+- Source visual truth: `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-e3fc1870-947f-4c13-9138-770929788a68.png` (3264 × 1668 px, annotated current state).
+- Browser-rendered implementation evidence: `/Users/apple/work/cms.ccvar.com/.qa/simple-editor-compact-desktop.jpg` (1736 × 920 px at a 1736 × 920 CSS viewport) and `/Users/apple/work/cms.ccvar.com/.qa/simple-editor-compact-mobile.jpg` (390 × 844 px).
+- Full-view comparison evidence: `/Users/apple/work/cms.ccvar.com/.qa/simple-editor-compact-comparison.png`. The annotated source and final browser render were normalized to equal 1000 px widths and placed side by side in one inspected image.
+- Focused controls did not require a separate comparison image because the source explicitly boxes all four operation regions and the equal-width full comparison keeps every affected control legible.
+- Spacing and layout rhythm: top actions reduced from 42 px to 34 px; toolbar from 58 px to 46 px; left rail from 240 px to 212 px; right inspector from 352 px to 300 px; section rows from 46 px to 38 px; form inputs from 42 px to 36 px. The center canvas increased from 886 px to 966 px at the same 1480 px workbench width.
+- Typography: compact desktop controls use 11–12 px UI type with the existing font stack and weights. Titles and preview content are unchanged. No tested action or section label clips.
+- Colors and visual tokens: existing surface, accent, line, muted, success and danger tokens are unchanged; the pass changes density only.
+- Image quality and asset fidelity: no image or icon substitution was needed. Existing icon templates and preview assets remain unchanged.
+- Copy and content: all labels and backend-bound page data remain unchanged; no business data was added or hard-coded.
+- Responsive behavior: a 390 × 844 rendered DOM/CSS pass reports zero horizontal overflow. Desktop controls compact to 34–36 px, while the mobile media query restores 40–42 px touch targets for actions, tabs, section rows and form fields.
+- Primary interactions tested in the authenticated Chrome page: Edit/Browse, Content/Style/Data, selected-section editing, and restoration to the Content tab. Browse mode hid both side panels and returned without layout overflow.
+- Runtime checks: targeted admin page/composition tests, JavaScript syntax validation, application build and CSS diff hygiene pass. The application emitted no local-origin console warnings or errors; observed warnings came only from installed wallet extensions.
+
+## Findings
+
+No actionable P0, P1, or P2 differences remain. The intentionally denser desktop chrome preserves readable labels and gives the preview canvas materially more room.
+
+## Final result
+
+final result: passed
+
+### Pass 27 — CTA meaning and button proportion, passed
+
+- Source visual truth: `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-0c2c2a99-e139-4acf-91a8-da6d3fb70fa2.png` (2574 × 1320 px). It shows the selected CTA with its front-end link stretched to almost the full 238 px section height.
+- Browser-rendered implementation evidence: `/Users/apple/work/cms.ccvar.com/.qa/cta-button-fixed-desktop.png` (1721 × 912 px browser viewport at native density) and `/Users/apple/work/cms.ccvar.com/.qa/cta-button-fixed-mobile.png` (same editor viewport with the embedded preview switched to its 375 px mobile canvas).
+- Focused same-input comparison: `/Users/apple/work/cms.ccvar.com/.qa/cta-button-fix-comparison.png` (1912 × 236 px). The 1904 × 472 source CTA crop was normalized to 944 × 236 and placed beside the 944 × 236 implementation crop. This keeps the affected text, button, selection outline, and editing overlay legible in one visual inspection.
+- State: authenticated simple editor, page 51, `cta.banner` selected, saved revision unchanged, desktop `wide 1240` canvas for the primary comparison. The CTA link remains `/zh/` and no editor field was submitted.
+- [P1] The CTA action flex container inherited grid-track stretch. Its single link therefore rendered at about 214 px tall and looked like a large vertical panel instead of a normal call-to-action. The CTA action container now opts out of stretch; in the desktop two-column layout it measures 46.8 px tall and is vertically aligned beside the copy.
+- [P2] “行动按钮区” and the inspector heading “按钮” described implementation jargon, not user intent. The catalog and client fallback now call the component “下一步引导”, its inspector calls the field “跳转按钮”, and the description explains that the title, supporting text, and link guide visitors to an important page or next step.
+- Responsive evidence: the default desktop/tablet two-column CTA uses the compact centered action. Stack or one-column configurations retain a 1rem text-to-action gap. In the 375 px mobile canvas the CTA becomes one column, the action measures 45.2 px tall with a 16 px top gap, and `scrollWidth === clientWidth` (no horizontal overflow). The rules are breakpoint-, layout-, and column-aware so custom row/stack settings do not inherit the wrong spacing.
+- Fonts and typography: existing display and UI fonts, sizes, weights, wrapping, and CTA label text remain intact. The button is content-sized rather than height-stretched.
+- Spacing and layout rhythm: the copy and action now share a balanced two-column row; the button no longer dictates the section height. Mobile keeps a clear vertical gap before the action.
+- Colors and visual tokens: the existing blue accent, warm-red editor selection state, borders, radii, and surfaces are unchanged.
+- Image quality and asset fidelity: this component contains no image asset and no replacement or approximation was introduced.
+- Copy and content: only the editor-facing component label, field label, and explanation changed. The page title, CTA text, destination, manifest identity, revision data, and publication behavior remain unchanged.
+- Runtime checks: the targeted composition-render and component-catalog tests pass, `admin.js` parses, the application builds, `git diff --check` passes, desktop/mobile browser measurements pass, the inspector shows “下一步引导”, and Chrome reports no application console errors.
+- Comparison history: the initial source exposed a stretched 214 px action. The first scoped fix reduced it to normal content height. A follow-up audit found that a global zero-margin rule could crowd custom one-column layouts, so the final rule was narrowed by breakpoint, layout, and column count. Post-fix desktop and mobile evidence shows no remaining actionable P0/P1/P2 issue.
+
+## Findings
+
+No actionable P0, P1, or P2 difference remains. The button now reads as a normal next-step link instead of an unexplained blue panel, while its saved content and destination remain intact.
 
 ## Final result
 

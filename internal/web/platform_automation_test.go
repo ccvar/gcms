@@ -167,6 +167,93 @@ func TestPlatformMirrorThemeOptions(t *testing.T) {
 	}
 }
 
+// TestPlatformPageDesignContextRoutesAndIsolatesSites exercises the complete
+// platform dispatcher rather than the page-platform submux directly. Pilot
+// must receive the selected site's live design context and must never inherit
+// the default site's profile or theme through the platform namespace.
+func TestPlatformPageDesignContextRoutesAndIsolatesSites(t *testing.T) {
+	srv, h, ps, defaultSite, blogSite := setupPlatformAutomation(t)
+	pool := srv.runtimePool()
+	if pool == nil {
+		t.Fatal("platform runtime pool is nil")
+	}
+	defaultRuntime, ok := pool.runtimeByID(defaultSite.ID)
+	if !ok || defaultRuntime == nil || defaultRuntime.Store == nil {
+		t.Fatalf("default runtime %d unavailable", defaultSite.ID)
+	}
+	blogRuntime, ok := pool.runtimeByID(blogSite.ID)
+	if !ok || blogRuntime == nil || blogRuntime.Store == nil {
+		t.Fatalf("blog runtime %d unavailable", blogSite.ID)
+	}
+
+	setSettings := func(st *store.Store, values map[string]string) {
+		t.Helper()
+		for key, value := range values {
+			if err := st.SetSetting(key, value); err != nil {
+				t.Fatalf("set %s: %v", key, err)
+			}
+		}
+	}
+	setSettings(defaultRuntime.Store, map[string]string{
+		"site.name":       "Default Design Context",
+		"site.hero_title": "Default Hero Only",
+		"theme":           "answer-desk",
+		layoutWidthKey:    "1080",
+	})
+	setSettings(blogRuntime.Store, map[string]string{
+		"site.name":       "Blog Design Context",
+		"site.hero_title": "Blog Hero Only",
+		"theme":           "casebook-dark",
+		layoutWidthKey:    "1440",
+	})
+
+	token := "gcmsp_designcontext12345"
+	if _, err := ps.CreatePlatformKey(
+		"design-context", token, token[:13], platform.KeyMembershipAll,
+		apiScopePageProjectsRead, nil, time.Time{},
+	); err != nil {
+		t.Fatalf("create platform key: %v", err)
+	}
+
+	readContext := func(siteID int64) pageDesignContextResponse {
+		t.Helper()
+		path := "/api/platform/v1/sites/" + strconv.FormatInt(siteID, 10) +
+			"/page-design-context?lang=zh"
+		rec := platformAPIReq(t, h, http.MethodGet, path, token, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d, body = %s", path, rec.Code, rec.Body.String())
+		}
+		var response pageDesignContextResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+			t.Fatalf("decode %s: %v", path, err)
+		}
+		return response
+	}
+
+	defaultContext := readContext(defaultSite.ID)
+	blogContext := readContext(blogSite.ID)
+
+	if defaultContext.Site.Name != "Default Design Context" ||
+		defaultContext.Site.Hero.Title != "Default Hero Only" ||
+		defaultContext.Theme.ID != "answer-desk" ||
+		defaultContext.Theme.ResolvedHints.ContentWidthPX != 1080 {
+		t.Fatalf("default context leaked or incomplete: %#v", defaultContext)
+	}
+	if blogContext.Site.Name != "Blog Design Context" ||
+		blogContext.Site.Hero.Title != "Blog Hero Only" ||
+		blogContext.Site.BaseURL != "https://blog.test" ||
+		blogContext.Theme.ID != "casebook-dark" ||
+		blogContext.Theme.ResolvedHints.ContentWidthPX != 1440 {
+		t.Fatalf("blog context leaked or incomplete: %#v", blogContext)
+	}
+	if defaultContext.ContextHash == "" ||
+		blogContext.ContextHash == "" ||
+		defaultContext.ContextHash == blogContext.ContextHash {
+		t.Fatalf("site-specific context hashes are not isolated: default=%q blog=%q",
+			defaultContext.ContextHash, blogContext.ContextHash)
+	}
+}
+
 func TestPlatformKeyDispatchMembership(t *testing.T) {
 	_, h, ps, defaultSite, blogSite := setupPlatformAutomation(t)
 

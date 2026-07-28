@@ -1,0 +1,107 @@
+{{define "home_dtc_vitrine"}}
+  {{/* dtc-vitrine — 「橱窗」精品店：三联橱窗首屏（中窗大、hero 文案压中窗下沿，
+       橱窗陈列取前三件商品的 CoverImage）→ 商品橱窗格（白底细框 4/5 竖卡 + 规格签，
+       分类做橱窗上方细字排）→ 品牌数字 → 图集 → 评价 → FAQ → 页脚前联系 CTA。
+       数据由 fillDTCHome 装载；商品区在 .FactoryProducts 为空时整段不渲染。 */}}
+  {{/* Hero 视觉严格服从站点配置：image=HeroImage；svg=HeroSVG；
+       默认/anim*=DTC 轻动画。商品封面只留在两侧橱窗与下方商品陈列。 */}}
+  {{$heroImg := ""}}{{if and (eq .Site.HeroVisual "image") .Site.HeroImage}}{{$heroImg = .Site.HeroImage}}{{end}}
+  {{$heroSVG := and (eq .Site.HeroVisual "svg") (ne .Site.HeroSVG "")}}
+  {{$n := len .FactoryProducts}}
+  {{$w0 := ""}}{{if gt $n 0}}{{$w0 = index .FactoryProducts 0}}{{end}}
+  {{$w1 := ""}}{{if gt $n 1}}{{$w1 = index .FactoryProducts 1}}{{end}}
+  {{$w2 := ""}}{{if gt $n 2}}{{$w2 = index .FactoryProducts 2}}{{end}}
+  {{$photo := $heroImg}}
+  <div class="vtr-wrap">
+    <section class="vtr-hero">
+      <div class="vtr-windows">
+        <div class="vtr-win vtr-win-side vtr-win-l">
+          {{if $w1}}<a class="vtr-win-item{{if not $w1.CoverImage}} dt-gen{{end}}" href="{{if $w1.Slug}}{{$.Tr.U (contentURL $w1)}}{{else}}#{{end}}" aria-label="{{$w1.Title}}">{{if $w1.CoverImage}}<img class="vtr-win-img" src="{{$w1.CoverImage}}" alt="{{$w1.Title}}" loading="lazy" decoding="async"{{imgAttrs $w1.CoverImage}}>{{else}}<b aria-hidden="true">{{initial $w1.Title}}</b>{{end}}</a>
+          {{else}}<span class="vtr-win-pane" aria-hidden="true"></span>{{end}}
+        </div>
+        <div class="vtr-win vtr-win-main{{if $photo}} has-photo{{end}}">
+          {{if $photo}}<img class="vtr-win-img" src="{{$photo}}" alt="{{.Site.HeroAlt}}" decoding="async" fetchpriority="high"{{imgAttrs $photo}}>
+          {{else if $heroSVG}}<div class="vtr-win-layer dt-embed" aria-hidden="true">{{safeHTML .Site.HeroSVG}}</div>
+          {{else}}<div class="vtr-win-layer dt-heroanim" aria-hidden="true">{{template "dtc_hero_anim" .}}</div>{{end}}
+          <div class="vtr-hero-copy">
+            {{if .Site.HeroEyebrow}}<p class="dt-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+            <h1 class="vtr-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+            {{if .Site.HeroDescription}}<p class="vtr-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+            <div class="vtr-cta">
+              <a class="btn btn-primary" href="{{.Tr.U "/products"}}">{{.Tr.T "dtc.shop_now"}} <span class="arrow" aria-hidden="true">→</span></a>
+              {{if .Contact.Any}}<a class="btn dt-btn-ghost" href="#dtc-contact">{{.Tr.T "contact.float_label"}}</a>{{end}}
+            </div>
+          </div>
+        </div>
+        <div class="vtr-win vtr-win-side vtr-win-r">
+          {{if $w2}}<a class="vtr-win-item{{if not $w2.CoverImage}} dt-gen{{end}}" href="{{if $w2.Slug}}{{$.Tr.U (contentURL $w2)}}{{else}}#{{end}}" aria-label="{{$w2.Title}}">{{if $w2.CoverImage}}<img class="vtr-win-img" src="{{$w2.CoverImage}}" alt="{{$w2.Title}}" loading="lazy" decoding="async"{{imgAttrs $w2.CoverImage}}>{{else}}<b aria-hidden="true">{{initial $w2.Title}}</b>{{end}}</a>
+          {{else}}<span class="vtr-win-pane" aria-hidden="true"></span>{{end}}
+        </div>
+      </div>
+    </section>
+
+    {{if .FactoryProducts}}
+    <section class="vtr-section vtr-shop">
+      <div class="dt-head">
+        <div>
+          <p class="dt-eyebrow">{{.Tr.T "dtc.label.products"}}</p>
+          <h2>{{.Tr.T "dtc.bestsellers"}}</h2>
+        </div>
+        <a href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      {{if .FactoryCats}}
+      <nav class="vtr-cats" aria-label="{{.Tr.T "factory.categories"}}">
+        {{range .FactoryCats}}<a href="{{$.Tr.U .URL}}">{{.Name}} <i>{{.Count}}</i></a>
+        {{end}}
+      </nav>
+      {{end}}
+      <div class="vtr-grid">
+        {{range .FactoryProducts}}
+        <a class="vtr-card" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+          <span class="vtr-card-media{{if not .CoverImage}} dt-gen{{end}}">
+            {{if .CoverImage}}<img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}
+          </span>
+          <span class="vtr-card-body">
+            <span class="vtr-card-title">{{.Title}}</span>
+            {{with productChips .}}<span class="f-chips">{{range .}}<span class="f-chip"><b>{{.K}}</b><i>{{.V}}</i></span>{{end}}</span>{{end}}
+          </span>
+        </a>
+        {{end}}
+      </div>
+    </section>
+    {{end}}
+
+    {{if .FactoryStats}}
+    <section class="vtr-section">
+      <div class="dt-head"><div><p class="dt-eyebrow">{{.Tr.T "dtc.label.story"}}</p><h2>{{.Tr.T "dtc.story"}}</h2></div></div>
+      <dl class="dt-stats">
+        {{range .FactoryStats}}<div class="dt-stat"><dt>{{.Num}}</dt><dd>{{.Label}}</dd></div>
+        {{end}}
+      </dl>
+    </section>
+    {{end}}
+
+    {{if .FactoryGallery}}
+    <section class="vtr-section">
+      <div class="dt-head"><div><p class="dt-eyebrow">{{.Tr.T "dtc.label.scenes"}}</p><h2>{{.Tr.T "dtc.scenes"}}</h2></div></div>
+      {{template "factory_gallery" .}}
+    </section>
+    {{end}}
+
+    {{if .DTCTestimonials}}
+    <section class="vtr-section">
+      <div class="dt-head"><div><p class="dt-eyebrow">{{.Tr.T "dtc.label.reviews"}}</p><h2>{{.Tr.T "dtc.reviews"}}</h2></div></div>
+      {{template "dtc_testimonials" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryQAs}}
+    <section class="vtr-section">
+      <div class="dt-head"><div><p class="dt-eyebrow">{{.Tr.T "dtc.label.guide"}}</p><h2>{{.Tr.T "factory.faq"}}</h2></div></div>
+      {{template "factory_faq" .}}
+    </section>
+    {{end}}
+  </div>
+
+  {{template "dtc_cta" .}}
+{{end}}

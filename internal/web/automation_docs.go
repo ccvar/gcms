@@ -214,8 +214,187 @@ func automationStarterFiles(opts automationSkillOptions) ([]automationSkillFile,
 	return files, nil
 }
 
+func automationPageAppCapabilityMutationOperation(
+	operationID string,
+	summary string,
+	description string,
+	withApproval bool,
+) map[string]any {
+	properties := map[string]any{
+		"capability": map[string]any{"type": "string"},
+		"config":     map[string]any{"type": "object", "additionalProperties": true},
+	}
+	if withApproval {
+		properties["decision"] = map[string]any{
+			"type": "string", "enum": []string{"approve", "deny"},
+		}
+	}
+	parameters := []map[string]any{
+		{"name": "project_id", "in": "path", "required": true, "schema": map[string]any{"type": "integer"}},
+		{"name": "If-Match", "in": "header", "required": true, "schema": map[string]any{"type": "string"}},
+		{"name": "Idempotency-Key", "in": "header", "required": true, "schema": map[string]any{"type": "string"}},
+	}
+	if withApproval {
+		parameters = append(parameters, map[string]any{
+			"name": "X-GCMS-Control-Unlock", "in": "header", "required": false,
+			"description": "只由 Pilot 原生确认界面注入的短时、目标绑定凭证；AI/技能不得接收、打印或持久化。",
+			"schema":      map[string]any{"type": "string", "writeOnly": true},
+		})
+	}
+	requiredProperties := []string{"capability"}
+	if withApproval {
+		requiredProperties = append(requiredProperties, "decision")
+	}
+	return map[string]any{
+		"summary": summary, "description": description,
+		"operationId": operationID, "tags": []string{"互动应用能力"},
+		"parameters": parameters,
+		"requestBody": map[string]any{
+			"required": true,
+			"content": map[string]any{"application/json": map[string]any{
+				"schema": map[string]any{
+					"type": "object", "required": requiredProperties,
+					"properties": properties, "additionalProperties": false,
+				},
+			}},
+		},
+		"responses": map[string]any{
+			"200": map[string]any{"description": "能力状态已更新或幂等重放"},
+			"201": map[string]any{"description": "能力申请已创建"},
+			"409": map[string]any{"description": "并发、幂等或原生批准冲突"},
+			"422": map[string]any{"description": "能力声明或配置无效"},
+		},
+	}
+}
+
 func automationOpenAPISpec(apiBase string) map[string]any {
 	paths := map[string]any{
+		"/page-platform/capabilities": map[string]any{
+			"get": map[string]any{
+				"summary":     "读取页面平台能力",
+				"description": "返回当前版本认识的页面模式、实际已接线操作、所需精确权限、风险/确认/幂等/并发契约与服务端限制。任何有效访问密钥都可读取；available 与 granted 必须分别判断。",
+				"operationId": "getPagePlatformCapabilities",
+				"tags":        []string{"页面平台"},
+				"responses":   map[string]any{"200": map[string]any{"description": "页面平台能力描述"}},
+			},
+		},
+		"/page-projects/{project_id}/app-package": map[string]any{
+			"post": map[string]any{
+				"summary":     "上传并校验互动应用包",
+				"description": "需要显式 page_apps:write、If-Match 与 Idempotency-Key。接受 application/zip，或 multipart/form-data 的 package 文件及可选 base_revision_id/summary/conversation_id。服务端拒绝路径穿越、符号链接、压缩炸弹、远程代码与 Worker；源码写入私有内容寻址存储并创建不可变修订，客户端不能提交 source_bundle_ref。",
+				"operationId": "uploadPageAppPackage",
+				"tags":        []string{"互动应用"},
+				"parameters": []map[string]any{
+					{"name": "project_id", "in": "path", "required": true, "schema": map[string]any{"type": "integer"}},
+					{"name": "If-Match", "in": "header", "required": true, "schema": map[string]any{"type": "string"}},
+					{"name": "Idempotency-Key", "in": "header", "required": true, "schema": map[string]any{"type": "string"}},
+				},
+				"requestBody": map[string]any{
+					"required": true,
+					"content": map[string]any{
+						"application/zip": map[string]any{
+							"schema": map[string]any{"type": "string", "format": "binary"},
+						},
+						"multipart/form-data": map[string]any{
+							"schema": map[string]any{
+								"type": "object",
+								"properties": map[string]any{
+									"package":          map[string]any{"type": "string", "format": "binary"},
+									"base_revision_id": map[string]any{"type": "integer"},
+									"summary":          map[string]any{"type": "string"},
+									"conversation_id":  map[string]any{"type": "string"},
+								},
+								"required": []string{"package"},
+							},
+						},
+					},
+				},
+				"responses": map[string]any{
+					"201": map[string]any{"description": "已创建不可变应用修订"},
+					"409": map[string]any{"description": "ETag 或幂等冲突"},
+					"422": map[string]any{"description": "应用包安全校验失败"},
+				},
+			},
+		},
+		"/page-projects/{project_id}/app-files/{file_path}": map[string]any{
+			"get": map[string]any{
+				"summary":     "读取可在线编辑的互动应用文本源码",
+				"description": "需要显式 page_apps:write。仅返回当前工程私有源码中的 HTML、CSS、JavaScript、JSON、Markdown 或纯文本；二进制资源不通过此接口暴露。",
+				"operationId": "getPageAppTextSource",
+				"tags":        []string{"互动应用"},
+				"parameters": []map[string]any{
+					{"name": "project_id", "in": "path", "required": true, "schema": map[string]any{"type": "integer"}},
+					{"name": "file_path", "in": "path", "required": true, "schema": map[string]any{"type": "string"}},
+					{"name": "revision_id", "in": "query", "required": false, "schema": map[string]any{"type": "integer"}},
+				},
+				"responses": map[string]any{"200": map[string]any{"description": "文本源码和内容哈希"}},
+			},
+			"put": map[string]any{
+				"summary":     "编辑互动应用文本源码并创建新修订",
+				"description": "需要显式 page_apps:write、If-Match 与 Idempotency-Key。只能替换已有白名单文本文件；服务端复制完整私有源码、重新执行 manifest/shell/capability/远程代码等全部校验，再写入新的内容寻址源码并创建不可变修订，绝不原地修改旧源码。",
+				"operationId": "editPageAppTextSource",
+				"tags":        []string{"互动应用"},
+				"parameters": []map[string]any{
+					{"name": "project_id", "in": "path", "required": true, "schema": map[string]any{"type": "integer"}},
+					{"name": "file_path", "in": "path", "required": true, "schema": map[string]any{"type": "string"}},
+					{"name": "If-Match", "in": "header", "required": true, "schema": map[string]any{"type": "string"}},
+					{"name": "Idempotency-Key", "in": "header", "required": true, "schema": map[string]any{"type": "string"}},
+				},
+				"requestBody": map[string]any{
+					"required": true,
+					"content": map[string]any{"application/json": map[string]any{
+						"schema": map[string]any{
+							"type":     "object",
+							"required": []string{"base_revision_id", "content"},
+							"properties": map[string]any{
+								"base_revision_id": map[string]any{"type": "integer"},
+								"content":          map[string]any{"type": "string"},
+								"summary":          map[string]any{"type": "string"},
+								"conversation_id":  map[string]any{"type": "string"},
+							},
+						},
+					}},
+				},
+				"responses": map[string]any{
+					"201": map[string]any{"description": "已创建新不可变修订"},
+					"409": map[string]any{"description": "并发或幂等冲突"},
+					"422": map[string]any{"description": "整包重新校验失败"},
+				},
+			},
+		},
+		"/page-projects/{project_id}/capabilities": map[string]any{
+			"get": map[string]any{
+				"summary":     "读取互动应用声明与授权状态",
+				"description": "返回 manifest 声明、运行时是否实现、是否可授权、当前 requested/approved/denied/revoked 状态及受控配置。",
+				"operationId": "listPageAppCapabilities",
+				"tags":        []string{"互动应用能力"},
+				"parameters": []map[string]any{
+					{"name": "project_id", "in": "path", "required": true, "schema": map[string]any{"type": "integer"}},
+				},
+				"responses": map[string]any{"200": map[string]any{"description": "能力状态列表"}},
+			},
+		},
+		"/page-projects/{project_id}/capabilities/request": map[string]any{
+			"post": automationPageAppCapabilityMutationOperation(
+				"requestPageAppCapability", "申请互动应用能力",
+				"需要 page_capabilities:request、If-Match 与 Idempotency-Key。只能申请当前 manifest 已声明且服务端实现的能力。",
+				false,
+			),
+		},
+		"/page-projects/{project_id}/capabilities/apply": map[string]any{
+			"post": automationPageAppCapabilityMutationOperation(
+				"applyPageAppCapability", "批准或拒绝互动应用能力",
+				"需要 page_capabilities:grant、If-Match 与 Idempotency-Key。批准请求不接收后台密码或 approval_token；首次请求返回绑定 site/page/project/revision/capability/规范化 config/decision/ETag/request-id/主体的 unlock_required/page_challenge，Pilot 原生界面验证后通过 X-GCMS-Control-Unlock 重试完全相同请求。拒绝同样必须由用户明确确认。",
+				true,
+			),
+		},
+		"/page-projects/{project_id}/capabilities/revoke": map[string]any{
+			"post": automationPageAppCapabilityMutationOperation(
+				"revokePageAppCapability", "即时撤销互动应用能力",
+				"需要 page_capabilities:grant、If-Match 与 Idempotency-Key。撤销后下一次 Bridge 调用立即重新读库并拒绝。",
+				false,
+			),
+		},
 		"/languages": map[string]any{
 			"get":  automationLanguagesOperation(),
 			"post": automationLanguageCreateOperation(),
@@ -311,6 +490,250 @@ func automationOpenAPISpec(apiBase string) map[string]any {
 			},
 		},
 	}
+	pageProjectParam := map[string]any{
+		"name": "project_id", "in": "path", "required": true,
+		"schema": map[string]any{"type": "integer", "minimum": 1},
+	}
+	pageRevisionParam := map[string]any{
+		"name": "revision_id", "in": "path", "required": true,
+		"schema": map[string]any{"type": "integer", "minimum": 1},
+	}
+	pageBuildParam := map[string]any{
+		"name": "build_id", "in": "path", "required": true,
+		"schema": map[string]any{"type": "integer", "minimum": 1},
+	}
+	pageETagHeader := map[string]any{
+		"name": pagePlatformConcurrencyHeader, "in": "header", "required": true,
+		"schema":      map[string]any{"type": "string"},
+		"description": "最新 page-get/写响应返回的 ETag；不匹配返回 409，客户端不得覆盖。",
+	}
+	pageIdempotencyHeader := map[string]any{
+		"name": pagePlatformIdempotencyHeader, "in": "header", "required": true,
+		"schema":      map[string]any{"type": "string", "minLength": 8, "maxLength": 200},
+		"description": "同一逻辑请求稳定复用，不同请求必须更换。",
+	}
+	pageNativeUnlockHeader := map[string]any{
+		"name": controlUnlockHeader, "in": "header", "required": false,
+		"schema":      map[string]any{"type": "string", "writeOnly": true},
+		"description": "只由 Pilot 原生确认界面注入的短时、目标绑定凭证；AI/技能不得接收、打印或持久化。",
+	}
+	pageParameters := func(pathParams []map[string]any, requireETag, requireIdempotency bool) []map[string]any {
+		parameters := append([]map[string]any(nil), pathParams...)
+		if requireETag {
+			parameters = append(parameters, pageETagHeader)
+		}
+		if requireIdempotency {
+			parameters = append(parameters, pageIdempotencyHeader)
+		}
+		return parameters
+	}
+	pageResponses := map[string]any{
+		"200": map[string]any{"description": "成功或幂等重放"},
+		"201": map[string]any{"description": "已创建"},
+		"400": map[string]any{"description": "请求体、查询参数或幂等键无效"},
+		"428": map[string]any{"description": "缺少 If-Match"},
+		"409": map[string]any{"description": "ETag/修订/幂等冲突；发布相关操作还可能返回 build_stale 或要求 Pilot 原生确认"},
+		"422": map[string]any{"description": "Manifest、应用包或构建校验失败"},
+	}
+	pageOperation := func(id, summary string, pathParams []map[string]any, requireETag, requireIdempotency bool) map[string]any {
+		description := "只读页面工程操作；按实时 capabilities 判断权限与可用性。"
+		if requireIdempotency {
+			description = "页面工程写操作使用不可变修订、If-Match 与 Idempotency-Key。409 必须重新读取并合并，禁止整页覆盖。"
+		} else if requireETag {
+			description = "此操作不修改页面工程，但结果绑定当前修订，因此必须提供 If-Match；不需要也不消费 Idempotency-Key。"
+		}
+		return map[string]any{
+			"operationId": id, "summary": summary, "tags": []string{"页面平台"},
+			"parameters": pageParameters(pathParams, requireETag, requireIdempotency),
+			"responses":  pageResponses, "description": description,
+		}
+	}
+	pageJSONRequestBody := func(required []string, properties map[string]any) map[string]any {
+		schema := map[string]any{
+			"type": "object", "additionalProperties": false, "properties": properties,
+		}
+		if len(required) > 0 {
+			schema["required"] = required
+		}
+		return map[string]any{
+			"required": true,
+			"content": map[string]any{
+				"application/json": map[string]any{"schema": schema},
+			},
+		}
+	}
+	pageTargetProperties := map[string]any{
+		"revision_id": map[string]any{"type": "integer", "minimum": 1},
+		"build_id":    map[string]any{"type": "integer", "minimum": 1},
+	}
+	pageTargetBody := pageJSONRequestBody(nil, pageTargetProperties)
+	pageOptionalTargetBody := pageJSONRequestBody(nil, pageTargetProperties)
+	pageOptionalTargetBody["required"] = false
+	pageProjectCreate := pageOperation(
+		"pages.project.create", "从现有标准页面旁挂创建自由编排或互动应用工程",
+		nil, true, true,
+	)
+	pageProjectCreate["requestBody"] = pageJSONRequestBody(
+		[]string{"page_id", "mode"},
+		map[string]any{
+			"page_id":        map[string]any{"type": "integer", "minimum": 1},
+			"mode":           map[string]any{"type": "string", "enum": []string{"composition", "app"}},
+			"schema_version": map[string]any{"type": "integer", "enum": []int{1}, "default": 1},
+			"shell_mode":     map[string]any{"type": "string", "enum": []string{"site", "minimal", "none"}, "default": "site"},
+		},
+	)
+	pageProjectList := pageOperation(
+		"pages.project.list",
+		"按页面、语种、Slug 或模式发现已有页面工程及其最新 ETag",
+		nil, false, false,
+	)
+	pageProjectList["parameters"] = []map[string]any{
+		{"name": "page_id", "in": "query", "required": false, "schema": map[string]any{"type": "integer", "minimum": 1}},
+		{"name": "lang", "in": "query", "required": false, "schema": map[string]any{"type": "string"}},
+		{"name": "slug", "in": "query", "required": false, "schema": map[string]any{"type": "string"}},
+		{"name": "mode", "in": "query", "required": false, "schema": map[string]any{"type": "string", "enum": []string{"composition", "app"}}},
+		{"name": "limit", "in": "query", "required": false, "schema": map[string]any{"type": "integer", "minimum": 1, "maximum": 200, "default": 50}},
+		{"name": "offset", "in": "query", "required": false, "schema": map[string]any{"type": "integer", "minimum": 0, "default": 0}},
+	}
+	paths["/page-projects"] = map[string]any{
+		"get": pageProjectList, "post": pageProjectCreate,
+	}
+	paths["/page-projects/{project_id}"] = map[string]any{
+		"get": pageOperation("pages.project.get", "读取页面工程与当前工作修订（响应含 ETag）", []map[string]any{pageProjectParam}, false, false),
+	}
+	pageRevisionList := pageOperation("pages.revision.list", "列出页面工程不可变修订", []map[string]any{pageProjectParam}, false, false)
+	pageRevisionList["parameters"] = append(
+		pageRevisionList["parameters"].([]map[string]any),
+		map[string]any{"name": "limit", "in": "query", "schema": map[string]any{"type": "integer", "minimum": 1, "default": 100}},
+	)
+	pageRevisionCreate := pageOperation("pages.revision.create", "基于 base_revision_id 创建不可变工作修订", []map[string]any{pageProjectParam}, true, true)
+	pageRevisionCreate["requestBody"] = pageJSONRequestBody(
+		[]string{"base_revision_id"},
+		map[string]any{
+			"base_revision_id": map[string]any{"type": "integer", "minimum": 1},
+			"page_meta":        map[string]any{"type": "object", "additionalProperties": true},
+			"manifest":         map[string]any{"type": "object", "additionalProperties": true},
+			"summary":          map[string]any{"type": "string"},
+			"conversation_id":  map[string]any{"type": "string"},
+		},
+	)
+	paths["/page-projects/{project_id}/revisions"] = map[string]any{
+		"get": pageRevisionList, "post": pageRevisionCreate,
+	}
+	paths["/page-projects/{project_id}/revisions/{revision_id}"] = map[string]any{
+		"get": pageOperation("pages.revision.get", "读取指定不可变页面修订", []map[string]any{pageProjectParam, pageRevisionParam}, false, false),
+	}
+	pageRestore := pageOperation("pages.revision.restore", "从历史修订创建新的恢复修订", []map[string]any{pageProjectParam}, true, true)
+	pageRestore["requestBody"] = pageJSONRequestBody(
+		[]string{"revision_id"},
+		map[string]any{
+			"revision_id": map[string]any{"type": "integer", "minimum": 1},
+			"summary":     map[string]any{"type": "string"},
+		},
+	)
+	paths["/page-projects/{project_id}/restore"] = map[string]any{
+		"post": pageRestore,
+	}
+	pageDesignContext := pageOperation(
+		"pages.design_context.get",
+		"读取 Pilot 页面设计上下文（当前主题、站点资料、导航、组件、真实数据源与预览门禁）",
+		nil, false, false,
+	)
+	pageDesignContext["parameters"] = []map[string]any{
+		{"name": "lang", "in": "query", "required": false, "schema": map[string]any{"type": "string"}},
+	}
+	paths["/page-design-context"] = map[string]any{
+		"get": pageDesignContext,
+	}
+	paths["/page-components"] = map[string]any{
+		"get": pageOperation("pages.components.list", "读取可用组件注册表与属性 schema", nil, false, false),
+	}
+	pageDataSources := pageOperation("pages.data_sources.list", "读取本站实时数据源、字段、排序与限制", nil, false, false)
+	pageDataSources["parameters"] = []map[string]any{
+		{"name": "lang", "in": "query", "required": false, "schema": map[string]any{"type": "string"}},
+	}
+	paths["/page-data-sources"] = map[string]any{
+		"get": pageDataSources,
+	}
+	pageBindingPreview := pageOperation("pages.bindings.preview", "用已发布站点数据预览 Manifest 或单个绑定", nil, false, false)
+	pageBindingPreview["requestBody"] = pageJSONRequestBody(nil, map[string]any{
+		"lang":           map[string]any{"type": "string"},
+		"manifest":       map[string]any{"type": "object", "additionalProperties": true},
+		"component_type": map[string]any{"type": "string"},
+		"section_id":     map[string]any{"type": "string"},
+		"binding":        map[string]any{"type": "object", "additionalProperties": true},
+	})
+	paths["/page-bindings/preview"] = map[string]any{
+		"post": pageBindingPreview,
+	}
+	paths["/page-projects/{project_id}/assets"] = map[string]any{
+		"get":  pageOperation("pages.asset.list", "列出页面工程素材", []map[string]any{pageProjectParam}, false, false),
+		"post": pageOperation("pages.asset.upload", "上传并登记自由编排页面素材（multipart/form-data）", []map[string]any{pageProjectParam}, true, true),
+	}
+	pageValidate := pageOperation("pages.validate", "校验指定页面修订", []map[string]any{pageProjectParam}, true, false)
+	pageValidate["requestBody"] = pageTargetBody
+	paths["/page-projects/{project_id}/validate"] = map[string]any{
+		"post": pageValidate,
+	}
+	pageBuild := pageOperation("pages.build", "构建指定不可变修订", []map[string]any{pageProjectParam}, true, true)
+	pageBuild["requestBody"] = pageOptionalTargetBody
+	paths["/page-projects/{project_id}/builds"] = map[string]any{
+		"post": pageBuild,
+	}
+	paths["/page-projects/{project_id}/builds/{build_id}"] = map[string]any{
+		"get": pageOperation("pages.build.get", "读取指定不可变构建", []map[string]any{pageProjectParam, pageBuildParam}, false, false),
+	}
+	for pathSuffix, operation := range map[string][2]string{
+		"preview-url":   {"pages.preview", "创建指定修订/构建的短时私有预览"},
+		"publish-plan":  {"pages.publish_plan", "预检页面发布影响"},
+		"rollback-plan": {"pages.rollback_plan", "预检页面回滚影响"},
+	} {
+		op := pageOperation(operation[0], operation[1], []map[string]any{pageProjectParam}, true, false)
+		op["requestBody"] = pageTargetBody
+		if pathSuffix == "preview-url" {
+			op["requestBody"] = pageOptionalTargetBody
+		}
+		paths["/page-projects/{project_id}/"+pathSuffix] = map[string]any{
+			"post": op,
+		}
+	}
+	for pathSuffix, operation := range map[string][2]string{
+		"publish":  {pageApprovalPublish, "使用 Pilot 原生确认发布精确修订"},
+		"rollback": {pageApprovalRollback, "使用 Pilot 原生确认回滚到精确历史修订"},
+	} {
+		op := pageOperation(operation[0], operation[1], []map[string]any{pageProjectParam}, true, true)
+		op["parameters"] = append(op["parameters"].([]map[string]any), pageNativeUnlockHeader)
+		op["description"] = "先调用对应 *-plan。正式请求缺少确认时返回 unlock_required + 服务端签名 page_challenge；后台密码只由 Pilot 原生界面提交。原生令牌绑定 operation/site/page/project/revision/build/实时数据快照/ETag/request-id/主体，approval token 永不进入模型上下文。"
+		op["requestBody"] = pageJSONRequestBody(
+			[]string{"revision_id"},
+			map[string]any{
+				"revision_id":        map[string]any{"type": "integer", "minimum": 1},
+				"build_id":           map[string]any{"type": "integer", "minimum": 1},
+				"data_snapshot_hash": map[string]any{"type": "string"},
+			},
+		)
+		paths["/page-projects/{project_id}/"+pathSuffix] = map[string]any{"post": op}
+	}
+	pagePublicationList := pageOperation("pages.publication.list", "列出页面发布与投递记录", []map[string]any{pageProjectParam}, false, false)
+	pagePublicationList["parameters"] = append(
+		pagePublicationList["parameters"].([]map[string]any),
+		map[string]any{"name": "limit", "in": "query", "schema": map[string]any{"type": "integer", "minimum": 1, "default": 100}},
+	)
+	paths["/page-projects/{project_id}/publications"] = map[string]any{
+		"get": pagePublicationList,
+	}
+	paths["/control/unlock"] = map[string]any{
+		"post": map[string]any{
+			"operationId": "pages.native_unlock", "summary": "Pilot 原生页面发布/回滚/能力批准确认",
+			"tags":        []string{"页面平台"},
+			"description": "仅接受 X-GCMS-Control-UI: pilot。密码与响应中的隐藏 approval 均不得进入模型上下文；单站端点只接受 pages.publish、pages.rollback 或 page_capabilities.grant，并要求具体失败请求返回的 page_challenge。",
+			"responses": map[string]any{
+				"201": map[string]any{"description": "签发目标绑定、短时且逻辑单用的原生 unlock token"},
+				"403": map[string]any{"description": "不是 Pilot 原生 UI 或缺少权限"},
+				"409": map[string]any{"description": "目标已变化或挑战已过期/使用"},
+			},
+		},
+	}
 	// 扩展类型分类（通用 {collection} 版）：支持分类的扩展类型（如 products）与 posts/links 同形。
 	// scope 口径（评审定）：不新增 categories scope 种类——读走 {collection}:read、写走
 	// {collection}:write，与该集合内容本身同权（posts/links 维持既有 categories 专属 scope）。
@@ -396,11 +819,15 @@ func automationOpenAPISpec(apiBase string) map[string]any {
 			paths["/"+col.path+"/{id}/preview"] = map[string]any{
 				"get": automationPreviewOperation(col),
 			}
-			paths["/"+col.path+"/{id}/preview-url"] = map[string]any{
-				"post": automationPreviewURLOperation(col),
-			}
 			paths["/"+col.path+"/featured/{id}"] = map[string]any{
 				"patch": automationFeaturedOperation(col),
+			}
+		}
+		// 标准页面没有文章/链接的结构化 HTML 摘要预览，但可以通过独立
+		// 签名域生成真实前台模板预览；内容变化后旧链接自动失效。
+		if col.path == "posts" || col.path == "links" || col.path == "pages" {
+			paths["/"+col.path+"/{id}/preview-url"] = map[string]any{
+				"post": automationPreviewURLOperation(col),
 			}
 		}
 	}
@@ -409,7 +836,7 @@ func automationOpenAPISpec(apiBase string) map[string]any {
 		"info": map[string]any{
 			"title":       "GCMS Automation API",
 			"version":     "1.0.0",
-			"description": "开放语种读取、新增、启用/禁用、默认语种设置、前台字典、站点文案、导航菜单、分类、媒体上传、文章与链接草稿预览、文章与链接置顶，以及文章、链接、页面的自动化接口。GCMS 不调用 AI API，外部 AI 工具或自动化程序使用访问密钥调用这里的接口。",
+			"description": "开放语种读取、新增、启用/禁用、默认语种设置、前台字典、站点文案、导航菜单、分类、媒体上传、文章与链接结构化草稿预览、文章/链接/标准页面签名前台预览、文章与链接置顶，以及文章、链接、页面的自动化接口。GCMS 不调用 AI API，外部 AI 工具或自动化程序使用访问密钥调用这里的接口。",
 		},
 		"servers": []map[string]string{{"url": apiBase}},
 		"security": []map[string][]string{
@@ -490,7 +917,7 @@ func automationLanguageCatalogUpdateOperation() map[string]any {
 func automationSiteProfileGetOperation() map[string]any {
 	return map[string]any{
 		"summary":     "读取站点资料与首页显示设置",
-		"description": "读取每个启用语种的站点名称、标语、描述、首页 Hero 文案、Hero 右侧视觉、首页区块标题、页脚说明和默认作者；顶层同时返回全站共用的首页链接数量与文章每页数量。新站初始化或调整首页密度时先读取再覆盖。",
+		"description": "读取每个启用语种的站点名称、标语、描述、首页 Hero 文案、Hero 右侧视觉、首页区块标题、页脚说明和默认作者；顶层同时返回全站共用的首页链接数量、文章每页数量与 logo_scale。新站初始化或调整首页密度、Logo 显示大小时先读取再覆盖。",
 		"operationId": "getSiteProfile",
 		"tags":        []string{"站点初始化"},
 		"responses":   automationResponses("SiteProfileResponse"),
@@ -513,7 +940,7 @@ func automationThemeOptionsGetOperation() map[string]any {
 func automationSiteProfileUpdateOperation() map[string]any {
 	return map[string]any{
 		"summary":     "更新站点资料与首页显示设置",
-		"description": "按语种更新站点基础文案和首页文案；顶层 home_links_limit（0..24）与 home_posts_per_page（1..50）是全站、全语种共用的首页显示设置，需要 site:write，0 个链接会隐藏首页链接模块。拥有品牌资产权限时，也可以更新 Logo、分享图和 Hero 右侧视觉。主题配置数据槽（工厂主题族的 factory_stats / factory_process / factory_cta / factory_categories / factory_industries / factory_gallery / factory_faq，独立站主题族另有 dtc_testimonials——只能录入真实用户评价，绝不编造）也走这里，随 lang 分语种、传空清除回落默认。可传单个语种对象，也可传 items 数组批量更新；两个首页数量字段只能放在顶层。默认语种的站点名称不能为空。",
+		"description": "按语种更新站点基础文案和首页文案；顶层 home_links_limit（0..24）与 home_posts_per_page（1..50）是全站、全语种共用的首页显示设置，需要 site:write，0 个链接会隐藏首页链接模块。顶层 logo_scale（0.3..2，1 为原始大小）同样全站、全语种共用，需要 brand:assets:write。拥有品牌资产权限时，也可以更新 Logo、分享图和 Hero 右侧视觉。主题配置数据槽（工厂主题族的 factory_stats / factory_process / factory_cta / factory_categories / factory_industries / factory_gallery / factory_faq，独立站主题族另有 dtc_testimonials——只能录入真实用户评价，绝不编造）也走这里，随 lang 分语种、传空清除回落默认。可传单个语种对象，也可传 items 数组批量更新；首页数量与 logo_scale 只能放在顶层。默认语种的站点名称不能为空。",
 		"operationId": "updateSiteProfile",
 		"tags":        []string{"站点初始化"},
 		"requestBody": automationJSONBody("SiteProfilePatch"),
@@ -635,33 +1062,56 @@ func automationListOperation(col automationCollection) map[string]any {
 func automationCreateOperation(col automationCollection) map[string]any {
 	return map[string]any{
 		"summary":     "创建" + col.label,
-		"description": "默认创建草稿。发布、定时发布或修改已发布内容需要访问密钥拥有对应资源的发布权限。",
+		"description": "默认创建草稿。发布、定时发布或修改已发布内容需要访问密钥拥有对应资源的发布权限。成功响应返回当前内容行的强 ETag。",
 		"operationId": "create" + automationOperationSuffix(col.path),
 		"tags":        []string{col.label},
 		"requestBody": automationJSONBody("ContentInput"),
-		"responses":   automationResponses("ContentItemResponse"),
+		"responses":   automationContentResponsesWithETag("ContentItemResponse"),
 	}
 }
 
 func automationGetOperation(col automationCollection) map[string]any {
 	return map[string]any{
 		"summary":     "读取" + col.label,
+		"description": "成功响应返回当前内容行的强 ETag；新客户端应在后续更新时将其作为 If-Match 发回。",
 		"operationId": "get" + automationOperationSuffix(col.path),
 		"tags":        []string{col.label},
 		"parameters":  []map[string]any{automationIDParam()},
-		"responses":   automationResponses("ContentItemResponse"),
+		"responses":   automationContentResponsesWithETag("ContentItemResponse"),
 	}
 }
 
 func automationUpdateOperation(col automationCollection) map[string]any {
+	description := "先查到准确 id 再更新。没有发布权限时，只能修改草稿。If-Match 为兼容旧客户端保持可选；提供时服务端执行强 ETag 原子比较更新，冲突返回 revision_conflict，禁止盲目覆盖。"
+	if col.path == "pages" {
+		description += " 已有自由页面工程时旧页面接口返回 project_api_required；新技能包经此兼容接口只修改标准页面草稿，不发布或修改已发布标准页。"
+	}
+	responses := automationContentResponsesWithETag("ContentItemResponse")
+	conflictDescription := "If-Match 已过期"
+	if col.path == "pages" {
+		conflictDescription += "，或页面已由页面工程接管"
+	}
+	responses["409"] = map[string]any{
+		"description": conflictDescription,
+		"content": map[string]any{
+			"application/json": map[string]any{"schema": map[string]any{"$ref": "#/components/schemas/APIError"}},
+		},
+	}
 	return map[string]any{
 		"summary":     "更新" + col.label,
-		"description": "先查到准确 id 再更新。没有发布权限时，只能修改草稿。",
+		"description": description,
 		"operationId": "update" + automationOperationSuffix(col.path),
 		"tags":        []string{col.label},
-		"parameters":  []map[string]any{automationIDParam()},
+		"parameters": []map[string]any{
+			automationIDParam(),
+			{
+				"name": "If-Match", "in": "header", "required": false,
+				"schema":      map[string]any{"type": "string"},
+				"description": "前一次单条读取/写入响应返回的强 ETag。新客户端应提供；省略仅用于旧客户端兼容。",
+			},
+		},
 		"requestBody": automationJSONBody("ContentInput"),
-		"responses":   automationResponses("ContentItemResponse"),
+		"responses":   responses,
 	}
 }
 
@@ -817,6 +1267,23 @@ func automationResponses(schema string) map[string]any {
 		"403": map[string]any{"description": "访问权限不足", "content": map[string]any{"application/json": map[string]any{"schema": map[string]any{"$ref": "#/components/schemas/APIError"}}}},
 		"404": map[string]any{"description": "内容不存在", "content": map[string]any{"application/json": map[string]any{"schema": map[string]any{"$ref": "#/components/schemas/APIError"}}}},
 	}
+}
+
+func automationContentResponsesWithETag(schema string) map[string]any {
+	responses := automationResponses(schema)
+	for _, status := range []string{"200", "201"} {
+		response, ok := responses[status].(map[string]any)
+		if !ok {
+			continue
+		}
+		response["headers"] = map[string]any{
+			"ETag": map[string]any{
+				"description": "当前完整内容行的强验证器。",
+				"schema":      map[string]any{"type": "string"},
+			},
+		}
+	}
+	return responses
 }
 
 func automationOpenAPISchemas() map[string]any {
@@ -989,6 +1456,10 @@ func automationOpenAPISchemas() map[string]any {
 					"type": "integer", "minimum": minHomePostsPerPage, "maximum": maxHomePostsPerPage, "default": defaultHomePostsPerPage,
 					"description": "首页每页文章数量，也决定首页内容密度与分页。全站、全语种共用。",
 				},
+				"logo_scale": map[string]any{
+					"type": "number", "minimum": 0.3, "maximum": 2, "default": 1, "multipleOf": 0.05,
+					"description": "前台 Logo 显示缩放系数；1 为原始大小，小于 1 缩小，大于 1 放大。全站、全语种共用。",
+				},
 				"items": map[string]any{"type": "array", "items": map[string]any{"$ref": "#/components/schemas/SiteProfileItem"}},
 			},
 		},
@@ -1007,45 +1478,46 @@ func automationOpenAPISchemas() map[string]any {
 			"description": "当前主题声明消费的一个数据槽。key 去掉 .enabled 后缀、点换下划线即 PATCH /site-profile 的字段名（如 factory.stats → factory_stats、factory.categories.enabled → factory_categories）。",
 			"properties": map[string]any{
 				"key":         map[string]any{"type": "string", "description": "settings 语义键（如 factory.stats；hero 槽为 hero.visual）。"},
-				"type":        map[string]any{"type": "string", "description": "槽类型：hero/stats/steps/textpair/toggle/pairs/qalist/gallery/testimonials。"},
+				"type":        map[string]any{"type": "string", "description": "槽类型：hero/stats/steps/textpair/toggle/pairs/qalist/gallery/certifications/testimonials。"},
 				"label":       map[string]any{"type": "string"},
 				"localized":   map[string]any{"type": "boolean", "description": "文本按语种覆盖（PATCH 时随 lang 分语种）。"},
 				"enabled_key": map[string]any{"type": "string", "description": "带整条开关的槽的开关键（全局，不分语种）。"},
 				"enabled":     map[string]any{"type": "boolean", "description": "带开关的槽的当前开关态；false 时该区块不在首页渲染。"},
 				"configured":  map[string]any{"type": "boolean", "description": "该语种是否存在覆盖值；false = 前台走内置默认。"},
-				"value":       map[string]any{"description": "按语种现值（只回覆盖值）：stats/steps/pairs/qalist 为对象数组、textpair 为 {title,note}、gallery 为 URL 数组、hero 为 {visual,image}；未配置时省略。"},
+				"value":       map[string]any{"description": "按语种现值（只回覆盖值）：stats/steps/pairs/qalist/certifications 为对象数组、textpair 为 {title,note}、gallery 为 URL 数组、hero 为 {visual,image}；未配置时省略。"},
 			},
 		},
 		"SiteProfileItem": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"lang":                map[string]any{"type": "string"},
-				"name":                map[string]any{"type": "string", "description": "站点名称。"},
-				"tagline":             map[string]any{"type": "string", "description": "站点标语。"},
-				"description":         map[string]any{"type": "string", "description": "站点描述。"},
-				"keywords":            map[string]any{"type": "string"},
-				"hero_eyebrow":        map[string]any{"type": "string"},
-				"hero_title":          map[string]any{"type": "string"},
-				"hero_description":    map[string]any{"type": "string"},
-				"footer_note":         map[string]any{"type": "string"},
-				"home_featured_title": map[string]any{"type": "string"},
-				"home_links_title":    map[string]any{"type": "string"},
-				"home_latest_title":   map[string]any{"type": "string"},
-				"default_post_author": map[string]any{"type": "string"},
-				"default_link_author": map[string]any{"type": "string"},
-				"logo":                map[string]any{"type": "string", "description": "站点 Logo URL。更新需要 brand:assets:write。"},
-				"favicon":             map[string]any{"type": "string", "description": "浏览器图标 URL。更新需要 brand:assets:write。"},
-				"share_image":         map[string]any{"type": "string", "description": "默认分享图 URL。更新需要 brand:assets:write。"},
-				"hero_visual":         map[string]any{"type": "string", "description": "首页 Hero 右侧视觉类型。AI 上传动画或图片时通常使用 image；空值表示恢复主题默认。更新需要 brand:assets:write。"},
-				"hero_image":          map[string]any{"type": "string", "description": "首页 Hero 右侧图片或动画 URL，可写入 /media 返回的 WebP 文件路径；已有 SVG 文件也可作为图片路径使用。AI 生成的动画必须上传 WebP。更新需要 brand:assets:write。"},
-				"factory_stats":       automationFactoryStatsSchema(),
-				"factory_process":     automationFactoryProcessSchema(),
-				"factory_cta":         automationFactoryCTASchema(),
-				"factory_categories":  automationFactoryCategoriesSchema(),
-				"factory_industries":  automationFactoryIndustriesSchema(),
-				"factory_gallery":     automationFactoryGallerySchema(),
-				"factory_faq":         automationFactoryFAQSchema(),
-				"dtc_testimonials":    automationDTCTestimonialsSchema(),
+				"lang":                   map[string]any{"type": "string"},
+				"name":                   map[string]any{"type": "string", "description": "站点名称。"},
+				"tagline":                map[string]any{"type": "string", "description": "站点标语。"},
+				"description":            map[string]any{"type": "string", "description": "站点描述。"},
+				"keywords":               map[string]any{"type": "string"},
+				"hero_eyebrow":           map[string]any{"type": "string"},
+				"hero_title":             map[string]any{"type": "string"},
+				"hero_description":       map[string]any{"type": "string"},
+				"footer_note":            map[string]any{"type": "string"},
+				"home_featured_title":    map[string]any{"type": "string"},
+				"home_links_title":       map[string]any{"type": "string"},
+				"home_latest_title":      map[string]any{"type": "string"},
+				"default_post_author":    map[string]any{"type": "string"},
+				"default_link_author":    map[string]any{"type": "string"},
+				"logo":                   map[string]any{"type": "string", "description": "站点 Logo URL。更新需要 brand:assets:write。"},
+				"favicon":                map[string]any{"type": "string", "description": "浏览器图标 URL。更新需要 brand:assets:write。"},
+				"share_image":            map[string]any{"type": "string", "description": "默认分享图 URL。更新需要 brand:assets:write。"},
+				"hero_visual":            map[string]any{"type": "string", "description": "首页 Hero 右侧视觉类型。AI 上传动画或图片时通常使用 image；空值表示恢复主题默认。更新需要 brand:assets:write。"},
+				"hero_image":             map[string]any{"type": "string", "description": "首页 Hero 右侧图片或动画 URL，可写入 /media 返回的 WebP 文件路径；已有 SVG 文件也可作为图片路径使用。AI 生成的动画必须上传 WebP。更新需要 brand:assets:write。"},
+				"factory_stats":          automationFactoryStatsSchema(),
+				"factory_process":        automationFactoryProcessSchema(),
+				"factory_cta":            automationFactoryCTASchema(),
+				"factory_categories":     automationFactoryCategoriesSchema(),
+				"factory_industries":     automationFactoryIndustriesSchema(),
+				"factory_gallery":        automationFactoryGallerySchema(),
+				"factory_certifications": automationFactoryCertificationsSchema(),
+				"factory_faq":            automationFactoryFAQSchema(),
+				"dtc_testimonials":       automationDTCTestimonialsSchema(),
 			},
 		},
 		"SiteProfilePatch": map[string]any{
@@ -1064,33 +1536,38 @@ func automationOpenAPISchemas() map[string]any {
 					"type": "integer", "minimum": minHomePostsPerPage, "maximum": maxHomePostsPerPage, "default": defaultHomePostsPerPage,
 					"description": "全站首页每页文章数量。只能放在 PATCH 顶层，需要 site:write。",
 				},
-				"lang":                map[string]any{"type": "string"},
-				"name":                map[string]any{"type": "string"},
-				"tagline":             map[string]any{"type": "string"},
-				"description":         map[string]any{"type": "string"},
-				"keywords":            map[string]any{"type": "string"},
-				"hero_eyebrow":        map[string]any{"type": "string"},
-				"hero_title":          map[string]any{"type": "string"},
-				"hero_description":    map[string]any{"type": "string"},
-				"footer_note":         map[string]any{"type": "string"},
-				"home_featured_title": map[string]any{"type": "string"},
-				"home_links_title":    map[string]any{"type": "string"},
-				"home_latest_title":   map[string]any{"type": "string"},
-				"default_post_author": map[string]any{"type": "string"},
-				"default_link_author": map[string]any{"type": "string"},
-				"logo":                map[string]any{"type": "string", "description": "站点 Logo URL。更新需要 brand:assets:write。"},
-				"favicon":             map[string]any{"type": "string", "description": "浏览器图标 URL。更新需要 brand:assets:write。"},
-				"share_image":         map[string]any{"type": "string", "description": "默认分享图 URL。更新需要 brand:assets:write。"},
-				"hero_visual":         map[string]any{"type": "string", "description": "首页 Hero 右侧视觉类型。上传动画/图片后设为 image；传空字符串恢复主题默认。更新需要 brand:assets:write。"},
-				"hero_image":          map[string]any{"type": "string", "description": "首页 Hero 右侧图片或动画 URL。先用 POST /media 上传 WebP，再把返回 url 写入这里；未同时传 hero_visual 时会自动切为 image。AI 生成的动画必须上传 WebP。更新需要 brand:assets:write。"},
-				"factory_stats":       automationFactoryStatsSchema(),
-				"factory_process":     automationFactoryProcessSchema(),
-				"factory_cta":         automationFactoryCTASchema(),
-				"factory_categories":  automationFactoryCategoriesSchema(),
-				"factory_industries":  automationFactoryIndustriesSchema(),
-				"factory_gallery":     automationFactoryGallerySchema(),
-				"factory_faq":         automationFactoryFAQSchema(),
-				"dtc_testimonials":    automationDTCTestimonialsSchema(),
+				"logo_scale": map[string]any{
+					"type": "number", "minimum": 0.3, "maximum": 2, "default": 1, "multipleOf": 0.05,
+					"description": "前台 Logo 显示缩放系数；1 为原始大小，小于 1 缩小，大于 1 放大。只能放在 PATCH 顶层，全站、全语种共用，需要 brand:assets:write。",
+				},
+				"lang":                   map[string]any{"type": "string"},
+				"name":                   map[string]any{"type": "string"},
+				"tagline":                map[string]any{"type": "string"},
+				"description":            map[string]any{"type": "string"},
+				"keywords":               map[string]any{"type": "string"},
+				"hero_eyebrow":           map[string]any{"type": "string"},
+				"hero_title":             map[string]any{"type": "string"},
+				"hero_description":       map[string]any{"type": "string"},
+				"footer_note":            map[string]any{"type": "string"},
+				"home_featured_title":    map[string]any{"type": "string"},
+				"home_links_title":       map[string]any{"type": "string"},
+				"home_latest_title":      map[string]any{"type": "string"},
+				"default_post_author":    map[string]any{"type": "string"},
+				"default_link_author":    map[string]any{"type": "string"},
+				"logo":                   map[string]any{"type": "string", "description": "站点 Logo URL。更新需要 brand:assets:write。"},
+				"favicon":                map[string]any{"type": "string", "description": "浏览器图标 URL。更新需要 brand:assets:write。"},
+				"share_image":            map[string]any{"type": "string", "description": "默认分享图 URL。更新需要 brand:assets:write。"},
+				"hero_visual":            map[string]any{"type": "string", "description": "首页 Hero 右侧视觉类型。上传动画/图片后设为 image；传空字符串恢复主题默认。更新需要 brand:assets:write。"},
+				"hero_image":             map[string]any{"type": "string", "description": "首页 Hero 右侧图片或动画 URL。先用 POST /media 上传 WebP，再把返回 url 写入这里；未同时传 hero_visual 时会自动切为 image。AI 生成的动画必须上传 WebP。更新需要 brand:assets:write。"},
+				"factory_stats":          automationFactoryStatsSchema(),
+				"factory_process":        automationFactoryProcessSchema(),
+				"factory_cta":            automationFactoryCTASchema(),
+				"factory_categories":     automationFactoryCategoriesSchema(),
+				"factory_industries":     automationFactoryIndustriesSchema(),
+				"factory_gallery":        automationFactoryGallerySchema(),
+				"factory_certifications": automationFactoryCertificationsSchema(),
+				"factory_faq":            automationFactoryFAQSchema(),
+				"dtc_testimonials":       automationDTCTestimonialsSchema(),
 			},
 		},
 		"NavigationResponse": map[string]any{
@@ -1349,6 +1826,9 @@ func automationScopeBadges(scopes string) []string {
 	if labels := automationControlScopeLabels(m); len(labels) > 0 {
 		out = append(out, "Pilot 管理："+strings.Join(labels, "、"))
 	}
+	if labels := automationPagePlatformScopeLabels(m); len(labels) > 0 {
+		out = append(out, "高级页面："+strings.Join(labels, "、"))
+	}
 	if labels := automationActionLabels(m, "content"); len(labels) > 0 {
 		out = append(out, "全部内容："+strings.Join(labels, "、"))
 	}
@@ -1400,6 +1880,28 @@ func automationControlScopeLabels(scopes map[string]bool) []string {
 		{apiScopeThemesApply, "用主题"},
 		{apiScopeDomainsRead, "读域名"},
 		{apiScopeDomainsWrite, "配域名"},
+	} {
+		if scopes[item.scope] {
+			labels = append(labels, item.label)
+		}
+	}
+	return labels
+}
+
+func automationPagePlatformScopeLabels(scopes map[string]bool) []string {
+	var labels []string
+	for _, item := range []struct {
+		scope string
+		label string
+	}{
+		{apiScopePageProjectsRead, "读取工程"},
+		{apiScopePageProjectsWrite, "编辑工程"},
+		{apiScopePageProjectsBuild, "构建"},
+		{apiScopePageAssetsWrite, "管理资源"},
+		{apiScopePageAppsWrite, "上传应用"},
+		{apiScopePagePreviewRead, "私有预览"},
+		{apiScopePageCapabilitiesRequest, "申请运行能力"},
+		{apiScopePageCapabilitiesGrant, "批准运行能力"},
 	} {
 		if scopes[item.scope] {
 			labels = append(labels, item.label)
@@ -1479,6 +1981,9 @@ func automationScopeBadgesAdmin(scopes string, admin *i18n.AdminTr) []string {
 	}
 	if labels := automationControlScopeLabels(m); len(labels) > 0 {
 		out = append(out, adminUI(admin, "admin.platform_keys.control", "Pilot 统一管理")+colon+strings.Join(labels, sep))
+	}
+	if labels := automationPagePlatformScopeLabels(m); len(labels) > 0 {
+		out = append(out, adminUI(admin, "admin.settings.automation.page_platform", "高级页面")+colon+strings.Join(labels, sep))
 	}
 	if labels := automationActionLabelsAdmin(m, "content", admin); len(labels) > 0 {
 		out = append(out, adminUI(admin, "admin.settings.automation.content", "全部内容")+colon+strings.Join(labels, sep))
@@ -2201,12 +2706,12 @@ func automationKitReadme(opts automationSkillOptions) string {
 		"- 启用/禁用语种：`PATCH /languages/{code}`，请求体为 `{\"enabled\":true}` 或 `{\"enabled\":false}`，需要 `languages:enable` 权限。",
 		"- 设置默认语种：`PATCH /languages/{code}`，请求体为 `{\"default\":true}`，需要 `languages:default` 权限；设置默认会自动启用该语种。",
 		"- 读取/修改语种前台字典：`GET/PATCH /languages/{code}/catalog`。字典只管模板系统文案，例如 `home.cta_start`、`footer.about`、搜索空状态和页脚链接；需要 `languages:catalog` 权限。",
-		"- 读取/更新站点文案、首页 Hero、品牌资产和分享图：`GET/PATCH /site-profile`。",
+		"- 读取/更新站点文案、首页 Hero、品牌资产、分享图和全站 Logo 前台缩放：`GET/PATCH /site-profile`；`logo_scale` 只能放 PATCH 顶层，范围 0.3..2，需要 `brand:assets:write`。",
 		"- 读取当前主题声明消费的配置槽与现值：`GET /theme-options`（工厂/独立站主题族先看这里再写 `factory_*` / `dtc_*` 字段；旧服务端 404 时跳过）。",
 		"- 读取/更新导航菜单：`GET/PATCH /navigation`。",
 		"- 上传媒体：`POST /media`。所有图片资源必须先转成 WebP（`.webp`）再上传；动画也优先用 animated WebP。",
 		"- 读取/创建/修改文章、链接、页面：`GET/POST /posts|links|pages`、`GET/PATCH /posts|links|pages/{id}`。",
-		"- 预览草稿：`GET /posts/{id}/preview`、`GET /links/{id}/preview`，需要打开真实前台时用 `POST /posts/{id}/preview-url` 或 `POST /links/{id}/preview-url`。",
+		"- 预览草稿：`GET /posts/{id}/preview`、`GET /links/{id}/preview`；需要打开真实前台时，文章、链接和标准页面都可调用各自的 `POST /{collection}/{id}/preview-url`。",
 		"- 置顶文章/链接：`PATCH /posts/featured/{id}`、`PATCH /links/featured/{id}`，请求体为 `{\"featured\":true}` 或 `{\"featured\":false}`，需要单独置顶权限。",
 		"- 读取/创建/修改文章分类和链接分类：`GET/POST/PATCH /posts/categories`、`GET/POST/PATCH /links/categories`。",
 		"- 修改“全部”入口文案和描述：`GET/PATCH /posts/categories/all-entry`、`GET/PATCH /links/categories/all-entry`。",
@@ -2259,7 +2764,7 @@ func automationKitReadme(opts automationSkillOptions) string {
 		"- 创建一条链接草稿，链接地址是我给的 URL；先查询链接分类并写入合适的 `category_id`，补充摘要、正文介绍、SEO 描述和封面图。",
 		"- 先读取启用语种，再读取目标内容的 `trans_group`，找出同组中文和英文版本；分别按各自语言优化标题、摘要和 SEO 描述。",
 		"- 发布前复核指定草稿是否具备发布条件，包括标题、slug、摘要、SEO 描述、关键词、分类、封面图、正文结构和多语种关联；只给意见，不要发布。",
-		"- 发布前调用 `GET /posts/{id}/preview` 或 `GET /links/{id}/preview`，检查草稿渲染后的正文 HTML、目录和正式 URL；需要浏览器复核时调用 `POST /posts/{id}/preview-url` 或 `POST /links/{id}/preview-url` 生成短期前台预览链接。",
+		"- 发布前调用 `GET /posts/{id}/preview` 或 `GET /links/{id}/preview`，检查草稿渲染后的正文 HTML、目录和正式 URL；需要浏览器复核时调用文章、链接或标准页面的 `POST /{collection}/{id}/preview-url` 生成短期前台预览链接。",
 		"- 把标题包含“入门指南”的文章置顶；先搜索并列出候选 ID，让我确认后再调用文章置顶接口。",
 		"- 把某条链接取消置顶；先按 slug 或标题找到准确 ID，再调用链接置顶接口写 `featured:false`。",
 		"- 只有我明确说“发布这篇”时，才回读目标 ID 和当前状态，确认具备 `publish` 权限后改为 `published`；完成后报告 ID、语种、URL 和改动字段。",
@@ -2272,7 +2777,7 @@ func automationKitReadme(opts automationSkillOptions) string {
 		"- 第一次接入、改过权限或接口异常时，先读取 OpenAPI 并请求只读接口检查连接。",
 		"- 默认让 AI 创建或修改草稿，发布前先人工审核。",
 		"- 修改指定内容时，让 AI 先查 id，再按 id 更新。",
-		"- 发布前复核文章或链接草稿时，让 AI 用 `/posts/{id}/preview` 或 `/links/{id}/preview` 查看渲染后的正文 HTML；需要打开真实前台页面时，用 `/posts/{id}/preview-url` 或 `/links/{id}/preview-url` 生成短期签名链接。",
+		"- 发布前复核文章或链接草稿时，让 AI 用 `/posts/{id}/preview` 或 `/links/{id}/preview` 查看渲染后的正文 HTML；需要打开真实前台页面时，文章、链接和标准页面都可用各自的 `preview-url` 生成短期签名链接。",
 		"- 设置内容分类前，让 AI 先用 `/posts/categories` 或 `/links/categories` 查询真实分类 ID；不要把 all-entry 当成 `category_id`。",
 		"- 调整文章或链接列表页标题、描述、入口路径和“全部”筛选按钮时，让 AI 使用 `/posts/categories/all-entry` 或 `/links/categories/all-entry`。",
 		"- 设置封面、正文图片或 Hero 右侧视觉前，让 AI 先把图片转成 WebP（.webp），再用 `POST /media` 上传文件；Hero 右侧动画写入 `hero_image` 并设置 `hero_visual:image`。",
@@ -2346,6 +2851,9 @@ func automationSkillMarkdown(apiBase string) string {
 		"- `preview-url`：生成短期有效的前台预览链接，用真实前台模板复核草稿。",
 		"- `pin`：在用户明确要求时，切换文章或链接的置顶状态；置顶按当前单条、单语种生效，不自动联动互译内容，且只有已到发布时间的已发布内容会在首页显示；不适用于页面。",
 		"- `homepage-display`：调整首页显示密度。先读取 `/site-profile` 顶层的 `home_links_limit` 与 `home_posts_per_page`，用户明确确认后再用 `site-profile-update` 只修改目标字段；两个值全站、全语种共用，链接数量设为 0 会隐藏首页链接模块。",
+		"- `logo-display`：调整前台 Logo 显示大小。先读取 `/site-profile` 顶层的 `logo_scale`，用户明确要求后再用 `site-profile-update` 只修改该字段；范围 0.3..2，1 为原始大小，全站、全语种共用，需要 `brand:assets:write`。",
+		"- `page-project`：先读 `page-context` 与 `page-capabilities`，继承当前主题并用组件注册表、实时数据源和不可变修订创建页面；不得把站内业务数据硬编码进 Manifest。",
+		"- `page-release`：校验、构建、私有预览、展示发布/回滚预检，再等待 Pilot 原生目标绑定确认；AI 不接触后台密码或 approval token。",
 		"",
 		"## 工作规则",
 		"",
@@ -2363,10 +2871,14 @@ func automationSkillMarkdown(apiBase string) string {
 		"12. 不要把一个语种的正文直接覆盖到其它语种，除非用户明确要求这么做。",
 		"13. 默认只创建或修改草稿。",
 		"14. 只有用户明确要求发布，并且访问密钥有对应资源的发布权限，才设置 `status` 为 `published` 或 `scheduled`。",
-		"15. 发布前优先用 `GET /posts/{id}/preview` 或 `GET /links/{id}/preview` 复核草稿渲染结果；需要浏览器复核时再生成 `preview-url`。",
+		"15. 发布前优先用 `GET /posts/{id}/preview` 或 `GET /links/{id}/preview` 复核结构化渲染结果；文章、链接或标准页面需要浏览器复核时再生成 `preview-url`。",
 		"16. 需要置顶或取消置顶文章/链接时，先用 `q`、`slug` 或列表查到准确 id，再调用 `PATCH /posts/featured/{id}` 或 `PATCH /links/featured/{id}`，请求体只传 `{\"featured\":true}` 或 `{\"featured\":false}`；需要对应的置顶权限。置顶只作用于这条内容的语种，草稿或未到发布时间的定时内容不会立即出现在首页。",
 		"17. 需要调整首页链接数量或文章每页数量时，先读取 `/site-profile`，再在 PATCH 顶层传 `home_links_limit`（0..24）或 `home_posts_per_page`（1..50）；它们全站、全语种共用，需要 `site:write`，不要放进 `items`。",
-		"18. 完成后告诉用户变更了哪些内容、对应 id、语种、状态，以及建议人工复核的点。",
+		"17a. 需要调整前台 Logo 显示大小时，先读取 `/site-profile`，再在 PATCH 顶层传 `logo_scale`（0.3..2，1 为原始大小）；它全站、全语种共用，需要 `brand:assets:write`，不要放进 `items`。",
+		"18. 用户要求宣传页、专题页或内容聚合页时，直接在 Pilot 对话中工作：先运行 `page-context --lang <语种>` 与 `page-capabilities`；已有页面用 `page-projects --lang <语种> --slug <slug>` 发现真实 project id/ETag。默认使用返回的 manifest_default（theme.inherit=true、空 tokens、site shell），不要把用户赶到网页后台。",
+		"19. 每个写操作使用最新 ETag、明确 base_revision_id 与稳定 request-id；组件与数据绑定使用 page-context 返回的实时注册表，并用 `page-binding-preview` 验证。每次实质修改后依次 validate → build → preview，并把 page-build 返回的 ready build.id 传给 page-preview，确保预览、发布预检和正式发布绑定同一产物与真实数据快照。返回预览链接和变更摘要。`page-validate`、`page-preview`、`page-publish-plan`、`page-rollback-plan` 是修订绑定只读操作，只带 If-Match，不生成或消费 request-id。",
+		"19b. 默认只生成草稿和不可变修订。只有用户明确要求发布时才执行 publish-plan 并交给 Pilot 原生确认；互动应用源码编辑会创建新修订，能力批准只能保留 unlock_required 挑战交给 Pilot 原生界面。",
+		"20. 完成后告诉用户变更了哪些内容、对应 id、语种、状态，以及建议人工复核的点。",
 		"",
 		"## 内容模型边界",
 		"",
@@ -2383,6 +2895,17 @@ func automationSkillMarkdown(apiBase string) string {
 		"如果当前环境可以运行 Node.js，优先使用 `scripts/gcms.js`：",
 		"",
 		"- `node scripts/gcms.js doctor`",
+		"- `node scripts/gcms.js page-context --lang zh`（页面创作第一步：读取主题、真实站点数据、组件、数据源与预览门禁）",
+		"- `node scripts/gcms.js page-capabilities`（再确认 available 与 granted）",
+		"- `node scripts/gcms.js page-projects --lang zh --slug campaign-2026`（发现已有页面工程，禁止猜 project id）",
+		"- `node scripts/gcms.js page-components` / `page-data-sources --lang zh` / `page-binding-preview @binding.json`",
+		"- `node scripts/gcms.js page-revisions 42 --limit 100` / `page-revision 42 5` / `page-assets 42` / `page-build-get 42 7` / `page-publications 42`",
+		"- `node scripts/gcms.js page-restore 42 --revision-id 3 --etag '<copy _protocol.etag verbatim>' --request-id restore-revision-003 --confirm true`",
+		"- `node scripts/gcms.js page-app-source-read 42 src/app.js --revision-id 5`",
+		"- `node scripts/gcms.js page-app-source-edit 42 src/app.js @app.js --base-revision-id 5 --etag '<copy _protocol.etag verbatim>' --request-id app-source-006 --confirm true`",
+		"- `node scripts/gcms.js page-capability-list 42` / `page-capability-request ...` / `page-capability-grant ...` / `page-capability-revoke ...`（grant 的原生确认不进入 AI 上下文）",
+		"- `node scripts/gcms.js page-preview 42 --revision-id 5 --build-id 7 --etag '<copy _protocol.etag verbatim>'`（使用刚完成的 ready 构建；只读操作不传 request-id）",
+		"- `node scripts/gcms.js page-publish-plan 42 --revision-id 5 --build-id 7 --etag '<copy _protocol.etag verbatim>'`（确认后正式发布才使用 request-id）",
 		"- `node scripts/gcms.js languages`",
 		"- `node scripts/gcms.js languages --all`",
 		"- `node scripts/gcms.js languages --all --catalog`",
@@ -2391,9 +2914,10 @@ func automationSkillMarkdown(apiBase string) string {
 		"- `node scripts/gcms.js language-default en`",
 		"- `node scripts/gcms.js language-catalog id`",
 		"- `node scripts/gcms.js language-catalog-update id '{\"catalog\":{\"home.cta_start\":\"Mulai membaca\"}}'`",
-		"- `node scripts/gcms.js site-profile`（读取站点文案 / Hero / 首页标题及全站首页显示数量）",
+		"- `node scripts/gcms.js site-profile`（读取站点文案 / Hero / 首页标题、首页显示数量及全站 Logo 缩放）",
 		"- `node scripts/gcms.js site-profile-update '{\"lang\":\"zh\",\"hero_title\":\"新标题\"}'`",
 		"- `node scripts/gcms.js site-profile-update '{\"home_links_limit\":8,\"home_posts_per_page\":6}'`（全站、全语种共用；链接为 0 时隐藏首页链接模块）",
+		"- `node scripts/gcms.js site-profile-update '{\"logo_scale\":0.8}'`（前台 Logo 缩小到 80%；全站、全语种共用，需要 brand:assets:write）",
 		"- `node scripts/gcms.js navigation`",
 		"- `node scripts/gcms.js navigation-update @nav.json`",
 		"- `node scripts/gcms.js upload ./cover.webp`",
@@ -2410,6 +2934,7 @@ func automationSkillMarkdown(apiBase string) string {
 		"- `node scripts/gcms.js preview posts 123`",
 		"- `node scripts/gcms.js preview-url posts 123`",
 		"- `node scripts/gcms.js preview links 123`",
+		"- `node scripts/gcms.js preview-url pages 123`",
 		"- `node scripts/gcms.js pin posts 123 on`",
 		"- `node scripts/gcms.js pin links 123 off`",
 		"- `node scripts/gcms.js create posts '{\"title\":\"标题\",\"content\":\"正文\",\"lang\":\"zh\",\"status\":\"draft\"}'`",
@@ -2605,6 +3130,16 @@ func automationFactoryGallerySchema() map[string]any {
 	}
 }
 
+func automationFactoryCertificationsSchema() map[string]any {
+	spec := automationFactorySpec(factoryCertificationsSettingKey)
+	return map[string]any{
+		"type": "array", "items": map[string]any{"type": "object", "properties": map[string]any{
+			"name": map[string]any{"type": "string"}, "note": map[string]any{"type": "string"},
+		}},
+		"description": spec.Label + "（工厂主题族）：" + spec.Desc + " 按语种保存；传 [] 清除。示例：" + spec.Example + "。只能填写用户提供的真实资质，需要 site:write。",
+	}
+}
+
 func automationFactoryFAQSchema() map[string]any {
 	spec := automationFactorySpec(factoryFAQSettingKey)
 	return map[string]any{
@@ -2703,7 +3238,7 @@ func automationThemeOptionsDoc() []string {
 		"**用户评价红线**：`dtc_testimonials` 只能录入用户提供的真实评价（订单、邮件、社媒等真实反馈），**绝不编造**；",
 		"没有真实评价就不要配置——未配置时评价区不渲染，这是刻意设计，绝不放假评价占位。",
 		"",
-		"带 `enabled` 的槽可单独传 `{\"enabled\":false}` 把整个区块从首页隐藏；`factory_gallery` / `dtc_testimonials` 未配置时区块不渲染。",
+		"带 `enabled` 的槽可单独传 `{\"enabled\":false}` 把整个区块从首页隐藏；`factory_gallery` / `factory_certifications` / `dtc_testimonials` 未配置时区块不渲染。",
 		"修改前先 `theme-options` 看槽子集与现值（旧服务端 404 则退回 `GET /site-profile` 查现值）；",
 		"这些字段对任何主题都可写（数据挂在站点上），只在消费它们的工厂/独立站骨架首页渲染。",
 		"`theme-options` 返回的槽 `key` 去掉 `.enabled` 后缀、点换下划线即上面的字段名（如 `factory.stats` → `factory_stats`、`dtc.testimonials` → `dtc_testimonials`）。",
@@ -2714,8 +3249,8 @@ func automationThemeOptionsDoc() []string {
 func automationSkillAgentYAML() string {
 	return strings.Join([]string{
 		"display_name: GCMS Content Assistant",
-		"short_description: Diagnose, audit, preview drafts, upload media, and optimize GCMS content through the automation API.",
-		"default_prompt: Run doctor, audit recent GCMS content for improvements, create drafts when useful, preview posts or links before publishing, and do not publish without explicit approval.",
+		"short_description: Create themed pages in Pilot, diagnose, audit, preview drafts, upload media, and operate GCMS safely through the automation API.",
+		"default_prompt: Keep page creation and iteration in Pilot. For a landing, campaign, or content-hub page, run page-context before page-capabilities, inherit the live site theme, bind real site data, and return a private preview after every meaningful revision. Run doctor for a new environment. Default all content to drafts and never publish without explicit approval.",
 	}, "\n") + "\n"
 }
 

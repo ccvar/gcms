@@ -1,0 +1,96 @@
+{{define "home_dtc_column"}}
+  {{/* dtc-column — 直列：导航无横栏（左上小站名 + 右缘悬浮圆点节，纯 CSS 锚点），
+       整页一屏一款——hero 第一屏（HeroTitle 大字压屏），每件商品独占一整屏区
+       （大图居中 + 左下标题与规格签 + SHOT NN 编号，编号由 CSS counter 生成），
+       可选品牌数字/评价/FAQ 收成紧凑条带，FactoryCTA 有则末屏 CTA。
+       商品为空时商品屏与圆点栏整段不渲染；数据由 fillDTCHome 装载。 */}}
+  {{/* hero 槽三态：image=全幅底图 scrim 压字；svg=右下内嵌；default/anim*=DTC 轻动画。 */}}
+  {{$heroImg := ""}}{{if and (eq .Site.HeroVisual "image") .Site.HeroImage}}{{$heroImg = .Site.HeroImage}}{{end}}
+  {{$heroSVG := and (eq .Site.HeroVisual "svg") (ne .Site.HeroSVG "")}}
+  {{$heroAnim := and (not $heroImg) (not $heroSVG)}}
+  <div class="clm-wrap">
+    {{if .FactoryProducts}}
+    <nav class="clm-rail" aria-label="{{.Tr.T "factory.products"}}">
+      <a class="clm-dot" href="#clm-top" aria-label="{{.Site.Name}}" title="{{.Site.Name}}"></a>
+      {{range $i, $p := .FactoryProducts}}
+      <a class="clm-dot" href="#clm-s{{add $i 1}}" aria-label="{{$p.Title}}" title="{{$p.Title}}"></a>
+      {{end}}
+      {{if .FactoryCTA.Title}}<a class="clm-dot" href="#dtc-contact" aria-label="{{.FactoryCTA.Title}}" title="{{.FactoryCTA.Title}}"></a>{{end}}
+    </nav>
+    {{end}}
+
+    <section class="clm-screen clm-hero{{if $heroImg}} has-img{{end}}" id="clm-top">
+      {{if $heroImg}}<img class="clm-hero-img" src="{{$heroImg}}" alt="{{.Site.HeroAlt}}" decoding="async" fetchpriority="high"{{imgAttrs $heroImg}}>{{end}}
+      <div class="clm-hero-inner">
+        {{if .Site.HeroEyebrow}}<p class="dt-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+        <h1 class="clm-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+        {{if .Site.HeroDescription}}<p class="clm-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+        <div class="clm-cta">
+          <a class="btn btn-primary" href="{{.Tr.U "/products"}}">{{.Tr.T "dtc.shop_now"}} <span class="arrow" aria-hidden="true">→</span></a>
+          {{if .Contact.Any}}<a class="btn dt-btn-ghost" href="#dtc-contact">{{.Tr.T "contact.float_label"}}</a>{{end}}
+        </div>
+      </div>
+      {{if $heroSVG}}<div class="clm-hero-side dt-embed" aria-hidden="true">{{safeHTML .Site.HeroSVG}}</div>
+      {{else if $heroAnim}}<div class="clm-hero-side dt-heroanim" aria-hidden="true">{{template "dtc_hero_anim" .}}</div>{{end}}
+    </section>
+
+    {{range $i, $p := .FactoryProducts}}
+    <section class="clm-screen clm-shot" id="clm-s{{add $i 1}}">
+      <a class="clm-shot-link" href="{{if $p.Slug}}{{$.Tr.U (contentURL $p)}}{{else}}#clm-s{{add $i 1}}{{end}}">
+        <span class="clm-shot-media{{if not $p.CoverImage}} dt-gen{{end}}">
+          {{if $p.CoverImage}}<img src="{{$p.CoverImage}}" alt="{{$p.Title}}" loading="lazy" decoding="async"{{imgAttrs $p.CoverImage}}>{{else}}<b aria-hidden="true">{{initial $p.Title}}</b>{{end}}
+        </span>
+        <span class="clm-shot-panel">
+          <i class="clm-num" aria-hidden="true"></i>
+          {{with $p.Category}}<span class="clm-shot-cat">{{.Name}}</span>{{end}}
+          <span class="clm-shot-title">{{$p.Title}}</span>
+          {{with productChips $p}}<span class="f-chips clm-chips">{{range .}}<span class="f-chip"><b>{{.K}}</b><i>{{.V}}</i></span>{{end}}</span>{{end}}
+          <span class="clm-shot-go">{{$.Tr.T "dtc.shop_now"}} <span class="arrow" aria-hidden="true">→</span></span>
+        </span>
+      </a>
+    </section>
+    {{end}}
+
+    {{if .FactoryStats}}
+    <section class="clm-band">
+      <div class="clm-band-in">
+        <dl class="dt-stats">
+          {{range .FactoryStats}}
+          <div class="dt-stat"><dt>{{.Num}}</dt><dd>{{.Label}}</dd></div>
+          {{end}}
+        </dl>
+      </div>
+    </section>
+    {{end}}
+
+    {{if .DTCTestimonials}}
+    <section class="clm-band">
+      <div class="clm-band-in">
+        <div class="dt-head">
+          <div>
+            <p class="dt-eyebrow">{{.Tr.T "dtc.label.reviews"}}</p>
+            <h2>{{.Tr.T "dtc.reviews"}}</h2>
+          </div>
+        </div>
+        {{template "dtc_testimonials" .}}
+      </div>
+    </section>
+    {{end}}
+
+    {{if .FactoryQAs}}
+    <section class="clm-band">
+      <div class="clm-band-in">
+        <div class="dt-head">
+          <div>
+            <p class="dt-eyebrow">{{.Tr.T "dtc.label.guide"}}</p>
+            <h2>{{.Tr.T "factory.faq"}}</h2>
+          </div>
+        </div>
+        {{template "factory_faq" .}}
+      </div>
+    </section>
+    {{end}}
+  </div>
+
+  {{if .FactoryCTA.Title}}{{template "dtc_cta" .}}{{end}}
+{{end}}

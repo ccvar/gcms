@@ -1,0 +1,113 @@
+{{define "home_dtc_apothecary"}}
+  {{/* dtc-apothecary — 药柜：药柜题签 hero（双框题签卡居中；image=全幅底图压 scrim，
+       svg=题签下内嵌，缺省=dtc_hero_anim 轻动画）→ 瓷标签分类横排（.FactoryCats）→
+       瓶签卡四列（卡顶凸出墨绿瓶盖色块 + mono 编号 CSS counter + 规格签当价签，
+       无价格函数绝不放价格；FactoryProducts 为空整段不渲染）→ 品牌数字 → 植物图集
+       （factory.gallery）→ 顾客回声（dtc.testimonials，未配置不渲染、绝不编造）→
+       FAQ → 联系 CTA。导航瓷标签化只在 CSS（重塑段包 min-width:621px）。 */}}
+  {{$heroImg := ""}}{{if and (eq .Site.HeroVisual "image") .Site.HeroImage}}{{$heroImg = .Site.HeroImage}}{{end}}
+  {{$heroSVG := and (eq .Site.HeroVisual "svg") (ne .Site.HeroSVG "")}}
+  {{$heroAnim := and (not $heroImg) (not $heroSVG)}}
+  <div class="apo-wrap">
+    <section class="apo-hero{{if $heroImg}} has-img{{end}}">
+      {{if $heroImg}}<img class="apo-hero-img" src="{{$heroImg}}" alt="{{.Site.HeroAlt}}" decoding="async" fetchpriority="high"{{imgAttrs $heroImg}}>{{end}}
+      <div class="apo-hero-inner">
+        {{if .Site.HeroEyebrow}}<p class="dt-eyebrow apo-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+        <h1 class="apo-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+        {{if .Site.HeroDescription}}<p class="apo-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+        <div class="apo-cta">
+          <a class="btn btn-primary" href="{{.Tr.U "/products"}}">{{.Tr.T "dtc.shop_now"}} <span class="arrow" aria-hidden="true">→</span></a>
+          {{if .Contact.Any}}<a class="btn dt-btn-ghost" href="#dtc-contact">{{.Tr.T "contact.float_label"}}</a>{{end}}
+        </div>
+        {{if $heroSVG}}<div class="apo-hero-side dt-embed" aria-hidden="true">{{safeHTML .Site.HeroSVG}}</div>
+        {{else if $heroAnim}}<div class="apo-hero-side dt-heroanim" aria-hidden="true">{{template "dtc_hero_anim" .}}</div>{{end}}
+      </div>
+    </section>
+
+    {{if .FactoryCats}}
+    <nav class="apo-tags" aria-label="{{.Tr.T "factory.categories"}}">
+      {{range .FactoryCats}}<a class="apo-tag" href="{{$.Tr.U .URL}}"><span>{{.Name}}</span><sup>{{.Count}}</sup></a>{{end}}
+    </nav>
+    {{end}}
+
+    {{if .FactoryProducts}}
+    <section class="apo-section">
+      <div class="dt-head">
+        <div>
+          <p class="dt-eyebrow">{{.Tr.T "dtc.label.products"}}</p>
+          <h2>{{.Tr.T "dtc.bestsellers"}}</h2>
+        </div>
+        <a href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="apo-grid">
+        {{range .FactoryProducts}}
+        <a class="apo-card" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+          <span class="apo-card-media{{if not .CoverImage}} dt-gen{{end}}">
+            {{if .CoverImage}}<img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}
+          </span>
+          <span class="apo-card-body">
+            <span class="apo-card-no" aria-hidden="true"></span>
+            <span class="apo-card-title">{{.Title}}</span>
+            {{with productChips .}}<span class="f-chips">{{range .}}<span class="f-chip"><b>{{.K}}</b><i>{{.V}}</i></span>{{end}}</span>{{end}}
+          </span>
+        </a>
+        {{end}}
+      </div>
+    </section>
+    {{end}}
+
+    {{if .FactoryStats}}
+    <section class="apo-section">
+      <div class="dt-head">
+        <div>
+          <p class="dt-eyebrow">{{.Tr.T "dtc.label.story"}}</p>
+          <h2>{{.Tr.T "dtc.story"}}</h2>
+        </div>
+      </div>
+      <dl class="dt-stats">
+        {{range .FactoryStats}}
+        <div class="dt-stat"><dt>{{.Num}}</dt><dd>{{.Label}}</dd></div>
+        {{end}}
+      </dl>
+    </section>
+    {{end}}
+
+    {{if .FactoryGallery}}
+    <section class="apo-section">
+      <div class="dt-head">
+        <div>
+          <p class="dt-eyebrow">{{.Tr.T "dtc.label.scenes"}}</p>
+          <h2>{{.Tr.T "dtc.scenes"}}</h2>
+        </div>
+      </div>
+      {{template "factory_gallery" .}}
+    </section>
+    {{end}}
+
+    {{if .DTCTestimonials}}
+    <section class="apo-section">
+      <div class="dt-head">
+        <div>
+          <p class="dt-eyebrow">{{.Tr.T "dtc.label.reviews"}}</p>
+          <h2>{{.Tr.T "dtc.reviews"}}</h2>
+        </div>
+      </div>
+      {{template "dtc_testimonials" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryQAs}}
+    <section class="apo-section">
+      <div class="dt-head">
+        <div>
+          <p class="dt-eyebrow">{{.Tr.T "dtc.label.guide"}}</p>
+          <h2>{{.Tr.T "factory.faq"}}</h2>
+        </div>
+      </div>
+      {{template "factory_faq" .}}
+    </section>
+    {{end}}
+  </div>
+
+  {{template "dtc_cta" .}}
+{{end}}

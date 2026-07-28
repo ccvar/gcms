@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick } from 'svelte';
+  import { onDestroy, tick } from 'svelte';
   import { invoke, Channel } from '@tauri-apps/api/core';
   // xterm 自带样式：必须从 JS 侧引入。写进组件样式块的 @import 会被 Svelte 作用域化，
   // 而 xterm 的 DOM 是运行时建的、静态分析看不到 → 26 条 unused selector 警告。
@@ -18,7 +18,7 @@
   import { hideTip, showTipFor, tip as tipAction } from '$lib/tip';
   import AppIcon from '$lib/AppIcon.svelte';
   import type {
-    Connection, Discovery, Site, SiteDeployment, SitePublicAccessStatus, SitePublicAccessSummary, SitePublicAccessApplyResult, BrainsInfo, Brain, ImportOutcome, GlobalIntegrationsConfig, SiteIntegrationsConfig, CloudflareAuthorization,
+    Connection, Discovery, Site, SiteDeployment, SitePublicAccessStatus, SitePublicAccessSummary, SitePublicAccessApplyResult, BrainsInfo, Brain, CliUpdateInfo, ImportOutcome, GlobalIntegrationsConfig, SiteIntegrationsConfig, CloudflareAuthorization,
     Conversation, Message, TaskType, TurnEvent, ToolCall, ScheduledItem, ScheduledTask, TaskProposal,
     ThemeCatalogItem, ThemeSkin, ThemeFamily, ThemeCatalog, SiteThemeState, ThemeMutationResult, ThemePreviewURL,
   } from '$lib/types';
@@ -29,6 +29,7 @@
   import GscOverviewChart from '$lib/GscOverviewChart.svelte';
   import ConfirmDialog from '$lib/ConfirmDialog.svelte';
   import GcmsPasswordDialog from '$lib/GcmsPasswordDialog.svelte';
+  import PilotConsoleBinding from '$lib/PilotConsoleBinding.svelte';
   import { dialogGeometry, type DialogGeometryOptions } from '$lib/dialogGeometry';
   import { sheetWidth, type SheetWidthOptions } from '$lib/sheetWidth';
   import { marked } from 'marked';
@@ -65,6 +66,27 @@
       id: `integration-settings-${kind}`,
     };
   }
+
+  const THEME_WIN_PREFIX = 'theme-';
+  type ThemeWindowTarget = { siteId: number; connId: string };
+  function currentPilotWindowLabel(): string {
+    try { return getCurrentWindow().label; }
+    catch { return 'main'; }
+  }
+  function parseThemeWindowTarget(label: string): ThemeWindowTarget | null {
+    if (!label.startsWith(THEME_WIN_PREFIX)) return null;
+    const encoded = label.slice(THEME_WIN_PREFIX.length);
+    const separator = encoded.indexOf('-');
+    if (separator <= 0 || separator >= encoded.length - 1) return null;
+    const siteId = Number(encoded.slice(0, separator));
+    const connId = encoded.slice(separator + 1);
+    return Number.isSafeInteger(siteId) && siteId > 0 && connId
+      ? { siteId, connId }
+      : null;
+  }
+  const pilotWindowLabel = currentPilotWindowLabel();
+  const isThemeWindow = pilotWindowLabel.startsWith(THEME_WIN_PREFIX);
+  const themeWindowTarget = parseThemeWindowTarget(pilotWindowLabel);
 
   const SHEET_WIDTH = {
     setup: { id: 'connection-settings', defaultWidth: 400, minWidth: 360, maxWidth: 720, label: '调整连接与模型面板宽度' },
@@ -2100,6 +2122,15 @@
     gcmsInstallOpen = true;
     void refreshGcmsServers();
   }
+  function openConnectionSetup(event?: MouseEvent) {
+    event?.preventDefault();
+    event?.stopPropagation();
+    setupOpen = true;
+    setupAddOpen = false;
+    gcmsInstallOpen = false;
+    connCtx = null;
+    switcherOpen = false;
+  }
   async function installRemoteGcms(c: Connection) {
     if (gcmsInstalling[c.id]) return;
     gcmsInstalling = { ...gcmsInstalling, [c.id]: Date.now() };
@@ -2140,6 +2171,25 @@
     e.preventDefault();
     e.stopPropagation(); // 别让全局那个输入框右键菜单也跳出来
     connCtx = { x: Math.min(e.clientX, window.innerWidth - 180), y: Math.min(e.clientY, window.innerHeight - 150), conn: c };
+  }
+  function toggleConnCtx(e: MouseEvent, c: Connection) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (connCtx?.conn.id === c.id) {
+      connCtx = null;
+      return;
+    }
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    connCtx = {
+      x: Math.max(12, Math.min(rect.right - 180, window.innerWidth - 192)),
+      y: Math.min(rect.bottom + 5, window.innerHeight - 150),
+      conn: c,
+    };
+  }
+  function openPilotBinding(c: Connection) {
+    connCtx = null;
+    selectConn(c.id);
+    window.dispatchEvent(new CustomEvent('pilot-console-open', { detail: c.id }));
   }
   let connRemarkEdit = $state<null | { id: string; name: string; original: string; value: string; busy: boolean; error: string }>(null);
   function openConnRemark(c: Connection) {
@@ -2313,6 +2363,7 @@
         connId,
         password,
         operations: [operation],
+        pageChallenge: null,
       });
       rememberGcmsNativeUnlock(connId, siteId, operation, result);
     } catch (error) {
@@ -2397,7 +2448,21 @@
   const activeConn = $derived(conns.find((c) => c.id === activeConnId) ?? null);
   const sites = $derived(discovery?.items ?? []);
   const dashboardAllSites = $derived(discovery?.lifecycle_items ?? sites);
-  const dashboardSites = $derived(dashboardAllSites);
+  let dashboardSiteFilter = $state('');
+  const dashboardSites = $derived(
+    dashboardSiteFilter
+      ? dashboardAllSites.filter((site) => site.slug === dashboardSiteFilter)
+      : dashboardAllSites
+  );
+  const dashboardSiteFilterOpts = $derived([
+    { value: '', label: `${sites.length} 个可管理站点` },
+    ...dashboardAllSites.map((site) => ({
+      value: site.slug,
+      label: site.name || site.slug,
+      sub: site.url ? hostOf(site.url) : site.slug,
+      img: site.favicon || site.logo || faviconGuess(site.url),
+    })),
+  ]);
 
   type SiteGoogleService = 'analytics' | 'search_console';
   type IntegrationEditor = { kind: 'google' | 'telegram' | 'cloudflare' | 'site-analytics' | 'site-search-console'; connId: string; site?: Site };
@@ -2511,6 +2576,10 @@
   let themePreviewBusy = $state(false);
   let themeError = $state('');
   let themeNotice = $state('');
+  let themeWindowBootstrapError = $state(
+    isThemeWindow && !themeWindowTarget ? '主题窗口缺少有效的站点信息，请从 Pilot 站点卡片重新打开。' : '',
+  );
+  let themeWindowMounting = false;
   let themeLoadRequestId = 0;
   type ThemeThumbStatus = 'idle' | 'loading' | 'ready' | 'error';
   type ThemeThumbEntry = {
@@ -3083,7 +3152,8 @@
     }
     const observer = new IntersectionObserver(
       ([entry]) => sync(Boolean(entry?.isIntersecting)),
-      { rootMargin: '120px 0px' },
+      // 提前约一屏请求真实缩略图，避免用户滚动到卡片后才开始等待预览。
+      { rootMargin: '70% 0px' },
     );
     observer.observe(node);
     return {
@@ -3169,12 +3239,10 @@
       if (requestId === themeLoadRequestId) themeLoading = false;
     }
   }
-  function openSiteThemeEditor(site: Site) {
-    if (!activeConnId || discovery?.synthetic || site.id <= 0) return;
-    siteCardMenu = null;
-    closeSitesGlobalMenu();
+  function mountSiteThemeEditor(site: Site, connId = activeConnId) {
+    if (!connId || site.id <= 0) return;
     resetThemeThumbs();
-    const editor = { connId: activeConnId, site };
+    const editor = { connId, site };
     themeEditor = editor;
     themeCatalog = null;
     themeState = null;
@@ -3188,8 +3256,34 @@
     themeNotice = '';
     void loadSiteThemeEditor(editor);
   }
+  async function openSiteThemeEditor(site: Site) {
+    if (!activeConnId || discovery?.synthetic || site.id <= 0) return;
+    siteCardMenu = null;
+    closeSitesGlobalMenu();
+    if (isThemeWindow) {
+      mountSiteThemeEditor(site);
+      return;
+    }
+    try {
+      await invoke('open_site_theme_window', {
+        connId: activeConnId,
+        siteId: site.id,
+        siteName: site.name || site.slug,
+      });
+    } catch (error) {
+      say(`打开主题中心失败：${String(error)}`, 'err');
+    }
+  }
+  async function closeNativeThemeWindow() {
+    try { await invoke('close_site_theme_window'); }
+    catch (error) { themeWindowBootstrapError = String(error); }
+  }
   function closeSiteThemeEditor() {
-    if (themeBusy || themePreviewBusy) return;
+    if (themeBusy || themePreviewBusy || gcmsPasswordState) return;
+    if (isThemeWindow) {
+      void closeNativeThemeWindow();
+      return;
+    }
     themeLoadRequestId += 1;
     resetThemeThumbs();
     themeEditor = null;
@@ -4299,9 +4393,12 @@
   let threadModel = $state('');
   async function persistThreadModel(m: string) {
     if (!activeConv || m === activeConv.model) return;
+    const wasClaude = activeConv.brain === 'claude';
     try {
       const u = await invoke<Conversation | null>('set_conversation_model', { convId: activeConv.id, model: m });
       if (u && activeConvId === u.id) activeConv = u;
+      // claude 的 --resume 无视 --model（后端因此清了 session）：如实告知生效方式。
+      if (wasClaude) say('模型已切换：下一条消息将以历史摘要重建会话后用新模型跑');
     } catch (e) { say(String(e), 'err'); }
   }
   // 会话内模型面板：三家厂商的模型都列出（值编码 "<brain>::<model>"，同启动器 comboOpts；行首图标区分）。
@@ -4365,13 +4462,23 @@
       if (viewBusy) say('推理强度已调整，从下一轮开始生效');
     } catch (e) { say(String(e), 'err'); }
   }
+  async function persistThreadFast(v: boolean) {
+    if (!activeConv || v === (activeConv.fast ?? false)) return;
+    try {
+      const u = await invoke<Conversation | null>('set_conversation_fast', { convId: activeConv.id, fast: v });
+      if (u && activeConvId === u.id) activeConv = u;
+      if (viewBusy) say('Fast 模式已调整，从下一轮开始生效');
+    } catch (e) { say(String(e), 'err'); }
+  }
   async function persistThreadPerm(p: string) {
     if (!activeConv || p === (activeConv.perm_mode || 'full')) return;
     try {
       const u = await invoke<Conversation | null>('set_conversation_perm_mode', { convId: activeConv.id, permMode: p });
       // 回写 threadPerm：若这段 RPC 期间轮次刚好收尾，endTurn 可能已把下拉打回旧值，这里以落库值自愈。
       if (u && activeConvId === u.id) { activeConv = u; threadPerm = u.perm_mode || 'full'; }
-      if (viewBusy) say('权限档位已切换，从下一轮开始生效（不影响正在跑的这轮）');
+      // 放宽到全自动＝实时生效（后端把本轮已弹/将弹的批准卡全部自动放行）；
+      // 收紧方向做不到——本轮是带旧档启动的，钩子/参数拦不回来，只能下一轮。
+      if (viewBusy) say(p === 'full' ? '已切全自动：本轮剩余操作不再弹卡' : '权限档位已收紧，从下一轮开始生效（正在跑的这轮拦不回来）');
     } catch (e) { say(String(e), 'err'); }
   }
   let view = $state<'launcher' | 'thread' | 'sites' | 'schedule' | 'tasks' | 'managed' | 'templates' | 'prompts' | 'remote'>('launcher');
@@ -4959,7 +5066,7 @@
   let mwBusy = $state(false);
   // 配套任务的厂商/模型/强度（默认取启动器当前偏好）+ 等级 + 每周 token 预算（0=不限）。
   let mwBrain = $state<string>('claude');
-  let mwModel = $state('sonnet');
+  let mwModel = $state('claude-sonnet-5');
   let mwEffort = $state('');
   let mwFallbackEnabled = $state(false);
   let mwFallbackBrain = $state<string>('codex');
@@ -5120,7 +5227,7 @@
       const conv = await invoke<Conversation>('start_conversation', {
         convId: id, connId: activeConnId, siteSlug: mwSite, siteName: site?.name || mwSite,
         siteSlugs: [], siteNames: [], taskType: 'free', brain: mwBrain, model: mwModel,
-        permMode: 'auto', effort: mwEffort, workspaceDir: '', message: MW_PLAN_PROMPT, onEvent: makeChannel(id),
+        permMode: 'auto', effort: mwEffort, fast: false, workspaceDir: '', message: MW_PLAN_PROMPT, onEvent: makeChannel(id),
       });
       const last = [...conv.messages].reverse().find((x) => x.role === 'assistant' && !x.error && x.text.trim());
       if (last) mwPlan = last.text.trim();
@@ -5237,6 +5344,7 @@
 
   interface TaskForm {
     id: string | null; connId: string; connName: string; siteSlugs: string[]; taskType: string; brain: string; model: string; effort: string;
+    fallbackEnabled: boolean; fallbackBrain: string; fallbackModel: string; fallbackEffort: string;
     title: string; prompt: string; period: string; firstRun: string; enabled: boolean;
   }
   let taskModalOpen = $state(false);
@@ -5251,9 +5359,11 @@
   function markProposalCreated(key: string) { if (!key) return; const n = new Set(createdProposals); n.add(key); createdProposals = n; try { localStorage.setItem('gcms.pilot.createdProposals', JSON.stringify([...n])); } catch { /* */ } }
   function freshTaskForm(): TaskForm {
     const brain = firstUsableBrain();
+    const fallbackBrain = ALL_BRAINS.find((candidate) => candidate !== brain && brainUsable(candidate)) ?? firstUsableBrain();
     return {
       id: null, connId: activeConnId, connName: activeConn?.name ?? '', siteSlugs: sites[0] ? [sites[0].slug] : [], taskType: 'article',
       brain, model: defaultModelFor(brain), effort: '',
+      fallbackEnabled: false, fallbackBrain, fallbackModel: defaultModelFor(fallbackBrain), fallbackEffort: '',
       title: '', prompt: '', period: '1440', firstRun: '', enabled: true,
     };
   }
@@ -5267,9 +5377,14 @@
     tf = {
       id: null, connId: c.conn_id, connName: c.conn_name, siteSlugs: c.site_slugs?.length ? [...c.site_slugs] : (c.site_slug ? [c.site_slug] : []),
       taskType: c.task_type === 'free' ? 'free' : 'article', brain: c.brain, model: c.model, effort: c.effort || '',
+      fallbackEnabled: false,
+      fallbackBrain: ALL_BRAINS.find((brain) => brain !== c.brain && brainUsable(brain)) ?? firstUsableBrain(),
+      fallbackModel: '',
+      fallbackEffort: '',
       title: p.title, prompt: p.prompt, period: String(p.every_minutes || 1440),
       firstRun: firstRunSecs ? toLocalInput(firstRunSecs) : '', enabled: true,
     };
+    tf.fallbackModel = defaultModelFor(tf.fallbackBrain);
     taskModalOpen = true;
   }
   async function toggleTaskCardMenu(event: MouseEvent, taskId: string) {
@@ -5326,9 +5441,14 @@
     tf = {
       id: t.id, connId: t.conn_id, connName: t.conn_name, siteSlugs: t.site_slugs?.length ? [...t.site_slugs] : [t.site_slug],
       taskType: t.task_type, brain: t.brain, model: t.model, effort: t.effort || '',
+      fallbackEnabled: Boolean(t.fallback_brain && t.fallback_model),
+      fallbackBrain: t.fallback_brain || (ALL_BRAINS.find((brain) => brain !== t.brain && brainUsable(brain)) ?? firstUsableBrain()),
+      fallbackModel: t.fallback_model || '',
+      fallbackEffort: t.fallback_effort || '',
       title: t.title, prompt: t.prompt, period: String(t.interval_minutes),
       firstRun: t.next_run ? toLocalInput(t.next_run) : '', enabled: t.enabled,
     };
+    if (!tf.fallbackModel) tf.fallbackModel = defaultModelFor(tf.fallbackBrain);
     taskModalOpen = true;
   }
   // 可添加的站点选项：编辑跨连接任务时，活动连接的 discovery 里可能没有它的站点，
@@ -5356,9 +5476,15 @@
     const d = new Date(secs * 1000); const p = (n: number) => String(n).padStart(2, '0');
     return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
   }
+  const taskFallbackValid = $derived(!tf.fallbackEnabled || (
+    brainUsable(tf.fallbackBrain as Brain) &&
+    Boolean(tf.fallbackModel.trim()) &&
+    (tf.fallbackBrain !== tf.brain || tf.fallbackModel !== tf.model || tf.fallbackEffort !== tf.effort)
+  ));
   async function saveTask() {
     if (!tf.siteSlugs.length || !tf.prompt.trim()) { say('请选择站点并填写指令', 'err'); return; }
     if (!brainUsable(tf.brain as Brain)) { say('所选模型未就绪，去设置里授权', 'err'); return; }
+    if (!taskFallbackValid) { say('备用模型必须可用，并且不能与主模型完全相同', 'err'); return; }
     // 新建用当前活动连接；编辑保留任务原连接。
     const connId = tf.connId || activeConnId;
     const siteNames = tf.siteSlugs.map((s) => (tf.connId === activeConnId ? taskSiteName(s) : s));
@@ -5367,6 +5493,9 @@
       await invoke('save_task', {
         id: tf.id, connId, siteSlugs: tf.siteSlugs, siteNames,
         taskType: tf.taskType, brain: tf.brain, model: tf.model, effort: tf.effort,
+        fallbackBrain: tf.fallbackEnabled ? tf.fallbackBrain : '',
+        fallbackModel: tf.fallbackEnabled ? tf.fallbackModel : '',
+        fallbackEffort: tf.fallbackEnabled ? tf.fallbackEffort : '',
         title: tf.title, prompt: tf.prompt, intervalMinutes: parseInt(tf.period) || 1440, firstRun, enabled: tf.enabled,
       });
       if (pendingProposalKey) { markProposalCreated(pendingProposalKey); pendingProposalKey = ''; }
@@ -5511,6 +5640,13 @@
   let lModel = $state(prefs.model);
   let lPerm = $state<string>(prefs.taskType === 'sitebuild' && (prefs.perm ?? 'full') === 'full' ? 'auto' : (prefs.perm ?? 'full'));
   let lEffort = $state<string>(prefs.effort ?? '');
+  /** fast 模式。只有 Opus 5 / Opus 4.8 支持 —— 换到别的模型必须自动落下，
+   *  否则会留下一个「显示开着、对该模型其实无效」的状态，比关着更误导。 */
+  let lFast = $state<boolean>(prefs.fast ?? false);
+  const FAST_MODELS = ['claude-opus-5', 'claude-opus-4-8'];
+  const fastable = (m: string) => FAST_MODELS.includes(m);
+  $effect(() => { if (lFast && !fastable(lModel)) { lFast = false; prefs.fast = false; savePrefs(prefs); } });
+  function setFast(v: boolean) { lFast = v; prefs.fast = v; savePrefs(prefs); }
   const WORKSPACE_CONN_ID = '__workspace__';
   let workspaceDir = $state('');
   function workspaceFolderName(path: string): string {
@@ -5866,6 +6002,8 @@
   // 全局自定义模型 ID（按厂商，可多个，在「连接与模型」里增删）；作为该厂商模型下拉的附加档位。
   let customDraft = $state<Record<string, string>>({ claude: '', codex: '', grok: '' });
   let customOpen = $state<Record<string, boolean>>({ claude: false, codex: false, grok: false });
+  /** 账号行（邮箱+重新绑定）默认收起：多数时候不需要看，展开才见。 */
+  let acctOpen = $state<Record<string, boolean>>({ claude: false, codex: false, grok: false });
   function customsOf(b: string): string[] { return (b === 'codex' ? prefs.customCodexIds : b === 'grok' ? prefs.customGrokIds : prefs.customClaudeIds) ?? []; }
   function addCustom(b: string) {
     const v = (customDraft[b] ?? '').trim();
@@ -5938,9 +6076,28 @@
 
   // ---------- composer / live turn ----------
   let draft = $state('');
+  type ExecutionActivity = {
+    id: string;
+    label: string;
+    detail: string;
+    status: 'running' | 'completed' | 'failed' | 'canceled';
+    startedAt: number;
+    updatedAt: number;
+  };
+  type LiveTurn = {
+    text: string;
+    tools: ToolCall[];
+    activities: Record<string, ExecutionActivity>;
+    lastActivityAt: number;
+    error: string;
+    failed: boolean;
+    startedAt: number;
+    compactedAt?: number;
+    compactedPreTokens?: number;
+  };
   // 并发对话：running = convId → connId（在跑的对话；带 connId 便于删连接时可靠判定）；lives = 每个对话的流式缓冲。
   let running = $state<Record<string, string>>({});
-  let lives = $state<Record<string, { text: string; tools: ToolCall[]; error: string; failed: boolean; startedAt: number; compactedAt?: number; compactedPreTokens?: number }>>({});
+  let lives = $state<Record<string, LiveTurn>>({});
   let autoRetried = $state<Record<string, boolean>>({}); // convId → 本轮已自动重试过（每个用户轮只自动重试一次）
   let retryTimers: Record<string, ReturnType<typeof setTimeout>> = {}; // 待触发的自动重连定时器（新一轮开始时取消，防陈旧触发）
   // 智能升级：手动重试后若以同样的错误再次失败，说明 resume 救不了 → 之后只显示「重建继续」。
@@ -5968,15 +6125,78 @@
     const s = Math.max(0, Math.floor(ms / 1000));
     return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s`;
   }
+  function activityLabel(activity: ExecutionActivity): string {
+    const label = activity.label.trim();
+    const key = label.toLowerCase();
+    if (key.includes('get_command_or_subagent_output')) return '等待后台任务返回';
+    if (key.includes('kill_command_or_subagent')) return '正在停止无响应的后台任务';
+    if (key === 'todo_write' || key.includes('update_plan')) return '正在更新执行计划';
+    if (key.includes('subagent') || key.includes('spawn_agent')) return '后台代理正在处理';
+    if (key === 'exec' || key === 'bash' || key.includes('terminal')) {
+      const detail = activity.detail.trim();
+      if (detail && !/^export\s+PATH=/i.test(detail)) return detail;
+      return '正在执行命令';
+    }
+    if (key === 'read') return '正在读取资料';
+    if (key === 'edit') return '正在修改文件';
+    if (key === 'search' || key === 'grep') return '正在查找信息';
+    if (key === 'fetch') return '正在获取网页';
+    return activity.detail.trim() || label || '正在执行下一步';
+  }
+  function executionProgress(live: LiveTurn, now: number) {
+    const activities = Object.values(live.activities).sort((a, b) => a.startedAt - b.startedAt);
+    const runningActivities = activities.filter((activity) => activity.status === 'running');
+    const latest = runningActivities.at(-1) ?? activities.at(-1);
+    const finished = activities.filter((activity) => activity.status === 'completed').length;
+    const failed = activities.filter((activity) => activity.status === 'failed').length;
+    const canceled = activities.filter((activity) => activity.status === 'canceled').length;
+    const quietFor = Math.max(0, now - live.lastActivityAt);
+    const quiet = activities.length > 0 && quietFor >= 45_000;
+    let title = latest ? activityLabel(latest) : '正在思考下一步';
+    if (quiet) title = '后台任务暂时没有新进展';
+    else if (!runningActivities.length && activities.length) title = live.text ? '正在整理并继续处理' : '正在等待下一步';
+    const parts: string[] = [];
+    if (finished) parts.push(`${finished} 次执行已返回`);
+    if (runningActivities.length) parts.push(`${runningActivities.length} 项进行中`);
+    if (failed) parts.push(`${failed} 项失败`);
+    if (canceled) parts.push(`${canceled} 项已停止`);
+    if (quiet) parts.push(`${elapsedLabel(quietFor)} 未收到新事件`);
+    return {
+      hasActivity: activities.length > 0,
+      title,
+      meta: parts.join(' · ') || '正在建立执行上下文',
+      quiet,
+      failed: failed > 0,
+    };
+  }
+  function compactToolRows(tools: ToolCall[]): Array<ToolCall & { count: number }> {
+    const rows: Array<ToolCall & { count: number }> = [];
+    const indexes = new Map<string, number>();
+    for (const tool of tools) {
+      const key = `${tool.label}\u0000${tool.detail}`;
+      const index = indexes.get(key);
+      if (index == null) {
+        indexes.set(key, rows.length);
+        rows.push({ ...tool, count: 1 });
+      } else {
+        rows[index].count += 1;
+      }
+    }
+    return rows;
+  }
   // 会话大小/用量：上下文按「厂商 + 模型」估算——codex 272k；grok-4.5 500k（ACP initialize
   // 的 totalContextTokens 实测值）。Claude 当前 Sonnet / Opus / Fable 是 1M；
   // Haiku 4.5 仍是 200k。旧版或无法识别的自定义 Claude ID 保守按 200k。
+  //
+  // ★ 加新模型时**必须同时改这里**，否则它会掉进最后那个 200k 兜底 —— 用量百分比、
+  //   「快满了」提示、自动压缩时机全部按错误的窗口算，而且不报错、只是数字悄悄不对。
+  //   `-5` 这一支（sonnet-5 / opus-5 / fable-5）没有第三段版本号，别套 `-4-[6-9]` 那种写法。
   function ctxLimit(brain: string, model = ''): number {
     if (brain === 'codex') return 272000;
     if (brain === 'grok') return 500000;
     const id = (model.trim() || 'sonnet').toLowerCase();
     if (id === 'sonnet' || id === 'opus' || id.includes('fable') || id.includes('mythos')) return 1_000_000;
-    if (/claude-(?:sonnet-5|sonnet-4-[6-9]|opus-4-[6-9])(?:$|-)/.test(id)) return 1_000_000;
+    if (/claude-(?:sonnet-5|opus-5|sonnet-4-[6-9]|opus-4-[6-9])(?:$|-)/.test(id)) return 1_000_000;
     return 200_000;
   }
   // 实测自适应升档（证据驱动，只升不降）：实测 ctx 已超过假定上限的 95%，说明真实窗口更大
@@ -6560,18 +6780,66 @@
       : '站点信息、访问域名、品牌素材与首批内容均已就绪');
   let gcmsPublicAccessOpeningFor = $state('');
   let gcmsUnlockPromptedKeys = $state<Set<string>>(new Set());
-
   type GcmsControlUnlockOperation =
     | 'categories.delete'
     | 'navigation.delete'
     | 'sites.delete'
     | 'domains.apply'
     | 'public_access.apply'
-    | 'themes.apply_live';
+    | 'public_access.clear_unverified'
+    | 'themes.apply_live'
+    | 'pages.publish'
+    | 'pages.rollback'
+    | 'page_capabilities.grant';
+  const gcmsStructuredUnlockOperations = new Set<GcmsControlUnlockOperation>([
+    'categories.delete',
+    'navigation.delete',
+    'sites.delete',
+    'domains.apply',
+    'public_access.apply',
+    'public_access.clear_unverified',
+    'themes.apply_live',
+    'pages.publish',
+    'pages.rollback',
+    'page_capabilities.grant',
+  ]);
+  function isGcmsControlUnlockOperation(operation: string): operation is GcmsControlUnlockOperation {
+    return gcmsStructuredUnlockOperations.has(operation as GcmsControlUnlockOperation);
+  }
+  function isPageTargetUnlockOperation(operation: GcmsControlUnlockOperation): boolean {
+    return operation === 'pages.publish'
+      || operation === 'pages.rollback'
+      || operation === 'page_capabilities.grant';
+  }
+  let gcmsStructuredUnlocks = $state<Record<string, {
+    operation: GcmsControlUnlockOperation;
+    unlockChallenge: string;
+    adminPath: string;
+    expiresAt: number;
+  }>>({});
+  let gcmsStructuredUnlockTimers: Record<string, ReturnType<typeof setTimeout>> = {};
+  function clearStructuredGcmsUnlock(convId: string) {
+    if (gcmsStructuredUnlockTimers[convId]) {
+      clearTimeout(gcmsStructuredUnlockTimers[convId]);
+      delete gcmsStructuredUnlockTimers[convId];
+    }
+    if (!(convId in gcmsStructuredUnlocks)) return;
+    const next = { ...gcmsStructuredUnlocks };
+    delete next[convId];
+    gcmsStructuredUnlocks = next;
+  }
+  onDestroy(() => {
+    for (const timer of Object.values(gcmsStructuredUnlockTimers)) clearTimeout(timer);
+    gcmsStructuredUnlockTimers = {};
+    gcmsStructuredUnlocks = {};
+  });
+
   type GcmsControlUnlockAction = {
     operation: GcmsControlUnlockOperation;
     title: string;
     detail: string;
+    contextToken?: string;
+    adminPath?: string;
   };
   const gcmsControlUnlockActions: Array<GcmsControlUnlockAction & { pattern: RegExp }> = [
     {
@@ -6605,14 +6873,64 @@
       pattern: /(?:\bpublic_access\.apply\b|\bpublic-access-apply\b(?!-plan))/i,
     },
     {
+      operation: 'public_access.clear_unverified',
+      title: '确认清除失败的公网访问配置',
+      detail: '只会清除尚未通过 HTTPS 验证的失败配置；验证成功后 Pilot 会让 AI 继续刚才的操作。',
+      pattern: /(?:\bpublic_access\.clear_unverified\b|\bpublic-access-clear-unverified\b(?!-plan))/i,
+    },
+    {
       operation: 'themes.apply_live',
       title: '确认修改线上主题',
       detail: '这会立即改变已上线站点的公开外观；验证成功后 Pilot 会让 AI 继续刚才的操作。',
       pattern: /(?:\bthemes\.apply_live\b|\btheme-apply\b(?!-plan))/i,
     },
+    {
+      operation: 'pages.publish',
+      title: '确认发布页面',
+      detail: '授权只绑定当前站点、页面、修订、ETag 和 request-id；目标变化后必须重新确认。',
+      pattern: /(?:\bpages\.publish\b|\bpage-publish\b(?!-plan))/i,
+    },
+    {
+      operation: 'pages.rollback',
+      title: '确认回滚页面',
+      detail: '授权只允许把当前页面回滚到预检中指定的历史修订，不会扩大到其他页面。',
+      pattern: /(?:\bpages\.rollback\b|\bpage-rollback\b(?!-plan))/i,
+    },
+    {
+      operation: 'page_capabilities.grant',
+      title: '确认授予应用能力',
+      detail: '授权只绑定当前站点、页面工程、工作修订、能力配置、ETag 和 request-id；配置变化后必须重新确认。',
+      pattern: /(?:\bpage_capabilities\.grant\b|\bpage-capability-grant\b)/i,
+    },
   ];
+  function structuredGcmsUnlockAction(c: Conversation | null): GcmsControlUnlockAction | null {
+    if (!c || conns.find((connection) => connection.id === c.conn_id)?.kind !== 'gcms') return null;
+    const event = gcmsStructuredUnlocks[c.id];
+    if (!event
+      || event.expiresAt <= Date.now()
+      || !isGcmsControlUnlockOperation(event.operation)) return null;
+    const pageTargetUnlock = isPageTargetUnlockOperation(event.operation);
+    if (pageTargetUnlock && (
+      !/^gcmspc_[A-Za-z0-9_-]{20,96}$/.test(event.unlockChallenge)
+      || !/^\/admin\/pages\/[1-9]\d*\/project$/.test(event.adminPath)
+    )) return null;
+    if (!pageTargetUnlock && (event.unlockChallenge || event.adminPath)) return null;
+    const definition = gcmsControlUnlockActions.find((action) => action.operation === event.operation);
+    if (!definition) return null;
+    return {
+      operation: definition.operation,
+      title: definition.title,
+      detail: definition.detail,
+      contextToken: event.unlockChallenge || undefined,
+      adminPath: event.adminPath || undefined,
+    };
+  }
   function conversationGcmsUnlockAction(c: Conversation | null): GcmsControlUnlockAction | null {
     if (!c || conns.find((connection) => connection.id === c.conn_id)?.kind !== 'gcms') return null;
+    // 新协议优先消费仅存在于当前 Pilot 进程内的结构化工具结果事件。
+    // 以下消息文本解析只为旧 CLI/旧会话兼容，不能覆盖结构化目标。
+    const structured = structuredGcmsUnlockAction(c);
+    if (structured) return structured;
     // 只看最近一轮尚未被用户继续处理的助手回复；历史消息里的
     // unlock_required 不能一直显示密码验证入口。
     const lastUser = c.messages.map((message, index) => message.role === 'user' ? index : -1).reduce((max, index) => Math.max(max, index), -1);
@@ -6642,9 +6960,28 @@
       // 站点尚未解析出来时保持保守，不在前端擅自豁免服务端保护。
       if (site?.is_default === false && !siteHasBoundDomain(site)) return null;
     }
-    return matched
-      ? { operation: matched.operation, title: matched.title, detail: matched.detail }
-      : null;
+    if (!matched) return null;
+    const evidence = `${responseText}\n${toolEvidence}`;
+    const contextToken = evidence.match(/\bgcmspc_[A-Za-z0-9_-]{20,}\b/)?.[0] || '';
+    const adminPath = evidence.match(/\/admin\/pages\/[1-9]\d*\/project\b/)?.[0] || '';
+    // 页面发布、回滚和应用能力批准都必须绑定服务端签发的具体目标挑战。
+    // 没有挑战时不弹密码框，防止退化为可跨页面或跨配置复用的
+    // operation-only 解锁。
+    if (
+      (
+        matched.operation === 'pages.publish'
+        || matched.operation === 'pages.rollback'
+        || matched.operation === 'page_capabilities.grant'
+      )
+      && !contextToken
+    ) return null;
+    return {
+      operation: matched.operation,
+      title: matched.title,
+      detail: matched.detail,
+      contextToken: contextToken || undefined,
+      adminPath: adminPath || undefined,
+    };
   }
   const activeConversationUnlockAction = $derived.by(() => conversationGcmsUnlockAction(activeConv));
   const activeGcmsPublicAccessPending = $derived.by(() => {
@@ -6720,7 +7057,11 @@
         connId: conn.id,
         password,
         operations: [action.operation],
+        pageChallenge: action.contextToken || null,
       });
+      // 服务端已用 challenge 换出严格目标绑定的短时授权后，立即销毁本机副本。
+      // 后续只让 AI 原样重试；若任何目标字段变化，服务端会拒绝并签发新挑战。
+      if (action.contextToken) clearStructuredGcmsUnlock(c.id);
     }, async () => {
       // 解锁令牌只在 Pilot 内存中保存，并在启动下一轮 AI 进程时注入。
       // 发送一条窄化续跑指令，而不是重跑整条用户请求：上一轮在触发
@@ -6734,7 +7075,7 @@
     if (!base) return;
     const message = [
       `Pilot 原生界面已完成 ${action.operation} 的短时密码授权。`,
-      '只重试上一轮因 unlock_required 未完成的同一个受控操作：必须沿用完全相同的 operation、目标、参数、request-id，以及该操作如有的 expected_revision。',
+      '只重试上一轮因 unlock_required 未完成的同一个受控操作：必须沿用完全相同的 operation、站点、project、page、revision、ETag、参数和 request-id。',
       '不要重新执行上一轮已经成功的任何写操作，也不要改动或扩大删除范围。若无法从上一条工具命令确定完全相同的请求，请停止并说明。',
     ].join('\n');
     delete autoRetried[convId];
@@ -6791,21 +7132,34 @@
   // 而 SvelteKit 只认 /，开出来是白屏。详见 lib.rs::open_conn_window。
   const CONN_WIN_PREFIX = 'conn-';
   function bootConnId(): string {
-    try {
-      const l = getCurrentWindow().label;
-      return l.startsWith(CONN_WIN_PREFIX) ? l.slice(CONN_WIN_PREFIX.length) : '';
-    } catch { return ''; }
+    if (themeWindowTarget) return themeWindowTarget.connId;
+    return pilotWindowLabel.startsWith(CONN_WIN_PREFIX)
+      ? pilotWindowLabel.slice(CONN_WIN_PREFIX.length)
+      : '';
   }
   async function refreshConns() {
     try {
       const next = await invoke<Connection[]>('list_connections');
       conns = next;
       pruneConnectionUpdateState(next);
+      if (isThemeWindow && next.length === 0) {
+        themeWindowBootstrapError = 'Pilot 中没有可用的 GCMS 连接，无法读取站点主题。';
+        return;
+      }
       if (!activeConnId && conns.length) {
         const want = bootConnId();
-        selectConn(conns.some((c) => c.id === want) ? want : conns[0].id);
+        if (isThemeWindow && want && !conns.some((c) => c.id === want)) {
+          themeWindowBootstrapError = '原 GCMS 连接已不存在，无法读取这个站点的主题。';
+          return;
+        }
+        const target = conns.some((c) => c.id === want) ? want : conns[0].id;
+        if (isThemeWindow) await selectConn(target);
+        else void selectConn(target);
       }
-    } catch (e) { say(String(e), 'err'); }
+    } catch (e) {
+      if (isThemeWindow) themeWindowBootstrapError = String(e);
+      else say(String(e), 'err');
+    }
   }
   async function refreshBrains() { try { brains = await invoke('detect_brains'); } catch (e) { say(String(e), 'err'); } }
   let copiedCmd = $state('');
@@ -6831,10 +7185,10 @@
   }
   let brainsBusy = $state(false);
   // 手动重新检测：走 redetect_brains（后端先重读登录 shell 的 PATH，再探测）——治「装/登录完仍显示未安装/未登录」。
-  async function refreshBrainsManual() { brainsBusy = true; try { brains = await invoke('redetect_brains'); } catch (e) { say(String(e), 'err'); } finally { brainsBusy = false; } }
+  async function refreshBrainsManual() { brainsBusy = true; try { brains = await invoke('redetect_brains'); } catch (e) { say(String(e), 'err'); } finally { brainsBusy = false; } void verifyClaude(true); }
 
   // 应用版本 + 在线检查更新（Tauri updater：拉 release 仓 latest.json，ed25519 验签后下载安装再重启）。
-  const isMainWindow = (() => { try { return getCurrentWindow().label === 'main'; } catch { return true; } })();
+  const isMainWindow = pilotWindowLabel === 'main';
   const PILOT_UPDATE_RECEIPT_KEY = 'gcms.pilot.updateReceipt';
   let appVersion = $state('');
   let updBusy = $state(false);
@@ -7140,6 +7494,7 @@
       // 换连接＝换工作区：关掉上个连接的对话/排期/定时任务视图，别串场。
       // 模板库 / 提示词库只在 CF 连接下有；切到 gcms 时也退回启动页。
       activeConvId = ''; activeConv = null;
+      dashboardSiteFilter = '';
       taskModalOpen = false; taskHistoryFor = null; hlTaskIds = [];
       if (view === 'thread' || view === 'schedule' || view === 'tasks' || view === 'managed' || view === 'remote'
         || (view === 'sites' && conn?.kind !== 'gcms')
@@ -7173,7 +7528,15 @@
       const r = await invoke<Discovery>('discover_sites', { connId: id, refreshStats });
       if (seq === selSeq) { discovery = r; discovered = r.items; }
     }
-    catch (e) { if (seq === selSeq) say(String(e), 'err'); }
+    catch (e) {
+      if (seq === selSeq) {
+        if (isThemeWindow && themeWindowTarget?.connId === id) {
+          themeWindowBootstrapError = `读取站点失败：${String(e)}`;
+        } else {
+          say(String(e), 'err');
+        }
+      }
+    }
     finally { if (seq === selSeq) { discoveryLoading = false; if (!lSite && discovery?.items.length) lSite = discovery.items[0].slug; } }
     if (seq === selSeq) await syncUnboundSitebuildConversations(id, discovered, authoritativeSitebuild);
   }
@@ -7200,7 +7563,61 @@
     queueMicrotask(() => { void syncCreatedSitebuildConversation(c); });
   });
 
-  $effect(() => { refreshConns(); refreshBrains(); refreshConvos(); });
+  async function retryThemeWindowBootstrap() {
+    if (!themeWindowTarget) return;
+    const forceRefresh = !!themeWindowBootstrapError;
+    themeWindowBootstrapError = '';
+    if (!conns.length) await refreshConns();
+    if (!conns.some((conn) => conn.id === themeWindowTarget.connId)) {
+      themeWindowBootstrapError = '原 GCMS 连接已不存在，无法读取这个站点的主题。';
+      return;
+    }
+    if (forceRefresh || activeConnId !== themeWindowTarget.connId || !discovery) {
+      await selectConn(themeWindowTarget.connId, undefined, true);
+    }
+  }
+
+  $effect(() => {
+    if (!isThemeWindow || !themeWindowTarget || themeEditor || themeWindowMounting) return;
+    if (activeConnId !== themeWindowTarget.connId || discoveryLoading || !discovery) return;
+    const site = (discovery.lifecycle_items ?? discovery.items ?? [])
+      .find((item) => item.id === themeWindowTarget.siteId);
+    if (!site) {
+      themeWindowBootstrapError = '当前 GCMS 中已找不到这个站点，请关闭窗口后从站点卡片重新打开。';
+      return;
+    }
+    themeWindowBootstrapError = '';
+    themeWindowMounting = true;
+    queueMicrotask(() => {
+      mountSiteThemeEditor(site, themeWindowTarget.connId);
+      themeWindowMounting = false;
+    });
+  });
+
+  $effect(() => {
+    if (!isThemeWindow) return;
+    const unlisten = getCurrentWindow().onCloseRequested((event) => {
+      event.preventDefault();
+      if (!themeBusy && !themePreviewBusy && !gcmsPasswordState) void closeNativeThemeWindow();
+    });
+    return () => { void unlisten.then((dispose) => dispose()); };
+  });
+
+  $effect(() => {
+    if (isThemeWindow) return;
+    const unlisten = getCurrentWindow().listen<{ conn_id: string; site_id: number }>('site-theme-changed', (event) => {
+      if (event.payload.conn_id === activeConnId) void refreshDiscoverySummary(event.payload.conn_id, true);
+    });
+    return () => { void unlisten.then((dispose) => dispose()); };
+  });
+
+  $effect(() => {
+    void refreshConns();
+    if (!isThemeWindow) {
+      void refreshBrains();
+      void refreshConvos();
+    }
+  });
   $effect(() => {
     const need = !!brains && ((brains.claude.found && brains.claude.logged_in === false) || (brains.codex.found && brains.codex.logged_in === false) || (brains.grok.found && brains.grok.logged_in === false));
     if (!need) return;
@@ -8252,7 +8669,7 @@
     try {
       const conv = await invoke<Conversation>('start_conversation', {
         convId: id, connId, siteSlug: slug, siteName: name, siteSlugs: [], siteNames: [],
-        taskType: 'sitebuild', brain, model, permMode: 'auto', effort, workspaceDir: '',
+        taskType: 'sitebuild', brain, model, permMode: 'auto', effort, fast: lFast, workspaceDir: '',
         message: text, onEvent: makeChannel(id),
       });
       await refreshConvos();
@@ -9118,6 +9535,9 @@
   // 随后进入「等待授权…」：每 4s 静默重检 brains，logged_in 翻 true 即复位绿灯；120s 超时自动复位。
   let authWaiting = $state<Brain | ''>('');
   let authTimer: ReturnType<typeof setInterval> | undefined;
+  let claudeTokenOpen = $state(false);
+  let claudeTokenDraft = $state('');
+  let claudeTokenSaving = $state(false);
   function stopAuthWait() { authWaiting = ''; if (authTimer) { clearInterval(authTimer); authTimer = undefined; } }
   async function authorize(b: Brain) {
     try {
@@ -9135,8 +9555,105 @@
   $effect(() => {
     if (!authWaiting || !brains) return;
     const st = authWaiting === 'claude' ? brains.claude : authWaiting === 'codex' ? brains.codex : brains.grok;
-    if (st.found && st.logged_in) { stopAuthWait(); say('授权完成，已就绪'); }
+    if (st.found && st.logged_in) {
+      const wasClaude = authWaiting === 'claude';
+      stopAuthWait(); say('授权完成，已就绪');
+      if (wasClaude) void verifyClaude(true); // 新登录立即复验，别让旧的「失效」标记赖着
+    }
   });
+  async function saveClaudeToken() {
+    const token = claudeTokenDraft.trim();
+    if (!token || claudeTokenSaving) return;
+    claudeTokenSaving = true;
+    try {
+      await invoke('save_claude_oauth_token', { token });
+      claudeTokenDraft = '';
+      claudeTokenOpen = false;
+      // 后端已经用候选 Token 做过一次真实最小调用；不要在这里再计费验证第二次。
+      claudeVerify = 'ok';
+      claudeVerifyAt = Date.now();
+      await refreshBrains();
+      if (!brains?.claude.logged_in) {
+        claudeTokenOpen = true;
+        say('Claude CLI 未接受这个 Token，请确认由 claude setup-token 生成且复制完整', 'err');
+        return;
+      }
+      say('Claude 订阅 Token 已验证并安全保存');
+    } catch (e) {
+      say(String(e), 'err');
+    } finally {
+      claudeTokenSaving = false;
+    }
+  }
+  function closeClaudeToken() {
+    if (claudeTokenSaving) return;
+    claudeTokenDraft = '';
+    claudeTokenOpen = false;
+  }
+  /** Claude 凭据深度验证：auth status 只读本地记录会说谎（桌面端换号后旧 token 已废
+   *  它照样报已登录）——打开设置时真跑一次最小无头调用（30 分钟缓存；跑一次是一次
+   *  最小 haiku 计费，所以只在设置面板/手动刷新触发，不进 4 秒轮询）。 */
+  let claudeVerify = $state<'unknown' | 'checking' | 'ok' | 'bad'>('unknown');
+  let claudeVerifyAt = 0;
+  async function verifyClaude(force = false) {
+    if (!brains?.claude.found || !brains.claude.logged_in) { claudeVerify = 'unknown'; return claudeVerify; }
+    if (claudeVerify === 'checking') return claudeVerify;
+    if (!force && Date.now() - claudeVerifyAt < 30 * 60_000) return claudeVerify;
+    claudeVerify = 'checking';
+    try {
+      const ok = await invoke<boolean>('brain_verify_claude');
+      claudeVerify = ok ? 'ok' : 'bad';
+    } catch {
+      claudeVerify = 'unknown'; // 网络/档位类异常：不冤枉凭据，也不背书
+    }
+    claudeVerifyAt = Date.now();
+    return claudeVerify;
+  }
+  $effect(() => { if (setupOpen) void verifyClaude(); });
+
+  // ---------- Claude CLI 版本提示 + 一键升级 ----------
+  // 只在设置面板打开时查一次（要一次 npm registry 请求），不在启动路径上加网络往返。
+  let cliUpd = $state<CliUpdateInfo | null>(null);
+  let cliUpdBusy = $state(false);
+  let cliUpgrading = $state(false);
+  async function checkCliUpdate() {
+    if (cliUpdBusy) return;
+    cliUpdBusy = true;
+    try { cliUpd = await invoke<CliUpdateInfo>('check_claude_update'); }
+    catch { cliUpd = null; } // 查不到（离线/无 npm）就当没有提示，别拿红字骚扰
+    finally { cliUpdBusy = false; }
+  }
+  $effect(() => { if (setupOpen && brains?.claude.found && !cliUpd) void checkCliUpdate(); });
+  async function upgradeCli() {
+    if (!cliUpd || cliUpgrading) return;
+    // 会改本机环境 → 必须先确认，并把「升的是哪一个」摆明：多安装时只有 PATH 第一个生效。
+    const multi = cliUpd.all.length > 1
+      ? `\n\n注意：PATH 上有 ${cliUpd.all.length} 份 claude，只有第一个会被真正调用：\n${cliUpd.all.map((p, i) => `${i === 0 ? '→ ' : '   '}${p}`).join('\n')}`
+      : '';
+    const yes = await confirmDialog(
+      `将对 ${cliUpd.target} 执行 claude update，从 ${cliUpd.installed || '未知'} 升到 ${cliUpd.latest}。${multi}`,
+      { title: '升级 Claude Code CLI', kind: 'warning' },
+    );
+    if (!yes) return;
+    cliUpgrading = true;
+    try {
+      const out = await invoke<string>('upgrade_claude_cli');
+      say(out.trim() ? out.trim().split('\n').slice(-2).join(' · ') : '升级完成');
+      cliUpd = null;
+      await refreshBrainsManual(); // 重探版本，UI 立刻反映新版本与 fast 可用性
+      void checkCliUpdate();
+    } catch (e) { say(String(e), 'err'); }
+    finally { cliUpgrading = false; }
+  }
+  /** 重新绑定：先 headless 退出当前账号，再走原有授权终端登录新账号（等待轮询复用 authorize）。 */
+  async function rebind(b: Brain) {
+    try {
+      await invoke('brain_logout', { brain: b });
+    } catch (e) { say(String(e), 'err'); return; }
+    say('已退出当前账号');
+    void refreshBrains();
+    await authorize(b);
+  }
 
   // ---------- 对话导航 ----------
   function newChat() {
@@ -9881,7 +10398,12 @@
     const label = c?.title?.trim() ? `「${c.title.trim()}」` : '这条对话';
     const yes = await confirmDialog(`删除对话${label}？聊天记录不可恢复。`, { title: '删除对话', kind: 'danger' });
     if (!yes) return;
-    try { await invoke('delete_conversation', { id }); if (activeConvId === id) { activeConvId = ''; activeConv = null; viewAfterConvGone(); } await refreshConvos(); } catch (e) { say(String(e), 'err'); }
+    try {
+      await invoke('delete_conversation', { id });
+      clearStructuredGcmsUnlock(id);
+      if (activeConvId === id) { activeConvId = ''; activeConv = null; viewAfterConvGone(); }
+      await refreshConvos();
+    } catch (e) { say(String(e), 'err'); }
   }
 
   // ---------- 运行一轮 ----------
@@ -9890,8 +10412,63 @@
     ch.onmessage = (ev) => {
       const buf = lives[convId];
       if (!buf) return; // 该对话已结束/被清（切走后仍可能收到尾包）
-      if (ev.type === 'delta') { buf.text += ev.text; if (activeConvId === convId) scrollSoon(); }
-      else if (ev.type === 'tool') { buf.tools = [...buf.tools, { label: ev.label, detail: ev.detail }]; if (activeConvId === convId) scrollSoon(); }
+      if (ev.type === 'delta') {
+        buf.text += ev.text;
+        buf.lastActivityAt = Date.now();
+        if (activeConvId === convId) scrollSoon();
+      }
+      else if (ev.type === 'tool') {
+        buf.tools = [...buf.tools, { label: ev.label, detail: ev.detail }];
+        buf.lastActivityAt = Date.now();
+        if (activeConvId === convId) scrollSoon();
+      }
+      else if (ev.type === 'activity') {
+        const now = Date.now();
+        const previous = buf.activities[ev.activity_id];
+        buf.activities = {
+          ...buf.activities,
+          [ev.activity_id]: {
+            id: ev.activity_id,
+            label: ev.label || previous?.label || '',
+            detail: ev.detail || previous?.detail || '',
+            status: ev.status,
+            startedAt: previous?.startedAt ?? now,
+            updatedAt: now,
+          },
+        };
+        buf.lastActivityAt = now;
+        if (activeConvId === convId) scrollSoon();
+      }
+      else if (ev.type === 'gcms_unlock_required') {
+        // 二次校验 IPC 边界；challenge 只放在这张内存表，不写 live 文本、
+        // ToolCall、Conversation 或任何浏览器持久化存储。
+        const validOperation = isGcmsControlUnlockOperation(ev.operation);
+        const pageTargetUnlock = validOperation && isPageTargetUnlockOperation(ev.operation);
+        const validPageTarget = pageTargetUnlock
+          && /^gcmspc_[A-Za-z0-9_-]{20,96}$/.test(ev.unlock_challenge)
+          && /^\/admin\/pages\/[1-9]\d*\/project$/.test(ev.admin_path);
+        const validControlOperation = validOperation
+          && !pageTargetUnlock
+          && !ev.unlock_challenge
+          && !ev.admin_path;
+        if (validPageTarget || validControlOperation) {
+          clearStructuredGcmsUnlock(convId);
+          const expiresAt = Date.now() + 3 * 60_000;
+          gcmsStructuredUnlocks = {
+            ...gcmsStructuredUnlocks,
+            [convId]: {
+              operation: ev.operation,
+              unlockChallenge: ev.unlock_challenge,
+              adminPath: ev.admin_path,
+              expiresAt,
+            },
+          };
+          gcmsStructuredUnlockTimers[convId] = setTimeout(
+            () => clearStructuredGcmsUnlock(convId),
+            Math.max(0, expiresAt - Date.now()),
+          );
+        }
+      }
       else if (ev.type === 'context_compacted') {
         buf.compactedAt = Date.now();
         buf.compactedPreTokens = ev.pre_tokens;
@@ -9915,6 +10492,7 @@
   // 首轮也能流式渲染 + 停止（cancel 键对准真正的注册表 key）。
   function beginTurn(convId: string, optimistic: Conversation) {
     if (retryTimers[convId]) { clearTimeout(retryTimers[convId]); delete retryTimers[convId]; } // 任何新一轮开始都取消该会话待触发的自动重连
+    clearStructuredGcmsUnlock(convId);
     clearSitebuildAutoSyncRetry(convId);
     sitebuildAutoSyncGeneration.set(convId, (sitebuildAutoSyncGeneration.get(convId) ?? 0) + 1);
     sitebuildAutoSyncPending.delete(convId);
@@ -9930,7 +10508,16 @@
     } else {
       sitebuildTurnDiscoveryBaselines.delete(convId);
     }
-    lives[convId] = { text: '', tools: [], error: '', failed: false, startedAt: Date.now() };
+    const startedAt = Date.now();
+    lives[convId] = {
+      text: '',
+      tools: [],
+      activities: {},
+      lastActivityAt: startedAt,
+      error: '',
+      failed: false,
+      startedAt,
+    };
     running[convId] = optimistic.conn_id;
     activeConv = optimistic; activeConvId = convId; threadModel = optimistic.model; threadPerm = optimistic.perm_mode || 'full'; threadEffort = optimistic.effort || '';
     cfReady = false; // 本轮跑完再重新判定是否已建出内容
@@ -10045,7 +10632,7 @@
       const conv = await invoke<Conversation>('start_conversation', {
         convId: id, connId: conversationConnId, siteSlug: mSlug, siteName: mName,
         siteSlugs: multi ? lSites : [], siteNames: mNames,
-        taskType, brain: lBrain, model, permMode: lPerm, effort: lEffort,
+        taskType, brain: lBrain, model, permMode: lPerm, effort: lEffort, fast: lFast,
         workspaceDir: workspace ? workspaceDir : '',
         message: text, onEvent: makeChannel(id),
       });
@@ -10756,12 +11343,29 @@
     }).join('\n');
     return { count: seen.size, tip };
   });
-  // Claude 档位 = 别名（--model sonnet/opus/haiku），永远指向该档「当前最新」，
-  // 厂商发新版自动跟随、无需更新客户端。sub 版本号仅「当前实际版本」提示，可能滞后。
-  // Fable 例外：claude 2.1.96 尚无 fable 别名（实测报错），只能用全 ID，出新版需更新这里。
+  // Sonnet / Haiku 用别名（--model sonnet/haiku），永远指向该档「当前最新」，厂商发新版自动
+  // 跟随、无需更新客户端；sub 里的版本号只是提示，可能滞后。
+  // Fable 与 Opus 两档例外，走全 ID（原因见下），出新版需回来改这里。
+  //
+  // ★ Opus 两档都**钉全 ID**，不用 opus 别名：
+  //   - 别名不会指到 Opus 5（那是它必须写全 ID 的原因）；
+  //   - 且别名此刻也不指 4.8 —— 让它自报模型返回的是 claude-opus-4-6。自报版本本来就不可靠，
+  //     不足以断定别名真指 4.6；但既然拿不准，就别用一个标着「4.8」的选项去赌别名解析到哪。
+  //   钉住 claude-opus-4-8 后，标签写的就是实际发出去的，用户点 4.8 一定得到 4.8。
+  //   代价与 Fable 相同：厂商出新版不会自动跟随，得回来改这里。
+  //
+  // ★ 测「某个 --model ID 存不存在」的前提：**CLI 凭据必须是有效的**。
+  //   凭据过期时，claude CLI 对**任何** --model 值都静默返回空 + exit 0 —— 连凭空编的
+  //   claude-definitely-not-real-9 也一样，此时「没报错」完全不等于「ID 有效」。
+  //   凭据有效后才有判别力：真 ID 返回内容，假 ID 明确回
+  //   「There's an issue with the selected model (…). It may not exist or you may not have access to it.」
+  //   claude-opus-5 与 claude-opus-4-8 都是这么验的（真回话 + 同轮假 ID 被拒）。
   const CLAUDE_MODELS = [
-    { value: 'sonnet', label: 'Sonnet', sub: '性价比 · 当前 Sonnet 5 · 1M 上下文' },
-    { value: 'opus', label: 'Opus', sub: '最强 · 当前 Opus 4.8 · 1M 上下文' },
+    // ★ 必须用显式 ID，不能用别名 'sonnet'：别名由 CLI 解析，2.1.96 把它解析成
+    //   claude-sonnet-4-6 —— 标签写着 Sonnet 5、实际跑的是 4.6（用户实测抓到）。
+    { value: 'claude-sonnet-5', label: 'Sonnet', sub: '性价比 · Sonnet 5 · 1M 上下文' },
+    { value: 'claude-opus-5', label: 'Opus 5', sub: '最强 · Opus 5 · 1M 上下文' },
+    { value: 'claude-opus-4-8', label: 'Opus 4.8', sub: '上一代 Opus · 1M 上下文' },
     { value: 'claude-fable-5', label: 'Fable', sub: 'Claude 5 家族 · Fable 5 · 1M 上下文' },
     { value: 'haiku', label: 'Haiku', sub: '最快 · 当前 Haiku 4.5 · 200k 上下文' },
   ];
@@ -10787,7 +11391,7 @@
   function modelOptsFor(b: string) { return b === 'codex' ? CODEX_MODELS : b === 'grok' ? GROK_MODELS : CLAUDE_MODELS; }
   // launcher / 会话里可选：预设档位 + 该厂商的全局自定义模型 ID（定时任务表单仍只用预设 + 自己的 modelCustom）。
   function launcherModelOpts(b: string) { return [...modelOptsFor(b), ...customsOf(b).map((id) => ({ value: id, label: id, sub: '自定义' }))]; }
-  function defaultModelFor(b: string): string { return b === 'claude' ? 'sonnet' : ''; }
+  function defaultModelFor(b: string): string { return b === 'claude' ? 'claude-sonnet-5' : ''; }
   function isLauncherModel(b: string, m: string): boolean { return launcherModelOpts(b).some((o) => o.value === m); }
 
   // 会话按「站点 → 任务类型」两级分组：站点按最近活动倒序；任务类型固定顺序，只留有会话的。
@@ -10854,6 +11458,7 @@
   onresize={() => { hideTip(); imgTip = null; hoverWant = ''; }}
   onkeydown={(e) => { if (e.key === 'Escape') { if (lightbox) lightbox = ''; closeSitesGlobalMenu(); if (themeEditor) closeSiteThemeEditor(); } }}
 />
+{#if !isThemeWindow}
 <main class="app" class:win={isWindows} class:fs={isFullscreen} class:rail-collapsed={railCollapsed} class:top-update-visible={topUpdateVisible}>
   <!-- 融合式标题栏：透明拖拽条铺满顶部，红绿灯与工具按钮浮在其上（macOS Overlay） -->
   <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -11009,7 +11614,7 @@
           <button class="cs-act" onclick={() => { switcherOpen = false; openCfConnect(); }}>{@render cfMark(15)}连接 Cloudflare</button>
           <button class="cs-act" onclick={() => { switcherOpen = false; openSshConnect(); }}>{@render sshMark(15)}新建远程连接</button>
           <button class="cs-act" onclick={openGcmsInstaller}>{@render gcmsInstallIcon(15)}安装与管理 gcms</button>
-          <button class="cs-act" onclick={() => { switcherOpen = false; gcmsInstallOpen = false; setupOpen = true; }}>{@render gearIcon()}连接与模型设置…</button>
+          <button type="button" class="cs-act" onclick={openConnectionSetup}>{@render gearIcon()}连接与模型设置…</button>
         </div>
       {/if}
     <!-- 空态也走切换器（不再直跳设置）：菜单里三条连接路径 + 设置一次性摆出，和有连接时同一套交互。 -->
@@ -11186,13 +11791,13 @@
                       {#if workspaceDir}<button type="button" class="workspace-clear" aria-label="移除文件夹" data-tip="移除文件夹，改为纯对话" onclick={() => (workspaceDir = '')}>×</button>{/if}
                     </div>
                   {:else}
-                    <Dropdown compact searchable bind:value={lSite} options={launcherSiteOpts} placeholder="选择站点" onchange={onLauncherSitePick} />
+                    <Dropdown compact searchable keepOpenOnSelect={lSites.length > 0} bind:value={lSite} options={launcherSiteOpts} placeholder="选择站点" onchange={onLauncherSitePick} />
                     {#if !lSites.length && sites.length > 1}<button class="multi-add" title="多站会话：同时操作多个站点" onclick={enterMultiMode}>+多站</button>{/if}
                   {/if}
                 </div>
                 <div class="cb-right">
                   <Dropdown compact bind:value={lPerm} options={permOptsFor(lBrain, isSshConn)} tone={permTone(lPerm)} tip={permTipFor(lBrain, lPerm, isSshConn)} />
-                  <ModelFx options={comboOpts} value={`${lBrain}::${lModel}`} effort={lEffort} onpick={pickCombo} oneffort={(v: string) => { lEffort = v; prefs.effort = v; savePrefs(prefs); }} />
+                  <ModelFx options={comboOpts} value={`${lBrain}::${lModel}`} effort={lEffort} fast={lFast} fastOk={brains?.claude_fast_ok ?? false} onpick={pickCombo} oneffort={(v: string) => { lEffort = v; prefs.effort = v; savePrefs(prefs); }} onfast={setFast} />
                   <UsageRing />
                   <button class="send" onclick={startChat} disabled={(!isSshConn && !isGcmsSiteBuild && !isWorkspaceChat && !lSite.trim() && lSites.length < 2) || (isGcmsSiteBuild ? !siteBuildChatReady : !lDraft.trim()) || !brainUsable(lBrain)} title="发送（Enter）">↑</button>
                 </div>
@@ -11322,7 +11927,7 @@
                     </span>
                     <div>
                       <Dropdown compact bind:value={lPerm} options={permOptsFor(lBrain, false)} tone={permTone(lPerm)} tip={permTipFor(lBrain, lPerm, false)} />
-                      <ModelFx options={comboOpts} value={`${lBrain}::${lModel}`} effort={lEffort} onpick={pickCombo} oneffort={(v: string) => { lEffort = v; prefs.effort = v; savePrefs(prefs); }} />
+                      <ModelFx options={comboOpts} value={`${lBrain}::${lModel}`} effort={lEffort} fast={lFast} fastOk={brains?.claude_fast_ok ?? false} onpick={pickCombo} oneffort={(v: string) => { lEffort = v; prefs.effort = v; savePrefs(prefs); }} onfast={setFast} />
                       <UsageRing />
                     </div>
                   </div>
@@ -11364,11 +11969,31 @@
       </div>
 
     {:else if view === 'sites'}
+      {@const sitesAdminUrl = gcmsAdminURL('/admin')}
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <header class="thread-head" data-tauri-drag-region onmousedown={startDrag}>
         <div class="th-info">
           <b class="th-title">{@render sitesIcon(16)}<span>站点</span></b>
-          <small>{activeConn?.name || 'GCMS'} · {sites.length} 个可管理站点</small>
+          <small class="sites-head-meta">
+            <span class="sites-head-filter">
+              <Dropdown
+                compact
+                searchable
+                bare
+                bind:value={dashboardSiteFilter}
+                options={dashboardSiteFilterOpts}
+                placeholder={`${sites.length} 个可管理站点`}
+              />
+            </span>
+            <span class="sites-head-sep" aria-hidden="true">·</span>
+            <button
+              type="button"
+              class="sites-admin-link"
+              aria-label={`在浏览器打开 ${sitesAdminUrl || 'GCMS 后台'}`}
+              data-tip="在系统浏览器打开 GCMS 后台"
+              onclick={() => sitesAdminUrl ? void openUrl(sitesAdminUrl) : say('当前连接没有可用的 GCMS 后台地址', 'err')}
+            ><span>{sitesAdminUrl || activeConn?.name || 'GCMS'}</span>{@render externalLinkIcon(10)}</button>
+          </small>
         </div>
         <div class="th-actions sites-head-actions">
           <div class="sites-global-menu" bind:this={sitesGlobalMenuEl}>
@@ -12321,7 +12946,7 @@
                       <div class="cb-left"><span class="ssh-target" title={activeConn?.ssh_os || '远端系统未知'}>{@render distroMark(distroOf(activeConn), 13)}{activeConn?.ssh_user}@{activeConn?.ssh_host}</span></div>
                       <div class="cb-right">
                         <Dropdown compact bind:value={lPerm} options={permOptsFor(lBrain, true)} tone={permTone(lPerm)} tip={permTipFor(lBrain, lPerm, true)} />
-                        <ModelFx options={comboOpts} value={`${lBrain}::${lModel}`} effort={lEffort} onpick={pickCombo} oneffort={(v: string) => { lEffort = v; prefs.effort = v; savePrefs(prefs); }} />
+                        <ModelFx options={comboOpts} value={`${lBrain}::${lModel}`} effort={lEffort} fast={lFast} fastOk={brains?.claude_fast_ok ?? false} onpick={pickCombo} oneffort={(v: string) => { lEffort = v; prefs.effort = v; savePrefs(prefs); }} onfast={setFast} />
                         <button class="send" onclick={startChat} disabled={!lDraft.trim() || !brainUsable(lBrain)} title="发送（Enter）">↑</button>
                       </div>
                     </div>
@@ -12486,6 +13111,7 @@
     {/if}
   </section>
 </main>
+{/if}
 
 <!-- 会话搜索（Claude Code 风格：顶部圆角搜索框 + 结果列表） -->
 {#if searchOpen}
@@ -12653,8 +13279,8 @@
 
 {#snippet richText(text: string)}{#each text.split('\n') as line, i (i)}{#if i > 0}<br />{/if}{#each segs(line) as s, si (si)}{#if s.link}<button class="inlink" onclick={() => openUrl(s.t)}>{s.t}</button>{:else}{s.t}{/if}{/each}{/each}{/snippet}
 
-{#snippet toolChip(t: ToolCall)}
-  <div class="tool"><span class="tcode">{t.label}</span><span class="tdetail">{t.detail}</span></div>
+{#snippet toolChip(t: ToolCall & { count?: number })}
+  <div class="tool"><span class="tcode">{t.label}</span><span class="tdetail">{t.detail}</span>{#if (t.count ?? 0) > 1}<span class="tool-count">×{t.count}</span>{/if}</div>
 {/snippet}
 
 {#snippet brainTag(brain: string, label: string)}<span class="btag"><BrainIcon {brain} size={12} />{label}</span>{/snippet}
@@ -12789,6 +13415,7 @@
         {@render bubble(m, i === shownMessages.length - 1)}
       {/each}
       {#if viewBusy && liveView}
+        {@const progress = executionProgress(liveView, nowMs)}
         <div class="msg assistant">
           <div class="body">
             {#if liveView.tools.length}{@render cmds(liveView.tools)}{/if}
@@ -12801,6 +13428,17 @@
             {/if}
             <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
             {#if liveView.text}<div class="text md" onclick={mdClick} onauxclick={mdClick}>{@html mdRender(liveView.text)}</div>{/if}
+            {#if progress.hasActivity}
+              <div class="execution-progress" class:quiet={progress.quiet} class:has-failure={progress.failed}>
+                <span class="execution-progress-mark" aria-hidden="true">
+                  <span></span>
+                </span>
+                <span class="execution-progress-copy">
+                  <b>{progress.title}</b>
+                  <small>{progress.meta}</small>
+                </span>
+              </div>
+            {/if}
             {#if liveView.error}<div class="err-note">{liveView.error}</div>
             {:else}
               <div class="working" aria-label="思考中">
@@ -12828,6 +13466,9 @@
             <div class="permit-desc">{activeConversationUnlockAction.title}</div>
             <div class="permit-meta">{activeConversationUnlockAction.detail}</div>
             <div class="permit-act">
+              {#if activeConversationUnlockAction.adminPath}
+                <button class="btn sm" onclick={() => openGcmsAdmin(activeConversationUnlockAction.adminPath)}>在 GCMS 后台打开 ↗</button>
+              {/if}
               <button class="btn sm primary" onclick={() => openGcmsControlUnlock(activeConversationUnlockAction)}>输入密码并继续</button>
             </div>
           </div>
@@ -13002,7 +13643,7 @@
         <div class="cb-right">
           <Dropdown compact bind:value={threadPerm} options={permOptsFor(activeConv?.brain ?? 'claude', activeConvIsSsh)} tone={permTone(threadPerm)} tip={permTipFor(activeConv?.brain ?? 'claude', threadPerm, activeConvIsSsh)} onchange={persistThreadPerm} />
           <!-- 模型下拉列全部厂商（图标区分）：同厂商下一轮生效；跨厂商确认后以历史摘要重建续跑 -->
-          <ModelFx options={threadComboOpts} value={`${activeConv?.brain ?? 'claude'}::${threadModel}`} effort={threadEffort} lockModel={viewBusy} onpick={(v: string) => { void pickThreadCombo(v); }} oneffort={persistThreadEffort} />
+          <ModelFx options={threadComboOpts} value={`${activeConv?.brain ?? 'claude'}::${threadModel}`} effort={threadEffort} fast={activeConv?.fast ?? false} fastOk={brains?.claude_fast_ok ?? false} lockModel={viewBusy} onpick={(v: string) => { void pickThreadCombo(v); }} oneffort={persistThreadEffort} onfast={(v: boolean) => { void persistThreadFast(v); }} />
           <UsageRing ctx={activeConv?.ctx_tokens ?? 0} limit={ctxLimitAdaptive(activeConv?.brain ?? 'claude', activeConv?.model ?? '', activeConv?.ctx_tokens ?? 0)} total={activeConv?.total_tokens ?? 0} />
           {#if viewBusy}
             {#if draft.trim() || attachments.length}
@@ -13125,10 +13766,10 @@
         <rect x="1.5" y="2.5" width="13" height="11" rx="2" stroke="currentColor" stroke-width="1.3" />
         <path d="M4.5 6l2 2-2 2M8.5 10h3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" />
       </svg>
-      <span>{tools.length} 条命令</span>
+      <span>{tools.length} 条执行记录</span>
       <svg class="cmd-chev" width="11" height="11" viewBox="0 0 12 12" fill="none"><path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
     </summary>
-    <div class="tools">{#each tools as t, i (i)}{@render toolChip(t)}{/each}</div>
+    <div class="tools">{#each compactToolRows(tools) as t, i (i)}{@render toolChip(t)}{/each}</div>
   </details>
 {/snippet}
 
@@ -13585,7 +14226,8 @@
       <div class="conn-list">
         {#each conns as c (c.id)}
           <div class="conn-row {activeConnId === c.id ? 'on' : ''}" role="button" tabindex="0"
-            onclick={() => selectConn(c.id)} onkeydown={(e) => e.key === 'Enter' && selectConn(c.id)}
+            onclick={(e) => { if (!(e.target as HTMLElement).closest('.pilot-control')) selectConn(c.id); }}
+            onkeydown={(e) => e.key === 'Enter' && e.currentTarget === e.target && selectConn(c.id)}
             oncontextmenu={(e) => openConnCtx(e, c)}>
             {#if c.kind === 'cloudflare'}{@render cfMark(22)}{:else if c.kind === 'ssh'}{@render sshMark(22)}{:else}<SiteMark size={22} />{/if}
             <span class="conn-main"><b>{connectionDisplayName(c)}</b>
@@ -13594,19 +14236,22 @@
               {:else}
                 <small><span class:conn-remark={!!c.remark?.trim()} data-tip={c.remark?.trim() ? `脱敏 Key：${c.key_prefix}` : undefined}>{c.remark?.trim() || c.key_prefix}</span> · {c.kind === 'cloudflare' ? 'Cloudflare' : c.key_kind === 'gcmsp_' ? '平台' : '单站'}{#if activeConnId === c.id} · {sites.length} 站点{/if}</small>
               {/if}</span>
-            {#if c.kind === 'ssh'}
-              <button class="icon-btn sm" title="编辑连接（地址 / 用户 / 密码或密钥 / 指纹）" onclick={(e) => { e.stopPropagation(); openSshEdit(c); }}>
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><path d="M10.8 2.9l2.3 2.3M11.4 2.3l2.3 2.3-8 8-3 .7.7-3 8-8z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /></svg>
-              </button>
-            {/if}
             {#if packUpdates[c.id]}
               <button class="pack-upd" title="技能包有新版 {packUpdates[c.id]}——一键就地升级，连接与对话全部保留" disabled={!!packUpdating[c.id]}
                 onclick={(e) => { e.stopPropagation(); upgradePack(c.id); }}>{packUpdating[c.id] ? '升级中…' : `升级技能包 ${packUpdates[c.id]}`}</button>
             {/if}
-            {#if activeConnId === c.id && c.kind !== 'cloudflare' && c.kind !== 'ssh'}
-              <button class="icon-btn sm" title="检查技能包更新并刷新站点" disabled={discoveryLoading || !!connectionSyncing[c.id] || !!packUpdating[c.id]} onclick={(e) => { e.stopPropagation(); refreshSites(c.id); }}>{@render refreshIcon(discoveryLoading || !!connectionSyncing[c.id])}</button>
+            {#if c.kind === 'gcms'}
+              <PilotConsoleBinding connection={c} sites={activeConnId === c.id ? sites : []} {appVersion} brain={prefs.brain} model={prefs.model} effort={prefs.effort} showTrigger={false} />
             {/if}
-            <button class="x sm" title="删除连接" onclick={(e) => { e.stopPropagation(); removeConn(c.id); }}>×</button>
+            <button
+              class="icon-btn sm"
+              class:active={connCtx?.conn.id === c.id}
+              title="连接设置"
+              aria-label={`打开 ${connectionDisplayName(c)} 的连接设置`}
+              aria-haspopup="menu"
+              aria-expanded={connCtx?.conn.id === c.id}
+              onclick={(e) => toggleConnCtx(e, c)}
+            >{@render settingsIcon()}</button>
           </div>
         {/each}
       </div>
@@ -13619,10 +14264,61 @@
           <div class="brain-row">
             <span class="brain-ic"><BrainIcon brain={r.b} size={18} /></span>
             <span class="brain-main"><b>{r.name}</b>
-              <small>{#if !r.st.found}未安装{:else if r.st.logged_in === false}未登录{:else}{r.st.version || '已就绪'}{/if}</small></span>
-            <span class="brain-dot"><span class="dot {r.st.found && r.st.logged_in ? 'ok' : r.st.found ? 'warn' : 'off'}"></span></span>
-            {#if r.st.found && r.st.logged_in === false}<button class="authbtn" onclick={() => authorize(r.b)} disabled={authWaiting === r.b}>{#if authWaiting === r.b}<span class="wr-spin"></span>等待授权…{:else}去授权 ↗{/if}</button>{/if}
+              <small>{#if !r.st.found}未安装{:else if r.st.logged_in === false}未登录{:else}{r.st.version || '已就绪'}{#if r.b === 'claude' && cliUpd?.has_update} · <span class="cli-new">新版 {cliUpd.latest}</span>{/if}{/if}</small></span>
+            <span class="brain-dot"><span class="dot {r.st.found && r.st.logged_in && !(r.b === 'claude' && claudeVerify === 'bad') ? 'ok' : r.st.found ? 'warn' : 'off'}"></span></span>
+            {#if r.st.found && r.st.logged_in === false}
+              {#if r.b === 'claude'}
+                <span class="brain-auth-actions">
+                  <button
+                    class="claude-token-trigger"
+                    class:active={claudeTokenOpen}
+                    type="button"
+                    onclick={() => (claudeTokenOpen = !claudeTokenOpen)}
+                    aria-label="粘贴 Claude 订阅 Token"
+                    aria-expanded={claudeTokenOpen}
+                    data-tip="粘贴订阅 Token&#10;使用 claude setup-token 生成"
+                  ><svg width="15" height="15" viewBox="0 0 18 18" fill="none" aria-hidden="true"><circle cx="5.5" cy="12.5" r="3.25" stroke="currentColor" stroke-width="1.45"/><path d="m7.85 10.15 6.55-6.55M11.45 6.55l1.7 1.7M13.15 4.85l1.35 1.35" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+                  <button class="authbtn" onclick={() => authorize(r.b)} disabled={authWaiting === r.b}>{#if authWaiting === r.b}<span class="wr-spin"></span>等待授权…{:else}去授权 ↗{/if}</button>
+                </span>
+              {:else}
+                <button class="authbtn" onclick={() => authorize(r.b)} disabled={authWaiting === r.b}>{#if authWaiting === r.b}<span class="wr-spin"></span>等待授权…{:else}去授权 ↗{/if}</button>
+              {/if}
+            {:else if r.b === 'claude' && r.st.logged_in && claudeVerify === 'bad'}<button class="authbtn" onclick={() => rebind('claude')} disabled={authWaiting === 'claude'}>{#if authWaiting === 'claude'}<span class="wr-spin"></span>等待授权…{:else}重新绑定 ↗{/if}</button>
+            {:else if r.b === 'claude' && cliUpd?.has_update}
+              <!-- 图标 + tips：这一行右侧本来是「去授权 / 重新绑定」那类**必须做**的动作，
+                   升级是可选的，用文字按钮会跟它们抢同一级视觉重量。tips 里写全「升到哪个版本、
+                   会动哪个路径」——多安装时只有 PATH 第一个生效，这信息不能只藏在确认弹窗里。
+                   升级中不另写 tip：disabled 的按钮在 Chrome 下根本不派发 mouseover，气泡永远弹不出来，
+                   状态只能靠 spinner 表达。 -->
+              <button class="cli-upg" onclick={() => void upgradeCli()} disabled={cliUpgrading}
+                aria-label={`升级 Claude Code 到 ${cliUpd.latest}`}
+                data-tip={`升级到 ${cliUpd.latest}\n${cliUpd.target}${cliUpd.all.length > 1 ? `\nPATH 上有 ${cliUpd.all.length} 份，只有这个生效` : ''}`}>
+                {#if cliUpgrading}<span class="wr-spin"></span>{:else}{@render gcmsUpdateIcon(14)}{/if}
+              </button>{/if}
           </div>
+          {#if r.b === 'claude' && claudeTokenOpen}
+            <div class="claude-token-form">
+              <div class="claude-token-copy">
+                <b>Claude Code 订阅 Token</b>
+                <small>在终端运行 <code>claude setup-token</code>，完成授权后复制生成的长期 Token。仅支持 Pro、Max、Team 或 Enterprise 订阅。</small>
+              </div>
+              <div class="claude-token-entry">
+                <input
+                  type="password"
+                  bind:value={claudeTokenDraft}
+                  placeholder="粘贴 Token"
+                  autocomplete="off"
+                  spellcheck="false"
+                  autocapitalize="off"
+                  autocorrect="off"
+                  onkeydown={(event) => event.key === 'Enter' && void saveClaudeToken()}
+                />
+                <button class="btn sm" type="button" onclick={() => void saveClaudeToken()} disabled={!claudeTokenDraft.trim() || claudeTokenSaving}>{claudeTokenSaving ? '验证中…' : '保存并验证'}</button>
+                <button class="btn sm ghost" type="button" onclick={closeClaudeToken} disabled={claudeTokenSaving}>取消</button>
+              </div>
+              <small class="claude-token-safe">Token 只保存到 {keystoreName}，不会写入 Pilot 配置、导出文件或对话内容。</small>
+            </div>
+          {/if}
           {#if !r.st.found}
             <!-- 与主界面同款一键安装（同 invoke/进度态/错误处理），放在「未安装」状态文字下方、小号靠左；
                  手动命令降级为同行的复制小图标 -->
@@ -13644,10 +14340,26 @@
           {/if}
           {#if r.st.found}
             <div class="cust">
-              <button class="cust-head" type="button" onclick={() => (customOpen[r.b] = !customOpen[r.b])}>
-                <svg class="cust-chev" class:open={customOpen[r.b]} width="10" height="10" viewBox="0 0 12 12" fill="none"><path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>
-                自定义模型{#if customsOf(r.b).length}<span class="cust-n">{customsOf(r.b).length}</span>{/if}
-              </button>
+              <!-- 自定义模型 与 账号 两个折叠头并排一行（默认都收起），展开体各自出现在行下方。
+                   账号从各 CLI 本地凭据只读提取（brains.rs）；重新绑定 = headless logout
+                   + 原有授权终端流程登录新账号 -->
+              <div class="cust-heads">
+                <button class="cust-head" type="button" onclick={() => (customOpen[r.b] = !customOpen[r.b])}>
+                  <svg class="cust-chev" class:open={customOpen[r.b]} width="10" height="10" viewBox="0 0 12 12" fill="none"><path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>
+                  自定义模型{#if customsOf(r.b).length}<span class="cust-n">{customsOf(r.b).length}</span>{/if}
+                </button>
+                {#if r.st.logged_in}
+                  <button class="cust-head" type="button" onclick={() => (acctOpen[r.b] = !acctOpen[r.b])}>
+                    <svg class="cust-chev" class:open={acctOpen[r.b]} width="10" height="10" viewBox="0 0 12 12" fill="none"><path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>
+                    账号
+                    {#if r.b === 'claude' && claudeVerify === 'bad'}
+                      <span class="verify-bad">凭据已失效</span>
+                    {:else if r.b === 'claude' && claudeVerify === 'checking'}
+                      <span class="verify-checking">验证中…</span>
+                    {/if}
+                  </button>
+                {/if}
+              </div>
               {#if customOpen[r.b]}
                 <div class="cust-body">
                   {#each customsOf(r.b) as id (id)}
@@ -13658,6 +14370,31 @@
                       spellcheck="false" autocapitalize="off" autocorrect="off" onkeydown={(e) => e.key === 'Enter' && addCustom(r.b)} />
                     <button class="btn sm" onclick={() => addCustom(r.b)} disabled={!(customDraft[r.b] ?? '').trim()}>添加</button>
                   </div>
+                </div>
+              {/if}
+              {#if acctOpen[r.b] && r.st.logged_in}
+                <div class="brain-auth">
+                  {#if r.st.account}<span class="brain-acct" title={`当前账号：${r.st.account}`}>{r.st.account}</span>{/if}
+                  {#if r.st.account}<span class="brain-auth-sep" aria-hidden="true">·</span>{/if}
+                  {#if r.b === 'claude'}
+                    <button
+                      class="brain-auth-icon"
+                      class:active={claudeTokenOpen}
+                      type="button"
+                      aria-label="更换 Claude 订阅 Token"
+                      aria-expanded={claudeTokenOpen}
+                      data-tip="更换订阅 Token&#10;粘贴 claude setup-token 生成的长期授权 Token"
+                      onclick={() => (claudeTokenOpen = !claudeTokenOpen)}
+                    ><svg width="14" height="14" viewBox="0 0 18 18" fill="none" aria-hidden="true"><circle cx="5.5" cy="12.5" r="3.25" stroke="currentColor" stroke-width="1.45"/><path d="m7.85 10.15 6.55-6.55M11.45 6.55l1.7 1.7M13.15 4.85l1.35 1.35" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+                  {/if}
+                  <button
+                    class="brain-auth-icon"
+                    type="button"
+                    aria-label={authWaiting === r.b ? '正在重新绑定账号' : '重新绑定账号'}
+                    data-tip={authWaiting === r.b ? '正在等待账号授权…' : '退出当前账号并重新登录'}
+                    onclick={() => rebind(r.b)}
+                    disabled={authWaiting === r.b}
+                  >{#if authWaiting === r.b}<span class="wr-spin"></span>{:else}{@render refreshIcon(false)}{/if}</button>
                 </div>
               {/if}
             </div>
@@ -15210,9 +15947,43 @@
   </div>
 {/if}
 
+{#if isThemeWindow && !themeEditor}
+  <div class="theme-window-bootstrap" role="status" aria-live="polite">
+    <header class="sheet-head integration-head">
+      <div class="integration-head-title">
+        <span class="integration-head-icon theme-head-icon">{@render paletteIcon(20)}</span>
+        <span><b>外观主题</b><small>正在连接 GCMS 并读取站点</small></span>
+      </div>
+      <button class="x" onclick={() => void closeNativeThemeWindow()} aria-label="关闭主题中心">×</button>
+    </header>
+    <div class="theme-window-bootstrap-body">
+      <span class="theme-state-mark">{@render paletteIcon(24)}</span>
+      {#if themeWindowBootstrapError}
+        <b>暂时无法打开主题中心</b>
+        <p>{themeWindowBootstrapError}</p>
+        {#if themeWindowTarget}
+          <button class="btn" onclick={() => void retryThemeWindowBootstrap()}>重新读取</button>
+        {/if}
+      {:else}
+        <span class="gcms-spin"></span>
+        <b>正在读取站点与主题…</b>
+        <p>窗口准备完成后会直接显示可用主题，无需返回主窗口操作。</p>
+      {/if}
+    </div>
+  </div>
+{/if}
+
 {#if themeEditor}
-  <div class="mask" role="presentation" onclick={closeSiteThemeEditor}></div>
-  <div class="modal wide theme-modal" use:dialogGeometry={DIALOG_GEOMETRY.theme} role="dialog" aria-modal="true" aria-label={`${themeEditor.site.name || themeEditor.site.slug} · 外观主题`} aria-busy={themeLoading || themeBusy}>
+  {#if !isThemeWindow}<div class="mask" role="presentation" onclick={closeSiteThemeEditor}></div>{/if}
+  <div
+    class="modal wide theme-modal"
+    class:theme-native-window={isThemeWindow}
+    use:dialogGeometry={{ ...DIALOG_GEOMETRY.theme, enabled: !isThemeWindow }}
+    role="dialog"
+    aria-modal={isThemeWindow ? undefined : 'true'}
+    aria-label={`${themeEditor.site.name || themeEditor.site.slug} · 外观主题`}
+    aria-busy={themeLoading || themeBusy}
+  >
     <header class="sheet-head integration-head theme-sheet-head">
       <div class="integration-head-title">
         <span class="integration-head-icon theme-head-icon">{@render paletteIcon(20)}</span>
@@ -15220,7 +15991,7 @@
           <b>{themeEditor.site.name || themeEditor.site.slug} · 外观主题</b>
         </span>
       </div>
-      <button class="x" onclick={closeSiteThemeEditor} disabled={themeBusy || themePreviewBusy}>×</button>
+      <button class="x" onclick={closeSiteThemeEditor} disabled={themeBusy || themePreviewBusy || !!gcmsPasswordState}>×</button>
       {#if !themeLoading && themeCatalog && themeState && themeView === 'select'}
         <div class="theme-category-row">
           <nav class="theme-category-nav" aria-label="主题分类">
@@ -15284,7 +16055,7 @@
                     use:themeThumbViewport={thumbTarget}
                     style={`--theme-accent:${themeSkinColor(skin ?? { id: family.id, name: family.name }, 'accent')};--theme-bg:${themeSkinColor(skin ?? { id: family.id, name: family.name }, 'background')}`}
                   >
-                    {#if thumb?.url && (thumb.visible || thumb.status === 'ready')}
+                    {#if thumb?.url}
                       {#key thumb.url}
                         <iframe
                           class:ready={thumb.status === 'ready'}
@@ -15292,7 +16063,7 @@
                           title={`${family.name}真实效果缩略图`}
                           aria-hidden="true"
                           tabindex="-1"
-                          loading="lazy"
+                          loading="eager"
                           sandbox="allow-scripts allow-same-origin"
                           referrerpolicy="strict-origin-when-cross-origin"
                           onload={() => markThemeThumbLoaded(thumbTarget, thumb.url)}
@@ -15300,7 +16071,11 @@
                         ></iframe>
                       {/key}
                     {/if}
-                    <span class="theme-family-fallback" class:hidden={thumb?.status === 'ready'}>
+                    <span
+                      class="theme-family-fallback"
+                      class:loading={Boolean(thumb?.visible) && (thumb?.status === 'idle' || thumb?.status === 'loading')}
+                      class:hidden={thumb?.status === 'ready'}
+                    >
                       <i></i><i></i><i></i>
                     </span>
                     {#if familyChosen}<em>正在选择</em>{:else if themeFamilySkins(family).some((item) => item.id === currentThemeId())}<em>当前家族</em>{/if}
@@ -15896,6 +16671,7 @@
       <button class="ctx-item" role="menuitem" onclick={() => { switcherOpen = false; openSshEdit(c); }}>编辑连接…</button>
     {:else if c.kind === 'gcms'}
       <div class="ctx-div"></div>
+      <button class="ctx-item" role="menuitem" onclick={() => openPilotBinding(c)}>Pilot 控制台…</button>
       <button class="ctx-item" role="menuitem" onclick={() => { switcherOpen = false; refreshSites(c.id); }} disabled={!!connectionSyncing[c.id]}>检查更新并刷新站点</button>
       {#if packUpdates[c.id]}
         <button class="ctx-item" role="menuitem" onclick={() => upgradePack(c.id)} disabled={!!packUpdating[c.id]}>升级技能包 {packUpdates[c.id]}</button>
@@ -16137,8 +16913,27 @@
         <div class="tfield"><span>类型</span><Dropdown bind:value={tf.taskType} options={taskTypeOpts} /></div>
         <div class="tfield"><span>任务名称（可选）</span><input class="tin" bind:value={tf.title} placeholder="例如：每日热点速写" /></div>
       </div>
-      <div class="tfield"><span>厂商与模型（与对话中一致）</span>
-        <div class="tfield-fx"><ModelFx options={comboOpts} value={`${tf.brain}::${tf.model}`} effort={tf.effort} onpick={(v: string) => { const i = v.indexOf('::'); if (i > 0) { tf.brain = v.slice(0, i); tf.model = v.slice(i + 2); } }} oneffort={(v: string) => (tf.effort = v)} /></div></div>
+      <div class="md-model-grid task-model-grid">
+        <div class="tfield md-model-card md-model-primary">
+          <div class="md-model-head"><strong>主模型</strong><small>与对话中的模型选择一致</small></div>
+          <div class="tfield-fx"><ModelFx options={comboOpts} value={`${tf.brain}::${tf.model}`} effort={tf.effort} onpick={(v: string) => { const i = v.indexOf('::'); if (i > 0) { tf.brain = v.slice(0, i); tf.model = v.slice(i + 2); } }} oneffort={(v: string) => (tf.effort = v)} /></div>
+        </div>
+        <div class="tfield md-model-card md-model-fallback">
+          <div class="md-model-head md-model-head-fallback">
+            <span><strong>备用模型</strong><small>主模型不可用时接管一次</small></span>
+            <button type="button" class="md-fallback-switch" class:active={tf.fallbackEnabled} role="switch" aria-checked={tf.fallbackEnabled} aria-label={tf.fallbackEnabled ? '停用备用模型' : '启用备用模型'} onclick={() => (tf.fallbackEnabled = !tf.fallbackEnabled)}><span></span></button>
+          </div>
+          {#if tf.fallbackEnabled}
+            <div class="tfield-fx"><ModelFx options={comboOpts} value={`${tf.fallbackBrain}::${tf.fallbackModel}`} effort={tf.fallbackEffort} onpick={(v: string) => { const i = v.indexOf('::'); if (i > 0) { tf.fallbackBrain = v.slice(0, i); tf.fallbackModel = v.slice(i + 2); } }} oneffort={(v: string) => (tf.fallbackEffort = v)} /></div>
+            <small class="md-fallback-note">仅限额度、限流或模型不可用，且尚未执行写操作；不会重复运行。</small>
+          {:else}
+            <button type="button" class="md-fallback-empty" onclick={() => (tf.fallbackEnabled = true)}>
+              <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" /></svg>
+              <span>添加备用模型</span>
+            </button>
+          {/if}
+        </div>
+      </div>
       <div class="tfield"><span>指令（每次到点就把这句话发给模型）</span>
         <textarea bind:value={tf.prompt} rows="3" placeholder="例如：围绕本周科技热点写一篇 800 字左右的中文文章，存草稿，完成后给我预览链接"></textarea></div>
       <div class="trow">
@@ -16148,7 +16943,7 @@
       <label class="tcheck"><input type="checkbox" bind:checked={tf.enabled} /><span>创建后立即启用</span></label>
       <div class="row-end">
         <button class="btn ghost" onclick={() => (taskModalOpen = false)}>取消</button>
-        <button class="btn primary" onclick={saveTask} disabled={!tf.siteSlugs.length || !tf.prompt.trim()}>{tf.id ? '保存' : '创建'}</button>
+        <button class="btn primary" onclick={saveTask} disabled={!tf.siteSlugs.length || !tf.prompt.trim() || !taskFallbackValid}>{tf.id ? '保存' : '创建'}</button>
       </div>
     </div>
   </div>
@@ -17327,6 +18122,23 @@
   .limit-actions .retry-btn { margin-left: 0; }
   .limit-actions .retry-btn.is-armed { color: #3e7a4e; }
   .limit-hint { margin-top: 6px; font-size: 11.5px; color: var(--faint, #9b968c); }
+  /* 运行中活动：只展示协议里真实收到的工具生命周期，不把轮询次数冒充业务完成度。 */
+  .execution-progress {
+    width: fit-content; max-width: 100%; box-sizing: border-box; display: flex; align-items: center; gap: 7px;
+    margin: 9px 0 7px; padding: 6px 9px; border: 1px solid var(--border); border-radius: 9px;
+    background: #faf9f6;
+  }
+  .execution-progress-mark { width: 18px; height: 18px; flex: none; display: grid; place-items: center; border-radius: 6px; background: #eeeae3; }
+  .execution-progress-mark > span { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+  .execution-progress-copy { min-width: 0; display: flex; align-items: baseline; gap: 7px; }
+  .execution-progress-copy b, .execution-progress-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .execution-progress-copy b { font-size: 12px; font-weight: 600; color: var(--text); }
+  .execution-progress-copy small { font-size: 10.5px; color: var(--faint); font-variant-numeric: tabular-nums; }
+  .execution-progress.quiet { border-color: #ead8b7; background: #fcf8ef; }
+  .execution-progress.quiet .execution-progress-mark { background: #f4ead6; }
+  .execution-progress.quiet .execution-progress-mark > span { background: #b87920; }
+  .execution-progress.has-failure:not(.quiet) { border-color: #ecd9d4; }
+  .execution-progress.has-failure:not(.quiet) .execution-progress-mark > span { background: var(--err); }
   /* 命令列表：默认收起，点击展开 */
   .cmds { margin-bottom: 9px; }
   .cmds summary { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; list-style: none; width: fit-content;
@@ -17341,6 +18153,7 @@
   .tool { display: flex; gap: 8px; align-items: baseline; background: #f6f5f1; border: 1px solid var(--border); border-radius: 8px; padding: 5px 10px; font-size: 12px; }
   .tcode { color: var(--accent); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; flex: none; font-weight: 600; }
   .tdetail { color: var(--dim); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tool-count { flex: none; margin-left: auto; color: var(--faint); font-size: 10.5px; font-variant-numeric: tabular-nums; }
   .inlink { background: none; border: none; color: var(--accent); text-decoration: underline; cursor: pointer; padding: 0; font: inherit; word-break: break-all; }
   .err-note { color: var(--err); background: var(--err-soft); border: 1px solid var(--err-border); border-radius: 8px; padding: 8px 10px; font-size: 13px; }
   /* 加载：logo 的 C 一笔描出、圆点落定，循环；后面带本轮耗时。尊重"减弱动态"。 */
@@ -17358,6 +18171,14 @@
   @keyframes pulse { 50% { opacity: .35; } }
 
   /* 站点视图：Pilot 原生读取全局接入与单站摘要；复杂配置仍由 GCMS 作为唯一事实源。 */
+  .sites-head-meta { min-width: 0; flex-wrap: nowrap !important; gap: 3px !important; }
+  .sites-admin-link { min-width: 0; max-width: min(360px, 55vw); display: inline-flex; align-items: center; gap: 4px; padding: 0; border: 0; background: transparent; color: var(--dim); font: inherit; cursor: pointer; }
+  .sites-admin-link span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sites-admin-link :global(svg) { flex: none; }
+  .sites-admin-link:hover { color: var(--text); }
+  .sites-head-sep { flex: none; color: var(--faint); }
+  .sites-head-filter { min-width: 0; display: inline-flex; align-items: center; }
+  .sites-head-filter :global(.dd-trigger.compact) { max-width: 220px; padding-inline: 4px; color: var(--dim); }
   .sites-head-actions .btn { display: inline-flex; align-items: center; gap: 5px; }
   .sites-global-menu { position: relative; flex: none; }
   .sites-global-triggers { height: 30px; display: inline-flex; align-items: center; gap: .46rem; }
@@ -17765,6 +18586,38 @@
   }
 
   /* 站点主题中心：卡片只负责入口，目录、真实预览与确认都在独立宽浮层完成。 */
+  .theme-window-bootstrap {
+    position: fixed;
+    z-index: 60;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--bg);
+  }
+  .theme-window-bootstrap > .sheet-head {
+    flex: none;
+    border-bottom: 1px solid var(--border);
+  }
+  .theme-window-bootstrap-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 9px;
+    padding: 32px;
+    text-align: center;
+  }
+  .theme-window-bootstrap-body > b { font-size: 14px; }
+  .theme-window-bootstrap-body > p {
+    max-width: 440px;
+    margin: 0 0 3px;
+    color: var(--dim);
+    font-size: 11px;
+    line-height: 1.6;
+  }
   .modal.theme-modal {
     width: min(840px, 94vw) !important;
     height: min(720px, 88vh);
@@ -17772,6 +18625,17 @@
     display: flex;
     flex-direction: column;
     overflow: hidden;
+  }
+  .modal.theme-modal.theme-native-window {
+    inset: 0 !important;
+    margin: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    max-width: none !important;
+    max-height: none !important;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
   }
   .theme-head-icon { color: #8a6332; background: #f6efe3; }
   .modal.theme-modal .theme-body {
@@ -17898,12 +18762,35 @@
     transition: opacity .2s ease;
   }
   .theme-family-visual iframe.ready { opacity: 1; }
-  .theme-family-fallback { position: absolute; z-index: 1; inset: 0; display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 16px 1fr; gap: 4px; padding: 7px; opacity: 1; transition: opacity .18s ease; }
-  .theme-family-fallback.hidden { opacity: 0; }
+  .theme-family-fallback { position: absolute; z-index: 1; inset: 0; display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: 16px 1fr; gap: 4px; padding: 7px; overflow: hidden; opacity: 1; visibility: visible; transition: opacity .22s ease, visibility .22s ease; }
+  .theme-family-fallback.hidden { opacity: 0; visibility: hidden; }
+  .theme-family-fallback.loading::after {
+    position: absolute;
+    inset: -35% -65%;
+    background: linear-gradient(
+      108deg,
+      transparent 28%,
+      rgb(255 255 255 / 14%) 39%,
+      rgb(255 255 255 / 62%) 48%,
+      rgb(50 43 32 / 8%) 56%,
+      transparent 68%
+    );
+    content: "";
+    transform: translateX(-42%);
+    animation: theme-thumb-shimmer 1.45s ease-in-out infinite;
+    pointer-events: none;
+  }
   .theme-family-fallback i { display: block; border-radius: 3px; background: currentColor; opacity: .16; }
   .theme-family-fallback i:first-child { grid-column: 1 / -1; opacity: .88; }
   .theme-family-fallback i:nth-child(2) { opacity: .28; }
   .theme-family-fallback i:nth-child(3) { opacity: .09; }
+  @keyframes theme-thumb-shimmer {
+    0% { transform: translateX(-42%); }
+    68%, 100% { transform: translateX(42%); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .theme-family-fallback.loading::after { animation: none; opacity: .4; transform: none; }
+  }
   .theme-family-visual em { position: absolute; z-index: 2; right: 5px; bottom: 5px; padding: 1px 4px; border-radius: 999px; background: rgb(255 255 255 / 86%); color: var(--theme-accent); font-size: 7.5px; font-style: normal; font-weight: 700; }
   .theme-family-copy { min-width: 0; min-height: 67px; align-self: stretch; }
   .theme-family-title { min-width: 0; display: flex; align-items: center; gap: 6px; }
@@ -19557,7 +20444,7 @@
   .transfer-modes small { color: var(--faint); font-size: 9.5px; }
   .transfer-empty { margin: 4px 0; }
   .conn-list { display: flex; flex-direction: column; gap: 5px; }
-  .conn-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 11px; cursor: pointer; transition: border-color .12s, background .12s; }
+  .conn-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 11px; cursor: pointer; transition: border-color .12s, background .12s; }
   .conn-row:hover { background: #faf9f6; }
   .conn-row.on { border-color: #cfc9ec; background: #f7f6ff; }
   .conn-row :global(.sm) { border-radius: 6px; }
@@ -19573,8 +20460,37 @@
   .pack-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); margin-left: 6px; vertical-align: 1px; }
   .icon-btn.sm { padding: 4px; border-radius: 7px; }
   .brain-row { display: flex; align-items: center; gap: 11px; padding: 0; }
+  .brain-auth-actions { flex: none; display: inline-flex; align-items: center; gap: 8px; }
+  .claude-token-trigger { flex: none; width: 26px; height: 26px; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--dim); cursor: pointer; }
+  .claude-token-trigger:hover, .claude-token-trigger.active { background: #f1efe9; color: var(--accent); }
+  .claude-token-form { margin: 7px 0 2px 33px; padding: 10px; display: grid; gap: 8px; border: 1px solid var(--border); border-radius: 10px; background: #faf9f6; }
+  .claude-token-copy { min-width: 0; display: grid; gap: 3px; }
+  .claude-token-copy b { font-size: 11.5px; font-weight: 650; }
+  .claude-token-copy small, .claude-token-safe { color: var(--dim); font-size: 9.5px; line-height: 1.45; }
+  .claude-token-copy code { padding: 1px 4px; border-radius: 4px; background: #efede7; color: var(--text); font: 500 9.5px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .claude-token-entry { display: flex; align-items: center; gap: 6px; }
+  .claude-token-entry input { min-width: 0; flex: 1; height: 30px; box-sizing: border-box; padding: 0 9px; border: 1px solid var(--border2); border-radius: 7px; outline: none; background: #fff; color: var(--text); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .claude-token-entry input:focus { border-color: #c7a599; box-shadow: 0 0 0 2px rgb(160 60 43 / 8%); }
+  .claude-token-entry .btn { flex: none; }
   /* 状态点放进与 .icon-btn 同宽(27px)的居中盒，右缘、图标中心都与本地模型区的刷新图标对齐。 */
   .brain-dot { flex: none; width: 27px; display: inline-flex; align-items: center; justify-content: center; }
+  /* 「账号 / 自定义模型」两个折叠头并排一行；展开体各自出现在行下 */
+  .cust-heads { display: flex; align-items: center; gap: 16px; }
+  /* 当前账号 + 紧凑操作：展开体缩进对齐 chevron 后的文字；完整动作通过 tips 说明。 */
+  .brain-auth { display: flex; align-items: center; gap: 6px; margin: 3px 0 1px 15px; min-width: 0; }
+  .brain-acct { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dim); font-size: 11px; }
+  .brain-auth-sep { color: var(--faint); font-size: 11px; }
+  .brain-auth-icon { flex: none; width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: none; border-radius: 5px; background: transparent; color: var(--faint); cursor: pointer; }
+  .brain-auth-icon:hover, .brain-auth-icon.active { color: var(--accent); background: #f1efe9; }
+  .brain-auth-icon:disabled { opacity: .6; cursor: default; }
+  .brain-auth-icon :global(.rfz) { width: 12px; height: 12px; }
+  .brain-auth-icon .wr-spin { width: 10px; height: 10px; }
+  .cli-new { color: var(--ok); }
+  .cli-upg { flex: none; width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; border: none; background: none; border-radius: 6px; color: var(--ok); cursor: pointer; }
+  .cli-upg:hover:not(:disabled) { background: #f1efe9; }
+  .cli-upg:disabled { color: var(--faint); cursor: default; }
+  .verify-bad { color: #b45309; font-size: 10px; font-weight: 550; white-space: nowrap; }
+  .verify-checking { color: var(--faint); font-size: 10px; white-space: nowrap; }
   .brain-ic { flex: none; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; }
   .brain-main { flex: 1; min-width: 0; } .brain-main b { display: block; font-size: 13.5px; line-height: 1.15; } .brain-main small { display: block; color: var(--dim); font-size: 11px; line-height: 1.1; }
   /* 自定义模型：折叠管理器（对齐大脑名，缩进 33px = 图标 22 + gap 11） */
@@ -19584,7 +20500,7 @@
   .brain-block { display: flex; flex-direction: column; gap: 0; }
   /* 未安装行：一键安装挪到状态文字下方（缩进对齐 brain-main），复制小图标同行在旁 */
   .brain-install { display: flex; align-items: center; gap: 5px; margin: 3px 0 2px 33px; }
-  .cust { margin: 0 0 0 33px; }
+  .cust { margin: 4px 0 0 33px; }
   .cust-head { display: inline-flex; align-items: center; gap: 5px; background: none; border: none; padding: 0; cursor: pointer; font: inherit; font-size: 11.5px; color: var(--dim); -webkit-appearance: none; appearance: none; }
   .cust-head:hover { color: var(--text); }
   .cust-chev { color: var(--faint); flex: none; transition: transform .12s; }

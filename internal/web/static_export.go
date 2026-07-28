@@ -39,6 +39,20 @@ type staticExportFile struct {
 	ContentType string
 }
 
+type staticExportCloudflareConfigKey struct{}
+
+func withStaticExportCloudflareConfig(ctx context.Context, cfg CloudflareConfig) context.Context {
+	return context.WithValue(ctx, staticExportCloudflareConfigKey{}, cfg)
+}
+
+func staticExportCloudflareConfig(ctx context.Context) (CloudflareConfig, bool) {
+	if ctx == nil {
+		return CloudflareConfig{}, false
+	}
+	cfg, ok := ctx.Value(staticExportCloudflareConfigKey{}).(CloudflareConfig)
+	return cfg, ok
+}
+
 type staticSearchEntry struct {
 	Type     string `json:"type"`
 	Title    string `json:"title"`
@@ -51,13 +65,36 @@ type staticSearchEntry struct {
 }
 
 func (s *Server) exportStaticSite(ctx context.Context, cfg CloudflareConfig) (*staticExportResult, error) {
+	s.pagePublicationMu.RLock()
+	defer s.pagePublicationMu.RUnlock()
+	return s.exportStaticSiteLocked(ctx, cfg)
+}
+
+// exportStaticSiteLocked renders one immutable view of all published page
+// pointers. Callers that need to bind delivery records in the same snapshot
+// (the Cloudflare deploy path) take pagePublicationMu themselves and call this
+// helper; ordinary callers use exportStaticSite above.
+func (s *Server) exportStaticSiteLocked(ctx context.Context, cfg CloudflareConfig) (*staticExportResult, error) {
 	cfg = s.cloudflareStaticRuntimeConfig(cfg)
+	ctx = withStaticExportCloudflareConfig(ctx, cfg)
 	host := cloudflareRouteHost(cfg.RoutePattern)
 	if host == "" {
 		return nil, errors.New("请先填写前台访问域名。")
 	}
 	if s.assetsFS == nil {
 		return nil, errors.New("静态资源文件系统未初始化。")
+	}
+	// Reject unsupported published page runtimes before creating or rendering a
+	// partial export tree. Draft-only conversions continue to use the standard
+	// public page and do not trip this guard.
+	if err := s.checkPageProjectStaticExport(); err != nil {
+		return nil, err
+	}
+	if err := s.validateCompositionContactStaticExport(cfg); err != nil {
+		return nil, err
+	}
+	if err := s.validatePageAppBridgeStaticExport(cfg); err != nil {
+		return nil, err
 	}
 	dir, err := os.MkdirTemp("", "gcms-static-*")
 	if err != nil {
@@ -163,6 +200,12 @@ func (s *Server) exportStaticSite(ctx context.Context, cfg CloudflareConfig) (*s
 		return nil, err
 	}
 	if err := s.exportUploads(result); err != nil {
+		return nil, err
+	}
+	if err := s.exportPublishedCompositionAssets(result); err != nil {
+		return nil, err
+	}
+	if err := s.exportPublishedPageAppArtifacts(result, cfg); err != nil {
 		return nil, err
 	}
 	return result, nil
@@ -336,6 +379,9 @@ func (s *Server) exportLinkPages(render func(string, string) error, lang, prefix
 }
 
 func (s *Server) exportPagePages(render func(string, string) error, lang, prefix string) error {
+	if err := s.checkPageProjectStaticExport(); err != nil {
+		return err
+	}
 	pages, err := s.store.AllPagesAllLangs()
 	if err != nil {
 		return err

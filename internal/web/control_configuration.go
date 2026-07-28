@@ -323,14 +323,10 @@ func (s *Server) servePlatformControlSiteTheme(w http.ResponseWriter, r *http.Re
 			return
 		}
 
-		liveSite := site.IsDefault
-		if !liveSite {
-			domains, err := s.controlDomainsForSite(site.ID)
-			if err != nil {
-				apiError(w, http.StatusInternalServerError, "theme_live_status_failed", "无法确认站点是否已上线，未执行主题变更。")
-				return
-			}
-			liveSite = len(domains) > 0
+		liveSite, err := s.controlSiteRequiresUnlock(site)
+		if err != nil {
+			apiError(w, http.StatusInternalServerError, "theme_live_status_failed", "无法确认站点是否已上线，未执行主题变更。")
+			return
 		}
 		if !controlDryRun(r) && liveSite && !s.requireControlUnlock(w, r, key, "themes.apply_live") {
 			return
@@ -462,6 +458,22 @@ func (s *Server) controlDomainsForSite(siteID int64) ([]*platform.SiteDomain, er
 		}
 	}
 	return out, nil
+}
+
+// 默认站点始终对外；非默认站只有绑定了已启用域名才算线上站点。
+// 判断失败必须由调用方 fail-closed，不能静默免除密码验证。
+func (s *Server) controlSiteRequiresUnlock(site *platform.Site) (bool, error) {
+	if site == nil {
+		return true, fmt.Errorf("站点不存在")
+	}
+	if site.IsDefault {
+		return true, nil
+	}
+	domains, err := s.controlDomainsForSite(site.ID)
+	if err != nil {
+		return true, err
+	}
+	return len(domains) > 0, nil
 }
 
 func controlDomainResponse(siteID int64, domains []*platform.SiteDomain) map[string]any {

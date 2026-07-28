@@ -1,0 +1,116 @@
+{{define "home_factory_rackwall"}}
+  {{/* factory-rackwall — 货架：首屏是一格「货位」——上下两道橙色横梁夹住整块，左立柱内是
+       标题文案，右侧一块承重铭牌（factory.stats 逐条＝一行载重读数；未配置回落 factory_about
+       拆分块，绝不留空卡），铭牌底缀认证钢印槽；横梁正下方续一条作业流程刻度带
+      （factory.process，整条开关关掉就不渲染）与库区实拍带（factory.gallery，未配置整块不渲染，
+       绝不占位假照片）。商品区＝托盘位：整排卡片同样被上下橙色横梁夹住，每张卡顶一条
+       黑底托盘编号签。其余区块复用共享 define：通道索引（分类）/ 应用行业 / FAQ / 出库动态 /
+       CTA 通栏。区块序号、通道字母、托盘编号一律由 CSS counter 生成——模板不写死任何示例文案，
+       文字全部走 i18n 键与配置槽。 */}}
+  <div class="rkw-wrap">
+    <section class="rkw-bay">
+      <div class="rkw-bay-in">
+        <div class="rkw-copy">
+          {{if .Site.HeroEyebrow}}<p class="rkw-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+          <h1 class="rkw-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+          {{if .Site.HeroDescription}}<p class="rkw-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+          <div class="rkw-cta">
+            {{if .Contact.Any}}<a class="btn btn-primary" href="#factory-contact">{{.Tr.T "contact.float_label"}} <span class="arrow" aria-hidden="true">→</span></a>
+            {{else}}<a class="btn btn-primary" href="{{.Tr.U "/products"}}">{{.Tr.T "factory.products"}} <span class="arrow" aria-hidden="true">→</span></a>{{end}}
+            <a class="btn" href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}}</a>
+          </div>
+        </div>
+        <aside class="rkw-plate" aria-label="{{.Tr.T "factory.strength"}}">
+          {{template "factory_hero_slot" .}}
+          <p class="rkw-plate-t">{{.Tr.T "factory.strength"}}</p>
+          {{if .FactoryStats}}
+          <dl class="f-stats rkw-stats">
+            {{range .FactoryStats}}<div class="f-stat"><dt>{{.Num}}</dt><dd>{{.Label}}</dd></div>
+            {{end}}
+          </dl>
+          {{else}}{{template "factory_about" .}}{{end}}
+          {{if .FactoryCertifications}}<div class="f-certs rkw-certs" aria-label="{{.Tr.T "factory.certs"}}">
+            {{range .FactoryCertifications}}<span class="f-cert"><b>{{.Name}}</b>{{if .Note}}<i>{{.Note}}</i>{{end}}</span>{{end}}
+          </div>{{end}}
+        </aside>
+      </div>
+    </section>
+
+    {{if .FactoryProcessOn}}
+    <div class="rkw-rail" aria-label="{{.Tr.T "factory.process"}}">
+      <p class="rkw-rail-t">{{.Tr.T "factory.process"}}</p>
+      {{template "factory_process_steps" .}}
+    </div>
+    {{end}}
+
+    {{if .FactoryGallery}}
+    <section class="rkw-sec rkw-zone">
+      <div class="rkw-head"><h2>{{.Tr.T "factory.gallery"}}</h2></div>
+      {{template "factory_gallery" .}}
+    </section>
+    {{end}}
+
+    <section class="rkw-sec">
+      <div class="rkw-head">
+        <h2>{{.Tr.T "factory.products"}}</h2>
+        <a href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="rkw-shelf">
+        <div class="rkw-grid">
+          {{range .FactoryProducts}}
+          <a class="rkw-slot" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+            <span class="rkw-slot-tag" aria-hidden="true"></span>
+            <span class="rkw-slot-media{{if not .CoverImage}} rkw-slot-gen{{end}}">
+              {{if .CoverImage}}<img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}
+            </span>
+            <span class="rkw-slot-body">
+              {{with .Category}}<span class="rkw-slot-cat">{{.Name}}</span>{{end}}
+              <span class="rkw-slot-title">{{.Title}}</span>
+              {{with productChips .}}<span class="f-chips">{{range .}}<span class="f-chip"><b>{{.K}}</b><i>{{.V}}</i></span>{{end}}</span>{{end}}
+            </span>
+          </a>
+          {{else}}
+          <p class="rkw-empty muted">{{.Tr.T "factory.no_products"}}</p>
+          {{end}}
+        </div>
+      </div>
+    </section>
+
+    {{if .FactoryCats}}
+    <section class="rkw-sec">
+      <div class="rkw-head"><h2>{{.Tr.T "factory.categories"}}</h2></div>
+      {{template "factory_categories" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryIndustries}}
+    <section class="rkw-sec">
+      <div class="rkw-head"><h2>{{.Tr.T "factory.industries"}}</h2></div>
+      {{template "factory_industries" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryQAs}}
+    <section class="rkw-sec">
+      <div class="rkw-head"><h2>{{.Tr.T "factory.faq"}}</h2></div>
+      {{template "factory_faq" .}}
+    </section>
+    {{end}}
+
+    {{if .Posts}}
+    <section class="rkw-sec">
+      <div class="rkw-head">
+        <h2>{{.Tr.T "factory.news"}}</h2>
+        <a href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="rkw-news">
+        {{range $i, $p := .Posts}}{{if lt $i 3}}
+        <a class="rkw-news-item" href="{{$.Tr.U (contentURL $p)}}"><time datetime="{{$.Tr.ISODate $p.PublishedAt}}">{{$.Tr.Date $p.PublishedAt}}</time><span class="rkw-news-title">{{$p.Title}}</span><span class="arrow" aria-hidden="true">→</span></a>
+        {{end}}{{end}}
+      </div>
+    </section>
+    {{end}}
+  </div>
+
+  {{template "factory_cta" .}}
+{{end}}

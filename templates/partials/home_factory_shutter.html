@@ -1,0 +1,110 @@
+{{define "home_factory_shutter"}}
+  {{/* factory-shutter — 卷帘：整页读成一条卷帘门市街。
+       页头=门牌号导航（CSS 重塑标准 .site-header：导航项配等宽 No.01… 门牌号，
+       CSS 计数器生成不改 DOM，当前项深底黄字灯牌；≤620px 交还基础汉堡抽屉，
+       故不新增 header define）。hero=大标题（眉标=灯箱牌）+ factory.stats 档口小牌
+       （顶条 No. 门牌；未配置回落 factory_about）。商品=卷帘门格：卡顶卷轴盒横条，
+       媒体上段被帘板横纹渐变覆盖、底部白色信息条露出=半卷起（悬停帘子再卷高一段，
+       prefers-reduced-motion 静止）；首张精选卡整门卷起=纯白底完整内容（无帘板覆盖，跨两列）。
+       gallery=档口实拍格（共享 f-gallery 重塑为编号格网）。
+       数据全由 fillFactoryHome 装载；空数据整块不渲染，封面缺失走首字兜底；
+       编号取 .FactorySectionNum（跳过未渲染区块，编号连续）。 */}}
+  <div class="sht-wrap">
+    <section class="sht-hero">
+      <div class="sht-hero-copy">
+        {{if .Site.HeroEyebrow}}<p class="sht-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+        <h1 class="sht-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+        {{if .Site.HeroDescription}}<p class="sht-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+        <div class="sht-cta">
+          {{if .Contact.Any}}<a class="btn btn-primary" href="#factory-contact">{{.Tr.T "contact.float_label"}} <span class="arrow" aria-hidden="true">→</span></a>
+          {{else}}<a class="btn btn-primary" href="{{.Tr.U "/products"}}">{{.Tr.T "factory.products"}} <span class="arrow" aria-hidden="true">→</span></a>{{end}}
+          <a class="btn" href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}}</a>
+        </div>
+      </div>
+      <div class="sht-hero-side">
+        {{template "factory_hero_slot" .}}
+        {{if .FactoryStats}}<dl class="f-stats sht-stats">
+          {{range .FactoryStats}}<div class="f-stat"><dt>{{.Num}}</dt><dd>{{.Label}}</dd></div>
+          {{end}}</dl>
+        {{else}}{{template "factory_about" .}}{{end}}
+      </div>
+    </section>
+
+    {{if .FactoryCats}}
+    <section class="sht-section">
+      <div class="sht-head"><div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "categories"}}</span>{{.Tr.T "factory.categories"}}</p><h2>{{.Tr.T "factory.categories"}}</h2></div></div>
+      {{template "factory_categories" .}}
+    </section>
+    {{end}}
+
+    <section class="sht-section sht-doors-sec">
+      <div class="sht-head">
+        <div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "products"}}</span>{{.Tr.T "factory.products"}}</p><h2>{{.Tr.T "factory.products"}}</h2></div>
+        <a href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="sht-doors">
+        {{range $i, $p := .FactoryProducts}}
+        <a class="sht-door{{if eq $i 0}} sht-door-open{{end}}" href="{{if $p.Slug}}{{$.Tr.U (contentURL $p)}}{{else}}#{{end}}">
+          <span class="sht-door-media{{if not $p.CoverImage}} sht-door-gen{{end}}">
+            {{if $p.CoverImage}}<img src="{{$p.CoverImage}}" alt="{{$p.Title}}" loading="lazy" decoding="async"{{imgAttrs $p.CoverImage}}>{{else}}<b aria-hidden="true">{{initial $p.Title}}</b>{{end}}
+          </span>
+          <span class="sht-door-body">
+            {{with $p.Category}}<span class="sht-door-cat">{{.Name}}</span>{{end}}
+            <span class="sht-door-title">{{$p.Title}}</span>
+            {{if $p.Excerpt}}<span class="sht-door-ex">{{$p.Excerpt}}</span>{{end}}
+            {{with productChips $p}}<span class="f-chips">{{range .}}<span class="f-chip"><b>{{.K}}</b><i>{{.V}}</i></span>{{end}}</span>{{end}}
+          </span>
+        </a>
+        {{else}}<p class="sht-empty muted">{{.Tr.T "factory.no_products"}}</p>{{end}}
+      </div>
+    </section>
+
+    {{if .FactoryProcessOn}}
+    <section class="sht-section sht-process-sec">
+      <div class="sht-head"><div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "process"}}</span>{{.Tr.T "factory.process"}}</p><h2>{{.Tr.T "factory.process"}}</h2></div></div>
+      {{template "factory_process_steps" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryIndustries}}
+    <section class="sht-section">
+      <div class="sht-head"><div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "industries"}}</span>{{.Tr.T "factory.industries"}}</p><h2>{{.Tr.T "factory.industries"}}</h2></div></div>
+      {{template "factory_industries" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryGallery}}
+    <section class="sht-section">
+      <div class="sht-head"><div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "gallery"}}</span>{{.Tr.T "factory.gallery"}}</p><h2>{{.Tr.T "factory.gallery"}}</h2></div></div>
+      {{template "factory_gallery" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryQAs}}
+    <section class="sht-section">
+      <div class="sht-head"><div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "faq"}}</span>{{.Tr.T "factory.faq"}}</p><h2>{{.Tr.T "factory.faq"}}</h2></div></div>
+      {{template "factory_faq" .}}
+    </section>
+    {{end}}
+
+    {{if .Posts}}
+    <section class="sht-section sht-news">
+      <div class="sht-head sht-news-head">
+        <div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "news"}}</span>{{.Tr.T "factory.news"}}</p><h2>{{.Tr.T "factory.news"}}</h2></div>
+        <a href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="sht-news-list">
+        {{range $i, $p := .Posts}}{{if lt $i 3}}
+        <a class="sht-news-item" href="{{$.Tr.U (contentURL $p)}}">
+          <time datetime="{{$.Tr.ISODate $p.PublishedAt}}">{{$.Tr.Date $p.PublishedAt}}</time>
+          <span class="sht-news-title">{{$p.Title}}</span>
+          <span class="arrow" aria-hidden="true">→</span>
+        </a>
+        {{end}}{{end}}
+      </div>
+    </section>
+    {{end}}
+  </div>
+
+  {{template "factory_cta" .}}
+{{end}}

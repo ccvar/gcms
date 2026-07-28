@@ -1,0 +1,120 @@
+{{define "home_dtc_atelier"}}
+  {{/* dtc-atelier — 工坊：手作工作室气质的独立站。导航=左竖签工牌（深木底竖排站名+链接，
+       920px 转顶部木条、620px 交还基础汉堡，见 public.css）；hero=工作台叙事（HeroTitle+
+       HeroDescription 长文当「主理人口述」，衬线宽行距，左缘竖排眉标装饰车道）；商品=器物卡
+       （productChips 渲染成「工艺行」点线对账行）；FactoryGallery 有则出「工作台照」横带。
+       数据由 fillDTCHome 装载；空数据优雅缺省，商品区在 FactoryProducts 为空时整段不渲染。
+       hero 槽三态照 flagship 抄法：image=全幅底图 scrim 压字 / svg=右侧内嵌 /
+       default,anim*=右侧 DTC 轻动画（dtc_hero_anim 复用）。 */}}
+  {{$heroImg := ""}}{{if and (eq .Site.HeroVisual "image") .Site.HeroImage}}{{$heroImg = .Site.HeroImage}}{{end}}
+  {{$heroSVG := and (eq .Site.HeroVisual "svg") (ne .Site.HeroSVG "")}}
+  {{$heroAnim := and (not $heroImg) (not $heroSVG)}}
+  <div class="atl-wrap">
+    <section class="atl-hero{{if $heroImg}} has-img{{else if $heroAnim}} has-anim{{end}}">
+      {{if $heroImg}}<img class="atl-hero-img" src="{{$heroImg}}" alt="{{.Site.HeroAlt}}" decoding="async" fetchpriority="high"{{imgAttrs $heroImg}}>{{end}}
+      <div class="atl-hero-inner">
+        <div class="atl-hero-copy">
+          {{if .Site.HeroEyebrow}}<p class="atl-hero-mark"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+          {{/* 竖排眉标与正文分列：眉标独占左车道（不再绝对定位压 h1），正文成一列 */}}
+          <div class="atl-hero-main">
+            <h1 class="atl-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+            {{if .Site.HeroDescription}}<p class="atl-tale"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+            <div class="atl-cta">
+              <a class="btn btn-primary" href="{{.Tr.U "/products"}}">{{.Tr.T "dtc.shop_now"}} <span class="arrow" aria-hidden="true">→</span></a>
+              {{if .Contact.Any}}<a class="btn dt-btn-ghost" href="#dtc-contact">{{.Tr.T "contact.float_label"}}</a>{{end}}
+            </div>
+          </div>
+        </div>
+        {{if $heroSVG}}<div class="atl-hero-side dt-embed" aria-hidden="true">{{safeHTML .Site.HeroSVG}}</div>
+        {{else if $heroAnim}}<div class="atl-hero-side dt-heroanim" aria-hidden="true">{{template "dtc_hero_anim" .}}</div>{{end}}
+      </div>
+    </section>
+
+    {{if .FactoryCats}}
+    <nav class="atl-shelf" aria-label="{{.Tr.T "factory.categories"}}">
+      {{range .FactoryCats}}
+      <a class="atl-shelf-tag" href="{{$.Tr.U .URL}}"><span>{{.Name}}</span><small>{{.Count}}</small></a>
+      {{end}}
+    </nav>
+    {{end}}
+
+    {{if .FactoryProducts}}
+    <section class="atl-section atl-goods">
+      <div class="dt-head">
+        <div>
+          <p class="dt-eyebrow">{{.Tr.T "dtc.label.products"}}</p>
+          <h2>{{.Tr.T "factory.products"}}</h2>
+        </div>
+        <a href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="atl-grid">
+        {{range .FactoryProducts}}
+        <a class="atl-card" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+          <span class="atl-card-media{{if not .CoverImage}} dt-gen{{end}}">
+            {{if .CoverImage}}<img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}
+          </span>
+          <span class="atl-card-body">
+            {{with .Category}}<span class="atl-card-cat">{{.Name}}</span>{{end}}
+            <span class="atl-card-title">{{.Title}}</span>
+            {{with productChips .}}<span class="atl-craft">{{range .}}<span class="atl-craft-row"><b>{{.K}}</b><i>{{.V}}</i></span>{{end}}</span>{{end}}
+          </span>
+        </a>
+        {{end}}
+      </div>
+    </section>
+    {{end}}
+
+    {{if or .FactoryStats .Site.Description}}
+    <section class="atl-section atl-story">
+      <div class="dt-head">
+        <div>
+          <p class="dt-eyebrow">{{.Tr.T "dtc.label.story"}}</p>
+          <h2>{{.Tr.T "dtc.story"}}</h2>
+        </div>
+      </div>
+      {{if .FactoryStats}}
+      <dl class="dt-stats">
+        {{range .FactoryStats}}
+        <div class="dt-stat"><dt>{{.Num}}</dt><dd>{{.Label}}</dd></div>
+        {{end}}
+      </dl>
+      {{else}}
+      <p class="atl-about">{{.Site.Description}}</p>
+      {{end}}
+    </section>
+    {{end}}
+
+    {{if .FactoryGallery}}
+    <section class="atl-section atl-bench">
+      <div class="dt-head">
+        <div>
+          <p class="dt-eyebrow">{{.Tr.T "dtc.label.scenes"}}</p>
+          <h2>{{.Tr.T "dtc.scenes"}}</h2>
+        </div>
+      </div>
+      {{template "factory_gallery" .}}
+    </section>
+    {{end}}
+
+    {{if .DTCTestimonials}}
+    <section class="atl-section atl-reviews">
+      <div class="dt-head">
+        <div>
+          <p class="dt-eyebrow">{{.Tr.T "dtc.label.reviews"}}</p>
+          <h2>{{.Tr.T "dtc.reviews"}}</h2>
+        </div>
+      </div>
+      {{template "dtc_testimonials" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryQAs}}
+    <section class="atl-section atl-faq">
+      <div class="dt-head"><div><p class="dt-eyebrow">{{.Tr.T "dtc.label.guide"}}</p><h2>{{.Tr.T "factory.faq"}}</h2></div></div>
+      {{template "factory_faq" .}}
+    </section>
+    {{end}}
+  </div>
+
+  {{template "dtc_cta" .}}
+{{end}}

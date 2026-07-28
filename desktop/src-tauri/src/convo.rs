@@ -27,9 +27,12 @@ pub struct TaskProposal {
 /// begin_turn 的结果。
 pub enum TurnStart {
     Started,
+    /// session 尚未建立（当年首轮就崩 / 换厂商时被清空）：消息已入列、状态已置 running，
+    /// 调用方须按「新会话首轮」跑（同重建口径：新 session + 系统提示 + 历史摘要）——
+    /// 老对话不再因此死路一条。
+    StartedFresh,
     Busy,
     NotFound,
-    NoSession,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -72,6 +75,9 @@ pub struct Conversation {
     /// 思考等级（推理强度）：'' 默认 | low | medium | high。每轮下发，运行中可改。
     #[serde(default)]
     pub effort: String,
+    /// fast 模式：只有 Opus 5 / Opus 4.8 支持。旧会话反序列化缺这个键 → default false。
+    #[serde(default)]
+    pub fast: bool,
     /// 多站会话：站点 slug 清单（>1 时为跨站会话，site_slug 存空、site_name 存展示名）。
     #[serde(default)]
     pub site_slugs: Vec<String>,
@@ -162,14 +168,16 @@ impl ConvStore {
         if slot.status == "running" {
             return TurnStart::Busy;
         }
-        if slot.session_ref.trim().is_empty() {
-            return TurnStart::NoSession;
-        }
+        let fresh = slot.session_ref.trim().is_empty();
         slot.messages.push(user);
         slot.status = "running".into();
         slot.updated_at = now;
         let _ = self.save(&list);
-        TurnStart::Started
+        if fresh {
+            TurnStart::StartedFresh
+        } else {
+            TurnStart::Started
+        }
     }
 
     /// 原子开始"重试上一轮"：锁内检查 running/session、去掉末尾那条失败/部分的助手消息、
@@ -393,6 +401,7 @@ mod tests {
             model: "sonnet".into(),
             perm_mode: "full".into(),
             effort: String::new(),
+            fast: false,
             site_slugs: vec![],
             site_names: vec![],
             workspace_dir: String::new(),
@@ -475,6 +484,29 @@ mod tests {
 
         // 正在跑时拒绝
         assert!(store.begin_retry("a", 11).is_err());
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn begin_turn_without_session_starts_fresh_instead_of_dead_end() {
+        // 首轮 401 就崩 / 换厂商清空 session 的老对话：发消息不再报「已失效」死路，
+        // 而是消息照常入列、置 running，返回 StartedFresh 让调用方按新会话首轮跑。
+        let base = std::env::temp_dir().join(format!("convo-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&base).unwrap();
+        let store = ConvStore::new(&base);
+        store
+            .upsert(conv("a", "", vec![msg("user", "hi"), msg("assistant", "早年回复")]))
+            .unwrap();
+
+        let started = store.begin_turn("a", 10, msg("user", "新消息"));
+        assert!(matches!(started, TurnStart::StartedFresh));
+        let c = store.get("a").unwrap();
+        assert_eq!(c.status, "running");
+        assert_eq!(c.messages.last().unwrap().text, "新消息");
+
+        // 有 session 的照旧走 Started
+        store.upsert(conv("b", "sess-1", vec![])).unwrap();
+        assert!(matches!(store.begin_turn("b", 11, msg("user", "q")), TurnStart::Started));
         std::fs::remove_dir_all(&base).ok();
     }
 

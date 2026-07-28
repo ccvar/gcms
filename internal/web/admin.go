@@ -634,11 +634,20 @@ func (s *Server) populatePlatformSites(v *View) {
 	v.PlatformPreviewURLs = map[int64]string{}
 	v.PlatformOfficialURLs = map[int64]string{}
 	v.PlatformOfficialHosts = map[int64]string{}
+	v.PlatformRuntimeErrors = map[int64]string{}
+	if pool := s.runtimePool(); pool != nil {
+		for siteID, failure := range pool.failures {
+			v.PlatformRuntimeErrors[siteID] = failure.Detail
+		}
+	}
 	for _, site := range sites {
 		if site == nil {
 			continue
 		}
 		v.PlatformPreviewURLs[site.ID] = s.platformSitePreviewURL(site.ID)
+		if _, failed := v.PlatformRuntimeErrors[site.ID]; failed {
+			continue
+		}
 		if icon := s.platformSiteIconURL(site.ID); icon != "" {
 			v.PlatformSiteIcons[site.ID] = icon
 		}
@@ -1049,6 +1058,19 @@ func (s *Server) adminListRedirect(base string, r *http.Request) string {
 	case "draft", "published", "scheduled", "discarded":
 		parts = append(parts, "status="+status)
 	}
+	switch mode := strings.TrimSpace(r.FormValue("mode")); mode {
+	case "standard", store.PageModeComposition, store.PageModeApp:
+		parts = append(parts, "mode="+mode)
+	}
+	switch origin := strings.TrimSpace(r.FormValue("origin")); origin {
+	case store.PageOriginAdmin, store.PageOriginPilot, store.PageOriginAPI, store.PageOriginRestore:
+		parts = append(parts, "origin="+origin)
+	}
+	switch build := strings.TrimSpace(r.FormValue("build")); build {
+	case store.PageProjectBuildIdle, store.PageProjectBuildValidating,
+		store.PageProjectBuildReady, store.PageProjectBuildFailed:
+		parts = append(parts, "build="+build)
+	}
 	if cat := strings.Trim(strings.TrimSpace(r.FormValue("cat")), "/"); cat != "" {
 		parts = append(parts, "cat="+cat)
 	}
@@ -1112,7 +1134,7 @@ func (s *Server) adminDashboard(w http.ResponseWriter, r *http.Request) {
 	v.OverviewRecent = recent
 	v.AutomationKeys = keys
 	v.AutomationLogs = logs
-	v.Update = currentUpdateInfo()
+	v.Update = s.currentUpdateInfo()
 	v.Upgrade = readUpgradeStatus()
 	v.OverviewStatus = s.adminOverviewStatus(v, keys)
 	s.rnd.Admin(w, "dashboard", http.StatusOK, v)
@@ -1845,7 +1867,7 @@ func (s *Server) showAdminUpdates(w http.ResponseWriter, r *http.Request, flash,
 	s.platformAuthed(v, sess)
 	v.Flash = flash
 	v.FormErr = formErr
-	v.Update = currentUpdateInfo()
+	v.Update = s.currentUpdateInfo()
 	v.Upgrade = readUpgradeStatus()
 	status := http.StatusOK
 	if formErr != "" {
@@ -3781,6 +3803,9 @@ func (s *Server) adminRelink(w http.ResponseWriter, r *http.Request) {
 		s.notFound(w, r)
 		return
 	}
+	if s.rejectAdvancedPageLegacyAdminMutation(w, p) {
+		return
+	}
 	target := strings.TrimSpace(r.FormValue("relink_target"))
 	group := target
 	if tid := atoi64(target); tid > 0 { // 填的是文章 ID → 取它所在的组
@@ -3897,6 +3922,9 @@ func (s *Server) adminTranslate(w http.ResponseWriter, r *http.Request) {
 		s.notFound(w, r)
 		return
 	}
+	if s.rejectAdvancedPageLegacyAdminMutation(w, src) {
+		return
+	}
 	editPath := func(id int64) string {
 		switch src.Type {
 		case "page":
@@ -3925,7 +3953,16 @@ func (s *Server) adminTranslate(w http.ResponseWriter, r *http.Request) {
 		MetaDesc: src.MetaDesc, Keywords: src.Keywords, CoverImage: src.CoverImage, Author: src.Author,
 		Status: "draft", EditorMode: src.EditorMode, Lang: target, TransGroup: src.TransGroup, LinkURL: src.LinkURL,
 	}
-	np.Slug = s.uniqueSlug(target, src.Slug, 0)
+	var err error
+	if src.Type == "page" {
+		np.Slug, err = s.uniquePageSlug(target, src.Slug, 0)
+		if err != nil {
+			s.serverError(w, err)
+			return
+		}
+	} else {
+		np.Slug = s.uniqueSlug(target, src.Slug, 0)
+	}
 	// 分类映射到目标语种的对应分类（若存在互译关联）
 	if src.CategoryID.Valid {
 		if sc, _ := s.store.GetCategoryByID(src.CategoryID.Int64); sc != nil {
@@ -4309,19 +4346,79 @@ var themeDescEN = map[string]string{
 	"whitecube":                 "Pure-white gallery walls with graphite type and label red — minimal art and case studies",
 	"botanical":                 "Sage gallery walls with forest green and cobalt labels — nature-led exhibitions",
 	// 外贸独立站主题族（dtc）
-	"cream":     "Cream-white paper with warm near-black and hairlines — flagship brand-store homepage for general DTC brands",
-	"amberglow": "Warm amber paper with honey-orange accents and serif headings — cozy lifestyle skin for home fragrance and craft brands",
-	"inknavy":   "Deep ink-navy with champagne-gold accents and serif display type — premium night-mode skin for accessible luxury brands",
-	"oliveleaf": "Rice-paper base with olive-green accents and soft rounded cards — natural skin for personal care and outdoor-living brands",
-	"dawnfair":  "Pure white with system sans-serif light-weight display type, hairline dividers, outlined buttons that invert on hover and frameless product cards — Shopify-Dawn default-store feel for general DTC brands",
-	"solowhite": "Pure white with an indigo conversion button and oversized type — single-product long-scroll funnel for one-hero-product brands",
-	"charcoal":  "Charcoal dark base with amber-gold CTAs and type over imagery — launch-night skin for electronics and fitness gear",
-	"coralpop":  "Milk-white base with lively coral accents and large radii — energetic skin for beauty and trend gadgets",
-	"limewash":  "Pale green-gray base with moss-green accents and bold serif titles — fresh natural skin for wellness and plant-based products",
-	"galleria":  "Gallery white with near-black fine type and zero radius — visual-first lookbook wall for fashion and designer brands",
-	"blackbox":  "Near-black exhibition hall with warm gold wall labels — after-dark lookbook for high fashion and limited collections",
-	"flaxen":    "Flaxen linen paper with flax-brown accents and small serif labels — textile skin for home linen and slow-living brands",
-	"fogblue":   "Fog gray-blue base with harbor-blue accents — cool still-life skin for ceramics, stationery and minimal lifestyle brands",
+	"cream":             "Cream-white paper with warm near-black and hairlines — flagship brand-store homepage for general DTC brands",
+	"amberglow":         "Warm amber paper with honey-orange accents and serif headings — cozy lifestyle skin for home fragrance and craft brands",
+	"inknavy":           "Deep ink-navy with champagne-gold accents and serif display type — premium night-mode skin for accessible luxury brands",
+	"oliveleaf":         "Rice-paper base with olive-green accents and soft rounded cards — natural skin for personal care and outdoor-living brands",
+	"dawnfair":          "Pure white with system sans-serif light-weight display type, hairline dividers, outlined buttons that invert on hover and frameless product cards — Shopify-Dawn default-store feel for general DTC brands",
+	"solowhite":         "Pure white with an indigo conversion button and oversized type — single-product long-scroll funnel for one-hero-product brands",
+	"charcoal":          "Charcoal dark base with amber-gold CTAs and type over imagery — launch-night skin for electronics and fitness gear",
+	"coralpop":          "Milk-white base with lively coral accents and large radii — energetic skin for beauty and trend gadgets",
+	"limewash":          "Pale green-gray base with moss-green accents and bold serif titles — fresh natural skin for wellness and plant-based products",
+	"galleria":          "Gallery white with near-black fine type and zero radius — visual-first lookbook wall for fashion and designer brands",
+	"blackbox":          "Near-black exhibition hall with warm gold wall labels — after-dark lookbook for high fashion and limited collections",
+	"flaxen":            "Flaxen linen paper with flax-brown accents and small serif labels — textile skin for home linen and slow-living brands",
+	"fogblue":           "Fog gray-blue base with harbor-blue accents — cool still-life skin for ceramics, stationery and minimal lifestyle brands",
+	"vitrine":           "Warm-white shopfront with ink and antique brass \u2014 a three-pane vitrine hero over slim-framed tall product cards, for boutique curation, accessories and fragrance brands",
+	"vitrine-noir":      "Blacked-out window with warm gold spotlighting \u2014 the vitrine skeleton after closing time, for jewellery, gifting and light-luxury accessories",
+	"vitrine-white":     "Pure-white colourway of the Vitrine skeleton",
+	"journalshop":       "Off-white stock with ink and brick red \u2014 a cover-story spread and a three-column selects strip, for editorial brands, buyer shops and lifestyle stores",
+	"journalshop-noir":  "Ink-black magazine face with off-white text and brick-red kickers \u2014 the journal skeleton for night reading and design titles",
+	"journalshop-white": "Pure-white colourway of the Journal skeleton",
+	"catalogue":         "Ivory stock with ink and dark gold \u2014 an index rail beside numbered catalogue rows, for SKU-heavy curated goods, homeware and tool brands",
+	"catalogue-noir":    "Charcoal catalogue with dark-gold numbering \u2014 the catalogue skeleton in the dark, for tools, instruments and menswear",
+	"catalogue-white":   "Pure-white colourway of the Catalogue skeleton",
+	"bazaar":            "Linen beige with stall red and timber brown \u2014 a clipped banner header over awning-topped stall cards, for craft, food and folk-goods brands",
+	"bazaar-noir":       "Night-market brown with warm bulb amber \u2014 the bazaar skeleton after dark, for street food, festival goods and market culture",
+	"bazaar-white":      "Pure-white colourway of the Bazaar skeleton",
+	"column":            "Near-black with warm gold and moonlight white \u2014 one product per full screen with a floating dot rail, for tightly curated design brands",
+	"column-day":        "Daylight white with ink and dark gold \u2014 the column skeleton in full daylight, for homeware objects and single garments",
+	"column-white":      "Pure-white colourway of the Column skeleton",
+	"swissgrid":         "Warm paper with black and signal red \u2014 a 1px-seam grid under one heavy display line, for minimal curation, stationery and tool brands",
+	"swissgrid-noir":    "Black ground with white rules and red signals \u2014 the Swiss grid skeleton inverted",
+	"swissgrid-white":   "Pure-white colourway of the Swissgrid skeleton",
+	"catwalk":           "Near-black stage with champagne gold \u2014 a full-bleed opening look and LOOK-numbered portrait cards, for fashion, footwear and designer labels",
+	"catwalk-day":       "Daylight show in bright white with ink and gold \u2014 the runway skeleton for daytime collections and accessories",
+	"catwalk-white":     "Pure-white colourway of the Runway skeleton",
+	"handcraft":         "Hemp beige with deep timber and ink \u2014 a vertical name-tag rail and craft-row object cards, for leather, wood, ceramics and handmade brands",
+	"handcraft-noir":    "Dark timber with candle gold \u2014 the atelier skeleton after the workshop closes, for metalwork and made-to-order craft",
+	"handcraft-white":   "Pure-white colourway of the Atelier skeleton",
+	"monthbox":          "Warm beige with ink and honey brown \u2014 a raised monthly-box card above past-box cards, for subscription boxes, gift sets and merch brands",
+	"monthbox-noir":     "Night blue with honey gold \u2014 the monthbox skeleton for seasonal limited editions and premium subscriptions",
+	"monthbox-white":    "Pure-white colourway of the Monthbox skeleton",
+	"booth":             "Hall grey with deep slate and wayfinding blue \u2014 a brand-wall banner over numbered stand cards, for trade-show brands and B2B retail",
+	"booth-noir":        "Dark hall with fluorescent blue signage \u2014 the booth skeleton after hours, for tech and instrument categories",
+	"booth-white":       "Pure-white colourway of the Booth skeleton",
+	"herbary":           "Herbal white with deep-green porcelain labels \u2014 bottle-label cards and paired ingredient tables, for personal care, botanical and supplement brands",
+	"herbary-noir":      "Deep-green cabinet at night with porcelain-white labels \u2014 the apothecary skeleton in the dark, for essential oils and premium care",
+	"herbary-white":     "Pure-white colourway of the Apothecary skeleton",
+	"grocer":            "Wheat beige with chalkboard green and timber \u2014 a chalkboard price hero over paper-bag shelf cards, for food, coffee and farm brands",
+	"grocer-noir":       "Chalkboard green at night with chalk white \u2014 the grocer skeleton after closing, for drinks and deli goods",
+	"grocer-white":      "Pure-white colourway of the Grocer skeleton",
+	"cellar":            "Cellar black with gilt and parchment \u2014 horizontal rack rows with vintage tags, for wine, spirits, tea and aged-goods brands",
+	"cellar-day":        "Daylight tasting room in warm cream with deep walnut and dark gold \u2014 the cellar skeleton by day",
+	"cellar-white":      "Pure-white colourway of the Cellar skeleton",
+	"basecamp":          "Moss white with olive drab and forest ink \u2014 signpost navigation over gear-list rows with a weight column, for outdoor, gear and sport brands",
+	"basecamp-noir":     "Night camp in deep green with moonlight white \u2014 the basecamp skeleton after dark, for lighting and night-trail gear",
+	"basecamp-white":    "Pure-white colourway of the Basecamp skeleton",
+	"toybox":            "Cream with ink brown and block red \u2014 building-block navigation and sticker-badged outlined cards, for toys, kids and family brands",
+	"toybox-noir":       "Night-play dark ground with bright block colours \u2014 the toybox skeleton in the dark, for board games and designer toys",
+	"toybox-white":      "Pure-white colourway of the Toybox skeleton",
+	"paperie":           "Paper white with ink and washi yellow \u2014 index-tab navigation and taped corner cards on grid paper, for stationery, journaling and paper brands",
+	"paperie-noir":      "Deep blue-black paper with warm tabs \u2014 the paperie skeleton for night writing, fountain pens and inks",
+	"paperie-white":     "Pure-white colourway of the Paperie skeleton",
+	"mono":              "Cool-grey paper with hard black rules \u2014 a fixed bottom bar for navigation and a 1px product grid with zero radius, for monochrome and design-led brands",
+	"mono-noir":         "All-black ground with reversed white rules \u2014 the mono skeleton inverted, for streetwear and black-label lines",
+	"mono-white":        "Pure-white colourway of the Mono skeleton with soft grey rules",
+	"flatlay":           "Linen with deep smoke and terracotta \u2014 an overhead mosaic hero where the big tile carries the copy, for lifestyle, homeware and still-life brands",
+	"flatlay-noir":      "Dark flat lay with light type and clay orange \u2014 the flatlay skeleton in low key",
+	"flatlay-white":     "Pure-white colourway of the Flatlay skeleton",
+	"flyer":             "Paper yellow with ink, hazard yellow and burst red \u2014 thick-ruled flyer sheets and cards, for fast-moving goods and value-led brands",
+	"flyer-noir":        "Night-market black with hazard-yellow type and red stickers \u2014 the flyer skeleton in the dark",
+	"flyer-white":       "Pure-white colourway of the Flyer skeleton",
+	"lightbox":          "Night black with neon cyan and off-white \u2014 backlit display cards with glowing image wells, for electronics, designer toys and night-toned brands",
+	"lightbox-day":      "Daylight display in bright cool white with deepened cyan \u2014 the lightbox skeleton by day",
+	"lightbox-white":    "Pure-white colourway of the Lightbox skeleton",
 }
 
 func themeOptionForAdmin(t ThemeOption, lang string) ThemeOption {
@@ -4436,7 +4533,23 @@ func writeQueuedUpgradeStatus(version string) {
 	writeUpgradeStatus(st)
 }
 
-func launchUpgrade(version string) error {
+func upgradeCommandArgs(root, version, manifestURL string) []string {
+	args := []string{filepath.Join(root, "scripts", "cms.sh"), "upgrade"}
+	version = strings.TrimSpace(version)
+	manifestURL = strings.TrimSpace(manifestURL)
+	if version != "" {
+		args = append(args, version)
+	}
+	if manifestURL != "" {
+		if version == "" {
+			args = append(args, "")
+		}
+		args = append(args, manifestURL)
+	}
+	return args
+}
+
+func launchUpgrade(version, manifestURL string) error {
 	root := upgradeRoot()
 	logPath := upgradeRunnerLogPath()
 	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
@@ -4447,10 +4560,7 @@ func launchUpgrade(version string) error {
 		return err
 	}
 
-	args := []string{filepath.Join(root, "scripts", "cms.sh"), "upgrade"}
-	if version = strings.TrimSpace(version); version != "" {
-		args = append(args, version)
-	}
+	args := upgradeCommandArgs(root, version, manifestURL)
 	cmd := exec.Command("sh", args...)
 	cmd.Dir = root
 	cmd.Env = os.Environ()
@@ -4474,7 +4584,7 @@ func (s *Server) adminUpgradeStatus(w http.ResponseWriter, r *http.Request) {
 func (s *Server) adminUpdateCheck(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 6*time.Second)
 	defer cancel()
-	writeJSON(w, http.StatusOK, checkLatestRelease(ctx))
+	writeJSON(w, http.StatusOK, s.checkLatestRelease(ctx))
 }
 
 func (s *Server) adminStartUpgrade(w http.ResponseWriter, r *http.Request) {
@@ -4501,7 +4611,7 @@ func (s *Server) adminStartUpgrade(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeQueuedUpgradeStatus(version)
-	if err := launchUpgrade(version); err != nil {
+	if err := launchUpgrade(version, s.selectedUpdateManifestURL()); err != nil {
 		failed := UpgradeStatus{
 			Status:  "failed",
 			Step:    "launch",
@@ -4791,7 +4901,7 @@ func (s *Server) showSettings(w http.ResponseWriter, r *http.Request, section, f
 	case "cloudflare":
 		v.Cloudflare = s.cloudflareViewForRequest(r)
 	case "updates":
-		v.Update = currentUpdateInfo()
+		v.Update = s.currentUpdateInfo()
 		v.Upgrade = readUpgradeStatus()
 	}
 
@@ -5033,6 +5143,19 @@ func automationScopesFromFormWithDefault(r *http.Request, useDefault bool) []str
 	if want[apiScopeLanguagesWrite] || want[apiScopeLanguagesEnable] || want[apiScopeLanguagesDefault] || want[apiScopeLanguagesCatalog] {
 		want[apiScopeLanguagesRead] = true
 	}
+	// 页面工程权限与传统 pages/content 权限是两个独立能力族。这里仅补齐
+	// 同一能力族内部的最小依赖，绝不能由旧 content:* 密钥反向获得这些权限。
+	if want[apiScopePageProjectsWrite] || want[apiScopePageProjectsBuild] || want[apiScopePageAssetsWrite] ||
+		want[apiScopePageAppsWrite] || want[apiScopePagePreviewRead] ||
+		want[apiScopePageCapabilitiesRequest] || want[apiScopePageCapabilitiesGrant] {
+		want[apiScopePageProjectsRead] = true
+	}
+	if want[apiScopePageAppsWrite] {
+		want[apiScopePageProjectsWrite] = true
+	}
+	if want[apiScopePagesPublish] || want[apiScopePageCapabilitiesGrant] {
+		want[apiScopeControlRead] = true
+	}
 	// 平台控制权限是独立的能力族：任一控制权限都自动补齐能力自省；
 	// 删除、改域名以及已上线站点改主题还必须允许 Pilot 在密码验证后签发
 	// 短时授权。初始密码不属于 HTTP 自动化权限，只能通过服务器上的 GCMS
@@ -5043,7 +5166,9 @@ func automationScopesFromFormWithDefault(r *http.Request, useDefault bool) []str
 			break
 		}
 	}
-	if want[apiScopeSitesDelete] || want[apiScopeCategoriesDelete] || want[apiScopeNavigationDelete] || want[apiScopeDomainsWrite] || want[apiScopeThemesApply] {
+	if want[apiScopeSitesDelete] || want[apiScopeCategoriesDelete] || want[apiScopeNavigationDelete] ||
+		want[apiScopeDomainsWrite] || want[apiScopeThemesApply] ||
+		want[apiScopePagesPublish] || want[apiScopePageCapabilitiesGrant] {
 		want[apiScopeControlUnlock] = true
 	}
 	var out []string
@@ -5073,6 +5198,11 @@ func automationScopesFromFormWithDefault(r *http.Request, useDefault bool) []str
 		}
 	}
 	for _, scope := range platformControlScopes() {
+		if want[scope] {
+			out = append(out, scope)
+		}
+	}
+	for _, scope := range pagePlatformScopes() {
 		if want[scope] {
 			out = append(out, scope)
 		}
@@ -5117,7 +5247,11 @@ func automationScopeValid(scope string) bool {
 		apiScopeStatsRead, apiScopeTypesWrite, apiScopeContentRead, apiScopeContentWrite, apiScopeContentPublish,
 		apiScopeControlRead, apiScopeControlUnlock, apiScopeSitesCreate, apiScopeSitesUpdate, apiScopeSitesDelete,
 		apiScopeCategoriesDelete, apiScopeNavigationDelete,
-		apiScopeThemesRead, apiScopeThemesApply, apiScopeDomainsRead, apiScopeDomainsWrite:
+		apiScopeThemesRead, apiScopeThemesApply, apiScopeDomainsRead, apiScopeDomainsWrite,
+		apiScopePageProjectsRead, apiScopePageProjectsWrite, apiScopePageProjectsBuild,
+		apiScopePageAssetsWrite, apiScopePageAppsWrite, apiScopePagePreviewRead,
+		apiScopePagesRead, apiScopePagesPublish,
+		apiScopePageCapabilitiesRequest, apiScopePageCapabilitiesGrant:
 		return true
 	}
 	// 扩展集合 scope（如 products:write / cases:read）：集合名为合法 slug 即放行——
@@ -5967,12 +6101,36 @@ func (s *Server) adminPages(w http.ResponseWriter, r *http.Request) {
 	s.authed(v, sess)
 	v.AllPosts = pages
 	v.EditLang = lang
-	s.rnd.Admin(w, "pages", http.StatusOK, v)
+	v.Query = strings.TrimSpace(r.URL.Query().Get("q"))
+	v.StatusFilter = strings.TrimSpace(r.URL.Query().Get("status"))
+	modeFilter := strings.TrimSpace(r.URL.Query().Get("mode"))
+	originFilter := strings.TrimSpace(r.URL.Query().Get("origin"))
+	buildFilter := strings.TrimSpace(r.URL.Query().Get("build"))
+	rows, err := s.adminPageRows(pages, v.Query, modeFilter, v.StatusFilter, originFilter, buildFilter)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	s.rnd.Admin(w, "pages", http.StatusOK, &adminPagesView{
+		View:         v,
+		Rows:         rows,
+		ModeFilter:   modeFilter,
+		OriginFilter: originFilter,
+		BuildFilter:  buildFilter,
+	})
 }
 
 func (s *Server) adminPageNew(w http.ResponseWriter, r *http.Request) {
 	sess, _ := s.currentSession(r)
-	s.showEdit(w, r, sess, &store.Post{Type: "page", Status: "published", Lang: s.editLang(r)}, "", "")
+	mode := strings.TrimSpace(r.URL.Query().Get("mode"))
+	if mode == "standard" {
+		s.showEdit(w, r, sess, &store.Post{Type: "page", Status: "published", Lang: s.editLang(r)}, "", "")
+		return
+	}
+	if mode != "" && mode != store.PageModeComposition && mode != store.PageModeApp {
+		mode = ""
+	}
+	s.showAdminPageNew(w, r, sess, mode, http.StatusOK, "")
 }
 
 func (s *Server) adminPageEdit(w http.ResponseWriter, r *http.Request) {
@@ -5980,6 +6138,13 @@ func (s *Server) adminPageEdit(w http.ResponseWriter, r *http.Request) {
 	p, _ := s.store.GetPostByID(atoi64(r.PathValue("id")))
 	if p == nil || p.Type != "page" {
 		s.notFound(w, r)
+		return
+	}
+	if project, err := s.store.GetPageProjectByPostID(p.ID); err != nil {
+		s.serverError(w, err)
+		return
+	} else if project != nil {
+		http.Redirect(w, r, fmt.Sprintf("/admin/pages/%d/project", p.ID), http.StatusSeeOther)
 		return
 	}
 	flash := ""
@@ -6000,7 +6165,12 @@ func (s *Server) adminPageCreate(w http.ResponseWriter, r *http.Request) {
 		s.showEdit(w, r, sess, p, "", formErr)
 		return
 	}
-	p.Slug = s.uniqueSlug(lang, p.Slug, 0)
+	var err error
+	p.Slug, err = s.uniquePageSlug(lang, p.Slug, 0)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
 	id, err := s.store.CreatePost(p)
 	if err != nil {
 		s.serverError(w, err)
@@ -6023,6 +6193,13 @@ func (s *Server) adminPageSave(w http.ResponseWriter, r *http.Request) {
 		s.notFound(w, r)
 		return
 	}
+	if project, err := s.store.GetPageProjectByPostID(p.ID); err != nil {
+		s.serverError(w, err)
+		return
+	} else if project != nil {
+		http.Error(w, "高级页面必须在页面工作台中保存，不能走旧页面表单。", http.StatusConflict)
+		return
+	}
 	updated, formErr := pageFromForm(r, id, p.Lang)
 	if formErr != "" {
 		updated.TransGroup = p.TransGroup
@@ -6033,7 +6210,12 @@ func (s *Server) adminPageSave(w http.ResponseWriter, r *http.Request) {
 	updated.TransGroup = p.TransGroup
 	updated.PublishedAt = p.PublishedAt
 	preserveSEOOverrides(r, updated, p)
-	updated.Slug = s.uniqueSlug(p.Lang, updated.Slug, id)
+	var err error
+	updated.Slug, err = s.uniquePageSlug(p.Lang, updated.Slug, id)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
 	if err := s.store.UpdatePost(updated); err != nil {
 		s.serverError(w, err)
 		return
@@ -6055,6 +6237,9 @@ func (s *Server) adminPageDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	if p == nil || p.Type != "page" {
 		s.notFound(w, r)
+		return
+	}
+	if s.rejectAdvancedPageLegacyAdminMutation(w, p) {
 		return
 	}
 	if err := s.store.DeletePost(id); err != nil {
@@ -6175,6 +6360,25 @@ func (s *Server) uniqueSlug(lang, slug string, exceptID int64) string {
 		exists, err := s.store.SlugExists(lang, slug, exceptID)
 		if err != nil || !exists {
 			return slug
+		}
+		slug = base + "-" + strconv.Itoa(n)
+		n++
+	}
+}
+
+// uniquePageSlug also respects owners of top-level routes: system paths,
+// custom content-type prefixes and immutable advanced-page reservations.
+// Unlike the legacy helper it returns storage errors so page creation fails
+// closed instead of accidentally accepting a route that could be shadowed.
+func (s *Server) uniquePageSlug(lang, slug string, exceptID int64) (string, error) {
+	base, n := slug, 2
+	for {
+		unavailable, err := s.store.PageSlugUnavailable(lang, slug, exceptID)
+		if err != nil {
+			return "", err
+		}
+		if !unavailable {
+			return slug, nil
 		}
 		slug = base + "-" + strconv.Itoa(n)
 		n++

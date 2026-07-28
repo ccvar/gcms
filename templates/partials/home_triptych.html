@@ -1,0 +1,76 @@
+{{define "home_triptych"}}
+  {{/* 三联 Triptych — 祭坛三联画：楣梁页头（CSS 重塑标准 .site-header，此处不再自绘导航）
+       + 翼|中央拱顶|翼 三联 grid，中央=圆拱大卡，两翼=紧凑条目列 */}}
+  <div class="tp-wrap">
+
+    <header class="tp-pediment">
+      {{if .Site.HeroEyebrow}}<p class="tp-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+      <h1 class="tp-title"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+      {{if .Site.HeroDescription}}<p class="tp-motto"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+    </header>
+
+    {{if or .Featured .Posts .FeatLinks .Categories}}
+    <section class="tp-altar{{if not .Featured}} tp-flat{{end}}{{if not .Posts}} tp-noleft{{end}}{{if not (or .FeatLinks .Categories)}} tp-noright{{end}}">
+
+      {{with .Featured}}
+      <a class="tp-apse" href="{{$.Tr.U (contentURL .)}}">
+        {{if .CoverImage}}<span class="tp-apse-cover"><img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}></span>
+        {{else}}<span class="tp-apse-seal" aria-hidden="true">{{initial .Title}}</span>{{end}}
+        <span class="tp-apse-kicker"><b>{{$.Site.HomeFeatured}}</b>{{with .Category}}<i aria-hidden="true">·</i><span class="tp-apse-cat">{{.Name}}</span>{{end}}</span>
+        <span class="tp-apse-h">{{.Title}}</span>
+        {{if .Excerpt}}<span class="tp-apse-ex">{{.Excerpt}}</span>{{end}}
+        <span class="tp-apse-foot">
+          <span class="tp-enter">{{$.Tr.T "home.read_more"}} <span class="arrow" aria-hidden="true">→</span></span>
+          <time class="tp-apse-date" datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time>
+        </span>
+      </a>
+      {{end}}
+
+      {{if .Posts}}
+      <aside class="tp-wing tp-wing-l">
+        <h2 class="tp-wing-h">{{.Site.HomeLatest}}</h2>
+        {{range .Posts}}
+        <a class="tp-row" href="{{$.Tr.U (contentURL .)}}">
+          <span class="tp-row-t">{{.Title}}</span>
+          {{if .Excerpt}}<span class="tp-row-ex">{{.Excerpt}}</span>{{end}}
+          <time class="tp-row-d" datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time>
+        </a>
+        {{end}}
+        <a class="tp-wing-all" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </aside>
+      {{end}}
+
+      {{if .FeatLinks}}
+      <aside class="tp-wing tp-wing-r" aria-label="{{.Site.HomeLinks}}">
+        <h2 class="tp-wing-h">{{.Site.HomeLinks}}</h2>
+        {{range .FeatLinks}}
+        <a class="tp-row" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+          <span class="tp-row-t">{{.Title}}</span>
+          {{if .Excerpt}}<span class="tp-row-ex">{{.Excerpt}}</span>{{end}}
+        </a>
+        {{end}}
+      </aside>
+      {{else if .Categories}}
+      <aside class="tp-wing tp-wing-r" aria-label="{{.Tr.T "nav.category"}}">
+        <h2 class="tp-wing-h">{{.Tr.T "nav.category"}}</h2>
+        {{range .Categories}}
+        <a class="tp-row tp-row-cat" href="{{$.Tr.U (printf "/category/%s" .Slug)}}">
+          <span class="tp-row-t">{{.Name}}</span>
+          <span class="tp-row-n">{{.Count}}</span>
+        </a>
+        {{end}}
+        <a class="tp-wing-all" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </aside>
+      {{end}}
+
+    </section>
+    {{end}}
+
+    <footer class="tp-colophon">
+      <a href="{{.Tr.U "/about"}}">{{.Tr.T "home.cta_more"}}</a>
+      <span aria-hidden="true">·</span>
+      <a href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}}</a>
+    </footer>
+
+  </div>
+{{end}}

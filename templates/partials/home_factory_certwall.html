@@ -1,0 +1,114 @@
+{{define "home_factory_certwall"}}
+  {{/* factory-certwall — 认证墙：只把站点明确配置的真实认证／审核资料画成资质墙。
+       页头=资质页签导航（CSS 重塑标准 .site-header：导航项做成坐在底线上的档案页签
+       + 铆钉小环，当前项顶缘 accent 粗线；≤620px 交还基础汉堡抽屉，不新增 header define）。
+       hero=真实认证徽章环绕：factory.certifications 居中画双线圆徽（首尾两枚下沉微转成环拱，
+       ≤720px 归位 2×2）；stats 保持中性的工厂数字卡，下接居中大标题 + 一句话。
+       商品=目录卡：双线框 + 纯装饰圆环；productChips 仍是材质／MOQ 等中性规格，不冒充认证。
+       数据全由 fillFactoryHome 装载；空数据整块不渲染，封面缺失走首字兜底；
+       区块编号取 .FactorySectionNum（跳过未渲染区块，编号连续）。 */}}
+  <div class="fcw-wrap">
+    <section class="fcw-hero">
+      <div class="fcw-hero-visual">{{template "factory_hero_slot" .}}</div>
+      {{if .FactoryCertifications}}
+      <dl class="f-certs fcw-seals" aria-label="{{.Tr.T "factory.certs"}}">
+        {{range .FactoryCertifications}}<div class="f-cert f-stat fcw-seal"><dt>{{.Name}}</dt>{{if .Note}}<dd>{{.Note}}</dd>{{end}}</div>
+        {{end}}
+      </dl>
+      {{end}}
+      <div class="fcw-hero-copy">
+        {{if .Site.HeroEyebrow}}<p class="fcw-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+        <h1 class="fcw-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+        {{if .Site.HeroDescription}}<p class="fcw-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+        <div class="fcw-cta">
+          {{if .Contact.Any}}<a class="btn btn-primary" href="#factory-contact">{{.Tr.T "contact.float_label"}} <span class="arrow" aria-hidden="true">→</span></a>
+          {{else}}<a class="btn btn-primary" href="{{.Tr.U "/products"}}">{{.Tr.T "factory.products"}} <span class="arrow" aria-hidden="true">→</span></a>{{end}}
+          <a class="btn" href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}}</a>
+        </div>
+      </div>
+      {{if .FactoryStats}}
+      <dl class="f-stats fcw-metrics" aria-label="{{.Tr.T "factory.strength"}}">
+        {{range .FactoryStats}}<div class="f-stat"><dt>{{.Num}}</dt><dd>{{.Label}}</dd></div>{{end}}
+      </dl>
+      {{end}}
+      {{if not .FactoryStats}}<div class="fcw-hero-about">{{template "factory_about" .}}</div>{{end}}
+    </section>
+
+    {{if .FactoryCats}}
+    <section class="fcw-section">
+      <div class="fcw-head"><div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "categories"}}</span>{{.Tr.T "factory.categories"}}</p><h2>{{.Tr.T "factory.categories"}}</h2></div></div>
+      {{template "factory_categories" .}}
+    </section>
+    {{end}}
+
+    <section class="fcw-section fcw-products-sec">
+      <div class="fcw-head">
+        <div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "products"}}</span>{{.Tr.T "factory.featured"}}</p><h2>{{.Tr.T "factory.products"}}</h2></div>
+        <a href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="fcw-grid">
+        {{range .FactoryProducts}}
+        <a class="fcw-card" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+          <span class="fcw-card-media{{if not .CoverImage}} fcw-card-gen{{end}}">
+            {{if .CoverImage}}<img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}
+          </span>
+          <span class="fcw-card-body">
+            {{with .Category}}<span class="fcw-card-cat">{{.Name}}</span>{{end}}
+            <span class="fcw-card-title">{{.Title}}</span>
+            {{if .Excerpt}}<span class="fcw-card-ex">{{.Excerpt}}</span>{{end}}
+            {{with productChips .}}<span class="f-chips">{{range .}}<span class="f-chip"><b>{{.K}}</b><i>{{.V}}</i></span>{{end}}</span>{{end}}
+          </span>
+        </a>
+        {{else}}<p class="fcw-empty muted">{{.Tr.T "factory.no_products"}}</p>{{end}}
+      </div>
+    </section>
+
+    {{if .FactoryProcessOn}}
+    <section class="fcw-section fcw-process-sec">
+      <div class="fcw-head"><div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "process"}}</span>{{.Tr.T "factory.process"}}</p><h2>{{.Tr.T "factory.process"}}</h2></div></div>
+      {{template "factory_process_steps" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryIndustries}}
+    <section class="fcw-section">
+      <div class="fcw-head"><div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "industries"}}</span>{{.Tr.T "factory.industries"}}</p><h2>{{.Tr.T "factory.industries"}}</h2></div></div>
+      {{template "factory_industries" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryGallery}}
+    <section class="fcw-section">
+      <div class="fcw-head"><div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "gallery"}}</span>{{.Tr.T "factory.gallery"}}</p><h2>{{.Tr.T "factory.gallery"}}</h2></div></div>
+      {{template "factory_gallery" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryQAs}}
+    <section class="fcw-section">
+      <div class="fcw-head"><div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "faq"}}</span>{{.Tr.T "factory.faq"}}</p><h2>{{.Tr.T "factory.faq"}}</h2></div></div>
+      {{template "factory_faq" .}}
+    </section>
+    {{end}}
+
+    {{if .Posts}}
+    <section class="fcw-section fcw-news">
+      <div class="fcw-head fcw-news-head">
+        <div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "news"}}</span>{{.Tr.T "factory.news"}}</p><h2>{{.Tr.T "factory.news"}}</h2></div>
+        <a href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="fcw-news-list">
+        {{range $i, $p := .Posts}}{{if lt $i 3}}
+        <a class="fcw-news-item" href="{{$.Tr.U (contentURL $p)}}">
+          <time datetime="{{$.Tr.ISODate $p.PublishedAt}}">{{$.Tr.Date $p.PublishedAt}}</time>
+          <span class="fcw-news-title">{{$p.Title}}</span>
+          <span class="arrow" aria-hidden="true">→</span>
+        </a>
+        {{end}}{{end}}
+      </div>
+    </section>
+    {{end}}
+  </div>
+
+  {{template "factory_cta" .}}
+{{end}}

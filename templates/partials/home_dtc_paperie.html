@@ -1,0 +1,92 @@
+{{define "home_dtc_paperie"}}
+  {{/* dtc-paperie — 手账铺：文具/手账品牌店。背景=低透明网格纸，主区=白纸容器
+       （1px 细框 + 内衬 18px 印刷框，车道在容器 padding 里、绝不压内容），
+       页头导航由 CSS 重塑成索引贴纸页签（上圆角、和纸黄/雾蓝/藕紫/豆绿 nth 轮换，
+       ≤620px 交还基础汉堡抽屉）。hero=扉页（行距宽），商品=胶带贴角卡
+       （卡顶半透明和纸胶带条 rotate(-2deg)，规格签 productChips 代替价格——无价格函数）。
+       数据由 fillDTCHome 装载；商品区在 .FactoryProducts 为空时整段不渲染，
+       其余区块空数据优雅缺省，评价绝不硬造。 */}}
+  {{/* hero 槽三态（照 dtc-flagship 抄法）：image+配图=全幅底图 scrim 压字；
+       svg=右侧内嵌；default/anim*=右侧 DTC 轻动画（dtc_hero_anim 复用）。 */}}
+  {{$heroImg := ""}}{{if and (eq .Site.HeroVisual "image") .Site.HeroImage}}{{$heroImg = .Site.HeroImage}}{{end}}
+  {{$heroSVG := and (eq .Site.HeroVisual "svg") (ne .Site.HeroSVG "")}}
+  {{$heroAnim := and (not $heroImg) (not $heroSVG)}}
+  <div class="ppr-wrap">
+    <section class="ppr-hero{{if $heroImg}} has-img{{else if $heroAnim}} has-anim{{end}}">
+      {{if $heroImg}}<img class="ppr-hero-img" src="{{$heroImg}}" alt="{{.Site.HeroAlt}}" decoding="async" fetchpriority="high"{{imgAttrs $heroImg}}>{{end}}
+      <div class="ppr-hero-inner">
+        <div class="ppr-hero-copy">
+          {{if .Site.HeroEyebrow}}<p class="ppr-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+          <h1 class="ppr-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+          {{if .Site.HeroDescription}}<p class="ppr-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+          <div class="ppr-cta">
+            <a class="btn btn-primary" href="{{.Tr.U "/products"}}">{{.Tr.T "dtc.shop_now"}} <span class="arrow" aria-hidden="true">→</span></a>
+            {{if .Contact.Any}}<a class="btn dt-btn-ghost" href="#dtc-contact">{{.Tr.T "contact.float_label"}}</a>{{end}}
+          </div>
+        </div>
+        {{if $heroSVG}}<div class="ppr-hero-side dt-embed" aria-hidden="true">{{safeHTML .Site.HeroSVG}}</div>
+        {{else if $heroAnim}}<div class="ppr-hero-side dt-heroanim" aria-hidden="true">{{template "dtc_hero_anim" .}}</div>{{end}}
+      </div>
+    </section>
+
+    {{if .FactoryCats}}
+    <nav class="ppr-cats" aria-label="{{.Tr.T "common.category_nav"}}">
+      {{range .FactoryCats}}<a href="{{$.Tr.U .URL}}"><span>{{.Name}}</span><small>{{.Count}}</small></a>
+      {{end}}<a class="ppr-cats-all" href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+    </nav>
+    {{end}}
+
+    {{if .FactoryProducts}}
+    <section class="ppr-section ppr-products">
+      <div class="ppr-head">
+        <h2>{{.Tr.T "dtc.bestsellers"}}</h2>
+        <a href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="ppr-grid">
+        {{range .FactoryProducts}}
+        <a class="ppr-card" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+          <span class="ppr-card-media{{if not .CoverImage}} dt-gen{{end}}">
+            {{if .CoverImage}}<img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}
+          </span>
+          <span class="ppr-card-title">{{.Title}}</span>
+          {{with productChips .}}<span class="f-chips">{{range .}}<span class="f-chip"><b>{{.K}}</b><i>{{.V}}</i></span>{{end}}</span>{{end}}
+        </a>
+        {{end}}
+      </div>
+    </section>
+    {{end}}
+
+    {{if .FactoryStats}}
+    <section class="ppr-section ppr-facts">
+      <div class="ppr-head"><h2>{{.Tr.T "dtc.story"}}</h2></div>
+      <dl class="dt-stats">
+        {{range .FactoryStats}}<div class="dt-stat"><dt>{{.Num}}</dt><dd>{{.Label}}</dd></div>
+        {{end}}
+      </dl>
+    </section>
+    {{end}}
+
+    {{if .FactoryGallery}}
+    <section class="ppr-section">
+      <div class="ppr-head"><h2>{{.Tr.T "dtc.scenes"}}</h2></div>
+      {{template "factory_gallery" .}}
+    </section>
+    {{end}}
+
+    {{if .DTCTestimonials}}
+    <section class="ppr-section">
+      <div class="ppr-head"><h2>{{.Tr.T "dtc.reviews"}}</h2></div>
+      {{template "dtc_testimonials" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryQAs}}
+    <section class="ppr-section">
+      <div class="ppr-head"><h2>{{.Tr.T "factory.faq"}}</h2></div>
+      {{template "factory_faq" .}}
+    </section>
+    {{end}}
+  </div>
+
+  {{template "dtc_cta" .}}
+{{end}}

@@ -1,0 +1,87 @@
+{{define "home_dtc_journal"}}
+  {{/* dtc-journal — 刊物店：把品牌独立站排成一本杂志——居中刊头（CSS 重塑标准页头，
+       双线压底）→ 封面故事大区（HeroEyebrow 站 COVER 眉题位 + HeroTitle + HeroDescription
+       + 站点 Hero 三态视觉，读起来像杂志开篇跨页）→ 栏目行（FactoryCats）→「本期选物」
+       三栏条（上细线）→ 品牌数字（stats 复用为刊末数据栏）→ 画页（gallery）→ 读者来信
+      （评价，杂志引文样式，未配置不渲染、绝不硬造）→ FAQ → 页脚前联系 CTA。
+       数据由 fillDTCHome 装载；商品为空时选物区整段不渲染。 */}}
+  {{/* Hero 槽严格三态：image=全幅 HeroImage；svg=右侧 HeroSVG；
+       default/anim*=右侧 DTC 轻动画。商品内容完整保留在下方本期选物。 */}}
+  {{$heroImg := ""}}{{if and (eq .Site.HeroVisual "image") .Site.HeroImage}}{{$heroImg = .Site.HeroImage}}{{end}}
+  {{$heroSVG := and (eq .Site.HeroVisual "svg") (ne .Site.HeroSVG "")}}
+  <div class="jnl-wrap">
+    <section class="jnl-cover{{if $heroImg}} has-img{{end}}">
+      {{if $heroImg}}<img class="jnl-cover-img" src="{{$heroImg}}" alt="{{.Site.HeroAlt}}" decoding="async" fetchpriority="high"{{imgAttrs $heroImg}}>{{end}}
+      <div class="jnl-cover-inner">
+        <div class="jnl-cover-copy">
+          {{if .Site.HeroEyebrow}}<p class="jnl-rubric"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}><span>{{.Site.HeroEyebrow}}</span></p>{{end}}
+          <h1 class="jnl-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+          {{if .Site.HeroDescription}}<p class="jnl-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+          <div class="jnl-cover-cta">
+            <a class="btn btn-primary" href="{{.Tr.U "/products"}}">{{.Tr.T "dtc.shop_now"}} <span class="arrow" aria-hidden="true">→</span></a>
+            {{if .Contact.Any}}<a class="btn dt-btn-ghost" href="#dtc-contact">{{.Tr.T "contact.float_label"}}</a>{{end}}
+          </div>
+        </div>
+        {{if $heroSVG}}<div class="jnl-cover-side dt-embed" aria-hidden="true">{{safeHTML .Site.HeroSVG}}</div>
+        {{else if not $heroImg}}<div class="jnl-cover-side dt-heroanim" aria-hidden="true">{{template "dtc_hero_anim" .}}</div>{{end}}
+      </div>
+    </section>
+
+    {{if .FactoryCats}}
+    <nav class="jnl-depts" aria-label="{{.Tr.T "factory.categories"}}">
+      {{range .FactoryCats}}<a class="jnl-dept" href="{{$.Tr.U .URL}}"><span class="jnl-dept-name">{{.Name}}</span><span class="jnl-dept-n">{{.Count}}</span></a>{{end}}
+    </nav>
+    {{end}}
+
+    {{if .FactoryProducts}}
+    <section class="jnl-issue">
+      <div class="dt-head jnl-head">
+        <div><p class="dt-eyebrow">{{.Tr.T "dtc.label.products"}}</p><h2>{{.Tr.T "dtc.bestsellers"}}</h2></div>
+        <a href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="jnl-issue-grid">
+        {{range $i, $p := .FactoryProducts}}
+        <a class="jnl-item" href="{{if $p.Slug}}{{$.Tr.U (contentURL $p)}}{{else}}#{{end}}">
+          <span class="jnl-item-media{{if not $p.CoverImage}} dt-gen{{end}}">
+            {{if $p.CoverImage}}<img src="{{$p.CoverImage}}" alt="{{$p.Title}}" loading="lazy" decoding="async"{{imgAttrs $p.CoverImage}}>{{else}}<b aria-hidden="true">{{initial $p.Title}}</b>{{end}}
+          </span>
+          {{with $p.Category}}<span class="jnl-item-cat">{{.Name}}</span>{{end}}
+          <span class="jnl-item-title">{{$p.Title}}</span>
+          {{with productChips $p}}<span class="f-chips">{{range .}}<span class="f-chip"><b>{{.K}}</b><i>{{.V}}</i></span>{{end}}</span>{{end}}
+        </a>
+        {{end}}
+      </div>
+    </section>
+    {{end}}
+
+    {{if .FactoryStats}}
+    <section class="jnl-section jnl-colophon">
+      <div class="dt-head jnl-head"><div><p class="dt-eyebrow">{{.Tr.T "dtc.label.story"}}</p><h2>{{.Tr.T "dtc.story"}}</h2></div></div>
+      <dl class="dt-stats">{{range .FactoryStats}}<div class="dt-stat"><dt>{{.Num}}</dt><dd>{{.Label}}</dd></div>{{end}}</dl>
+    </section>
+    {{end}}
+
+    {{if .FactoryGallery}}
+    <section class="jnl-section">
+      <div class="dt-head jnl-head"><div><p class="dt-eyebrow">{{.Tr.T "dtc.label.scenes"}}</p><h2>{{.Tr.T "dtc.scenes"}}</h2></div></div>
+      {{template "factory_gallery" .}}
+    </section>
+    {{end}}
+
+    {{if .DTCTestimonials}}
+    <section class="jnl-section jnl-letters">
+      <div class="dt-head jnl-head"><div><p class="dt-eyebrow">{{.Tr.T "dtc.label.reviews"}}</p><h2>{{.Tr.T "dtc.reviews"}}</h2></div></div>
+      {{template "dtc_testimonials" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryQAs}}
+    <section class="jnl-section">
+      <div class="dt-head jnl-head"><div><p class="dt-eyebrow">{{.Tr.T "dtc.label.guide"}}</p><h2>{{.Tr.T "factory.faq"}}</h2></div></div>
+      {{template "factory_faq" .}}
+    </section>
+    {{end}}
+  </div>
+
+  {{template "dtc_cta" .}}
+{{end}}

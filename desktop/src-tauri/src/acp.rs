@@ -235,7 +235,9 @@ pub async fn run_turn(
     } else {
         agent::detect_usage_limit(&format!("{error}\n{err_text}\n{}", s.raw_tail))
     };
-    let (clean_text, proposal) = agent::extract_proposal(&text);
+    let error = agent::redact_gcms_unlock_challenges(&error);
+    let persisted_text = agent::redact_gcms_unlock_challenges(&text);
+    let (clean_text, proposal) = agent::extract_proposal(&persisted_text);
     text = clean_text;
 
     let _ = channel.send(TurnEvent::Done {
@@ -245,7 +247,15 @@ pub async fn run_turn(
     TurnResult {
         ok,
         text,
-        tools: s.tools.clone(),
+        tools: s
+            .tools
+            .iter()
+            .cloned()
+            .map(|mut tool| {
+                tool.detail = agent::redact_gcms_unlock_challenges(&tool.detail);
+                tool
+            })
+            .collect(),
         error,
         session_ref: s.session_ref.clone(),
         proposal,
@@ -445,7 +455,23 @@ async fn pump(
                     })).await?;
                 }
             } else if streaming && method == "session/update" {
-                if let Some((label, detail, delta)) = parse_update(&msg["params"]["update"]) {
+                let update = &msg["params"]["update"];
+                if let Some(request) = grok_gcms_unlock_request(update) {
+                    let _ = ch.send(TurnEvent::GcmsUnlockRequired {
+                        operation: request.operation,
+                        unlock_challenge: request.unlock_challenge,
+                        admin_path: request.admin_path,
+                    });
+                }
+                if let Some((activity_id, label, detail, status)) = grok_activity_update(update) {
+                    let _ = ch.send(TurnEvent::Activity {
+                        activity_id,
+                        label,
+                        detail,
+                        status,
+                    });
+                }
+                if let Some((label, detail, delta)) = parse_update(update) {
                     if let Some(text) = delta {
                         st.lock().unwrap().text.push_str(&text);
                         let _ = ch.send(TurnEvent::Delta { text });
@@ -516,8 +542,59 @@ async fn send(stdin: &mut ChildStdin, msg: &serde_json::Value) -> Result<(), Str
 
 // ---- 流事件解析（纯函数，夹具可测）----
 
+fn grok_gcms_unlock_request(u: &serde_json::Value) -> Option<agent::GcmsUnlockRequest> {
+    if u.get("sessionUpdate").and_then(|value| value.as_str()) != Some("tool_call_update") {
+        return None;
+    }
+    // GCMS 用非 2xx + exit(1) 返回 unlock_required，因此 Grok ACP 会把这条
+    // 有效服务端结果标成 failed。只消费 completed/failed 两种终态，绝不从
+    // in_progress 的半截输出触发密码框。
+    if !matches!(
+        u.get("status").and_then(|value| value.as_str()),
+        Some("completed" | "failed")
+    ) {
+        return None;
+    }
+    ["content", "output", "rawOutput", "result"]
+        .iter()
+        .find_map(|key| u.get(*key).and_then(agent::gcms_unlock_from_tool_payload))
+}
+
+fn grok_activity_update(u: &serde_json::Value) -> Option<(String, String, String, String)> {
+    let update = u.get("sessionUpdate").and_then(|value| value.as_str())?;
+    let activity_id = u
+        .get("toolCallId")
+        .and_then(|value| value.as_str())?
+        .to_string();
+    match update {
+        "tool_call" => {
+            let (label, fallback_detail) = tool_card(u);
+            let detail = u
+                .pointer("/rawInput/description")
+                .and_then(|value| value.as_str())
+                .unwrap_or(&fallback_detail)
+                .chars()
+                .take(200)
+                .collect();
+            Some((activity_id, label, detail, "running".into()))
+        }
+        "tool_call_update" => {
+            let status = match u.get("status").and_then(|value| value.as_str()) {
+                Some("completed") => "completed",
+                Some("failed") => "failed",
+                Some("cancelled" | "canceled") => "canceled",
+                Some("pending" | "in_progress" | "running") => "running",
+                _ => return None,
+            };
+            Some((activity_id, String::new(), String::new(), status.into()))
+        }
+        _ => None,
+    }
+}
+
 /// session/update → 渲染事件：Some((_,_,Some(text)))＝文本增量；Some((label,detail,None))＝工具卡；
-/// None＝忽略（思考流、tool_call_update、历史重放的 user_message_chunk、计划等）。
+/// None＝忽略（思考流、历史重放的 user_message_chunk、计划等）。工具更新帧由
+/// `grok_activity_update` 消费，不再伪装成新的命令卡。
 pub(crate) fn parse_update(u: &serde_json::Value) -> Option<(String, String, Option<String>)> {
     match u.get("sessionUpdate").and_then(|s| s.as_str()) {
         Some("agent_message_chunk") => {
@@ -858,6 +935,111 @@ mod tests {
             &json!({"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"旧消息"}})
         )
         .is_none());
+    }
+
+    #[test]
+    fn grok_activity_parser_tracks_tool_lifecycle_without_fabricating_progress() {
+        let started =
+            grok_activity_update(&fx_tool_call()).expect("tool call should start activity");
+        assert_eq!(
+            started,
+            (
+                "call-10e3413a-bc60-4abc-acf3-ab38f2ba1aa0-0".into(),
+                "exec".into(),
+                "Echo acp-probe to stdout".into(),
+                "running".into(),
+            )
+        );
+        let completed = grok_activity_update(&json!({
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": "call-10e3413a-bc60-4abc-acf3-ab38f2ba1aa0-0",
+            "status": "completed"
+        }))
+        .expect("terminal update should finish activity");
+        assert_eq!(completed.0, started.0);
+        assert!(completed.1.is_empty());
+        assert_eq!(completed.3, "completed");
+        let failed = grok_activity_update(&json!({
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": "call-2",
+            "status": "failed"
+        }))
+        .expect("failed update is still a real terminal state");
+        assert_eq!(failed.3, "failed");
+        assert!(grok_activity_update(&json!({
+            "sessionUpdate": "agent_message_chunk",
+            "content": {"type": "text", "text": "50% complete"}
+        }))
+        .is_none());
+    }
+
+    #[test]
+    fn grok_unlock_parser_reads_only_terminal_tool_output() {
+        let payload = json!({
+            "unlock_required": true,
+            "operation": "pages.rollback",
+            "unlock_challenge": "gcmspc_abcdefghijklmnopqrstuvwxyzABCDE1234567890_-",
+            "page_id": 42,
+            "admin_path": "/admin/pages/42/project"
+        });
+        let update = json!({
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": "call-1",
+            "status": "completed",
+            "content": [{
+                "type": "content",
+                "content": {"type": "text", "text": payload.to_string()}
+            }]
+        });
+        let request = grok_gcms_unlock_request(&update).expect("Grok tool output should emit");
+        assert_eq!(request.operation, "pages.rollback");
+        assert_eq!(request.admin_path, "/admin/pages/42/project");
+
+        let navigation = json!({
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": "call-navigation",
+            "status": "failed",
+            "content": [{
+                "type": "content",
+                "content": {
+                    "type": "text",
+                    "text": json!({
+                        "error": "unlock_required",
+                        "message": "操作 navigation.delete 需要在 Pilot 中输入后台密码重新授权。",
+                        "unlock_required": true,
+                        "operation": "navigation.delete"
+                    }).to_string()
+                }
+            }]
+        });
+        let request = grok_gcms_unlock_request(&navigation)
+            .expect("failed GCMS command still carries an authoritative unlock result");
+        assert_eq!(request.operation, "navigation.delete");
+        assert!(request.unlock_challenge.is_empty());
+        assert!(request.admin_path.is_empty());
+        let mut partial = navigation.clone();
+        partial["status"] = json!("in_progress");
+        assert!(
+            grok_gcms_unlock_request(&partial).is_none(),
+            "partial tool output must not request a password"
+        );
+
+        assert!(
+            grok_gcms_unlock_request(&json!({
+                "sessionUpdate": "agent_message_chunk",
+                "content": {"type": "text", "text": payload.to_string()}
+            }))
+            .is_none(),
+            "assistant prose must never create an unlock event"
+        );
+        assert!(
+            grok_gcms_unlock_request(&json!({
+                "sessionUpdate": "tool_call",
+                "rawInput": {"payload": payload}
+            }))
+            .is_none(),
+            "tool input is not server evidence"
+        );
     }
 
     #[test]

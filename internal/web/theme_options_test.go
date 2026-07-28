@@ -51,15 +51,19 @@ func TestThemeOptionSpecs(t *testing.T) {
 		"hero.visual",
 		factoryStatsSettingKey, factoryProcessSettingKey,
 		factoryCategoriesEnabledKey, factoryIndustriesSettingKey,
-		factoryGallerySettingKey, factoryFAQSettingKey, factoryCTASettingKey,
+		factoryGallerySettingKey, factoryCertificationsSettingKey, factoryFAQSettingKey, factoryCTASettingKey,
 	}
 	if strings.Join(keys, ",") != strings.Join(want, ",") {
 		t.Fatalf("factory specs = %v, want %v", keys, want)
 	}
-	for _, id := range []string{"industrial", "gunmetal"} { // 同族（两骨架）共享同一套槽
-		if got := themeOptionSpecs(id); len(got) != len(factory) {
-			t.Fatalf("theme %q specs = %d, want %d（同族共享）", id, len(got), len(factory))
-		}
+	if got := themeOptionSpecs("gunmetal"); len(got) != len(factory) {
+		t.Fatalf("theme %q specs = %d, want %d（同骨架共享）", "gunmetal", len(got), len(factory))
+	}
+	if got := themeOptionSpecs("industrial"); len(got) != len(factory)-1 {
+		t.Fatalf("theme %q specs = %d, want %d（目录骨架不消费认证槽）", "industrial", len(got), len(factory)-1)
+	}
+	if got := themeOptionSpecs("navigator"); len(got) != len(factory) {
+		t.Fatalf("theme %q specs = %d, want %d（贸易骨架页脚消费真实认证槽）", "navigator", len(got), len(factory))
 	}
 	content := themeOptionSpecs("editorial")
 	if len(content) != 1 || content[0].Type != themeOptHero {
@@ -77,16 +81,42 @@ func TestFactoryLayoutSlotSubsets(t *testing.T) {
 		factoryStatsSettingKey, factoryProcessSettingKey, factoryCategoriesEnabledKey,
 		factoryIndustriesSettingKey, factoryGallerySettingKey, factoryFAQSettingKey, factoryCTASettingKey,
 	}
+	allWithCertifications := []string{
+		factoryStatsSettingKey, factoryProcessSettingKey, factoryCategoriesEnabledKey,
+		factoryIndustriesSettingKey, factoryGallerySettingKey, factoryCertificationsSettingKey,
+		factoryFAQSettingKey, factoryCTASettingKey,
+	}
 	want := map[string][]string{
 		"factory-catalog":     all,
-		"factory-showcase":    all,
+		"factory-showcase":    allWithCertifications,
 		"factory-onepage":     {factoryStatsSettingKey, factoryProcessSettingKey, factoryFAQSettingKey, factoryCTASettingKey},
-		"factory-solutions":   {factoryStatsSettingKey, factoryProcessSettingKey, factoryIndustriesSettingKey, factoryCTASettingKey},
-		"factory-engineering": {factoryStatsSettingKey, factoryCategoriesEnabledKey, factoryCTASettingKey},
-		"factory-trade":       all,
-		"factory-sidebar":     all, // 分类树在侧栏竖栏（header 分支）消费
-		"factory-vision":      all, // CTA 在页脚（footer 分支复用 factory_cta）；hero 无图回落 gallery 首图
-		"factory-herofold":    all, // hero 无图回落 gallery 首图
+		"factory-solutions":   {factoryStatsSettingKey, factoryProcessSettingKey, factoryIndustriesSettingKey, factoryCertificationsSettingKey, factoryCTASettingKey},
+		"factory-engineering": {factoryStatsSettingKey, factoryCategoriesEnabledKey, factoryCertificationsSettingKey, factoryCTASettingKey},
+		"factory-trade":       allWithCertifications,
+		"factory-sidebar":     all,                   // 分类树在侧栏竖栏（header 分支）消费
+		"factory-vision":      all,                   // CTA 在页脚（footer 分支复用 factory_cta）；hero 无图回落 gallery 首图
+		"factory-herofold":    allWithCertifications, // hero 无图回落 gallery 首图
+		// 工厂第二批二十骨架：13 套额外消费真实认证槽，其余仍消费既有七槽。
+		"factory-andon":      all,
+		"factory-certwall":   allWithCertifications,
+		"factory-container":  allWithCertifications,
+		"factory-crate":      allWithCertifications,
+		"factory-draftdesk":  allWithCertifications,
+		"factory-exportmap":  allWithCertifications,
+		"factory-floorplan":  all,
+		"factory-furnace":    allWithCertifications,
+		"factory-gantry":     allWithCertifications,
+		"factory-gauge":      allWithCertifications,
+		"factory-hazardtape": allWithCertifications,
+		"factory-inspection": allWithCertifications,
+		"factory-line":       allWithCertifications,
+		"factory-nameplate":  allWithCertifications,
+		"factory-pipeworks":  all,
+		"factory-quotation":  all,
+		"factory-rackwall":   allWithCertifications,
+		"factory-sampleroom": allWithCertifications,
+		"factory-shutter":    all,
+		"factory-tonnage":    all,
 	}
 	if len(factoryLayoutSlots) != len(want) {
 		t.Fatalf("factoryLayoutSlots 登记了 %d 个骨架, want %d", len(factoryLayoutSlots), len(want))
@@ -112,7 +142,7 @@ func TestFactoryLayoutSlotSubsets(t *testing.T) {
 		}
 	}
 	// 未登记的新骨架回落全量（宁多勿丢）。
-	if got := keysOf(factoryLayoutThemeOptions("factory-future")); got != strings.Join(all, ",") {
+	if got := keysOf(factoryLayoutThemeOptions("factory-future")); got != strings.Join(allWithCertifications, ",") {
 		t.Fatalf("未登记骨架应回落全量, got %s", got)
 	}
 	// 经 themeOptionSpecs 走主题：hero 槽恒在最前 + 骨架子集。
@@ -504,6 +534,22 @@ func TestAppearanceThemeOptionsForm(t *testing.T) {
 			t.Fatalf("工厂主题缺少表单控件 %s", f)
 		}
 	}
+	if strings.Contains(body, `name="factory_certification_name_0"`) {
+		t.Fatal("industrial 骨架未消费认证槽，不应渲染认证表单")
+	}
+	if err := s.store.SetSetting("theme", "container"); err != nil {
+		t.Fatal(err)
+	}
+	body = themeOptsAppearanceHTML(t, s, cookie, "")
+	for _, f := range []string{
+		`name="factory_certification_name_0"`,
+		`name="factory_certification_note_0"`,
+		`name="theme_opt_slot" value="factory.certifications"`,
+	} {
+		if !strings.Contains(body, f) {
+			t.Fatalf("container 骨架缺少真实认证槽表单 %s", f)
+		}
+	}
 	// 工厂骨架=固定结构：首页版块节整体不渲染（控件不提交；后端靠登记字段区分
 	// 「没渲染」与「清空」，换回标准主题时已有配置保留）。
 	for _, f := range []string{`name="home_hero"`, `name="home_sections"`, `name="home_sections_present"`, "data-home-sections"} {
@@ -524,7 +570,7 @@ func TestAppearanceThemeOptionsForm(t *testing.T) {
 	}
 }
 
-// 骨架子集渲染：engineering（phosphor）弹窗只出 stats/categories/cta 三槽 + hero，
+// 骨架子集渲染：engineering（phosphor）弹窗只出 stats/categories/certifications/cta 四槽 + hero，
 // 不消费的槽（流程/行业/图集/FAQ）不渲染；槽登记字段只登记渲染的子集。
 func TestAppearanceThemeOptionsFormSubset(t *testing.T) {
 	s := newTestPublicServer(t, "")
@@ -534,10 +580,12 @@ func TestAppearanceThemeOptionsFormSubset(t *testing.T) {
 	cookie, _ := themeOptsAdminSession(t, s)
 	body := themeOptsAppearanceHTML(t, s, cookie, "")
 	for _, f := range []string{
-		`name="hero_visual"`, `name="factory_stat_num_0"`, `name="factory_categories_on"`, `name="factory_cta_title"`,
+		`name="hero_visual"`, `name="factory_stat_num_0"`, `name="factory_categories_on"`,
+		`name="factory_certification_name_0"`, `name="factory_cta_title"`,
 		`name="theme_opts" value="factory"`,
 		`name="theme_opt_slot" value="factory.stats"`,
 		`name="theme_opt_slot" value="factory.categories.enabled"`,
+		`name="theme_opt_slot" value="factory.certifications"`,
 		`name="theme_opt_slot" value="factory.cta"`,
 	} {
 		if !strings.Contains(body, f) {
@@ -595,15 +643,17 @@ func TestAppearanceSaveThemeOptionsSubset(t *testing.T) {
 		}
 	}
 
-	// 子集表单提交（engineering 只渲染 stats/categories/cta 三槽）：其余字段全部缺席。
-	subset := []string{factoryStatsSettingKey, factoryCategoriesEnabledKey, factoryCTASettingKey}
+	// 子集表单提交（engineering 只渲染 stats/categories/certifications/cta 四槽）：其余字段全部缺席。
+	subset := []string{factoryStatsSettingKey, factoryCategoriesEnabledKey, factoryCertificationsSettingKey, factoryCTASettingKey}
 	post(url.Values{
-		"theme_opts":            {"factory"},
-		"theme_opt_slot":        subset,
-		"factory_stat_num_0":    {"1998"},
-		"factory_stat_label_0":  {"建厂"},
-		"factory_categories_on": {"1"},
-		"factory_cta_title":     {"要图纸报价"},
+		"theme_opts":                   {"factory"},
+		"theme_opt_slot":               subset,
+		"factory_stat_num_0":           {"1998"},
+		"factory_stat_label_0":         {"建厂"},
+		"factory_categories_on":        {"1"},
+		"factory_certification_name_0": {"客户验厂"},
+		"factory_certification_note_0": {"有效期 2028"},
+		"factory_cta_title":            {"要图纸报价"},
 	})
 	// 登记槽照常写入。
 	if got := s.store.Setting(factoryStatsSettingKey); got != `[{"num":"1998","label":"建厂"}]` {
@@ -614,6 +664,9 @@ func TestAppearanceSaveThemeOptionsSubset(t *testing.T) {
 	}
 	if got := s.store.Setting(factoryCategoriesEnabledKey); got != "" {
 		t.Fatalf("factory.categories.enabled = %q, want \"\"（勾选=开）", got)
+	}
+	if got := s.store.Setting(factoryCertificationsSettingKey); got != `[{"name":"客户验厂","note":"有效期 2028"}]` {
+		t.Fatalf("factory.certifications = %q", got)
 	}
 	// 没登记的槽（含其开关）纹丝不动——表单里字段缺席绝不等于清空。
 	for k, v := range preserved {
@@ -626,6 +679,9 @@ func TestAppearanceSaveThemeOptionsSubset(t *testing.T) {
 	post(url.Values{"theme_opts": {"factory"}, "theme_opt_slot": subset})
 	if got := s.store.Setting(factoryStatsSettingKey); got != "" {
 		t.Fatalf("factory.stats = %q, want empty（留空回落默认）", got)
+	}
+	if got := s.store.Setting(factoryCertificationsSettingKey); got != "" {
+		t.Fatalf("factory.certifications = %q, want empty（留空不渲染）", got)
 	}
 	for _, k := range []string{factoryProcessSettingKey, factoryIndustriesSettingKey, factoryGallerySettingKey, factoryFAQSettingKey} {
 		if got := s.store.Setting(k); got != preserved[k] {
@@ -749,22 +805,24 @@ func TestAppearanceSaveThemeOptions(t *testing.T) {
 
 	// 默认语种保存三组 + 新区块；hero 槽选「动画1」必须落键（历史坑：一律归一成 "" 丢选择）。
 	post(url.Values{
-		"theme_opts":              {"factory"},
-		"hero_visual":             {"anim1"},
-		"factory_stat_num_0":      {"2010"},
-		"factory_stat_label_0":    {"建厂"},
-		"factory_stat_num_1":      {"只有数字没标签"}, // 应被丢弃
-		"factory_process_on":      {"1"},
-		"factory_step_title_1":    {"免费打样"},
-		"factory_industries_on":   {"1"},
-		"factory_industry_name_0": {"汽车配件"},
-		"factory_industry_note_0": {"主机厂供货"},
-		"factory_gallery":         {"/uploads/a.webp\n\n /uploads/b.webp "},
-		"factory_faq_on":          {"1"},
-		"factory_faq_q_0":         {"能贴牌吗？"},
-		"factory_faq_a_0":         {"支持 OEM。"},
-		"factory_categories_on":   {"1"},
-		"factory_cta_title":       {"谈一单"},
+		"theme_opts":                   {"factory"},
+		"hero_visual":                  {"anim1"},
+		"factory_stat_num_0":           {"2010"},
+		"factory_stat_label_0":         {"建厂"},
+		"factory_stat_num_1":           {"只有数字没标签"}, // 应被丢弃
+		"factory_process_on":           {"1"},
+		"factory_step_title_1":         {"免费打样"},
+		"factory_industries_on":        {"1"},
+		"factory_industry_name_0":      {"汽车配件"},
+		"factory_industry_note_0":      {"主机厂供货"},
+		"factory_gallery":              {"/uploads/a.webp\n\n /uploads/b.webp "},
+		"factory_certification_name_0": {"IATF 16949"},
+		"factory_certification_note_0": {"有效期至 2028-06"},
+		"factory_faq_on":               {"1"},
+		"factory_faq_q_0":              {"能贴牌吗？"},
+		"factory_faq_a_0":              {"支持 OEM。"},
+		"factory_categories_on":        {"1"},
+		"factory_cta_title":            {"谈一单"},
 	})
 	if got := s.store.Setting(factoryStatsSettingKey); got != `[{"num":"2010","label":"建厂"}]` {
 		t.Fatalf("factory.stats = %q", got)
@@ -777,6 +835,9 @@ func TestAppearanceSaveThemeOptions(t *testing.T) {
 	}
 	if got := s.store.Setting(factoryGallerySettingKey); got != `["/uploads/a.webp","/uploads/b.webp"]` {
 		t.Fatalf("factory.gallery = %q", got)
+	}
+	if got := s.store.Setting(factoryCertificationsSettingKey); got != `[{"name":"IATF 16949","note":"有效期至 2028-06"}]` {
+		t.Fatalf("factory.certifications = %q", got)
 	}
 	if got := s.store.Setting(factoryFAQSettingKey); got != `[{"q":"能贴牌吗？","a":"支持 OEM。"}]` {
 		t.Fatalf("factory.faq = %q", got)
@@ -819,7 +880,7 @@ func TestAppearanceSaveThemeOptions(t *testing.T) {
 
 	// 默认语种全部留空 → 清键（回落 i18n）。
 	post(url.Values{"theme_opts": {"factory"}})
-	for _, key := range []string{factoryStatsSettingKey, factoryProcessSettingKey, factoryIndustriesSettingKey, factoryGallerySettingKey, factoryFAQSettingKey, factoryCTASettingKey} {
+	for _, key := range []string{factoryStatsSettingKey, factoryProcessSettingKey, factoryIndustriesSettingKey, factoryGallerySettingKey, factoryCertificationsSettingKey, factoryFAQSettingKey, factoryCTASettingKey} {
 		if got := s.store.Setting(key); got != "" {
 			t.Fatalf("%s = %q, want empty（留空回落默认）", key, got)
 		}
@@ -858,6 +919,7 @@ func TestAPISiteProfileFactoryOptions(t *testing.T) {
 		 "factory_categories":{"enabled":false},
 		 "factory_industries":{"items":[{"name":"军工","note":"高可靠"}]},
 		 "factory_gallery":["/uploads/w1.webp"],
+		 "factory_certifications":[{"name":"IATF 16949","note":"证书 2028 年到期"}],
 		 "factory_faq":{"items":[{"q":"验厂吗","a":"欢迎"}]}},
 		{"lang":"en","factory_cta":{"title":"Get Pricing","note":""}}
 	]}`)
@@ -882,6 +944,9 @@ func TestAPISiteProfileFactoryOptions(t *testing.T) {
 	if got := s.store.Setting(factoryGallerySettingKey); got != `["/uploads/w1.webp"]` {
 		t.Fatalf("factory.gallery = %q", got)
 	}
+	if got := s.store.Setting(factoryCertificationsSettingKey); got != `[{"name":"IATF 16949","note":"证书 2028 年到期"}]` {
+		t.Fatalf("factory.certifications = %q", got)
+	}
 	if got := s.store.Setting(factoryFAQSettingKey); got != `[{"q":"验厂吗","a":"欢迎"}]` {
 		t.Fatalf("factory.faq = %q", got)
 	}
@@ -900,12 +965,15 @@ func TestAPISiteProfileFactoryOptions(t *testing.T) {
 	if item.FactoryCTA == nil || item.FactoryCTA.Title != "要报价" {
 		t.Fatalf("item.FactoryCTA = %#v", item.FactoryCTA)
 	}
+	if len(item.FactoryCertifications) != 1 || item.FactoryCertifications[0].Name != "IATF 16949" {
+		t.Fatalf("item.FactoryCertifications = %#v", item.FactoryCertifications)
+	}
 
 	// 传 [] 清除覆盖。
-	if w := patch(`{"lang":"zh","factory_stats":[],"factory_gallery":[],"factory_faq":{"items":[]}}`); w.Code != http.StatusOK {
+	if w := patch(`{"lang":"zh","factory_stats":[],"factory_gallery":[],"factory_certifications":[],"factory_faq":{"items":[]}}`); w.Code != http.StatusOK {
 		t.Fatalf("clear status = %d, body = %s", w.Code, w.Body.String())
 	}
-	for _, key := range []string{factoryStatsSettingKey, factoryGallerySettingKey, factoryFAQSettingKey} {
+	for _, key := range []string{factoryStatsSettingKey, factoryGallerySettingKey, factoryCertificationsSettingKey, factoryFAQSettingKey} {
 		if got := s.store.Setting(key); got != "" {
 			t.Fatalf("%s = %q, want empty after []", key, got)
 		}
@@ -917,6 +985,7 @@ func TestAPISiteProfileFactoryOptions(t *testing.T) {
 		`{"lang":"zh","factory_stats":"not-an-array"}`,
 		`{"lang":"zh","factory_faq":{"items":[{"q":"没答案"}]}}`,
 		`{"lang":"zh","factory_gallery":[""]}`,
+		`{"lang":"zh","factory_certifications":[{"note":"缺少名称"}]}`,
 	} {
 		if w := patch(bad); w.Code != http.StatusBadRequest {
 			t.Fatalf("bad payload %s → status %d, want 400（body %s）", bad, w.Code, w.Body.String())
@@ -1021,7 +1090,7 @@ func TestAPIThemeOptionsEndpoint(t *testing.T) {
 		keys = append(keys, slot.Key)
 		byKey[slot.Key] = i
 	}
-	if strings.Join(keys, ",") != "hero.visual,factory.stats,factory.categories.enabled,factory.cta" {
+	if strings.Join(keys, ",") != "hero.visual,factory.stats,factory.categories.enabled,factory.certifications,factory.cta" {
 		t.Fatalf("engineering slots = %v（应只回消费子集）", keys)
 	}
 	stats := out.Slots[byKey[factoryStatsSettingKey]]
@@ -1057,8 +1126,8 @@ func TestAPIThemeOptionsEndpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	out = decode(get("/api/admin/v1/theme-options", token))
-	if len(out.Slots) != 8 {
-		t.Fatalf("showroom slots = %d, want 8（hero + 7 工厂槽）", len(out.Slots))
+	if len(out.Slots) != 9 {
+		t.Fatalf("showroom slots = %d, want 9（hero + 8 工厂槽）", len(out.Slots))
 	}
 	found := false
 	for _, slot := range out.Slots {
@@ -1075,6 +1144,29 @@ func TestAPIThemeOptionsEndpoint(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("showroom 应包含 gallery 槽")
+	}
+
+	// 认证槽：仅消费它的骨架声明；按语种返回真实配置，不生成默认资质。
+	if err := s.store.SetSetting("theme", "container"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.store.SetSetting(factoryCertificationsSettingKey, `[{"name":"IATF 16949","note":"有效期至 2028-06"}]`); err != nil {
+		t.Fatal(err)
+	}
+	out = decode(get("/api/admin/v1/theme-options", token))
+	found = false
+	for _, slot := range out.Slots {
+		if slot.Key != factoryCertificationsSettingKey {
+			continue
+		}
+		found = true
+		if slot.Type != themeOptCertifications || !slot.Localized || !slot.Configured ||
+			!strings.Contains(string(slot.Value), "IATF 16949") {
+			t.Fatalf("certifications slot = %+v", slot)
+		}
+	}
+	if !found {
+		t.Fatal("container 应声明 factory.certifications 槽")
 	}
 
 	// 语种未启用 → 400；缺权限 → 403；无认证 → 401。
@@ -1102,7 +1194,7 @@ func TestAutomationDocsThemeOptions(t *testing.T) {
 		t.Fatal(err)
 	}
 	doc := string(b)
-	for _, want := range []string{"factory_stats", "factory_process", "factory_cta", "factory_categories", "factory_industries", "factory_gallery", "factory_faq"} {
+	for _, want := range []string{"factory_stats", "factory_process", "factory_cta", "factory_categories", "factory_industries", "factory_gallery", "factory_certifications", "factory_faq"} {
 		if !strings.Contains(doc, `"`+want+`"`) {
 			t.Fatalf("openapi 缺少 %s", want)
 		}
@@ -1115,7 +1207,7 @@ func TestAutomationDocsThemeOptions(t *testing.T) {
 	}
 	md := automationSkillMarkdown("http://x/api/admin/v1")
 	for _, want := range []string{
-		"## 主题配置", "factory_faq", "factory_gallery", "industrial", "gunmetal", "`theme-options`",
+		"## 主题配置", "factory_faq", "factory_gallery", "factory_certifications", "industrial", "gunmetal", "`theme-options`",
 		// 与「主题配置」节互链：先 theme-options 看槽再 PATCH site-profile；绝不编造工厂数字。
 		"node scripts/gcms.js theme-options", "绝不编造工厂数字", "GET /theme-options",
 	} {

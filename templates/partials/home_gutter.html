@@ -1,0 +1,68 @@
+{{define "home_gutter"}}
+  {{/* 书缝 Gutter — 一本摊开的书：左页刊首语 / 立体中缝(首字圆章+竖排分类导航) / 右页目录行；主导航仍在顶部标准页头(CSS 居中化) */}}
+  <div class="gt-wrap">
+    <div class="gt-book">
+
+      <section class="gt-page gt-recto">
+        {{if .Site.HeroEyebrow}}<p class="gt-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+        <h1 class="gt-title"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+        {{if .Site.HeroDescription}}<p class="gt-desc"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+        {{with .Featured}}
+        <a class="gt-lead" href="{{$.Tr.U (contentURL .)}}">
+          <span class="gt-lead-kicker"><b>{{$.Site.HomeFeatured}}</b>{{with .Category}}<i aria-hidden="true">·</i><span>{{.Name}}</span>{{end}}</span>
+          {{if .CoverImage}}<span class="gt-lead-cover"><img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}></span>{{end}}
+          <span class="gt-lead-t">{{.Title}}</span>
+          {{if .Excerpt}}<span class="gt-lead-ex">{{.Excerpt}}</span>{{end}}
+          <span class="gt-lead-foot">
+            <time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time>
+            <span class="gt-lead-more">{{$.Tr.T "home.read_more"}} <span class="arrow" aria-hidden="true">→</span></span>
+          </span>
+        </a>
+        {{end}}
+        {{if .FeatLinks}}
+        <div class="gt-links">
+          <h2 class="gt-links-h">{{.Site.HomeLinks}}</h2>
+          {{range .FeatLinks}}
+          <a class="gt-slip" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+            <span class="gt-slip-ic">{{if .CoverImage}}<img src="{{.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}</span>
+            <span class="gt-slip-t">{{.Title}}</span>
+          </a>
+          {{end}}
+        </div>
+        {{end}}
+        <p class="gt-folio">{{.Site.HomeFeatured}}{{with .Featured}}{{with .Category}} · {{.Name}}{{end}}{{end}}</p>
+      </section>
+
+      <aside class="gt-spine">
+        <span class="gt-seal" aria-hidden="true">{{initial .Site.HeroTitle}}</span>
+        {{if .Categories}}
+        <nav class="gt-spine-nav" aria-label="{{.Tr.T "nav.category"}}">
+          {{range .Categories}}<a class="gt-spine-cat" href="{{$.Tr.U (printf "/category/%s" .Slug)}}"><span class="gt-spine-name">{{.Name}}</span><small class="gt-spine-n">{{.Count}}</small></a>
+          {{end}}
+        </nav>
+        {{end}}
+        <a class="gt-spine-all" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}}</a>
+      </aside>
+
+      <section class="gt-page gt-verso">
+        <div class="gt-list-head">
+          <h2 class="gt-list-t">{{.Site.HomeLatest}}</h2>
+          <a class="gt-list-all" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+        </div>
+        {{if .Posts}}
+        <div class="gt-list">
+          {{range .Posts}}
+          <a class="gt-row" href="{{$.Tr.U (contentURL .)}}">
+            <span class="gt-row-t">{{.Title}}</span>
+            <span class="gt-row-dots" aria-hidden="true"></span>
+            <span class="gt-row-meta">{{with .Category}}{{.Name}}<i aria-hidden="true"> · </i>{{end}}<time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time></span>
+          </a>
+          {{end}}
+        </div>
+        {{end}}
+        <p class="gt-folio">{{.Site.HomeLatest}}{{if .Posts}} · {{len .Posts}}{{end}}</p>
+      </section>
+
+    </div>
+  </div>
+{{end}}

@@ -1,0 +1,91 @@
+{{define "home_departure"}}
+  {{/* 发车牌 Departure — 车站出发信息牌：带状页头 + 表头栏 + 「即将发车」放大首行 + 行列时刻表 + 候车厅指路牌 */}}
+  <div class="dp-wrap">
+
+    <header class="dp-band">
+      <div class="dp-band-main">
+        {{if .Site.HeroEyebrow}}<span class="dp-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</span>{{end}}
+        <h1 class="dp-station"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+      </div>
+      {{if .Site.HeroDescription}}<p class="dp-notice"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+    </header>
+
+    {{if or .Featured .Posts}}
+    <section class="dp-board">
+      <div class="dp-board-head">
+        <h2 class="dp-board-t">{{.Site.HomeLatest}}</h2>
+        <a class="dp-board-all" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="dp-cols">
+        <span class="dp-col dp-col-time">{{.Tr.T "common.date"}}</span>
+        <span class="dp-col dp-col-dest">{{.Tr.T "home.latest"}}</span>
+        <span class="dp-col dp-col-plat">{{.Tr.T "category.label"}}</span>
+        <span class="dp-col dp-col-no" aria-hidden="true">№</span>
+      </div>
+      {{with .Featured}}
+      <a class="dp-lead" href="{{$.Tr.U (contentURL .)}}">
+        <span class="dp-lead-time">
+          <b class="dp-lead-kicker">{{$.Site.HomeFeatured}}</b>
+          <time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time>
+        </span>
+        <span class="dp-lead-dest">
+          <span class="dp-lead-h">{{.Title}}</span>
+          {{if .Excerpt}}<span class="dp-lead-ex">{{.Excerpt}}</span>{{end}}
+          {{if .CoverImage}}<span class="dp-lead-cover"><img src="{{.CoverImage}}" alt="{{.Title}}" decoding="async" fetchpriority="high"{{imgAttrs .CoverImage}}></span>{{end}}
+          <span class="dp-lead-more">{{$.Tr.T "home.read_more"}} <span class="arrow" aria-hidden="true">→</span></span>
+        </span>
+        {{with .Category}}<span class="dp-plat">{{.Name}}</span>{{end}}
+        <span class="dp-no" aria-hidden="true"></span>
+      </a>
+      {{end}}
+      {{if .Posts}}
+      <div class="dp-rows">
+        {{range .Posts}}
+        <article class="dp-row">
+          <a class="dp-row-in" href="{{$.Tr.U (contentURL .)}}">
+            <time class="dp-time" datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time>
+            <span class="dp-dest">
+              <span class="dp-dest-t">{{.Title}}</span>
+              {{if .Excerpt}}<span class="dp-dest-ex">{{.Excerpt}}</span>{{end}}
+            </span>
+            {{with .Category}}<span class="dp-plat">{{.Name}}</span>{{end}}
+            <span class="dp-no" aria-hidden="true"></span>
+          </a>
+        </article>
+        {{end}}
+      </div>
+      {{end}}
+    </section>
+    {{end}}
+
+    {{if .FeatLinks}}
+    <section class="dp-transfer" aria-label="{{.Site.HomeLinks}}">
+      <h2 class="dp-transfer-h">{{.Site.HomeLinks}}</h2>
+      <div class="dp-transfer-list">
+        {{range .FeatLinks}}
+        <a class="dp-pass" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+          <span class="dp-pass-ic">{{if .CoverImage}}<img src="{{.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}</span>
+          <span class="dp-pass-t">{{.Title}}</span>
+        </a>
+        {{end}}
+      </div>
+    </section>
+    {{end}}
+
+    {{if .Categories}}
+    <nav class="dp-hall" aria-label="{{.Tr.T "nav.category"}}">
+      {{range .Categories}}
+      <a class="dp-sign" href="{{$.Tr.U (printf "/category/%s" .Slug)}}">
+        <span class="dp-sign-name">{{.Name}}</span>
+        <span class="dp-sign-n">{{.Count}}</span>
+      </a>
+      {{end}}
+      <a class="dp-sign dp-sign-all" href="{{.Tr.U .CategoryAll.Path}}">
+        <span class="dp-sign-name">{{.Tr.T "home.view_all"}}</span>
+        <span class="dp-sign-arrow" aria-hidden="true">→</span>
+      </a>
+    </nav>
+    {{end}}
+
+  </div>
+{{end}}

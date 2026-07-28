@@ -1,0 +1,236 @@
+{{define "body"}}
+<div class="pilot-console" data-pilot-console>
+  <header class="pc-topbar">
+    <div>
+      <span class="pc-kicker">GCMS · PILOT</span>
+      <h1>Pilot 控制台</h1>
+      <p>像使用 Pilot 一样，在浏览器中开始对话、继续历史、管理定时任务与托管。</p>
+    </div>
+    <div class="pc-context">
+      <div class="dropdown pc-dropdown pc-device-select" data-select-dropdown>
+        <button type="button" class="dd-toggle" aria-haspopup="listbox" aria-expanded="false"><span class="dd-label">选择 Pilot</span><span class="dd-caret" aria-hidden="true">⌄</span></button>
+        <select class="dd-native" data-dropdown-native data-binding-select><option value="">选择 Pilot</option></select>
+        <ul class="dd-menu" role="listbox"></ul>
+      </div>
+      <span class="pc-live" data-global-state><i></i>正在连接</span>
+      <button class="pc-icon-btn" type="button" data-refresh aria-label="刷新" title="刷新">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36L21 8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M21 3v5h-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="pc-workspace">
+    <aside class="pc-sidebar">
+      <nav class="pc-primary-nav" aria-label="Pilot 操作">
+        <button type="button" data-view="new">
+          <svg viewBox="0 0 18 18" fill="none" aria-hidden="true"><path d="m3 14 2.4-.55L14 4.85 11.15 2 2.55 10.6 2 13Z" stroke="currentColor" stroke-width="1.45" stroke-linejoin="round"/><path d="m9.9 3.3 2.8 2.8" stroke="currentColor" stroke-width="1.45"/></svg>
+          新对话
+        </button>
+        <button type="button" data-view="scheduled">
+          <svg viewBox="0 0 18 18" fill="none" aria-hidden="true"><rect x="3" y="4" width="12" height="11" rx="2" stroke="currentColor" stroke-width="1.35"/><path d="M6 2.5v3M12 2.5v3M3 7.5h12" stroke="currentColor" stroke-width="1.35" stroke-linecap="round"/></svg>
+          定时任务
+        </button>
+        <button type="button" data-view="managed">
+          <svg viewBox="0 0 18 18" fill="none" aria-hidden="true"><rect x="3.25" y="6" width="11.5" height="8.5" rx="2" stroke="currentColor" stroke-width="1.35"/><path d="M6 6V4.5A2.5 2.5 0 0 1 8.5 2h1A2.5 2.5 0 0 1 12 4.5V6M6.5 10.2h.01M11.5 10.2h.01" stroke="currentColor" stroke-width="1.35" stroke-linecap="round"/></svg>
+          托管
+        </button>
+      </nav>
+      <div class="pc-history-head"><span>历史对话</span><small data-history-count>0</small></div>
+      <div class="pc-history" data-conversations><div class="pc-sidebar-empty">暂无对话</div></div>
+    </aside>
+
+    <main class="pc-main">
+      <section class="pc-view" data-panel="new">
+        <div class="pc-welcome">
+          <h2>想让它帮你做点什么？</h2>
+          <p>选择站点和模型，像聊天一样把需求说清楚。对话会同步到 Pilot 本地。</p>
+        </div>
+        <form class="pc-chat-start" data-task-form>
+          <div class="pc-mode-cards">
+            <button type="button" class="active" data-mode="conversation.create"><span class="pc-mode-icon"><img src="/assets/icons/pilot-siteops.svg" alt=""></span><span class="pc-mode-copy"><b>站点运营</b><small>内容、SEO 与日常运营</small></span></button>
+            <button type="button" data-mode="sites.create"><span class="pc-mode-icon"><img src="/assets/icons/pilot-sitebuild.svg" alt=""></span><span class="pc-mode-copy"><b>新站建设</b><small>创建并搭建全新子站点</small></span></button>
+            <button type="button" data-mode="conversation.free"><span class="pc-mode-icon"><img src="/assets/icons/pilot-chat.svg" alt=""></span><span class="pc-mode-copy"><b>自由对话</b><small>不关联站点，自由交流</small></span></button>
+          </div>
+          <div class="pc-message-box">
+            <textarea name="prompt" rows="3" required placeholder="例如：分析这个站点最近的内容表现，并给出下一步运营计划"></textarea>
+            <div class="pc-composer-bar">
+              <div class="pc-composer-left">
+                <div class="dropdown pc-dropdown pc-composer-select pc-site-select" data-select-dropdown data-dropdown-search data-dropdown-search-placeholder="搜索站点名称或域名">
+                  <button type="button" class="dd-toggle" aria-label="站点" aria-haspopup="listbox" aria-expanded="false"><span class="dd-label">选择站点</span><span class="dd-caret" aria-hidden="true">⌄</span></button>
+                  <select class="dd-native" data-dropdown-native data-site-pick><option value="">选择站点</option></select><ul class="dd-menu" role="listbox"></ul>
+                </div>
+                <div class="pc-site-chips" data-site-chips></div>
+                <span class="pc-context-label" data-mode-target hidden><img src="/assets/icons/pilot-sitebuild.svg" alt=""><span><b>新建站点</b><small>使用当前 GCMS 技能包</small></span></span>
+              </div>
+              <div class="pc-composer-right">
+                <div class="dropdown pc-dropdown pc-composer-select pc-model-select" data-select-dropdown>
+                  <button type="button" class="dd-toggle" aria-label="模型" aria-haspopup="listbox" aria-expanded="false"><span class="dd-label">Codex · 默认</span><span class="dd-caret">⌄</span></button>
+                  <select class="dd-native" name="brain" data-dropdown-native><option value="codex">Codex · 默认</option><option value="claude">Claude Code · 默认</option><option value="grok">Grok · 默认</option></select><ul class="dd-menu" role="listbox"></ul>
+                </div>
+                <div class="dropdown pc-dropdown pc-composer-select pc-effort-select" data-select-dropdown>
+                  <button type="button" class="dd-toggle" aria-label="思考强度" aria-haspopup="listbox" aria-expanded="false"><span class="dd-label">默认强度</span><span class="dd-caret">⌄</span></button>
+                  <select class="dd-native" name="effort" data-dropdown-native><option value="">默认强度</option><option value="low">低</option><option value="medium">中</option><option value="high">高</option></select><ul class="dd-menu" role="listbox"></ul>
+                </div>
+                <span class="pc-composer-error" data-task-error></span>
+                <button class="pc-send" type="submit" aria-label="发送"><img src="/assets/icons/pilot-send.svg" alt=""></button>
+              </div>
+            </div>
+          </div>
+          <p class="pc-safety">写操作会在 Pilot 中明确确认；发布、覆盖、改域名和删除仍需 GCMS 密码短时解锁。</p>
+        </form>
+      </section>
+
+      <section class="pc-view" data-panel="conversation" hidden>
+        <article class="pc-thread" data-conversation-detail></article>
+        <form class="pc-reply" data-reply-form>
+          <textarea name="prompt" rows="2" required placeholder="继续这段对话…"></textarea>
+          <button class="pc-send" type="submit" aria-label="发送"><svg viewBox="0 0 18 18" fill="none"><path d="m3 9 12-6-4.5 12-2-4.5L3 9Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="m8.5 10.5 3-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button>
+        </form>
+      </section>
+
+      <section class="pc-view" data-panel="scheduled" hidden>
+        <div class="pc-section-head"><div><h2>定时任务</h2><p>这里管理 Pilot 本地的真实定时任务，离线时操作会排队。</p></div><button class="btn primary" type="button" data-new-schedule>＋ 新建</button></div>
+        <form class="pc-inline-form" data-schedule-form hidden>
+          <div class="pc-form-grid">
+            <label><span>名称</span><input name="title" placeholder="例如：每日 SEO 检查"></label>
+            <label><span>执行站点</span><div class="dropdown pc-dropdown" data-select-dropdown><button type="button" class="dd-toggle"><span class="dd-label">选择站点</span><span class="dd-caret">⌄</span></button><select class="dd-native" data-dropdown-native name="site_id" data-schedule-site required><option value="">选择站点</option></select><ul class="dd-menu"></ul></div></label>
+            <label><span>执行周期</span><div class="dropdown pc-dropdown" data-select-dropdown><button type="button" class="dd-toggle"><span class="dd-label">每天</span><span class="dd-caret">⌄</span></button><select class="dd-native" data-dropdown-native name="interval"><option value="60">每小时</option><option value="360">每 6 小时</option><option value="1440" selected>每天</option><option value="10080">每周</option></select><ul class="dd-menu"></ul></div></label>
+          </div>
+          <label><span>任务内容</span><textarea name="prompt" rows="4" required placeholder="每次到点让 Pilot 做什么？"></textarea></label>
+          <div class="pc-inline-actions"><button class="btn" type="button" data-cancel-schedule>取消</button><button class="btn primary" type="submit">保存到 Pilot</button></div>
+        </form>
+        <div class="pc-card-list" data-scheduled-list></div>
+      </section>
+
+      <section class="pc-view" data-panel="managed" hidden>
+        <div class="pc-section-head"><div><h2>托管</h2><p>查看并控制 Pilot 已开启的真实托管，不复制站点管理功能。</p></div></div>
+        <div class="pc-card-list" data-managed-list></div>
+      </section>
+    </main>
+  </div>
+
+  <dialog class="pc-dialog" data-confirm-dialog>
+    <form method="dialog" data-confirm-form>
+      <button class="pc-dialog-x" value="cancel" aria-label="关闭">×</button>
+      <h3 data-confirm-title>确认操作</h3><p data-confirm-copy></p>
+      <div class="pc-dialog-actions"><button class="btn" value="cancel">取消</button><button class="btn primary" type="submit">确认</button></div>
+    </form>
+  </dialog>
+</div>
+
+<style>
+.pilot-console{--pc:#315cff;--ink:#172033;--muted:#6d7586;max-width:1240px;margin:0 auto;padding:18px 0 70px;color:var(--ink)}
+.pilot-console [hidden]{display:none!important}
+.pc-topbar{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;padding:18px 0 22px;border-bottom:1px solid #dde2eb}.pc-kicker{font:700 11px/1.2 ui-monospace,monospace;letter-spacing:.14em;color:var(--pc)}.pc-topbar h1{font-size:36px;line-height:1;margin:8px 0}.pc-topbar p,.pc-section-head p,.pc-welcome p{margin:0;color:var(--muted)}.pc-context{display:flex;align-items:center;gap:6px}.pc-device-select{width:196px}.pc-context .pc-device-select .dd-toggle{min-height:30px;height:30px;padding:0 9px;border-radius:8px;font-size:11px;line-height:1.2}.pc-context .pc-device-select .dd-caret{font-size:10px}.pc-context .pc-device-select .dd-menu{font-size:11px}.pc-context .pc-device-select .dd-menu li{padding:5px 7px;font-size:11px}.pc-live{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 9px;border:1px solid #dbe1eb;border-radius:99px;background:#fff;font-size:10px;line-height:1;white-space:nowrap}.pc-live i{width:6px;height:6px;border-radius:50%;background:#9ba4b5}.pc-live.online i{background:#18a957;box-shadow:0 0 0 3px #18a95718}.pc-icon-btn{display:grid;place-items:center;width:30px;height:30px;padding:0;border:1px solid #dbe1eb;border-radius:8px;background:#fff;color:var(--muted);cursor:pointer}.pc-icon-btn svg{width:14px;height:14px}
+.pc-workspace{display:grid;grid-template-columns:244px minmax(0,1fr);min-height:630px;margin-top:18px;border:1px solid #dce1e9;border-radius:18px;background:#fff;overflow:hidden;box-shadow:0 10px 36px #14213d0a}.pc-sidebar{display:flex;flex-direction:column;min-height:0;padding:14px 10px;border-right:1px solid #e4e7ec;background:#fbfbfa}.pc-primary-nav{display:grid;gap:3px}.pc-primary-nav button,.pc-history-row{display:flex;align-items:center;gap:10px;width:100%;min-width:0;border:0;border-radius:9px;background:transparent;padding:10px;color:#555e6c;text-align:left;font:600 13px/1.2 inherit;cursor:pointer}.pc-primary-nav button:hover,.pc-history-row:hover,.pc-primary-nav button.active{background:#eef1f6;color:var(--ink)}.pc-primary-nav button.active{color:var(--pc)}.pc-primary-nav svg{width:17px;height:17px;flex:none}.pc-history-head{display:flex;justify-content:space-between;margin:18px 10px 7px;color:#8a919d;font-size:11px;font-weight:700}.pc-history{min-height:0;overflow:auto}.pc-history-row{display:grid;grid-template-columns:18px minmax(0,1fr);gap:8px;padding:8px 9px;font-weight:500}.pc-history-row>svg{width:16px}.pc-history-row span{min-width:0}.pc-history-row b,.pc-history-row small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.pc-history-row b{font-size:12px}.pc-history-row small{margin-top:3px;color:#979da8;font-size:10px}.pc-history-row.active{background:#edf1ff;color:#274fcc}.pc-sidebar-empty{padding:15px 10px;color:#9aa1ad;font-size:12px}
+.pc-main{min-width:0;padding:34px 42px}.pc-view{max-width:850px;margin:0 auto}.pc-welcome{text-align:center;padding:24px 0 30px}.pc-welcome h2{font-size:29px;margin:0 0 9px}.pc-mode-cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:30px}.pc-mode-cards button{display:flex;align-items:center;gap:10px;min-width:0;min-height:54px;border:1px solid #d9dde5;border-radius:12px;background:#fff;padding:11px 13px;text-align:left;color:var(--ink);font:inherit;cursor:pointer;transition:border-color .12s,background .12s}.pc-mode-cards button:hover{border-color:#c9cdd5}.pc-mode-cards button.active{border-color:#5f6877;box-shadow:inset 0 0 0 1px #5f6877}.pc-mode-icon{display:grid;place-items:center;flex:none;width:30px;height:30px;border-radius:8px;background:#edeef1;color:#687180}.pc-mode-icon img{width:17px;height:17px}.pc-mode-cards button.active .pc-mode-icon{color:#315cff}.pc-mode-copy{display:flex;flex-direction:column;gap:1px;min-width:0}.pc-mode-copy b{font-size:13.5px;line-height:1.35}.pc-mode-copy small{color:var(--muted);font-size:11.5px;line-height:1.35;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.pc-form-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.pc-chat-start label,.pc-inline-form label{display:grid;gap:6px;font-size:11px;font-weight:700}.pc-dropdown .dd-toggle,.pc-inline-form input{min-height:40px;border:1px solid #ccd3df;border-radius:10px;background:#fff;font-size:12px}.pc-site-chips{display:flex;align-items:center;flex-wrap:wrap;gap:5px}.pc-site-chip{display:inline-flex;align-items:center;gap:5px;padding:4px 7px 4px 9px;border-radius:99px;background:#edf1ff;color:#294fbf;font-size:10px}.pc-site-chip button{border:0;background:transparent;color:inherit;cursor:pointer}.pc-message-box{position:relative;display:flex;flex-direction:column;border:1px solid #d0d5de;border-radius:12px;background:#fff;padding:0;box-shadow:none;transition:border-color .12s}.pc-message-box:focus-within{border-color:#aeb5c0}.pc-message-box textarea,.pc-reply textarea,.pc-inline-form textarea{width:100%;resize:vertical;border:0;outline:0;background:transparent;color:var(--ink);font:14px/1.6 inherit}.pc-message-box textarea{min-height:88px;max-height:200px;resize:none;padding:12px 16px 6px}.pc-composer-bar{display:flex;align-items:flex-end;justify-content:space-between;gap:6px;padding:4px 8px 8px}.pc-composer-left,.pc-composer-right{display:flex;align-items:center;gap:2px;min-width:0}.pc-composer-left{flex:1}.pc-composer-right{flex:none}.pc-composer-select .dd-toggle{min-height:26px;height:26px;padding:0 6px;gap:4px;border-color:transparent;border-radius:7px;background:transparent;font-size:10.5px;line-height:1.2;font-weight:600}.pc-composer-select .dd-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.pc-composer-select .dd-caret{font-size:10px}.pc-composer-select .dd-toggle:hover,.pc-composer-select.open .dd-toggle{background:#f2f3f5;border-color:#e1e3e8}.pc-composer-select .dd-menu{top:calc(100% + 3px);min-width:100%;padding:3px;border-radius:7px;box-shadow:0 8px 24px rgba(17,24,39,.12);max-height:190px}.pc-composer-select .dd-menu li{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:26px;padding:5px 7px;border-radius:5px;font-size:11px;line-height:1.25;font-weight:500;white-space:nowrap}.pc-composer-select .dd-menu li[aria-selected="true"]{font-weight:650}.pc-composer-select .dd-menu li[aria-selected="true"]::after{font-size:10px;line-height:1}.pc-site-select{max-width:160px}.pc-model-select{width:132px}.pc-effort-select{width:92px}.pc-composer-error{max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#b42318;font-size:10px}.pc-send{display:grid;place-items:center;flex:none;width:30px;height:30px;padding:0;border:0;border-radius:50%;background:var(--pc);color:#fff;cursor:pointer;transition:background .12s,transform .08s}.pc-send:hover{background:#264ee7}.pc-send:active{transform:scale(.92)}.pc-send:disabled{background:#d7dae0;cursor:default;transform:none}.pc-send img{width:17px;height:17px}.pc-safety{text-align:center;color:#9299a5;font-size:10px}.pc-section-head{display:flex;justify-content:space-between;align-items:flex-end;gap:18px;margin-bottom:18px}.pc-section-head h2{font-size:24px;margin:0 0 5px}
+.pc-context-label{display:flex;align-items:center;gap:7px;min-width:0;padding:3px 8px;color:#687180}.pc-context-label>img{width:15px;height:15px}.pc-context-label>span{display:flex;align-items:baseline;gap:6px;min-width:0}.pc-context-label b{font-size:11.5px;color:var(--ink)}.pc-context-label small{font-size:10px;color:var(--muted);white-space:nowrap}.pc-thread{padding-bottom:18px}.pc-thread-head{border-bottom:1px solid #e3e6eb;padding-bottom:16px}.pc-thread-head h2{margin:0 0 6px}.pc-thread-head small{color:var(--muted)}.pc-message{max-width:82%;margin:18px 0;padding:13px 15px;border-radius:14px;background:#f3f4f6;line-height:1.65;white-space:pre-wrap}.pc-message.user{margin-left:auto;background:#edf1ff}.pc-thread-state{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:11px}.pc-state{padding:4px 7px;border-radius:99px;background:#edf0f5}.pc-state.running,.pc-state.claimed{background:#eaf0ff;color:var(--pc)}.pc-state.completed{background:#e8f8ef;color:#138549}.pc-state.failed{background:#fff0ee;color:#b42318}.pc-reply{position:sticky;bottom:10px;display:flex;align-items:flex-end;gap:8px;border:1px solid #ccd3df;border-radius:14px;background:#fff;padding:10px;box-shadow:0 10px 28px #14213d18}
+.pc-inline-form{display:grid;gap:13px;margin-bottom:18px;padding:16px;border:1px solid #dce1e9;border-radius:14px;background:#fafbfc}.pc-inline-form input{width:100%;padding:0 11px}.pc-inline-form label>textarea{min-height:90px;border:1px solid #ccd3df;border-radius:10px;background:#fff;padding:10px}.pc-inline-actions{display:flex;justify-content:flex-end;gap:8px}.pc-card-list{display:grid;gap:10px}.pc-control-card{border:1px solid #dce1e9;border-radius:14px;padding:15px;background:#fff}.pc-control-head{display:flex;align-items:flex-start;gap:10px}.pc-control-head>div{min-width:0;flex:1}.pc-control-head h3{margin:0 0 4px;font-size:15px}.pc-control-head p{margin:0;color:var(--muted);font-size:11px}.pc-control-actions{display:flex;gap:7px;flex-wrap:wrap;margin-top:12px}.pc-control-meta{display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;color:#697282;font-size:11px}.pc-empty{padding:35px;border:1px dashed #ccd3df;border-radius:14px;text-align:center;color:var(--muted)}.pc-pending{margin-top:8px;color:#7a5a00;font-size:11px}
+.pc-dialog{max-width:430px;border:0;border-radius:17px;padding:0;box-shadow:0 20px 70px #10182855}.pc-dialog::backdrop{background:#10182866}.pc-dialog form{position:relative;padding:24px}.pc-dialog h3{margin:0 0 8px}.pc-dialog p{color:var(--muted);line-height:1.6}.pc-dialog-x{position:absolute;right:12px;top:10px;border:0;background:transparent;font-size:22px}.pc-dialog-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:17px}
+@media(max-width:760px){.pilot-console{padding:0 0 78px}.pc-topbar{align-items:flex-start;padding:14px 0;gap:12px}.pc-topbar h1{font-size:24px;white-space:nowrap}.pc-topbar p,.pc-kicker{display:none}.pc-context{flex-wrap:nowrap;justify-content:flex-end;gap:4px}.pc-device-select{width:148px}.pc-context .pc-device-select .dd-toggle,.pc-icon-btn{height:28px;min-height:28px}.pc-live{display:none}.pc-workspace{display:block;min-height:0;margin-top:12px;border:0;border-radius:0;box-shadow:none;overflow:visible}.pc-sidebar{display:block;padding:0;border:0;background:transparent}.pc-primary-nav{position:fixed;z-index:30;left:0;right:0;bottom:0;display:grid;grid-template-columns:repeat(3,1fr);padding:7px 10px calc(7px + env(safe-area-inset-bottom));border-top:1px solid #dde2eb;background:#fffffff2;backdrop-filter:blur(16px)}.pc-primary-nav button{display:grid;place-items:center;gap:2px;padding:5px;font-size:10px}.pc-history-head,.pc-history{display:none}.pc-main{padding:26px 16px 34px}.pc-welcome{padding:16px 8px 28px}.pc-welcome h2{margin-bottom:12px;font-size:24px;line-height:1.25}.pc-welcome p{max-width:320px;margin-inline:auto;line-height:1.65}.pc-mode-cards{grid-template-columns:1fr;gap:12px;margin-bottom:24px}.pc-form-grid{grid-template-columns:1fr}.pc-view{max-width:none}.pc-chat-start{padding-bottom:6px}.pc-safety{margin:14px 8px 0;line-height:1.6}.pc-message{max-width:92%}.pc-composer-bar{align-items:stretch;flex-direction:column}.pc-composer-left,.pc-composer-right{width:100%}.pc-composer-right{justify-content:flex-end}.pc-site-select{max-width:none;flex:1}.pc-model-select{width:min(39vw,132px)}.pc-effort-select{width:min(29vw,92px)}.pc-site-chips{max-width:46vw;overflow:auto;flex-wrap:nowrap}.pc-context-label small{display:none}}
+</style>
+
+<script>
+(() => {
+  const root=document.querySelector('[data-pilot-console]');if(!root)return;
+  const csrf=document.body.dataset.csrf||'';
+  const state={overview:null,binding:'',siteIDs:[],conversation:'',view:'',mode:'conversation.create',pending:null,timer:null};
+  const labels={queued:'排队中',claimed:'已领取',running:'执行中',waiting_confirmation:'等待确认',completed:'已完成',failed:'失败',canceled:'已取消',expired:'已过期'};
+  const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const when=v=>!v||String(v).startsWith('0001-')?'从未':new Date(v).toLocaleString();
+  async function api(path,options={}){const response=await fetch('/admin/pilot/api'+path,{credentials:'same-origin',...options,headers:{Accept:'application/json','Content-Type':'application/json','X-CSRF-Token':csrf,...(options.headers||{})}});const data=await response.json().catch(()=>({message:'GCMS 返回无法解析的响应'}));if(!response.ok)throw new Error(data.message||data.error||`HTTP ${response.status}`);return data}
+  const bindingRows=()=>(state.overview?.devices||[]).flatMap(row=>(row.bindings||[]).map(item=>({...item,device:row.device,online:row.online})));
+  const selectedBinding=()=>bindingRows().find(row=>row.binding.ID===state.binding);
+  const parseJSON=(value,fallback=[])=>{try{return JSON.parse(value||'[]')}catch{return fallback}};
+  const snapshot=(row=selectedBinding())=>({scheduled:parseJSON(row?.snapshot?.ScheduledTasksJSON),managed:parseJSON(row?.snapshot?.ManagedSitesJSON),updated:row?.snapshot?.UpdatedAt});
+  function pendingControl(prefix,id){
+    return (state.overview?.tasks||[]).find(task=>{
+      if(!String(task.Operation||'').startsWith(prefix)||!['queued','claimed','running','waiting_confirmation'].includes(task.Status))return false;
+      const payload=parseJSON(task.Prompt,{});
+      return !id||payload.id===id;
+    });
+  }
+  function conversations(){
+    const groups=new Map();
+    (state.overview?.tasks||[]).filter(t=>!String(t.Operation||'').startsWith('schedule.')&&!String(t.Operation||'').startsWith('managed.')).forEach(task=>{if(!task.ConversationID)return;const group=groups.get(task.ConversationID)||{first:task,latest:task,tasks:[]};group.tasks.push(task);if(new Date(task.CreatedAt)<new Date(group.first.CreatedAt))group.first=task;if(new Date(task.UpdatedAt)>new Date(group.latest.UpdatedAt))group.latest=task;groups.set(task.ConversationID,group)});
+    return [...groups.values()].sort((a,b)=>new Date(b.latest.UpdatedAt)-new Date(a.latest.UpdatedAt));
+  }
+  function conversationTitle(group){return String(group?.first?.Prompt||'未命名对话').trim().slice(0,64)||'未命名对话'}
+  function siteNames(task){return parseJSON(task?.SiteNamesJSON).join('、')}
+  function show(view){
+    state.view=view;
+    root.querySelectorAll('[data-panel]').forEach(panel=>panel.hidden=panel.dataset.panel!==view);
+    root.querySelectorAll('[data-view]').forEach(button=>button.classList.toggle('active',button.dataset.view===view));
+    renderHistory();
+  }
+  function renderContext(){
+    const rows=bindingRows(),select=root.querySelector('[data-binding-select]'),old=state.binding;
+    select.innerHTML='<option value="">选择 Pilot</option>'+rows.filter(x=>x.valid).map(x=>`<option value="${esc(x.binding.ID)}">${x.online?'●':'○'} ${esc(x.device.Name)} · ${esc(x.binding.ConnectionName||'GCMS 技能包')}</option>`).join('');
+    if(old&&rows.some(x=>x.binding.ID===old))select.value=old;else{const first=rows.find(x=>x.valid&&x.online)||rows.find(x=>x.valid);select.value=first?.binding.ID||''}
+    state.binding=select.value;if(window.adminRefreshDropdown)window.adminRefreshDropdown(select);
+    const online=(state.overview?.devices||[]).filter(x=>x.online).length,total=(state.overview?.devices||[]).length,live=root.querySelector('[data-global-state]');
+    live.classList.toggle('online',online>0);live.innerHTML=`<i></i>${online} 在线 · ${total} 设备`;
+  }
+  function renderSites(){
+    const row=selectedBinding(),sites=row?.sites||[],pick=root.querySelector('[data-site-pick]'),schedule=root.querySelector('[data-schedule-site]');
+    state.siteIDs=state.siteIDs.filter(id=>sites.some(site=>site.id===id));
+    const options='<option value="">选择站点</option>'+sites.map(site=>`<option value="${site.id}" data-title="${esc(site.name)}" data-subtitle="${esc(site.domain||site.slug)}" data-icon="${esc(site.favicon||'/assets/favicon.svg')}">${esc(site.name)} · ${esc(site.domain||site.slug)}</option>`).join('');
+    pick.innerHTML=options;schedule.innerHTML=options;
+    pick.disabled=!sites.length;schedule.disabled=!sites.length;
+    if(window.adminRefreshDropdown){window.adminRefreshDropdown(pick);window.adminRefreshDropdown(schedule)}
+    root.querySelector('[data-site-chips]').innerHTML=state.siteIDs.map(id=>{const site=sites.find(x=>x.id===id);return site?`<span class="pc-site-chip">${esc(site.name)}<button type="button" data-remove-site="${id}">×</button></span>`:''}).join('');
+  }
+  function renderModeContext(){
+    const siteSelect=root.querySelector('.pc-site-select'),chips=root.querySelector('[data-site-chips]'),target=root.querySelector('[data-mode-target]');
+    const needsSite=state.mode==='conversation.create';
+    siteSelect.hidden=!needsSite;chips.hidden=!needsSite;target.hidden=needsSite;
+    const image=target.querySelector('img'),title=target.querySelector('b'),copy=target.querySelector('small');
+    if(state.mode==='sites.create'){image.src='/assets/icons/pilot-sitebuild.svg';title.textContent='新建站点';copy.textContent='使用当前 GCMS 技能包'}
+    else if(state.mode==='conversation.free'){image.src='/assets/icons/pilot-chat.svg';title.textContent='自由对话';copy.textContent='不关联站点'}
+  }
+  function renderHistory(){
+    const rows=conversations();root.querySelector('[data-history-count]').textContent=rows.length;
+    root.querySelector('[data-conversations]').innerHTML=rows.length?rows.map(group=>{const t=group.latest;return `<button type="button" class="pc-history-row ${state.conversation===t.ConversationID?'active':''}" data-open-conversation="${esc(t.ConversationID)}"><svg viewBox="0 0 16 16" fill="none"><path d="M3 3h10a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H6.5L4 13.2V11H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z" stroke="currentColor" stroke-width="1.25"/></svg><span><b>${esc(conversationTitle(group))}</b><small>${esc(siteNames(t)||'自由对话')} · ${labels[t.Status]||esc(t.Status)}</small></span></button>`}).join(''):'<div class="pc-sidebar-empty">暂无历史对话</div>';
+  }
+  function renderConversation(){
+    const group=conversations().find(x=>x.latest.ConversationID===state.conversation),detail=root.querySelector('[data-conversation-detail]');if(!group)return;
+    const messages=[...group.tasks].sort((a,b)=>new Date(a.CreatedAt)-new Date(b.CreatedAt)).map(t=>`<div class="pc-message user">${esc(t.Prompt)}</div>${t.FinalOutput||t.ErrorMessage?`<div class="pc-message">${esc(t.FinalOutput||t.ErrorMessage)}</div>`:''}`).join('');
+    const t=group.latest;detail.innerHTML=`<header class="pc-thread-head"><h2>${esc(conversationTitle(group))}</h2><div class="pc-thread-state"><span class="pc-state ${esc(t.Status)}">${labels[t.Status]||esc(t.Status)}</span><span>${esc(siteNames(t)||'自由对话')} · ${esc(when(t.UpdatedAt))}</span></div></header>${messages}${['queued','claimed','running','waiting_confirmation'].includes(t.Status)?`<p class="pc-pending">${esc(t.ProgressText||'正在等待 Pilot 更新…')}</p>`:''}`;
+  }
+  function renderScheduled(){
+    const data=snapshot(),list=root.querySelector('[data-scheduled-list]'),creating=(state.overview?.tasks||[]).find(task=>task.Operation==='schedule.create'&&['queued','claimed','running'].includes(task.Status));
+    list.innerHTML=data.scheduled.length?data.scheduled.map(task=>{const pending=pendingControl('schedule.',task.id);return `<article class="pc-control-card"><div class="pc-control-head"><div><h3>${esc(task.title||task.prompt)}</h3><p>${esc((task.site_names||[task.site_name]).filter(Boolean).join('、'))}</p></div><span class="pc-state ${task.enabled?'completed':''}">${task.enabled?'运行中':'已暂停'}</span></div><div class="pc-control-meta"><span>周期：${task.interval_minutes<1440?`${task.interval_minutes} 分钟`:task.interval_minutes===1440?'每天':task.interval_minutes===10080?'每周':`${task.interval_minutes} 分钟`}</span><span>下次：${task.enabled?esc(new Date(task.next_run*1000).toLocaleString()):'—'}</span><span>上次：${esc(task.last_summary||'尚未执行')}</span></div>${pending?`<p class="pc-pending">${labels[pending.Status]||esc(pending.Status)}：${esc(pending.ProgressText||'等待 Pilot 领取')}</p>`:''}<div class="pc-control-actions"><button class="btn" data-control="schedule.toggle" data-id="${esc(task.id)}" data-enabled="${task.enabled?'0':'1'}" ${pending?'disabled':''}>${task.enabled?'暂停':'启用'}</button><button class="btn" data-confirm-control="schedule.delete" data-id="${esc(task.id)}" data-title="删除定时任务" data-copy="删除后 Pilot 将不再自动执行这项任务。历史对话不会删除。" ${pending?'disabled':''}>删除</button></div></article>`}).join(''):creating?`<div class="pc-empty">${labels[creating.Status]||esc(creating.Status)}：${esc(creating.ProgressText||'新定时任务正在等待 Pilot 领取')}</div>`:`<div class="pc-empty">${selectedBinding()?.online?'这个 Pilot 还没有定时任务。':'Pilot 当前离线，显示的是最近一次同步状态。'}</div>`;
+  }
+  function renderManaged(){
+    const data=snapshot(),list=root.querySelector('[data-managed-list]');
+    list.innerHTML=data.managed.length?data.managed.map(item=>{const pending=pendingControl('managed.',item.id);return `<article class="pc-control-card"><div class="pc-control-head"><div><h3>${esc(item.site_name)}</h3><p>${item.mode==='growth'?'增长托管':'计划托管'} · ${esc(item.level?.toUpperCase()||'L0')}</p></div><span class="pc-state ${item.paused?'':'completed'}">${item.paused?'已暂停':'托管中'}</span></div><div class="pc-control-meta"><span>每周内容上限：${item.weekly_post_limit}</span><span>模型：${esc(item.brain||'Pilot 默认')}</span>${item.fused_at?'<span>预算熔断</span>':''}</div>${pending?`<p class="pc-pending">${labels[pending.Status]||esc(pending.Status)}：${esc(pending.ProgressText||'等待 Pilot 领取')}</p>`:''}<div class="pc-control-actions"><button class="btn" data-control="${item.paused?'managed.resume':'managed.pause'}" data-id="${esc(item.id)}" ${pending?'disabled':''}>${item.paused?'恢复托管':'暂停托管'}</button><button class="btn" data-confirm-control="managed.disable" data-id="${esc(item.id)}" data-title="关闭托管" data-copy="关闭会删除 Pilot 中的配套定时任务，但不会删除站点内容和草稿。" ${pending?'disabled':''}>关闭托管</button></div></article>`}).join(''):`<div class="pc-empty">${selectedBinding()?.online?'这个 Pilot 还没有开启托管。请先在 Pilot 中完成托管方案配置。':'Pilot 当前离线，显示的是最近一次同步状态。'}</div>`;
+  }
+  function render(){
+    renderContext();renderSites();renderModeContext();renderHistory();renderScheduled();renderManaged();
+    if(!state.view){const first=conversations()[0];if(first){state.conversation=first.latest.ConversationID;show('conversation');renderConversation()}else show('new')}
+    else if(state.view==='conversation')renderConversation();
+  }
+  async function refresh(silent=false){try{state.overview=await api('/overview');render()}catch(error){if(!silent)root.querySelector('[data-global-state]').textContent=error.message}}
+  async function queue(payload){const out=await api('/tasks',{method:'POST',body:JSON.stringify({BindingID:state.binding,RequestID:'web-'+crypto.randomUUID(),Risk:'write',...payload})});await refresh();return out}
+  root.querySelector('[data-refresh]').onclick=()=>refresh();
+  root.querySelector('[data-binding-select]').onchange=e=>{state.binding=e.target.value;state.siteIDs=[];renderSites();renderScheduled();renderManaged()};
+  root.querySelectorAll('[data-view]').forEach(button=>button.onclick=()=>{state.conversation='';show(button.dataset.view)});
+  root.querySelectorAll('[data-mode]').forEach(button=>button.onclick=()=>{state.mode=button.dataset.mode;root.querySelectorAll('[data-mode]').forEach(x=>x.classList.toggle('active',x===button));if(state.mode!=='conversation.create'){state.siteIDs=[];renderSites()}renderModeContext()});
+  root.querySelector('[data-site-pick]').onchange=e=>{const id=Number(e.target.value);if(id&&!state.siteIDs.includes(id))state.siteIDs.push(id);e.target.value='';renderSites()};
+  root.querySelector('[data-task-form]').onsubmit=async event=>{event.preventDefault();const form=new FormData(event.currentTarget),error=event.currentTarget.querySelector('[data-task-error]');error.textContent='';try{if(!state.binding)throw new Error('请先选择在线 Pilot');if(state.mode==='conversation.create'&&!state.siteIDs.length)throw new Error('请选择站点');const out=await queue({Operation:state.mode==='conversation.free'?'conversation.create':state.mode,Prompt:form.get('prompt'),Brain:form.get('brain'),Effort:form.get('effort'),SiteIDs:state.mode==='conversation.create'?state.siteIDs:[]});state.conversation=out.task.ConversationID;event.currentTarget.reset();show('conversation');renderConversation()}catch(ex){error.textContent=ex.message}};
+  root.querySelector('[data-reply-form]').onsubmit=async event=>{event.preventDefault();const group=conversations().find(x=>x.latest.ConversationID===state.conversation);if(!group)return;const form=new FormData(event.currentTarget);await queue({BindingID:group.latest.BindingID,ConversationID:state.conversation,Operation:'conversation.create',Prompt:form.get('prompt'),Brain:group.latest.Brain,Effort:group.latest.Effort,SiteIDs:parseJSON(group.latest.SiteIDsJSON)});event.currentTarget.reset();renderConversation()};
+  root.querySelector('[data-new-schedule]').onclick=()=>root.querySelector('[data-schedule-form]').hidden=false;
+  root.querySelector('[data-cancel-schedule]').onclick=()=>root.querySelector('[data-schedule-form]').hidden=true;
+  root.querySelector('[data-schedule-form]').onsubmit=async event=>{event.preventDefault();const form=new FormData(event.currentTarget),siteID=Number(form.get('site_id'));await queue({Operation:'schedule.create',SiteIDs:[siteID],Prompt:JSON.stringify({title:form.get('title'),prompt:form.get('prompt'),interval_minutes:Number(form.get('interval')),brain:'codex'})});event.currentTarget.reset();event.currentTarget.hidden=true};
+  root.onclick=async event=>{
+    const remove=event.target.closest('[data-remove-site]');if(remove){state.siteIDs=state.siteIDs.filter(id=>id!==Number(remove.dataset.removeSite));renderSites();return}
+    const history=event.target.closest('[data-open-conversation]');if(history){state.conversation=history.dataset.openConversation;show('conversation');renderConversation();return}
+    const control=event.target.closest('[data-control]');if(control){await queue({Operation:control.dataset.control,Prompt:JSON.stringify({id:control.dataset.id,enabled:control.dataset.enabled==='1'}),SiteIDs:[]});return}
+    const confirm=event.target.closest('[data-confirm-control]');if(confirm){state.pending={operation:confirm.dataset.confirmControl,id:confirm.dataset.id};root.querySelector('[data-confirm-title]').textContent=confirm.dataset.title;root.querySelector('[data-confirm-copy]').textContent=confirm.dataset.copy;root.querySelector('[data-confirm-dialog]').showModal()}
+  };
+  root.querySelector('[data-confirm-form]').onsubmit=async event=>{event.preventDefault();root.querySelector('[data-confirm-dialog]').close();if(state.pending){await queue({Operation:state.pending.operation,Prompt:JSON.stringify({id:state.pending.id}),SiteIDs:[]});state.pending=null}};
+  refresh();state.timer=setInterval(()=>refresh(true),3500);
+})();
+</script>
+{{end}}
+{{define "admin_pilot_console"}}{{template "admin_layout" .}}{{end}}

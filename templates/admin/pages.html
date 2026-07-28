@@ -1,7 +1,8 @@
-{{define "body"}}  <div class="admin-head">
+{{define "body"}}
+  <div class="admin-head">
     <div class="admin-title-line">
       <h1>{{.Admin.T "admin.pages.title" "页面"}}</h1>
-      <span class="admin-title-count">{{.Admin.T "admin.pages.desc" "独立页面（如「关于」），在此维护内容"}}</span>
+      <span class="admin-title-count">标准内容、自由编排与互动应用统一管理</span>
     </div>
     <a class="btn btn-primary" href="/admin/pages/new?lang={{.EditLang}}">＋ {{.Admin.T "admin.pages.new" "新增页面"}}</a>
   </div>
@@ -12,30 +13,128 @@
   </div>
   {{end}}
 
-  <table class="admin-table content-table pages-table">
+  <form class="page-list-filters" method="get" action="/admin/pages">
+    <input type="hidden" name="lang" value="{{.EditLang}}">
+    <label class="page-filter-search">
+      <span class="sr-only">搜索页面</span>
+      <input type="search" name="q" value="{{.Query}}" placeholder="搜索标题或 Slug">
+    </label>
+    <div class="dropdown page-filter-dropdown page-filter-mode" data-select-dropdown>
+      <button type="button" class="dd-toggle" aria-haspopup="listbox" aria-expanded="false" aria-label="页面类型">
+        <span class="dd-label">{{if eq .ModeFilter "standard"}}标准页面{{else if eq .ModeFilter "composition"}}自由编排{{else if eq .ModeFilter "app"}}互动应用{{else}}全部类型{{end}}</span>
+        <span class="dd-caret" aria-hidden="true">⌄</span>
+      </button>
+      <select class="dd-native" name="mode" data-dropdown-native aria-label="页面类型">
+        <option value="">全部类型</option>
+        <option value="standard"{{if eq .ModeFilter "standard"}} selected{{end}}>标准页面</option>
+        <option value="composition"{{if eq .ModeFilter "composition"}} selected{{end}}>自由编排</option>
+        <option value="app"{{if eq .ModeFilter "app"}} selected{{end}}>互动应用</option>
+      </select>
+      <ul class="dd-menu" role="listbox" aria-label="页面类型"></ul>
+    </div>
+    <div class="dropdown page-filter-dropdown page-filter-status" data-select-dropdown>
+      <button type="button" class="dd-toggle" aria-haspopup="listbox" aria-expanded="false" aria-label="页面状态">
+        <span class="dd-label">{{if eq .StatusFilter "draft"}}草稿{{else if eq .StatusFilter "published"}}已发布{{else if eq .StatusFilter "scheduled"}}定时发布{{else}}全部状态{{end}}</span>
+        <span class="dd-caret" aria-hidden="true">⌄</span>
+      </button>
+      <select class="dd-native" name="status" data-dropdown-native aria-label="页面状态">
+        <option value="">全部状态</option>
+        <option value="draft"{{if eq .StatusFilter "draft"}} selected{{end}}>草稿</option>
+        <option value="published"{{if eq .StatusFilter "published"}} selected{{end}}>已发布</option>
+        <option value="scheduled"{{if eq .StatusFilter "scheduled"}} selected{{end}}>定时发布</option>
+      </select>
+      <ul class="dd-menu" role="listbox" aria-label="页面状态"></ul>
+    </div>
+    <div class="dropdown page-filter-dropdown page-filter-origin" data-select-dropdown>
+      <button type="button" class="dd-toggle" aria-haspopup="listbox" aria-expanded="false" aria-label="修改来源">
+        <span class="dd-label">{{if eq .OriginFilter "admin"}}后台人工{{else if eq .OriginFilter "pilot"}}Pilot{{else if eq .OriginFilter "api"}}API{{else if eq .OriginFilter "restore"}}版本恢复{{else}}全部来源{{end}}</span>
+        <span class="dd-caret" aria-hidden="true">⌄</span>
+      </button>
+      <select class="dd-native" name="origin" data-dropdown-native aria-label="修改来源">
+        <option value="">全部来源</option>
+        <option value="admin"{{if eq .OriginFilter "admin"}} selected{{end}}>后台人工</option>
+        <option value="pilot"{{if eq .OriginFilter "pilot"}} selected{{end}}>Pilot</option>
+        <option value="api"{{if eq .OriginFilter "api"}} selected{{end}}>API</option>
+        <option value="restore"{{if eq .OriginFilter "restore"}} selected{{end}}>版本恢复</option>
+      </select>
+      <ul class="dd-menu" role="listbox" aria-label="修改来源"></ul>
+    </div>
+    <div class="dropdown page-filter-dropdown page-filter-build" data-select-dropdown>
+      <button type="button" class="dd-toggle" aria-haspopup="listbox" aria-expanded="false" aria-label="构建状态">
+        <span class="dd-label">{{if eq .BuildFilter "idle"}}待构建{{else if eq .BuildFilter "validating"}}构建中{{else if eq .BuildFilter "ready"}}构建通过{{else if eq .BuildFilter "failed"}}构建失败{{else}}全部构建状态{{end}}</span>
+        <span class="dd-caret" aria-hidden="true">⌄</span>
+      </button>
+      <select class="dd-native" name="build" data-dropdown-native aria-label="构建状态">
+        <option value="">全部构建状态</option>
+        <option value="idle"{{if eq .BuildFilter "idle"}} selected{{end}}>待构建</option>
+        <option value="validating"{{if eq .BuildFilter "validating"}} selected{{end}}>构建中</option>
+        <option value="ready"{{if eq .BuildFilter "ready"}} selected{{end}}>构建通过</option>
+        <option value="failed"{{if eq .BuildFilter "failed"}} selected{{end}}>构建失败</option>
+      </select>
+      <ul class="dd-menu" role="listbox" aria-label="构建状态"></ul>
+    </div>
+    <button class="btn" type="submit">筛选</button>
+    {{if or .Query .ModeFilter .StatusFilter .OriginFilter .BuildFilter}}<a class="btn btn-ghost" href="/admin/pages?lang={{.EditLang}}">清除</a>{{end}}
+  </form>
+
+  <table class="admin-table content-table pages-table page-platform-table">
     <thead>
-      <tr><th class="content-col-title">{{.Admin.T "admin.common.title" "标题"}}</th><th class="content-col-url">URL</th><th class="content-col-date nowrap">{{.Admin.T "admin.common.updated_at" "更新时间"}}</th><th class="content-col-actions right nowrap">{{.Admin.T "admin.common.actions" "操作"}}</th></tr>
+      <tr>
+        <th class="content-col-title">{{.Admin.T "admin.common.title" "标题"}}</th>
+        <th class="content-col-kind">类型 / 状态</th>
+        <th class="content-col-origin">来源 / 数据</th>
+        <th class="content-col-url">URL</th>
+        <th class="content-col-date nowrap">{{.Admin.T "admin.common.updated_at" "更新时间"}}</th>
+        <th class="content-col-actions right nowrap">{{.Admin.T "admin.common.actions" "操作"}}</th>
+      </tr>
     </thead>
     <tbody>
-      {{range .AllPosts}}
+      {{range .Rows}}
       <tr>
-        <td class="content-col-title"><a class="t" href="/admin/pages/{{.ID}}/edit">{{.Title}}</a></td>
-        <td class="content-col-url"><span class="slug">/{{.Lang}}/{{.Slug}}</span></td>
-        <td class="muted nowrap content-col-date">{{adminDateTime .UpdatedAt}}</td>
+        <td class="content-col-title">
+          <a class="t" href="{{.EditURL}}">{{.Post.Title}}</a>
+          {{if and .Project (ne .Project.PublishedRevisionID .Project.WorkingRevisionID)}}<small class="page-row-note">工作版本尚未发布</small>{{end}}
+        </td>
+        <td class="content-col-kind">
+          <span class="page-kind page-kind-{{.Mode}}">{{.ModeLabel}}</span>
+          <span class="page-state">{{.StatusLabel}}</span>
+        </td>
+        <td class="content-col-origin">
+          <strong class="page-origin">{{.OriginLabel}}</strong>
+          <small class="page-data-summary">{{.DataSummary}}</small>
+        </td>
+        <td class="content-col-url"><span class="slug">/{{.Post.Lang}}/{{.Post.Slug}}</span></td>
+        <td class="muted nowrap content-col-date">{{adminDateTime .Post.UpdatedAt}}</td>
         <td class="right actions content-col-actions">
           <span class="action-icons">
-            <a class="act-ico" href="{{adminPublicContentPath $.AdminViewPrefix .Lang "page" .Slug}}" target="_blank" title="{{$.Admin.T "admin.action.view" "查看"}}" aria-label="{{$.Admin.T "admin.action.view" "查看"}}">{{template "icon-extlink"}}</a>
-            <a class="act-ico" href="/admin/pages/{{.ID}}/edit" title="{{$.Admin.T "admin.action.edit" "编辑"}}" aria-label="{{$.Admin.T "admin.action.edit" "编辑"}}">{{template "icon-edit"}}</a>
-            <form method="post" action="/admin/pages/{{.ID}}/delete" data-confirm="{{printf ($.Admin.T "admin.pages.delete_confirm" "确定删除页面「%s」？此操作不可撤销。") .Title}}">
+            {{if .Project}}
+              {{if eq .Post.Status "published"}}<a class="act-ico" href="{{adminPublicContentPath $.AdminViewPrefix .Post.Lang "page" .Post.Slug}}" target="_blank" rel="noopener" title="查看线上页面" aria-label="查看线上页面">{{template "icon-extlink"}}</a>{{end}}
+              {{if eq .Mode "composition"}}<a class="act-ico" href="/admin/pages/{{.Post.ID}}/project/preview?revision={{.Project.WorkingRevisionID}}" target="_blank" rel="noopener" title="预览工作版本" aria-label="预览工作版本"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 12s3.5-6.5 9.5-6.5 9.5 6.5 9.5 6.5-3.5 6.5-9.5 6.5S2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.8"/></svg></a>
+              {{else if eq .Project.BuildStatus "ready"}}<a class="act-ico" href="/admin/pages/{{.Post.ID}}/project/app-preview?revision={{.Project.WorkingRevisionID}}" target="_blank" rel="noopener" title="预览工作版本" aria-label="预览工作版本"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 12s3.5-6.5 9.5-6.5 9.5 6.5 9.5 6.5-3.5 6.5-9.5 6.5S2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.8"/></svg></a>
+              {{else}}<span class="act-ico is-disabled" title="构建通过后可预览工作版本" aria-label="构建通过后可预览工作版本" aria-disabled="true"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 12s3.5-6.5 9.5-6.5 9.5 6.5 9.5 6.5-3.5 6.5-9.5 6.5S2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.8"/></svg></span>{{end}}
+            {{else if eq .Post.Status "published"}}<a class="act-ico" href="{{adminPublicContentPath $.AdminViewPrefix .Post.Lang "page" .Post.Slug}}" target="_blank" rel="noopener" title="{{$.Admin.T "admin.action.view" "查看"}}" aria-label="{{$.Admin.T "admin.action.view" "查看"}}">{{template "icon-extlink"}}</a>{{end}}
+            <a class="act-ico" href="{{.EditURL}}" title="{{$.Admin.T "admin.action.edit" "编辑"}}" aria-label="{{$.Admin.T "admin.action.edit" "编辑"}}">{{template "icon-edit"}}</a>
+            {{if and .Project (eq .Post.Status "draft") (eq .Project.PublishedRevisionID 0)}}<form method="post" action="/admin/pages/{{.Post.ID}}/project/delete" data-confirm-title="确认删除页面工程" data-confirm-ok="{{$.Admin.T "admin.action.delete" "删除"}}" data-confirm="{{printf "将删除页面「%s」及其全部修订、构建和工程数据。此操作不可撤销，确定继续？" .Post.Title}}">
               <input type="hidden" name="_csrf" value="{{$.CSRF}}">
-              <input type="hidden" name="lang" value="{{.Lang}}">
+              <input type="hidden" name="_etag" value="{{.Project.ETag}}">
+              <input type="hidden" name="lang" value="{{.Post.Lang}}">
+              <input type="hidden" name="q" value="{{$.Query}}">
+              <input type="hidden" name="mode" value="{{$.ModeFilter}}">
+              <input type="hidden" name="status" value="{{$.StatusFilter}}">
+              <input type="hidden" name="origin" value="{{$.OriginFilter}}">
+              <input type="hidden" name="build" value="{{$.BuildFilter}}">
               <button class="del act-ico" type="submit" title="{{$.Admin.T "admin.action.delete" "删除"}}" aria-label="{{$.Admin.T "admin.action.delete" "删除"}}">{{template "icon-trash"}}</button>
-            </form>
+            </form>{{else if .Project}}<span class="act-ico is-disabled" title="已发布页面需先下线后删除" aria-label="已发布页面需先下线后删除" aria-disabled="true">{{template "icon-trash"}}</span>
+            {{else}}<form method="post" action="/admin/pages/{{.Post.ID}}/delete" data-confirm="{{printf ($.Admin.T "admin.pages.delete_confirm" "确定删除页面「%s」？此操作不可撤销。") .Post.Title}}">
+              <input type="hidden" name="_csrf" value="{{$.CSRF}}">
+              <input type="hidden" name="lang" value="{{.Post.Lang}}">
+              <button class="del act-ico" type="submit" title="{{$.Admin.T "admin.action.delete" "删除"}}" aria-label="{{$.Admin.T "admin.action.delete" "删除"}}">{{template "icon-trash"}}</button>
+            </form>{{end}}
           </span>
         </td>
       </tr>
       {{else}}
-      <tr><td colspan="4" class="muted">{{.Admin.T "admin.pages.empty" "该语种下还没有页面。"}}</td></tr>
+      <tr><td colspan="6" class="muted">{{if or .Query .ModeFilter .StatusFilter .OriginFilter .BuildFilter}}没有符合筛选条件的页面。{{else}}{{.Admin.T "admin.pages.empty" "该语种下还没有页面。"}}{{end}}</td></tr>
       {{end}}
     </tbody>
   </table>

@@ -1,7 +1,7 @@
 interface:
   display_name: "GCMS Content Assistant"
-  short_description: "Diagnose, audit, preview drafts, upload media, and optimize GCMS content"
-  default_prompt: "Use $gcms-content-assistant to run doctor, audit recent GCMS content, preview post or link drafts, and suggest safe draft improvements."
+  short_description: "Create themed pages in Pilot and operate GCMS content safely"
+  default_prompt: "Use $gcms-content-assistant to keep page creation in Pilot: run page-context before page-capabilities, inherit the live theme, bind real site data, and return a private preview after each meaningful revision. Default to drafts and never publish without explicit approval."
 
 policy:
   allow_implicit_invocation: true

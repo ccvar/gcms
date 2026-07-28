@@ -1,4 +1,4 @@
-{{define "header"}}{{if or (eq .ContentThemeFamily "seamless-canvas") (eq .ContentThemeFamily "night-corridor") (eq .ContentThemeFamily "open-ascent") (eq .ContentThemeFamily "answer-desk") (eq .ContentThemeFamily "portrait-journal") (eq .ContentThemeFamily "casebook") (eq .ContentThemeFamily "shelf-index") (eq .ContentThemeFamily "tradeoff-sheet") (eq .ContentThemeFamily "progress-bulletin") (eq .ContentThemeFamily "margin-reading-room") (eq .ContentThemeFamily "light-table") (eq .ContentThemeFamily "counterpoint")}}{{template "header_editorial_collection" .}}{{else if or (eq .ContentThemeFamily "briefing-desk") (eq .ContentThemeFamily "decision-wall") (eq .ContentThemeFamily "route-atlas")}}{{template "header_web3_guides" .}}{{else if eq .ContentThemeFamily "type-cascade"}}{{template "header_type_cascade" .}}{{else if eq .ContentThemeFamily "orbit-index"}}{{template "header_orbit_index" .}}{{else if eq .ContentThemeFamily "column-stage"}}{{template "header_column_stage" .}}{{else if eq .ContentThemeFamily "paper-current"}}{{template "header_paper_current" .}}{{else if .ContentThemeFamily}}{{template "header_content_theme" .}}{{else if eq .Layout "factory-trade"}}{{template "header_factory_trade" .}}{{else if eq .Layout "factory-sidebar"}}{{template "header_factory_sidebar" .}}{{else}}{{template "header_topbar" .}}{{end}}{{end}}
+{{define "header"}}{{if or (eq .ContentThemeFamily "seamless-canvas") (eq .ContentThemeFamily "night-corridor") (eq .ContentThemeFamily "open-ascent") (eq .ContentThemeFamily "answer-desk") (eq .ContentThemeFamily "portrait-journal") (eq .ContentThemeFamily "casebook") (eq .ContentThemeFamily "shelf-index") (eq .ContentThemeFamily "tradeoff-sheet") (eq .ContentThemeFamily "progress-bulletin") (eq .ContentThemeFamily "margin-reading-room") (eq .ContentThemeFamily "light-table") (eq .ContentThemeFamily "counterpoint")}}{{template "header_editorial_collection" .}}{{else if or (eq .ContentThemeFamily "briefing-desk") (eq .ContentThemeFamily "decision-wall") (eq .ContentThemeFamily "route-atlas")}}{{template "header_web3_guides" .}}{{else if eq .ContentThemeFamily "type-cascade"}}{{template "header_type_cascade" .}}{{else if eq .ContentThemeFamily "orbit-index"}}{{template "header_orbit_index" .}}{{else if eq .ContentThemeFamily "column-stage"}}{{template "header_column_stage" .}}{{else if eq .ContentThemeFamily "paper-current"}}{{template "header_paper_current" .}}{{else if .ContentThemeFamily}}{{template "header_content_theme" .}}{{else if eq .Layout "factory-trade"}}{{template "header_factory_trade" .}}{{else if eq .Layout "factory-sidebar"}}{{template "header_factory_sidebar" .}}{{else if eq .Layout "factory-exportmap"}}{{template "header_factory_exportmap" .}}{{else if eq .Layout "factory-container"}}{{template "header_factory_container" .}}{{else if eq .Layout "factory-gantry"}}{{template "header_factory_gantry" .}}{{else if eq .Layout "factory-inspection"}}{{template "header_factory_inspection" .}}{{else}}{{template "header_topbar" .}}{{end}}{{end}}
 
 {{define "header_brand"}}{{/* 品牌（logo/文字/两者），三种页头共用；跟随站点 brand 设置 */}}
       {{if and .Site.Logo (ne .Site.Brand "text")}}<a class="brand has-logo{{if eq .Site.Brand "both"}} with-name{{end}}" href="{{.Tr.U "/"}}"><img class="brand-logo" src="{{.Site.Logo}}" alt="{{.Site.Name}}" decoding="async"{{imgAttrs .Site.Logo}}{{if .Site.LogoScale}} style="transform:scale({{.Site.LogoScale}})"{{end}}{{if .VisualEdit}} data-visual-edit="site.logo" data-visual-label="站点 Logo" data-visual-kind="image"{{end}}>{{if eq .Site.Brand "both"}}<span class="brand-name"{{if .VisualEdit}} data-visual-edit="site.name" data-visual-label="站点名称"{{end}}>{{.Site.Name}}</span>{{end}}</a>{{else}}<a class="brand" href="{{.Tr.U "/"}}"{{if .VisualEdit}} data-visual-edit="site.name" data-visual-label="站点名称"{{end}}>{{.Site.Name}}</a>{{end}}
@@ -250,6 +250,135 @@
           {{else}}<a class="btn btn-primary" href="#factory-contact">{{.Tr.T "contact.float_label"}}</a>{{end}}
           {{else}}<a class="btn btn-primary" href="{{.Tr.U "/products"}}">{{.Tr.T "factory.products"}}</a>{{end}}
         </div>
+      </nav>
+    </div>
+  </header>
+{{end}}
+
+{{define "header_factory_exportmap"}}{{/* factory-exportmap 航线图：品牌/主导航行 + 底缘「时区细条」——
+     等宽分段网格（grid-auto-columns: 1fr），每段 = CSS 画的表盘刻度 + 等宽标签，段间虚线航路相连。
+     细条绝不写死城市与钟点（设计稿里的城市/时间全是示意），三段只吃真数据：
+       · 多语种站 = 每个语种一段（LangLink 的 Code/Name，当前语种高亮，点击即切换；
+         此时 >620px 隐藏导航里的语言下拉，避免两套切换器并存，见 public.css .emap-zoned）；
+       · 单语种站 = 回落联系方式（ContactView，未配置项不显示）；
+       · 两者皆无整条不渲染。
+     ≤620px 整条隐藏，导航回落基础汉堡抽屉（menu-toggle + .nav-open，绝不 :target）。 */}}  <header class="site-header emap-header{{if gt (len .Langs) 1}} emap-zoned{{end}}">
+    <div class="wrap">
+      {{template "header_brand" .}}
+      {{if .Site.Tagline}}<p class="brand-tagline"{{if .VisualEdit}} data-visual-edit="site.tagline" data-visual-label="站点标语"{{end}}>{{.Site.Tagline}}</p>{{end}}
+      <button type="button" class="menu-toggle" aria-label="{{.Tr.T "common.main_nav"}}" aria-expanded="false" aria-controls="site-nav">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+      </button>
+      <nav class="nav" id="site-nav" aria-label="{{.Tr.T "common.main_nav"}}">
+        {{range .Menu}}<a href="{{.Href}}"{{$.ExternalLinkAttrs .Href}}{{if .Active}} aria-current="page"{{end}}{{if $.VisualEdit}} data-visual-edit="nav.{{.Index}}" data-visual-label="{{.Label}}"{{end}}>{{.Label}}</a>
+        {{end}}{{template "header_search" .}}
+        {{template "header_lang" .}}
+      </nav>
+    </div>
+    {{if or (gt (len .Langs) 1) .Contact.Any}}
+    <div class="emap-zonebar">
+      <div class="emap-zonebar-in">
+        {{if gt (len .Langs) 1}}
+        {{range .Langs}}<a class="emap-zone{{if .Active}} is-on{{end}}" href="{{.URL}}"{{if .Active}} aria-current="true"{{end}}><span class="emap-dial" aria-hidden="true"></span><b>{{.Code}}</b><i>{{.Name}}</i></a>
+        {{end}}
+        {{else}}
+        {{if .Contact.TelURL}}<a class="emap-zone" href="{{.Contact.TelURL}}"><span class="emap-dial" aria-hidden="true"></span><b>{{.Tr.T "contact.phone"}}</b><i>{{.Contact.Phone}}</i></a>{{end}}
+        {{if .Contact.Email}}<a class="emap-zone" href="mailto:{{.Contact.Email}}"><span class="emap-dial" aria-hidden="true"></span><b>{{.Tr.T "contact.email"}}</b><i>{{.Contact.Email}}</i></a>{{end}}
+        {{if .Contact.WaMe}}{{$wa := printf "https://wa.me/%s" .Contact.WaMe}}<a class="emap-zone" href="{{$wa}}"{{.ExternalLinkAttrs $wa}}><span class="emap-dial" aria-hidden="true"></span><b>{{.Tr.T "contact.whatsapp"}}</b><i>{{.Contact.WhatsApp}}</i></a>{{end}}
+        {{end}}
+      </div>
+    </div>
+    {{end}}
+  </header>
+{{end}}
+
+{{define "header_factory_container"}}{{/* factory-container 集装箱：页头=货运单条——
+     上层「单据条」（反色 ink 底）等宽大写字距的收发货格：站点标语当唛头（MARKS），
+     其余格全吃 ContactView（未配置项不显示），右端语言切换；一格都没有且单语种时整条不渲染。
+     下层 = 唛头品牌 + 主导航（CSS 重塑成钢印大写字距）+ 常驻 RFQ 报价牌（带 →，
+     首选 WhatsApp→邮箱→电话，都没配就锚到首页 CTA 通栏 #factory-contact）。
+     ≤620px 导航回落基础汉堡抽屉（menu-toggle + .nav-open，绝不 :target），
+     RFQ 牌收成纯唛头方牌常驻（可读名走 aria-label）。 */}}  <header class="site-header ctn-header">
+    {{if or .Site.Tagline .Contact.Any (gt (len .Langs) 1)}}
+    <div class="ctn-manifest">
+      <div class="ctn-manifest-in">
+        <div class="ctn-manifest-cells">
+          {{if .Site.Tagline}}<span class="ctn-mf-cell ctn-mf-marks"{{if .VisualEdit}} data-visual-edit="site.tagline" data-visual-label="站点标语"{{end}}><b>{{.Tr.T "factory.shipping_marks"}}</b><i>{{.Site.Tagline}}</i></span>{{end}}
+          {{if .Contact.Any}}
+          {{if .Contact.TelURL}}<a class="ctn-mf-cell" href="{{.Contact.TelURL}}"><b>{{.Tr.T "contact.phone"}}</b><i>{{.Contact.Phone}}</i></a>{{end}}
+          {{if .Contact.Email}}<a class="ctn-mf-cell" href="mailto:{{.Contact.Email}}"><b>{{.Tr.T "contact.email"}}</b><i>{{.Contact.Email}}</i></a>{{end}}
+          {{if .Contact.WaMe}}{{$wa := printf "https://wa.me/%s" .Contact.WaMe}}<a class="ctn-mf-cell" href="{{$wa}}"{{.ExternalLinkAttrs $wa}}><b>{{.Tr.T "contact.whatsapp"}}</b><i>{{.Contact.WhatsApp}}</i></a>{{end}}
+          {{end}}
+        </div>
+        <div class="ctn-manifest-tools">{{template "header_lang" .}}</div>
+      </div>
+    </div>
+    {{end}}
+    <div class="wrap">
+      {{template "header_brand" .}}
+      <button type="button" class="menu-toggle" aria-label="{{.Tr.T "common.main_nav"}}" aria-expanded="false" aria-controls="site-nav">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+      </button>
+      <nav class="nav" id="site-nav" aria-label="{{.Tr.T "common.main_nav"}}">
+        {{range .Menu}}<a href="{{.Href}}"{{$.ExternalLinkAttrs .Href}}{{if .Active}} aria-current="page"{{end}}{{if $.VisualEdit}} data-visual-edit="nav.{{.Index}}" data-visual-label="{{.Label}}"{{end}}>{{.Label}}</a>
+        {{end}}{{template "header_search" .}}
+      </nav>
+      {{$rfq := "#factory-contact"}}{{if .Contact.Any}}{{if .Contact.WaMe}}{{$rfq = printf "https://wa.me/%s" .Contact.WaMe}}{{else if .Contact.Email}}{{$rfq = printf "mailto:%s" .Contact.Email}}{{else if .Contact.TelURL}}{{$rfq = .Contact.TelURL}}{{end}}{{end}}
+      <a class="ctn-rfq" href="{{$rfq}}"{{.ExternalLinkAttrs $rfq}} aria-label="{{.Tr.T "contact.float_label"}}"><b aria-hidden="true">↗</b><span class="ctn-rfq-t">{{.Tr.T "contact.float_label"}}</span><span class="arrow" aria-hidden="true">→</span></a>
+    </div>
+  </header>
+{{end}}
+{{define "header_factory_gantry"}}{{/* factory-gantry 龙门：粗黄横梁（整条通栏）包住导航条，横梁两端的
+     立柱沿容器左右缘往下延伸——页头的 .gnt-hoist 与首屏 .gnt-stage 共用同一条 border-inline 立柱，
+     视觉上连成一座龙门架（所以本骨架的页头不吸顶：架子是站在地上的结构，跟着页面走）。
+     站点标题从横梁「吊」下来：两根细钢缆（.gnt-cable，纯 CSS 双线）+ 铭牌 .gnt-nameplate。
+     ≤620px 立柱收细、钢缆收起，铭牌与汉堡按钮同排，导航回落基础抽屉
+     （menu-toggle + .nav-open，JS class 开关，绝不 :target）。 */}}  <header class="site-header gnt-header">
+    <div class="gnt-beam">
+      <nav class="nav gnt-nav" id="site-nav" aria-label="{{.Tr.T "common.main_nav"}}">
+        {{range .Menu}}<a href="{{.Href}}"{{$.ExternalLinkAttrs .Href}}{{if .Active}} aria-current="page"{{end}}{{if $.VisualEdit}} data-visual-edit="nav.{{.Index}}" data-visual-label="{{.Label}}"{{end}}>{{.Label}}</a>
+        {{end}}{{template "header_search" .}}
+        {{template "header_lang" .}}
+      </nav>
+    </div>
+    <div class="gnt-hoist">
+      <span class="gnt-cable" aria-hidden="true"></span>
+      <div class="gnt-nameplate">
+        {{template "header_brand" .}}
+        {{if .Site.Tagline}}<p class="brand-tagline"{{if .VisualEdit}} data-visual-edit="site.tagline" data-visual-label="站点标语"{{end}}>{{.Site.Tagline}}</p>{{end}}
+      </div>
+      <button type="button" class="menu-toggle" aria-label="{{.Tr.T "common.main_nav"}}" aria-expanded="false" aria-controls="site-nav">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+      </button>
+    </div>
+  </header>
+{{end}}
+
+{{define "header_factory_inspection"}}{{/* factory-inspection 质检单：双层页头——
+     上层「检验流程步骤条」（四道工序 01–04，读现成 factory.process_* i18n 键，
+     内页也照常渲染，不依赖 fillFactoryHome 的每页装载）+ 右侧圆形文档编号章（纯 CSS 画，-12deg），
+     下层 logo + 主导航。≤620px 步骤条整条收起，交还基础汉堡抽屉（menu-toggle + .nav-open）。 */}}  <header class="site-header insp-header">
+    <div class="insp-strip">
+      <div class="insp-strip-in">
+        <ol class="insp-steps" aria-label="{{.Tr.T "factory.process"}}">
+          <li><span aria-hidden="true">01</span>{{.Tr.T "factory.process_inquiry"}}</li>
+          <li><span aria-hidden="true">02</span>{{.Tr.T "factory.process_sample"}}</li>
+          <li><span aria-hidden="true">03</span>{{.Tr.T "factory.process_production"}}</li>
+          <li><span aria-hidden="true">04</span>{{.Tr.T "factory.process_shipping"}}</li>
+        </ol>
+        <span class="insp-seal" aria-hidden="true"><b>{{.Tr.T "factory.number"}}</b><i>01</i></span>
+      </div>
+    </div>
+    <div class="wrap">
+      {{template "header_brand" .}}
+      {{if .Site.Tagline}}<p class="brand-tagline"{{if .VisualEdit}} data-visual-edit="site.tagline" data-visual-label="站点标语"{{end}}>{{.Site.Tagline}}</p>{{end}}
+      <button type="button" class="menu-toggle" aria-label="{{.Tr.T "common.main_nav"}}" aria-expanded="false" aria-controls="site-nav">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+      </button>
+      <nav class="nav" id="site-nav" aria-label="{{.Tr.T "common.main_nav"}}">
+        {{range .Menu}}<a href="{{.Href}}"{{$.ExternalLinkAttrs .Href}}{{if .Active}} aria-current="page"{{end}}{{if $.VisualEdit}} data-visual-edit="nav.{{.Index}}" data-visual-label="{{.Label}}"{{end}}>{{.Label}}</a>
+        {{end}}{{template "header_search" .}}
+        {{template "header_lang" .}}
       </nav>
     </div>
   </header>

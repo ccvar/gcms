@@ -1,0 +1,117 @@
+{{define "home_factory_gauge"}}
+  {{/* factory-gauge — 仪表墙：首屏右侧是一整块「仪表盘面」，工厂数据全部读成仪表——
+       factory.stats 变指针表盘（盘面/刻度/指针全由 CSS 画，dt=盘面读数、dd=盘下标签，
+       最多 4 只，指针静止角按 nth-child 分配、reduced-motion 不扫针；没配回落 factory_about），
+       流程=盘面下状态指示灯排，Hero=监视窗，认证槽=铭牌条。正文区：商品=控制模块卡
+      （规格 chip 重塑成量程行）、流程=管线流程图，其余复用工厂族共享 define，CTA 走通栏。
+       页头由 CSS 重塑成拨杆开关排（▮/▯ 当前态，≤620px 交还基础汉堡抽屉，不改 DOM，
+       所以没有专属 header/footer define）。区块编号取 .FactorySectionNum（编号连续）。 */}}
+  <div class="gau-wrap">
+    <section class="gau-hero">
+      <div class="gau-hero-copy">
+        {{if .Site.HeroEyebrow}}<p class="gau-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+        <h1 class="gau-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+        {{if .Site.HeroDescription}}<p class="gau-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+        <div class="gau-cta">
+          {{if .Contact.Any}}<a class="btn btn-primary" href="#factory-contact">{{.Tr.T "contact.float_label"}} <span class="arrow" aria-hidden="true">→</span></a>
+          {{else}}<a class="btn btn-primary" href="{{.Tr.U "/products"}}">{{.Tr.T "factory.products"}} <span class="arrow" aria-hidden="true">→</span></a>{{end}}
+          <a class="btn" href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}}</a>
+        </div>
+      </div>
+      <div class="gau-board">
+        {{template "factory_hero_slot" .}}
+        <p class="gau-board-cap">{{.Tr.T "factory.strength"}}</p>
+        {{if .FactoryStats}}
+        <dl class="f-stats gau-dials">
+          {{range .FactoryStats}}<div class="f-stat gau-dial"><dt>{{.Num}}</dt><dd>{{.Label}}</dd></div>
+          {{end}}
+        </dl>
+        {{else}}
+        {{template "factory_about" .}}
+        {{end}}
+        {{if .FactoryProcessOn}}
+        <ol class="gau-lamps" aria-label="{{.Tr.T "factory.process"}}">
+          {{range .FactoryProcess}}<li class="gau-lamp"><b aria-hidden="true">{{.Num}}</b><span>{{.Title}}</span></li>
+          {{end}}
+        </ol>
+        {{end}}
+        <div class="gau-board-foot">
+          {{if .FactoryCertifications}}<div class="f-certs gau-certs" aria-label="{{.Tr.T "factory.certs"}}">{{range .FactoryCertifications}}<span class="f-cert"><b>{{.Name}}</b>{{if .Note}}<i>{{.Note}}</i>{{end}}</span>{{end}}</div>{{end}}
+        </div>
+      </div>
+    </section>
+
+    <section class="gau-section gau-products">
+      <div class="gau-head">
+        <div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "products"}}</span>{{.Tr.T "factory.products"}}</p><h2>{{.Tr.T "factory.products"}}</h2></div>
+        <a href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="gau-grid">
+        {{range .FactoryProducts}}
+        <a class="gau-mod" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+          <span class="gau-mod-media{{if not .CoverImage}} gau-mod-gen{{end}}">{{if .CoverImage}}<img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}</span>
+          <span class="gau-mod-body">
+            {{with .Category}}<span class="gau-mod-ch">{{.Name}}</span>{{end}}
+            <span class="gau-mod-title">{{.Title}}</span>
+            {{if .Excerpt}}<span class="gau-mod-ex">{{.Excerpt}}</span>{{end}}
+            {{with productChips .}}<span class="f-chips gau-ranges">{{range .}}<span class="f-chip"><b>{{.K}}</b><i>{{.V}}</i></span>{{end}}</span>{{end}}
+          </span>
+        </a>
+        {{else}}
+        <p class="gau-empty muted">{{.Tr.T "factory.no_products"}}</p>
+        {{end}}
+      </div>
+    </section>
+
+    {{if .FactoryCats}}
+    <section class="gau-section">
+      <div class="gau-head"><div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "categories"}}</span>{{.Tr.T "factory.categories"}}</p><h2>{{.Tr.T "factory.categories"}}</h2></div></div>
+      {{template "factory_categories" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryProcessOn}}
+    <section class="gau-section gau-pipeline">
+      <div class="gau-head"><div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "process"}}</span>{{.Tr.T "factory.process"}}</p><h2>{{.Tr.T "factory.process"}}</h2></div></div>
+      {{template "factory_process_steps" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryIndustries}}
+    <section class="gau-section">
+      <div class="gau-head"><div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "industries"}}</span>{{.Tr.T "factory.industries"}}</p><h2>{{.Tr.T "factory.industries"}}</h2></div></div>
+      {{template "factory_industries" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryGallery}}
+    <section class="gau-section">
+      <div class="gau-head"><div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "gallery"}}</span>{{.Tr.T "factory.gallery"}}</p><h2>{{.Tr.T "factory.gallery"}}</h2></div></div>
+      {{template "factory_gallery" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryQAs}}
+    <section class="gau-section">
+      <div class="gau-head"><div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "faq"}}</span>{{.Tr.T "factory.faq"}}</p><h2>{{.Tr.T "factory.faq"}}</h2></div></div>
+      {{template "factory_faq" .}}
+    </section>
+    {{end}}
+
+    {{if .Posts}}
+    <section class="gau-section gau-news">
+      <div class="gau-head">
+        <div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "news"}}</span>{{.Tr.T "factory.news"}}</p><h2>{{.Tr.T "factory.news"}}</h2></div>
+        <a href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="gau-log">
+        {{range $i, $p := .Posts}}{{if lt $i 4}}
+        <a class="gau-log-row" href="{{$.Tr.U (contentURL $p)}}"><time datetime="{{$.Tr.ISODate $p.PublishedAt}}">{{$.Tr.Date $p.PublishedAt}}</time><span class="gau-log-title">{{$p.Title}}</span><span class="arrow" aria-hidden="true">→</span></a>
+        {{end}}{{end}}
+      </div>
+    </section>
+    {{end}}
+  </div>
+
+  {{template "factory_cta" .}}
+{{end}}

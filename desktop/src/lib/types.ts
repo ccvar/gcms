@@ -494,6 +494,20 @@ export interface BrainsInfo {
   /** Node.js（npm 装 Codex/wrangler 的前置；Claude Code 原生安装不需要）。 */
   node: BrainStatus;
   path_env: string;
+  /** 装着的 Claude CLI 够不够新到能用 headless fast mode（判定在 Rust，前端不重写 semver 比较）。 */
+  claude_fast_ok: boolean;
+}
+
+/** Claude CLI 可升级情况（check_claude_update 的返回）。 */
+export interface CliUpdateInfo {
+  installed: string;
+  latest: string;
+  has_update: boolean;
+  /** 会被真正升级的那一个（= PATH 里第一个）。 */
+  target: string;
+  /** PATH 上全部同名安装；>1 时只有第一个生效。 */
+  all: string[];
+  fast_after_upgrade: boolean;
 }
 
 // ---- 对话 ----
@@ -541,6 +555,8 @@ export interface Conversation {
   perm_mode: string;
   /** 思考等级（推理强度）：'' 默认 | low | medium | high。 */
   effort?: string;
+  /** fast 模式（仅 Opus 5 / Opus 4.8）。 */
+  fast?: boolean;
   /** 多站会话：站点 slug 清单（>1 时为跨站会话）。 */
   site_slugs?: string[];
   site_names?: string[];
@@ -561,6 +577,29 @@ export interface Conversation {
 export type TurnEvent =
   | { type: 'delta'; text: string }
   | { type: 'tool'; label: string; detail: string }
+  | {
+      type: 'activity';
+      activity_id: string;
+      label: string;
+      detail: string;
+      status: 'running' | 'completed' | 'failed' | 'canceled';
+    }
+  | {
+      type: 'gcms_unlock_required';
+      operation:
+        | 'sites.delete'
+        | 'categories.delete'
+        | 'navigation.delete'
+        | 'themes.apply_live'
+        | 'domains.apply'
+        | 'public_access.apply'
+        | 'public_access.clear_unverified'
+        | 'pages.publish'
+        | 'pages.rollback'
+        | 'page_capabilities.grant';
+      unlock_challenge: string;
+      admin_path: string;
+    }
   | { type: 'context_compacted'; pre_tokens: number }
   | { type: 'done'; ok: boolean; error: string };
 
@@ -598,6 +637,8 @@ export interface ScheduledTask {
   model: string;
   /** 思考等级：'' 默认 | low | medium | high */
   effort?: string;
+  /** fast 模式（仅 Opus 5 / Opus 4.8）。 */
+  fast?: boolean;
   /** 主模型因额度、限流或不可用而且尚未写入时，最多自动接管一次。 */
   fallback_brain?: Brain | '';
   fallback_model?: string;

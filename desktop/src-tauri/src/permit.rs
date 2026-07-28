@@ -159,17 +159,33 @@ const ASK_MATCHER: &str = "*";
 /// - `conv_id`：写进待批请求，UI 据此把批准卡显示在对应会话线程。
 /// - `gen_dir`：本对话私有目录，放 settings/hook（会被创建）。
 /// - `pending_dir`：待批请求目录，UI 轮询/写响应（会被创建）。
-/// plan/full 不需要钩子，直接返回对应 flag。
+/// - `fast`：Claude 的 `fastMode` settings 键。**必须由这里统一写**——`--settings` 只有一个槽，
+///   分开给两次会让后者把权限钩子那份整个顶掉（静默关掉权限闸门）。
+///
+/// plan/full 不需要钩子：不开 fast 时直接返回对应 flag，开了才补一个只含 fastMode 的 settings。
 pub fn claude_flags(
     mode: PermMode,
     conv_id: &str,
     gen_dir: &Path,
     pending_dir: &Path,
     ssh_js: &Path,
+    fast: bool,
 ) -> Result<Vec<String>, String> {
     match mode {
-        PermMode::Plan => Ok(vec!["--permission-mode".into(), "plan".into()]),
-        PermMode::Full => Ok(vec!["--dangerously-skip-permissions".into()]),
+        // Plan/Full 本来不需要 settings 文件；只有开了 fast 才写一个「只含 fastMode」的最小文件。
+        // ★ `--settings` 只有一个槽（给两次是后者覆盖前者），所以 fast 不能自己再挂一个 —— 必须
+        //   和权限钩子合进同一个对象，这也是 fast 要从这里出去、而不是在 agent.rs 里另加参数的原因。
+        PermMode::Plan | PermMode::Full => {
+            let mut flags = match mode {
+                PermMode::Plan => vec!["--permission-mode".to_string(), "plan".to_string()],
+                _ => vec!["--dangerously-skip-permissions".to_string()],
+            };
+            if fast {
+                flags.push("--settings".into());
+                flags.push(write_settings(gen_dir, serde_json::json!({ "fastMode": true }))?);
+            }
+            Ok(flags)
+        }
         PermMode::Ask | PermMode::Auto => {
             std::fs::create_dir_all(gen_dir).map_err(|e| format!("建钩子目录失败: {e}"))?;
             std::fs::create_dir_all(pending_dir).map_err(|e| format!("建待批目录失败: {e}"))?;
@@ -185,19 +201,17 @@ pub fn claude_flags(
             };
             // 钩子命令：node <脚本绝对路径>。路径可能含空格 → 加双引号。
             let cmd = format!("node \"{}\"", hook_path.to_string_lossy());
-            let settings = serde_json::json!({
+            let mut settings = serde_json::json!({
                 "hooks": {
                     "PreToolUse": [
                         { "matcher": matcher, "hooks": [ { "type": "command", "command": cmd } ] }
                     ]
                 }
             });
-            let settings_path = gen_dir.join("permit-settings.json");
-            std::fs::write(
-                &settings_path,
-                serde_json::to_vec_pretty(&settings).map_err(|e| e.to_string())?,
-            )
-            .map_err(|e| format!("写 settings 失败: {e}"))?;
+            if fast {
+                settings["fastMode"] = serde_json::Value::Bool(true);
+            }
+            let settings_path = write_settings(gen_dir, settings)?;
 
             let base = if mode == PermMode::Ask {
                 "default"
@@ -208,10 +222,20 @@ pub fn claude_flags(
                 "--permission-mode".into(),
                 base.into(),
                 "--settings".into(),
-                settings_path.to_string_lossy().into_owned(),
+                settings_path,
             ])
         }
     }
+}
+
+/// 把 settings 落成文件并返回路径。`--settings` 也收 JSON 字符串，但走文件更稳：
+/// 内容里带引号/换行（钩子命令含 Windows 路径），当命令行参数传容易被 shell 或 .cmd 包装吃掉。
+fn write_settings(gen_dir: &Path, value: serde_json::Value) -> Result<String, String> {
+    std::fs::create_dir_all(gen_dir).map_err(|e| format!("建钩子目录失败: {e}"))?;
+    let path = gen_dir.join("permit-settings.json");
+    std::fs::write(&path, serde_json::to_vec_pretty(&value).map_err(|e| e.to_string())?)
+        .map_err(|e| format!("写 settings 失败: {e}"))?;
+    Ok(path.to_string_lossy().into_owned())
 }
 
 /// 转义成能安全嵌进 JS 正则**字面量** `/…/` 的形式。`/` 也必须转义，
@@ -428,6 +452,18 @@ pub fn respond(pending_dir: &Path, id: &str, allow: bool) -> Result<(), String> 
         .map_err(|e| format!("写应答失败: {e}"))
 }
 
+/// 会话运行中被切到「全自动」：把该会话现存的待批请求全部就地放行（钩子在轮询应答文件，
+/// 写 allow 即放行）。返回放行条数；之后陆续到来的请求由 list_pending_permits 的同款检查兜住。
+pub fn auto_allow_for(pending_dir: &Path, conv_id: &str) -> usize {
+    let mut n = 0;
+    for p in list_pending(pending_dir) {
+        if p.conv == conv_id && respond(pending_dir, &p.id, true).is_ok() {
+            n += 1;
+        }
+    }
+    n
+}
+
 /// 清掉某会话遗留的待批请求（回合结束/取消时调用）——否则钩子被 SIGKILL 时 .req.json
 /// 不会自删，下次进这个会话会冒出幽灵批准卡。
 pub fn sweep_conv(pending_dir: &std::path::Path, conv_id: &str) {
@@ -610,17 +646,65 @@ mod tests {
         assert!(!is_bridge_cmd("node \"\" 'ls'", ""));
     }
 
+    /// fast 模式必须**合进同一个 settings 对象**，不能自己再挂一个 `--settings`。
+    ///
+    /// 病根形状：`--settings` 只有一个槽（给两次是后者覆盖前者）。如果 fast 单独追加一个，
+    /// 在 ask/auto 档就会把权限钩子那份**整个顶掉** —— 结果是「开了 fast 顺便把权限闸门关了」，
+    /// 而且不报错、只是钩子再也不触发。这条测试就是钉这个。
+    #[test]
+    fn fast_merges_into_the_single_settings_slot() {
+        let js = std::path::Path::new("/d/tools/ssh.js");
+        let mk = |mode: PermMode, fast: bool| {
+            let g = std::env::temp_dir().join(format!("permit-f-{}", uuid::Uuid::new_v4()));
+            let p = g.join("pending");
+            let flags = claude_flags(mode, "cv", &g, &p, js, fast).unwrap();
+            let body = flags
+                .iter()
+                .position(|f| f == "--settings")
+                .map(|i| std::fs::read_to_string(&flags[i + 1]).unwrap());
+            let n = flags.iter().filter(|f| *f == "--settings").count();
+            std::fs::remove_dir_all(&g).ok();
+            (n, body)
+        };
+
+        // ask/auto：钩子与 fastMode 必须在**同一份**文件里，且只有一个 --settings
+        for mode in [PermMode::Ask, PermMode::Auto] {
+            let (n, body) = mk(mode, true);
+            assert_eq!(n, 1, "{mode:?}: --settings 只能出现一次，否则后者顶掉前者");
+            let body = body.expect("ask/auto 必须有 settings");
+            assert!(body.contains("\"fastMode\""), "{mode:?}: 缺 fastMode");
+            assert!(body.contains("PreToolUse"), "{mode:?}: ★ 权限钩子被顶掉了 —— 等于静默关掉权限闸门");
+
+            // 不开 fast 时不许留下这个键（免得看起来像默认开着）
+            let (_, off) = mk(mode, false);
+            assert!(!off.unwrap().contains("fastMode"), "{mode:?}: fast=false 不该写 fastMode");
+        }
+
+        // plan/full：原本没有 settings 文件；开 fast 才补一个「只含 fastMode」的
+        for mode in [PermMode::Plan, PermMode::Full] {
+            let (n_off, off) = mk(mode, false);
+            assert_eq!(n_off, 0, "{mode:?}: 不开 fast 就不该有 settings（保持原行为）");
+            assert!(off.is_none());
+
+            let (n_on, on) = mk(mode, true);
+            assert_eq!(n_on, 1, "{mode:?}: 开 fast 要有且只有一个 --settings");
+            let on = on.unwrap();
+            assert!(on.contains("\"fastMode\""));
+            assert!(!on.contains("PreToolUse"), "{mode:?}: plan/full 不该带权限钩子");
+        }
+    }
+
     #[test]
     fn plan_and_full_need_no_hook_files() {
         let g = std::env::temp_dir().join(format!("permit-t-{}", uuid::Uuid::new_v4()));
         let p = g.join("pending");
         let js = std::path::PathBuf::from("/d/tools/ssh.js");
         assert_eq!(
-            claude_flags(PermMode::Plan, "c1", &g, &p, &js).unwrap(),
+            claude_flags(PermMode::Plan, "c1", &g, &p, &js, false).unwrap(),
             vec!["--permission-mode".to_string(), "plan".to_string()]
         );
         assert_eq!(
-            claude_flags(PermMode::Full, "c1", &g, &p, &js).unwrap(),
+            claude_flags(PermMode::Full, "c1", &g, &p, &js, false).unwrap(),
             vec!["--dangerously-skip-permissions".to_string()]
         );
         assert!(!g.exists());
@@ -636,6 +720,7 @@ mod tests {
             &g,
             &p,
             std::path::Path::new("/d/tools/ssh.js"),
+            false,
         )
         .unwrap();
         assert_eq!(flags[1], "acceptEdits");
@@ -659,6 +744,7 @@ mod tests {
             &g,
             &p,
             std::path::Path::new("/d/tools/ssh.js"),
+            false,
         )
         .unwrap();
         assert_eq!(flags[1], "default");
@@ -749,6 +835,7 @@ mod tests {
             &g,
             &pend,
             std::path::Path::new(js_path),
+            false,
         )
         .unwrap();
         let hook = g.join("permit-hook.js");
@@ -795,6 +882,7 @@ mod tests {
             &g,
             &pend,
             std::path::Path::new("/d/tools/ssh.js"),
+            false,
         )
         .unwrap();
         let hook = g.join("permit-hook.js");
@@ -830,6 +918,7 @@ mod tests {
             &g,
             &pend,
             std::path::Path::new("/d/tools/ssh.js"),
+            false,
         )
         .unwrap();
         let hook = g.join("permit-hook.js");

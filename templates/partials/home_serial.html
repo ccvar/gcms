@@ -1,0 +1,75 @@
+{{define "home_serial"}}
+  {{/* 章回 Serial — 连载书局：书口装饰线 + 竖排小签 + 续读条 + 卷页签 + 汉字序号章回目录 + 待续印章 */}}
+  <div class="srl-wrap">
+
+    <header class="srl-head">
+      <div class="srl-head-main">
+        <h1 class="srl-title"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+        {{if .Site.HeroDescription}}<p class="srl-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+      </div>
+      {{if .Site.HeroEyebrow}}<span class="srl-ear"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</span>{{end}}
+    </header>
+
+    {{with .Featured}}
+    <section class="srl-resume">
+      <span class="srl-resume-tag">{{$.Site.HomeFeatured}}</span>
+      <a class="srl-resume-main" href="{{$.Tr.U (contentURL .)}}">
+        <span class="srl-resume-h">{{.Title}}</span>
+        <span class="srl-resume-meta"><time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time></span>
+        {{if .Excerpt}}<span class="srl-resume-ex">{{.Excerpt}}</span>{{end}}
+      </a>
+      <a class="srl-resume-btn" href="{{$.Tr.U (contentURL .)}}">{{$.Tr.T "home.read_more"}} <span class="arrow" aria-hidden="true">→</span></a>
+    </section>
+    {{end}}
+
+    {{if .Categories}}
+    <nav class="srl-tabs" aria-label="{{.Tr.T "nav.category"}}">
+      {{range .Categories}}<a class="srl-tab" href="{{$.Tr.U (printf "/category/%s" .Slug)}}"><span class="srl-tab-name">{{.Name}}</span><span class="srl-tab-count">{{.Count}}</span></a>{{end}}
+      <a class="srl-tab srl-tab-all" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}}</a>
+    </nav>
+    {{end}}
+
+    {{if .Posts}}
+    <section class="srl-toc">
+      <div class="srl-toc-head">
+        <h2 class="srl-toc-t">{{.Site.HomeLatest}}</h2>
+        <a class="srl-toc-all" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <ol class="srl-list">
+        {{range .Posts}}
+        <li class="srl-item">
+          <a class="srl-item-in" href="{{$.Tr.U (contentURL .)}}">
+            <span class="srl-item-no" aria-hidden="true"></span>
+            <span class="srl-item-main">
+              <span class="srl-item-h">{{.Title}}</span>
+              {{if .Excerpt}}<span class="srl-item-ex">{{.Excerpt}}</span>{{end}}
+            </span>
+            <time class="srl-item-date" datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time>
+          </a>
+        </li>
+        {{end}}
+      </ol>
+    </section>
+    {{end}}
+
+    {{if .FeatLinks}}
+    <aside class="srl-shelf" aria-label="{{.Site.HomeLinks}}">
+      <h2 class="srl-shelf-h">{{.Site.HomeLinks}}</h2>
+      <div class="srl-shelf-row">
+        {{range .FeatLinks}}
+        <a class="srl-shelf-link" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+          <span class="srl-shelf-ic">{{if .CoverImage}}<img src="{{.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}</span>
+          <span class="srl-shelf-t">{{.Title}}</span>
+        </a>
+        {{end}}
+      </div>
+    </aside>
+    {{end}}
+
+    <footer class="srl-fin">
+      <a class="srl-fin-more" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}}</a>
+      <span class="srl-seal" aria-hidden="true"></span>
+    </footer>
+
+  </div>
+{{end}}

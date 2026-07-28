@@ -216,6 +216,11 @@ func (s *Server) fillDTCHome(v *View, lang string) {
 	if consumed[factoryStatsSettingKey] {
 		v.FactoryStats = parseFactoryStats(s.localizedSetting(factoryStatsSettingKey, lang, ""))
 	}
+	if consumed[factoryCategoriesEnabledKey] {
+		// DTC 分类导航必须使用真实 product 分类卡。不要复用 View.Categories：
+		// 后者是文章分类，既会生成错误路由，也会绕过商品分类开关。
+		v.FactoryCats = s.factoryCategoryCards(lang)
+	}
 	if consumed[factoryGallerySettingKey] {
 		v.FactoryGallery = parseFactoryGallery(s.store.Setting(factoryGallerySettingKey)) // 图集全局，不分语种
 	}
@@ -229,8 +234,6 @@ func (s *Server) fillDTCHome(v *View, lang string) {
 		v.FactoryCTA = s.dtcCTAText(lang)
 	}
 	switch v.Layout {
-	case "dtc-flagship":
-		v.FactoryCats = s.factoryCategoryCards(lang) // 系列入口（分类大卡；开关同 factory.categories.enabled）
 	case "dtc-solo":
 		if len(v.FactoryProducts) > 0 {
 			v.DTCMain = v.FactoryProducts[0]

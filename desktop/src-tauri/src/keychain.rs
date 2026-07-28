@@ -8,6 +8,12 @@
 use std::sync::OnceLock;
 
 const SERVICE: &str = "com.ccvar.gcms.pilot";
+const CLAUDE_CREDENTIAL_ACCOUNT: &str = "brain:claude:credential";
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct ClaudeCredential {
+    secret: String,
+}
 
 /// 进程内只装一次 macOS 原生 Keychain store。
 fn ensure_store() -> Result<(), String> {
@@ -33,6 +39,78 @@ fn ensure_store() -> Result<(), String> {
 fn entry(conn_id: &str) -> Result<keyring_core::Entry, String> {
     ensure_store()?;
     keyring_core::Entry::new(SERVICE, conn_id).map_err(|e| format!("keychain entry: {e}"))
+}
+
+/// Pilot 控制台等附属凭据使用独立 account 命名空间，避免覆盖技能包连接密钥。
+pub fn set_named_secret(account: &str, value: &str) -> Result<(), String> {
+    entry(account)?
+        .set_password(value)
+        .map_err(|e| format!("credential write: {e}"))?;
+    cache()
+        .lock()
+        .unwrap()
+        .insert(account.to_string(), value.to_string());
+    Ok(())
+}
+
+pub fn get_named_secret(account: &str) -> Result<String, String> {
+    let mut values = cache().lock().unwrap();
+    if let Some(value) = values.get(account) {
+        return Ok(value.clone());
+    }
+    let value = entry(account)?
+        .get_password()
+        .map_err(|e| format!("credential read: {e}"))?;
+    values.insert(account.to_string(), value.clone());
+    Ok(value)
+}
+
+pub fn delete_named_secret(account: &str) -> Result<(), String> {
+    cache().lock().unwrap().remove(account);
+    match entry(account)?.delete_credential() {
+        Ok(()) | Err(keyring_core::Error::NoEntry) => Ok(()),
+        Err(e) => Err(format!("credential delete: {e}")),
+    }
+}
+
+/// 保存用户显式粘贴的 Claude CLI 凭据。完整值只进入系统安全存储；调用方和前端
+/// 永远只处理 kind，不读取或展示 secret。
+pub fn set_claude_oauth_token(secret: &str) -> Result<(), String> {
+    let value = serde_json::to_string(&ClaudeCredential {
+        secret: secret.to_string(),
+    })
+    .map_err(|e| format!("credential encode: {e}"))?;
+    set_named_secret(CLAUDE_CREDENTIAL_ACCOUNT, &value)
+}
+
+/// 返回 Claude Code 官方识别的环境变量和值。NoEntry 表示用户没在 Pilot 中配置，
+/// 此时继续使用 CLI 自己的 OAuth/keychain 登录，不视为错误。
+pub fn claude_oauth_token() -> Result<Option<String>, String> {
+    let raw = {
+        let mut values = cache().lock().unwrap();
+        if let Some(value) = values.get(CLAUDE_CREDENTIAL_ACCOUNT) {
+            value.clone()
+        } else {
+            match entry(CLAUDE_CREDENTIAL_ACCOUNT)?.get_password() {
+                Ok(value) => {
+                    values.insert(CLAUDE_CREDENTIAL_ACCOUNT.to_string(), value.clone());
+                    value
+                }
+                Err(keyring_core::Error::NoEntry) => return Ok(None),
+                Err(error) => return Err(format!("credential read: {error}")),
+            }
+        }
+    };
+    let credential: ClaudeCredential =
+        serde_json::from_str(&raw).map_err(|e| format!("credential decode: {e}"))?;
+    if credential.secret.trim().is_empty() {
+        return Err("Claude 订阅 Token 为空，请重新粘贴".into());
+    }
+    Ok(Some(credential.secret))
+}
+
+pub fn delete_claude_oauth_token() -> Result<(), String> {
+    delete_named_secret(CLAUDE_CREDENTIAL_ACCOUNT)
 }
 
 /// 进程内密钥缓存：每个连接每次启动最多读一次钥匙串。

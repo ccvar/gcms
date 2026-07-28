@@ -61,7 +61,7 @@
     {{/* 规格参数：repeater 数据表格化 */}}
     {{range .Fields}}
     {{if .Pairs}}
-    <section class="pd-specs">
+    <section class="pd-specs" data-spec-label="{{$.Tr.T "factory.specifications"}}">
       <h2 class="pd-sec-title">{{.Label}}</h2>
       <div class="pd-specs-tablewrap">
         <table class="pd-specs-table">

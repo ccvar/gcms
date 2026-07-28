@@ -808,6 +808,12 @@ func (s *Server) adminTypeKeyValid(key string) bool {
 	if s.langEnabled(key) {
 		return false
 	}
+	// A custom type owns /<lang>/<prefix>/... and would otherwise be routed
+	// before a standard page or an advanced page's reserved candidate. Query
+	// both published/current page slugs and working-route reservations.
+	if used, err := s.store.PageRoutePrefixInUse(key); err != nil || used {
+		return false
+	}
 	if row, _ := s.store.GetContentType(key); row != nil {
 		return false
 	}

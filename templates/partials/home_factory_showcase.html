@@ -82,14 +82,13 @@
       {{else}}
       {{template "factory_about" .}}
       {{end}}
-      {{/* 认证徽章条：样式化文字章（纯 CSS 图章质感，不用图片；展台骨架专属记忆点） */}}
+      {{/* 认证徽章条：只渲染站点真实配置，空槽不生成示例资质。 */}}
+      {{if .FactoryCertifications}}
       <div class="f-certs" aria-label="{{.Tr.T "factory.certs"}}">
         <span class="f-certs-label">{{.Tr.T "factory.certs"}}</span>
-        <span class="f-cert"><b>CE</b><i>Certified</i></span>
-        <span class="f-cert"><b>ISO 9001</b><i>Certified</i></span>
-        <span class="f-cert"><b>RoHS</b><i>Compliant</i></span>
-        <span class="f-cert"><b>SGS</b><i>Audited</i></span>
+        {{range .FactoryCertifications}}<span class="f-cert"><b>{{.Name}}</b>{{if .Note}}<i>{{.Note}}</i>{{end}}</span>{{end}}
       </div>
+      {{end}}
     </section>
 
     {{if .FactoryProcessOn}}

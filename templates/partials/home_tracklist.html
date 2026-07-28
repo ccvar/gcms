@@ -1,0 +1,77 @@
+{{define "home_tracklist"}}
+  {{/* 唱片集 Tracklist — 左「专辑封面」方块（纯排版 + CSS 黑胶盘）＋ 右曲目单 ＋ Credits 双列 */}}
+  <div class="tl-wrap">
+
+    <div class="tl-record">
+      <aside class="tl-cover">
+        {{if .Site.HeroEyebrow}}<span class="tl-imprint"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</span>{{end}}
+        <h1 class="tl-title"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+        {{if .Featured}}<time class="tl-year" datetime="{{.Tr.ISODate .Featured.PublishedAt}}">{{.Tr.Date .Featured.PublishedAt}}</time>{{else if .Posts}}{{with index .Posts 0}}<time class="tl-year" datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time>{{end}}{{end}}
+        {{if .Site.HeroDescription}}<p class="tl-note"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+        <span class="tl-disc" aria-hidden="true"><i></i></span>
+      </aside>
+
+      <section class="tl-tracks">
+        {{if .Categories}}
+        <nav class="tl-sides" aria-label="{{.Tr.T "nav.category"}}">
+          {{range .Categories}}<a class="tl-side" href="{{$.Tr.U (printf "/category/%s" .Slug)}}"><span class="tl-side-name">{{.Name}}</span><span class="tl-side-n">{{.Count}}</span></a>{{end}}
+          <a class="tl-side tl-side-all" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}}</a>
+        </nav>
+        {{end}}
+
+        {{with .Featured}}
+        <a class="tl-lead" href="{{$.Tr.U (contentURL .)}}">
+          <span class="tl-no" aria-hidden="true"></span>
+          <span class="tl-lead-art">{{if .CoverImage}}<img src="{{.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}</span>
+          <span class="tl-lead-body">
+            <span class="tl-kicker"><b>{{$.Site.HomeFeatured}}</b>{{with .Category}}<span class="tl-kicker-sep" aria-hidden="true">/</span><span class="tl-kicker-cat">{{.Name}}</span>{{end}}</span>
+            <span class="tl-lead-h">{{.Title}}</span>
+            {{if .Excerpt}}<span class="tl-lead-ex">{{.Excerpt}}</span>{{end}}
+            <time class="tl-lead-date" datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time>
+          </span>
+        </a>
+        {{end}}
+
+        {{if .Posts}}
+        <div class="tl-list-head">
+          <h2 class="tl-list-t">{{.Site.HomeLatest}}</h2>
+          <a class="tl-list-all" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+        </div>
+        <ol class="tl-list">
+          {{range .Posts}}
+          <li class="tl-track">
+            <a class="tl-track-in" href="{{$.Tr.U (contentURL .)}}">
+              <span class="tl-no" aria-hidden="true"></span>
+              <span class="tl-track-body">
+                <span class="tl-track-h">{{.Title}}</span>
+                {{if .Excerpt}}<span class="tl-track-ex">{{.Excerpt}}</span>{{end}}
+              </span>
+              <span class="tl-track-meta">{{with .Category}}<span class="tl-track-cat">{{.Name}}</span>{{end}}<time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time></span>
+            </a>
+          </li>
+          {{end}}
+        </ol>
+        {{end}}
+      </section>
+    </div>
+
+    <footer class="tl-credits">
+      {{if .FeatLinks}}
+      <div class="tl-credit-col">
+        <h2 class="tl-credit-h">{{.Site.HomeLinks}}</h2>
+        {{range .FeatLinks}}
+        <a class="tl-credit" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+          <span class="tl-credit-ic">{{if .CoverImage}}<img src="{{.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}</span>
+          <span class="tl-credit-t">{{.Title}}</span>
+        </a>
+        {{end}}
+      </div>
+      {{end}}
+      <div class="tl-credit-col tl-credit-nav">
+        <a href="{{.Tr.U "/about"}}">{{.Tr.T "home.cta_more"}}</a>
+        <a href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}}</a>
+      </div>
+    </footer>
+
+  </div>
+{{end}}

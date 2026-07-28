@@ -157,11 +157,61 @@ func TestThemePreviewRendersAllThemes(t *testing.T) {
 		"factory-onepage": "fo-wrap", "factory-solutions": "fx-wrap",
 		"factory-engineering": "fe-wrap", "factory-trade": "ft-wrap",
 		"factory-sidebar": "fb-wrap", "factory-vision": "fv-wrap",
-		"factory-herofold": "fh-wrap",
-		"gazette":          "gz-wrap", "inbox": "ib-wrap", "index": "index-wrap",
+		"factory-herofold":   "fh-wrap",
+		"factory-andon":      "fan-wrap",
+		"factory-certwall":   "fcw-wrap",
+		"factory-container":  "ctn-wrap",
+		"factory-crate":      "fcr-wrap",
+		"factory-draftdesk":  "dft-wrap",
+		"factory-exportmap":  "emap-wrap",
+		"factory-floorplan":  "fpl-wrap",
+		"factory-furnace":    "fur-wrap",
+		"factory-gantry":     "gnt-wrap",
+		"factory-gauge":      "gau-wrap",
+		"factory-hazardtape": "hzt-wrap",
+		"factory-inspection": "insp-wrap",
+		"factory-line":       "fln-wrap",
+		"factory-nameplate":  "npl-wrap",
+		"factory-pipeworks":  "ppw-wrap",
+		"factory-quotation":  "fqt-wrap",
+		"factory-rackwall":   "rkw-wrap",
+		"factory-sampleroom": "smp-wrap",
+		"factory-shutter":    "sht-wrap",
+		"factory-tonnage":    "ftn-wrap",
+		"gazette":            "gz-wrap", "inbox": "ib-wrap", "index": "index-wrap",
 		"liftoff": "lo-hero", "manual": "mn-wrap", "masonry": "ms-wrap",
 		"poster": "poster-scroll", "profile": "prof-wrap", "split": "split-hero",
 		"ticker": "tick-marquee", "timeline": "tl-wrap", "uptime": "up-wrap",
+		// 内容骨架第三批（tracklist 的 tl- 前缀与 timeline 重合但各自限定
+		// data-theme-layout 作用域，全库无未限定 .tl- 规则，已核）。
+		"tracklist": "tl-cover", "departure": "dp-wrap", "lexicon": "lx-wrap",
+		"bistro": "bt-wrap", "serial": "srl-wrap", "verse": "vs-wrap",
+		"archway": "aw-wrap", "gutter": "gt-wrap",
+		"cover": "cv-cover", "marquee": "mq-wrap", "triptych": "tp-wrap",
+		"stubs": "stb-wrap", "cardfile": "cdf-wrap", "script": "scp-wrap",
+		"postmark": "pmk-wrap", "metro": "mtr-wrap", "circuit": "cir-wrap",
+		"specimen": "spc-wrap", "lockers": "lkr-wrap", "auction": "auc-wrap",
+		"lattice":        "lw-wrap",
+		"dtc-vitrine":    "vtr-wrap",
+		"dtc-journal":    "jnl-wrap",
+		"dtc-catalogue":  "ctg-wrap",
+		"dtc-bazaar":     "bzr-wrap",
+		"dtc-column":     "clm-wrap",
+		"dtc-swissgrid":  "swg-wrap",
+		"dtc-runway":     "rwy-stage-inner",
+		"dtc-atelier":    "atl-wrap",
+		"dtc-monthbox":   "mbx-wrap",
+		"dtc-booth":      "bth-wrap",
+		"dtc-apothecary": "apo-wrap",
+		"dtc-grocer":     "gcr-wrap",
+		"dtc-cellar":     "clr-wrap",
+		"dtc-basecamp":   "bcp-wrap",
+		"dtc-toybox":     "tbx-wrap",
+		"dtc-paperie":    "ppr-wrap",
+		"dtc-mono":       "mno-hero-inner",
+		"dtc-flatlay":    "flt-wrap",
+		"dtc-flyer":      "flr-wrap",
+		"dtc-lightbox":   "lbx-wrap",
 	}
 
 	// 进入站点后台，让会话绑定一个站点（站点级路由需要 current site）。
@@ -336,6 +386,12 @@ func TestThemePreviewRendersAllThemes(t *testing.T) {
 	if !strings.Contains(publicCSSCache, `[data-theme^="route-atlas"] .post-list.search-results:has(> .search-empty) { border-bottom:0; border-left:0; }`) {
 		t.Error("route-atlas search empty state still inherits the list frame")
 	}
+	if !strings.Contains(publicCSSCache, `max-width:min(180px,38vw); height:30px; max-height:30px;`) {
+		t.Error("nine editorial home themes do not share the normal inner-page logo size")
+	}
+	if strings.Contains(publicCSSCache, `max-width:48px; height:42px; max-height:42px;`) {
+		t.Error("editorial home header still compresses horizontal logos to 48px")
+	}
 	for _, want := range []string{
 		`.ec-main-nav a[aria-current="page"]::after { display:none; }`,
 		`position:sticky; top:0; z-index:20;`,
@@ -393,6 +449,300 @@ func TestLightThemePairsCoverEveryLayout(t *testing.T) {
 			if got := layoutForTheme(id); got != layout {
 				t.Errorf("light theme %q layout = %q, want %q", id, got, layout)
 			}
+		}
+	}
+}
+
+func TestEmptyCommerceThemePreviewMatchesBrowseWithoutInventedData(t *testing.T) {
+	srv, h, ps, _, blogSite := setupPlatformAutomation(t)
+	cookie := platformAdminSession(t, ps)
+	runtime, ok := srv.runtimePool().runtimeByID(blogSite.ID)
+	if !ok || runtime == nil || runtime.Store == nil || runtime.server == nil {
+		t.Fatal("blog runtime missing")
+	}
+	for _, typ := range []string{"post", "page", "link", "product"} {
+		items, err := runtime.Store.ListPublishedByType(typ, "zh", 0, 0, 1000)
+		if err != nil {
+			t.Fatalf("list %s fixtures: %v", typ, err)
+		}
+		for _, item := range items {
+			if err := runtime.Store.DeletePost(item.ID); err != nil {
+				t.Fatalf("delete %s fixture %d: %v", typ, item.ID, err)
+			}
+		}
+	}
+	for _, kind := range []string{"post", "product"} {
+		categories, err := runtime.Store.ListCategories("zh", kind)
+		if err != nil {
+			t.Fatalf("list %s categories: %v", kind, err)
+		}
+		for _, category := range categories {
+			if err := runtime.Store.DeleteCategory(category.ID); err != nil {
+				t.Fatalf("delete %s category %d: %v", kind, category.ID, err)
+			}
+		}
+	}
+	for _, key := range []string{
+		"hero.image", "hero.svg",
+		factoryStatsSettingKey, factoryProcessSettingKey, factoryCTASettingKey,
+		factoryFAQSettingKey, factoryIndustriesSettingKey, factoryCertificationsSettingKey,
+		factoryGallerySettingKey, dtcTestimonialsSettingKey,
+	} {
+		if err := runtime.Store.SetSetting(key, ""); err != nil {
+			t.Fatalf("clear setting %s: %v", key, err)
+		}
+	}
+	runtime.server.clearGeneratedCaches()
+
+	enter := httptest.NewRecorder()
+	enterReq := httptest.NewRequest(http.MethodGet, "https://platform.test/admin/sites/"+strconv.FormatInt(blogSite.ID, 10)+"/posts", nil)
+	enterReq.AddCookie(cookie)
+	h.ServeHTTP(enter, enterReq)
+
+	get := func(path string) string {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "https://platform.test"+path, nil)
+		req.AddCookie(cookie)
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d, body=%s", path, rec.Code, rec.Body.String())
+		}
+		return rec.Body.String()
+	}
+
+	// 新建站点没有商品或经营数据时，卡片和完整试穿都应展示真实空态。
+	// 不能在卡片里虚构商品、工厂规模、出口范围或售后承诺来填满版面。
+	for _, theme := range []string{"andon", "vitrine"} {
+		for label, body := range map[string]string{
+			"thumbnail": get("/admin/theme-preview/" + theme),
+			"browse":    get("/admin/theme-browse/" + theme + "/"),
+		} {
+			if !strings.Contains(body, "Blog Site") {
+				t.Errorf("%s %s omitted the real site name", theme, label)
+			}
+			for _, invented := range []string{
+				"深沟球轴承 6204-2RS",
+				"手工陶瓷马克杯 350ml",
+				"12,000㎡",
+				"出口国家",
+				"发货国家与地区",
+				"质保承诺",
+			} {
+				if strings.Contains(body, invented) {
+					t.Errorf("%s %s invented empty-site data %q", theme, label, invented)
+				}
+			}
+		}
+	}
+}
+
+func TestCommerceThemePreviewMatchesBrowseDataWithoutMixedSamples(t *testing.T) {
+	srv, h, ps, _, blogSite := setupPlatformAutomation(t)
+	cookie := platformAdminSession(t, ps)
+	runtime, ok := srv.runtimePool().runtimeByID(blogSite.ID)
+	if !ok || runtime == nil || runtime.Store == nil || runtime.server == nil {
+		t.Fatal("blog runtime missing")
+	}
+	existing, err := runtime.Store.ListPublished("zh", 0, 1000)
+	if err != nil {
+		t.Fatalf("list fixture articles: %v", err)
+	}
+	for _, post := range existing {
+		if err := runtime.Store.DeletePost(post.ID); err != nil {
+			t.Fatalf("delete fixture article %d: %v", post.ID, err)
+		}
+	}
+	categories, err := runtime.Store.ListCategories("zh", "post")
+	if err != nil {
+		t.Fatalf("list fixture categories: %v", err)
+	}
+	for _, category := range categories {
+		if err := runtime.Store.DeleteCategory(category.ID); err != nil {
+			t.Fatalf("delete fixture category %d: %v", category.ID, err)
+		}
+	}
+	if err := runtime.Store.SetSetting(enabledContentTypesKey, "product"); err != nil {
+		t.Fatalf("enable product: %v", err)
+	}
+	if _, err := runtime.Store.CreatePost(&store.Post{
+		Type: "post", Lang: "zh", Slug: "preview-real-article", Title: "真实站点文章",
+		Excerpt: "真实文章摘要", Status: "published", PublishedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("create real article: %v", err)
+	}
+
+	enter := httptest.NewRecorder()
+	enterReq := httptest.NewRequest(http.MethodGet, "https://platform.test/admin/sites/"+strconv.FormatInt(blogSite.ID, 10)+"/posts", nil)
+	enterReq.AddCookie(cookie)
+	h.ServeHTTP(enter, enterReq)
+
+	get := func(path string) *httptest.ResponseRecorder {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "https://platform.test"+path, nil)
+		req.AddCookie(cookie)
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d, body=%s", path, rec.Code, rec.Body.String())
+		}
+		return rec
+	}
+
+	// A real article is already enough to make this a non-empty site. Missing
+	// commerce slots must stay empty in both views instead of being padded with
+	// sample products/statistics in the compact card only.
+	for _, theme := range []string{"andon", "vitrine"} {
+		thumbnail := get("/admin/theme-preview/" + theme)
+		browse := get("/admin/theme-browse/" + theme + "/")
+		if got := thumbnail.Header().Get("Cache-Control"); got != "no-store" {
+			t.Errorf("%s thumbnail Cache-Control = %q, want no-store", theme, got)
+		}
+		if got := browse.Header().Get("Cache-Control"); got != "no-store" {
+			t.Errorf("%s browse Cache-Control = %q, want no-store", theme, got)
+		}
+		for label, body := range map[string]string{
+			"thumbnail": thumbnail.Body.String(),
+			"browse":    browse.Body.String(),
+		} {
+			for _, sample := range []string{"深沟球轴承 6204-2RS", "手工陶瓷马克杯 350ml", "12,000㎡", "发货国家与地区"} {
+				if strings.Contains(body, sample) {
+					t.Errorf("%s %s mixed empty-site sample %q into real data", theme, label, sample)
+				}
+			}
+		}
+	}
+	for label, body := range map[string]string{
+		"thumbnail": get("/admin/theme-preview/masonry").Body.String(),
+		"browse":    get("/admin/theme-browse/masonry/").Body.String(),
+	} {
+		if strings.Contains(body, `class="ms-chips"`) {
+			t.Errorf("%s injected fallback category chips beside a real uncategorized article", label)
+		}
+	}
+
+	if _, err := runtime.Store.CreatePost(&store.Post{
+		Type: "product", Lang: "zh", Slug: "preview-real-product", Title: "真实站点商品",
+		Excerpt: "真实商品摘要", Status: "published", PublishedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("create real product: %v", err)
+	}
+	if err := runtime.Store.SetSetting(factoryStatsSettingKey, `[{"num":"37","label":"真实服务地区"}]`); err != nil {
+		t.Fatalf("set real stats: %v", err)
+	}
+	runtime.server.clearGeneratedCaches()
+
+	for _, theme := range []string{"andon", "vitrine"} {
+		for label, body := range map[string]string{
+			"thumbnail": get("/admin/theme-preview/" + theme).Body.String(),
+			"browse":    get("/admin/theme-browse/" + theme + "/").Body.String(),
+		} {
+			for _, want := range []string{"真实站点商品", "真实服务地区"} {
+				if !strings.Contains(body, want) {
+					t.Errorf("%s %s omitted real commerce data %q", theme, label, want)
+				}
+			}
+			for _, sample := range []string{"深沟球轴承 6204-2RS", "手工陶瓷马克杯 350ml"} {
+				if strings.Contains(body, sample) {
+					t.Errorf("%s %s retained sample %q after real data was added", theme, label, sample)
+				}
+			}
+		}
+	}
+
+	js := httptest.NewRecorder()
+	h.ServeHTTP(js, httptest.NewRequest(http.MethodGet, "https://platform.test/assets/js/admin.js", nil))
+	if js.Code != http.StatusOK {
+		t.Fatalf("admin.js status = %d", js.Code)
+	}
+	if body := js.Body.String(); !strings.Contains(body, "function freshThemePreviewURL") ||
+		strings.Count(body, "freshThemePreviewURL(") < 4 {
+		t.Fatal("theme-card reload paths are not all routed through the cache-busting URL helper")
+	}
+}
+
+func TestThemePreviewUsesRealFeaturedLinksAndPublishedTotal(t *testing.T) {
+	srv, h, ps, _, blogSite := setupPlatformAutomation(t)
+	cookie := platformAdminSession(t, ps)
+	runtime, ok := srv.runtimePool().runtimeByID(blogSite.ID)
+	if !ok || runtime == nil || runtime.Store == nil {
+		t.Fatal("blog runtime missing")
+	}
+	existing, err := runtime.Store.ListPublished("zh", 0, 1000)
+	if err != nil {
+		t.Fatalf("list fixture articles: %v", err)
+	}
+	for _, post := range existing {
+		if err := runtime.Store.DeletePost(post.ID); err != nil {
+			t.Fatalf("delete fixture article %d: %v", post.ID, err)
+		}
+	}
+	linkID, err := runtime.Store.CreatePost(&store.Post{
+		Type: "link", Lang: "zh", Slug: "real-resource", Title: "真实精选链接",
+		Excerpt: "真实链接摘要", Status: "published", PublishedAt: time.Now(),
+	})
+	if err != nil {
+		t.Fatalf("create featured link: %v", err)
+	}
+	if err := runtime.Store.SetFeatured(linkID, true); err != nil {
+		t.Fatalf("feature link: %v", err)
+	}
+
+	enter := httptest.NewRecorder()
+	enterReq := httptest.NewRequest(http.MethodGet, "https://platform.test/admin/sites/"+strconv.FormatInt(blogSite.ID, 10)+"/posts", nil)
+	enterReq.AddCookie(cookie)
+	h.ServeHTTP(enter, enterReq)
+	get := func(path string) string {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "https://platform.test"+path, nil)
+		req.AddCookie(cookie)
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d, body=%s", path, rec.Code, rec.Body.String())
+		}
+		return rec.Body.String()
+	}
+
+	for label, body := range map[string]string{
+		"thumbnail": get("/admin/theme-preview/gazette"),
+		"browse":    get("/admin/theme-browse/gazette/"),
+	} {
+		if !strings.Contains(body, "真实精选链接") {
+			t.Errorf("%s omitted the configured featured link", label)
+		}
+		for _, sample := range []string{">文档<", ">发布<", ">生态<"} {
+			if strings.Contains(body, sample) {
+				t.Errorf("%s mixed fallback link %q with configured links", label, sample)
+			}
+		}
+	}
+
+	before, err := runtime.Store.CountPublished("zh")
+	if err != nil {
+		t.Fatalf("count published before seed: %v", err)
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := runtime.Store.CreatePost(&store.Post{
+			Type: "post", Lang: "zh", Slug: fmt.Sprintf("published-total-%d", i),
+			Title: fmt.Sprintf("真实文章 %d", i+1), Status: "published",
+			PublishedAt: time.Now().Add(-time.Duration(i) * time.Hour),
+		}); err != nil {
+			t.Fatalf("create article %d: %v", i, err)
+		}
+	}
+	wantTotal := before + 2
+	wantCountMarkup := fmt.Sprintf(`<span>%d / `, wantTotal)
+	for label, body := range map[string]string{
+		"thumbnail": get("/admin/theme-preview/light-table"),
+		"browse":    get("/admin/theme-browse/light-table/"),
+	} {
+		if !strings.Contains(body, wantCountMarkup) {
+			at := strings.Index(body, "lt-hero-caption")
+			if at >= 0 && at+240 < len(body) {
+				body = body[at : at+240]
+			}
+			t.Errorf("%s did not render the real published total of %d: %q", label, wantTotal, body)
 		}
 	}
 }

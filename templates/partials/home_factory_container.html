@@ -1,0 +1,145 @@
+{{define "home_factory_container"}}
+  {{/* factory-container — 集装箱：首屏是一扇「箱门大牌」——波纹钢竖纹门面（左文右窗两栏）+ 钢印唛头
+       （站点名，钳成单行）+ 三色喷印实底块（factory.stats 逐格换箱色）+ 门脚铅封条（认证槽）；
+       Hero 视觉三态：图片／SVG → 未配置或选中空槽时
+       图纸机械动画（共享 factory_hero_anim，reduced-motion 自带静止）——三态都嵌进右侧「箱门视窗」：
+       波纹钢窗框 + 右上箱号唛头小牌 + 框底 accent 铅封（≤920px 图窗收到文案下方、动画窗整个收起）。
+       紧接堆场图带（factory.gallery 横向滚动，等高箱柜）。商品=波纹钢箱面卡：顶梁按「该商品分类在
+       FactoryCats 里的位次」三色轮转（零新增数据；分类不在前 8 名或无分类回落默认箱色），箱号位取
+       productSKU 嗅探的型号。其余区块（分类闸口 / 航次流程 / 应用行业 / FAQ / 动态 / CTA 通栏）全部
+       复用工厂族共享 define，未配置的槽整块不渲染。页头「货运单条」在 header_factory_container。 */}}
+  <div class="ctn-wrap">
+    <section class="ctn-door has-visual">
+      <div class="ctn-door-face">
+        <div class="ctn-door-copy">
+          {{if .Site.HeroEyebrow}}<p class="ctn-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+          <h1 class="ctn-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+          {{if .Site.HeroDescription}}<p class="ctn-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+          <div class="ctn-cta">
+            {{if .Contact.Any}}<a class="btn btn-primary" href="#factory-contact">{{.Tr.T "contact.float_label"}} <span class="arrow" aria-hidden="true">→</span></a>
+            {{else}}<a class="btn btn-primary" href="{{.Tr.U "/products"}}">{{.Tr.T "factory.products"}} <span class="arrow" aria-hidden="true">→</span></a>{{end}}
+            <a class="btn ctn-btn-ghost" href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}}</a>
+          </div>
+        </div>
+        <div class="ctn-port">
+          <span class="ctn-port-no" aria-hidden="true">{{.Site.Name}}</span>
+          <div class="ctn-port-win">
+            {{template "factory_hero_slot" .}}
+          </div>
+        </div>
+        <p class="ctn-brandmark" aria-hidden="true">{{.Site.Name}}</p>
+      </div>
+      {{if .FactoryStats}}
+      <dl class="ctn-plates">
+        {{range .FactoryStats}}
+        <div class="ctn-plate"><dt>{{.Num}}</dt><dd>{{.Label}}</dd></div>
+        {{end}}
+      </dl>
+      {{else}}
+      <div class="ctn-door-about">{{template "factory_about" .}}</div>
+      {{end}}
+      {{if .FactoryCertifications}}<div class="f-certs ctn-seals" aria-label="{{.Tr.T "factory.certs"}}">
+        <span class="f-certs-label">{{.Tr.T "factory.certs"}}</span>
+        {{range .FactoryCertifications}}<span class="f-cert"><b>{{.Name}}</b>{{if .Note}}<i>{{.Note}}</i>{{end}}</span>{{end}}
+      </div>{{end}}
+    </section>
+  </div>
+
+  {{if .FactoryGallery}}
+  <section class="ctn-yard">
+    <div class="ctn-yard-in">
+      <p class="ctn-yard-label">{{.Tr.T "factory.gallery"}}</p>
+      {{template "factory_gallery" .}}
+    </div>
+  </section>
+  {{end}}
+
+  <div class="ctn-wrap">
+    <section class="ctn-section">
+      <div class="ctn-head">
+        <div class="f-head-copy">
+          <p class="f-eyebrow">{{.Tr.T "factory.products"}}</p>
+          <h2>{{.Tr.T "factory.products"}}</h2>
+        </div>
+        <a href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="ctn-grid">
+        {{range .FactoryProducts}}
+        {{$k := "x"}}{{with .Category}}{{$n := .Name}}{{range $i, $c := $.FactoryCats}}{{if eq $c.Name $n}}{{$k = printf "%d" $i}}{{end}}{{end}}{{end}}
+        <a class="ctn-box ctn-c{{$k}}" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+          <span class="ctn-box-top">
+            <span class="ctn-box-cat">{{with .Category}}{{.Name}}{{end}}</span>
+            {{with productSKU .}}<span class="ctn-box-no">{{.}}</span>{{end}}
+          </span>
+          <span class="ctn-box-face{{if not .CoverImage}} ctn-box-gen{{end}}">
+            {{if .CoverImage}}<img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}
+          </span>
+          <span class="ctn-box-body">
+            <span class="ctn-box-title">{{.Title}}</span>
+            {{if .Excerpt}}<span class="ctn-box-ex">{{.Excerpt}}</span>{{end}}
+            {{with productChips .}}<span class="f-chips">{{range .}}<span class="f-chip"><b>{{.K}}</b><i>{{.V}}</i></span>{{end}}</span>{{end}}
+          </span>
+        </a>
+        {{else}}
+        <p class="ctn-empty muted">{{.Tr.T "factory.no_products"}}</p>
+        {{end}}
+      </div>
+    </section>
+
+    {{if .FactoryCats}}
+    <section class="ctn-section">
+      <div class="ctn-head">
+        <div class="f-head-copy"><p class="f-eyebrow">{{.Tr.T "factory.categories"}}</p><h2>{{.Tr.T "factory.categories"}}</h2></div>
+      </div>
+      {{template "factory_categories" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryProcessOn}}
+    <section class="ctn-section ctn-voyage">
+      <div class="ctn-head">
+        <div class="f-head-copy"><p class="f-eyebrow">{{.Tr.T "factory.process"}}</p><h2>{{.Tr.T "factory.process"}}</h2></div>
+      </div>
+      {{template "factory_process_steps" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryIndustries}}
+    <section class="ctn-section">
+      <div class="ctn-head">
+        <div class="f-head-copy"><p class="f-eyebrow">{{.Tr.T "factory.industries"}}</p><h2>{{.Tr.T "factory.industries"}}</h2></div>
+      </div>
+      {{template "factory_industries" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryQAs}}
+    <section class="ctn-section">
+      <div class="ctn-head">
+        <div class="f-head-copy"><p class="f-eyebrow">{{.Tr.T "factory.faq"}}</p><h2>{{.Tr.T "factory.faq"}}</h2></div>
+      </div>
+      {{template "factory_faq" .}}
+    </section>
+    {{end}}
+
+    {{if .Posts}}
+    <section class="ctn-section ctn-news">
+      <div class="ctn-head">
+        <div class="f-head-copy"><p class="f-eyebrow">{{.Tr.T "factory.news"}}</p><h2>{{.Tr.T "factory.news"}}</h2></div>
+        <a href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="ctn-news-list">
+        {{range $i, $p := .Posts}}{{if lt $i 3}}
+        <a class="ctn-news-item" href="{{$.Tr.U (contentURL $p)}}">
+          <time datetime="{{$.Tr.ISODate $p.PublishedAt}}">{{$.Tr.Date $p.PublishedAt}}</time>
+          <span class="ctn-news-title">{{$p.Title}}</span>
+          <span class="arrow" aria-hidden="true">→</span>
+        </a>
+        {{end}}{{end}}
+      </div>
+    </section>
+    {{end}}
+  </div>
+
+  {{template "factory_cta" .}}
+{{end}}

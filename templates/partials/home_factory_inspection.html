@@ -1,0 +1,160 @@
+{{define "home_factory_inspection"}}
+  {{/* factory-inspection — 质检单：整页按一份出厂检验报告排版。
+       首屏 = 报告头（Inspection Report 眉标 + 大标题 + 样品图 + factory.stats 渲染成绿描边
+       「检测指标框」+ 认证槽当「检验依据」条）；商品 = 检验单行卡（左缘绿粗边 + 中性编号
+       取 productSKU、无型号回落行序号 + 规格项计数=productChips 实际列出的规格条数，绝不虚构）；
+       流程 = 检验工序工位卡（复用 factory_process_steps）。分类/行业/图集/FAQ/CTA 全部复用
+       工厂族共享 define，数据一律来自 fillFactoryHome；区块编号取 .FactorySectionNum
+       （跳过未渲染区块，编号连续，故区块顺序与装载顺序一致）。
+       页头「检验流程步骤条 + 圆形文档编号章」见 partials/header.html 的 header_factory_inspection。
+       样品图槽：支持 Hero 图片、SVG 与内置动画；空图片／SVG 槽回落动画。 */}}
+  <div class="insp-wrap">
+    <section class="insp-sheet has-shot">
+      <div class="insp-sheet-head">
+        <p class="f-eyebrow insp-doc">{{.Tr.T "factory.certs"}}</p>
+        <span class="insp-rule" aria-hidden="true"></span>
+      </div>
+      <div class="insp-sheet-body">
+        <div class="insp-sheet-copy">
+          {{if .Site.HeroEyebrow}}<p class="insp-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+          <h1 class="insp-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+          {{if .Site.HeroDescription}}<p class="insp-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+          <div class="insp-cta">
+            {{if .Contact.Any}}<a class="btn btn-primary" href="#factory-contact">{{.Tr.T "contact.float_label"}} <span class="arrow" aria-hidden="true">→</span></a>
+            {{else}}<a class="btn btn-primary" href="{{.Tr.U "/products"}}">{{.Tr.T "factory.products"}} <span class="arrow" aria-hidden="true">→</span></a>{{end}}
+            <a class="btn" href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}}</a>
+          </div>
+        </div>
+        <figure class="insp-shot">{{template "factory_hero_slot" .}}</figure>
+      </div>
+      {{if .FactoryStats}}
+      <dl class="f-stats insp-metrics">
+        {{range .FactoryStats}}
+        <div class="f-stat"><dt>{{.Num}}</dt><dd>{{.Label}}</dd></div>
+        {{end}}
+      </dl>
+      {{else}}
+      <div class="insp-sheet-about">{{template "factory_about" .}}</div>
+      {{end}}
+      {{if .FactoryCertifications}}<div class="f-certs insp-standards" aria-label="{{.Tr.T "factory.certs"}}">
+        <span class="f-certs-label">{{.Tr.T "factory.certs"}}</span>
+        {{range .FactoryCertifications}}<span class="f-cert"><b>{{.Name}}</b>{{if .Note}}<i>{{.Note}}</i>{{end}}</span>{{end}}
+      </div>{{end}}
+    </section>
+
+    {{if .FactoryCats}}
+    <section class="insp-sec">
+      <div class="insp-sec-head">
+        <div class="f-head-copy">
+          <p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "categories"}}</span>{{.Tr.T "factory.batches"}}</p>
+          <h2>{{.Tr.T "factory.categories"}}</h2>
+        </div>
+      </div>
+      {{template "factory_categories" .}}
+    </section>
+    {{end}}
+
+    <section class="insp-sec insp-items">
+      <div class="insp-sec-head">
+        <div class="f-head-copy">
+          <p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "products"}}</span>{{.Tr.T "factory.products"}}</p>
+          <h2>{{.Tr.T "factory.products"}}</h2>
+        </div>
+        <a href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="insp-list">
+        {{range $i, $p := .FactoryProducts}}
+        <a class="insp-row" href="{{if $p.Slug}}{{$.Tr.U (contentURL $p)}}{{else}}#{{end}}">
+          <span class="insp-row-qc">{{with productSKU $p}}{{.}}{{else}}#{{printf "%03d" (add $i 1)}}{{end}}</span>
+          <span class="insp-row-media{{if not $p.CoverImage}} insp-row-gen{{end}}">
+            {{if $p.CoverImage}}<img src="{{$p.CoverImage}}" alt="{{$p.Title}}" loading="lazy" decoding="async"{{imgAttrs $p.CoverImage}}>{{else}}<b aria-hidden="true">{{initial $p.Title}}</b>{{end}}
+          </span>
+          <span class="insp-row-body">
+            {{with $p.Category}}<span class="insp-row-cat">{{.Name}}</span>{{end}}
+            <span class="insp-row-title">{{$p.Title}}</span>
+            {{if $p.Excerpt}}<span class="insp-row-ex">{{$p.Excerpt}}</span>{{end}}
+            {{with productChips $p}}<span class="f-chips">{{range .}}<span class="f-chip"><b>{{.K}}</b><i>{{.V}}</i></span>{{end}}</span>{{end}}
+          </span>
+          <span class="insp-row-mark">
+            {{with productChips $p}}<span class="insp-count"><b>{{len .}}</b><i>{{$.Tr.T "factory.specifications"}}</i></span>{{end}}
+            <span class="arrow" aria-hidden="true">→</span>
+          </span>
+        </a>
+        {{else}}
+        <p class="insp-empty muted">{{.Tr.T "factory.no_products"}}</p>
+        {{end}}
+      </div>
+    </section>
+
+    {{if .FactoryProcessOn}}
+    <section class="insp-sec insp-flow">
+      <div class="insp-sec-head">
+        <div class="f-head-copy">
+          <p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "process"}}</span>{{.Tr.T "factory.process"}}</p>
+          <h2>{{.Tr.T "factory.process"}}</h2>
+        </div>
+      </div>
+      {{template "factory_process_steps" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryIndustries}}
+    <section class="insp-sec">
+      <div class="insp-sec-head">
+        <div class="f-head-copy">
+          <p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "industries"}}</span>{{.Tr.T "factory.industries"}}</p>
+          <h2>{{.Tr.T "factory.industries"}}</h2>
+        </div>
+      </div>
+      {{template "factory_industries" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryGallery}}
+    <section class="insp-sec">
+      <div class="insp-sec-head">
+        <div class="f-head-copy">
+          <p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "gallery"}}</span>{{.Tr.T "factory.gallery"}}</p>
+          <h2>{{.Tr.T "factory.gallery"}}</h2>
+        </div>
+      </div>
+      {{template "factory_gallery" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryQAs}}
+    <section class="insp-sec">
+      <div class="insp-sec-head">
+        <div class="f-head-copy">
+          <p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "faq"}}</span>{{.Tr.T "factory.faq"}}</p>
+          <h2>{{.Tr.T "factory.faq"}}</h2>
+        </div>
+      </div>
+      {{template "factory_faq" .}}
+    </section>
+    {{end}}
+
+    {{if .Posts}}
+    <section class="insp-sec insp-news">
+      <div class="insp-sec-head">
+        <div class="f-head-copy">
+          <p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "news"}}</span>{{.Tr.T "factory.news"}}</p>
+          <h2>{{.Tr.T "factory.news"}}</h2>
+        </div>
+        <a href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="insp-log">
+        {{range $i, $p := .Posts}}{{if lt $i 3}}
+        <a class="insp-log-item" href="{{$.Tr.U (contentURL $p)}}">
+          <time datetime="{{$.Tr.ISODate $p.PublishedAt}}">{{$.Tr.Date $p.PublishedAt}}</time>
+          <span class="insp-log-title">{{$p.Title}}</span>
+          <span class="arrow" aria-hidden="true">→</span>
+        </a>
+        {{end}}{{end}}
+      </div>
+    </section>
+    {{end}}
+  </div>
+
+  {{template "factory_cta" .}}
+{{end}}

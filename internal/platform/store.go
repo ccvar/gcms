@@ -319,6 +319,10 @@ func Open(path string) (*Store, error) {
 		_ = s.Close()
 		return nil, fmt.Errorf("平台数据库迁移失败: %w", err)
 	}
+	if err := s.migratePilotConsole(); err != nil {
+		_ = s.Close()
+		return nil, fmt.Errorf("Pilot 控制台迁移失败: %w", err)
+	}
 	return s, nil
 }
 

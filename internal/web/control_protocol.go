@@ -143,6 +143,13 @@ func runControlMutation(w http.ResponseWriter, fn controlMutationFunc) (body []b
 // executeControlMutation 是所有平台控制写端点的统一入口。fingerprint 必须是
 // 业务处理器生成的稳定、无密码请求指纹；这里只持久化它的 SHA-256。
 func (s *Server) executeControlMutation(w http.ResponseWriter, r *http.Request, key *platform.PlatformAutomationKey, operation, fingerprint string, fn controlMutationFunc) {
+	s.executeControlMutationWithUnlockRequirement(w, r, key, operation, fingerprint, true, fn)
+}
+
+// executeControlMutationWithUnlockRequirement 只供已经用真实站点与已启用域名
+// 计算过上线状态的站点结构操作使用。requireUnlock=false 不能取消明确确认、
+// 幂等键、请求指纹、范围校验或操作收据。
+func (s *Server) executeControlMutationWithUnlockRequirement(w http.ResponseWriter, r *http.Request, key *platform.PlatformAutomationKey, operation, fingerprint string, requireUnlock bool, fn controlMutationFunc) {
 	op, ok := platformControlOperationByID(operation)
 	if !ok {
 		apiError(w, http.StatusBadRequest, "unknown_operation", "未知的控制操作。")
@@ -178,7 +185,7 @@ func (s *Server) executeControlMutation(w http.ResponseWriter, r *http.Request, 
 		apiError(w, http.StatusInternalServerError, "control_contract_error", "控制操作缺少稳定请求指纹。")
 		return
 	}
-	if op.RequiresUnlock && !s.requireControlUnlock(w, r, key, operation) {
+	if op.RequiresUnlock && requireUnlock && !s.requireControlUnlock(w, r, key, operation) {
 		return
 	}
 	if s.platform == nil {

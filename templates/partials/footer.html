@@ -60,8 +60,8 @@
 {{end}}
 
 {{define "footer_factory_trade"}}{{/* factory-trade 经典外贸：四栏大页脚——商品分类（现成分类数据）/
-     快速链接（导航菜单）/联系方式（ContactView，未配置项不显示）/认证徽章（纯 CSS 文字章），
-     底部版权条。不新增数据概念，全部吃既有装载。 */}}  <footer class="site-footer ft-footer">
+     快速链接（导航菜单）/联系方式（ContactView，未配置项不显示）/站点配置的认证徽章，
+     底部版权条。不新增数据概念，全部吃既有装载；未配置认证时不虚构资质。 */}}  <footer class="site-footer ft-footer">
     <div class="wrap ft-foot-grid">
       <div class="f-col ft-foot-brand">
         <div class="brand"{{if .VisualEdit}} data-visual-edit="site.name" data-visual-label="站点名称"{{end}}>{{.Site.Name}}</div>
@@ -84,11 +84,9 @@
         {{if .Contact.WaMe}}{{$wa := printf "https://wa.me/%s" .Contact.WaMe}}<a href="{{$wa}}"{{.ExternalLinkAttrs $wa}}><b>WhatsApp</b>{{.Contact.WhatsApp}}</a>{{end}}
         {{if .Contact.WeChatQR}}<button type="button" class="ft-foot-wechat" data-wechat-open><b>{{.Tr.T "contact.wechat"}}</b>{{.Tr.T "contact.wechat_scan"}}</button>{{end}}
         {{else}}<p class="copy">{{.Tr.T "factory.contact_note"}}</p>{{end}}
-        <div class="f-certs ft-foot-certs" aria-label="{{.Tr.T "factory.certs"}}">
-          <span class="f-cert"><b>CE</b><i>Certified</i></span>
-          <span class="f-cert"><b>ISO 9001</b><i>Certified</i></span>
-          <span class="f-cert"><b>SGS</b><i>Audited</i></span>
-        </div>
+        {{if .FactoryCertifications}}<div class="f-certs ft-foot-certs" aria-label="{{.Tr.T "factory.certs"}}">
+          {{range .FactoryCertifications}}<span class="f-cert"><b>{{.Name}}</b>{{if .Note}}<i>{{.Note}}</i>{{end}}</span>{{end}}
+        </div>{{end}}
       </div>
     </div>
     <div class="ft-foot-bar">

@@ -7,10 +7,12 @@ import (
 )
 
 var (
-	Version = "dev"
-	Commit  = ""
-	BuiltAt = ""
-	Repo    = "ccvar/gcms-releases"
+	Version                   = "dev"
+	Commit                    = ""
+	BuiltAt                   = ""
+	Repo                      = "ccvar/gcms-releases"
+	PreviewRepo               = "ccvar/gcms-preview-releases"
+	PreviewActivationCodeHash = ""
 )
 
 type Info struct {

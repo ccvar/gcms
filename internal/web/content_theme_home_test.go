@@ -134,6 +134,56 @@ func TestAnswerDeskHeroUsesSiteProfile(t *testing.T) {
 	}
 }
 
+// TestEditorialTrioPaletteSkinsKeepOneDynamicSkeleton locks the exact three
+// skeletons introduced together: every palette card must render the same
+// backend-bound page structure instead of drifting into a second template or
+// carrying design-study copy.
+func TestEditorialTrioPaletteSkinsKeepOneDynamicSkeleton(t *testing.T) {
+	s := newTestPublicServer(t, "")
+	for key, value := range map[string]string{
+		"site.hero_eyebrow":     "动态三套眉标",
+		"site.hero_title":       "动态三套标题",
+		"site.hero_description": "动态三套说明",
+	} {
+		if err := s.store.SetSetting(key, value); err != nil {
+			t.Fatalf("set %s: %v", key, err)
+		}
+	}
+
+	for family, skeleton := range map[string]string{
+		"answer-desk":      "answer-desk-page",
+		"portrait-journal": "portrait-journal-page",
+		"casebook":         "casebook-page",
+	} {
+		for _, theme := range []string{family, family + "-white", family + "-dark"} {
+			t.Run(theme, func(t *testing.T) {
+				if err := s.store.SetSetting("theme", theme); err != nil {
+					t.Fatal(err)
+				}
+				s.clearGeneratedCaches()
+
+				rec := httptest.NewRecorder()
+				s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/zh/", nil))
+				if rec.Code != http.StatusOK {
+					t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+				}
+				body := rec.Body.String()
+				for _, want := range []string{
+					`data-theme="` + theme + `"`,
+					`class="site-header ec-site-header ec-` + family + `-header"`,
+					`class="` + skeleton + `"`,
+					"动态三套眉标",
+					"动态三套标题",
+				} {
+					if !strings.Contains(body, want) {
+						t.Errorf("render missing %q", want)
+					}
+				}
+			})
+		}
+	}
+}
+
 func TestHeroFirstContentThemesFollowConfiguredVisualMode(t *testing.T) {
 	s := newTestPublicServer(t, "")
 	const configuredImage = "/uploads/configured-content-hero.webp"

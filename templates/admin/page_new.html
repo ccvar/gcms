@@ -1,0 +1,137 @@
+{{define "body"}}
+  <div class="admin-head page-new-head{{if .Mode}} is-project{{end}}">
+    <div>
+      <nav class="breadcrumb" aria-label="面包屑">
+        <a href="/admin/pages?lang={{.EditLang}}">页面</a>
+        <span class="sep" aria-hidden="true">/</span>
+        <span aria-current="page">新建</span>
+      </nav>
+      <h1>新建页面</h1>
+    </div>
+  </div>
+
+  {{if .FormErr}}<div class="form-err page-project-error" role="alert">{{.FormErr}}</div>{{end}}
+
+  {{if not .Mode}}
+  <section class="page-type-intro">
+    <p class="eyebrow">选择创作方式</p>
+    <h2>同一套页面数据，三种表达能力</h2>
+    <p>标准页面沿用原编辑器；自由编排使用受控组件和真实数据绑定；互动应用运行在隔离沙箱中。</p>
+  </section>
+  <div class="page-type-grid">
+    <a class="page-type-card" href="/admin/pages/new?mode=standard&amp;lang={{.EditLang}}">
+      <span class="page-type-index">01</span>
+      <strong>标准页面</strong>
+      <p>Markdown / 富文本，适合关于、指南和长期内容。原有创建、编辑与发布路径保持不变。</p>
+      <span class="page-type-action">使用标准编辑器 →</span>
+    </a>
+    <a class="page-type-card is-featured" href="/admin/pages/new?mode=composition&amp;lang={{.EditLang}}">
+      <span class="page-type-index">02</span>
+      <strong>自由编排页</strong>
+      <p>通过 Hero、图文、特性、数据卡片、FAQ 和 CTA 等白名单组件搭建响应式页面。</p>
+      <span class="page-type-action">打开可视化工作台 →</span>
+    </a>
+    <a class="page-type-card" href="/admin/pages/new?mode=app&amp;lang={{.EditLang}}">
+      <span class="page-type-index">03</span>
+      <strong>互动应用</strong>
+      <p>宣传页、计算器或小游戏等独立工程。源码、能力与发布产物均受版本和沙箱约束。</p>
+      <span class="page-type-action">创建应用工程 →</span>
+    </a>
+  </div>
+  {{else}}
+  <form class="page-project-create" method="post" action="/admin/pages/platform?lang={{.EditLang}}" data-page-project-create data-no-dirty data-no-busy>
+    <input type="hidden" name="_csrf" value="{{.CSRF}}">
+    <input type="hidden" name="mode" value="{{.Mode}}">
+
+    <header class="page-project-create-head">
+      <div class="page-project-create-context">
+        <span class="page-kind page-kind-{{.Mode}}">{{.ModeLabel}}</span>
+        <div>
+          <h2>创建{{.ModeLabel}}草稿</h2>
+          <p>{{if eq .Mode "composition"}}先建立页面信息，再进入三栏编排工作台；创建操作不会直接发布。{{else}}先建立页面信息，再进入应用工程工作台；通过构建与授权后才可发布。{{end}}</p>
+        </div>
+      </div>
+      <a class="page-project-reselect" href="/admin/pages/new?lang={{.EditLang}}">更换页面类型</a>
+    </header>
+
+    <div class="page-project-create-body">
+      <section class="page-create-section" aria-labelledby="page-create-basic-title">
+        <div class="page-create-section-head">
+          <span aria-hidden="true">01</span>
+          <div>
+            <h3 id="page-create-basic-title">基础信息</h3>
+            <p>设置页面名称、访问路径和列表摘要。</p>
+          </div>
+        </div>
+        <div class="page-create-grid">
+          <div class="field page-create-title">
+            <label for="page-create-title">标题</label>
+            <input id="page-create-title" name="title" value="{{.Edit.Title}}" required autofocus aria-describedby="page-create-title-hint">
+            <small class="hint" id="page-create-title-hint">{{if eq .Mode "composition"}}将作为页面标题，并用于初始化首屏标题。{{else}}用于后台识别和页面元信息，不会写入应用源码。{{end}}</small>
+          </div>
+          <div class="field page-create-slug">
+            <label for="page-create-slug">Slug（URL）</label>
+            <input id="page-create-slug" name="slug" value="{{.Edit.Slug}}" placeholder="留空则按标题自动生成" aria-describedby="page-create-slug-hint" spellcheck="false">
+            <small class="hint" id="page-create-slug-hint">只填写路径名称，不需要输入域名。</small>
+          </div>
+          <div class="field page-create-full">
+            <label for="page-create-excerpt">页面简介</label>
+            <textarea id="page-create-excerpt" name="excerpt" rows="3" aria-describedby="page-create-excerpt-hint">{{.Edit.Excerpt}}</textarea>
+            <small class="hint" id="page-create-excerpt-hint">{{if eq .Mode "composition"}}用于页面列表，并作为首屏说明的初始内容。{{else}}用于页面列表和内容概览，不会写入应用源码。{{end}}</small>
+          </div>
+        </div>
+      </section>
+
+      <section class="page-create-section" aria-labelledby="page-create-settings-title">
+        <div class="page-create-section-head">
+          <span aria-hidden="true">02</span>
+          <div>
+            <h3 id="page-create-settings-title">页面设置</h3>
+            <p>确定署名方式和公开页面使用的站点框架。</p>
+          </div>
+        </div>
+        <div class="page-create-grid">
+          <div class="field page-create-author">
+            <label for="page-create-author">作者</label>
+            <input id="page-create-author" name="author" value="{{.Edit.Author}}" placeholder="可选，用于页面署名">
+          </div>
+          <div class="field page-create-shell">
+            <label for="page-create-shell">站点框架</label>
+            <select id="page-create-shell" name="shell_mode" aria-describedby="page-create-shell-hint">
+              <option value="site"{{if eq .ShellMode "site"}} selected{{end}}>站点页头与页脚</option>
+              <option value="minimal"{{if eq .ShellMode "minimal"}} selected{{end}}>极简品牌框架</option>
+              <option value="none"{{if eq .ShellMode "none"}} selected{{end}}>无站点框架</option>
+            </select>
+            <small class="hint" id="page-create-shell-hint">决定公开页面是否继承站点导航与页脚。</small>
+          </div>
+        </div>
+      </section>
+
+      <section class="page-create-section" aria-labelledby="page-create-search-title">
+        <div class="page-create-section-head">
+          <span aria-hidden="true">03</span>
+          <div>
+            <h3 id="page-create-search-title">搜索摘要</h3>
+            <p>为搜索结果单独准备描述；留空时使用页面简介。</p>
+          </div>
+        </div>
+        <div class="page-create-grid">
+          <div class="field page-create-full">
+            <label for="page-create-meta-desc">SEO 描述</label>
+            <textarea id="page-create-meta-desc" name="meta_desc" rows="2" aria-describedby="page-create-meta-hint">{{.Edit.MetaDesc}}</textarea>
+            <small class="hint" id="page-create-meta-hint">建议准确概括页面内容，不必重复堆叠关键词。</small>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <footer class="page-create-actions">
+      <p>创建后保持草稿，可在工作台继续完善、预览和校验。</p>
+      <div class="page-create-buttons">
+        <a class="btn" href="/admin/pages?lang={{.EditLang}}">取消</a>
+        <button class="btn btn-primary" type="submit" data-page-create-submit>{{if eq .Mode "composition"}}创建并进入编排工作台{{else}}创建并进入应用工作台{{end}}</button>
+      </div>
+    </footer>
+  </form>
+  {{end}}
+{{end}}

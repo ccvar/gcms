@@ -1,0 +1,127 @@
+{{define "home_factory_sampleroom"}}
+  {{/* factory-sampleroom — 样品间：首屏是一页「样品册封面」——左侧标题/引导 + 数字签（factory.stats），
+       右侧色卡样品条（Hero 图／SVG／动画；未配图集时退回 accent 系三段变奏，
+       绝不放占位假照片），封面下缘挂认证图章条；页头由 CSS 重塑成样品册页签（无专属 DOM，
+       ≤620px 回落基础汉堡抽屉）。
+       首屏以下：工序签条（factory.process）→ 样品挂签卡商品墙（顶部三段色带 + 克重/幅宽签，
+       签由 productChips 从 specs 嗅探）→ 分类色卡 → 应用行业 → 余下图集 → FAQ → 动态 → CTA 通栏。
+       数据全部由 fillFactoryHome 装载，空槽整块不渲染（零配置照常可用）。 */}}
+  <div class="smp-wrap">
+    <section class="smp-hero">
+      <div class="smp-hero-copy">
+        {{if .Site.HeroEyebrow}}<p class="smp-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+        <h1 class="smp-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+        {{if .Site.HeroDescription}}<p class="smp-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+        <div class="smp-cta">
+          {{if .Contact.Any}}<a class="btn btn-primary" href="#factory-contact">{{.Tr.T "contact.float_label"}} <span class="arrow" aria-hidden="true">→</span></a>
+          {{else}}<a class="btn btn-primary" href="{{.Tr.U "/products"}}">{{.Tr.T "factory.products"}} <span class="arrow" aria-hidden="true">→</span></a>{{end}}
+          <a class="btn" href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}}</a>
+        </div>
+        {{if .FactoryStats}}
+        <dl class="f-stats smp-stats">
+          {{range .FactoryStats}}
+          <div class="f-stat"><dt>{{.Num}}</dt><dd>{{.Label}}</dd></div>
+          {{end}}
+        </dl>
+        {{end}}
+      </div>
+      <div class="smp-swatch">
+        {{template "factory_hero_slot" .}}
+      </div>
+      {{if .FactoryCertifications}}<div class="f-certs smp-certs" aria-label="{{.Tr.T "factory.certs"}}">
+        <span class="f-certs-label">{{.Tr.T "factory.certs"}}</span>
+        {{range .FactoryCertifications}}<span class="f-cert"><b>{{.Name}}</b>{{if .Note}}<i>{{.Note}}</i>{{end}}</span>{{end}}
+      </div>{{end}}
+    </section>
+
+    {{if .FactoryProcessOn}}
+    <section class="smp-section smp-proc">
+      <div class="smp-head">
+        <div class="f-head-copy"><p class="f-eyebrow">{{.Tr.T "factory.process"}}</p><h2>{{.Tr.T "factory.process"}}</h2></div>
+      </div>
+      {{template "factory_process_steps" .}}
+    </section>
+    {{end}}
+
+    <section class="smp-section smp-products">
+      <div class="smp-head">
+        <div class="f-head-copy"><p class="f-eyebrow">{{.Tr.T "factory.products"}}</p><h2>{{.Tr.T "factory.products"}}</h2></div>
+        <a href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="smp-grid">
+        {{range .FactoryProducts}}
+        <a class="smp-card" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+          <span class="smp-card-bands" aria-hidden="true"><i></i><i></i><i></i></span>
+          <span class="smp-card-media{{if not .CoverImage}} smp-card-gen{{end}}">
+            {{if .CoverImage}}<img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}
+          </span>
+          <span class="smp-card-body">
+            {{with .Category}}<span class="smp-card-cat">{{.Name}}</span>{{end}}
+            <span class="smp-card-title">{{.Title}}</span>
+            {{if .Excerpt}}<span class="smp-card-ex">{{.Excerpt}}</span>{{end}}
+            {{with productChips .}}<span class="f-chips">{{range .}}<span class="f-chip"><b>{{.K}}</b><i>{{.V}}</i></span>{{end}}</span>{{end}}
+          </span>
+        </a>
+        {{else}}
+        <p class="smp-empty muted">{{.Tr.T "factory.no_products"}}</p>
+        {{end}}
+      </div>
+    </section>
+
+    {{if .FactoryCats}}
+    <section class="smp-section smp-cats">
+      <div class="smp-head">
+        <div class="f-head-copy"><p class="f-eyebrow">{{.Tr.T "factory.categories"}}</p><h2>{{.Tr.T "factory.categories"}}</h2></div>
+      </div>
+      {{template "factory_categories" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryIndustries}}
+    <section class="smp-section smp-inds">
+      <div class="smp-head">
+        <div class="f-head-copy"><p class="f-eyebrow">{{.Tr.T "factory.industries"}}</p><h2>{{.Tr.T "factory.industries"}}</h2></div>
+      </div>
+      {{template "factory_industries" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryGallery}}
+    <section class="smp-section smp-gal">
+      <div class="smp-head">
+        <div class="f-head-copy"><p class="f-eyebrow">{{.Tr.T "factory.gallery"}}</p><h2>{{.Tr.T "factory.gallery"}}</h2></div>
+      </div>
+      {{template "factory_gallery" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryQAs}}
+    <section class="smp-section smp-faq">
+      <div class="smp-head">
+        <div class="f-head-copy"><p class="f-eyebrow">{{.Tr.T "factory.faq"}}</p><h2>{{.Tr.T "factory.faq"}}</h2></div>
+      </div>
+      {{template "factory_faq" .}}
+    </section>
+    {{end}}
+
+    {{if .Posts}}
+    <section class="smp-section smp-news">
+      <div class="smp-head">
+        <div class="f-head-copy"><p class="f-eyebrow">{{.Tr.T "factory.news"}}</p><h2>{{.Tr.T "factory.news"}}</h2></div>
+        <a href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="smp-news-list">
+        {{range $i, $p := .Posts}}{{if lt $i 3}}
+        <a class="smp-news-item" href="{{$.Tr.U (contentURL $p)}}">
+          <time datetime="{{$.Tr.ISODate $p.PublishedAt}}">{{$.Tr.Date $p.PublishedAt}}</time>
+          <span class="smp-news-title">{{$p.Title}}</span>
+          <span class="arrow" aria-hidden="true">→</span>
+        </a>
+        {{end}}{{end}}
+      </div>
+    </section>
+    {{end}}
+  </div>
+
+  {{template "factory_cta" .}}
+{{end}}

@@ -12,6 +12,7 @@ permissions:
 
 env:
   RELEASE_REPO: ccvar/gcms-releases
+  PREVIEW_RELEASE_REPO: ccvar/gcms-preview-releases
 
 jobs:
   release:
@@ -24,14 +25,37 @@ jobs:
           go-version: "1.23"
           cache: true
 
+      - name: 选择发布通道
+        run: |
+          case "${GITHUB_REF_NAME}" in
+            *-preview.*)
+              publish_repo="${PREVIEW_RELEASE_REPO}"
+              publish_channel="preview"
+              ;;
+            *)
+              publish_repo="${RELEASE_REPO}"
+              publish_channel="stable"
+              ;;
+          esac
+          {
+            echo "PUBLISH_REPO=${publish_repo}"
+            echo "PUBLISH_CHANNEL=${publish_channel}"
+          } >> "$GITHUB_ENV"
+
       - name: 检查发布密钥
         env:
-          GCMS_RELEASE_TOKEN: ${{ secrets.GCMS_RELEASE_TOKEN }}
+          STABLE_RELEASE_TOKEN: ${{ secrets.GCMS_RELEASE_TOKEN }}
+          PREVIEW_RELEASE_TOKEN: ${{ secrets.GCMS_PREVIEW_RELEASE_TOKEN }}
           GCMS_RELEASE_PUBLIC_KEY: ${{ secrets.GCMS_RELEASE_PUBLIC_KEY }}
           GCMS_RELEASE_SIGNING_KEY: ${{ secrets.GCMS_RELEASE_SIGNING_KEY }}
+          GCMS_PREVIEW_ACTIVATION_CODE_HASH: ${{ secrets.GCMS_PREVIEW_ACTIVATION_CODE_HASH }}
         run: |
-          if [ -z "$GCMS_RELEASE_TOKEN" ]; then
-            echo "::error::请在私有源码仓库配置 GCMS_RELEASE_TOKEN，授予 ${RELEASE_REPO} Contents: Read and write 权限。"
+          publish_token="$STABLE_RELEASE_TOKEN"
+          if [ "$PUBLISH_CHANNEL" = "preview" ]; then
+            publish_token="$PREVIEW_RELEASE_TOKEN"
+          fi
+          if [ -z "$publish_token" ]; then
+            echo "::error::缺少 ${PUBLISH_CHANNEL} 发布 Token；Stable 配置 GCMS_RELEASE_TOKEN，Preview 配置 GCMS_PREVIEW_RELEASE_TOKEN，并授予 ${PUBLISH_REPO} Contents: Read and write。"
             exit 1
           fi
           if [ -z "${GCMS_RELEASE_PUBLIC_KEY:-}" ]; then
@@ -42,11 +66,17 @@ jobs:
             echo "::error::请配置 GCMS_RELEASE_SIGNING_KEY，manifest.json 必须生成签名。"
             exit 1
           fi
+          if ! printf '%s' "$GCMS_PREVIEW_ACTIVATION_CODE_HASH" | grep -Eq '^[0-9a-fA-F]{64}$'; then
+            echo "::error::请配置 64 位 SHA-256 十六进制 GCMS_PREVIEW_ACTIVATION_CODE_HASH。"
+            exit 1
+          fi
 
       - name: 交叉编译全部平台并打包
         env:
           VERSION: ${{ github.ref_name }}
           RELEASE_REPO: ${{ env.RELEASE_REPO }}
+          PREVIEW_RELEASE_REPO: ${{ env.PREVIEW_RELEASE_REPO }}
+          PREVIEW_ACTIVATION_CODE_HASH: ${{ secrets.GCMS_PREVIEW_ACTIVATION_CODE_HASH }}
           GCMS_RELEASE_PUBLIC_KEY: ${{ secrets.GCMS_RELEASE_PUBLIC_KEY }}
         run: |
           set -e
@@ -75,73 +105,15 @@ jobs:
       - name: 列出待发布文件
         run: ls -lh dist/*.tar.gz dist/*.zip
 
-      - name: 生成 SHA256 校验文件
-        run: |
-          cd dist
-          sha256sum *.tar.gz *.zip > checksums.txt
-          cat checksums.txt
-
-      - name: 生成更新清单
+      - name: 生成 SHA256、更新清单与发布说明
         env:
           VERSION: ${{ github.ref_name }}
           SOURCE_COMMIT: ${{ github.sha }}
-          GCMS_RELEASE_PUBLIC_KEY: ${{ secrets.GCMS_RELEASE_PUBLIC_KEY }}
+          PUBLISH_REPO: ${{ env.PUBLISH_REPO }}
         run: |
-          cd dist
-          python3 - <<'PY'
-          import datetime
-          import hashlib
-          import json
-          import os
-          import pathlib
-
-          version = os.environ["VERSION"]
-          repo = os.environ["RELEASE_REPO"]
-          base = f"https://github.com/{repo}/releases/download/{version}"
-          signing_enabled = bool(os.environ.get("GCMS_RELEASE_PUBLIC_KEY"))
-          assets = []
-          packages = sorted(list(pathlib.Path(".").glob("*.tar.gz")) + list(pathlib.Path(".").glob("*.zip")))
-
-          for pkg in packages:
-              name = pkg.name
-              stem = name[:-7] if name.endswith(".tar.gz") else pkg.stem
-              parts = stem.rsplit("-", 2)
-              if len(parts) != 3:
-                  continue
-              digest = hashlib.sha256(pkg.read_bytes()).hexdigest()
-              assets.append({
-                  "name": name,
-                  "os": parts[1],
-                  "arch": parts[2],
-                  "url": f"{base}/{name}",
-                  "sha256": digest,
-                  "size": pkg.stat().st_size,
-              })
-
-          manifest = {
-              "schema": 1,
-              "name": "gcms",
-              "version": version,
-              "release_repo": repo,
-              "release_url": f"https://github.com/{repo}/releases/tag/{version}",
-              "manifest_url": f"{base}/manifest.json",
-              "checksum_url": f"{base}/checksums.txt",
-              "published_at": datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
-              "notes": f"GCMS {version} 发布包。",
-              "source_commit": os.environ["SOURCE_COMMIT"],
-              "assets": assets,
-          }
-          if signing_enabled:
-              manifest["manifest_signature_url"] = f"{base}/manifest.json.sig"
-              manifest["manifest_signature_algorithm"] = "openssl-sha256-rsa"
-          pathlib.Path("manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-          PY
-          cat > RELEASE_NOTES.md <<EOF
-          GCMS ${{ github.ref_name }} 发布包。
-
-          此公开仓库只存放已编译二进制、校验文件和更新清单；源码仓库保持私有。
-          EOF
-          cat manifest.json
+          python3 scripts/generate-release-manifest.py
+          cat dist/checksums.txt
+          cat dist/manifest.json
 
       - name: 生成 manifest 签名
         env:
@@ -159,11 +131,31 @@ jobs:
           rm -f "$key_file"
           ls -lh manifest.json.sig
 
-      - name: 发布 Release（上传到公开仓库）
+      - name: 发布 Stable Release
+        if: env.PUBLISH_CHANNEL == 'stable'
         uses: softprops/action-gh-release@v2
         with:
           repository: ${{ env.RELEASE_REPO }}
           token: ${{ secrets.GCMS_RELEASE_TOKEN }}
+          tag_name: ${{ github.ref_name }}
+          target_commitish: main
+          name: ${{ github.ref_name }}
+          body_path: dist/RELEASE_NOTES.md
+          make_latest: true
+          fail_on_unmatched_files: false
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/checksums.txt
+            dist/manifest.json
+            dist/manifest.json.sig
+
+      - name: 发布 Preview Release
+        if: env.PUBLISH_CHANNEL == 'preview'
+        uses: softprops/action-gh-release@v2
+        with:
+          repository: ${{ env.PREVIEW_RELEASE_REPO }}
+          token: ${{ secrets.GCMS_PREVIEW_RELEASE_TOKEN }}
           tag_name: ${{ github.ref_name }}
           target_commitish: main
           name: ${{ github.ref_name }}

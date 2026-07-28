@@ -1,0 +1,76 @@
+{{define "home_lattice"}}
+  {{/* 花窗 Lattice — 园林花窗：黛瓦横带（定高装饰） + 居中题签 + 园林三列 grid
+       （八角窗精选 / 圆洞门 / 方窗卡） + 窗型分类胶囊行 + 园外链接一行；
+       页头轻重塑由 CSS 完成，此处不画第二份主导航 */}}
+  <div class="lw-eave" aria-hidden="true"></div>
+  <div class="lw-wrap">
+
+    <header class="lw-plaque">
+      {{if .Site.HeroEyebrow}}<p class="lw-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+      <h1 class="lw-title"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+      {{if .Site.HeroDescription}}<p class="lw-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+    </header>
+
+    {{if .Posts}}
+    <div class="lw-head">
+      <h2 class="lw-head-t">{{.Site.HomeLatest}}</h2>
+      <a class="lw-head-all" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+    </div>
+    {{end}}
+
+    {{if or .Featured .Posts}}
+    <section class="lw-garden">
+      {{with .Featured}}
+      <a class="lw-oct" href="{{$.Tr.U (contentURL .)}}">
+        <span class="lw-oct-in">
+          <span class="lw-kicker"><b>{{$.Site.HomeFeatured}}</b>{{with .Category}}<span class="lw-kicker-cat">{{.Name}}</span>{{end}}</span>
+          <span class="lw-oct-t">{{.Title}}</span>
+          {{if .Excerpt}}<span class="lw-oct-ex">{{.Excerpt}}</span>{{end}}
+          <time class="lw-oct-date" datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time>
+        </span>
+      </a>
+      {{end}}
+      {{range $i, $p := .Posts}}
+      {{if eq $i 0}}
+      <a class="lw-moon" href="{{$.Tr.U (contentURL $p)}}">
+        <span class="lw-moon-in">
+          {{with $p.Category}}<span class="lw-moon-cat">{{.Name}}</span>{{end}}
+          <span class="lw-moon-t">{{$p.Title}}</span>
+          <time class="lw-moon-date" datetime="{{$.Tr.ISODate $p.PublishedAt}}">{{$.Tr.Date $p.PublishedAt}}</time>
+        </span>
+      </a>
+      {{else}}
+      <a class="lw-pane" href="{{$.Tr.U (contentURL $p)}}">
+        {{with $p.Category}}<span class="lw-pane-cat">{{.Name}}</span>{{end}}
+        <span class="lw-pane-t">{{$p.Title}}</span>
+        {{if $p.Excerpt}}<span class="lw-pane-ex">{{$p.Excerpt}}</span>{{end}}
+        <time class="lw-pane-date" datetime="{{$.Tr.ISODate $p.PublishedAt}}">{{$.Tr.Date $p.PublishedAt}}</time>
+      </a>
+      {{end}}
+      {{end}}
+    </section>
+    {{end}}
+
+    {{if .Categories}}
+    <nav class="lw-cats" aria-label="{{.Tr.T "nav.category"}}">
+      {{range .Categories}}<a class="lw-cat" href="{{$.Tr.U (printf "/category/%s" .Slug)}}"><span class="lw-cat-in"><span class="lw-cat-name">{{.Name}}</span><small class="lw-cat-n">{{.Count}}</small></span></a>{{end}}
+      <a class="lw-cat lw-cat-all" href="{{.Tr.U .CategoryAll.Path}}"><span class="lw-cat-in">{{.Tr.T "home.view_all"}}</span></a>
+    </nav>
+    {{end}}
+
+    {{if .FeatLinks}}
+    <section class="lw-links" aria-label="{{.Site.HomeLinks}}">
+      <h2 class="lw-links-h">{{.Site.HomeLinks}}</h2>
+      <div class="lw-links-row">
+        {{range .FeatLinks}}
+        <a class="lw-link" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+          <span class="lw-link-ic">{{if .CoverImage}}<img src="{{.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}</span>
+          <span class="lw-link-t">{{.Title}}</span>
+        </a>
+        {{end}}
+      </div>
+    </section>
+    {{end}}
+
+  </div>
+{{end}}

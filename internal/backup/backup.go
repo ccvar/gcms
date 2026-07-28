@@ -25,9 +25,40 @@ import (
 )
 
 const (
-	ConfigSettingKey = "backup.config"
-	DefaultKeep      = 8
+	ConfigSettingKey          = "backup.config"
+	DefaultKeep               = 8
+	PageProjectsDirectoryName = "page-projects"
 )
+
+// SiteBackupPath describes an optional filesystem tree which is part of a
+// site's recoverable state. SourcePath is never exposed in the public site;
+// ArchivePath is the stable path used inside a platform backup.
+type SiteBackupPath struct {
+	SourcePath  string
+	ArchivePath string
+	Kind        string
+}
+
+// PageProjectBackupPaths is the single source of truth for the private page
+// project filesystem backup unit. The whole root is included so blobs, source
+// bundles, immutable artifacts, and future versioned metadata cannot drift
+// into separate backup policies. A missing root means the site has never used
+// page projects and is intentionally skipped by addDirectory.
+func PageProjectBackupPaths(site *platform.Site) []SiteBackupPath {
+	if site == nil {
+		return nil
+	}
+	dbPath := filepath.Clean(strings.TrimSpace(site.DBPath))
+	if dbPath == "" || dbPath == "." {
+		return nil
+	}
+	root := filepath.Join(filepath.Dir(dbPath), PageProjectsDirectoryName)
+	return []SiteBackupPath{{
+		SourcePath:  root,
+		ArchivePath: "sites/" + safeZipSegment(site.Slug) + "/" + PageProjectsDirectoryName,
+		Kind:        "site_page_projects",
+	}}
+}
 
 type Config struct {
 	AutoSync        bool   `json:"auto_sync"`
@@ -95,13 +126,14 @@ type Manifest struct {
 }
 
 type ManifestSite struct {
-	ID        int64  `json:"id"`
-	Slug      string `json:"slug"`
-	Name      string `json:"name"`
-	Status    string `json:"status"`
-	IsDefault bool   `json:"is_default"`
-	DBPath    string `json:"db_path"`
-	UploadDir string `json:"upload_dir"`
+	ID              int64  `json:"id"`
+	Slug            string `json:"slug"`
+	Name            string `json:"name"`
+	Status          string `json:"status"`
+	IsDefault       bool   `json:"is_default"`
+	DBPath          string `json:"db_path"`
+	UploadDir       string `json:"upload_dir"`
+	PageProjectsDir string `json:"page_projects_dir,omitempty"`
 }
 
 type ManifestArchive struct {
@@ -184,6 +216,11 @@ func CreatePlatformBackup(opts Options) (*BackupRecord, error) {
 			ID: site.ID, Slug: site.Slug, Name: site.Name, Status: site.Status, IsDefault: site.IsDefault,
 			DBPath: site.DBPath, UploadDir: site.UploadDir,
 		}
+		if paths := PageProjectBackupPaths(site); len(paths) != 0 {
+			if info, statErr := os.Stat(paths[0].SourcePath); statErr == nil && info.IsDir() {
+				siteInfo.PageProjectsDir = paths[0].SourcePath
+			}
+		}
 		manifest.Sites = append(manifest.Sites, siteInfo)
 		base := "sites/" + safeZipSegment(site.Slug)
 		if strings.TrimSpace(site.DBPath) != "" {
@@ -194,6 +231,17 @@ func CreatePlatformBackup(opts Options) (*BackupRecord, error) {
 		if strings.TrimSpace(site.UploadDir) != "" {
 			if err := addDirectory(zw, site.UploadDir, base+"/uploads", "site_upload", &manifest); err != nil {
 				addWarning("站点 %s 上传目录备份失败：%v", site.Slug, err)
+			}
+		}
+		for _, privatePath := range PageProjectBackupPaths(site) {
+			if err := addDirectory(
+				zw,
+				privatePath.SourcePath,
+				privatePath.ArchivePath,
+				privatePath.Kind,
+				&manifest,
+			); err != nil {
+				addWarning("站点 %s 页面工程目录备份失败：%v", site.Slug, err)
 			}
 		}
 	}
@@ -221,9 +269,10 @@ func CreatePlatformBackup(opts Options) (*BackupRecord, error) {
 		"- system/system.db: platform database",
 		"- sites/{slug}/cms.db: site content database snapshots",
 		"- sites/{slug}/uploads/: site uploaded files",
+		"- sites/{slug}/page-projects/: private page blobs, sources, and immutable artifacts",
 		"- archived/{slug}/: archived site directories when available",
 		"",
-		"Restore manually by stopping gcms, copying the databases and uploads back to their paths recorded in manifest.json, then starting gcms again.",
+		"Restore manually by stopping gcms, restoring each database together with its uploads and page-projects directories to the paths recorded in manifest.json, then starting gcms again.",
 		"",
 	}, "\n")
 	if err := addBytes(zw, "README.txt", "readme", []byte(readme), &manifest); err != nil {

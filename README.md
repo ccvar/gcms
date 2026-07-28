@@ -1,6 +1,8 @@
 # CCVAR 简记 · 轻量 CMS
 
-用 **Go + SQLite** 构建的极简内容管理系统：简约大气、100% 服务端渲染、完全适配 SEO，最终交付为**单一静态二进制 + 一个数据库文件**。
+用 **Go + SQLite** 构建的极简内容管理系统：标准内容与自由编排页面由服务端渲染，互动应用运行在受限沙箱中，并统一接入 SEO、版本与发布流程。程序仍交付为单一静态二进制，标准内容元数据保存在 SQLite；启用上传或自由页面后，还会在数据库旁保存 `uploads/` 与私有 `page-projects/` 文件，备份时必须把它们视为同一个数据单元。
+
+网页端 Pilot 控制台的架构、绑定与任务协议、权限和解锁模型、手机端使用、安全说明及故障处理见 [docs/pilot-console.md](docs/pilot-console.md)。
 
 ---
 
@@ -55,6 +57,9 @@ GOOS=linux GOARCH=amd64 go build -o cms .
 | `BASE_URL` | `http://localhost:8080` | 站点绝对地址（用于 canonical / OG / sitemap）。**生产环境务必设为 `https://ccvar.com`** |
 | `GCMS_RELEASE_REPO` | `ccvar/gcms-releases` | 后台检查更新使用的公开发布仓库 |
 | `GCMS_UPDATE_URL` | `https://github.com/ccvar/gcms-releases/releases/latest/download/manifest.json` | 自定义更新清单地址，留空则按发布仓库自动拼接 |
+| `GCMS_PREVIEW_RELEASE_REPO` | `ccvar/gcms-preview-releases` | 过渡版激活后使用的 Preview 发布仓库 |
+| `GCMS_PREVIEW_UPDATE_URL` | 按 Preview 发布仓库自动拼接 | 自定义 Preview 更新清单地址 |
+| `GCMS_PREVIEW_ACTIVATION_CODE_HASH` | 空 | Preview 激活码的 SHA-256 十六进制哈希；发布包优先通过构建参数注入 |
 | `GCMS_UPDATE_PUBLIC_KEY` | 空 | 自定义更新清单验签公钥路径。发布包内有 `scripts/update-public.pem` 时无需配置 |
 | `GCMS_UPDATE_REQUIRE_SIGNATURE` | `1` | 是否强制校验 `manifest.json.sig`。标准发布包应保持开启；仅排障时可临时设为 `0` |
 
@@ -115,7 +120,8 @@ gcms-v1.0.3-linux-amd64/
 ├── shared/
 │   ├── data/
 │   │   ├── cms.db
-│   │   └── uploads/
+│   │   ├── uploads/
+│   │   └── page-projects/
 │   └── cms.conf
 ├── run/
 ├── logs/
@@ -133,7 +139,7 @@ cd cms-v1.0.3-linux-amd64
 ./scripts/cms.sh start
 ```
 
-`current` 指向当前运行版本；`releases/` 保存历史版本；`shared/` 保存数据库、上传文件和配置，升级时不覆盖；`backups/` 保存升级前数据库备份。
+`current` 指向当前运行版本；`releases/` 保存历史版本；`shared/` 保存数据库、上传文件、页面工程私有源码/资源/构建产物和配置，升级时不覆盖；`backups/` 保存升级前数据库备份。
 
 Linux / macOS 发布包已提供手动升级命令：
 
@@ -142,7 +148,7 @@ Linux / macOS 发布包已提供手动升级命令：
 ./scripts/cms.sh upgrade-status
 ```
 
-`upgrade` 会读取公开发布仓库的 `manifest.json`，先用发布包内置的 `scripts/update-public.pem`（或 `GCMS_UPDATE_PUBLIC_KEY` 指定的公钥）校验 `manifest.json.sig`，再下载当前平台包、校验 SHA256、检查压缩包路径安全性，解压到 `releases/<新版本>`，备份 `shared/data/cms.db`，切换 `current`，然后重启并做健康检查。失败时会切回旧版本并恢复数据库备份。
+`upgrade` 会读取公开发布仓库的 `manifest.json`，先用发布包内置的 `scripts/update-public.pem`（或 `GCMS_UPDATE_PUBLIC_KEY` 指定的公钥）校验 `manifest.json.sig`，再下载当前平台包、校验 SHA256、检查压缩包路径安全性，解压到 `releases/<新版本>`，备份 `shared/data/cms.db`，切换 `current`，然后重启并做健康检查。失败时会切回旧版本并恢复数据库备份。`shared/data/page-projects/` 不会被版本切换覆盖，但仅有升级器的数据库副本不等于完整页面工程备份；使用自由页面的生产站发布前必须验证数据库、`uploads/` 与 `page-projects/` 的整包备份/恢复。
 
 后台「设置 → 系统更新」会检查公开发布仓库；当当前运行目录是 Linux / macOS 标准发布包、检测到新版本且当前平台包存在时，可以直接点击「一键升级」。后台升级会调用 `./scripts/cms.sh upgrade`，状态写入 `run/upgrade.json`，详细输出写入 `logs/upgrade-runner.log`。
 
@@ -163,8 +169,10 @@ https://github.com/ccvar/gcms-releases/releases/latest/download/manifest.json
 | Secret | 用途 |
 |--------|------|
 | `GCMS_RELEASE_TOKEN` | GitHub fine-grained token，仅授予公开仓库 `ccvar/gcms-releases` 的 `Contents: Read and write` 权限，用于创建 Release 与上传二进制产物 |
+| `GCMS_PREVIEW_RELEASE_TOKEN` | GitHub fine-grained token，仅授予 Preview 仓库 `ccvar/gcms-preview-releases` 的 `Contents: Read and write` 权限 |
 | `GCMS_RELEASE_SIGNING_KEY` | 必填。RSA 私钥 PEM，用于给 `manifest.json` 生成 `manifest.json.sig` |
 | `GCMS_RELEASE_PUBLIC_KEY` | 必填。与私钥匹配的 RSA 公钥 PEM，会打进发布包的 `scripts/update-public.pem` |
+| `GCMS_PREVIEW_ACTIVATION_CODE_HASH` | 必填。内部 Preview 激活码的 SHA-256 十六进制哈希，安装包不包含原始码 |
 
 `manifest.json` 是后台升级链路的稳定协议，包含版本号、Release 地址、各平台包的 `os` / `arch` / 下载 URL / SHA256 / 文件大小。这样用户部署环境不需要访问私有源码仓库，也不需要配置 GitHub token。
 
@@ -206,14 +214,15 @@ ccvar.com/
 │   ├── home / article / category / page / search / 404 .html
 │   └── admin/               #   layout / login / dashboard / posts / edit / settings
 ├── assets/                  # embed 进二进制
-│   ├── css/style.css        # 全站唯一样式表（19 套主题）
+│   ├── css/style.css        # 全站主题与响应式样式
 │   ├── favicon.svg          # 默认站点图标
 │   └── js/
 │       ├── toc.js           # 公开页：页眉测量 / 阅读进度 / 回顶 / 大纲高亮
 │       └── admin.js         # 后台：上传 / 自定义下拉 / 主题微调 / 富文本编辑器
 ├── data/
 │   ├── cms.db               # SQLite（运行时生成）
-│   └── uploads/             # 用户上传图片（运行时，经 /uploads/ 提供）
+│   ├── uploads/             # 用户上传图片（运行时，经 /uploads/ 提供）
+│   └── page-projects/       # 自由页面私有源码、资源与不可变构建产物
 └── data/cms.db              # 运行时生成（已 gitignore）
 ```
 
@@ -229,11 +238,11 @@ ccvar.com/
 - **多语种**：每个语种独立 URL 前缀 `/{lang}/…`（如 `/en/posts/…`），页眉语言切换器，界面文案与内容均按语种本地化（详见下方「多语种」）
 - 基于 slug 的干净 URL：`/{lang}/posts/{slug}`、`/{lang}/category/{slug}`（slug 各语种独立，`(lang, slug)` 复合唯一）
 - 文章正文用 Markdown 撰写，goldmark 渲染（支持表格、代码块等 GFM 扩展）
-- **文章大纲（TOC）**：自动从 h2/h3 提取，桌面端粘性右栏、移动端可折叠；标题锚点保留中文（如 `#数据怎么建模`），便于分享。粘性偏移由 JS 实测页眉高度（`--header-h`）自适应，**任意主题都不被页眉遮挡**
+- **文章大纲（TOC）**：自动从 h2/h3 提取，桌面端粘性右栏、移动端可折叠；标题锚点保留中文（如 `#数据怎么建模`），便于分享。粘性偏移由 JS 读取页眉高度（`--header-h`）自适应；全部既有主题的升级前后截图对比仍属于发布前人工视觉门禁
 - **阅读进度条 + 回到顶部**：文章页顶部进度条随滚动填充，下滑后右下角出现回到顶部按钮（均为渐进增强 JS）
 - **文章封面图**：编辑器可上传/粘贴封面，首页精选与文章详情自动以 `<img>` 呈现
 
-**SEO（每页动态生成，已实测通过）**
+**SEO（每页动态生成，已有自动化与本地验证）**
 - 每页独立 `title` / `description` / `canonical` / `robots`
 - Open Graph + Twitter Card（文章含 `article:published_time` 等）
 - JSON-LD：首页 `WebSite`+`Organization`、文章 `BlogPosting`+`BreadcrumbList`、分类 `CollectionPage`、关于 `AboutPage` —— 均为合法 JSON，`inLanguage` 随语种
@@ -266,7 +275,7 @@ ccvar.com/
 - 图片上传 `/admin/upload` → `data/uploads/`（限 8MB，类型白名单含 svg/ico）。**前端在浏览器支持时先把 png/jpg 转 WebP** 再上传
 - **设置页 `/admin/settings`**：左侧菜单分区，**各区独立保存**——
   - `站点信息`（`/site`）：站名 / 标语 / 描述 / **favicon / logo**（上传或 URL）/ **首页显示数量**（链接条数、文章每页条数）/ **社交链接**（页脚「关注」栏，可增删，图标按域名自动识别 GitHub·X·YouTube·Telegram·LinkedIn·邮箱等，存 `social_links`）
-  - `外观与主题`（`/appearance`）：19 套主题单选 + **当前站点实时缩略图** + **按主题各自保存的可视化微调**（主色取色器、圆角滑杆，存 `theme.<id>.*`，切卡时控件随主题同步，以内联 CSS 变量覆盖当前主题默认）；**首页 Hero 右侧视觉可替换**：默认动画 / 上传图片或 SVG 文件 / 直接粘贴 SVG 代码（存 `hero.visual`·`hero.image`·`hero.svg`）
+  - `外观与主题`（`/appearance`）：按注册表展示主题骨架与色卡 + **当前站点实时缩略图** + **按主题各自保存的可视化微调**（主色取色器、圆角滑杆，存 `theme.<id>.*`，切卡时控件随主题同步，以内联 CSS 变量覆盖当前主题默认）；**首页 Hero 右侧视觉可替换**：默认动画 / 上传图片或 SVG 文件 / 直接粘贴 SVG 代码（存 `hero.visual`·`hero.image`·`hero.svg`）
   - `文案`（`/copy`）：首页 hero 眉标/大标题、标语、描述、页脚说明等前台文案可编辑，**按语种切换标签分别维护**（非默认语种存 `site.x::<lang>`，留空回落默认语种）；字段按「首页 Hero / 站点描述 / 页脚」分组展示
   - `导航`（`/menu`）：**页眉菜单构建器**——自定义每项名称、**拖动排序**、**每语种单独命名**（存 `nav_menu` JSON）；内部路径自动加语种前缀，外部 `https://…` 新窗口打开；未配置时回落默认菜单（首页/分类/关于）
   - 左侧分区菜单每项带 SVG 图标
@@ -352,6 +361,22 @@ X-GCMS-API-Key: gcms_xxx
 
 当前不提供删除接口，也不开放安全、系统更新、Cloudflare 等平台配置。权限按资源分组：`languages:read`、`media:write`、`site:*`、`navigation:*`、`posts:*`、`links:*`、`pages:*`；文章和链接额外有分类读取/写入权限 `posts:categories`、`posts:categories:write`、`links:categories`、`links:categories:write`。内容操作包含 `read`、`write`、`publish`。例如 `posts:write` 只能创建/修改文章草稿；发布、定时发布、修改已发布文章需要 `posts:publish`。文章和链接预览接口属于读取能力，分别使用 `posts:read`、`links:read`。
 
+### Pilot 页面工程闭环
+
+新版页面工程是旁挂能力，不改变既有标准页面数据或渲染。Pilot 单站包和平台包都支持：
+
+```text
+page-capabilities → page-get/page-create → page-update 或 page-app-upload
+→ page-validate → page-build → page-preview
+→ page-publish-plan → Pilot 原生确认 → page-publish
+```
+
+所有页面工程变更命令都携带最新 `ETag` 和稳定的 `Idempotency-Key`；409 只返回结构化冲突，客户端必须重新读取并合并，不能覆盖人工修改。发布、回滚和互动能力批准由 Pilot 原生密码框完成一次性目标绑定确认：发布目标还绑定 build/实时数据快照，能力目标还绑定 capability/config/decision；两类凭证都绑定 operation、site、page、project、revision、ETag、request-id 和当前主体。后台密码和内部 approval token 不会进入 AI 对话、技能脚本参数或输出。
+
+旧 `/pages`（以及其他旧内容）接口为兼容老客户端仍允许不带 `If-Match`；新响应会返回强 `ETag`，新客户端提供 `If-Match` 时服务端执行原子比较更新。技能包的 `update pages` 会先读取最新页面与 ETag，只允许修改标准页面草稿，并拒绝经旧接口发布或修改已发布页面；已有页面工程的页面会返回 `project_api_required`。这个兼容例外不具有页面工程的强制幂等/原生批准语义。响应中的 `_links.admin_path` 可直接用于“在 GCMS 后台打开”，Pilot 不复制后台的复杂编辑表单。
+
+若 Cloudflare 静态页面包含联系表单，或互动应用已批准需要服务端的 Bridge 能力，导出前必须配置与静态公开站不同的 HTTPS GCMS Origin；否则导出 fail-closed。纯客户端小游戏在未声明/批准服务端 Bridge 能力时不需要该 Origin。`composition` 的实时绑定在构建后发生变化会返回 `build_stale`，必须重新校验和构建，不能继续发布旧产物。
+
 修改某篇内容前，外部助手应先查到目标内容的 `id`，再用对应 `id` 更新，避免只凭标题猜测：
 
 ```bash
@@ -397,9 +422,9 @@ curl -X POST https://example.com/api/admin/v1/posts \
 
 全局评论关闭、giscus 参数不完整、或文章未勾选时，前台不会加载任何评论脚本。页面和链接内容暂不接评论，避免入口过多导致运营成本上升。
 
-### 前台主题（19 套，布局风格各异，非简单换色）
+### 前台主题（注册表持续扩展，布局风格各异）
 
-在设置页切换，存于 `settings.theme`，服务端渲染即时生效（`<html data-theme="…">`，无闪烁）：
+在设置页切换，存于 `settings.theme`，服务端渲染即时生效（`<html data-theme="…">`，无闪烁）。下表保留最早的 19 套基础主题作为代表；完整骨架、纯白/深色等色卡及分类以后台实时主题注册表为准，客户端不得硬编码数量：
 
 | 主题 | 风格 | 布局差异要点 |
 |------|------|---------|
@@ -437,7 +462,7 @@ curl -X POST https://example.com/api/admin/v1/posts \
 - **站点文案**：站名/标语/描述/hero/页脚按语种存储（非默认语种存 `site.x::<lang>`，留空回落默认语种）。
 - **语言切换器**：页眉零 JS 的 `<details>` 下拉；文章/分类/关于切换时跳到**对应译文**（无译文则回该语种首页，且不对其输出 hreflang）。
 - **启用与默认**：在「设置 → 语言」勾选启用语种、指定默认语种；内置 `zh / en / ja / ko / fr / de / es`。
-- **平滑迁移**：旧库（slug 全局唯一、无 `lang`）首启时自动整表重建为多语种结构，存量内容归默认语种 `zh`、原内容经 `/zh/…` 继续可达——**向后兼容、零数据丢失**（已用真实旧库实测）。
+- **平滑迁移**：旧库（slug 全局唯一、无 `lang`）首启时自动整表重建为多语种结构，存量内容归默认语种 `zh`、原内容经 `/zh/…` 继续可达；迁移逻辑有合成旧 Schema fixture 自动化覆盖。本次页面平台正式发布前，仍必须使用受支持历史发布版本生成的真实数据库完成升级、备份和恢复演练。
 
 ---
 

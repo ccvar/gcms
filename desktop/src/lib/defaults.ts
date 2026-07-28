@@ -12,6 +12,8 @@ export interface Prefs {
   perm: string;
   /** 思考等级（推理强度）：'' 默认 | low | medium | high */
   effort?: string;
+  /** fast 模式（仅 Opus 5 / Opus 4.8）。 */
+  fast?: boolean;
 }
 
 const KEY = 'gcms.pilot.prefs';

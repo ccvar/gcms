@@ -1,0 +1,95 @@
+{{define "home_dtc_mono"}}
+  {{/* dtc-mono — 黑白铺：纯黑白的极简品牌店。导航 = 底部固定黑条（CSS 重塑标准
+       .site-header 为 position:fixed 贴底通栏，白字大字距均分排；body 由 CSS 预留
+       padding-bottom 车道防遮挡；≤620px 黑条仍贴底、汉堡照常，抽屉改为向上弹出）。
+       hero = 顶部通栏特大黑体（HeroTitle 900 + 底 1px 硬线）→ 分类细条 →
+       商品 1px 线格三列（共享 1px 缝、零圆角零阴影，卡 = 浅灰图面 + 标题 +
+       超大粗字规格签位，productChips 代替价格——无价格函数，绝不虚构价签）→
+       品牌数字 → 图集 → 评价 → FAQ → CTA。数据由 fillDTCHome 装载；
+       商品区在 .FactoryProducts 为空时整段不渲染，其余区块空数据优雅缺省。 */}}
+  {{/* hero 槽三态（照 dtc-flagship 抄法）：image+配图=全幅底图 scrim 压字；
+       svg=右侧内嵌；default/anim*=右侧 DTC 轻动画（dtc_hero_anim 复用）。 */}}
+  {{$heroImg := ""}}{{if and (eq .Site.HeroVisual "image") .Site.HeroImage}}{{$heroImg = .Site.HeroImage}}{{end}}
+  {{$heroSVG := and (eq .Site.HeroVisual "svg") (ne .Site.HeroSVG "")}}
+  {{$heroAnim := and (not $heroImg) (not $heroSVG)}}
+  <section class="mno-hero{{if $heroImg}} has-img{{else if $heroAnim}} has-anim{{end}}">
+    {{if $heroImg}}<img class="mno-hero-img" src="{{$heroImg}}" alt="{{.Site.HeroAlt}}" decoding="async" fetchpriority="high"{{imgAttrs $heroImg}}>{{end}}
+    <div class="mno-hero-inner">
+      <div class="mno-hero-copy">
+        {{if .Site.HeroEyebrow}}<p class="dt-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+        <h1 class="mno-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+        {{if .Site.HeroDescription}}<p class="mno-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+        <div class="mno-cta">
+          <a class="btn btn-primary" href="{{.Tr.U "/products"}}">{{.Tr.T "dtc.shop_now"}} <span class="arrow" aria-hidden="true">→</span></a>
+          {{if .Contact.Any}}<a class="btn dt-btn-ghost" href="#dtc-contact">{{.Tr.T "contact.float_label"}}</a>{{end}}
+        </div>
+      </div>
+      {{if $heroSVG}}<div class="mno-hero-side dt-embed" aria-hidden="true">{{safeHTML .Site.HeroSVG}}</div>
+      {{else if $heroAnim}}<div class="mno-hero-side dt-heroanim" aria-hidden="true">{{template "dtc_hero_anim" .}}</div>{{end}}
+    </div>
+  </section>
+
+  <div class="mno-wrap">
+    {{if .FactoryCats}}
+    <nav class="mno-cats" aria-label="{{.Tr.T "common.category_nav"}}">
+      {{range .FactoryCats}}<a href="{{$.Tr.U .URL}}"><span>{{.Name}}</span><small>{{.Count}}</small></a>
+      {{end}}<a class="mno-cats-all" href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+    </nav>
+    {{end}}
+
+    {{if .FactoryProducts}}
+    <section class="mno-section mno-products">
+      <div class="mno-head">
+        <h2>{{.Tr.T "dtc.bestsellers"}}</h2>
+        <a href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="mno-grid">
+        {{range .FactoryProducts}}
+        <a class="mno-card" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+          <span class="mno-card-media{{if not .CoverImage}} dt-gen{{end}}">
+            {{if .CoverImage}}<img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}
+          </span>
+          <span class="mno-card-body">
+            <span class="mno-card-title">{{.Title}}</span>
+            {{with productChips .}}<span class="f-chips mno-chips">{{range .}}<span class="f-chip"><b>{{.K}}</b><i>{{.V}}</i></span>{{end}}</span>{{end}}
+          </span>
+        </a>
+        {{end}}
+      </div>
+    </section>
+    {{end}}
+
+    {{if .FactoryStats}}
+    <section class="mno-section">
+      <div class="mno-head"><h2>{{.Tr.T "dtc.story"}}</h2></div>
+      <dl class="dt-stats">
+        {{range .FactoryStats}}<div class="dt-stat"><dt>{{.Num}}</dt><dd>{{.Label}}</dd></div>
+        {{end}}
+      </dl>
+    </section>
+    {{end}}
+
+    {{if .FactoryGallery}}
+    <section class="mno-section">
+      <div class="mno-head"><h2>{{.Tr.T "dtc.scenes"}}</h2></div>
+      {{template "factory_gallery" .}}
+    </section>
+    {{end}}
+
+    {{if .DTCTestimonials}}
+    <section class="mno-section">
+      <div class="mno-head"><h2>{{.Tr.T "dtc.reviews"}}</h2></div>
+      {{template "dtc_testimonials" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryQAs}}
+    <section class="mno-section">
+      <div class="mno-head"><h2>{{.Tr.T "factory.faq"}}</h2></div>
+      {{template "factory_faq" .}}
+    </section>
+    {{end}}
+  </div>
+
+  {{template "dtc_cta" .}}
+{{end}}

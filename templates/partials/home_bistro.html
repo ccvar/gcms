@@ -1,0 +1,68 @@
+{{define "home_bistro"}}
+  {{/* 餐牌 Bistro — 整页居中双线框餐牌：店徽饰线 + 本日特供双线卡 + 虚线引导菜单行 + 章节条分类 */}}
+  <div class="bt-wrap">
+    <div class="bt-card">
+
+      <header class="bt-crest">
+        <span class="bt-fleuron" aria-hidden="true"><i></i></span>
+        <h1 class="bt-title"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+        {{if .Site.HeroEyebrow}}<p class="bt-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+        {{if .Site.HeroDescription}}<p class="bt-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+      </header>
+
+      {{with .Featured}}
+      <section class="bt-special">
+        <span class="bt-special-tag">{{$.Site.HomeFeatured}}</span>
+        <a class="bt-special-in" href="{{$.Tr.U (contentURL .)}}">
+          {{if .CoverImage}}<span class="bt-special-cover"><img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}></span>{{end}}
+          <span class="bt-special-body">
+            <span class="bt-special-t">{{.Title}}</span>
+            {{if .Excerpt}}<span class="bt-special-ex">{{.Excerpt}}</span>{{end}}
+            <span class="bt-special-meta">
+              {{with .Category}}<span>{{.Name}}</span><span class="bt-sep" aria-hidden="true">·</span>{{end}}
+              <time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time>
+              <span class="bt-special-more">{{$.Tr.T "home.read_more"}} <span class="arrow" aria-hidden="true">→</span></span>
+            </span>
+          </span>
+        </a>
+      </section>
+      {{end}}
+
+      {{if .Posts}}
+      <section class="bt-menu">
+        <h2 class="bt-course">{{.Site.HomeLatest}}</h2>
+        <ol class="bt-dishes">
+          {{range $i, $p := .Posts}}
+          <li class="bt-dish">
+            <a class="bt-dish-in" href="{{$.Tr.U (contentURL $p)}}">
+              <span class="bt-dish-row">
+                <span class="bt-dish-t">{{$p.Title}}</span>
+                <span class="bt-dish-dots" aria-hidden="true"></span>
+                <time class="bt-dish-date" datetime="{{$.Tr.ISODate $p.PublishedAt}}">{{$.Tr.Date $p.PublishedAt}}</time>
+              </span>
+              {{if and $p.Excerpt (lt $i 3)}}<span class="bt-dish-ex">{{$p.Excerpt}}</span>{{end}}
+            </a>
+          </li>
+          {{end}}
+        </ol>
+      </section>
+      {{end}}
+
+      {{if .Categories}}
+      <nav class="bt-courses" aria-label="{{.Tr.T "nav.category"}}">
+        {{range .Categories}}
+        <a class="bt-course-link" href="{{$.Tr.U (printf "/category/%s" .Slug)}}"><span class="bt-course-name">{{.Name}}</span><small class="bt-course-n">{{.Count}}</small></a>
+        {{end}}
+      </nav>
+      {{end}}
+
+      <footer class="bt-foot">
+        <a href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}}</a>
+        <span class="bt-sep" aria-hidden="true">·</span>
+        <a href="{{.Tr.U "/about"}}">{{.Tr.T "home.cta_more"}}</a>
+        {{range .FeatLinks}}<span class="bt-sep" aria-hidden="true">·</span><a href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">{{.Title}}</a>{{end}}
+      </footer>
+
+    </div>
+  </div>
+{{end}}

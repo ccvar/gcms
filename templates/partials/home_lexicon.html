@@ -1,0 +1,82 @@
+{{define "home_lexicon"}}
+  {{/* 辞书 Lexicon — 词典正文页：书脊色带 + 今日词条 + 密排词条行 + 首字母竖排索引 + 凡例 */}}
+  <div class="lx-wrap">
+
+    <header class="lx-spine">
+      <h1 class="lx-title"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+      {{if .Site.HeroEyebrow}}<p class="lx-edition"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+    </header>
+
+    <div class="lx-page{{if not .Categories}} lx-page-solo{{end}}">
+      {{if .Categories}}
+      <nav class="lx-thumb" aria-label="{{.Tr.T "nav.category"}}">
+        {{range .Categories}}
+        <a class="lx-tab" href="{{$.Tr.U (printf "/category/%s" .Slug)}}" title="{{.Name}}"><b aria-hidden="true">{{initial .Name}}</b><span class="lx-tab-name">{{.Name}}</span></a>
+        {{end}}
+        <a class="lx-tab lx-tab-all" href="{{.Tr.U .CategoryAll.Path}}" title="{{.Tr.T "home.view_all"}}"><b aria-hidden="true">∗</b><span class="lx-tab-name">{{.Tr.T "home.view_all"}}</span></a>
+      </nav>
+      {{end}}
+
+      <div class="lx-main">
+        {{with .Featured}}
+        <article class="lx-lead">
+          <h2 class="lx-lead-label">{{$.Site.HomeFeatured}}</h2>
+          <a class="lx-lead-in" href="{{$.Tr.U (contentURL .)}}">
+            <span class="lx-lead-hw">
+              <span class="lx-headword">{{.Title}}</span>
+              {{with .Category}}<em class="lx-pos">{{.Name}}</em>{{end}}
+            </span>
+            {{if .CoverImage}}<span class="lx-lead-fig"><img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}></span>{{end}}
+            {{if .Excerpt}}<span class="lx-def"><b class="lx-def-no" aria-hidden="true">1.</b><span class="lx-def-t">{{.Excerpt}}</span></span>{{end}}
+            <span class="lx-lead-foot">
+              <time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time>
+              <span class="lx-lead-more">{{$.Tr.T "home.read_more"}} <span class="arrow" aria-hidden="true">→</span></span>
+            </span>
+          </a>
+        </article>
+        {{end}}
+
+        {{if .Posts}}
+        <section class="lx-entries">
+          <div class="lx-entries-head">
+            <h2 class="lx-entries-t">{{.Site.HomeLatest}}</h2>
+            <a class="lx-entries-all" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+          </div>
+          <div class="lx-rows">
+            {{range .Posts}}
+            <a class="lx-row" href="{{$.Tr.U (contentURL .)}}">
+              <span class="lx-row-hw">{{.Title}}</span>
+              {{with .Category}}<em class="lx-row-pos">{{.Name}}</em>{{end}}
+              {{if .Excerpt}}<span class="lx-row-def">{{.Excerpt}}</span>{{end}}
+              <time class="lx-row-date" datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time>
+            </a>
+            {{end}}
+          </div>
+        </section>
+        {{end}}
+
+        {{if .FeatLinks}}
+        <aside class="lx-xref" aria-label="{{.Site.HomeLinks}}">
+          <h2 class="lx-xref-h">{{.Site.HomeLinks}}</h2>
+          <div class="lx-xref-list">
+            {{range .FeatLinks}}
+            <a class="lx-xref-a" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+              <span class="lx-xref-ic">{{if .CoverImage}}<img src="{{.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}</span>
+              <span class="lx-xref-t">{{.Title}}</span>
+            </a>
+            {{end}}
+          </div>
+        </aside>
+        {{end}}
+
+        {{if .Site.HeroDescription}}
+        <footer class="lx-legend">
+          <span class="lx-legend-mark" aria-hidden="true">§</span>
+          <p class="lx-legend-p"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>
+        </footer>
+        {{end}}
+      </div>
+    </div>
+
+  </div>
+{{end}}

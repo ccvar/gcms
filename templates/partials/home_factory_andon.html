@@ -1,0 +1,122 @@
+{{define "home_factory_andon"}}
+  {{/* factory-andon — 安灯板：整页读成车间安灯（Andon）状态屏。
+       页头=班次状态灯导航（CSS 重塑标准 .site-header：导航项前加 ○ 状态灯、
+       当前项亮绿 ● + 光晕，≤620px 交还基础汉堡抽屉，故不新增 header define）。
+       hero=大标题 + factory.stats 做成 LED 大数字屏（黑底 --fan-panel + 等宽发光
+       数字 + 小标签，三块并排；顶缘三色状态条；未配置回落 factory_about）。
+       商品=工单卡（左缘三色状态条 nth-child(3n) 轮转 + 工单号 WO-001 头条）；
+       factory.process 复用共享 f-process 标记、编号重塑成 LED 小屏块。
+       Hero 视觉三态：图片／SVG → 未配置或选中空槽时
+       hero.visual=default/未配置时上图纸机械动画（复用 factory_hero_anim）——
+       三态统一嵌进右侧「车间监控屏」：黑底 --fan-panel 屏框 + 顶部状态小灯行
+       + 屏内四角标记 + 扫描线；动画态整屏 aria-hidden、色板压成 LED 绿磷屏；
+       ≤920px 图态收到文案下方、动画态直接收起，绝不压文字。
+       数据全由 fillFactoryHome 装载；空数据整块不渲染，封面缺失走首字兜底；
+       编号取 .FactorySectionNum（跳过未渲染区块，编号连续）。 */}}
+  <div class="fan-wrap">
+    <section class="fan-hero fan-hero-vis">
+      <div class="fan-hero-copy">
+        {{if .Site.HeroEyebrow}}<p class="fan-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+        <h1 class="fan-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+        {{if .Site.HeroDescription}}<p class="fan-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+        <div class="fan-cta">
+          {{if .Contact.Any}}<a class="btn btn-primary" href="#factory-contact">{{.Tr.T "contact.float_label"}} <span class="arrow" aria-hidden="true">→</span></a>
+          {{else}}<a class="btn btn-primary" href="{{.Tr.U "/products"}}">{{.Tr.T "factory.products"}} <span class="arrow" aria-hidden="true">→</span></a>{{end}}
+          <a class="btn" href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}}</a>
+        </div>
+      </div>
+      <div class="fan-monitor">
+        <span class="fan-monitor-top" aria-hidden="true"><i></i><i></i><i></i></span>
+        <div class="fan-monitor-view">
+          {{template "factory_hero_slot" .}}
+        </div>
+      </div>
+      {{if .FactoryStats}}
+      {{/* LED 大数字屏：黑底面板不随皮翻色（--fan-panel），数字吃 --fan-led 发光 */}}
+      <div class="fan-screen">
+        <dl class="f-stats fan-board">
+          {{range .FactoryStats}}<div class="f-stat"><dt>{{.Num}}</dt><dd>{{.Label}}</dd></div>
+          {{end}}</dl>
+      </div>
+      {{else}}<div class="fan-hero-aside">{{template "factory_about" .}}</div>{{end}}
+    </section>
+
+    {{if .FactoryCats}}
+    <section class="fan-section">
+      <div class="fan-head"><div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "categories"}}</span>{{.Tr.T "factory.categories"}}</p><h2>{{.Tr.T "factory.categories"}}</h2></div></div>
+      {{template "factory_categories" .}}
+    </section>
+    {{end}}
+
+    <section class="fan-section fan-orders-sec">
+      <div class="fan-head">
+        <div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "products"}}</span>{{.Tr.T "factory.products"}}</p><h2>{{.Tr.T "factory.products"}}</h2></div>
+        <a href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="fan-orders">
+        {{range $i, $p := .FactoryProducts}}
+        <a class="fan-order" href="{{if $p.Slug}}{{$.Tr.U (contentURL $p)}}{{else}}#{{end}}">
+          <span class="fan-order-head" aria-hidden="true"><b class="fan-order-no">№ {{printf "%03d" (add $i 1)}}</b><i class="fan-order-lamp"></i></span>
+          <span class="fan-order-media{{if not $p.CoverImage}} fan-order-gen{{end}}">
+            {{if $p.CoverImage}}<img src="{{$p.CoverImage}}" alt="{{$p.Title}}" loading="lazy" decoding="async"{{imgAttrs $p.CoverImage}}>{{else}}<b aria-hidden="true">{{initial $p.Title}}</b>{{end}}
+          </span>
+          <span class="fan-order-body">
+            {{with $p.Category}}<span class="fan-order-cat">{{.Name}}</span>{{end}}
+            <span class="fan-order-title">{{$p.Title}}</span>
+            {{if $p.Excerpt}}<span class="fan-order-ex">{{$p.Excerpt}}</span>{{end}}
+            {{with productChips $p}}<span class="f-chips">{{range .}}<span class="f-chip"><b>{{.K}}</b><i>{{.V}}</i></span>{{end}}</span>{{end}}
+          </span>
+        </a>
+        {{else}}<p class="fan-empty muted">{{.Tr.T "factory.no_products"}}</p>{{end}}
+      </div>
+    </section>
+
+    {{if .FactoryProcessOn}}
+    <section class="fan-section fan-process-sec">
+      <div class="fan-head"><div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "process"}}</span>{{.Tr.T "factory.process"}}</p><h2>{{.Tr.T "factory.process"}}</h2></div></div>
+      {{template "factory_process_steps" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryIndustries}}
+    <section class="fan-section">
+      <div class="fan-head"><div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "industries"}}</span>{{.Tr.T "factory.industries"}}</p><h2>{{.Tr.T "factory.industries"}}</h2></div></div>
+      {{template "factory_industries" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryGallery}}
+    <section class="fan-section">
+      <div class="fan-head"><div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "gallery"}}</span>{{.Tr.T "factory.gallery"}}</p><h2>{{.Tr.T "factory.gallery"}}</h2></div></div>
+      {{template "factory_gallery" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryQAs}}
+    <section class="fan-section">
+      <div class="fan-head"><div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "faq"}}</span>{{.Tr.T "factory.faq"}}</p><h2>{{.Tr.T "factory.faq"}}</h2></div></div>
+      {{template "factory_faq" .}}
+    </section>
+    {{end}}
+
+    {{if .Posts}}
+    <section class="fan-section fan-news">
+      <div class="fan-head fan-news-head">
+        <div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "news"}}</span>{{.Tr.T "factory.news"}}</p><h2>{{.Tr.T "factory.news"}}</h2></div>
+        <a href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="fan-news-list">
+        {{range $i, $p := .Posts}}{{if lt $i 3}}
+        <a class="fan-news-item" href="{{$.Tr.U (contentURL $p)}}">
+          <time datetime="{{$.Tr.ISODate $p.PublishedAt}}">{{$.Tr.Date $p.PublishedAt}}</time>
+          <span class="fan-news-title">{{$p.Title}}</span>
+          <span class="arrow" aria-hidden="true">→</span>
+        </a>
+        {{end}}{{end}}
+      </div>
+    </section>
+    {{end}}
+  </div>
+
+  {{template "factory_cta" .}}
+{{end}}

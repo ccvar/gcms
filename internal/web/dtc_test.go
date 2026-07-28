@@ -9,6 +9,13 @@ import (
 	"testing"
 )
 
+var secondBatchDTCThemes = []string{
+	"vitrine", "journalshop", "catalogue", "bazaar", "column",
+	"swissgrid", "catwalk", "handcraft", "monthbox", "booth",
+	"herbary", "grocer", "cellar", "basecamp", "toybox",
+	"paperie", "mono", "flatlay", "flyer", "lightbox",
+}
+
 // ---------- 注册全表 ----------
 
 // 独立站主题族注册齐全：13 皮 × Category=dtc、骨架映射、accent/radius/bg/骨架名/EN 描述。
@@ -18,6 +25,27 @@ func TestDTCThemesRegistered(t *testing.T) {
 		"dawnfair":  "dtc-flagship", // Shopify Dawn 气质皮（旗舰骨架第 5 皮）
 		"solowhite": "dtc-solo", "charcoal": "dtc-solo", "coralpop": "dtc-solo", "limewash": "dtc-solo",
 		"galleria": "dtc-lookbook", "blackbox": "dtc-lookbook", "flaxen": "dtc-lookbook", "fogblue": "dtc-lookbook",
+		// 第二批 20 骨架 ×3 皮（原生 / 反差 / 纯白）
+		"vitrine": "dtc-vitrine", "vitrine-noir": "dtc-vitrine", "vitrine-white": "dtc-vitrine",
+		"journalshop": "dtc-journal", "journalshop-noir": "dtc-journal", "journalshop-white": "dtc-journal",
+		"catalogue": "dtc-catalogue", "catalogue-noir": "dtc-catalogue", "catalogue-white": "dtc-catalogue",
+		"bazaar": "dtc-bazaar", "bazaar-noir": "dtc-bazaar", "bazaar-white": "dtc-bazaar",
+		"column": "dtc-column", "column-day": "dtc-column", "column-white": "dtc-column",
+		"swissgrid": "dtc-swissgrid", "swissgrid-noir": "dtc-swissgrid", "swissgrid-white": "dtc-swissgrid",
+		"catwalk": "dtc-runway", "catwalk-day": "dtc-runway", "catwalk-white": "dtc-runway",
+		"handcraft": "dtc-atelier", "handcraft-noir": "dtc-atelier", "handcraft-white": "dtc-atelier",
+		"monthbox": "dtc-monthbox", "monthbox-noir": "dtc-monthbox", "monthbox-white": "dtc-monthbox",
+		"booth": "dtc-booth", "booth-noir": "dtc-booth", "booth-white": "dtc-booth",
+		"herbary": "dtc-apothecary", "herbary-noir": "dtc-apothecary", "herbary-white": "dtc-apothecary",
+		"grocer": "dtc-grocer", "grocer-noir": "dtc-grocer", "grocer-white": "dtc-grocer",
+		"cellar": "dtc-cellar", "cellar-day": "dtc-cellar", "cellar-white": "dtc-cellar",
+		"basecamp": "dtc-basecamp", "basecamp-noir": "dtc-basecamp", "basecamp-white": "dtc-basecamp",
+		"toybox": "dtc-toybox", "toybox-noir": "dtc-toybox", "toybox-white": "dtc-toybox",
+		"paperie": "dtc-paperie", "paperie-noir": "dtc-paperie", "paperie-white": "dtc-paperie",
+		"mono": "dtc-mono", "mono-noir": "dtc-mono", "mono-white": "dtc-mono",
+		"flatlay": "dtc-flatlay", "flatlay-noir": "dtc-flatlay", "flatlay-white": "dtc-flatlay",
+		"flyer": "dtc-flyer", "flyer-noir": "dtc-flyer", "flyer-white": "dtc-flyer",
+		"lightbox": "dtc-lightbox", "lightbox-day": "dtc-lightbox", "lightbox-white": "dtc-lightbox",
 	}
 	seen := map[string]bool{}
 	for _, th := range Themes {
@@ -499,6 +527,226 @@ func TestDTCHomeSectionsRendering(t *testing.T) {
 	body = fetch("/zh/products/cnc-machined-parts/")
 	if !strings.Contains(body, `class="pd-top"`) {
 		t.Fatal("dtc 骨架下商品详情应走 product_detail 模板")
+	}
+}
+
+// 第二批 20 个 DTC 骨架共享同一条真实数据契约：
+//   - 声明分类槽的 18 个骨架只读 product 分类卡（FactoryCats），URL 使用内容类型真实前缀；
+//   - column / monthbox 不声明、也不渲染分类；
+//   - 分类开关关闭后，所有消费该槽的骨架都必须立即隐藏分类导航；
+//   - 每个骨架在真实首页路径上都能渲染真实商品，而非仅在主题卡样例里可见。
+func TestDTCNewLayoutsProductCategoryContract(t *testing.T) {
+	s := newTestPublicServer(t, "")
+	if err := s.store.SetSetting(enabledContentTypesKey, "product"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.store.SeedFactoryDemoProducts(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.store.SetSetting(factoryCategoriesEnabledKey, "1"); err != nil {
+		t.Fatal(err)
+	}
+	type layoutCase struct {
+		theme   string
+		marker  string
+		hasCats bool
+	}
+	cases := []layoutCase{
+		{"vitrine", `class="vtr-wrap"`, true},
+		{"journalshop", `class="jnl-wrap"`, true},
+		{"catalogue", `class="ctg-wrap"`, true},
+		{"bazaar", `class="bzr-wrap"`, true},
+		{"column", `class="clm-wrap"`, false},
+		{"swissgrid", `class="swg-wrap"`, true},
+		{"catwalk", `class="rwy-wrap"`, true},
+		{"handcraft", `class="atl-wrap"`, true},
+		{"monthbox", `class="mbx-wrap"`, false},
+		{"booth", `class="bth-wrap"`, true},
+		{"herbary", `class="apo-wrap"`, true},
+		{"grocer", `class="gcr-wrap"`, true},
+		{"cellar", `class="clr-wrap"`, true},
+		{"basecamp", `class="bcp-wrap"`, true},
+		{"toybox", `class="tbx-wrap"`, true},
+		{"paperie", `class="ppr-wrap"`, true},
+		{"mono", `class="mno-wrap"`, true},
+		{"flatlay", `class="flt-wrap"`, true},
+		{"flyer", `class="flr-wrap"`, true},
+		{"lightbox", `class="lbx-wrap"`, true},
+	}
+	fetchHome := func(theme string) string {
+		t.Helper()
+		if err := s.store.SetSetting("theme", theme); err != nil {
+			t.Fatal(err)
+		}
+		s.clearGeneratedCaches()
+		rec := httptest.NewRecorder()
+		s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/zh/", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("theme %s: GET /zh/ status=%d body=%s", theme, rec.Code, rec.Body.String())
+		}
+		return rec.Body.String()
+	}
+	hasOption := func(theme, key string) bool {
+		for _, spec := range themeOptionSpecs(theme) {
+			if spec.Key == key {
+				return true
+			}
+		}
+		return false
+	}
+	optionKeys := func(theme string) []string {
+		specs := themeOptionSpecs(theme)
+		out := make([]string, 0, len(specs))
+		for _, spec := range specs {
+			out = append(out, spec.Key)
+		}
+		return out
+	}
+
+	for _, tc := range cases {
+		body := fetchHome(tc.theme)
+		if !strings.Contains(body, tc.marker) {
+			t.Errorf("theme %s: 真实首页缺骨架标记 %s", tc.theme, tc.marker)
+		}
+		if !strings.Contains(body, "精密 CNC 铝合金加工件") {
+			t.Errorf("theme %s: 真实首页没有装载已发布商品", tc.theme)
+		}
+		if got := hasOption(tc.theme, factoryCategoriesEnabledKey); got != tc.hasCats {
+			t.Errorf("theme %s: 分类配置槽=%v, want %v", tc.theme, got, tc.hasCats)
+		}
+		wantSlots := []string{"hero.visual", factoryStatsSettingKey}
+		switch tc.theme {
+		case "column", "monthbox":
+			// 这两个骨架刻意没有分类和图集区块。
+		case "catalogue":
+			wantSlots = append(wantSlots, factoryCategoriesEnabledKey)
+		default:
+			wantSlots = append(wantSlots, factoryCategoriesEnabledKey, factoryGallerySettingKey)
+		}
+		wantSlots = append(wantSlots, dtcTestimonialsSettingKey, factoryFAQSettingKey, factoryCTASettingKey)
+		if got := optionKeys(tc.theme); strings.Join(got, ",") != strings.Join(wantSlots, ",") {
+			t.Errorf("theme %s: 配置槽=%v, want %v", tc.theme, got, wantSlots)
+		}
+		hasProductCat := strings.Contains(body, `/zh/products/cat/mechanical-parts`)
+		if hasProductCat != tc.hasCats {
+			t.Errorf("theme %s: 商品分类导航=%v, want %v", tc.theme, hasProductCat, tc.hasCats)
+		}
+		// 新骨架的分类导航不能再拼文章分类路由。
+		if strings.Contains(body, `href="/zh/category/mechanical-parts`) {
+			t.Errorf("theme %s: 商品分类误用了文章分类路由", tc.theme)
+		}
+	}
+
+	// 真实商品分类 URL 必须可访问并返回该分类下的真实商品。
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/zh/products/cat/mechanical-parts/", nil))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "精密 CNC 铝合金加工件") {
+		t.Fatalf("商品分类路由 status=%d, body=%s", rec.Code, rec.Body.String())
+	}
+
+	// 同一个共享开关必须控制全部 18 个消费分类槽的骨架。
+	if err := s.store.SetSetting(factoryCategoriesEnabledKey, "0"); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range cases {
+		if !tc.hasCats {
+			continue
+		}
+		if body := fetchHome(tc.theme); strings.Contains(body, `/products/cat/`) {
+			t.Errorf("theme %s: 分类开关关闭后仍渲染商品分类导航", tc.theme)
+		}
+	}
+}
+
+// 第二批 20 个 DTC 骨架必须严格服从同一套 Hero 三态：
+// image 只使用站点 HeroImage，svg 只使用站点 HeroSVG，默认/动画态始终使用
+// dtc_hero_anim。商品封面与图集可以出现在后续陈列区，但不能顶替 Hero。
+func TestSecondBatchDTCHeroVisualContract(t *testing.T) {
+	s := newTestPublicServer(t, "")
+	set := func(key, value string) {
+		t.Helper()
+		if err := s.store.SetSetting(key, value); err != nil {
+			t.Fatalf("SetSetting(%q): %v", key, err)
+		}
+	}
+	set(enabledContentTypesKey, "product")
+	if err := s.store.SeedFactoryDemoProducts(); err != nil {
+		t.Fatal(err)
+	}
+
+	render := func(theme string) string {
+		t.Helper()
+		set("theme", theme)
+		s.clearGeneratedCaches()
+		rec := httptest.NewRecorder()
+		s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/zh/", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s home status = %d, body = %s", theme, rec.Code, rec.Body.String())
+		}
+		return rec.Body.String()
+	}
+
+	const (
+		heroImage  = "/uploads/dtc-hero-contract.webp"
+		svgMarker  = `data-dtc-contract="custom-svg"`
+		animMarker = `data-dtc-hero-visual="animation"`
+	)
+	set("hero.image", heroImage)
+	set("hero.svg", `<svg viewBox="0 0 10 10" `+svgMarker+`></svg>`)
+
+	set("hero.visual", "image")
+	for _, theme := range secondBatchDTCThemes {
+		body := render(theme)
+		if got := strings.Count(body, `src="`+heroImage+`"`); got != 1 {
+			t.Errorf("%s image 模式 HeroImage 出现 %d 次，want 1", theme, got)
+		}
+		if strings.Contains(body, svgMarker) || strings.Contains(body, animMarker) {
+			t.Errorf("%s image 模式混入了 SVG 或默认动画", theme)
+		}
+	}
+
+	set("hero.visual", "svg")
+	for _, theme := range secondBatchDTCThemes {
+		body := render(theme)
+		if got := strings.Count(body, svgMarker); got != 1 {
+			t.Errorf("%s svg 模式 HeroSVG 出现 %d 次，want 1", theme, got)
+		}
+		if strings.Contains(body, `src="`+heroImage+`"`) || strings.Contains(body, animMarker) {
+			t.Errorf("%s svg 模式混入了 HeroImage 或默认动画", theme)
+		}
+	}
+
+	for _, visual := range []string{"", "anim1", "anim2"} {
+		set("hero.visual", visual)
+		for _, theme := range secondBatchDTCThemes {
+			body := render(theme)
+			if got := strings.Count(body, animMarker); got != 1 {
+				t.Errorf("%s %q 模式默认动画出现 %d 次，want 1", theme, visual, got)
+			}
+			if strings.Contains(body, `src="`+heroImage+`"`) || strings.Contains(body, svgMarker) {
+				t.Errorf("%s %q 模式泄漏了未选中的 HeroImage/HeroSVG", theme, visual)
+			}
+		}
+	}
+}
+
+func TestDTCSectionLabelsAreLocalized(t *testing.T) {
+	s := newTestPublicServer(t, "")
+	keys := []string{
+		"dtc.label.products",
+		"dtc.label.story",
+		"dtc.label.scenes",
+		"dtc.label.reviews",
+		"dtc.label.guide",
+		"dtc.label.look",
+	}
+	for _, lang := range []string{"zh", "en", "vi", "id", "th"} {
+		tr := s.i18n.Tr(lang, s.defaultLang())
+		for _, key := range keys {
+			if got := tr.T(key); got == "" || got == key {
+				t.Errorf("%s: %s 未本地化，got %q", lang, key, got)
+			}
+		}
 	}
 }
 

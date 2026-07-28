@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -66,6 +67,20 @@ const (
 	apiIPRateLimit    = 240
 	apiTokenRateLimit = 120
 	apiRateWindow     = time.Minute
+
+	// 技能包是持续运行的受信任自动化客户端，读取站点、内容和任务状态时不应
+	// 与普通 API 请求共用 120 次/分钟的小桶。读、写和昂贵刷新使用独立桶：
+	// 高频读取尽量放开，写操作仍保留保护，强制刷新避免反复触发外部统计查询。
+	platformSkillReadIPRateLimit       = 6000
+	platformSkillReadTokenRateLimit    = 3000
+	platformSkillWriteIPRateLimit      = 2400
+	platformSkillWriteTokenRateLimit   = 600
+	singleSkillReadIPRateLimit         = 3000
+	singleSkillReadTokenRateLimit      = 1200
+	singleSkillWriteIPRateLimit        = 1200
+	singleSkillWriteTokenRateLimit     = 300
+	platformSkillRefreshIPRateLimit    = 240
+	platformSkillRefreshTokenRateLimit = 60
 )
 
 const (
@@ -148,16 +163,75 @@ func (l *apiRateLimiter) allow(key string, max int, window time.Duration) (time.
 	return 0, true
 }
 
+type apiRatePolicy struct {
+	bucket     string
+	ipLimit    int
+	tokenLimit int
+}
+
+func apiRatePolicyFor(r *http.Request, token string) apiRatePolicy {
+	policy := apiRatePolicy{
+		bucket:     "default",
+		ipLimit:    apiIPRateLimit,
+		tokenLimit: apiTokenRateLimit,
+	}
+	if r == nil {
+		return policy
+	}
+
+	isRead := r.Method == http.MethodGet || r.Method == http.MethodHead
+	switch {
+	case strings.HasPrefix(token, "gcmsp_"):
+		if isRead &&
+			strings.HasSuffix(strings.TrimSuffix(r.URL.Path, "/"), "/sites") &&
+			r.URL.Query().Get("refresh_stats") == "1" {
+			return apiRatePolicy{
+				bucket:     "platform-refresh",
+				ipLimit:    platformSkillRefreshIPRateLimit,
+				tokenLimit: platformSkillRefreshTokenRateLimit,
+			}
+		}
+		if isRead {
+			return apiRatePolicy{
+				bucket:     "platform-read",
+				ipLimit:    platformSkillReadIPRateLimit,
+				tokenLimit: platformSkillReadTokenRateLimit,
+			}
+		}
+		return apiRatePolicy{
+			bucket:     "platform-write",
+			ipLimit:    platformSkillWriteIPRateLimit,
+			tokenLimit: platformSkillWriteTokenRateLimit,
+		}
+	case strings.HasPrefix(token, "gcms_"):
+		if isRead {
+			return apiRatePolicy{
+				bucket:     "single-read",
+				ipLimit:    singleSkillReadIPRateLimit,
+				tokenLimit: singleSkillReadTokenRateLimit,
+			}
+		}
+		return apiRatePolicy{
+			bucket:     "single-write",
+			ipLimit:    singleSkillWriteIPRateLimit,
+			tokenLimit: singleSkillWriteTokenRateLimit,
+		}
+	default:
+		return policy
+	}
+}
+
 func (s *Server) checkAPIRateLimit(w http.ResponseWriter, r *http.Request, token string) bool {
 	if s.apiLimiter == nil {
 		return true
 	}
-	if retry, ok := s.apiLimiter.allow("ip:"+clientIP(r), apiIPRateLimit, apiRateWindow); !ok {
+	policy := apiRatePolicyFor(r, token)
+	if retry, ok := s.apiLimiter.allow("ip:"+policy.bucket+":"+clientIP(r), policy.ipLimit, apiRateWindow); !ok {
 		apiRateLimitError(w, retry)
 		return false
 	}
 	if token != "" {
-		if retry, ok := s.apiLimiter.allow("token:"+apiTokenRateKey(token), apiTokenRateLimit, apiRateWindow); !ok {
+		if retry, ok := s.apiLimiter.allow("token:"+policy.bucket+":"+apiTokenRateKey(token), policy.tokenLimit, apiRateWindow); !ok {
 			apiRateLimitError(w, retry)
 			return false
 		}
@@ -305,14 +379,15 @@ type apiSiteProfileItem struct {
 
 	// 主题 options（工厂主题族数据槽）：返回该语种生效的 settings 覆盖值（含 ::lang 回落裸键，
 	// 不含 i18n 内置默认）；没有配置时省略（带 enabled 的槽在被显式关闭时也会返回）。
-	FactoryStats      []FactoryStat             `json:"factory_stats,omitempty"`
-	FactoryProcess    *apiFactoryProcessItem    `json:"factory_process,omitempty"`
-	FactoryCTA        *FactoryTextPair          `json:"factory_cta,omitempty"`
-	FactoryCategories *apiFactoryToggleInput    `json:"factory_categories,omitempty"`
-	FactoryIndustries *apiFactoryIndustriesItem `json:"factory_industries,omitempty"`
-	FactoryGallery    []string                  `json:"factory_gallery,omitempty"`
-	FactoryFAQ        *apiFactoryFAQItem        `json:"factory_faq,omitempty"`
-	DTCTestimonials   []DTCTestimonial          `json:"dtc_testimonials,omitempty"` // 独立站用户评价（按语种；只录真实评价）
+	FactoryStats          []FactoryStat             `json:"factory_stats,omitempty"`
+	FactoryProcess        *apiFactoryProcessItem    `json:"factory_process,omitempty"`
+	FactoryCTA            *FactoryTextPair          `json:"factory_cta,omitempty"`
+	FactoryCategories     *apiFactoryToggleInput    `json:"factory_categories,omitempty"`
+	FactoryIndustries     *apiFactoryIndustriesItem `json:"factory_industries,omitempty"`
+	FactoryGallery        []string                  `json:"factory_gallery,omitempty"`
+	FactoryCertifications []FactoryCertification    `json:"factory_certifications,omitempty"`
+	FactoryFAQ            *apiFactoryFAQItem        `json:"factory_faq,omitempty"`
+	DTCTestimonials       []DTCTestimonial          `json:"dtc_testimonials,omitempty"` // 独立站用户评价（按语种；只录真实评价）
 }
 
 type apiSiteProfileInput struct {
@@ -339,14 +414,15 @@ type apiSiteProfileInput struct {
 	// 主题 options（工厂主题族数据槽，见 theme_options.go）：写 settings 语义键，
 	// 按 lang 落 键/键::lang（各 enabled 开关与 factory_gallery 是全局例外，不分语种）。
 	// 传 []/null（或 items/steps:[]、全空 cta）= 清除该语种覆盖、回落默认；字段缺省 = 不动。
-	FactoryStats      json.RawMessage         `json:"factory_stats,omitempty"`
-	FactoryProcess    *apiFactoryProcessInput `json:"factory_process,omitempty"`
-	FactoryCTA        *FactoryTextPair        `json:"factory_cta,omitempty"`
-	FactoryCategories *apiFactoryToggleInput  `json:"factory_categories,omitempty"`
-	FactoryIndustries *apiFactoryListInput    `json:"factory_industries,omitempty"`
-	FactoryGallery    json.RawMessage         `json:"factory_gallery,omitempty"` // ["url",...]（全局）
-	FactoryFAQ        *apiFactoryListInput    `json:"factory_faq,omitempty"`
-	DTCTestimonials   json.RawMessage         `json:"dtc_testimonials,omitempty"` // [{name,region,quote}]（按语种；[]/null 清除；只录真实评价）
+	FactoryStats          json.RawMessage         `json:"factory_stats,omitempty"`
+	FactoryProcess        *apiFactoryProcessInput `json:"factory_process,omitempty"`
+	FactoryCTA            *FactoryTextPair        `json:"factory_cta,omitempty"`
+	FactoryCategories     *apiFactoryToggleInput  `json:"factory_categories,omitempty"`
+	FactoryIndustries     *apiFactoryListInput    `json:"factory_industries,omitempty"`
+	FactoryGallery        json.RawMessage         `json:"factory_gallery,omitempty"`        // ["url",...]（全局）
+	FactoryCertifications json.RawMessage         `json:"factory_certifications,omitempty"` // [{name,note}]（按语种；[]/null 清除）
+	FactoryFAQ            *apiFactoryListInput    `json:"factory_faq,omitempty"`
+	DTCTestimonials       json.RawMessage         `json:"dtc_testimonials,omitempty"` // [{name,region,quote}]（按语种；[]/null 清除；只录真实评价）
 }
 
 // apiFactoryProcessInput 「合作流程」写入：enabled 缺省不动；steps 缺省不动、[]/null 清除。
@@ -387,6 +463,7 @@ type apiSiteProfilePatch struct {
 	apiSiteProfileInput
 	HomeLinksLimit   *int                  `json:"home_links_limit,omitempty"`
 	HomePostsPerPage *int                  `json:"home_posts_per_page,omitempty"`
+	LogoScale        *float64              `json:"logo_scale,omitempty"`
 	Items            []apiSiteProfileInput `json:"items,omitempty"`
 }
 
@@ -777,6 +854,10 @@ func (s *Server) apiThemeOptionsResponse(lang string) map[string]any {
 			if v := parseFactoryGallery(s.store.Setting(spec.Key)); len(v) > 0 {
 				slot.Configured, slot.Value = true, v
 			}
+		case themeOptCertifications:
+			if v := parseFactoryCertifications(s.localizedSetting(spec.Key, lang, "")); len(v) > 0 {
+				slot.Configured, slot.Value = true, v
+			}
 		}
 		slots = append(slots, slot)
 	}
@@ -802,7 +883,7 @@ func (s *Server) apiUpdateSiteProfile(w http.ResponseWriter, r *http.Request) {
 	if len(items) == 0 && in.apiSiteProfileInput.hasFields() {
 		items = []apiSiteProfileInput{in.apiSiteProfileInput}
 	}
-	if len(items) == 0 && !in.hasHomeDisplayFields() {
+	if len(items) == 0 && !in.hasGlobalFields() {
 		apiError(w, http.StatusBadRequest, "empty_patch", "没有收到需要更新的站点资料。")
 		return
 	}
@@ -810,7 +891,15 @@ func (s *Server) apiUpdateSiteProfile(w http.ResponseWriter, r *http.Request) {
 		apiError(w, http.StatusForbidden, "missing_scope", "这条访问权限不能修改首页显示设置。")
 		return
 	}
+	if in.LogoScale != nil && !automationScopeAllowed(auth.scopes, apiScopeBrandAssetsWrite) {
+		apiError(w, http.StatusForbidden, "missing_scope", "这条访问权限不能修改 Logo 前台缩放。")
+		return
+	}
 	if errMsg := validateAPIHomeDisplaySettings(in); errMsg != "" {
+		apiError(w, http.StatusBadRequest, "bad_request", errMsg)
+		return
+	}
+	if errMsg := validateAPILogoScale(in); errMsg != "" {
 		apiError(w, http.StatusBadRequest, "bad_request", errMsg)
 		return
 	}
@@ -829,6 +918,10 @@ func (s *Server) apiUpdateSiteProfile(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if errMsg := s.applyAPIHomeDisplaySettings(in); errMsg != "" {
+		apiError(w, http.StatusInternalServerError, "store_error", errMsg)
+		return
+	}
+	if errMsg := s.applyAPILogoScale(in); errMsg != "" {
 		apiError(w, http.StatusInternalServerError, "store_error", errMsg)
 		return
 	}
@@ -1222,6 +1315,7 @@ func (s *Server) apiGetContent(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	w.Header().Set("ETag", store.PostETag(p))
 	writeJSON(w, http.StatusOK, map[string]any{"item": s.apiContentItem(p, true)})
 }
 
@@ -1338,7 +1432,16 @@ func (s *Server) apiCreateContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.fillDefaultAuthor(p)
-	p.Slug = s.uniqueSlug(p.Lang, p.Slug, 0)
+	if kind == "page" {
+		var err error
+		p.Slug, err = s.uniquePageSlug(p.Lang, p.Slug, 0)
+		if err != nil {
+			apiError(w, http.StatusInternalServerError, "store_error", err.Error())
+			return
+		}
+	} else {
+		p.Slug = s.uniqueSlug(p.Lang, p.Slug, 0)
+	}
 	id, err := s.store.CreatePost(p)
 	if err != nil {
 		apiError(w, http.StatusInternalServerError, "store_error", err.Error())
@@ -1349,6 +1452,7 @@ func (s *Server) apiCreateContent(w http.ResponseWriter, r *http.Request) {
 	s.recordAutomationLog(auth, "create", kind, id, s.automationContentLogMessage("create", kind, created))
 	s.clearGeneratedCaches()
 	s.firePublishHooks(r, created)
+	w.Header().Set("ETag", store.PostETag(created))
 	writeJSON(w, http.StatusCreated, map[string]any{"item": s.apiContentItem(created, true)})
 }
 
@@ -1365,6 +1469,18 @@ func (s *Server) apiUpdateContent(w http.ResponseWriter, r *http.Request) {
 	}
 	existing, ok := s.apiContentByID(w, r, kind)
 	if !ok {
+		return
+	}
+	if s.rejectAdvancedPageLegacyAPIMutation(w, existing) {
+		return
+	}
+	expectedETag := strings.TrimSpace(r.Header.Get("If-Match"))
+	if expectedETag != "" && expectedETag != store.PostETag(existing) {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error": "revision_conflict", "message": "内容已被其他操作更新。",
+			"expected_etag": expectedETag, "current_etag": store.PostETag(existing),
+			"current_updated_at": apiTime(existing.UpdatedAt),
+		})
 		return
 	}
 	var in apiContentInput
@@ -1402,15 +1518,47 @@ func (s *Server) apiUpdateContent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.fillDefaultAuthor(&next)
-	next.Slug = s.uniqueSlug(next.Lang, next.Slug, next.ID)
-	if err := s.store.UpdatePostFrom(&next, store.PostRevisionSourceAPI); err != nil {
-		apiError(w, http.StatusInternalServerError, "store_error", err.Error())
+	if kind == "page" {
+		var err error
+		next.Slug, err = s.uniquePageSlug(next.Lang, next.Slug, next.ID)
+		if err != nil {
+			apiError(w, http.StatusInternalServerError, "store_error", err.Error())
+			return
+		}
+	} else {
+		next.Slug = s.uniqueSlug(next.Lang, next.Slug, next.ID)
+	}
+	var updateErr error
+	if expectedETag != "" {
+		updateErr = s.store.UpdatePostFromIfMatch(
+			&next, existing, expectedETag, store.PostRevisionSourceAPI,
+		)
+	} else {
+		updateErr = s.store.UpdatePostFrom(&next, store.PostRevisionSourceAPI)
+	}
+	if errors.Is(updateErr, store.ErrPostChanged) {
+		current, _ := s.store.GetPostByID(existing.ID)
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error": "revision_conflict", "message": "内容已被其他操作更新。",
+			"expected_etag": expectedETag, "current_etag": store.PostETag(current),
+			"current_updated_at": func() string {
+				if current == nil {
+					return ""
+				}
+				return apiTime(current.UpdatedAt)
+			}(),
+		})
+		return
+	}
+	if updateErr != nil {
+		apiError(w, http.StatusInternalServerError, "store_error", updateErr.Error())
 		return
 	}
 	updated, _ := s.store.GetPostByID(next.ID)
 	s.recordAutomationLog(auth, "update", kind, next.ID, s.automationContentLogMessage("update", kind, &next))
 	s.clearGeneratedCaches()
 	s.firePublishHooks(r, updated)
+	w.Header().Set("ETag", store.PostETag(updated))
 	writeJSON(w, http.StatusOK, map[string]any{"item": s.apiContentItem(updated, true)})
 }
 
@@ -1469,6 +1617,9 @@ func (s *Server) apiRelinkContent(w http.ResponseWriter, r *http.Request) {
 	}
 	existing, ok := s.apiContentByID(w, r, kind)
 	if !ok {
+		return
+	}
+	if s.rejectAdvancedPageLegacyAPIMutation(w, existing) {
 		return
 	}
 	var in apiRelinkInput
@@ -1688,6 +1839,58 @@ func (s *Server) apiContentByID(w http.ResponseWriter, r *http.Request, kind str
 	return p, true
 }
 
+// Advanced pages own their mutable metadata and publication state through
+// page-project revisions. A legacy page write would bypass ETag, approval,
+// immutable history and Cloudflare delivery tracking.
+func (s *Server) advancedPageProject(p *store.Post) (*store.PageProject, error) {
+	if p == nil || p.Type != "page" {
+		return nil, nil
+	}
+	return s.store.GetPageProjectByPostID(p.ID)
+}
+
+func (s *Server) rejectAdvancedPageLegacyAPIMutation(
+	w http.ResponseWriter,
+	p *store.Post,
+) bool {
+	project, err := s.advancedPageProject(p)
+	if err != nil {
+		apiError(w, http.StatusInternalServerError, "store_error", err.Error())
+		return true
+	}
+	if project == nil {
+		return false
+	}
+	writeJSON(w, http.StatusConflict, map[string]any{
+		"error":      "advanced_page_requires_page_project_api",
+		"message":    "该页面已启用高级页面工程，必须通过 Page API 创建修订、预览和发布。",
+		"page_id":    p.ID,
+		"project_id": project.ID,
+		"mode":       project.Mode,
+	})
+	return true
+}
+
+func (s *Server) rejectAdvancedPageLegacyAdminMutation(
+	w http.ResponseWriter,
+	p *store.Post,
+) bool {
+	project, err := s.advancedPageProject(p)
+	if err != nil {
+		s.serverError(w, err)
+		return true
+	}
+	if project == nil {
+		return false
+	}
+	http.Error(
+		w,
+		"高级页面必须在页面工作台中操作；旧页面入口不会修改或删除页面工程。",
+		http.StatusConflict,
+	)
+	return true
+}
+
 func (in apiSiteProfileInput) hasTextFields() bool {
 	return in.Name != nil || in.Tagline != nil || in.Description != nil || in.Keywords != nil ||
 		in.HeroEyebrow != nil || in.HeroTitle != nil || in.HeroDescription != nil || in.FooterNote != nil ||
@@ -1695,6 +1898,7 @@ func (in apiSiteProfileInput) hasTextFields() bool {
 		in.DefaultPostAuthor != nil || in.DefaultLinkAuthor != nil ||
 		in.FactoryStats != nil || in.FactoryProcess != nil || in.FactoryCTA != nil || // 主题 options 槽按站点文案权限（site:write）
 		in.FactoryCategories != nil || in.FactoryIndustries != nil || in.FactoryGallery != nil || in.FactoryFAQ != nil ||
+		in.FactoryCertifications != nil ||
 		in.DTCTestimonials != nil
 }
 
@@ -1708,7 +1912,11 @@ func (in apiSiteProfileInput) hasFields() bool {
 }
 
 func (in apiSiteProfilePatch) hasFields() bool {
-	return in.apiSiteProfileInput.hasFields() || in.hasHomeDisplayFields()
+	return in.apiSiteProfileInput.hasFields() || in.hasGlobalFields()
+}
+
+func (in apiSiteProfilePatch) hasGlobalFields() bool {
+	return in.hasHomeDisplayFields() || in.LogoScale != nil
 }
 
 func (in apiSiteProfilePatch) hasHomeDisplayFields() bool {
@@ -1721,6 +1929,17 @@ func validateAPIHomeDisplaySettings(in apiSiteProfilePatch) string {
 	}
 	if in.HomePostsPerPage != nil && (*in.HomePostsPerPage < minHomePostsPerPage || *in.HomePostsPerPage > maxHomePostsPerPage) {
 		return "home_posts_per_page 必须在 " + strconv.Itoa(minHomePostsPerPage) + " 到 " + strconv.Itoa(maxHomePostsPerPage) + " 之间。"
+	}
+	return ""
+}
+
+func validateAPILogoScale(in apiSiteProfilePatch) string {
+	if in.LogoScale == nil {
+		return ""
+	}
+	value := *in.LogoScale
+	if value != value || value < 0.3 || value > 2 {
+		return "logo_scale 必须在 0.3 到 2 之间。"
 	}
 	return ""
 }
@@ -1739,6 +1958,29 @@ func (s *Server) applyAPIHomeDisplaySettings(in apiSiteProfilePatch) string {
 	return ""
 }
 
+func (s *Server) applyAPILogoScale(in apiSiteProfilePatch) string {
+	if in.LogoScale == nil {
+		return ""
+	}
+	value := strconv.FormatFloat(*in.LogoScale, 'f', -1, 64)
+	if err := s.store.SetSetting("site.logo_scale", normalizeLogoScale(value)); err != nil {
+		return err.Error()
+	}
+	return ""
+}
+
+func (s *Server) apiLogoScale() float64 {
+	value := normalizeLogoScale(s.store.Setting("site.logo_scale"))
+	if value == "" {
+		return 1
+	}
+	scale, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return 1
+	}
+	return scale
+}
+
 func (s *Server) apiSiteProfileResponse() map[string]any {
 	locales := s.locales()
 	items := make([]apiSiteProfileItem, 0, len(locales))
@@ -1749,6 +1991,7 @@ func (s *Server) apiSiteProfileResponse() map[string]any {
 		"default":             s.defaultLang(),
 		"home_links_limit":    s.intSetting(homeLinksLimitKey, defaultHomeLinksLimit, minHomeLinksLimit, maxHomeLinksLimit),
 		"home_posts_per_page": s.intSetting(homePostsPerPageKey, defaultHomePostsPerPage, minHomePostsPerPage, maxHomePostsPerPage),
+		"logo_scale":          s.apiLogoScale(),
 		"items":               items,
 	}
 }
@@ -1792,6 +2035,7 @@ func (s *Server) apiSiteProfileItem(lang string) apiSiteProfileItem {
 		item.FactoryIndustries = &apiFactoryIndustriesItem{Enabled: s.factorySectionEnabled(factoryIndustriesEnabledKey), Items: items}
 	}
 	item.FactoryGallery = parseFactoryGallery(s.store.Setting(factoryGallerySettingKey))
+	item.FactoryCertifications = parseFactoryCertifications(s.localizedSetting(factoryCertificationsSettingKey, lang, ""))
 	if items := parseFactoryQAs(s.localizedSetting(factoryFAQSettingKey, lang, "")); len(items) > 0 || !s.factorySectionEnabled(factoryFAQEnabledKey) {
 		item.FactoryFAQ = &apiFactoryFAQItem{Enabled: s.factorySectionEnabled(factoryFAQEnabledKey), Items: items}
 	}
@@ -1885,6 +2129,19 @@ func (s *Server) applyAPIFactoryOptions(in *apiSiteProfileInput, lang string) st
 		}
 		// 图集全局（不分语种）：写裸键。
 		if err := s.store.SetSetting(factoryGallerySettingKey, marshalThemeOptionJSON(items, len(items) == 0)); err != nil {
+			return err.Error()
+		}
+	}
+	if in.FactoryCertifications != nil {
+		var rows []map[string]any
+		if err := json.Unmarshal(in.FactoryCertifications, &rows); err != nil && strings.TrimSpace(string(in.FactoryCertifications)) != "null" {
+			return "factory_certifications 需要 [{name,note}] 数组。"
+		}
+		items := parseFactoryCertifications(string(in.FactoryCertifications))
+		if len(rows) > 0 && len(items) == 0 {
+			return "factory_certifications 每项需要非空的 name（note 可空，最多 " + strconv.Itoa(maxFactoryCertifications) + " 项）。"
+		}
+		if err := s.store.SetSetting(s.copyKey(factoryCertificationsSettingKey, lang), marshalThemeOptionJSON(items, len(items) == 0)); err != nil {
 			return err.Error()
 		}
 	}

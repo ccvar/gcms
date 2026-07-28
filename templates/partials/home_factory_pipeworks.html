@@ -1,0 +1,110 @@
+{{define "home_factory_pipeworks"}}
+  {{/* factory-pipeworks — 管廊：整页读成一套厂区管路系统。
+       页头=阀门圆点导航（CSS 重塑标准 .site-header：导航项前加空心阀轮 ◎、当前项实心 ◉，
+       页头底缘接一条「总管」横条——金属渐变 + 两个 accent 阀门方块，全部 background 图层画成，
+       不加 DOM 不吸车道；≤620px 交还基础汉堡抽屉，故不新增 header define）。
+       hero=大标题 + factory.stats 表压读数胶囊（圆角描边仪表盘；未配置回落 factory_about）。
+       商品=管段卡（大圆角 + 底部「口径行」= productChips 重塑的虚线规格行 + DN 序号牌）。
+       factory.process 复用共享 f-process 标记、CSS 重塑成管线流程（金属管段连线 + 法兰接头圈）。
+       数据全由 fillFactoryHome 装载；空数据整块不渲染，封面缺失走首字兜底；
+       编号取 .FactorySectionNum（跳过未渲染区块，编号连续）。 */}}
+  <div class="ppw-wrap">
+    <section class="ppw-hero">
+      <div class="ppw-hero-copy">
+        {{if .Site.HeroEyebrow}}<p class="ppw-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+        <h1 class="ppw-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+        {{if .Site.HeroDescription}}<p class="ppw-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+        <div class="ppw-cta">
+          {{if .Contact.Any}}<a class="btn btn-primary" href="#factory-contact">{{.Tr.T "contact.float_label"}} <span class="arrow" aria-hidden="true">→</span></a>
+          {{else}}<a class="btn btn-primary" href="{{.Tr.U "/products"}}">{{.Tr.T "factory.products"}} <span class="arrow" aria-hidden="true">→</span></a>{{end}}
+          <a class="btn" href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}}</a>
+        </div>
+      </div>
+      <div class="ppw-hero-side">
+        {{template "factory_hero_slot" .}}
+        {{if .FactoryStats}}<dl class="f-stats ppw-gauges">
+          {{range .FactoryStats}}<div class="f-stat"><dt>{{.Num}}</dt><dd>{{.Label}}</dd></div>
+          {{end}}</dl>
+        {{else}}{{template "factory_about" .}}{{end}}
+      </div>
+    </section>
+
+    {{if .FactoryCats}}
+    <section class="ppw-section">
+      <div class="ppw-head"><div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "categories"}}</span>{{.Tr.T "factory.categories"}}</p><h2>{{.Tr.T "factory.categories"}}</h2></div></div>
+      {{template "factory_categories" .}}
+    </section>
+    {{end}}
+
+    <section class="ppw-section ppw-pipes-sec">
+      <div class="ppw-head">
+        <div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "products"}}</span>{{.Tr.T "factory.products"}}</p><h2>{{.Tr.T "factory.products"}}</h2></div>
+        <a href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="ppw-pipes">
+        {{range $i, $p := .FactoryProducts}}
+        <a class="ppw-pipe" href="{{if $p.Slug}}{{$.Tr.U (contentURL $p)}}{{else}}#{{end}}">
+          <span class="ppw-pipe-media{{if not $p.CoverImage}} ppw-pipe-gen{{end}}">
+            {{if $p.CoverImage}}<img src="{{$p.CoverImage}}" alt="{{$p.Title}}" loading="lazy" decoding="async"{{imgAttrs $p.CoverImage}}>{{else}}<b aria-hidden="true">{{initial $p.Title}}</b>{{end}}
+            <span class="ppw-pipe-tag" aria-hidden="true">№ {{printf "%02d" (add $i 1)}}</span>
+          </span>
+          <span class="ppw-pipe-body">
+            {{with $p.Category}}<span class="ppw-pipe-cat">{{.Name}}</span>{{end}}
+            <span class="ppw-pipe-title">{{$p.Title}}</span>
+            {{if $p.Excerpt}}<span class="ppw-pipe-ex">{{$p.Excerpt}}</span>{{end}}
+            {{with productChips $p}}<span class="f-chips">{{range .}}<span class="f-chip"><b>{{.K}}</b><i>{{.V}}</i></span>{{end}}</span>{{end}}
+          </span>
+        </a>
+        {{else}}<p class="ppw-empty muted">{{.Tr.T "factory.no_products"}}</p>{{end}}
+      </div>
+    </section>
+
+    {{if .FactoryProcessOn}}
+    <section class="ppw-section ppw-process-sec">
+      <div class="ppw-head"><div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "process"}}</span>{{.Tr.T "factory.process"}}</p><h2>{{.Tr.T "factory.process"}}</h2></div></div>
+      {{template "factory_process_steps" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryIndustries}}
+    <section class="ppw-section">
+      <div class="ppw-head"><div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "industries"}}</span>{{.Tr.T "factory.industries"}}</p><h2>{{.Tr.T "factory.industries"}}</h2></div></div>
+      {{template "factory_industries" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryGallery}}
+    <section class="ppw-section">
+      <div class="ppw-head"><div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "gallery"}}</span>{{.Tr.T "factory.gallery"}}</p><h2>{{.Tr.T "factory.gallery"}}</h2></div></div>
+      {{template "factory_gallery" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryQAs}}
+    <section class="ppw-section">
+      <div class="ppw-head"><div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "faq"}}</span>{{.Tr.T "factory.faq"}}</p><h2>{{.Tr.T "factory.faq"}}</h2></div></div>
+      {{template "factory_faq" .}}
+    </section>
+    {{end}}
+
+    {{if .Posts}}
+    <section class="ppw-section ppw-news">
+      <div class="ppw-head ppw-news-head">
+        <div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "news"}}</span>{{.Tr.T "factory.news"}}</p><h2>{{.Tr.T "factory.news"}}</h2></div>
+        <a href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="ppw-news-list">
+        {{range $i, $p := .Posts}}{{if lt $i 3}}
+        <a class="ppw-news-item" href="{{$.Tr.U (contentURL $p)}}">
+          <time datetime="{{$.Tr.ISODate $p.PublishedAt}}">{{$.Tr.Date $p.PublishedAt}}</time>
+          <span class="ppw-news-title">{{$p.Title}}</span>
+          <span class="arrow" aria-hidden="true">→</span>
+        </a>
+        {{end}}{{end}}
+      </div>
+    </section>
+    {{end}}
+  </div>
+
+  {{template "factory_cta" .}}
+{{end}}

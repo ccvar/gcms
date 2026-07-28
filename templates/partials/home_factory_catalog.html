@@ -221,6 +221,26 @@
   </ol>
 {{end}}
 
+{{define "factory_hero_slot"}}
+  {{/* Shared contract for the factory skeleton family.  A selected-but-empty
+       image/SVG value falls back to the theme animation instead of leaving a
+       broken or blank media panel.  Gallery images are intentionally not used
+       here: they remain gallery content and therefore never appear twice. */}}
+  {{if and (eq .Site.HeroVisual "image") .Site.HeroImage}}
+  <div class="factory-hero-slot is-image" data-factory-hero-visual="image">
+    <img src="{{.Site.HeroImage}}" alt="{{if .Site.HeroAlt}}{{.Site.HeroAlt}}{{else}}{{.Site.Name}}{{end}}" decoding="async" fetchpriority="high"{{imgAttrs .Site.HeroImage}}>
+  </div>
+  {{else if and (eq .Site.HeroVisual "svg") .Site.HeroSVG}}
+  <div class="factory-hero-slot is-svg" data-factory-hero-visual="svg">
+    <div class="factory-hero-slot-svg">{{safeHTML .Site.HeroSVG}}</div>
+  </div>
+  {{else}}
+  <div class="factory-hero-slot is-animation" data-factory-hero-visual="animation" aria-hidden="true">
+    <div class="f-heroanim f-heroanim-plain">{{template "factory_hero_anim" .}}</div>
+  </div>
+  {{end}}
+{{end}}
+
 {{define "factory_hero_anim"}}
   {{/* hero「默认动画」的工厂风变体（hero.visual=default/anim* 时由各骨架的 hero 视觉位渲染）：
        内容主题的 hv2 科技感动画讲的是「数据库→芯片→页面」，放工厂站气质违和，

@@ -38,7 +38,7 @@
         <div class="update-versions">
           <div class="update-block">
             <span class="update-label">{{.Admin.T "admin.settings.updates.current_version" "当前版本"}}</span>
-            <strong>{{$u.Current.Version}}</strong>{{if eq $u.Current.Version "dev"}} <span class="mini-tag">{{.Admin.T "admin.settings.updates.dev_build" "开发构建"}}</span>{{end}}
+            <strong>{{$u.Current.Version}}</strong>{{if eq $u.Current.Version "dev"}} <span class="mini-tag">{{.Admin.T "admin.settings.updates.dev_build" "开发构建"}}</span>{{end}} {{if eq $u.Channel "preview"}}<span class="mini-tag">Preview</span>{{end}}
             <span class="update-meta">{{$u.Current.Platform}}</span>
           </div>
           <span class="update-sep" aria-hidden="true">→</span>

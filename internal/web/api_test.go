@@ -37,6 +37,68 @@ func testWebPBytes() []byte {
 	return []byte("RIFF\x18\x00\x00\x00WEBPVP8 \x00\x00\x00\x00gcms-test")
 }
 
+func TestSkillAPIRatePoliciesAreSeparatedAndRelaxed(t *testing.T) {
+	tests := []struct {
+		name       string
+		method     string
+		target     string
+		token      string
+		bucket     string
+		tokenLimit int
+	}{
+		{"platform read", http.MethodGet, "/api/platform/v1/sites", "gcmsp_test", "platform-read", platformSkillReadTokenRateLimit},
+		{"platform refresh", http.MethodGet, "/api/platform/v1/sites?refresh_stats=1", "gcmsp_test", "platform-refresh", platformSkillRefreshTokenRateLimit},
+		{"platform write", http.MethodPost, "/api/platform/v1/sites/1/posts", "gcmsp_test", "platform-write", platformSkillWriteTokenRateLimit},
+		{"single read", http.MethodGet, "/api/admin/v1/posts", "gcms_test", "single-read", singleSkillReadTokenRateLimit},
+		{"single write", http.MethodPost, "/api/admin/v1/posts", "gcms_test", "single-write", singleSkillWriteTokenRateLimit},
+		{"unknown token", http.MethodGet, "/api/admin/v1/posts", "other_test", "default", apiTokenRateLimit},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := httptest.NewRequest(tt.method, tt.target, nil)
+			got := apiRatePolicyFor(r, tt.token)
+			if got.bucket != tt.bucket || got.tokenLimit != tt.tokenLimit {
+				t.Fatalf("policy = %#v, want bucket=%q tokenLimit=%d", got, tt.bucket, tt.tokenLimit)
+			}
+		})
+	}
+
+	if platformSkillReadTokenRateLimit <= apiTokenRateLimit ||
+		singleSkillReadTokenRateLimit <= apiTokenRateLimit {
+		t.Fatal("技能包读取额度必须高于普通 API 额度")
+	}
+}
+
+func TestSkillAPIRateBucketsDoNotCompete(t *testing.T) {
+	s := &Server{apiLimiter: newAPIRateLimiter()}
+	token := "gcmsp_rate_test"
+
+	for i := 0; i < apiTokenRateLimit+1; i++ {
+		r := httptest.NewRequest(http.MethodGet, "/api/platform/v1/sites", nil)
+		w := httptest.NewRecorder()
+		if !s.checkAPIRateLimit(w, r, token) {
+			t.Fatalf("platform read unexpectedly limited at request %d: %s", i+1, w.Body.String())
+		}
+	}
+
+	for i := 0; i < platformSkillRefreshTokenRateLimit; i++ {
+		r := httptest.NewRequest(http.MethodGet, "/api/platform/v1/sites?refresh_stats=1", nil)
+		w := httptest.NewRecorder()
+		if !s.checkAPIRateLimit(w, r, token) {
+			t.Fatalf("platform refresh unexpectedly limited at request %d: %s", i+1, w.Body.String())
+		}
+	}
+	r := httptest.NewRequest(http.MethodGet, "/api/platform/v1/sites?refresh_stats=1", nil)
+	w := httptest.NewRecorder()
+	if s.checkAPIRateLimit(w, r, token) {
+		t.Fatal("platform refresh should be limited after its independent allowance")
+	}
+	if w.Code != http.StatusTooManyRequests || w.Header().Get("Retry-After") == "" ||
+		!strings.Contains(w.Body.String(), `"message":"请求过于频繁，请稍后再试。"`) {
+		t.Fatalf("rate limit response = %d headers=%v body=%s", w.Code, w.Header(), w.Body.String())
+	}
+}
+
 func TestAssetCacheControlUsesLongCacheForVersionedAssets(t *testing.T) {
 	s := &Server{assetVer: "asset123"}
 	versioned := httptest.NewRequest(http.MethodGet, "/assets/css/style.css?v=asset123", nil)
@@ -337,6 +399,13 @@ func TestAutomationOpenAPIIncludesMediaUpload(t *testing.T) {
 	if _, ok := schemas["LanguageCatalogInput"]; !ok {
 		t.Fatalf("LanguageCatalogInput schema missing: %#v", schemas)
 	}
+	capabilities, ok := paths["/page-platform/capabilities"].(map[string]any)
+	if !ok {
+		t.Fatalf("/page-platform/capabilities path missing: %#v", paths)
+	}
+	if get, ok := capabilities["get"].(map[string]any); !ok || get["responses"] == nil {
+		t.Fatalf("GET /page-platform/capabilities missing: %#v", capabilities)
+	}
 	for _, path := range []string{"/posts/{id}/preview", "/links/{id}/preview"} {
 		entry, ok := paths[path].(map[string]any)
 		if !ok {
@@ -350,7 +419,7 @@ func TestAutomationOpenAPIIncludesMediaUpload(t *testing.T) {
 			t.Fatalf("GET %s responses missing: %#v", path, get)
 		}
 	}
-	for _, path := range []string{"/posts/{id}/preview-url", "/links/{id}/preview-url"} {
+	for _, path := range []string{"/posts/{id}/preview-url", "/links/{id}/preview-url", "/pages/{id}/preview-url"} {
 		entry, ok := paths[path].(map[string]any)
 		if !ok {
 			t.Fatalf("%s path missing: %#v", path, paths)
@@ -434,10 +503,15 @@ func TestAutomationOpenAPIIncludesMediaUpload(t *testing.T) {
 	if !ok {
 		t.Fatalf("SiteProfilePatch properties missing: %#v", sitePatch)
 	}
-	for _, prop := range []string{"logo", "favicon", "share_image", "hero_visual", "hero_image"} {
+	for _, prop := range []string{"logo", "favicon", "share_image", "hero_visual", "hero_image", "logo_scale"} {
 		if _, ok := siteProps[prop]; !ok {
 			t.Fatalf("SiteProfilePatch.%s missing: %#v", prop, siteProps)
 		}
+	}
+	siteResponse := schemas["SiteProfileResponse"].(map[string]any)
+	responseProps := siteResponse["properties"].(map[string]any)
+	if _, ok := responseProps["logo_scale"]; !ok {
+		t.Fatalf("SiteProfileResponse.logo_scale missing: %#v", responseProps)
 	}
 	navItem, ok := schemas["NavigationItem"].(map[string]any)
 	if !ok {
@@ -810,6 +884,69 @@ func TestAPISiteProfileBrandAssetsRequireScope(t *testing.T) {
 	}
 }
 
+func TestAPISiteProfileLogoScaleUsesBrandScopeAndGlobalSetting(t *testing.T) {
+	s, brandToken := newTestAutomationServer(t, apiScopeBrandAssetsWrite)
+	patch := func(value float64) *httptest.ResponseRecorder {
+		t.Helper()
+		body, err := json.Marshal(map[string]any{"logo_scale": value})
+		if err != nil {
+			t.Fatalf("marshal logo scale: %v", err)
+		}
+		r := httptest.NewRequest(http.MethodPatch, "/api/admin/v1/site-profile", bytes.NewReader(body))
+		r.Header.Set("Authorization", "Bearer "+brandToken)
+		r.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		s.apiUpdateSiteProfile(w, r)
+		return w
+	}
+
+	w := patch(0.85)
+	if w.Code != http.StatusOK {
+		t.Fatalf("logo scale update status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if got := s.store.Setting("site.logo_scale"); got != "0.85" {
+		t.Fatalf("site.logo_scale = %q, want 0.85", got)
+	}
+	var response map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode logo scale response: %v", err)
+	}
+	if got := response["logo_scale"]; got != 0.85 {
+		t.Fatalf("response logo_scale = %#v, want 0.85", got)
+	}
+
+	w = patch(1)
+	if w.Code != http.StatusOK {
+		t.Fatalf("reset logo scale status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if got := s.store.Setting("site.logo_scale"); got != "" {
+		t.Fatalf("site.logo_scale reset stored %q, want empty", got)
+	}
+	response = nil
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode reset response: %v", err)
+	}
+	if got := response["logo_scale"]; got != float64(1) {
+		t.Fatalf("reset response logo_scale = %#v, want 1", got)
+	}
+
+	w = patch(2.1)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "logo_scale") {
+		t.Fatalf("out-of-range logo scale status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	siteOnly, siteToken := newTestAutomationServer(t, apiScopeSiteWrite)
+	body := bytes.NewBufferString(`{"logo_scale":0.8}`)
+	r := httptest.NewRequest(http.MethodPatch, "/api/admin/v1/site-profile", body)
+	r.Header.Set("Authorization", "Bearer "+siteToken)
+	r.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	siteOnly.apiUpdateSiteProfile(w, r)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("logo scale with site scope status = %d, body = %s", w.Code, w.Body.String())
+	}
+}
+
 func TestAPISiteProfileUpdatesEnglishShareImage(t *testing.T) {
 	s, token := newTestAutomationServer(t, apiScopeBrandAssetsWrite)
 	if err := s.store.SetSetting("site.share_image", "/uploads/share-zh.webp"); err != nil {
@@ -945,6 +1082,8 @@ func TestAutomationSkillZipKeepsLegacyStructure(t *testing.T) {
 		"language-catalog",
 		"languages:catalog",
 		"hero-visual",
+		"logo-display",
+		`"logo_scale":0.8`,
 		"PATCH /posts/featured/{id}",
 	} {
 		if !strings.Contains(skill, want) {
@@ -961,6 +1100,7 @@ func TestAutomationSkillZipKeepsLegacyStructure(t *testing.T) {
 		"/featured/",
 		`cmd === "site-profile"`,
 		`cmd === "site-profile-update"`,
+		`logo_scale(0.3..2)`,
 		`cmd === "navigation"`,
 		`cmd === "navigation-update"`,
 	} {
@@ -974,6 +1114,7 @@ func TestAutomationSkillZipKeepsLegacyStructure(t *testing.T) {
 		`"/languages/{code}"`,
 		`"/languages/{code}/catalog"`,
 		`"/posts/featured/{id}"`,
+		`"logo_scale"`,
 	} {
 		if !strings.Contains(openapi, want) {
 			t.Fatalf("skill OpenAPI missing %q", want)
@@ -1210,6 +1351,107 @@ func TestAPICreateAndUpdatePageCoverImage(t *testing.T) {
 	}
 	if updated.Item.CoverImage != nextCover {
 		t.Fatalf("updated cover_image = %q, want %q", updated.Item.CoverImage, nextCover)
+	}
+}
+
+func TestLegacyContentOptionalETagPreventsPilotOverwritingHumanEdit(t *testing.T) {
+	s, token := newTestAutomationServer(t, "pages:read,pages:write")
+	pageID, err := s.store.CreatePost(&store.Post{
+		Type: "page", Lang: "zh", Slug: "etag-page", Title: "Initial title",
+		Content: "Initial body", Status: "draft", EditorMode: "markdown",
+	})
+	if err != nil {
+		t.Fatalf("create standard page: %v", err)
+	}
+	get := func() *httptest.ResponseRecorder {
+		t.Helper()
+		r := httptest.NewRequest(http.MethodGet,
+			"/api/admin/v1/pages/"+strconv.FormatInt(pageID, 10), nil)
+		r.SetPathValue("collection", "pages")
+		r.SetPathValue("id", strconv.FormatInt(pageID, 10))
+		r.Header.Set("Authorization", "Bearer "+token)
+		w := httptest.NewRecorder()
+		s.apiGetContent(w, r)
+		return w
+	}
+	first := get()
+	originalETag := first.Header().Get("ETag")
+	if first.Code != http.StatusOK || !strings.HasPrefix(originalETag, `"content-`) {
+		t.Fatalf("initial GET = %d etag=%q body=%s",
+			first.Code, originalETag, first.Body.String())
+	}
+
+	human, err := s.store.GetPostByID(pageID)
+	if err != nil || human == nil {
+		t.Fatalf("read human page: post=%+v err=%v", human, err)
+	}
+	human.Title = "Saved by human"
+	if err := s.store.UpdatePost(human); err != nil {
+		t.Fatalf("human update: %v", err)
+	}
+
+	patch := func(title, etag string) *httptest.ResponseRecorder {
+		t.Helper()
+		raw, _ := json.Marshal(map[string]any{"title": title})
+		r := httptest.NewRequest(http.MethodPatch,
+			"/api/admin/v1/pages/"+strconv.FormatInt(pageID, 10), bytes.NewReader(raw))
+		r.SetPathValue("collection", "pages")
+		r.SetPathValue("id", strconv.FormatInt(pageID, 10))
+		r.Header.Set("Authorization", "Bearer "+token)
+		r.Header.Set("Content-Type", "application/json")
+		if etag != "" {
+			r.Header.Set("If-Match", etag)
+		}
+		w := httptest.NewRecorder()
+		s.apiUpdateContent(w, r)
+		return w
+	}
+	stale := patch("Stale Pilot overwrite", originalETag)
+	if stale.Code != http.StatusConflict ||
+		!strings.Contains(stale.Body.String(), `"error":"revision_conflict"`) {
+		t.Fatalf("stale update = %d %s", stale.Code, stale.Body.String())
+	}
+	afterStale, _ := s.store.GetPostByID(pageID)
+	if afterStale == nil || afterStale.Title != "Saved by human" {
+		t.Fatalf("stale update overwrote human edit: %+v", afterStale)
+	}
+
+	current := get()
+	currentETag := current.Header().Get("ETag")
+	if currentETag == "" || currentETag == originalETag {
+		t.Fatalf("human edit did not change ETag: before=%q after=%q",
+			originalETag, currentETag)
+	}
+	fresh := patch("Merged by Pilot", currentETag)
+	if fresh.Code != http.StatusOK || fresh.Header().Get("ETag") == currentETag {
+		t.Fatalf("fresh update = %d etag=%q body=%s",
+			fresh.Code, fresh.Header().Get("ETag"), fresh.Body.String())
+	}
+
+	// Existing integrations that do not send If-Match retain their historical
+	// behavior; the protection is opt-in for the new skill and clients.
+	legacy := patch("Legacy client", "")
+	if legacy.Code != http.StatusOK {
+		t.Fatalf("legacy no-header update = %d %s", legacy.Code, legacy.Body.String())
+	}
+
+	concurrentETag := get().Header().Get("ETag")
+	start := make(chan struct{})
+	responses := make(chan *httptest.ResponseRecorder, 2)
+	for _, title := range []string{"Pilot A", "Pilot B"} {
+		title := title
+		go func() {
+			<-start
+			responses <- patch(title, concurrentETag)
+		}()
+	}
+	close(start)
+	statuses := map[int]int{}
+	for range 2 {
+		statuses[(<-responses).Code]++
+	}
+	if statuses[http.StatusOK] != 1 || statuses[http.StatusConflict] != 1 {
+		t.Fatalf("concurrent CAS statuses = %#v, want one 200 and one 409", statuses)
 	}
 }
 

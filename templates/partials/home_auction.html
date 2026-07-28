@@ -1,0 +1,86 @@
+{{define "home_auction"}}
+  {{/* 拍卖 Auction — 双线刊头（站名大字距 + HeroEyebrow 当 SALE 期号行）+ 封面拍品大卡
+       + LOT 计数器拍品行 + 「专场」索引 + 「买家服务」小字两列 */}}
+  <div class="auc-wrap">
+
+    <header class="auc-masthead">
+      <h1 class="auc-house"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+      {{if .Site.HeroEyebrow}}<p class="auc-sale"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+      {{if .Site.HeroDescription}}<p class="auc-note"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+    </header>
+
+    {{with .Featured}}
+    <section class="auc-cover">
+      <a class="auc-cover-card{{if .CoverImage}} auc-cover-has-img{{end}}" href="{{$.Tr.U (contentURL .)}}">
+        <span class="auc-cover-body">
+          <span class="auc-cover-tag">{{$.Site.HomeFeatured}}</span>
+          <span class="auc-cover-h">{{.Title}}</span>
+          {{if .Excerpt}}<span class="auc-cover-ex">{{.Excerpt}}</span>{{end}}
+          <span class="auc-cover-foot">
+            <time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time>
+            <span class="auc-cover-more">{{$.Tr.T "home.read_more"}} <span class="arrow" aria-hidden="true">→</span></span>
+          </span>
+        </span>
+        {{if .CoverImage}}<span class="auc-cover-plate"><img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}></span>{{end}}
+      </a>
+    </section>
+    {{end}}
+
+    {{if or .Posts .Categories .FeatLinks}}
+    <div class="auc-floor">
+
+      {{if .Posts}}
+      <section class="auc-lots-sec">
+        <div class="auc-sec-head">
+          <h2 class="auc-sec-t">{{.Site.HomeLatest}}</h2>
+          <a class="auc-sec-all" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+        </div>
+        <ol class="auc-lots{{if .Featured}} auc-lots-offset{{end}}">
+          {{range .Posts}}
+          <li class="auc-lot">
+            <a class="auc-lot-in" href="{{$.Tr.U (contentURL .)}}">
+              <span class="auc-lot-body">
+                <span class="auc-lot-h">{{.Title}}</span>
+                {{if .Excerpt}}<span class="auc-lot-ex">{{.Excerpt}}</span>{{end}}
+                {{with .Category}}<span class="auc-lot-cat">{{.Name}}</span>{{end}}
+              </span>
+              <time class="auc-lot-est" datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time>
+            </a>
+          </li>
+          {{end}}
+        </ol>
+      </section>
+      {{end}}
+
+      {{if or .Categories .FeatLinks}}
+      <aside class="auc-side">
+        {{if .Categories}}
+        <nav class="auc-sessions" aria-label="{{.Tr.T "nav.category"}}">
+          <h2 class="auc-side-t">{{.Tr.T "nav.category"}}</h2>
+          {{range .Categories}}
+          <a class="auc-session" href="{{$.Tr.U (printf "/category/%s" .Slug)}}"><span class="auc-session-name">{{.Name}}</span><span class="auc-session-n">{{.Count}}</span></a>
+          {{end}}
+          <a class="auc-session auc-session-all" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+        </nav>
+        {{end}}
+        {{if .FeatLinks}}
+        <nav class="auc-services" aria-label="{{.Site.HomeLinks}}">
+          <h2 class="auc-side-t">{{.Site.HomeLinks}}</h2>
+          <div class="auc-services-grid">
+            {{range .FeatLinks}}
+            <a class="auc-service" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+              <span class="auc-service-t">{{.Title}}</span>
+              {{if .Excerpt}}<span class="auc-service-ex">{{.Excerpt}}</span>{{end}}
+            </a>
+            {{end}}
+          </div>
+        </nav>
+        {{end}}
+      </aside>
+      {{end}}
+
+    </div>
+    {{end}}
+
+  </div>
+{{end}}

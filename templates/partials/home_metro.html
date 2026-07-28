@@ -1,0 +1,83 @@
+{{define "home_metro"}}
+  {{/* 线网 Metro — 白底圆角线网图卡：前 3~4 个分类=彩色线路（线名徽章胶囊+通长圆头色轨），
+       Posts 轮转散作沿线站点（白底粗彩边圆点+下方站名），Featured=双圈换乘大站；
+       线网图下=「站点一览」编号列表行。无分类时线网回落为单条「全部」线。 */}}
+  <div class="mtr-wrap">
+
+    <header class="mtr-hero">
+      {{if .Site.HeroEyebrow}}<p class="mtr-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+      <h1 class="mtr-title"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+      {{if .Site.HeroDescription}}<p class="mtr-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+    </header>
+
+    {{if or .Featured .Posts}}
+    {{$lines := .Categories}}{{if gt (len $lines) 4}}{{$lines = slice $lines 0 4}}{{end}}
+    {{$n := len $lines}}{{if eq $n 0}}{{$n = 1}}{{end}}
+    {{$sta := .Posts}}{{if gt (len $sta) 12}}{{$sta = slice $sta 0 12}}{{end}}
+    <section class="mtr-map" aria-label="{{.Tr.T "nav.category"}}">
+      {{range $k := pages $n}}{{$li := sub $k 1}}
+      <div class="mtr-line">
+        {{if $lines}}{{$cat := index $lines $li}}
+        <a class="mtr-badge" href="{{$.Tr.U (printf "/category/%s" $cat.Slug)}}"><span class="mtr-badge-name">{{$cat.Name}}</span><b class="mtr-badge-n">{{$cat.Count}}</b></a>
+        {{else}}
+        <a class="mtr-badge" href="{{$.Tr.U $.CategoryAll.Path}}"><span class="mtr-badge-name">{{$.Tr.T "home.view_all"}}</span></a>
+        {{end}}
+        <div class="mtr-track">
+          {{if and (eq $li 0) $.Featured}}
+          <a class="mtr-sta mtr-hub" href="{{$.Tr.U (contentURL $.Featured)}}">
+            <span class="mtr-dot" aria-hidden="true"></span>
+            <span class="mtr-sta-body"><i class="mtr-hub-tag">{{$.Site.HomeFeatured}}</i><span class="mtr-sta-t">{{$.Featured.Title}}</span></span>
+          </a>
+          {{end}}
+          {{$slot := 0}}
+          {{range $sta}}
+          {{if eq $slot $li}}
+          <a class="mtr-sta" href="{{$.Tr.U (contentURL .)}}">
+            <span class="mtr-dot" aria-hidden="true"></span>
+            <span class="mtr-sta-body"><span class="mtr-sta-t">{{.Title}}</span></span>
+          </a>
+          {{end}}
+          {{$slot = add $slot 1}}{{if eq $slot $n}}{{$slot = 0}}{{end}}
+          {{end}}
+        </div>
+      </div>
+      {{end}}
+      <a class="mtr-map-all" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+    </section>
+    {{end}}
+
+    {{if .FeatLinks}}
+    <section class="mtr-links" aria-label="{{.Site.HomeLinks}}">
+      <h2 class="mtr-links-h">{{.Site.HomeLinks}}</h2>
+      <div class="mtr-links-row">
+        {{range .FeatLinks}}
+        <a class="mtr-link" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+          <span class="mtr-link-ic">{{if .CoverImage}}<img src="{{.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}</span>
+          <span class="mtr-link-t">{{.Title}}</span>
+        </a>
+        {{end}}
+      </div>
+    </section>
+    {{end}}
+
+    {{if .Posts}}
+    <section class="mtr-list">
+      <div class="mtr-list-head">
+        <h2 class="mtr-list-t">{{.Site.HomeLatest}}</h2>
+        <a class="mtr-list-all" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <ol class="mtr-rows">
+        {{range .Posts}}
+        <li class="mtr-row">
+          <a class="mtr-row-in" href="{{$.Tr.U (contentURL .)}}">
+            <span class="mtr-row-t">{{.Title}}</span>
+            <span class="mtr-row-meta">{{with .Category}}<span class="mtr-row-cat">{{.Name}}</span><span aria-hidden="true">·</span>{{end}}<time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time></span>
+          </a>
+        </li>
+        {{end}}
+      </ol>
+    </section>
+    {{end}}
+
+  </div>
+{{end}}

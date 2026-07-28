@@ -503,13 +503,14 @@ func (s *Server) fillFactoryHome(v *View, lang string) {
 	}
 	v.FactoryIndustries = s.factoryIndustryList(lang)
 	v.FactoryGallery = parseFactoryGallery(s.store.Setting(factoryGallerySettingKey)) // 图集全局，不分语种
+	v.FactoryCertifications = parseFactoryCertifications(s.localizedSetting(factoryCertificationsSettingKey, lang, ""))
 	v.FactoryQAs = s.factoryFAQList(lang)
 	v.FactoryCTA = s.factoryCTAText(lang)
 
 	// 目录骨架的区块编号 eyebrow（01/02/…）：跳过未渲染的区块，编号永远连续。
 	num := 0
 	v.FactorySectionNum = map[string]string{}
-	for _, sec := range []struct {
+	sections := []struct {
 		key string
 		on  bool
 	}{
@@ -520,7 +521,13 @@ func (s *Server) fillFactoryHome(v *View, lang string) {
 		{"gallery", len(v.FactoryGallery) > 0},
 		{"faq", len(v.FactoryQAs) > 0},
 		{"news", len(v.Posts) > 0},
-	} {
+	}
+	// Gauge renders its product modules before the category section.  Keep the
+	// visible document order and the printed 01/02 labels in sync.
+	if v.Layout == "factory-gauge" {
+		sections[0], sections[1] = sections[1], sections[0]
+	}
+	for _, sec := range sections {
 		if !sec.on {
 			continue
 		}

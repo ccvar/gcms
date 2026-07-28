@@ -1,0 +1,116 @@
+{{define "home_dtc_basecamp"}}
+  {{/* dtc-basecamp — 营地：户外装备库气质的独立站。导航=路标木牌箭头（军绿底白字、
+       右端箭头 clip-path，CSS 重塑标准页头，≤620px 交还基础汉堡抽屉）；背景=等高线底纹
+       （repeating-radial-gradient 细环线，皮肤变量控制透明度，白皮隐去）；hero=开拔词
+       （HeroTitle+HeroDescription）；商品=装备清单行（白卡容器 1px 框，行=60px 缩略图+
+       名称+规格签+右端 mono 军绿「重量列」位=第一枚规格签，行间细线；无价格函数，
+       规格签即价签位）；FactoryStats 有则「营地数字」行。数据由 fillDTCHome 装载；
+       空数据优雅缺省，FactoryProducts 为空时商品区整段不渲染。
+       hero 槽三态照 flagship 抄法：image=全幅底图 scrim 压字 / svg=右侧内嵌 /
+       default,anim*=右侧 DTC 轻动画（dtc_hero_anim 复用）。 */}}
+  {{$heroImg := ""}}{{if and (eq .Site.HeroVisual "image") .Site.HeroImage}}{{$heroImg = .Site.HeroImage}}{{end}}
+  {{$heroSVG := and (eq .Site.HeroVisual "svg") (ne .Site.HeroSVG "")}}
+  {{$heroAnim := and (not $heroImg) (not $heroSVG)}}
+  <div class="bcp-wrap">
+    <section class="bcp-hero{{if $heroImg}} has-img{{else if $heroAnim}} has-anim{{end}}">
+      {{if $heroImg}}<img class="bcp-hero-img" src="{{$heroImg}}" alt="{{.Site.HeroAlt}}" decoding="async" fetchpriority="high"{{imgAttrs $heroImg}}>{{end}}
+      <div class="bcp-hero-inner">
+        <div class="bcp-hero-copy">
+          {{if .Site.HeroEyebrow}}<p class="dt-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+          <h1 class="bcp-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+          {{if .Site.HeroDescription}}<p class="bcp-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+          <div class="bcp-cta">
+            <a class="btn btn-primary" href="{{.Tr.U "/products"}}">{{.Tr.T "dtc.shop_now"}} <span class="arrow" aria-hidden="true">→</span></a>
+            {{if .Contact.Any}}<a class="btn dt-btn-ghost" href="#dtc-contact">{{.Tr.T "contact.float_label"}}</a>{{end}}
+          </div>
+        </div>
+        {{if $heroSVG}}<div class="bcp-hero-side dt-embed" aria-hidden="true">{{safeHTML .Site.HeroSVG}}</div>
+        {{else if $heroAnim}}<div class="bcp-hero-side dt-heroanim" aria-hidden="true">{{template "dtc_hero_anim" .}}</div>{{end}}
+      </div>
+    </section>
+
+    {{if .FactoryCats}}
+    <nav class="bcp-routes" aria-label="{{.Tr.T "factory.categories"}}">
+      {{range .FactoryCats}}
+      <a class="bcp-route" href="{{$.Tr.U .URL}}"><span>{{.Name}}</span><small>{{.Count}}</small></a>
+      {{end}}
+    </nav>
+    {{end}}
+
+    {{if .FactoryProducts}}
+    <section class="bcp-section bcp-gear">
+      <div class="dt-head">
+        <div>
+          <p class="dt-eyebrow">{{.Tr.T "dtc.label.products"}}</p>
+          <h2>{{.Tr.T "factory.products"}}</h2>
+        </div>
+        <a href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="bcp-manifest">
+        {{range .FactoryProducts}}
+        {{$chips := productChips .}}
+        <a class="bcp-row" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+          <span class="bcp-row-thumb{{if not .CoverImage}} dt-gen{{end}}">
+            {{if .CoverImage}}<img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}
+          </span>
+          <span class="bcp-row-main">
+            <span class="bcp-row-name">{{.Title}}</span>
+            {{if gt (len $chips) 1}}<span class="f-chips bcp-row-chips">{{range $i, $c := $chips}}{{if gt $i 0}}<span class="f-chip"><b>{{$c.K}}</b><i>{{$c.V}}</i></span>{{end}}{{end}}</span>{{end}}
+          </span>
+          {{with $chips}}{{with index . 0}}<span class="bcp-row-load"><b>{{.K}}</b><i>{{.V}}</i></span>{{end}}{{end}}
+        </a>
+        {{end}}
+      </div>
+    </section>
+    {{end}}
+
+    {{if .FactoryStats}}
+    <section class="bcp-section bcp-stats-sec">
+      <div class="dt-head">
+        <div>
+          <p class="dt-eyebrow">{{.Tr.T "dtc.label.story"}}</p>
+          <h2>{{.Tr.T "dtc.story"}}</h2>
+        </div>
+      </div>
+      <dl class="dt-stats bcp-stats">
+        {{range .FactoryStats}}
+        <div class="dt-stat"><dt>{{.Num}}</dt><dd>{{.Label}}</dd></div>
+        {{end}}
+      </dl>
+    </section>
+    {{end}}
+
+    {{if .FactoryGallery}}
+    <section class="bcp-section bcp-field">
+      <div class="dt-head">
+        <div>
+          <p class="dt-eyebrow">{{.Tr.T "dtc.label.scenes"}}</p>
+          <h2>{{.Tr.T "dtc.scenes"}}</h2>
+        </div>
+      </div>
+      {{template "factory_gallery" .}}
+    </section>
+    {{end}}
+
+    {{if .DTCTestimonials}}
+    <section class="bcp-section bcp-reviews">
+      <div class="dt-head">
+        <div>
+          <p class="dt-eyebrow">{{.Tr.T "dtc.label.reviews"}}</p>
+          <h2>{{.Tr.T "dtc.reviews"}}</h2>
+        </div>
+      </div>
+      {{template "dtc_testimonials" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryQAs}}
+    <section class="bcp-section bcp-faq">
+      <div class="dt-head"><div><p class="dt-eyebrow">{{.Tr.T "dtc.label.guide"}}</p><h2>{{.Tr.T "factory.faq"}}</h2></div></div>
+      {{template "factory_faq" .}}
+    </section>
+    {{end}}
+  </div>
+
+  {{template "dtc_cta" .}}
+{{end}}

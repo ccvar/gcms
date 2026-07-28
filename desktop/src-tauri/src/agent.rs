@@ -84,7 +84,7 @@ fn parse_codex_version(text: &str) -> Option<(u32, u32, u32)> {
     text.split_whitespace().find_map(parse_version_triplet)
 }
 
-fn parse_version_triplet(text: &str) -> Option<(u32, u32, u32)> {
+pub(crate) fn parse_version_triplet(text: &str) -> Option<(u32, u32, u32)> {
     let trimmed = text.trim_start_matches(['v', 'V']);
     let mut parts = trimmed.split('.');
     let major = parts.next()?.parse().ok()?;
@@ -152,6 +152,9 @@ struct PermSpec {
     pending_dir: PathBuf,
     /// AI 桥脚本路径：钩子要靠它认出「桥命令」并放行（桥自己会弹卡），见 permit::is_bridge_cmd。
     ssh_js: PathBuf,
+    /// fast 模式（Claude 的 `fastMode` settings 键）。跟着 `--settings` 一起下去，
+    /// 因为那个槽只有一个、必须和权限钩子合并 —— 见 permit::claude_flags。
+    fast: bool,
 }
 
 /// Claude 的多行系统提示不能直接作为 `.cmd/.bat` 参数传递（Windows 会拒绝 CR/LF）。
@@ -196,10 +199,244 @@ impl Drop for ScopedPromptFile {
 #[derive(Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum TurnEvent {
-    Delta { text: String },
-    Tool { label: String, detail: String },
-    ContextCompacted { pre_tokens: u64 },
-    Done { ok: bool, error: String },
+    Delta {
+        text: String,
+    },
+    Tool {
+        label: String,
+        detail: String,
+    },
+    /// 仅供本轮实时界面消费的执行活动。它把三家 CLI/ACP 各自的工具生命周期
+    /// 归一成同一套状态，不写入 Conversation，也不替模型编造业务进度。
+    Activity {
+        activity_id: String,
+        label: String,
+        detail: String,
+        status: String,
+    },
+    /// GCMS 高风险操作的服务端解锁要求。它只从工具结果提取并经本轮
+    /// Channel 送到原生 UI，不进入 TurnResult/会话消息。页面操作额外
+    /// 携带服务端签名 challenge；其它控制操作只允许严格白名单里的 operation。
+    GcmsUnlockRequired {
+        operation: String,
+        unlock_challenge: String,
+        admin_path: String,
+    },
+    ContextCompacted {
+        pre_tokens: u64,
+    },
+    Done {
+        ok: bool,
+        error: String,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct GcmsUnlockRequest {
+    pub operation: String,
+    pub unlock_challenge: String,
+    pub admin_path: String,
+}
+
+fn valid_page_unlock_operation(operation: &str) -> bool {
+    matches!(
+        operation,
+        "pages.publish" | "pages.rollback" | "page_capabilities.grant"
+    )
+}
+
+fn valid_control_unlock_operation(operation: &str) -> bool {
+    matches!(
+        operation,
+        "sites.delete"
+            | "categories.delete"
+            | "navigation.delete"
+            | "themes.apply_live"
+            | "domains.apply"
+            | "public_access.apply"
+            | "public_access.clear_unverified"
+            | "pages.publish"
+            | "pages.rollback"
+            | "page_capabilities.grant"
+    )
+}
+
+fn unlock_operation_from_message(message: &str) -> Option<&'static str> {
+    const OPERATIONS: [&str; 10] = [
+        "sites.delete",
+        "categories.delete",
+        "navigation.delete",
+        "themes.apply_live",
+        "domains.apply",
+        "public_access.apply",
+        "public_access.clear_unverified",
+        "pages.publish",
+        "pages.rollback",
+        "page_capabilities.grant",
+    ];
+    let mut matches = OPERATIONS
+        .iter()
+        .copied()
+        .filter(|operation| message.contains(operation));
+    let operation = matches.next()?;
+    matches.next().is_none().then_some(operation)
+}
+
+fn valid_page_unlock_challenge(token: &str) -> bool {
+    let Some(body) = token.strip_prefix("gcmspc_") else {
+        return false;
+    };
+    (20..=96).contains(&body.len())
+        && body
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+}
+
+fn page_id_from_admin_path(path: &str) -> Option<i64> {
+    let raw = path
+        .strip_prefix("/admin/pages/")?
+        .strip_suffix("/project")?;
+    if raw.is_empty() || raw.contains('/') || raw.starts_with('0') {
+        return None;
+    }
+    raw.parse::<i64>().ok().filter(|id| *id > 0)
+}
+
+fn gcms_unlock_candidate(value: &serde_json::Value) -> Option<GcmsUnlockRequest> {
+    let object = value.as_object()?;
+    let unlock_required = object.get("unlock_required").and_then(|v| v.as_bool()) == Some(true)
+        || object.get("error").and_then(|v| v.as_str()) == Some("unlock_required");
+    if !unlock_required {
+        return None;
+    }
+    let operation = object
+        .get("operation")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            object
+                .get("message")
+                .and_then(|value| value.as_str())
+                .and_then(unlock_operation_from_message)
+        })?;
+    if !valid_control_unlock_operation(operation) {
+        return None;
+    }
+    if !valid_page_unlock_operation(operation) {
+        if object
+            .get("unlock_challenge")
+            .and_then(|value| value.as_str())
+            .is_some_and(|value| !value.trim().is_empty())
+            || object
+                .get("admin_path")
+                .and_then(|value| value.as_str())
+                .is_some_and(|value| !value.trim().is_empty())
+        {
+            return None;
+        }
+        return Some(GcmsUnlockRequest {
+            operation: operation.to_string(),
+            unlock_challenge: String::new(),
+            admin_path: String::new(),
+        });
+    }
+    let unlock_challenge = object.get("unlock_challenge")?.as_str()?.trim();
+    if !valid_page_unlock_challenge(unlock_challenge) {
+        return None;
+    }
+    let admin_path = object.get("admin_path")?.as_str()?.trim();
+    let page_id = page_id_from_admin_path(admin_path)?;
+    if let Some(expected) = object.get("page_id").and_then(|v| v.as_i64()) {
+        if expected != page_id {
+            return None;
+        }
+    }
+    Some(GcmsUnlockRequest {
+        operation: operation.to_string(),
+        unlock_challenge: unlock_challenge.to_string(),
+        admin_path: admin_path.to_string(),
+    })
+}
+
+fn gcms_unlock_from_tool_payload_inner(
+    value: &serde_json::Value,
+    depth: usize,
+) -> Option<GcmsUnlockRequest> {
+    if depth > 16 {
+        return None;
+    }
+    if let Some(candidate) = gcms_unlock_candidate(value) {
+        return Some(candidate);
+    }
+    match value {
+        serde_json::Value::Array(values) => values
+            .iter()
+            .find_map(|value| gcms_unlock_from_tool_payload_inner(value, depth + 1)),
+        serde_json::Value::Object(values) => values
+            .values()
+            .find_map(|value| gcms_unlock_from_tool_payload_inner(value, depth + 1)),
+        serde_json::Value::String(raw) if raw.len() <= 1_048_576 => {
+            let trimmed = raw.trim();
+            let parsed = serde_json::from_str::<serde_json::Value>(trimmed)
+                .ok()
+                .or_else(|| {
+                    let start = trimmed.find('{')?;
+                    let end = trimmed.rfind('}')?;
+                    (end > start)
+                        .then(|| {
+                            serde_json::from_str::<serde_json::Value>(&trimmed[start..=end]).ok()
+                        })
+                        .flatten()
+                })?;
+            gcms_unlock_from_tool_payload_inner(&parsed, depth + 1)
+        }
+        _ => None,
+    }
+}
+
+/// Extract a page unlock request from a tool-result payload. Callers must pass
+/// only result/output fields, never assistant prose or tool inputs.
+pub(crate) fn gcms_unlock_from_tool_payload(
+    value: &serde_json::Value,
+) -> Option<GcmsUnlockRequest> {
+    gcms_unlock_from_tool_payload_inner(value, 0)
+}
+
+fn send_gcms_unlock_request(ch: &Channel<TurnEvent>, request: GcmsUnlockRequest) {
+    let _ = ch.send(TurnEvent::GcmsUnlockRequired {
+        operation: request.operation,
+        unlock_challenge: request.unlock_challenge,
+        admin_path: request.admin_path,
+    });
+}
+
+/// Server challenges are deliberately ephemeral. Even if an assistant echoes
+/// one in its final prose, redact it before TurnResult can reach ConvStore.
+pub(crate) fn redact_gcms_unlock_challenges(text: &str) -> String {
+    const PREFIX: &str = "gcmspc_";
+    const REDACTED: &str = "[页面确认挑战已由 Pilot 临时接管]";
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    loop {
+        let Some(offset) = rest.find(PREFIX) else {
+            out.push_str(rest);
+            break;
+        };
+        out.push_str(&rest[..offset]);
+        let token = &rest[offset..];
+        let end = token
+            .bytes()
+            .position(|b| !(b.is_ascii_alphanumeric() || b == b'_' || b == b'-'))
+            .unwrap_or(token.len());
+        if end >= PREFIX.len() + 20 {
+            out.push_str(REDACTED);
+        } else {
+            out.push_str(&token[..end]);
+        }
+        rest = &token[end..];
+    }
+    out
 }
 
 pub struct TurnResult {
@@ -325,6 +562,22 @@ pub fn system_prompt(task_type: &str, site_slug: &str, site_name: &str) -> Strin
 扩展类型（产品/文档/活动/图库/自定义），返回的字段 schema 就是操作契约：list/create/update 对\
 扩展集合同样可用，自定义字段放 `fields:{{...}}`。需要新的内容形态（如案例库/菜谱/招聘岗位）时，\
 先把内容模型（类型名+字段清单）讲给用户、征得同意后再 type-create；类型是站点级结构，别随手建。\n\
+【自由编排页面：Pilot 优先】用户提出创建或修改宣传页、专题页、内容聚合页等自由编排页面时，\
+不要把用户赶到网页后台，也不要要求用户自己拼 Manifest。先运行 `node scripts/gcms.js page-context --site {slug}` 和\
+`node scripts/gcms.js page-capabilities --site {slug}`，以实时返回的主题、组件、数据源、操作权限和协议为准；\
+已有页面先用 `node scripts/gcms.js page-projects --site {slug} --lang <语种> --slug <slug>` 找到真实 project id 与最新 ETag；\
+默认使用 `theme.inherit=true`、`shell=site`（Manifest 中为 `shell.mode=site`），继承站点字体、颜色、圆角、导航和页脚。\
+动态区域必须读取 page-components、page-data-sources 并通过 page-binding-preview 使用真实数据绑定，\
+不得把文章、产品等站内业务数据复制或硬编码进页面 props；只有页面自身的展示文案可以写入 Manifest。\n\
+用户明确提出创建或修改页面，就可以在 Pilot 内生成或更新草稿，不要为每个安全的草稿步骤反复确认。\
+每次实质修改都必须基于最新 ETag/base revision 创建新修订，随后依次运行 page-validate、page-build、page-preview；\
+把 page-build 返回的 ready build id 传给 page-preview、发布预检和正式发布，确保预览与发布绑定同一产物及真实数据快照，\
+并在回复中给出可打开的预览与简短变更摘要；校验或构建失败时先修好草稿再交付。\
+除非用户明确要求发布，否则不要运行 page-publish-plan 或 page-publish，也不要把草稿说成已上线。\
+正式发布、回滚或能力批准返回 `unlock_required` 时，停止重试并等待 Pilot 原生界面；\
+不要在助手回复中复述 `unlock_challenge`，该挑战由 Pilot 从工具结果临时接管。\
+遇到 409、revision_conflict 或 ETag 变化时，重新运行 page-get（必要时也重读 page-context），比较最新修订并创建合并后的新修订；\
+禁止覆盖他人的修改、重放旧快照或盲目重试。能力缺失时在对话中说明具体阻塞与可继续完成的部分，不要把操作责任推回网页后台。\n\
 交互方式：以对话推进——先理解用户意图，必要时提问澄清，给出简短方案并征得同意后再动手；\
 动手时边做边用一两句话说明你在做什么；每完成一步给出结果（如新建内容的 ID、预览或后台链接，可用 `preview-url`）。\
 回答用中文，简洁自然，不要长篇大论。运行命令（Bash）时 description 字段一律用中文写清这条命令做什么、\
@@ -370,6 +623,31 @@ pub fn workspace_system_prompt(has_folder: bool) -> String {
 不得查找、读取或使用 GCMS_API_KEY、GCMS_API_BASE、CLOUDFLARE_API_TOKEN、站点技能包或当前 Pilot 连接信息；\
 不要运行 gcms.js，也不要假设存在目标站点。{workspace}\n\
 先理解用户意图，必要时简短澄清；涉及文件修改时先说明影响并遵守当前权限档位。回答使用用户所用语言，简洁自然。"
+    )
+}
+
+/// 普通对话的模型进程只在当前回合存活。Claude/Codex 自己启动的后台命令既不受
+/// Pilot TaskStore 管理，也没有可供下一轮重新订阅的完成事件。因此每一轮都注入这条
+/// 运行时约束（而不只放在首轮 system prompt），让既有 session 也立即生效。
+///
+/// SSH 会话例外：它有独立桥接租约和明确的远程运维提示，长编译等允许由用户通过日志
+/// 分次查看；这里处理的是 GCMS/Cloudflare/workspace 对话中“说稍后自动继续、实际无人
+/// 接收结果”的假后台任务。
+fn conversation_completion_policy(message: &str, connection_kind: &str) -> String {
+    if connection_kind == "ssh" {
+        return message.to_string();
+    }
+    format!(
+        "{message}\n\n\
+<pilot-runtime-policy>\n\
+当前请求需要用工具采集、生成、检查或执行后才能回答时，必须在本回合内等到工具结束并返回真实结果。\
+不要把这类工作留成无人接收的后台任务，也不要在结果尚未就绪时结束回合并声称“稍后会自动继续”。\
+不得为这类工作使用 run_in_background、nohup、shell `&` 或其它脱离当前回合的方式；应以前台方式执行\
+并等待 completed、failed 或 canceled 后再回复，不得让 pending/running 的任务跨出本回合。周期性或\
+确实需要脱离当前对话运行的工作，只能\
+通过 Pilot 原生定时任务建议交给用户确认。无法在本回合完成时，明确说明中断点和可恢复状态，不得假装\
+仍在运行。\n\
+</pilot-runtime-policy>"
     )
 }
 
@@ -554,11 +832,17 @@ pub fn ssh_system_prompt(user: &str, host: &str, port: u16, ssh_js: &str) -> Str
 /// gcms 会话教「截图→确认→转 WebP→上传→插入文章」；CF 会话教「截本地预览自查 / 截参考站」。
 pub fn shot_prompt(shot_path: &str, is_cf: bool) -> String {
     let common = format!(
-        "【网页截图】需要网页截图时用随附的无头截图工具（后台渲染、不弹窗）：\n\
+        "【网页截图】需要网页截图时先用随附工具自动后台渲染：\n\
 `node \"{shot_path}\" --url <URL> --out shots/名字.png [--width 1280] [--full-page] [--wait 3000]`\n\
-成功输出 JSON（含文件路径），失败会给出原因。截完**必须用 Read 打开图片确认**内容正确\
+成功输出 JSON（含文件路径和最终 URL），失败返回结构化 `code`、`detail` 与是否可见重试。\
+若 `code=verification_required` 且 `visible_retry_available=true`，先用一句话告诉用户将打开\
+Pilot 专用浏览器协助验证，再把**同一条命令**加 `--visible --timeout 120000` 重试；该浏览器\
+使用 Pilot 独立配置，不读取用户日常 Chrome。用户只需在弹出的窗口处理网页自身的真人验证，\
+验证消失后工具会自动截图并关闭。不得要求用户自己保存、上传截图，也不得在该专用浏览器中\
+代填密码、验证码或登录账号；若返回 `login_required`，停止并说明该页面必须登录。\n\
+截完**必须用 Read 打开图片确认**内容正确\
 ——打不开的页面 Chrome 会把自己的错误页截下来，所以要看图排除：错误页 / 验证码 / 空白页 / Cookie 弹窗。\
-不对就加大 --wait 重截或换 URL；需要登录或反爬的页面截不了就直说，别硬试。"
+不对就依据真实 `code/detail` 调整一次；禁止把所有失败笼统说成“反爬”，也不要反复启动可见浏览器。"
     );
     if is_cf {
         format!(
@@ -568,7 +852,11 @@ pub fn shot_prompt(shot_path: &str, is_cf: bool) -> String {
     } else {
         format!(
             "{common}\n\
-用途：给文章配网页截图——确认无误后转 WebP（`cwebp 输入.png -o 输出.webp`，macOS 也可 \
+用途一：自由编排页面每次完成 build-bound 私有预览后，必须按 page-context 返回的视口做视觉验收；\
+至少截桌面 1280、平板 768 和手机 390（手机高度 844），逐张用 Read 打开，检查横向溢出、裁切、\
+导航遮挡、字号/对比度、间距节奏、真实图片与数据卡片。发现问题先创建新修订并重新\
+validate → build → preview → 截图，三张都通过后才把预览交给用户；截图不是发布授权。\n\
+用途二：给文章配网页截图——确认无误后转 WebP（`cwebp 输入.png -o 输出.webp`，macOS 也可 \
 `sips -s format webp 输入.png --out 输出.webp`），用 `node scripts/gcms.js upload` 上传拿 url，\
 以 Markdown 图片插入文章。注意版权：优先截步骤 / 界面等事实性画面，不要整版搬运他人内容。"
         )
@@ -615,6 +903,8 @@ pub async fn run_turn(
     model: String,
     perm_mode: String,
     effort: String,
+    // fast 模式：只有 Opus 5 / Opus 4.8 支持（CLI 2.1.205+ 才认 headless 的 fastMode 键）。
+    fast: bool,
     data_dir: PathBuf,
     ssh: crate::ssh::SshSessions,
     session_ref: String,
@@ -624,6 +914,9 @@ pub async fn run_turn(
     turn_id: String,
     channel: Channel<TurnEvent>,
 ) -> TurnResult {
+    // 用户消息仍按原文写入 conversations.json；这里只增强发给执行器的临时副本。
+    // 每轮注入才能覆盖升级前已经建立的 Claude/Codex session。
+    let message = conversation_completion_policy(&message, &conn.kind);
     // ssh 连接没有 API key（密码/口令是给 Pilot 连机器用的，绝不进子进程），
     // 且无口令私钥根本没有钥匙串条目 —— 这里拿不到不算错。
     let api_key = if conn.kind == "ssh" || conn.kind == "workspace" {
@@ -658,6 +951,7 @@ pub async fn run_turn(
         gen_dir: permit_base.join("hooks").join(&turn_id),
         pending_dir: permit_base.join("pending"),
         ssh_js: crate::tools::ssh_js_path(&data_dir),
+        fast,
     };
 
     let work_dir = if work_dir.trim().is_empty() {
@@ -914,10 +1208,12 @@ pub async fn run_turn(
     } else {
         String::new()
     };
-    let error = clarify_claude_cli_error(&brain, error);
+    let error = redact_gcms_unlock_challenges(&clarify_claude_cli_error(&brain, error));
 
+    // 挑战先脱敏再解析提议，避免它藏进 PILOT_TASK 参数或普通助手正文后落库。
+    let persisted_text = redact_gcms_unlock_challenges(&c.text);
     // 从助手文本里剥出 PILOT_TASK 提议（并把那行从展示文本移除）。
-    let (clean_text, proposal) = extract_proposal(&c.text);
+    let (clean_text, proposal) = extract_proposal(&persisted_text);
     // 生图产物：只补真实存在的文件（模型可能提了没写出来的路径）。
     let clean_text = if ok && !c.images.is_empty() {
         let existing: Vec<String> = c
@@ -945,7 +1241,14 @@ pub async fn run_turn(
     TurnResult {
         ok,
         text: clean_text,
-        tools: c.tools,
+        tools: c
+            .tools
+            .into_iter()
+            .map(|mut tool| {
+                tool.detail = redact_gcms_unlock_challenges(&tool.detail);
+                tool
+            })
+            .collect(),
         error,
         session_ref: c.session_ref,
         proposal,
@@ -1181,7 +1484,9 @@ fn build_claude(
     // 只挡形似参数/含空白的非法值。claude --model 同时接受别名与完整 ID。
     let model = model.trim();
     let model = if model.is_empty() {
-        "sonnet"
+        // 显式 ID 而非别名 'sonnet'：别名由 CLI 解析且会落后（2.1.96 解析成 4.6），
+        // 与 Pilot 界面「Sonnet 5」的承诺对不上。
+        "claude-sonnet-5"
     } else if model.starts_with('-') || model.contains(char::is_whitespace) {
         return Err(format!("无效的模型标识: {model}"));
     } else {
@@ -1194,6 +1499,7 @@ fn build_claude(
         &perm.gen_dir,
         &perm.pending_dir,
         &perm.ssh_js,
+        perm.fast,
     )?;
     let prompt_file = if is_first {
         system
@@ -1245,6 +1551,13 @@ fn build_claude(
         cmd.env("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE", "90");
     }
     apply_env_cwd(&mut cmd, conn, work_dir, api_key, lease);
+    // 用户在 Pilot 中粘贴的 Claude 订阅 Token 只存在系统安全存储；每轮启动 Claude
+    // 时临时注入，不写 shell profile、settings.json 或对话记录。
+    if let Some(token) = keychain::claude_oauth_token()? {
+        cmd.env_remove("ANTHROPIC_AUTH_TOKEN")
+            .env_remove("ANTHROPIC_API_KEY")
+            .env("CLAUDE_CODE_OAUTH_TOKEN", token);
+    }
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1359,7 +1672,26 @@ fn parse_stream(
     })
 }
 
+fn claude_gcms_unlock_request(ev: &serde_json::Value) -> Option<GcmsUnlockRequest> {
+    match ev.get("type").and_then(|value| value.as_str()) {
+        Some("user") => ev
+            .pointer("/message/content")
+            .and_then(|value| value.as_array())?
+            .iter()
+            .filter(|block| {
+                block.get("type").and_then(|value| value.as_str()) == Some("tool_result")
+            })
+            .find_map(|block| gcms_unlock_from_tool_payload(block.get("content").unwrap_or(block))),
+        Some("tool_result") => gcms_unlock_from_tool_payload(ev.get("content").unwrap_or(ev)),
+        _ => None,
+    }
+}
+
 fn parse_claude(ev: &serde_json::Value, ch: &Channel<TurnEvent>, collect: &Arc<Mutex<Collect>>) {
+    if let Some(request) = claude_gcms_unlock_request(ev) {
+        send_gcms_unlock_request(ch, request);
+    }
+    send_claude_tool_result_activity(ev, ch);
     match ev.get("type").and_then(|t| t.as_str()) {
         Some("system") if claude_compact_pre_tokens(ev).is_some() => {
             let pre_tokens = claude_compact_pre_tokens(ev).unwrap_or(0);
@@ -1387,6 +1719,20 @@ fn parse_claude(ev: &serde_json::Value, ch: &Channel<TurnEvent>, collect: &Arc<M
                     if b.get("type").and_then(|t| t.as_str()) == Some("tool_use") {
                         let name = b.get("name").and_then(|n| n.as_str()).unwrap_or("tool");
                         let detail = tool_detail(name, &b["input"]);
+                        if let Some(activity_id) = b.get("id").and_then(|id| id.as_str()) {
+                            let _ = ch.send(TurnEvent::Activity {
+                                activity_id: activity_id.to_string(),
+                                label: name.to_string(),
+                                detail: b
+                                    .pointer("/input/description")
+                                    .and_then(|value| value.as_str())
+                                    .unwrap_or(&detail)
+                                    .chars()
+                                    .take(200)
+                                    .collect(),
+                                status: "running".into(),
+                            });
+                        }
                         collect.lock().unwrap().tools.push(ToolCall {
                             label: name.into(),
                             detail: detail.clone(),
@@ -1425,6 +1771,52 @@ fn parse_claude(ev: &serde_json::Value, ch: &Channel<TurnEvent>, collect: &Arc<M
     }
 }
 
+fn send_claude_tool_result_activity(ev: &serde_json::Value, ch: &Channel<TurnEvent>) {
+    let send_result = |block: &serde_json::Value| {
+        let Some((activity_id, status)) = claude_tool_result_activity(block) else {
+            return;
+        };
+        let _ = ch.send(TurnEvent::Activity {
+            activity_id,
+            label: String::new(),
+            detail: String::new(),
+            status,
+        });
+    };
+    match ev.get("type").and_then(|value| value.as_str()) {
+        Some("user") => {
+            if let Some(blocks) = ev
+                .pointer("/message/content")
+                .and_then(|value| value.as_array())
+            {
+                for block in blocks {
+                    send_result(block);
+                }
+            }
+        }
+        Some("tool_result") => send_result(ev),
+        _ => {}
+    }
+}
+
+fn claude_tool_result_activity(block: &serde_json::Value) -> Option<(String, String)> {
+    if block.get("type").and_then(|value| value.as_str()) != Some("tool_result") {
+        return None;
+    }
+    let activity_id = block
+        .get("tool_use_id")
+        .or_else(|| block.get("id"))
+        .and_then(|value| value.as_str())?;
+    let failed = block
+        .get("is_error")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    Some((
+        activity_id.to_string(),
+        if failed { "failed" } else { "completed" }.into(),
+    ))
+}
+
 fn claude_compact_pre_tokens(ev: &serde_json::Value) -> Option<u64> {
     (ev.get("type").and_then(|t| t.as_str()) == Some("system")
         && ev.get("subtype").and_then(|t| t.as_str()) == Some("compact_boundary"))
@@ -1435,7 +1827,28 @@ fn claude_compact_pre_tokens(ev: &serde_json::Value) -> Option<u64> {
     })
 }
 
+fn codex_gcms_unlock_request(ev: &serde_json::Value) -> Option<GcmsUnlockRequest> {
+    if ev.get("type").and_then(|value| value.as_str()) != Some("item.completed") {
+        return None;
+    }
+    let item = ev.get("item")?;
+    let item_type = item.get("type").and_then(|value| value.as_str())?;
+    let result_keys: &[&str] = match item_type {
+        "command_execution" => &["aggregated_output", "output", "result"],
+        "mcp_tool_call" | "tool_call" | "dynamic_tool_call" | "function_call_output" => {
+            &["result", "output", "content"]
+        }
+        _ => return None,
+    };
+    result_keys
+        .iter()
+        .find_map(|key| item.get(*key).and_then(gcms_unlock_from_tool_payload))
+}
+
 fn parse_codex(ev: &serde_json::Value, ch: &Channel<TurnEvent>, collect: &Arc<Mutex<Collect>>) {
+    if let Some(request) = codex_gcms_unlock_request(ev) {
+        send_gcms_unlock_request(ch, request);
+    }
     // 生图工具的产物只出现在工具结果事件里、不进对话正文——从所有事件里顺手收集。
     {
         let mut imgs = Vec::new();
@@ -1462,8 +1875,20 @@ fn parse_codex(ev: &serde_json::Value, ch: &Channel<TurnEvent>, collect: &Arc<Mu
                 collect.lock().unwrap().session_ref = id.to_string();
             }
         }
+        Some("item.started") => {
+            send_codex_activity(&ev["item"], "running", ch);
+        }
         Some("item.completed") => {
             let it = &ev["item"];
+            send_codex_activity(
+                it,
+                if it.get("status").and_then(|value| value.as_str()) == Some("failed") {
+                    "failed"
+                } else {
+                    "completed"
+                },
+                ch,
+            );
             match it.get("type").and_then(|t| t.as_str()) {
                 Some("agent_message") => {
                     if let Some(t) = it.get("text").and_then(|t| t.as_str()) {
@@ -1505,6 +1930,59 @@ fn parse_codex(ev: &serde_json::Value, ch: &Channel<TurnEvent>, collect: &Arc<Mu
         }
         _ => {}
     }
+}
+
+fn send_codex_activity(item: &serde_json::Value, status: &str, ch: &Channel<TurnEvent>) {
+    let Some((activity_id, label, detail, status)) = codex_activity(item, status) else {
+        return;
+    };
+    let _ = ch.send(TurnEvent::Activity {
+        activity_id,
+        label,
+        detail,
+        status,
+    });
+}
+
+fn codex_activity(
+    item: &serde_json::Value,
+    status: &str,
+) -> Option<(String, String, String, String)> {
+    let item_type = item
+        .get("type")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    if !matches!(
+        item_type,
+        "command_execution"
+            | "mcp_tool_call"
+            | "tool_call"
+            | "dynamic_tool_call"
+            | "function_call"
+            | "function_call_output"
+    ) {
+        return None;
+    }
+    let activity_id = ["id", "call_id", "tool_call_id"]
+        .iter()
+        .find_map(|key| item.get(*key).and_then(|value| value.as_str()))?;
+    let label = item.get("name").and_then(|value| value.as_str()).unwrap_or(
+        if item_type == "command_execution" {
+            "exec"
+        } else {
+            "tool"
+        },
+    );
+    let detail = ["description", "command", "title"]
+        .iter()
+        .find_map(|key| item.get(*key).and_then(|value| value.as_str()))
+        .unwrap_or("");
+    Some((
+        activity_id.to_string(),
+        label.to_string(),
+        detail.chars().take(200).collect(),
+        status.to_string(),
+    ))
 }
 
 fn tool_detail(name: &str, input: &serde_json::Value) -> String {
@@ -1567,6 +2045,22 @@ mod tests {
     }
 
     #[test]
+    fn normal_conversations_cannot_leave_answer_work_in_a_private_background_job() {
+        let prompt = conversation_completion_policy("检查 20 个站点", "gcms");
+        assert!(prompt.starts_with("检查 20 个站点"));
+        assert!(prompt.contains("不得为这类工作使用 run_in_background"));
+        assert!(prompt.contains("并等待 completed、failed 或 canceled"));
+        assert!(prompt.contains("不得让 pending/running 的任务跨出本回合"));
+        assert!(prompt.contains("不得假装"));
+    }
+
+    #[test]
+    fn ssh_conversations_keep_their_explicit_remote_background_policy() {
+        let message = "后台编译并稍后查看日志";
+        assert_eq!(conversation_completion_policy(message, "ssh"), message);
+    }
+
+    #[test]
     fn codex_version_parser_accepts_cli_output_and_prerelease_suffix() {
         assert_eq!(parse_codex_version("codex-cli 0.144.1"), Some((0, 144, 1)));
         assert_eq!(
@@ -1612,6 +2106,49 @@ mod tests {
         let legacy = platform_sitebuild_system_prompt("GCMS", "main", "主站");
         assert!(legacy.contains("只可用于读取结构或风格参考"));
         assert!(legacy.contains("必须创建一个不同 slug 的新站点"));
+    }
+
+    #[test]
+    fn gcms_site_prompt_keeps_page_work_inside_pilot() {
+        let prompt = system_prompt("siteops", "demo-site", "演示站");
+        for required in [
+            "page-context --site demo-site",
+            "page-capabilities --site demo-site",
+            "page-projects --site demo-site",
+            "theme.inherit=true",
+            "shell=site",
+            "shell.mode=site",
+            "page-components",
+            "page-data-sources",
+            "page-binding-preview",
+            "真实数据绑定",
+            "page-validate",
+            "page-build",
+            "page-preview",
+            "可打开的预览",
+            "简短变更摘要",
+            "除非用户明确要求发布",
+            "page-publish-plan",
+            "page-publish",
+            "不要在助手回复中复述 `unlock_challenge`",
+            "重新运行 page-get",
+            "创建合并后的新修订",
+            "不要把操作责任推回网页后台",
+        ] {
+            assert!(
+                prompt.contains(required),
+                "单站页面工作流提示缺少关键约束：{required}"
+            );
+        }
+        assert!(
+            prompt.find("page-context").unwrap() < prompt.find("page-capabilities").unwrap(),
+            "必须先读取页面上下文，再判断页面平台能力"
+        );
+        assert!(
+            prompt.find("page-validate").unwrap() < prompt.find("page-build").unwrap()
+                && prompt.find("page-build").unwrap() < prompt.find("page-preview").unwrap(),
+            "草稿修改后必须按 validate → build → preview 顺序交付"
+        );
     }
 
     /// 目录非空时必须明确告诉模型「先读再改、别推倒重写」——这是内置模板能不能生效的**唯一**开关。
@@ -1727,6 +2264,7 @@ mod tests {
             gen_dir: root.join("hooks"),
             pending_dir: root.join("pending"),
             ssh_js: root.join("ssh.js"),
+            fast: false,
         };
 
         let system = "系统规则第一行\r\n系统规则第二行";
@@ -1904,6 +2442,239 @@ mod tests {
         let g = c.lock().unwrap();
         assert_eq!(g.tools.len(), 1);
         assert!(g.tools[0].detail.contains("gcms.js"));
+    }
+
+    #[test]
+    fn claude_and_codex_activity_helpers_preserve_real_terminal_states() {
+        assert_eq!(
+            claude_tool_result_activity(&json!({
+                "type": "tool_result",
+                "tool_use_id": "tool-1",
+                "content": "done"
+            })),
+            Some(("tool-1".into(), "completed".into()))
+        );
+        assert_eq!(
+            claude_tool_result_activity(&json!({
+                "type": "tool_result",
+                "tool_use_id": "tool-2",
+                "is_error": true,
+                "content": "failed"
+            })),
+            Some(("tool-2".into(), "failed".into()))
+        );
+        assert!(claude_tool_result_activity(&json!({
+            "type": "assistant",
+            "content": "not a tool result"
+        }))
+        .is_none());
+
+        let started = codex_activity(
+            &json!({
+                "type": "command_execution",
+                "id": "item-1",
+                "command": "npm run check"
+            }),
+            "running",
+        )
+        .expect("Codex command should become a live activity");
+        assert_eq!(
+            started,
+            (
+                "item-1".into(),
+                "exec".into(),
+                "npm run check".into(),
+                "running".into()
+            )
+        );
+        let completed = codex_activity(
+            &json!({
+                "type": "command_execution",
+                "id": "item-1",
+                "command": "npm run check"
+            }),
+            "completed",
+        )
+        .expect("same Codex item should reach a terminal state");
+        assert_eq!(completed.0, started.0);
+        assert_eq!(completed.3, "completed");
+        assert!(
+            codex_activity(
+                &json!({"type": "agent_message", "id": "message-1", "text": "done"}),
+                "completed"
+            )
+            .is_none(),
+            "assistant prose must not masquerade as execution progress"
+        );
+    }
+
+    fn unlock_payload(operation: &str) -> serde_json::Value {
+        json!({
+            "error": "publish_confirmation_required",
+            "unlock_required": true,
+            "operation": operation,
+            "unlock_challenge": "gcmspc_abcdefghijklmnopqrstuvwxyzABCDE1234567890_-",
+            "page_id": 42,
+            "admin_path": "/admin/pages/42/project"
+        })
+    }
+
+    #[test]
+    fn gcms_unlock_parser_is_narrow_and_targeted() {
+        for operation in ["pages.publish", "pages.rollback", "page_capabilities.grant"] {
+            let wrapped = json!({
+                "content": format!("command failed\n{}", unlock_payload(operation))
+            });
+            let request =
+                gcms_unlock_from_tool_payload(&wrapped).expect("valid tool result challenge");
+            assert_eq!(request.operation, operation);
+            assert_eq!(request.admin_path, "/admin/pages/42/project");
+            assert!(request.unlock_challenge.starts_with("gcmspc_"));
+        }
+
+        let mut denied = unlock_payload("sites.delete");
+        assert!(gcms_unlock_from_tool_payload(&denied).is_none());
+        denied["operation"] = json!("pages.publish");
+        denied["unlock_required"] = json!(false);
+        assert!(gcms_unlock_from_tool_payload(&denied).is_none());
+        denied["unlock_required"] = json!(true);
+        denied["unlock_challenge"] = json!("not-a-server-challenge");
+        assert!(gcms_unlock_from_tool_payload(&denied).is_none());
+        denied["unlock_challenge"] = json!("gcmspc_abcdefghijklmnopqrstuvwxyzABCDE1234567890_-");
+        denied["admin_path"] = json!("/admin/pages/41/project");
+        assert!(
+            gcms_unlock_from_tool_payload(&denied).is_none(),
+            "admin path must identify the same page as the signed response"
+        );
+    }
+
+    #[test]
+    fn gcms_unlock_parser_accepts_machine_readable_and_legacy_control_results() {
+        let structured = json!({
+            "error": "unlock_required",
+            "message": "操作 navigation.delete 需要在 Pilot 中输入后台密码重新授权。",
+            "unlock_required": true,
+            "operation": "navigation.delete"
+        });
+        let request =
+            gcms_unlock_from_tool_payload(&structured).expect("structured control unlock");
+        assert_eq!(request.operation, "navigation.delete");
+        assert!(request.unlock_challenge.is_empty());
+        assert!(request.admin_path.is_empty());
+
+        let legacy = json!({
+            "error": "unlock_required",
+            "message": "操作 categories.delete 需要在 Pilot 中输入后台密码重新授权。"
+        });
+        assert_eq!(
+            gcms_unlock_from_tool_payload(&legacy)
+                .expect("legacy server response remains compatible")
+                .operation,
+            "categories.delete"
+        );
+
+        assert!(gcms_unlock_from_tool_payload(&json!({
+            "error": "unlock_required",
+            "message": "operation plugins.install needs unlock",
+            "unlock_required": true,
+            "operation": "plugins.install"
+        }))
+        .is_none());
+        assert!(gcms_unlock_from_tool_payload(&json!({
+            "error": "unlock_required",
+            "message": "navigation.delete and sites.delete"
+        }))
+        .is_none());
+    }
+
+    #[test]
+    fn claude_and_codex_only_parse_tool_results_not_assistant_text() {
+        let payload = unlock_payload("pages.publish");
+        let claude_tool_result = json!({
+            "type": "user",
+            "message": {"content": [{
+                "type": "tool_result",
+                "tool_use_id": "tool-1",
+                "content": [{"type": "text", "text": payload.to_string()}]
+            }]}
+        });
+        assert_eq!(
+            claude_gcms_unlock_request(&claude_tool_result)
+                .expect("Claude tool result should emit")
+                .operation,
+            "pages.publish"
+        );
+        assert!(claude_gcms_unlock_request(&json!({
+            "type": "assistant",
+            "message": {"content": [{"type": "text", "text": payload.to_string()}]}
+        }))
+        .is_none());
+
+        let codex_tool_result = json!({
+            "type": "item.completed",
+            "item": {
+                "type": "command_execution",
+                "command": "node scripts/gcms.js page-publish",
+                "aggregated_output": payload.to_string()
+            }
+        });
+        assert_eq!(
+            codex_gcms_unlock_request(&codex_tool_result)
+                .expect("Codex command result should emit")
+                .operation,
+            "pages.publish"
+        );
+        assert!(codex_gcms_unlock_request(&json!({
+            "type": "item.completed",
+            "item": {"type": "agent_message", "text": payload.to_string()}
+        }))
+        .is_none());
+
+        let control = json!({
+            "error": "unlock_required",
+            "message": "操作 navigation.delete 需要在 Pilot 中输入后台密码重新授权。",
+            "unlock_required": true,
+            "operation": "navigation.delete"
+        });
+        assert_eq!(
+            claude_gcms_unlock_request(&json!({
+                "type": "tool_result",
+                "content": [{"type":"text","text":control.to_string()}]
+            }))
+            .expect("Claude control result should emit")
+            .operation,
+            "navigation.delete"
+        );
+        assert_eq!(
+            codex_gcms_unlock_request(&json!({
+                "type": "item.completed",
+                "item": {
+                    "type": "command_execution",
+                    "aggregated_output": control.to_string()
+                }
+            }))
+            .expect("Codex control result should emit")
+            .operation,
+            "navigation.delete"
+        );
+    }
+
+    #[test]
+    fn page_challenges_are_redacted_before_history_persistence() {
+        let challenge = "gcmspc_abcdefghijklmnopqrstuvwxyzABCDE1234567890_-";
+        let text = format!("unlock_required {challenge}\n{{\"unlock_challenge\":\"{challenge}\"}}");
+        let redacted = redact_gcms_unlock_challenges(&text);
+        assert!(!redacted.contains(challenge));
+        assert_eq!(
+            redacted
+                .matches("[页面确认挑战已由 Pilot 临时接管]")
+                .count(),
+            2
+        );
+        assert_eq!(
+            redact_gcms_unlock_challenges("gcmspc_short 保留"),
+            "gcmspc_short 保留"
+        );
     }
 
     #[test]

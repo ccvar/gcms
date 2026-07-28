@@ -1,0 +1,75 @@
+{{define "home_archway"}}
+  {{/* 门坊 Archway — 居中门坊：拱门线框精选 + 菱形花标条目行 + 居中双列小卡；
+       导航居中由 CSS 重塑标准 .site-header 实现，此处不再画主导航 */}}
+  <div class="aw-wrap">
+
+    <header class="aw-hero">
+      {{if .Site.HeroEyebrow}}<p class="aw-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+      <h1 class="aw-title"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+      {{if .Site.HeroDescription}}<p class="aw-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+      {{if .Categories}}
+      <nav class="aw-cats" aria-label="{{.Tr.T "nav.category"}}">
+        {{range .Categories}}<a class="aw-cat" href="{{$.Tr.U (printf "/category/%s" .Slug)}}"><span class="aw-cat-name">{{.Name}}</span><small class="aw-cat-n">{{.Count}}</small></a>{{end}}
+        <a class="aw-cat aw-cat-all" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}}</a>
+      </nav>
+      {{end}}
+    </header>
+
+    {{with .Featured}}
+    <section class="aw-front">
+      <a class="aw-arch" href="{{$.Tr.U (contentURL .)}}">
+        {{if .CoverImage}}<span class="aw-arch-cover"><img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}></span>
+        {{else}}<span class="aw-arch-mark" aria-hidden="true"><b>{{initial .Title}}</b></span>{{end}}
+        <span class="aw-kicker"><b>{{$.Site.HomeFeatured}}</b>{{with .Category}}<i class="aw-gem" aria-hidden="true"></i><span class="aw-kicker-cat">{{.Name}}</span>{{end}}</span>
+        <span class="aw-arch-t">{{.Title}}</span>
+        {{if .Excerpt}}<span class="aw-arch-ex">{{.Excerpt}}</span>{{end}}
+        <span class="aw-arch-btn">{{$.Tr.T "home.read_more"}} <span class="arrow" aria-hidden="true">→</span></span>
+        <time class="aw-arch-date" datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time>
+      </a>
+    </section>
+    {{end}}
+
+    {{if .Posts}}
+    <section class="aw-roll">
+      <div class="aw-head">
+        <h2 class="aw-head-t">{{.Site.HomeLatest}}</h2>
+        <a class="aw-head-all" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <ul class="aw-rows">
+        {{range .Posts}}
+        <li class="aw-row">
+          <a class="aw-row-in" href="{{$.Tr.U (contentURL .)}}">
+            <i class="aw-gem" aria-hidden="true"></i>
+            <span class="aw-row-body">
+              <span class="aw-row-t">{{.Title}}</span>
+              {{with .Category}}<span class="aw-row-cat">{{.Name}}</span>{{end}}
+            </span>
+            <time class="aw-row-date" datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time>
+          </a>
+        </li>
+        {{end}}
+      </ul>
+    </section>
+    {{end}}
+
+    {{if .FeatLinks}}
+    <section class="aw-gates" aria-label="{{.Site.HomeLinks}}">
+      <div class="aw-head">
+        <h2 class="aw-head-t">{{.Site.HomeLinks}}</h2>
+      </div>
+      <div class="aw-gate-grid">
+        {{range .FeatLinks}}
+        <a class="aw-gate" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+          <span class="aw-gate-ic">{{if .CoverImage}}<img src="{{.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}</span>
+          <span class="aw-gate-body">
+            <span class="aw-gate-t">{{.Title}}</span>
+            {{if .Excerpt}}<span class="aw-gate-ex">{{.Excerpt}}</span>{{end}}
+          </span>
+        </a>
+        {{end}}
+      </div>
+    </section>
+    {{end}}
+
+  </div>
+{{end}}

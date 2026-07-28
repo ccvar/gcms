@@ -82,6 +82,9 @@ func TestPlatformControlCategoryDeleteReportsImpactUnlocksAndPreservesContent(t 
 	}
 	impactRevision := controlImpactRevision(t, plan.Body.Bytes())
 
+	if err := ps.ReplaceSiteDomains(blogSite.ID, []platform.SiteDomainSpec{{Scheme: "https", Host: "category-delete.test", Primary: true}}); err != nil {
+		t.Fatalf("bind category test domain: %v", err)
+	}
 	noUnlockPath := basePath + "?remove_navigation=1&expected_revision=" + url.QueryEscape(impactRevision)
 	noUnlock := controlConfigurationAPIReq(t, h, http.MethodDelete, noUnlockPath, token, nil,
 		controlConfigurationRequest{Confirm: "categories.delete", IdempotencyKey: "category-delete-guides-1"})
@@ -260,6 +263,9 @@ func TestDeleteCategoryTransactionRejectsChangedCategoryContext(t *testing.T) {
 func TestPlatformControlNavigationDeleteAndPlatformPatchGuard(t *testing.T) {
 	srv, h, ps, _, blogSite := setupPlatformAutomation(t)
 	setPlatformTestPassword(t, ps, controlTestPassword)
+	if err := ps.ReplaceSiteDomains(blogSite.ID, nil); err != nil {
+		t.Fatalf("unbind navigation test site: %v", err)
+	}
 	runtime, ok := srv.platformRuntimePool().runtimeByID(blogSite.ID)
 	if !ok || runtime == nil {
 		t.Fatal("blog runtime missing")
@@ -286,7 +292,9 @@ func TestPlatformControlNavigationDeleteAndPlatformPatchGuard(t *testing.T) {
 		strings.Join([]string{apiScopeControlRead, apiScopeControlUnlock, apiScopeNavigationDelete}, ","), nil)
 	basePath := "/api/platform/v1/control/sites/" + strconv.FormatInt(blogSite.ID, 10) + "/navigation/0"
 	plan := controlConfigurationAPIReq(t, h, http.MethodDelete, basePath+"?dry_run=1", token, nil, controlConfigurationRequest{})
-	if plan.Code != http.StatusOK || !strings.Contains(plan.Body.String(), `"expected_url":"/pricing"`) || !strings.Contains(plan.Body.String(), `"position":1`) {
+	if plan.Code != http.StatusOK || !strings.Contains(plan.Body.String(), `"expected_url":"/pricing"`) ||
+		!strings.Contains(plan.Body.String(), `"position":1`) ||
+		!strings.Contains(plan.Body.String(), `"execution_requires_unlock":false`) {
 		t.Fatalf("navigation plan = %d %s", plan.Code, plan.Body.String())
 	}
 	impactRevision := controlImpactRevision(t, plan.Body.Bytes())
@@ -305,21 +313,31 @@ func TestPlatformControlNavigationDeleteAndPlatformPatchGuard(t *testing.T) {
 	}
 	apply := controlConfigurationAPIReq(t, h, http.MethodDelete,
 		basePath+"?expected_url="+url.QueryEscape("/pricing")+"&expected_revision="+url.QueryEscape(impactRevision), token, nil,
-		controlConfigurationRequest{Confirm: "navigation.delete", IdempotencyKey: "navigation-delete-1", UnlockToken: unlock})
+		controlConfigurationRequest{Confirm: "navigation.delete", IdempotencyKey: "navigation-delete-1"})
 	if apply.Code != http.StatusOK || !strings.Contains(apply.Body.String(), `"remaining_count":1`) {
-		t.Fatalf("navigation delete = %d %s", apply.Code, apply.Body.String())
+		t.Fatalf("unbound navigation delete should not need password = %d %s", apply.Code, apply.Body.String())
 	}
 	if navigation := runtime.Store.Setting("nav_menu"); strings.Contains(navigation, "/pricing") || !strings.Contains(navigation, "/about") {
 		t.Fatalf("navigation after delete = %s", navigation)
 	}
 
 	lastPath := "/api/platform/v1/control/sites/" + strconv.FormatInt(blogSite.ID, 10) + "/navigation/0"
+	if err := ps.ReplaceSiteDomains(blogSite.ID, []platform.SiteDomainSpec{{Scheme: "https", Host: "navigation-delete.test", Primary: true}}); err != nil {
+		t.Fatalf("bind navigation test domain: %v", err)
+	}
 	lastPlan := controlConfigurationAPIReq(t, h, http.MethodDelete, lastPath+"?dry_run=1", token, nil, controlConfigurationRequest{})
 	if lastPlan.Code != http.StatusOK || !strings.Contains(lastPlan.Body.String(), `"remaining_count":0`) ||
-		!strings.Contains(lastPlan.Body.String(), "不会重新显示默认导航") {
+		!strings.Contains(lastPlan.Body.String(), "不会重新显示默认导航") ||
+		!strings.Contains(lastPlan.Body.String(), `"execution_requires_unlock":true`) {
 		t.Fatalf("last navigation plan = %d %s", lastPlan.Code, lastPlan.Body.String())
 	}
 	lastRevision := controlImpactRevision(t, lastPlan.Body.Bytes())
+	lastLocked := controlConfigurationAPIReq(t, h, http.MethodDelete,
+		lastPath+"?expected_url="+url.QueryEscape("/about")+"&expected_revision="+url.QueryEscape(lastRevision), token, nil,
+		controlConfigurationRequest{Confirm: "navigation.delete", IdempotencyKey: "navigation-delete-last"})
+	if lastLocked.Code != http.StatusForbidden || !strings.Contains(lastLocked.Body.String(), `"operation":"navigation.delete"`) {
+		t.Fatalf("bound navigation delete should require password = %d %s", lastLocked.Code, lastLocked.Body.String())
+	}
 	lastApply := controlConfigurationAPIReq(t, h, http.MethodDelete,
 		lastPath+"?expected_url="+url.QueryEscape("/about")+"&expected_revision="+url.QueryEscape(lastRevision), token, nil,
 		controlConfigurationRequest{Confirm: "navigation.delete", IdempotencyKey: "navigation-delete-last", UnlockToken: unlock})

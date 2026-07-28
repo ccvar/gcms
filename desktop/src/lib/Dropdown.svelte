@@ -15,11 +15,12 @@
     compact = false,
     menuCompact = false,
     searchable = false,
+    keepOpenOnSelect = false,
     tone = '',
     bare = false,
     tip = '',
     onchange,
-  }: { value: string; options: Opt[]; placeholder?: string; disabled?: boolean; compact?: boolean; menuCompact?: boolean; searchable?: boolean; tone?: string; bare?: boolean; tip?: string; onchange?: (value: string) => void } = $props();
+  }: { value: string; options: Opt[]; placeholder?: string; disabled?: boolean; compact?: boolean; menuCompact?: boolean; searchable?: boolean; keepOpenOnSelect?: boolean; tone?: string; bare?: boolean; tip?: string; onchange?: (value: string) => void } = $props();
 
   let open = $state(false);
   let root: HTMLDivElement | undefined = $state();
@@ -68,7 +69,23 @@
   // pick / Escape 关菜单时也得收气泡：选项自己带 data-tip，悬停它会弹气泡；点中/按 Esc 后
   // 菜单卸载、光标却没动 → 不会有新的 mouseover 来清它，气泡就飘在原地。onDoc（点外面）和
   // onScroll 本身带移动/滚动，会自己清，不用管。
-  function pick(o: Opt) { if (o.disabled) return; const changed = o.value !== value; value = o.value; open = false; hideTipBubble(); if (changed) onchange?.(o.value); }
+  function pick(o: Opt) {
+    if (o.disabled) return;
+    const changed = o.value !== value;
+    value = o.value;
+    if (changed) onchange?.(o.value);
+    if (keepOpenOnSelect) {
+      query = '';
+      hideTipBubble();
+      requestAnimationFrame(() => {
+        position();
+        if (showSearch) searchEl?.focus();
+      });
+      return;
+    }
+    open = false;
+    hideTipBubble();
+  }
   function onDoc(e: MouseEvent) { if (root && !root.contains(e.target as Node)) open = false; }
   function onKey(e: KeyboardEvent) { if (e.key === 'Escape') { open = false; hideTipBubble(); } }
   // 只在「菜单之外」的滚动才收起；菜单自身内部滚动（选项多时）不关闭。

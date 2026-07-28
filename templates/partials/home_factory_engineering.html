@@ -97,23 +97,20 @@
       {{end}}
     </section>
 
+    {{if .FactoryCertifications}}
     <section class="fe-section fe-certs-sec">
       <div class="fe-section-head">
         <div class="f-head-copy">
-          <p class="f-eyebrow">Certifications</p>
+          <p class="f-eyebrow">{{.Tr.T "factory.certs"}}</p>
           <h2>{{.Tr.T "factory.certs"}}</h2>
         </div>
       </div>
-      {{/* 认证证书墙：与展台骨架同一图章语言，技术骨架铺成规则网格（CSS 去掉错位角度） */}}
+      {{/* 认证证书墙：只渲染站点真实配置，空槽整段不出现。 */}}
       <div class="f-certs fe-certs" aria-label="{{.Tr.T "factory.certs"}}">
-        <span class="f-cert"><b>CE</b><i>Certified</i></span>
-        <span class="f-cert"><b>ISO 9001</b><i>Certified</i></span>
-        <span class="f-cert"><b>RoHS</b><i>Compliant</i></span>
-        <span class="f-cert"><b>REACH</b><i>Compliant</i></span>
-        <span class="f-cert"><b>SGS</b><i>Audited</i></span>
-        <span class="f-cert"><b>UL</b><i>Listed</i></span>
+        {{range .FactoryCertifications}}<span class="f-cert"><b>{{.Name}}</b>{{if .Note}}<i>{{.Note}}</i>{{end}}</span>{{end}}
       </div>
     </section>
+    {{end}}
 
     {{if .FactoryCats}}
     <section class="fe-section fe-cats-sec">

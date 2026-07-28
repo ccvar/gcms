@@ -1,0 +1,89 @@
+{{define "home_specimen"}}
+  {{/* 标本 Specimen — 博物图鉴大页（衬线）：整页一张图版纸；顶部 PLATE 罗马数字
+       装饰行 + HeroTitle 字距行；大标本区 = Featured 两栏（左图版框：有图用图 /
+       无图内联 SVG 叶脉线描；右 = 拉丁式斜体副题 + 大标题 + 摘要 + 采集地边框签）；
+       FIG. N 小标本卡三列（编号由 CSS 计数器生成）；页脚 = 图例式 colophon */}}
+  <div class="spc-wrap">
+    <div class="spc-sheet">
+
+      <header class="spc-plateline">
+        <p class="spc-plate-no" aria-hidden="true">PLATE&nbsp;·&nbsp;Ⅰ</p>
+        <h1 class="spc-plate-name"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+        {{if .Site.HeroDescription}}<p class="spc-plate-sub"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+      </header>
+
+      {{with .Featured}}
+      <section class="spc-front">
+        <a class="spc-feat" href="{{$.Tr.U (contentURL .)}}">
+          <span class="spc-figbox">
+            {{if .CoverImage}}<img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>
+            {{else}}<svg class="spc-leaf" viewBox="0 0 100 80" aria-hidden="true"><path d="M50 8 C30 22 26 40 30 54 C34 68 44 74 50 74 C56 74 66 68 70 54 C74 40 70 22 50 8 Z M50 20 L50 66 M50 34 L38 26 M50 34 L62 26 M50 48 L36 40 M50 48 L64 40" fill="none" stroke="currentColor" stroke-width="2"/></svg>{{end}}
+          </span>
+          <span class="spc-desc">
+            <span class="spc-kicker">{{$.Site.HomeFeatured}}</span>
+            {{if or $.Site.HeroEyebrow .Category}}<i class="spc-latin"{{if and $.VisualEdit $.Site.HeroEyebrow}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{if $.Site.HeroEyebrow}}{{$.Site.HeroEyebrow}}{{else}}{{.Category.Name}}{{end}}</i>{{end}}
+            <span class="spc-feat-t">{{.Title}}</span>
+            {{if .Excerpt}}<span class="spc-feat-ex">{{.Excerpt}}</span>{{end}}
+            <span class="spc-feat-foot">
+              {{with .Category}}<span class="spc-tag">{{.Name}}</span>{{end}}
+              <time class="spc-date" datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time>
+              <span class="spc-more">{{$.Tr.T "home.read_more"}} <span class="arrow" aria-hidden="true">→</span></span>
+            </span>
+          </span>
+        </a>
+      </section>
+      {{end}}
+
+      {{if .Posts}}
+      <section class="spc-figs">
+        <div class="spc-head">
+          <h2 class="spc-head-t">{{.Site.HomeLatest}}</h2>
+          <a class="spc-head-all" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+        </div>
+        <div class="spc-minis">
+          {{range .Posts}}
+          <a class="spc-mini" href="{{$.Tr.U (contentURL .)}}">
+            <span class="spc-fig-no" aria-hidden="true"></span>
+            <span class="spc-mini-t">{{.Title}}</span>
+            <small class="spc-mini-meta">{{with .Category}}<span class="spc-mini-cat">{{.Name}}</span><span aria-hidden="true">·</span>{{end}}<time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time></small>
+          </a>
+          {{end}}
+        </div>
+      </section>
+      {{end}}
+
+      {{if .FeatLinks}}
+      <section class="spc-index" aria-label="{{.Site.HomeLinks}}">
+        <div class="spc-head">
+          <h2 class="spc-head-t">{{.Site.HomeLinks}}</h2>
+        </div>
+        <div class="spc-index-grid">
+          {{range .FeatLinks}}
+          <a class="spc-card" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+            <span class="spc-card-ic">{{if .CoverImage}}<img src="{{.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}</span>
+            <span class="spc-card-body">
+              <span class="spc-card-t">{{.Title}}</span>
+              {{if .Excerpt}}<span class="spc-card-ex">{{.Excerpt}}</span>{{end}}
+            </span>
+          </a>
+          {{end}}
+        </div>
+      </section>
+      {{end}}
+
+      <footer class="spc-colophon">
+        {{if .Categories}}
+        <nav class="spc-legend" aria-label="{{.Tr.T "nav.category"}}">
+          {{range .Categories}}<a class="spc-leg" href="{{$.Tr.U (printf "/category/%s" .Slug)}}"><i class="spc-leg-dot" aria-hidden="true"></i><span class="spc-leg-name">{{.Name}}</span><small class="spc-leg-n">{{.Count}}</small></a>{{end}}
+        </nav>
+        {{end}}
+        <div class="spc-colophon-links">
+          <a href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}}</a>
+          <span aria-hidden="true">·</span>
+          <a href="{{.Tr.U "/about"}}">{{.Tr.T "home.cta_more"}}</a>
+        </div>
+      </footer>
+
+    </div>
+  </div>
+{{end}}

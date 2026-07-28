@@ -21,6 +21,7 @@ func TestPilotAssistantAutomationScopesCoverPlatformAutomation(t *testing.T) {
 		"control:read", "control:unlock", "sites:create", "sites:update", "sites:delete",
 		"categories:delete", "navigation:delete",
 		"themes:read", "themes:apply", "domains:read", "domains:write",
+		apiScopePageCapabilitiesRequest, apiScopePageCapabilitiesGrant,
 	} {
 		if !got[want] {
 			t.Errorf("missing scope %q", want)

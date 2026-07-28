@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -100,6 +101,41 @@ func (p *Post) ReadingTime() int {
 
 func (p *Post) IsPublished() bool { return p.Status == "published" }
 
+// PostETag is a strong validator for the mutable content row. It deliberately
+// hashes the full persisted state instead of updated_at alone because legacy
+// databases store timestamps at one-second precision.
+func PostETag(p *Post) string {
+	if p == nil || p.ID <= 0 {
+		return ""
+	}
+	categoryID := int64(0)
+	if p.CategoryID.Valid {
+		categoryID = p.CategoryID.Int64
+	}
+	snapshot := struct {
+		ID, CategoryID                                              int64
+		Type, Slug, Title, Excerpt, Content, MetaDesc, Keywords     string
+		CoverImage, Author, Status, EditorMode, Lang, TransGroup    string
+		LinkURL, Extra, RobotsOverride, CanonicalOverride           string
+		DiscardReason, PublishedAt, CreatedAt, UpdatedAt, Discarded string
+		Featured, CommentsEnabled                                   bool
+	}{
+		ID: p.ID, CategoryID: categoryID,
+		Type: p.Type, Slug: p.Slug, Title: p.Title, Excerpt: p.Excerpt,
+		Content: p.Content, MetaDesc: p.MetaDesc, Keywords: p.Keywords,
+		CoverImage: p.CoverImage, Author: p.Author, Status: p.Status,
+		EditorMode: p.EditorMode, Lang: p.Lang, TransGroup: p.TransGroup,
+		LinkURL: p.LinkURL, Extra: p.Extra, RobotsOverride: p.RobotsOverride,
+		CanonicalOverride: p.CanonicalOverride, DiscardReason: p.DiscardReason,
+		PublishedAt: fmtTime(p.PublishedAt), CreatedAt: fmtTime(p.CreatedAt),
+		UpdatedAt: fmtTime(p.UpdatedAt), Discarded: fmtTime(p.DiscardedAt),
+		Featured: p.Featured, CommentsEnabled: p.CommentsEnabled,
+	}
+	raw, _ := json.Marshal(snapshot)
+	sum := sha256.Sum256(raw)
+	return fmt.Sprintf(`"content-%d-%s"`, p.ID, hex.EncodeToString(sum[:]))
+}
+
 // KeywordList 把逗号分隔的关键词拆成切片，供模板渲染标签。
 func (p *Post) KeywordList() []string {
 	var out []string
@@ -119,7 +155,8 @@ type Setting struct {
 // ---------- 连接与迁移 ----------
 
 type Store struct {
-	db *sql.DB
+	db     *sql.DB
+	dbPath string
 	// Seeded 表示本次 Open 触发了空库播种（首次启动），供上层提示默认账号。
 	Seeded bool
 	// 默认密码校验结果缓存（bcrypt 较慢，仅当 hash 变化时重算）。
@@ -136,6 +173,7 @@ type Store struct {
 var (
 	ErrSettingChanged  = errors.New("setting changed")
 	ErrCategoryChanged = errors.New("category changed")
+	ErrPostChanged     = errors.New("post changed")
 )
 
 func Open(path string) (*Store, error) {
@@ -151,14 +189,29 @@ func Open(path string) (*Store, error) {
 	if err := db.Ping(); err != nil {
 		return nil, err
 	}
-	s := &Store{db: db}
+	dbPath, absErr := filepath.Abs(path)
+	if absErr != nil {
+		dbPath = filepath.Clean(path)
+	}
+	s := &Store{db: db, dbPath: dbPath}
 	if err := s.migrate(); err != nil {
+		_ = db.Close()
 		return nil, err
 	}
 	return s, nil
 }
 
 func (s *Store) Close() error { return s.db.Close() }
+
+// PageProjectStorageDir returns the private, database-adjacent root used by
+// page source bundles, blobs and build artifacts. It deliberately never
+// points inside the public uploads directory.
+func (s *Store) PageProjectStorageDir() string {
+	if s == nil || strings.TrimSpace(s.dbPath) == "" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(s.dbPath), "page-projects")
+}
 
 // 新库建表：slug 不再全局唯一，而是 (lang, slug) 复合唯一，
 // 以支持各语种使用各自的 slug（如 /zh/about 与 /en/about 并存）。
@@ -305,6 +358,11 @@ func (s *Store) migrate() error {
 	// 索引在表结构（含 lang/trans_group）就绪后统一创建，兼容新旧库。
 	if err := s.createIndexes(); err != nil {
 		return fmt.Errorf("索引创建失败: %w", err)
+	}
+	// 页面工程属于发布链路的关键 Schema：必须在单个事务内完整创建并校验，
+	// 任一表、索引或外键失败都要阻止站点以半迁移状态启动。
+	if err := s.migratePagePlatform(); err != nil {
+		return fmt.Errorf("页面平台迁移失败: %w", err)
 	}
 	if err := s.createSearchIndex(); err != nil {
 		return fmt.Errorf("搜索索引创建失败: %w", err)
@@ -2101,6 +2159,9 @@ func (s *Store) CreatePost(p *Post) (int64, error) {
 		p.Author, p.Status, boolInt(p.Featured), nz(p.EditorMode, "markdown"), boolInt(p.CommentsEnabled), p.LinkURL, p.Lang, p.TransGroup,
 		p.Extra, p.RobotsOverride, p.CanonicalOverride, p.CategoryID, nullTime(p.PublishedAt), fmtTime(p.CreatedAt), fmtTime(p.UpdatedAt))
 	if err != nil {
+		if strings.Contains(err.Error(), "page_route_conflict") {
+			return 0, &PageRouteConflictError{Lang: p.Lang, Slug: p.Slug}
+		}
 		return 0, err
 	}
 	return res.LastInsertId()
@@ -2128,10 +2189,101 @@ func (s *Store) UpdatePostFrom(p *Post, source string) error {
 		WHERE id=?`,
 		p.Slug, p.Title, p.Excerpt, p.Content, p.MetaDesc, p.Keywords, p.CoverImage, p.Author, p.Status,
 		boolInt(p.Featured), nz(p.EditorMode, "markdown"), boolInt(p.CommentsEnabled), p.LinkURL, p.TransGroup, p.Extra, p.RobotsOverride, p.CanonicalOverride, p.CategoryID, nullTime(p.PublishedAt), fmtTime(p.UpdatedAt), p.Status, p.Status, p.ID)
+	if err != nil && strings.Contains(err.Error(), "page_route_conflict") {
+		return &PageRouteConflictError{Lang: p.Lang, Slug: p.Slug}
+	}
 	if err == nil && p.Status == "published" {
 		p.DiscardReason, p.DiscardedAt = "", time.Time{}
 	}
 	return err
+}
+
+// UpdatePostFromIfMatch applies the legacy content update as a full-row
+// compare-and-swap. Callers that opt into ETag concurrency can therefore
+// coexist with old clients without weakening the protection for new clients.
+func (s *Store) UpdatePostFromIfMatch(p, expected *Post, expectedETag, source string) error {
+	if p == nil || expected == nil || p.ID <= 0 || p.ID != expected.ID ||
+		expectedETag == "" || PostETag(expected) != expectedETag {
+		return ErrPostChanged
+	}
+	if source != PostRevisionSourceAPI {
+		source = PostRevisionSourceAdmin
+	}
+	p.UpdatedAt = time.Now()
+	if p.Status == "published" && p.PublishedAt.IsZero() {
+		p.PublishedAt = p.UpdatedAt
+	}
+	categoryID := int64(0)
+	if expected.CategoryID.Valid {
+		categoryID = expected.CategoryID.Int64
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.Exec(`UPDATE posts SET
+		slug=?,title=?,excerpt=?,content=?,meta_desc=?,keywords=?,cover_image=?,author=?,status=?,featured=?,editor_mode=?,comments_enabled=?,link_url=?,trans_group=?,extra=?,robots_override=?,canonical_override=?,category_id=?,published_at=?,updated_at=?,
+		discard_reason=CASE WHEN ?='published' THEN '' ELSE discard_reason END,
+		discarded_at=CASE WHEN ?='published' THEN NULL ELSE discarded_at END
+		WHERE id=? AND type=? AND slug=? AND title=? AND excerpt=? AND content=?
+		AND meta_desc=? AND keywords=? AND cover_image=? AND author=? AND status=?
+		AND featured=? AND editor_mode=? AND comments_enabled=? AND link_url=?
+		AND lang=? AND trans_group=? AND extra=? AND robots_override=?
+		AND canonical_override=? AND discard_reason=?
+		AND COALESCE(discarded_at,'')=? AND COALESCE(category_id,0)=?
+		AND COALESCE(published_at,'')=? AND created_at=? AND updated_at=?`,
+		p.Slug, p.Title, p.Excerpt, p.Content, p.MetaDesc, p.Keywords,
+		p.CoverImage, p.Author, p.Status, boolInt(p.Featured),
+		nz(p.EditorMode, "markdown"), boolInt(p.CommentsEnabled), p.LinkURL,
+		p.TransGroup, p.Extra, p.RobotsOverride, p.CanonicalOverride,
+		p.CategoryID, nullTime(p.PublishedAt), fmtTime(p.UpdatedAt),
+		p.Status, p.Status,
+		expected.ID, expected.Type, expected.Slug, expected.Title,
+		expected.Excerpt, expected.Content, expected.MetaDesc, expected.Keywords,
+		expected.CoverImage, expected.Author, expected.Status,
+		boolInt(expected.Featured), expected.EditorMode,
+		boolInt(expected.CommentsEnabled), expected.LinkURL, expected.Lang,
+		expected.TransGroup, expected.Extra, expected.RobotsOverride,
+		expected.CanonicalOverride, expected.DiscardReason,
+		fmtTime(expected.DiscardedAt), categoryID, fmtTime(expected.PublishedAt),
+		fmtTime(expected.CreatedAt), fmtTime(expected.UpdatedAt),
+	)
+	if err != nil {
+		if strings.Contains(err.Error(), "page_route_conflict") {
+			return &PageRouteConflictError{Lang: p.Lang, Slug: p.Slug}
+		}
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected != 1 {
+		return ErrPostChanged
+	}
+	snapshot, err := json.Marshal(expected)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(
+		`INSERT INTO post_revisions(post_id,snapshot,source,created_at) VALUES(?,?,?,?)`,
+		expected.ID, string(snapshot), source, fmtTime(time.Now()),
+	); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM post_revisions WHERE post_id=? AND id NOT IN
+		(SELECT id FROM post_revisions WHERE post_id=? ORDER BY id DESC LIMIT ?)`,
+		expected.ID, expected.ID, PostRevisionKeep); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	if p.Status == "published" {
+		p.DiscardReason, p.DiscardedAt = "", time.Time{}
+	}
+	return nil
 }
 
 // snapshotPostRevision 把某篇内容当前的库内状态整体序列化成一条修订快照，并裁剪历史。

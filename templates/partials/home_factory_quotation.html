@@ -1,0 +1,111 @@
+{{define "home_factory_quotation"}}
+  {{/* factory-quotation — 报价单：整页读成一张 RFQ 报价单。
+       页头=单据步骤导航（CSS 重塑标准 .site-header：导航项前 CSS 计数器圆圈号①②③、
+       当前项圈号填色，页头双线压底；≤620px 交还基础汉堡抽屉，故不新增 header define）。
+       hero=单头：标题 + factory.stats 重塑成条款行（等宽小字标签 + 点线引导 + 值；
+       未配置回落 factory_about）。商品=报价表行（首行表头深底，编号/缩略图/品名/规格
+       chips/询价钮五列 grid，≤720px 转卡片）。流程复用共享 f-process 重塑成圈号条款步骤。
+       数据全由 fillFactoryHome 装载；空数据整块不渲染，封面缺失走首字兜底；
+       编号取 .FactorySectionNum（跳过未渲染区块，编号连续）。 */}}
+  <div class="fqt-wrap">
+    <section class="fqt-hero">
+      <div class="fqt-hero-copy">
+        {{if .Site.HeroEyebrow}}<p class="fqt-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+        <h1 class="fqt-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+        {{if .Site.HeroDescription}}<p class="fqt-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+        <div class="fqt-cta">
+          {{if .Contact.Any}}<a class="btn btn-primary" href="#factory-contact">{{.Tr.T "contact.float_label"}} <span class="arrow" aria-hidden="true">→</span></a>
+          {{else}}<a class="btn btn-primary" href="{{.Tr.U "/products"}}">{{.Tr.T "factory.products"}} <span class="arrow" aria-hidden="true">→</span></a>{{end}}
+          <a class="btn" href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}}</a>
+        </div>
+      </div>
+      <div class="fqt-hero-side">
+        {{template "factory_hero_slot" .}}
+        {{if .FactoryStats}}<dl class="f-stats fqt-terms">
+          {{range .FactoryStats}}<div class="f-stat"><dt>{{.Num}}</dt><dd>{{.Label}}</dd></div>
+          {{end}}</dl>
+        {{else}}{{template "factory_about" .}}{{end}}
+      </div>
+    </section>
+
+    {{if .FactoryCats}}
+    <section class="fqt-section">
+      <div class="fqt-head"><div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "categories"}}</span>{{.Tr.T "factory.categories"}}</p><h2>{{.Tr.T "factory.categories"}}</h2></div></div>
+      {{template "factory_categories" .}}
+    </section>
+    {{end}}
+
+    <section class="fqt-section fqt-quote-sec">
+      <div class="fqt-head">
+        <div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "products"}}</span>{{.Tr.T "factory.cta"}}</p><h2>{{.Tr.T "factory.products"}}</h2></div>
+        <a href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="fqt-table">
+        <div class="fqt-thead" aria-hidden="true"><span>{{.Tr.T "factory.number"}}</span><span class="fqt-th-item">{{.Tr.T "factory.item_description"}}</span><span>{{.Tr.T "factory.specifications"}}</span><span>{{.Tr.T "factory.cta"}}</span></div>
+        {{range $i, $p := .FactoryProducts}}
+        <a class="fqt-row" href="{{if $p.Slug}}{{$.Tr.U (contentURL $p)}}{{else}}#{{end}}">
+          <span class="fqt-no" aria-hidden="true">{{printf "%02d" (add $i 1)}}</span>
+          <span class="fqt-thumb{{if not $p.CoverImage}} fqt-gen{{end}}">
+            {{if $p.CoverImage}}<img src="{{$p.CoverImage}}" alt="{{$p.Title}}" loading="lazy" decoding="async"{{imgAttrs $p.CoverImage}}>{{else}}<b aria-hidden="true">{{initial $p.Title}}</b>{{end}}
+          </span>
+          <span class="fqt-item">
+            {{with $p.Category}}<span class="fqt-item-cat">{{.Name}}</span>{{end}}
+            <span class="fqt-item-title">{{$p.Title}}</span>
+            {{if $p.Excerpt}}<span class="fqt-item-ex">{{$p.Excerpt}}</span>{{end}}
+          </span>
+          <span class="fqt-specs">{{with productChips $p}}<span class="f-chips">{{range .}}<span class="f-chip"><b>{{.K}}</b><i>{{.V}}</i></span>{{end}}</span>{{end}}</span>
+          <span class="fqt-rfq"><b>{{$.Tr.T "factory.cta"}}</b><span class="arrow" aria-hidden="true">→</span></span>
+        </a>
+        {{else}}<p class="fqt-empty muted">{{.Tr.T "factory.no_products"}}</p>{{end}}
+      </div>
+    </section>
+
+    {{if .FactoryProcessOn}}
+    <section class="fqt-section fqt-process-sec">
+      <div class="fqt-head"><div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "process"}}</span>{{.Tr.T "factory.process"}}</p><h2>{{.Tr.T "factory.process"}}</h2></div></div>
+      {{template "factory_process_steps" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryIndustries}}
+    <section class="fqt-section">
+      <div class="fqt-head"><div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "industries"}}</span>{{.Tr.T "factory.industries"}}</p><h2>{{.Tr.T "factory.industries"}}</h2></div></div>
+      {{template "factory_industries" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryGallery}}
+    <section class="fqt-section">
+      <div class="fqt-head"><div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "gallery"}}</span>{{.Tr.T "factory.gallery"}}</p><h2>{{.Tr.T "factory.gallery"}}</h2></div></div>
+      {{template "factory_gallery" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryQAs}}
+    <section class="fqt-section">
+      <div class="fqt-head"><div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "faq"}}</span>{{.Tr.T "factory.faq"}}</p><h2>{{.Tr.T "factory.faq"}}</h2></div></div>
+      {{template "factory_faq" .}}
+    </section>
+    {{end}}
+
+    {{if .Posts}}
+    <section class="fqt-section fqt-news">
+      <div class="fqt-head fqt-news-head">
+        <div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "news"}}</span>{{.Tr.T "factory.news"}}</p><h2>{{.Tr.T "factory.news"}}</h2></div>
+        <a href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="fqt-news-list">
+        {{range $i, $p := .Posts}}{{if lt $i 3}}
+        <a class="fqt-news-item" href="{{$.Tr.U (contentURL $p)}}">
+          <time datetime="{{$.Tr.ISODate $p.PublishedAt}}">{{$.Tr.Date $p.PublishedAt}}</time>
+          <span class="fqt-news-title">{{$p.Title}}</span>
+          <span class="arrow" aria-hidden="true">→</span>
+        </a>
+        {{end}}{{end}}
+      </div>
+    </section>
+    {{end}}
+  </div>
+
+  {{template "factory_cta" .}}
+{{end}}

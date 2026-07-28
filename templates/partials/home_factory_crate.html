@@ -1,0 +1,120 @@
+{{define "home_factory_crate"}}
+  {{/* factory-crate — 木箱：整页读成一只出口木箱。
+       页头=唛头行导航（CSS 重塑标准 .site-header：导航项等宽大写 + ↗ 角标（伪元素）、
+       整条双线压底，≤620px 交还基础汉堡抽屉，故不新增 header define）。
+       hero=大木箱面（木纹板条渐变 + 粗木框 + 对角箱撑 + 右上 FRAGILE 旋转印
+       （纯 CSS 装饰、720px 隐藏归位）+ 蚀刻站名；factory.stats 重塑成唛头数据行
+       「标签 …… 数值」，未配置回落 factory_about）；箱面下一排质检印章
+       （复用共享 f-certs，本骨架天然读成箱面盖章）。商品=箱面卡（木框 + CTN 编号红章）；
+       流程=共享 f-process 重塑成盖章步骤（编号斜盖小红章）。数据全由 fillFactoryHome
+       装载；空数据整块不渲染，封面缺失走首字兜底；编号取 .FactorySectionNum（连续）。 */}}
+  <div class="fcr-wrap">
+    <section class="fcr-hero">
+      <div class="fcr-hero-copy">
+        {{if .Site.HeroEyebrow}}<p class="fcr-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+        <h1 class="fcr-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+        {{if .Site.HeroDescription}}<p class="fcr-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+        <div class="fcr-cta">
+          {{if .Contact.Any}}<a class="btn btn-primary" href="#factory-contact">{{.Tr.T "contact.float_label"}} <span class="arrow" aria-hidden="true">→</span></a>
+          {{else}}<a class="btn btn-primary" href="{{.Tr.U "/products"}}">{{.Tr.T "factory.products"}} <span class="arrow" aria-hidden="true">→</span></a>{{end}}
+          <a class="btn" href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}}</a>
+        </div>
+      </div>
+      <div class="fcr-hero-side">
+        {{template "factory_hero_slot" .}}
+        {{if .FactoryStats}}<div class="fcr-marks">
+          <p class="fcr-marks-label">{{.Tr.T "factory.shipping_marks"}}</p>
+          <dl class="f-stats">{{range .FactoryStats}}<div class="f-stat"><dt>{{.Num}}</dt><dd>{{.Label}}</dd></div>
+          {{end}}</dl>
+        </div>
+        {{else}}{{template "factory_about" .}}{{end}}
+      </div>
+    </section>
+
+    {{/* 箱面盖章行：质检认证章（共享 f-certs 标记，基础样式已是斜盖双框章） */}}
+    {{if .FactoryCertifications}}<div class="fcr-stamprow">
+      <div class="f-certs fcr-certs" aria-label="{{.Tr.T "factory.certs"}}">
+        <span class="f-certs-label">{{.Tr.T "factory.certs"}}</span>
+        {{range .FactoryCertifications}}<span class="f-cert"><b>{{.Name}}</b>{{if .Note}}<i>{{.Note}}</i>{{end}}</span>{{end}}
+      </div>
+    </div>{{end}}
+
+    {{if .FactoryCats}}
+    <section class="fcr-section">
+      <div class="fcr-head"><div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "categories"}}</span>{{.Tr.T "factory.categories"}}</p><h2>{{.Tr.T "factory.categories"}}</h2></div></div>
+      {{template "factory_categories" .}}
+    </section>
+    {{end}}
+
+    <section class="fcr-section fcr-crates-sec">
+      <div class="fcr-head">
+        <div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "products"}}</span>{{.Tr.T "factory.products"}}</p><h2>{{.Tr.T "factory.products"}}</h2></div>
+        <a href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="fcr-grid">
+        {{range $i, $p := .FactoryProducts}}
+        <a class="fcr-card" href="{{if $p.Slug}}{{$.Tr.U (contentURL $p)}}{{else}}#{{end}}">
+          <span class="fcr-card-media{{if not $p.CoverImage}} fcr-card-gen{{end}}">
+            {{if $p.CoverImage}}<img src="{{$p.CoverImage}}" alt="{{$p.Title}}" loading="lazy" decoding="async"{{imgAttrs $p.CoverImage}}>{{else}}<b aria-hidden="true">{{initial $p.Title}}</b>{{end}}
+            <span class="fcr-card-ctn" aria-hidden="true">№ {{printf "%02d" (add $i 1)}}</span>
+          </span>
+          <span class="fcr-card-body">
+            {{with $p.Category}}<span class="fcr-card-cat">{{.Name}}</span>{{end}}
+            <span class="fcr-card-title">{{$p.Title}}</span>
+            {{if $p.Excerpt}}<span class="fcr-card-ex">{{$p.Excerpt}}</span>{{end}}
+            {{with productChips $p}}<span class="f-chips">{{range .}}<span class="f-chip"><b>{{.K}}</b><i>{{.V}}</i></span>{{end}}</span>{{end}}
+          </span>
+        </a>
+        {{else}}<p class="fcr-empty muted">{{.Tr.T "factory.no_products"}}</p>{{end}}
+      </div>
+    </section>
+
+    {{if .FactoryProcessOn}}
+    <section class="fcr-section fcr-process-sec">
+      <div class="fcr-head"><div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "process"}}</span>{{.Tr.T "factory.process"}}</p><h2>{{.Tr.T "factory.process"}}</h2></div></div>
+      {{template "factory_process_steps" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryIndustries}}
+    <section class="fcr-section">
+      <div class="fcr-head"><div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "industries"}}</span>{{.Tr.T "factory.industries"}}</p><h2>{{.Tr.T "factory.industries"}}</h2></div></div>
+      {{template "factory_industries" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryGallery}}
+    <section class="fcr-section">
+      <div class="fcr-head"><div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "gallery"}}</span>{{.Tr.T "factory.gallery"}}</p><h2>{{.Tr.T "factory.gallery"}}</h2></div></div>
+      {{template "factory_gallery" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryQAs}}
+    <section class="fcr-section">
+      <div class="fcr-head"><div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "faq"}}</span>{{.Tr.T "factory.faq"}}</p><h2>{{.Tr.T "factory.faq"}}</h2></div></div>
+      {{template "factory_faq" .}}
+    </section>
+    {{end}}
+
+    {{if .Posts}}
+    <section class="fcr-section fcr-news">
+      <div class="fcr-head fcr-news-head">
+        <div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "news"}}</span>{{.Tr.T "factory.news"}}</p><h2>{{.Tr.T "factory.news"}}</h2></div>
+        <a href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="fcr-news-list">
+        {{range $i, $p := .Posts}}{{if lt $i 3}}
+        <a class="fcr-news-item" href="{{$.Tr.U (contentURL $p)}}">
+          <time datetime="{{$.Tr.ISODate $p.PublishedAt}}">{{$.Tr.Date $p.PublishedAt}}</time>
+          <span class="fcr-news-title">{{$p.Title}}</span>
+          <span class="arrow" aria-hidden="true">→</span>
+        </a>
+        {{end}}{{end}}
+      </div>
+    </section>
+    {{end}}
+  </div>
+
+  {{template "factory_cta" .}}
+{{end}}

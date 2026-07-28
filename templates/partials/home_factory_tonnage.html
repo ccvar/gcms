@@ -1,0 +1,106 @@
+{{define "home_factory_tonnage"}}
+  {{/* factory-tonnage — 吨位：数据融合极致——整页把「数字」当第一视觉。
+       页头=大写宽字距粗野条（标准 .site-header 纯 CSS 重塑：4px 粗底线 + 全大写导航，
+       ≤620px 交还基础汉堡抽屉，故不新增 header define）。
+       hero=眉标 + 一句话大标题 + factory.stats 数据板：首项由 CSS :first-child 放大成
+       超大数字（clamp 64px+、900 字重，dd 标签顶对齐成「单位小字上标」），其余项列成小吨位牌；
+       未配置 stats 回落 factory_about。商品=牌号大卡（深底钢牌 + 大写代号色字=标题 +
+       品名/参数；有封面才渲染图，无封面由大字代号本身撑起卡面）。
+       数据全由 fillFactoryHome 装载；空数据整块不渲染；编号取 .FactorySectionNum（连续）。 */}}
+  <div class="ftn-wrap">
+    <section class="ftn-hero">
+      <div class="ftn-hero-copy">
+        {{if .Site.HeroEyebrow}}<p class="ftn-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+        <h1 class="ftn-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+        {{if .Site.HeroDescription}}<p class="ftn-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+        <div class="ftn-cta">
+          {{if .Contact.Any}}<a class="btn btn-primary" href="#factory-contact">{{.Tr.T "contact.float_label"}} <span class="arrow" aria-hidden="true">→</span></a>
+          {{else}}<a class="btn btn-primary" href="{{.Tr.U "/products"}}">{{.Tr.T "factory.products"}} <span class="arrow" aria-hidden="true">→</span></a>{{end}}
+          <a class="btn" href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}}</a>
+        </div>
+      </div>
+      <div class="ftn-hero-side">
+        {{template "factory_hero_slot" .}}
+        {{if .FactoryStats}}<dl class="f-stats ftn-board">
+          {{range .FactoryStats}}<div class="f-stat"><dt>{{.Num}}</dt><dd>{{.Label}}</dd></div>
+          {{end}}</dl>
+        {{else}}{{template "factory_about" .}}{{end}}
+      </div>
+    </section>
+
+    {{if .FactoryCats}}
+    <section class="ftn-section">
+      <div class="ftn-head"><div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "categories"}}</span>{{.Tr.T "factory.categories"}}</p><h2>{{.Tr.T "factory.categories"}}</h2></div></div>
+      {{template "factory_categories" .}}
+    </section>
+    {{end}}
+
+    <section class="ftn-section ftn-grades-sec">
+      <div class="ftn-head">
+        <div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "products"}}</span>{{.Tr.T "factory.products"}}</p><h2>{{.Tr.T "factory.products"}}</h2></div>
+        <a href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="ftn-grid">
+        {{range .FactoryProducts}}
+        <a class="ftn-card" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+          {{if .CoverImage}}<span class="ftn-card-media"><img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}></span>{{end}}
+          <span class="ftn-card-body">
+            {{with .Category}}<span class="ftn-card-cat">{{.Name}}</span>{{end}}
+            <span class="ftn-card-code">{{.Title}}</span>
+            {{if .Excerpt}}<span class="ftn-card-ex">{{.Excerpt}}</span>{{end}}
+            {{with productChips .}}<span class="f-chips">{{range .}}<span class="f-chip"><b>{{.K}}</b><i>{{.V}}</i></span>{{end}}</span>{{end}}
+          </span>
+        </a>
+        {{else}}<p class="ftn-empty muted">{{.Tr.T "factory.no_products"}}</p>{{end}}
+      </div>
+    </section>
+
+    {{if .FactoryProcessOn}}
+    <section class="ftn-section ftn-process-sec">
+      <div class="ftn-head"><div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "process"}}</span>{{.Tr.T "factory.process"}}</p><h2>{{.Tr.T "factory.process"}}</h2></div></div>
+      {{template "factory_process_steps" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryIndustries}}
+    <section class="ftn-section">
+      <div class="ftn-head"><div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "industries"}}</span>{{.Tr.T "factory.industries"}}</p><h2>{{.Tr.T "factory.industries"}}</h2></div></div>
+      {{template "factory_industries" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryGallery}}
+    <section class="ftn-section">
+      <div class="ftn-head"><div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "gallery"}}</span>{{.Tr.T "factory.gallery"}}</p><h2>{{.Tr.T "factory.gallery"}}</h2></div></div>
+      {{template "factory_gallery" .}}
+    </section>
+    {{end}}
+
+    {{if .FactoryQAs}}
+    <section class="ftn-section">
+      <div class="ftn-head"><div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "faq"}}</span>{{.Tr.T "factory.faq"}}</p><h2>{{.Tr.T "factory.faq"}}</h2></div></div>
+      {{template "factory_faq" .}}
+    </section>
+    {{end}}
+
+    {{if .Posts}}
+    <section class="ftn-section ftn-news">
+      <div class="ftn-head ftn-news-head">
+        <div class="f-head-copy"><p class="f-eyebrow"><span aria-hidden="true">{{index .FactorySectionNum "news"}}</span>{{.Tr.T "factory.news"}}</p><h2>{{.Tr.T "factory.news"}}</h2></div>
+        <a href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="ftn-news-list">
+        {{range $i, $p := .Posts}}{{if lt $i 3}}
+        <a class="ftn-news-item" href="{{$.Tr.U (contentURL $p)}}">
+          <time datetime="{{$.Tr.ISODate $p.PublishedAt}}">{{$.Tr.Date $p.PublishedAt}}</time>
+          <span class="ftn-news-title">{{$p.Title}}</span>
+          <span class="arrow" aria-hidden="true">→</span>
+        </a>
+        {{end}}{{end}}
+      </div>
+    </section>
+    {{end}}
+  </div>
+
+  {{template "factory_cta" .}}
+{{end}}

@@ -1,0 +1,120 @@
+{{define "home_dtc_runway"}}
+  {{/* dtc-runway — 秀场：全屏开场 Look（HeroImage 有图=全幅底图压固定 scrim，否则恒暗
+       舞台渐变——三皮下 hero 都是「暗场亮台」，透明页头白字才恒可读）→ 系列场次条
+       （.FactoryCats 分类导航）→ LOOK 编号横排卡（竖构图 3/4，productChips 规格签当
+       行头单，无价格函数绝不放价格）→ 品牌数字 → 后台花絮（factory.gallery）→
+       「秀评」斜体条（dtc.testimonials，未配置不渲染、绝不编造）→ FAQ → 联系 CTA。
+       导航重塑只在 CSS（:has(.rwy-stage) 首页透明悬浮，静态零 JS）；hero 槽三态照 flagship。 */}}
+  {{$heroImg := ""}}{{if and (eq .Site.HeroVisual "image") .Site.HeroImage}}{{$heroImg = .Site.HeroImage}}{{end}}
+  {{$heroSVG := and (eq .Site.HeroVisual "svg") (ne .Site.HeroSVG "")}}
+  {{$heroAnim := and (not $heroImg) (not $heroSVG)}}
+  <section class="rwy-stage{{if $heroImg}} has-img{{end}}">
+    {{if $heroImg}}<img class="rwy-stage-img" src="{{$heroImg}}" alt="{{.Site.HeroAlt}}" decoding="async" fetchpriority="high"{{imgAttrs $heroImg}}>{{end}}
+    <div class="rwy-stage-inner">
+      <div class="rwy-stage-copy">
+        {{if .Site.HeroEyebrow}}<p class="rwy-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+        <h1 class="rwy-h1"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+        {{if .Site.HeroDescription}}<p class="rwy-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+        <div class="rwy-cta">
+          <a class="btn btn-primary" href="{{.Tr.U "/products"}}">{{.Tr.T "dtc.shop_now"}} <span class="arrow" aria-hidden="true">→</span></a>
+          {{if .Contact.Any}}<a class="btn dt-btn-ghost" href="#dtc-contact">{{.Tr.T "contact.float_label"}}</a>{{end}}
+        </div>
+      </div>
+      {{if $heroSVG}}<div class="rwy-stage-side dt-embed" aria-hidden="true">{{safeHTML .Site.HeroSVG}}</div>
+      {{else if $heroAnim}}<div class="rwy-stage-side dt-heroanim" aria-hidden="true">{{template "dtc_hero_anim" .}}</div>{{end}}
+    </div>
+  </section>
+
+  <div class="rwy-wrap">
+    {{if .FactoryCats}}
+    <nav class="rwy-series" aria-label="{{.Tr.T "factory.categories"}}">
+      {{range .FactoryCats}}<a href="{{$.Tr.U .URL}}"><span>{{.Name}}</span><sup>{{.Count}}</sup></a>{{end}}
+    </nav>
+    {{end}}
+
+    {{if .FactoryProducts}}
+    <section class="rwy-section">
+      <div class="dt-head">
+        <div>
+          <p class="dt-eyebrow">{{.Tr.T "dtc.label.products"}}</p>
+          <h2>{{.Tr.T "dtc.bestsellers"}}</h2>
+        </div>
+        <a href="{{.Tr.U "/products"}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="rwy-looks">
+        {{range $i, $p := .FactoryProducts}}
+        <a class="rwy-look" href="{{if $p.Slug}}{{$.Tr.U (contentURL $p)}}{{else}}#{{end}}">
+          <span class="rwy-look-num" aria-hidden="true">{{$.Tr.T "dtc.label.look"}} {{printf "%02d" (add $i 1)}}</span>
+          <span class="rwy-look-media{{if not $p.CoverImage}} dt-gen{{end}}">
+            {{if $p.CoverImage}}<img src="{{$p.CoverImage}}" alt="{{$p.Title}}" loading="lazy" decoding="async"{{imgAttrs $p.CoverImage}}>{{else}}<b aria-hidden="true">{{initial $p.Title}}</b>{{end}}
+          </span>
+          <span class="rwy-look-title">{{$p.Title}}</span>
+          {{with productChips $p}}<span class="f-chips rwy-look-chips">{{range .}}<span class="f-chip"><b>{{.K}}</b><i>{{.V}}</i></span>{{end}}</span>{{end}}
+        </a>
+        {{end}}
+      </div>
+    </section>
+    {{end}}
+
+    {{if .FactoryStats}}
+    <section class="rwy-section">
+      <div class="dt-head">
+        <div>
+          <p class="dt-eyebrow">{{.Tr.T "dtc.label.story"}}</p>
+          <h2>{{.Tr.T "dtc.story"}}</h2>
+        </div>
+      </div>
+      <dl class="dt-stats">
+        {{range .FactoryStats}}
+        <div class="dt-stat"><dt>{{.Num}}</dt><dd>{{.Label}}</dd></div>
+        {{end}}
+      </dl>
+    </section>
+    {{end}}
+
+    {{if .FactoryGallery}}
+    <section class="rwy-section">
+      <div class="dt-head">
+        <div>
+          <p class="dt-eyebrow">{{.Tr.T "dtc.label.scenes"}}</p>
+          <h2>{{.Tr.T "dtc.scenes"}}</h2>
+        </div>
+      </div>
+      {{template "factory_gallery" .}}
+    </section>
+    {{end}}
+
+    {{if .DTCTestimonials}}
+    <section class="rwy-section">
+      <div class="dt-head">
+        <div>
+          <p class="dt-eyebrow">{{.Tr.T "dtc.label.reviews"}}</p>
+          <h2>{{.Tr.T "dtc.reviews"}}</h2>
+        </div>
+      </div>
+      <div class="rwy-quotes">
+        {{range .DTCTestimonials}}
+        <figure class="rwy-quote">
+          <blockquote>{{.Quote}}</blockquote>
+          <figcaption>— {{.Name}}{{if .Region}} · {{.Region}}{{end}}</figcaption>
+        </figure>
+        {{end}}
+      </div>
+    </section>
+    {{end}}
+
+    {{if .FactoryQAs}}
+    <section class="rwy-section">
+      <div class="dt-head">
+        <div>
+          <p class="dt-eyebrow">{{.Tr.T "dtc.label.guide"}}</p>
+          <h2>{{.Tr.T "factory.faq"}}</h2>
+        </div>
+      </div>
+      {{template "factory_faq" .}}
+    </section>
+    {{end}}
+  </div>
+
+  {{template "dtc_cta" .}}
+{{end}}

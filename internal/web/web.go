@@ -48,6 +48,7 @@ type Server struct {
 	controlMutation *sync.Mutex
 	i18n            *i18n.Manager
 	mux             *http.ServeMux
+	pagePlatformMux *http.ServeMux
 	assetsFS        fs.FS
 	assetVer        string // 静态资源内容指纹，用作 ?v= 破缓存（资源变更即失效旧缓存）
 	imageSizes      map[string]ImageSize
@@ -56,6 +57,13 @@ type Server struct {
 	endpoints       map[string]endpointCacheEntry
 	pages           map[string]pageCacheEntry
 	googleAnalytics *googleAnalyticsPropertiesCache
+
+	// A static export takes a read lock only while it snapshots the current
+	// public tree. Publication takes the write lock around the atomic pointer
+	// switch. Network upload happens after the read lock is released, so a
+	// publication can never be half included in one deployment without
+	// blocking editors for the duration of a Cloudflare upload.
+	pagePublicationMu sync.RWMutex
 
 	cloudflareMu         sync.Mutex
 	cloudflareTimer      *time.Timer
@@ -93,9 +101,17 @@ type SiteRuntimePool struct {
 	byID          map[int64]*SiteRuntime
 	byHost        map[string]*SiteRuntime
 	redirects     map[string]string // 别名 Host -> 主域名基址（scheme://host），命中即 301
+	failures      map[int64]SiteRuntimeFailure
 	defaultSite   *SiteRuntime
 	platformHost  string
 	localPlatform bool
+}
+
+type SiteRuntimeFailure struct {
+	SiteID   int64
+	SiteSlug string
+	Code     string
+	Detail   string
 }
 
 // redirectTarget returns the primary base URL an alias host should 301 to, or "".
@@ -332,6 +348,129 @@ var Themes = []ThemeOption{
 	{"nightmarket", "夜市 · Night Market", "货架骨架切入深色夜市：墨黑展台 + 荧光青价格签式标签、发光封面——Web3 工具库 / 数字产品目录 / 夜间资源导航", "general"},
 	{"broadcast", "播客 · Broadcast", "广播节目首页：大幅主节目播放器 + 频道刻度 + 编号节目单，声音杂志式留白——播客 / 访谈 / 视频栏目 / 连载内容", "content"},
 	{"airwave", "电波 · Airwave", "广播骨架进入午夜频段：深蓝控制台 + 电波紫信号灯、等宽时间码——科技播客 / 电子音乐 / 夜间访谈栏目", "content"},
+	{"tracklist", "唱片集 · Tracklist", "一张唱片的印刷内页：方形专辑封面 + 等宽序号曲目行（阅读时长当曲长）+ Side 分面 + Credits 页脚，近黑黑胶底、鎏金标——播客文字版 / 专栏连载 / 个人精选集", "content"},
+	{"sleeve", "封套 · Sleeve", "唱片骨架翻到封套面：米白卡纸 + 墨黑衬线 + 烧橙标，静态印刷质感——乐评 / 文化随笔 / 复古内容站", "content"},
+	{"departure", "发车牌 · Departure", "车站告示板行列：站名大字距页头 + 翻牌式行（时刻｜目的地｜站台）+「即将发车」精选首行 + 候车厅分类色块，黑底琥珀翻牌字——高频资讯 / 发布日志 / 周刊", "content"},
+	{"dayline", "日间 · Dayline", "发车牌骨架的白天班次：暖白站厅 + 墨绿站牌 + 四色指路牌，日间通勤气质——站点公告 / 更新频繁的内容站", "content"},
+	{"lexicon", "辞书 · Lexicon", "词典词条排版：书脊色带题签 +「今日词条」大词头（词性=分类、义项=摘要）+ 词条密排 + 首字母索引竖条，纸白深蓝、砖红词性——概念科普 / 术语站 / 行业百科", "content"},
+	{"nightgloss", "夜读 · Nightgloss", "辞书骨架的深夜修订版：墨蓝底 + 暖黄词头辉光 + 小型大写词性签——开发者术语表 / 暗色知识库", "content"},
+	{"bistro", "菜单 · Bistro", "居中双线框餐牌：店徽饰线刊头 + 分类菜单节 + 虚线引导条目（标题……日期）+「本日特供」精选框，黑板墨绿、粉笔白黄——轻内容 / 生活方式 / 个人博客", "content"},
+	{"taverna", "酒馆 · Taverna", "餐牌骨架换上酒馆皮：奶油纸 + 酒红强调 + 小型大写标题，欧陆小馆气质——美食 / 生活随笔 / 品牌小站", "content"},
+	{"serial", "章回 · Serial", "连载章回体：书口装饰线 + 续读大卡（回目大字）+ 汉字序号章回目录 + 分卷页签 + 待续朱印，仿古米纸、靛蓝朱红——小说连载 / 系列教程 / 长篇专栏", "content"},
+	{"nightlamp", "夜读灯 · Nightlamp", "章回骨架亮起夜读灯：暖黑底 + 烛黄回目 + 虚线书口——深夜连载 / 暗色阅读站", "content"},
+	{"verse", "诗笺 · Verse", "竖排诗笺：真竖排题签（朱丝栏界格，非中文自动降级横排）+ 笺条卡两列 + 方形朱印页脚，宣纸暖白、墨黑朱砂——诗歌 / 散文 / 书法 / 文化站", "content"},
+	{"indigonight", "靛夜 · Indigonight", "诗笺骨架入夜：靛青深底 + 月白字 + 陶红印，夜色文人气质——夜话 / 文学 / 暗色文化站", "content"},
+	{"tracklist-white", "唱片集 · 纯白", "Tracklist 的纯白背景色卡（暗金标）", "content"},
+	{"departure-white", "发车牌 · 纯白", "Departure 的纯白背景色卡（墨绿站牌）", "content"},
+	{"lexicon-white", "辞书 · 纯白", "Lexicon 的纯白背景色卡（深蓝词头）", "content"},
+	{"bistro-white", "菜单 · 纯白", "Bistro 的纯白背景色卡（深绿菜单节）", "content"},
+	{"serial-white", "章回 · 纯白", "Serial 的纯白背景色卡（靛蓝回目）", "content"},
+	{"verse-white", "诗笺 · 纯白", "Verse 的纯白背景色卡（朱砂界格）", "content"},
+	{"archway", "门坊 · Archway", "居中门坊：徽标居上 + 细线夹住的居中导航（菱形分隔）+ 拱门线框精选 + 居中单列条目，暖米白、古铜强调——品牌 / 工作室 / 精品内容", "content"},
+	{"nightgate", "夜坊 · Nightgate", "门坊骨架入夜：近黑底 + 鎏金拱线与导航，静谧门第气质——夜色品牌站 / 作品门户", "content"},
+	{"archway-white", "门坊 · 纯白", "Archway 的纯白背景色卡（古铜拱线）", "content"},
+	{"gutter", "书缝 · Gutter", "摊开的书：左右对称书页双栏 + 正中书缝竖排分类导航（圆章 + 页码书口），主导航居中于顶部——文集 / 双语站 / 期刊", "content"},
+	{"nightfold", "夜读缝 · Nightfold", "书缝骨架的深夜装订台：暖黑桌面 + 深褐书页 + 烛金缝线——夜读文集 / 暗色期刊", "content"},
+	{"gutter-white", "书缝 · 纯白", "Gutter 的纯白背景色卡（砖红圆章）", "content"},
+	{"cover", "封面 · Cover", "首页即一张 3:4 杂志封面：巨型刊名 + 居中细行导航 + 封面故事 + 四角 coverlines + 条码装饰，夜蓝黑暖金——个人杂志 / 摄影 / 评论", "content"},
+	{"scarlet", "红刊 · Scarlet", "封面骨架的正红特辑：深红封面底 + 反白大字 + 黑章黑条码，海报冲击力——专题特辑 / 视觉评论", "content"},
+	{"cover-white", "封面 · 纯白", "Cover 的纯白背景色卡（铜金刊名）", "content"},
+	{"marquee", "戏台 · Marquee", "剧院门头天幕：灯泡边框 + 霓虹站名 + 导航胶囊嵌在天幕板上，下接「场次单」内容行（期号 + 主打徽签），夜幕灯金——播客 / 演出 / 栏目内容", "content"},
+	{"daybill", "日场 · Daybill", "戏台骨架的日场戏单：米纸底 + 朱红门头 + 墨字场次——白日演出 / 轻松栏目", "content"},
+	{"marquee-white", "戏台 · 纯白", "Marquee 的纯白背景色卡（铜金灯架）", "content"},
+	{"triptych", "三联 · Triptych", "楣梁横条居中承载站名与导航（底边双线），下接三联祭坛画：中央圆拱精选 + 两翼列表，暖灰白橄榄褐——摄影 / 艺术 / 策展内容", "content"},
+	{"nighthall", "暗厅 · Nighthall", "三联骨架闭馆开暗厅：炭黑展厅 + 暖白字 + 橄榄金拱框——夜间画廊 / 影像档案", "content"},
+	{"triptych-white", "三联 · 纯白", "Triptych 的纯白背景色卡（古铜拱框）", "content"},
+	{"stubs", "票根 · Stubs", "撕边打孔票根行卡：票号段｜正片段｜日期条码段，精选=放大版票——影评 / 演出 / 活动记录", "content"},
+	{"nightshow", "午夜场 · Nightshow", "票根骨架的午夜场：深夜蓝黑 + 荧光橙票字——夜场影迷 / 演出记录", "content"},
+	{"stubs-white", "票根 · 纯白", "Stubs 的纯白背景色卡（朱红票号）", "content"},
+	{"cardfile", "目录柜 · Cardfile", "图书馆卡片目录柜：分类=抽屉（标签框+黄铜拉手），下方桌面摊开打字机索引卡——知识库 / 读书笔记 / 档案", "content"},
+	{"steelcab", "铁柜 · Steelcab", "目录柜换军绿铁柜：铁灰柜体 + 锈红标签 + 米白卡纸——工程笔记 / 冷档案", "content"},
+	{"cardfile-white", "目录柜 · 纯白", "Cardfile 的纯白背景色卡（黄铜拉手）", "content"},
+	{"script", "剧本 · Script", "台词本排版：INT. 场景行 + 居中角色名与对白 + SCENE 场号条目，等宽居中窄栏——对话体 / 影评 / 播客文字版", "content"},
+	{"nightdraft", "夜场读本 · Nightdraft", "剧本骨架的深夜读本：夜蓝底 + 暖米字 + 陶红场号——夜读剧场 / 暗色文学", "content"},
+	{"script-white", "剧本 · 纯白", "Script 的纯白背景色卡（砖红场号）", "content"},
+	{"postmark", "邮戳 · Postmark", "明信片墙：齿孔邮票框（分类首字）+ 圆邮戳（日期）+ 地址线区，微角度错落——旅行 / 通讯 / 生活记录", "content"},
+	{"kraft", "牛皮纸 · Kraft", "邮戳骨架的牛皮纸包裹台：深牛皮底 + 米白明信片 + 墨绿邮票——旧物 / 手账 / 慢邮件", "content"},
+	{"postmark-white", "邮戳 · 纯白", "Postmark 的纯白背景色卡（邮政蓝票）", "content"},
+	{"metro", "线网 · Metro", "地铁线网图：分类=彩色线路（线名徽章），文章=沿线站点，精选=双圈换乘大站，下接站点一览——系列内容 / 学习路线", "content"},
+	{"nightline", "夜间线网 · Nightline", "线网骨架的夜间运营图：深夜黑底 + 霓虹线 + 月白站名——暗色阅读 / 夜航路线", "content"},
+	{"metro-white", "线网 · 纯白", "Metro 的纯白背景色卡（信号红线）", "content"},
+	{"circuit", "电路 · Circuit", "PCB 电路板：焊点网格 + 铜走线，文章=芯片卡（丝印编号+引脚行），精选=主控大芯片——技术博客 / 硬件 / 开发日志", "content"},
+	{"bluetrace", "蓝图 · Bluetrace", "电路骨架的工程蓝图：普鲁士蓝底 + 白细线网格 + 冰蓝强调——架构笔记 / 设计文档", "content"},
+	{"circuit-white", "电路 · 纯白", "Circuit 的纯白背景色卡（铜金丝印）", "content"},
+	{"specimen", "标本 · Specimen", "博物图鉴：PLATE 图版编号 + 大标本区（拉丁式副题+采集地签）+ FIG. 针脚小卡——自然 / 收藏 / 图鉴内容", "content"},
+	{"nightplate", "夜馆 · Nightplate", "标本骨架闭馆开夜灯：墨绿深底 + 鎏金图版框 + 暖纸字——夜间博物馆 / 暗色图鉴", "content"},
+	{"specimen-white", "标本 · 纯白", "Specimen 的纯白背景色卡（标本褐签）", "content"},
+	{"lockers", "储物柜 · Lockers", "一墙编号柜门：通风百叶 + 号码牌，精选=打开的柜门，分类=柜区索引——合集 / 资源库 / 泛主题博客", "content"},
+	{"nightlocker", "工业夜 · Nightlocker", "储物柜的工业夜班：炭蓝灰柜 + 雾蓝字 + 琥珀号码牌——车间日志 / 暗色合集", "content"},
+	{"lockers-white", "储物柜 · 纯白", "Lockers 的纯白背景色卡（深绿柜牌）", "content"},
+	{"auction", "拍卖 · Auction", "拍卖图录：LOT 编号 + 拍品行（估价位放日期）+ 封面拍品大版与落槌签——收藏 / 精选集 / 策展内容", "content"},
+	{"nightsale", "夜拍 · Nightsale", "拍卖图录的晚间专场：近黑底 + 鎏金 LOT 号 + 米白字——夜场收藏 / 高端策展", "content"},
+	{"auction-white", "拍卖 · 纯白", "Auction 的纯白背景色卡（拍卖红号）", "content"},
+	{"lattice", "花窗 · Lattice", "园林花窗框景：八角窗精选 + 圆洞门与方窗卡 + 黛瓦横带与窗型胶囊——文化 / 园林 / 慢生活", "content"},
+	{"nightgarden", "夜园 · Nightgarden", "花窗骨架入夜游园：墨青夜底 + 月白字 + 苔绿框光——夜话园林 / 暗色文化站", "content"},
+	{"lattice-white", "花窗 · 纯白", "Lattice 的纯白背景色卡（竹绿窗框）", "content"},
+	{"andon", "安灯板 · Andon", "班次状态灯导航 + stats 做成 LED 大数字屏 + 三色状态条工单卡，排产板列表——精益生产 / 车间数字化", "factory"},
+	{"shopfloor", "白板 · Shopfloor", "安灯骨架的白板版：浅灰白 + 深绿状态灯", "factory"},
+	{"andon-white", "安灯板 · 纯白", "Andon 的纯白背景色卡", "factory"},
+	{"certwall", "认证墙 · Certwall", "资质页签导航 + 真实认证槽徽章环绕 hero + 双线目录卡，逐项参数块——医械 / 食品 / 强认证行业", "factory"},
+	{"attest", "夜审 · Attest", "认证骨架的夜审：深蓝黑 + 冰蓝徽章", "factory"},
+	{"certwall-white", "认证墙 · 纯白", "Certwall 的纯白背景色卡", "factory"},
+	{"container", "集装箱 · Container", "货运单页头 + 箱面大牌 hero（stats 喷印成实底块）+ 波纹钢箱面商品卡，堆场图带——出口集装箱直发型工厂", "factory"},
+	{"seafreight", "夜港 · Seafreight", "集装箱骨架的夜港：深蓝黑堆场 + 橙色箱号", "factory"},
+	{"container-white", "集装箱 · 纯白", "Container 的纯白背景色卡", "factory"},
+	{"crate", "木箱 · Crate", "唛头行导航 + 大木箱面 hero（stats 作唛头数据行）+ 箱面商品卡，装箱单参数——包装出口 / 木制品", "factory"},
+	{"stencil", "夜运 · Stencil", "木箱骨架的夜运：深棕黑 + 米黄喷印唛头", "factory"},
+	{"crate-white", "木箱 · 纯白", "Crate 的纯白背景色卡", "factory"},
+	{"draftdesk", "图纸台 · Draftdesk", "整站蓝图网格底 + 图层标签页导航 + 图签框 hero（stats 填进图签表）+ 图纸卡商品，尺寸标注引线——定制加工 / 机械设计", "factory"},
+	{"blueline", "晒图 · Blueline", "图纸台骨架的深蓝晒图：普鲁士蓝底 + 白线", "factory"},
+	{"draftdesk-white", "图纸台 · 纯白", "Draftdesk 的纯白背景色卡", "factory"},
+	{"exportmap", "航线图 · Exportmap", "时区细条页头 + 世界航线点阵 hero（stats 融进图下）+ 航线商品卡（港口代码列），按市场分组——多国出口型工厂", "factory"},
+	{"nightport", "白昼 · Nightport", "航线骨架的白昼版：浅蓝白海图 + 深蓝航点", "factory"},
+	{"exportmap-white", "航线图 · 纯白", "Exportmap 的纯白背景色卡", "factory"},
+	{"floorplan", "平面图 · Floorplan", "图例条导航 + 车间俯视平面分区图 hero + 设备位商品卡（区号色标），按分区分组——多车间 / 产线分区型工厂", "factory"},
+	{"zoning", "夜巡 · Zoning", "平面图骨架的夜巡：深蓝灰 + 荧光分区", "factory"},
+	{"floorplan-white", "平面图 · 纯白", "Floorplan 的纯白背景色卡", "factory"},
+	{"furnace", "熔炉 · Furnace", "炉号标签导航 + 炉口橙光 hero + 阶梯色温浇铸流程 + 铸件商品卡，工艺曲线内页——铸造 / 热处理 / 冶金", "factory"},
+	{"emberdark", "冷却 · Emberdark", "熔炉骨架的冷却版：浅灰米 + 暗红余烬", "factory"},
+	{"furnace-white", "熔炉 · 纯白", "Furnace 的纯白背景色卡", "factory"},
+	{"gantry", "龙门 · Gantry", "龙门架页头（粗梁包住导航、标题从横梁吊下）+ 横梁铭板 stats + 吊装件商品卡，跨度分组——重型装备 / 起重机械", "factory"},
+	{"beamline", "夜吊 · Beamline", "龙门骨架的夜间吊装：炭黑厂房 + 高亮黄梁", "factory"},
+	{"gantry-white", "龙门 · 纯白", "Gantry 的纯白背景色卡", "factory"},
+	{"gauge", "仪表墙 · Gauge", "拨杆开关导航 + stats 变成指针表盘 hero + 管线流程图 + 控制模块商品卡，参数仪表内页——仪器仪表 / 自动化设备", "factory"},
+	{"dialface", "白盘 · Dialface", "仪表骨架的白盘版：浅灰白盘面 + 深青指针", "factory"},
+	{"gauge-white", "仪表墙 · 纯白", "Gauge 的纯白背景色卡", "factory"},
+	{"hazardtape", "警示带 · Hazardtape", "安全帽色块导航 + 黄黑警示带 + 安全生产大牌 hero（stats 主数字）+ 粗边框商品卡——安全器材 / 重工车间", "factory"},
+	{"graveyard", "夜班 · Graveyard", "警示骨架的夜班：黑底荧光黄警示带", "factory"},
+	{"hazardtape-white", "警示带 · 纯白", "Hazardtape 的纯白背景色卡", "factory"},
+	{"inspection", "质检单 · Inspection", "检验流程页头 + 文档编号章 + 报告头 hero（stats 作检测指标框）+ 检验单行卡，逐项规格表——品控流程型工厂", "factory"},
+	{"passmark", "夜检 · Passmark", "质检骨架的夜班检验：深绿黑 + 荧光绿编号章", "factory"},
+	{"inspection-white", "质检单 · 纯白", "Inspection 的纯白背景色卡", "factory"},
+	{"line", "产线 · Line", "流水线首页：页头工位标签条 + hero 工位牌 + 传送带横带，商品沿带排列成工位卡，流程画成产线节点串——连续生产型工厂", "factory"},
+	{"conveyor", "夜班 · Conveyor", "产线骨架的夜班：近黑车间 + 琥珀工位灯", "factory"},
+	{"line-white", "产线 · 纯白", "Line 的纯白背景色卡", "factory"},
+	{"nameplate", "铭牌 · Nameplate", "蚀刻细字导航 + 金属拉丝大铭牌 hero（stats 作铭牌参数格）+ 小铭牌商品卡，型号铭牌网格——设备制造 / 精密仪器", "factory"},
+	{"etchplate", "阳极 · Etchplate", "铭牌骨架的阳极黑：深灰黑金属 + 银蚀字", "factory"},
+	{"nameplate-white", "铭牌 · 纯白", "Nameplate 的纯白背景色卡", "factory"},
+	{"pipeworks", "管廊 · Pipeworks", "阀门圆点导航 + 总管横条 + 表压读数 stats + 法兰接头流程 + 管段商品卡，口径分组——管阀 / 流体设备", "factory"},
+	{"flowline", "夜巡管 · Flowline", "管廊骨架的夜巡：深灰蓝 + 荧光青流线", "factory"},
+	{"pipeworks-white", "管廊 · 纯白", "Pipeworks 的纯白背景色卡", "factory"},
+	{"quotation", "报价单 · Quotation", "单据步骤导航 + 单头 hero（stats 作条款行）+ 五列报价表行商品，完整报价参数表——询价驱动型外贸工厂", "factory"},
+	{"proforma", "夜单 · Proforma", "报价骨架的夜间单据：深灰黑 + 薄荷绿", "factory"},
+	{"quotation-white", "报价单 · 纯白", "Quotation 的纯白背景色卡", "factory"},
+	{"rackwall", "货架 · Rackwall", "通道牌导航 + 承重铭牌 hero + 托盘位商品卡（上下橙梁夹持），货架分层列表——仓储备货型工厂", "factory"},
+	{"aisle", "夜库 · Aisle", "货架骨架的夜间库区：炭黑货架 + 高亮橙梁", "factory"},
+	{"rackwall-white", "货架 · 纯白", "Rackwall 的纯白背景色卡", "factory"},
+	{"sampleroom", "样品间 · Sampleroom", "样品册页签导航 + 色卡样品条 hero（gallery 融合）+ 样品挂签商品卡（克重/幅宽签）——纺织 / 面料 / 打样型工厂", "factory"},
+	{"swatchbook", "胡桃 · Swatchbook", "样品间骨架的深胡桃：暗棕木台 + 米金样签", "factory"},
+	{"sampleroom-white", "样品间 · 纯白", "Sampleroom 的纯白背景色卡", "factory"},
+	{"shutter", "卷帘 · Shutter", "门牌号导航 + 档口小牌 hero + 卷帘门格商品（精选整门卷起），门市街列表——五金城 / 档口批发型工厂", "factory"},
+	{"stallfront", "夜市 · Stallfront", "卷帘骨架的夜市档口：深灰黑 + 暖黄灯", "factory"},
+	{"shutter-white", "卷帘 · 纯白", "Shutter 的纯白背景色卡", "factory"},
+	{"tonnage", "吨位 · Tonnage", "粗野大写页头 + stats 首项变超大数字 hero + 牌号大卡商品，大字参数块内页——钢材 / 大宗原材料", "factory"},
+	{"millscale", "轧线 · Millscale", "吨位骨架的轧线夜：黑底 + 橙红熔光", "factory"},
+	{"tonnage-white", "吨位 · 纯白", "Tonnage 的纯白背景色卡", "factory"},
 	{"exhibit", "展厅 · Exhibit", "策展式首页：展签标题 + 非对称作品墙 + 展厅分类导览，完整展示封面——摄影 / 建筑 / 案例研究 / 艺术档案", "general"},
 	{"afterhours", "闭馆 · After Hours", "展厅闭馆后的暗场版本：炭黑墙面 + 安全灯红展签、克制聚光——夜间画廊 / 影像档案 / 高端创意工作室", "general"},
 	// 工厂主题族（工厂/外贸站 P2）：目录骨架 factory-catalog（SKU 多）× 4 皮 + 展台骨架 factory-showcase（精品少 SKU）× 4 皮。
@@ -405,6 +544,68 @@ var Themes = []ThemeOption{
 	{"blackbox", "暗厅 · Blackbox", "暗厅近黑底 + 暖金展签：画册骨架的夜场展陈皮，高端时装 / 摄影感产品 / 限量系列", "dtc"},
 	{"flaxen", "亚麻米 · Flaxen", "亚麻米纸底 + 亚麻棕点缀、衬线小标：画册骨架的素色织物皮，家纺 / 亚麻服饰 / 慢生活品牌", "dtc"},
 	{"fogblue", "雾灰蓝 · Fogblue", "雾灰蓝底 + 港雾蓝强调：画册骨架的冷调静物皮，陶瓷器物 / 文具 / 极简生活方式品牌", "dtc"},
+	// 外贸独立站主题族第二批：20 套骨架 × 3 皮（原生 + 反差 + 纯白）。导航形态、首页骨骼、
+	// 商品列表页与详情页都逐款差异化；hero 数据在部分骨架里直接融进首屏（黑板价目 / 马赛克 / 封面故事 / 月盒）。
+	{"vitrine", "橱窗 · Vitrine", "暖白底 + 墨黑与古铜金：三联橱窗首屏 + 细框竖卡，精品选物 / 配饰 / 香氛品牌店", "dtc"},
+	{"vitrine-noir", "夜橱 · Vitrine Noir", "夜幕黑橱窗 + 暖金射灯：橱窗骨架的打烊后暗场皮，轻奢配饰 / 珠宝 / 礼品", "dtc"},
+	{"vitrine-white", "橱窗 · 纯白", "Vitrine 的纯白背景色卡", "dtc"},
+	{"journalshop", "刊物店 · Journal", "米白纸底 + 墨与砖红：封面故事跨页 + 三栏选物，内容型品牌 / 买手店 / 生活方式刊物店", "dtc"},
+	{"journalshop-noir", "夜刊 · Journal Noir", "墨黑刊面 + 米白正文与砖红眉题：刊物骨架的夜读皮，深度选物 / 设计刊", "dtc"},
+	{"journalshop-white", "刊物店 · 纯白", "Journal 的纯白背景色卡", "dtc"},
+	{"catalogue", "型录 · Catalogue", "象牙纸底 + 墨与暗金：索引竖栏 + 编号行型录，SKU 多的选品 / 器物 / 家居品牌", "dtc"},
+	{"catalogue-noir", "夜录 · Catalogue Noir", "深炭型录 + 暗金编号：型录骨架的暗色版本，工具 / 器械 / 男士品类", "dtc"},
+	{"catalogue-white", "型录 · 纯白", "Catalogue 的纯白背景色卡", "dtc"},
+	{"bazaar", "集市 · Bazaar", "麻布米底 + 摊红与木棕：布条横幅 + 摊位卡，手作 / 食品 / 民艺杂货品牌", "dtc"},
+	{"bazaar-noir", "夜市 · Bazaar Noir", "夜市深棕 + 灯串暖黄：集市骨架的夜摊皮，小吃 / 夜市文创 / 节庆商品", "dtc"},
+	{"bazaar-white", "集市 · 纯白", "Bazaar 的纯白背景色卡", "dtc"},
+	{"column", "直列 · Column", "近黑底 + 暖金与月白：一屏一款的沉浸直列，单品线少而精的设计品牌", "dtc"},
+	{"column-day", "日列 · Column Day", "亮白日场 + 墨与暗金：直列骨架的日光版本，家居器物 / 服饰单品", "dtc"},
+	{"column-white", "直列 · 纯白", "Column 的纯白背景色卡", "dtc"},
+	{"swissgrid", "严选格 · Swissgrid", "暖纸底 + 黑与信号红：1px 网格陈列，极简严选 / 设计文具 / 器具品牌", "dtc"},
+	{"swissgrid-noir", "夜格 · Swissgrid Noir", "黑底白线 + 红点信号：严选格骨架的暗色网格版本", "dtc"},
+	{"swissgrid-white", "严选格 · 纯白", "Swissgrid 的纯白背景色卡", "dtc"},
+	{"catwalk", "秀场 · Runway", "近黑舞台 + 香槟金：全屏开场 Look + LOOK 编号卡，服饰 / 鞋履 / 设计师品牌", "dtc"},
+	{"catwalk-day", "日场 · Runway Day", "日场亮白 + 墨与金：秀场骨架的白天秀版本，轻盈成衣 / 配饰系列", "dtc"},
+	{"catwalk-white", "秀场 · 纯白", "Runway 的纯白背景色卡", "dtc"},
+	{"handcraft", "工坊 · Atelier", "麻米底 + 深木与墨：竖签工牌 + 器物卡，手作 / 皮具 / 木作 / 陶艺品牌", "dtc"},
+	{"handcraft-noir", "夜坊 · Atelier Noir", "深木夜色 + 烛金：工坊骨架的收工后暗场皮，金工 / 高定手作", "dtc"},
+	{"handcraft-white", "工坊 · 纯白", "Atelier 的纯白背景色卡", "dtc"},
+	{"monthbox", "月盒 · Monthbox", "暖米底 + 墨与蜜棕：立体月盒大卡 + 往期盒，订阅盒 / 礼盒 / 周边品牌", "dtc"},
+	{"monthbox-noir", "夜盒 · Monthbox Noir", "夜蓝底 + 蜜金：月盒骨架的暗色礼盒皮，节庆限定 / 高端订阅", "dtc"},
+	{"monthbox-white", "月盒 · 纯白", "Monthbox 的纯白背景色卡", "dtc"},
+	{"booth", "展位 · Booth", "展馆灰底 + 深灰蓝与指示蓝：品牌墙横幅 + 展位编号卡，展会型品牌 / B2B 零售", "dtc"},
+	{"booth-noir", "夜馆 · Booth Noir", "夜馆深底 + 荧蓝指示：展位骨架的闭馆后暗场皮，科技 / 器械品类", "dtc"},
+	{"booth-white", "展位 · 纯白", "Booth 的纯白背景色卡", "dtc"},
+	{"herbary", "药柜 · Apothecary", "药草白底 + 墨绿瓷签：瓶签商品卡 + 双表详情，个护 / 草本 / 保健品牌", "dtc"},
+	{"herbary-noir", "夜柜 · Apothecary Noir", "深墨绿夜柜 + 瓷白药签：药柜骨架的暗色版本，精油 / 高端护理", "dtc"},
+	{"herbary-white", "药柜 · 纯白", "Apothecary 的纯白背景色卡", "dtc"},
+	{"grocer", "食铺 · Grocer", "麦米底 + 黑板绿与木棕：黑板价目 + 纸袋货架，食品 / 咖啡 / 农产品牌", "dtc"},
+	{"grocer-noir", "夜铺 · Grocer Noir", "黑板绿夜底 + 粉笔白：食铺骨架的打烊后暗场皮，酒饮 / 熟食", "dtc"},
+	{"grocer-white", "食铺 · 纯白", "Grocer 的纯白背景色卡", "dtc"},
+	{"cellar", "酒窖 · Cellar", "窖黑底 + 鎏金与羊皮米：横向酒架行，酒饮 / 茶叶 / 陈酿类品牌", "dtc"},
+	{"cellar-day", "日窖 · Cellar Day", "日窖亮米 + 深木褐与暗金：酒窖骨架的白天品鉴室版本", "dtc"},
+	{"cellar-white", "酒窖 · 纯白", "Cellar 的纯白背景色卡", "dtc"},
+	{"basecamp", "营地 · Basecamp", "苔白底 + 军绿与深林墨：路标导航 + 装备清单行，户外 / 装备 / 运动品牌", "dtc"},
+	{"basecamp-noir", "夜营 · Basecamp Noir", "夜营深绿 + 月白与浅军绿：营地骨架的夜宿版本，露营灯具 / 夜行装备", "dtc"},
+	{"basecamp-white", "营地 · 纯白", "Basecamp 的纯白背景色卡", "dtc"},
+	{"toybox", "玩具盒 · Toybox", "奶油底 + 墨棕与积木红：积木导航 + 贴纸徽章卡，玩具 / 童品 / 亲子品牌", "dtc"},
+	{"toybox-noir", "夜游 · Toybox Noir", "夜游深底 + 亮积木四色：玩具盒骨架的暗色版本，桌游 / 潮玩", "dtc"},
+	{"toybox-white", "玩具盒 · 纯白", "Toybox 的纯白背景色卡", "dtc"},
+	{"paperie", "手账铺 · Paperie", "纸白底 + 墨与和纸黄：索引页签 + 胶带贴角卡，文具 / 手账 / 纸品品牌", "dtc"},
+	{"paperie-noir", "夜账 · Paperie Noir", "深夜蓝黑纸 + 暖纸色页签：手账铺骨架的夜写版本，钢笔 / 墨水", "dtc"},
+	{"paperie-white", "手账铺 · 纯白", "Paperie 的纯白背景色卡", "dtc"},
+	{"mono", "黑白铺 · Mono", "冷灰纸底 + 纯黑硬线：底部固定黑条 + 1px 线格，极简单色 / 设计文创品牌", "dtc"},
+	{"mono-noir", "反白 · Mono Noir", "全黑底反白线：黑白铺骨架的反相版本，潮牌 / 黑标系列", "dtc"},
+	{"mono-white", "黑白铺 · 纯白", "Mono 的纯白背景色卡（纯白 + 柔灰线）", "dtc"},
+	{"flatlay", "平铺 · Flatlay", "亚麻底 + 深烟与赭陶：俯拍马赛克首屏，生活方式 / 家居 / 静物摄影型品牌", "dtc"},
+	{"flatlay-noir", "暗铺 · Flatlay Noir", "暗调平铺深底 + 浅字与陶橙：平铺骨架的暗色静物版本", "dtc"},
+	{"flatlay-white", "平铺 · 纯白", "Flatlay 的纯白背景色卡", "dtc"},
+	{"flyer", "传单 · Flyer", "纸黄底 + 墨与警示黄、爆炸红：粗框传单格，快消 / 促销季 / 高性价比品牌", "dtc"},
+	{"flyer-noir", "夜传单 · Flyer Noir", "夜市黑底 + 警示黄字与红贴纸：传单骨架的暗色版本", "dtc"},
+	{"flyer-white", "传单 · 纯白", "Flyer 的纯白背景色卡", "dtc"},
+	{"lightbox", "灯箱 · Lightbox", "夜黑底 + 霓虹青与灰白：发光灯箱格，电子 / 潮玩 / 夜色系品牌", "dtc"},
+	{"lightbox-day", "日箱 · Lightbox Day", "日光亮底 + 深字与压深青：灯箱骨架的白天展陈版本", "dtc"},
+	{"lightbox-white", "灯箱 · 纯白", "Lightbox 的纯白背景色卡", "dtc"},
 	// 每种骨架补充两套浅色皮肤：结构复用既有 layout，仅改变视觉语言。
 	{"paperwhite", "纸白 · Paperwhite", "冷白纸面 + 群青与朱红信号，清晰克制的通用编辑官网", "content"},
 	{"citrus", "柑光 · Citrus", "淡柠檬底 + 叶绿与珊瑚橙，明快亲和的品牌内容站", "content"},
@@ -544,6 +745,47 @@ var themeLayouts = map[string]string{
 	"catalog": "catalog", "nightmarket": "catalog",
 	"broadcast": "broadcast", "airwave": "broadcast",
 	"exhibit": "exhibit", "afterhours": "exhibit",
+	"tracklist": "tracklist", "sleeve": "tracklist", "tracklist-white": "tracklist",
+	"departure": "departure", "dayline": "departure", "departure-white": "departure",
+	"lexicon": "lexicon", "nightgloss": "lexicon", "lexicon-white": "lexicon",
+	"bistro": "bistro", "taverna": "bistro", "bistro-white": "bistro",
+	"serial": "serial", "nightlamp": "serial", "serial-white": "serial",
+	"verse": "verse", "indigonight": "verse", "verse-white": "verse",
+	"archway": "archway", "nightgate": "archway", "archway-white": "archway",
+	"gutter": "gutter", "nightfold": "gutter", "gutter-white": "gutter",
+	"cover": "cover", "scarlet": "cover", "cover-white": "cover",
+	"marquee": "marquee", "daybill": "marquee", "marquee-white": "marquee",
+	"triptych": "triptych", "nighthall": "triptych", "triptych-white": "triptych",
+	"stubs": "stubs", "nightshow": "stubs", "stubs-white": "stubs",
+	"cardfile": "cardfile", "steelcab": "cardfile", "cardfile-white": "cardfile",
+	"script": "script", "nightdraft": "script", "script-white": "script",
+	"postmark": "postmark", "kraft": "postmark", "postmark-white": "postmark",
+	"metro": "metro", "nightline": "metro", "metro-white": "metro",
+	"circuit": "circuit", "bluetrace": "circuit", "circuit-white": "circuit",
+	"specimen": "specimen", "nightplate": "specimen", "specimen-white": "specimen",
+	"lockers": "lockers", "nightlocker": "lockers", "lockers-white": "lockers",
+	"auction": "auction", "nightsale": "auction", "auction-white": "auction",
+	"lattice": "lattice", "nightgarden": "lattice", "lattice-white": "lattice",
+	"andon": "factory-andon", "shopfloor": "factory-andon", "andon-white": "factory-andon",
+	"certwall": "factory-certwall", "attest": "factory-certwall", "certwall-white": "factory-certwall",
+	"container": "factory-container", "seafreight": "factory-container", "container-white": "factory-container",
+	"crate": "factory-crate", "stencil": "factory-crate", "crate-white": "factory-crate",
+	"draftdesk": "factory-draftdesk", "blueline": "factory-draftdesk", "draftdesk-white": "factory-draftdesk",
+	"exportmap": "factory-exportmap", "nightport": "factory-exportmap", "exportmap-white": "factory-exportmap",
+	"floorplan": "factory-floorplan", "zoning": "factory-floorplan", "floorplan-white": "factory-floorplan",
+	"furnace": "factory-furnace", "emberdark": "factory-furnace", "furnace-white": "factory-furnace",
+	"gantry": "factory-gantry", "beamline": "factory-gantry", "gantry-white": "factory-gantry",
+	"gauge": "factory-gauge", "dialface": "factory-gauge", "gauge-white": "factory-gauge",
+	"hazardtape": "factory-hazardtape", "graveyard": "factory-hazardtape", "hazardtape-white": "factory-hazardtape",
+	"inspection": "factory-inspection", "passmark": "factory-inspection", "inspection-white": "factory-inspection",
+	"line": "factory-line", "conveyor": "factory-line", "line-white": "factory-line",
+	"nameplate": "factory-nameplate", "etchplate": "factory-nameplate", "nameplate-white": "factory-nameplate",
+	"pipeworks": "factory-pipeworks", "flowline": "factory-pipeworks", "pipeworks-white": "factory-pipeworks",
+	"quotation": "factory-quotation", "proforma": "factory-quotation", "quotation-white": "factory-quotation",
+	"rackwall": "factory-rackwall", "aisle": "factory-rackwall", "rackwall-white": "factory-rackwall",
+	"sampleroom": "factory-sampleroom", "swatchbook": "factory-sampleroom", "sampleroom-white": "factory-sampleroom",
+	"shutter": "factory-shutter", "stallfront": "factory-shutter", "shutter-white": "factory-shutter",
+	"tonnage": "factory-tonnage", "millscale": "factory-tonnage", "tonnage-white": "factory-tonnage",
 	// 每种骨架的两套新增浅色皮肤（topbar 的 paperwhite / citrus 使用缺省映射）。
 	"bookshop": "sidebar", "canal": "sidebar",
 	"confetti": "bento", "icebox": "bento",
@@ -607,6 +849,26 @@ var themeLayouts = map[string]string{
 	"solowhite": "dtc-solo", "charcoal": "dtc-solo",
 	"coralpop": "dtc-solo", "limewash": "dtc-solo",
 	"galleria": "dtc-lookbook", "blackbox": "dtc-lookbook",
+	"vitrine": "dtc-vitrine", "vitrine-noir": "dtc-vitrine", "vitrine-white": "dtc-vitrine",
+	"journalshop": "dtc-journal", "journalshop-noir": "dtc-journal", "journalshop-white": "dtc-journal",
+	"catalogue": "dtc-catalogue", "catalogue-noir": "dtc-catalogue", "catalogue-white": "dtc-catalogue",
+	"bazaar": "dtc-bazaar", "bazaar-noir": "dtc-bazaar", "bazaar-white": "dtc-bazaar",
+	"column": "dtc-column", "column-day": "dtc-column", "column-white": "dtc-column",
+	"swissgrid": "dtc-swissgrid", "swissgrid-noir": "dtc-swissgrid", "swissgrid-white": "dtc-swissgrid",
+	"catwalk": "dtc-runway", "catwalk-day": "dtc-runway", "catwalk-white": "dtc-runway",
+	"handcraft": "dtc-atelier", "handcraft-noir": "dtc-atelier", "handcraft-white": "dtc-atelier",
+	"monthbox": "dtc-monthbox", "monthbox-noir": "dtc-monthbox", "monthbox-white": "dtc-monthbox",
+	"booth": "dtc-booth", "booth-noir": "dtc-booth", "booth-white": "dtc-booth",
+	"herbary": "dtc-apothecary", "herbary-noir": "dtc-apothecary", "herbary-white": "dtc-apothecary",
+	"grocer": "dtc-grocer", "grocer-noir": "dtc-grocer", "grocer-white": "dtc-grocer",
+	"cellar": "dtc-cellar", "cellar-day": "dtc-cellar", "cellar-white": "dtc-cellar",
+	"basecamp": "dtc-basecamp", "basecamp-noir": "dtc-basecamp", "basecamp-white": "dtc-basecamp",
+	"toybox": "dtc-toybox", "toybox-noir": "dtc-toybox", "toybox-white": "dtc-toybox",
+	"paperie": "dtc-paperie", "paperie-noir": "dtc-paperie", "paperie-white": "dtc-paperie",
+	"mono": "dtc-mono", "mono-noir": "dtc-mono", "mono-white": "dtc-mono",
+	"flatlay": "dtc-flatlay", "flatlay-noir": "dtc-flatlay", "flatlay-white": "dtc-flatlay",
+	"flyer": "dtc-flyer", "flyer-noir": "dtc-flyer", "flyer-white": "dtc-flyer",
+	"lightbox": "dtc-lightbox", "lightbox-day": "dtc-lightbox", "lightbox-white": "dtc-lightbox",
 	"flaxen": "dtc-lookbook", "fogblue": "dtc-lookbook",
 }
 
@@ -677,6 +939,46 @@ var themeAccentDefault = map[string]string{
 	"almanac": "#bf4229", "nightshift": "#8f6bff", "inbox": "#2563eb", "midnight": "#7aa2ff",
 	"catalog": "#d94f35", "nightmarket": "#62f5c4", "broadcast": "#e34b62", "airwave": "#a88bff",
 	"exhibit": "#2f5d50", "afterhours": "#ff6659",
+	"tracklist": "#c9a227", "sleeve": "#993a10", "departure": "#ffb340", "dayline": "#1f5b46",
+	"lexicon": "#1f3a66", "nightgloss": "#e9b957", "bistro": "#f2cf5b", "taverna": "#7c1f2c",
+	"serial": "#2a3b66", "nightlamp": "#e2b25c", "verse": "#b23a2a", "indigonight": "#e08159",
+	"tracklist-white": "#8a6a08", "departure-white": "#1f5b46", "lexicon-white": "#1f3a66",
+	"bistro-white": "#1d4d3b", "serial-white": "#2a3b66", "verse-white": "#b23a2a",
+	"archway": "#7a5c2e", "nightgate": "#d9a848", "archway-white": "#7c5c22",
+	"gutter": "#8c2f2b", "nightfold": "#d9a441", "gutter-white": "#96322d",
+	"cover": "#ffc247", "scarlet": "#ffe4de", "cover-white": "#8f6400",
+	"marquee": "#e8b25c", "daybill": "#b0331d", "marquee-white": "#8a6408",
+	"triptych": "#7a5c2e", "nighthall": "#c8a04e", "triptych-white": "#7a5c2e",
+	"stubs": "#b2331f", "nightshow": "#ff9b3d", "stubs-white": "#b2331f",
+	"cardfile": "#7c5313", "steelcab": "#e28a63", "cardfile-white": "#7c5a14",
+	"script": "#9a3b2f", "nightdraft": "#e08a63", "script-white": "#9c3a2b",
+	"postmark": "#2f5d8a", "kraft": "#cfe3c8", "postmark-white": "#2f5d8a",
+	"metro": "#c8102e", "nightline": "#ffd60a", "metro-white": "#b60f28",
+	"circuit": "#cf9d4a", "bluetrace": "#8fd9f2", "circuit-white": "#8a5c10",
+	"specimen": "#5d5738", "nightplate": "#d8c98a", "specimen-white": "#5d5738",
+	"lockers": "#1f5b40", "nightlocker": "#e5a43c", "lockers-white": "#1f5b40",
+	"auction": "#8a2f24", "nightsale": "#d9a848", "auction-white": "#8a2f24",
+	"lattice": "#46734c", "nightgarden": "#6fa276", "lattice-white": "#3a6a41",
+	"andon": "#5ecf92", "shopfloor": "#1b6a44", "andon-white": "#1d6641",
+	"certwall": "#0e5f9e", "attest": "#8ac2ef", "certwall-white": "#175a95",
+	"container": "#1f5a88", "seafreight": "#f09a3e", "container-white": "#1d5480",
+	"crate": "#97390f", "stencil": "#d9bc7c", "crate-white": "#a03c14",
+	"draftdesk": "#15558f", "blueline": "#edb64b", "draftdesk-white": "#24486f",
+	"exportmap": "#58b6ea", "nightport": "#14527f", "exportmap-white": "#17457a",
+	"floorplan": "#1e5c43", "zoning": "#52d6a5", "floorplan-white": "#1d5941",
+	"furnace": "#ee8a3c", "emberdark": "#8e2b1e", "furnace-white": "#9a3b12",
+	"gantry": "#8a6608", "beamline": "#f0c62a", "gantry-white": "#7a5c07",
+	"gauge": "#5ad0b0", "dialface": "#0f5f52", "gauge-white": "#0f6355",
+	"hazardtape": "#6d5300", "graveyard": "#dcf23c", "hazardtape-white": "#7a5c00",
+	"inspection": "#1a6a41", "passmark": "#48e08b", "inspection-white": "#1a6340",
+	"line": "#ab4718", "conveyor": "#efa93f", "line-white": "#a3461a",
+	"nameplate": "#2b5470", "etchplate": "#a8bfd0", "nameplate-white": "#1f4a66",
+	"pipeworks": "#0b6b62", "flowline": "#4cd7e2", "pipeworks-white": "#0c6157",
+	"quotation": "#1e6b47", "proforma": "#6cd9a7", "quotation-white": "#1e6047",
+	"rackwall": "#943f05", "aisle": "#ef7c1a", "rackwall-white": "#95430a",
+	"sampleroom": "#8a4a22", "swatchbook": "#d8b473", "sampleroom-white": "#8a4a22",
+	"shutter": "#8a5b00", "stallfront": "#f2b63c", "shutter-white": "#7e5b00",
+	"tonnage": "#a83c12", "millscale": "#f4744a", "tonnage-white": "#a13a11",
 	"field-ledger": "#b33d1f", "field-ledger-graphite": "#d8e900", "field-ledger-ocean": "#087d8e", "field-ledger-plum": "#7e3d72", "field-ledger-amber": "#a65c18",
 	"signal-archive": "#a92f1e", "signal-archive-ink": "#d5e95b", "signal-archive-copper": "#b96a3d", "signal-archive-cobalt": "#315fc2",
 	"paper-current": "#2f5f9f", "paper-current-sage": "#47765e", "paper-current-rose": "#b54b58", "paper-current-indigo": "#4c4ba6",
@@ -728,6 +1030,26 @@ var themeAccentDefault = map[string]string{
 	"cream": "#4a3f35", "amberglow": "#9a5a14", "inknavy": "#d3b078", "oliveleaf": "#556740",
 	"dawnfair":  "#121212",
 	"solowhite": "#2f56d9", "charcoal": "#e8b64c", "coralpop": "#c73a22", "limewash": "#4c7136",
+	"vitrine": "#7e6034", "vitrine-noir": "#d9ae62", "vitrine-white": "#755425",
+	"journalshop": "#a8352c", "journalshop-noir": "#d4705d", "journalshop-white": "#a8352c",
+	"catalogue": "#7c5c10", "catalogue-noir": "#c9a44a", "catalogue-white": "#7a5c08",
+	"bazaar": "#a8352c", "bazaar-noir": "#e9b45b", "bazaar-white": "#a03328",
+	"column": "#c9a25c", "column-day": "#8a6410", "column-white": "#8a6408",
+	"swissgrid": "#c2311f", "swissgrid-noir": "#e6503f", "swissgrid-white": "#b02c1c",
+	"catwalk": "#c9a25c", "catwalk-day": "#86651a", "catwalk-white": "#856318",
+	"handcraft": "#5d4a33", "handcraft-noir": "#dda74f", "handcraft-white": "#6b5335",
+	"monthbox": "#8a5a12", "monthbox-noir": "#d7b26c", "monthbox-white": "#8a5a10",
+	"booth": "#3d6b8a", "booth-noir": "#57b9e8", "booth-white": "#33607e",
+	"herbary": "#38553f", "herbary-noir": "#a3cc9b", "herbary-white": "#31543c",
+	"grocer": "#2e5b43", "grocer-noir": "#e3bd76", "grocer-white": "#265840",
+	"cellar": "#d9a848", "cellar-day": "#75550c", "cellar-white": "#7d5c10",
+	"basecamp": "#4a5c38", "basecamp-noir": "#a9c284", "basecamp-white": "#42552f",
+	"toybox": "#c23a3a", "toybox-noir": "#ef6d6d", "toybox-white": "#c23a3a",
+	"paperie": "#7c5310", "paperie-noir": "#e3b56b", "paperie-white": "#7d520e",
+	"mono": "#0d0d0d", "mono-noir": "#ffffff", "mono-white": "#1c1b17",
+	"flatlay": "#96451f", "flatlay-noir": "#e39a67", "flatlay-white": "#94431e",
+	"flyer": "#c22d1c", "flyer-noir": "#f2c517", "flyer-white": "#b32d1e",
+	"lightbox": "#3ec6ff", "lightbox-day": "#0a648f", "lightbox-white": "#0b6892",
 	"galleria": "#2b2b2b", "blackbox": "#cbb27e", "flaxen": "#7a5f3d", "fogblue": "#48657c",
 	"daybook": "#2676d2", "civic": "#b33236", "broadsheet": "#a12d2d", "salmonpress": "#a43d43",
 	"fieldguide": "#3f7248", "bluebook": "#2b58ad", "sunclock": "#c84a2f", "seedcalendar": "#4e7848",
@@ -755,6 +1077,46 @@ var themeRadiusDefault = map[string]string{
 	"almanac": "10", "nightshift": "10", "inbox": "10", "midnight": "10",
 	"catalog": "10", "nightmarket": "10", "broadcast": "14", "airwave": "14",
 	"exhibit": "2", "afterhours": "2",
+	"tracklist": "10", "sleeve": "2", "departure": "6", "dayline": "6",
+	"lexicon": "6", "nightgloss": "6", "bistro": "0", "taverna": "0",
+	"serial": "3", "nightlamp": "3", "verse": "0", "indigonight": "0",
+	"tracklist-white": "10", "departure-white": "6", "lexicon-white": "6",
+	"bistro-white": "0", "serial-white": "3", "verse-white": "0",
+	"archway": "12", "nightgate": "12", "archway-white": "12",
+	"gutter": "14", "nightfold": "14", "gutter-white": "14",
+	"cover": "0", "scarlet": "0", "cover-white": "0",
+	"marquee": "14", "daybill": "14", "marquee-white": "14",
+	"triptych": "14", "nighthall": "14", "triptych-white": "14",
+	"stubs": "10", "nightshow": "10", "stubs-white": "10",
+	"cardfile": "8", "steelcab": "8", "cardfile-white": "8",
+	"script": "3", "nightdraft": "3", "script-white": "3",
+	"postmark": "10", "kraft": "10", "postmark-white": "10",
+	"metro": "12", "nightline": "12", "metro-white": "10",
+	"circuit": "10", "bluetrace": "10", "circuit-white": "10",
+	"specimen": "0", "nightplate": "0", "specimen-white": "0",
+	"lockers": "10", "nightlocker": "10", "lockers-white": "10",
+	"auction": "0", "nightsale": "0", "auction-white": "0",
+	"lattice": "0", "nightgarden": "0", "lattice-white": "0",
+	"andon": "2", "shopfloor": "2", "andon-white": "2",
+	"certwall": "4", "attest": "4", "certwall-white": "4",
+	"container": "2", "seafreight": "2", "container-white": "2",
+	"crate": "0", "stencil": "0", "crate-white": "0",
+	"draftdesk": "2", "blueline": "2", "draftdesk-white": "2",
+	"exportmap": "3", "nightport": "3", "exportmap-white": "3",
+	"floorplan": "2", "zoning": "2", "floorplan-white": "2",
+	"furnace": "3", "emberdark": "3", "furnace-white": "3",
+	"gantry": "0", "beamline": "0", "gantry-white": "0",
+	"gauge": "4", "dialface": "4", "gauge-white": "4",
+	"hazardtape": "0", "graveyard": "0", "hazardtape-white": "0",
+	"inspection": "2", "passmark": "2", "inspection-white": "2",
+	"line": "2", "conveyor": "2", "line-white": "2",
+	"nameplate": "3", "etchplate": "3", "nameplate-white": "3",
+	"pipeworks": "10", "flowline": "10", "pipeworks-white": "10",
+	"quotation": "2", "proforma": "2", "quotation-white": "2",
+	"rackwall": "2", "aisle": "2", "rackwall-white": "2",
+	"sampleroom": "4", "swatchbook": "4", "sampleroom-white": "4",
+	"shutter": "2", "stallfront": "2", "shutter-white": "2",
+	"tonnage": "0", "millscale": "0", "tonnage-white": "0",
 	"field-ledger": "0", "field-ledger-graphite": "0", "field-ledger-ocean": "0", "field-ledger-plum": "0", "field-ledger-amber": "0",
 	"signal-archive": "0", "signal-archive-ink": "0", "signal-archive-copper": "0", "signal-archive-cobalt": "0",
 	"paper-current": "0", "paper-current-sage": "0", "paper-current-rose": "0", "paper-current-indigo": "0",
@@ -806,6 +1168,26 @@ var themeRadiusDefault = map[string]string{
 	"cream": "14", "amberglow": "16", "inknavy": "12", "oliveleaf": "18",
 	"dawnfair":  "0",
 	"solowhite": "12", "charcoal": "12", "coralpop": "18", "limewash": "14",
+	"vitrine": "2", "vitrine-noir": "2", "vitrine-white": "0",
+	"journalshop": "2", "journalshop-noir": "2", "journalshop-white": "2",
+	"catalogue": "2", "catalogue-noir": "2", "catalogue-white": "2",
+	"bazaar": "12", "bazaar-noir": "12", "bazaar-white": "10",
+	"column": "10", "column-day": "10", "column-white": "10",
+	"swissgrid": "0", "swissgrid-noir": "0", "swissgrid-white": "0",
+	"catwalk": "0", "catwalk-day": "0", "catwalk-white": "0",
+	"handcraft": "4", "handcraft-noir": "4", "handcraft-white": "6",
+	"monthbox": "14", "monthbox-noir": "12", "monthbox-white": "10",
+	"booth": "10", "booth-noir": "10", "booth-white": "8",
+	"herbary": "6", "herbary-noir": "6", "herbary-white": "3",
+	"grocer": "10", "grocer-noir": "10", "grocer-white": "10",
+	"cellar": "3", "cellar-day": "3", "cellar-white": "2",
+	"basecamp": "10", "basecamp-noir": "10", "basecamp-white": "10",
+	"toybox": "14", "toybox-noir": "14", "toybox-white": "12",
+	"paperie": "6", "paperie-noir": "6", "paperie-white": "6",
+	"mono": "0", "mono-noir": "0", "mono-white": "0",
+	"flatlay": "14", "flatlay-noir": "14", "flatlay-white": "14",
+	"flyer": "0", "flyer-noir": "0", "flyer-white": "0",
+	"lightbox": "8", "lightbox-day": "8", "lightbox-white": "8",
 	"galleria": "0", "blackbox": "0", "flaxen": "4", "fogblue": "6",
 	"daybook": "16", "civic": "8", "broadsheet": "0", "salmonpress": "2",
 	"fieldguide": "6", "bluebook": "4", "sunclock": "10", "seedcalendar": "12",
@@ -1039,17 +1421,18 @@ type View struct {
 	Inquiry         *InquiryView // product 详情页「询盘」区块（非 nil 时渲染）
 
 	// 工厂主题族（factory-* 五骨架首页；见 factory.go 包注释）
-	FactoryProducts   []*store.Post     // 首页商品：目录型栅格 / 展台型精选横排
-	FactoryCats       []FactoryCatCard  // 分类入口卡区（零配置：分类+数量+首个商品封面；空不渲染）
-	FactoryStats      []FactoryStat     // 「工厂实力」（settings factory.stats；空则模板回落站点简介）
-	FactoryProcessOn  bool              // 「合作流程」整条开关（settings factory.process.enabled != "0"）
-	FactoryProcess    []FactoryStep     // 四步流程（settings factory.process 覆盖，逐项回落 i18n）
-	FactoryIndustries []FactoryIndustry // 应用行业条（settings factory.industries 覆盖，空回落 i18n；关=nil）
-	FactoryGallery    []string          // 工厂图集图片 URL（settings factory.gallery；未配置不渲染）
-	FactoryQAs        []FactoryQA       // FAQ（settings factory.faq 覆盖，空回落 i18n 四条；关=nil）
-	FactoryCTA        FactoryTextPair   // CTA 通栏文案（settings factory.cta 覆盖，回落 i18n）
-	FactorySectionNum map[string]string // 目录骨架区块编号（跳过未渲染区块，编号连续）
-	FactoryCompare    *FactoryCompare   // 技术骨架规格对比表（specs 共有键求交集；带规格商品 <2 或无共有键为 nil → 模板回落商品栅格）
+	FactoryProducts       []*store.Post          // 首页商品：目录型栅格 / 展台型精选横排
+	FactoryCats           []FactoryCatCard       // 分类入口卡区（零配置：分类+数量+首个商品封面；空不渲染）
+	FactoryStats          []FactoryStat          // 「工厂实力」（settings factory.stats；空则模板回落站点简介）
+	FactoryProcessOn      bool                   // 「合作流程」整条开关（settings factory.process.enabled != "0"）
+	FactoryProcess        []FactoryStep          // 四步流程（settings factory.process 覆盖，逐项回落 i18n）
+	FactoryIndustries     []FactoryIndustry      // 应用行业条（settings factory.industries 覆盖，空回落 i18n；关=nil）
+	FactoryGallery        []string               // 工厂图集图片 URL（settings factory.gallery；未配置不渲染）
+	FactoryCertifications []FactoryCertification // 真实认证/审核（settings factory.certifications；空不渲染，绝不编造）
+	FactoryQAs            []FactoryQA            // FAQ（settings factory.faq 覆盖，空回落 i18n 四条；关=nil）
+	FactoryCTA            FactoryTextPair        // CTA 通栏文案（settings factory.cta 覆盖，回落 i18n）
+	FactorySectionNum     map[string]string      // 目录骨架区块编号（跳过未渲染区块，编号连续）
+	FactoryCompare        *FactoryCompare        // 技术骨架规格对比表（specs 共有键求交集；带规格商品 <2 或无共有键为 nil → 模板回落商品栅格）
 
 	// 外贸独立站主题族（dtc-* 三骨架首页；见 dtc.go 包注释）。商品/分类/数字/图集/FAQ/CTA
 	// 复用上面的 Factory* 字段（同一存储键），以下是独立站专属的派生数据。
@@ -1196,6 +1579,7 @@ type View struct {
 	PlatformPreviewURLs          map[int64]string      // 平台站点页：按各站点默认语种生成的预览入口
 	PlatformOfficialURLs         map[int64]string      // 已发布到 Cloudflare 的正式站点入口
 	PlatformOfficialHosts        map[int64]string      // 正式站点入口展示域名
+	PlatformRuntimeErrors        map[int64]string      // 迁移/加载失败站点；仅后台展示，不向自动化接口泄露磁盘细节
 	PlatformCFStatus             map[int64]string      // 每站点：Cloudflare 部署状态（running/success/failed/空），卡片轮询初值
 	PlatformDeployChips          map[int64]*DeployChip // 每站点：卡片左下角「待部署 / 运行 N 天 · 更新 M」芯片（见 site_deploy_chip.go）
 	PlatformLocaleCounts         map[int64]int         // 每站点：启用语种数
@@ -1516,7 +1900,45 @@ func (s *Server) Handler() http.Handler {
 }
 
 func (s *Server) siteHandler() http.Handler {
-	return s.securityHeaders(s.withCloudflareCanonicalFrontend(s.withLocale(s.publicPageCache(s.contentTypeRouter(s.apiExtCategoryRouter(s.mux))))))
+	return s.securityHeaders(s.withCloudflareCanonicalFrontend(s.withLocale(s.publicPageCache(s.contentTypeRouter(s.apiExtCategoryRouter(s.pagePlatformAPIRouter(s.mux)))))))
+}
+
+func (s *Server) pagePlatformAPIRouter(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.pagePlatformMux != nil && pagePlatformAPIPath(r.URL.Path) {
+			s.pagePlatformMux.ServeHTTP(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func pagePlatformAPIPath(requestPath string) bool {
+	rest := ""
+	switch {
+	case strings.HasPrefix(requestPath, "/api/admin/v1/"):
+		rest = strings.TrimPrefix(requestPath, "/api/admin/v1")
+	case strings.HasPrefix(requestPath, "/api/platform/v1/sites/"):
+		tail := strings.TrimPrefix(requestPath, "/api/platform/v1/sites/")
+		_, pathTail, ok := strings.Cut(tail, "/")
+		if !ok {
+			return false
+		}
+		rest = "/" + strings.TrimPrefix(pathTail, "/")
+	default:
+		return false
+	}
+	if rest == "/page-projects" || strings.HasPrefix(rest, "/page-projects/") {
+		return true
+	}
+	switch rest {
+	case "/page-design-context", "/page-components", "/page-data-sources", "/page-bindings/preview":
+		return true
+	}
+	if !strings.HasPrefix(rest, "/pages/") {
+		return false
+	}
+	return strings.HasSuffix(rest, "/convert") || strings.HasSuffix(rest, "/convert-plan")
 }
 
 func (s *Server) runtimePool() *SiteRuntimePool {
@@ -1552,6 +1974,7 @@ func (s *Server) detachSiteRuntime(siteID int64) {
 	}
 	rt := s.runtimes.byID[siteID]
 	delete(s.runtimes.byID, siteID)
+	delete(s.runtimes.failures, siteID)
 	for host, candidate := range s.runtimes.byHost {
 		if candidate == rt {
 			delete(s.runtimes.byHost, host)
@@ -1585,6 +2008,7 @@ func (s *Server) reloadRuntimePool() error {
 		byID:          map[int64]*SiteRuntime{},
 		byHost:        map[string]*SiteRuntime{},
 		redirects:     map[string]string{},
+		failures:      map[int64]SiteRuntimeFailure{},
 		platformHost:  normalizeRuntimeHost(baseURLHost(s.baseURL)),
 		localPlatform: isLocalBaseURL(s.baseURL),
 	}
@@ -1594,7 +2018,11 @@ func (s *Server) reloadRuntimePool() error {
 		}
 		rt, err := s.runtimeForSite(site, domainsBySite[site.ID])
 		if err != nil {
-			return err
+			pool.failures[site.ID] = SiteRuntimeFailure{
+				SiteID: site.ID, SiteSlug: site.Slug,
+				Code: "site_runtime_unavailable", Detail: err.Error(),
+			}
+			continue
 		}
 		pool.byID[site.ID] = rt
 		if site.IsDefault || pool.defaultSite == nil {
@@ -1774,6 +2202,14 @@ func (p *SiteRuntimePool) runtimeByID(id int64) (*SiteRuntime, bool) {
 		}
 	}
 	return nil, false
+}
+
+func (p *SiteRuntimePool) runtimeFailure(id int64) (SiteRuntimeFailure, bool) {
+	if p == nil || id <= 0 {
+		return SiteRuntimeFailure{}, false
+	}
+	failure, ok := p.failures[id]
+	return failure, ok
 }
 
 func isLocalHostOnly(host string) bool {
@@ -1999,6 +2435,10 @@ func (s *Server) serveRuntimeSitePreview(w http.ResponseWriter, r *http.Request,
 func (s *Server) serveSignedSitePreview(w http.ResponseWriter, r *http.Request, pool *SiteRuntimePool, siteID int64, rest string) {
 	rt, ok := pool.runtimeByID(siteID)
 	if !ok || rt == nil || rt.server == nil || rt.Site == nil {
+		if _, failed := pool.runtimeFailure(siteID); failed {
+			apiError(w, http.StatusServiceUnavailable, "site_runtime_unavailable", "该站点数据库迁移或加载失败，已隔离；其他站点不受影响。")
+			return
+		}
 		http.NotFound(w, r)
 		return
 	}
@@ -2007,7 +2447,7 @@ func (s *Server) serveSignedSitePreview(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	if token, name, ok := signedContentPreviewMediaTarget(rest); ok {
-		if _, state := rt.server.verifyFrontendPreviewToken(token); state != "" {
+		if !rt.server.signedPreviewMediaTokenValid(token) {
 			http.NotFound(w, r)
 			return
 		}
@@ -2220,6 +2660,10 @@ func (s *Server) servePlatformAPI(w http.ResponseWriter, r *http.Request, pool *
 		s.servePlatformControl(w, r)
 		return
 	}
+	if strings.HasPrefix(r.URL.Path, "/api/platform/v1/pilot/") {
+		s.servePilotDeviceAPI(w, r, pool)
+		return
+	}
 	// 发现端点：GET /api/platform/v1/sites（含结尾斜杠），在解析数字 siteID 之前拦截。
 	if p := r.URL.Path; p == "/api/platform/v1/sites" || p == "/api/platform/v1/sites/" {
 		s.servePlatformDiscovery(w, r, pool)
@@ -2287,6 +2731,10 @@ func (s *Server) servePlatformKeyRequest(w http.ResponseWriter, r *http.Request,
 	}
 	rt, ok := pool.runtimeByID(siteID)
 	if !ok || rt == nil || rt.server == nil || rt.Site == nil {
+		if _, failed := pool.runtimeFailure(siteID); failed {
+			apiError(w, http.StatusServiceUnavailable, "site_runtime_unavailable", "该站点数据库迁移或加载失败，已隔离；其他站点不受影响。")
+			return
+		}
 		apiError(w, http.StatusNotFound, "site_not_found", "站点不存在。")
 		return
 	}
@@ -2422,6 +2870,12 @@ func (s *Server) discoverySiteItem(pool *SiteRuntimePool, site *platform.Site, d
 		"deployment":                    s.discoverySiteDeployment(displayPool, site, publicURL),
 		"public_access":                 s.discoverySitePublicAccess(site.ID, domains),
 	}
+	if failure, failed := pool.runtimeFailure(site.ID); failed {
+		item["runtime_available"] = false
+		item["runtime_error"] = failure.Code
+	} else {
+		item["runtime_available"] = true
+	}
 	if includeTheme && displayPool != nil {
 		if runtime, ok := displayPool.runtimeByID(site.ID); ok && runtime != nil && runtime.Store != nil {
 			item["theme"] = controlThemeSummary(runtime.Store, "zh")
@@ -2433,6 +2887,9 @@ func (s *Server) discoverySiteItem(pool *SiteRuntimePool, site *platform.Site, d
 func discoverySiteDisplayPool(pool *SiteRuntimePool, site *platform.Site) (*SiteRuntimePool, func()) {
 	if pool != nil && site != nil {
 		if _, ok := pool.runtimeByID(site.ID); ok {
+			return pool, func() {}
+		}
+		if _, failed := pool.runtimeFailure(site.ID); failed {
 			return pool, func() {}
 		}
 	}
@@ -2464,6 +2921,9 @@ func (s *Server) discoverySiteCounts(pool *SiteRuntimePool, site *platform.Site)
 		}
 	}
 	if st == nil && strings.TrimSpace(site.DBPath) != "" {
+		if _, failed := pool.runtimeFailure(site.ID); failed {
+			return 0, 0, 0
+		}
 		opened, err := store.Open(site.DBPath)
 		if err == nil {
 			st = opened
@@ -2875,6 +3335,8 @@ func platformOnlyPath(path string) bool {
 		return true
 	case path == "/admin/server-health":
 		return true
+	case path == "/admin/pre-active", path == "/admin/pre-stable":
+		return true
 	case strings.HasPrefix(path, "/admin/google/"):
 		return true
 	case path == "/admin/backups" || strings.HasPrefix(path, "/admin/backups/"):
@@ -2892,6 +3354,8 @@ func platformOnlyPath(path string) bool {
 	case path == "/admin/settings/admin-i18n":
 		return true
 	case path == "/admin/sites" || strings.HasPrefix(path, "/admin/sites/"):
+		return true
+	case path == "/admin/pilot" || strings.HasPrefix(path, "/admin/pilot/"):
 		return true
 	case path == "/admin/automation" || strings.HasPrefix(path, "/admin/automation/"):
 		return true
@@ -3406,7 +3870,7 @@ func isLocalBaseURL(raw string) bool {
 // 这些路径不参与语种前缀：后台、静态资源、上传、临时预览、全局 SEO 端点。
 func isReservedPath(p string) bool {
 	switch {
-	case strings.HasPrefix(p, "/admin"), strings.HasPrefix(p, "/api/"), strings.HasPrefix(p, "/assets/"), strings.HasPrefix(p, "/uploads/"), strings.HasPrefix(p, "/preview/"):
+	case strings.HasPrefix(p, "/admin"), strings.HasPrefix(p, "/api/"), strings.HasPrefix(p, "/assets/"), strings.HasPrefix(p, "/uploads/"), strings.HasPrefix(p, "/page-assets/"), strings.HasPrefix(p, "/preview/"), strings.HasPrefix(p, "/_gcms/"):
 		return true
 	case p == "/robots.txt", p == "/sitemap.xml", p == "/favicon.ico":
 		return true
@@ -3960,6 +4424,11 @@ func hexColor(s string) bool {
 
 func (s *Server) routes(assetsFS fs.FS) {
 	mux := http.NewServeMux()
+	pagePlatformMux := http.NewServeMux()
+	s.registerPagePlatformAPIRoutes(pagePlatformMux)
+	s.pagePlatformMux = pagePlatformMux
+	s.registerCompositionPublicRoutes(mux)
+	s.registerPageAppPublicRoutes(mux)
 
 	// 公开站点（语种前缀由 withLocale 中间件剥离后命中这些原始路由）
 	mux.HandleFunc("GET /{$}", s.home)
@@ -4027,6 +4496,13 @@ func (s *Server) routes(assetsFS fs.FS) {
 
 	// 自动化 API（开放语种、站点文案、导航、分类、媒体上传，以及文章 / 页面 / 链接内容操作）。
 	mux.HandleFunc("GET /api/admin/v1/openapi.json", s.apiOpenAPI)
+	mux.HandleFunc("GET /api/admin/v1/page-platform/capabilities", s.servePagePlatformCapabilities)
+	mux.HandleFunc("POST /api/admin/v1/control/unlock", s.serveSingleControlUnlock)
+	mux.HandleFunc("DELETE /api/admin/v1/control/unlock", s.serveSingleControlUnlock)
+	mux.HandleFunc("GET /api/platform/v1/sites/{siteID}/page-platform/capabilities", s.servePagePlatformCapabilities)
+	// 标准页面使用独立签名域预览。字面 pages 路由必须与旧 {collection}
+	// 路由同时保留，让老文章、链接以及既有 API 行为保持不变。
+	s.registerPagePreviewRoutes(mux)
 	mux.HandleFunc("GET /api/admin/v1/languages", s.apiLanguages)
 	mux.HandleFunc("POST /api/admin/v1/languages", s.apiCreateLanguage)
 	mux.HandleFunc("PATCH /api/admin/v1/languages/{code}", s.apiUpdateLanguage)
@@ -4149,7 +4625,14 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /admin/dismiss-pw", s.requireAuth(s.adminDismissPw))
 	mux.HandleFunc("GET /admin", s.requireAuth(s.adminDashboard))
 	mux.HandleFunc("GET /admin/sites", s.requireAuth(s.adminSites))
+	mux.HandleFunc("GET /admin/pilot", s.requireAuth(s.adminPilotConsole))
+	mux.HandleFunc("GET /admin/pilot/api/", s.requireAuth(s.adminPilotAPI))
+	mux.HandleFunc("POST /admin/pilot/api/", s.requireAuth(s.adminPilotAPI))
+	mux.HandleFunc("PATCH /admin/pilot/api/", s.requireAuth(s.adminPilotAPI))
+	mux.HandleFunc("DELETE /admin/pilot/api/", s.requireAuth(s.adminPilotAPI))
 	mux.HandleFunc("GET /admin/server-health", s.requireAuth(s.adminServerHealth))
+	mux.HandleFunc("GET /admin/pre-active", s.requireAuth(s.adminPreviewActivate))
+	mux.HandleFunc("GET /admin/pre-stable", s.requireAuth(s.adminPreviewDeactivate))
 	mux.HandleFunc("GET /admin/google/oauth/start", s.requireAuth(s.adminGoogleOAuthStart))
 	mux.HandleFunc("GET /admin/google/oauth/callback", s.requireAuth(s.adminGoogleOAuthCallback))
 	mux.HandleFunc("POST /admin/google/oauth/config", s.requireAuth(s.adminGoogleOAuthConfig))
@@ -4272,6 +4755,7 @@ func (s *Server) routes(assetsFS fs.FS) {
 	mux.HandleFunc("POST /admin/pages/{id}/delete", s.requireAuth(s.adminPageDelete))
 	mux.HandleFunc("POST /admin/pages/{id}/translate", s.requireAuth(s.adminTranslate))
 	mux.HandleFunc("POST /admin/pages/{id}/relink", s.requireAuth(s.adminRelink))
+	s.registerPagePlatformAdminRoutes(mux)
 	mux.HandleFunc("GET /admin/posts/new", s.requireAuth(s.adminNew))
 	mux.HandleFunc("GET /admin/posts/{id}/preview", s.requireAuth(s.adminPostPreview))
 	mux.HandleFunc("GET /admin/posts/{id}/edit", s.requireAuth(s.adminEdit))
@@ -4852,11 +5336,18 @@ func (s *Server) adminThemePreview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("X-Robots-Tag", "noindex, nofollow")
-	w.Header().Set("Cache-Control", "private, max-age=60")
+	// 主题卡会在保存外观配置、切换同族色卡后立即重载。这里不能让浏览器
+	// 复用一分钟前的 HTML，否则卡片会继续展示旧 Hero / 旧数据。
+	w.Header().Set("Cache-Control", "no-store")
 	lang := langFrom(r)
 	v := s.view(r, "home")
 	s.applyTheme(v, theme)
 	v.SEO = v.Site.Home()
+	familyPreview := isFactoryLayout(v.Layout) || isDTCLayout(v.Layout)
+	// 工厂与 DTC 卡片必须是站点真实首页的缩放视图；即使站点还没有
+	// 商品或配置槽，也保持真实空态，不能为了把卡片填满而注入样例数据。
+	// 这样卡片与点开的 theme-browse 预览始终使用同一份站点数据。
+	allowSynthetic := !familyPreview
 	// 主题卡缩略图与完整试穿页复用同一套真实 Hero 数据。只隔离自定义注入，
 	// 避免后台 iframe 执行站点脚本；图片/SVG 本身必须保留，才能真实反映主题效果。
 	v.Site.InjectHead = ""
@@ -4876,9 +5367,12 @@ func (s *Server) adminThemePreview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	hasRealPosts := len(posts) > 0
-	if total, err := s.store.CountPublished(lang); err == nil {
-		v.TotalPosts = total
+	total, err := s.store.CountPublished(lang)
+	if err != nil {
+		s.serverError(w, err)
+		return
 	}
+	v.TotalPosts = total
 	syntheticContentPreview := len(posts) == 0 && newContentPreview
 	if syntheticContentPreview {
 		now := time.Now()
@@ -4893,26 +5387,27 @@ func (s *Server) adminThemePreview(w http.ResponseWriter, r *http.Request) {
 		if len(posts) > previewLimit {
 			posts = posts[:previewLimit]
 		}
-	} else if len(posts) == 0 {
+	} else if len(posts) == 0 && allowSynthetic {
 		posts = []*store.Post{
 			{Title: v.Site.Name + " 更新日志", Excerpt: v.Site.Description, PublishedAt: time.Now()},
 			{Title: "快速开始", Excerpt: "安装、配置与内容发布流程。", PublishedAt: time.Now()},
 			{Title: "设计与主题", Excerpt: "为不同类型的网站选择合适的前台结构。", PublishedAt: time.Now()},
 		}
 	}
-	if v.TotalPosts == 0 {
-		v.TotalPosts = len(posts)
-	}
 	if hasRealPosts {
 		s.populateHomeContent(v, lang, posts, postsPerPage, s.intSetting(homeLinksLimitKey, defaultHomeLinksLimit, minHomeLinksLimit, maxHomeLinksLimit), 1)
-	} else {
+	} else if len(posts) > 0 {
 		v.Featured = posts[0]
 		if len(posts) > 1 {
 			v.Posts = posts[1:]
 		}
 	}
-	v.Categories, _ = s.store.ListCategories(lang, "post")
-	if !hasRealPosts && len(v.Categories) == 0 {
+	v.Categories, err = s.store.ListCategories(lang, "post")
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	if allowSynthetic && !hasRealPosts && len(v.Categories) == 0 {
 		if syntheticContentPreview {
 			v.Categories = []*store.Category{
 				{Slug: "city", Name: "城市与空间", Count: 98},
@@ -4940,9 +5435,13 @@ func (s *Server) adminThemePreview(w http.ResponseWriter, r *http.Request) {
 		v.FeatLinks = s.knowledgeHeroLinks(lang, knowledgeLinksLimit)
 	} else if !hasRealPosts && knowledgeLinksLimit > 0 {
 		// 空文章站点仍可能配置了真实置顶链接；先使用真实数据，再考虑空站占位。
-		v.FeatLinks, _ = s.store.FeaturedLinks(lang, knowledgeLinksLimit)
+		v.FeatLinks, err = s.store.FeaturedLinks(lang, knowledgeLinksLimit)
+		if err != nil {
+			s.serverError(w, err)
+			return
+		}
 	}
-	if !hasRealPosts && len(v.FeatLinks) == 0 && knowledgeLinksLimit > 0 && v.ContentThemeFamily != "pilot-flight-deck" {
+	if allowSynthetic && !hasRealPosts && len(v.FeatLinks) == 0 && knowledgeLinksLimit > 0 && v.ContentThemeFamily != "pilot-flight-deck" {
 		v.FeatLinks = []*store.Post{
 			{Title: "文档", Excerpt: "查看部署、配置与 API 用法。"},
 			{Title: "发布", Excerpt: "版本更新与一键升级流程。"},
@@ -4952,62 +5451,13 @@ func (s *Server) adminThemePreview(w http.ResponseWriter, r *http.Request) {
 			v.FeatLinks = v.FeatLinks[:knowledgeLinksLimit]
 		}
 	}
-	// 工厂骨架预览：站点没有商品时补几条商品样例，让缩略图能表达骨架结构。
+	// 工厂／DTC 主题卡与完整试穿页都只装载真实站点数据。空槽由模板
+	// 自己显示真实空态，绝不注入商品、统计、认证或承诺样例。
 	if isFactoryLayout(v.Layout) {
 		s.fillFactoryHome(v, lang)
-		if len(v.FactoryProducts) == 0 {
-			// 样例带 specs：技术骨架（factory-engineering）的规格对比表在预览里也能出。
-			v.FactoryProducts = []*store.Post{
-				{Title: "深沟球轴承 6204-2RS", Excerpt: "低噪音高转速，适配电机与传动设备。", Extra: `{"specs":[{"k":"型号","v":"6204-2RS"},{"k":"材质","v":"轴承钢 GCr15"},{"k":"起订量","v":"2000 套"}]}`},
-				{Title: "不锈钢法兰 DN50", Excerpt: "304 材质，耐腐蚀，按图纸定制。", Extra: `{"specs":[{"k":"型号","v":"FLG-DN50"},{"k":"材质","v":"304 不锈钢"},{"k":"起订量","v":"500 件"}]}`},
-				{Title: "铝合金外壳 CNC 加工件", Excerpt: "阳极氧化表面，公差 ±0.02mm。", Extra: `{"specs":[{"k":"型号","v":"GC-CNC-6061"},{"k":"材质","v":"6061-T6 铝合金"},{"k":"起订量","v":"500 件"}]}`},
-				{Title: "工业级同步带轮", Excerpt: "标准 HTD 齿形，现货批量供应。", Extra: `{"specs":[{"k":"型号","v":"HTD-5M-30"},{"k":"材质","v":"45# 钢发黑"},{"k":"起订量","v":"1000 件"}]}`},
-				{Title: "精密弹簧组件", Excerpt: "多规格模压成型，支持来样开模。"},
-				{Title: "尼龙输送链板", Excerpt: "食品级材质，耐磨耐高温。"},
-			}
-			if v.Layout == "factory-engineering" {
-				v.FactoryCompare = factorySpecCompare(v.FactoryProducts)
-			}
-		}
-		if len(v.FactoryStats) == 0 {
-			v.FactoryStats = []FactoryStat{
-				{Num: "2008", Label: "工厂成立"},
-				{Num: "12,000㎡", Label: "自有厂房"},
-				{Num: "45+", Label: "出口国家"},
-				{Num: "200+", Label: "产线员工"},
-			}
-		}
 	}
-	// 独立站骨架预览：站点没有商品时补品牌感样品（带 specs，单品骨架的规格表能出）。
-	// 用户评价刻意不补样例——评价红线是「绝不编造」，预览里也不放假评价。
 	if isDTCLayout(v.Layout) {
 		s.fillDTCHome(v, lang)
-		if len(v.FactoryProducts) == 0 {
-			v.FactoryProducts = []*store.Post{
-				{Title: "手工陶瓷马克杯 350ml", Excerpt: "釉下彩手绘，微波炉与洗碗机适用。", Extra: `{"specs":[{"k":"容量","v":"350ml"},{"k":"材质","v":"高温白瓷"},{"k":"产地","v":"景德镇"}]}`},
-				{Title: "有机棉华夫格浴巾", Excerpt: "GOTS 认证有机棉，蓬松速干。", Extra: `{"specs":[{"k":"尺寸","v":"70×140cm"},{"k":"材质","v":"100% 有机棉"}]}`},
-				{Title: "胡桃木手机支架", Excerpt: "整木 CNC 成型，手工打磨上蜡。", Extra: `{"specs":[{"k":"材质","v":"北美黑胡桃"},{"k":"重量","v":"120g"}]}`},
-				{Title: "便携香薰蜡烛礼盒", Excerpt: "大豆蜡 + 精油调香，三种木质香型。", Extra: `{"specs":[{"k":"净含量","v":"3×60g"},{"k":"燃烧时长","v":"约 36 小时"}]}`},
-				{Title: "再生帆布托特包", Excerpt: "回收棉帆布，承重 15kg。"},
-				{Title: "不锈钢保温随行杯", Excerpt: "6 小时保温，一键开合防漏。"},
-			}
-			switch v.Layout {
-			case "dtc-solo":
-				v.DTCMain = v.FactoryProducts[0]
-				v.DTCMainSpecs = productSpecPairs(v.DTCMain)
-				v.DTCSelling, v.DTCScenes = dtcSoloSelling(v.FactoryGallery, v.DTCMainSpecs)
-			case "dtc-lookbook":
-				v.DTCLookGroups = []DTCLookGroup{{Name: "全部商品", URL: "/products", Items: v.FactoryProducts}}
-			}
-		}
-		if len(v.FactoryStats) == 0 && v.Layout != "dtc-lookbook" {
-			v.FactoryStats = []FactoryStat{
-				{Num: "2018", Label: "品牌创立"},
-				{Num: "30+", Label: "发货国家与地区"},
-				{Num: "72h", Label: "工厂直发"},
-				{Num: "12 个月", Label: "质保承诺"},
-			}
-		}
 	}
 	// Pilot 预览读取与真实首页完全相同的站点配置，不注入版本、平台或下载链接样例。
 	s.fillPilotHome(v, lang)
@@ -5395,6 +5845,23 @@ func (s *Server) renderPageBySlug(w http.ResponseWriter, r *http.Request, slug s
 	}
 	if p == nil {
 		s.notFound(w, r)
+		return
+	}
+	if handled, renderErr := s.renderPublishedPageAppForPost(w, r, p); handled {
+		if renderErr != nil {
+			s.serverError(w, renderErr)
+		}
+		return
+	}
+	// A published composition revision owns the public page once it exists.
+	// Rendering errors fail closed: serving the legacy post.Content here would
+	// silently publish stale data under the composition page's URL.
+	if rendered, handled, renderErr := s.RenderPublishedComposition(r, p); handled {
+		if renderErr != nil {
+			s.serverError(w, renderErr)
+			return
+		}
+		s.WriteCompositionPage(w, rendered, http.StatusOK)
 		return
 	}
 	v := s.view(r, slug)

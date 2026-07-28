@@ -1,0 +1,87 @@
+{{define "home_cardfile"}}
+  {{/* 目录柜 Cardfile — 抽屉墙（Categories=抽屉卡：纸标签框+Count+黄铜拉手胶囊+木纹底）+
+       桌面浅色大板（Featured=放大首卡，Posts=打字机索引卡：卡号行+红横线+底部穿孔圆，
+       FeatLinks=借阅签）+ colophon；页头由 CSS 重塑为柜面木纹横条，此处不画第二份主导航 */}}
+  <div class="cdf-wrap">
+
+    <header class="cdf-cabinet">
+      <div class="cdf-plate">
+        {{if .Site.HeroEyebrow}}<p class="cdf-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+        <h1 class="cdf-title"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+        {{if .Site.HeroDescription}}<p class="cdf-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+      </div>
+      {{if .Categories}}
+      <nav class="cdf-drawers" aria-label="{{.Tr.T "nav.category"}}">
+        {{range .Categories}}
+        <a class="cdf-drawer" href="{{$.Tr.U (printf "/category/%s" .Slug)}}">
+          <span class="cdf-label"><span class="cdf-label-name">{{.Name}}</span><span class="cdf-label-n">{{.Count}}</span></span>
+          <span class="cdf-pull" aria-hidden="true"></span>
+        </a>
+        {{end}}
+        <a class="cdf-drawer cdf-drawer-all" href="{{.Tr.U .CategoryAll.Path}}">
+          <span class="cdf-label"><span class="cdf-label-name">{{.Tr.T "home.view_all"}}</span></span>
+          <span class="cdf-pull" aria-hidden="true"></span>
+        </a>
+      </nav>
+      {{end}}
+    </header>
+
+    {{if or .Featured .Posts .FeatLinks}}
+    <section class="cdf-desk">
+      {{with .Featured}}
+      <a class="cdf-card cdf-lead" href="{{$.Tr.U (contentURL .)}}">
+        <span class="cdf-no"><b class="cdf-stamp">{{$.Site.HomeFeatured}}</b>{{with .Category}}<span class="cdf-no-sep" aria-hidden="true">·</span><span>{{.Name}}</span>{{end}}<span class="cdf-no-sep" aria-hidden="true">·</span><time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time></span>
+        <span class="cdf-card-t">{{.Title}}</span>
+        {{if .CoverImage}}<span class="cdf-lead-cover"><img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}></span>{{end}}
+        {{if .Excerpt}}<span class="cdf-card-ex">{{.Excerpt}}</span>{{end}}
+        <span class="cdf-more">{{$.Tr.T "home.read_more"}} <span class="arrow" aria-hidden="true">→</span></span>
+        <span class="cdf-hole" aria-hidden="true"></span>
+      </a>
+      {{end}}
+
+      {{if .Posts}}
+      <div class="cdf-desk-head">
+        <h2 class="cdf-chip cdf-chip-h">{{.Site.HomeLatest}}</h2>
+        <a class="cdf-chip cdf-chip-all" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="cdf-grid">
+        {{range .Posts}}
+        <article class="cdf-card">
+          <a class="cdf-card-in" href="{{$.Tr.U (contentURL .)}}">
+            <span class="cdf-no">{{with .Category}}<span>{{.Name}}</span><span class="cdf-no-sep" aria-hidden="true">·</span>{{end}}<time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time></span>
+            <span class="cdf-card-t">{{.Title}}</span>
+            {{if .Excerpt}}<span class="cdf-card-ex">{{.Excerpt}}</span>{{end}}
+            <span class="cdf-hole" aria-hidden="true"></span>
+          </a>
+        </article>
+        {{end}}
+      </div>
+      {{end}}
+
+      {{if .FeatLinks}}
+      <aside class="cdf-tabs" aria-label="{{.Site.HomeLinks}}">
+        <h2 class="cdf-chip cdf-chip-h">{{.Site.HomeLinks}}</h2>
+        <div class="cdf-tab-row">
+          {{range .FeatLinks}}
+          <a class="cdf-tab" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+            <span class="cdf-tab-ic">{{if .CoverImage}}<img src="{{.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}</span>
+            <span class="cdf-tab-body">
+              <span class="cdf-tab-t">{{.Title}}</span>
+              {{if .Excerpt}}<span class="cdf-tab-ex">{{.Excerpt}}</span>{{end}}
+            </span>
+          </a>
+          {{end}}
+        </div>
+      </aside>
+      {{end}}
+    </section>
+    {{end}}
+
+    <footer class="cdf-colophon">
+      <a href="{{.Tr.U "/about"}}">{{.Tr.T "home.cta_more"}}</a>
+      <span aria-hidden="true">·</span>
+      <a href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}}</a>
+    </footer>
+
+  </div>
+{{end}}

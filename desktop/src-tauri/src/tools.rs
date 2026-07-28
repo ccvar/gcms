@@ -1,40 +1,77 @@
 //! 随附工具脚本：生成到 <data_dir>/tools/ 供 AI 在对话里调用。
-//! shot.js（无头网页截图）+ ssh.js（远程执行，走 AI 桥）。每次启动覆写，升级 Pilot 即拿到新版脚本。
+//! shot.js（自动网页截图 + 必要时可见浏览器接管）+ ssh.js（远程执行，走 AI 桥）。
+//! 每次启动覆写，升级 Pilot 即拿到新版脚本。
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// 无头截图脚本：系统 Chrome/Edge/Chromium/Brave 优先，playwright 兜底（--no-install，不偷偷下载）。
-/// 成功打印 JSON {ok:true,out,engine,bytes}；失败打印 {ok:false,error} 并退出 1，错误信息可直接转告用户。
+/// 网页截图脚本：默认用 Pilot 独立的持久 Chrome 配置无头截图；遇到真人验证时可加
+/// `--visible` 打开同一独立配置，由用户完成验证后自动截图。不会读取日常浏览器配置。
+/// 成功打印 JSON {ok:true,out,engine,bytes,final_url}；失败返回结构化 code/detail。
 pub const SHOT_JS: &str = r##"#!/usr/bin/env node
-// shot.js — GCMS Pilot 随附的无头网页截图工具。
-// 用法: node shot.js --url <url> --out <file.png> [--width 1280] [--height 800] [--full-page] [--wait <ms>]
-const { spawnSync } = require("child_process");
+// shot.js — GCMS Pilot 随附的网页截图工具。
+// 用法: node shot.js --url <url> --out <file.png> [--width 1280] [--height 800]
+//       [--full-page] [--wait <ms>] [--timeout <ms>] [--visible]
+// --visible 只使用 Pilot 专属浏览器配置，不读取用户日常 Chrome 的账号、Cookie 或历史记录。
+const { spawn, spawnSync } = require("child_process");
 const fs = require("fs");
-const os = require("os");
 const path = require("path");
 
-function fail(msg) { console.log(JSON.stringify({ ok: false, error: msg })); process.exit(1); }
+function finish(value, code) {
+  process.stdout.write(JSON.stringify(value) + "\n");
+  process.exitCode = code;
+}
+function fail(code, error, extra = {}) {
+  finish({ ok: false, code, error, ...extra }, 1);
+}
 
 const args = process.argv.slice(2);
 const opt = {};
 for (let i = 0; i < args.length; i++) {
   const a = args[i];
-  if (!a.startsWith("--")) fail("参数格式错误: " + a);
+  if (!a.startsWith("--")) { fail("invalid_argument", "参数格式错误: " + a); return; }
   const k = a.slice(2);
-  if (k === "full-page") { opt[k] = true; continue; }
+  if (k === "full-page" || k === "visible") { opt[k] = true; continue; }
   const v = args[++i];
-  if (v == null) fail("缺少 --" + k + " 的值");
+  if (v == null) { fail("invalid_argument", "缺少 --" + k + " 的值"); return; }
   opt[k] = v;
 }
-if (!opt.url || !opt.out) fail("用法: node shot.js --url <url> --out <file.png> [--width 1280] [--height 800] [--full-page] [--wait <ms>]");
+if (!opt.url || !opt.out) {
+  fail("invalid_argument", "用法: node shot.js --url <url> --out <file.png> [--width 1280] [--height 800] [--full-page] [--wait <ms>] [--visible]");
+  return;
+}
+let targetUrl;
+try {
+  targetUrl = new URL(opt.url);
+  if (!["http:", "https:", "file:"].includes(targetUrl.protocol)) throw new Error("unsupported");
+} catch {
+  fail("invalid_url", "只支持 http、https 或 file URL");
+  return;
+}
 
 const width = parseInt(opt.width || "1280", 10) || 1280;
 const height = parseInt(opt.height || "800", 10) || 800;
 const wait = parseInt(opt.wait || "2500", 10) || 2500;
+const timeout = Math.max(wait + 5000, parseInt(opt.timeout || (opt.visible ? "120000" : "35000"), 10) || 35000);
 const fullPage = !!opt["full-page"];
+const visible = !!opt.visible;
 const out = path.resolve(opt.out);
 fs.mkdirSync(path.dirname(out), { recursive: true });
+// 路径固定在 Pilot 数据目录，故意不提供 --profile：不能让模型把日常 Chrome
+// profile 塞进来，避免读取用户账号、Cookie 与浏览历史。
+const profile = path.resolve(path.join(__dirname, "..", "browser-profile", "screenshots"));
+fs.mkdirSync(profile, { recursive: true });
+const lockPath = profile + ".lock";
+let activeBrowser = null;
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+  try {
+    process.on(signal, () => {
+      try { if (activeBrowser) activeBrowser.kill("SIGTERM"); } catch { /* ignore */ }
+      try { fs.rmSync(lockPath, { force: true }); } catch { /* ignore */ }
+      process.exit(1);
+    });
+  } catch { /* Windows may not support every signal */ }
+}
 
 function findBrowser() {
   const cands = [];
@@ -60,47 +97,295 @@ function findBrowser() {
 }
 
 function fileOk() { try { return fs.statSync(out).size >= 1000; } catch { return false; } }
+function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+function tail(text, max = 1400) {
+  const safe = String(text || "")
+    .replaceAll(profile, "[Pilot screenshot profile]")
+    .replace(/(?:https?|socks5?):\/\/[^\s"']+/gi, "[proxy/url]")
+    .trim();
+  return safe.length > max ? safe.slice(-max) : safe;
+}
+function proxyFlag() {
+  const raw = process.env.HTTPS_PROXY || process.env.https_proxy || process.env.HTTP_PROXY || process.env.http_proxy || "";
+  if (!raw) return "";
+  try {
+    const u = new URL(raw);
+    if (!["http:", "https:", "socks5:", "socks4:"].includes(u.protocol)) return "";
+    return u.protocol + "//" + u.hostname + (u.port ? ":" + u.port : "");
+  } catch { return ""; }
+}
+function acquireLock() {
+  try {
+    const fd = fs.openSync(lockPath, "wx");
+    fs.writeFileSync(fd, JSON.stringify({ pid: process.pid, ts: Date.now() }));
+    fs.closeSync(fd);
+    return true;
+  } catch (e) {
+    try {
+      const raw = JSON.parse(fs.readFileSync(lockPath, "utf8"));
+      let alive = false;
+      if (Number.isInteger(raw.pid) && raw.pid > 0) {
+        try { process.kill(raw.pid, 0); alive = true; } catch { /* dead */ }
+      }
+      const age = Date.now() - fs.statSync(lockPath).mtimeMs;
+      if (!alive || age > 5 * 60 * 1000) {
+        fs.rmSync(lockPath, { force: true });
+        return acquireLock();
+      }
+    } catch { /* ignore */ }
+    return false;
+  }
+}
+function releaseLock() { try { fs.rmSync(lockPath, { force: true }); } catch { /* ignore */ } }
 
-function shotWithChrome(browser) {
-  // Chrome headless --screenshot 只截视口；--full-page 用加高窗口近似（真全页建议 playwright）。
-  const h = fullPage ? Math.max(height, 6000) : height;
-  const profile = fs.mkdtempSync(path.join(os.tmpdir(), "pilot-shot-"));
+function chromeFlags() {
   const flags = [
-    "--headless=new", "--disable-gpu", "--hide-scrollbars", "--mute-audio",
+    "--remote-debugging-pipe", "--disable-gpu", "--hide-scrollbars", "--mute-audio",
     "--no-first-run", "--no-default-browser-check", "--disable-extensions",
     "--user-data-dir=" + profile,
-    "--window-size=" + width + "," + h,
-    "--virtual-time-budget=" + wait,
-    "--screenshot=" + out,
-    opt.url,
+    "--window-size=" + width + "," + height,
+    "about:blank",
   ];
-  const r = spawnSync(browser, flags, { timeout: 90000, stdio: "ignore" });
-  try { fs.rmSync(profile, { recursive: true, force: true }); } catch { /* ignore */ }
-  return r.status === 0;
+  if (!visible) flags.unshift("--headless=new");
+  const proxy = proxyFlag();
+  if (proxy) flags.unshift("--proxy-server=" + proxy);
+  return flags;
 }
 
 function shotWithPlaywright() {
   const a = ["--no-install", "playwright", "screenshot", "--browser=chromium", "--viewport-size=" + width + "," + height, "--wait-for-timeout=" + wait];
   if (fullPage) a.push("--full-page");
-  a.push(opt.url, out);
-  const r = spawnSync(process.platform === "win32" ? "npx.cmd" : "npx", a, { timeout: 120000, stdio: "ignore" });
-  return r.status === 0;
+  a.push(targetUrl.href, out);
+  const r = spawnSync(process.platform === "win32" ? "npx.cmd" : "npx", a, {
+    timeout: Math.min(timeout, 120000),
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  return {
+    ok: r.status === 0 && fileOk(),
+    timedOut: !!r.error && r.error.code === "ETIMEDOUT",
+    detail: tail((r.stderr || "") + "\n" + (r.stdout || "")),
+  };
 }
 
-let engine = "";
-const browser = findBrowser();
-if (browser && shotWithChrome(browser) && fileOk()) engine = path.basename(browser);
-if (!engine) {
-  try { fs.rmSync(out, { force: true }); } catch { /* ignore */ }
-  if (shotWithPlaywright() && fileOk()) engine = "playwright";
+class Cdp {
+  constructor(child) {
+    this.child = child;
+    this.nextId = 1;
+    this.pending = new Map();
+    this.buffer = Buffer.alloc(0);
+    child.stdio[4].on("data", chunk => this.onData(chunk));
+  }
+  onData(chunk) {
+    this.buffer = Buffer.concat([this.buffer, chunk]);
+    while (true) {
+      const end = this.buffer.indexOf(0);
+      if (end < 0) break;
+      const raw = this.buffer.subarray(0, end).toString("utf8");
+      this.buffer = this.buffer.subarray(end + 1);
+      if (!raw) continue;
+      let msg;
+      try { msg = JSON.parse(raw); } catch { continue; }
+      if (!msg.id) continue;
+      const pending = this.pending.get(msg.id);
+      if (!pending) continue;
+      this.pending.delete(msg.id);
+      clearTimeout(pending.timer);
+      if (msg.error) pending.reject(new Error(msg.error.message || "CDP error"));
+      else pending.resolve(msg.result || {});
+    }
+  }
+  send(method, params = {}, sessionId = undefined, waitMs = 15000) {
+    const id = this.nextId++;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(method + " timed out"));
+      }, waitMs);
+      this.pending.set(id, { resolve, reject, timer });
+      const msg = { id, method, params };
+      if (sessionId) msg.sessionId = sessionId;
+      this.child.stdio[3].write(JSON.stringify(msg) + "\0");
+    });
+  }
+  close(error) {
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(error);
+    }
+    this.pending.clear();
+  }
 }
-if (!engine) {
-  try { fs.rmSync(out, { force: true }); } catch { /* ignore */ }
-  fail(browser
-    ? "截图失败：页面可能无法访问 / 渲染超时。试试加大 --wait（如 6000）或换 URL；需要登录或有反爬的页面截不了。"
-    : "没找到可用浏览器。请安装 Google Chrome / Microsoft Edge，或 `npm i -g playwright && npx playwright install chromium` 后重试。");
+
+function challengeReason(page) {
+  const text = ((page.title || "") + "\n" + (page.text || "")).toLowerCase();
+  const challenge = /just a moment|checking your browser|verify (?:you are )?human|captcha|access denied|验证.{0,8}(?:身份|真人)|安全验证|人机验证/.test(text);
+  let login = false;
+  try { login = /\/(?:login|signin|sign-in)(?:\/|$|\?)/i.test(new URL(page.href || targetUrl.href).pathname); } catch { /* ignore */ }
+  if (challenge) return "verification";
+  if (login && (page.text || "").length < 3000) return "login";
+  return "";
 }
-console.log(JSON.stringify({ ok: true, out: out, engine: engine, bytes: fs.statSync(out).size, width: width, fullPage: fullPage }));
+
+async function pageState(cdp, sessionId) {
+  const result = await cdp.send("Runtime.evaluate", {
+    expression: `({title:document.title,href:location.href,text:(document.body&&document.body.innerText||"").slice(0,5000),ready:document.readyState})`,
+    returnByValue: true,
+  }, sessionId);
+  return (result.result && result.result.value) || {};
+}
+
+async function shotWithChrome(browser) {
+  let stderr = "";
+  const child = spawn(browser, chromeFlags(), {
+    stdio: ["ignore", "ignore", "pipe", "pipe", "pipe"],
+    windowsHide: !visible,
+  });
+  activeBrowser = child;
+  child.stderr.on("data", chunk => { stderr = (stderr + chunk.toString("utf8")).slice(-12000); });
+  const cdp = new Cdp(child);
+  let killed = false;
+  const kill = () => {
+    if (killed) return;
+    killed = true;
+    cdp.close(new Error("browser closed"));
+    try { child.kill("SIGTERM"); } catch { /* ignore */ }
+  };
+  const deadline = Date.now() + timeout;
+  try {
+    await cdp.send("Browser.getVersion", {}, undefined, 15000);
+    const targets = await cdp.send("Target.getTargets");
+    let pageTarget = (targets.targetInfos || []).find(target => target.type === "page");
+    if (!pageTarget) {
+      const created = await cdp.send("Target.createTarget", { url: "about:blank" });
+      pageTarget = { targetId: created.targetId };
+    }
+    const attached = await cdp.send("Target.attachToTarget", { targetId: pageTarget.targetId, flatten: true });
+    const sessionId = attached.sessionId;
+    await cdp.send("Page.enable", {}, sessionId);
+    await cdp.send("Runtime.enable", {}, sessionId);
+    await cdp.send("Emulation.setDeviceMetricsOverride", {
+      width, height, deviceScaleFactor: 1, mobile: false,
+    }, sessionId);
+    const navigation = await cdp.send("Page.navigate", { url: targetUrl.href }, sessionId);
+    if (navigation.errorText) throw new Error("navigation: " + navigation.errorText);
+    await sleep(wait);
+
+    let page = await pageState(cdp, sessionId);
+    let reason = challengeReason(page);
+    if (reason && visible) {
+      process.stderr.write("Pilot screenshot browser is waiting for verification...\n");
+      while (reason && Date.now() < deadline) {
+        await sleep(1500);
+        page = await pageState(cdp, sessionId);
+        reason = challengeReason(page);
+      }
+    }
+    if (reason) {
+      return {
+        ok: false,
+        code: reason === "login" ? "login_required" : "verification_required",
+        error: reason === "login"
+          ? "页面跳转到登录界面；Pilot 不会代填账号或密码。"
+          : visible
+            ? "等待用户完成网页验证超时。"
+            : "页面要求真人验证，可使用同一命令加 --visible 由 Pilot 专用浏览器接管。",
+        detail: tail(stderr),
+        finalUrl: page.href || "",
+        visibleRetry: !visible,
+      };
+    }
+    const metrics = await cdp.send("Page.getLayoutMetrics", {}, sessionId);
+    const size = metrics.cssContentSize || metrics.contentSize || { width, height };
+    const capture = { format: "png", fromSurface: true, captureBeyondViewport: fullPage };
+    if (fullPage) {
+      capture.clip = {
+        x: 0,
+        y: 0,
+        width: Math.max(1, Math.min(10000, Math.ceil(size.width || width))),
+        height: Math.max(1, Math.min(30000, Math.ceil(size.height || height))),
+        scale: 1,
+      };
+    }
+    const image = await cdp.send("Page.captureScreenshot", capture, sessionId, 30000);
+    fs.writeFileSync(out, Buffer.from(image.data || "", "base64"));
+    if (!fileOk()) throw new Error("browser returned an empty screenshot");
+    return { ok: true, finalUrl: page.href || targetUrl.href, detail: tail(stderr) };
+  } catch (e) {
+    return {
+      ok: false,
+      code: Date.now() >= deadline ? "render_timeout" : "browser_error",
+      error: Date.now() >= deadline ? "网页渲染超时。" : "浏览器截图失败。",
+      detail: tail((e && e.message ? e.message : String(e)) + "\n" + stderr),
+      finalUrl: "",
+      visibleRetry: !visible,
+    };
+  } finally {
+    try { await cdp.send("Browser.close", {}, undefined, 1000); } catch { /* ignore */ }
+    kill();
+    activeBrowser = null;
+  }
+}
+
+async function main() {
+  if (!acquireLock()) {
+    fail("screenshot_busy", "另一个截图任务正在使用 Pilot 专用浏览器，请稍后重试。");
+    return;
+  }
+  try {
+    try { fs.rmSync(out, { force: true }); } catch { /* ignore */ }
+    const browser = findBrowser();
+    if (browser) {
+      const result = await shotWithChrome(browser);
+      if (result.ok) {
+        finish({
+          ok: true,
+          out,
+          engine: path.basename(browser) + (visible ? "-visible" : "-headless"),
+          bytes: fs.statSync(out).size,
+          width,
+          height,
+          full_page: fullPage,
+          final_url: result.finalUrl,
+        }, 0);
+        return;
+      }
+      if (result.code === "verification_required" || result.code === "login_required" || visible) {
+        fail(result.code, result.error, {
+          detail: result.detail,
+          final_url: result.finalUrl,
+          visible_retry_available: !!result.visibleRetry,
+        });
+        return;
+      }
+      try { fs.rmSync(out, { force: true }); } catch { /* ignore */ }
+      const fallback = shotWithPlaywright();
+      if (fallback.ok) {
+        finish({ ok: true, out, engine: "playwright", bytes: fs.statSync(out).size, width, height, full_page: fullPage, final_url: targetUrl.href }, 0);
+        return;
+      }
+      fail(fallback.timedOut ? "render_timeout" : result.code, result.error, {
+        detail: [result.detail, fallback.detail].filter(Boolean).join("\n").slice(-1800),
+        final_url: result.finalUrl,
+        visible_retry_available: true,
+      });
+      return;
+    }
+    const fallback = shotWithPlaywright();
+    if (fallback.ok) {
+      finish({ ok: true, out, engine: "playwright", bytes: fs.statSync(out).size, width, height, full_page: fullPage, final_url: targetUrl.href }, 0);
+      return;
+    }
+    fail("browser_missing", "没找到可用浏览器。请安装 Google Chrome、Microsoft Edge、Chromium 或 Brave。", { detail: fallback.detail });
+  } finally {
+    releaseLock();
+  }
+}
+
+main().catch(error => {
+  releaseLock();
+  fail("unexpected_error", "截图工具意外失败。", { detail: tail(error && error.stack ? error.stack : error) });
+});
 "##;
 
 /// 远程执行脚本（AI 桥的 AI 侧）：**它自己什么都不会做** —— 只把命令写进本轮租约目录，
@@ -300,6 +585,14 @@ mod tests {
         assert!(s.contains("--url"));
         assert!(s.contains("findBrowser"));
         assert!(s.contains("playwright"));
+        assert!(s.contains("--visible"));
+        assert!(s.contains("--remote-debugging-pipe"));
+        assert!(s.contains("visible_retry_available"));
+        assert!(s.contains("browser-profile"));
+        assert!(
+            !s.contains("opt.profile"),
+            "模型不能把用户日常浏览器 profile 注入截图工具"
+        );
         // 覆写不报错（升级刷新场景）
         ensure_shot(&base).unwrap();
         fs::remove_dir_all(&base).ok();
@@ -333,6 +626,116 @@ mod tests {
             .map(|s| s.success())
             .unwrap_or(false);
         assert!(ok, "node --check failed for generated shot.js");
+        fs::remove_dir_all(&base).ok();
+    }
+
+    /// 真浏览器烟测：用 file:// 页面验证 CDP pipe、截图写盘和退出清理。
+    /// CI 可能没有 Chrome，故保持 ignored；本地发布前执行。
+    #[test]
+    #[ignore]
+    fn shot_js_local_file_roundtrip() {
+        let base = std::env::temp_dir().join(format!("tools-shot-{}", uuid::Uuid::new_v4()));
+        let script = ensure_shot(&base).unwrap();
+        let page = base.join("fixture.html");
+        let out = base.join("fixture.png");
+        fs::write(
+            &page,
+            "<!doctype html><meta charset=utf-8><title>Pilot Shot</title><h1>截图正常</h1>",
+        )
+        .unwrap();
+        let page_path = page.to_string_lossy().replace('\\', "/");
+        let file_url = if cfg!(windows) {
+            format!("file:///{page_path}")
+        } else {
+            format!("file://{page_path}")
+        };
+        let out_path = out.to_string_lossy().into_owned();
+        let output = std::process::Command::new("node")
+            .arg(&script)
+            .args([
+                "--url",
+                &file_url,
+                "--out",
+                &out_path,
+                "--wait",
+                "300",
+                "--timeout",
+                "15000",
+            ])
+            .output()
+            .expect("node should run shot.js");
+        assert!(
+            output.status.success(),
+            "shot.js failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(fs::metadata(&out).map(|meta| meta.len()).unwrap_or(0) > 1000);
+
+        let visible_out = base.join("fixture-visible.png");
+        let visible_out_path = visible_out.to_string_lossy().into_owned();
+        let visible_output = std::process::Command::new("node")
+            .arg(&script)
+            .args([
+                "--url",
+                &file_url,
+                "--out",
+                &visible_out_path,
+                "--visible",
+                "--wait",
+                "300",
+                "--timeout",
+                "15000",
+            ])
+            .output()
+            .expect("node should run visible shot.js");
+        assert!(
+            visible_output.status.success(),
+            "visible shot.js failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&visible_output.stdout),
+            String::from_utf8_lossy(&visible_output.stderr)
+        );
+        assert!(
+            fs::metadata(&visible_out)
+                .map(|meta| meta.len())
+                .unwrap_or(0)
+                > 1000
+        );
+        fs::remove_dir_all(&base).ok();
+    }
+
+    /// 可选公开网页烟测：仅在显式提供 PILOT_SHOT_TEST_URL 时访问网络。
+    #[test]
+    #[ignore]
+    fn shot_js_live_url_from_env() {
+        let Ok(url) = std::env::var("PILOT_SHOT_TEST_URL") else {
+            return;
+        };
+        let base = std::env::temp_dir().join(format!("tools-live-{}", uuid::Uuid::new_v4()));
+        let script = ensure_shot(&base).unwrap();
+        let out = base.join("live.png");
+        let out_path = out.to_string_lossy().into_owned();
+        let output = std::process::Command::new("node")
+            .arg(&script)
+            .args([
+                "--url",
+                &url,
+                "--out",
+                &out_path,
+                "--wait",
+                "4000",
+                "--timeout",
+                "45000",
+            ])
+            .output()
+            .expect("node should run shot.js");
+        assert!(
+            output.status.success(),
+            "shot.js failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(fs::metadata(&out).map(|meta| meta.len()).unwrap_or(0) > 1000);
         fs::remove_dir_all(&base).ok();
     }
 

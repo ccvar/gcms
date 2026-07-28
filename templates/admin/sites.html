@@ -225,9 +225,10 @@
       {{$gaSummary := index $.SiteGoogleAnalyticsSummaries .ID}}
       {{$gscSummary := index $.SiteGoogleSearchSummaries .ID}}
       {{$tg := index $.SiteTelegramStatus .ID}}
-      <article id="site-card-{{.ID}}" class="site-card{{if .IsDefault}} is-default{{end}}{{if eq .Status "disabled"}} is-disabled{{end}}{{if eq .ID $.PlatformCurrentSiteID}} is-current{{end}}">
-        <div class="site-card-locked-area"{{if eq .Status "disabled"}} aria-disabled="true"{{end}}>
-          <div class="site-card-main"{{if eq .Status "disabled"}} inert{{end}}>
+      {{$runtimeError := index $.PlatformRuntimeErrors .ID}}
+      <article id="site-card-{{.ID}}" class="site-card{{if .IsDefault}} is-default{{end}}{{if eq .Status "disabled"}} is-disabled{{end}}{{if $runtimeError}} is-runtime-error{{end}}{{if eq .ID $.PlatformCurrentSiteID}} is-current{{end}}">
+        <div class="site-card-locked-area"{{if or (eq .Status "disabled") $runtimeError}} aria-disabled="true"{{end}}>
+          <div class="site-card-main"{{if or (eq .Status "disabled") $runtimeError}} inert{{end}}>
             <div class="site-title-row">
               <div class="site-card-lead">
                 <div class="site-card-identity">
@@ -239,6 +240,7 @@
                       {{$lc := index $.PlatformLocaleCounts .ID}}{{if gt $lc 0}}<span>{{printf ($.Admin.T "admin.sites.locale_count" "%d语种") $lc}}</span><span>{{printf ($.Admin.T "admin.sites.content_count" "%d条内容") (index $.PlatformContentCounts .ID)}}</span>{{end}}
                       {{$sc := index $.PlatformScheduledCounts .ID}}{{if gt $sc 0}}<span>{{printf ($.Admin.T "admin.sites.scheduled_count" "%d条待发") $sc}}</span>{{end}}
                       {{if .IsDefault}}<span>{{$.Admin.T "admin.sites.default" "默认站点"}}</span>{{end}}
+                      {{if $runtimeError}}<span class="site-runtime-error" data-tooltip="{{$runtimeError}}">{{$.Admin.T "admin.sites.runtime_failed" "迁移/加载失败，已隔离"}}</span>{{end}}
                     </p>
                   </div>
                 </div>
@@ -271,10 +273,10 @@
             </div>
           </div>
 
-          <div class="site-card-actions"{{if eq .Status "disabled"}} inert{{end}}>
+          <div class="site-card-actions"{{if or (eq .Status "disabled") $runtimeError}} inert{{end}}>
             <form method="post" action="/admin/sites/{{.ID}}/enter">
               <input type="hidden" name="_csrf" value="{{$.CSRF}}">
-              <button class="btn btn-primary icon-text" type="submit">{{template "site-icon-enter"}}<span>{{$.Admin.T "admin.sites.enter" "进入后台"}}</span></button>
+              <button class="btn btn-primary icon-text" type="submit"{{if $runtimeError}} disabled{{end}}>{{template "site-icon-enter"}}<span>{{if $runtimeError}}{{$.Admin.T "admin.sites.runtime_repair_first" "修复后进入"}}{{else}}{{$.Admin.T "admin.sites.enter" "进入后台"}}{{end}}</span></button>
             </form>
             <div class="site-card-links">
               {{with index $.PlatformOfficialURLs .ID}}

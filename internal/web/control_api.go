@@ -66,6 +66,9 @@ func platformControlCatalog() []platformControlOperation {
 		{ID: "public_access.read", Label: "读取公网访问状态", RequiredScope: apiScopeDomainsRead, Risk: "read", Method: http.MethodGet, Endpoint: "/control/sites/{site_id}/public-access", Available: true},
 		{ID: "public_access.apply", Label: "配置 GCMS 公网访问", RequiredScope: apiScopeDomainsWrite, Risk: "sensitive", Method: http.MethodPost, Endpoint: "/control/sites/{site_id}/public-access", RequiresConfirmation: true, RequiresUnlock: true, SupportsDryRun: true, Available: true},
 		{ID: "public_access.clear_unverified", Label: "清除未验证成功的访问域名", RequiredScope: apiScopeDomainsWrite, Risk: "destructive", Method: http.MethodDelete, Endpoint: "/control/sites/{site_id}/public-access", RequiresConfirmation: true, RequiresUnlock: true, SupportsDryRun: true, Available: true},
+		{ID: pageApprovalPublish, Label: "发布页面工程修订", RequiredScope: apiScopePagesPublish, Risk: "sensitive", Method: http.MethodPost, Endpoint: "/sites/{site_id}/page-projects/{project_id}/publish", RequiresConfirmation: true, RequiresUnlock: true, Available: true},
+		{ID: pageApprovalRollback, Label: "回滚页面工程修订", RequiredScope: apiScopePagesPublish, Risk: "sensitive", Method: http.MethodPost, Endpoint: "/sites/{site_id}/page-projects/{project_id}/rollback", RequiresConfirmation: true, RequiresUnlock: true, Available: true},
+		{ID: pageCapabilityGrant, Label: "批准互动应用能力", RequiredScope: apiScopePageCapabilitiesGrant, Risk: "sensitive", Method: http.MethodPost, Endpoint: "/sites/{site_id}/page-projects/{project_id}/capabilities/apply", RequiresConfirmation: true, RequiresUnlock: true, Available: true},
 		{ID: "security.status", Label: "读取后台安全状态", RequiredScope: apiScopeControlRead, Risk: "read", Method: http.MethodGet, Endpoint: "/control/security", Available: true},
 	}
 }
@@ -355,7 +358,8 @@ func (s *Server) servePlatformControlUnlock(w http.ResponseWriter, r *http.Reque
 			apiError(w, http.StatusBadRequest, "missing_unlock_token", "缺少短时授权令牌。")
 			return
 		}
-		revoked := s.controlGrants != nil && s.controlGrants.revoke(key.ID, token)
+		revoked := (s.controlGrants != nil && s.controlGrants.revoke(key.ID, token)) ||
+			revokeNativePageUnlock(s, "platform-key:"+strconv.FormatInt(key.ID, 10), token)
 		if revoked {
 			_ = s.platform.CreatePlatformAutomationLog(key.ID, 0, "control_unlock_revoke", "control", 0, "已主动结束短时高风险操作授权")
 		}
@@ -373,8 +377,9 @@ func (s *Server) servePlatformControlUnlock(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	var in struct {
-		Password   string   `json:"password"`
-		Operations []string `json:"operations"`
+		Password      string   `json:"password"`
+		Operations    []string `json:"operations"`
+		PageChallenge string   `json:"page_challenge,omitempty"`
 	}
 	if !decodeAPIJSON(w, r, &in) {
 		return
@@ -421,9 +426,31 @@ func (s *Server) servePlatformControlUnlock(w http.ResponseWriter, r *http.Reque
 		apiError(w, http.StatusServiceUnavailable, "unlock_unavailable", "短时授权服务尚未就绪。")
 		return
 	}
-	token, expiresAt, err := s.controlGrants.issue(key.ID, operations, controlCredentialRevision(hash), time.Now())
+	var token string
+	var expiresAt time.Time
+	var err error
+	if strings.TrimSpace(in.PageChallenge) != "" {
+		if !pageUnlockOperationsOnly(operations) {
+			apiError(w, http.StatusBadRequest, "page_challenge_operation_mismatch", "页面确认挑战只能用于单个页面发布、回滚或能力批准操作。")
+			return
+		}
+		token, expiresAt, err = issueNativePageUnlock(
+			s, "platform-key:"+strconv.FormatInt(key.ID, 10),
+			strings.TrimSpace(in.PageChallenge), operations[0],
+			controlCredentialRevision(hash),
+		)
+	} else {
+		for _, operation := range operations {
+			if operation == pageApprovalPublish || operation == pageApprovalRollback ||
+				operation == pageCapabilityGrant {
+				apiError(w, http.StatusBadRequest, "page_challenge_required", "页面发布、回滚或能力批准必须携带服务端签发、绑定具体目标的 page_challenge。")
+				return
+			}
+		}
+		token, expiresAt, err = s.controlGrants.issue(key.ID, operations, controlCredentialRevision(hash), time.Now())
+	}
 	if err != nil {
-		apiError(w, http.StatusInternalServerError, "unlock_error", "无法创建短时授权。")
+		apiError(w, http.StatusConflict, "unlock_target_changed", err.Error())
 		return
 	}
 	_ = s.platform.CreatePlatformAutomationLog(key.ID, 0, "control_unlock_issue", "control", 0, "已授权高风险操作："+strings.Join(operations, ", "))
@@ -488,7 +515,14 @@ func (s *Server) requireControlUnlock(w http.ResponseWriter, r *http.Request, ke
 	_, hash := s.adminCredentials()
 	token := strings.TrimSpace(r.Header.Get(controlUnlockHeader))
 	if token == "" || hash == "" || s.controlGrants == nil || !s.controlGrants.valid(key.ID, token, operation, controlCredentialRevision(hash), time.Now()) {
-		apiError(w, http.StatusForbidden, "unlock_required", "操作 "+operation+" 需要在 Pilot 中输入后台密码重新授权。")
+		// Pilot 只从真实工具结果消费这个机器可读信号；不要逼客户端从
+		// 模型正文或被截断的命令展示中猜测操作类型。
+		writeJSON(w, http.StatusForbidden, map[string]any{
+			"error":           "unlock_required",
+			"message":         "操作 " + operation + " 需要在 Pilot 中输入后台密码重新授权。",
+			"unlock_required": true,
+			"operation":       operation,
+		})
 		return false
 	}
 	return true

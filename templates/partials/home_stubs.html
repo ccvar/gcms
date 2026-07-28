@@ -1,0 +1,78 @@
+{{define "home_stubs"}}
+  {{/* 票根 Stubs — 撕边票根行卡：居中影院刊头 + 「排」索引行 + 放大版精选票(accent 描边) + 加映场小票胶囊 + No.NNN 三段票列 */}}
+  <div class="stb-wrap">
+
+    <header class="stb-marquee">
+      {{if .Site.HeroEyebrow}}<p class="stb-admit"><span{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</span></p>{{end}}
+      <h1 class="stb-title"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+      {{if .Site.HeroDescription}}<p class="stb-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+      <div class="stb-lights" aria-hidden="true"></div>
+      {{if .Categories}}
+      <nav class="stb-gate" aria-label="{{.Tr.T "nav.category"}}">
+        {{range .Categories}}<a class="stb-row" href="{{$.Tr.U (printf "/category/%s" .Slug)}}"><span class="stb-row-name">{{.Name}}</span><span class="stb-row-n">{{.Count}}</span></a>{{end}}
+        <a class="stb-row stb-row-all" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}}</a>
+      </nav>
+      {{end}}
+    </header>
+
+    {{with .Featured}}
+    <a class="stb-lead" href="{{$.Tr.U (contentURL .)}}">
+      <span class="stb-lead-body">
+        <span class="stb-kicker"><b>{{$.Site.HomeFeatured}}</b>{{with .Category}}<span class="stb-kicker-cat">{{.Name}}</span>{{end}}</span>
+        <span class="stb-lead-t">{{.Title}}</span>
+        {{if .CoverImage}}<span class="stb-lead-cover"><img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}></span>{{end}}
+        {{if .Excerpt}}<span class="stb-lead-ex">{{.Excerpt}}</span>{{end}}
+      </span>
+      <span class="stb-lead-tail">
+        <time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time>
+        <span class="stb-bar" aria-hidden="true"></span>
+        <span class="stb-lead-more">{{$.Tr.T "home.read_more"}} <span class="arrow" aria-hidden="true">→</span></span>
+      </span>
+    </a>
+    {{end}}
+
+    {{if .FeatLinks}}
+    <section class="stb-extras" aria-label="{{.Site.HomeLinks}}">
+      <div class="stb-head"><h2 class="stb-head-t">{{.Site.HomeLinks}}</h2></div>
+      <div class="stb-extra-row">
+        {{range .FeatLinks}}
+        <a class="stb-extra" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+          <span class="stb-extra-ic">{{if .CoverImage}}<img src="{{.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}</span>
+          <span class="stb-extra-t">{{.Title}}</span>
+        </a>
+        {{end}}
+      </div>
+    </section>
+    {{end}}
+
+    {{if .Posts}}
+    <section class="stb-latest">
+      <div class="stb-head">
+        <h2 class="stb-head-t">{{.Site.HomeLatest}}</h2>
+        <a class="stb-head-all" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="stb-list">
+        {{range .Posts}}
+        <article class="stb-ticket">
+          <a class="stb-ticket-in" href="{{$.Tr.U (contentURL .)}}">
+            <span class="stb-no">
+              <span class="stb-no-num" aria-hidden="true"></span>
+              {{with .Category}}<span class="stb-no-row">{{.Name}}</span>{{end}}
+            </span>
+            <span class="stb-mid">
+              <span class="stb-t">{{.Title}}</span>
+              {{if .Excerpt}}<span class="stb-ex">{{.Excerpt}}</span>{{end}}
+            </span>
+            <span class="stb-tail">
+              <time class="stb-date" datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time>
+              <span class="stb-bar" aria-hidden="true"></span>
+            </span>
+          </a>
+        </article>
+        {{end}}
+      </div>
+    </section>
+    {{end}}
+
+  </div>
+{{end}}

@@ -19,6 +19,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"cms.ccvar.com/internal/store"
 )
 
 const (
@@ -2157,7 +2159,23 @@ func (s *Server) deployCloudflare(ctx context.Context, cfg CloudflareConfig) err
 	}
 	cfg = s.cloudflareStaticRuntimeConfig(cfg)
 	setStep("export", "正在导出前台静态站。")
-	exported, err := s.exportStaticSite(ctx, cfg)
+	deploymentJobID := "cloudflare-" + strconv.FormatInt(time.Now().UTC().UnixNano(), 36)
+	s.pagePublicationMu.RLock()
+	deliveryIDs, err := s.beginQueuedPageProjectDeliveries(deploymentJobID)
+	if err != nil {
+		s.pagePublicationMu.RUnlock()
+		return fmt.Errorf("绑定页面发布与部署任务失败：%w", err)
+	}
+	deliveryFinished := false
+	defer func() {
+		if !deliveryFinished {
+			s.finishPageProjectDeliveries(
+				deliveryIDs, deploymentJobID, store.PageDeliveryFailed,
+			)
+		}
+	}()
+	exported, err := s.exportStaticSiteLocked(ctx, cfg)
+	s.pagePublicationMu.RUnlock()
 	if err != nil {
 		return fmt.Errorf("导出静态站失败：%w", err)
 	}
@@ -2197,6 +2215,10 @@ func (s *Server) deployCloudflare(ctx context.Context, cfg CloudflareConfig) err
 			DNSMessage:       dnsResult.Message,
 			Published:        true,
 		}, "deploy"))
+		s.finishPageProjectDeliveries(
+			deliveryIDs, deploymentJobID, store.PageDeliveryLive,
+		)
+		deliveryFinished = true
 		return nil
 	}
 
@@ -2251,6 +2273,10 @@ func (s *Server) deployCloudflare(ctx context.Context, cfg CloudflareConfig) err
 		DNSMessage:       dnsResult.Message,
 		Published:        true,
 	}, "deploy"))
+	s.finishPageProjectDeliveries(
+		deliveryIDs, deploymentJobID, store.PageDeliveryLive,
+	)
+	deliveryFinished = true
 	return nil
 }
 
@@ -3557,7 +3583,7 @@ func cloudflareWorkerScriptForConfig(cfg CloudflareConfig) string {
 	defaultLangJSON, _ := json.Marshal(cloudflareWorkerDefaultLang(cfg))
 	localesJSON, _ := json.Marshal(cloudflareWorkerLocales(cfg))
 	return fmt.Sprintf(`const BLOCKED_PREFIXES = ["/admin", "/api/admin", "/preview"];
-const RESERVED_PREFIXES = ["/assets", "/uploads", "/api"];
+const RESERVED_PREFIXES = ["/assets", "/uploads", "/api", "/_gcms"];
 const RESERVED_PATHS = new Set(["/robots.txt", "/sitemap.xml", "/rss.xml", "/favicon.ico", "/_redirects", "/_worker.js"]);
 const PRIMARY_HOST = %s;
 const REDIRECT_HOSTS = new Set(%s);

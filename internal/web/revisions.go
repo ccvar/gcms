@@ -57,7 +57,15 @@ func (s *Server) restorePostRevision(p *store.Post, rev *store.PostRevision, sou
 	restored.Lang = p.Lang
 	restored.CreatedAt = p.CreatedAt
 	// 旧 slug 可能已被其它内容占用：按现行规则去重，避免恢复失败。
-	restored.Slug = s.uniqueSlug(restored.Lang, restored.Slug, restored.ID)
+	if restored.Type == "page" {
+		var err error
+		restored.Slug, err = s.uniquePageSlug(restored.Lang, restored.Slug, restored.ID)
+		if err != nil {
+			return err
+		}
+	} else {
+		restored.Slug = s.uniqueSlug(restored.Lang, restored.Slug, restored.ID)
+	}
 	if err := s.store.UpdatePostFrom(&restored, source); err != nil {
 		return err
 	}
@@ -129,6 +137,9 @@ func (s *Server) apiRestoreRevision(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if s.rejectAdvancedPageLegacyAPIMutation(w, existing) {
+		return
+	}
 	rid, err := strconv.ParseInt(r.PathValue("rid"), 10, 64)
 	if err != nil || rid <= 0 {
 		apiError(w, http.StatusBadRequest, "bad_id", "修订 ID 无效。")
@@ -198,6 +209,9 @@ func (s *Server) adminRestoreRevision(w http.ResponseWriter, r *http.Request) {
 	}
 	if p == nil {
 		s.notFound(w, r)
+		return
+	}
+	if s.rejectAdvancedPageLegacyAdminMutation(w, p) {
 		return
 	}
 	if err := s.restorePostRevision(p, rev, store.PostRevisionSourceAdmin); err != nil {

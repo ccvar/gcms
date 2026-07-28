@@ -30,7 +30,16 @@ pub struct BrainsInfo {
     /// Node.js（npm 安装 Codex/wrangler 的前置；Claude Code 用原生安装器不需要它）。
     pub node: BrainStatus,
     pub path_env: String,
+    /// 装着的 Claude CLI 够不够新到能用 **headless** fast mode。
+    /// ★ 判定放在这里（而不是前端）：版本解析只有一份，别让 JS 再写一套 semver 比较。
+    /// 旧版不会报错、只是那个 `fastMode` 键**静默失效** —— UI 必须据此置灰开关，
+    /// 否则用户点开它、以为开了、其实什么都没变。
+    pub claude_fast_ok: bool,
 }
+
+/// headless fast mode 的最低 CLI 版本。依据：Claude Code 文档 headless 章节
+/// 「`/model`, `/effort`, `/fast` … accept the value as an argument … require v2.1.205 or later」。
+pub const FAST_MIN_CLI: (u32, u32, u32) = (2, 1, 205);
 
 pub async fn detect() -> BrainsInfo {
     augment_path_env(); // 每次检测都补一遍：刚装完的目录此刻才存在
@@ -41,6 +50,8 @@ pub async fn detect() -> BrainsInfo {
         detect_wrangler(),
         detect_node()
     );
+    let claude_fast_ok = crate::agent::parse_version_triplet(&claude.version)
+        .is_some_and(|v| v >= FAST_MIN_CLI);
     BrainsInfo {
         claude,
         codex,
@@ -49,7 +60,39 @@ pub async fn detect() -> BrainsInfo {
         node,
         browser: detect_browser(),
         path_env: std::env::var("PATH").unwrap_or_default(),
+        claude_fast_ok,
     }
+}
+
+/// PATH 上**所有**叫这个名字的可执行文件（去重、保序）。
+///
+/// 为什么需要「所有」而不是第一个：多安装是真实场景（实测同机有 native `~/.local/bin/claude`
+/// 与 npm `/opt/homebrew/bin/claude` 两份，版本还不同）。**只有 PATH 里第一个会被真正调用**，
+/// 所以升级必须针对它 —— 升了被遮蔽的那份，点完版本号纹丝不动，看着像功能坏了。
+pub fn which_all(bin: &str) -> Vec<String> {
+    let exts: Vec<String> = if cfg!(windows) {
+        std::env::var("PATHEXT")
+            .unwrap_or_else(|_| ".EXE;.CMD;.BAT".into())
+            .split(';')
+            .filter(|e| !e.is_empty())
+            .map(|e| e.to_ascii_lowercase())
+            .collect()
+    } else {
+        vec![String::new()]
+    };
+    let mut out: Vec<String> = Vec::new();
+    for dir in std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()) {
+        for ext in &exts {
+            let p = dir.join(format!("{bin}{ext}"));
+            if p.is_file() {
+                let s = p.to_string_lossy().into_owned();
+                if !out.contains(&s) {
+                    out.push(s);
+                }
+            }
+        }
+    }
+    out
 }
 
 async fn detect_node() -> BrainStatus {
@@ -169,6 +212,52 @@ async fn run_capture(program: &str, args: &[&str], timeout: Duration) -> Option<
     }
 }
 
+/// Pilot 中粘贴的 Claude 订阅 Token 只从系统安全存储读入，并只注入即将启动的
+/// Claude 子进程。没有配置或安全存储暂时不可读时保持 CLI 原生登录路径。
+fn apply_claude_oauth_token(command: &mut Command) -> bool {
+    match crate::keychain::claude_oauth_token() {
+        Ok(Some(token)) => {
+            command
+                .env_remove("ANTHROPIC_AUTH_TOKEN")
+                .env_remove("ANTHROPIC_API_KEY")
+                .env("CLAUDE_CODE_OAUTH_TOKEN", token);
+            true
+        }
+        _ => false,
+    }
+}
+
+async fn run_capture_claude(
+    program: &str,
+    args: &[&str],
+    timeout: Duration,
+) -> Option<(bool, String, bool)> {
+    let mut command = Command::new(program);
+    let token_configured = apply_claude_oauth_token(&mut command);
+    command
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    #[cfg(target_os = "windows")]
+    command.creation_flags(0x0800_0000);
+    match tokio::time::timeout(timeout, command.output()).await {
+        Ok(Ok(output)) => {
+            let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
+            if text.trim().is_empty() {
+                text = String::from_utf8_lossy(&output.stderr).into_owned();
+            }
+            Some((
+                output.status.success(),
+                text.trim().to_string(),
+                token_configured,
+            ))
+        }
+        _ => None,
+    }
+}
+
 /// 解析可执行的完整路径给 spawn 用：Windows 上 npm 装的是 codex.cmd/wrangler.cmd，
 /// 裸名 CreateProcess 只补 .exe 永远找不到；显式 .cmd 路径 std 会经 cmd.exe 启动。
 /// 注意 .cmd 参数不能含换行，多行输入必须由调用方改走 stdin（见 agent::build_codex）。
@@ -249,7 +338,7 @@ async fn detect_claude() -> BrainStatus {
         st.version = ver;
     }
     // 登出时退出码是 1，但 stdout 仍是 JSON —— 只解析 stdout。
-    if let Some((_, out)) = run_capture(
+    if let Some((_, out, token_configured)) = run_capture_claude(
         &st.path,
         &["auth", "status", "--json"],
         Duration::from_secs(15),
@@ -274,6 +363,9 @@ async fn detect_claude() -> BrainStatus {
         if st.logged_in.is_none() {
             st.detail = out.chars().take(200).collect();
         }
+        if token_configured && st.logged_in == Some(true) && st.account.is_empty() {
+            st.account = "Claude 订阅 Token".into();
+        }
     }
     st
 }
@@ -296,7 +388,50 @@ async fn detect_codex() -> BrainStatus {
         st.logged_in = Some(ok && out.to_lowercase().contains("logged in"));
         st.detail = out.chars().take(200).collect();
     }
+    if st.logged_in == Some(true) {
+        st.account = codex_account().unwrap_or_default();
+    }
     st
+}
+
+/// Codex 当前账号：~/.codex/auth.json（CODEX_HOME 可改基目录）。
+/// ChatGPT 登录 → tokens.id_token(JWT) 的 email 声明；API Key 模式没有身份，标 "API Key"。
+/// 只读本地文件不跑网络；任何一步取不到都返回 None（界面上不显示而已，不算错）。
+fn codex_account() -> Option<String> {
+    let base = std::env::var("CODEX_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|_| {
+            std::env::var(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+                .map(|h| std::path::Path::new(&h).join(".codex"))
+        })
+        .ok()?;
+    let v: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(base.join("auth.json")).ok()?).ok()?;
+    if let Some(email) = v
+        .pointer("/tokens/id_token")
+        .and_then(serde_json::Value::as_str)
+        .and_then(jwt_email)
+    {
+        return Some(email);
+    }
+    v.get("OPENAI_API_KEY")
+        .and_then(serde_json::Value::as_str)
+        .filter(|s| !s.trim().is_empty())
+        .map(|_| "API Key".to_string())
+}
+
+/// 从 JWT 载荷取 email 声明（不验签——只做展示，凭据真伪由 CLI 自己负责）。
+fn jwt_email(token: &str) -> Option<String> {
+    use base64::Engine;
+    let payload = token.split('.').nth(1)?;
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(payload.trim_end_matches('='))
+        .ok()?;
+    let v: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    v.get("email")
+        .and_then(serde_json::Value::as_str)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
 }
 
 /// xAI Grok CLI。安装器默认放 ~/.grok/bin（并 symlink ~/.local/bin），PATH 缺失时兜底直查。
@@ -340,6 +475,21 @@ async fn detect_grok() -> BrainStatus {
     );
     if st.logged_in == Some(false) {
         st.detail = "未登录：终端运行 grok login 完成授权".into();
+    } else if let Ok(p) = auth.as_ref() {
+        // 账号：auth.json 是 { "issuer::uuid": { email, ... } } 形状的凭据表，
+        // 取第一条的 email 展示（只读本地文件，不跑网络；解析失败就不显示）。
+        st.account = std::fs::read_to_string(p)
+            .ok()
+            .and_then(|txt| serde_json::from_str::<serde_json::Value>(&txt).ok())
+            .and_then(|v| {
+                v.as_object().and_then(|o| {
+                    o.values()
+                        .filter_map(|e| e.get("email").and_then(serde_json::Value::as_str))
+                        .find(|s| !s.is_empty())
+                        .map(str::to_string)
+                })
+            })
+            .unwrap_or_default();
     }
     st
 }
@@ -352,5 +502,32 @@ fn extract_json(s: &str) -> Option<String> {
         Some(s[start..=end].to_string())
     } else {
         None
+    }
+}
+
+
+#[cfg(test)]
+mod version_cmp_tests {
+    use super::*;
+    use crate::agent::parse_version_triplet as pv;
+
+    /// ★ 版本号必须按数值比。字符串序下 "2.1.96" > "2.1.220" 成立，
+    /// 那会把「有新版」判成「已最新」，而且不报错、只是升级入口永远不出现。
+    #[test]
+    fn version_compare_is_numeric_not_lexical() {
+        let cur = pv("2.1.96 (Claude Code)").unwrap();
+        let latest = pv("2.1.220").unwrap();
+        assert_eq!(cur, (2, 1, 96), "要能吃 --version 的后缀");
+        assert!(latest > cur, "2.1.220 必须判为比 2.1.96 新");
+        assert!("2.1.96" > "2.1.220", "（对照）字符串比就是反的——所以不能用字符串");
+    }
+
+    /// fast 的门槛：2.1.96 不够，2.1.205 刚够，2.1.220 够。
+    #[test]
+    fn fast_gate_matches_documented_minimum() {
+        assert!(pv("2.1.96").unwrap() < FAST_MIN_CLI, "2.1.96 不该判为支持 fast");
+        assert!(pv("2.1.112").unwrap() < FAST_MIN_CLI, "npm 那份 2.1.112 也不够");
+        assert!(pv("2.1.205").unwrap() >= FAST_MIN_CLI, "2.1.205 是文档给的最低版本");
+        assert!(pv("2.1.220").unwrap() >= FAST_MIN_CLI);
     }
 }

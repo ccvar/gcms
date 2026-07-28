@@ -1,0 +1,73 @@
+{{define "home_lockers"}}
+  {{/* 储物柜 Lockers — 一墙柜门四列网格：每门=通风百叶+右上号码牌（CSS counter，101 起）
+       +标题+分类·日期；Featured=打开的门跨两列（左缘斜门板伪元素+浅色内里+阅读胶囊）；
+       Categories=顶部柜区索引条；FeatLinks=底部失物招领小卡行 */}}
+  <div class="lkr-wrap">
+
+    <header class="lkr-hero">
+      {{if .Site.HeroEyebrow}}<p class="lkr-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+      <h1 class="lkr-title"{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{nl2br .Site.HeroTitle}}</h1>
+      {{if .Site.HeroDescription}}<p class="lkr-lede"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+    </header>
+
+    {{if .Categories}}
+    <nav class="lkr-zones" aria-label="{{.Tr.T "nav.category"}}">
+      {{range .Categories}}<a class="lkr-zone" href="{{$.Tr.U (printf "/category/%s" .Slug)}}"><span class="lkr-zone-name">{{.Name}}</span><span class="lkr-zone-n">{{.Count}}</span></a>{{end}}
+      <a class="lkr-zone lkr-zone-all" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+    </nav>
+    {{end}}
+
+    {{if or .Featured .Posts}}
+    <section class="lkr-wall">
+      <div class="lkr-wall-head">
+        <h2 class="lkr-wall-t">{{.Site.HomeLatest}}</h2>
+        <a class="lkr-wall-all" href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span class="arrow" aria-hidden="true">→</span></a>
+      </div>
+      <div class="lkr-grid">
+        {{with .Featured}}
+        <a class="lkr-open" href="{{$.Tr.U (contentURL .)}}">
+          <span class="lkr-open-top">
+            <span class="lkr-kicker"><b>{{$.Site.HomeFeatured}}</b>{{with .Category}}<span class="lkr-kicker-cat">{{.Name}}</span>{{end}}</span>
+            <span class="lkr-plate" aria-hidden="true"></span>
+          </span>
+          <span class="lkr-open-t">{{.Title}}</span>
+          {{if .CoverImage}}<span class="lkr-open-cover"><img src="{{.CoverImage}}" alt="{{.Title}}" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}></span>{{end}}
+          {{if .Excerpt}}<span class="lkr-open-ex">{{.Excerpt}}</span>{{end}}
+          <span class="lkr-open-foot">
+            <time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time>
+            <span class="lkr-cap">{{$.Tr.T "home.read_more"}} <span class="arrow" aria-hidden="true">→</span></span>
+          </span>
+        </a>
+        {{end}}
+        {{range .Posts}}
+        <article class="lkr-door">
+          <a class="lkr-door-in" href="{{$.Tr.U (contentURL .)}}">
+            <span class="lkr-door-top"><span class="lkr-vents" aria-hidden="true"></span><span class="lkr-plate" aria-hidden="true"></span></span>
+            <span class="lkr-door-t">{{.Title}}</span>
+            <span class="lkr-door-meta">{{with .Category}}<span class="lkr-door-cat">{{.Name}}</span><span aria-hidden="true">·</span>{{end}}<time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time></span>
+          </a>
+        </article>
+        {{end}}
+      </div>
+    </section>
+    {{end}}
+
+    {{if .FeatLinks}}
+    <section class="lkr-lost" aria-label="{{.Site.HomeLinks}}">
+      <h2 class="lkr-lost-h">{{.Site.HomeLinks}}</h2>
+      <div class="lkr-lost-row">
+        {{range .FeatLinks}}
+        <a class="lkr-tag" href="{{if .Slug}}{{$.Tr.U (contentURL .)}}{{else}}#{{end}}">
+          <span class="lkr-tag-ic">{{if .CoverImage}}<img src="{{.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs .CoverImage}}>{{else}}<b aria-hidden="true">{{initial .Title}}</b>{{end}}</span>
+          <span class="lkr-tag-body">
+            <span class="lkr-tag-t">{{.Title}}</span>
+            {{if .Excerpt}}<span class="lkr-tag-ex">{{.Excerpt}}</span>{{end}}
+          </span>
+        </a>
+        {{end}}
+      </div>
+    </section>
+    {{end}}
+
+  </div>
+{{end}}

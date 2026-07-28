@@ -44,6 +44,9 @@ func (s *Server) apiDiscardContent(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if s.rejectAdvancedPageLegacyAPIMutation(w, existing) {
+		return
+	}
 	var in apiDiscardInput
 	if !decodeAPIJSON(w, r, &in) {
 		return
@@ -91,6 +94,9 @@ func (s *Server) apiUndiscardContent(w http.ResponseWriter, r *http.Request) {
 	}
 	existing, ok := s.apiContentByID(w, r, kind)
 	if !ok {
+		return
+	}
+	if s.rejectAdvancedPageLegacyAPIMutation(w, existing) {
 		return
 	}
 	if err := s.store.ClearDiscard(existing.ID); err != nil {

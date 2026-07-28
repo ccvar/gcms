@@ -10,9 +10,19 @@
     effort = '',
     /** 运行中锁模型（换模型影响本轮语义），强度仍可调（下轮生效） */
     lockModel = false,
+    fast = false,
+    /** 装着的 CLI 够不够新（headless fast 需要 2.1.205+）。不够就置灰并说明，
+     *  绝不摆一个「点了没反应」的开关——那个键在旧版上是静默失效的。 */
+    fastOk = true,
     onpick = (_v: string) => {},
     oneffort = (_v: string) => {},
+    onfast = (_v: boolean) => {},
   } = $props();
+
+  /** fast 模式只有这两档支持（CLI changelog 2.1.219：「/fast now applies to Opus 5 and Opus 4.8」，
+   *  Opus 4.7 已被移除）。不支持的模型不显示这一行 —— 摆一个点了没反应的开关最糟。 */
+  const FAST_OK = ['claude-opus-5', 'claude-opus-4-8'];
+  const fastable = $derived(FAST_OK.some((m) => value.endsWith('::' + m) || value === m));
 
   const STOPS = [
     { v: '', l: '默认', d: '跟随模型' },
@@ -139,12 +149,28 @@
         </span>
         <span class="fx-thumb"></span>
       </div>
+      {#if fastable}
+        <div class="fx-div"></div>
+        <button type="button" class="fx-fast" class:on={fast && fastOk} disabled={!fastOk} onclick={() => onfast(!fast)}>
+          <span class="fx-otext"><b>Fast 模式</b><small>{fastOk ? '更快出字 · 按 API 用量单独计费' : 'CLI 需 2.1.205+ · 去「本地模型」升级'}</small></span>
+          <span class="fx-sw" aria-hidden="true"></span>
+        </button>
+      {/if}
     </div>
   {/if}
 </div>
 
 <style>
   .fx { position: relative; display: inline-flex; }
+  .fx-fast { display: flex; align-items: center; gap: 10px; width: 100%; padding: 6px 8px; border: none; border-radius: 8px; background: transparent; font: inherit; text-align: left; cursor: pointer; }
+  .fx-fast:hover:not(:disabled) { background: #f1efe9; }
+  .fx-fast:disabled { cursor: default; }
+  .fx-fast:disabled .fx-otext b { color: var(--faint, #a29d93); }
+  /* 开关：宽度固定，不随文案变化跳位 */
+  .fx-sw { flex: none; width: 30px; height: 17px; border-radius: 999px; background: #d9d5cc; position: relative; transition: background .15s; }
+  .fx-sw::after { content: ''; position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; border-radius: 50%; background: #fff; transition: transform .15s; }
+  .fx-fast.on .fx-sw { background: var(--ok, #12805c); }
+  .fx-fast.on .fx-sw::after { transform: translateX(13px); }
   /* 底栏 chip 定高（--chip-h）：内容（图标/「低」徽章/文字）flex 垂直居中，徽章行高顶不开壳。 */
   .fx-trigger { display: inline-flex; align-items: center; height: var(--chip-h, 24px); box-sizing: border-box; gap: 5px; padding: 0 7px; border: none; border-radius: 7px; background: transparent; font-size: 12px; color: var(--dim, #6b675f); cursor: pointer; white-space: nowrap; }
   .fx-trigger:hover, .fx-trigger.open { background: #f1efe9; color: var(--text, #26241f); }

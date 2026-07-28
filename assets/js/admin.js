@@ -1832,7 +1832,7 @@
     dd._ddMenuNext = null;
   }
   function portalDDMenu(dd, menu, toggle) {
-    if (!dd || !menu || !toggle || !dd.closest(".modal") || dd.hasAttribute("data-dropdown-search")) return;
+    if (!dd || !menu || !toggle || (!dd.closest(".modal") && !dd.closest(".page-composer-grid")) || dd.hasAttribute("data-dropdown-search")) return;
     var rect = toggle.getBoundingClientRect();
     dd._ddPortalMenu = menu;
     dd._ddMenuParent = menu.parentNode;
@@ -1897,7 +1897,7 @@
 	      }
 	      function syncNativeLabel() {
 	        var selected = nativeSelect.options[nativeSelect.selectedIndex] || nativeSelect.options[0];
-	        if (label) label.textContent = selected ? (selected.textContent || "").trim() : "";
+	        if (label) label.textContent = selected ? (selected.dataset.title || selected.textContent || "").trim() : "";
 	        nativeItems.forEach(function (li) {
 	          li.setAttribute("aria-selected", li.getAttribute("data-value") === nativeSelect.value ? "true" : "false");
         });
@@ -1944,7 +1944,33 @@
 	          li.setAttribute("data-value", opt.value || "");
           li.setAttribute("aria-selected", opt.selected ? "true" : "false");
           if (opt.disabled) li.setAttribute("aria-disabled", "true");
-          li.textContent = (opt.textContent || "").trim();
+	          var title = (opt.dataset.title || opt.textContent || "").trim();
+	          var subtitle = (opt.dataset.subtitle || "").trim();
+	          var icon = (opt.dataset.icon || "").trim();
+	          if (icon || subtitle) {
+	            li.classList.add("dd-rich-option");
+	            if (icon) {
+	              var image = document.createElement("img");
+	              image.className = "dd-rich-icon";
+	              image.src = icon;
+	              image.alt = "";
+	              image.decoding = "async";
+	              li.appendChild(image);
+	            }
+	            var copy = document.createElement("span");
+	            copy.className = "dd-rich-copy";
+	            var strong = document.createElement("strong");
+	            strong.textContent = title;
+	            copy.appendChild(strong);
+	            if (subtitle) {
+	              var small = document.createElement("small");
+	              small.textContent = subtitle;
+	              copy.appendChild(small);
+	            }
+	            li.appendChild(copy);
+	          } else {
+	            li.textContent = title;
+	          }
           li.addEventListener("click", function () { chooseNative(li); closeDD(); });
 	          menu.appendChild(li);
 	          nativeItems.push(li);
@@ -2945,6 +2971,12 @@
      卡片=配色族、色卡=族内皮肤（独立皮族没有色卡排）：radio 值是皮肤 id（存储零变化），
      预览 iframe 即时换皮肤、小字换皮肤名、放大/真实预览按钮跟着换目标；
      微调控件经既有 change 事件同步。 */
+  var themePreviewNonce = 0;
+  function freshThemePreviewURL(raw) {
+    var sep = raw.indexOf("?") >= 0 ? "&" : "?";
+    themePreviewNonce += 1;
+    return raw + sep + "_tp=" + Date.now().toString(36) + "-" + themePreviewNonce;
+  }
   function activateThemeSkin(btn, check) {
     var card = btn.closest(".theme-card");
     if (!card) return;
@@ -2979,7 +3011,7 @@
           box.classList.remove("is-loading");
           box.classList.add("is-loaded");
         }, { once: true });
-        frame.src = url;
+        frame.src = freshThemePreviewURL(url);
       } else {
         frame.dataset.src = url;
       }
@@ -3019,7 +3051,7 @@
         box.classList.remove("is-loading");
         box.classList.add("is-error");
       }, { once: true });
-      frame.src = frame.dataset.src;
+      frame.src = freshThemePreviewURL(frame.dataset.src);
     }
 
     if ("IntersectionObserver" in window) {
@@ -3068,7 +3100,7 @@
     function open(id, name) {
       curId = id;
       if (titleEl && name) titleEl.textContent = name;
-      frame.src = "/admin/theme-preview/" + encodeURIComponent(id);
+      frame.src = freshThemePreviewURL("/admin/theme-preview/" + encodeURIComponent(id));
       if (browseBtn) browseBtn.href = "/admin/theme-browse/" + encodeURIComponent(id) + "/";
       modal.hidden = false;
       fitSoon(); // 等布局完成后再按舞台宽度缩放
@@ -4233,6 +4265,1472 @@
   }
 })();
 
+// ---------- 互动应用后台：原始 ZIP 流式上传与安全构建 ----------
+(function () {
+  "use strict";
+  var root = document.querySelector("[data-page-app-admin]");
+  if (!root || !window.fetch) return;
+  var fileInput = root.querySelector("[data-page-app-file]");
+  var uploadButton = root.querySelector("[data-page-app-upload]");
+  var state = root.querySelector("[data-page-app-operation-state]");
+  var csrf = root.dataset.appCsrf || "";
+  var etag = root.dataset.appEtag || "";
+  function show(message, error) {
+    if (state) {
+      state.textContent = message;
+      state.classList.toggle("is-error", !!error);
+    }
+    if (window.adminShowFlash && (error || /完成|成功/.test(message))) window.adminShowFlash(message, !!error);
+  }
+  if (uploadButton && fileInput) {
+    uploadButton.addEventListener("click", function () {
+      var file = fileInput.files && fileInput.files[0];
+      if (!file) {
+        show("请先选择 ZIP 应用包。", true);
+        return;
+      }
+      uploadButton.disabled = true;
+      show("正在校验并保存应用包…", false);
+      fetch(window.location.pathname + "/app-package", {
+        method: "POST",
+        body: file,
+        credentials: "same-origin",
+        headers: {
+          "Accept": "application/json",
+          "Content-Type": "application/zip",
+          "X-CSRF-Token": csrf,
+          "If-Match": etag,
+          "X-Requested-With": "XMLHttpRequest"
+        }
+      }).then(function (response) {
+        return response.json().catch(function () { return {}; }).then(function (payload) {
+          return { response: response, payload: payload };
+        });
+      }).then(function (result) {
+        if (!result.response.ok) throw new Error(result.payload.message || result.payload.error || "上传失败");
+        show("应用包校验完成，已保存为新修订。", false);
+        window.location.replace(result.payload.redirect || window.location.pathname);
+      }).catch(function (error) {
+        show("应用包处理失败：" + error.message, true);
+        uploadButton.disabled = false;
+      });
+    });
+  }
+  var buildForm = root.querySelector("[data-page-app-build-form]");
+  if (buildForm) {
+    buildForm.addEventListener("submit", function (event) {
+      event.preventDefault();
+      var button = buildForm.querySelector("button[type=submit]");
+      button.disabled = true;
+      show("正在重新校验源码并生成不可变构建…", false);
+      fetch(buildForm.action, {
+        method: "POST",
+        body: new FormData(buildForm),
+        credentials: "same-origin",
+        headers: { "Accept": "application/json", "X-Requested-With": "XMLHttpRequest" }
+      }).then(function (response) {
+        return response.json().catch(function () { return {}; }).then(function (payload) {
+          return { response: response, payload: payload };
+        });
+      }).then(function (result) {
+        if (!result.response.ok) throw new Error(result.payload.message || result.payload.error || "构建失败");
+        show("安全构建完成。", false);
+        window.location.reload();
+      }).catch(function (error) {
+        show("构建失败：" + error.message, true);
+        button.disabled = false;
+      });
+    });
+  }
+})();
+
+// ---------- 高级页面自由编排工作台 ----------
+// 浏览器只负责编辑 Manifest；校验、数据绑定与预览始终交给服务端统一实现。
+(function () {
+  "use strict";
+  var root = document.querySelector("[data-page-composer]");
+  var form = document.getElementById("page-composer-form");
+  if (!root || !form) return;
+
+  var manifestField = form.querySelector("[data-page-manifest]");
+  var registryField = form.querySelector("[data-page-registry]");
+  var dataSourcesField = form.querySelector("[data-page-data-sources]");
+  var tree = form.querySelector("[data-page-section-tree]");
+  var inspector = form.querySelector("[data-page-inspector]");
+  var inspectorEmpty = form.querySelector("[data-page-inspector-empty]");
+  var titleNode = form.querySelector("[data-page-component-title]");
+  var propertiesNode = form.querySelector("[data-page-properties]");
+  var bindingNode = form.querySelector("[data-page-binding]");
+  var responsiveNode = form.querySelector("[data-page-responsive]");
+  var validationState = form.querySelector("[data-page-validation-state]");
+  var saveState = document.querySelector("[data-page-save-state]");
+  var previewShell = form.querySelector("[data-page-preview-shell]");
+  var previewFrame = form.querySelector("[data-page-preview]");
+  var widthSelect = form.querySelector("[data-page-width]");
+  var manifest;
+  var registry;
+  var dataSources;
+  var selectedID = "";
+  var draggedID = "";
+  var activeEditorMode = "simple";
+  var activeViewMode = "edit";
+  var activeBeginnerTab = "content";
+  var initialManifestJSON = "";
+  var initialMetaJSON = "";
+  var historyCurrentJSON = "";
+  var undoStack = [];
+  var redoStack = [];
+  var lastHistoryKey = "";
+  var lastHistoryAt = 0;
+  var maxHistory = 60;
+  var initialValidationText = validationState ? validationState.textContent : "";
+  var isSubmitting = false;
+  var saveButtons = Array.prototype.slice.call(document.querySelectorAll('.page-save-action[form="page-composer-form"]'));
+  var publishButtons = Array.prototype.slice.call(document.querySelectorAll('form[action$="/publish"] button[type="submit"]'));
+  publishButtons.forEach(function (button) { button.dataset.pageServerDisabled = button.disabled ? "1" : "0"; });
+
+  try {
+    manifest = JSON.parse(manifestField.value || "{}");
+    registry = JSON.parse(registryField.value || "[]");
+    dataSources = JSON.parse((dataSourcesField && dataSourcesField.value) || "[]");
+  } catch (err) {
+    if (validationState) {
+      validationState.textContent = "Manifest 无法读取";
+      validationState.classList.add("is-invalid");
+    }
+    return;
+  }
+  manifest.sections = Array.isArray(manifest.sections) ? manifest.sections : [];
+  manifest.shell = manifest.shell || { mode: "site" };
+  manifest.layout = manifest.layout || { content_max_width: "comfortable", section_gap: "comfortable" };
+  initialManifestJSON = JSON.stringify(manifest);
+  historyCurrentJSON = initialManifestJSON;
+  initialMetaJSON = serializeMetaFields();
+
+  var registryByType = {};
+  registry.forEach(function (definition) {
+    var type = definition.type || definition.Type;
+    if (type) registryByType[type] = definition;
+  });
+  var dataSourceByKey = {};
+  dataSources.forEach(function (source) { dataSourceByKey[source.key] = source; });
+
+  var componentLabels = {
+    "hero.centered": "顶部宣传区",
+    "hero.split": "图文宣传区",
+    "text.rich": "图文正文",
+    "media.image": "图片",
+    "features.grid": "功能卡片",
+    "content.cards": "内容卡片",
+    "posts.grid": "文章列表",
+    "products.grid": "商品列表",
+    "custom_content.grid": "自定义内容列表",
+    "faq.accordion": "常见问题",
+    "cta.banner": "下一步引导",
+    "form.contact": "联系表单",
+    "layout.section": "内容分组",
+    "layout.columns": "分栏布局"
+  };
+  var propertyLabels = {
+    eyebrow: "辅助标题",
+    title: "标题",
+    description: "说明",
+    body: "正文",
+    primary_action: "主按钮",
+    secondary_action: "次按钮",
+    alignment: "内容对齐",
+    items: "内容项",
+    empty_state: "无内容时的提示",
+    show_excerpt: "显示内容摘要",
+    alt: "图片说明",
+    caption: "图片标题",
+    action: "跳转按钮",
+    fields: "表单字段",
+    submit_label: "提交按钮文字",
+    privacy_label: "隐私说明",
+    privacy_href: "隐私政策链接",
+    label: "区块名称"
+  };
+  var enumLabels = {
+    start: "左对齐",
+    center: "居中",
+    stack: "上下排列",
+    split: "左右排列",
+    grid: "网格",
+    row: "横向排列",
+    "before-content": "内容之前",
+    "after-content": "内容之后",
+    stretch: "拉伸",
+    end: "末端对齐",
+    live: "跟随内容实时更新",
+    placeholder: "显示占位内容",
+    hide: "隐藏这个区块",
+    block: "阻止页面发布"
+  };
+  function definitionValue(definition, key, fallback) {
+    if (!definition) return fallback;
+    var pascal = key.charAt(0).toUpperCase() + key.slice(1);
+    if (definition[key] != null) return definition[key];
+    if (definition[pascal] != null) return definition[pascal];
+    return fallback;
+  }
+  function definitionProperties(definition) {
+    return definitionValue(definition, "properties", []) || [];
+  }
+  function propertyValue(property, key, fallback) {
+    return definitionValue(property, key, fallback);
+  }
+  function componentLabel(type) {
+    var definition = registryByType[type];
+    return definitionValue(definition, "label", componentLabels[type] || String(type || "页面区块"));
+  }
+  function componentDescription(type) {
+    return definitionValue(registryByType[type], "description", "");
+  }
+  function propertyLabel(property, componentType) {
+    var key = propertyValue(property, "key", "");
+    var definition = registryByType[componentType];
+    var catalogLabels = definitionValue(definition, "property_labels", definitionValue(definition, "propertyLabels", {})) || {};
+    return propertyValue(property, "label", catalogLabels[key] || propertyLabels[key] || key);
+  }
+  function enumLabel(value) {
+    return enumLabels[value] || value;
+  }
+  function simpleSectionLabel(section) {
+    var label = componentLabel(section.type);
+    var props = section.props || {};
+    var detail = String(props.title || props.label || props.eyebrow || "").trim();
+    return detail && detail !== label ? label + " · " + detail : label;
+  }
+  function isSimpleMode() {
+    return activeEditorMode === "simple";
+  }
+  function inferEditorMode() {
+    var declared = root.getAttribute("data-page-editor-mode") || form.getAttribute("data-page-editor-mode");
+    var currentControl = document.querySelector('[data-page-editor-mode][aria-current="page"], [data-page-editor-mode].is-active');
+    var queryMode = "";
+    try { queryMode = new URL(window.location.href).searchParams.get("editor") || ""; } catch (_) {}
+    if (queryMode === "advanced" || queryMode === "simple") return queryMode;
+    if (declared === "advanced" || declared === "simple") return declared;
+    if (currentControl) {
+      var current = currentControl.getAttribute("data-page-editor-mode");
+      if (current === "advanced" || current === "simple") return current;
+    }
+    return "simple";
+  }
+  activeEditorMode = inferEditorMode();
+
+  function deepCopy(value) {
+    return JSON.parse(JSON.stringify(value));
+  }
+  function uniqueID(type) {
+    var prefix = String(type || "section").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "section";
+    var id;
+    do {
+      id = prefix + "-" + Date.now().toString(36) + Math.floor(Math.random() * 1296).toString(36);
+    } while (findSection(id));
+    return id;
+  }
+  function visitSections(items, parent, visit) {
+    (items || []).forEach(function (section, index) {
+      visit(section, items, index, parent);
+      visitSections(section.children || [], section, visit);
+    });
+  }
+  function findSection(id) {
+    var found = null;
+    visitSections(manifest.sections, null, function (section, siblings, index, parent) {
+      if (!found && section.id === id) found = { section: section, siblings: siblings, index: index, parent: parent };
+    });
+    return found;
+  }
+  function serializeMetaFields() {
+    var entries = [];
+    try {
+      new FormData(form).forEach(function (value, key) {
+        if (key === "manifest_json" || key === "_csrf" || key === "_etag" || (typeof File !== "undefined" && value instanceof File)) return;
+        entries.push([key, String(value)]);
+      });
+    } catch (_) {}
+    return JSON.stringify(entries);
+  }
+  function isDirty() {
+    return JSON.stringify(manifest) !== initialManifestJSON || serializeMetaFields() !== initialMetaJSON;
+  }
+  function updateHistoryControls() {
+    form.querySelectorAll("[data-page-undo]").forEach(function (button) {
+      button.disabled = undoStack.length === 0;
+      button.setAttribute("aria-disabled", button.disabled ? "true" : "false");
+      button.title = undoStack.length ? "撤销上一步本地修改" : "没有可撤销的修改";
+    });
+    form.querySelectorAll("[data-page-redo]").forEach(function (button) {
+      button.disabled = redoStack.length === 0;
+      button.setAttribute("aria-disabled", button.disabled ? "true" : "false");
+      button.title = redoStack.length ? "重做上一步本地修改" : "没有可重做的修改";
+    });
+  }
+  function updateSaveState(message, state) {
+    var target = saveState || validationState;
+    if (target) {
+      if (saveState) {
+        target.textContent = message;
+      } else if (state === "dirty") {
+        target.textContent = "有未保存修改";
+      } else if (state === "saved") {
+        target.textContent = initialValidationText || "当前修订已保存";
+      } else {
+        target.textContent = message;
+      }
+      target.dataset.state = state || "";
+      ["dirty", "saved", "saving", "error"].forEach(function (name) {
+        target.classList.toggle("is-" + name, state === name);
+      });
+    }
+    saveButtons.forEach(function (button) {
+      if (button.dataset.busy) return;
+      button.disabled = state !== "dirty" && state !== "error";
+    });
+    publishButtons.forEach(function (button) {
+      var shouldDisable = state === "dirty" || state === "saving" || button.dataset.pageServerDisabled === "1";
+      button.disabled = shouldDisable;
+      if (state === "dirty") button.title = "请先保存当前修改，再发布这个修订";
+      else if (button.dataset.pageServerDisabled !== "1") button.removeAttribute("title");
+    });
+  }
+  function recordHistory(nextJSON, historyKey) {
+    if (nextJSON === historyCurrentJSON) return;
+    var now = Date.now();
+    var coalesce = historyKey && historyKey === lastHistoryKey && now - lastHistoryAt < 900 && undoStack.length;
+    if (!coalesce) {
+      undoStack.push({ json: historyCurrentJSON, selectedID: selectedID });
+      if (undoStack.length > maxHistory) undoStack.shift();
+    }
+    historyCurrentJSON = nextJSON;
+    redoStack = [];
+    lastHistoryKey = historyKey || "";
+    lastHistoryAt = now;
+    updateHistoryControls();
+  }
+  function syncManifest(historyKey, options) {
+    options = options || {};
+    var compact = JSON.stringify(manifest);
+    if (!options.skipHistory) recordHistory(compact, typeof historyKey === "string" ? historyKey : "");
+    else historyCurrentJSON = compact;
+    manifestField.value = JSON.stringify(manifest, null, 2);
+    if (validationState) {
+      validationState.classList.remove("is-valid");
+      validationState.classList.remove("is-invalid");
+    }
+    updateSaveState(isDirty() ? "有未保存修改" : "当前修订已保存", isDirty() ? "dirty" : "saved");
+  }
+  function text(value) {
+    return document.createTextNode(value == null ? "" : String(value));
+  }
+  function element(tag, className) {
+    var node = document.createElement(tag);
+    if (className) node.className = className;
+    return node;
+  }
+  function enhancePageSelect(select) {
+    if (!select || select.multiple) return select;
+    var existing = select.closest && select.closest(".dropdown");
+    if (existing) return existing;
+    var dropdown = element("div", "dropdown page-composer-select");
+    dropdown.setAttribute("data-select-dropdown", "");
+    var toggle = element("button", "dd-toggle");
+    toggle.type = "button";
+    toggle.setAttribute("aria-haspopup", "listbox");
+    toggle.setAttribute("aria-expanded", "false");
+    var label = element("span", "dd-label");
+    toggle.appendChild(label);
+    var caretSource = form.querySelector(".page-width-select .dd-caret");
+    if (caretSource) toggle.appendChild(caretSource.cloneNode(true));
+    select.classList.add("dd-native");
+    select.setAttribute("data-dropdown-native", "");
+    var menu = element("ul", "dd-menu");
+    menu.setAttribute("role", "listbox");
+    dropdown.appendChild(toggle);
+    dropdown.appendChild(select);
+    dropdown.appendChild(menu);
+    if (window.adminInitDropdown) window.adminInitDropdown(dropdown);
+    return dropdown;
+  }
+
+  function beginnerPropertyGroup(property) {
+    var key = propertyValue(property, "key", "");
+    return key === "alignment" ? "style" : "content";
+  }
+  function simpleStructuredProperty(section, property) {
+    var key = propertyValue(property, "key", "");
+    var kind = propertyValue(property, "kind", "text");
+    var required = !!propertyValue(property, "required", false);
+    var value = valueForProperty(section, property);
+    var wrap = element("div", "page-simple-property");
+    wrap.dataset.pageBeginnerGroup = beginnerPropertyGroup(property);
+    var caption = element("span", "page-simple-property-label");
+    caption.appendChild(text(propertyLabel(property, section.type) + (required ? " *" : "")));
+    wrap.appendChild(caption);
+    if (kind === "action") {
+      var action = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+      [["label", "按钮文字"], ["href", "跳转链接"]].forEach(function (entry) {
+        var field = element("label");
+        var fieldCaption = element("span");
+        fieldCaption.appendChild(text(entry[1]));
+        var input = element("input");
+        input.type = entry[0] === "href" ? "url" : "text";
+        input.value = action[entry[0]] || "";
+        input.placeholder = entry[0] === "href" ? "例如：/products 或 https://…" : "";
+        input.dataset.propertyKey = key;
+        input.dataset.propertyKind = kind;
+        input.dataset.propertySubkey = entry[0];
+        if (required) input.required = true;
+        field.appendChild(fieldCaption);
+        field.appendChild(input);
+        wrap.appendChild(field);
+      });
+      return wrap;
+    }
+    var items = Array.isArray(value) ? value : [];
+    var list = element("div", "page-simple-list");
+    var fieldConfig = kind === "feature_list"
+      ? [["title", "标题"], ["description", "说明"], ["href", "链接"]]
+      : (kind === "faq_list" ? [["question", "问题"], ["answer", "回答"]] : [["", "字段名称"]]);
+    items.forEach(function (item, index) {
+      var row = element("div", "page-simple-list-row");
+      fieldConfig.forEach(function (entry) {
+        var field = element("label");
+        var fieldCaption = element("span");
+        fieldCaption.appendChild(text(entry[1]));
+        var input = kind === "field_list"
+          ? element("select")
+          : (entry[0] === "description" || entry[0] === "answer" ? element("textarea") : element("input"));
+        if (kind === "field_list") {
+          [["name", "姓名"], ["email", "邮箱"], ["phone", "电话"], ["company", "公司"], ["subject", "主题"], ["message", "留言"]].forEach(function (choice) {
+            var option = element("option");
+            option.value = choice[0];
+            option.textContent = choice[1];
+            option.dataset.title = choice[1];
+            if (item === choice[0]) option.selected = true;
+            input.appendChild(option);
+          });
+        } else if (input.tagName === "INPUT") {
+          input.type = entry[0] === "href" ? "url" : "text";
+        }
+        if (input.tagName === "TEXTAREA") input.rows = 2;
+        if (kind !== "field_list") input.value = entry[0] ? ((item && item[entry[0]]) || "") : (item || "");
+        input.dataset.propertyKey = key;
+        input.dataset.propertyKind = kind;
+        input.dataset.propertyIndex = String(index);
+        input.dataset.propertySubkey = entry[0];
+        field.appendChild(fieldCaption);
+        field.appendChild(input.tagName === "SELECT" ? enhancePageSelect(input) : input);
+        row.appendChild(field);
+      });
+      var remove = element("button", "page-simple-list-remove");
+      remove.type = "button";
+      remove.dataset.pageListRemove = key;
+      remove.dataset.propertyIndex = String(index);
+      remove.appendChild(text("移除"));
+      row.appendChild(remove);
+      list.appendChild(row);
+    });
+    if (!items.length) {
+      var empty = element("p", "page-binding-empty");
+      empty.appendChild(text("暂时没有内容项，可以从下方添加。"));
+      list.appendChild(empty);
+    }
+    wrap.appendChild(list);
+    var add = element("button", "page-simple-list-add");
+    add.type = "button";
+    add.dataset.pageListAdd = key;
+    add.dataset.propertyKind = kind;
+    add.appendChild(text(kind === "faq_list" ? "添加问题" : (kind === "field_list" ? "添加字段" : "添加内容项")));
+    wrap.appendChild(add);
+    return wrap;
+  }
+
+  function renderTree() {
+    if (!tree) return;
+    tree.innerHTML = "";
+    function renderItems(items, target, depth) {
+      (items || []).forEach(function (section) {
+        var li = element("li", section.id === selectedID ? "is-selected" : "");
+        li.dataset.sectionId = section.id;
+        li.dataset.componentType = section.type;
+        li.draggable = true;
+        li.style.paddingLeft = (8 + depth * 13) + "px";
+        var grip = element("span", "page-tree-grip");
+        grip.appendChild(text("⋮⋮"));
+        var label = element("span", "page-tree-label");
+        var labelText = isSimpleMode() ? simpleSectionLabel(section) : section.type + " · " + section.id;
+        label.appendChild(text(labelText));
+        li.setAttribute("aria-label", labelText);
+        li.title = isSimpleMode() ? componentDescription(section.type) || labelText : section.type + " · " + section.id;
+        var moves = element("span", "page-tree-move");
+        var up = element("button");
+        up.type = "button";
+        up.dataset.pageMove = "up";
+        up.title = "上移";
+        up.appendChild(text("↑"));
+        var down = element("button");
+        down.type = "button";
+        down.dataset.pageMove = "down";
+        down.title = "下移";
+        down.appendChild(text("↓"));
+        moves.appendChild(up);
+        moves.appendChild(down);
+        li.appendChild(grip);
+        li.appendChild(label);
+        li.appendChild(moves);
+        target.appendChild(li);
+        if (section.children && section.children.length) renderItems(section.children, target, depth + 1);
+      });
+    }
+    renderItems(manifest.sections, tree, 0);
+  }
+
+  function valueForProperty(section, property) {
+    var props = section.props || {};
+    return props[propertyValue(property, "key", "")];
+  }
+  function inputForProperty(section, property) {
+    var key = propertyValue(property, "key", "");
+    var kind = propertyValue(property, "kind", "text");
+    var required = !!propertyValue(property, "required", false);
+    if (isSimpleMode() && (kind === "action" || /list$/.test(kind))) {
+      return simpleStructuredProperty(section, property);
+    }
+    var label = element("label");
+    label.dataset.pageBeginnerGroup = beginnerPropertyGroup(property);
+    var caption = element("span");
+    caption.appendChild(text((isSimpleMode() ? propertyLabel(property, section.type) : key) + (required ? " *" : "")));
+    label.appendChild(caption);
+    var value = valueForProperty(section, property);
+    var input;
+    if (kind === "textarea" || kind === "markdown") {
+      input = element("textarea");
+      input.rows = kind === "markdown" ? 8 : 4;
+      input.value = value == null ? "" : String(value);
+    } else if (kind === "select") {
+      input = element("select");
+      (propertyValue(property, "enum", []) || []).forEach(function (choice) {
+        var option = element("option");
+        option.value = choice;
+        option.appendChild(text(isSimpleMode() ? enumLabel(choice) : choice));
+        option.dataset.title = isSimpleMode() ? enumLabel(choice) : choice;
+        if (choice === value) option.selected = true;
+        input.appendChild(option);
+      });
+    } else if (kind === "action") {
+      input = element("textarea");
+      input.rows = 3;
+      input.value = value ? JSON.stringify(value, null, 2) : "";
+      input.placeholder = '{"label":"...","href":"/..."}';
+      input.dataset.complex = "1";
+    } else if (/list$/.test(kind)) {
+      input = element("textarea");
+      input.rows = 7;
+      input.value = value ? JSON.stringify(value, null, 2) : "[]";
+      input.dataset.complex = "1";
+    } else if (kind === "boolean") {
+      input = element("input");
+      input.type = "checkbox";
+      input.checked = !!value;
+    } else {
+      input = element("input");
+      input.type = "text";
+      input.value = value == null ? "" : String(value);
+    }
+    input.dataset.propertyKey = key;
+    input.dataset.propertyKind = kind;
+    if (required) input.required = true;
+    label.appendChild(input.tagName === "SELECT" ? enhancePageSelect(input) : input);
+    return label;
+  }
+  function updateProperty(input) {
+    var found = findSection(selectedID);
+    if (!found) return;
+    var key = input.dataset.propertyKey;
+    found.section.props = found.section.props || {};
+    var value = input.type === "checkbox" ? input.checked : input.value;
+    var listIndex = input.dataset.propertyIndex;
+    var subkey = input.dataset.propertySubkey;
+    if (listIndex != null && listIndex !== "") {
+      var list = Array.isArray(found.section.props[key]) ? found.section.props[key] : [];
+      var index = Number(listIndex);
+      if (/field_list$/.test(input.dataset.propertyKind || "")) {
+        list[index] = value;
+      } else {
+        list[index] = list[index] && typeof list[index] === "object" ? list[index] : {};
+        list[index][subkey] = value;
+      }
+      found.section.props[key] = list;
+    } else if (subkey) {
+      var objectValue = found.section.props[key] && typeof found.section.props[key] === "object" && !Array.isArray(found.section.props[key])
+        ? found.section.props[key] : {};
+      objectValue[subkey] = value;
+      if (!String(objectValue.label || "").trim() && !String(objectValue.href || "").trim()) delete found.section.props[key];
+      else found.section.props[key] = objectValue;
+    } else if (input.dataset.complex === "1") {
+      if (!value.trim()) {
+        delete found.section.props[key];
+      } else {
+        try {
+          found.section.props[key] = JSON.parse(value);
+          input.setCustomValidity("");
+        } catch (_) {
+          input.setCustomValidity("请输入有效 JSON");
+          return;
+        }
+      }
+    } else {
+      found.section.props[key] = value;
+    }
+    syncManifest("property:" + selectedID + ":" + key);
+    if (key === "title" || key === "label" || key === "eyebrow") renderTree();
+  }
+
+  function renderBinding(section, definition) {
+    if (!bindingNode) return;
+    bindingNode.innerHTML = "";
+    var bindingSources = definitionValue(definition, "binding_sources", definitionValue(definition, "bindingSources", [])) || [];
+    if (!definition || !bindingSources.length) {
+      var none = element("p", "page-binding-empty");
+      none.appendChild(text("这个组件不读取内容数据。"));
+      bindingNode.appendChild(none);
+      return;
+    }
+    var toggle = element("label", "page-binding-toggle");
+    var checkbox = element("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = !!section.binding;
+    checkbox.dataset.bindingToggle = "1";
+    toggle.appendChild(checkbox);
+    toggle.appendChild(text(" 启用真实内容数据绑定"));
+    bindingNode.appendChild(toggle);
+    if (!section.binding) return;
+    var wrap = element("div", "page-binding-fields");
+    var allowedSources = dataSources.filter(function (source) {
+      var allowed = bindingSources;
+      return allowed.indexOf("*") !== -1 || allowed.indexOf(source.key) !== -1;
+    });
+    var sourceLabel = element("label");
+    var sourceCaption = element("span");
+    sourceCaption.appendChild(text("内容数据源"));
+    var sourceSelect = element("select");
+    sourceSelect.dataset.bindingKey = "source";
+    var sourcePlaceholder = element("option");
+    sourcePlaceholder.value = "";
+    sourcePlaceholder.appendChild(text("请选择当前站点的数据源"));
+    sourceSelect.appendChild(sourcePlaceholder);
+    allowedSources.forEach(function (source) {
+      var option = element("option");
+      option.value = source.key;
+      option.appendChild(text(isSimpleMode() ? source.label : source.label + " · " + source.key));
+      if (section.binding.source === source.key) option.selected = true;
+      sourceSelect.appendChild(option);
+    });
+    sourceLabel.appendChild(sourceCaption);
+    sourceLabel.appendChild(enhancePageSelect(sourceSelect));
+    wrap.appendChild(sourceLabel);
+
+    var selectedSource = dataSourceByKey[section.binding.source];
+    if (selectedSource && allowedSources.some(function (source) { return source.key === selectedSource.key; })) {
+      var sortLabel = element("label");
+      var sortCaption = element("span");
+      sortCaption.appendChild(text("排序"));
+      var sortSelect = element("select");
+      sortSelect.dataset.bindingKey = "sort";
+      (selectedSource.sorts || []).forEach(function (sort) {
+        var option = element("option");
+        option.value = sort;
+        var displaySortLabel = {
+          "featured,-published_at": "推荐内容优先",
+          "-published_at": "最新发布优先",
+          published_at: "最早发布优先",
+          title: "标题顺序",
+          "-title": "标题倒序",
+          "-updated_at": "最近更新优先"
+        }[sort] || sort;
+        option.appendChild(text(isSimpleMode() ? displaySortLabel : sort));
+        option.dataset.title = isSimpleMode() ? displaySortLabel : sort;
+        if (section.binding.sort === sort) option.selected = true;
+        sortSelect.appendChild(option);
+      });
+      sortLabel.appendChild(sortCaption);
+      sortLabel.appendChild(enhancePageSelect(sortSelect));
+      wrap.appendChild(sortLabel);
+
+      var fieldsLabel = element("label");
+      var fieldsCaption = element("span");
+      fieldsCaption.appendChild(text("返回字段（可多选）"));
+      var fieldsSelect = element("select");
+      fieldsSelect.multiple = true;
+      fieldsSelect.size = Math.min(8, Math.max(4, (selectedSource.fields || []).length));
+      fieldsSelect.dataset.bindingKey = "fields";
+      (selectedSource.fields || []).forEach(function (field) {
+        var option = element("option");
+        option.value = field.key;
+        option.appendChild(text(isSimpleMode() ? field.label : field.label + " · " + field.key));
+        if ((section.binding.fields || []).indexOf(field.key) !== -1) option.selected = true;
+        fieldsSelect.appendChild(option);
+      });
+      fieldsLabel.appendChild(fieldsCaption);
+      fieldsLabel.appendChild(fieldsSelect);
+      wrap.appendChild(fieldsLabel);
+
+      var limitLabel = element("label");
+      var limitCaption = element("span");
+      limitCaption.appendChild(text("数量上限"));
+      var limitInput = element("input");
+      limitInput.type = "number";
+      limitInput.min = "1";
+      limitInput.max = String(selectedSource.max_items || 1);
+      limitInput.value = section.binding.limit || Math.min(6, selectedSource.max_items || 1);
+      limitInput.dataset.bindingKey = "limit";
+      limitLabel.appendChild(limitCaption);
+      limitLabel.appendChild(limitInput);
+      wrap.appendChild(limitLabel);
+
+      if (selectedSource.has_category) {
+        var categoryLabel = element("label");
+        var categoryCaption = element("span");
+        categoryCaption.appendChild(text("分类 Slug（可选）"));
+        var categoryInput = element("input");
+        categoryInput.type = "text";
+        categoryInput.value = (section.binding.filter && section.binding.filter.category_slug) || "";
+        categoryInput.dataset.bindingKey = "category_slug";
+        categoryLabel.appendChild(categoryCaption);
+        categoryLabel.appendChild(categoryInput);
+        wrap.appendChild(categoryLabel);
+      }
+    } else {
+      var unavailable = element("p", "page-binding-empty");
+      unavailable.appendChild(text("请先选择当前站点已启用且该组件支持的数据源。"));
+      wrap.appendChild(unavailable);
+    }
+    [
+      ["update_mode", "更新方式", ["live"]],
+      ["missing_policy", "缺失处理", ["placeholder", "hide", "block"]]
+    ].forEach(function (entry) {
+      var label = element("label");
+      var caption = element("span");
+      caption.appendChild(text(entry[1]));
+      var select = element("select");
+      select.dataset.bindingKey = entry[0];
+      entry[2].forEach(function (choice) {
+        var option = element("option");
+        option.value = choice;
+        option.appendChild(text(isSimpleMode() ? enumLabel(choice) : choice));
+        option.dataset.title = isSimpleMode() ? enumLabel(choice) : choice;
+        if (section.binding[entry[0]] === choice) option.selected = true;
+        select.appendChild(option);
+      });
+      label.appendChild(caption);
+      label.appendChild(enhancePageSelect(select));
+      wrap.appendChild(label);
+    });
+    bindingNode.appendChild(wrap);
+  }
+
+  function renderResponsive(section) {
+    if (!responsiveNode) return;
+    responsiveNode.innerHTML = "";
+    ["desktop", "tablet", "mobile"].forEach(function (breakpoint) {
+      var value = (section.responsive && section.responsive[breakpoint]) || {};
+      var breakpointLabel = ({ desktop: "桌面", tablet: "平板", mobile: "手机" }[breakpoint] || breakpoint);
+      var group = element("div", "page-responsive-breakpoint");
+      var heading = element("strong");
+      heading.appendChild(text(isSimpleMode() ? breakpointLabel : breakpoint));
+      group.appendChild(heading);
+      var layout = element("label");
+      layout.appendChild(text("布局"));
+      var layoutSelect = element("select");
+      layoutSelect.dataset.responsiveBreakpoint = breakpoint;
+      layoutSelect.dataset.responsiveKey = "layout";
+      ["stack", "split", "grid", "row"].forEach(function (choice) {
+        var option = element("option");
+        option.value = choice;
+        option.appendChild(text(isSimpleMode() ? enumLabel(choice) : choice));
+        option.dataset.title = isSimpleMode() ? enumLabel(choice) : choice;
+        if (value.layout === choice) option.selected = true;
+        layoutSelect.appendChild(option);
+      });
+      layout.appendChild(enhancePageSelect(layoutSelect));
+      group.appendChild(layout);
+      var columns = element("label");
+      columns.appendChild(text("列数"));
+      var columnInput = element("input");
+      columnInput.type = "number";
+      columnInput.min = "1";
+      columnInput.max = "6";
+      columnInput.value = value.columns || 1;
+      columnInput.dataset.responsiveBreakpoint = breakpoint;
+      columnInput.dataset.responsiveKey = "columns";
+      columns.appendChild(columnInput);
+      group.appendChild(columns);
+      [["align", "对齐", ["start", "center", "end", "stretch"]], ["media_position", "图片位置", ["before-content", "after-content"]]].forEach(function (config) {
+        var label = element("label");
+        label.appendChild(text(isSimpleMode() ? config[1] : config[0]));
+        var select = element("select");
+        select.dataset.responsiveBreakpoint = breakpoint;
+        select.dataset.responsiveKey = config[0];
+        config[2].forEach(function (choice) {
+          var option = element("option");
+          option.value = choice;
+          option.appendChild(text(isSimpleMode() ? enumLabel(choice) : choice));
+          option.dataset.title = isSimpleMode() ? enumLabel(choice) : choice;
+          if (value[config[0]] === choice) option.selected = true;
+          select.appendChild(option);
+        });
+        label.appendChild(enhancePageSelect(select));
+        group.appendChild(label);
+      });
+      var visibilityLabel = element("label", "page-responsive-visibility");
+      var visibilityCopy = element("span", "page-responsive-visibility-copy");
+      visibilityCopy.appendChild(text(isSimpleMode() ? "在" + breakpointLabel + "显示" : "visible (protocol: hidden=false)"));
+      var visibility = element("input", "page-responsive-visibility-toggle");
+      visibility.type = "checkbox";
+      visibility.setAttribute("role", "switch");
+      visibility.checked = !value.hidden;
+      visibility.dataset.responsiveBreakpoint = breakpoint;
+      visibility.dataset.responsiveKey = "hidden";
+      visibility.dataset.responsiveInverted = "true";
+      visibility.setAttribute("aria-label", isSimpleMode() ? "在" + breakpointLabel + "显示" : breakpoint + " visible");
+      visibilityLabel.appendChild(visibilityCopy);
+      visibilityLabel.appendChild(visibility);
+      group.appendChild(visibilityLabel);
+      responsiveNode.appendChild(group);
+    });
+  }
+
+  function renderInspector() {
+    var found = findSection(selectedID);
+    if (inspector) inspector.hidden = !found;
+    if (inspectorEmpty) inspectorEmpty.hidden = !!found;
+    if (!found) return;
+    var section = found.section;
+    var definition = registryByType[section.type];
+    if (titleNode) titleNode.textContent = isSimpleMode() ? componentLabel(section.type) : section.type;
+    if (propertiesNode) {
+      propertiesNode.innerHTML = "";
+      propertiesNode.dataset.pageBeginnerPanel = "content";
+      definitionProperties(definition).forEach(function (property) {
+        propertiesNode.appendChild(inputForProperty(section, property));
+      });
+    }
+    if (bindingNode) bindingNode.dataset.pageBeginnerPanel = "data";
+    if (responsiveNode) responsiveNode.dataset.pageBeginnerPanel = "style";
+    renderBinding(section, definition);
+    renderResponsive(section);
+    applyBeginnerTab(activeBeginnerTab);
+  }
+
+  function activateComponentPanel() {
+    var button = form.querySelector('[data-page-panel-tab="component"]');
+    if (!button) return;
+    form.querySelectorAll("[data-page-panel-tab]").forEach(function (item) {
+      item.classList.toggle("is-active", item === button);
+      item.setAttribute("aria-selected", item === button ? "true" : "false");
+    });
+    form.querySelectorAll("[data-page-panel]").forEach(function (panel) {
+      panel.classList.toggle("is-active", panel.dataset.pagePanel === "component");
+    });
+  }
+  function applyBeginnerTab(tab) {
+    if (tab !== "content" && tab !== "style" && tab !== "data") tab = "content";
+    activeBeginnerTab = tab;
+    root.dataset.pageBeginnerTab = tab;
+    form.querySelectorAll("[data-page-beginner-tab]").forEach(function (button) {
+      var active = button.dataset.pageBeginnerTab === tab;
+      button.classList.toggle("is-active", active);
+      button.setAttribute("aria-selected", active ? "true" : "false");
+    });
+    form.querySelectorAll("[data-page-beginner-panel]").forEach(function (panel) {
+      var active = panel.dataset.pageBeginnerPanel === tab;
+      if (panel === inspectorEmpty && findSection(selectedID)) active = false;
+      panel.classList.toggle("is-active", active);
+      panel.hidden = !active;
+    });
+    if (!isSimpleMode()) {
+      form.querySelectorAll("[data-page-beginner-group]").forEach(function (node) { node.hidden = false; });
+      [bindingNode, responsiveNode].forEach(function (node) {
+        var group = node && node.closest(".page-inspector-group");
+        if (group) group.hidden = false;
+      });
+      if (propertiesNode) propertiesNode.hidden = false;
+      return;
+    }
+    if (propertiesNode) {
+      propertiesNode.hidden = tab === "data";
+      propertiesNode.querySelectorAll("[data-page-beginner-group]").forEach(function (node) {
+        node.hidden = node.dataset.pageBeginnerGroup !== tab;
+      });
+    }
+    var bindingGroup = bindingNode && bindingNode.closest(".page-inspector-group");
+    var responsiveGroup = responsiveNode && responsiveNode.closest(".page-inspector-group");
+    if (bindingGroup) {
+      bindingGroup.hidden = tab !== "data";
+      if (tab === "data") bindingGroup.open = true;
+    }
+    if (responsiveGroup) {
+      responsiveGroup.hidden = tab !== "style";
+      if (tab === "style") responsiveGroup.open = true;
+    }
+  }
+  function setEditorMode(mode) {
+    if (mode !== "advanced" && mode !== "simple") mode = "simple";
+    activeEditorMode = mode;
+    root.dataset.pageEditorActiveMode = mode;
+    form.dataset.pageEditorActiveMode = mode;
+    root.classList.toggle("is-simple-mode", mode === "simple");
+    root.classList.toggle("is-advanced-mode", mode === "advanced");
+    form.classList.toggle("is-simple-mode", mode === "simple");
+    form.classList.toggle("is-advanced-mode", mode === "advanced");
+    form.classList.toggle("is-simple", mode === "simple");
+    form.classList.toggle("is-advanced", mode === "advanced");
+    document.querySelectorAll("[data-page-editor-mode]").forEach(function (control) {
+      if (!control.matches("a, button, [role=button]")) return;
+      var active = control.dataset.pageEditorMode === mode;
+      control.classList.toggle("is-active", active);
+      if (active) control.setAttribute("aria-current", "page");
+      else control.removeAttribute("aria-current");
+    });
+    if (mode === "advanced") setViewMode("browse");
+    else setViewMode(activeViewMode === "browse" ? "browse" : "edit");
+    renderTree();
+    renderInspector();
+  }
+  function setViewMode(mode) {
+    if (mode !== "browse") mode = "edit";
+    activeViewMode = mode;
+    root.dataset.pageViewActiveMode = mode;
+    root.classList.toggle("is-browse-mode", mode === "browse");
+    form.classList.toggle("is-browse-mode", mode === "browse");
+    form.querySelectorAll("[data-page-view-mode]").forEach(function (button) {
+      var active = button.dataset.pageViewMode === mode;
+      button.classList.toggle("is-active", active);
+      button.setAttribute("aria-pressed", active ? "true" : "false");
+    });
+    syncPreviewSelection();
+  }
+  function previewDocument() {
+    if (!previewFrame) return null;
+    try {
+      return previewFrame.contentDocument && previewFrame.contentDocument.documentElement ? previewFrame.contentDocument : null;
+    } catch (_) {
+      return null;
+    }
+  }
+  function syncPreviewSelection(options) {
+    options = options || {};
+    var doc = previewDocument();
+    if (!doc) return;
+    var editable = isSimpleMode() && activeViewMode === "edit";
+    if (doc.body) doc.body.dataset.pageEditorView = editable ? "edit" : "browse";
+    doc.querySelectorAll(".cmp-section[id][data-component]").forEach(function (section) {
+      var id = section.id || "";
+      section.classList.toggle("page-editor-selected", editable && id === selectedID);
+      section.dataset.pageEditorLabel = componentLabel(section.getAttribute("data-component"));
+      var oldToolbar = section.querySelector(":scope > [data-page-editor-toolbar]");
+      if (oldToolbar) oldToolbar.remove();
+      if (editable && id === selectedID) {
+        var toolbar = doc.createElement("div");
+        toolbar.setAttribute("data-page-editor-toolbar", "");
+        toolbar.setAttribute("role", "toolbar");
+        toolbar.setAttribute("aria-label", "当前区块操作");
+        [["edit", "编辑"], ["up", "上移"], ["down", "下移"]].forEach(function (entry) {
+          var button = doc.createElement("button");
+          button.type = "button";
+          button.setAttribute("data-page-editor-action", entry[0]);
+          button.textContent = entry[1];
+          toolbar.appendChild(button);
+        });
+        section.appendChild(toolbar);
+      }
+    });
+    if (options.reveal && selectedID) {
+      var selected = doc.getElementById(selectedID);
+      var scroller = doc.scrollingElement || doc.documentElement;
+      if (selected && scroller) {
+        var rect = selected.getBoundingClientRect();
+        var viewportHeight = (doc.defaultView && doc.defaultView.innerHeight) || doc.documentElement.clientHeight;
+        if (rect.top < 12 || rect.bottom > viewportHeight - 12) {
+          var targetTop = scroller.scrollTop + rect.top - Math.max(12, (viewportHeight - Math.min(rect.height, viewportHeight)) / 2);
+          scroller.scrollTo({ top: Math.max(0, targetTop), behavior: "smooth" });
+        }
+      }
+    }
+  }
+  function bindPreviewSelection() {
+    var doc = previewDocument();
+    if (!doc || doc.__pageComposerSelectionReady) {
+      syncPreviewSelection();
+      return;
+    }
+    doc.__pageComposerSelectionReady = true;
+    var style = doc.createElement("style");
+    style.id = "page-composer-selection-style";
+    style.textContent = [
+      'body[data-page-editor-view="edit"] .cmp-section[id][data-component]{position:relative;cursor:pointer;outline:1px dashed transparent;outline-offset:-2px;transition:outline-color .15s,box-shadow .15s}',
+      'body[data-page-editor-view="edit"] .cmp-section[id][data-component]:hover{outline-color:rgba(154,59,47,.58);box-shadow:inset 0 0 0 2px rgba(154,59,47,.08)}',
+      'body[data-page-editor-view="edit"] .cmp-section[id][data-component].page-editor-selected{outline:3px solid #9a3b2f;outline-offset:-3px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.85)}',
+      'body[data-page-editor-view="edit"] .cmp-section[id][data-component].page-editor-selected::before{content:attr(data-page-editor-label);position:absolute;z-index:2147483000;top:8px;left:8px;padding:5px 9px;border-radius:6px;background:#9a3b2f;color:#fff;font:600 12px/1.2 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;pointer-events:none}',
+      '[data-page-editor-toolbar]{position:absolute;z-index:2147483001;top:8px;right:8px;display:flex;gap:1px;padding:3px;border-radius:8px;background:#9a3b2f;box-shadow:0 8px 24px rgba(38,28,24,.2);font:600 12px/1.2 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}',
+      '[data-page-editor-toolbar] button{appearance:none;border:0;border-radius:5px;padding:6px 8px;background:transparent;color:#fff;font:inherit;cursor:pointer}',
+      '[data-page-editor-toolbar] button:hover,[data-page-editor-toolbar] button:focus-visible{background:#b9543f;outline:2px solid #fff;outline-offset:-2px}'
+    ].join("");
+    (doc.head || doc.documentElement).appendChild(style);
+    doc.addEventListener("click", function (event) {
+      if (!isSimpleMode() || activeViewMode !== "edit") return;
+      var actionButton = event.target && event.target.closest ? event.target.closest("[data-page-editor-action]") : null;
+      var section = event.target && event.target.closest ? event.target.closest(".cmp-section[id][data-component]") : null;
+      if (!section || !findSection(section.id)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.stopImmediatePropagation) event.stopImmediatePropagation();
+      selectSection(section.id, { fromPreview: true });
+      if (actionButton && actionButton.dataset.pageEditorAction === "up") moveSelected(-1);
+      if (actionButton && actionButton.dataset.pageEditorAction === "down") moveSelected(1);
+    }, true);
+    syncPreviewSelection();
+  }
+  function selectSection(id, options) {
+    options = options || {};
+    if (id && !findSection(id)) return;
+    selectedID = id;
+    root.classList.toggle("has-page-selection", !!selectedID);
+    form.classList.toggle("has-page-selection", !!selectedID);
+    renderTree();
+    renderInspector();
+    activateComponentPanel();
+    if (isSimpleMode()) applyBeginnerTab("content");
+    syncPreviewSelection({ reveal: !options.fromPreview });
+    var selectedRow = tree && tree.querySelector('[data-section-id="' + String(id || "").replace(/"/g, '\\"') + '"]');
+    if (selectedRow && selectedRow.scrollIntoView) selectedRow.scrollIntoView({ block: "nearest" });
+  }
+  function restoreHistorySnapshot(snapshot, message) {
+    if (!snapshot || !snapshot.json) return;
+    try {
+      manifest = JSON.parse(snapshot.json);
+    } catch (_) {
+      return;
+    }
+    manifest.sections = Array.isArray(manifest.sections) ? manifest.sections : [];
+    historyCurrentJSON = JSON.stringify(manifest);
+    selectedID = snapshot.selectedID && findSection(snapshot.selectedID) ? snapshot.selectedID : ((manifest.sections[0] || {}).id || "");
+    root.classList.toggle("has-page-selection", !!selectedID);
+    form.classList.toggle("has-page-selection", !!selectedID);
+    manifestField.value = JSON.stringify(manifest, null, 2);
+    lastHistoryKey = "";
+    lastHistoryAt = 0;
+    renderTree();
+    renderInspector();
+    syncPreviewSelection();
+    updateHistoryControls();
+    updateSaveState(isDirty() ? message + " · 有未保存修改" : "已恢复到当前已保存修订", isDirty() ? "dirty" : "saved");
+  }
+  function undoLocalChange() {
+    if (!undoStack.length) return;
+    redoStack.push({ json: historyCurrentJSON, selectedID: selectedID });
+    restoreHistorySnapshot(undoStack.pop(), "已撤销");
+  }
+  function redoLocalChange() {
+    if (!redoStack.length) return;
+    undoStack.push({ json: historyCurrentJSON, selectedID: selectedID });
+    restoreHistorySnapshot(redoStack.pop(), "已重做");
+  }
+  function addComponent(type) {
+    var definition = registryByType[type];
+    if (!definition) return;
+    var props = {};
+    definitionProperties(definition).forEach(function (property) {
+      var key = propertyValue(property, "key", "");
+      var kind = propertyValue(property, "kind", "text");
+      var choices = propertyValue(property, "enum", []) || [];
+      if (/list$/.test(kind)) props[key] = [];
+      else if (kind === "select" && choices.length) props[key] = choices[0];
+      else if (propertyValue(property, "required", false) && kind !== "action") props[key] = "";
+    });
+    var section = {
+      id: uniqueID(type),
+      type: type,
+      props: props,
+      responsive: deepCopy(definitionValue(definition, "responsive_defaults", definitionValue(definition, "responsiveDefaults", {})) || {})
+    };
+    manifest.sections.push(section);
+    syncManifest("add:" + type);
+    selectSection(section.id);
+  }
+  function reconcilePreviewOrder(siblings) {
+    var doc = previewDocument();
+    if (!doc || !siblings || siblings.length < 2) return;
+    var elements = siblings.map(function (section) { return doc.getElementById(section.id); });
+    if (elements.some(function (node) { return !node; })) return;
+    var parent = elements[0].parentNode;
+    if (!parent || elements.some(function (node) { return node.parentNode !== parent; })) return;
+    elements.forEach(function (node) { parent.appendChild(node); });
+    syncPreviewSelection();
+  }
+  function moveSelected(direction) {
+    var found = findSection(selectedID);
+    if (!found) return;
+    var next = found.index + direction;
+    if (next < 0 || next >= found.siblings.length) return;
+    var tmp = found.siblings[found.index];
+    found.siblings[found.index] = found.siblings[next];
+    found.siblings[next] = tmp;
+    syncManifest("move:" + selectedID);
+    renderTree();
+    reconcilePreviewOrder(found.siblings);
+  }
+  function duplicateSelected() {
+    var found = findSection(selectedID);
+    if (!found) return;
+    var copy = deepCopy(found.section);
+    visitSections([copy], null, function (section) { section.id = uniqueID(section.type); });
+    found.siblings.splice(found.index + 1, 0, copy);
+    syncManifest("duplicate:" + selectedID);
+    selectSection(copy.id);
+  }
+  function deleteSelected() {
+    var found = findSection(selectedID);
+    if (!found) return;
+    var nextID = (found.siblings[found.index + 1] || found.siblings[found.index - 1] || {}).id || "";
+    found.siblings.splice(found.index, 1);
+    selectedID = nextID;
+    syncManifest("delete:" + found.section.id);
+    selectSection(selectedID);
+  }
+
+  if (tree) {
+    tree.addEventListener("click", function (event) {
+      var row = event.target.closest("[data-section-id]");
+      if (!row) return;
+      var move = event.target.closest("[data-page-move]");
+      selectSection(row.dataset.sectionId);
+      if (move) moveSelected(move.dataset.pageMove === "up" ? -1 : 1);
+    });
+    tree.addEventListener("dragstart", function (event) {
+      var row = event.target.closest("[data-section-id]");
+      draggedID = row ? row.dataset.sectionId : "";
+      if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
+    });
+    tree.addEventListener("dragover", function (event) {
+      if (draggedID && event.target.closest("[data-section-id]")) event.preventDefault();
+    });
+    tree.addEventListener("drop", function (event) {
+      var targetRow = event.target.closest("[data-section-id]");
+      var source = findSection(draggedID);
+      var target = targetRow && findSection(targetRow.dataset.sectionId);
+      if (!source || !target || source.siblings !== target.siblings || source.index === target.index) return;
+      event.preventDefault();
+      var moved = source.siblings.splice(source.index, 1)[0];
+      var targetIndex = source.index < target.index ? target.index - 1 : target.index;
+      source.siblings.splice(targetIndex, 0, moved);
+      selectedID = moved.id;
+      syncManifest("drag:" + moved.id);
+      renderTree();
+      reconcilePreviewOrder(source.siblings);
+    });
+  }
+  form.querySelectorAll("[data-page-add-component]").forEach(function (button) {
+    var type = button.dataset.pageAddComponent;
+    var label = componentLabel(type);
+    var description = componentDescription(type);
+    button.setAttribute("aria-label", "添加" + label);
+    if (description) button.title = description;
+    if (isSimpleMode()) {
+      var labelNode = button.querySelector("[data-page-component-label]") || button.querySelector("strong") || button.querySelector("span");
+      var metaNode = button.querySelector("[data-page-component-description]") || button.querySelector("small");
+      if (labelNode) labelNode.textContent = label;
+      if (metaNode) metaNode.textContent = description || definitionValue(registryByType[type], "category_label", "页面区块");
+    }
+    button.addEventListener("click", function () {
+      addComponent(type);
+      form.querySelectorAll("details[data-page-component-catalog][open]").forEach(function (catalog) { catalog.open = false; });
+      root.classList.remove("is-component-catalog-open");
+    });
+  });
+  form.querySelectorAll("[data-page-add-section], [data-page-add-block]").forEach(function (trigger) {
+    trigger.addEventListener("click", function () {
+      var catalog = form.querySelector("[data-page-component-catalog]") || form.querySelector(".page-component-palette");
+      setTimeout(function () {
+        var details = trigger.closest("details") || (catalog && catalog.closest("details"));
+        var open = details ? details.open : !root.classList.contains("is-component-catalog-open");
+        root.classList.toggle("is-component-catalog-open", open);
+        if (catalog && !details) catalog.hidden = !open;
+        if (open && catalog) {
+          var first = catalog.querySelector("[data-page-add-component]");
+          if (first) first.focus();
+        }
+      }, 0);
+    });
+  });
+  var duplicateButton = form.querySelector("[data-page-duplicate]");
+  var deleteButton = form.querySelector("[data-page-delete]");
+  if (duplicateButton) duplicateButton.addEventListener("click", duplicateSelected);
+  if (deleteButton) deleteButton.addEventListener("click", deleteSelected);
+  if (propertiesNode) {
+    propertiesNode.addEventListener("input", function (event) {
+      if (event.target.dataset.propertyKey) updateProperty(event.target);
+    });
+    propertiesNode.addEventListener("change", function (event) {
+      if (event.target.dataset.propertyKey && event.target.tagName === "SELECT") updateProperty(event.target);
+    });
+    propertiesNode.addEventListener("click", function (event) {
+      var add = event.target.closest("[data-page-list-add]");
+      var remove = event.target.closest("[data-page-list-remove]");
+      var found = findSection(selectedID);
+      if (!found || (!add && !remove)) return;
+      event.preventDefault();
+      found.section.props = found.section.props || {};
+      var key = (add && add.dataset.pageListAdd) || (remove && remove.dataset.pageListRemove);
+      var items = Array.isArray(found.section.props[key]) ? found.section.props[key] : [];
+      if (add) {
+        var kind = add.dataset.propertyKind || "";
+        if (kind === "feature_list") items.push({ title: "", description: "", href: "" });
+        else if (kind === "faq_list") items.push({ question: "", answer: "" });
+        else items.push("");
+      } else {
+        items.splice(Number(remove.dataset.propertyIndex), 1);
+      }
+      found.section.props[key] = items;
+      syncManifest((add ? "list-add:" : "list-remove:") + selectedID + ":" + key);
+      renderInspector();
+    });
+  }
+  if (bindingNode) {
+    bindingNode.addEventListener("change", function (event) {
+      var found = findSection(selectedID);
+      if (!found) return;
+      if (event.target.dataset.bindingToggle) {
+        if (event.target.checked) {
+          found.section.binding = {
+            source: "", filter: { status: "published" }, sort: "",
+            limit: 6, fields: [],
+            update_mode: "live", missing_policy: "placeholder"
+          };
+        } else {
+          delete found.section.binding;
+        }
+        syncManifest("binding-toggle:" + selectedID);
+        renderBinding(found.section, registryByType[found.section.type]);
+        return;
+      }
+      var key = event.target.dataset.bindingKey;
+      if (!key || !found.section.binding) return;
+      found.section.binding.filter = found.section.binding.filter || { status: "published" };
+      if (key === "category_slug") found.section.binding.filter.category_slug = event.target.value.trim();
+      else if (key === "fields") found.section.binding.fields = Array.prototype.map.call(event.target.selectedOptions, function (option) { return option.value; });
+      else if (key === "limit") found.section.binding.limit = Number(event.target.value);
+      else if (key === "source") {
+        found.section.binding.source = event.target.value.trim();
+        var source = dataSourceByKey[found.section.binding.source];
+        if (source) {
+          found.section.binding.sort = (source.sorts || [])[0] || "";
+          var availableFields = (source.fields || []).map(function (field) { return field.key; });
+          found.section.binding.fields = (source.fields || []).filter(function (field) { return field.default; }).map(function (field) { return field.key; });
+          if (!found.section.binding.fields.length && availableFields.length) found.section.binding.fields = [availableFields[0]];
+          found.section.binding.limit = Math.min(6, source.max_items || 1);
+          found.section.binding.filter = { status: "published" };
+        }
+        syncManifest("binding:" + selectedID + ":" + key);
+        renderBinding(found.section, registryByType[found.section.type]);
+        return;
+      } else found.section.binding[key] = event.target.value.trim();
+      syncManifest("binding:" + selectedID + ":" + key);
+    });
+  }
+  if (responsiveNode) {
+    responsiveNode.addEventListener("change", function (event) {
+      var found = findSection(selectedID);
+      var breakpoint = event.target.dataset.responsiveBreakpoint;
+      var key = event.target.dataset.responsiveKey;
+      if (!found || !breakpoint || !key) return;
+      found.section.responsive = found.section.responsive || {};
+      found.section.responsive[breakpoint] = found.section.responsive[breakpoint] || {};
+      var value = event.target.type === "checkbox" ? event.target.checked : event.target.value;
+      if (event.target.type === "checkbox" && event.target.dataset.responsiveInverted === "true") value = !value;
+      if (key === "columns") value = Number(value);
+      found.section.responsive[breakpoint][key] = value;
+      syncManifest("responsive:" + selectedID + ":" + breakpoint + ":" + key);
+    });
+  }
+
+  form.querySelectorAll("[data-page-panel-tab]").forEach(function (button) {
+    button.addEventListener("click", function () {
+      form.querySelectorAll("[data-page-panel-tab]").forEach(function (item) {
+        item.classList.toggle("is-active", item === button);
+        item.setAttribute("aria-selected", item === button ? "true" : "false");
+      });
+      form.querySelectorAll("[data-page-panel]").forEach(function (panel) { panel.classList.toggle("is-active", panel.dataset.pagePanel === button.dataset.pagePanelTab); });
+    });
+  });
+  form.querySelectorAll("[data-page-beginner-tab]").forEach(function (button) {
+    button.addEventListener("click", function () {
+      applyBeginnerTab(button.dataset.pageBeginnerTab);
+    });
+  });
+  document.querySelectorAll("[data-page-editor-mode]").forEach(function (control) {
+    if (!control.matches("a, button, [role=button]")) return;
+    control.addEventListener("click", function (event) {
+      var mode = control.dataset.pageEditorMode;
+      var url = control.getAttribute("href") || control.dataset.pageEditorUrl || "";
+      if (url) return;
+      event.preventDefault();
+      setEditorMode(mode);
+    });
+  });
+  form.querySelectorAll("[data-page-view-mode]").forEach(function (button) {
+    button.addEventListener("click", function () { setViewMode(button.dataset.pageViewMode); });
+  });
+  form.querySelectorAll("[data-page-undo]").forEach(function (button) {
+    button.addEventListener("click", undoLocalChange);
+  });
+  form.querySelectorAll("[data-page-redo]").forEach(function (button) {
+    button.addEventListener("click", redoLocalChange);
+  });
+  var shellSelect = form.querySelector("[data-page-shell]");
+  var contentWidth = form.querySelector("[data-page-content-width]");
+  var sectionGap = form.querySelector("[data-page-section-gap]");
+  if (shellSelect) shellSelect.value = manifest.shell.mode || "site";
+  if (contentWidth) contentWidth.value = manifest.layout.content_max_width || "comfortable";
+  if (sectionGap) sectionGap.value = manifest.layout.section_gap || "comfortable";
+  if (window.adminRefreshDropdown) {
+    if (shellSelect) window.adminRefreshDropdown(shellSelect);
+    if (contentWidth) window.adminRefreshDropdown(contentWidth);
+    if (sectionGap) window.adminRefreshDropdown(sectionGap);
+  }
+  if (shellSelect) shellSelect.addEventListener("change", function () { manifest.shell.mode = shellSelect.value; syncManifest("page:shell"); });
+  if (contentWidth) contentWidth.addEventListener("change", function () { manifest.layout.content_max_width = contentWidth.value; syncManifest("page:width"); });
+  if (sectionGap) sectionGap.addEventListener("change", function () { manifest.layout.section_gap = sectionGap.value; syncManifest("page:gap"); });
+
+  function setCanvas(width, device) {
+    if (previewShell && Number.isFinite(width)) previewShell.style.setProperty("--page-preview-width", width + "px");
+    form.querySelectorAll("[data-page-device]").forEach(function (button) {
+      button.classList.toggle("is-active", button.dataset.pageDevice === device);
+      button.setAttribute("aria-pressed", button.dataset.pageDevice === device ? "true" : "false");
+    });
+    if (widthSelect) {
+      widthSelect.disabled = device !== "desktop";
+      if (window.adminRefreshDropdown) window.adminRefreshDropdown(widthSelect);
+    }
+  }
+  form.querySelectorAll("[data-page-device]").forEach(function (button) {
+    button.addEventListener("click", function () {
+      var device = button.dataset.pageDevice;
+      setCanvas(device === "tablet" ? 768 : (device === "mobile" ? 390 : Number(widthSelect ? widthSelect.value : 1240)), device);
+    });
+  });
+  if (widthSelect) widthSelect.addEventListener("change", function () { setCanvas(Number(widthSelect.value), "desktop"); });
+  var currentOnly = form.querySelector("[data-page-current-only]");
+  var collapseAll = form.querySelector("[data-page-collapse-all]");
+  if (currentOnly) currentOnly.addEventListener("change", function (event) {
+    root.classList.toggle("is-current-only", event.target.checked);
+  });
+  if (collapseAll) collapseAll.addEventListener("click", function () {
+    root.classList.toggle("is-tree-compact");
+  });
+
+  var validateButton = document.querySelector("[data-page-validate]");
+  if (validateButton && window.fetch) {
+    validateButton.addEventListener("click", function () {
+      syncManifest("", { skipHistory: true });
+      validateButton.disabled = true;
+      var validationOutput = validationState || saveState;
+      if (validationOutput) validationOutput.textContent = "校验中…";
+      var body = new FormData(form);
+      fetch(form.action + "/validate", {
+        method: "POST",
+        body: body,
+        headers: { "Accept": "application/json", "X-Requested-With": "XMLHttpRequest" },
+        credentials: "same-origin"
+      }).then(function (response) {
+        return response.json().catch(function () { return {}; }).then(function (payload) {
+          return { response: response, payload: payload };
+        });
+      }).then(function (result) {
+        var payload = result.payload || {};
+        if (validationOutput) {
+          validationOutput.classList.toggle("is-valid", !!payload.valid);
+          validationOutput.classList.toggle("is-invalid", !payload.valid);
+        }
+        if (payload.valid && payload.canonical_manifest) {
+          manifest = JSON.parse(payload.canonical_manifest);
+          manifest.sections = Array.isArray(manifest.sections) ? manifest.sections : [];
+          syncManifest("validate:canonical");
+          if (validationOutput) validationOutput.textContent = isDirty() ? "校验通过 · 有未保存修改" : "校验通过 · 当前修订已保存";
+          if (window.adminShowFlash) window.adminShowFlash("页面结构与数据绑定校验通过。", false);
+        } else if (result.response.status === 409) {
+          if (validationOutput) validationOutput.textContent = "版本冲突";
+          if (window.adminShowFlash) window.adminShowFlash("页面已被更新，请刷新后再合并修改。", true);
+        } else {
+          if (validationOutput) validationOutput.textContent = "发现 " + ((payload.diagnostics || []).length || 1) + " 个问题";
+          var message = (payload.diagnostics && payload.diagnostics[0] && payload.diagnostics[0].message) || payload.message || "页面校验失败。";
+          if (window.adminShowFlash) window.adminShowFlash(message, true);
+        }
+      }).catch(function (err) {
+        var validationOutput = validationState || saveState;
+        if (validationOutput) {
+          validationOutput.textContent = "校验请求失败";
+          validationOutput.classList.add("is-invalid");
+        }
+        if (window.adminShowFlash) window.adminShowFlash("校验失败：" + err, true);
+      }).finally(function () { validateButton.disabled = false; });
+    });
+  }
+  document.addEventListener("keydown", function (event) {
+    if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
+    var target = event.target;
+    if (target && (target.matches("input, textarea, select") || target.isContentEditable)) return;
+    var key = String(event.key || "").toLowerCase();
+    if (key === "z" && event.shiftKey) {
+      event.preventDefault();
+      redoLocalChange();
+    } else if (key === "z") {
+      event.preventDefault();
+      undoLocalChange();
+    } else if (key === "y") {
+      event.preventDefault();
+      redoLocalChange();
+    }
+  });
+  window.addEventListener("beforeunload", function (event) {
+    if (isSubmitting || !isDirty()) return;
+    event.preventDefault();
+    event.returnValue = "";
+  });
+  form.addEventListener("input", function (event) {
+    var name = event.target && event.target.name;
+    if (!name || name === "manifest_json" || name === "_csrf" || name === "_etag") return;
+    updateSaveState(isDirty() ? "有未保存修改" : "当前修订已保存", isDirty() ? "dirty" : "saved");
+  });
+  form.addEventListener("change", function (event) {
+    var name = event.target && event.target.name;
+    if (!name || name === "manifest_json" || name === "_csrf" || name === "_etag") return;
+    updateSaveState(isDirty() ? "有未保存修改" : "当前修订已保存", isDirty() ? "dirty" : "saved");
+  });
+  form.addEventListener("submit", function () {
+    isSubmitting = true;
+    syncManifest("", { skipHistory: true });
+    updateSaveState("正在保存新修订…", "saving");
+  });
+  if (previewFrame) {
+    previewFrame.addEventListener("load", bindPreviewSelection);
+    try {
+      if (previewFrame.contentDocument && previewFrame.contentDocument.readyState !== "loading") bindPreviewSelection();
+    } catch (_) {}
+  }
+  if (isSimpleMode() && manifest.sections.length) selectedID = manifest.sections[0].id || "";
+  root.classList.toggle("has-page-selection", !!selectedID);
+  form.classList.toggle("has-page-selection", !!selectedID);
+  setEditorMode(activeEditorMode);
+  applyBeginnerTab("content");
+  updateHistoryControls();
+  updateSaveState((saveState && saveState.textContent.trim()) || "当前修订已保存", "saved");
+})();
+
 /* ---------- Google OAuth 浮层：OAuth / GA-GSC 默认数据范围选项卡 ---------- */
 (function () {
   var root = document.querySelector("[data-google-oauth-root]");
@@ -5230,4 +6728,22 @@
     var initial = new URL(window.location.href).searchParams.get("cat");
     if (initial && bar.querySelector('[data-theme-cat="' + initial + '"]')) applyCat(initial, null);
   } catch (_) {}
+})();
+
+// 页面工程创建：通过原生表单校验后立即锁定主按钮，避免双击生成重复草稿。
+(function () {
+  var form = document.querySelector("[data-page-project-create]");
+  if (!form) return;
+  var submit = form.querySelector("[data-page-create-submit]");
+  if (!submit) return;
+  form.addEventListener("submit", function (event) {
+    if (form.dataset.submitting === "true") {
+      event.preventDefault();
+      return;
+    }
+    form.dataset.submitting = "true";
+    submit.disabled = true;
+    submit.setAttribute("aria-busy", "true");
+    submit.textContent = "正在创建…";
+  });
 })();
