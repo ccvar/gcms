@@ -212,7 +212,36 @@ command -v python3 >/dev/null 2>&1 || {
 }
 current=$(awk -F= '$1 == "VERSION" { sub(/^[^=]*=/, ""); print; exit }' "$root/current/BUILD_INFO" 2>/dev/null || true)
 [ -n "$current" ] || current=$(awk -F= '$1 == "VERSION" { sub(/^[^=]*=/, ""); print; exit }' "$root/BUILD_INFO" 2>/dev/null || true)
-update_url=${GCMS_UPDATE_URL:-}
+update_channel=''
+selected_manifest=''
+bin="$root/current/bin/cms"
+if [ -x "$bin" ] && grep -a -Fq 'pilot-update-status' "$bin" 2>/dev/null; then
+  conf="$root/shared/cms.conf"
+  cms_db=$(awk -F= '$1 == "CMS_DB" { sub(/^[^=]*=/, ""); gsub(/^[[:space:]]+|[[:space:]]+$/, ""); print; exit }' "$conf" 2>/dev/null || true)
+  system_db=$(awk -F= '$1 == "SYSTEM_DB" { sub(/^[^=]*=/, ""); gsub(/^[[:space:]]+|[[:space:]]+$/, ""); print; exit }' "$conf" 2>/dev/null || true)
+  [ -n "$cms_db" ] || cms_db=shared/data/cms.db
+  case "$cms_db" in /*) ;; *) cms_db="$root/$cms_db" ;; esac
+  [ -n "$system_db" ] || system_db=$(dirname "$cms_db")/system.db
+  case "$system_db" in /*) ;; *) system_db="$root/$system_db" ;; esac
+  update_status=$(cd "$root" && CMS_DB="$cms_db" SYSTEM_DB="$system_db" "$bin" pilot-update-status 2>/dev/null || true)
+  update_channel=$(printf '%s\n' "$update_status" | awk -F '\t' '$1 == "PILOT_GCMS_UPDATE_CHANNEL" { print $2; exit }')
+  selected_manifest=$(printf '%s\n' "$update_status" | awk -F '\t' '$1 == "PILOT_GCMS_UPDATE_MANIFEST_URL" { print $2; exit }')
+fi
+case "$update_channel" in
+  preview|stable) ;;
+  *) case "$current" in *-preview*) update_channel=preview ;; *) update_channel=stable ;; esac ;;
+esac
+update_url=$selected_manifest
+if [ -z "$update_url" ] && [ "$update_channel" = "preview" ]; then
+  update_url=${GCMS_PREVIEW_UPDATE_URL:-}
+  if [ -z "$update_url" ]; then
+    preview_repo=${GCMS_PREVIEW_RELEASE_REPO:-ccvar/gcms-preview-releases}
+    update_url="https://github.com/$preview_repo/releases/latest/download/manifest.json"
+  fi
+fi
+if [ -z "$update_url" ]; then
+  update_url=${GCMS_UPDATE_URL:-}
+fi
 if [ -z "$update_url" ]; then
   repo=${GCMS_RELEASE_REPO:-}
   [ -n "$repo" ] || repo=$(awk -F= '$1 == "RELEASE_REPO" { sub(/^[^=]*=/, ""); print; exit }' "$root/current/BUILD_INFO" 2>/dev/null || true)
@@ -239,6 +268,7 @@ PY
 [ -n "$latest" ] || { printf '%s\n' '更新清单缺少版本号' >&2; exit 6; }
 printf 'PILOT_GCMS_CURRENT_VERSION\t%s\n' "$current"
 printf 'PILOT_GCMS_LATEST_VERSION\t%s\n' "$latest"
+printf 'PILOT_GCMS_UPDATE_CHANNEL\t%s\n' "$update_channel"
 "#;
 
 /// 正式升级完全委托标准发布包内置的升级器：校验 manifest 签名与 SHA256、备份数据库、
@@ -252,8 +282,46 @@ script="$root/scripts/cms.sh"
   printf '%s\n' '当前 GCMS 安装不支持在线升级' >&2
   exit 3
 }
+current=$(awk -F= '$1 == "VERSION" { sub(/^[^=]*=/, ""); print; exit }' "$root/current/BUILD_INFO" 2>/dev/null || true)
+[ -n "$current" ] || current=$(awk -F= '$1 == "VERSION" { sub(/^[^=]*=/, ""); print; exit }' "$root/BUILD_INFO" 2>/dev/null || true)
+update_channel=''
+update_url=''
+bin="$root/current/bin/cms"
+if [ -x "$bin" ] && grep -a -Fq 'pilot-update-status' "$bin" 2>/dev/null; then
+  conf="$root/shared/cms.conf"
+  cms_db=$(awk -F= '$1 == "CMS_DB" { sub(/^[^=]*=/, ""); gsub(/^[[:space:]]+|[[:space:]]+$/, ""); print; exit }' "$conf" 2>/dev/null || true)
+  system_db=$(awk -F= '$1 == "SYSTEM_DB" { sub(/^[^=]*=/, ""); gsub(/^[[:space:]]+|[[:space:]]+$/, ""); print; exit }' "$conf" 2>/dev/null || true)
+  [ -n "$cms_db" ] || cms_db=shared/data/cms.db
+  case "$cms_db" in /*) ;; *) cms_db="$root/$cms_db" ;; esac
+  [ -n "$system_db" ] || system_db=$(dirname "$cms_db")/system.db
+  case "$system_db" in /*) ;; *) system_db="$root/$system_db" ;; esac
+  update_status=$(cd "$root" && CMS_DB="$cms_db" SYSTEM_DB="$system_db" "$bin" pilot-update-status 2>/dev/null || true)
+  update_channel=$(printf '%s\n' "$update_status" | awk -F '\t' '$1 == "PILOT_GCMS_UPDATE_CHANNEL" { print $2; exit }')
+  update_url=$(printf '%s\n' "$update_status" | awk -F '\t' '$1 == "PILOT_GCMS_UPDATE_MANIFEST_URL" { print $2; exit }')
+fi
+case "$update_channel" in
+  preview|stable) ;;
+  *) case "$current" in *-preview*) update_channel=preview ;; *) update_channel=stable ;; esac ;;
+esac
+if [ -z "$update_url" ] && [ "$update_channel" = "preview" ]; then
+  update_url=${GCMS_PREVIEW_UPDATE_URL:-}
+  if [ -z "$update_url" ]; then
+    preview_repo=${GCMS_PREVIEW_RELEASE_REPO:-ccvar/gcms-preview-releases}
+    update_url="https://github.com/$preview_repo/releases/latest/download/manifest.json"
+  fi
+fi
+if [ -z "$update_url" ]; then
+  update_url=${GCMS_UPDATE_URL:-}
+fi
+if [ -z "$update_url" ]; then
+  repo=${GCMS_RELEASE_REPO:-}
+  [ -n "$repo" ] || repo=$(awk -F= '$1 == "RELEASE_REPO" { sub(/^[^=]*=/, ""); print; exit }' "$root/current/BUILD_INFO" 2>/dev/null || true)
+  [ -n "$repo" ] || repo=$(awk -F= '$1 == "RELEASE_REPO" { sub(/^[^=]*=/, ""); print; exit }' "$root/BUILD_INFO" 2>/dev/null || true)
+  [ -n "$repo" ] || repo=ccvar/gcms-releases
+  update_url="https://github.com/$repo/releases/latest/download/manifest.json"
+fi
 cd "$root"
-exec "$script" upgrade "$target"
+exec "$script" upgrade "$target" "$update_url"
 "#;
 
 /// 主实例服务控制。只调用探测到的标准安装目录里的管理脚本，不按进程名或端口
@@ -1162,6 +1230,7 @@ pub(super) struct GcmsRemoteUpdateInfo {
     current: String,
     latest: String,
     has_update: bool,
+    channel: String,
 }
 
 #[derive(Clone, Serialize, Default, Debug, PartialEq)]
@@ -3329,6 +3398,7 @@ fn parse_gcms_remote_update_info(
 ) -> Result<GcmsRemoteUpdateInfo, String> {
     let mut current = fallback_current.trim().to_string();
     let mut latest = String::new();
+    let mut channel = String::new();
     for line in raw.lines() {
         let Some((key, value)) = line.split_once('\t') else {
             continue;
@@ -3338,6 +3408,12 @@ fn parse_gcms_remote_update_info(
                 current = value.trim().to_string()
             }
             "PILOT_GCMS_LATEST_VERSION" => latest = value.trim().to_string(),
+            "PILOT_GCMS_UPDATE_CHANNEL" => {
+                channel = match value.trim() {
+                    "preview" => "preview".into(),
+                    _ => "stable".into(),
+                }
+            }
             _ => {}
         }
     }
@@ -3348,6 +3424,11 @@ fn parse_gcms_remote_update_info(
         has_update: gcms_version_is_newer(&current, &latest),
         current,
         latest,
+        channel: if channel.is_empty() {
+            "stable".into()
+        } else {
+            channel
+        },
     })
 }
 
@@ -7947,13 +8028,20 @@ mod tests {
         assert!(!gcms_version_is_newer("dev", "v1.3.39"));
 
         let info = parse_gcms_remote_update_info(
-            "banner\nPILOT_GCMS_CURRENT_VERSION\tv1.3.38\nPILOT_GCMS_LATEST_VERSION\tv1.3.39\n",
+            "banner\nPILOT_GCMS_CURRENT_VERSION\tv1.3.38-preview.1\nPILOT_GCMS_LATEST_VERSION\tv1.3.39-preview.1\nPILOT_GCMS_UPDATE_CHANNEL\tpreview\n",
             "",
         )
         .unwrap();
-        assert_eq!(info.current, "v1.3.38");
-        assert_eq!(info.latest, "v1.3.39");
+        assert_eq!(info.current, "v1.3.38-preview.1");
+        assert_eq!(info.latest, "v1.3.39-preview.1");
+        assert_eq!(info.channel, "preview");
         assert!(info.has_update);
+        let stable = parse_gcms_remote_update_info(
+            "PILOT_GCMS_CURRENT_VERSION\tv1.3.38\nPILOT_GCMS_LATEST_VERSION\tv1.3.39\n",
+            "",
+        )
+        .unwrap();
+        assert_eq!(stable.channel, "stable");
         assert!(parse_gcms_remote_update_info("unrelated", "v1.3.38").is_err());
     }
 
@@ -8795,6 +8883,14 @@ mod tests {
         assert!(!GCMS_REMOTE_VERIFY_ADMIN_PASSWORD_CMD.contains("PASSWORD="));
         assert!(GCMS_REMOTE_ISSUE_ASSISTANT_KEY_CMD.contains("pilot-issue-assistant-key"));
         assert!(!GCMS_REMOTE_ISSUE_ASSISTANT_KEY_CMD.contains("GCMS_API_KEY="));
+        assert!(GCMS_REMOTE_CHECK_UPDATE_CMD.contains("pilot-update-status"));
+        assert!(GCMS_REMOTE_CHECK_UPDATE_CMD.contains("gcms-preview-releases"));
+        assert!(GCMS_REMOTE_CHECK_UPDATE_CMD.contains("PILOT_GCMS_UPDATE_CHANNEL"));
+        assert!(GCMS_REMOTE_UPGRADE_CMD.contains("pilot-update-status"));
+        assert!(GCMS_REMOTE_UPGRADE_CMD.contains("gcms-preview-releases"));
+        assert!(
+            GCMS_REMOTE_UPGRADE_CMD.contains(r#"exec "$script" upgrade "$target" "$update_url""#)
+        );
         assert!(GCMS_CADDY_CONFIGURE_CMD.contains("redir https://%s{uri} 301"));
         assert!(GCMS_CADDY_CONFIGURE_CMD.contains("PILOT_REDIRECT_DOMAIN"));
         assert!(GCMS_NGINX_CONFIGURE_CMD.contains("nginx -t"));

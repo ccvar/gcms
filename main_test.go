@@ -74,6 +74,50 @@ func TestPilotStatusFieldIsSingleLine(t *testing.T) {
 	}
 }
 
+func TestPilotUpdateStatusUsesPersistedChannelAndSignedManifest(t *testing.T) {
+	t.Setenv("GCMS_UPDATE_URL", "")
+	t.Setenv("GCMS_PREVIEW_UPDATE_URL", "")
+	t.Setenv("GCMS_PREVIEW_RELEASE_REPO", "")
+
+	dir := t.TempDir()
+	cmsPath := filepath.Join(dir, "cms.db")
+	systemPath := filepath.Join(dir, "system.db")
+	st, err := store.Open(cmsPath)
+	if err != nil {
+		t.Fatalf("open site store: %v", err)
+	}
+	if err := st.SetSetting(pilotUpdateChannelSetting, "preview"); err != nil {
+		t.Fatalf("set site preview channel: %v", err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatalf("close site store: %v", err)
+	}
+
+	var fallback bytes.Buffer
+	printPilotUpdateStatus(cmsPath, filepath.Join(dir, "missing.db"), &fallback)
+	if !strings.Contains(fallback.String(), "PILOT_GCMS_UPDATE_CHANNEL\tpreview\n") ||
+		!strings.Contains(fallback.String(), "/ccvar/gcms-preview-releases/releases/latest/download/manifest.json\n") {
+		t.Fatalf("site preview status = %q", fallback.String())
+	}
+
+	ps, err := platform.Open(systemPath)
+	if err != nil {
+		t.Fatalf("open platform store: %v", err)
+	}
+	if err := ps.SetSetting(pilotUpdateChannelSetting, "stable"); err != nil {
+		t.Fatalf("set platform stable channel: %v", err)
+	}
+	if err := ps.Close(); err != nil {
+		t.Fatalf("close platform store: %v", err)
+	}
+	var stable bytes.Buffer
+	printPilotUpdateStatus(cmsPath, systemPath, &stable)
+	if !strings.Contains(stable.String(), "PILOT_GCMS_UPDATE_CHANNEL\tstable\n") ||
+		!strings.Contains(stable.String(), "/ccvar/gcms-releases/releases/latest/download/manifest.json\n") {
+		t.Fatalf("platform stable status = %q", stable.String())
+	}
+}
+
 func TestIssuePilotAssistantKeyCreatesReusesAndRotatesOneFullAccessKey(t *testing.T) {
 	dir := t.TempDir()
 	systemPath := filepath.Join(dir, "system.db")

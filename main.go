@@ -57,6 +57,9 @@ func main() {
 				os.Exit(1)
 			}
 			return
+		case "pilot-update-status":
+			printPilotUpdateStatus(dbPath, systemDBPath, os.Stdout)
+			return
 		}
 	}
 	if dir := filepath.Dir(dbPath); dir != "" {
@@ -147,6 +150,51 @@ func printPilotSecurityStatus(dbPath, systemDBPath string) {
 	}
 	fmt.Printf("PILOT_GCMS_PASSWORD_STATUS\t%s\n", status)
 	fmt.Printf("PILOT_GCMS_ADMIN_USER\t%s\n", pilotStatusField(user))
+}
+
+const pilotUpdateChannelSetting = "system.update_channel"
+
+// printPilotUpdateStatus is a local-only read path used by Pilot over the
+// already-authorized SSH connection. It reports no credential or activation
+// code, only the persisted channel and the signed manifest URL selected by the
+// running binary.
+func printPilotUpdateStatus(dbPath, systemDBPath string, output io.Writer) {
+	channel := readPilotUpdateChannel(systemDBPath, dbPath)
+	fmt.Fprintf(output, "PILOT_GCMS_UPDATE_CHANNEL\t%s\n", channel)
+	fmt.Fprintf(output, "PILOT_GCMS_UPDATE_MANIFEST_URL\t%s\n", web.UpdateManifestURLForChannel(channel))
+}
+
+func readPilotUpdateChannel(paths ...string) string {
+	for _, path := range paths {
+		value, ok := readPilotSetting(path, pilotUpdateChannelSetting)
+		if !ok {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(value), "preview") {
+			return "preview"
+		}
+		return "stable"
+	}
+	return "stable"
+}
+
+func readPilotSetting(path, key string) (string, bool) {
+	if strings.TrimSpace(path) == "" {
+		return "", false
+	}
+	if _, err := os.Stat(path); err != nil {
+		return "", false
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		return "", false
+	}
+	defer db.Close()
+	var value string
+	if err := db.QueryRow(`SELECT value FROM settings WHERE key = ?`, key).Scan(&value); err != nil {
+		return "", false
+	}
+	return value, true
 }
 
 const pilotAssistantName = "Pilot 运营助手"

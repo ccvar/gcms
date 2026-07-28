@@ -111,6 +111,14 @@ func updateManifestURL(cur version.Info) string {
 	return updateManifestURLForChannel(cur, updateChannelStable)
 }
 
+// UpdateManifestURLForChannel exposes the exact signed manifest selected for a
+// channel to trusted local maintenance commands. It is not an HTTP endpoint.
+// Pilot uses the value through the GCMS binary's local-only status command so
+// that remote checks and upgrades cannot silently fall back to Stable.
+func UpdateManifestURLForChannel(channel string) string {
+	return updateManifestURLForChannel(version.Current(), channel)
+}
+
 func updateManifestURLForChannel(cur version.Info, channel string) string {
 	if normalizeUpdateChannel(channel) == updateChannelPreview {
 		if v := strings.TrimSpace(os.Getenv("GCMS_PREVIEW_UPDATE_URL")); v != "" {

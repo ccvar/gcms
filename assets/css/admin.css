@@ -2400,9 +2400,9 @@ a.overview-log-title { text-decoration: none; }
 /* 设置页：双列与主题选择卡 */
 .form-2col { display: grid; grid-template-columns: 1fr 1fr; gap: 0 1.2rem; }
 @media (max-width: 560px) { .form-2col { grid-template-columns: 1fr; } }
-.theme-picker { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
+.theme-picker { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; }
 @media (max-width: 680px) { .theme-picker { grid-template-columns: 1fr; } }
-.theme-card { position: relative; display: block; content-visibility: auto; contain-intrinsic-size: auto 340px; border: 1.5px solid var(--line); border-radius: 10px; padding: .8rem; cursor: pointer; transition: border-color .15s, box-shadow .15s; }
+.theme-card { position: relative; display: block; min-width: 0; content-visibility: auto; contain-intrinsic-size: 0 340px; border: 1.5px solid var(--line); border-radius: 10px; padding: .8rem; cursor: pointer; transition: border-color .15s, box-shadow .15s; }
 .theme-card:hover { border-color: var(--accent); }
 .theme-card input { position: absolute; opacity: 0; width: 0; height: 0; }
 .theme-card.sel, .theme-card:has(input:checked) { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-wash); }

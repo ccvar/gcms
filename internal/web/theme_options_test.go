@@ -41,6 +41,8 @@ func TestAppearanceInteractionContracts(t *testing.T) {
 		t.Error("admin.css misses top-layer dropdown portal rule")
 	}
 	if !strings.Contains(css, "content-visibility: auto") ||
+		!strings.Contains(css, "repeat(3, minmax(0, 1fr))") ||
+		!strings.Contains(css, "contain-intrinsic-size: 0 340px") ||
 		!strings.Contains(css, ".tc-live.is-loading::after") {
 		t.Error("admin.css misses offscreen theme-card rendering guards")
 	}

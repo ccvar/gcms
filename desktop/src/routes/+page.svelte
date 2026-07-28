@@ -316,7 +316,7 @@
     assistant_import_supported?: boolean;
     update_supported?: boolean;
   };
-  type GcmsRemoteUpdateInfo = { current: string; latest: string; has_update: boolean };
+  type GcmsRemoteUpdateInfo = { current: string; latest: string; has_update: boolean; channel?: 'stable' | 'preview' };
   type PackUpdateInfo = {
     current: string;
     latest: string;
@@ -928,7 +928,9 @@
       const errors = { ...gcmsUpdateErrors };
       delete errors[connId];
       gcmsUpdateErrors = errors;
-      if (!silent) say(info.has_update ? `发现 GCMS 新版本 ${info.latest}` : `GCMS ${info.current || status.version} 已是最新版本`);
+      if (!silent) say(info.has_update
+        ? `发现 GCMS ${info.channel === 'preview' ? 'Preview ' : ''}新版本 ${info.latest}`
+        : `GCMS ${info.current || status.version} 已是最新版本`);
       return info;
     } catch (e) {
       const message = String(e);
@@ -991,7 +993,7 @@
         throw new Error(`升级后版本核验失败：期望 ${update.latest}，服务器实际为 ${status.version || '未知'}`);
       }
       patchGcmsServer(c.id, { status, error: '', phase: '升级完成' });
-      gcmsUpdates = { ...gcmsUpdates, [c.id]: { current: status.version, latest: update.latest, has_update: false } };
+      gcmsUpdates = { ...gcmsUpdates, [c.id]: { current: status.version, latest: update.latest, has_update: false, channel: update.channel } };
       const errors = { ...gcmsUpdateErrors };
       delete errors[c.id];
       gcmsUpdateErrors = errors;
@@ -7759,8 +7761,8 @@
     if (!view.status.update_supported) return { status: 'unsupported', message: '当前安装方式不支持在线升级' };
     if (gcmsUpdateErrors[connection.id]) return { status: 'unreachable', message: gcmsUpdateErrors[connection.id] };
     const info = gcmsUpdates[connection.id];
-    if (info?.has_update) return { status: 'available', message: `${info.current || view.status.version || '当前版本'} → ${info.latest}` };
-    if (info) return { status: 'current', message: `当前 ${info.current || view.status.version || '版本未知'}` };
+    if (info?.has_update) return { status: 'available', message: `${info.channel === 'preview' ? 'Preview · ' : ''}${info.current || view.status.version || '当前版本'} → ${info.latest}` };
+    if (info) return { status: 'current', message: `${info.channel === 'preview' ? 'Preview · ' : ''}当前 ${info.current || view.status.version || '版本未知'}` };
     return { status: 'idle', message: `当前 ${view.status.version || '版本未知'}，尚未检查更新` };
   }
   function packUnifiedState(connection: Connection): UnifiedRunState {
@@ -15244,7 +15246,7 @@
                 <div class="gcms-facts">
                   <div class="gcms-fact">
                     <b>{state.status.version || '版本未知'}</b>
-                    <small class="gcms-version-line"><span>版本</span>{#if updateInfo?.has_update}<button type="button" data-tip={`在线升级到 ${updateInfo.latest}`} onclick={() => void upgradeRemoteGcms(c, state.status!)}>有新版 {updateInfo.latest}</button>{:else if updateChecking}<i>检查中…</i>{/if}</small>
+                    <small class="gcms-version-line"><span>版本</span>{#if updateInfo?.has_update}<button type="button" data-tip={`在线升级到 ${updateInfo.latest}`} onclick={() => void upgradeRemoteGcms(c, state.status!)}>{updateInfo.channel === 'preview' ? 'Preview 新版' : '有新版'} {updateInfo.latest}</button>{:else if updateChecking}<i>检查中…</i>{/if}</small>
                     <span class="gcms-fact-action passive" data-tip={gcmsDetailsTip(state.status)} aria-label="安装目录">
                       <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M1.8 4.5A1.4 1.4 0 0 1 3.2 3.1h3l1.3 1.5h5.3A1.4 1.4 0 0 1 14.2 6v6A1.4 1.4 0 0 1 12.8 13.4H3.2A1.4 1.4 0 0 1 1.8 12V4.5Z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" /><path d="M9.2 8.2h3M10.8 6.7l1.5 1.5-1.5 1.5" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round" /></svg>
                     </span>
