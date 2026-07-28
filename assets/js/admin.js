@@ -3049,6 +3049,22 @@
     var queue = [];
     var active = 0;
     var maxConcurrent = 2;
+    var previewWidth = 1120;
+
+    function fitPreview(box) {
+      if (!box || !box.clientWidth) return;
+      box.style.setProperty("--tc-preview-scale", String(box.clientWidth / previewWidth));
+    }
+
+    previews.forEach(fitPreview);
+    if ("ResizeObserver" in window) {
+      var previewResizeObserver = new ResizeObserver(function (entries) {
+        entries.forEach(function (entry) { fitPreview(entry.target); });
+      });
+      previews.forEach(function (box) { previewResizeObserver.observe(box); });
+    } else {
+      window.addEventListener("resize", function () { previews.forEach(fitPreview); });
+    }
 
     function nearViewport(box) {
       if (!box || box.closest("[data-theme-hidden]") || !box.getClientRects().length) return false;

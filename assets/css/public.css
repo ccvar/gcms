@@ -13594,6 +13594,8 @@ html.js-fnav[data-theme-layout="factory-herofold"] .site-header.nav-open { backg
 [data-theme^="signal-archive"] .sa-timeline small { color:var(--muted); font:8px var(--mono); }
 [data-theme^="signal-archive"] .sa-timeline .sa-more { border-top:0; color:var(--accent); align-items:flex-end; white-space:nowrap; }
 [data-theme^="signal-archive"] .sa-body { display:grid; grid-template-columns:310px minmax(0,1fr); gap:54px; padding:32px 24px 42px; }
+[data-theme^="signal-archive"] .sa-body.no-topics { grid-template-columns:minmax(0,1fr); gap:0; }
+[data-theme^="signal-archive"] .sa-list { min-width:0; }
 [data-theme^="signal-archive"] .sa-topics-head,[data-theme^="signal-archive"] .sa-list-head { display:flex; align-items:flex-end; justify-content:space-between; gap:18px; }
 [data-theme^="signal-archive"] .sa-topics h2,[data-theme^="signal-archive"] .sa-list-head h2 { margin:0 0 14px; font-size:1.7rem; }
 [data-theme^="signal-archive"] .sa-topics-head > a { margin-bottom:14px; color:var(--ink); font-size:.7rem; }

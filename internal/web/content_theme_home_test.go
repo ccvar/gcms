@@ -326,6 +326,46 @@ func TestArticleFirstContentThemesUseFeaturedCoverByDefault(t *testing.T) {
 	}
 }
 
+// Signal Archive 没有文章分类时不渲染左栏，列表必须占满整个内容区域；
+// 否则唯一的网格子项会落进原本为分类栏保留的 310px 固定列。
+func TestSignalArchiveWithoutCategoriesUsesFullWidthList(t *testing.T) {
+	s := newTestPublicServer(t, "")
+	categories, err := s.store.ListCategories("zh", "post")
+	if err != nil {
+		t.Fatalf("list categories: %v", err)
+	}
+	for _, category := range categories {
+		if err := s.store.DeleteCategory(category.ID); err != nil {
+			t.Fatalf("delete category %d: %v", category.ID, err)
+		}
+	}
+	if err := s.store.SetSetting("theme", "signal-archive"); err != nil {
+		t.Fatalf("set theme: %v", err)
+	}
+	s.clearGeneratedCaches()
+
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/zh/", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("home status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `class="sa-body wrap no-topics"`) {
+		t.Error("signal archive without categories misses the full-width layout state")
+	}
+	if strings.Contains(body, `<main class="sa-list"`) || !strings.Contains(body, `<div class="sa-list"`) {
+		t.Error("signal archive list must not nest a second main landmark")
+	}
+
+	css, err := os.ReadFile(filepath.Join("..", "..", "assets", "css", "public.css"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(css), `.sa-body.no-topics { grid-template-columns:minmax(0,1fr); gap:0; }`) {
+		t.Error("signal archive CSS misses the no-category single-column rule")
+	}
+}
+
 // TestContentThemesHonorHomePostLimitWithMultipleFeatured 锁定独立内容骨架的
 // 首页数量口径：后台设置 N 条时，渲染 1 篇主推 + N-1 篇列表；除主推外的
 // 置顶文章仍进入列表，且第 N+1 篇不会越界出现。

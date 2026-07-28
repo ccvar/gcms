@@ -27,6 +27,8 @@ func TestAppearanceInteractionContracts(t *testing.T) {
 		"maxConcurrent = 2",
 		"nearViewport",
 		"previewQueued",
+		"previewWidth = 1120",
+		"--tc-preview-scale",
 	} {
 		if !strings.Contains(js, marker) {
 			t.Errorf("admin.js misses appearance interaction contract %q", marker)
@@ -43,7 +45,9 @@ func TestAppearanceInteractionContracts(t *testing.T) {
 	if !strings.Contains(css, "content-visibility: auto") ||
 		!strings.Contains(css, "repeat(3, minmax(0, 1fr))") ||
 		!strings.Contains(css, "contain-intrinsic-size: 0 340px") ||
-		!strings.Contains(css, ".tc-live.is-loading::after") {
+		!strings.Contains(css, ".tc-live.is-loading::after") ||
+		!strings.Contains(css, "width: 1120px; height: 700px") ||
+		strings.Contains(css, ".tc-prev iframe { position: absolute; top: 0; left: 50%; width: 560%") {
 		t.Error("admin.css misses offscreen theme-card rendering guards")
 	}
 }

@@ -2406,8 +2406,11 @@ a.overview-log-title { text-decoration: none; }
 .theme-card:hover { border-color: var(--accent); }
 .theme-card input { position: absolute; opacity: 0; width: 0; height: 0; }
 .theme-card.sel, .theme-card:has(input:checked) { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-wash); }
-.tc-prev { display: block; position: relative; aspect-ratio: 16 / 10; border-radius: 8px; padding: 0; margin-bottom: .8rem; overflow: hidden; border: 1px solid rgba(0,0,0,.08); background: var(--line-soft); }
-.tc-prev iframe { position: absolute; top: 0; left: 50%; width: 560%; height: 560%; margin-left: -280%; border: 0; transform: scale(.18); transform-origin: top center; pointer-events: none; background: #fff; opacity: 0; transition: opacity .22s ease; }
+.tc-prev { --tc-preview-scale: .18; display: block; position: relative; aspect-ratio: 16 / 10; border-radius: 8px; padding: 0; margin-bottom: .8rem; overflow: hidden; border: 1px solid rgba(0,0,0,.08); background: var(--line-soft); }
+/* 缩略图始终使用 1120×700 的真实桌面视口，再按卡片宽度等比缩放。
+   不能用百分比放大 iframe：卡片越宽，iframe 的媒体查询视口也会越宽，
+   带 max-width 的主题便会缩成中央窄条。 */
+.tc-prev iframe { position: absolute; top: 0; left: 0; width: 1120px; height: 700px; margin: 0; border: 0; transform: scale(var(--tc-preview-scale)); transform-origin: top left; pointer-events: none; background: #fff; opacity: 0; transition: opacity .22s ease; }
 .tc-live::before { content: "加载预览…"; position: absolute; inset: 0; z-index: 2; display: grid; place-items: center; color: var(--muted); font-size: .78rem; font-weight: 600; background: linear-gradient(135deg, var(--line-soft), var(--surface)); }
 .tc-live::after { content: ""; position: absolute; inset: 0; z-index: 1; background: linear-gradient(105deg, transparent 0 36%, rgba(255,255,255,.72) 47%, transparent 58%); transform: translateX(-100%); }
 .tc-live.is-loading::after { animation: previewShimmer 1.25s ease-in-out infinite; }
