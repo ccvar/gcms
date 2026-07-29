@@ -972,7 +972,7 @@ func automationNavigationUpdateOperation() map[string]any {
 func automationMediaUploadOperation() map[string]any {
 	return map[string]any{
 		"summary":     "上传媒体",
-		"description": "接收 multipart/form-data 的 file 字段，上传成功后返回可写入 cover_image、正文 Markdown 或 site-profile.hero_image 的 URL。大小上限 8MB，支持 jpg、png、gif、webp、svg、ico、avif；AI 上传图片或动画前必须转成 WebP。",
+		"description": "接收 multipart/form-data 的 file 字段，上传成功后返回可写入 cover_image、正文 Markdown 或 site-profile.hero_image 的 URL。同一文件按内容哈希安全去重，客户端可在网络响应丢失时重试而不会产生重复媒体。大小上限 8MB，支持 jpg、png、gif、webp、svg、ico、avif；AI 上传图片或动画前必须转成 WebP。",
 		"operationId": "uploadMedia",
 		"tags":        []string{"媒体"},
 		"requestBody": automationMultipartFileBody(),
@@ -2872,6 +2872,8 @@ func automationSkillMarkdown(apiBase string) string {
 		"13. 默认只创建或修改草稿。",
 		"14. 只有用户明确要求发布，并且访问密钥有对应资源的发布权限，才设置 `status` 为 `published` 或 `scheduled`。",
 		"15. 发布前优先用 `GET /posts/{id}/preview` 或 `GET /links/{id}/preview` 复核结构化渲染结果；文章、链接或标准页面需要浏览器复核时再生成 `preview-url`。",
+		"15a. 如果紧邻的上一轮已经对一组明确 ID 完成审计或预览，而用户本轮只是明确要求发布同一组内容，不要重复全量审计，也不要先手工逐条读取 ETag。直接逐条运行 `update <collection> <id> '{\"status\":\"published\"}'`；脚本会在每次 PATCH 前读取该条最新状态与 ETag。只有目标状态或 ETag 已变化时，才重新复核受影响的单条内容。",
+		"15b. 批量发布要分成可核对的小批次；瞬时网络读取失败最多重试 2 次并短暂退避，之后停止该条并明确报告未处理 ID、已完成 ID 和下一步，不得无限等待或重复写入已成功项目。",
 		"16. 需要置顶或取消置顶文章/链接时，先用 `q`、`slug` 或列表查到准确 id，再调用 `PATCH /posts/featured/{id}` 或 `PATCH /links/featured/{id}`，请求体只传 `{\"featured\":true}` 或 `{\"featured\":false}`；需要对应的置顶权限。置顶只作用于这条内容的语种，草稿或未到发布时间的定时内容不会立即出现在首页。",
 		"17. 需要调整首页链接数量或文章每页数量时，先读取 `/site-profile`，再在 PATCH 顶层传 `home_links_limit`（0..24）或 `home_posts_per_page`（1..50）；它们全站、全语种共用，需要 `site:write`，不要放进 `items`。",
 		"17a. 需要调整前台 Logo 显示大小时，先读取 `/site-profile`，再在 PATCH 顶层传 `logo_scale`（0.3..2，1 为原始大小）；它全站、全语种共用，需要 `brand:assets:write`，不要放进 `items`。",

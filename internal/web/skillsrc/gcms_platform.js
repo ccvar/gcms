@@ -99,7 +99,7 @@ function usage(code = 2) {
   out("  gcms.js theme-options --site <slug|id> [--lang xx]   # 该站当前主题声明的配置槽与现值（site:read；写入走 site-profile-update 的 factory_*/dtc_* 字段）");
   out("  gcms.js navigation --site <slug|id>");
   out("  gcms.js navigation-update --site <slug|id> <json|@file>");
-  out("  gcms.js upload --site <slug|id> <file>");
+  out("  gcms.js upload --site <slug|id> <file> [file...]  # 多文件批量上传；瞬时网络失败在脚本内自动重试");
   out("  gcms.js types --site <slug|id> [--all]      # 该站内容类型与字段 schema（--all 含未启用）");
   out("  gcms.js type-enable --site <slug|id> <key> | type-disable --site <slug|id> <key>");
   out("  gcms.js type-create --site <slug|id> <json|@file>   # 新建自定义类型（先与用户确认内容模型）");
@@ -217,6 +217,61 @@ function mediaBodyFromFile(file) {
   return form;
 }
 
+const transientHTTPStatuses = new Set([408, 425, 429, 500, 502, 503, 504]);
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function uploadMedia(file, urlPath) {
+  const maxAttempts = 4;
+  let last;
+  let attempts = 0;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    attempts = attempt;
+    try {
+      const result = await rawRequest("POST", urlPath, mediaBodyFromFile(file), {}, { timeoutMs: 20000 });
+      if (result.ok) {
+        return {
+          ok: true,
+          file,
+          attempts: attempt,
+          replayed: Boolean(result.headers?.replayed),
+          ...result.data
+        };
+      }
+      last = { status: result.status, error: result.data };
+      if (!transientHTTPStatuses.has(result.status)) break;
+    } catch (err) {
+      last = { error: { error: "network_error", message: err.message || String(err) } };
+    }
+    if (attempt < maxAttempts) {
+      await wait([400, 1200, 2800][attempt - 1] + Math.floor(Math.random() * 250));
+    }
+  }
+  return { ok: false, file, attempts, ...(last || {}) };
+}
+
+async function uploadFiles(files, urlPath) {
+  const results = new Array(files.length);
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < files.length) {
+      const index = cursor++;
+      results[index] = await uploadMedia(files[index], urlPath);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(2, files.length) }, worker));
+  const succeeded = results.filter((item) => item.ok).length;
+  return {
+    ok: succeeded === results.length,
+    succeeded,
+    failed: results.length - succeeded,
+    total: results.length,
+    items: results
+  };
+}
+
 function mediaProbeBody() {
   if (typeof FormData !== "function" || typeof Blob !== "function") {
     console.error("Doctor needs Node.js 18+ with FormData and Blob.");
@@ -227,7 +282,7 @@ function mediaProbeBody() {
   return form;
 }
 
-async function rawRequest(method, urlPath, body, extraHeaders = {}) {
+async function rawRequest(method, urlPath, body, extraHeaders = {}, options = {}) {
   requireConfig();
   const headers = { Authorization: "Bearer " + key, Accept: "application/json", ...extraHeaders };
   const init = { method, headers };
@@ -239,7 +294,15 @@ async function rawRequest(method, urlPath, body, extraHeaders = {}) {
       init.body = JSON.stringify(body);
     }
   }
-  const res = await fetch(base + urlPath, init);
+  const controller = options.timeoutMs ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), options.timeoutMs) : null;
+  if (controller) init.signal = controller.signal;
+  let res;
+  try {
+    res = await fetch(base + urlPath, init);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
   const text = await res.text();
   let data;
   try {
@@ -1197,9 +1260,11 @@ async function main() {
   }
 
   if (cmd === "upload") {
-    const file = collection;
-    if (!file) usage();
-    print(await request("POST", P("/media"), mediaBodyFromFile(file)));
+    const files = [collection, ...rest].filter(Boolean);
+    if (!files.length) usage();
+    const result = await uploadFiles(files, P("/media"));
+    print(files.length === 1 ? result.items[0] : result);
+    if (!result.ok) process.exitCode = 1;
     return;
   }
 

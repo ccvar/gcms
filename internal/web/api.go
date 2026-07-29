@@ -1241,7 +1241,7 @@ func (s *Server) apiUploadMedia(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer file.Close()
-	result, err := s.saveUploadFile(file, hdr.Filename)
+	result, err := s.saveAutomationUploadFile(file, hdr.Filename)
 	if err != nil {
 		switch err.Error() {
 		case "upload_disabled":
@@ -1256,6 +1256,9 @@ func (s *Server) apiUploadMedia(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.recordAutomationLog(auth, "upload", "media", 0, "上传媒体："+result.URL)
+	if result.Replayed {
+		w.Header().Set("Idempotent-Replayed", "true")
+	}
 	writeJSON(w, http.StatusCreated, map[string]any{"url": result.URL, "name": result.Name, "size": result.Size})
 }
 

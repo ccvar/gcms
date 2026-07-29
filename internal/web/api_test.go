@@ -1233,6 +1233,59 @@ func TestAPIUploadMedia(t *testing.T) {
 	}
 }
 
+func TestAPIUploadMediaRetryReturnsSameObject(t *testing.T) {
+	s, token := newTestAutomationServer(t, "media:write")
+	s.uploadDir = t.TempDir()
+
+	upload := func() *httptest.ResponseRecorder {
+		t.Helper()
+		body := &bytes.Buffer{}
+		mw := multipart.NewWriter(body)
+		part, err := mw.CreateFormFile("file", "cover.webp")
+		if err != nil {
+			t.Fatalf("create form file: %v", err)
+		}
+		if _, err := part.Write(testWebPBytes()); err != nil {
+			t.Fatalf("write form file: %v", err)
+		}
+		if err := mw.Close(); err != nil {
+			t.Fatalf("close multipart: %v", err)
+		}
+		r := httptest.NewRequest(http.MethodPost, "/api/admin/v1/media", body)
+		r.Header.Set("Authorization", "Bearer "+token)
+		r.Header.Set("Content-Type", mw.FormDataContentType())
+		w := httptest.NewRecorder()
+		s.apiUploadMedia(w, r)
+		return w
+	}
+
+	first := upload()
+	second := upload()
+	if first.Code != http.StatusCreated || second.Code != http.StatusCreated {
+		t.Fatalf("upload status = %d then %d", first.Code, second.Code)
+	}
+	if second.Header().Get("Idempotent-Replayed") != "true" {
+		t.Fatalf("second upload did not report idempotent replay")
+	}
+	var firstBody, secondBody map[string]any
+	if err := json.Unmarshal(first.Body.Bytes(), &firstBody); err != nil {
+		t.Fatalf("decode first response: %v", err)
+	}
+	if err := json.Unmarshal(second.Body.Bytes(), &secondBody); err != nil {
+		t.Fatalf("decode second response: %v", err)
+	}
+	if firstBody["url"] != secondBody["url"] || firstBody["name"] != secondBody["name"] {
+		t.Fatalf("retry created another object: first=%v second=%v", firstBody, secondBody)
+	}
+	entries, err := os.ReadDir(s.uploadDir)
+	if err != nil {
+		t.Fatalf("read upload dir: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("upload file count = %d, want 1", len(entries))
+	}
+}
+
 func TestSaveUploadRejectsMismatchedContent(t *testing.T) {
 	s := &Server{uploadDir: t.TempDir()}
 	if _, err := s.saveUploadFile(strings.NewReader("not an image"), "fake.webp"); err == nil || err.Error() != "bad_type" {

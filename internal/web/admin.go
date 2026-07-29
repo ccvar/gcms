@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"io"
@@ -6424,9 +6426,10 @@ func uploadJSON(w http.ResponseWriter, status int, body string) {
 }
 
 type uploadResult struct {
-	URL  string `json:"url"`
-	Name string `json:"name"`
-	Size int64  `json:"size"`
+	URL      string `json:"url"`
+	Name     string `json:"name"`
+	Size     int64  `json:"size"`
+	Replayed bool   `json:"-"`
 }
 
 func (s *Server) saveUploadFile(file io.Reader, filename string) (uploadResult, error) {
@@ -6462,6 +6465,56 @@ func (s *Server) saveUploadFile(file io.Reader, filename string) (uploadResult, 
 		return uploadResult{}, fmt.Errorf("write_failed")
 	}
 	return uploadResult{URL: "/uploads/" + name, Name: name, Size: int64(len(head)) + m}, nil
+}
+
+// saveAutomationUploadFile stores API uploads by content hash. Retrying the
+// same media after a lost response therefore returns the original object
+// instead of creating another orphaned upload.
+func (s *Server) saveAutomationUploadFile(file io.Reader, filename string) (uploadResult, error) {
+	if s.uploadDir == "" {
+		return uploadResult{}, fmt.Errorf("upload_disabled")
+	}
+	ext := strings.ToLower(filepath.Ext(filename))
+	if !allowedUploadExt[ext] {
+		return uploadResult{}, fmt.Errorf("bad_type")
+	}
+	data, err := io.ReadAll(file)
+	if err != nil {
+		return uploadResult{}, fmt.Errorf("write_failed")
+	}
+	head := data
+	if len(head) > 512 {
+		head = head[:512]
+	}
+	if !validUploadContent(ext, head) {
+		return uploadResult{}, fmt.Errorf("bad_type")
+	}
+	sum := sha256.Sum256(data)
+	name := hex.EncodeToString(sum[:])[:32] + ext
+	target := filepath.Join(s.uploadDir, name)
+	out, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if errors.Is(err, os.ErrExist) {
+		info, statErr := os.Stat(target)
+		if statErr != nil || info.Size() != int64(len(data)) {
+			return uploadResult{}, fmt.Errorf("save_failed")
+		}
+		return uploadResult{
+			URL: "/uploads/" + name, Name: name, Size: info.Size(), Replayed: true,
+		}, nil
+	}
+	if err != nil {
+		return uploadResult{}, fmt.Errorf("save_failed")
+	}
+	if _, err := out.Write(data); err != nil {
+		_ = out.Close()
+		_ = os.Remove(target)
+		return uploadResult{}, fmt.Errorf("write_failed")
+	}
+	if err := out.Close(); err != nil {
+		_ = os.Remove(target)
+		return uploadResult{}, fmt.Errorf("write_failed")
+	}
+	return uploadResult{URL: "/uploads/" + name, Name: name, Size: int64(len(data))}, nil
 }
 
 func validUploadContent(ext string, head []byte) bool {

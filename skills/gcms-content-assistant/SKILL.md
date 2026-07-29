@@ -99,6 +99,7 @@ node scripts/gcms.js languages
 node scripts/gcms.js site-profile
 node scripts/gcms.js site-profile-update '{"logo_scale":0.8}'
 node scripts/gcms.js upload ./cover.webp
+node scripts/gcms.js upload ./cover-1.webp ./cover-2.webp ./cover-3.webp
 node scripts/gcms.js categories posts --lang zh
 node scripts/gcms.js categories links --lang zh
 node scripts/gcms.js list posts --lang zh --q keyword
@@ -213,6 +214,7 @@ node scripts/gcms.js page-publications 42 --limit 100
 ## Media Rules
 
 - Before setting `cover_image`, upload the local file with `node scripts/gcms.js upload <file>`.
+- When several media files are ready, pass all of them to one `upload` command. The client uploads with bounded concurrency, retries transient network failures, and returns one batch result. Do not write a model-driven shell loop or retry successful files one by one.
 - Use the returned `url` unchanged in `cover_image` or Markdown image syntax.
 - Do not upload unrelated or unverified media just to fill a field; mention missing assets when no suitable file exists.
 
@@ -222,6 +224,8 @@ node scripts/gcms.js page-publications 42 --limit 100
 - Confirm that the user requested publishing in the current conversation.
 - Confirm the content status, language, and ID before publishing.
 - For posts and links, run `preview` and check rendered HTML, TOC, and public URL before publishing. Use `preview-url` when someone needs to open the real front-end page.
+- If the immediately preceding completed turn already audited or previewed an explicit set of IDs and the user now asks to publish that same set, do not repeat the full audit or manually prefetch every ETag. Run `update <collection> <id> '{"status":"published"}'` for each confirmed ID; the script reads the latest state and ETag before each PATCH. Re-review only an item whose state or ETag changed.
+- Process bulk publishing in small, verifiable batches. Retry a transient read failure at most twice with a short backoff, then stop that item and report completed and unprocessed IDs. Never wait indefinitely or rewrite items already confirmed successful.
 - If publish scope is missing, create or update a draft and say publishing was not available.
 
 ## Extension Principle
