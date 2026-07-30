@@ -53,6 +53,24 @@ func TestAdminCompositionLayoutControlsUseProtocolEnums(t *testing.T) {
 	}
 }
 
+func TestGoogleOAuthSaveEnablesAuthorizationWithoutReload(t *testing.T) {
+	raw, err := os.ReadFile("../../assets/js/admin.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(raw)
+	for _, marker := range []string{
+		"function enableOAuthAuthorize(root)",
+		`root.getAttribute("data-google-start-url")`,
+		`link.setAttribute("data-google-authorize", "")`,
+		"enableOAuthAuthorize(oauthRoot)",
+	} {
+		if !strings.Contains(script, marker) {
+			t.Fatalf("OAuth live-update behavior missing %q", marker)
+		}
+	}
+}
+
 func TestAdminCompositionWorkbenchUsesSharedDropdownsAndContainedScrolling(t *testing.T) {
 	templateRaw, err := os.ReadFile("../../templates/admin/page_composer.html")
 	if err != nil {

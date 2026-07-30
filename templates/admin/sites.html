@@ -21,7 +21,10 @@
         </span>
       </div>
       {{if .PlatformMode}}<div class="google-connectors" aria-label="{{.Admin.T "admin.sites.google_integrations" "Google 接入"}}" data-google-connectors data-google-oauth-ready="{{if .GoogleOAuthConfigured}}1{{else}}0{{end}}" data-google-oauth-ready-label="{{.Admin.T "admin.sites.google_oauth_ready" "已配置"}}" data-google-oauth-missing-label="{{.Admin.T "admin.sites.google_oauth_missing_badge" "未配置"}}">
-        <details class="google-connect google-connect-oauth{{if .GoogleOAuthConfigured}} is-configured{{else}} is-missing{{end}}" data-google-oauth-root>
+        <details class="google-connect google-connect-oauth{{if .GoogleOAuthConfigured}} is-configured{{else}} is-missing{{end}}" data-google-oauth-root
+          data-google-start-url="/admin/google/oauth/start?service=all"
+          data-google-add-label="{{.Admin.T "admin.sites.google_add_account" "新增授权账号"}}"
+          data-google-loading-label="{{.Admin.T "admin.sites.google_authorizing" "正在打开 Google 授权..."}}">
           <summary data-tooltip="{{if .GoogleOAuthConfigured}}{{.Admin.T "admin.sites.google_oauth_tip_ready" "Google OAuth：已配置。新增授权账号会使用当前 Client ID。"}}{{else}}{{.Admin.T "admin.sites.google_oauth_tip_missing" "Google OAuth：未配置。先保存 Client ID 和 Client Secret。"}}{{end}}" data-ready-tooltip="{{.Admin.T "admin.sites.google_oauth_tip_ready" "Google OAuth：已配置。新增授权账号会使用当前 Client ID。"}}" data-missing-tooltip="{{.Admin.T "admin.sites.google_oauth_tip_missing" "Google OAuth：未配置。先保存 Client ID 和 Client Secret。"}}" aria-label="{{.Admin.T "admin.sites.google_oauth_title" "Google OAuth 配置"}}">{{template "site-icon-google-oauth-trigger"}}</summary>
           <div class="google-connect-pop google-oauth-pop">
             <div class="google-oauth-tabs" role="tablist">

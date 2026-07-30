@@ -366,6 +366,36 @@
       }
     }
 
+    function enableOAuthAuthorize(root) {
+      if (!root) return;
+      var hint = root.querySelector(".google-connect-disabled-hint");
+      if (hint) hint.hidden = true;
+      var actions = root.querySelector(".google-connect-actions");
+      if (!actions) return;
+      var add = actions.querySelector(".google-connect-add");
+      if (!add) return;
+      var startURL = root.getAttribute("data-google-start-url") || "/admin/google/oauth/start?service=all";
+      var readyLabel = root.getAttribute("data-google-add-label") || "新增授权账号";
+      if (add.tagName !== "A") {
+        var link = document.createElement("a");
+        link.className = add.className.replace(/\bis-disabled\b/g, "").trim() || "google-connect-add";
+        link.setAttribute("data-google-authorize", "");
+        link.href = startURL;
+        var loadingLabel = root.getAttribute("data-google-loading-label");
+        if (loadingLabel) link.setAttribute("data-loading-label", loadingLabel);
+        link.innerHTML = add.innerHTML;
+        var label = link.querySelector("span");
+        if (label) label.textContent = readyLabel;
+        add.replaceWith(link);
+        return;
+      }
+      add.classList.remove("is-disabled");
+      add.setAttribute("data-google-authorize", "");
+      add.href = startURL;
+      var addLabel = add.querySelector("span");
+      if (addLabel) addLabel.textContent = readyLabel;
+    }
+
     function markOAuthReady() {
       if (connectorsWrap) connectorsWrap.setAttribute("data-google-oauth-ready", "1");
       if (oauthRoot) {
@@ -380,6 +410,7 @@
           var tip = summary.getAttribute("data-ready-tooltip");
           if (tip) summary.setAttribute("data-tooltip", tip);
         }
+        enableOAuthAuthorize(oauthRoot);
       }
       connects.forEach(enableAuthorize);
     }

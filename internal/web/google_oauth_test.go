@@ -177,6 +177,15 @@ func TestGoogleOAuthConfigCanBeSavedFromPlatformSites(t *testing.T) {
 	if !strings.Contains(beforeBody, `data-google-oauth-root`) || !strings.Contains(beforeBody, `class="google-oauth-form"`) || !strings.Contains(beforeBody, "Client ID 和 Client Secret 从哪里获取") || !strings.Contains(beforeBody, "先配置 OAuth") {
 		t.Fatalf("sites page did not render OAuth config form")
 	}
+	for _, marker := range []string{
+		`data-google-start-url="/admin/google/oauth/start?service=all"`,
+		`data-google-add-label="新增授权账号"`,
+		`data-google-loading-label="正在打开 Google 授权..."`,
+	} {
+		if !strings.Contains(beforeBody, marker) {
+			t.Fatalf("sites page missing OAuth live-update contract %q", marker)
+		}
+	}
 	if strings.Contains(beforeBody, `href="/admin/google/oauth/start?service=all"`) {
 		t.Fatalf("sites page rendered Google authorize links before OAuth config was saved")
 	}
