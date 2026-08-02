@@ -160,7 +160,7 @@ func assetVersion(fsys fs.FS) string {
 	// v2 同时使此前被 Caddy 误标为 immutable 的 404 资源 URL 失效。仅修复路由而不
 	// 改 CSS 内容时也必须换查询指纹，否则浏览器可能继续使用旧的负缓存。
 	_, _ = h.Write([]byte("gcms-assets-v2\n"))
-	for _, p := range []string{"assets/css/style.css", "assets/css/public.css", "assets/css/admin.css", "assets/js/admin.js", "assets/js/site.js", "assets/js/toc.js"} {
+	for _, p := range []string{"assets/css/style.css", "assets/css/public.css", "assets/css/toolbench.css", "assets/css/decision-grid.css", "assets/css/release-radar.css", "assets/css/admin.css", "assets/js/admin.js", "assets/js/site.js", "assets/js/toc.js"} {
 		if b, err := fs.ReadFile(fsys, p); err == nil {
 			_, _ = h.Write(b)
 		}
@@ -293,6 +293,12 @@ var Themes = []ThemeOption{
 	{"pilot-flight-deck", "领航台 · Pilot Flight Deck", "为 Pilot 客户端打造的连续产品首屏：客户端视觉、工作流、能力、案例、资源与下载", "content"},
 	{"pilot-flight-deck-white", "领航台 · 纯白", "Pilot Flight Deck 的纯白背景色卡", "content"},
 	{"pilot-flight-deck-dark", "领航台 · 深空", "Pilot Flight Deck 的深色背景色卡", "content"},
+	{"toolbench", "工具台 · Toolbench", "工具推荐、对比入口与最新更新组成的开发者工作台", "general"},
+	{"toolbench-white", "工具台 · 纯白", "Toolbench 的纯白背景色卡", "general"},
+	{"decision-grid", "决策矩阵 · Decision Grid", "按场景选择工具、进入对比并追踪更新的深色决策面板", "general"},
+	{"decision-grid-white", "决策矩阵 · 纯白", "Decision Grid 的纯白背景色卡", "general"},
+	{"release-radar", "更新雷达 · Release Radar", "以最新更新为主轴，结合工具推荐与选型对比的开发者简报", "general"},
+	{"release-radar-white", "更新雷达 · 纯白", "Release Radar 的纯白背景色卡", "general"},
 	{"blueprint", "蓝图 · Blueprint", "工程制图：方格纸底纹 + 墨线 + 等宽技术标注 + 角落标题栏", "general"},
 	{"riso", "孔版 · Risograph", "独立孔版印刷：双专色叠印、网点质感、套印偏移、硬阴影", "content"},
 	{"quiet", "和敬 · Quiet", "和风留白：极阔间距、竖向节奏、发丝线、一点朱印强调", "content"},
@@ -715,6 +721,9 @@ var themeLayouts = map[string]string{
 	"night-corridor": "night-corridor", "night-corridor-white": "night-corridor", "night-corridor-dark": "night-corridor",
 	"open-ascent": "open-ascent", "open-ascent-white": "open-ascent", "open-ascent-dark": "open-ascent",
 	"pilot-flight-deck": "pilot-flight-deck", "pilot-flight-deck-white": "pilot-flight-deck", "pilot-flight-deck-dark": "pilot-flight-deck",
+	"toolbench": "toolbench", "toolbench-white": "toolbench",
+	"decision-grid": "decision-grid", "decision-grid-white": "decision-grid",
+	"release-radar": "release-radar", "release-radar-white": "release-radar",
 	// 皮肤复用骨架（新皮 → 既有骨）
 	"grove":     "sidebar",
 	"obsidian":  "bento",
@@ -883,7 +892,7 @@ func layoutForTheme(theme string) string {
 // contentThemeFamily 返回独立内容骨架的族名。色卡变体共享同一骨架，
 // 其余既有主题返回空字符串，确保不会误入新页头/页脚分支。
 func contentThemeFamily(theme string) string {
-	for _, family := range []string{"field-ledger", "signal-archive", "paper-current", "night-watch", "orbit-index", "column-stage", "type-cascade", "briefing-desk", "decision-wall", "route-atlas", "answer-desk", "portrait-journal", "casebook", "shelf-index", "tradeoff-sheet", "progress-bulletin", "margin-reading-room", "light-table", "counterpoint", "seamless-canvas", "night-corridor", "open-ascent", "pilot-flight-deck"} {
+	for _, family := range []string{"field-ledger", "signal-archive", "paper-current", "night-watch", "orbit-index", "column-stage", "type-cascade", "briefing-desk", "decision-wall", "route-atlas", "answer-desk", "portrait-journal", "casebook", "shelf-index", "tradeoff-sheet", "progress-bulletin", "margin-reading-room", "light-table", "counterpoint", "seamless-canvas", "night-corridor", "open-ascent", "pilot-flight-deck", "toolbench", "decision-grid", "release-radar"} {
 		if theme == family || strings.HasPrefix(theme, family+"-") {
 			return family
 		}
@@ -1002,6 +1011,9 @@ var themeAccentDefault = map[string]string{
 	"night-corridor": "#ff5a42", "night-corridor-white": "#b63b2a", "night-corridor-dark": "#ff765f",
 	"open-ascent": "#155dcc", "open-ascent-white": "#155dcc", "open-ascent-dark": "#83adff",
 	"pilot-flight-deck": "#1763e8", "pilot-flight-deck-white": "#1763e8", "pilot-flight-deck-dark": "#76a9ff",
+	"toolbench": "#1f64b0", "toolbench-white": "#1f64b0",
+	"decision-grid": "#5dd8c6", "decision-grid-white": "#167365",
+	"release-radar": "#2f6a4c", "release-radar-white": "#2f6a4c",
 	"paperwhite": "#3156c8", "citrus": "#e34f32",
 	"bookshop": "#2d5bd1", "canal": "#177c76", "confetti": "#e34b46", "icebox": "#3569d4",
 	"ledger": "#26735b", "signal": "#ff5a36", "gallery": "#263f8f", "coast": "#147d85",
@@ -1140,6 +1152,9 @@ var themeRadiusDefault = map[string]string{
 	"night-corridor": "0", "night-corridor-white": "0", "night-corridor-dark": "0",
 	"open-ascent": "0", "open-ascent-white": "0", "open-ascent-dark": "0",
 	"pilot-flight-deck": "8", "pilot-flight-deck-white": "8", "pilot-flight-deck-dark": "8",
+	"toolbench": "8", "toolbench-white": "8",
+	"decision-grid": "0", "decision-grid-white": "0",
+	"release-radar": "6", "release-radar-white": "6",
 	"paperwhite": "6", "citrus": "16",
 	"bookshop": "4", "canal": "10", "confetti": "14", "icebox": "12",
 	"ledger": "2", "signal": "4", "gallery": "0", "coast": "14",
@@ -5344,10 +5359,13 @@ func (s *Server) adminThemePreview(w http.ResponseWriter, r *http.Request) {
 	s.applyTheme(v, theme)
 	v.SEO = v.Site.Home()
 	familyPreview := isFactoryLayout(v.Layout) || isDTCLayout(v.Layout)
+	dashboardPreview := v.ContentThemeFamily == "toolbench" || v.ContentThemeFamily == "decision-grid" || v.ContentThemeFamily == "release-radar"
 	// 工厂与 DTC 卡片必须是站点真实首页的缩放视图；即使站点还没有
 	// 商品或配置槽，也保持真实空态，不能为了把卡片填满而注入样例数据。
 	// 这样卡片与点开的 theme-browse 预览始终使用同一份站点数据。
-	allowSynthetic := !familyPreview
+	// 开发者仪表盘主题同样只接受真实文章、置顶链接和分类；空站保持真实空态，
+	// 避免主题卡出现点开后不存在的工具、对比或更新。
+	allowSynthetic := !familyPreview && !dashboardPreview
 	// 主题卡缩略图与完整试穿页复用同一套真实 Hero 数据。只隔离自定义注入，
 	// 避免后台 iframe 执行站点脚本；图片/SVG 本身必须保留，才能真实反映主题效果。
 	v.Site.InjectHead = ""

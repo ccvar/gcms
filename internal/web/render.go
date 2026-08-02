@@ -463,6 +463,7 @@ func NewRenderer(tplFS fs.FS, imageSizes map[string]ImageSize) (*Renderer, error
 		"partials/home_light_table.html", "partials/home_counterpoint.html",
 		"partials/home_seamless_canvas.html", "partials/home_night_corridor.html", "partials/home_open_ascent.html",
 		"partials/home_pilot_flight_deck.html",
+		"partials/home_toolbench.html", "partials/home_decision_grid.html", "partials/home_release_radar.html",
 	)
 
 	for _, name := range []string{"home", "article", "category", "links", "link", "page", "search", "api_docs", "404", "generic_list", "generic_detail", "doc_list", "doc_detail", "product_detail"} {
@@ -486,6 +487,7 @@ func NewRenderer(tplFS fs.FS, imageSizes map[string]ImageSize) (*Renderer, error
 		"partials/home_light_table.html", "partials/home_counterpoint.html",
 		"partials/home_seamless_canvas.html", "partials/home_night_corridor.html", "partials/home_open_ascent.html",
 		"partials/home_pilot_flight_deck.html",
+		"partials/home_toolbench.html", "partials/home_decision_grid.html", "partials/home_release_radar.html",
 	)
 	if err != nil {
 		return nil, err

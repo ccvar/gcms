@@ -307,6 +307,15 @@ func TestThemePreviewRendersAllThemes(t *testing.T) {
 		if strings.HasPrefix(th.ID, "open-ascent") {
 			skeleton, ok = "open-ascent-page", true
 		}
+		if strings.HasPrefix(th.ID, "toolbench") {
+			skeleton, ok = "toolbench-page", true
+		}
+		if strings.HasPrefix(th.ID, "decision-grid") {
+			skeleton, ok = "dg-page", true
+		}
+		if strings.HasPrefix(th.ID, "release-radar") {
+			skeleton, ok = "release-radar-page", true
+		}
 		if ok {
 			needle := `class="` + skeleton + `"`
 			if contentThemeFamily(th.ID) != "" {
@@ -353,6 +362,8 @@ func TestThemePreviewRendersAllThemes(t *testing.T) {
 				"margin-reading-room", "light-table", "counterpoint",
 				"seamless-canvas", "night-corridor", "open-ascent":
 				brandClass = `class="ec-header-brand"`
+			case "toolbench", "decision-grid", "release-radar":
+				brandClass = `class="dd-header-brand"`
 			}
 			start := strings.Index(body, brandClass)
 			if start < 0 {
@@ -763,9 +774,24 @@ func TestThemePreviewUsesRealFeaturedLinksAndPublishedTotal(t *testing.T) {
 }
 
 var publicCSSCache string
+var dashboardCSSCache = map[string]string{}
 
 func publicCSSHasTheme(t *testing.T, h http.Handler, cookie *http.Cookie, id string) bool {
 	t.Helper()
+	family := contentThemeFamily(id)
+	if family == "toolbench" || family == "decision-grid" || family == "release-radar" {
+		if dashboardCSSCache[family] == "" {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "https://platform.test/assets/css/"+family+".css", nil)
+			req.AddCookie(cookie)
+			h.ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("fetch %s.css status = %d", family, rec.Code)
+			}
+			dashboardCSSCache[family] = rec.Body.String()
+		}
+		return strings.Contains(dashboardCSSCache[family], `[data-theme="`+id+`"]`)
+	}
 	if publicCSSCache == "" {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, "https://platform.test/assets/css/public.css", nil)

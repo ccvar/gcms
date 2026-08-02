@@ -1,0 +1,133 @@
+{{define "home_decision_grid"}}
+{{$hasCompare := false}}
+{{with .Featured}}{{if .Featured}}{{$hasCompare = true}}{{end}}{{end}}
+{{range .FeaturedMore}}{{if .Featured}}{{$hasCompare = true}}{{end}}{{end}}
+{{$hasUpdates := false}}
+{{with .Featured}}{{if not .Featured}}{{$hasUpdates = true}}{{end}}{{end}}
+{{range .Posts}}{{if not .Featured}}{{$hasUpdates = true}}{{end}}{{end}}
+
+<div class="dg-page">
+  {{if .HomeHero}}
+  <section class="dg-hero">
+    <div class="dg-hero-copy">
+      {{if .Site.HeroEyebrow}}<p class="dg-eyebrow"{{if .VisualEdit}} data-visual-edit="site.hero_eyebrow" data-visual-label="Hero 眉标"{{end}}>{{.Site.HeroEyebrow}}</p>{{end}}
+      <h1{{if .VisualEdit}} data-visual-edit="site.hero_title" data-visual-label="Hero 大标题"{{end}}>{{if .Site.HeroTitle}}{{nl2br .Site.HeroTitle}}{{else}}{{.Site.Name}}{{end}}</h1>
+      {{if .Site.HeroDescription}}<p class="dg-hero-description"{{if .VisualEdit}} data-visual-edit="site.hero_description" data-visual-label="Hero 描述"{{end}}>{{.Site.HeroDescription}}</p>{{end}}
+    </div>
+    <div class="dg-hero-media"{{if .VisualEdit}} data-visual-edit="hero.image" data-visual-label="Hero 视觉" data-visual-kind="image"{{end}}>
+      {{if and (eq .Site.HeroVisual "image") .Site.HeroImage}}
+        <img src="{{.Site.HeroImage}}" alt="{{.Site.HeroAlt}}" decoding="async" fetchpriority="high"{{imgAttrs .Site.HeroImage}}>
+      {{else if and (eq .Site.HeroVisual "svg") .Site.HeroSVG}}
+        <div class="dg-hero-embed">{{safeHTML .Site.HeroSVG}}</div>
+      {{else if eq .Site.HeroVisual "anim1"}}
+        <div class="dg-hero-animation">{{template "content_hero_anim1" .}}</div>
+      {{else}}
+        <div class="dg-hero-animation">{{template "content_hero_anim2" .}}</div>
+      {{end}}
+    </div>
+  </section>
+  {{end}}
+
+  {{if or .Categories .FeatLinks $hasCompare}}
+  <div class="dg-panels">
+    {{if .Categories}}
+    <section class="dg-panel dg-scenes">
+      <header class="dg-panel-head">
+        <h2>{{.CategoryAll.Title}}</h2>
+        <a href="{{.Tr.U .CategoryAll.Path}}">{{.CategoryAll.Label}} <span aria-hidden="true">→</span></a>
+      </header>
+      <nav class="dg-scene-list" aria-label="{{.Tr.T "common.category_nav"}}">
+        {{range $i, $cat := .Categories}}{{if lt $i 11}}
+        <a href="{{$.Tr.U (printf "/category/%s" $cat.Slug)}}"{{if eq $i 0}} class="is-current"{{end}}>
+          <span>{{$cat.Name}}</span>
+          <strong>{{$cat.Count}}</strong>
+        </a>
+        {{end}}{{end}}
+      </nav>
+    </section>
+    {{end}}
+
+    {{if .FeatLinks}}
+    <section class="dg-panel dg-tools">
+      <header class="dg-panel-head">
+        <h2{{if .VisualEdit}} data-visual-edit="home.links_title" data-visual-label="首页链接标题"{{end}}>{{.Site.HomeLinks}}</h2>
+        <a href="{{.Tr.U .LinksAll.Path}}">{{.Tr.T "home.view_all"}} <span aria-hidden="true">→</span></a>
+      </header>
+      <div class="dg-tool-list">
+        {{range $i, $tool := .FeatLinks}}{{if lt $i 5}}
+        <a class="dg-tool-row" href="{{if $tool.Slug}}{{$.Tr.U (contentURL $tool)}}{{else if $tool.LinkURL}}{{$tool.LinkURL}}{{else}}#{{end}}"{{if and (not $tool.Slug) $tool.LinkURL}}{{$.ExternalLinkAttrs $tool.LinkURL}}{{end}}>
+          {{if $tool.CoverImage}}<span class="dg-tool-media"><img src="{{$tool.CoverImage}}" alt="" loading="lazy" decoding="async"{{imgAttrs $tool.CoverImage}}></span>{{end}}
+          <span class="dg-tool-copy">
+            <b>{{$tool.Title}}</b>
+            {{if $tool.Excerpt}}<small>{{$tool.Excerpt}}</small>{{end}}
+          </span>
+          <span class="dg-tool-category">{{with $tool.Category}}{{.Name}}{{end}}</span>
+          <span class="dg-row-arrow" aria-hidden="true">→</span>
+        </a>
+        {{end}}{{end}}
+      </div>
+    </section>
+    {{end}}
+
+    {{if $hasCompare}}
+    <section class="dg-panel dg-compare">
+      <header class="dg-panel-head">
+        <h2{{if .VisualEdit}} data-visual-edit="home.featured_title" data-visual-label="首页精选标题"{{end}}>{{.Site.HomeFeatured}}</h2>
+        <a href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span aria-hidden="true">→</span></a>
+      </header>
+      <div class="dg-compare-list">
+        {{with .Featured}}{{if .Featured}}
+        <a href="{{$.Tr.U (contentURL .)}}">
+          {{with .Category}}<small>{{.Name}}</small>{{end}}
+          <b>{{.Title}}</b>
+          {{if .Excerpt}}<span>{{.Excerpt}}</span>{{end}}
+          <strong aria-hidden="true">→</strong>
+        </a>
+        {{end}}{{end}}
+        {{range $i, $post := .FeaturedMore}}{{if and $post.Featured (lt $i 4)}}
+        <a href="{{$.Tr.U (contentURL $post)}}">
+          {{with $post.Category}}<small>{{.Name}}</small>{{end}}
+          <b>{{$post.Title}}</b>
+          {{if $post.Excerpt}}<span>{{$post.Excerpt}}</span>{{end}}
+          <strong aria-hidden="true">→</strong>
+        </a>
+        {{end}}{{end}}
+      </div>
+    </section>
+    {{end}}
+  </div>
+  {{end}}
+
+  {{if $hasUpdates}}
+  <section class="dg-updates">
+    <header class="dg-updates-head">
+      <h2{{if .VisualEdit}} data-visual-edit="home.latest_title" data-visual-label="首页最新标题"{{end}}>{{.Site.HomeLatest}}</h2>
+      <a href="{{.Tr.U .CategoryAll.Path}}">{{.Tr.T "home.view_all"}} <span aria-hidden="true">→</span></a>
+    </header>
+    <div class="dg-update-list">
+      {{$updateIndex := 0}}
+      {{with .Featured}}{{if and (not .Featured) (lt $updateIndex 6)}}
+      <a class="dg-update-row" href="{{$.Tr.U (contentURL .)}}">
+        <time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time>
+        <b>{{.Title}}</b>
+        <span>{{with .Category}}{{.Name}}{{end}}</span>
+        <small>{{.ReadingTime}} {{$.Tr.T "common.min"}}</small>
+        <strong>{{$.Tr.T "home.read_more"}} <span aria-hidden="true">→</span></strong>
+      </a>
+      {{$updateIndex = add $updateIndex 1}}
+      {{end}}{{end}}
+      {{range .Posts}}{{if and (not .Featured) (lt $updateIndex 6)}}
+      <a class="dg-update-row" href="{{$.Tr.U (contentURL .)}}">
+        <time datetime="{{$.Tr.ISODate .PublishedAt}}">{{$.Tr.Date .PublishedAt}}</time>
+        <b>{{.Title}}</b>
+        <span>{{with .Category}}{{.Name}}{{end}}</span>
+        <small>{{.ReadingTime}} {{$.Tr.T "common.min"}}</small>
+        <strong>{{$.Tr.T "home.read_more"}} <span aria-hidden="true">→</span></strong>
+      </a>
+      {{$updateIndex = add $updateIndex 1}}
+      {{end}}{{end}}
+    </div>
+  </section>
+  {{end}}
+</div>
+{{end}}

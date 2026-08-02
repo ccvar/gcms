@@ -132,6 +132,9 @@ var themeSkeletons = map[string]ThemeSkeletonInfo{
 	"night-corridor":      {"夜廊 · Night Corridor", "沉浸媒体首屏、融合导航、右侧阅读清单与底部内容轨道"},
 	"open-ascent":         {"天阶 · Open Ascent", "明亮媒体首屏、融合导航、三条文章索引与精选阅读展签"},
 	"pilot-flight-deck":   {"领航台 · Pilot Flight Deck", "客户端视觉、工作流、能力、案例、资源与下载组成的完整产品发布首页"},
+	"toolbench":           {"工具台 · Toolbench", "工具推荐、对比入口与最新更新组成的开发者工作台"},
+	"decision-grid":       {"决策矩阵 · Decision Grid", "按场景选择工具、进入对比并追踪更新的决策面板"},
+	"release-radar":       {"更新雷达 · Release Radar", "以更新账簿为主轴，结合工具推荐与选型对比的开发者简报"},
 }
 
 // themeSkeletonDescEN 是骨架定位描述的英文版（英文后台用，对应 themeDescEN 的做法）。
@@ -247,6 +250,9 @@ var themeSkeletonDescEN = map[string]string{
 	"night-corridor":      "Immersive media hero with integrated navigation, a reading guide and a bottom content track",
 	"open-ascent":         "Bright media-led first screen with integrated navigation, three article rows and a featured reading label",
 	"pilot-flight-deck":   "A complete desktop-client launch page with product media, workflow, capabilities, cases, resources and downloads",
+	"toolbench":           "A developer workbench combining recommended tools, comparison entrances and latest updates",
+	"decision-grid":       "A scenario-first decision dashboard for discovering tools, opening comparisons and tracking updates",
+	"release-radar":       "An update-led developer briefing with tool recommendations and selection comparisons",
 }
 
 // secondBatchFactoryThemeDescEN keeps every concrete skin in the second factory
@@ -370,6 +376,9 @@ var themeBgDefault = map[string]string{
 	"night-corridor": "#f4f3f0", "night-corridor-white": "#ffffff", "night-corridor-dark": "#080a0d",
 	"open-ascent": "#f5f5f2", "open-ascent-white": "#ffffff", "open-ascent-dark": "#0c1420",
 	"pilot-flight-deck": "#f5f7fb", "pilot-flight-deck-white": "#ffffff", "pilot-flight-deck-dark": "#0b111b",
+	"toolbench": "#f7f7f5", "toolbench-white": "#ffffff",
+	"decision-grid": "#0a1726", "decision-grid-white": "#ffffff",
+	"release-radar": "#f7f6f1", "release-radar-white": "#ffffff",
 	"magazine": "#ffffff", "terminal": "#0b0f14", "brutalist": "#f3f3ee", "notebook": "#fbf7ec",
 	"swiss": "#ffffff", "pastel": "#faf7ff", "newspaper": "#f6f4ee", "darkpro": "#0e1016",
 	"landing": "#fbfcff", "product": "#f8fafc", "prism": "#09090b", "exchange": "#05080d",

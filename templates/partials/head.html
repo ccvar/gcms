@@ -72,5 +72,8 @@
   {{range .SEO.JSONLD}}<script type="application/ld+json">{{.}}</script>
   {{end}}
   <link rel="stylesheet" href="/assets/css/public.css?v={{.AssetVer}}">
+  {{if eq .ContentThemeFamily "toolbench"}}<link rel="stylesheet" href="/assets/css/toolbench.css?v={{.AssetVer}}">
+  {{else if eq .ContentThemeFamily "decision-grid"}}<link rel="stylesheet" href="/assets/css/decision-grid.css?v={{.AssetVer}}">
+  {{else if eq .ContentThemeFamily "release-radar"}}<link rel="stylesheet" href="/assets/css/release-radar.css?v={{.AssetVer}}">{{end}}
   {{if .Site.InjectHead}}{{safeHTML .Site.InjectHead}}{{end}}
 {{end}}

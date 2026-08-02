@@ -1,0 +1,1516 @@
+/* Release Radar
+   A data-led developer dashboard. The warm native card and the white card share
+   one layout; all visible content continues to come from the public View model. */
+
+:root[data-theme="release-radar"] {
+  --bg:#f7f5ef;
+  --surface:#fcfbf8;
+  --ink:#242724;
+  --ink-soft:#50554f;
+  --muted:#747a73;
+  --faint:#a2a79f;
+  --line:#dcded7;
+  --line-soft:#eceee8;
+  --accent:#2f6a50;
+  --accent-soft:#477b64;
+  --accent-wash:#e8f0eb;
+  --rr-panel:#fbfaf6;
+  --rr-panel-strong:#f2f5ef;
+  --rr-amber:#bd741f;
+  --rr-amber-wash:#f7eee1;
+  --radius:8px;
+  --w-wide:1320px;
+  --w-read:760px;
+  --shadow:0 12px 34px rgba(34,39,34,.045);
+}
+
+:root[data-theme="release-radar-white"] {
+  --bg:#ffffff;
+  --surface:#ffffff;
+  --ink:#202421;
+  --ink-soft:#4c534e;
+  --muted:#717871;
+  --faint:#a1a7a1;
+  --line:#dfe2dd;
+  --line-soft:#eff1ee;
+  --accent:#2b664c;
+  --accent-soft:#437a61;
+  --accent-wash:#edf4ef;
+  --rr-panel:#ffffff;
+  --rr-panel-strong:#f5f8f5;
+  --rr-amber:#ad681c;
+  --rr-amber-wash:#fbf2e7;
+  --radius:8px;
+  --w-wide:1320px;
+  --w-read:760px;
+  --shadow:0 12px 34px rgba(30,37,31,.035);
+}
+
+:is([data-theme^="release-radar"]) {
+  color-scheme:light;
+  --rr-header-h:72px;
+}
+
+:is([data-theme^="release-radar"]) body {
+  min-width:0;
+  overflow-x:hidden;
+  background:var(--bg);
+  color:var(--ink);
+  font-family:var(--sans);
+  font-size:16px;
+  line-height:1.65;
+}
+
+:is([data-theme^="release-radar"]) a {
+  text-underline-offset:3px;
+}
+
+:is([data-theme^="release-radar"]) :focus-visible {
+  outline:2px solid var(--accent);
+  outline-offset:3px;
+}
+
+:is([data-theme^="release-radar"]) input[type="search"]:focus-visible {
+  outline:none;
+  outline-offset:0;
+  border-color:var(--accent);
+  box-shadow:none;
+}
+
+/* Shared dashboard header supplied by the three decision-dashboard families. */
+:is([data-theme^="release-radar"]) .dd-site-header {
+  position:sticky;
+  top:0;
+  z-index:60;
+  min-height:var(--rr-header-h);
+  border:0;
+  border-bottom:1px solid var(--line);
+  background:color-mix(in srgb,var(--bg) 94%,transparent);
+  -webkit-backdrop-filter:blur(16px);
+  backdrop-filter:blur(16px);
+}
+
+:is([data-theme^="release-radar"]) .dd-header-grid {
+  display:grid;
+  grid-template-columns:minmax(176px,1fr) auto minmax(280px,1fr);
+  align-items:center;
+  gap:30px;
+  width:min(1320px,calc(100% - 48px));
+  max-width:none;
+  height:auto;
+  min-height:var(--rr-header-h);
+  margin-inline:auto;
+}
+
+:is([data-theme^="release-radar"]) .dd-header-brand {
+  min-width:0;
+  justify-self:start;
+}
+
+:is([data-theme^="release-radar"]) .dd-header-brand .brand {
+  display:inline-flex;
+  align-items:center;
+  gap:10px;
+  color:var(--ink);
+  font-size:1rem;
+  font-weight:760;
+  letter-spacing:.015em;
+}
+
+:is([data-theme^="release-radar"]) .dd-header-brand .brand.has-logo {
+  max-width:220px;
+}
+
+:is([data-theme^="release-radar"]) .dd-header-brand .brand-logo {
+  width:auto;
+  max-width:180px;
+  height:31px;
+  max-height:31px;
+  object-fit:contain;
+  transform-origin:left center;
+}
+
+:is([data-theme^="release-radar"]) .dd-header-brand .brand-name {
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+
+:is([data-theme^="release-radar"]) .dd-main-nav {
+  display:flex;
+  align-items:stretch;
+  align-self:stretch;
+  justify-self:center;
+  gap:clamp(20px,2.5vw,40px);
+}
+
+:is([data-theme^="release-radar"]) .dd-main-nav > a {
+  display:flex;
+  align-items:center;
+  min-width:0;
+  padding:2px 0 0;
+  border-bottom:2px solid transparent;
+  color:var(--ink-soft);
+  font-size:.82rem;
+  font-weight:650;
+  white-space:nowrap;
+}
+
+:is([data-theme^="release-radar"]) .dd-main-nav > a:hover,
+:is([data-theme^="release-radar"]) .dd-main-nav > a[aria-current="page"] {
+  border-bottom-color:var(--accent);
+  color:var(--ink);
+}
+
+:is([data-theme^="release-radar"]) .dd-main-nav > a[aria-current="page"]::after {
+  display:none;
+}
+
+:is([data-theme^="release-radar"]) .dd-header-tools {
+  display:flex;
+  align-items:center;
+  justify-self:end;
+  gap:18px;
+  min-width:0;
+}
+
+:is([data-theme^="release-radar"]) .dd-header-search {
+  display:grid;
+  grid-template-columns:minmax(0,1fr) 34px;
+  align-items:center;
+  width:min(240px,22vw);
+  min-width:210px;
+  height:36px;
+  border:1px solid var(--line);
+  border-radius:6px;
+  background:var(--surface);
+  color:var(--muted);
+  font-size:.75rem;
+}
+
+:is([data-theme^="release-radar"]) .dd-header-search:focus-within {
+  border-color:var(--accent);
+}
+
+:is([data-theme^="release-radar"]) .dd-header-search input {
+  min-width:0;
+  height:34px;
+  border:0;
+  padding:0 0 0 12px;
+  background:transparent;
+  color:var(--ink);
+  font:inherit;
+  outline:0;
+}
+
+:is([data-theme^="release-radar"]) .dd-header-search input::placeholder {
+  color:var(--muted);
+}
+
+:is([data-theme^="release-radar"]) .dd-header-search button {
+  display:grid;
+  width:34px;
+  height:34px;
+  place-items:center;
+  border:0;
+  padding:0;
+  background:transparent;
+  color:var(--muted);
+  cursor:pointer;
+}
+
+:is([data-theme^="release-radar"]) .dd-header-search button:hover {
+  color:var(--accent);
+}
+
+:is([data-theme^="release-radar"]) .dd-header-tools .lang-switch {
+  margin:0;
+  padding-left:16px;
+  border-left:1px solid var(--line);
+}
+
+:is([data-theme^="release-radar"]) .dd-site-header .menu-toggle {
+  display:none;
+}
+
+/* Homepage */
+.release-radar-page {
+  width:min(1320px,calc(100% - 48px));
+  margin-inline:auto;
+  padding:0 0 clamp(54px,7vw,92px);
+}
+
+.rr-hero {
+  display:grid;
+  grid-template-columns:minmax(0,1.03fr) minmax(390px,.97fr);
+  gap:clamp(36px,6vw,92px);
+  align-items:center;
+  min-height:350px;
+  padding:28px 0 24px;
+}
+
+.rr-hero-copy {
+  align-self:center;
+  padding-left:2px;
+}
+
+.rr-eyebrow {
+  margin:0 0 16px;
+  color:var(--accent);
+  font-size:.78rem;
+  font-weight:720;
+  letter-spacing:.07em;
+}
+
+.rr-hero h1 {
+  max-width:13.5ch;
+  margin:0;
+  overflow-wrap:anywhere;
+  color:var(--ink);
+  font:600 clamp(2.8rem,3.8vw,3.7rem)/1 var(--serif);
+  letter-spacing:-.052em;
+}
+
+.rr-hero-description {
+  display:-webkit-box;
+  max-width:54ch;
+  margin:16px 0 0;
+  overflow:hidden;
+  color:var(--ink-soft);
+  font-size:.92rem;
+  line-height:1.75;
+  -webkit-box-orient:vertical;
+  -webkit-line-clamp:3;
+}
+
+.rr-hero-action {
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  min-height:42px;
+  margin-top:18px;
+  padding:8px 18px;
+  border:1px solid var(--accent);
+  border-radius:5px;
+  background:var(--accent);
+  color:#fff;
+  font-size:.78rem;
+  font-weight:700;
+}
+
+.rr-hero-action:hover {
+  background:var(--accent-soft);
+  border-color:var(--accent-soft);
+  color:#fff;
+}
+
+.rr-hero-visual {
+  display:grid;
+  min-width:0;
+  min-height:325px;
+  overflow:hidden;
+  place-items:center;
+  background:transparent;
+}
+
+.rr-hero-visual > img,
+.rr-hero-embed,
+.rr-hero-embed > svg,
+.rr-hero-animation {
+  display:block;
+  width:100%;
+  height:100%;
+  max-height:345px;
+}
+
+.rr-hero-visual > img {
+  object-fit:contain;
+}
+
+.rr-hero-embed > svg {
+  object-fit:contain;
+}
+
+.rr-hero-animation {
+  display:grid;
+  place-items:center;
+  overflow:hidden;
+}
+
+.rr-hero-animation .hero-svg {
+  width:min(100%,480px);
+  height:auto;
+  max-height:345px;
+  margin:0;
+}
+
+.rr-dashboard {
+  display:grid;
+  grid-template-columns:minmax(0,1.7fr) minmax(340px,1fr);
+  gap:16px;
+  align-items:start;
+}
+
+.rr-sidebar {
+  display:grid;
+  gap:16px;
+  min-width:0;
+}
+
+.rr-panel,
+.rr-index {
+  min-width:0;
+  overflow:hidden;
+  border:1px solid var(--line);
+  border-radius:8px;
+  background:var(--rr-panel);
+  box-shadow:var(--shadow);
+}
+
+.rr-panel-head {
+  display:flex;
+  align-items:baseline;
+  justify-content:space-between;
+  gap:24px;
+  min-height:50px;
+  padding:14px 18px 12px;
+  border-bottom:1px solid var(--line);
+}
+
+.rr-panel-head h2 {
+  margin:0;
+  color:var(--ink);
+  font-size:.93rem;
+  font-weight:760;
+  letter-spacing:.01em;
+}
+
+.rr-panel-head > a {
+  display:inline-flex;
+  flex:none;
+  align-items:center;
+  min-height:32px;
+  color:var(--muted);
+  font-size:.72rem;
+  font-weight:620;
+}
+
+.rr-panel-head > a:hover {
+  color:var(--accent);
+}
+
+.rr-update-head,
+.rr-update-row {
+  display:grid;
+  grid-template-columns:126px 104px minmax(0,1fr);
+  gap:16px;
+  align-items:center;
+}
+
+.rr-update-head {
+  min-height:38px;
+  padding:0 18px;
+  border-bottom:1px solid var(--line);
+  color:var(--faint);
+  font-size:.65rem;
+  font-weight:650;
+}
+
+.rr-update-row {
+  min-height:67px;
+  padding:10px 18px;
+  border-bottom:1px solid var(--line-soft);
+  color:var(--ink-soft);
+}
+
+.rr-update-row:last-child {
+  border-bottom:0;
+}
+
+.rr-update-row:hover {
+  background:var(--rr-panel-strong);
+}
+
+.rr-update-row time,
+.rr-update-row > span:nth-child(2) {
+  color:var(--muted);
+  font-size:.72rem;
+}
+
+.rr-update-row > span:last-child {
+  display:block;
+  min-width:0;
+}
+
+.rr-update-row strong {
+  display:block;
+  overflow:hidden;
+  color:var(--ink);
+  font-size:.84rem;
+  line-height:1.35;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+
+.rr-update-row small {
+  display:block;
+  overflow:hidden;
+  margin-top:3px;
+  color:var(--muted);
+  font-size:.68rem;
+  font-weight:400;
+  line-height:1.45;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+
+.rr-update-lead {
+  background:var(--accent-wash);
+}
+
+.rr-updates:not(:has(.rr-update-row)) {
+  display:none;
+}
+
+.rr-tool-list {
+  display:grid;
+}
+
+.rr-tool-card {
+  display:grid;
+  grid-template-columns:auto minmax(0,1fr);
+  gap:13px;
+  min-height:112px;
+  padding:18px 16px;
+  border-bottom:1px solid var(--line-soft);
+  color:var(--ink);
+}
+
+.rr-tool-card:last-child {
+  border-bottom:0;
+}
+
+.rr-tool-card:hover {
+  background:var(--rr-amber-wash);
+}
+
+.rr-tool-cover {
+  width:54px;
+  height:54px;
+  overflow:hidden;
+  border:1px solid var(--line);
+  border-radius:7px;
+  background:var(--surface);
+}
+
+.rr-tool-cover img {
+  width:100%;
+  height:100%;
+  object-fit:cover;
+}
+
+.rr-tool-copy {
+  display:flex;
+  min-width:0;
+  flex-direction:column;
+  justify-content:center;
+}
+
+.rr-tool-copy small {
+  margin-bottom:2px;
+  color:var(--rr-amber);
+  font-size:.64rem;
+  font-style:normal;
+  font-weight:680;
+}
+
+.rr-tool-copy strong {
+  overflow:hidden;
+  font-size:.86rem;
+  line-height:1.35;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+
+.rr-tool-copy em {
+  display:-webkit-box;
+  margin-top:3px;
+  overflow:hidden;
+  color:var(--muted);
+  font-size:.67rem;
+  font-style:normal;
+  line-height:1.45;
+  -webkit-box-orient:vertical;
+  -webkit-line-clamp:2;
+}
+
+.rr-compare-grid {
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  padding:6px;
+}
+
+.rr-compare-grid a {
+  display:flex;
+  min-width:0;
+  min-height:68px;
+  flex-direction:column;
+  justify-content:center;
+  padding:11px 12px;
+  border:1px solid var(--line-soft);
+  color:var(--ink);
+}
+
+.rr-compare-grid a:hover {
+  border-color:var(--accent);
+  background:var(--accent-wash);
+}
+
+.rr-compare-grid small {
+  overflow:hidden;
+  margin-bottom:4px;
+  color:var(--accent);
+  font-size:.61rem;
+  line-height:1.25;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+
+.rr-compare-grid strong {
+  display:-webkit-box;
+  overflow:hidden;
+  font-size:.75rem;
+  line-height:1.4;
+  -webkit-box-orient:vertical;
+  -webkit-line-clamp:2;
+}
+
+.rr-index {
+  margin-top:16px;
+}
+
+.rr-index-grid {
+  display:grid;
+  grid-template-columns:repeat(9,minmax(0,1fr));
+}
+
+.rr-index-grid a {
+  display:flex;
+  min-width:0;
+  min-height:72px;
+  flex-direction:column;
+  justify-content:center;
+  padding:11px 14px;
+  border-right:1px solid var(--line);
+  color:var(--ink);
+}
+
+.rr-index-grid a:last-child {
+  border-right:0;
+}
+
+.rr-index-grid a:hover {
+  background:var(--rr-panel-strong);
+  color:var(--accent);
+}
+
+.rr-index-grid strong {
+  overflow:hidden;
+  font-size:.75rem;
+  line-height:1.35;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+
+.rr-index-grid small {
+  margin-top:4px;
+  color:var(--muted);
+  font-size:.64rem;
+}
+
+/* Category, archive and search screens */
+:is([data-theme^="release-radar"]) main:not(:has(> .release-radar-page)) {
+  min-width:0;
+  padding-bottom:clamp(66px,8vw,110px);
+}
+
+:is([data-theme^="release-radar"]) main:not(:has(> .release-radar-page)) > .wrap,
+:is([data-theme^="release-radar"]) .page-head > .wrap {
+  width:min(1180px,calc(100% - 48px));
+  max-width:none;
+}
+
+:is([data-theme^="release-radar"]) .page-head {
+  padding:clamp(50px,7vw,88px) 0 34px;
+  border-bottom:1px solid var(--line);
+  background:var(--bg);
+}
+
+:is([data-theme^="release-radar"]) .page-head .breadcrumb {
+  padding:0 0 20px !important;
+  color:var(--faint);
+  font-size:.72rem;
+}
+
+:is([data-theme^="release-radar"]) .page-head .eyebrow {
+  margin:0 0 13px;
+  color:var(--accent);
+  font-size:.7rem;
+  font-weight:720;
+  letter-spacing:.09em;
+}
+
+:is([data-theme^="release-radar"]) .page-head h1 {
+  max-width:16ch;
+  margin:0;
+  overflow-wrap:anywhere;
+  color:var(--ink);
+  font:600 clamp(2.7rem,5vw,4.8rem)/1.02 var(--serif);
+  letter-spacing:-.045em;
+}
+
+:is([data-theme^="release-radar"]) .page-head p:not(.eyebrow) {
+  max-width:58ch;
+  margin:18px 0 0;
+  color:var(--muted);
+  font-size:.96rem;
+  line-height:1.75;
+}
+
+:is([data-theme^="release-radar"]) .cat-nav {
+  display:flex;
+  gap:0;
+  margin:0 0 24px;
+  overflow-x:auto;
+  padding:18px 0 13px;
+  border-bottom:1px solid var(--line);
+  scrollbar-width:thin;
+}
+
+:is([data-theme^="release-radar"]) .cat-nav a {
+  flex:none;
+  padding:7px 14px;
+  border:0;
+  border-right:1px solid var(--line);
+  border-radius:0;
+  color:var(--muted);
+  font-size:.78rem;
+}
+
+:is([data-theme^="release-radar"]) .cat-nav a:first-child {
+  padding-left:0;
+}
+
+:is([data-theme^="release-radar"]) .cat-nav a.active {
+  background:transparent;
+  color:var(--accent);
+  font-weight:760;
+}
+
+:is([data-theme^="release-radar"]) .post-list {
+  border:1px solid var(--line);
+  border-radius:8px;
+  background:var(--rr-panel);
+  box-shadow:var(--shadow);
+}
+
+:is([data-theme^="release-radar"]) .post-item {
+  grid-template-columns:72px minmax(0,1fr);
+  gap:18px;
+  padding:24px;
+  border-top:1px solid var(--line-soft);
+}
+
+:is([data-theme^="release-radar"]) .post-item:first-child {
+  border-top:0;
+}
+
+:is([data-theme^="release-radar"]) .post-item:hover {
+  background:var(--rr-panel-strong);
+}
+
+:is([data-theme^="release-radar"]) .post-item .num {
+  color:var(--accent);
+  font:500 1.35rem/1.2 var(--serif);
+}
+
+:is([data-theme^="release-radar"]) .post-item h3 {
+  margin:5px 0 8px;
+  overflow-wrap:anywhere;
+  font-size:1.18rem;
+  line-height:1.35;
+}
+
+:is([data-theme^="release-radar"]) .post-item h3 a {
+  color:var(--ink);
+}
+
+:is([data-theme^="release-radar"]) .post-item p {
+  max-width:72ch;
+  margin:0;
+  color:var(--muted);
+  font-size:.86rem;
+  line-height:1.7;
+}
+
+:is([data-theme^="release-radar"]) .post-item .meta {
+  color:var(--faint);
+  font-size:.7rem;
+}
+
+:is([data-theme^="release-radar"]) .tag {
+  border:0;
+  border-radius:3px;
+  background:var(--accent-wash);
+  color:var(--accent);
+}
+
+:is([data-theme^="release-radar"]) .searchbox {
+  width:min(100%,620px);
+  max-width:none;
+  margin:28px 0 0;
+}
+
+:is([data-theme^="release-radar"]) .searchbox input,
+:is([data-theme^="release-radar"]) .searchbox .btn {
+  min-height:46px;
+  border-radius:6px;
+}
+
+:is([data-theme^="release-radar"]) .searchbox input {
+  min-width:0;
+  background:var(--surface);
+}
+
+:is([data-theme^="release-radar"]) .search-results {
+  margin-top:28px;
+}
+
+:is([data-theme^="release-radar"]) .search-results .search-empty {
+  border:0;
+  border-radius:0;
+  background:transparent;
+  box-shadow:none;
+}
+
+/* Resource index and resource detail */
+:is([data-theme^="release-radar"]) .link-grid {
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:16px;
+  margin-top:28px;
+}
+
+:is([data-theme^="release-radar"]) .link-card {
+  min-width:0;
+  overflow:hidden;
+  border:1px solid var(--line);
+  border-radius:8px;
+  background:var(--rr-panel);
+  box-shadow:none;
+}
+
+:is([data-theme^="release-radar"]) .link-card:hover {
+  border-color:var(--accent);
+  box-shadow:var(--shadow);
+  transform:translateY(-2px);
+}
+
+:is([data-theme^="release-radar"]) .link-card .lc-cover {
+  aspect-ratio:16/8;
+  min-height:0;
+  border-bottom:1px solid var(--line);
+  background:var(--rr-panel-strong);
+}
+
+:is([data-theme^="release-radar"]) .link-card .lc-cover img {
+  width:100%;
+  height:100%;
+  object-fit:cover;
+}
+
+:is([data-theme^="release-radar"]) .link-card .lc-mono {
+  display:grid;
+  width:100%;
+  height:100%;
+  place-items:center;
+  color:var(--accent);
+  font:600 2rem var(--serif);
+}
+
+:is([data-theme^="release-radar"]) .link-card .lc-body {
+  padding:18px;
+}
+
+:is([data-theme^="release-radar"]) .link-card .lc-title {
+  overflow-wrap:anywhere;
+  color:var(--ink);
+  font-size:1rem;
+}
+
+:is([data-theme^="release-radar"]) .link-card .lc-intro {
+  color:var(--muted);
+  font-size:.82rem;
+  line-height:1.65;
+}
+
+:is([data-theme^="release-radar"]) .link-visit-row {
+  display:flex;
+  min-width:0;
+  flex-wrap:wrap;
+  align-items:center;
+  gap:14px;
+  margin-top:22px;
+}
+
+:is([data-theme^="release-radar"]) .link-url {
+  max-width:100%;
+  overflow:hidden;
+  font:11px var(--mono);
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+
+/* Article, TOC, related reading and ordinary pages */
+:is([data-theme^="release-radar"]) .article-grid {
+  grid-template-columns:minmax(0,760px);
+  column-gap:54px;
+  width:min(1120px,100%);
+  margin-inline:auto;
+}
+
+:is([data-theme^="release-radar"]) .article-grid.has-toc {
+  grid-template-columns:minmax(0,760px) 250px;
+}
+
+:is([data-theme^="release-radar"]) :is(.article-col,.article-main,.article-reading,.content-page,.link-card .lc-body) {
+  min-width:0;
+}
+
+:is([data-theme^="release-radar"]) .article-bc {
+  padding:28px 0 12px;
+  color:var(--faint);
+  font-size:.72rem;
+}
+
+:is([data-theme^="release-radar"]) .article-head {
+  margin:0 0 30px;
+  padding:22px 0 28px;
+  border-bottom:1px solid var(--line);
+}
+
+:is([data-theme^="release-radar"]) .article-head .kicker {
+  color:var(--accent);
+  font-size:.7rem;
+  letter-spacing:.1em;
+}
+
+:is([data-theme^="release-radar"]) .article-head h1 {
+  max-width:15ch;
+  margin-bottom:18px;
+  overflow-wrap:anywhere;
+  color:var(--ink);
+  font:600 clamp(2.7rem,5.4vw,5.1rem)/1.01 var(--serif);
+  letter-spacing:-.047em;
+}
+
+:is([data-theme^="release-radar"]) .article-head .lead {
+  max-width:58ch;
+  color:var(--muted);
+  font-size:1.02rem;
+  line-height:1.7;
+}
+
+:is([data-theme^="release-radar"]) .avatar {
+  border-radius:6px;
+  background:var(--accent);
+}
+
+:is([data-theme^="release-radar"]) .article-cover {
+  width:100%;
+  max-height:560px;
+  margin-bottom:34px;
+  border:1px solid var(--line);
+  border-radius:8px;
+  object-fit:cover;
+  box-shadow:none;
+}
+
+:is([data-theme^="release-radar"]) .prose {
+  min-width:0;
+  overflow-wrap:anywhere;
+  color:var(--ink-soft);
+  font-size:1.04rem;
+  line-height:1.9;
+}
+
+:is([data-theme^="release-radar"]) .prose h2 {
+  color:var(--ink);
+  font:600 1.75rem/1.3 var(--serif);
+}
+
+:is([data-theme^="release-radar"]) .prose h3 {
+  color:var(--ink);
+  font-size:1.2rem;
+}
+
+:is([data-theme^="release-radar"]) .prose blockquote {
+  border-left-color:var(--accent);
+  font-style:normal;
+}
+
+:is([data-theme^="release-radar"]) .prose code {
+  border-radius:3px;
+}
+
+:is([data-theme^="release-radar"]) .prose pre {
+  max-width:100%;
+  border-radius:7px;
+}
+
+:is([data-theme^="release-radar"]) .prose table {
+  display:block;
+  max-width:100%;
+  overflow-x:auto;
+  -webkit-overflow-scrolling:touch;
+}
+
+:is([data-theme^="release-radar"]) .toc {
+  padding:16px;
+  border:1px solid var(--line);
+  border-radius:8px;
+  background:var(--rr-panel);
+}
+
+:is([data-theme^="release-radar"]) .toc > summary {
+  color:var(--accent);
+}
+
+:is([data-theme^="release-radar"]) .toc ul {
+  border-left-color:var(--line);
+}
+
+:is([data-theme^="release-radar"]) .article-foot {
+  border-top-color:var(--line);
+}
+
+:is([data-theme^="release-radar"]) .pager {
+  gap:12px;
+  margin-top:42px;
+}
+
+:is([data-theme^="release-radar"]) .pager > a {
+  min-height:118px;
+  padding:20px;
+  border:1px solid var(--line);
+  border-radius:8px;
+  background:var(--rr-panel);
+}
+
+:is([data-theme^="release-radar"]) .pager .t {
+  overflow-wrap:anywhere;
+}
+
+:is([data-theme^="release-radar"]) .pager > a:hover {
+  border-color:var(--accent);
+}
+
+:is([data-theme^="release-radar"]) .related {
+  margin-top:58px;
+}
+
+:is([data-theme^="release-radar"]) .related .section-head {
+  margin-bottom:18px;
+  padding-bottom:12px;
+  border-bottom:1px solid var(--line);
+}
+
+:is([data-theme^="release-radar"]) .related-grid {
+  gap:12px;
+}
+
+:is([data-theme^="release-radar"]) .related .card {
+  border-radius:8px;
+  background:var(--rr-panel);
+  box-shadow:none;
+}
+
+:is([data-theme^="release-radar"]) .content-page .page-head .read {
+  width:min(920px,calc(100% - 48px));
+  max-width:none;
+}
+
+:is([data-theme^="release-radar"]) .content-page > .wrap {
+  width:min(920px,calc(100% - 48px));
+}
+
+:is([data-theme^="release-radar"]) .content-page .prose.read {
+  max-width:760px;
+  padding-top:42px !important;
+}
+
+:is([data-theme^="release-radar"]) main:not(:has(> .release-radar-page)) .btn {
+  min-height:42px;
+  justify-content:center;
+}
+
+/* Pagination and footer */
+:is([data-theme^="release-radar"]) .pagination {
+  gap:6px;
+  margin-top:32px;
+}
+
+:is([data-theme^="release-radar"]) .pagination a,
+:is([data-theme^="release-radar"]) .pagination span {
+  border-radius:5px;
+  background:var(--surface);
+}
+
+:is([data-theme^="release-radar"]) .pagination .cur {
+  background:var(--accent);
+  color:#fff;
+}
+
+:is([data-theme^="release-radar"]) :is(.ct-footer,.dd-footer) {
+  min-height:96px;
+  margin:0;
+  padding:25px 0 34px;
+  border-top:1px solid var(--line);
+  background:var(--bg);
+}
+
+:is([data-theme^="release-radar"]) :is(.ct-footer-row,.dd-footer-row) {
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:24px;
+  width:min(1320px,calc(100% - 48px));
+  max-width:none;
+  margin-inline:auto;
+  padding:0;
+}
+
+:is([data-theme^="release-radar"]) :is(.ct-footer,.dd-footer) p {
+  margin:0;
+  color:var(--muted);
+  font:10px/1.6 var(--mono);
+}
+
+:is([data-theme^="release-radar"]) :is(.ct-footer,.dd-footer) nav {
+  display:flex;
+  flex-wrap:wrap;
+  gap:22px;
+}
+
+:is([data-theme^="release-radar"]) :is(.ct-footer,.dd-footer) a {
+  color:var(--muted);
+  font-size:.72rem;
+}
+
+@media (max-width:1120px) {
+  :is([data-theme^="release-radar"]) .dd-header-grid {
+    grid-template-columns:minmax(150px,1fr) auto minmax(190px,1fr);
+    gap:20px;
+  }
+
+  :is([data-theme^="release-radar"]) .dd-main-nav {
+    gap:20px;
+  }
+
+  :is([data-theme^="release-radar"]) .dd-header-search {
+    grid-template-columns:38px;
+    min-width:0;
+    width:38px;
+    padding:0;
+  }
+
+  :is([data-theme^="release-radar"]) .dd-header-search input {
+    display:none;
+  }
+
+  :is([data-theme^="release-radar"]) .dd-header-search button {
+    width:36px;
+  }
+
+  .rr-hero {
+    grid-template-columns:minmax(0,1fr) minmax(340px,.82fr);
+    gap:38px;
+  }
+
+  .rr-index-grid {
+    grid-template-columns:repeat(5,minmax(0,1fr));
+  }
+
+  .rr-index-grid a {
+    border-bottom:1px solid var(--line);
+  }
+
+  .rr-index-grid a:nth-child(5n) {
+    border-right:0;
+  }
+
+  :is([data-theme^="release-radar"]) .article-grid.has-toc {
+    grid-template-columns:minmax(0,760px);
+  }
+
+  :is([data-theme^="release-radar"]) .toc-rail {
+    position:static;
+    grid-column:1;
+    grid-row:2;
+    margin-bottom:1.6rem;
+  }
+
+  :is([data-theme^="release-radar"]) .article-grid.has-toc .article-col {
+    grid-row:3;
+  }
+
+  :is([data-theme^="release-radar"]) .toc > summary {
+    margin-bottom:0;
+    padding-left:0;
+    cursor:pointer;
+    pointer-events:auto;
+  }
+
+  :is([data-theme^="release-radar"]) .toc > summary::after {
+    content:"▾";
+    float:right;
+    transition:transform .2s;
+  }
+
+  :is([data-theme^="release-radar"]) .toc[open] > summary {
+    margin-bottom:.8rem;
+  }
+
+  :is([data-theme^="release-radar"]) .toc[open] > summary::after {
+    transform:rotate(180deg);
+  }
+
+  :is([data-theme^="release-radar"]) .toc ul {
+    border-left:0;
+  }
+
+  :is([data-theme^="release-radar"]) .toc a {
+    padding-left:0;
+  }
+
+  :is([data-theme^="release-radar"]) .toc li.lv3 a {
+    padding-left:.9rem;
+  }
+}
+
+@media (max-width:900px) {
+  :is([data-theme^="release-radar"]) {
+    --rr-header-h:60px;
+  }
+
+  :is([data-theme^="release-radar"]) .dd-site-header {
+    min-height:var(--rr-header-h);
+  }
+
+  :is([data-theme^="release-radar"]) .dd-header-grid {
+    position:relative;
+    display:flex;
+    width:min(100% - 36px,760px);
+    min-height:var(--rr-header-h);
+    gap:12px;
+  }
+
+  :is([data-theme^="release-radar"]) .dd-header-brand {
+    order:1;
+    min-width:0;
+  }
+
+  :is([data-theme^="release-radar"]) .dd-header-brand .brand-logo {
+    max-width:142px;
+    height:27px;
+  }
+
+  :is([data-theme^="release-radar"]) .dd-header-tools {
+    display:none;
+  }
+
+  :is([data-theme^="release-radar"]) .dd-site-header .menu-toggle {
+    order:3;
+    display:inline-flex;
+    flex:none;
+    align-items:center;
+    justify-content:center;
+    width:40px;
+    height:40px;
+    margin-left:auto;
+    border:1px solid var(--line);
+    border-radius:6px;
+    background:var(--surface);
+    color:var(--ink);
+  }
+
+  :is([data-theme^="release-radar"]) .dd-main-nav {
+    position:absolute;
+    top:calc(100% + 1px);
+    right:0;
+    left:0;
+    z-index:70;
+    display:none;
+    max-height:calc(100vh - var(--rr-header-h));
+    max-height:calc(100dvh - var(--rr-header-h));
+    flex-direction:column;
+    align-items:stretch;
+    gap:0;
+    overflow-y:auto;
+    padding:7px 14px 12px;
+    border:1px solid var(--line);
+    border-top:0;
+    background:var(--surface);
+    box-shadow:0 18px 34px rgba(31,39,33,.12);
+  }
+
+  :is([data-theme^="release-radar"]) .dd-site-header.nav-open .dd-main-nav {
+    display:flex;
+  }
+
+  :is([data-theme^="release-radar"]) .dd-main-nav > a {
+    min-height:43px;
+    padding:10px 2px;
+    border:0;
+    border-bottom:1px solid var(--line-soft);
+    font-size:.92rem;
+    white-space:normal;
+  }
+
+  :is([data-theme^="release-radar"]) .dd-main-nav > a:last-child {
+    border-bottom:0;
+  }
+
+  .release-radar-page {
+    width:min(100% - 36px,760px);
+  }
+
+  .rr-hero {
+    grid-template-columns:minmax(0,1fr);
+    gap:8px;
+    padding-top:38px;
+  }
+
+  .rr-hero h1 {
+    max-width:11ch;
+  }
+
+  .rr-hero-visual {
+    min-height:280px;
+  }
+
+  .rr-dashboard {
+    display:flex;
+    flex-direction:column;
+  }
+
+  .rr-sidebar {
+    display:contents;
+  }
+
+  .rr-compare {
+    order:1;
+    width:100%;
+  }
+
+  .rr-tools {
+    order:2;
+    width:100%;
+  }
+
+  .rr-updates {
+    order:3;
+    width:100%;
+  }
+
+  :is([data-theme^="release-radar"]) .link-grid {
+    grid-template-columns:repeat(2,minmax(0,1fr));
+  }
+}
+
+@media (max-width:760px) {
+  :is([data-theme^="release-radar"]) .dd-header-grid {
+    width:calc(100% - 28px);
+  }
+
+  .release-radar-page {
+    width:calc(100% - 28px);
+    padding-bottom:56px;
+  }
+
+  .rr-hero {
+    min-height:0;
+    padding:34px 0 22px;
+  }
+
+  .rr-hero h1 {
+    font-size:clamp(2.7rem,13.5vw,4rem);
+  }
+
+  .rr-hero-description {
+    font-size:.88rem;
+  }
+
+  .rr-hero-visual {
+    min-height:235px;
+    max-height:300px;
+  }
+
+  .rr-update-head {
+    display:none;
+  }
+
+  .rr-update-row {
+    grid-template-columns:84px minmax(0,1fr);
+    gap:10px 14px;
+    min-height:82px;
+    padding:13px 14px;
+  }
+
+  .rr-update-row > span:nth-child(2) {
+    grid-column:2;
+    grid-row:1;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+  }
+
+  .rr-update-row > span:last-child {
+    grid-column:1 / -1;
+    grid-row:2;
+  }
+
+  .rr-update-row small {
+    white-space:normal;
+  }
+
+  .rr-compare-grid {
+    grid-template-columns:minmax(0,1fr);
+  }
+
+  .rr-index-grid {
+    grid-template-columns:repeat(2,minmax(0,1fr));
+  }
+
+  .rr-index-grid a,
+  .rr-index-grid a:nth-child(5n) {
+    border-right:1px solid var(--line);
+  }
+
+  .rr-index-grid a:nth-child(2n) {
+    border-right:0;
+  }
+
+  .rr-index-grid a:last-child:nth-child(odd) {
+    border-right:0;
+  }
+
+  :is([data-theme^="release-radar"]) main:not(:has(> .release-radar-page)) > .wrap,
+  :is([data-theme^="release-radar"]) .page-head > .wrap,
+  :is([data-theme^="release-radar"]) .content-page .page-head .read,
+  :is([data-theme^="release-radar"]) .content-page > .wrap {
+    width:calc(100% - 32px);
+  }
+
+  :is([data-theme^="release-radar"]) .page-head {
+    padding:38px 0 25px;
+  }
+
+  :is([data-theme^="release-radar"]) .page-head h1 {
+    font-size:clamp(2.45rem,13vw,4rem);
+  }
+
+  :is([data-theme^="release-radar"]) .post-list {
+    border-right:0;
+    border-left:0;
+    border-radius:0;
+    box-shadow:none;
+  }
+
+  :is([data-theme^="release-radar"]) .post-item {
+    grid-template-columns:minmax(0,1fr);
+    gap:5px;
+    padding:20px 0;
+  }
+
+  :is([data-theme^="release-radar"]) .post-item .num {
+    display:none;
+  }
+
+  :is([data-theme^="release-radar"]) .link-grid {
+    grid-template-columns:minmax(0,1fr);
+  }
+
+  :is([data-theme^="release-radar"]) .article-grid,
+  :is([data-theme^="release-radar"]) .article-grid.has-toc {
+    width:100%;
+  }
+
+  :is([data-theme^="release-radar"]) .article-head h1 {
+    font-size:clamp(2.45rem,12vw,3.9rem);
+  }
+
+  :is([data-theme^="release-radar"]) .toc {
+    border-radius:6px;
+  }
+
+  :is([data-theme^="release-radar"]) .pager {
+    grid-template-columns:minmax(0,1fr);
+  }
+
+  :is([data-theme^="release-radar"]) :is(.ct-footer-row,.dd-footer-row) {
+    width:calc(100% - 32px);
+    flex-direction:column;
+  }
+}
+
+@media (max-width:420px) {
+  :is([data-theme^="release-radar"]) .searchbox {
+    flex-direction:column;
+  }
+
+  :is([data-theme^="release-radar"]) .searchbox .btn {
+    width:100%;
+  }
+
+  .rr-panel-head {
+    padding-inline:14px;
+  }
+
+  .rr-tool-card {
+    padding-inline:13px;
+  }
+
+  .rr-tool-cover {
+    width:48px;
+    height:48px;
+  }
+
+  .rr-index-grid {
+    grid-template-columns:minmax(0,1fr);
+  }
+
+  .rr-index-grid a,
+  .rr-index-grid a:nth-child(2n),
+  .rr-index-grid a:nth-child(5n) {
+    min-height:60px;
+    border-right:0;
+  }
+}
+
+@media print {
+  :is([data-theme^="release-radar"]) :is(.dd-site-header,.ct-footer,.dd-footer,.rr-hero-action,.to-top) {
+    display:none !important;
+  }
+
+  .release-radar-page,
+  :is([data-theme^="release-radar"]) main:not(:has(> .release-radar-page)) > .wrap {
+    width:100%;
+  }
+
+  .rr-panel,
+  .rr-index,
+  :is([data-theme^="release-radar"]) .post-list {
+    box-shadow:none;
+  }
+}
