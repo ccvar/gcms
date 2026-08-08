@@ -582,7 +582,12 @@ export type TurnEvent =
       activity_id: string;
       label: string;
       detail: string;
+      error: string;
       status: 'running' | 'completed' | 'failed' | 'canceled';
+      kind?: 'reasoning' | 'command' | 'tool' | 'skill' | 'image_generation' | 'image_review' | 'progress' | string;
+      phase?: string;
+      current?: number;
+      total?: number;
     }
   | {
       type: 'gcms_unlock_required';

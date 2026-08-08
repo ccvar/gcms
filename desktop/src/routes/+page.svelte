@@ -6082,12 +6082,19 @@
     id: string;
     label: string;
     detail: string;
+    error: string;
     status: 'running' | 'completed' | 'failed' | 'canceled';
+    kind?: string;
+    phase?: string;
+    current?: number;
+    total?: number;
     startedAt: number;
     updatedAt: number;
   };
   type LiveTurn = {
     text: string;
+    /** 只在正文 delta 到达时更新；任务活动变化不能重建正文 DOM。 */
+    renderedText: string;
     tools: ToolCall[];
     activities: Record<string, ExecutionActivity>;
     lastActivityAt: number;
@@ -6128,16 +6135,80 @@
     return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s`;
   }
   function activityLabel(activity: ExecutionActivity): string {
+    const phase = activity.phase?.trim() ?? '';
+    if (phase) {
+      // 原生活动在开始与结束时复用同一 phase。按真实状态改写，否则已经完成的
+      // 上传仍会显示“正在上传”，旧客户端留下的“正在执行命令”也会继续暴露技术概念。
+      if (phase === '正在执行命令' || phase === '正在处理任务步骤') {
+        return activity.status === 'failed' ? '任务步骤未成功'
+          : activity.status === 'completed' ? '任务步骤已完成'
+          : '正在处理任务步骤';
+      }
+      if (phase === '正在上传站点图片') {
+        return activity.status === 'failed' ? '站点图片上传未成功'
+          : activity.status === 'completed' ? '站点图片已上传'
+          : phase;
+      }
+      if (phase === '正在更新站点内容') {
+        return activity.status === 'failed' ? '站点内容更新未成功'
+          : activity.status === 'completed' ? '站点内容已更新'
+          : phase;
+      }
+      if (phase === '正在读取站点内容') {
+        return activity.status === 'failed' ? '站点内容读取未成功'
+          : activity.status === 'completed' ? '站点内容已读取'
+          : phase;
+      }
+      if (phase === '正在检查 GCMS 连接') {
+        return activity.status === 'failed' ? 'GCMS 连接检查未通过'
+          : activity.status === 'completed' ? 'GCMS 连接检查完成'
+          : phase;
+      }
+      if (phase === '正在检查图片文件') {
+        return activity.status === 'failed' ? '图片检查未成功'
+          : activity.status === 'completed' ? '图片检查完成'
+          : phase;
+      }
+      if (phase === '正在处理站点内容' || phase === '站点操作已完成') {
+        return activity.status === 'failed' ? '站点内容处理未成功'
+          : activity.status === 'completed' ? '站点内容处理完成'
+          : '正在处理站点内容';
+      }
+      return phase;
+    }
+    if (activity.kind === 'image_generation') return activity.status === 'completed' ? '图片已生成' : '正在生成图片';
+    if (activity.kind === 'image_review') return activity.status === 'completed' ? '图片检查完成' : '正在检查图片';
+    if (activity.kind === 'reasoning') return '正在分析与规划';
+    if (activity.kind === 'skill') return '正在使用技能';
     const label = activity.label.trim();
     const key = label.toLowerCase();
     if (key.includes('get_command_or_subagent_output')) return '等待后台任务返回';
     if (key.includes('kill_command_or_subagent')) return '正在停止无响应的后台任务';
     if (key === 'todo_write' || key.includes('update_plan')) return '正在更新执行计划';
     if (key.includes('subagent') || key.includes('spawn_agent')) return '后台代理正在处理';
-    if (key === 'exec' || key === 'bash' || key.includes('terminal')) {
-      const detail = activity.detail.trim();
-      if (detail && !/^export\s+PATH=/i.test(detail)) return detail;
-      return '正在执行命令';
+    if (activity.kind === 'command' || key === 'exec' || key === 'bash' || key.includes('terminal')) {
+      const detail = activity.detail.trim().toLowerCase();
+      const completed = activity.status === 'completed';
+      const failed = activity.status === 'failed';
+      if (detail.includes('gcms.js')) {
+        if (/\b(upload|media)\b/.test(detail)) {
+          return failed ? '站点图片上传未成功' : completed ? '站点图片已上传' : '正在上传站点图片';
+        }
+        if (/\b(update|publish|published|patch)\b/.test(detail)) {
+          return failed ? '站点内容更新未成功' : completed ? '站点内容已更新' : '正在更新站点内容';
+        }
+        if (/\b(audit|preview|check|validate)\b/.test(detail)) {
+          return failed ? '站点内容检查未成功' : completed ? '站点内容检查完成' : '正在检查站点内容';
+        }
+        if (/\b(list|get|categories|types|languages)\b/.test(detail)) {
+          return failed ? '站点资源读取未成功' : completed ? '站点资源读取完成' : '正在读取站点资源';
+        }
+        return failed ? '站点处理未成功' : completed ? '站点处理完成' : '正在处理站点内容';
+      }
+      if (/\b(npm|cargo|svelte-check|pytest|go test)\b/.test(detail)) {
+        return failed ? '项目检查未通过' : completed ? '项目检查完成' : '正在检查项目';
+      }
+      return failed ? '任务步骤未成功' : completed ? '任务步骤已完成' : '正在执行任务步骤';
     }
     if (key === 'read') return '正在读取资料';
     if (key === 'edit') return '正在修改文件';
@@ -6148,28 +6219,63 @@
   function executionProgress(live: LiveTurn, now: number) {
     const activities = Object.values(live.activities).sort((a, b) => a.startedAt - b.startedAt);
     const runningActivities = activities.filter((activity) => activity.status === 'running');
+    const failedActivities = activities.filter((activity) => activity.status === 'failed');
     const latest = runningActivities.at(-1) ?? activities.at(-1);
     const finished = activities.filter((activity) => activity.status === 'completed').length;
-    const failed = activities.filter((activity) => activity.status === 'failed').length;
     const canceled = activities.filter((activity) => activity.status === 'canceled').length;
     const quietFor = Math.max(0, now - live.lastActivityAt);
     const quiet = activities.length > 0 && quietFor >= 45_000;
+    // CLI 子进程启动后，到首个 JSON 状态事件返回前没有更细的真实阶段。
+    // 与 Codex 原生界面一致立即显示“正在思考”，不把这段空窗误称为恢复历史会话。
+    const waitingForFirstActivity = activities.length === 0 && !live.text;
     let title = latest ? activityLabel(latest) : '正在思考下一步';
-    if (quiet) title = '后台任务暂时没有新进展';
+    if (waitingForFirstActivity) title = '正在思考';
+    else if (quiet) title = '后台任务仍在运行';
     else if (!runningActivities.length && activities.length) title = live.text ? '正在整理并继续处理' : '正在等待下一步';
     const parts: string[] = [];
-    if (finished) parts.push(`${finished} 次执行已返回`);
-    if (runningActivities.length) parts.push(`${runningActivities.length} 项进行中`);
-    if (failed) parts.push(`${failed} 项失败`);
+    const generated = activities.filter((activity) => activity.kind === 'image_generation' && activity.status === 'completed').length;
+    const skills = activities.filter((activity) => activity.kind === 'skill' && activity.status === 'completed').length;
+    // 这是工具真实返回的“调用完成次数”，可能包含重做，不能冒充业务目标张数。
+    if (generated) parts.push(`图片生成完成 ${generated} 次`);
+    if (skills) parts.push(`已完成 ${skills} 次技能调用`);
+    if (!generated && !skills && finished) parts.push(`${finished} 个步骤已完成`);
     if (canceled) parts.push(`${canceled} 项已停止`);
-    if (quiet) parts.push(`${elapsedLabel(quietFor)} 未收到新事件`);
+    if (waitingForFirstActivity && quietFor >= 60_000) parts.push('Codex 暂未返回新进展');
+    if (quiet) parts.push(`最近活动在 ${elapsedLabel(quietFor)} 前`);
+    parts.push(`已运行 ${elapsedLabel(now - live.startedAt)}`);
+    const trueProgress = [...activities]
+      .reverse()
+      .find((activity) => activity.total != null && activity.total > 0 && activity.current != null && activity.current >= 0 && activity.current <= activity.total);
+    const latestFailureAt = failedActivities.reduce((latestAt, activity) => Math.max(latestAt, activity.updatedAt), 0);
+    const continuedAfterFailure = latestFailureAt > 0
+      && activities.some((activity) => activity.status === 'completed' && activity.updatedAt > latestFailureAt);
     return {
-      hasActivity: activities.length > 0,
+      hasActivity: activities.length > 0 || waitingForFirstActivity,
+      thinking: waitingForFirstActivity,
       title,
-      meta: parts.join(' · ') || '正在建立执行上下文',
+      meta: parts.join(' · '),
       quiet,
-      failed: failed > 0,
+      failed: failedActivities.length > 0,
+      continuedAfterFailure,
+      failedActivities,
+      activities: [...activities].reverse().slice(0, 10),
+      trueProgress,
     };
+  }
+  function activityFailureReason(activity: ExecutionActivity): string {
+    return activity.error.trim() || '执行端未返回具体错误原因';
+  }
+  function activityStatusLabel(activity: ExecutionActivity): string {
+    if (activity.status === 'completed') return '已完成';
+    if (activity.status === 'failed') return '未成功';
+    if (activity.status === 'canceled') return '已停止';
+    return '进行中';
+  }
+  function activityDetail(activity: ExecutionActivity): string {
+    // 原始 shell 命令、绝对路径和参数不适合直接暴露给普通用户。完整命令已经保留在
+    // 上方可折叠的“执行记录”中；任务卡只呈现语义状态和真实终态。
+    if (activity.kind === 'command') return '';
+    return activity.detail.trim();
   }
   function compactToolRows(tools: ToolCall[]): Array<ToolCall & { count: number }> {
     const rows: Array<ToolCall & { count: number }> = [];
@@ -10412,6 +10518,10 @@
       if (!buf) return; // 该对话已结束/被清（切走后仍可能收到尾包）
       if (ev.type === 'delta') {
         buf.text += ev.text;
+        // Markdown 的 {@html} 会替换其整棵子树。若直接在模板中调用 mdRender，
+        // 生图/推理等 activity 更新也可能让正文跟着反复失效，形成可见闪空。
+        // 把渲染结果缓存到正文事件上，任务卡更新时该字段保持引用和值都不变。
+        buf.renderedText = mdRender(buf.text);
         buf.lastActivityAt = Date.now();
         if (activeConvId === convId) scrollSoon();
       }
@@ -10430,6 +10540,11 @@
             label: ev.label || previous?.label || '',
             detail: ev.detail || previous?.detail || '',
             status: ev.status,
+            error: ev.error || previous?.error || '',
+            kind: ev.kind || previous?.kind,
+            phase: ev.phase || previous?.phase,
+            current: ev.current ?? previous?.current,
+            total: ev.total ?? previous?.total,
             startedAt: previous?.startedAt ?? now,
             updatedAt: now,
           },
@@ -10509,6 +10624,7 @@
     const startedAt = Date.now();
     lives[convId] = {
       text: '',
+      renderedText: '',
       tools: [],
       activities: {},
       lastActivityAt: startedAt,
@@ -10531,6 +10647,7 @@
   }
   function endTurn(conv: Conversation | null, convId: string) {
     const failed = lives[convId]?.failed ?? false; // 删缓冲前先取，供等待消息门控用
+    const completedTurnStartedAt = lives[convId]?.startedAt ?? 0;
     const createdSiteThisTurn = sitebuildToolsExecutedCreate(lives[convId]?.tools);
     const createRejectedThisTurn = sitebuildCreateWasRejected(lives[convId]?.text, lives[convId]?.tools);
     const sitebuildBaseline = sitebuildTurnDiscoveryBaselines.get(convId);
@@ -10571,9 +10688,21 @@
     }
     // 等待消息：这轮**成功**结束、用户还在本会话，才把排队的那条发出去（失败/要重连时不发，避免连环失败）。
     if (!failed && queued && queued.convId === convId && activeConvId === convId) {
-      const q = queued; queued = null;
-      draft = q.text; attachments = q.atts;
-      queueMicrotask(() => { void send(); });
+      const q = queued;
+      const lastUserText = [...(conv?.messages ?? activeConv?.messages ?? [])]
+        .reverse()
+        .find((message) => message.role === 'user')?.text.trim() ?? '';
+      const staleQueue = !completedTurnStartedAt || q.turnStartedAt !== completedTurnStartedAt;
+      const duplicateQueue = queuedPayloadText(q).trim() === lastUserText;
+      queued = null;
+      if (staleQueue || duplicateQueue) {
+        // 排队项必须来自刚结束的这一轮，并且不能与该轮原始请求完全相同。
+        // 这同时挡住 HMR/旧状态残留和完成后的原消息重放。
+        if (activeConvId === convId) say('已拦截重复的等待消息，未再次执行');
+      } else {
+        draft = q.text; attachments = q.atts;
+        queueMicrotask(() => { void send(); });
+      }
     }
     // 不在接近上限时自动 rebuild：rebuild 会创建全新的底层 Claude session，只能靠摘要
     // 衔接，等同于主动丢弃原生会话上下文。Claude Code 会自行管理长会话；若底层真的返回
@@ -10730,16 +10859,36 @@
   function removeAttachment(i: number) { attachments = attachments.filter((_, idx) => idx !== i); }
 
   // 等待消息：这轮还在跑时先把下一条排进队列，等回合结束自动发；发出前可编辑/清除。绑定 convId，切走即清。
-  let queued = $state<{ convId: string; text: string; atts: Attach[] } | null>(null);
+  type QueuedMessage = {
+    convId: string;
+    text: string;
+    atts: Attach[];
+    /** 排队动作所属的运行轮；轮末只消费同一轮创建的消息。 */
+    turnStartedAt: number;
+  };
+  let queued = $state<QueuedMessage | null>(null);
+  function queuedPayloadText(message: QueuedMessage): string {
+    if (!message.atts.length) return message.text;
+    return message.text
+      + (message.text ? '\n\n' : '')
+      + ATT_MARKER + '\n'
+      + message.atts.map((attachment) => `- ${attachment.path}`).join('\n');
+  }
   function queueMessage() {
     if (!activeConv) return;
     if (!draft.trim() && !attachments.length) return;
     if (!running[activeConv.id]) { void send(); return; } // 其实没在跑就直接发
     const t = draft.trim();
+    const turnStartedAt = lives[activeConv.id]?.startedAt ?? Date.now();
     // 已有排队则合并进同一条（不覆盖丢字）；否则新建。
     queued = queued && queued.convId === activeConv.id
-      ? { convId: activeConv.id, text: [queued.text, t].filter(Boolean).join('\n'), atts: [...queued.atts, ...attachments] }
-      : { convId: activeConv.id, text: t, atts: attachments };
+      ? {
+          convId: activeConv.id,
+          text: [queued.text, t].filter(Boolean).join('\n'),
+          atts: [...queued.atts, ...attachments],
+          turnStartedAt,
+        }
+      : { convId: activeConv.id, text: t, atts: attachments, turnStartedAt };
     draft = ''; attachments = [];
   }
   function editQueued() {
@@ -13425,20 +13574,73 @@
               </div>
             {/if}
             <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
-            {#if liveView.text}<div class="text md" onclick={mdClick} onauxclick={mdClick}>{@html mdRender(liveView.text)}</div>{/if}
-            {#if progress.hasActivity}
-              <div class="execution-progress" class:quiet={progress.quiet} class:has-failure={progress.failed}>
-                <span class="execution-progress-mark" aria-hidden="true">
-                  <span></span>
-                </span>
-                <span class="execution-progress-copy">
-                  <b>{progress.title}</b>
-                  <small>{progress.meta}</small>
-                </span>
+            {#if liveView.renderedText}<div class="text md live-text" onclick={mdClick} onauxclick={mdClick}>{@html liveView.renderedText}</div>{/if}
+            {#if progress.thinking}
+              <div class="codex-thinking" role="status" aria-live="polite">
+                <span>正在思考</span>
+              </div>
+            {:else if progress.hasActivity}
+              <div class="execution-progress-stack">
+                <details
+                  class="execution-progress execution-progress-details is-running"
+                  class:quiet={progress.quiet}
+                  class:has-failure={progress.failed}
+                  class:recovered-failure={progress.continuedAfterFailure}
+                >
+                  <summary>
+                    <span class="execution-progress-mark" aria-hidden="true">
+                      <span></span>
+                    </span>
+                    <span class="execution-progress-copy">
+                      <b>{progress.title}</b>
+                      <small>{progress.meta}</small>
+                    </span>
+                    <span class="execution-failure-summary">
+                      {#if progress.failedActivities.length && !progress.continuedAfterFailure}
+                        <b>{progress.failedActivities.length} 项异常</b>
+                      {/if}
+                      <small>查看详情</small>
+                      <svg width="11" height="11" viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M3 4.5 6 7.5l3-3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg>
+                    </span>
+                  </summary>
+                  <div class="execution-activity-list">
+                    {#if progress.trueProgress}
+                      <div class="execution-real-progress">
+                        <div>
+                          <b>{progress.trueProgress.current} / {progress.trueProgress.total}</b>
+                          <span>{activityLabel(progress.trueProgress)}</span>
+                        </div>
+                        <span><i style={`width:${Math.round(((progress.trueProgress.current ?? 0) / (progress.trueProgress.total ?? 1)) * 100)}%`}></i></span>
+                      </div>
+                    {/if}
+                    {#each progress.activities as activity (activity.id)}
+                      {@const detail = activityDetail(activity)}
+                      <div class="execution-activity-item" class:is-failed={activity.status === 'failed'}>
+                        <span class={`execution-activity-state ${activity.status}`}></span>
+                        <div>
+                          <b>{activityLabel(activity)}</b>
+                          {#if activity.status === 'failed'}
+                            <p>{activityFailureReason(activity)}</p>
+                          {:else if detail}
+                            <p>{detail}</p>
+                          {/if}
+                        </div>
+                        <small>{activityStatusLabel(activity)}</small>
+                      </div>
+                    {/each}
+                    {#if progress.failedActivities.length}
+                      <p class="execution-failure-impact">
+                        {progress.continuedAfterFailure
+                          ? '后续步骤已继续执行；最终答复会说明该异常是否影响结果。'
+                          : '本轮仍在继续；最终答复会说明该异常是否影响结果。'}
+                      </p>
+                    {/if}
+                  </div>
+                </details>
               </div>
             {/if}
             {#if liveView.error}<div class="err-note">{liveView.error}</div>
-            {:else}
+            {:else if !progress.thinking}
               <div class="working" aria-label="思考中">
                 <svg class="wl" viewBox="0 0 64 64" width="17" height="17" aria-hidden="true">
                   <path class="wl-trace" d="M44 24a14 14 0 1 0 0 16" fill="none" stroke="#a03c2b" stroke-width="7" stroke-linecap="round" pathLength="100" stroke-dasharray="100" />
@@ -18121,22 +18323,100 @@
   .limit-actions .retry-btn.is-armed { color: #3e7a4e; }
   .limit-hint { margin-top: 6px; font-size: 11.5px; color: var(--faint, #9b968c); }
   /* 运行中活动：只展示协议里真实收到的工具生命周期，不把轮询次数冒充业务完成度。 */
+  .codex-thinking {
+    width: max-content;
+    margin: 13px 0 11px;
+    font-size: 15px;
+    font-weight: 500;
+    line-height: 1.5;
+  }
+  .codex-thinking > span {
+    color: transparent;
+    background: linear-gradient(90deg, #aaa7a0 20%, #dedbd4 48%, #aaa7a0 76%);
+    background-size: 220% 100%;
+    background-position: 100% 50%;
+    background-clip: text;
+    -webkit-background-clip: text;
+    animation: codexThinkingShimmer 2.1s ease-in-out infinite;
+  }
+  @keyframes codexThinkingShimmer {
+    0%, 100% { background-position: 100% 50%; opacity: .62; }
+    50% { background-position: 0 50%; opacity: 1; }
+  }
+  .execution-progress-stack { width: min(620px, 100%); margin: 7px 0 5px; }
   .execution-progress {
-    width: fit-content; max-width: 100%; box-sizing: border-box; display: flex; align-items: center; gap: 7px;
-    margin: 9px 0 7px; padding: 6px 9px; border: 1px solid var(--border); border-radius: 9px;
+    width: 100%; box-sizing: border-box; margin: 0; border: 1px solid var(--border); border-radius: 9px;
     background: #faf9f6;
   }
-  .execution-progress-mark { width: 18px; height: 18px; flex: none; display: grid; place-items: center; border-radius: 6px; background: #eeeae3; }
-  .execution-progress-mark > span { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
-  .execution-progress-copy { min-width: 0; display: flex; align-items: baseline; gap: 7px; }
-  .execution-progress-copy b, .execution-progress-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .execution-progress-copy b { font-size: 12px; font-weight: 600; color: var(--text); }
-  .execution-progress-copy small { font-size: 10.5px; color: var(--faint); font-variant-numeric: tabular-nums; }
+  .execution-progress-mark { width: 16px; height: 16px; flex: none; display: grid; place-items: center; border-radius: 5px; background: #eeeae3; }
+  .execution-progress-mark > span { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
+  .execution-progress-copy { min-width: 0; display: grid; gap: 0; }
+  .execution-progress-copy b, .execution-progress-copy small { min-width: 0; overflow-wrap: anywhere; white-space: normal; }
+  .execution-progress-copy b { font-size: 11.5px; line-height: 1.42; font-weight: 600; color: var(--text); }
+  .execution-progress-copy small { margin-top: 1px; font-size: 10px; line-height: 1.4; color: var(--faint); font-variant-numeric: tabular-nums; }
   .execution-progress.quiet { border-color: #ead8b7; background: #fcf8ef; }
   .execution-progress.quiet .execution-progress-mark { background: #f4ead6; }
   .execution-progress.quiet .execution-progress-mark > span { background: #b87920; }
-  .execution-progress.has-failure:not(.quiet) { border-color: #ecd9d4; }
-  .execution-progress.has-failure:not(.quiet) .execution-progress-mark > span { background: var(--err); }
+  .execution-progress.has-failure:not(.quiet) { border-color: #ead8b7; background: #fcf8ef; }
+  .execution-progress.has-failure:not(.quiet) .execution-progress-mark { background: #f4ead6; }
+  .execution-progress.has-failure:not(.quiet) .execution-progress-mark > span { background: #b87920; }
+  .execution-progress.recovered-failure:not(.quiet) { border-color: var(--border); background: #faf9f6; }
+  .execution-progress.recovered-failure:not(.quiet) .execution-progress-mark { background: #eeeae3; }
+  .execution-progress.recovered-failure:not(.quiet) .execution-progress-mark > span { background: var(--accent); }
+  .execution-progress-details {
+    display: block; padding: 0; overflow: hidden;
+  }
+  .execution-progress-details > summary {
+    display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; align-items: start; gap: 7px; min-width: 0; padding: 6px 8px;
+    cursor: pointer; list-style: none; user-select: none;
+  }
+  .execution-progress-details > summary::-webkit-details-marker { display: none; }
+  .execution-progress-details .execution-progress-copy { flex: 1 1 auto; }
+  .execution-failure-summary {
+    display: flex; align-items: center; gap: 4px; flex: none; margin: 1px 0 0 auto;
+    color: #8a5d1b; white-space: nowrap;
+  }
+  .execution-failure-summary b { font-size: 10px; font-weight: 650; }
+  .execution-failure-summary small { color: var(--faint); font-size: 10px; font-weight: 500; }
+  .execution-failure-summary svg { flex: none; transition: transform .15s ease; }
+  .execution-progress-details[open] .execution-failure-summary svg { transform: rotate(180deg); }
+  .execution-activity-list { max-height: min(300px, 42vh); overflow: auto; padding: 5px 8px 7px; border-top: 1px solid rgba(128,122,110,.16); }
+  .execution-activity-item { display: grid; grid-template-columns: 7px minmax(0,1fr) auto; gap: 7px; align-items: start; padding: 6px 0; border-bottom: 1px solid rgba(128,122,110,.12); }
+  .execution-activity-item > div { min-width: 0; }
+  .execution-activity-item b { display: block; font-size: 11.5px; font-weight: 650; line-height: 1.4; overflow-wrap: anywhere; }
+  .execution-activity-item p { margin: 2px 0 0; color: var(--dim); font-size: 10.5px; line-height: 1.45; overflow-wrap: anywhere; }
+  .execution-activity-item > small { color: var(--faint); font-size: 10px; white-space: nowrap; }
+  .execution-activity-item.is-failed > small { color: #9a6420; }
+  .execution-activity-state { width: 6px; height: 6px; margin-top: 5px; border-radius: 50%; background: #aaa59a; }
+  .execution-activity-state.running { background: var(--accent); box-shadow: 0 0 0 3px rgba(160,60,43,.09); }
+  .execution-activity-state.completed { background: #4e9861; }
+  .execution-activity-state.failed { background: #b87920; }
+  .execution-real-progress { padding: 5px 0 8px; }
+  .execution-real-progress > div { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 10.5px; color: var(--dim); }
+  .execution-real-progress > div b { color: var(--text); font-size: 11px; }
+  .execution-real-progress > span { display: block; height: 3px; margin-top: 5px; overflow: hidden; border-radius: 9px; background: #e8e4dc; }
+  .execution-real-progress > span i { display: block; height: 100%; border-radius: inherit; background: var(--accent); }
+  .execution-progress.is-running .execution-progress-mark > span { animation: executionPulse 1.6s ease-in-out infinite; }
+  @keyframes executionPulse {
+    0%, 100% { transform: scale(.82); opacity: .72; box-shadow: 0 0 0 0 rgba(160,60,43,0); }
+    50% { transform: scale(1.08); opacity: 1; box-shadow: 0 0 0 4px rgba(160,60,43,.11); }
+  }
+  .execution-failure-impact { margin: 8px 0 0; color: #8a6d43; font-size: 10.5px; line-height: 1.55; }
+  @media (max-width: 620px) {
+    .execution-progress-stack { width: 100%; }
+    .execution-progress-details > summary { padding: 6px 8px; }
+    .execution-failure-summary small { display: none; }
+    .execution-failure-summary b { max-width: 76px; overflow: hidden; text-overflow: ellipsis; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .codex-thinking > span {
+      color: var(--faint);
+      background: none;
+      animation: none;
+      opacity: 1;
+    }
+    .execution-progress.is-running .execution-progress-mark > span { animation: none; }
+  }
   /* 命令列表：默认收起，点击展开 */
   .cmds { margin-bottom: 9px; }
   .cmds summary { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; list-style: none; width: fit-content;

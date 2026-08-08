@@ -653,3 +653,183 @@ No actionable P0, P1, or P2 difference remains. The button now reads as a normal
 ## Final result
 
 final result: passed
+
+### Pass 30 — Pilot live-task card wrapping and recovered-error hierarchy, blocked
+
+- Source visual truth:
+  - `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-c0937651-a61b-49ca-95b7-93f7dd116d83.png` (1320 × 350 px).
+  - `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-2b85ca07-0fca-4bff-ad72-ff24787d68cc.png` (1258 × 250 px).
+- Implementation screenshot: unavailable. The standalone Vite page is blank outside Tauri, and two read-only Computer Use captures of the running `GCMS Pilot` window timed out. No rendered evidence was fabricated.
+- Intended state: desktop conversation with a long current-activity label; recovered transient failure followed by successful activity.
+- Viewport, implementation pixels, CSS size and density normalization could not be measured without a real Tauri capture.
+- Full-view and focused same-input comparisons are blocked by the unavailable implementation screenshot.
+- Fonts/typography: code inspection confirms normal wrapping and `overflow-wrap:anywhere`; visual fidelity is unverified.
+- Spacing/layout: summary contents are top-aligned so the title and metadata can grow vertically; visual density is unverified.
+- Colors/tokens and icons remain unchanged.
+- Copy/content: full activity text is preserved. A recovered failure stays in expanded details but no longer appears as a primary warning. An unresolved failure still shows “N 项异常”.
+- Static verification: `npm run check` reports 0 errors and 0 warnings.
+- [P1] Remaining blocker: restart/load the revised Pilot build, reproduce both card states, capture them, and compare them with the supplied source crops.
+
+## Findings
+
+- [P1] Rendered Tauri evidence is unavailable, so this visual pass cannot be marked complete despite clean static checks.
+
+## Implementation Checklist
+
+- Restart the revised Pilot build while no task is running.
+- Verify full label wrapping at desktop and mobile widths.
+- Verify recovered failures are detail-only and unresolved failures remain visible.
+
+## Final result
+
+final result: blocked
+
+### Pass 31 — Toolbench / Decision Grid / Release Radar dashboard families, passed
+
+- Visual sources:
+  - Toolbench: `/Users/apple/.codex/generated_images/019f986c-a7c7-71f0-9b09-ea435acec882/call_St4HDjIO2aXVmYPKMfL4doXJ.png`
+  - Decision Grid: `/Users/apple/.codex/generated_images/019f986c-a7c7-71f0-9b09-ea435acec882/call_zVTRA10VJ2fBYrl2NOpBjz9t.png`
+  - Release Radar: `/Users/apple/.codex/generated_images/019f986c-a7c7-71f0-9b09-ea435acec882/call_pxpZs2k0nNZv4GfIN0h1DmN3.png`
+- Same-input comparison evidence:
+  - `.qa/dashboard-themes/toolbench-compare.png`
+  - `.qa/dashboard-themes/decision-grid-compare.png`
+  - `.qa/dashboard-themes/release-radar-compare.png`
+  - Each comparison places the selected design on the left and the final live-data implementation on the right at equal normalized dimensions.
+- Final browser evidence:
+  - Native homepages: `.qa/dashboard-themes/{toolbench,decision-grid,release-radar}-home.png`
+  - Pure-white cards: `.qa/dashboard-themes/{toolbench,decision-grid,release-radar}-white.png`
+  - Mobile: `.qa/dashboard-themes/{toolbench,decision-grid,release-radar}-mobile.png`
+  - Restyled inner pages: `.qa/dashboard-themes/{toolbench,decision-grid,release-radar}-article.png`
+  - Release Radar resource index: `.qa/dashboard-themes/release-radar-links.png`
+- Desktop layout was measured at a 1488 × 1024 CSS viewport and mobile at 390 × 844. The visible browser capture surface excludes browser scrollbar/chrome pixels; comparison images normalize both halves to the same 633 × 507 region. All measured pages report no horizontal overflow.
+- Structure fidelity: Toolbench retains the compact search-led tool dashboard, comparison rail, recommended resources and update ledger. Decision Grid retains the dark three-column decision surface, category index, tool rows, selected comparisons and chronological ledger. Release Radar retains the editorial release lead, update table, recommendation/compare sidebar and category index.
+- Dynamic-content contract: every visible Logo, menu item, Hero eyebrow/title/description/media, category/count, featured article, latest article, resource link, date, excerpt and translated label comes from the existing public view model. Theme templates contain no design-study article names, counts, dates, URLs or product copy.
+- Hero-media contract: configured image, SVG and theme animation modes are routed through the stored site setting. Media wrappers remain transparent; images use `object-fit: contain` and receive no mask, gradient or theme background. Real long CMS copy is bounded with responsive type and line clamping so it preserves the source dashboard density without writing content-specific exceptions.
+- Inner-page contract: each family restyles the shared article, category/list, search, links, pagination, TOC and footer templates. Browser captures confirm themed article pages for all three families and a themed Release Radar link index. Headers remain sticky.
+- Palette contract: each family exposes its native card and one `-white` sibling on the same picker card. Browser-computed body backgrounds for all three white variants are `rgb(255, 255, 255)`; their panel surfaces are also white.
+- Responsive interaction: at 390 × 844 the Logo stays left and the menu control stays right for all three themes. The named “主导航” button was activated in every family; the header entered `nav-open` and the navigation changed from hidden to `display:flex`.
+- Comparison history:
+  - Pass 1 found oversized live Hero copy that pushed the lower dashboard below the accepted source rhythm.
+  - The final pass reduced display scale and vertical padding, clamped only the homepage description, fixed the Toolbench image element sizing, and preserved uncropped real Hero media.
+  - Remaining visible differences are expected live-data differences: the studies contain short art-directed copy, custom illustrations and fuller sample collections, while production deliberately renders the current site's longer Hero text, configured screenshot and actual collection sizes.
+- Runtime verification: the in-app browser reports no application warnings or errors. The focused dashboard/theme/template suite passes, `go build ./...` succeeds, and `git diff --check` is clean. The unrelated full web test path still reaches sandbox-blocked listener/network cases; no in-scope dashboard contract failed.
+
+## Findings
+
+No actionable P0, P1 or P2 visual, responsive, data-binding or interaction difference remains within the three selected dashboard families.
+
+## Final result
+
+final result: passed
+
+### Pass 32 — Dashboard theme search geometry and responsive hardening, passed
+
+- Source visual truth: `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-4a874a91-e8e6-40ba-abb3-bf0b749a7d6e.png` (1264 × 904 px). It shows the Toolbench homepage search label occupying layout space, the icon centered against the inflated label block, and the submit button stretched to the same incorrect height.
+- Final implementation evidence: `.qa/dashboard-theme-fix/19-toolbench-final.png`; focused same-input comparison: `.qa/dashboard-theme-fix/18-toolbench-search-comparison.png`. The comparison places the supplied broken state and final browser render in one normalized 1216 × 155 image.
+- Root cause: the homepage template used an `.sr-only` span, but the shared public frontend did not define that utility. The visible span increased the label height from 40 px to 68.9 px; flex stretch then enlarged the button, while the absolutely positioned icon centered against the wrong label box.
+- Toolbench result: the redundant span was removed while the input keeps its translated `aria-label`. The form, label, input and button now share an exact 40 px row; the icon is 18 × 18 px and vertically centered. The desktop browser reports no horizontal overflow. Mobile search stacks to 303 px full-width input/button rows, and the shared mobile navigation opens with `aria-expanded="true"` and no overflow.
+- Inner-page evidence:
+  - Toolbench: `.qa/dashboard-theme-fix/03-toolbench-search.png`, `.qa/dashboard-theme-fix/04-toolbench-article.png`
+  - Decision Grid: `.qa/dashboard-theme-fix/08-decision-grid-search.png`, `.qa/dashboard-theme-fix/09-decision-grid-article.png`
+  - Release Radar: `.qa/dashboard-theme-fix/13-release-radar-search.png`, `.qa/dashboard-theme-fix/14-release-radar-article.png`
+  - Search, category, links, article and ordinary page routes were browser-measured for each family; all report zero horizontal overflow and sticky headers.
+- Responsive evidence:
+  - Toolbench: `.qa/dashboard-theme-fix/05-toolbench-mobile.png`
+  - Decision Grid: `.qa/dashboard-theme-fix/10-decision-grid-mobile.png`
+  - Release Radar: `.qa/dashboard-theme-fix/15-release-radar-mobile.png`
+  - All three 375 × 844 frame viewports keep the logo left and 40–44 px menu control right. Each real menu control was activated through the browser; the corresponding header entered `nav-open`, its navigation became visible and `aria-expanded` became true.
+  - Decision Grid now collapses the tablet header before its three-column controls crowd, recomputes mobile divider edges after visual reordering, and protects long titles, URLs, code and tables.
+  - Release Radar now protects the 1101–1120 px article/TOC boundary. At a measured 1095 px content viewport the article grid and visible TOC report zero horizontal overflow. Mobile search stacks at 310 px full width with a 46 px input and 42 px button.
+- Pure-white evidence:
+  - Toolbench: `.qa/dashboard-theme-fix/06-toolbench-white.png`
+  - Decision Grid: `.qa/dashboard-theme-fix/11-decision-grid-white.png`
+  - Release Radar: `.qa/dashboard-theme-fix/16-release-radar-white.png`
+  - Computed body backgrounds are `rgb(255, 255, 255)` for all three variants. The same configured Hero and real resource/post data remain visible.
+- Runtime checks: focused dashboard/theme/template/standard-page tests pass; `go build ./...` succeeds; `git diff --check` and the three new CSS/template trailing-whitespace scan are clean. The final Toolbench page emits no browser console messages.
+
+## Findings
+
+No actionable P0, P1 or P2 layout, responsive, data-binding or interaction issue remains in the three dashboard families covered by this pass.
+
+## Final result
+
+final result: passed
+
+### Pass 33 — Dashboard search focus treatment, passed
+
+- Source visual truth: `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-67deb388-62c8-4c37-a48d-bbd043100444.png`. It shows the Toolbench homepage search field receiving both the theme border and a separate 2 px browser focus outline with a 3 px offset.
+- Browser evidence:
+  - Before: `.qa/dashboard-theme-fix/20-toolbench-focus-before.png`
+  - After: `.qa/dashboard-theme-fix/21-toolbench-focus-after.png`
+  - Inner search page: `.qa/dashboard-theme-fix/22-toolbench-inner-search-focus.png`
+  - Same-input comparison: `.qa/dashboard-theme-fix/23-toolbench-focus-comparison.png`
+- Final Toolbench homepage geometry is unchanged at 329.84 × 40 px. The focused input now has no outline or shadow and retains one 1 px accent border, so keyboard focus remains visible without the double dark frame.
+- The Toolbench inner search input follows the same treatment at 510 × 48 px. Both measured routes report zero horizontal overflow.
+- Matching search-input overrides were added to Decision Grid and Release Radar so the three related dashboard families use the same single-border focus contract. Link and button focus indicators remain untouched.
+- Runtime checks: the focused dashboard/theme/template/standard-page test suite passes, `go build ./...` succeeds and `git diff --check` is clean.
+
+## Findings
+
+No actionable P0, P1 or P2 focus, geometry, responsive or accessibility issue remains in the dashboard search inputs covered by this pass.
+
+## Final result
+
+final result: passed
+
+### Pass 34 — Dashboard outer boundaries and header alignment, passed
+
+- Source visual truth:
+  - Toolbench outer-line reference: `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-300aed8a-b98b-4b17-8b08-d834b89f3047.png`
+  - Decision Grid outer-line reference: `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-f4c3158f-b105-4830-8230-91b3ef130e70.png`
+  - Header/content alignment references: `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-b590afff-ebfb-47b6-ac56-f2e90cb076db.png`, `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-21685be4-e36b-499b-8abd-3a11f0f9115b.png`, `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-c60d884a-a418-4d54-800a-f1d1c02165e0.png`
+- Final browser evidence:
+  - Combined normalized comparison: `.qa/dashboard-align/dashboard-boundary-comparison.png`
+  - Toolbench: `.qa/dashboard-align/toolbench-final.png`
+  - Decision Grid: `.qa/dashboard-align/decision-grid-final.png`
+  - Release Radar: `.qa/dashboard-align/release-radar-final.png`
+- Root cause: the shared dashboard header used both its family grid class and the global `.wrap` class. The latter silently constrained the header to the common `--w-wide` value, while each dashboard homepage used its own family width. Toolbench and Decision Grid also placed a border on the full outer page shell, producing the two unrelated full-height vertical lines.
+- Boundary result: the shared dashboard header no longer inherits the global wrapper constraint. Each family now owns one explicit responsive width contract shared by its header and content. Toolbench and Decision Grid outer-shell side borders were removed; intentional card, row, column and horizontal separators remain unchanged.
+- Desktop measurements at a 2048 px browser viewport:
+  - Toolbench header and content: `x=280`, `right=1768`, `width=1488`
+  - Decision Grid header and content: `x=314`, `right=1734`, `width=1420`
+  - Release Radar header and content: `x=356.5`, `right=1676.5`, `width=1320`
+  - All three pages report zero horizontal overflow and zero outer-shell left/right border widths.
+- Mobile measurements at a 390 × 844 viewport:
+  - Toolbench header/content: `x=0`, `right=375`, `width=375`
+  - Decision Grid header/content: `x=0`, `right=375`, `width=375`
+  - Release Radar header/content: `x=14`, `right=361`, `width=347`
+  - All three mobile pages report zero horizontal overflow.
+- Runtime checks: the focused dashboard/theme/template/standard-page suite passes, `go build ./...` succeeds and `git diff --check` is clean.
+
+## Findings
+
+No actionable P0, P1 or P2 boundary, alignment, responsive or overflow issue remains in the three dashboard families covered by this pass.
+
+## Final result
+
+final result: passed
+
+### Pass 35 — Decision Grid footer breathing room and functional Release Radar header search, passed
+
+- Source visual truth:
+  - Decision Grid bottom-spacing reference: `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-5a33113d-e634-4cc0-be8a-de46cc6ab9f9.png`
+  - Release Radar misleading search-control reference: `/var/folders/hv/v_cz9tgs4b74bg3qdvssct_h0000gn/T/codex-clipboard-968c3761-8971-437f-86cc-d35562ee4a40.png`
+- Final browser evidence:
+  - Combined source/final comparison: `.qa/dashboard-breathing/dashboard-breathing-search-comparison.png`
+  - Decision Grid before: `.qa/dashboard-breathing/decision-grid-before.png`
+  - Decision Grid after: `.qa/dashboard-breathing/decision-grid-after.png`
+  - Decision Grid responsive capture: `.qa/dashboard-breathing/decision-grid-mobile.png`
+  - Release Radar functional search: `.qa/dashboard-breathing/release-radar-search-functional.png`
+- Decision Grid result: the homepage owns a responsive bottom breathing-space token rather than relying on the final data row. At the 2048 px QA viewport, the measured distance from the last update row to the footer increased from 16 px to 64 px; the page contributes 48 px through `clamp(28px,2.4vw,48px)`. The same rule contracts at narrower sizes, remains independent of article count and reports zero horizontal overflow.
+- Search decision: Release Radar visually reserves a full input field, so keeping it as a link-only imitation was misleading. It now renders a real GET search form using the existing translated placeholder, current query and `/search` route. A browser-entered `Cloudflare` query navigated to `/zh/search?q=Cloudflare`, retained the value and returned live results. No query text or result data is hard-coded.
+- Responsive search contract: the 240 × 36 px desktop control is fully editable; below 1120 px it collapses to the existing 38 px search-icon action; the header tools continue to defer to the mobile menu at the existing phone breakpoint. All measured states report zero horizontal overflow.
+- Scope decision: Toolbench keeps its compact search icon because its homepage already provides the primary full search form. Decision Grid keeps its compact icon treatment. Only the control that visually promises direct text entry was changed into an input.
+- Runtime checks: the focused dashboard/theme/template/standard-page suite passes, `go build ./...` succeeds, `git diff --check` is clean and the verified pages emit no browser warnings or errors.
+
+## Findings
+
+No actionable P0, P1 or P2 spacing, affordance, responsive, data-binding or interaction issue remains in the two states covered by this pass.
+
+## Final result
+
+final result: passed

@@ -456,6 +456,35 @@ async fn pump(
                 }
             } else if streaming && method == "session/update" {
                 let update = &msg["params"]["update"];
+                match update.get("sessionUpdate").and_then(|value| value.as_str()) {
+                    Some("agent_thought_chunk") => {
+                        let _ = ch.send(TurnEvent::Activity {
+                            activity_id: "native:reasoning".into(),
+                            label: "reasoning".into(),
+                            detail: String::new(),
+                            error: String::new(),
+                            status: "running".into(),
+                            kind: "reasoning".into(),
+                            phase: "正在分析与规划".into(),
+                            current: None,
+                            total: None,
+                        });
+                    }
+                    Some("tool_call" | "agent_message_chunk") => {
+                        let _ = ch.send(TurnEvent::Activity {
+                            activity_id: "native:reasoning".into(),
+                            label: String::new(),
+                            detail: String::new(),
+                            error: String::new(),
+                            status: "completed".into(),
+                            kind: "reasoning".into(),
+                            phase: String::new(),
+                            current: None,
+                            total: None,
+                        });
+                    }
+                    _ => {}
+                }
                 if let Some(request) = grok_gcms_unlock_request(update) {
                     let _ = ch.send(TurnEvent::GcmsUnlockRequired {
                         operation: request.operation,
@@ -463,12 +492,19 @@ async fn pump(
                         admin_path: request.admin_path,
                     });
                 }
-                if let Some((activity_id, label, detail, status)) = grok_activity_update(update) {
+                if let Some((activity_id, label, detail, error, status)) =
+                    grok_activity_update(update)
+                {
                     let _ = ch.send(TurnEvent::Activity {
                         activity_id,
+                        kind: agent::activity_kind(&label).into(),
                         label,
                         detail,
+                        error,
                         status,
+                        phase: String::new(),
+                        current: None,
+                        total: None,
                     });
                 }
                 if let Some((label, detail, delta)) = parse_update(update) {
@@ -560,7 +596,7 @@ fn grok_gcms_unlock_request(u: &serde_json::Value) -> Option<agent::GcmsUnlockRe
         .find_map(|key| u.get(*key).and_then(agent::gcms_unlock_from_tool_payload))
 }
 
-fn grok_activity_update(u: &serde_json::Value) -> Option<(String, String, String, String)> {
+fn grok_activity_update(u: &serde_json::Value) -> Option<(String, String, String, String, String)> {
     let update = u.get("sessionUpdate").and_then(|value| value.as_str())?;
     let activity_id = u
         .get("toolCallId")
@@ -576,7 +612,7 @@ fn grok_activity_update(u: &serde_json::Value) -> Option<(String, String, String
                 .chars()
                 .take(200)
                 .collect();
-            Some((activity_id, label, detail, "running".into()))
+            Some((activity_id, label, detail, String::new(), "running".into()))
         }
         "tool_call_update" => {
             let status = match u.get("status").and_then(|value| value.as_str()) {
@@ -586,7 +622,18 @@ fn grok_activity_update(u: &serde_json::Value) -> Option<(String, String, String
                 Some("pending" | "in_progress" | "running") => "running",
                 _ => return None,
             };
-            Some((activity_id, String::new(), String::new(), status.into()))
+            let error = if status == "failed" {
+                agent::failure_detail(u)
+            } else {
+                String::new()
+            };
+            Some((
+                activity_id,
+                String::new(),
+                String::new(),
+                error,
+                status.into(),
+            ))
         }
         _ => None,
     }
@@ -947,6 +994,7 @@ mod tests {
                 "call-10e3413a-bc60-4abc-acf3-ab38f2ba1aa0-0".into(),
                 "exec".into(),
                 "Echo acp-probe to stdout".into(),
+                String::new(),
                 "running".into(),
             )
         );
@@ -958,14 +1006,16 @@ mod tests {
         .expect("terminal update should finish activity");
         assert_eq!(completed.0, started.0);
         assert!(completed.1.is_empty());
-        assert_eq!(completed.3, "completed");
+        assert_eq!(completed.4, "completed");
         let failed = grok_activity_update(&json!({
             "sessionUpdate": "tool_call_update",
             "toolCallId": "call-2",
-            "status": "failed"
+            "status": "failed",
+            "content": [{"type":"content","content":{"type":"text","text":"抓取网页时连接超时"}}]
         }))
         .expect("failed update is still a real terminal state");
-        assert_eq!(failed.3, "failed");
+        assert_eq!(failed.3, "抓取网页时连接超时");
+        assert_eq!(failed.4, "failed");
         assert!(grok_activity_update(&json!({
             "sessionUpdate": "agent_message_chunk",
             "content": {"type": "text", "text": "50% complete"}

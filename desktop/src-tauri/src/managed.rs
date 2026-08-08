@@ -1232,18 +1232,23 @@ pub async fn list_drafts(conn: &Connection, site_slug: &str) -> Result<Vec<Draft
     Ok(out)
 }
 
-/// 批准发布：PUT posts/{id} 只送 {"status":"published"}——服务端 apiUpdateContent 是
+fn publish_post_request(client: &reqwest::Client, url: &str, key: &str) -> reqwest::RequestBuilder {
+    client
+        .patch(url)
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {key}"))
+        .body(r#"{"status":"published"}"#)
+        .timeout(Duration::from_secs(15))
+}
+
+/// 批准发布：PATCH posts/{id} 只送 {"status":"published"}——服务端 apiUpdateContent 是
 /// 指针字段部分更新（api.go），其余字段一概不动；published_at 为空时服务端自动填当前时间
 ///（store.UpdatePost）。密钥需要 posts 发布权限，没有会得到 403 的人话报错。
 pub async fn publish_post(conn: &Connection, site_slug: &str, id: i64) -> Result<(), String> {
     let (api_base, key) = site_api(conn, site_slug).await?;
     let url = format!("{api_base}/posts/{id}");
-    let resp = reqwest::Client::new()
-        .put(&url)
-        .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {key}"))
-        .body(r#"{"status":"published"}"#)
-        .timeout(Duration::from_secs(15))
+    let client = reqwest::Client::new();
+    let resp = publish_post_request(&client, &url, &key)
         .send()
         .await
         .map_err(|e| e.to_string())?;
@@ -1382,6 +1387,35 @@ pub async fn week_stats(conn: &Connection, site_slug: &str) -> Result<WeekStats,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn publish_request_uses_patch_and_only_updates_status() {
+        let client = reqwest::Client::new();
+        let request = publish_post_request(
+            &client,
+            "https://example.test/api/admin/v1/posts/42",
+            "secret-key",
+        )
+        .build()
+        .expect("publish request should build");
+
+        assert_eq!(request.method(), reqwest::Method::PATCH);
+        assert_eq!(
+            request.url().as_str(),
+            "https://example.test/api/admin/v1/posts/42"
+        );
+        assert_eq!(
+            request
+                .headers()
+                .get(reqwest::header::AUTHORIZATION)
+                .and_then(|value| value.to_str().ok()),
+            Some("Bearer secret-key")
+        );
+        assert_eq!(
+            request.body().and_then(|body| body.as_bytes()),
+            Some(r#"{"status":"published"}"#.as_bytes())
+        );
+    }
 
     fn note(title: &str, reason: &str) -> ReviewNote {
         ReviewNote {

@@ -2,19 +2,22 @@
 //! 边跑边把助手文本增量、工具调用经 Channel 推给前端，收尾返回本轮结果。
 //! 多轮机制（已在真机验证）：
 //!   claude —— 首轮 `--session-id <uuid>`，续轮 `--resume <uuid>`；
-//!   codex  —— 首轮 `exec` 从 thread.started 取 thread_id，续轮 `exec resume <id>`。
+//!   codex  —— 优先复用常驻 app-server 的 thread/turn；实验接口不可用时自动降级到
+//!             `exec` / `exec resume <id>`。
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::PathBuf;
+use std::io::SeekFrom;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::ipc::Channel;
-use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt, BufReader};
-use tokio::process::Command;
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncSeekExt, AsyncWriteExt, BufReader};
+use tokio::process::{Child, Command};
+use tokio::sync::{mpsc, oneshot};
 
 use crate::convo::{TaskProposal, ToolCall};
 use crate::keychain;
@@ -65,7 +68,11 @@ pub(crate) async fn prepare_codex_cache() -> Result<(), String> {
     let cache_is_newer = cache_version.is_some_and(|v| v > cli_version);
     // 0.144 及更早版本不认识 max/ultra；这些值出现在新版缓存时会直接阻断启动。
     let old_cli_has_new_effort = cli_version < (0, 145, 0) && contains_new_effort(&value);
-    if cache_is_newer || old_cli_has_new_effort {
+    // 0.144 app-server 比 exec 更严格：缺少该字段会在每次 thread/start 都解析失败并
+    // 重新刷新缓存。隔离一次让 CLI 生成完整缓存，避免每轮重复付出这段固定开销。
+    let app_server_cache_incomplete = cli_version >= (0, 144, 0)
+        && codex_models_missing_field(&value, "supports_reasoning_summaries");
+    if cache_is_newer || old_cli_has_new_effort || app_server_cache_incomplete {
         quarantine_codex_cache(&cache)?;
     }
     Ok(())
@@ -104,6 +111,14 @@ fn contains_new_effort(value: &serde_json::Value) -> bool {
         serde_json::Value::Object(items) => items.values().any(contains_new_effort),
         _ => false,
     }
+}
+
+fn codex_models_missing_field(value: &serde_json::Value, field: &str) -> bool {
+    value
+        .get("models")
+        .and_then(serde_json::Value::as_array)
+        .filter(|models| !models.is_empty())
+        .is_some_and(|models| models.iter().any(|model| model.get(field).is_none()))
 }
 
 fn quarantine_codex_cache(cache: &std::path::Path) -> Result<(), String> {
@@ -212,7 +227,15 @@ pub enum TurnEvent {
         activity_id: String,
         label: String,
         detail: String,
+        error: String,
         status: String,
+        /// 三家执行器共用的语义类别。没有真实类别时为空，不由界面猜测。
+        kind: String,
+        /// 执行器明确给出的阶段文案；为空时界面回退到 label/detail。
+        phase: String,
+        /// 只有执行器给出真实总量时才填写，避免把工具调用次数冒充业务进度。
+        current: Option<u64>,
+        total: Option<u64>,
     },
     /// GCMS 高风险操作的服务端解锁要求。它只从工具结果提取并经本轮
     /// Channel 送到原生 UI，不进入 TurnResult/会话消息。页面操作额外
@@ -550,7 +573,874 @@ impl RunRegistry {
     }
 }
 
+// ---- Codex app-server（按连接环境常驻，exec 仍是兼容降级路径）----
+
+type RpcReply = Result<serde_json::Value, String>;
+
+#[derive(Clone)]
+struct CodexTurnSink {
+    channel: Channel<TurnEvent>,
+    collect: Arc<Mutex<Collect>>,
+    completed: Arc<Mutex<Option<oneshot::Sender<serde_json::Value>>>>,
+    streamed_messages: Arc<Mutex<HashSet<String>>>,
+}
+
+struct CodexAppServer {
+    tx: mpsc::UnboundedSender<serde_json::Value>,
+    pending: Arc<Mutex<HashMap<u64, oneshot::Sender<RpcReply>>>>,
+    sinks: Arc<Mutex<HashMap<String, CodexTurnSink>>>,
+    loaded_threads: Mutex<HashSet<String>>,
+    next_id: AtomicU64,
+    dead: Arc<AtomicBool>,
+    // 持有 Child 才能保证 Pilot 生命周期内复用同一个 app-server；Drop 会终止它。
+    _child: Arc<tokio::sync::Mutex<Child>>,
+}
+
+static CODEX_APP_SERVERS: OnceLock<tokio::sync::Mutex<HashMap<String, Arc<CodexAppServer>>>> =
+    OnceLock::new();
+
+enum CodexAppServerAttempt {
+    Completed(TurnResult),
+    Unavailable(String),
+}
+
+impl CodexAppServer {
+    async fn request(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+        timeout: std::time::Duration,
+    ) -> RpcReply {
+        if self.dead.load(Ordering::SeqCst) {
+            return Err("Codex app-server 已退出".into());
+        }
+        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+        let (tx, rx) = oneshot::channel();
+        self.pending.lock().unwrap().insert(id, tx);
+        if self
+            .tx
+            .send(serde_json::json!({"id": id, "method": method, "params": params}))
+            .is_err()
+        {
+            self.pending.lock().unwrap().remove(&id);
+            return Err("Codex app-server 写入通道已关闭".into());
+        }
+        match tokio::time::timeout(timeout, rx).await {
+            Ok(Ok(result)) => result,
+            Ok(Err(_)) => Err(format!("Codex app-server 请求中断：{method}")),
+            Err(_) => {
+                self.pending.lock().unwrap().remove(&id);
+                Err(format!("Codex app-server 请求超时：{method}"))
+            }
+        }
+    }
+
+    fn notify(&self, method: &str, params: Option<serde_json::Value>) -> Result<(), String> {
+        let mut message = serde_json::json!({"method": method});
+        if let Some(params) = params {
+            message["params"] = params;
+        }
+        self.tx
+            .send(message)
+            .map_err(|_| "Codex app-server 写入通道已关闭".to_string())
+    }
+
+    fn attach(&self, thread_id: &str, sink: CodexTurnSink) {
+        self.sinks
+            .lock()
+            .unwrap()
+            .insert(thread_id.to_string(), sink);
+    }
+
+    fn detach(&self, thread_id: &str) {
+        self.sinks.lock().unwrap().remove(thread_id);
+    }
+
+    async fn shutdown(&self) {
+        self.dead.store(true, Ordering::SeqCst);
+        let mut child = self._child.lock().await;
+        kill_tree(child.id());
+        let _ = child.kill().await;
+        let _ = child.wait().await;
+    }
+}
+
+fn codex_server_environment_key(
+    conn: &Connection,
+    work_dir: &str,
+    api_key: &str,
+    lease: Option<&crate::bridge::Lease>,
+) -> String {
+    use sha2::{Digest, Sha256};
+    let work_hash = {
+        let digest = Sha256::digest(work_dir.as_bytes());
+        format!("{:x}", digest)[..16].to_string()
+    };
+    let mut hasher = Sha256::new();
+    hasher.update(conn.id.as_bytes());
+    hasher.update([0]);
+    hasher.update(work_dir.as_bytes());
+    hasher.update([0]);
+    hasher.update(api_key.as_bytes());
+    if let Some(token) = gcms_unlock(&conn.id) {
+        hasher.update([0]);
+        hasher.update(token.as_bytes());
+    }
+    if let Some(lease) = lease {
+        let mut env = lease.env();
+        env.sort_by(|a, b| a.0.cmp(&b.0));
+        for (key, value) in env {
+            hasher.update([0]);
+            hasher.update(key.as_bytes());
+            hasher.update([0]);
+            hasher.update(value.as_bytes());
+        }
+    }
+    format!("{}:{work_hash}:{:x}", conn.id, hasher.finalize())
+}
+
+fn codex_initialize_params() -> serde_json::Value {
+    serde_json::json!({
+        "clientInfo": {
+            "name": "gcms-pilot",
+            "title": "GCMS Pilot",
+            "version": env!("CARGO_PKG_VERSION")
+        },
+        // thread/resume.excludeTurns is deliberately used below so a persistent
+        // app-server can reattach without replaying a very large rollout into Pilot.
+        // Codex rejects that field unless the client negotiates experimentalApi.
+        "capabilities": {
+            "experimentalApi": true
+        }
+    })
+}
+
+async fn codex_app_server(
+    conn: &Connection,
+    work_dir: &str,
+    api_key: &str,
+    lease: Option<&crate::bridge::Lease>,
+) -> Result<Arc<CodexAppServer>, String> {
+    let key = codex_server_environment_key(conn, work_dir, api_key, lease);
+    let scope = key
+        .rsplit_once(':')
+        .map(|(scope, _)| format!("{scope}:"))
+        .unwrap_or_default();
+    let servers = CODEX_APP_SERVERS.get_or_init(|| tokio::sync::Mutex::new(HashMap::new()));
+    {
+        let guard = servers.lock().await;
+        if let Some(server) = guard.get(&key) {
+            if !server.dead.load(Ordering::SeqCst) {
+                return Ok(server.clone());
+            }
+        }
+    }
+
+    let mut cmd = Command::new(crate::brains::resolve_bin("codex"));
+    cmd.args(["app-server", "--stdio"]);
+    apply_env_cwd(&mut cmd, conn, work_dir, api_key, lease);
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    #[cfg(unix)]
+    cmd.process_group(0);
+    #[cfg(windows)]
+    cmd.creation_flags(0x0800_0000);
+
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| format!("启动 Codex app-server 失败：{e}"))?;
+    let stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| "Codex app-server stdin 不可用".to_string())?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "Codex app-server stdout 不可用".to_string())?;
+    let stderr = child.stderr.take();
+    let child = Arc::new(tokio::sync::Mutex::new(child));
+    let (write_tx, mut write_rx) = mpsc::unbounded_channel::<serde_json::Value>();
+    let pending = Arc::new(Mutex::new(HashMap::<u64, oneshot::Sender<RpcReply>>::new()));
+    let sinks = Arc::new(Mutex::new(HashMap::<String, CodexTurnSink>::new()));
+    let dead = Arc::new(AtomicBool::new(false));
+
+    tauri::async_runtime::spawn(async move {
+        let mut stdin = stdin;
+        while let Some(message) = write_rx.recv().await {
+            let Ok(mut line) = serde_json::to_vec(&message) else {
+                continue;
+            };
+            line.push(b'\n');
+            if stdin.write_all(&line).await.is_err() || stdin.flush().await.is_err() {
+                break;
+            }
+        }
+    });
+
+    let read_pending = pending.clone();
+    let read_sinks = sinks.clone();
+    let read_dead = dead.clone();
+    let response_tx = write_tx.clone();
+    tauri::async_runtime::spawn(async move {
+        let mut reader = BufReader::new(stdout);
+        let mut line = Vec::new();
+        loop {
+            line.clear();
+            let read = reader.read_until(b'\n', &mut line).await;
+            if !matches!(read, Ok(n) if n > 0) {
+                break;
+            }
+            let Ok(value) = serde_json::from_slice::<serde_json::Value>(&line) else {
+                continue;
+            };
+            if let Some(id_value) = value.get("id") {
+                if value.get("method").is_some() {
+                    respond_to_codex_server_request(&response_tx, id_value.clone(), &value);
+                    continue;
+                }
+                let Some(id) = id_value.as_u64() else {
+                    continue;
+                };
+                if let Some(sender) = read_pending.lock().unwrap().remove(&id) {
+                    let reply = if let Some(error) = value.get("error") {
+                        Err(rpc_error_message(error))
+                    } else {
+                        Ok(value.get("result").cloned().unwrap_or_default())
+                    };
+                    let _ = sender.send(reply);
+                }
+                continue;
+            }
+            let Some(method) = value.get("method").and_then(|value| value.as_str()) else {
+                continue;
+            };
+            let params = value.get("params").cloned().unwrap_or_default();
+            let Some(thread_id) = params.get("threadId").and_then(|value| value.as_str()) else {
+                continue;
+            };
+            if let Some(sink) = read_sinks.lock().unwrap().get(thread_id).cloned() {
+                handle_codex_app_notification(method, &params, &sink);
+            }
+        }
+        read_dead.store(true, Ordering::SeqCst);
+        for (_, sender) in read_pending.lock().unwrap().drain() {
+            let _ = sender.send(Err("Codex app-server 已退出".into()));
+        }
+        for sink in read_sinks.lock().unwrap().values() {
+            if let Some(sender) = sink.completed.lock().unwrap().take() {
+                let _ = sender.send(serde_json::json!({
+                    "status": "failed",
+                    "error": {"message": "Codex app-server 已退出"}
+                }));
+            }
+        }
+    });
+    if let Some(stderr) = stderr {
+        tauri::async_runtime::spawn(async move {
+            let mut reader = BufReader::new(stderr);
+            let mut line = String::new();
+            while reader.read_line(&mut line).await.unwrap_or(0) > 0 {
+                let message = line.trim();
+                if !message.is_empty() {
+                    eprintln!("[codex-app-server] {message}");
+                }
+                line.clear();
+            }
+        });
+    }
+
+    let server = Arc::new(CodexAppServer {
+        tx: write_tx,
+        pending,
+        sinks,
+        loaded_threads: Mutex::new(HashSet::new()),
+        next_id: AtomicU64::new(1),
+        dead,
+        _child: child,
+    });
+    server
+        .request(
+            "initialize",
+            codex_initialize_params(),
+            std::time::Duration::from_secs(15),
+        )
+        .await?;
+    server.notify("initialized", None)?;
+    let mut guard = servers.lock().await;
+    // 凭据或短时解锁发生变化后，不把带旧环境的空闲 app-server 永久留在进程中。
+    // 正在执行的旧回合仍由其 Arc 持有，结束后自然 Drop。
+    guard.retain(|existing, _| !existing.starts_with(&scope) || existing == &key);
+    guard.insert(key, server.clone());
+    Ok(server)
+}
+
+fn rpc_error_message(error: &serde_json::Value) -> String {
+    error
+        .get("message")
+        .and_then(|value| value.as_str())
+        .or_else(|| error.as_str())
+        .unwrap_or("Codex app-server 请求失败")
+        .chars()
+        .take(500)
+        .collect()
+}
+
+fn respond_to_codex_server_request(
+    tx: &mpsc::UnboundedSender<serde_json::Value>,
+    id: serde_json::Value,
+    request: &serde_json::Value,
+) {
+    let method = request
+        .get("method")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    let result = match method {
+        "item/commandExecution/requestApproval" => serde_json::json!({"decision": "decline"}),
+        "item/fileChange/requestApproval" => serde_json::json!({"decision": "decline"}),
+        "item/tool/requestUserInput" => serde_json::json!({"answers": {}}),
+        _ => {
+            let _ = tx.send(serde_json::json!({
+                "id": id,
+                "error": {"code": -32601, "message": "Pilot 不支持此交互请求"}
+            }));
+            return;
+        }
+    };
+    let _ = tx.send(serde_json::json!({"id": id, "result": result}));
+}
+
+fn app_item_type(item: &serde_json::Value) -> &str {
+    item.get("type")
+        .and_then(|value| value.as_str())
+        .unwrap_or("")
+}
+
+fn app_item_status(item: &serde_json::Value, fallback: &str) -> String {
+    match item.get("status").and_then(|value| value.as_str()) {
+        Some("failed") | Some("declined") => "failed".into(),
+        Some("completed") => "completed".into(),
+        Some("inProgress") => "running".into(),
+        _ => fallback.into(),
+    }
+}
+
+fn send_codex_app_activity(
+    item: &serde_json::Value,
+    fallback_status: &str,
+    ch: &Channel<TurnEvent>,
+) {
+    let item_type = app_item_type(item);
+    let id = item
+        .get("id")
+        .and_then(|value| value.as_str())
+        .unwrap_or("");
+    if id.is_empty() {
+        return;
+    }
+    let (label, detail) = match item_type {
+        "reasoning" => ("reasoning", String::new()),
+        // 原始命令仍会进入上方可折叠的执行记录；活动卡只接收业务语义，
+        // 避免把 shell、路径和参数直接推给普通用户。
+        "commandExecution" => ("exec", String::new()),
+        "fileChange" => ("file_change", "正在更新文件".into()),
+        "mcpToolCall" => (
+            item.get("tool")
+                .and_then(|value| value.as_str())
+                .unwrap_or("tool"),
+            item.get("server")
+                .and_then(|value| value.as_str())
+                .unwrap_or("")
+                .chars()
+                .take(120)
+                .collect(),
+        ),
+        "dynamicToolCall" => (
+            item.get("tool")
+                .and_then(|value| value.as_str())
+                .unwrap_or("tool"),
+            item.get("namespace")
+                .and_then(|value| value.as_str())
+                .unwrap_or("")
+                .chars()
+                .take(120)
+                .collect(),
+        ),
+        "imageView" => ("view_image", "正在检查图片".into()),
+        "imageGeneration" => ("imagegen", "正在生成图片".into()),
+        "webSearch" => ("web_search", "正在搜索资料".into()),
+        "contextCompaction" => ("context_compaction", "正在整理会话上下文".into()),
+        _ => return,
+    };
+    let status = app_item_status(item, fallback_status);
+    let phase = if item_type == "commandExecution" {
+        native_command_phase(item)
+    } else {
+        ""
+    };
+    let _ = ch.send(TurnEvent::Activity {
+        activity_id: format!("codex:{id}"),
+        label: label.into(),
+        detail,
+        error: if status == "failed" {
+            failure_detail(item)
+        } else {
+            String::new()
+        },
+        status,
+        kind: activity_kind(label).into(),
+        phase: phase.into(),
+        current: None,
+        total: None,
+    });
+}
+
+fn handle_codex_app_notification(method: &str, params: &serde_json::Value, sink: &CodexTurnSink) {
+    if let Some(request) = codex_gcms_unlock_request(params) {
+        send_gcms_unlock_request(&sink.channel, request);
+    }
+    {
+        let mut images = Vec::new();
+        extract_generated_images(params, &mut images);
+        if !images.is_empty() {
+            let mut collect = sink.collect.lock().unwrap();
+            for image in images {
+                if !collect.images.contains(&image) {
+                    collect.images.push(image);
+                }
+            }
+        }
+    }
+    if let Some(usage) = parse_usage(&params["tokenUsage"]["last"])
+        .or_else(|| parse_usage(&params["tokenUsage"]["total"]))
+        .or_else(|| parse_usage(&params["tokenUsage"]))
+        .or_else(|| parse_usage(&params["usage"]))
+        .or_else(|| parse_usage(&params["turn"]["usage"]))
+    {
+        sink.collect.lock().unwrap().usage = Some(usage);
+    }
+
+    match method {
+        "item/agentMessage/delta" => {
+            let delta = params
+                .get("delta")
+                .and_then(|value| value.as_str())
+                .unwrap_or("");
+            if delta.is_empty() {
+                return;
+            }
+            if let Some(item_id) = params.get("itemId").and_then(|value| value.as_str()) {
+                sink.streamed_messages
+                    .lock()
+                    .unwrap()
+                    .insert(item_id.to_string());
+            }
+            sink.collect.lock().unwrap().text.push_str(delta);
+            let _ = sink.channel.send(TurnEvent::Delta {
+                text: delta.to_string(),
+            });
+        }
+        "item/reasoning/summaryTextDelta" | "item/reasoning/textDelta" => {
+            let item_id = params
+                .get("itemId")
+                .and_then(|value| value.as_str())
+                .unwrap_or("reasoning");
+            let detail = params
+                .get("delta")
+                .and_then(|value| value.as_str())
+                .unwrap_or("")
+                .chars()
+                .take(240)
+                .collect();
+            let _ = sink.channel.send(TurnEvent::Activity {
+                activity_id: format!("codex:{item_id}"),
+                label: "reasoning".into(),
+                detail,
+                error: String::new(),
+                status: "running".into(),
+                kind: "reasoning".into(),
+                phase: String::new(),
+                current: None,
+                total: None,
+            });
+        }
+        "item/started" => {
+            let item = &params["item"];
+            if app_item_type(item) == "agentMessage"
+                && !sink.collect.lock().unwrap().text.is_empty()
+            {
+                sink.collect.lock().unwrap().text.push_str("\n\n");
+                let _ = sink.channel.send(TurnEvent::Delta {
+                    text: "\n\n".into(),
+                });
+            }
+            send_codex_app_activity(item, "running", &sink.channel);
+        }
+        "item/completed" => {
+            let item = &params["item"];
+            send_codex_app_activity(item, "completed", &sink.channel);
+            match app_item_type(item) {
+                "agentMessage" => {
+                    let item_id = item
+                        .get("id")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("");
+                    if !sink.streamed_messages.lock().unwrap().contains(item_id) {
+                        if let Some(text) = item.get("text").and_then(|value| value.as_str()) {
+                            sink.collect.lock().unwrap().text.push_str(text);
+                            let _ = sink.channel.send(TurnEvent::Delta {
+                                text: text.to_string(),
+                            });
+                        }
+                    }
+                }
+                "commandExecution" => {
+                    let detail = item
+                        .get("command")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("")
+                        .chars()
+                        .take(200)
+                        .collect::<String>();
+                    sink.collect.lock().unwrap().tools.push(ToolCall {
+                        label: "exec".into(),
+                        detail: detail.clone(),
+                    });
+                    let _ = sink.channel.send(TurnEvent::Tool {
+                        label: "exec".into(),
+                        detail,
+                    });
+                }
+                "mcpToolCall" | "dynamicToolCall" => {
+                    let label = item
+                        .get("tool")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("tool")
+                        .to_string();
+                    sink.collect.lock().unwrap().tools.push(ToolCall {
+                        label: label.clone(),
+                        detail: String::new(),
+                    });
+                    let _ = sink.channel.send(TurnEvent::Tool {
+                        label,
+                        detail: String::new(),
+                    });
+                }
+                _ => {}
+            }
+        }
+        "thread/compacted" => {
+            let _ = sink.channel.send(TurnEvent::ContextCompacted {
+                pre_tokens: params
+                    .get("preTokens")
+                    .and_then(|value| value.as_u64())
+                    .unwrap_or(0),
+            });
+        }
+        "error" => {
+            if params.get("willRetry").and_then(|value| value.as_bool()) != Some(true) {
+                sink.collect.lock().unwrap().is_error = true;
+            }
+        }
+        "turn/completed" => {
+            let turn = params.get("turn").cloned().unwrap_or_default();
+            if turn.get("status").and_then(|value| value.as_str()) == Some("failed") {
+                sink.collect.lock().unwrap().is_error = true;
+            }
+            if let Some(sender) = sink.completed.lock().unwrap().take() {
+                let _ = sender.send(turn);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn codex_sandbox(mode: PermMode) -> &'static str {
+    match mode {
+        PermMode::Plan => "read-only",
+        PermMode::Full => "danger-full-access",
+        PermMode::Ask | PermMode::Auto => "workspace-write",
+    }
+}
+
+fn validate_codex_model(model: &str) -> Result<Option<String>, String> {
+    let model = model.trim();
+    if model.is_empty() {
+        Ok(None)
+    } else if model.starts_with('-') || model.contains(char::is_whitespace) {
+        Err(format!("无效的模型标识: {model}"))
+    } else {
+        Ok(Some(model.to_string()))
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn try_run_codex_app_server(
+    registry: RunRegistry,
+    conn: &Connection,
+    work_dir: &str,
+    model: &str,
+    effort: &str,
+    mode: PermMode,
+    lease: Option<&crate::bridge::Lease>,
+    api_key: &str,
+    session_ref: &str,
+    is_first: bool,
+    system: Option<&str>,
+    message: &str,
+    turn_id: &str,
+    channel: Channel<TurnEvent>,
+) -> CodexAppServerAttempt {
+    let model = match validate_codex_model(model) {
+        Ok(model) => model,
+        Err(error) => {
+            return CodexAppServerAttempt::Completed(failed_turn_result(
+                session_ref,
+                error,
+                &channel,
+            ));
+        }
+    };
+    let server = match codex_app_server(conn, work_dir, api_key, lease).await {
+        Ok(server) => server,
+        Err(error) => return CodexAppServerAttempt::Unavailable(error),
+    };
+    let sandbox = codex_sandbox(mode);
+    let config = serde_json::json!({
+        "sandbox_workspace_write": {"network_access": true}
+    });
+    let mut thread_id = session_ref.to_string();
+
+    if is_first || thread_id.trim().is_empty() {
+        let mut params = serde_json::json!({
+            "cwd": work_dir,
+            "approvalPolicy": "never",
+            "sandbox": sandbox,
+            "config": config,
+            "developerInstructions": system,
+            "ephemeral": false
+        });
+        if let Some(model) = model.as_ref() {
+            params["model"] = serde_json::Value::String(model.clone());
+        }
+        let result = match server
+            .request("thread/start", params, std::time::Duration::from_secs(60))
+            .await
+        {
+            Ok(result) => result,
+            Err(error) => return CodexAppServerAttempt::Unavailable(error),
+        };
+        thread_id = result
+            .get("thread")
+            .and_then(|thread| thread.get("id"))
+            .and_then(|value| value.as_str())
+            .unwrap_or("")
+            .to_string();
+        if thread_id.is_empty() {
+            return CodexAppServerAttempt::Unavailable("Codex app-server 未返回 thread id".into());
+        }
+        server
+            .loaded_threads
+            .lock()
+            .unwrap()
+            .insert(thread_id.clone());
+    } else if !server.loaded_threads.lock().unwrap().contains(&thread_id) {
+        let mut params = serde_json::json!({
+            "threadId": thread_id,
+            "excludeTurns": true,
+            "cwd": work_dir,
+            "approvalPolicy": "never",
+            "sandbox": sandbox,
+            "config": config
+        });
+        if let Some(model) = model.as_ref() {
+            params["model"] = serde_json::Value::String(model.clone());
+        }
+        if let Err(error) = server
+            .request("thread/resume", params, std::time::Duration::from_secs(60))
+            .await
+        {
+            return CodexAppServerAttempt::Unavailable(error);
+        }
+        server
+            .loaded_threads
+            .lock()
+            .unwrap()
+            .insert(thread_id.clone());
+    }
+
+    let collect = Arc::new(Mutex::new(Collect {
+        text: String::new(),
+        tools: Vec::new(),
+        session_ref: thread_id.clone(),
+        is_error: false,
+        usage: None,
+        raw_tail: String::new(),
+        images: Vec::new(),
+    }));
+    let (completed_tx, completed_rx) = oneshot::channel();
+    let sink = CodexTurnSink {
+        channel: channel.clone(),
+        collect: collect.clone(),
+        completed: Arc::new(Mutex::new(Some(completed_tx))),
+        streamed_messages: Arc::new(Mutex::new(HashSet::new())),
+    };
+    server.attach(&thread_id, sink);
+    let (_canceled, mut kill_rx) = registry.register(turn_id);
+
+    let mut params = serde_json::json!({
+        "threadId": thread_id,
+        "input": [{"type": "text", "text": message, "text_elements": []}],
+        "cwd": work_dir,
+        "approvalPolicy": "never"
+    });
+    if let Some(model) = model.as_ref() {
+        params["model"] = serde_json::Value::String(model.clone());
+    }
+    if matches!(
+        effort,
+        "low" | "medium" | "high" | "xhigh" | "max" | "ultra"
+    ) {
+        params["effort"] = serde_json::Value::String(effort.to_string());
+    }
+    let turn = match server
+        .request("turn/start", params, std::time::Duration::from_secs(30))
+        .await
+    {
+        Ok(result) => result.get("turn").cloned().unwrap_or_default(),
+        Err(error) => {
+            server.detach(&thread_id);
+            registry.unregister(turn_id);
+            return CodexAppServerAttempt::Unavailable(error);
+        }
+    };
+    let server_turn_id = turn
+        .get("id")
+        .and_then(|value| value.as_str())
+        .unwrap_or("")
+        .to_string();
+    if server_turn_id.is_empty() {
+        server.detach(&thread_id);
+        registry.unregister(turn_id);
+        return CodexAppServerAttempt::Unavailable("Codex app-server 未返回 turn id".into());
+    }
+
+    let completed_turn = tokio::select! {
+        result = completed_rx => result.unwrap_or_else(|_| serde_json::json!({
+            "status": "failed",
+            "error": {"message": "Codex app-server 事件流已中断"}
+        })),
+        _ = &mut kill_rx => {
+            if server.request(
+                "turn/interrupt",
+                serde_json::json!({"threadId": thread_id, "turnId": server_turn_id}),
+                std::time::Duration::from_secs(10),
+            ).await.is_err() {
+                // 中断确认失败时宁可终止共享 app-server，也不能让带凭据的模型在 UI
+                // 已显示“停止”后继续写站点；其它对话会自动走 exec 或重建常驻服务。
+                server.shutdown().await;
+            }
+            serde_json::json!({"status": "interrupted"})
+        }
+    };
+    let canceled = registry.is_canceled(turn_id);
+    registry.unregister(turn_id);
+    server.detach(&thread_id);
+
+    let collect = collect.lock().unwrap().clone();
+    let status = completed_turn
+        .get("status")
+        .and_then(|value| value.as_str())
+        .unwrap_or("failed");
+    let ok = status == "completed" && !collect.is_error && !canceled;
+    let error = if canceled || status == "interrupted" {
+        "已停止".to_string()
+    } else if !ok {
+        completed_turn
+            .get("error")
+            .map(rpc_error_message)
+            .filter(|message| !message.is_empty())
+            .unwrap_or_else(|| "Codex 本轮执行失败".into())
+    } else {
+        String::new()
+    };
+    CodexAppServerAttempt::Completed(finish_codex_app_turn(collect, ok, error, &channel))
+}
+
+fn failed_turn_result(
+    session_ref: &str,
+    error: String,
+    channel: &Channel<TurnEvent>,
+) -> TurnResult {
+    let _ = channel.send(TurnEvent::Done {
+        ok: false,
+        error: error.clone(),
+    });
+    TurnResult {
+        ok: false,
+        text: String::new(),
+        tools: Vec::new(),
+        error,
+        session_ref: session_ref.to_string(),
+        proposal: None,
+        usage: None,
+        limit_reset: None,
+    }
+}
+
+fn finish_codex_app_turn(
+    collect: Collect,
+    ok: bool,
+    error: String,
+    channel: &Channel<TurnEvent>,
+) -> TurnResult {
+    let error = redact_gcms_unlock_challenges(&error);
+    let persisted_text = redact_gcms_unlock_challenges(&collect.text);
+    let (clean_text, proposal) = extract_proposal(&persisted_text);
+    let clean_text = if ok && !collect.images.is_empty() {
+        let existing = collect
+            .images
+            .iter()
+            .filter(|path| Path::new(path.as_str()).is_file())
+            .cloned()
+            .collect::<Vec<_>>();
+        append_generated_images(&clean_text, &existing)
+    } else {
+        clean_text
+    };
+    let limit_reset = (!ok).then(|| detect_usage_limit(&error)).flatten();
+    let _ = channel.send(TurnEvent::Done {
+        ok,
+        error: error.clone(),
+    });
+    TurnResult {
+        ok,
+        text: clean_text,
+        tools: collect
+            .tools
+            .into_iter()
+            .map(|mut tool| {
+                tool.detail = redact_gcms_unlock_challenges(&tool.detail);
+                tool
+            })
+            .collect(),
+        error,
+        session_ref: collect.session_ref,
+        proposal,
+        usage: collect.usage,
+        limit_reset,
+    }
+}
+
 // ---- 系统提示词（角色框架）----
+
+const GCMS_BATCH_POLICY: &str = "\n\
+【批量操作性能规则】用户要求对多条内容执行相同读取、上传、修改、发布或校验时，先一次确定目标 ID、\
+字段和预期结果，再用单个受控脚本/批次完成；不要每处理一条就重新思考、解释或启动一次模型回合。\
+写入前批量读取最新状态与 ETag，只修改确实需要变化的条目；成功项立即记账，网络瞬断时只对失败项\
+做最多 3 次带间隔重试，严禁重复上传或覆盖成功项。批量结束后统一读取结果并验收一次；只有发现异常\
+或用户明确要求时才逐条截图、逐条复查。回复中用“已完成/总数、失败项和下一步”汇报真实进度。";
 
 pub fn system_prompt(task_type: &str, site_slug: &str, site_name: &str) -> String {
     let base = format!(
@@ -607,7 +1497,7 @@ PILOT_TASK: {{\"title\":\"简短任务名\",\"prompt\":\"每次到点要执行�
 时效性事实优先引用官方或一手来源；不能验证的事实要标注不确定，不得编造。",
         _ => "\n\n以对话方式协助用户完成关于这个站点的各类内容运营工作。",
     };
-    format!("{base}{role}")
+    format!("{base}{role}{GCMS_BATCH_POLICY}")
 }
 
 /// 与任何连接、站点和技能包都隔离的自由对话提示词。
@@ -725,8 +1615,10 @@ pub fn multi_site_system_prompt(slugs: &[String], names: &[String]) -> String {
 PILOT_TASK: {{\"title\":\"简短任务名\",\"prompt\":\"每个站点各自执行的完整指令（写清语言、产出要求；站点由任务配置指定，不要写死 slug）\",\"every_minutes\":周期分钟数,\"first_run\":\"可选，RFC3339\"}}\n\
 Pilot 会预填本会话的全部站点，用户确认后并发分站执行；一次性的活让用户创建后点「立即运行」即可。\n\
 交互方式：先理解意图、必要时澄清，动手时边做边简述；回答用中文，简洁自然。\
-运行命令（Bash）时 description 一律用中文写清这条命令做什么、影响哪个站点。",
+运行命令（Bash）时 description 一律用中文写清这条命令做什么、影响哪个站点。\
+{batch_policy}",
         count = slugs.len(),
+        batch_policy = GCMS_BATCH_POLICY,
     )
 }
 
@@ -1016,6 +1908,36 @@ pub async fn run_turn(
         )
         .await;
     }
+    if brain == "codex" {
+        match try_run_codex_app_server(
+            registry.clone(),
+            &conn,
+            &work_dir,
+            &model,
+            &effort,
+            mode,
+            lease.as_ref(),
+            &api_key,
+            &session_ref,
+            is_first,
+            system.as_deref(),
+            &message,
+            &turn_id,
+            channel.clone(),
+        )
+        .await
+        {
+            CodexAppServerAttempt::Completed(result) => {
+                permit::sweep_conv(&perm.pending_dir, &turn_id);
+                return result;
+            }
+            CodexAppServerAttempt::Unavailable(reason) => {
+                // app-server 仍是实验接口：当前 CLI 不支持、初始化失败或协议变化时，
+                // 静默回到已验证的 `codex exec`，避免用户失去对话能力。
+                eprintln!("[codex-app-server] fallback to codex exec: {reason}");
+            }
+        }
+    }
     let build: Result<(Command, Option<String>, Option<ScopedPromptFile>), String> =
         if brain == "codex" {
             build_codex(
@@ -1074,6 +1996,16 @@ pub async fn run_turn(
     #[cfg(windows)]
     cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW：跑 CLI 不弹控制台
 
+    // 续跑会话只读取本轮追加内容，避免把历史活动重新投进当前卡片。
+    // 首轮要等 thread.started 给出 session_ref，再从新建 rollout 的开头读取。
+    let initial_rollout = (brain == "codex")
+        .then(|| find_codex_rollout(&session_ref))
+        .flatten();
+    let initial_rollout_offset = initial_rollout
+        .as_ref()
+        .and_then(|path| fs::metadata(path).ok())
+        .map(|metadata| metadata.len())
+        .unwrap_or(0);
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => {
@@ -1145,6 +2077,16 @@ pub async fn run_turn(
     let out_task = stdout.map(|s| parse_stream(s, is_codex, channel.clone(), collect.clone()));
     let err_buf = Arc::new(Mutex::new(String::new()));
     let err_task = stderr.map(|s| collect_lines(s, err_buf.clone()));
+    let native_stop = Arc::new(AtomicBool::new(false));
+    let native_task = is_codex.then(|| {
+        watch_codex_rollout(
+            collect.clone(),
+            channel.clone(),
+            native_stop.clone(),
+            initial_rollout,
+            initial_rollout_offset,
+        )
+    });
 
     let status = tokio::select! {
         s = child.wait() => s.ok(),
@@ -1167,6 +2109,10 @@ pub async fn run_turn(
         let _ = t.await;
     }
     if let Some(t) = err_task {
+        let _ = t.await;
+    }
+    native_stop.store(true, Ordering::Relaxed);
+    if let Some(t) = native_task {
         let _ = t.await;
     }
     // 必须在 unregister 之前读取取消标记——移除句柄后 is_canceled 恒为 false。
@@ -1414,10 +2360,14 @@ fn parse_usage(v: &serde_json::Value) -> Option<TurnUsage> {
             .unwrap_or(0)
     };
     let u = TurnUsage {
-        input: g(&["input_tokens", "prompt_tokens"]),
-        output: g(&["output_tokens", "completion_tokens"]),
-        cache_read: g(&["cache_read_input_tokens", "cached_input_tokens"]),
-        cache_create: g(&["cache_creation_input_tokens"]),
+        input: g(&["input_tokens", "prompt_tokens", "inputTokens"]),
+        output: g(&["output_tokens", "completion_tokens", "outputTokens"]),
+        cache_read: g(&[
+            "cache_read_input_tokens",
+            "cached_input_tokens",
+            "cachedInputTokens",
+        ]),
+        cache_create: g(&["cache_creation_input_tokens", "cacheCreationInputTokens"]),
     };
     if u.input + u.output + u.cache_read + u.cache_create == 0 {
         None
@@ -1672,6 +2622,271 @@ fn parse_stream(
     })
 }
 
+fn find_codex_rollout(session_ref: &str) -> Option<PathBuf> {
+    if session_ref.trim().is_empty() {
+        return None;
+    }
+    let root = codex_home()?.join("sessions");
+    fn visit(dir: &Path, needle: &str, depth: usize) -> Option<PathBuf> {
+        if depth > 6 {
+            return None;
+        }
+        for entry in fs::read_dir(dir).ok()?.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if let Some(found) = visit(&path, needle, depth + 1) {
+                    return Some(found);
+                }
+            } else if path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.ends_with(&format!("{needle}.jsonl")))
+            {
+                return Some(path);
+            }
+        }
+        None
+    }
+    visit(&root, session_ref, 0)
+}
+
+fn native_activity(
+    ev: &serde_json::Value,
+) -> Option<(String, String, String, String, String, String)> {
+    let outer = ev.get("type").and_then(|value| value.as_str())?;
+    let payload = ev.get("payload")?;
+    let event_type = payload.get("type").and_then(|value| value.as_str())?;
+    match (outer, event_type) {
+        ("response_item", "reasoning") => Some((
+            "native:reasoning".into(),
+            "reasoning".into(),
+            "正在分析与规划".into(),
+            String::new(),
+            String::new(),
+            "running".into(),
+        )),
+        ("response_item", "function_call" | "custom_tool_call") => {
+            let call_id = payload
+                .get("call_id")
+                .or_else(|| payload.get("id"))
+                .and_then(|value| value.as_str())?;
+            let name = payload
+                .get("name")
+                .and_then(|value| value.as_str())
+                .unwrap_or("tool");
+            let kind = activity_kind(name);
+            let phase = match kind {
+                "image_generation" => "正在生成图片",
+                "image_review" => "正在检查图片",
+                "skill" => "正在使用技能",
+                "command" => native_command_phase(payload),
+                _ => "正在调用工具",
+            };
+            Some((
+                call_id.into(),
+                kind.into(),
+                name.into(),
+                phase.into(),
+                String::new(),
+                "running".into(),
+            ))
+        }
+        ("response_item", "function_call_output" | "custom_tool_call_output") => {
+            let call_id = payload
+                .get("call_id")
+                .or_else(|| payload.get("id"))
+                .and_then(|value| value.as_str())?;
+            let failed = payload.get("success").and_then(|value| value.as_bool()) == Some(false)
+                || payload.get("status").and_then(|value| value.as_str()) == Some("failed");
+            Some((
+                call_id.into(),
+                String::new(),
+                String::new(),
+                String::new(),
+                if failed {
+                    failure_detail(payload)
+                } else {
+                    String::new()
+                },
+                if failed { "failed" } else { "completed" }.into(),
+            ))
+        }
+        ("event_msg", "image_generation_end") => {
+            let call_id = payload
+                .get("call_id")
+                .or_else(|| payload.get("id"))
+                .and_then(|value| value.as_str())?;
+            let failed = payload.get("status").and_then(|value| value.as_str()) == Some("failed");
+            Some((
+                call_id.into(),
+                "image_generation".into(),
+                "imagegen".into(),
+                if failed {
+                    "图片生成未成功"
+                } else {
+                    "图片已生成"
+                }
+                .into(),
+                if failed {
+                    failure_detail(payload)
+                } else {
+                    String::new()
+                },
+                if failed { "failed" } else { "completed" }.into(),
+            ))
+        }
+        // agent_message 已经通过 stdout 的 Delta 进入助手正文。不能再把同一段自然语言
+        // 伪装成持续 running 的活动，否则正文会在任务卡里重复一次，而且这个
+        // native:phase 会一直压住后续真实的命令/技能/图片活动。
+        ("event_msg", "agent_message") => None,
+        ("event_msg", "task_complete") => Some((
+            "native:phase".into(),
+            "progress".into(),
+            "任务进展".into(),
+            "本轮任务已完成".into(),
+            String::new(),
+            "completed".into(),
+        )),
+        _ => None,
+    }
+}
+
+/// 把 Codex 的命令调用翻译成用户能理解的业务阶段。这里只返回固定的安全文案，
+/// 不把原始 shell、路径、Token 或参数送进活动卡。
+fn native_command_phase(payload: &serde_json::Value) -> &'static str {
+    let input = payload
+        .get("arguments")
+        .or_else(|| payload.get("input"))
+        .or_else(|| payload.get("command"))
+        .map(|value| {
+            value
+                .as_str()
+                .map(ToOwned::to_owned)
+                .unwrap_or_else(|| value.to_string())
+        })
+        .unwrap_or_default()
+        .to_lowercase();
+    if input.contains("gcms.js") {
+        if input.contains(" upload") || input.contains("media") {
+            return "正在上传站点图片";
+        }
+        if input.contains(" update")
+            || input.contains(" patch")
+            || input.contains(" publish")
+            || input.contains("cover_image")
+        {
+            return "正在更新站点内容";
+        }
+        if input.contains(" doctor") || input.contains(" sites") || input.contains("capabilities") {
+            return "正在检查 GCMS 连接";
+        }
+        if input.contains(" get")
+            || input.contains(" list")
+            || input.contains(" status")
+            || input.contains(" audit")
+        {
+            return "正在读取站点内容";
+        }
+        return "正在处理站点内容";
+    }
+    if input.contains("webp")
+        || input.contains("identify ")
+        || input.contains("view_image")
+        || input.contains("image")
+    {
+        return "正在检查图片文件";
+    }
+    "正在处理任务步骤"
+}
+
+fn send_native_activity(ev: &serde_json::Value, ch: &Channel<TurnEvent>) {
+    let Some((activity_id, kind, label, phase, error, status)) = native_activity(ev) else {
+        return;
+    };
+    if status == "running" && activity_id != "native:reasoning" {
+        let _ = ch.send(TurnEvent::Activity {
+            activity_id: "native:reasoning".into(),
+            label: String::new(),
+            detail: String::new(),
+            error: String::new(),
+            status: "completed".into(),
+            kind: "reasoning".into(),
+            phase: String::new(),
+            current: None,
+            total: None,
+        });
+    }
+    let _ = ch.send(TurnEvent::Activity {
+        activity_id,
+        label,
+        detail: String::new(),
+        error,
+        status,
+        kind,
+        phase,
+        current: None,
+        total: None,
+    });
+}
+
+fn watch_codex_rollout(
+    collect: Arc<Mutex<Collect>>,
+    ch: Channel<TurnEvent>,
+    stop: Arc<AtomicBool>,
+    initial_path: Option<PathBuf>,
+    initial_offset: u64,
+) -> tauri::async_runtime::JoinHandle<()> {
+    tauri::async_runtime::spawn(async move {
+        let mut path = initial_path;
+        let mut offset = initial_offset;
+        let mut seen = HashSet::<(String, String, String)>::new();
+        loop {
+            if path.is_none() {
+                let session_ref = collect.lock().unwrap().session_ref.clone();
+                path = find_codex_rollout(&session_ref);
+                if path.is_some() {
+                    offset = 0;
+                }
+            }
+            if let Some(current_path) = path.as_ref() {
+                if let Ok(mut file) = tokio::fs::File::open(current_path).await {
+                    if file.seek(SeekFrom::Start(offset)).await.is_ok() {
+                        let mut reader = BufReader::new(file);
+                        loop {
+                            let mut line = Vec::new();
+                            let Ok(read) = reader.read_until(b'\n', &mut line).await else {
+                                break;
+                            };
+                            if read == 0 || line.last() != Some(&b'\n') {
+                                break;
+                            }
+                            offset += read as u64;
+                            // 图片工具输出可能含巨型 data URL；这些行不需要进入 UI。
+                            if line.len() > 2 * 1024 * 1024 {
+                                continue;
+                            }
+                            let Ok(ev) = serde_json::from_slice::<serde_json::Value>(&line) else {
+                                continue;
+                            };
+                            let Some((activity_id, _, _, phase, _, status)) = native_activity(&ev)
+                            else {
+                                continue;
+                            };
+                            if seen.insert((activity_id, status, phase)) {
+                                send_native_activity(&ev, &ch);
+                            }
+                        }
+                    }
+                }
+            }
+            if stop.load(Ordering::Relaxed) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        }
+    })
+}
+
 fn claude_gcms_unlock_request(ev: &serde_json::Value) -> Option<GcmsUnlockRequest> {
     match ev.get("type").and_then(|value| value.as_str()) {
         Some("user") => ev
@@ -1701,12 +2916,39 @@ fn parse_claude(ev: &serde_json::Value, ch: &Channel<TurnEvent>, collect: &Arc<M
             let e = &ev["event"];
             if e.get("type").and_then(|t| t.as_str()) == Some("content_block_delta") {
                 if e["delta"].get("type").and_then(|t| t.as_str()) == Some("text_delta") {
+                    let _ = ch.send(TurnEvent::Activity {
+                        activity_id: "native:reasoning".into(),
+                        label: String::new(),
+                        detail: String::new(),
+                        error: String::new(),
+                        status: "completed".into(),
+                        kind: "reasoning".into(),
+                        phase: String::new(),
+                        current: None,
+                        total: None,
+                    });
                     if let Some(t) = e["delta"].get("text").and_then(|t| t.as_str()) {
                         collect.lock().unwrap().text.push_str(t);
                         let _ = ch.send(TurnEvent::Delta {
                             text: t.to_string(),
                         });
                     }
+                } else if matches!(
+                    e["delta"].get("type").and_then(|t| t.as_str()),
+                    Some("thinking_delta" | "signature_delta")
+                ) {
+                    // 只暴露“正在思考”的语义脉冲，不把供应商思维链或签名内容送到 UI。
+                    let _ = ch.send(TurnEvent::Activity {
+                        activity_id: "native:reasoning".into(),
+                        label: "reasoning".into(),
+                        detail: String::new(),
+                        error: String::new(),
+                        status: "running".into(),
+                        kind: "reasoning".into(),
+                        phase: "正在分析与规划".into(),
+                        current: None,
+                        total: None,
+                    });
                 }
             }
         }
@@ -1730,7 +2972,12 @@ fn parse_claude(ev: &serde_json::Value, ch: &Channel<TurnEvent>, collect: &Arc<M
                                     .chars()
                                     .take(200)
                                     .collect(),
+                                error: String::new(),
                                 status: "running".into(),
+                                kind: activity_kind(name).into(),
+                                phase: String::new(),
+                                current: None,
+                                total: None,
                             });
                         }
                         collect.lock().unwrap().tools.push(ToolCall {
@@ -1773,14 +3020,19 @@ fn parse_claude(ev: &serde_json::Value, ch: &Channel<TurnEvent>, collect: &Arc<M
 
 fn send_claude_tool_result_activity(ev: &serde_json::Value, ch: &Channel<TurnEvent>) {
     let send_result = |block: &serde_json::Value| {
-        let Some((activity_id, status)) = claude_tool_result_activity(block) else {
+        let Some((activity_id, status, error)) = claude_tool_result_activity(block) else {
             return;
         };
         let _ = ch.send(TurnEvent::Activity {
             activity_id,
             label: String::new(),
             detail: String::new(),
+            error,
             status,
+            kind: String::new(),
+            phase: String::new(),
+            current: None,
+            total: None,
         });
     };
     match ev.get("type").and_then(|value| value.as_str()) {
@@ -1799,7 +3051,7 @@ fn send_claude_tool_result_activity(ev: &serde_json::Value, ch: &Channel<TurnEve
     }
 }
 
-fn claude_tool_result_activity(block: &serde_json::Value) -> Option<(String, String)> {
+fn claude_tool_result_activity(block: &serde_json::Value) -> Option<(String, String, String)> {
     if block.get("type").and_then(|value| value.as_str()) != Some("tool_result") {
         return None;
     }
@@ -1814,6 +3066,11 @@ fn claude_tool_result_activity(block: &serde_json::Value) -> Option<(String, Str
     Some((
         activity_id.to_string(),
         if failed { "failed" } else { "completed" }.into(),
+        if failed {
+            failure_detail(block)
+        } else {
+            String::new()
+        },
     ))
 }
 
@@ -1933,21 +3190,49 @@ fn parse_codex(ev: &serde_json::Value, ch: &Channel<TurnEvent>, collect: &Arc<Mu
 }
 
 fn send_codex_activity(item: &serde_json::Value, status: &str, ch: &Channel<TurnEvent>) {
-    let Some((activity_id, label, detail, status)) = codex_activity(item, status) else {
+    let Some((activity_id, label, detail, error, status)) = codex_activity(item, status) else {
         return;
     };
     let _ = ch.send(TurnEvent::Activity {
         activity_id,
+        kind: activity_kind(&label).into(),
         label,
         detail,
+        error,
         status,
+        phase: String::new(),
+        current: None,
+        total: None,
     });
+}
+
+/// 把不同供应商的工具名归一成稳定、低敏感度的活动类别。
+/// 这里只按真实工具名分类，不从模型自然语言里猜测业务阶段或完成数量。
+pub(crate) fn activity_kind(label: &str) -> &'static str {
+    let key = label.to_ascii_lowercase();
+    if key.contains("imagegen") || key.contains("image_gen") || key.contains("generate_image") {
+        "image_generation"
+    } else if key.contains("view_image")
+        || key.contains("image_view")
+        || key.contains("inspect_image")
+    {
+        "image_review"
+    } else if key.contains("skill") {
+        "skill"
+    } else if key == "exec" || key == "bash" || key.contains("command") || key.contains("terminal")
+    {
+        "command"
+    } else if key.contains("reason") || key.contains("thinking") {
+        "reasoning"
+    } else {
+        "tool"
+    }
 }
 
 fn codex_activity(
     item: &serde_json::Value,
     status: &str,
-) -> Option<(String, String, String, String)> {
+) -> Option<(String, String, String, String, String)> {
     let item_type = item
         .get("type")
         .and_then(|value| value.as_str())
@@ -1981,8 +3266,55 @@ fn codex_activity(
         activity_id.to_string(),
         label.to_string(),
         detail.chars().take(200).collect(),
+        if status == "failed" {
+            failure_detail(item)
+        } else {
+            String::new()
+        },
         status.to_string(),
     ))
+}
+
+/// 从三家 CLI/ACP 的失败结果里提取一条适合界面展示的真实原因。
+/// 只读明确的错误/输出字段，不回显整段输入参数，避免把密钥或大块 JSON 带进 UI。
+pub(crate) fn failure_detail(value: &serde_json::Value) -> String {
+    fn text(value: &serde_json::Value, depth: usize) -> Option<String> {
+        if depth > 4 {
+            return None;
+        }
+        if let Some(value) = value.as_str() {
+            let compact = value.split_whitespace().collect::<Vec<_>>().join(" ");
+            if !compact.is_empty() {
+                return Some(compact);
+            }
+        }
+        if let Some(items) = value.as_array() {
+            return items.iter().find_map(|item| text(item, depth + 1));
+        }
+        let object = value.as_object()?;
+        for key in [
+            "message",
+            "error",
+            "stderr",
+            "aggregated_output",
+            "output",
+            "content",
+            "result",
+            "text",
+        ] {
+            if let Some(found) = object.get(key).and_then(|item| text(item, depth + 1)) {
+                return Some(found);
+            }
+        }
+        None
+    }
+
+    let detail: String = text(value, 0)
+        .unwrap_or_default()
+        .chars()
+        .take(300)
+        .collect();
+    redact_gcms_unlock_challenges(&detail)
 }
 
 fn tool_detail(name: &str, input: &serde_json::Value) -> String {
@@ -2079,6 +3411,139 @@ mod tests {
         assert!(contains_new_effort(&cache));
         assert!((0, 144, 1) < (0, 145, 0));
         assert!(!((0, 145, 0) < (0, 145, 0)));
+        assert!(codex_models_missing_field(
+            &json!({"models": [{"slug": "gpt-test"}]}),
+            "supports_reasoning_summaries"
+        ));
+        assert!(!codex_models_missing_field(
+            &json!({"models": [{"supports_reasoning_summaries": true}]}),
+            "supports_reasoning_summaries"
+        ));
+    }
+
+    #[test]
+    fn codex_app_server_validates_model_and_maps_sandbox() {
+        assert_eq!(validate_codex_model("").unwrap(), None);
+        assert_eq!(
+            validate_codex_model("gpt-5.6-sol").unwrap(),
+            Some("gpt-5.6-sol".into())
+        );
+        assert!(validate_codex_model("--bad").is_err());
+        assert!(validate_codex_model("bad model").is_err());
+        assert_eq!(codex_sandbox(PermMode::Plan), "read-only");
+        assert_eq!(codex_sandbox(PermMode::Auto), "workspace-write");
+        assert_eq!(codex_sandbox(PermMode::Full), "danger-full-access");
+    }
+
+    #[test]
+    fn codex_app_server_negotiates_the_capability_required_by_resume() {
+        let params = codex_initialize_params();
+        assert_eq!(
+            params["capabilities"]["experimentalApi"].as_bool(),
+            Some(true),
+            "excludeTurns 会被 Codex 拒绝，除非初始化时协商 experimentalApi"
+        );
+    }
+
+    #[test]
+    fn gcms_prompts_require_bounded_batch_work_instead_of_per_item_turns() {
+        let single = system_prompt("siteops", "demo", "演示站");
+        let multi = multi_site_system_prompt(&["a".into(), "b".into()], &[]);
+        for prompt in [&single, &multi] {
+            assert!(prompt.contains("批量读取最新状态与 ETag"));
+            assert!(prompt.contains("只对失败项"));
+            assert!(prompt.contains("严禁重复上传或覆盖成功项"));
+            assert!(prompt.contains("批量结束后统一读取结果并验收一次"));
+        }
+    }
+
+    #[test]
+    fn codex_app_server_streamed_message_is_not_duplicated_on_completion() {
+        let collect = Arc::new(Mutex::new(Collect {
+            text: String::new(),
+            tools: Vec::new(),
+            session_ref: "thread-1".into(),
+            is_error: false,
+            usage: None,
+            raw_tail: String::new(),
+            images: Vec::new(),
+        }));
+        let (done_tx, _done_rx) = oneshot::channel();
+        let sink = CodexTurnSink {
+            channel: ch(),
+            collect: collect.clone(),
+            completed: Arc::new(Mutex::new(Some(done_tx))),
+            streamed_messages: Arc::new(Mutex::new(HashSet::new())),
+        };
+        handle_codex_app_notification(
+            "item/agentMessage/delta",
+            &json!({
+                "threadId": "thread-1",
+                "turnId": "turn-1",
+                "itemId": "message-1",
+                "delta": "已经完成"
+            }),
+            &sink,
+        );
+        handle_codex_app_notification(
+            "item/completed",
+            &json!({
+                "threadId": "thread-1",
+                "turnId": "turn-1",
+                "item": {
+                    "type": "agentMessage",
+                    "id": "message-1",
+                    "text": "已经完成"
+                }
+            }),
+            &sink,
+        );
+        assert_eq!(collect.lock().unwrap().text, "已经完成");
+    }
+
+    #[test]
+    fn codex_app_server_completion_closes_the_waiter_with_real_status() {
+        let collect = Arc::new(Mutex::new(Collect {
+            text: String::new(),
+            tools: Vec::new(),
+            session_ref: "thread-1".into(),
+            is_error: false,
+            usage: None,
+            raw_tail: String::new(),
+            images: Vec::new(),
+        }));
+        let (done_tx, mut done_rx) = oneshot::channel();
+        let sink = CodexTurnSink {
+            channel: ch(),
+            collect,
+            completed: Arc::new(Mutex::new(Some(done_tx))),
+            streamed_messages: Arc::new(Mutex::new(HashSet::new())),
+        };
+        handle_codex_app_notification(
+            "turn/completed",
+            &json!({
+                "threadId": "thread-1",
+                "turn": {"id": "turn-1", "status": "completed"}
+            }),
+            &sink,
+        );
+        assert_eq!(
+            done_rx.try_recv().unwrap()["status"].as_str(),
+            Some("completed")
+        );
+    }
+
+    #[test]
+    fn codex_app_server_reads_camel_case_token_usage() {
+        let usage = parse_usage(&json!({
+            "inputTokens": 120,
+            "cachedInputTokens": 80,
+            "outputTokens": 16
+        }))
+        .unwrap();
+        assert_eq!(usage.input, 120);
+        assert_eq!(usage.cache_read, 80);
+        assert_eq!(usage.output, 16);
     }
 
     #[test]
@@ -2452,16 +3917,16 @@ mod tests {
                 "tool_use_id": "tool-1",
                 "content": "done"
             })),
-            Some(("tool-1".into(), "completed".into()))
+            Some(("tool-1".into(), "completed".into(), String::new()))
         );
         assert_eq!(
             claude_tool_result_activity(&json!({
                 "type": "tool_result",
                 "tool_use_id": "tool-2",
                 "is_error": true,
-                "content": "failed"
+                "content": [{"type":"text","text":"网页截图加载超时"}]
             })),
-            Some(("tool-2".into(), "failed".into()))
+            Some(("tool-2".into(), "failed".into(), "网页截图加载超时".into()))
         );
         assert!(claude_tool_result_activity(&json!({
             "type": "assistant",
@@ -2484,6 +3949,7 @@ mod tests {
                 "item-1".into(),
                 "exec".into(),
                 "npm run check".into(),
+                String::new(),
                 "running".into()
             )
         );
@@ -2497,7 +3963,20 @@ mod tests {
         )
         .expect("same Codex item should reach a terminal state");
         assert_eq!(completed.0, started.0);
-        assert_eq!(completed.3, "completed");
+        assert_eq!(completed.4, "completed");
+        let failed = codex_activity(
+            &json!({
+                "type": "command_execution",
+                "id": "item-2",
+                "command": "capture-page",
+                "status": "failed",
+                "error": {"message": "页面加载超时"}
+            }),
+            "failed",
+        )
+        .expect("failed Codex command should retain its reason");
+        assert_eq!(failed.3, "页面加载超时");
+        assert_eq!(failed.4, "failed");
         assert!(
             codex_activity(
                 &json!({"type": "agent_message", "id": "message-1", "text": "done"}),
@@ -2506,6 +3985,95 @@ mod tests {
             .is_none(),
             "assistant prose must not masquerade as execution progress"
         );
+    }
+
+    #[test]
+    fn codex_native_events_expose_semantic_progress_without_private_payloads() {
+        assert!(
+            native_activity(&json!({
+                "type": "event_msg",
+                "payload": {
+                    "type": "agent_message",
+                    "message": "我会读取最新 ETag，然后发布这 12 条资源。"
+                }
+            }))
+            .is_none(),
+            "assistant prose belongs in the message body, not in the activity card"
+        );
+
+        let image = native_activity(&json!({
+            "type": "response_item",
+            "payload": {
+                "type": "function_call",
+                "name": "image_gen__imagegen",
+                "call_id": "call-image-1",
+                "arguments": "{\"prompt\":\"private prompt\",\"token\":\"secret\"}"
+            }
+        }))
+        .expect("imagegen should become semantic activity");
+        assert_eq!(image.0, "call-image-1");
+        assert_eq!(image.1, "image_generation");
+        assert_eq!(image.3, "正在生成图片");
+        assert!(!format!("{image:?}").contains("private prompt"));
+        assert!(!format!("{image:?}").contains("secret"));
+
+        let reasoning = native_activity(&json!({
+            "type": "response_item",
+            "payload": {
+                "type": "reasoning",
+                "encrypted_content": "encrypted-private-chain"
+            }
+        }))
+        .expect("reasoning should expose a safe pulse");
+        assert_eq!(reasoning.1, "reasoning");
+        assert!(!format!("{reasoning:?}").contains("encrypted-private-chain"));
+
+        let completed = native_activity(&json!({
+            "type": "event_msg",
+            "payload": {
+                "type": "image_generation_end",
+                "call_id": "call-image-1",
+                "status": "completed",
+                "saved_path": "/Users/private/generated_images/secret.webp",
+                "result": "data:image/webp;base64,very-secret"
+            }
+        }))
+        .expect("image end should complete the same activity");
+        assert_eq!(completed.0, "call-image-1");
+        assert_eq!(completed.5, "completed");
+        assert!(!format!("{completed:?}").contains("/Users/private"));
+        assert!(!format!("{completed:?}").contains("base64"));
+
+        let upload = native_activity(&json!({
+            "type": "response_item",
+            "payload": {
+                "type": "function_call",
+                "name": "exec",
+                "call_id": "call-upload-1",
+                "arguments": {
+                    "command": "node scripts/gcms.js upload --site cligx /private/tmp/cover.webp",
+                    "env": {"GCMS_API_KEY": "gcmsp_secret"}
+                }
+            }
+        }))
+        .expect("GCMS upload should become a semantic command activity");
+        assert_eq!(upload.1, "command");
+        assert_eq!(upload.3, "正在上传站点图片");
+        let exposed = format!("{upload:?}");
+        assert!(!exposed.contains("/private/tmp"));
+        assert!(!exposed.contains("gcmsp_secret"));
+
+        let update = native_activity(&json!({
+            "type": "response_item",
+            "payload": {
+                "type": "custom_tool_call",
+                "name": "exec",
+                "call_id": "call-update-1",
+                "input": "node scripts/gcms.js update posts 61 @payload.json"
+            }
+        }))
+        .expect("GCMS update should become a semantic command activity");
+        assert_eq!(update.3, "正在更新站点内容");
     }
 
     fn unlock_payload(operation: &str) -> serde_json::Value {
